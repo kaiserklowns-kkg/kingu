@@ -1,12 +1,17 @@
 <script lang="ts">
+	import DiffHost from './DiffHost.svelte';
 	import EditorHost from './EditorHost.svelte';
 	import Icon from './Icon.svelte';
 	import { editors } from './editors.svelte';
 	import { status } from './status.svelte';
 	import { keyLabel } from './keys';
+	import { fileOf, isDiffKey, tabLabel } from './scm';
 
-	const base = (p: string) => p.split('/').pop() ?? p;
-	const crumbs = $derived(editors.active ? editors.active.split('/') : []);
+	const base = tabLabel;
+	const crumbs = $derived(editors.active ? fileOf(editors.active).split('/') : []);
+	const diffActive = $derived(editors.active !== null && isDiffKey(editors.active));
+	// The diff editor exists only while a diff tab is open.
+	const hasDiff = $derived(editors.tabs.some((t) => isDiffKey(t.path)));
 
 	function close(path: string, force: boolean) {
 		if (!editors.close(path, { force })) status.flash('มีการแก้ไขที่ยังไม่บันทึก: กด ⌘S ก่อน หรือกด ⌥ ค้างแล้วคลิก × เพื่อทิ้งการแก้ไข');
@@ -77,9 +82,14 @@
 	{/if}
 
 	<div class="relative min-h-0 flex-1">
-		<div class={['absolute inset-0', !editors.active && 'invisible']}>
+		<div class={['absolute inset-0', (!editors.active || diffActive) && 'invisible']}>
 			<EditorHost />
 		</div>
+		{#if hasDiff}
+			<div class={['absolute inset-0', !diffActive && 'invisible']}>
+				<DiffHost />
+			</div>
+		{/if}
 		{#if !editors.active}
 			<div class="absolute inset-0 grid place-items-center">
 				<dl class="grid grid-cols-[auto_auto] gap-x-4 gap-y-2 text-(--vscode-descriptionForeground)">

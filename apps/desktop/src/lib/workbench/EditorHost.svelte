@@ -8,6 +8,7 @@
 	import { commands } from './commands.svelte';
 	import { editors } from './editors.svelte';
 	import { quick } from './quick.svelte';
+	import { isDiffKey } from './scm';
 
 	type Entry = { model: Monaco.editor.ITextModel; savedVersion: number; view?: Monaco.editor.ICodeEditorViewState | null };
 
@@ -98,7 +99,8 @@
 			const prev = models.get(shownPath);
 			if (prev) prev.view = editor.saveViewState();
 		}
-		if (!path) {
+		// Diff tabs are shown by DiffHost.
+		if (!path || isDiffKey(path)) {
 			editor.setModel(null);
 			shownPath = null;
 			return;

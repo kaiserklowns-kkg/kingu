@@ -2,7 +2,10 @@
 	import Icon, { type IconName } from './Icon.svelte';
 	import { layout, type SideView } from './layout.svelte';
 	import { keyLabel } from './keys';
+	import { scm } from './scm.svelte';
 
+	// Count badges (VS Code activitybar badge: bottom-right, 16px).
+	const badges: Partial<Record<SideView, () => number>> = { scm: () => scm.count };
 	const views: { view: SideView; label: string; icon: IconName; key: string }[] = [
 		{ view: 'explorer', label: 'Explorer', icon: 'files', key: 'cmd+shift+e' },
 		{ view: 'search', label: 'Search', icon: 'search', key: 'cmd+shift+f' },
@@ -17,6 +20,7 @@
 >
 	{#each views as v (v.view)}
 		{@const on = layout.sidebarVisible && layout.sideView === v.view}
+		{@const badge = badges[v.view]?.() ?? 0}
 		<button
 			aria-label="{v.label} ({keyLabel(v.key)})"
 			aria-pressed={on}
@@ -29,6 +33,13 @@
 		>
 			{#if on}<span class="absolute inset-y-0 left-0 w-0.5 bg-(--vscode-activityBar-activeBorder)"></span>{/if}
 			<Icon name={v.icon} size={24} stroke={1.5} />
+			{#if badge}
+				<span
+					class="absolute right-1.5 bottom-1.5 h-4 min-w-4 rounded-full bg-(--vscode-activityBarBadge-background) px-1 text-center text-[9px] leading-4 font-semibold text-(--vscode-activityBarBadge-foreground)"
+				>
+					{badge > 999 ? '999+' : badge}
+				</span>
+			{/if}
 		</button>
 	{/each}
 	<button

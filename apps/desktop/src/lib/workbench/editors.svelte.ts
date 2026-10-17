@@ -1,5 +1,8 @@
 // Single editor group (VS Code: EditorGroupModel). At most one preview tab, shown in italics;
 // opening another file unpinned replaces it. Editing or double-clicking pins.
+// A tab's `path` is a workspace file, or `diff:<file>` for a HEAD ↔ working tree diff (scm.ts).
+
+import { diffKey } from './scm';
 
 export type EditorTab = { path: string; preview: boolean; dirty: boolean };
 export type Cursor = { line: number; column: number };
@@ -28,6 +31,11 @@ class Editors {
 			}
 		}
 		this.active = path;
+	}
+
+	/** Opens the Source Control diff of `rel` (HEAD vs working tree) as its own tab. */
+	openDiff(rel: string, options: { preview?: boolean } = {}) {
+		this.open(diffKey(rel), options);
 	}
 
 	pin(path: string) {
