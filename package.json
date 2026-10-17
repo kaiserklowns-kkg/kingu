@@ -1,7 +1,7 @@
 {
 	"name": "kingu",
 	"private": true,
-	"workspaces": ["apps/desktop", "packages/*"],
+	"workspaces": ["apps/desktop", "apps/agent-host", "packages/*"],
 	"scripts": {
 		"dev:desktop": "bun --cwd apps/desktop tauri dev",
 		"build:desktop": "bun --cwd apps/desktop tauri build",

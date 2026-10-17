@@ -4,6 +4,7 @@
 	import { quick } from './quick.svelte';
 	import { editors } from './editors.svelte';
 	import { keyLabel } from './keys';
+	import { agents } from '#lib/agent/agents.svelte.ts';
 
 	let { workspaceName }: { workspaceName: string } = $props();
 
@@ -33,6 +34,15 @@
 		</button>
 	</div>
 	<div class="flex items-center gap-0.5">
+		{#if agents.pendingCount}
+			<button
+				class="mr-1 rounded bg-amber-600 px-1.5 text-[11px] leading-[18px] font-medium text-black hover:bg-amber-500"
+				title="agent รอคุณอนุญาต {agents.pendingCount} รายการ ({agents.pendingCount} permission request(s) waiting)"
+				onclick={() => (layout.auxVisible = true)}
+			>
+				รอคุณ {agents.pendingCount}
+			</button>
+		{/if}
 		{#each toggles as t (t.label)}
 			<button
 				aria-label={t.label}

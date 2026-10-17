@@ -150,6 +150,26 @@ export const SETTINGS: SettingSchema[] = [
 		type: 'string',
 		default: '',
 		description: 'ฟอนต์ของ terminal เว้นว่างเพื่อใช้ editor.fontFamily (Defaults to editor.fontFamily when empty.)'
+	},
+	{
+		id: 'kingu.agent.model',
+		group: 'Agent',
+		type: 'string',
+		default: 'claude-opus-5-5',
+		description: 'โมเดลที่ agent ใช้ (The Claude model agent runs use.)'
+	},
+	{
+		id: 'kingu.agent.permissionMode',
+		group: 'Agent',
+		type: 'string',
+		default: 'default',
+		enum: ['default', 'acceptEdits', 'plan'],
+		enumDescriptions: [
+			'ถามก่อนใช้เครื่องมือที่ต้องขออนุญาต (Ask before tools that need approval.)',
+			'แก้ไขไฟล์ใน worktree ได้เลย ถามเฉพาะคำสั่งอื่น (Accept file edits automatically.)',
+			'วางแผนเท่านั้น ไม่แก้ไขไฟล์ (Plan only; no edits or commands.)'
+		],
+		description: 'โหมดการขออนุญาตของ agent (How the agent asks for permission to use tools.)'
 	}
 ];
 

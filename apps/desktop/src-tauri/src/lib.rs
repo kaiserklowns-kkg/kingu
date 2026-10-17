@@ -7,6 +7,7 @@ mod pty;
 mod replace;
 mod search;
 mod settings;
+mod shell_env;
 mod watcher;
 mod workspace;
 
@@ -199,35 +200,6 @@ fn worktree_remove(
   agent::worktree::remove(&ws.root()?, &slug, force.unwrap_or(false), delete_branch.unwrap_or(false))
 }
 
-/// Runs Claude Code headless in the task's worktree; events stream over `on_event`.
-#[tauri::command]
-fn agent_start(
-  ws: State<'_, Workspace>,
-  agents: State<'_, agent::Agents>,
-  slug: String,
-  prompt: String,
-  on_event: Channel<agent::AgentEvent>,
-) -> Result<u32, String> {
-  agent::worktree::validate_slug(&slug)?;
-  if prompt.trim().is_empty() {
-    return Err("prompt is empty".into());
-  }
-  let cwd = agent::worktree::worktree_path(&ws.root()?, &slug);
-  if !cwd.is_dir() {
-    return Err(format!("{slug}: no worktree, create it first"));
-  }
-  let env = agent::runner::allowed_env(std::env::vars_os());
-  let launch = agent::runner::claude_launch(agents.claude_bin.clone(), &prompt, cwd, env);
-  let id = agents.start(
-    launch,
-    std::sync::Arc::new(move |ev| {
-      let _ = on_event.send(ev);
-    }),
-  )?;
-  log::info!("agent run {id} started for task {slug}");
-  Ok(id)
-}
-
 /// Find in Files: streams ripgrep matches per file; a new search cancels the previous one.
 #[tauri::command]
 fn search_text(
@@ -240,7 +212,7 @@ fn search_text(
     searches.cancel();
     return Err("query is empty".into());
   }
-  let rg = search::find_rg(std::env::var_os("KINGU_RG"), std::env::var_os("PATH"))?;
+  let rg = search::find_rg(std::env::var_os("KINGU_RG"), shell_env::path())?;
   searches.start(&rg, &ws.root()?, &options, move |ev| on_event.send(ev).is_ok())
 }
 
@@ -391,10 +363,11 @@ pub fn run() {
     .manage(Workspace::default())
     .manage(watcher::FileWatcher::default())
     .manage(pty::Ptys::default())
-    .manage(agent::Agents::default())
+    .manage(Arc::new(agent::AgentHost::default()))
     .manage(Arc::new(search::Searches::default()))
     .manage(lsp::Servers::default())
     .setup(|app| {
+      shell_env::init();
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()
@@ -444,7 +417,10 @@ pub fn run() {
       worktree_create,
       worktree_list,
       worktree_remove,
-      agent_start,
+      agent::agent_start,
+      agent::agent_send,
+      agent::agent_answer_permission,
+      agent::agent_interrupt,
       agent::agent_stop,
       search_text,
       search_cancel,
@@ -460,6 +436,7 @@ pub fn run() {
     .run(|app, event| {
       if let tauri::RunEvent::Exit = event {
         app.state::<lsp::Servers>().stop_all();
+        app.state::<Arc<agent::AgentHost>>().shutdown();
       }
     });
 }
