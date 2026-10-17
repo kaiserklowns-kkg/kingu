@@ -12,11 +12,13 @@
 	onMount(() => {
 		let disposed = false;
 		// Loaded on demand so Monaco (several MB) stays out of the first paint.
-		import('./monaco').then((m) => {
+		import('./monaco').then(async (m) => {
+			// Theme and TextMate tokenizers must be in place before the first model exists.
+			await m.setupTextMate();
 			if (disposed) return;
 			api = m;
 			editor = m.monaco.editor.create(host, {
-				theme: 'vs-dark',
+				theme: m.THEME_ID,
 				automaticLayout: true,
 				fontFamily: "Menlo, 'SF Mono', 'IBM Plex Sans Thai', monospace",
 				fontSize: 13,
