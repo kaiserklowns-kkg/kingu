@@ -65,12 +65,13 @@ pub fn find_bun(override_var: Option<OsString>, path: Option<&OsStr>, home: Opti
 }
 
 /// Where the sidecar is: `KINGU_AGENT_HOST` (a binary, or a `.ts`/`.js` entry run with bun),
-/// else `kingu-agent-host` next to the app executable (release), else the repo's
-/// `apps/agent-host/src/main.ts` run with bun (dev).
+/// else `kingu-agent-host` next to the app executable (release: Tauri `externalBin` strips the
+/// `-<target-triple>` suffix and puts it in `Contents/MacOS`), else the repo's
+/// `apps/agent-host/src/main.ts` run with bun (`dev_script`, debug builds only).
 pub fn resolve_sidecar(
   override_var: Option<OsString>,
   exe_dir: Option<&Path>,
-  dev_script: &Path,
+  dev_script: Option<&Path>,
   bun: impl FnOnce() -> Option<PathBuf>,
 ) -> Result<(PathBuf, Vec<OsString>), String> {
   let with_bun = |script: &Path| -> Result<(PathBuf, Vec<OsString>), String> {
@@ -90,10 +91,23 @@ pub fn resolve_sidecar(
   if let Some(bin) = exe_dir.map(|d| d.join(SIDECAR_NAME)).filter(|p| p.is_file()) {
     return Ok((bin, Vec::new()));
   }
-  if dev_script.is_file() {
-    return with_bun(dev_script);
+  match dev_script {
+    Some(script) if script.is_file() => with_bun(script),
+    Some(script) => Err(format!("agent host not found: build apps/agent-host or set KINGU_AGENT_HOST ({} missing)", script.display())),
+    None => Err(format!("agent host not found: {SIDECAR_NAME} is missing next to the app executable (set KINGU_AGENT_HOST)")),
   }
-  Err(format!("agent host not found: build apps/agent-host or set KINGU_AGENT_HOST ({} missing)", dev_script.display()))
+}
+
+/// The repo's TypeScript entry, for `tauri dev`. Release builds do not embed the build machine's
+/// repo path (and never run sidecar code from outside the signed bundle unless KINGU_AGENT_HOST says so).
+#[cfg(debug_assertions)]
+fn dev_script() -> Option<PathBuf> {
+  Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../agent-host/src/main.ts"))
+}
+
+#[cfg(not(debug_assertions))]
+fn dev_script() -> Option<PathBuf> {
+  None
 }
 
 /// The real launch: resolved per spawn so a fixed PATH or newly built sidecar is picked up.
@@ -101,8 +115,8 @@ pub fn default_launch() -> Result<HostLaunch, String> {
   let path = crate::shell_env::path();
   let home = std::env::var_os("HOME").map(PathBuf::from);
   let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
-  let dev_script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../agent-host/src/main.ts");
-  let (program, args) = resolve_sidecar(std::env::var_os("KINGU_AGENT_HOST"), exe_dir.as_deref(), &dev_script, || {
+  let dev_script = dev_script();
+  let (program, args) = resolve_sidecar(std::env::var_os("KINGU_AGENT_HOST"), exe_dir.as_deref(), dev_script.as_deref(), || {
     find_bun(std::env::var_os("KINGU_BUN"), path.as_deref(), home.as_deref())
   })?;
   Ok(HostLaunch { program, args, env: agent_env(std::env::vars_os(), path) })
@@ -592,16 +606,18 @@ sleep 60"#;
     let missing = dir.join("nope.ts");
 
     // KINGU_AGENT_HOST: a .ts entry runs with bun, anything else directly.
-    assert_eq!(resolve_sidecar(Some(script_ts.clone().into()), None, &missing, bun).unwrap(), ("/x/bun".into(), vec!["run".into(), script_ts.clone().into()]));
-    assert_eq!(resolve_sidecar(Some(bin.clone().into()), None, &missing, bun).unwrap(), (bin.clone(), vec![]));
-    assert!(resolve_sidecar(Some(missing.clone().into()), None, &missing, bun).unwrap_err().contains("KINGU_AGENT_HOST"));
+    assert_eq!(resolve_sidecar(Some(script_ts.clone().into()), None, Some(&missing), bun).unwrap(), ("/x/bun".into(), vec!["run".into(), script_ts.clone().into()]));
+    assert_eq!(resolve_sidecar(Some(bin.clone().into()), None, Some(&missing), bun).unwrap(), (bin.clone(), vec![]));
+    assert!(resolve_sidecar(Some(missing.clone().into()), None, Some(&missing), bun).unwrap_err().contains("KINGU_AGENT_HOST"));
     // Release: next to the executable, before the dev script.
-    assert_eq!(resolve_sidecar(None, Some(dir), &script_ts, bun).unwrap(), (bin, vec![]));
+    assert_eq!(resolve_sidecar(None, Some(dir), Some(&script_ts), bun).unwrap(), (bin, vec![]));
     // Dev: the repo script with bun.
     let empty = tempfile::tempdir().unwrap();
-    assert_eq!(resolve_sidecar(None, Some(empty.path()), &script_ts, bun).unwrap().0, PathBuf::from("/x/bun"));
-    assert!(resolve_sidecar(None, Some(empty.path()), &script_ts, no_bun).unwrap_err().contains("bun"));
-    assert!(resolve_sidecar(None, None, &missing, bun).unwrap_err().contains("agent host not found"));
+    assert_eq!(resolve_sidecar(None, Some(empty.path()), Some(&script_ts), bun).unwrap().0, PathBuf::from("/x/bun"));
+    assert!(resolve_sidecar(None, Some(empty.path()), Some(&script_ts), no_bun).unwrap_err().contains("bun"));
+    assert!(resolve_sidecar(None, None, Some(&missing), bun).unwrap_err().contains("agent host not found"));
+    // Release (no dev script): only next to the executable.
+    assert!(resolve_sidecar(None, Some(empty.path()), None, bun).unwrap_err().contains(SIDECAR_NAME));
   }
 
   #[test]
@@ -615,8 +631,9 @@ sleep 60"#;
   }
 
   #[test]
+  #[cfg(debug_assertions)]
   fn dev_sidecar_path_points_into_the_repo() {
-    let dev = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../agent-host/src/main.ts");
+    let dev = dev_script().unwrap();
     assert!(dev.is_file(), "{}", dev.display());
   }
 

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged by `tauri build` into Kingu.app/Contents/Info.plist. Usage descriptions only for what the
+  app actually touches: projects opened from (and terminals/agents/git working in) the Desktop,
+  Documents and Downloads folders trigger macOS privacy prompts. No camera, microphone, location,
+  contacts, Bluetooth or Apple Events: nothing in the app uses them.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Kingu opens, edits and runs tools in projects you keep on your Desktop.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Kingu opens, edits and runs tools in projects you keep in Documents.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Kingu opens, edits and runs tools in projects you keep in Downloads.</string>
+</dict>
+</plist>

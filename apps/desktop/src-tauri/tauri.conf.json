@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Kingu",
-  "version": "0.1.0",
   "identifier": "ai.anthov.kingu.studio",
   "build": {
     "frontendDist": "../build",
@@ -10,6 +9,7 @@
     "beforeBuildCommand": "bun run build"
   },
   "app": {
+    "withGlobalTauri": false,
     "windows": [
       {
         "title": "Kingu",
@@ -30,6 +30,8 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "Code editor and AI agent workspace",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -37,6 +39,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "hardenedRuntime": true,
+      "signingIdentity": "-",
+      "entitlements": "entitlements/app.plist"
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }
