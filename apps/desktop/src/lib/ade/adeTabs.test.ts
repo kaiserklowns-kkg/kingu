@@ -5,6 +5,9 @@ describe('adeTabs', () => {
 	test('the folder starts with the new-task composer', () => {
 		expect(adeTabs('', [])).toEqual([{ id: 'main', kind: 'compose', label: 'งานใหม่' }]);
 	});
+	test('a terminal can carry its own title', () => {
+		expect(adeTabs('x', [{ id: 't1', n: 1, title: 'test (Go)' }])[1].label).toBe('test (Go)');
+	});
 	test('a task starts with its agent session, then its terminals', () => {
 		expect(adeTabs('fix-login', [{ id: 't1', n: 1 }, { id: 't4', n: 2 }]).map((t) => [t.kind, t.label])).toEqual([
 			['agent', 'Agent'],

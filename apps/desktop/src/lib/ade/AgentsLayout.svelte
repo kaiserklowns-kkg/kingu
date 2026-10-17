@@ -123,7 +123,7 @@
 		{#each Object.entries(adeLayout.terminals) as [k, list] (k)}
 			{#each list as t (t.id)}
 				<div class={['absolute inset-0 bg-(--vscode-terminal-background,var(--vscode-panel-background))', (adeLayout.board || k !== key || activeTab !== t.id) && 'hidden']}>
-					<Terminal slug={k || undefined} />
+					<Terminal slug={k || undefined} run={t.run} />
 				</div>
 			{/each}
 		{/each}

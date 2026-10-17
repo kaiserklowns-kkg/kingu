@@ -6,8 +6,11 @@
 	import '@xterm/xterm/css/xterm.css';
 	import { bindTerminalSettings } from '#lib/settings/apply.svelte.ts';
 
-	/** A task slug: the terminal starts in that task's worktree instead of the folder root. */
-	let { slug }: { slug?: string } = $props();
+	/**
+	 * `slug`: start in that task's worktree instead of the folder root. `run`: a command typed into
+	 * the shell once it starts (an agent CLI, a Snap task); Rust quotes every argument.
+	 */
+	let { slug, run }: { slug?: string; run?: string[] } = $props();
 	let host: HTMLDivElement;
 
 	onMount(() => {
@@ -28,7 +31,7 @@
 		const onData = new Channel<string>();
 		onData.onmessage = (chunk) => term.write(chunk);
 
-		invoke<number>('pty_spawn', { cols: term.cols, rows: term.rows, onData, slug: slug ?? null })
+		invoke<number>('pty_spawn', { cols: term.cols, rows: term.rows, onData, slug: slug ?? null, run: run ?? null })
 			.then((v) => (id = v))
 			.catch((e) => term.write(`\r\nเปิด terminal ไม่ได้: ${e}\r\n`));
 

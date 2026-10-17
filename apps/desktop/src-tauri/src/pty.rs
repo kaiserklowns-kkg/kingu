@@ -38,7 +38,33 @@ fn utf8_prefix_len(buf: &[u8]) -> usize {
   }
 }
 
-pub fn spawn_shell(ptys: &Ptys, cwd: &Path, cols: u16, rows: u16, on_data: Channel<String>) -> Result<u32, String> {
+/// POSIX shell quoting for one argument: bare when it only has safe characters, else in single
+/// quotes (`'` becomes `'\''`). Newlines stay inside the quotes, so a multi-line prompt is one argument.
+pub fn shell_quote(arg: &str) -> String {
+  let safe = !arg.is_empty() && arg.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_./=:@%+,".contains(&b));
+  if safe {
+    arg.to_string()
+  } else {
+    format!("'{}'", arg.replace('\'', "'\\''"))
+  }
+}
+
+/// The command line typed into a new terminal for `run` (each argument quoted, so a prompt or a
+/// setting value can never become shell syntax).
+pub fn command_line(argv: &[String]) -> Result<String, String> {
+  if argv.is_empty() || argv[0].is_empty() {
+    return Err("คำสั่งว่าง".into());
+  }
+  if argv.iter().any(|a| a.contains('\0')) {
+    return Err("คำสั่งมีอักขระ NUL".into());
+  }
+  Ok(argv.iter().map(|a| shell_quote(a)).collect::<Vec<_>>().join(" "))
+}
+
+/// A login shell in `cwd`. With `run`, that command is typed into the shell once it starts (like
+/// Orca starting an agent CLI in a worktree terminal): when it exits, the shell stays open.
+pub fn spawn_shell(ptys: &Ptys, cwd: &Path, cols: u16, rows: u16, on_data: Channel<String>, run: Option<&[String]>) -> Result<u32, String> {
+  let line = run.map(command_line).transpose()?;
   let pair = native_pty_system().openpty(size(cols, rows)).map_err(|e| e.to_string())?;
   let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
   let mut cmd = CommandBuilder::new(shell);
@@ -50,7 +76,11 @@ pub fn spawn_shell(ptys: &Ptys, cwd: &Path, cols: u16, rows: u16, on_data: Chann
   drop(pair.slave);
 
   let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-  let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+  let mut writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+  if let Some(line) = line {
+    // The tty buffers it until the shell reads its first line.
+    writer.write_all(format!("{line}\r").as_bytes()).map_err(|e| e.to_string())?;
+  }
   let id = ptys.next_id.fetch_add(1, Ordering::Relaxed) + 1;
 
   std::thread::spawn(move || {
@@ -103,7 +133,7 @@ pub fn pty_kill(ptys: State<'_, Ptys>, id: u32) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-  use super::utf8_prefix_len;
+  use super::{command_line, shell_quote, utf8_prefix_len};
 
   #[test]
   fn holds_back_a_cut_thai_character() {
@@ -118,5 +148,17 @@ mod tests {
   #[test]
   fn passes_invalid_bytes_through() {
     assert_eq!(utf8_prefix_len(&[b'a', 0xff, b'b']), 3);
+  }
+
+  #[test]
+  fn quotes_arguments_for_the_shell() {
+    assert_eq!(shell_quote("go"), "go");
+    assert_eq!(shell_quote("./..."), "./...");
+    assert_eq!(shell_quote("แก้บั๊ก login"), "'แก้บั๊ก login'");
+    assert_eq!(shell_quote("it's $(rm -rf ~)"), "'it'\\''s $(rm -rf ~)'");
+    assert_eq!(shell_quote(""), "''");
+    assert_eq!(command_line(&["claude".into(), "a\nb".into()]).unwrap(), "claude 'a\nb'");
+    assert!(command_line(&[]).is_err());
+    assert!(command_line(&["x\0".into()]).is_err());
   }
 }

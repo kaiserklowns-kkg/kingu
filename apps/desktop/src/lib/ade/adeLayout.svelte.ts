@@ -45,13 +45,15 @@ class AdeLayout {
 		else appMode.openSession(key);
 	}
 
-	newTerminal(key: string) {
+	/** A terminal in that worktree; `run` is typed into its shell (an agent CLI, a Snap task). */
+	newTerminal(key: string, opts: { title?: string; run?: string[] } = {}): string {
 		const list = this.terminals[key] ?? [];
 		const n = list.reduce((m, t) => Math.max(m, t.n), 0) + 1;
-		const tab = { id: `t${++this.#seq}`, n };
+		const tab: TerminalTab = { id: `t${++this.#seq}`, n, title: opts.title, run: opts.run };
 		this.terminals[key] = [...list, tab];
 		this.active[key] = tab.id;
 		this.board = false;
+		return tab.id;
 	}
 
 	closeTerminal(key: string, id: string) {

@@ -170,6 +170,7 @@ fn pty_spawn(
   rows: u16,
   on_data: Channel<String>,
   slug: Option<String>,
+  run: Option<Vec<String>>,
 ) -> Result<u32, String> {
   // A task terminal starts in the task's worktree (the ADE's per-worktree terminals).
   // No folder open: the terminal starts in the home folder, like VS Code's empty window.
@@ -184,7 +185,7 @@ fn pty_spawn(
     }
     None => ws.current().or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("/")),
   };
-  let id = pty::spawn_shell(&ptys, &cwd, cols, rows, on_data)?;
+  let id = pty::spawn_shell(&ptys, &cwd, cols, rows, on_data, run.as_deref())?;
   log::info!("terminal {id} started ({cols}x{rows})");
   Ok(id)
 }
