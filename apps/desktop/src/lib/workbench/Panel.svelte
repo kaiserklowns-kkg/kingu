@@ -6,6 +6,19 @@
 	import { layout, type PanelTab } from './layout.svelte';
 	import { workspace } from './workspace.svelte';
 
+	// VS Code's Maximize Panel Size: the panel takes the editor area; again restores the height.
+	let restoreHeight: number | null = $state(null);
+	const maximized = $derived(restoreHeight !== null);
+	function toggleMaximize() {
+		if (restoreHeight !== null) {
+			layout.panelHeight = restoreHeight;
+			restoreHeight = null;
+		} else {
+			restoreHeight = layout.panelHeight;
+			layout.panelHeight = Math.max(160, window.innerHeight - 35 - 22 - 70);
+		}
+	}
+
 	const tabs: { id: PanelTab; label: string }[] = [
 		{ id: 'problems', label: 'Problems' },
 		{ id: 'output', label: 'Output' },
@@ -29,6 +42,14 @@
 			>
 		{/each}
 		<div class="flex-1"></div>
+		<button
+			aria-label={maximized ? 'Restore Panel Size' : 'Maximize Panel Size'}
+			title={maximized ? 'Restore Panel Size' : 'Maximize Panel Size'}
+			class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)"
+			onclick={toggleMaximize}
+		>
+			<Icon name={maximized ? 'chevronDown' : 'chevronUp'} size={16} />
+		</button>
 		<button aria-label="Hide Panel" title="Hide Panel" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => (layout.panelVisible = false)}>
 			<Icon name="close" size={14} />
 		</button>

@@ -283,8 +283,23 @@
 		{:else if search.running}
 			<span>กำลังค้นหา… {shownMatches ? summarize(shownMatches, search.files.length) : ''}</span>
 		{/if}
-		{#if search.files.length}
-			<button class="ml-auto shrink-0 text-(--vscode-textLink-foreground) hover:underline" onclick={() => search.collapseAll()}>Collapse All</button>
+		{#if search.query}
+			<div class="ml-auto flex shrink-0 items-center">
+				{#each [
+					{ label: 'Refresh', icon: 'refresh', run: () => void search.run(), show: true },
+					{ label: 'Clear Search Results', icon: 'close', run: () => search.clear(), show: true },
+					{ label: 'Collapse All', icon: 'collapseAll', run: () => search.collapseAll(), show: search.files.length > 0 }
+				] as const as a (a.label)}
+					{#if a.show}
+						<button
+							class="grid size-[22px] place-items-center rounded text-(--vscode-icon-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
+							title={a.label}
+							aria-label={a.label}
+							onclick={a.run}><Icon name={a.icon} size={15} /></button
+						>
+					{/if}
+				{/each}
+			</div>
 		{/if}
 	</div>
 

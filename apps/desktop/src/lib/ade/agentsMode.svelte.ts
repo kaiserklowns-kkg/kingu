@@ -69,10 +69,11 @@ export function pickSession() {
 	});
 }
 
-/** New Session: the sessions side bar with the New Task form open. */
+/** New Session: clears the active session so the Agents layout shows its centred composer. */
 export function newSession() {
-	appMode.sessionsVisible = true;
-	adeTasks.composing = true;
+	appMode.activeSession = null;
+	adeTasks.composing = false;
+	appMode.composeRequest++;
 }
 
 /** Registers the mode commands and follows editor opens out of the Agents layout. */

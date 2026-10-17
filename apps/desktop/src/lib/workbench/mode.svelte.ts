@@ -20,6 +20,8 @@ class AppModeStore {
 	mode = $state<AppMode>('workbench');
 	/** Task slug shown in the Agents layout. */
 	activeSession = $state<string | null>(null);
+	/** Bumped by New Session so the Agents layout focuses its composer. */
+	composeRequest = $state(0);
 	sessionsVisible = $state(true);
 	panelVisible = $state(true);
 	sessionsWidth = $state(300);

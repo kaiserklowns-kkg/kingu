@@ -1,151 +1,155 @@
 <script lang="ts">
-	// Agent panel (secondary side bar): quick task entry, the open folder's tasks, and the selected
-	// task's run. Tasks are created through the ADE task store (worktree + tasks.json, then
-	// `agents.start`), so a run started here shows up in the Agents view and board too. Runs live
-	// in the `agents` store and outlive this panel; follow-ups resume the task's session.
+	// Agent panel (secondary side bar), laid out like VS Code's Chat view: a session switcher on
+	// top, the selected task's timeline, and the composer pinned to the bottom. With no session
+	// selected the composer starts a new task (title = the prompt's first line). Tasks go through
+	// the ADE task store (worktree + tasks.json, then `agents.start`), so they also show up in the
+	// Agents view and board; follow-ups resume the task's session.
 	import AgentTimeline from './AgentTimeline.svelte';
+	import Composer from './Composer.svelte';
+	import Icon from '#lib/workbench/Icon.svelte';
+	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 	import { runtime } from '#lib/ade/runtime.svelte.ts';
+	import { appMode } from '#lib/workbench/mode.svelte.ts';
 	import { STATUS_LABEL, type RunStatus } from './events';
+	import { taskTitleFromPrompt } from './composerText';
 
-	let title = $state('');
-	let prompt = $state('');
+	let draft = $state('');
 	let followUp = $state('');
 	let selected = $state<string | null>(null);
+	let composingNew = $state(false);
 	let busy = $state(false);
 
 	const run = $derived(selected ? runtime.run(selected) : undefined);
 	const rt = $derived(selected ? runtime.get(selected) : undefined);
 	const meta = $derived(selected ? adeTasks.list.find((t) => t.slug === selected) : undefined);
+	const model = $derived(settings.get<string>('kingu.agent.model') ?? '');
 
 	// Default to the most recent run of this folder, else the newest task; drop a removed task.
 	$effect(() => {
 		if (selected !== null && !adeTasks.list.some((t) => t.slug === selected) && adeTasks.loaded) selected = null;
-		if (selected === null) selected = runtime.all()[0]?.slug ?? adeTasks.list.at(-1)?.slug ?? null;
+		if (selected === null && !composingNew) selected = runtime.all()[0]?.slug ?? adeTasks.list.at(-1)?.slug ?? null;
 	});
 
-	async function start(e: SubmitEvent) {
-		e.preventDefault();
-		const task = title.trim();
-		if (!task || busy) return;
+	async function start(text: string) {
 		busy = true;
 		try {
-			const created = await adeTasks.create({ title: task, prompt, base: '' });
+			const created = await adeTasks.create({ title: taskTitleFromPrompt(text), prompt: text, base: '' });
 			if (created) {
 				selected = created;
-				title = '';
-				prompt = '';
+				composingNew = false;
+				draft = '';
 			}
 		} finally {
 			busy = false;
 		}
 	}
 
-	async function send(e?: Event) {
-		e?.preventDefault();
-		const text = followUp.trim();
-		if (!text || !selected || run?.status === 'starting') return;
+	async function send(text: string) {
+		if (!selected || run?.status === 'starting') return;
 		followUp = '';
 		await adeTasks.followUp(selected, text);
 	}
 
-	function composerKey(e: KeyboardEvent) {
-		if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) send(e);
+	function newTask() {
+		composingNew = true;
+		selected = null;
 	}
 
-	const BADGE: Record<RunStatus, string> = {
-		starting: 'bg-neutral-700 text-neutral-200',
-		running: 'bg-sky-800 text-sky-100',
-		waiting: 'bg-amber-600 text-black',
-		idle: 'bg-emerald-800 text-emerald-100',
-		stopped: 'bg-neutral-700 text-neutral-300',
-		failed: 'bg-red-800 text-red-100',
-		done: 'bg-neutral-700 text-neutral-300'
+	const DOT: Record<RunStatus, string> = {
+		starting: 'bg-(--vscode-descriptionForeground)',
+		running: 'bg-(--vscode-editorInfo-foreground) animate-pulse',
+		waiting: 'bg-(--vscode-editorWarning-foreground)',
+		idle: 'bg-[#73C991]',
+		stopped: 'bg-(--vscode-descriptionForeground)',
+		failed: 'bg-(--vscode-errorForeground)',
+		done: 'bg-(--vscode-descriptionForeground)'
 	};
+	const ICON_BTN = 'grid size-[22px] shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-40';
 </script>
 
-{#snippet badge(status: RunStatus)}
-	<span class={['shrink-0 rounded px-1.5 py-px text-[10px] leading-4', BADGE[status]]}>{STATUS_LABEL[status]}</span>
-{/snippet}
-
-<div class="flex h-full flex-col text-xs">
-	<form class="space-y-2 border-b border-neutral-800 p-3" onsubmit={start}>
-		<input
-			class="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1 outline-none focus:border-sky-600"
-			placeholder="ชื่องานใหม่ เช่น fix login bug"
-			aria-label="ชื่องาน"
-			bind:value={title}
-			disabled={busy}
-		/>
-		<textarea
-			class="h-16 w-full resize-none rounded border border-neutral-700 bg-neutral-900 px-2 py-1 outline-none focus:border-sky-600"
-			placeholder="คำสั่งให้ agent (เว้นว่างเพื่อใช้ชื่องาน)"
-			aria-label="คำสั่งให้ agent"
-			bind:value={prompt}
-			disabled={busy}
-		></textarea>
-		<button type="submit" class="rounded bg-sky-700 px-3 py-1 text-white hover:bg-sky-600 disabled:opacity-50" disabled={!title.trim() || busy}>{busy ? 'กำลังสร้าง…' : 'เริ่มงาน'}</button>
-	</form>
-
-	{#if adeTasks.list.length}
-		<div class="max-h-32 shrink-0 overflow-y-auto border-b border-neutral-800 p-2">
-			{#each adeTasks.views as v (v.meta.slug)}
-				{@const r = runtime.run(v.meta.slug)}
-				<div class={['flex items-center gap-2 rounded px-1', v.meta.slug === selected && 'bg-white/5']}>
-					<button class="flex min-w-0 flex-1 items-center gap-2 text-left" onclick={() => (selected = v.meta.slug)}>
-						<span class="flex-1 truncate text-neutral-300" title="kingu/{v.meta.slug}">{v.meta.title}</span>
-						{#if r}
-							{@render badge(r.status)}
-							{#if r.pending.length}<span class="text-amber-400" title="คำขออนุญาตที่รออยู่">{r.pending.length}</span>{/if}
-						{/if}
-					</button>
-					<button class="text-neutral-500 hover:text-red-400 disabled:opacity-30" disabled={!!r && !r.ended} onclick={() => adeTasks.remove(v.meta.slug)}>ลบ</button>
-				</div>
-			{/each}
-		</div>
-	{/if}
+<div class="flex h-full flex-col text-[13px]">
+	<!-- Session switcher + actions (VS Code chat view title actions). -->
+	<div class="flex h-[30px] shrink-0 items-center gap-1 px-2">
+		{#if adeTasks.list.length}
+			<label class="min-w-0 flex-1">
+				<span class="sr-only">Session</span>
+				<select
+					class="h-[22px] w-full truncate rounded-sm border border-transparent bg-transparent px-1 text-[13px] text-(--vscode-foreground) outline-none hover:border-(--vscode-widget-border) focus:border-(--vscode-focusBorder)"
+					value={composingNew ? '' : (selected ?? '')}
+					onchange={(e) => {
+						const v = e.currentTarget.value;
+						if (v) {
+							composingNew = false;
+							selected = v;
+						} else newTask();
+					}}
+				>
+					<option value="">＋ งานใหม่…</option>
+					{#each adeTasks.views as v (v.meta.slug)}
+						{@const r = runtime.run(v.meta.slug)}
+						<option value={v.meta.slug}>{v.meta.title}{r ? ` — ${STATUS_LABEL[r.status]}` : ''}</option>
+					{/each}
+				</select>
+			</label>
+		{:else}
+			<span class="flex-1 truncate text-(--vscode-descriptionForeground)">ยังไม่มีงาน</span>
+		{/if}
+		<button class={ICON_BTN} aria-label="งานใหม่" title="งานใหม่" onclick={newTask}><Icon name="plus" size={16} /></button>
+		<button class={ICON_BTN} aria-label="Open in Agents (⇧⌘A)" title="Open in Agents (⇧⌘A)" onclick={() => appMode.setMode('agents')}>
+			<Icon name="agent" size={16} />
+		</button>
+	</div>
 
 	{#if selected && meta}
-		<div class="flex shrink-0 items-center gap-2 border-b border-neutral-800 px-3 py-1.5">
-			<button class="flex-1 truncate text-left font-mono text-neutral-400 hover:underline" title="เปิดหน้างาน" onclick={() => adeTasks.openTask(meta.slug)}
-				>kingu/{meta.slug}{(run?.model ?? meta.model) ? ` · ${run?.model ?? meta.model}` : ''}</button
+		<div class="flex shrink-0 items-center gap-2 px-3 pb-1.5 text-xs text-(--vscode-descriptionForeground)">
+			{#if run}<span class={['size-2 shrink-0 rounded-full', DOT[run.status]]} title={STATUS_LABEL[run.status]}></span>{/if}
+			<button class="min-w-0 flex-1 truncate text-left font-mono hover:underline" title="เปิดหน้างาน" onclick={() => adeTasks.openTask(meta.slug)}
+				>kingu/{meta.slug}</button
 			>
-			{#if run}{@render badge(run.status)}{/if}
 			{#if rt?.working && run?.runId !== undefined}
-				<button class="rounded bg-red-700 px-2 py-0.5 text-white hover:bg-red-600" title="หยุดรอบนี้ (Interrupt)" onclick={() => adeTasks.interrupt(meta.slug)}>หยุด</button>
+				<button class="rounded-sm border border-(--vscode-widget-border) px-1.5 hover:bg-(--vscode-toolbar-hoverBackground)" title="หยุดรอบนี้" onclick={() => adeTasks.interrupt(meta.slug)}>หยุด</button>
 			{/if}
 			{#if rt?.live}
-				<button class="text-neutral-400 hover:text-red-400" title="จบ session (Stop the run)" onclick={() => adeTasks.stop(meta.slug)}>จบงาน</button>
+				<button class="hover:text-(--vscode-errorForeground)" title="จบ session" onclick={() => adeTasks.stop(meta.slug)}>จบงาน</button>
 			{/if}
 		</div>
 	{/if}
 
-	<AgentTimeline {run} onanswer={(p, decision, message) => selected && adeTasks.answer(selected, p.request_id, decision, message)} class="flex-1 p-3">
-		{#snippet empty()}
-			{#if meta}
-				<p class="text-neutral-600">
-					ยังไม่มีบันทึกของรอบนี้{meta.session_id ? ' — พิมพ์ด้านล่างเพื่อทำงานต่อใน session เดิม' : ''}
-				</p>
-			{:else}
-				<p class="text-neutral-600">ยังไม่มีงาน — ตั้งชื่องานแล้วกด "เริ่มงาน" เพื่อสร้าง worktree และรัน Claude (ดูทุกงานได้ที่มุมมอง Agents)</p>
-			{/if}
-		{/snippet}
-	</AgentTimeline>
+	<div class="min-h-0 flex-1 overflow-hidden border-t border-(--vscode-sideBar-border)">
+		{#if selected && meta}
+			<AgentTimeline {run} onanswer={(p, decision, message) => selected && adeTasks.answer(selected, p.request_id, decision, message)} class="h-full p-3">
+				{#snippet empty()}
+					<p class="text-(--vscode-descriptionForeground)">
+						ยังไม่มีบันทึกของรอบนี้{meta.session_id ? ' — พิมพ์ด้านล่างเพื่อทำงานต่อใน session เดิม' : ''}
+					</p>
+				{/snippet}
+			</AgentTimeline>
+		{:else}
+			<div class="grid h-full place-items-center p-6 text-center">
+				<div class="max-w-64 space-y-2 text-(--vscode-descriptionForeground)">
+					<div class="flex justify-center"><Icon name="agent" size={28} stroke={1.2} /></div>
+					<p class="text-(--vscode-foreground)">สั่งงานให้ agent</p>
+					<p class="text-xs leading-5">แต่ละงานได้ git worktree ของตัวเอง agent จะขออนุญาตก่อนรันคำสั่งหรือแก้ไฟล์</p>
+				</div>
+			</div>
+		{/if}
+	</div>
 
-	{#if selected && meta}
-		<form class="flex shrink-0 gap-2 border-t border-neutral-800 p-2" onsubmit={send}>
-			<textarea
-				class="h-14 min-w-0 flex-1 resize-none rounded border border-neutral-700 bg-neutral-900 px-2 py-1 outline-none focus:border-sky-600"
-				placeholder={rt?.live
-					? 'ส่งข้อความเพิ่มเติม (Enter ส่ง, Shift+Enter ขึ้นบรรทัดใหม่)'
-					: (run?.sessionId ?? meta.session_id)
-						? 'พิมพ์เพื่อทำงานต่อใน session เดิม…'
-						: 'พิมพ์เพื่อเริ่มใหม่…'}
-				aria-label="ข้อความถึง agent"
+	<div class="shrink-0 p-2">
+		{#if selected && meta}
+			<Composer
 				bind:value={followUp}
-				onkeydown={composerKey}
-			></textarea>
-			<button type="submit" class="self-end rounded bg-sky-700 px-3 py-1 text-white hover:bg-sky-600 disabled:opacity-50" disabled={!followUp.trim() || run?.status === 'starting'}>ส่ง</button>
-		</form>
-	{/if}
+				placeholder={rt?.live ? 'ส่งข้อความเพิ่มเติม…' : (run?.sessionId ?? meta.session_id) ? 'ทำงานต่อใน session เดิม…' : 'พิมพ์เพื่อเริ่มใหม่…'}
+				disabled={run?.status === 'starting'}
+				onsubmit={send}
+			>
+				{#snippet chips()}<span class="truncate">{run?.model ?? meta.model ?? model}</span>{/snippet}
+			</Composer>
+		{:else}
+			<Composer bind:value={draft} placeholder="อยากให้ agent ทำอะไร เช่น แก้บั๊กหน้า login…" {busy} autofocus={composingNew} onsubmit={start}>
+				{#snippet chips()}<span class="truncate">{model}</span><span aria-hidden="true">·</span><span>worktree ใหม่</span>{/snippet}
+			</Composer>
+		{/if}
+	</div>
 </div>

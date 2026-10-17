@@ -23,7 +23,7 @@
 	{:else}
 		<div class="flex shrink-0 items-center gap-1 px-2 pb-1">
 			<button
-				class="inline-flex h-6 flex-1 items-center justify-center gap-1 rounded-sm bg-(--vscode-button-background) text-xs text-(--vscode-button-foreground) hover:opacity-90"
+				class="inline-flex h-6 flex-1 items-center justify-center gap-1 rounded-sm border border-(--vscode-widget-border) text-xs hover:bg-(--vscode-toolbar-hoverBackground)"
 				onclick={() => (adeTasks.composing = !adeTasks.composing)}
 				aria-expanded={adeTasks.composing}
 			>

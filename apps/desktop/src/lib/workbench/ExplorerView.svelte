@@ -212,16 +212,37 @@
 	</section>
 {:else}
 	<section class="flex min-h-0 flex-1 flex-col">
-		<button
-			class="flex h-(--kg-row-height) shrink-0 items-center gap-0.5 px-0.5 text-[11px] font-bold uppercase text-(--vscode-sideBarTitle-foreground)"
-			aria-expanded={open}
-			title={workspace.root}
-			onclick={() => (open = !open)}
-			oncontextmenu={(e) => openMenu(e, null)}
-		>
-			<Icon name={open ? 'chevronDown' : 'chevronRight'} size={16} />
-			{workspaceName}
-		</button>
+		<!-- Section header; its actions show on hover or focus, like VS Code's Explorer. -->
+		<div class="group flex h-(--kg-row-height) shrink-0 items-center pr-1">
+			<button
+				class="flex h-full min-w-0 flex-1 items-center gap-0.5 px-0.5 text-[11px] font-bold uppercase text-(--vscode-sideBarTitle-foreground)"
+				aria-expanded={open}
+				title={workspace.root}
+				onclick={() => (open = !open)}
+				oncontextmenu={(e) => openMenu(e, null)}
+			>
+				<Icon name={open ? 'chevronDown' : 'chevronRight'} size={16} />
+				<span class="truncate">{workspaceName}</span>
+			</button>
+			<div class="flex items-center opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+				{#each [
+					{ label: 'New File...', icon: 'newFile', run: () => explorer.startCreate('file') },
+					{ label: 'New Folder...', icon: 'newFolder', run: () => explorer.startCreate('folder') },
+					{ label: 'Refresh Explorer', icon: 'refresh', run: () => explorer.refresh(['', ...explorer.expanded]) },
+					{ label: 'Collapse Folders in Explorer', icon: 'collapseAll', run: () => explorer.collapseAll() }
+				] as const as a (a.label)}
+					<button
+						class="grid size-[22px] place-items-center rounded text-(--vscode-icon-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
+						aria-label={a.label}
+						title={a.label}
+						onclick={() => {
+							open = true;
+							void a.run();
+						}}><Icon name={a.icon} size={16} /></button
+					>
+				{/each}
+			</div>
+		</div>
 
 		{#if open}
 			<div

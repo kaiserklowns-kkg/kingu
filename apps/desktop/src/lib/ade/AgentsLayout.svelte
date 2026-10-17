@@ -8,14 +8,43 @@
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import AgentsView from './AgentsView.svelte';
 	import TaskPage from './TaskPage.svelte';
-	import { newSession } from './agentsMode.svelte';
 	import { adeTasks } from './tasks.svelte';
-	import { BUTTON } from './ui';
+	import Composer from '#lib/agent/Composer.svelte';
+	import { taskTitleFromPrompt } from '#lib/agent/composerText.ts';
+	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { status } from '#lib/workbench/status.svelte.ts';
 
 	let body: HTMLDivElement | undefined = $state();
 	const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 	const maxSide = () => (body?.clientWidth ?? 1200) * 0.45;
 	const slug = $derived(appMode.activeSession && adeTasks.find(appMode.activeSession) ? appMode.activeSession : null);
+
+	// The centred "new session" composer (VS Code's Agents window opens on a chat input).
+	let draft = $state('');
+	let base = $state('');
+	let busy = $state(false);
+	let focusKey = $derived(appMode.composeRequest);
+	const model = $derived(settings.get<string>('kingu.agent.model') ?? '');
+
+	$effect(() => {
+		if (!workspace.root || slug) return;
+		void adeTasks.refreshBranches().then(() => {
+			if (!base || !adeTasks.branches.includes(base)) base = status.branch && adeTasks.branches.includes(status.branch) ? status.branch : (adeTasks.branches[0] ?? '');
+		});
+	});
+
+	async function start(text: string) {
+		busy = true;
+		try {
+			const created = await adeTasks.create({ title: taskTitleFromPrompt(text), prompt: text, base });
+			if (created) {
+				draft = '';
+				appMode.openSession(created);
+			}
+		} finally {
+			busy = false;
+		}
+	}
 </script>
 
 <div bind:this={body} class="flex min-h-0 flex-1 bg-(--vscode-agentsBackground) text-(--vscode-foreground)">
@@ -37,12 +66,33 @@
 		{#if slug}
 			{#key slug}<TaskPage {slug} sections="timeline" />{/key}
 		{:else}
-			<div class="grid h-full place-items-center p-6 text-center text-sm text-(--vscode-descriptionForeground)">
-				<div class="space-y-3">
-					<Icon name="agent" size={32} stroke={1.2} />
-					<p>{workspace.root ? 'เลือก session จากรายการ หรือเริ่มงานใหม่ให้ agent' : 'เปิดโฟลเดอร์ที่เป็น git repository ก่อน'}</p>
-					{#if workspace.root}<button class={BUTTON} onclick={newSession}><Icon name="plus" size={14} /> New Session</button>{/if}
-				</div>
+			<div class="grid h-full place-items-center p-6">
+				{#if workspace.root}
+					<div class="w-full max-w-[640px] space-y-3">
+						<div class="flex items-center gap-2 text-(--vscode-descriptionForeground)">
+							<Icon name="agent" size={20} stroke={1.4} />
+							<h1 class="text-base font-medium text-(--vscode-foreground)">อยากให้ agent ทำอะไร</h1>
+						</div>
+						{#key focusKey}
+							<Composer bind:value={draft} size="lg" autofocus placeholder="อธิบายงาน เช่น เพิ่มปุ่ม export รายงานเป็น CSV…" {busy} onsubmit={start}>
+								{#snippet chips()}
+									<label class="inline-flex shrink-0 items-center gap-1 rounded-sm border border-(--vscode-widget-border) px-1.5 py-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" title="แตกจาก branch">
+										<Icon name="branch" size={12} />
+										<span class="sr-only">แตกจาก branch</span>
+										<select class="max-w-48 bg-transparent outline-none focus-visible:outline-none" bind:value={base} disabled={busy}>
+											{#each adeTasks.branches as b (b)}<option value={b}>{b}</option>{/each}
+											{#if !adeTasks.branches.length}<option value="">HEAD</option>{/if}
+										</select>
+									</label>
+									<span class="truncate">{model}</span>
+								{/snippet}
+							</Composer>
+						{/key}
+						<p class="text-xs text-(--vscode-descriptionForeground)">สร้าง worktree ใหม่บน branch <span class="font-mono">kingu/…</span> แล้วเริ่ม agent · Enter เพื่อเริ่ม · Shift+Enter ขึ้นบรรทัดใหม่</p>
+					</div>
+				{:else}
+					<p class="text-sm text-(--vscode-descriptionForeground)">เปิดโฟลเดอร์ที่เป็น git repository ก่อน</p>
+				{/if}
 			</div>
 		{/if}
 	</main>
