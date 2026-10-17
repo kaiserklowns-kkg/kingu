@@ -3,6 +3,8 @@
 
 export type EditorTab = { path: string; preview: boolean; dirty: boolean };
 export type Cursor = { line: number; column: number };
+/** Where to put the cursor once a file is shown (Search results, go to definition). */
+export type Reveal = { line: number; column: number; endColumn?: number; focus?: boolean };
 
 class Editors {
 	tabs = $state<EditorTab[]>([]);
@@ -13,8 +15,13 @@ class Editors {
 	eol = $state('');
 	/** Set by the editor host once Monaco is up. */
 	gotoLine: (line: number, column?: number) => void = () => {};
+	/** Set by the editor host: the active editor's selected text, '' when none. */
+	selectionText: () => string = () => '';
+	/** Consumed by the editor host once `path`'s model is shown. */
+	pendingReveal = $state<(Reveal & { path: string }) | null>(null);
 
-	open(path: string, { preview = true }: { preview?: boolean } = {}) {
+	open(path: string, { preview = true, reveal }: { preview?: boolean; reveal?: Reveal } = {}) {
+		if (reveal) this.pendingReveal = { ...reveal, path };
 		const existing = this.tabs.find((t) => t.path === path);
 		if (existing) {
 			if (!preview) existing.preview = false;

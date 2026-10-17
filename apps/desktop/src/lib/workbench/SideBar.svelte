@@ -1,6 +1,7 @@
 <script lang="ts">
 	import ExplorerView from './ExplorerView.svelte';
 	import Icon from './Icon.svelte';
+	import SearchView from './SearchView.svelte';
 	import { layout } from './layout.svelte';
 	import { status } from './status.svelte';
 	import { editors } from './editors.svelte';
@@ -19,9 +20,7 @@
 	{#if layout.sideView === 'explorer'}
 		<ExplorerView {workspaceName} />
 	{:else if layout.sideView === 'search'}
-		<div class="px-3 py-1 text-(--vscode-descriptionForeground)">
-			ค้นหาข้อความทั้ง workspace (ripgrep) อยู่ใน P1 · ตอนนี้ใช้ <b>⌘P</b> ค้นหาชื่อไฟล์ได้
-		</div>
+		<SearchView />
 	{:else if layout.sideView === 'scm'}
 		<div class="flex flex-col gap-1 px-3 py-1">
 			<div class="flex items-center gap-1.5"><Icon name="branch" size={14} />{status.branch ?? 'ไม่ใช่ git repository'}</div>

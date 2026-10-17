@@ -70,6 +70,28 @@
 		editor.focus();
 	};
 
+	editors.selectionText = () => {
+		const model = editor?.getModel();
+		const sel = editor?.getSelection();
+		return model && sel && !sel.isEmpty() ? model.getValueInRange(sel) : '';
+	};
+
+	/** Applies `editors.pendingReveal` when its file is the one shown (selects the range, like VS Code's search). */
+	function applyReveal() {
+		const r = editors.pendingReveal;
+		if (!editor || !r || r.path !== shownPath) return;
+		editors.pendingReveal = null;
+		const range = { startLineNumber: r.line, startColumn: r.column, endLineNumber: r.line, endColumn: r.endColumn ?? r.column };
+		editor.setSelection(range);
+		editor.revealRangeInCenterIfOutsideViewport(range);
+		if (r.focus) editor.focus();
+	}
+
+	// A reveal for the file already shown; otherwise the model-switch effect applies it after loading.
+	$effect(() => {
+		if (editors.pendingReveal && editor) applyReveal();
+	});
+
 	async function entryFor(path: string): Promise<Entry | undefined> {
 		const existing = models.get(path);
 		if (existing || !api) return existing;
@@ -109,6 +131,7 @@
 				editor.setModel(entry.model);
 				if (entry.view) editor.restoreViewState(entry.view);
 				shownPath = path;
+				applyReveal();
 				editors.language = entry.model.getLanguageId();
 				editors.indent = entry.model.getOptions().insertSpaces ? `Spaces: ${entry.model.getOptions().indentSize}` : 'Tab Size: ' + entry.model.getOptions().tabSize;
 				editors.eol = entry.model.getEOL() === '\n' ? 'LF' : 'CRLF';

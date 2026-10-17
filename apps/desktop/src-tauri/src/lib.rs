@@ -1,8 +1,10 @@
 mod agent;
 mod fs;
 mod pty;
+mod search;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use tauri::State;
 use tauri::ipc::Channel;
@@ -177,12 +179,34 @@ fn agent_start(
   Ok(id)
 }
 
+/// Find in Files: streams ripgrep matches per file; a new search cancels the previous one.
+#[tauri::command]
+fn search_text(
+  ws: State<'_, Workspace>,
+  searches: State<'_, Arc<search::Searches>>,
+  options: search::SearchOptions,
+  on_event: Channel<search::SearchEvent>,
+) -> Result<u32, String> {
+  if options.query.is_empty() {
+    searches.cancel();
+    return Err("query is empty".into());
+  }
+  let rg = search::find_rg(std::env::var_os("KINGU_RG"), std::env::var_os("PATH"))?;
+  searches.start(&rg, &ws.root, &options, move |ev| on_event.send(ev).is_ok())
+}
+
+#[tauri::command]
+fn search_cancel(searches: State<'_, Arc<search::Searches>>) {
+  searches.cancel();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
     .manage(Workspace::from_env())
     .manage(pty::Ptys::default())
     .manage(agent::Agents::default())
+    .manage(Arc::new(search::Searches::default()))
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -209,7 +233,9 @@ pub fn run() {
       worktree_list,
       worktree_remove,
       agent_start,
-      agent::agent_stop
+      agent::agent_stop,
+      search_text,
+      search_cancel
     ])
     .run(tauri::generate_context!())
     .expect("error while building tauri application");
