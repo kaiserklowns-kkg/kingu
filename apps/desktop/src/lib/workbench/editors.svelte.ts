@@ -13,6 +13,16 @@ class Editors {
 	eol = $state('');
 	/** Set by the editor host once Monaco is up. */
 	gotoLine: (line: number, column?: number) => void = () => {};
+	/** Cursor target for a tab whose model is still loading; the editor host applies and clears it. */
+	reveal: { path: string; line: number; column: number } | null = null;
+
+	/** Opens `path` with the cursor at `line`:`column` (Problems, Go to Definition). */
+	openAt(path: string, line: number, column = 1, opts: { preview?: boolean } = {}) {
+		const shown = this.active === path;
+		this.open(path, opts);
+		if (shown) this.gotoLine(line, column);
+		else this.reveal = { path, line, column };
+	}
 
 	open(path: string, { preview = true }: { preview?: boolean } = {}) {
 		const existing = this.tabs.find((t) => t.path === path);

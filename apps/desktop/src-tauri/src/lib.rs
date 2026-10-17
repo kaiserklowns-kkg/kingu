@@ -1,5 +1,6 @@
 mod agent;
 mod fs;
+mod lsp;
 mod pty;
 
 use std::path::{Path, PathBuf};
@@ -177,12 +178,24 @@ fn agent_start(
   Ok(id)
 }
 
+/// Starts the language server for `language` in the workspace; server messages stream over `on_event`.
+#[tauri::command]
+fn lsp_start(
+  ws: State<'_, Workspace>,
+  servers: State<'_, lsp::Servers>,
+  language: String,
+  on_event: Channel<lsp::LspEvent>,
+) -> Result<u32, String> {
+  lsp::start_for(&servers, &ws.root, &language, on_event)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
     .manage(Workspace::from_env())
     .manage(pty::Ptys::default())
     .manage(agent::Agents::default())
+    .manage(lsp::Servers::default())
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -209,10 +222,18 @@ pub fn run() {
       worktree_list,
       worktree_remove,
       agent_start,
-      agent::agent_stop
+      agent::agent_stop,
+      lsp_start,
+      lsp::lsp_send,
+      lsp::lsp_stop
     ])
-    .run(tauri::generate_context!())
-    .expect("error while building tauri application");
+    .build(tauri::generate_context!())
+    .expect("error while building tauri application")
+    .run(|app, event| {
+      if let tauri::RunEvent::Exit = event {
+        tauri::Manager::state::<lsp::Servers>(app).stop_all();
+      }
+    });
 }
 
 #[cfg(test)]

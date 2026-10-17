@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { lsp } from '#lib/lsp/lsp.svelte.ts';
 	import EditorHost from './EditorHost.svelte';
 	import Icon from './Icon.svelte';
 	import { editors } from './editors.svelte';
@@ -7,6 +8,8 @@
 
 	const base = (p: string) => p.split('/').pop() ?? p;
 	const crumbs = $derived(editors.active ? editors.active.split('/') : []);
+	// Enclosing symbols from the language server's document symbols, like VS Code's outline crumbs.
+	const symbolCrumbs = $derived(editors.active ? lsp.crumbs(editors.active, editors.cursor.line, editors.cursor.column) : []);
 
 	function close(path: string, force: boolean) {
 		if (!editors.close(path, { force })) status.flash('มีการแก้ไขที่ยังไม่บันทึก: กด ⌘S ก่อน หรือกด ⌥ ค้างแล้วคลิก × เพื่อทิ้งการแก้ไข');
@@ -72,6 +75,10 @@
 			{#each crumbs as c, i (i)}
 				{#if i > 0}<Icon name="chevronRight" size={14} />{/if}
 				<span class="whitespace-nowrap">{c}</span>
+			{/each}
+			{#each symbolCrumbs as s, i (i)}
+				<Icon name="chevronRight" size={14} />
+				<button class="whitespace-nowrap hover:text-(--vscode-foreground)" onclick={() => editors.gotoLine(s.range.start.line + 1, s.range.start.character + 1)}>{s.name}</button>
 			{/each}
 		</nav>
 	{/if}

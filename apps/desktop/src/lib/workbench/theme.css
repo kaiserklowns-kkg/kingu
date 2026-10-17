@@ -66,6 +66,8 @@
 	--vscode-list-highlightForeground: #2AAAFF;
 	--vscode-quickInputList-focusBackground: #04395E;
 	--vscode-editorWarning-foreground: #CCA700;
+	--vscode-editorError-foreground: #F14C4C;
+	--vscode-editorInfo-foreground: #3794FF;
 	--vscode-sash-hoverBorder: var(--vscode-focusBorder);
 	--vscode-breadcrumb-foreground: #CCCCCCCC;
 	--vscode-commandCenter-background: rgba(255, 255, 255, 0.05);

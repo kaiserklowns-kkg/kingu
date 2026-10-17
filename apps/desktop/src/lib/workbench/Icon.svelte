@@ -16,6 +16,7 @@
 		branch: 'M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9',
 		error: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM9 9l6 6M15 9l-6 6',
 		warning: 'M12 3l10 18H2zM12 10v4M12 17h.01',
+		info: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 11v6M12 7.5h.01',
 		folder: 'M3 6h6l2 2h10v11H3z',
 		file: 'M14 3H6v18h12V7zM14 3v4h4'
 	} as const;
