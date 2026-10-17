@@ -37,6 +37,7 @@
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import AgentsLayout from '#lib/ade/AgentsLayout.svelte';
 	import AgentsTitleBar from '#lib/ade/AgentsTitleBar.svelte';
+	import AdeStatusBar from '#lib/ade/AdeStatusBar.svelte';
 	import { installAgentsMode } from '#lib/ade/agentsMode.svelte.ts';
 
 	let middle: HTMLDivElement | undefined = $state();
@@ -312,8 +313,10 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 		</aside>
 	</div>
 
-	{#if appMode.isAgents}<AgentsLayout />{/if}
+	<!-- Kept mounted (hidden in the IDE) so the ADE's worktree terminals keep running. -->
+	<div class={['contents', !appMode.isAgents && '[&>*]:hidden']}><AgentsLayout /></div>
 
 	<div class={['contents', appMode.isAgents && '[&>*]:hidden']}><StatusBar /></div>
+	{#if appMode.isAgents}<AdeStatusBar />{/if}
 	<QuickInput />
 </div>

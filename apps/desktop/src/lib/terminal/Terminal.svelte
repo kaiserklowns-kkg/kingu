@@ -6,6 +6,8 @@
 	import '@xterm/xterm/css/xterm.css';
 	import { bindTerminalSettings } from '#lib/settings/apply.svelte.ts';
 
+	/** A task slug: the terminal starts in that task's worktree instead of the folder root. */
+	let { slug }: { slug?: string } = $props();
 	let host: HTMLDivElement;
 
 	onMount(() => {
@@ -26,7 +28,7 @@
 		const onData = new Channel<string>();
 		onData.onmessage = (chunk) => term.write(chunk);
 
-		invoke<number>('pty_spawn', { cols: term.cols, rows: term.rows, onData })
+		invoke<number>('pty_spawn', { cols: term.cols, rows: term.rows, onData, slug: slug ?? null })
 			.then((v) => (id = v))
 			.catch((e) => term.write(`\r\nเปิด terminal ไม่ได้: ${e}\r\n`));
 

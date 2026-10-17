@@ -43,6 +43,7 @@
 		menu: 'M4 6h16M4 12h16M4 18h16',
 		layout: 'M3 4h18v16H3zM3 9h18M9 9v11',
 		code: 'M8 7l-5 5 5 5M16 7l5 5-5 5',
+		terminal: 'M3 5h18v14H3zM7 9.5l3 2.5-3 2.5M12.5 15h4.5',
 		commit: 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM3 12h6M15 12h6',
 		replaceAll:'M3 4h6v5H3zM3 13h6v5H3zM14 9h7v6h-7zM9 6.5h2.5a2 2 0 0 1 2 2V9M9 15.5h2.5a2 2 0 0 0 2-2V15'
 	} as const;

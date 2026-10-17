@@ -24,8 +24,8 @@ class AppModeStore {
 	composeRequest = $state(0);
 	sessionsVisible = $state(true);
 	panelVisible = $state(true);
-	sessionsWidth = $state(300);
-	panelWidth = $state(420);
+	sessionsWidth = $state(280);
+	panelWidth = $state(360);
 	/** The Agents side bar shows only this group (a click on an agents status section). */
 	filter = $state<AgentsFilter>('all');
 	/** Unix ms each session was last looked at (for "unread"). */

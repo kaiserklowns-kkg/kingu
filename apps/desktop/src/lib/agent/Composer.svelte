@@ -31,6 +31,11 @@
 	$effect(() => {
 		void value;
 		if (!area) return;
+		// Not rendered (a hidden layout): keep the `rows` height instead of measuring 0.
+		if (!area.getClientRects().length) {
+			area.style.height = '';
+			return;
+		}
 		area.style.height = 'auto';
 		const line = parseFloat(getComputedStyle(area).lineHeight) || 20;
 		area.style.height = `${Math.min(area.scrollHeight, line * maxRows + 8)}px`;

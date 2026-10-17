@@ -169,9 +169,21 @@ fn pty_spawn(
   cols: u16,
   rows: u16,
   on_data: Channel<String>,
+  slug: Option<String>,
 ) -> Result<u32, String> {
+  // A task terminal starts in the task's worktree (the ADE's per-worktree terminals).
   // No folder open: the terminal starts in the home folder, like VS Code's empty window.
-  let cwd = ws.current().or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("/"));
+  let cwd = match slug {
+    Some(slug) => {
+      agent::worktree::validate_slug(&slug)?;
+      let dir = agent::worktree::worktree_path(&ws.root()?, &slug);
+      if !dir.is_dir() {
+        return Err(format!("ไม่พบ worktree ของงาน {slug}"));
+      }
+      dir
+    }
+    None => ws.current().or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("/")),
+  };
   let id = pty::spawn_shell(&ptys, &cwd, cols, rows, on_data)?;
   log::info!("terminal {id} started ({cols}x{rows})");
   Ok(id)

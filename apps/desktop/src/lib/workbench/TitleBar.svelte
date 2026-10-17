@@ -2,7 +2,7 @@
 	// Workbench (IDE) title bar, VS Code's `window.titleBarStyle: custom` (titlebarPart.ts):
 	// 35px (30px without the command center), left 20% / center (fit-content, max 60%) / right 20%.
 	// Left: the macOS traffic-light inset, or the Kingu mark and the in-window menu bar.
-	// Center: the command center. Right: Open in Agents, layout controls, and Accounts/Manage when
+	// Center: the command center and Open in Agents next to it. Right: layout controls, and Accounts/Manage when
 	// the activity bar is not showing them. Any non-interactive part drags the window.
 	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
@@ -79,7 +79,9 @@
 	const label = $derived(commandCenterLabel({ folderName: workspace.root ? workspaceName : null, title, customTitle: isCustomTitle(template, isMac) }));
 	const layoutItems = $derived(layoutControlItems(settings.get<boolean>('workbench.layoutControl.enabled'), settings.get<LayoutControlType>('workbench.layoutControl.type')));
 	const globalActions = $derived(settings.get<string>('workbench.activityBar.location') !== 'default');
-	const toolbar = $derived(titleToolbar({ openInAgents: settings.get<boolean>('kingu.titleBar.openInAgents.enabled'), layout: layoutItems, globalActions }));
+	// Open in Agents sits next to the command center (VS Code's TitleBarAdjacentCenter), not in the right toolbar.
+	const openInAgents = $derived(settings.get<boolean>('kingu.titleBar.openInAgents.enabled'));
+	const toolbar = $derived(titleToolbar({ openInAgents: false, layout: layoutItems, globalActions }));
 
 	// Overflow: items next to the center hide first (VS Code `.overflowing`).
 	let right: HTMLDivElement | undefined = $state();
@@ -197,25 +199,25 @@
 		{/if}
 	</div>
 
-	{#if commandCenter}
-		<div class="titlebar-center mx-2.5 flex h-full max-w-[60%] min-w-0 flex-[0_1_auto] items-center justify-center">
-			<CommandCenter {label} folderName={workspace.root ? workspaceName : null} />
+	{#if commandCenter || openInAgents}
+		<div class="titlebar-center mx-2.5 flex h-full max-w-[60%] min-w-0 flex-[0_1_auto] items-center justify-center gap-1.5">
+			{#if commandCenter}<CommandCenter {label} folderName={workspace.root ? workspaceName : null} />{/if}
+			{#if openInAgents}
+				<!-- VS Code's TitleBarAdjacentCenter "Open in Agents", right after the command center: the label slides out after a 0.2s hover. -->
+				<button
+					class="group flex h-[22px] max-w-[22px] shrink-0 items-center gap-1 overflow-hidden rounded-[5px] px-[3px] text-xs whitespace-nowrap transition-[max-width] delay-0 duration-200 hover:max-w-[200px] hover:bg-(--vscode-toolbar-hoverBackground) hover:delay-200"
+					title="Open in Agents{hint('workbench.action.toggleAgentsMode')}"
+					aria-label="Open in Agents"
+					onclick={() => openAgents()}
+				>
+					<span class="shrink-0 grayscale group-hover:grayscale-0 group-hover:text-(--vscode-textLink-foreground)"><Icon name="agent" size={16} /></span>
+					<span class="pr-1">Open in Agents</span>
+				</button>
+			{/if}
 		</div>
 	{/if}
 
 	<div bind:this={right} class="titlebar-right flex h-full min-w-0 flex-[1_1_20%] items-center justify-end gap-1 overflow-hidden pr-1.5" role="toolbar" aria-label="Title actions">
-		{#if shown('openInAgents')}
-			<!-- VS Code's TitleBarAdjacentCenter "Open in Agents": the label slides out after a 0.2s hover. -->
-			<button
-				class="group flex h-[22px] max-w-[22px] shrink-0 items-center gap-1 overflow-hidden rounded-[5px] px-[3px] text-xs whitespace-nowrap transition-[max-width] delay-0 duration-200 hover:max-w-[200px] hover:bg-(--vscode-toolbar-hoverBackground) hover:delay-200"
-				title="Open in Agents{hint('workbench.action.toggleAgentsMode')}"
-				aria-label="Open in Agents"
-				onclick={() => openAgents()}
-			>
-				<span class="shrink-0 grayscale group-hover:grayscale-0 group-hover:text-(--vscode-textLink-foreground)"><Icon name="agent" size={16} /></span>
-				<span class="pr-1">Open in Agents</span>
-			</button>
-		{/if}
 		{#each layoutItems as id (id)}
 			{#if shown(id)}
 				{#if id === 'layoutMenu'}

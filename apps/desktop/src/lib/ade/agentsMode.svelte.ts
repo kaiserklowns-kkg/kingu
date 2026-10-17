@@ -13,6 +13,7 @@ import type { AgentsFilter } from '#lib/workbench/titlebar.ts';
 import { COLUMNS, STATUS_LABEL } from './model';
 import { BOARD_KEY, slugOfTaskKey, taskKey, worktreeDir } from './keys';
 import { adeTasks } from './tasks.svelte';
+import { adeLayout, PRIMARY } from './adeLayout.svelte';
 
 /** The session to show when entering the Agents layout: the task tab in front, else the last one, else the first needing attention. */
 function initialSession(): string | null {
@@ -28,7 +29,7 @@ export function openAgents(filter: AgentsFilter = 'all') {
 	if (filter !== 'all') appMode.sessionsVisible = true;
 	const slug = filter === 'all' ? initialSession() : (adeTasks.filtered(filter)[0]?.meta.slug ?? initialSession());
 	appMode.setMode('agents');
-	if (slug) appMode.openSession(slug);
+	if (slug) adeLayout.show(slug);
 }
 
 /** Open in Editor: back to the workbench, showing the active session's task page and its first changed worktree file. */
@@ -65,13 +66,14 @@ export function pickSession() {
 		placeholder: 'เลือก session (งานของ agent)',
 		items,
 		activeId: appMode.activeSession ?? undefined,
-		onAccept: (item) => appMode.openSession(item.id)
+		onAccept: (item) => adeLayout.show(item.id)
 	});
 }
 
 /** New Session: clears the active session so the Agents layout shows its centred composer. */
 export function newSession() {
-	appMode.activeSession = null;
+	adeLayout.show(PRIMARY);
+	adeLayout.select(PRIMARY, 'main');
 	adeTasks.composing = false;
 	appMode.composeRequest++;
 }

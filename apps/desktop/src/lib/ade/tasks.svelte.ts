@@ -45,6 +45,7 @@ import {
 	type TaskView
 } from './model';
 import { runtime } from './runtime.svelte';
+import { adeLayout } from './adeLayout.svelte';
 
 class AdeTasks {
 	list = $state<TaskMeta[]>([]);
@@ -407,12 +408,13 @@ class AdeTasks {
 
 	/** The task page: the Agents layout's session in Agents mode, else an editor tab. */
 	openTask(slug: string) {
-		if (appMode.isAgents) appMode.openSession(slug);
+		if (appMode.isAgents) adeLayout.show(slug);
 		else editors.open(taskKey(slug), { preview: false });
 	}
 
 	openBoard() {
-		editors.open(BOARD_KEY, { preview: false });
+		if (appMode.isAgents) adeLayout.board = true;
+		else editors.open(BOARD_KEY, { preview: false });
 	}
 
 	/** The Agents side bar view (in Agents mode: the sessions side bar). */
