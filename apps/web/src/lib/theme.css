@@ -1,0 +1,78 @@
+/* Kingu's VS Code Dark Modern tokens, copied verbatim (names and values) from
+ * apps/desktop/src/lib/workbench/theme.css so the dashboard matches the desktop app.
+ * Keep the two in sync when the desktop palette changes. */
+:root {
+	--vscode-foreground: #CCCCCC;
+	--vscode-descriptionForeground: #9D9D9D;
+	--vscode-focusBorder: #0078D4;
+	--vscode-icon-foreground: #CCCCCC;
+	--vscode-widget-border: #313131;
+	--vscode-titleBar-activeBackground: #181818;
+	--vscode-titleBar-activeForeground: #CCCCCC;
+	--vscode-titleBar-border: #2B2B2B;
+	--vscode-activityBar-background: #181818;
+	--vscode-activityBar-foreground: #D7D7D7;
+	--vscode-activityBar-inactiveForeground: #868686;
+	--vscode-activityBar-activeBorder: #0078D4;
+	--vscode-activityBar-border: #2B2B2B;
+	--vscode-activityBarBadge-background: #0078D4;
+	--vscode-activityBarBadge-foreground: #FFFFFF;
+	--vscode-sideBar-background: #181818;
+	--vscode-sideBar-foreground: #CCCCCC;
+	--vscode-sideBar-border: #2B2B2B;
+	--vscode-sideBarTitle-foreground: #CCCCCC;
+	--vscode-sideBarSectionHeader-background: #181818;
+	--vscode-sideBarSectionHeader-border: #2B2B2B;
+	--vscode-editor-background: #1F1F1F;
+	--vscode-editor-foreground: #CCCCCC;
+	--vscode-editorGroup-border: #FFFFFF17;
+	--vscode-editorGroupHeader-tabsBackground: #181818;
+	--vscode-editorGroupHeader-tabsBorder: #2B2B2B;
+	--vscode-tab-activeBackground: #1F1F1F;
+	--vscode-tab-activeForeground: #FFFFFF;
+	--vscode-tab-activeBorderTop: #0078D4;
+	--vscode-tab-inactiveBackground: #181818;
+	--vscode-tab-inactiveForeground: #9D9D9D;
+	--vscode-tab-border: #2B2B2B;
+	--vscode-tab-hoverBackground: #1F1F1F;
+	--vscode-panel-background: #181818;
+	--vscode-panel-border: #2B2B2B;
+	--vscode-panelTitle-activeBorder: #0078D4;
+	--vscode-panelTitle-activeForeground: #CCCCCC;
+	--vscode-panelTitle-inactiveForeground: #9D9D9D;
+	--vscode-statusBar-background: #181818;
+	--vscode-statusBar-foreground: #CCCCCC;
+	--vscode-statusBar-border: #2B2B2B;
+	--vscode-statusBarItem-remoteBackground: #0078D4;
+	--vscode-statusBarItem-remoteForeground: #FFFFFF;
+	--vscode-input-background: #313131;
+	--vscode-input-border: #3C3C3C;
+	--vscode-input-foreground: #CCCCCC;
+	--vscode-input-placeholderForeground: #989898;
+	--vscode-quickInput-background: #222222;
+	--vscode-quickInput-foreground: #CCCCCC;
+	--vscode-button-background: #0078D4;
+	--vscode-button-foreground: #FFFFFF;
+	--vscode-badge-background: #616161;
+	--vscode-badge-foreground: #F8F8F8;
+	--vscode-terminal-foreground: #CCCCCC;
+	--vscode-textLink-foreground: #4daafc;
+	--vscode-errorForeground: #F85149;
+
+	/* Not in the theme files: VS Code's color-registry dark defaults (platform/theme/common/colors). */
+	--vscode-list-hoverBackground: #2A2D2E;
+	--vscode-list-activeSelectionBackground: #04395E;
+	--vscode-list-activeSelectionForeground: #FFFFFF;
+	--vscode-list-inactiveSelectionBackground: #37373D;
+	--vscode-list-highlightForeground: #2AAAFF;
+	--vscode-quickInputList-focusBackground: #04395E;
+	--vscode-editorWarning-foreground: #CCA700;
+	--vscode-editorError-foreground: #F14C4C;
+	--vscode-editorInfo-foreground: #3794FF;
+	--vscode-sash-hoverBorder: var(--vscode-focusBorder);
+	--vscode-breadcrumb-foreground: #CCCCCCCC;
+	--vscode-commandCenter-background: rgba(255, 255, 255, 0.05);
+	--vscode-toolbar-hoverBackground: rgba(90, 93, 94, 0.31);
+	--vscode-commandCenter-border: rgba(204, 204, 204, 0.2);
+	--vscode-terminal-background: var(--vscode-panel-background);
+}

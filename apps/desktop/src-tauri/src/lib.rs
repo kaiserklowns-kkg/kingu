@@ -8,6 +8,7 @@ mod replace;
 mod search;
 mod settings;
 mod shell_env;
+mod team;
 mod watcher;
 mod workspace;
 
@@ -379,6 +380,7 @@ pub fn run() {
       let recent = Recent::load(app.path().app_data_dir()?.join("recent.json"));
       let start = workspace::startup_root(recent.data().last.as_deref(), std::env::var_os("KINGU_WORKSPACE"));
       app.manage(recent);
+      team::install(app)?;
       if let Some(root) = start
         && let Err(e) = switch_root(app.handle(), Some(&root))
       {
@@ -440,7 +442,12 @@ pub fn run() {
       lsp::lsp_send,
       lsp::lsp_stop,
       settings::settings_read,
-      settings::settings_write
+      settings::settings_write,
+      team::team_sign_in,
+      team::team_sign_out,
+      team::team_status,
+      team::team_sync_task,
+      team::team_sync_now
     ])
     .build(tauri::generate_context!())
     .expect("error while building tauri application")

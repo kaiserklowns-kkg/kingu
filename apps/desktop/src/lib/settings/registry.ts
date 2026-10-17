@@ -170,6 +170,23 @@ export const SETTINGS: SettingSchema[] = [
 			'วางแผนเท่านั้น ไม่แก้ไขไฟล์ (Plan only; no edits or commands.)'
 		],
 		description: 'โหมดการขออนุญาตของ agent (How the agent asks for permission to use tools.)'
+	},
+	{
+		id: 'kingu.team.serverUrl',
+		group: 'Team',
+		type: 'string',
+		default: '',
+		description:
+			'URL ของเซิร์ฟเวอร์ทีม Kingu (ต้องเป็น HTTPS ยกเว้น http://localhost) ส่งเฉพาะ metadata ของงาน ไม่ส่งโค้ดหรือความลับ token เก็บใน Keychain เท่านั้น (Kingu team server URL. Only task metadata is synced; the token lives in the macOS Keychain.)',
+		// User-only: a repository's workspace settings must not redirect task metadata elsewhere.
+		scope: 'application'
+	},
+	{
+		id: 'kingu.team.project',
+		group: 'Team',
+		type: 'string',
+		default: '',
+		description: 'Project id (uuid) บนเซิร์ฟเวอร์ทีมที่งานของ workspace นี้จะถูกซิงก์ไป เว้นว่างเพื่อปิดการซิงก์ (Team server project id for this workspace; empty disables sync.)'
 	}
 ];
 

@@ -1,8 +1,8 @@
 // Package api implements the Kingu team server's JSON HTTP API.
 //
 // The server stores task METADATA only (projects, tasks, agent runs, audit
-// trail). It must never accept or persist source code, diffs, transcripts or
-// secrets.
+// trail, event feed). It must never accept or persist source code, diffs,
+// transcripts or secrets.
 package api
 
 import (
@@ -13,8 +13,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"mime"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,48 +32,116 @@ const (
 	// MaxBodyBytes caps every request body.
 	MaxBodyBytes = 64 << 10
 
-	// HeaderOrg identifies the caller's org.
-	//
-	// TODO(auth): dev-only. Replace with OIDC bearer tokens; the org (and the
-	// member's role) must come from verified claims + the members table, never
-	// from a client-supplied header.
+	// HeaderOrg identifies the caller's org. Honoured only when Config.Dev is
+	// set (KINGU_DEV=1); otherwise callers authenticate with a bearer token.
 	HeaderOrg = "X-Kingu-Org"
 
 	// HeaderUser optionally names the acting user for audit/created_by.
-	//
-	// TODO(auth): dev-only, replaced by the OIDC subject.
+	// Dev-only, like HeaderOrg.
 	HeaderUser = "X-Kingu-User"
 
 	defaultActor = "dev"
 )
 
+// Config tunes the server. The zero value is production-safe (no dev header,
+// no dev token endpoint, default limits).
+type Config struct {
+	// Dev enables the X-Kingu-Org/X-Kingu-User headers and POST /v1/dev/tokens.
+	Dev bool
+	// RateLimit is the sustained requests/second per credential (default 20).
+	RateLimit float64
+	// RateBurst is the bucket size per credential (default 40).
+	RateBurst int
+	// Heartbeat is the SSE keep-alive interval (default 15s).
+	Heartbeat time.Duration
+	// MaxStreams caps concurrent SSE streams per credential (default 4).
+	MaxStreams int
+	// PruneInterval is how often expired org_events are deleted (default 10m).
+	PruneInterval time.Duration
+}
+
+func (c Config) withDefaults() Config {
+	if c.RateLimit <= 0 {
+		c.RateLimit = 20
+	}
+	if c.RateBurst <= 0 {
+		c.RateBurst = 40
+	}
+	if c.Heartbeat <= 0 {
+		c.Heartbeat = 15 * time.Second
+	}
+	if c.MaxStreams <= 0 {
+		c.MaxStreams = 4
+	}
+	if c.PruneInterval <= 0 {
+		c.PruneInterval = 10 * time.Minute
+	}
+	return c
+}
+
 // Server holds the API's dependencies.
 type Server struct {
-	pool   *pgxpool.Pool
-	logger *slog.Logger
+	pool    *pgxpool.Pool
+	logger  *slog.Logger
+	cfg     Config
+	auth    []Authenticator
+	limiter *rateLimiter
+	// failLimiter throttles failed authentication attempts per client IP.
+	failLimiter *rateLimiter
+	broker      *broker
+	streams     *streamCounter
 }
 
 // New returns a Server backed by pool.
-func New(pool *pgxpool.Pool, logger *slog.Logger) *Server {
+func New(pool *pgxpool.Pool, logger *slog.Logger, cfg Config) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{pool: pool, logger: logger}
+	cfg = cfg.withDefaults()
+	s := &Server{
+		pool:        pool,
+		logger:      logger,
+		cfg:         cfg,
+		limiter:     newRateLimiter(cfg.RateLimit, cfg.RateBurst),
+		failLimiter: newRateLimiter(1, 20),
+		broker:      newBroker(pool, logger),
+		streams:     &streamCounter{n: map[string]int{}},
+	}
+	// TODO(auth/OIDC): prepend an OIDC Authenticator here (see auth.go).
+	s.auth = []Authenticator{&tokenAuthenticator{pool: pool}}
+	if cfg.Dev {
+		s.auth = append(s.auth, devHeaderAuthenticator{})
+	}
+	return s
+}
+
+// Start runs the background workers (LISTEN/NOTIFY fan-out for /v1/events and
+// event retention) until ctx is done. Without it SSE clients still receive
+// events, but only at heartbeat granularity.
+func (s *Server) Start(ctx context.Context) {
+	go s.broker.run(ctx)
+	go s.pruneLoop(ctx)
 }
 
 // Handler returns the fully wired HTTP handler.
-//
-// TODO(ops): add per-org/per-IP rate limiting before exposing beyond localhost.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
 
+	mux.Handle("GET /v1/me", s.org(s.me))
 	mux.Handle("POST /v1/projects", s.org(s.createProject))
 	mux.Handle("GET /v1/projects", s.org(s.listProjects))
 	mux.Handle("POST /v1/projects/{id}/tasks", s.org(s.createTask))
 	mux.Handle("GET /v1/projects/{id}/tasks", s.org(s.listTasks))
+	mux.Handle("GET /v1/tasks", s.org(s.listOrgTasks))
 	mux.Handle("PATCH /v1/tasks/{id}", s.org(s.patchTask))
+	mux.Handle("PUT /v1/tasks/{id}/sync", s.org(s.syncTask))
 	mux.Handle("POST /v1/tasks/{id}/runs", s.org(s.createRun))
+	mux.Handle("GET /v1/runs", s.org(s.listRuns))
+	mux.HandleFunc("GET /v1/events", s.handleEvents)
+	if s.cfg.Dev {
+		mux.HandleFunc("POST /v1/dev/tokens", s.handleDevMintToken)
+	}
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, errNotFound("route not found"))
@@ -97,7 +168,7 @@ func errNotFound(msg string) *apiError {
 
 var (
 	errMissingOrg = &apiError{Status: http.StatusUnauthorized, Code: "missing_org",
-		Message: "header " + HeaderOrg + " (uuid) is required"}
+		Message: "Authorization: Bearer token or (dev) header " + HeaderOrg + " is required"}
 	errUnknownOrg = &apiError{Status: http.StatusForbidden, Code: "unknown_org",
 		Message: "org does not exist or is not accessible"}
 	errInternal = &apiError{Status: http.StatusInternalServerError, Code: "internal",
@@ -107,6 +178,7 @@ var (
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
@@ -115,39 +187,82 @@ func writeError(w http.ResponseWriter, e *apiError) {
 	writeJSON(w, e.Status, map[string]*apiError{"error": e})
 }
 
-// ---- org-scoped handler plumbing -------------------------------------------
+// ---- authentication, rate limiting, org-scoped handler plumbing ------------
 
 type orgCtx struct {
 	OrgID string
 	Actor string
+	P     *Principal
 }
 
 type orgHandler func(r *http.Request, oc orgCtx, tx pgx.Tx) (status int, body any, err error)
 
-// org authenticates the (dev) org header, then runs h inside a transaction
-// with app.org_id set so RLS scopes every query to that org.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// authenticate resolves the caller and applies the per-credential rate limit.
+// On failure it has already written the error response.
+func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (*Principal, bool) {
+	var p *Principal
+	for _, a := range s.auth {
+		got, err := a.Authenticate(r.Context(), r)
+		if err != nil {
+			e := s.toAPIError(r, err)
+			if e.Status == http.StatusUnauthorized {
+				// Slow down token guessing from one address.
+				if ok, wait := s.failLimiter.allow("ip:" + clientIP(r)); !ok {
+					writeRateLimited(w, wait)
+					return nil, false
+				}
+			}
+			writeError(w, e)
+			return nil, false
+		}
+		if got != nil {
+			p = got
+			break
+		}
+	}
+	if p == nil {
+		if s.cfg.Dev {
+			writeError(w, errMissingOrg)
+		} else {
+			writeError(w, errMissingCredentials)
+		}
+		return nil, false
+	}
+	if ok, wait := s.limiter.allow(p.Key); !ok {
+		writeRateLimited(w, wait)
+		return nil, false
+	}
+	return p, true
+}
+
+func writeRateLimited(w http.ResponseWriter, wait time.Duration) {
+	secs := max(int(math.Ceil(wait.Seconds())), 1)
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	writeError(w, &apiError{Status: http.StatusTooManyRequests, Code: "rate_limited",
+		Message: "too many requests; retry later"})
+}
+
+// org authenticates the caller, then runs h inside a transaction with
+// app.org_id set so RLS scopes every query to the caller's org.
 func (s *Server) org(h orgHandler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw := r.Header.Get(HeaderOrg)
-		if raw == "" {
-			writeError(w, errMissingOrg)
-			return
-		}
-		orgID, ok := parseUUID(raw)
+		p, ok := s.authenticate(w, r)
 		if !ok {
-			writeError(w, &apiError{Status: http.StatusUnauthorized, Code: "invalid_org",
-				Message: "header " + HeaderOrg + " must be a uuid"})
 			return
 		}
-		actor := defaultActor
-		if u := r.Header.Get(HeaderUser); u != "" {
-			if err := checkText("X-Kingu-User", u, 255, true); err != nil {
-				writeError(w, err)
-				return
-			}
-			actor = u
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && !p.canWrite() {
+			writeError(w, errForbidden)
+			return
 		}
-		oc := orgCtx{OrgID: orgID, Actor: actor}
+		oc := orgCtx{OrgID: p.OrgID, Actor: p.UserID, P: p}
 
 		// Read the (capped) body before opening a transaction so a slow
 		// client can never hold a database transaction open.
@@ -170,7 +285,7 @@ func (s *Server) org(h orgHandler) http.Handler {
 			status int
 			body   any
 		)
-		err := db.WithOrg(r.Context(), s.pool, orgID, func(tx pgx.Tx) error {
+		err := db.WithOrg(r.Context(), s.pool, oc.OrgID, func(tx pgx.Tx) error {
 			var exists bool
 			// RLS on orgs only exposes the row whose id == app.org_id.
 			if err := tx.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM orgs)`).Scan(&exists); err != nil {
@@ -195,6 +310,10 @@ func (s *Server) toAPIError(r *http.Request, err error) *apiError {
 	var ae *apiError
 	if errors.As(err, &ae) {
 		return ae
+	}
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		return &apiError{Status: http.StatusRequestEntityTooLarge, Code: "body_too_large", Message: "request body too large"}
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
@@ -228,6 +347,10 @@ func decodeJSON(r *http.Request, dst any) error {
 	if err := dec.Decode(dst); err != nil {
 		if errors.Is(err, io.EOF) {
 			return errBadRequest("invalid_json", "request body is empty")
+		}
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			return err
 		}
 		msg := err.Error()
 		if strings.HasPrefix(msg, "json: unknown field") {
@@ -266,6 +389,9 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
 }
+
+// Unwrap lets http.ResponseController reach Flush/SetWriteDeadline (SSE).
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
 func (s *Server) logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

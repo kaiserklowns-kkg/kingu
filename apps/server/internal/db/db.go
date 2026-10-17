@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -80,4 +81,29 @@ func WithOrg(ctx context.Context, pool *pgxpool.Pool, orgID string, fn func(pgx.
 		}
 		return fn(tx)
 	})
+}
+
+// EventRetention is how long org_events rows are kept. It mirrors the
+// retention_prune_* policies in migrations/0002_team_sync.sql, which are what
+// actually bound the deletion.
+const EventRetention = 72 * time.Hour
+
+// PruneEvents deletes org_events older than EventRetention across all orgs.
+// It enables the retention policies with the transaction-local
+// app.prune_events setting; those policies only ever expose expired rows.
+func PruneEvents(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
+	var n int64
+	err := pgx.BeginTxFunc(ctx, pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.prune_events', 'on', true)`); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx, `DELETE FROM org_events WHERE created_at < now() - $1::interval`,
+			fmt.Sprintf("%d seconds", int64(EventRetention.Seconds())))
+		if err != nil {
+			return err
+		}
+		n = tag.RowsAffected()
+		return nil
+	})
+	return n, err
 }

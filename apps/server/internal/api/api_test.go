@@ -170,7 +170,11 @@ func setup() (cleanup func(), err error) {
 	}
 	cleanups = append(cleanups, adminPool.Close)
 
-	ts = httptest.NewServer(api.New(appPool, logger).Handler())
+	srv := api.New(appPool, logger, api.Config{Dev: true, Heartbeat: 300 * time.Millisecond})
+	bgCtx, stopBg := context.WithCancel(context.Background())
+	cleanups = append(cleanups, stopBg)
+	srv.Start(bgCtx)
+	ts = httptest.NewServer(srv.Handler())
 	cleanups = append(cleanups, ts.Close)
 	return cleanup, nil
 }

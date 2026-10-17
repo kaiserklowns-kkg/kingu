@@ -5,6 +5,8 @@
 // task can be continued after a restart. Views read `adeTasks.views / groups`; actions confirm
 // destructive steps with a native dialog and report results in the status bar.
 
+import { team } from '#lib/team/team.svelte.ts';
+import { syncKey, toTeamTask } from './teamSync.ts';
 import { untrack } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
 import { ask, message } from '@tauri-apps/plugin-dialog';
@@ -451,6 +453,19 @@ export function installAde(): () => void {
 				synced.clear();
 				void adeTasks.load();
 			});
+		});
+		// Team server: send each task's metadata when its status, branch or diff stats change.
+		const teamSent = new Map<string, string>();
+		$effect(() => {
+			if (!adeTasks.loaded || !workspace.root) return;
+			const folder = workspace.name;
+			for (const view of adeTasks.views) {
+				const task = toTeamTask(view, folder);
+				const key = syncKey(task);
+				if (teamSent.get(task.id) === key) continue;
+				teamSent.set(task.id, key);
+				untrack(() => void team.syncTask(task));
+			}
 		});
 		$effect(() => {
 			if (!adeTasks.loaded) return;
