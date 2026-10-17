@@ -13,6 +13,10 @@
 	import { status } from './status.svelte';
 	import SettingsEditor from '#lib/settings/SettingsEditor.svelte';
 	import { SETTINGS_EDITOR_KEY, USER_SETTINGS_KEY } from '#lib/settings/settings.svelte.ts';
+	import Board from '#lib/ade/Board.svelte';
+	import TaskPage from '#lib/ade/TaskPage.svelte';
+	import { isAdeEditor, isBoardKey, slugOfTaskKey } from '#lib/ade/keys.ts';
+	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 
 	let { group }: { group: number } = $props();
 
@@ -23,16 +27,25 @@
 	const activePath = $derived(g?.active ?? null);
 	const focused = $derived(editors.activeGroupId === group);
 	const settingsActive = $derived(activePath === SETTINGS_EDITOR_KEY);
-	const crumbs = $derived(!activePath || settingsActive ? [] : activePath === USER_SETTINGS_KEY ? ['User', 'settings.json'] : fileOf(activePath).split('/'));
+	const adeActive = $derived(activePath !== null && isAdeEditor(activePath));
+	const taskSlug = $derived(activePath ? slugOfTaskKey(activePath) : null);
+	const crumbs = $derived(!activePath || settingsActive || adeActive ? [] : activePath === USER_SETTINGS_KEY ? ['User', 'settings.json'] : fileOf(activePath).split('/'));
 	/** Tab label; the Settings editor and the user settings.json are not workspace files. */
-	const label = (key: string) => (key === SETTINGS_EDITOR_KEY ? 'Settings' : tabLabel(key));
-	const iconOf = (key: string) => fileIcon(key === SETTINGS_EDITOR_KEY || key === USER_SETTINGS_KEY ? 'settings.json' : fileOf(key));
+	function label(key: string): string {
+		if (key === SETTINGS_EDITOR_KEY) return 'Settings';
+		if (isBoardKey(key)) return 'บอร์ดงาน';
+		const slug = slugOfTaskKey(key);
+		if (slug) return `งาน: ${adeTasks.find(slug)?.meta.title ?? slug}`;
+		return tabLabel(key);
+	}
+	const iconOf = (key: string) =>
+		fileIcon(key === SETTINGS_EDITOR_KEY || key === USER_SETTINGS_KEY ? 'settings.json' : isAdeEditor(key) ? 'tasks.md' : fileOf(key));
 	const diffActive = $derived(activePath !== null && isDiffKey(activePath));
 	// The diff editor exists only while this group has a diff tab.
 	const hasDiff = $derived(tabs.some((t) => isDiffKey(t.path)));
 	// Enclosing symbols from the language server's document symbols, like VS Code's outline crumbs.
 	// The cursor is tracked for the active group only, so other groups show just the path.
-	const symbolCrumbs = $derived(activePath && !diffActive && !settingsActive && focused ? lsp.crumbs(activePath, editors.cursor.line, editors.cursor.column) : []);
+	const symbolCrumbs = $derived(activePath && !diffActive && !settingsActive && !adeActive && focused ? lsp.crumbs(activePath, editors.cursor.line, editors.cursor.column) : []);
 	let dropTarget = $state<number | null>(null);
 
 	function close(path: string, force: boolean) {
@@ -139,7 +152,7 @@
 			{#if dropTarget === tabs.length}<span class="h-full w-0.5 shrink-0 bg-(--vscode-focusBorder)"></span>{/if}
 		</div>
 	{/if}
-	{#if activePath}
+	{#if activePath && !adeActive}
 		<nav aria-label="Breadcrumbs" class="flex h-(--kg-breadcrumbs-height) shrink-0 items-center gap-0.5 overflow-hidden px-3 text-(--vscode-breadcrumb-foreground)">
 			{#each crumbs as c, i (i)}
 				{#if i > 0}<Icon name="chevronRight" size={14} />{/if}
@@ -153,7 +166,7 @@
 	{/if}
 
 	<div class="relative min-h-0 flex-1">
-		<div class={['absolute inset-0', (!activePath || diffActive || settingsActive) && 'invisible']}>
+		<div class={['absolute inset-0', (!activePath || diffActive || settingsActive || adeActive) && 'invisible']}>
 			<EditorHost {group} />
 		</div>
 		{#if hasDiff}
@@ -163,6 +176,11 @@
 		{/if}
 		{#if settingsActive}
 			<div class="absolute inset-0"><SettingsEditor /></div>
+		{/if}
+		{#if taskSlug}
+			<div class="absolute inset-0">{#key taskSlug}<TaskPage slug={taskSlug} />{/key}</div>
+		{:else if activePath && isBoardKey(activePath)}
+			<div class="absolute inset-0"><Board /></div>
 		{/if}
 		{#if !activePath && editors.groups.length === 1}
 			<div class="absolute inset-0 grid place-items-center">

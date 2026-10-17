@@ -74,12 +74,31 @@ export function splitPath(path: string): [name: string, dir: string] {
 /** Editor tab key for a diff of a workspace file against HEAD. */
 export const DIFF_PREFIX = 'diff:';
 export const diffKey = (rel: string) => DIFF_PREFIX + rel;
-export const isDiffKey = (key: string) => key.startsWith(DIFF_PREFIX);
-/** The workspace file behind an editor tab key (itself for plain file tabs). */
-export const fileOf = (key: string) => (isDiffKey(key) ? key.slice(DIFF_PREFIX.length) : key);
+/** Diff of a file in a task worktree against the task's fork point: `taskdiff://<slug>/<rel>`. */
+export const TASK_DIFF_PREFIX = 'taskdiff://';
+export const taskDiffKey = (slug: string, rel: string) => `${TASK_DIFF_PREFIX}${slug}/${rel}`;
+export const isTaskDiffKey = (key: string) => key.startsWith(TASK_DIFF_PREFIX);
+/** `{ slug, rel }` of a task diff key (`rel` is relative to the worktree), else null. */
+export function parseTaskDiffKey(key: string): { slug: string; rel: string } | null {
+	if (!isTaskDiffKey(key)) return null;
+	const rest = key.slice(TASK_DIFF_PREFIX.length);
+	const i = rest.indexOf('/');
+	return i <= 0 ? null : { slug: rest.slice(0, i), rel: rest.slice(i + 1) };
+}
 
-/** Tab label: `a.ts`, or `a.ts (Working Tree)` for a diff, like VS Code. */
+export const isDiffKey = (key: string) => key.startsWith(DIFF_PREFIX) || isTaskDiffKey(key);
+/** The workspace file behind an editor tab key (itself for plain file tabs; a task diff's file
+ * lives in the worktree under `.kingu/worktrees/<slug>/`). */
+export function fileOf(key: string): string {
+	const task = parseTaskDiffKey(key);
+	if (task) return `.kingu/worktrees/${task.slug}/${task.rel}`;
+	return key.startsWith(DIFF_PREFIX) ? key.slice(DIFF_PREFIX.length) : key;
+}
+
+/** Tab label: `a.ts`, or `a.ts (Working Tree)` for a diff, like VS Code; `a.ts (งาน slug)` for a task diff. */
 export function tabLabel(key: string): string {
 	const [name] = splitPath(fileOf(key));
+	const task = parseTaskDiffKey(key);
+	if (task) return `${name} (งาน ${task.slug})`;
 	return isDiffKey(key) ? `${name} (Working Tree)` : name;
 }

@@ -4,6 +4,7 @@
 	import { quick } from './quick.svelte';
 	import { editors } from './editors.svelte';
 	import { keyLabel } from './keys';
+	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 
 	let { workspaceName }: { workspaceName: string } = $props();
 
@@ -33,6 +34,15 @@
 		</button>
 	</div>
 	<div class="flex items-center gap-0.5">
+		{#if adeTasks.attentionCount}
+			<button
+				class="mr-1 flex h-[22px] items-center gap-1 rounded-full bg-(--vscode-activityBarBadge-background) px-2 text-xs text-(--vscode-activityBarBadge-foreground) hover:opacity-90"
+				title="เปิดงานถัดไปที่รอคุณ"
+				onclick={() => adeTasks.openNext()}
+			>
+				รอคุณ {adeTasks.attentionCount}
+			</button>
+		{/if}
 		{#each toggles as t (t.label)}
 			<button
 				aria-label={t.label}

@@ -2,6 +2,7 @@
 	import ExplorerView from './ExplorerView.svelte';
 	import ScmView from './ScmView.svelte';
 	import SearchView from './SearchView.svelte';
+	import AgentsView from '#lib/ade/AgentsView.svelte';
 	import { layout } from './layout.svelte';
 
 	let { workspaceName }: { workspaceName: string } = $props();
@@ -20,5 +21,7 @@
 		<SearchView />
 	{:else if layout.sideView === 'scm'}
 		<ScmView />
+	{:else if layout.sideView === 'agents'}
+		<AgentsView />
 	{/if}
 </aside>

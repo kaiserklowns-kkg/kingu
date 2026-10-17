@@ -1,0 +1,435 @@
+// ADE tasks (Orca-style: one task = one git worktree with an agent). Task metadata is persisted in
+// `<root>/.kingu/tasks.json` through Rust; live state comes from the TaskRuntime adapter; diff
+// stats come from `worktree_diff_stat`. Views read `adeTasks.views / groups`; actions confirm
+// destructive steps with a native dialog and report results in the status bar.
+
+import { untrack } from 'svelte';
+import { invoke } from '@tauri-apps/api/core';
+import { ask, message } from '@tauri-apps/plugin-dialog';
+import { clientLog } from '#lib/client-log.ts';
+import type { WorktreeInfo } from '#lib/agent/events.ts';
+import { commands } from '#lib/workbench/commands.svelte.ts';
+import { editors } from '#lib/workbench/editors.svelte.ts';
+import { layout } from '#lib/workbench/layout.svelte.ts';
+import { quick } from '#lib/workbench/quick.svelte.ts';
+import { status } from '#lib/workbench/status.svelte.ts';
+import { workspace } from '#lib/workbench/workspace.svelte.ts';
+import { taskDiffKey, parseTaskDiffKey } from '#lib/workbench/scm.ts';
+import { BOARD_KEY, slugOfTaskKey, taskKey, worktreeDir } from './keys';
+import {
+	adoptOrphans,
+	commitMessage,
+	effectiveStatus,
+	groupTasks,
+	newTask,
+	nextNeedingAttention,
+	patchTask,
+	pruneAccepted,
+	removeTask,
+	toggleAccepted,
+	uniqueSlug,
+	type DiffStat,
+	type GhStatus,
+	type MergeResult,
+	type TaskMeta,
+	type TaskView
+} from './model';
+import { runtime } from './runtime.svelte';
+
+class AdeTasks {
+	list = $state<TaskMeta[]>([]);
+	worktrees = $state<WorktreeInfo[]>([]);
+	stats = $state<Record<string, DiffStat>>({});
+	statErrors = $state<Record<string, string>>({});
+	branches = $state<string[]>([]);
+	gh = $state<GhStatus | null>(null);
+	loaded = $state(false);
+	busy = $state<Record<string, string>>({});
+	/** Ticks every 30s so "time ago" labels move. */
+	now = $state(Date.now());
+	/** The New Task form is open (side bar or board). */
+	composing = $state(false);
+
+	views: TaskView[] = $derived(
+		this.list.map((meta) => {
+			const rt = runtime.get(meta.slug);
+			return { meta, runtime: rt, status: effectiveStatus(meta, rt), stat: this.stats[meta.slug], statError: this.statErrors[meta.slug] };
+		})
+	);
+	groups = $derived(groupTasks(this.views));
+	attentionCount = $derived(this.groups.attention.length);
+
+	#saving: Promise<void> = Promise.resolve();
+	#root: string | null = null;
+
+	find(slug: string): TaskView | undefined {
+		return this.views.find((v) => v.meta.slug === slug);
+	}
+
+	async load() {
+		const root = workspace.root;
+		this.#root = root;
+		this.list = [];
+		this.stats = {};
+		this.statErrors = {};
+		this.worktrees = [];
+		this.loaded = false;
+		if (!root) return;
+		try {
+			const [tasks, worktrees, branches] = await Promise.all([
+				invoke<TaskMeta[]>('tasks_load'),
+				invoke<WorktreeInfo[]>('worktree_list'),
+				invoke<string[]>('git_branches').catch(() => [] as string[])
+			]);
+			if (this.#root !== root) return;
+			this.worktrees = worktrees.filter((w) => w.slug);
+			this.branches = branches;
+			const base = status.branch && branches.includes(status.branch) ? status.branch : (branches[0] ?? 'HEAD');
+			const adopted = adoptOrphans(tasks, this.worktrees.map((w) => w.slug!), base, Date.now());
+			this.list = adopted;
+			if (adopted !== tasks) await this.#save(adopted);
+		} catch (e) {
+			status.flash(`โหลดงานไม่ได้: ${e}`, 8000);
+			clientLog('error', `tasks_load: ${e}`);
+		}
+		this.loaded = true;
+		await this.refreshStats();
+	}
+
+	async refreshBranches() {
+		this.branches = await invoke<string[]>('git_branches').catch(() => this.branches);
+	}
+
+	async refreshStats() {
+		await Promise.all(this.list.map((t) => this.refreshStat(t.slug)));
+	}
+
+	async refreshStat(slug: string): Promise<DiffStat | undefined> {
+		const meta = this.list.find((t) => t.slug === slug);
+		if (!meta) return;
+		try {
+			const stat = await invoke<DiffStat>('worktree_diff_stat', { slug, base: meta.base });
+			this.stats[slug] = stat;
+			delete this.statErrors[slug];
+			const accepted = pruneAccepted(meta.accepted, stat.files);
+			if (accepted.length !== meta.accepted.length) await this.#patch(slug, { accepted });
+			return stat;
+		} catch (e) {
+			this.statErrors[slug] = String(e);
+			delete this.stats[slug];
+		}
+	}
+
+	#save(next: TaskMeta[]): Promise<void> {
+		this.list = next;
+		const snapshot = $state.snapshot(next) as TaskMeta[];
+		this.#saving = this.#saving.then(() =>
+			invoke<void>('tasks_save', { tasks: snapshot }).catch((e) => {
+				status.flash(`บันทึก tasks.json ไม่ได้: ${e}`, 8000);
+				clientLog('error', `tasks_save: ${e}`);
+			})
+		);
+		return this.#saving;
+	}
+
+	#patch(slug: string, patch: Partial<Omit<TaskMeta, 'slug'>>) {
+		return this.#save(patchTask(this.list, slug, patch, Date.now()));
+	}
+
+	async #step<T>(slug: string, label: string, f: () => Promise<T>): Promise<T | undefined> {
+		this.busy[slug] = label;
+		try {
+			return await f();
+		} catch (e) {
+			status.flash(`${label}ไม่สำเร็จ: ${e}`, 10000);
+			clientLog('error', `${slug} ${label}: ${e}`);
+		} finally {
+			delete this.busy[slug];
+		}
+	}
+
+	// -------------------------------------------------------------------------------------------
+	// Lifecycle
+
+	/** Creates the worktree, saves the task and starts the agent; opens the task page. */
+	async create(input: { title: string; prompt: string; base: string }): Promise<string | undefined> {
+		const title = input.title.trim();
+		if (!title || !workspace.root) return;
+		const taken = new Set([...this.list.map((t) => t.slug), ...this.worktrees.map((w) => w.slug ?? '')]);
+		const slug = uniqueSlug(title, taken);
+		const prompt = input.prompt.trim() || title;
+		// Without a pick, fork from the folder's current branch (so merging back has a branch).
+		const base = input.base || status.branch || 'HEAD';
+		try {
+			await invoke<WorktreeInfo>('worktree_create', { slug, base });
+		} catch (e) {
+			status.flash(`สร้าง worktree ไม่ได้: ${e}`, 10000);
+			return;
+		}
+		await this.#save([...this.list, newTask({ slug, title, prompt, base }, Date.now())]);
+		this.worktrees = (await invoke<WorktreeInfo[]>('worktree_list').catch(() => this.worktrees)).filter((w) => w.slug);
+		this.openTask(slug);
+		await this.run(slug, prompt);
+		return slug;
+	}
+
+	/** Runs the agent (again) in the task worktree. */
+	async run(slug: string, prompt: string) {
+		try {
+			await runtime.start(slug, prompt);
+			await this.#patch(slug, { status: 'running' });
+		} catch (e) {
+			status.flash(`เริ่ม agent ไม่ได้: ${e}`, 10000);
+			await this.#patch(slug, { status: 'failed' });
+		}
+	}
+
+	stop(slug: string) {
+		return runtime.stop(slug).catch((e) => status.flash(String(e), 8000));
+	}
+
+	/** Called when a run's status or model changes, so tasks.json follows the live state. */
+	syncRuntime(slug: string) {
+		const rt = runtime.get(slug);
+		const meta = this.list.find((t) => t.slug === slug);
+		if (!rt || !meta) return;
+		const patch: Partial<TaskMeta> = {};
+		if (rt.status !== meta.status && !(meta.status === 'done' && rt.status === 'review')) patch.status = rt.status;
+		if (rt.model && rt.model !== meta.model) patch.model = rt.model;
+		if (Object.keys(patch).length) void this.#patch(slug, patch);
+		if (rt.status === 'review' || rt.status === 'failed') void this.refreshStat(slug);
+	}
+
+	/** Removes the worktree (the branch `kingu/<slug>` is kept) and forgets the task. */
+	async remove(slug: string) {
+		if (runtime.isRunning(slug)) {
+			status.flash('หยุด agent ก่อนลบงาน');
+			return;
+		}
+		const path = worktreeDir(slug);
+		const hasWorktree = this.worktrees.some((w) => w.slug === slug);
+		if (hasWorktree) {
+			if (!(await ask(`ลบ worktree ${path}?\n\nbranch kingu/${slug} จะยังอยู่ (ลบเองได้ด้วย git branch -D)`, { title: 'ลบงาน', kind: 'warning', okLabel: 'ลบ', cancelLabel: 'ยกเลิก' }))) return;
+			try {
+				await invoke('worktree_remove', { slug, force: false, deleteBranch: false });
+			} catch (e) {
+				const dirty = /modified|untracked|dirty/i.test(String(e));
+				if (!dirty) {
+					status.flash(`ลบไม่ได้: ${e}`, 10000);
+					return;
+				}
+				const force = await ask(`worktree ${path} มีการแก้ไขที่ยังไม่ commit\n\nลบทิ้งทั้งหมด? กู้คืนไม่ได้`, { title: 'มีงานที่ยังไม่ commit', kind: 'warning', okLabel: 'ลบทิ้ง', cancelLabel: 'ยกเลิก' });
+				if (!force) return;
+				try {
+					await invoke('worktree_remove', { slug, force: true, deleteBranch: false });
+				} catch (e2) {
+					status.flash(`ลบไม่ได้: ${e2}`, 10000);
+					return;
+				}
+			}
+		} else if (!(await ask(`ลบงาน "${this.list.find((t) => t.slug === slug)?.title ?? slug}" ออกจากรายการ?`, { title: 'ลบงาน', okLabel: 'ลบ', cancelLabel: 'ยกเลิก' }))) return;
+		for (const t of editors.allTabs().map((t) => t.path)) {
+			if (slugOfTaskKey(t) === slug || parseTaskDiffKey(t)?.slug === slug) editors.closeEverywhere(t);
+		}
+		this.worktrees = this.worktrees.filter((w) => w.slug !== slug);
+		delete this.stats[slug];
+		delete this.statErrors[slug];
+		await this.#save(removeTask(this.list, slug));
+		status.flash(`ลบงาน ${slug} แล้ว`);
+	}
+
+	// -------------------------------------------------------------------------------------------
+	// Review
+
+	toggleAccept(slug: string, path: string) {
+		return this.#save(toggleAccepted(this.list, slug, path, Date.now()));
+	}
+
+	/** Restores files from the base after confirming; `paths` includes a rename's source. */
+	async reject(slug: string, paths: string[], label: string) {
+		const meta = this.list.find((t) => t.slug === slug);
+		if (!meta || !paths.length) return;
+		const ok = await ask(`ทิ้งการเปลี่ยนแปลงของ ${label} ใน worktree ${slug}?\n\nไฟล์จะกลับเป็นแบบใน ${meta.base} (ไฟล์ที่เพิ่มใหม่จะถูกลบ) กู้คืนไม่ได้`, {
+			title: 'ปฏิเสธการเปลี่ยนแปลง',
+			kind: 'warning',
+			okLabel: 'ทิ้งการเปลี่ยนแปลง',
+			cancelLabel: 'ยกเลิก'
+		});
+		if (!ok) return;
+		await this.#step(slug, 'ปฏิเสธไฟล์', () => invoke('worktree_reject', { slug, base: meta.base, paths }));
+		await this.refreshStat(slug);
+	}
+
+	async commit(slug: string, msg: string) {
+		if (!msg.trim()) {
+			status.flash('ใส่ข้อความ commit ก่อน');
+			return false;
+		}
+		const done = await this.#step(slug, 'commit', () => invoke('worktree_commit', { slug, message: msg }).then(() => true));
+		await this.refreshStat(slug);
+		if (done) status.flash(`commit ใน kingu/${slug} แล้ว`);
+		return !!done;
+	}
+
+	defaultCommitMessage(slug: string) {
+		const meta = this.list.find((t) => t.slug === slug);
+		return meta ? commitMessage(meta) : '';
+	}
+
+	async merge(slug: string, mode: 'ff' | 'merge') {
+		const meta = this.list.find((t) => t.slug === slug);
+		if (!meta) return;
+		const how = mode === 'ff' ? 'แบบ fast-forward' : 'แบบ merge commit';
+		const ok = await ask(`รวม kingu/${slug} เข้า ${meta.base} ${how} ในเครื่อง?`, { title: 'Merge เข้า base', okLabel: 'Merge', cancelLabel: 'ยกเลิก' });
+		if (!ok) return;
+		const r = await this.#step(slug, 'merge', () => invoke<MergeResult>('worktree_merge', { slug, base: meta.base, mode }));
+		if (r) {
+			await this.#patch(slug, { merged_at: Date.now(), status: 'done' });
+			status.flash(`merge เข้า ${meta.base} แล้ว (${r.fast_forward ? 'fast-forward' : 'merge commit'} ${r.commit.slice(0, 8)})`, 8000);
+		}
+		await this.refreshStat(slug);
+	}
+
+	async checkGh(): Promise<GhStatus | null> {
+		this.gh = await invoke<GhStatus>('gh_status').catch(() => null);
+		return this.gh;
+	}
+
+	async createPr(slug: string) {
+		const meta = this.list.find((t) => t.slug === slug);
+		if (!meta) return;
+		const gh = await this.checkGh();
+		if (!gh?.installed) {
+			await message('ยังไม่ได้ติดตั้ง GitHub CLI (gh)\n\nติดตั้ง: brew install gh\nแล้วเข้าสู่ระบบ: gh auth login', { title: 'สร้าง PR', kind: 'info' });
+			return;
+		}
+		if (!gh.authenticated) {
+			await message(`gh ยังไม่ได้เข้าสู่ระบบ\n\nรันในเทอร์มินัล: gh auth login\n\n${gh.detail}`, { title: 'สร้าง PR', kind: 'info' });
+			return;
+		}
+		const stat = this.stats[slug];
+		if (stat?.dirty && !(await ask('มีการแก้ไขที่ยังไม่ commit ซึ่งจะไม่อยู่ใน PR\n\nสร้าง PR ต่อไหม?', { title: 'สร้าง PR', okLabel: 'สร้าง PR', cancelLabel: 'ยกเลิก' })))
+			return;
+		if (!(await ask(`push kingu/${slug} ไปที่ origin แล้วเปิด PR เข้า ${meta.base}?`, { title: 'สร้าง PR', okLabel: 'สร้าง PR', cancelLabel: 'ยกเลิก' }))) return;
+		const body = `${meta.prompt}\n\n---\nสร้างจากงาน Kingu \`${slug}\``;
+		const url = await this.#step(slug, 'สร้าง PR', () => invoke<string>('worktree_pr_create', { slug, base: meta.base, title: meta.title, body }));
+		if (url !== undefined) {
+			await this.#patch(slug, { pr_url: url || null });
+			status.flash(url ? `เปิด PR แล้ว: ${url}` : 'เปิด PR แล้ว', 10000);
+		}
+	}
+
+	markDone(slug: string, done = true) {
+		return this.#patch(slug, { status: done ? 'done' : 'review' });
+	}
+
+	// -------------------------------------------------------------------------------------------
+	// Navigation
+
+	openTask(slug: string) {
+		editors.open(taskKey(slug), { preview: false });
+	}
+
+	openBoard() {
+		editors.open(BOARD_KEY, { preview: false });
+	}
+
+	showView() {
+		layout.sideView = 'agents';
+		layout.sidebarVisible = true;
+	}
+
+	/** Title-bar badge: the next task in รอคุณ (cycling when the current tab is already one). */
+	openNext() {
+		const current = editors.active ? slugOfTaskKey(editors.active) : null;
+		const next = nextNeedingAttention(this.views, current ?? undefined);
+		if (next) this.openTask(next.meta.slug);
+		else status.flash('ไม่มีงานที่รอคุณ');
+	}
+
+	/** Diff of a worktree file against the task's fork point, in a `taskdiff://` tab. */
+	async openDiff(slug: string, rel: string) {
+		if (!this.stats[slug]) await this.refreshStat(slug);
+		editors.open(taskDiffKey(slug, rel), { preview: true });
+	}
+
+	/** For DiffHost: the revision and path to show on the left of a task diff tab. */
+	diffBase(key: string): { slug: string; rel: string; rev: string; orig: string } | null {
+		const k = parseTaskDiffKey(key);
+		if (!k) return null;
+		const stat = this.stats[k.slug];
+		if (!stat) return null;
+		const orig = stat.files.find((f) => f.path === k.rel)?.orig_path ?? k.rel;
+		return { ...k, rev: stat.merge_base, orig };
+	}
+
+	/** Quick open scoped to the worktree: files open as `.kingu/worktrees/<slug>/<file>`. */
+	async quickOpen(slug: string) {
+		let files: string[];
+		try {
+			files = await invoke<string[]>('worktree_list_files', { slug });
+		} catch (e) {
+			status.flash(String(e), 8000);
+			return;
+		}
+		const changed = new Set(this.stats[slug]?.files.map((f) => f.path));
+		quick.pick({
+			placeholder: `เปิดไฟล์ใน worktree ${slug}`,
+			items: files.map((f) => ({ id: f, label: f, description: changed.has(f) ? 'แก้ไข' : undefined })),
+			onAccept: (item) => editors.open(`${worktreeDir(slug)}/${item.id}`, { preview: true })
+		});
+	}
+
+	/** Palette: pick a task to open. */
+	pickTask() {
+		quick.pick({
+			placeholder: 'เลือกงาน',
+			items: this.views.map((v) => ({ id: v.meta.slug, label: v.meta.title, description: `kingu/${v.meta.slug}` })),
+			onAccept: (item) => this.openTask(item.id)
+		});
+	}
+}
+
+export const adeTasks = new AdeTasks();
+
+/** Workbench wiring: loads tasks per folder, follows runtime changes, registers commands. */
+export function installAde(): () => void {
+	const synced = new Map<string, string>();
+	const stopEffects = $effect.root(() => {
+		$effect(() => {
+			void workspace.root;
+			untrack(() => {
+				runtime.reset();
+				synced.clear();
+				void adeTasks.load();
+			});
+		});
+		$effect(() => {
+			for (const rt of runtime.all()) {
+				const sig = `${rt.status}|${rt.model ?? ''}`;
+				if (synced.get(rt.slug) === sig) continue;
+				synced.set(rt.slug, sig);
+				untrack(() => adeTasks.syncRuntime(rt.slug));
+			}
+		});
+	});
+	const tick = setInterval(() => (adeTasks.now = Date.now()), 30_000);
+	// Refresh stats when the window regains focus (agents and terminals change worktrees).
+	const onFocus = () => void adeTasks.refreshStats();
+	window.addEventListener('focus', onFocus);
+	const hasRoot = () => workspace.root !== null;
+	const unregister = [
+		commands.register({ id: 'kingu.agents.show', title: 'Show Agents', category: 'View', key: 'ctrl+shift+a', run: () => adeTasks.showView() }),
+		commands.register({ id: 'kingu.agents.newTask', title: 'งานใหม่ (New Task)', category: 'Agents', when: hasRoot, run: () => (adeTasks.showView(), (adeTasks.composing = true)) }),
+		commands.register({ id: 'kingu.agents.openBoard', title: 'Open Board', category: 'Agents', when: hasRoot, run: () => adeTasks.openBoard() }),
+		commands.register({ id: 'kingu.agents.nextAttention', title: 'เปิดงานถัดไปที่รอคุณ (Next Task Needing Attention)', category: 'Agents', when: hasRoot, run: () => adeTasks.openNext() }),
+		commands.register({ id: 'kingu.agents.openTask', title: 'Open Task...', category: 'Agents', when: () => adeTasks.list.length > 0, run: () => adeTasks.pickTask() }),
+		commands.register({ id: 'kingu.agents.refresh', title: 'Refresh Tasks', category: 'Agents', when: hasRoot, run: () => adeTasks.load() })
+	];
+	return () => {
+		stopEffects();
+		clearInterval(tick);
+		window.removeEventListener('focus', onFocus);
+		unregister.forEach((u) => u());
+	};
+}

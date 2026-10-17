@@ -4,13 +4,15 @@
 	import { keyLabel } from './keys';
 	import { scm } from './scm.svelte';
 	import { commands } from './commands.svelte';
+	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 
 	// Count badges (VS Code activitybar badge: bottom-right, 16px).
-	const badges: Partial<Record<SideView, () => number>> = { scm: () => scm.count };
+	const badges: Partial<Record<SideView, () => number>> = { scm: () => scm.count, agents: () => adeTasks.attentionCount };
 	const views: { view: SideView; label: string; icon: IconName; key: string }[] = [
 		{ view: 'explorer', label: 'Explorer', icon: 'files', key: 'cmd+shift+e' },
 		{ view: 'search', label: 'Search', icon: 'search', key: 'cmd+shift+f' },
-		{ view: 'scm', label: 'Source Control', icon: 'git', key: 'ctrl+shift+g' }
+		{ view: 'scm', label: 'Source Control', icon: 'git', key: 'ctrl+shift+g' },
+		{ view: 'agents', label: 'Agents', icon: 'tasks', key: 'ctrl+shift+a' }
 	];
 </script>
 
