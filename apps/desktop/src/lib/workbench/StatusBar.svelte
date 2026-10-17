@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { lsp } from '#lib/lsp/lsp.svelte.ts';
+	import TeamStatus from '#lib/team/TeamStatus.svelte';
 	import Icon from './Icon.svelte';
 	import { editors } from './editors.svelte';
 	import { layout } from './layout.svelte';
@@ -40,6 +41,7 @@
 	{/if}
 	{#if status.message}<span class="truncate px-2">{status.message}</span>{/if}
 	<div class="flex-1"></div>
+	<TeamStatus />
 	{#if editors.active && languageStatus}
 		<button
 			class={['h-full max-w-80 truncate px-2 hover:bg-(--vscode-toolbar-hoverBackground)', languageStatus.state === 'not-installed' || languageStatus.state === 'error' ? 'text-(--vscode-editorWarning-foreground)' : '']}

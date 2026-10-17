@@ -1,0 +1,194 @@
+//! HTTP to the team server and the token store. HTTPS only, except plain HTTP to a loopback
+//! host for local development. Redirects are not followed (they could downgrade to HTTP or
+//! carry the bearer token elsewhere).
+
+use std::time::Duration;
+
+use super::payload::TaskSync;
+
+/// Keychain service name for team tokens; the account is the normalized server URL.
+pub const KEYCHAIN_SERVICE: &str = "dev.kingu.team";
+
+/// Validates and normalizes a server URL to `scheme://host[:port][/path]` without a trailing
+/// slash. HTTPS is required unless the host is loopback.
+pub fn normalize_server_url(raw: &str) -> Result<String, String> {
+  let raw = raw.trim();
+  let url = url::Url::parse(raw).map_err(|e| format!("server URL ไม่ถูกต้อง: {e}"))?;
+  let host = url.host_str().ok_or("server URL ต้องมีชื่อโฮสต์")?;
+  let loopback = matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1");
+  match url.scheme() {
+    "https" => {}
+    "http" if loopback => {}
+    "http" => return Err("ต้องใช้ HTTPS (อนุญาต HTTP เฉพาะ localhost)".into()),
+    s => return Err(format!("ไม่รองรับ scheme {s}")),
+  }
+  if !url.username().is_empty() || url.password().is_some() {
+    return Err("server URL ต้องไม่มีชื่อผู้ใช้/รหัสผ่าน".into());
+  }
+  if url.query().is_some() || url.fragment().is_some() {
+    return Err("server URL ต้องไม่มี query หรือ fragment".into());
+  }
+  let mut out = format!("{}://{}", url.scheme(), host);
+  if let Some(port) = url.port() {
+    out.push_str(&format!(":{port}"));
+  }
+  out.push_str(url.path().trim_end_matches('/'));
+  Ok(out)
+}
+
+/// `kgu_` followed by 43 base64url characters.
+pub fn valid_token(token: &str) -> bool {
+  token.len() == 47
+    && token.starts_with("kgu_")
+    && token[4..].bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SendError {
+  /// Network error, timeout, 408, 429 or 5xx: keep and retry later.
+  Retryable(String),
+  /// 401/403: the token is missing, revoked or lacks rights. Keep, wait for sign-in.
+  Unauthorized(String),
+  /// Any other 4xx: this state will never be accepted. Drop it.
+  Permanent(String),
+}
+
+pub fn classify(status: u16, body: &str) -> Result<(), SendError> {
+  let detail = || {
+    let code = serde_json::from_str::<serde_json::Value>(body)
+      .ok()
+      .and_then(|v| v["error"]["code"].as_str().map(str::to_owned))
+      .unwrap_or_default();
+    format!("HTTP {status} {code}").trim().to_owned()
+  };
+  match status {
+    200..=299 => Ok(()),
+    401 | 403 => Err(SendError::Unauthorized(detail())),
+    408 | 429 | 500..=599 => Err(SendError::Retryable(detail())),
+    _ => Err(SendError::Permanent(detail())),
+  }
+}
+
+pub trait Transport: Send + Sync {
+  fn put_task(&self, server: &str, token: &str, project: &str, task: &TaskSync) -> Result<(), SendError>;
+}
+
+pub trait TokenStore: Send + Sync {
+  fn get(&self, server: &str) -> Option<String>;
+}
+
+pub struct HttpTransport {
+  client: reqwest::blocking::Client,
+}
+
+impl HttpTransport {
+  pub fn new() -> Result<Self, String> {
+    let client = reqwest::blocking::Client::builder()
+      .timeout(Duration::from_secs(15))
+      .connect_timeout(Duration::from_secs(5))
+      .redirect(reqwest::redirect::Policy::none())
+      .user_agent(concat!("kingu-desktop/", env!("CARGO_PKG_VERSION")))
+      .build()
+      .map_err(|e| e.to_string())?;
+    Ok(Self { client })
+  }
+
+  /// `GET /v1/me`: verifies a token before it is stored.
+  pub fn me(&self, server: &str, token: &str) -> Result<serde_json::Value, SendError> {
+    let res = self
+      .client
+      .get(format!("{server}/v1/me"))
+      .bearer_auth(token)
+      .send()
+      .map_err(|e| SendError::Retryable(e.without_url().to_string()))?;
+    let status = res.status().as_u16();
+    let body = res.text().unwrap_or_default();
+    classify(status, &body)?;
+    serde_json::from_str(&body).map_err(|e| SendError::Permanent(e.to_string()))
+  }
+}
+
+impl Transport for HttpTransport {
+  fn put_task(&self, server: &str, token: &str, project: &str, task: &TaskSync) -> Result<(), SendError> {
+    // client_task_id matches [A-Za-z0-9._:-], which is path-safe.
+    let res = self
+      .client
+      .put(format!("{server}/v1/tasks/{}/sync", task.client_task_id))
+      .bearer_auth(token)
+      .json(&task.wire_body(project))
+      .send()
+      .map_err(|e| SendError::Retryable(e.without_url().to_string()))?;
+    let status = res.status().as_u16();
+    let body = res.text().unwrap_or_default();
+    classify(status, &body)
+  }
+}
+
+/// macOS Keychain (Windows Credential Manager / Secret Service elsewhere) via `keyring`.
+pub struct Keychain;
+
+impl Keychain {
+  fn entry(server: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(KEYCHAIN_SERVICE, server).map_err(|e| e.to_string())
+  }
+
+  pub fn set(server: &str, token: &str) -> Result<(), String> {
+    Self::entry(server)?.set_password(token).map_err(|e| e.to_string())
+  }
+
+  pub fn delete(server: &str) -> Result<(), String> {
+    match Self::entry(server)?.delete_credential() {
+      Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+      Err(e) => Err(e.to_string()),
+    }
+  }
+}
+
+impl TokenStore for Keychain {
+  fn get(&self, server: &str) -> Option<String> {
+    Self::entry(server).ok()?.get_password().ok()
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn server_urls() {
+    assert_eq!(normalize_server_url("https://team.example.com/").unwrap(), "https://team.example.com");
+    assert_eq!(normalize_server_url(" https://example.com:8443/kingu/ ").unwrap(), "https://example.com:8443/kingu");
+    assert_eq!(normalize_server_url("http://localhost:8787").unwrap(), "http://localhost:8787");
+    assert_eq!(normalize_server_url("http://127.0.0.1:8787").unwrap(), "http://127.0.0.1:8787");
+    assert_eq!(normalize_server_url("http://[::1]:8787").unwrap(), "http://[::1]:8787");
+    for bad in [
+      "http://team.example.com",
+      "http://localhost.evil.com",
+      "ftp://example.com",
+      "https://user:pw@example.com",
+      "https://example.com/?x=1",
+      "not a url",
+    ] {
+      assert!(normalize_server_url(bad).is_err(), "{bad}");
+    }
+  }
+
+  #[test]
+  fn tokens() {
+    assert!(valid_token(&format!("kgu_{}", "a".repeat(43))));
+    assert!(!valid_token(&format!("kgu_{}", "a".repeat(42))));
+    assert!(!valid_token(&format!("kgu_{}!", "a".repeat(42))));
+    assert!(!valid_token(&format!("ghp_{}", "a".repeat(43))));
+  }
+
+  #[test]
+  fn status_classes() {
+    assert_eq!(classify(200, ""), Ok(()));
+    assert_eq!(classify(201, ""), Ok(()));
+    assert!(matches!(classify(401, r#"{"error":{"code":"invalid_token"}}"#), Err(SendError::Unauthorized(m)) if m == "HTTP 401 invalid_token"));
+    assert!(matches!(classify(429, ""), Err(SendError::Retryable(_))));
+    assert!(matches!(classify(503, ""), Err(SendError::Retryable(_))));
+    assert!(matches!(classify(422, ""), Err(SendError::Permanent(_))));
+    assert!(matches!(classify(404, ""), Err(SendError::Permanent(_))));
+  }
+}

@@ -40,14 +40,32 @@ type task struct {
 	CreatedBy   string    `json:"created_by"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+
+	// Desktop sync metadata (PUT /v1/tasks/{id}/sync).
+	ClientTaskID *string    `json:"client_task_id"`
+	Agent        *string    `json:"agent"`
+	Model        *string    `json:"model"`
+	Additions    int        `json:"additions"`
+	Deletions    int        `json:"deletions"`
+	FilesChanged int        `json:"files_changed"`
+	StartedAt    *time.Time `json:"started_at"`
+	FinishedAt   *time.Time `json:"finished_at"`
+	UpdatedBy    *string    `json:"updated_by"`
 }
 
-const taskCols = `id::text, project_id::text, title, source, external_ref, status, branch, created_by, created_at, updated_at`
+const taskCols = `id::text, project_id::text, title, source, external_ref, status, branch, created_by, created_at, updated_at,
+	client_task_id, agent, model, additions, deletions, files_changed, started_at, finished_at, updated_by`
+
+func (t *task) scanDest() []any {
+	return []any{&t.ID, &t.ProjectID, &t.Title, &t.Source, &t.ExternalRef, &t.Status,
+		&t.Branch, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt,
+		&t.ClientTaskID, &t.Agent, &t.Model, &t.Additions, &t.Deletions, &t.FilesChanged,
+		&t.StartedAt, &t.FinishedAt, &t.UpdatedBy}
+}
 
 func scanTask(row pgx.Row) (task, error) {
 	var t task
-	err := row.Scan(&t.ID, &t.ProjectID, &t.Title, &t.Source, &t.ExternalRef, &t.Status,
-		&t.Branch, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt)
+	err := row.Scan(t.scanDest()...)
 	return t, err
 }
 
@@ -287,10 +305,11 @@ func (s *Server) patchTask(r *http.Request, oc orgCtx, tx pgx.Tx) (int, any, err
 		`UPDATE tasks SET
 		     status = COALESCE($2, status),
 		     branch = COALESCE($3, branch),
+		     updated_by = $4,
 		     updated_at = now()
 		 WHERE id = $1
 		 RETURNING `+taskCols,
-		taskID, req.Status, req.Branch))
+		taskID, req.Status, req.Branch, oc.Actor))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil, errNotFound("task not found")
 	}
