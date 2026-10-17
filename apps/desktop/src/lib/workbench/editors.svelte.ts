@@ -4,6 +4,7 @@
 // Text models are shared between groups (editorModels.ts), one Monaco editor per group.
 
 import type * as Monaco from 'monaco-editor';
+import { SvelteSet } from 'svelte/reactivity';
 import { diffKey } from './scm';
 import * as G from './editorGroups';
 import { settings } from '#lib/settings/settings.svelte.ts';
@@ -37,6 +38,10 @@ class Editors {
 	 * null. Edits from rename, code actions and Search: Replace go into it (undoable, left dirty)
 	 * instead of to disk, so unsaved changes are never clobbered. */
 	textModel: (path: string) => Monaco.editor.ITextModel | null = () => null;
+	/** Files whose shared model has unsaved edits, wherever they are shown (an IDE group or an ADE tab). */
+	#dirty = new SvelteSet<string>();
+	/** Set by the Agents layout: the file of its active tab while it is in front, else null. */
+	adeFile: () => string | null = () => null;
 
 	get groups() {
 		return this.model.groups;
@@ -69,12 +74,23 @@ class Editors {
 	openPaths() {
 		return G.openPaths(this.model);
 	}
-	hasDirty() {
-		return this.model.groups.some((g) => g.tabs.some((t) => t.dirty));
+	/** The file that Save and auto save act on: the Agents layout's file tab when it is in front, else the active editor. */
+	get focusedFile(): string | null {
+		return this.adeFile() ?? this.active;
 	}
-	/** Distinct dirty files across groups. */
+	isDirty(path: string) {
+		return this.#dirty.has(path);
+	}
+	/** Dirty files, including ones open only in the Agents layout. */
+	dirtyPaths(): string[] {
+		return [...this.#dirty];
+	}
+	hasDirty() {
+		return this.#dirty.size > 0;
+	}
+	/** Distinct dirty files across groups and the Agents layout. */
 	dirtyCount() {
-		return new Set(this.model.groups.flatMap((g) => g.tabs.filter((t) => t.dirty).map((t) => t.path))).size;
+		return this.#dirty.size;
 	}
 
 	activateGroup(id: number) {
@@ -116,6 +132,8 @@ class Editors {
 		// workbench.editor.enablePreview: false opens every editor pinned.
 		if (!settings.get('workbench.editor.enablePreview')) preview = false;
 		G.openEditor(this.model, path, { preview, group });
+		// The file may be dirty in the Agents layout only.
+		if (this.#dirty.has(path)) G.setDirty(this.model, path, true);
 		if (reveal) this.pendingReveal = { ...reveal, path, group: this.model.activeGroup };
 	}
 
@@ -129,6 +147,8 @@ class Editors {
 	}
 
 	setDirty(path: string, dirty: boolean) {
+		if (dirty) this.#dirty.add(path);
+		else this.#dirty.delete(path);
 		G.setDirty(this.model, path, dirty);
 	}
 

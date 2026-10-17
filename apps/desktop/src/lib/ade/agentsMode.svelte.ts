@@ -33,15 +33,22 @@ export function openAgents(filter: AgentsFilter = 'all') {
 	if (slug) adeLayout.show(slug);
 }
 
-/** Open in Editor: back to the workbench, showing the active session's task page and its first changed worktree file. */
+/**
+ * Open in Editor: back to the workbench, showing the active session's task page and the file (or
+ * task diff) of the ADE's active tab, else the task's first changed worktree file.
+ */
 export function openEditor() {
+	const file = adeLayout.activeFile();
 	appMode.setMode('workbench');
 	const slug = appMode.activeSession;
 	const view = slug ? adeTasks.find(slug) : undefined;
-	if (!slug || !view) return;
-	const first = view.stat?.files.find((f) => f.status !== 'D');
-	editors.open(taskKey(slug), { preview: false });
-	if (first) editors.open(`${worktreeDir(slug)}/${first.path}`, { preview: true });
+	if (slug && view) editors.open(taskKey(slug), { preview: false });
+	if (file) {
+		editors.open(file, { preview: false });
+		return;
+	}
+	const first = slug && view ? view.stat?.files.find((f) => f.status !== 'D') : undefined;
+	if (slug && first) editors.open(`${worktreeDir(slug)}/${first.path}`, { preview: true });
 }
 
 export function toggleAgentsMode() {
@@ -84,7 +91,8 @@ export function newSession() {
 export function installAgentsMode(): () => void {
 	let lastActive = untrack(() => editors.active);
 	const stop = $effect.root(() => {
-		// Opening a file or diff (Quick Open, a review file) while in the Agents layout shows the workbench.
+		// Opening a file or diff in the IDE (Quick Open, Go to Definition) while in the Agents layout
+		// shows the workbench. Files opened from the Agents layout itself stay there as its tabs.
 		$effect(() => {
 			const active = editors.active;
 			untrack(() => {

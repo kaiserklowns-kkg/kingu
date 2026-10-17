@@ -12,6 +12,7 @@
 	import { quick } from './quick.svelte';
 	import { isDiffKey } from './scm';
 	import { workspace } from './workspace.svelte';
+	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 
 	onMount(() => {
 		const unregister = [
@@ -20,8 +21,11 @@
 				title: 'Save',
 				category: 'File',
 				key: 'cmd+s',
-				when: () => editors.active !== null,
-				run: () => editors.active && !isDiffKey(editors.active) && saveFile(editors.active)
+				when: () => editors.focusedFile !== null,
+				run: () => {
+					const path = editors.focusedFile;
+					if (path && !isDiffKey(path)) return saveFile(path);
+				}
 			}),
 			commands.register({
 				id: 'workbench.action.files.saveAll',
@@ -29,7 +33,7 @@
 				category: 'File',
 				key: 'cmd+alt+s',
 				when: () => editors.hasDirty(),
-				run: () => Promise.all([...new Set(editors.allTabs().filter((t) => t.dirty && !isDiffKey(t.path)).map((t) => t.path))].map(saveFile))
+				run: () => Promise.all(editors.dirtyPaths().filter((p) => !isDiffKey(p)).map(saveFile))
 			}),
 			// Monaco owns these keys (⌘F, F12…); the commands exist for the menus and the palette.
 			...Object.entries(EDITOR_ACTIONS).map(([id, title]) =>
@@ -59,9 +63,9 @@
 		};
 	});
 
-	// Dispose models of files no group has open.
+	// Dispose models of files no group has open (files open in the Agents layout share them too).
 	$effect(() => {
-		disposeClosed(editors.openPaths(), editors.order());
+		disposeClosed(new Set([...editors.openPaths(), ...adeLayout.openFiles()]), editors.order());
 	});
 </script>
 

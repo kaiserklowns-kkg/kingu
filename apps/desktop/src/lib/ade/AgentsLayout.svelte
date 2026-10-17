@@ -1,14 +1,19 @@
 <script lang="ts">
 	// Agents layout body, laid out like Orca: side bar (search, Tasks, Projects → worktrees) | the
 	// selected worktree's active tab (the agent session, the new-task composer for the folder
-	// itself, or a terminal in that worktree; Tasks shows the board) | right side bar (Files or
-	// Changes of that worktree). Terminals stay mounted while hidden so their shells keep running.
+	// itself, a terminal in that worktree, or a file / task diff opened from the right side bar;
+	// Tasks shows the board) | right side bar (Files or Changes of that worktree). Terminals stay
+	// mounted while hidden so their shells keep running; a file tab's editor mounts when shown.
 	import Icon from '#lib/workbench/Icon.svelte';
 	import Sash from '#lib/workbench/Sash.svelte';
 	import ScmView from '#lib/workbench/ScmView.svelte';
+	import DiffHost from '#lib/workbench/DiffHost.svelte';
+	import AdeEditor from './AdeEditor.svelte';
+	import { keyOfTabId } from './adeTabs.ts';
 	import { SIDEBAR_MIN } from '#lib/workbench/layout.svelte.ts';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
+	import { isDiffKey } from '#lib/workbench/scm.ts';
 	import Terminal from '#lib/terminal/Terminal.svelte';
 	import Composer from '#lib/agent/Composer.svelte';
 	import { taskTitleFromPrompt } from '#lib/agent/composerText.ts';
@@ -37,6 +42,7 @@
 	const key = $derived(adeLayout.key);
 	const slug = $derived(key && adeTasks.find(key) ? key : null);
 	const activeTab = $derived(adeLayout.activeTab(key));
+	const activeFile = $derived(keyOfTabId(activeTab));
 	/** The selected task runs its agent CLI in a terminal (the Orca way). */
 	const cli = $derived(slug ? cliOf(adeTasks.find(slug)?.meta.agent ?? '') : null);
 	const resume = $derived(cli ? cliResume(cli) : null);
@@ -60,7 +66,15 @@
 	// A removed task's terminals close with it.
 	$effect(() => {
 		if (!adeTasks.loaded) return;
-		for (const k of Object.keys(adeLayout.terminals)) if (k !== PRIMARY && !adeTasks.find(k)) adeLayout.drop(k);
+		for (const k of new Set([...Object.keys(adeLayout.terminals), ...Object.keys(adeLayout.files)])) if (k !== PRIMARY && !adeTasks.find(k)) adeLayout.drop(k);
+	});
+
+	// Another folder: the old folder's file tabs close, like the IDE's editors.
+	let lastRoot = untrack(() => workspace.root);
+	$effect(() => {
+		const root = workspace.root;
+		if (root !== lastRoot) untrack(() => adeLayout.closeAllFiles());
+		lastRoot = root;
 	});
 
 	async function start(text: string) {
@@ -94,6 +108,22 @@
 		<div class="relative min-h-0 flex-1">
 		{#if adeLayout.board}
 			<Board />
+		{:else if activeFile !== null}
+			{#if isDiffKey(activeFile)}
+				<div class="absolute inset-0">
+					<DiffHost active={activeFile} onfail={(k) => adeLayout.closeFile(key, k)} />
+				</div>
+			{:else}
+				{#key activeFile}
+					<div class="absolute inset-0">
+						<AdeEditor
+							path={activeFile}
+							onedit={() => adeLayout.pin(key, activeFile)}
+							onfail={(e) => (status.flash(`เปิดไฟล์ไม่ได้: ${e}`), adeLayout.closeFile(key, activeFile))}
+						/>
+					</div>
+				{/key}
+			{/if}
 		{:else if activeTab === 'main'}
 			{#if slug && cli}
 				{#if !cliSessions.has(slug)}

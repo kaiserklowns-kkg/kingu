@@ -97,10 +97,11 @@ export function viewState(group: number, path: string) {
 	return views.get(viewKey(group, path)) ?? null;
 }
 
-/** Disposes the models (and view states) of files no group has open any more. */
+/** Disposes the models (and view states) of files no group or ADE tab has open any more; their unsaved edits go with them. */
 export function disposeClosed(open: Set<string>, groups: number[]) {
 	for (const [path, entry] of entries) {
 		if (open.has(path)) continue;
+		editors.setDirty(path, false);
 		entry.model.dispose();
 		entries.delete(path);
 	}

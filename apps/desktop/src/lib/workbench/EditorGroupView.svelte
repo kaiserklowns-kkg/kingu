@@ -17,6 +17,7 @@
 	import Board from '#lib/ade/Board.svelte';
 	import TaskPage from '#lib/ade/TaskPage.svelte';
 	import { isAdeEditor, isBoardKey, slugOfTaskKey } from '#lib/ade/keys.ts';
+	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 
 	let { group }: { group: number } = $props();
 
@@ -42,7 +43,8 @@
 	let dropTarget = $state<number | null>(null);
 
 	function close(path: string, force: boolean) {
-		if (!editors.close(path, { force, group })) status.flash('มีการแก้ไขที่ยังไม่บันทึก: กด ⌘S ก่อน หรือกด ⌥ ค้างแล้วคลิก × เพื่อทิ้งการแก้ไข');
+		// A file also open in the Agents layout keeps its model (and unsaved edits) there.
+		if (!editors.close(path, { force: force || adeLayout.openFiles().includes(path), group })) status.flash('มีการแก้ไขที่ยังไม่บันทึก: กด ⌘S ก่อน หรือกด ⌥ ค้างแล้วคลิก × เพื่อทิ้งการแก้ไข');
 	}
 
 	function dragStart(e: DragEvent, path: string) {
@@ -164,7 +166,7 @@
 		</div>
 		{#if hasDiff}
 			<div class={['absolute inset-0', !diffActive && 'invisible']}>
-				<DiffHost {group} />
+				<DiffHost active={activePath} onfail={(key) => editors.close(key, { force: true, group })} reportLanguage={focused} />
 			</div>
 		{/if}
 		{#if settingsActive}

@@ -42,12 +42,12 @@ function applyIndent(model: Monaco.editor.ITextModel, i: Indent) {
 	else model.updateOptions({ tabSize: i.tabSize, insertSpaces: i.insertSpaces });
 }
 
-/** The model shown for the active tab (EditorHost creates models at `file:///<tab key>`). */
-const isActiveModel = (model: Monaco.editor.ITextModel) => editors.active !== null && model.uri.path === '/' + editors.active;
+/** The model shown for the focused file, an IDE tab or the Agents layout's (models live at `file:///<tab key>`). */
+const isActiveModel = (model: Monaco.editor.ITextModel) => editors.focusedFile !== null && model.uri.path === '/' + editors.focusedFile;
 
 function saveActive(model?: Monaco.editor.ITextModel) {
-	const tab = editors.tabs.find((t) => t.path === editors.active);
-	if (!tab?.dirty || (model && !isActiveModel(model))) return;
+	const path = editors.focusedFile;
+	if (!path || !editors.isDirty(path) || (model && !isActiveModel(model))) return;
 	void Promise.resolve(commands.run('workbench.action.files.save')).catch((e) => status.flash(`บันทึกอัตโนมัติไม่สำเร็จ: ${e}`));
 }
 

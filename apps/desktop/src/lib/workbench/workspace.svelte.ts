@@ -163,7 +163,7 @@ class Workspace {
 
 /** Reuses the editors' dirty state: asks before throwing away unsaved changes. */
 async function confirmDiscard(action: string): Promise<boolean> {
-	const dirty = [...new Set(editors.allTabs().filter((t) => t.dirty).map((t) => t.path))];
+	const dirty = editors.dirtyPaths();
 	if (!dirty.length) return true;
 	const names = dirty.map((p) => p.split('/').pop()).join(', ');
 	return ask(`มี ${dirty.length} ไฟล์ที่ยังไม่บันทึก: ${names}\n\n${action}จะทิ้งการแก้ไขเหล่านี้`, {
