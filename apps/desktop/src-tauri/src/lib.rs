@@ -462,6 +462,7 @@ pub fn run() {
       settings::settings_write,
       snap::snap_list,
       snap::snap_trust,
+      snap::snap_skill_plugins,
       team::team_sign_in,
       team::team_sign_out,
       team::team_status,

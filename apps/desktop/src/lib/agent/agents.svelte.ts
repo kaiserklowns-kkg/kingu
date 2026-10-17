@@ -14,7 +14,7 @@
  *   agents.onEvent(fn)        (slug, event) for every event of every run; returns an unsubscribe
  */
 
-import { mcpServers } from '#lib/ade/mcp.ts';
+import { mcpServers, skillPlugins } from '#lib/ade/mcp.ts';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { clientLog } from '#lib/client-log.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
@@ -64,6 +64,7 @@ class Agents {
 		this.runs[slug] = run;
 		const state = this.runs[slug]; // the reactive proxy
 		const mcp = mcpServers();
+		const plugins = await skillPlugins();
 		const onEvent = new Channel<AgentEvent>();
 		onEvent.onmessage = (ev) => {
 			applyEvent(state, ev);
@@ -77,6 +78,7 @@ class Agents {
 				permissionMode: settings.get<string>('kingu.agent.permissionMode'),
 				resume,
 				mcpServers: Object.keys(mcp).length ? mcp : null,
+				plugins: plugins.length ? plugins : null,
 				onEvent
 			});
 			clientLog('info', `agent run ${state.runId} started for ${slug}`);

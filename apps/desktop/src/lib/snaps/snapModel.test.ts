@@ -1,7 +1,7 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
 import { validate } from '../settings/registry';
-import { expandCommand, isActive, mcpServersOf, runnableTasks, snapSettingSchemas, taskArgv, type SnapInfo } from './snapModel';
+import { expandCommand, expandEnv, isActive, mcpServersOf, runnableTasks, skillSnapIds, snapSettingSchemas, taskArgv, touchesRepoSnaps, type SnapInfo } from './snapModel';
 
 function snap(over: Partial<SnapInfo> = {}): SnapInfo {
 	return {
@@ -23,6 +23,7 @@ function snap(over: Partial<SnapInfo> = {}): SnapInfo {
 			{ key: 'count', type: 'number', default: 3, description: '' }
 		],
 		mcp: [{ name: 'gopls', command: ['gopls', 'mcp'], env: { GOFLAGS: '-mod=mod' } }],
+		skills: [],
 		...over
 	};
 }
@@ -53,6 +54,11 @@ describe('taskArgv', () => {
 		expect(taskArgv(s, s.tasks[0], () => undefined)).toEqual(['go', 'test', '-race', './...']);
 		expect(taskArgv(s, s.tasks[0], (id) => (id === 'snap.go.testFlags' ? '' : undefined))).toEqual(['go', 'test', './...']);
 	});
+	test('an empty program empties the argv instead of promoting the next argument', () => {
+		const s = snap({ tasks: [{ id: 't', title: 'T', command: ['${setting:testFlags}', 'rm', '-rf'] }] });
+		expect(taskArgv(s, s.tasks[0], () => '')).toEqual([]);
+		expect(taskArgv(s, s.tasks[0], () => 'echo')).toEqual(['echo', 'rm', '-rf']);
+	});
 });
 
 describe('contributions', () => {
@@ -77,5 +83,52 @@ describe('contributions', () => {
 		expect(schemas[3].scope).toBeUndefined();
 		for (const s of schemas) expect(validate(s, s.default)).toEqual(s.default);
 		expect(schemas[2]).toMatchObject({ type: 'number', default: 3 });
+	});
+});
+
+describe('MCP settings', () => {
+	const go = snap({
+		mcp: [{ name: 'gopls', command: ['gopls', '${setting:testFlags}', '--count=${setting:count}'], env: { FLAGS: '${setting:testFlags}', MODE: 'v=${setting:verbose}', PLAIN: 'x' } }]
+	});
+
+	test('env follows the command rules: whole value or dropped when empty, else text replace, one pass', () => {
+		expect(expandEnv({ A: '${setting:a}', B: 'p=${setting:a}', C: '${setting:none}', D: '' }, { a: '-race -v' })).toEqual({ A: '-race -v', B: 'p=-race -v', D: '' });
+		expect(expandEnv({ A: '${setting:a}' }, { a: '${setting:b}', b: 'no' })).toEqual({ A: '${setting:b}' });
+	});
+
+	test('servers get the settings through the settings service, defaults otherwise', () => {
+		expect(mcpServersOf([go])).toEqual({ 'go-gopls': { command: 'gopls', args: ['-race', '--count=3'], env: { FLAGS: '-race', MODE: 'v=false', PLAIN: 'x' } } });
+		const values: Record<string, unknown> = { 'snap.go.testFlags': '', 'snap.go.verbose': true };
+		expect(mcpServersOf([go], (id) => values[id])).toEqual({ 'go-gopls': { command: 'gopls', args: ['--count=3'], env: { MODE: 'v=true', PLAIN: 'x' } } });
+	});
+
+	test('a server whose program expands to nothing is left out', () => {
+		const s = snap({ mcp: [{ name: 'x', command: ['${setting:testFlags}', 'serve'], env: {} }] });
+		expect(mcpServersOf([s], () => '')).toEqual({});
+		expect(mcpServersOf([s], () => 'my-server')).toEqual({ 'go-x': { command: 'my-server', args: ['serve'], env: {} } });
+	});
+});
+
+describe('skills and reloads', () => {
+	const skill = { name: 'go-style', path: 'skills/go-style', description: '' };
+
+	test('only active snaps with skills hand them to agents', () => {
+		const list = [
+			snap({ skills: [skill] }),
+			snap({ id: 'plain' }),
+			snap({ id: 'lint', source: 'repo', trusted: false, skills: [skill] }),
+			snap({ id: 'old', overridden: true, skills: [skill] }),
+			snap({ id: 'bad', error: 'x', skills: [skill] })
+		];
+		expect(skillSnapIds(list)).toEqual(['go']);
+	});
+
+	test('reloads for changes under .kingu/snaps or a rescan, not worktrees or other .kingu files', () => {
+		expect(touchesRepoSnaps(['.kingu/snaps/go/snap.toml'])).toBe(true);
+		expect(touchesRepoSnaps(['src/a.ts', '.kingu/snaps/go/skills/go-style/SKILL.md'])).toBe(true);
+		expect(touchesRepoSnaps(['.kingu/snaps'])).toBe(true);
+		expect(touchesRepoSnaps(['.kingu'])).toBe(true);
+		expect(touchesRepoSnaps([''])).toBe(true);
+		expect(touchesRepoSnaps(['.kingu/worktrees/fix/.kingu/snaps/go/snap.toml', '.kingu/settings.json', '.kingu/snapshots', 'src/.kingu/snaps/x'])).toBe(false);
 	});
 });

@@ -25,6 +25,7 @@ const PERMISSION_MODES: &[&str] = &["default", "acceptEdits", "plan"];
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn agent_start(
+  app: tauri::AppHandle,
   ws: State<'_, Workspace>,
   agents: State<'_, Arc<AgentHost>>,
   slug: String,
@@ -33,6 +34,7 @@ pub async fn agent_start(
   permission_mode: Option<String>,
   resume: Option<String>,
   mcp_servers: Option<std::collections::BTreeMap<String, host::McpServer>>,
+  plugins: Option<Vec<String>>,
   on_event: Channel<AgentEvent>,
 ) -> Result<u32, String> {
   worktree::validate_slug(&slug)?;
@@ -52,13 +54,17 @@ pub async fn agent_start(
   if let Some(servers) = &mcp_servers {
     host::validate_mcp_servers(servers)?;
   }
+  let plugins = plugins.filter(|p| !p.is_empty());
+  if let Some(dirs) = &plugins {
+    crate::snap::validate_plugin_dirs(&crate::snap::plugins_dir(&app)?, dirs)?;
+  }
   let cwd = worktree::worktree_path(&ws.root()?, &slug);
   if !cwd.is_dir() {
     return Err(format!("{slug}: no worktree, create it first"));
   }
   let cwd = cwd.to_str().ok_or("worktree path is not valid UTF-8")?.to_owned();
   let mcp_servers = mcp_servers.filter(|m| !m.is_empty());
-  let req = host::StartRequest { cwd, prompt, model: model.filter(|m| !m.trim().is_empty()), permission_mode, resume, mcp_servers };
+  let req = host::StartRequest { cwd, prompt, model: model.filter(|m| !m.trim().is_empty()), permission_mode, resume, mcp_servers, plugins };
   let resuming = req.resume.is_some();
   let agents = agents.inner().clone();
   // Spawning the sidecar and its first answer can take a moment: keep it off the main thread.

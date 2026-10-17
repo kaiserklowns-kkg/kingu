@@ -134,6 +134,9 @@ pub struct StartRequest {
   /// MCP servers for the run (from trusted Snaps); omitted when there are none.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub mcp_servers: Option<std::collections::BTreeMap<String, McpServer>>,
+  /// Skill plugin folders of active Snaps (`snap::validate_plugin_dirs`); omitted when none.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub plugins: Option<Vec<String>>,
 }
 
 /// A stdio MCP server handed to an agent run (the SDK's `mcpServers` entry without `type`).
@@ -571,6 +574,14 @@ exit 3"#
     let mut empty = BTreeMap::new();
     empty.insert("a".to_string(), McpServer { command: " ".into(), ..Default::default() });
     assert!(validate_mcp_servers(&empty).is_err());
+  }
+
+  #[test]
+  fn plugins_are_sent_only_when_present() {
+    let wire = serde_json::to_value(StartRequest { cwd: "/w".into(), prompt: "x".into(), plugins: Some(vec!["/c/snap-plugins/go-0123456789abcdef".into()]), ..Default::default() }).unwrap();
+    assert_eq!(wire["plugins"], json!(["/c/snap-plugins/go-0123456789abcdef"]));
+    let wire = serde_json::to_value(StartRequest { cwd: "/w".into(), prompt: "x".into(), ..Default::default() }).unwrap();
+    assert!(wire.get("plugins").is_none() && wire.get("mcpServers").is_none());
   }
 
   #[test]
