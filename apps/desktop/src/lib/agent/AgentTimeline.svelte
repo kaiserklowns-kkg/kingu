@@ -42,7 +42,7 @@
 	};
 </script>
 
-<div bind:this={timeline} class={['min-h-0 space-y-1 overflow-y-auto text-xs', klass]} aria-live="polite">
+<div bind:this={timeline} class={['kg-selectable min-h-0 space-y-1 overflow-y-auto text-xs', klass]} aria-live="polite">
 	{#if run && (run.items.length || run.draft.text || run.draft.thinking)}
 		{#each run.items as ev, i (i)}
 			{#if ev.kind === 'tool_use'}

@@ -6,6 +6,11 @@
 	import { layout } from './layout.svelte';
 	import { quick } from './quick.svelte';
 	import { status } from './status.svelte';
+	import { appMode } from './mode.svelte';
+	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
+	import { openAgents, pickSession } from '#lib/ade/agentsMode.svelte.ts';
+	import { runtime } from '#lib/ade/runtime.svelte.ts';
+	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 
 	const languageNames: Record<string, string> = {
 		typescript: 'TypeScript',
@@ -21,16 +26,24 @@
 	};
 
 	const languageStatus = $derived(lsp.statusFor(editors.language));
+
+	// One status bar for the IDE and the Agents layout: the branch of what you are looking at (the
+	// selected worktree in Agents), problems, agent activity and cost in both; editor items in the IDE.
+	const branch = $derived(appMode.isAgents && adeLayout.key ? `kingu/${adeLayout.key}` : status.branch);
+	const counts = $derived(adeTasks.counts);
+	const cost = $derived(adeTasks.views.reduce((sum, v) => sum + (runtime.run(v.meta.slug)?.result?.total_cost_usd ?? v.meta.last_run?.cost_usd ?? 0), 0));
+	const editorItems = $derived(!appMode.isAgents && editors.active);
+	const ITEM = 'flex h-full items-center gap-1 px-2 hover:bg-(--vscode-toolbar-hoverBackground)';
 </script>
 
 <!-- 22px, items 22px line-height (VS Code statusbarPart). -->
 <footer
 	class="flex h-(--kg-statusbar-height) shrink-0 items-center border-t border-(--vscode-statusBar-border) bg-(--vscode-statusBar-background) text-xs leading-(--kg-statusbar-height) text-(--vscode-statusBar-foreground)"
 >
-	{#if status.branch}
-		<span class="flex h-full items-center gap-1 px-2"><Icon name="branch" size={14} />{status.branch}</span>
+	{#if branch}
+		<span class="flex h-full items-center gap-1 px-2" title={appMode.isAgents && adeLayout.key ? 'branch ของ worktree ที่เลือก' : 'branch ปัจจุบัน'}><Icon name="branch" size={14} />{branch}</span>
 	{/if}
-	<button class="flex h-full items-center gap-1 px-2 hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => layout.showPanel('problems')}>
+	<button class={ITEM} onclick={() => (appMode.setMode('workbench'), layout.showPanel('problems'))}>
 		<Icon name="error" size={14} />{lsp.counts.errors} <Icon name="warning" size={14} />{lsp.counts.warnings}
 	</button>
 	{#if lsp.progress && lsp.progress !== languageStatus?.text}
@@ -39,17 +52,27 @@
 			<span class="truncate">{lsp.progress}</span>
 		</button>
 	{/if}
+	<!-- Agents: in progress / waiting for you; opens the Agents layout (or the waiting session). -->
+	<button
+		class={ITEM}
+		title={counts.needsInput ? 'เลือก session ที่รอคุณ' : 'Agents (⇧⌘A)'}
+		onclick={() => (counts.needsInput ? pickSession() : openAgents())}
+	>
+		<Icon name="agent" size={14} />{counts.inProgress} กำลังทำ
+		{#if counts.needsInput}<span class="text-(--vscode-editorWarning-foreground)">· {counts.needsInput} รอคุณ</span>{/if}
+	</button>
+	{#if cost > 0}<span class="px-2 tabular-nums" title="ค่าใช้จ่าย agent ในโฟลเดอร์นี้">${cost.toFixed(2)}</span>{/if}
 	{#if status.message}<span class="truncate px-2">{status.message}</span>{/if}
 	<div class="flex-1"></div>
 	<TeamStatus />
-	{#if editors.active && languageStatus}
+	{#if editorItems && languageStatus}
 		<button
 			class={['h-full max-w-80 truncate px-2 hover:bg-(--vscode-toolbar-hoverBackground)', languageStatus.state === 'not-installed' || languageStatus.state === 'error' ? 'text-(--vscode-editorWarning-foreground)' : '']}
 			title={languageStatus.tooltip}
 			onclick={() => layout.showPanel('output')}>{languageStatus.text}</button
 		>
 	{/if}
-	{#if editors.active}
+	{#if editorItems}
 		<button class="h-full px-2 hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => quick.show(':')}>Ln {editors.cursor.line}, Col {editors.cursor.column}</button>
 		<span class="px-2">{editors.indent}</span>
 		<span class="px-2">UTF-8</span>

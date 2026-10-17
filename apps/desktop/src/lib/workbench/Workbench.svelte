@@ -36,8 +36,6 @@
 	import { gridTemplateAreas, gridTemplateColumns, gridTemplateRows, workbenchGrid, type PanelAlignment, type PanelLocation, type SideBarLocation } from './workbenchGrid';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import AgentsLayout from '#lib/ade/AgentsLayout.svelte';
-	import AgentsTitleBar from '#lib/ade/AgentsTitleBar.svelte';
-	import AdeStatusBar from '#lib/ade/AdeStatusBar.svelte';
 	import { installAgentsMode } from '#lib/ade/agentsMode.svelte.ts';
 
 	let middle: HTMLDivElement | undefined = $state();
@@ -99,7 +97,13 @@
 				key: 'cmd+b',
 				run: () => (appMode.isAgents ? (appMode.sessionsVisible = !appMode.sessionsVisible) : (layout.sidebarVisible = !layout.sidebarVisible))
 			}),
-			commands.register({ id: 'workbench.action.toggleAuxiliaryBar', title: 'Toggle Agent (Secondary Side Bar)', category: 'View', key: 'cmd+alt+b', run: () => (layout.auxVisible = !layout.auxVisible) }),
+			commands.register({
+				id: 'workbench.action.toggleAuxiliaryBar',
+				title: 'Toggle Secondary Side Bar',
+				category: 'View',
+				key: 'cmd+alt+b',
+				run: () => (appMode.isAgents ? (appMode.panelVisible = !appMode.panelVisible) : (layout.auxVisible = !layout.auxVisible))
+			}),
 			commands.register({
 				id: 'workbench.action.togglePanel',
 				title: 'Toggle Panel Visibility',
@@ -239,11 +243,8 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 <svelte:window onfocus={() => (focused = true)} onblur={() => (focused = false)} />
 
 <div class="flex h-screen flex-col overflow-hidden">
-	{#if appMode.isAgents}
-		<AgentsTitleBar {focused} />
-	{:else}
-		<TitleBar workspaceName={workspaceName || 'Kingu'} {focused} />
-	{/if}
+	<!-- One title bar and one status bar for the IDE and the Agents layout. -->
+	<TitleBar workspaceName={workspaceName || 'Kingu'} {focused} />
 
 	<div bind:this={middle} class={['workbench-body grid min-h-0 flex-1', appMode.isAgents && 'hidden']}
 		style:grid-template-areas={gridTemplateAreas(grid)}
@@ -316,7 +317,6 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 	<!-- Kept mounted (hidden in the IDE) so the ADE's worktree terminals keep running. -->
 	<div class={['contents', !appMode.isAgents && '[&>*]:hidden']}><AgentsLayout /></div>
 
-	<div class={['contents', appMode.isAgents && '[&>*]:hidden']}><StatusBar /></div>
-	{#if appMode.isAgents}<AdeStatusBar />{/if}
+	<StatusBar />
 	<QuickInput />
 </div>

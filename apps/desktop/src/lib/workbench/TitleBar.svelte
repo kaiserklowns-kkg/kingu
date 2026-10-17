@@ -2,7 +2,8 @@
 	// Workbench (IDE) title bar, VS Code's `window.titleBarStyle: custom` (titlebarPart.ts):
 	// 35px (30px without the command center), left 20% / center (fit-content, max 60%) / right 20%.
 	// Left: the macOS traffic-light inset, or the Kingu mark and the in-window menu bar.
-	// Center: the command center and Open in Agents next to it. Right: layout controls, and Accounts/Manage when
+	// Center: the command center and Open in Agents / Open in Editor next to it (the same
+	// title bar serves the IDE and the Agents layout). Right: layout controls, and Accounts/Manage when
 	// the activity bar is not showing them. Any non-interactive part drags the window.
 	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
@@ -33,7 +34,8 @@
 	import type { MenuNode } from './menus';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { team } from '#lib/team/team.svelte.ts';
-	import { openAgents } from '#lib/ade/agentsMode.svelte.ts';
+	import { toggleAgentsMode } from '#lib/ade/agentsMode.svelte.ts';
+	import { appMode } from './mode.svelte';
 
 	let { workspaceName, focused }: { workspaceName: string; focused: boolean } = $props();
 
@@ -96,9 +98,9 @@
 	const shown = (id: string) => toolbar.some((t) => t.id === id) && !hidden.has(id);
 
 	const TOGGLES: Record<Exclude<LayoutControlItem, 'layoutMenu'>, { label: string; icon: IconName; command: string; on: () => boolean }> = {
-		toggleSidebar: { label: 'Toggle Primary Side Bar', icon: 'sidebarLeft', command: 'workbench.action.toggleSidebarVisibility', on: () => layout.sidebarVisible },
+		toggleSidebar: { label: 'Toggle Primary Side Bar', icon: 'sidebarLeft', command: 'workbench.action.toggleSidebarVisibility', on: () => (appMode.isAgents ? appMode.sessionsVisible : layout.sidebarVisible) },
 		togglePanel: { label: 'Toggle Panel', icon: 'panelBottom', command: 'workbench.action.togglePanel', on: () => layout.panelVisible },
-		toggleAuxiliaryBar: { label: 'Toggle Agent (Secondary Side Bar)', icon: 'sidebarRight', command: 'workbench.action.toggleAuxiliaryBar', on: () => layout.auxVisible }
+		toggleAuxiliaryBar: { label: 'Toggle Secondary Side Bar', icon: 'sidebarRight', command: 'workbench.action.toggleAuxiliaryBar', on: () => (appMode.isAgents ? appMode.panelVisible : layout.auxVisible) }
 	};
 	// With the side bar on the right, VS Code swaps the side bar icons.
 	const sidebarRight = $derived(settings.get<string>('workbench.sideBar.location') === 'right');
@@ -203,15 +205,17 @@
 		<div class="titlebar-center mx-2.5 flex h-full max-w-[60%] min-w-0 flex-[0_1_auto] items-center justify-center gap-1.5">
 			{#if commandCenter}<CommandCenter {label} folderName={workspace.root ? workspaceName : null} />{/if}
 			{#if openInAgents}
-				<!-- VS Code's TitleBarAdjacentCenter "Open in Agents", right after the command center: the label slides out after a 0.2s hover. -->
+				<!-- VS Code's TitleBarAdjacentCenter, right after the command center: Open in Agents in the
+				     IDE, Open in Editor in the Agents layout (same place, ⇧⌘A). The label slides out after a 0.2s hover. -->
+				{@const toAgents = !appMode.isAgents}
 				<button
 					class="group flex h-[22px] max-w-[22px] shrink-0 items-center gap-1 overflow-hidden rounded-[5px] px-[3px] text-xs whitespace-nowrap transition-[max-width] delay-0 duration-200 hover:max-w-[200px] hover:bg-(--vscode-toolbar-hoverBackground) hover:delay-200"
-					title="Open in Agents{hint('workbench.action.toggleAgentsMode')}"
-					aria-label="Open in Agents"
-					onclick={() => openAgents()}
+					title="{toAgents ? 'Open in Agents' : 'Open in Editor'}{hint('workbench.action.toggleAgentsMode')}"
+					aria-label={toAgents ? 'Open in Agents' : 'Open in Editor'}
+					onclick={() => toggleAgentsMode()}
 				>
-					<span class="shrink-0 grayscale group-hover:grayscale-0 group-hover:text-(--vscode-textLink-foreground)"><Icon name="agent" size={16} /></span>
-					<span class="pr-1">Open in Agents</span>
+					<span class="shrink-0 grayscale group-hover:grayscale-0 group-hover:text-(--vscode-textLink-foreground)"><Icon name={toAgents ? 'agent' : 'code'} size={16} /></span>
+					<span class="pr-1">{toAgents ? 'Open in Agents' : 'Open in Editor'}</span>
 				</button>
 			{/if}
 		</div>
@@ -219,7 +223,8 @@
 
 	<div bind:this={right} class="titlebar-right flex h-full min-w-0 flex-[1_1_20%] items-center justify-end gap-1 overflow-hidden pr-1.5" role="toolbar" aria-label="Title actions">
 		{#each layoutItems as id (id)}
-			{#if shown(id)}
+			<!-- The Agents layout has no bottom panel. -->
+			{#if shown(id) && !(appMode.isAgents && (id === 'togglePanel' || id === 'layoutMenu'))}
 				{#if id === 'layoutMenu'}
 					<button class={ACTION} aria-label="Configure Layout" title="Configure Layout" aria-haspopup="menu" onclick={(e) => openBelow('layout', e, true)}>
 						<Icon name="layout" size={16} />

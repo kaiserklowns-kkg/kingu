@@ -6,7 +6,6 @@
 	import { commands } from '#lib/workbench/commands.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
-	import { appMode } from '#lib/workbench/mode.svelte.ts';
 	import { adeLayout, PRIMARY } from './adeLayout.svelte';
 	import { matchesQuery } from './adeTabs';
 	import { aggregateStats, STATUS_LABEL, timeAgo, type TaskView } from './model';
@@ -121,7 +120,5 @@
 
 	<div class="flex h-9 shrink-0 items-center gap-0.5 border-t border-(--vscode-sideBar-border) px-2">
 		<button class={HEADER_ACTION} aria-label="Settings" title="Settings" onclick={() => commands.run('workbench.action.openSettings')}><Icon name="settings" size={16} /></button>
-		<span class="flex-1"></span>
-		<button class={HEADER_ACTION} aria-label="Open in Editor" title="กลับไปที่ Editor (⇧⌘A)" onclick={() => appMode.setMode('workbench')}><Icon name="code" size={16} /></button>
 	</div>
 </div>

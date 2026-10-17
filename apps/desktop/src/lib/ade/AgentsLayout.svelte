@@ -15,13 +15,19 @@
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import AdeSidebar from './AdeSidebar.svelte';
+	import AdeTabBar from './AdeTabBar.svelte';
+	import type { IconName } from '#lib/workbench/Icon.svelte';
 	import Board from './Board.svelte';
 	import TaskPage from './TaskPage.svelte';
 	import WorktreeFiles from './WorktreeFiles.svelte';
-	import { adeLayout, PRIMARY } from './adeLayout.svelte';
+	import { adeLayout, PRIMARY, type RightTab } from './adeLayout.svelte';
 	import { adeTasks } from './tasks.svelte';
 
 	let body: HTMLDivElement | undefined = $state();
+	const RIGHT_TABS: { id: RightTab; label: string; icon: IconName }[] = [
+		{ id: 'files', label: 'Files', icon: 'files' },
+		{ id: 'changes', label: 'Changes', icon: 'git' }
+	];
 	const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 	const maxSide = () => (body?.clientWidth ?? 1200) * 0.45;
 	const key = $derived(adeLayout.key);
@@ -74,7 +80,9 @@
 		/>
 	{/if}
 
-	<main class="relative min-w-0 flex-1 overflow-hidden">
+	<main class="flex min-w-0 flex-1 flex-col overflow-hidden">
+		<AdeTabBar />
+		<div class="relative min-h-0 flex-1">
 		{#if adeLayout.board}
 			<Board />
 		{:else if activeTab === 'main'}
@@ -119,6 +127,7 @@
 				</div>
 			{/each}
 		{/each}
+		</div>
 	</main>
 
 	{#if appMode.panelVisible}
@@ -128,6 +137,26 @@
 			onReset={() => (appMode.panelWidth = 360)}
 		/>
 		<aside aria-label={adeLayout.rightTab === 'files' ? 'Files' : 'Changes'} class="flex shrink-0 flex-col overflow-hidden border-l border-(--vscode-sideBar-border) bg-(--vscode-sideBar-background)" style:width="{appMode.panelWidth}px">
+			<!-- Orca's right side bar tabs. -->
+			<div class="flex h-[35px] shrink-0 items-stretch gap-0.5 border-b border-(--vscode-sideBar-border) px-1.5" role="tablist" aria-label="Right Side Bar">
+				{#each RIGHT_TABS as t (t.id)}
+					{@const on = adeLayout.rightTab === t.id}
+					<button
+						role="tab"
+						aria-selected={on}
+						class={['relative flex items-center gap-1.5 px-2 text-[13px]', on ? 'text-(--vscode-foreground)' : 'text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)']}
+						title={t.label}
+						onclick={() => (adeLayout.rightTab = t.id)}
+					>
+						<Icon name={t.icon} size={15} />{t.label}
+						{#if on}<span class="absolute inset-x-1 bottom-0 h-0.5 rounded-full bg-(--vscode-focusBorder)"></span>{/if}
+					</button>
+				{/each}
+				<span class="flex-1"></span>
+				<button class="my-auto grid size-6 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="ซ่อน side bar ขวา" title="ซ่อน (⌥⌘B)" onclick={() => (appMode.panelVisible = false)}>
+					<Icon name="close" size={14} />
+				</button>
+			</div>
 			{#if adeLayout.rightTab === 'files'}
 				{#if workspace.root}{#key key}<WorktreeFiles slug={slug ?? ''} />{/key}{/if}
 			{:else if slug}

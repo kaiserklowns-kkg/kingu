@@ -14,6 +14,7 @@
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 	import { openAgents } from '#lib/ade/agentsMode.svelte.ts';
+	import { appMode } from './mode.svelte';
 
 	let { label, folderName }: { label: string; folderName: string | null } = $props();
 
@@ -114,10 +115,11 @@
 
 <div class="command-center flex h-full min-w-0 items-center gap-1" role="toolbar" aria-label="Command Center">
 	{#if navigationControl}
-		<button aria-label="Go Back" title="Go Back{hint('workbench.action.navigateBack')}" disabled={!navigation.canGoBack} class={NAV} onclick={() => navigation.back()}>
+		<!-- Agents mode: back/forward walk the worktrees you looked at instead of editor locations. -->
+		<button aria-label="Go Back" title="Go Back{hint('workbench.action.navigateBack')}" disabled={appMode.isAgents ? !appMode.canGoBack : !navigation.canGoBack} class={NAV} onclick={() => (appMode.isAgents ? appMode.back() : navigation.back())}>
 			<Icon name="arrowLeft" size={16} />
 		</button>
-		<button aria-label="Go Forward" title="Go Forward{hint('workbench.action.navigateForward')}" disabled={!navigation.canGoForward} class={NAV} onclick={() => navigation.forward()}>
+		<button aria-label="Go Forward" title="Go Forward{hint('workbench.action.navigateForward')}" disabled={appMode.isAgents ? !appMode.canGoForward : !navigation.canGoForward} class={NAV} onclick={() => (appMode.isAgents ? appMode.forward() : navigation.forward())}>
 			<Icon name="arrowRight" size={16} />
 		</button>
 	{/if}

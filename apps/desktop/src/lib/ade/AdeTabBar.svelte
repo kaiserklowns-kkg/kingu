@@ -1,0 +1,102 @@
+<script lang="ts">
+	// Tab row of the Agents layout's center (Orca's worktree tabs): the selected worktree's agent
+	// session (or the new-task composer for the folder itself), its terminals, and "+" for a new
+	// terminal in that worktree; "N รอคุณ" at the end. Tasks (the board) shows as its own tab.
+	import Icon from '#lib/workbench/Icon.svelte';
+	import { workspace } from '#lib/workbench/workspace.svelte.ts';
+	import { adeLayout } from './adeLayout.svelte';
+	import { pickSession } from './agentsMode.svelte';
+	import { STATUS_LABEL } from './model';
+	import { adeTasks } from './tasks.svelte';
+	import { STATUS_DOT } from './ui';
+	import { sessionsAttentionLabel } from '#lib/workbench/titlebar.ts';
+
+	const key = $derived(adeLayout.key);
+	const view = $derived(key ? adeTasks.find(key) : undefined);
+	const tabs = $derived(adeLayout.tabs(key));
+	const activeTab = $derived(adeLayout.activeTab(key));
+	const attention = $derived(sessionsAttentionLabel(adeTasks.counts.needsInput));
+
+	const TAB = 'group flex max-w-60 min-w-0 shrink-0 cursor-default items-center gap-1.5 border-r border-(--vscode-editorGroupHeader-tabsBorder,var(--vscode-widget-border)) pr-1.5 pl-3 text-[13px]';
+	const ACTIVE = 'bg-(--vscode-tab-activeBackground) text-(--vscode-tab-activeForeground)';
+	const INACTIVE = 'text-(--vscode-tab-inactiveForeground) hover:bg-(--vscode-tab-hoverBackground)';
+</script>
+
+<div class="flex h-[35px] shrink-0 items-stretch border-b border-(--vscode-editorGroupHeader-tabsBorder,var(--vscode-widget-border)) bg-(--vscode-editorGroupHeader-tabsBackground)">
+	{#if adeLayout.board}
+		<div class={[TAB, ACTIVE]}>
+			<Icon name="tasks" size={14} /> Tasks
+			<button class="grid size-5 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="ปิด Tasks" onclick={() => (adeLayout.board = false)}><Icon name="close" size={13} /></button>
+		</div>
+	{:else}
+		<div class="flex min-w-0 items-stretch overflow-x-auto" role="tablist" aria-label="แท็บของ worktree">
+			{#each tabs as t (t.id)}
+				{@const active = t.id === activeTab}
+				<div
+					role="tab"
+					tabindex="0"
+					aria-selected={active}
+					class={[TAB, active ? ACTIVE : INACTIVE]}
+					onclick={() => adeLayout.select(key, t.id)}
+					onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), adeLayout.select(key, t.id))}
+					onauxclick={(e) => e.button === 1 && t.kind === 'terminal' && adeLayout.closeTerminal(key, t.id)}
+				>
+					{#if t.kind === 'agent' && view}
+						<span class={['size-2 shrink-0 rounded-full', STATUS_DOT[view.status]]} title={STATUS_LABEL[view.status]}></span>
+						<span class="truncate" title={view.meta.title}>{view.meta.title}</span>
+					{:else}
+						<Icon name={t.kind === 'compose' ? 'agent' : 'terminal'} size={14} /><span class="truncate">{t.label}</span>
+					{/if}
+					{#if t.kind === 'terminal'}
+						<button
+							class={['grid size-5 shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)', !active && 'invisible group-hover:visible']}
+							aria-label="ปิด {t.label}"
+							title="ปิด"
+							onclick={(e) => (e.stopPropagation(), adeLayout.closeTerminal(key, t.id))}><Icon name="close" size={13} /></button
+						>
+					{:else}
+						<span class="w-1"></span>
+					{/if}
+				</div>
+			{/each}
+		</div>
+		<div class="flex items-center px-1">
+			<button
+				class="grid size-6 place-items-center rounded-md enabled:hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-35"
+				aria-label="Terminal ใหม่ใน worktree นี้"
+				title="Terminal ใหม่ใน worktree นี้"
+				disabled={!workspace.root}
+				onclick={() => adeLayout.newTerminal(key)}
+			>
+				<Icon name="plus" size={16} />
+			</button>
+		</div>
+	{/if}
+	<span class="flex-1"></span>
+	{#if attention}
+		<button
+			class="needs-input my-auto mr-2 flex h-[22px] items-center gap-1.5 rounded-md px-2 text-xs text-(--vscode-editorWarning-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
+			title="{attention} — เลือก session"
+			onclick={pickSession}
+		>
+			<span class="size-2 rounded-full bg-(--vscode-editorWarning-foreground)"></span>{attention}
+		</button>
+	{/if}
+</div>
+
+<style>
+	/* "N sessions require input": a gentle blink, off when the user asks for less motion. */
+	.needs-input {
+		animation: kg-attention 2s ease-in-out infinite;
+	}
+	@keyframes kg-attention {
+		50% {
+			opacity: 0.55;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.needs-input {
+			animation: none;
+		}
+	}
+</style>

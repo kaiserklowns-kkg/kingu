@@ -11,8 +11,18 @@ body {
 	color: var(--vscode-foreground);
 	font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', 'IBM Plex Sans Thai', 'Thonburi', sans-serif;
 	font-size: 13px;
+	/* WKWebView (macOS) still needs the prefix: without it ⌘A selects the whole workbench. */
+	-webkit-user-select: none;
 	user-select: none;
 	-webkit-font-smoothing: antialiased;
+}
+
+/* Text you may want to copy stays selectable: inputs and agent output (`.kg-selectable`). */
+input,
+textarea,
+.kg-selectable {
+	-webkit-user-select: text;
+	user-select: text;
 }
 
 :focus-visible {
