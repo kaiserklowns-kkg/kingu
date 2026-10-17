@@ -1,1 +1,21 @@
 @import 'tailwindcss';
+@import '../lib/workbench/theme.css';
+
+/* VS Code's UI font stack and 13px base size; Thai falls back to IBM Plex Sans Thai if installed. */
+html,
+body {
+	margin: 0;
+	height: 100%;
+	overflow: hidden;
+	background: var(--vscode-editor-background);
+	color: var(--vscode-foreground);
+	font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', 'IBM Plex Sans Thai', 'Thonburi', sans-serif;
+	font-size: 13px;
+	user-select: none;
+	-webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}

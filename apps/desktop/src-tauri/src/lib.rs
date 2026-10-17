@@ -1,4 +1,5 @@
 mod agent;
+mod fs;
 mod pty;
 
 use std::path::{Path, PathBuf};
@@ -69,6 +70,45 @@ fn read_workspace_file(ws: State<'_, Workspace>, rel: String) -> Result<String, 
     return Err(format!("{rel}: larger than {MAX_OPEN_BYTES} bytes"));
   }
   std::fs::read_to_string(&path).map_err(|e| format!("{rel}: {e}"))
+}
+
+#[tauri::command]
+fn fs_list_dir(ws: State<'_, Workspace>, rel: String) -> Result<Vec<fs::DirEntry>, String> {
+  let dir = if rel.is_empty() { ws.root.clone() } else { ws.resolve(&rel)? };
+  fs::list_dir(&ws.root, &dir)
+}
+
+const QUICK_OPEN_LIMIT: usize = 20_000;
+
+#[tauri::command]
+async fn fs_list_files(ws: State<'_, Workspace>) -> Result<Vec<String>, String> {
+  let root = ws.root.clone();
+  tauri::async_runtime::spawn_blocking(move || fs::list_files(&root, QUICK_OPEN_LIMIT))
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Saves over an existing workspace file (the prototype has no "new file" yet).
+#[tauri::command]
+fn fs_write_file(ws: State<'_, Workspace>, rel: String, content: String) -> Result<(), String> {
+  let path = ws.resolve(&rel)?;
+  if !path.is_file() {
+    return Err(format!("{rel}: not a file"));
+  }
+  std::fs::write(&path, content).map_err(|e| format!("{rel}: {e}"))?;
+  log::info!("saved {rel}");
+  Ok(())
+}
+
+/// Current branch for the status bar; `None` outside a git repository.
+#[tauri::command]
+fn git_branch(ws: State<'_, Workspace>) -> Option<String> {
+  let out = std::process::Command::new("git")
+    .args(["rev-parse", "--abbrev-ref", "HEAD"])
+    .current_dir(&ws.root)
+    .output()
+    .ok()?;
+  out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 #[tauri::command]
@@ -157,6 +197,10 @@ pub fn run() {
       app_info,
       client_log,
       read_workspace_file,
+      fs_list_dir,
+      fs_list_files,
+      fs_write_file,
+      git_branch,
       pty_spawn,
       pty::pty_write,
       pty::pty_resize,

@@ -9,10 +9,12 @@
 
 	onMount(() => {
 		const term = new Terminal({
-			fontFamily: "Menlo, 'SF Mono', 'IBM Plex Sans Thai', monospace",
+			fontFamily: "Menlo, Monaco, 'Courier New', 'IBM Plex Sans Thai', monospace",
 			fontSize: 12,
+			lineHeight: 1.2,
 			cursorBlink: true,
-			theme: { background: '#0a0a0a' }
+			// VS Code Dark Modern: terminal background follows the panel.
+			theme: { background: '#181818', foreground: '#CCCCCC' }
 		});
 		const fit = new FitAddon();
 		term.loadAddon(fit);
