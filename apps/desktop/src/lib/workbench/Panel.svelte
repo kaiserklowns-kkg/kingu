@@ -4,6 +4,7 @@
 	import Terminal from '#lib/terminal/Terminal.svelte';
 	import Icon from './Icon.svelte';
 	import { layout, type PanelTab } from './layout.svelte';
+	import { workspace } from './workspace.svelte';
 
 	const tabs: { id: PanelTab; label: string }[] = [
 		{ id: 'problems', label: 'Problems' },
@@ -35,7 +36,8 @@
 	<div class="relative min-h-0 flex-1">
 		<!-- The terminal stays mounted so its shell survives tab switches, like VS Code's pty host. -->
 		<div class={['absolute inset-0 bg-(--vscode-terminal-background)', layout.panelTab !== 'terminal' && 'invisible']}>
-			<Terminal />
+			<!-- Open Folder restarts the shell in the new root (VS Code reloads the window). -->
+			{#if workspace.ready}{#key workspace.root}<Terminal />{/key}{/if}
 		</div>
 		{#if layout.panelTab === 'problems'}
 			<div class="absolute inset-0"><ProblemsView /></div>

@@ -10,8 +10,9 @@
 	import { editors } from './editors.svelte';
 	import { quick } from './quick.svelte';
 	import { isDiffKey } from './scm';
+	import { workspace } from './workspace.svelte';
 
-	type Entry = { model: Monaco.editor.ITextModel; savedVersion: number; view?: Monaco.editor.ICodeEditorViewState | null };
+	type Entry = { model: Monaco.editor.ITextModel; savedVersion: number; view?: Monaco.editor.ICodeEditorViewState | null; reloading?: boolean };
 
 	let host: HTMLDivElement;
 	let api: typeof import('#lib/editor/monaco.ts') | undefined;
@@ -64,8 +65,11 @@
 			})
 		];
 
+		const unwatch = workspace.onFilesChanged(reloadClean);
+
 		return () => {
 			disposed = true;
+			unwatch();
 			unregister.forEach((u) => u());
 			for (const e of models.values()) e.model.dispose();
 			editor?.dispose();
@@ -107,10 +111,31 @@
 		const text = await invoke<string>('read_workspace_file', { rel: path });
 		const model = api.monaco.editor.createModel(text, api.languageFor(path), api.monaco.Uri.file('/' + path));
 		const entry: Entry = { model, savedVersion: model.getAlternativeVersionId() };
-		model.onDidChangeContent(() => editors.setDirty(path, model.getAlternativeVersionId() !== entry.savedVersion));
+		model.onDidChangeContent(() => !entry.reloading && editors.setDirty(path, model.getAlternativeVersionId() !== entry.savedVersion));
 		models.set(path, entry);
 		lsp.attach(api.monaco, model, path);
 		return entry;
+	}
+
+	/** Changed on disk: a clean model takes the new contents (undoable); a dirty one keeps the user's version. */
+	async function reloadClean(paths: string[]) {
+		for (const path of paths) {
+			const entry = models.get(path);
+			if (!entry || entry.model.getAlternativeVersionId() !== entry.savedVersion) continue;
+			let text: string;
+			try {
+				text = await invoke<string>('read_workspace_file', { rel: path });
+			} catch {
+				continue; // deleted or unreadable: the tab keeps the last contents
+			}
+			const { model } = entry;
+			if (model.isDisposed() || model.getValue() === text || model.getAlternativeVersionId() !== entry.savedVersion) continue;
+			entry.reloading = true;
+			model.pushEditOperations([], [{ range: model.getFullModelRange(), text }], () => null);
+			entry.reloading = false;
+			entry.savedVersion = model.getAlternativeVersionId();
+			clientLog('info', `reloaded ${path} (changed on disk)`);
+		}
 	}
 
 	async function save() {
