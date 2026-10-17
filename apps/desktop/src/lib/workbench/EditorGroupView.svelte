@@ -11,6 +11,8 @@
 	import { keyLabel } from './keys';
 	import { fileOf, isDiffKey, tabLabel } from './scm';
 	import { status } from './status.svelte';
+	import SettingsEditor from '#lib/settings/SettingsEditor.svelte';
+	import { SETTINGS_EDITOR_KEY, USER_SETTINGS_KEY } from '#lib/settings/settings.svelte.ts';
 
 	let { group }: { group: number } = $props();
 
@@ -20,13 +22,17 @@
 	const tabs = $derived(g?.tabs ?? []);
 	const activePath = $derived(g?.active ?? null);
 	const focused = $derived(editors.activeGroupId === group);
-	const crumbs = $derived(activePath ? fileOf(activePath).split('/') : []);
+	const settingsActive = $derived(activePath === SETTINGS_EDITOR_KEY);
+	const crumbs = $derived(!activePath || settingsActive ? [] : activePath === USER_SETTINGS_KEY ? ['User', 'settings.json'] : fileOf(activePath).split('/'));
+	/** Tab label; the Settings editor and the user settings.json are not workspace files. */
+	const label = (key: string) => (key === SETTINGS_EDITOR_KEY ? 'Settings' : tabLabel(key));
+	const iconOf = (key: string) => fileIcon(key === SETTINGS_EDITOR_KEY || key === USER_SETTINGS_KEY ? 'settings.json' : fileOf(key));
 	const diffActive = $derived(activePath !== null && isDiffKey(activePath));
 	// The diff editor exists only while this group has a diff tab.
 	const hasDiff = $derived(tabs.some((t) => isDiffKey(t.path)));
 	// Enclosing symbols from the language server's document symbols, like VS Code's outline crumbs.
 	// The cursor is tracked for the active group only, so other groups show just the path.
-	const symbolCrumbs = $derived(activePath && !diffActive && focused ? lsp.crumbs(activePath, editors.cursor.line, editors.cursor.column) : []);
+	const symbolCrumbs = $derived(activePath && !diffActive && !settingsActive && focused ? lsp.crumbs(activePath, editors.cursor.line, editors.cursor.column) : []);
 	let dropTarget = $state<number | null>(null);
 
 	function close(path: string, force: boolean) {
@@ -104,7 +110,7 @@
 				>
 					{#if active && focused}<span class="absolute inset-x-0 top-0 h-px bg-(--vscode-tab-activeBorderTop)"></span>{/if}
 					{#if dropTarget === i}<span class="absolute inset-y-0 left-0 w-0.5 bg-(--vscode-focusBorder)"></span>{/if}
-					<span class={['flex', !focused && 'opacity-60']}><FileIcon icon={fileIcon(fileOf(tab.path))} /></span>
+					<span class={['flex', !focused && 'opacity-60']}><FileIcon icon={iconOf(tab.path)} /></span>
 					<button
 						role="tab"
 						aria-selected={active}
@@ -114,10 +120,10 @@
 						ondblclick={() => editors.pin(tab.path, group)}
 						onauxclick={(e) => e.button === 1 && close(tab.path, false)}
 					>
-						{tabLabel(tab.path)}
+						{label(tab.path)}
 					</button>
 					<button
-						aria-label={tab.dirty ? `${tabLabel(tab.path)} ยังไม่บันทึก: ปิด` : `ปิด ${tabLabel(tab.path)}`}
+						aria-label={tab.dirty ? `${label(tab.path)} ยังไม่บันทึก: ปิด` : `ปิด ${label(tab.path)}`}
 						class={['mr-1 grid size-5 place-items-center rounded hover:bg-white/10', !active && !tab.dirty && 'invisible group-hover:visible']}
 						onclick={(e) => close(tab.path, e.altKey)}
 					>
@@ -147,13 +153,16 @@
 	{/if}
 
 	<div class="relative min-h-0 flex-1">
-		<div class={['absolute inset-0', (!activePath || diffActive) && 'invisible']}>
+		<div class={['absolute inset-0', (!activePath || diffActive || settingsActive) && 'invisible']}>
 			<EditorHost {group} />
 		</div>
 		{#if hasDiff}
 			<div class={['absolute inset-0', !diffActive && 'invisible']}>
 				<DiffHost {group} />
 			</div>
+		{/if}
+		{#if settingsActive}
+			<div class="absolute inset-0"><SettingsEditor /></div>
 		{/if}
 		{#if !activePath && editors.groups.length === 1}
 			<div class="absolute inset-0 grid place-items-center">

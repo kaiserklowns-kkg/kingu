@@ -6,6 +6,7 @@ mod lsp;
 mod pty;
 mod replace;
 mod search;
+mod settings;
 mod watcher;
 mod workspace;
 
@@ -450,7 +451,9 @@ pub fn run() {
       search_replace,
       lsp_start,
       lsp::lsp_send,
-      lsp::lsp_stop
+      lsp::lsp_stop,
+      settings::settings_read,
+      settings::settings_write
     ])
     .build(tauri::generate_context!())
     .expect("error while building tauri application")

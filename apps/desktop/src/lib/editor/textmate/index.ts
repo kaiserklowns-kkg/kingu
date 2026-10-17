@@ -14,12 +14,12 @@ import {
 	type IGrammarConfiguration,
 	type StateStack
 } from 'vscode-textmate';
-import darkModern from './themes/dark_modern.json?raw';
-import darkPlus from './themes/dark_plus.json?raw';
-import darkVs from './themes/dark_vs.json?raw';
-import { editorColors, flattenTheme, textMateRules } from './theme';
+import { onActiveTheme, type ActiveTheme } from '../../theme/current';
+import { monacoBase } from '../../theme/themes';
+import { editorColors, textMateRules } from './theme';
 
-export const THEME_ID = 'vscode-dark-modern';
+/** One Monaco theme id, redefined on every color theme change (editors pass it at creation). */
+export const THEME_ID = 'kingu-color-theme';
 
 // Grammars are split into lazy chunks; a language's grammar loads on first use.
 const grammarFiles = import.meta.glob<string>('./grammars/*', { query: '?raw', import: 'default' });
@@ -135,20 +135,8 @@ async function init() {
 		.then((data) => loadWASM({ data }))
 		.then(() => ({ createOnigScanner, createOnigString }));
 
-	const themeSources: Record<string, string> = {
-		'dark_modern.json': darkModern,
-		'dark_plus.json': darkPlus,
-		'dark_vs.json': darkVs
-	};
-	const theme = flattenTheme('dark_modern.json', (p) => {
-		const src = themeSources[p];
-		if (src === undefined) throw new Error(`theme file not vendored: ${p}`);
-		return src;
-	});
-
 	const registry = new Registry({
 		onigLib,
-		theme: { name: theme.name, settings: textMateRules(theme) },
 		loadGrammar: async (scopeName) => {
 			const file = scopeFiles[scopeName];
 			const load = file && grammarFiles[`./grammars/${file}`];
@@ -158,14 +146,18 @@ async function init() {
 		getInjections: (scopeName) => injections[scopeName]
 	});
 
-	monaco.editor.defineTheme(THEME_ID, {
-		base: 'vs-dark',
-		inherit: true,
-		rules: [],
-		colors: editorColors(theme)
+	// Until the workbench theme service has loaded the selected theme (normally already done).
+	monaco.editor.defineTheme(THEME_ID, { base: 'vs-dark', inherit: true, rules: [], colors: {} });
+
+	// Follows `workbench.colorTheme`, like VS Code's TextMateTokenizationFeature on theme change.
+	onActiveTheme(({ info, flat }: ActiveTheme) => {
+		registry.setTheme({ name: flat.name, settings: textMateRules(flat, info.type) });
+		monaco.editor.defineTheme(THEME_ID, { base: monacoBase(info.type), inherit: true, rules: [], colors: editorColors(flat) });
+		monaco.editor.setTheme(THEME_ID);
+		// Token colors come from the TextMate theme's color map, not Monaco's rules. Setting it
+		// also fires a tokenization change for every language, so open models re-tokenize.
+		monaco.languages.setColorMap(registry.getColorMap());
 	});
-	// Token colors come from the TextMate theme's color map, not Monaco's rules.
-	monaco.languages.setColorMap(registry.getColorMap());
 
 	for (const [languageId, def] of Object.entries(languages)) {
 		// Replaces the Monarch tokenizer factory that monaco-editor registers per language.

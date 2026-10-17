@@ -3,6 +3,7 @@
 	import { layout, type SideView } from './layout.svelte';
 	import { keyLabel } from './keys';
 	import { scm } from './scm.svelte';
+	import { commands } from './commands.svelte';
 
 	// Count badges (VS Code activitybar badge: bottom-right, 16px).
 	const badges: Partial<Record<SideView, () => number>> = { scm: () => scm.count };
@@ -58,7 +59,12 @@
 	<button aria-label="Accounts" title="Accounts" class="grid size-12 place-items-center text-(--vscode-activityBar-inactiveForeground)">
 		<Icon name="account" size={24} stroke={1.5} />
 	</button>
-	<button aria-label="Manage" title="Manage" class="grid size-12 place-items-center text-(--vscode-activityBar-inactiveForeground)">
+	<button
+		aria-label="Manage: Settings ({keyLabel('cmd+,')})"
+		title="Settings ({keyLabel('cmd+,')})"
+		class="grid size-12 place-items-center text-(--vscode-activityBar-inactiveForeground) hover:text-(--vscode-activityBar-foreground)"
+		onclick={() => commands.run('workbench.action.openSettings')}
+	>
 		<Icon name="settings" size={24} stroke={1.5} />
 	</button>
 </nav>

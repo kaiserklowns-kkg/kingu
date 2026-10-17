@@ -2,12 +2,15 @@
 	// One Monaco editor per editor group (VS Code: the group's TextEditor pane). Text models are
 	// shared between groups (editorModels.ts), so switching tabs preserves undo history and two
 	// groups showing one file edit the same model. Save and LSP commands live in EditorPart.
+	// Editor settings reach every group's editor through installEditorSettings' Monaco hooks.
 	import { onMount, untrack } from 'svelte';
 	import type * as Monaco from 'monaco-editor';
 	import { clientLog } from '#lib/client-log.ts';
 	import { editors } from './editors.svelte';
 	import { modelEntry, saveViewState, viewState } from './editorModels';
 	import { isDiffKey } from './scm';
+	import { isNonTextEditor } from '#lib/settings/resources.ts';
+	import { installEditorSettings } from '#lib/settings/apply.svelte.ts';
 
 	let { group }: { group: number } = $props();
 
@@ -26,6 +29,7 @@
 			await m.setupTextMate();
 			if (disposed) return;
 			api = m;
+			installEditorSettings(m.monaco);
 			const ed = m.monaco.editor.create(host, {
 				theme: m.THEME_ID,
 				automaticLayout: true,
@@ -115,7 +119,7 @@
 			if (shown) saveViewState(group, shown, ed.saveViewState());
 		});
 		// Diff tabs are shown by DiffHost.
-		if (!p || isDiffKey(p) || !api) {
+		if (!p || isDiffKey(p) || isNonTextEditor(p) || !api) {
 			ed.setModel(null);
 			shown = null;
 			return;

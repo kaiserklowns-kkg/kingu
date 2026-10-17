@@ -6,6 +6,7 @@
 import type * as Monaco from 'monaco-editor';
 import { diffKey } from './scm';
 import * as G from './editorGroups';
+import { settings } from '#lib/settings/settings.svelte.ts';
 
 export type { EditorTab, EditorGroup, GridNode, SplitDirection } from './editorGroups';
 export type Cursor = { line: number; column: number };
@@ -102,6 +103,8 @@ class Editors {
 	}
 
 	open(path: string, { preview = true, reveal, group }: { preview?: boolean; reveal?: Reveal; group?: number } = {}) {
+		// workbench.editor.enablePreview: false opens every editor pinned.
+		if (!settings.get('workbench.editor.enablePreview')) preview = false;
 		G.openEditor(this.model, path, { preview, group });
 		if (reveal) this.pendingReveal = { ...reveal, path, group: this.model.activeGroup };
 	}

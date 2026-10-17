@@ -3,10 +3,10 @@
 // file, and the language server sees one didOpen/didClose per file. View state (scroll, cursor)
 // is per group and file, like VS Code's per-editor view state.
 
-import { invoke } from '@tauri-apps/api/core';
 import type * as Monaco from 'monaco-editor';
 import { clientLog } from '#lib/client-log.ts';
 import { lsp } from '#lib/lsp/lsp.svelte.ts';
+import { readResource, writeResource } from '#lib/settings/resources.ts';
 import { editors } from './editors.svelte';
 
 type MonacoModule = typeof import('#lib/editor/monaco.ts');
@@ -34,7 +34,8 @@ export function modelEntry(api: MonacoModule, path: string): Promise<ModelEntry>
 	if (existing) return Promise.resolve(existing);
 	let pending = loading.get(path);
 	if (!pending) {
-		pending = invoke<string>('read_workspace_file', { rel: path })
+		// readResource: workspace files, or the user settings.json (settings:// key).
+		pending = readResource(path)
 			.then((text) => {
 				// A references peek may already have made a preview model for this file.
 				const preview = lsp.adoptPreview(path);
@@ -55,7 +56,7 @@ export function modelEntry(api: MonacoModule, path: string): Promise<ModelEntry>
 export async function saveFile(path: string) {
 	const entry = entries.get(path);
 	if (!entry) return;
-	await invoke('fs_write_file', { rel: path, content: entry.model.getValue() });
+	await writeResource(path, entry.model.getValue());
 	entry.savedVersion = entry.model.getAlternativeVersionId();
 	editors.setDirty(path, false);
 	lsp.didSave(entry.model);
@@ -71,7 +72,7 @@ export async function reloadClean(paths: string[]) {
 		if (!entry || entry.model.getAlternativeVersionId() !== entry.savedVersion) continue;
 		let text: string;
 		try {
-			text = await invoke<string>('read_workspace_file', { rel: path });
+			text = await readResource(path);
 		} catch {
 			continue; // deleted or unreadable: the tab keeps the last contents
 		}

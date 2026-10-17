@@ -36,11 +36,31 @@ export function matches(chord: Chord, e: Pick<KeyboardEvent, 'key' | 'code' | 'm
 	);
 }
 
-/** Display label in VS Code's macOS style (⌃⌥⇧⌘) or `Ctrl+Shift+P` elsewhere. */
-export function keyLabel(chord: string, mac = isMac): string {
-	const c = parseChord(chord, mac);
-	const key = c.key.length === 1 ? c.key.toUpperCase() : c.key;
-	if (mac) return `${c.ctrl ? '⌃' : ''}${c.alt ? '⌥' : ''}${c.shift ? '⇧' : ''}${c.meta ? '⌘' : ''}${key}`;
-	return [c.ctrl && 'Ctrl', c.alt && 'Alt', c.shift && 'Shift', key].filter(Boolean).join('+');
+/** Display label in VS Code's macOS style (⌃⌥⇧⌘) or `Ctrl+Shift+P` elsewhere; chord parts joined by a space. */
+export function keyLabel(keybinding: string, mac = isMac): string {
+	return splitKeybinding(keybinding)
+		.map((part) => {
+			const c = parseChord(part, mac);
+			const key = c.key.length === 1 ? c.key.toUpperCase() : c.key;
+			if (mac) return `${c.ctrl ? '⌃' : ''}${c.alt ? '⌥' : ''}${c.shift ? '⇧' : ''}${c.meta ? '⌘' : ''}${key}`;
+			return [c.ctrl && 'Ctrl', c.alt && 'Alt', c.shift && 'Shift', key].filter(Boolean).join('+');
+		})
+		.join(' ');
+}
+
+/** A keybinding is one chord (`cmd+p`) or a two-part chord like VS Code's `cmd+k cmd+t`. */
+export function splitKeybinding(keybinding: string): string[] {
+	return keybinding.trim().split(/\s+/);
+}
+
+/** Label of a pressed key combination, e.g. `⌘K` (for chord status messages). */
+export function eventLabel(e: Pick<KeyboardEvent, 'key' | 'code' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>, mac = isMac): string {
+	const mods = [e.ctrlKey && (mac ? 'ctrl' : 'cmd'), e.altKey && 'alt', e.shiftKey && 'shift', mac && e.metaKey && 'cmd'].filter(Boolean);
+	return keyLabel([...mods, eventKey(e)].join('+'), mac);
+}
+
+/** Modifier keydowns never complete a chord (VS Code waits for the next real key). */
+export function isModifierKey(e: Pick<KeyboardEvent, 'key'>): boolean {
+	return ['Meta', 'Control', 'Shift', 'Alt', 'CapsLock', 'Fn'].includes(e.key);
 }
 

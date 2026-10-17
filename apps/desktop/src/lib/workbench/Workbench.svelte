@@ -21,6 +21,8 @@
 	import { search } from './search.svelte';
 	import { status } from './status.svelte';
 	import { workspace } from './workspace.svelte';
+	import { installSettings } from '#lib/settings/apply.svelte.ts';
+	import { registerSettingsCommands } from '#lib/settings/contributions.ts';
 
 	let middle: HTMLDivElement | undefined = $state();
 	const workspaceName = $derived(workspace.name);
@@ -115,10 +117,14 @@
 		const uninstall = installKeybindings();
 		const uninstallScm = installScm();
 		const uninstallWatcher = workspace.install();
+		const uninstallSettings = installSettings();
+		const unregisterSettings = registerSettingsCommands();
 		return () => {
 			uninstall();
 			uninstallScm();
 			uninstallWatcher();
+			uninstallSettings();
+			unregisterSettings();
 			unregister.forEach((u) => u());
 		};
 	});

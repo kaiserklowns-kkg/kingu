@@ -4,6 +4,7 @@
 	import { Terminal } from '@xterm/xterm';
 	import { FitAddon } from '@xterm/addon-fit';
 	import '@xterm/xterm/css/xterm.css';
+	import { bindTerminalSettings } from '#lib/settings/apply.svelte.ts';
 
 	let host: HTMLDivElement;
 
@@ -13,7 +14,7 @@
 			fontSize: 12,
 			lineHeight: 1.2,
 			cursorBlink: true,
-			// VS Code Dark Modern: terminal background follows the panel.
+			// Font and colors follow the settings and color theme (bindTerminalSettings); these are first-paint values.
 			theme: { background: '#181818', foreground: '#CCCCCC' }
 		});
 		const fit = new FitAddon();
@@ -35,11 +36,13 @@
 		const resized = term.onResize(({ cols, rows }) => {
 			if (id !== undefined) invoke('pty_resize', { id, cols, rows });
 		});
+		const unbindSettings = bindTerminalSettings(term, () => fit.fit());
 		const observer = new ResizeObserver(() => fit.fit());
 		observer.observe(host);
 
 		return () => {
 			observer.disconnect();
+			unbindSettings();
 			input.dispose();
 			resized.dispose();
 			if (id !== undefined) invoke('pty_kill', { id });

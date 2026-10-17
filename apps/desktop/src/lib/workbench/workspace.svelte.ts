@@ -82,15 +82,24 @@ class Workspace {
 	/** "File: Open Recent" quick pick. */
 	async showRecent() {
 		await this.loadRecent();
+		const OPEN = '\0open', CLEAR = '\0clear';
 		const items: PickItem[] = this.recent
 			.filter((p) => p !== this.root)
 			.map((path) => {
 				const { label, detail } = recentLabel(path, this.#home);
-				return { label, detail, run: () => this.openFolder(path) };
+				return { id: path, label, description: detail };
 			});
-		items.push({ label: 'Open Folder...', detail: '', run: () => this.pickFolder() });
-		if (this.recent.length) items.push({ label: 'Clear Recently Opened', detail: '', run: () => invoke('workspace_recent_clear').then(() => this.loadRecent()) });
-		quick.pick(items, 'เลือกโฟลเดอร์ที่จะเปิด');
+		items.push({ id: OPEN, label: 'Open Folder...' });
+		if (this.recent.length) items.push({ id: CLEAR, label: 'Clear Recently Opened' });
+		quick.pick({
+			placeholder: 'เลือกโฟลเดอร์ที่จะเปิด',
+			items,
+			onAccept: (item) => {
+				if (item.id === OPEN) void this.pickFolder();
+				else if (item.id === CLEAR) void invoke('workspace_recent_clear').then(() => this.loadRecent());
+				else void this.openFolder(item.id);
+			}
+		});
 	}
 
 	/** File watcher batches (workspace-relative paths, git internals removed) for editors to reload. */
