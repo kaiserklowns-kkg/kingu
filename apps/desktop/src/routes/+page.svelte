@@ -2,6 +2,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import Editor from '#lib/editor/Editor.svelte';
 	import Terminal from '#lib/terminal/Terminal.svelte';
+	import AgentPanel from '#lib/agent/AgentPanel.svelte';
 
 	type AppInfo = { name: string; version: string; os: string; arch: string; workspace: string };
 
@@ -67,5 +68,12 @@
 				<Terminal />
 			</section>
 		</main>
+
+		<aside aria-label="Agent" class="flex w-96 shrink-0 flex-col border-l border-neutral-800">
+			<div class="h-8 shrink-0 border-b border-neutral-800 px-3 leading-8 text-neutral-400">Agent</div>
+			<div class="min-h-0 flex-1">
+				<AgentPanel />
+			</div>
+		</aside>
 	</div>
 </div>

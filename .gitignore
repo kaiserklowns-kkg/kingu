@@ -6,3 +6,6 @@ apps/desktop/build/
 *.log
 .env
 .env.*
+
+# Kingu task worktrees
+.kingu/
