@@ -111,6 +111,15 @@ class Lsp {
 		for (const doc of this.#docs.values()) if (doc.key === info.key) void this.#open(doc);
 	}
 
+	/** Open Folder: Rust has already killed the old root's servers; forget them and the cached root. */
+	reset() {
+		for (const key of [...this.#sessions.keys()]) this.#forget(key);
+		this.#root = undefined;
+		this.#rootPath = '';
+		this.status.clear();
+		this.symbols.clear();
+	}
+
 	// --- Sessions --------------------------------------------------------------------------------
 
 	#init(monaco: MonacoApi) {

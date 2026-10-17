@@ -125,6 +125,31 @@ export function closeAllInGroup(m: GroupsModel, group: number, { force = false }
 	return kept;
 }
 
+/**
+ * Points tabs at new paths in every group, in place (a file or folder was renamed): groups, tab
+ * order, preview and active state are kept. `remap` returns null for tabs it leaves alone; a tab
+ * whose new path the group already shows is dropped.
+ */
+export function remapEditors(m: GroupsModel, remap: (path: string) => string | null) {
+	for (const g of m.groups) {
+		const seen = new Set<string>();
+		const tabs: EditorTab[] = [];
+		for (const tab of g.tabs) {
+			const next = remap(tab.path) ?? tab.path;
+			if (seen.has(next)) continue;
+			seen.add(next);
+			tabs.push(next === tab.path ? tab : { ...tab, path: next });
+		}
+		g.tabs = tabs;
+		if (g.active) g.active = remap(g.active) ?? g.active;
+	}
+}
+
+/** Force-closes every tab in every group, leaving one empty group (the folder was switched). */
+export function closeAllGroups(m: GroupsModel) {
+	for (const g of [...m.groups]) closeAllInGroup(m, g.id, { force: true });
+}
+
 type Located = { node: GridNode; parent: GroupSplit | null; index: number };
 
 function locate(m: GroupsModel, pred: (n: GridNode) => boolean): Located | null {

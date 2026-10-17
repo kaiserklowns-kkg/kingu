@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
 	activeGroupOf,
 	addGroup,
+	closeAllGroups,
 	closeAllInGroup,
 	closeEditor,
 	createGroupsModel,
@@ -12,6 +13,7 @@ import {
 	moveEditor,
 	openEditor,
 	openPaths,
+	remapEditors,
 	removeGroup,
 	resizeSplit,
 	setDirty,
@@ -248,4 +250,32 @@ test('resizeSplit clamps to the minimum size', () => {
 	resizeSplit(m, root.id, 0, 5);
 	expect(root.sizes[0]).toBeCloseTo(0.9);
 	expect(root.sizes[1]).toBeCloseTo(0.1);
+});
+
+describe('workspace file operations', () => {
+	test('remapEditors renames tabs in place in every group', () => {
+		const m = createGroupsModel();
+		openEditor(m, 'src/a.ts', { preview: false });
+		openEditor(m, 'README.md', { preview: false });
+		const right = splitEditor(m, 'right')!;
+		openEditor(m, 'src/b.ts', { preview: false, group: right });
+		remapEditors(m, (p) => (p.startsWith('src/') ? 'lib/' + p.slice(4) : null));
+		expect(getGroup(m, 1)!.tabs.map((t) => t.path)).toEqual(['lib/a.ts', 'README.md']);
+		expect(getGroup(m, 1)!.active).toBe('README.md');
+		expect(getGroup(m, right)!.tabs.map((t) => t.path)).toEqual(['README.md', 'lib/b.ts']);
+		expect(getGroup(m, right)!.active).toBe('lib/b.ts');
+		expect(m.groups).toHaveLength(2);
+	});
+
+	test('closeAllGroups leaves one empty group, discarding dirty tabs', () => {
+		const m = createGroupsModel();
+		openEditor(m, 'a.ts', { preview: false });
+		setDirty(m, 'a.ts', true);
+		const right = splitEditor(m, 'down')!;
+		openEditor(m, 'b.ts', { group: right });
+		closeAllGroups(m);
+		expect(m.groups).toHaveLength(1);
+		expect(openPaths(m).size).toBe(0);
+		expect(m.root.type).toBe('group');
+	});
 });

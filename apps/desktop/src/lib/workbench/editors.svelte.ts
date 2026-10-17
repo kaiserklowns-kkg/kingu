@@ -129,6 +129,21 @@ class Editors {
 		return G.closeAllInGroup(this.model, group);
 	}
 
+	/** Every tab of every group (a file's tab appears once per group showing it). */
+	allTabs(): G.EditorTab[] {
+		return this.model.groups.flatMap((g) => g.tabs);
+	}
+
+	/** A file or folder was renamed: its tabs follow it in every group. */
+	remap(remap: (path: string) => string | null) {
+		G.remapEditors(this.model, remap);
+	}
+
+	/** Closes everything, discarding unsaved changes (the caller already asked). */
+	closeAll() {
+		G.closeAllGroups(this.model);
+	}
+
 	removeGroup(group = this.model.activeGroup) {
 		G.removeGroup(this.model, group);
 	}

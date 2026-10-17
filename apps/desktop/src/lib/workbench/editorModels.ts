@@ -5,11 +5,12 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type * as Monaco from 'monaco-editor';
+import { clientLog } from '#lib/client-log.ts';
 import { lsp } from '#lib/lsp/lsp.svelte.ts';
 import { editors } from './editors.svelte';
 
 type MonacoModule = typeof import('#lib/editor/monaco.ts');
-export type ModelEntry = { model: Monaco.editor.ITextModel; savedVersion: number };
+export type ModelEntry = { model: Monaco.editor.ITextModel; savedVersion: number; reloading?: boolean };
 
 const entries = new Map<string, ModelEntry>();
 const loading = new Map<string, Promise<ModelEntry>>();
@@ -31,7 +32,7 @@ export function modelEntry(api: MonacoModule, path: string): Promise<ModelEntry>
 			.then((text) => {
 				const model = api.monaco.editor.createModel(text, api.languageFor(path), api.monaco.Uri.file('/' + path));
 				const entry: ModelEntry = { model, savedVersion: model.getAlternativeVersionId() };
-				model.onDidChangeContent(() => editors.setDirty(path, model.getAlternativeVersionId() !== entry.savedVersion));
+				model.onDidChangeContent(() => !entry.reloading && editors.setDirty(path, model.getAlternativeVersionId() !== entry.savedVersion));
 				entries.set(path, entry);
 				lsp.attach(api.monaco, model, path);
 				return entry;
@@ -49,6 +50,33 @@ export async function saveFile(path: string) {
 	entry.savedVersion = entry.model.getAlternativeVersionId();
 	editors.setDirty(path, false);
 	lsp.didSave(entry.model);
+}
+
+/**
+ * The file watcher saw `paths` change on disk: a clean model takes the new contents (undoable, and
+ * every group showing it follows); a dirty one keeps the user's version.
+ */
+export async function reloadClean(paths: string[]) {
+	for (const path of paths) {
+		const entry = entries.get(path);
+		if (!entry || entry.model.getAlternativeVersionId() !== entry.savedVersion) continue;
+		let text: string;
+		try {
+			text = await invoke<string>('read_workspace_file', { rel: path });
+		} catch {
+			continue; // deleted or unreadable: the tab keeps the last contents
+		}
+		const { model } = entry;
+		if (model.isDisposed() || model.getValue() === text || model.getAlternativeVersionId() !== entry.savedVersion) continue;
+		entry.reloading = true;
+		try {
+			model.pushEditOperations([], [{ range: model.getFullModelRange(), text }], () => null);
+		} finally {
+			entry.reloading = false;
+		}
+		entry.savedVersion = model.getAlternativeVersionId();
+		clientLog('info', `reloaded ${path} (changed on disk)`);
+	}
 }
 
 export function saveViewState(group: number, path: string, state: Monaco.editor.ICodeEditorViewState | null) {

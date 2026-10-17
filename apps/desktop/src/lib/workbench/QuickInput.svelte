@@ -18,11 +18,16 @@
 		if (!quick.visible) return;
 		index = 0;
 		queueMicrotask(() => input?.focus());
-		invoke<string[]>('fs_list_files').then((v) => (files = v));
+		if (!quick.picks) invoke<string[]>('fs_list_files').then((v) => (files = v));
 	});
 
 	const items = $derived.by((): Item[] => {
 		const v = quick.value;
+		if (quick.picks) {
+			const picks = quick.picks;
+			if (!v) return picks.map((p) => ({ label: p.label, detail: p.detail, run: p.run }));
+			return rank(v, picks, (p) => p.label, 100).map(({ item, match }) => ({ label: item.label, detail: item.detail, match, run: item.run }));
+		}
 		if (v.startsWith('>')) {
 			const q = v.slice(1).trim();
 			const all = commands.paletteItems();
@@ -94,7 +99,7 @@
 			oninput={() => (index = 0)}
 			onkeydown={onKey}
 			aria-label="ค้นหาไฟล์ พิมพ์ > เพื่อดูคำสั่ง หรือ : เพื่อไปบรรทัด"
-			placeholder="ค้นหาไฟล์ตามชื่อ (พิมพ์ > สำหรับคำสั่ง, : สำหรับไปบรรทัด)"
+			placeholder={quick.picks ? quick.placeholder : 'ค้นหาไฟล์ตามชื่อ (พิมพ์ > สำหรับคำสั่ง, : สำหรับไปบรรทัด)'}
 			class="h-[26px] w-full rounded-sm border border-(--vscode-focusBorder) bg-(--vscode-input-background) px-1.5 text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground)"
 		/>
 		<ul role="listbox" aria-label="ผลลัพธ์" class="mt-1 max-h-[440px] overflow-y-auto">

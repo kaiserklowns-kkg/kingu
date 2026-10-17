@@ -1,0 +1,151 @@
+// The open folder (VS Code: IWorkspaceContextService + the Open Folder / Open Recent actions).
+// Rust owns the root (`workspace_open` stops the old folder's language servers and search and
+// moves the file watcher); this side resets every view that showed the old folder.
+
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import { homeDir } from '@tauri-apps/api/path';
+import { ask, open } from '@tauri-apps/plugin-dialog';
+import { clientLog } from '#lib/client-log.ts';
+import { lsp } from '#lib/lsp/lsp.svelte.ts';
+import { editors } from './editors.svelte';
+import { explorer } from './explorer.svelte';
+import { recentLabel, workspaceFiles } from './fileTree';
+import { quick, type PickItem } from './quick.svelte';
+import { scm } from './scm.svelte';
+import { search } from './search.svelte';
+import { status } from './status.svelte';
+
+type FilesChanged = { root: string; paths: string[] };
+type Listener = (paths: string[]) => void;
+
+class Workspace {
+	/** Absolute root of the open folder; null shows the Explorer's welcome view. */
+	root = $state<string | null>(null);
+	/** False until startup has asked Rust which folder is open (no welcome-view flash). */
+	ready = $state(false);
+	recent = $state<string[]>([]);
+	name = $derived(this.root ? this.root.split('/').pop() || this.root : '');
+
+	#listeners = new Set<Listener>();
+	#home = '';
+
+	async init() {
+		try {
+			const info = await invoke<{ workspace: string }>('app_info');
+			this.root = info.workspace || null;
+		} finally {
+			this.ready = true;
+		}
+		homeDir().then((h) => (this.#home = h.replace(/\/$/, '')), () => {});
+		await this.loadRecent();
+	}
+
+	async loadRecent() {
+		this.recent = await invoke<string[]>('workspace_recent').catch(() => []);
+	}
+
+	/** `workbench.action.files.openFolder`: the native folder picker. */
+	async pickFolder() {
+		const dir = await open({ directory: true, multiple: false, title: 'Open Folder', defaultPath: this.root ?? (this.#home || undefined) });
+		if (typeof dir === 'string') await this.openFolder(dir);
+	}
+
+	async openFolder(path: string): Promise<boolean> {
+		if (path === this.root) return true;
+		if (!(await confirmDiscard('เปิดโฟลเดอร์อื่น'))) return false;
+		let root: string;
+		try {
+			root = await invoke<string>('workspace_open', { path });
+		} catch (e) {
+			status.flash(`เปิดโฟลเดอร์ไม่ได้: ${e}`, 8000);
+			// VS Code drops a recent entry that no longer opens.
+			if (this.recent.includes(path)) await invoke('workspace_recent_remove', { path }).catch(() => {});
+			await this.loadRecent();
+			return false;
+		}
+		this.#switched(root);
+		return true;
+	}
+
+	async closeFolder() {
+		if (this.root === null || !(await confirmDiscard('ปิดโฟลเดอร์'))) return;
+		try {
+			await invoke('workspace_close');
+		} catch (e) {
+			status.flash(String(e), 8000);
+			return;
+		}
+		this.#switched(null);
+	}
+
+	/** "File: Open Recent" quick pick. */
+	async showRecent() {
+		await this.loadRecent();
+		const items: PickItem[] = this.recent
+			.filter((p) => p !== this.root)
+			.map((path) => {
+				const { label, detail } = recentLabel(path, this.#home);
+				return { label, detail, run: () => this.openFolder(path) };
+			});
+		items.push({ label: 'Open Folder...', detail: '', run: () => this.pickFolder() });
+		if (this.recent.length) items.push({ label: 'Clear Recently Opened', detail: '', run: () => invoke('workspace_recent_clear').then(() => this.loadRecent()) });
+		quick.pick(items, 'เลือกโฟลเดอร์ที่จะเปิด');
+	}
+
+	/** File watcher batches (workspace-relative paths, git internals removed) for editors to reload. */
+	onFilesChanged(fn: Listener): () => void {
+		this.#listeners.add(fn);
+		return () => this.#listeners.delete(fn);
+	}
+
+	/** Every view of the old folder goes: editors, language servers, tree, search, source control. */
+	#switched(root: string | null) {
+		editors.closeAll();
+		lsp.reset();
+		explorer.reset();
+		search.clear();
+		scm.repo = null;
+		scm.loaded = false;
+		scm.message = '';
+		status.branch = null;
+		this.root = root;
+		clientLog('info', `workspace: ${root ?? '(none)'}`);
+		void this.loadRecent();
+		// The Explorer re-reads its root when shown; Source Control reads the new repository now.
+		if (root) void scm.refresh();
+	}
+
+	/** Listens to the Rust file watcher; returns the uninstaller. */
+	install(): () => void {
+		let unlisten: (() => void) | undefined;
+		let gone = false;
+		listen<FilesChanged>('workspace:files-changed', (e) => {
+			if (!this.root || e.payload.root !== this.root) return;
+			void scm.refresh();
+			const files = workspaceFiles(e.payload.paths);
+			if (!files.length) return;
+			void explorer.refresh(files);
+			for (const fn of this.#listeners) fn(files);
+		}).then((u) => (gone ? u() : (unlisten = u)));
+		return () => {
+			gone = true;
+			unlisten?.();
+		};
+	}
+}
+
+/** Reuses the editors' dirty state: asks before throwing away unsaved changes. */
+async function confirmDiscard(action: string): Promise<boolean> {
+	const dirty = [...new Set(editors.allTabs().filter((t) => t.dirty).map((t) => t.path))];
+	if (!dirty.length) return true;
+	const names = dirty.map((p) => p.split('/').pop()).join(', ');
+	return ask(`มี ${dirty.length} ไฟล์ที่ยังไม่บันทึก: ${names}\n\n${action}จะทิ้งการแก้ไขเหล่านี้`, {
+		title: 'ยังไม่ได้บันทึก',
+		kind: 'warning',
+		okLabel: 'ทิ้งการแก้ไข',
+		cancelLabel: 'ยกเลิก'
+	});
+}
+
+export const workspace = new Workspace();

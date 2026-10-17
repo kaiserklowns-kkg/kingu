@@ -7,9 +7,10 @@
 	import EditorGrid from './EditorGrid.svelte';
 	import { commands } from './commands.svelte';
 	import { editors } from './editors.svelte';
-	import { disposeAll, disposeClosed, saveFile } from './editorModels';
+	import { disposeAll, disposeClosed, reloadClean, saveFile } from './editorModels';
 	import { quick } from './quick.svelte';
 	import { isDiffKey } from './scm';
+	import { workspace } from './workspace.svelte';
 
 	onMount(() => {
 		const unregister = [
@@ -36,7 +37,10 @@
 				run: () => lsp.restart(editors.language)
 			})
 		];
+		// File watcher: clean open models follow the file on disk.
+		const unwatch = workspace.onFilesChanged(reloadClean);
 		return () => {
+			unwatch();
 			unregister.forEach((u) => u());
 			disposeAll();
 		};

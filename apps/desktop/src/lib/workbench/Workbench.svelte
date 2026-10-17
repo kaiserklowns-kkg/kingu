@@ -14,24 +14,49 @@
 	import TitleBar from './TitleBar.svelte';
 	import { commands, installKeybindings } from './commands.svelte';
 	import { editors } from './editors.svelte';
+	import { explorer } from './explorer.svelte';
 	import { layout, PANEL_MIN, SIDEBAR_MIN } from './layout.svelte';
 	import { quick } from './quick.svelte';
 	import { installScm } from './scm.svelte';
 	import { search } from './search.svelte';
 	import { status } from './status.svelte';
+	import { workspace } from './workspace.svelte';
 
-	let workspaceName = $state('');
 	let middle: HTMLDivElement | undefined = $state();
+	const workspaceName = $derived(workspace.name);
 
 	$effect(() => {
-		invoke<{ workspace: string }>('app_info').then((i) => (workspaceName = i.workspace.split('/').pop() ?? i.workspace));
-		invoke<string | null>('git_branch').then((b) => (status.branch = b));
+		document.title = workspace.name ? `${workspace.name} — Kingu` : 'Kingu';
 	});
 
 	// VS Code's default macOS keybindings (docs/IDE-DESIGN.md §2). onMount, not $effect:
 	// register() reads and writes the registry, which an effect would re-run on forever.
 	onMount(() => {
+		void workspace.init().then(() => invoke<string | null>('git_branch').then((b) => (status.branch = b)));
 		const unregister = [
+			commands.register({ id: 'workbench.action.files.openFolder', title: 'Open Folder...', category: 'File', key: 'cmd+o', run: () => workspace.pickFolder() }),
+			commands.register({ id: 'workbench.action.openRecent', title: 'Open Recent...', category: 'File', key: 'ctrl+r',
+				// The shell's reverse search keeps ctrl+r inside the terminal.
+				when: () => !document.activeElement?.closest('.xterm'),
+				run: () => workspace.showRecent()
+			}),
+			commands.register({ id: 'workbench.action.closeFolder', title: 'Close Folder', category: 'Workspaces', when: () => workspace.root !== null, run: () => workspace.closeFolder() }),
+			commands.register({
+				id: 'explorer.newFile',
+				title: 'New File...',
+				category: 'File',
+				when: () => workspace.root !== null,
+				run: () => ((layout.sideView = 'explorer'), (layout.sidebarVisible = true), explorer.startCreate('file'))
+			}),
+			commands.register({
+				id: 'explorer.newFolder',
+				title: 'New Folder...',
+				category: 'File',
+				when: () => workspace.root !== null,
+				run: () => ((layout.sideView = 'explorer'), (layout.sidebarVisible = true), explorer.startCreate('folder'))
+			}),
+			commands.register({ id: 'workbench.files.action.refreshFilesExplorer', title: 'Refresh Explorer', category: 'File', when: () => workspace.root !== null, run: () => explorer.refresh(['']) }),
+			commands.register({ id: 'workbench.files.action.collapseExplorerFolders', title: 'Collapse Folders in Explorer', category: 'File', when: () => workspace.root !== null, run: () => explorer.collapseAll() }),
 			commands.register({ id: 'workbench.action.quickOpen', title: 'Go to File...', key: 'cmd+p', run: () => quick.show('') }),
 			commands.register({ id: 'workbench.action.showCommands', title: 'Show All Commands', key: 'cmd+shift+p', palette: false, run: () => quick.show('>') }),
 			commands.register({ id: 'workbench.action.toggleSidebarVisibility', title: 'Toggle Primary Side Bar Visibility', category: 'View', key: 'cmd+b', run: () => (layout.sidebarVisible = !layout.sidebarVisible) }),
@@ -89,9 +114,11 @@
 		];
 		const uninstall = installKeybindings();
 		const uninstallScm = installScm();
+		const uninstallWatcher = workspace.install();
 		return () => {
 			uninstall();
 			uninstallScm();
+			uninstallWatcher();
 			unregister.forEach((u) => u());
 		};
 	});
@@ -102,7 +129,7 @@
 </script>
 
 <div class="flex h-screen flex-col overflow-hidden">
-	<TitleBar {workspaceName} />
+	<TitleBar workspaceName={workspaceName || 'Kingu'} />
 
 	<div bind:this={middle} class="flex min-h-0 flex-1">
 		<ActivityBar />
@@ -136,7 +163,10 @@
 			/>
 			<aside aria-label="Agent" class="flex shrink-0 flex-col border-l border-(--vscode-sideBar-border) bg-(--vscode-sideBar-background)" style:width="{layout.auxWidth}px">
 				<div class="flex h-(--kg-part-title-height) shrink-0 items-center pl-3 text-[11px] text-(--vscode-sideBarTitle-foreground) uppercase">Agent</div>
-				<div class="min-h-0 flex-1"><AgentPanel /></div>
+				<!-- Tasks are worktrees of the open folder: a new folder gets a fresh panel. -->
+				<div class="min-h-0 flex-1">
+					{#key workspace.root}<AgentPanel />{/key}
+				</div>
 			</aside>
 		{/if}
 	</div>
