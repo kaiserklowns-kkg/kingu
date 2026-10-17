@@ -11,6 +11,9 @@ import { status } from '#lib/workbench/status.svelte.ts';
 import { theme } from '#lib/theme/theme.svelte.ts';
 import { jsonSchema } from './registry';
 import { settings } from './settings.svelte';
+import { settingSchemas } from './schemas.svelte';
+
+const SETTINGS_SCHEMA_URI = 'kingu://schemas/settings';
 
 /** Monaco editor options from settings (VS Code: editor.* configuration). */
 export function editorOptions(): Monaco.editor.IEditorOptions {
@@ -58,15 +61,6 @@ export function installEditorSettings(monaco: typeof Monaco) {
 	if (monacoInstalled) return;
 	monacoInstalled = true;
 
-	// settings.json is JSONC; give it completion and validation from the schema registry.
-	monaco.json.jsonDefaults.setDiagnosticsOptions({
-		...monaco.json.jsonDefaults.diagnosticsOptions,
-		validate: true,
-		allowComments: true,
-		trailingCommas: 'ignore',
-		schemas: [...(monaco.json.jsonDefaults.diagnosticsOptions.schemas ?? []), { uri: 'kingu://schemas/settings', fileMatch: ['**/settings.json'], schema: jsonSchema() }]
-	});
-
 	const timers = new WeakMap<Monaco.editor.ITextModel, ReturnType<typeof setTimeout>>();
 	monaco.editor.onDidCreateModel((model) => {
 		applyIndent(model, untrack(indentSettings));
@@ -85,6 +79,21 @@ export function installEditorSettings(monaco: typeof Monaco) {
 	});
 
 	$effect.root(() => {
+		// settings.json is JSONC; give it completion and validation from the schema registry
+		// (contributed Snap settings included, so it follows them).
+		$effect(() => {
+			const schema = jsonSchema(settingSchemas.all);
+			untrack(() => {
+				const opts = monaco.json.jsonDefaults.diagnosticsOptions;
+				monaco.json.jsonDefaults.setDiagnosticsOptions({
+					...opts,
+					validate: true,
+					allowComments: true,
+					trailingCommas: 'ignore',
+					schemas: [...(opts.schemas ?? []).filter((s) => s.uri !== SETTINGS_SCHEMA_URI), { uri: SETTINGS_SCHEMA_URI, fileMatch: ['**/settings.json'], schema }]
+				});
+			});
+		});
 		$effect(() => {
 			const options = editorOptions();
 			untrack(() => monaco.editor.getEditors().forEach((e) => e.updateOptions(options)));

@@ -9,6 +9,7 @@ mod replace;
 mod search;
 mod settings;
 mod shell_env;
+mod snap;
 mod team;
 mod watcher;
 mod workspace;
@@ -459,6 +460,8 @@ pub fn run() {
       lsp::lsp_stop,
       settings::settings_read,
       settings::settings_write,
+      snap::snap_list,
+      snap::snap_trust,
       team::team_sign_in,
       team::team_sign_out,
       team::team_status,

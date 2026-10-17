@@ -348,15 +348,30 @@ export const SETTINGS: SettingSchema[] = [
 	}
 ];
 
+export type SettingsSection = { id: string; label: string; groups: string[] };
+
 /**
  * The system settings page's table of contents: one settings system for the IDE and the ADE,
  * grouped by what they affect. Every group in `SETTINGS` belongs to exactly one section.
  */
-export const SETTINGS_SECTIONS: { id: string; label: string; groups: string[] }[] = [
+export const SETTINGS_SECTIONS: SettingsSection[] = [
 	{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Team'] },
 	{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Files', 'Terminal'] },
 	{ id: 'ade', label: 'ADE (Agents)', groups: ['Agent'] }
 ];
+
+export const SNAPS_SECTION_ID = 'snaps';
+
+/**
+ * The table of contents for `schemas` (the static ones plus contributed ones): the static
+ * sections, then "Snaps" holding every contributed group (one per snap, `Snap: <name>`). The
+ * Snaps section is always there, for the Snap management view.
+ */
+export function settingsSections(schemas: SettingSchema[] = SETTINGS): SettingsSection[] {
+	const known = new Set(SETTINGS_SECTIONS.flatMap((s) => s.groups));
+	const contributed = [...new Set(schemas.map((s) => s.group).filter((g) => !known.has(g)))];
+	return [...SETTINGS_SECTIONS, { id: SNAPS_SECTION_ID, label: 'Snaps', groups: contributed }];
+}
 
 /** Settings shown for a TOC selection (`null` = all) and a search query (searching spans every group). */
 export function settingsInView(query: string, group: string | null, schemas: SettingSchema[] = SETTINGS): SettingSchema[] {
@@ -420,9 +435,9 @@ export function settingTitle(schema: SettingSchema): { category: string; label: 
 }
 
 /** A JSON schema for settings.json, so Monaco's JSON support completes and validates it. */
-export function jsonSchema() {
+export function jsonSchema(schemas: SettingSchema[] = SETTINGS) {
 	const properties: Record<string, unknown> = {};
-	for (const s of SETTINGS) {
+	for (const s of schemas) {
 		const base: Record<string, unknown> = { type: s.type, default: s.default, description: s.description };
 		if (s.type === 'string' && s.enum) {
 			base.enum = s.enum;

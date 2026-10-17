@@ -2182,11 +2182,13 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-log",
  "tempfile",
+ "toml 1.1.8+spec-1.1.0",
  "trash",
  "url",
 ]

@@ -39,6 +39,7 @@
 	import SettingsPage from '#lib/settings/SettingsPage.svelte';
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 	import { installAgentsMode } from '#lib/ade/agentsMode.svelte.ts';
+	import { installSnaps } from '#lib/snaps/snaps.svelte.ts';
 
 	// Opening a file or diff (Quick Open, a review file, settings.json) closes the system settings page.
 	// `editors.active` also re-runs on focus changes, so only a different editor closes it.
@@ -183,7 +184,9 @@
 		const uninstallAde = installAde();
 		const uninstallAgentsMode = installAgentsMode();
 		const uninstallLayout = installLayoutCommands();
+		const uninstallSnaps = installSnaps();
 		return () => {
+			uninstallSnaps();
 			uninstallLayout();
 			uninstallAgentsMode();
 			uninstallAde();
