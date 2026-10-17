@@ -14,6 +14,7 @@ self.MonacoEnvironment = {
 const byExtension: Record<string, string> = {
 	ts: 'typescript',
 	js: 'javascript',
+	// No MIT-licensed Svelte TextMate grammar is vendored yet; HTML's grammar covers markup, <script> and <style>.
 	svelte: 'html',
 	rs: 'rust',
 	go: 'go',
@@ -29,3 +30,4 @@ export function languageFor(path: string): string {
 }
 
 export { monaco };
+export { setupTextMate, THEME_ID } from './textmate';
