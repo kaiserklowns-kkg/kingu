@@ -186,6 +186,43 @@ describe('menu model', () => {
 		expect(structureKey(bar)).toBe(structureKey(resolveMenubar(context(true))));
 	});
 
+	test('⌘⇧A / Ctrl+Shift+A toggles Agents mode; Show Agents has no key any more', () => {
+		expect(registered.get('workbench.action.toggleAgentsMode')?.key).toBe('cmd+shift+a');
+		expect(registered.get('kingu.agents.show')?.key).toBeUndefined();
+		for (const mac of [true, false]) {
+			const holders = [...registered.values()].filter((r) => {
+				const k = keyOf(r, mac);
+				return k === 'cmd+shift+a' || k === 'ctrl+shift+a';
+			});
+			expect(holders.map((r) => r.id)).toEqual(['workbench.action.toggleAgentsMode']);
+		}
+		// The ActivityBar no longer advertises the old chord.
+		expect(readFileSync(join(import.meta.dir, 'ActivityBar.svelte'), 'utf8')).not.toContain('ctrl+shift+a');
+	});
+
+	test('Agents menu: "Open in Agents" reads "Open in Editor" in Agents mode, without a check mark', () => {
+		const item = (checked: boolean, mac: boolean) => {
+			const agents = resolveMenubar(context(mac, { checked: (id) => checked && id === 'workbench.action.toggleAgentsMode' })).find((m) => m.id === 'agents')!;
+			return flattenItems(agents.items).find((i) => i.id === 'workbench.action.toggleAgentsMode')!;
+		};
+		expect(item(false, true)).toMatchObject({ text: 'Open in Agents', accelerator: 'Shift+Cmd+A', keyLabel: '⇧⌘A' });
+		expect(item(true, true)).toMatchObject({ text: 'Open in Editor', accelerator: 'Shift+Cmd+A' });
+		expect(item(true, true).checked).toBeUndefined();
+		expect(item(false, false)).toMatchObject({ accelerator: 'Ctrl+Shift+A', keyLabel: 'Ctrl+Shift+A' });
+		// The label change rebuilds the native menu.
+		expect(structureKey(resolveMenubar(context(true, { checked: (id) => id === 'workbench.action.toggleAgentsMode' })))).not.toBe(structureKey(resolveMenubar(context(true))));
+	});
+
+	test('title bar commands are registered (Customize Layout, context menu toggles, Agents mode)', () => {
+		const src = readFileSync(join(import.meta.dir, 'titlebar.ts'), 'utf8');
+		const toggles = [...src.matchAll(/command: '([^']+)'/g)].map((m) => m[1]);
+		expect(toggles.length).toBe(5);
+		const layoutControls = readFileSync(join(import.meta.dir, 'layoutControls.svelte.ts'), 'utf8');
+		expect(layoutControls).toContain('TITLE_BAR_TOGGLES.map((t) =>\n\t\t\tcommands.register({ id: t.command');
+		for (const id of ['workbench.action.customizeLayout', 'kingu.agents.openInAgents', 'kingu.agents.openInEditor', 'kingu.agents.pickSession', 'kingu.agents.newSession'])
+			expect([id, registered.has(id)]).toEqual([id, true]);
+	});
+
 	test('Open Recent lists recent folders, More… and Clear', () => {
 		const recent = [
 			{ path: '/Users/me/code/kingu', label: 'kingu', detail: '~/code' },

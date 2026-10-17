@@ -3,70 +3,111 @@
 	import { layout, type SideView } from './layout.svelte';
 	import { keyLabel } from './keys';
 	import { scm } from './scm.svelte';
-	import { commands } from './commands.svelte';
+	import { commands, keyOf } from './commands.svelte';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
+	import { team } from '#lib/team/team.svelte.ts';
+
+	/**
+	 * `vertical`: the activity bar (`workbench.activityBar.location: default`), with Accounts and
+	 * Manage at the bottom. `horizontal`: the view icons at the top of the side bar (`top`), where
+	 * Accounts and Manage are in the title bar instead.
+	 */
+	let { orientation = 'vertical' }: { orientation?: 'vertical' | 'horizontal' } = $props();
+	const vertical = $derived(orientation === 'vertical');
 
 	// Count badges (VS Code activitybar badge: bottom-right, 16px).
 	const badges: Partial<Record<SideView, () => number>> = { scm: () => scm.count, agents: () => adeTasks.attentionCount };
-	const views: { view: SideView; label: string; icon: IconName; key: string }[] = [
-		{ view: 'explorer', label: 'Explorer', icon: 'files', key: 'cmd+shift+e' },
-		{ view: 'search', label: 'Search', icon: 'search', key: 'cmd+shift+f' },
-		{ view: 'scm', label: 'Source Control', icon: 'git', key: 'ctrl+shift+g' },
-		{ view: 'agents', label: 'Agents', icon: 'tasks', key: 'ctrl+shift+a' }
+	const views: { view: SideView; label: string; icon: IconName; command: string }[] = [
+		{ view: 'explorer', label: 'Explorer', icon: 'files', command: 'workbench.view.explorer' },
+		{ view: 'search', label: 'Search', icon: 'search', command: 'workbench.action.findInFiles' },
+		{ view: 'scm', label: 'Source Control', icon: 'git', command: 'workbench.view.scm' },
+		{ view: 'agents', label: 'Agents', icon: 'tasks', command: 'kingu.agents.show' }
 	];
+	/** `Explorer (⇧⌘E)`, from the command's live keybinding. */
+	const titled = (label: string, command: string) => {
+		const cmd = commands.get(command);
+		const key = cmd && keyOf(cmd);
+		return key ? `${label} (${keyLabel(key)})` : label;
+	};
+	const ITEM = $derived(vertical ? 'relative grid size-12 place-items-center' : 'relative grid h-full w-8 place-items-center');
+	const ICON = $derived(vertical ? 24 : 16);
 </script>
 
-<!-- 48px wide, 48px items, 24px icons, 2px active indicator on the left (VS Code activitybarPart). -->
+<!-- 48px wide, 48px items, 24px icons, 2px active indicator on the left (VS Code activitybarPart);
+     at the top of the side bar: 16px icons, the indicator below. -->
 <nav
 	aria-label="Activity Bar"
-	class="flex w-(--kg-activitybar-width) shrink-0 flex-col items-center border-r border-(--vscode-activityBar-border) bg-(--vscode-activityBar-background)"
+	class={
+		vertical
+			? 'flex w-(--kg-activitybar-width) shrink-0 flex-col items-center border-r border-(--vscode-activityBar-border) bg-(--vscode-activityBar-background)'
+			: 'flex h-full items-center'
+	}
 >
 	{#each views as v (v.view)}
 		{@const on = layout.sidebarVisible && layout.sideView === v.view}
 		{@const badge = badges[v.view]?.() ?? 0}
+		{@const label = titled(v.label, v.command)}
 		<button
-			aria-label="{v.label} ({keyLabel(v.key)})"
+			aria-label={label}
 			aria-pressed={on}
-			title="{v.label} ({keyLabel(v.key)})"
+			title={label}
 			class={[
-				'relative grid size-12 place-items-center',
-				on ? 'text-(--vscode-activityBar-foreground)' : 'text-(--vscode-activityBar-inactiveForeground) hover:text-(--vscode-activityBar-foreground)'
+				ITEM,
+				vertical
+					? on
+						? 'text-(--vscode-activityBar-foreground)'
+						: 'text-(--vscode-activityBar-inactiveForeground) hover:text-(--vscode-activityBar-foreground)'
+					: on
+						? 'text-(--vscode-foreground)'
+						: 'text-(--vscode-foreground) opacity-60 hover:opacity-100'
 			]}
 			onclick={() => layout.showView(v.view)}
 		>
-			{#if on}<span class="absolute inset-y-0 left-0 w-0.5 bg-(--vscode-activityBar-activeBorder)"></span>{/if}
-			<Icon name={v.icon} size={24} stroke={1.5} />
+			{#if on}<span class={vertical ? 'absolute inset-y-0 left-0 w-0.5 bg-(--vscode-activityBar-activeBorder)' : 'absolute inset-x-1 bottom-0 h-px bg-(--vscode-foreground)'}></span>{/if}
+			<Icon name={v.icon} size={ICON} stroke={1.5} />
 			{#if badge}
 				<span
-					class="absolute right-1.5 bottom-1.5 h-4 min-w-4 rounded-full bg-(--vscode-activityBarBadge-background) px-1 text-center text-[9px] leading-4 font-semibold text-(--vscode-activityBarBadge-foreground)"
+					class={[
+						'absolute rounded-full bg-(--vscode-activityBarBadge-background) text-center font-semibold text-(--vscode-activityBarBadge-foreground)',
+						vertical ? 'right-1.5 bottom-1.5 h-4 min-w-4 px-1 text-[9px] leading-4' : 'top-0.5 right-0 h-3.5 min-w-3.5 px-0.5 text-[8px] leading-3.5'
+					]}
 				>
 					{badge > 999 ? '999+' : badge}
 				</span>
 			{/if}
 		</button>
 	{/each}
-	<button
-		aria-label="Agent ({keyLabel('cmd+alt+b')})"
-		aria-pressed={layout.auxVisible}
-		title="Agent ({keyLabel('cmd+alt+b')})"
-		class={[
-			'relative grid size-12 place-items-center',
-			layout.auxVisible ? 'text-(--vscode-activityBar-foreground)' : 'text-(--vscode-activityBar-inactiveForeground) hover:text-(--vscode-activityBar-foreground)'
-		]}
-		onclick={() => (layout.auxVisible = !layout.auxVisible)}
-	>
-		<Icon name="agent" size={24} stroke={1.5} />
-	</button>
-	<div class="flex-1"></div>
-	<button aria-label="Accounts" title="Accounts" class="grid size-12 place-items-center text-(--vscode-activityBar-inactiveForeground)">
-		<Icon name="account" size={24} stroke={1.5} />
-	</button>
-	<button
-		aria-label="Manage: Settings ({keyLabel('cmd+,')})"
-		title="Settings ({keyLabel('cmd+,')})"
-		class="grid size-12 place-items-center text-(--vscode-activityBar-inactiveForeground) hover:text-(--vscode-activityBar-foreground)"
-		onclick={() => commands.run('workbench.action.openSettings')}
-	>
-		<Icon name="settings" size={24} stroke={1.5} />
-	</button>
+	{#if vertical}
+		{@const agentLabel = titled('Agent', 'workbench.action.toggleAuxiliaryBar')}
+		{@const manage = titled('Manage: Settings', 'workbench.action.openSettings')}
+		<button
+			aria-label={agentLabel}
+			aria-pressed={layout.auxVisible}
+			title={agentLabel}
+			class={[
+				'relative grid size-12 place-items-center',
+				layout.auxVisible ? 'text-(--vscode-activityBar-foreground)' : 'text-(--vscode-activityBar-inactiveForeground) hover:text-(--vscode-activityBar-foreground)'
+			]}
+			onclick={() => (layout.auxVisible = !layout.auxVisible)}
+		>
+			<Icon name="agent" size={24} stroke={1.5} />
+		</button>
+		<div class="flex-1"></div>
+		<button
+			aria-label="Accounts"
+			title={team.label?.tooltip ?? 'Accounts'}
+			class="grid size-12 place-items-center text-(--vscode-activityBar-inactiveForeground) hover:text-(--vscode-activityBar-foreground)"
+			onclick={() => team.showMenu()}
+		>
+			<Icon name="account" size={24} stroke={1.5} />
+		</button>
+		<button
+			aria-label={manage}
+			title={manage}
+			class="grid size-12 place-items-center text-(--vscode-activityBar-inactiveForeground) hover:text-(--vscode-activityBar-foreground)"
+			onclick={() => commands.run('workbench.action.openSettings')}
+		>
+			<Icon name="settings" size={24} stroke={1.5} />
+		</button>
+	{/if}
 </nav>

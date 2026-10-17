@@ -13,7 +13,8 @@
 	import { adeTasks } from './tasks.svelte';
 	import { BUTTON, BUTTON_SECONDARY, ICON_BUTTON, INPUT, LETTER_COLOR, STATUS_DOT, TONE } from './ui';
 
-	let { slug }: { slug: string } = $props();
+	/** `timeline` / `review`: one half, for the Agents layout's main area and changes panel. */
+	let { slug, sections = 'all' }: { slug: string; sections?: 'all' | 'timeline' | 'review' } = $props();
 
 	const view = $derived(adeTasks.find(slug));
 	const meta = $derived(view?.meta);
@@ -87,6 +88,7 @@
 {:else}
 	{@const chip = reviewChip(view)}
 	<div class="flex h-full flex-col overflow-hidden bg-(--vscode-editor-background) text-(--vscode-foreground)">
+		{#if sections !== 'review'}
 		<header class="shrink-0 border-b border-(--vscode-widget-border) px-4 py-3">
 			<div class="flex items-center gap-2">
 				<span class={['size-2.5 shrink-0 rounded-full', STATUS_DOT[view.status]]}></span>
@@ -129,10 +131,12 @@
 				</p>
 			{/if}
 		</header>
+		{/if}
 
-		<div class="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1fr)_minmax(320px,440px)]">
+		<div class={['grid min-h-0 flex-1 grid-cols-1 overflow-hidden', sections === 'all' && 'lg:grid-cols-[minmax(0,1fr)_minmax(320px,440px)]']}>
+			{#if sections !== 'review'}
 			<!-- Timeline -->
-			<section aria-label="Timeline" class="flex min-h-0 flex-col border-r border-(--vscode-widget-border)">
+			<section aria-label="Timeline" class={['flex min-h-0 flex-col', sections === 'all' && 'border-r border-(--vscode-widget-border)']}>
 				<h2 class="shrink-0 px-4 pt-2 text-[11px] font-bold text-(--vscode-descriptionForeground) uppercase">Timeline</h2>
 				{#if meta.prompt}
 					<p class="mx-4 mt-1 line-clamp-3 shrink-0 rounded bg-(--vscode-input-background) px-2 py-1 text-xs whitespace-pre-wrap" title={meta.prompt}>{meta.prompt}</p>
@@ -157,7 +161,9 @@
 					<button class={BUTTON} disabled={run?.status === 'starting' || !followUp.trim()}><Icon name="play" size={12} /> ส่ง</button>
 				</form>
 			</section>
+			{/if}
 
+			{#if sections !== 'timeline'}
 			<!-- Review -->
 			<section aria-label="Review" class="flex min-h-0 flex-col overflow-y-auto text-xs">
 				<div class="flex shrink-0 items-center gap-2 px-3 pt-2">
@@ -245,6 +251,7 @@
 					<p class="px-3 py-2 text-(--vscode-descriptionForeground)">กำลังอ่านการเปลี่ยนแปลง…</p>
 				{/if}
 			</section>
+			{/if}
 		</div>
 	</div>
 {/if}

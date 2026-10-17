@@ -3,6 +3,9 @@
 // its schema so a bad value in a file falls back instead of breaking the workbench.
 
 import { DEFAULT_THEME, THEMES } from '../theme/themes';
+import { defaultTitleTemplate } from '../workbench/title';
+
+const MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
 
 export type SettingScope = 'user' | 'workspace';
 
@@ -187,6 +190,151 @@ export const SETTINGS: SettingSchema[] = [
 		type: 'string',
 		default: '',
 		description: 'Project id (uuid) บนเซิร์ฟเวอร์ทีมที่งานของ workspace นี้จะถูกซิงก์ไป เว้นว่างเพื่อปิดการซิงก์ (Team server project id for this workspace; empty disables sync.)'
+	},
+	// --- Title bar and layout (VS Code: window.*, workbench.layoutControl.*, workbench.activityBar.location …)
+	{
+		id: 'window.title',
+		group: 'Window',
+		type: 'string',
+		default: defaultTitleTemplate(MAC),
+		description:
+			'ชื่อหน้าต่างจากตัวแปร: ${activeEditorShort} ${activeEditorMedium} ${activeEditorLong} ${activeFolderShort} ${folderName} ${folderPath} ${rootName} ${rootPath} ${activeRepositoryBranchName} ${dirty} ${appName} ${separator} (Controls the window title based on the current context; the variables are substituted.)',
+		scope: 'application'
+	},
+	{
+		id: 'window.titleSeparator',
+		group: 'Window',
+		type: 'string',
+		default: ' — ',
+		description: 'ตัวคั่นที่ใช้แทน ${separator} ใน window.title (Separator used by window.title.)',
+		scope: 'application'
+	},
+	{
+		id: 'window.commandCenter',
+		group: 'Window',
+		type: 'boolean',
+		default: true,
+		description: 'แสดง command center (ช่องค้นหา) กลางแถบชื่อเรื่อง แถบจะสูง 30px เมื่อปิด (Show the command center in the title bar.)',
+		scope: 'application'
+	},
+	{
+		id: 'window.menuBarVisibility',
+		group: 'Window',
+		type: 'string',
+		default: 'classic',
+		enum: ['classic', 'compact', 'hidden'],
+		enumDescriptions: [
+			'แสดงเมนูเต็มในแถบชื่อเรื่อง (The menu is displayed at the top of the window.)',
+			'รวมเมนูไว้ในปุ่มแฮมเบอร์เกอร์ (The menu is displayed as a compact button.)',
+			'ซ่อนเมนู (The menu is hidden.)'
+		],
+		description: 'การแสดงเมนูในหน้าต่างบน Windows/Linux (macOS ใช้เมนูของระบบ) (Controls the visibility of the in-window menu bar on Windows and Linux.)',
+		scope: 'application'
+	},
+	{
+		id: 'workbench.navigationControl.enabled',
+		group: 'Workbench',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงปุ่มย้อนกลับ/ไปข้างหน้าใน command center (Controls whether the navigation controls are shown in the command center.)',
+		scope: 'application'
+	},
+	{
+		id: 'workbench.layoutControl.enabled',
+		group: 'Workbench',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงปุ่มควบคุมเลย์เอาต์ในแถบชื่อเรื่อง (Controls whether the layout controls in the title bar are shown.)',
+		scope: 'application'
+	},
+	{
+		id: 'workbench.layoutControl.type',
+		group: 'Workbench',
+		type: 'string',
+		default: 'both',
+		enum: ['toggles', 'menu', 'both'],
+		enumDescriptions: [
+			'ปุ่มเปิด/ปิด side bar, panel และ secondary side bar (Shows toggles for the side bars and panel.)',
+			'ปุ่มเดียวที่เปิดเมนูเลย์เอาต์ (Shows a single button with a dropdown of layout options.)',
+			'แสดงทั้งปุ่มเปิด/ปิดและเมนู (Shows both the toggles and the menu.)'
+		],
+		description: 'รูปแบบของปุ่มควบคุมเลย์เอาต์ในแถบชื่อเรื่อง (Controls whether the layout control is a single menu button, toggles, or both.)',
+		scope: 'application'
+	},
+	{
+		id: 'workbench.activityBar.location',
+		group: 'Workbench',
+		type: 'string',
+		default: 'default',
+		enum: ['default', 'top', 'hidden'],
+		enumDescriptions: [
+			'แถบแนวตั้งข้าง side bar (Show the activity bar to the side of the primary side bar.)',
+			'ไอคอนอยู่บนหัว side bar บัญชีและการตั้งค่าย้ายไปแถบชื่อเรื่อง (Show the activity bar at the top of the primary side bar; Accounts and Manage move to the title bar.)',
+			'ซ่อน บัญชีและการตั้งค่าย้ายไปแถบชื่อเรื่อง (Hide the activity bar.)'
+		],
+		description: 'ตำแหน่งของ activity bar (Controls the location of the activity bar.)'
+	},
+	{
+		id: 'workbench.sideBar.location',
+		group: 'Workbench',
+		type: 'string',
+		default: 'left',
+		enum: ['left', 'right'],
+		description: 'ตำแหน่งของ primary side bar ซ้ายหรือขวา secondary side bar จะอยู่ฝั่งตรงข้าม (Controls the location of the primary side bar.)'
+	},
+	{
+		id: 'workbench.panel.defaultLocation',
+		group: 'Workbench',
+		type: 'string',
+		default: 'bottom',
+		enum: ['bottom', 'top', 'left', 'right'],
+		description: 'ตำแหน่งของ panel (terminal, problems, output) (Controls where the panel is shown.)'
+	},
+	{
+		id: 'workbench.panel.alignment',
+		group: 'Workbench',
+		type: 'string',
+		default: 'center',
+		enum: ['center', 'justify', 'left', 'right'],
+		enumDescriptions: [
+			'panel กว้างเท่า editor (The panel spans the editor area only.)',
+			'panel กว้างเต็มหน้าต่างระหว่าง side bar ทั้งสอง (The panel spans the full width.)',
+			'panel ยื่นไปถึงขอบซ้าย (The panel extends to the left edge.)',
+			'panel ยื่นไปถึงขอบขวา (The panel extends to the right edge.)'
+		],
+		description: 'การจัดแนวของ panel เมื่ออยู่ด้านล่างหรือด้านบน (Controls the alignment of the panel when it is at the bottom or top.)'
+	},
+	{
+		id: 'kingu.agentsControl.enabled',
+		group: 'Agent',
+		type: 'string',
+		default: 'compact',
+		enum: ['hidden', 'badge', 'compact'],
+		enumDescriptions: [
+			'ไม่แสดงสถานะ agent ในแถบชื่อเรื่อง (Hide the agents status.)',
+			'ป้ายสถานะแยกถัดจากช่องค้นหา (Show the agents status as a separate badge next to the search box.)',
+			'รวมช่องค้นหากับสถานะ agent เป็นปุ่มเดียว (Merge the search box and the agents status into one pill.)'
+		],
+		description: 'การแสดงสถานะ agent (รอคุณ / กำลังทำ / ยังไม่อ่าน) ใน command center (Controls the agents status widget in the command center.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.titleBar.openInAgents.enabled',
+		group: 'Agent',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงปุ่ม "Open in Agents" ในแถบชื่อเรื่อง (Show the Open in Agents button in the title bar.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.agentsLayout.density',
+		group: 'Agent',
+		type: 'string',
+		default: 'default',
+		enum: ['default', 'compact'],
+		enumDescriptions: ['แถบชื่อเรื่อง 44px (44px title bar.)', 'แถบชื่อเรื่อง 35px (35px title bar.)'],
+		description: 'ความหนาแน่นของแถบชื่อเรื่องในโหมด Agents (Title bar density of the Agents layout.)',
+		scope: 'application'
 	}
 ];
 

@@ -7,7 +7,7 @@ export type PanelTab = 'problems' | 'output' | 'terminal';
 const KEY = 'kingu.workbench.layout';
 export const SIDEBAR_MIN = 170;
 export const PANEL_MIN = 77;
-const PERSISTED = ['sidebarVisible', 'panelVisible', 'auxVisible', 'sidebarWidth', 'panelHeight', 'auxWidth', 'sideView', 'panelTab'] as const;
+const PERSISTED = ['sidebarVisible', 'panelVisible', 'auxVisible', 'sidebarWidth', 'panelHeight', 'auxWidth', 'panelWidth', 'sideView', 'panelTab'] as const;
 
 function readSaved(): Record<string, unknown> {
 	try {
@@ -24,6 +24,8 @@ class Layout {
 	sidebarWidth = $state(300);
 	panelHeight = $state(260);
 	auxWidth = $state(360);
+	/** Width of the panel when it sits left or right of the editor (`workbench.panel.defaultLocation`). */
+	panelWidth = $state(400);
 	sideView = $state<SideView>('explorer');
 	panelTab = $state<PanelTab>('terminal');
 

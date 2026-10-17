@@ -20,6 +20,8 @@ import { quick } from '#lib/workbench/quick.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { taskDiffKey, parseTaskDiffKey } from '#lib/workbench/scm.ts';
+import { appMode } from '#lib/workbench/mode.svelte.ts';
+import { countSessions, inFilter, type AgentsFilter, type SessionState } from '#lib/workbench/titlebar.ts';
 import { BOARD_KEY, slugOfTaskKey, taskKey, worktreeDir } from './keys';
 import {
 	adoptOrphans,
@@ -32,6 +34,7 @@ import {
 	pruneAccepted,
 	removeTask,
 	runSummary,
+	toTaskRuntime,
 	sameSummary,
 	toggleAccepted,
 	uniqueSlug,
@@ -69,9 +72,38 @@ class AdeTasks {
 	reviewCount = $derived(this.groups.attention.filter((v) => v.status !== 'waiting').length);
 	/** The title-bar "รอคุณ" badge: pending permission requests (every folder) + tasks to review. */
 	badgeCount = $derived(agents.pendingCount + this.reviewCount);
+	/**
+	 * Every agent session for the title bar's agents status: this folder's tasks, plus runs started
+	 * in other folders (they can still need input or be working).
+	 */
+	sessionStates: (SessionState & { slug: string })[] = $derived.by(() => {
+		const here = this.views.map((v) => ({ slug: v.meta.slug, ...this.stateOf(v) }));
+		const others = agents.list
+			.filter((r) => r.root !== workspace.root)
+			.map((r) => ({ slug: r.slug, status: toTaskRuntime(r).status, pending: r.pending.length }));
+		return [...here, ...others];
+	});
+	/** Needs input / in progress / unread, for the agents status widget and the session pill. */
+	counts = $derived(countSessions(this.sessionStates));
 
 	#saving: Promise<void> = Promise.resolve();
 	#root: string | null = null;
+
+	/** A task as the agents status sees it (unread = finished after it was last viewed). */
+	stateOf(v: TaskView): SessionState {
+		const finished = v.status === 'review' || v.status === 'failed';
+		return {
+			status: v.status,
+			pending: v.runtime?.pendingPermissions ?? 0,
+			finishedAt: finished ? (v.runtime?.updatedAt ?? v.meta.last_run?.at ?? v.meta.updated_at) : undefined,
+			viewedAt: appMode.viewedAt[v.meta.slug]
+		};
+	}
+
+	/** This folder's tasks in a status group of the Agents layout. */
+	filtered(filter: AgentsFilter): TaskView[] {
+		return this.views.filter((v) => inFilter(this.stateOf(v), filter));
+	}
 
 	find(slug: string): TaskView | undefined {
 		return this.views.find((v) => v.meta.slug === slug);
@@ -281,6 +313,7 @@ class AdeTasks {
 		delete this.stats[slug];
 		delete this.statErrors[slug];
 		await this.#save(removeTask(this.list, slug));
+		appMode.forget(slug);
 		status.flash(`ลบงาน ${slug} แล้ว`);
 	}
 
@@ -372,15 +405,22 @@ class AdeTasks {
 	// -------------------------------------------------------------------------------------------
 	// Navigation
 
+	/** The task page: the Agents layout's session in Agents mode, else an editor tab. */
 	openTask(slug: string) {
-		editors.open(taskKey(slug), { preview: false });
+		if (appMode.isAgents) appMode.openSession(slug);
+		else editors.open(taskKey(slug), { preview: false });
 	}
 
 	openBoard() {
 		editors.open(BOARD_KEY, { preview: false });
 	}
 
+	/** The Agents side bar view (in Agents mode: the sessions side bar). */
 	showView() {
+		if (appMode.isAgents) {
+			appMode.sessionsVisible = true;
+			return;
+		}
 		layout.sideView = 'agents';
 		layout.sidebarVisible = true;
 	}
@@ -467,6 +507,16 @@ export function installAde(): () => void {
 				untrack(() => void team.syncTask(task));
 			}
 		});
+		// "Unread": a session counts as seen while its task page is in front (tab or Agents layout).
+		$effect(() => {
+			const slug = appMode.isAgents ? appMode.activeSession : editors.active ? slugOfTaskKey(editors.active) : null;
+			if (!slug) return;
+			const v = adeTasks.find(slug);
+			void v?.status;
+			void v?.runtime?.updatedAt;
+			void v?.meta.updated_at;
+			untrack(() => appMode.markViewed(slug));
+		});
 		$effect(() => {
 			if (!adeTasks.loaded) return;
 			for (const rt of runtime.all()) {
@@ -483,7 +533,8 @@ export function installAde(): () => void {
 	window.addEventListener('focus', onFocus);
 	const hasRoot = () => workspace.root !== null;
 	const unregister = [
-		commands.register({ id: 'kingu.agents.show', title: 'Show Agents', category: 'View', key: 'ctrl+shift+a', run: () => adeTasks.showView() }),
+		// No keybinding: ⌘⇧A (Ctrl+Shift+A) switches to the Agents layout (workbench.action.toggleAgentsMode).
+		commands.register({ id: 'kingu.agents.show', title: 'Show Agents', category: 'View', run: () => adeTasks.showView() }),
 		commands.register({ id: 'kingu.agents.newTask', title: 'งานใหม่ (New Task)', category: 'Agents', when: hasRoot, run: () => (adeTasks.showView(), (adeTasks.composing = true)) }),
 		commands.register({ id: 'kingu.agents.openBoard', title: 'Open Board', category: 'Agents', when: hasRoot, run: () => adeTasks.openBoard() }),
 		commands.register({ id: 'kingu.agents.nextAttention', title: 'เปิดงานถัดไปที่รอคุณ (Next Task Needing Attention)', category: 'Agents', when: hasRoot, run: () => adeTasks.openNext() }),

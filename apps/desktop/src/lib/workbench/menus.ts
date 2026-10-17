@@ -36,7 +36,15 @@ export type Role =
 
 type Only = { platform?: Platform };
 export type MenuItem =
-	| ({ command: string; label: string; key?: string; mac?: string; toggle?: boolean } & Only)
+	| ({
+			command: string;
+			label: string;
+			key?: string;
+			mac?: string;
+			toggle?: boolean;
+			/** A two-state item whose label names the other state (Open in Agents / Open in Editor) instead of a check mark. */
+			checkedLabel?: string;
+	  } & Only)
 	| ({ role: Role; label?: string } & Only)
 	| ({ separator: true } & Only)
 	| ({ submenu: string; label: string; items: MenuItem[] } & Only)
@@ -164,6 +172,7 @@ export const MENUS: Menu[] = [
 					{ command: 'workbench.action.toggleSidebarVisibility', label: 'Primary Side Bar', toggle: true },
 					{ command: 'workbench.action.toggleAuxiliaryBar', label: 'Secondary Side Bar', toggle: true },
 					{ command: 'workbench.action.togglePanel', label: 'Panel', toggle: true },
+					{ command: 'workbench.action.customizeLayout', label: 'Customize Layout...' },
 					SEP,
 					{ command: 'workbench.action.zoomIn', label: 'Zoom In' },
 					{ command: 'workbench.action.zoomOut', label: 'Zoom Out' },
@@ -200,6 +209,8 @@ export const MENUS: Menu[] = [
 			{ command: 'kingu.agents.newTask', label: 'New Task' },
 			{ command: 'kingu.agents.show', label: 'Show Agents' },
 			{ command: 'kingu.agents.openBoard', label: 'Board' },
+			SEP,
+			{ command: 'workbench.action.toggleAgentsMode', label: 'Open in Agents', checkedLabel: 'Open in Editor' },
 			SEP,
 			{ command: 'kingu.agents.nextAttention', label: 'Next Task Needing Attention' }
 		]
@@ -298,7 +309,8 @@ function resolveItems(items: MenuItem[], ctx: MenuContext): MenuNode[] {
 		} else if ('recent' in item) out.push(...recentItems(ctx));
 		else {
 			const key = (ctx.mac ? item.mac : undefined) ?? item.key ?? ctx.keyOf(item.command);
-			const node: MenuNode = { type: 'item', id: item.command, text: item.label, ...keyInfo(key, ctx.mac), enabled: ctx.enabled(item.command) };
+			const text = item.checkedLabel && ctx.checked(item.command) ? item.checkedLabel : item.label;
+			const node: MenuNode = { type: 'item', id: item.command, text, ...keyInfo(key, ctx.mac), enabled: ctx.enabled(item.command) };
 			if (item.toggle) node.checked = ctx.checked(item.command);
 			out.push(node);
 		}

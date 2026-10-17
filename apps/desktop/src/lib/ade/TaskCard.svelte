@@ -5,8 +5,11 @@
 	import { aggregateStats, formatSummaryUsage, reviewChip, STATUS_LABEL, timeAgo, type TaskView } from './model';
 	import { adeTasks } from './tasks.svelte';
 	import { ICON_BUTTON, STATUS_DOT, TONE } from './ui';
+	import { appMode } from '#lib/workbench/mode.svelte.ts';
 
 	let { view }: { view: TaskView } = $props();
+	/** The session shown in the Agents layout. */
+	const selected = $derived(appMode.isAgents && appMode.activeSession === view.meta.slug);
 
 	const meta = $derived(view.meta);
 	const totals = $derived(view.stat ? aggregateStats(view.stat.files) : null);
@@ -31,7 +34,11 @@
 	role="button"
 	tabindex="0"
 	aria-label="{meta.title} — {STATUS_LABEL[view.status]}"
-	class="group relative cursor-pointer rounded border border-(--vscode-widget-border) bg-(--vscode-editor-background) p-2 text-xs outline-none hover:border-(--vscode-focusBorder)/60 focus-visible:border-(--vscode-focusBorder)"
+	aria-current={selected ? 'true' : undefined}
+	class={[
+		'group relative cursor-pointer rounded border bg-(--vscode-editor-background) p-2 text-xs outline-none hover:border-(--vscode-focusBorder)/60 focus-visible:border-(--vscode-focusBorder)',
+		selected ? 'border-(--vscode-focusBorder)' : 'border-(--vscode-widget-border)'
+	]}
 	onclick={() => adeTasks.openTask(meta.slug)}
 	onkeydown={onKey}
 >

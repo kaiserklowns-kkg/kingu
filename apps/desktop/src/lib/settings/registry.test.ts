@@ -89,4 +89,31 @@ describe('schema', () => {
 		expect(schema.properties['editor.tabSize'].type).toBe('integer');
 		expect(schema.properties['files.autoSave'].enum).toEqual(['off', 'afterDelay', 'onFocusChange']);
 	});
+
+	test('title bar and layout settings, with VS Code defaults and Thai + English descriptions', () => {
+		const m = resolveSettings({}, {});
+		const expected: Record<string, unknown> = {
+			'window.commandCenter': true,
+			'window.menuBarVisibility': 'classic',
+			'window.titleSeparator': ' — ',
+			'workbench.navigationControl.enabled': true,
+			'workbench.layoutControl.enabled': true,
+			'workbench.layoutControl.type': 'both',
+			'workbench.activityBar.location': 'default',
+			'workbench.sideBar.location': 'left',
+			'workbench.panel.defaultLocation': 'bottom',
+			'workbench.panel.alignment': 'center',
+			'kingu.agentsControl.enabled': 'compact',
+			'kingu.titleBar.openInAgents.enabled': true,
+			'kingu.agentsLayout.density': 'default'
+		};
+		for (const [id, v] of Object.entries(expected)) expect([id, m.get(id)?.value]).toEqual([id, v]);
+		expect(String(m.get('window.title')?.value)).toContain('${activeEditorShort}${separator}${rootName}');
+		for (const id of [...Object.keys(expected), 'window.title']) {
+			const d = SCHEMA.get(id)!.description;
+			expect([id, /[฀-๿]/.test(d), /\([A-Z][^)]*\.\)/.test(d)]).toEqual([id, true, true]);
+		}
+		expect(SCHEMA.get('kingu.agentsControl.enabled')).toMatchObject({ enum: ['hidden', 'badge', 'compact'] });
+		expect(resolveSettings({ 'workbench.layoutControl.type': 'sideways' }, {}).get('workbench.layoutControl.type')?.source).toBe('default');
+	});
 });

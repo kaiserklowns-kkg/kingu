@@ -34,6 +34,11 @@
 		merge: 'M6 3v18M6 9a6 6 0 0 0 6 6h3M18 18a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
 		pullRequest: 'M6 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM6 9v12M18 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 15V8a2 2 0 0 0-2-2h-4M14 3l-2 3 2 3',
 		refresh: 'M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7',
+		kingu: 'M6 3h12a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3zM9 7.5v9M15.5 7.5L9 12l6.5 4.5',
+		menu: 'M4 6h16M4 12h16M4 18h16',
+		layout: 'M3 4h18v16H3zM3 9h18M9 9v11',
+		code: 'M8 7l-5 5 5 5M16 7l5 5-5 5',
+		commit: 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM3 12h6M15 12h6',
 		replaceAll:'M3 4h6v5H3zM3 13h6v5H3zM14 9h7v6h-7zM9 6.5h2.5a2 2 0 0 1 2 2V9M9 15.5h2.5a2 2 0 0 0 2-2V15'
 	} as const;
 	export type IconName = keyof typeof icons;

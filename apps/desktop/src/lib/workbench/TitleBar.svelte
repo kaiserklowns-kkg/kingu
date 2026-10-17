@@ -1,41 +1,107 @@
 <script lang="ts">
+	// Workbench (IDE) title bar, VS Code's `window.titleBarStyle: custom` (titlebarPart.ts):
+	// 35px (30px without the command center), left 20% / center (fit-content, max 60%) / right 20%.
+	// Left: the macOS traffic-light inset, or the Kingu mark and the in-window menu bar.
+	// Center: the command center. Right: Open in Agents, layout controls, and Accounts/Manage when
+	// the activity bar is not showing them. Any non-interactive part drags the window.
+	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
+	import CommandCenter from './CommandCenter.svelte';
 	import Icon, { type IconName } from './Icon.svelte';
 	import MenuBar from './MenuBar.svelte';
+	import PopupMenu, { menuItem, menuSeparator } from './PopupMenu.svelte';
+	import { currentMenubar, runMenuItem, runRole } from './appMenu.svelte';
 	import { commands, keyOf } from './commands.svelte';
 	import { editorLabel } from './editorLabel';
-	import { layout } from './layout.svelte';
-	import { navigation } from './navigation.svelte';
 	import { editors } from './editors.svelte';
 	import { isMac, keyLabel } from './keys';
-	import { windowTitle } from './title';
-	import { agents } from '#lib/agent/agents.svelte.ts';
-	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
+	import { layout } from './layout.svelte';
+	import { titleBarToggleChecked } from './layoutControls.svelte';
+	import { status } from './status.svelte';
+	import { isCustomTitle, renderWindowTitle } from './title';
+	import {
+		commandCenterLabel,
+		layoutControlItems,
+		overflowHidden,
+		TITLE_BAR_TOGGLES,
+		titleBarHeight,
+		titleToolbar,
+		type LayoutControlItem,
+		type LayoutControlType
+	} from './titlebar';
+	import { workspace } from './workspace.svelte';
+	import type { MenuNode } from './menus';
+	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { team } from '#lib/team/team.svelte.ts';
+	import { openAgents } from '#lib/ade/agentsMode.svelte.ts';
 
-	let { workspaceName }: { workspaceName: string } = $props();
+	let { workspaceName, focused }: { workspaceName: string; focused: boolean } = $props();
 
-	const toggles: { label: string; icon: IconName; command: string; on: () => boolean }[] = [
-		{ label: 'Toggle Primary Side Bar', icon: 'sidebarLeft', command: 'workbench.action.toggleSidebarVisibility', on: () => layout.sidebarVisible },
-		{ label: 'Toggle Panel', icon: 'panelBottom', command: 'workbench.action.togglePanel', on: () => layout.panelVisible },
-		{ label: 'Toggle Agent (Secondary Side Bar)', icon: 'sidebarRight', command: 'workbench.action.toggleAuxiliaryBar', on: () => layout.auxVisible }
-	];
-
-	/** ` (⌘B)` for a tooltip, from the command's live keybinding. */
-	const keyHint = (command: string) => {
+	const key = (command: string) => {
 		const cmd = commands.get(command);
-		const key = cmd && keyOf(cmd);
-		return key ? ` (${keyLabel(key)})` : '';
+		const k = cmd && keyOf(cmd);
+		return k ? keyLabel(k) : undefined;
 	};
+	const hint = (command: string) => (key(command) ? ` (${key(command)})` : '');
 
+	// --- Window title (`window.title`) --------------------------------------------------------
 	const active = $derived(editors.active);
 	const dirty = $derived(active !== null && editors.tabs.some((t) => t.path === active && t.dirty));
-	// VS Code's `window.title`: `● file.ts — folder — Kingu`.
-	const title = $derived(windowTitle({ editor: active ? editorLabel(active) : null, folder: workspaceName, dirty }));
+	const template = $derived(settings.get<string>('window.title'));
+	const title = $derived.by(() => {
+		const isFile = active !== null && !active.includes('://');
+		const editor = active ? { short: editorLabel(active), medium: isFile ? active : editorLabel(active), long: isFile && workspace.root ? `${workspace.root}/${active}` : editorLabel(active) } : null;
+		return renderWindowTitle(template, {
+			editor,
+			rootName: workspace.root ? workspaceName : null,
+			rootPath: workspace.root,
+			dirty,
+			branch: status.branch,
+			separator: settings.get<string>('window.titleSeparator')
+		});
+	});
 
 	$effect(() => {
-		document.title = title;
+		const t = title;
+		document.title = t;
+		// The native title (Mission Control, the Dock and the taskbar show it).
+		void import('@tauri-apps/api/window')
+			.then(({ getCurrentWindow }) => getCurrentWindow().setTitle(t))
+			.catch(() => {});
 	});
+
+	// --- Parts ---------------------------------------------------------------------------------
+	const commandCenter = $derived(settings.get<boolean>('window.commandCenter'));
+	const height = $derived(titleBarHeight('workbench', { commandCenter, compactAgents: false }));
+	// Quick input and other overlays sit just below the title bar.
+	$effect(() => document.documentElement.style.setProperty('--kg-titlebar-height', `${height}px`));
+	const menuBarVisibility = $derived(settings.get<'classic' | 'compact' | 'hidden'>('window.menuBarVisibility'));
+	const label = $derived(commandCenterLabel({ folderName: workspace.root ? workspaceName : null, title, customTitle: isCustomTitle(template, isMac) }));
+	const layoutItems = $derived(layoutControlItems(settings.get<boolean>('workbench.layoutControl.enabled'), settings.get<LayoutControlType>('workbench.layoutControl.type')));
+	const globalActions = $derived(settings.get<string>('workbench.activityBar.location') !== 'default');
+	const toolbar = $derived(titleToolbar({ openInAgents: settings.get<boolean>('kingu.titleBar.openInAgents.enabled'), layout: layoutItems, globalActions }));
+
+	// Overflow: items next to the center hide first (VS Code `.overflowing`).
+	let right: HTMLDivElement | undefined = $state();
+	let rightWidth = $state(400);
+	onMount(() => {
+		if (!right) return;
+		const ro = new ResizeObserver(([e]) => (rightWidth = e.contentRect.width));
+		ro.observe(right);
+		return () => ro.disconnect();
+	});
+	const hidden = $derived(overflowHidden(toolbar, rightWidth - 8));
+	const shown = (id: string) => toolbar.some((t) => t.id === id) && !hidden.has(id);
+
+	const TOGGLES: Record<Exclude<LayoutControlItem, 'layoutMenu'>, { label: string; icon: IconName; command: string; on: () => boolean }> = {
+		toggleSidebar: { label: 'Toggle Primary Side Bar', icon: 'sidebarLeft', command: 'workbench.action.toggleSidebarVisibility', on: () => layout.sidebarVisible },
+		togglePanel: { label: 'Toggle Panel', icon: 'panelBottom', command: 'workbench.action.togglePanel', on: () => layout.panelVisible },
+		toggleAuxiliaryBar: { label: 'Toggle Agent (Secondary Side Bar)', icon: 'sidebarRight', command: 'workbench.action.toggleAuxiliaryBar', on: () => layout.auxVisible }
+	};
+	// With the side bar on the right, VS Code swaps the side bar icons.
+	const sidebarRight = $derived(settings.get<string>('workbench.sideBar.location') === 'right');
+	const toggleIcon = (id: Exclude<LayoutControlItem, 'layoutMenu'>): IconName =>
+		sidebarRight && id === 'toggleSidebar' ? 'sidebarRight' : sidebarRight && id === 'toggleAuxiliaryBar' ? 'sidebarLeft' : TOGGLES[id].icon;
 
 	const account = $derived.by(() => {
 		const s = team.status;
@@ -43,6 +109,48 @@
 		if (!s.signed_in) return { label: `บัญชี: ยังไม่ได้ลงชื่อเข้าใช้ทีม (${s.server})`, signedIn: false };
 		return { label: `บัญชี: ลงชื่อเข้าใช้ทีมแล้ว (${s.server})${s.online ? '' : ' — ออฟไลน์'}`, signedIn: true };
 	});
+
+	// --- Menus ---------------------------------------------------------------------------------
+	type Popup = { kind: 'context' | 'layout' | 'hamburger'; x: number; y: number; keyboard: boolean };
+	let popup = $state<Popup | null>(null);
+
+	const popupItems = $derived.by((): MenuNode[] => {
+		if (!popup) return [];
+		if (popup.kind === 'hamburger') return currentMenubar(false);
+		if (popup.kind === 'layout')
+			return [
+				menuItem('workbench.action.toggleSidebarVisibility', 'Primary Side Bar', { checked: layout.sidebarVisible, keyLabel: key('workbench.action.toggleSidebarVisibility') }),
+				menuItem('workbench.action.toggleAuxiliaryBar', 'Secondary Side Bar', { checked: layout.auxVisible, keyLabel: key('workbench.action.toggleAuxiliaryBar') }),
+				menuItem('workbench.action.togglePanel', 'Panel', { checked: layout.panelVisible, keyLabel: key('workbench.action.togglePanel') }),
+				menuSeparator,
+				menuItem('workbench.action.customizeLayout', 'Customize Layout...')
+			];
+		return [
+			...TITLE_BAR_TOGGLES.map((t) =>
+				menuItem(t.command, t.label, { checked: titleBarToggleChecked(t.command), enabled: t.setting !== 'workbench.navigationControl.enabled' || commandCenter })
+			),
+			menuSeparator,
+			menuItem('workbench.action.customizeLayout', 'Customize Layout...')
+		];
+	});
+
+	function runPopup(node: MenuNode) {
+		if (node.type === 'item') {
+			if (popup?.kind === 'hamburger' || node.id.startsWith('recent:')) runMenuItem(node.id);
+			else void commands.run(node.id);
+		} else if (node.type === 'role') void runRole(node.role);
+	}
+
+	function openBelow(kind: Popup['kind'], e: MouseEvent, alignRight = false) {
+		const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		popup = { kind, x: alignRight ? r.right - 248 : r.left, y: r.bottom + 2, keyboard: e.detail === 0 };
+	}
+
+	function onContextMenu(e: MouseEvent) {
+		if ((e.target as Element).closest('[role="menubar"], [role="menu"], input')) return;
+		e.preventDefault();
+		popup = { kind: 'context', x: e.clientX, y: e.clientY, keyboard: false };
+	}
 
 	/** Clicks on the bar itself (not on its buttons or menus) drag the window and double-click zooms it. */
 	const onBarItself = (e: MouseEvent) => !(e.target as Element).closest('button, a, input, [role="menubar"], [role="menu"]');
@@ -54,83 +162,104 @@
 		e.stopPropagation();
 		void invoke('window_titlebar_double_click').catch(() => {});
 	}
+
+	const ACTION = 'grid size-6 shrink-0 place-items-center rounded-[5px] hover:bg-(--vscode-toolbar-hoverBackground)';
 </script>
 
-<!-- Custom title bar, 35px with the command center (VS Code's default `window.titleBarStyle: custom`).
-     The left inset clears the macOS traffic lights of the overlay title bar; Windows and Linux get
-     the in-window menu bar there instead. `deep`: any non-interactive part of the bar drags. -->
 <!-- svelte-ignore a11y_no_static_element_interactions (double-click zoom is a pointer convenience, like the native title bar) -->
 <header
 	data-tauri-drag-region="deep"
 	onmouseup={onMouseUp}
+	oncontextmenu={onContextMenu}
+	style:height="{height}px"
 	class={[
-		'relative flex h-(--kg-titlebar-height) shrink-0 items-center gap-1 border-b border-(--vscode-titleBar-border) bg-(--vscode-titleBar-activeBackground) pr-2 text-(--vscode-titleBar-activeForeground) select-none',
-		isMac ? 'pl-[78px]' : 'pl-1'
+		'titlebar relative flex shrink-0 items-center border-b border-(--vscode-titleBar-border) select-none',
+		focused
+			? 'bg-(--vscode-titleBar-activeBackground) text-(--vscode-titleBar-activeForeground)'
+			: 'inactive bg-(--vscode-titleBar-inactiveBackground) text-(--vscode-titleBar-inactiveForeground) [&>*]:opacity-60'
 	]}
 >
-	<div class="flex shrink-0 items-center gap-0.5">
-		{#if !isMac}<MenuBar />{/if}
-		<button
-			aria-label="Go Back"
-			title="Go Back{keyHint('workbench.action.navigateBack')}"
-			disabled={!navigation.canGoBack}
-			class="grid size-6 place-items-center rounded enabled:hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-35"
-			onclick={() => navigation.back()}
-		>
-			<Icon name="arrowLeft" size={16} />
-		</button>
-		<button
-			aria-label="Go Forward"
-			title="Go Forward{keyHint('workbench.action.navigateForward')}"
-			disabled={!navigation.canGoForward}
-			class="grid size-6 place-items-center rounded enabled:hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-35"
-			onclick={() => navigation.forward()}
-		>
-			<Icon name="arrowRight" size={16} />
-		</button>
+	<div class="titlebar-left flex h-full min-w-0 flex-[1_1_20%] items-center overflow-hidden">
+		{#if isMac}
+			<!-- The overlay title bar's traffic lights. -->
+			<div class="h-full w-[70px] shrink-0"></div>
+		{:else}
+			<div class="grid h-full w-[35px] shrink-0 place-items-center text-(--vscode-titleBar-activeForeground)" aria-hidden="true">
+				<Icon name="kingu" size={16} />
+			</div>
+			{#if menuBarVisibility === 'classic'}
+				<MenuBar />
+			{:else if menuBarVisibility === 'compact'}
+				<button class={ACTION} aria-label="Application Menu" title="Application Menu" aria-haspopup="menu" onclick={(e) => openBelow('hamburger', e)}>
+					<Icon name="menu" size={16} />
+				</button>
+			{/if}
+		{/if}
 	</div>
-	<div class="flex min-w-0 flex-1 justify-center">
-		<button
-			class="flex h-[22px] w-[min(600px,38vw)] min-w-0 items-center justify-center gap-1.5 rounded-md border border-(--vscode-commandCenter-border) bg-(--vscode-commandCenter-background) px-2 text-xs hover:bg-(--vscode-toolbar-hoverBackground)"
-			onclick={() => commands.run('workbench.action.quickOpen')}
-			title="{title}&#10;ค้นหาไฟล์{keyHint('workbench.action.quickOpen')} · คำสั่ง{keyHint('workbench.action.showCommands')}"
-		>
-			<Icon name="search" size={14} />
-			<span class="truncate">{title}</span>
-		</button>
-	</div>
-	<div class="flex shrink-0 items-center gap-0.5">
-		{#if adeTasks.badgeCount}
+
+	{#if commandCenter}
+		<div class="titlebar-center mx-2.5 flex h-full max-w-[60%] min-w-0 flex-[0_1_auto] items-center justify-center">
+			<CommandCenter {label} folderName={workspace.root ? workspaceName : null} />
+		</div>
+	{/if}
+
+	<div bind:this={right} class="titlebar-right flex h-full min-w-0 flex-[1_1_20%] items-center justify-end gap-1 overflow-hidden pr-1.5" role="toolbar" aria-label="Title actions">
+		{#if shown('openInAgents')}
+			<!-- VS Code's TitleBarAdjacentCenter "Open in Agents": the label slides out after a 0.2s hover. -->
 			<button
-				class="mr-1 flex h-[22px] items-center gap-1 rounded-full bg-(--vscode-activityBarBadge-background) px-2 text-xs text-(--vscode-activityBarBadge-foreground) hover:opacity-90"
-				title="เปิดงานถัดไปที่รอคุณ: รออนุญาต {agents.pendingCount} · รอรีวิว {adeTasks.reviewCount}"
-				onclick={() => adeTasks.openNext()}
+				class="group flex h-[22px] max-w-[22px] shrink-0 items-center gap-1 overflow-hidden rounded-[5px] px-[3px] text-xs whitespace-nowrap transition-[max-width] delay-0 duration-200 hover:max-w-[200px] hover:bg-(--vscode-toolbar-hoverBackground) hover:delay-200"
+				title="Open in Agents{hint('workbench.action.toggleAgentsMode')}"
+				aria-label="Open in Agents"
+				onclick={() => openAgents()}
 			>
-				รอคุณ {adeTasks.badgeCount}
+				<span class="shrink-0 grayscale group-hover:grayscale-0 group-hover:text-(--vscode-textLink-foreground)"><Icon name="agent" size={16} /></span>
+				<span class="pr-1">Open in Agents</span>
 			</button>
 		{/if}
-		{#each toggles as t (t.command)}
-			<button
-				aria-label={t.label}
-				aria-pressed={t.on()}
-				title="{t.label}{keyHint(t.command)}"
-				class={['grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)', t.on() ? 'opacity-100' : 'opacity-50']}
-				onclick={() => commands.run(t.command)}
-			>
-				<Icon name={t.icon} size={16} />
-			</button>
-		{/each}
-		<!-- Accounts (VS Code's title bar account menu); for now the team server sign-in. -->
-		<button
-			aria-label={account.label}
-			title={account.label}
-			class="relative ml-1 grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)"
-			onclick={() => team.showMenu()}
-		>
-			<Icon name="account" size={16} />
-			{#if account.signedIn}
-				<span class="absolute right-0.5 bottom-0.5 size-1.5 rounded-full bg-(--vscode-activityBarBadge-background)"></span>
+		{#each layoutItems as id (id)}
+			{#if shown(id)}
+				{#if id === 'layoutMenu'}
+					<button class={ACTION} aria-label="Configure Layout" title="Configure Layout" aria-haspopup="menu" onclick={(e) => openBelow('layout', e, true)}>
+						<Icon name="layout" size={16} />
+					</button>
+				{:else}
+					{@const t = TOGGLES[id]}
+					<button
+						aria-label={t.label}
+						aria-pressed={t.on()}
+						title="{t.label}{hint(t.command)}"
+						class={[ACTION, t.on() ? 'opacity-100' : 'opacity-50']}
+						onclick={() => commands.run(t.command)}
+					>
+						<Icon name={toggleIcon(id)} size={16} />
+					</button>
+				{/if}
 			{/if}
-		</button>
+		{/each}
+		{#if shown('accounts')}
+			<button aria-label={account.label} title={account.label} class={[ACTION, 'relative']} onclick={() => team.showMenu()}>
+				<Icon name="account" size={16} />
+				{#if account.signedIn}
+					<span class="absolute right-0.5 bottom-0.5 size-1.5 rounded-full bg-(--vscode-activityBarBadge-background)"></span>
+				{/if}
+			</button>
+		{/if}
+		{#if shown('manage')}
+			<button aria-label="Manage" title="Manage: Settings{hint('workbench.action.openSettings')}" class={ACTION} onclick={() => commands.run('workbench.action.openSettings')}>
+				<Icon name="settings" size={16} />
+			</button>
+		{/if}
 	</div>
 </header>
+
+{#if popup}
+	<PopupMenu
+		items={popupItems}
+		label={popup.kind === 'context' ? 'Title Bar' : popup.kind === 'layout' ? 'Layout' : 'Application Menu'}
+		x={popup.x}
+		y={popup.y}
+		focusFirst={popup.keyboard}
+		onRun={runPopup}
+		onClose={() => (popup = null)}
+	/>
+{/if}

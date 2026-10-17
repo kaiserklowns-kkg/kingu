@@ -1,6 +1,9 @@
 <script lang="ts">
-	// The workbench grid (VS Code layout.ts, panel at the bottom, alignment "center"):
-	// VERTICAL [ titlebar | HORIZONTAL [ activitybar | sidebar | VERTICAL [ editor | panel ] | auxiliarybar ] | statusbar ]
+	// The workbench grid (VS Code layout.ts): VERTICAL [ titlebar | body | statusbar ], the body one
+	// CSS grid of activity bar, side bar, editor, panel and secondary side bar arranged by
+	// workbench.sideBar.location / workbench.panel.defaultLocation / workbench.panel.alignment
+	// (workbenchGrid.ts). Agents mode swaps the title bar and shows the Agents layout instead of the
+	// body and status bar, which stay mounted (hidden) so editors and terminals keep their state.
 	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import { ask, message } from '@tauri-apps/plugin-dialog';
@@ -28,6 +31,13 @@
 	import { isMac, keyLabel } from './keys';
 	import { installNativeMenu } from './appMenu.svelte';
 	import { navigation } from './navigation.svelte';
+	import { appMode } from './mode.svelte';
+	import { installLayoutCommands } from './layoutControls.svelte';
+	import { gridTemplateAreas, gridTemplateColumns, gridTemplateRows, workbenchGrid, type PanelAlignment, type PanelLocation, type SideBarLocation } from './workbenchGrid';
+	import { settings } from '#lib/settings/settings.svelte.ts';
+	import AgentsLayout from '#lib/ade/AgentsLayout.svelte';
+	import AgentsTitleBar from '#lib/ade/AgentsTitleBar.svelte';
+	import { installAgentsMode } from '#lib/ade/agentsMode.svelte.ts';
 
 	let middle: HTMLDivElement | undefined = $state();
 	const workspaceName = $derived(workspace.name);
@@ -80,9 +90,22 @@
 			commands.register({ id: 'workbench.files.action.collapseExplorerFolders', title: 'Collapse Folders in Explorer', category: 'File', when: () => workspace.root !== null, run: () => explorer.collapseAll() }),
 			commands.register({ id: 'workbench.action.quickOpen', title: 'Go to File...', key: 'cmd+p', run: () => quick.show('') }),
 			commands.register({ id: 'workbench.action.showCommands', title: 'Show All Commands', key: 'cmd+shift+p', palette: false, run: () => quick.show('>') }),
-			commands.register({ id: 'workbench.action.toggleSidebarVisibility', title: 'Toggle Primary Side Bar Visibility', category: 'View', key: 'cmd+b', run: () => (layout.sidebarVisible = !layout.sidebarVisible) }),
+			// In Agents mode ⌘B / ⌘J toggle the sessions side bar and the changes panel instead.
+			commands.register({
+				id: 'workbench.action.toggleSidebarVisibility',
+				title: 'Toggle Primary Side Bar Visibility',
+				category: 'View',
+				key: 'cmd+b',
+				run: () => (appMode.isAgents ? (appMode.sessionsVisible = !appMode.sessionsVisible) : (layout.sidebarVisible = !layout.sidebarVisible))
+			}),
 			commands.register({ id: 'workbench.action.toggleAuxiliaryBar', title: 'Toggle Agent (Secondary Side Bar)', category: 'View', key: 'cmd+alt+b', run: () => (layout.auxVisible = !layout.auxVisible) }),
-			commands.register({ id: 'workbench.action.togglePanel', title: 'Toggle Panel Visibility', category: 'View', key: 'cmd+j', run: () => (layout.panelVisible = !layout.panelVisible) }),
+			commands.register({
+				id: 'workbench.action.togglePanel',
+				title: 'Toggle Panel Visibility',
+				category: 'View',
+				key: 'cmd+j',
+				run: () => (appMode.isAgents ? (appMode.panelVisible = !appMode.panelVisible) : (layout.panelVisible = !layout.panelVisible))
+			}),
 			commands.register({
 				id: 'workbench.action.terminal.toggleTerminal',
 				title: 'Toggle Terminal',
@@ -140,7 +163,11 @@
 		const uninstallSettings = installSettings();
 		const unregisterSettings = registerSettingsCommands();
 		const uninstallAde = installAde();
+		const uninstallAgentsMode = installAgentsMode();
+		const uninstallLayout = installLayoutCommands();
 		return () => {
+			uninstallLayout();
+			uninstallAgentsMode();
 			uninstallAde();
 			uninstallMenu();
 			uninstall();
@@ -194,51 +221,99 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 	const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 	const maxSide = () => (middle?.clientWidth ?? 1200) * 0.45;
 	const maxPanel = () => (middle?.clientHeight ?? 800) - 100;
+
+	// Inactive window: the title bar dims (VS Code titleBar.inactive* colors, children at 60%).
+	let focused = $state(typeof document === 'undefined' || document.hasFocus());
+
+	const sideBarAt = $derived(settings.get<SideBarLocation>('workbench.sideBar.location'));
+	const panelAt = $derived(settings.get<PanelLocation>('workbench.panel.defaultLocation'));
+	const grid = $derived(workbenchGrid({ sideBar: sideBarAt, panel: panelAt, alignment: settings.get<PanelAlignment>('workbench.panel.alignment') }));
+	const panelBeside = $derived(panelAt === 'left' || panelAt === 'right');
+	const activityBar = $derived(settings.get<string>('workbench.activityBar.location') === 'default');
+	/** +1 when dragging a sash rightward/downward grows the part. */
+	const sideSign = $derived(sideBarAt === 'left' ? 1 : -1);
+	const panelSign = $derived(panelAt === 'top' || panelAt === 'left' ? 1 : -1);
 </script>
 
+<svelte:window onfocus={() => (focused = true)} onblur={() => (focused = false)} />
+
 <div class="flex h-screen flex-col overflow-hidden">
-	<TitleBar workspaceName={workspaceName || 'Kingu'} />
+	{#if appMode.isAgents}
+		<AgentsTitleBar {focused} />
+	{:else}
+		<TitleBar workspaceName={workspaceName || 'Kingu'} {focused} />
+	{/if}
 
-	<div bind:this={middle} class="flex min-h-0 flex-1">
-		<ActivityBar />
+	<div bind:this={middle} class={['workbench-body grid min-h-0 flex-1', appMode.isAgents && 'hidden']}
+		style:grid-template-areas={gridTemplateAreas(grid)}
+		style:grid-template-columns={gridTemplateColumns(grid)}
+		style:grid-template-rows={gridTemplateRows(grid)}
+	>
+		<div style:grid-area="act" class={['flex min-h-0', !activityBar && 'hidden']}><ActivityBar /></div>
 
-		{#if layout.sidebarVisible}
-			<div class="shrink-0 border-r border-(--vscode-sideBar-border)" style:width="{layout.sidebarWidth}px">
-				<SideBar {workspaceName} />
-			</div>
+		<div
+			style:grid-area="side"
+			style:width="{layout.sidebarWidth}px"
+			class={['min-h-0 border-(--vscode-sideBar-border)', sideBarAt === 'left' ? 'border-r' : 'border-l', !layout.sidebarVisible && 'hidden']}
+		>
+			<SideBar {workspaceName} />
+		</div>
+		<div style:grid-area="sashS" class={['flex', !layout.sidebarVisible && 'hidden']}>
 			<Sash
 				orientation="vertical"
-				onDrag={(d) => (layout.sidebarWidth = clamp(layout.sidebarWidth + d, SIDEBAR_MIN, maxSide()))}
+				onDrag={(d) => (layout.sidebarWidth = clamp(layout.sidebarWidth + sideSign * d, SIDEBAR_MIN, maxSide()))}
 				onReset={() => (layout.sidebarWidth = 300)}
 			/>
-		{/if}
-
-		<div class="flex min-w-0 flex-1 flex-col">
-			<div class="min-h-0 flex-1">
-				<EditorPart />
-			</div>
-			<div class={['flex shrink-0 flex-col', !layout.panelVisible && 'hidden']} style:height="{layout.panelHeight}px">
-				<Sash orientation="horizontal" onDrag={(d) => (layout.panelHeight = clamp(layout.panelHeight - d, PANEL_MIN, maxPanel()))} onReset={() => (layout.panelHeight = 260)} />
-				<div class="min-h-0 flex-1"><Panel /></div>
-			</div>
 		</div>
 
-		{#if layout.auxVisible}
+		<div style:grid-area="edit" class="min-h-0 min-w-0"><EditorPart /></div>
+
+		<div style:grid-area="sashP" class={['flex', panelBeside ? 'flex-row' : 'flex-col', !layout.panelVisible && 'hidden']}>
+			<Sash
+				orientation={panelBeside ? 'vertical' : 'horizontal'}
+				onDrag={(d) =>
+					panelBeside
+						? (layout.panelWidth = clamp(layout.panelWidth + panelSign * d, SIDEBAR_MIN, maxSide()))
+						: (layout.panelHeight = clamp(layout.panelHeight + panelSign * d, PANEL_MIN, maxPanel()))}
+				onReset={() => (panelBeside ? (layout.panelWidth = 400) : (layout.panelHeight = 260))}
+			/>
+		</div>
+		<div
+			style:grid-area="panel"
+			style:height={panelBeside ? undefined : `${layout.panelHeight}px`}
+			style:width={panelBeside ? `${layout.panelWidth}px` : undefined}
+			class={['min-h-0 min-w-0 overflow-hidden', !layout.panelVisible && 'hidden']}
+		>
+			<Panel />
+		</div>
+
+		<div style:grid-area="sashX" class={['flex', !layout.auxVisible && 'hidden']}>
 			<Sash
 				orientation="vertical"
-				onDrag={(d) => (layout.auxWidth = clamp(layout.auxWidth - d, SIDEBAR_MIN, maxSide()))}
+				onDrag={(d) => (layout.auxWidth = clamp(layout.auxWidth - sideSign * d, SIDEBAR_MIN, maxSide()))}
 				onReset={() => (layout.auxWidth = 360)}
 			/>
-			<aside aria-label="Agent" class="flex shrink-0 flex-col border-l border-(--vscode-sideBar-border) bg-(--vscode-sideBar-background)" style:width="{layout.auxWidth}px">
-				<div class="flex h-(--kg-part-title-height) shrink-0 items-center pl-3 text-[11px] text-(--vscode-sideBarTitle-foreground) uppercase">Agent</div>
-				<!-- Tasks are worktrees of the open folder: a new folder gets a fresh panel. -->
-				<div class="min-h-0 flex-1">
-					{#key workspace.root}<AgentPanel />{/key}
-				</div>
-			</aside>
-		{/if}
+		</div>
+		<aside
+			aria-label="Agent"
+			style:grid-area="aux"
+			style:width="{layout.auxWidth}px"
+			class={[
+				'flex min-h-0 flex-col border-(--vscode-sideBar-border) bg-(--vscode-sideBar-background)',
+				sideBarAt === 'left' ? 'border-l' : 'border-r',
+				!layout.auxVisible && 'hidden'
+			]}
+		>
+			<div class="flex h-(--kg-part-title-height) shrink-0 items-center pl-3 text-[11px] text-(--vscode-sideBarTitle-foreground) uppercase">Agent</div>
+			<!-- Tasks are worktrees of the open folder: a new folder gets a fresh panel. -->
+			<div class="min-h-0 flex-1">
+				{#key workspace.root}<AgentPanel />{/key}
+			</div>
+		</aside>
 	</div>
 
-	<StatusBar />
+	{#if appMode.isAgents}<AgentsLayout />{/if}
+
+	<div class={['contents', appMode.isAgents && '[&>*]:hidden']}><StatusBar /></div>
 	<QuickInput />
 </div>

@@ -14,13 +14,16 @@ import { commands, keyOf } from './commands.svelte';
 import { editors } from './editors.svelte';
 import { isMac } from './keys';
 import { layout } from './layout.svelte';
+import { appMode } from './mode.svelte';
 import { itemStates, RECENT_PREFIX, resolveMenubar, structureKey, type MenuNode, type Role } from './menus';
 import { workspace } from './workspace.svelte';
 
 const CHECKED: Record<string, () => boolean> = {
 	'workbench.action.toggleSidebarVisibility': () => layout.sidebarVisible,
 	'workbench.action.toggleAuxiliaryBar': () => layout.auxVisible,
-	'workbench.action.togglePanel': () => layout.panelVisible
+	'workbench.action.togglePanel': () => layout.panelVisible,
+	// Not a check mark: the Agents menu item reads "Open in Editor" while in Agents mode.
+	'workbench.action.toggleAgentsMode': () => appMode.isAgents
 };
 
 /** The menu bar as it should look now (reactive: reads commands, `when` state and layout). */

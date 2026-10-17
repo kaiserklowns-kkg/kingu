@@ -39,6 +39,16 @@ export const COLOR_DEFAULTS: Record<string, Defaults> = {
 	'titleBar.border': [null, null, 'contrastBorder', 'contrastBorder'],
 	'commandCenter.background': [t('#FFFFFF', 0.05), t('#000000', 0.05), null, null],
 	'commandCenter.border': [t('titleBar.activeForeground', 0.2), t('titleBar.activeForeground', 0.2), 'contrastBorder', 'contrastBorder'],
+	'titleBar.inactiveBackground': [t('titleBar.activeBackground', 0.6), t('titleBar.activeBackground', 0.6), null, null],
+	'titleBar.inactiveForeground': [t('titleBar.activeForeground', 0.6), t('titleBar.activeForeground', 0.6), null, '#292929'],
+	'commandCenter.foreground': 'titleBar.activeForeground',
+	'commandCenter.activeForeground': 'titleBar.activeForeground',
+	'commandCenter.inactiveForeground': 'titleBar.inactiveForeground',
+	'commandCenter.activeBackground': [t('#FFFFFF', 0.08), t('#000000', 0.08), null, null],
+	'commandCenter.activeBorder': [t('titleBar.activeForeground', 0.3), t('titleBar.activeForeground', 0.3), 'focusBorder', 'focusBorder'],
+	'commandCenter.inactiveBorder': [t('titleBar.inactiveForeground', 0.25), t('titleBar.inactiveForeground', 0.25), 'titleBar.inactiveForeground', 'titleBar.inactiveForeground'],
+	// Kingu's Agents layout (VS Code's Agents window): the side bar's color, the editor's in high contrast.
+	agentsBackground: ['sideBar.background', 'sideBar.background', 'editor.background', 'editor.background'],
 
 	'activityBar.background': ['#333333', '#2C2C2C', '#000000', '#FFFFFF'],
 	'activityBar.foreground': ['#FFFFFF', '#FFFFFF', '#FFFFFF', 'editor.foreground'],
