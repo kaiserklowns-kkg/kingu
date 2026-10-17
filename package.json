@@ -1,11 +1,13 @@
 {
 	"name": "kingu",
 	"private": true,
-	"workspaces": ["apps/desktop", "packages/*"],
+	"workspaces": ["apps/desktop", "apps/web", "packages/*"],
 	"scripts": {
 		"dev:desktop": "bun --cwd apps/desktop tauri dev",
 		"build:desktop": "bun --cwd apps/desktop tauri build",
-		"check": "bun --cwd apps/desktop run check && cargo check --workspace && (cd apps/server && go vet ./...)",
+		"dev:web": "bun --cwd apps/web run dev",
+		"build:web": "bun --cwd apps/web run build",
+		"check": "bun --cwd apps/desktop run check && bun --cwd apps/web run check && cargo check --workspace && (cd apps/server && go vet ./...)",
 		"dev:server": "cd apps/server && go run ./cmd/api"
 	}
 }
