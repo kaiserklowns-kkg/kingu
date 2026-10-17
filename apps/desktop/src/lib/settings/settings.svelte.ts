@@ -4,7 +4,8 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { parseSettingsText, setProperty } from './jsonc';
-import { resolveSettings, SCHEMA, type Resolved, type SettingScope } from './registry';
+import { resolveSettings, type Resolved, type SettingScope } from './registry';
+import { settingSchemas } from './schemas.svelte';
 
 type SettingsFile = { path: string; content: string | null };
 type Layer = { path: string; text: string | null; values: Record<string, unknown>; error: string | null };
@@ -20,12 +21,12 @@ class Settings {
 	user = $state<Layer>(emptyLayer());
 	workspace = $state<Layer>(emptyLayer());
 	loaded = $state(false);
-	readonly resolved: Map<string, Resolved> = $derived(resolveSettings(this.user.values, this.workspace.values));
+	readonly resolved: Map<string, Resolved> = $derived(resolveSettings(this.user.values, this.workspace.values, settingSchemas.all));
 	private writes = Promise.resolve();
 
 	/** The effective value (workspace over user over default). */
 	get<T = unknown>(id: string): T {
-		return (this.resolved.get(id)?.value ?? SCHEMA.get(id)?.default) as T;
+		return (this.resolved.get(id)?.value ?? settingSchemas.byId.get(id)?.default) as T;
 	}
 
 	/** The value set in one scope's file, or undefined. */

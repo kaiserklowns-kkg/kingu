@@ -8,6 +8,7 @@
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { allowedIn, settingsInView, settingTitle, validate, type SettingSchema, type SettingScope } from './registry';
 	import { settings } from './settings.svelte';
+	import { settingSchemas } from './schemas.svelte';
 
 	const SCOPES: [SettingScope, string][] = [
 		['user', 'User'],
@@ -17,7 +18,7 @@
 	let { group = null, query = $bindable('') }: { group?: string | null; query?: string } = $props();
 	let scope = $state<SettingScope>('user');
 
-	const visible = $derived(settingsInView(query, group));
+	const visible = $derived(settingsInView(query, group, settingSchemas.all));
 	const groups = $derived.by(() => {
 		const out = new Map<string, SettingSchema[]>();
 		for (const s of visible) out.set(s.group, [...(out.get(s.group) ?? []), s]);

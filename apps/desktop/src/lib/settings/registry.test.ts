@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { jsonSchema, matchesQuery, resolveSettings, SCHEMA, SETTINGS, SETTINGS_SECTIONS, settingsInView, settingTitle, validate } from './registry';
+import { jsonSchema, matchesQuery, resolveSettings, SCHEMA, SETTINGS, SETTINGS_SECTIONS, settingsInView, settingsSections, settingTitle, validate, type SettingSchema } from './registry';
 
 const value = (m: ReturnType<typeof resolveSettings>, id: string) => m.get(id);
 
@@ -118,10 +118,32 @@ describe('schema', () => {
 });
 
 describe('settings sections', () => {
+	// Contributed (Snap) settings, as snapModel.snapSettingSchemas makes them.
+	const contributed: SettingSchema[] = [
+		{ id: 'snap.go.testFlags', group: 'Snap: Go', type: 'string', default: '-race', description: 'flags', scope: 'application' },
+		{ id: 'snap.go.verbose', group: 'Snap: Go', type: 'boolean', default: false, description: 'v', scope: 'application' },
+		{ id: 'snap.lint.strict', group: 'Snap: Lint', type: 'boolean', default: true, description: 's' }
+	];
+
 	test('every group belongs to exactly one section', () => {
-		const groups = new Set(SETTINGS.map((s) => s.group));
-		for (const g of groups) expect(SETTINGS_SECTIONS.filter((sec) => sec.groups.includes(g))).toHaveLength(1);
-		for (const sec of SETTINGS_SECTIONS) for (const g of sec.groups) expect(groups.has(g)).toBe(true);
+		for (const schemas of [SETTINGS, [...SETTINGS, ...contributed]]) {
+			const sections = settingsSections(schemas);
+			const groups = new Set(schemas.map((s) => s.group));
+			for (const g of groups) expect([g, sections.filter((sec) => sec.groups.includes(g)).length]).toEqual([g, 1]);
+			for (const sec of sections) for (const g of sec.groups) expect(groups.has(g)).toBe(true);
+		}
+		// The static sections only hold static groups.
+		const staticGroups = new Set(SETTINGS.map((s) => s.group));
+		for (const sec of SETTINGS_SECTIONS) for (const g of sec.groups) expect(staticGroups.has(g)).toBe(true);
+	});
+	test('contributed groups go to the Snaps section, which is always there', () => {
+		expect(settingsSections().at(-1)).toEqual({ id: 'snaps', label: 'Snaps', groups: [] });
+		expect(settingsSections([...SETTINGS, ...contributed]).at(-1)?.groups).toEqual(['Snap: Go', 'Snap: Lint']);
+		const all = [...SETTINGS, ...contributed];
+		expect(settingsInView('', 'Snap: Go', all).map((s) => s.id)).toEqual(['snap.go.testFlags', 'snap.go.verbose']);
+		expect(Object.keys((jsonSchema(all) as { properties: object }).properties)).toContain('snap.lint.strict');
+		expect(resolveSettings({ 'snap.go.testFlags': '-v' }, { 'snap.go.testFlags': '-exec=x', 'snap.lint.strict': false }, all).get('snap.go.testFlags')).toEqual({ value: '-v', source: 'user' });
+		expect(resolveSettings({}, { 'snap.lint.strict': false }, all).get('snap.lint.strict')).toEqual({ value: false, source: 'workspace' });
 	});
 	test('a group filters, a query searches everything', () => {
 		expect(settingsInView('', 'Terminal').every((s) => s.group === 'Terminal')).toBe(true);

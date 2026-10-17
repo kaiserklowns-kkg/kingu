@@ -5,9 +5,18 @@ class SystemSettings {
 	visible = $state(false);
 	/** The table of contents selection: a settings group, or `null` for all. */
 	group = $state<string | null>(null);
+	/** The Snaps management view instead of the settings editor. */
+	snaps = $state(false);
 
 	show(group: string | null = null) {
 		this.group = group;
+		this.snaps = false;
+		this.visible = true;
+	}
+
+	showSnaps() {
+		this.group = null;
+		this.snaps = true;
 		this.visible = true;
 	}
 
