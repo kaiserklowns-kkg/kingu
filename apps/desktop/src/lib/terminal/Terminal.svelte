@@ -34,9 +34,22 @@
 			onoutput?.();
 		};
 
-		invoke<number>('pty_spawn', { cols: term.cols, rows: term.rows, onData, slug: slug ?? null, run: run ?? null })
-			.then((v) => (id = v))
-			.catch((e) => term.write(`\r\nเปิด terminal ไม่ได้: ${e}\r\n`));
+		// Start the shell once the terminal has its real size: a terminal mounted hidden (the Agents
+		// layout while the IDE shows) would otherwise type its command into an 11-column shell.
+		let started = false;
+		let disposed = false;
+		function start() {
+			if (started || !host.clientWidth || !host.clientHeight) return;
+			started = true;
+			fit.fit();
+			invoke<number>('pty_spawn', { cols: term.cols, rows: term.rows, onData, slug: slug ?? null, run: run ?? null })
+				.then((v) => {
+					if (disposed) invoke('pty_kill', { id: v });
+					else id = v;
+				})
+				.catch((e) => term.write(`\r\nเปิด terminal ไม่ได้: ${e}\r\n`));
+		}
+		start();
 
 		const input = term.onData((data) => {
 			if (id !== undefined) invoke('pty_write', { id, data });
@@ -45,10 +58,14 @@
 			if (id !== undefined) invoke('pty_resize', { id, cols, rows });
 		});
 		const unbindSettings = bindTerminalSettings(term, () => fit.fit());
-		const observer = new ResizeObserver(() => fit.fit());
+		const observer = new ResizeObserver(() => {
+			fit.fit();
+			start();
+		});
 		observer.observe(host);
 
 		return () => {
+			disposed = true;
 			observer.disconnect();
 			unbindSettings();
 			input.dispose();

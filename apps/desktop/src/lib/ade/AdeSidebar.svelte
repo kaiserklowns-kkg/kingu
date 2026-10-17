@@ -12,6 +12,9 @@
 	import { adeTasks } from './tasks.svelte';
 	import { STATUS_DOT } from './ui';
 	import { newSession } from './agentsMode.svelte';
+	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
+	import { actionsFor, runWorktreeAction } from './worktreeMenu.svelte';
+	import type { WorktreeAction } from './worktreeActions';
 
 	/** Needs-attention first, then in progress, then done (Orca keeps busy worktrees on top). */
 	const ordered = $derived([...adeTasks.groups.attention, ...adeTasks.groups.active, ...adeTasks.groups.done]);
@@ -26,6 +29,18 @@
 		adeLayout.show(PRIMARY);
 		adeLayout.select(PRIMARY, 'main');
 		newSession();
+	}
+
+	// Orca's worktree context menu: right-click a card (or its ⋯ button).
+	let menu = $state<{ key: string; x: number; y: number; keyboard: boolean } | null>(null);
+	const menuItems = $derived(
+		menu ? actionsFor(menu.key).map((r) => (r === 'separator' ? menuSeparator : menuItem(r.id, r.label, { enabled: r.enabled ?? true }))) : []
+	);
+	function openMenu(key: string, e: MouseEvent) {
+		e.preventDefault();
+		e.stopPropagation();
+		const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		menu = e.type === 'contextmenu' && e.clientX ? { key, x: e.clientX, y: e.clientY, keyboard: false } : { key, x: r.right - 248, y: r.bottom + 2, keyboard: e.detail === 0 };
 	}
 
 	const NAV = 'flex h-8 w-full items-center gap-2.5 rounded-md px-2.5 text-[13px] hover:bg-(--vscode-list-hoverBackground)';
@@ -59,6 +74,18 @@
 		<button class={HEADER_ACTION} aria-label="งานใหม่ (worktree ใหม่)" title="งานใหม่ (worktree ใหม่)" disabled={!workspace.root} onclick={newTask}><Icon name="plus" size={16} /></button>
 	</div>
 
+	{#if menu}
+		<PopupMenu
+			items={menuItems}
+			label="Worktree"
+			x={menu.x}
+			y={menu.y}
+			focusFirst={menu.keyboard}
+			onRun={(node) => node.type === 'item' && menu && runWorktreeAction(menu.key, node.id as WorktreeAction)}
+			onClose={() => (menu = null)}
+		/>
+	{/if}
+
 	<div class="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
 		{#if !workspace.root}
 			<div class="space-y-2 px-2 py-3 text-xs text-(--vscode-descriptionForeground)">
@@ -77,6 +104,7 @@
 						class={[CARD, selectedKey === PRIMARY ? 'border-(--vscode-widget-border) bg-(--vscode-list-hoverBackground)' : 'border-transparent hover:bg-(--vscode-list-hoverBackground)']}
 						aria-current={selectedKey === PRIMARY ? 'true' : undefined}
 						onclick={() => adeLayout.show(PRIMARY)}
+						oncontextmenu={(e) => openMenu(PRIMARY, e)}
 					>
 						<span class="flex items-center gap-2">
 							<span class="size-2 shrink-0 rounded-full bg-[#73C991]"></span>
@@ -95,10 +123,20 @@
 						aria-current={selected ? 'true' : undefined}
 						aria-label="{v.meta.title} — {STATUS_LABEL[v.status]}"
 						onclick={() => adeLayout.show(v.meta.slug)}
+						oncontextmenu={(e) => openMenu(v.meta.slug, e)}
 					>
-						<span class="flex items-center gap-2">
+						<span class="group/card flex items-center gap-2">
 							<span class={['size-2 shrink-0 rounded-full', STATUS_DOT[v.status]]} title={STATUS_LABEL[v.status]}></span>
 							<span class="min-w-0 flex-1 truncate text-[13px]" title={v.meta.title}>{v.meta.title}</span>
+							<span
+								role="button"
+								tabindex="0"
+								aria-label="การทำงานของ worktree"
+								title="การทำงานของ worktree"
+								class="grid size-5 shrink-0 place-items-center rounded opacity-0 group-hover/card:opacity-100 hover:bg-(--vscode-toolbar-hoverBackground) focus-visible:opacity-100"
+								onclick={(e) => openMenu(v.meta.slug, e)}
+								onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && openMenu(v.meta.slug, e as unknown as MouseEvent)}>⋯</span
+							>
 							{#if totals && (totals.added || totals.deleted)}
 								<span class="shrink-0 font-mono text-[11px]"><span class="text-[#73C991]">+{totals.added}</span> <span class="text-[#F48771]">−{totals.deleted}</span></span>
 							{/if}
