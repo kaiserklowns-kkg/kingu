@@ -46,6 +46,9 @@ import {
 } from './model';
 import { runtime } from './runtime.svelte';
 import { adeLayout } from './adeLayout.svelte';
+import { cliAgent, cliOf, cliResume, cliStart, parseCliCommand, type RunMode } from './agentCli';
+import { cliSessions } from './cliSessions.svelte';
+import { settings } from '#lib/settings/settings.svelte.ts';
 
 class AdeTasks {
 	list = $state<TaskMeta[]>([]);
@@ -195,8 +198,12 @@ class AdeTasks {
 	// -------------------------------------------------------------------------------------------
 	// Lifecycle
 
-	/** Creates the worktree, saves the task and starts the agent; opens the task page. */
-	async create(input: { title: string; prompt: string; base: string }): Promise<string | undefined> {
+	/**
+	 * Creates the worktree, saves the task and starts the agent; opens the task page. `mode`:
+	 * `terminal` runs the agent CLI (`kingu.agent.cli`) in a terminal of the worktree, the Orca way;
+	 * `timeline` runs it through the agent host. Without one, `kingu.agent.runMode` decides.
+	 */
+	async create(input: { title: string; prompt: string; base: string; mode?: RunMode }): Promise<string | undefined> {
 		const title = input.title.trim();
 		if (!title || !workspace.root) return;
 		const taken = new Set([...this.list.map((t) => t.slug), ...this.worktrees.map((w) => w.slug ?? '')]);
@@ -204,17 +211,33 @@ class AdeTasks {
 		const prompt = input.prompt.trim() || title;
 		// Without a pick, fork from the folder's current branch (so merging back has a branch).
 		const base = input.base || status.branch || 'HEAD';
+		const mode = input.mode ?? (settings.get<RunMode>('kingu.agent.runMode') === 'timeline' ? 'timeline' : 'terminal');
+		const cli = mode === 'terminal' ? parseCliCommand(settings.get<string>('kingu.agent.cli') ?? '') : null;
+		if (mode === 'terminal' && !cli) {
+			status.flash('kingu.agent.cli ต้องเป็นคำสั่งธรรมดา เช่น claude หรือ codex --full-auto (ไม่มีอักขระของ shell)', 10000);
+			return;
+		}
 		try {
 			await invoke<WorktreeInfo>('worktree_create', { slug, base });
 		} catch (e) {
 			status.flash(`สร้าง worktree ไม่ได้: ${e}`, 10000);
 			return;
 		}
-		await this.#save([...this.list, newTask({ slug, title, prompt, base }, Date.now())]);
+		await this.#save([...this.list, newTask({ slug, title, prompt, base, agent: cli ? cliAgent(cli) : undefined }, Date.now())]);
 		this.worktrees = (await invoke<WorktreeInfo[]>('worktree_list').catch(() => this.worktrees)).filter((w) => w.slug);
 		this.openTask(slug);
-		await this.run(slug, prompt);
+		if (cli) cliSessions.start(slug, cliStart(cli, prompt));
+		else await this.run(slug, prompt);
 		return slug;
+	}
+
+	/** After a restart: start the task's CLI again in its worktree, continuing its latest session where the CLI can. */
+	resumeCli(slug: string, fresh = false) {
+		const meta = this.list.find((t) => t.slug === slug);
+		const cli = meta && cliOf(meta.agent);
+		if (!cli) return;
+		const resume = fresh ? null : cliResume(cli);
+		cliSessions.start(slug, resume ?? cli);
 	}
 
 	/** Starts the agent in the task worktree through the agents store. */
@@ -307,6 +330,7 @@ class AdeTasks {
 		} else if (!(await ask(`ลบงาน "${this.list.find((t) => t.slug === slug)?.title ?? slug}" ออกจากรายการ?`, { title: 'ลบงาน', okLabel: 'ลบ', cancelLabel: 'ยกเลิก' }))) return;
 		if (!hasWorktree && runtime.isLive(slug)) await this.stop(slug);
 		runtime.forget(slug);
+		cliSessions.end(slug);
 		for (const t of editors.allTabs().map((t) => t.path)) {
 			if (slugOfTaskKey(t) === slug || parseTaskDiffKey(t)?.slug === slug) editors.closeEverywhere(t);
 		}

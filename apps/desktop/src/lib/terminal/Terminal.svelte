@@ -10,7 +10,7 @@
 	 * `slug`: start in that task's worktree instead of the folder root. `run`: a command typed into
 	 * the shell once it starts (an agent CLI, a Snap task); Rust quotes every argument.
 	 */
-	let { slug, run }: { slug?: string; run?: string[] } = $props();
+	let { slug, run, onoutput }: { slug?: string; run?: string[]; onoutput?: () => void } = $props();
 	let host: HTMLDivElement;
 
 	onMount(() => {
@@ -29,7 +29,10 @@
 
 		let id: number | undefined;
 		const onData = new Channel<string>();
-		onData.onmessage = (chunk) => term.write(chunk);
+		onData.onmessage = (chunk) => {
+			term.write(chunk);
+			onoutput?.();
+		};
 
 		invoke<number>('pty_spawn', { cols: term.cols, rows: term.rows, onData, slug: slug ?? null, run: run ?? null })
 			.then((v) => (id = v))

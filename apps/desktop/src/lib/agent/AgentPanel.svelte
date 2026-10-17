@@ -13,6 +13,8 @@
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
 	import { STATUS_LABEL, type RunStatus } from './events';
 	import { taskTitleFromPrompt } from './composerText';
+	import { cliOf } from '#lib/ade/agentCli.ts';
+	import { openAgents } from '#lib/ade/agentsMode.svelte.ts';
 
 	let draft = $state('');
 	let followUp = $state('');
@@ -34,7 +36,8 @@
 	async function start(text: string) {
 		busy = true;
 		try {
-			const created = await adeTasks.create({ title: taskTitleFromPrompt(text), prompt: text, base: '' });
+			// The chat-style panel runs the timeline; terminal (CLI) tasks live in the Agents layout.
+			const created = await adeTasks.create({ title: taskTitleFromPrompt(text), prompt: text, base: '', mode: 'timeline' });
 			if (created) {
 				selected = created;
 				composingNew = false;
@@ -117,7 +120,15 @@
 	{/if}
 
 	<div class="min-h-0 flex-1 overflow-hidden border-t border-(--vscode-sideBar-border)">
-		{#if selected && meta}
+		{#if selected && meta && cliOf(meta.agent)}
+			<div class="grid h-full place-items-center p-6 text-center">
+				<div class="max-w-64 space-y-2 text-(--vscode-descriptionForeground)">
+					<div class="flex justify-center"><Icon name="terminal" size={28} stroke={1.2} /></div>
+					<p class="text-(--vscode-foreground)">งานนี้รัน {cliOf(meta.agent)?.[0]} ใน terminal</p>
+					<button class="text-(--vscode-textLink-foreground) hover:underline" onclick={() => openAgents()}>เปิดใน Agents (⇧⌘A)</button>
+				</div>
+			</div>
+		{:else if selected && meta}
 			<AgentTimeline {run} onanswer={(p, decision, message) => selected && adeTasks.answer(selected, p.request_id, decision, message)} class="h-full p-3">
 				{#snippet empty()}
 					<p class="text-(--vscode-descriptionForeground)">
@@ -137,7 +148,9 @@
 	</div>
 
 	<div class="shrink-0 p-2">
-		{#if selected && meta}
+		{#if selected && meta && cliOf(meta.agent)}
+			<!-- The CLI takes input in its own terminal. -->
+		{:else if selected && meta}
 			<Composer
 				bind:value={followUp}
 				placeholder={rt?.live ? 'ส่งข้อความเพิ่มเติม…' : (run?.sessionId ?? meta.session_id) ? 'ทำงานต่อใน session เดิม…' : 'พิมพ์เพื่อเริ่มใหม่…'}

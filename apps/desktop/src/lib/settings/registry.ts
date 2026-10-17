@@ -175,6 +175,26 @@ export const SETTINGS: SettingSchema[] = [
 		description: 'โหมดการขออนุญาตของ agent (How the agent asks for permission to use tools.)'
 	},
 	{
+		id: 'kingu.agent.runMode',
+		group: 'Agent',
+		type: 'string',
+		default: 'terminal',
+		enum: ['terminal', 'timeline'],
+		enumDescriptions: [
+			'รัน agent CLI ใน terminal ของ worktree แบบ Orca (Run the agent CLI in a terminal of the worktree, like Orca.)',
+			'รันผ่าน agent host แสดงเป็น timeline พร้อมการ์ดขออนุญาต (Run through the agent host as a timeline with permission cards.)'
+		],
+		description: 'วิธีรัน agent ของงานใหม่ใน Agents เลือกต่องานได้ตอนสร้าง (How new tasks run their agent; each task can pick when it is created.)'
+	},
+	{
+		id: 'kingu.agent.cli',
+		group: 'Agent',
+		type: 'string',
+		default: 'claude',
+		description:
+			'คำสั่ง agent CLI สำหรับโหมด terminal เช่น claude, codex หรือ claude --model opus — prompt จะต่อท้ายเป็นอาร์กิวเมนต์สุดท้าย ห้ามมีอักขระของ shell (The agent CLI for the terminal mode; the prompt is appended as its last argument.)'
+	},
+	{
 		id: 'kingu.team.serverUrl',
 		group: 'Team',
 		type: 'string',

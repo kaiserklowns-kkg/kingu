@@ -22,6 +22,10 @@
 	import WorktreeFiles from './WorktreeFiles.svelte';
 	import { adeLayout, PRIMARY, type RightTab } from './adeLayout.svelte';
 	import { adeTasks } from './tasks.svelte';
+	import { untrack } from 'svelte';
+	import { cliName, cliOf, cliResume, type RunMode } from './agentCli';
+	import { cliSessions } from './cliSessions.svelte';
+	import { BUTTON, BUTTON_SECONDARY } from './ui';
 
 	let body: HTMLDivElement | undefined = $state();
 	const RIGHT_TABS: { id: RightTab; label: string; icon: IconName }[] = [
@@ -33,6 +37,9 @@
 	const key = $derived(adeLayout.key);
 	const slug = $derived(key && adeTasks.find(key) ? key : null);
 	const activeTab = $derived(adeLayout.activeTab(key));
+	/** The selected task runs its agent CLI in a terminal (the Orca way). */
+	const cli = $derived(slug ? cliOf(adeTasks.find(slug)?.meta.agent ?? '') : null);
+	const resume = $derived(cli ? cliResume(cli) : null);
 
 	// The folder's "new task" composer (Orca: a new worktree with an agent).
 	let draft = $state('');
@@ -40,6 +47,8 @@
 	let busy = $state(false);
 	let focusKey = $derived(appMode.composeRequest);
 	const model = $derived(settings.get<string>('kingu.agent.model') ?? '');
+	const cliSetting = $derived(settings.get<string>('kingu.agent.cli') ?? '');
+	let mode = $state<RunMode>(untrack(() => (settings.get<string>('kingu.agent.runMode') === 'timeline' ? 'timeline' : 'terminal')));
 
 	$effect(() => {
 		if (!workspace.root || slug) return;
@@ -57,7 +66,7 @@
 	async function start(text: string) {
 		busy = true;
 		try {
-			const created = await adeTasks.create({ title: taskTitleFromPrompt(text), prompt: text, base });
+			const created = await adeTasks.create({ title: taskTitleFromPrompt(text), prompt: text, base, mode });
 			if (created) {
 				draft = '';
 				adeLayout.show(created);
@@ -86,7 +95,22 @@
 		{#if adeLayout.board}
 			<Board />
 		{:else if activeTab === 'main'}
-			{#if slug}
+			{#if slug && cli}
+				{#if !cliSessions.has(slug)}
+					<!-- After a restart the CLI is not running: continue its session or start fresh (never on its own). -->
+					<div class="grid h-full place-items-center p-6">
+						<div class="max-w-md space-y-3 text-center">
+							<div class="flex justify-center text-(--vscode-descriptionForeground)"><Icon name="terminal" size={28} stroke={1.3} /></div>
+							<p>{cliName(cli)} ของงานนี้ไม่ได้รันอยู่</p>
+							<p class="text-xs text-(--vscode-descriptionForeground)">งานรันใน terminal ของ worktree <span class="font-mono">kingu/{slug}</span></p>
+							<div class="flex justify-center gap-2">
+								{#if resume}<button class={BUTTON} onclick={() => adeTasks.resumeCli(slug)}>ทำงานต่อ ({resume.join(' ')})</button>{/if}
+								<button class={resume ? BUTTON_SECONDARY : BUTTON} onclick={() => adeTasks.resumeCli(slug, true)}>เริ่ม {cli.join(' ')} ใหม่</button>
+							</div>
+						</div>
+					</div>
+				{/if}
+			{:else if slug}
 				{#key slug}<TaskPage {slug} sections="timeline" />{/key}
 			{:else}
 				<div class="grid h-full place-items-center p-6">
@@ -99,6 +123,14 @@
 							{#key focusKey}
 								<Composer bind:value={draft} size="lg" autofocus placeholder="อธิบายงาน เช่น เพิ่มปุ่ม export รายงานเป็น CSV…" {busy} onsubmit={start}>
 									{#snippet chips()}
+										<label class="inline-flex shrink-0 items-center gap-1 rounded-sm border border-(--vscode-widget-border) px-1.5 py-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" title="วิธีรัน agent">
+											<Icon name={mode === 'terminal' ? 'terminal' : 'agent'} size={12} />
+											<span class="sr-only">วิธีรัน agent</span>
+											<select class="bg-transparent outline-none focus-visible:outline-none" bind:value={mode} disabled={busy}>
+												<option value="terminal">Terminal · {cliSetting || 'claude'}</option>
+												<option value="timeline">Timeline</option>
+											</select>
+										</label>
 										<label class="inline-flex shrink-0 items-center gap-1 rounded-sm border border-(--vscode-widget-border) px-1.5 py-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" title="แตกจาก branch">
 											<Icon name="branch" size={12} />
 											<span class="sr-only">แตกจาก branch</span>
@@ -107,11 +139,11 @@
 												{#if !adeTasks.branches.length}<option value="">HEAD</option>{/if}
 											</select>
 										</label>
-										<span class="truncate">{model}</span>
+										{#if mode === 'timeline'}<span class="truncate">{model}</span>{/if}
 									{/snippet}
 								</Composer>
 							{/key}
-							<p class="text-xs text-(--vscode-descriptionForeground)">สร้าง worktree ใหม่บน branch <span class="font-mono">kingu/…</span> แล้วเริ่ม agent · Enter เพื่อเริ่ม · Shift+Enter ขึ้นบรรทัดใหม่</p>
+							<p class="text-xs text-(--vscode-descriptionForeground)">สร้าง worktree ใหม่บน branch <span class="font-mono">kingu/…</span> แล้วเริ่ม {mode === 'terminal' ? `${cliSetting || 'claude'} ใน terminal ของ worktree` : 'agent (timeline)'} · Enter เพื่อเริ่ม · Shift+Enter ขึ้นบรรทัดใหม่</p>
 						</div>
 					{:else}
 						<p class="text-sm text-(--vscode-descriptionForeground)">เปิดโฟลเดอร์ที่เป็น git repository ก่อน</p>
@@ -119,7 +151,12 @@
 				</div>
 			{/if}
 		{/if}
-		<!-- Every worktree's terminals, the active one shown. -->
+		<!-- Agent CLIs (each task's main tab when it runs the Orca way), then every worktree's terminals. -->
+		{#each Object.entries(cliSessions.sessions) as [s, sess] (s + sess.startedAt)}
+			<div class={['absolute inset-0 bg-(--vscode-terminal-background,var(--vscode-panel-background))', (adeLayout.board || s !== key || activeTab !== 'main') && 'hidden']}>
+				<Terminal slug={s} run={sess.run} onoutput={() => cliSessions.output(s)} />
+			</div>
+		{/each}
 		{#each Object.entries(adeLayout.terminals) as [k, list] (k)}
 			{#each list as t (t.id)}
 				<div class={['absolute inset-0 bg-(--vscode-terminal-background,var(--vscode-panel-background))', (adeLayout.board || k !== key || activeTab !== t.id) && 'hidden']}>

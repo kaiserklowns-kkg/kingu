@@ -8,6 +8,26 @@ import { agents, type AgentRun } from '#lib/agent/agents.svelte.ts';
 import type { Decision } from '#lib/agent/events.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { followUpPlan, toTaskRuntime, type TaskRuntime } from './model';
+import { cliName } from './agentCli';
+import { cliSessions } from './cliSessions.svelte';
+
+/** A task whose agent CLI runs in a terminal: working while it prints, else waiting for you. */
+function cliRuntime(slug: string): TaskRuntime | undefined {
+	const s = cliSessions.sessions[slug];
+	if (!s) return;
+	const working = cliSessions.working(slug);
+	return {
+		slug,
+		status: working ? 'running' : 'review',
+		runStatus: working ? 'running' : 'idle',
+		live: true,
+		working,
+		lastEvent: working ? `${cliName(s.run)} กำลังทำงานใน terminal` : `${cliName(s.run)} รอคุณใน terminal`,
+		pendingPermissions: 0,
+		sessionId: null,
+		updatedAt: cliSessions.lastOutput(slug)
+	};
+}
 
 class Runtime {
 	/** Unix ms of each task's latest event (the store does not timestamp events). */
@@ -27,7 +47,8 @@ class Runtime {
 
 	get(slug: string): TaskRuntime | undefined {
 		const r = this.run(slug);
-		return r && toTaskRuntime(r, this.#touched[slug] ?? r.startedAt);
+		if (r) return toTaskRuntime(r, this.#touched[slug] ?? r.startedAt);
+		return cliRuntime(slug);
 	}
 
 	all(): TaskRuntime[] {
