@@ -1,5 +1,6 @@
 mod agent;
 mod fs;
+mod git;
 mod pty;
 mod search;
 
@@ -111,6 +112,61 @@ fn git_branch(ws: State<'_, Workspace>) -> Option<String> {
     .output()
     .ok()?;
   out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Paths from the webview, each checked to stay inside the workspace (they may be deleted files).
+fn checked(ws: &Workspace, paths: Vec<String>) -> Result<Vec<String>, String> {
+  for p in &paths {
+    git::check_rel(&ws.root, p)?;
+  }
+  Ok(paths)
+}
+
+/// Runs a git operation off the main thread (status can take a while in a large repository).
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+  tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
+}
+
+/// Source Control view: branch, ahead/behind and changed files; `None` outside a repository.
+#[tauri::command]
+async fn git_status(ws: State<'_, Workspace>) -> Result<Option<git::GitStatus>, String> {
+  let root = ws.root.clone();
+  blocking(move || git::status(&root)).await
+}
+
+#[tauri::command]
+async fn git_stage(ws: State<'_, Workspace>, paths: Vec<String>) -> Result<(), String> {
+  let (root, paths) = (ws.root.clone(), checked(&ws, paths)?);
+  blocking(move || git::stage(&root, &paths)).await
+}
+
+#[tauri::command]
+async fn git_unstage(ws: State<'_, Workspace>, paths: Vec<String>) -> Result<(), String> {
+  let (root, paths) = (ws.root.clone(), checked(&ws, paths)?);
+  blocking(move || git::unstage(&root, &paths)).await
+}
+
+/// Deleting untracked files needs `delete_untracked`, set only after the user confirmed.
+#[tauri::command]
+async fn git_discard(ws: State<'_, Workspace>, paths: Vec<String>, delete_untracked: Option<bool>) -> Result<(), String> {
+  let (root, paths) = (ws.root.clone(), checked(&ws, paths)?);
+  blocking(move || git::discard(&root, &paths, delete_untracked.unwrap_or(false))).await
+}
+
+#[tauri::command]
+async fn git_commit(ws: State<'_, Workspace>, message: String, amend: Option<bool>) -> Result<(), String> {
+  let root = ws.root.clone();
+  blocking(move || git::commit(&root, &message, amend.unwrap_or(false))).await?;
+  log::info!("committed");
+  Ok(())
+}
+
+/// HEAD version of a file for the diff editor; empty when the file is not in HEAD.
+#[tauri::command]
+async fn git_show_head(ws: State<'_, Workspace>, rel: String) -> Result<String, String> {
+  git::check_rel(&ws.root, &rel)?;
+  let root = ws.root.clone();
+  blocking(move || git::show_head(&root, &rel)).await
 }
 
 #[tauri::command]
@@ -225,6 +281,12 @@ pub fn run() {
       fs_list_files,
       fs_write_file,
       git_branch,
+      git_status,
+      git_stage,
+      git_unstage,
+      git_discard,
+      git_commit,
+      git_show_head,
       pty_spawn,
       pty::pty_write,
       pty::pty_resize,

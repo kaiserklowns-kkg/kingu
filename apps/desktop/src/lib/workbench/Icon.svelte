@@ -17,7 +17,12 @@
 		error: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM9 9l6 6M15 9l-6 6',
 		warning: 'M12 3l10 18H2zM12 10v4M12 17h.01',
 		folder: 'M3 6h6l2 2h10v11H3z',
-		file: 'M14 3H6v18h12V7zM14 3v4h4'
+		file: 'M14 3H6v18h12V7zM14 3v4h4',
+		plus: 'M12 5v14M5 12h14',
+		minus: 'M5 12h14',
+		discard: 'M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11',
+		goToFile: 'M14 3H6v18h12V7zM14 3v4h4M9 14h6M13 11.5l2.5 2.5-2.5 2.5',
+		check: 'M5 12.5l4.5 4.5L19 7.5'
 	} as const;
 	export type IconName = keyof typeof icons;
 </script>

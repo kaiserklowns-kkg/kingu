@@ -16,6 +16,7 @@
 	import { editors } from './editors.svelte';
 	import { layout, PANEL_MIN, SIDEBAR_MIN } from './layout.svelte';
 	import { quick } from './quick.svelte';
+	import { installScm } from './scm.svelte';
 	import { search } from './search.svelte';
 	import { status } from './status.svelte';
 
@@ -63,8 +64,10 @@
 			commands.register({ id: 'workbench.action.keepEditor', title: 'Keep Editor', category: 'View', when: () => editors.active !== null, run: () => editors.active && editors.pin(editors.active) })
 		];
 		const uninstall = installKeybindings();
+		const uninstallScm = installScm();
 		return () => {
 			uninstall();
+			uninstallScm();
 			unregister.forEach((u) => u());
 		};
 	});

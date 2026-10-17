@@ -1,15 +1,12 @@
 <script lang="ts">
 	import ExplorerView from './ExplorerView.svelte';
-	import Icon from './Icon.svelte';
+	import ScmView from './ScmView.svelte';
 	import SearchView from './SearchView.svelte';
 	import { layout } from './layout.svelte';
-	import { status } from './status.svelte';
-	import { editors } from './editors.svelte';
 
 	let { workspaceName }: { workspaceName: string } = $props();
 
 	const titles = { explorer: 'Explorer', search: 'Search', scm: 'Source Control', agents: 'Agents' };
-	const dirty = $derived(editors.tabs.filter((t) => t.dirty));
 </script>
 
 <aside aria-label={titles[layout.sideView]} class="flex h-full flex-col bg-(--vscode-sideBar-background) text-(--vscode-sideBar-foreground)">
@@ -22,11 +19,6 @@
 	{:else if layout.sideView === 'search'}
 		<SearchView />
 	{:else if layout.sideView === 'scm'}
-		<div class="flex flex-col gap-1 px-3 py-1">
-			<div class="flex items-center gap-1.5"><Icon name="branch" size={14} />{status.branch ?? 'ไม่ใช่ git repository'}</div>
-			<div class="text-(--vscode-descriptionForeground)">
-				{#if dirty.length}แก้ไว้ยังไม่บันทึก {dirty.length} ไฟล์{:else}รายการไฟล์ที่เปลี่ยนและ commit อยู่ใน P1{/if}
-			</div>
-		</div>
+		<ScmView />
 	{/if}
 </aside>
