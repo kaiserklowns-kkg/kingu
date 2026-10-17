@@ -43,6 +43,11 @@ pub async fn agent_start(
   {
     return Err(format!("{m}: unsupported permission mode"));
   }
+  if let Some(id) = resume.as_deref()
+    && !tasks::valid_session_id(id)
+  {
+    return Err("invalid session id to resume".into());
+  }
   let cwd = worktree::worktree_path(&ws.root()?, &slug);
   if !cwd.is_dir() {
     return Err(format!("{slug}: no worktree, create it first"));

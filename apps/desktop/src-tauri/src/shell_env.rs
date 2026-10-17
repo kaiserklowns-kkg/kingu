@@ -45,6 +45,16 @@ pub fn path() -> Option<OsString> {
   merge(login_path().map(OsString::as_os_str), std::env::var_os("PATH").as_deref())
 }
 
+/// `Command::new(program)` with PATH set to [`path`], for tools that look up other tools (git
+/// hooks and credential helpers, `gh` calling `git`), as the agent host gets it.
+pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+  let mut cmd = Command::new(program);
+  if let Some(p) = path() {
+    cmd.env("PATH", p);
+  }
+  cmd
+}
+
 /// The process environment with PATH replaced by [`path`].
 pub fn vars_os() -> Vec<(OsString, OsString)> {
   let mut vars: Vec<_> = std::env::vars_os().filter(|(k, _)| k != "PATH").collect();

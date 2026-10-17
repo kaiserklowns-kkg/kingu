@@ -1,7 +1,7 @@
 // ADE task model: pure types and functions (no runes, no Tauri) so they are unit-testable.
 // Shapes mirror Rust `agent/tasks.rs` and `agent/review.rs`.
 
-import { firstLine, slugify, toolArg, type AgentEvent } from '#lib/agent/events.ts';
+import { firstLine, formatUsage, slugify, toolArg, type AgentEvent, type RunState, type RunStatus } from '#lib/agent/events.ts';
 
 export type TaskStatus = 'running' | 'waiting' | 'review' | 'done' | 'failed';
 
@@ -22,19 +22,47 @@ export type TaskMeta = {
 	/** Files accepted in review. */
 	accepted: string[];
 	merged_at: number | null;
+	/** Claude session of the latest run, resumed by follow-ups (also after a restart). */
+	session_id: string | null;
+	/** How the latest run (or turn) ended, saved so the card can show it after a restart. */
+	last_run: RunSummary | null;
+};
+
+/** Mirrors Rust `agent::tasks::RunSummary`. */
+export type RunSummary = {
+	/** The agent run status when saved (`idle` after a turn, `done`/`stopped`/`failed` once ended). */
+	status: RunStatus;
+	/** Unix ms. */
+	at: number;
+	summary: string | null;
+	error: string | null;
+	cost_usd: number | null;
+	input_tokens: number | null;
+	output_tokens: number | null;
+	num_turns: number | null;
 };
 
 /**
- * What the Agents view needs from whatever runs the agents. Today the adapter in runtime.svelte.ts
- * derives it from the webview-side runner events; a sidecar agent host can provide the same shape.
+ * What the Agents view needs from whatever runs the agents. The adapter in runtime.svelte.ts derives
+ * it from the agent host's `agents` store with `toTaskRuntime`.
  */
 export type TaskRuntime = {
 	slug: string;
 	status: TaskStatus;
+	/** The agent host's own status (starting / running / waiting / idle / stopped / failed / done). */
+	runStatus: RunStatus;
+	/** The session is open (follow-ups go straight to it). */
+	live: boolean;
+	/** A turn is in progress or waiting for a permission answer. */
+	working: boolean;
 	/** One-line summary of the latest event. */
 	lastEvent?: string;
 	pendingPermissions: number;
 	model?: string;
+	sessionId: string | null;
+	/** "$0.0123 · 12.3k in · 456 out · 3 turns" of the session so far. */
+	usage?: string;
+	error?: string;
 	/** Unix ms of the latest event. */
 	updatedAt?: number;
 };
@@ -95,7 +123,9 @@ export function newTask(input: { slug: string; title: string; prompt: string; ba
 		status: 'running',
 		pr_url: null,
 		accepted: [],
-		merged_at: null
+		merged_at: null,
+		session_id: null,
+		last_run: null
 	};
 }
 
@@ -146,21 +176,12 @@ export function uniqueSlug(title: string, taken: Set<string>): string {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Runtime events → TaskRuntime (the adapter's reducer)
+// Agent run (agents store) → TaskRuntime (the adapter's pure mapping)
 
-/** Runner events plus the permission events a sidecar host adds. */
-export type RuntimeEvent =
-	| AgentEvent
-	| { kind: 'permission_request'; id: string; tool: string; input?: unknown }
-	| { kind: 'permission_resolved'; id: string; allowed: boolean };
+/** The parts of an agent-host run the ADE reads (`AgentRun` from agents.svelte.ts fits). */
+export type RunView = Pick<RunState, 'status' | 'items' | 'draft' | 'pending' | 'sessionId' | 'model' | 'result' | 'error' | 'ended'> & { slug: string };
 
-export type RunState = { runtime: TaskRuntime; failed: boolean; pending: string[] };
-
-export function startRun(slug: string, now: number): RunState {
-	return { runtime: { slug, status: 'running', pendingPermissions: 0, updatedAt: now, lastEvent: 'เริ่มงาน' }, failed: false, pending: [] };
-}
-
-export function summarizeEvent(ev: RuntimeEvent): string | undefined {
+export function summarizeEvent(ev: AgentEvent): string | undefined {
 	switch (ev.kind) {
 		case 'tool_use':
 			return `${ev.name}(${toolArg(ev.input, 60)})`;
@@ -169,11 +190,13 @@ export function summarizeEvent(ev: RuntimeEvent): string | undefined {
 		case 'result':
 			return ev.is_error ? `ล้มเหลว: ${firstLine(ev.result ?? ev.subtype, 80)}` : 'agent ทำงานเสร็จ';
 		case 'exit':
-			return ev.stopped ? 'หยุดแล้ว' : ev.code === 0 ? undefined : `จบการทำงาน (exit ${ev.code ?? `signal ${ev.signal}`})`;
+			return ev.stopped ? 'หยุดแล้ว' : ev.code == null && ev.signal == null ? undefined : ev.code === 0 ? undefined : `จบการทำงาน (exit ${ev.code ?? `signal ${ev.signal}`})`;
+		case 'error':
+			return `ข้อผิดพลาด: ${firstLine(ev.message, 80)}`;
 		case 'stderr':
 			return firstLine(ev.line, 80);
 		case 'permission_request':
-			return `ขออนุญาตใช้ ${ev.tool}`;
+			return `ขออนุญาตใช้ ${ev.tool}${ev.input_summary ? `: ${firstLine(ev.input_summary, 60)}` : ''}`;
 		case 'system':
 			return ev.subtype === 'init' ? 'เริ่ม session' : undefined;
 		default:
@@ -181,39 +204,105 @@ export function summarizeEvent(ev: RuntimeEvent): string | undefined {
 	}
 }
 
-export function reduceRun(state: RunState, ev: RuntimeEvent, now: number): RunState {
-	const rt = { ...state.runtime, updatedAt: now };
-	let { failed, pending } = state;
-	const summary = summarizeEvent(ev);
-	if (summary) rt.lastEvent = summary;
-	switch (ev.kind) {
-		case 'system':
-			if (ev.model) rt.model = ev.model;
-			break;
-		case 'result':
-			failed = ev.is_error;
-			break;
-		case 'permission_request':
-			pending = [...pending, ev.id];
-			break;
-		case 'permission_resolved':
-			pending = pending.filter((p) => p !== ev.id);
-			break;
-		case 'exit':
-			pending = [];
-			rt.status = ev.stopped ? 'review' : failed || ev.code !== 0 ? 'failed' : 'review';
-			break;
+/** How far back the summary looks for an event worth showing. */
+const SUMMARY_LOOKBACK = 50;
+
+/** The card line: an open permission request first, then streaming text, then the latest summarizable event. */
+export function lastEventOf(run: Pick<RunView, 'items' | 'draft' | 'pending'>): string | undefined {
+	if (run.pending.length) return summarizeEvent(run.pending[0]);
+	if (run.draft.text.trim()) return firstLine(run.draft.text, 100);
+	for (let i = run.items.length - 1; i >= Math.max(0, run.items.length - SUMMARY_LOOKBACK); i--) {
+		const s = summarizeEvent(run.items[i]);
+		if (s) return s;
 	}
-	rt.pendingPermissions = pending.length;
-	if (rt.status === 'running' || rt.status === 'waiting') rt.status = pending.length ? 'waiting' : 'running';
-	return { runtime: rt, failed, pending };
+	return undefined;
+}
+
+/**
+ * Agent run status → task status: a turn in progress is กำลังทำ, a permission prompt is รอคุณ
+ * (waiting), a finished turn or ended run needs review, errors fail.
+ */
+export function taskStatusOf(run: Pick<RunView, 'status' | 'result' | 'error' | 'pending' | 'ended'>): TaskStatus {
+	if (!run.ended && run.pending.length) return 'waiting';
+	switch (run.status) {
+		case 'starting':
+		case 'running':
+			return 'running';
+		case 'waiting':
+			return 'waiting';
+		case 'failed':
+			return 'failed';
+		case 'stopped':
+			return 'review';
+		case 'idle':
+		case 'done':
+			return run.result?.is_error || (run.status === 'done' && run.error) ? 'failed' : 'review';
+	}
+}
+
+export function toTaskRuntime(run: RunView, updatedAt?: number): TaskRuntime {
+	return {
+		slug: run.slug,
+		status: taskStatusOf(run),
+		runStatus: run.status,
+		live: !run.ended,
+		working: !run.ended && (run.status === 'starting' || run.status === 'running' || run.status === 'waiting'),
+		lastEvent: lastEventOf(run) ?? (run.status === 'starting' ? 'กำลังเริ่ม' : undefined),
+		pendingPermissions: run.pending.length,
+		model: run.model ?? undefined,
+		sessionId: run.sessionId,
+		usage: run.result ? formatUsage(run.result) || undefined : undefined,
+		error: run.error ?? undefined,
+		updatedAt
+	};
+}
+
+/** What tasks.json keeps of a run: written after each turn and when the run ends. */
+export function runSummary(run: RunView, now: number): RunSummary {
+	const r = run.result;
+	const u = r?.usage;
+	return {
+		status: run.status,
+		at: now,
+		summary: lastEventOf({ ...run, pending: [] }) ?? null,
+		error: run.error ? firstLine(run.error, 200) : null,
+		cost_usd: r?.total_cost_usd ?? null,
+		input_tokens: u ? u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens : null,
+		output_tokens: u ? u.output_tokens : null,
+		num_turns: r?.num_turns ?? null
+	};
+}
+
+/** Same run outcome (ignores when it was saved). */
+export function sameSummary(a: RunSummary | null, b: RunSummary | null): boolean {
+	if (!a || !b) return a === b;
+	return (Object.keys(a) as (keyof RunSummary)[]).every((k) => k === 'at' || a[k] === b[k]);
+}
+
+/** Usage line of a saved run, like `formatUsage`. */
+export function formatSummaryUsage(s: RunSummary): string {
+	const usage =
+		s.input_tokens == null && s.output_tokens == null
+			? null
+			: { input_tokens: s.input_tokens ?? 0, output_tokens: s.output_tokens ?? 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+	return formatUsage({ total_cost_usd: s.cost_usd, num_turns: s.num_turns, usage });
+}
+
+/**
+ * What a follow-up does: `send` through the agents store (into the open session, or resuming the
+ * run's ended session), else start resuming the session saved in tasks.json (after a restart),
+ * else start a fresh session.
+ */
+export function followUpPlan(run: Pick<RunView, 'ended' | 'sessionId'> | undefined, saved: string | null): { kind: 'send' } | { kind: 'start'; resume: string | null } {
+	if (run && (!run.ended || run.sessionId)) return { kind: 'send' };
+	return { kind: 'start', resume: saved ?? null };
 }
 
 // ---------------------------------------------------------------------------------------------
 // Grouping, sorting and stats
 
 /** A live run wins; a saved `running`/`waiting` with no live run was interrupted (app restart). */
-export function effectiveStatus(meta: TaskMeta, runtime?: TaskRuntime): TaskStatus {
+export function effectiveStatus(meta: TaskMeta, runtime?: Pick<TaskRuntime, 'status' | 'pendingPermissions'>): TaskStatus {
 	if (runtime && (runtime.status === 'running' || runtime.status === 'waiting')) return runtime.pendingPermissions > 0 ? 'waiting' : runtime.status;
 	if (meta.status === 'running' || meta.status === 'waiting') return 'review';
 	return meta.status;

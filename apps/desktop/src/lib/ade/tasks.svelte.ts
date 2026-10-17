@@ -1,13 +1,16 @@
 // ADE tasks (Orca-style: one task = one git worktree with an agent). Task metadata is persisted in
 // `<root>/.kingu/tasks.json` through Rust; live state comes from the TaskRuntime adapter; diff
-// stats come from `worktree_diff_stat`. Views read `adeTasks.views / groups`; actions confirm
+// stats come from `worktree_diff_stat`. Runs go through the agent host's `agents` store (via the
+// runtime adapter); when a turn or run ends its status, usage and session id are saved here so a
+// task can be continued after a restart. Views read `adeTasks.views / groups`; actions confirm
 // destructive steps with a native dialog and report results in the status bar.
 
 import { untrack } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
 import { ask, message } from '@tauri-apps/plugin-dialog';
 import { clientLog } from '#lib/client-log.ts';
-import type { WorktreeInfo } from '#lib/agent/events.ts';
+import { agents } from '#lib/agent/agents.svelte.ts';
+import type { Decision, WorktreeInfo } from '#lib/agent/events.ts';
 import { commands } from '#lib/workbench/commands.svelte.ts';
 import { editors } from '#lib/workbench/editors.svelte.ts';
 import { layout } from '#lib/workbench/layout.svelte.ts';
@@ -26,6 +29,8 @@ import {
 	patchTask,
 	pruneAccepted,
 	removeTask,
+	runSummary,
+	sameSummary,
 	toggleAccepted,
 	uniqueSlug,
 	type DiffStat,
@@ -58,6 +63,10 @@ class AdeTasks {
 	);
 	groups = $derived(groupTasks(this.views));
 	attentionCount = $derived(this.groups.attention.length);
+	/** Tasks of the open folder that need a review (or failed); permission prompts are counted by `agents`. */
+	reviewCount = $derived(this.groups.attention.filter((v) => v.status !== 'waiting').length);
+	/** The title-bar "รอคุณ" badge: pending permission requests (every folder) + tasks to review. */
+	badgeCount = $derived(agents.pendingCount + this.reviewCount);
 
 	#saving: Promise<void> = Promise.resolve();
 	#root: string | null = null;
@@ -173,7 +182,7 @@ class AdeTasks {
 		return slug;
 	}
 
-	/** Runs the agent (again) in the task worktree. */
+	/** Starts the agent in the task worktree through the agents store. */
 	async run(slug: string, prompt: string) {
 		try {
 			await runtime.start(slug, prompt);
@@ -184,25 +193,56 @@ class AdeTasks {
 		}
 	}
 
+	/** Follow-up message: into the open session, else resuming the task's session (saved in tasks.json). */
+	async followUp(slug: string, text: string) {
+		const meta = this.list.find((t) => t.slug === slug);
+		if (!meta || !text.trim()) return;
+		try {
+			await runtime.followUp(slug, text, meta.session_id);
+			if (meta.status !== 'running') await this.#patch(slug, { status: 'running' });
+		} catch (e) {
+			status.flash(`ส่งข้อความถึง agent ไม่ได้: ${e}`, 10000);
+		}
+	}
+
+	answer(slug: string, requestId: string, decision: Decision, message?: string) {
+		return runtime.answer(slug, requestId, decision, message).catch((e) => status.flash(`ตอบคำขออนุญาตไม่ได้: ${e}`, 8000));
+	}
+
+	/** Stops the current turn; the session stays open for follow-ups. */
+	interrupt(slug: string) {
+		return runtime.interrupt(slug).catch((e) => status.flash(String(e), 8000));
+	}
+
+	/** Ends the run (continue later with a follow-up, which resumes the session). */
 	stop(slug: string) {
 		return runtime.stop(slug).catch((e) => status.flash(String(e), 8000));
 	}
 
-	/** Called when a run's status or model changes, so tasks.json follows the live state. */
+	/**
+	 * Called when a run's state changes, so tasks.json follows it: status, model, the session id
+	 * (to resume after a restart) and, after each turn and when the run ends, its summary and usage.
+	 */
 	syncRuntime(slug: string) {
+		const run = runtime.run(slug);
 		const rt = runtime.get(slug);
 		const meta = this.list.find((t) => t.slug === slug);
-		if (!rt || !meta) return;
+		if (!run || !rt || !meta) return;
 		const patch: Partial<TaskMeta> = {};
 		if (rt.status !== meta.status && !(meta.status === 'done' && rt.status === 'review')) patch.status = rt.status;
 		if (rt.model && rt.model !== meta.model) patch.model = rt.model;
+		if (run.sessionId && run.sessionId !== meta.session_id) patch.session_id = run.sessionId;
+		if (run.ended || run.status === 'idle') {
+			const summary = runSummary(run, Date.now());
+			if (!sameSummary(summary, meta.last_run)) patch.last_run = summary;
+		}
 		if (Object.keys(patch).length) void this.#patch(slug, patch);
 		if (rt.status === 'review' || rt.status === 'failed') void this.refreshStat(slug);
 	}
 
 	/** Removes the worktree (the branch `kingu/<slug>` is kept) and forgets the task. */
 	async remove(slug: string) {
-		if (runtime.isRunning(slug)) {
+		if (runtime.isWorking(slug)) {
 			status.flash('หยุด agent ก่อนลบงาน');
 			return;
 		}
@@ -210,6 +250,8 @@ class AdeTasks {
 		const hasWorktree = this.worktrees.some((w) => w.slug === slug);
 		if (hasWorktree) {
 			if (!(await ask(`ลบ worktree ${path}?\n\nbranch kingu/${slug} จะยังอยู่ (ลบเองได้ด้วย git branch -D)`, { title: 'ลบงาน', kind: 'warning', okLabel: 'ลบ', cancelLabel: 'ยกเลิก' }))) return;
+			// An idle session still runs in the worktree: end it with the task.
+			if (runtime.isLive(slug)) await this.stop(slug);
 			try {
 				await invoke('worktree_remove', { slug, force: false, deleteBranch: false });
 			} catch (e) {
@@ -228,6 +270,8 @@ class AdeTasks {
 				}
 			}
 		} else if (!(await ask(`ลบงาน "${this.list.find((t) => t.slug === slug)?.title ?? slug}" ออกจากรายการ?`, { title: 'ลบงาน', okLabel: 'ลบ', cancelLabel: 'ยกเลิก' }))) return;
+		if (!hasWorktree && runtime.isLive(slug)) await this.stop(slug);
+		runtime.forget(slug);
 		for (const t of editors.allTabs().map((t) => t.path)) {
 			if (slugOfTaskKey(t) === slug || parseTaskDiffKey(t)?.slug === slug) editors.closeEverywhere(t);
 		}
@@ -344,7 +388,11 @@ class AdeTasks {
 		const current = editors.active ? slugOfTaskKey(editors.active) : null;
 		const next = nextNeedingAttention(this.views, current ?? undefined);
 		if (next) this.openTask(next.meta.slug);
-		else status.flash('ไม่มีงานที่รอคุณ');
+		else if (agents.pendingCount) {
+			// Permission requests of runs started in another folder.
+			const other = agents.list.find((r) => r.pending.length);
+			status.flash(`agent ในโฟลเดอร์ ${other?.root ?? 'อื่น'} รอคุณอนุญาต (งาน ${other?.slug ?? ''})`, 8000);
+		} else status.flash('ไม่มีงานที่รอคุณ');
 	}
 
 	/** Diff of a worktree file against the task's fork point, in a `taskdiff://` tab. */
@@ -399,14 +447,15 @@ export function installAde(): () => void {
 		$effect(() => {
 			void workspace.root;
 			untrack(() => {
-				runtime.reset();
+				// Runs stay in the agents store across folders; re-sync this folder's after loading.
 				synced.clear();
 				void adeTasks.load();
 			});
 		});
 		$effect(() => {
+			if (!adeTasks.loaded) return;
 			for (const rt of runtime.all()) {
-				const sig = `${rt.status}|${rt.model ?? ''}`;
+				const sig = `${rt.status}|${rt.runStatus}|${rt.model ?? ''}|${rt.sessionId ?? ''}|${rt.usage ?? ''}|${rt.error ?? ''}`;
 				if (synced.get(rt.slug) === sig) continue;
 				synced.set(rt.slug, sig);
 				untrack(() => adeTasks.syncRuntime(rt.slug));

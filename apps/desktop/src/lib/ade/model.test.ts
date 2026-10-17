@@ -5,26 +5,32 @@ import {
 	columnOf,
 	commitMessage,
 	effectiveStatus,
+	followUpPlan,
+	formatSummaryUsage,
 	groupTasks,
+	lastEventOf,
 	newTask,
 	nextNeedingAttention,
 	patchTask,
 	pruneAccepted,
-	reduceRun,
 	removeTask,
 	reviewChip,
-	startRun,
+	runSummary,
+	sameSummary,
+	taskStatusOf,
 	timeAgo,
+	toTaskRuntime,
 	toggleAccepted,
 	uniqueSlug,
 	upsertTask,
 	type DiffStat,
 	type FileChange,
-	type RuntimeEvent,
+	type RunView,
 	type TaskMeta,
 	type TaskRuntime,
 	type TaskView
 } from './model';
+import { applyEvent, initialRun, type AgentEvent, type PermissionRequest, type RunState } from '../agent/events';
 import { BOARD_KEY, isAdeEditor, slugOfTaskKey, taskKey } from './keys';
 import { fileOf, isDiffKey, parseTaskDiffKey, tabLabel, taskDiffKey } from '../workbench/scm';
 import { remapPath } from '../workbench/fileTree';
@@ -88,37 +94,99 @@ describe('tasks.json reducers', () => {
 	});
 });
 
-describe('runtime reducer', () => {
-	const run = (events: RuntimeEvent[]) => events.reduce((s, ev, i) => reduceRun(s, ev, 100 + i), startRun('t', 0)).runtime;
-
-	test('a clean run ends ready for review, with the model and last event', () => {
-		const rt = run([
-			{ kind: 'system', subtype: 'init', session_id: 's', model: 'claude-opus' },
-			{ kind: 'tool_use', id: '1', name: 'Edit', input: { file_path: 'src/a.ts' } },
-			{ kind: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: 's', num_turns: 2, duration_ms: 1, total_cost_usd: 0.1 },
-			{ kind: 'exit', code: 0, signal: null, stopped: false }
-		]);
-		expect(rt).toMatchObject({ status: 'review', model: 'claude-opus', lastEvent: 'agent ทำงานเสร็จ', pendingPermissions: 0 });
+describe('agents store → TaskRuntime adapter', () => {
+	const run = (events: AgentEvent[]): RunView & RunState => {
+		const r = { ...initialRun(), slug: 't' };
+		for (const ev of events) applyEvent(r, ev);
+		return r;
+	};
+	const init: AgentEvent = { kind: 'system', subtype: 'init', session_id: 'sess-1', model: 'claude-opus-5-5' };
+	const usage = { input_tokens: 1000, output_tokens: 200, cache_read_input_tokens: 500, cache_creation_input_tokens: 0 };
+	const ok: AgentEvent = { kind: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: 'sess-1', num_turns: 2, duration_ms: 1, total_cost_usd: 0.1, usage };
+	const exit = (extra: Partial<Extract<AgentEvent, { kind: 'exit' }>> = {}): AgentEvent => ({ kind: 'exit', code: 0, signal: null, stopped: false, ...extra });
+	const perm = (id: string, tool = 'Bash'): PermissionRequest => ({
+		kind: 'permission_request',
+		request_id: id,
+		tool,
+		tool_use_id: null,
+		title: null,
+		input_summary: 'npm test',
+		detail: null,
+		diff: null,
+		input: { command: 'npm test' },
+		can_always: true
 	});
 
-	test('errors and non-zero exits fail; stopping is a review', () => {
-		expect(run([{ kind: 'result', subtype: 'error', is_error: true, result: 'boom', session_id: null, num_turns: 1, duration_ms: 1, total_cost_usd: null }, { kind: 'exit', code: 0, signal: null, stopped: false }]).status).toBe('failed');
-		expect(run([{ kind: 'exit', code: 1, signal: null, stopped: false }]).status).toBe('failed');
-		expect(run([{ kind: 'exit', code: null, signal: 15, stopped: true }]).status).toBe('review');
+	test('a starting or working run is กำลังทำ', () => {
+		expect(toTaskRuntime(run([]))).toMatchObject({ status: 'running', runStatus: 'starting', live: true, working: true, lastEvent: 'กำลังเริ่ม' });
+		const rt = toTaskRuntime(run([init, { kind: 'tool_use', id: '1', name: 'Edit', input: { file_path: 'src/a.ts' } }]), 42);
+		expect(rt).toMatchObject({ status: 'running', runStatus: 'running', model: 'claude-opus-5-5', sessionId: 'sess-1', lastEvent: 'Edit(src/a.ts)', updatedAt: 42 });
 	});
 
-	test('permission requests make it wait until resolved', () => {
-		let s = startRun('t', 0);
-		s = reduceRun(s, { kind: 'permission_request', id: 'p1', tool: 'Bash' }, 1);
-		expect(s.runtime).toMatchObject({ status: 'waiting', pendingPermissions: 1, lastEvent: 'ขออนุญาตใช้ Bash' });
-		s = reduceRun(s, { kind: 'permission_resolved', id: 'p1', allowed: true }, 2);
-		expect(s.runtime).toMatchObject({ status: 'running', pendingPermissions: 0 });
+	test('streamed deltas are the last event until the message completes', () => {
+		const r = run([init, { kind: 'delta', block: 'text', text: 'กำลังแก้ ' }, { kind: 'delta', block: 'text', text: 'ไฟล์\nบรรทัดสอง' }]);
+		expect(lastEventOf(r)).toBe('กำลังแก้ ไฟล์');
+		applyEvent(r, { kind: 'message', role: 'assistant', text: 'แก้เสร็จแล้ว' });
+		expect(lastEventOf(r)).toBe('แก้เสร็จแล้ว');
+	});
+
+	test('a permission request is รอคุณ (waiting) until answered', () => {
+		const r = run([init, perm('p1'), perm('p2', 'Write')]);
+		expect(toTaskRuntime(r)).toMatchObject({ status: 'waiting', runStatus: 'waiting', pendingPermissions: 2, working: true, lastEvent: 'ขออนุญาตใช้ Bash: npm test' });
+		expect(effectiveStatus(newTask({ slug: 't', title: 't', prompt: '', base: 'main' }, 0), toTaskRuntime(r))).toBe('waiting');
+		applyEvent(r, { kind: 'permission_resolved', request_id: 'p1', decision: 'allow' });
+		applyEvent(r, { kind: 'permission_resolved', request_id: 'p2', decision: 'deny' });
+		expect(toTaskRuntime(r)).toMatchObject({ status: 'running', pendingPermissions: 0 });
+	});
+
+	test('a finished turn (session still open) needs review, with usage', () => {
+		const rt = toTaskRuntime(run([init, ok]));
+		expect(rt).toMatchObject({ status: 'review', runStatus: 'idle', live: true, working: false, lastEvent: 'agent ทำงานเสร็จ' });
+		expect(rt.usage).toBe('$0.1000 · 1.5k in · 200 out · 2 turns');
+	});
+
+	test('ended runs: done and stopped are reviews; errors and failed exits fail', () => {
+		expect(toTaskRuntime(run([init, ok, exit()]))).toMatchObject({ status: 'review', runStatus: 'done', live: false, working: false });
+		expect(toTaskRuntime(run([init, exit({ code: null, signal: 15, stopped: true })]))).toMatchObject({ status: 'review', runStatus: 'stopped', lastEvent: 'หยุดแล้ว' });
+		expect(taskStatusOf(run([init, { ...ok, is_error: true, subtype: 'error_max_turns', result: 'boom' }]))).toBe('failed');
+		expect(taskStatusOf(run([init, exit({ code: 1 })]))).toBe('failed');
+		const crashed = run([{ kind: 'error', message: 'agent host exited' }, exit({ code: null })]);
+		expect(toTaskRuntime(crashed)).toMatchObject({ status: 'failed', error: 'agent host exited', lastEvent: 'ข้อผิดพลาด: agent host exited' });
+		// Pending requests are cancelled when the run ends.
+		expect(toTaskRuntime(run([init, perm('p1'), exit({ stopped: true })]))).toMatchObject({ status: 'review', pendingPermissions: 0 });
+	});
+
+	test('run summary for tasks.json', () => {
+		const s = runSummary(run([init, ok, exit()]), 5000);
+		expect(s).toEqual({ status: 'done', at: 5000, summary: 'agent ทำงานเสร็จ', error: null, cost_usd: 0.1, input_tokens: 1500, output_tokens: 200, num_turns: 2 });
+		expect(formatSummaryUsage(s)).toBe('$0.1000 · 1.5k in · 200 out · 2 turns');
+		expect(sameSummary(s, { ...s, at: 9 })).toBe(true);
+		expect(sameSummary(s, { ...s, status: 'stopped' })).toBe(false);
+		expect(sameSummary(s, null)).toBe(false);
+		expect(formatSummaryUsage(runSummary(run([exit({ stopped: true })]), 1))).toBe('');
+	});
+
+	test('follow-ups: send to the store when it has the session, else resume the saved one', () => {
+		const live = run([init]);
+		expect(followUpPlan(live, null)).toEqual({ kind: 'send' });
+		expect(followUpPlan(run([init, ok, exit()]), 'older')).toEqual({ kind: 'send' });
+		expect(followUpPlan(undefined, 'sess-saved')).toEqual({ kind: 'start', resume: 'sess-saved' });
+		expect(followUpPlan(run([exit({ code: 1 })]), 'sess-saved')).toEqual({ kind: 'start', resume: 'sess-saved' });
+		expect(followUpPlan(undefined, null)).toEqual({ kind: 'start', resume: null });
 	});
 });
 
 describe('grouping and sorting', () => {
 	test('effective status: live runs win, interrupted runs become reviews', () => {
-		const rt = (status: TaskRuntime['status'], pendingPermissions = 0): TaskRuntime => ({ slug: 'a', status, pendingPermissions });
+		const rt = (status: TaskRuntime['status'], pendingPermissions = 0): TaskRuntime => ({
+			slug: 'a',
+			status,
+			runStatus: 'running',
+			live: true,
+			working: true,
+			sessionId: null,
+			pendingPermissions
+		});
 		expect(effectiveStatus(meta('a', { status: 'review' }), rt('running'))).toBe('running');
 		expect(effectiveStatus(meta('a'), rt('running', 2))).toBe('waiting');
 		expect(effectiveStatus(meta('a', { status: 'running' }))).toBe('review');
@@ -126,14 +194,25 @@ describe('grouping and sorting', () => {
 		expect([columnOf('waiting'), columnOf('failed'), columnOf('review'), columnOf('running'), columnOf('done')]).toEqual(['attention', 'attention', 'attention', 'active', 'done']);
 	});
 
+	const live = (slug: string, pendingPermissions: number, updatedAt: number): TaskRuntime => ({
+		slug,
+		status: 'running',
+		runStatus: pendingPermissions ? 'waiting' : 'running',
+		live: true,
+		working: true,
+		sessionId: null,
+		pendingPermissions,
+		updatedAt
+	});
+
 	test('รอคุณ: waiting, then failed, then review, oldest first; others newest first', () => {
 		const views = [
 			view(meta('review-new', { status: 'review', updated_at: 50 })),
 			view(meta('review-old', { status: 'review', updated_at: 10 })),
 			view(meta('failed', { status: 'failed', updated_at: 99 })),
-			view(meta('waiting', { status: 'review', updated_at: 99 }), { slug: 'waiting', status: 'running', pendingPermissions: 1, updatedAt: 100 }),
-			view(meta('run-old', { updated_at: 1 }), { slug: 'run-old', status: 'running', pendingPermissions: 0, updatedAt: 5 }),
-			view(meta('run-new', { updated_at: 1 }), { slug: 'run-new', status: 'running', pendingPermissions: 0, updatedAt: 500 }),
+			view(meta('waiting', { status: 'review', updated_at: 99 }), live('waiting', 1, 100)),
+			view(meta('run-old', { updated_at: 1 }), live('run-old', 0, 5)),
+			view(meta('run-new', { updated_at: 1 }), live('run-new', 0, 500)),
 			view(meta('done-a', { status: 'done', updated_at: 3 })),
 			view(meta('done-b', { status: 'done', updated_at: 7 }))
 		];

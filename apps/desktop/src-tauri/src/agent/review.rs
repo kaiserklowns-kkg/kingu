@@ -7,7 +7,6 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::git::{self, check_rel, check_rev};
 
@@ -278,13 +277,13 @@ pub fn find_on_path(name: &str, path: Option<OsString>) -> Option<PathBuf> {
   std::env::split_paths(&path?).map(|d| d.join(name)).find(|p| p.is_file())
 }
 
-/// The `gh` binary: `KINGU_GH_BIN`, else `gh` on PATH (plus Homebrew's folders, which a GUI app
-/// launched from Finder does not have on PATH).
+/// The `gh` binary: `KINGU_GH_BIN`, else `gh` on the login-shell PATH (`shell_env`, since a GUI app
+/// launched from Finder only has launchd's PATH), plus Homebrew's folders as a fallback.
 pub fn gh_bin() -> Option<PathBuf> {
   if let Some(p) = std::env::var_os("KINGU_GH_BIN") {
     return Some(PathBuf::from(p));
   }
-  let mut path = std::env::var_os("PATH").unwrap_or_default();
+  let mut path = crate::shell_env::path().unwrap_or_default();
   if !path.is_empty() {
     path.push(":");
   }
@@ -298,7 +297,7 @@ pub fn gh_status(bin: Option<PathBuf>) -> GhStatus {
     return GhStatus { installed: false, authenticated: false, path: None, detail: "gh not found".into() };
   };
   let path = Some(bin.display().to_string());
-  match Command::new(&bin).args(["auth", "status"]).output() {
+  match crate::shell_env::command(&bin).args(["auth", "status"]).output() {
     Ok(out) => {
       let detail = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)).trim().to_owned();
       GhStatus { installed: true, authenticated: out.status.success(), path, detail }
@@ -316,7 +315,7 @@ pub fn pr_create(gh: &Path, dir: &Path, slug: &str, base: &str, title: &str, bod
   git::run(dir, &["remote", "get-url", "origin"]).map_err(|_| "ไม่มี remote ชื่อ origin".to_owned())?;
   let branch = branch_name(slug);
   git::run(dir, &["push", "-u", "origin", &format!("refs/heads/{branch}:refs/heads/{branch}")])?;
-  let out = Command::new(gh)
+  let out = crate::shell_env::command(gh)
     .current_dir(dir)
     .args(["pr", "create", &format!("--base={base}"), &format!("--head={branch}"), &format!("--title={title}"), &format!("--body={body}")])
     .output()
@@ -331,6 +330,7 @@ pub fn pr_create(gh: &Path, dir: &Path, slug: &str, base: &str, title: &str, bod
 #[cfg(test)]
 mod tests {
   use super::*;
+  use std::process::Command;
   use crate::agent::worktree;
 
   fn git_ok(dir: &Path, args: &[&str]) -> String {

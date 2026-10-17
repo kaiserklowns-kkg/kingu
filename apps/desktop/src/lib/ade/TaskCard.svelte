@@ -2,7 +2,7 @@
 	// One task, Orca-style: title, branch, agent + model, last event, +/- vs base, time ago and the
 	// review/PR chip. Enter/click opens the task page; actions show on hover and keyboard focus.
 	import Icon from '#lib/workbench/Icon.svelte';
-	import { aggregateStats, reviewChip, STATUS_LABEL, timeAgo, type TaskView } from './model';
+	import { aggregateStats, formatSummaryUsage, reviewChip, STATUS_LABEL, timeAgo, type TaskView } from './model';
 	import { adeTasks } from './tasks.svelte';
 	import { ICON_BUTTON, STATUS_DOT, TONE } from './ui';
 
@@ -12,9 +12,10 @@
 	const totals = $derived(view.stat ? aggregateStats(view.stat.files) : null);
 	const chip = $derived(reviewChip(view));
 	const when = $derived(Math.max(meta.updated_at, view.runtime?.updatedAt ?? 0));
-	const summary = $derived(view.runtime?.lastEvent ?? (meta.prompt.split('\n', 1)[0] || ''));
+	const summary = $derived(view.runtime?.lastEvent ?? meta.last_run?.summary ?? (meta.prompt.split('\n', 1)[0] || ''));
+	const usage = $derived(view.runtime?.usage ?? (meta.last_run ? formatSummaryUsage(meta.last_run) : ''));
 	const busy = $derived(adeTasks.busy[meta.slug]);
-	const running = $derived(view.status === 'running' || view.status === 'waiting');
+	const running = $derived(!!view.runtime?.working);
 	const model = $derived(view.runtime?.model ?? meta.model);
 
 	function onKey(e: KeyboardEvent) {
@@ -51,6 +52,7 @@
 		<div class="mt-1 truncate text-(--vscode-foreground)/80" title={summary}>{summary}</div>
 	{/if}
 	<div class="mt-1.5 flex items-center gap-2">
+		{#if usage}<span class="truncate text-[10px] text-(--vscode-descriptionForeground)" title="usage ของ session">{usage}</span>{/if}
 		{#if totals}
 			<span class="font-mono"><span class="text-[#73C991]">+{totals.added}</span> <span class="text-[#F48771]">−{totals.deleted}</span></span>
 			<span class="text-(--vscode-descriptionForeground)">{totals.files} ไฟล์</span>
@@ -60,7 +62,7 @@
 	</div>
 	<div class="absolute top-1 right-1 hidden gap-0.5 rounded bg-(--vscode-editor-background) group-focus-within:flex group-hover:flex">
 		{#if running}
-			<button class={ICON_BUTTON} aria-label="หยุด agent" title="หยุด agent" onclick={(e) => (e.stopPropagation(), adeTasks.stop(meta.slug))}><Icon name="stop" size={14} /></button>
+			<button class={ICON_BUTTON} aria-label="หยุดรอบนี้" title="หยุดรอบนี้ (Interrupt)" onclick={(e) => (e.stopPropagation(), adeTasks.interrupt(meta.slug))}><Icon name="stop" size={14} /></button>
 		{/if}
 		<button class={ICON_BUTTON} aria-label="เปิดไฟล์ใน worktree" title="เปิดไฟล์ใน worktree" disabled={!!view.statError} onclick={(e) => (e.stopPropagation(), adeTasks.quickOpen(meta.slug))}>
 			<Icon name="goToFile" size={14} />

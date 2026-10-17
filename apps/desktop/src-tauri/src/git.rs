@@ -6,7 +6,6 @@
 
 use std::collections::HashSet;
 use std::path::{Component, Path};
-use std::process::Command;
 
 /// HEAD contents larger than this are not shown in a diff (matches `read_workspace_file`).
 const MAX_SHOW_BYTES: usize = 5 * 1024 * 1024;
@@ -63,7 +62,7 @@ pub fn check_rel(root: &Path, rel: &str) -> Result<(), String> {
 }
 
 pub(crate) fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-  let out = Command::new("git")
+  let out = crate::shell_env::command("git")
     .arg("-C")
     .arg(root)
     .arg("--literal-pathspecs")
@@ -255,6 +254,7 @@ pub fn show_at(root: &Path, rev: &str, rel: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use std::process::Command;
   use std::path::PathBuf;
 
   fn git(dir: &Path, args: &[&str]) {

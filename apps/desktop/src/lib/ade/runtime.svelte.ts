@@ -1,77 +1,82 @@
-// TaskRuntime adapter. Today agent runs live in the webview: `agent_start` streams the runner's
-// events over a Channel and this module keeps them per task slug. The rest of the ADE reads only
-// `runtime.get / events / isRunning / start / stop`, so moving to the sidecar agent host's
-// reactive `agents` store means rewriting this one file against that store.
+// TaskRuntime adapter over the agent host's `agents` store (agent/agents.svelte.ts), the single
+// source of truth for agent runs. The ADE reads tasks' live state only through this module:
+// `get` maps a run to a TaskRuntime (pure mapping in model.ts), `run` hands the timeline the run
+// itself, and the actions forward to the store. Runs belong to a workspace root; only runs of
+// the open folder are visible here (others keep streaming in the store).
 
-import { Channel, invoke } from '@tauri-apps/api/core';
-import { clientLog } from '#lib/client-log.ts';
-import type { AgentEvent } from '#lib/agent/events.ts';
-import { reduceRun, startRun, type RunState, type RuntimeEvent, type TaskRuntime } from './model';
-
-type Run = RunState & { id?: number; events: RuntimeEvent[] };
-
-/** The timeline keeps the latest events only; tool results are already truncated in Rust. */
-const MAX_EVENTS = 2000;
+import { agents, type AgentRun } from '#lib/agent/agents.svelte.ts';
+import type { Decision } from '#lib/agent/events.ts';
+import { workspace } from '#lib/workbench/workspace.svelte.ts';
+import { followUpPlan, toTaskRuntime, type TaskRuntime } from './model';
 
 class Runtime {
-	#runs = $state<Record<string, Run>>({});
+	/** Unix ms of each task's latest event (the store does not timestamp events). */
+	#touched = $state<Record<string, number>>({});
+
+	constructor() {
+		agents.onEvent((slug) => {
+			this.#touched[slug] = Date.now();
+		});
+	}
+
+	/** The latest run of `slug` in the open folder. */
+	run(slug: string): AgentRun | undefined {
+		const r = agents.get(slug);
+		return r && r.root === workspace.root ? r : undefined;
+	}
 
 	get(slug: string): TaskRuntime | undefined {
-		return this.#runs[slug]?.runtime;
-	}
-
-	/** Events of the latest run of `slug` (empty when it has not run since the app started). */
-	events(slug: string): AgentEvent[] {
-		return (this.#runs[slug]?.events ?? []).filter((e): e is AgentEvent => e.kind !== 'permission_request' && e.kind !== 'permission_resolved');
-	}
-
-	isRunning(slug: string): boolean {
-		const s = this.get(slug)?.status;
-		return s === 'running' || s === 'waiting';
+		const r = this.run(slug);
+		return r && toTaskRuntime(r, this.#touched[slug] ?? r.startedAt);
 	}
 
 	all(): TaskRuntime[] {
-		return Object.values(this.#runs).map((r) => r.runtime);
+		return agents.list.filter((r) => r.root === workspace.root).map((r) => toTaskRuntime(r, this.#touched[r.slug] ?? r.startedAt));
 	}
 
-	/** Starts the agent in the task worktree (which must exist). A new run replaces the old timeline. */
-	async start(slug: string, prompt: string): Promise<void> {
-		if (this.isRunning(slug)) throw new Error(`${slug}: กำลังทำงานอยู่`);
-		this.#runs[slug] = { ...startRun(slug, Date.now()), events: [] };
-		const onEvent = new Channel<AgentEvent>();
-		onEvent.onmessage = (ev) => this.#push(slug, ev);
-		try {
-			const id = await invoke<number>('agent_start', { slug, prompt, onEvent });
-			const run = this.#runs[slug];
-			if (run) run.id = id;
-			clientLog('info', `agent run ${id} started for ${slug}`);
-		} catch (e) {
-			this.#push(slug, { kind: 'stderr', line: String(e) });
-			this.#push(slug, { kind: 'exit', code: null, signal: null, stopped: false });
-			throw e;
-		}
+	/** The session is open (the task's worktree is in use). */
+	isLive(slug: string): boolean {
+		const r = this.run(slug);
+		return !!r && !r.ended;
 	}
 
-	async stop(slug: string): Promise<void> {
-		const id = this.#runs[slug]?.id;
-		if (id !== undefined && this.isRunning(slug)) await invoke('agent_stop', { id });
+	/** A turn is in progress or waiting for a permission answer. */
+	isWorking(slug: string): boolean {
+		return this.get(slug)?.working ?? false;
 	}
 
-	/** A folder switch: runs belong to the old folder's tasks. */
-	reset() {
-		this.#runs = {};
+	/** Starts the agent in the task worktree (which must exist); model and permission mode come from settings. */
+	start(slug: string, prompt: string, resume: string | null = null): Promise<void> {
+		this.#touched[slug] = Date.now();
+		return agents.start(slug, prompt, { root: workspace.root ?? undefined, resume });
 	}
 
-	#push(slug: string, ev: RuntimeEvent) {
-		const run = this.#runs[slug];
-		if (!run) return;
-		const next = reduceRun(run, ev, Date.now());
-		run.runtime = next.runtime;
-		run.failed = next.failed;
-		run.pending = next.pending;
-		run.events.push(ev);
-		if (run.events.length > MAX_EVENTS) run.events.splice(0, run.events.length - MAX_EVENTS);
-		if (ev.kind === 'exit') run.id = undefined;
+	/**
+	 * Follow-up: sent to the open session, else resumes the run's session (or `savedSession` from
+	 * tasks.json after a restart), else starts fresh.
+	 */
+	async followUp(slug: string, text: string, savedSession: string | null): Promise<void> {
+		const plan = followUpPlan(this.run(slug), savedSession);
+		this.#touched[slug] = Date.now();
+		if (plan.kind === 'send') await agents.send(slug, text);
+		else await this.start(slug, text, plan.resume);
+	}
+
+	answer(slug: string, requestId: string, decision: Decision, message?: string): Promise<void> {
+		return agents.answer(slug, requestId, decision, message);
+	}
+
+	interrupt(slug: string): Promise<void> {
+		return agents.interrupt(slug);
+	}
+
+	stop(slug: string): Promise<void> {
+		return agents.stop(slug);
+	}
+
+	forget(slug: string) {
+		if (this.run(slug)) agents.forget(slug);
+		delete this.#touched[slug];
 	}
 }
 

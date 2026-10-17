@@ -15,6 +15,30 @@ pub const STATUSES: &[&str] = &["running", "waiting", "review", "done", "failed"
 const MAX_TASKS: usize = 500;
 const MAX_TITLE: usize = 200;
 const MAX_PROMPT: usize = 64 * 1024;
+/// Agent host run statuses (`RunStatus` in the webview's agent/events.ts).
+pub const RUN_STATUSES: &[&str] = &["starting", "running", "waiting", "idle", "stopped", "failed", "done"];
+const MAX_SESSION_ID: usize = 128;
+const MAX_SUMMARY: usize = 2000;
+
+/// How the latest run (or turn) of a task ended, so the Agents view can show it after a restart.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RunSummary {
+  pub status: String,
+  /// Unix milliseconds.
+  pub at: u64,
+  #[serde(default)]
+  pub summary: Option<String>,
+  #[serde(default)]
+  pub error: Option<String>,
+  #[serde(default)]
+  pub cost_usd: Option<f64>,
+  #[serde(default)]
+  pub input_tokens: Option<u64>,
+  #[serde(default)]
+  pub output_tokens: Option<u64>,
+  #[serde(default)]
+  pub num_turns: Option<u32>,
+}
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TaskMeta {
@@ -40,6 +64,16 @@ pub struct TaskMeta {
   pub accepted: Vec<String>,
   #[serde(default)]
   pub merged_at: Option<u64>,
+  /// Claude session of the latest run; a follow-up resumes it (also after a restart).
+  #[serde(default)]
+  pub session_id: Option<String>,
+  #[serde(default)]
+  pub last_run: Option<RunSummary>,
+}
+
+/// Session ids go to the agent host as `resume`: keep them to plain id characters.
+pub fn valid_session_id(id: &str) -> bool {
+  !id.is_empty() && id.len() <= MAX_SESSION_ID && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 fn default_agent() -> String {
@@ -87,6 +121,22 @@ pub fn validate(tasks: &[TaskMeta]) -> Result<(), String> {
     if !STATUSES.contains(&t.status.as_str()) {
       return Err(format!("{}: unknown status {}", t.slug, t.status));
     }
+    if let Some(id) = &t.session_id
+      && !valid_session_id(id)
+    {
+      return Err(format!("{}: invalid session id", t.slug));
+    }
+    if let Some(r) = &t.last_run {
+      if !RUN_STATUSES.contains(&r.status.as_str()) {
+        return Err(format!("{}: unknown run status {}", t.slug, r.status));
+      }
+      if [&r.summary, &r.error].into_iter().flatten().any(|s| s.len() > MAX_SUMMARY) {
+        return Err(format!("{}: run summary larger than {MAX_SUMMARY} bytes", t.slug));
+      }
+      if r.cost_usd.is_some_and(|c| !c.is_finite() || c < 0.0) {
+        return Err(format!("{}: invalid run cost", t.slug));
+      }
+    }
   }
   Ok(())
 }
@@ -115,6 +165,17 @@ mod tests {
       pr_url: None,
       accepted: vec!["a.txt".into()],
       merged_at: None,
+      session_id: Some("0b5e-4c1d_9".into()),
+      last_run: Some(RunSummary {
+        status: "done".into(),
+        at: 3,
+        summary: Some("agent ทำงานเสร็จ".into()),
+        error: None,
+        cost_usd: Some(0.0123),
+        input_tokens: Some(1200),
+        output_tokens: Some(34),
+        num_turns: Some(2),
+      }),
     }
   }
 
@@ -140,6 +201,7 @@ mod tests {
     .unwrap();
     let t = &load(tmp.path()).unwrap()[0];
     assert_eq!((t.agent.as_str(), t.updated_at, t.accepted.len()), ("claude-code", 0, 0));
+    assert_eq!((t.session_id.as_deref(), t.last_run.as_ref()), (None, None));
   }
 
   #[test]
@@ -154,6 +216,11 @@ mod tests {
     assert!(bad(|t| t.title = " ".into()));
     assert!(bad(|t| t.status = "weird".into()));
     assert!(bad(|t| t.base = "-x".into()));
+    assert!(bad(|t| t.session_id = Some("--resume; rm".into())));
+    assert!(bad(|t| t.session_id = Some(String::new())));
+    assert!(bad(|t| t.last_run.as_mut().unwrap().status = "weird".into()));
+    assert!(bad(|t| t.last_run.as_mut().unwrap().summary = Some("x".repeat(MAX_SUMMARY + 1))));
+    assert!(bad(|t| t.last_run.as_mut().unwrap().cost_usd = Some(f64::NAN)));
     assert!(save(tmp.path(), &[task("a"), task("a")]).is_err());
     assert!(!tmp.path().join(".kingu/tasks.json").exists());
   }

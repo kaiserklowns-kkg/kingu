@@ -35,13 +35,13 @@
 		</button>
 	</div>
 	<div class="flex items-center gap-0.5">
-		{#if adeTasks.attentionCount + agents.pendingCount}
+		{#if adeTasks.badgeCount}
 			<button
 				class="mr-1 flex h-[22px] items-center gap-1 rounded-full bg-(--vscode-activityBarBadge-background) px-2 text-xs text-(--vscode-activityBarBadge-foreground) hover:opacity-90"
-				title="เปิดงานถัดไปที่รอคุณ"
-				onclick={() => (adeTasks.attentionCount ? adeTasks.openNext() : (layout.auxVisible = true))}
+				title="เปิดงานถัดไปที่รอคุณ: รออนุญาต {agents.pendingCount} · รอรีวิว {adeTasks.reviewCount}"
+				onclick={() => adeTasks.openNext()}
 			>
-				รอคุณ {adeTasks.attentionCount + agents.pendingCount}
+				รอคุณ {adeTasks.badgeCount}
 			</button>
 		{/if}
 		{#each toggles as t (t.label)}

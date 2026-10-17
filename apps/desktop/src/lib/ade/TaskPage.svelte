@@ -1,5 +1,6 @@
 <script lang="ts">
-	// Task page (`task://<slug>`): header, the agent timeline, and the review section — files
+	// Task page (`task://<slug>`): header, the agent timeline (live from the agents store, with
+	// permission cards to answer), follow-ups that resume the task's session, and the review section — files
 	// changed in the worktree since it forked from its base, accept/reject per file, diffs, then
 	// commit, PR (gh) or a local merge into the base.
 	import { untrack } from 'svelte';
@@ -7,7 +8,7 @@
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { splitPath } from '#lib/workbench/scm.ts';
 	import { keyLabel } from '#lib/workbench/keys.ts';
-	import { aggregateStats, reviewChip, STATUS_LABEL, timeAgo, type FileChange } from './model';
+	import { aggregateStats, formatSummaryUsage, reviewChip, STATUS_LABEL, timeAgo, type FileChange } from './model';
 	import { runtime } from './runtime.svelte';
 	import { adeTasks } from './tasks.svelte';
 	import { BUTTON, BUTTON_SECONDARY, ICON_BUTTON, INPUT, LETTER_COLOR, STATUS_DOT, TONE } from './ui';
@@ -18,8 +19,11 @@
 	const meta = $derived(view?.meta);
 	const stat = $derived(view?.stat);
 	const totals = $derived(stat ? aggregateStats(stat.files) : null);
-	const events = $derived(runtime.events(slug));
-	const running = $derived(view?.status === 'running' || view?.status === 'waiting');
+	const run = $derived(runtime.run(slug));
+	const rt = $derived(view?.runtime);
+	/** A turn is in progress (or waiting for a permission answer): review actions wait. */
+	const running = $derived(!!rt?.working);
+	const resumable = $derived(!!(run?.sessionId ?? meta?.session_id));
 	const busy = $derived(adeTasks.busy[slug]);
 	const accepted = $derived(new Set(meta?.accepted ?? []));
 	const mac = keyLabel('cmd+a').startsWith('⌘');
@@ -63,9 +67,9 @@
 	async function sendFollowUp(e: Event) {
 		e.preventDefault();
 		const p = followUp.trim();
-		if (!p || running) return;
+		if (!p || run?.status === 'starting') return;
 		followUp = '';
-		await adeTasks.run(slug, p);
+		await adeTasks.followUp(slug, p);
 	}
 
 	function onCommitKey(e: KeyboardEvent) {
@@ -96,8 +100,11 @@
 				<span>สร้าง {timeAgo(meta.created_at, adeTasks.now)}</span>
 				{#if meta.pr_url}<a class="text-(--vscode-textLink-foreground) hover:underline" href={meta.pr_url} target="_blank" rel="noreferrer">{meta.pr_url}</a>{/if}
 				<span class="flex-1"></span>
-				{#if running}
-					<button class={BUTTON_SECONDARY} onclick={() => adeTasks.stop(slug)}><Icon name="stop" size={12} /> หยุด agent</button>
+				{#if running && run?.runId !== undefined}
+					<button class={BUTTON_SECONDARY} title="หยุดรอบนี้ session ยังเปิดอยู่ (Interrupt)" onclick={() => adeTasks.interrupt(slug)}><Icon name="stop" size={12} /> หยุดรอบนี้</button>
+				{/if}
+				{#if rt?.live}
+					<button class={BUTTON_SECONDARY} title="จบ session (ส่งข้อความต่อได้ภายหลัง จะ resume session เดิม)" onclick={() => adeTasks.stop(slug)}>จบ session</button>
 				{/if}
 				<button class={BUTTON_SECONDARY} onclick={() => adeTasks.quickOpen(slug)} disabled={!!view.statError}><Icon name="goToFile" size={12} /> เปิดไฟล์ใน worktree</button>
 				{#if view.status === 'done'}
@@ -107,9 +114,18 @@
 				{/if}
 				<button class={BUTTON_SECONDARY} onclick={() => adeTasks.remove(slug)} disabled={running}><Icon name="trash" size={12} /> ลบ</button>
 			</div>
+			{#if rt?.usage || meta.last_run}
+				<div class="mt-1 text-xs text-(--vscode-descriptionForeground)">
+					{#if rt?.usage}
+						session: {rt.usage}
+					{:else if meta.last_run}
+						รอบล่าสุด ({timeAgo(meta.last_run.at, adeTasks.now)}): {meta.last_run.summary ?? meta.last_run.status}{formatSummaryUsage(meta.last_run) ? ` · ${formatSummaryUsage(meta.last_run)}` : ''}
+					{/if}
+				</div>
+			{/if}
 			{#if view.status === 'waiting'}
 				<p class="mt-2 rounded border border-(--vscode-editorWarning-foreground) px-2 py-1 text-xs text-(--vscode-editorWarning-foreground)">
-					agent รออนุญาต {view.runtime?.pendingPermissions} รายการ: {view.runtime?.lastEvent}
+					agent รออนุญาต {rt?.pendingPermissions} รายการ (ตอบได้ใน timeline): {rt?.lastEvent}
 				</p>
 			{/if}
 		</header>
@@ -121,16 +137,24 @@
 				{#if meta.prompt}
 					<p class="mx-4 mt-1 line-clamp-3 shrink-0 rounded bg-(--vscode-input-background) px-2 py-1 text-xs whitespace-pre-wrap" title={meta.prompt}>{meta.prompt}</p>
 				{/if}
-				<AgentTimeline {events} class="flex-1 px-4 py-2">
+				<AgentTimeline {run} onanswer={(p, decision, message) => adeTasks.answer(slug, p.request_id, decision, message)} class="flex-1 px-4 py-2">
 					{#snippet empty()}
 						<p class="text-(--vscode-descriptionForeground)">
-							{running ? 'กำลังเริ่ม…' : 'ยังไม่มีบันทึกของรอบนี้ (timeline เก็บในหน่วยความจำ จะหายเมื่อปิดแอป)'}
+							{run && !run.ended
+								? 'กำลังเริ่ม…'
+								: `ยังไม่มีบันทึกของรอบนี้ (timeline เก็บในหน่วยความจำ จะหายเมื่อปิดแอป)${resumable ? ' — ส่งข้อความด้านล่างเพื่อทำงานต่อใน session เดิม' : ''}`}
 						</p>
 					{/snippet}
 				</AgentTimeline>
 				<form class="flex shrink-0 gap-1.5 border-t border-(--vscode-widget-border) p-2" onsubmit={sendFollowUp}>
-					<input class={INPUT} placeholder={running ? 'agent กำลังทำงาน…' : 'สั่งงานเพิ่มใน worktree นี้ (เริ่ม session ใหม่)'} aria-label="คำสั่งเพิ่มเติม" bind:value={followUp} disabled={running} />
-					<button class={BUTTON} disabled={running || !followUp.trim()}><Icon name="play" size={12} /> ส่ง</button>
+					<input
+						class={INPUT}
+						placeholder={rt?.live ? 'ส่งข้อความเพิ่มเติมถึง agent' : resumable ? 'สั่งงานต่อ (resume session เดิม)' : 'สั่งงานเพิ่มใน worktree นี้ (เริ่ม session ใหม่)'}
+						aria-label="คำสั่งเพิ่มเติม"
+						bind:value={followUp}
+						disabled={run?.status === 'starting'}
+					/>
+					<button class={BUTTON} disabled={run?.status === 'starting' || !followUp.trim()}><Icon name="play" size={12} /> ส่ง</button>
 				</form>
 			</section>
 
