@@ -79,6 +79,8 @@
 		editor.focus();
 	};
 
+	editors.textModel = (path: string) => models.get(path)?.model ?? null;
+
 	editors.selectionText = () => {
 		const model = editor?.getModel();
 		const sel = editor?.getSelection();
@@ -105,7 +107,10 @@
 		const existing = models.get(path);
 		if (existing || !api) return existing;
 		const text = await invoke<string>('read_workspace_file', { rel: path });
-		const model = api.monaco.editor.createModel(text, api.languageFor(path), api.monaco.Uri.file('/' + path));
+		// A references peek may already have made a preview model for this file.
+		const preview = lsp.adoptPreview(path);
+		if (preview && preview.getValue() !== text) preview.setValue(text);
+		const model = preview ?? api.monaco.editor.createModel(text, api.languageFor(path), api.monaco.Uri.file('/' + path));
 		const entry: Entry = { model, savedVersion: model.getAlternativeVersionId() };
 		model.onDidChangeContent(() => editors.setDirty(path, model.getAlternativeVersionId() !== entry.savedVersion));
 		models.set(path, entry);

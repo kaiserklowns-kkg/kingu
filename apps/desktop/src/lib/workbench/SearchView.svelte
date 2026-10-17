@@ -1,11 +1,13 @@
 <script lang="ts">
 	// VS Code's Search view (searchView.ts / searchWidget.ts): query box with Match Case,
-	// Whole Word and Regex toggles, include/exclude globs behind "…", and a results tree.
+	// Whole Word and Regex toggles, the Replace box behind the chevron (Preserve Case, Replace
+	// All, per-file and per-match replace on hover), include/exclude globs behind "…", and a
+	// results tree.
 	// The tree is virtualized at the 22px row height, so 20,000 matches stay cheap.
 	import Icon from './Icon.svelte';
 	import { editors } from './editors.svelte';
 	import { search } from './search.svelte';
-	import { basename, dirname, flattenResults, splitPreview, summarize, type ResultRow } from './searchResults';
+	import { basename, dirname, flattenResults, previewReplacement, replaceConfirmText, splitPreview, summarize, type FileMatches, type ResultRow } from './searchResults';
 
 	const ROW = 22;
 	const OVERSCAN = 10;
@@ -15,11 +17,40 @@
 	let scrollTop = $state(0);
 	let viewHeight = $state(0);
 	let selected = $state(-1);
+	let confirmAll = $state(false);
 
 	const rows = $derived(flattenResults(search.files, search.collapsed));
 	const first = $derived(Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN));
 	const visible = $derived(rows.slice(first, first + Math.ceil(viewHeight / ROW) + 2 * OVERSCAN));
 	const shownMatches = $derived(search.files.reduce((n, f) => n + f.matches.length, 0));
+	const canReplace = $derived(search.showReplace && search.searched !== null && !search.replacing);
+
+	/** Replace All asks first, with counts (VS Code's confirmation dialog). */
+	function askReplaceAll() {
+		if (canReplace && shownMatches && !search.running) confirmAll = true;
+	}
+
+	function replaceAll() {
+		confirmAll = false;
+		void search.replace(search.files);
+	}
+
+	function replaceRow(row: ResultRow, e: MouseEvent) {
+		e.stopPropagation();
+		const scope: FileMatches[] = row.kind === 'file' ? [row.file] : [{ ...row.file, matches: [row.match] }];
+		void search.replace(scope);
+	}
+
+	function onReplaceKey(e: KeyboardEvent) {
+		// VS Code: ⌥⌘Enter (and Enter in the Replace box) replaces all.
+		if (e.key === 'Enter') askReplaceAll();
+		else if (e.key === 'Escape' && confirmAll) confirmAll = false;
+		else return;
+		e.preventDefault();
+	}
+
+	const replacementOf = (text: string) =>
+		search.searched ? previewReplacement(text, search.replaceText, { isRegex: search.searched.is_regex, matchCase: search.searched.match_case, query: search.searched.query }) : search.replaceText;
 
 	$effect(() => {
 		if (search.focusRequested && input) {
@@ -99,35 +130,93 @@
 </script>
 
 <section aria-label="Search" class="flex min-h-0 flex-1 flex-col">
-	<div class="flex shrink-0 flex-col gap-1 pr-3 pl-3">
-		<div class={inputBox}>
-			<input
-				bind:this={input}
-				bind:value={search.query}
-				oninput={() => search.schedule()}
-				onkeydown={onInputKey}
-				aria-label="Search"
-				placeholder="Search"
-				spellcheck="false"
-				class={inputField}
-			/>
-			<div class="flex shrink-0 gap-0.5 pr-0.5">
-				{#each toggles as t (t.key)}
-					<button
-						class={toggleClass(search[t.key])}
-						title={t.title}
-						aria-label={t.title}
-						aria-pressed={search[t.key]}
-						onclick={() => {
-							search[t.key] = !search[t.key];
-							void search.run();
-						}}
-					>
-						<span class={t.key === 'wholeWord' ? 'underline decoration-1 underline-offset-2' : undefined}>{t.label}</span>
-					</button>
-				{/each}
+	<div class="flex shrink-0 flex-col gap-1 pr-3 pl-0.5">
+		<div class="flex gap-0.5">
+			<button
+				class="flex w-4 shrink-0 items-start justify-center rounded-[3px] pt-[5px] text-(--vscode-icon-foreground) hover:bg-(--vscode-list-hoverBackground)"
+				title="Toggle Replace"
+				aria-label="Toggle Replace"
+				aria-expanded={search.showReplace}
+				onclick={() => {
+					search.showReplace = !search.showReplace;
+					confirmAll = false;
+				}}><Icon name={search.showReplace ? 'chevronDown' : 'chevronRight'} size={16} /></button
+			>
+			<div class="flex min-w-0 flex-1 flex-col gap-1">
+				<div class={inputBox}>
+					<input
+						bind:this={input}
+						bind:value={search.query}
+						oninput={() => search.schedule()}
+						onkeydown={onInputKey}
+						aria-label="Search"
+						placeholder="Search"
+						spellcheck="false"
+						class={inputField}
+					/>
+					<div class="flex shrink-0 gap-0.5 pr-0.5">
+						{#each toggles as t (t.key)}
+							<button
+								class={toggleClass(search[t.key])}
+								title={t.title}
+								aria-label={t.title}
+								aria-pressed={search[t.key]}
+								onclick={() => {
+									search[t.key] = !search[t.key];
+									void search.run();
+								}}
+							>
+								<span class={t.key === 'wholeWord' ? 'underline decoration-1 underline-offset-2' : undefined}>{t.label}</span>
+							</button>
+						{/each}
+					</div>
+				</div>
+
+				{#if search.showReplace}
+					<div class="flex items-center gap-0.5">
+						<div class={[inputBox, 'min-w-0 flex-1']}>
+							<input
+								bind:value={search.replaceText}
+								onkeydown={onReplaceKey}
+								aria-label="Replace"
+								placeholder="Replace"
+								spellcheck="false"
+								class={inputField}
+							/>
+							<div class="flex shrink-0 pr-0.5">
+								<button
+									class={toggleClass(search.preserveCase)}
+									title="Preserve Case (⌥⌘P)"
+									aria-label="Preserve Case"
+									aria-pressed={search.preserveCase}
+									onclick={() => (search.preserveCase = !search.preserveCase)}><span class="text-[11px]">AB</span></button
+								>
+							</div>
+						</div>
+						<button
+							class="flex h-[26px] w-6 shrink-0 items-center justify-center rounded-[3px] text-(--vscode-icon-foreground) hover:bg-(--vscode-list-hoverBackground) disabled:opacity-40"
+							title="Replace All (⌥⌘Enter)"
+							aria-label="Replace All"
+							disabled={!canReplace || !shownMatches || search.running}
+							onclick={askReplaceAll}><Icon name="replaceAll" size={16} /></button
+						>
+					</div>
+				{/if}
 			</div>
 		</div>
+
+		{#if confirmAll}
+			<div role="alertdialog" aria-label="Confirm Replace All" class="ml-[18px] flex flex-col gap-1.5 rounded border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) p-2">
+				<p>{replaceConfirmText(shownMatches, search.files.length, search.replaceText)}</p>
+				<div class="flex justify-end gap-1.5">
+					<button class="rounded-sm px-2 py-0.5 hover:bg-white/10" onclick={() => (confirmAll = false)}>Cancel</button>
+					<!-- svelte-ignore a11y_autofocus -->
+					<button autofocus class="rounded-sm bg-(--vscode-button-background) px-2 py-0.5 text-(--vscode-button-foreground) hover:brightness-110" onclick={replaceAll}
+						>Replace</button
+					>
+				</div>
+			</div>
+		{/if}
 
 		<div class="flex justify-end">
 			<button
@@ -140,7 +229,7 @@
 		</div>
 
 		{#if search.showDetails}
-			<label class="flex flex-col gap-0.5">
+			<label class="ml-[18px] flex flex-col gap-0.5">
 				<span class="text-[11px]">files to include</span>
 				<div class={inputBox}>
 					<input
@@ -153,7 +242,7 @@
 					/>
 				</div>
 			</label>
-			<label class="flex flex-col gap-0.5">
+			<label class="ml-[18px] flex flex-col gap-0.5">
 				<span class="text-[11px]">files to exclude</span>
 				<div class={inputBox}>
 					<input
@@ -219,7 +308,7 @@
 					aria-expanded={row.kind === 'file' ? !row.collapsed : undefined}
 					aria-level={row.kind === 'file' ? 1 : 2}
 					class={[
-						'flex h-(--kg-row-height) cursor-pointer items-center gap-1 pr-3 leading-(--kg-row-height) whitespace-nowrap',
+						'group/row flex h-(--kg-row-height) cursor-pointer items-center gap-1 pr-3 leading-(--kg-row-height) whitespace-nowrap',
 						selected === i
 							? 'bg-(--vscode-list-activeSelectionBackground) text-(--vscode-list-activeSelectionForeground)'
 							: 'hover:bg-(--vscode-list-hoverBackground)'
@@ -238,18 +327,44 @@
 						<span class="min-w-0 truncate" title={row.file.path}>
 							{basename(row.file.path)}<span class="ml-1.5 text-[0.9em] text-(--vscode-descriptionForeground)">{dirname(row.file.path)}</span>
 						</span>
+						{#if canReplace}
+							<button
+								class="ml-auto hidden size-5 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) group-hover/row:grid hover:bg-white/10"
+								title="Replace All in File"
+								aria-label="Replace All in {basename(row.file.path)}"
+								onclick={(e) => replaceRow(row, e)}><Icon name="replaceAll" size={14} /></button
+							>
+						{/if}
 						<span
-							class="ml-auto flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-[11px] bg-(--vscode-badge-background) px-1.5 text-[11px] text-(--vscode-badge-foreground)"
-							>{row.file.matches.length}</span
+							class={[
+								'flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-[11px] bg-(--vscode-badge-background) px-1.5 text-[11px] text-(--vscode-badge-foreground)',
+								canReplace ? 'ml-auto group-hover/row:ml-0' : 'ml-auto'
+							]}>{row.file.matches.length}</span
 						>
 					{:else}
 						{@const p = splitPreview(row.match)}
-						<span class="min-w-0 truncate" title="{row.match.line}: {row.match.preview}"
-							>{p.before}<span
-								class="rounded-[2px] bg-[var(--vscode-editor-findMatchHighlightBackground,#EA5C0055)]"
-								>{p.match}</span
-							>{p.after}</span
-						>
+						{#if search.showReplace}
+							<span class="min-w-0 truncate" title="{row.match.line}: {row.match.preview}"
+								>{p.before}<span class="bg-[var(--vscode-diffEditor-removedTextBackground,#FF000033)] line-through">{p.match}</span><span
+									class="bg-[var(--vscode-diffEditor-insertedTextBackground,#9CCC2C33)]">{replacementOf(row.match.text)}</span
+								>{p.after}</span
+							>
+							{#if canReplace}
+								<button
+									class="ml-auto hidden size-5 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) group-hover/row:grid hover:bg-white/10"
+									title="Replace"
+									aria-label="Replace"
+									onclick={(e) => replaceRow(row, e)}><Icon name="replace" size={14} /></button
+								>
+							{/if}
+						{:else}
+							<span class="min-w-0 truncate" title="{row.match.line}: {row.match.preview}"
+								>{p.before}<span
+									class="rounded-[2px] bg-[var(--vscode-editor-findMatchHighlightBackground,#EA5C0055)]"
+									>{p.match}</span
+								>{p.after}</span
+							>
+						{/if}
 					{/if}
 				</div>
 			{/each}

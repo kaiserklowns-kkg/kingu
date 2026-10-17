@@ -2,6 +2,7 @@
 // opening another file unpinned replaces it. Editing or double-clicking pins.
 // A tab's `path` is a workspace file, or `diff:<file>` for a HEAD ↔ working tree diff (scm.ts).
 
+import type * as Monaco from 'monaco-editor';
 import { diffKey } from './scm';
 
 export type EditorTab = { path: string; preview: boolean; dirty: boolean };
@@ -20,6 +21,10 @@ class Editors {
 	gotoLine: (line: number, column?: number) => void = () => {};
 	/** Set by the editor host: the active editor's selected text, '' when none. */
 	selectionText: () => string = () => '';
+	/** Set by the editor host: the text model of `path` when it is open in an editor, else null.
+	 * Edits from rename, code actions and Search: Replace go into it (undoable, left dirty)
+	 * instead of to disk, so unsaved changes are never clobbered. */
+	textModel: (path: string) => Monaco.editor.ITextModel | null = () => null;
 	/** Consumed by the editor host once `path`'s model is shown. */
 	pendingReveal = $state<(Reveal & { path: string }) | null>(null);
 

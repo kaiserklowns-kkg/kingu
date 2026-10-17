@@ -9,6 +9,7 @@ import type {
 	CompletionItem,
 	CompletionItemDefaults,
 	Diagnostic,
+	DocumentHighlight,
 	DocumentSymbol,
 	Hover,
 	Location,
@@ -16,8 +17,11 @@ import type {
 	MarkedString,
 	MarkupContent,
 	Position,
+	PrepareRenameResult,
 	Range,
-	SymbolInformation
+	SignatureHelp,
+	SymbolInformation,
+	TextEdit
 } from './protocol';
 
 export type MRange = Monaco.IRange;
@@ -66,6 +70,20 @@ export function toMarker(d: Diagnostic): Monaco.editor.IMarkerData {
 		code: d.code === undefined ? undefined : d.codeDescription ? { value: String(d.code), target: d.codeDescription.href as never } : String(d.code),
 		// LSP DiagnosticTag and monaco.MarkerTag share values (Unnecessary 1, Deprecated 2).
 		tags: d.tags?.filter((t) => t === 1 || t === 2) as Monaco.MarkerTag[] | undefined
+	};
+}
+
+/** A Monaco marker back to the LSP diagnostic it came from (for `textDocument/codeAction`). */
+export function markerToDiagnostic(m: Monaco.editor.IMarkerData): Diagnostic {
+	const severity = m.severity === MarkerSeverity.Warning ? 2 : m.severity === MarkerSeverity.Info ? 3 : m.severity === MarkerSeverity.Hint ? 4 : 1;
+	const code = typeof m.code === 'object' ? m.code.value : m.code;
+	return {
+		range: toLspRange(m),
+		severity,
+		message: m.message,
+		source: m.source,
+		code,
+		tags: m.tags?.length ? (m.tags as number[]) : undefined
 	};
 }
 
@@ -267,4 +285,51 @@ export function symbolPath(symbols: (DocumentSymbol | SymbolInformation)[], pos:
 		.filter((s) => rangeContains(s.location.range, pos))
 		.sort((a, b) => size(b.location.range) - size(a.location.range))
 		.map((s) => ({ name: s.name, kind: s.kind, range: s.location.range }));
+}
+
+// --- Edits -----------------------------------------------------------------------------------
+
+export function toMonacoTextEdits(edits: TextEdit[] | null | undefined): Monaco.languages.TextEdit[] {
+	return (edits ?? []).map((e) => ({ range: toMonacoRange(e.range), text: e.newText }));
+}
+
+/** Where F2 starts and what it shows, from `textDocument/prepareRename`. `word` is the word at
+ * the cursor, used for `defaultBehavior` and when the server has no prepare support. Null when
+ * the element cannot be renamed. */
+export function toRenameLocation(result: PrepareRenameResult | undefined, word: { range: MRange; text: string } | null, textIn: (r: MRange) => string): { range: MRange; text: string } | null {
+	if (result === undefined) return word;
+	if (result === null) return null;
+	if ('defaultBehavior' in result) return result.defaultBehavior ? word : null;
+	if ('placeholder' in result) return { range: toMonacoRange(result.range), text: result.placeholder };
+	const range = toMonacoRange(result);
+	return { range, text: textIn(range) };
+}
+
+// --- Signature help, highlights --------------------------------------------------------------
+
+export function toSignatureHelp(h: SignatureHelp): Monaco.languages.SignatureHelp {
+	return {
+		signatures: h.signatures.map((s) => ({
+			label: s.label,
+			documentation: markupToMarkdown(s.documentation),
+			parameters: (s.parameters ?? []).map((p) => ({ label: p.label, documentation: markupToMarkdown(p.documentation) })),
+			activeParameter: s.activeParameter
+		})),
+		activeSignature: Math.max(0, Math.min(h.activeSignature ?? 0, h.signatures.length - 1)),
+		activeParameter: h.activeParameter ?? 0
+	};
+}
+
+/** Monaco's previous signature help back to LSP (the `activeSignatureHelp` of a retrigger). */
+export function fromSignatureHelp(h: Monaco.languages.SignatureHelp): SignatureHelp {
+	return {
+		signatures: h.signatures.map((s) => ({ label: s.label, parameters: s.parameters.map((p) => ({ label: p.label })), activeParameter: s.activeParameter })),
+		activeSignature: h.activeSignature,
+		activeParameter: h.activeParameter
+	};
+}
+
+/** LSP DocumentHighlightKind Text 1, Read 2, Write 3 → monaco 0, 1, 2. */
+export function toDocumentHighlights(list: DocumentHighlight[] | null | undefined): Monaco.languages.DocumentHighlight[] {
+	return (list ?? []).map((h) => ({ range: toMonacoRange(h.range), kind: Math.max(0, (h.kind ?? 1) - 1) as Monaco.languages.DocumentHighlightKind }));
 }

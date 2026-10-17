@@ -48,6 +48,8 @@ pub struct TextMatch {
   /// UTF-16 range of the match inside `preview`.
   pub preview_start: u32,
   pub preview_end: u32,
+  /// The whole matched text (the preview may elide it); Replace checks it is still there.
+  pub text: String,
 }
 
 /// Sent to the webview over a channel, tagged by `kind`.
@@ -55,7 +57,9 @@ pub struct TextMatch {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SearchEvent {
   /// All matches of one file (ripgrep's `begin` … `end`).
-  File { path: String, matches: Vec<TextMatch> },
+  /// `version` fingerprints the file's content when its matches were sent (see
+  /// `replace::file_version`), so Replace can refuse a file that changed since.
+  File { path: String, matches: Vec<TextMatch>, version: String },
   Done { files: usize, matches: usize, limit_hit: bool, elapsed_ms: u64 },
   Error { message: String },
 }
@@ -179,7 +183,15 @@ pub fn make_match(line_number: u32, line: &str, start: usize, end: usize) -> Tex
   let preview = format!("{prefix}{before}{rest}{suffix}");
   let preview_start = utf16_len(prefix) + utf16_len(before);
   let match_len = utf16_len(&line[start..end]).min(utf16_len(rest));
-  TextMatch { line: line_number, column, end_column, preview, preview_start, preview_end: preview_start + match_len }
+  TextMatch {
+    line: line_number,
+    column,
+    end_column,
+    preview,
+    preview_start,
+    preview_end: preview_start + match_len,
+    text: line[start..end].to_string(),
+  }
 }
 
 /// rg reports text as `{"text": …}`, or `{"bytes": base64}` when it is not valid UTF-8.
@@ -239,7 +251,7 @@ impl RgParser {
       return None;
     }
     self.files += 1;
-    Some(SearchEvent::File { path, matches })
+    Some(SearchEvent::File { path, matches, version: String::new() })
   }
 }
 
@@ -296,6 +308,13 @@ impl Searches {
       s
     });
     let searches = Arc::clone(self);
+    let root = root.to_path_buf();
+    let sink = move |mut ev: SearchEvent| {
+      if let SearchEvent::File { path, version, .. } = &mut ev {
+        *version = crate::replace::file_version(&root.join(path.as_str())).unwrap_or_default();
+      }
+      sink(ev)
+    };
     std::thread::spawn(move || {
       let started = Instant::now();
       let mut parser = RgParser::default();
@@ -408,6 +427,7 @@ mod tests {
     let m = make_match(3, line, start, start + 5);
     assert_eq!((m.line, m.column, m.end_column), (3, 7, 12));
     assert_eq!(m.preview, "é𝄞 hello");
+    assert_eq!(m.text, "hello");
     assert_eq!((m.preview_start, m.preview_end), (4, 9));
   }
 
@@ -437,7 +457,7 @@ mod tests {
     let mut p = RgParser::default();
     let events: Vec<_> = lines.iter().filter_map(|l| p.feed(l, 100)).collect();
     assert_eq!(events.len(), 1);
-    let SearchEvent::File { path, matches } = &events[0] else { panic!("expected a file") };
+    let SearchEvent::File { path, matches, .. } = &events[0] else { panic!("expected a file") };
     assert_eq!(path, "src/a.txt");
     assert_eq!(matches.iter().map(|m| (m.line, m.column)).collect::<Vec<_>>(), [(2, 5), (2, 11)]);
     assert_eq!((p.files, p.matches), (1, 2));
@@ -486,7 +506,10 @@ mod tests {
       let mut files = Vec::new();
       for ev in rx {
         match ev {
-          SearchEvent::File { path, matches } => files.push((path, matches.len())),
+          SearchEvent::File { path, matches, version } => {
+            assert!(!version.is_empty());
+            files.push((path, matches.len()))
+          }
           SearchEvent::Done { .. } => break,
           SearchEvent::Error { message } => panic!("{message}"),
         }

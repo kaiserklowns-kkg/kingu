@@ -618,4 +618,95 @@ mod tests {
     assert!(checked["range"]["start"]["line"].as_u64().is_some(), "{checked}");
     servers.stop(id).unwrap();
   }
+  /// rust-analyzer over the real transport: prepareRename + rename (a WorkspaceEdit with
+  /// `documentChanges`) and document formatting on a file with Thai text before the symbol.
+  /// Skipped without rust-analyzer; formatting is skipped when rustfmt is unavailable.
+  #[test]
+  fn rust_analyzer_renames_and_formats() {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let spec = spec_for("rust").unwrap();
+    let Ok(program) = resolve_binary(&spec, std::env::var_os(override_name(&spec)), std::env::var_os("PATH").as_deref(), home.as_deref(), &root) else {
+      eprintln!("rust-analyzer not installed; skipping");
+      return;
+    };
+    if !Command::new(&program).arg("--version").output().is_ok_and(|o| o.status.success()) {
+      eprintln!("rust-analyzer does not run; skipping");
+      return;
+    }
+    std::fs::create_dir(root.join("src")).unwrap();
+    std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"lsp_rename\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
+    // `helper` on line 1 sits after a Thai string and an emoji: UTF-16 character 31.
+    let source = "fn main() { let _x = helper(); }\nconst S: &str = \"สวัสดี🦀\"; fn helper() -> i32 { 1 }\n";
+    std::fs::write(root.join("src/main.rs"), source).unwrap();
+
+    let servers = Servers::default();
+    let (sink, rx) = collect();
+    let env = server_env(std::env::vars_os(), &program, home.as_deref());
+    let id = servers.start(Launch { program, args: vec![], cwd: root.clone(), env }, sink).unwrap();
+    let send = |v: serde_json::Value| servers.send(id, &v.to_string()).unwrap();
+    let root_uri = format!("file://{}", root.display());
+    let file_uri = format!("{root_uri}/src/main.rs");
+    send(serde_json::json!({
+      "jsonrpc": "2.0", "id": "init", "method": "initialize",
+      "params": {
+        "processId": std::process::id(), "rootUri": root_uri,
+        "workspaceFolders": [{ "uri": root_uri, "name": "probe" }],
+        "capabilities": {
+          "workspace": { "workspaceEdit": { "documentChanges": true } },
+          "textDocument": { "rename": { "prepareSupport": true } },
+          "window": { "workDoneProgress": true },
+          "experimental": { "serverStatusNotification": true },
+          "general": { "positionEncodings": ["utf-16"] }
+        }
+      }
+    }));
+    let at = serde_json::json!({ "textDocument": { "uri": file_uri }, "position": { "line": 1, "character": 33 } });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(240);
+    let (mut prepared, mut renamed, mut formatted, mut asked) = (None, None, None, false);
+    while prepared.is_none() || renamed.is_none() || formatted.is_none() {
+      let left = deadline.saturating_duration_since(std::time::Instant::now());
+      assert!(!left.is_zero(), "rust-analyzer: no rename in time ({prepared:?}, {renamed:?})");
+      let LspEvent::Message { json } = recv(&rx, left.as_secs() + 1) else { continue };
+      let msg: serde_json::Value = serde_json::from_str(&json).unwrap();
+      if msg["id"] == "init" {
+        send(serde_json::json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} }));
+        send(serde_json::json!({
+          "jsonrpc": "2.0", "method": "textDocument/didOpen",
+          "params": { "textDocument": { "uri": file_uri, "languageId": "rust", "version": 1, "text": source } }
+        }));
+      } else if msg["id"] == "prepare" {
+        prepared = Some(msg["result"].clone());
+      } else if msg["id"] == "rename" {
+        renamed = Some(msg["result"].clone());
+      } else if msg["id"] == "format" {
+        formatted = Some(msg.get("error").map_or_else(|| msg["result"].clone(), |_| serde_json::Value::Null));
+      } else if msg.get("id").is_some() && msg.get("method").is_some() {
+        send(serde_json::json!({ "jsonrpc": "2.0", "id": msg["id"], "result": null }));
+      } else if msg["method"] == "experimental/serverStatus" && msg["params"]["quiescent"] == true && !asked {
+        asked = true;
+        send(serde_json::json!({ "jsonrpc": "2.0", "id": "prepare", "method": "textDocument/prepareRename", "params": at }));
+        let mut params = at.clone();
+        params["newName"] = "assist".into();
+        send(serde_json::json!({ "jsonrpc": "2.0", "id": "rename", "method": "textDocument/rename", "params": params }));
+        let options = serde_json::json!({ "tabSize": 4, "insertSpaces": true });
+        send(serde_json::json!({ "jsonrpc": "2.0", "id": "format", "method": "textDocument/formatting", "params": { "textDocument": { "uri": file_uri }, "options": options } }));
+      }
+    }
+    let prepared = prepared.unwrap();
+    let range = prepared.get("range").unwrap_or(&prepared);
+    assert_eq!(range["start"], serde_json::json!({ "line": 1, "character": 31 }), "{prepared}");
+    assert_eq!(range["end"], serde_json::json!({ "line": 1, "character": 37 }), "{prepared}");
+    let renamed = renamed.unwrap();
+    let edits = renamed["documentChanges"][0]["edits"].as_array().cloned().unwrap_or_default();
+    assert_eq!(renamed["documentChanges"][0]["textDocument"]["uri"], file_uri.as_str(), "{renamed}");
+    assert_eq!(edits.len(), 2, "{renamed}");
+    assert!(edits.iter().all(|e| e["newText"] == "assist"), "{renamed}");
+    match formatted.unwrap() {
+      serde_json::Value::Array(edits) => assert!(!edits.is_empty(), "rustfmt should reflow `fn main() {{ … }}`"),
+      _ => eprintln!("formatting unavailable (rustfmt missing?); skipped"),
+    }
+    servers.stop(id).unwrap();
+  }
 }

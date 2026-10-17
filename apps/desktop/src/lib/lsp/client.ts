@@ -4,18 +4,28 @@
 import { JsonRpc, ResponseError, type Cancellation } from './jsonrpc';
 import {
 	ErrorCodes,
+	type CodeAction,
+	type Command,
 	type CompletionItem,
 	type CompletionList,
 	type Diagnostic,
 	type DocumentDiagnosticReport,
+	type DocumentHighlight,
 	type DocumentSymbol,
+	type FormattingOptions,
 	type Hover,
 	type Location,
 	type LocationLink,
 	type Position,
+	type PrepareRenameResult,
 	type ProgressValue,
+	type Range,
 	type ServerCapabilities,
-	type SymbolInformation
+	type SignatureHelp,
+	type SignatureHelpContext,
+	type SymbolInformation,
+	type TextEdit,
+	type WorkspaceEdit
 } from './protocol';
 
 export type ServerState = 'starting' | 'indexing' | 'ready' | 'not-installed' | 'error' | 'stopped';
@@ -27,12 +37,26 @@ export type ClientHooks = {
 	status(status: ServerStatus): void;
 	log(line: string): void;
 	showMessage?(type: number, message: string): void;
+	/** `workspace/applyEdit` from the server (code action commands, refactorings). */
+	applyEdit?(edit: WorkspaceEdit, label?: string): Promise<{ applied: boolean; failureReason?: string }>;
+	/** `workspace/configuration`: the settings value for `section` (null when unset). */
+	configuration?(section: string | undefined, scopeUri: string | undefined): unknown;
 };
+
+/** Code action kinds Kingu understands (VS Code's list). */
+const CODE_ACTION_KINDS = ['', 'quickfix', 'refactor', 'refactor.extract', 'refactor.inline', 'refactor.rewrite', 'source', 'source.organizeImports', 'source.fixAll'];
 
 export const clientCapabilities = {
 	general: { positionEncodings: ['utf-16'] },
-	window: { workDoneProgress: true, showMessage: {} },
-	workspace: { workspaceFolders: true, configuration: false, diagnostics: { refreshSupport: true } },
+	window: { workDoneProgress: true, showMessage: { messageActionItem: { additionalPropertiesSupport: false } } },
+	workspace: {
+		workspaceFolders: true,
+		configuration: true,
+		applyEdit: true,
+		workspaceEdit: { documentChanges: true, resourceOperations: [], failureHandling: 'abort', normalizesLineEndings: false },
+		executeCommand: { dynamicRegistration: false },
+		diagnostics: { refreshSupport: true }
+	},
 	textDocument: {
 		synchronization: { didSave: true, willSave: false, willSaveWaitUntil: false, dynamicRegistration: false },
 		publishDiagnostics: { relatedInformation: false, tagSupport: { valueSet: [1, 2] }, versionSupport: true, codeDescriptionSupport: true },
@@ -54,7 +78,23 @@ export const clientCapabilities = {
 			completionList: { itemDefaults: ['commitCharacters', 'editRange', 'insertTextFormat', 'data'] }
 		},
 		definition: { linkSupport: true },
-		documentSymbol: { hierarchicalDocumentSymbolSupport: true }
+		documentSymbol: { hierarchicalDocumentSymbolSupport: true },
+		references: {},
+		documentHighlight: {},
+		rename: { prepareSupport: true, prepareSupportDefaultBehavior: 1, honorsChangeAnnotations: false },
+		codeAction: {
+			codeActionLiteralSupport: { codeActionKind: { valueSet: CODE_ACTION_KINDS } },
+			isPreferredSupport: true,
+			disabledSupport: true,
+			dataSupport: true,
+			resolveSupport: { properties: ['edit'] }
+		},
+		signatureHelp: {
+			contextSupport: true,
+			signatureInformation: { documentationFormat: ['markdown', 'plaintext'], parameterInformation: { labelOffsetSupport: true }, activeParameterSupport: true }
+		},
+		formatting: {},
+		rangeFormatting: {}
 	},
 	// rust-analyzer: `experimental/serverStatus` tells when indexing is done.
 	experimental: { serverStatusNotification: true }
@@ -103,16 +143,26 @@ export class LanguageClient {
 		});
 
 		rpc.onRequest('window/workDoneProgress/create', () => null);
-		rpc.onRequest('workspace/configuration', (p: { items: unknown[] }) => (p?.items ?? []).map(() => null));
+		rpc.onRequest('workspace/configuration', (p: { items: { section?: string; scopeUri?: string }[] }) =>
+			(p?.items ?? []).map((item) => hooks.configuration?.(item?.section, item?.scopeUri) ?? null)
+		);
 		rpc.onRequest('client/registerCapability', () => null);
 		rpc.onRequest('client/unregisterCapability', () => null);
-		rpc.onRequest('window/showMessageRequest', (p: { message: string }) => (hooks.log(p.message), null));
+		rpc.onRequest('window/showMessageRequest', (p: { type: number; message: string }) => {
+			hooks.log(p.message);
+			hooks.showMessage?.(p.type, p.message);
+			return null;
+		});
 		rpc.onRequest('workspace/workspaceFolders', () => (this.#rootUri ? [{ uri: this.#rootUri, name: this.#rootUri.split('/').pop() }] : null));
 		rpc.onRequest('workspace/diagnostic/refresh', () => (this.#pullAll(), null));
 		for (const m of ['workspace/semanticTokens/refresh', 'workspace/inlayHint/refresh', 'workspace/codeLens/refresh', 'workspace/inlineValue/refresh']) {
 			rpc.onRequest(m, () => null);
 		}
-		rpc.onRequest('workspace/applyEdit', () => ({ applied: false, failureReason: 'Kingu does not apply server edits yet' }));
+		rpc.onRequest('workspace/applyEdit', async (p: { label?: string; edit: WorkspaceEdit }) => {
+			if (!hooks.applyEdit) return { applied: false, failureReason: 'no workspace to edit' };
+			const r = await hooks.applyEdit(p.edit, p.label);
+			return r.applied ? { applied: true } : { applied: false, failureReason: r.failureReason };
+		});
 	}
 
 	get ready() {
@@ -287,5 +337,75 @@ export class LanguageClient {
 	documentSymbols(uri: string, token?: Cancellation) {
 		if (!this.capabilities.documentSymbolProvider) return Promise.resolve(null);
 		return this.rpc.request<DocumentSymbol[] | SymbolInformation[] | null>('textDocument/documentSymbol', { textDocument: { uri } }, token);
+	}
+
+	references(uri: string, position: Position, includeDeclaration: boolean, token?: Cancellation) {
+		if (!this.capabilities.referencesProvider) return Promise.resolve(null);
+		return this.rpc.request<Location[] | null>('textDocument/references', { textDocument: { uri }, position, context: { includeDeclaration } }, token);
+	}
+
+	documentHighlight(uri: string, position: Position, token?: Cancellation) {
+		if (!this.capabilities.documentHighlightProvider) return Promise.resolve(null);
+		return this.rpc.request<DocumentHighlight[] | null>('textDocument/documentHighlight', { textDocument: { uri }, position }, token);
+	}
+
+	signatureHelp(uri: string, position: Position, context: SignatureHelpContext, token?: Cancellation) {
+		if (!this.capabilities.signatureHelpProvider) return Promise.resolve(null);
+		return this.rpc.request<SignatureHelp | null>('textDocument/signatureHelp', { textDocument: { uri }, position, context }, token);
+	}
+
+	get canPrepareRename() {
+		const r = this.capabilities.renameProvider;
+		return typeof r === 'object' && r !== null && !!r.prepareProvider;
+	}
+
+	prepareRename(uri: string, position: Position, token?: Cancellation) {
+		return this.rpc.request<PrepareRenameResult>('textDocument/prepareRename', { textDocument: { uri }, position }, token);
+	}
+
+	rename(uri: string, position: Position, newName: string, token?: Cancellation) {
+		if (!this.capabilities.renameProvider) return Promise.resolve(null);
+		return this.rpc.request<WorkspaceEdit | null>('textDocument/rename', { textDocument: { uri }, position, newName }, token);
+	}
+
+	codeActions(uri: string, range: Range, context: { diagnostics: Diagnostic[]; only?: string[]; triggerKind: number }, token?: Cancellation) {
+		if (!this.capabilities.codeActionProvider) return Promise.resolve(null);
+		return this.rpc.request<(Command | CodeAction)[] | null>('textDocument/codeAction', { textDocument: { uri }, range, context }, token);
+	}
+
+	get canResolveCodeAction() {
+		const c = this.capabilities.codeActionProvider;
+		return typeof c === 'object' && c !== null && !!c.resolveProvider;
+	}
+
+	resolveCodeAction(action: CodeAction) {
+		return this.rpc.request<CodeAction>('codeAction/resolve', action);
+	}
+
+	formatting(uri: string, options: FormattingOptions, token?: Cancellation) {
+		if (!this.capabilities.documentFormattingProvider) return Promise.resolve(null);
+		return this.rpc.request<TextEdit[] | null>('textDocument/formatting', { textDocument: { uri }, options }, token);
+	}
+
+	rangeFormatting(uri: string, range: Range, options: FormattingOptions, token?: Cancellation) {
+		if (!this.capabilities.documentRangeFormattingProvider) return Promise.resolve(null);
+		return this.rpc.request<TextEdit[] | null>('textDocument/rangeFormatting', { textDocument: { uri }, range, options }, token);
+	}
+
+	/** Runs a server command; false when the server does not offer it. */
+	async executeCommand(command: Command): Promise<boolean> {
+		if (!this.capabilities.executeCommandProvider?.commands?.includes(command.command)) return false;
+		await this.rpc.request('workspace/executeCommand', { command: command.command, arguments: command.arguments });
+		return true;
+	}
+
+	/** Files changed on disk behind the server's back (Search: Replace, rename into unopened files). */
+	didChangeWatchedFiles(uris: string[]) {
+		if (uris.length) this.rpc.notify('workspace/didChangeWatchedFiles', { changes: uris.map((uri) => ({ uri, type: 2 })) });
+	}
+
+	/** LSP version of an open document, or undefined. */
+	versionOf(uri: string) {
+		return this.docs.get(uri)?.version;
 	}
 }
