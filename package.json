@@ -4,7 +4,8 @@
 	"workspaces": ["apps/desktop", "apps/agent-host", "apps/web", "packages/*"],
 	"scripts": {
 		"dev:desktop": "bun --cwd apps/desktop tauri dev",
-		"build:desktop": "bun --cwd apps/desktop tauri build",
+		"build:desktop": "bun tools/build-desktop.ts",
+		"verify:desktop": "bun tools/release-verify.ts target/aarch64-apple-darwin/release/bundle/macos/Kingu.app",
 		"dev:web": "bun --cwd apps/web run dev",
 		"build:web": "bun --cwd apps/web run build",
 		"check": "bun --cwd apps/desktop run check && bun --cwd apps/web run check && cargo check --workspace && (cd apps/server && go vet ./...)",

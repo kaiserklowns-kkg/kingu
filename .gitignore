@@ -10,3 +10,8 @@ apps/desktop/build/
 # Kingu task worktrees
 .kingu/
 .claude/
+
+# Release build outputs (never commit binaries)
+apps/desktop/src-tauri/binaries/
+apps/agent-host/dist/
+*.bun-build

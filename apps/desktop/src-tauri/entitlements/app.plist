@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for the main executable (Contents/MacOS/kingu-desktop): intentionally empty.
+  WKWebView's JavaScript JIT runs in Apple's WebContent XPC service, which carries its own
+  entitlements, so the app needs no cs.allow-jit. No App Sandbox (an IDE spawns shells, git,
+  language servers and agents in arbitrary folders). Never add disable-library-validation,
+  allow-dyld-environment-variables or allow-unsigned-executable-memory (docs/PLAN.md 7.2).
+  The agent host sidecar has its own file: agent-host.plist.
+-->
+<plist version="1.0">
+<dict/>
+</plist>

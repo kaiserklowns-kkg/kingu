@@ -22,12 +22,20 @@ compiled binary.
 
 ## Release
 
-    bun run build          # bun build --compile → dist/kingu-agent-host
+    bun run build          # scripts/build-sidecar.ts → ../desktop/src-tauri/binaries/kingu-agent-host-<triple>
 
-Rust looks for `kingu-agent-host` next to the app executable. Not wired into `tauri build` yet: to
-ship it, copy the binary to `src-tauri/binaries/kingu-agent-host-<target-triple>` and add
-`"externalBin": ["binaries/kingu-agent-host"]` to `tauri.conf.json` (`bundle`).
+`bun run build:desktop` (repo root, `tools/build-desktop.ts`) runs this as part of
+`beforeBuildCommand` (from `src-tauri/tauri.release.conf.json`, which also adds
+`bundle.externalBin`). Tauri copies it to `Kingu.app/Contents/MacOS/kingu-agent-host` (triple
+stripped), where `host.rs` finds it next to the app executable. The target is `--target`,
+`TAURI_ENV_TARGET_TRIPLE` or the rustc host triple; `binaries/` is gitignored.
+
+The executable embeds the Bun runtime and the bundled SDK (`--minify`, no source map, `.env` and
+`bunfig.toml` autoload disabled), so it needs nothing from the repo or `node_modules` at runtime.
+On macOS it is signed with the hardened runtime and `cs.allow-jit` only
+(`src-tauri/entitlements/agent-host.plist`): JavaScriptCore fails at startup without it.
 
 A compiled binary cannot use the SDK's per-platform bundled Claude Code, so it uses
-`KINGU_CLAUDE_BIN` or `claude` on PATH. (Alternatively embed the platform package's `claude`
-with `import … with { type: 'file' }` + `extractFromBunfs`, see the SDK README.)
+`KINGU_CLAUDE_BIN` or `claude` on the login-shell PATH (Claude Code must be installed separately).
+(Alternatively embed the platform package's `claude` with `import … with { type: 'file' }` +
+`extractFromBunfs`, see the SDK README; it would then need its own signature in the bundle.)
