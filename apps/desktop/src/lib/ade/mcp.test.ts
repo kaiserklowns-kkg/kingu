@@ -12,6 +12,14 @@ describe('MCP for agent CLIs', () => {
 	test('the flag goes after the prompt (it takes several values)', () => {
 		expect(cliWithMcp(['claude', 'แก้บั๊ก'], servers).slice(0, 3)).toEqual(['claude', 'แก้บั๊ก', '--mcp-config']);
 	});
+	test('claude gets one --plugin-dir per skill plugin, before the variadic --mcp-config', () => {
+		const argv = cliWithMcp(['claude', 'แก้บั๊ก'], servers, ['/c/snap-plugins/go-1', '/c/snap-plugins/lint-2']);
+		expect(argv.slice(0, 6)).toEqual(['claude', 'แก้บั๊ก', '--plugin-dir', '/c/snap-plugins/go-1', '--plugin-dir', '/c/snap-plugins/lint-2']);
+		expect(argv[6]).toBe('--mcp-config');
+		expect(argv).toHaveLength(8);
+		expect(cliWithMcp(['claude', '--continue'], {}, ['/p'])).toEqual(['claude', '--continue', '--plugin-dir', '/p']);
+		expect(cliWithMcp(['/usr/local/bin/codex', 'x'], servers, ['/p'])).toEqual(['/usr/local/bin/codex', 'x']);
+	});
 	test('no servers, or a CLI without the flag, runs unchanged', () => {
 		expect(cliWithMcp(['claude'], {})).toEqual(['claude']);
 		expect(cliWithMcp(['codex'], servers)).toEqual(['codex']);

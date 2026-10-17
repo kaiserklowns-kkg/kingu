@@ -1,14 +1,15 @@
-//! Snaps: packs of tasks, settings and MCP servers that plug into both the IDE and the ADE
-//! (Kingu has no extensions). A snap is a folder holding a `snap.toml`, either the user's
+//! Snaps: packs of tasks, settings, MCP servers and skills that plug into both the IDE and the
+//! ADE (Kingu has no extensions). A snap is a folder holding a `snap.toml`, either the user's
 //! (`<config dir>/snaps/<id>`) or the open folder's (`<root>/.kingu/snaps/<id>`, shared through
-//! git). This module only reads manifests; it never runs anything.
+//! git). This module reads manifests and copies skills into agent plugins in the app cache; it
+//! never runs anything.
 //!
 //! Trust: opening or cloning a repo must never run anything from `.kingu/snaps`, so a repo snap
 //! is untrusted until the user trusts it. Trust lives outside the repo in
-//! `<config dir>/snap-trust.json`, keyed by folder + snap id + SHA-256 of the manifest bytes, so
-//! any change to the manifest (a pull, a branch switch) revokes it. User snaps are trusted (the
-//! user put them there). The webview only lists untrusted snaps; it contributes their tasks and
-//! MCP servers only when `trusted` is true and `error` is none.
+//! `<config dir>/snap-trust.json`, keyed by folder + snap id + SHA-256 of the manifest (and of
+//! its skill files, see `snap_hash`), so any change to them (a pull, a branch switch) revokes it.
+//! User snaps are trusted (the user put them there). The webview only lists untrusted snaps; it
+//! contributes their tasks, MCP servers and skills only when `trusted` is true and `error` is none.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -48,6 +49,8 @@ struct Manifest {
   settings: Vec<RawSetting>,
   #[serde(default)]
   mcp: BTreeMap<String, RawMcp>,
+  #[serde(default)]
+  skills: Vec<RawSkill>,
 }
 
 /// Declared and shown to the user before trust; enforcement is phase 2.
@@ -116,6 +119,12 @@ struct RawMcp {
   env: BTreeMap<String, String>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawSkill {
+  path: String,
+}
+
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct McpServer {
   pub name: String,
@@ -134,6 +143,8 @@ pub struct Parsed {
   pub tasks: Vec<Task>,
   pub settings: Vec<Setting>,
   pub mcp: Vec<McpServer>,
+  /// Skill folders relative to the snap folder (`skills/go-style`), checked on disk by `read_skills`.
+  pub skills: Vec<String>,
 }
 
 /// `^[a-z0-9][a-z0-9-]{0,max-1}$` (task ids pass `usize::MAX`).
@@ -176,6 +187,33 @@ pub fn placeholders(arg: &str) -> Result<Vec<&str>, String> {
     rest = &after[end + 1..];
   }
   Ok(out)
+}
+
+/// Every `${setting:<key>}` in `arg` must name a declared setting.
+fn check_placeholders(arg: &str, keys: &BTreeSet<String>, owner: &str) -> Result<(), String> {
+  for key in placeholders(arg).map_err(|e| format!("{owner}: {e}"))? {
+    if !keys.contains(key) {
+      return Err(format!("{owner} อ้างถึงการตั้งค่า \"{key}\" ที่ไม่ได้ประกาศใน [[settings]]"));
+    }
+  }
+  Ok(())
+}
+
+const MAX_SKILLS: usize = 32;
+
+/// A skill path is relative, `/`-separated, made of plain names (no `.`, `..`, empty or absolute
+/// parts) and ends in the skill's name (`a-z`, `0-9`, `-`, as Claude Code names skills).
+fn skill_path_error(path: &str) -> Option<String> {
+  let parts: Vec<&str> = path.split('/').collect();
+  let plain = |p: &&str| !p.is_empty() && *p != "." && *p != ".." && p.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'.' || c == b'_' || c == b'-');
+  if path.starts_with('/') || !parts.iter().all(plain) {
+    return Some(format!("path ของ skill \"{path}\" ต้องเป็น path ย่อยในโฟลเดอร์ snap (ห้ามขึ้นต้นด้วย / และห้ามมี .. หรืออักขระพิเศษ)"));
+  }
+  let name = parts.last().copied().unwrap_or_default();
+  if !is_slug(name, 64) {
+    return Some(format!("ชื่อโฟลเดอร์ของ skill \"{name}\" ใช้เป็นชื่อ skill ไม่ได้ (ใช้ a-z, 0-9, - ยาวไม่เกิน 64 ตัว)"));
+  }
+  None
 }
 
 fn setting_default(key: &str, kind: SettingType, value: Option<toml::Value>) -> Result<serde_json::Value, String> {
@@ -243,11 +281,7 @@ pub fn parse_manifest(text: &str, folder: &str) -> Result<Parsed, String> {
       return Err(format!("งาน \"{}\" ต้องมี command (argv อย่างน้อยหนึ่งตัว)", t.id));
     }
     for arg in &t.command {
-      for key in placeholders(arg).map_err(|e| format!("งาน \"{}\": {e}", t.id))? {
-        if !keys.contains(key) {
-          return Err(format!("งาน \"{}\" อ้างถึงการตั้งค่า \"{key}\" ที่ไม่ได้ประกาศใน [[settings]]", t.id));
-        }
-      }
+      check_placeholders(arg, &keys, &format!("งาน \"{}\"", t.id))?;
     }
   }
 
@@ -262,14 +296,168 @@ pub fn parse_manifest(text: &str, folder: &str) -> Result<Parsed, String> {
     if let Some(k) = server.env.keys().find(|k| !is_env_name(k)) {
       return Err(format!("MCP server \"{name}\": ชื่อตัวแปร env \"{k}\" ไม่ถูกต้อง"));
     }
+    // Expanded by the webview like task arguments (snapModel.expandCommand / expandEnv).
+    let owner = format!("MCP server \"{name}\"");
+    for arg in server.command.iter().chain(server.env.values()) {
+      check_placeholders(arg, &keys, &owner)?;
+    }
     mcp.push(McpServer { name, command: server.command, env: server.env });
   }
 
-  Ok(Parsed { id: m.id, name: m.name, version: m.version, description: m.description, permissions: m.permissions, tasks: m.tasks, settings, mcp })
+  if m.skills.len() > MAX_SKILLS {
+    return Err(format!("มี skill ได้ไม่เกิน {MAX_SKILLS} ตัว"));
+  }
+  let mut skills = Vec::new();
+  let mut names = BTreeSet::new();
+  for s in m.skills {
+    if let Some(e) = skill_path_error(&s.path) {
+      return Err(e);
+    }
+    let name = s.path.rsplit('/').next().unwrap_or_default().to_string();
+    if !names.insert(name.clone()) {
+      return Err(format!("skill ชื่อ \"{name}\" ซ้ำ (ชื่อ skill คือชื่อโฟลเดอร์สุดท้ายของ path)"));
+    }
+    skills.push(s.path);
+  }
+
+  Ok(Parsed { id: m.id, name: m.name, version: m.version, description: m.description, permissions: m.permissions, tasks: m.tasks, settings, mcp, skills })
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
   Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+// ---------------------------------------------------------------------------------------------
+// Skills
+
+const SKILL_FILE: &str = "SKILL.md";
+/// Per snap, over all of its skills: skills are prompts and references, not payloads.
+const MAX_SKILL_FILES: usize = 256;
+const MAX_SKILL_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_SKILL_DEPTH: usize = 8;
+
+/// A skill of a snap: a folder holding `SKILL.md` (Claude Code's skill format).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Skill {
+  /// The folder's name, which is the skill's name in the generated plugin.
+  pub name: String,
+  /// As written in the manifest, relative to the snap folder.
+  pub path: String,
+  /// From SKILL.md's front matter (empty when it has none).
+  pub description: String,
+  /// Every file of the skill (`/`-separated, relative to the skill folder) as read when listing:
+  /// these exact bytes are hashed for trust and copied into the agent plugin.
+  #[serde(skip)]
+  pub files: Vec<(String, Vec<u8>)>,
+}
+
+/// `description:` of a `---` front matter block, unquoted (one line is enough to show it).
+fn front_matter_description(text: &str) -> String {
+  let mut lines = text.lines();
+  if lines.next().map(str::trim_end) != Some("---") {
+    return String::new();
+  }
+  for line in lines {
+    if line.trim_end() == "---" {
+      break;
+    }
+    if let Some(v) = line.strip_prefix("description:") {
+      let v = v.trim();
+      return v.strip_prefix('"').and_then(|v| v.strip_suffix('"')).or_else(|| v.strip_prefix('\'').and_then(|v| v.strip_suffix('\''))).unwrap_or(v).to_string();
+    }
+  }
+  String::new()
+}
+
+struct Budget {
+  files: usize,
+  bytes: u64,
+}
+
+/// Reads `dir` recursively in name order. Symlinks anywhere are errors (they could point out of
+/// the snap); hidden entries (`.DS_Store`, `.git`) are skipped so they never change the hash.
+fn read_tree(dir: &Path, prefix: &str, depth: usize, budget: &mut Budget, out: &mut Vec<(String, Vec<u8>)>) -> Result<(), String> {
+  if depth > MAX_SKILL_DEPTH {
+    return Err(format!("โฟลเดอร์ซ้อนลึกเกิน {MAX_SKILL_DEPTH} ชั้น"));
+  }
+  let mut entries: Vec<_> = std::fs::read_dir(dir).map_err(|e| format!("อ่าน {} ไม่ได้: {e}", dir.display()))?.flatten().collect();
+  entries.sort_by_key(|e| e.file_name());
+  for entry in entries {
+    let name = entry.file_name().to_string_lossy().into_owned();
+    if name.starts_with('.') {
+      continue;
+    }
+    let rel = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
+    let meta = std::fs::symlink_metadata(entry.path()).map_err(|e| format!("อ่าน {rel} ไม่ได้: {e}"))?;
+    if meta.file_type().is_symlink() {
+      return Err(format!("{rel} เป็น symlink — ไม่รองรับใน skill"));
+    }
+    if meta.is_dir() {
+      read_tree(&entry.path(), &rel, depth + 1, budget, out)?;
+    } else if meta.is_file() {
+      budget.files += 1;
+      budget.bytes += meta.len();
+      if budget.files > MAX_SKILL_FILES || budget.bytes > MAX_SKILL_BYTES {
+        return Err(format!("skill ใหญ่เกินไป (รวมได้ไม่เกิน {MAX_SKILL_FILES} ไฟล์ และ {} MB ต่อ snap)", MAX_SKILL_BYTES / 1024 / 1024));
+      }
+      out.push((rel, std::fs::read(entry.path()).map_err(|e| format!("อ่าน {} ไม่ได้: {e}", entry.path().display()))?));
+    }
+  }
+  Ok(())
+}
+
+/// Reads the declared skills of the snap in `snap_dir`. Each path must be a real folder inside
+/// the snap (no symlinked part) holding a regular `SKILL.md`.
+pub fn read_skills(snap_dir: &Path, paths: &[String]) -> Result<Vec<Skill>, String> {
+  let mut budget = Budget { files: 0, bytes: 0 };
+  let mut out = Vec::new();
+  for path in paths {
+    let err = |e: String| format!("skill \"{path}\": {e}");
+    let mut dir = snap_dir.to_path_buf();
+    for part in path.split('/') {
+      dir.push(part);
+      match std::fs::symlink_metadata(&dir) {
+        Ok(m) if m.file_type().is_symlink() => return Err(err(format!("{part} เป็น symlink — ไม่รองรับ"))),
+        Ok(m) if m.is_dir() => {}
+        Ok(_) => return Err(err("ต้องเป็นโฟลเดอร์".into())),
+        Err(_) => return Err(err("ไม่พบโฟลเดอร์นี้ใน snap".into())),
+      }
+    }
+    match std::fs::symlink_metadata(dir.join(SKILL_FILE)) {
+      Ok(m) if m.is_file() => {}
+      Ok(_) => return Err(err(format!("{SKILL_FILE} ต้องเป็นไฟล์ธรรมดา (ไม่ใช่ symlink)"))),
+      Err(_) => return Err(err(format!("ไม่มี {SKILL_FILE}"))),
+    }
+    let mut files = Vec::new();
+    read_tree(&dir, "", 0, &mut budget, &mut files).map_err(err)?;
+    let description = files.iter().find(|(rel, _)| rel == SKILL_FILE).map(|(_, b)| front_matter_description(&String::from_utf8_lossy(b))).unwrap_or_default();
+    let name = path.rsplit('/').next().unwrap_or_default().to_string();
+    out.push(Skill { name, path: path.clone(), description, files });
+  }
+  Ok(out)
+}
+
+/// The trust hash: SHA-256 of `snap.toml` alone for a snap without skills (unchanged from phase
+/// 1), otherwise also over every skill file, so editing a repo snap's SKILL.md revokes trust too:
+/// a skill is instructions to the agent and must not change behind the user's back.
+pub fn snap_hash(manifest: &[u8], skills: &[Skill]) -> String {
+  if skills.is_empty() {
+    return sha256_hex(manifest);
+  }
+  let mut h = Sha256::new();
+  h.update(manifest);
+  for s in skills {
+    for (rel, bytes) in &s.files {
+      h.update(b"\0kingu-skill\0");
+      h.update(s.path.as_bytes());
+      h.update(b"/");
+      h.update(rel.as_bytes());
+      h.update(b"\0");
+      h.update((bytes.len() as u64).to_le_bytes());
+      h.update(bytes);
+    }
+  }
+  h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -303,6 +491,7 @@ pub struct SnapInfo {
   pub tasks: Vec<Task>,
   pub settings: Vec<Setting>,
   pub mcp: Vec<McpServer>,
+  pub skills: Vec<Skill>,
 }
 
 impl SnapInfo {
@@ -322,6 +511,7 @@ impl SnapInfo {
       tasks: Vec::new(),
       settings: Vec::new(),
       mcp: Vec::new(),
+      skills: Vec::new(),
     }
   }
 }
@@ -367,28 +557,35 @@ fn read_snap(dir: &Path, folder: &str, source: Source, root: Option<&Path>, trus
   let Ok(text) = std::str::from_utf8(&bytes) else {
     return broken(hash, format!("{MANIFEST} ไม่ใช่ UTF-8"));
   };
-  match parse_manifest(text, folder) {
-    Err(e) => broken(hash, e),
-    Ok(p) => SnapInfo {
-      trusted: match (source, root) {
-        (Source::User, _) => true,
-        (Source::Repo, Some(root)) => trust.is_trusted(root, &p.id, &hash),
-        (Source::Repo, None) => false,
-      },
-      id: p.id,
-      name: p.name,
-      version: p.version,
-      description: p.description,
-      source,
-      dir: dir.display().to_string(),
-      error: None,
-      overridden: false,
-      hash,
-      permissions: p.permissions,
-      tasks: p.tasks,
-      settings: p.settings,
-      mcp: p.mcp,
+  let p = match parse_manifest(text, folder) {
+    Ok(p) => p,
+    Err(e) => return broken(hash, e),
+  };
+  let skills = match read_skills(dir, &p.skills) {
+    Ok(s) => s,
+    Err(e) => return broken(hash, e),
+  };
+  let hash = snap_hash(&bytes, &skills);
+  SnapInfo {
+    trusted: match (source, root) {
+      (Source::User, _) => true,
+      (Source::Repo, Some(root)) => trust.is_trusted(root, &p.id, &hash),
+      (Source::Repo, None) => false,
     },
+    id: p.id,
+    name: p.name,
+    version: p.version,
+    description: p.description,
+    source,
+    dir: dir.display().to_string(),
+    error: None,
+    overridden: false,
+    hash,
+    permissions: p.permissions,
+    tasks: p.tasks,
+    settings: p.settings,
+    mcp: p.mcp,
+    skills,
   }
 }
 
@@ -494,6 +691,136 @@ pub fn set_trust(config_dir: &Path, root: &Path, id: &str, trusted: bool, expect
   data.save(&file)
 }
 
+// ---------------------------------------------------------------------------------------------
+// Skill plugins for agents
+//
+// Claude Code loads skills from plugins: a folder with `.claude-plugin/plugin.json` and
+// `skills/<name>/SKILL.md`, passed as the SDK's `plugins: [{ type: 'local', path }]` or the CLI's
+// `--plugin-dir <path>`. Kingu writes one such folder per active snap with skills into the app's
+// cache dir (never the repo or a worktree), from the bytes read and hashed when listing. Folders
+// are named by that hash, so a running agent's folder never changes under it and an unchanged
+// snap reuses its folder.
+
+const PLUGINS_DIR: &str = "snap-plugins";
+const PLUGIN_MANIFEST: [&str; 2] = [".claude-plugin", "plugin.json"];
+/// Older versions of a snap's plugin folder are removed after this long unused.
+const PLUGIN_TTL: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+const MAX_PLUGINS: usize = 64;
+
+/// The plugin's name, so its skills show up as `snap-<id>:<skill>`.
+pub fn plugin_name(snap_id: &str) -> String {
+  format!("snap-{snap_id}")
+}
+
+fn write_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
+  if let Some(parent) = path.parent() {
+    std::fs::create_dir_all(parent).map_err(|e| format!("สร้าง {} ไม่ได้: {e}", parent.display()))?;
+  }
+  std::fs::write(path, bytes).map_err(|e| format!("เขียน {} ไม่ได้: {e}", path.display()))
+}
+
+/// Writes (or reuses) the plugin folder of `snap` under `plugins_dir` and returns its path.
+pub fn write_plugin(plugins_dir: &Path, snap: &SnapInfo) -> Result<PathBuf, String> {
+  if !is_snap_id(&snap.id) || snap.hash.len() < 16 {
+    return Err(format!("snap \"{}\" ไม่ถูกต้อง", snap.id));
+  }
+  let dir = plugins_dir.join(format!("{}-{}", snap.id, &snap.hash[..16]));
+  if dir.join(PLUGIN_MANIFEST[0]).join(PLUGIN_MANIFEST[1]).is_file() {
+    prune_plugins(plugins_dir, &snap.id, &dir);
+    return Ok(dir);
+  }
+  // Built aside and renamed into place, so a reader never sees a half-written plugin.
+  let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
+  let tmp = plugins_dir.join(format!(".tmp-{}-{}-{nanos}", snap.id, std::process::id()));
+  let build = || -> Result<(), String> {
+    let manifest = serde_json::json!({
+      "name": plugin_name(&snap.id),
+      "version": snap.version,
+      "description": format!("Skills of the Kingu snap \"{}\"", snap.name),
+    });
+    write_file(&tmp.join(PLUGIN_MANIFEST[0]).join(PLUGIN_MANIFEST[1]), serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?.as_bytes())?;
+    for skill in &snap.skills {
+      let base = tmp.join("skills").join(&skill.name);
+      for (rel, bytes) in &skill.files {
+        // `rel` came from `read_tree` (plain names joined by `/`); checked again before writing.
+        if rel.split('/').any(|p| p.is_empty() || p == "." || p == ".." || p.contains('\\')) {
+          return Err(format!("ชื่อไฟล์ใน skill ไม่ถูกต้อง: {rel}"));
+        }
+        write_file(&base.join(rel), bytes)?;
+      }
+    }
+    Ok(())
+  };
+  let built = build().and_then(|()| match std::fs::rename(&tmp, &dir) {
+    Ok(()) => Ok(()),
+    // Another run wrote the same content first.
+    Err(_) if dir.join(PLUGIN_MANIFEST[0]).join(PLUGIN_MANIFEST[1]).is_file() => Ok(()),
+    Err(e) => Err(format!("ย้าย plugin ของ snap \"{}\" เข้าที่ไม่ได้: {e}", snap.id)),
+  });
+  if tmp.exists() {
+    let _ = std::fs::remove_dir_all(&tmp);
+  }
+  built?;
+  prune_plugins(plugins_dir, &snap.id, &dir);
+  Ok(dir)
+}
+
+/// Removes this snap's other plugin folders (and stale temp folders) not touched for `PLUGIN_TTL`.
+fn prune_plugins(plugins_dir: &Path, id: &str, keep: &Path) {
+  let Ok(read) = std::fs::read_dir(plugins_dir) else { return };
+  let prefix = format!("{id}-");
+  let tmp_prefix = format!(".tmp-{id}-");
+  for entry in read.flatten() {
+    let name = entry.file_name().to_string_lossy().into_owned();
+    // `<id>-<16 hex>` exactly, so "go-" never matches "go-lint-…".
+    let ours = name.strip_prefix(&prefix).is_some_and(|h| h.len() == 16 && h.bytes().all(|b| b.is_ascii_hexdigit()));
+    if (!ours && !name.starts_with(&tmp_prefix)) || entry.path() == keep {
+      continue;
+    }
+    let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > PLUGIN_TTL);
+    if old {
+      let _ = std::fs::remove_dir_all(entry.path());
+    }
+  }
+}
+
+/// Plugin folders for the active snaps among `ids` that have skills.
+pub fn skill_plugins(plugins_dir: &Path, list: &[SnapInfo], ids: &[String]) -> Result<Vec<PathBuf>, String> {
+  let active = list.iter().filter(|s| s.error.is_none() && s.trusted && !s.overridden && !s.skills.is_empty() && ids.contains(&s.id));
+  let mut out = Vec::new();
+  for snap in active {
+    std::fs::create_dir_all(plugins_dir).map_err(|e| format!("สร้าง {} ไม่ได้: {e}", plugins_dir.display()))?;
+    out.push(write_plugin(plugins_dir, snap)?);
+  }
+  Ok(out)
+}
+
+/// Plugin folders handed to an agent must be ones `skill_plugins` wrote: directly inside
+/// `plugins_dir`, not hidden, with a plugin manifest. Anything else could load arbitrary hooks.
+pub fn validate_plugin_dirs(plugins_dir: &Path, dirs: &[String]) -> Result<(), String> {
+  if dirs.len() > MAX_PLUGINS {
+    return Err("too many plugins".into());
+  }
+  let base = plugins_dir.canonicalize().map_err(|_| "no snap plugins have been prepared".to_string())?;
+  for d in dirs {
+    let bad = || format!("{d}: not a Kingu snap plugin folder");
+    let path = Path::new(d);
+    if !path.is_absolute() {
+      return Err(bad());
+    }
+    let real = path.canonicalize().map_err(|_| bad())?;
+    let hidden = real.file_name().is_none_or(|n| n.to_string_lossy().starts_with('.'));
+    if real.parent() != Some(base.as_path()) || hidden || !real.join(PLUGIN_MANIFEST[0]).join(PLUGIN_MANIFEST[1]).is_file() {
+      return Err(bad());
+    }
+  }
+  Ok(())
+}
+
+pub fn plugins_dir(app: &AppHandle) -> Result<PathBuf, String> {
+  Ok(app.path().app_cache_dir().map_err(|e| e.to_string())?.join(PLUGINS_DIR))
+}
+
 fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
   app.path().app_config_dir().map_err(|e| e.to_string())
 }
@@ -503,6 +830,29 @@ pub fn snap_list(app: AppHandle, ws: State<'_, Workspace>) -> Result<Vec<SnapInf
   let config = config_dir(&app)?;
   let trust = TrustData::load(&config.join(TRUST_FILE));
   Ok(discover(&config.join(USER_DIR), ws.current().as_deref(), &trust))
+}
+
+/// Prepares the skill plugins of the given snaps for an agent run and returns their folders.
+/// Snaps are listed again here, so only ones that are active right now (valid, trusted, not
+/// overridden) contribute, with exactly the bytes that were hashed for trust.
+#[tauri::command]
+pub async fn snap_skill_plugins(app: AppHandle, ids: Vec<String>) -> Result<Vec<String>, String> {
+  if ids.is_empty() {
+    return Ok(Vec::new());
+  }
+  if ids.iter().any(|id| !is_snap_id(id)) {
+    return Err("id ของ snap ไม่ถูกต้อง".into());
+  }
+  tauri::async_runtime::spawn_blocking(move || {
+    let config = config_dir(&app)?;
+    let trust = TrustData::load(&config.join(TRUST_FILE));
+    let root = app.state::<Workspace>().current();
+    let list = discover(&config.join(USER_DIR), root.as_deref(), &trust);
+    let dirs = skill_plugins(&plugins_dir(&app)?, &list, &ids)?;
+    Ok(dirs.into_iter().map(|d| d.display().to_string()).collect())
+  })
+  .await
+  .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -728,6 +1078,175 @@ env = { GOFLAGS = "-mod=mod" }
     write_snap(&root.path().join(".kingu/snaps"), "x", "id = \"x\"\n");
     assert!(set_trust(config.path(), root.path(), "x", true, None).unwrap_err().contains("ข้อผิดพลาด"));
     assert!(set_trust(config.path(), root.path(), "../x", true, None).is_err());
+  }
+
+  #[test]
+  fn mcp_placeholders_must_name_declared_settings() {
+    let with = |cmd: &str, env: &str| FULL.replace("command = [\"gopls\", \"mcp\"]", cmd).replace("env = { GOFLAGS = \"-mod=mod\" }", env);
+    assert!(parse_manifest(&with("command = [\"gopls\", \"${setting:testFlags}\"]", "env = { GOFLAGS = \"x${setting:count}\" }"), "go").is_ok());
+    let e = parse_manifest(&with("command = [\"gopls\", \"${setting:nope}\"]", ""), "go").unwrap_err();
+    assert!(e.contains("MCP server \"gopls\"") && e.contains("\"nope\""), "{e}");
+    let e = parse_manifest(&with("command = [\"gopls\"]", "env = { A = \"${setting:nope}\" }"), "go").unwrap_err();
+    assert!(e.contains("\"nope\""), "{e}");
+    assert!(parse_manifest(&with("command = [\"gopls\", \"${setting:testFlags\"]", ""), "go").is_err());
+  }
+
+  const SKILL_MD: &str = "---\nname: go-style\ndescription: \"How we write Go\"\n---\n\nUse gofmt.\n";
+
+  fn with_skills(paths: &[&str]) -> String {
+    let mut s = minimal("go");
+    for p in paths {
+      s.push_str(&format!("[[skills]]\npath = \"{p}\"\n"));
+    }
+    s
+  }
+
+  #[test]
+  fn validates_skill_paths_in_the_manifest() {
+    assert_eq!(parse_manifest(&with_skills(&["skills/go-style", "review"]), "go").unwrap().skills, ["skills/go-style", "review"]);
+    for bad in ["/etc/skills", "../x", "skills/../x", "skills//x", "./x", "skills/Go_Style", "a b", "skills\\\\x", ""] {
+      assert!(parse_manifest(&with_skills(&[bad]), "go").is_err(), "{bad}");
+    }
+    assert!(parse_manifest(&with_skills(&["a/style", "b/style"]), "go").unwrap_err().contains("ซ้ำ"));
+    assert!(parse_manifest(&format!("{}[[skills]]\npath = \"x\"\nname = \"y\"\n", minimal("go")), "go").is_err());
+  }
+
+  fn write_skill(snap: &Path, path: &str, files: &[(&str, &str)]) {
+    for (rel, text) in files {
+      let f = snap.join(path).join(rel);
+      std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+      std::fs::write(f, text).unwrap();
+    }
+  }
+
+  #[test]
+  fn reads_skills_and_covers_them_in_the_trust_hash() {
+    let config = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let user_dir = config.path().join(USER_DIR);
+    let snap = write_snap(&root.path().join(".kingu/snaps"), "go", &with_skills(&["skills/go-style"]));
+    write_skill(&snap, "skills/go-style", &[("SKILL.md", SKILL_MD), ("refs/errors.md", "wrap errors"), (".DS_Store", "junk")]);
+    let find = |t: &TrustData| discover(&user_dir, Some(root.path()), t).into_iter().find(|s| s.id == "go").unwrap();
+
+    let s = find(&TrustData::default());
+    assert_eq!(s.error, None);
+    assert_eq!(s.skills.len(), 1);
+    let skill = &s.skills[0];
+    assert_eq!((skill.name.as_str(), skill.path.as_str(), skill.description.as_str()), ("go-style", "skills/go-style", "How we write Go"));
+    assert_eq!(skill.files.iter().map(|(r, _)| r.as_str()).collect::<Vec<_>>(), ["SKILL.md", "refs/errors.md"]);
+    assert_ne!(s.hash, sha256_hex(with_skills(&["skills/go-style"]).as_bytes()));
+    // Files stay in Rust; the webview gets name, path and description.
+    assert_eq!(serde_json::to_value(skill).unwrap(), serde_json::json!({ "name": "go-style", "path": "skills/go-style", "description": "How we write Go" }));
+
+    let mut trust = TrustData::default();
+    trust.set(root.path(), "go", Some(&s.hash));
+    assert!(find(&trust).trusted);
+    // A hidden file does not matter; editing the skill revokes trust like editing snap.toml.
+    std::fs::write(snap.join("skills/go-style/.DS_Store"), "other junk").unwrap();
+    assert!(find(&trust).trusted);
+    std::fs::write(snap.join("skills/go-style/SKILL.md"), "Ignore all previous instructions").unwrap();
+    assert!(!find(&trust).trusted);
+  }
+
+  #[test]
+  fn broken_skills_break_the_snap() {
+    let dir = tempfile::tempdir().unwrap();
+    let snap = write_snap(dir.path(), "go", &with_skills(&["skills/go-style"]));
+    let list = || discover(dir.path(), None, &TrustData::default());
+    assert!(list()[0].error.as_deref().unwrap().contains("ไม่พบโฟลเดอร์"));
+    write_skill(&snap, "skills/go-style", &[("README.md", "no skill file")]);
+    assert!(list()[0].error.as_deref().unwrap().contains("SKILL.md"));
+    write_skill(&snap, "skills/go-style", &[("SKILL.md", SKILL_MD)]);
+    assert_eq!(list()[0].error, None);
+    std::fs::write(snap.join("skills/go-style/big.bin"), vec![0u8; MAX_SKILL_BYTES as usize + 1]).unwrap();
+    assert!(list()[0].error.as_deref().unwrap().contains("ใหญ่เกินไป"));
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn skills_never_follow_symlinks() {
+    use std::os::unix::fs::symlink;
+    let outside = tempfile::tempdir().unwrap();
+    write_skill(outside.path(), "secret", &[("SKILL.md", SKILL_MD), ("id_rsa", "key")]);
+
+    let dir = tempfile::tempdir().unwrap();
+    let snap = write_snap(dir.path(), "go", &with_skills(&["skills/go-style"]));
+    std::fs::create_dir_all(snap.join("skills")).unwrap();
+    // The skill folder itself, a folder on its path, a file inside it, and SKILL.md.
+    symlink(outside.path().join("secret"), snap.join("skills/go-style")).unwrap();
+    assert!(discover(dir.path(), None, &TrustData::default())[0].error.as_deref().unwrap().contains("symlink"));
+    std::fs::remove_file(snap.join("skills/go-style")).unwrap();
+    std::fs::remove_dir(snap.join("skills")).unwrap();
+    symlink(outside.path(), snap.join("skills")).unwrap();
+    assert!(discover(dir.path(), None, &TrustData::default())[0].error.as_deref().unwrap().contains("symlink"));
+    std::fs::remove_file(snap.join("skills")).unwrap();
+    write_skill(&snap, "skills/go-style", &[("SKILL.md", SKILL_MD)]);
+    symlink(outside.path().join("secret/id_rsa"), snap.join("skills/go-style/key")).unwrap();
+    assert!(discover(dir.path(), None, &TrustData::default())[0].error.as_deref().unwrap().contains("symlink"));
+    std::fs::remove_file(snap.join("skills/go-style/key")).unwrap();
+    std::fs::remove_file(snap.join("skills/go-style/SKILL.md")).unwrap();
+    symlink(outside.path().join("secret/SKILL.md"), snap.join("skills/go-style/SKILL.md")).unwrap();
+    assert!(discover(dir.path(), None, &TrustData::default())[0].error.as_deref().unwrap().contains("SKILL.md"));
+  }
+
+  #[test]
+  fn writes_one_plugin_per_active_snap_outside_the_repo() {
+    let config = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    let plugins = cache.path().join(PLUGINS_DIR);
+    let user_dir = config.path().join(USER_DIR);
+    let mine = write_snap(&user_dir, "go", &with_skills(&["skills/go-style"]));
+    write_skill(&mine, "skills/go-style", &[("SKILL.md", SKILL_MD), ("refs/errors.md", "wrap errors")]);
+    let repo = write_snap(&root.path().join(".kingu/snaps"), "lint", &format!("{}[[skills]]\npath = \"review\"\n", minimal("lint")));
+    write_skill(&repo, "review", &[("SKILL.md", "review well")]);
+    write_snap(&user_dir, "plain", &minimal("plain"));
+    let ids: Vec<String> = ["go", "lint", "plain"].map(String::from).to_vec();
+
+    // The untrusted repo snap and the snap without skills get no plugin.
+    let list = discover(&user_dir, Some(root.path()), &TrustData::default());
+    let dirs = skill_plugins(&plugins, &list, &ids).unwrap();
+    assert_eq!(dirs.len(), 1);
+    let go = &dirs[0];
+    assert_eq!(go.parent(), Some(plugins.as_path()));
+    let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(go.join(".claude-plugin/plugin.json")).unwrap()).unwrap();
+    assert_eq!(manifest["name"], "snap-go");
+    assert_eq!(std::fs::read_to_string(go.join("skills/go-style/SKILL.md")).unwrap(), SKILL_MD);
+    assert_eq!(std::fs::read_to_string(go.join("skills/go-style/refs/errors.md")).unwrap(), "wrap errors");
+    // Nothing was written into the repo or next to the snaps.
+    assert!(!root.path().join(".claude-plugin").exists() && !mine.join(".claude-plugin").exists());
+    // Only the listed ids.
+    assert!(skill_plugins(&plugins, &list, &["plain".to_string()]).unwrap().is_empty());
+
+    // Same content reuses the folder; changed content gets a new one and the old one stays for running agents.
+    assert_eq!(&skill_plugins(&plugins, &list, &ids).unwrap()[0], go);
+    std::fs::write(mine.join("skills/go-style/SKILL.md"), "v2").unwrap();
+    let list = discover(&user_dir, Some(root.path()), &TrustData::default());
+    let v2 = skill_plugins(&plugins, &list, &ids).unwrap().remove(0);
+    assert_ne!(&v2, go);
+    assert!(go.exists());
+    assert_eq!(std::fs::read_to_string(v2.join("skills/go-style/SKILL.md")).unwrap(), "v2");
+
+    // Trusting the repo snap adds its plugin.
+    let lint = list.iter().find(|s| s.id == "lint").unwrap();
+    let mut trust = TrustData::default();
+    trust.set(root.path(), "lint", Some(&lint.hash));
+    let list = discover(&user_dir, Some(root.path()), &trust);
+    let dirs = skill_plugins(&plugins, &list, &ids).unwrap();
+    assert_eq!(dirs.len(), 2);
+    assert!(dirs[1].join("skills/review/SKILL.md").is_file());
+    // No temp folders are left behind.
+    assert!(std::fs::read_dir(&plugins).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().starts_with('.')));
+
+    // Only folders written here pass the agent_start check.
+    let as_str = |p: &Path| p.display().to_string();
+    assert!(validate_plugin_dirs(&plugins, &dirs.iter().map(|d| as_str(d)).collect::<Vec<_>>()).is_ok());
+    assert!(validate_plugin_dirs(&plugins, &[as_str(&mine)]).is_err());
+    assert!(validate_plugin_dirs(&plugins, &[as_str(&plugins.join("go-0000000000000000"))]).is_err());
+    assert!(validate_plugin_dirs(&plugins, &[as_str(&dirs[0].join("skills"))]).is_err());
+    assert!(validate_plugin_dirs(&plugins, &[format!("{}/../{}", as_str(&plugins), PLUGINS_DIR)]).is_err());
+    assert!(validate_plugin_dirs(&plugins, &["relative/path".into()]).is_err());
+    assert!(validate_plugin_dirs(&cache.path().join("none"), &[as_str(&dirs[0])]).is_err());
   }
 
   #[test]

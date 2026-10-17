@@ -160,10 +160,17 @@ describe('agent host protocol', () => {
 		expect(log.options?.mcpServers).toEqual({ 'go-gopls': { type: 'stdio', command: 'gopls', args: ['mcp'], env: {} } });
 	});
 
-	test('no MCP servers leaves the option out', async () => {
+	test('no MCP servers or plugins leaves the options out', async () => {
 		const { log, call } = setup();
-		await call(1, 'start', { runId: 1, cwd: '/w', prompt: 'x' });
+		await call(1, 'start', { runId: 1, cwd: '/w', prompt: 'x', plugins: [] });
 		expect(log.options && 'mcpServers' in log.options).toBe(false);
+		expect(log.options && 'plugins' in log.options).toBe(false);
+	});
+
+	test('hands Snap skill plugins to the SDK as local plugins without their own MCP', async () => {
+		const { log, call } = setup();
+		await call(1, 'start', { runId: 1, cwd: '/w', prompt: 'x', plugins: ['/cache/snap-plugins/go-0123456789abcdef'] });
+		expect(log.options?.plugins).toEqual([{ type: 'local', path: '/cache/snap-plugins/go-0123456789abcdef', skipMcpDiscovery: true }]);
 	});
 
 	test('rejects bad requests', async () => {
@@ -172,6 +179,8 @@ describe('agent host protocol', () => {
 		expect((await call(2, 'start', { runId: 1, cwd: '/w', prompt: '  ' })).error?.message).toBe('prompt is empty');
 		expect((await call(3, 'start', { runId: 1, cwd: '/w', prompt: 'x', permissionMode: 'bypassPermissions' })).error?.message).toContain('unsupported permission mode');
 		expect((await call(6, 'start', { runId: 1, cwd: '/w', prompt: 'x', mcpServers: { bad: { command: ' ' } } })).error?.message).toContain('command is empty');
+		expect((await call(7, 'start', { runId: 1, cwd: '/w', prompt: 'x', plugins: ['relative/plugin'] })).error?.message).toContain('plugins must be absolute');
+		expect((await call(8, 'start', { runId: 1, cwd: '/w', prompt: 'x', plugins: '/one' })).error?.message).toContain('plugins must be absolute');
 		expect((await call(4, 'answer', { runId: 9, requestId: 'r', decision: 'allow' })).error?.message).toContain('no such run');
 		expect((await call(5, 'nope', {})).error?.code).toBe(-32601);
 		await host.handleLine('{not json');

@@ -180,6 +180,8 @@ export class AgentHost {
 		const mcp = p.mcpServers ?? {};
 		need(typeof mcp === 'object' && !Array.isArray(mcp), 'mcpServers must be an object');
 		for (const [name, s] of Object.entries(mcp)) need(typeof s?.command === 'string' && s.command.trim(), `mcp server ${name}: command is empty`);
+		const plugins = p.plugins ?? [];
+		need(Array.isArray(plugins) && plugins.every((d) => typeof d === 'string' && d.startsWith('/')), 'plugins must be absolute paths');
 
 		const run = new Run(p.runId);
 		this.runs.set(run.id, run);
@@ -192,6 +194,8 @@ export class AgentHost {
 			...(Object.keys(mcp).length
 				? { mcpServers: Object.fromEntries(Object.entries(mcp).map(([name, s]) => [name, { type: 'stdio' as const, command: s.command, args: s.args ?? [], env: s.env ?? {} }])) }
 				: {}),
+			// Skills only: Kingu owns the MCP connections (mcpServers above), so a plugin never adds its own.
+			...(plugins.length ? { plugins: plugins.map((path) => ({ type: 'local' as const, path, skipMcpDiscovery: true })) } : {}),
 			includePartialMessages: true,
 			// User + project settings: CLAUDE.md and the user's own allow/deny rules apply.
 			settingSources: ['user', 'project', 'local'],

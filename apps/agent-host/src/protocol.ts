@@ -18,6 +18,8 @@ export type StartParams = {
 	resume?: string | null;
 	/** Stdio MCP servers for this run (from trusted Snaps), by name. */
 	mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>;
+	/** Skill plugin folders of active Snaps (absolute; Rust checks they are ones Kingu generated). */
+	plugins?: string[];
 };
 export type SendParams = { runId: number; text: string };
 export type RunParams = { runId: number };

@@ -43,7 +43,7 @@
 			<button class={[SECONDARY, 'flex items-center gap-1.5']} disabled={reloading} onclick={reload}><Icon name="refresh" size={14} /> โหลดใหม่ (Reload)</button>
 		</div>
 		<p class="mt-1 text-[13px] text-(--vscode-descriptionForeground)">
-			Snap คือแพ็กของงาน การตั้งค่า และ MCP server ที่ใช้ได้ทั้งใน IDE และ ADE — ของคุณเองอยู่ในโฟลเดอร์ config ของแอป (<code>snaps/&lt;id&gt;/snap.toml</code>), ของโฟลเดอร์งานอยู่ใน
+			Snap คือแพ็กของงาน การตั้งค่า MCP server และ skill ที่ใช้ได้ทั้งใน IDE และ ADE — ของคุณเองอยู่ในโฟลเดอร์ config ของแอป (<code>snaps/&lt;id&gt;/snap.toml</code>), ของโฟลเดอร์งานอยู่ใน
 			<code>.kingu/snaps/&lt;id&gt;/snap.toml</code> และต้องกดเชื่อถือก่อนจึงจะรันได้
 		</p>
 		{#if snaps.error}
@@ -77,8 +77,8 @@
 					<p class="mt-2 flex items-start gap-1.5 rounded-md border border-(--vscode-editorWarning-foreground) px-2 py-1.5 text-(--vscode-editorWarning-foreground)">
 						<Icon name="warning" size={14} />
 						<span
-							>Snap นี้มาจากโฟลเดอร์ที่เปิดอยู่ (<code>.kingu/snaps</code>) ใครก็ตามที่แก้ repo นี้เขียนได้ — การเชื่อถือจะให้ snap นี้รันคำสั่งในโฟลเดอร์นี้และ worktree ของงาน และส่ง MCP server ให้ agent ได้
-							ตรวจคำสั่งและสิทธิ์ด้านล่างก่อนกดเชื่อถือ ถ้า snap.toml เปลี่ยน Kingu จะเลิกเชื่อถือให้อัตโนมัติ</span
+							>Snap นี้มาจากโฟลเดอร์ที่เปิดอยู่ (<code>.kingu/snaps</code>) ใครก็ตามที่แก้ repo นี้เขียนได้ — การเชื่อถือจะให้ snap นี้รันคำสั่งในโฟลเดอร์นี้และ worktree ของงาน และส่ง MCP server กับ skill ให้ agent ได้
+							ตรวจคำสั่งและสิทธิ์ด้านล่างก่อนกดเชื่อถือ ถ้า snap.toml หรือไฟล์ของ skill เปลี่ยน Kingu จะเลิกเชื่อถือให้อัตโนมัติ</span
 						>
 					</p>
 				{/if}
@@ -104,6 +104,21 @@
 							{/each}
 						</div>
 					</div>
+
+					<div class={['mt-3', LABEL]}>Skills (ให้ agent)</div>
+					{#each s.skills as k (k.path)}
+						<div class="mt-1">
+							<span class="font-semibold">{k.name}</span> <code class="text-(--vscode-descriptionForeground)">{k.path}/SKILL.md</code>
+							{#if k.description}<span class="text-(--vscode-descriptionForeground)"> — {k.description}</span>{/if}
+						</div>
+					{:else}
+						<div class="mt-1 text-(--vscode-descriptionForeground)">—</div>
+					{/each}
+					{#if s.skills.length}
+						<p class="mt-1 text-[11px] text-(--vscode-descriptionForeground) opacity-80">
+							agent แบบ timeline และ claude CLI ได้ skill เหล่านี้ในชื่อ <code>snap-{s.id}:&lt;skill&gt;</code>{active ? '' : ' เมื่อ snap นี้ใช้งานอยู่'} — codex และ CLI อื่นยังไม่ได้
+						</p>
+					{/if}
 
 					<div class={['mt-3', LABEL]}>งาน (Tasks)</div>
 					{#each s.tasks as t (t.id)}

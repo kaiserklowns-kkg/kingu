@@ -1,7 +1,7 @@
 // Snaps store: the list from `snap_list` (user snaps + the open folder's `.kingu/snaps`), trust,
 // running a task in the mode that is showing (an IDE panel terminal in the folder root, or an
 // ADE terminal tab in the selected worktree), and what active snaps contribute: palette
-// commands, settings schemas and MCP servers. Rust decides `trusted`; nothing here runs a repo
+// commands, settings schemas, MCP servers and skills. Rust decides `trusted`; nothing here runs a repo
 // snap's command unless it is trusted (see snapModel.isActive).
 
 import { untrack } from 'svelte';
@@ -16,8 +16,8 @@ import { layout } from '#lib/workbench/layout.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
-import { setMcpProvider } from '#lib/ade/mcp.ts';
-import { isActive, mcpServersOf, runnableTasks, snapSettingSchemas, taskArgv, taskCommandId, type McpServerSpec, type SnapInfo } from './snapModel.ts';
+import { setMcpProvider, setSkillPluginProvider } from '#lib/ade/mcp.ts';
+import { isActive, mcpServersOf, runnableTasks, skillSnapIds, snapSettingSchemas, taskArgv, taskCommandId, touchesRepoSnaps, type McpServerSpec, type SnapInfo } from './snapModel.ts';
 
 class Snaps {
 	list = $state<SnapInfo[]>([]);
@@ -32,7 +32,9 @@ class Snaps {
 		try {
 			const list = await invoke<SnapInfo[]>('snap_list');
 			if (seq !== this.#seq) return;
-			this.list = list;
+			// Reloads on focus and file changes mostly find nothing new: keep the list (and the
+			// commands and settings derived from it) as it is then.
+			if (JSON.stringify(list) !== JSON.stringify($state.snapshot(this.list))) this.list = list;
 			this.error = null;
 		} catch (e) {
 			if (seq === this.#seq) this.error = String(e);
@@ -67,6 +69,10 @@ class Snaps {
 			return;
 		}
 		const run = taskArgv(snap, task, (id) => settings.get(id));
+		if (!run.length) {
+			status.flash(`งาน ${task.title} ไม่มีโปรแกรมให้รัน (การตั้งค่าที่เป็นชื่อโปรแกรมว่างอยู่)`);
+			return;
+		}
 		const title = `${task.title} (${snap.name})`;
 		systemSettings.close();
 		if (appMode.isAgents) adeLayout.newTerminal(adeLayout.key, { title, run });
@@ -78,16 +84,42 @@ class Snaps {
 
 	/** MCP servers of trusted, valid snaps for agents, keyed `<snapId>-<serverName>`. */
 	mcpServers(): Record<string, McpServerSpec> {
-		return mcpServersOf(this.list);
+		return mcpServersOf(this.list, (id) => settings.get(id));
+	}
+
+	/** Skill plugin folders of active snaps for an agent run (Rust lists the snaps again and writes them into the app cache). */
+	async skillPlugins(): Promise<string[]> {
+		const ids = skillSnapIds(this.list);
+		if (!ids.length) return [];
+		try {
+			return await invoke<string[]>('snap_skill_plugins', { ids });
+		} catch (e) {
+			status.flash(`เตรียม skill ของ snap ไม่สำเร็จ agent จะเริ่มโดยไม่มี skill: ${e}`, 8000);
+			return [];
+		}
 	}
 }
 
 export const snaps = new Snaps();
 
+const RELOAD_DEBOUNCE_MS = 300;
+
 /** Workbench wiring: loads snaps per folder, registers their settings and commands. */
 export function installSnaps(): () => void {
 	// Agents (timeline and CLI) get the MCP servers of active snaps when a run starts.
 	setMcpProvider(() => snaps.mcpServers());
+	setSkillPluginProvider(() => snaps.skillPlugins());
+	// Editing a repo snap reloads the list (the watcher reports `.kingu/snaps/**`); the user snaps
+	// dir is not watched, so they are re-listed when the window gets focus (listing is cheap).
+	let reloadTimer: ReturnType<typeof setTimeout> | undefined;
+	const reloadSoon = () => {
+		clearTimeout(reloadTimer);
+		reloadTimer = setTimeout(() => void snaps.load(), RELOAD_DEBOUNCE_MS);
+	};
+	const stopWatching = workspace.onFilesChanged((paths) => {
+		if (touchesRepoSnaps(paths)) reloadSoon();
+	});
+	window.addEventListener('focus', reloadSoon);
 	let taskCommands: (() => void)[] = [];
 	const unregisterTasks = () => {
 		taskCommands.forEach((u) => u());
@@ -128,10 +160,14 @@ export function installSnaps(): () => void {
 		commands.register({ id: 'snap.manage', title: 'Manage Snaps', category: 'Snap', run: () => systemSettings.showSnaps() })
 	];
 	return () => {
+		clearTimeout(reloadTimer);
+		stopWatching();
+		window.removeEventListener('focus', reloadSoon);
 		stopEffects();
 		unregisterTasks();
 		unregister.forEach((u) => u());
 		settingSchemas.contribute('snaps', []);
 		setMcpProvider(() => ({}));
+		setSkillPluginProvider(async () => []);
 	};
 }

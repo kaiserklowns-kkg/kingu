@@ -1,11 +1,13 @@
-// MCP servers handed to agents (from trusted Snaps). The Snap store registers itself as the
-// provider; agents read it when a run starts: the timeline through the agent host's
-// `mcpServers`, the claude CLI through `--mcp-config` (a JSON string argument). Pure.
+// What trusted Snaps hand to agents: MCP servers and skill plugins. The Snap store registers
+// itself as the provider; agents read it when a run starts: the timeline through the agent
+// host's `mcpServers` / `plugins`, the claude CLI through `--mcp-config` (a JSON string
+// argument) and `--plugin-dir` (one folder per flag). Pure.
 
 export type McpServer = { command: string; args: string[]; env: Record<string, string> };
 export type McpServers = Record<string, McpServer>;
 
 let provider: () => McpServers = () => ({});
+let pluginProvider: () => Promise<string[]> = async () => [];
 
 export function setMcpProvider(fn: () => McpServers) {
 	provider = fn;
@@ -13,6 +15,20 @@ export function setMcpProvider(fn: () => McpServers) {
 
 export function mcpServers(): McpServers {
 	return provider();
+}
+
+/** Skill plugin folders (written by Rust into the app cache) come from the Snap store too. */
+export function setSkillPluginProvider(fn: () => Promise<string[]>) {
+	pluginProvider = fn;
+}
+
+/** Skill plugin folders for a run starting now; never throws (an agent still starts without them). */
+export async function skillPlugins(): Promise<string[]> {
+	try {
+		return await pluginProvider();
+	} catch {
+		return [];
+	}
 }
 
 /** Claude Code's `--mcp-config` JSON for these servers, or null when there are none. */
@@ -23,11 +39,13 @@ export function claudeMcpConfig(servers: McpServers): string | null {
 }
 
 /**
- * The CLI argv with the servers added at the end where the CLI supports it (claude); others run
- * without them. Last on purpose: `--mcp-config` takes several values, so a prompt after it would be read as one.
+ * The CLI argv with the Snap contributions added at the end where the CLI supports them
+ * (claude); others run without them. `--plugin-dir` takes one value per flag; `--mcp-config`
+ * takes several, so it goes last: a prompt or another flag value after it would be read as a config.
  */
-export function cliWithMcp(argv: string[], servers: McpServers): string[] {
+export function cliWithMcp(argv: string[], servers: McpServers, plugins: readonly string[] = []): string[] {
 	const program = argv[0]?.split('/').pop();
-	const config = program === 'claude' ? claudeMcpConfig(servers) : null;
-	return config ? [...argv, '--mcp-config', config] : argv;
+	if (program !== 'claude') return argv;
+	const config = claudeMcpConfig(servers);
+	return [...argv, ...plugins.flatMap((dir) => ['--plugin-dir', dir]), ...(config ? ['--mcp-config', config] : [])];
 }

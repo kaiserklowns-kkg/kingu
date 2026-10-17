@@ -11,6 +11,8 @@ export type SnapTask = { id: string; title: string; command: string[] };
 export type SnapSetting = { key: string; type: SnapSettingType; default: SettingValue; description: string };
 export type SnapMcp = { name: string; command: string[]; env: Record<string, string> };
 export type SnapPermissions = { network: boolean; fs: 'worktree' | 'home'; secrets: string[] };
+/** A skill folder (SKILL.md) of a snap; its files stay in Rust, which copies them into an agent plugin. */
+export type SnapSkill = { name: string; path: string; description: string };
 
 export type SnapInfo = {
 	id: string;
@@ -30,6 +32,7 @@ export type SnapInfo = {
 	tasks: SnapTask[];
 	settings: SnapSetting[];
 	mcp: SnapMcp[];
+	skills: SnapSkill[];
 };
 
 export type McpServerSpec = { command: string; args: string[]; env: Record<string, string> };
@@ -92,28 +95,68 @@ export function snapSettingSchemas(list: readonly SnapInfo[]): SettingSchema[] {
 	return out;
 }
 
-/** The argv to run for a task, its settings read through `get` (the settings service). */
-export function taskArgv(snap: SnapInfo, task: SnapTask, get: (id: string) => unknown): string[] {
+/**
+ * env values with the same rules as `expandCommand`: a value that is only a placeholder becomes
+ * the setting's whole value and the variable is left out when that is empty; elsewhere text is
+ * replaced in one pass.
+ */
+export function expandEnv(env: Readonly<Record<string, string>>, values: Record<string, SettingValue | undefined>): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const [name, value] of Object.entries(env)) {
+		const [v] = expandCommand([value], values);
+		if (v !== undefined) out[name] = v;
+	}
+	return out;
+}
+
+/** A snap's setting values through `get` (the settings service), falling back to the defaults. */
+function settingValues(snap: SnapInfo, get: (id: string) => unknown): Record<string, SettingValue | undefined> {
 	const values: Record<string, SettingValue | undefined> = {};
 	for (const st of snap.settings) {
 		const v = get(settingId(snap.id, st.key));
 		values[st.key] = typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean' ? v : st.default;
 	}
-	return expandCommand(task.command, values);
+	return values;
 }
 
-/** MCP servers handed to agents: active snaps only, keyed `<snapId>-<serverName>`. */
-export function mcpServersOf(list: readonly SnapInfo[]): Record<string, McpServerSpec> {
+/** The argv to run for a task, its settings read through `get` (the settings service). */
+export function taskArgv(snap: SnapInfo, task: SnapTask, get: (id: string) => unknown): string[] {
+	return expandArgv(task.command, settingValues(snap, get));
+}
+
+/**
+ * `expandCommand` for a whole argv: when the program itself expands to nothing the result is
+ * empty, never the next argument promoted to program.
+ */
+export function expandArgv(command: readonly string[], values: Record<string, SettingValue | undefined>): string[] {
+	const [program] = expandCommand(command.slice(0, 1), values);
+	if (!program?.trim()) return [];
+	return [program, ...expandCommand(command.slice(1), values)];
+}
+
+/**
+ * MCP servers handed to agents: active snaps only, keyed `<snapId>-<serverName>`, with
+ * `${setting:…}` expanded in command and env. A server whose program expands to nothing is left out.
+ */
+export function mcpServersOf(list: readonly SnapInfo[], get: (id: string) => unknown = () => undefined): Record<string, McpServerSpec> {
 	const out: Record<string, McpServerSpec> = {};
 	for (const s of list) {
 		if (!isActive(s)) continue;
+		const values = settingValues(s, get);
 		for (const m of s.mcp) {
-			const [command, ...args] = m.command;
-			out[`${s.id}-${m.name}`] = { command, args, env: { ...m.env } };
+			const [command, ...args] = expandArgv(m.command, values);
+			if (!command) continue;
+			out[`${s.id}-${m.name}`] = { command, args, env: expandEnv(m.env, values) };
 		}
 	}
 	return out;
 }
+
+/** Active snaps whose skills agents get (as plugins Rust writes into the app cache). */
+export const skillSnapIds = (list: readonly SnapInfo[]) => list.filter((s) => isActive(s) && s.skills.length > 0).map((s) => s.id);
+
+/** A watcher batch (workspace-relative paths) that may change the repo snaps: `.kingu/snaps` or a rescan. */
+export const touchesRepoSnaps = (paths: readonly string[]) => paths.some((p) => p === '' || p === '.kingu' || p === '.kingu/snaps' || p.startsWith('.kingu/snaps/'));
 
 /** Tasks that become commands (palette and Run buttons). */
 export function runnableTasks(list: readonly SnapInfo[]): { snap: SnapInfo; task: SnapTask }[] {
