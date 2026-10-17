@@ -1,7 +1,7 @@
 // Pure path helpers for the Explorer's file operations and the file watcher, kept free of runes
 // so they are unit-testable. Paths are workspace-relative and `/`-separated; '' is the root.
 
-import { DIFF_PREFIX, fileOf, isDiffKey } from './scm';
+import { DIFF_PREFIX, fileOf, isDiffKey, isTaskDiffKey } from './scm';
 
 export function parentOf(rel: string): string {
 	const i = rel.lastIndexOf('/');
@@ -39,6 +39,8 @@ export function validateName(input: string): string | null {
 
 /** Where `path` (a tab key: a file or `diff:<file>`) moves when `from` is renamed to `to`; null if unaffected. */
 export function remapPath(path: string, from: string, to: string): string | null {
+	// A task diff names a file inside its worktree, which an Explorer rename never moves.
+	if (isTaskDiffKey(path)) return null;
 	const file = fileOf(path);
 	if (!isUnder(file, from) || from === '') return null;
 	const moved = to + file.slice(from.length);

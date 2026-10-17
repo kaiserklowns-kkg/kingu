@@ -7,8 +7,9 @@
 	import type * as Monaco from 'monaco-editor';
 	import { clientLog } from '#lib/client-log.ts';
 	import { editors } from './editors.svelte';
-	import { fileOf, isDiffKey } from './scm';
+	import { fileOf, isDiffKey, isTaskDiffKey, parseTaskDiffKey } from './scm';
 	import { scm } from './scm.svelte';
+	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 
 	let { group }: { group: number } = $props();
 	const activeKey = $derived(editors.group(group)?.active ?? null);
@@ -54,14 +55,32 @@
 		return invoke<string>('read_workspace_file', { rel }).catch(() => '');
 	}
 
-	async function show(m: typeof import('#lib/editor/monaco.ts'), key: string) {
-		const rel = fileOf(key);
-		const my = ++seq;
+	/** Left side: HEAD for Source Control diffs; the task's fork point for task diffs (`taskdiff://`). */
+	async function original(key: string, rel: string): Promise<{ text: string; path: string }> {
+		if (isTaskDiffKey(key)) {
+			let base = adeTasks.diffBase(key);
+			if (!base) {
+				const slug = parseTaskDiffKey(key)?.slug;
+				if (slug) await adeTasks.refreshStat(slug);
+				base = adeTasks.diffBase(key);
+			}
+			if (!base) throw new Error('task has no diff base');
+			const text = await invoke<string>('git_show_ref', { slug: base.slug, rev: base.rev, rel: base.orig });
+			return { text, path: `${base.slug}/${base.orig}` };
+		}
 		// A rename diffs against the source's HEAD contents.
 		const entry = scm.repo?.entries.find((e) => e.path === rel);
 		const headPath = entry?.orig_path ?? rel;
+		return { text: await invoke<string>('git_show_head', { rel: headPath }), path: headPath };
+	}
+
+	async function show(m: typeof import('#lib/editor/monaco.ts'), key: string) {
+		const rel = fileOf(key);
+		const my = ++seq;
 		try {
-			const [head, work] = await Promise.all([invoke<string>('git_show_head', { rel: headPath }), workingCopy(m, rel)]);
+			const [orig, work] = await Promise.all([original(key, rel), workingCopy(m, rel)]);
+			const head = orig.text;
+			const headPath = orig.path;
 			if (my !== seq || !diff || editors.group(group)?.active !== key) return;
 			const language = m.languageFor(rel);
 			// Fresh URIs each time: the old pair is disposed only after the new one is shown.
@@ -87,6 +106,7 @@
 	$effect(() => {
 		const key = activeKey;
 		void scm.repo;
+		if (key && isTaskDiffKey(key)) void adeTasks.stats[parseTaskDiffKey(key)?.slug ?? ''];
 		if (api && key && isDiffKey(key)) void show(api, key);
 	});
 

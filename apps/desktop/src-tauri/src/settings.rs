@@ -45,13 +45,18 @@ pub fn user_path(config_dir: &Path) -> PathBuf {
 /// `<root>/.kingu/settings.json`, refusing a `.kingu` or `settings.json` that is a symlink
 /// (it could point outside the workspace) or a `.kingu` that is not a directory.
 pub fn workspace_path(root: &Path) -> Result<PathBuf, String> {
+  kingu_file(root, FILE)
+}
+
+/// `<root>/.kingu/<name>` for Kingu's own per-folder files (settings, tasks), with the same guards.
+pub fn kingu_file(root: &Path, name: &str) -> Result<PathBuf, String> {
   let dir = root.join(WORKSPACE_DIR);
   if let Ok(meta) = std::fs::symlink_metadata(&dir)
     && (meta.file_type().is_symlink() || !meta.is_dir())
   {
     return Err(format!("{}: not a directory", dir.display()));
   }
-  let file = dir.join(FILE);
+  let file = dir.join(name);
   if let Ok(meta) = std::fs::symlink_metadata(&file)
     && !meta.is_file()
   {
@@ -75,8 +80,9 @@ pub fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
     return Err(format!("settings larger than {MAX_BYTES} bytes"));
   }
   let dir = path.parent().ok_or("settings path has no parent")?;
+  let name = path.file_name().and_then(|n| n.to_str()).unwrap_or(FILE);
   std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-  let tmp = dir.join(format!(".{FILE}.{}.tmp", std::process::id()));
+  let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
   let result = (|| {
     let mut f = std::fs::File::create(&tmp)?;
     f.write_all(content.as_bytes())?;

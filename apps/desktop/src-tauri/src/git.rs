@@ -62,7 +62,7 @@ pub fn check_rel(root: &Path, rel: &str) -> Result<(), String> {
   }
 }
 
-fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+pub(crate) fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
   let out = Command::new("git")
     .arg("-C")
     .arg(root)
@@ -218,7 +218,30 @@ pub fn commit(root: &Path, message: &str, amend: bool) -> Result<(), String> {
 /// The HEAD version of `rel` for the diff editor; empty for files not in HEAD (added, untracked,
 /// or no commit yet).
 pub fn show_head(root: &Path, rel: &str) -> Result<String, String> {
-  let spec = format!("HEAD:./{rel}");
+  show_at(root, "HEAD", rel)
+}
+
+/// Rejects revisions that could be read as an option, a range or a `rev:path` spec. Plain refs,
+/// commit ids and `~`/`^` suffixes pass; callers still resolve them with `--end-of-options`.
+pub fn check_rev(rev: &str) -> Result<(), String> {
+  let bad = rev.is_empty()
+    || rev.len() > 255
+    || rev.starts_with('-')
+    || rev.contains("..")
+    || rev.chars().any(|c| c.is_whitespace() || c.is_control() || matches!(c, ':' | '\\' | '*' | '?' | '['));
+  if bad { Err(format!("{rev:?}: invalid revision")) } else { Ok(()) }
+}
+
+/// Local branch names (`refs/heads`), sorted by git.
+pub fn local_branches(root: &Path) -> Result<Vec<String>, String> {
+  let out = run(root, &["for-each-ref", "--format=%(refname:short)", "refs/heads"])?;
+  Ok(String::from_utf8_lossy(&out).lines().map(str::to_owned).filter(|l| !l.is_empty()).collect())
+}
+
+/// `rel` as of revision `rev` (for diffs against a task's base); empty when the file is not there.
+pub fn show_at(root: &Path, rev: &str, rel: &str) -> Result<String, String> {
+  check_rev(rev)?;
+  let spec = format!("{rev}:./{rel}");
   if run(root, &["cat-file", "-e", &spec]).is_err() {
     return Ok(String::new());
   }
@@ -377,6 +400,11 @@ mod tests {
     assert_eq!(show_head(&repo, "a.txt").unwrap(), "a.txt\n");
     assert_eq!(show_head(&repo, "sub/c.txt").unwrap(), "sub/c.txt\n");
     assert_eq!(show_head(&repo, "missing.txt").unwrap(), "");
+    assert_eq!(show_at(&repo, "main", "sub/c.txt").unwrap(), "sub/c.txt\n");
+    for bad in ["", "-p", "a..b", "HEAD:x", "a b", "main\n"] {
+      assert!(show_at(&repo, bad, "a.txt").is_err(), "{bad:?}");
+    }
+    assert_eq!(local_branches(&repo).unwrap(), ["main"]);
     // Pathspec magic would stage every file; literally it matches nothing.
     assert!(stage(&repo, &[":(glob)*".into()]).is_err());
     assert_eq!(codes(entry(&status(&repo).unwrap().unwrap(), "a.txt")), (None, Some("M")));

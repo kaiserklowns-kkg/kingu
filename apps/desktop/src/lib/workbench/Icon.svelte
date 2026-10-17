@@ -25,7 +25,14 @@
 		goToFile: 'M14 3H6v18h12V7zM14 3v4h4M9 14h6M13 11.5l2.5 2.5-2.5 2.5',
 		check: 'M5 12.5l4.5 4.5L19 7.5',
 		replace: 'M4 4h7v6H4zM13 14h7v6h-7zM14 4h2.5A2.5 2.5 0 0 1 19 6.5V11M17 9l2 2 2-2M10 20H7.5A2.5 2.5 0 0 1 5 17.5V13',
-		replaceAll: 'M3 4h6v5H3zM3 13h6v5H3zM14 9h7v6h-7zM9 6.5h2.5a2 2 0 0 1 2 2V9M9 15.5h2.5a2 2 0 0 0 2-2V15'
+		tasks: 'M4 4h5v16H4zM10.5 4h5v10h-5zM17 4h3v7h-3z',
+		trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6',
+		play: 'M7 4l13 8-13 8z',
+		stop: 'M6 6h12v12H6z',
+		merge: 'M6 3v18M6 9a6 6 0 0 0 6 6h3M18 18a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+		pullRequest: 'M6 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM6 9v12M18 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 15V8a2 2 0 0 0-2-2h-4M14 3l-2 3 2 3',
+		refresh: 'M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7',
+		replaceAll:'M3 4h6v5H3zM3 13h6v5H3zM14 9h7v6h-7zM9 6.5h2.5a2 2 0 0 1 2 2V9M9 15.5h2.5a2 2 0 0 0 2-2V15'
 	} as const;
 	export type IconName = keyof typeof icons;
 </script>

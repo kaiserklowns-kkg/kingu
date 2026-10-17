@@ -5,6 +5,7 @@
 	import { editors } from './editors.svelte';
 	import { keyLabel } from './keys';
 	import { agents } from '#lib/agent/agents.svelte.ts';
+	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 
 	let { workspaceName }: { workspaceName: string } = $props();
 
@@ -34,13 +35,13 @@
 		</button>
 	</div>
 	<div class="flex items-center gap-0.5">
-		{#if agents.pendingCount}
+		{#if adeTasks.attentionCount + agents.pendingCount}
 			<button
-				class="mr-1 rounded bg-amber-600 px-1.5 text-[11px] leading-[18px] font-medium text-black hover:bg-amber-500"
-				title="agent รอคุณอนุญาต {agents.pendingCount} รายการ ({agents.pendingCount} permission request(s) waiting)"
-				onclick={() => (layout.auxVisible = true)}
+				class="mr-1 flex h-[22px] items-center gap-1 rounded-full bg-(--vscode-activityBarBadge-background) px-2 text-xs text-(--vscode-activityBarBadge-foreground) hover:opacity-90"
+				title="เปิดงานถัดไปที่รอคุณ"
+				onclick={() => (adeTasks.attentionCount ? adeTasks.openNext() : (layout.auxVisible = true))}
 			>
-				รอคุณ {agents.pendingCount}
+				รอคุณ {adeTasks.attentionCount + agents.pendingCount}
 			</button>
 		{/if}
 		{#each toggles as t (t.label)}

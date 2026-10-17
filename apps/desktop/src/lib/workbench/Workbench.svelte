@@ -23,6 +23,7 @@
 	import { workspace } from './workspace.svelte';
 	import { installSettings } from '#lib/settings/apply.svelte.ts';
 	import { registerSettingsCommands } from '#lib/settings/contributions.ts';
+	import { installAde } from '#lib/ade/tasks.svelte.ts';
 
 	let middle: HTMLDivElement | undefined = $state();
 	const workspaceName = $derived(workspace.name);
@@ -119,7 +120,9 @@
 		const uninstallWatcher = workspace.install();
 		const uninstallSettings = installSettings();
 		const unregisterSettings = registerSettingsCommands();
+		const uninstallAde = installAde();
 		return () => {
+			uninstallAde();
 			uninstall();
 			uninstallScm();
 			uninstallWatcher();

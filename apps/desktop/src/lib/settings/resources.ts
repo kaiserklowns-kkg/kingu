@@ -4,9 +4,10 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { settings, USER_SETTINGS_KEY, WORKSPACE_SETTINGS_PATH, SETTINGS_EDITOR_KEY } from './settings.svelte';
+import { isAdeEditor } from '#lib/ade/keys.ts';
 
-/** Tabs with no text model (the Settings editor UI). */
-export const isNonTextEditor = (key: string) => key === SETTINGS_EDITOR_KEY;
+/** Tabs with no text model (the Settings editor UI, ADE task pages and the board). */
+export const isNonTextEditor = (key: string) => key === SETTINGS_EDITOR_KEY || isAdeEditor(key);
 
 export async function readResource(key: string): Promise<string> {
 	if (key === USER_SETTINGS_KEY) {
