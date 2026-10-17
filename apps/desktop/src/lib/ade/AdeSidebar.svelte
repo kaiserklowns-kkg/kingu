@@ -118,7 +118,4 @@
 		{/if}
 	</div>
 
-	<div class="flex h-9 shrink-0 items-center gap-0.5 border-t border-(--vscode-sideBar-border) px-2">
-		<button class={HEADER_ACTION} aria-label="Settings" title="Settings" onclick={() => commands.run('workbench.action.openSettings')}><Icon name="settings" size={16} /></button>
-	</div>
 </div>

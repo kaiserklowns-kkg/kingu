@@ -5,12 +5,10 @@
 	import { scm } from './scm.svelte';
 	import { commands, keyOf } from './commands.svelte';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
-	import { team } from '#lib/team/team.svelte.ts';
 
 	/**
-	 * `vertical`: the activity bar (`workbench.activityBar.location: default`), with Accounts and
-	 * Manage at the bottom. `horizontal`: the view icons at the top of the side bar (`top`), where
-	 * Accounts and Manage are in the title bar instead.
+	 * `vertical`: the activity bar (`workbench.activityBar.location: default`). `horizontal`: the
+	 * view icons at the top of the side bar (`top`). Accounts and Manage are always in the title bar.
 	 */
 	let { orientation = 'vertical' }: { orientation?: 'vertical' | 'horizontal' } = $props();
 	const vertical = $derived(orientation === 'vertical');
@@ -79,7 +77,6 @@
 	{/each}
 	{#if vertical}
 		{@const agentLabel = titled('Agent', 'workbench.action.toggleAuxiliaryBar')}
-		{@const manage = titled('Manage: Settings', 'workbench.action.openSettings')}
 		<button
 			aria-label={agentLabel}
 			aria-pressed={layout.auxVisible}
@@ -91,23 +88,6 @@
 			onclick={() => (layout.auxVisible = !layout.auxVisible)}
 		>
 			<Icon name="agent" size={24} stroke={1.5} />
-		</button>
-		<div class="flex-1"></div>
-		<button
-			aria-label="Accounts"
-			title={team.label?.tooltip ?? 'Accounts'}
-			class="grid size-12 place-items-center text-(--vscode-activityBar-inactiveForeground) hover:text-(--vscode-activityBar-foreground)"
-			onclick={() => team.showMenu()}
-		>
-			<Icon name="account" size={24} stroke={1.5} />
-		</button>
-		<button
-			aria-label={manage}
-			title={manage}
-			class="grid size-12 place-items-center text-(--vscode-activityBar-inactiveForeground) hover:text-(--vscode-activityBar-foreground)"
-			onclick={() => commands.run('workbench.action.openSettings')}
-		>
-			<Icon name="settings" size={24} stroke={1.5} />
 		</button>
 	{/if}
 </nav>

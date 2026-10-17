@@ -325,18 +325,23 @@ export const SETTINGS: SettingSchema[] = [
 		default: true,
 		description: 'แสดงปุ่ม "Open in Agents" ในแถบชื่อเรื่อง (Show the Open in Agents button in the title bar.)',
 		scope: 'application'
-	},
-	{
-		id: 'kingu.agentsLayout.density',
-		group: 'Agent',
-		type: 'string',
-		default: 'default',
-		enum: ['default', 'compact'],
-		enumDescriptions: ['แถบชื่อเรื่อง 44px (44px title bar.)', 'แถบชื่อเรื่อง 35px (35px title bar.)'],
-		description: 'ความหนาแน่นของแถบชื่อเรื่องในโหมด Agents (Title bar density of the Agents layout.)',
-		scope: 'application'
 	}
 ];
+
+/**
+ * The system settings page's table of contents: one settings system for the IDE and the ADE,
+ * grouped by what they affect. Every group in `SETTINGS` belongs to exactly one section.
+ */
+export const SETTINGS_SECTIONS: { id: string; label: string; groups: string[] }[] = [
+	{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Team'] },
+	{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Files', 'Terminal'] },
+	{ id: 'ade', label: 'ADE (Agents)', groups: ['Agent'] }
+];
+
+/** Settings shown for a TOC selection (`null` = all) and a search query (searching spans every group). */
+export function settingsInView(query: string, group: string | null, schemas: SettingSchema[] = SETTINGS): SettingSchema[] {
+	return schemas.filter((s) => (query.trim() ? matchesQuery(s, query) : group === null || s.group === group));
+}
 
 export const SCHEMA = new Map(SETTINGS.map((s) => [s.id, s]));
 

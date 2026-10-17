@@ -5,10 +5,10 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { commands } from '#lib/workbench/commands.svelte.ts';
-import { editors } from '#lib/workbench/editors.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
 import { status as statusBar } from '#lib/workbench/status.svelte.ts';
-import { settings, SETTINGS_EDITOR_KEY } from '#lib/settings/settings.svelte.ts';
+import { settings } from '#lib/settings/settings.svelte.ts';
+import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 import { buildTaskSync, teamStatusLabel, type TeamStatus, type TeamTaskInput } from './team';
 
 type SignedIn = { server: string; org_id: string; org_name: string; user_id: string; role: string };
@@ -43,7 +43,7 @@ class Team {
 	startSignIn() {
 		if (!this.serverUrl) {
 			statusBar.flash('ตั้งค่า kingu.team.serverUrl ก่อนลงชื่อเข้าใช้ทีม');
-			editors.open(SETTINGS_EDITOR_KEY, { preview: false });
+			systemSettings.show('Team');
 			return;
 		}
 		this.signingIn = true;

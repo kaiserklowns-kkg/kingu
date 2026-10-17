@@ -8,7 +8,8 @@ import { status } from '#lib/workbench/status.svelte.ts';
 import { theme } from '#lib/theme/theme.svelte.ts';
 import { findTheme, THEMES } from '#lib/theme/themes.ts';
 import { SCHEMA } from './registry';
-import { SETTINGS_EDITOR_KEY, settings, USER_SETTINGS_KEY, WORKSPACE_SETTINGS_PATH } from './settings.svelte';
+import { settings, USER_SETTINGS_KEY, WORKSPACE_SETTINGS_PATH } from './settings.svelte';
+import { systemSettings } from './systemSettings.svelte';
 
 const GROUPS: Record<string, string> = { light: 'light themes', dark: 'dark themes', hcDark: 'high contrast themes', hcLight: 'high contrast themes' };
 
@@ -50,13 +51,13 @@ export function registerSettingsCommands(): () => void {
 			title: 'Open Settings (UI)',
 			category: 'Preferences',
 			key: 'cmd+,',
-			run: () => editors.open(SETTINGS_EDITOR_KEY, { preview: false })
+			run: () => systemSettings.show()
 		}),
 		commands.register({
 			id: 'workbench.action.openSettingsJson',
 			title: 'Open User Settings (JSON)',
 			category: 'Preferences',
-			run: () => editors.open(USER_SETTINGS_KEY, { preview: false })
+			run: () => (systemSettings.close(), editors.open(USER_SETTINGS_KEY, { preview: false }))
 		}),
 		commands.register({
 			id: 'workbench.action.openWorkspaceSettingsFile',
@@ -66,6 +67,7 @@ export function registerSettingsCommands(): () => void {
 			when: () => workspace.root !== null,
 			run: async () => {
 				await settings.ensureFile('workspace');
+				systemSettings.close();
 				editors.open(WORKSPACE_SETTINGS_PATH, { preview: false });
 			}
 		}),

@@ -4,7 +4,7 @@
 	// workbench.sideBar.location / workbench.panel.defaultLocation / workbench.panel.alignment
 	// (workbenchGrid.ts). Agents mode swaps the title bar and shows the Agents layout instead of the
 	// body and status bar, which stay mounted (hidden) so editors and terminals keep their state.
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import { ask, message } from '@tauri-apps/plugin-dialog';
 	import AgentPanel from '#lib/agent/AgentPanel.svelte';
@@ -36,7 +36,20 @@
 	import { gridTemplateAreas, gridTemplateColumns, gridTemplateRows, workbenchGrid, type PanelAlignment, type PanelLocation, type SideBarLocation } from './workbenchGrid';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import AgentsLayout from '#lib/ade/AgentsLayout.svelte';
+	import SettingsPage from '#lib/settings/SettingsPage.svelte';
+	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 	import { installAgentsMode } from '#lib/ade/agentsMode.svelte.ts';
+
+	// Opening a file or diff (Quick Open, a review file, settings.json) closes the system settings page.
+	// `editors.active` also re-runs on focus changes, so only a different editor closes it.
+	let lastActive = untrack(() => editors.active);
+	$effect(() => {
+		const active = editors.active;
+		if (active === lastActive) return;
+		lastActive = active;
+		untrack(() => systemSettings.close());
+	});
+
 
 	let middle: HTMLDivElement | undefined = $state();
 	const workspaceName = $derived(workspace.name);
@@ -246,7 +259,7 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 	<!-- One title bar and one status bar for the IDE and the Agents layout. -->
 	<TitleBar workspaceName={workspaceName || 'Kingu'} {focused} />
 
-	<div bind:this={middle} class={['workbench-body grid min-h-0 flex-1', appMode.isAgents && 'hidden']}
+	<div bind:this={middle} class={['workbench-body grid min-h-0 flex-1', (appMode.isAgents || systemSettings.visible) && 'hidden']}
 		style:grid-template-areas={gridTemplateAreas(grid)}
 		style:grid-template-columns={gridTemplateColumns(grid)}
 		style:grid-template-rows={gridTemplateRows(grid)}
@@ -315,7 +328,9 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 	</div>
 
 	<!-- Kept mounted (hidden in the IDE) so the ADE's worktree terminals keep running. -->
-	<div class={['contents', !appMode.isAgents && '[&>*]:hidden']}><AgentsLayout /></div>
+	<div class={['contents', (!appMode.isAgents || systemSettings.visible) && '[&>*]:hidden']}><AgentsLayout /></div>
+	<!-- System settings (IDE + ADE) over the content of either mode. -->
+	{#if systemSettings.visible}<SettingsPage />{/if}
 
 	<StatusBar />
 	<QuickInput />

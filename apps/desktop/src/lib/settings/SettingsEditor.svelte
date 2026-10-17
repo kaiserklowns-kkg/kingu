@@ -1,10 +1,12 @@
 <script lang="ts">
 	// Simplified VS Code Settings editor (settingsEditor2): search, User/Workspace scope tabs,
 	// grouped settings with a control per type, and a jump to the settings.json being edited.
+	// `group` narrows it to one group (the system settings page's table of contents); a search
+	// always spans every group.
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { commands } from '#lib/workbench/commands.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
-	import { allowedIn, matchesQuery, settingTitle, SETTINGS, validate, type SettingSchema, type SettingScope } from './registry';
+	import { allowedIn, settingsInView, settingTitle, validate, type SettingSchema, type SettingScope } from './registry';
 	import { settings } from './settings.svelte';
 
 	const SCOPES: [SettingScope, string][] = [
@@ -12,10 +14,10 @@
 		['workspace', 'Workspace']
 	];
 
-	let query = $state('');
+	let { group = null, query = $bindable('') }: { group?: string | null; query?: string } = $props();
 	let scope = $state<SettingScope>('user');
 
-	const visible = $derived(SETTINGS.filter((s) => matchesQuery(s, query)));
+	const visible = $derived(settingsInView(query, group));
 	const groups = $derived.by(() => {
 		const out = new Map<string, SettingSchema[]>();
 		for (const s of visible) out.set(s.group, [...(out.get(s.group) ?? []), s]);

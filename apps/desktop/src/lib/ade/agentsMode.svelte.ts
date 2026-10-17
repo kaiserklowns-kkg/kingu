@@ -14,6 +14,7 @@ import { COLUMNS, STATUS_LABEL } from './model';
 import { BOARD_KEY, slugOfTaskKey, taskKey, worktreeDir } from './keys';
 import { adeTasks } from './tasks.svelte';
 import { adeLayout, PRIMARY } from './adeLayout.svelte';
+import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 
 /** The session to show when entering the Agents layout: the task tab in front, else the last one, else the first needing attention. */
 function initialSession(): string | null {
@@ -44,6 +45,7 @@ export function openEditor() {
 }
 
 export function toggleAgentsMode() {
+	systemSettings.close();
 	if (appMode.isAgents) openEditor();
 	else openAgents();
 }

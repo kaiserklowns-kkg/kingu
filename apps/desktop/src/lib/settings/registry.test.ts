@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { jsonSchema, matchesQuery, resolveSettings, SCHEMA, SETTINGS, settingTitle, validate } from './registry';
+import { jsonSchema, matchesQuery, resolveSettings, SCHEMA, SETTINGS, SETTINGS_SECTIONS, settingsInView, settingTitle, validate } from './registry';
 
 const value = (m: ReturnType<typeof resolveSettings>, id: string) => m.get(id);
 
@@ -104,8 +104,7 @@ describe('schema', () => {
 			'workbench.panel.defaultLocation': 'bottom',
 			'workbench.panel.alignment': 'center',
 			'kingu.agentsControl.enabled': 'compact',
-			'kingu.titleBar.openInAgents.enabled': true,
-			'kingu.agentsLayout.density': 'default'
+			'kingu.titleBar.openInAgents.enabled': true
 		};
 		for (const [id, v] of Object.entries(expected)) expect([id, m.get(id)?.value]).toEqual([id, v]);
 		expect(String(m.get('window.title')?.value)).toContain('${activeEditorShort}${separator}${rootName}');
@@ -115,5 +114,18 @@ describe('schema', () => {
 		}
 		expect(SCHEMA.get('kingu.agentsControl.enabled')).toMatchObject({ enum: ['hidden', 'badge', 'compact'] });
 		expect(resolveSettings({ 'workbench.layoutControl.type': 'sideways' }, {}).get('workbench.layoutControl.type')?.source).toBe('default');
+	});
+});
+
+describe('settings sections', () => {
+	test('every group belongs to exactly one section', () => {
+		const groups = new Set(SETTINGS.map((s) => s.group));
+		for (const g of groups) expect(SETTINGS_SECTIONS.filter((sec) => sec.groups.includes(g))).toHaveLength(1);
+		for (const sec of SETTINGS_SECTIONS) for (const g of sec.groups) expect(groups.has(g)).toBe(true);
+	});
+	test('a group filters, a query searches everything', () => {
+		expect(settingsInView('', 'Terminal').every((s) => s.group === 'Terminal')).toBe(true);
+		expect(settingsInView('', null)).toHaveLength(SETTINGS.length);
+		expect(settingsInView('fontSize', 'Agent').map((s) => s.id)).toEqual(['editor.fontSize', 'terminal.integrated.fontSize']);
 	});
 });

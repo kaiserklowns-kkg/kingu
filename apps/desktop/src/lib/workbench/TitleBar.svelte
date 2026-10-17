@@ -3,8 +3,8 @@
 	// 35px (30px without the command center), left 20% / center (fit-content, max 60%) / right 20%.
 	// Left: the macOS traffic-light inset, or the Kingu mark and the in-window menu bar.
 	// Center: the command center and Open in Agents / Open in Editor next to it (the same
-	// title bar serves the IDE and the Agents layout). Right: layout controls, and Accounts/Manage when
-	// the activity bar is not showing them. Any non-interactive part drags the window.
+	// title bar serves the IDE and the Agents layout). Right: layout controls, then Accounts and
+	// Manage (always here, in both modes). Any non-interactive part drags the window.
 	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import CommandCenter from './CommandCenter.svelte';
@@ -80,10 +80,9 @@
 	const menuBarVisibility = $derived(settings.get<'classic' | 'compact' | 'hidden'>('window.menuBarVisibility'));
 	const label = $derived(commandCenterLabel({ folderName: workspace.root ? workspaceName : null, title, customTitle: isCustomTitle(template, isMac) }));
 	const layoutItems = $derived(layoutControlItems(settings.get<boolean>('workbench.layoutControl.enabled'), settings.get<LayoutControlType>('workbench.layoutControl.type')));
-	const globalActions = $derived(settings.get<string>('workbench.activityBar.location') !== 'default');
 	// Open in Agents sits next to the command center (VS Code's TitleBarAdjacentCenter), not in the right toolbar.
 	const openInAgents = $derived(settings.get<boolean>('kingu.titleBar.openInAgents.enabled'));
-	const toolbar = $derived(titleToolbar({ openInAgents: false, layout: layoutItems, globalActions }));
+	const toolbar = $derived(titleToolbar({ openInAgents: false, layout: layoutItems, globalActions: true }));
 
 	// Overflow: items next to the center hide first (VS Code `.overflowing`).
 	let right: HTMLDivElement | undefined = $state();
@@ -115,12 +114,22 @@
 	});
 
 	// --- Menus ---------------------------------------------------------------------------------
-	type Popup = { kind: 'context' | 'layout' | 'hamburger'; x: number; y: number; keyboard: boolean };
+	type Popup = { kind: 'context' | 'layout' | 'hamburger' | 'manage'; x: number; y: number; keyboard: boolean };
 	let popup = $state<Popup | null>(null);
 
 	const popupItems = $derived.by((): MenuNode[] => {
 		if (!popup) return [];
 		if (popup.kind === 'hamburger') return currentMenubar(false);
+		// VS Code's Manage (gear) menu; settings are one system page for the IDE and the ADE.
+		if (popup.kind === 'manage')
+			return [
+				menuItem('workbench.action.showCommands', 'Command Palette...', { keyLabel: key('workbench.action.showCommands') }),
+				menuSeparator,
+				menuItem('workbench.action.openSettings', 'Settings', { keyLabel: key('workbench.action.openSettings') }),
+				menuItem('workbench.action.openSettingsJson', 'Settings (JSON)'),
+				menuSeparator,
+				menuItem('workbench.action.selectTheme', 'Themes: Color Theme', { keyLabel: key('workbench.action.selectTheme') })
+			];
 		if (popup.kind === 'layout')
 			return [
 				menuItem('workbench.action.toggleSidebarVisibility', 'Primary Side Bar', { checked: layout.sidebarVisible, keyLabel: key('workbench.action.toggleSidebarVisibility') }),
@@ -252,7 +261,7 @@
 			</button>
 		{/if}
 		{#if shown('manage')}
-			<button aria-label="Manage" title="Manage: Settings{hint('workbench.action.openSettings')}" class={ACTION} onclick={() => commands.run('workbench.action.openSettings')}>
+			<button aria-label="Manage" title="Manage" aria-haspopup="menu" class={ACTION} onclick={(e) => openBelow('manage', e, true)}>
 				<Icon name="settings" size={16} />
 			</button>
 		{/if}
@@ -262,7 +271,7 @@
 {#if popup}
 	<PopupMenu
 		items={popupItems}
-		label={popup.kind === 'context' ? 'Title Bar' : popup.kind === 'layout' ? 'Layout' : 'Application Menu'}
+		label={popup.kind === 'context' ? 'Title Bar' : popup.kind === 'layout' ? 'Layout' : popup.kind === 'manage' ? 'Manage' : 'Application Menu'}
 		x={popup.x}
 		y={popup.y}
 		focusFirst={popup.keyboard}
