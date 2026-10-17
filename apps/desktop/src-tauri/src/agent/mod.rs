@@ -32,6 +32,7 @@ pub async fn agent_start(
   model: Option<String>,
   permission_mode: Option<String>,
   resume: Option<String>,
+  mcp_servers: Option<std::collections::BTreeMap<String, host::McpServer>>,
   on_event: Channel<AgentEvent>,
 ) -> Result<u32, String> {
   worktree::validate_slug(&slug)?;
@@ -48,12 +49,16 @@ pub async fn agent_start(
   {
     return Err("invalid session id to resume".into());
   }
+  if let Some(servers) = &mcp_servers {
+    host::validate_mcp_servers(servers)?;
+  }
   let cwd = worktree::worktree_path(&ws.root()?, &slug);
   if !cwd.is_dir() {
     return Err(format!("{slug}: no worktree, create it first"));
   }
   let cwd = cwd.to_str().ok_or("worktree path is not valid UTF-8")?.to_owned();
-  let req = host::StartRequest { cwd, prompt, model: model.filter(|m| !m.trim().is_empty()), permission_mode, resume };
+  let mcp_servers = mcp_servers.filter(|m| !m.is_empty());
+  let req = host::StartRequest { cwd, prompt, model: model.filter(|m| !m.trim().is_empty()), permission_mode, resume, mcp_servers };
   let resuming = req.resume.is_some();
   let agents = agents.inner().clone();
   // Spawning the sidecar and its first answer can take a moment: keep it off the main thread.

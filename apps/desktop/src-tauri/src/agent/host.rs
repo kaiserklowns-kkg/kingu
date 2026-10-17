@@ -131,6 +131,36 @@ pub struct StartRequest {
   pub model: Option<String>,
   pub permission_mode: Option<String>,
   pub resume: Option<String>,
+  /// MCP servers for the run (from trusted Snaps); omitted when there are none.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub mcp_servers: Option<std::collections::BTreeMap<String, McpServer>>,
+}
+
+/// A stdio MCP server handed to an agent run (the SDK's `mcpServers` entry without `type`).
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct McpServer {
+  pub command: String,
+  #[serde(default)]
+  pub args: Vec<String>,
+  #[serde(default)]
+  pub env: std::collections::BTreeMap<String, String>,
+}
+
+/// Server names are `<snap>-<server>` (lowercase, digits, `-`); commands must not be empty.
+pub fn validate_mcp_servers(servers: &std::collections::BTreeMap<String, McpServer>) -> Result<(), String> {
+  if servers.len() > 32 {
+    return Err("too many MCP servers".into());
+  }
+  for (name, s) in servers {
+    let ok_name = !name.is_empty() && name.len() <= 81 && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    if !ok_name {
+      return Err(format!("{name}: invalid MCP server name"));
+    }
+    if s.command.trim().is_empty() || s.command.contains('\0') || s.args.iter().any(|a| a.contains('\0')) {
+      return Err(format!("{name}: invalid MCP server command"));
+    }
+  }
+  Ok(())
 }
 
 struct Proc {
@@ -525,6 +555,22 @@ exit 3"#
     let second = host.start(req("/w"), sink).unwrap();
     assert_ne!(first, second);
     assert!(matches!(next(&rx), AgentEvent::Message { .. }));
+  }
+
+  #[test]
+  fn mcp_servers_are_validated_and_sent_as_camel_case() {
+    use std::collections::BTreeMap;
+    let mut servers = BTreeMap::new();
+    servers.insert("go-gopls".to_string(), McpServer { command: "gopls".into(), args: vec!["mcp".into()], env: BTreeMap::new() });
+    assert!(validate_mcp_servers(&servers).is_ok());
+    let wire = serde_json::to_value(StartRequest { cwd: "/w".into(), prompt: "x".into(), mcp_servers: Some(servers.clone()), ..Default::default() }).unwrap();
+    assert_eq!(wire["mcpServers"]["go-gopls"]["args"], json!(["mcp"]));
+    let mut bad = servers.clone();
+    bad.insert("Bad Name".into(), McpServer { command: "x".into(), ..Default::default() });
+    assert!(validate_mcp_servers(&bad).is_err());
+    let mut empty = BTreeMap::new();
+    empty.insert("a".to_string(), McpServer { command: " ".into(), ..Default::default() });
+    assert!(validate_mcp_servers(&empty).is_err());
   }
 
   #[test]

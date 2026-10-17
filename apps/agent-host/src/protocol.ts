@@ -16,6 +16,8 @@ export type StartParams = {
 	permissionMode?: PermissionMode | null;
 	/** Session id to continue (from an earlier `system`/`result` event). */
 	resume?: string | null;
+	/** Stdio MCP servers for this run (from trusted Snaps), by name. */
+	mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>;
 };
 export type SendParams = { runId: number; text: string };
 export type RunParams = { runId: number };

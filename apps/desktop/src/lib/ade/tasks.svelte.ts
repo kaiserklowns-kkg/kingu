@@ -48,6 +48,7 @@ import { runtime } from './runtime.svelte';
 import { adeLayout } from './adeLayout.svelte';
 import { cliAgent, cliOf, cliResume, cliStart, parseCliCommand, type RunMode } from './agentCli';
 import { cliSessions } from './cliSessions.svelte';
+import { cliWithMcp, mcpServers } from './mcp';
 import { settings } from '#lib/settings/settings.svelte.ts';
 
 class AdeTasks {
@@ -226,7 +227,8 @@ class AdeTasks {
 		await this.#save([...this.list, newTask({ slug, title, prompt, base, agent: cli ? cliAgent(cli) : undefined }, Date.now())]);
 		this.worktrees = (await invoke<WorktreeInfo[]>('worktree_list').catch(() => this.worktrees)).filter((w) => w.slug);
 		this.openTask(slug);
-		if (cli) cliSessions.start(slug, cliStart(cli, prompt));
+		// After the prompt: claude's --mcp-config takes several values and would swallow it.
+		if (cli) cliSessions.start(slug, cliWithMcp(cliStart(cli, prompt), mcpServers()));
 		else await this.run(slug, prompt);
 		return slug;
 	}
@@ -237,7 +239,7 @@ class AdeTasks {
 		const cli = meta && cliOf(meta.agent);
 		if (!cli) return;
 		const resume = fresh ? null : cliResume(cli);
-		cliSessions.start(slug, resume ?? cli);
+		cliSessions.start(slug, cliWithMcp(resume ?? cli, mcpServers()));
 	}
 
 	/** Starts the agent in the task worktree through the agents store. */
