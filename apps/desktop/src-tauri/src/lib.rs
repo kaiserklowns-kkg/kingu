@@ -1,3 +1,4 @@
+mod agent;
 mod pty;
 
 use std::path::{Path, PathBuf};
@@ -83,11 +84,65 @@ fn pty_spawn(
   Ok(id)
 }
 
+#[tauri::command]
+fn worktree_create(
+  ws: State<'_, Workspace>,
+  slug: String,
+  base: Option<String>,
+) -> Result<agent::worktree::WorktreeInfo, String> {
+  agent::worktree::create(&ws.root, &slug, base.as_deref())
+}
+
+#[tauri::command]
+fn worktree_list(ws: State<'_, Workspace>) -> Result<Vec<agent::worktree::WorktreeInfo>, String> {
+  agent::worktree::list(&ws.root)
+}
+
+#[tauri::command]
+fn worktree_remove(
+  ws: State<'_, Workspace>,
+  slug: String,
+  force: Option<bool>,
+  delete_branch: Option<bool>,
+) -> Result<(), String> {
+  agent::worktree::remove(&ws.root, &slug, force.unwrap_or(false), delete_branch.unwrap_or(false))
+}
+
+/// Runs Claude Code headless in the task's worktree; events stream over `on_event`.
+#[tauri::command]
+fn agent_start(
+  ws: State<'_, Workspace>,
+  agents: State<'_, agent::Agents>,
+  slug: String,
+  prompt: String,
+  on_event: Channel<agent::AgentEvent>,
+) -> Result<u32, String> {
+  agent::worktree::validate_slug(&slug)?;
+  if prompt.trim().is_empty() {
+    return Err("prompt is empty".into());
+  }
+  let cwd = agent::worktree::worktree_path(&ws.root, &slug);
+  if !cwd.is_dir() {
+    return Err(format!("{slug}: no worktree, create it first"));
+  }
+  let env = agent::runner::allowed_env(std::env::vars_os());
+  let launch = agent::runner::claude_launch(agents.claude_bin.clone(), &prompt, cwd, env);
+  let id = agents.start(
+    launch,
+    std::sync::Arc::new(move |ev| {
+      let _ = on_event.send(ev);
+    }),
+  )?;
+  log::info!("agent run {id} started for task {slug}");
+  Ok(id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
     .manage(Workspace::from_env())
     .manage(pty::Ptys::default())
+    .manage(agent::Agents::default())
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -105,7 +160,12 @@ pub fn run() {
       pty_spawn,
       pty::pty_write,
       pty::pty_resize,
-      pty::pty_kill
+      pty::pty_kill,
+      worktree_create,
+      worktree_list,
+      worktree_remove,
+      agent_start,
+      agent::agent_stop
     ])
     .run(tauri::generate_context!())
     .expect("error while building tauri application");
@@ -119,6 +179,8 @@ mod tests {
   fn rejects_paths_outside_the_workspace() {
     let ws = Workspace { root: std::env::current_dir().unwrap().canonicalize().unwrap() };
     assert!(ws.resolve("Cargo.toml").is_ok());
-    assert!(ws.resolve("../../../../../../etc/hosts").unwrap_err().contains("outside"));
+    // Enough `..` to reach `/` however deep the checkout is (e.g. inside a git worktree).
+    let escape = format!("{}etc/hosts", "../".repeat(64));
+    assert!(ws.resolve(&escape).unwrap_err().contains("outside"));
   }
 }
