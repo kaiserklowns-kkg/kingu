@@ -36,6 +36,7 @@
 	import { gridTemplateAreas, gridTemplateColumns, gridTemplateRows, workbenchGrid, type PanelAlignment, type PanelLocation, type SideBarLocation } from './workbenchGrid';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import AgentsLayout from '#lib/ade/AgentsLayout.svelte';
+	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 	import SettingsPage from '#lib/settings/SettingsPage.svelte';
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 	import { installAgentsMode } from '#lib/ade/agentsMode.svelte.ts';
@@ -146,9 +147,11 @@
 				category: 'View',
 				key: 'cmd+w',
 				// An empty group closes itself when it is not the only one (VS Code closes the group).
-				when: () => editors.active !== null || editors.groups.length > 1,
+				when: () => editors.active !== null || editors.groups.length > 1 || (appMode.isAgents && adeLayout.activeFile() !== null),
 				run: () => {
-					if (!editors.active) editors.removeGroup();
+					const adeFile = appMode.isAgents ? adeLayout.activeFile() : null;
+					if (adeFile) void adeLayout.closeFile(adeLayout.key, adeFile);
+					else if (!editors.active) editors.removeGroup();
 					else if (!editors.close(editors.active)) status.flash('มีการแก้ไขที่ยังไม่บันทึก: กด ⌘S ก่อนปิด');
 				}
 			}),

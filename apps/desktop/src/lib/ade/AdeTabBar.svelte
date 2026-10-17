@@ -1,8 +1,13 @@
 <script lang="ts">
 	// Tab row of the Agents layout's center (Orca's worktree tabs): the selected worktree's agent
-	// session (or the new-task composer for the folder itself), its terminals, and "+" for a new
-	// terminal in that worktree; "N รอคุณ" at the end. Tasks (the board) shows as its own tab.
+	// session (or the new-task composer for the folder itself), its terminals, files and task diffs
+	// opened from the right side bar (italic while a preview, a dot while unsaved), and "+" for a
+	// new terminal in that worktree; "N รอคุณ" at the end. Tasks (the board) shows as its own tab.
+	import FileIcon from '#lib/workbench/FileIcon.svelte';
 	import Icon from '#lib/workbench/Icon.svelte';
+	import { editors } from '#lib/workbench/editors.svelte.ts';
+	import { fileIcon } from '#lib/workbench/fileIcons.ts';
+	import { fileOf } from '#lib/workbench/scm.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { adeLayout } from './adeLayout.svelte';
 	import { pickSession } from './agentsMode.svelte';
@@ -39,21 +44,34 @@
 					class={[TAB, active ? ACTIVE : INACTIVE]}
 					onclick={() => adeLayout.select(key, t.id)}
 					onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), adeLayout.select(key, t.id))}
-					onauxclick={(e) => e.button === 1 && t.kind === 'terminal' && adeLayout.closeTerminal(key, t.id)}
+					onauxclick={(e) => e.button === 1 && t.kind !== 'agent' && t.kind !== 'compose' && adeLayout.close(key, t.id)}
+					ondblclick={() => (t.kind === 'file' || t.kind === 'diff') && adeLayout.pin(key, t.key)}
 				>
 					{#if t.kind === 'agent' && view}
 						<span class={['size-2 shrink-0 rounded-full', STATUS_DOT[view.status]]} title={STATUS_LABEL[view.status]}></span>
 						<span class="truncate" title={view.meta.title}>{view.meta.title}</span>
+					{:else if t.kind === 'file' || t.kind === 'diff'}
+						<FileIcon icon={fileIcon(t.label)} />
+						<span class={['truncate', t.preview && 'italic']} title={t.kind === 'diff' ? `${fileOf(t.key)} (diff ของงาน)` : t.key}>{t.label}</span>
+						{#if t.kind === 'diff'}<Icon name="git" size={12} />{/if}
 					{:else}
 						<Icon name={t.kind === 'compose' ? 'agent' : 'terminal'} size={14} /><span class="truncate">{t.label}</span>
 					{/if}
-					{#if t.kind === 'terminal'}
+					{#if t.kind !== 'agent' && t.kind !== 'compose'}
+						{@const dirty = t.kind === 'file' && editors.isDirty(t.key)}
 						<button
-							class={['grid size-5 shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)', !active && 'invisible group-hover:visible']}
-							aria-label="ปิด {t.label}"
+							class={['grid size-5 shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)', !active && !dirty && 'invisible group-hover:visible']}
+							aria-label={dirty ? `${t.label} ยังไม่บันทึก: ปิด` : `ปิด ${t.label}`}
 							title="ปิด"
-							onclick={(e) => (e.stopPropagation(), adeLayout.closeTerminal(key, t.id))}><Icon name="close" size={13} /></button
+							onclick={(e) => (e.stopPropagation(), adeLayout.close(key, t.id))}
 						>
+							{#if dirty}
+								<span class="size-2 rounded-full bg-current group-hover:hidden"></span>
+								<span class="hidden group-hover:block"><Icon name="close" size={13} /></span>
+							{:else}
+								<Icon name="close" size={13} />
+							{/if}
+						</button>
 					{:else}
 						<span class="w-1"></span>
 					{/if}

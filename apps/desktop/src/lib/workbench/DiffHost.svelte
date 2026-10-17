@@ -1,7 +1,8 @@
 <script lang="ts">
 	// Side-by-side diff for Source Control tabs (`diff:<file>`): HEAD on the left, the working
 	// copy on the right (VS Code's "file (Working Tree)" editor). Read-only: edits go through the
-	// file's own tab. Mounted per editor group only while that group has a diff tab open.
+	// file's own tab. Mounted per editor group only while that group has a diff tab open, and in
+	// the Agents layout for its diff tabs. `active` is the shown tab's key; `onfail` closes it.
 	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import type * as Monaco from 'monaco-editor';
@@ -11,8 +12,8 @@
 	import { scm } from './scm.svelte';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 
-	let { group }: { group: number } = $props();
-	const activeKey = $derived(editors.group(group)?.active ?? null);
+	let { active, onfail, reportLanguage = false }: { active: string | null; onfail: (key: string) => void; reportLanguage?: boolean } = $props();
+	const activeKey = $derived(active);
 	let shownLanguage = $state('');
 
 	let host: HTMLDivElement;
@@ -81,7 +82,7 @@
 			const [orig, work] = await Promise.all([original(key, rel), workingCopy(m, rel)]);
 			const head = orig.text;
 			const headPath = orig.path;
-			if (my !== seq || !diff || editors.group(group)?.active !== key) return;
+			if (my !== seq || !diff || active !== key) return;
 			const language = m.languageFor(rel);
 			// Fresh URIs each time: the old pair is disposed only after the new one is shown.
 			const next = {
@@ -98,7 +99,7 @@
 			shownLanguage = language;
 		} catch (e) {
 			clientLog('error', `diff ${rel}: ${e}`);
-			editors.close(key, { force: true, group });
+			onfail(key);
 		}
 	}
 
@@ -112,7 +113,7 @@
 
 	// The status bar language follows the active group's diff.
 	$effect(() => {
-		if (editors.activeGroupId === group && activeKey && isDiffKey(activeKey) && shownLanguage) editors.language = shownLanguage;
+		if (reportLanguage && activeKey && isDiffKey(activeKey) && shownLanguage) editors.language = shownLanguage;
 	});
 </script>
 

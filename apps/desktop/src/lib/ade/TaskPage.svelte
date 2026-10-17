@@ -6,7 +6,7 @@
 	import { untrack } from 'svelte';
 	import AgentTimeline from '#lib/agent/AgentTimeline.svelte';
 	import Icon from '#lib/workbench/Icon.svelte';
-	import { splitPath } from '#lib/workbench/scm.ts';
+	import { splitPath, taskDiffKey } from '#lib/workbench/scm.ts';
 	import { keyLabel } from '#lib/workbench/keys.ts';
 	import { aggregateStats, formatSummaryUsage, reviewChip, STATUS_LABEL, timeAgo, type FileChange } from './model';
 	import { runtime } from './runtime.svelte';
@@ -58,6 +58,11 @@
 	const statusText = (f: FileChange) =>
 		({ M: 'แก้ไข', A: 'เพิ่ม', D: 'ลบ', R: 'เปลี่ยนชื่อ', C: 'คัดลอก', T: 'เปลี่ยนชนิด', '?': 'ไฟล์ใหม่ (untracked)' })[f.status] ?? f.status;
 	const letter = (f: FileChange) => (f.status === '?' ? 'U' : f.status);
+	/** In the Agents layout the diff opens as a tab of the task's worktree; in the IDE as an editor tab. */
+	function openDiff(rel: string) {
+		if (appMode.isAgents) adeLayout.openFile(slug, taskDiffKey(slug, rel));
+		else void adeTasks.openDiff(slug, rel);
+	}
 
 	function reject(f: FileChange) {
 		const paths = f.orig_path ? [f.path, f.orig_path] : [f.path];
@@ -208,7 +213,7 @@
 									title={ok ? 'ยอมรับแล้ว (คลิกเพื่อยกเลิก)' : 'ยอมรับไฟล์นี้'}
 									onclick={() => adeTasks.toggleAccept(slug, f.path)}><Icon name="check" size={12} /></button
 								>
-								<button class="flex min-w-0 flex-1 items-baseline gap-1.5 text-left" title="{statusText(f)}: {f.orig_path ? `${f.orig_path} → ` : ''}{f.path} (เปิด diff)" onclick={() => adeTasks.openDiff(slug, f.path)}>
+								<button class="flex min-w-0 flex-1 items-baseline gap-1.5 text-left" title="{statusText(f)}: {f.orig_path ? `${f.orig_path} → ` : ''}{f.path} (เปิด diff)" onclick={() => openDiff(f.path)}>
 									<span class={['truncate', f.status === 'D' && 'line-through', ok && 'opacity-60']}>{name}</span>
 									<span class="truncate text-[11px] text-(--vscode-descriptionForeground)">{f.orig_path ? `← ${f.orig_path}` : dir}</span>
 								</button>

@@ -1,14 +1,16 @@
 <script lang="ts">
 	// Files of one worktree for the Agents layout's right side bar (Orca's file explorer): a lazy
-	// tree with a name filter over the loaded folders. A click opens the file in the editor.
+	// tree with a name filter over the loaded folders. A click opens the file as a preview tab of
+	// the worktree in the Agents layout's center (Orca keeps files next to the agent); a double
+	// click keeps the tab.
 	import { untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import FileIcon from '#lib/workbench/FileIcon.svelte';
 	import Icon from '#lib/workbench/Icon.svelte';
-	import { editors } from '#lib/workbench/editors.svelte.ts';
 	import { fileIcon, folderIcon } from '#lib/workbench/fileIcons.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { worktreeDir } from './keys';
+	import { adeLayout } from './adeLayout.svelte';
 
 	type Entry = { name: string; rel: string; is_dir: boolean };
 	type Row = Entry & { depth: number; open: boolean };
@@ -62,9 +64,9 @@
 		return out;
 	});
 
-	function activate(r: Row) {
+	function activate(r: Row, preview = true) {
 		if (r.is_dir) void toggle(r.rel);
-		else editors.open(r.rel, { preview: true });
+		else adeLayout.openFile(slug, r.rel, { preview });
 	}
 </script>
 
@@ -96,6 +98,7 @@
 				style:padding-left="{8 + r.depth * 12}px"
 				title={r.rel}
 				onclick={() => activate(r)}
+				ondblclick={() => !r.is_dir && activate(r, false)}
 			>
 				<span class="grid w-4 shrink-0 place-items-center text-(--vscode-icon-foreground)">
 					{#if r.is_dir}<Icon name={r.open ? 'chevronDown' : 'chevronRight'} size={14} />{/if}
