@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
-	import { commands } from './commands.svelte';
+	import { commands, keyOf } from './commands.svelte';
 	import { editors } from './editors.svelte';
 	import FileIcon from './FileIcon.svelte';
 	import { fileIcon, type FileIconSpec } from './fileIcons';
@@ -49,7 +49,7 @@
 			const label = (c: (typeof all)[number]) => (c.category ? `${c.category}: ${c.title}` : c.title);
 			return rank(q, all, label, 100).map(({ item, match }) => ({
 				label: label(item),
-				key: item.key,
+				key: keyOf(item),
 				match,
 				run: () => commands.run(item.id)
 			}));

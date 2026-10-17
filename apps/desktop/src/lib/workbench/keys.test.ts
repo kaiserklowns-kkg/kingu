@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { eventLabel, isModifierKey, keyLabel, splitKeybinding } from './keys';
+import { eventLabel, isModifierKey, keyLabel, matches, parseChord, splitKeybinding } from './keys';
 
 describe('two-part chords', () => {
 	test('split and label like VS Code', () => {
@@ -16,5 +16,22 @@ describe('two-part chords', () => {
 		expect(eventLabel({ ...e, metaKey: false, ctrlKey: true }, false)).toBe('Ctrl+K');
 		expect(isModifierKey({ key: 'Meta' })).toBe(true);
 		expect(isModifierKey({ key: 't' })).toBe(false);
+	});
+});
+
+describe('Go Back / Go Forward chords', () => {
+	const ev = (code: string, key: string, mods: Partial<KeyboardEvent> = {}) => ({ code, key, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, ...mods });
+
+	test('⌃⇧- matches by code although Shift turns the key into `_`', () => {
+		expect(matches(parseChord('ctrl+-', true), ev('Minus', '-', { ctrlKey: true }))).toBe(true);
+		expect(matches(parseChord('ctrl+shift+-', true), ev('Minus', '_', { ctrlKey: true, shiftKey: true }))).toBe(true);
+		expect(matches(parseChord('ctrl+-', true), ev('Minus', '_', { ctrlKey: true, shiftKey: true }))).toBe(false);
+	});
+
+	test('arrow keys are `left`/`right` in keybindings', () => {
+		expect(matches(parseChord('alt+left', false), ev('ArrowLeft', 'ArrowLeft', { altKey: true }))).toBe(true);
+		expect(keyLabel('ctrl+shift+cmd+right', true)).toBe('⌃⇧⌘→');
+		expect(keyLabel('alt+left', false)).toBe('Alt+LeftArrow');
+		expect(keyLabel('f12', true)).toBe('F12');
 	});
 });

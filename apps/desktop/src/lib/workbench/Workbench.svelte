@@ -3,6 +3,7 @@
 	// VERTICAL [ titlebar | HORIZONTAL [ activitybar | sidebar | VERTICAL [ editor | panel ] | auxiliarybar ] | statusbar ]
 	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
+	import { ask, message } from '@tauri-apps/plugin-dialog';
 	import AgentPanel from '#lib/agent/AgentPanel.svelte';
 	import ActivityBar from './ActivityBar.svelte';
 	import EditorPart from './EditorPart.svelte';
@@ -12,7 +13,7 @@
 	import SideBar from './SideBar.svelte';
 	import StatusBar from './StatusBar.svelte';
 	import TitleBar from './TitleBar.svelte';
-	import { commands, installKeybindings } from './commands.svelte';
+	import { commands, installKeybindings, keyOf } from './commands.svelte';
 	import { editors } from './editors.svelte';
 	import { explorer } from './explorer.svelte';
 	import { layout, PANEL_MIN, SIDEBAR_MIN } from './layout.svelte';
@@ -24,13 +25,12 @@
 	import { installSettings } from '#lib/settings/apply.svelte.ts';
 	import { registerSettingsCommands } from '#lib/settings/contributions.ts';
 	import { installAde } from '#lib/ade/tasks.svelte.ts';
+	import { isMac, keyLabel } from './keys';
+	import { installNativeMenu } from './appMenu.svelte';
+	import { navigation } from './navigation.svelte';
 
 	let middle: HTMLDivElement | undefined = $state();
 	const workspaceName = $derived(workspace.name);
-
-	$effect(() => {
-		document.title = workspace.name ? `${workspace.name} — Kingu` : 'Kingu';
-	});
 
 	// VS Code's default macOS keybindings (docs/IDE-DESIGN.md §2). onMount, not $effect:
 	// register() reads and writes the registry, which an effect would re-run on forever.
@@ -39,9 +39,27 @@
 		const unregister = [
 			commands.register({ id: 'workbench.action.files.openFolder', title: 'Open Folder...', category: 'File', key: 'cmd+o', run: () => workspace.pickFolder() }),
 			commands.register({ id: 'workbench.action.openRecent', title: 'Open Recent...', category: 'File', key: 'ctrl+r',
-				// The shell's reverse search keeps ctrl+r inside the terminal.
-				when: () => !document.activeElement?.closest('.xterm'),
+				// The shell's reverse search keeps ctrl+r inside the terminal (the menu still opens the picker).
+				keyWhen: () => !document.activeElement?.closest('.xterm'),
 				run: () => workspace.showRecent()
+			}),
+			commands.register({ id: 'workbench.action.clearRecentFiles', title: 'Clear Recently Opened', category: 'File', run: () => workspace.clearRecent() }),
+			// Go Back / Go Forward (VS Code: ⌃- / ⌃⇧- on macOS, Alt+←/→ elsewhere).
+			commands.register({ id: 'workbench.action.navigateBack', title: 'Go Back', key: 'alt+left', mac: 'ctrl+-', when: () => navigation.canGoBack, run: () => navigation.back() }),
+			commands.register({ id: 'workbench.action.navigateForward', title: 'Go Forward', key: 'alt+right', mac: 'ctrl+shift+-', when: () => navigation.canGoForward, run: () => navigation.forward() }),
+			commands.register({ id: 'workbench.action.openView', title: 'Open View...', run: openView }),
+			commands.register({ id: 'workbench.action.openGlobalKeybindings', title: 'Open Keyboard Shortcuts', category: 'Preferences', run: showKeybindings }),
+			commands.register({ id: 'workbench.action.showAboutDialog', title: 'About', category: 'Help', run: showAbout }),
+			commands.register({
+				id: 'workbench.action.quit',
+				title: 'Quit',
+				category: 'File',
+				// macOS quits through the app menu's Quit item.
+				when: () => !isMac,
+				run: async () => {
+					if (editors.hasDirty() && !(await ask(`มี ${editors.dirtyCount()} ไฟล์ที่ยังไม่บันทึก ออกจาก Kingu และทิ้งการแก้ไข?`, { title: 'ยังไม่ได้บันทึก', kind: 'warning', okLabel: 'ออก', cancelLabel: 'ยกเลิก' }))) return;
+					await invoke('app_quit');
+				}
 			}),
 			commands.register({ id: 'workbench.action.closeFolder', title: 'Close Folder', category: 'Workspaces', when: () => workspace.root !== null, run: () => workspace.closeFolder() }),
 			commands.register({
@@ -116,6 +134,7 @@
 			commands.register({ id: 'workbench.action.keepEditor', title: 'Keep Editor', category: 'View', when: () => editors.active !== null, run: () => editors.active && editors.pin(editors.active) })
 		];
 		const uninstall = installKeybindings();
+		const uninstallMenu = installNativeMenu();
 		const uninstallScm = installScm();
 		const uninstallWatcher = workspace.install();
 		const uninstallSettings = installSettings();
@@ -123,6 +142,7 @@
 		const uninstallAde = installAde();
 		return () => {
 			uninstallAde();
+			uninstallMenu();
 			uninstall();
 			uninstallScm();
 			uninstallWatcher();
@@ -131,6 +151,45 @@
 			unregister.forEach((u) => u());
 		};
 	});
+
+	/** View: Open View… (VS Code's `view ` quick access): side bar views and panel tabs. */
+	function openView() {
+		const views: [string, string, () => void][] = [
+			['explorer', 'Explorer', () => layout.showView('explorer')],
+			['search', 'Search', () => layout.showView('search')],
+			['scm', 'Source Control', () => layout.showView('scm')],
+			['agents', 'Agents', () => layout.showView('agents')],
+			['problems', 'Problems', () => layout.showPanel('problems')],
+			['output', 'Output', () => layout.showPanel('output')],
+			['terminal', 'Terminal', () => layout.showPanel('terminal')]
+		];
+		quick.pick({
+			placeholder: 'เลือกมุมมองที่จะเปิด (Open View)',
+			items: views.map(([id, label], i) => ({ id, label, separator: i === 0 ? 'Side Bar' : i === 4 ? 'Panel' : undefined })),
+			onAccept: (item) => {
+				const view = views.find(([id]) => id === item.id);
+				if (!view) return;
+				// showView toggles the side bar off for the visible view; Open View always shows it.
+				if (item.id !== layout.sideView || !layout.sidebarVisible) view[2]();
+			}
+		});
+	}
+
+	/** Help: Keyboard Shortcuts — a read-only list of commands and their keys (runs the picked one). */
+	function showKeybindings() {
+		const withKeys = commands.all.filter((c) => keyOf(c)).sort((a, b) => a.title.localeCompare(b.title));
+		quick.pick({
+			placeholder: 'คีย์ลัด (Keyboard Shortcuts)',
+			items: withKeys.map((c) => ({ id: c.id, label: `${c.category ? `${c.category}: ` : ''}${c.title}`, description: `${keyLabel(keyOf(c)!)}  ·  ${c.id}` })),
+			onAccept: (item) => void commands.run(item.id)
+		});
+	}
+
+	async function showAbout() {
+		const info = await invoke<{ name: string; version: string; os: string; arch: string }>('app_info').catch(() => null);
+		await message(info ? `${info.name} ${info.version}
+${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
+	}
 
 	const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 	const maxSide = () => (middle?.clientWidth ?? 1200) * 0.45;
