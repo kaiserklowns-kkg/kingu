@@ -338,8 +338,8 @@ fn kill(server: &Server) {
 pub fn start_for(servers: &Servers, root: &Path, language: &str, on_event: Channel<LspEvent>) -> Result<u32, String> {
   let spec = spec_for(language).ok_or_else(|| format!("no language server for {language}"))?;
   let home = std::env::var_os("HOME").map(PathBuf::from);
-  let program = resolve_binary(&spec, std::env::var_os(override_name(&spec)), std::env::var_os("PATH").as_deref(), home.as_deref(), root)?;
-  let env = server_env(std::env::vars_os(), &program, home.as_deref());
+  let program = resolve_binary(&spec, std::env::var_os(override_name(&spec)), crate::shell_env::path().as_deref(), home.as_deref(), root)?;
+  let env = server_env(crate::shell_env::vars_os(), &program, home.as_deref());
   let launch = Launch { program: program.clone(), args: spec.args.iter().map(|s| s.to_string()).collect(), cwd: root.to_path_buf(), env };
   let id = servers.start(
     launch,
