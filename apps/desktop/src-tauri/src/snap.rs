@@ -414,12 +414,13 @@ fn scan(snaps_dir: &Path, source: Source, root: Option<&Path>, trust: &TrustData
   out
 }
 
-/// User snaps then the open folder's repo snaps. A repo snap overrides a user snap with the same id.
+/// User snaps then the open folder's repo snaps. A repo snap overrides a user snap with the same
+/// id once it is valid and trusted: an untrusted repo cannot switch off a tool the user installed.
 pub fn discover(user_dir: &Path, root: Option<&Path>, trust: &TrustData) -> Vec<SnapInfo> {
   let mut user = scan(user_dir, Source::User, None, trust);
   let repo = root.and_then(|r| repo_snaps_dir(r).map(|d| scan(&d, Source::Repo, Some(r), trust))).unwrap_or_default();
   for u in &mut user {
-    u.overridden = repo.iter().any(|r| r.id == u.id);
+    u.overridden = repo.iter().any(|r| r.id == u.id && r.trusted && r.error.is_none());
   }
   user.extend(repo);
   user
@@ -631,6 +632,22 @@ env = { GOFLAGS = "-mod=mod" }
   }
 
   #[test]
+  fn a_trusted_repo_snap_overrides_the_users() {
+    let config = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let user_dir = config.path().join(USER_DIR);
+    write_snap(&user_dir, "go", FULL);
+    write_snap(&root.path().join(".kingu/snaps"), "go", &minimal("go"));
+    let untrusted = discover(&user_dir, Some(root.path()), &TrustData::default());
+    let repo_hash = untrusted.iter().find(|s| s.source == Source::Repo).unwrap().hash.clone();
+    let mut trust = TrustData::default();
+    trust.set(root.path(), "go", Some(&repo_hash));
+    let list = discover(&user_dir, Some(root.path()), &trust);
+    assert!(list.iter().find(|s| s.source == Source::User).unwrap().overridden);
+    assert!(list.iter().find(|s| s.source == Source::Repo).unwrap().trusted);
+  }
+
+  #[test]
   fn placeholder_parsing() {
     assert_eq!(placeholders("${setting:a}").unwrap(), ["a"]);
     assert_eq!(placeholders("--x=${setting:a},${setting:b}").unwrap(), ["a", "b"]);
@@ -656,7 +673,8 @@ env = { GOFLAGS = "-mod=mod" }
     let ids: Vec<_> = list.iter().map(|s| (s.id.as_str(), s.source)).collect();
     assert_eq!(ids, [("Bad_Name", Source::User), ("go", Source::User), ("mine", Source::User), ("broken", Source::Repo), ("go", Source::Repo)]);
     assert!(list[0].error.as_deref().unwrap().contains("ชื่อโฟลเดอร์"));
-    assert!(list[1].overridden && list[1].trusted);
+    // The repo "go" is not trusted yet: the user's "go" stays active.
+    assert!(!list[1].overridden && list[1].trusted);
     assert!(!list[2].overridden && list[2].trusted && list[2].error.is_none());
     assert!(list[3].error.is_some() && list[3].tasks.is_empty() && !list[3].trusted);
     assert!(!list[4].trusted && list[4].error.is_none() && list[4].tasks.len() == 1);

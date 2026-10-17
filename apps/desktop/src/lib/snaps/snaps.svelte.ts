@@ -16,6 +16,7 @@ import { layout } from '#lib/workbench/layout.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
+import { setMcpProvider } from '#lib/ade/mcp.ts';
 import { isActive, mcpServersOf, runnableTasks, snapSettingSchemas, taskArgv, taskCommandId, type McpServerSpec, type SnapInfo } from './snapModel.ts';
 
 class Snaps {
@@ -85,6 +86,8 @@ export const snaps = new Snaps();
 
 /** Workbench wiring: loads snaps per folder, registers their settings and commands. */
 export function installSnaps(): () => void {
+	// Agents (timeline and CLI) get the MCP servers of active snaps when a run starts.
+	setMcpProvider(() => snaps.mcpServers());
 	let taskCommands: (() => void)[] = [];
 	const unregisterTasks = () => {
 		taskCommands.forEach((u) => u());
@@ -129,5 +132,6 @@ export function installSnaps(): () => void {
 		unregisterTasks();
 		unregister.forEach((u) => u());
 		settingSchemas.contribute('snaps', []);
+		setMcpProvider(() => ({}));
 	};
 }

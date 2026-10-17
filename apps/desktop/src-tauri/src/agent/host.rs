@@ -146,13 +146,13 @@ pub struct McpServer {
   pub env: std::collections::BTreeMap<String, String>,
 }
 
-/// Server names are `<snap>-<server>` (lowercase, digits, `-`); commands must not be empty.
+/// Server names are `<snap>-<server>` (letters, digits, `-`, `_`); commands must not be empty.
 pub fn validate_mcp_servers(servers: &std::collections::BTreeMap<String, McpServer>) -> Result<(), String> {
   if servers.len() > 32 {
     return Err("too many MCP servers".into());
   }
   for (name, s) in servers {
-    let ok_name = !name.is_empty() && name.len() <= 81 && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    let ok_name = !name.is_empty() && name.len() <= 81 && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
     if !ok_name {
       return Err(format!("{name}: invalid MCP server name"));
     }

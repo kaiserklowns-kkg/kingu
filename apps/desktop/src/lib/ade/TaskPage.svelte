@@ -11,12 +11,17 @@
 	import { aggregateStats, formatSummaryUsage, reviewChip, STATUS_LABEL, timeAgo, type FileChange } from './model';
 	import { runtime } from './runtime.svelte';
 	import { adeTasks } from './tasks.svelte';
+	import { cliOf } from './agentCli';
+	import { adeLayout } from './adeLayout.svelte';
+	import { appMode } from '#lib/workbench/mode.svelte.ts';
 	import { BUTTON, BUTTON_SECONDARY, ICON_BUTTON, INPUT, LETTER_COLOR, STATUS_DOT, TONE } from './ui';
 
 	/** `timeline` / `review`: one half, for the Agents layout's main area and changes panel. */
 	let { slug, sections = 'all' }: { slug: string; sections?: 'all' | 'timeline' | 'review' } = $props();
 
 	const view = $derived(adeTasks.find(slug));
+	/** The task runs its agent CLI in a terminal (Orca way), not the timeline. */
+	const cli = $derived(view ? cliOf(view.meta.agent) : null);
 	const meta = $derived(view?.meta);
 	const stat = $derived(view?.stat);
 	const totals = $derived(stat ? aggregateStats(stat.files) : null);
@@ -141,25 +146,34 @@
 				{#if meta.prompt}
 					<p class="mx-4 mt-1 line-clamp-3 shrink-0 rounded bg-(--vscode-input-background) px-2 py-1 text-xs whitespace-pre-wrap" title={meta.prompt}>{meta.prompt}</p>
 				{/if}
-				<AgentTimeline {run} onanswer={(p, decision, message) => adeTasks.answer(slug, p.request_id, decision, message)} class="flex-1 px-4 py-2">
-					{#snippet empty()}
-						<p class="text-(--vscode-descriptionForeground)">
-							{run && !run.ended
-								? 'กำลังเริ่ม…'
-								: `ยังไม่มีบันทึกของรอบนี้ (timeline เก็บในหน่วยความจำ จะหายเมื่อปิดแอป)${resumable ? ' — ส่งข้อความด้านล่างเพื่อทำงานต่อใน session เดิม' : ''}`}
-						</p>
-					{/snippet}
-				</AgentTimeline>
-				<form class="flex shrink-0 gap-1.5 border-t border-(--vscode-widget-border) p-2" onsubmit={sendFollowUp}>
-					<input
-						class={INPUT}
-						placeholder={rt?.live ? 'ส่งข้อความเพิ่มเติมถึง agent' : resumable ? 'สั่งงานต่อ (resume session เดิม)' : 'สั่งงานเพิ่มใน worktree นี้ (เริ่ม session ใหม่)'}
-						aria-label="คำสั่งเพิ่มเติม"
-						bind:value={followUp}
-						disabled={run?.status === 'starting'}
-					/>
-					<button class={BUTTON} disabled={run?.status === 'starting' || !followUp.trim()}><Icon name="play" size={12} /> ส่ง</button>
-				</form>
+				{#if cli}
+					<!-- The agent CLI runs in a terminal of the worktree (Agents); a timeline follow-up here would start a second agent. -->
+					<div class="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-xs text-(--vscode-descriptionForeground)">
+						<Icon name="terminal" size={24} stroke={1.3} />
+						<p>งานนี้รัน <span class="font-mono">{cli.join(' ')}</span> ใน terminal ของ worktree</p>
+						<button class={BUTTON_SECONDARY} onclick={() => (appMode.setMode('agents'), adeLayout.show(slug))}>เปิดใน Agents (⇧⌘A)</button>
+					</div>
+				{:else}
+					<AgentTimeline {run} onanswer={(p, decision, message) => adeTasks.answer(slug, p.request_id, decision, message)} class="flex-1 px-4 py-2">
+						{#snippet empty()}
+							<p class="text-(--vscode-descriptionForeground)">
+								{run && !run.ended
+									? 'กำลังเริ่ม…'
+									: `ยังไม่มีบันทึกของรอบนี้ (timeline เก็บในหน่วยความจำ จะหายเมื่อปิดแอป)${resumable ? ' — ส่งข้อความด้านล่างเพื่อทำงานต่อใน session เดิม' : ''}`}
+							</p>
+						{/snippet}
+					</AgentTimeline>
+					<form class="flex shrink-0 gap-1.5 border-t border-(--vscode-widget-border) p-2" onsubmit={sendFollowUp}>
+						<input
+							class={INPUT}
+							placeholder={rt?.live ? 'ส่งข้อความเพิ่มเติมถึง agent' : resumable ? 'สั่งงานต่อ (resume session เดิม)' : 'สั่งงานเพิ่มใน worktree นี้ (เริ่ม session ใหม่)'}
+							aria-label="คำสั่งเพิ่มเติม"
+							bind:value={followUp}
+							disabled={run?.status === 'starting'}
+						/>
+						<button class={BUTTON} disabled={run?.status === 'starting' || !followUp.trim()}><Icon name="play" size={12} /> ส่ง</button>
+					</form>
+				{/if}
 			</section>
 			{/if}
 
