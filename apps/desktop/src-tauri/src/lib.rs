@@ -4,6 +4,7 @@ mod git;
 mod lsp;
 mod pty;
 mod search;
+mod settings;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -313,7 +314,9 @@ pub fn run() {
       search_cancel,
       lsp_start,
       lsp::lsp_send,
-      lsp::lsp_stop
+      lsp::lsp_stop,
+      settings::settings_read,
+      settings::settings_write
     ])
     .build(tauri::generate_context!())
     .expect("error while building tauri application")

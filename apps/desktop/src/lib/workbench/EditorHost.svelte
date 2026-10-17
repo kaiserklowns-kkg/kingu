@@ -2,7 +2,6 @@
 	// One Monaco editor, one text model per open tab (VS Code keeps a model per resource, so
 	// switching tabs preserves undo history and cursor). Saves through Rust `fs_write_file`.
 	import { onMount } from 'svelte';
-	import { invoke } from '@tauri-apps/api/core';
 	import type * as Monaco from 'monaco-editor';
 	import { clientLog } from '#lib/client-log.ts';
 	import { lsp } from '#lib/lsp/lsp.svelte.ts';
@@ -10,6 +9,8 @@
 	import { editors } from './editors.svelte';
 	import { quick } from './quick.svelte';
 	import { isDiffKey } from './scm';
+	import { isNonTextEditor, readResource, writeResource } from '#lib/settings/resources.ts';
+	import { installEditorSettings } from '#lib/settings/apply.svelte.ts';
 
 	type Entry = { model: Monaco.editor.ITextModel; savedVersion: number; view?: Monaco.editor.ICodeEditorViewState | null };
 
@@ -25,6 +26,7 @@
 			await m.setupTextMate();
 			if (disposed) return;
 			api = m;
+			installEditorSettings(m.monaco);
 			editor = m.monaco.editor.create(host, {
 				theme: m.THEME_ID,
 				automaticLayout: true,
@@ -104,7 +106,7 @@
 	async function entryFor(path: string): Promise<Entry | undefined> {
 		const existing = models.get(path);
 		if (existing || !api) return existing;
-		const text = await invoke<string>('read_workspace_file', { rel: path });
+		const text = await readResource(path);
 		const model = api.monaco.editor.createModel(text, api.languageFor(path), api.monaco.Uri.file('/' + path));
 		const entry: Entry = { model, savedVersion: model.getAlternativeVersionId() };
 		model.onDidChangeContent(() => editors.setDirty(path, model.getAlternativeVersionId() !== entry.savedVersion));
@@ -117,7 +119,7 @@
 		const path = editors.active;
 		const entry = path ? models.get(path) : undefined;
 		if (!path || !entry) return;
-		await invoke('fs_write_file', { rel: path, content: entry.model.getValue() });
+		await writeResource(path, entry.model.getValue());
 		entry.savedVersion = entry.model.getAlternativeVersionId();
 		editors.setDirty(path, false);
 		lsp.didSave(entry.model);
@@ -132,7 +134,7 @@
 			if (prev) prev.view = editor.saveViewState();
 		}
 		// Diff tabs are shown by DiffHost.
-		if (!path || isDiffKey(path)) {
+		if (!path || isDiffKey(path) || isNonTextEditor(path)) {
 			editor.setModel(null);
 			shownPath = null;
 			return;

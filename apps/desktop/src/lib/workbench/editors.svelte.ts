@@ -3,6 +3,7 @@
 // A tab's `path` is a workspace file, or `diff:<file>` for a HEAD ↔ working tree diff (scm.ts).
 
 import { diffKey } from './scm';
+import { settings } from '#lib/settings/settings.svelte.ts';
 
 export type EditorTab = { path: string; preview: boolean; dirty: boolean };
 export type Cursor = { line: number; column: number };
@@ -29,6 +30,8 @@ class Editors {
 	}
 
 	open(path: string, { preview = true, reveal }: { preview?: boolean; reveal?: Reveal } = {}) {
+		// workbench.editor.enablePreview: false opens every editor pinned.
+		if (!settings.get('workbench.editor.enablePreview')) preview = false;
 		if (reveal) this.pendingReveal = { ...reveal, path };
 		const existing = this.tabs.find((t) => t.path === path);
 		if (existing) {

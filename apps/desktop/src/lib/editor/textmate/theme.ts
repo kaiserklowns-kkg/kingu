@@ -3,6 +3,8 @@
 // Mirrors _loadColorTheme / ColorThemeData.tokenColors in
 // microsoft/vscode src/vs/workbench/services/themes/common/colorThemeData.ts.
 
+import { parseJsonc } from '../../settings/jsonc';
+
 export interface TokenColorRule {
 	name?: string;
 	scope?: string | string[];
@@ -22,32 +24,7 @@ export interface FlatTheme {
 	tokenColors: TokenColorRule[];
 }
 
-/** Parses JSONC: drops // and block comments and trailing commas, leaving strings untouched. */
-export function parseJsonc<T = unknown>(text: string): T {
-	let out = '';
-	let i = 0;
-	const n = text.length;
-	while (i < n) {
-		const ch = text[i];
-		if (ch === '"') {
-			const start = i++;
-			while (i < n && text[i] !== '"') i += text[i] === '\\' ? 2 : 1;
-			out += text.slice(start, ++i);
-		} else if (ch === '/' && text[i + 1] === '/') {
-			while (i < n && text[i] !== '\n') i++;
-		} else if (ch === '/' && text[i + 1] === '*') {
-			const end = text.indexOf('*/', i + 2);
-			i = end < 0 ? n : end + 2;
-		} else {
-			out += ch;
-			i++;
-		}
-	}
-	// Trailing commas: a comma followed only by whitespace before } or ].
-	// Safe now that comments are gone; strings are skipped by matching them first.
-	out = out.replace(/("(?:[^"\\]|\\.)*")|,(\s*[}\]])/g, (m, str, close) => str ?? close);
-	return JSON.parse(out) as T;
-}
+export { parseJsonc };
 
 /** Resolves a theme's `include` chain: included colors are overridden, included tokenColors come first. */
 export function flattenTheme(entry: string, read: (path: string) => string): FlatTheme {
@@ -85,23 +62,40 @@ export function normalizeColor(color: string | undefined): string | undefined {
 	return '#' + (hex.length <= 4 ? [...hex].map((c) => c + c).join('') : hex);
 }
 
-const darkDefaultTokens: TokenColorRule[] = [
-	{ scope: 'token.info-token', settings: { foreground: '#6796e6' } },
-	{ scope: 'token.warn-token', settings: { foreground: '#cd9731' } },
-	{ scope: 'token.error-token', settings: { foreground: '#f44747' } },
-	{ scope: 'token.debug-token', settings: { foreground: '#b267e6' } }
+/** VS Code's theme kinds (ColorScheme): `vs-dark`, `vs`, `hc-black`, `hc-light` themes. */
+export type ThemeType = 'dark' | 'light' | 'hcDark' | 'hcLight';
+
+const tokens = (info: string, warn: string, error: string, debug: string): TokenColorRule[] => [
+	{ scope: 'token.info-token', settings: { foreground: info } },
+	{ scope: 'token.warn-token', settings: { foreground: warn } },
+	{ scope: 'token.error-token', settings: { foreground: error } },
+	{ scope: 'token.debug-token', settings: { foreground: debug } }
 ];
+
+// colorThemeData.ts defaultThemeColors and the editor.foreground/background registry defaults.
+const defaultTokens: Record<ThemeType, TokenColorRule[]> = {
+	dark: tokens('#6796e6', '#cd9731', '#f44747', '#b267e6'),
+	light: tokens('#316bcd', '#cd9731', '#cd3131', '#800080'),
+	hcDark: tokens('#6796e6', '#008000', '#FF0000', '#b267e6'),
+	hcLight: tokens('#316bcd', '#cd9731', '#cd3131', '#800080')
+};
+const defaultEditor: Record<ThemeType, [fg: string, bg: string]> = {
+	dark: ['#BBBBBB', '#1E1E1E'],
+	light: ['#333333', '#FFFFFF'],
+	hcDark: ['#FFFFFF', '#000000'],
+	hcLight: ['#292929', '#FFFFFF']
+};
 
 /**
  * The TextMate theme rules VS Code feeds its tokenizer: a scope-less default rule
  * from editor.foreground/background first, then the theme's scoped rules.
  */
-export function textMateRules(theme: FlatTheme): TokenColorRule[] {
+export function textMateRules(theme: FlatTheme, type: ThemeType = 'dark'): TokenColorRule[] {
 	const rules: TokenColorRule[] = [
 		{
 			settings: {
-				foreground: normalizeColor(theme.colors['editor.foreground']) ?? '#BBBBBB',
-				background: normalizeColor(theme.colors['editor.background']) ?? '#1E1E1E'
+				foreground: normalizeColor(theme.colors['editor.foreground']) ?? defaultEditor[type][0],
+				background: normalizeColor(theme.colors['editor.background']) ?? defaultEditor[type][1]
 			}
 		}
 	];
@@ -119,7 +113,7 @@ export function textMateRules(theme: FlatTheme): TokenColorRule[] {
 		});
 	};
 	theme.tokenColors.forEach(add);
-	if (!hasDefaultTokens) darkDefaultTokens.forEach(add);
+	if (!hasDefaultTokens) defaultTokens[type].forEach(add);
 	return rules;
 }
 

@@ -22,6 +22,11 @@ local fork at VS Code 1.143.0). Only one file was renamed:
 | themes/dark_modern.json | extensions/theme-defaults/themes/dark_modern.json | microsoft/vscode | MIT |
 | themes/dark_plus.json | extensions/theme-defaults/themes/dark_plus.json | microsoft/vscode | MIT |
 | themes/dark_vs.json | extensions/theme-defaults/themes/dark_vs.json | microsoft/vscode | MIT |
+| themes/light_modern.json | extensions/theme-defaults/themes/light_modern.json | microsoft/vscode | MIT |
+| themes/light_plus.json | extensions/theme-defaults/themes/light_plus.json | microsoft/vscode | MIT |
+| themes/light_vs.json | extensions/theme-defaults/themes/light_vs.json | microsoft/vscode | MIT |
+| themes/hc_black.json | extensions/theme-defaults/themes/hc_black.json | microsoft/vscode | MIT |
+| themes/hc_light.json | extensions/theme-defaults/themes/hc_light.json | microsoft/vscode | MIT |
 
 There is no Svelte grammar here: VS Code does not ship one, so `.svelte` files
 use the HTML grammar for now.

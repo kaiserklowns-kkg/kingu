@@ -19,6 +19,8 @@
 	import { installScm } from './scm.svelte';
 	import { search } from './search.svelte';
 	import { status } from './status.svelte';
+	import { installSettings } from '#lib/settings/apply.svelte.ts';
+	import { registerSettingsCommands } from '#lib/settings/contributions.ts';
 
 	let workspaceName = $state('');
 	let middle: HTMLDivElement | undefined = $state();
@@ -65,9 +67,13 @@
 		];
 		const uninstall = installKeybindings();
 		const uninstallScm = installScm();
+		const uninstallSettings = installSettings();
+		const unregisterSettings = registerSettingsCommands();
 		return () => {
 			uninstall();
 			uninstallScm();
+			uninstallSettings();
+			unregisterSettings();
 			unregister.forEach((u) => u());
 		};
 	});

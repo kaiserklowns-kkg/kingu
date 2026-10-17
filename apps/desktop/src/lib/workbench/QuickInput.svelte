@@ -2,11 +2,12 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { commands } from './commands.svelte';
 	import { editors } from './editors.svelte';
-	import { quick } from './quick.svelte';
+	import { quick, type PickItem, type Picker } from './quick.svelte';
+	import { untrack } from 'svelte';
 	import { rank, type Match } from './fuzzy';
 	import { keyLabel } from './keys';
 
-	type Item = { label: string; detail?: string; key?: string; match?: Match; run: () => void };
+	type Item = { label: string; detail?: string; key?: string; match?: Match; separator?: string; pick?: PickItem; run: () => void };
 
 	let input: HTMLInputElement | undefined = $state();
 	let files = $state<string[]>([]);
@@ -14,12 +15,31 @@
 
 	$effect(() => {
 		if (!quick.visible) return;
-		index = 0;
+		void quick.session;
+		const p = untrack(() => quick.picker);
+		index = p?.activeId ? Math.max(0, p.items.findIndex((i) => i.id === p.activeId)) : 0;
 		queueMicrotask(() => input?.focus());
+		if (p) return;
 		invoke<string[]>('fs_list_files').then((v) => (files = v));
 	});
 
+	/** Custom pick list: original order (with group labels) until the user types. */
+	function pickerItems(picker: Picker, q: string): Item[] {
+		const list = picker.items;
+		const toItem = (pick: PickItem, match?: Match): Item => ({ label: pick.label, detail: pick.description, separator: q ? undefined : pick.separator, match, pick, run: () => picker.onAccept(pick) });
+		if (!q) return list.map((p) => toItem(p));
+		return rank(q, list, (p) => p.label, 100).map(({ item, match }) => toItem(item, match));
+	}
+
+	// Focus changes preview the item (VS Code's color theme picker applies the theme live).
+	$effect(() => {
+		const pick = items[index]?.pick;
+		const onActive = quick.picker?.onActive;
+		if (pick && onActive) untrack(() => onActive(pick));
+	});
+
 	const items = $derived.by((): Item[] => {
+		if (quick.picker) return pickerItems(quick.picker, quick.value.trim());
 		const v = quick.value;
 		if (v.startsWith('>')) {
 			const q = v.slice(1).trim();
@@ -55,7 +75,7 @@
 
 	function accept(i = index) {
 		const item = items[i];
-		quick.hide();
+		quick.hide({ accepted: true });
 		item?.run();
 	}
 
@@ -91,7 +111,7 @@
 			oninput={() => (index = 0)}
 			onkeydown={onKey}
 			aria-label="ค้นหาไฟล์ พิมพ์ > เพื่อดูคำสั่ง หรือ : เพื่อไปบรรทัด"
-			placeholder="ค้นหาไฟล์ตามชื่อ (พิมพ์ > สำหรับคำสั่ง, : สำหรับไปบรรทัด)"
+			placeholder={quick.picker?.placeholder ?? 'ค้นหาไฟล์ตามชื่อ (พิมพ์ > สำหรับคำสั่ง, : สำหรับไปบรรทัด)'}
 			class="h-[26px] w-full rounded-sm border border-(--vscode-focusBorder) bg-(--vscode-input-background) px-1.5 text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground)"
 		/>
 		<ul role="listbox" aria-label="ผลลัพธ์" class="mt-1 max-h-[440px] overflow-y-auto">
@@ -110,6 +130,7 @@
 							{#each parts(item.label, item.match?.positions) as p, k (k)}<span class={p.hit ? 'font-bold text-(--vscode-list-highlightForeground)' : undefined}>{p.ch}</span>{/each}
 						</span>
 						{#if item.detail}<span class="truncate text-xs text-(--vscode-descriptionForeground)">{item.detail}</span>{/if}
+						{#if item.separator}<span class="ml-auto shrink-0 text-xs text-(--vscode-descriptionForeground)">{item.separator}</span>{/if}
 						{#if item.key}<span class="ml-auto shrink-0 font-mono text-xs text-(--vscode-descriptionForeground)">{keyLabel(item.key)}</span>{/if}
 					</button>
 				</li>

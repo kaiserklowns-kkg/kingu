@@ -7,9 +7,12 @@
 	import { status } from './status.svelte';
 	import { keyLabel } from './keys';
 	import { fileOf, isDiffKey, tabLabel } from './scm';
+	import SettingsEditor from '#lib/settings/SettingsEditor.svelte';
+	import { SETTINGS_EDITOR_KEY, USER_SETTINGS_KEY } from '#lib/settings/settings.svelte.ts';
 
-	const base = tabLabel;
-	const crumbs = $derived(editors.active ? fileOf(editors.active).split('/') : []);
+	const base = (key: string) => (key === SETTINGS_EDITOR_KEY ? 'Settings' : tabLabel(key));
+	const settingsActive = $derived(editors.active === SETTINGS_EDITOR_KEY);
+	const crumbs = $derived(!editors.active || settingsActive ? [] : editors.active === USER_SETTINGS_KEY ? ['User', 'settings.json'] : fileOf(editors.active).split('/'));
 	const diffActive = $derived(editors.active !== null && isDiffKey(editors.active));
 	// The diff editor exists only while a diff tab is open.
 	const hasDiff = $derived(editors.tabs.some((t) => isDiffKey(t.path)));
@@ -89,13 +92,16 @@
 	{/if}
 
 	<div class="relative min-h-0 flex-1">
-		<div class={['absolute inset-0', (!editors.active || diffActive) && 'invisible']}>
+		<div class={['absolute inset-0', (!editors.active || diffActive || settingsActive) && 'invisible']}>
 			<EditorHost />
 		</div>
 		{#if hasDiff}
 			<div class={['absolute inset-0', !diffActive && 'invisible']}>
 				<DiffHost />
 			</div>
+		{/if}
+		{#if settingsActive}
+			<div class="absolute inset-0"><SettingsEditor /></div>
 		{/if}
 		{#if !editors.active}
 			<div class="absolute inset-0 grid place-items-center">

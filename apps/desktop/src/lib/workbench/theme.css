@@ -1,5 +1,8 @@
 /* Generated from the vendored VS Code Dark Modern theme (MIT, see ../editor/textmate/NOTICE.md):
- * dark_vs.json < dark_plus.json < dark_modern.json `colors`, named like VS Code's CSS variables. */
+ * dark_vs.json < dark_plus.json < dark_modern.json `colors`, named like VS Code's CSS variables.
+ * These are the first-paint fallback only: at runtime theme/theme.svelte.ts writes every color in
+ * theme/colors.ts COLOR_DEFAULTS for the `workbench.colorTheme` theme onto <html> (colors.test.ts
+ * checks that Dark Modern reproduces the values below). */
 :root {
 	--vscode-foreground: #CCCCCC;
 	--vscode-descriptionForeground: #9D9D9D;
