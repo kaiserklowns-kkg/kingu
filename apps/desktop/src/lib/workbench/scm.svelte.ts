@@ -104,7 +104,7 @@ export function installScm(): () => void {
 	let dirty = 0;
 	const stopEffect = $effect.root(() => {
 		$effect(() => {
-			const now = editors.tabs.filter((t) => t.dirty).length;
+			const now = editors.dirtyCount();
 			if (now < dirty) void scm.refresh();
 			dirty = now;
 		});

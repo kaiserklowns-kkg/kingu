@@ -1,111 +1,53 @@
 <script lang="ts">
+	// The editor area (VS Code: EditorPart): a grid of editor groups. Owns what is shared between
+	// groups: the text models (disposed once no group shows their file) and the editor commands
+	// that act on the active group's editor.
+	import { onMount } from 'svelte';
 	import { lsp } from '#lib/lsp/lsp.svelte.ts';
-	import DiffHost from './DiffHost.svelte';
-	import EditorHost from './EditorHost.svelte';
-	import Icon from './Icon.svelte';
+	import EditorGrid from './EditorGrid.svelte';
+	import { commands } from './commands.svelte';
 	import { editors } from './editors.svelte';
-	import { status } from './status.svelte';
-	import { keyLabel } from './keys';
-	import { fileOf, isDiffKey, tabLabel } from './scm';
+	import { disposeAll, disposeClosed, saveFile } from './editorModels';
+	import { quick } from './quick.svelte';
+	import { isDiffKey } from './scm';
 
-	const base = tabLabel;
-	const crumbs = $derived(editors.active ? fileOf(editors.active).split('/') : []);
-	const diffActive = $derived(editors.active !== null && isDiffKey(editors.active));
-	// The diff editor exists only while a diff tab is open.
-	const hasDiff = $derived(editors.tabs.some((t) => isDiffKey(t.path)));
-	// Enclosing symbols from the language server's document symbols, like VS Code's outline crumbs.
-	const symbolCrumbs = $derived(editors.active && !diffActive ? lsp.crumbs(editors.active, editors.cursor.line, editors.cursor.column) : []);
+	onMount(() => {
+		const unregister = [
+			commands.register({
+				id: 'workbench.action.files.save',
+				title: 'Save',
+				category: 'File',
+				key: 'cmd+s',
+				when: () => editors.active !== null,
+				run: () => editors.active && !isDiffKey(editors.active) && saveFile(editors.active)
+			}),
+			commands.register({
+				id: 'workbench.action.gotoLine',
+				title: 'Go to Line/Column...',
+				key: 'ctrl+g',
+				when: () => editors.active !== null,
+				run: () => quick.show(':')
+			}),
+			commands.register({
+				id: 'kingu.lsp.restart',
+				title: 'Restart Language Server',
+				category: 'Developer',
+				when: () => lsp.hasServer(editors.language),
+				run: () => lsp.restart(editors.language)
+			})
+		];
+		return () => {
+			unregister.forEach((u) => u());
+			disposeAll();
+		};
+	});
 
-	function close(path: string, force: boolean) {
-		if (!editors.close(path, { force })) status.flash('มีการแก้ไขที่ยังไม่บันทึก: กด ⌘S ก่อน หรือกด ⌥ ค้างแล้วคลิก × เพื่อทิ้งการแก้ไข');
-	}
-
-	const watermark = [
-		['Show All Commands', 'cmd+shift+p'],
-		['Go to File', 'cmd+p'],
-		['Toggle Terminal', 'ctrl+`'],
-		['Toggle Agent', 'cmd+alt+b']
-	];
+	// Dispose models of files no group has open.
+	$effect(() => {
+		disposeClosed(editors.openPaths(), editors.order());
+	});
 </script>
 
-<div class="flex h-full min-w-0 flex-col bg-(--vscode-editor-background)">
-	{#if editors.tabs.length}
-		<div
-			role="tablist"
-			aria-label="Editor tabs"
-			class="flex h-(--kg-tab-height) shrink-0 overflow-x-auto bg-(--vscode-editorGroupHeader-tabsBackground) [scrollbar-width:none]"
-		>
-			{#each editors.tabs as tab (tab.path)}
-				{@const active = tab.path === editors.active}
-				<div
-					class={[
-						'group relative flex h-full shrink-0 items-center border-r border-(--vscode-tab-border) pl-3',
-						active ? 'bg-(--vscode-tab-activeBackground) text-(--vscode-tab-activeForeground)' : 'bg-(--vscode-tab-inactiveBackground) text-(--vscode-tab-inactiveForeground) hover:bg-(--vscode-tab-hoverBackground)'
-					]}
-				>
-					{#if active}<span class="absolute inset-x-0 top-0 h-px bg-(--vscode-tab-activeBorderTop)"></span>{/if}
-					<button
-						role="tab"
-						aria-selected={active}
-						title={tab.path}
-						class={['h-full pr-1 whitespace-nowrap', tab.preview && 'italic']}
-						onclick={() => (editors.active = tab.path)}
-						ondblclick={() => editors.pin(tab.path)}
-						onauxclick={(e) => e.button === 1 && close(tab.path, false)}
-					>
-						{base(tab.path)}
-					</button>
-					<button
-						aria-label={tab.dirty ? `${base(tab.path)} ยังไม่บันทึก: ปิด` : `ปิด ${base(tab.path)}`}
-						class={[
-							'mr-1 grid size-5 place-items-center rounded hover:bg-white/10',
-							!active && !tab.dirty && 'invisible group-hover:visible'
-						]}
-						onclick={(e) => close(tab.path, e.altKey)}
-					>
-						{#if tab.dirty}
-							<span class="size-2 rounded-full bg-current group-hover:hidden"></span>
-							<span class="hidden group-hover:block"><Icon name="close" size={14} /></span>
-						{:else}
-							<Icon name="close" size={14} />
-						{/if}
-					</button>
-				</div>
-			{/each}
-		</div>
-		<nav
-			aria-label="Breadcrumbs"
-			class="flex h-(--kg-breadcrumbs-height) shrink-0 items-center gap-0.5 overflow-hidden px-3 text-(--vscode-breadcrumb-foreground)"
-		>
-			{#each crumbs as c, i (i)}
-				{#if i > 0}<Icon name="chevronRight" size={14} />{/if}
-				<span class="whitespace-nowrap">{c}</span>
-			{/each}
-			{#each symbolCrumbs as s, i (i)}
-				<Icon name="chevronRight" size={14} />
-				<button class="whitespace-nowrap hover:text-(--vscode-foreground)" onclick={() => editors.gotoLine(s.range.start.line + 1, s.range.start.character + 1)}>{s.name}</button>
-			{/each}
-		</nav>
-	{/if}
-
-	<div class="relative min-h-0 flex-1">
-		<div class={['absolute inset-0', (!editors.active || diffActive) && 'invisible']}>
-			<EditorHost />
-		</div>
-		{#if hasDiff}
-			<div class={['absolute inset-0', !diffActive && 'invisible']}>
-				<DiffHost />
-			</div>
-		{/if}
-		{#if !editors.active}
-			<div class="absolute inset-0 grid place-items-center">
-				<dl class="grid grid-cols-[auto_auto] gap-x-4 gap-y-2 text-(--vscode-descriptionForeground)">
-					{#each watermark as [label, key] (label)}
-						<dt class="text-right">{label}</dt>
-						<dd class="font-mono tracking-widest">{keyLabel(key)}</dd>
-					{/each}
-				</dl>
-			</div>
-		{/if}
-	</div>
+<div class="h-full min-w-0 bg-(--vscode-editor-background)">
+	<EditorGrid node={editors.model.root} />
 </div>

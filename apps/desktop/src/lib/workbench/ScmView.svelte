@@ -1,7 +1,9 @@
 <script lang="ts">
 	// Source Control view (VS Code scmViewPane): commit input, Commit button, then the
 	// "Staged Changes" and "Changes" groups. Clicking a file opens its diff against HEAD.
+	import FileIcon from './FileIcon.svelte';
 	import Icon, { type IconName } from './Icon.svelte';
+	import { fileIcon } from './fileIcons';
 	import { editors } from './editors.svelte';
 	import { keyLabel } from './keys';
 	import { diffKey, splitPath, type Resource } from './scm';
@@ -138,6 +140,7 @@
 					}}
 					ondblclick={() => editors.openDiff(r.entry.path, { preview: false })}
 				>
+					<FileIcon icon={fileIcon(name)} />
 					<span class={['shrink-0 truncate', r.deleted && 'line-through']}>{name}</span>
 					{#if dir}<span class="truncate text-[0.9em] text-(--vscode-descriptionForeground)">{dir}</span>{/if}
 				</button>

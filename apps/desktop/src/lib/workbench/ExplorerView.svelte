@@ -1,5 +1,7 @@
 <script lang="ts">
+	import FileIcon from './FileIcon.svelte';
 	import Icon from './Icon.svelte';
+	import { fileIcon, folderIcon } from './fileIcons';
 	import { explorer } from './explorer.svelte';
 	import { editors } from './editors.svelte';
 
@@ -52,6 +54,7 @@
 					<span class="flex w-4 shrink-0 justify-center text-(--vscode-icon-foreground)">
 						{#if row.is_dir}<Icon name={row.expanded ? 'chevronDown' : 'chevronRight'} size={16} />{/if}
 					</span>
+					<FileIcon icon={row.is_dir ? folderIcon(row.rel, row.expanded) : fileIcon(row.name)} />
 					<span class="truncate">{row.name}</span>
 				</button>
 			{/each}
