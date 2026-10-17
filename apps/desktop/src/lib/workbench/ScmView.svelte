@@ -78,7 +78,7 @@
 				aria-label={a.label}
 				title={a.label}
 				disabled={scm.busy}
-				class="grid size-5 place-items-center rounded text-(--vscode-icon-foreground) hover:bg-white/10"
+				class="grid size-5 place-items-center rounded text-(--vscode-icon-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
 				onclick={(e) => {
 					e.stopPropagation();
 					void a.run();
@@ -94,7 +94,7 @@
 	<div role="alertdialog" aria-label="ยืนยันการทิ้งการแก้ไข" class="mx-2 my-1 flex flex-col gap-1.5 rounded border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) p-2">
 		<p>{c.text}</p>
 		<div class="flex justify-end gap-1.5">
-			<button class="rounded-sm px-2 py-0.5 hover:bg-white/10" onclick={() => (confirming = null)}>Cancel</button>
+			<button class="rounded-sm px-2 py-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => (confirming = null)}>Cancel</button>
 			<!-- svelte-ignore a11y_autofocus -->
 			<button
 				autofocus

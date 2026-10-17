@@ -24,7 +24,7 @@
 >
 	<div data-tauri-drag-region class="flex flex-1 justify-center">
 		<button
-			class="flex h-[22px] w-[min(600px,38vw)] items-center justify-center gap-1.5 rounded-md border border-(--vscode-commandCenter-border) bg-(--vscode-commandCenter-background) text-xs hover:bg-white/10"
+			class="flex h-[22px] w-[min(600px,38vw)] items-center justify-center gap-1.5 rounded-md border border-(--vscode-commandCenter-border) bg-(--vscode-commandCenter-background) text-xs hover:bg-(--vscode-toolbar-hoverBackground)"
 			onclick={() => quick.show('')}
 			title="ค้นหาไฟล์ ({keyLabel('cmd+p')}) · คำสั่ง ({keyLabel('cmd+shift+p')})"
 		>
@@ -38,7 +38,7 @@
 				aria-label={t.label}
 				aria-pressed={t.on()}
 				title="{t.label} ({keyLabel(t.key)})"
-				class={['grid size-6 place-items-center rounded hover:bg-white/10', t.on() ? 'opacity-100' : 'opacity-50']}
+				class={['grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)', t.on() ? 'opacity-100' : 'opacity-50']}
 				onclick={t.flip}
 			>
 				<Icon name={t.icon} size={16} />

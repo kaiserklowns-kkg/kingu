@@ -29,7 +29,7 @@
 			>
 		{/each}
 		<div class="flex-1"></div>
-		<button aria-label="Hide Panel" title="Hide Panel" class="grid size-6 place-items-center rounded hover:bg-white/10" onclick={() => (layout.panelVisible = false)}>
+		<button aria-label="Hide Panel" title="Hide Panel" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => (layout.panelVisible = false)}>
 			<Icon name="close" size={14} />
 		</button>
 	</div>

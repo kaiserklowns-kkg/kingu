@@ -124,7 +124,7 @@
 					</button>
 					<button
 						aria-label={tab.dirty ? `${label(tab.path)} ยังไม่บันทึก: ปิด` : `ปิด ${label(tab.path)}`}
-						class={['mr-1 grid size-5 place-items-center rounded hover:bg-white/10', !active && !tab.dirty && 'invisible group-hover:visible']}
+						class={['mr-1 grid size-5 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)', !active && !tab.dirty && 'invisible group-hover:visible']}
 						onclick={(e) => close(tab.path, e.altKey)}
 					>
 						{#if tab.dirty}

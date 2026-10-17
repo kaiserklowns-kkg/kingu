@@ -2,6 +2,7 @@
 
 import { commands } from '#lib/workbench/commands.svelte.ts';
 import { editors } from '#lib/workbench/editors.svelte.ts';
+import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { quick, type PickItem } from '#lib/workbench/quick.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { theme } from '#lib/theme/theme.svelte.ts';
@@ -61,6 +62,8 @@ export function registerSettingsCommands(): () => void {
 			id: 'workbench.action.openWorkspaceSettingsFile',
 			title: 'Open Workspace Settings (JSON)',
 			category: 'Preferences',
+			// Workspace settings live in the open folder.
+			when: () => workspace.root !== null,
 			run: async () => {
 				await settings.ensureFile('workspace');
 				editors.open(WORKSPACE_SETTINGS_PATH, { preview: false });

@@ -100,3 +100,13 @@ describe('terminalTheme', () => {
 		expect(l.foreground).toBeDefined();
 	});
 });
+
+describe('toolbar hover', () => {
+	test('uses the registry defaults per theme type (transparent in high contrast)', () => {
+		const v = (type: 'dark' | 'light' | 'hcDark' | 'hcLight') => chromeVariables({}, type)['--vscode-toolbar-hoverBackground'];
+		expect(v('dark')).toBe(normalizeColor('#5A5D5E50')!);
+		expect(v('light')).toBe(normalizeColor('#B8B8B850')!);
+		expect(v('hcDark')).toBe('transparent');
+		expect(v('hcLight')).toBe('transparent');
+	});
+});

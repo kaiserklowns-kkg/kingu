@@ -211,7 +211,7 @@
 			<div role="alertdialog" aria-label="Confirm Replace All" class="ml-[18px] flex flex-col gap-1.5 rounded border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) p-2">
 				<p>{replaceConfirmText(shownMatches, search.files.length, search.replaceText)}</p>
 				<div class="flex justify-end gap-1.5">
-					<button class="rounded-sm px-2 py-0.5 hover:bg-white/10" onclick={() => (confirmAll = false)}>Cancel</button>
+					<button class="rounded-sm px-2 py-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => (confirmAll = false)}>Cancel</button>
 					<!-- svelte-ignore a11y_autofocus -->
 					<button autofocus class="rounded-sm bg-(--vscode-button-background) px-2 py-0.5 text-(--vscode-button-foreground) hover:brightness-110" onclick={replaceAll}
 						>Replace</button
@@ -331,7 +331,7 @@
 						</span>
 						{#if canReplace}
 							<button
-								class="ml-auto hidden size-5 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) group-hover/row:grid hover:bg-white/10"
+								class="ml-auto hidden size-5 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) group-hover/row:grid hover:bg-(--vscode-toolbar-hoverBackground)"
 								title="Replace All in File"
 								aria-label="Replace All in {basename(row.file.path)}"
 								onclick={(e) => replaceRow(row, e)}><Icon name="replaceAll" size={14} /></button
@@ -353,7 +353,7 @@
 							>
 							{#if canReplace}
 								<button
-									class="ml-auto hidden size-5 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) group-hover/row:grid hover:bg-white/10"
+									class="ml-auto hidden size-5 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) group-hover/row:grid hover:bg-(--vscode-toolbar-hoverBackground)"
 									title="Replace"
 									aria-label="Replace"
 									onclick={(e) => replaceRow(row, e)}><Icon name="replace" size={14} /></button

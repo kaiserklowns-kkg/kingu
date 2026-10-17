@@ -8,6 +8,7 @@ import { homeDir } from '@tauri-apps/api/path';
 import { ask, open } from '@tauri-apps/plugin-dialog';
 import { clientLog } from '#lib/client-log.ts';
 import { lsp } from '#lib/lsp/lsp.svelte.ts';
+import { settings, WORKSPACE_SETTINGS_PATH } from '#lib/settings/settings.svelte.ts';
 import { editors } from './editors.svelte';
 import { explorer } from './explorer.svelte';
 import { recentLabel, workspaceFiles } from './fileTree';
@@ -119,6 +120,8 @@ class Workspace {
 		scm.message = '';
 		status.branch = null;
 		this.root = root;
+		// Workspace settings (`.kingu/settings.json`) belong to the folder.
+		void settings.reloadWorkspace();
 		clientLog('info', `workspace: ${root ?? '(none)'}`);
 		void this.loadRecent();
 		// The Explorer re-reads its root when shown; Source Control reads the new repository now.
@@ -135,6 +138,7 @@ class Workspace {
 			const files = workspaceFiles(e.payload.paths);
 			if (!files.length) return;
 			void explorer.refresh(files);
+			if (files.includes(WORKSPACE_SETTINGS_PATH)) void settings.load();
 			for (const fn of this.#listeners) fn(files);
 		}).then((u) => (gone ? u() : (unlisten = u)));
 		return () => {

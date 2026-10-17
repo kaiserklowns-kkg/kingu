@@ -42,6 +42,12 @@ class Settings {
 		this.loaded = true;
 	}
 
+	/** Open Folder / Close Folder: drop the old folder's layer and read the new folder's file. */
+	async reloadWorkspace() {
+		this.workspace = emptyLayer();
+		await this.load();
+	}
+
 	private async read(scope: SettingScope): Promise<Layer> {
 		const prev = scope === 'user' ? this.user : this.workspace;
 		try {

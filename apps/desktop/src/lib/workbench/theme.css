@@ -74,6 +74,7 @@
 	--vscode-sash-hoverBorder: var(--vscode-focusBorder);
 	--vscode-breadcrumb-foreground: #CCCCCCCC;
 	--vscode-commandCenter-background: rgba(255, 255, 255, 0.05);
+	--vscode-toolbar-hoverBackground: rgba(90, 93, 94, 0.31);
 	--vscode-commandCenter-border: rgba(204, 204, 204, 0.2);
 	--vscode-terminal-background: var(--vscode-panel-background);
 	/* Chrome sizes (A: shipped CSS / B: Code-OSS source, see docs/IDE-DESIGN.md §1.3). */
