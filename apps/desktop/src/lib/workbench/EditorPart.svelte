@@ -8,6 +8,7 @@
 	import { commands } from './commands.svelte';
 	import { editors } from './editors.svelte';
 	import { disposeAll, disposeClosed, reloadClean, saveFile } from './editorModels';
+	import { EDITOR_ACTIONS } from './menus';
 	import { quick } from './quick.svelte';
 	import { isDiffKey } from './scm';
 	import { workspace } from './workspace.svelte';
@@ -22,6 +23,18 @@
 				when: () => editors.active !== null,
 				run: () => editors.active && !isDiffKey(editors.active) && saveFile(editors.active)
 			}),
+			commands.register({
+				id: 'workbench.action.files.saveAll',
+				title: 'Save All',
+				category: 'File',
+				key: 'cmd+alt+s',
+				when: () => editors.hasDirty(),
+				run: () => Promise.all([...new Set(editors.allTabs().filter((t) => t.dirty && !isDiffKey(t.path)).map((t) => t.path))].map(saveFile))
+			}),
+			// Monaco owns these keys (⌘F, F12…); the commands exist for the menus and the palette.
+			...Object.entries(EDITOR_ACTIONS).map(([id, title]) =>
+				commands.register({ id, title, category: 'Editor', when: () => editors.active !== null, run: () => editors.trigger(id) })
+			),
 			commands.register({
 				id: 'workbench.action.gotoLine',
 				title: 'Go to Line/Column...',

@@ -7,16 +7,16 @@
 	import FileIcon from './FileIcon.svelte';
 	import Icon from './Icon.svelte';
 	import { editors } from './editors.svelte';
+	import { editorLabel } from './editorLabel';
 	import { fileIcon } from './fileIcons';
 	import { keyLabel } from './keys';
-	import { fileOf, isDiffKey, tabLabel } from './scm';
+	import { fileOf, isDiffKey } from './scm';
 	import { status } from './status.svelte';
 	import SettingsEditor from '#lib/settings/SettingsEditor.svelte';
 	import { SETTINGS_EDITOR_KEY, USER_SETTINGS_KEY } from '#lib/settings/settings.svelte.ts';
 	import Board from '#lib/ade/Board.svelte';
 	import TaskPage from '#lib/ade/TaskPage.svelte';
 	import { isAdeEditor, isBoardKey, slugOfTaskKey } from '#lib/ade/keys.ts';
-	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 
 	let { group }: { group: number } = $props();
 
@@ -30,14 +30,7 @@
 	const adeActive = $derived(activePath !== null && isAdeEditor(activePath));
 	const taskSlug = $derived(activePath ? slugOfTaskKey(activePath) : null);
 	const crumbs = $derived(!activePath || settingsActive || adeActive ? [] : activePath === USER_SETTINGS_KEY ? ['User', 'settings.json'] : fileOf(activePath).split('/'));
-	/** Tab label; the Settings editor and the user settings.json are not workspace files. */
-	function label(key: string): string {
-		if (key === SETTINGS_EDITOR_KEY) return 'Settings';
-		if (isBoardKey(key)) return 'บอร์ดงาน';
-		const slug = slugOfTaskKey(key);
-		if (slug) return `งาน: ${adeTasks.find(slug)?.meta.title ?? slug}`;
-		return tabLabel(key);
-	}
+	const label = editorLabel;
 	const iconOf = (key: string) =>
 		fileIcon(key === SETTINGS_EDITOR_KEY || key === USER_SETTINGS_KEY ? 'settings.json' : isAdeEditor(key) ? 'tasks.md' : fileOf(key));
 	const diffActive = $derived(activePath !== null && isDiffKey(activePath));

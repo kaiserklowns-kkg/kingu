@@ -12,6 +12,8 @@ import { settings, WORKSPACE_SETTINGS_PATH } from '#lib/settings/settings.svelte
 import { editors } from './editors.svelte';
 import { explorer } from './explorer.svelte';
 import { recentLabel, workspaceFiles } from './fileTree';
+import type { RecentFolder } from './menus';
+import { navigation } from './navigation.svelte';
 import { quick, type PickItem } from './quick.svelte';
 import { scm } from './scm.svelte';
 import { search } from './search.svelte';
@@ -80,6 +82,16 @@ class Workspace {
 		this.#switched(null);
 	}
 
+	/** Recent folders other than the open one, labelled like the Open Recent picker. */
+	recentFolders(): RecentFolder[] {
+		return this.recent.filter((p) => p !== this.root).map((path) => ({ path, ...recentLabel(path, this.#home) }));
+	}
+
+	async clearRecent() {
+		await invoke('workspace_recent_clear').catch((e) => status.flash(String(e)));
+		await this.loadRecent();
+	}
+
 	/** "File: Open Recent" quick pick. */
 	async showRecent() {
 		await this.loadRecent();
@@ -97,7 +109,7 @@ class Workspace {
 			items,
 			onAccept: (item) => {
 				if (item.id === OPEN) void this.pickFolder();
-				else if (item.id === CLEAR) void invoke('workspace_recent_clear').then(() => this.loadRecent());
+				else if (item.id === CLEAR) void this.clearRecent();
 				else void this.openFolder(item.id);
 			}
 		});
@@ -112,6 +124,7 @@ class Workspace {
 	/** Every view of the old folder goes: editors, language servers, tree, search, source control. */
 	#switched(root: string | null) {
 		editors.closeAll();
+		navigation.clear();
 		lsp.reset();
 		explorer.reset();
 		search.clear();

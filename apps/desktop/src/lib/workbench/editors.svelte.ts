@@ -14,7 +14,13 @@ export type Cursor = { line: number; column: number };
 export type Reveal = { line: number; column: number; endColumn?: number; focus?: boolean };
 
 /** What a group's editor host exposes to commands that act on "the active editor". */
-export type EditorHostHandle = { gotoLine: (line: number, column?: number) => void; selectionText: () => string; focus: () => void };
+export type EditorHostHandle = {
+	gotoLine: (line: number, column?: number) => void;
+	selectionText: () => string;
+	focus: () => void;
+	/** Runs a Monaco editor action (`actions.find`, `undo`…) on the shown file; false when none is shown. */
+	trigger: (actionId: string) => boolean;
+};
 
 class Editors {
 	model = $state<G.GroupsModel>(G.createGroupsModel());
@@ -85,6 +91,10 @@ class Editors {
 
 	gotoLine(line: number, column = 1) {
 		this.#hosts.get(this.model.activeGroup)?.gotoLine(line, column);
+	}
+	/** Runs a Monaco action in the active group's editor (menu items such as Find, Go to Definition). */
+	trigger(actionId: string): boolean {
+		return this.#hosts.get(this.model.activeGroup)?.trigger(actionId) ?? false;
 	}
 	/** The active editor's selected text, '' when none. */
 	selectionText(): string {

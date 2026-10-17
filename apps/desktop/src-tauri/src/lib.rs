@@ -3,6 +3,7 @@ mod fileops;
 mod fs;
 mod git;
 mod lsp;
+mod menu;
 mod pty;
 mod replace;
 mod search;
@@ -367,6 +368,7 @@ pub fn run() {
     .manage(Arc::new(agent::AgentHost::default()))
     .manage(Arc::new(search::Searches::default()))
     .manage(lsp::Servers::default())
+    .manage(menu::MenuState::default())
     .setup(|app| {
       shell_env::init();
       if cfg!(debug_assertions) {
@@ -381,6 +383,7 @@ pub fn run() {
       let start = workspace::startup_root(recent.data().last.as_deref(), std::env::var_os("KINGU_WORKSPACE"));
       app.manage(recent);
       team::install(app)?;
+      menu::install(app.handle());
       if let Some(root) = start
         && let Err(e) = switch_root(app.handle(), Some(&root))
       {
@@ -447,7 +450,12 @@ pub fn run() {
       team::team_sign_out,
       team::team_status,
       team::team_sync_task,
-      team::team_sync_now
+      team::team_sync_now,
+      menu::menu_set_model,
+      menu::menu_set_checked,
+      menu::menu_set_enabled,
+      menu::window_titlebar_double_click,
+      menu::app_quit
     ])
     .build(tauri::generate_context!())
     .expect("error while building tauri application")

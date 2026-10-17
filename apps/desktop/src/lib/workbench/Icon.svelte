@@ -8,6 +8,8 @@
 		settings: 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1',
 		account: 'M12 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM4 21c1.5-4 4.5-6 8-6s6.5 2 8 6',
 		chevronRight: 'M9 6l6 6-6 6',
+		arrowLeft: 'M19 12H5M11 6l-6 6 6 6',
+		arrowRight: 'M5 12h14M13 6l6 6-6 6',
 		chevronDown: 'M6 9l6 6 6-6',
 		close: 'M6 6l12 12M18 6L6 18',
 		sidebarLeft: 'M3 4h18v16H3zM9 4v16',
