@@ -5,6 +5,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import type * as Monaco from 'monaco-editor';
 	import { clientLog } from '#lib/client-log.ts';
+	import { lsp } from '#lib/lsp/lsp.svelte.ts';
 	import { commands } from './commands.svelte';
 	import { editors } from './editors.svelte';
 	import { quick } from './quick.svelte';
@@ -53,6 +54,13 @@
 				key: 'ctrl+g',
 				when: () => editors.active !== null,
 				run: () => quick.show(':')
+			}),
+			commands.register({
+				id: 'kingu.lsp.restart',
+				title: 'Restart Language Server',
+				category: 'Developer',
+				when: () => lsp.hasServer(editors.language),
+				run: () => lsp.restart(editors.language)
 			})
 		];
 
@@ -101,6 +109,7 @@
 		const entry: Entry = { model, savedVersion: model.getAlternativeVersionId() };
 		model.onDidChangeContent(() => editors.setDirty(path, model.getAlternativeVersionId() !== entry.savedVersion));
 		models.set(path, entry);
+		lsp.attach(api.monaco, model, path);
 		return entry;
 	}
 
@@ -111,6 +120,7 @@
 		await invoke('fs_write_file', { rel: path, content: entry.model.getValue() });
 		entry.savedVersion = entry.model.getAlternativeVersionId();
 		editors.setDirty(path, false);
+		lsp.didSave(entry.model);
 	}
 
 	// Show the active tab's model, restoring its scroll and cursor.

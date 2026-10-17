@@ -1,4 +1,6 @@
 <script lang="ts">
+	import ProblemsView from '#lib/lsp/ProblemsView.svelte';
+	import { lsp } from '#lib/lsp/lsp.svelte.ts';
 	import Terminal from '#lib/terminal/Terminal.svelte';
 	import Icon from './Icon.svelte';
 	import { layout, type PanelTab } from './layout.svelte';
@@ -36,9 +38,10 @@
 			<Terminal />
 		</div>
 		{#if layout.panelTab === 'problems'}
-			<p class="absolute inset-0 px-5 py-1 text-(--vscode-descriptionForeground)">No problems have been detected in the workspace.</p>
+			<div class="absolute inset-0"><ProblemsView /></div>
 		{:else if layout.panelTab === 'output'}
-			<p class="absolute inset-0 px-5 py-1 font-mono text-xs text-(--vscode-descriptionForeground)">Language servers (LSP) และ output ของ task อยู่ใน P1</p>
+			<!-- Language server output for now; task output joins it later. -->
+			<pre class="absolute inset-0 overflow-auto px-5 py-1 font-mono text-xs whitespace-pre-wrap text-(--vscode-descriptionForeground)">{lsp.log.length ? lsp.log.join('\n') : 'No output yet. Language servers log here once a Rust, TypeScript or Go file is opened.'}</pre>
 		{/if}
 	</div>
 </section>

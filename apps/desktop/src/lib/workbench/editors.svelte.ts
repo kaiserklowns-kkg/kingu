@@ -23,6 +23,11 @@ class Editors {
 	/** Consumed by the editor host once `path`'s model is shown. */
 	pendingReveal = $state<(Reveal & { path: string }) | null>(null);
 
+	/** Opens `path` with the cursor at `line`:`column` (Problems, Go to Definition). */
+	openAt(path: string, line: number, column = 1, opts: { preview?: boolean } = {}) {
+		this.open(path, { ...opts, reveal: { line, column, focus: true } });
+	}
+
 	open(path: string, { preview = true, reveal }: { preview?: boolean; reveal?: Reveal } = {}) {
 		if (reveal) this.pendingReveal = { ...reveal, path };
 		const existing = this.tabs.find((t) => t.path === path);
