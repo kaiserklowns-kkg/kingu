@@ -2,7 +2,9 @@
 	// VS Code's Search view (searchView.ts / searchWidget.ts): query box with Match Case,
 	// Whole Word and Regex toggles, include/exclude globs behind "…", and a results tree.
 	// The tree is virtualized at the 22px row height, so 20,000 matches stay cheap.
+	import FileIcon from './FileIcon.svelte';
 	import Icon from './Icon.svelte';
+	import { fileIcon } from './fileIcons';
 	import { editors } from './editors.svelte';
 	import { search } from './search.svelte';
 	import { basename, dirname, flattenResults, splitPreview, summarize, type ResultRow } from './searchResults';
@@ -234,7 +236,7 @@
 				>
 					{#if row.kind === 'file'}
 						<span class="flex w-4 shrink-0 justify-center text-(--vscode-icon-foreground)"><Icon name={row.collapsed ? 'chevronRight' : 'chevronDown'} size={16} /></span>
-						<span class="flex w-4 shrink-0 justify-center text-(--vscode-icon-foreground)"><Icon name="file" size={14} /></span>
+						<span class="flex w-4 shrink-0 justify-center"><FileIcon icon={fileIcon(row.file.path)} /></span>
 						<span class="min-w-0 truncate" title={row.file.path}>
 							{basename(row.file.path)}<span class="ml-1.5 text-[0.9em] text-(--vscode-descriptionForeground)">{dirname(row.file.path)}</span>
 						</span>

@@ -1,23 +1,24 @@
 <script lang="ts">
-	// One Monaco editor, one text model per open tab (VS Code keeps a model per resource, so
-	// switching tabs preserves undo history and cursor). Saves through Rust `fs_write_file`.
-	import { onMount } from 'svelte';
-	import { invoke } from '@tauri-apps/api/core';
+	// One Monaco editor per editor group (VS Code: the group's TextEditor pane). Text models are
+	// shared between groups (editorModels.ts), so switching tabs preserves undo history and two
+	// groups showing one file edit the same model. Save and LSP commands live in EditorPart.
+	import { onMount, untrack } from 'svelte';
 	import type * as Monaco from 'monaco-editor';
 	import { clientLog } from '#lib/client-log.ts';
-	import { lsp } from '#lib/lsp/lsp.svelte.ts';
-	import { commands } from './commands.svelte';
 	import { editors } from './editors.svelte';
-	import { quick } from './quick.svelte';
+	import { modelEntry, saveViewState, viewState } from './editorModels';
 	import { isDiffKey } from './scm';
 
-	type Entry = { model: Monaco.editor.ITextModel; savedVersion: number; view?: Monaco.editor.ICodeEditorViewState | null };
+	let { group }: { group: number } = $props();
 
 	let host: HTMLDivElement;
 	let api: typeof import('#lib/editor/monaco.ts') | undefined;
 	let editor = $state<Monaco.editor.IStandaloneCodeEditor | undefined>();
-	const models = new Map<string, Entry>();
-	let shownPath: string | null = null;
+	/** The path whose model is set on the editor (reactive, for the status bar effect). */
+	let shown = $state<string | null>(null);
+
+	const path = $derived(editors.group(group)?.active ?? null);
+	const isActiveGroup = $derived(editors.activeGroupId === group);
 
 	onMount(() => {
 		let disposed = false;
@@ -25,7 +26,7 @@
 			await m.setupTextMate();
 			if (disposed) return;
 			api = m;
-			editor = m.monaco.editor.create(host, {
+			const ed = m.monaco.editor.create(host, {
 				theme: m.THEME_ID,
 				automaticLayout: true,
 				fontFamily: "Menlo, Monaco, 'Courier New', 'IBM Plex Sans Thai', monospace",
@@ -35,60 +36,43 @@
 				scrollBeyondLastLine: true,
 				renderLineHighlight: 'all'
 			});
-			editor.onDidChangeCursorPosition((e) => (editors.cursor = { line: e.position.lineNumber, column: e.position.column }));
-			clientLog('info', 'editor ready');
+			ed.onDidChangeCursorPosition((e) => {
+				if (editors.activeGroupId === group) editors.cursor = { line: e.position.lineNumber, column: e.position.column };
+			});
+			ed.onDidFocusEditorText(() => editors.activateGroup(group));
+			editor = ed;
+			clientLog('info', `editor ready (group ${group})`);
 		});
 
-		const unregister = [
-			commands.register({
-				id: 'workbench.action.files.save',
-				title: 'Save',
-				category: 'File',
-				key: 'cmd+s',
-				when: () => editors.active !== null,
-				run: save
-			}),
-			commands.register({
-				id: 'workbench.action.gotoLine',
-				title: 'Go to Line/Column...',
-				key: 'ctrl+g',
-				when: () => editors.active !== null,
-				run: () => quick.show(':')
-			}),
-			commands.register({
-				id: 'kingu.lsp.restart',
-				title: 'Restart Language Server',
-				category: 'Developer',
-				when: () => lsp.hasServer(editors.language),
-				run: () => lsp.restart(editors.language)
-			})
-		];
+		const unregister = editors.registerHost(group, {
+			gotoLine: (line, column = 1) => {
+				if (!editor) return;
+				editor.revealLineInCenter(line);
+				editor.setPosition({ lineNumber: line, column });
+				editor.focus();
+			},
+			selectionText: () => {
+				const model = editor?.getModel();
+				const sel = editor?.getSelection();
+				return model && sel && !sel.isEmpty() ? model.getValueInRange(sel) : '';
+			},
+			focus: () => editor?.focus()
+		});
 
 		return () => {
 			disposed = true;
-			unregister.forEach((u) => u());
-			for (const e of models.values()) e.model.dispose();
+			unregister();
+			if (editor && shown) saveViewState(group, shown, editor.saveViewState());
+			// Models are shared and outlive this editor; only detach.
+			editor?.setModel(null);
 			editor?.dispose();
 		};
 	});
 
-	editors.gotoLine = (line: number, column = 1) => {
-		if (!editor) return;
-		editor.revealLineInCenter(line);
-		editor.setPosition({ lineNumber: line, column });
-		editor.focus();
-	};
-
-	editors.selectionText = () => {
-		const model = editor?.getModel();
-		const sel = editor?.getSelection();
-		return model && sel && !sel.isEmpty() ? model.getValueInRange(sel) : '';
-	};
-
-	/** Applies `editors.pendingReveal` when its file is the one shown (selects the range, like VS Code's search). */
+	/** Applies `editors.pendingReveal` when it targets this group and its file is shown (selects the range, like VS Code's search). */
 	function applyReveal() {
 		const r = editors.pendingReveal;
-		if (!editor || !r || r.path !== shownPath) return;
+		if (!editor || !r || r.group !== group || r.path !== shown) return;
 		editors.pendingReveal = null;
 		const range = { startLineNumber: r.line, startColumn: r.column, endLineNumber: r.line, endColumn: r.endColumn ?? r.column };
 		editor.setSelection(range);
@@ -98,72 +82,58 @@
 
 	// A reveal for the file already shown; otherwise the model-switch effect applies it after loading.
 	$effect(() => {
-		if (editors.pendingReveal && editor) applyReveal();
+		if (editors.pendingReveal && editor && shown) applyReveal();
 	});
 
-	async function entryFor(path: string): Promise<Entry | undefined> {
-		const existing = models.get(path);
-		if (existing || !api) return existing;
-		const text = await invoke<string>('read_workspace_file', { rel: path });
-		const model = api.monaco.editor.createModel(text, api.languageFor(path), api.monaco.Uri.file('/' + path));
-		const entry: Entry = { model, savedVersion: model.getAlternativeVersionId() };
-		model.onDidChangeContent(() => editors.setDirty(path, model.getAlternativeVersionId() !== entry.savedVersion));
-		models.set(path, entry);
-		lsp.attach(api.monaco, model, path);
-		return entry;
-	}
-
-	async function save() {
-		const path = editors.active;
-		const entry = path ? models.get(path) : undefined;
-		if (!path || !entry) return;
-		await invoke('fs_write_file', { rel: path, content: entry.model.getValue() });
-		entry.savedVersion = entry.model.getAlternativeVersionId();
-		editors.setDirty(path, false);
-		lsp.didSave(entry.model);
-	}
-
-	// Show the active tab's model, restoring its scroll and cursor.
+	// Focus requested by a group command (split, focus group, move editor).
 	$effect(() => {
-		const path = editors.active;
-		if (!editor) return;
-		if (shownPath) {
-			const prev = models.get(shownPath);
-			if (prev) prev.view = editor.saveViewState();
+		if (editors.focusRequest === group && editor && shown) {
+			editors.focusRequest = null;
+			editor.focus();
 		}
+	});
+
+	// The status bar follows the active group's editor.
+	$effect(() => {
+		if (!isActiveGroup || !editor || !shown) return;
+		const model = editor.getModel();
+		if (!model) return;
+		const opts = model.getOptions();
+		editors.language = model.getLanguageId();
+		editors.indent = opts.insertSpaces ? `Spaces: ${opts.indentSize}` : `Tab Size: ${opts.tabSize}`;
+		editors.eol = model.getEOL() === '\n' ? 'LF' : 'CRLF';
+		const pos = editor.getPosition();
+		if (pos) editors.cursor = { line: pos.lineNumber, column: pos.column };
+	});
+
+	// Show the group's active tab's model, restoring its scroll and cursor.
+	$effect(() => {
+		const p = path;
+		const ed = editor;
+		if (!ed) return;
+		untrack(() => {
+			if (shown) saveViewState(group, shown, ed.saveViewState());
+		});
 		// Diff tabs are shown by DiffHost.
-		if (!path || isDiffKey(path)) {
-			editor.setModel(null);
-			shownPath = null;
+		if (!p || isDiffKey(p) || !api) {
+			ed.setModel(null);
+			shown = null;
 			return;
 		}
-		entryFor(path)
+		modelEntry(api, p)
 			.then((entry) => {
-				if (!entry || editors.active !== path || !editor) return;
-				editor.setModel(entry.model);
-				if (entry.view) editor.restoreViewState(entry.view);
-				shownPath = path;
+				if (editors.group(group)?.active !== p || editor !== ed || entry.model.isDisposed()) return;
+				ed.setModel(entry.model);
+				const view = viewState(group, p);
+				if (view) ed.restoreViewState(view);
+				shown = p;
 				applyReveal();
-				editors.language = entry.model.getLanguageId();
-				editors.indent = entry.model.getOptions().insertSpaces ? `Spaces: ${entry.model.getOptions().indentSize}` : 'Tab Size: ' + entry.model.getOptions().tabSize;
-				editors.eol = entry.model.getEOL() === '\n' ? 'LF' : 'CRLF';
-				clientLog('info', `opened ${path} as ${editors.language} (${entry.model.getLineCount()} lines)`);
+				clientLog('info', `opened ${p} in group ${group} as ${entry.model.getLanguageId()} (${entry.model.getLineCount()} lines)`);
 			})
 			.catch((e) => {
-				clientLog('error', `open ${path}: ${e}`);
-				editors.close(path, { force: true });
+				clientLog('error', `open ${p}: ${e}`);
+				editors.close(p, { force: true, group });
 			});
-	});
-
-	// Dispose models of closed tabs.
-	$effect(() => {
-		const open = new Set(editors.tabs.map((t) => t.path));
-		for (const [path, entry] of models) {
-			if (!open.has(path)) {
-				entry.model.dispose();
-				models.delete(path);
-			}
-		}
 	});
 </script>
 

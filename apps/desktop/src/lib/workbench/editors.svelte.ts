@@ -1,48 +1,104 @@
-// Single editor group (VS Code: EditorGroupModel). At most one preview tab, shown in italics;
-// opening another file unpinned replaces it. Editing or double-clicking pins.
-// A tab's `path` is a workspace file, or `diff:<file>` for a HEAD ↔ working tree diff (scm.ts).
+// Editor groups, reactive (VS Code: IEditorGroupsService). The model lives in editorGroups.ts;
+// this wraps it in `$state` and keeps the single-group API the rest of the workbench uses:
+// `editors.active`, `editors.tabs`, `open`, `close`… all mean "in the active group".
+// Text models are shared between groups (editorModels.ts), one Monaco editor per group.
 
 import { diffKey } from './scm';
+import * as G from './editorGroups';
 
-export type EditorTab = { path: string; preview: boolean; dirty: boolean };
+export type { EditorTab, EditorGroup, GridNode, SplitDirection } from './editorGroups';
 export type Cursor = { line: number; column: number };
 /** Where to put the cursor once a file is shown (Search results, go to definition). */
 export type Reveal = { line: number; column: number; endColumn?: number; focus?: boolean };
 
+/** What a group's editor host exposes to commands that act on "the active editor". */
+export type EditorHostHandle = { gotoLine: (line: number, column?: number) => void; selectionText: () => string; focus: () => void };
+
 class Editors {
-	tabs = $state<EditorTab[]>([]);
-	active = $state<string | null>(null);
+	model = $state<G.GroupsModel>(G.createGroupsModel());
 	cursor = $state<Cursor>({ line: 1, column: 1 });
 	language = $state('');
 	indent = $state('');
 	eol = $state('');
-	/** Set by the editor host once Monaco is up. */
-	gotoLine: (line: number, column?: number) => void = () => {};
-	/** Set by the editor host: the active editor's selected text, '' when none. */
-	selectionText: () => string = () => '';
-	/** Consumed by the editor host once `path`'s model is shown. */
-	pendingReveal = $state<(Reveal & { path: string }) | null>(null);
+	/** Consumed by the editor host of `group` once `path`'s model is shown there. */
+	pendingReveal = $state<(Reveal & { path: string; group: number }) | null>(null);
+	/** A group whose editor should take keyboard focus once it shows a model. */
+	focusRequest = $state<number | null>(null);
+	#hosts = new Map<number, EditorHostHandle>();
+
+	get groups() {
+		return this.model.groups;
+	}
+	get activeGroupId() {
+		return this.model.activeGroup;
+	}
+	get activeGroup() {
+		return G.activeGroupOf(this.model);
+	}
+	/** Tabs of the active group. */
+	get tabs() {
+		return this.activeGroup.tabs;
+	}
+	/** The active editor of the active group. */
+	get active(): string | null {
+		return this.activeGroup.active;
+	}
+	set active(path: string | null) {
+		if (path) G.setActiveEditor(this.model, this.model.activeGroup, path);
+	}
+
+	group(id: number) {
+		return G.getGroup(this.model, id);
+	}
+	/** Group ids in grid order (left→right, top→bottom). */
+	order() {
+		return G.groupOrder(this.model);
+	}
+	openPaths() {
+		return G.openPaths(this.model);
+	}
+	hasDirty() {
+		return this.model.groups.some((g) => g.tabs.some((t) => t.dirty));
+	}
+	/** Distinct dirty files across groups. */
+	dirtyCount() {
+		return new Set(this.model.groups.flatMap((g) => g.tabs.filter((t) => t.dirty).map((t) => t.path))).size;
+	}
+
+	activateGroup(id: number) {
+		if (this.model.activeGroup !== id) G.activateGroup(this.model, id);
+	}
+
+	/** Called by each group's editor host while it is mounted. */
+	registerHost(id: number, handle: EditorHostHandle): () => void {
+		this.#hosts.set(id, handle);
+		return () => {
+			if (this.#hosts.get(id) === handle) this.#hosts.delete(id);
+		};
+	}
+
+	gotoLine(line: number, column = 1) {
+		this.#hosts.get(this.model.activeGroup)?.gotoLine(line, column);
+	}
+	/** The active editor's selected text, '' when none. */
+	selectionText(): string {
+		return this.#hosts.get(this.model.activeGroup)?.selectionText() ?? '';
+	}
+	focusGroup(id: number) {
+		this.activateGroup(id);
+		const host = this.#hosts.get(id);
+		if (host && this.group(id)?.active) host.focus();
+		else this.focusRequest = id;
+	}
 
 	/** Opens `path` with the cursor at `line`:`column` (Problems, Go to Definition). */
 	openAt(path: string, line: number, column = 1, opts: { preview?: boolean } = {}) {
 		this.open(path, { ...opts, reveal: { line, column, focus: true } });
 	}
 
-	open(path: string, { preview = true, reveal }: { preview?: boolean; reveal?: Reveal } = {}) {
-		if (reveal) this.pendingReveal = { ...reveal, path };
-		const existing = this.tabs.find((t) => t.path === path);
-		if (existing) {
-			if (!preview) existing.preview = false;
-		} else {
-			const tab = { path, preview, dirty: false };
-			const previewIdx = preview ? this.tabs.findIndex((t) => t.preview && !t.dirty) : -1;
-			if (previewIdx >= 0) this.tabs[previewIdx] = tab;
-			else {
-				const at = this.active ? this.tabs.findIndex((t) => t.path === this.active) + 1 : this.tabs.length;
-				this.tabs.splice(at, 0, tab);
-			}
-		}
-		this.active = path;
+	open(path: string, { preview = true, reveal, group }: { preview?: boolean; reveal?: Reveal; group?: number } = {}) {
+		G.openEditor(this.model, path, { preview, group });
+		if (reveal) this.pendingReveal = { ...reveal, path, group: this.model.activeGroup };
 	}
 
 	/** Opens the Source Control diff of `rel` (HEAD vs working tree) as its own tab. */
@@ -50,26 +106,59 @@ class Editors {
 		this.open(diffKey(rel), options);
 	}
 
-	pin(path: string) {
-		const tab = this.tabs.find((t) => t.path === path);
-		if (tab) tab.preview = false;
+	pin(path: string, group = this.model.activeGroup) {
+		G.pinEditor(this.model, group, path);
 	}
 
 	setDirty(path: string, dirty: boolean) {
-		const tab = this.tabs.find((t) => t.path === path);
-		if (!tab || tab.dirty === dirty) return;
-		tab.dirty = dirty;
-		if (dirty) tab.preview = false;
+		G.setDirty(this.model, path, dirty);
 	}
 
 	/** Returns false when the tab is dirty (the caller asks before discarding). */
-	close(path: string, { force = false } = {}): boolean {
-		const i = this.tabs.findIndex((t) => t.path === path);
-		if (i < 0) return true;
-		if (this.tabs[i].dirty && !force) return false;
-		this.tabs.splice(i, 1);
-		if (this.active === path) this.active = this.tabs[Math.min(i, this.tabs.length - 1)]?.path ?? null;
-		return true;
+	close(path: string, { force = false, group = this.model.activeGroup }: { force?: boolean; group?: number } = {}): boolean {
+		return G.closeEditor(this.model, group, path, { force });
+	}
+
+	/** Closes `path` in every group (e.g. a diff that failed to load). */
+	closeEverywhere(path: string) {
+		for (const g of [...this.model.groups]) G.closeEditor(this.model, g.id, path, { force: true });
+	}
+
+	/** Returns the dirty paths it left open. */
+	closeAllInGroup(group = this.model.activeGroup): string[] {
+		return G.closeAllInGroup(this.model, group);
+	}
+
+	removeGroup(group = this.model.activeGroup) {
+		G.removeGroup(this.model, group);
+	}
+
+	split(direction: G.SplitDirection) {
+		const id = G.splitEditor(this.model, direction);
+		if (id !== null) this.focusRequest = id;
+		return id;
+	}
+
+	focusGroupAt(index: number) {
+		const id = G.focusGroupAt(this.model, index);
+		if (id !== null) this.focusGroup(id);
+	}
+
+	moveEditor(from: number, path: string, to: number, index?: number) {
+		G.moveEditor(this.model, from, path, to, index);
+		this.focusRequest = to;
+	}
+
+	moveActiveEditorToNextGroup() {
+		if (G.moveActiveEditorToNextGroup(this.model)) this.focusRequest = this.model.activeGroup;
+	}
+
+	resize(splitId: number, index: number, delta: number) {
+		G.resizeSplit(this.model, splitId, index, delta);
+	}
+
+	evenSplit(splitId: number) {
+		G.evenSplit(this.model, splitId);
 	}
 }
 

@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Side-by-side diff for Source Control tabs (`diff:<file>`): HEAD on the left, the working
 	// copy on the right (VS Code's "file (Working Tree)" editor). Read-only: edits go through the
-	// file's own tab. Mounted by EditorPart only while a diff tab is open.
+	// file's own tab. Mounted per editor group only while that group has a diff tab open.
 	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import type * as Monaco from 'monaco-editor';
@@ -9,6 +9,10 @@
 	import { editors } from './editors.svelte';
 	import { fileOf, isDiffKey } from './scm';
 	import { scm } from './scm.svelte';
+
+	let { group }: { group: number } = $props();
+	const activeKey = $derived(editors.group(group)?.active ?? null);
+	let shownLanguage = $state('');
 
 	let host: HTMLDivElement;
 	let api = $state<typeof import('#lib/editor/monaco.ts') | undefined>();
@@ -58,7 +62,7 @@
 		const headPath = entry?.orig_path ?? rel;
 		try {
 			const [head, work] = await Promise.all([invoke<string>('git_show_head', { rel: headPath }), workingCopy(m, rel)]);
-			if (my !== seq || !diff || editors.active !== key) return;
+			if (my !== seq || !diff || editors.group(group)?.active !== key) return;
 			const language = m.languageFor(rel);
 			// Fresh URIs each time: the old pair is disposed only after the new one is shown.
 			const next = {
@@ -72,18 +76,23 @@
 			shown?.original.dispose();
 			shown?.modified.dispose();
 			shown = next;
-			editors.language = language;
+			shownLanguage = language;
 		} catch (e) {
 			clientLog('error', `diff ${rel}: ${e}`);
-			editors.close(key, { force: true });
+			editors.close(key, { force: true, group });
 		}
 	}
 
 	// Re-read when a diff tab becomes active and whenever git status changes (save, focus, stage).
 	$effect(() => {
-		const key = editors.active;
+		const key = activeKey;
 		void scm.repo;
 		if (api && key && isDiffKey(key)) void show(api, key);
+	});
+
+	// The status bar language follows the active group's diff.
+	$effect(() => {
+		if (editors.activeGroupId === group && activeKey && isDiffKey(activeKey) && shownLanguage) editors.language = shownLanguage;
 	});
 </script>
 

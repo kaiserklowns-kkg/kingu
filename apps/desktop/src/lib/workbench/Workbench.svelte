@@ -56,10 +56,34 @@
 				title: 'Close Editor',
 				category: 'View',
 				key: 'cmd+w',
-				when: () => editors.active !== null,
+				// An empty group closes itself when it is not the only one (VS Code closes the group).
+				when: () => editors.active !== null || editors.groups.length > 1,
 				run: () => {
-					if (editors.active && !editors.close(editors.active)) status.flash('มีการแก้ไขที่ยังไม่บันทึก: กด ⌘S ก่อนปิด');
+					if (!editors.active) editors.removeGroup();
+					else if (!editors.close(editors.active)) status.flash('มีการแก้ไขที่ยังไม่บันทึก: กด ⌘S ก่อนปิด');
 				}
+			}),
+			// Editor groups (VS Code editorCommands.ts / editorActions.ts, macOS keys).
+			commands.register({ id: 'workbench.action.splitEditor', title: 'Split Editor', category: 'View', key: 'cmd+\\', run: () => editors.split('right') }),
+			commands.register({ id: 'workbench.action.splitEditorDown', title: 'Split Editor Down', category: 'View', run: () => editors.split('down') }),
+			commands.register({ id: 'workbench.action.focusFirstEditorGroup', title: 'Focus First Editor Group', category: 'View', key: 'cmd+1', run: () => editors.focusGroupAt(0) }),
+			commands.register({ id: 'workbench.action.focusSecondEditorGroup', title: 'Focus Second Editor Group', category: 'View', key: 'cmd+2', run: () => editors.focusGroupAt(1) }),
+			commands.register({ id: 'workbench.action.focusThirdEditorGroup', title: 'Focus Third Editor Group', category: 'View', key: 'cmd+3', run: () => editors.focusGroupAt(2) }),
+			commands.register({
+				id: 'workbench.action.closeEditorsInGroup',
+				title: 'Close All Editors in Group',
+				category: 'View',
+				when: () => editors.tabs.length > 0 || editors.groups.length > 1,
+				run: () => {
+					if (editors.closeAllInGroup().length) status.flash('มีการแก้ไขที่ยังไม่บันทึก: บันทึกก่อนปิดแท็บที่เหลือ');
+				}
+			}),
+			commands.register({
+				id: 'workbench.action.moveEditorToNextGroup',
+				title: 'Move Editor into Next Group',
+				category: 'View',
+				when: () => editors.active !== null,
+				run: () => editors.moveActiveEditorToNextGroup()
 			}),
 			commands.register({ id: 'workbench.action.keepEditor', title: 'Keep Editor', category: 'View', when: () => editors.active !== null, run: () => editors.active && editors.pin(editors.active) })
 		];

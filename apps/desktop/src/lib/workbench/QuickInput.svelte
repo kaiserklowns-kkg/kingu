@@ -2,11 +2,13 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { commands } from './commands.svelte';
 	import { editors } from './editors.svelte';
+	import FileIcon from './FileIcon.svelte';
+	import { fileIcon, type FileIconSpec } from './fileIcons';
 	import { quick } from './quick.svelte';
 	import { rank, type Match } from './fuzzy';
 	import { keyLabel } from './keys';
 
-	type Item = { label: string; detail?: string; key?: string; match?: Match; run: () => void };
+	type Item = { label: string; detail?: string; key?: string; match?: Match; icon?: FileIconSpec; run: () => void };
 
 	let input: HTMLInputElement | undefined = $state();
 	let files = $state<string[]>([]);
@@ -46,6 +48,7 @@
 			const slash = item.lastIndexOf('/');
 			return {
 				label: item.slice(slash + 1),
+				icon: fileIcon(item),
 				detail: slash > 0 ? item.slice(0, slash) : '',
 				match: { score: match.score, positions: match.positions.filter((p) => p > slash).map((p) => p - slash - 1) },
 				run: () => editors.open(item, { preview: true })
@@ -106,6 +109,7 @@
 						onmousemove={() => (index = i)}
 						onclick={() => accept(i)}
 					>
+						{#if item.icon}<FileIcon icon={item.icon} />{/if}
 						<span class="truncate">
 							{#each parts(item.label, item.match?.positions) as p, k (k)}<span class={p.hit ? 'font-bold text-(--vscode-list-highlightForeground)' : undefined}>{p.ch}</span>{/each}
 						</span>
