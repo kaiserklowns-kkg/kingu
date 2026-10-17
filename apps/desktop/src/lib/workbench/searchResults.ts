@@ -9,13 +9,16 @@ export type TextMatch = {
 	preview: string;
 	preview_start: number;
 	preview_end: number;
+	/** The whole matched text (the preview may elide it). */
+	text: string;
 };
 
-export type FileMatches = { path: string; matches: TextMatch[] };
+/** `version` fingerprints the file as searched; Replace refuses the file once it differs. */
+export type FileMatches = { path: string; matches: TextMatch[]; version?: string };
 
 /** Mirrors Rust `search::SearchEvent`. */
 export type SearchEvent =
-	| ({ kind: 'file' } & FileMatches)
+	| { kind: 'file'; path: string; matches: TextMatch[]; version: string }
 	| { kind: 'done'; files: number; matches: number; limit_hit: boolean; elapsed_ms: number }
 	| { kind: 'error'; message: string };
 
@@ -75,4 +78,62 @@ export function dirname(path: string): string {
 export function seedFromSelection(selection: string): string | null {
 	if (!selection || /[\r\n]/.test(selection)) return null;
 	return selection;
+}
+
+// --- Replace ---------------------------------------------------------------------------------
+
+/** Mirrors Rust `replace::ReplaceEdit`: 1-based line, UTF-16 columns of the text before. */
+export type ReplaceEdit = { line: number; column: number; end_column: number; text: string };
+
+/** Mirrors Rust `replace::FileResult`. */
+export type ReplaceResult = {
+	path: string;
+	outcome: 'written' | 'edits' | 'stale' | 'failed';
+	replaced: number;
+	edits: ReplaceEdit[];
+	version: string | null;
+	message: string | null;
+};
+
+/** Moves matches that follow replaced text to where that text now ends (VS Code keeps the other
+ * results of a file valid after replacing one). `edits` must not overlap `matches`. */
+export function rebaseMatches(matches: TextMatch[], edits: ReplaceEdit[]): TextMatch[] {
+	// Last edit first: a later edit never moves an earlier one's coordinates.
+	const sorted = [...edits].sort((a, b) => b.line - a.line || b.column - a.column);
+	return matches.map((m) => {
+		let { line, column, end_column } = m;
+		for (const e of sorted) {
+			const lines = e.text.split(/\r\n|\r|\n/);
+			const added = lines.length - 1;
+			if (line === e.line && column >= e.end_column) {
+				const lastLen = lines[added].length;
+				const start = added ? lastLen + 1 : e.column + lastLen;
+				const shift = start - e.end_column;
+				line += added;
+				column += shift;
+				end_column += shift;
+			} else if (line > e.line) line += added;
+		}
+		return line === m.line && column === m.column ? m : { ...m, line, column, end_column };
+	});
+}
+
+/** What a match becomes, for the results preview. Regex mode uses JavaScript's replace (the
+ * same `$1`/`$&` rules Rust applies); a pattern JavaScript cannot compile shows the raw text. */
+export function previewReplacement(matched: string, replace: string, opts: { isRegex: boolean; matchCase: boolean; query: string }): string {
+	if (!opts.isRegex) return replace;
+	try {
+		const re = new RegExp(`^(?:${opts.query})$`, opts.matchCase ? 'u' : 'iu');
+		const template = replace.replace(/\\(n|t|\\)/g, (_, c) => (c === 'n' ? '\n' : c === 't' ? '\t' : '\\'));
+		return re.test(matched) ? matched.replace(re, template) : replace;
+	} catch {
+		return replace;
+	}
+}
+
+/** "Replace 3 occurrences across 2 files with 'x'?" */
+export function replaceConfirmText(matches: number, files: number, replace: string): string {
+	const o = matches === 1 ? '1 occurrence' : `${matches} occurrences`;
+	const f = files === 1 ? '1 file' : `${files} files`;
+	return replace ? `Replace ${o} across ${f} with '${replace}'?` : `Replace ${o} across ${f} with nothing (delete)?`;
 }

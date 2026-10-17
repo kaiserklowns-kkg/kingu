@@ -16,6 +16,12 @@ const entries = new Map<string, ModelEntry>();
 const loading = new Map<string, Promise<ModelEntry>>();
 const views = new Map<string, Monaco.editor.ICodeEditorViewState | null>();
 
+// Workspace edits (LSP rename, code actions, Search: Replace) go into open files' models.
+editors.textModel = (path) => {
+	const model = entries.get(path)?.model;
+	return model && !model.isDisposed() ? model : null;
+};
+
 const viewKey = (group: number, path: string) => `${group}\u0000${path}`;
 
 export function getEntry(path: string): ModelEntry | undefined {
@@ -30,7 +36,10 @@ export function modelEntry(api: MonacoModule, path: string): Promise<ModelEntry>
 	if (!pending) {
 		pending = invoke<string>('read_workspace_file', { rel: path })
 			.then((text) => {
-				const model = api.monaco.editor.createModel(text, api.languageFor(path), api.monaco.Uri.file('/' + path));
+				// A references peek may already have made a preview model for this file.
+				const preview = lsp.adoptPreview(path);
+				if (preview && preview.getValue() !== text) preview.setValue(text);
+				const model = preview ?? api.monaco.editor.createModel(text, api.languageFor(path), api.monaco.Uri.file('/' + path));
 				const entry: ModelEntry = { model, savedVersion: model.getAlternativeVersionId() };
 				model.onDidChangeContent(() => !entry.reloading && editors.setDirty(path, model.getAlternativeVersionId() !== entry.savedVersion));
 				entries.set(path, entry);

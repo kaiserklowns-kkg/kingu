@@ -32,6 +32,12 @@
 	<button class="flex h-full items-center gap-1 px-2 hover:bg-white/10" onclick={() => layout.showPanel('problems')}>
 		<Icon name="error" size={14} />{lsp.counts.errors} <Icon name="warning" size={14} />{lsp.counts.warnings}
 	</button>
+	{#if lsp.progress && lsp.progress !== languageStatus?.text}
+		<button class="flex h-full min-w-0 items-center gap-1 truncate px-2 hover:bg-white/10" title={lsp.progress} onclick={() => layout.showPanel('output')}>
+			<span class="inline-block size-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent"></span>
+			<span class="truncate">{lsp.progress}</span>
+		</button>
+	{/if}
 	{#if status.message}<span class="truncate px-2">{status.message}</span>{/if}
 	<div class="flex-1"></div>
 	{#if editors.active && languageStatus}

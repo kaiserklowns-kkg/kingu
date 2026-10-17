@@ -86,6 +86,25 @@ export class DiagnosticsIndex {
 	}
 }
 
+/** `workspace/configuration`: the value at a dotted `section` of `settings` (VS Code's
+ * `getConfiguration(section)`), the whole object without a section, null when absent. */
+export function configSection(settings: Record<string, unknown>, section?: string): unknown {
+	if (!section) return settings;
+	if (section in settings) return settings[section];
+	let v: unknown = settings;
+	for (const key of section.split('.')) {
+		if (v === null || typeof v !== 'object' || !(key in v)) return null;
+		v = (v as Record<string, unknown>)[key];
+	}
+	return v ?? null;
+}
+
+/** A busy server for the status bar ("rust-analyzer: Indexing (40%)…"), null when idle. */
+export function progressText(server: ServerInfo, status: ServerStatus | undefined): string | null {
+	if (status?.state !== 'indexing' && status?.state !== 'starting') return null;
+	return statusText(server, status);
+}
+
 export function countDiagnostics(files: ProblemFile[]): Counts {
 	const c: Counts = { errors: 0, warnings: 0, infos: 0 };
 	for (const f of files)

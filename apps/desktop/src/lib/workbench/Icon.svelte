@@ -23,7 +23,9 @@
 		minus: 'M5 12h14',
 		discard: 'M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11',
 		goToFile: 'M14 3H6v18h12V7zM14 3v4h4M9 14h6M13 11.5l2.5 2.5-2.5 2.5',
-		check: 'M5 12.5l4.5 4.5L19 7.5'
+		check: 'M5 12.5l4.5 4.5L19 7.5',
+		replace: 'M4 4h7v6H4zM13 14h7v6h-7zM14 4h2.5A2.5 2.5 0 0 1 19 6.5V11M17 9l2 2 2-2M10 20H7.5A2.5 2.5 0 0 1 5 17.5V13',
+		replaceAll: 'M3 4h6v5H3zM3 13h6v5H3zM14 9h7v6h-7zM9 6.5h2.5a2 2 0 0 1 2 2V9M9 15.5h2.5a2 2 0 0 0 2-2V15'
 	} as const;
 	export type IconName = keyof typeof icons;
 </script>

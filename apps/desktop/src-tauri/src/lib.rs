@@ -4,6 +4,7 @@ mod fs;
 mod git;
 mod lsp;
 mod pty;
+mod replace;
 mod search;
 mod watcher;
 mod workspace;
@@ -242,6 +243,17 @@ fn search_text(
   searches.start(&rg, &ws.root()?, &options, move |ev| on_event.send(ev).is_ok())
 }
 
+/// Search: Replace. Rewrites the matches of the last search (refusing files changed since) and
+/// returns edits for files the webview has open, which it applies to their editor models.
+#[tauri::command]
+async fn search_replace(ws: State<'_, Workspace>, request: replace::ReplaceRequest) -> Result<Vec<replace::FileResult>, String> {
+  let root = ws.root()?;
+  let results = blocking(move || replace::replace_all(&root, &request)).await?;
+  let written: usize = results.iter().filter(|r| r.outcome == replace::Outcome::Written).map(|r| r.replaced).sum();
+  log::info!("search_replace: {written} replacements written in {} files", results.len());
+  Ok(results)
+}
+
 #[tauri::command]
 fn search_cancel(searches: State<'_, Arc<search::Searches>>) {
   searches.cancel();
@@ -435,6 +447,7 @@ pub fn run() {
       agent::agent_stop,
       search_text,
       search_cancel,
+      search_replace,
       lsp_start,
       lsp::lsp_send,
       lsp::lsp_stop

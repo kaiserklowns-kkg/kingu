@@ -3,6 +3,7 @@
 // `editors.active`, `editors.tabs`, `open`, `close`… all mean "in the active group".
 // Text models are shared between groups (editorModels.ts), one Monaco editor per group.
 
+import type * as Monaco from 'monaco-editor';
 import { diffKey } from './scm';
 import * as G from './editorGroups';
 
@@ -25,6 +26,10 @@ class Editors {
 	/** A group whose editor should take keyboard focus once it shows a model. */
 	focusRequest = $state<number | null>(null);
 	#hosts = new Map<number, EditorHostHandle>();
+	/** Set by editorModels.ts: the shared text model of `path` when it is open in any group, else
+	 * null. Edits from rename, code actions and Search: Replace go into it (undoable, left dirty)
+	 * instead of to disk, so unsaved changes are never clobbered. */
+	textModel: (path: string) => Monaco.editor.ITextModel | null = () => null;
 
 	get groups() {
 		return this.model.groups;
