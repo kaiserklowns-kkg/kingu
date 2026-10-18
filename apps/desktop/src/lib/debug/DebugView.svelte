@@ -1,11 +1,14 @@
 <script lang="ts">
-	// Run and Debug view (VS Code debugViewlet): the debug toolbar (VS Code floats it; here it heads
-	// the view), then the Variables, Watch, Call Stack and Breakpoints sections.
-	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
+	// Run and Debug view (VS Code debugViewlet): the debug toolbar when `debug.toolBarLocation` is
+	// `docked`, then the Variables, Watch, Call Stack and Breakpoints sections.
+	import Icon from '#lib/workbench/Icon.svelte';
 	import { commands, keyOf } from '#lib/workbench/commands.svelte.ts';
 	import { editors } from '#lib/workbench/editors.svelte.ts';
 	import { keyLabel } from '#lib/workbench/keys.ts';
+	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { debug } from './debug.svelte.ts';
+	import { breakpointRows, variableLabel } from './debugSettings.ts';
+	import DebugToolbar from './DebugToolbar.svelte';
 	import type { Variable } from './protocol.ts';
 
 	type Section = 'variables' | 'watch' | 'stack' | 'breakpoints';
@@ -17,22 +20,17 @@
 
 	const model = $derived(debug.model);
 	const breakpointFiles = $derived(Object.entries(debug.breakpoints).sort(([a], [b]) => a.localeCompare(b)));
+	// debug.breakpointsView.presentation: a flat list or a tree by file.
+	const breakpointList = $derived(breakpointRows(breakpointFiles, settings.get<string>('debug.breakpointsView.presentation')));
+	let collapsedFiles = $state<Record<string, boolean>>({});
+	// debug.showVariableTypes
+	const showTypes = $derived(settings.get<boolean>('debug.showVariableTypes'));
 
 	const titled = (label: string, id: string) => {
 		const cmd = commands.get(id);
 		const key = cmd && keyOf(cmd);
 		return key ? `${label} (${keyLabel(key)})` : label;
 	};
-	type Tool = { icon: IconName; label: string; command: string; show: boolean };
-	const tools = $derived<Tool[]>([
-		{ icon: 'play', label: 'Continue', command: 'workbench.action.debug.start', show: debug.stopped },
-		{ icon: 'pause', label: 'Pause', command: 'workbench.action.debug.pause', show: debug.running },
-		{ icon: 'stepOver', label: 'Step Over', command: 'workbench.action.debug.stepOver', show: true },
-		{ icon: 'stepInto', label: 'Step Into', command: 'workbench.action.debug.stepInto', show: true },
-		{ icon: 'stepOut', label: 'Step Out', command: 'workbench.action.debug.stepOut', show: true },
-		{ icon: 'refresh', label: 'Restart', command: 'workbench.action.debug.restart', show: true },
-		{ icon: 'stop', label: 'Stop', command: 'workbench.action.debug.stop', show: true }
-	]);
 
 	function toggleVar(key: string, ref: number) {
 		expanded[key] = !expanded[key];
@@ -79,7 +77,7 @@
 			{:else}
 				<span class="w-4 shrink-0"></span>
 			{/if}
-			<span class="shrink-0 text-(--vscode-debugTokenExpression-name,var(--vscode-foreground))">{v.name}</span>
+			<span class="shrink-0 text-(--vscode-debugTokenExpression-name,var(--vscode-foreground))">{variableLabel(v, showTypes)}</span>
 			<span class="shrink-0 pr-1">:</span>
 			<span class="truncate font-mono text-xs text-(--vscode-descriptionForeground)">{v.value}</span>
 		</div>
@@ -90,15 +88,7 @@
 <section class="flex min-h-0 flex-1 flex-col">
 	<div class="flex shrink-0 flex-col gap-1.5 px-2 pt-1 pb-2">
 		{#if debug.active}
-			<div role="toolbar" aria-label="Debug" class="flex items-center gap-0.5">
-				{#each tools as t (t.label)}
-					{#if t.show}
-						<button aria-label={t.label} title={titled(t.label, t.command)} disabled={!commands.enabled(t.command)} class={[ICON_BUTTON, 'size-6 disabled:opacity-40']} onclick={() => commands.run(t.command)}>
-							<Icon name={t.icon} size={16} />
-						</button>
-					{/if}
-				{/each}
-			</div>
+			<DebugToolbar placement="docked" />
 		{:else}
 			<button
 				class="flex h-[26px] items-center justify-center gap-1 rounded-sm bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:brightness-110"
@@ -177,19 +167,39 @@
 
 		{@render header('breakpoints', 'Breakpoints')}
 		{#if open.breakpoints}
-			{#each breakpointFiles as [rel, list] (rel)}
-				{#each list as b (b.line)}
-					<div class={['group/row', ROW, 'gap-1.5 pr-2 pl-4']}>
+			{#each breakpointList as row (row.kind === 'file' ? `f:${row.rel}` : `b:${row.rel}:${row.item.line}`)}
+				{#if row.kind === 'file'}
+					{@const isOpen = !collapsedFiles[row.rel]}
+					<button class={[ROW, 'w-full gap-1 pr-2 pl-1 text-left']} aria-expanded={isOpen} title={row.rel} onclick={() => (collapsedFiles[row.rel] = isOpen)}>
+						<Icon name={isOpen ? 'chevronDown' : 'chevronRight'} size={14} />
+						<span class="truncate">{fileName(row.rel)}</span>
+						<span class="truncate text-xs text-(--vscode-descriptionForeground)">{row.rel.includes('/') ? row.rel.slice(0, row.rel.lastIndexOf('/')) : ''}</span>
+						<span class="ml-auto shrink-0 rounded-full bg-(--vscode-badge-background) px-1.5 text-[11px] leading-4 text-(--vscode-badge-foreground)">{row.count}</span>
+					</button>
+				{:else if !collapsedFiles[row.rel] || row.depth === 0}
+					{@const rel = row.rel}
+					{@const b = row.item}
+					{@const tree = row.depth > 0}
+					<div class={['group/row', ROW, 'gap-1.5 pr-2', tree ? 'pl-8' : 'pl-4']}>
 						<input type="checkbox" aria-label="Enable breakpoint" checked={b.enabled} onchange={(e) => debug.setBreakpointEnabled(rel, b.line, e.currentTarget.checked)} />
-						<button class="flex min-w-0 flex-1 items-center gap-1.5 text-left" title={b.condition ? `${rel}:${b.line} — ${b.condition}` : `${rel}:${b.line}`} onclick={() => editors.openAt(rel, b.line)}>
-							<span class="truncate">{fileName(rel)}</span>
-							<span class="truncate text-xs text-(--vscode-descriptionForeground)">{rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : ''}</span>
-							{#if b.condition}<span class="truncate font-mono text-xs text-(--vscode-descriptionForeground)">{b.condition}</span>{/if}
+						<button
+							class="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+							title={b.logMessage ? `${rel}:${b.line} — log ${b.logMessage}` : b.condition ? `${rel}:${b.line} — ${b.condition}` : `${rel}:${b.line}`}
+							onclick={() => editors.openAt(rel, b.line)}
+						>
+							{#if !tree}
+								<span class="truncate">{fileName(rel)}</span>
+								<span class="truncate text-xs text-(--vscode-descriptionForeground)">{rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : ''}</span>
+							{:else}
+								<span class="truncate">Line {b.line}</span>
+							{/if}
+							{#if b.logMessage}<span class="truncate font-mono text-xs text-(--vscode-descriptionForeground)">log {b.logMessage}</span>
+							{:else if b.condition}<span class="truncate font-mono text-xs text-(--vscode-descriptionForeground)">{b.condition}</span>{/if}
 						</button>
-						<span class="shrink-0 rounded-full bg-(--vscode-badge-background) px-1.5 text-[11px] leading-4 text-(--vscode-badge-foreground)">{b.line}</span>
+						{#if !tree}<span class="shrink-0 rounded-full bg-(--vscode-badge-background) px-1.5 text-[11px] leading-4 text-(--vscode-badge-foreground)">{b.line}</span>{/if}
 						<button aria-label="Remove Breakpoint" title="Remove Breakpoint" class={[ICON_BUTTON, 'invisible group-hover/row:visible']} onclick={() => debug.removeBreakpoint(rel, b.line)}><Icon name="close" size={12} /></button>
 					</div>
-				{/each}
+				{/if}
 			{/each}
 		{/if}
 	</div>
