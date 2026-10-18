@@ -31,6 +31,18 @@ describe('questions', () => {
 		expect(run([{ hook_event_name: 'PermissionRequest', tool_name: 'Bash' }])).toMatchObject({ phase: 'waiting', permission: true, message: 'ขออนุญาตใช้ Bash' });
 		expect(needsInput(run([{ hook_event_name: 'Notification', message: 'Claude is waiting for your input' }]))).toBe(false);
 	});
+	test('the question keeps its options for a quick reply until the CLI moves on', () => {
+		const input = { questions: [{ question: 'Which?', header: 'Pick', multiSelect: false, options: [{ label: 'a', description: '' }, { label: 'b', description: 'bee' }] }] };
+		const q = run([{ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: input }]);
+		expect(q.ask).toEqual({ questions: [{ question: 'Which?', header: 'Pick', multiSelect: false, options: [{ label: 'a' }, { label: 'b', description: 'bee' }] }] });
+		// Claude's "waiting for your input" while the question is open leaves it open.
+		expect(applyHook(q, { hook_event_name: 'Notification', message: 'Claude is waiting for your input' }, 9)).toBe(q);
+		const answered = applyHook(q, { hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion' }, 9);
+		expect(answered.ask).toBeUndefined();
+		expect(applyHook(q, { hook_event_name: 'Stop' }, 9).ask).toBeUndefined();
+		// No options in the payload: still a question, nothing to quick-reply with.
+		expect(run([{ hook_event_name: 'Notification', notification_type: 'elicitation_dialog', message: 'MCP asks' }]).ask).toBeUndefined();
+	});
 	test('question tool names across CLIs', () => {
 		for (const n of ['AskUserQuestion', 'request_user_input', 'ask_user', 'AskUser']) expect(isQuestionTool(n)).toBe(true);
 		expect(isQuestionTool('Bash')).toBe(false);

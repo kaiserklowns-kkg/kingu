@@ -16,6 +16,7 @@
 	import { taskTitleFromPrompt } from './composerText';
 	import { cliOf } from '#lib/ade/agentCli.ts';
 	import { openAgents } from '#lib/ade/agentsMode.svelte.ts';
+	import CliQuestion from '#lib/ade/CliQuestion.svelte';
 
 	let draft = $state('');
 	let followUp = $state('');
@@ -137,6 +138,7 @@
 					<div class="flex justify-center"><Icon name="terminal" size={28} /></div>
 					<p class="text-(--vscode-foreground)">งานนี้รัน {cliOf(meta.agent)?.[0]} ใน terminal</p>
 					<button class="text-(--vscode-textLink-foreground) hover:underline" onclick={() => openAgents()}>เปิดใน Agents (⇧⌘A)</button>
+					<CliQuestion slug={meta.slug} class="text-left text-xs" />
 				</div>
 			</div>
 		{:else if selected && meta}

@@ -149,3 +149,19 @@ export function askKeysFor(cli: string, prompt: AskPrompt, sels: readonly (AskSe
 
 /** Between keystroke groups: the selector must apply one before the next (Orca's 500 + 500 ms step). */
 export const ASK_KEY_STEP_MS = 1000;
+
+/**
+ * Types the groups one step apart. `live()` is asked before each write and stops the typing once
+ * false (the task's CLI was restarted or ended: never type into another terminal). True when all went.
+ */
+export async function typeAskKeys(
+	groups: readonly AskKeyGroup[],
+	io: { write: (data: string) => Promise<unknown>; paste: (text: string) => string; wait: (ms: number) => Promise<unknown>; live: () => boolean }
+): Promise<boolean> {
+	for (const [i, g] of groups.entries()) {
+		if (i) await io.wait(ASK_KEY_STEP_MS);
+		if (!io.live()) return false;
+		await io.write('raw' in g ? g.raw : io.paste(g.text));
+	}
+	return true;
+}

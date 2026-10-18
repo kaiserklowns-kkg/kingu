@@ -4,6 +4,8 @@
 // Rust agent/status_hooks.rs). Each provider's events map to Orca's states the way Orca's
 // provider mappers do. Pure.
 
+import { parseAsk, type AskPrompt } from '#lib/agent/ask.ts';
+
 export type HookPhase = 'starting' | 'working' | 'waiting' | 'idle' | 'ended';
 export type HookState = {
 	phase: HookPhase;
@@ -13,6 +15,8 @@ export type HookState = {
 	permission: boolean;
 	/** Waiting on the answer to a question the agent asked (AskUserQuestion, elicitation, …). */
 	question: boolean;
+	/** That question's options, when its tool input carried them (terminal quick reply). */
+	ask?: AskPrompt;
 	/** Real hook events arrive (not only codex's turn-end notify): the phase can be trusted. */
 	hooks?: boolean;
 	sessionId?: string;
@@ -64,11 +68,11 @@ export function questionText(input: unknown): string | undefined {
 const toolOf = (p: Payload) => str(p.tool_name) ?? str(p.toolName) ?? str(p.name) ?? str((p.tool as Payload | undefined)?.name);
 const inputOf = (p: Payload) => p.tool_input ?? p.toolInput ?? p.input ?? p.args ?? p.arguments;
 
-type Patch = Partial<Pick<HookState, 'phase' | 'permission' | 'question' | 'message'>>;
-const working = (message?: string): Patch => ({ phase: 'working', permission: false, question: false, ...(message ? { message } : {}) });
-const idle = (message = 'จบรอบ รอคุณ'): Patch => ({ phase: 'idle', permission: false, question: false, message });
-const permission = (tool?: string, message?: string): Patch => ({ phase: 'waiting', permission: true, question: false, message: message || (tool ? `ขออนุญาตใช้ ${tool}` : 'รอคุณอนุญาต') });
-const question = (input: unknown): Patch => ({ phase: 'waiting', permission: false, question: true, message: firstLine(questionText(input)) || 'agent ถามคุณ' });
+type Patch = Partial<Pick<HookState, 'phase' | 'permission' | 'question' | 'ask' | 'message'>>;
+const working = (message?: string): Patch => ({ phase: 'working', permission: false, question: false, ask: undefined, ...(message ? { message } : {}) });
+const idle = (message = 'จบรอบ รอคุณ'): Patch => ({ phase: 'idle', permission: false, question: false, ask: undefined, message });
+const permission = (tool?: string, message?: string): Patch => ({ phase: 'waiting', permission: true, question: false, ask: undefined, message: message || (tool ? `ขออนุญาตใช้ ${tool}` : 'รอคุณอนุญาต') });
+const question = (input: unknown): Patch => ({ phase: 'waiting', permission: false, question: true, ask: parseAsk(input) ?? undefined, message: firstLine(questionText(input)) || 'agent ถามคุณ' });
 const usingTool = (p: Payload) => {
 	const tool = toolOf(p);
 	return working(tool ? `ใช้ ${tool}` : 'กำลังทำงาน');
@@ -225,7 +229,7 @@ function opencode(ev: string, p: Payload): Patch | null {
 const PROVIDERS: Partial<Record<string, (ev: string, p: Payload, prev: HookState) => Patch | null>> = { gemini, cursor, copilot, droid, codex, opencode };
 
 /** Claude Code hook events (Orca claude-events + Kingu's Notification handling). */
-function claude(ev: HookEvent): Patch | null {
+function claude(ev: HookEvent, prev: HookState): Patch | null {
 	switch (ev.hook_event_name) {
 		case 'SessionStart':
 			return idle('พร้อมรับคำสั่ง');
@@ -241,14 +245,16 @@ function claude(ev: HookEvent): Patch | null {
 			return working();
 		case 'Notification': {
 			if (ev.notification_type === 'elicitation_dialog') return { ...question(null), message: firstLine(ev.message) || 'agent ถามคุณ' };
+			// While a question is open, Claude's "waiting for your input" is about that question.
+			if (prev.phase === 'waiting' && prev.question) return null;
 			// "Claude needs your permission to use Bash" vs. "Claude is waiting for your input".
 			const perm = ev.notification_type === 'permission_prompt' || /permission/i.test(ev.message ?? '');
-			return { phase: 'waiting', permission: perm, question: false, message: firstLine(ev.message) || 'รอคุณ' };
+			return { phase: 'waiting', permission: perm, question: false, ask: undefined, message: firstLine(ev.message) || 'รอคุณ' };
 		}
 		case 'Stop':
 			return idle();
 		case 'SessionEnd':
-			return { phase: 'ended', permission: false, question: false, message: 'จบ session' };
+			return { phase: 'ended', permission: false, question: false, ask: undefined, message: 'จบ session' };
 		default:
 			return null;
 	}
@@ -258,7 +264,7 @@ export function applyHook(state: HookState, event: object, now: number): HookSta
 	const ev = event as HookEvent;
 	if (ev.type === 'agent-turn-complete') {
 		const sessionId = typeof ev['thread-id'] === 'string' && ev['thread-id'] ? ev['thread-id'] : state.sessionId;
-		return { ...state, at: now, sessionId, phase: 'idle', permission: false, question: false, message: firstLine(ev['last-assistant-message']) || 'จบรอบ รอคุณ' };
+		return { ...state, at: now, sessionId, phase: 'idle', permission: false, question: false, ask: undefined, message: firstLine(ev['last-assistant-message']) || 'จบรอบ รอคุณ' };
 	}
 	if (typeof ev.kingu_hook === 'string') {
 		const map = PROVIDERS[ev.kingu_hook];
@@ -268,7 +274,7 @@ export function applyHook(state: HookState, event: object, now: number): HookSta
 		const sessionId = str(p.session_id) ?? str(p.sessionID) ?? state.sessionId;
 		return { ...state, ...patch, hooks: true, at: now, sessionId };
 	}
-	const patch = claude(ev);
+	const patch = claude(ev, state);
 	if (!patch) return state;
 	return { ...state, ...patch, hooks: true, at: now, sessionId: ev.session_id ?? state.sessionId };
 }

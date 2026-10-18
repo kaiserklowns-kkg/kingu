@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { answersFor, askKeysFor, claudeAskKeys, codexAskKeys, isAnswered, isComplete, parseAsk, textAskKeys, type AskPrompt } from './ask';
+import { answersFor, ASK_KEY_STEP_MS, askKeysFor, claudeAskKeys, codexAskKeys, isAnswered, isComplete, parseAsk, textAskKeys, typeAskKeys, type AskPrompt } from './ask';
 
 const input = {
 	questions: [
@@ -76,6 +76,28 @@ describe('terminal keystrokes', () => {
 	test('codex: the digit submits; own words become notes on the "none" row', () => {
 		expect(codexAskKeys(single, [{ indices: [1] }])).toEqual([{ raw: '2' }]);
 		expect(codexAskKeys(single, [{ indices: [], other: 'x' }])).toEqual([{ raw: '\x1b[A' }, { raw: '\t' }, { text: 'x' }, { raw: '\r' }]);
+	});
+	test('typeAskKeys writes one group per step, pastes text, and stops when the terminal is no longer the task CLI', async () => {
+		const writes: string[] = [];
+		const waits: number[] = [];
+		let live = true;
+		const io = {
+			write: async (d: string) => void writes.push(d),
+			paste: (t: string) => `[${t}]`,
+			wait: async (ms: number) => void waits.push(ms),
+			live: () => live
+		};
+		expect(await typeAskKeys([{ raw: '4' }, { text: 'temporal' }, { raw: '\r' }], io)).toBe(true);
+		expect(writes).toEqual(['4', '[temporal]', '\r']);
+		expect(waits).toEqual([ASK_KEY_STEP_MS, ASK_KEY_STEP_MS]);
+
+		writes.length = 0;
+		io.write = async (d: string) => {
+			writes.push(d);
+			live = false; // e.g. the task's CLI restarted under a new terminal key
+		};
+		expect(await typeAskKeys([{ raw: '1' }, { raw: '\r' }], io)).toBe(false);
+		expect(writes).toEqual(['1']);
 	});
 	test('other CLIs get each answer pasted and submitted; askKeysFor picks by CLI', () => {
 		expect(textAskKeys(prompt, [{ indices: [0] }, { indices: [0, 1] }])).toEqual([{ text: 'date-fns' }, { raw: '\r' }, { text: 'web, ios' }, { raw: '\r' }]);

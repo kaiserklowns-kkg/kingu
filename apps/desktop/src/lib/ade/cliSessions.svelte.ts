@@ -10,7 +10,8 @@ import { killPty } from '#lib/terminal/pty.ts';
 import { cliKey, liveCliSessions, parseCliSessions, persist, restore, storeName } from '#lib/terminal/sessions.ts';
 import { isWorking } from './agentCli';
 import { applyHook, initialHookState, type HookState } from './agentHooks';
-import { pasteText, promptDue } from '#lib/ade/agentProfiles.ts';
+import { pasteText, profileOf, promptDue } from '#lib/ade/agentProfiles.ts';
+import { askKeysFor, isComplete, typeAskKeys, type AskSelection } from '#lib/agent/ask.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { clientLog } from '#lib/client-log.ts';
@@ -156,6 +157,36 @@ class CliSessions {
 			status.flash(`ส่งถึง terminal ของ agent ไม่ได้: ${e}`, 8000);
 			return false;
 		}
+	}
+
+	/**
+	 * Quick reply: answers the question the task's CLI is asking (its hook state's `ask`) by typing
+	 * into that task's own CLI terminal — the keystrokes its question UI takes (ask.ts). Stops if
+	 * the session changes meanwhile. False when there is no open question or the typing failed.
+	 */
+	async answer(slug: string, selections: AskSelection[]): Promise<boolean> {
+		const s = this.sessions[slug];
+		const hook = this.hooks[slug];
+		if (!s || !hook?.question || hook.phase !== 'waiting' || !hook.ask || !isComplete(hook.ask, selections)) return false;
+		const key = this.ptyKey(slug, s.startedAt);
+		const groups = askKeysFor(profileOf(s.run).id, hook.ask, selections);
+		try {
+			const done = await typeAskKeys(groups, {
+				write: (data) => invoke('pty_write', { key, data }),
+				paste: pasteText,
+				wait: (ms) => new Promise((r) => setTimeout(r, ms)),
+				live: () => this.key(slug) === key
+			});
+			if (!done) return false;
+		} catch (e) {
+			status.flash(`ส่งคำตอบถึง terminal ของ agent ไม่ได้: ${e}`, 8000);
+			return false;
+		}
+		// The CLI's next hook event takes over; until then the question is answered.
+		const now = this.hooks[slug];
+		if (now?.question) this.hooks[slug] = { ...now, phase: 'working', question: false, ask: undefined, message: 'ตอบคำถามแล้ว', at: Date.now() };
+		this.#last[slug] = Date.now();
+		return true;
 	}
 
 	/** Output arrived (throttled: one state write per 500ms per task). */

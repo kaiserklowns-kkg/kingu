@@ -13,6 +13,7 @@
 	import { adeTasks } from './tasks.svelte';
 	import PrChecks from './PrChecks.svelte';
 	import CacheTimer from './CacheTimer.svelte';
+	import CliQuestion from './CliQuestion.svelte';
 	import DiffNotesList from './DiffNotesList.svelte';
 	import { issues } from './issues.svelte.ts';
 	import { isLinear, issueRef } from './issues.ts';
@@ -170,6 +171,7 @@
 						<Icon name="terminal" size={24} />
 						<p>งานนี้รัน <span class="font-mono">{cli.join(' ')}</span> ใน terminal ของ worktree</p>
 						<button class={BUTTON_SECONDARY} onclick={() => (appMode.setMode('agents'), adeLayout.show(slug))}>เปิดใน Agents (⇧⌘A)</button>
+						<CliQuestion {slug} class="w-full max-w-md text-left" />
 					</div>
 				{:else}
 					<AgentTimeline {run} onanswer={(p, decision, message, answers) => adeTasks.answer(slug, p.request_id, decision, message, answers)} class="flex-1 px-4 py-2">

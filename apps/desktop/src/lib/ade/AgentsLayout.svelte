@@ -33,6 +33,7 @@
 	import AutomationsPage from './AutomationsPage.svelte';
 	import IssuesPage from './IssuesPage.svelte';
 	import TaskPage from './TaskPage.svelte';
+	import CliQuestion from './CliQuestion.svelte';
 	import WorktreeFiles from './WorktreeFiles.svelte';
 	import AdeSourceControl from './AdeSourceControl.svelte';
 	import AdeChecks from './AdeChecks.svelte';
@@ -306,6 +307,8 @@
 					onoutput={() => cliSessions.output(s)}
 					onopenfile={(rel, line, column) => openLinkedFile(s, rel, line, column)}
 				/>
+				<!-- Quick reply while the CLI asks a question (top right: the CLI draws its question at the bottom). -->
+				<CliQuestion slug={s} class="absolute top-2 right-4 z-10 max-h-[70%] w-80 overflow-y-auto text-xs shadow-lg shadow-black/30" />
 			</div>
 		{/each}
 		{#each Object.entries(adeLayout.terminals) as [k, list] (k)}
