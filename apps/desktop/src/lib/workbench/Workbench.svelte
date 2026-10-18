@@ -45,6 +45,7 @@
 	import { installAgentNotifications } from '#lib/ade/agentNotify.svelte.ts';
 	import { installAutomations } from '#lib/ade/automations.svelte.ts';
 	import { installSnaps } from '#lib/snaps/snaps.svelte.ts';
+	import { installDebug } from '#lib/debug/debug.svelte.ts';
 
 	// Opening a file or diff (Quick Open, a review file, settings.json) closes the system settings page.
 	// `editors.active` also re-runs on focus changes, so only a different editor closes it.
@@ -198,7 +199,9 @@
 		const uninstallLayout = installLayoutCommands();
 		const uninstallSnaps = installSnaps();
 		const uninstallTerminalSessions = installTerminalSessions();
+		const uninstallDebug = installDebug();
 		return () => {
+			uninstallDebug();
 			uninstallTerminalSessions();
 			uninstallSnaps();
 			uninstallLayout();
@@ -223,14 +226,16 @@
 			['explorer', 'Explorer', () => layout.showView('explorer')],
 			['search', 'Search', () => layout.showView('search')],
 			['scm', 'Source Control', () => layout.showView('scm')],
+			['debug', 'Run and Debug', () => layout.showView('debug')],
 			['agents', 'Agents', () => layout.showView('agents')],
 			['problems', 'Problems', () => layout.showPanel('problems')],
 			['output', 'Output', () => layout.showPanel('output')],
+			['debugConsole', 'Debug Console', () => layout.showPanel('debugConsole')],
 			['terminal', 'Terminal', () => layout.showPanel('terminal')]
 		];
 		quick.pick({
 			placeholder: 'เลือกมุมมองที่จะเปิด (Open View)',
-			items: views.map(([id, label], i) => ({ id, label, separator: i === 0 ? 'Side Bar' : i === 4 ? 'Panel' : undefined })),
+			items: views.map(([id, label], i) => ({ id, label, separator: i === 0 ? 'Side Bar' : i === 5 ? 'Panel' : undefined })),
 			onAccept: (item) => {
 				const view = views.find(([id]) => id === item.id);
 				if (!view) return;

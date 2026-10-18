@@ -137,14 +137,14 @@ describe('menu model', () => {
 			const bar = resolveMenubar(context(mac));
 			check(bar);
 			const tops = bar.map((m) => m.text);
-			expect(tops).toEqual(mac ? ['Kingu', 'File', 'Edit', 'Selection', 'View', 'Go', 'Agents', 'Terminal', 'Window', 'Help'] : ['File', 'Edit', 'Selection', 'View', 'Go', 'Agents', 'Terminal', 'Help']);
+			expect(tops).toEqual(mac ? ['Kingu', 'File', 'Edit', 'Selection', 'View', 'Go', 'Run', 'Agents', 'Terminal', 'Window', 'Help'] : ['File', 'Edit', 'Selection', 'View', 'Go', 'Run', 'Agents', 'Terminal', 'Help']);
 		});
 	}
 
 	test('Windows/Linux top-level mnemonics are unique', () => {
 		const letters = resolveMenubar(context(false)).map((m) => m.text[m.mnemonic!].toLowerCase());
 		expect(new Set(letters).size).toBe(letters.length);
-		expect(letters).toEqual(['f', 'e', 's', 'v', 'g', 'a', 't', 'h']);
+		expect(letters).toEqual(['f', 'e', 's', 'v', 'g', 'r', 'a', 't', 'h']);
 	});
 
 	test('macOS keeps About/Settings/Quit in the app menu and Edit uses native roles', () => {

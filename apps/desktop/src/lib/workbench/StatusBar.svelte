@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { debug } from '#lib/debug/debug.svelte.ts';
 	import { lsp } from '#lib/lsp/lsp.svelte.ts';
 	import TeamStatus from '#lib/team/TeamStatus.svelte';
 	import Icon from './Icon.svelte';
@@ -91,6 +92,12 @@
 		<button class="flex h-full min-w-0 items-center gap-1 truncate px-2 hover:bg-(--vscode-toolbar-hoverBackground)" title={lsp.progress} onclick={() => layout.showPanel('output')}>
 			<span class="inline-block size-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent"></span>
 			<span class="truncate">{lsp.progress}</span>
+		</button>
+	{/if}
+	{#if debug.active}
+		<!-- VS Code's debug status item: the running configuration; opens Run and Debug. -->
+		<button class={ITEM} title="Run and Debug" onclick={() => (appMode.setMode('workbench'), (layout.sideView = 'debug'), (layout.sidebarVisible = true))}>
+			<Icon name="bug" size={14} />{debug.configName}: {debug.label}
 		</button>
 	{/if}
 	<!-- Agents: in progress / waiting for you; opens the Agents layout (or the waiting session). -->

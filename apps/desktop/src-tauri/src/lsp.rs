@@ -91,6 +91,8 @@ pub enum Package {
   PyTool(&'static str),
   /// `cargo install --locked` arguments (space-separated).
   Cargo(&'static str),
+  /// A Python module (debugpy), installed into the user's python3 with pip.
+  Pip(&'static str),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -155,7 +157,7 @@ fn extra_dirs(home: Option<&Path>, root: &Path) -> Vec<PathBuf> {
   dirs
 }
 
-fn is_executable(p: &Path) -> bool {
+pub(crate) fn is_executable(p: &Path) -> bool {
   #[cfg(unix)]
   {
     use std::os::unix::fs::PermissionsExt;
@@ -168,7 +170,7 @@ fn is_executable(p: &Path) -> bool {
 }
 
 /// `name` on `path`, else in the extra dirs. The bool is whether it came from `path`.
-fn find_executable(name: &str, path: Option<&OsStr>, home: Option<&Path>, root: &Path) -> Option<(PathBuf, bool)> {
+pub(crate) fn find_executable(name: &str, path: Option<&OsStr>, home: Option<&Path>, root: &Path) -> Option<(PathBuf, bool)> {
   let on_path = path.map(|p| std::env::split_paths(p).collect::<Vec<_>>()).unwrap_or_default();
   if let Some(p) = on_path.iter().map(|d| d.join(name)).find(|p| is_executable(p)) {
     return Some((p, true));
@@ -222,7 +224,7 @@ pub fn check(language: &str, root: &Path) -> Result<PathBuf, String> {
 // in a visible terminal, never silently)
 
 /// Package managers Kingu knows how to drive.
-pub const INSTALL_TOOLS: &[&str] = &["bun", "npm", "go", "rustup", "brew", "pipx", "uv", "cargo"];
+pub const INSTALL_TOOLS: &[&str] = &["bun", "npm", "go", "rustup", "brew", "pipx", "uv", "cargo", "python3"];
 
 #[derive(serde::Serialize, Clone, Debug, PartialEq)]
 pub struct InstallMethod {
@@ -257,6 +259,7 @@ pub fn install_methods(spec: &ServerSpec, program: impl Fn(&str) -> Option<Strin
         add("uv", &["tool", "install"], p);
       }
       Package::Cargo(a) => add("cargo", &["install", "--locked"], a),
+      Package::Pip(m) => add("python3", &["-m", "pip", "install", "--user"], m),
     }
   }
   out

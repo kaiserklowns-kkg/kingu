@@ -19,6 +19,7 @@
 		{ view: 'explorer', label: 'Explorer', icon: 'files', command: 'workbench.view.explorer' },
 		{ view: 'search', label: 'Search', icon: 'search', command: 'workbench.action.findInFiles' },
 		{ view: 'scm', label: 'Source Control', icon: 'git', command: 'workbench.view.scm' },
+		{ view: 'debug', label: 'Run and Debug', icon: 'bug', command: 'workbench.view.debug' },
 		{ view: 'agents', label: 'Agents', icon: 'tasks', command: 'kingu.agents.show' }
 	];
 	/** `Explorer (⇧⌘E)`, from the command's live keybinding. */

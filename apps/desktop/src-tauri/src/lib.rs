@@ -1,4 +1,5 @@
 mod agent;
+mod dap;
 mod fileops;
 mod fs;
 mod git;
@@ -316,6 +317,51 @@ fn lsp_install_methods(ws: State<'_, Workspace>, language: String) -> Result<lsp
 }
 
 // ---------------------------------------------------------------------------------------------
+// Debugging (VS Code: debug adapters from extensions; Kingu: lldb-dap, dlv dap, debugpy)
+
+/// Starts the debug adapter for a launch.json `type`; adapter messages stream over `on_event`.
+/// `python` is the configuration's interpreter, preferred for debugpy.
+#[tauri::command]
+fn dap_start(
+  ws: State<'_, Workspace>,
+  sessions: State<'_, dap::Sessions>,
+  debug_type: String,
+  python: Option<String>,
+  on_event: Channel<dap::DapEvent>,
+) -> Result<u32, String> {
+  dap::start_for(&sessions, &ws.root()?, &debug_type, python.as_deref().map(Path::new), on_event)
+}
+
+/// The adapter program for `debug_type`, or the "ไม่ได้ติดตั้ง …" error (re-resolved every call).
+#[tauri::command]
+async fn dap_check(ws: State<'_, Workspace>, debug_type: String, python: Option<String>) -> Result<String, String> {
+  let root = ws.root()?;
+  blocking(move || dap::check(&debug_type, python.as_deref().map(Path::new), &root).map(|(_, r)| r.program.to_string_lossy().into_owned())).await
+}
+
+#[tauri::command]
+fn dap_install_methods(ws: State<'_, Workspace>, debug_type: String) -> Result<lsp::InstallInfo, String> {
+  dap::install_info(&debug_type, &ws.root()?)
+}
+
+/// `${env:NAME}` in launch.json: the named variables of the environment debuggees get.
+#[tauri::command]
+fn debug_env(names: Vec<String>) -> std::collections::HashMap<String, String> {
+  shell_env::vars_os()
+    .into_iter()
+    .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
+    .filter(|(k, _)| names.contains(k))
+    .collect()
+}
+
+/// A build step before a launch (e.g. `cargo build`), run in the workspace root and awaited.
+#[tauri::command]
+async fn debug_build(ws: State<'_, Workspace>, argv: Vec<String>) -> Result<dap::BuildResult, String> {
+  let root = ws.root()?;
+  blocking(move || dap::run_build(&argv, &root)).await
+}
+
+// ---------------------------------------------------------------------------------------------
 // Open Folder (VS Code: workbench.action.files.openFolder, File: Open Recent)
 
 /// Emitted with a debounced batch of changed paths under the open folder.
@@ -333,6 +379,7 @@ struct FilesChanged {
 fn switch_root(app: &AppHandle, dir: Option<&Path>) -> Result<Option<PathBuf>, String> {
   let root = dir.map(workspace::canonical_dir).transpose()?;
   app.state::<lsp::Servers>().stop_all();
+  app.state::<dap::Sessions>().stop_all();
   app.state::<Arc<search::Searches>>().cancel();
   let ws = app.state::<Workspace>();
   match &root {
@@ -440,6 +487,7 @@ pub fn run() {
     .manage(Arc::new(agent::AgentHost::default()))
     .manage(Arc::new(search::Searches::default()))
     .manage(lsp::Servers::default())
+    .manage(dap::Sessions::default())
     .manage(git_remote::GitOps::default())
     .manage(menu::MenuState::default())
     .setup(|app| {
@@ -555,6 +603,13 @@ pub fn run() {
       lsp_install_methods,
       lsp::lsp_send,
       lsp::lsp_stop,
+      dap_start,
+      dap_check,
+      dap_install_methods,
+      debug_build,
+      debug_env,
+      dap::dap_send,
+      dap::dap_stop,
       settings::settings_read,
       settings::settings_write,
       snap::snap_list,
@@ -576,6 +631,7 @@ pub fn run() {
     .run(|app, event| {
       if let tauri::RunEvent::Exit = event {
         app.state::<lsp::Servers>().stop_all();
+        app.state::<dap::Sessions>().stop_all();
         app.state::<Arc<agent::AgentHost>>().shutdown();
       }
     });
