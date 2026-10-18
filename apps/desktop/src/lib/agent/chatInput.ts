@@ -30,14 +30,19 @@ export function recallPrompt(history: readonly string[], cursor: HistoryCursor, 
 
 /** VS Code's chat modes: Ask answers without changing anything (SDK `plan`), Agent works with tools. */
 export type ChatMode = 'ask' | 'agent';
-/** How Agent mode asks for permission (the existing choice). */
-export type AgentApproval = Exclude<PermissionMode, 'plan'>;
-export const AGENT_APPROVALS: readonly AgentApproval[] = ['default', 'acceptEdits'];
+/**
+ * How Agent mode asks for permission. `bypassPermissions` is VS Code's "Allow all": no prompts,
+ * confirmed by the user first and never saved with the chat (chats.svelte.ts `allowAll`).
+ */
+export type AgentApproval = Exclude<PermissionMode, 'plan'> | 'bypassPermissions';
+export const AGENT_APPROVALS: readonly AgentApproval[] = ['default', 'acceptEdits', 'bypassPermissions'];
+/** A permission mode a run can take: a saved chat's, or "Allow all". */
+export type RunPermissionMode = PermissionMode | 'bypassPermissions';
 
-export const modeOf = (permission: PermissionMode | null | undefined): ChatMode => (permission === 'plan' ? 'ask' : 'agent');
+export const modeOf = (permission: RunPermissionMode | null | undefined): ChatMode => (permission === 'plan' ? 'ask' : 'agent');
 
 /** The permission mode for a mode pick; Agent keeps the approval chosen before (or asks first). */
-export function permissionFor(mode: ChatMode, approval: AgentApproval | null | undefined): PermissionMode {
+export function permissionFor(mode: ChatMode, approval: AgentApproval | null | undefined): RunPermissionMode {
 	return mode === 'ask' ? 'plan' : (approval ?? 'default');
 }
 
