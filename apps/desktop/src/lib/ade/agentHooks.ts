@@ -1,5 +1,5 @@
-// Agent CLI state from Claude Code hook events (the JSON each hook gets on stdin): Kingu's version
-// of Orca's agent state dot. Pure, so `bun test` covers it.
+// Agent CLI state from Claude Code hook events (the JSON each hook gets on stdin) and codex
+// `notify` payloads (one per finished turn): Kingu's version of Orca's agent state dot. Pure.
 
 export type HookPhase = 'starting' | 'working' | 'waiting' | 'idle' | 'ended';
 export type HookState = {
@@ -15,7 +15,17 @@ export type HookState = {
 
 export const initialHookState = (now: number): HookState => ({ phase: 'starting', permission: false, at: now });
 
-type HookEvent = { hook_event_name?: string; session_id?: string; tool_name?: string; message?: string; prompt?: string };
+type HookEvent = {
+	hook_event_name?: string;
+	session_id?: string;
+	tool_name?: string;
+	message?: string;
+	prompt?: string;
+	/** codex notify: `agent-turn-complete` with the session (`thread-id`) and its last answer. */
+	type?: string;
+	'thread-id'?: string;
+	'last-assistant-message'?: string;
+};
 
 const firstLine = (s: string | undefined, max = 80) => {
 	const line = (s ?? '').split('\n').find((l) => l.trim())?.trim() ?? '';
@@ -23,6 +33,10 @@ const firstLine = (s: string | undefined, max = 80) => {
 };
 
 export function applyHook(state: HookState, ev: HookEvent, now: number): HookState {
+	if (ev.type === 'agent-turn-complete') {
+		const sessionId = typeof ev['thread-id'] === 'string' && ev['thread-id'] ? ev['thread-id'] : state.sessionId;
+		return { ...state, at: now, sessionId, phase: 'idle', permission: false, message: firstLine(ev['last-assistant-message']) || 'จบรอบ รอคุณ' };
+	}
 	const base = { ...state, at: now, sessionId: ev.session_id ?? state.sessionId };
 	switch (ev.hook_event_name) {
 		case 'SessionStart':

@@ -215,7 +215,7 @@ export const SETTINGS: SettingSchema[] = [
 		type: 'string',
 		default: 'claude',
 		description:
-			'คำสั่ง agent CLI สำหรับโหมด terminal เช่น claude, codex หรือ claude --model opus — prompt จะต่อท้ายเป็นอาร์กิวเมนต์สุดท้าย ห้ามมีอักขระของ shell (The agent CLI for the terminal mode; the prompt is appended as its last argument.)'
+			'คำสั่ง agent CLI สำหรับโหมด terminal เช่น claude, codex, gemini, opencode, cursor-agent หรือ claude --model opus — CLI ที่ Kingu รู้จักได้ prompt, resume, MCP และสถานะตามที่ CLI นั้นรองรับ คำสั่งอื่นได้ prompt ต่อท้ายเป็นอาร์กิวเมนต์สุดท้าย ห้ามมีอักขระของ shell เลือกได้จาก Agent: Choose CLI… (The agent CLI for the terminal mode; known CLIs get their own prompt, resume, MCP and status handling, others get the prompt as their last argument.)'
 	},
 	{
 		id: 'kingu.automations.enabled',
