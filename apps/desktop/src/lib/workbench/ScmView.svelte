@@ -260,7 +260,7 @@
 			{#if row.kind === 'folder'}
 				{@const shut = collapsed.has(`${id}:${row.path}`)}
 				<button
-					class="flex h-(--kg-row-height) w-full items-center gap-1 pr-2 text-left hover:bg-(--vscode-list-hoverBackground)"
+					class="mx-1.5 flex h-(--kg-row-height) w-[calc(100%-12px)] items-center gap-1 rounded-md pr-2 text-left hover:bg-(--vscode-list-hoverBackground)"
 					style:padding-left="{12 + row.depth * 8}px"
 					aria-expanded={!shut}
 					title={row.path}

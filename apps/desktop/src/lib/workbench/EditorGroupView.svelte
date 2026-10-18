@@ -362,7 +362,7 @@
 								'group relative flex h-[calc(var(--kg-tab-height)-5px)] items-center gap-1.5 rounded-t-lg transition-colors',
 								actionsLeft ? 'pr-2.5 pl-1' : 'pl-2.5',
 								size.cls,
-								active ? 'bg-(--vscode-tab-activeBackground)' : 'bg-(--vscode-tab-inactiveBackground) hover:bg-(--vscode-tab-hoverBackground)',
+								active ? 'bg-(--vscode-tab-activeBackground)' : 'hover:bg-(--vscode-tab-hoverBackground)',
 								active
 									? focused
 										? 'text-(--vscode-tab-activeForeground)'

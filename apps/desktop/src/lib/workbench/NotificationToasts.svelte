@@ -13,24 +13,26 @@
 		warning: { name: 'warning', color: 'var(--vscode-notificationsWarningIcon-foreground, #cca700)' },
 		error: { name: 'error', color: 'var(--vscode-notificationsErrorIcon-foreground, #f14c4c)' }
 	};
-	const BUTTON = 'h-[22px] rounded-sm px-2 text-xs';
+	const BUTTON = 'h-[22px] rounded-md px-2 text-xs';
 	const corner = $derived(notificationsCorner(settings.get<string>('workbench.notifications.position')));
-	const TOOL = 'grid size-[22px] place-items-center rounded text-(--vscode-icon-foreground) hover:bg-(--vscode-toolbar-hoverBackground)';
+	const TOOL = 'grid size-6 shrink-0 place-items-center rounded-md text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)';
+	// The UI's popover look (StatusPopover / the old toasts): rounded, quick-input background, soft shadow.
+	const FRAME = 'pointer-events-auto overflow-hidden rounded-lg border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) text-[13px] text-(--vscode-foreground) shadow-xl shadow-black/40';
 </script>
 
 {#snippet row(n: NotificationItem, inToast: boolean)}
 	{@const pct = progressPercent(n.progress)}
 	<div
 		role={n.severity === 'error' ? 'alert' : 'status'}
-		class="group relative flex flex-col gap-1.5 px-2.5 py-2"
+		class="group relative flex flex-col gap-1.5 px-3 py-2.5"
 		onmouseenter={() => inToast && notifications.hold(n.id, true)}
 		onmouseleave={() => inToast && notifications.hold(n.id, false)}
 		onfocusin={() => inToast && notifications.hold(n.id, true)}
 		onfocusout={() => inToast && notifications.hold(n.id, false)}
 	>
-		<div class="flex items-start gap-2">
-			<span class="mt-0.5 flex" style:color={ICON[n.severity].color}><Icon name={ICON[n.severity].name} size={16} /></span>
-			<p class={['min-w-0 flex-1 break-words whitespace-pre-wrap', !n.expanded && 'line-clamp-3']}>{n.message}</p>
+		<div class="flex items-start gap-2.5">
+			<span class="mt-0.5 flex shrink-0" style:color={ICON[n.severity].color}><Icon name={ICON[n.severity].name} size={16} /></span>
+			<p class={['kg-selectable min-w-0 flex-1 leading-snug break-words whitespace-pre-wrap', !n.expanded && 'line-clamp-3']}>{n.message}</p>
 			<div class="flex shrink-0 items-center opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
 				{#if n.message.length > 120 || n.message.includes('\n')}
 					<button class={TOOL} aria-label={n.expanded ? 'ย่อ (Collapse)' : 'ขยาย (Expand)'} title={n.expanded ? 'Collapse' : 'Expand'} onclick={() => notifications.toggleExpanded(n.id)}>
@@ -41,7 +43,7 @@
 			</div>
 		</div>
 		{#if n.source || n.actions.length}
-			<div class="flex items-center gap-2 pl-6">
+			<div class="flex items-center gap-2 pl-[26px]">
 				{#if n.source}<span class="min-w-0 flex-1 truncate text-xs text-(--vscode-descriptionForeground)">ที่มา (Source): {n.source}</span>{:else}<span class="flex-1"></span>{/if}
 				{#each n.actions as action, i (i)}
 					<button
@@ -67,7 +69,7 @@
 
 <div
 	class={[
-		'pointer-events-none fixed z-40 flex w-[min(450px,calc(100vw-24px))] flex-col items-stretch gap-2',
+		'pointer-events-none fixed z-40 flex w-[min(380px,calc(100vw-24px))] flex-col items-stretch gap-2',
 		corner.left ? 'left-3' : 'right-3',
 		corner.top ? 'top-[calc(var(--kg-titlebar-height)+8px)]' : 'bottom-[calc(var(--kg-statusbar-height)+8px)]'
 	]}
@@ -75,10 +77,10 @@
 	{#if notifications.centerVisible}
 		<section
 			aria-label="Notifications"
-			class="pointer-events-auto flex max-h-[min(500px,60vh)] flex-col overflow-hidden rounded-md border border-(--vscode-widget-border) bg-[var(--vscode-notifications-background,var(--vscode-editorWidget-background))] text-[color:var(--vscode-notifications-foreground,var(--vscode-foreground))] shadow-[0_0_8px_2px_rgba(0,0,0,0.36)]"
+			class={[FRAME, 'flex max-h-[min(500px,60vh)] flex-col']}
 		>
-			<header class="flex h-[35px] shrink-0 items-center gap-1 border-b border-(--vscode-widget-border) bg-[var(--vscode-notificationCenterHeader-background,transparent)] pr-1.5 pl-2.5 text-[11px] uppercase">
-				<span class="flex-1">{notifications.items.length ? 'Notifications' : 'No New Notifications'}</span>
+			<header class="flex h-9 shrink-0 items-center gap-1 border-b border-(--vscode-widget-border) pr-1.5 pl-3">
+				<span class="flex-1 font-medium">การแจ้งเตือน</span>
 				<button class={TOOL} aria-label="ล้างทั้งหมด (Clear All Notifications)" title="Clear All Notifications" onclick={() => notifications.clearAll()}><Icon name="clearAll" size={14} /></button>
 				<button
 					class={TOOL}
@@ -89,15 +91,17 @@
 				>
 				<button class={TOOL} aria-label="ซ่อน (Hide Notifications)" title="Hide Notifications" onclick={() => notifications.toggleCenter(false)}><Icon name="chevronDown" size={14} /></button>
 			</header>
-			<div class="min-h-0 flex-1 overflow-y-auto">
+			<div class="min-h-0 flex-1 overflow-y-auto py-1">
 				{#each notifications.items as n (n.id)}
-					<div class="border-b border-(--vscode-widget-border) last:border-b-0">{@render row(n, false)}</div>
+					<div class="hover:bg-(--vscode-list-hoverBackground)">{@render row(n, false)}</div>
+				{:else}
+					<p class="px-3 py-6 text-center text-xs text-(--vscode-descriptionForeground)">ไม่มีการแจ้งเตือนใหม่</p>
 				{/each}
 			</div>
 		</section>
 	{:else}
 		{#each notifications.toasts as n (n.id)}
-			<div class="pointer-events-auto overflow-hidden rounded-md border border-(--vscode-widget-border) bg-[var(--vscode-notifications-background,var(--vscode-editorWidget-background))] text-[color:var(--vscode-notifications-foreground,var(--vscode-foreground))] shadow-[0_0_8px_2px_rgba(0,0,0,0.36)]">
+			<div class="kg-toast {FRAME}">
 				{@render row(n, true)}
 			</div>
 		{/each}
@@ -105,6 +109,15 @@
 </div>
 
 <style>
+	.kg-toast {
+		animation: kg-toast-in 180ms ease-out;
+	}
+	@keyframes kg-toast-in {
+		from {
+			opacity: 0;
+			transform: translateY(8px);
+		}
+	}
 	.kg-progress-infinite {
 		animation: kg-progress 1.5s linear infinite;
 	}

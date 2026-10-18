@@ -517,7 +517,7 @@
 							class={[
 								'mx-1.5 flex h-(--kg-row-height) w-[calc(100%-12px)] items-center gap-1 rounded-md pr-2 text-left leading-(--kg-row-height) outline-offset-[-1px]',
 								picked
-									? 'bg-(--vscode-list-activeSelectionBackground) text-(--vscode-list-activeSelectionForeground)'
+									? 'bg-(--vscode-list-activeSelectionBackground) text-(--vscode-list-activeSelectionForeground) outline outline-1 outline-(--vscode-focusBorder)'
 									: inDragTarget(row.rel)
 										? 'bg-(--vscode-list-dropBackground)'
 										: 'hover:bg-(--vscode-list-hoverBackground)',

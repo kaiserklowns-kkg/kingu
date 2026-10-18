@@ -775,14 +775,15 @@
 
 	const title = $derived(slug ? adeTasks.branchOf(slug) : workspace.name);
 	const OPTION = 'grid size-5 place-items-center rounded-sm text-[11px] font-semibold';
-	const HEADER_ACTION = 'grid size-6 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-40';
+	const TOOL = 'grid size-6 place-items-center rounded-md text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground) disabled:opacity-50';
+	const SMALL_INPUT = 'h-6 rounded-sm border border-(--vscode-widget-border) bg-(--vscode-input-background)/50 px-1.5 text-xs outline-none placeholder:text-(--vscode-input-placeholderForeground)/50 focus:border-(--vscode-focusBorder)';
 </script>
 
 {#snippet nameRow(r: NameRow, first: boolean)}
 	{@const rel = full(r.rel)}
 	<button
-		class="flex h-[22px] w-full items-center gap-1 pr-2 text-left hover:bg-(--vscode-list-hoverBackground) focus:bg-(--vscode-list-activeSelectionBackground) focus:outline-none"
-		style:padding-left="{8 + r.depth * 12}px"
+		class="flex h-[26px] w-full items-center gap-1 rounded-sm px-2 text-left transition-colors hover:bg-(--vscode-list-hoverBackground) focus:bg-(--vscode-list-inactiveSelectionBackground)/70 focus:outline-none"
+		style:padding-left="{r.depth * 16 + 8}px"
 		title={r.rel}
 		data-names-first={first ? '' : undefined}
 		onclick={() => !r.is_dir && adeLayout.openFile(slug, rel, { preview: true })}
@@ -795,110 +796,116 @@
 			e.preventDefault();
 		}}
 	>
-		<span class="w-4 shrink-0 text-(--vscode-icon-foreground)">{#if r.is_dir}<Icon name="chevronDown" size={14} />{/if}</span>
+		<span class="grid size-3 shrink-0 place-items-center text-(--vscode-descriptionForeground)">{#if r.is_dir}<Icon name="chevronDown" size={12} />{/if}</span>
 		<FileIcon icon={r.is_dir ? folderIcon(rel, true) : fileIcon(r.name)} />
 		<span class={['min-w-0 flex-1 truncate', r.is_dir && 'text-(--vscode-descriptionForeground)']} style:color={decorations.get(rel)?.color}>{r.name}</span>
-		{#if !r.is_dir && decorations.get(rel)?.letter}<span class="shrink-0 pl-2 text-[11px] font-semibold" style:color={decorations.get(rel)?.color}>{decorations.get(rel)?.letter}</span>{/if}
+		{#if !r.is_dir && decorations.get(rel)?.letter}<span class="mr-2 ml-auto shrink-0 text-[10px] font-semibold tracking-wide" style:color={decorations.get(rel)?.color}>{decorations.get(rel)?.letter}</span>{/if}
 	</button>
 {/snippet}
 
 <div class="flex h-full min-h-0 flex-col">
-	<div class="flex h-8 shrink-0 items-center gap-0.5 pr-1 pl-3">
-		<span class="min-w-0 flex-1 truncate text-[13px] font-medium" title={abs(base)}>{title}</span>
-		<button class={HEADER_ACTION} aria-label="Collapse All" title="Collapse All" onclick={() => (open = {})}><Icon name="collapseAll" size={15} /></button>
-		<button class={HEADER_ACTION} aria-label="Refresh Explorer" title="Refresh Explorer" disabled={refreshing} onclick={refresh}>
-			<span class={refreshing ? 'animate-spin' : ''}><Icon name="refresh" size={15} /></span>
+	<!-- Orca's toolbar: the worktree's name, Collapse All, Refresh, more actions. -->
+	<div class="flex h-8 min-h-8 shrink-0 items-center gap-2 border-b border-(--vscode-widget-border) px-2">
+		<span class="min-w-0 flex-1 truncate text-xs font-medium" title={abs(base)}>{title}</span>
+		<button class={TOOL} aria-label="Collapse All" title="Collapse All" onclick={() => (open = {})}><Icon name="collapseAll" size={13} /></button>
+		<button class={TOOL} aria-label="Refresh Explorer" title="Refresh Explorer" disabled={refreshing} onclick={refresh}>
+			<span class={['grid place-items-center', refreshing && 'animate-spin']}><Icon name="refresh" size={13} /></span>
 		</button>
-		<button class={HEADER_ACTION} aria-label="More Explorer Actions" title="More Explorer Actions" onclick={moreMenu}><Icon name="menu" size={15} /></button>
+		<button class={TOOL} aria-label="More Explorer Actions" title="More Explorer Actions" onclick={moreMenu}><Icon name="more" size={13} /></button>
 	</div>
-	<label class="mx-2 mb-1.5 flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-(--vscode-input-border,var(--vscode-widget-border)) bg-(--vscode-input-background) px-2 text-[13px] focus-within:border-(--vscode-focusBorder)">
-		<Icon name="search" size={13} />
-		<span class="sr-only">{find.view === 'names' ? 'Filter files by name' : 'Search file contents'}</span>
-		<input
-			bind:this={findInput}
-			class="min-w-0 flex-1 bg-transparent outline-none placeholder:text-(--vscode-input-placeholderForeground)"
-			placeholder={find.view === 'names' ? 'Find files' : 'Search'}
-			spellcheck="false"
-			bind:value={find.query}
-			onkeydown={onFindKey}
-		/>
-		{#if find.view === 'contents'}
-			{#each [['matchCase', 'Aa', 'Match Case'], ['wholeWord', 'ab', 'Match Whole Word'], ['regex', '.*', 'Use Regular Expression']] as const as [k, text, label] (k)}
+	<!-- Query block: the name filter (or content search) over the Names | Contents switch. -->
+	<div class="flex shrink-0 flex-col gap-1 border-b border-(--vscode-widget-border) px-2 py-1.5">
+		<label class="flex h-7 items-center gap-1 rounded-sm border border-(--vscode-widget-border) bg-(--vscode-input-background)/50 px-1.5 focus-within:border-(--vscode-focusBorder)">
+			<span class="text-(--vscode-descriptionForeground)"><Icon name={find.view === 'names' ? 'menu' : 'search'} size={13} /></span>
+			<span class="sr-only">{find.view === 'names' ? 'Filter files by name' : 'Search file contents'}</span>
+			<input
+				bind:this={findInput}
+				class="min-w-0 flex-1 bg-transparent py-1 text-xs outline-none placeholder:text-(--vscode-input-placeholderForeground)/50"
+				placeholder={find.view === 'names' ? 'Find files' : 'Search'}
+				spellcheck="false"
+				bind:value={find.query}
+				onkeydown={onFindKey}
+			/>
+			{#if find.view === 'contents' && searching}<span class="size-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent opacity-60"></span>{/if}
+			{#if find.query}<button type="button" class="grid place-items-center rounded p-0.5 text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="Clear file filter" onclick={() => ((find.query = ''), findInput?.focus())}><Icon name="close" size={12} /></button>{/if}
+			{#if find.view === 'contents'}
+				{#each [['matchCase', 'Aa', 'Match Case'], ['wholeWord', 'ab', 'Match Whole Word'], ['regex', '.*', 'Use Regular Expression']] as const as [k, text, label] (k)}
+					<button
+						type="button"
+						class={[OPTION, find.options[k] ? 'bg-(--vscode-inputOption-activeBackground,#24557780) text-(--vscode-foreground) outline outline-1 outline-(--vscode-inputOption-activeBorder,#007ACC)' : 'text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground)']}
+						aria-label={label}
+						aria-pressed={find.options[k]}
+						title={label}
+						onclick={() => (find.options[k] = !find.options[k])}>{text}</button
+					>
+				{/each}
+				<button type="button" class={[OPTION, 'text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground)']} aria-label="Toggle Search Details" aria-expanded={find.options.details} title="Toggle Search Details" onclick={() => (find.options.details = !find.options.details)}>…</button>
+			{/if}
+		</label>
+		{#if find.view === 'contents' && find.options.details}
+			<div class="flex flex-col gap-1">
+				<input class={SMALL_INPUT} placeholder="files to include (e.g. *.ts, src/**)" aria-label="Files To Include" spellcheck="false" bind:value={find.options.include} />
+				<input class={SMALL_INPUT} placeholder="files to exclude (e.g. *.min.js, dist/**)" aria-label="Files To Exclude" spellcheck="false" bind:value={find.options.exclude} />
+			</div>
+		{/if}
+		<div class="flex h-7 w-full items-center gap-0.5 rounded-md bg-(--vscode-input-background)/40 p-0.5" role="radiogroup" aria-label="Explorer search mode">
+			{#each [['names', 'Names'], ['contents', 'Contents']] as const as [id, label] (id)}
 				<button
-					type="button"
-					class={[OPTION, find.options[k] ? 'bg-(--vscode-inputOption-activeBackground,#24557780) text-(--vscode-foreground) outline outline-1 outline-(--vscode-inputOption-activeBorder,#007ACC)' : 'text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground)']}
-					aria-label={label}
-					aria-pressed={find.options[k]}
-					title={label}
-					onclick={() => (find.options[k] = !find.options[k])}>{text}</button
+					role="radio"
+					aria-checked={find.view === id}
+					class={['h-full min-w-0 flex-1 rounded-sm px-2 text-[11px]', find.view === id ? 'bg-(--vscode-editor-background) font-medium text-(--vscode-foreground) shadow-xs' : 'text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)']}
+					onclick={() => ((find.view = id), findInput?.focus())}>{label}</button
 				>
 			{/each}
-			<button type="button" class={[OPTION, 'text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground)']} aria-label="Toggle Search Details" aria-expanded={find.options.details} title="Toggle Search Details" onclick={() => (find.options.details = !find.options.details)}>…</button>
-		{/if}
-	</label>
-	{#if find.view === 'contents' && find.options.details}
-		<div class="mx-2 mb-1.5 flex shrink-0 flex-col gap-1 text-xs">
-			<input class="h-6 rounded-md border border-(--vscode-input-border,var(--vscode-widget-border)) bg-(--vscode-input-background) px-2 outline-none focus:border-(--vscode-focusBorder)" placeholder="files to include (e.g. *.ts, src/**)" aria-label="Files To Include" spellcheck="false" bind:value={find.options.include} />
-			<input class="h-6 rounded-md border border-(--vscode-input-border,var(--vscode-widget-border)) bg-(--vscode-input-background) px-2 outline-none focus:border-(--vscode-focusBorder)" placeholder="files to exclude (e.g. *.min.js, dist/**)" aria-label="Files To Exclude" spellcheck="false" bind:value={find.options.exclude} />
 		</div>
-	{/if}
-	<div class="mx-2 mb-2 grid shrink-0 grid-cols-2 rounded-md bg-(--vscode-input-background) p-0.5 text-xs" role="radiogroup" aria-label="Explorer search mode">
-		{#each [['names', 'Names'], ['contents', 'Contents']] as const as [id, label] (id)}
-			<button
-				role="radio"
-				aria-checked={find.view === id}
-				class={['h-6 rounded-[5px]', find.view === id ? 'bg-(--vscode-editor-background) text-(--vscode-foreground) shadow-sm' : 'text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)']}
-				onclick={() => ((find.view = id), findInput?.focus())}>{label}</button
-			>
-		{/each}
 	</div>
 
 	{#if find.view === 'contents' && find.query.trim()}
-		<div class="min-h-0 flex-1 overflow-y-auto pb-2 text-[13px]" aria-label="ผลการค้นหา">
-			<p class="px-3 pb-1 text-xs text-(--vscode-descriptionForeground)">
+		<div class="min-h-0 flex-1 overflow-y-auto py-2 text-xs" aria-label="ผลการค้นหา">
+			<p class="px-3 pb-1 text-[11px] text-(--vscode-descriptionForeground)">
 				{#if searchError}<span class="text-(--vscode-errorForeground)">{searchError}</span>{:else if searching && !results.length}กำลังค้นหา…{:else}{contentSummary(results, limitHit)}{/if}
 			</p>
 			{#each contents as r (r.key)}
 				{#if r.kind === 'file'}
-					<button class="flex h-[22px] w-full items-center gap-1 pr-2 pl-1 text-left hover:bg-(--vscode-list-hoverBackground)" title={r.path} aria-expanded={!r.collapsed} onclick={() => toggleCollapsed(r.path)} oncontextmenu={(e) => resultMenu(e, r.path)}>
-						<span class="w-4 shrink-0 text-(--vscode-icon-foreground)"><Icon name={r.collapsed ? 'chevronRight' : 'chevronDown'} size={14} /></span>
+					<button class="flex h-[26px] w-full items-center gap-1.5 rounded-sm px-2 text-left hover:bg-(--vscode-list-hoverBackground)" title={r.path} aria-expanded={!r.collapsed} onclick={() => toggleCollapsed(r.path)} oncontextmenu={(e) => resultMenu(e, r.path)}>
+						<span class={['grid size-3 shrink-0 place-items-center text-(--vscode-descriptionForeground) transition-transform', !r.collapsed && 'rotate-90']}><Icon name="chevronRight" size={12} /></span>
 						<FileIcon icon={fileIcon(r.name)} />
 						<span class="shrink-0 truncate">{r.name}</span>
-						<span class="min-w-0 flex-1 truncate text-xs text-(--vscode-descriptionForeground)">{r.dir}</span>
+						<span class="min-w-0 flex-1 truncate text-[11px] text-(--vscode-descriptionForeground)">{r.dir}</span>
 						<span class="shrink-0 rounded-full bg-(--vscode-badge-background) px-1.5 text-[11px] leading-4 text-(--vscode-badge-foreground)">{r.count}</span>
 					</button>
 				{:else}
 					{@const p = splitPreview(r.match)}
 					<button
-						class="flex h-[22px] w-full items-baseline gap-1.5 pr-2 pl-7 text-left text-xs hover:bg-(--vscode-list-hoverBackground)"
+						class="flex h-[22px] w-full items-baseline gap-1.5 rounded-sm pr-2 pl-8 text-left text-[11px] text-(--vscode-descriptionForeground) hover:bg-(--vscode-list-hoverBackground) hover:text-(--vscode-foreground)"
 						title="{r.path}:{r.match.line}"
 						onclick={() => adeLayout.openFile(slug, full(r.path), { preview: true, reveal: { line: r.match.line, column: r.match.column, endColumn: r.match.end_column, focus: true } })}
 						ondblclick={() => adeLayout.pin(slug, full(r.path))}
 						oncontextmenu={(e) => resultMenu(e, r.path, r.match.line)}
 					>
-						<span class="w-7 shrink-0 text-right font-mono text-[11px] text-(--vscode-descriptionForeground)">{r.match.line}</span>
+						<span class="shrink-0 font-mono opacity-60">{r.match.line}</span>
 						<span class="min-w-0 flex-1 truncate font-mono">{p.before}<span class="rounded-sm bg-(--vscode-editor-findMatchHighlightBackground,#EA5C0055)">{p.match}</span>{p.after}</span>
 					</button>
 				{/if}
 			{/each}
 		</div>
 	{:else if find.view === 'names' && find.query.trim()}
-		<div class="min-h-0 flex-1 overflow-y-auto pb-2 text-[13px]" aria-label="ไฟล์ที่ตรงกับชื่อ">
+		<div class="min-h-0 flex-1 overflow-y-auto py-2 text-xs" aria-label="ไฟล์ที่ตรงกับชื่อ">
 			{#if !names}
-				<p class="px-3 py-1 text-xs text-(--vscode-descriptionForeground)">กำลังอ่านรายชื่อไฟล์…</p>
+				<p class="px-3 py-1 text-[11px] text-(--vscode-descriptionForeground)">กำลังอ่านรายชื่อไฟล์…</p>
 			{:else if !names.rows.length}
-				<p class="px-3 py-1 text-xs text-(--vscode-descriptionForeground)">No files match this filter</p>
+				<p class="px-3 py-1 text-[11px] text-(--vscode-descriptionForeground)">No files match this filter</p>
 			{:else}
 				{#each names.rows as r, i (r.rel)}{@render nameRow(r, i === 0)}{/each}
 				{#if names.total > names.rows.filter((r) => !r.is_dir).length}
-					<p class="px-3 py-1 text-xs text-(--vscode-descriptionForeground)">แสดง {names.rows.filter((r) => !r.is_dir).length} จาก {names.total} ไฟล์ พิมพ์ให้เจาะจงขึ้น</p>
+					<p class="px-3 py-1 text-[11px] text-(--vscode-descriptionForeground)">แสดง {names.rows.filter((r) => !r.is_dir).length} จาก {names.total} ไฟล์ พิมพ์ให้เจาะจงขึ้น</p>
 				{/if}
 			{/if}
 		</div>
 	{:else}
 		<div
 			bind:this={tree}
-			class="min-h-0 flex-1 overflow-y-auto pb-2 text-[13px] outline-none"
+			class={['min-h-0 flex-1 overflow-y-auto py-2 text-xs outline-none', dropTarget === base && 'bg-(--vscode-widget-border)/40']}
 			role="tree"
 			tabindex="-1"
 			aria-label="Files"
@@ -909,20 +916,20 @@
 			ondrop={(e) => onDrop(e, null)}
 		>
 			{#if error}
-				<p class="px-3 text-xs text-(--vscode-errorForeground)">{error}</p>
+				<p class="px-3 text-center text-[11px] text-(--vscode-errorForeground)">{error}</p>
 			{/if}
 			{#each items as item (item.type === 'row' ? item.row.rel : item.key)}
 				{#if item.type === 'input'}
-					<div class="relative" style:padding-left="{8 + item.depth * 12}px">
-						<div class="flex h-[22px] items-center gap-1 pr-2">
-							<span class="w-4 shrink-0"></span>
+					<div class="relative" style:padding-left="{item.depth * 16 + 8}px">
+						<div class="flex h-[26px] items-center gap-1 pr-2">
+							<span class="size-3 shrink-0"></span>
 							<FileIcon icon={item.is_dir ? folderIcon(item.value, false) : fileIcon(item.value)} />
 							<input
 								use:editBox={{ value: item.value, is_dir: item.is_dir }}
 								aria-label={editing?.kind === 'rename' ? 'ชื่อใหม่' : item.is_dir ? 'ชื่อโฟลเดอร์ใหม่' : 'ชื่อไฟล์ใหม่'}
 								aria-invalid={inputError !== ''}
 								spellcheck="false"
-								class={['h-[20px] min-w-0 flex-1 border bg-(--vscode-input-background) px-1 text-(--vscode-input-foreground) outline-none', inputError ? 'border-[color:var(--vscode-inputValidation-errorBorder,#BE1100)]' : 'border-(--vscode-focusBorder)']}
+								class={['min-w-0 flex-1 rounded-sm border bg-transparent px-1 text-xs text-(--vscode-input-foreground) outline-none', inputError ? 'border-[color:var(--vscode-inputValidation-errorBorder,#BE1100)]' : 'border-(--vscode-focusBorder)']}
 								oninput={() => (inputError = '')}
 								onkeydown={onInputKey}
 								onblur={onInputBlur}
@@ -942,11 +949,10 @@
 						aria-expanded={r.is_dir ? r.open : undefined}
 						draggable="true"
 						class={[
-							'flex h-[22px] w-full items-center gap-1 pr-2 text-left outline-offset-[-1px]',
-							isPicked(r.rel) ? 'bg-(--vscode-list-inactiveSelectionBackground) focus:bg-(--vscode-list-activeSelectionBackground) focus:outline focus:outline-1 focus:outline-(--vscode-focusBorder)' : 'hover:bg-(--vscode-list-hoverBackground)',
-							r.is_dir && dropTarget === r.rel && 'bg-(--vscode-list-dropBackground,#383B3D)'
+							'flex h-[26px] w-full items-center gap-1 rounded-sm px-2 text-left transition-colors outline-offset-[-1px]',
+							r.is_dir && dropTarget === r.rel ? 'bg-(--vscode-widget-border)' : isPicked(r.rel) ? 'bg-(--vscode-list-inactiveSelectionBackground)/70 focus:outline focus:outline-1 focus:outline-(--vscode-focusBorder)' : 'hover:bg-(--vscode-list-hoverBackground)'
 						]}
-						style:padding-left="{8 + r.depth * 12}px"
+						style:padding-left="{r.depth * 16 + 8}px"
 						title={r.rel}
 						onclick={(e) => clickRow(e, r)}
 						ondblclick={(e) => !r.is_dir && !e.shiftKey && !(isMac ? e.metaKey : e.ctrlKey) && activate(r, false)}
@@ -956,16 +962,16 @@
 						ondrop={(e) => (e.stopPropagation(), onDrop(e, r))}
 						ondragend={() => (dropTarget = null)}
 					>
-						<span class="grid w-4 shrink-0 place-items-center text-(--vscode-icon-foreground)">
-							{#if r.is_dir}<Icon name={r.open ? 'chevronDown' : 'chevronRight'} size={14} />{/if}
+						<span class={['grid size-3 shrink-0 place-items-center text-(--vscode-descriptionForeground) transition-transform', r.is_dir && r.open && 'rotate-90']}>
+							{#if r.is_dir}<Icon name="chevronRight" size={12} />{/if}
 						</span>
 						<FileIcon icon={r.is_dir ? folderIcon(r.rel, r.open) : fileIcon(r.name)} />
 						{#if look.ignored}
-							<span class="min-w-0 flex-1 truncate italic opacity-55">{r.name}</span>
-							<span class="shrink-0 pl-2 opacity-55" title="Ignored by .gitignore"><Icon name="ignored" size={12} /></span>
+							<span class="min-w-0 flex-1 truncate pr-0.5 italic opacity-55">{r.name}</span>
+							<span class="mr-2 ml-auto shrink-0 opacity-55" title="Ignored by .gitignore"><Icon name="ignored" size={12} /></span>
 						{:else}
 							<span class="min-w-0 flex-1 truncate" style:color={look.deco?.color}>{r.name}</span>
-							{#if look.deco}<span class="shrink-0 pl-2 text-[11px] font-semibold" style:color={look.deco.color}>{look.deco.letter || '•'}</span>{/if}
+							{#if look.deco}<span class="mr-2 ml-auto shrink-0 text-[10px] font-semibold tracking-wide" style:color={look.deco.color}>{look.deco.letter || '•'}</span>{/if}
 						{/if}
 					</button>
 				{/if}
