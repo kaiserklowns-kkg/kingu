@@ -2,8 +2,9 @@
 	// The Agents layout side bar, built like Orca's worktree sidebar: Search (the worktree jump
 	// palette) and Tasks (the board) on top, a "Projects" header with the activity view, workspace
 	// options, add project and new workspace, then the folder as a project group with a card per
-	// worktree (status slot, title, branch, the agent row with its last message and time), and a
-	// footer with Settings, Help, Reveal active workspace and the board.
+	// worktree (status slot, title, branch, the agent row with its last message and time). Orca's
+	// footer is left out: Settings, Help and the board already live elsewhere in Kingu (title bar
+	// gear, Settings, the Tasks row); Reveal active workspace is on the project header.
 	import { untrack } from 'svelte';
 	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
 	import ProviderIcon from '#lib/workbench/ProviderIcon.svelte';
@@ -221,6 +222,7 @@
 				when: () => appMode.isAgents && !!selectedKey && selectedKey !== PRIMARY,
 				run: () => selectedKey && void adeTasks.remove(selectedKey)
 			}),
+			commands.register({ id: 'kingu.agents.revealActiveWorkspace', title: 'Reveal Active Workspace', category: 'Agents', when: () => appMode.isAgents, run: () => reveal() }),
 			commands.register({ id: 'kingu.agents.focusWorktreeList', title: 'Focus Worktree List', category: 'Agents', key: 'cmd+shift+0', when: () => appMode.isAgents, run: () => list?.focus() })
 		]);
 		return () => off.forEach((u) => u());
@@ -240,7 +242,6 @@
 	// --- Header, options and footer menus ------------------------------------------------------
 	let options = $state<{ x: number; y: number } | null>(null);
 	let repoMenu = $state<{ x: number; y: number } | null>(null);
-	let help = $state<{ x: number; y: number } | null>(null);
 	const filterCount = $derived(activeFilterCount(prefs.filters));
 	const repoItems: MenuNode[] = [menuItem('settings', 'Project Settings'), menuItem('reveal', 'Reveal in Finder'), menuSeparator, menuItem('remove', 'Remove Project')];
 	function runRepo(id: string) {
@@ -248,7 +249,6 @@
 		else if (id === 'reveal') void invoke('fs_reveal', { rel: '' }).catch((e) => status.error(String(e)));
 		else if (id === 'remove') commands.run('workbench.action.closeFolder');
 	}
-	const helpItems: MenuNode[] = [menuItem('shortcuts', 'Keyboard Shortcuts'), menuSeparator, menuItem('about', 'About Kingu')];
 	function newWorkspace() {
 		adeLayout.show(PRIMARY);
 		adeLayout.select(PRIMARY, 'main');
@@ -495,6 +495,7 @@
 											repoMenu = { x: rr.right - 248, y: rr.bottom + 6 };
 										}}><Icon name="more" size={14} /></button
 									>
+									<button class={REVEAL} aria-label="Reveal active workspace" title="Reveal active workspace" onclick={(e) => (e.stopPropagation(), reveal())}><Icon name="crosshair" size={13} /></button>
 									<button class={REVEAL} aria-label="Create workspace for {g.label}" title="Create workspace for {g.label}" onclick={(e) => (e.stopPropagation(), newWorkspace())}><Icon name="plus" size={12} /></button>
 								{/if}
 								<span class={['grid size-5 place-items-center rounded-md transition-transform hover:bg-(--vscode-toolbar-hoverBackground)', collapsed && '-rotate-90']}><Icon name="chevronDown" size={14} /></span>
@@ -515,27 +516,6 @@
 		{/if}
 	</div>
 
-	<!-- Footer: Settings and Help on the left; Reveal active workspace and the board on the right. -->
-	<div class="flex shrink-0 items-center justify-between border-t border-(--vscode-widget-border) px-2 py-1.5">
-		<div class="flex items-center gap-1">
-			<button class={HEADER_BTN} aria-label="Settings" title="Settings (⌘,)" onclick={() => systemSettings.show()}><Icon name="settings" size={14} /></button>
-			<button
-				class={HEADER_BTN}
-				aria-label="Help"
-				title="Help"
-				onclick={(e) => {
-					const rr = e.currentTarget.getBoundingClientRect();
-					help = { x: rr.left, y: rr.top - 8 - 22 * 3 - 12 };
-				}}><Icon name="help" size={14} /></button
-			>
-		</div>
-		<div class="flex items-center gap-1">
-			<button class={HEADER_BTN} aria-label="Reveal active workspace" title="Reveal active workspace" onclick={reveal}><Icon name="crosshair" size={14} /></button>
-			<button class={[HEADER_BTN, adeLayout.board && 'bg-(--vscode-toolbar-activeBackground,#ffffff1f) text-(--vscode-foreground)']} aria-pressed={adeLayout.board} aria-label="Workspace board" title={adeLayout.board ? 'Close workspace board' : 'Workspace board'} onclick={() => (adeLayout.board = !adeLayout.board)}>
-				<Icon name="tasks" size={14} />
-			</button>
-		</div>
-	</div>
 </div>
 
 {#if menu}
@@ -544,9 +524,6 @@
 {/if}
 {#if repoMenu}
 	<PopupMenu items={repoItems} label="Project actions" x={repoMenu.x} y={repoMenu.y} onRun={(node) => node.type === 'item' && runRepo(node.id)} onClose={() => (repoMenu = null)} />
-{/if}
-{#if help}
-	<PopupMenu items={helpItems} label="Help" x={help.x} y={help.y} onRun={(node) => node.type === 'item' && systemSettings.showPage(node.id === 'shortcuts' ? 'shortcuts' : 'about')} onClose={() => (help = null)} />
 {/if}
 {#if options}
 	<div class="fixed inset-0 z-40" role="presentation" onpointerdown={() => (options = null)}></div>
