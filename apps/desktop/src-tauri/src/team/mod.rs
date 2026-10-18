@@ -6,6 +6,7 @@
 //! token lives only in the OS keychain (macOS Keychain), never in settings or localStorage.
 
 pub mod client;
+pub mod events;
 pub mod outbox;
 pub mod payload;
 pub mod snaps;
@@ -18,6 +19,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use events::{Signal, StreamState};
 use client::{HttpTransport, Keychain, SendError, TokenStore, Transport, normalize_server_url, valid_token};
 use outbox::{Entry, Outbox};
 use payload::{TaskSync, valid_project_id};
@@ -40,6 +42,8 @@ pub struct TeamStatus {
   pub online: Option<bool>,
   pub pending: usize,
   pub last_error: Option<String>,
+  /// Live updates (`team://event`) from the server's event stream.
+  pub stream: StreamState,
 }
 
 #[derive(Default)]
@@ -50,6 +54,7 @@ struct Shared {
   kick: Mutex<bool>,
   wake: Condvar,
   status: Mutex<HashMap<String, TeamStatus>>,
+  stream: Mutex<Option<events::Handle>>,
 }
 
 #[derive(Default, Clone)]
@@ -154,6 +159,95 @@ impl Team {
     }
   }
 
+  /// Starts the event stream for `server` unless it is already running; stops any other.
+  fn start_stream(&self, app: &AppHandle, server: &str) {
+    let mut slot = self.shared.stream.lock().unwrap();
+    if slot.as_ref().is_some_and(|h| h.server == server && !h.stop.is_stopped()) {
+      return;
+    }
+    let old = slot.take();
+    let stop = Arc::new(events::Stop::default());
+    *slot = Some(events::Handle { server: server.to_owned(), stop: stop.clone() });
+    drop(slot);
+    if let Some(old) = old {
+      old.stop.stop();
+      if old.server != server {
+        self.update_status(Some(app), &old.server, |st| st.stream = StreamState::Off);
+      }
+    }
+    let (team, app, server) = (self.clone(), app.clone(), server.to_owned());
+    let spawned = std::thread::Builder::new().name("kingu-team-events".into()).spawn(move || team.stream_worker(&app, &server, &stop));
+    if let Err(e) = spawned {
+      log::error!("team events thread: {e}");
+    }
+  }
+
+  /// Stops the event stream (any, or only `server`'s).
+  fn stop_stream(&self, app: &AppHandle, server: Option<&str>) {
+    let mut slot = self.shared.stream.lock().unwrap();
+    if !slot.as_ref().is_some_and(|h| server.is_none_or(|s| s == h.server)) {
+      return;
+    }
+    if let Some(h) = slot.take() {
+      drop(slot);
+      h.stop.stop();
+      self.update_status(Some(app), &h.server, |st| st.stream = StreamState::Off);
+    }
+  }
+
+  fn stream_worker(&self, app: &AppHandle, server: &str, stop: &events::Stop) {
+    let Some(token) = Keychain.get(server) else {
+      self.update_status(Some(app), server, |st| {
+        st.signed_in = false;
+        st.stream = StreamState::Off;
+      });
+      return self.release_stream(stop);
+    };
+    let cfg = events::StreamConfig::default();
+    let client = match events::http_client(&cfg) {
+      Ok(c) => c,
+      Err(e) => {
+        log::error!("team events disabled: {e}");
+        return self.release_stream(stop);
+      }
+    };
+    events::run(&client, &cfg, server, &token, stop, &mut |signal| {
+      // A stopped stream's status belongs to whoever stopped it (or to its successor).
+      if stop.is_stopped() {
+        return;
+      }
+      match signal {
+        Signal::Event(ev) => {
+          let _ = app.emit(events::EVENT_NAME, ev);
+        }
+        Signal::State(state) => self.update_status(Some(app), server, |st| {
+          st.stream = state;
+          if state == StreamState::Connected {
+            st.online = Some(true);
+          }
+        }),
+        Signal::Retrying(ms) => log::info!("team events: reconnecting in {ms} ms"),
+        Signal::Unauthorized(e) => {
+          log::warn!("team events: token rejected ({e})");
+          self.update_status(Some(app), server, |st| {
+            st.signed_in = false;
+            st.online = Some(true);
+            st.last_error = Some(e);
+          });
+        }
+      }
+    });
+    self.release_stream(stop);
+  }
+
+  /// Clears the slot when it still holds this (ended) stream, so a later start runs a new one.
+  fn release_stream(&self, stop: &events::Stop) {
+    let mut slot = self.shared.stream.lock().unwrap();
+    if slot.as_ref().is_some_and(|h| std::ptr::eq(Arc::as_ptr(&h.stop), stop)) {
+      *slot = None;
+    }
+  }
+
   /// Loads the outbox and starts the delivery thread.
   fn start(&self, app: AppHandle, path: PathBuf) {
     *self.shared.outbox.lock().unwrap() = Outbox::load(path);
@@ -243,6 +337,11 @@ pub async fn team_sign_in(app: AppHandle, team: State<'_, Team>, server_url: Str
   .map_err(|e| e.to_string())??;
   team.shared.outbox.lock().unwrap().retry_all_now();
   team.kick();
+  // A running stream still holds the old token.
+  if team.shared.stream.lock().unwrap().as_ref().is_some_and(|h| h.server == server) {
+    team.stop_stream(&app, Some(&server));
+    team.start_stream(&app, &server);
+  }
   team.update_status(Some(&app), &server, |st| {
     st.signed_in = true;
     st.online = Some(true);
@@ -255,6 +354,7 @@ pub async fn team_sign_in(app: AppHandle, team: State<'_, Team>, server_url: Str
 #[tauri::command]
 pub fn team_sign_out(app: AppHandle, team: State<'_, Team>, server_url: String) -> Result<(), String> {
   let server = normalize_server_url(&server_url)?;
+  team.stop_stream(&app, Some(&server));
   Keychain::delete(&server)?;
   team.update_status(Some(&app), &server, |st| {
     st.signed_in = false;
@@ -266,6 +366,20 @@ pub fn team_sign_out(app: AppHandle, team: State<'_, Team>, server_url: String) 
 #[tauri::command]
 pub fn team_status(team: State<'_, Team>, server_url: String) -> Result<TeamStatus, String> {
   Ok(team.status_of(&normalize_server_url(&server_url)?))
+}
+
+/// Live updates for `server_url` (the selected team server) while signed in; replaces any other
+/// stream. Without a token the status turns signed-out instead.
+#[tauri::command]
+pub fn team_events_start(app: AppHandle, team: State<'_, Team>, server_url: String) -> Result<(), String> {
+  let server = normalize_server_url(&server_url)?;
+  team.start_stream(&app, &server);
+  Ok(())
+}
+
+#[tauri::command]
+pub fn team_events_stop(app: AppHandle, team: State<'_, Team>) {
+  team.stop_stream(&app, None);
 }
 
 /// Queues one task state for the team server. Returns the number of pending states.

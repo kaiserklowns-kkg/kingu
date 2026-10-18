@@ -656,6 +656,8 @@ pub fn run() {
       team::team_status,
       team::team_sync_task,
       team::team_sync_now,
+      team::team_events_start,
+      team::team_events_stop,
       team::snaps::team_snap_catalog,
       team::snaps::team_snap_approve,
       team::snaps::snap_install_team,

@@ -225,3 +225,40 @@ func TestSnapCatalogEvents(t *testing.T) {
 		t.Fatalf("event = %+v", m)
 	}
 }
+
+// The desktop resumes with Last-Event-ID after a dropped connection: snap changes made while it
+// was away are replayed in order, each with the id to resume from next time.
+func TestSnapCatalogEventsResume(t *testing.T) {
+	requireDB(t)
+	base := newServer(t, api.Config{Heartbeat: time.Hour})
+	tok, _ := devToken(t, map[string]any{"org_name": "snaps-resume", "user_id": "sam"})
+	ch, stop := openStream(t, base, tok, nil)
+	waitFor(t, ch, 3*time.Second, func(m sseMsg) bool { return m.Comment == "connected" })
+	expect(t, authed(t, tok, "PUT", "/v1/snaps/go", snapBody("1.0.0")), http.StatusCreated, "")
+	first := waitFor(t, ch, 3*time.Second, func(m sseMsg) bool { return m.Event != "" })
+	stop()
+	if first.Event != "snap.updated" || first.ID == "" {
+		t.Fatalf("first = %+v", first)
+	}
+
+	expect(t, authed(t, tok, "PUT", "/v1/snaps/go", snapBody("1.1.0")), http.StatusOK, "")
+	expect(t, authed(t, tok, "DELETE", "/v1/snaps/go", nil), http.StatusOK, "")
+
+	ch, stop = openStream(t, base, tok, map[string]string{"Last-Event-ID": first.ID})
+	defer stop()
+	a := waitFor(t, ch, 3*time.Second, func(m sseMsg) bool { return m.Event != "" })
+	b := waitFor(t, ch, 3*time.Second, func(m sseMsg) bool { return m.Event != "" })
+	if a.Event != "snap.updated" || eventData(t, a)["data"].(map[string]any)["version"] != "1.1.0" ||
+		b.Event != "snap.removed" || eventData(t, b)["data"].(map[string]any)["snap_id"] != "go" {
+		t.Fatalf("replay = %+v / %+v", a, b)
+	}
+	var ids [3]int64
+	for i, m := range []sseMsg{first, a, b} {
+		if _, err := fmt.Sscan(m.ID, &ids[i]); err != nil {
+			t.Fatalf("id %q: %v", m.ID, err)
+		}
+	}
+	if !(ids[0] < ids[1] && ids[1] < ids[2]) {
+		t.Fatalf("ids not increasing: %v", ids)
+	}
+}
