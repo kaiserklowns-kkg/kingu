@@ -6,6 +6,7 @@
 //! running after Kingu quits and the next launch re-attaches to them. On Windows, or when the
 //! daemon cannot start, they live in this process (they then end with the app).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 #[cfg(unix)]
@@ -134,9 +135,10 @@ impl Ptys {
     Backend::Local(Host::default())
   }
 
-  /// Attaches to `key`, else starts a login shell for it in `cwd` (typing `run` once).
-  pub fn open(&self, key: &str, cwd: &Path, cols: u16, rows: u16, run: Option<&[String]>, sink: Sink) -> Result<Attached, String> {
-    let spec = ShellSpec { cwd, cols, rows, run, env: &Default::default() };
+  /// Attaches to `key`, else starts a login shell for it in `cwd` with `env` (typing `run` once).
+  #[allow(clippy::too_many_arguments)]
+  pub fn open(&self, key: &str, cwd: &Path, cols: u16, rows: u16, run: Option<&[String]>, env: &BTreeMap<String, String>, sink: Sink) -> Result<Attached, String> {
+    let spec = ShellSpec { cwd, cols, rows, run, env };
     match self.backend() {
       Backend::Local(host) => host.open(key, &spec, sink),
       #[cfg(unix)]

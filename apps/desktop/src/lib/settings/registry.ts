@@ -399,6 +399,24 @@ export const SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.statusBar.usage.visible',
+		group: 'Status Bar',
+		type: 'boolean',
+		default: true,
+		description: 'แสดง usage ของแพ็กเกจ AI (Claude, Codex) ใน status bar และดึงข้อมูลทุก 15 นาที (Show plan usage of the AI accounts agents use; fetched every 15 minutes.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.statusBar.usage.mode',
+		group: 'Status Bar',
+		type: 'string',
+		default: 'compact',
+		enum: ['compact', 'detailed'],
+		enumDescriptions: ['ช่วงเวลาที่ใช้ไปมากที่สุด (The tightest window only.)', 'ทั้ง 5 ชั่วโมงและ 7 วัน (Both the 5-hour and the weekly window.)'],
+		description: 'รูปแบบ usage ใน status bar (How usage shows in the status bar.)',
+		scope: 'application'
+	},
+	{
 		id: 'kingu.statusBar.keepAwake.visible',
 		group: 'Status Bar',
 		type: 'boolean',

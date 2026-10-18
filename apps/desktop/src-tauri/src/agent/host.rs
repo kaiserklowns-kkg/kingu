@@ -137,6 +137,23 @@ pub struct StartRequest {
   /// Skill plugin folders of active Snaps (`snap::validate_plugin_dirs`); omitted when none.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub plugins: Option<Vec<String>>,
+  /// The active Claude account (`CLAUDE_CONFIG_DIR` or `ANTHROPIC_API_KEY`); omitted when none.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub env: Option<SecretEnv>,
+  /// Auth variables to drop from the run's env so they do not override that account.
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  pub unset_env: Vec<String>,
+}
+
+/// Env values that may hold an API key: serialized for the sidecar, never shown by Debug.
+#[derive(Clone, Default, PartialEq, serde::Serialize)]
+#[serde(transparent)]
+pub struct SecretEnv(pub std::collections::BTreeMap<String, String>);
+
+impl std::fmt::Debug for SecretEnv {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_set().entries(self.0.keys()).finish()
+  }
 }
 
 /// A stdio MCP server handed to an agent run (the SDK's `mcpServers` entry without `type`).
@@ -581,6 +598,13 @@ exit 3"#
     let wire = serde_json::to_value(StartRequest { cwd: "/w".into(), prompt: "x".into(), plugins: Some(vec!["/c/snap-plugins/go-0123456789abcdef".into()]), ..Default::default() }).unwrap();
     assert_eq!(wire["plugins"], json!(["/c/snap-plugins/go-0123456789abcdef"]));
     let wire = serde_json::to_value(StartRequest { cwd: "/w".into(), prompt: "x".into(), ..Default::default() }).unwrap();
+    assert!(wire.get("env").is_none() && wire.get("unsetEnv").is_none(), "no account: nothing changes");
+    let env = SecretEnv([("ANTHROPIC_API_KEY".to_owned(), "sk-ant-secret".to_owned())].into());
+    let req = StartRequest { cwd: "/w".into(), prompt: "x".into(), env: Some(env), unset_env: vec!["ANTHROPIC_AUTH_TOKEN".into()], ..Default::default() };
+    assert!(!format!("{req:?}").contains("sk-ant-secret"));
+    let with_env = serde_json::to_value(req).unwrap();
+    assert_eq!(with_env["env"]["ANTHROPIC_API_KEY"], "sk-ant-secret");
+    assert_eq!(with_env["unsetEnv"], json!(["ANTHROPIC_AUTH_TOKEN"]));
     assert!(wire.get("plugins").is_none() && wire.get("mcpServers").is_none());
   }
 

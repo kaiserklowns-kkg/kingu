@@ -1,6 +1,7 @@
 <script lang="ts" module>
 	import {
 		ArrowClockwiseIcon,
+		AsteriskIcon,
 		ArrowCounterClockwiseIcon,
 		ArrowLeftIcon,
 		ArrowRightIcon,
@@ -35,12 +36,14 @@
 		GitMergeIcon,
 		GitPullRequestIcon,
 		InfoIcon,
+		KeyIcon,
 		KanbanIcon,
 		LayoutIcon,
 		ListIcon,
 		MagnifyingGlassIcon,
 		MemoryIcon,
 		MinusIcon,
+		OpenAiLogoIcon,
 		PauseIcon,
 		PlayIcon,
 		PlugIcon,
@@ -48,6 +51,7 @@
 		PuzzlePieceIcon,
 		ProhibitIcon,
 		SidebarSimpleIcon,
+		SignInIcon,
 		SquaresFourIcon,
 		SquareSplitVerticalIcon,
 		StopCircleIcon,
@@ -130,7 +134,12 @@
 		stepOut: ArrowLineUpIcon,
 		breakpoint: CircleIcon,
 		/** Snaps (Kingu's packs; VS Code's Extensions view). */
-		snap: PuzzlePieceIcon
+		snap: PuzzlePieceIcon,
+		/** AI providers in the usage meter and accounts (Claude's mark is a starburst). */
+		claude: AsteriskIcon,
+		openai: OpenAiLogoIcon,
+		key: KeyIcon,
+		signIn: SignInIcon
 	} as const;
 	export type IconName = keyof typeof icons;
 

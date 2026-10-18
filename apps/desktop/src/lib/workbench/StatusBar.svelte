@@ -2,6 +2,7 @@
 	import { debug } from '#lib/debug/debug.svelte.ts';
 	import { lsp } from '#lib/lsp/lsp.svelte.ts';
 	import TeamStatus from '#lib/team/TeamStatus.svelte';
+	import UsageStatus from '#lib/accounts/UsageStatus.svelte';
 	import Icon from './Icon.svelte';
 	import { editors } from './editors.svelte';
 	import { layout } from './layout.svelte';
@@ -51,6 +52,7 @@
 
 	// Right-click: which resource items show (Orca's status bar context menu).
 	const TOGGLES = [
+		{ id: 'kingu.statusBar.usage.visible', label: 'Usage' },
 		{ id: 'kingu.statusBar.keepAwake.visible', label: 'Keep Awake' },
 		{ id: 'kingu.statusBar.resources.visible', label: 'Resource Manager' },
 		{ id: 'kingu.statusBar.ports.visible', label: 'Ports' }
@@ -109,6 +111,7 @@
 		<Icon name="agent" size={14} />{counts.inProgress} กำลังทำ
 		{#if counts.needsInput}<span class="text-(--vscode-editorWarning-foreground)">· {counts.needsInput} รอคุณ</span>{/if}
 	</button>
+	<UsageStatus />
 	{#if cost > 0}<span class="px-2 tabular-nums" title="ค่าใช้จ่าย agent ในโฟลเดอร์นี้">${cost.toFixed(2)}</span>{/if}
 	{#if status.message}<span class="truncate px-2">{status.message}</span>{/if}
 	<div class="flex-1"></div>

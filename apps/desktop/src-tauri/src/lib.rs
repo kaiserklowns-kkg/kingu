@@ -1,3 +1,4 @@
+mod accounts;
 mod agent;
 mod dap;
 mod fileops;
@@ -207,6 +208,7 @@ async fn git_show_head(ws: State<'_, Workspace>, rel: String) -> Result<String, 
 fn pty_spawn(
   ws: State<'_, Workspace>,
   ptys: State<'_, pty::Ptys>,
+  accounts: State<'_, accounts::Accounts>,
   key: String,
   cols: u16,
   rows: u16,
@@ -228,7 +230,13 @@ fn pty_spawn(
     }
     None => ws.current().or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("/")),
   };
-  let attached = ptys.open(&key, &cwd, cols, rows, run.as_deref(), pty::channel_sink(on_data))?;
+  // Only an agent CLI's terminal (`cli:` keys) gets the active AI account's env, never an
+  // ordinary terminal, so an API key does not leak into every shell.
+  let env = match run.as_deref().and_then(<[String]>::first) {
+    Some(program) if key.starts_with("cli:") => accounts::env_for_program(&accounts, program)?,
+    _ => Default::default(),
+  };
+  let attached = ptys.open(&key, &cwd, cols, rows, run.as_deref(), &env, pty::channel_sink(on_data))?;
   if attached.spawned {
     log::info!("terminal {key} started ({cols}x{rows})");
   } else {
@@ -515,6 +523,7 @@ pub fn run() {
       let (runtime, uid) = (None, 0);
       pty::Ptys::init(app.handle(), pty::daemon_dir(&data, runtime, &std::env::temp_dir(), uid));
       team::install(app)?;
+      accounts::install(app)?;
       menu::install(app.handle());
       if let Some(root) = start
         && let Err(e) = switch_root(app.handle(), Some(&root))
@@ -633,6 +642,15 @@ pub fn run() {
       snap_install::snap_reveal,
       snap_install::snap_manifest_read,
       snap_install::snap_manifest_write,
+      accounts::ai_accounts_list,
+      accounts::ai_account_add,
+      accounts::ai_account_set_key,
+      accounts::ai_account_remove,
+      accounts::ai_account_set_active,
+      accounts::ai_account_login_command,
+      accounts::ai_usage_get,
+      accounts::ai_usage_refresh,
+      accounts::ai_usage_history,
       team::team_sign_in,
       team::team_sign_out,
       team::team_status,

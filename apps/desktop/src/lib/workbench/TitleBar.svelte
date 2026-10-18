@@ -34,6 +34,7 @@
 	import type { MenuNode } from './menus';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { team } from '#lib/team/team.svelte.ts';
+	import { showAccountsMenu } from '#lib/accounts/accounts.svelte.ts';
 	import { toggleAgentsMode } from '#lib/ade/agentsMode.svelte.ts';
 	import { appMode } from './mode.svelte';
 
@@ -253,7 +254,7 @@
 			{/if}
 		{/each}
 		{#if shown('accounts')}
-			<button aria-label={account.label} title={account.label} class={[ACTION, 'relative']} onclick={() => team.showMenu()}>
+			<button aria-label={`${account.label} · บัญชี AI`} title={`${account.label}\nคลิก: บัญชี AI (Claude, Codex) และทีม`} class={[ACTION, 'relative']} onclick={() => showAccountsMenu()}>
 				<Icon name="account" size={16} />
 				{#if account.signedIn}
 					<span class="absolute right-0.5 bottom-0.5 size-1.5 rounded-full bg-(--vscode-activityBarBadge-background)"></span>

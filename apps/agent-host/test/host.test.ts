@@ -2,7 +2,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { Options, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import { AgentHost, decisionResult, Inbox, type QueryFn } from '../src/host.ts';
+import { AgentHost, decisionResult, Inbox, runEnv, type QueryFn } from '../src/host.ts';
 import type { AgentEvent } from '../src/protocol.ts';
 
 type Out = { jsonrpc: '2.0'; id?: number | string | null; method?: string; params?: any; result?: unknown; error?: { code: number; message: string } };
@@ -165,6 +165,18 @@ describe('agent host protocol', () => {
 		await call(1, 'start', { runId: 1, cwd: '/w', prompt: 'x', plugins: [] });
 		expect(log.options && 'mcpServers' in log.options).toBe(false);
 		expect(log.options && 'plugins' in log.options).toBe(false);
+	});
+
+	test('no account leaves env to the host; an account sets and clears variables for that run only', async () => {
+		const { log, call } = setup();
+		await call(1, 'start', { runId: 1, cwd: '/w', prompt: 'x' });
+		expect(log.options && 'env' in log.options).toBe(false);
+		await call(2, 'start', { runId: 2, cwd: '/w', prompt: 'x', env: { CLAUDE_CONFIG_DIR: '/acc/claude/0123456789ab' }, unsetEnv: ['ANTHROPIC_API_KEY'] });
+		expect(log.options?.env?.CLAUDE_CONFIG_DIR).toBe('/acc/claude/0123456789ab');
+		expect(log.options?.env && 'ANTHROPIC_API_KEY' in log.options.env).toBe(false);
+		expect(runEnv({ A: '1', ANTHROPIC_API_KEY: 'k' }, { B: '2' }, ['ANTHROPIC_API_KEY'])).toEqual({ A: '1', B: '2' });
+		expect((await call(3, 'start', { runId: 3, cwd: '/w', prompt: 'x', env: { 'bad name': 'x' } })).error?.message).toContain('env must map');
+		expect((await call(4, 'start', { runId: 4, cwd: '/w', prompt: 'x', unsetEnv: [1] })).error?.message).toContain('unsetEnv');
 	});
 
 	test('hands Snap skill plugins to the SDK as local plugins without their own MCP', async () => {
