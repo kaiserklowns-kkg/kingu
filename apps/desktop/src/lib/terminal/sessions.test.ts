@@ -1,31 +1,89 @@
 import { describe, expect, test } from 'bun:test';
-import { adeKey, cliKey, isValidKey, orphanKeys, panelKey, parseAdeTerminals, parseCliSessions, parsePanelTerminals, persist, restore } from './sessions.ts';
+import {
+	adeKey,
+	backgroundKeys,
+	cliKey,
+	isValidKey,
+	keyTag,
+	liveCliSessions,
+	orphanKeys,
+	panelKey,
+	parseAdeTerminals,
+	parseCliSessions,
+	parsePanelTerminals,
+	persist,
+	restore,
+	rootTag,
+	storeName,
+	withoutRun
+} from './sessions.ts';
 
 function memory() {
 	const items = new Map<string, string>();
 	return { getItem: (k: string) => items.get(k) ?? null, setItem: (k: string, v: string) => void items.set(k, v), items };
 }
 
+describe('root tags', () => {
+	test('stable, short, and different per folder', () => {
+		expect(rootTag('/Users/a/proj')).toBe(rootTag('/Users/a/proj'));
+		expect(rootTag('/Users/a/proj')).toMatch(/^[0-9a-f]{8}$/);
+		expect(rootTag('/Users/a/proj')).not.toBe(rootTag('/Users/a/proj2'));
+		expect(rootTag('/Users/a/โปรเจกต์')).toMatch(/^[0-9a-f]{8}$/);
+		// No folder open is a root of its own.
+		expect(rootTag(null)).toBe(rootTag(null));
+		expect(rootTag(null)).not.toBe(rootTag('/'));
+	});
+});
+
 describe('session keys', () => {
+	const tag = rootTag('/repo');
 	test('every kind of terminal gets a key Rust accepts', () => {
-		for (const key of [panelKey(3), adeKey('', 't1'), adeKey('fix-login', 't12'), cliKey('fix-login', 1760000000000)]) expect(isValidKey(key)).toBe(true);
-		expect(adeKey('', 't1')).toBe('ade::t1');
-		expect(cliKey('a', 5)).toBe('cli:a:5');
+		const longest = 'a'.repeat(48);
+		for (const key of [panelKey(tag, 3), adeKey(tag, '', 't1'), adeKey(tag, 'fix-login', 't12'), cliKey(tag, 'fix-login', 1760000000000), cliKey(tag, longest, 1760000000000)]) expect(isValidKey(key)).toBe(true);
+		expect(adeKey('ab12cd34', '', 't1')).toBe('ade:ab12cd34::t1');
+		expect(cliKey('ab12cd34', 'a', 5)).toBe('cli:ab12cd34:a:5');
+		expect(panelKey('ab12cd34', 2)).toBe('panel:ab12cd34:2');
+	});
+	test('two folders never share a key', () => {
+		const other = rootTag('/other');
+		expect(panelKey(tag, 1)).not.toBe(panelKey(other, 1));
+		expect(adeKey(tag, '', 't1')).not.toBe(adeKey(other, '', 't1'));
+		expect(cliKey(tag, 'x', 1)).not.toBe(cliKey(other, 'x', 1));
 	});
 	test('rejects what Rust rejects', () => {
 		for (const key of ['', 'a b', 'a/b', 'ก', 'k'.repeat(129)]) expect(isValidKey(key)).toBe(false);
 	});
-	test('orphans are live keys the page does not show', () => {
-		expect(orphanKeys(['panel:1', 'panel:2', 'cli:x:1'], new Set(['panel:2', 'ade::t1']))).toEqual(['panel:1', 'cli:x:1']);
+	test('the root tag reads back from a key', () => {
+		expect(keyTag(panelKey(tag, 1))).toBe(tag);
+		expect(keyTag(adeKey(tag, 'w', 't1'))).toBe(tag);
+		expect(keyTag(cliKey(tag, 's', 1))).toBe(tag);
+		// Keys from before root tags.
+		expect(keyTag('panel:1')).toBeNull();
+		expect(keyTag('cli:fix:1700000000000')).toBeNull();
+		expect(keyTag('ade::t1')).toBeNull();
+	});
+	test("orphans are only the current folder's live keys the page does not show", () => {
+		const other = rootTag('/other');
+		const live = [panelKey(tag, 1), panelKey(tag, 2), cliKey(tag, 'x', 1), panelKey(other, 1), 'panel:7'];
+		expect(orphanKeys(live, new Set([panelKey(tag, 2), adeKey(tag, '', 't1')]), tag)).toEqual([panelKey(tag, 1), cliKey(tag, 'x', 1)]);
+		// Background: everything the window does not show, any folder.
+		expect(backgroundKeys(live, new Set([panelKey(tag, 2)]))).toEqual([panelKey(tag, 1), cliKey(tag, 'x', 1), panelKey(other, 1), 'panel:7']);
 	});
 });
 
 describe('persistence', () => {
-	test('round-trips through storage', () => {
+	test('round-trips through storage, one list per folder', () => {
 		const store = memory();
+		const a = rootTag('/a');
+		const b = rootTag('/b');
 		const state = { list: [{ id: 2, title: 'zsh' }, { id: 5, title: 'test', run: ['go', 'test'] }], active: 5, seq: 5 };
-		persist('p', state, store);
-		expect(restore('p', parsePanelTerminals, store)).toEqual({ list: [{ id: 2, title: 'zsh', run: undefined }, { id: 5, title: 'test', run: ['go', 'test'] }], active: 5, seq: 5 });
+		persist(storeName('p', a), state, store);
+		expect(restore(storeName('p', a), parsePanelTerminals, store)).toEqual({ list: [{ id: 2, title: 'zsh', run: undefined }, { id: 5, title: 'test', run: ['go', 'test'] }], active: 5, seq: 5 });
+		expect(restore(storeName('p', b), parsePanelTerminals, store)).toBeNull();
+		expect(storeName('p', a)).toBe(`p:${a}`);
+	});
+	test('a restored terminal never re-runs its command', () => {
+		expect(withoutRun({ id: 5, title: 'test', run: ['go', 'test'] })).toEqual({ id: 5, title: 'test' });
 	});
 	test('missing, broken or unavailable storage reads as nothing', () => {
 		const store = memory();
@@ -62,5 +120,12 @@ describe('persistence', () => {
 		expect(parseCliSessions('x')).toBeNull();
 		expect(parseCliSessions({ a: { run: ['claude'], startedAt: 1, hookToken: '3f2a9c1e-77aa-4d1b' } })).toEqual({ a: { run: ['claude'], startedAt: 1, hookToken: '3f2a9c1e-77aa-4d1b' } });
 		expect(parseCliSessions({ a: { run: ['claude'], startedAt: 1, hookToken: '../x' } })).toEqual({ a: { run: ['claude'], startedAt: 1 } });
+	});
+	test('after a restart only CLI sessions with a live PTY come back', () => {
+		const tag = rootTag('/repo');
+		const saved = { a: { run: ['claude'], startedAt: 10, hookToken: 'tok-aaaa-1111' }, b: { run: ['codex'], startedAt: 20 } };
+		const { kept, gone } = liveCliSessions(saved, tag, new Set([cliKey(tag, 'a', 10), cliKey(rootTag('/other'), 'b', 20)]));
+		expect(kept).toEqual({ a: saved.a });
+		expect(gone).toEqual({ b: saved.b });
 	});
 });

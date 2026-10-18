@@ -8,8 +8,8 @@
 
 	/**
 	 * `key`: the PTY session (sessions.ts). A live one is re-attached with its recent output
-	 * replayed, so the shell outlives a webview reload; unmounting never kills it, closing the tab
-	 * does (the terminal stores). `slug`: start in that task's worktree instead of the folder root.
+	 * replayed, so the shell outlives a webview reload, a folder switch and (with the kingu-ptyd
+	 * daemon) an app restart; unmounting never kills it, closing the tab does (the terminal stores). `slug`: start in that task's worktree instead of the folder root.
 	 * `run`: a command typed into a new shell (an agent CLI, a Snap task); Rust quotes every argument.
 	 */
 	let { key, slug, run, onoutput }: { key: string; slug?: string; run?: string[]; onoutput?: () => void } = $props();

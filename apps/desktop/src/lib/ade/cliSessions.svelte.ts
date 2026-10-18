@@ -1,12 +1,13 @@
 // Agent CLIs running in task terminals (the Orca way): which task has one, the command it was
 // started with, and when it last printed something — that is how a card shows "working" vs
 // "waiting for you". The terminal itself lives in the Agents layout (kept mounted). The sessions
-// survive a webview reload (sessionStorage) and their terminals re-attach under `cliKey`; after an
-// app restart there are none, so the user continues a task's CLI explicitly.
+// belong to the open folder and are kept in localStorage per folder: after a reload, a folder
+// switch or an app restart (the kingu-ptyd daemon keeps the CLIs running) each one whose PTY is
+// still alive re-attaches under `cliKey`; the others are gone, and the user continues the task.
 
 import { invoke } from '@tauri-apps/api/core';
 import { killPty } from '#lib/terminal/pty.ts';
-import { cliKey, parseCliSessions, persist, restore } from '#lib/terminal/sessions.ts';
+import { cliKey, liveCliSessions, parseCliSessions, persist, restore, storeName } from '#lib/terminal/sessions.ts';
 import { isWorking } from './agentCli';
 import { applyHook, initialHookState, type HookState } from './agentHooks';
 
@@ -27,35 +28,71 @@ class CliSessions {
 	#offsets: Record<string, number> = {};
 	#polling = false;
 
+	/** Root tag of the folder whose sessions these are; null until loaded. */
+	#tag = $state<string | null>(null);
+	/** Sessions restored from storage: their terminal only re-attaches, never re-runs the CLI. */
+	#restored = new Set<string>();
+
 	constructor() {
-		const saved = restore(STORE, parseCliSessions);
-		if (saved) {
-			this.sessions = saved;
-			for (const [slug, s] of Object.entries(saved)) if (s.hookToken) this.hooks[slug] = initialHookState(Date.now());
-		}
-		this.#tick();
 		$effect.root(() => {
-			$effect(() => persist(STORE, $state.snapshot(this.sessions)));
+			$effect(() => {
+				const state = $state.snapshot(this.sessions);
+				if (this.#tag) persist(storeName(STORE, this.#tag), state);
+			});
 		});
+	}
+
+	/** Folder `tag`'s sessions whose PTY is in `live`; hook polling picks up where it was. */
+	load(tag: string, live: Set<string>) {
+		const { kept, gone } = liveCliSessions(restore(storeName(STORE, tag), parseCliSessions) ?? {}, tag, live);
+		for (const s of Object.values(gone)) if (s.hookToken) void invoke('agent_hook_clear', { token: s.hookToken }).catch(() => {});
+		this.sessions = kept;
+		this.hooks = {};
+		this.#offsets = {};
+		this.#restored = new Set(Object.keys(kept));
+		for (const [slug, s] of Object.entries(kept)) if (s.hookToken) this.hooks[slug] = initialHookState(Date.now());
+		this.#tag = tag;
+		this.#tick();
+	}
+
+	/** Another folder is about to load: its CLIs keep running, unshown. */
+	unload() {
+		this.#tag = null;
+		this.sessions = {};
+		this.hooks = {};
+		this.#offsets = {};
+		this.#last = {};
+		this.#restored.clear();
+		this.#tick();
+	}
+
+	ptyKey(slug: string, startedAt: number): string {
+		return cliKey(this.#tag ?? '', slug, startedAt);
 	}
 
 	key(slug: string): string | null {
 		const s = this.sessions[slug];
-		return s ? cliKey(slug, s.startedAt) : null;
+		return s ? this.ptyKey(slug, s.startedAt) : null;
 	}
 
 	ptyKeys(): string[] {
-		return Object.entries(this.sessions).map(([slug, s]) => cliKey(slug, s.startedAt));
+		return Object.entries(this.sessions).map(([slug, s]) => this.ptyKey(slug, s.startedAt));
+	}
+
+	/** The command a session's terminal may type: none for a restored one (it only re-attaches). */
+	runOf(slug: string): string[] | undefined {
+		return this.#restored.has(slug) ? undefined : this.sessions[slug]?.run;
 	}
 
 	start(slug: string, run: string[], hookToken?: string) {
 		const old = this.sessions[slug];
 		if (old) {
-			killPty(cliKey(slug, old.startedAt));
+			killPty(this.ptyKey(slug, old.startedAt));
 			if (old.hookToken && old.hookToken !== hookToken) void invoke('agent_hook_clear', { token: old.hookToken }).catch(() => {});
 		}
 		// A new key even within the same millisecond: Rust never re-types `run` for a key it has seen.
 		this.sessions[slug] = { run, startedAt: Math.max(Date.now(), (old?.startedAt ?? 0) + 1), hookToken };
+		this.#restored.delete(slug);
 		this.#offsets[slug] = 0;
 		if (hookToken) this.hooks[slug] = initialHookState(Date.now());
 		else delete this.hooks[slug];
@@ -72,6 +109,7 @@ class CliSessions {
 		delete this.#offsets[slug];
 		delete this.sessions[slug];
 		delete this.#last[slug];
+		this.#restored.delete(slug);
 		this.#tick();
 	}
 

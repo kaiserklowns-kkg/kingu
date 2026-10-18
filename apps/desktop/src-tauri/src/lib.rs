@@ -164,7 +164,7 @@ async fn git_show_head(ws: State<'_, Workspace>, rel: String) -> Result<String, 
 }
 
 /// Terminal session `key`: re-attaches to its live shell (`run` is not typed again), else starts one.
-#[tauri::command]
+#[tauri::command(async)]
 #[allow(clippy::too_many_arguments)]
 fn pty_spawn(
   ws: State<'_, Workspace>,
@@ -175,12 +175,8 @@ fn pty_spawn(
   on_data: Channel<String>,
   slug: Option<String>,
   run: Option<Vec<String>>,
-) -> Result<pty::Attached, String> {
+) -> Result<kingu_ptyd::Attached, String> {
   pty::validate_key(&key)?;
-  if let Some(attached) = pty::attach(&ptys, &key, Some((cols, rows)), on_data.clone()) {
-    log::info!("terminal {key} re-attached ({cols}x{rows})");
-    return Ok(attached);
-  }
   // A task terminal starts in the task's worktree (the ADE's per-worktree terminals).
   // No folder open: the terminal starts in the home folder, like VS Code's empty window.
   let cwd = match slug {
@@ -194,9 +190,13 @@ fn pty_spawn(
     }
     None => ws.current().or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("/")),
   };
-  let started = pty::spawn_shell(&ptys, &key, &cwd, cols, rows, on_data, run.as_deref())?;
-  log::info!("terminal {key} started ({cols}x{rows})");
-  Ok(started)
+  let attached = ptys.open(&key, &cwd, cols, rows, run.as_deref(), pty::channel_sink(on_data))?;
+  if attached.spawned {
+    log::info!("terminal {key} started ({cols}x{rows})");
+  } else {
+    log::info!("terminal {key} re-attached ({cols}x{rows})");
+  }
+  Ok(attached)
 }
 
 #[tauri::command]
@@ -405,6 +405,15 @@ pub fn run() {
       let recent = Recent::load(app.path().app_data_dir()?.join("recent.json"));
       let start = workspace::startup_root(recent.data().last.as_deref(), std::env::var_os("KINGU_WORKSPACE"));
       app.manage(recent);
+      let data = app.path().app_data_dir()?;
+      #[cfg(unix)]
+      let (runtime, uid) = (
+        std::env::var_os("XDG_RUNTIME_DIR").filter(|_| cfg!(target_os = "linux")).map(PathBuf::from),
+        kingu_ptyd::peer::own_uid(),
+      );
+      #[cfg(not(unix))]
+      let (runtime, uid) = (None, 0);
+      pty::Ptys::init(app.handle(), pty::daemon_dir(&data, runtime, &std::env::temp_dir(), uid));
       team::install(app)?;
       menu::install(app.handle());
       if let Some(root) = start
@@ -444,6 +453,7 @@ pub fn run() {
       pty::pty_kill,
       pty::pty_attach,
       pty::pty_list,
+      pty::pty_backend,
       worktree_create,
       worktree_list,
       worktree_remove,

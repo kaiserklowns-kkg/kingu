@@ -2,11 +2,13 @@
 // Release build of the desktop app: `bun run build:desktop [-- <extra tauri build args>]`.
 //
 //   1. `tauri build` with src-tauri/tauri.release.conf.json merged in, which compiles the agent host
-//      sidecar first (beforeBuildCommand → build:sidecar) and bundles it (`bundle.externalBin`).
+//      sidecar and the terminal daemon first (beforeBuildCommand → build:sidecar, build:ptyd) and
+//      bundles both (`bundle.externalBin`).
 //      The base tauri.conf.json has no externalBin so `cargo build/test/clippy` and `tauri dev`
 //      work without a compiled sidecar.
 //   2. macOS: re-signs the sidecar with its own entitlements (entitlements/agent-host.plist:
-//      cs.allow-jit, which Bun's JavaScriptCore needs under the hardened runtime) and then the app
+//      cs.allow-jit, which Bun's JavaScriptCore needs under the hardened runtime), the terminal
+//      daemon `kingu-ptyd` with none under its own identifier, and then the app
 //      (entitlements/app.plist: none). Tauri signs every binary in Contents/MacOS with the app's
 //      entitlements, which would either kill the sidecar or hand JIT to the main executable.
 //
@@ -107,6 +109,8 @@ if (target.endsWith('apple-darwin')) {
 	const sign = (path: string, entitlements: string, extra: string[] = []) =>
 		run(['codesign', '--force', '--sign', identity, '--options', 'runtime', ...ts, ...extra, '--entitlements', join(tauriDir, 'entitlements', entitlements), path]);
 	sign(join(app, 'Contents/MacOS/kingu-agent-host'), 'agent-host.plist', ['--identifier', 'ai.anthov.kingu.studio.agent-host']);
+	// The terminal daemon needs no entitlements (app.plist is empty); it gets its own identifier.
+	sign(join(app, 'Contents/MacOS/kingu-ptyd'), 'app.plist', ['--identifier', 'ai.anthov.kingu.studio.ptyd']);
 	sign(app, 'app.plist');
 	run(['codesign', '--verify', '--deep', '--strict', '--verbose=2', app]);
 	console.log(`build-desktop: ${app}\n  verify: bun tools/release-verify.ts ${app}`);

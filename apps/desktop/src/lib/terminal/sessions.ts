@@ -1,21 +1,47 @@
-// Terminal session keys and their persistence across webview reloads (pure, so `bun test` covers it).
-// PTYs live in the Rust process under a key the page picks; the lists that decide which terminals
-// exist go to sessionStorage, so a reloaded page mounts the same terminals and re-attaches. After an
-// app restart sessionStorage is empty: nothing re-attaches and no agent CLI is started again.
+// Terminal session keys and their persistence (pure, so `bun test` covers it).
+// PTYs live outside the page (the kingu-ptyd daemon, or the Rust process as a fallback) under a
+// key the page picks. Keys carry a short hash of the workspace root, so two folders never share
+// a key. The lists that decide which terminals exist go to localStorage per root, so a reloaded
+// page, and the next launch after a quit, mount the same terminals and re-attach to them.
+
+/** Short, stable tag of a workspace root (FNV-1a, 8 hex digits); `null` is "no folder open". */
+export function rootTag(root: string | null): string {
+	let h = 0x811c9dc5;
+	for (const byte of new TextEncoder().encode(root ?? '')) {
+		h ^= byte;
+		h = Math.imul(h, 0x01000193) >>> 0;
+	}
+	return h.toString(16).padStart(8, '0');
+}
 
 /** A terminal of the IDE panel. */
-export const panelKey = (id: number) => `panel:${id}`;
+export const panelKey = (tag: string, id: number) => `panel:${tag}:${id}`;
 /** A terminal tab of an ADE worktree ('' is the folder itself). */
-export const adeKey = (worktree: string, tabId: string) => `ade:${worktree}:${tabId}`;
+export const adeKey = (tag: string, worktree: string, tabId: string) => `ade:${tag}:${worktree}:${tabId}`;
 /** A task's agent CLI; `startedAt` makes a restarted CLI a new session. */
-export const cliKey = (slug: string, startedAt: number) => `cli:${slug}:${startedAt}`;
+export const cliKey = (tag: string, slug: string, startedAt: number) => `cli:${tag}:${slug}:${startedAt}`;
 
 const KEY_RE = /^[A-Za-z0-9:_.-]{1,128}$/;
-/** Same rule as Rust's `pty::validate_key`. */
+/** Same rule as Rust's `validate_key`. */
 export const isValidKey = (key: string) => KEY_RE.test(key);
 
-/** Live PTYs the page no longer shows (left over from before a reload). */
-export function orphanKeys(live: string[], wanted: Set<string>): string[] {
+/** The root tag of a key built above; null for anything else (a key from an older build). */
+export function keyTag(key: string): string | null {
+	const m = /^(?:panel|ade|cli):([0-9a-f]{8}):/.exec(key);
+	return m ? m[1] : null;
+}
+
+/** What `pty_list` returns per live session. */
+export type PtyInfo = { key: string; cwd: string; alive: boolean };
+
+/** Live PTYs of root `tag` that the restored page does not show: left over, so safe to kill.
+ *  Other roots' sessions keep running until their folder is opened again. */
+export function orphanKeys(live: string[], wanted: Set<string>, tag: string): string[] {
+	return live.filter((k) => keyTag(k) === tag && !wanted.has(k));
+}
+
+/** Live PTYs this window does not show (other folders, or left over from an older build). */
+export function backgroundKeys(live: string[], wanted: Set<string>): string[] {
 	return live.filter((k) => !wanted.has(k));
 }
 
@@ -23,11 +49,14 @@ type Storage = Pick<globalThis.Storage, 'getItem' | 'setItem'>;
 
 function storage(): Storage | null {
 	try {
-		return globalThis.sessionStorage ?? null;
+		return globalThis.localStorage ?? null;
 	} catch {
 		return null;
 	}
 }
+
+/** The storage name of one root's list. */
+export const storeName = (base: string, tag: string) => `${base}:${tag}`;
 
 /** Reads `name` and lets `parse` vet it: anything unexpected reads as nothing. */
 export function restore<T>(name: string, parse: (raw: unknown) => T | null, store: Storage | null = storage()): T | null {
@@ -43,8 +72,14 @@ export function persist(name: string, value: unknown, store: Storage | null = st
 	try {
 		store?.setItem(name, JSON.stringify(value));
 	} catch {
-		// Storage can be unavailable; terminals then restart with the page.
+		// Storage can be unavailable; terminals then start over with the page.
 	}
+}
+
+/** A restored terminal re-attaches, or starts a plain shell: its command never runs again. */
+export function withoutRun<T extends { run?: string[] }>(t: T): Omit<T, 'run'> {
+	const { run: _, ...rest } = t;
+	return rest;
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -52,6 +87,8 @@ const isInt = (v: unknown): v is number => Number.isSafeInteger(v);
 const isArgv = (v: unknown): v is string[] => Array.isArray(v) && v.every((a) => typeof a === 'string');
 const optString = (v: unknown) => (typeof v === 'string' ? v : undefined);
 const optArgv = (v: unknown) => (isArgv(v) ? v : undefined);
+/** Any root tag: key validity only depends on its length. */
+const SAMPLE_TAG = '00000000';
 
 export type PanelTerminalsState = { list: { id: number; title: string; run?: string[] }[]; active: number; seq: number };
 
@@ -80,7 +117,7 @@ export function parseAdeTerminals(raw: unknown): AdeTerminalsState | null {
 			.filter((t) => isObject(t) && typeof t.id === 'string' && /^t\d+$/.test(t.id) && isInt(t.n))
 			.map((t) => ({ id: t.id as string, n: t.n as number, title: optString(t.title), run: optArgv(t.run) }));
 		for (const t of tabs) seq = Math.max(seq, Number(t.id.slice(1)));
-		if (tabs.length && isValidKey(adeKey(worktree, 't0'))) terminals[worktree] = tabs;
+		if (tabs.length && isValidKey(adeKey(SAMPLE_TAG, worktree, 't0'))) terminals[worktree] = tabs;
 	}
 	const active: Record<string, string> = {};
 	if (isObject(raw.active)) for (const [k, v] of Object.entries(raw.active)) if (typeof v === 'string') active[k] = v;
@@ -93,7 +130,15 @@ export function parseCliSessions(raw: unknown): CliSessionsState | null {
 	if (!isObject(raw)) return null;
 	const out: CliSessionsState = {};
 	for (const [slug, s] of Object.entries(raw)) {
-		if (isObject(s) && isArgv(s.run) && s.run.length && isInt(s.startedAt) && isValidKey(cliKey(slug, s.startedAt))) out[slug] = { run: s.run, startedAt: s.startedAt, ...(typeof s.hookToken === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(s.hookToken) ? { hookToken: s.hookToken } : {}) };
+		if (isObject(s) && isArgv(s.run) && s.run.length && isInt(s.startedAt) && isValidKey(cliKey(SAMPLE_TAG, slug, s.startedAt))) out[slug] = { run: s.run, startedAt: s.startedAt, ...(typeof s.hookToken === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(s.hookToken) ? { hookToken: s.hookToken } : {}) };
 	}
 	return out;
+}
+
+/** Restored CLI sessions split by whether their PTY is still alive (only those show a terminal). */
+export function liveCliSessions(saved: CliSessionsState, tag: string, live: Set<string>): { kept: CliSessionsState; gone: CliSessionsState } {
+	const kept: CliSessionsState = {};
+	const gone: CliSessionsState = {};
+	for (const [slug, s] of Object.entries(saved)) (live.has(cliKey(tag, slug, s.startedAt)) ? kept : gone)[slug] = s;
+	return { kept, gone };
 }

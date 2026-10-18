@@ -11,7 +11,7 @@ import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { isDiffKey } from '#lib/workbench/scm.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { killPty } from '#lib/terminal/pty.ts';
-import { adeKey, parseAdeTerminals, persist, restore } from '#lib/terminal/sessions.ts';
+import { adeKey, parseAdeTerminals, persist, restore, storeName, withoutRun } from '#lib/terminal/sessions.ts';
 import { activeAfterClose, adeTabs, fileTabId, keyOfTabId, openFileTab, pinFileTab, type AdeTab, type FileTab, type TerminalTab } from './adeTabs.ts';
 
 export type RightTab = 'files' | 'changes';
@@ -31,23 +31,43 @@ class AdeLayout {
 	/** Active tab per worktree ('main', a terminal id or a file tab id). */
 	active = $state<Record<string, string>>({});
 	#seq = $state(0);
+	/** Root tag of the folder whose terminal tabs these are; null until loaded. */
+	#tag = $state<string | null>(null);
 
 	constructor() {
-		// Terminal tabs survive a webview reload (their PTYs do too); file tabs start over.
-		const saved = restore(STORE, parseAdeTerminals);
-		if (saved) {
-			this.terminals = saved.terminals;
-			this.active = saved.active;
-			this.#seq = saved.seq;
-		}
 		$effect.root(() => {
-			$effect(() => persist(STORE, { terminals: $state.snapshot(this.terminals), active: $state.snapshot(this.active), seq: this.#seq }));
+			$effect(() => {
+				const state = { terminals: $state.snapshot(this.terminals), active: $state.snapshot(this.active), seq: this.#seq };
+				if (this.#tag) persist(storeName(STORE, this.#tag), state);
+			});
 		});
+	}
+
+	/** Terminal tabs of folder `tag` come back (their PTYs outlive reloads, folder switches and
+	 *  restarts); file tabs start over. A restored tab never re-runs its command. */
+	loadTerminals(tag: string) {
+		const saved = restore(storeName(STORE, tag), parseAdeTerminals);
+		this.terminals = saved ? Object.fromEntries(Object.entries(saved.terminals).map(([k, list]) => [k, list.map(withoutRun)])) : {};
+		this.active = saved?.active ?? {};
+		this.#seq = saved?.seq ?? 0;
+		this.#tag = tag;
+	}
+
+	/** Another folder is about to load: unmount its terminals (the shells keep running). */
+	unloadTerminals() {
+		this.#tag = null;
+		this.terminals = {};
+		this.active = {};
+	}
+
+	/** PTY key of a worktree terminal tab. */
+	ptyKey(key: string, id: string): string {
+		return adeKey(this.#tag ?? '', key, id);
 	}
 
 	/** PTY keys of every worktree terminal tab. */
 	ptyKeys(): string[] {
-		return Object.entries(this.terminals).flatMap(([k, list]) => list.map((t) => adeKey(k, t.id)));
+		return Object.entries(this.terminals).flatMap(([k, list]) => list.map((t) => this.ptyKey(k, t.id)));
 	}
 
 	get key(): string {
@@ -144,7 +164,7 @@ class AdeLayout {
 	closeTerminal(key: string, id: string) {
 		const list = this.terminals[key] ?? [];
 		if (!list.some((t) => t.id === id)) return;
-		killPty(adeKey(key, id));
+		killPty(this.ptyKey(key, id));
 		// Closing the active tab shows its neighbour (like an editor tab), else the main tab.
 		this.active[key] = activeAfterClose(this.tabs(key).map((t) => t.id), id, this.activeTab(key));
 		this.terminals[key] = list.filter((t) => t.id !== id);
@@ -152,7 +172,7 @@ class AdeLayout {
 
 	/** A removed task: its terminals and file tabs go away with it. */
 	drop(key: string) {
-		for (const t of this.terminals[key] ?? []) killPty(adeKey(key, t.id));
+		for (const t of this.terminals[key] ?? []) killPty(this.ptyKey(key, t.id));
 		delete this.terminals[key];
 		delete this.files[key];
 		delete this.active[key];
