@@ -223,7 +223,7 @@
 					aria-label={toAgents ? 'Open in Agents' : 'Open in Editor'}
 					onclick={() => toggleAgentsMode()}
 				>
-					<span class="shrink-0 grayscale group-hover:grayscale-0 group-hover:text-(--vscode-textLink-foreground)"><Icon name={toAgents ? 'agent' : 'code'} size={16} /></span>
+					<span class="shrink-0 grayscale group-hover:grayscale-0 group-hover:text-(--vscode-textLink-foreground)"><Icon name={toAgents ? 'agentsLayout' : 'code'} size={16} /></span>
 					<span class="pr-1">{toAgents ? 'Open in Agents' : 'Open in Editor'}</span>
 				</button>
 			{/if}
@@ -247,7 +247,7 @@
 						class={[ACTION, t.on() ? 'opacity-100' : 'opacity-50']}
 						onclick={() => commands.run(t.command)}
 					>
-						<Icon name={toggleIcon(id)} size={16} />
+						<Icon name={toggleIcon(id)} size={16} filled={t.on()} />
 					</button>
 				{/if}
 			{/if}

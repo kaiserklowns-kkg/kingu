@@ -285,7 +285,8 @@ export const SETTINGS: SettingSchema[] = [
 		id: 'workbench.activityBar.location',
 		group: 'Workbench',
 		type: 'string',
-		default: 'default',
+		// Kingu puts the view switcher on top of the side bar, unlike VS Code's `default`.
+		default: 'top',
 		enum: ['default', 'top', 'hidden'],
 		enumDescriptions: [
 			'แถบแนวตั้งข้าง side bar (Show the activity bar to the side of the primary side bar.)',
@@ -324,6 +325,45 @@ export const SETTINGS: SettingSchema[] = [
 		],
 		description: 'การจัดแนวของ panel เมื่ออยู่ด้านล่างหรือด้านบน (Controls the alignment of the panel when it is at the bottom or top.)'
 	},
+	// --- Status bar resources (Orca's footer)
+	{
+		id: 'kingu.keepAwake',
+		group: 'Status Bar',
+		type: 'string',
+		default: 'off',
+		enum: ['off', 'auto', 'on'],
+		enumDescriptions: [
+			'ให้เครื่องหลับตามปกติ (Allow normal system sleep behavior.)',
+			'ไม่หลับขณะ agent กำลังทำงาน (Stay awake while an agent is working.)',
+			'ไม่หลับตลอดเวลาที่ Kingu เปิดอยู่ (Keep this computer awake continuously.)'
+		],
+		description: 'กันเครื่อง Mac หลับ (Keeps the Mac awake; macOS only.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.statusBar.keepAwake.visible',
+		group: 'Status Bar',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงปุ่มกันเครื่องหลับใน status bar (Show the keep-awake item in the status bar.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.statusBar.resources.visible',
+		group: 'Status Bar',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงหน่วยความจำและ terminal (Resource Manager) ใน status bar (Show memory and terminals in the status bar.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.statusBar.ports.visible',
+		group: 'Status Bar',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงพอร์ตที่เปิดอยู่ใน status bar (Show listening ports in the status bar.)',
+		scope: 'application'
+	},
 	{
 		id: 'kingu.agentsControl.enabled',
 		group: 'Agent',
@@ -355,7 +395,7 @@ export type SettingsSection = { id: string; label: string; groups: string[] };
  * grouped by what they affect. Every group in `SETTINGS` belongs to exactly one section.
  */
 export const SETTINGS_SECTIONS: SettingsSection[] = [
-	{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Team'] },
+	{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Status Bar', 'Team'] },
 	{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Files', 'Terminal'] },
 	{ id: 'ade', label: 'ADE (Agents)', groups: ['Agent'] }
 ];

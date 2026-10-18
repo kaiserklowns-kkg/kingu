@@ -61,6 +61,38 @@ pub fn check_rel(root: &Path, rel: &str) -> Result<(), String> {
   }
 }
 
+/// Sets `ignored` on the entries of `dir` that its repository's ignore rules match. Runs in `dir`,
+/// so a task worktree under `.kingu/` uses its own rules. Outside a repository nothing is marked.
+pub fn mark_ignored(dir: &Path, entries: &mut [crate::fs::DirEntry]) {
+  use std::io::Write;
+  if entries.is_empty() {
+    return;
+  }
+  let Ok(mut child) = crate::shell_env::command("git")
+    .arg("-C")
+    .arg(dir)
+    .args(["check-ignore", "--stdin", "-z"])
+    .stdin(std::process::Stdio::piped())
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::null())
+    .spawn()
+  else {
+    return;
+  };
+  if let Some(mut stdin) = child.stdin.take() {
+    for e in entries.iter() {
+      let _ = stdin.write_all(e.name.as_bytes());
+      let _ = stdin.write_all(b"\0");
+    }
+  }
+  // Exit 1 means nothing matched, 128 not a repository: both leave the entries as they are.
+  let Ok(out) = child.wait_with_output() else { return };
+  let ignored: std::collections::HashSet<&[u8]> = out.stdout.split(|b| *b == 0).filter(|s| !s.is_empty()).collect();
+  for e in entries.iter_mut() {
+    e.ignored = ignored.contains(e.name.as_bytes());
+  }
+}
+
 pub(crate) fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
   let out = crate::shell_env::command("git")
     .arg("-C")
@@ -256,6 +288,29 @@ mod tests {
   use super::*;
   use std::process::Command;
   use std::path::PathBuf;
+
+  #[test]
+  fn marks_ignored_entries_of_a_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    assert!(Command::new("git").arg("-C").arg(dir).args(["init", "-q"]).status().unwrap().success());
+    std::fs::write(dir.join(".gitignore"), "target/\n*.log\n").unwrap();
+    std::fs::create_dir(dir.join("target")).unwrap();
+    std::fs::create_dir(dir.join("src")).unwrap();
+    std::fs::write(dir.join("run.log"), "").unwrap();
+    std::fs::write(dir.join("a.ts"), "").unwrap();
+    let mut entries = crate::fs::list_dir(dir, dir).unwrap();
+    mark_ignored(dir, &mut entries);
+    let ignored: Vec<&str> = entries.iter().filter(|e| e.ignored).map(|e| e.name.as_str()).collect();
+    assert_eq!(ignored, ["target", "run.log"]);
+
+    // Outside a repository nothing is marked.
+    let plain = tempfile::tempdir().unwrap();
+    std::fs::write(plain.path().join("x.log"), "").unwrap();
+    let mut entries = crate::fs::list_dir(plain.path(), plain.path()).unwrap();
+    mark_ignored(plain.path(), &mut entries);
+    assert!(entries.iter().all(|e| !e.ignored));
+  }
 
   fn git(dir: &Path, args: &[&str]) {
     let ok = Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();

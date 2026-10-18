@@ -91,7 +91,7 @@
 			disabled={!value.trim() || disabled || busy}
 			onclick={send}
 		>
-			{#if busy}<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>{:else}<Icon name="send" size={14} stroke={2} />{/if}
+			{#if busy}<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>{:else}<Icon name="send" size={14} />{/if}
 		</button>
 	</div>
 </div>

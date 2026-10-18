@@ -260,6 +260,7 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 	/** +1 when dragging a sash rightward/downward grows the part. */
 	const sideSign = $derived(sideBarAt === 'left' ? 1 : -1);
 	const panelSign = $derived(panelAt === 'top' || panelAt === 'left' ? 1 : -1);
+	const FRAME = 'min-h-0 overflow-hidden rounded-[10px] border border-(--vscode-widget-border)';
 </script>
 
 <svelte:window onfocus={() => (focused = true)} onblur={() => (focused = false)} />
@@ -268,7 +269,8 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 	<!-- One title bar and one status bar for the IDE and the Agents layout. -->
 	<TitleBar workspaceName={workspaceName || 'Kingu'} {focused} />
 
-	<div bind:this={middle} class={['workbench-body grid min-h-0 flex-1', (appMode.isAgents || systemSettings.visible) && 'hidden']}
+	<!-- Each part sits in its own rounded frame; the 4px sashes between them are the gaps. -->
+	<div bind:this={middle} class={['workbench-body grid min-h-0 flex-1 bg-(--vscode-titleBar-activeBackground) px-1.5 pb-1.5', (appMode.isAgents || systemSettings.visible) && 'hidden']}
 		style:grid-template-areas={gridTemplateAreas(grid)}
 		style:grid-template-columns={gridTemplateColumns(grid)}
 		style:grid-template-rows={gridTemplateRows(grid)}
@@ -278,7 +280,7 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 		<div
 			style:grid-area="side"
 			style:width="{layout.sidebarWidth}px"
-			class={['min-h-0 border-(--vscode-sideBar-border)', sideBarAt === 'left' ? 'border-r' : 'border-l', !layout.sidebarVisible && 'hidden']}
+			class={[FRAME, !layout.sidebarVisible && 'hidden']}
 		>
 			<SideBar {workspaceName} />
 		</div>
@@ -290,7 +292,7 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 			/>
 		</div>
 
-		<div style:grid-area="edit" class="min-h-0 min-w-0"><EditorPart /></div>
+		<div style:grid-area="edit" class={[FRAME, 'min-w-0']}><EditorPart /></div>
 
 		<div style:grid-area="sashP" class={['flex', panelBeside ? 'flex-row' : 'flex-col', !layout.panelVisible && 'hidden']}>
 			<Sash
@@ -306,7 +308,7 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 			style:grid-area="panel"
 			style:height={panelBeside ? undefined : `${layout.panelHeight}px`}
 			style:width={panelBeside ? `${layout.panelWidth}px` : undefined}
-			class={['min-h-0 min-w-0 overflow-hidden', !layout.panelVisible && 'hidden']}
+			class={[FRAME, 'min-w-0', !layout.panelVisible && 'hidden']}
 		>
 			<Panel />
 		</div>
@@ -323,8 +325,8 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 			style:grid-area="aux"
 			style:width="{layout.auxWidth}px"
 			class={[
-				'flex min-h-0 flex-col border-(--vscode-sideBar-border) bg-(--vscode-sideBar-background)',
-				sideBarAt === 'left' ? 'border-l' : 'border-r',
+				FRAME,
+				'flex flex-col bg-(--vscode-sideBar-background)',
 				!layout.auxVisible && 'hidden'
 			]}
 		>

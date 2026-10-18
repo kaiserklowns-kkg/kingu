@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { decoration, diffKey, fileOf, groups, isDiffKey, splitPath, tabLabel, type StatusEntry } from './scm';
+import { decoration, diffKey, fileDecorations, fileOf, groups, isDiffKey, splitPath, tabLabel, type StatusEntry } from './scm';
 
 const e = (path: string, index: string | null, worktree: string | null, extra: Partial<StatusEntry> = {}): StatusEntry => ({
 	path,
@@ -57,5 +57,29 @@ describe('paths and tab keys', () => {
 		expect(fileOf('src/a.ts')).toBe('src/a.ts');
 		expect(tabLabel(key)).toBe('a.ts (Working Tree)');
 		expect(tabLabel('src/a.ts')).toBe('a.ts');
+	});
+});
+
+describe('fileDecorations', () => {
+	test('decorates files and colors their folders by the most important change', () => {
+		const d = fileDecorations([
+			{ path: 'src/lib/new.ts', code: '?' },
+			{ path: 'src/lib/a.ts', code: 'M' },
+			{ path: 'src/gone.ts', code: 'D' },
+			{ path: 'README.md', code: 'M' }
+		]);
+		expect(d.get('src/lib/new.ts')).toEqual({ letter: 'U', color: '#73C991' });
+		expect(d.get('src/lib/a.ts')?.letter).toBe('M');
+		expect(d.get('src/lib')).toEqual({ letter: '', color: '#E2C08D' });
+		expect(d.get('src')).toEqual({ letter: '', color: '#E2C08D' });
+		expect(d.get('README.md')?.letter).toBe('M');
+		expect(d.has('')).toBe(false);
+	});
+
+	test('lets a conflict win and prefixes paths', () => {
+		const d = fileDecorations([{ path: 'a/x.ts', code: 'M' }, { path: 'a/y.ts', code: 'U', conflict: true }], 'wt/');
+		expect(d.get('wt/a/y.ts')?.letter).toBe('!');
+		expect(d.get('wt/a')?.color).toBe('#E4676B');
+		expect(d.get('wt')?.color).toBe('#E4676B');
 	});
 });

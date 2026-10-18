@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
 	import FileIcon from './FileIcon.svelte';
+	import { scm } from './scm.svelte';
+	import { entryChanges, fileDecorations } from './scm';
 	import Icon from './Icon.svelte';
 	import { fileIcon, folderIcon } from './fileIcons';
 	import { explorer, type Row } from './explorer.svelte';
@@ -13,6 +15,7 @@
 	let { workspaceName }: { workspaceName: string } = $props();
 
 	const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
+	const decorations = $derived(fileDecorations(entryChanges(scm.repo?.entries ?? [])));
 
 	let open = $state(true);
 	let inputError = $state('');
@@ -318,7 +321,9 @@
 								{#if row.is_dir}<Icon name={row.expanded ? 'chevronDown' : 'chevronRight'} size={16} />{/if}
 							</span>
 							<FileIcon icon={row.is_dir ? folderIcon(row.rel, row.expanded) : fileIcon(row.name)} />
-							<span class="truncate">{row.name}</span>
+							<span class={['min-w-0 flex-1 truncate', row.ignored && 'italic opacity-55']} style:color={decorations.get(row.rel)?.color}>{row.name}</span>
+							{#if row.ignored}<span class="shrink-0 pr-3 pl-2 opacity-55" title="ถูก .gitignore"><Icon name="ignored" size={12} /></span>
+							{:else if decorations.has(row.rel)}{@const deco = decorations.get(row.rel)!}<span class="shrink-0 pr-3 pl-2 text-[11px] font-semibold" style:color={deco.color}>{deco.letter || '•'}</span>{/if}
 						</button>
 					{/if}
 				{/each}

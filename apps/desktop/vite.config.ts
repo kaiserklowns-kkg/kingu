@@ -2,6 +2,7 @@ import tailwindcss from '@tailwindcss/vite';
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
+import { sveltePhosphorOptimize } from 'phosphor-svelte/vite';
 
 export default defineConfig({
 	// Tauri expects a fixed port and fails if it is taken
@@ -16,6 +17,8 @@ export default defineConfig({
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
 			adapter: adapter({ fallback: 'index.html' })
-		})
+		}),
+		// Runs after the Svelte compiler: rewrites `import { XIcon } from 'phosphor-svelte'` to per-icon imports
+		sveltePhosphorOptimize()
 	]
 });

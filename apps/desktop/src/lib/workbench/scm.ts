@@ -48,6 +48,38 @@ export function decoration(code: string, conflict = false): { letter: string; co
 	}
 }
 
+/** A change to show in a file tree: git's status code for the path, relative to the tree's root. */
+export type TreeChange = { path: string; code: string; conflict?: boolean };
+export type Decoration = { letter: string; color: string };
+
+// Which color a folder takes when its children differ (VS Code: the most important change wins).
+const RANK: Record<string, number> = { [COLORS.conflict]: 3, [COLORS.modified]: 2, [COLORS.added]: 1, [COLORS.deleted]: 0 };
+
+/**
+ * File tree decorations like VS Code's explorer and Orca's file panel: each changed file gets its
+ * letter and color; each folder above it gets the color only (`letter: ''`). `prefix` is prepended to
+ * every path, for trees whose rows are relative to an outer root (a worktree under `.kingu/`).
+ */
+export function fileDecorations(changes: TreeChange[], prefix = ''): Map<string, Decoration> {
+	const out = new Map<string, Decoration>();
+	for (const c of changes) {
+		const d = decoration(c.code, c.conflict);
+		const path = prefix + c.path;
+		out.set(path, d);
+		for (let i = path.lastIndexOf('/'); i > 0; i = path.lastIndexOf('/', i - 1)) {
+			const dir = path.slice(0, i);
+			const prev = out.get(dir);
+			if (prev && RANK[prev.color] >= RANK[d.color]) break;
+			out.set(dir, { letter: '', color: d.color });
+		}
+	}
+	return out;
+}
+
+/** `git status` entries as tree changes: the working-tree letter wins over the staged one, like VS Code's explorer. */
+export const entryChanges = (entries: StatusEntry[]): TreeChange[] =>
+	entries.map((e) => ({ path: e.path, code: e.worktree ?? e.index ?? 'M', conflict: e.conflict }));
+
 const byPath = (a: Resource, b: Resource) => a.entry.path.localeCompare(b.entry.path);
 
 /** Splits entries like VS Code: a file staged and then edited again is in both groups. Conflicts go to Changes. */

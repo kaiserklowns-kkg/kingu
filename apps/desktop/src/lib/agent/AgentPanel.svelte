@@ -100,7 +100,7 @@
 		{/if}
 		<button class={ICON_BTN} aria-label="งานใหม่" title="งานใหม่" onclick={newTask}><Icon name="plus" size={16} /></button>
 		<button class={ICON_BTN} aria-label="Open in Agents (⇧⌘A)" title="Open in Agents (⇧⌘A)" onclick={() => appMode.setMode('agents')}>
-			<Icon name="agent" size={16} />
+			<Icon name="agentsLayout" size={16} />
 		</button>
 	</div>
 
@@ -123,7 +123,7 @@
 		{#if selected && meta && cliOf(meta.agent)}
 			<div class="grid h-full place-items-center p-6 text-center">
 				<div class="max-w-64 space-y-2 text-(--vscode-descriptionForeground)">
-					<div class="flex justify-center"><Icon name="terminal" size={28} stroke={1.2} /></div>
+					<div class="flex justify-center"><Icon name="terminal" size={28} /></div>
 					<p class="text-(--vscode-foreground)">งานนี้รัน {cliOf(meta.agent)?.[0]} ใน terminal</p>
 					<button class="text-(--vscode-textLink-foreground) hover:underline" onclick={() => openAgents()}>เปิดใน Agents (⇧⌘A)</button>
 				</div>
@@ -139,7 +139,7 @@
 		{:else}
 			<div class="grid h-full place-items-center p-6 text-center">
 				<div class="max-w-64 space-y-2 text-(--vscode-descriptionForeground)">
-					<div class="flex justify-center"><Icon name="agent" size={28} stroke={1.2} /></div>
+					<div class="flex justify-center"><Icon name="agent" size={28} /></div>
 					<p class="text-(--vscode-foreground)">สั่งงานให้ agent</p>
 					<p class="text-xs leading-5">แต่ละงานได้ git worktree ของตัวเอง agent จะขออนุญาตก่อนรันคำสั่งหรือแก้ไฟล์</p>
 				</div>

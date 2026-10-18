@@ -11,6 +11,9 @@
 	import { openAgents, pickSession } from '#lib/ade/agentsMode.svelte.ts';
 	import { runtime } from '#lib/ade/runtime.svelte.ts';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
+	import StatusResources from './StatusResources.svelte';
+	import PopupMenu, { menuItem } from './PopupMenu.svelte';
+	import { settings } from '#lib/settings/settings.svelte.ts';
 
 	const languageNames: Record<string, string> = {
 		typescript: 'TypeScript',
@@ -34,10 +37,24 @@
 	const cost = $derived(adeTasks.views.reduce((sum, v) => sum + (runtime.run(v.meta.slug)?.result?.total_cost_usd ?? v.meta.last_run?.cost_usd ?? 0), 0));
 	const editorItems = $derived(!appMode.isAgents && editors.active);
 	const ITEM = 'flex h-full items-center gap-1 px-2 hover:bg-(--vscode-toolbar-hoverBackground)';
+
+	// Right-click: which resource items show (Orca's status bar context menu).
+	const TOGGLES = [
+		{ id: 'kingu.statusBar.keepAwake.visible', label: 'Keep Awake' },
+		{ id: 'kingu.statusBar.resources.visible', label: 'Resource Manager' },
+		{ id: 'kingu.statusBar.ports.visible', label: 'Ports' }
+	];
+	let menu = $state<{ x: number; y: number } | null>(null);
+	const menuItems = $derived(TOGGLES.map((t) => menuItem(t.id, t.label, { checked: settings.get<boolean>(t.id) !== false })));
+	function toggleItem(id: string) {
+		const shown = settings.get<boolean>(id) !== false;
+		void settings.set(id, shown ? false : undefined, 'user');
+	}
 </script>
 
 <!-- 22px, items 22px line-height (VS Code statusbarPart). -->
 <footer
+	oncontextmenu={(e) => (e.preventDefault(), (menu = { x: e.clientX, y: e.clientY - 4 - 22 * TOGGLES.length - 12 }))}
 	class="flex h-(--kg-statusbar-height) shrink-0 items-center border-t border-(--vscode-statusBar-border) bg-(--vscode-statusBar-background) text-xs leading-(--kg-statusbar-height) text-(--vscode-statusBar-foreground)"
 >
 	{#if branch}
@@ -65,6 +82,7 @@
 	{#if status.message}<span class="truncate px-2">{status.message}</span>{/if}
 	<div class="flex-1"></div>
 	<TeamStatus />
+	<StatusResources />
 	{#if editorItems && languageStatus}
 		<button
 			class={['h-full max-w-80 truncate px-2 hover:bg-(--vscode-toolbar-hoverBackground)', languageStatus.state === 'not-installed' || languageStatus.state === 'error' ? 'text-(--vscode-editorWarning-foreground)' : '']}
@@ -80,3 +98,7 @@
 		<span class="px-2">{languageNames[editors.language] ?? editors.language}</span>
 	{/if}
 </footer>
+
+{#if menu}
+	<PopupMenu items={menuItems} label="Status Bar" x={menu.x} y={menu.y} onRun={(node) => node.type === 'item' && toggleItem(node.id)} onClose={() => (menu = null)} />
+{/if}

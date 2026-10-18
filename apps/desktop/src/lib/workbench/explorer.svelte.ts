@@ -6,7 +6,8 @@ import { editors } from './editors.svelte';
 import { affectedBy, baseName, dirsToRefresh, isUnder, joinRel, parentOf, remapPath, validateName } from './fileTree';
 import { status } from './status.svelte';
 
-export type DirEntry = { name: string; rel: string; is_dir: boolean };
+/** `ignored`: matched by `.gitignore` (drawn dimmed). */
+export type DirEntry = { name: string; rel: string; is_dir: boolean; ignored?: boolean };
 export type Row = DirEntry & { depth: number; expanded: boolean };
 /** The inline input row (VS Code's explorer edit box): a new entry in `parent`, or a rename of `rel`. */
 export type Editing = { kind: 'file' | 'folder'; parent: string } | { kind: 'rename'; rel: string; is_dir: boolean };

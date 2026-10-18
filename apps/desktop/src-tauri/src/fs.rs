@@ -9,6 +9,8 @@ pub struct DirEntry {
   /// Path relative to the workspace root, `/`-separated.
   pub rel: String,
   pub is_dir: bool,
+  /// Matched by `.gitignore` (shown dimmed, like Orca and VS Code). Filled in by `git::mark_ignored`.
+  pub ignored: bool,
 }
 
 /// Directories the Explorer hides and quick open never walks (VS Code's `files.exclude` defaults
@@ -37,7 +39,7 @@ pub fn list_dir(root: &Path, dir: &Path) -> Result<Vec<DirEntry>, String> {
     }
     // Follows symlinks for the kind, but a dangling link still lists as a file.
     let is_dir = entry.path().is_dir();
-    entries.push(DirEntry { rel: rel_of(root, &entry.path()), name, is_dir });
+    entries.push(DirEntry { rel: rel_of(root, &entry.path()), name, is_dir, ignored: false });
   }
   entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
   Ok(entries)

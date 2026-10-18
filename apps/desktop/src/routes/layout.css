@@ -1,6 +1,16 @@
 @import 'tailwindcss';
 @import '../lib/workbench/theme.css';
 
+/* Kingu's rounder radius scale: buttons, inputs, menus and cards all use these, so one place sets
+   the feel (Tailwind's defaults are 2–8px; the framed parts are 10px). */
+@theme {
+	--radius: 6px;
+	--radius-xs: 3px;
+	--radius-sm: 5px;
+	--radius-md: 7px;
+	--radius-lg: 10px;
+}
+
 /* VS Code's UI font stack and 13px base size; Thai falls back to IBM Plex Sans Thai if installed. */
 html,
 body {
