@@ -20,7 +20,7 @@ pub const RUN_STATUSES: &[&str] = &["starting", "running", "waiting", "idle", "s
 const MAX_SESSION_ID: usize = 128;
 /// Accepted hunk marks of one task, over all its files.
 const MAX_ACCEPTED_HUNKS: usize = 20_000;
-const MAX_SUMMARY: usize = 2000;
+pub const MAX_SUMMARY: usize = 2000;
 const MAX_ISSUE_URL: usize = 2048;
 /// What created a task other than you (Orca's automation / CLI workspace badges); the side bar can hide them.
 pub const ORIGINS: &[&str] = &["automation"];
@@ -184,16 +184,22 @@ pub fn validate(tasks: &[TaskMeta]) -> Result<(), String> {
       return Err(format!("{}: unknown origin {o}", t.slug));
     }
     if let Some(r) = &t.last_run {
-      if !RUN_STATUSES.contains(&r.status.as_str()) {
-        return Err(format!("{}: unknown run status {}", t.slug, r.status));
-      }
-      if [&r.summary, &r.error].into_iter().flatten().any(|s| s.len() > MAX_SUMMARY) {
-        return Err(format!("{}: run summary larger than {MAX_SUMMARY} bytes", t.slug));
-      }
-      if r.cost_usd.is_some_and(|c| !c.is_finite() || c < 0.0) {
-        return Err(format!("{}: invalid run cost", t.slug));
-      }
+      validate_run_summary(&t.slug, r)?;
     }
+  }
+  Ok(())
+}
+
+/// A saved run summary (tasks.json and chats.json); `owner` names the task or chat in errors.
+pub fn validate_run_summary(owner: &str, r: &RunSummary) -> Result<(), String> {
+  if !RUN_STATUSES.contains(&r.status.as_str()) {
+    return Err(format!("{owner}: unknown run status {}", r.status));
+  }
+  if [&r.summary, &r.error].into_iter().flatten().any(|s| s.len() > MAX_SUMMARY) {
+    return Err(format!("{owner}: run summary larger than {MAX_SUMMARY} bytes"));
+  }
+  if r.cost_usd.is_some_and(|c| !c.is_finite() || c < 0.0) {
+    return Err(format!("{owner}: invalid run cost"));
   }
   Ok(())
 }

@@ -5,6 +5,7 @@
 
 pub mod ai_text;
 pub mod automations;
+pub mod chats;
 pub mod cli;
 pub mod events;
 pub mod hooks;
@@ -31,17 +32,46 @@ use crate::workspace::Workspace;
 pub use events::AgentEvent;
 pub use host::AgentHost;
 
-const PERMISSION_MODES: &[&str] = &["default", "acceptEdits", "plan"];
+use chats::PERMISSION_MODES;
 
-/// Runs the agent in the task's worktree; events stream over `on_event`. `resume` continues an
-/// earlier session (its `session_id`); `model`/`permission_mode` come from the user's settings.
+/// Where a run goes: the task worktree `slug` (the ADE), or an explicit `cwd` the webview chose
+/// (a chat): the open folder or one of its task worktrees (`chats::resolve_cwd`). `root`, when
+/// given, must still be the open folder, so a chat never runs against a folder opened since.
+fn run_dir(open_root: &std::path::Path, root: Option<&str>, slug: Option<&str>, cwd: Option<&str>) -> Result<std::path::PathBuf, String> {
+  if let Some(r) = root {
+    let same = std::fs::canonicalize(r).is_ok_and(|r| r == open_root);
+    if !same {
+      return Err(crate::tr!(crate::i18n::msg::AgentMsg::ChatFolderChanged, path = r));
+    }
+  }
+  match (cwd, slug) {
+    (Some(dir), _) => chats::resolve_cwd(open_root, std::path::Path::new(dir)),
+    (None, Some(slug)) => {
+      worktree::validate_slug(slug)?;
+      let dir = worktree::worktree_path(open_root, slug);
+      if !dir.is_dir() {
+        return Err(format!("{slug}: no worktree, create it first"));
+      }
+      Ok(dir)
+    }
+    (None, None) => Err(crate::tr!(crate::i18n::msg::AgentMsg::NoAgentCwd)),
+  }
+}
+
+/// Runs the agent and streams its events over `on_event`. Where: the task worktree `slug` (the
+/// ADE's calls), or `cwd` (`run_dir`). `chat_id`: the run belongs to that chat of `root`; its
+/// events are appended to the chat's transcript and only one run of a chat is live at a time.
+/// `resume` continues an earlier session (its `session_id`), refused while a live run holds it.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn agent_start(
   app: tauri::AppHandle,
   ws: State<'_, Workspace>,
   agents: State<'_, Arc<AgentHost>>,
-  slug: String,
+  slug: Option<String>,
+  root: Option<String>,
+  cwd: Option<String>,
+  chat_id: Option<String>,
   prompt: String,
   model: Option<String>,
   permission_mode: Option<String>,
@@ -51,7 +81,9 @@ pub async fn agent_start(
   images: Option<Vec<String>>,
   on_event: Channel<AgentEvent>,
 ) -> Result<u32, String> {
-  worktree::validate_slug(&slug)?;
+  if let Some(id) = chat_id.as_deref() {
+    chats::check_id(id)?;
+  }
   let images = images.unwrap_or_default();
   crate::attachments::check_images(&images)?;
   if prompt.trim().is_empty() {
@@ -74,11 +106,14 @@ pub async fn agent_start(
   if let Some(dirs) = &plugins {
     crate::snap::validate_plugin_dirs(&crate::snap::plugins_dir(&app)?, dirs)?;
   }
-  let cwd = worktree::worktree_path(&ws.root()?, &slug);
-  if !cwd.is_dir() {
-    return Err(format!("{slug}: no worktree, create it first"));
-  }
-  let cwd = cwd.to_str().ok_or("worktree path is not valid UTF-8")?.to_owned();
+  let open_root = ws.root()?;
+  let dir = run_dir(&open_root, root.as_deref(), slug.as_deref(), cwd.as_deref())?;
+  let cwd = dir.to_str().ok_or("worktree path is not valid UTF-8")?.to_owned();
+  let transcript = match chat_id.as_deref() {
+    Some(id) => Some(chats::Transcript::new(&open_root, id)?),
+    None => None,
+  };
+  let owner = chat_id.as_deref().map(|id| format!("chat:{}:{id}", open_root.display()));
   let mcp_servers = mcp_servers.filter(|m| !m.is_empty());
   let account = {
     use tauri::Manager;
@@ -95,22 +130,77 @@ pub async fn agent_start(
     env: (!account.set.is_empty()).then_some(host::SecretEnv(account.set)),
     unset_env: account.unset,
     images,
+    owner,
   };
   let resuming = req.resume.is_some();
   let agents = agents.inner().clone();
+  let what = match (&chat_id, &slug) {
+    (Some(id), _) => format!("chat {id}"),
+    (None, Some(slug)) => format!("task {slug}"),
+    (None, None) => "folder".into(),
+  };
   // Spawning the sidecar and its first answer can take a moment: keep it off the main thread.
   let id = tauri::async_runtime::spawn_blocking(move || {
     agents.start(
       req,
       Arc::new(move |ev| {
+        // Transcript first, so a chat reopened right after an event has it.
+        if let Some(t) = &transcript
+          && let Err(e) = t.append(&ev)
+        {
+          log::warn!("chat transcript: {e}");
+        }
         let _ = on_event.send(ev);
       }),
     )
   })
   .await
   .map_err(|e| e.to_string())??;
-  log::info!("agent run {id} started for task {slug}{}", if resuming { " (resumed)" } else { "" });
+  log::info!("agent run {id} started for {what}{}", if resuming { " (resumed)" } else { "" });
   Ok(id)
+}
+
+/// Changes a live run's model and/or permission mode from its next response on.
+#[tauri::command]
+pub async fn agent_set_options(agents: State<'_, Arc<AgentHost>>, run_id: u32, model: Option<String>, permission_mode: Option<String>) -> Result<(), String> {
+  if let Some(m) = permission_mode.as_deref()
+    && !PERMISSION_MODES.contains(&m)
+  {
+    return Err(format!("{m}: unsupported permission mode"));
+  }
+  let model = model.filter(|m| !m.trim().is_empty());
+  if model.as_deref().is_some_and(|m| m.len() > 128 || !m.chars().all(|c| c.is_ascii_graphic())) {
+    return Err("invalid model".into());
+  }
+  on_host(&agents, move |a| a.set_options(run_id, model.as_deref(), permission_mode.as_deref())).await
+}
+
+/// Chats of the open folder; empty with no folder open.
+#[tauri::command]
+pub fn chats_load(ws: State<'_, Workspace>) -> Result<Vec<chats::ChatMeta>, String> {
+  ws.current().map_or(Ok(Vec::new()), |root| chats::load(&root))
+}
+
+#[tauri::command]
+pub fn chats_save(ws: State<'_, Workspace>, chats: Vec<chats::ChatMeta>) -> Result<(), String> {
+  chats::save(&ws.root()?, &chats)
+}
+
+/// The chat's saved events (newest `chats::MAX_LOADED_EVENTS`), to rebuild its timeline.
+#[tauri::command]
+pub async fn chat_transcript_load(ws: State<'_, Workspace>, id: String) -> Result<Vec<AgentEvent>, String> {
+  let root = ws.root()?;
+  blocking(move || chats::load_transcript(&root, &id)).await
+}
+
+/// Deletes the chat's transcript (the webview drops it from chats.json). Refused while it runs.
+#[tauri::command]
+pub async fn chat_transcript_delete(ws: State<'_, Workspace>, agents: State<'_, Arc<AgentHost>>, id: String, session_id: Option<String>) -> Result<(), String> {
+  if session_id.as_deref().is_some_and(|s| agents.session_live(s)) {
+    return Err(crate::tr!(crate::i18n::msg::AgentMsg::ChatBusy));
+  }
+  let root = ws.root()?;
+  blocking(move || chats::delete_transcript(&root, &id)).await
 }
 
 async fn on_host<T: Send + 'static>(
@@ -451,4 +541,29 @@ pub async fn gh_resolve_thread(ws: State<'_, Workspace>, slug: String, url: Stri
   let done = blocking(move || pr::resolve_thread(&gh, &dir, &url, &thread_id, resolve)).await?;
   log::info!("review thread {}", if done { "resolved" } else { "reopened" });
   Ok(done)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn run_dir_takes_a_task_slug_or_a_checked_cwd() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(tmp.path()).unwrap();
+    let wt = root.join(".kingu/worktrees/fix-login");
+    std::fs::create_dir_all(&wt).unwrap();
+    let r = root.to_str().unwrap();
+    // The ADE's calls: a slug, no cwd.
+    assert_eq!(run_dir(&root, None, Some("fix-login"), None).unwrap(), wt);
+    assert!(run_dir(&root, None, Some("gone"), None).unwrap_err().contains("no worktree"));
+    assert!(run_dir(&root, None, Some("../x"), None).is_err());
+    // Chats: the folder or a task worktree, while that folder is still the open one.
+    assert_eq!(run_dir(&root, Some(r), None, Some(r)).unwrap(), root);
+    assert_eq!(run_dir(&root, Some(r), None, Some(wt.to_str().unwrap())).unwrap(), wt);
+    assert!(run_dir(&root, Some(r), Some("fix-login"), Some("/")).unwrap_err().contains("only in the open folder"), "cwd wins over slug");
+    let other = tempfile::tempdir().unwrap();
+    assert!(run_dir(&root, Some(other.path().to_str().unwrap()), None, Some(r)).unwrap_err().contains("open folder changed"));
+    assert!(run_dir(&root, None, None, None).is_err());
+  }
 }

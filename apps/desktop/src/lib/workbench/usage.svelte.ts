@@ -10,6 +10,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { accounts } from '#lib/accounts/accounts.svelte.ts';
 import { agents } from '#lib/agent/agents.svelte.ts';
+import { chats } from '#lib/agent/chats.svelte.ts';
 import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 import { clientLog } from '#lib/client-log.ts';
 import { applyStale, backoff, fromAccountRow, LIVE_FRESH_MS, nextTick, parseLiveLimit, POLL_MS, PROVIDERS, spend, STALE_AFTER_MS, windowsOf, type ProviderId, type ProviderState } from './usage';
@@ -132,7 +133,9 @@ class Usage {
 		const poll = setInterval(() => windowActive() && void this.#fetchAll(false), POLL_MS);
 		const onFocus = () => this.#refreshIfActive();
 		window.addEventListener('focus', onFocus);
-		const offEvents = agents.onEvent((_, ev) => ev.kind === 'raw' && this.#ingestLive(ev.line));
+		const offTaskEvents = agents.onEvent((_, ev) => ev.kind === 'raw' && this.#ingestLive(ev.line));
+		const offChatEvents = chats.onEvent((_, ev) => ev.kind === 'raw' && this.#ingestLive(ev.line));
+		const offEvents = () => (offTaskEvents(), offChatEvents());
 		// Countdowns change on the minute (hourly beyond a day); tick exactly then.
 		let tick: ReturnType<typeof setTimeout>;
 		const schedule = () => {

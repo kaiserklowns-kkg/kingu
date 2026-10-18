@@ -300,6 +300,35 @@ crate::i18n::messages! {
       en: "The agent host exited unexpectedly",
       th: "agent host หยุดทำงานกะทันหัน",
     },
+    /// Single owner per agent session (`host::Owners`).
+    SessionBusy {
+      en: "This agent session is already running in Kingu: continue it there, or stop it first",
+      th: "session นี้กำลังทำงานอยู่ใน Kingu แล้ว: ทำงานต่อที่เดิม หรือหยุดมันก่อน",
+    },
+    ChatBusy {
+      en: "This chat already has a running agent: stop it first",
+      th: "แชตนี้มี agent ทำงานอยู่แล้ว: หยุดก่อน",
+    },
+    ChatCwdOutside {
+      en: "{path}: an agent chat runs only in the open folder or one of its task worktrees",
+      th: "{path}: แชต agent รันได้เฉพาะในโฟลเดอร์ที่เปิดอยู่หรือ worktree ของงานในโฟลเดอร์นั้น",
+    },
+    ChatCwdMissing {
+      en: "{path}: folder not found",
+      th: "{path}: ไม่พบโฟลเดอร์",
+    },
+    ChatFolderChanged {
+      en: "The open folder changed: open {path} again to run this chat",
+      th: "โฟลเดอร์ที่เปิดเปลี่ยนไปแล้ว: เปิด {path} อีกครั้งเพื่อรันแชตนี้",
+    },
+    BadChatId {
+      en: "Invalid chat id",
+      th: "รหัสแชตไม่ถูกต้อง",
+    },
+    NoAgentCwd {
+      en: "No working directory for the agent: pass a chat folder or a task",
+      th: "ไม่ได้ระบุโฟลเดอร์ทำงานของ agent: ต้องระบุโฟลเดอร์ของแชตหรืองาน",
+    },
     MergeDirty {
       en: "{slug}: has uncommitted changes; commit or discard them before merging",
       th: "{slug}: มีการเปลี่ยนแปลงที่ยังไม่ commit, commit หรือทิ้งก่อน merge",
