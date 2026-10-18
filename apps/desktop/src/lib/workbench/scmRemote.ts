@@ -4,6 +4,7 @@
 import type { PickItem } from '#lib/workbench/quick.svelte.ts';
 import type { GitStatus } from '#lib/workbench/scm.ts';
 import { t } from '#lib/i18n/index.ts';
+import { isRustError } from '#lib/i18n/rustErrors.ts';
 
 export type BranchRef = {
 	/** `main`, or `origin/main` for a remote branch. */
@@ -25,9 +26,8 @@ export type Stash = { index: number; message: string; branch: string | null; whe
 
 export type DeleteResult = 'deleted' | 'not_merged';
 
-/** Start of Rust's message for a rejected or missing credential (`git_remote::AUTH_FAILED`). */
-export const AUTH_FAILED = 'ยืนยันตัวตนกับ remote ไม่สำเร็จ';
-export const isAuthError = (e: unknown) => String(e).startsWith(AUTH_FAILED);
+/** Rust's message for a rejected or missing credential (`GitMsg::AuthFailed`), in either language. */
+export const isAuthError = (e: unknown) => isRustError(e, 'remoteAuthFailed');
 
 export type SyncItem = { label: string; title: string; command: 'git.sync' | 'git.publish' };
 

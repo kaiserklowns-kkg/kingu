@@ -8,6 +8,7 @@ mod fileops;
 mod floating;
 mod fs;
 mod git;
+mod i18n;
 mod glob;
 mod git_remote;
 mod linear;
@@ -370,7 +371,7 @@ fn open_web_url(url: String) -> Result<(), String> {
 
 /// Runs `gh` in `dir`; its stderr becomes the error.
 fn gh_run(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-  let gh = agent::review::gh_bin().ok_or("ยังไม่ได้ติดตั้ง GitHub CLI (gh)")?;
+  let gh = agent::review::gh_bin().ok_or_else(agent::issues::gh_missing)?;
   let out = shell_env::command(&gh).current_dir(dir).env("GH_PROMPT_DISABLED", "1").args(args).output().map_err(|e| format!("gh: {e}"))?;
   if !out.status.success() {
     return Err(format!("gh {}: {}", args.first().unwrap_or(&""), String::from_utf8_lossy(&out.stderr).trim()));
@@ -1168,6 +1169,7 @@ pub fn run() {
     })
     .invoke_handler(tauri::generate_handler![
       app_info,
+      i18n::app_set_locale,
       system_stats,
       fs_read_data_url,
       system_ports,

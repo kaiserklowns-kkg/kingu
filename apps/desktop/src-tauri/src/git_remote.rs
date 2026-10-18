@@ -17,13 +17,16 @@ use std::time::{Duration, Instant};
 use tauri::State;
 
 use crate::git::{check_rev, run};
+use crate::i18n::msg::GitMsg;
+use crate::tr;
 use crate::workspace::Workspace;
 
 /// How long a network operation may run before it is killed.
 pub const NET_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Start of the message for an authentication failure; the webview keys "Open in Terminal" on it.
-pub const AUTH_FAILED: &str = "ยืนยันตัวตนกับ remote ไม่สำเร็จ";
+/// Start of `GitMsg::AuthFailed` in English (tests run in English).
+#[cfg(test)]
+const AUTH_FAILED: &str = "Authentication with the remote failed";
 
 // ---------------------------------------------------------------------------------------------
 // One operation at a time
@@ -275,7 +278,7 @@ fn net_result(op: &str, result: Result<NetOutput, Stopped>, timeout: Duration) -
 pub fn net_error(op: &str, stderr: &str) -> String {
   let lower = stderr.to_lowercase();
   let why = if is_auth_failure(stderr) {
-    format!("{AUTH_FAILED}: Kingu ไม่ถามรหัสผ่านเอง เปิดใน Terminal เพื่อยืนยันตัวตนแล้วลองใหม่")
+    tr!(GitMsg::AuthFailed)
   } else if lower.contains("not possible to fast-forward") || lower.contains("diverging branches") {
     "pull แบบ fast-forward ไม่ได้ เพราะ branch แยกทางกับ upstream แล้ว (ใช้ Git: Pull (Rebase) หรือ merge เอง)".into()
   } else if lower.contains("would be overwritten") {

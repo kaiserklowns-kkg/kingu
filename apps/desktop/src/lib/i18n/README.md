@@ -9,7 +9,9 @@ No dependency: `t(key, params?)` looks the key up in the catalog of the current 
   (CI). `i18n.test.ts` checks both catalogs have the same keys, the same `{params}` per key and
   no empty messages.
 - Not translated: command palette titles and categories (English, like VS Code), settings
-  descriptions (Thai then English, in the registry), Rust error text (Thai for now).
+  descriptions (Thai then English, in the registry).
+- Rust text (command errors, native dialogs, notifications) has its own catalogs in the same
+  language: see "Rust" below.
 
 ## Using it in a component
 
@@ -46,6 +48,30 @@ level — call `t()` where it's shown (or in a `$derived`).
 
 Thai style: plain and short like the rest of the UI, no ครับ/ค่ะ; keep technical words people
 type (worktree, branch, commit, agent) in English.
+
+## Rust
+
+`src-tauri/src/i18n/`: the frontend calls `app_set_locale` with the resolved language on start
+and on every change (`locale.svelte.ts`); until then Rust uses the OS language (same `auto` rule).
+
+- Catalogs: `i18n/msg/<area>.rs`, one `messages!` table per area with both languages per message:
+  `NotFound { en: "Snap {id} not found", th: "ไม่พบ Snap {id}" }`. The message id is an enum
+  variant (`SnapMsg::NotFound`), so a wrong or removed id fails to compile.
+- Use: `tr!(SnapMsg::NotFound, id = snap.id)` (or `tr!(SnapMsg::NotFound, id)` when the variable
+  has the param's name) → `String`. Same `{name}` / `{count|one|other}` syntax as `t()`. Raw
+  OS / git / gh output goes in as a param (`{detail}`), untranslated. Log lines stay English.
+- `cargo test` checks: both languages present and non-empty, the same `{params}`, no ครับ/ค่ะ,
+  and that every `tr!` call in the source passes exactly the params its message uses. Rust tests
+  run in English; `i18n::with_locale(Locale::Th, || …)` switches one test thread to Thai.
+
+### Matching Rust errors in the webview
+
+Never match a Rust error by a literal string in a component. The few errors the UI reacts to are
+listed in `rustErrors.ts` (`notInstalled`, `remoteAuthFailed`, `ghMissing`), each with its English
+and Thai text, and checked with `isRustError(e, 'ghMissing')`, which matches either language (the
+error may have been made before the language changed). A Rust test reads `rustErrors.ts` and fails
+unless each entry is the start of the Rust catalog messages listed in `msg::frontend_matched()`.
+To match a new error: add the entry there and the message ids to `frontend_matched()`.
 
 ## Tests
 

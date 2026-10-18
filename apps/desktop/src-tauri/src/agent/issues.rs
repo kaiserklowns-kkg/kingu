@@ -4,11 +4,17 @@
 //! saying what to fix (`gh` missing, not logged in, no GitHub remote).
 
 use std::io::Read;
+
+use crate::i18n::msg::AgentMsg;
+use crate::tr;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-pub const GH_MISSING: &str = "ไม่พบ gh: ติดตั้งด้วย `brew install gh` แล้ว `gh auth login`";
+/// The "gh not found" error, which the webview recognises (rustErrors.ts `ghMissing`).
+pub fn gh_missing() -> String {
+  tr!(AgentMsg::GhMissing)
+}
 const TIMEOUT: Duration = Duration::from_secs(30);
 /// Issue bodies go into prompts and the webview: keep them bounded.
 pub const MAX_BODY: usize = 8 * 1024;
@@ -193,7 +199,7 @@ fn run_gh(gh: &Path, dir: &Path, op: &str, args: &[String]) -> Result<String, St
     use std::os::unix::process::CommandExt;
     cmd.process_group(0);
   }
-  let mut child = cmd.spawn().map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { GH_MISSING.to_owned() } else { format!("gh: {e}") })?;
+  let mut child = cmd.spawn().map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { gh_missing() } else { format!("gh: {e}") })?;
   let out = reader(child.stdout.take());
   let err = reader(child.stderr.take());
   let deadline = Instant::now() + TIMEOUT;
@@ -348,6 +354,6 @@ mod tests {
   fn refuses_empty_comments_without_running_gh() {
     let missing = Path::new("/nonexistent/gh");
     assert!(comment(missing, Path::new("/"), 1, "  ").is_err());
-    assert_eq!(list(missing, Path::new("/"), &IssueQuery { state: "open".into(), limit: 5, ..Default::default() }).unwrap_err(), GH_MISSING);
+    assert_eq!(list(missing, Path::new("/"), &IssueQuery { state: "open".into(), limit: 5, ..Default::default() }).unwrap_err(), gh_missing());
   }
 }

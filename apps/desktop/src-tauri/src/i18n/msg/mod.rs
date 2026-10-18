@@ -1,0 +1,46 @@
+//! The catalogs, one file per area (keeps parallel work from colliding). A new area: add the
+//! file, `mod` + `pub use` it here and list its enum in `all()`.
+
+mod agent;
+mod git;
+mod lsp;
+
+pub use agent::AgentMsg;
+pub use git::GitMsg;
+pub use lsp::LspMsg;
+
+#[cfg(test)]
+use super::{Locale, Message};
+
+/// (id, English, Thai).
+#[cfg(test)]
+pub type Entry = (&'static str, &'static str, &'static str);
+
+#[cfg(test)]
+fn entry<M: Message>(m: M) -> Entry {
+  (m.id(), m.text(Locale::En), m.text(Locale::Th))
+}
+
+/// Every message of every area: (id, English, Thai).
+#[cfg(test)]
+pub fn all() -> Vec<Entry> {
+  let mut out = Vec::new();
+  out.extend(AgentMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(GitMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(LspMsg::ALL.iter().map(|&m| entry(m)));
+  out
+}
+
+/// Errors the webview recognises by their text (`src/lib/i18n/rustErrors.ts`): the entry there
+/// must be the start of each listed message, in both languages.
+#[cfg(test)]
+pub fn frontend_matched() -> Vec<(&'static str, Vec<Entry>)> {
+  vec![
+    ("ghMissing", vec![entry(AgentMsg::GhMissing)]),
+    ("remoteAuthFailed", vec![entry(GitMsg::AuthFailed)]),
+    (
+      "notInstalled",
+      [LspMsg::NotExecutable, LspMsg::NotOnPath, LspMsg::NoDebugpy, LspMsg::NoPython, LspMsg::AdapterNotOnPath].into_iter().map(entry).collect(),
+    ),
+  ]
+}

@@ -314,7 +314,7 @@ pub async fn gh_status() -> Result<review::GhStatus, String> {
 #[tauri::command]
 pub async fn worktree_pr(ws: State<'_, Workspace>, slug: String) -> Result<Option<review::WorktreePr>, String> {
   let root = ws.root()?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
   if slug.is_empty() {
     return blocking(move || review::worktree_pr(&gh, &root, None)).await;
   }
@@ -334,7 +334,7 @@ pub async fn worktree_pr_create(
   open: Option<bool>,
 ) -> Result<String, String> {
   let dir = review::task_dir(&ws.root()?, &slug)?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
   let draft = draft.unwrap_or(false);
   let url = blocking(move || {
     let url = review::pr_create(&gh, &dir, &slug, &base, &title, &body, draft)?;
@@ -363,7 +363,7 @@ pub async fn gh_issues_list(
   limit: Option<u32>,
 ) -> Result<Vec<issues::Issue>, String> {
   let root = ws.root()?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
   let q = issues::IssueQuery { state: state.unwrap_or_else(|| "open".into()), assignee, label, search, limit: limit.unwrap_or(50) };
   blocking(move || issues::list(&gh, &root, &q)).await
 }
@@ -372,7 +372,7 @@ pub async fn gh_issues_list(
 #[tauri::command]
 pub async fn gh_issue_view(ws: State<'_, Workspace>, number: u64) -> Result<issues::IssueDetail, String> {
   let root = ws.root()?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
   blocking(move || issues::view(&gh, &root, number)).await
 }
 
@@ -380,7 +380,7 @@ pub async fn gh_issue_view(ws: State<'_, Workspace>, number: u64) -> Result<issu
 #[tauri::command]
 pub async fn gh_issue_comment(ws: State<'_, Workspace>, number: u64, body: String) -> Result<(), String> {
   let root = ws.root()?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
   blocking(move || issues::comment(&gh, &root, number, &body)).await?;
   log::info!("commented on issue #{number}");
   Ok(())
@@ -390,7 +390,7 @@ pub async fn gh_issue_comment(ws: State<'_, Workspace>, number: u64, body: Strin
 #[tauri::command]
 pub async fn gh_issue_open(ws: State<'_, Workspace>, number: u64) -> Result<(), String> {
   let root = ws.root()?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
   blocking(move || issues::open_web(&gh, &root, number)).await
 }
 
@@ -413,7 +413,7 @@ pub async fn worktree_pr_merge(
   delete_branch: Option<bool>,
 ) -> Result<pr::MergeOutcome, String> {
   let dir = pr_dir(&ws, &slug)?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
   let method = pr::MergeMethod::parse(&method)?;
   blocking(move || pr::merge(&gh, &dir, &url, number, method, delete_branch.unwrap_or(false))).await
 }
@@ -422,7 +422,7 @@ pub async fn worktree_pr_merge(
 #[tauri::command]
 pub async fn gh_merge_settings(ws: State<'_, Workspace>, slug: String, url: String) -> Result<pr::RepoMergeSettings, String> {
   let dir = pr_dir(&ws, &slug)?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
   let repo = pr::RepoRef::from_pr_url(&url)?;
   blocking(move || pr::merge_settings(&gh, &dir, &repo)).await
 }
@@ -431,7 +431,7 @@ pub async fn gh_merge_settings(ws: State<'_, Workspace>, slug: String, url: Stri
 #[tauri::command]
 pub async fn worktree_pr_check_logs(ws: State<'_, Workspace>, slug: String, url: String, checks: Vec<pr::CheckRef>) -> Result<Vec<pr::CheckLog>, String> {
   let dir = pr_dir(&ws, &slug)?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
   blocking(move || pr::check_logs(&gh, &dir, &url, &checks)).await
 }
 
@@ -439,7 +439,7 @@ pub async fn worktree_pr_check_logs(ws: State<'_, Workspace>, slug: String, url:
 #[tauri::command]
 pub async fn worktree_pr_threads(ws: State<'_, Workspace>, slug: String, url: String, number: u64) -> Result<Vec<pr::ReviewThread>, String> {
   let dir = pr_dir(&ws, &slug)?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
   blocking(move || pr::review_threads(&gh, &dir, &url, number)).await
 }
 
@@ -447,7 +447,7 @@ pub async fn worktree_pr_threads(ws: State<'_, Workspace>, slug: String, url: St
 #[tauri::command]
 pub async fn gh_resolve_thread(ws: State<'_, Workspace>, slug: String, url: String, thread_id: String, resolve: bool) -> Result<bool, String> {
   let dir = pr_dir(&ws, &slug)?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
   let done = blocking(move || pr::resolve_thread(&gh, &dir, &url, &thread_id, resolve)).await?;
   log::info!("review thread {}", if done { "resolved" } else { "reopened" });
   Ok(done)
