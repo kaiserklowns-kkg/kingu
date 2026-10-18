@@ -655,7 +655,7 @@ export type SettingsSection = { id: string; label: string; groups: string[] };
  */
 export const SETTINGS_SECTIONS: SettingsSection[] = [
 	{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Status Bar', 'Team', 'Snap Sandbox'] },
-	{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Files', 'Explorer', 'Search', 'Terminal', 'Git', 'Debug'] },
+	{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Terminal', 'Git', 'Debug'] },
 	{ id: 'ade', label: 'ADE (Agents)', groups: ['Agent', 'Worktrees', 'Pull Requests'] }
 ];
 

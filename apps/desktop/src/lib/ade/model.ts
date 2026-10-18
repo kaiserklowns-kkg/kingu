@@ -135,6 +135,15 @@ export function newTask(input: { slug: string; title: string; prompt: string; ba
 	};
 }
 
+/** Title length cap of tasks.json (Rust `MAX_TITLE`, in characters). */
+export const MAX_TITLE = 200;
+
+/** Orca's getWorktreeTitleRenameCommit: the trimmed new name, or null (cancel) when empty or unchanged. */
+export function renamedTitle(current: string, next: string): string | null {
+	const trimmed = [...next.trim()].slice(0, MAX_TITLE).join('').trim();
+	return !trimmed || trimmed === current ? null : trimmed;
+}
+
 /** Replaces the task with the same slug, else appends. */
 export function upsertTask(list: TaskMeta[], task: TaskMeta): TaskMeta[] {
 	const i = list.findIndex((t) => t.slug === task.slug);

@@ -11,6 +11,7 @@ import { cliKey, liveCliSessions, parseCliSessions, persist, restore, storeName 
 import { isWorking } from './agentCli';
 import { applyHook, initialHookState, type HookState } from './agentHooks';
 import { pasteText, promptDue } from '#lib/ade/agentProfiles.ts';
+import { status } from '#lib/workbench/status.svelte.ts';
 
 /** `hookToken`: the session reports its state through Claude Code hooks (claude CLIs). */
 export type CliSession = { run: string[]; startedAt: number; hookToken?: string };
@@ -128,6 +129,24 @@ class CliSessions {
 
 	has(slug: string) {
 		return slug in this.sessions;
+	}
+
+	/**
+	 * Types `text` into the task's running CLI as one bracketed paste, then Enter apart from it
+	 * (Orca's guarded paste-then-submit). False when no CLI runs or the write fails.
+	 */
+	async send(slug: string, text: string): Promise<boolean> {
+		const key = this.key(slug);
+		if (!key) return false;
+		try {
+			await invoke('pty_write', { key, data: pasteText(text) });
+			await new Promise((r) => setTimeout(r, 300));
+			await invoke('pty_write', { key, data: '\r' });
+			return true;
+		} catch (e) {
+			status.flash(`ส่งถึง terminal ของ agent ไม่ได้: ${e}`, 8000);
+			return false;
+		}
 	}
 
 	/** Output arrived (throttled: one state write per 500ms per task). */

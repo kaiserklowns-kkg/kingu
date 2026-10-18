@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { branchPrefix, branchRemoval, defaultBaseBranch, scriptPreview, scriptRunSummary, setupCommand, setupPolicy, validBranchPrefix } from './worktreeSettings';
+import { BRANCH_CHOICES, branchPrefix, branchRemoval, defaultBaseBranch, dirtyLabel, dirtyPreview, scriptPreview, scriptRunSummary, setupCommand, setupPolicy, validBranchPrefix } from './worktreeSettings';
 import { agentCommand } from './agentCli';
 import { notificationSound, noticeFor, shouldNotify } from './agentNotify';
 
@@ -96,5 +96,22 @@ describe('agent notification settings', () => {
 		expect(notificationSound(undefined)).toBeUndefined();
 		expect(notificationSound('default')).toBe('NSUserNotificationDefaultSoundName');
 		expect(notificationSound('Glass')).toBe('Glass');
+	});
+});
+
+describe('remove dialog', () => {
+	test('dirty preview: one count, the first 10 paths with letters, how many more', () => {
+		const entries: { path: string; index: string | null; worktree: string | null }[] = Array.from({ length: 12 }, (_, i) => ({ path: `f${i}`, index: null, worktree: 'M' }));
+		entries[0] = { path: 'new.txt', index: null, worktree: '?' };
+		entries[1] = { path: 'staged.txt', index: 'A', worktree: null };
+		const p = dirtyPreview(entries);
+		expect([p.count, p.files.length, p.more]).toEqual([12, 10, 2]);
+		expect(p.files.slice(0, 3).map((f) => f.letter)).toEqual(['U', 'A', 'M']);
+		expect(dirtyPreview([{ path: 'c', index: 'U', worktree: 'U', conflict: true }]).files[0]).toEqual({ path: 'c', letter: '!', conflict: true });
+		expect(dirtyPreview([])).toEqual({ count: 0, files: [], more: 0 });
+	});
+	test('labels and the branch choices', () => {
+		expect(dirtyLabel(3)).toContain('3');
+		expect(BRANCH_CHOICES.map((c) => c.id)).toEqual(['keep', 'safe', 'force']);
 	});
 });

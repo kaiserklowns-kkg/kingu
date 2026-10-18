@@ -7,6 +7,28 @@ import type { ITerminalOptions } from '@xterm/xterm';
 
 export type Get = <T = unknown>(id: string) => T;
 
+export type DiffWordWrap = 'off' | 'on' | 'inherit';
+
+/**
+ * Monaco diff editor options (VS Code: diffEditor.*; Orca's diff-editor-*-options). `sideBySide`
+ * is a diff view's own inline / side-by-side toggle, which wins over the setting until it changes.
+ */
+export function diffEditorOptionsFrom(get: Get, sideBySide?: boolean): Monaco.editor.IDiffEditorOptions {
+	const wrap = get<DiffWordWrap>('diffEditor.wordWrap');
+	return {
+		renderSideBySide: sideBySide ?? get<boolean>('diffEditor.renderSideBySide'),
+		hideUnchangedRegions: { enabled: get<boolean>('diffEditor.hideUnchangedRegions.enabled') },
+		ignoreTrimWhitespace: get<boolean>('diffEditor.ignoreTrimWhitespace'),
+		diffWordWrap: wrap === 'on' || wrap === 'off' ? wrap : 'inherit'
+	};
+}
+
+/** Whether a diff wraps lines: diffEditor.wordWrap, or editor.wordWrap when it inherits (the "…" menu's check). */
+export function diffWraps(get: Get): boolean {
+	const wrap = get<DiffWordWrap>('diffEditor.wordWrap');
+	return wrap === 'inherit' ? get<string>('editor.wordWrap') !== 'off' : wrap === 'on';
+}
+
 /** Monaco editor options (VS Code: editor.* configuration). */
 export function editorOptionsFrom(get: Get): Monaco.editor.IEditorOptions & Monaco.editor.IGlobalEditorOptions {
 	const quick = get<boolean>('editor.quickSuggestions');

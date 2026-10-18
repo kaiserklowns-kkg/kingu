@@ -12,6 +12,7 @@
 	import { runtime } from './runtime.svelte';
 	import { adeTasks } from './tasks.svelte';
 	import PrChecks from './PrChecks.svelte';
+	import DiffNotesList from './DiffNotesList.svelte';
 	import { issues } from './issues.svelte.ts';
 	import { cliOf } from './agentCli';
 	import { adeLayout } from './adeLayout.svelte';
@@ -236,6 +237,7 @@
 							<li class="px-2 py-1 text-(--vscode-descriptionForeground)">ไม่มีไฟล์ที่เปลี่ยนจาก {meta.base}</li>
 						{/each}
 					</ul>
+					<DiffNotesList worktree={slug} />
 					{#if stat.files.length}
 						<div class="flex gap-1.5 px-3 pt-1">
 							<button class={BUTTON_SECONDARY} disabled={!!busy || running || accepted.size === stat.files.length} onclick={rejectUnaccepted}>

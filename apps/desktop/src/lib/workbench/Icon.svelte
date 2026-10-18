@@ -7,6 +7,12 @@
 		ArrowRightIcon,
 		ArrowSquareOutIcon,
 		ArrowUpIcon,
+		ArrowDownIcon,
+		ChatTextIcon,
+		ColumnsIcon,
+		DotsThreeIcon,
+		PencilSimpleIcon,
+		RowsIcon,
 		ArrowBendUpRightIcon,
 		ArrowLineDownIcon,
 		ArrowLineUpIcon,
@@ -139,7 +145,16 @@
 		claude: AsteriskIcon,
 		openai: OpenAiLogoIcon,
 		key: KeyIcon,
-		signIn: SignInIcon
+		signIn: SignInIcon,
+		arrowUp: ArrowUpIcon,
+		arrowDown: ArrowDownIcon,
+		/** Review notes on diff lines. */
+		note: ChatTextIcon,
+		edit: PencilSimpleIcon,
+		/** Diff views: side by side / inline. */
+		columns: ColumnsIcon,
+		rows: RowsIcon,
+		more: DotsThreeIcon
 	} as const;
 	export type IconName = keyof typeof icons;
 

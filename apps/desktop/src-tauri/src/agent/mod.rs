@@ -9,6 +9,7 @@ pub mod events;
 pub mod hooks;
 pub mod host;
 pub mod issues;
+pub mod notes;
 pub mod review;
 pub mod scripts;
 pub mod tasks;
@@ -167,6 +168,25 @@ pub fn automations_save(ws: State<'_, Workspace>, automations: Vec<automations::
 #[tauri::command]
 pub fn tasks_save(ws: State<'_, Workspace>, tasks: Vec<tasks::TaskMeta>) -> Result<(), String> {
   tasks::save(&ws.root()?, &tasks)
+}
+
+/// Review notes of every worktree of the open folder (`""` = the folder); empty with no folder open.
+#[tauri::command]
+pub fn diff_notes_load(ws: State<'_, Workspace>) -> Result<std::collections::BTreeMap<String, Vec<notes::DiffNote>>, String> {
+  ws.current().map_or(Ok(Default::default()), |root| notes::load(&root))
+}
+
+/// Replaces the review notes of worktree `key` (`""` = the folder, else a task slug).
+#[tauri::command]
+pub fn diff_notes_save(ws: State<'_, Workspace>, key: String, notes: Vec<notes::DiffNote>) -> Result<(), String> {
+  notes::save(&ws.root()?, &key, &notes)
+}
+
+/// Commits on the task branch since it forked from `base`, oldest first (prefills the PR form).
+#[tauri::command]
+pub async fn worktree_commits(ws: State<'_, Workspace>, slug: String, base: String) -> Result<Vec<review::Commit>, String> {
+  let dir = review::task_dir(&ws.root()?, &slug)?;
+  blocking(move || review::commits_since(&dir, &base)).await
 }
 
 /// Local branches of the open folder's repository (base branch picker).

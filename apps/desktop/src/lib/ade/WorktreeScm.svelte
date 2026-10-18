@@ -13,6 +13,7 @@
 	import { rightSidebar } from './rightSidebar.svelte.ts';
 	import { adeTasks } from './tasks.svelte.ts';
 	import TaskPage from './TaskPage.svelte';
+	import DiffNotesList from './DiffNotesList.svelte';
 
 	let { slug }: { slug: string } = $props();
 
@@ -68,6 +69,7 @@
 		<div class="flex min-h-[40%] flex-col">
 			<ScmView source={repo ?? undefined} diffKey={slug ? (rel) => taskDiffKey(slug, rel) : undefined} fileKey={slug ? (rel) => `${worktreeDir(slug)}/${rel}` : undefined} />
 		</div>
+		{#if !slug}<DiffNotesList worktree="" />{/if}
 		{#if slug}
 			<div class="border-t border-(--vscode-widget-border)">
 				<TaskPage {slug} sections="review" embedded />

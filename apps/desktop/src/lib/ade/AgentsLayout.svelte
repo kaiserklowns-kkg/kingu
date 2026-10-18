@@ -28,6 +28,7 @@
 	import RightSidebar from './RightSidebar.svelte';
 	import { adeLayout, PRIMARY } from './adeLayout.svelte';
 	import { adeTasks } from './tasks.svelte';
+	import { recordQuickOpenVisit } from './quickOpen.svelte.ts';
 	import { untrack } from 'svelte';
 	import { cliName, cliOf, type RunMode } from './agentCli';
 	import { profileOf } from '#lib/ade/agentProfiles.ts';
@@ -69,6 +70,12 @@
 		if (!adeTasks.loaded) return;
 		for (const k of new Set([...Object.keys(adeLayout.terminals), ...Object.keys(adeLayout.files)])) if (k !== PRIMARY && !adeTasks.find(k)) adeLayout.drop(k);
 		for (const s of Object.keys(cliSessions.sessions)) if (!adeTasks.find(s)) untrack(() => cliSessions.end(s));
+	});
+
+	// A shown file tab is a visit: quick open lists it first next time (Orca's quick open history).
+	$effect(() => {
+		const file = activeFile;
+		if (file !== null && !isDiffKey(file) && !adeLayout.board) untrack(() => recordQuickOpenVisit(key, file));
 	});
 
 	// Another folder: the old folder's file tabs close, like the IDE's editors.

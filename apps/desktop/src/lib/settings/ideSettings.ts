@@ -374,6 +374,37 @@ export const IDE_SETTINGS: SettingSchema[] = [
 		description:
 			'code action ที่รันตอนบันทึก เช่น { "source.organizeImports": "explicit", "source.fixAll": "explicit" } — "explicit" เฉพาะบันทึกเอง, "always" รวมบันทึกอัตโนมัติด้วย (Code action kinds run on save: explicit for manual saves, always also on auto save.)'
 	},
+	// --- Diff Editor (Monaco diff options, see mappings.diffEditorOptionsFrom; Orca's diff viewer options)
+	{
+		id: 'diffEditor.renderSideBySide',
+		group: 'Diff Editor',
+		type: 'boolean',
+		default: true,
+		description: 'แสดง diff แบบสองฝั่ง (side by side) ปิดเพื่อแสดงแบบ inline (Controls whether the diff editor shows the diff side by side or inline.)'
+	},
+	{
+		id: 'diffEditor.hideUnchangedRegions.enabled',
+		group: 'Diff Editor',
+		type: 'boolean',
+		default: false,
+		description: 'ซ่อนส่วนที่ไม่เปลี่ยนใน diff (Controls whether the diff editor shows unchanged regions.)'
+	},
+	{
+		id: 'diffEditor.ignoreTrimWhitespace',
+		group: 'Diff Editor',
+		type: 'boolean',
+		default: true,
+		description: 'ไม่นับช่องว่างหน้าและท้ายบรรทัดเป็นการเปลี่ยนแปลง (When enabled, the diff editor ignores changes in leading or trailing whitespace.)'
+	},
+	{
+		id: 'diffEditor.wordWrap',
+		group: 'Diff Editor',
+		type: 'string',
+		default: 'inherit',
+		enum: ['off', 'on', 'inherit'],
+		enumDescriptions: ['ไม่ตัดบรรทัด', 'ตัดบรรทัดตามความกว้าง', 'ตาม editor.wordWrap'],
+		description: 'การตัดบรรทัดใน diff (Controls whether lines should wrap in the diff editor; inherit follows editor.wordWrap.)'
+	},
 	// --- Files
 	{
 		id: 'files.exclude',

@@ -36,7 +36,9 @@
 	import { gridTemplateAreas, gridTemplateColumns, gridTemplateRows, workbenchGrid, type PanelAlignment, type PanelLocation, type SideBarLocation } from './workbenchGrid';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import AgentsLayout from '#lib/ade/AgentsLayout.svelte';
+	import AdeDialogs from '#lib/ade/AdeDialogs.svelte';
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
+	import { quickOpenWorktree } from '#lib/ade/quickOpen.svelte.ts';
 	import { installTerminalSessions } from './terminalSessions.svelte';
 	import { accounts } from '#lib/accounts/accounts.svelte.ts';
 	import SettingsPage from '#lib/settings/SettingsPage.svelte';
@@ -108,7 +110,8 @@
 			}),
 			commands.register({ id: 'workbench.files.action.refreshFilesExplorer', title: 'Refresh Explorer', category: 'File', when: () => workspace.root !== null, run: () => explorer.refresh(['']) }),
 			commands.register({ id: 'workbench.files.action.collapseExplorerFolders', title: 'Collapse Folders in Explorer', category: 'File', when: () => workspace.root !== null, run: () => explorer.collapseAll() }),
-			commands.register({ id: 'workbench.action.quickOpen', title: 'Go to File...', key: 'cmd+p', run: () => quick.show('') }),
+			// In the Agents layout ⌘P lists the selected worktree's files and opens them in its tabs (Orca).
+			commands.register({ id: 'workbench.action.quickOpen', title: 'Go to File...', key: 'cmd+p', run: () => (appMode.isAgents && workspace.root ? quickOpenWorktree(adeLayout.key) : quick.show('')) }),
 			// VS Code's Developer: Reload Window; terminals and agent CLIs re-attach (they live in Rust).
 			commands.register({ id: 'workbench.action.reloadWindow', title: 'Reload Window', category: 'Developer', run: () => location.reload() }),
 			commands.register({ id: 'workbench.action.showCommands', title: 'Show All Commands', key: 'cmd+shift+p', palette: false, run: () => quick.show('>') }),
@@ -371,4 +374,5 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 	<!-- workbench.statusBar.visible (kept mounted so its items keep their state). -->
 	<div class={['contents', !settings.get<boolean>('workbench.statusBar.visible') && '[&>*]:hidden']}><StatusBar /></div>
 	<QuickInput />
+	<AdeDialogs />
 </div>
