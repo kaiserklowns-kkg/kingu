@@ -15,6 +15,10 @@
 	import ChatEditsBar from './ChatEditsBar.svelte';
 	import ChatTodoBar from './ChatTodoBar.svelte';
 	import RestoreCheckpoint from './RestoreCheckpoint.svelte';
+	import ContextRing from './ContextRing.svelte';
+	import { kinguCommands, localCommandFor, mergeCommands, type FileCommand } from './slashCommands.ts';
+	import { queueDefault, type SendHow } from './requestQueuing.ts';
+	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { chatEdits } from './chatEdits.svelte.ts';
 	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
@@ -61,6 +65,9 @@
 	/** Where the last model / mode change took effect, shown under the input. */
 	let optionNote = $state('');
 	let composer: ReturnType<typeof Composer> | undefined = $state();
+	let modelPicker: HTMLSelectElement | undefined = $state();
+	/** `.claude/commands` and skills of where the chat runs (for a chat with no session list yet). */
+	let fileCommands = $state<FileCommand[]>([]);
 	let root: HTMLDivElement;
 
 	const chatMeta = $derived(selectedId ? chats.get(selectedId) : undefined);
@@ -80,6 +87,33 @@
 	const taskWorktrees = $derived(adeTasks.worktrees.filter((w) => w.slug).map((w) => w.slug as string));
 	const cwd = $derived(workspace.root && chatMeta ? chatCwdPath(workspace.root, chatMeta.cwd) : workspace.root);
 	const mode = $derived(chatMeta ? modeOf(chatMeta.permission_mode) : newMode);
+	const allowAll = $derived(chatMeta ? chats.isAllowAll(chatMeta.id) : approval === 'bypassPermissions');
+	const queueAction = $derived(queueDefault(settings.get<string>('kingu.chat.requestQueuing.defaultAction')));
+
+	// `/` commands: Kingu's own (run here, never sent), then the session's, then the folder's files.
+	// `/fork` joins them once the chats store can fork.
+	const forkable = chats as unknown as { fork?: (id: string) => unknown };
+	const localCommands = $derived(
+		kinguCommands(
+			{
+				clear: () => newChat(),
+				model: () => queueMicrotask(() => modelPicker?.focus()),
+				fork: typeof forkable.fork === 'function' && chatMeta ? () => void forkable.fork?.(chatMeta!.id) : undefined
+			},
+			(name) => (name === 'clear' ? t('chatInput.slash.clear') : name === 'model' ? t('chatInput.slash.model') : t('chatInput.slash.fork'))
+		)
+	);
+	const slashCommands = $derived(mergeCommands(localCommands, chatRun?.commands ?? [], fileCommands));
+
+	$effect(() => {
+		const dir = cwd;
+		if (!dir) return;
+		let stale = false;
+		invoke<FileCommand[]>('chat_slash_commands', { cwd: dir })
+			.then((list) => !stale && (fileCommands = list))
+			.catch(() => !stale && (fileCommands = []));
+		return () => (stale = true);
+	});
 
 	// Implicit context (VS Code's "current file"): the active editor's file and selection.
 	const activeFile = $derived(isFileKey(editors.active) ? editors.active : null);
@@ -179,8 +213,15 @@
 		return { text: assemblePrompt(text, context), images: attachments.filter((a) => a.image).map((a) => a.path) };
 	}
 
-	async function submit(text: string, attachments: Attachment[]) {
+	async function submit(text: string, attachments: Attachment[], how?: SendHow) {
 		if (busy) return;
+		// Kingu's own commands run here; every other `/command` goes to the agent as text.
+		const local = localCommandFor(text, localCommands);
+		if (local) {
+			if (local.command.name !== 'clear') resetInput();
+			await local.command.run(local.args);
+			return;
+		}
 		busy = true;
 		try {
 			if (!chatMeta) {
@@ -194,7 +235,7 @@
 				return;
 			}
 			const message = await outgoing(text, attachments, chatMeta.cwd.kind === 'folder');
-			const sent = await chats.submit(chatMeta.id, message, text);
+			const sent = await chats.submit(chatMeta.id, message, text, how);
 			if (sent) resetInput();
 		} catch (e) {
 			status.flash(t('chat.sendFailed', { error: String(e) }), 10000);
@@ -224,6 +265,36 @@
 			}
 		});
 		if (item && !picked.some((p) => p.path === item.id && !p.range)) picked = [...picked, { path: item.id }];
+		queueMicrotask(() => composer?.focus());
+	}
+
+	/** "Allow all" asks once per app session (a native warning) before any chat uses it. */
+	async function confirmAllowAll(): Promise<boolean> {
+		if (chats.allowAllConfirmed) return true;
+		const ok = await ask(t('chatInput.allowAllConfirm'), { kind: 'warning', okLabel: t('chatInput.allowAll') });
+		if (ok) chats.allowAllConfirmed = true;
+		return ok;
+	}
+
+	async function pickApproval(select: HTMLSelectElement) {
+		const next = select.value as AgentApproval;
+		if (next === 'bypassPermissions' && !(await confirmAllowAll())) {
+			select.value = allowAll ? 'bypassPermissions' : chatMeta ? (chatMeta.permission_mode ?? 'default') : approval;
+			return;
+		}
+		await setMode('agent', next);
+	}
+
+	/** Compact (the context ring): `/compact` to the agent, queued while a turn runs. */
+	function compact() {
+		if (chatMeta) void chats.submit(chatMeta.id, { text: '/compact', images: [] }, '/compact');
+	}
+
+	/** Edit on a queued row: back into the input (its attached context is read again on send). */
+	function editQueued(n: number) {
+		const item = chatMeta && chats.takeQueued(chatMeta.id, n);
+		if (!item) return;
+		input = item.label;
 		queueMicrotask(() => composer?.focus());
 	}
 
@@ -283,7 +354,8 @@
 	const cwdLabel = (where: ChatCwd) => (where.kind === 'folder' ? workspace.name || t('chat.panel.cwdFolder') : `kingu/${where.slug}`);
 	const APPROVAL_LABEL: Record<AgentApproval, () => string> = {
 		default: () => t('chat.panel.mode.default'),
-		acceptEdits: () => t('chat.panel.mode.acceptEdits')
+		acceptEdits: () => t('chat.panel.mode.acceptEdits'),
+		bypassPermissions: () => t('chatInput.allowAll')
 	};
 	/** Model choices: the default from settings, the chat's own, and Claude's aliases. */
 	function modelChoices(current: string | null): string[] {
@@ -457,6 +529,10 @@
 						<li class="flex items-center gap-1.5 rounded border border-dashed border-(--vscode-widget-border) px-2 py-1 text-xs text-(--vscode-descriptionForeground)">
 							<Icon name="clock" size={12} />
 							<span class="min-w-0 flex-1 truncate" title={q.label}>{t('chatView.queuedItem', { text: q.label })}</span>
+							<button class={ICON_BTN} aria-label={t('chatInput.queue.edit')} title={t('chatInput.queue.editHint')} onclick={() => editQueued(q.n)}><Icon name="edit" size={12} /></button>
+							<button class={ICON_BTN} aria-label={t('chatInput.queue.sendNow')} title={t('chatInput.queue.sendNowHint')} onclick={() => chatMeta && void chats.sendQueuedNow(chatMeta.id, q.n)}
+								><Icon name="send" size={12} /></button
+							>
 							<button class={ICON_BTN} aria-label={t('chatView.unqueue')} title={t('chatView.unqueue')} onclick={() => chatMeta && chats.unqueue(chatMeta.id, q.n)}><Icon name="close" size={12} /></button>
 						</li>
 					{/each}
@@ -485,8 +561,13 @@
 				oncontexttoggle={(f) => (implicitOff = implicitOff === f.path ? null : f.path)}
 				oncontextremove={(f) => (picked = picked.filter((p) => !(p.path === f.path && p.range?.startLine === f.range?.startLine)))}
 				sendLabel={running ? t('chatView.queue') : undefined}
+				commands={slashCommands}
+				queueDefault={queueAction}
 				onsubmit={submit}
 			>
+				{#snippet footer()}
+					{#if chatRun?.context}<ContextRing usage={chatRun.context} cost={chatRun.result?.total_cost_usd ?? null} oncompact={chatMeta ? compact : undefined} />{/if}
+				{/snippet}
 				{#snippet chips()}
 					{#if !chatMeta}
 						<select class={CHIP_SELECT} aria-label={t('chat.panel.cwdLabel')} title={t('chat.panel.cwdLabel')} bind:value={newWhere}>
@@ -503,13 +584,14 @@
 							class={CHIP_SELECT}
 							aria-label={t('chat.panel.mode')}
 							title={t('chat.panel.mode')}
-							value={chatMeta ? (chatMeta.permission_mode ?? 'default') : approval}
-							onchange={(e) => setMode('agent', e.currentTarget.value as AgentApproval)}
+							value={allowAll ? 'bypassPermissions' : chatMeta ? (chatMeta.permission_mode ?? 'default') : approval}
+							onchange={(e) => pickApproval(e.currentTarget)}
 						>
 							{#each AGENT_APPROVALS as m (m)}<option value={m}>{APPROVAL_LABEL[m]()}</option>{/each}
 						</select>
 					{/if}
 					<select
+						bind:this={modelPicker}
 						class={CHIP_SELECT}
 						aria-label={t('chat.panel.model')}
 						title={t('chat.panel.model')}
@@ -521,6 +603,7 @@
 				{/snippet}
 			</Composer>
 			{#if optionNote}<p class="px-1 pt-1 text-xs text-(--vscode-descriptionForeground)" role="status">{optionNote}</p>{/if}
+			{#if allowAll && mode === 'agent'}<p class="px-1 pt-1 text-xs text-(--vscode-editorWarning-foreground)" role="status">{t('chatInput.allowAllNote')}</p>{/if}
 		</div>
 	{/if}
 </div>

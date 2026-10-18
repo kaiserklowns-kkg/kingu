@@ -6,6 +6,9 @@
 	// Chat extras (VS Code's chatInputPart), all optional: `context` chips (the active editor's file
 	// as implicit context, `#`-picked files), ↑/↓ through `history` from an empty input, `#` calls
 	// `onhash`, and while `running` a Stop button (Enter still sends: the panel queues it).
+	// `commands`: `/` at the start of the input opens their list (SlashSuggest; ↑/↓, Enter/Tab, Esc).
+	// While `running`, Send is a split button (SendMenu): Enter runs `queueDefault`, ⌥Enter the
+	// other of queue / steer, and `onsubmit` gets which (`how`). `footer`: extra footer controls.
 	import type { Snippet } from 'svelte';
 	import { open } from '@tauri-apps/plugin-dialog';
 	import Icon from '#lib/workbench/Icon.svelte';
@@ -15,6 +18,10 @@
 	import { clipboardImage, onFileDrop, savePastedImage } from './attachInput.ts';
 	import { contextLabel, type ContextFile } from './chatPrompt.ts';
 	import { hashTrigger, recallPrompt, type HistoryCursor } from './chatInput.ts';
+	import SlashSuggest from './SlashSuggest.svelte';
+	import SendMenu from './SendMenu.svelte';
+	import { completeCommand, filterCommands, moveActive, slashQuery, type SlashItem } from './slashCommands.ts';
+	import { sendHowFor, type QueueDefault, type SendHow } from './requestQueuing.ts';
 
 	let {
 		value = $bindable(''),
@@ -34,7 +41,10 @@
 		running = false,
 		onstop,
 		onhash,
-		sendLabel
+		sendLabel,
+		commands = [],
+		queueDefault = 'queue',
+		footer
 	}: {
 		value?: string;
 		placeholder: string;
@@ -44,7 +54,8 @@
 		autofocus?: boolean;
 		attach?: boolean;
 		attachments?: Attachment[];
-		onsubmit: (text: string, attachments: Attachment[]) => void;
+		/** `how`: what to do while a turn runs (only given then). */
+		onsubmit: (text: string, attachments: Attachment[], how?: SendHow) => void;
 		chips?: Snippet;
 		/** Attached files; an implicit one (the active editor's) can be turned off and on. */
 		context?: (ContextFile & { disabled?: boolean })[];
@@ -58,12 +69,41 @@
 		/** `#` typed at the start of a word: attach a file. */
 		onhash?: () => void;
 		sendLabel?: string;
+		/** The `/` list. */
+		commands?: SlashItem[];
+		/** What Enter does while a turn runs. */
+		queueDefault?: QueueDefault;
+		footer?: Snippet;
 	} = $props();
 
 	let area: HTMLTextAreaElement | undefined = $state();
 	let box: HTMLDivElement | undefined = $state();
 	let dragOver = $state(false);
 	let cursor: HistoryCursor = null;
+	/** The caret, so the `/` list knows whether it is still in the command word. */
+	let caret = $state(0);
+	let slashActive = $state(0);
+	/** Esc closed the list for this command word. */
+	let slashClosed = $state<string | null>(null);
+	const slashText = $derived(commands.length ? slashQuery(value, caret) : null);
+	const slashItems = $derived(slashText === null ? [] : filterCommands(commands, slashText));
+	const slashOpen = $derived(slashItems.length > 0 && slashClosed !== value.split(/\s/, 1)[0]);
+	const listId = `slash-${Math.random().toString(36).slice(2, 8)}`;
+	$effect(() => {
+		void slashText;
+		slashActive = 0;
+	});
+
+	function trackCaret() {
+		if (area) caret = area.selectionStart;
+	}
+
+	function pickCommand(item: SlashItem) {
+		const next = completeCommand(value, item.name);
+		value = next.text;
+		caret = next.caret;
+		queueMicrotask(() => area?.setSelectionRange(next.caret, next.caret));
+	}
 
 	export function focus() {
 		area?.focus();
@@ -109,17 +149,35 @@
 		if (autofocus) area?.focus();
 	});
 
-	function send() {
+	function send(how?: SendHow) {
 		const text = value.trim();
 		if (!text || disabled || busy) return;
 		cursor = null;
-		onsubmit(text, $state.snapshot(attachments));
+		onsubmit(text, $state.snapshot(attachments), running ? (how ?? queueDefault) : undefined);
 	}
 
 	function onkeydown(e: KeyboardEvent) {
+		if (slashOpen && !e.isComposing) {
+			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+				e.preventDefault();
+				slashActive = moveActive(slashActive, slashItems.length, e.key === 'ArrowDown' ? 'down' : 'up');
+				return;
+			}
+			if ((e.key === 'Enter' && !e.shiftKey && !e.altKey) || e.key === 'Tab') {
+				e.preventDefault();
+				pickCommand(slashItems[slashActive] ?? slashItems[0]);
+				return;
+			}
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				e.stopPropagation();
+				slashClosed = value.split(/\s/, 1)[0];
+				return;
+			}
+		}
 		if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
 			e.preventDefault();
-			send();
+			send(running ? sendHowFor(queueDefault, e.altKey) : undefined);
 			return;
 		}
 		if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && !e.isComposing && area) {
@@ -137,6 +195,7 @@
 	}
 
 	function oninput() {
+		trackCaret();
 		if (!onhash || !area) return;
 		const at = hashTrigger(value, area.selectionStart);
 		if (at < 0) return;
@@ -151,11 +210,14 @@
 <div
 	bind:this={box}
 	class={[
-		'flex flex-col rounded-xl border bg-(--vscode-input-background) transition-colors focus-within:border-(--vscode-focusBorder)',
+		'relative flex flex-col rounded-xl border bg-(--vscode-input-background) transition-colors focus-within:border-(--vscode-focusBorder)',
 		dragOver ? 'border-(--vscode-focusBorder) border-dashed' : 'border-(--vscode-input-border,var(--vscode-widget-border))',
 		size === 'lg' ? 'p-2.5 shadow-[0_2px_12px_rgba(0,0,0,0.25)]' : 'p-1.5'
 	]}
 >
+	{#if slashOpen}
+		<SlashSuggest items={slashItems} active={slashActive} id={listId} onpick={pickCommand} />
+	{/if}
 	{#if context.length}
 		<ul class="flex flex-wrap gap-1 px-1 pb-1" aria-label={t('chatView.context')}>
 			{#each context as f (f.path + (f.implicit ? ':implicit' : ''))}
@@ -197,6 +259,13 @@
 		{onkeydown}
 		{onpaste}
 		{oninput}
+		onkeyup={trackCaret}
+		onclick={trackCaret}
+		role={commands.length ? 'combobox' : undefined}
+		aria-expanded={commands.length ? slashOpen : undefined}
+		aria-controls={slashOpen ? listId : undefined}
+		aria-autocomplete={commands.length ? 'list' : undefined}
+		aria-activedescendant={slashOpen ? `${listId}-${slashActive}` : undefined}
 		style="outline: none; box-shadow: none"
 		class={[
 			'w-full resize-none bg-transparent px-1 text-(--vscode-input-foreground) outline-none focus-visible:outline-none placeholder:text-(--vscode-input-placeholderForeground)',
@@ -223,6 +292,7 @@
 		<div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-xs text-(--vscode-descriptionForeground)">
 			{@render chips?.()}
 		</div>
+		{@render footer?.()}
 		{#if attach}
 			<button
 				type="button"
@@ -242,14 +312,16 @@
 				onclick={() => onstop?.()}><Icon name="stop" size={14} /></button
 			>
 		{/if}
-		{#if !(running && onstop) || value.trim()}
+		{#if running && onstop && value.trim()}
+			<SendMenu def={queueDefault} disabled={disabled || busy} onsend={(how) => send(how)} />
+		{:else if !(running && onstop)}
 			<button
 				type="button"
 				aria-label={sendLabel ?? t('chatView.send')}
 				title={`${sendLabel ?? t('chatView.send')} · ${t('chatView.newLine')}`}
 				class="grid size-7 shrink-0 place-items-center rounded-full bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:opacity-90 disabled:bg-transparent disabled:text-(--vscode-descriptionForeground) disabled:opacity-60"
 				disabled={!value.trim() || disabled || busy}
-				onclick={send}
+				onclick={() => send()}
 			>
 				{#if busy}<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>{:else}<Icon name="send" size={14} />{/if}
 			</button>

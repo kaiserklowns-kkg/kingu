@@ -240,6 +240,20 @@ const CORE_SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.chat.requestQueuing.defaultAction',
+		group: 'Agent Chat',
+		type: 'string',
+		default: 'queue',
+		enum: ['queue', 'steer'],
+		enumDescriptions: [
+			'ต่อคิวไว้ ส่งเมื่อรอบปัจจุบันจบ (Add to Queue: sent when the current turn ends.)',
+			'ส่งเข้า session ทันที agent อ่านเมื่อมีจังหวะถัดไป (Steer with Message: sent now; the agent reads it at its next opportunity.)'
+		],
+		// VS Code's chat.requestQueuing.defaultAction; no Orca setting, so not in the ADE list.
+		description:
+			'สิ่งที่ Enter ทำเมื่อส่งข้อความขณะ agent กำลังทำงาน ⌥Enter ทำอีกแบบ (VS Code: chat.requestQueuing.defaultAction) (What Enter does while a turn runs; ⌥Enter does the other.)'
+	},
+	{
 		id: 'kingu.agent.runMode',
 		group: 'Agent',
 		type: 'string',
