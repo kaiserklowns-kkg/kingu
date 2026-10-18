@@ -1298,6 +1298,7 @@ pub fn run() {
       agent::agent_stop,
       agent::tasks_load,
       agent::tasks_save,
+      agent::tasks_update,
       agent::diff_notes_load,
       agent::diff_notes_save,
       agent::worktree_commits,

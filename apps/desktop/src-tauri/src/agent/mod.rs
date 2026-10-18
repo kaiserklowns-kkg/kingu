@@ -185,6 +185,14 @@ pub fn tasks_save(ws: State<'_, Workspace>, tasks: Vec<tasks::TaskMeta>) -> Resu
   tasks::save(&ws.root()?, &tasks)
 }
 
+/// Applies the webview's task changes to tasks.json as it is on disk now (another window's
+/// edits are kept) and returns the stored list.
+#[tauri::command]
+pub async fn tasks_update(ws: State<'_, Workspace>, changes: Vec<tasks::TaskChange>) -> Result<Vec<tasks::TaskMeta>, String> {
+  let root = ws.root()?;
+  blocking(move || tasks::update(&root, &changes)).await
+}
+
 /// Review notes of every worktree of the open folder (`""` = the folder); empty with no folder open.
 #[tauri::command]
 pub fn diff_notes_load(ws: State<'_, Workspace>) -> Result<std::collections::BTreeMap<String, Vec<notes::DiffNote>>, String> {

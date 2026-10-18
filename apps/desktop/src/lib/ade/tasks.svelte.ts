@@ -30,9 +30,12 @@ import {
 	groupTasks,
 	newTask,
 	nextNeedingAttention,
+	patchChange,
 	patchTask,
 	pruneAccepted,
 	removeTask,
+	taskChanges,
+	type TaskChange,
 	renamedTitle,
 	runSummary,
 	toTaskRuntime,
@@ -241,16 +244,37 @@ class AdeTasks {
 		}
 	}
 
-	#save(next: TaskMeta[]): Promise<void> {
-		this.list = next;
-		const snapshot = $state.snapshot(next) as TaskMeta[];
-		this.#saving = this.#saving.then(() =>
-			invoke<void>('tasks_save', { tasks: snapshot }).catch((e) => {
+	/** Writes of ours still queued; the stored list comes back only when the last one lands. */
+	#pending = 0;
+
+	/**
+	 * Sends `changes` (not the whole list): Rust applies them to tasks.json as it is on disk under
+	 * one lock per file, so another window's (or a later Kingu's) edits to other tasks and fields
+	 * are kept, and returns the stored list, which this window then shows.
+	 */
+	#write(changes: TaskChange[]): Promise<void> {
+		if (!changes.length) return this.#saving;
+		const root = this.#root;
+		const payload = $state.snapshot(changes) as TaskChange[];
+		this.#pending++;
+		this.#saving = this.#saving.then(async () => {
+			try {
+				const stored = await invoke<TaskMeta[]>('tasks_update', { changes: payload });
+				if (this.#pending === 1 && this.#root === root) this.list = stored;
+			} catch (e) {
 				notifications.error(t('adeTasks.tasks.saveFailed', { error: String(e) }));
-				clientLog('error', `tasks_save: ${e}`);
-			})
-		);
+				clientLog('error', `tasks_update: ${e}`);
+			} finally {
+				this.#pending--;
+			}
+		});
 		return this.#saving;
+	}
+
+	#save(next: TaskMeta[]): Promise<void> {
+		const changes = taskChanges(this.list, next);
+		this.list = next;
+		return this.#write(changes);
 	}
 
 	/** A PR created for the task outside its Review page (Source Control's composer). */
@@ -258,8 +282,12 @@ class AdeTasks {
 		return this.#patch(slug, { pr_url: url || null });
 	}
 
+	/** Only these fields of the task are written: another window's edits to its other fields stay. */
 	#patch(slug: string, patch: Partial<Omit<TaskMeta, 'slug'>>) {
-		return this.#save(patchTask(this.list, slug, patch, Date.now()));
+		if (!this.list.some((t) => t.slug === slug)) return this.#saving;
+		const now = Date.now();
+		this.list = patchTask(this.list, slug, patch, now);
+		return this.#write([patchChange(slug, patch, now)]);
 	}
 
 	async #step<T>(slug: string, label: string, f: () => Promise<T>): Promise<T | undefined> {
@@ -784,7 +812,8 @@ class AdeTasks {
 	// Review
 
 	toggleAccept(slug: string, path: string) {
-		return this.#save(toggleAccepted(this.list, slug, path, Date.now()));
+		const accepted = toggleAccepted(this.list, slug, path, Date.now()).find((t) => t.slug === slug)?.accepted;
+		return accepted ? this.#patch(slug, { accepted }) : this.#saving;
 	}
 
 	/** Accepted file and hunk marks from the hunkReview.ts reducers (saved like toggleAccept). */

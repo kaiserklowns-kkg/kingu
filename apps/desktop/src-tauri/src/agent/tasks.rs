@@ -2,8 +2,9 @@
 //! Agents view survives restarts. The webview owns the list and its reducers; Rust validates the
 //! whole list and writes it atomically through the same guarded `.kingu` path as settings.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::settings::{kingu_file, read, write_atomic};
 
@@ -198,10 +199,81 @@ pub fn validate(tasks: &[TaskMeta]) -> Result<(), String> {
   Ok(())
 }
 
+/// Writes the whole list (tasks_save, kept for older webviews). Prefer [`update`]: a whole-list
+/// write from one window drops what another window (or Kingu instance) changed since it read.
 pub fn save(root: &Path, tasks: &[TaskMeta]) -> Result<(), String> {
+  let path = path(root)?;
+  let lock = file_lock(&path);
+  let _held = lock.lock().unwrap_or_else(|e| e.into_inner());
+  write_list(&path, tasks)
+}
+
+fn write_list(path: &Path, tasks: &[TaskMeta]) -> Result<(), String> {
   validate(tasks)?;
   let text = serde_json::to_string_pretty(&TasksFile { version: VERSION, tasks: tasks.to_vec() }).map_err(|e| e.to_string())?;
-  write_atomic(&path(root)?, &(text + "\n"))
+  write_atomic(path, &(text + "\n"))
+}
+
+/// One lock per tasks.json path, so read-modify-write updates of this process never interleave.
+/// (Atomic renames keep a reader from ever seeing half a file; this keeps writers from losing
+/// each other's changes.)
+fn file_lock(path: &Path) -> Arc<Mutex<()>> {
+  static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
+  let mut map = LOCKS.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
+  map.entry(path.to_path_buf()).or_default().clone()
+}
+
+/// A change to the task list, applied by [`update`] to what is on disk at that moment.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum TaskChange {
+  /// Adds the task, or replaces the one with its slug.
+  Upsert { task: Box<TaskMeta> },
+  /// Sets these fields of the task (absent fields keep the stored value); an unknown slug
+  /// (removed meanwhile) is skipped.
+  Patch { slug: String, fields: serde_json::Map<String, serde_json::Value> },
+  Remove { slug: String },
+}
+
+/// Applies `changes` to the stored list under the file's lock (a read-modify-write, so a patch
+/// from one window keeps another window's edits to other tasks and other fields) and returns the
+/// list as now stored. The file format is unchanged.
+pub fn update(root: &Path, changes: &[TaskChange]) -> Result<Vec<TaskMeta>, String> {
+  let path = path(root)?;
+  let lock = file_lock(&path);
+  let _held = lock.lock().unwrap_or_else(|e| e.into_inner());
+  let mut list = load(root)?;
+  let before = list.clone();
+  for change in changes {
+    apply(&mut list, change)?;
+  }
+  if list != before {
+    write_list(&path, &list)?;
+  }
+  Ok(list)
+}
+
+fn apply(list: &mut Vec<TaskMeta>, change: &TaskChange) -> Result<(), String> {
+  match change {
+    TaskChange::Upsert { task } => match list.iter_mut().find(|t| t.slug == task.slug) {
+      Some(t) => *t = (**task).clone(),
+      None => list.push((**task).clone()),
+    },
+    TaskChange::Patch { slug, fields } => {
+      if fields.contains_key("slug") {
+        return Err(format!("{slug}: a task's slug cannot change"));
+      }
+      let Some(t) = list.iter_mut().find(|t| &t.slug == slug) else { return Ok(()) };
+      let mut value = serde_json::to_value(&*t).map_err(|e| e.to_string())?;
+      let obj = value.as_object_mut().ok_or("task is not an object")?;
+      for (k, v) in fields {
+        obj.insert(k.clone(), v.clone());
+      }
+      *t = serde_json::from_value(value).map_err(|e| format!("{slug}: {e}"))?;
+    }
+    TaskChange::Remove { slug } => list.retain(|t| &t.slug != slug),
+  }
+  Ok(())
 }
 
 #[cfg(test)]
@@ -313,6 +385,67 @@ mod tests {
     assert!(bad(|t| t.accepted_hunks = BTreeMap::from([(String::new(), vec!["ab".into()])])));
     assert!(save(tmp.path(), &[task("a"), task("a")]).is_err());
     assert!(!tmp.path().join(".kingu/tasks.json").exists());
+  }
+
+  fn patch(slug: &str, fields: serde_json::Value) -> TaskChange {
+    TaskChange::Patch { slug: slug.into(), fields: fields.as_object().unwrap().clone() }
+  }
+
+  #[test]
+  fn updates_merge_with_what_is_on_disk() {
+    let tmp = tempfile::tempdir().unwrap();
+    save(tmp.path(), &[task("a"), task("b")]).unwrap();
+    // Window 1 read the list, then window 2 renamed `b` and added `c`.
+    update(tmp.path(), &[patch("b", serde_json::json!({ "title": "จากหน้าต่างที่สอง", "updated_at": 9 }))]).unwrap();
+    update(tmp.path(), &[TaskChange::Upsert { task: Box::new(task("c")) }]).unwrap();
+    // Window 1's patch of `a` keeps both; null clears an option, absent fields stay.
+    let list = update(tmp.path(), &[patch("a", serde_json::json!({ "status": "done", "pr_url": "https://github.com/x/y/pull/1", "session_id": null }))]).unwrap();
+    assert_eq!(list.iter().map(|t| t.slug.as_str()).collect::<Vec<_>>(), ["a", "b", "c"]);
+    assert_eq!((list[0].status.as_str(), list[0].pr_url.as_deref(), list[0].session_id.as_deref()), ("done", Some("https://github.com/x/y/pull/1"), None));
+    assert_eq!(list[0].title, task("a").title);
+    assert_eq!((list[1].title.as_str(), list[1].updated_at), ("จากหน้าต่างที่สอง", 9));
+    assert_eq!(load(tmp.path()).unwrap(), list);
+    // A task removed meanwhile is not brought back by a late patch.
+    update(tmp.path(), &[TaskChange::Remove { slug: "c".into() }]).unwrap();
+    let list = update(tmp.path(), &[patch("c", serde_json::json!({ "status": "done" }))]).unwrap();
+    assert_eq!(list.len(), 2);
+    // Bad patches change nothing.
+    assert!(update(tmp.path(), &[patch("a", serde_json::json!({ "status": "weird" }))]).is_err());
+    assert!(update(tmp.path(), &[patch("a", serde_json::json!({ "slug": "z" }))]).is_err());
+    assert!(update(tmp.path(), &[patch("a", serde_json::json!({ "created_at": "soon" }))]).is_err());
+    assert_eq!(load(tmp.path()).unwrap()[0].status, "done");
+  }
+
+  #[test]
+  fn concurrent_updates_never_lose_a_task() {
+    let tmp = tempfile::tempdir().unwrap();
+    save(tmp.path(), &[]).unwrap();
+    let root = tmp.path().to_path_buf();
+    let threads: Vec<_> = (0..8)
+      .map(|i| {
+        let root = root.clone();
+        std::thread::spawn(move || {
+          for j in 0..5 {
+            let slug = format!("t{i}-{j}");
+            update(&root, &[TaskChange::Upsert { task: Box::new(task(&slug)) }]).unwrap();
+            update(&root, &[patch(&slug, serde_json::json!({ "status": "done" }))]).unwrap();
+          }
+        })
+      })
+      .collect();
+    for t in threads {
+      t.join().unwrap();
+    }
+    let list = load(&root).unwrap();
+    assert_eq!(list.len(), 40);
+    assert!(list.iter().all(|t| t.status == "done"));
+  }
+
+  #[test]
+  fn changes_read_as_the_webview_sends_them() {
+    let c: Vec<TaskChange> = serde_json::from_str(r#"[{"kind":"remove","slug":"a"},{"kind":"patch","slug":"b","fields":{"title":"x"}}]"#).unwrap();
+    assert_eq!(c[0], TaskChange::Remove { slug: "a".into() });
+    assert!(matches!(&c[1], TaskChange::Patch { slug, fields } if slug == "b" && fields["title"] == "x"));
   }
 
   #[cfg(unix)]
