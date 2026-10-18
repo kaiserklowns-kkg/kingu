@@ -149,7 +149,8 @@ impl Agent {
     match self {
       // Gemini waits for a JSON answer on stdout; it has no permission hook.
       Self::Gemini => ["BeforeAgent", "AfterAgent", "AfterTool", "BeforeTool"].map(|e| (e, None, Some("{}"))).to_vec(),
-      // cursor's gate hooks fail closed on an empty answer: allow (cursor still asks its own way).
+      // cursor's gate hooks fail closed on an empty answer, so they answer allow, exactly as Orca's do
+      // (the answer cursor-agent then combines with its own permission settings).
       Self::Cursor => vec![
         ("beforeSubmitPrompt", None, Some(r#"{"continue":true}"#)),
         ("stop", None, Some("{}")),
