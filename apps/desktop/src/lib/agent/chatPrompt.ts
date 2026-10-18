@@ -16,6 +16,13 @@ export type ContextFile = {
 	implicit?: boolean;
 };
 
+/**
+ * Context that is not a file (VS Code's Add Context sources): problems, a git diff, terminal
+ * output, a folder's listing, a past chat. `kind` names the source; `text` goes in as is (cut to
+ * `MAX_INLINE_BYTES`).
+ */
+export type ContextText = { kind: string; label: string; text: string };
+
 /** Files up to this size go into the prompt; bigger ones are sent as a reference the agent can read. */
 export const MAX_INLINE_BYTES = 32 * 1024;
 
@@ -45,8 +52,29 @@ function fileBlock(f: ContextFile): string {
 	return `${head}>\n${content}${content.endsWith('\n') ? '' : '\n'}</file>`;
 }
 
-/** The prompt of a request: the text, then one `<attached-context>` block with every file (once each). */
-export function assemblePrompt(text: string, files: readonly ContextFile[]): string {
+/** `text` cut to `MAX_INLINE_BYTES` (whole characters), marked when cut. */
+export function cutText(text: string, max = MAX_INLINE_BYTES): string {
+	if (byteLength(text) <= max) return text;
+	let out = '';
+	let size = 0;
+	for (const ch of text) {
+		size += byteLength(ch);
+		if (size > max) break;
+		out += ch;
+	}
+	return `${out}\n… (cut)`;
+}
+
+function textBlock(c: ContextText): string {
+	const body = cutText(c.text);
+	return `<context kind="${attr(c.kind)}" label="${attr(c.label)}">\n${body}${body.endsWith('\n') ? '' : '\n'}</context>`;
+}
+
+/**
+ * The prompt of a request: the text, then one `<attached-context>` block with every file (once
+ * each) and every other context (`texts`).
+ */
+export function assemblePrompt(text: string, files: readonly ContextFile[], texts: readonly ContextText[] = []): string {
 	const seen = new Set<string>();
 	const unique = files.filter((f) => {
 		const key = `${f.path}:${f.range?.startLine ?? ''}-${f.range?.endLine ?? ''}`;
@@ -55,9 +83,12 @@ export function assemblePrompt(text: string, files: readonly ContextFile[]): str
 		return true;
 	});
 	const body = text.trim();
-	if (!unique.length) return body;
-	const intro = 'Files the user attached (the selected lines when `lines` is set; read a file without content yourself):';
-	return `${body}\n\n${CONTEXT_OPEN}\n${intro}\n${unique.map(fileBlock).join('\n')}\n${CONTEXT_CLOSE}`;
+	if (!unique.length && !texts.length) return body;
+	const intro = texts.length
+		? 'Context the user attached: files (the selected lines when `lines` is set; read a file without content yourself) and other context:'
+		: 'Files the user attached (the selected lines when `lines` is set; read a file without content yourself):';
+	const blocks = [...unique.map(fileBlock), ...texts.map(textBlock)];
+	return `${body}\n\n${CONTEXT_OPEN}\n${intro}\n${blocks.join('\n')}\n${CONTEXT_CLOSE}`;
 }
 
 export type ParsedRequest = {

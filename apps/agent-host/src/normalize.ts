@@ -2,11 +2,13 @@
 // Pure and loosely typed on input, so a newer SDK adding fields or message types never breaks it:
 // anything unrecognized becomes a `raw` event instead of being dropped.
 
-import type { AgentEvent, DiffStats, SlashCommandInfo, Usage } from './protocol.ts';
+import type { AgentEvent, DiffStats, ModelOption, SlashCommandInfo, Usage } from './protocol.ts';
 
 /** Tool results can be whole files; the timeline only needs a preview. */
 export const MAX_TOOL_RESULT_CHARS = 4000;
 const MAX_SUMMARY_CHARS = 500;
+/** Rows kept from `supportedModels()`. */
+const MAX_MODELS = 50;
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -120,6 +122,21 @@ export function slashCommands(list: unknown): SlashCommandInfo[] {
 		if (!isObj(c) || !name || seen.has(name)) continue;
 		seen.add(name);
 		out.push({ name, description: truncate(str(c.description)?.trim() ?? '', MAX_SUMMARY_CHARS), argument_hint: truncate(str(c.argumentHint)?.trim() ?? '', 200) });
+	}
+	return out;
+}
+
+/** The SDK's `supportedModels()` rows as `ModelOption`s: one per value, at most `MAX_MODELS`. */
+export function modelOptions(list: unknown): ModelOption[] {
+	if (!Array.isArray(list)) return [];
+	const seen = new Set<string>();
+	const out: ModelOption[] = [];
+	for (const m of list) {
+		const value = isObj(m) ? str(m.value)?.trim() : null;
+		if (!isObj(m) || !value || value.length > 128 || seen.has(value)) continue;
+		seen.add(value);
+		out.push({ value, display_name: truncate(str(m.displayName)?.trim() || value, 200), description: truncate(str(m.description)?.trim() ?? '', MAX_SUMMARY_CHARS) });
+		if (out.length >= MAX_MODELS) break;
 	}
 	return out;
 }

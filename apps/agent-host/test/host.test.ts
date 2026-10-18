@@ -170,14 +170,16 @@ describe('agent host protocol', () => {
 				})();
 				return Object.assign(gen, {
 					interrupt: async () => {},
-					supportedCommands: async () => (asked.push('commands'), [{ name: 'compact', description: 'Clear history but keep a summary', argumentHint: '<instructions>' }])
+					supportedCommands: async () => (asked.push('commands'), [{ name: 'compact', description: 'Clear history but keep a summary', argumentHint: '<instructions>' }]),
+					supportedModels: async () => (asked.push('models'), [{ value: 'opus', displayName: 'Opus', description: 'Most capable' }])
 				});
 			}
 		});
 		await host.handleLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'start', params: { runId: 1, cwd: '/w', prompt: 'x' } }));
 		const evs = () => out.filter((o) => o.method === 'event').map((o) => o.params.event as AgentEvent);
 		for (let i = 0; i < 50 && !evs().some((e) => e.kind === 'context_usage'); i++) await Bun.sleep(2);
-		expect(asked).toEqual(['commands']);
+		expect(asked).toEqual(['commands', 'models']);
+		expect(evs().find((e) => e.kind === 'models')).toEqual({ kind: 'models', models: [{ value: 'opus', display_name: 'Opus', description: 'Most capable' }] });
 		expect(evs().find((e) => e.kind === 'commands')).toEqual({ kind: 'commands', commands: [{ name: 'compact', description: 'Clear history but keep a summary', argument_hint: '<instructions>' }] });
 		expect(evs().find((e) => e.kind === 'context_usage')).toEqual({ kind: 'context_usage', used_tokens: 1050, max_tokens: 200000 });
 		expect(evs().find((e) => e.kind === 'session_info')).toMatchObject({ slash_commands: ['compact'] });

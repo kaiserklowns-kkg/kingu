@@ -2,6 +2,8 @@
 //   workbench.action.chat.open        ⌃⌘I (Ctrl+Alt+I elsewhere): show the chat and focus its input
 //   workbench.action.chat.focusInput  ⌘L in the IDE (Cursor's key; the Agents layout keeps its own ⌘L)
 //   workbench.action.chat.newChat     ⌘N while the chat has focus (over New Untitled File)
+//   workbench.action.chat.attachContext  ⌘/ while the chat has focus: Add Context...
+//   workbench.action.chat.export / .import  Export Chat... (JSON) / Import Chat...
 // The panel listens to `chatSignals` (it is mounted once, hidden with the secondary side bar).
 
 import { commands } from '#lib/workbench/commands.svelte.ts';
@@ -13,6 +15,11 @@ class ChatSignals {
 	focus = $state(0);
 	/** Bumped to start a new chat. */
 	newChat = $state(0);
+	/** Bumped to open Add Context. */
+	addContext = $state(0);
+	/** Bumped to export the shown chat / import one. */
+	exportChat = $state(0);
+	importChat = $state(0);
 	/** A chat to show (a clicked notification); `n` tells two requests for the same chat apart. */
 	open = $state<{ id: string; n: number } | null>(null);
 	/** The panel's root element, to tell whether the chat has focus. */
@@ -71,6 +78,36 @@ export function registerChatCommands(): () => void {
 			run: () => {
 				show();
 				chatSignals.newChat++;
+			}
+		}),
+		commands.register({
+			id: 'workbench.action.chat.attachContext',
+			title: 'Add Context...',
+			category: 'Chat',
+			key: 'cmd+/',
+			keyWhen: () => chatSignals.hasFocus(),
+			weight: 100,
+			run: () => {
+				show();
+				chatSignals.addContext++;
+			}
+		}),
+		commands.register({
+			id: 'workbench.action.chat.export',
+			title: 'Export Chat...',
+			category: 'Chat',
+			run: () => {
+				show();
+				chatSignals.exportChat++;
+			}
+		}),
+		commands.register({
+			id: 'workbench.action.chat.import',
+			title: 'Import Chat...',
+			category: 'Chat',
+			run: () => {
+				show();
+				chatSignals.importChat++;
 			}
 		})
 	];

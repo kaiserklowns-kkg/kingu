@@ -69,6 +69,9 @@ export type DiffStats = { added: number; removed: number };
 /** A slash command the session knows (SDK `SlashCommand`): built in, a skill, or `.claude/commands`. */
 export type SlashCommandInfo = { name: string; description: string; argument_hint: string };
 
+/** A model the session can use (SDK `ModelInfo` from `supportedModels()`). */
+export type ModelOption = { value: string; display_name: string; description: string };
+
 /** On the events of a subagent's own conversation: the id of the Task/Agent `tool_use` that started it. */
 export type Parent = { parent_tool_use_id?: string };
 
@@ -78,6 +81,8 @@ export type AgentEvent =
 	| { kind: 'session_info'; slash_commands: string[]; tools: string[]; mcp_servers: { name: string; status: string }[] }
 	/** The session's slash commands with descriptions (`supportedCommands()`, or a `commands_changed` push). Replaces the last list. */
 	| { kind: 'commands'; commands: SlashCommandInfo[] }
+	/** The models the session can switch to (`supportedModels()`, asked once per run). Replaces the last list. */
+	| { kind: 'models'; models: ModelOption[] }
 	/** How full the context window is after a turn: `used_tokens` of `max_tokens`. */
 	| { kind: 'context_usage'; used_tokens: number; max_tokens: number }
 	| ({ kind: 'message'; role: string; text: string } & Parent)

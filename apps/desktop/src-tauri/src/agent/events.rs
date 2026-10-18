@@ -44,6 +44,16 @@ pub struct SlashCommand {
   pub argument_hint: String,
 }
 
+/// A model the session can use (SDK `supportedModels()`), for the chat's model picker.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ModelOption {
+  pub value: String,
+  #[serde(default)]
+  pub display_name: String,
+  #[serde(default)]
+  pub description: String,
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentEvent {
@@ -60,6 +70,8 @@ pub enum AgentEvent {
   },
   /// The session's slash commands with descriptions; replaces the last list.
   Commands { commands: Vec<SlashCommand> },
+  /// The models the session can switch to; replaces the last list.
+  Models { models: Vec<ModelOption> },
   /// How full the context window is after a turn.
   ContextUsage { used_tokens: u64, max_tokens: u64 },
   /// `parent_tool_use_id` (also on `Thinking`, `ToolUse`, `ToolResult`): set on a subagent's own
@@ -220,6 +232,7 @@ mod tests {
       json!({"kind": "session_info", "slash_commands": ["compact"], "tools": ["Bash"], "mcp_servers": [{"name": "gh", "status": "connected"}]}),
       json!({"kind": "commands", "commands": [{"name": "review", "description": "Review a PR", "argument_hint": "<pr>"}]}),
       json!({"kind": "context_usage", "used_tokens": 1200, "max_tokens": 200000}),
+      json!({"kind": "models", "models": [{"value": "opus", "display_name": "Opus", "description": "Most capable"}]}),
     ] {
       assert_eq!(serde_json::to_value(AgentEvent::from_host(v.clone())).unwrap(), v);
     }

@@ -359,6 +359,19 @@ crate::i18n::messages! {
       en: "Nothing to redo: a message was sent after the checkpoint was restored",
       th: "ไม่มีอะไรให้ทำซ้ำ: มีการส่งข้อความหลังจากย้อนกลับไปที่ checkpoint แล้ว",
     },
+    /// Import Chat (agent/chat_io.rs).
+    ChatImportBad {
+      en: "Not a chat file: {error}",
+      th: "ไม่ใช่ไฟล์แชต: {error}",
+    },
+    ChatImportEmpty {
+      en: "The chat file has no requests to import",
+      th: "ไฟล์แชตนี้ไม่มีคำขอให้นำเข้า",
+    },
+    ChatImportTooBig {
+      en: "{path}: not a file, or larger than 16 MB",
+      th: "{path}: ไม่ใช่ไฟล์ หรือใหญ่เกิน 16 MB",
+    },
     ForkExists {
       en: "A chat with this id already exists",
       th: "มีแชตที่ใช้ id นี้อยู่แล้ว",

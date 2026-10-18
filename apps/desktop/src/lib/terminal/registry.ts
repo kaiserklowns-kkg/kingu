@@ -13,16 +13,24 @@ export type TerminalHandle = {
 	selectAll(): void;
 	/** Types `data` into the shell (quick commands). */
 	write(data: string): void;
+	/** The buffer's lines, oldest first (the chat's Terminal context). */
+	lines?(): string[];
 };
 
 const handles = new Map<string, TerminalHandle>();
 /** The ADE terminal focused last: where `Terminal: Run Quick Command…` types. */
 let lastAde: string | null = null;
+/** The terminal of any layout focused last (the chat's "Terminal" context reads it). */
+let lastAny: string | null = null;
 
-/** Records `key` as the last used ADE terminal (on focus). */
+/** Records `key` as the last used terminal, and ADE terminal (on focus). */
 export function touchTerminal(key: string) {
+	lastAny = key;
 	if (handles.get(key)?.flavor === 'ade') lastAde = key;
 }
+
+/** The terminal used last that is still mounted. */
+export const lastTerminal = (): TerminalHandle | null => (lastAny ? (handles.get(lastAny) ?? null) : null);
 
 /** The ADE terminal used last that is still mounted. */
 export const lastAdeTerminal = (): TerminalHandle | null => (lastAde ? (handles.get(lastAde) ?? null) : null);

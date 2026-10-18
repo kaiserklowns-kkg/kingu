@@ -28,7 +28,7 @@ export function recallPrompt(history: readonly string[], cursor: HistoryCursor, 
 
 // ---- Ask / Agent -----------------------------------------------------------------------------
 
-/** VS Code's chat modes: Ask answers without changing anything (SDK `plan`), Agent works with tools. */
+/** The chat's modes: 'ask' is shown as Plan (SDK `plan`: reads and proposes a plan, changes nothing), Agent works with tools. */
 export type ChatMode = 'ask' | 'agent';
 /**
  * How Agent mode asks for permission. `bypassPermissions` is VS Code's "Allow all": no prompts,

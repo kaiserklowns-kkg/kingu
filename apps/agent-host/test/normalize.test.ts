@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { contextTokensOf, contextWindowOf, MAX_TOOL_RESULT_CHARS, normalize, ruleTexts, slashCommands, summarizeTool } from '../src/normalize.ts';
+import { contextTokensOf, contextWindowOf, MAX_TOOL_RESULT_CHARS, modelOptions, normalize, ruleTexts, slashCommands, summarizeTool } from '../src/normalize.ts';
 
 describe('normalize', () => {
 	test('maps init, assistant blocks, tool results and results', () => {
@@ -99,6 +99,14 @@ describe('normalize', () => {
 		expect(normalize(changed)).toEqual([{ kind: 'commands', commands: [{ name: 'deploy', description: 'Ship it', argument_hint: '<env>' }] }]);
 		expect(slashCommands([{ name: '/a', description: 'x' }, { name: 'a', description: 'dup' }, { description: 'no name' }, null])).toEqual([{ name: 'a', description: 'x', argument_hint: '' }]);
 		expect(slashCommands('nope')).toEqual([]);
+	});
+
+	test('maps supportedModels() rows, one per value', () => {
+		expect(modelOptions([{ value: 'sonnet', displayName: 'Sonnet', description: 'Fast' }, { value: 'sonnet', displayName: 'dup' }, { value: ' haiku ' }, { displayName: 'no value' }, null])).toEqual([
+			{ value: 'sonnet', display_name: 'Sonnet', description: 'Fast' },
+			{ value: 'haiku', display_name: 'haiku', description: '' }
+		]);
+		expect(modelOptions('nope')).toEqual([]);
 	});
 
 	test('reads the context window and the main agent\'s last call', () => {

@@ -11,6 +11,8 @@
 		 * into an editor; on Enter its checkpoint and the new text come here. Over `edit` for those.
 		 */
 		editInline?: (request: NonNullable<Turn['request']>, checkpoint: number, text: string) => Promise<unknown> | void;
+		/** The plan card's Implement (the last turn's ExitPlanMode only): leave plan mode and carry it out. */
+		implement?: () => void;
 	};
 </script>
 
@@ -244,7 +246,7 @@
 								{/if}
 							</div>
 						{:else if part.kind === 'tool'}
-							<ChatToolRow {part} turnDone={turn.done} {cwd} {root} {chatId} pending={pendingTools(turn.parts)} />
+							<ChatToolRow {part} turnDone={turn.done} {cwd} {root} {chatId} pending={pendingTools(turn.parts)} onimplement={last ? actions.implement : undefined} />
 						{:else if part.kind === 'confirmation'}
 							{@const ev = part.request}
 							{@const decided = run?.decisions[ev.request_id]}
