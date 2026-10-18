@@ -15,6 +15,7 @@
 	import ArkaiPage from './pages/ArkaiPage.svelte';
 	import TerminalPage from './pages/TerminalPage.svelte';
 	import AccountPage from './pages/AccountPage.svelte';
+	import UsagePage from './pages/UsagePage.svelte';
 	import { settings } from './settings.svelte';
 	import type { IconName } from '#lib/workbench/Icon.svelte';
 	import type { SettingsPageId } from './systemSettings.svelte';
@@ -25,9 +26,10 @@
 		{ id: 'arkai', label: 'Arkai', icon: 'agent' },
 		{ id: 'terminal', label: 'Terminal', icon: 'terminal' },
 		{ id: 'account', label: 'บัญชีและทีม', icon: 'account' },
+		{ id: 'usage', label: 'Usage', icon: 'usage' },
 		{ id: 'shortcuts', label: 'Keyboard Shortcuts', icon: 'keyboard' }
 	];
-	const PAGE_LABEL: Record<SettingsPageId, string> = { appearance: 'Appearance', arkai: 'Arkai', terminal: 'Terminal', account: 'บัญชีและทีม', shortcuts: 'Keyboard Shortcuts', about: 'About Kingu' };
+	const PAGE_LABEL: Record<SettingsPageId, string> = { appearance: 'Appearance', arkai: 'Arkai', terminal: 'Terminal', account: 'บัญชีและทีม', usage: 'Usage', shortcuts: 'Keyboard Shortcuts', about: 'About Kingu' };
 	import { systemSettings } from './systemSettings.svelte';
 
 	let query = $state('');
@@ -127,6 +129,7 @@
 			{:else if page === 'arkai'}<ArkaiPage />
 			{:else if page === 'terminal'}<TerminalPage />
 			{:else if page === 'account'}<AccountPage />
+			{:else if page === 'usage'}<UsagePage />
 			{:else if page === 'about'}<AboutPage />
 			{:else if showSnaps}<SnapsView />{:else}<SettingsEditor group={systemSettings.group} bind:query />{/if}
 		</div>

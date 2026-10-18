@@ -386,6 +386,34 @@ export const SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.statusBar.usage.visible',
+		group: 'Status Bar',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงโควตาการใช้งาน Claude ใน status bar (Show Claude usage limits in the status bar.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.usage.display',
+		group: 'Status Bar',
+		type: 'string',
+		default: 'used',
+		enum: ['used', 'remaining'],
+		enumDescriptions: ['แสดงเปอร์เซ็นต์ที่ใช้ไปแล้ว (Show the percentage used.)', 'แสดงเปอร์เซ็นต์ที่เหลือ (Show the percentage left.)'],
+		description: 'แสดงโควตาเป็นส่วนที่ใช้ไปหรือส่วนที่เหลือ (Show usage as used or remaining.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.usage.mode',
+		group: 'Status Bar',
+		type: 'string',
+		default: 'compact',
+		enum: ['detailed', 'compact'],
+		enumDescriptions: ['แถบ ป้ายชื่อ และเปอร์เซ็นต์ของทุกช่วงเวลา (Full usage with bars, labels and percentages.)', 'สรุปบรรทัดเดียวต่อผู้ให้บริการ (One summary per provider.)'],
+		description: 'รูปแบบของหน้าต่าง Usage (Layout of the usage popup.)',
+		scope: 'application'
+	},
+	{
 		id: 'kingu.agentsControl.enabled',
 		group: 'Agent',
 		type: 'string',

@@ -13,6 +13,7 @@
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 	import StatusResources from './StatusResources.svelte';
 	import NotificationsBell from './NotificationsBell.svelte';
+	import UsageStatus from './UsageStatus.svelte';
 	import PopupMenu, { menuItem, menuSeparator } from './PopupMenu.svelte';
 	import { floating } from './floating.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
@@ -44,7 +45,8 @@
 	const TOGGLES = [
 		{ id: 'kingu.statusBar.keepAwake.visible', label: 'Keep Awake' },
 		{ id: 'kingu.statusBar.resources.visible', label: 'Resource Manager' },
-		{ id: 'kingu.statusBar.ports.visible', label: 'Ports' }
+		{ id: 'kingu.statusBar.ports.visible', label: 'Ports' },
+		{ id: 'kingu.statusBar.usage.visible', label: 'Usage' }
 	];
 	let menu = $state<{ x: number; y: number } | null>(null);
 	const menuItems = $derived([
@@ -85,6 +87,7 @@
 		<Icon name="agent" size={14} />{counts.inProgress} กำลังทำ
 		{#if counts.needsInput}<span class="text-(--vscode-editorWarning-foreground)">· {counts.needsInput} รอคุณ</span>{/if}
 	</button>
+	<UsageStatus />
 	{#if cost > 0}<span class="px-2 tabular-nums" title="ค่าใช้จ่าย agent ในโฟลเดอร์นี้">${cost.toFixed(2)}</span>{/if}
 	{#if status.message}<span class="truncate px-2">{status.message}</span>{/if}
 	<div class="flex-1"></div>
