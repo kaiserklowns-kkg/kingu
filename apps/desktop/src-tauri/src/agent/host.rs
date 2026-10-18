@@ -6,6 +6,8 @@
 //!
 //! Prompts and tool inputs pass through but are never logged.
 
+use crate::i18n::msg::AgentMsg;
+use crate::tr;
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -75,7 +77,7 @@ pub fn resolve_sidecar(
   bun: impl FnOnce() -> Option<PathBuf>,
 ) -> Result<(PathBuf, Vec<OsString>), String> {
   let with_bun = |script: &Path| -> Result<(PathBuf, Vec<OsString>), String> {
-    let bun = bun().ok_or("ไม่พบ bun สำหรับรัน agent host: ติดตั้ง bun หรือตั้ง KINGU_BUN / KINGU_AGENT_HOST")?;
+    let bun = bun().ok_or_else(|| tr!(AgentMsg::NoBun))?;
     Ok((bun, vec!["run".into(), script.as_os_str().to_owned()]))
   };
   if let Some(o) = override_var.filter(|o| !o.is_empty()) {
@@ -275,7 +277,7 @@ impl Proc {
     let runs: Vec<_> = self.runs.lock().unwrap().drain().collect();
     log::info!("agent host {} exited (code {code:?}, signal {signal:?}); ending {} run(s)", self.pid, runs.len());
     for (_, sink) in runs {
-      sink(AgentEvent::Error { message: "agent host หยุดทำงานกะทันหัน (agent host exited unexpectedly)".into() });
+      sink(AgentEvent::Error { message: tr!(AgentMsg::HostExited) });
       sink(AgentEvent::Exit { code, signal, stopped: false });
     }
   }
