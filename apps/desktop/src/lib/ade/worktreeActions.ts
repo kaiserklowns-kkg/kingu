@@ -10,6 +10,7 @@ export type WorktreeAction =
 	| 'quickOpen'
 	| 'reveal'
 	| 'copyBranch'
+	| 'rename'
 	| 'copyPath'
 	| 'markDone'
 	| 'reopen'
@@ -30,7 +31,7 @@ export function worktreeActions(w: { slug: string | null; status?: TaskStatus; r
 		{ id: 'copyPath', label: 'คัดลอก path' }
 	];
 	if (!task) return rows;
-	rows.push({ id: 'copyBranch', label: 'คัดลอกชื่อ branch' }, 'separator');
+	rows.push({ id: 'copyBranch', label: 'คัดลอกชื่อ branch' }, { id: 'rename', label: 'เปลี่ยนชื่อ… (Rename)' }, 'separator');
 	rows.push(w.status === 'done' ? { id: 'reopen', label: 'เปิดงานอีกครั้ง' } : { id: 'markDone', label: 'ปิดงาน (Mark as Done)', enabled: !w.running });
 	rows.push({ id: 'remove', label: 'ลบงานและ worktree…', enabled: !w.running });
 	return rows;

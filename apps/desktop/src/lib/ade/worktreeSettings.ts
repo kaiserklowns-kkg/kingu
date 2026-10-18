@@ -75,3 +75,24 @@ export function scriptPreview(content: string, maxLines = 20): string {
 	const lines = content.replace(/\s+$/, '').split('\n');
 	return lines.length > maxLines ? [...lines.slice(0, maxLines), `… (อีก ${lines.length - maxLines} บรรทัด)`].join('\n') : lines.join('\n');
 }
+
+/** The remove dialog's branch choice (defaults from `branchRemoval`). */
+export const BRANCH_CHOICES: { id: BranchRemoval; label: string }[] = [
+	{ id: 'keep', label: 'เก็บ branch ไว้' },
+	{ id: 'safe', label: 'ลบ branch ถ้า merge แล้ว (git branch -d) ไม่เช่นนั้นเก็บไว้' },
+	{ id: 'force', label: 'ลบ branch แม้ยังไม่ merge (git branch -D)' }
+];
+
+/** Orca's DeleteWorktreeTargetPreview limit: changed paths listed in the remove dialog. */
+export const DIRTY_PREVIEW = 10;
+
+/**
+ * Orca's dirty-change hint: one count for every status entry (modified and untracked together),
+ * the first `DIRTY_PREVIEW` paths with their letter, and how many more.
+ */
+export function dirtyPreview(entries: { path: string; index: string | null; worktree: string | null; conflict?: boolean }[]) {
+	const files = entries.slice(0, DIRTY_PREVIEW).map((e) => ({ path: e.path, letter: e.conflict ? '!' : e.worktree === '?' ? 'U' : (e.worktree ?? e.index ?? 'M'), conflict: !!e.conflict }));
+	return { count: entries.length, files, more: Math.max(0, entries.length - files.length) };
+}
+
+export const dirtyLabel = (n: number) => (n === 0 ? 'ไม่มีการแก้ไขที่ยังไม่ commit หรือไฟล์ untracked' : `การแก้ไขที่ยังไม่ commit หรือ untracked ${n} รายการ`);

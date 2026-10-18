@@ -9,6 +9,7 @@ import { status } from '#lib/workbench/status.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { adeLayout, PRIMARY } from './adeLayout.svelte';
 import { openEditor } from './agentsMode.svelte';
+import { quickOpenWorktree } from './quickOpen.svelte.ts';
 import { worktreeDir } from './keys';
 import { COLUMNS, STATUS_LABEL } from './model';
 import { adeTasks } from './tasks.svelte';
@@ -45,13 +46,17 @@ export function runWorktreeAction(key: string, id: WorktreeAction) {
 			adeLayout.show(key);
 			return adeLayout.newTerminal(key);
 		case 'quickOpen':
-			return slug ? adeTasks.quickOpen(slug) : commands.run('workbench.action.quickOpen');
+			appMode.setMode('agents');
+			adeLayout.show(key);
+			return quickOpenWorktree(key);
 		case 'reveal':
 			return invoke('fs_reveal', { rel: slug ? worktreeDir(slug) : '' }).catch((e) => status.flash(String(e)));
 		case 'copyPath':
 			return workspace.root && copy(slug ? `${workspace.root}/${worktreeDir(slug)}` : workspace.root, ' path ');
 		case 'copyBranch':
 			return slug && copy(adeTasks.branchOf(slug), 'ชื่อ branch ');
+		case 'rename':
+			return slug && adeTasks.startRename(slug);
 		case 'markDone':
 			return slug && adeTasks.markDone(slug);
 		case 'reopen':

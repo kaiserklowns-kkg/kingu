@@ -1,7 +1,17 @@
 // Quick input state (VS Code: IQuickInputService / quick access). The prefix picks the provider:
 // '>' commands, ':' go to line, '' files. `pick` shows a custom list instead (createQuickPick).
 
-export type PickItem = { id: string; label: string; description?: string; /** Group label shown above this item. */ separator?: string };
+export type PickItem = {
+	id: string;
+	label: string;
+	description?: string;
+	/** Group label shown above this item. */
+	separator?: string;
+	/** Matched characters of `label` to highlight (a `dynamic` list ranks itself). */
+	positions?: number[];
+	/** A file path: the row shows that file's icon. */
+	icon?: string;
+};
 
 export type Picker = {
 	placeholder: string;

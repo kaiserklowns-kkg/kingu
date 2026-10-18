@@ -3,6 +3,8 @@ import { describe, expect, test } from 'bun:test';
 import {
 	associatedLanguage,
 	codeActionsOnSave,
+	diffEditorOptionsFrom,
+	diffWraps,
 	editorOptionsFrom,
 	effectiveTheme,
 	enabledGlobs,
@@ -220,5 +222,24 @@ describe('workbench', () => {
 		const auto = getter({ 'window.autoDetectColorScheme': true, 'workbench.preferredLightColorTheme': 'Light+' });
 		expect(effectiveTheme(auto, false)).toBe('Light+');
 		expect(effectiveTheme(auto, true)).toBe('Dark Modern');
+	});
+});
+
+describe('diff editor options (diffEditor.*)', () => {
+	test('defaults follow VS Code: side by side, unchanged shown, trim whitespace ignored, wrap inherited', () => {
+		expect(diffEditorOptionsFrom(getter())).toEqual({ renderSideBySide: true, hideUnchangedRegions: { enabled: false }, ignoreTrimWhitespace: true, diffWordWrap: 'inherit' });
+		expect(diffWraps(getter())).toBe(false);
+	});
+
+	test('settings map to Monaco, and a view toggle wins over the setting', () => {
+		const get = getter({ 'diffEditor.renderSideBySide': false, 'diffEditor.hideUnchangedRegions.enabled': true, 'diffEditor.ignoreTrimWhitespace': false, 'diffEditor.wordWrap': 'on' });
+		expect(diffEditorOptionsFrom(get)).toEqual({ renderSideBySide: false, hideUnchangedRegions: { enabled: true }, ignoreTrimWhitespace: false, diffWordWrap: 'on' });
+		expect(diffEditorOptionsFrom(get, true).renderSideBySide).toBe(true);
+		expect(diffWraps(get)).toBe(true);
+	});
+
+	test('inherit follows editor.wordWrap', () => {
+		expect(diffWraps(getter({ 'editor.wordWrap': 'bounded' }))).toBe(true);
+		expect(diffWraps(getter({ 'editor.wordWrap': 'on', 'diffEditor.wordWrap': 'off' }))).toBe(false);
 	});
 });

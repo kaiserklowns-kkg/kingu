@@ -103,6 +103,33 @@ pub fn merge_base(dir: &Path, base: &str) -> Result<String, String> {
   Ok(text(git::run(dir, &["merge-base", &base, &head])?).trim().to_owned())
 }
 
+/// A commit of the task branch (PR form prefill).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Commit {
+  pub subject: String,
+  pub body: String,
+}
+
+const MAX_COMMITS: usize = 200;
+
+/// Commits on HEAD since it forked from `base`, oldest first (at most `MAX_COMMITS`, the newest).
+pub fn commits_since(dir: &Path, base: &str) -> Result<Vec<Commit>, String> {
+  let fork = merge_base(dir, base)?;
+  let range = format!("{fork}..HEAD");
+  let max = format!("--max-count={MAX_COMMITS}");
+  let out = text(git::run(dir, &["log", "--no-merges", &max, "--format=%s%x1f%b%x1e", &range])?);
+  let mut commits: Vec<Commit> = out
+    .split('\x1e')
+    .filter_map(|rec| {
+      let rec = rec.trim_start_matches('\n');
+      let (subject, body) = rec.split_once('\x1f')?;
+      Some(Commit { subject: subject.trim().to_owned(), body: body.trim().to_owned() })
+    })
+    .collect();
+  commits.reverse();
+  Ok(commits)
+}
+
 /// Lines in an untracked file; `None` when binary (a NUL byte) or too large to read.
 fn line_count(path: &Path) -> Option<u64> {
   let meta = std::fs::symlink_metadata(path).ok()?;
@@ -493,6 +520,56 @@ mod tests {
     let args = pr_create_args("main", "kingu/t", "--title", "-b", false);
     assert_eq!(args, ["pr", "create", "--base=main", "--head=kingu/t", "--title=--title", "--body=-b"]);
     assert_eq!(pr_create_args("main", "kingu/t", "x", "", true).last().map(String::as_str), Some("--draft"));
+  }
+
+  #[test]
+  fn commits_since_lists_the_branch_commits_oldest_first() {
+    let (_tmp, repo, wt) = setup();
+    assert_eq!(commits_since(&wt, "main").unwrap(), []);
+    write(&wt, "a.txt", "a\n");
+    git_ok(&wt, &["add", "."]);
+    git_ok(&wt, &["commit", "-q", "-m", "เพิ่ม a", "-m", "รายละเอียด\nบรรทัดสอง"]);
+    write(&wt, "b.txt", "b\n");
+    git_ok(&wt, &["add", "."]);
+    git_ok(&wt, &["commit", "-q", "-m", "add b"]);
+    // A commit on main after the fork is not the task's.
+    write(&repo, "m.txt", "m\n");
+    git_ok(&repo, &["add", "m.txt"]);
+    git_ok(&repo, &["commit", "-q", "-m", "on main"]);
+    let commits = commits_since(&wt, "main").unwrap();
+    assert_eq!(
+      commits,
+      [
+        Commit { subject: "เพิ่ม a".into(), body: "รายละเอียด\nบรรทัดสอง".into() },
+        Commit { subject: "add b".into(), body: String::new() }
+      ]
+    );
+    assert!(commits_since(&wt, "-x").is_err());
+  }
+
+  /// `gh pr create` with a fake `gh`: the branch is pushed to origin and gh gets the edited
+  /// title, body, base and --draft as separate attached arguments; its URL comes back.
+  #[cfg(unix)]
+  #[test]
+  fn pr_create_pushes_then_runs_gh_with_the_form_values() {
+    use std::os::unix::fs::PermissionsExt;
+    let (tmp, repo, wt) = setup();
+    let remote = tmp.path().join("remote.git");
+    git_ok(tmp.path(), &["init", "-q", "--bare", remote.to_str().unwrap()]);
+    git_ok(&repo, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    write(&wt, "new.txt", "n\n");
+    git_ok(&wt, &["add", "."]);
+    git_ok(&wt, &["commit", "-q", "-m", "add new"]);
+    let log = tmp.path().join("gh-args");
+    let gh = tmp.path().join("gh");
+    std::fs::write(&gh, format!("#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> '{}'; done\necho https://github.com/acme/app/pull/7\n", log.display())).unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let url = pr_create(&gh, &wt, "t", "main", "แก้ login", "Fixes #3\n\nรายละเอียด", true).unwrap();
+    assert_eq!(url, "https://github.com/acme/app/pull/7");
+    let args = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(args, "pr\ncreate\n--base=main\n--head=kingu/t\n--title=แก้ login\n--body=Fixes #3\n\nรายละเอียด\n--draft\n");
+    assert_eq!(git_ok(&remote, &["log", "-1", "--format=%s", "kingu/t"]).trim(), "add new");
+    assert!(pr_create(&gh, &wt, "t", "main", "  ", "", false).is_err(), "empty title");
   }
 
   #[test]

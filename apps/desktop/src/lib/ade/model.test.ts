@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
+	renamedTitle,
+	MAX_TITLE,
 	adoptOrphans,
 	aggregateStats,
 	columnOf,
@@ -273,5 +275,16 @@ describe('editor keys', () => {
 		expect(remapPath(key, '.kingu', 'x')).toBeNull();
 		expect(parseTaskDiffKey('diff:src/a.ts')).toBeNull();
 		expect(fileOf('diff:src/a.ts')).toBe('src/a.ts');
+	});
+});
+
+describe('rename (Orca getWorktreeTitleRenameCommit)', () => {
+	test('trimmed new name; empty or unchanged cancels', () => {
+		expect(renamedTitle('old', '  แก้ login  ')).toBe('แก้ login');
+		expect(renamedTitle('old', '   ')).toBeNull();
+		expect(renamedTitle('old', ' old ')).toBeNull();
+	});
+	test('capped at the tasks.json limit in characters', () => {
+		expect([...renamedTitle('old', 'ก'.repeat(MAX_TITLE + 20))!]).toHaveLength(MAX_TITLE);
 	});
 });

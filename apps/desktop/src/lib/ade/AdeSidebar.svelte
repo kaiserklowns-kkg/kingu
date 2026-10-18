@@ -8,7 +8,7 @@
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { adeLayout, PRIMARY } from './adeLayout.svelte';
 	import { matchesQuery } from './adeTabs';
-	import { aggregateStats, STATUS_LABEL, timeAgo, type TaskView } from './model';
+	import { aggregateStats, MAX_TITLE, STATUS_LABEL, timeAgo, type TaskView } from './model';
 	import { adeTasks } from './tasks.svelte';
 	import { automations } from './automations.svelte.ts';
 	import { STATUS_DOT } from './ui';
@@ -42,6 +42,39 @@
 		e.stopPropagation();
 		const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		menu = e.type === 'contextmenu' && e.clientX ? { key, x: e.clientX, y: e.clientY, keyboard: false } : { key, x: r.right - 248, y: r.bottom + 2, keyboard: e.detail === 0 };
+	}
+
+	// Orca's WorktreeTitleInlineRename: Enter or leaving the box saves, Escape cancels; empty or
+	// unchanged keeps the old name. Only the display name changes, never the branch.
+	let renameValue = $state('');
+	let saving = false;
+	$effect(() => {
+		const slug = adeTasks.renaming;
+		if (slug) renameValue = adeTasks.find(slug)?.meta.title ?? '';
+	});
+	function focusSelect(node: HTMLInputElement) {
+		node.focus();
+		node.select();
+	}
+	async function commitRename(slug: string) {
+		if (saving || adeTasks.renaming !== slug) return;
+		saving = true;
+		try {
+			await adeTasks.rename(slug, renameValue);
+		} finally {
+			saving = false;
+			if (adeTasks.renaming === slug) adeTasks.renaming = null;
+		}
+	}
+	function onRenameKey(e: KeyboardEvent, slug: string) {
+		if (e.isComposing) return;
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			void commitRename(slug);
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			adeTasks.renaming = null;
+		}
 	}
 
 	const NAV = 'flex h-8 w-full items-center gap-2.5 rounded-md px-2.5 text-[13px] hover:bg-(--vscode-list-hoverBackground)';
@@ -140,6 +173,20 @@
 				{#each shown as v (v.meta.slug)}
 					{@const selected = selectedKey === v.meta.slug}
 					{@const totals = v.stat ? aggregateStats(v.stat.files) : null}
+					{#if adeTasks.renaming === v.meta.slug}
+						<div class={[CARD, 'border-(--vscode-focusBorder) bg-(--vscode-list-hoverBackground)']}>
+							<input
+								class="h-6 w-full rounded-sm border border-(--vscode-focusBorder) bg-(--vscode-input-background) px-1.5 text-[13px] text-(--vscode-input-foreground) outline-none"
+								aria-label="เปลี่ยนชื่องาน"
+								maxlength={MAX_TITLE}
+								bind:value={renameValue}
+								use:focusSelect
+								onkeydown={(e) => onRenameKey(e, v.meta.slug)}
+								onblur={() => void commitRename(v.meta.slug)}
+							/>
+							<span class="mt-0.5 block truncate pl-1 font-mono text-xs text-(--vscode-descriptionForeground)" title="branch ไม่เปลี่ยน">{adeTasks.branchOf(v.meta.slug)}</span>
+						</div>
+					{:else}
 					<button
 						class={[CARD, selected ? 'border-(--vscode-widget-border) bg-(--vscode-list-hoverBackground)' : 'border-transparent hover:bg-(--vscode-list-hoverBackground)']}
 						aria-current={selected ? 'true' : undefined}
@@ -156,7 +203,8 @@
 							{:else}
 								<span class={['size-2 shrink-0 rounded-full', STATUS_DOT[v.status]]} title={STATUS_LABEL[v.status]}></span>
 							{/if}
-							<span class="min-w-0 flex-1 truncate text-[13px]" title={v.meta.title}>{v.meta.title}</span>
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<span class="min-w-0 flex-1 truncate text-[13px]" title="{v.meta.title} (ดับเบิลคลิกเพื่อเปลี่ยนชื่อ)" ondblclick={(e) => (e.stopPropagation(), adeTasks.startRename(v.meta.slug))}>{v.meta.title}</span>
 							<span
 								role="button"
 								tabindex="0"
@@ -177,6 +225,7 @@
 							<span class="shrink-0 text-[11px] text-(--vscode-descriptionForeground)">{timeAgo(when(v), adeTasks.now)}</span>
 						</span>
 					</button>
+					{/if}
 				{/each}
 				{#if adeLayout.query && !shown.length && !primaryShown}
 					<p class="px-2 py-1 text-xs text-(--vscode-descriptionForeground)">ไม่พบ worktree ที่ตรงกับ “{adeLayout.query}”</p>

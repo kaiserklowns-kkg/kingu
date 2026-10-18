@@ -33,6 +33,7 @@ import {
 	patchTask,
 	pruneAccepted,
 	removeTask,
+	renamedTitle,
 	runSummary,
 	toTaskRuntime,
 	sameSummary,
@@ -53,9 +54,13 @@ import { chooseAgentCli } from '#lib/ade/agentPicker.ts';
 import { cliSessions } from './cliSessions.svelte';
 import { mcpServers, skillPlugins } from './mcp';
 import { prStatuses } from './prStatus.svelte';
-import { issueLink, issuePrompt, issueSlug, issueTaskTitle, prBody, prComment, taskForIssue, type Issue, type IssueDetail } from './issues.ts';
+import { quickOpenWorktree } from './quickOpen.svelte.ts';
+import { diffNotes } from './diffNotes.svelte.ts';
+import { adeDialogs } from './dialogs.svelte.ts';
+import { prefillPr, prFormProblem, type Commit, type PrForm } from './prForm.ts';
+import { issueLink, issuePrompt, issueSlug, issueTaskTitle, prComment, taskForIssue, type Issue, type IssueDetail } from './issues.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
-import { branchPrefix, branchRemoval, defaultBaseBranch, scriptPreview, scriptRunSummary, setupCommand, setupPolicy, type ScriptRun, type WorktreeScript } from './worktreeSettings.ts';
+import { branchPrefix, branchRemoval, type BranchRemoval, defaultBaseBranch, scriptPreview, scriptRunSummary, setupCommand, setupPolicy, type ScriptRun, type WorktreeScript } from './worktreeSettings.ts';
 
 class AdeTasks {
 	list = $state<TaskMeta[]>([]);
@@ -437,15 +442,26 @@ class AdeTasks {
 	}
 
 	/** Follow-up message: into the open session, else resuming the task's session (saved in tasks.json). */
-	async followUp(slug: string, text: string) {
+	async followUp(slug: string, text: string): Promise<boolean> {
 		const meta = this.list.find((t) => t.slug === slug);
-		if (!meta || !text.trim()) return;
+		if (!meta || !text.trim()) return false;
 		try {
 			await runtime.followUp(slug, text, meta.session_id);
 			if (meta.status !== 'running') await this.#patch(slug, { status: 'running' });
+			return true;
 		} catch (e) {
 			status.flash(`ส่งข้อความถึง agent ไม่ได้: ${e}`, 10000);
+			return false;
 		}
+	}
+
+	/** Starts the task's CLI again in its worktree with `prompt` (Orca's "New agent" for review notes). */
+	async startCliWith(slug: string, prompt: string): Promise<boolean> {
+		const meta = this.list.find((t) => t.slug === slug);
+		const cli = meta && cliOf(meta.agent);
+		if (!cli) return false;
+		await this.#launchCli(slug, cli, { prompt });
+		return true;
 	}
 
 	answer(slug: string, requestId: string, decision: Decision, message?: string) {
@@ -483,52 +499,70 @@ class AdeTasks {
 		if (rt.status === 'review' || rt.status === 'failed') void this.refreshStat(slug);
 	}
 
-	/** Removes the worktree (its branch is kept unless kingu.worktree.deleteBranchOnRemove says otherwise) and forgets the task. */
+	/** The branch removal a task gets by default (`kingu.worktree.deleteBranchOnRemove`, merged or not). */
+	defaultBranchRemoval(slug: string): BranchRemoval {
+		const meta = this.list.find((t) => t.slug === slug);
+		const merged = !!meta?.merged_at || prStatuses.bySlug[slug]?.pr?.state === 'MERGED';
+		return branchRemoval(settings.get<string>('kingu.worktree.deleteBranchOnRemove'), { merged });
+	}
+
+	hasWorktree(slug: string): boolean {
+		return this.worktrees.some((w) => w.slug === slug);
+	}
+
+	/**
+	 * Remove a task: the remove dialog (Orca's Delete Workspace: changes, branch choice, "don't ask
+	 * again"), or straight away when kingu.worktree.confirmRemove is off.
+	 */
 	async remove(slug: string) {
 		if (runtime.isWorking(slug)) {
 			status.flash('หยุด agent ก่อนลบงาน');
 			return;
 		}
+		if (settings.get<boolean>('kingu.worktree.confirmRemove') !== false) adeDialogs.open({ kind: 'remove', slug });
+		else await this.removeConfirmed(slug, { deleteBranch: this.defaultBranchRemoval(slug), force: false });
+	}
+
+	/**
+	 * Removes the worktree (the branch per `deleteBranch`) and forgets the task. `force`: the user
+	 * saw the uncommitted changes in the dialog and removes them too; without it a dirty worktree
+	 * still asks. False when nothing was removed.
+	 */
+	async removeConfirmed(slug: string, opts: { deleteBranch: BranchRemoval; force: boolean }): Promise<boolean> {
+		if (runtime.isWorking(slug)) {
+			status.flash('หยุด agent ก่อนลบงาน');
+			return false;
+		}
 		const path = worktreeDir(slug);
-		const hasWorktree = this.worktrees.some((w) => w.slug === slug);
-		const meta = this.list.find((t) => t.slug === slug);
-		const merged = !!meta?.merged_at || prStatuses.bySlug[slug]?.pr?.state === 'MERGED';
-		const deleteBranch = branchRemoval(settings.get<string>('kingu.worktree.deleteBranchOnRemove'), { merged });
-		const branch = this.branchOf(slug);
-		const confirm = settings.get<boolean>('kingu.worktree.confirmRemove') !== false;
+		const hasWorktree = this.hasWorktree(slug);
+		const deleteBranch = opts.deleteBranch;
 		let kept: string | null = null;
 		if (hasWorktree) {
-			const branchNote =
-				deleteBranch === 'keep'
-					? `branch ${branch} จะยังอยู่ (ลบเองได้ด้วย git branch -D)`
-					: deleteBranch === 'force'
-						? `branch ${branch} จะถูกลบด้วย (kingu.worktree.deleteBranchOnRemove)`
-						: `branch ${branch} จะถูกลบด้วยถ้า merge แล้ว ถ้ายังไม่ merge จะเก็บไว้`;
-			if (confirm && !(await ask(`ลบ worktree ${path}?\n\n${branchNote}`, { title: 'ลบงาน', kind: 'warning', okLabel: 'ลบ', cancelLabel: 'ยกเลิก' }))) return;
 			// An idle session still runs in the worktree: end it with the task.
 			if (runtime.isLive(slug)) await this.stop(slug);
-			if (!(await this.#runArchive(slug))) return;
+			if (!(await this.#runArchive(slug))) return false;
 			try {
-				kept = await invoke<string | null>('worktree_remove', { slug, force: false, deleteBranch });
+				kept = await invoke<string | null>('worktree_remove', { slug, force: opts.force, deleteBranch });
 			} catch (e) {
 				const dirty = /modified|untracked|dirty/i.test(String(e));
-				if (!dirty) {
+				if (!dirty || opts.force) {
 					status.flash(`ลบไม่ได้: ${e}`, 10000);
-					return;
+					return false;
 				}
 				const force = await ask(`worktree ${path} มีการแก้ไขที่ยังไม่ commit\n\nลบทิ้งทั้งหมด? กู้คืนไม่ได้`, { title: 'มีงานที่ยังไม่ commit', kind: 'warning', okLabel: 'ลบทิ้ง', cancelLabel: 'ยกเลิก' });
-				if (!force) return;
+				if (!force) return false;
 				try {
 					kept = await invoke<string | null>('worktree_remove', { slug, force: true, deleteBranch });
 				} catch (e2) {
 					status.flash(`ลบไม่ได้: ${e2}`, 10000);
-					return;
+					return false;
 				}
 			}
-		} else if (confirm && !(await ask(`ลบงาน "${this.list.find((t) => t.slug === slug)?.title ?? slug}" ออกจากรายการ?`, { title: 'ลบงาน', okLabel: 'ลบ', cancelLabel: 'ยกเลิก' }))) return;
+		}
 		if (!hasWorktree && runtime.isLive(slug)) await this.stop(slug);
 		runtime.forget(slug);
 		cliSessions.end(slug);
+		diffNotes.forget(slug);
 		for (const t of editors.allTabs().map((t) => t.path)) {
 			if (slugOfTaskKey(t) === slug || parseTaskDiffKey(t)?.slug === slug) editors.closeEverywhere(t);
 		}
@@ -538,6 +572,7 @@ class AdeTasks {
 		await this.#save(removeTask(this.list, slug));
 		appMode.forget(slug);
 		status.flash(kept ? `ลบงาน ${slug} แล้ว — เก็บ branch ${kept} ไว้เพราะยังไม่ merge (ลบเองได้ด้วย git branch -D)` : `ลบงาน ${slug} แล้ว`, kept ? 10000 : undefined);
+		return true;
 	}
 
 	// -------------------------------------------------------------------------------------------
@@ -609,22 +644,67 @@ class AdeTasks {
 			await message(`gh ยังไม่ได้เข้าสู่ระบบ\n\nรันในเทอร์มินัล: gh auth login\n\n${gh.detail}`, { title: 'สร้าง PR', kind: 'info' });
 			return;
 		}
-		const stat = this.stats[slug];
-		if (stat?.dirty && !(await ask('มีการแก้ไขที่ยังไม่ commit ซึ่งจะไม่อยู่ใน PR\n\nสร้าง PR ต่อไหม?', { title: 'สร้าง PR', okLabel: 'สร้าง PR', cancelLabel: 'ยกเลิก' })))
-			return;
-		if (!(await ask(`push ${this.branchOf(slug)} ไปที่ origin แล้วเปิด PR เข้า ${meta.base}?`, { title: 'สร้าง PR', okLabel: 'สร้าง PR', cancelLabel: 'ยกเลิก' }))) return;
-		const body = prBody(meta);
-		const draft = settings.get<boolean>('kingu.pr.draft') === true;
-		const url = await this.#step(slug, 'สร้าง PR', () => invoke<string>('worktree_pr_create', { slug, base: meta.base, title: meta.title, body, draft, open: settings.get<boolean>('kingu.pr.openAfterCreate') === true }));
-		if (url !== undefined) {
-			await this.#patch(slug, { pr_url: url || null });
-			status.flash(url ? `เปิด PR แล้ว: ${url}` : 'เปิด PR แล้ว', 10000);
-			void prStatuses.refresh(slug);
-			if (url && meta.issue && settings.get<boolean>('kingu.issues.commentOnPr') === true) {
-				const number = meta.issue.number;
-				invoke('gh_issue_comment', { number, body: prComment(url) }).catch((e) => status.flash(`comment ใน issue #${number} ไม่ได้: ${e}`, 8000));
-			}
+		adeDialogs.open({ kind: 'pr', slug });
+	}
+
+	/** The PR form's first values (Orca seeds them once per open): from the branch's commits and the task. */
+	async prDefaults(slug: string): Promise<PrForm | null> {
+		const meta = this.list.find((t) => t.slug === slug);
+		if (!meta) return null;
+		const commits = await invoke<Commit[]>('worktree_commits', { slug, base: meta.base }).catch((e) => {
+			clientLog('info', `worktree_commits ${slug}: ${e}`);
+			return [] as Commit[];
+		});
+		return prefillPr(meta, this.branchOf(slug), commits, settings.get<boolean>('kingu.pr.draft') === true);
+	}
+
+	/** Pushes the branch and opens the PR from the form; the error text when it failed (the form shows it). */
+	async submitPr(slug: string, form: PrForm): Promise<string | null> {
+		const meta = this.list.find((t) => t.slug === slug);
+		if (!meta) return 'ไม่พบงาน';
+		const problem = prFormProblem(form, this.branchOf(slug));
+		if (problem) return problem;
+		this.busy[slug] = 'สร้าง PR';
+		let url: string;
+		try {
+			url = await invoke<string>('worktree_pr_create', {
+				slug,
+				base: form.base.trim(),
+				title: form.title.trim(),
+				body: form.body,
+				draft: form.draft,
+				open: settings.get<boolean>('kingu.pr.openAfterCreate') === true
+			});
+		} catch (e) {
+			clientLog('error', `${slug} สร้าง PR: ${e}`);
+			return String(e);
+		} finally {
+			delete this.busy[slug];
 		}
+		await this.#patch(slug, { pr_url: url || null });
+		status.flash(url ? `เปิด PR แล้ว: ${url}` : 'เปิด PR แล้ว', 10000);
+		void prStatuses.refresh(slug);
+		if (url && meta.issue && settings.get<boolean>('kingu.issues.commentOnPr') === true) {
+			const number = meta.issue.number;
+			invoke('gh_issue_comment', { number, body: prComment(url) }).catch((e) => status.flash(`comment ใน issue #${number} ไม่ได้: ${e}`, 8000));
+		}
+		return null;
+	}
+
+	/** Orca's rename: the task's display name only; its branch and worktree folder stay. Empty or unchanged keeps the old name. */
+	async rename(slug: string, title: string) {
+		const meta = this.list.find((t) => t.slug === slug);
+		const next = meta ? renamedTitle(meta.title, title) : null;
+		if (next !== null) await this.#patch(slug, { title: next });
+	}
+
+	/** The task whose side bar card shows the inline rename box (⌥⌘R, the card menu). */
+	renaming = $state<string | null>(null);
+
+	startRename(slug: string) {
+		if (!this.list.some((t) => t.slug === slug)) return;
+		if (appMode.isAgents) appMode.sessionsVisible = true;
+		this.renaming = slug;
 	}
 
 	markDone(slug: string, done = true) {
@@ -683,8 +763,12 @@ class AdeTasks {
 		return { ...k, rev: stat.merge_base, orig };
 	}
 
-	/** Quick open scoped to the worktree: files open as `.kingu/worktrees/<slug>/<file>`. */
+	/** Quick open scoped to the worktree: files open as `.kingu/worktrees/<slug>/<file>` (in the Agents layout, as its tabs). */
 	async quickOpen(slug: string) {
+		if (appMode.isAgents) {
+			adeLayout.show(slug);
+			return quickOpenWorktree(slug);
+		}
 		let files: string[];
 		try {
 			files = await invoke<string[]>('worktree_list_files', { slug });
@@ -722,6 +806,7 @@ export function installAde(): () => void {
 				// Runs stay in the agents store across folders; re-sync this folder's after loading.
 				synced.clear();
 				void adeTasks.load();
+				void diffNotes.load();
 			});
 		});
 		// Team server: send each task's metadata when its status, branch or diff stats change.
@@ -769,6 +854,28 @@ export function installAde(): () => void {
 		commands.register({ id: 'kingu.agents.openBoard', title: 'Open Board', category: 'Agents', when: hasRoot, run: () => adeTasks.openBoard() }),
 		commands.register({ id: 'kingu.agents.nextAttention', title: 'เปิดงานถัดไปที่รอคุณ (Next Task Needing Attention)', category: 'Agents', when: hasRoot, run: () => adeTasks.openNext() }),
 		commands.register({ id: 'kingu.agents.openTask', title: 'Open Task...', category: 'Agents', when: () => adeTasks.list.length > 0, run: () => adeTasks.pickTask() }),
+		// Orca's sourceControl.sendReviewNotes (unbound): the notes of the worktree in front.
+		commands.register({
+			id: 'kingu.agents.sendReviewNotes',
+			title: 'ส่งโน้ตรีวิวถึง agent (Send Review Notes to Agent)',
+			category: 'Agents',
+			when: hasRoot,
+			run: () => {
+				const active = editors.active;
+				const key = appMode.isAgents ? adeLayout.key : active ? (slugOfTaskKey(active) ?? parseTaskDiffKey(active)?.slug ?? '') : '';
+				const notes = diffNotes.list(key);
+				if (!notes.length) return status.flash('ไม่มีโน้ตรีวิวที่ยังไม่ได้ส่ง');
+				return diffNotes.send(key, notes);
+			}
+		}),
+		commands.register({
+			id: 'kingu.agents.renameTask',
+			title: 'เปลี่ยนชื่องาน (Rename Task)',
+			category: 'Agents',
+			key: 'cmd+alt+r',
+			when: () => appMode.isAgents && !!appMode.activeSession && !!adeTasks.find(appMode.activeSession),
+			run: () => appMode.activeSession && adeTasks.startRename(appMode.activeSession)
+		}),
 		commands.register({ id: 'kingu.agents.refresh', title: 'Refresh Tasks', category: 'Agents', when: hasRoot, run: () => adeTasks.load() }),
 		commands.register({ id: 'kingu.agent.chooseCli', title: 'Choose CLI…', category: 'Agent', run: () => chooseAgentCli() }),
 		commands.register({

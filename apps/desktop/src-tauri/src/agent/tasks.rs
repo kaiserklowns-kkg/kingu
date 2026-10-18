@@ -209,6 +209,24 @@ mod tests {
     assert_eq!(names, ["tasks.json"], "no temp file left behind");
   }
 
+  /// Rename (Orca's display name): only the title changes; slug, branch base and session stay.
+  #[test]
+  fn rename_changes_only_the_title() {
+    let tmp = tempfile::tempdir().unwrap();
+    save(tmp.path(), &[task("a"), task("b")]).unwrap();
+    let mut list = load(tmp.path()).unwrap();
+    list[0].title = "แก้หน้า login ใหม่".into();
+    save(tmp.path(), &list).unwrap();
+    let after = load(tmp.path()).unwrap();
+    assert_eq!(after[0].title, "แก้หน้า login ใหม่");
+    assert_eq!(TaskMeta { title: task("a").title, ..after[0].clone() }, task("a"));
+    assert_eq!(after[1], task("b"));
+    list[0].title = "ก".repeat(MAX_TITLE + 1);
+    assert!(save(tmp.path(), &list).is_err(), "longer than {MAX_TITLE} characters");
+    list[0].title = "ก".repeat(MAX_TITLE);
+    assert!(save(tmp.path(), &list).is_ok(), "the limit counts characters, not bytes");
+  }
+
   #[test]
   fn fills_defaults_for_older_files() {
     let tmp = tempfile::tempdir().unwrap();
