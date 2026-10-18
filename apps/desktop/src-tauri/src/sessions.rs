@@ -86,21 +86,22 @@ pub fn read_session(path: &Path) -> Option<Session> {
     if kind == "summary" || kind == "custom-title" {
       summary = v.get("summary").or_else(|| v.get("customTitle")).and_then(Value::as_str).map(str::to_owned).or(summary);
     }
-    if s.created == 0 {
-      if let Some(t) = time_of(&v) {
-        s.created = t;
-      }
+    if s.created == 0
+      && let Some(t) = time_of(&v)
+    {
+      s.created = t;
     }
     if s.cwd.is_none() {
       s.cwd = v.get("cwd").and_then(Value::as_str).map(str::to_owned);
       s.branch = v.get("gitBranch").and_then(Value::as_str).map(str::to_owned);
     }
-    if s.title.is_empty() && kind == "user" && v.get("isSidechain").and_then(Value::as_bool) != Some(true) {
-      if let Some(t) = v.get("message").and_then(|m| m.get("content")).and_then(text_of) {
-        if !t.starts_with('<') {
-          s.title = short(&t, 120);
-        }
-      }
+    if s.title.is_empty()
+      && kind == "user"
+      && v.get("isSidechain").and_then(Value::as_bool) != Some(true)
+      && let Some(t) = v.get("message").and_then(|m| m.get("content")).and_then(text_of)
+      && !t.starts_with('<')
+    {
+      s.title = short(&t, 120);
     }
   }
   // Message count: every user/assistant record in the whole file (a cheap line scan).
@@ -113,16 +114,16 @@ pub fn read_session(path: &Path) -> Option<Session> {
       s.updated = s.updated.max(t);
     }
     let kind = v.get("type").and_then(Value::as_str).unwrap_or("");
-    if kind == "assistant" || kind == "user" {
-      if let Some(msg) = v.get("message") {
-        if let Some(m) = msg.get("model").and_then(Value::as_str) {
-          s.model = Some(m.to_owned());
-        }
-        if let Some(t) = msg.get("content").and_then(text_of) {
-          if !t.starts_with('<') {
-            s.preview = Some(short(&format!("{}: {t}", if kind == "assistant" { "Agent" } else { "You" }), 240));
-          }
-        }
+    if (kind == "assistant" || kind == "user")
+      && let Some(msg) = v.get("message")
+    {
+      if let Some(m) = msg.get("model").and_then(Value::as_str) {
+        s.model = Some(m.to_owned());
+      }
+      if let Some(t) = msg.get("content").and_then(text_of)
+        && !t.starts_with('<')
+      {
+        s.preview = Some(short(&format!("{}: {t}", if kind == "assistant" { "Agent" } else { "You" }), 240));
       }
     }
   }
@@ -158,7 +159,7 @@ pub fn list(root: &Path, limit: usize) -> Vec<Session> {
       }
     }
   }
-  files.sort_by(|a, b| b.0.cmp(&a.0));
+  files.sort_by_key(|f| std::cmp::Reverse(f.0));
   files.into_iter().take(limit).filter_map(|(_, p)| read_session(&p)).collect()
 }
 

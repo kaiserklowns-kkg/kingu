@@ -156,10 +156,10 @@ fn claude_credentials() -> Option<(Option<String>, bool)> {
       .args(["find-generic-password", "-s", &keychain_service(), "-a", &keychain_account(), "-w"])
       .output()
       .ok();
-    if let Some(found) = out.filter(|o| o.status.success()).and_then(|o| oauth_from(&String::from_utf8_lossy(&o.stdout))) {
-      if found.0.is_some() {
-        return Some(found);
-      }
+    if let Some(found) = out.filter(|o| o.status.success()).and_then(|o| oauth_from(&String::from_utf8_lossy(&o.stdout)))
+      && found.0.is_some()
+    {
+      return Some(found);
     }
   }
   let file = claude_config_dir()?.join(".credentials.json");
