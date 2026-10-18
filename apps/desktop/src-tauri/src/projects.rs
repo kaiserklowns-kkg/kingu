@@ -109,7 +109,8 @@ impl Projects {
   /// `root` canonicalized, when it is an added project or the open folder `open`; the error
   /// otherwise (a webview may not read any folder it names).
   pub fn check(&self, root: &str, open: Option<&Path>) -> Result<PathBuf, String> {
-    let path = Path::new(root).canonicalize().map_err(|_| tr!(ProjectsMsg::NotAdded, path = root))?;
+    // A project whose folder was moved or deleted reads as that, not as "not added".
+    let path = Path::new(root).canonicalize().map_err(|_| tr!(ProjectsMsg::NotAFolder, path = root))?;
     if open == Some(path.as_path()) || self.data.lock().unwrap_or_else(|e| e.into_inner()).projects.iter().any(|p| p.path == path) {
       Ok(path)
     } else {
@@ -224,7 +225,7 @@ mod tests {
     assert_eq!(p.check(a.path().to_str().unwrap(), None).unwrap(), a.path().canonicalize().unwrap());
     assert!(p.check(b.path().to_str().unwrap(), Some(&open_root)).unwrap_err().contains("not an added project"));
     assert_eq!(p.check(open.path().to_str().unwrap(), Some(&open_root)).unwrap(), open_root);
-    assert!(p.check("/definitely/not/here", None).is_err());
+    assert!(p.check("/definitely/not/here", None).unwrap_err().contains("not a folder"));
     // Inside an added project is not the project.
     std::fs::create_dir(a.path().join("sub")).unwrap();
     assert!(p.check(a.path().join("sub").to_str().unwrap(), None).is_err());

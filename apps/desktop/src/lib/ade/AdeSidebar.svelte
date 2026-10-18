@@ -2,7 +2,9 @@
 	// The Agents layout side bar, built like Orca's worktree sidebar: Search (the worktree jump
 	// palette), Tasks (the board), Automations and Issues on top, a "Projects" header with the activity view, workspace
 	// options, add project and new workspace, then the folder as a project group with a card per
-	// worktree (status slot, title, branch, the agent row with its last message and time). Orca's
+	// worktree (status slot, title, branch, the agent row with its last message and time). Every
+	// other added project follows as its own group (projects.svelte.ts): lighter cards with the
+	// status, unread state and agent row; opening one switches the folder. Orca's
 	// footer is left out: Settings, Help and the board already live elsewhere in Kingu (title bar
 	// gear, Settings, the Tasks row); Reveal active workspace is on the project header.
 	import { untrack } from 'svelte';
@@ -37,6 +39,9 @@
 	import { isLinear, issueRef } from './issues.ts';
 	import { actionsFor, openWorktreeIn, runWorktreeAction } from './worktreeMenu.svelte';
 	import type { WorktreeAction } from './worktreeActions';
+	import { projects } from './projects.svelte';
+	import { aroundOpen, projectName, projectSidebarTask, type SidebarProject } from './projects';
+	import { t } from '#lib/i18n/index.ts';
 
 	const root = $derived(workspace.root ?? '');
 	const now = $derived(adeTasks.now);
@@ -95,6 +100,8 @@
 	type Group = { id: string; label: string; icon: IconName; tone?: string; rows: Row[]; repo?: boolean };
 	const groups = $derived.by((): Group[] => {
 		const out: Group[] = [];
+		// No folder open: only the other added projects show (their own groups).
+		if (!workspace.root) return out;
 		if (pinned.length) out.push({ id: 'pinned', label: 'Pinned', icon: 'pin', rows: pinned });
 		const all = [...(showPrimary ? [primaryRow] : []), ...sorted];
 		if (prefs.groupBy === 'repo') out.push({ id: `repo:${root}`, label: repoName, icon: 'folder', rows: all, repo: true });
@@ -179,9 +186,16 @@
 		if (await scm.init(true)) await adeTasks.load();
 	}
 	let addMenu = $state<{ x: number; y: number } | null>(null);
-	const ADD_ITEMS: MenuNode[] = [menuItem('open', 'เปิดโฟลเดอร์… (Open Folder)'), menuItem('clone', 'Clone repository…'), menuItem('create', 'สร้างโปรเจกต์ใหม่… (New Project)')];
+	const ADD_ITEMS: MenuNode[] = $derived([
+		menuItem('add', t('adeProjects.add')),
+		menuSeparator,
+		menuItem('open', 'เปิดโฟลเดอร์… (Open Folder)'),
+		menuItem('clone', 'Clone repository…'),
+		menuItem('create', 'สร้างโปรเจกต์ใหม่… (New Project)')
+	]);
 	function runAdd(id: string) {
-		if (id === 'open') void commands.run('workbench.action.files.openFolder');
+		if (id === 'add') void projects.pickAndAdd();
+		else if (id === 'open') void commands.run('workbench.action.files.openFolder');
 		else void repoDialog.show(id === 'clone' ? 'clone' : 'create');
 	}
 
@@ -284,7 +298,49 @@
 	function runRepo(id: string) {
 		if (id === 'settings') systemSettings.show();
 		else if (id === 'reveal') void invoke('fs_reveal', { rel: '' }).catch((e) => status.error(String(e)));
-		else if (id === 'remove') commands.run('workbench.action.closeFolder');
+		else if (id === 'remove') void removeOpen();
+	}
+	/** Remove Project on the open folder: closes it (as before) and takes it out of the added projects. */
+	async function removeOpen() {
+		const open = workspace.root;
+		if (!open) return;
+		await workspace.closeFolder();
+		if (workspace.root !== open && projects.added.has(open)) await projects.remove(open);
+	}
+
+	// --- Other added projects: lighter groups (status, unread); a card opens by switching folders --
+	type ProjectRow = { root: string; key: string; title: string; branch: string; view: TaskView; created: number; activity: number };
+	function projectRows(root: string): ProjectRow[] {
+		const wts = projects.worktrees(root);
+		const rows = projects
+			.views(root)
+			.filter((v) => !hiddenBy(projectSidebarTask(v, wts.find((w) => w.slug === v.meta.slug)?.detached ?? false), sidebarFilters()))
+			.map((v) => ({ root, key: v.meta.slug, title: v.meta.title, branch: wts.find((w) => w.slug === v.meta.slug)?.branch ?? `kingu/${v.meta.slug}`, view: v, created: v.meta.created_at, activity: lastActivity(v) }));
+		return sortItems(
+			rows.map((r) => ({ ...r, slug: r.key, status: r.view.status, createdAt: r.created, lastActivityAt: r.activity })),
+			prefs.sortBy,
+			now,
+			prefs.manual(root)
+		);
+	}
+	// Grouped by project, the projects keep the order they were added around the open folder; otherwise they follow it.
+	const around = $derived(aroundOpen(projects.items));
+	const beforeProjects = $derived(prefs.groupBy === 'repo' ? around.before : []);
+	const afterProjects = $derived(prefs.groupBy === 'repo' ? around.after : [...around.before, ...around.after]);
+	function projectUnread(r: ProjectRow): boolean {
+		if (prefs.markedUnread(r.root).includes(r.key)) return true;
+		const s = adeTasks.stateOf(r.view);
+		return !!s.finishedAt && s.finishedAt > (s.viewedAt ?? 0);
+	}
+	function openProjectTask(r: ProjectRow) {
+		if (prefs.markedUnread(r.root).includes(r.key)) prefs.setMarkedUnread(r.root, r.key, false);
+		void projects.open(r.root, r.key);
+	}
+	let projectMenu = $state<{ root: string; x: number; y: number } | null>(null);
+	const projectItems = $derived<MenuNode[]>([menuItem('open', t('adeProjects.open')), menuSeparator, menuItem('remove', t('adeProjects.remove'))]);
+	function runProject(id: string, root: string) {
+		if (id === 'open') void projects.open(root);
+		else if (id === 'remove') void projects.remove(root);
 	}
 	function newWorkspace() {
 		adeLayout.show(PRIMARY);
@@ -455,6 +511,87 @@
 	</div>
 {/snippet}
 
+<!-- Another added project's card: status slot, title, branch, the agent row; a click switches to that folder and opens the task. -->
+{#snippet projectCard(r: ProjectRow, name: string)}
+	{@const s = cardStatus(r.view.status, !!r.view.runtime?.working, false)}
+	{@const unread = projectUnread(r)}
+	<div role="option" aria-selected="false" class="relative px-1 pb-1">
+		<button
+			class={['ml-1 flex w-[calc(100%-4px)] flex-col rounded-lg border border-transparent pr-1.5 pl-1.5 text-left hover:bg-(--vscode-list-hoverBackground)/60', prefs.compact ? 'py-2' : 'pt-1.25 pb-1.5']}
+			title={t('adeProjects.openTask', { task: r.title, project: name })}
+			onclick={() => openProjectTask(r)}
+		>
+			<span class="flex w-full min-w-0 items-center gap-1.5">
+				<span class="grid size-4 shrink-0 place-items-center">
+					{#if unread}<span class="text-amber-400 drop-shadow-sm"><Icon name="bell" size={13} filled /></span>{:else if props.has('status')}{@render statusDot(s)}{/if}
+				</span>
+				<span class={['min-w-0 flex-1 truncate text-[13px] leading-5 text-(--vscode-foreground)', unread ? 'font-semibold' : 'font-normal']}>{r.title}</span>
+			</span>
+			{#if !prefs.compact}
+				{#if props.has('branch')}<span class="mt-1 truncate pl-5.5 text-[11px] leading-none {MUTED}">{r.branch}</span>{/if}
+				{#if props.has('activity') && (r.view.runtime || r.view.meta.last_run)}
+					<span class="mt-1 flex h-5 min-w-0 items-center gap-1 pl-5 text-[11px] leading-none {MUTED}">
+						<span class={['min-w-0 flex-1 truncate', unread ? 'font-semibold text-(--vscode-foreground)' : 'text-(--vscode-descriptionForeground)/90']}>{agentName(r.view)}<span class="opacity-65"> - {agentText(r.view)}</span></span>
+						{#if props.has('time')}<span class="shrink-0 text-[10px] tabular-nums opacity-60">{shortAgo(r.activity, now)}</span>{/if}
+					</span>
+					{#each r.view.runtime?.agents ?? [] as a (a.id)}
+						<span class="flex h-5 min-w-0 items-center gap-1 pl-7 text-[11px] leading-none {MUTED}">
+							<span class="grid size-3 shrink-0 place-items-center">{@render statusDot(rowCardStatus(a), 'size-1.5')}</span>
+							<span class="min-w-0 flex-1 truncate">{rowText(a)}</span>
+						</span>
+					{/each}
+				{/if}
+			{/if}
+		</button>
+	</div>
+{/snippet}
+
+<!-- Another added project's group: its header (collapse, actions, right-click menu) and its task cards. -->
+{#snippet projectGroup(p: SidebarProject)}
+	{@const id = `repo:${p.path}`}
+	{@const collapsed = prefs.isCollapsed(id)}
+	{@const rows = projectRows(p.path)}
+	{@const listing = projects.listings[p.path]}
+	{@const waiting = rows.filter((r) => r.view.status === 'waiting').length}
+	<div class="sticky -top-px z-20 bg-(--vscode-sideBar-background) pt-1">
+		<div
+			role="button"
+			tabindex="0"
+			aria-expanded={!collapsed}
+			class="group/header relative flex h-7 w-full cursor-pointer items-center gap-1.5 pr-2 pl-2.5 text-left"
+			title={p.path}
+			onclick={() => prefs.toggleCollapsed(id)}
+			onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), prefs.toggleCollapsed(id))}
+			oncontextmenu={(e) => (e.preventDefault(), (projectMenu = { root: p.path, x: e.clientX, y: e.clientY }))}
+		>
+			<span class="grid size-4 shrink-0 place-items-center rounded-[4px] bg-amber-500/15 text-amber-400"><Icon name="folder" size={12} /></span>
+			<span class="truncate text-[13px] leading-none font-semibold">{p.name}</span>
+			{#if waiting}<span class="rounded-full bg-(--vscode-editorWarning-foreground) px-1.5 text-[10px] leading-4 font-semibold text-black">{waiting}</span>{/if}
+			<span class="ml-auto flex items-center">
+				<button
+					class={REVEAL}
+					aria-label={t('adeProjects.actionsFor', { name: p.name })}
+					title={t('adeProjects.menu')}
+					onclick={(e) => {
+						e.stopPropagation();
+						const rr = e.currentTarget.getBoundingClientRect();
+						projectMenu = { root: p.path, x: rr.right - 248, y: rr.bottom + 6 };
+					}}><Icon name="more" size={14} /></button
+				>
+				<span class={['grid size-5 place-items-center rounded-md transition-transform hover:bg-(--vscode-toolbar-hoverBackground)', collapsed && '-rotate-90']}><Icon name="chevronDown" size={14} /></span>
+			</span>
+		</div>
+	</div>
+	{#if !collapsed}
+		{#if listing?.error}
+			<p class="px-4 pb-1 text-[11px] break-words {MUTED}">{t('adeProjects.loadFailed', { error: listing.error })}</p>
+		{:else if listing && !rows.length}
+			<p class="px-4 pb-1 text-[11px] {MUTED}">{t('adeProjects.noTasks')}</p>
+		{/if}
+		{#each rows as r (r.key)}{@render projectCard(r, p.name)}{/each}
+	{/if}
+{/snippet}
+
 <div class="flex h-full min-h-0 flex-col bg-(--vscode-sideBar-background) text-(--vscode-sideBar-foreground)">
 	<!-- Top nav: Search (the worktree palette), then the center's pages: Tasks (the board), Automations, Issues. -->
 	<nav class="flex flex-col gap-0.5 px-2 pt-2 pb-1">
@@ -524,7 +661,7 @@
 		ondragover={(e) => dragging && e.preventDefault()}
 		ondrop={(e) => (e.preventDefault(), drop(null))}
 	>
-		{#if !workspace.root}
+		{#if !workspace.root && !projects.others.length}
 			<div class="space-y-2 px-4 py-6 text-center text-[11px] {MUTED}">
 				<p>No workspaces found</p>
 				<button class="block w-full text-(--vscode-textLink-foreground) hover:underline" onclick={() => commands.run('workbench.action.files.openFolder')}>Add project</button>
@@ -532,12 +669,17 @@
 				<button class="block w-full text-(--vscode-textLink-foreground) hover:underline" onclick={() => repoDialog.show('create')}>สร้างโปรเจกต์ใหม่…</button>
 			</div>
 		{:else if prefs.activity}
-			<!-- Activity view: every agent session, the ones that need you first. -->
-			{#each sortItems(taskRows.map((r) => ({ ...r, slug: r.key, status: r.view!.status, createdAt: r.created, lastActivityAt: r.activity })), 'smart', now) as r (r.key)}
-				{@const s = stateOf(r)}
-				<button class={['flex h-7 w-[calc(100%-8px)] items-center gap-1.5 rounded-md px-2 text-left text-[12px] hover:bg-(--vscode-list-hoverBackground)', selectedKey === r.key && 'bg-(--vscode-foreground)/10']} onclick={() => activate(r.key)}>
+			<!-- Activity view: every agent session of every project, the ones that need you first. -->
+			{#each sortItems([...taskRows.map((r) => ({ ...r, root: null as string | null, view: r.view! })), ...projects.others.flatMap(projectRows)].map((r) => ({ ...r, slug: r.key, status: r.view.status, createdAt: r.created, lastActivityAt: r.activity })), 'smart', now) as r (`${r.root ?? ''}:${r.key}`)}
+				{@const s = r.root ? cardStatus(r.view.status, !!r.view.runtime?.working, false) : stateOf(r)}
+				<button
+					class={['flex h-7 w-[calc(100%-8px)] items-center gap-1.5 rounded-md px-2 text-left text-[12px] hover:bg-(--vscode-list-hoverBackground)', !r.root && selectedKey === r.key && 'bg-(--vscode-foreground)/10']}
+					title={r.root ? t('adeProjects.openTask', { task: r.title, project: projectName(r.root) }) : undefined}
+					onclick={() => (r.root ? void projects.open(r.root, r.key) : activate(r.key))}
+				>
 					<span class="grid size-3 shrink-0 place-items-center">{@render statusDot(s, 'size-1.5')}</span>
-					<span class="min-w-0 flex-1 truncate">{r.title}<span class="opacity-60"> - {agentText(r.view!)}</span></span>
+					<span class="min-w-0 flex-1 truncate">{r.title}<span class="opacity-60"> - {agentText(r.view)}</span></span>
+					{#if r.root}<span class="max-w-20 shrink-0 truncate text-[10px] opacity-60">{projectName(r.root)}</span>{/if}
 					<span class="shrink-0 text-[10px] opacity-60">{shortAgo(r.activity, now)}</span>
 				</button>
 			{:else}
@@ -552,6 +694,7 @@
 			{/if}
 			{#each groups as g, gi (g.id)}
 				{@const collapsed = prefs.isCollapsed(g.id)}
+				{#if g.repo}{#each beforeProjects as p (p.path)}{@render projectGroup(p)}{/each}{/if}
 				{#if g.id !== 'all'}
 					<div class={['sticky -top-px z-20 bg-(--vscode-sideBar-background)', gi > 0 && 'pt-1']}>
 						<div
@@ -561,6 +704,7 @@
 							class="group/header relative flex h-7 w-full cursor-pointer items-center gap-1.5 pr-2 pl-2.5 text-left"
 							onclick={() => prefs.toggleCollapsed(g.id)}
 							onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), prefs.toggleCollapsed(g.id))}
+							oncontextmenu={(e) => g.repo && (e.preventDefault(), (repoMenu = { x: e.clientX, y: e.clientY }))}
 						>
 							{#if g.repo && repoIcon}
 								<span class="grid size-4 shrink-0 place-items-center text-[12px] leading-none">{repoIcon}</span>
@@ -614,12 +758,13 @@
 					</button>
 				</div>
 			{/each}
-			{#if !order.length && !groups.some((g) => g.rows.length)}
+			{#if workspace.root && !order.length && !groups.some((g) => g.rows.length)}
 				<div class="px-4 py-6 text-center text-[11px] {MUTED}">
 					<p>No workspaces found</p>
 					{#if filterCount}<button class="mt-2 inline-flex items-center gap-1 rounded-md bg-(--vscode-button-secondaryBackground) px-2 py-1 text-(--vscode-button-secondaryForeground)" onclick={() => prefs.clearFilters()}><Icon name="error" size={12} />Clear Filters</button>{/if}
 				</div>
 			{/if}
+			{#each afterProjects as p (p.path)}{@render projectGroup(p)}{/each}
 		{/if}
 	</div>
 
@@ -644,6 +789,10 @@
 		}}
 		onClose={() => (externalMenu = null)}
 	/>
+{/if}
+{#if projectMenu}
+	{@const root = projectMenu.root}
+	<PopupMenu items={projectItems} label={t('adeProjects.menu')} x={projectMenu.x} y={projectMenu.y} onRun={(node) => node.type === 'item' && runProject(node.id, root)} onClose={() => (projectMenu = null)} />
 {/if}
 {#if addMenu}
 	<PopupMenu items={ADD_ITEMS} label="Add project" x={addMenu.x} y={addMenu.y} onRun={(node) => node.type === 'item' && runAdd(node.id)} onClose={() => (addMenu = null)} />
