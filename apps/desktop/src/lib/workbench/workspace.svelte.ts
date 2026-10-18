@@ -5,7 +5,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { homeDir } from '@tauri-apps/api/path';
-import { ask, open } from '@tauri-apps/plugin-dialog';
+import { open } from '@tauri-apps/plugin-dialog';
 import { clientLog } from '#lib/client-log.ts';
 import { debug } from '#lib/debug/debug.svelte.ts';
 import { lsp } from '#lib/lsp/lsp.svelte.ts';
@@ -58,7 +58,7 @@ class Workspace {
 
 	async openFolder(path: string): Promise<boolean> {
 		if (path === this.root) return true;
-		if (!(await confirmDiscard('เปิดโฟลเดอร์อื่น'))) return false;
+		if (!(await confirmDiscard())) return false;
 		let root: string;
 		try {
 			root = await invoke<string>('workspace_open', { path });
@@ -74,7 +74,7 @@ class Workspace {
 	}
 
 	async closeFolder() {
-		if (this.root === null || !(await confirmDiscard('ปิดโฟลเดอร์'))) return;
+		if (this.root === null || !(await confirmDiscard())) return;
 		try {
 			await invoke('workspace_close');
 		} catch (e) {
@@ -171,17 +171,11 @@ class Workspace {
 	}
 }
 
-/** Reuses the editors' dirty state: asks before throwing away unsaved changes. */
-async function confirmDiscard(action: string): Promise<boolean> {
-	const dirty = editors.dirtyPaths();
-	if (!dirty.length) return true;
-	const names = dirty.map((p) => p.split('/').pop()).join(', ');
-	return ask(`มี ${dirty.length} ไฟล์ที่ยังไม่บันทึก: ${names}\n\n${action}จะทิ้งการแก้ไขเหล่านี้`, {
-		title: 'ยังไม่ได้บันทึก',
-		kind: 'warning',
-		okLabel: 'ทิ้งการแก้ไข',
-		cancelLabel: 'ยกเลิก'
-	});
+/** Unsaved editors before the folder changes: backed up (`files.hotExit: onExitAndWindowClose`) or asked about. */
+async function confirmDiscard(): Promise<boolean> {
+	if (!editors.hasDirty()) return true;
+	const { textFiles } = await import('./textFileService.svelte');
+	return textFiles.beforeShutdown('load');
 }
 
 export const workspace = new Workspace();

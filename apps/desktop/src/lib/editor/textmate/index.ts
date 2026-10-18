@@ -27,6 +27,10 @@ const grammarFiles = import.meta.glob<string>('./grammars/*', { query: '?raw', i
 const scopeFiles: Record<string, string> = {
 	'source.ts': 'TypeScript.tmLanguage.json',
 	'source.js': 'JavaScript.tmLanguage.json',
+	'source.tsx': 'TypeScriptReact.tmLanguage.json',
+	'source.js.jsx': 'JavaScriptReact.tmLanguage.json',
+	'source.makefile': 'make.tmLanguage.json',
+	'source.diff': 'diff.tmLanguage.json',
 	'source.js.regexp': 'RegularExpressionsJavaScript.tmLanguage',
 	'documentation.injection.ts': 'jsdoc.ts.injection.tmLanguage.json',
 	'documentation.injection.js.jsx': 'jsdoc.js.injection.tmLanguage.json',
@@ -41,7 +45,9 @@ const scopeFiles: Record<string, string> = {
 
 const injections: Record<string, string[]> = {
 	'source.ts': ['documentation.injection.ts'],
-	'source.js': ['documentation.injection.js.jsx']
+	'source.tsx': ['documentation.injection.ts'],
+	'source.js': ['documentation.injection.js.jsx'],
+	'source.js.jsx': ['documentation.injection.js.jsx']
 };
 
 // From each language's `contributes.grammars` in microsoft/vscode extensions/*/package.json.
@@ -85,9 +91,22 @@ const languages: Record<string, LanguageGrammar> = {
 	},
 	javascript: {
 		scopeName: 'source.js',
-		embedded: { 'meta.tag.attributes.js': 'javascript', 'meta.embedded.expression.js': 'javascript' },
+		embedded: { 'meta.tag.js': 'jsx-tags', 'meta.tag.without-attributes.js': 'jsx-tags', 'meta.tag.attributes.js': 'javascript', 'meta.embedded.expression.js': 'javascript' },
 		tokenTypes: jsTokenTypes
 	},
+	typescriptreact: {
+		scopeName: 'source.tsx',
+		embedded: { 'meta.tag.tsx': 'jsx-tags', 'meta.tag.without-attributes.tsx': 'jsx-tags', 'meta.tag.attributes.tsx': 'typescriptreact', 'meta.embedded.expression.tsx': 'typescriptreact' },
+		tokenTypes: jsTokenTypes,
+		unbalancedBracketSelectors: ['keyword.operator.relational', 'storage.type.function.arrow', 'keyword.operator.bitwise.shift', 'punctuation.definition.tag', 'keyword.operator.assignment.compound.bitwise.ts']
+	},
+	javascriptreact: {
+		scopeName: 'source.js.jsx',
+		embedded: { 'meta.tag.js': 'jsx-tags', 'meta.tag.without-attributes.js': 'jsx-tags', 'meta.tag.attributes.js.jsx': 'javascriptreact', 'meta.embedded.expression.js': 'javascriptreact' },
+		tokenTypes: jsTokenTypes
+	},
+	makefile: { scopeName: 'source.makefile', tokenTypes: { 'string.interpolated': OTHER } },
+	diff: { scopeName: 'source.diff' },
 	rust: { scopeName: 'source.rust' },
 	go: { scopeName: 'source.go' },
 	json: { scopeName: 'source.json' },

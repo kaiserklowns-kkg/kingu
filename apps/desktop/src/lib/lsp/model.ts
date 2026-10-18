@@ -24,7 +24,7 @@ export type ServerInfo = {
 /** Mirrors `spec_for` in src-tauri/src/lsp.rs. Keys are what `lsp_start` accepts. */
 export const SERVERS: ServerInfo[] = [
 	{ key: 'rust', name: 'rust-analyzer', languages: ['rust'] },
-	{ key: 'typescript', name: 'TypeScript language server', languages: ['typescript', 'javascript'], yieldsBuiltin: true },
+	{ key: 'typescript', name: 'TypeScript language server', languages: ['typescript', 'javascript', 'typescriptreact', 'javascriptreact'], yieldsBuiltin: true },
 	{ key: 'go', name: 'gopls', languages: ['go'] },
 	{
 		key: 'svelte',

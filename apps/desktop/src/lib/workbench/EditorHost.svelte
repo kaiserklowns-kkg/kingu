@@ -13,6 +13,8 @@
 	import { isNonTextEditor } from '#lib/settings/resources.ts';
 	import { editorOptions, installEditorSettings } from '#lib/settings/apply.svelte.ts';
 	import { attachDebugEditor, type DebugDecorations } from '#lib/debug/editorDebug.ts';
+	import { indentLabel } from './textFiles';
+	import { textFiles } from './textFileService.svelte';
 
 	let { group }: { group: number } = $props();
 
@@ -119,10 +121,14 @@
 		if (!isActiveGroup || !editor || !shown) return;
 		const model = editor.getModel();
 		if (!model) return;
-		const opts = model.getOptions();
-		editors.language = model.getLanguageId();
-		editors.indent = opts.insertSpaces ? `Spaces: ${opts.indentSize}` : `Tab Size: ${opts.tabSize}`;
-		editors.eol = model.getEOL() === '\n' ? 'LF' : 'CRLF';
+		const update = () => {
+			editors.language = model.getLanguageId();
+			editors.indent = indentLabel(model.getOptions());
+			editors.eol = model.getEOL() === '\n' ? 'LF' : 'CRLF';
+		};
+		update();
+		// Change Language Mode, indentation and EOL changes (also by undo) show at once.
+		const subs = [model.onDidChangeLanguage(update), model.onDidChangeOptions(update), model.onDidChangeContent((e) => e.isEolChange && update())];
 		const pos = editor.getPosition();
 		if (pos) {
 			editors.cursor = { line: pos.lineNumber, column: pos.column };
@@ -130,6 +136,7 @@
 			const file = shown;
 			untrack(() => navigation.record({ path: file, line: pos.lineNumber, column: pos.column }));
 		}
+		return () => subs.forEach((d) => d.dispose());
 	});
 
 	// Show the group's active tab's model, restoring its scroll and cursor.
@@ -140,8 +147,8 @@
 		untrack(() => {
 			if (shown) saveViewState(group, shown, ed.saveViewState());
 		});
-		// Diff tabs are shown by DiffHost.
-		if (!p || isDiffKey(p) || isNonTextEditor(p) || !api) {
+		// Diff tabs are shown by DiffHost; binary, large and unreadable files by a placeholder.
+		if (!p || isDiffKey(p) || isNonTextEditor(p) || !api || textFiles.placeholder(p)) {
 			ed.setModel(null);
 			shown = null;
 			return;
@@ -163,8 +170,8 @@
 			})
 			.catch((e) => {
 				clientLog('error', `open ${p}: ${e}`);
-				navigation.remove((path) => path === p);
-				editors.close(p, { force: true, group });
+				// VS Code keeps the tab and shows why (binary, too large, an error) with "Open Anyway".
+				textFiles.openFailed(p, e);
 			});
 	});
 </script>

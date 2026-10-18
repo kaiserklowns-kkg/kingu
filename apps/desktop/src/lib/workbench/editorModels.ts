@@ -2,18 +2,57 @@
 // Two groups showing a file edit the same model, so edits, undo history and dirty state are per
 // file, and the language server sees one didOpen/didClose per file. View state (scroll, cursor)
 // is per group and file, like VS Code's per-editor view state.
+// Each model remembers what VS Code's TextFileEditorModel does: the file's encoding and the disk
+// stat it was loaded or last saved with, so saving writes the same encoding and a file changed
+// on disk since is reported as a save conflict instead of being overwritten.
 
 import type * as Monaco from 'monaco-editor';
 import { clientLog } from '#lib/client-log.ts';
+import { languageFor } from '#lib/editor/languages.ts';
 import { lsp } from '#lib/lsp/lsp.svelte.ts';
-import { associatedLanguage, eolFor, type SaveReason } from '#lib/settings/mappings.ts';
-import { readResource, writeResource } from '#lib/settings/resources.ts';
+import { eolFor, type SaveReason } from '#lib/settings/mappings.ts';
+import { readTextResource, writeTextResource, type FileStat, type ReadOptions, type TextRead } from '#lib/settings/resources.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { editors } from './editors.svelte';
 import { runSaveParticipants } from './textFileSave';
 
 type MonacoModule = typeof import('#lib/editor/monaco.ts');
-export type ModelEntry = { model: Monaco.editor.ITextModel; savedVersion: number; reloading?: boolean };
+export type ModelEntry = {
+	model: Monaco.editor.ITextModel;
+	savedVersion: number;
+	reloading?: boolean;
+	/** VS Code encoding id the file is read and saved with. */
+	encoding: string;
+	/** The disk state this model is based on (workspace files only). */
+	stat?: FileStat;
+	/** Some bytes were invalid in `encoding` and became U+FFFD. */
+	lossy?: boolean;
+	/** Set by Change Language Mode: `files.associations` no longer changes it. */
+	explicitLanguage?: boolean;
+	/** A save found a newer file on disk; auto save stops until it is resolved (VS Code's conflict mode). */
+	inConflict?: boolean;
+};
+
+/** A file that opens as a placeholder instead of a text editor (VS Code's binary / too large / error editors). */
+export class OpenError extends Error {
+	constructor(readonly result: Exclude<TextRead, { kind: 'text' }> | { kind: 'error'; message: string }) {
+		super(result.kind === 'error' ? result.message : result.kind);
+	}
+}
+
+/** Hooks the text file service installs (textFileService.svelte.ts), so this module stays free of dialogs. */
+export const textFileHooks = {
+	/** Read options for `path` beyond the settings ("Open Anyway", a backup's encoding). */
+	readOptions: (_path: string): ReadOptions => ({}),
+	/** A model was created: restore a backup into it, track it for backups. */
+	created: (_path: string, _entry: ModelEntry) => {},
+	/** A save hit a newer file on disk. */
+	conflict: (_path: string) => {},
+	/** A save could not encode a character. */
+	unencodable: (_path: string, _ch: string) => {},
+	/** The model is saved or reverted: its backup goes. */
+	clean: (_path: string) => {}
+};
 
 const entries = new Map<string, ModelEntry>();
 const loading = new Map<string, Promise<ModelEntry>>();
@@ -32,26 +71,54 @@ export function getEntry(path: string): ModelEntry | undefined {
 	return entries.get(path);
 }
 
-/** The shared model of `path`, read from disk the first time any group shows it. */
+/** Read options from the settings (`files.encoding`, `files.autoGuessEncoding`) plus the service's. */
+export function readOptions(path: string, extra: ReadOptions = {}): ReadOptions {
+	return {
+		defaultEncoding: settings.get<string>('files.encoding'),
+		autoGuess: settings.get<boolean>('files.autoGuessEncoding'),
+		...textFileHooks.readOptions(path),
+		...extra
+	};
+}
+
+async function readText(path: string, extra: ReadOptions = {}) {
+	let result: TextRead;
+	try {
+		result = await readTextResource(path, readOptions(path, extra));
+	} catch (e) {
+		throw new OpenError({ kind: 'error', message: String(e) });
+	}
+	if (result.kind !== 'text') throw new OpenError(result);
+	return result;
+}
+
+/** The shared model of `path`, read from disk the first time any group shows it. Rejects with an {@link OpenError}. */
 export function modelEntry(m: MonacoModule, path: string): Promise<ModelEntry> {
 	api = m;
 	const existing = entries.get(path);
 	if (existing) return Promise.resolve(existing);
 	let pending = loading.get(path);
 	if (!pending) {
-		// readResource: workspace files, or the user settings.json (settings:// key).
-		pending = readResource(path)
-			.then((text) => {
+		pending = readText(path)
+			.then((file) => {
+				const text = file.content;
 				// A references peek may already have made a preview model for this file.
 				const preview = lsp.adoptPreview(path);
 				if (preview && preview.getValue() !== text) preview.setValue(text);
-				const model = preview ?? m.monaco.editor.createModel(text, languageOf(m, path), m.monaco.Uri.file('/' + path));
+				const model = preview ?? m.monaco.editor.createModel(text, languageOf(m, path, text), m.monaco.Uri.file('/' + path));
+				if (preview) setLanguage(m, model, languageOf(m, path, text));
 				// files.eol: a file with no line break yet takes the configured one (not counted as an edit).
 				if (!/\r?\n/.test(text)) model.setEOL(eolFor(settings.get('files.eol')) === '\n' ? m.monaco.editor.EndOfLineSequence.LF : m.monaco.editor.EndOfLineSequence.CRLF);
-				const entry: ModelEntry = { model, savedVersion: model.getAlternativeVersionId() };
-				model.onDidChangeContent(() => !entry.reloading && editors.setDirty(path, model.getAlternativeVersionId() !== entry.savedVersion));
+				const entry: ModelEntry = { model, savedVersion: model.getAlternativeVersionId(), encoding: file.encoding, stat: file.stat, lossy: file.lossy };
+				model.onDidChangeContent(() => {
+					if (entry.reloading) return;
+					const dirty = model.getAlternativeVersionId() !== entry.savedVersion;
+					editors.setDirty(path, dirty);
+					if (!dirty) textFileHooks.clean(path);
+				});
 				entries.set(path, entry);
 				lsp.attach(m.monaco, model, path);
+				textFileHooks.created(path, entry);
 				return entry;
 			})
 			.finally(() => loading.delete(path));
@@ -60,10 +127,15 @@ export function modelEntry(m: MonacoModule, path: string): Promise<ModelEntry> {
 	return pending;
 }
 
-/** `files.associations` over the extension's language, when the associated language exists. */
-export function languageOf(m: MonacoModule, path: string): string {
-	const id = associatedLanguage(path, settings.get('files.associations'));
-	return id && m.monaco.languages.getLanguages().some((l) => l.id === id) ? id : m.languageFor(path);
+function setLanguage(m: MonacoModule, model: Monaco.editor.ITextModel, language: string) {
+	if (model.getLanguageId() !== language) m.monaco.editor.setModelLanguage(model, language);
+}
+
+/** The language of `path`: `files.associations`, then the registered associations, then the first line of `text`. */
+export function languageOf(m: MonacoModule, path: string, text?: string): string {
+	const known = new Set(m.monaco.languages.getLanguages().map((l) => l.id));
+	const firstLine = text?.slice(0, 1000).split(/\r?\n/, 1)[0];
+	return languageFor(path, { associations: settings.get('files.associations'), firstLine, known: (id) => known.has(id) });
 }
 
 /** Every open model with its path, for settings that follow open files (files.associations). */
@@ -71,16 +143,92 @@ export function openModels(): [string, Monaco.editor.ITextModel][] {
 	return [...entries].filter(([, e]) => !e.model.isDisposed()).map(([p, e]) => [p, e.model]);
 }
 
-/** Runs the save participants (format, trim…), then writes. `reason` is how the save was triggered. */
-export async function saveFile(path: string, reason: SaveReason = 'explicit') {
+/** Re-resolves the language of open models whose language was not picked by hand (files.associations changed). */
+export function refreshLanguages(m: MonacoModule) {
+	for (const [path, entry] of entries) {
+		if (entry.model.isDisposed() || entry.explicitLanguage) continue;
+		setLanguage(m, entry.model, languageOf(m, path, entry.model.getLineContent(1)));
+	}
+}
+
+export type SaveOptions = { reason?: SaveReason; overwrite?: boolean; encoding?: string };
+
+/**
+ * Runs the save participants (format, trim…), then writes with the file's encoding. Resolves to
+ * whether the file was saved: a newer file on disk (unless `overwrite`) or a character the
+ * encoding cannot hold leave it dirty and go to the text file service hooks.
+ */
+export async function saveFile(path: string, reasonOrOptions: SaveReason | SaveOptions = 'explicit'): Promise<boolean> {
+	const opts = typeof reasonOrOptions === 'string' ? { reason: reasonOrOptions } : reasonOrOptions;
+	const entry = entries.get(path);
+	if (!entry) return false;
+	if (entry.inConflict && (opts.reason ?? 'explicit') !== 'explicit' && !opts.overwrite) return false;
+	if (api) await runSaveParticipants(api.monaco, entry.model, opts.reason ?? 'explicit');
+	if (entry.model.isDisposed()) return false;
+	const version = entry.model.getAlternativeVersionId();
+	const encoding = opts.encoding ?? entry.encoding;
+	const result = await writeTextResource(path, entry.model.getValue(), encoding, opts.overwrite ? undefined : entry.stat);
+	if (result.kind === 'conflict') {
+		entry.inConflict = true;
+		textFileHooks.conflict(path);
+		return false;
+	}
+	if (result.kind === 'unencodable') {
+		textFileHooks.unencodable(path, result.ch);
+		return false;
+	}
+	entry.encoding = encoding;
+	entry.stat = result.stat ?? entry.stat;
+	entry.lossy = false;
+	entry.inConflict = false;
+	entry.savedVersion = version;
+	const dirty = entry.model.getAlternativeVersionId() !== version;
+	editors.setDirty(path, dirty);
+	if (!dirty) textFileHooks.clean(path);
+	lsp.didSave(entry.model);
+	return true;
+}
+
+/** Replaces a model's text with what is on disk (undoable) and marks it saved. */
+function replaceWithDisk(entry: ModelEntry, file: Extract<TextRead, { kind: 'text' }>) {
+	const { model } = entry;
+	entry.reloading = true;
+	try {
+		if (model.getValue() !== file.content) model.pushEditOperations([], [{ range: model.getFullModelRange(), text: file.content }], () => null);
+	} finally {
+		entry.reloading = false;
+	}
+	entry.savedVersion = model.getAlternativeVersionId();
+	entry.encoding = file.encoding;
+	entry.stat = file.stat;
+	entry.lossy = file.lossy;
+	entry.inConflict = false;
+}
+
+/** VS Code's Revert File: the disk contents replace unsaved edits. `encoding` reopens with another encoding. */
+export async function revertFile(path: string, encoding?: string): Promise<void> {
 	const entry = entries.get(path);
 	if (!entry) return;
-	if (api) await runSaveParticipants(api.monaco, entry.model, reason);
+	const file = await readText(path, { encoding: encoding ?? entry.encoding, acceptBinary: true, acceptLarge: true });
 	if (entry.model.isDisposed()) return;
-	await writeResource(path, entry.model.getValue());
-	entry.savedVersion = entry.model.getAlternativeVersionId();
+	replaceWithDisk(entry, file);
 	editors.setDirty(path, false);
-	lsp.didSave(entry.model);
+	textFileHooks.clean(path);
+}
+
+/** The disk contents of an open file, decoded with its encoding (the save conflict compare). */
+export async function diskText(path: string): Promise<string> {
+	const entry = entries.get(path);
+	return (await readText(path, { encoding: entry?.encoding, acceptBinary: true, acceptLarge: true })).content;
+}
+
+/** Puts unsaved text from a backup into the model of `path`, leaving it dirty against `stat`. */
+export function restoreText(entry: ModelEntry, text: string, meta: { encoding?: string; stat?: FileStat }) {
+	const { model } = entry;
+	if (meta.encoding) entry.encoding = meta.encoding;
+	if (meta.stat) entry.stat = meta.stat;
+	if (model.getValue() === text) return;
+	model.pushEditOperations([], [{ range: model.getFullModelRange(), text }], () => null);
 }
 
 /**
@@ -91,24 +239,19 @@ export async function reloadClean(paths: string[]) {
 	for (const path of paths) {
 		const entry = entries.get(path);
 		if (!entry || entry.model.getAlternativeVersionId() !== entry.savedVersion) continue;
-		let text: string;
+		let file: Extract<TextRead, { kind: 'text' }>;
 		try {
-			text = await readResource(path);
+			file = await readText(path, { encoding: entry.encoding, acceptBinary: true, acceptLarge: true });
 		} catch (e) {
 			// Deleted: workbench.editor.closeOnFileDelete closes its (clean) tabs, else they keep the last contents.
 			if (settings.get<boolean>('workbench.editor.closeOnFileDelete') && /not found|No such file|os error 2/i.test(String(e))) editors.closeEverywhere(path);
 			continue;
 		}
 		const { model } = entry;
-		if (model.isDisposed() || model.getValue() === text || model.getAlternativeVersionId() !== entry.savedVersion) continue;
-		entry.reloading = true;
-		try {
-			model.pushEditOperations([], [{ range: model.getFullModelRange(), text }], () => null);
-		} finally {
-			entry.reloading = false;
-		}
-		entry.savedVersion = model.getAlternativeVersionId();
-		clientLog('info', `reloaded ${path} (changed on disk)`);
+		if (model.isDisposed() || model.getAlternativeVersionId() !== entry.savedVersion) continue;
+		const changed = model.getValue() !== file.content;
+		replaceWithDisk(entry, file);
+		if (changed) clientLog('info', `reloaded ${path} (changed on disk)`);
 	}
 }
 

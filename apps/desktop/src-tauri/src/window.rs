@@ -24,10 +24,12 @@ impl CloseGuard {
   }
 }
 
-pub fn on_close_requested(app: &AppHandle) -> bool {
+/// `reason` tells the webview a window close (`"close"`) from a quit (`"quit"`): `files.hotExit`
+/// treats them differently, as VS Code does.
+pub fn on_close_requested(app: &AppHandle, reason: &str) -> bool {
   let held = app.state::<CloseGuard>().hold();
   if held {
-    let _ = app.emit(CLOSE_REQUESTED, ());
+    let _ = app.emit(CLOSE_REQUESTED, reason);
   }
   held
 }

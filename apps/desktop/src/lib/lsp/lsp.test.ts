@@ -334,9 +334,15 @@ describe('server table and status text', () => {
 		expect(languageFor('App.svelte')).toBe('svelte');
 		expect(languageFor('Cargo.TOML')).toBe('toml');
 		expect(languageFor('a.YML')).toBe('yaml');
-		expect(languageFor('.yml')).toBe('plaintext');
+		// VS Code matches extensions with endsWith, so a bare `.yml` is YAML too.
+		expect(languageFor('.yml')).toBe('yaml');
 		expect(languageFor('dir.d/file')).toBe('plaintext');
-		expect(EXTRA_LANGUAGES.map((l) => l.id)).toEqual(['svelte', 'toml']);
+		expect(EXTRA_LANGUAGES.map((l) => l.id)).toEqual(['svelte', 'toml', 'typescriptreact', 'javascriptreact', 'jsx-tags', 'makefile', 'diff', 'dotenv', 'properties', 'ignore']);
+		// TSX/JSX are their own languages, served by the TypeScript server.
+		expect(serverFor(languageFor('App.tsx'))?.key).toBe('typescript');
+		expect(serverFor(languageFor('App.jsx'))?.key).toBe('typescript');
+		expect(lspLanguageId('typescriptreact', 'App.tsx')).toBe('typescriptreact');
+		expect(lspLanguageId('shell', 'run.sh')).toBe('shellscript');
 		// JSON with comments is `jsonc` for the language server only (Monaco has one JSON language).
 		expect(lspLanguageId('json', 'tsconfig.json')).toBe('jsonc');
 		expect(lspLanguageId('json', 'tsconfig.node.json')).toBe('jsonc');
