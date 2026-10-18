@@ -1130,6 +1130,10 @@ pub fn run() {
         settings::user_value(&config_dir, "application.shellEnvironmentResolutionTimeout").as_ref(),
       ));
       net_proxy::init(&config_dir);
+      app.manage(settings::ConfigWatcher::default());
+      if let Err(e) = settings::watch_config(app.handle(), &config_dir) {
+        log::warn!("settings watcher: {e}");
+      }
       system::set_config_dir(config_dir);
       // Release builds too: a rotating, size-limited Kingu.log in the app log dir (logging.rs).
       app.handle().plugin(logging::plugin())?;

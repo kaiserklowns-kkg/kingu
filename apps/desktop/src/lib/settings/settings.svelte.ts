@@ -3,6 +3,7 @@
 // comments in the files survive. Re-reads on window focus (files edited outside Kingu).
 
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { parseSettingsText, setProperty } from './jsonc';
 import { resolveSettings, settingProblems, type Resolved, type SettingProblem, type SettingScope } from './registry';
 import { settingSchemas } from './schemas.svelte';
@@ -110,12 +111,17 @@ class Settings {
 		if (layer.text === null) await invoke('settings_write', { scope, content: '{\n}\n' });
 	}
 
-	/** Keeps re-reading the files when the window regains focus. Returns an uninstaller. */
+	/** Keeps re-reading the files when the window regains focus and when Rust sees a settings file
+	 * change (`settings://changed`, edits made while Kingu has focus). Returns an uninstaller. */
 	install(): () => void {
 		void this.load();
 		const onFocus = () => void this.load();
 		window.addEventListener('focus', onFocus);
-		return () => window.removeEventListener('focus', onFocus);
+		const unlisten = listen<string>('settings://changed', (e) => e.payload !== 'keybindings' && void this.load());
+		return () => {
+			window.removeEventListener('focus', onFocus);
+			void unlisten.then((u) => u());
+		};
 	}
 }
 

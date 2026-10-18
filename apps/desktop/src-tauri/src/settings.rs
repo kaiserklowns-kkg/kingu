@@ -231,9 +231,80 @@ pub fn settings_write(app: AppHandle, ws: State<'_, Workspace>, scope: String, c
   Ok(())
 }
 
+/// Which settings file a change in the app config dir touched (for `settings://changed`): the
+/// user `settings.json`, `keybindings.json`, or a per-repository file under `repos/`.
+pub fn changed_file(config_dir: &Path, path: &Path) -> Option<&'static str> {
+  if path == user_path(config_dir) {
+    Some("settings")
+  } else if path == config_dir.join(KEYBINDINGS_FILE) {
+    Some("keybindings")
+  } else if path.parent() == Some(config_dir.join(REPOS_DIR).as_path()) && path.extension().is_some_and(|e| e == "json") {
+    Some("repo")
+  } else {
+    None
+  }
+}
+
+/// Keeps the config-dir watcher alive.
+#[derive(Default)]
+pub struct ConfigWatcher(std::sync::Mutex<Option<notify::RecommendedWatcher>>);
+
+/// Watches the app config dir so `settings.json` and `keybindings.json` edited while Kingu has
+/// focus (by another program or an agent) apply right away, like VS Code; the webview also
+/// re-reads on focus. Emits `settings://changed` with the file kind, at most every 150 ms per kind.
+pub fn watch_config(app: &AppHandle, config_dir: &Path) -> Result<(), String> {
+  use notify::{RecursiveMode, Watcher};
+  use tauri::Emitter;
+  std::fs::create_dir_all(config_dir.join(REPOS_DIR)).map_err(|e| e.to_string())?;
+  let (tx, rx) = std::sync::mpsc::channel::<&'static str>();
+  // File events carry resolved paths (e.g. /private/var on macOS).
+  let dir = std::fs::canonicalize(config_dir).unwrap_or_else(|_| config_dir.to_owned());
+  let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+    let Ok(event) = res else { return };
+    if matches!(event.kind, notify::EventKind::Access(_)) {
+      return;
+    }
+    for p in &event.paths {
+      if let Some(kind) = changed_file(&dir, p) {
+        let _ = tx.send(kind);
+      }
+    }
+  })
+  .map_err(|e| e.to_string())?;
+  watcher.watch(config_dir, RecursiveMode::NonRecursive).map_err(|e| e.to_string())?;
+  watcher.watch(&config_dir.join(REPOS_DIR), RecursiveMode::NonRecursive).map_err(|e| e.to_string())?;
+  let handle = app.clone();
+  std::thread::spawn(move || {
+    // Editors save in several steps (temp file, rename): one event per burst.
+    while let Ok(first) = rx.recv() {
+      let mut kinds = std::collections::BTreeSet::from([first]);
+      while let Ok(k) = rx.recv_timeout(std::time::Duration::from_millis(150)) {
+        kinds.insert(k);
+      }
+      for k in kinds {
+        let _ = handle.emit("settings://changed", k);
+      }
+    }
+  });
+  if let Some(w) = app.try_state::<ConfigWatcher>() {
+    *w.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(watcher);
+  }
+  Ok(())
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn knows_which_config_file_changed() {
+    let dir = Path::new("/cfg");
+    assert_eq!(changed_file(dir, Path::new("/cfg/settings.json")), Some("settings"));
+    assert_eq!(changed_file(dir, Path::new("/cfg/keybindings.json")), Some("keybindings"));
+    assert_eq!(changed_file(dir, &dir.join(REPOS_DIR).join("0123456789abcdef.json")), Some("repo"));
+    assert_eq!(changed_file(dir, Path::new("/cfg/settings.json.tmp")), None);
+    assert_eq!(changed_file(dir, Path::new("/cfg/other/settings.json")), None);
+  }
 
   #[test]
   fn parses_only_known_scopes() {
