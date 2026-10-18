@@ -122,14 +122,6 @@ export const AGENT_SETTINGS: SettingSchema[] = [
 		description: 'ใช้ฟอนต์ของ terminal (terminal.integrated.fontFamily) ในบทสนทนา (Orca: nativeChatAppearance.matchTerminalInterface) (Use the terminal font in the chat.)'
 	},
 	{
-		id: 'kingu.chat.confirmRewind',
-		group: 'Agent Chat',
-		type: 'boolean',
-		default: true,
-		description:
-			'ถามก่อนกลับไปจุด checkpoint แก้คำขอ หรือลองใหม่ ซึ่งจะลบคำขอหลังจากนั้นและย้อนการแก้ไฟล์ (VS Code: chat.editing.confirmEditRequestRemoval) (Ask before restoring a checkpoint, editing or retrying a request removes the later requests and undoes their edits.)'
-	},
-	{
 		id: 'kingu.automations.confirmDelete',
 		group: G,
 		type: 'boolean',

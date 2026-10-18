@@ -123,7 +123,7 @@ fn split(text: &str, request: Option<u32>) -> Option<Split> {
     return Some(Split { head: text.to_owned(), tail: String::new(), resume });
   };
   let at = lines.iter().position(|(_, e)| matches!(e, Some(AgentEvent::Checkpoint { request: r, .. }) if *r == request))?;
-  let cut = lines[..at].iter().rposition(|(_, e)| matches!(e, Some(AgentEvent::Message { role, .. }) if role == "user")).unwrap_or(at);
+  let cut = lines[..at].iter().rposition(|(_, e)| matches!(e, Some(AgentEvent::Message { role, parent_tool_use_id: None, .. }) if role == "user")).unwrap_or(at);
   let resume = match &lines[at].1 {
     Some(AgentEvent::Checkpoint { session_id: Some(s), resume_at: Some(u), .. }) if valid_session_id(s) && valid_uuid(u) => Resume { session_id: Some(s.clone()), resume_at: Some(u.clone()) },
     _ => Anchors::of(lines[..cut].iter().filter_map(|(_, e)| e.as_ref())).resume(),
@@ -251,10 +251,10 @@ mod tests {
   const U3: &str = "0b5e9a1c-4c1d-4e2f-9a3b-000000000003";
 
   fn user(text: &str) -> AgentEvent {
-    AgentEvent::Message { role: "user".into(), text: text.into() }
+    AgentEvent::Message { role: "user".into(), text: text.into(), parent_tool_use_id: None }
   }
   fn said(text: &str) -> AgentEvent {
-    AgentEvent::Message { role: "assistant".into(), text: text.into() }
+    AgentEvent::Message { role: "assistant".into(), text: text.into(), parent_tool_use_id: None }
   }
   fn system(s: &str) -> AgentEvent {
     AgentEvent::System { subtype: "init".into(), session_id: Some(s.into()), model: None }
