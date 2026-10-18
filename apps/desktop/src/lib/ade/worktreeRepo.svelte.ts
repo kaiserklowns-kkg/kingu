@@ -7,6 +7,7 @@ import { clientLog } from '#lib/client-log.ts';
 import { groups, type GitStatus, type ScmSource } from '#lib/workbench/scm.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 export class WorktreeRepo implements ScmSource {
 	readonly slug: string;
@@ -53,7 +54,7 @@ export class WorktreeRepo implements ScmSource {
 			await invoke(cmd, { ...args, slug: this.slug });
 			return true;
 		} catch (e) {
-			status.flash(String(e), 8000);
+			notifications.error(e);
 			clientLog('error', `${cmd} (${this.slug}): ${e}`);
 			return false;
 		} finally {

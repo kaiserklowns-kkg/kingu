@@ -21,6 +21,7 @@ import { generatedConfigs, LAUNCH_FILES, parseLaunchJson, runInTerminalArgv, sub
 import { appendOutput, currentFrame, frameLocation, initialModel, stateLabel, type DebugModel } from './model.ts';
 import type { StackFrame } from './protocol.ts';
 import { DebugSession } from './session.ts';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 type DapEvent = { type: 'message'; json: string } | { type: 'stderr'; line: string } | { type: 'exit'; code: number | null };
 type Active = { session: DebugSession; id: number | null; config: LaunchConfig; build?: string[]; noDebug: boolean };
@@ -179,7 +180,7 @@ class Debug {
 			}
 			config = substitute(config, ctx);
 		} catch (e) {
-			return status.flash(e instanceof Error ? e.message : String(e));
+			return notifications.error(e instanceof Error ? e.message : String(e));
 		}
 		await this.#launch(config, noDebug, generated?.build);
 	}
@@ -321,7 +322,7 @@ class Debug {
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e);
 			this.#sessionOutput(session, 'stderr', `${message}\n`);
-			status.flash(`เริ่ม debug ไม่ได้: ${message}`);
+			notifications.error(`เริ่ม debug ไม่ได้: ${message}`);
 			await this.#kill(active);
 		}
 	}
@@ -391,7 +392,7 @@ class Debug {
 	#reveal(frame: StackFrame | null) {
 		const loc = frameLocation(frame, this.root);
 		if (loc) editors.open(loc.rel, { reveal: { line: loc.line, column: loc.column } });
-		else if (frame?.source?.path) status.flash(`${frame.source.path} อยู่นอก workspace จึงเปิดไม่ได้`);
+		else if (frame?.source?.path) notifications.warn(`${frame.source.path} อยู่นอก workspace จึงเปิดไม่ได้`);
 	}
 
 	// --- Watch and REPL ----------------------------------------------------------------------------
@@ -455,7 +456,7 @@ class Debug {
 		try {
 			res = await invoke<InstallInfo>('dap_install_methods', { debugType });
 		} catch (e) {
-			return status.flash(String(e));
+			return notifications.error(e);
 		}
 		quick.pick({
 			placeholder: res.methods.length ? `ไม่ได้ติดตั้ง ${res.server}: ติดตั้งด้วยคำสั่ง (รันใน terminal) แล้วกด F5 อีกครั้ง` : `ไม่ได้ติดตั้ง ${res.server} — ติดตั้ง ${res.binary} เองแล้วกด F5 อีกครั้ง`,
@@ -488,7 +489,7 @@ class Debug {
 				await invoke('fs_create_file', { rel });
 				await invoke('fs_write_file', { rel, content: text });
 			} catch (e) {
-				return status.flash(String(e));
+				return notifications.error(e);
 			}
 		}
 		editors.open(rel, { preview: false });

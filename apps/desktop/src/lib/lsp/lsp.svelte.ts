@@ -15,6 +15,7 @@ import { editors } from '#lib/workbench/editors.svelte.ts';
 import { layout } from '#lib/workbench/layout.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
 import { status as statusBar } from '#lib/workbench/status.svelte.ts';
+import { notifications, type Severity } from '#lib/workbench/notifications.svelte.ts';
 import { LanguageClient, type ServerStatus } from './client';
 import {
 	fromSignatureHelp,
@@ -62,6 +63,8 @@ type Session = { info: ServerInfo; client: LanguageClient; id: number | null; re
 type Doc = { rel: string; uri: string; key: string; model: Monaco.editor.ITextModel };
 
 const MARKER_OWNER = 'lsp';
+/** LSP MessageType → notification severity. */
+const MESSAGE_SEVERITY: Record<number, Severity> = { 1: 'error', 2: 'warning', 3: 'info', 4: 'info' };
 const EXTERNAL_SCHEME = 'kingu-external';
 const LOG_LIMIT = 1000;
 const SYMBOLS_DELAY_MS = 400;
@@ -149,6 +152,39 @@ class Lsp {
 		return syms ? symbolPath(syms, toLspPosition({ lineNumber: line, column })) : [];
 	}
 
+	/** `#query` (VS Code's workspace symbol search): every running server that offers it, merged. */
+	async workspaceSymbols(query: string): Promise<{ name: string; kind: number; container?: string; rel: string; line: number; column: number }[]> {
+		const lists = await Promise.all(
+			[...this.#sessions.values()].map((s) => (s.client.ready ? s.client.workspaceSymbols(query).catch(() => null) : Promise.resolve(null)))
+		);
+		const out: { name: string; kind: number; container?: string; rel: string; line: number; column: number }[] = [];
+		for (const list of lists)
+			for (const sym of list ?? []) {
+				const rel = sym.location?.uri ? relOfUri(this.#rootPath, sym.location.uri) : null;
+				if (rel === null) continue;
+				const start = sym.location.range?.start ?? { line: 0, character: 0 };
+				out.push({ name: sym.name, kind: sym.kind, container: sym.containerName, rel, line: start.line + 1, column: start.character + 1 });
+			}
+		return out;
+	}
+
+	/** Whether any running server answers `#` queries. */
+	hasWorkspaceSymbols(): boolean {
+		return [...this.#sessions.values()].some((s) => !!s.client.capabilities.workspaceSymbolProvider);
+	}
+
+	/** Document symbols of an open file: the breadcrumbs' copy, or a fresh request when there is none yet. */
+	async documentSymbolsOf(rel: string): Promise<(DocumentSymbol | SymbolInformation)[]> {
+		const cached = this.symbols.get(rel);
+		if (cached?.length) return cached;
+		const doc = [...this.#docs.values()].find((d) => d.rel === rel);
+		const client = doc?.uri ? this.#sessions.get(doc.key)?.client : undefined;
+		if (!doc || !client?.ready) return cached ?? [];
+		const syms = (await client.documentSymbols(doc.uri).catch(() => null)) ?? [];
+		if (this.#docs.has(doc.model)) this.symbols.set(rel, syms);
+		return syms;
+	}
+
 	hasServer(languageId: string) {
 		return serverFor(languageId) !== undefined;
 	}
@@ -195,7 +231,7 @@ class Lsp {
 		try {
 			res = await invoke<InstallInfo>('lsp_install_methods', { language: info.languages[0] });
 		} catch (e) {
-			return statusBar.flash(String(e));
+			return notifications.error(e);
 		}
 		const retry = { id: 'retry', label: 'ลองหาอีกครั้ง', description: `ติดตั้ง ${res.binary} เองแล้ว`, separator: res.methods.length ? 'อื่น ๆ' : undefined };
 		quick.pick({
@@ -244,7 +280,7 @@ class Lsp {
 		try {
 			const found = await invoke<string>('lsp_check', { language: info.languages[0] }).then(
 				() => true,
-				(e) => (report && statusBar.flash(String(e)), false)
+				(e) => (report && notifications.error(e), false)
 			);
 			if (!found) return false;
 			statusBar.flash(`พบ ${info.name} แล้ว — กำลังเริ่ม`);
@@ -282,7 +318,7 @@ class Lsp {
 			openCodeEditor: (_source, resource, selection) => {
 				const at = selection && 'startLineNumber' in selection ? { line: selection.startLineNumber, column: selection.startColumn } : selection ? { line: selection.lineNumber, column: selection.column } : { line: 1, column: 1 };
 				if (resource.scheme === EXTERNAL_SCHEME) {
-					statusBar.flash(`${resource.path} อยู่นอก workspace จึงเปิดไม่ได้`);
+					notifications.warn(`${resource.path} อยู่นอก workspace จึงเปิดไม่ได้`);
 					return true;
 				}
 				if (resource.scheme !== 'file') return false;
@@ -329,8 +365,11 @@ class Lsp {
 			},
 			status: (s) => this.#setStatus(info, s),
 			log: (line) => this.#append(line),
-			// MessageType Error 1, Warning 2, Info 3 flash; Log 4 only goes to the Output log.
-			showMessage: (type, message) => type <= 3 && statusBar.flash(`${info.name}: ${message}`),
+			// MessageType Error 1, Warning 2, Info 3 are notifications (VS Code); Log 4 only goes to the Output log.
+			showMessage: (type, message) => {
+				if (type <= 3) notifications.notify({ severity: MESSAGE_SEVERITY[type], message, source: info.name });
+			},
+			showMessageRequest: async (type, message, actions) => (await notifications.prompt(MESSAGE_SEVERITY[type] ?? 'info', message, actions, { source: info.name })) ?? null,
 			applyEdit: (edit) => this.applyWorkspaceEdit(edit),
 			configuration: (section) => configurationValue(this.#settingsFor(info), section)
 		});
@@ -608,7 +647,7 @@ class Lsp {
 			}
 			if (action.command) await this.#execute(client, action.command);
 		} catch (e) {
-			statusBar.flash(`${item.title}: ${e instanceof Error ? e.message : e}`);
+			notifications.error(`${item.title}: ${e instanceof Error ? e.message : e}`);
 		}
 	}
 
@@ -824,7 +863,7 @@ class Lsp {
 						provideDocumentFormattingEdits: async (model, options, token) => {
 							const d = this.#lookup(model);
 							const fmt = { tabSize: options.tabSize, insertSpaces: options.insertSpaces };
-							return toMonacoTextEdits(d && (await d.client.formatting(d.uri, fmt, token).catch((e) => (statusBar.flash(`Format: ${e}`), null))));
+							return toMonacoTextEdits(d && (await d.client.formatting(d.uri, fmt, token).catch((e) => (notifications.error(`Format: ${e}`), null))));
 						}
 					})
 				);
@@ -836,7 +875,7 @@ class Lsp {
 						provideDocumentRangeFormattingEdits: async (model, range, options, token) => {
 							const d = this.#lookup(model);
 							const fmt = { tabSize: options.tabSize, insertSpaces: options.insertSpaces };
-							return toMonacoTextEdits(d && (await d.client.rangeFormatting(d.uri, toLspRange(range), fmt, token).catch((e) => (statusBar.flash(`Format: ${e}`), null))));
+							return toMonacoTextEdits(d && (await d.client.rangeFormatting(d.uri, toLspRange(range), fmt, token).catch((e) => (notifications.error(`Format: ${e}`), null))));
 						}
 					})
 				);

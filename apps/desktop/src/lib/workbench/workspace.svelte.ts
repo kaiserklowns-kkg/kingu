@@ -19,6 +19,7 @@ import { quick, type PickItem } from './quick.svelte';
 import { scm } from './scm.svelte';
 import { search } from './search.svelte';
 import { status } from './status.svelte';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 type FilesChanged = { root: string; paths: string[] };
 type Listener = (paths: string[]) => void;
@@ -63,7 +64,7 @@ class Workspace {
 		try {
 			root = await invoke<string>('workspace_open', { path });
 		} catch (e) {
-			status.flash(`เปิดโฟลเดอร์ไม่ได้: ${e}`, 8000);
+			notifications.error(`เปิดโฟลเดอร์ไม่ได้: ${e}`);
 			// VS Code drops a recent entry that no longer opens.
 			if (this.recent.includes(path)) await invoke('workspace_recent_remove', { path }).catch(() => {});
 			await this.loadRecent();
@@ -78,7 +79,7 @@ class Workspace {
 		try {
 			await invoke('workspace_close');
 		} catch (e) {
-			status.flash(String(e), 8000);
+			notifications.error(e);
 			return;
 		}
 		this.#switched(null);
@@ -90,7 +91,7 @@ class Workspace {
 	}
 
 	async clearRecent() {
-		await invoke('workspace_recent_clear').catch((e) => status.flash(String(e)));
+		await invoke('workspace_recent_clear').catch((e) => notifications.error(e));
 		await this.loadRecent();
 	}
 

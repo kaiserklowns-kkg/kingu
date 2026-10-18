@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { notifications } from '#lib/workbench/notifications.svelte.ts';
 	// Explorer tab of the ADE's right side bar (Orca's FileExplorer) for one worktree: header with
 	// Collapse All, Refresh and a "…" menu (Show Dotfiles, Show Git Ignored Files, Reveal, Open in
 	// Editor / Terminal); the "Find files" box with Names (every space-separated part in the path,
@@ -199,11 +200,11 @@
 			await navigator.clipboard.writeText(text);
 			status.flash(`คัดลอก ${what} แล้ว`);
 		} catch (e) {
-			status.flash(`คัดลอกไม่ได้: ${e}`);
+			notifications.error(`คัดลอกไม่ได้: ${e}`);
 		}
 	}
 
-	const reveal = (rel: string) => invoke('fs_reveal', { rel }).catch((e) => status.flash(String(e), 8000));
+	const reveal = (rel: string) => invoke('fs_reveal', { rel }).catch((e) => notifications.error(e));
 
 	async function startCreate(kind: 'file' | 'folder', target: string | null = selected) {
 		const parent = target === null ? base : isDir(target) ? target : parentOf(target);
@@ -282,7 +283,7 @@
 		try {
 			await invoke('fs_delete', { rel });
 		} catch (e) {
-			status.flash(String(e), 8000);
+			notifications.error(e);
 			return;
 		}
 		for (const t of tabs) editors.closeEverywhere(t);
@@ -474,7 +475,7 @@
 		try {
 			await move(from, joinRel(dir, baseName(from)));
 		} catch (err) {
-			status.flash(err instanceof Error ? err.message : String(err), 8000);
+			notifications.error(err instanceof Error ? err.message : String(err));
 		}
 	}
 
@@ -488,7 +489,7 @@
 		loadingFiles = true;
 		(s ? invoke<string[]>('worktree_list_files', { slug: s }) : invoke<string[]>('fs_list_files'))
 			.then((list) => s === slug && (allFiles = list))
-			.catch((e) => status.flash(String(e), 8000))
+			.catch((e) => notifications.error(e))
 			.finally(() => (loadingFiles = false));
 	});
 	const names = $derived.by(() => {

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { notifications } from '#lib/workbench/notifications.svelte.ts';
 	// Agents layout body, laid out like Orca: side bar (search, Tasks, Projects → worktrees) | the
 	// selected worktree's active tab (the agent session, the new-task composer for the folder
 	// itself, a terminal in that worktree, or a file / task diff opened from the right side bar;
@@ -141,7 +142,7 @@
 						<AdeEditor
 							path={activeFile}
 							onedit={() => adeLayout.pin(key, activeFile)}
-							onfail={(e) => (status.flash(`เปิดไฟล์ไม่ได้: ${e}`), adeLayout.closeFile(key, activeFile))}
+							onfail={(e) => (notifications.error(`เปิดไฟล์ไม่ได้: ${e}`), adeLayout.closeFile(key, activeFile))}
 						/>
 					</div>
 				{/key}

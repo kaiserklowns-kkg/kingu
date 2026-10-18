@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
+	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import FileIcon from './FileIcon.svelte';
 	import { scm } from './scm.svelte';
 	import { entryChanges, fileDecorations } from './scm';
@@ -10,11 +11,13 @@
 	import { editors } from './editors.svelte';
 	import { baseName, recentLabel, stemLength } from './fileTree';
 	import { keyLabel } from './keys';
-	import { status } from './status.svelte';
 	import { workspace } from './workspace.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { isNonTextEditor } from '#lib/settings/resources.ts';
 	import { isDiffKey } from './scm';
+	import { isUntitled } from './untitled';
+	import { notifications } from './notifications.svelte';
+	import { dropTarget } from './explorerModel';
 
 	let { workspaceName }: { workspaceName: string } = $props();
 
@@ -30,13 +33,97 @@
 		if (workspace.root && !explorer.children.has('')) explorer.load('');
 	});
 
+	explorer.setRootName(() => workspaceName);
+
+	// Reveal in Explorer View: focus the row once it is rendered.
+	$effect(() => {
+		const rel = explorer.focusRequest;
+		if (!rel || !tree) return;
+		queueMicrotask(() => {
+			const el = tree?.querySelector<HTMLElement>(`[data-rel="${CSS.escape(rel)}"]`);
+			if (!el) return;
+			explorer.focusRequest = null;
+			el.scrollIntoView({ block: 'nearest' });
+			el.focus();
+		});
+	});
+
+	// --- Drag and drop (VS Code explorerViewer.ts FileDragAndDrop) --------------------------------
+
+	const DRAG_MIME = 'application/x-kingu-explorer';
+	/** The folder a drag would drop into ('' is the root), highlighted with its rows. */
+	let dragTarget = $state<string | null>(null);
+	const dndEnabled = $derived(settings.get<boolean>('explorer.enableDragAndDrop') !== false);
+
+	function onDragStart(e: DragEvent, row: Row) {
+		if (!e.dataTransfer || !dndEnabled) return;
+		if (!explorer.isSelected(row.rel)) explorer.select(row.rel);
+		const paths = explorer.targets(row.rel);
+		e.dataTransfer.setData(DRAG_MIME, JSON.stringify(paths));
+		e.dataTransfer.setData('text/plain', paths.map(absPath).join('\n'));
+		e.dataTransfer.effectAllowed = 'copyMove';
+	}
+
+	function onDragOver(e: DragEvent, row: Row | null) {
+		if (!e.dataTransfer?.types.includes(DRAG_MIME)) return;
+		e.preventDefault();
+		e.stopPropagation();
+		// ⌥ copies, like VS Code (Ctrl on Windows/Linux).
+		e.dataTransfer.dropEffect = (isMac ? e.altKey : e.ctrlKey) ? 'copy' : 'move';
+		dragTarget = dropTarget(row?.rel ?? null, row?.is_dir ?? true);
+	}
+
+	function onDrop(e: DragEvent, row: Row | null) {
+		const raw = e.dataTransfer?.getData(DRAG_MIME);
+		dragTarget = null;
+		if (!raw) return;
+		e.preventDefault();
+		e.stopPropagation();
+		const copy = isMac ? e.altKey : e.ctrlKey;
+		void explorer.transfer(JSON.parse(raw) as string[], dropTarget(row?.rel ?? null, row?.is_dir ?? true), copy, true);
+	}
+
+	/** In the drop target folder (it and its rows are highlighted). */
+	const inDragTarget = (rel: string) => dragTarget !== null && (dragTarget === '' ? false : rel === dragTarget || rel.startsWith(dragTarget + '/'));
+
+	// Files dragged in from Finder arrive as Tauri drag-drop events (window coordinates in physical px).
+	onMount(() => {
+		let unlisten: (() => void) | undefined;
+		let gone = false;
+		const targetAt = (pos: { x: number; y: number }): string | null => {
+			const ratio = window.devicePixelRatio || 1;
+			const el = document.elementFromPoint(pos.x / ratio, pos.y / ratio);
+			if (!el || !tree?.contains(el)) return null;
+			const rowEl = el.closest<HTMLElement>('[data-rel]');
+			if (!rowEl) return '';
+			const rel = rowEl.dataset.rel!;
+			return dropTarget(rel, explorer.isDir(rel));
+		};
+		getCurrentWebview()
+			.onDragDropEvent((ev) => {
+				const p = ev.payload;
+				if (p.type === 'over' || p.type === 'enter') dragTarget = targetAt(p.position);
+				else if (p.type === 'drop') {
+					const target = targetAt(p.position);
+					dragTarget = null;
+					if (target !== null && p.paths.length && workspace.root) void explorer.importDropped(p.paths, target);
+				} else dragTarget = null;
+			})
+			.then((u) => (gone ? u() : (unlisten = u)))
+			.catch(() => {});
+		return () => {
+			gone = true;
+			unlisten?.();
+		};
+	});
+
 	/** workbench.tree.indent */
 	const indent = $derived(settings.get<number>('workbench.tree.indent'));
 
 	// explorer.autoReveal: the active editor's file is expanded to, selected and scrolled into view.
 	$effect(() => {
 		const active = editors.active;
-		if (!active || !workspace.root || !settings.get<boolean>('explorer.autoReveal') || isDiffKey(active) || isNonTextEditor(active) || active.includes('://')) return;
+		if (!active || !workspace.root || !settings.get<boolean>('explorer.autoReveal') || isDiffKey(active) || isUntitled(active) || isNonTextEditor(active) || active.includes('://')) return;
 		// Untracked: the tree loading folders on the way must not re-run this (and re-select the file).
 		untrack(() =>
 			explorer.reveal(active).then(() => {
@@ -66,7 +153,16 @@
 	});
 
 	function select(rel: string | null) {
-		explorer.selected = rel;
+		explorer.select(rel);
+	}
+
+	/** Row click: ⌘ toggles, ⇧ extends, a plain click selects and opens (VS Code's list). */
+	function onRowClick(e: MouseEvent, row: Row) {
+		if (isMac ? e.metaKey : e.ctrlKey) return explorer.toggleSelect(row.rel);
+		if (e.shiftKey) return explorer.selectRange(row.rel);
+		select(row.rel);
+		if (row.is_dir) void (row.expanded ? explorer.collapse(row) : explorer.expand(row.rel));
+		else editors.open(row.rel, { preview: true });
 	}
 
 	/** Mounts the edit box focused, with the name (minus extension) selected like VS Code. */
@@ -129,32 +225,36 @@
 		try {
 			await navigator.clipboard.writeText(text);
 		} catch (e) {
-			status.flash(`คัดลอกไม่ได้: ${e}`);
+			notifications.error(`คัดลอกไม่ได้ (Copy failed): ${e}`);
 		}
 	}
 
 	function reveal(rel: string | null) {
-		invoke('fs_reveal', { rel: rel ?? '' }).catch((e) => status.flash(String(e), 8000));
+		invoke('fs_reveal', { rel: rel ?? '' }).catch((e) => notifications.error(String(e)));
 	}
 
-	type MenuItem = { label: string; key?: string; run: () => unknown } | 'sep';
+	type MenuItem = { label: string; key?: string; enabled?: boolean; run: () => unknown } | 'sep';
 
 	function menuItems(target: string | null): MenuItem[] {
+		const many = target !== null && explorer.targets(target).length > 1;
 		const items: MenuItem[] = [
 			{ label: 'New File...', run: () => explorer.startCreate('file', target) },
 			{ label: 'New Folder...', run: () => explorer.startCreate('folder', target) },
 			'sep',
 			{ label: isMac ? 'Reveal in Finder' : 'Reveal in File Explorer', key: keyLabel('alt+cmd+r'), run: () => reveal(target) },
-			'sep',
-			{ label: 'Copy Path', key: keyLabel('alt+cmd+c'), run: () => copy(absPath(target ?? '')) },
-			{ label: 'Copy Relative Path', key: keyLabel('alt+shift+cmd+c'), run: () => copy(target ?? '.') }
+			'sep'
 		];
+		if (target) items.push({ label: 'Cut', key: keyLabel('cmd+x'), run: () => explorer.setClipboard(explorer.targets(target), true) }, { label: 'Copy', key: keyLabel('cmd+c'), run: () => explorer.setClipboard(explorer.targets(target), false) });
+		items.push(
+			{ label: 'Paste', key: keyLabel('cmd+v'), enabled: explorer.clipboard !== null, run: () => explorer.paste(target) },
+			'sep',
+			{ label: 'Copy Path', key: keyLabel('alt+cmd+c'), run: () => copy(target ? explorer.targets(target).map(absPath).join('\n') : absPath('')) },
+			{ label: 'Copy Relative Path', key: keyLabel('alt+shift+cmd+c'), run: () => copy(target ? explorer.targets(target).join('\n') : '.') }
+		);
 		if (target) {
-			items.push(
-				'sep',
-				{ label: 'Rename...', key: isMac ? '↵' : 'F2', run: () => explorer.startRename(target) },
-				{ label: 'Delete', key: isMac ? '⌘⌫' : 'Delete', run: () => explorer.delete(target) }
-			);
+			items.push('sep');
+			if (!many) items.push({ label: 'Rename...', key: isMac ? '↵' : 'F2', run: () => explorer.startRename(target) });
+			items.push({ label: 'Delete', key: isMac ? '⌘⌫' : 'Delete', run: () => explorer.delete(target) });
 		}
 		return items;
 	}
@@ -162,7 +262,8 @@
 	function openMenu(e: MouseEvent, target: string | null) {
 		e.preventDefault();
 		e.stopPropagation();
-		select(target);
+		// Right-click inside the selection keeps it (the menu acts on all of it), like VS Code.
+		if (target === null || !explorer.isSelected(target)) select(target);
 		// Keep the menu inside the window.
 		const x = Math.min(e.clientX, window.innerWidth - 240);
 		const y = Math.min(e.clientY, window.innerHeight - 260);
@@ -172,7 +273,18 @@
 	function onTreeKey(e: KeyboardEvent) {
 		const sel = explorer.selected;
 		const mod = isMac ? e.metaKey : e.ctrlKey;
-		if (e.key === 'F2' || (isMac && e.key === 'Enter' && !mod && !e.altKey && !e.shiftKey)) {
+		const plainMod = mod && !e.altKey && !e.shiftKey;
+		if (plainMod && (e.code === 'KeyC' || e.code === 'KeyX')) {
+			if (!sel) return;
+			explorer.setClipboard(explorer.targets(sel), e.code === 'KeyX');
+		} else if (plainMod && e.code === 'KeyV') {
+			void explorer.paste(sel);
+		} else if (plainMod && e.code === 'KeyA') {
+			for (const r of explorer.rows()) explorer.selection.add(r.rel);
+		} else if (e.key === 'Escape' && (explorer.selection.size > 1 || explorer.clipboard)) {
+			explorer.clipboard = null;
+			if (sel) select(sel);
+		} else if (e.key === 'F2' || (isMac && e.key === 'Enter' && !mod && !e.altKey && !e.shiftKey)) {
 			if (!sel) return;
 			explorer.startRename(sel);
 		} else if ((isMac && mod && e.key === 'Backspace') || (!isMac && e.key === 'Delete')) {
@@ -187,9 +299,23 @@
 			const i = rows.findIndex((r) => r.rel === sel);
 			const next = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))];
 			if (next) {
-				select(next.rel);
+				if (e.shiftKey) explorer.selectRange(next.rel);
+				else select(next.rel);
 				tree?.querySelector<HTMLElement>(`[data-rel="${CSS.escape(next.rel)}"]`)?.focus();
 			}
+		} else if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && sel && !e.shiftKey && !mod) {
+			const row = explorer.rows().find((r) => r.rel === sel);
+			if (!row) return;
+			if (e.key === 'ArrowRight' && row.is_dir && !row.expanded) void explorer.expand(row.rel);
+			else if (e.key === 'ArrowLeft' && row.is_dir && row.expanded) explorer.collapse(row);
+			else if (e.key === 'ArrowLeft') {
+				const parent = sel.includes('/') ? sel.slice(0, sel.lastIndexOf('/')) : null;
+				const up = parent && explorer.rows().find((r) => r.rel === parent || r.chain?.includes(parent));
+				if (up) {
+					select(up.rel);
+					tree?.querySelector<HTMLElement>(`[data-rel="${CSS.escape(up.rel)}"]`)?.focus();
+				}
+			} else return;
 		} else return;
 		e.preventDefault();
 		e.stopPropagation();
@@ -272,11 +398,16 @@
 				role="tree"
 				tabindex="-1"
 				aria-label="ไฟล์ใน workspace"
-				class="min-h-0 flex-1 overflow-y-auto outline-none"
+				aria-multiselectable="true"
+				data-context="explorer"
+				class={['min-h-0 flex-1 overflow-y-auto outline-none', dragTarget === '' && 'bg-(--vscode-list-dropBackground)']}
 				style:scroll-behavior="var(--kg-list-scroll-behavior, auto)"
 				onkeydown={onTreeKey}
 				oncontextmenu={(e) => openMenu(e, null)}
 				onclick={(e) => e.target === e.currentTarget && select(null)}
+				ondragover={(e) => onDragOver(e, null)}
+				ondragleave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && (dragTarget = null)}
+				ondrop={(e) => onDrop(e, null)}
 			>
 				{#each items as item (item.type === 'row' ? item.row.rel : item.key)}
 					{#if item.type === 'input'}
@@ -312,30 +443,36 @@
 						</div>
 					{:else}
 						{@const row = item.row}
+						{@const picked = explorer.isSelected(row.rel)}
 						<button
 							role="treeitem"
 							data-rel={row.rel}
-							aria-selected={explorer.selected === row.rel}
+							aria-selected={picked}
 							aria-expanded={row.is_dir ? row.expanded : undefined}
+							draggable={dndEnabled}
 							class={[
 								'flex h-(--kg-row-height) w-full items-center gap-1 pr-2 text-left leading-(--kg-row-height) outline-offset-[-1px]',
-								explorer.selected === row.rel
-									? 'bg-(--vscode-list-activeSelectionBackground) text-(--vscode-list-activeSelectionForeground) outline outline-1 outline-(--vscode-focusBorder)'
-									: 'hover:bg-(--vscode-list-hoverBackground)',
-								editors.active === row.rel && explorer.selected !== row.rel && 'bg-(--vscode-list-inactiveSelectionBackground)',
-								menu?.target === row.rel && 'outline outline-1 outline-(--vscode-focusBorder)'
+								picked
+									? 'bg-(--vscode-list-activeSelectionBackground) text-(--vscode-list-activeSelectionForeground)'
+									: inDragTarget(row.rel)
+										? 'bg-(--vscode-list-dropBackground)'
+										: 'hover:bg-(--vscode-list-hoverBackground)',
+								explorer.selected === row.rel && 'outline outline-1 outline-(--vscode-focusBorder)',
+								editors.active === row.rel && !picked && 'bg-(--vscode-list-inactiveSelectionBackground)',
+								menu?.target === row.rel && 'outline outline-1 outline-(--vscode-focusBorder)',
+								explorer.isCut(row.rel) && 'opacity-50'
 							]}
 							style:padding-left="{8 + row.depth * indent}px"
 							title={row.rel}
-							onclick={() => {
-								select(row.rel);
-								if (row.is_dir) explorer.toggle(row.rel);
-								else editors.open(row.rel, { preview: true });
-							}}
-							ondblclick={() => {
-								if (!row.is_dir) editors.open(row.rel, { preview: false });
+							onclick={(e) => onRowClick(e, row)}
+							ondblclick={(e) => {
+								if (!row.is_dir && !e.shiftKey && !(isMac ? e.metaKey : e.ctrlKey)) editors.open(row.rel, { preview: false });
 							}}
 							oncontextmenu={(e) => openMenu(e, row.rel)}
+							ondragstart={(e) => onDragStart(e, row)}
+							ondragover={(e) => onDragOver(e, row)}
+							ondrop={(e) => onDrop(e, row)}
+							ondragend={() => (dragTarget = null)}
 						>
 							<span class="flex w-4 shrink-0 justify-center text-(--vscode-icon-foreground)">
 								{#if row.is_dir}<Icon name={row.expanded ? 'chevronDown' : 'chevronRight'} size={16} />{/if}
@@ -378,7 +515,8 @@
 			{:else}
 				<button
 					role="menuitem"
-					class="mx-1 flex h-6 w-[calc(100%-8px)] items-center justify-between gap-6 rounded px-3 text-left hover:bg-[var(--vscode-menu-selectionBackground,#0078D4)] hover:text-[color:var(--vscode-menu-selectionForeground,#FFFFFF)]"
+					disabled={it.enabled === false}
+					class="mx-1 flex h-6 w-[calc(100%-8px)] items-center justify-between gap-6 rounded px-3 text-left hover:bg-[var(--vscode-menu-selectionBackground,#0078D4)] hover:text-[color:var(--vscode-menu-selectionForeground,#FFFFFF)] disabled:opacity-40 disabled:hover:bg-transparent"
 					onclick={() => {
 						menu = null;
 						void it.run();

@@ -117,7 +117,7 @@ describe('menu model', () => {
 			const items = flattenItems(resolveMenubar(context(mac)));
 			const accelerators = items.flatMap((i) => (i.accelerator ? [i.accelerator] : []));
 			expect(accelerators.length).toBeGreaterThan(15);
-			for (const a of accelerators) expect(a).toMatch(/^((Ctrl|Alt|Shift|Cmd)\+)*([A-Z0-9]|F\d{1,2}|Backquote|Backslash|Comma|Period|Equal|Minus|Slash|Semicolon|Quote|BracketLeft|BracketRight|Arrow(Left|Right|Up|Down))$/);
+			for (const a of accelerators) expect(a).toMatch(/^((Ctrl|Alt|Shift|Cmd)\+)*([A-Z0-9]|F\d{1,2}|Backquote|Backslash|Comma|Period|Equal|Minus|Slash|Semicolon|Quote|BracketLeft|BracketRight|Arrow(Left|Right|Up|Down)|Page(Up|Down))$/);
 			// Every item with a single-chord keybinding gets an accelerator; two-part chords only a label.
 			for (const i of items) if (i.keyLabel && !i.keyLabel.includes(' ')) expect([i.id, i.accelerator]).toEqual([i.id, expect.any(String)]);
 		});

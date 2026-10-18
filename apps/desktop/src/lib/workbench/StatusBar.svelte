@@ -19,6 +19,7 @@
 	import { commands } from '#lib/workbench/commands.svelte.ts';
 	import { scm } from '#lib/workbench/scm.svelte.ts';
 	import { syncItem } from '#lib/workbench/scmRemote.ts';
+	import { notifications } from './notifications.svelte';
 
 	const languageNames: Record<string, string> = {
 		typescript: 'TypeScript',
@@ -131,6 +132,15 @@
 		<span class="px-2">{editors.eol}</span>
 		<span class="px-2">{languageNames[editors.language] ?? editors.language}</span>
 	{/if}
+	<!-- VS Code's notifications bell, always the right-most item. -->
+	<button
+		class={ITEM}
+		aria-label={notifications.doNotDisturb ? 'Notifications (Do Not Disturb)' : notifications.unread ? `Notifications: ${notifications.unread} new` : 'Notifications'}
+		title={notifications.doNotDisturb ? 'Do Not Disturb' : notifications.unread ? `${notifications.unread} New Notifications` : 'No Notifications'}
+		onclick={() => notifications.toggleCenter()}
+	>
+		<Icon name={notifications.doNotDisturb ? 'bellSlash' : notifications.unread ? 'bellDot' : 'bell'} size={14} />
+	</button>
 </footer>
 
 {#if menu}

@@ -13,6 +13,7 @@ import { worktreeDir } from './keys';
 import { COLUMNS, STATUS_LABEL } from './model';
 import { adeTasks } from './tasks.svelte';
 import { jumpRows, worktreeActions, type WorktreeAction } from './worktreeActions';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 const FOLDER_ID = '@folder';
 
@@ -27,7 +28,7 @@ async function copy(text: string, what: string) {
 		await navigator.clipboard.writeText(text);
 		status.flash(`คัดลอก${what}แล้ว`);
 	} catch {
-		status.flash(`คัดลอก${what}ไม่ได้`);
+		notifications.error(`คัดลอก${what}ไม่ได้`);
 	}
 }
 
@@ -47,7 +48,7 @@ export function runWorktreeAction(key: string, id: WorktreeAction) {
 		case 'quickOpen':
 			return slug ? adeTasks.quickOpen(slug) : commands.run('workbench.action.quickOpen');
 		case 'reveal':
-			return invoke('fs_reveal', { rel: slug ? worktreeDir(slug) : '' }).catch((e) => status.flash(String(e)));
+			return invoke('fs_reveal', { rel: slug ? worktreeDir(slug) : '' }).catch((e) => notifications.error(e));
 		case 'copyPath':
 			return workspace.root && copy(slug ? `${workspace.root}/${worktreeDir(slug)}` : workspace.root, ' path ');
 		case 'copyBranch':

@@ -10,7 +10,10 @@ import { associatedLanguage, eolFor, type SaveReason } from '#lib/settings/mappi
 import { readResource, writeResource } from '#lib/settings/resources.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { editors } from './editors.svelte';
+import { invoke } from '@tauri-apps/api/core';
 import { runSaveParticipants } from './textFileSave';
+import { isUntitled, suggestedName } from './untitled';
+import { notifications } from './notifications.svelte';
 
 type MonacoModule = typeof import('#lib/editor/monaco.ts');
 export type ModelEntry = { model: Monaco.editor.ITextModel; savedVersion: number; reloading?: boolean };
@@ -75,12 +78,84 @@ export function openModels(): [string, Monaco.editor.ITextModel][] {
 export async function saveFile(path: string, reason: SaveReason = 'explicit') {
 	const entry = entries.get(path);
 	if (!entry) return;
+	// An untitled editor has no file yet: an explicit save asks where (auto save leaves it alone).
+	if (isUntitled(path)) {
+		if (reason === 'explicit') await saveAs(path);
+		return;
+	}
 	if (api) await runSaveParticipants(api.monaco, entry.model, reason);
 	if (entry.model.isDisposed()) return;
 	await writeResource(path, entry.model.getValue());
 	entry.savedVersion = entry.model.getAlternativeVersionId();
 	editors.setDirty(path, false);
 	lsp.didSave(entry.model);
+}
+
+type SavedAs = { rel: string | null; path: string };
+
+/**
+ * Save As (⇧⌘S), and the first save of an untitled editor: the native save dialog (run by Rust),
+ * then the editor switches to the new file like VS Code. The old file keeps what is on disk.
+ * Returns the new workspace path, or null when cancelled or saved outside the folder.
+ */
+export async function saveAs(path: string): Promise<string | null> {
+	const entry = entries.get(path);
+	if (!entry) return null;
+	const text = entry.model.getValue();
+	const slash = path.lastIndexOf('/');
+	let saved: SavedAs | null;
+	try {
+		saved = await invoke<SavedAs | null>('fs_save_as', {
+			content: text,
+			name: suggestedName(path, text),
+			dir: !isUntitled(path) && slash > 0 ? path.slice(0, slash) : null
+		});
+	} catch (e) {
+		notifications.error(`บันทึกเป็นไฟล์ใหม่ไม่สำเร็จ (Save As failed): ${e}`);
+		return null;
+	}
+	if (!saved) return null;
+	if (!saved.rel) {
+		notifications.info(`บันทึกไว้ที่ ${saved.path} ซึ่งอยู่นอกโฟลเดอร์ที่เปิด จึงเปิดเป็นแท็บไม่ได้ (Saved outside the open folder.)`);
+		if (isUntitled(path)) {
+			editors.setDirty(path, false);
+			editors.closeEverywhere(path);
+		}
+		return null;
+	}
+	const rel = saved.rel;
+	editors.setDirty(path, false);
+	if (rel !== path) {
+		// The editor now shows the new file; the old model goes once no tab shows it.
+		editors.remap((p) => (p === path ? rel : null));
+		// An already-loaded model of the target is stale now.
+		void reloadClean([rel]);
+	} else {
+		entry.savedVersion = entry.model.getAlternativeVersionId();
+	}
+	return rel;
+}
+
+/** Revert File: the editor takes the file's contents on disk and is clean again (undoable). */
+export async function revertFile(path: string) {
+	const entry = entries.get(path);
+	if (!entry) return;
+	if (isUntitled(path)) {
+		entry.model.setValue('');
+		entry.savedVersion = entry.model.getAlternativeVersionId();
+		editors.setDirty(path, false);
+		return;
+	}
+	const text = await readResource(path);
+	if (entry.model.isDisposed()) return;
+	entry.reloading = true;
+	try {
+		entry.model.pushEditOperations([], [{ range: entry.model.getFullModelRange(), text }], () => null);
+	} finally {
+		entry.reloading = false;
+	}
+	entry.savedVersion = entry.model.getAlternativeVersionId();
+	editors.setDirty(path, false);
 }
 
 /**

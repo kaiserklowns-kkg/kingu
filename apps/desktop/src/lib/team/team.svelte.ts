@@ -11,6 +11,7 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 import { buildTaskSync, STREAM_LABEL, teamStatusLabel, type TeamStatus, type TeamTaskInput } from './team';
 import type { TeamEvent } from './teamEvents.ts';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 type SignedIn = { server: string; org_id: string; org_name: string; user_id: string; role: string };
 
@@ -66,7 +67,7 @@ class Team {
 			await invoke('team_sign_out', { serverUrl: this.serverUrl });
 			statusBar.flash('ออกจากระบบทีมแล้ว (ลบ token จาก Keychain)');
 		} catch (e) {
-			statusBar.flash(`ออกจากระบบทีมไม่สำเร็จ: ${message(e)}`);
+			notifications.error(`ออกจากระบบทีมไม่สำเร็จ: ${message(e)}`);
 		}
 		await this.refresh();
 	}
@@ -82,7 +83,7 @@ class Team {
 			const pending = await invoke<number>('team_sync_task', { serverUrl, project, task: buildTaskSync(task) });
 			if (this.status) this.status = { ...this.status, pending };
 		} catch (e) {
-			statusBar.flash(`ซิงก์งานไปยังทีมไม่ได้: ${message(e)}`);
+			notifications.error(`ซิงก์งานไปยังทีมไม่ได้: ${message(e)}`);
 		}
 	}
 
@@ -99,7 +100,7 @@ class Team {
 		const done = server ? invoke('team_events_start', { serverUrl: server }) : invoke('team_events_stop');
 		done.catch((e) => {
 			this.#streaming = '';
-			statusBar.flash(`เชื่อมต่ออัปเดตสดจากทีมไม่ได้: ${message(e)}`);
+			notifications.error(`เชื่อมต่ออัปเดตสดจากทีมไม่ได้: ${message(e)}`);
 		});
 	}
 

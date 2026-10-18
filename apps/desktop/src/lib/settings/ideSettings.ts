@@ -442,9 +442,30 @@ export const IDE_SETTINGS: SettingSchema[] = [
 		group: 'Explorer',
 		type: 'string',
 		default: 'default',
-		enum: ['default', 'mixed', 'filesFirst', 'type'],
-		enumDescriptions: ['โฟลเดอร์ก่อน แล้วเรียงตามชื่อ', 'ไฟล์และโฟลเดอร์ปนกันตามชื่อ', 'ไฟล์ก่อนโฟลเดอร์', 'โฟลเดอร์ก่อน แล้วเรียงตามนามสกุลไฟล์'],
+		enum: ['default', 'mixed', 'filesFirst', 'type', 'modified'],
+		enumDescriptions: ['โฟลเดอร์ก่อน แล้วเรียงตามชื่อ', 'ไฟล์และโฟลเดอร์ปนกันตามชื่อ', 'ไฟล์ก่อนโฟลเดอร์', 'โฟลเดอร์ก่อน แล้วเรียงตามนามสกุลไฟล์', 'โฟลเดอร์ก่อน แล้วเรียงตามเวลาแก้ไขล่าสุด (ใหม่สุดก่อน)'],
 		description: 'การเรียงไฟล์และโฟลเดอร์ใน Explorer (Controls the property-based sorting of files and folders in the Explorer.)'
+	},
+	{
+		id: 'explorer.compactFolders',
+		group: 'Explorer',
+		type: 'boolean',
+		default: true,
+		description: 'รวมโฟลเดอร์ที่มีโฟลเดอร์ย่อยเดียวเป็นแถวเดียว เช่น src/lib/utils (Controls whether the Explorer should render folders in a compact form.)'
+	},
+	{
+		id: 'explorer.enableDragAndDrop',
+		group: 'Explorer',
+		type: 'boolean',
+		default: true,
+		description: 'ลากและวางเพื่อย้ายไฟล์และโฟลเดอร์ใน Explorer (Controls whether the Explorer should allow to move files and folders via drag and drop.)'
+	},
+	{
+		id: 'explorer.confirmDragAndDrop',
+		group: 'Explorer',
+		type: 'boolean',
+		default: true,
+		description: 'ถามก่อนย้ายไฟล์และโฟลเดอร์ด้วยการลากและวาง (Controls whether the Explorer should ask for confirmation to move files and folders via drag and drop.)'
 	},
 	{
 		id: 'explorer.autoReveal',

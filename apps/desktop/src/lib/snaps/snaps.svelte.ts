@@ -48,6 +48,7 @@ import {
 	type SandboxPlan,
 	type SnapInfo
 } from './snapModel.ts';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 class Snaps {
 	list = $state<SnapInfo[]>([]);
@@ -91,7 +92,7 @@ class Snaps {
 			await invoke('snap_trust', { id, trusted: on, hash: on ? snap.hash : null });
 			status.flash(on ? `เชื่อถือ snap “${snap.name}” แล้ว` : `เลิกเชื่อถือ snap “${snap.name}” แล้ว`);
 		} catch (e) {
-			status.flash(`เปลี่ยนการเชื่อถือ snap ไม่สำเร็จ: ${e}`);
+			notifications.error(`เปลี่ยนการเชื่อถือ snap ไม่สำเร็จ: ${e}`);
 		}
 		await this.load();
 	}
@@ -157,7 +158,7 @@ class Snaps {
 				await invoke('snap_uninstall', { id: target });
 				status.flash(`ถอนการติดตั้ง snap “${snap.name}” แล้ว (อยู่ในถังขยะ)`);
 			} catch (e) {
-				status.flash(`ถอนการติดตั้ง snap ไม่สำเร็จ: ${e}`, 8000);
+				notifications.error(`ถอนการติดตั้ง snap ไม่สำเร็จ: ${e}`);
 			}
 			await this.load();
 		});
@@ -183,7 +184,7 @@ class Snaps {
 			appMode.setMode('workbench');
 			editors.open(key, { preview: false });
 		} catch (e) {
-			status.flash(`สร้าง snap ไม่สำเร็จ: ${e}`, 8000);
+			notifications.error(`สร้าง snap ไม่สำเร็จ: ${e}`);
 		}
 	}
 
@@ -197,7 +198,7 @@ class Snaps {
 			const count = await invoke<number>('snap_lock');
 			status.flash(`เขียน .kingu/snaps.lock แล้ว (${count} snap)`);
 		} catch (e) {
-			status.flash(`เขียน snaps.lock ไม่สำเร็จ: ${e}`, 8000);
+			notifications.error(`เขียน snaps.lock ไม่สำเร็จ: ${e}`);
 		}
 		await this.load();
 	}
@@ -220,14 +221,14 @@ class Snaps {
 		try {
 			await invoke('snap_reveal', { id: s.id, source: s.source });
 		} catch (e) {
-			status.flash(`เปิดโฟลเดอร์ไม่สำเร็จ: ${e}`);
+			notifications.error(`เปิดโฟลเดอร์ไม่สำเร็จ: ${e}`);
 		}
 	}
 
 	/** Run a task of the snap, picked from a quick pick when it has several. */
 	async pickTask(s: SnapInfo) {
 		if (!isActive(s)) {
-			status.flash(s.source === 'repo' ? 'เชื่อถือ snap นี้ก่อนจึงจะรันงานได้' : 'snap นี้ใช้งานไม่ได้อยู่');
+			notifications.warn(s.source === 'repo' ? 'เชื่อถือ snap นี้ก่อนจึงจะรันงานได้' : 'snap นี้ใช้งานไม่ได้อยู่');
 			return;
 		}
 		if (!s.tasks.length) {
@@ -411,7 +412,7 @@ class Snaps {
 		try {
 			return await invoke<string[]>('snap_skill_plugins', { ids });
 		} catch (e) {
-			status.flash(`เตรียม skill ของ snap ไม่สำเร็จ agent จะเริ่มโดยไม่มี skill: ${e}`, 8000);
+			notifications.error(`เตรียม skill ของ snap ไม่สำเร็จ agent จะเริ่มโดยไม่มี skill: ${e}`);
 			return [];
 		}
 	}
@@ -487,7 +488,8 @@ export function installSnaps(): () => void {
 			category: 'Snap',
 			run: async () => {
 				await snaps.load();
-				status.flash(snaps.error ? `โหลด Snaps ไม่สำเร็จ: ${snaps.error}` : `โหลด Snaps แล้ว (${snaps.list.length})`);
+				if (snaps.error) notifications.error(`โหลด Snaps ไม่สำเร็จ: ${snaps.error}`);
+				else status.flash(`โหลด Snaps แล้ว (${snaps.list.length})`);
 			}
 		}),
 		commands.register({ id: 'snap.manage', title: 'Manage Snaps', category: 'Snap', run: () => systemSettings.showSnaps() }),

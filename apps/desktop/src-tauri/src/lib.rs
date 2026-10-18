@@ -568,6 +568,71 @@ fn fs_reveal(ws: State<'_, Workspace>, rel: String) -> Result<(), String> {
   fileops::reveal(&ws.root()?, &rel)
 }
 
+/// Paste / ⌥-drag: copies `from` into the folder `to_dir`; returns the new path (`a copy.ts` on a clash).
+#[tauri::command]
+async fn fs_copy(ws: State<'_, Workspace>, from: String, to_dir: String) -> Result<String, String> {
+  let root = ws.root()?;
+  let rel = blocking(move || fileops::copy(&root, &from, &to_dir)).await?;
+  log::info!("copied to {rel}");
+  Ok(rel)
+}
+
+/// Cut/paste and drag and drop: moves `from` into the folder `to_dir`; returns the new path.
+#[tauri::command]
+fn fs_move(ws: State<'_, Workspace>, from: String, to_dir: String) -> Result<String, String> {
+  let rel = fileops::move_into(&ws.root()?, &from, &to_dir)?;
+  log::info!("moved {from} to {rel}");
+  Ok(rel)
+}
+
+/// Files dropped on the window from Finder. Only these may be imported, so the webview cannot
+/// copy an arbitrary file from outside the workspace into it.
+#[derive(Default)]
+struct DroppedPaths(std::sync::Mutex<Vec<PathBuf>>);
+
+/// External drop (Finder → Explorer): copies the dropped `paths` into the folder `to_dir`.
+#[tauri::command]
+async fn fs_import(ws: State<'_, Workspace>, dropped: State<'_, DroppedPaths>, paths: Vec<String>, to_dir: String) -> Result<Vec<String>, String> {
+  let root = ws.root()?;
+  let allowed = dropped.0.lock().map_err(|e| e.to_string())?.clone();
+  let sources: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+  if let Some(bad) = sources.iter().find(|p| !allowed.contains(p)) {
+    return Err(format!("{}: not a dropped file", bad.display()));
+  }
+  let rels = blocking(move || fileops::import(&root, &sources, &to_dir)).await?;
+  log::info!("imported {} dropped item(s)", rels.len());
+  Ok(rels)
+}
+
+#[derive(serde::Serialize)]
+struct SavedAs {
+  /// Workspace-relative path, or None when the user saved outside the open folder.
+  rel: Option<String>,
+  path: String,
+}
+
+/// Save As (and the first save of an untitled editor): the native save dialog, then the write.
+/// The dialog runs here so the webview never names a path outside the workspace itself.
+#[tauri::command]
+async fn fs_save_as(app: AppHandle, ws: State<'_, Workspace>, content: String, name: String, dir: Option<String>) -> Result<Option<SavedAs>, String> {
+  use tauri_plugin_dialog::DialogExt;
+  let root = ws.current();
+  let start = match (&root, dir) {
+    (Some(r), Some(d)) => resolve_in(r, &d).unwrap_or_else(|_| r.clone()),
+    (Some(r), None) => r.clone(),
+    (None, _) => app.path().home_dir().map_err(|e| e.to_string())?,
+  };
+  let picked = tauri::async_runtime::spawn_blocking(move || app.dialog().file().set_directory(start).set_file_name(name).blocking_save_file())
+    .await
+    .map_err(|e| e.to_string())?;
+  let Some(path) = picked.and_then(|p| p.into_path().ok()) else { return Ok(None) };
+  std::fs::write(&path, content).map_err(|e| format!("{}: {e}", path.display()))?;
+  log::info!("saved as {}", path.display());
+  let real = path.canonicalize().unwrap_or_else(|_| path.clone());
+  let rel = root.and_then(|r| real.strip_prefix(&r).ok().map(|p| p.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")));
+  Ok(Some(SavedAs { rel, path: path.display().to_string() }))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -585,6 +650,7 @@ pub fn run() {
     .manage(dap::Sessions::default())
     .manage(git_remote::GitOps::default())
     .manage(menu::MenuState::default())
+    .manage(DroppedPaths::default())
     .setup(|app| {
       shell_env::init();
       if cfg!(debug_assertions) {
@@ -638,6 +704,10 @@ pub fn run() {
       fs_rename,
       fs_delete,
       fs_reveal,
+      fs_copy,
+      fs_move,
+      fs_import,
+      fs_save_as,
       workspace_open,
       workspace_close,
       workspace_recent,
@@ -771,6 +841,11 @@ pub fn run() {
     .build(tauri::generate_context!())
     .expect("error while building tauri application")
     .run(|app, event| {
+      if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }), .. } = &event
+        && let Ok(mut dropped) = app.state::<DroppedPaths>().0.lock()
+      {
+        *dropped = paths.clone();
+      }
       // Closing the window or a user quit (⌘Q) waits for the webview while it has something to ask.
       if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::CloseRequested { api, .. }, .. } = &event
         && window::on_close_requested(app)

@@ -22,6 +22,7 @@ import { consentKey, decide, formatWhen, newAutomation, nextRunOf, runTitle, typ
 import { uniqueSlug } from './model.ts';
 import { parseSchedule, upcoming } from './schedule.ts';
 import { adeTasks } from './tasks.svelte.ts';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 const CONSENT_STORE = 'kingu.automations.consent';
 const TICK_MS = 30_000;
@@ -109,7 +110,7 @@ class AdeAutomations {
 			if (this.#root !== root) return;
 			this.list = list;
 		} catch (e) {
-			status.flash(`โหลด automations ไม่ได้: ${e}`, 8000);
+			notifications.error(`โหลด automations ไม่ได้: ${e}`);
 			clientLog('error', `automations_load: ${e}`);
 		}
 		this.loaded = true;
@@ -123,7 +124,7 @@ class AdeAutomations {
 		this.#saving = this.#saving.then(() => {
 			if (root !== workspace.root) return;
 			return invoke<void>('automations_save', { automations: snapshot }).catch((e) => {
-				status.flash(`บันทึก automations.json ไม่ได้: ${e}`, 8000);
+				notifications.error(`บันทึก automations.json ไม่ได้: ${e}`);
 				clientLog('error', `automations_save: ${e}`);
 			});
 		});
@@ -274,7 +275,7 @@ class AdeAutomations {
 			await settings.set('kingu.automations.enabled', false, 'user');
 			status.flash('หยุด Automations ทั้งหมดแล้ว — เปิดอีกครั้งได้ที่หน้า Automations หรือ Settings', 8000);
 		} catch (e) {
-			status.flash(`หยุด Automations ไม่ได้: ${e}`, 8000);
+			notifications.error(`หยุด Automations ไม่ได้: ${e}`);
 		}
 	}
 
@@ -282,7 +283,7 @@ class AdeAutomations {
 		try {
 			await settings.set('kingu.automations.enabled', undefined, 'user');
 		} catch (e) {
-			status.flash(`เปิด Automations ไม่ได้: ${e}`, 8000);
+			notifications.error(`เปิด Automations ไม่ได้: ${e}`);
 		}
 	}
 

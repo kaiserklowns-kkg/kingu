@@ -7,6 +7,7 @@ import { quick } from '#lib/workbench/quick.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { parseCliCommand } from '#lib/ade/agentCli.ts';
 import { CUSTOM_PICK, KNOWN_BINS, pickerItems, profileOf } from '#lib/ade/agentProfiles.ts';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 export async function chooseAgentCli() {
 	const current = (settings.get<string>('kingu.agent.cli') ?? '').trim();
@@ -39,6 +40,6 @@ export async function chooseAgentCli() {
 		await settings.set('kingu.agent.cli', value, 'user');
 		status.flash(`งานใหม่โหมด terminal จะใช้ ${value}`);
 	} catch (e) {
-		status.flash(`ตั้งค่า agent CLI ไม่ได้: ${e}`, 8000);
+		notifications.error(`ตั้งค่า agent CLI ไม่ได้: ${e}`);
 	}
 }

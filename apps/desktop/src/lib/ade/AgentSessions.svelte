@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { notifications } from '#lib/workbench/notifications.svelte.ts';
 	// Agents tab of the ADE's right side bar (Orca's "Agents" session history): every agent session
 	// of the folder, newest first, with its worktree, CLI and state. A click jumps to its worktree;
 	// the menu resumes it in the worktree's terminal, starts a fresh CLI there, or copies the resume
@@ -35,7 +36,7 @@
 			await navigator.clipboard.writeText(text);
 			status.flash(`คัดลอก${what}แล้ว`);
 		} catch {
-			status.flash(`คัดลอก${what}ไม่ได้`);
+			notifications.error(`คัดลอก${what}ไม่ได้`);
 		}
 	}
 

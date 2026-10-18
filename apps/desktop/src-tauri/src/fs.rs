@@ -13,6 +13,17 @@ pub struct DirEntry {
   pub ignored: bool,
   /// A folder git does not track at all (Orca shows it with `U`). Filled in by `git::mark_ignored`.
   pub untracked: bool,
+  /// Last modification, ms since the Unix epoch (0 when unknown), for `explorer.sortOrder: modified`.
+  pub modified: u64,
+}
+
+/// `path`'s modification time in ms since the epoch, following symlinks; 0 when unavailable.
+pub fn modified_ms(path: &Path) -> u64 {
+  std::fs::metadata(path)
+    .and_then(|m| m.modified())
+    .ok()
+    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+    .map_or(0, |d| d.as_millis() as u64)
 }
 
 /// Directories the Explorer hides and quick open never walks (VS Code's `files.exclude` defaults
@@ -40,8 +51,9 @@ pub fn list_dir(root: &Path, dir: &Path) -> Result<Vec<DirEntry>, String> {
       continue;
     }
     // Follows symlinks for the kind, but a dangling link still lists as a file.
-    let is_dir = entry.path().is_dir();
-    entries.push(DirEntry { rel: rel_of(root, &entry.path()), name, is_dir, ignored: false, untracked: false });
+    let path = entry.path();
+    let is_dir = path.is_dir();
+    entries.push(DirEntry { rel: rel_of(root, &path), name, is_dir, ignored: false, untracked: false, modified: modified_ms(&path) });
   }
   entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
   Ok(entries)
@@ -88,6 +100,21 @@ mod tests {
     std::fs::write(root.join("A.md"), "").unwrap();
     let names: Vec<_> = list_dir(root, root).unwrap().into_iter().map(|e| e.name).collect();
     assert_eq!(names, ["src", "A.md", "b.txt"]);
+  }
+
+  #[test]
+  fn lists_modification_times() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::write(root.join("old.txt"), "").unwrap();
+    let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+    std::fs::File::options().write(true).open(root.join("old.txt")).unwrap().set_modified(old).unwrap();
+    std::fs::write(root.join("new.txt"), "").unwrap();
+    let entries = list_dir(root, root).unwrap();
+    let by = |n: &str| entries.iter().find(|e| e.name == n).unwrap().modified;
+    assert_eq!(by("old.txt"), 1_000_000_000);
+    assert!(by("new.txt") > by("old.txt"));
+    assert_eq!(modified_ms(&root.join("missing")), 0);
   }
 
   #[test]

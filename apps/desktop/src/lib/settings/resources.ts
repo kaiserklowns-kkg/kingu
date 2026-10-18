@@ -7,6 +7,7 @@ import { settings, USER_SETTINGS_KEY, WORKSPACE_SETTINGS_PATH, SETTINGS_EDITOR_K
 import { isAdeEditor } from '#lib/ade/keys.ts';
 import { keybindings, USER_KEYBINDINGS_KEY } from '#lib/workbench/keybindings.svelte.ts';
 import { KEYBINDINGS_TEMPLATE } from '#lib/workbench/keybindingsModel.ts';
+import { isUntitled } from '#lib/workbench/untitled.ts';
 
 /** Tabs with no text model (the Settings editor UI, ADE task pages and the board). */
 export const isNonTextEditor = (key: string) => key === SETTINGS_EDITOR_KEY || isAdeEditor(key);
@@ -15,6 +16,8 @@ export const isNonTextEditor = (key: string) => key === SETTINGS_EDITOR_KEY || i
 const userSnapId = (key: string) => /^snap:\/\/user\/([a-z0-9][a-z0-9-]{0,39})\/snap\.toml$/.exec(key)?.[1];
 
 export async function readResource(key: string): Promise<string> {
+	// An untitled editor starts empty; it has nothing on disk.
+	if (isUntitled(key)) return '';
 	const snapId = userSnapId(key);
 	if (snapId) return invoke<string>('snap_manifest_read', { id: snapId });
 	if (key === USER_SETTINGS_KEY) {
@@ -29,6 +32,7 @@ export async function readResource(key: string): Promise<string> {
 }
 
 export async function writeResource(key: string, content: string): Promise<void> {
+	if (isUntitled(key)) throw new Error('an untitled editor is saved with Save As');
 	const snapId = userSnapId(key);
 	if (key === USER_SETTINGS_KEY) await invoke('settings_write', { scope: 'user', content });
 	else if (key === USER_KEYBINDINGS_KEY) await invoke('settings_write', { scope: 'keybindings', content });

@@ -50,6 +50,10 @@
 	import { installDebug } from '#lib/debug/debug.svelte.ts';
 	import { installCloseGuard, quit } from './closeGuard.svelte';
 	import { installEditorRestore } from './editorRestore.svelte';
+	import { installEditorCommands } from './editorCommands.svelte';
+	import { installNotificationCommands } from './notificationCommands.svelte';
+	import NotificationToasts from './NotificationToasts.svelte';
+	import { recentFiles } from './recentFiles.svelte';
 
 	// Opening a file or diff (Quick Open, a review file, settings.json) closes the system settings page.
 	// `editors.active` also re-runs on focus changes, so only a different editor closes it.
@@ -76,7 +80,12 @@
 				keyWhen: () => !document.activeElement?.closest('.xterm'),
 				run: () => workspace.showRecent()
 			}),
-			commands.register({ id: 'workbench.action.clearRecentFiles', title: 'Clear Recently Opened', category: 'File', run: () => workspace.clearRecent() }),
+			commands.register({ id: 'workbench.action.clearRecentFiles', title: 'Clear Recently Opened', category: 'File', run: () => (recentFiles.clear(), workspace.clearRecent()) }),
+			commands.register({ id: 'workbench.action.clearEditorHistory', title: 'Clear Editor History', category: 'View', run: () => recentFiles.clear() }),
+			// Quick access prefixes (VS Code: ⇧⌘O `@`, ⌘T `#`).
+			commands.register({ id: 'workbench.action.gotoSymbol', title: 'Go to Symbol in Editor...', key: 'cmd+shift+o', when: () => editors.active !== null, run: () => quick.show('@') }),
+			commands.register({ id: 'workbench.action.showAllSymbols', title: 'Go to Symbol in Workspace...', key: 'cmd+t', run: () => quick.show('#') }),
+			commands.register({ id: 'workbench.action.quickOpenView', title: 'Quick Open View', key: 'ctrl+q', palette: false, run: () => quick.show('view ') }),
 			// Go Back / Go Forward (VS Code: ⌃- / ⌃⇧- on macOS, Alt+←/→ elsewhere).
 			commands.register({ id: 'workbench.action.navigateBack', title: 'Go Back', key: 'alt+left', mac: 'ctrl+-', when: () => navigation.canGoBack, run: () => navigation.back() }),
 			commands.register({ id: 'workbench.action.navigateForward', title: 'Go Forward', key: 'alt+right', mac: 'ctrl+shift+-', when: () => navigation.canGoForward, run: () => navigation.forward() }),
@@ -172,6 +181,7 @@
 				id: 'workbench.action.closeEditorsInGroup',
 				title: 'Close All Editors in Group',
 				category: 'View',
+				key: 'cmd+k w',
 				when: () => editors.tabs.length > 0 || editors.groups.length > 1,
 				run: () => {
 					if (editors.closeAllInGroup().length) status.flash('มีการแก้ไขที่ยังไม่บันทึก: บันทึกก่อนปิดแท็บที่เหลือ');
@@ -184,7 +194,7 @@
 				when: () => editors.active !== null,
 				run: () => editors.moveActiveEditorToNextGroup()
 			}),
-			commands.register({ id: 'workbench.action.keepEditor', title: 'Keep Editor', category: 'View', when: () => editors.active !== null, run: () => editors.active && editors.pin(editors.active) })
+			commands.register({ id: 'workbench.action.keepEditor', title: 'Keep Editor', category: 'View', key: 'cmd+k enter', when: () => editors.active !== null, run: () => editors.active && editors.pin(editors.active) })
 		];
 		const uninstall = installKeybindings();
 		const uninstallMenu = installNativeMenu();
@@ -205,7 +215,13 @@
 		const uninstallAccounts = accounts.install();
 		const uninstallCloseGuard = installCloseGuard();
 		const uninstallEditorRestore = installEditorRestore();
+		const uninstallEditorCommands = installEditorCommands();
+		const uninstallRecentFiles = recentFiles.install();
+		const uninstallNotificationCommands = installNotificationCommands();
 		return () => {
+			uninstallNotificationCommands();
+			uninstallRecentFiles();
+			uninstallEditorCommands();
 			uninstallEditorRestore();
 			uninstallCloseGuard();
 			uninstallAccounts();
@@ -371,4 +387,5 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 	<!-- workbench.statusBar.visible (kept mounted so its items keep their state). -->
 	<div class={['contents', !settings.get<boolean>('workbench.statusBar.visible') && '[&>*]:hidden']}><StatusBar /></div>
 	<QuickInput />
+	<NotificationToasts />
 </div>

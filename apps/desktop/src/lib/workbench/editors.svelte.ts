@@ -22,6 +22,8 @@ export type EditorHostHandle = {
 	focus: () => void;
 	/** Runs a Monaco editor action (`actions.find`, `undo`…) on the shown file; false when none is shown. */
 	trigger: (actionId: string) => boolean;
+	/** Shows a position without moving focus (Quick Open's symbol preview). */
+	peek?: (line: number, column: number) => void;
 };
 
 class Editors {
@@ -122,6 +124,10 @@ class Editors {
 	gotoLine(line: number, column = 1) {
 		this.#target()?.gotoLine(line, column);
 	}
+	/** Scrolls the active editor to a position and selects it, leaving focus where it is. */
+	peek(line: number, column = 1) {
+		this.#target()?.peek?.(line, column);
+	}
 	/** Runs a Monaco action in the active group's editor (menu items such as Find, Go to Definition). */
 	trigger(actionId: string): boolean {
 		return this.#target()?.trigger(actionId) ?? false;
@@ -171,6 +177,47 @@ class Editors {
 		return G.closeEditor(this.model, group, path, { force });
 	}
 
+	closeOthers(path: string, group = this.model.activeGroup): string[] {
+		return G.closeOthers(this.model, group, path);
+	}
+	closeToRight(path: string, group = this.model.activeGroup): string[] {
+		return G.closeToRight(this.model, group, path);
+	}
+	closeSaved(group = this.model.activeGroup) {
+		G.closeSaved(this.model, group);
+	}
+	/** Close All Editors in every group; returns the dirty paths it kept. */
+	closeAllEditors(): string[] {
+		return G.closeAllEditors(this.model);
+	}
+	/** Reopen Closed Editor; `exists` skips files deleted since. */
+	reopenClosed(exists?: (path: string) => boolean): string | null {
+		const path = G.reopenClosed(this.model, exists);
+		if (path) this.focusRequest = this.model.activeGroup;
+		return path;
+	}
+	/** Editors of a group by most recent use (⌃Tab). */
+	mru(group = this.model.activeGroup): string[] {
+		return G.mruOf(this.model, group);
+	}
+	/** Next/Previous Editor: opens the neighbouring tab (continuing into the next group unless `inGroup`). */
+	openNeighbour(delta: 1 | -1, inGroup = false) {
+		const hit = G.neighbourEditor(this.model, delta, { inGroup });
+		if (!hit) return;
+		this.activateGroup(hit[0]);
+		G.setActiveEditor(this.model, hit[0], hit[1]);
+		this.focusRequest = hit[0];
+	}
+	stick(path: string, group = this.model.activeGroup) {
+		G.stickEditor(this.model, group, path);
+	}
+	unstick(path: string, group = this.model.activeGroup) {
+		G.unstickEditor(this.model, group, path);
+	}
+	isSticky(path: string, group = this.model.activeGroup): boolean {
+		return this.group(group)?.tabs.find((t) => t.path === path)?.sticky ?? false;
+	}
+
 	/** Closes `path` in every group (e.g. a diff that failed to load). */
 	closeEverywhere(path: string) {
 		for (const g of [...this.model.groups]) G.closeEditor(this.model, g.id, path, { force: true });
@@ -209,6 +256,16 @@ class Editors {
 	focusGroupAt(index: number) {
 		const id = G.focusGroupAt(this.model, index);
 		if (id !== null) this.focusGroup(id);
+	}
+
+	/** VS Code's "Open to the Side" (⌘Enter in Quick Open): the group to the right, created if needed. */
+	openToSide(path: string, reveal?: Reveal) {
+		const order = G.groupOrder(this.model);
+		let target: number | null | undefined = order[order.indexOf(this.model.activeGroup) + 1];
+		if (target === undefined) target = G.addGroup(this.model, this.model.activeGroup, 'right');
+		if (target === null) return this.open(path, { reveal });
+		this.open(path, { preview: false, group: target, reveal });
+		this.focusRequest = target;
 	}
 
 	moveEditor(from: number, path: string, to: number, index?: number) {

@@ -27,6 +27,7 @@ import { commands } from './commands.svelte';
 import { editors } from './editors.svelte';
 import { groups, smartCommitPaths, type GitStatus } from './scm';
 import { status } from './status.svelte';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 class Scm {
 	repo = $state<GitStatus | null>(null);
@@ -70,7 +71,7 @@ class Scm {
 			await invoke(cmd, args);
 			return true;
 		} catch (e) {
-			status.flash(String(e), 8000);
+			notifications.error(e);
 			clientLog('error', `${cmd}: ${e}`);
 			return false;
 		} finally {
@@ -185,7 +186,7 @@ class Scm {
 		const branch = this.repo?.branch;
 		const remotes = this.repo?.remotes ?? [];
 		if (!branch) {
-			status.flash('HEAD ไม่ได้อยู่บน branch สร้าง branch ก่อนแล้วจึง publish');
+			notifications.warn('HEAD ไม่ได้อยู่บน branch สร้าง branch ก่อนแล้วจึง publish');
 			return false;
 		}
 		let remote = remotes.includes('origin') ? 'origin' : remotes.length === 1 ? remotes[0] : undefined;
@@ -204,7 +205,7 @@ class Scm {
 		try {
 			return await invoke<BranchRef[]>('git_refs');
 		} catch (e) {
-			status.flash(String(e), 8000);
+			notifications.error(e);
 			return null;
 		}
 	}
@@ -254,7 +255,7 @@ class Scm {
 		if (!refs) return;
 		const items = deletableBranches(refs);
 		if (!items.length) {
-			status.flash('ไม่มี branch ที่ลบได้ (branch ปัจจุบันและ branch ของ worktree ลบไม่ได้)');
+			notifications.info('ไม่มี branch ที่ลบได้ (branch ปัจจุบันและ branch ของ worktree ลบไม่ได้)');
 			return;
 		}
 		const pick = await quick.choose({ placeholder: 'เลือก branch ที่จะลบ (Select a branch to delete)', items });
@@ -290,7 +291,7 @@ class Scm {
 		try {
 			list = await invoke<Stash[]>('git_stash_list');
 		} catch (e) {
-			status.flash(String(e), 8000);
+			notifications.error(e);
 			return undefined;
 		}
 		if (!list.length) {

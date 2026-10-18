@@ -56,6 +56,7 @@ import { prStatuses } from './prStatus.svelte';
 import { issueLink, issuePrompt, issueSlug, issueTaskTitle, prBody, prComment, taskForIssue, type Issue, type IssueDetail } from './issues.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { branchPrefix, branchRemoval, defaultBaseBranch, scriptPreview, scriptRunSummary, setupCommand, setupPolicy, type ScriptRun, type WorktreeScript } from './worktreeSettings.ts';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 class AdeTasks {
 	list = $state<TaskMeta[]>([]);
@@ -153,7 +154,7 @@ class AdeTasks {
 			this.list = adopted;
 			if (adopted !== tasks) await this.#save(adopted);
 		} catch (e) {
-			status.flash(`โหลดงานไม่ได้: ${e}`, 8000);
+			notifications.error(`โหลดงานไม่ได้: ${e}`);
 			clientLog('error', `tasks_load: ${e}`);
 		}
 		this.loaded = true;
@@ -189,7 +190,7 @@ class AdeTasks {
 		const snapshot = $state.snapshot(next) as TaskMeta[];
 		this.#saving = this.#saving.then(() =>
 			invoke<void>('tasks_save', { tasks: snapshot }).catch((e) => {
-				status.flash(`บันทึก tasks.json ไม่ได้: ${e}`, 8000);
+				notifications.error(`บันทึก tasks.json ไม่ได้: ${e}`);
 				clientLog('error', `tasks_save: ${e}`);
 			})
 		);
@@ -205,7 +206,7 @@ class AdeTasks {
 		try {
 			return await f();
 		} catch (e) {
-			status.flash(`${label}ไม่สำเร็จ: ${e}`, 10000);
+			notifications.error(`${label}ไม่สำเร็จ: ${e}`);
 			clientLog('error', `${slug} ${label}: ${e}`);
 		} finally {
 			delete this.busy[slug];
@@ -258,7 +259,7 @@ class AdeTasks {
 		try {
 			await invoke<WorktreeInfo>('worktree_create', { slug, base, prefix });
 		} catch (e) {
-			status.flash(`สร้าง worktree ไม่ได้: ${e}`, 10000);
+			notifications.error(`สร้าง worktree ไม่ได้: ${e}`);
 			return;
 		}
 		await this.#save([...this.list, newTask({ slug, title, prompt, base, agent: cli ? cliAgent(cli) : undefined, issue: input.issue }, Date.now())]);
@@ -280,13 +281,13 @@ class AdeTasks {
 	 */
 	async #approvedScript(kind: 'setup' | 'archive', opts: { interactive: boolean; ask?: boolean; what: string }): Promise<WorktreeScript | null> {
 		const script = await invoke<WorktreeScript | null>('worktree_script', { kind }).catch((e) => {
-			status.flash(`อ่าน .kingu/${kind}.sh ไม่ได้: ${e}`, 8000);
+			notifications.error(`อ่าน .kingu/${kind}.sh ไม่ได้: ${e}`);
 			return null;
 		});
 		if (!script) return null;
 		if (script.trusted && !opts.ask) return script;
 		if (!opts.interactive) {
-			if (!script.trusted) status.flash(`ไม่ได้รัน ${script.path}: ยังไม่ได้เชื่อถือสคริปต์นี้ (หรือมันเปลี่ยนไป)`, 10000);
+			if (!script.trusted) notifications.warn(`ไม่ได้รัน ${script.path}: ยังไม่ได้เชื่อถือสคริปต์นี้ (หรือมันเปลี่ยนไป)`);
 			return null;
 		}
 		const intro = script.trusted
@@ -303,7 +304,7 @@ class AdeTasks {
 			try {
 				await invoke('worktree_script_trust', { kind, trusted: true, hash: script.hash });
 			} catch (e) {
-				status.flash(String(e), 10000);
+				notifications.error(e);
 				return null;
 			}
 		}
@@ -321,7 +322,7 @@ class AdeTasks {
 			const file = await invoke<string | null>('worktree_script_prepare', { kind: 'setup' });
 			if (file) adeLayout.newTerminal(slug, { title: 'Setup', run: setupCommand(file, root, `${root}/${worktreeDir(slug)}`, slug), background: true });
 		} catch (e) {
-			status.flash(`รัน ${script.path} ไม่ได้: ${e}`, 10000);
+			notifications.error(`รัน ${script.path} ไม่ได้: ${e}`);
 		}
 	}
 
@@ -431,7 +432,7 @@ class AdeTasks {
 			await runtime.start(slug, prompt);
 			await this.#patch(slug, { status: 'running' });
 		} catch (e) {
-			status.flash(`เริ่ม agent ไม่ได้: ${e}`, 10000);
+			notifications.error(`เริ่ม agent ไม่ได้: ${e}`);
 			await this.#patch(slug, { status: 'failed' });
 		}
 	}
@@ -444,22 +445,22 @@ class AdeTasks {
 			await runtime.followUp(slug, text, meta.session_id);
 			if (meta.status !== 'running') await this.#patch(slug, { status: 'running' });
 		} catch (e) {
-			status.flash(`ส่งข้อความถึง agent ไม่ได้: ${e}`, 10000);
+			notifications.error(`ส่งข้อความถึง agent ไม่ได้: ${e}`);
 		}
 	}
 
 	answer(slug: string, requestId: string, decision: Decision, message?: string) {
-		return runtime.answer(slug, requestId, decision, message).catch((e) => status.flash(`ตอบคำขออนุญาตไม่ได้: ${e}`, 8000));
+		return runtime.answer(slug, requestId, decision, message).catch((e) => notifications.error(`ตอบคำขออนุญาตไม่ได้: ${e}`));
 	}
 
 	/** Stops the current turn; the session stays open for follow-ups. */
 	interrupt(slug: string) {
-		return runtime.interrupt(slug).catch((e) => status.flash(String(e), 8000));
+		return runtime.interrupt(slug).catch((e) => notifications.error(e));
 	}
 
 	/** Ends the run (continue later with a follow-up, which resumes the session). */
 	stop(slug: string) {
-		return runtime.stop(slug).catch((e) => status.flash(String(e), 8000));
+		return runtime.stop(slug).catch((e) => notifications.error(e));
 	}
 
 	/**
@@ -513,7 +514,7 @@ class AdeTasks {
 			} catch (e) {
 				const dirty = /modified|untracked|dirty/i.test(String(e));
 				if (!dirty) {
-					status.flash(`ลบไม่ได้: ${e}`, 10000);
+					notifications.error(`ลบไม่ได้: ${e}`);
 					return;
 				}
 				const force = await ask(`worktree ${path} มีการแก้ไขที่ยังไม่ commit\n\nลบทิ้งทั้งหมด? กู้คืนไม่ได้`, { title: 'มีงานที่ยังไม่ commit', kind: 'warning', okLabel: 'ลบทิ้ง', cancelLabel: 'ยกเลิก' });
@@ -521,7 +522,7 @@ class AdeTasks {
 				try {
 					kept = await invoke<string | null>('worktree_remove', { slug, force: true, deleteBranch });
 				} catch (e2) {
-					status.flash(`ลบไม่ได้: ${e2}`, 10000);
+					notifications.error(`ลบไม่ได้: ${e2}`);
 					return;
 				}
 			}
@@ -622,7 +623,7 @@ class AdeTasks {
 			void prStatuses.refresh(slug);
 			if (url && meta.issue && settings.get<boolean>('kingu.issues.commentOnPr') === true) {
 				const number = meta.issue.number;
-				invoke('gh_issue_comment', { number, body: prComment(url) }).catch((e) => status.flash(`comment ใน issue #${number} ไม่ได้: ${e}`, 8000));
+				invoke('gh_issue_comment', { number, body: prComment(url) }).catch((e) => notifications.error(`comment ใน issue #${number} ไม่ได้: ${e}`));
 			}
 		}
 	}
@@ -689,7 +690,7 @@ class AdeTasks {
 		try {
 			files = await invoke<string[]>('worktree_list_files', { slug });
 		} catch (e) {
-			status.flash(String(e), 8000);
+			notifications.error(e);
 			return;
 		}
 		const changed = new Set(this.stats[slug]?.files.map((f) => f.path));
@@ -779,7 +780,7 @@ export function installAde(): () => void {
 			run: () =>
 				Promise.all(['setup', 'archive'].map((kind) => invoke('worktree_script_trust', { kind, trusted: false, hash: null })))
 					.then(() => status.flash('เลิกเชื่อถือ .kingu/setup.sh และ .kingu/archive.sh ของโฟลเดอร์นี้แล้ว ครั้งหน้าจะถามก่อนรัน'))
-					.catch((e) => status.flash(String(e), 8000))
+					.catch((e) => notifications.error(e))
 		})
 	];
 	cliSessions.onSessionId = (slug, id) => adeTasks.learnCliSession(slug, id);
