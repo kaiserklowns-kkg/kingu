@@ -14,6 +14,8 @@
 	import { adeTasks } from './tasks.svelte.ts';
 	import TaskPage from './TaskPage.svelte';
 	import DiffNotesList from './DiffNotesList.svelte';
+	import { aiText, aiTextEnabled, generateCommitMessage } from './aiText.svelte.ts';
+	import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 	let { slug }: { slug: string } = $props();
 
@@ -36,6 +38,17 @@
 		if (before && !source.groups.staged.length) await remote('push');
 	}
 
+	// Orca's source-control AI: the agent drafts the commit message from the staged changes (kingu.git.ai.*).
+	const drafting = $derived(!!aiText.busy[slug]);
+	async function draftMessage() {
+		const target = source;
+		try {
+			target.message = await generateCommitMessage(slug || null);
+		} catch (e) {
+			notifications.error(`สร้างข้อความ commit ไม่ได้: ${e instanceof Error ? e.message : e}`);
+		}
+	}
+
 	function openMenu(e: MouseEvent) {
 		const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		menu = { x: r.left, y: r.bottom + 2 };
@@ -43,6 +56,7 @@
 
 	const items = $derived([
 		menuItem('commitPush', 'Commit & Push', { enabled: !!source.groups.staged.length && !!source.message.trim() }),
+		...(aiTextEnabled() ? [menuItem('aiCommit', 'ให้ agent เขียนข้อความ commit (Generate Commit Message)', { enabled: !!source.groups.staged.length && !drafting })] : []),
 		menuSeparator,
 		menuItem('push', unpublished ? 'Publish Branch' : `Push${st?.ahead ? ` (${st.ahead})` : ''}`, { enabled: !!st?.branch }),
 		menuItem('pull', `Pull${st?.behind ? ` (${st.behind})` : ''}`, { enabled: !unpublished }),
@@ -63,6 +77,17 @@
 		<button class={ACTION} disabled={busy || !st?.branch} aria-label={unpublished ? 'Publish Branch' : 'Sync'} title={unpublished ? 'Publish Branch' : 'Sync (pull แล้ว push)'} onclick={() => remote(unpublished ? 'push' : 'sync')}>
 			<Icon name={unpublished ? 'openExternal' : 'refresh'} size={15} />
 		</button>
+		{#if aiTextEnabled()}
+			<button
+				class={[ACTION, drafting && 'animate-pulse']}
+				disabled={busy || drafting || !source.groups.staged.length}
+				aria-label="Generate Commit Message"
+				title={drafting ? 'agent กำลังเขียนข้อความ commit…' : 'ให้ agent เขียนข้อความ commit จากไฟล์ที่ stage (Generate Commit Message)'}
+				onclick={draftMessage}
+			>
+				<Icon name="sparkle" size={15} />
+			</button>
+		{/if}
 		<button class={ACTION} disabled={busy} aria-label="More source control actions" title="More source control actions" onclick={openMenu}><Icon name="menu" size={15} /></button>
 	</div>
 	<div class="min-h-0 flex-1 overflow-y-auto">
@@ -88,6 +113,7 @@
 		onRun={(node) => {
 			if (node.type !== 'item') return;
 			if (node.id === 'commitPush') void commitAndPush();
+			else if (node.id === 'aiCommit') void draftMessage();
 			else void remote(node.id as Op);
 		}}
 		onClose={() => (menu = null)}

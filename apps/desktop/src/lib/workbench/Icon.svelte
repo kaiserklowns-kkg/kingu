@@ -75,7 +75,8 @@
 		UserCircleIcon,
 		WarningIcon,
 		XCircleIcon,
-		XIcon
+		XIcon,
+		SparkleIcon
 	} from 'phosphor-svelte';
 	import ArkaiMark from './ArkaiMark.svelte';
 	import KinguMark from './KinguMark.svelte';
@@ -171,7 +172,8 @@
 		/** Diff views: side by side / inline. */
 		columns: ColumnsIcon,
 		rows: RowsIcon,
-		more: DotsThreeIcon
+		more: DotsThreeIcon,
+		sparkle: SparkleIcon
 	} as const;
 	export type IconName = keyof typeof icons;
 

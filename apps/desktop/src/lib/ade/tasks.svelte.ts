@@ -59,7 +59,7 @@ import { quickOpenWorktree } from './quickOpen.svelte.ts';
 import { diffNotes } from './diffNotes.svelte.ts';
 import { adeDialogs } from './dialogs.svelte.ts';
 import { prefillPr, prFormProblem, type Commit, type PrForm } from './prForm.ts';
-import { isLinear, issueLink, issuePrompt, issueRef, issueSlug, issueTaskTitle, prComment, taskForIssue, type Issue, type IssueDetail } from './issues.ts';
+import { isLinear, issueLink, issuePrompt, issueRef, issueSlug, issueTaskTitle, prBody, prComment, taskForIssue, type Issue, type IssueDetail } from './issues.ts';
 import { linearLink, linearPrompt, linearSlug, linearTaskTitle, taskForLinearIssue, type LinearIssue, type LinearIssueDetail } from './linear.ts';
 import { brokenChecks, MERGE_LABEL, type MergeMethod } from './prChecks.ts';
 import { buildCommentsPrompt, buildFixChecksPrompt, type CheckLog } from './prPrompts.ts';
@@ -190,7 +190,9 @@ class AdeTasks {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta) return;
 		try {
-			const stat = await invoke<DiffStat>('worktree_diff_stat', { slug, base: meta.base });
+			// kingu.git.compareAgainstUpstream (Orca): the base's upstream (origin/main) when it has one.
+			const upstream = settings.get<boolean>('kingu.git.compareAgainstUpstream') === true ? await invoke<string | null>('git_base_upstream', { base: meta.base }).catch(() => null) : null;
+			const stat = await invoke<DiffStat>('worktree_diff_stat', { slug, base: upstream ?? meta.base });
 			this.stats[slug] = stat;
 			delete this.statErrors[slug];
 			const accepted = pruneAccepted(meta.accepted, stat.files);
@@ -719,6 +721,12 @@ class AdeTasks {
 	}
 
 	/** The PR form's first values (Orca seeds them once per open): from the branch's commits and the task. */
+	/** A PR description from `text` (a template or the agent's draft) with the task's `Fixes …` line. */
+	prBodyFrom(slug: string, text: string): string {
+		const meta = this.list.find((t) => t.slug === slug);
+		return meta ? prBody({ slug, issue: meta.issue, prompt: text.trim() }) : text;
+	}
+
 	async prDefaults(slug: string): Promise<PrForm | null> {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta) return null;
