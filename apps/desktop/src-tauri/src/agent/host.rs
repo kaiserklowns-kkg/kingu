@@ -136,9 +136,16 @@ pub struct StartRequest {
   /// With `resume`: continue only up to this message, in a fork of the session (`rewind`).
   #[serde(skip_serializing_if = "Option::is_none")]
   pub resume_at: Option<String>,
-  /// MCP servers for the run (from trusted Snaps); omitted when there are none.
+  /// MCP servers for the run (trusted Snaps, the user's mcp.json, trusted .vscode / .cursor
+  /// configs); omitted when there are none.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub mcp_servers: Option<std::collections::BTreeMap<String, McpServer>>,
+  /// Which of the project's `.mcp.json` servers may run (`mcp::run_plan`); omitted when it has none.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub project_mcp: Option<super::mcp::ProjectMcp>,
+  /// `mcp__<server>` of each MCP server the user turned off (`mcp::run_plan`).
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  pub disallowed_tools: Vec<String>,
   /// Skill plugin folders of active Snaps (`snap::validate_plugin_dirs`); omitted when none.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub plugins: Option<Vec<String>>,
@@ -233,31 +240,72 @@ impl std::fmt::Debug for SecretEnv {
   }
 }
 
-/// A stdio MCP server handed to an agent run (the SDK's `mcpServers` entry without `type`).
+/// An MCP server handed to an agent run, as the SDK's `mcpServers` entry: a program over stdio
+/// (`type` absent or `stdio`: `command`, `args`, `env`) or a remote server (`type` `http` or
+/// `sse`: `url`, `headers`).
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct McpServer {
+  #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+  pub kind: Option<String>,
+  #[serde(default, skip_serializing_if = "String::is_empty")]
   pub command: String,
-  #[serde(default)]
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub args: Vec<String>,
-  #[serde(default)]
+  #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
   pub env: std::collections::BTreeMap<String, String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub url: Option<String>,
+  #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+  pub headers: std::collections::BTreeMap<String, String>,
 }
 
-/// Server names are `<snap>-<server>` (letters, digits, `-`, `_`); commands must not be empty.
-pub fn validate_mcp_servers(servers: &std::collections::BTreeMap<String, McpServer>) -> Result<(), String> {
-  if servers.len() > 32 {
-    return Err("too many MCP servers".into());
+pub const MAX_MCP_SERVERS: usize = 64;
+
+/// A server name as it appears in tool names (`mcp__<name>__<tool>`): letters, digits, `-`, `_`.
+pub fn valid_mcp_name(name: &str) -> bool {
+  !name.is_empty() && name.len() <= 81 && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// One server: a stdio one needs a command; a remote one an http(s) URL and plain header lines.
+pub fn validate_mcp_server(name: &str, s: &McpServer) -> Result<(), String> {
+  use crate::i18n::msg::McpMsg;
+  if !valid_mcp_name(name) {
+    return Err(crate::tr!(McpMsg::InvalidName, name));
   }
-  for (name, s) in servers {
-    let ok_name = !name.is_empty() && name.len() <= 81 && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-    if !ok_name {
-      return Err(format!("{name}: invalid MCP server name"));
+  let bad = |v: &str| v.chars().any(|c| c == '\0' || c == '\r' || c == '\n');
+  match s.kind.as_deref() {
+    None | Some("stdio") => {
+      if s.command.trim().is_empty() || s.command.contains('\0') || s.args.iter().any(|a| a.contains('\0')) || s.url.is_some() {
+        return Err(crate::tr!(McpMsg::InvalidCommand, name));
+      }
     }
-    if s.command.trim().is_empty() || s.command.contains('\0') || s.args.iter().any(|a| a.contains('\0')) {
-      return Err(format!("{name}: invalid MCP server command"));
+    Some("http" | "sse") => {
+      let url = s.url.as_deref().unwrap_or_default();
+      let scheme = url.starts_with("https://") || url.starts_with("http://");
+      if !scheme || url.len() > 4096 || url.chars().any(|c| c.is_whitespace() || c.is_control()) || !s.command.is_empty() {
+        return Err(crate::tr!(McpMsg::InvalidUrl, name));
+      }
+      for (header, value) in &s.headers {
+        let token = !header.is_empty() && header.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        if !token || bad(value) {
+          return Err(crate::tr!(McpMsg::InvalidHeader, name, header));
+        }
+      }
     }
+    Some(kind) => return Err(crate::tr!(McpMsg::UnsupportedType, name, kind)),
+  }
+  if s.env.iter().any(|(k, v)| k.is_empty() || k.contains(['=', '\0']) || v.contains('\0')) {
+    return Err(crate::tr!(McpMsg::InvalidCommand, name));
   }
   Ok(())
+}
+
+/// Every server of a run (names as in tool names; see `validate_mcp_server`).
+pub fn validate_mcp_servers(servers: &std::collections::BTreeMap<String, McpServer>) -> Result<(), String> {
+  if servers.len() > MAX_MCP_SERVERS {
+    return Err(crate::tr!(crate::i18n::msg::McpMsg::TooMany, max = MAX_MCP_SERVERS));
+  }
+  servers.iter().try_for_each(|(name, s)| validate_mcp_server(name, s))
 }
 
 struct Proc {
@@ -808,7 +856,7 @@ exit 3"#
   fn mcp_servers_are_validated_and_sent_as_camel_case() {
     use std::collections::BTreeMap;
     let mut servers = BTreeMap::new();
-    servers.insert("go-gopls".to_string(), McpServer { command: "gopls".into(), args: vec!["mcp".into()], env: BTreeMap::new() });
+    servers.insert("go-gopls".to_string(), McpServer { command: "gopls".into(), args: vec!["mcp".into()], ..Default::default() });
     assert!(validate_mcp_servers(&servers).is_ok());
     let wire = serde_json::to_value(StartRequest { cwd: "/w".into(), prompt: "x".into(), mcp_servers: Some(servers.clone()), ..Default::default() }).unwrap();
     assert_eq!(wire["mcpServers"]["go-gopls"]["args"], json!(["mcp"]));
@@ -818,6 +866,28 @@ exit 3"#
     let mut empty = BTreeMap::new();
     empty.insert("a".to_string(), McpServer { command: " ".into(), ..Default::default() });
     assert!(validate_mcp_servers(&empty).is_err());
+  }
+
+  #[test]
+  fn remote_mcp_servers_need_an_http_url_and_plain_headers() {
+    let http = |url: &str| McpServer { kind: Some("http".into()), url: Some(url.into()), ..Default::default() };
+    assert!(validate_mcp_server("docs", &http("https://mcp.example.com/mcp")).is_ok());
+    assert!(validate_mcp_server("docs", &McpServer { kind: Some("sse".into()), url: Some("http://localhost:9000/sse".into()), ..Default::default() }).is_ok());
+    for url in ["file:///etc/passwd", "https://a b", "ftp://x", ""] {
+      assert!(validate_mcp_server("docs", &http(url)).is_err(), "{url}");
+    }
+    let mut h = http("https://x.dev");
+    h.headers.insert("Authorization".into(), "Bearer t".into());
+    assert!(validate_mcp_server("docs", &h).is_ok());
+    h.headers.insert("X-Evil".into(), "a\r\nHost: b".into());
+    assert!(validate_mcp_server("docs", &h).is_err());
+    assert!(validate_mcp_server("docs", &McpServer { kind: Some("ws".into()), url: Some("https://x".into()), ..Default::default() }).is_err());
+    // A remote entry never names a program, and a stdio one never a URL.
+    assert!(validate_mcp_server("docs", &McpServer { command: "sh".into(), ..http("https://x") }).is_err());
+    assert!(validate_mcp_server("docs", &McpServer { command: "sh".into(), url: Some("https://x".into()), ..Default::default() }).is_err());
+    let wire = serde_json::to_value(&h).unwrap();
+    assert_eq!(wire["type"], "http");
+    assert!(wire.get("command").is_none());
   }
 
   #[test]

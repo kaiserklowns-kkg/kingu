@@ -251,11 +251,72 @@ describe('agent host protocol', () => {
 		expect(log.options?.mcpServers).toEqual({ 'go-gopls': { type: 'stdio', command: 'gopls', args: ['mcp'], env: {} } });
 	});
 
+	test('remote MCP servers, project .mcp.json approvals and turned-off servers reach the SDK', async () => {
+		const { log, call } = setup();
+		await call(1, 'start', {
+			runId: 1,
+			cwd: '/w',
+			prompt: 'x',
+			mcpServers: { docs: { type: 'http', url: 'https://mcp.example.com/mcp', headers: { Authorization: 'Bearer t' } }, live: { type: 'sse', url: 'http://localhost:9000/sse' } },
+			projectMcp: { enabled: ['db'], disabled: ['untrusted'] },
+			disallowedTools: ['mcp__off']
+		});
+		expect(log.options?.mcpServers).toEqual({
+			docs: { type: 'http', url: 'https://mcp.example.com/mcp', headers: { Authorization: 'Bearer t' } },
+			live: { type: 'sse', url: 'http://localhost:9000/sse' }
+		});
+		expect(log.options?.settings).toEqual({ enabledMcpjsonServers: ['db'], disabledMcpjsonServers: ['untrusted'] });
+		expect(log.options?.disallowedTools).toEqual(['mcp__off']);
+		expect((await call(2, 'start', { runId: 2, cwd: '/w', prompt: 'x', mcpServers: { web: { type: 'http', url: 'file:///etc/passwd' } } })).error?.message).toContain('url must be http(s)');
+		expect((await call(3, 'start', { runId: 3, cwd: '/w', prompt: 'x', mcpServers: { web: { type: 'ws', url: 'https://x' } } })).error?.message).toContain('unsupported type');
+		expect((await call(4, 'start', { runId: 4, cwd: '/w', prompt: 'x', mcpServers: { 'a b': { command: 'x' } } })).error?.message).toContain('invalid name');
+		expect((await call(5, 'start', { runId: 5, cwd: '/w', prompt: 'x', disallowedTools: [1] })).error?.message).toContain('disallowedTools');
+		expect((await call(6, 'start', { runId: 6, cwd: '/w', prompt: 'x', projectMcp: { enabled: 'db' } })).error?.message).toContain('projectMcp');
+	});
+
+	test('reports the MCP servers of the session after it starts and after a turn', async () => {
+		const out: Out[] = [];
+		let asked = 0;
+		const host = new AgentHost({
+			write: (m) => out.push(JSON.parse(JSON.stringify(m))),
+			query: ({ prompt }) => {
+				const gen = (async function* () {
+					yield { type: 'system', subtype: 'init', session_id: 's', model: 'm', tools: [], mcp_servers: [{ name: 'gh', status: 'pending' }] };
+					for await (const _ of prompt) yield { type: 'result', subtype: 'success', is_error: false, session_id: 's' };
+				})();
+				return Object.assign(gen, {
+					interrupt: async () => {},
+					mcpServerStatus: async () => (
+						asked++,
+						[
+							{ name: 'gh', status: 'connected', source: 'user', tools: [{ name: 'create_issue' }, { name: 'search' }, { nope: 1 }] },
+							{ name: 'db', status: 'failed', error: 'spawn psql ENOENT', scope: 'project' },
+							{ status: 'connected' }
+						]
+					)
+				});
+			}
+		});
+		await host.handleLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'start', params: { runId: 1, cwd: '/w', prompt: 'x' } }));
+		const evs = () => out.filter((o) => o.method === 'event').map((o) => o.params.event as AgentEvent);
+		for (let i = 0; i < 50 && evs().filter((e) => e.kind === 'mcp_status').length < 2; i++) await Bun.sleep(2);
+		expect(asked).toBeGreaterThanOrEqual(2);
+		expect(evs().find((e) => e.kind === 'mcp_status')).toEqual({
+			kind: 'mcp_status',
+			servers: [
+				{ name: 'gh', status: 'connected', error: null, source: 'user', tools: ['create_issue', 'search'] },
+				{ name: 'db', status: 'failed', error: 'spawn psql ENOENT', source: 'project', tools: [] }
+			]
+		});
+		await host.dispatch('stop', { runId: 1 });
+	});
+
 	test('no MCP servers or plugins leaves the options out', async () => {
 		const { log, call } = setup();
 		await call(1, 'start', { runId: 1, cwd: '/w', prompt: 'x', plugins: [] });
 		expect(log.options && 'mcpServers' in log.options).toBe(false);
 		expect(log.options && 'plugins' in log.options).toBe(false);
+		expect(log.options && ('settings' in log.options || 'disallowedTools' in log.options)).toBe(false);
 	});
 
 	test('no account leaves env to the host; an account sets and clears variables for that run only', async () => {

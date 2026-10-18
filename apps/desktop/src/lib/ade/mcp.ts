@@ -1,22 +1,47 @@
-// What trusted Snaps hand to agents: MCP servers and skill plugins. The Snap store registers
-// itself as the provider; agents read it when a run starts, passing their worktree (the folder
-// the servers are confined to; see snapModel.sandboxedArgv): the timeline through the agent
-// host's `mcpServers` / `plugins`, the claude CLI through `--mcp-config` (a JSON string
-// argument) and `--plugin-dir` (one folder per flag). Pure.
+// What agents get besides their own config: MCP servers and skill plugins. The Snap store
+// registers itself as the provider; the MCP store (mcp/mcp.svelte.ts) composes the result with
+// the servers of the user's and the folder's config files and drops the ones turned off. Agents
+// read it when a run starts, passing their worktree (the folder Snap servers are confined to; see
+// snapModel.sandboxedArgv): the timeline through the agent host's `mcpServers` / `plugins`, the
+// claude CLI through `--mcp-config` (a JSON string argument) and `--plugin-dir` (one folder per
+// flag). Pure.
 
-export type McpServer = { command: string; args: string[]; env: Record<string, string> };
-export type McpServers = Record<string, McpServer>;
+/** A program over stdio. */
+export type McpServer = { type?: 'stdio'; command: string; args: string[]; env: Record<string, string> };
+/** A remote server (Streamable HTTP or SSE). */
+export type McpRemoteServer = { type: 'http' | 'sse'; url: string; headers?: Record<string, string> };
+export type McpServerConfig = McpServer | McpRemoteServer;
+export type McpServers = Record<string, McpServerConfig>;
+export type StdioServers = Record<string, McpServer>;
+
+export const isRemote = (s: McpServerConfig): s is McpRemoteServer => s.type === 'http' || s.type === 'sse';
+
+/** The stdio servers only (CLIs that take no remote servers from Kingu). */
+export function stdioOnly(servers: McpServers): StdioServers {
+	return Object.fromEntries(Object.entries(servers).filter((e): e is [string, McpServer] => !isRemote(e[1])));
+}
 
 let provider: (root: string | null) => McpServers = () => ({});
+let compose: (snapServers: McpServers, root: string | null) => McpServers = (s) => s;
 let pluginProvider: () => Promise<string[]> = async () => [];
 
 export function setMcpProvider(fn: (root: string | null) => McpServers) {
 	provider = fn;
 }
 
+/** The MCP store's step over the Snap servers: adds config servers, drops turned-off ones. */
+export function setMcpComposer(fn: (snapServers: McpServers, root: string | null) => McpServers) {
+	compose = fn;
+}
+
+/** The Snap servers alone (the MCP Servers view lists them with their on/off state). */
+export function snapMcpServers(root: string | null): McpServers {
+	return provider(root);
+}
+
 /** MCP servers for an agent working in `root`. */
 export function mcpServers(root: string | null): McpServers {
-	return provider(root);
+	return compose(provider(root), root);
 }
 
 /** Skill plugin folders (written by Rust into the app cache) come from the Snap store too. */
@@ -37,7 +62,9 @@ export async function skillPlugins(): Promise<string[]> {
 export function claudeMcpConfig(servers: McpServers): string | null {
 	const entries = Object.entries(servers);
 	if (!entries.length) return null;
-	return JSON.stringify({ mcpServers: Object.fromEntries(entries.map(([name, s]) => [name, { command: s.command, args: s.args, env: s.env }])) });
+	return JSON.stringify({
+		mcpServers: Object.fromEntries(entries.map(([name, s]) => [name, isRemote(s) ? { type: s.type, url: s.url, ...(s.headers && Object.keys(s.headers).length ? { headers: s.headers } : {}) } : { command: s.command, args: s.args, env: s.env }]))
+	});
 }
 
 /**

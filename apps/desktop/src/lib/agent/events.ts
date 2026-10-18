@@ -59,6 +59,8 @@ export type AgentEvent =
 	| { kind: 'system'; subtype: string; session_id: string | null; model: string | null }
 	/** What the session started with: its slash command names, tools and MCP servers. Not a timeline entry. */
 	| { kind: 'session_info'; slash_commands: string[]; tools: string[]; mcp_servers: { name: string; status: string }[] }
+	/** The session's MCP servers now (status, error, source, tools); replaces the last list. Not a timeline entry. */
+	| { kind: 'mcp_status'; servers: { name: string; status: string; error: string | null; source: string | null; tools: string[] }[] }
 	/** The session's slash commands with descriptions; replaces the last list. Not a timeline entry. */
 	| { kind: 'commands'; commands: SessionCommand[] }
 	/** The models the session can switch to; replaces the last list (modelCatalog). Not a timeline entry. */
@@ -132,7 +134,7 @@ export const STATUS_LABEL: Readonly<Record<RunStatus, string>> = {
 /** Timeline entries: every event except streaming deltas and permission bookkeeping. */
 export type TimelineEvent = Exclude<
 	AgentEvent,
-	{ kind: 'delta' } | { kind: 'permission_resolved' } | { kind: 'edits_changed' } | { kind: 'session_info' } | { kind: 'commands' } | { kind: 'models' } | { kind: 'context_usage' }
+	{ kind: 'delta' } | { kind: 'permission_resolved' } | { kind: 'edits_changed' } | { kind: 'session_info' } | { kind: 'commands' } | { kind: 'models' } | { kind: 'mcp_status' } | { kind: 'context_usage' }
 >;
 
 export type RunState = {
@@ -201,6 +203,8 @@ export function applyEvent(s: RunState, ev: AgentEvent): void {
 			s.commands = ev.commands;
 			return;
 		case 'models':
+		case 'mcp_status':
+			// Kept by the MCP store (mcp/mcp.svelte.ts), not by the run.
 			return;
 		case 'context_usage':
 			if (ev.max_tokens > 0) s.context = { used: ev.used_tokens, max: ev.max_tokens };
