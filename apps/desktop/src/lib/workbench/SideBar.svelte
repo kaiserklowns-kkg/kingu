@@ -11,11 +11,12 @@
 
 	let { workspaceName }: { workspaceName: string } = $props();
 
+	const location = $derived(settings.get<string>('workbench.activityBar.location'));
 	const titles = { explorer: 'Explorer', search: 'Search', scm: 'Source Control', debug: 'Run and Debug', snaps: 'Snaps', agents: 'Agents' };
 </script>
 
 <aside aria-label={titles[layout.sideView]} class="flex h-full flex-col bg-(--vscode-sideBar-background) text-(--vscode-sideBar-foreground)">
-	{#if settings.get('workbench.activityBar.location') === 'top'}
+	{#if location === 'top'}
 		<!-- `workbench.activityBar.location: top`: the view switcher is the side bar's header. -->
 		<div class="flex h-(--kg-part-title-height) shrink-0 items-center px-1.5 text-(--vscode-sideBarTitle-foreground)">
 			<ActivityBar orientation="horizontal" />
@@ -27,6 +28,7 @@
 		</div>
 	{/if}
 
+	<div class="flex min-h-0 flex-1 flex-col">
 	{#if layout.sideView === 'explorer'}
 		<ExplorerView {workspaceName} />
 	{:else if layout.sideView === 'search'}
@@ -39,5 +41,12 @@
 		<SnapsSideView />
 	{:else if layout.sideView === 'agents'}
 		<AgentsView />
+	{/if}
+	</div>
+	{#if location === 'bottom'}
+		<!-- `workbench.activityBar.location: bottom`: the view switcher at the foot of the side bar. -->
+		<div class="flex h-(--kg-part-title-height) shrink-0 items-center border-t border-(--vscode-sideBarSectionHeader-border) px-1.5 text-(--vscode-sideBarTitle-foreground)">
+			<ActivityBar orientation="horizontal" />
+		</div>
 	{/if}
 </aside>

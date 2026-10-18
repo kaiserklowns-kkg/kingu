@@ -6,8 +6,14 @@
 	import MenuList from './MenuList.svelte';
 	import { currentMenubar, runMenuItem, runRole } from './appMenu.svelte';
 	import type { MenuNode } from './menus';
+	import { settings } from '#lib/settings/settings.svelte.ts';
+
+	/** `onLeave`: focus left the menu bar with no menu open (`window.menuBarVisibility: toggle` hides it then). */
+	let { onLeave }: { onLeave?: () => void } = $props();
 
 	const menus = $derived(currentMenubar(false));
+	/** window.enableMenuBarMnemonics: Alt+letter opens a menu, and the letters are underlined. */
+	const mnemonics = $derived(settings.get<boolean>('window.enableMenuBarMnemonics'));
 
 	let bar: HTMLDivElement | undefined = $state();
 	let openIndex = $state<number | null>(null);
@@ -64,7 +70,7 @@
 
 	function onWindowKeyDown(e: KeyboardEvent) {
 		altArmed = e.key === 'Alt' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.shiftKey;
-		if (e.defaultPrevented || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || !/^Key[A-Z]$/.test(e.code)) return;
+		if (!mnemonics || e.defaultPrevented || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || !/^Key[A-Z]$/.test(e.code)) return;
 		// Alt+F: the menu whose mnemonic is F (only when no keybinding took the chord).
 		const letter = e.code.slice(3).toLowerCase();
 		const i = menus.findIndex((m) => m.mnemonic !== undefined && m.text[m.mnemonic].toLowerCase() === letter);
@@ -74,7 +80,8 @@
 	}
 
 	function onWindowKeyUp(e: KeyboardEvent) {
-		if (e.key !== 'Alt' || !altArmed) return;
+		// window.customMenuBarAltFocus: Alt alone focuses the menu bar.
+		if (e.key !== 'Alt' || !altArmed || !settings.get<boolean>('window.customMenuBarAltFocus')) return;
 		altArmed = false;
 		e.preventDefault();
 		if (openIndex !== null || inBar()) return closeAll(true);
@@ -98,7 +105,12 @@
 	tabindex="-1"
 	data-tauri-drag-region="false"
 	class="relative z-50 flex h-full items-center"
-	onfocusout={() => queueMicrotask(() => !inBar() && openIndex === null && (showMnemonics = false))}
+	onfocusout={() =>
+		queueMicrotask(() => {
+			if (inBar() || openIndex !== null) return;
+			showMnemonics = false;
+			onLeave?.();
+		})}
 >
 	{#each menus as menu, i (menu.id)}
 		<div class="relative">
@@ -119,7 +131,7 @@
 				onpointerenter={() => openIndex !== null && openIndex !== i && open(i, false)}
 				onkeydown={(e) => onTopKey(e, i)}
 			>
-				{#if showMnemonics && menu.mnemonic !== undefined}
+				{#if showMnemonics && mnemonics && menu.mnemonic !== undefined}
 					{menu.text.slice(0, menu.mnemonic)}<u>{menu.text[menu.mnemonic]}</u>{menu.text.slice(menu.mnemonic + 1)}
 				{:else}
 					{menu.text}

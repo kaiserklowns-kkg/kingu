@@ -11,12 +11,24 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 const MARKER: &str = "__KINGU_PATH__";
-pub const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(5);
+/// VS Code's `application.shellEnvironmentResolutionTimeout` default (seconds).
+pub const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(10);
 
 static LOGIN_PATH: OnceLock<Option<OsString>> = OnceLock::new();
+static TIMEOUT: OnceLock<Duration> = OnceLock::new();
+
+/// `application.shellEnvironmentResolutionTimeout`: whole seconds from 1 to 120 (VS Code's range),
+/// else the default.
+pub fn resolution_timeout(setting: Option<&serde_json::Value>) -> Duration {
+  match setting.and_then(serde_json::Value::as_f64) {
+    Some(secs) if (1.0..=120.0).contains(&secs) => Duration::from_secs_f64(secs),
+    _ => LOGIN_SHELL_TIMEOUT,
+  }
+}
 
 /// Starts resolving in the background so the first agent/LSP/search lookup rarely waits.
-pub fn init() {
+pub fn init(timeout: Duration) {
+  let _ = TIMEOUT.set(timeout);
   std::thread::spawn(|| {
     let _ = login_path();
   });
@@ -30,7 +42,7 @@ fn login_path() -> Option<&'static OsString> {
       }
       let shell = std::env::var_os("SHELL").map(PathBuf::from).unwrap_or_else(|| "/bin/zsh".into());
       let started = Instant::now();
-      let path = read_login_path(&shell, LOGIN_SHELL_TIMEOUT);
+      let path = read_login_path(&shell, *TIMEOUT.get().unwrap_or(&LOGIN_SHELL_TIMEOUT));
       match &path {
         Some(_) => log::info!("login shell PATH resolved in {:?}", started.elapsed()),
         None => log::info!("login shell PATH unavailable from {}; using the process PATH", shell.display()),
@@ -134,6 +146,17 @@ mod tests {
     // $1 is -ilc, $2 the script; rc files may print anything around it.
     let sh = fake_shell(tmp.path(), "echo 'Welcome to zsh!'\nPATH=/opt/homebrew/bin:/usr/bin\neval \"$2\"\necho bye");
     assert_eq!(read_login_path(&sh, Duration::from_secs(5)).as_deref(), Some("/opt/homebrew/bin:/usr/bin"));
+  }
+
+  #[test]
+  fn resolution_timeout_follows_the_setting_within_vs_code_range() {
+    use serde_json::json;
+    assert_eq!(resolution_timeout(None), Duration::from_secs(10));
+    assert_eq!(resolution_timeout(Some(&json!(30))), Duration::from_secs(30));
+    assert_eq!(resolution_timeout(Some(&json!(1.5))), Duration::from_millis(1500));
+    assert_eq!(resolution_timeout(Some(&json!(0))), Duration::from_secs(10));
+    assert_eq!(resolution_timeout(Some(&json!(121))), Duration::from_secs(10));
+    assert_eq!(resolution_timeout(Some(&json!("5"))), Duration::from_secs(10));
   }
 
   #[test]

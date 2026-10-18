@@ -31,6 +31,7 @@
 		type LayoutControlType
 	} from './titlebar';
 	import { workspace } from './workspace.svelte';
+	import { menuBarShown, type MenuBarVisibility } from './workbenchOptions';
 	import type { MenuNode } from './menus';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { team } from '#lib/team/team.svelte.ts';
@@ -60,6 +61,7 @@
 			rootPath: workspace.root,
 			dirty,
 			branch: status.branch,
+			languageId: editors.language,
 			separator: settings.get<string>('window.titleSeparator')
 		});
 	});
@@ -78,7 +80,43 @@
 	const height = $derived(titleBarHeight('workbench', { commandCenter, compactAgents: false }));
 	// Quick input and other overlays sit just below the title bar.
 	$effect(() => document.documentElement.style.setProperty('--kg-titlebar-height', `${height}px`));
-	const menuBarVisibility = $derived(settings.get<'classic' | 'compact' | 'hidden'>('window.menuBarVisibility'));
+	// window.menuBarVisibility (Windows and Linux): `classic` hides the menu in full screen, `toggle`
+	// shows it while Alt alone toggles it (until focus leaves it), `compact` is one menu button.
+	let fullscreen = $state(false);
+	let menuToggledOn = $state(false);
+	const menuBar = $derived(menuBarShown(settings.get<MenuBarVisibility>('window.menuBarVisibility'), { fullscreen, toggledOn: menuToggledOn }));
+	onMount(() => {
+		if (isMac) return;
+		let off: (() => void) | undefined;
+		let gone = false;
+		void import('@tauri-apps/api/window')
+			.then(async ({ getCurrentWindow }) => {
+				const win = getCurrentWindow();
+				fullscreen = await win.isFullscreen();
+				const un = await win.onResized(async () => (fullscreen = await win.isFullscreen()));
+				if (gone) un();
+				else off = un;
+			})
+			.catch(() => {});
+		let altAlone = false;
+		const down = (e: KeyboardEvent) => (altAlone = e.key === 'Alt' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.shiftKey);
+		const up = (e: KeyboardEvent) => {
+			if (e.key !== 'Alt' || !altAlone) return;
+			altAlone = false;
+			if (settings.get('window.menuBarVisibility') !== 'toggle' || menuToggledOn) return;
+			menuToggledOn = true;
+			// Show it and put focus on the first menu, like VS Code.
+			queueMicrotask(() => document.querySelector<HTMLButtonElement>('header.titlebar [role="menubar"] button')?.focus());
+		};
+		window.addEventListener('keydown', down, true);
+		window.addEventListener('keyup', up, true);
+		return () => {
+			gone = true;
+			off?.();
+			window.removeEventListener('keydown', down, true);
+			window.removeEventListener('keyup', up, true);
+		};
+	});
 	const label = $derived(commandCenterLabel({ folderName: workspace.root ? workspaceName : null, title, customTitle: isCustomTitle(template, isMac) }));
 	const layoutItems = $derived(layoutControlItems(settings.get<boolean>('workbench.layoutControl.enabled'), settings.get<LayoutControlType>('workbench.layoutControl.type')));
 	// Open in Agents sits next to the command center (VS Code's TitleBarAdjacentCenter), not in the right toolbar.
@@ -201,9 +239,9 @@
 			<div class="grid h-full w-[35px] shrink-0 place-items-center text-(--vscode-titleBar-activeForeground)" aria-hidden="true">
 				<Icon name="kingu" size={16} />
 			</div>
-			{#if menuBarVisibility === 'classic'}
-				<MenuBar />
-			{:else if menuBarVisibility === 'compact'}
+			{#if menuBar === 'bar'}
+				<MenuBar onLeave={() => (menuToggledOn = false)} />
+			{:else if menuBar === 'button'}
 				<button class={ACTION} aria-label="Application Menu" title="Application Menu" aria-haspopup="menu" onclick={(e) => openBelow('hamburger', e)}>
 					<Icon name="menu" size={16} />
 				</button>

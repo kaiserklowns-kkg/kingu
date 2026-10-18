@@ -1,7 +1,10 @@
 <script lang="ts">
 	// Toasts and the notifications center (VS Code: notificationsToasts.ts, notificationsCenter.ts),
-	// both in the bottom-right corner above the status bar, 450px wide.
+	// 450px wide, in the corner `workbench.notifications.position` names (bottom-right above the
+	// status bar by default, bottom-left, or top-right below the title bar).
 	import Icon, { type IconName } from './Icon.svelte';
+	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { notificationsCorner } from './workbenchOptions';
 	import { notifications, type NotificationItem } from './notifications.svelte';
 	import { progressPercent } from './notificationsModel';
 
@@ -11,6 +14,7 @@
 		error: { name: 'error', color: 'var(--vscode-notificationsErrorIcon-foreground, #f14c4c)' }
 	};
 	const BUTTON = 'h-[22px] rounded-sm px-2 text-xs';
+	const corner = $derived(notificationsCorner(settings.get<string>('workbench.notifications.position')));
 	const TOOL = 'grid size-[22px] place-items-center rounded text-(--vscode-icon-foreground) hover:bg-(--vscode-toolbar-hoverBackground)';
 </script>
 
@@ -61,7 +65,13 @@
 	</div>
 {/snippet}
 
-<div class="pointer-events-none fixed right-3 bottom-[calc(var(--kg-statusbar-height)+8px)] z-40 flex w-[min(450px,calc(100vw-24px))] flex-col items-stretch gap-2">
+<div
+	class={[
+		'pointer-events-none fixed z-40 flex w-[min(450px,calc(100vw-24px))] flex-col items-stretch gap-2',
+		corner.left ? 'left-3' : 'right-3',
+		corner.top ? 'top-[calc(var(--kg-titlebar-height)+8px)]' : 'bottom-[calc(var(--kg-statusbar-height)+8px)]'
+	]}
+>
 	{#if notifications.centerVisible}
 		<section
 			aria-label="Notifications"

@@ -8,16 +8,18 @@
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 	import { snaps } from '#lib/snaps/snaps.svelte.ts';
 	import { pendingTrustCount } from '#lib/snaps/snapModel.ts';
+	import { activityBarMetrics, activityClickHides } from './workbenchOptions';
 
 	/**
-	 * `vertical`: the activity bar (`workbench.activityBar.location: default`). `horizontal`: the
-	 * view icons at the top of the side bar (`top`). Accounts and Manage are always in the title bar.
+	 * `vertical`: the activity bar (`workbench.activityBar.location: default`, 36px wide with
+	 * `workbench.activityBar.compact`). `horizontal`: the view icons at the top or bottom of the side
+	 * bar (`top`, `bottom`). Accounts and Manage are always in the title bar.
 	 */
 	let { orientation = 'vertical' }: { orientation?: 'vertical' | 'horizontal' } = $props();
 	const vertical = $derived(orientation === 'vertical');
 
 	// Count badges (VS Code activitybar badge: bottom-right, 16px).
-	const badges: Partial<Record<SideView, () => number>> = { scm: () => (settings.get('scm.countBadge') === 'off' ? 0 : scm.count), snaps: () => pendingTrustCount(snaps.list), agents: () => adeTasks.attentionCount };
+	const badges: Partial<Record<SideView, () => number>> = { scm: () => scm.count, snaps: () => pendingTrustCount(snaps.list), agents: () => adeTasks.attentionCount };
 	const views: { view: SideView; label: string; icon: IconName; command: string }[] = [
 		{ view: 'explorer', label: 'Explorer', icon: 'files', command: 'workbench.view.explorer' },
 		{ view: 'search', label: 'Search', icon: 'search', command: 'workbench.action.findInFiles' },
@@ -32,8 +34,17 @@
 		const key = cmd && keyOf(cmd);
 		return key ? `${label} (${keyLabel(key)})` : label;
 	};
-	const ITEM = $derived(vertical ? 'relative grid size-12 place-items-center' : 'relative grid h-full w-8 place-items-center');
-	const ICON = $derived(vertical ? 24 : 16);
+	const metrics = $derived(activityBarMetrics(settings.get<boolean>('workbench.activityBar.compact')));
+	const ITEM = $derived(vertical ? 'relative grid w-full place-items-center' : 'relative grid h-full w-8 place-items-center');
+	const ICON = $derived(vertical ? metrics.icon : 16);
+	/** `workbench.activityBar.iconClickBehavior` (only for the vertical activity bar, like VS Code): `focus` keeps the side bar open. */
+	function select(view: SideView) {
+		if (vertical && layout.sideView === view && !activityClickHides(settings.get<string>('workbench.activityBar.iconClickBehavior'), layout.sidebarVisible, true)) {
+			layout.sidebarVisible = true;
+			return;
+		}
+		layout.showView(view);
+	}
 	const agentLabel = $derived(titled('Arkai', 'workbench.action.toggleAuxiliaryBar'));
 </script>
 
@@ -43,9 +54,10 @@
 	aria-label="Activity Bar"
 	class={
 		vertical
-			? 'flex w-(--kg-activitybar-width) shrink-0 flex-col items-center border-r border-(--vscode-activityBar-border) bg-(--vscode-activityBar-background)'
+			? 'flex shrink-0 flex-col items-center border-r border-(--vscode-activityBar-border) bg-(--vscode-activityBar-background)'
 			: 'flex h-full items-center'
 	}
+	style:width={vertical ? `${metrics.width}px` : undefined}
 >
 	{#each views as v (v.view)}
 		{@const on = layout.sidebarVisible && layout.sideView === v.view}
@@ -65,7 +77,8 @@
 						? 'text-(--vscode-foreground)'
 						: 'text-(--vscode-foreground) opacity-60 hover:opacity-100'
 			]}
-			onclick={() => layout.showView(v.view)}
+			style:height={vertical ? `${metrics.item}px` : undefined}
+			onclick={() => select(v.view)}
 		>
 			{#if on}<span class={vertical ? 'absolute inset-y-0 left-0 w-0.5 bg-(--vscode-activityBar-activeBorder)' : 'absolute inset-x-1 bottom-0 h-px bg-(--vscode-foreground)'}></span>{/if}
 			<Icon name={v.icon} size={ICON} filled={on} />
@@ -73,7 +86,7 @@
 				<span
 					class={[
 						'absolute rounded-full bg-(--vscode-activityBarBadge-background) text-center font-semibold text-(--vscode-activityBarBadge-foreground)',
-						vertical ? 'right-1.5 bottom-1.5 h-4 min-w-4 px-1 text-[9px] leading-4' : 'top-0.5 right-0 h-3.5 min-w-3.5 px-0.5 text-[8px] leading-3.5'
+						vertical ? (metrics.width < 48 ? 'right-0.5 bottom-0 h-4 min-w-4 px-1 text-[9px] leading-4' : 'right-1.5 bottom-1.5 h-4 min-w-4 px-1 text-[9px] leading-4') : 'top-0.5 right-0 h-3.5 min-w-3.5 px-0.5 text-[8px] leading-3.5'
 					]}
 				>
 					{badge > 999 ? '999+' : badge}
@@ -89,6 +102,7 @@
 			ITEM,
 			layout.auxVisible ? 'text-(--vscode-activityBar-foreground)' : 'text-(--vscode-activityBar-inactiveForeground) hover:text-(--vscode-activityBar-foreground)'
 		]}
+		style:height={vertical ? `${metrics.item}px` : undefined}
 		onclick={() => (layout.auxVisible = !layout.auxVisible)}
 	>
 		<Icon name="agent" size={ICON} />
