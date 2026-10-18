@@ -1,0 +1,40 @@
+// Mounted terminals by PTY key, so keybindings (⌘F, ⌘K, splits) act on the one that has focus,
+// like VS Code's `terminalFocus` context key.
+
+import type { TerminalFlavor } from './terminalMenu.ts';
+
+export type TerminalHandle = {
+	key: string;
+	flavor: TerminalFlavor;
+	host: HTMLElement;
+	focus(): void;
+	find(): void;
+	clear(): void;
+	selectAll(): void;
+};
+
+const handles = new Map<string, TerminalHandle>();
+
+export function registerTerminal(h: TerminalHandle): () => void {
+	handles.set(h.key, h);
+	return () => {
+		if (handles.get(h.key) === h) handles.delete(h.key);
+	};
+}
+
+export const terminalHandle = (key: string) => handles.get(key) ?? null;
+
+/** The terminal holding keyboard focus, optionally only of one layout. */
+export function focusedTerminal(flavor?: TerminalFlavor): TerminalHandle | null {
+	const el = typeof document === 'undefined' ? null : document.activeElement;
+	if (!el) return null;
+	for (const h of handles.values()) if (h.host.contains(el) && (!flavor || h.flavor === flavor)) return h;
+	return null;
+}
+
+/** Focuses `key` once it is mounted and shown (a new split pane mounts on the next tick). */
+export function focusTerminal(key: string, tries = 10) {
+	const h = handles.get(key);
+	if (h && h.host.offsetParent !== null) h.focus();
+	else if (tries > 0) setTimeout(() => focusTerminal(key, tries - 1), 30);
+}

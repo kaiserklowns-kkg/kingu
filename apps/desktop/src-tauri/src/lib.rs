@@ -17,6 +17,7 @@ mod snap;
 mod snap_install;
 mod snap_sandbox;
 mod system;
+mod terminal_links;
 mod team;
 mod watcher;
 mod window;
@@ -232,12 +233,17 @@ fn pty_spawn(
   slug: Option<String>,
   run: Option<Vec<String>>,
   terminal: Option<TerminalSettings>,
+  cwd_from: Option<String>,
 ) -> Result<kingu_ptyd::Attached, String> {
   pty::validate_key(&key)?;
+  // A split pane starts where its source pane's shell is now (VS Code's splitCwd "inherited",
+  // Orca's resolve-split-cwd), else where a new terminal would.
+  let inherited = cwd_from.as_deref().and_then(|from| ptys.live_cwd(from));
   // A task terminal starts in the task's worktree (the ADE's per-worktree terminals).
   // No folder open: the terminal starts in the home folder, like VS Code's empty window.
-  let cwd = match slug {
-    Some(slug) => {
+  let cwd = match (inherited, slug) {
+    (Some(dir), _) => dir,
+    (None, Some(slug)) => {
       agent::worktree::validate_slug(&slug)?;
       let dir = agent::worktree::worktree_path(&ws.root()?, &slug);
       if !dir.is_dir() {
@@ -245,7 +251,7 @@ fn pty_spawn(
       }
       dir
     }
-    None => {
+    (None, None) => {
       let folder = ws.current();
       let fallback = folder.clone().or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("/"));
       pty::terminal_cwd(terminal.as_ref().and_then(|t| t.cwd.as_deref()), folder.as_deref(), fallback)
@@ -670,6 +676,9 @@ pub fn run() {
       pty::pty_attach,
       pty::pty_list,
       pty::pty_backend,
+      pty::pty_foreground,
+      terminal_links::terminal_link_target,
+      terminal_links::terminal_open_url,
       worktree_create,
       worktree_refresh_base,
       worktree_list,

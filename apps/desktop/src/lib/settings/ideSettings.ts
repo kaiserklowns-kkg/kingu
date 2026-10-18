@@ -711,10 +711,10 @@ export const IDE_SETTINGS: SettingSchema[] = [
 		id: 'terminal.integrated.confirmOnKill',
 		group: 'Terminal',
 		type: 'string',
-		default: 'never',
-		enum: ['never', 'panel', 'always'],
-		enumDescriptions: ['ไม่ถาม', 'ถามเมื่อปิด terminal ใน panel', 'ถามทุกครั้ง'],
-		description: 'ถามก่อนปิด terminal (Controls whether to confirm killing terminals.)'
+		default: 'editor',
+		enum: ['never', 'editor', 'panel', 'always'],
+		enumDescriptions: ['ไม่ถาม', 'ถามเมื่อ terminal อยู่ในพื้นที่ editor (แท็บ terminal ของ Agents)', 'ถามเมื่อ terminal อยู่ใน panel', 'ถามทั้งใน editor และ panel'],
+		description: 'ถามก่อนปิด terminal ที่มีโปรเซสทำงานอยู่ (Controls whether to confirm killing terminals when they have child processes.)'
 	},
 	// --- Workbench / Window
 	{

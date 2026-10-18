@@ -2,6 +2,7 @@
 //! when the daemon cannot start) or in `kingu-ptyd`, a per-user daemon the app talks to over a
 //! Unix socket (`protocol`, `server`, `client`), so agent CLIs keep running after the app quits.
 
+pub mod procinfo;
 pub mod protocol;
 pub mod sandbox;
 pub mod session;
@@ -13,4 +14,5 @@ pub mod peer;
 #[cfg(unix)]
 pub mod server;
 
+pub use procinfo::Foreground;
 pub use session::{Attached, Host, SessionInfo, ShellSpec, Sink, command_line, is_agent_session_marker, shell_quote, validate_key};

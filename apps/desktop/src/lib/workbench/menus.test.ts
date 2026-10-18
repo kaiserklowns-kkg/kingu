@@ -18,7 +18,8 @@ function sources(dir: string): string[] {
 	});
 }
 
-type Registered = { id: string; key?: string; mac?: string };
+/** `terminalOnly`: its key acts only while a terminal has focus (`keyWhen`), where Monaco's menu keys do not apply. */
+type Registered = { id: string; key?: string; mac?: string; terminalOnly?: boolean };
 
 /** Every `commands.register({ id: '…', … key: '…', mac: '…', … run` in src/lib. */
 function registeredCommands(): Map<string, Registered> {
@@ -29,7 +30,7 @@ function registeredCommands(): Map<string, Registered> {
 			const body = m[1];
 			const field = (name: string) => body.match(new RegExp(`\\b${name}: '((?:[^'\\\\]|\\\\.)*)'`))?.[1]?.replace(/\\\\/g, '\\');
 			const id = field('id');
-			if (id) out.set(id, { id, key: field('key'), mac: field('mac') });
+			if (id) out.set(id, { id, key: field('key'), mac: field('mac'), ...(/keyWhen: (panelTerminalFocus,|\(\) => focusedTerminal\(\) !== null,)/.test(body) ? { terminalOnly: true } : {}) });
 		}
 	}
 	return out;
@@ -104,7 +105,7 @@ describe('menu model', () => {
 		});
 
 		test(`${platform}: keys the menu owns (Monaco's) collide with no workbench keybinding`, () => {
-			const workbenchKeys = new Map([...registered.values()].flatMap((r) => (keyOf(r, mac) ? [[keyLabel(keyOf(r, mac)!, mac), r.id] as const] : [])));
+			const workbenchKeys = new Map([...registered.values()].flatMap((r) => (keyOf(r, mac) && !r.terminalOnly ? [[keyLabel(keyOf(r, mac)!, mac), r.id] as const] : [])));
 			for (const menu of MENUS)
 				walk(menu.items, (i) => {
 					if (!('command' in i)) return;

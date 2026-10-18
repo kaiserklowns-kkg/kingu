@@ -11,6 +11,8 @@ use std::sync::{Arc, Mutex};
 
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 
+use crate::procinfo::{self, Foreground};
+
 /// Output kept per session for a re-attaching viewer.
 pub const SCROLLBACK_BYTES: usize = 256 * 1024;
 const EXITED: &str = "\r\n[process exited]\r\n";
@@ -132,6 +134,14 @@ struct Session {
 }
 
 impl Session {
+  fn foreground(&self) -> Option<Foreground> {
+    #[cfg(unix)]
+    let group = self.master.process_group_leader();
+    #[cfg(not(unix))]
+    let group = None;
+    procinfo::foreground(group, self.child.process_id())
+  }
+
   /// Ends the shell off the caller's thread (`kill` waits up to ~200ms for SIGHUP to work).
   fn kill(mut self) {
     std::thread::spawn(move || {
@@ -160,6 +170,10 @@ pub struct SessionInfo {
   /// The shell's pid (the Resource Manager's terminal rows); absent from older daemons.
   #[serde(default)]
   pub pid: Option<u32>,
+  /// The job in front of the shell (`sleep 30`, an agent CLI); absent while the shell is at its
+  /// prompt, and from older daemons.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub foreground: Option<Foreground>,
 }
 
 /// What `open` starts when `key` has no live session.
@@ -370,10 +384,19 @@ impl Host {
     let mut sessions = self.sessions.lock().unwrap();
     let mut out: Vec<SessionInfo> = sessions
       .iter_mut()
-      .map(|(key, s)| SessionInfo { key: key.clone(), cwd: s.cwd.display().to_string(), alive: matches!(s.child.try_wait(), Ok(None)), pid: s.child.process_id() })
+      .map(|(key, s)| {
+        let alive = matches!(s.child.try_wait(), Ok(None));
+        let foreground = if alive { s.foreground() } else { None };
+        SessionInfo { key: key.clone(), cwd: s.cwd.display().to_string(), alive, pid: s.child.process_id(), foreground }
+      })
       .collect();
     out.sort_by(|a, b| a.key.cmp(&b.key));
     out
+  }
+
+  /// The job running in front of `key`'s shell, if any (a close asks first while there is one).
+  pub fn foreground(&self, key: &str) -> Option<Foreground> {
+    self.sessions.lock().unwrap().get(key).and_then(Session::foreground)
   }
 
   pub fn len(&self) -> usize {
@@ -559,6 +582,43 @@ pub(crate) mod tests {
       let spec = ShellSpec { shell: Some(bad), ..spec };
       assert!(host.spawn_shell("test:bad", &spec, collecting().0).is_err(), "{bad}");
     }
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn reports_the_foreground_job_not_the_idle_shell() {
+    if !Path::new("/bin/sh").exists() || !Path::new("/bin/sleep").exists() {
+      return;
+    }
+    let host = Host::default();
+    let mut cmd = CommandBuilder::new("/bin/sh");
+    // Interactive, so job control puts each command in a foreground group of its own.
+    cmd.args(["-i"]);
+    cmd.env("PS1", "ready> ");
+    cmd.cwd("/");
+    let (sink, seen) = collecting();
+    host.spawn("test:fg", cmd, 80, 24, sink, None).unwrap();
+    wait_for("the prompt", || seen.lock().unwrap().contains("ready>"));
+    assert_eq!(host.foreground("test:fg"), None);
+    assert!(host.list()[0].foreground.is_none());
+
+    host.write("test:fg", b"/bin/sleep 30\r").unwrap();
+    wait_for("sleep in front", || host.foreground("test:fg").is_some_and(|f| f.name == "sleep"));
+    let listed = host.list().remove(0).foreground.unwrap();
+    assert_eq!(listed.name, "sleep");
+    assert_ne!(Some(listed.pid), host.list()[0].pid);
+
+    // On the wire next to the other fields; an older daemon's list (no field) reads as none.
+    let wire = serde_json::to_value(host.list().remove(0)).unwrap();
+    assert_eq!(wire["foreground"]["name"], "sleep");
+    let old: super::SessionInfo = serde_json::from_str(r#"{"key":"k","cwd":"/","alive":true}"#).unwrap();
+    assert_eq!(old.foreground, None);
+
+    // ^C ends the job: the shell is back in front.
+    host.write("test:fg", b"\x03").unwrap();
+    wait_for("the shell back in front", || host.foreground("test:fg").is_none());
+    assert!(host.kill("test:fg"));
+    assert_eq!(host.foreground("test:fg"), None);
   }
 
   #[test]

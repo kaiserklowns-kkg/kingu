@@ -10,6 +10,7 @@ import {
 	panelKey,
 	parseAdeTerminals,
 	parseCliSessions,
+	panelGroups,
 	parsePanelTerminals,
 	persist,
 	restore,
@@ -17,6 +18,7 @@ import {
 	storeName,
 	withoutRun
 } from './sessions.ts';
+import { leaf, splitPane } from './paneLayout.ts';
 
 function memory() {
 	const items = new Map<string, string>();
@@ -78,7 +80,7 @@ describe('persistence', () => {
 		const b = rootTag('/b');
 		const state = { list: [{ id: 2, title: 'zsh' }, { id: 5, title: 'test', run: ['go', 'test'] }], active: 5, seq: 5 };
 		persist(storeName('p', a), state, store);
-		expect(restore(storeName('p', a), parsePanelTerminals, store)).toEqual({ list: [{ id: 2, title: 'zsh', run: undefined }, { id: 5, title: 'test', run: ['go', 'test'] }], active: 5, seq: 5 });
+		expect(restore(storeName('p', a), parsePanelTerminals, store)).toEqual({ list: [{ id: 2, title: 'zsh', run: undefined }, { id: 5, title: 'test', run: ['go', 'test'] }], active: 5, seq: 5, groups: [leaf('2'), leaf('5')] });
 		expect(restore(storeName('p', b), parsePanelTerminals, store)).toBeNull();
 		expect(storeName('p', a)).toBe(`p:${a}`);
 	});
@@ -96,9 +98,23 @@ describe('persistence', () => {
 		expect(() => persist('p', {}, throwing)).not.toThrow();
 	});
 	test('panel terminals: bad entries dropped, seq never reuses an id, active falls back', () => {
-		expect(parsePanelTerminals({ list: [{ id: 7 }, { id: 'x' }, null, { id: 0 }], active: 99, seq: 3 })).toEqual({ list: [{ id: 7, title: 'zsh', run: undefined }], active: 7, seq: 7 });
+		expect(parsePanelTerminals({ list: [{ id: 7 }, { id: 'x' }, null, { id: 0 }], active: 99, seq: 3 })).toEqual({ list: [{ id: 7, title: 'zsh', run: undefined }], active: 7, seq: 7, groups: [leaf('7')] });
 		expect(parsePanelTerminals({ list: [], active: 1, seq: 1 })).toBeNull();
 		expect(parsePanelTerminals([1, 2])).toBeNull();
+	});
+	test('panel terminal groups (VS Code splits): kept when valid, every terminal in exactly one', () => {
+		const split = splitPane(leaf('1'), '1', '3', 'vertical');
+		const list = [{ id: 1 }, { id: 2 }, { id: 3 }];
+		expect(parsePanelTerminals({ list, active: 3, seq: 3, groups: [split] })?.groups).toEqual([split, leaf('2')]);
+		// A group naming a gone terminal, or one already grouped, is dropped.
+		expect(panelGroups([split, splitPane(leaf('3'), '3', '9', 'vertical'), 'junk'], [1, 3])).toEqual([split]);
+		expect(panelGroups(undefined, [4])).toEqual([leaf('4')]);
+	});
+	test('ADE split tabs keep their pane tree; seq covers every pane', () => {
+		const layout = splitPane(leaf('t2'), 't2', 't7', 'horizontal');
+		const parsed = parseAdeTerminals({ terminals: { x: [{ id: 't2', n: 1, layout, pane: 't7', expanded: 'nope' }, { id: 't3', n: 2, layout: splitPane(leaf('t3'), 't3', 't7', 'vertical') }] }, active: {}, seq: 1 });
+		expect(parsed?.terminals.x).toEqual([{ id: 't2', n: 1, title: undefined, run: undefined, layout, pane: 't7' }]);
+		expect(parsed?.seq).toBe(7);
 	});
 	test('ADE terminals: per worktree, seq covers every tab id', () => {
 		const parsed = parseAdeTerminals({

@@ -38,6 +38,8 @@
 	import AgentsLayout from '#lib/ade/AgentsLayout.svelte';
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 	import { installTerminalSessions } from './terminalSessions.svelte';
+	import { installTerminalCommands, panelTerminalFocus } from '#lib/terminal/terminalCommands.svelte.ts';
+	import { adeInFront, installAdeCommands } from '#lib/ade/adeCommands.svelte.ts';
 	import { accounts } from '#lib/accounts/accounts.svelte.ts';
 	import SettingsPage from '#lib/settings/SettingsPage.svelte';
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
@@ -78,8 +80,9 @@
 			}),
 			commands.register({ id: 'workbench.action.clearRecentFiles', title: 'Clear Recently Opened', category: 'File', run: () => workspace.clearRecent() }),
 			// Go Back / Go Forward (VS Code: ⌃- / ⌃⇧- on macOS, Alt+←/→ elsewhere).
-			commands.register({ id: 'workbench.action.navigateBack', title: 'Go Back', key: 'alt+left', mac: 'ctrl+-', when: () => navigation.canGoBack, run: () => navigation.back() }),
-			commands.register({ id: 'workbench.action.navigateForward', title: 'Go Forward', key: 'alt+right', mac: 'ctrl+shift+-', when: () => navigation.canGoForward, run: () => navigation.forward() }),
+			// Off macOS Alt+←/→ move between split terminals while a panel terminal has focus (VS Code).
+			commands.register({ id: 'workbench.action.navigateBack', title: 'Go Back', key: 'alt+left', mac: 'ctrl+-', when: () => navigation.canGoBack, keyWhen: () => isMac || !panelTerminalFocus(), run: () => navigation.back() }),
+			commands.register({ id: 'workbench.action.navigateForward', title: 'Go Forward', key: 'alt+right', mac: 'ctrl+shift+-', when: () => navigation.canGoForward, keyWhen: () => isMac || !panelTerminalFocus(), run: () => navigation.forward() }),
 			commands.register({ id: 'workbench.action.openView', title: 'Open View...', run: openView }),
 			commands.register({ id: 'workbench.action.openGlobalKeybindings', title: 'Open Keyboard Shortcuts', category: 'Preferences', run: showKeybindings }),
 			commands.register({ id: 'workbench.action.showAboutDialog', title: 'About', category: 'Help', run: showAbout }),
@@ -154,16 +157,16 @@
 				category: 'View',
 				key: 'cmd+w',
 				// An empty group closes itself when it is not the only one (VS Code closes the group).
-				when: () => editors.active !== null || editors.groups.length > 1 || (appMode.isAgents && adeLayout.activeFile() !== null),
+				// In the Agents layout ⌘W closes the active tab, or the focused pane of a split terminal (Orca).
+				when: () => adeInFront() || editors.active !== null || editors.groups.length > 1,
 				run: () => {
-					const adeFile = appMode.isAgents ? adeLayout.activeFile() : null;
-					if (adeFile) void adeLayout.closeFile(adeLayout.key, adeFile);
+					if (adeInFront()) adeLayout.closeActive();
 					else if (!editors.active) editors.removeGroup();
 					else if (!editors.close(editors.active)) status.flash('มีการแก้ไขที่ยังไม่บันทึก: กด ⌘S ก่อนปิด');
 				}
 			}),
 			// Editor groups (VS Code editorCommands.ts / editorActions.ts, macOS keys).
-			commands.register({ id: 'workbench.action.splitEditor', title: 'Split Editor', category: 'View', key: 'cmd+\\', run: () => editors.split('right') }),
+			commands.register({ id: 'workbench.action.splitEditor', title: 'Split Editor', category: 'View', key: 'cmd+\\', keyWhen: () => !panelTerminalFocus(), run: () => editors.split('right') }),
 			commands.register({ id: 'workbench.action.splitEditorDown', title: 'Split Editor Down', category: 'View', run: () => editors.split('down') }),
 			commands.register({ id: 'workbench.action.focusFirstEditorGroup', title: 'Focus First Editor Group', category: 'View', key: 'cmd+1', run: () => editors.focusGroupAt(0) }),
 			commands.register({ id: 'workbench.action.focusSecondEditorGroup', title: 'Focus Second Editor Group', category: 'View', key: 'cmd+2', run: () => editors.focusGroupAt(1) }),
@@ -201,6 +204,8 @@
 		const uninstallLayout = installLayoutCommands();
 		const uninstallSnaps = installSnaps();
 		const uninstallTerminalSessions = installTerminalSessions();
+		const uninstallTerminalCommands = installTerminalCommands();
+		const uninstallAdeCommands = installAdeCommands();
 		const uninstallDebug = installDebug();
 		const uninstallAccounts = accounts.install();
 		const uninstallCloseGuard = installCloseGuard();
@@ -210,6 +215,8 @@
 			uninstallCloseGuard();
 			uninstallAccounts();
 			uninstallDebug();
+			uninstallAdeCommands();
+			uninstallTerminalCommands();
 			uninstallTerminalSessions();
 			uninstallSnaps();
 			uninstallLayout();

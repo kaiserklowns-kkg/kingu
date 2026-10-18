@@ -15,6 +15,7 @@
 	import { adeTasks } from './tasks.svelte';
 	import { STATUS_DOT } from './ui';
 	import { sessionsAttentionLabel } from '#lib/workbench/titlebar.ts';
+	import { keyLabel } from '#lib/workbench/keys.ts';
 
 	const key = $derived(adeLayout.key);
 	const view = $derived(key ? adeTasks.find(key) : undefined);
@@ -45,7 +46,7 @@
 					onclick={() => adeLayout.select(key, t.id)}
 					onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), adeLayout.select(key, t.id))}
 					onauxclick={(e) => e.button === 1 && t.kind !== 'agent' && t.kind !== 'compose' && adeLayout.close(key, t.id)}
-					ondblclick={() => (t.kind === 'file' || t.kind === 'diff') && adeLayout.pin(key, t.key)}
+					ondblclick={() => (t.kind === 'file' || t.kind === 'diff' ? adeLayout.pin(key, t.key) : t.kind === 'terminal' && adeLayout.rename(key, t.id))}
 				>
 					{#if t.kind === 'agent' && view}
 						<span class={['size-2 shrink-0 rounded-full', STATUS_DOT[view.status]]} title={STATUS_LABEL[view.status]}></span>
@@ -82,7 +83,7 @@
 			<button
 				class="grid size-6 place-items-center rounded-md enabled:hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-35"
 				aria-label="Terminal ใหม่ใน worktree นี้"
-				title="Terminal ใหม่ใน worktree นี้"
+				title="Terminal ใหม่ใน worktree นี้ ({keyLabel('cmd+t')})"
 				disabled={!workspace.root}
 				onclick={() => adeLayout.newTerminal(key)}
 			>

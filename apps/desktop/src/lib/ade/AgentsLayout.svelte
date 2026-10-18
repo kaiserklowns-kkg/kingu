@@ -14,6 +14,12 @@
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { isDiffKey } from '#lib/workbench/scm.ts';
 	import Terminal from '#lib/terminal/Terminal.svelte';
+	import PaneSplitView from '#lib/terminal/PaneSplitView.svelte';
+	import { leaf } from '#lib/terminal/paneLayout.ts';
+	import { keyLabel, keyOf } from '#lib/workbench/keys.ts';
+	import { tabPanes } from './adeTabs.ts';
+	import { ADE_SHORTCUTS } from './adeShortcuts.ts';
+	import RecentTabSwitcher from './RecentTabSwitcher.svelte';
 	import Composer from '#lib/agent/Composer.svelte';
 	import { taskTitleFromPrompt } from '#lib/agent/composerText.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
@@ -106,6 +112,35 @@
 		}
 	}
 	const FRAME = 'min-h-0 overflow-hidden rounded-[10px] border border-(--vscode-widget-border)';
+
+	/** Shortcut labels in a pane's context menu (Orca shows them next to its items). */
+	const label = (s: { key?: string; mac?: string }) => {
+		const k = keyOf(s);
+		return k ? keyLabel(k) : undefined;
+	};
+	const PANE_KEYS = {
+		splitRight: label(ADE_SHORTCUTS.splitRight),
+		splitDown: label(ADE_SHORTCUTS.splitDown),
+		expand: label(ADE_SHORTCUTS.expandPane),
+		rename: label(ADE_SHORTCUTS.rename),
+		closePane: keyLabel('cmd+w')
+	};
+
+	/** A pane's context menu items beyond copy/paste/clear (Orca's TerminalContextMenu). */
+	function paneAction(k: string, id: string, p: string, action: string) {
+		adeLayout.focusPaneOf(k, id, p);
+		if (action === 'splitRight') adeLayout.split(k, id, 'vertical');
+		else if (action === 'splitDown') adeLayout.split(k, id, 'horizontal');
+		else if (action === 'equalize') adeLayout.equalize(k, id);
+		else if (action === 'expand') adeLayout.toggleExpand(k, id);
+		else if (action === 'rename') void adeLayout.rename(k, id);
+		else if (action === 'closePane') void adeLayout.closePane(k, id, p);
+	}
+
+	/** A followed file link opens in that worktree's editor tab, at its line (Orca's terminal file routing). */
+	function openLinkedFile(k: string, rel: string, line?: number, column?: number) {
+		adeLayout.openFile(k, rel, { preview: false, reveal: line ? { line, column: column ?? 1, focus: true } : undefined });
+	}
 </script>
 
 <!-- Same framed parts as the IDE workbench: each zone has its own rounded frame, the sashes are the gaps. -->
@@ -124,6 +159,7 @@
 	<main class={[FRAME, 'flex min-w-0 flex-1 flex-col bg-(--vscode-editor-background)']}>
 		<AdeTabBar />
 		<div class="relative min-h-0 flex-1">
+		<RecentTabSwitcher />
 		{#if adeLayout.page === 'automations'}
 			<AutomationsPage />
 		{:else if adeLayout.page === 'issues'}
@@ -233,13 +269,37 @@
 		<!-- Agent CLIs (each task's main tab when it runs the Orca way), then every worktree's terminals. -->
 		{#each Object.entries(cliSessions.sessions) as [s, sess] (s + sess.startedAt)}
 			<div class={['absolute inset-0 bg-(--vscode-terminal-background,var(--vscode-panel-background))', (adeLayout.board || s !== key || activeTab !== 'main') && 'hidden']}>
-				<Terminal key={cliSessions.ptyKey(s, sess.startedAt)} slug={s} run={cliSessions.runOf(s)} onoutput={() => cliSessions.output(s)} />
+				<Terminal
+					key={cliSessions.ptyKey(s, sess.startedAt)}
+					slug={s}
+					run={cliSessions.runOf(s)}
+					flavor="ade"
+					menuState={() => ({ panes: false })}
+					onoutput={() => cliSessions.output(s)}
+					onopenfile={(rel, line, column) => openLinkedFile(s, rel, line, column)}
+				/>
 			</div>
 		{/each}
 		{#each Object.entries(adeLayout.terminals) as [k, list] (k)}
 			{#each list as t (t.id)}
 				<div class={['absolute inset-0 bg-(--vscode-terminal-background,var(--vscode-panel-background))', (adeLayout.board || k !== key || activeTab !== t.id) && 'hidden']}>
-					<Terminal key={adeLayout.ptyKey(k, t.id)} slug={k || undefined} run={t.run} />
+					<!-- Orca's pane splits: every pane is its own PTY (`t<n>` ids; the first pane's id is the tab's). -->
+					<PaneSplitView tree={t.layout ?? leaf(t.id)} expanded={t.expanded ?? null} onresize={(path, ratio) => adeLayout.resizePane(k, t.id, path, ratio)}>
+						{#snippet pane(p)}
+							<Terminal
+								key={adeLayout.ptyKey(k, p)}
+								slug={k || undefined}
+								run={p === t.id ? t.run : undefined}
+								cwdFrom={adeLayout.cwdFrom(k, p)}
+								flavor="ade"
+								keyLabels={PANE_KEYS}
+								menuState={() => ({ split: tabPanes(t).length > 1, expanded: !!t.expanded })}
+								onfocus={() => adeLayout.focusPaneOf(k, t.id, p)}
+								onaction={(a) => paneAction(k, t.id, p, a)}
+								onopenfile={(rel, line, column) => openLinkedFile(k, rel, line, column)}
+							/>
+						{/snippet}
+					</PaneSplitView>
 				</div>
 			{/each}
 		{/each}

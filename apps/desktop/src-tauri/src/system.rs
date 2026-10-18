@@ -291,9 +291,27 @@ pub fn open_local_url(url: &str) -> Result<(), String> {
   Command::new(program).arg(parsed.as_str()).spawn().map(|_| ()).map_err(|e| format!("{program}: {e}"))
 }
 
+/// Opens a web page (`http`/`https` only: a terminal link must never launch other handlers) in
+/// the default browser.
+pub fn open_web_url(url: &str) -> Result<(), String> {
+  let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
+  if !matches!(parsed.scheme(), "http" | "https") {
+    return Err(format!("{}: เปิดได้เฉพาะลิงก์ http/https", parsed.scheme()));
+  }
+  let program = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+  Command::new(program).arg(parsed.as_str()).spawn().map(|_| ()).map_err(|e| format!("{program}: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn web_links_open_only_http_and_https() {
+    assert!(open_web_url("file:///etc/passwd").is_err());
+    assert!(open_web_url("javascript:alert(1)").is_err());
+    assert!(open_web_url("not a url").is_err());
+  }
 
   #[test]
   fn finds_a_process_tree() {

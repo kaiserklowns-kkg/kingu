@@ -186,6 +186,12 @@ impl Ptys {
     }
   }
 
+  /// The current directory of `key`'s shell (after its `cd`s), when it can be read.
+  pub fn live_cwd(&self, key: &str) -> Option<PathBuf> {
+    let pid = self.list().ok()?.into_iter().find(|s| s.key == key && s.alive)?.pid?;
+    kingu_ptyd::procinfo::process_cwd(pid).filter(|d| d.is_dir())
+  }
+
   /// Live terminals for the status bar's Resource Manager (its shells run under the daemon when
   /// there is one, so their pids are not Kingu's children).
   pub fn terminals(&self) -> Vec<PtyInfo> {
@@ -248,6 +254,14 @@ pub fn pty_kill(ptys: State<'_, Ptys>, key: String) -> Result<(), String> {
 #[tauri::command(async)]
 pub fn pty_list(ptys: State<'_, Ptys>) -> Result<Vec<SessionInfo>, String> {
   ptys.list()
+}
+
+/// The jobs running in front of the shells of `keys` (a close asks first while one runs), by key;
+/// a terminal at its prompt, or one that is gone, is left out.
+#[tauri::command(async)]
+pub fn pty_foreground(ptys: State<'_, Ptys>, keys: Vec<String>) -> Result<BTreeMap<String, kingu_ptyd::Foreground>, String> {
+  let wanted: std::collections::BTreeSet<String> = keys.into_iter().collect();
+  Ok(ptys.list()?.into_iter().filter(|s| s.alive && wanted.contains(&s.key)).filter_map(|s| s.foreground.map(|f| (s.key, f))).collect())
 }
 
 /// Where sessions live: `"daemon"` (they survive quitting Kingu) or `"local"`.

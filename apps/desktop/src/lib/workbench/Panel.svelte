@@ -4,7 +4,12 @@
 	import { lsp } from '#lib/lsp/lsp.svelte.ts';
 	import Terminal from '#lib/terminal/Terminal.svelte';
 	import { terminals } from '#lib/terminal/terminals.svelte.ts';
+	import PaneSplitView from '#lib/terminal/PaneSplitView.svelte';
+	import { leaves } from '#lib/terminal/paneLayout.ts';
+	import { focusTerminal } from '#lib/terminal/registry.ts';
 	import Icon from './Icon.svelte';
+	import { editors } from './editors.svelte';
+	import { isMac, keyLabel } from './keys';
 	import { layout, type PanelTab } from './layout.svelte';
 
 	// VS Code's Maximize Panel Size: the panel takes the editor area; again restores the height.
@@ -18,6 +23,21 @@
 			restoreHeight = layout.panelHeight;
 			layout.panelHeight = Math.max(160, window.innerHeight - 35 - 22 - 70);
 		}
+	}
+
+	const activeGroup = $derived(terminals.groupOf(terminals.active));
+	const splitKey = keyLabel(isMac ? 'cmd+\\' : 'ctrl+shift+5');
+
+	/** A terminal's context menu items beyond copy/paste/clear (VS Code: Split, Rename, Kill). */
+	function terminalAction(id: number, action: string) {
+		if (action === 'split') terminals.split(id);
+		else if (action === 'rename') void terminals.rename(id);
+		else if (action === 'kill') void terminals.kill(id);
+	}
+
+	/** A followed file link opens pinned at its position, like VS Code's terminal link opener. */
+	function openFile(rel: string, line?: number, column?: number) {
+		editors.open(rel, { preview: false, reveal: line ? { line, column: column ?? 1, focus: true } : undefined });
 	}
 
 	const tabs: { id: PanelTab; label: string }[] = [
@@ -48,6 +68,9 @@
 			<button aria-label="New Terminal" title="New Terminal" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => terminals.open()}>
 				<Icon name="plus" size={16} />
 			</button>
+			<button aria-label="Split Terminal" title="Split Terminal ({splitKey})" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => terminals.split()}>
+				<Icon name="layout" size={15} />
+			</button>
 			<button aria-label="Kill Terminal" title="Kill Terminal" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => terminals.kill(terminals.active)}>
 				<Icon name="trash" size={15} />
 			</button>
@@ -71,33 +94,60 @@
 			{#if terminals.tag}
 				{#key terminals.tag}
 					<div class="relative min-w-0 flex-1">
-						{#each terminals.list as t (t.id)}
-							<div class={['absolute inset-0', t.id !== terminals.active && 'invisible']}><Terminal key={terminals.key(t.id)} run={t.run} /></div>
+						<!-- VS Code's terminal groups: the active terminal's group shows, split side by side. -->
+						{#each terminals.groups as group, g (leaves(group)[0])}
+							<div class={['absolute inset-0', g !== activeGroup && 'invisible']}>
+								<PaneSplitView tree={group} onresize={(path, ratio) => terminals.resize(g, path, ratio)}>
+									{#snippet pane(id)}
+										{@const t = terminals.get(Number(id))}
+										{#if t}
+											<Terminal
+												key={terminals.key(t.id)}
+												run={t.run}
+												cwdFrom={t.cwdFrom}
+												flavor="ide"
+												keyLabels={{ split: splitKey }}
+												onfocus={() => (terminals.active = t.id)}
+												onaction={(a) => terminalAction(t.id, a)}
+												onopenfile={openFile}
+											/>
+										{/if}
+									{/snippet}
+								</PaneSplitView>
+							</div>
 						{/each}
 					</div>
 				{/key}
 			{/if}
 			{#if terminals.list.length > 1}
-				<!-- VS Code's terminal tabs list, on the right once there is more than one. -->
+				<!-- VS Code's terminal tabs list, on the right once there is more than one; a split group is drawn with tree lines. -->
 				<ul aria-label="Terminals" class="w-44 shrink-0 overflow-y-auto border-l border-(--vscode-panel-border) py-1 text-[13px]">
-					{#each terminals.list as t (t.id)}
-						<li>
-							<button
-								class={['group flex h-[22px] w-full items-center gap-1.5 px-2 text-left', t.id === terminals.active ? 'bg-(--vscode-list-inactiveSelectionBackground)' : 'hover:bg-(--vscode-list-hoverBackground)']}
-								onclick={() => (terminals.active = t.id)}
-							>
-								<Icon name="terminal" size={14} />
-								<span class="min-w-0 flex-1 truncate" title={t.run?.join(' ') ?? t.title}>{t.title}</span>
-								<span
-									role="button"
-									tabindex="-1"
-									aria-label="Kill {t.title}"
-									class="invisible grid size-4 place-items-center rounded group-hover:visible hover:bg-(--vscode-toolbar-hoverBackground)"
-									onclick={(e) => (e.stopPropagation(), void terminals.kill(t.id))}
-									onkeydown={() => {}}><Icon name="close" size={12} /></span
-								>
-							</button>
-						</li>
+					{#each terminals.groups as group (leaves(group)[0])}
+						{@const ids = leaves(group).map(Number)}
+						{#each ids as id, i (id)}
+							{@const t = terminals.get(id)}
+							{#if t}
+								<li>
+									<button
+										class={['group flex h-[22px] w-full items-center gap-1.5 px-2 text-left', t.id === terminals.active ? 'bg-(--vscode-list-inactiveSelectionBackground)' : 'hover:bg-(--vscode-list-hoverBackground)']}
+										onclick={() => ((terminals.active = t.id), focusTerminal(terminals.key(t.id)))}
+										ondblclick={() => terminals.rename(t.id)}
+									>
+										{#if ids.length > 1}<span class="w-2 shrink-0 font-mono text-(--vscode-descriptionForeground)" aria-hidden="true">{i === 0 ? '┌' : i === ids.length - 1 ? '└' : '├'}</span>{/if}
+										<Icon name="terminal" size={14} />
+										<span class="min-w-0 flex-1 truncate" title={t.run?.join(' ') ?? t.title}>{t.title}</span>
+										<span
+											role="button"
+											tabindex="-1"
+											aria-label="Kill {t.title}"
+											class="invisible grid size-4 place-items-center rounded group-hover:visible hover:bg-(--vscode-toolbar-hoverBackground)"
+											onclick={(e) => (e.stopPropagation(), void terminals.kill(t.id))}
+											onkeydown={() => {}}><Icon name="close" size={12} /></span
+										>
+									</button>
+								</li>
+							{/if}
+						{/each}
 					{/each}
 				</ul>
 			{/if}
