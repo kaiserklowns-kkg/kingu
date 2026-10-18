@@ -19,6 +19,7 @@
 	import { tick } from 'svelte';
 	import PopupMenu, { menuItem, menuSeparator } from './PopupMenu.svelte';
 	import { floating } from './floating.svelte';
+	import FloatingToggle from './FloatingToggle.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 
 	const languageNames: Record<string, string> = {
@@ -111,7 +112,7 @@
 		menuSeparator,
 		...ORCA_TOGGLES.map((t) => menuItem(t.id, t.label, { checked: settings.get<boolean>(t.id) !== false })),
 		menuSeparator,
-		menuItem('floating', floating.visible ? 'Hide Floating Terminal' : 'Show Floating Terminal', { keyLabel: '⌥⌘T' })
+		menuItem('floating', floating.open ? 'Minimize Floating Workspace' : 'Show Floating Workspace', { keyLabel: '⌥⌘A', enabled: floating.enabled })
 	]);
 	const MENU_HEIGHT = $derived(22 * (ENTRIES.length + ORCA_TOGGLES.length + 1) + 2 * 9 + 8);
 	function toggleItem(id: string) {
@@ -180,6 +181,7 @@
 		{#if show('status.editor.mode')}<button class={ITEM} title="Select Language Mode" onclick={pickLanguage}>{languageName}</button>{/if}
 	{/if}
 	<!-- VS Code keeps the notification bell at the far right. -->
+	{#if floating.enabled && floating.location === 'status-bar'}<FloatingToggle variant="status-bar" />{/if}
 	{#if show('status.notifications')}<NotificationsBell />{/if}
 </footer>
 

@@ -183,9 +183,19 @@
 				id: 'kingu.floatingTerminal.toggle',
 				title: 'Toggle Floating Terminal',
 				category: 'Terminal',
-				key: 'cmd+alt+t',
+				key: 'cmd+alt+a',
+				when: () => floating.enabled,
 				run: () => floating.toggle()
 			}),
+			commands.register({
+				id: 'kingu.floatingWorkspace.maximize',
+				title: 'Maximize Floating Workspace Panel',
+				category: 'Terminal',
+				key: 'cmd+alt+shift+a',
+				when: () => floating.enabled,
+				run: () => (floating.open ? floating.toggleMaximized() : floating.openMaximized())
+			}),
+			commands.register({ id: 'kingu.floatingWorkspace.minimize', title: 'Minimize Floating Workspace Panel', category: 'Terminal', when: () => floating.open, run: () => floating.hide() }),
 			commands.register({
 				id: 'workbench.action.toggleAuxiliaryBar',
 				title: 'Toggle Secondary Side Bar',

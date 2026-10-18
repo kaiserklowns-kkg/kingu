@@ -10,7 +10,8 @@
 	 * `slug`: start in that task's worktree instead of the folder root. `run`: a command typed into
 	 * the shell once it starts (an agent CLI, a Snap task); Rust quotes every argument.
 	 */
-	let { slug, run, onoutput }: { slug?: string; run?: string[]; onoutput?: () => void } = $props();
+	/** `floatingCwd`: a floating workspace terminal, started in that directory setting (`~` = home). */
+	let { slug, run, onoutput, floatingCwd }: { slug?: string; run?: string[]; onoutput?: () => void; floatingCwd?: string } = $props();
 	let host: HTMLDivElement;
 
 	onMount(() => {
@@ -42,7 +43,7 @@
 			if (started || !host.clientWidth || !host.clientHeight) return;
 			started = true;
 			fit.fit();
-			invoke<number>('pty_spawn', { cols: term.cols, rows: term.rows, onData, slug: slug ?? null, run: run ?? null })
+			invoke<number>('pty_spawn', { cols: term.cols, rows: term.rows, onData, slug: slug ?? null, run: run ?? null, floatingCwd: floatingCwd ?? null })
 				.then((v) => {
 					if (disposed) invoke('pty_kill', { id: v });
 					else id = v;

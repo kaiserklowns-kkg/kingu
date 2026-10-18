@@ -1,5 +1,6 @@
 mod agent;
 mod fileops;
+mod floating;
 mod fs;
 mod git;
 mod lsp;
@@ -225,6 +226,30 @@ async fn usage_detect() -> Result<Vec<String>, String> {
   blocking(|| Ok(usage::detect())).await
 }
 
+/// Floating workspace notes: a new `Untitled.md` in the app-owned folder, then read and save.
+#[tauri::command]
+fn floating_note_new(app: AppHandle) -> Result<String, String> {
+  let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+  Ok(floating::new_note(&data)?.display().to_string())
+}
+
+#[tauri::command]
+fn floating_note_read(path: String) -> Result<String, String> {
+  floating::read_note(&path)
+}
+
+#[tauri::command]
+fn floating_note_write(path: String, text: String) -> Result<(), String> {
+  floating::write_note(&path, &text)
+}
+
+/// The app-owned floating workspace folder (where Open Markdown starts).
+#[tauri::command]
+fn floating_dir(app: AppHandle) -> Result<String, String> {
+  let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+  Ok(floating::app_dir(&data)?.display().to_string())
+}
+
 /// HEAD version of a file for the diff editor; empty when the file is not in HEAD.
 #[tauri::command]
 async fn git_show_head(ws: State<'_, Workspace>, rel: String) -> Result<String, String> {
@@ -242,10 +267,17 @@ fn pty_spawn(
   on_data: Channel<String>,
   slug: Option<String>,
   run: Option<Vec<String>>,
+  floating_cwd: Option<String>,
+  app: AppHandle,
 ) -> Result<u32, String> {
-  // A task terminal starts in the task's worktree (the ADE's per-worktree terminals).
-  // No folder open: the terminal starts in the home folder, like VS Code's empty window.
+  // A task terminal starts in the task's worktree (the ADE's per-worktree terminals); a floating
+  // workspace terminal in its own directory setting. No folder open: the home folder, like VS
+  // Code's empty window.
   let cwd = match slug {
+    _ if floating_cwd.is_some() => {
+      let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+      floating::terminal_cwd(floating_cwd.as_deref().unwrap_or("~"), &data)?
+    }
     Some(slug) => {
       agent::worktree::validate_slug(&slug)?;
       let dir = agent::worktree::worktree_path(&ws.root()?, &slug);
@@ -509,6 +541,10 @@ pub fn run() {
       git_sync,
       usage_fetch,
       usage_detect,
+      floating_note_new,
+      floating_note_read,
+      floating_note_write,
+      floating_dir,
       git_show_head,
       pty_spawn,
       pty::pty_write,

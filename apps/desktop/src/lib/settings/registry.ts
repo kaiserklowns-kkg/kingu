@@ -386,6 +386,32 @@ export const SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.floating.enabled',
+		group: 'Terminal',
+		type: 'boolean',
+		default: true,
+		description: 'เปิดใช้ Floating Workspace: ปุ่มและหน้าต่างลอย (Enable Floating Workspace: shows the floating workspace button and panel.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.floating.cwd',
+		group: 'Terminal',
+		type: 'string',
+		default: '~',
+		description: 'โฟลเดอร์เริ่มต้นของ terminal ใน Floating Workspace (Terminal Directory: new floating terminal tabs start here.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.floating.triggerLocation',
+		group: 'Terminal',
+		type: 'string',
+		default: 'floating-button',
+		enum: ['floating-button', 'status-bar'],
+		enumDescriptions: ['ปุ่มลอยมุมหน้าต่าง (Floating Button.)', 'ปุ่มใน status bar (Status Bar.)'],
+		description: 'ตำแหน่งปุ่มเปิด Floating Workspace คีย์ลัดใช้ได้เสมอ (Toggle Button Location: the keyboard shortcut works regardless.)',
+		scope: 'application'
+	},
+	{
 		id: 'kingu.statusBar.claudeUsage.visible',
 		group: 'Status Bar',
 		type: 'boolean',
