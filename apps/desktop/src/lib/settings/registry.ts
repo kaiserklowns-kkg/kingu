@@ -6,18 +6,30 @@ import { DEFAULT_THEME, THEMES } from '../theme/themes';
 import { defaultTitleTemplate } from '../workbench/title';
 import { PROFILES } from '../ade/agentProfiles';
 import { IDE_SETTINGS } from './ideSettings';
+import { ADE_SECTION_GROUPS, ADE_SETTINGS, SYSTEM_SECTION_GROUPS } from './ade';
 
 const MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
 
-export type SettingScope = 'user' | 'workspace';
+/**
+ * The settings files, lowest to highest precedence after the defaults: the user's settings.json,
+ * the folder's `.kingu/settings.json` (comes with the repository) and the per-repository
+ * overrides Kingu keeps for this repository in its own config dir (Orca's per-repo settings; never
+ * read from the repository, only written by the user through Kingu).
+ */
+export type SettingScope = 'user' | 'workspace' | 'repo';
 
 type Base = {
 	id: string;
 	/** Settings editor group, e.g. "Text Editor". */
 	group: string;
 	description: string;
-	/** `application` settings are user-only, like VS Code's ConfigurationScope.APPLICATION. */
-	scope?: 'application' | 'window' | 'resource';
+	/**
+	 * `application` settings are user-only, like VS Code's ConfigurationScope.APPLICATION.
+	 * `local`: the user settings or Kingu's per-repository store (both only ever written by the
+	 * user through Kingu), never the repository's own `.kingu/settings.json` — for per-repo values
+	 * that run programs (local setup scripts) or pick what repository code may do.
+	 */
+	scope?: 'application' | 'local' | 'window' | 'resource';
 };
 
 export type SettingSchema =
@@ -339,9 +351,9 @@ const CORE_SETTINGS: SettingSchema[] = [
 			'ไม่รันสคริปต์ตั้งค่า (Never run the setup script.)'
 		],
 		description:
-			'สคริปต์ตั้งค่า worktree (เช่น bun install, คัดลอก .env) ได้ KINGU_ROOT_PATH, KINGU_WORKTREE_PATH และ KINGU_WORKSPACE_NAME ใน environment automation ไม่ถามและข้ามสคริปต์ที่ยังไม่เชื่อถือ (Worktree setup script, e.g. install dependencies; gets KINGU_ROOT_PATH, KINGU_WORKTREE_PATH and KINGU_WORKSPACE_NAME. Automations never ask and skip an untrusted script.)',
-		// User-only: it decides whether repository code runs on the user's machine.
-		scope: 'application'
+			'สคริปต์ตั้งค่า worktree (Orca: setup run policy) จาก scripts.setup ใน kingu.yaml (หรือ .kingu/setup.sh แบบเดิม) และ/หรือ kingu.repo.setupScript เช่น bun install, คัดลอก .env ได้ KINGU_ROOT_PATH, KINGU_WORKTREE_PATH และ KINGU_WORKSPACE_NAME ใน environment automation ไม่ถามและข้ามสคริปต์ที่ยังไม่เชื่อถือ ตั้งต่อ repository ได้ในแท็บ Repository (Worktree setup script from kingu.yaml scripts.setup (or the older .kingu/setup.sh) and/or kingu.repo.setupScript; gets KINGU_ROOT_PATH, KINGU_WORKTREE_PATH and KINGU_WORKSPACE_NAME. Automations never ask and skip an untrusted script. Can be set per repository.)',
+		// It decides whether repository code runs: the user's settings or per-repo store only.
+		scope: 'local'
 	},
 	{
 		id: 'kingu.worktree.archiveScript',
@@ -353,9 +365,10 @@ const CORE_SETTINGS: SettingSchema[] = [
 			'รัน .kingu/archive.sh ของโฟลเดอร์ใน worktree ก่อนลบ (เช่น หยุด container) ถามให้เชื่อถือก่อนเหมือน setup ถ้าล้มเหลวจะถามว่าจะลบต่อไหม (Run the folder\'s .kingu/archive.sh in the worktree before it is removed; trusted like the setup script; a failure asks whether to go on.)',
 			'ไม่รันสคริปต์ก่อนลบ (Never run the archive script.)'
 		],
-		description: 'สคริปต์ก่อนลบ worktree หยุดเองหลัง 120 วินาที (Archive script run before a task worktree is removed; stopped after 120 seconds.)',
-		// User-only: it decides whether repository code runs on the user's machine.
-		scope: 'application'
+		description:
+			'สคริปต์ก่อนลบ worktree จาก scripts.archive ใน kingu.yaml (หรือ .kingu/archive.sh) และ/หรือ kingu.repo.archiveScript หยุดเองหลัง 120 วินาที (Archive script — kingu.yaml scripts.archive or .kingu/archive.sh, and/or kingu.repo.archiveScript — run before a task worktree is removed; stopped after 120 seconds.)',
+		// It decides whether repository code runs: the user's settings or per-repo store only.
+		scope: 'local'
 	},
 	{
 		id: 'kingu.worktree.confirmRemove',
@@ -665,7 +678,7 @@ const CORE_SETTINGS: SettingSchema[] = [
 ];
 
 /** Every static setting: the core ones above plus the VS Code-derived IDE settings (ideSettings.ts). */
-export const SETTINGS: SettingSchema[] = [...CORE_SETTINGS, ...IDE_SETTINGS];
+export const SETTINGS: SettingSchema[] = [...CORE_SETTINGS, ...ADE_SETTINGS, ...IDE_SETTINGS];
 
 export type SettingsSection = { id: string; label: string; groups: string[] };
 
@@ -673,11 +686,13 @@ export type SettingsSection = { id: string; label: string; groups: string[] };
  * The system settings page's table of contents: one settings system for the IDE and the ADE,
  * grouped by what they affect. Every group in `SETTINGS` belongs to exactly one section.
  */
-export const SETTINGS_SECTIONS: SettingsSection[] = [
-	{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Status Bar', 'Team', 'Snap Sandbox'] },
-	{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Terminal', 'Git', 'Debug'] },
-	{ id: 'ade', label: 'ADE (Agents)', groups: ['Agent', 'Worktrees', 'Pull Requests'] }
-];
+export const SETTINGS_SECTIONS: SettingsSection[] = (
+	[
+		{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', ...SYSTEM_SECTION_GROUPS, 'Status Bar', 'Team', 'Snap Sandbox'] },
+		{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Terminal', 'Git', 'Debug'] },
+		{ id: 'ade', label: 'ADE (Agents)', groups: ADE_SECTION_GROUPS }
+	] satisfies SettingsSection[]
+).map((sec) => ({ ...sec, groups: sec.groups.filter((g) => SETTINGS.some((s) => s.group === g)) }));
 
 export const SNAPS_SECTION_ID = 'snaps';
 
@@ -745,20 +760,37 @@ export function validate(schema: SettingSchema, value: unknown): unknown {
 	}
 }
 
-/** Whether `scope` may set this setting (application settings are user-only). */
-export const allowedIn = (schema: SettingSchema, scope: SettingScope) => scope === 'user' || schema.scope !== 'application';
+/**
+ * Whether `scope` may set this setting: application settings are user-only; `local` ones also go
+ * in Kingu's per-repository store but never in the repository's workspace file.
+ */
+export function allowedIn(schema: SettingSchema, scope: SettingScope): boolean {
+	if (scope === 'user') return true;
+	if (scope === 'repo') return schema.scope !== 'application';
+	return schema.scope !== 'application' && schema.scope !== 'local';
+}
 
 export type Resolved = { value: unknown; source: 'default' | SettingScope };
 
-/** Workspace over user over default, per setting; object settings merge key by key. Unknown keys are ignored. */
-export function resolveSettings(user: Record<string, unknown>, workspace: Record<string, unknown>, schemas: SettingSchema[] = SETTINGS): Map<string, Resolved> {
+/**
+ * Repo over workspace over user over default, per setting (the per-repository store is the
+ * user's own choice for this repository, so it beats the repository's committed file); object
+ * settings merge key by key. Unknown keys are ignored.
+ */
+export function resolveSettings(
+	user: Record<string, unknown>,
+	workspace: Record<string, unknown>,
+	schemas: SettingSchema[] = SETTINGS,
+	repo: Record<string, unknown> = {}
+): Map<string, Resolved> {
 	const out = new Map<string, Resolved>();
 	for (const s of schemas) {
+		const rp = allowedIn(s, 'repo') ? validate(s, repo[s.id]) : undefined;
 		const ws = allowedIn(s, 'workspace') ? validate(s, workspace[s.id]) : undefined;
 		const us = validate(s, user[s.id]);
-		const source = ws !== undefined ? 'workspace' : us !== undefined ? 'user' : 'default';
-		if (s.type === 'object' && source !== 'default') out.set(s.id, { value: { ...s.default, ...(us as object), ...(ws as object) }, source });
-		else out.set(s.id, { value: ws ?? us ?? s.default, source });
+		const source = rp !== undefined ? 'repo' : ws !== undefined ? 'workspace' : us !== undefined ? 'user' : 'default';
+		if (s.type === 'object' && source !== 'default') out.set(s.id, { value: { ...s.default, ...(us as object), ...(ws as object), ...(rp as object) }, source });
+		else out.set(s.id, { value: rp ?? ws ?? us ?? s.default, source });
 	}
 	return out;
 }
@@ -772,10 +804,17 @@ export function settingProblems(values: Record<string, unknown>, scope: SettingS
 	for (const [id, value] of Object.entries(values)) {
 		const s = byId.get(id);
 		if (!s) continue;
-		if (!allowedIn(s, scope)) out.push({ scope, id, message: 'ตั้งได้เฉพาะใน User จึงถูกละไว้ (This setting can only be applied in user settings.)' });
+		if (!allowedIn(s, scope)) out.push({ scope, id, message: scopeRule(s) });
 		else if (validate(s, value) === undefined) out.push({ scope, id, message: `ค่า ${JSON.stringify(value)} ไม่ถูกต้อง จึงใช้ค่าจากชั้นถัดไปแทน (Expected ${describeType(s)}; the value is ignored.)` });
 	}
 	return out;
+}
+
+/** Why a scope may not set this setting, for the editor and the problems list. */
+export function scopeRule(s: SettingSchema): string {
+	return s.scope === 'local'
+		? 'ตั้งได้เฉพาะใน User หรือ Repository (ที่ Kingu เก็บไว้เอง) ไม่ใช่ไฟล์ของ repository (This setting can only be applied in user or repository-local settings, never by the repository itself.)'
+		: 'ตั้งได้เฉพาะใน User จึงถูกละไว้ (This setting can only be applied in user settings.)';
 }
 
 function describeType(s: SettingSchema): string {
