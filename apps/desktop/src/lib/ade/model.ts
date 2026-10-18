@@ -29,6 +29,8 @@ export type TaskMeta = {
 	last_run: RunSummary | null;
 	/** The issue the task was started from; its PR body says `Fixes #number` (`Fixes ENG-123` for Linear). */
 	issue: IssueLink | null;
+	/** `automation`: an automation started it (Orca's automation badge); absent when you did. */
+	origin?: 'automation' | null;
 };
 
 /** Mirrors Rust `agent::tasks::IssueLink`. No `provider` means GitHub (links saved before Linear came). */
@@ -123,7 +125,7 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
 // ---------------------------------------------------------------------------------------------
 // tasks.json reducers (immutable: each returns a new list)
 
-export function newTask(input: { slug: string; title: string; prompt: string; base: string; agent?: string; issue?: IssueLink | null }, now: number): TaskMeta {
+export function newTask(input: { slug: string; title: string; prompt: string; base: string; agent?: string; issue?: IssueLink | null; origin?: 'automation' }, now: number): TaskMeta {
 	return {
 		slug: input.slug,
 		title: input.title.trim(),
@@ -139,7 +141,8 @@ export function newTask(input: { slug: string; title: string; prompt: string; ba
 		merged_at: null,
 		session_id: null,
 		last_run: null,
-		issue: input.issue ?? null
+		issue: input.issue ?? null,
+		...(input.origin ? { origin: input.origin } : {})
 	};
 }
 

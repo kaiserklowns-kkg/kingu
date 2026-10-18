@@ -20,6 +20,8 @@ pub const RUN_STATUSES: &[&str] = &["starting", "running", "waiting", "idle", "s
 const MAX_SESSION_ID: usize = 128;
 const MAX_SUMMARY: usize = 2000;
 const MAX_ISSUE_URL: usize = 2048;
+/// What created a task other than you (Orca's automation / CLI workspace badges); the side bar can hide them.
+pub const ORIGINS: &[&str] = &["automation"];
 
 /// The issue a task was started from (its PR says `Fixes #number`, or `Fixes ENG-123` for Linear).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -91,6 +93,9 @@ pub struct TaskMeta {
   /// Older tasks.json files have no `issue`.
   #[serde(default)]
   pub issue: Option<IssueLink>,
+  /// `automation` for a task an automation started; absent when you started it.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub origin: Option<String>,
 }
 
 /// Session ids go to the agent host as `resume`: keep them to plain id characters.
@@ -159,6 +164,11 @@ pub fn validate(tasks: &[TaskMeta]) -> Result<(), String> {
         return Err(format!("{}: invalid issue link", t.slug));
       }
     }
+    if let Some(o) = &t.origin
+      && !ORIGINS.contains(&o.as_str())
+    {
+      return Err(format!("{}: unknown origin {o}", t.slug));
+    }
     if let Some(r) = &t.last_run {
       if !RUN_STATUSES.contains(&r.status.as_str()) {
         return Err(format!("{}: unknown run status {}", t.slug, r.status));
@@ -210,6 +220,7 @@ mod tests {
         num_turns: Some(2),
       }),
       issue: Some(IssueLink { number: 42, url: "https://github.com/acme/app/issues/42".into(), title: "แก้ login".into(), provider: "github".into(), key: None }),
+      origin: Some("automation".into()),
     }
   }
 
@@ -253,7 +264,7 @@ mod tests {
     .unwrap();
     let t = &load(tmp.path()).unwrap()[0];
     assert_eq!((t.agent.as_str(), t.updated_at, t.accepted.len()), ("claude-code", 0, 0));
-    assert_eq!((t.session_id.as_deref(), t.last_run.as_ref(), t.issue.as_ref()), (None, None, None));
+    assert_eq!((t.session_id.as_deref(), t.last_run.as_ref(), t.issue.as_ref(), t.origin.as_deref()), (None, None, None, None));
   }
 
   #[test]
@@ -281,6 +292,7 @@ mod tests {
     let mut linear = task("b");
     linear.issue = Some(IssueLink { number: 7, url: "https://linear.app/acme/issue/ENG-7/x".into(), title: "t".into(), provider: "linear".into(), key: Some("ENG-7".into()) });
     assert!(validate(&[linear]).is_ok());
+    assert!(bad(|t| t.origin = Some("cli; rm".into())));
     assert!(save(tmp.path(), &[task("a"), task("a")]).is_err());
     assert!(!tmp.path().join(".kingu/tasks.json").exists());
   }

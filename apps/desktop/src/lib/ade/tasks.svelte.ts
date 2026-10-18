@@ -48,7 +48,7 @@ import {
 } from './model';
 import { runtime } from './runtime.svelte';
 import { adeLayout } from './adeLayout.svelte';
-import { agentCommand, cliAgent, cliOf, type RunMode } from './agentCli';
+import { agentCommand, cliAgent, cliOf, launchOptions, withLaunchOptions, type RunMode } from './agentCli';
 import { profileOf, programOf } from '#lib/ade/agentProfiles.ts';
 import { chooseAgentCli } from '#lib/ade/agentPicker.ts';
 import { composeMessage, promptWithAttachments, type Attachment } from '#lib/agent/attachments.ts';
@@ -246,6 +246,8 @@ class AdeTasks {
 		slugHint?: string;
 		slug?: string;
 		issue?: IssueLink;
+		/** `automation`: an automation started it (kingu.sidebar.hideAutomationTasks). */
+		origin?: 'automation';
 		/** Composer attachments: image blocks for a timeline run, path references for a CLI. */
 		attachments?: Attachment[];
 	}): Promise<string | undefined> {
@@ -277,7 +279,7 @@ class AdeTasks {
 			notifications.error(`สร้าง worktree ไม่ได้: ${e}`);
 			return;
 		}
-		await this.#save([...this.list, newTask({ slug, title, prompt, base, agent: cli ? cliAgent(cli) : undefined, issue: input.issue }, Date.now())]);
+		await this.#save([...this.list, newTask({ slug, title, prompt, base, agent: cli ? cliAgent(cli) : undefined, issue: input.issue, origin: input.origin }, Date.now())]);
 		this.worktrees = (await invoke<WorktreeInfo[]>('worktree_list').catch(() => this.worktrees)).filter((w) => w.slug);
 		if (input.open !== false) this.openTask(slug);
 		await this.#runSetup(slug, input.open !== false);
@@ -473,9 +475,15 @@ class AdeTasks {
 		if (settings.get<boolean>('kingu.agent.trustWorkspace') !== false)
 			await invoke('agent_trust_workspace', { slug, program: programOf(cli) }).catch((e) => clientLog('info', `trust ${slug}: ${e}`));
 		const sessionId = profile.ownsSessionId && !('resume' in how) ? crypto.randomUUID() : undefined;
+		// Orca's agentCmdOverrides / agentDefaultEnv / claudeAgentTeamsMode (user settings only).
+		const options = launchOptions(profile.id, (k) => settings.get(k));
+		if (typeof options === 'string') {
+			notifications.error(options);
+			return;
+		}
 		const launch = profile.launch(cli, how, { sessionId, hookSettings, hookFile, opencodeDir, servers: mcpServers(root), plugins: profile.skills ? await skillPlugins() : [] });
 		if (sessionId) await this.#patch(slug, { session_id: sessionId });
-		cliSessions.start(slug, launch.argv, hookSettings || hookFile ? token : undefined, launch.typePrompt);
+		cliSessions.start(slug, withLaunchOptions(launch.argv, options), hookSettings || hookFile ? token : undefined, launch.typePrompt);
 	}
 
 	/** A CLI reported its session id (codex notify): saved so a restart resumes exactly it. */

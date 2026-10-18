@@ -12,6 +12,7 @@
 	import { runtime } from './runtime.svelte';
 	import { adeTasks } from './tasks.svelte';
 	import PrChecks from './PrChecks.svelte';
+	import CacheTimer from './CacheTimer.svelte';
 	import DiffNotesList from './DiffNotesList.svelte';
 	import { issues } from './issues.svelte.ts';
 	import { isLinear, issueRef } from './issues.ts';
@@ -108,6 +109,7 @@
 			<div class="flex items-center gap-2">
 				<span class={['size-2.5 shrink-0 rounded-full', STATUS_DOT[view.status]]}></span>
 				<h1 class="min-w-0 flex-1 truncate text-base font-semibold" title={meta.title}>{meta.title}</h1>
+				<CacheTimer {view} />
 				<span class="rounded-full border border-(--vscode-widget-border) px-2 text-xs">{STATUS_LABEL[view.status]}</span>
 				<span class={['rounded-full border px-2 text-xs', TONE[chip.tone]]}>{chip.label}</span>
 			</div>

@@ -202,7 +202,9 @@ class AdeAutomations {
 	async remove(id: string) {
 		const a = this.find(id);
 		if (!a) return;
-		if (!(await ask(`ลบ automation "${a.name}"?\n\nงานที่เคยสร้างไว้ยังอยู่`, { title: 'ลบ Automation', kind: 'warning', okLabel: 'ลบ', cancelLabel: 'ยกเลิก' }))) return;
+		// kingu.automations.confirmDelete (Orca's skipDeleteAutomationConfirm, inverted).
+		const confirm = settings.get<boolean>('kingu.automations.confirmDelete') !== false;
+		if (confirm && !(await ask(`ลบ automation "${a.name}"?\n\nงานที่เคยสร้างไว้ยังอยู่`, { title: 'ลบ Automation', kind: 'warning', okLabel: 'ลบ', cancelLabel: 'ยกเลิก' }))) return;
 		this.#setConsent(null, id);
 		delete this.#handled[id];
 		if (this.editing?.id === id) this.editing = null;
@@ -223,7 +225,7 @@ class AdeAutomations {
 	/** Creates the task like the composer does; `due` null = Run now (it keeps the schedule's window). */
 	async #start(a: Automation, due: number | null) {
 		const now = Date.now();
-		const slug = await adeTasks.create({ title: runTitle(a.name, new Date(due ?? now)), prompt: a.prompt, base: a.base ?? '', mode: a.mode ?? undefined, open: false, slugHint: a.id });
+		const slug = await adeTasks.create({ title: runTitle(a.name, new Date(due ?? now)), prompt: a.prompt, base: a.base ?? '', mode: a.mode ?? undefined, open: false, slugHint: a.id, origin: 'automation' });
 		if (!slug) {
 			await this.#patch(a.id, { last_skip: { at: now, reason: 'สร้างงานไม่สำเร็จ (ดูข้อความใน status bar)' } });
 			return;
