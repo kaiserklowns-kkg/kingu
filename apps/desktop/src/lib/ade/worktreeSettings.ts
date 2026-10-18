@@ -33,23 +33,41 @@ export function defaultBaseBranch(setting: string | undefined, current: string |
 	return branches[0] ?? '';
 }
 
-export type BranchOnRemove = 'keep' | 'deleteMerged' | 'delete';
+/** What Rust's `worktree_remove` does with the branch: keep it, `git branch -d`, or `-D`. */
+export type BranchRemoval = 'keep' | 'safe' | 'force';
 
 /**
- * Whether removing a task also deletes its branch (`kingu.worktree.deleteBranchOnRemove`):
- * `deleteMerged` only once the task was merged locally or its PR was merged.
+ * What removing a task does with its branch (`kingu.worktree.deleteBranchOnRemove`, Orca's
+ * default): `deleteMerged` deletes it when git sees it merged (`-d`), or for sure once Kingu knows
+ * it was merged (locally, or its PR, which a squash merge leaves unmerged for git); `delete`
+ * always; `keep` never.
  */
-export function deleteBranchOnRemove(setting: string | undefined, task: { merged: boolean }): boolean {
-	if (setting === 'delete') return true;
-	if (setting === 'deleteMerged') return task.merged;
-	return false;
+export function branchRemoval(setting: string | undefined, task: { merged: boolean }): BranchRemoval {
+	if (setting === 'keep') return 'keep';
+	if (setting === 'delete') return 'force';
+	return task.merged ? 'force' : 'safe';
 }
 
-export type SetupScript = { path: string; content: string; hash: string; trusted: boolean };
+export type WorktreeScript = { path: string; content: string; hash: string; trusted: boolean };
+export type ScriptRun = { code: number | null; timed_out: boolean; output: string };
 
-/** The setup terminal's command: the trusted copy of `.kingu/setup.sh`, told where the folder and worktree are. */
-export function setupCommand(file: string, root: string, worktree: string): string[] {
-	return ['env', `KINGU_ROOT_PATH=${root}`, `KINGU_WORKTREE_PATH=${worktree}`, 'sh', file];
+/**
+ * The setup terminal's command: the trusted copy of `.kingu/setup.sh`, told where the folder and
+ * worktree are (Orca's ORCA_ROOT_PATH / ORCA_WORKTREE_PATH / ORCA_WORKSPACE_NAME).
+ */
+export function setupCommand(file: string, root: string, worktree: string, slug: string): string[] {
+	return ['env', `KINGU_ROOT_PATH=${root}`, `KINGU_WORKTREE_PATH=${worktree}`, `KINGU_WORKSPACE_NAME=${slug}`, 'sh', file];
+}
+
+/** `kingu.worktree.setupScript`: run a trusted script without asking, ask every time, or never. */
+export type SetupPolicy = 'auto' | 'ask' | 'off';
+export const setupPolicy = (setting: string | undefined): SetupPolicy => (setting === 'ask' || setting === 'off' ? setting : 'auto');
+
+/** The archive script's result in one line for the status bar or the dialog. */
+export function scriptRunSummary(r: ScriptRun): string {
+	if (r.timed_out) return 'ใช้เวลานานเกินจึงหยุดไว้';
+	if (r.code === 0) return 'สำเร็จ';
+	return r.code === null ? 'ถูกหยุดกลางคัน' : `จบด้วย exit code ${r.code}`;
 }
 
 /** What the trust dialog shows of a script: its first lines, so a long one stays readable. */

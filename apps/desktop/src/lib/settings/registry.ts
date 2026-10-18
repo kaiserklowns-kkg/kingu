@@ -229,16 +229,12 @@ export const SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
-		id: 'kingu.agent.notifications.when',
+		id: 'kingu.agent.notifications.suppressWhenFocused',
 		group: 'Agent',
-		type: 'string',
-		default: 'unfocused',
-		enum: ['unfocused', 'always'],
-		enumDescriptions: [
-			'เฉพาะตอนที่ไม่ได้ดูหน้าต่าง Kingu (Only while the Kingu window is not focused.)',
-			'ทุกครั้ง ยกเว้นงานที่คุณเปิดดูอยู่ (Always, except for the task you are looking at.)'
-		],
-		description: 'แจ้งเตือน agent เมื่อไหร่ (When agent notifications are shown.)',
+		type: 'boolean',
+		default: true,
+		description:
+			'ไม่แจ้งเตือนงานที่คุณเปิดดูอยู่ขณะหน้าต่าง Kingu อยู่ด้านหน้า ปิดเพื่อแจ้งเตือนทุกครั้ง (Avoid notifying about the task on screen while Kingu is focused; off notifies always.)',
 		scope: 'application'
 	},
 	{
@@ -270,7 +266,8 @@ export const SETTINGS: SettingSchema[] = [
 			'Submarine',
 			'Tink'
 		],
-		description: 'เสียงของการแจ้งเตือน agent (เสียงของ macOS) (Sound of agent notifications; macOS system sounds.)',
+		description:
+			'เสียงของการแจ้งเตือน agent (เสียงของ macOS) ลองได้ที่ Agents: ส่งการแจ้งเตือนทดสอบ (Sound of agent notifications; macOS system sounds. Try it with Agents: Send Test Notification.)',
 		scope: 'application'
 	},
 	{
@@ -306,29 +303,79 @@ export const SETTINGS: SettingSchema[] = [
 		group: 'Worktrees',
 		type: 'string',
 		default: 'auto',
-		enum: ['auto', 'off'],
+		enum: ['auto', 'ask', 'off'],
 		enumDescriptions: [
 			'รัน .kingu/setup.sh ของโฟลเดอร์ใน terminal "Setup" ของ worktree ใหม่ ถามให้เชื่อถือก่อนครั้งแรกและทุกครั้งที่สคริปต์เปลี่ยน (Run the folder\'s .kingu/setup.sh in a Setup terminal of each new worktree; asks you to trust it first and whenever it changes.)',
+			'ถามทุกครั้งก่อนรัน (Ask every time before running it.)',
 			'ไม่รันสคริปต์ตั้งค่า (Never run the setup script.)'
 		],
 		description:
-			'สคริปต์ตั้งค่า worktree (เช่น bun install, คัดลอก .env) ได้ KINGU_ROOT_PATH และ KINGU_WORKTREE_PATH ใน environment automation ไม่ถามและข้ามสคริปต์ที่ยังไม่เชื่อถือ (Worktree setup script, e.g. install dependencies; gets KINGU_ROOT_PATH and KINGU_WORKTREE_PATH. Automations never ask and skip an untrusted script.)',
+			'สคริปต์ตั้งค่า worktree (เช่น bun install, คัดลอก .env) ได้ KINGU_ROOT_PATH, KINGU_WORKTREE_PATH และ KINGU_WORKSPACE_NAME ใน environment automation ไม่ถามและข้ามสคริปต์ที่ยังไม่เชื่อถือ (Worktree setup script, e.g. install dependencies; gets KINGU_ROOT_PATH, KINGU_WORKTREE_PATH and KINGU_WORKSPACE_NAME. Automations never ask and skip an untrusted script.)',
 		// User-only: it decides whether repository code runs on the user's machine.
+		scope: 'application'
+	},
+	{
+		id: 'kingu.worktree.archiveScript',
+		group: 'Worktrees',
+		type: 'string',
+		default: 'auto',
+		enum: ['auto', 'off'],
+		enumDescriptions: [
+			'รัน .kingu/archive.sh ของโฟลเดอร์ใน worktree ก่อนลบ (เช่น หยุด container) ถามให้เชื่อถือก่อนเหมือน setup ถ้าล้มเหลวจะถามว่าจะลบต่อไหม (Run the folder\'s .kingu/archive.sh in the worktree before it is removed; trusted like the setup script; a failure asks whether to go on.)',
+			'ไม่รันสคริปต์ก่อนลบ (Never run the archive script.)'
+		],
+		description: 'สคริปต์ก่อนลบ worktree หยุดเองหลัง 120 วินาที (Archive script run before a task worktree is removed; stopped after 120 seconds.)',
+		// User-only: it decides whether repository code runs on the user's machine.
+		scope: 'application'
+	},
+	{
+		id: 'kingu.worktree.confirmRemove',
+		group: 'Worktrees',
+		type: 'boolean',
+		default: true,
+		description:
+			'ถามก่อนลบงานและ worktree (worktree ที่มีงานยังไม่ commit ยังถามเสมอ) (Ask before removing a task and its worktree; a worktree with uncommitted work always asks.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.worktree.refreshBaseOnCreate',
+		group: 'Worktrees',
+		type: 'boolean',
+		default: false,
+		description:
+			'ก่อนสร้างงาน fetch branch ตั้งต้นจาก upstream แล้ว fast-forward เมื่อปลอดภัย (ไม่มี commit ในเครื่องที่ยังไม่ push และไม่มีการแก้ไขที่ยังไม่ commit) (Keep the local base up to date: fetch it and fast-forward it when safe before a task forks from it.)',
+		// User-only: it talks to the network and moves a local branch.
 		scope: 'application'
 	},
 	{
 		id: 'kingu.worktree.deleteBranchOnRemove',
 		group: 'Worktrees',
 		type: 'string',
-		default: 'keep',
+		default: 'deleteMerged',
 		enum: ['keep', 'deleteMerged', 'delete'],
 		enumDescriptions: [
 			'เก็บ branch ไว้ (Keep the branch.)',
-			'ลบ branch เมื่องานถูก merge แล้ว (ในเครื่องหรือ PR merged) (Delete it once the task was merged locally or its PR was merged.)',
+			'ลบ branch ที่ merge แล้ว (git branch -d หรือรู้ว่า merge ในเครื่อง/PR merged) เก็บ branch ที่ยังไม่ merge ไว้ (Delete it when merged — git sees it merged, or the task was merged locally or its PR was; keep unmerged ones.)',
 			'ลบ branch ทุกครั้ง แม้ยังไม่ merge (Always delete it, even unmerged.)'
 		],
 		description: 'เมื่อลบงาน จะลบ branch ของงานด้วยหรือไม่ (Whether removing a task also deletes its branch.)',
 		// User-only: deleting branches is the user's call, not a repository's.
+		scope: 'application'
+	},
+	// --- Pull requests (Orca: PR creation defaults)
+	{
+		id: 'kingu.pr.draft',
+		group: 'Pull Requests',
+		type: 'boolean',
+		default: false,
+		description: 'สร้าง PR ของงานเป็น draft (Create task pull requests as drafts.)'
+	},
+	{
+		id: 'kingu.pr.openAfterCreate',
+		group: 'Pull Requests',
+		type: 'boolean',
+		default: false,
+		description: 'เปิด PR ในเบราว์เซอร์หลังสร้าง (Open the pull request in the browser after creating it.)',
 		scope: 'application'
 	},
 	{
@@ -531,6 +578,16 @@ export const SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.statusBar.usage.display',
+		group: 'Status Bar',
+		type: 'string',
+		default: 'used',
+		enum: ['used', 'remaining'],
+		enumDescriptions: ['เปอร์เซ็นต์ที่ใช้ไป (Percent used.)', 'เปอร์เซ็นต์ที่เหลือ (Percent remaining.)'],
+		description: 'usage ใน status bar แสดงที่ใช้ไปหรือที่เหลือ (Show usage as used or remaining.)',
+		scope: 'application'
+	},
+	{
 		id: 'kingu.statusBar.keepAwake.visible',
 		group: 'Status Bar',
 		type: 'boolean',
@@ -587,7 +644,7 @@ export type SettingsSection = { id: string; label: string; groups: string[] };
 export const SETTINGS_SECTIONS: SettingsSection[] = [
 	{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Status Bar', 'Team', 'Snap Sandbox'] },
 	{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Files', 'Terminal', 'Git'] },
-	{ id: 'ade', label: 'ADE (Agents)', groups: ['Agent', 'Worktrees'] }
+	{ id: 'ade', label: 'ADE (Agents)', groups: ['Agent', 'Worktrees', 'Pull Requests'] }
 ];
 
 export const SNAPS_SECTION_ID = 'snaps';

@@ -1,10 +1,11 @@
 // Sends the system notification for agent state changes (agentNotify.ts decides), so you can work
-// elsewhere while agents run: kingu.agent.notifications (on/off), .when, .events and .sound.
+// elsewhere while agents run: kingu.agent.notifications (on/off), .suppressWhenFocused, .events, .sound.
 
 import { untrack } from 'svelte';
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
+import { commands } from '#lib/workbench/commands.svelte.ts';
 import type { TaskStatus } from './model';
 import { noticeFor, notificationSound, shouldNotify } from './agentNotify';
 import { adeTasks } from './tasks.svelte';
@@ -20,11 +21,11 @@ export async function notify(title: string, body: string) {
 	}
 }
 
-/** Notifications on, and (for `when`) whether one may show now for a task. */
+/** Notifications on, and not suppressed for the task you are looking at. */
 export function agentNotifyAllowed(slug?: string): boolean {
 	const viewing = slug !== undefined && appMode.isAgents && appMode.activeSession === slug;
 	return shouldNotify(
-		{ enabled: settings.get<boolean>('kingu.agent.notifications') !== false, when: settings.get<string>('kingu.agent.notifications.when') },
+		{ enabled: settings.get<boolean>('kingu.agent.notifications') !== false, suppressWhenFocused: settings.get<boolean>('kingu.agent.notifications.suppressWhenFocused') !== false },
 		document.hasFocus(),
 		viewing
 	);
@@ -32,7 +33,13 @@ export function agentNotifyAllowed(slug?: string): boolean {
 
 export function installAgentNotifications(): () => void {
 	const seen = new Map<string, TaskStatus>();
-	return $effect.root(() => {
+	const unregister = commands.register({
+		id: 'kingu.agents.testNotification',
+		title: 'ส่งการแจ้งเตือนทดสอบ (Send Test Notification)',
+		category: 'Agents',
+		run: () => notify('Kingu: ทดสอบการแจ้งเตือน', 'การแจ้งเตือนของ agent จะหน้าตาและเสียงแบบนี้')
+	});
+	const stop = $effect.root(() => {
 		$effect(() => {
 			const views = adeTasks.views.map((v) => ({ slug: v.meta.slug, status: v.status, title: v.meta.title, lastEvent: v.runtime?.lastEvent }));
 			untrack(() => {
@@ -45,4 +52,8 @@ export function installAgentNotifications(): () => void {
 			});
 		});
 	});
+	return () => {
+		stop();
+		unregister();
+	};
 }

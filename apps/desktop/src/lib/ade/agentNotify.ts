@@ -14,16 +14,15 @@ export function noticeFor(prev: TaskStatus | undefined, next: TaskStatus, task: 
 	return null;
 }
 
-export type NotifySettings = { enabled: boolean; when: string };
+export type NotifySettings = { enabled: boolean; suppressWhenFocused: boolean };
 
 /**
- * Whether a task's notice is shown: never with notifications off; with `when: unfocused` only
- * while the window is not focused; with `always` also while focused, except for the task on screen.
+ * Whether a task's notice is shown: never with notifications off; with Suppress While Focused (Orca's
+ * default) not for the task on screen while the window is focused, otherwise always.
  */
 export function shouldNotify(s: NotifySettings, focused: boolean, viewing: boolean): boolean {
 	if (!s.enabled) return false;
-	if (!focused) return true;
-	return s.when === 'always' && !viewing;
+	return !(s.suppressWhenFocused && focused && viewing);
 }
 
 /** `kingu.agent.notifications.sound` → the notification's sound name (macOS), or none. */

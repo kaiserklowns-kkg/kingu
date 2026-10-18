@@ -10,6 +10,7 @@
 
 	const visible = $derived(settings.get<boolean>('kingu.statusBar.usage.visible') !== false);
 	const mode = $derived(settings.get<string>('kingu.statusBar.usage.mode') === 'detailed' ? 'detailed' : 'compact');
+	const display = $derived(settings.get<string>('kingu.statusBar.usage.display') === 'remaining' ? 'remaining' : 'used');
 	const shown = $derived(footerRows(accounts.rows));
 	const listed = $derived(accounts.rows.filter((r) => r.status !== 'unavailable').sort((a, b) => Number(b.active) - Number(a.active)));
 
@@ -57,7 +58,7 @@
 		<button class={ITEM} aria-haspopup="dialog" aria-expanded={open} aria-label="Usage" title={shown.map(tooltip).join('\n\n')} onclick={toggle}>
 			{#each shown as r (r.key)}
 				<span class={['flex items-center gap-1', TONE[rowLevel(r)]]}>
-					<Icon name={ICON[r.provider]} size={13} />{chipText(r, accounts.now, mode)}
+					<Icon name={ICON[r.provider]} size={13} />{chipText(r, accounts.now, mode, display)}
 					{#if r.status === 'stale' || r.status === 'error'}<span class="text-(--vscode-editorWarning-foreground)"><Icon name="warning" size={12} /></span>{/if}
 				</span>
 			{/each}

@@ -69,6 +69,8 @@ describe('chips', () => {
 
 	test('detailed shows session and weekly', () => {
 		expect(chipText(row(), now, 'detailed')).toBe('23% used 2h 5m · 71% used 3d 6h');
+		expect(chipText(row(), now, 'compact', 'remaining')).toBe('29% left 3d 6h');
+		expect(chipText(row(), now, 'detailed', 'remaining')).toBe('77% left 2h 5m · 29% left 3d 6h');
 	});
 
 	test('states without numbers', () => {

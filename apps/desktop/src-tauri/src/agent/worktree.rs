@@ -120,23 +120,93 @@ pub fn list(repo: &Path) -> Result<Vec<WorktreeInfo>, String> {
   Ok(parse_porcelain(&git(repo, &["worktree", "list", "--porcelain"])?))
 }
 
-/// Removes the task worktree; with `delete_branch`, also deletes the branch it had checked out.
-pub fn remove(repo: &Path, slug: &str, force: bool, delete_branch: bool) -> Result<(), String> {
+/// Orca's "Keep Local Main Up to Date" (`kingu.worktree.refreshBaseOnCreate`): fetches the local
+/// branch `base` from its upstream and fast-forwards it when that is safe (no local commits; where
+/// it is checked out, no tracked changes). Returns what happened for the status bar; `None` when
+/// there is nothing to do (not a local branch, no upstream, already up to date).
+pub fn refresh_base(repo: &Path, base: &str, timeout: std::time::Duration) -> Result<Option<String>, String> {
+  if base.starts_with('-') || git(repo, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{base}")]).is_err() {
+    return Ok(None);
+  }
+  let config = |key: &str| git(repo, &["config", "--get", &format!("branch.{base}.{key}")]).map(|v| v.trim().to_owned()).unwrap_or_default();
+  let (remote, merge) = (config("remote"), config("merge"));
+  if remote.is_empty() || remote == "." || remote.starts_with('-') || !merge.starts_with("refs/") {
+    return Ok(None);
+  }
+  let cancel = std::sync::atomic::AtomicBool::new(false);
+  crate::git_remote::net_env(repo, &["fetch", "--quiet", "--no-tags", "--", &remote, &merge], &[], &cancel, timeout)?;
+  let fetched = git(repo, &["rev-parse", "--verify", "--quiet", "FETCH_HEAD^{commit}"])?.trim().to_owned();
+  let local = git(repo, &["rev-parse", &format!("refs/heads/{base}")])?.trim().to_owned();
+  if local == fetched {
+    return Ok(None);
+  }
+  if git(repo, &["merge-base", "--is-ancestor", &local, &fetched]).is_err() {
+    return Ok(Some(format!("{base} มี commit ที่ไม่อยู่บน {remote} จึงไม่ได้อัปเดต (fast-forward ไม่ได้)")));
+  }
+  let short = &fetched[..fetched.len().min(8)];
+  match list(repo)?.into_iter().find(|w| w.branch.as_deref() == Some(base) && !w.bare) {
+    Some(w) => {
+      let at = Path::new(&w.path);
+      if !git(at, &["status", "--porcelain", "--untracked-files=no"])?.trim().is_empty() {
+        return Ok(Some(format!("{base} มีการแก้ไขที่ยังไม่ commit ที่ {} จึงไม่ได้อัปเดต", w.path)));
+      }
+      git(at, &["merge", "--ff-only", "--quiet", &fetched])?;
+    }
+    None => {
+      git(repo, &["update-ref", "-m", &format!("kingu: fast-forward {base} from {remote}"), &format!("refs/heads/{base}"), &fetched, &local])?;
+    }
+  }
+  log::info!("refreshed {base} from {remote} to {fetched}");
+  Ok(Some(format!("อัปเดต {base} จาก {remote} แล้ว ({short})")))
+}
+
+/// What removing a task does with its branch (`kingu.worktree.deleteBranchOnRemove`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteBranch {
+  Keep,
+  /// `git branch -d`: only when git sees it merged (into its upstream or HEAD), like Orca.
+  Safe,
+  /// `git branch -D`.
+  Force,
+}
+
+impl DeleteBranch {
+  pub fn parse(s: Option<&str>) -> Result<Self, String> {
+    match s {
+      None | Some("keep") => Ok(Self::Keep),
+      Some("safe") => Ok(Self::Safe),
+      Some("force") => Ok(Self::Force),
+      Some(other) => Err(format!("unknown branch removal {other}")),
+    }
+  }
+}
+
+/// Removes the task worktree and, per `branch`, the branch it had checked out. Returns the branch
+/// a safe delete kept because git does not see it merged.
+pub fn remove(repo: &Path, slug: &str, force: bool, branch: DeleteBranch) -> Result<Option<String>, String> {
   validate_slug(slug)?;
   let path = worktree_path(repo, slug);
   let path_str = path.to_str().ok_or("worktree path is not valid UTF-8")?;
-  let branch = if delete_branch { current_branch(&path).ok().flatten() } else { None };
+  let name = if branch == DeleteBranch::Keep { None } else { current_branch(&path).ok().flatten() };
   let mut args = vec!["worktree", "remove"];
   if force {
     args.push("--force");
   }
   args.extend(["--", path_str]);
   git(repo, &args)?;
-  if let Some(branch) = branch {
-    git(repo, &["branch", "-D", "--", &branch])?;
-  }
   log::info!("worktree {slug} removed");
-  Ok(())
+  let Some(name) = name else {
+    return Ok(None);
+  };
+  if branch == DeleteBranch::Force {
+    git(repo, &["branch", "-D", "--", &name])?;
+    return Ok(None);
+  }
+  match git(repo, &["branch", "-d", "--", &name]) {
+    Ok(_) => Ok(None),
+    Err(e) if e.contains("not fully merged") => Ok(Some(name)),
+    Err(e) => Err(e),
+  }
 }
 
 fn slug_of(path: &str) -> Option<String> {
@@ -233,7 +303,7 @@ mod tests {
 
     assert!(create(&repo, "fix-login", None, None).unwrap_err().contains("already exists"));
 
-    remove(&repo, "fix-login", false, true).unwrap();
+    assert_eq!(remove(&repo, "fix-login", false, DeleteBranch::Safe).unwrap(), None);
     assert!(!path.exists());
     assert_eq!(list(&repo).unwrap().len(), 1);
     assert!(git(&repo, &["branch", "--list", "kingu/fix-login"]).unwrap().trim().is_empty());
@@ -248,7 +318,7 @@ mod tests {
     assert!(create(&repo, "nope", Some("no-such-ref"), None).unwrap_err().contains("not a commit"));
     assert!(create(&repo, "nope", Some("--orphan"), None).is_err());
     assert!(create(&repo, "../escape", None, None).is_err());
-    assert!(remove(&repo, "missing", false, false).is_err());
+    assert!(remove(&repo, "missing", false, DeleteBranch::Keep).is_err());
   }
 
   #[test]
@@ -274,14 +344,69 @@ mod tests {
     }
     // Allowed by the character rules, refused by git as a ref name.
     assert!(create(&repo, "nope", None, Some("x.lock/")).is_err());
-    remove(&repo, "custom", false, true).unwrap();
+    // Unmerged: a safe delete keeps it, a forced one does not.
+    std::fs::write(dir.join("new.txt"), "x").unwrap();
+    run(&dir, &["add", "."]);
+    run(&dir, &["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "work"]);
+    let flat_dir = worktree_path(&repo, "flat");
+    assert_eq!(remove(&repo, "custom", false, DeleteBranch::Safe).unwrap().as_deref(), Some("feature/custom"));
+    assert!(!git(&repo, &["branch", "--list", "feature/custom"]).unwrap().trim().is_empty());
+    run(&flat_dir, &["checkout", "-q", "feature/custom"]);
+    assert_eq!(remove(&repo, "flat", false, DeleteBranch::Force).unwrap(), None);
     assert!(git(&repo, &["branch", "--list", "feature/custom"]).unwrap().trim().is_empty());
     let old = worktree_path(&repo, "old");
     run(&old, &["checkout", "-q", "--detach"]);
     assert!(task_branch(&old, "old").unwrap_err().contains("detached"));
     // Removing a detached task worktree with delete_branch keeps every branch.
-    remove(&repo, "old", false, true).unwrap();
+    remove(&repo, "old", false, DeleteBranch::Force).unwrap();
     assert!(!git(&repo, &["branch", "--list", "kingu/old"]).unwrap().trim().is_empty());
+  }
+
+  fn commit(dir: &Path, file: &str) {
+    std::fs::write(dir.join(file), file).unwrap();
+    run(dir, &["add", "."]);
+    run(dir, &["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "-m", file]);
+  }
+
+  #[test]
+  fn refreshes_the_base_from_its_upstream_only_when_safe() {
+    let t = std::time::Duration::from_secs(30);
+    let (tmp, origin) = temp_repo();
+    let clone = tmp.path().canonicalize().unwrap().join("clone");
+    run(&origin, &["clone", "-q", origin.to_str().unwrap(), clone.to_str().unwrap()]);
+    run(&origin, &["branch", "develop"]);
+    run(&clone, &["fetch", "-q", "origin", "develop:develop"]);
+    run(&clone, &["branch", "-q", "--set-upstream-to=origin/develop", "develop"]);
+
+    // Up to date, not a local branch, no upstream: nothing to do.
+    assert_eq!(refresh_base(&clone, "main", t).unwrap(), None);
+    assert_eq!(refresh_base(&clone, "nope", t).unwrap(), None);
+    run(&clone, &["branch", "local-only"]);
+    assert_eq!(refresh_base(&clone, "local-only", t).unwrap(), None);
+
+    // main checked out in the clone: fast-forwarded there.
+    commit(&origin, "a.txt");
+    let new_main = git(&origin, &["rev-parse", "main"]).unwrap();
+    assert!(refresh_base(&clone, "main", t).unwrap().unwrap().contains("อัปเดต main"));
+    assert_eq!(git(&clone, &["rev-parse", "main"]).unwrap(), new_main);
+    assert!(clone.join("a.txt").is_file());
+
+    // develop not checked out anywhere: only its ref moves.
+    run(&origin, &["checkout", "-q", "develop"]);
+    commit(&origin, "b.txt");
+    refresh_base(&clone, "develop", t).unwrap().unwrap();
+    assert_eq!(git(&clone, &["rev-parse", "develop"]).unwrap(), git(&origin, &["rev-parse", "develop"]).unwrap());
+
+    // Local commits on main, or tracked changes where it is checked out: left alone.
+    run(&origin, &["checkout", "-q", "main"]);
+    commit(&origin, "c.txt");
+    std::fs::write(clone.join("a.txt"), "edited").unwrap();
+    assert!(refresh_base(&clone, "main", t).unwrap().unwrap().contains("ยังไม่ commit"));
+    run(&clone, &["checkout", "-q", "--", "a.txt"]);
+    commit(&clone, "local.txt");
+    let local = git(&clone, &["rev-parse", "main"]).unwrap();
+    assert!(refresh_base(&clone, "main", t).unwrap().unwrap().contains("fast-forward ไม่ได้"));
+    assert_eq!(git(&clone, &["rev-parse", "main"]).unwrap(), local);
   }
 
   #[test]

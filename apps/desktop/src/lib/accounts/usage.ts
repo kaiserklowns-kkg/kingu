@@ -105,12 +105,17 @@ export function footerRows(rows: UsageRow[]): UsageRow[] {
 }
 
 /** `71% used 3d 6h`, `API key`, `···` (not fetched yet), `—` (failed, nothing to show). */
-export function chipText(row: UsageRow, now: number, mode: 'compact' | 'detailed' = 'compact'): string {
+/** `kingu.statusBar.usage.display` (Orca's usagePercentageDisplay): percent used, or what is left. */
+export type UsageDisplay = 'used' | 'remaining';
+export const usageLabel = (usedPercent: number, display: UsageDisplay = 'used') =>
+	display === 'remaining' ? `${pct(100 - usedPercent)}% left` : `${pct(usedPercent)}% used`;
+
+export function chipText(row: UsageRow, now: number, mode: 'compact' | 'detailed' = 'compact', display: UsageDisplay = 'used'): string {
 	if (row.status === 'api_key') return 'API key';
 	if (row.status === 'idle') return '···';
 	const shown = mode === 'compact' ? [headline(row.usage)].filter((w) => w !== null) : windows(row.usage).filter((w) => w.name === 'session' || w.name === 'weekly');
 	if (!shown.length) return '—';
-	return shown.map((w) => `${pct(w.window.used_percent)}% used ${resetLabel(w.window, now)}`).join(' · ');
+	return shown.map((w) => `${usageLabel(w.window.used_percent, display)} ${resetLabel(w.window, now)}`).join(' · ');
 }
 
 /** The level of a row: its tightest window. */

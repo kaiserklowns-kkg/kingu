@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { branchPrefix, defaultBaseBranch, deleteBranchOnRemove, scriptPreview, setupCommand, validBranchPrefix } from './worktreeSettings';
+import { branchPrefix, branchRemoval, defaultBaseBranch, scriptPreview, scriptRunSummary, setupCommand, setupPolicy, validBranchPrefix } from './worktreeSettings';
 import { agentCommand } from './agentCli';
 import { notificationSound, noticeFor, shouldNotify } from './agentNotify';
 
@@ -25,21 +25,33 @@ describe('worktree settings', () => {
 		expect(defaultBaseBranch(undefined, null, [])).toBe('');
 	});
 
-	test('branch on remove', () => {
-		expect(deleteBranchOnRemove(undefined, { merged: true })).toBe(false);
-		expect(deleteBranchOnRemove('keep', { merged: true })).toBe(false);
-		expect(deleteBranchOnRemove('deleteMerged', { merged: false })).toBe(false);
-		expect(deleteBranchOnRemove('deleteMerged', { merged: true })).toBe(true);
-		expect(deleteBranchOnRemove('delete', { merged: false })).toBe(true);
+	test('branch on remove: Orca\'s default deletes merged branches and keeps the others', () => {
+		expect(branchRemoval(undefined, { merged: false })).toBe('safe');
+		expect(branchRemoval('deleteMerged', { merged: false })).toBe('safe');
+		// A squash-merged PR is not merged for git: Kingu knows, so -D.
+		expect(branchRemoval('deleteMerged', { merged: true })).toBe('force');
+		expect(branchRemoval('keep', { merged: true })).toBe('keep');
+		expect(branchRemoval('delete', { merged: false })).toBe('force');
+	});
+
+	test('setup policy and archive results', () => {
+		expect(setupPolicy(undefined)).toBe('auto');
+		expect(setupPolicy('ask')).toBe('ask');
+		expect(setupPolicy('off')).toBe('off');
+		expect(setupPolicy('sometimes')).toBe('auto');
+		expect(scriptRunSummary({ code: 0, timed_out: false, output: '' })).toBe('สำเร็จ');
+		expect(scriptRunSummary({ code: 2, timed_out: false, output: '' })).toContain('exit code 2');
+		expect(scriptRunSummary({ code: null, timed_out: true, output: '' })).toContain('นานเกิน');
 	});
 
 	test('setup command runs the trusted copy with the paths in its environment', () => {
-		expect(setupCommand('/cache/worktree-setup/ab.sh', '/r', '/r/.kingu/worktrees/t')).toEqual([
+		expect(setupCommand('/cache/worktree-scripts/ab.sh', '/r', '/r/.kingu/worktrees/t', 't')).toEqual([
 			'env',
 			'KINGU_ROOT_PATH=/r',
 			'KINGU_WORKTREE_PATH=/r/.kingu/worktrees/t',
+			'KINGU_WORKSPACE_NAME=t',
 			'sh',
-			'/cache/worktree-setup/ab.sh'
+			'/cache/worktree-scripts/ab.sh'
 		]);
 		expect(scriptPreview('a\nb\n\n')).toBe('a\nb');
 		expect(scriptPreview(Array.from({ length: 25 }, (_, i) => `l${i}`).join('\n'), 20).split('\n')).toHaveLength(21);
@@ -64,12 +76,12 @@ describe('agent command', () => {
 });
 
 describe('agent notification settings', () => {
-	test('when: unfocused only, or always except the task on screen', () => {
-		const on = { enabled: true, when: 'unfocused' };
-		expect(shouldNotify(on, false, false)).toBe(true);
-		expect(shouldNotify(on, true, false)).toBe(false);
-		expect(shouldNotify({ ...on, when: 'always' }, true, false)).toBe(true);
-		expect(shouldNotify({ ...on, when: 'always' }, true, true)).toBe(false);
+	test('suppress while focused: only the task on screen, while the window is focused', () => {
+		const on = { enabled: true, suppressWhenFocused: true };
+		expect(shouldNotify(on, false, true)).toBe(true);
+		expect(shouldNotify(on, true, false)).toBe(true);
+		expect(shouldNotify(on, true, true)).toBe(false);
+		expect(shouldNotify({ ...on, suppressWhenFocused: false }, true, true)).toBe(true);
 		expect(shouldNotify({ ...on, enabled: false }, false, false)).toBe(false);
 	});
 

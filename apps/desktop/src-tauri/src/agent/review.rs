@@ -306,8 +306,17 @@ pub fn gh_status(bin: Option<PathBuf>) -> GhStatus {
   }
 }
 
+/// `gh pr create` arguments; `draft` from `kingu.pr.draft` (Orca's PR creation defaults).
+pub fn pr_create_args(base: &str, branch: &str, title: &str, body: &str, draft: bool) -> Vec<String> {
+  let mut args = vec!["pr".to_owned(), "create".to_owned(), format!("--base={base}"), format!("--head={branch}"), format!("--title={title}"), format!("--body={body}")];
+  if draft {
+    args.push("--draft".to_owned());
+  }
+  args
+}
+
 /// Pushes the task branch to `origin` and opens a pull request against `base`; returns its URL.
-pub fn pr_create(gh: &Path, dir: &Path, slug: &str, base: &str, title: &str, body: &str) -> Result<String, String> {
+pub fn pr_create(gh: &Path, dir: &Path, slug: &str, base: &str, title: &str, body: &str, draft: bool) -> Result<String, String> {
   check_rev(base)?;
   if title.trim().is_empty() {
     return Err("PR title is empty".into());
@@ -317,7 +326,7 @@ pub fn pr_create(gh: &Path, dir: &Path, slug: &str, base: &str, title: &str, bod
   git::run(dir, &["push", "-u", "origin", &format!("refs/heads/{branch}:refs/heads/{branch}")])?;
   let out = crate::shell_env::command(gh)
     .current_dir(dir)
-    .args(["pr", "create", &format!("--base={base}"), &format!("--head={branch}"), &format!("--title={title}"), &format!("--body={body}")])
+    .args(pr_create_args(base, &branch, title, body, draft))
     .output()
     .map_err(|e| format!("gh: {e}"))?;
   if !out.status.success() {
@@ -477,6 +486,13 @@ mod tests {
 
   fn file<'a>(st: &'a DiffStat, path: &str) -> &'a FileChange {
     st.files.iter().find(|f| f.path == path).unwrap_or_else(|| panic!("{path} not in {:?}", st.files))
+  }
+
+  #[test]
+  fn pr_create_arguments_keep_values_attached_and_add_draft() {
+    let args = pr_create_args("main", "kingu/t", "--title", "-b", false);
+    assert_eq!(args, ["pr", "create", "--base=main", "--head=kingu/t", "--title=--title", "--body=-b"]);
+    assert_eq!(pr_create_args("main", "kingu/t", "x", "", true).last().map(String::as_str), Some("--draft"));
   }
 
   #[test]

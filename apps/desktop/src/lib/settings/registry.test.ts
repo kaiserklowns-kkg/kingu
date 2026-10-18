@@ -124,9 +124,15 @@ describe('ADE settings', () => {
 			'kingu.worktree.branchPrefix': 'kingu/',
 			'kingu.worktree.baseBranch': '',
 			'kingu.worktree.setupScript': 'auto',
-			'kingu.worktree.deleteBranchOnRemove': 'keep',
+			'kingu.worktree.deleteBranchOnRemove': 'deleteMerged',
+			'kingu.worktree.archiveScript': 'auto',
+			'kingu.worktree.confirmRemove': true,
+			'kingu.worktree.refreshBaseOnCreate': false,
+			'kingu.pr.draft': false,
+			'kingu.pr.openAfterCreate': false,
+			'kingu.statusBar.usage.display': 'used',
 			'kingu.agent.notifications': true,
-			'kingu.agent.notifications.when': 'unfocused',
+			'kingu.agent.notifications.suppressWhenFocused': true,
 			'kingu.agent.notifications.events': 'all',
 			'kingu.agent.notifications.sound': 'default',
 			'kingu.agent.args.claude': '',
@@ -137,7 +143,7 @@ describe('ADE settings', () => {
 			const d = SCHEMA.get(id)!.description;
 			expect([id, /[฀-๿]/.test(d), /\([A-Z][^)]*\.\)/.test(d)]).toEqual([id, true, true]);
 		}
-		expect(settingsSections().find((s) => s.id === 'ade')?.groups).toEqual(['Agent', 'Worktrees']);
+		expect(settingsSections().find((s) => s.id === 'ade')?.groups).toEqual(['Agent', 'Worktrees', 'Pull Requests']);
 	});
 
 	test('settings that run commands, loosen prompts or delete branches are user-only', () => {
@@ -146,6 +152,8 @@ describe('ADE settings', () => {
 			'kingu.agent.permissionMode',
 			'kingu.worktree.setupScript',
 			'kingu.worktree.deleteBranchOnRemove',
+			'kingu.worktree.archiveScript',
+			'kingu.worktree.refreshBaseOnCreate',
 			'kingu.automations.enabled',
 			'kingu.snaps.sandbox',
 			...SETTINGS.filter((s) => s.id.startsWith('kingu.agent.args.')).map((s) => s.id)
