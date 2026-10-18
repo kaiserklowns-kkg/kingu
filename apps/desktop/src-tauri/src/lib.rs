@@ -11,6 +11,7 @@ mod git;
 mod glob;
 mod git_remote;
 mod linear;
+mod logging;
 mod lsp;
 mod menu;
 mod net_proxy;
@@ -97,8 +98,11 @@ fn keep_awake_set(keep: State<'_, system::KeepAwake>, on: bool) -> Result<bool, 
 }
 
 /// Webview errors and milestones, so they show up in the app log (WKWebView has no CDP).
+/// Bounded per line; the log's formatter masks anything that looks like a credential.
 #[tauri::command]
 fn client_log(level: String, message: String) {
+  const MAX: usize = 4000;
+  let message = if message.chars().count() > MAX { format!("{}… (cut)", message.chars().take(MAX).collect::<String>()) } else { message };
   match level.as_str() {
     "error" => log::error!("[webview] {message}"),
     _ => log::info!("[webview] {message}"),
@@ -1138,13 +1142,8 @@ pub fn run() {
       ));
       net_proxy::init(&config_dir);
       system::set_config_dir(config_dir);
-      if cfg!(debug_assertions) {
-        app.handle().plugin(
-          tauri_plugin_log::Builder::default()
-            .level(log::LevelFilter::Info)
-            .build(),
-        )?;
-      }
+      // Release builds too: a rotating, size-limited Kingu.log in the app log dir (logging.rs).
+      app.handle().plugin(logging::plugin())?;
       // Reopen the last folder if it still exists, else KINGU_WORKSPACE, else the welcome view.
       let recent = Recent::load(app.path().app_data_dir()?.join("recent.json"));
       // window.restoreWindows: "none" starts empty (KINGU_WORKSPACE still opens).
@@ -1392,6 +1391,7 @@ pub fn run() {
       team::team_status,
       team::team_sync_task,
       team::team_sync_run,
+      logging::open_logs_folder,
       team::team_sync_now,
       team::team_events_start,
       team::team_events_stop,

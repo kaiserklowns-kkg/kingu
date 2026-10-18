@@ -24,6 +24,8 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.12.1", features = [] }
 tauri-plugin-log = "2"
+# Log line timestamps (src/logging.rs); already in the tree through tauri-plugin-log.
+time = { version = "0.3", features = ["formatting", "macros"] }
 # Terminal sessions: in the kingu-ptyd daemon (macOS, Linux) or in-process.
 kingu-ptyd = { path = "../../../crates/kingu-ptyd" }
 tauri-plugin-dialog = "=2.8.1"

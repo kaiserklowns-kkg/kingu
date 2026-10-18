@@ -167,6 +167,13 @@
 			commands.register({ id: 'workbench.action.quickOpen', title: 'Go to File...', key: 'cmd+p', run: () => (appMode.isAgents && workspace.root ? quickOpenWorktree(adeLayout.key) : quick.show('')) }),
 			// VS Code's Developer: Reload Window; terminals and agent CLIs re-attach (they live in Rust).
 			commands.register({ id: 'workbench.action.reloadWindow', title: 'Reload Window', category: 'Developer', run: async () => (await textFiles.beforeShutdown('reload')) && location.reload() }),
+			// VS Code's Developer: Open Logs Folder: the folder holding Kingu.log (and its rotated copies).
+			commands.register({
+				id: 'workbench.action.openLogsFolder',
+				title: 'Open Logs Folder',
+				category: 'Developer',
+				run: () => invoke<string>('open_logs_folder').catch((e) => status.flash(`เปิดโฟลเดอร์ log ไม่ได้: ${e}`, 5000))
+			}),
 			commands.register({ id: 'workbench.action.showCommands', title: 'Show All Commands', key: 'cmd+shift+p', palette: false, run: () => quick.show('>') }),
 			// In Agents mode ⌘B / ⌘J toggle the sessions side bar and the changes panel instead.
 			commands.register({
