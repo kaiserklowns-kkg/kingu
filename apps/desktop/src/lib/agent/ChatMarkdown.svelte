@@ -1,7 +1,8 @@
 <script lang="ts">
 	// A response's markdown (VS Code's chatMarkdownContentPart): prose rendered as Markdown (raw HTML
-	// shown as text), code blocks in their own box with Copy and Insert at Cursor (into the active
-	// editor). Links: web links open in the browser, workspace paths open in the editor.
+	// shown as text), code blocks in their own box, syntax coloured once the text stopped streaming,
+	// with Insert at Cursor (into the active editor), Insert into New File, Insert into Terminal and
+	// Copy. Links: web links open in the browser, workspace paths open in the editor.
 	import { invoke } from '@tauri-apps/api/core';
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { editors } from '#lib/workbench/editors.svelte.ts';
@@ -9,11 +10,27 @@
 	import { t } from '#lib/i18n/index.ts';
 	import { splitMarkdown } from './chatMarkdown';
 	import { shortPath } from './chatParts';
+	import { colorize, insertIntoNewFile, insertIntoTerminal } from './chatCodeActions';
 
 	let { text, streaming = false, root = null }: { text: string; streaming?: boolean; root?: string | null } = $props();
 
 	const segments = $derived(splitMarkdown(text));
 	let copied = $state(-1);
+	/** Coloured code blocks by `lang\0code` (Monaco's colorizer), once the text stopped streaming. */
+	let colored = $state<Record<string, string>>({});
+	const blockKey = (seg: { lang: string; code: string }) => `${seg.lang}\u0000${seg.code}`;
+
+	$effect(() => {
+		if (streaming) return;
+		for (const seg of segments) {
+			if (seg.kind !== 'code' || !seg.lang) continue;
+			const key = blockKey(seg);
+			if (colored[key] !== undefined) continue;
+			void colorize(seg.code, seg.lang).then((html) => {
+				if (html !== null) colored[key] = html;
+			});
+		}
+	});
 
 	async function copy(code: string, i: number) {
 		try {
@@ -57,17 +74,25 @@
 			<!-- Safe: renderMarkdown escapes raw HTML and drops images (workbench/markdown.ts). -->
 			{@html seg.html}
 		{:else}
+			{@const html = streaming ? undefined : colored[blockKey(seg)]}
 			<div class="kg-code group/code">
 				<div class="kg-code-head">
 					<span class="min-w-0 flex-1 truncate">{seg.lang}</span>
 					<button type="button" class="kg-code-btn" title={t('chatView.insertAtCursor')} aria-label={t('chatView.insertAtCursor')} onclick={() => insert(seg.code)}>
 						<Icon name="code" size={13} />
 					</button>
+					<button type="button" class="kg-code-btn" title={t('chatParts.code.newFile')} aria-label={t('chatParts.code.newFile')} onclick={() => void insertIntoNewFile(seg.code, seg.lang)}>
+						<Icon name="newFile" size={13} />
+					</button>
+					<button type="button" class="kg-code-btn" title={t('chatParts.code.terminal')} aria-label={t('chatParts.code.terminal')} onclick={() => insertIntoTerminal(seg.code)}>
+						<Icon name="terminal" size={13} />
+					</button>
 					<button type="button" class="kg-code-btn" title={t('chatView.copyCode')} aria-label={t('chatView.copyCode')} onclick={() => copy(seg.code, i)}>
 						<Icon name={copied === i ? 'check' : 'copy'} size={13} />
 					</button>
 				</div>
-				<pre><code>{seg.code}</code></pre>
+				<!-- Safe: Monaco's colorizer escapes the text and only adds token spans. -->
+				{#if html}<pre><code>{@html html}</code></pre>{:else}<pre><code>{seg.code}</code></pre>{/if}
 			</div>
 		{/if}
 	{/each}

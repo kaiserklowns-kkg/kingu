@@ -15,6 +15,8 @@ export type ToolPart = {
 	input: unknown;
 	/** Set once the tool returned. */
 	result?: { content: string; isError: boolean };
+	/** A Task/Agent call: its subagent's own text, thinking and tool calls (VS Code's subagent part). */
+	children?: Part[];
 };
 
 export type Part =
@@ -45,18 +47,18 @@ export function isInternal(ev: AgentEvent): boolean {
 	return ev.kind === 'raw' || ev.kind === 'stderr' || ev.kind === 'system';
 }
 
-const lastPart = (turn: Turn) => turn.parts[turn.parts.length - 1];
-
-function findTool(turns: Turn[], id: string): ToolPart | undefined {
-	for (let i = turns.length - 1; i >= 0; i--) {
-		for (const p of turns[i].parts) if (p.kind === 'tool' && p.id === id) return p;
-	}
-	return undefined;
+/** Appends a message's text to `parts`, joined to the markdown just before it. */
+function pushText(parts: Part[], text: string) {
+	const prev = parts[parts.length - 1];
+	if (prev?.kind === 'markdown') prev.text = `${prev.text}\n\n${text}`;
+	else parts.push({ kind: 'markdown', text });
 }
 
 /** Folds the run's timeline into requests and responses. */
 export function buildTurns(run: ChatView): Turn[] {
 	const turns: Turn[] = [];
+	/** Every tool call so far by id (results and subagent events find their call). */
+	const tools = new Map<string, ToolPart>();
 	let cur: Turn | null = null;
 	const current = (): Turn => {
 		if (!cur) {
@@ -64,6 +66,11 @@ export function buildTurns(run: ChatView): Turn[] {
 			turns.push(cur);
 		}
 		return cur;
+	};
+	/** Where an event's part goes: under its subagent's Task call when it has one, else the turn. */
+	const sink = (parent: string | null | undefined): Part[] => {
+		const call = parent ? tools.get(parent) : undefined;
+		return call ? (call.children ??= []) : current().parts;
 	};
 	const close = (canceled: boolean) => {
 		if (!cur || cur.done) return;
@@ -73,6 +80,7 @@ export function buildTurns(run: ChatView): Turn[] {
 	for (const ev of run.items) {
 		switch (ev.kind) {
 			case 'message': {
+				if (ev.role === 'user' && ev.parent_tool_use_id) break; // a subagent's prompt: the Task call's input
 				if (ev.role === 'user') {
 					// A follow-up sent while the turn ran (an ADE task): the earlier turn just ends.
 					close(false);
@@ -81,20 +89,20 @@ export function buildTurns(run: ChatView): Turn[] {
 					break;
 				}
 				if (!ev.text.trim()) break;
-				const turn = current();
-				const prev = lastPart(turn);
-				if (prev?.kind === 'markdown') prev.text = `${prev.text}\n\n${ev.text}`;
-				else turn.parts.push({ kind: 'markdown', text: ev.text });
+				pushText(sink(ev.parent_tool_use_id), ev.text);
 				break;
 			}
 			case 'thinking':
-				if (ev.text.trim()) current().parts.push({ kind: 'thinking', text: ev.text });
+				if (ev.text.trim()) sink(ev.parent_tool_use_id).push({ kind: 'thinking', text: ev.text });
 				break;
-			case 'tool_use':
-				current().parts.push({ kind: 'tool', id: ev.id, name: ev.name, input: ev.input });
+			case 'tool_use': {
+				const tool: ToolPart = { kind: 'tool', id: ev.id, name: ev.name, input: ev.input };
+				sink(ev.parent_tool_use_id).push(tool);
+				if (ev.id) tools.set(ev.id, tool);
 				break;
+			}
 			case 'tool_result': {
-				const tool = findTool(turns, ev.tool_use_id);
+				const tool = tools.get(ev.tool_use_id);
 				if (tool) tool.result = { content: ev.content, isError: ev.is_error };
 				break;
 			}
@@ -232,4 +240,100 @@ export function toolLabel(name: string, input: unknown, done: boolean, cwd?: str
 	const tool = mcp ? `${mcp[2]} (${mcp[1]})` : name;
 	const arg = oneLine(str(o, 'file_path', 'path', 'command', 'pattern', 'url', 'query', 'description'), 60);
 	return arg ? t(`chatView.tool.otherArg.${tense}`, { tool, arg }) : t(`chatView.tool.other.${tense}`, { tool });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Todos (TodoWrite), plans (ExitPlanMode), edits and subagents
+
+export type TodoStatus = 'pending' | 'in_progress' | 'completed';
+export type Todo = { content: string; status: TodoStatus; activeForm: string };
+
+const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** A TodoWrite call's list (`input.todos`): items without text are left out, unknown statuses read as pending. */
+export function parseTodos(input: unknown): Todo[] | null {
+	const list = isRecord(input) ? input.todos : undefined;
+	if (!Array.isArray(list)) return null;
+	return list.filter(isRecord).flatMap((x) => {
+		const content = typeof x.content === 'string' ? x.content.trim() : '';
+		if (!content) return [];
+		const status: TodoStatus = x.status === 'in_progress' || x.status === 'completed' ? x.status : 'pending';
+		const activeForm = typeof x.activeForm === 'string' && x.activeForm.trim() ? x.activeForm.trim() : content;
+		return [{ content, status, activeForm }];
+	});
+}
+
+/** The main agent's current todo list: the input of its last TodoWrite call (subagents' lists aside). */
+export function latestTodos(turns: readonly Turn[]): Todo[] | null {
+	for (let i = turns.length - 1; i >= 0; i--) {
+		const parts = turns[i].parts;
+		for (let j = parts.length - 1; j >= 0; j--) {
+			const p = parts[j];
+			if (p.kind === 'tool' && p.name === 'TodoWrite') return parseTodos(p.input);
+		}
+	}
+	return null;
+}
+
+/**
+ * The todo bar's header (VS Code's ChatTodoListWidget): the item worked on (the first in progress,
+ * else the first not started) and its number `n` of `total`, counted from the completed ones.
+ */
+export function todoProgress(todos: readonly Todo[]): { done: number; total: number; n: number; current: Todo | null; inProgress: boolean } {
+	const done = todos.filter((x) => x.status === 'completed').length;
+	const working = todos.find((x) => x.status === 'in_progress');
+	const current = working ?? todos.find((x) => x.status === 'pending') ?? null;
+	return { done, total: todos.length, n: working ? done + 1 : Math.max(1, done), current, inProgress: !!working };
+}
+
+/** An ExitPlanMode call's plan (markdown), or null. */
+export function planOf(input: unknown): string | null {
+	const plan = isRecord(input) ? input.plan : undefined;
+	return typeof plan === 'string' && plan.trim() ? plan : null;
+}
+
+const lineCount = (s: unknown) => (typeof s === 'string' && s.length ? s.split('\n').length : 0);
+
+/** The file and `+added −removed` of an edit tool's call (the agent host's summarizeTool math); null for other tools. */
+export function editOf(name: string, input: unknown): { path: string; added: number; removed: number } | null {
+	if (name !== 'Edit' && name !== 'MultiEdit' && name !== 'Write' && name !== 'NotebookEdit') return null;
+	const o = isRecord(input) ? input : {};
+	const path = str(o, 'file_path', 'notebook_path');
+	if (!path) return null;
+	switch (name) {
+		case 'Edit':
+			return { path, added: lineCount(o.new_string), removed: lineCount(o.old_string) };
+		case 'MultiEdit': {
+			const edits: Record<string, unknown>[] = Array.isArray(o.edits) ? o.edits.filter(isRecord) : [];
+			let added = 0;
+			let removed = 0;
+			for (const e of edits) {
+				added += lineCount(e.new_string);
+				removed += lineCount(e.old_string);
+			}
+			return { path, added, removed };
+		}
+		case 'Write':
+			return { path, added: lineCount(o.content), removed: 0 };
+		default:
+			return { path, added: lineCount(o.new_source), removed: 0 };
+	}
+}
+
+export const isSubagentTool = (name: string) => name === 'Task' || name === 'Agent';
+
+/** A subagent call's tool calls (nested ones included), how many still run, and their ids (pending approvals). */
+export function subagentStats(tool: ToolPart): { tools: number; running: number; ids: Set<string> } {
+	const ids = new Set<string>();
+	let running = 0;
+	const walk = (parts: readonly Part[]) => {
+		for (const p of parts) {
+			if (p.kind !== 'tool') continue;
+			ids.add(p.id);
+			if (!p.result) running++;
+			if (p.children) walk(p.children);
+		}
+	};
+	walk(tool.children ?? []);
+	return { tools: ids.size, running, ids };
 }

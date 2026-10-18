@@ -265,6 +265,8 @@ export class AgentHost {
 			...(plugins.length ? { plugins: plugins.map((path) => ({ type: 'local' as const, path, skipMcpDiscovery: true })) } : {}),
 			...(accountEnv ? { env: accountEnv } : {}),
 			includePartialMessages: true,
+			// Subagents' text and thinking too (not only their tool calls): the chat nests them under the Task call.
+			forwardSubagentText: true,
 			// User + project settings: CLAUDE.md and the user's own allow/deny rules apply.
 			settingSources: ['user', 'project', 'local'],
 			abortController: run.abort,

@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { buildTurns, isInternal, lastRequest, promptHistory, responseText, shortPath, toolLabel, type Turn } from './chatParts';
+import { buildTurns, editOf, isInternal, isSubagentTool, lastRequest, latestTodos, parseTodos, planOf, promptHistory, responseText, shortPath, subagentStats, todoProgress, toolLabel, type TodoStatus, type ToolPart, type Turn } from './chatParts';
 import { applyEvent, initialRun, type AgentEvent, type PermissionRequest } from './events';
 import { assemblePrompt } from './chatPrompt';
 
@@ -177,5 +177,100 @@ describe('tool rows', () => {
 		expect(toolLabel('mcp__github__get_issue', { query: '#12' }, true)).toBe('Ran get_issue (github): #12');
 		expect(toolLabel('Mystery', {}, false)).toBe('Running Mystery');
 		expect(shortPath('/elsewhere/z.ts', '/r')).toBe('/elsewhere/z.ts');
+	});
+});
+
+describe('subagents', () => {
+	test("a Task call holds its subagent's text, thinking and tool calls; the main response goes on after it", () => {
+		const run = fold([
+			{ kind: 'message', role: 'user', text: 'look around' },
+			{ kind: 'tool_use', id: 'task', name: 'Task', input: { description: 'Explore', prompt: 'find x' } },
+			{ kind: 'thinking', text: 'hm', parent_tool_use_id: 'task' },
+			{ kind: 'message', role: 'assistant', text: 'searching', parent_tool_use_id: 'task' },
+			{ kind: 'message', role: 'assistant', text: 'more', parent_tool_use_id: 'task' },
+			{ kind: 'tool_use', id: 'g', name: 'Grep', input: { pattern: 'x' }, parent_tool_use_id: 'task' },
+			{ kind: 'tool_result', tool_use_id: 'g', content: 'a.ts:1', is_error: false, parent_tool_use_id: 'task' },
+			{ kind: 'tool_use', id: 'r', name: 'Read', input: { file_path: 'a.ts' }, parent_tool_use_id: 'task' },
+			{ kind: 'tool_result', tool_use_id: 'task', content: 'found in a.ts', is_error: false },
+			{ kind: 'message', role: 'assistant', text: 'done' },
+			result('done')
+		]);
+		const [turn] = buildTurns(run);
+		expect(kinds(turn)).toEqual(['tool', 'markdown']);
+		const task = turn.parts[0] as ToolPart;
+		expect(task.result?.content).toBe('found in a.ts');
+		expect(task.children?.map((p) => p.kind)).toEqual(['thinking', 'markdown', 'tool', 'tool']);
+		expect(task.children?.[1]).toMatchObject({ kind: 'markdown', text: 'searching\n\nmore' });
+		expect((task.children?.[2] as ToolPart).result?.content).toBe('a.ts:1');
+		const stats = subagentStats(task);
+		expect([stats.tools, stats.running, [...stats.ids]]).toEqual([2, 1, ['g', 'r']]);
+		expect(isSubagentTool('Agent')).toBe(true);
+	});
+
+	test("a subagent's prompt is not a request, and does not clear the main agent's streaming text", () => {
+		const run = fold([
+			{ kind: 'message', role: 'user', text: 'go' },
+			{ kind: 'tool_use', id: 'task', name: 'Task', input: {} },
+			{ kind: 'delta', block: 'text', text: 'main…' },
+			{ kind: 'message', role: 'user', text: 'sub prompt', parent_tool_use_id: 'task' },
+			{ kind: 'message', role: 'assistant', text: 'sub reply', parent_tool_use_id: 'task' }
+		]);
+		expect(run.draft.text).toBe('main…');
+		const turns = buildTurns(run);
+		expect(turns.length).toBe(1);
+		expect(kinds(turns[0])).toEqual(['tool', 'markdown']);
+		expect((turns[0].parts[0] as ToolPart).children).toEqual([{ kind: 'markdown', text: 'sub reply' }]);
+	});
+
+	test('events whose call is unknown (e.g. trimmed from the timeline) stay in the response', () => {
+		const run = fold([{ kind: 'message', role: 'assistant', text: 'orphan', parent_tool_use_id: 'gone' }]);
+		expect(kinds(buildTurns(run)[0])).toEqual(['markdown']);
+	});
+});
+
+describe('todos, plans and edits', () => {
+	const todos = [
+		{ content: 'Read the code', status: 'completed', activeForm: 'Reading the code' },
+		{ content: 'Fix the bug', status: 'in_progress', activeForm: 'Fixing the bug' },
+		{ content: 'Run tests', status: 'pending', activeForm: '' },
+		{ content: '', status: 'pending' },
+		'junk'
+	];
+
+	test('the latest TodoWrite of the main agent is the list', () => {
+		const run = fold([
+			{ kind: 'message', role: 'user', text: 'go' },
+			{ kind: 'tool_use', id: 't1', name: 'TodoWrite', input: { todos: [{ content: 'old', status: 'pending', activeForm: 'old' }] } },
+			{ kind: 'tool_use', id: 't2', name: 'TodoWrite', input: { todos } },
+			{ kind: 'tool_use', id: 'task', name: 'Task', input: {} },
+			{ kind: 'tool_use', id: 't3', name: 'TodoWrite', input: { todos: [] }, parent_tool_use_id: 'task' }
+		]);
+		const list = latestTodos(buildTurns(run))!;
+		expect(list).toEqual([
+			{ content: 'Read the code', status: 'completed', activeForm: 'Reading the code' },
+			{ content: 'Fix the bug', status: 'in_progress', activeForm: 'Fixing the bug' },
+			{ content: 'Run tests', status: 'pending', activeForm: 'Run tests' }
+		]);
+		expect(todoProgress(list)).toMatchObject({ done: 1, total: 3, n: 2, inProgress: true, current: { content: 'Fix the bug' } });
+		expect(latestTodos([])).toBeNull();
+		expect(parseTodos({})).toBeNull();
+	});
+
+	test('progress: next not started item when none runs; all done', () => {
+		const p = (s: string[]) => todoProgress(s.map((status, i) => ({ content: `t${i}`, activeForm: `t${i}`, status: status as TodoStatus })));
+		expect(p(['completed', 'pending'])).toMatchObject({ n: 1, current: { content: 't1' }, inProgress: false });
+		expect(p(['pending', 'pending'])).toMatchObject({ n: 1, current: { content: 't0' } });
+		expect(p(['completed', 'completed'])).toMatchObject({ done: 2, n: 2, current: null });
+	});
+
+	test('plan text and edit stats', () => {
+		expect(planOf({ plan: '# Plan\n- a' })).toBe('# Plan\n- a');
+		expect(planOf({ plan: '  ' })).toBeNull();
+		expect(editOf('Edit', { file_path: '/r/a.ts', old_string: 'a\nb', new_string: 'c' })).toEqual({ path: '/r/a.ts', added: 1, removed: 2 });
+		expect(editOf('MultiEdit', { file_path: 'b.ts', edits: [{ old_string: 'x', new_string: 'y\nz' }, { old_string: '', new_string: 'w' }] })).toEqual({ path: 'b.ts', added: 3, removed: 1 });
+		expect(editOf('Write', { file_path: 'c.ts', content: '1\n2\n3' })).toEqual({ path: 'c.ts', added: 3, removed: 0 });
+		expect(editOf('NotebookEdit', { notebook_path: 'n.ipynb', new_source: 'x' })).toEqual({ path: 'n.ipynb', added: 1, removed: 0 });
+		expect(editOf('Read', { file_path: 'a.ts' })).toBeNull();
+		expect(editOf('Edit', {})).toBeNull();
 	});
 });
