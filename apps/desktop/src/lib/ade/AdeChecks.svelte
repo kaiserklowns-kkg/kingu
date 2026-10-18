@@ -15,8 +15,9 @@
 	import { ask } from '#lib/workbench/messageBox.ts';
 	import { renderMarkdown } from '#lib/workbench/markdown.ts';
 	import { adeTasks } from './tasks.svelte';
-	import { checkKind, checkLabel, checkRank, fixPrompt, mergeLabel, reactionPills, REACTIONS, summarize, type Check, type Pr, type PrComment, type ReviewThread } from './checks';
+	import { checkKind, checkLabel, checkRank, mergeLabel, reactionPills, REACTIONS, summarize, type Check, type Pr, type PrComment, type ReviewThread } from './checks';
 	import { sessionAgo } from './agentsPanel';
+	import type { MergeMethod } from './prChecks.ts';
 
 	let { slug }: { slug: string } = $props();
 
@@ -56,6 +57,7 @@
 		{ id: 'rebase', label: 'Rebase and merge' }
 	];
 	let method = $state('squash');
+	let deleteBranch = $state(false);
 	let actionMenu = $state<{ x: number; y: number } | null>(null);
 	async function act(action: 'merge' | 'close' | 'reopen' | 'ready' | 'auto' | 'disableAuto') {
 		if (!pr) return;
@@ -64,8 +66,16 @@
 			if (!ok) return;
 		}
 		if (action === 'merge') {
-			const label = METHODS.find((x) => x.id === method)?.label ?? 'Merge';
-			if (!(await ask(`${label}: PR #${pr.number} into ${pr.baseRefName}?`, { title: 'Merge pull request', okLabel: 'Merge', cancelLabel: 'Cancel' }))) return;
+			// The task's merge (adeTasks.mergePr): it confirms, can delete the branch, and marks the task done.
+			busy = action;
+			actionError = '';
+			try {
+				await adeTasks.mergePr(slug, method as MergeMethod, deleteBranch);
+			} finally {
+				busy = null;
+				await refresh();
+			}
+			return;
 		}
 		busy = action;
 		actionError = '';
@@ -89,6 +99,7 @@
 			pr.autoMergeRequest ? menuItem('disableAuto', 'Disable auto-merge') : menuItem('auto', 'Enable auto-merge'),
 			menuSeparator,
 			...METHODS.map((x) => menuItem(`m:${x.id}`, x.label, { checked: method === x.id })),
+			menuItem('deleteBranch', 'Delete branch after merge', { checked: deleteBranch }),
 			menuSeparator,
 			menuItem('close', 'Close PR')
 		];
@@ -96,6 +107,7 @@
 	function runAction(id: string) {
 		if (id === 'close' || id === 'auto' || id === 'disableAuto') void act(id);
 		else if (id.startsWith('m:')) method = id.slice(2);
+		else if (id === 'deleteBranch') deleteBranch = !deleteBranch;
 	}
 
 	// --- Title edit ---------------------------------------------------------------------------
@@ -134,16 +146,10 @@
 	async function fix() {
 		if (!pr || !slug || !failing.length) return;
 		busy = 'fix';
-		const withLogs = await Promise.all(
-			failing.slice(0, 5).map(async (c) => {
-				const url = c.detailsUrl ?? c.targetUrl;
-				const log = url ? await invoke<string>('gh_check_log', { slug, url }).catch(() => '') : '';
-				return { name: c.name ?? c.context ?? 'check', url, log };
-			})
-		);
+		actionError = '';
 		try {
-			await adeTasks.followUp(slug, fixPrompt(pr, withLogs));
-			status.flash('Started an AI agent for the broken checks.', 4000);
+			// adeTasks.fixChecks: the failed jobs' log tails in Orca's prompt, sent to the task's agent.
+			await adeTasks.fixChecks(slug);
 		} catch (e) {
 			actionError = String(e);
 		}
@@ -203,8 +209,8 @@
 	async function resolveThread(t: ReviewThread) {
 		busy = `thread:${t.id}`;
 		try {
-			await invoke('gh_thread_resolve', { slug: slug || null, thread: t.id, resolve: !t.isResolved });
-			t.isResolved = !t.isResolved;
+			await adeTasks.resolveThread(slug, t.id, !t.isResolved);
+			await loadThreads();
 		} catch {
 			actionError = 'Could not update review thread. Check the GitHub API budget.';
 		}

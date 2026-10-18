@@ -528,18 +528,6 @@ async fn gh_review_threads(ws: State<'_, Workspace>, slug: Option<String>, numbe
   .await
 }
 
-/// Resolves or reopens a review thread.
-#[tauri::command]
-async fn gh_thread_resolve(ws: State<'_, Workspace>, slug: Option<String>, thread: String, resolve: bool) -> Result<(), String> {
-  let root = git_dir(&ws, slug.as_deref())?;
-  blocking(move || {
-    let m = if resolve { "resolveReviewThread" } else { "unresolveReviewThread" };
-    let query = format!("mutation($id:ID!){{{m}(input:{{threadId:$id}}){{thread{{id}}}}}}");
-    gh_run(&root, &["api", "graphql", "-f", &format!("id={thread}"), "-f", &format!("query={query}")]).map(|_| ())
-  })
-  .await
-}
-
 /// Replies inside a review thread.
 #[tauri::command]
 async fn gh_reply_thread(ws: State<'_, Workspace>, slug: Option<String>, thread: String, body: String) -> Result<(), String> {
@@ -1237,7 +1225,6 @@ pub fn run() {
       claude_sessions,
       gh_pr_create,
       gh_review_threads,
-      gh_thread_resolve,
       gh_reply_thread,
       gh_react,
       delete_claude_session,

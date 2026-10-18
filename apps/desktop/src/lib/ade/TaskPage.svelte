@@ -284,7 +284,8 @@
 						{#if busy}<p class="text-(--vscode-editorInfo-foreground)">{busy}…</p>{/if}
 					</div>
 
-					{#if adeTasks.gh?.authenticated && !embedded}
+					<!-- In the Agents layout the PR lives in the Checks tab (AdeChecks); the full task page keeps it here. -->
+					{#if adeTasks.gh?.authenticated && !embedded && sections === 'all'}
 						<div class="border-t border-(--vscode-widget-border) px-3 py-3"><PrChecks {slug} /></div>
 					{/if}
 				{:else}
