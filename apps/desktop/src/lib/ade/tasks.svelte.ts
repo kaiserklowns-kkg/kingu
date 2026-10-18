@@ -57,6 +57,7 @@ import { mcpServers, skillPlugins } from './mcp';
 import { prStatuses } from './prStatus.svelte';
 import { quickOpenWorktree } from './quickOpen.svelte.ts';
 import { diffNotes } from './diffNotes.svelte.ts';
+import { pruneAcceptedHunks, sameMarks } from './hunkReview.ts';
 import { adeDialogs } from './dialogs.svelte.ts';
 import { prefillPr, prFormProblem, type Commit, type PrForm } from './prForm.ts';
 import { isLinear, issueLink, issuePrompt, issueRef, issueSlug, issueTaskTitle, prBody, prComment, taskForIssue, type Issue, type IssueDetail } from './issues.ts';
@@ -219,7 +220,8 @@ class AdeTasks {
 			this.stats[slug] = stat;
 			delete this.statErrors[slug];
 			const accepted = pruneAccepted(meta.accepted, stat.files);
-			if (accepted.length !== meta.accepted.length) await this.#patch(slug, { accepted });
+			const accepted_hunks = pruneAcceptedHunks(meta.accepted_hunks, stat.files);
+			if (accepted.length !== meta.accepted.length || !sameMarks(meta.accepted_hunks, accepted_hunks)) await this.#patch(slug, { accepted, accepted_hunks });
 			return stat;
 		} catch (e) {
 			this.statErrors[slug] = String(e);
@@ -756,19 +758,47 @@ class AdeTasks {
 		return this.#save(toggleAccepted(this.list, slug, path, Date.now()));
 	}
 
-	/** Restores files from the base after confirming; `paths` includes a rename's source. */
-	async reject(slug: string, paths: string[], label: string) {
+	/** Accepted file and hunk marks from the hunkReview.ts reducers (saved like toggleAccept). */
+	setReviewMarks(slug: string, marks: Pick<TaskMeta, 'accepted' | 'accepted_hunks'>) {
+		return this.#patch(slug, marks);
+	}
+
+	/** Drops hunk marks of `path` that are not among its `live` hunk ids any more. */
+	pruneHunkMarks(slug: string, path: string, live: string[]) {
 		const meta = this.list.find((t) => t.slug === slug);
-		if (!meta || !paths.length) return;
+		const stat = this.stats[slug];
+		if (!meta || !stat) return;
+		const next = pruneAcceptedHunks(meta.accepted_hunks, stat.files, path, live);
+		if (!sameMarks(meta.accepted_hunks, next)) return this.#patch(slug, { accepted_hunks: next });
+	}
+
+	/** Takes back hunks `ids` of `path` (no confirmation: one change at a time, like VS Code's Undo this Change). */
+	async rejectHunks(slug: string, path: string, ids: string[]): Promise<boolean> {
+		const stat = this.stats[slug];
+		const meta = this.list.find((t) => t.slug === slug);
+		if (!meta || !ids.length) return false;
+		const n = await this.#step(slug, 'ปฏิเสธการเปลี่ยนแปลง', () => invoke<number>('worktree_reject_hunks', { slug, base: stat?.base ?? meta.base, path, ids }));
+		await this.refreshStat(slug);
+		return n !== undefined;
+	}
+
+	/** Restores files from the base after confirming; `paths` includes a rename's source. True when
+	 * confirmed. `confirmEmpty`: ask even without paths (the caller then takes back hunks). */
+	async reject(slug: string, paths: string[], label: string, confirmEmpty = false): Promise<boolean> {
+		const meta = this.list.find((t) => t.slug === slug);
+		if (!meta || (!paths.length && !confirmEmpty)) return false;
 		const ok = await ask(`ทิ้งการเปลี่ยนแปลงของ ${label} ใน worktree ${slug}?\n\nไฟล์จะกลับเป็นแบบใน ${meta.base} (ไฟล์ที่เพิ่มใหม่จะถูกลบ) กู้คืนไม่ได้`, {
 			title: 'ปฏิเสธการเปลี่ยนแปลง',
 			kind: 'warning',
 			okLabel: 'ทิ้งการเปลี่ยนแปลง',
 			cancelLabel: 'ยกเลิก'
 		});
-		if (!ok) return;
-		await this.#step(slug, 'ปฏิเสธไฟล์', () => invoke('worktree_reject', { slug, base: meta.base, paths }));
-		await this.refreshStat(slug);
+		if (!ok) return false;
+		if (paths.length) {
+			await this.#step(slug, 'ปฏิเสธไฟล์', () => invoke('worktree_reject', { slug, base: meta.base, paths }));
+			await this.refreshStat(slug);
+		}
+		return true;
 	}
 
 	async commit(slug: string, msg: string) {

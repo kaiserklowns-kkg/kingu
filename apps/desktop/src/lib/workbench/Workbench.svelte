@@ -58,6 +58,7 @@
 	import { installTerminalSessions } from './terminalSessions.svelte';
 	import { installTerminalCommands, panelTerminalFocus } from '#lib/terminal/terminalCommands.svelte.ts';
 	import { adeInFront, installAdeCommands } from '#lib/ade/adeCommands.svelte.ts';
+	import { installHunkCommands } from '#lib/ade/hunkReview.svelte.ts';
 	import { accounts } from '#lib/accounts/accounts.svelte.ts';
 	import SettingsPage from '#lib/settings/SettingsPage.svelte';
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
@@ -314,6 +315,7 @@
 		const uninstallTerminalSessions = installTerminalSessions();
 		const uninstallTerminalCommands = installTerminalCommands();
 		const uninstallAdeCommands = installAdeCommands();
+		const uninstallHunkCommands = installHunkCommands();
 		const uninstallDebug = installDebug();
 		const uninstallBreadcrumbs = installBreadcrumbs();
 		const uninstallProblemsSettings = installProblemsSettings();
@@ -338,6 +340,7 @@
 			uninstallBreadcrumbs();
 			uninstallDebug();
 			uninstallAdeCommands();
+			uninstallHunkCommands();
 			uninstallTerminalCommands();
 			uninstallTerminalSessions();
 			uninstallSnaps();

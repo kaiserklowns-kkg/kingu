@@ -37,6 +37,9 @@ export type Command = {
 	keyWhen?: () => boolean;
 	/** A key bound outside this registry (Monaco's own keybinding of an editor action), for display only. */
 	ownerKey?: () => string | undefined;
+	/** A default key of a higher weight wins over one of a lower weight on the same key while both
+	 * are enabled (VS Code's KeybindingWeight), e.g. a review key over New File. Defaults to 0. */
+	weight?: number;
 	run: () => unknown;
 };
 
@@ -97,7 +100,8 @@ export function installKeybindings(): () => void {
 				return { cmd, parts: splitKeybinding(key), user, when: user ? when.get(whenKey(cmd.id, key)) : undefined };
 			})
 		);
-		return [...all.filter((b) => b.user), ...all.filter((b) => !b.user)];
+		const byWeight = (list: Binding[]) => list.sort((a, b) => (b.cmd.weight ?? 0) - (a.cmd.weight ?? 0));
+		return [...byWeight(all.filter((b) => b.user)), ...byWeight(all.filter((b) => !b.user))];
 	};
 	const runByKey = (cmd: Command) => {
 		commands.lastKeyRun = { id: cmd.id, at: performance.now() };
