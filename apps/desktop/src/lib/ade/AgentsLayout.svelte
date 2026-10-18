@@ -28,7 +28,7 @@
 	import { adeLayout, PRIMARY, type RightTab } from './adeLayout.svelte';
 	import { adeTasks } from './tasks.svelte';
 	import { untrack } from 'svelte';
-	import { cliName, cliOf, cliResume, type RunMode } from './agentCli';
+	import { cliName, cliOf, cliResume, isClaude, type RunMode } from './agentCli';
 	import { cliSessions } from './cliSessions.svelte';
 	import { BUTTON, BUTTON_SECONDARY, STATUS_DOT } from './ui';
 	import { STATUS_LABEL, timeAgo } from './model';
@@ -46,7 +46,8 @@
 	const activeFile = $derived(keyOfTabId(activeTab));
 	/** The selected task runs its agent CLI in a terminal (the Orca way). */
 	const cli = $derived(slug ? cliOf(adeTasks.find(slug)?.meta.agent ?? '') : null);
-	const resume = $derived(cli ? cliResume(cli) : null);
+	/** claude resumes its own session (id saved at start); other CLIs their latest one where they can. */
+	const resume = $derived(cli ? (isClaude(cli) || cliResume(cli)) : null);
 
 	// The folder's "new task" composer (Orca: a new worktree with an agent).
 	let draft = $state('');
@@ -64,10 +65,12 @@
 		});
 	});
 
-	// A removed task's terminals close with it.
+	// A removed task's terminals and agent CLI close with it (also a task of the previous folder,
+	// or one removed while the page was reloading).
 	$effect(() => {
 		if (!adeTasks.loaded) return;
 		for (const k of new Set([...Object.keys(adeLayout.terminals), ...Object.keys(adeLayout.files)])) if (k !== PRIMARY && !adeTasks.find(k)) adeLayout.drop(k);
+		for (const s of Object.keys(cliSessions.sessions)) if (!adeTasks.find(s)) untrack(() => cliSessions.end(s));
 	});
 
 	// Another folder: the old folder's file tabs close, like the IDE's editors.
@@ -151,7 +154,7 @@
 							<p>{cliName(cli)} ของงานนี้ไม่ได้รันอยู่</p>
 							<p class="text-xs text-(--vscode-descriptionForeground)">งานรันใน terminal ของ worktree <span class="font-mono">kingu/{slug}</span></p>
 							<div class="flex justify-center gap-2">
-								{#if resume}<button class={BUTTON} onclick={() => adeTasks.resumeCli(slug)}>ทำงานต่อ ({resume.join(' ')})</button>{/if}
+								{#if resume}<button class={BUTTON} onclick={() => adeTasks.resumeCli(slug)}>ทำงานต่อใน session เดิม</button>{/if}
 								<button class={resume ? BUTTON_SECONDARY : BUTTON} onclick={() => adeTasks.resumeCli(slug, true)}>เริ่ม {cli.join(' ')} ใหม่</button>
 							</div>
 						</div>
@@ -228,13 +231,13 @@
 		<!-- Agent CLIs (each task's main tab when it runs the Orca way), then every worktree's terminals. -->
 		{#each Object.entries(cliSessions.sessions) as [s, sess] (s + sess.startedAt)}
 			<div class={['absolute inset-0 bg-(--vscode-terminal-background,var(--vscode-panel-background))', (adeLayout.board || s !== key || activeTab !== 'main') && 'hidden']}>
-				<Terminal slug={s} run={sess.run} onoutput={() => cliSessions.output(s)} />
+				<Terminal key={cliSessions.ptyKey(s, sess.startedAt)} slug={s} run={cliSessions.runOf(s)} onoutput={() => cliSessions.output(s)} />
 			</div>
 		{/each}
 		{#each Object.entries(adeLayout.terminals) as [k, list] (k)}
 			{#each list as t (t.id)}
 				<div class={['absolute inset-0 bg-(--vscode-terminal-background,var(--vscode-panel-background))', (adeLayout.board || k !== key || activeTab !== t.id) && 'hidden']}>
-					<Terminal slug={k || undefined} run={t.run} />
+					<Terminal key={adeLayout.ptyKey(k, t.id)} slug={k || undefined} run={t.run} />
 				</div>
 			{/each}
 		{/each}

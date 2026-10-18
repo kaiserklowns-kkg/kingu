@@ -48,19 +48,20 @@ fn app_info(ws: State<'_, Workspace>) -> AppInfo {
 /// Status bar resources (memory, CPU, processes, terminals, keep-awake), polled by the webview.
 #[tauri::command]
 async fn system_stats(ptys: State<'_, pty::Ptys>, keep: State<'_, system::KeepAwake>) -> Result<system::Stats, String> {
-  Ok(system::stats(ptys.list(), &keep))
+  Ok(system::stats(ptys.terminals(), ptys.daemon_pid(), &keep))
 }
 
 /// Listening TCP ports for the status bar's Ports popup.
 #[tauri::command]
-async fn system_ports() -> Result<Vec<system::Port>, String> {
-  blocking(system::ports).await
+async fn system_ports(ptys: State<'_, pty::Ptys>) -> Result<Vec<system::Port>, String> {
+  let daemon = ptys.daemon_pid();
+  blocking(move || system::ports(daemon)).await
 }
 
 /// Stops a process Kingu started (Resource Manager / Ports "Stop Process").
 #[tauri::command]
-fn system_kill(pid: u32) -> Result<(), String> {
-  system::kill(pid)
+fn system_kill(ptys: State<'_, pty::Ptys>, pid: u32) -> Result<(), String> {
+  system::kill(pid, ptys.daemon_pid())
 }
 
 /// Opens `http://localhost:<port>` in the default browser.
@@ -196,16 +197,20 @@ async fn git_show_head(ws: State<'_, Workspace>, rel: String) -> Result<String, 
   blocking(move || git::show_head(&root, &rel)).await
 }
 
-#[tauri::command]
+/// Terminal session `key`: re-attaches to its live shell (`run` is not typed again), else starts one.
+#[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
 fn pty_spawn(
   ws: State<'_, Workspace>,
   ptys: State<'_, pty::Ptys>,
+  key: String,
   cols: u16,
   rows: u16,
   on_data: Channel<String>,
   slug: Option<String>,
   run: Option<Vec<String>>,
-) -> Result<u32, String> {
+) -> Result<kingu_ptyd::Attached, String> {
+  pty::validate_key(&key)?;
   // A task terminal starts in the task's worktree (the ADE's per-worktree terminals).
   // No folder open: the terminal starts in the home folder, like VS Code's empty window.
   let cwd = match slug {
@@ -219,9 +224,13 @@ fn pty_spawn(
     }
     None => ws.current().or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("/")),
   };
-  let id = pty::spawn_shell(&ptys, &cwd, cols, rows, on_data, run.as_deref())?;
-  log::info!("terminal {id} started ({cols}x{rows})");
-  Ok(id)
+  let attached = ptys.open(&key, &cwd, cols, rows, run.as_deref(), pty::channel_sink(on_data))?;
+  if attached.spawned {
+    log::info!("terminal {key} started ({cols}x{rows})");
+  } else {
+    log::info!("terminal {key} re-attached ({cols}x{rows})");
+  }
+  Ok(attached)
 }
 
 #[tauri::command]
@@ -409,6 +418,7 @@ fn fs_reveal(ws: State<'_, Workspace>, rel: String) -> Result<(), String> {
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
+    .plugin(tauri_plugin_notification::init())
     .manage(Workspace::default())
     .manage(watcher::FileWatcher::default())
     .manage(pty::Ptys::default())
@@ -430,6 +440,15 @@ pub fn run() {
       let recent = Recent::load(app.path().app_data_dir()?.join("recent.json"));
       let start = workspace::startup_root(recent.data().last.as_deref(), std::env::var_os("KINGU_WORKSPACE"));
       app.manage(recent);
+      let data = app.path().app_data_dir()?;
+      #[cfg(unix)]
+      let (runtime, uid) = (
+        std::env::var_os("XDG_RUNTIME_DIR").filter(|_| cfg!(target_os = "linux")).map(PathBuf::from),
+        kingu_ptyd::peer::own_uid(),
+      );
+      #[cfg(not(unix))]
+      let (runtime, uid) = (None, 0);
+      pty::Ptys::init(app.handle(), pty::daemon_dir(&data, runtime, &std::env::temp_dir(), uid));
       team::install(app)?;
       menu::install(app.handle());
       if let Some(root) = start
@@ -472,10 +491,16 @@ pub fn run() {
       pty::pty_write,
       pty::pty_resize,
       pty::pty_kill,
+      pty::pty_attach,
+      pty::pty_list,
+      pty::pty_backend,
       worktree_create,
       worktree_list,
       worktree_remove,
       agent::agent_start,
+      agent::hooks::agent_hook_settings,
+      agent::hooks::agent_hook_read,
+      agent::hooks::agent_hook_clear,
       agent::agent_send,
       agent::agent_answer_permission,
       agent::agent_interrupt,

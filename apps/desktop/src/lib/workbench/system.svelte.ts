@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { status } from './status.svelte';
 import { pushSample, type KeepAwakeMode } from './system';
 
-export type PtyInfo = { id: number; pid: number | null; cwd: string };
+export type PtyInfo = { id: string; pid: number | null; cwd: string };
 export type ProcessRow = { pid: number; ppid: number; rss_bytes: number; cpu: number; name: string };
 type Stats = {
 	memory_bytes: number | null;

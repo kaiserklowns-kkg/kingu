@@ -1,6 +1,6 @@
 // Tabs of one worktree in the Agents layout (pure, so `bun test` can cover it).
 
-import { fileOf, isTaskDiffKey, splitPath } from '#lib/workbench/scm.ts';
+import { fileOf, isDiffKey, splitPath } from '#lib/workbench/scm.ts';
 
 /** `title`: a task or agent name instead of "Terminal n"; `run`: the command typed into its shell. */
 export type TerminalTab = { id: string; n: number; title?: string; run?: string[] };
@@ -26,7 +26,7 @@ export function adeTabs(key: string, terminals: TerminalTab[], files: FileTab[] 
 		...terminals.map((t) => ({ id: t.id, kind: 'terminal' as const, label: t.title ?? `Terminal ${t.n}` })),
 		...files.map((f) => ({
 			id: fileTabId(f.key),
-			kind: isTaskDiffKey(f.key) ? ('diff' as const) : ('file' as const),
+			kind: isDiffKey(f.key) ? ('diff' as const) : ('file' as const),
 			label: splitPath(fileOf(f.key))[0],
 			key: f.key,
 			preview: f.preview

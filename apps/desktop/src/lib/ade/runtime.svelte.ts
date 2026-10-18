@@ -15,6 +15,22 @@ import { cliSessions } from './cliSessions.svelte';
 function cliRuntime(slug: string): TaskRuntime | undefined {
 	const s = cliSessions.sessions[slug];
 	if (!s) return;
+	// claude reports its state through hooks; other CLIs fall back to "printing = working".
+	const hook = cliSessions.hooks[slug];
+	if (hook && hook.phase !== 'starting') {
+		const working = hook.phase === 'working';
+		return {
+			slug,
+			status: hook.permission ? 'waiting' : working ? 'running' : 'review',
+			runStatus: hook.permission ? 'waiting' : working ? 'running' : hook.phase === 'ended' ? 'done' : 'idle',
+			live: hook.phase !== 'ended',
+			working,
+			lastEvent: hook.message,
+			pendingPermissions: hook.permission ? 1 : 0,
+			sessionId: hook.sessionId ?? null,
+			updatedAt: hook.at
+		};
+	}
 	const working = cliSessions.working(slug);
 	return {
 		slug,

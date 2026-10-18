@@ -4,6 +4,7 @@
 //! Agents view.
 
 pub mod events;
+pub mod hooks;
 pub mod host;
 pub mod review;
 pub mod tasks;

@@ -187,6 +187,14 @@ export const SETTINGS: SettingSchema[] = [
 		description: 'วิธีรัน agent ของงานใหม่ใน Agents เลือกต่องานได้ตอนสร้าง (How new tasks run their agent; each task can pick when it is created.)'
 	},
 	{
+		id: 'kingu.agent.notifications',
+		group: 'Agent',
+		type: 'boolean',
+		default: true,
+		description:
+			'แจ้งเตือนของระบบเมื่อ agent รอคุณอนุญาต เสร็จรอบ หรือล้มเหลว ขณะที่คุณไม่ได้ดูหน้าต่าง Kingu (Show a system notification when an agent needs you while the window is not focused.)'
+	},
+	{
 		id: 'kingu.agent.cli',
 		group: 'Agent',
 		type: 'string',

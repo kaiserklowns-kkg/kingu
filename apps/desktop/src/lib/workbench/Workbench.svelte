@@ -37,10 +37,12 @@
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import AgentsLayout from '#lib/ade/AgentsLayout.svelte';
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
+	import { installTerminalSessions } from './terminalSessions.svelte';
 	import SettingsPage from '#lib/settings/SettingsPage.svelte';
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 	import { installAgentsMode } from '#lib/ade/agentsMode.svelte.ts';
 	import { installWorktreeCommands } from '#lib/ade/worktreeMenu.svelte.ts';
+	import { installAgentNotifications } from '#lib/ade/agentNotify.svelte.ts';
 	import { installSnaps } from '#lib/snaps/snaps.svelte.ts';
 
 	// Opening a file or diff (Quick Open, a review file, settings.json) closes the system settings page.
@@ -104,6 +106,8 @@
 			commands.register({ id: 'workbench.files.action.refreshFilesExplorer', title: 'Refresh Explorer', category: 'File', when: () => workspace.root !== null, run: () => explorer.refresh(['']) }),
 			commands.register({ id: 'workbench.files.action.collapseExplorerFolders', title: 'Collapse Folders in Explorer', category: 'File', when: () => workspace.root !== null, run: () => explorer.collapseAll() }),
 			commands.register({ id: 'workbench.action.quickOpen', title: 'Go to File...', key: 'cmd+p', run: () => quick.show('') }),
+			// VS Code's Developer: Reload Window; terminals and agent CLIs re-attach (they live in Rust).
+			commands.register({ id: 'workbench.action.reloadWindow', title: 'Reload Window', category: 'Developer', run: () => location.reload() }),
 			commands.register({ id: 'workbench.action.showCommands', title: 'Show All Commands', key: 'cmd+shift+p', palette: false, run: () => quick.show('>') }),
 			// In Agents mode ⌘B / ⌘J toggle the sessions side bar and the changes panel instead.
 			commands.register({
@@ -188,13 +192,17 @@
 		const uninstallAde = installAde();
 		const uninstallAgentsMode = installAgentsMode();
 		const uninstallWorktreeCommands = installWorktreeCommands();
+		const uninstallAgentNotifications = installAgentNotifications();
 		const uninstallLayout = installLayoutCommands();
 		const uninstallSnaps = installSnaps();
+		const uninstallTerminalSessions = installTerminalSessions();
 		return () => {
+			uninstallTerminalSessions();
 			uninstallSnaps();
 			uninstallLayout();
 			uninstallAgentsMode();
 			uninstallWorktreeCommands();
+			uninstallAgentNotifications();
 			uninstallAde();
 			uninstallMenu();
 			uninstall();

@@ -71,6 +71,15 @@ fn parse_ps(text: &str) -> Vec<Proc> {
     .collect()
 }
 
+/// Kingu and every process below it, plus the terminal daemon's tree (it is not our child).
+fn kingu_tree(rows: &[Proc], daemon: Option<u32>) -> HashSet<u32> {
+  let mut ours = tree(rows, std::process::id());
+  if let Some(d) = daemon {
+    ours.extend(tree(rows, d));
+  }
+  ours
+}
+
 /// `root` and every process below it.
 fn tree(rows: &[Proc], root: u32) -> HashSet<u32> {
   let mut seen = HashSet::from([root]);
@@ -130,13 +139,14 @@ impl KeepAwake {
   }
 }
 
-pub fn stats(terminals: Vec<PtyInfo>, keep: &KeepAwake) -> Stats {
+/// `daemon`: the terminal daemon's pid, whose shells and agent CLIs count as Kingu's.
+pub fn stats(terminals: Vec<PtyInfo>, daemon: Option<u32>, keep: &KeepAwake) -> Stats {
   let keep_awake = cfg!(target_os = "macos").then(|| keep.is_on());
   let Some(rows) = ps() else {
     return Stats { memory_bytes: None, cpu_percent: None, terminals, processes: Vec::new(), keep_awake };
   };
   let me = std::process::id();
-  let ours = tree(&rows, me);
+  let ours = kingu_tree(&rows, daemon);
   let mine: Vec<&Proc> = rows.iter().filter(|p| ours.contains(&p.pid)).collect();
   let memory = mine.iter().map(|p| p.rss).sum::<u64>() * 1024;
   let cpu = mine.iter().map(|p| p.cpu).sum::<f32>();
@@ -173,12 +183,12 @@ fn parse_lsof(text: &str) -> Vec<(u32, String, String, u16)> {
 }
 
 /// TCP ports in LISTEN state, Kingu's own first, then by port. Empty where `lsof` is missing.
-pub fn ports() -> Result<Vec<Port>, String> {
+pub fn ports(daemon: Option<u32>) -> Result<Vec<Port>, String> {
   if !cfg!(unix) {
     return Err("port scan needs macOS or Linux".into());
   }
   let out = Command::new("lsof").args(["-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pcn"]).output().map_err(|e| format!("lsof: {e}"))?;
-  let ours = ps().map(|rows| tree(&rows, std::process::id())).unwrap_or_default();
+  let ours = ps().map(|rows| kingu_tree(&rows, daemon)).unwrap_or_default();
   let mut seen = HashSet::new();
   let mut ports: Vec<Port> = parse_lsof(&String::from_utf8_lossy(&out.stdout))
     .into_iter()
@@ -192,10 +202,10 @@ pub fn ports() -> Result<Vec<Port>, String> {
 
 /// SIGTERM to a process, but only one that runs under Kingu: the webview can never stop
 /// another app's process.
-pub fn kill(pid: u32) -> Result<(), String> {
+pub fn kill(pid: u32, daemon: Option<u32>) -> Result<(), String> {
   let rows = ps().ok_or("not supported here")?;
   let me = std::process::id();
-  if pid == me || !tree(&rows, me).contains(&pid) {
+  if pid == me || Some(pid) == daemon || !kingu_tree(&rows, daemon).contains(&pid) {
     return Err(format!("process {pid} was not started by Kingu"));
   }
   let ok = Command::new("kill").args(["-TERM", &pid.to_string()]).status().map_err(|e| e.to_string())?.success();
@@ -244,7 +254,9 @@ mod tests {
 
   #[test]
   fn refuses_to_kill_foreign_processes() {
-    assert!(kill(1).is_err());
-    assert!(kill(std::process::id()).is_err());
+    assert!(kill(1, None).is_err());
+    assert!(kill(std::process::id(), None).is_err());
+    // The terminal daemon itself is never stopped from here (only what runs under it).
+    assert!(kill(4242, Some(4242)).is_err());
   }
 }

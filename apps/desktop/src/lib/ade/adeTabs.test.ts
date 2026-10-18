@@ -25,6 +25,9 @@ describe('adeTabs', () => {
 			{ id: 'f:taskdiff://x/src/b.ts', kind: 'diff', label: 'b.ts', key: 'taskdiff://x/src/b.ts', preview: false }
 		]);
 	});
+	test("the folder's own working-tree diffs are diff tabs too", () => {
+		expect(adeTabs('', [], [{ key: 'diff:src/c.ts', preview: true }])[1]).toMatchObject({ kind: 'diff', label: 'c.ts' });
+	});
 	test('a file named like a terminal id gets its own tab id', () => {
 		expect(keyOfTabId(fileTabId('t1'))).toBe('t1');
 		expect(keyOfTabId('t1')).toBeNull();

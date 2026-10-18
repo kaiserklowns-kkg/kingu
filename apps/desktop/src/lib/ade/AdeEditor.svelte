@@ -5,6 +5,7 @@
 </script>
 
 <script lang="ts">
+	import { editors } from '#lib/workbench/editors.svelte.ts';
 	// A file tab of the Agents layout: one Monaco editor on the IDE's shared text model of `path`
 	// (editorModels.ts), so edits, undo and dirty state are the same file in both layouts, and ⌘S
 	// goes through the IDE's Save command (it saves the ADE's active file while the ADE is in
@@ -22,6 +23,7 @@
 	onMount(() => {
 		let disposed = false;
 		let editor: MonacoTypes.editor.IStandaloneCodeEditor | undefined;
+		let unregister = () => {};
 		const file = path;
 		import('#lib/editor/monaco.ts')
 			.then(async (m) => {
@@ -46,6 +48,24 @@
 				// A reload from disk (the agent changed the file) is not the user's edit.
 				editor.onDidChangeModelContent(() => entry.reloading || onedit());
 				editor.focus();
+				const ed = editor;
+				unregister = editors.registerAdeEditor({
+					gotoLine: (line, column = 1) => {
+						ed.setPosition({ lineNumber: line, column });
+						ed.revealLineInCenter(line);
+						ed.focus();
+					},
+					selectionText: () => {
+						const sel = ed.getSelection();
+						return sel ? (ed.getModel()?.getValueInRange(sel) ?? '') : '';
+					},
+					focus: () => ed.focus(),
+					trigger: (actionId) => {
+						ed.focus();
+						ed.trigger('menu', actionId, null);
+						return true;
+					}
+				});
 			})
 			.catch((e) => {
 				clientLog('error', `open ${file} in the Agents layout: ${e}`);
@@ -53,6 +73,7 @@
 			});
 		return () => {
 			disposed = true;
+			unregister();
 			if (editor) views.set(file, editor.saveViewState());
 			// The model is shared and outlives this editor; only detach.
 			editor?.setModel(null);
