@@ -28,13 +28,27 @@ fn is_repo_root(dir: &Path) -> bool {
 /// `git init` in `dir`, plus an empty "Initial commit" when `initial_commit`. A failed commit
 /// removes the `.git` this created, so the folder is as it was (Orca).
 pub fn init(dir: &Path, initial_commit: bool) -> Result<(), String> {
+  init_with(dir, initial_commit, None)
+}
+
+/// [`init`] on `branch` (VS Code's `git.defaultBranchName`, `git init -b`); `None` keeps git's
+/// own `init.defaultBranch`.
+pub fn init_with(dir: &Path, initial_commit: bool, branch: Option<&str>) -> Result<(), String> {
+  let branch = branch.map(str::trim).filter(|b| !b.is_empty());
   if !dir.is_absolute() || !dir.is_dir() {
     return Err(format!("{}: ไม่ใช่โฟลเดอร์", dir.display()));
   }
   if is_repo_root(dir) {
     return Err(format!("{} เป็น git repository อยู่แล้ว", dir.display()));
   }
-  git(dir, &["init"]).map_err(|e| format!("git init ไม่สำเร็จ: {e}"))?;
+  let mut args = vec!["init"];
+  if let Some(b) = branch {
+    if b.starts_with('-') || crate::git::run(dir, &["check-ref-format", "--branch", b]).is_err() {
+      return Err(format!("ชื่อ branch เริ่มต้นไม่ถูกต้อง: {b:?} (git.defaultBranchName)"));
+    }
+    args.extend(["-b", b]);
+  }
+  git(dir, &args).map_err(|e| format!("git init ไม่สำเร็จ: {e}"))?;
   if !initial_commit {
     return Ok(());
   }
@@ -97,9 +111,9 @@ pub fn create(parent: &Path, name: &str) -> Result<PathBuf, String> {
 /// `git init` in the open folder (`initial_commit` from the ADE, which needs a branch to fork
 /// worktrees from).
 #[tauri::command]
-pub async fn git_init(ws: State<'_, Workspace>, initial_commit: Option<bool>) -> Result<(), String> {
+pub async fn git_init(ws: State<'_, Workspace>, initial_commit: Option<bool>, default_branch: Option<String>) -> Result<(), String> {
   let root = ws.root()?;
-  tauri::async_runtime::spawn_blocking(move || init(&root, initial_commit.unwrap_or(false))).await.map_err(|e| e.to_string())??;
+  tauri::async_runtime::spawn_blocking(move || init_with(&root, initial_commit.unwrap_or(false), default_branch.as_deref())).await.map_err(|e| e.to_string())??;
   log::info!("git init in the open folder");
   Ok(())
 }
@@ -144,6 +158,14 @@ mod tests {
     assert!(dir.join(".git").is_dir());
     assert!(crate::git::run(&dir, &["rev-parse", "--verify", "HEAD"]).is_err(), "no commit without initial_commit");
     assert!(init(&dir, false).unwrap_err().contains("อยู่แล้ว"));
+
+    let trunk = tmp.path().join("trunk");
+    std::fs::create_dir(&trunk).unwrap();
+    assert!(init_with(&trunk, false, Some("-x")).unwrap_err().contains("git.defaultBranchName"));
+    assert!(init_with(&trunk, false, Some("a b")).is_err());
+    init_with(&trunk, false, Some("trunk")).unwrap();
+    let head = crate::git::run(&trunk, &["symbolic-ref", "--short", "HEAD"]).unwrap();
+    assert_eq!(String::from_utf8_lossy(&head).trim(), "trunk");
 
     let ade = tmp.path().join("ade");
     std::fs::create_dir(&ade).unwrap();

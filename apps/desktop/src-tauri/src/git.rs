@@ -5,7 +5,42 @@
 //! [`check_rel`] first.
 
 use std::collections::HashSet;
-use std::path::{Component, Path};
+use std::ffi::OsString;
+use std::path::{Component, Path, PathBuf};
+use std::sync::RwLock;
+
+/// `git.path` (VS Code: a path, or a list tried in order; `null` finds `git` on PATH). Read by Rust
+/// itself from the user settings file (it picks a program to run, so never from the webview or a
+/// repository's own settings).
+static GIT_PROGRAM: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+/// The first `git.path` candidate that is an existing absolute file, else `None` (`git` from PATH).
+pub fn pick_git_path(setting: Option<&serde_json::Value>) -> Option<PathBuf> {
+  let candidates: Vec<&str> = match setting? {
+    serde_json::Value::String(s) => vec![s.as_str()],
+    serde_json::Value::Array(list) => list.iter().filter_map(|v| v.as_str()).collect(),
+    _ => vec![],
+  };
+  candidates.into_iter().map(str::trim).filter(|c| !c.is_empty()).map(PathBuf::from).find(|p| p.is_absolute() && p.is_file())
+}
+
+/// Re-reads `git.path` from the user settings in `config_dir`.
+pub fn load_git_path(config_dir: &Path) {
+  let picked = pick_git_path(crate::settings::user_value(config_dir, "git.path").as_ref());
+  if let Ok(mut slot) = GIT_PROGRAM.write() {
+    *slot = picked;
+  }
+}
+
+/// The git executable: `git.path` when set, else `git` from the login-shell PATH.
+pub fn program() -> OsString {
+  GIT_PROGRAM.read().ok().and_then(|p| p.clone()).map(PathBuf::into_os_string).unwrap_or_else(|| "git".into())
+}
+
+/// `crate::shell_env::command` for [`program`].
+pub fn command() -> std::process::Command {
+  crate::shell_env::command(program())
+}
 
 /// HEAD contents larger than this are not shown in a diff (matches `read_workspace_file`).
 const MAX_SHOW_BYTES: usize = 5 * 1024 * 1024;
@@ -77,7 +112,7 @@ pub fn mark_ignored(dir: &Path, entries: &mut [crate::fs::DirEntry]) {
   if entries.is_empty() {
     return;
   }
-  let Ok(mut child) = crate::shell_env::command("git")
+  let Ok(mut child) = command()
     .arg("-C")
     .arg(dir)
     .args(["check-ignore", "--stdin", "-z"])
@@ -121,7 +156,7 @@ fn mark_untracked_dirs(dir: &Path, entries: &mut [crate::fs::DirEntry]) {
 }
 
 pub(crate) fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-  let out = crate::shell_env::command("git")
+  let out = command()
     .arg("-C")
     .arg(root)
     .arg("--literal-pathspecs")
@@ -156,10 +191,43 @@ fn has_head(root: &Path) -> bool {
   run(root, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_ok()
 }
 
+/// How `git status` runs (VS Code: `git.similarityThreshold`, `git.ignoreSubmodules`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StatusOptions {
+  /// Rename detection threshold in percent (git's default is 50).
+  pub similarity_threshold: u8,
+  pub ignore_submodules: bool,
+}
+
+impl Default for StatusOptions {
+  fn default() -> Self {
+    Self { similarity_threshold: 50, ignore_submodules: false }
+  }
+}
+
+/// The `git status` arguments for `opts`.
+pub fn status_args(opts: &StatusOptions) -> Vec<String> {
+  let mut args: Vec<String> = ["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"].map(String::from).to_vec();
+  if opts.ignore_submodules {
+    args.push("--ignore-submodules".into());
+  }
+  if opts.similarity_threshold != 50 {
+    args.push(format!("--find-renames={}%", opts.similarity_threshold.min(100)));
+  }
+  args.extend(["--".into(), ".".into()]);
+  args
+}
+
 /// `None` outside a git repository.
 pub fn status(root: &Path) -> Result<Option<GitStatus>, String> {
+  status_with(root, &StatusOptions::default())
+}
+
+pub fn status_with(root: &Path, opts: &StatusOptions) -> Result<Option<GitStatus>, String> {
   let Some(prefix) = prefix(root) else { return Ok(None) };
-  let out = run(root, &["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all", "--", "."])?;
+  let args = status_args(opts);
+  let out = run(root, &args.iter().map(String::as_str).collect::<Vec<_>>())?;
   let mut st = parse_status(&String::from_utf8_lossy(&out), &prefix);
   st.remotes = remotes(root)?;
   Ok(Some(st))
@@ -268,7 +336,10 @@ pub fn unstage(root: &Path, paths: &[String]) -> Result<(), String> {
 
 /// Throws away working-tree changes (back to the index, like VS Code's "Discard Changes").
 /// Untracked files are deleted, which cannot be undone, so that needs `delete_untracked`.
-pub fn discard(root: &Path, paths: &[String], delete_untracked: bool) -> Result<(), String> {
+///
+/// `to_trash` (VS Code's `git.discardUntrackedChangesToTrash`) moves untracked files to the trash
+/// instead of deleting them.
+pub fn discard(root: &Path, paths: &[String], delete_untracked: bool, to_trash: bool) -> Result<(), String> {
   let Some(st) = status(root)? else { return Err("not a git repository".into()) };
   let untracked: HashSet<&str> =
     st.entries.iter().filter(|e| e.worktree.as_deref() == Some("?")).map(|e| e.path.as_str()).collect();
@@ -277,23 +348,59 @@ pub fn discard(root: &Path, paths: &[String], delete_untracked: bool) -> Result<
     return Err(format!("{}: untracked, deleting needs confirmation", new.join(", ")));
   }
   run_paths(root, &["restore", "--worktree"], &tracked)?;
+  if to_trash {
+    for rel in &new {
+      check_rel(root, rel)?;
+      trash::delete(root.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
+    }
+    return Ok(());
+  }
   // `git clean` only ever removes untracked files, so a racing `git add` cannot lose staged work.
   run_paths(root, &["clean", "-f", "-q"], &new)
 }
 
-pub fn commit(root: &Path, message: &str, amend: bool) -> Result<(), String> {
+/// Commit flags from VS Code's git settings and commands.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CommitOptions {
+  pub amend: bool,
+  /// `git.alwaysSignOff`: `--signoff`.
+  pub signoff: bool,
+  /// `git.enableCommitSigning`: `-S` (GPG, X.509 or SSH, per git's own config).
+  pub sign: bool,
+  /// Commit (No Verify), allowed by `git.allowNoVerifyCommit`: skips the pre-commit and commit-msg hooks.
+  pub no_verify: bool,
+  /// Commit Empty: `--allow-empty`.
+  pub empty: bool,
+}
+
+/// The `git commit` arguments for `opts` (before `-m`).
+pub fn commit_flags(opts: &CommitOptions) -> Vec<&'static str> {
+  let mut flags = vec!["commit", "-q", "--cleanup=strip"];
+  for (on, flag) in [(opts.amend, "--amend"), (opts.signoff, "--signoff"), (opts.sign, "-S"), (opts.no_verify, "--no-verify"), (opts.empty, "--allow-empty")] {
+    if on {
+      flags.push(flag);
+    }
+  }
+  flags
+}
+
+pub fn commit(root: &Path, message: &str, opts: &CommitOptions) -> Result<(), String> {
   if message.trim().is_empty() {
     return Err("commit message is empty".into());
   }
   // `git diff --cached --quiet` fails when something is staged (git's own message is a page of status).
-  if !amend && has_head(root) && run(root, &["diff", "--cached", "--quiet"]).is_ok() {
+  if !opts.amend && !opts.empty && has_head(root) && run(root, &["diff", "--cached", "--quiet"]).is_ok() {
     return Err("nothing staged to commit".into());
   }
-  let mut args = vec!["commit", "-q", "--cleanup=strip", "-m", message];
-  if amend {
-    args.push("--amend");
-  }
+  let mut args = commit_flags(opts);
+  args.extend(["-m", message]);
   run(root, &args).map(|_| ())
+}
+
+/// `git.requireGitUserConfig`: whether `user.name` and `user.email` are set for `root`.
+pub fn user_configured(root: &Path) -> bool {
+  ["user.name", "user.email"].iter().all(|k| run(root, &["config", "--get", k]).is_ok_and(|o| !String::from_utf8_lossy(&o).trim().is_empty()))
 }
 
 /// The HEAD version of `rel` for the diff editor; empty for files not in HEAD (added, untracked,
@@ -475,16 +582,82 @@ mod tests {
     let st = status(&repo).unwrap().unwrap();
     assert_eq!(codes(entry(&st, "a.txt")), (None, Some("M")));
 
-    assert!(commit(&repo, "  \n", false).is_err());
-    commit(&repo, "second", false).unwrap();
+    let plain = CommitOptions::default();
+    assert!(commit(&repo, "  \n", &plain).is_err());
+    commit(&repo, "second", &plain).unwrap();
     let st = status(&repo).unwrap().unwrap();
     assert_eq!(st.entries.len(), 1, "only the unstaged a.txt is left: {:?}", st.entries);
     assert_eq!(show_head(&repo, "n.txt").unwrap(), "new\n");
 
-    commit(&repo, "second, amended", true).unwrap();
+    commit(&repo, "second, amended", &CommitOptions { amend: true, ..plain }).unwrap();
     let log = Command::new("git").arg("-C").arg(&repo).args(["log", "--format=%s"]).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&log.stdout), "second, amended\ninit\n");
-    assert!(commit(&repo, "nothing staged", false).unwrap_err().contains("nothing"));
+    assert!(commit(&repo, "nothing staged", &plain).unwrap_err().contains("nothing"));
+
+    // git.alwaysSignOff and Commit Empty (git.confirmEmptyCommits asks first, in the webview).
+    commit(&repo, "empty", &CommitOptions { empty: true, signoff: true, ..plain }).unwrap();
+    let body = Command::new("git").arg("-C").arg(&repo).args(["log", "-1", "--format=%B"]).output().unwrap();
+    assert!(String::from_utf8_lossy(&body.stdout).contains("Signed-off-by: t <t@example.com>"), "{}", String::from_utf8_lossy(&body.stdout));
+  }
+
+  #[test]
+  fn commit_flags_follow_the_settings() {
+    assert_eq!(commit_flags(&CommitOptions::default()), ["commit", "-q", "--cleanup=strip"]);
+    let all = CommitOptions { amend: true, signoff: true, sign: true, no_verify: true, empty: true };
+    assert_eq!(commit_flags(&all), ["commit", "-q", "--cleanup=strip", "--amend", "--signoff", "-S", "--no-verify", "--allow-empty"]);
+  }
+
+  #[test]
+  fn no_verify_skips_the_pre_commit_hook() {
+    let (_tmp, repo) = temp_repo();
+    let hook = repo.join(".git/hooks/pre-commit");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write(&repo, "a.txt", "changed\n");
+    stage(&repo, &["a.txt".into()]).unwrap();
+    assert!(commit(&repo, "hooked", &CommitOptions::default()).is_err());
+    commit(&repo, "skipped", &CommitOptions { no_verify: true, ..Default::default() }).unwrap();
+  }
+
+  #[test]
+  fn status_args_follow_the_settings() {
+    let base = ["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all", "--", "."];
+    assert_eq!(status_args(&StatusOptions::default()), base);
+    let args = status_args(&StatusOptions { similarity_threshold: 80, ignore_submodules: true });
+    assert_eq!(args[5..7], ["--ignore-submodules", "--find-renames=80%"]);
+  }
+
+  #[test]
+  fn similarity_threshold_changes_rename_detection() {
+    let (_tmp, repo) = temp_repo();
+    std::fs::rename(repo.join("a.txt"), repo.join("moved.txt")).unwrap();
+    // 9 of 10 lines kept: a rename at 50%, a delete + add at 95%.
+    let text: String = (0..10).map(|i| format!("line {i}\n")).collect();
+    write(&repo, "moved.txt", &text);
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "ten"]);
+    std::fs::rename(repo.join("moved.txt"), repo.join("again.txt")).unwrap();
+    write(&repo, "again.txt", &text.replace("line 9", "changed"));
+    git(&repo, &["add", "-A"]);
+    let renamed = |t| status_with(&repo, &StatusOptions { similarity_threshold: t, ignore_submodules: false }).unwrap().unwrap().entries.iter().any(|e| e.orig_path.is_some());
+    assert!(renamed(50));
+    assert!(!renamed(95));
+  }
+
+  #[test]
+  fn reads_user_configuration_and_git_path() {
+    let (_tmp, repo) = temp_repo();
+    assert!(user_configured(&repo));
+    git(&repo, &["config", "user.email", ""]);
+    assert!(!user_configured(&repo));
+    let file = repo.join("a.txt");
+    let list = serde_json::json!(["relative/git", "/no/such/git", file.to_str().unwrap()]);
+    assert_eq!(pick_git_path(Some(&list)), Some(file.clone()));
+    assert_eq!(pick_git_path(Some(&serde_json::json!(null))), None);
+    assert_eq!(pick_git_path(Some(&serde_json::json!("/no/such/git"))), None);
+    assert_eq!(pick_git_path(None), None);
   }
 
   #[test]
@@ -506,9 +679,9 @@ mod tests {
     write(&repo, "a.txt", "changed\n");
     write(&repo, "u.txt", "u\n");
     let both = ["a.txt", "u.txt"].map(String::from);
-    assert!(discard(&repo, &both, false).unwrap_err().contains("u.txt"));
+    assert!(discard(&repo, &both, false, false).unwrap_err().contains("u.txt"));
     assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), "changed\n", "nothing discarded on refusal");
-    discard(&repo, &both, true).unwrap();
+    discard(&repo, &both, true, false).unwrap();
     assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), "a.txt\n");
     assert!(!repo.join("u.txt").exists());
     assert!(status(&repo).unwrap().unwrap().entries.is_empty());

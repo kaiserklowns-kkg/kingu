@@ -44,6 +44,21 @@ export function defaultParents(home: string): { clone: string; project: string }
 	return { clone: `${h}/kingu`, project: `${h}/kingu/projects` };
 }
 
+/** `git.defaultCloneDirectory` (`~` is the home folder), else Kingu's default. */
+export function cloneParent(setting: string | null | undefined, home: string): string {
+	const dir = (setting ?? '').trim();
+	if (!dir) return defaultParents(home).clone;
+	return dir === '~' ? home : dir.startsWith('~/') ? `${home.replace(/\/+$/, '')}/${dir.slice(2)}` : dir;
+}
+
+/** `git.openAfterClone`: open the clone, ask first, or leave the current folder open. */
+export function afterClone(mode: string, folderOpen: boolean): 'open' | 'ask' | 'stay' {
+	// Kingu has one window: alwaysNewWindow opens the clone in it.
+	if (mode === 'always' || mode === 'alwaysNewWindow') return 'open';
+	if (mode === 'whenNoFolderOpen') return folderOpen ? 'stay' : 'open';
+	return 'ask';
+}
+
 export type CloneProgress = { phase: string; percent: number };
 
 /** `Receiving objects 42%`. */

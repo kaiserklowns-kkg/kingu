@@ -5,6 +5,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { clientLog } from '#lib/client-log.ts';
 import { groups, type GitStatus, type ScmSource } from '#lib/workbench/scm.ts';
+import { commitOptions, fetchOptions, pullOptions, pushOptions } from '#lib/workbench/scmSettings.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
@@ -75,13 +76,21 @@ export class WorktreeRepo implements ScmSource {
 	}
 
 	discard(paths: string[], deleteUntracked: boolean) {
-		return this.#run('git_discard', { paths, deleteUntracked });
+		return this.#run('git_discard', { paths, deleteUntracked, toTrash: settings.get<boolean>('git.discardUntrackedChangesToTrash') });
 	}
 
 	/** Push (publishing the task branch to origin the first time), pull, fetch or sync, in the worktree. */
 	async remote(op: 'push' | 'pull' | 'fetch' | 'sync'): Promise<boolean> {
-		const rebase = settings.get<boolean>('git.pullRebase') === true;
-		const args = op === 'pull' || op === 'sync' ? { rebase } : {};
+		// VS Code's git settings, as in the folder's Source Control (scmSettings.ts).
+		const get = <T>(id: string) => settings.get<T>(id);
+		const args =
+			op === 'pull'
+				? { options: pullOptions(get) }
+				: op === 'sync'
+					? { options: pullOptions(get, { sync: true }), pushOptions: pushOptions(get, { sync: true }) }
+					: op === 'fetch'
+						? { options: fetchOptions(get) }
+						: { options: pushOptions(get) };
 		const ok = await this.#run(`git_${op}`, args);
 		if (ok) status.flash(`${op} ${this.repo?.branch ?? this.slug} แล้ว`);
 		return ok;
@@ -97,7 +106,7 @@ export class WorktreeRepo implements ScmSource {
 			status.flash(this.groups.changes.length ? 'ยังไม่มีไฟล์ที่ stage: กด + ที่ไฟล์ก่อน commit' : 'ไม่มีการเปลี่ยนแปลงให้ commit');
 			return;
 		}
-		if (await this.#run('git_commit', { message, amend })) {
+		if (await this.#run('git_commit', { message, options: commitOptions((id) => settings.get(id), { amend }) })) {
 			this.message = '';
 			status.flash(amend ? `แก้ commit ล่าสุดใน ${this.repo?.branch ?? this.slug} แล้ว` : `commit ใน ${this.repo?.branch ?? this.slug} แล้ว`);
 		}

@@ -1,5 +1,18 @@
 import { describe, expect, test } from 'bun:test';
-import { cloneUrlError, defaultParents, progressLabel, projectNameError, repoNameFromUrl } from './repoDialog.ts';
+import { afterClone, cloneParent, cloneUrlError, defaultParents, progressLabel, projectNameError, repoNameFromUrl } from './repoDialog.ts';
+
+test('git.defaultCloneDirectory and git.openAfterClone', () => {
+	expect(cloneParent(null, '/Users/me')).toBe('/Users/me/kingu');
+	expect(cloneParent('  ', '/Users/me')).toBe('/Users/me/kingu');
+	expect(cloneParent('~/src', '/Users/me/')).toBe('/Users/me/src');
+	expect(cloneParent('~', '/Users/me')).toBe('/Users/me');
+	expect(cloneParent('/work', '/Users/me')).toBe('/work');
+	expect(afterClone('always', true)).toBe('open');
+	expect(afterClone('alwaysNewWindow', true)).toBe('open');
+	expect(afterClone('whenNoFolderOpen', true)).toBe('stay');
+	expect(afterClone('whenNoFolderOpen', false)).toBe('open');
+	expect(afterClone('prompt', false)).toBe('ask');
+});
 
 describe('clone dialog', () => {
 	test('accepts https, ssh and scp-like URLs only', () => {
