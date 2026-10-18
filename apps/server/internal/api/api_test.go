@@ -91,6 +91,10 @@ func setup() (cleanup func(), err error) {
 	bin, ok := findPGBin()
 	if !ok {
 		skipReason = "PostgreSQL binaries (initdb, pg_ctl, postgres) not found; set KINGU_PG_BIN"
+		// CI sets KINGU_REQUIRE_DB so a missing PostgreSQL fails instead of skipping every test.
+		if os.Getenv("KINGU_REQUIRE_DB") != "" {
+			return cleanup, errors.New(skipReason)
+		}
 		return cleanup, nil
 	}
 	// Short base dir: Unix socket paths are limited to ~103 bytes on macOS.
