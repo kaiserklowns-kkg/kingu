@@ -12,11 +12,12 @@ export const SIDEBAR_SETTINGS: SettingSchema[] = [
 		group: G,
 		type: 'string',
 		default: 'repo',
-		enum: ['repo', 'none', 'workspace-status', 'pr-status'],
+		enum: ['repo', 'none', 'workspace-status', 'workflow', 'pr-status'],
 		enumDescriptions: [
 			'กลุ่มละโปรเจกต์ ทุกโปรเจกต์ที่เพิ่มไว้ (One group per added project.)',
 			'รายการเดียว (One list.)',
 			'แบ่งตามสถานะงาน: รอคุณ / กำลังทำ / เสร็จแล้ว (By task status.)',
+			'แบ่งตามคอลัมน์ขั้นตอนงานของบอร์ด: ต้องทำ / กำลังทำ / รอรีวิว / เสร็จแล้ว (By the board\'s workflow columns.)',
 			'แบ่งตามสถานะ PR: เปิด / ร่าง / merge แล้ว / ปิด / ไม่มี PR (By pull request state.)'
 		],
 		description: 'จัดกลุ่ม worktree ในแถบข้างของ Agents ค่าเริ่มต้นตาม Orca คือตามโปรเจกต์ (How the Agents side bar groups worktrees; Orca groups by project.)'
@@ -128,6 +129,35 @@ export const SIDEBAR_SETTINGS: SettingSchema[] = [
 		minimum: 0.3,
 		maximum: 1,
 		description: 'ความทึบของพื้นคอลัมน์ในบอร์ดงาน (Orca: workspaceBoardOpacity) (Opacity of the task board columns.)'
+	},
+	{
+		id: 'kingu.board.view',
+		group: G,
+		type: 'string',
+		default: 'workflow',
+		enum: ['workflow', 'agent'],
+		enumDescriptions: [
+			'คอลัมน์ขั้นตอนงานที่คุณย้ายงานไปมาเอง เช่น ต้องทำ / กำลังทำ / รอรีวิว / เสร็จแล้ว (Workflow columns you move tasks between.)',
+			'คอลัมน์ตามสถานะ agent: รอคุณ / กำลังทำ / เสร็จแล้ว (Columns from the agent status.)'
+		],
+		description: 'คอลัมน์ของบอร์ดงาน ค่าเริ่มต้นตาม Orca คือขั้นตอนงาน (Which columns the task board shows; Orca shows workflow statuses.)'
+	},
+	{
+		id: 'kingu.board.statuses',
+		group: G,
+		type: 'array',
+		items: 'string',
+		default: ['todo', 'in-progress', 'in-review', 'completed'],
+		description:
+			'คอลัมน์ขั้นตอนงานของบอร์ดตามลำดับ: todo, in-progress, in-review, completed หรือชื่อคอลัมน์ของคุณเอง สูงสุด 12 คอลัมน์ (Orca: workspaceStatuses) (The board\'s workflow columns in order: the built-in ids or your own column names, at most 12.)'
+	},
+	{
+		id: 'kingu.board.autoStatus',
+		group: G,
+		type: 'boolean',
+		default: true,
+		description:
+			'ย้ายงานไปข้างหน้าตาม pull request: เปิด PR แล้วไป "รอรีวิว" merge แล้วไป "เสร็จแล้ว" ไม่ย้ายงานถอยหลัง (Move tasks forward with their pull request: open goes to In review, merged to Done; never backwards.)'
 	},
 	// --- Repository display (Orca: per-repo display name, badge color, icon)
 	{

@@ -770,16 +770,20 @@ fn worktree_list(ws: State<'_, Workspace>, projects: State<'_, projects::Project
 }
 
 /// `delete_branch`: `keep` (default), `safe` (`git branch -d`) or `force`; returns the branch a
-/// safe delete kept because it is not merged.
+/// safe delete kept because it is not merged. Off the main thread: deleting a big worktree
+/// (node_modules) takes a while, and the window must keep working meanwhile.
 #[tauri::command]
-fn worktree_remove(
+async fn worktree_remove(
   ws: State<'_, Workspace>,
   slug: String,
   force: Option<bool>,
   delete_branch: Option<String>,
 ) -> Result<Option<String>, String> {
   let branch = agent::worktree::DeleteBranch::parse(delete_branch.as_deref())?;
-  agent::worktree::remove(&ws.root()?, &slug, force.unwrap_or(false), branch)
+  let root = ws.root()?;
+  tauri::async_runtime::spawn_blocking(move || agent::worktree::remove(&root, &slug, force.unwrap_or(false), branch))
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Find in Files: streams ripgrep matches per file; a new search cancels the previous one.
@@ -1331,6 +1335,7 @@ pub fn run() {
       agent::worktree_from::gh_pr_list,
       agent::agent_start,
       notify::agent_notify,
+      notify::app_badge,
       dialog::message_box,
       attachments::paste_image_save,
       agent::trust::agent_trust_workspace,

@@ -100,6 +100,9 @@ import { t } from '#lib/i18n/index.ts';
 import { aiTextEnabled } from './aiText.svelte.ts';
 import type { BranchRef } from '#lib/workbench/scmRemote.ts';
 import { branchChoices, branchNamePrompt, branchSlug, branchTitle, looksLikePr, prTitle, type PrHead, type TaskSource } from './worktreeSource.ts';
+import { canResumeWith, handOffPrompt, withSession, type SessionRef } from './sessionHistory.ts';
+import { workflowLabel } from './workflow.ts';
+import { isRustError } from '#lib/i18n/rustErrors.ts';
 
 const scriptTitle = (kind: ScriptKind): string =>
 	({
@@ -162,6 +165,8 @@ class AdeTasks {
 
 	#saving: Promise<void> = Promise.resolve();
 	#root: string | null = null;
+	/** Tasks whose worktree git is removing now (Orca's "removing" row). */
+	#removing = new Set<string>();
 
 	/** A task as the agents status sees it (unread = finished after it was last viewed). */
 	stateOf(v: TaskView): SessionState {
@@ -296,8 +301,14 @@ class AdeTasks {
 
 	/** Only these fields of the task are written: another window's edits to its other fields stay. */
 	#patch(slug: string, patch: Partial<Omit<TaskMeta, 'slug'>>) {
-		if (!this.list.some((t) => t.slug === slug)) return this.#saving;
+		const meta = this.list.find((t) => t.slug === slug);
+		if (!meta) return this.#saving;
 		const now = Date.now();
+		// Every session the task runs is kept for Continue Session… (sessionHistory.ts).
+		if (patch.session_id && !patch.sessions) {
+			const sessions = withSession(meta.sessions, patch.session_id, patch.agent ?? meta.agent, now);
+			if (JSON.stringify(sessions) !== JSON.stringify(meta.sessions ?? [])) patch = { ...patch, sessions };
+		}
 		this.list = patchTask(this.list, slug, patch, now);
 		return this.#write([patchChange(slug, patch, now)]);
 	}
@@ -792,6 +803,58 @@ class AdeTasks {
 		if (cli && profileOf(cli).status === 'notify' && meta.session_id !== id) void this.#patch(slug, { session_id: id });
 	}
 
+	/** Moves the task to a board column (Orca's Move to Status); the agent's own status is untouched. */
+	async setWorkflowStatus(slug: string, id: string, quiet = false) {
+		const meta = this.list.find((t) => t.slug === slug);
+		if (!meta || meta.workflow_status === id) return;
+		await this.#patch(slug, { workflow_status: id });
+		if (!quiet) status.flash(t('adeWorkflow.moved', { title: meta.title, status: workflowLabel(id) }));
+	}
+
+	/**
+	 * Continue Session… (Orca's agent session continuation): picks an earlier session of the task
+	 * up again. A CLI task restarts its CLI resuming it; a timeline task resumes it with the next
+	 * message. A session the task's agent cannot resume (another CLI's) is handed off instead.
+	 */
+	async continueSession(slug: string, session: SessionRef) {
+		const meta = this.list.find((t) => t.slug === slug);
+		if (!meta) return;
+		const cli = cliOf(meta.agent);
+		if (!canResumeWith(meta.agent, session.agent)) return this.handOff(slug, session, cli);
+		if (runtime.isWorking(slug) || cliSessions.working(slug)) return status.flash(t('adeWorkflow.stopFirst', { title: meta.title }));
+		if (cli) {
+			await this.#patch(slug, { session_id: session.id });
+			status.flash(t('adeWorkflow.resuming', { id: session.id.slice(0, 8), agent: programOf(cli) }));
+			await this.#launchCli(slug, cli, { resume: session.id });
+			return;
+		}
+		if (runtime.isLive(slug)) await this.stop(slug);
+		await this.#patch(slug, { session_id: session.id });
+		status.flash(t('adeWorkflow.nextMessageResumes', { id: session.id.slice(0, 8) }));
+	}
+
+	/**
+	 * Hand Off to Another Agent (Orca's AgentSessionContinuationDialog): starts `cli` (or the
+	 * timeline agent for null) in the task's worktree with a prompt pointing at the session's
+	 * transcript; the task's agent becomes that one.
+	 */
+	async handOff(slug: string, session: SessionRef, cli: string[] | null) {
+		const meta = this.list.find((t) => t.slug === slug);
+		if (!meta || !workspace.root) return;
+		if (runtime.isWorking(slug) || cliSessions.working(slug)) return status.flash(t('adeWorkflow.stopFirst', { title: meta.title }));
+		const prompt = handOffPrompt({ agent: session.agent, id: session.id, cwd: `${workspace.root}/${worktreeDir(slug)}`, title: meta.title, prompt: meta.prompt, summary: meta.last_run?.summary });
+		if (cli) {
+			await this.#patch(slug, { agent: cliAgent(cli) });
+			await this.#launchCli(slug, cli, { prompt });
+		} else {
+			if (runtime.isLive(slug)) await this.stop(slug);
+			cliSessions.end(slug);
+			await this.#patch(slug, { agent: 'claude-code', session_id: null });
+			await this.run(slug, prompt);
+		}
+		status.flash(t('adeWorkflow.handedOff', { title: meta.title, agent: cli ? programOf(cli) : 'Claude' }));
+	}
+
 	/** Starts the agent in the task worktree through the agents store. */
 	async run(slug: string, prompt: string, images: string[] = []) {
 		try {
@@ -893,6 +956,10 @@ class AdeTasks {
 	 * still asks. False when nothing was removed.
 	 */
 	async removeConfirmed(slug: string, opts: { deleteBranch: BranchRemoval; force: boolean }): Promise<boolean> {
+		if (this.#removing.has(slug)) {
+			status.flash(t('adeWorkflow.alreadyRemoving', { slug }));
+			return false;
+		}
 		const gate = removalGate(runtime.timelineWorking(slug), runtime.isWorking(slug));
 		if (gate === 'block') {
 			status.flash(t('adeTasks.tasks.stopAgentFirst'));
@@ -926,18 +993,37 @@ class AdeTasks {
 			// An idle session still runs in the worktree: end it with the task.
 			if (runtime.isLive(slug)) await this.stop(slug);
 			if (!(await this.#runArchive(slug))) return false;
+		}
+		// Also without a worktree git lists: Rust prunes a folder deleted by hand and finds one git lost track of.
+		{
+			// Orca's background removal: the card shows "Removing…" while git deletes the folder
+			// (Rust runs it off the main thread), and a second remove of it waits for this one.
+			const remove = async (force: boolean) => {
+				this.#removing.add(slug);
+				this.busy[slug] = t('adeWorkflow.removing');
+				try {
+					return await invoke<string | null>('worktree_remove', { slug, force, deleteBranch });
+				} finally {
+					this.#removing.delete(slug);
+					delete this.busy[slug];
+				}
+			};
 			try {
-				kept = await invoke<string | null>('worktree_remove', { slug, force: opts.force, deleteBranch });
+				kept = await remove(opts.force);
 			} catch (e) {
 				const dirty = /modified|untracked|dirty/i.test(String(e));
-				if (!dirty || opts.force) {
+				// Git lost track of the folder (Rust `RemoveOrphan`): deleting it needs a yes, forced or not.
+				const orphan = isRustError(e, 'worktreeOrphan');
+				if (!orphan && (!dirty || opts.force)) {
 					notifications.error(t('adeTasks.tasks.removeFailed', { error: String(e) }));
 					return false;
 				}
-				const force = await ask(t('adeTasks.tasks.dirtyAsk', { path }), { title: t('adeTasks.tasks.dirtyTitle'), kind: 'warning', okLabel: t('adeTasks.tasks.discard'), cancelLabel: t('common.cancel') });
+				const force = orphan
+					? await ask(t('adeWorkflow.orphanAsk', { path }), { title: t('adeWorkflow.orphanTitle'), kind: 'warning', okLabel: t('adeWorkflow.orphanOk'), cancelLabel: t('common.cancel') })
+					: await ask(t('adeTasks.tasks.dirtyAsk', { path }), { title: t('adeTasks.tasks.dirtyTitle'), kind: 'warning', okLabel: t('adeTasks.tasks.discard'), cancelLabel: t('common.cancel') });
 				if (!force) return false;
 				try {
-					kept = await invoke<string | null>('worktree_remove', { slug, force: true, deleteBranch });
+					kept = await remove(true);
 				} catch (e2) {
 					notifications.error(t('adeTasks.tasks.removeFailed', { error: String(e2) }));
 					return false;

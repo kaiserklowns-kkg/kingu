@@ -109,9 +109,41 @@ pub fn agent_notify(
   deliver(app, title, body, sound_of(sound.as_deref()), Clicked { slug, chat_id, root })
 }
 
+/// The dock badge text for `count` agents/tasks waiting on you (Orca's unread dock badge): none
+/// for 0, `99+` past 99.
+pub fn badge_label(count: u32) -> Option<String> {
+  match count {
+    0 => None,
+    1..=99 => Some(count.to_string()),
+    _ => Some("99+".into()),
+  }
+}
+
+/// Puts the attention count on the app's dock icon (macOS); elsewhere the taskbar badge where
+/// the platform has one. Best effort: a window that cannot badge is not an error.
+#[tauri::command]
+pub fn app_badge(app: AppHandle, count: u32) {
+  let Some(w) = app.get_webview_window("main").or_else(|| app.webview_windows().into_values().next()) else { return };
+  #[cfg(target_os = "macos")]
+  let r = w.set_badge_label(badge_label(count));
+  #[cfg(not(target_os = "macos"))]
+  let r = w.set_badge_count((count > 0).then_some(i64::from(count)));
+  if let Err(e) = r {
+    log::debug!("app badge: {e}");
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn badge_labels() {
+    assert_eq!(badge_label(0), None);
+    assert_eq!(badge_label(7).as_deref(), Some("7"));
+    assert_eq!(badge_label(99).as_deref(), Some("99"));
+    assert_eq!(badge_label(100).as_deref(), Some("99+"));
+  }
 
   #[test]
   fn sounds() {

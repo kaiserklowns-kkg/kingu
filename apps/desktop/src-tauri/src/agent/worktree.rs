@@ -191,23 +191,101 @@ impl DeleteBranch {
   }
 }
 
+/// What git and the disk say about a task's worktree folder when it is to be removed (Orca's
+/// removal recovery: already-missing folders, prunable rows, locked rows, orphaned folders).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Removal {
+  /// Registered and on disk: `git worktree remove`.
+  Remove,
+  /// Registered, but the folder is gone (deleted by hand): `git worktree prune` forgets it.
+  Prune,
+  /// Registered and locked (`git worktree lock`): refused, even with force.
+  Locked,
+  /// Not registered, but the folder is still there with its `.git` file (git lost track, a
+  /// removal stopped halfway): with force the folder is deleted.
+  Orphan,
+  /// Not registered and the folder is empty: it goes.
+  Empty,
+  /// Not registered and not a worktree (no `.git` file, a `.git` folder, a symlink): left alone.
+  Foreign,
+  /// Neither registered nor on disk: nothing left to remove.
+  Gone,
+}
+
+/// Decides how to remove the task worktree at `path`, from its row in `git worktree list` (if any).
+pub fn removal_of(path: &Path, row: Option<&WorktreeInfo>) -> Removal {
+  let meta = std::fs::symlink_metadata(path).ok();
+  match (row, meta) {
+    (Some(w), _) if w.locked => Removal::Locked,
+    (Some(_), Some(m)) if m.is_dir() => Removal::Remove,
+    (Some(_), _) => Removal::Prune,
+    (None, None) => Removal::Gone,
+    (None, Some(m)) if !m.is_dir() => Removal::Foreign,
+    (None, Some(_)) if path.join(".git").symlink_metadata().is_ok_and(|g| g.is_file()) => Removal::Orphan,
+    (None, Some(_)) if std::fs::read_dir(path).is_ok_and(|mut d| d.next().is_none()) => Removal::Empty,
+    (None, Some(_)) => Removal::Foreign,
+  }
+}
+
+/// `git worktree remove` failed because git cannot use the folder any more (its `.git` file is
+/// gone, broken, or points elsewhere): git's "validation failed" errors.
+fn lost_by_git(err: &str) -> bool {
+  err.contains("validation failed") || err.contains("is not a working tree") || err.contains("is not a .git file")
+}
+
+/// Deletes an app-made worktree folder git no longer tracks, then prunes git's record of it.
+fn delete_folder(repo: &Path, path: &Path) -> Result<(), String> {
+  std::fs::remove_dir_all(path).map_err(|e| format!("{}: {e}", path.display()))?;
+  git(repo, &["worktree", "prune"]).map(|_| ())
+}
+
 /// Removes the task worktree and, per `branch`, the branch it had checked out. Returns the branch
-/// a safe delete kept because git does not see it merged.
+/// a safe delete kept because git does not see it merged. A folder deleted by hand is pruned from
+/// git; a folder git lost track of is deleted with `force` (without it: `RemoveOrphan`, so the
+/// webview can ask); a locked worktree or a folder that is not a worktree is refused.
 pub fn remove(repo: &Path, slug: &str, force: bool, branch: DeleteBranch) -> Result<Option<String>, String> {
   validate_slug(slug)?;
   let path = worktree_path(repo, slug);
   let path_str = path.to_str().ok_or("worktree path is not valid UTF-8")?;
-  let name = if branch == DeleteBranch::Keep { None } else { current_branch(&path).ok().flatten() };
   let _queue = git_queue::lock(repo, Scope::Refs, "worktree remove")?;
-  // Nothing may be staging or rejecting inside the worktree while it goes away.
-  let _tree = if path.exists() { Some(git_queue::lock(&path, Scope::Worktree, "worktree remove")?) } else { None };
-  let mut args = vec!["worktree", "remove"];
-  if force {
-    args.push("--force");
+  let row = list(repo)?.into_iter().find(|w| w.slug.as_deref() == Some(slug));
+  // The branch from git's record: a folder deleted by hand can no longer say what it had out.
+  let name = if branch == DeleteBranch::Keep { None } else { row.as_ref().and_then(|w| w.branch.clone()) };
+  match removal_of(&path, row.as_ref()) {
+    Removal::Locked => return Err(tr!(WorktreeMsg::RemoveLocked, slug)),
+    Removal::Foreign => return Err(tr!(WorktreeMsg::RemoveNotWorktree, path = path.display())),
+    Removal::Orphan if !force => return Err(tr!(WorktreeMsg::RemoveOrphan, path = path.display())),
+    Removal::Orphan => {
+      delete_folder(repo, &path)?;
+      log::info!("worktree {slug}: deleted the folder git no longer tracked");
+    }
+    Removal::Empty => {
+      std::fs::remove_dir(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+      git(repo, &["worktree", "prune"])?;
+    }
+    Removal::Prune | Removal::Gone => {
+      git(repo, &["worktree", "prune"])?;
+      log::info!("worktree {slug}: folder already gone, pruned");
+    }
+    Removal::Remove => {
+      // Nothing may be staging or rejecting inside the worktree while it goes away.
+      let _tree = git_queue::lock(&path, Scope::Worktree, "worktree remove")?;
+      let mut args = vec!["worktree", "remove"];
+      if force {
+        args.push("--force");
+      }
+      args.extend(["--", path_str]);
+      match git(repo, &args) {
+        Ok(_) => log::info!("worktree {slug} removed"),
+        Err(e) if lost_by_git(&e) && force => {
+          log::warn!("worktree {slug}: {e}; deleting the folder");
+          delete_folder(repo, &path)?;
+        }
+        Err(e) if lost_by_git(&e) => return Err(tr!(WorktreeMsg::RemoveOrphan, path = path.display())),
+        Err(e) => return Err(e),
+      }
+    }
   }
-  args.extend(["--", path_str]);
-  git(repo, &args)?;
-  log::info!("worktree {slug} removed");
   let Some(name) = name else {
     return Ok(None);
   };
@@ -487,6 +565,79 @@ mod tests {
     assert!(git(&repo, &["branch", "--list", "kingu/fix-login"]).unwrap().trim().is_empty());
   }
 
+  fn branch_exists(repo: &Path, name: &str) -> bool {
+    !git(repo, &["branch", "--list", name]).unwrap().trim().is_empty()
+  }
+
+  /// Orca's removal recovery: a folder deleted by hand is pruned (its branch still goes).
+  #[test]
+  fn removes_a_worktree_whose_folder_was_deleted_by_hand() {
+    let (_tmp, repo) = temp_repo();
+    create(&repo, "gone", None, None).unwrap();
+    let path = worktree_path(&repo, "gone");
+    std::fs::remove_dir_all(&path).unwrap();
+    assert_eq!(removal_of(&path, list(&repo).unwrap().iter().find(|w| w.slug.as_deref() == Some("gone"))), Removal::Prune);
+    assert_eq!(remove(&repo, "gone", false, DeleteBranch::Force), Ok(None));
+    assert_eq!(list(&repo).unwrap().len(), 1, "git forgot the worktree");
+    assert!(!branch_exists(&repo, "kingu/gone"));
+  }
+
+  #[test]
+  fn deletes_an_orphaned_folder_only_with_force() {
+    let (_tmp, repo) = temp_repo();
+    create(&repo, "orphan", None, None).unwrap();
+    let path = worktree_path(&repo, "orphan");
+    // Git loses track of it (its admin dir is gone) while the folder and its `.git` file stay.
+    std::fs::write(path.join("notes.txt"), "x").unwrap();
+    std::fs::remove_dir_all(repo.join(".git/worktrees/orphan")).unwrap();
+    run(&repo, &["worktree", "prune"]);
+    assert_eq!(removal_of(&path, None), Removal::Orphan);
+    let err = remove(&repo, "orphan", false, DeleteBranch::Keep).unwrap_err();
+    assert!(err.contains(&path.display().to_string()), "{err}");
+    assert!(path.join("notes.txt").exists(), "nothing deleted without force");
+    assert_eq!(remove(&repo, "orphan", true, DeleteBranch::Keep), Ok(None));
+    assert!(!path.exists());
+  }
+
+  #[test]
+  fn deletes_a_folder_git_cannot_use_with_force() {
+    let (_tmp, repo) = temp_repo();
+    create(&repo, "broken", None, None).unwrap();
+    let path = worktree_path(&repo, "broken");
+    // Still registered, but its `.git` file is gone: `git worktree remove` fails validation.
+    std::fs::remove_file(path.join(".git")).unwrap();
+    assert!(remove(&repo, "broken", false, DeleteBranch::Keep).is_err());
+    assert!(path.exists());
+    assert_eq!(remove(&repo, "broken", true, DeleteBranch::Keep), Ok(None));
+    assert!(!path.exists());
+    assert_eq!(list(&repo).unwrap().len(), 1);
+  }
+
+  #[test]
+  fn refuses_locked_worktrees_and_folders_that_are_not_worktrees() {
+    let (_tmp, repo) = temp_repo();
+    create(&repo, "locked", None, None).unwrap();
+    let locked = worktree_path(&repo, "locked");
+    run(&repo, &["worktree", "lock", "--reason", "agent", locked.to_str().unwrap()]);
+    assert!(remove(&repo, "locked", true, DeleteBranch::Keep).is_err());
+    assert!(locked.exists());
+
+    let mine = worktree_path(&repo, "mine");
+    std::fs::create_dir_all(&mine).unwrap();
+    std::fs::write(mine.join("notes.txt"), "keep me").unwrap();
+    assert_eq!(removal_of(&mine, None), Removal::Foreign);
+    assert!(remove(&repo, "mine", true, DeleteBranch::Keep).is_err());
+    assert!(mine.join("notes.txt").exists());
+
+    std::fs::create_dir_all(mine.join(".git")).unwrap();
+    assert_eq!(removal_of(&mine, None), Removal::Foreign, "a .git folder is another repository");
+
+    let empty = worktree_path(&repo, "empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    assert_eq!(remove(&repo, "empty", false, DeleteBranch::Keep), Ok(None));
+    assert!(!empty.exists());
+  }
+
   #[test]
   fn creates_from_a_base_ref_and_rejects_bad_input() {
     let (_tmp, repo) = temp_repo();
@@ -496,7 +647,9 @@ mod tests {
     assert!(create(&repo, "nope", Some("no-such-ref"), None).unwrap_err().contains("not a commit"));
     assert!(create(&repo, "nope", Some("--orphan"), None).is_err());
     assert!(create(&repo, "../escape", None, None).is_err());
-    assert!(remove(&repo, "missing", false, DeleteBranch::Keep).is_err());
+    // Nothing registered and no folder: already removed.
+    assert_eq!(remove(&repo, "missing", false, DeleteBranch::Keep), Ok(None));
+    assert!(remove(&repo, "../escape", false, DeleteBranch::Keep).is_err());
   }
 
   #[test]

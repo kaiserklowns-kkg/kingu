@@ -66,5 +66,6 @@ pub fn frontend_matched() -> Vec<(&'static str, Vec<Entry>)> {
       "notInstalled",
       [LspMsg::NotExecutable, LspMsg::NotOnPath, LspMsg::NoDebugpy, LspMsg::NoPython, LspMsg::AdapterNotOnPath].into_iter().map(entry).collect(),
     ),
+    ("worktreeOrphan", vec![entry(WorktreeMsg::RemoveOrphan)]),
   ]
 }

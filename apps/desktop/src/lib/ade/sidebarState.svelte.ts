@@ -34,7 +34,8 @@ export function sidebarTask(v: TaskView): SidebarTask & { view: TaskView } {
 		live: !!v.runtime?.live || !!cliSessions.sessions[slug] || (adeLayout.terminals[slug]?.length ?? 0) > 0,
 		detached: adeTasks.worktrees.find((w) => w.slug === slug)?.detached ?? false,
 		prState: pr?.state ?? null,
-		prDraft: pr?.draft
+		prDraft: pr?.draft,
+		workflowStatus: v.meta.workflow_status ?? null
 	};
 }
 

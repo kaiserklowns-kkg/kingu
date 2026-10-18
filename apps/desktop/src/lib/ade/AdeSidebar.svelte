@@ -41,6 +41,7 @@
 	import type { WorktreeAction } from './worktreeActions';
 	import { projects } from './projects.svelte';
 	import { aroundOpen, projectName, projectSidebarTask, type SidebarProject } from './projects';
+	import { defaultWorkflowId, workflowOf, workflowStatuses } from './workflow.ts';
 	import { t } from '#lib/i18n/index.ts';
 
 	const root = $derived(workspace.root ?? '');
@@ -115,7 +116,14 @@
 				const rows = all.filter((r) => (r.view ? statusColumn(r.view.status) : 'active') === c.id);
 				if (rows.length) out.push({ id: `status:${c.id}`, label: c.label, icon: c.id === 'attention' ? 'bell' : c.id === 'active' ? 'activity' : 'checkCircle', rows });
 			}
-		else out.push({ id: 'all', label: '', icon: 'menu', rows: all });
+		else if (prefs.groupBy === 'workflow') {
+			// The board's workflow columns (workflow.ts); the folder itself sits with the default one.
+			const statuses = workflowStatuses(settings.get('kingu.board.statuses'));
+			for (const s of statuses) {
+				const rows = all.filter((r) => (r.view ? workflowOf(r.view.meta, statuses) : defaultWorkflowId(statuses)) === s.id);
+				if (rows.length) out.push({ id: `workflow:${s.id}`, label: s.label, icon: s.id === 'completed' ? 'checkCircle' : s.id === 'in-review' ? 'pullRequest' : 'tasks', rows });
+			}
+		} else out.push({ id: 'all', label: '', icon: 'menu', rows: all });
 		return out;
 	});
 	/** Every card in display order, for arrow-key navigation. */
@@ -456,6 +464,7 @@
 							{/if}
 						</div>
 						<div class="ml-auto flex shrink-0 items-center gap-1">
+							{#if adeTasks.busy[r.key]}<span class="max-w-24 truncate text-[10px] {MUTED}" title={adeTasks.busy[r.key]}>{adeTasks.busy[r.key]}</span>{/if}
 							{#if r.key === PRIMARY && prefs.compact}
 								<span class="text-amber-400" aria-label="Primary worktree"><Icon name="kingu" size={12} /></span>
 							{/if}
@@ -814,7 +823,7 @@
 		<div class="px-3 pt-2.5 pb-1 text-sm">Workspace options</div>
 		<div class="px-3 pt-2 pb-1 text-[11px] {MUTED}">Group by</div>
 		<div class="mx-3 flex h-6 rounded-md bg-(--vscode-editor-background)/50 p-px">
-			{#each [['none', 'None'], ['workspace-status', 'Status'], ['pr-status', 'PR'], ['repo', 'Project']] as [id, label] (id)}
+			{#each [['none', 'None'], ['workspace-status', 'Status'], ['workflow', t('adeWorkflow.groupBy')], ['pr-status', 'PR'], ['repo', 'Project']] as [id, label] (id)}
 				<button class={[SEG, prefs.groupBy === id ? 'bg-(--vscode-foreground)/10 font-semibold' : MUTED]} onclick={() => (prefs.groupBy = id as GroupBy)}>{label}</button>
 			{/each}
 		</div>

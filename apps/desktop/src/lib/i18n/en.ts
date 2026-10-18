@@ -18,7 +18,8 @@ import { chatEditor } from './en/chatEditor';
 import { chatSystem } from './en/chatSystem';
 import { adeWorktrees } from './en/adeWorktrees';
 import { adeProjects } from './en/adeProjects';
+import { adeWorkflow } from './en/adeWorkflow';
 
-export const en = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects } as const;
+export const en = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow } as const;
 
 export type MessageKey = keyof typeof en;
