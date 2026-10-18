@@ -106,6 +106,10 @@ pub struct TaskMeta {
   /// `automation` for a task an automation started; absent when you started it.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub origin: Option<String>,
+  /// The branch still has the name made from the title and waits for its work-derived one
+  /// (Orca's autoRenameBranchFromWork); absent once renamed, or for a branch you chose.
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub auto_name: bool,
 }
 
 /// Session ids go to the agent host as `resume`: keep them to plain id characters.
@@ -211,7 +215,9 @@ pub fn save(root: &Path, tasks: &[TaskMeta]) -> Result<(), String> {
   let path = path(root)?;
   let lock = file_lock(&path);
   let _held = lock.lock().unwrap_or_else(|e| e.into_inner());
-  write_list(&path, tasks)
+  write_list(&path, tasks)?;
+  super::worktree::exclude_kingu_soon(root);
+  Ok(())
 }
 
 fn write_list(path: &Path, tasks: &[TaskMeta]) -> Result<(), String> {
@@ -255,6 +261,7 @@ pub fn update(root: &Path, changes: &[TaskChange]) -> Result<Vec<TaskMeta>, Stri
   }
   if list != before {
     write_list(&path, &list)?;
+    super::worktree::exclude_kingu_soon(root);
   }
   Ok(list)
 }
@@ -315,6 +322,7 @@ mod tests {
       }),
       issue: Some(IssueLink { number: 42, url: "https://github.com/acme/app/issues/42".into(), title: "แก้ login".into(), provider: "github".into(), key: None }),
       origin: Some("automation".into()),
+      auto_name: false,
     }
   }
 

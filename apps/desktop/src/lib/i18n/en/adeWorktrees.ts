@@ -1,0 +1,36 @@
+// UI strings of tasks started from an existing branch or a pull request, and the first-work
+// branch name (NewTaskForm.svelte, tasks.svelte.ts). Keys: 'adeWorktrees.<what>'. Thai in ../th/adeWorktrees.ts.
+export const adeWorktrees = {
+	'adeWorktrees.renamed': 'Branch {from} renamed to {to} from the work',
+	'adeWorktrees.prLookupFailed': 'Could not find the pull request: {error}',
+	'adeWorktrees.prTaskExists': 'Pull request #{number} already has a task, "{title}". Open it?',
+	'adeWorktrees.prTaskTitle': 'Task for This Pull Request',
+	'adeWorktrees.remoteBranch': 'remote',
+	'adeWorktrees.pickBranch': 'Branch to start a task on',
+	'adeWorktrees.prListFailed': 'Could not list pull requests: {error}',
+	'adeWorktrees.draft': 'draft',
+	'adeWorktrees.pickPr': 'Pull request to start a task on (number, link or search)',
+	'adeWorktrees.usePr': 'Use pull request {pr}',
+	// NewTaskForm.svelte
+	'adeWorktrees.form.source': 'Branch',
+	'adeWorktrees.form.newBranch': 'New branch',
+	'adeWorktrees.form.existingBranch': 'Existing branch',
+	'adeWorktrees.form.pullRequest': 'Pull request',
+	'adeWorktrees.form.branch': 'Branch',
+	'adeWorktrees.form.pickBranch': 'Pick a branch',
+	'adeWorktrees.form.loading': 'Loading…',
+	'adeWorktrees.form.inUse': '(in use)',
+	'adeWorktrees.form.prPlaceholder': 'PR number or link, e.g. 123',
+	'adeWorktrees.form.title': 'Task name',
+	'adeWorktrees.form.titlePlaceholder': 'Task name, e.g. Fix the login page bug',
+	'adeWorktrees.form.titleOptional': 'Task name (optional)',
+	'adeWorktrees.form.prompt': 'Instructions for the agent',
+	'adeWorktrees.form.promptPlaceholder': 'Tell the agent what to do (leave empty to use the task name)',
+	'adeWorktrees.form.promptOptional': 'Tell the agent what to do (optional: leave empty to start it without a prompt)',
+	'adeWorktrees.form.forkFrom': 'From',
+	'adeWorktrees.form.compareWith': 'Compare with',
+	'adeWorktrees.form.base': 'Base branch',
+	'adeWorktrees.form.submitTitle': 'Create the worktree, then start the agent ({keys})',
+	'adeWorktrees.form.creating': 'Creating…',
+	'adeWorktrees.form.create': 'Create and start'
+} as const;

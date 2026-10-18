@@ -10,6 +10,7 @@ mod lsp;
 mod snap;
 mod team;
 mod workspace;
+mod worktree;
 
 pub use accounts::AccountsMsg;
 pub use agent::AgentMsg;
@@ -20,6 +21,7 @@ pub use lsp::LspMsg;
 pub use snap::SnapMsg;
 pub use team::TeamMsg;
 pub use workspace::WorkspaceMsg;
+pub use worktree::WorktreeMsg;
 
 #[cfg(test)]
 use super::{Locale, Message};
@@ -46,6 +48,7 @@ pub fn all() -> Vec<Entry> {
   out.extend(SnapMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(TeamMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(WorkspaceMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(WorktreeMsg::ALL.iter().map(|&m| entry(m)));
   out
 }
 

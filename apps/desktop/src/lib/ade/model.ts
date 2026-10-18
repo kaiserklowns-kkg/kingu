@@ -34,6 +34,9 @@ export type TaskMeta = {
 	issue: IssueLink | null;
 	/** `automation`: an automation started it (Orca's automation badge); absent when you did. */
 	origin?: 'automation' | null;
+	/** The branch still has the name made from the title and waits for one made from the work
+	 *  (Orca's autoRenameBranchFromWork); absent once renamed, or for a branch you chose. */
+	auto_name?: boolean;
 };
 
 /** Mirrors Rust `agent::tasks::IssueLink`. No `provider` means GitHub (links saved before Linear came). */
@@ -141,7 +144,10 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
 // ---------------------------------------------------------------------------------------------
 // tasks.json reducers (immutable: each returns a new list)
 
-export function newTask(input: { slug: string; title: string; prompt: string; base: string; agent?: string; issue?: IssueLink | null; origin?: 'automation' }, now: number): TaskMeta {
+export function newTask(
+	input: { slug: string; title: string; prompt: string; base: string; agent?: string; issue?: IssueLink | null; origin?: 'automation'; prUrl?: string; autoName?: boolean; status?: TaskStatus },
+	now: number
+): TaskMeta {
 	return {
 		slug: input.slug,
 		title: input.title.trim(),
@@ -151,14 +157,15 @@ export function newTask(input: { slug: string; title: string; prompt: string; ba
 		updated_at: now,
 		agent: input.agent ?? 'claude-code',
 		model: null,
-		status: 'running',
-		pr_url: null,
+		status: input.status ?? 'running',
+		pr_url: input.prUrl ?? null,
 		accepted: [],
 		merged_at: null,
 		session_id: null,
 		last_run: null,
 		issue: input.issue ?? null,
-		...(input.origin ? { origin: input.origin } : {})
+		...(input.origin ? { origin: input.origin } : {}),
+		...(input.autoName ? { auto_name: true } : {})
 	};
 }
 

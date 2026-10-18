@@ -183,9 +183,141 @@ impl FileWatcher {
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// The repository's worktrees and branches (Orca's worktree-git-common-watch)
+
+/// Git changes come in bursts (a commit writes a ref, the reflog and HEAD); one refresh per burst.
+const GIT_QUIET: Duration = Duration::from_millis(300);
+
+/// Whether a change at `path` in the git common dir can change the worktree list or a worktree's
+/// branch: the main checkout's HEAD, a branch ref (also packed), a worktree registered, removed,
+/// locked or switched (`worktrees/<name>/HEAD`). Lock files are git's temporaries.
+pub fn git_change(common: &Path, path: &Path) -> bool {
+  let Ok(rel) = path.strip_prefix(common) else { return false };
+  let parts: Vec<&str> = rel.components().filter_map(|c| c.as_os_str().to_str()).collect();
+  if parts.last().is_some_and(|p| p.ends_with(".lock")) {
+    return false;
+  }
+  matches!(
+    parts.as_slice(),
+    ["HEAD"] | ["packed-refs"] | ["refs", "heads", ..] | ["worktrees"] | ["worktrees", _] | ["worktrees", _, "HEAD" | "gitdir" | "locked"]
+  )
+}
+
+/// Watches the open folder's git common dir, so the ADE sees an agent's `git checkout -b`, a
+/// commit moving a branch, and worktrees added or removed outside Kingu: the dir itself (HEAD,
+/// packed-refs, `worktrees/` appearing), `refs/heads` and `worktrees/`, each only where it exists
+/// (no recursive watch over the object store). `emit` runs once per debounced burst.
+#[derive(Default)]
+pub struct GitWatcher {
+  current: Mutex<Option<Arc<Mutex<notify::RecommendedWatcher>>>>,
+}
+
+impl GitWatcher {
+  /// Replaces the watch with one on `common` (none for `None`).
+  pub fn watch(&self, common: Option<&Path>, emit: impl Fn() + Send + 'static) -> Result<(), String> {
+    let mut current = self.current.lock().unwrap_or_else(|e| e.into_inner());
+    // The old watcher's sender goes with it, which ends its debounce thread.
+    *current = None;
+    let Some(common) = common else { return Ok(()) };
+    let common = common.to_path_buf();
+    let (tx, rx) = channel::<String>();
+    let base = common.clone();
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+      let Ok(ev) = res else { return };
+      if matches!(ev.kind, EventKind::Access(_)) {
+        return;
+      }
+      if ev.need_rescan() || ev.paths.iter().any(|p| git_change(&base, p)) {
+        let _ = tx.send(String::new());
+      }
+    })
+    .map_err(|e| format!("watch {}: {e}", common.display()))?;
+    watcher.watch(&common, RecursiveMode::NonRecursive).map_err(|e| format!("watch {}: {e}", common.display()))?;
+    let inner = [common.join("refs").join("heads"), common.join("worktrees")];
+    let watch_inner = move |w: &mut notify::RecommendedWatcher, watched: &mut Vec<PathBuf>| {
+      for dir in &inner {
+        if !watched.contains(dir) && dir.is_dir() {
+          match w.watch(dir, RecursiveMode::Recursive) {
+            Ok(()) => watched.push(dir.clone()),
+            Err(e) => log::warn!("watch {}: {e}", dir.display()),
+          }
+        }
+      }
+    };
+    let mut watched = Vec::new();
+    watch_inner(&mut watcher, &mut watched);
+    let shared = Arc::new(Mutex::new(watcher));
+    // Weak: the thread must not keep a replaced watcher (and so its own sender) alive.
+    let weak = Arc::downgrade(&shared);
+    std::thread::spawn(move || {
+      while next_batch(&rx, GIT_QUIET, MAX_WAIT).is_some() {
+        // `worktrees/` appears with the first `git worktree add`: watch it from then on.
+        if let Some(w) = weak.upgrade() {
+          watch_inner(&mut w.lock().unwrap_or_else(|e| e.into_inner()), &mut watched);
+        }
+        emit();
+      }
+    });
+    *current = Some(shared);
+    log::info!("watching git refs and worktrees in {}", common.display());
+    Ok(())
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn git_changes_that_move_worktrees_or_branches() {
+    let c = Path::new("/r/.git");
+    let yes = |p: &str| git_change(c, Path::new(p));
+    for p in ["/r/.git/HEAD", "/r/.git/packed-refs", "/r/.git/refs/heads/kingu/x", "/r/.git/worktrees", "/r/.git/worktrees/t", "/r/.git/worktrees/t/HEAD", "/r/.git/worktrees/t/gitdir"] {
+      assert!(yes(p), "{p}");
+    }
+    for p in ["/r/.git/index", "/r/.git/refs/heads/x.lock", "/r/.git/worktrees/t/index", "/r/.git/worktrees/t/logs/HEAD", "/r/.git/objects/ab/cd", "/r/.git/refs/tags/v1", "/r/.git/FETCH_HEAD", "/elsewhere/HEAD"] {
+      assert!(!yes(p), "{p}");
+    }
+  }
+
+  #[test]
+  fn hears_a_branch_switch_and_a_new_worktree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().canonicalize().unwrap();
+    let git = |dir: &Path, args: &[&str]| {
+      let out = std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]).args(args).output().unwrap();
+      assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("a.txt"), "a").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "init"]);
+    let (tx, rx) = channel();
+    let w = GitWatcher::default();
+    w.watch(Some(&repo.join(".git")), move || {
+      let _ = tx.send(());
+    })
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    let heard = |rx: &Receiver<()>| {
+      let deadline = Instant::now() + Duration::from_secs(5);
+      while Instant::now() < deadline {
+        if rx.recv_timeout(Duration::from_millis(100)).is_ok() {
+          return true;
+        }
+      }
+      false
+    };
+    // The first worktree creates `worktrees/`; its branch switch is heard after that.
+    git(&repo, &["worktree", "add", "-q", "-b", "kingu/t", ".kingu/worktrees/t"]);
+    assert!(heard(&rx), "worktree add");
+    std::thread::sleep(Duration::from_millis(400));
+    while rx.try_recv().is_ok() {}
+    git(&repo.join(".kingu/worktrees/t"), &["checkout", "-q", "-b", "fix/x"]);
+    assert!(heard(&rx), "branch switch in the worktree");
+    w.watch(None, || {}).unwrap();
+  }
 
   #[test]
   fn filters_noise_and_relativizes() {

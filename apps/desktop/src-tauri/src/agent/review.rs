@@ -530,7 +530,9 @@ pub fn is_no_pr(stderr: &str) -> bool {
 pub fn pr_view(gh: &Path, dir: &Path, slug: Option<&str>) -> Result<Option<serde_json::Value>, String> {
   let mut args = vec!["pr".to_owned(), "view".to_owned()];
   if let Some(slug) = slug {
-    args.push(task_branch(dir, slug)?);
+    let branch = task_branch(dir, slug)?;
+    // A task started from a PR knows its number (a fork's head name, like `main`, is ambiguous).
+    args.push(super::worktree::pr_number_of(dir, &branch).map_or(branch, |n| n.to_string()));
   }
   args.extend(["--json".to_owned(), format!("{PR_FIELDS},{PR_VIEW_FIELDS}")]);
   let out = crate::shell_env::command(gh)

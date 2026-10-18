@@ -1,0 +1,36 @@
+import type { adeWorktrees as en } from '../en/adeWorktrees';
+
+export const adeWorktrees = {
+	'adeWorktrees.renamed': 'ตั้งชื่อ branch {from} ใหม่เป็น {to} ตามงานแล้ว',
+	'adeWorktrees.prLookupFailed': 'หา pull request ไม่พบ: {error}',
+	'adeWorktrees.prTaskExists': 'pull request #{number} มีงานอยู่แล้ว คือ "{title}" เปิดงานนั้นไหม',
+	'adeWorktrees.prTaskTitle': 'งานของ pull request นี้',
+	'adeWorktrees.remoteBranch': 'remote',
+	'adeWorktrees.pickBranch': 'เลือก branch ที่จะเริ่มงาน',
+	'adeWorktrees.prListFailed': 'ดึงรายการ pull request ไม่ได้: {error}',
+	'adeWorktrees.draft': 'draft',
+	'adeWorktrees.pickPr': 'เลือก pull request ที่จะเริ่มงาน (ใส่เลข ลิงก์ หรือคำค้น)',
+	'adeWorktrees.usePr': 'ใช้ pull request {pr}',
+	// NewTaskForm.svelte
+	'adeWorktrees.form.source': 'branch',
+	'adeWorktrees.form.newBranch': 'branch ใหม่',
+	'adeWorktrees.form.existingBranch': 'branch ที่มีอยู่',
+	'adeWorktrees.form.pullRequest': 'pull request',
+	'adeWorktrees.form.branch': 'branch',
+	'adeWorktrees.form.pickBranch': 'เลือก branch',
+	'adeWorktrees.form.loading': 'กำลังโหลด…',
+	'adeWorktrees.form.inUse': '(ใช้อยู่)',
+	'adeWorktrees.form.prPlaceholder': 'เลขหรือลิงก์ PR เช่น 123',
+	'adeWorktrees.form.title': 'ชื่องาน',
+	'adeWorktrees.form.titlePlaceholder': 'ชื่องาน เช่น แก้บั๊กหน้า login',
+	'adeWorktrees.form.titleOptional': 'ชื่องาน (ไม่ใส่ก็ได้)',
+	'adeWorktrees.form.prompt': 'คำสั่งให้ agent',
+	'adeWorktrees.form.promptPlaceholder': 'สั่ง agent ว่าให้ทำอะไร (เว้นว่างเพื่อใช้ชื่องาน)',
+	'adeWorktrees.form.promptOptional': 'สั่ง agent ว่าให้ทำอะไร (ไม่ใส่ก็ได้ agent จะเริ่มโดยไม่มีคำสั่ง)',
+	'adeWorktrees.form.forkFrom': 'แตกจาก',
+	'adeWorktrees.form.compareWith': 'เทียบกับ',
+	'adeWorktrees.form.base': 'base branch',
+	'adeWorktrees.form.submitTitle': 'สร้าง worktree แล้วเริ่ม agent ({keys})',
+	'adeWorktrees.form.creating': 'กำลังสร้าง…',
+	'adeWorktrees.form.create': 'สร้างและเริ่ม'
+} satisfies Record<keyof typeof en, string>;

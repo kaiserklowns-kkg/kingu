@@ -343,6 +343,14 @@ const CORE_SETTINGS: SettingSchema[] = [
 			'คำนำหน้าชื่อ branch ของงานใหม่ เช่น kingu/ feature/ หรือเว้นว่าง ใช้ได้เฉพาะ a-z A-Z 0-9 . _ / - งานเดิมใช้ branch เดิมต่อ (Prefix of new task branches, e.g. kingu/ or feature/; may be empty. Existing tasks keep their branch.)'
 	},
 	{
+		id: 'kingu.worktree.autoRenameBranch',
+		group: 'Worktrees',
+		type: 'boolean',
+		default: true,
+		description:
+			'เมื่อ agent เริ่มทำงานในงานใหม่ ให้ AI ของ source control (kingu.git.ai.*) ตั้งชื่อ branch สั้นๆ จากงานแทนชื่อที่ได้จากชื่องาน เฉพาะ branch ที่ยังไม่ push และไม่ได้เลือกเอง ชื่อโฟลเดอร์ worktree ไม่เปลี่ยน (Orca: autoRenameBranchFromWork) (When the agent starts on a new task, the source-control AI names its branch from the work instead of the title; only branches not yet pushed and not chosen by you; the worktree folder keeps its name.)'
+	},
+	{
 		id: 'kingu.worktree.baseBranch',
 		group: 'Worktrees',
 		type: 'string',
