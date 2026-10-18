@@ -56,6 +56,19 @@ function blocks(msg: Obj, role: string): AgentEvent[] | null {
 	});
 }
 
+/** UUIDs as the SDK writes them (any case, with dashes). */
+const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+export const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID.test(v);
+
+/**
+ * `events` then an `anchor` with the message's uuid, for a message of the session's main chain:
+ * not a subagent's (`parent_tool_use_id`) and not one replayed from the log.
+ */
+function withAnchor(msg: Obj, events: AgentEvent[]): AgentEvent[] {
+	if (!isUuid(msg.uuid) || msg.parent_tool_use_id || msg.isReplay) return events;
+	return [...events, { kind: 'anchor', uuid: msg.uuid }];
+}
+
 /** Totals over `modelUsage` (all models, subagents included); falls back to the main-loop `usage`. */
 export function usageOf(msg: Obj): Usage | null {
 	const total: Usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
@@ -90,11 +103,11 @@ export function normalize(msg: unknown): AgentEvent[] {
 			if (msg.subtype !== 'init') return []; // status/hook/task chatter: not timeline material
 			return [{ kind: 'system', subtype: 'init', session_id: str(msg.session_id), model: str(msg.model) }];
 		case 'assistant':
-			return blocks(msg, 'assistant') ?? raw();
+			return withAnchor(msg, blocks(msg, 'assistant') ?? raw());
 		case 'user':
 			// Replayed/synthetic user turns only carry tool results worth showing. A subagent's prompt
 			// (user text under a Task call) is that call's input already, and never a new request.
-			return (blocks(msg, 'user') ?? raw()).filter((e) => e.kind !== 'message' || !(msg.isSynthetic || msg.parent_tool_use_id));
+			return withAnchor(msg, (blocks(msg, 'user') ?? raw()).filter((e) => e.kind !== 'message' || !(msg.isSynthetic || msg.parent_tool_use_id)));
 		case 'stream_event': {
 			const ev = isObj(msg.event) ? msg.event : null;
 			if (!ev || ev.type !== 'content_block_delta' || !isObj(ev.delta) || msg.parent_tool_use_id) return [];

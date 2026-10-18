@@ -224,6 +224,14 @@ const CORE_SETTINGS: SettingSchema[] = [
 			'โมเดล Claude ของงานโหมด timeline (agent host) ส่วนโหมด terminal ใช้ค่าของ CLI เอง หรือใส่ --model ใน kingu.agent.args.claude (The Claude model of timeline-mode runs; terminal-mode CLIs use their own, or --model in kingu.agent.args.claude.)'
 	},
 	{
+		id: 'kingu.chat.confirmRewind',
+		group: 'Agent',
+		type: 'boolean',
+		default: true,
+		description:
+			'ถามก่อนกลับไปจุด checkpoint แก้คำขอ หรือลองใหม่ ซึ่งจะลบคำขอหลังจากนั้นและย้อนการแก้ไฟล์ (VS Code: chat.editing.confirmEditRequestRemoval) (Ask before restoring a checkpoint, editing or retrying a request removes the later requests and undoes their edits.)'
+	},
+	{
 		id: 'kingu.agent.permissionMode',
 		group: 'Agent',
 		type: 'string',

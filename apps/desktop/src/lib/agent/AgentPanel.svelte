@@ -32,9 +32,10 @@
 	import { STATUS_LABEL } from './events';
 	import { cliOf } from '#lib/ade/agentCli.ts';
 	import { chats } from './chats.svelte.ts';
+	import { chatRewind } from './chatRewind.svelte.ts';
 	import { chatCwdPath, groupByDate, historySections, initialChat, type ChatCwd, type DateGroup } from './chats.ts';
 	import RulesChip from './RulesChip.svelte';
-	import { assemblePrompt, isFileKey, promptPath, relativeTo, resolveContext, type ContextFile } from './chatPrompt.ts';
+	import { assemblePrompt, isFileKey, promptPath, relativeTo, resolveContext, withoutImagesLine, type ContextFile } from './chatPrompt.ts';
 	import { AGENT_APPROVALS, modeOf, permissionFor, turnBusy, type AgentApproval, type ChatMode } from './chatInput.ts';
 	import { buildTurns, promptHistory, type Turn } from './chatParts.ts';
 	import { chatSignals, registerChatCommands } from './chatCommands.svelte.ts';
@@ -227,6 +228,33 @@
 		files = [];
 		editing = true;
 		queueMicrotask(() => composer?.focus());
+	}
+
+	/** Restore Checkpoint put the request back in an empty input, with its files (VS Code's restoreRequestToMainInputIfEmpty). */
+	function restoreToInput(req: NonNullable<Turn['request']>) {
+		if (input.trim() || picked.length || files.length) return;
+		editRequest(req);
+		editing = false;
+	}
+
+	/** Edit request in place: the chat rewinds to it, then the new text goes with the request's files (read now). */
+	async function editInline(req: NonNullable<Turn['request']>, checkpoint: number, text: string) {
+		if (!chatMeta || !workspace.root) return;
+		const id = chatMeta.id;
+		const rootDir = workspace.root;
+		const runsInRoot = chatMeta.cwd.kind === 'folder';
+		const list = req.files.map((f) => ({ path: relativeTo(rootDir, f.path), ...(f.range ? { range: f.range } : {}) }));
+		const context = await resolveContext(list, (rel) => invoke<string>('read_workspace_file', { rel }), (rel) => promptPath(rel, rootDir, runsInRoot));
+		// Its images go again while the app still knows their files (the last request's).
+		const known = chats.lastSent(id);
+		const images = known && known.text === withoutImagesLine(req.sent) ? known.images : [];
+		await chatRewind.editAndSend(id, checkpoint, { text: assemblePrompt(text, context), images });
+	}
+
+	async function fork(request: number) {
+		if (!chatMeta) return;
+		const id = await chats.fork(chatMeta.id, request);
+		if (id) select(id);
 	}
 
 	async function pickFile() {
@@ -434,12 +462,15 @@
 				chatId={chatMeta.id}
 				root={workspace.root}
 				onanswer={(p, decision, message, answers) => chatMeta && chats.answer(chatMeta.id, p.request_id, decision, message, answers)}
-				actions={{ retry: () => chatMeta && void chats.retry(chatMeta.id), edit: editRequest }}
+				actions={{ retry: () => chatMeta && void chatRewind.retry(chatMeta.id), edit: editRequest, editInline }}
 				reverted={(r) => !!chatMeta && chatEdits.isReverted(chatMeta.id, r)}
 				class="h-full p-3"
 			>
-				{#snippet checkpoint(request)}
-					{#if chatMeta}<RestoreCheckpoint chatId={chatMeta.id} {request} />{/if}
+				{#snippet checkpoint(request, req, first)}
+					{#if chatMeta}
+						<RestoreCheckpoint chatId={chatMeta.id} {request} {first} onrestored={() => restoreToInput(req)} />
+						<button class={ICON_BTN} aria-label={t('chatRewind.fork')} title={t('chatRewind.forkHint')} onclick={() => fork(request)}><Icon name="branch" size={13} /></button>
+					{/if}
 				{/snippet}
 				{#snippet empty()}
 					<p class="text-(--vscode-descriptionForeground)">{t('chat.panel.noHistory')}</p>
@@ -471,6 +502,13 @@
 			<!-- chat edits bar -->
 			{#if chatMeta}<ChatTodoBar {turns} {running} />{/if}
 			{#if chatMeta}<ChatEditsBar chatId={chatMeta.id} />{/if}
+			{#if chatMeta && chatRewind.canRedo(chatMeta.id)}
+				<div class="mb-1.5 flex items-center gap-1.5 rounded border border-(--vscode-widget-border) px-2 py-1 text-xs text-(--vscode-descriptionForeground)" role="status">
+					<Icon name="discard" size={12} />
+					<span class="min-w-0 flex-1">{t('chatRewind.restored')}</span>
+					<button class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" title={t('chatRewind.redoHint')} onclick={() => chatMeta && chatRewind.redo(chatMeta.id)}>{t('chatRewind.redo')}</button>
+				</div>
+			{/if}
 			{#if queued.length}
 				<ul class="mb-1.5 space-y-1" aria-label={t('chatView.queued')}>
 					{#each queued as q (q.n)}

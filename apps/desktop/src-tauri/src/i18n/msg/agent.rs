@@ -351,6 +351,18 @@ crate::i18n::messages! {
       en: "{path}: the chat's snapshot store is full, so this change cannot be kept on its own; keep the whole file instead",
       th: "{path}: ที่เก็บสำเนาของแชตเต็มแล้ว จึงเก็บการแก้นี้แยกไม่ได้ ให้เก็บทั้งไฟล์แทน",
     },
+    RewindNoRequest {
+      en: "Request {index} is no longer in this chat's saved history, so the chat cannot go back to it",
+      th: "คำขอที่ {index} ไม่อยู่ในประวัติที่บันทึกของแชตนี้แล้ว จึงย้อนแชตกลับไปที่คำขอนั้นไม่ได้",
+    },
+    RewindNothingToRedo {
+      en: "Nothing to redo: a message was sent after the checkpoint was restored",
+      th: "ไม่มีอะไรให้ทำซ้ำ: มีการส่งข้อความหลังจากย้อนกลับไปที่ checkpoint แล้ว",
+    },
+    ForkExists {
+      en: "A chat with this id already exists",
+      th: "มีแชตที่ใช้ id นี้อยู่แล้ว",
+    },
     EditCwdChanged {
       en: "The chat's edits were made in {path}, not in this folder",
       th: "การแก้ไขของแชตนี้ทำใน {path} ไม่ใช่โฟลเดอร์นี้",

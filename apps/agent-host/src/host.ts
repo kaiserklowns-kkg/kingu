@@ -9,7 +9,7 @@
 
 import { readFileSync } from 'node:fs';
 import type { CanUseTool, HookCallbackMatcher, Options, PermissionResult, PermissionUpdate, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import { normalize, summarizeTool } from './normalize.ts';
+import { isUuid, normalize, summarizeTool } from './normalize.ts';
 import { snapshotHooks } from './snapshots.ts';
 import { Guards } from './guards/index.ts';
 import { checkAnswers, isAskUserQuestion, QUESTIONS_DISMISSED } from './questions.ts';
@@ -264,6 +264,8 @@ export class AgentHost {
 		need(p.safetyChecks === undefined || p.safetyChecks === null || typeof p.safetyChecks === 'boolean', 'safetyChecks must be a boolean');
 		const append = p.systemPromptAppend ?? '';
 		need(typeof append === 'string' && append.length <= MAX_SYSTEM_APPEND, 'systemPromptAppend must be a string of at most 256 KB');
+		const resumeAt = p.resumeAt || undefined;
+		need(resumeAt === undefined || (isUuid(resumeAt) && p.resume), 'resumeAt must be a message uuid, with resume');
 
 		const run = new Run(p.runId);
 		if (p.safetyChecks !== false) run.guards = new Guards();
@@ -278,6 +280,8 @@ export class AgentHost {
 			model: p.model || DEFAULT_MODEL,
 			permissionMode: mode,
 			resume: p.resume || undefined,
+			// Rewind / fork: the session up to `resumeAt`, as a new session (the original stays whole).
+			...(resumeAt ? { resumeSessionAt: resumeAt, forkSession: true } : {}),
 			...(Object.keys(mcp).length
 				? { mcpServers: Object.fromEntries(Object.entries(mcp).map(([name, s]) => [name, { type: 'stdio' as const, command: s.command, args: s.args ?? [], env: s.env ?? {} }])) }
 				: {}),
@@ -301,7 +305,7 @@ export class AgentHost {
 		};
 		run.inbox.push(p.prompt, images);
 		this.emit(run.id, { kind: 'message', role: 'user', text: shownText(p.prompt, p.images) });
-		this.log(`run ${run.id} starting (mode ${mode}${p.resume ? ', resuming' : ''})`);
+		this.log(`run ${run.id} starting (mode ${mode}${p.resume ? (resumeAt ? ', resuming at a message' : ', resuming') : ''})`);
 		try {
 			run.query = this.deps.query({ prompt: run.inbox, options });
 		} catch (e) {

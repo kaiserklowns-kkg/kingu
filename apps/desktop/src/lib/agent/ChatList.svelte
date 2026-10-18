@@ -6,6 +6,11 @@
 		retry?: () => void;
 		/** Puts a request back in the input to change and send as a new message. */
 		edit?: (request: NonNullable<Turn['request']>) => void;
+		/**
+		 * Edit in place (VS Code's `chat.editRequests: inline`): a request with a checkpoint turns
+		 * into an editor; on Enter its checkpoint and the new text come here. Over `edit` for those.
+		 */
+		editInline?: (request: NonNullable<Turn['request']>, checkpoint: number, text: string) => Promise<unknown> | void;
 	};
 </script>
 
@@ -53,8 +58,8 @@
 		/** The open folder: file links open relative to it. */
 		root?: string | null;
 		empty?: Snippet;
-		/** Chat edits: an action on each request (Restore checkpoint), given its request index. */
-		checkpoint?: Snippet<[number]>;
+		/** Chat edits: actions on each request (Restore checkpoint, Fork), given its request index, the request and whether it is the first. */
+		checkpoint?: Snippet<[number, NonNullable<Turn['request']>, boolean]>;
 		/** Chat edits: whether a request was reverted by a restored checkpoint (dimmed, like VS Code). */
 		reverted?: (request: number) => boolean;
 		/** The agent chat shown (edited-file pills open its diffs; "N files changed" per request); null for ADE tasks. */
@@ -69,6 +74,38 @@
 	const turns = $derived(run ? buildTurns(run) : []);
 	let open = $state<Record<string, boolean>>({});
 	let copied = $state<number | null>(null);
+	/** The turn whose request is edited in place, and its text. */
+	let editing = $state<number | null>(null);
+	let editText = $state('');
+	let editBusy = $state(false);
+	const firstRequest = $derived(turns.findIndex((x) => x.request));
+
+	function startEdit(ti: number, text: string) {
+		editing = ti;
+		editText = text;
+	}
+
+	async function submitEdit(req: NonNullable<Turn['request']>, checkpoint: number) {
+		const text = editText.trim();
+		if (!text || editBusy) return;
+		editBusy = true;
+		try {
+			await actions.editInline?.(req, checkpoint, text);
+			editing = null;
+		} finally {
+			editBusy = false;
+		}
+	}
+
+	function onEditKey(e: KeyboardEvent, req: NonNullable<Turn['request']>, checkpoint: number) {
+		if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+			e.preventDefault();
+			void submitEdit(req, checkpoint);
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			editing = null;
+		}
+	}
 
 	$effect(() => {
 		void run?.items.length;
@@ -119,13 +156,48 @@
 		{#if turns.length}
 			{#each turns as turn, ti (ti)}
 				{@const last = ti === turns.length - 1}
-				{@const dim = turn.checkpoint != null && !!reverted?.(turn.checkpoint)}
+				{@const dim = (turn.checkpoint != null && !!reverted?.(turn.checkpoint)) || (editing !== null && ti > editing)}
 				<div class={['flex flex-col gap-3', dim && 'opacity-50']}>
 				{#if turn.request}
 					{@const req = turn.request}
+					{@const inline = !!actions.editInline && turn.checkpoint != null}
 					<!-- Request -->
 					<div class="group/req flex flex-col items-end gap-1">
-						<div class="max-w-[90%] rounded-lg bg-(--vscode-chat-requestBackground,var(--vscode-input-background)) px-2.5 py-1.5 break-words whitespace-pre-wrap">
+						{#if editing === ti && turn.checkpoint != null}
+							{@const cp = turn.checkpoint}
+							<div class="flex w-full flex-col gap-1 rounded-lg border border-(--vscode-focusBorder) bg-(--vscode-input-background) px-2 py-1.5">
+								<textarea
+									class="min-h-12 w-full resize-y bg-transparent text-(--vscode-input-foreground) outline-none"
+									aria-label={t('chatRewind.editLabel')}
+									title={t('chatRewind.editHint')}
+									bind:value={editText}
+									disabled={editBusy}
+									onkeydown={(e) => onEditKey(e, req, cp)}
+									{@attach (el) => {
+										el.focus();
+										(el as HTMLTextAreaElement).select();
+									}}
+								></textarea>
+								<div class="flex items-center justify-end gap-1 text-xs">
+									<button type="button" class="rounded-sm px-1.5 py-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => (editing = null)}>{t('common.cancel')}</button>
+									<button
+										type="button"
+										class="rounded-sm bg-(--vscode-button-background) px-1.5 py-0.5 text-(--vscode-button-foreground) hover:bg-(--vscode-button-hoverBackground) disabled:opacity-50"
+										disabled={editBusy || !editText.trim()}
+										onclick={() => submitEdit(req, cp)}>{t('chatRewind.editSend')}</button
+									>
+								</div>
+							</div>
+						{:else}
+						<!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_tabindex -->
+						<div
+							class={['max-w-[90%] rounded-lg bg-(--vscode-chat-requestBackground,var(--vscode-input-background)) px-2.5 py-1.5 break-words whitespace-pre-wrap', inline && 'cursor-text']}
+							role={inline ? 'button' : undefined}
+							tabindex={inline ? 0 : undefined}
+							title={inline ? t('chatRewind.editHint') : undefined}
+							onclick={() => inline && !getSelection()?.toString() && startEdit(ti, req.text)}
+							onkeydown={(e) => inline && e.key === 'Enter' && e.target === e.currentTarget && (e.preventDefault(), startEdit(ti, req.text))}
+						>
 							{req.text}
 							{#if req.files.length || req.images.length}
 								<div class="mt-1 flex flex-wrap gap-1">
@@ -140,14 +212,17 @@
 								</div>
 							{/if}
 						</div>
+						{/if}
 						<div class="flex gap-0.5 opacity-0 transition-opacity group-hover/req:opacity-100 focus-within:opacity-100">
-							{#if actions.edit}
+							{#if inline}
+								<button type="button" class={ACTION} title={t('chatRewind.editHint')} aria-label={t('chatRewind.editLabel')} onclick={() => startEdit(ti, req.text)}><Icon name="edit" size={13} /></button>
+							{:else if actions.edit}
 								<button type="button" class={ACTION} title={t('chatView.editRequest')} aria-label={t('chatView.editRequest')} onclick={() => actions.edit?.(req)}><Icon name="edit" size={13} /></button>
 							{/if}
 							<button type="button" class={ACTION} title={t('chatView.copyRequest')} aria-label={t('chatView.copyRequest')} onclick={() => copy(req.text, -1 - ti)}>
 								<Icon name={copied === -1 - ti ? 'check' : 'copy'} size={13} />
 							</button>
-							{#if checkpoint && turn.checkpoint != null}{@render checkpoint(turn.checkpoint)}{/if}
+							{#if checkpoint && turn.checkpoint != null}{@render checkpoint(turn.checkpoint, req, ti === firstRequest)}{/if}
 						</div>
 					</div>
 				{/if}
