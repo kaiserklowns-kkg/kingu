@@ -7,20 +7,26 @@
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { commands } from '#lib/workbench/commands.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
-	import { allowedIn, settingsInView, settingTitle, validate, type SettingSchema, type SettingScope } from './registry';
+	import { workspace } from '#lib/workbench/workspace.svelte.ts';
+	import { allowedIn, scopeRule, settingsInView, settingTitle, validate, type SettingSchema, type SettingScope } from './registry';
 	import { settings } from './settings.svelte';
 	import { settingSchemas } from './schemas.svelte';
 	import ListSetting from './ListSetting.svelte';
 
-	const SCOPES: [SettingScope, string][] = [
-		['user', 'User'],
-		['workspace', 'Workspace']
-	];
+	// Repository: Kingu's per-repository overrides of the open folder (Orca's per-repo settings),
+	// kept in the app config dir, highest precedence.
+	const SCOPES = $derived<[SettingScope, string][]>([['user', 'User'], ['workspace', 'Workspace'], ...(workspace.root ? ([['repo', 'Repository']] as [SettingScope, string][]) : [])]);
+	const SCOPE_LABEL: Record<SettingScope, string> = { user: 'User', workspace: 'Workspace', repo: 'Repository' };
+	/** The layers under each scope, nearest first (what a scope inherits). */
+	const BELOW: Record<SettingScope, SettingScope[]> = { user: [], workspace: ['user'], repo: ['workspace', 'user'] };
 
 	let { group = null, query = $bindable('') }: { group?: string | null; query?: string } = $props();
 	let scope = $state<SettingScope>('user');
+	$effect(() => {
+		if (scope === 'repo' && !workspace.root) scope = 'user';
+	});
 
-	const isModified = (id: string) => settings.inspect(id, 'user') !== undefined || settings.inspect(id, 'workspace') !== undefined;
+	const isModified = (id: string) => (['user', 'workspace', 'repo'] as const).some((sc) => settings.inspect(id, sc) !== undefined);
 	const visible = $derived(settingsInView(query, group, settingSchemas.all, isModified));
 	const problemsOf = (id: string) => settings.problems.filter((p) => p.id === id && p.scope === scope);
 	const scopeProblems = $derived(settings.problems.filter((p) => p.scope === scope));
@@ -31,19 +37,20 @@
 		for (const s of visible) out.set(s.group, [...(out.get(s.group) ?? []), s]);
 		return [...out];
 	});
-	const layer = $derived(scope === 'user' ? settings.user : settings.workspace);
+	const layer = $derived(settings.layer(scope));
 
 	/** What the control shows: the scope's own value, else what that scope inherits. */
 	function shown(s: SettingSchema): unknown {
 		const own = validate(s, settings.inspect(s.id, scope));
-		const user = scope === 'workspace' ? validate(s, settings.inspect(s.id, 'user')) : undefined;
+		const below = BELOW[scope].filter((sc) => allowedIn(s, sc)).map((sc) => validate(s, settings.inspect(s.id, sc)));
 		// Object settings merge across layers (files.exclude adds to the defaults).
-		if (s.type === 'object') return { ...s.default, ...(user as object), ...(own as object) };
-		return own ?? user ?? s.default;
+		if (s.type === 'object') return Object.assign({}, s.default, ...below.toReversed(), own);
+		return own ?? below.find((v) => v !== undefined) ?? s.default;
 	}
 
 	const modifiedHere = (s: SettingSchema) => settings.inspect(s.id, scope) !== undefined;
-	const otherScope = $derived<SettingScope>(scope === 'user' ? 'workspace' : 'user');
+	/** The other scopes that set this setting (and may). */
+	const alsoIn = (s: SettingSchema) => (['user', 'workspace', 'repo'] as SettingScope[]).filter((sc) => sc !== scope && allowedIn(s, sc) && settings.inspect(s.id, sc) !== undefined);
 
 	async function update(s: SettingSchema, value: unknown) {
 		try {
@@ -66,6 +73,11 @@
 	}
 
 	function openJson() {
+		// The per-repository file lives in the app config dir: it is edited here only.
+		if (scope === 'repo') {
+			status.flash(`การตั้งค่า Repository เก็บที่ ${layer.path || 'config ของ Kingu'} — แก้ไขในหน้านี้`);
+			return;
+		}
 		void commands.run(scope === 'user' ? 'workbench.action.openSettingsJson' : 'workbench.action.openWorkspaceSettingsFile');
 	}
 </script>
@@ -123,8 +135,8 @@
 					<div class={['relative py-2 pr-2 pl-4', modifiedHere(s) && 'border-l-2 border-(--vscode-settings-modifiedItemIndicator) pl-[14px]']}>
 						<div class="flex items-center gap-2 text-[13px]">
 							<span><span class="text-(--vscode-descriptionForeground)">{title.category}:</span> <span class="font-semibold">{title.label}</span></span>
-							{#if settings.inspect(s.id, otherScope) !== undefined && allowedIn(s, otherScope)}
-								<span class="text-xs text-(--vscode-descriptionForeground) italic">({scope === 'user' ? 'Also modified in: Workspace' : 'Modified in: User'})</span>
+							{#if alsoIn(s).length}
+								<span class="text-xs text-(--vscode-descriptionForeground) italic">(Also modified in: {alsoIn(s).map((sc) => SCOPE_LABEL[sc]).join(', ')})</span>
 							{/if}
 							{#if modifiedHere(s)}
 								<button class="ml-auto text-xs text-(--vscode-textLink-foreground) hover:underline" onclick={() => update(s, undefined)}>Reset</button>
@@ -186,7 +198,7 @@
 							<p class="mt-1 text-xs text-(--vscode-editorWarning-foreground)">{p.message}</p>
 						{/each}
 						{#if disabled}
-							<p class="mt-1 text-xs text-(--vscode-editorWarning-foreground)">ตั้งค่านี้ได้เฉพาะใน User (This setting can only be applied in user settings.)</p>
+							<p class="mt-1 text-xs text-(--vscode-editorWarning-foreground)">{scopeRule(s)}</p>
 						{/if}
 					</div>
 				{/each}

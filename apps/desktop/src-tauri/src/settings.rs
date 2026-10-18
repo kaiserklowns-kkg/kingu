@@ -29,6 +29,9 @@ pub enum Scope {
   Workspace,
   /// The user `keybindings.json`.
   Keybindings,
+  /// Kingu's own per-repository overrides (Orca's per-repo settings) for the open folder:
+  /// `<config_dir>/repos/<id>.json`, never inside the repository.
+  Repo,
 }
 
 impl Scope {
@@ -37,6 +40,7 @@ impl Scope {
       "user" => Ok(Self::User),
       "workspace" => Ok(Self::Workspace),
       "keybindings" => Ok(Self::Keybindings),
+      "repo" => Ok(Self::Repo),
       _ => Err(format!("unknown settings scope: {s}")),
     }
   }
@@ -45,6 +49,23 @@ impl Scope {
 /// `<config_dir>/settings.json`.
 pub fn user_path(config_dir: &Path) -> PathBuf {
   config_dir.join(FILE)
+}
+
+const REPOS_DIR: &str = "repos";
+
+/// `<config_dir>/repos/<id>.json`: the per-repository overrides of `root`, keyed by a hash of its
+/// path so any folder name maps to one safe file name.
+pub fn repo_path(config_dir: &Path, root: &Path) -> PathBuf {
+  let hash = crate::snap::sha256_hex(root.to_string_lossy().as_bytes());
+  config_dir.join(REPOS_DIR).join(format!("{}.json", &hash[..16]))
+}
+
+/// One value of `root`'s per-repository settings (local scripts, script source), read by Rust
+/// itself so what may run never comes from the webview. A missing or unreadable file reads as unset.
+pub fn repo_value(config_dir: &Path, root: &Path, key: &str) -> Option<serde_json::Value> {
+  let text = read(&repo_path(config_dir, root)).ok()??;
+  let parsed: serde_json::Value = serde_json::from_str(&strip_jsonc(&text)).ok()?;
+  parsed.get(key).cloned()
 }
 
 /// `<root>/.kingu/settings.json`, refusing a `.kingu` or `settings.json` that is a symlink
@@ -186,6 +207,7 @@ fn path_for(app: &AppHandle, ws: &Workspace, scope: Scope) -> Result<PathBuf, St
     Scope::User => Ok(user_path(&app.path().app_config_dir().map_err(|e| e.to_string())?)),
     Scope::Workspace => workspace_path(&ws.root()?),
     Scope::Keybindings => Ok(app.path().app_config_dir().map_err(|e| e.to_string())?.join(KEYBINDINGS_FILE)),
+    Scope::Repo => Ok(repo_path(&app.path().app_config_dir().map_err(|e| e.to_string())?, &ws.root()?)),
   }
 }
 
@@ -194,7 +216,7 @@ pub fn settings_read(app: AppHandle, ws: State<'_, Workspace>, scope: String) ->
   let scope = Scope::parse(&scope)?;
   // No folder open: there are no workspace settings (not an error, which would keep the last
   // folder's values).
-  if scope == Scope::Workspace && ws.current().is_none() {
+  if matches!(scope, Scope::Workspace | Scope::Repo) && ws.current().is_none() {
     return Ok(SettingsFile { path: String::new(), content: None });
   }
   let path = path_for(&app, &ws, scope)?;
@@ -218,6 +240,7 @@ mod tests {
     assert_eq!(Scope::parse("user").unwrap(), Scope::User);
     assert_eq!(Scope::parse("workspace").unwrap(), Scope::Workspace);
     assert_eq!(Scope::parse("keybindings").unwrap(), Scope::Keybindings);
+    assert_eq!(Scope::parse("repo").unwrap(), Scope::Repo);
     assert!(Scope::parse("../etc").is_err());
   }
 
@@ -256,6 +279,20 @@ mod tests {
     assert_eq!(user_value(tmp.path(), "list"), Some(serde_json::json!([1, 2])));
     write_atomic(&user_path(tmp.path()), "{ broken").unwrap();
     assert_eq!(user_value(tmp.path(), "window.restoreWindows"), None);
+  }
+
+  #[test]
+  fn repo_settings_live_in_the_config_dir_per_repository() {
+    let config = tempfile::tempdir().unwrap();
+    let (a, b) = (Path::new("/work/a"), Path::new("/work/b"));
+    let pa = repo_path(config.path(), a);
+    assert!(pa.starts_with(config.path().join("repos")));
+    assert_ne!(pa, repo_path(config.path(), b));
+    assert_eq!(pa, repo_path(config.path(), a));
+    assert_eq!(repo_value(config.path(), a, "kingu.repo.setupScript"), None);
+    write_atomic(&pa, "{\n  // mine\n  \"kingu.repo.setupScript\": \"bun install\",\n}\n").unwrap();
+    assert_eq!(repo_value(config.path(), a, "kingu.repo.setupScript"), Some(serde_json::json!("bun install")));
+    assert_eq!(repo_value(config.path(), b, "kingu.repo.setupScript"), None);
   }
 
   #[test]

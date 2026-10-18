@@ -20,12 +20,15 @@ export const WORKSPACE_SETTINGS_PATH = '.kingu/settings.json';
 class Settings {
 	user = $state<Layer>(emptyLayer());
 	workspace = $state<Layer>(emptyLayer());
+	/** Kingu's per-repository overrides of the open folder (Orca's per-repo settings), kept in the app config dir. */
+	repo = $state<Layer>(emptyLayer());
 	loaded = $state(false);
-	readonly resolved: Map<string, Resolved> = $derived(resolveSettings(this.user.values, this.workspace.values, settingSchemas.all));
+	readonly resolved: Map<string, Resolved> = $derived(resolveSettings(this.user.values, this.workspace.values, settingSchemas.all, this.repo.values));
 	/** Values the files set but that are ignored (wrong type, out of range, user-only in the workspace file). */
 	readonly problems: SettingProblem[] = $derived([
 		...settingProblems(this.user.values, 'user', settingSchemas.all),
-		...settingProblems(this.workspace.values, 'workspace', settingSchemas.all)
+		...settingProblems(this.workspace.values, 'workspace', settingSchemas.all),
+		...settingProblems(this.repo.values, 'repo', settingSchemas.all)
 	]);
 	private writes = Promise.resolve();
 	#written = new Set<(scope: SettingScope) => void>();
@@ -36,33 +39,44 @@ class Settings {
 		return () => this.#written.delete(fn);
 	}
 
-	/** The effective value (workspace over user over default). */
+	/** The effective value (repo over workspace over user over default). */
 	get<T = unknown>(id: string): T {
 		return (this.resolved.get(id)?.value ?? settingSchemas.byId.get(id)?.default) as T;
 	}
 
 	/** The value set in one scope's file, or undefined. */
 	inspect(id: string, scope: SettingScope): unknown {
-		return (scope === 'user' ? this.user : this.workspace).values[id];
+		return this.layer(scope).values[id];
+	}
+
+	/** Where the effective value comes from. */
+	sourceOf(id: string): Resolved['source'] {
+		return this.resolved.get(id)?.source ?? 'default';
+	}
+
+	layer(scope: SettingScope): Layer {
+		return scope === 'user' ? this.user : scope === 'workspace' ? this.workspace : this.repo;
 	}
 
 	async load() {
-		const [user, workspace] = await Promise.all([this.read('user'), this.read('workspace')]);
+		const [user, workspace, repo] = await Promise.all([this.read('user'), this.read('workspace'), this.read('repo')]);
 		// Unchanged files keep their layer object, so re-reading on focus re-applies nothing.
 		const same = (a: Layer, b: Layer) => a.path === b.path && a.text === b.text && a.error === b.error;
 		if (!same(user, this.user)) this.user = user;
 		if (!same(workspace, this.workspace)) this.workspace = workspace;
+		if (!same(repo, this.repo)) this.repo = repo;
 		this.loaded = true;
 	}
 
 	/** Open Folder / Close Folder: drop the old folder's layer and read the new folder's file. */
 	async reloadWorkspace() {
 		this.workspace = emptyLayer();
+		this.repo = emptyLayer();
 		await this.load();
 	}
 
 	private async read(scope: SettingScope): Promise<Layer> {
-		const prev = scope === 'user' ? this.user : this.workspace;
+		const prev = this.layer(scope);
 		try {
 			const file = await invoke<SettingsFile>('settings_read', { scope });
 			return parseLayer(file, prev);
@@ -81,7 +95,8 @@ class Settings {
 			await invoke('settings_write', { scope, content: text });
 			const next = parseLayer({ path: layer.path, content: text }, layer);
 			if (scope === 'user') this.user = next;
-			else this.workspace = next;
+			else if (scope === 'workspace') this.workspace = next;
+			else this.repo = next;
 			for (const fn of this.#written) fn(scope);
 		};
 		const p = this.writes.then(run);
