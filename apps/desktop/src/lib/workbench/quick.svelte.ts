@@ -1,6 +1,20 @@
 // Quick input state (VS Code: IQuickInputService / quick access). The prefix picks the provider:
 // '>' commands, ':' go to line, '' files. `pick` shows a custom list instead (createQuickPick).
 
+import { settings } from '#lib/settings/settings.svelte.ts';
+import { quickInputKind, quickValueKind, recordCommand, restoredInput } from './workbenchOptions';
+
+const HISTORY_KEY = 'kingu.commandPalette.history';
+
+function readHistory(): string[] {
+	try {
+		const v = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]');
+		return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [];
+	} catch {
+		return [];
+	}
+}
+
 export type PickItem = {
 	id: string;
 	label: string;
@@ -44,11 +58,36 @@ class Quick {
 		this.step = { n: this.step.n + 1, delta };
 	}
 
+	/** The last text typed in the command palette and in Quick Open (for their `preserveInput` settings). */
+	#lastInput: { commands?: string; files?: string } = {};
+	/** `workbench.commandPalette.history`: recently run palette commands, most recent first. */
+	commandHistory = $state<string[]>(readHistory());
+
+	/**
+	 * Opens quick access at `prefix`. `workbench.commandPalette.preserveInput` and
+	 * `workbench.quickOpen.preserveInput` bring back the last text typed there (selected, so typing replaces it).
+	 */
 	show(prefix = '') {
 		this.hide();
-		this.value = prefix;
+		const kind = quickInputKind(prefix);
+		const preserve = kind === 'commands' ? settings.get<boolean>('workbench.commandPalette.preserveInput') : kind === 'files' ? settings.get<boolean>('workbench.quickOpen.preserveInput') : false;
+		this.value = kind ? restoredInput(prefix, this.#lastInput[kind], preserve) : prefix;
+		this.selectRestored = this.value !== prefix;
 		this.visible = true;
 		this.session++;
+	}
+
+	/** The input opened with restored text, which starts selected. */
+	selectRestored = false;
+
+	/** A command run from the palette: it moves to the top of the history. */
+	recordCommand(id: string) {
+		this.commandHistory = recordCommand(this.commandHistory, id, settings.get<number>('workbench.commandPalette.history'));
+		try {
+			localStorage.setItem(HISTORY_KEY, JSON.stringify(this.commandHistory));
+		} catch {
+			// Storage unavailable: the history lasts until reload.
+		}
 	}
 
 	pick(picker: Picker) {
@@ -73,6 +112,10 @@ class Quick {
 
 	hide({ accepted = false } = {}) {
 		const picker = this.picker;
+		if (this.visible && !picker) {
+			const kind = quickValueKind(this.value);
+			if (kind) this.#lastInput[kind] = this.value;
+		}
 		this.picker = null;
 		this.visible = false;
 		if (picker && !accepted) picker.onCancel?.();

@@ -83,3 +83,21 @@ export function moveQuestion(paths: readonly string[], target: string, root: str
 		? `ย้าย '${baseName(paths[0])}' ไปไว้ใน '${into}'? (Are you sure you want to move '${baseName(paths[0])}' into '${into}'?)`
 		: `ย้าย ${paths.length} รายการต่อไปนี้ไปไว้ใน '${into}'? (Are you sure you want to move the following ${paths.length} files into '${into}'?)\n\n${paths.map(baseName).join('\n')}`;
 }
+
+/**
+ * explorer.copyPathSeparator / explorer.copyRelativePathSeparator: `auto` keeps the platform's
+ * separator (`/` on macOS and Linux); `\` writes Windows-style paths.
+ */
+export function withPathSeparator(path: string, separator: string): string {
+	return separator === '\\' ? path.replaceAll('/', '\\') : path;
+}
+
+/**
+ * explorer.autoReveal (`true`, `false` or `"focusNoScroll"`) and explorer.autoRevealExclude:
+ * whether opening `rel` selects it in the Explorer, and whether the row scrolls into view.
+ * `excluded` says whether a glob of autoRevealExclude matches `rel` or a folder above it.
+ */
+export function autoRevealOf(setting: unknown, excluded: boolean): { reveal: boolean; scroll: boolean } {
+	if (excluded || (setting !== true && setting !== 'focusNoScroll')) return { reveal: false, scroll: false };
+	return { reveal: true, scroll: setting === true };
+}

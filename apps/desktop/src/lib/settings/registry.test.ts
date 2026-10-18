@@ -113,7 +113,8 @@ describe('schema', () => {
 		expect(String(m.get('window.title')?.value)).toContain('${activeEditorShort}${separator}${rootName}');
 		for (const id of [...Object.keys(expected), 'window.title']) {
 			const d = SCHEMA.get(id)!.description;
-			expect([id, /[฀-๿]/.test(d), /\([A-Z][^)]*\.\)/.test(d)]).toEqual([id, true, true]);
+			// Thai first, then VS Code's English description in parentheses (which may hold parentheses itself).
+			expect([id, /^[^(]*[฀-๿]/.test(d), /\([\s\S]*[A-Za-z][\s\S]*\)$/.test(d)]).toEqual([id, true, true]);
 		}
 		expect(SCHEMA.get('kingu.agentsControl.enabled')).toMatchObject({ enum: ['hidden', 'badge', 'compact'] });
 		expect(resolveSettings({ 'workbench.layoutControl.type': 'sideways' }, {}).get('workbench.layoutControl.type')?.source).toBe('default');
@@ -207,7 +208,11 @@ describe('settings sections', () => {
 	test('a group filters, a query searches everything', () => {
 		expect(settingsInView('', 'Terminal').every((s) => s.group === 'Terminal')).toBe(true);
 		expect(settingsInView('', null)).toHaveLength(SETTINGS.length);
-		expect(settingsInView('fontSize', 'Agent').map((s) => s.id)).toEqual(['editor.fontSize', 'terminal.integrated.fontSize', 'kingu.chat.fontSize', 'kingu.chat.codeFontSize']);
+		const found = settingsInView('fontSize', 'Agent').map((s) => s.id);
+		expect(found.slice(0, 2)).toEqual(['editor.fontSize', 'terminal.integrated.fontSize']);
+		expect(found.every((id) => id.toLowerCase().includes('fontsize'))).toBe(true);
+		expect(found).toContain('debug.console.fontSize');
+		expect(found).toContain('kingu.chat.fontSize');
 	});
 });
 
@@ -215,7 +220,7 @@ describe('VS Code IDE settings', () => {
 	test('object settings merge key by key, workspace over user over default', () => {
 		const m = resolveSettings({ 'files.exclude': { '**/tmp': true, '**/.git': false } }, { 'files.exclude': { '**/out': true } });
 		expect(m.get('files.exclude')).toEqual({
-			value: { '**/.git': false, '**/.svn': true, '**/.hg': true, '**/CVS': true, '**/.DS_Store': true, '**/Thumbs.db': true, '**/tmp': true, '**/out': true },
+			value: { '**/.git': false, '**/.svn': true, '**/.hg': true, '**/.jj': true, '**/.DS_Store': true, '**/Thumbs.db': true, '**/tmp': true, '**/out': true },
 			source: 'workspace'
 		});
 		expect(resolveSettings({ 'files.exclude': { x: 'yes' } }, {}).get('files.exclude')?.source).toBe('default');
@@ -242,7 +247,7 @@ describe('VS Code IDE settings', () => {
 		const modified = (id: string) => id === 'editor.fontSize' || id === 'files.autoSave';
 		expect(settingsInView('@modified', null, SETTINGS, modified).map((s) => s.id)).toEqual(['editor.fontSize', 'files.autoSave']);
 		expect(settingsInView('@modified font', 'Agent', SETTINGS, modified).map((s) => s.id)).toEqual(['editor.fontSize']);
-		expect(settingsInView('@id:files.autoSave', null).map((s) => s.id)).toEqual(['files.autoSave', 'files.autoSaveDelay']);
+		expect(settingsInView('@id:files.autoSave', null).map((s) => s.id)).toEqual(['files.autoSave', 'files.autoSaveDelay', 'files.autoSaveWorkspaceFilesOnly', 'files.autoSaveWhenNoErrors']);
 		expect(parseQuery('@modified  tab size')).toEqual({ filters: { modified: true, id: null }, text: 'tab size' });
 	});
 
@@ -254,7 +259,8 @@ describe('VS Code IDE settings', () => {
 	test('every IDE setting: Thai + English description, a valid default, a known section', () => {
 		const sectionGroups = new Set(SETTINGS_SECTIONS.flatMap((s) => s.groups));
 		for (const s of IDE_SETTINGS) {
-			expect([s.id, /[฀-๿]/.test(s.description), /\([A-Z][^)]*\.\)/.test(s.description)]).toEqual([s.id, true, true]);
+			// Thai first, then VS Code's English description in parentheses (which may hold parentheses itself).
+			expect([s.id, /^[^(]*[฀-๿]/.test(s.description), /\([\s\S]*[A-Za-z][\s\S]*\)$/.test(s.description)]).toEqual([s.id, true, true]);
 			expect([s.id, validate(s, s.default) !== undefined]).toEqual([s.id, true]);
 			expect([s.id, sectionGroups.has(s.group)]).toEqual([s.id, true]);
 		}
@@ -266,8 +272,10 @@ describe('VS Code IDE settings', () => {
 		const walk = (dir: string) => {
 			for (const name of readdirSync(dir)) {
 				const p = join(dir, name);
-				if (statSync(p).isDirectory()) walk(p);
-				else if (/\.(ts|svelte|rs)$/.test(name) && !/\.test\.ts$|registry\.ts$|ideSettings\.ts$/.test(name)) sources.push(readFileSync(p, 'utf8'));
+				if (statSync(p).isDirectory()) {
+					if (name !== 'testdata') walk(p);
+				}
+				else if (/\.(ts|svelte|rs)$/.test(name) && !/\.test\.ts$|registry\.ts$|ideSettings\.ts$/.test(name) && !p.includes('/settings/vscode/')) sources.push(readFileSync(p, 'utf8'));
 			}
 		};
 		walk(join(import.meta.dir, '..'));

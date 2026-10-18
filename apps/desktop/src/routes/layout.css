@@ -24,7 +24,8 @@ body {
 	/* WKWebView (macOS) still needs the prefix: without it ⌘A selects the whole workbench. */
 	-webkit-user-select: none;
 	user-select: none;
-	-webkit-font-smoothing: antialiased;
+	/* workbench.fontAliasing (workbenchAppearance.svelte.ts sets the variable). */
+	-webkit-font-smoothing: var(--kg-font-smoothing, auto);
 }
 
 /* Text you may want to copy stays selectable: inputs and agent output (`.kg-selectable`). */
@@ -38,4 +39,22 @@ textarea,
 :focus-visible {
 	outline: 1px solid var(--vscode-focusBorder);
 	outline-offset: -1px;
+}
+
+/* workbench.reduceMotion (on, or the OS setting with `auto`): no animations or transitions. */
+html.kg-reduce-motion *,
+html.kg-reduce-motion *::before,
+html.kg-reduce-motion *::after {
+	animation-duration: 0s !important;
+	animation-delay: 0s !important;
+	transition-duration: 0s !important;
+	transition-delay: 0s !important;
+	scroll-behavior: auto !important;
+}
+
+/* workbench.shadows: off removes the shadows of quick input, menus, hovers and toasts. */
+html.kg-no-shadows *,
+html.kg-no-shadows *::before,
+html.kg-no-shadows *::after {
+	box-shadow: none !important;
 }

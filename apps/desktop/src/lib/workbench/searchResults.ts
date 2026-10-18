@@ -13,12 +13,13 @@ export type TextMatch = {
 	text: string;
 };
 
-/** `version` fingerprints the file as searched; Replace refuses the file once it differs. */
-export type FileMatches = { path: string; matches: TextMatch[]; version?: string };
+/** `version` fingerprints the file as searched; Replace refuses the file once it differs.
+ * `modified`: the file's mtime (ms), for `search.sortOrder: modified`. */
+export type FileMatches = { path: string; matches: TextMatch[]; version?: string; modified?: number };
 
 /** Mirrors Rust `search::SearchEvent`. */
 export type SearchEvent =
-	| { kind: 'file'; path: string; matches: TextMatch[]; version: string }
+	| { kind: 'file'; path: string; matches: TextMatch[]; version: string; modified: number }
 	| { kind: 'done'; files: number; matches: number; limit_hit: boolean; elapsed_ms: number }
 	| { kind: 'error'; message: string };
 
@@ -37,22 +38,101 @@ export type SearchOptions = {
 	smart_case?: boolean;
 	use_global_ignore?: boolean;
 	use_parent_ignore?: boolean;
+	max_threads?: number;
 };
 
 export type ResultRow =
-	| { kind: 'file'; key: string; file: FileMatches; collapsed: boolean }
-	| { kind: 'match'; key: string; file: FileMatches; match: TextMatch };
+	| { kind: 'folder'; key: string; path: string; depth: number; collapsed: boolean }
+	| { kind: 'file'; key: string; file: FileMatches; collapsed: boolean; depth: number }
+	| { kind: 'match'; key: string; file: FileMatches; match: TextMatch; depth: number };
 
-/** The flattened tree in display order: each file row, then its matches unless collapsed. */
-export function flattenResults(files: FileMatches[], collapsed: ReadonlySet<string>): ResultRow[] {
+export type ViewMode = 'list' | 'tree';
+
+/** The collapse key of a folder row in the tree view (files use their path). */
+export const folderKey = (path: string) => `\u0000dir:${path}`;
+
+/**
+ * The flattened results in display order. `list` (search.defaultViewMode): each file, then its
+ * matches unless collapsed. `tree`: files under their folders, each folder a collapsible row.
+ */
+export function flattenResults(files: FileMatches[], collapsed: ReadonlySet<string>, mode: ViewMode = 'list'): ResultRow[] {
 	const rows: ResultRow[] = [];
-	for (const file of files) {
+	const pushFile = (file: FileMatches, depth: number) => {
 		const isCollapsed = collapsed.has(file.path);
-		rows.push({ kind: 'file', key: file.path, file, collapsed: isCollapsed });
-		if (isCollapsed) continue;
-		file.matches.forEach((match, i) => rows.push({ kind: 'match', key: `${file.path}\u0000${i}`, file, match }));
+		rows.push({ kind: 'file', key: file.path, file, collapsed: isCollapsed, depth });
+		if (isCollapsed) return;
+		file.matches.forEach((match, i) => rows.push({ kind: 'match', key: `${file.path}\u0000${i}`, file, match, depth: depth + 1 }));
+	};
+	if (mode === 'list') {
+		for (const file of files) pushFile(file, 0);
+		return rows;
 	}
+	// Tree: folders in the order their first file appears (the sort order), then their files.
+	type Node = { dirs: Map<string, Node>; files: FileMatches[] };
+	const root: Node = { dirs: new Map(), files: [] };
+	for (const file of files) {
+		let node = root;
+		let path = '';
+		for (const part of dirname(file.path).split('/').filter(Boolean)) {
+			path = path ? `${path}/${part}` : part;
+			let next = node.dirs.get(path);
+			if (!next) node.dirs.set(path, (next = { dirs: new Map(), files: [] }));
+			node = next;
+		}
+		node.files.push(file);
+	}
+	const walk = (node: Node, depth: number) => {
+		for (const [path, child] of node.dirs) {
+			const isCollapsed = collapsed.has(folderKey(path));
+			rows.push({ kind: 'folder', key: folderKey(path), path, depth, collapsed: isCollapsed });
+			if (!isCollapsed) walk(child, depth + 1);
+		}
+		for (const file of node.files) pushFile(file, depth);
+	};
+	walk(root, 0);
 	return rows;
+}
+
+export type ResultSortOrder = 'default' | 'fileNames' | 'type' | 'modified' | 'countDescending' | 'countAscending';
+
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+const extOf = (path: string) => {
+	const name = basename(path);
+	const dot = name.lastIndexOf('.');
+	return dot > 0 ? name.slice(dot + 1) : '';
+};
+/** Folder by folder, then the file name (VS Code's comparePaths). */
+const byPath = (a: string, b: string) => {
+	const pa = a.split('/');
+	const pb = b.split('/');
+	for (let i = 0; i < Math.min(pa.length, pb.length); i++) {
+		const aLast = i === pa.length - 1;
+		const bLast = i === pb.length - 1;
+		// A file in a folder comes before the folder's sub-folders.
+		if (aLast !== bLast) return aLast ? -1 : 1;
+		const c = collator.compare(pa[i], pb[i]);
+		if (c) return c;
+	}
+	return pa.length - pb.length;
+};
+
+/** `search.sortOrder` (VS Code's searchMatchComparer): the order of the result files. */
+export function sortResults(files: readonly FileMatches[], order: ResultSortOrder): FileMatches[] {
+	const name = (f: FileMatches) => basename(f.path);
+	const cmp: Record<ResultSortOrder, (a: FileMatches, b: FileMatches) => number> = {
+		default: (a, b) => byPath(a.path, b.path),
+		fileNames: (a, b) => collator.compare(name(a), name(b)) || byPath(a.path, b.path),
+		type: (a, b) => collator.compare(extOf(a.path), extOf(b.path)) || collator.compare(name(a), name(b)) || byPath(a.path, b.path),
+		modified: (a, b) => (b.modified ?? 0) - (a.modified ?? 0) || byPath(a.path, b.path),
+		countDescending: (a, b) => b.matches.length - a.matches.length || byPath(a.path, b.path),
+		countAscending: (a, b) => a.matches.length - b.matches.length || byPath(a.path, b.path)
+	};
+	return [...files].sort(cmp[order] ?? cmp.default);
+}
+
+/** `search.collapseResults`: whether a new result file starts collapsed (`auto`: over 10 matches, like VS Code). */
+export function startsCollapsed(setting: string, matches: number): boolean {
+	return setting === 'alwaysCollapse' || (setting === 'auto' && matches > 10);
 }
 
 /** VS Code's result message, e.g. "3 results in 2 files". */

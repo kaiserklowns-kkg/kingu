@@ -5,9 +5,11 @@
 	import { onMount, untrack } from 'svelte';
 	import { lsp } from '#lib/lsp/lsp.svelte.ts';
 	import EditorGrid from './EditorGrid.svelte';
+	import EditorGroupView from './EditorGroupView.svelte';
+	import { navigation } from './navigation.svelte';
 	import { commands } from './commands.svelte';
 	import { editors } from './editors.svelte';
-	import { disposeAll, disposeClosed, reloadClean, saveFile } from './editorModels';
+	import { disposeAll, disposeClosed, pruneViewStates, reloadClean, saveFile } from './editorModels';
 	import { EDITOR_ACTIONS } from './menus';
 	import { quick } from './quick.svelte';
 	import { isDiffKey } from './scm';
@@ -67,7 +69,16 @@
 		const unwatch = workspace.onFilesChanged(reloadClean);
 		// The settings UI wrote a settings file: an open (clean) settings.json tab follows it.
 		const unwritten = settings.onDidWrite((scope) => reloadClean([scope === 'user' ? USER_SETTINGS_KEY : WORKSPACE_SETTINGS_PATH]));
+		// workbench.editor.mouseBackForwardToNavigate: mouse buttons 4 and 5 are Go Back / Go Forward.
+		const onMouseUp = (e: MouseEvent) => {
+			if ((e.button !== 3 && e.button !== 4) || !settings.get<boolean>('workbench.editor.mouseBackForwardToNavigate')) return;
+			e.preventDefault();
+			if (e.button === 3) navigation.back();
+			else navigation.forward();
+		};
+		window.addEventListener('mouseup', onMouseUp);
 		return () => {
+			window.removeEventListener('mouseup', onMouseUp);
 			unwatch();
 			unwritten();
 			unregister.forEach((u) => u());
@@ -75,14 +86,28 @@
 		};
 	});
 
+	// workbench.editor.limit.*: a lower limit (or turning it on) closes editors at once, like VS Code.
+	$effect(() => {
+		void [settings.get('workbench.editor.limit.enabled'), settings.get('workbench.editor.limit.value'), settings.get('workbench.editor.limit.perEditorGroup'), settings.get('workbench.editor.limit.excludeDirty')];
+		untrack(() => editors.enforceLimit());
+	});
+
 	// Dispose models of files no group has open (files open in the Agents layout share them too).
 	$effect(() => {
 		const open = new Set([...editors.openPaths(), ...adeLayout.openFiles()]);
 		disposeClosed(open, editors.order());
+		const byGroup = new Map(editors.groups.map((g) => [g.id, new Set(g.tabs.map((t) => t.path))]));
+		void settings.get('workbench.editor.restoreViewState');
+		// After the editor hosts have saved the view state of the tab they stopped showing.
+		queueMicrotask(() => pruneViewStates(byGroup));
 		untrack(() => textFiles.prune(open));
 	});
 </script>
 
 <div class="h-full min-w-0 bg-(--vscode-editor-background)">
-	<EditorGrid node={editors.model.root} />
+	{#if editors.model.maximized != null && editors.group(editors.model.maximized)}
+		<EditorGroupView group={editors.model.maximized} />
+	{:else}
+		<EditorGrid node={editors.model.root} />
+	{/if}
 </div>

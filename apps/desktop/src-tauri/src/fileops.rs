@@ -143,6 +143,77 @@ pub fn increment_name(name: &str, is_dir: bool) -> String {
   format!("{stem} copy{ext}")
 }
 
+/// `explorer.incrementalNaming`: how a pasted or dropped item that clashes with an existing name
+/// is renamed. `Disabled` refuses the clash (the webview asks to replace it).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Naming {
+  #[default]
+  Simple,
+  Smart,
+  Disabled,
+}
+
+/// VS Code's `incrementFileName` with `smart` naming: the number in a name goes up
+/// (`file.1.txt` → `file.2.txt`, `1.txt` → `2.txt`, `folder1` → `folder2`), else `.1` is added
+/// (`file.txt` → `file.1.txt`).
+pub fn increment_name_smart(name: &str, is_dir: bool) -> String {
+  use regex::{Captures, Regex};
+  use std::sync::LazyLock;
+  // VS Code's MAX_SAFE_SMALL_INTEGER: past it the number is kept and `.1` appended.
+  const MAX: u64 = 1 << 30;
+  let bump = |digits: &str| -> Option<String> {
+    let n: u64 = digits.parse().ok()?;
+    (n < MAX).then(|| format!("{:0width$}", n + 1, width = digits.len()))
+  };
+  static SUFFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(.*[.\-_])(\d+)(\..*)$").unwrap());
+  static PREFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(.*?)(\d+)([.\-_].*)(\..*)$").unwrap());
+  static PREFIX_NO_NAME: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(.*?)(\d+)(\..*)$").unwrap());
+  static TRAILING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(\d+)$").unwrap());
+  static LEADING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d+)(.*)$").unwrap());
+  if !is_dir {
+    // file.1.txt → file.2.txt
+    if let Some(c) = SUFFIX.captures(name) {
+      return bump(&c[2]).map_or_else(|| format!("{}{}.1{}", &c[1], &c[2], &c[3]), |n| format!("{}{n}{}", &c[1], &c[3]));
+    }
+    // 1.file.txt → 2.file.txt
+    if let Some(c) = PREFIX.captures(name) {
+      return bump(&c[2]).map_or_else(|| format!("{}{}{}.1{}", &c[1], &c[2], &c[3], &c[4]), |n| format!("{}{n}{}{}", &c[1], &c[3], &c[4]));
+    }
+    // 1.txt → 2.txt (VS Code's regex is unanchored: the last digits before the first dot after them).
+    if let Some(c) = PREFIX_NO_NAME.captures(name).filter(|c| !c[3].is_empty()) {
+      return bump(&c[2]).map_or_else(|| format!("{}{}.1{}", &c[1], &c[2], &c[3]), |n| format!("{}{n}{}", &c[1], &c[3]));
+    }
+    // file.txt → file.1.txt
+    if let Some(dot) = name.rfind('.') {
+      return format!("{}.1{}", &name[..dot], &name[dot..]);
+    }
+    // 123 → 124
+    if let Some(c) = TRAILING.captures(name) {
+      let digits = c[1].to_string();
+      return match bump(&digits) {
+        Some(n) => TRAILING.replace(name, |_: &Captures| n.clone()).into_owned(),
+        None => format!("{name}.1"),
+      };
+    }
+    // file → file1 (VS Code's `(.*)(\d*)$` never captures digits here, so it always appends 1).
+    return format!("{name}1");
+  }
+  // folder.1 → folder.2
+  if let Some(c) = TRAILING.captures(name) {
+    let digits = c[1].to_string();
+    return match bump(&digits) {
+      Some(n) => TRAILING.replace(name, |_: &Captures| n.clone()).into_owned(),
+      None => format!("{name}.1"),
+    };
+  }
+  // 1.folder → 2.folder
+  if let Some(c) = LEADING.captures(name) {
+    return bump(&c[1]).map_or_else(|| format!("{}{}.1", &c[1], &c[2]), |n| format!("{n}{}", &c[2]));
+  }
+  format!("{name}.1")
+}
+
 /// An existing folder (or the root, `""`) to put things into, canonical and inside the workspace.
 fn target_dir(root: &Path, dir: &str) -> Result<PathBuf, String> {
   let path = if dir.is_empty() { root.to_path_buf() } else { root.join(plain(dir)?).canonicalize().map_err(|e| format!("{dir}: {e}"))? };
@@ -155,15 +226,20 @@ fn target_dir(root: &Path, dir: &str) -> Result<PathBuf, String> {
   Ok(path)
 }
 
-/// `dir/name`, or the first free incremented name when it is taken.
-fn free_name(root: &Path, dir: &str, name: &str, is_dir: bool) -> Result<String, String> {
+/// `dir/name`, or the first free incremented name when it is taken (`naming`); with naming
+/// disabled a taken name is an "already exists" error.
+fn free_name(root: &Path, dir: &str, name: &str, is_dir: bool, naming: Naming) -> Result<String, String> {
   let mut name = name.to_string();
   for _ in 0..10_000 {
     let rel = if dir.is_empty() { name.clone() } else { format!("{dir}/{name}") };
     if root.join(&rel).symlink_metadata().is_err() {
       return Ok(rel);
     }
-    name = increment_name(&name, is_dir);
+    name = match naming {
+      Naming::Simple => increment_name(&name, is_dir),
+      Naming::Smart => increment_name_smart(&name, is_dir),
+      Naming::Disabled => return Err(format!("{rel}: already exists")),
+    };
   }
   Err(format!("{name}: no free name"))
 }
@@ -196,14 +272,14 @@ fn name_of(rel: &str) -> Result<&str, String> {
 }
 
 /// Copies `from` into the folder `to_dir` (paste, ⌥-drag). A name already taken there becomes
-/// `name copy`, so pasting into the same folder duplicates. Returns the new path.
-pub fn copy(root: &Path, from: &str, to_dir: &str) -> Result<String, String> {
+/// `name copy` (or what `naming` says), so pasting into the same folder duplicates. Returns the new path.
+pub fn copy(root: &Path, from: &str, to_dir: &str, naming: Naming) -> Result<String, String> {
   let src = check_existing(root, from)?;
   target_dir(root, to_dir)?;
   if !to_dir.is_empty() && Path::new(to_dir).starts_with(Path::new(from)) {
     return Err(format!("{from}: cannot copy a folder into itself"));
   }
-  let rel = free_name(root, to_dir, name_of(from)?, src.is_dir())?;
+  let rel = free_name(root, to_dir, name_of(from)?, src.is_dir(), naming)?;
   copy_entry(&src, &root.join(&rel)).map_err(|e| format!("{from} → {rel}: {e}"))?;
   Ok(rel)
 }
@@ -223,7 +299,7 @@ pub fn move_into(root: &Path, from: &str, to_dir: &str) -> Result<String, String
 
 /// Copies files dropped from Finder (absolute paths) into `to_dir`, with copy naming on
 /// collisions. Returns the new paths; the first failure stops the rest.
-pub fn import(root: &Path, sources: &[PathBuf], to_dir: &str) -> Result<Vec<String>, String> {
+pub fn import(root: &Path, sources: &[PathBuf], to_dir: &str, naming: Naming) -> Result<Vec<String>, String> {
   let dir_abs = target_dir(root, to_dir)?;
   let mut out = Vec::new();
   for src in sources {
@@ -232,7 +308,7 @@ pub fn import(root: &Path, sources: &[PathBuf], to_dir: &str) -> Result<Vec<Stri
     if dir_abs.starts_with(&real) {
       return Err(format!("{}: cannot copy a folder into itself", src.display()));
     }
-    let rel = free_name(root, to_dir, name, real.is_dir())?;
+    let rel = free_name(root, to_dir, name, real.is_dir(), naming)?;
     copy_entry(src, &root.join(&rel)).map_err(|e| format!("{} → {rel}: {e}", src.display()))?;
     out.push(rel);
   }
@@ -243,6 +319,18 @@ pub fn import(root: &Path, sources: &[PathBuf], to_dir: &str) -> Result<Vec<Stri
 pub fn trash(root: &Path, rel: &str) -> Result<(), String> {
   let path = check_existing(root, rel)?;
   trash::delete(&path).map_err(|e| format!("{rel}: {e}"))
+}
+
+/// Deletes `rel`: to the Trash, or for good when `files.enableTrash` is off (a symlink is removed,
+/// never what it points to).
+pub fn delete(root: &Path, rel: &str, use_trash: bool) -> Result<(), String> {
+  if use_trash {
+    return trash(root, rel);
+  }
+  let path = check_existing(root, rel)?;
+  let meta = path.symlink_metadata().map_err(|e| format!("{rel}: {e}"))?;
+  let result = if meta.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
+  result.map_err(|e| format!("{rel}: {e}"))
 }
 
 /// Shows `rel` selected in Finder (Explorer on Windows, the containing folder elsewhere).
@@ -369,14 +457,52 @@ mod tests {
   }
 
   #[test]
+  fn increments_names_smartly_like_vscode() {
+    let s = |n: &str| increment_name_smart(n, false);
+    assert_eq!(s("file.1.txt"), "file.2.txt");
+    assert_eq!(s("file-09.txt"), "file-10.txt");
+    assert_eq!(s("1.file.txt"), "2.file.txt");
+    assert_eq!(s("a12.b.txt"), "a13.b.txt");
+    assert_eq!(s("01.txt"), "02.txt");
+    assert_eq!(s("file.txt"), "file.1.txt");
+    assert_eq!(s("123"), "124");
+    assert_eq!(s("file"), "file1");
+    assert_eq!(increment_name_smart("folder.1", true), "folder.2");
+    assert_eq!(increment_name_smart("1.folder", true), "2.folder");
+    assert_eq!(increment_name_smart("folder", true), "folder.1");
+  }
+
+  #[test]
+  fn copy_naming_smart_and_disabled() {
+    let (_tmp, root) = ws();
+    assert_eq!(copy(&root, "src/a.txt", "src", Naming::Smart).unwrap(), "src/a.1.txt");
+    assert_eq!(copy(&root, "src/a.txt", "src", Naming::Smart).unwrap(), "src/a.2.txt");
+    assert!(copy(&root, "src/a.txt", "src", Naming::Disabled).unwrap_err().contains("already exists"));
+    assert_eq!(copy(&root, "src/a.txt", "", Naming::Disabled).unwrap(), "a.txt");
+  }
+
+  #[test]
+  fn delete_trashes_or_removes_for_good() {
+    let (_tmp, root) = ws();
+    std::fs::create_dir_all(root.join("gone/deep")).unwrap();
+    std::fs::write(root.join("gone/deep/x.txt"), "x").unwrap();
+    delete(&root, "gone", false).unwrap();
+    assert!(!root.join("gone").exists());
+    delete(&root, "src/a.txt", false).unwrap();
+    assert!(!root.join("src/a.txt").exists());
+    assert!(delete(&root, "missing", false).is_err());
+    assert!(delete(&root, "../x", false).is_err());
+  }
+
+  #[test]
   fn copy_duplicates_with_copy_names() {
     let (_tmp, root) = ws();
-    assert_eq!(copy(&root, "src/a.txt", "src").unwrap(), "src/a copy.txt");
-    assert_eq!(copy(&root, "src/a.txt", "src").unwrap(), "src/a copy 2.txt");
-    assert_eq!(copy(&root, "src/a.txt", "").unwrap(), "a.txt");
+    assert_eq!(copy(&root, "src/a.txt", "src", Naming::Simple).unwrap(), "src/a copy.txt");
+    assert_eq!(copy(&root, "src/a.txt", "src", Naming::Simple).unwrap(), "src/a copy 2.txt");
+    assert_eq!(copy(&root, "src/a.txt", "", Naming::Simple).unwrap(), "a.txt");
     assert_eq!(std::fs::read_to_string(root.join("src/a copy 2.txt")).unwrap(), "a");
-    assert!(copy(&root, "src/a.txt", "src/a.txt").unwrap_err().contains("not a folder"));
-    assert!(copy(&root, "src/a.txt", "..").is_err());
+    assert!(copy(&root, "src/a.txt", "src/a.txt", Naming::Simple).unwrap_err().contains("not a folder"));
+    assert!(copy(&root, "src/a.txt", "..", Naming::Simple).is_err());
   }
 
   #[test]
@@ -385,12 +511,12 @@ mod tests {
     std::fs::create_dir_all(root.join("src/deep/er")).unwrap();
     std::fs::write(root.join("src/deep/er/x.rs"), "x").unwrap();
     std::fs::create_dir(root.join("dest")).unwrap();
-    assert_eq!(copy(&root, "src", "dest").unwrap(), "dest/src");
+    assert_eq!(copy(&root, "src", "dest", Naming::Simple).unwrap(), "dest/src");
     assert_eq!(std::fs::read_to_string(root.join("dest/src/deep/er/x.rs")).unwrap(), "x");
     assert_eq!(std::fs::read_to_string(root.join("dest/src/a.txt")).unwrap(), "a");
-    assert_eq!(copy(&root, "src", "").unwrap(), "src copy");
+    assert_eq!(copy(&root, "src", "", Naming::Simple).unwrap(), "src copy");
     assert!(root.join("src copy/deep/er/x.rs").is_file());
-    assert!(copy(&root, "src", "src/deep").unwrap_err().contains("into itself"));
+    assert!(copy(&root, "src", "src/deep", Naming::Simple).unwrap_err().contains("into itself"));
   }
 
   #[test]
@@ -415,11 +541,11 @@ mod tests {
     std::fs::create_dir_all(outside.join("dir")).unwrap();
     std::fs::write(outside.join("dir/f.txt"), "f").unwrap();
     std::fs::write(outside.join("a.txt"), "outside").unwrap();
-    let got = import(&root, &[outside.join("a.txt"), outside.join("dir")], "src").unwrap();
+    let got = import(&root, &[outside.join("a.txt"), outside.join("dir")], "src", Naming::Simple).unwrap();
     assert_eq!(got, ["src/a copy.txt", "src/dir"]);
     assert_eq!(std::fs::read_to_string(root.join("src/a copy.txt")).unwrap(), "outside");
     assert_eq!(std::fs::read_to_string(root.join("src/a.txt")).unwrap(), "a");
     assert!(root.join("src/dir/f.txt").is_file());
-    assert!(import(&root, &[root.join("src")], "src").unwrap_err().contains("into itself"));
+    assert!(import(&root, &[root.join("src")], "src", Naming::Simple).unwrap_err().contains("into itself"));
   }
 }

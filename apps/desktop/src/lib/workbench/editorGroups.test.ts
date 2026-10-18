@@ -108,7 +108,8 @@ describe('split and close', () => {
 		const g3 = splitEditor(m, 'right')!;
 		const root = m.root as GroupSplit;
 		expect(root.children.map((c) => c.type)).toEqual(['group', 'group', 'group']);
-		expect(root.sizes).toEqual([0.5, 0.25, 0.25]);
+		// splitSizing auto: the row was even, so all three share it (VS Code Sizing.Auto).
+		expect(root.sizes).toEqual([1 / 3, 1 / 3, 1 / 3]);
 		expect(groupOrder(m)).toEqual([1, g2, g3]);
 		const g4 = splitEditor(m, 'down')!;
 		expect(groupOrder(m)).toEqual([1, g2, g3, g4]);
@@ -136,7 +137,7 @@ describe('split and close', () => {
 		const g3 = addGroup(m, g2, 'right')!;
 		removeGroup(m, g2);
 		expect(groupOrder(m)).toEqual([1, g3]);
-		expect((m.root as GroupSplit).sizes).toEqual([0.75, 0.25]);
+		expect((m.root as GroupSplit).sizes).toEqual([2 / 3, 1 / 3]);
 	});
 
 	test('collapsing a nested split merges same-direction children into the parent', () => {

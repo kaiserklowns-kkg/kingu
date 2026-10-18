@@ -63,16 +63,22 @@ export function parseQuickInput(value: string): QuickMode {
 
 export type RankedFile = { path: string; match?: Match; recent: boolean };
 
+/** search.quickOpen.includeHistory and search.quickOpen.history.filterSortOrder. */
+export type HistoryOptions = { includeHistory?: boolean; sortOrder?: 'default' | 'recency' };
+
 /**
  * Quick Open's file list: recently opened files first (VS Code's editor history, its "recently
  * opened" section), then the rest ("file results"). With no query, only the history shows.
+ * Without history (`includeHistory: false`) only file results show; `sortOrder: 'recency'` keeps
+ * matching history entries in the order they were opened instead of by match quality.
  */
-export function rankFiles(query: string, files: readonly string[], history: readonly string[], limit = 60): RankedFile[] {
+export function rankFiles(query: string, files: readonly string[], history: readonly string[], limit = 60, opts: HistoryOptions = {}): RankedFile[] {
 	const known = new Set(files);
 	// History entries that still exist (all of them while the file list is still loading).
-	const recent = files.length ? history.filter((p) => known.has(p)) : [...history];
+	const recent = opts.includeHistory === false ? [] : files.length ? history.filter((p) => known.has(p)) : [...history];
 	if (!query) return recent.slice(0, limit).map((path) => ({ path, recent: true }));
-	const recentHits = rank(query, recent, (p) => p, limit).map(({ item, match }) => ({ path: item, match, recent: true }));
+	let recentHits = rank(query, recent, (p) => p, limit).map(({ item, match }) => ({ path: item, match, recent: true }));
+	if (opts.sortOrder === 'recency') recentHits = recentHits.sort((a, b) => recent.indexOf(a.path) - recent.indexOf(b.path));
 	const seen = new Set(recentHits.map((r) => r.path));
 	const rest = rank(
 		query,

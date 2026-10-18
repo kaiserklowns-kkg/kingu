@@ -60,6 +60,7 @@ function choices(): Choice[] {
 		...setting('Activity Bar Position', 'workbench.activityBar.location', [
 			['default', 'Default'],
 			['top', 'Top'],
+			['bottom', 'Bottom'],
 			['hidden', 'Hidden']
 		])
 	];

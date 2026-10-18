@@ -1,0 +1,120 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/files.ts",
+	"export": "FILES_SETTINGS",
+	"what": "files.*",
+	"entries": [
+		{
+			"id": "files.exclude",
+			"group": "Files",
+			"th": "glob ของไฟล์และโฟลเดอร์ที่ซ่อนใน Explorer, Quick Open และการค้นหา",
+			"objectValues": "boolean|when"
+		},
+		{
+			"id": "files.associations",
+			"group": "Files",
+			"th": "จับคู่ไฟล์กับภาษา เช่น { \"*.tmpl\": \"html\" }"
+		},
+		{
+			"id": "files.watcherExclude",
+			"group": "Files",
+			"th": "glob ที่ตัวเฝ้าไฟล์ไม่สนใจ ลดงานเมื่อมีไฟล์เปลี่ยนจำนวนมาก",
+			"objectValues": "boolean"
+		},
+		{
+			"id": "files.eol",
+			"group": "Files",
+			"th": "อักขระขึ้นบรรทัดใหม่ของไฟล์ใหม่หรือไฟล์ที่ยังไม่มีบรรทัด",
+			"enumTh": [
+				"LF",
+				"CRLF",
+				"ตามระบบปฏิบัติการ"
+			]
+		},
+		{
+			"id": "files.autoGuessEncoding",
+			"group": "Files",
+			"th": "เดา encoding ของไฟล์จากเนื้อหาตอนเปิด"
+		},
+		{
+			"id": "files.hotExit",
+			"group": "Files",
+			"th": "จำไฟล์ที่ยังไม่บันทึกไว้ระหว่างการเปิดปิดแอป",
+			"enumTh": [
+				"ปิด hot exit: ถามให้บันทึกทุกครั้งที่ออก",
+				"ออกจากแอปแล้วจำไฟล์ที่ยังไม่บันทึกไว้เปิดคืนครั้งหน้า",
+				"เหมือน onExit และรวมการปิดหน้าต่างหรือเปลี่ยนโฟลเดอร์ด้วย"
+			]
+		},
+		{
+			"id": "files.trimTrailingWhitespace",
+			"group": "Files",
+			"th": "ลบช่องว่างท้ายบรรทัดตอนบันทึก"
+		},
+		{
+			"id": "files.insertFinalNewline",
+			"group": "Files",
+			"th": "เติมบรรทัดว่างท้ายไฟล์ตอนบันทึก"
+		},
+		{
+			"id": "files.trimFinalNewlines",
+			"group": "Files",
+			"th": "ลบบรรทัดว่างที่เกินท้ายไฟล์ตอนบันทึก"
+		},
+		{
+			"id": "files.enableTrash",
+			"group": "Files",
+			"th": "ย้ายไฟล์ที่ลบไปถังขยะ ถ้าปิดจะลบถาวร"
+		},
+		{
+			"id": "files.trimTrailingWhitespaceInRegexAndStrings",
+			"group": "Files",
+			"th": "ลบช่องว่างท้ายบรรทัดในสตริงหลายบรรทัดและ regex ด้วย"
+		},
+		{
+			"id": "files.autoSaveWorkspaceFilesOnly",
+			"group": "Files",
+			"th": "บันทึกอัตโนมัติเฉพาะไฟล์ในโฟลเดอร์ที่เปิดอยู่"
+		},
+		{
+			"id": "files.autoSaveWhenNoErrors",
+			"group": "Files",
+			"th": "บันทึกอัตโนมัติเฉพาะไฟล์ที่ไม่มี error"
+		},
+		{
+			"id": "files.watcherInclude",
+			"group": "Files",
+			"th": "พาธเพิ่มเติมที่ต้องเฝ้าดูการเปลี่ยนแปลง เช่น โฟลเดอร์ที่เป็น symlink"
+		},
+		{
+			"id": "files.defaultLanguage",
+			"group": "Files",
+			"th": "ภาษาของไฟล์ใหม่ที่ยังไม่ได้บันทึก"
+		},
+		{
+			"id": "files.readonlyInclude",
+			"group": "Files",
+			"th": "pattern ของไฟล์ที่เปิดแบบอ่านอย่างเดียว",
+			"objectValues": "boolean"
+		},
+		{
+			"id": "files.readonlyExclude",
+			"group": "Files",
+			"th": "pattern ของไฟล์ที่ไม่ต้องอ่านอย่างเดียว แม้จะตรงกับ files.readonlyInclude",
+			"objectValues": "boolean"
+		},
+		{
+			"id": "files.readonlyFromPermissions",
+			"group": "Files",
+			"th": "เปิดไฟล์แบบอ่านอย่างเดียวเมื่อสิทธิ์ของไฟล์ไม่ให้เขียน"
+		},
+		{
+			"id": "files.saveConflictResolution",
+			"group": "Files",
+			"th": "ทำอย่างไรเมื่อไฟล์บนดิสก์ถูกแก้โดยโปรแกรมอื่นระหว่างบันทึก",
+			"enumTh": [
+				"ถามก่อน ให้เลือกเปรียบเทียบ เขียนทับ หรือใช้เวอร์ชันบนดิสก์",
+				"เขียนทับไฟล์บนดิสก์เลย"
+			]
+		}
+	]
+}

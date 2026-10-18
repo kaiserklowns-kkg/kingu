@@ -3,7 +3,7 @@
 // shown (Orca records editor visits, not only picks), per folder + worktree, in localStorage.
 
 import { invoke } from '@tauri-apps/api/core';
-import { enabledGlobs, isExcluded } from '#lib/settings/mappings.ts';
+import { enabledGlobs, hiddenBySibling, isExcluded, siblingClauses } from '#lib/settings/mappings.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
@@ -43,7 +43,9 @@ export async function quickOpenWorktree(key: string) {
 	}
 	// files.exclude and search.exclude apply, like the IDE's quick open.
 	const exclude = [...enabledGlobs(settings.get('files.exclude')), ...enabledGlobs(settings.get('search.exclude'))];
-	files = files.filter((f) => !isExcluded(f, exclude));
+	const clauses = siblingClauses(settings.get('files.exclude'), settings.get('search.exclude'));
+	const all = new Set(files);
+	files = files.filter((f) => !isExcluded(f, exclude) && !hiddenBySibling(f, clauses, (p) => all.has(p)));
 	if (files.length >= LISTING_CAP) status.flash(`worktree มีไฟล์มากกว่า ${LISTING_CAP} ไฟล์ อาจไม่แสดงครบ พิมพ์ชื่อให้เจาะจงขึ้น`, 6000);
 	const listed = new Set(files);
 	const recent = historyOf(history, historyScope(root, key));

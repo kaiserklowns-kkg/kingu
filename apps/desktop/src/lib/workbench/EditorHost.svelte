@@ -7,7 +7,10 @@
 	import type * as Monaco from 'monaco-editor';
 	import { clientLog } from '#lib/client-log.ts';
 	import { editors } from './editors.svelte';
-	import { modelEntry, saveViewState, viewState } from './editorModels';
+	import { getEntry, modelEntry, saveViewState, viewState } from './editorModels';
+	import { isReadonly } from './readonly';
+	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { workspace } from './workspace.svelte';
 	import { navigation } from './navigation.svelte';
 	import { isDiffKey } from './scm';
 	import { isNonTextEditor } from '#lib/settings/resources.ts';
@@ -48,7 +51,7 @@
 				editors.cursor = { line: e.position.lineNumber, column: e.position.column };
 				// Go Back/Forward history: clicks, keys and reveals, not edits (paste, undo) or model loads.
 				if (!switching && shown && (e.reason === CursorChangeReason.Explicit || e.reason === CursorChangeReason.NotSet))
-					navigation.record({ path: shown, line: e.position.lineNumber, column: e.position.column });
+					navigation.record({ path: shown, line: e.position.lineNumber, column: e.position.column, group });
 			});
 			ed.onDidFocusEditorText(() => editors.activateGroup(group));
 			debugDecorations = attachDebugEditor(m.monaco, ed, () => shown);
@@ -63,10 +66,12 @@
 				editor.setPosition({ lineNumber: line, column });
 				editor.focus();
 			},
-			selectionText: () => {
+			selectionText: (nearestWord) => {
 				const model = editor?.getModel();
 				const sel = editor?.getSelection();
-				return model && sel && !sel.isEmpty() ? model.getValueInRange(sel) : '';
+				if (!model || !sel) return '';
+				if (!sel.isEmpty()) return model.getValueInRange(sel);
+				return nearestWord ? (model.getWordAtPosition(sel.getPosition())?.word ?? '') : '';
 			},
 			focus: () => editor?.focus(),
 			peek: (line, column) => {
@@ -118,6 +123,24 @@
 		}
 	});
 
+	// files.readonlyInclude / files.readonlyExclude / files.readonlyFromPermissions: the shown file is
+	// read-only when they say so (Monaco then refuses edits with its read-only message).
+	$effect(() => {
+		const file = shown;
+		if (!editor || !file) return;
+		const readOnly = isReadonly(
+			file,
+			`${workspace.root ?? ''}/${file}`,
+			{
+				include: settings.get('files.readonlyInclude'),
+				exclude: settings.get('files.readonlyExclude'),
+				fromPermissions: settings.get<boolean>('files.readonlyFromPermissions')
+			},
+			getEntry(file)?.stat?.readonly ?? false
+		);
+		editor.updateOptions({ readOnly });
+	});
+
 	// Breakpoints and the stopped line follow the breakpoint store, the session and the shown file.
 	$effect(() => {
 		void shown;
@@ -142,7 +165,7 @@
 			editors.cursor = { line: pos.lineNumber, column: pos.column };
 			// A file switch (or a group becoming active) is a navigation entry, at the restored or revealed position.
 			const file = shown;
-			untrack(() => navigation.record({ path: file, line: pos.lineNumber, column: pos.column }));
+			untrack(() => navigation.record({ path: file, line: pos.lineNumber, column: pos.column, group }));
 		}
 		return () => subs.forEach((d) => d.dispose());
 	});
@@ -210,6 +233,24 @@
 	}
 	:global(.kg-bp-conditional)::before {
 		box-shadow: inset 0 0 0 2.5px var(--vscode-debugIcon-breakpointForeground, #e51400), inset 0 0 0 10px var(--vscode-editor-background, #1e1e1e);
+	}
+	:global(.kg-bp-log)::before {
+		width: 8px;
+		height: 8px;
+		border-radius: 1px;
+		transform: rotate(45deg);
+		background: var(--vscode-debugIcon-breakpointForeground, #e51400);
+	}
+	:global(.kg-bp-triggered)::before {
+		background: transparent;
+		border: 1.5px dashed var(--vscode-debugIcon-breakpointForeground, #e51400);
+	}
+	/* debug.inlineValues */
+	:global(.kg-debug-inline-value) {
+		color: var(--vscode-editor-inlineValuesForeground, rgba(255, 255, 255, 0.5));
+		background: var(--vscode-editor-inlineValuesBackground, rgba(255, 200, 0, 0.2));
+		margin-left: 8px;
+		padding: 0 4px;
 	}
 	:global(.kg-debug-arrow)::after {
 		content: '';

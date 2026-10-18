@@ -136,9 +136,10 @@ impl Ptys {
   }
 
   /// Attaches to `key`, else starts `shell` (default: a login `$SHELL`) for it in `cwd` with `env` (typing `run` once).
+  /// `unset` and `clean_env`: `terminal.integrated.env.*` nulls and `inheritEnv: false` (ShellSpec).
   #[allow(clippy::too_many_arguments)]
-  pub fn open(&self, key: &str, cwd: &Path, cols: u16, rows: u16, run: Option<&[String]>, env: &BTreeMap<String, String>, shell: Option<&str>, args: Option<&[String]>, sink: Sink) -> Result<Attached, String> {
-    let spec = ShellSpec { cwd, cols, rows, run, env, shell, args };
+  pub fn open(&self, key: &str, cwd: &Path, cols: u16, rows: u16, run: Option<&[String]>, env: &BTreeMap<String, String>, shell: Option<&str>, args: Option<&[String]>, unset: &[String], clean_env: bool, sink: Sink) -> Result<Attached, String> {
+    let spec = ShellSpec { cwd, cols, rows, run, env, shell, args, unset, clean_env };
     match self.backend() {
       Backend::Local(host) => host.open(key, &spec, sink),
       #[cfg(unix)]
@@ -184,6 +185,11 @@ impl Ptys {
       #[cfg(unix)]
       Backend::Daemon(d) => d.client()?.list(),
     }
+  }
+
+  /// The directory `key`'s shell started in (VS Code's splitCwd `initial`).
+  pub fn initial_cwd(&self, key: &str) -> Option<PathBuf> {
+    self.list().ok()?.into_iter().find(|s| s.key == key).map(|s| PathBuf::from(s.cwd)).filter(|d| d.is_dir())
   }
 
   /// The current directory of `key`'s shell (after its `cd`s), when it can be read.
@@ -302,11 +308,67 @@ pub fn scoped_history_env(shell: &str, history_root: &Path, scope: &Path) -> Res
   Ok(vec![("HISTFILE".into(), dir.join(file).display().to_string())])
 }
 
+/// `terminal.integrated.env.*` values: strings to set, and the `null`s, which remove a variable.
+pub fn split_env(env: BTreeMap<String, Option<String>>) -> (BTreeMap<String, String>, Vec<String>) {
+  let mut set = BTreeMap::new();
+  let mut unset = Vec::new();
+  for (k, v) in env {
+    match v {
+      Some(v) => {
+        set.insert(k, v);
+      }
+      None => unset.push(k),
+    }
+  }
+  (set, unset)
+}
+
+/// `terminal.integrated.splitCwd`: where a split terminal starts — the workspace root, the
+/// directory its source terminal started in, or the one that terminal is in now (the default).
+pub fn split_cwd(mode: &str, live: impl FnOnce() -> Option<PathBuf>, initial: impl FnOnce() -> Option<PathBuf>, root: Option<PathBuf>) -> Option<PathBuf> {
+  match mode {
+    "workspaceRoot" => root,
+    "initial" => initial().or_else(live),
+    _ => live(),
+  }
+}
+
+/// `terminal.integrated.detectLocale`: the `LANG` to give a new shell, if any. `auto` sets it only
+/// when the shell's `LANG` is missing or not a UTF-8 (or EUC) locale; the value comes from the UI
+/// locale (`th-TH` → `th_TH.UTF-8`, a bare language gets its main region), like VS Code.
+pub fn lang_env(mode: &str, current: Option<&str>, locale: Option<&str>) -> Option<String> {
+  let set = match mode {
+    "on" => true,
+    "auto" => current.is_none_or(|l| l.is_empty() || !(l.ends_with(".UTF-8") || l.ends_with(".utf8") || l.contains(".euc"))),
+    _ => false,
+  };
+  if !set {
+    return None;
+  }
+  let mut parts: Vec<String> = locale.filter(|l| !l.is_empty()).map(|l| l.split('-').map(str::to_string).collect()).unwrap_or_default();
+  match parts.len() {
+    0 => return Some("en_US.UTF-8".into()),
+    1 => {
+      const REGIONS: &[(&str, &str)] = &[
+        ("af", "ZA"), ("am", "ET"), ("be", "BY"), ("bg", "BG"), ("ca", "ES"), ("cs", "CZ"), ("da", "DK"), ("de", "DE"), ("el", "GR"), ("en", "US"),
+        ("es", "ES"), ("et", "EE"), ("eu", "ES"), ("fi", "FI"), ("fr", "FR"), ("he", "IL"), ("hr", "HR"), ("hu", "HU"), ("hy", "AM"), ("is", "IS"),
+        ("it", "IT"), ("ja", "JP"), ("kk", "KZ"), ("ko", "KR"), ("lt", "LT"), ("nl", "NL"), ("no", "NO"), ("pl", "PL"), ("pt", "BR"), ("ro", "RO"),
+        ("ru", "RU"), ("sk", "SK"), ("sl", "SI"), ("sr", "YU"), ("sv", "SE"), ("th", "TH"), ("tr", "TR"), ("uk", "UA"), ("zh", "CN"),
+      ];
+      if let Some((_, region)) = REGIONS.iter().find(|(l, _)| *l == parts[0]) {
+        parts.push((*region).to_string());
+      }
+    }
+    _ => parts[1] = parts[1].to_uppercase(),
+  }
+  Some(format!("{}.UTF-8", parts.join("_")))
+}
+
 #[cfg(test)]
 mod tests {
   use std::path::{Path, PathBuf};
 
-  use super::{daemon_dir, find_daemon, scoped_history_env, terminal_cwd};
+  use super::{daemon_dir, find_daemon, lang_env, scoped_history_env, split_cwd, terminal_cwd};
 
   #[test]
   fn scoped_history_is_per_worktree_and_per_shell() {
@@ -324,6 +386,27 @@ mod tests {
     assert_eq!(fish[0].0, "fish_history");
     assert!(fish[0].1.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
     assert_eq!(scoped_history_env("nu", tmp.path(), a).unwrap(), vec![]);
+  }
+
+  #[test]
+  fn split_cwd_modes() {
+    let (live, first, root) = (PathBuf::from("/a/now"), PathBuf::from("/a"), PathBuf::from("/root"));
+    assert_eq!(split_cwd("inherited", || Some(live.clone()), || Some(first.clone()), Some(root.clone())), Some(live.clone()));
+    assert_eq!(split_cwd("initial", || Some(live.clone()), || Some(first.clone()), Some(root.clone())), Some(first.clone()));
+    assert_eq!(split_cwd("initial", || Some(live.clone()), || None, None), Some(live.clone()));
+    assert_eq!(split_cwd("workspaceRoot", || Some(live.clone()), || Some(first.clone()), Some(root.clone())), Some(root));
+    assert_eq!(split_cwd("workspaceRoot", || Some(live), || Some(first), None), None);
+  }
+
+  #[test]
+  fn detect_locale_like_vscode() {
+    assert_eq!(lang_env("auto", None, Some("en-US")).as_deref(), Some("en_US.UTF-8"));
+    assert_eq!(lang_env("auto", Some("en_US.UTF-8"), Some("th-TH")), None);
+    assert_eq!(lang_env("auto", Some("C"), Some("th")).as_deref(), Some("th_TH.UTF-8"));
+    assert_eq!(lang_env("on", Some("en_US.UTF-8"), Some("de-ch")).as_deref(), Some("de_CH.UTF-8"));
+    assert_eq!(lang_env("on", None, None).as_deref(), Some("en_US.UTF-8"));
+    assert_eq!(lang_env("on", None, Some("xx")).as_deref(), Some("xx.UTF-8"));
+    assert_eq!(lang_env("off", None, Some("en-US")), None);
   }
 
   #[test]

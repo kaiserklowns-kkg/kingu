@@ -41,8 +41,9 @@ test('window.title variables', () => {
 });
 
 test('platform default and customised titles', () => {
-	expect(defaultTitleTemplate(true)).toBe('${activeEditorShort}${separator}${rootName}');
-	expect(defaultTitleTemplate(false)).toBe('${dirty}${activeEditorShort}${separator}${rootName}${separator}${appName}');
+	// VS Code's defaults; ${profileName} is always empty in Kingu (no profiles).
+	expect(defaultTitleTemplate(true)).toBe('${activeEditorShort}${separator}${rootName}${separator}${profileName}');
+	expect(defaultTitleTemplate(false)).toBe('${dirty}${activeEditorShort}${separator}${rootName}${separator}${profileName}${separator}${appName}');
 	expect(isCustomTitle(DEFAULT_TITLE_MAC, true)).toBe(false);
 	expect(isCustomTitle(DEFAULT_TITLE_MAC, false)).toBe(true);
 	expect(isCustomTitle('${rootName}', true)).toBe(true);

@@ -6,7 +6,9 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import { homeDir } from '@tauri-apps/api/path';
 import { open } from '@tauri-apps/plugin-dialog';
 import { clientLog } from '#lib/client-log.ts';
-import { cloneUrlError, defaultParents, projectNameError, type CloneProgress } from './repoDialog.ts';
+import { settings } from '#lib/settings/settings.svelte.ts';
+import { ask } from './messageBox.ts';
+import { afterClone, cloneParent, cloneUrlError, defaultParents, projectNameError, type CloneProgress } from './repoDialog.ts';
 import { status } from './status.svelte.ts';
 import { workspace } from './workspace.svelte.ts';
 
@@ -35,7 +37,7 @@ class RepoDialog {
 		this.progress = null;
 		const home = await homeDir().catch(() => '');
 		const d = defaultParents(home);
-		this.parent = mode === 'clone' ? d.clone : d.project;
+		this.parent = mode === 'clone' ? cloneParent(settings.get<string | null>('git.defaultCloneDirectory'), home) : d.project;
 	}
 
 	close() {
@@ -80,6 +82,10 @@ class RepoDialog {
 		if (!path) return;
 		this.mode = null;
 		status.flash(`clone แล้ว: ${path}`);
+		// git.openAfterClone
+		const then = afterClone(settings.get<string>('git.openAfterClone'), workspace.root !== null);
+		if (then === 'stay') return;
+		if (then === 'ask' && !(await ask(`เปิด repository ที่ clone มาไหม? (Would you like to open the cloned repository?)\n${path}`, { title: 'Git', okLabel: 'Open', cancelLabel: 'Cancel' }))) return;
 		await workspace.openFolder(path);
 	}
 

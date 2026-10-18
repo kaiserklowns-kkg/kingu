@@ -20,6 +20,15 @@ export function nextUntitledKey(open: Iterable<string>): string {
 	return `${UNTITLED_PREFIX}Untitled-${n}`;
 }
 
+/**
+ * `files.defaultLanguage` for a new untitled editor: a language id, or `${activeEditorLanguage}`
+ * for the language of the editor that was active. Empty (or plain text): none.
+ */
+export function defaultLanguage(setting: string, activeLanguage: string): string | null {
+	const wanted = setting.trim() === '${activeEditorLanguage}' ? activeLanguage : setting.trim();
+	return wanted && wanted !== 'plaintext' ? wanted : null;
+}
+
 /** Save As's suggested file name: the first line of text (VS Code's untitled title), else `Untitled-1.txt`. */
 export function suggestedName(key: string, text: string): string {
 	const first = text

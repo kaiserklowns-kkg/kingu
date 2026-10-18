@@ -76,11 +76,22 @@ describe('checkout items', () => {
 
 	test('create actions, local, remote, then worktree-held branches marked', () => {
 		const items = checkoutItems(refs);
-		expect(items.map((i) => i.id)).toEqual([CREATE_BRANCH, CREATE_BRANCH_FROM, 'dev', 'origin/main', 'origin/feature', 'worktree:kingu/t1']);
+		expect(items.map((i) => i.id)).toEqual([CREATE_BRANCH, CREATE_BRANCH_FROM, 'dev', 'origin/feature', 'origin/main', 'worktree:kingu/t1']);
 		expect(items.find((i) => i.id === 'dev')?.separator).toBe('branches');
-		expect(items.find((i) => i.id === 'origin/main')?.separator).toBe('remote branches');
+		expect(items.find((i) => i.id === 'origin/feature')?.separator).toBe('remote branches');
 		expect(items.at(-1)?.description).toContain('.kingu/worktrees/t1');
 		expect(checkoutItems(refs, { create: false })[0].id).toBe('dev');
+	});
+
+	test('git.checkoutType, git.branchSortOrder and git.showReferenceDetails', () => {
+		const all = [...refs, ref('v1', { tag: true, date: 5 }), ref('old', { date: 1 }), ref('new', { date: 9 })];
+		const ids = (o: Parameters<typeof checkoutItems>[1]) => checkoutItems(all, { create: false, ...o }).map((i) => i.id);
+		expect(ids({ types: ['tags', 'local'] })).toEqual(['tag:v1', 'dev', 'new', 'old', 'worktree:kingu/t1']);
+		expect(ids({ types: ['local'], sort: 'committerdate' })).toEqual(['new', 'old', 'dev', 'worktree:kingu/t1']);
+		expect(ids({ types: ['remote'] })).toEqual(['origin/feature', 'origin/main', 'worktree:kingu/t1']);
+		expect(checkoutItems(all, { create: false, details: false })[0].description).toBeUndefined();
+		expect(checkoutTarget('tag:v1', all)).toMatchObject({ kind: 'ref', ref: { name: 'v1', tag: true } });
+		expect(deletableBranches(all).map((i) => i.id)).not.toContain('v1');
 	});
 
 	test('targets', () => {
@@ -110,6 +121,8 @@ test('terminal commands rerun the same git operation', () => {
 	expect(terminalCommand('pull')).toEqual(['git', 'pull', '--no-rebase', '--ff-only']);
 	expect(terminalCommand('sync', { rebase: true })).toEqual(['git', 'pull', '--rebase']);
 	expect(terminalCommand('publish', { remote: 'origin', branch: 'feat/x' })).toEqual(['git', 'push', '-u', 'origin', 'feat/x']);
+	expect(terminalCommand('fetch', { prune: false })).toEqual(['git', 'fetch']);
+	expect(terminalCommand('pull', { pull: ['git', 'pull', '--tags', '--rebase'] })).toEqual(['git', 'pull', '--tags', '--rebase']);
 });
 
 test('cleanBranchName turns spaces into dashes', () => {

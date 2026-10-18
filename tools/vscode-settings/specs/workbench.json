@@ -1,0 +1,208 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/workbench.ts",
+	"export": "WORKBENCH_SETTINGS",
+	"what": "workbench.* other than editor management",
+	"entries": [
+		{
+			"id": "workbench.startupEditor",
+			"group": "Workbench",
+			"th": "editor ที่เปิดตอนเริ่มเมื่อไม่มี editor ให้กู้คืนจากครั้งก่อน",
+			"enumOnly": [
+				"none",
+				"readme",
+				"newUntitledFile",
+				"terminal"
+			],
+			"enumTh": [
+				"ไม่เปิดอะไร",
+				"",
+				"เปิด README ของโฟลเดอร์",
+				"เปิดไฟล์ข้อความใหม่ที่ยังไม่มีชื่อ",
+				"",
+				"เปิด terminal ใน panel",
+				""
+			],
+			"default": "none"
+		},
+		{
+			"id": "workbench.statusBar.visible",
+			"group": "Workbench",
+			"th": "แสดง status bar ด้านล่างของหน้าต่าง"
+		},
+		{
+			"id": "workbench.tree.indent",
+			"group": "Workbench",
+			"th": "ระยะเยื้องของ tree เป็นพิกเซล"
+		},
+		{
+			"id": "workbench.list.smoothScrolling",
+			"group": "Workbench",
+			"th": "เลื่อนรายการและ tree แบบมีแอนิเมชัน"
+		},
+		{
+			"id": "workbench.sideBar.location",
+			"group": "Workbench",
+			"th": "ตำแหน่งของ primary side bar และ activity bar ซ้ายหรือขวา โดย secondary side bar อยู่ฝั่งตรงข้าม",
+			"enumTh": [
+				"ด้านซ้าย",
+				"ด้านขวา"
+			]
+		},
+		{
+			"id": "workbench.panel.defaultLocation",
+			"group": "Workbench",
+			"th": "ตำแหน่งของ panel เช่น terminal, problems, output",
+			"enumTh": [
+				"ด้านซ้ายของ editor",
+				"ด้านล่างของ editor",
+				"ด้านบนของ editor",
+				"ด้านขวาของ editor"
+			]
+		},
+		{
+			"id": "workbench.panel.opensMaximized",
+			"group": "Workbench",
+			"th": "เปิด panel แบบขยายเต็มพื้นที่ editor หรือไม่",
+			"enumTh": [
+				"ขยายเต็มทุกครั้งที่เปิด",
+				"ไม่ขยายเมื่อเปิด",
+				"คืนสถานะขยายเหมือนตอนปิดครั้งล่าสุด"
+			]
+		},
+		{
+			"id": "workbench.panel.showLabels",
+			"group": "Workbench",
+			"th": "แสดงแท็บของ panel เป็นข้อความ ปิดเพื่อแสดงเป็นไอคอน"
+		},
+		{
+			"id": "workbench.activityBar.location",
+			"group": "Workbench",
+			"th": "ตำแหน่งของ activity bar เทียบกับ side bar",
+			"enumTh": [
+				"แถบแนวตั้งข้าง primary side bar",
+				"ไอคอนอยู่บนหัว side bar",
+				"ไอคอนอยู่ท้าย side bar",
+				"ซ่อน activity bar"
+			]
+		},
+		{
+			"id": "workbench.activityBar.compact",
+			"group": "Workbench",
+			"th": "activity bar แบบกะทัดรัด ไอคอนเล็กลงและแถบแคบลง"
+		},
+		{
+			"id": "workbench.activityBar.iconClickBehavior",
+			"group": "Workbench",
+			"th": "การคลิกไอคอนของ activity bar ที่เปิดอยู่แล้ว",
+			"enumTh": [
+				"ซ่อน side bar ถ้าไอคอนที่คลิกเปิดอยู่แล้ว",
+				"โฟกัส view ถ้าไอคอนที่คลิกเปิดอยู่แล้ว"
+			]
+		},
+		{
+			"id": "workbench.layoutControl.enabled",
+			"group": "Workbench",
+			"th": "แสดงปุ่มควบคุมเลย์เอาต์ในแถบชื่อเรื่อง"
+		},
+		{
+			"id": "workbench.layoutControl.type",
+			"group": "Workbench",
+			"th": "รูปแบบของปุ่มควบคุมเลย์เอาต์ในแถบชื่อเรื่อง",
+			"enumTh": [
+				"ปุ่มเดียวที่เปิดเมนูเลย์เอาต์",
+				"ปุ่มเปิดปิด side bar และ panel",
+				"แสดงทั้งเมนูและปุ่มเปิดปิด"
+			]
+		},
+		{
+			"id": "workbench.navigationControl.enabled",
+			"group": "Workbench",
+			"th": "แสดงปุ่มย้อนกลับและไปข้างหน้าในแถบชื่อเรื่อง"
+		},
+		{
+			"id": "workbench.sash.size",
+			"group": "Workbench",
+			"th": "ความกว้างของแถบลากปรับขนาดระหว่าง view และ editor เป็นพิกเซล"
+		},
+		{
+			"id": "workbench.sash.hoverDelay",
+			"group": "Workbench",
+			"th": "หน่วงเวลาก่อนแถบลากปรับขนาดเปลี่ยนสีเมื่อเอาเมาส์ชี้ เป็นมิลลิวินาที"
+		},
+		{
+			"id": "workbench.reduceMotion",
+			"group": "Workbench",
+			"th": "ลดแอนิเมชันของ workbench",
+			"enumTh": [
+				"ลดแอนิเมชันเสมอ",
+				"ไม่ลดแอนิเมชัน",
+				"ทำตามการตั้งค่าลดการเคลื่อนไหวของระบบ"
+			]
+		},
+		{
+			"id": "workbench.fontAliasing",
+			"group": "Workbench",
+			"th": "วิธีปรับขอบตัวอักษรของ workbench บน macOS",
+			"enumTh": [
+				"ปรับขอบแบบ sub-pixel ตัวอักษรคมที่สุดบนจอส่วนใหญ่",
+				"ปรับขอบระดับพิกเซล ตัวอักษรดูบางลง",
+				"ไม่ปรับขอบ ขอบตัวอักษรหยัก",
+				"เลือก default หรือ antialiased ตามความละเอียดของจอ"
+			]
+		},
+		{
+			"id": "workbench.shadows",
+			"group": "Workbench",
+			"th": "แสดงเงารอบ quick input, เมนู, การแจ้งเตือน และส่วนอื่นของ workbench"
+		},
+		{
+			"id": "workbench.tips.enabled",
+			"group": "Workbench",
+			"th": "แสดงคีย์ลัดแนะนำในพื้นที่ editor เมื่อไม่มี editor เปิดอยู่"
+		},
+		{
+			"id": "workbench.commandPalette.history",
+			"group": "Workbench",
+			"th": "จำนวนคำสั่งที่ใช้ล่าสุดที่ command palette จำไว้แสดงก่อน 0 คือไม่จำ"
+		},
+		{
+			"id": "workbench.commandPalette.preserveInput",
+			"group": "Workbench",
+			"th": "เปิด command palette ครั้งถัดไปพร้อมข้อความที่พิมพ์ไว้ครั้งล่าสุด"
+		},
+		{
+			"id": "workbench.quickOpen.closeOnFocusLost",
+			"group": "Workbench",
+			"th": "ปิด quick open อัตโนมัติเมื่อโฟกัสออกจากกล่อง"
+		},
+		{
+			"id": "workbench.quickOpen.preserveInput",
+			"group": "Workbench",
+			"th": "เปิด quick open ครั้งถัดไปพร้อมข้อความที่พิมพ์ไว้ครั้งล่าสุด"
+		},
+		{
+			"id": "workbench.notifications.position",
+			"group": "Workbench",
+			"th": "ตำแหน่งของการแจ้งเตือนและศูนย์การแจ้งเตือน",
+			"enumTh": [
+				"มุมขวาล่าง",
+				"มุมซ้ายล่าง",
+				"มุมขวาบน"
+			]
+		},
+		{
+			"id": "workbench.settings.editor",
+			"group": "Workbench",
+			"th": "หน้าการตั้งค่าที่เปิดด้วยคำสั่ง Open Settings",
+			"enumTh": [
+				"หน้าการตั้งค่าแบบ UI",
+				"ไฟล์ settings.json"
+			]
+		},
+		{
+			"id": "workbench.externalBrowser",
+			"group": "Workbench",
+			"th": "เบราว์เซอร์ที่ใช้เปิดลิงก์ http/https เช่น chrome, edge, firefox หรือ path เต็มของโปรแกรม เว้นว่างใช้เบราว์เซอร์เริ่มต้นของระบบ"
+		}
+	]
+}

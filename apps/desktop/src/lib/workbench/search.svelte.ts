@@ -10,7 +10,19 @@ import { searchSettingsFrom } from '#lib/settings/mappings.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { editors } from './editors.svelte';
 import { status } from './status.svelte';
-import { rebaseMatches, seedFromSelection, type FileMatches, type ReplaceEdit, type ReplaceResult, type SearchEvent, type SearchOptions, type TextMatch } from './searchResults';
+import {
+	folderKey,
+	rebaseMatches,
+	seedFromSelection,
+	startsCollapsed,
+	type FileMatches,
+	type ReplaceEdit,
+	type ReplaceResult,
+	type SearchEvent,
+	type SearchOptions,
+	type TextMatch,
+	type ViewMode
+} from './searchResults';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 /** Streamed files are appended in batches so a big result set re-renders a few times, not per file. */
@@ -33,6 +45,14 @@ class Search {
 
 	files = $state.raw<FileMatches[]>([]);
 	collapsed = new SvelteSet<string>();
+	/** View as List / View as Tree; starts as search.defaultViewMode. */
+	#viewMode = $state<ViewMode | null>(null);
+	get viewMode(): ViewMode {
+		return this.#viewMode ?? (settings.get<ViewMode>('search.defaultViewMode') === 'tree' ? 'tree' : 'list');
+	}
+	set viewMode(mode: ViewMode) {
+		this.#viewMode = mode;
+	}
 	running = $state(false);
 	/** Set when a search finished: totals for the summary line. */
 	done = $state<{ files: number; matches: number; limitHit: boolean } | null>(null);
@@ -85,6 +105,9 @@ class Search {
 		const flush = () => {
 			timer = undefined;
 			if (generation !== this.#generation || !pending.length) return;
+			// search.collapseResults: big (`auto`) or all (`alwaysCollapse`) files start collapsed.
+			const collapse = settings.get<string>('search.collapseResults');
+			for (const f of pending) if (startsCollapsed(collapse, f.matches.length)) this.collapsed.add(f.path);
 			this.files = this.files.concat(pending);
 			pending = [];
 		};
@@ -92,7 +115,7 @@ class Search {
 		onEvent.onmessage = (ev) => {
 			if (generation !== this.#generation) return;
 			if (ev.kind === 'file') {
-				pending.push({ path: ev.path, matches: ev.matches, version: ev.version });
+				pending.push({ path: ev.path, matches: ev.matches, version: ev.version, modified: ev.modified });
 				timer ??= setTimeout(flush, FLUSH_MS);
 				return;
 			}
@@ -208,7 +231,20 @@ class Search {
 	}
 
 	collapseAll() {
-		for (const f of this.files) this.collapsed.add(f.path);
+		for (const f of this.files) {
+			this.collapsed.add(f.path);
+			for (let dir = f.path; dir.includes('/'); ) this.collapsed.add(folderKey((dir = dir.slice(0, dir.lastIndexOf('/')))));
+		}
+	}
+
+	/** search.seedOnFocus: focusing the Search view takes the editor's selection as the query. */
+	seedOnFocus(selection: string) {
+		if (!settings.get<boolean>('search.seedOnFocus')) return;
+		const seed = seedFromSelection(selection);
+		if (seed !== null && seed !== this.query) {
+			this.query = seed;
+			void this.run();
+		}
 	}
 }
 

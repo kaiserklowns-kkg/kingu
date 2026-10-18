@@ -27,6 +27,9 @@ describe('ADE settings registry (Orca settings as kingu.*)', () => {
 		const rows = ORCA_MAP.filter(([, k, status]) => k && (status === 'added' || status === 'mapped') && k.startsWith('kingu.') && !k.startsWith('kingu.yaml'));
 		for (const [orca, key] of rows) expect([orca, key, SETTINGS.some((s) => matcher(key!).test(s.id))]).toEqual([orca, key, true]);
 		for (const s of ADE_SETTINGS) expect([s.id, rows.some(([, k]) => matcher(k!).test(s.id))]).toEqual([s.id, true]);
+		// Rows mapped to a VS Code key point at a registered setting (kingu.yaml fields and keybindings.json aside).
+		const vscode = ORCA_MAP.filter(([, k, status]) => k && status === 'mapped' && !k.startsWith('kingu.') && /^[a-z]+\.[A-Za-z.]+$/.test(k) && !k.endsWith('.json') && !/^(scripts|worktree)\./.test(k));
+		for (const [orca, key] of vscode) expect([orca, key, SETTINGS.some((s) => s.id === key)]).toEqual([orca, key, true]);
 		for (const [orca, kingu, status, note] of ORCA_MAP) {
 			if (status === 'needs-feature' || status === 'not-applicable') expect([orca, kingu, !!note]).toEqual([orca, null, true]);
 		}

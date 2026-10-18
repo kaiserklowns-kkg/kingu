@@ -156,7 +156,7 @@ impl Client {
   pub fn spawn(&self, key: &str, spec: &ShellSpec<'_>, sink: Sink) -> Result<Attached, String> {
     let stream = self.register(key, sink);
     let env = (!spec.env.is_empty()).then(|| spec.env.clone());
-    let request = Request::Spawn { key: key.into(), cwd: spec.cwd.display().to_string(), cols: spec.cols, rows: spec.rows, run: spec.run.map(<[String]>::to_vec), env, shell: spec.shell.map(str::to_string), args: spec.args.map(<[String]>::to_vec), stream };
+    let request = Request::Spawn { key: key.into(), cwd: spec.cwd.display().to_string(), cols: spec.cols, rows: spec.rows, run: spec.run.map(<[String]>::to_vec), env, shell: spec.shell.map(str::to_string), args: spec.args.map(<[String]>::to_vec), unset: spec.unset.to_vec(), clean_env: spec.clean_env, stream };
     self.call_as(request).inspect_err(|_| self.unregister(stream))
   }
 

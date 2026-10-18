@@ -189,6 +189,19 @@ pub struct ShellSpec<'a> {
   pub shell: Option<&'a str>,
   /// `terminal.integrated.shellArgs.*`; `None` starts a login shell (`-l`).
   pub args: Option<&'a [String]>,
+  /// `terminal.integrated.env.*` entries set to `null`: removed from the shell's environment.
+  pub unset: &'a [String],
+  /// `terminal.integrated.inheritEnv: false`: the shell starts from a minimal environment
+  /// (`base_env`) instead of this process's, and its login profile builds the rest.
+  pub clean_env: bool,
+}
+
+/// The variables a shell keeps when it does not inherit Kingu's environment
+/// (`terminal.integrated.inheritEnv: false`): who and where the user is, and a system `PATH`.
+pub fn base_env(get: impl Fn(&str) -> Option<String>) -> Vec<(String, String)> {
+  let mut out: Vec<(String, String)> = ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR"].iter().filter_map(|k| get(k).map(|v| (k.to_string(), v))).collect();
+  out.push(("PATH".into(), "/usr/bin:/bin:/usr/sbin:/sbin".into()));
+  out
 }
 
 /// A configured shell must be an absolute path to an executable file (never looked up on PATH).
@@ -282,10 +295,19 @@ impl Host {
       None => cmd.arg("-l"),
     }
     cmd.cwd(spec.cwd);
+    if spec.clean_env {
+      cmd.env_clear();
+      for (k, v) in base_env(|k| std::env::var(k).ok()) {
+        cmd.env(k, v);
+      }
+    }
     for (k, v) in spec.env {
       if !is_agent_session_marker(k) {
         cmd.env(k, v);
       }
+    }
+    for k in spec.unset {
+      cmd.env_remove(k);
     }
     self.spawn(key, cmd, spec.cols, spec.rows, sink, line)
   }
@@ -573,10 +595,25 @@ pub(crate) mod tests {
     let host = Host::default();
     let env = BTreeMap::from([("KINGU_TEST_VAR".to_string(), "from-settings".to_string())]);
     let args = ["-c".to_string(), "echo shell-$KINGU_TEST_VAR".to_string()];
-    let spec = ShellSpec { cwd: Path::new("/"), cols: 80, rows: 24, run: None, env: &env, shell: Some("/bin/sh"), args: Some(&args) };
+    let spec = ShellSpec { cwd: Path::new("/"), cols: 80, rows: 24, run: None, env: &env, shell: Some("/bin/sh"), args: Some(&args), unset: &[], clean_env: false };
     let (sink, seen) = collecting();
     host.spawn_shell("test:shell", &spec, sink).unwrap();
     wait_for("the configured shell's output", || seen.lock().unwrap().contains("shell-from-settings"));
+
+    // terminal.integrated.env `null` removes a variable; inheritEnv false starts from a minimal environment.
+    // SAFETY: tests in this module do not read KINGU_TEST_INHERITED concurrently.
+    unsafe { std::env::set_var("KINGU_TEST_INHERITED", "yes") };
+    let probe = ["-c".to_string(), "echo probe-[$KINGU_TEST_INHERITED]-[$KINGU_TEST_VAR]-[$HOME]".to_string()];
+    let unset = ["KINGU_TEST_VAR".to_string()];
+    let spec2 = ShellSpec { args: Some(&probe), unset: &unset, ..spec };
+    let (sink, seen) = collecting();
+    host.spawn_shell("test:unset", &spec2, sink).unwrap();
+    wait_for("inherited env, unset var", || seen.lock().unwrap().contains("probe-[yes]-[]-["));
+    let spec3 = ShellSpec { args: Some(&probe), clean_env: true, ..spec };
+    let (sink, seen) = collecting();
+    host.spawn_shell("test:clean", &spec3, sink).unwrap();
+    let home = std::env::var("HOME").unwrap_or_default();
+    wait_for("clean env", || seen.lock().unwrap().contains(&format!("probe-[]-[from-settings]-[{home}]")));
 
     for bad in ["sh", "/nope/not-a-shell"] {
       let spec = ShellSpec { shell: Some(bad), ..spec };

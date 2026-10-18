@@ -42,6 +42,11 @@ pub struct SearchOptions {
   /// `search.useGlobalIgnoreFiles` / `search.useParentIgnoreFiles`; unset keeps ripgrep's default (on).
   pub use_global_ignore: Option<bool>,
   pub use_parent_ignore: Option<bool>,
+  /// `search.ripgrep.maxThreads`; 0 or unset lets ripgrep decide.
+  pub max_threads: Option<usize>,
+  /// The sibling clauses of `files.exclude` / `search.exclude` (`"**/*.js": { "when": "$(basename).ts" }`):
+  /// ripgrep cannot express them, so matching files are dropped from the results.
+  pub sibling_clauses: Vec<crate::glob::SiblingClause>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -68,7 +73,8 @@ pub enum SearchEvent {
   /// All matches of one file (ripgrep's `begin` … `end`).
   /// `version` fingerprints the file's content when its matches were sent (see
   /// `replace::file_version`), so Replace can refuse a file that changed since.
-  File { path: String, matches: Vec<TextMatch>, version: String },
+  /// `modified`: the file's mtime in ms since the epoch (`search.sortOrder: modified`).
+  File { path: String, matches: Vec<TextMatch>, version: String, modified: u64 },
   Done { files: usize, matches: usize, limit_hit: bool, elapsed_ms: u64 },
   Error { message: String },
 }
@@ -135,6 +141,10 @@ pub fn build_args(opts: &SearchOptions) -> Vec<OsString> {
   }
   if opts.follow_symlinks == Some(true) {
     args.push("--follow".into());
+  }
+  if let Some(n) = opts.max_threads.filter(|n| *n > 0) {
+    args.push("--threads".into());
+    args.push(n.to_string());
   }
   // VS Code's default `files.exclude`/`search.exclude` that ignore files do not cover.
   for g in ["**/.git", "**/.git/**", "**/.DS_Store"] {
@@ -283,7 +293,7 @@ impl RgParser {
       return None;
     }
     self.files += 1;
-    Some(SearchEvent::File { path, matches, version: String::new() })
+    Some(SearchEvent::File { path, matches, version: String::new(), modified: 0 })
   }
 }
 
@@ -341,9 +351,19 @@ impl Searches {
     });
     let searches = Arc::clone(self);
     let root = root.to_path_buf();
+    let siblings = crate::glob::SiblingClauses::new(&opts.sibling_clauses);
     let sink = move |mut ev: SearchEvent| {
-      if let SearchEvent::File { path, version, .. } = &mut ev {
-        *version = crate::replace::file_version(&root.join(path.as_str())).unwrap_or_default();
+      if let SearchEvent::File { path, version, modified, .. } = &mut ev {
+        if !siblings.is_empty() && siblings.hides(path, |rel| root.join(rel).exists()) {
+          return true;
+        }
+        let file = root.join(path.as_str());
+        *version = crate::replace::file_version(&file).unwrap_or_default();
+        *modified = std::fs::metadata(&file)
+          .and_then(|m| m.modified())
+          .ok()
+          .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+          .map_or(0, |d| d.as_millis() as u64);
       }
       sink(ev)
     };
@@ -408,6 +428,13 @@ mod tests {
 
   fn has_pair(args: &[String], a: &str, b: &str) -> bool {
     args.windows(2).any(|w| w[0] == a && w[1] == b)
+  }
+
+  #[test]
+  fn ripgrep_threads_follow_search_ripgrep_max_threads() {
+    assert!(!args_of(&SearchOptions { query: "x".into(), ..Default::default() }).contains(&"--threads".into()));
+    assert!(!args_of(&SearchOptions { query: "x".into(), max_threads: Some(0), ..Default::default() }).contains(&"--threads".into()));
+    assert!(has_pair(&args_of(&SearchOptions { query: "x".into(), max_threads: Some(4), ..Default::default() }), "--threads", "4"));
   }
 
   #[test]
@@ -567,8 +594,9 @@ mod tests {
       let mut files = Vec::new();
       for ev in rx {
         match ev {
-          SearchEvent::File { path, matches, version } => {
+          SearchEvent::File { path, matches, version, modified } => {
             assert!(!version.is_empty());
+            assert!(modified > 0);
             files.push((path, matches.len()))
           }
           SearchEvent::Done { .. } => break,

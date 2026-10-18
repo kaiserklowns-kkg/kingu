@@ -7,9 +7,9 @@ export const TITLE_SEPARATOR = ' — ';
 export const DIRTY_MARK = '● ';
 
 /** VS Code's macOS default (the dirty state shows in the window's close button there). */
-export const DEFAULT_TITLE_MAC = '${activeEditorShort}${separator}${rootName}';
+export const DEFAULT_TITLE_MAC = '${activeEditorShort}${separator}${rootName}${separator}${profileName}';
 /** VS Code's Windows/Linux default. */
-export const DEFAULT_TITLE_OTHER = '${dirty}${activeEditorShort}${separator}${rootName}${separator}${appName}';
+export const DEFAULT_TITLE_OTHER = '${dirty}${activeEditorShort}${separator}${rootName}${separator}${profileName}${separator}${appName}';
 
 export const defaultTitleTemplate = (mac: boolean) => (mac ? DEFAULT_TITLE_MAC : DEFAULT_TITLE_OTHER);
 
@@ -66,11 +66,15 @@ export type TitleContext = {
 	dirty?: boolean;
 	/** `${activeRepositoryBranchName}`. */
 	branch?: string | null;
+	/** `${activeEditorLanguageId}`. */
+	languageId?: string | null;
+	/** `${focusedView}`: the name of the focused view (Explorer, Terminal…). */
+	focusedView?: string | null;
 	app?: string;
 	separator?: string;
 };
 
-/** The variables VS Code's window title supports (a subset: no remote/profile/focusedView). */
+/** The variables of VS Code's window title. Kingu has no profiles or remotes: those are always empty. */
 export function titleVariables(ctx: TitleContext): Record<string, string | Separator> {
 	const e = ctx.editor;
 	const dir = (path: string | undefined) => (path && path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
@@ -81,6 +85,8 @@ export function titleVariables(ctx: TitleContext): Record<string, string | Separ
 		activeEditorShort: e?.short ?? '',
 		activeEditorMedium: e ? (e.medium ?? e.short) : '',
 		activeEditorLong: e ? (e.long ?? e.medium ?? e.short) : '',
+		activeEditorLanguageId: e ? (ctx.languageId ?? '') : '',
+		activeEditorState: e && ctx.dirty ? 'Modified' : '',
 		activeFolderShort: activeFolderLong ? base(activeFolderLong) : '',
 		activeFolderMedium: dir(e?.medium),
 		activeFolderLong,
@@ -92,6 +98,9 @@ export function titleVariables(ctx: TitleContext): Record<string, string | Separ
 		activeRepositoryName: ctx.branch && ctx.rootName ? ctx.rootName : '',
 		activeRepositoryBranchName: ctx.branch ?? '',
 		appName: ctx.app ?? APP_NAME,
+		profileName: '',
+		remoteName: '',
+		focusedView: ctx.focusedView ?? '',
 		separator: { label: ctx.separator ?? TITLE_SEPARATOR }
 	};
 }

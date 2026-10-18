@@ -7,10 +7,14 @@
 	import PaneSplitView from '#lib/terminal/PaneSplitView.svelte';
 	import { leaves } from '#lib/terminal/paneLayout.ts';
 	import { focusTerminal } from '#lib/terminal/registry.ts';
-	import Icon from './Icon.svelte';
+	import { showTabsList } from '#lib/terminal/behaviour.ts';
+	import Icon, { type IconName } from './Icon.svelte';
 	import { editors } from './editors.svelte';
 	import { isMac, keyLabel } from './keys';
 	import { layout, type PanelTab } from './layout.svelte';
+	import { panelOpensMaximized } from './workbenchOptions';
+	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { untrack } from 'svelte';
 
 	// VS Code's Maximize Panel Size: the panel takes the editor area; again restores the height.
 	let restoreHeight: number | null = $state(null);
@@ -25,7 +29,32 @@
 		}
 	}
 
+	// workbench.panel.opensMaximized: when the panel is shown again, maximize it (always), restore
+	// it (never) or keep the state it had when it was hidden (preserve).
+	let wasVisible = untrack(() => layout.panelVisible);
+	let maximizedWhenHidden = false;
+	$effect(() => {
+		const visible = layout.panelVisible;
+		untrack(() => {
+			if (visible === wasVisible) return;
+			wasVisible = visible;
+			if (!visible) {
+				maximizedWhenHidden = maximized;
+				return;
+			}
+			if (panelOpensMaximized(settings.get<string>('workbench.panel.opensMaximized'), maximizedWhenHidden) !== maximized) toggleMaximize();
+		});
+	});
+	/** workbench.panel.showLabels: the panel's tabs as labels, or as icons with the label as a tooltip. */
+	const showLabels = $derived(settings.get<boolean>('workbench.panel.showLabels'));
+
 	const activeGroup = $derived(terminals.groupOf(terminals.active));
+	// terminal.integrated.tabs.enabled / hideCondition / location / focusMode.
+	const tabsShown = $derived(
+		showTabsList(settings.get<boolean>('terminal.integrated.tabs.enabled'), settings.get<string>('terminal.integrated.tabs.hideCondition'), terminals.list.length, terminals.groups.length)
+	);
+	const tabsLeft = $derived(settings.get<string>('terminal.integrated.tabs.location') === 'left');
+	const focusOnDoubleClick = $derived(settings.get<string>('terminal.integrated.tabs.focusMode') === 'doubleClick');
 	const splitKey = keyLabel(isMac ? 'cmd+\\' : 'ctrl+shift+5');
 
 	/** A terminal's context menu items beyond copy/paste/clear (VS Code: Split, Rename, Kill). */
@@ -40,11 +69,11 @@
 		editors.open(rel, { preview: false, reveal: line ? { line, column: column ?? 1, focus: true } : undefined });
 	}
 
-	const tabs: { id: PanelTab; label: string }[] = [
-		{ id: 'problems', label: 'Problems' },
-		{ id: 'output', label: 'Output' },
-		{ id: 'debugConsole', label: 'Debug Console' },
-		{ id: 'terminal', label: 'Terminal' }
+	const tabs: { id: PanelTab; label: string; icon: IconName }[] = [
+		{ id: 'problems', label: 'Problems', icon: 'warning' },
+		{ id: 'output', label: 'Output', icon: 'note' },
+		{ id: 'debugConsole', label: 'Debug Console', icon: 'bug' },
+		{ id: 'terminal', label: 'Terminal', icon: 'terminal' }
 	];
 </script>
 
@@ -60,7 +89,9 @@
 						? 'border-(--vscode-panelTitle-activeBorder) text-(--vscode-panelTitle-activeForeground)'
 						: 'border-transparent text-(--vscode-panelTitle-inactiveForeground) hover:text-(--vscode-panelTitle-activeForeground)'
 				]}
-				onclick={() => (layout.panelTab = t.id)}>{t.label}</button
+				aria-label={t.label}
+				title={showLabels ? undefined : t.label}
+				onclick={() => (layout.panelTab = t.id)}>{#if showLabels}{t.label}{:else}<Icon name={t.icon} size={16} />{/if}</button
 			>
 		{/each}
 		<div class="flex-1"></div>
@@ -119,9 +150,9 @@
 					</div>
 				{/key}
 			{/if}
-			{#if terminals.list.length > 1}
-				<!-- VS Code's terminal tabs list, on the right once there is more than one; a split group is drawn with tree lines. -->
-				<ul aria-label="Terminals" class="w-44 shrink-0 overflow-y-auto border-l border-(--vscode-panel-border) py-1 text-[13px]">
+			{#if tabsShown}
+				<!-- VS Code's terminal tabs list (by default on the right once there is more than one); a split group is drawn with tree lines. -->
+				<ul aria-label="Terminals" class={['w-44 shrink-0 overflow-y-auto border-(--vscode-panel-border) py-1 text-[13px]', tabsLeft ? '-order-1 border-r' : 'border-l']}>
 					{#each terminals.groups as group (leaves(group)[0])}
 						{@const ids = leaves(group).map(Number)}
 						{#each ids as id, i (id)}
@@ -130,8 +161,8 @@
 								<li>
 									<button
 										class={['group flex h-[22px] w-full items-center gap-1.5 px-2 text-left', t.id === terminals.active ? 'bg-(--vscode-list-inactiveSelectionBackground)' : 'hover:bg-(--vscode-list-hoverBackground)']}
-										onclick={() => ((terminals.active = t.id), focusTerminal(terminals.key(t.id)))}
-										ondblclick={() => terminals.rename(t.id)}
+										onclick={() => ((terminals.active = t.id), !focusOnDoubleClick && focusTerminal(terminals.key(t.id)))}
+										ondblclick={() => (focusOnDoubleClick ? focusTerminal(terminals.key(t.id)) : terminals.rename(t.id))}
 									>
 										{#if ids.length > 1}<span class="w-2 shrink-0 font-mono text-(--vscode-descriptionForeground)" aria-hidden="true">{i === 0 ? '┌' : i === ids.length - 1 ? '└' : '├'}</span>{/if}
 										<Icon name="terminal" size={14} />

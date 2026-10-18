@@ -7,15 +7,20 @@
 	import SnapsView from '#lib/snaps/SnapsView.svelte';
 	import AccountsView from '#lib/accounts/AccountsView.svelte';
 	import { snaps } from '#lib/snaps/snaps.svelte.ts';
-	import { SNAPS_SECTION_ID } from './registry';
+	import { SNAPS_SECTION_ID, subgroupsOf, tocKey } from './registry';
 	import { settingSchemas } from './schemas.svelte';
 	import SettingsEditor from './SettingsEditor.svelte';
 	import { systemSettings } from './systemSettings.svelte';
 
 	let query = $state('');
 	const count = (group: string) => settingSchemas.all.filter((s) => s.group === group).length;
-	const sectionOf = (group: string | null) =>
-		group && !query ? (settingSchemas.sections.find((s) => s.groups.includes(group))?.label ?? '') : query ? 'ผลการค้นหา' : 'การตั้งค่าทั้งหมด (IDE + ADE)';
+	/** The selection is a group or `Group/Sub-group` (VS Code's TOC: Text Editor › Cursor, Workbench › Breadcrumbs …). */
+	const groupOf = (selection: string | null) => selection?.split('/')[0] ?? null;
+	const subOf = (selection: string | null) => (selection?.includes('/') ? selection.slice(selection.indexOf('/') + 1) : null);
+	const sectionOf = (selection: string | null) => {
+		const group = groupOf(selection);
+		return group && !query ? (settingSchemas.sections.find((s) => s.groups.includes(group))?.label ?? '') : query ? 'ผลการค้นหา' : 'การตั้งค่าทั้งหมด (IDE + ADE)';
+	};
 	const showSnaps = $derived(systemSettings.snaps && !query);
 	const showAccounts = $derived(systemSettings.accounts && !query);
 
@@ -74,6 +79,15 @@
 							<span class="flex-1 truncate">{g}</span>
 							<span class="text-[11px] text-(--vscode-descriptionForeground)">{count(g)}</span>
 						</button>
+						{#if groupOf(systemSettings.group) === g && !showSnaps && !showAccounts && !query}
+							{#each subgroupsOf(g, settingSchemas.all) as sub (sub)}
+								{@const key = tocKey(g, sub)}
+								{@const here = systemSettings.group === key}
+								<button class={[ITEM, 'pl-6', here && SELECTED]} aria-current={here ? 'true' : undefined} onclick={() => select(key)}>
+									<span class="flex-1 truncate">{sub}</span>
+								</button>
+							{/each}
+						{/if}
 					{/each}
 				</div>
 			{/each}
@@ -87,7 +101,10 @@
 				<span class="text-(--vscode-descriptionForeground)">Snaps</span><span class="text-(--vscode-descriptionForeground)">›</span><span>จัดการ Snaps</span>
 			{:else}
 				<span class="text-(--vscode-descriptionForeground)">{sectionOf(systemSettings.group)}</span>
-				{#if systemSettings.group && !query}<span class="text-(--vscode-descriptionForeground)">›</span><span>{systemSettings.group}</span>{/if}
+				{#if systemSettings.group && !query}
+					<span class="text-(--vscode-descriptionForeground)">›</span><span>{groupOf(systemSettings.group)}</span>
+					{#if subOf(systemSettings.group)}<span class="text-(--vscode-descriptionForeground)">›</span><span>{subOf(systemSettings.group)}</span>{/if}
+				{/if}
 			{/if}
 			<span class="flex-1"></span>
 			<button class="grid size-7 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="ปิดการตั้งค่า" title="ปิด (Escape)" onclick={() => systemSettings.close()}>

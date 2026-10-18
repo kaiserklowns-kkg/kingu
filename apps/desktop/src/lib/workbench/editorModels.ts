@@ -7,6 +7,7 @@
 // on disk since is reported as a save conflict instead of being overwritten.
 
 import type * as Monaco from 'monaco-editor';
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { clientLog } from '#lib/client-log.ts';
 import { languageFor } from '#lib/editor/languages.ts';
 import { lsp } from '#lib/lsp/lsp.svelte.ts';
@@ -16,7 +17,7 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { editors } from './editors.svelte';
 import { invoke } from '@tauri-apps/api/core';
 import { runSaveParticipants } from './textFileSave';
-import { isUntitled, suggestedName } from './untitled';
+import { defaultLanguage, isUntitled, suggestedName } from './untitled';
 import { notifications } from './notifications.svelte';
 
 type MonacoModule = typeof import('#lib/editor/monaco.ts');
@@ -58,6 +59,10 @@ export const textFileHooks = {
 };
 
 const entries = new Map<string, ModelEntry>();
+/** The first line of each open untitled editor (reactive, for its tab label). */
+export const untitledFirstLines = new SvelteMap<string, string>();
+/** Open untitled editors that are still empty (`workbench.editor.empty.hint`). */
+export const emptyUntitled = new SvelteSet<string>();
 const loading = new Map<string, Promise<ModelEntry>>();
 const views = new Map<string, Monaco.editor.ICodeEditorViewState | null>();
 let api: MonacoModule | undefined;
@@ -79,6 +84,8 @@ export function readOptions(path: string, extra: ReadOptions = {}): ReadOptions 
 	return {
 		defaultEncoding: settings.get<string>('files.encoding'),
 		autoGuess: settings.get<boolean>('files.autoGuessEncoding'),
+		// workbench.editorLargeFileConfirmation is in MB.
+		largeFileLimit: Math.round(settings.get<number>('workbench.editorLargeFileConfirmation') * 1024 * 1024),
 		...textFileHooks.readOptions(path),
 		...extra
 	};
@@ -119,6 +126,17 @@ export function modelEntry(m: MonacoModule, path: string): Promise<ModelEntry> {
 					editors.setDirty(path, dirty);
 					if (!dirty) textFileHooks.clean(path);
 				});
+				// workbench.editor.untitled.labelFormat: an untitled tab may be named after its first line.
+				if (isUntitled(path)) {
+					const sync = () => {
+						untitledFirstLines.set(path, model.getLineContent(1));
+						if (model.getValueLength() === 0) emptyUntitled.add(path);
+						else emptyUntitled.delete(path);
+					};
+					sync();
+					model.onDidChangeContent(sync);
+					model.onWillDispose(() => (untitledFirstLines.delete(path), emptyUntitled.delete(path)));
+				}
 				entries.set(path, entry);
 				lsp.attach(m.monaco, model, path);
 				textFileHooks.created(path, entry);
@@ -134,9 +152,17 @@ function setLanguage(m: MonacoModule, model: Monaco.editor.ITextModel, language:
 	if (model.getLanguageId() !== language) m.monaco.editor.setModelLanguage(model, language);
 }
 
-/** The language of `path`: `files.associations`, then the registered associations, then the first line of `text`. */
+/**
+ * The language of `path`: `files.associations`, then the registered associations, then the first
+ * line of `text`. A new untitled editor takes `files.defaultLanguage` (`${activeEditorLanguage}`:
+ * the language of the editor that was active).
+ */
 export function languageOf(m: MonacoModule, path: string, text?: string): string {
 	const known = new Set(m.monaco.languages.getLanguages().map((l) => l.id));
+	if (isUntitled(path) && !text) {
+		const wanted = defaultLanguage(settings.get<string>('files.defaultLanguage'), editors.language);
+		if (wanted && known.has(wanted)) return wanted;
+	}
 	const firstLine = text?.slice(0, 1000).split(/\r?\n/, 1)[0];
 	return languageFor(path, { associations: settings.get('files.associations'), firstLine, known: (id) => known.has(id) });
 }
@@ -172,7 +198,9 @@ export async function saveFile(path: string, reasonOrOptions: SaveReason | SaveO
 	if (entry.model.isDisposed()) return false;
 	const version = entry.model.getAlternativeVersionId();
 	const encoding = opts.encoding ?? entry.encoding;
-	const result = await writeTextResource(path, entry.model.getValue(), encoding, opts.overwrite ? undefined : entry.stat);
+	// files.saveConflictResolution `overwriteFileOnDisk`: a newer file on disk is overwritten without asking.
+	const overwrite = opts.overwrite || settings.get<string>('files.saveConflictResolution') === 'overwriteFileOnDisk';
+	const result = await writeTextResource(path, entry.model.getValue(), encoding, overwrite ? undefined : entry.stat);
 	if (result.kind === 'conflict') {
 		entry.inConflict = true;
 		textFileHooks.conflict(path);
@@ -312,12 +340,45 @@ export async function reloadClean(paths: string[]) {
 	}
 }
 
+/** The most recent view state of each file in any group (`workbench.editor.sharedViewState`). */
+const sharedViews = new Map<string, Monaco.editor.ICodeEditorViewState>();
+/** View states kept for closed editors (`workbench.editor.restoreViewState`), oldest first. */
+const MAX_VIEW_STATES = 500;
+
 export function saveViewState(group: number, path: string, state: Monaco.editor.ICodeEditorViewState | null) {
-	views.set(viewKey(group, path), state);
+	const key = viewKey(group, path);
+	views.delete(key);
+	views.set(key, state);
+	if (state) {
+		sharedViews.delete(path);
+		sharedViews.set(path, state);
+	}
+	for (const map of [views, sharedViews] as Map<string, unknown>[]) while (map.size > MAX_VIEW_STATES) map.delete(map.keys().next().value!);
 }
 
+/** The view state to restore for `path` in `group`: the group's own, else (with `workbench.editor.sharedViewState`) the latest from any group. */
 export function viewState(group: number, path: string) {
-	return views.get(viewKey(group, path)) ?? null;
+	const own = views.get(viewKey(group, path));
+	if (own) return own;
+	return settings.get<boolean>('workbench.editor.sharedViewState') ? (sharedViews.get(path) ?? null) : null;
+}
+
+/**
+ * Forgets the view states of editors that are no longer open in their group, unless
+ * `workbench.editor.restoreViewState` keeps them for when the editor is opened again (VS Code
+ * restores scroll and cursor of a reopened editor). Groups that are gone always go.
+ */
+export function pruneViewStates(openByGroup: ReadonlyMap<number, ReadonlySet<string>>) {
+	const keep = settings.get<boolean>('workbench.editor.restoreViewState');
+	for (const key of [...views.keys()]) {
+		const [group, path] = key.split('\u0000');
+		const open = openByGroup.get(Number(group));
+		if (!open || (!keep && !open.has(path))) views.delete(key);
+	}
+	if (!keep) {
+		const anywhere = new Set([...openByGroup.values()].flatMap((s) => [...s]));
+		for (const path of [...sharedViews.keys()]) if (!anywhere.has(path)) sharedViews.delete(path);
+	}
 }
 
 /** Disposes the models (and view states) of files no group or ADE tab has open any more; their unsaved edits go with them. */
@@ -329,14 +390,13 @@ export function disposeClosed(open: Set<string>, groups: number[]) {
 		entries.delete(path);
 	}
 	const live = new Set(groups);
-	for (const key of views.keys()) {
-		const [group, path] = key.split('\u0000');
-		if (!open.has(path) || !live.has(Number(group))) views.delete(key);
-	}
+	for (const key of [...views.keys()]) if (!live.has(Number(key.split('\u0000')[0]))) views.delete(key);
+	// Closed editors' view states are pruneViewStates' (workbench.editor.restoreViewState).
 }
 
 export function disposeAll() {
 	for (const e of entries.values()) e.model.dispose();
 	entries.clear();
 	views.clear();
+	sharedViews.clear();
 }

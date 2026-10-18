@@ -17,8 +17,21 @@ export function parseChord(chord: string, mac = isMac): Chord {
 	};
 }
 
-/** Uses `e.code` for letters and digits so ⌥ combinations on macOS (which change `e.key`) still match. */
-export function eventKey(e: Pick<KeyboardEvent, 'key' | 'code'>): string {
+/** `keyboard.dispatch`: match keybindings by the physical key (`code`) or by what the key types in the layout (`keyCode`). */
+export type KeyboardDispatch = 'code' | 'keyCode';
+let dispatch: KeyboardDispatch = 'code';
+export function setKeyboardDispatch(value: KeyboardDispatch) {
+	dispatch = value;
+}
+
+/**
+ * With `keyboard.dispatch: code` (VS Code's default) letters and digits match by `e.code`, so ⌥
+ * combinations on macOS (which change `e.key`) still match and the physical key works in any
+ * layout. With `keyCode`, a key that types a plain letter or digit matches by that character
+ * (⌘Z is the key labelled Z on a Dvorak or AZERTY keyboard).
+ */
+export function eventKey(e: Pick<KeyboardEvent, 'key' | 'code'>, mode: KeyboardDispatch = dispatch): string {
+	if (mode === 'keyCode' && /^[a-z0-9]$/i.test(e.key)) return e.key.toLowerCase();
 	if (/^Key[A-Z]$/.test(e.code)) return e.code.slice(3).toLowerCase();
 	if (/^Digit\d$/.test(e.code)) return e.code.slice(5);
 	if (e.code === 'Backquote') return '`';

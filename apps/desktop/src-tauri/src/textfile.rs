@@ -165,6 +165,9 @@ pub struct Stat {
   pub size: u64,
   /// SHA-256 of the bytes on disk, hex.
   pub hash: String,
+  /// The file's permissions say it cannot be written (`files.readonlyFromPermissions`).
+  #[serde(default)]
+  pub readonly: bool,
 }
 
 pub fn hash(bytes: &[u8]) -> String {
@@ -189,6 +192,10 @@ pub struct ReadOptions {
   /// "Open Anyway" on the binary placeholder.
   #[serde(default)]
   pub accept_binary: bool,
+  /// `workbench.editorLargeFileConfirmation` in bytes: larger files ask first (default
+  /// LARGE_FILE_LIMIT; never above MAX_FILE_SIZE).
+  #[serde(default)]
+  pub large_file_limit: Option<u64>,
   /// "Open Anyway" on the large file placeholder.
   #[serde(default)]
   pub accept_large: bool,
@@ -245,7 +252,7 @@ pub fn decode_file(bytes: &[u8], opts: &ReadOptions) -> ReadResult {
   }
   let encoding = read_encoding(opts.encoding.as_deref(), detected.encoding, opts.default_encoding.as_deref().unwrap_or("utf8"));
   let (content, lossy) = decode(bytes, &encoding);
-  ReadResult::Text { content, encoding, lossy, stat: Stat { mtime: 0, size, hash: hash(bytes) } }
+  ReadResult::Text { content, encoding, lossy, stat: Stat { mtime: 0, size, hash: hash(bytes), readonly: false } }
 }
 
 pub fn read(path: &Path, opts: &ReadOptions) -> Result<ReadResult, String> {
@@ -254,13 +261,15 @@ pub fn read(path: &Path, opts: &ReadOptions) -> Result<ReadResult, String> {
     return Err("is a directory".into());
   }
   let size = meta.len();
-  if size > MAX_FILE_SIZE || (size > LARGE_FILE_LIMIT && !opts.accept_large) {
-    return Ok(ReadResult::TooLarge { size, limit: if size > MAX_FILE_SIZE { MAX_FILE_SIZE } else { LARGE_FILE_LIMIT } });
+  let confirm = opts.large_file_limit.unwrap_or(LARGE_FILE_LIMIT).clamp(1, MAX_FILE_SIZE);
+  if size > MAX_FILE_SIZE || (size > confirm && !opts.accept_large) {
+    return Ok(ReadResult::TooLarge { size, limit: if size > MAX_FILE_SIZE { MAX_FILE_SIZE } else { confirm } });
   }
   let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
   let mut result = decode_file(&bytes, opts);
   if let ReadResult::Text { stat, .. } = &mut result {
     stat.mtime = mtime_of(&meta);
+    stat.readonly = meta.permissions().readonly();
   }
   Ok(result)
 }
@@ -317,7 +326,7 @@ pub fn conflict(path: &Path, expected: &Expected) -> Result<Option<Stat>, String
   }
   let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
   let h = hash(&bytes);
-  Ok((h != expected.hash).then_some(Stat { mtime, size: bytes.len() as u64, hash: h }))
+  Ok((h != expected.hash).then_some(Stat { mtime, size: bytes.len() as u64, hash: h, readonly: meta.permissions().readonly() }))
 }
 
 pub fn write(path: &Path, text: &str, encoding: &str, expected: Option<&Expected>) -> Result<WriteResult, String> {
@@ -332,7 +341,7 @@ pub fn write(path: &Path, text: &str, encoding: &str, expected: Option<&Expected
   };
   std::fs::write(path, &bytes).map_err(|e| e.to_string())?;
   let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
-  Ok(WriteResult::Saved { stat: Stat { mtime: mtime_of(&meta), size: bytes.len() as u64, hash: hash(&bytes) } })
+  Ok(WriteResult::Saved { stat: Stat { mtime: mtime_of(&meta), size: bytes.len() as u64, hash: hash(&bytes), readonly: meta.permissions().readonly() } })
 }
 
 /// `rel` inside `root` for a save: the file itself, or (deleted on disk) its parent folder joined
@@ -465,6 +474,28 @@ mod tests {
     // set_len fills with zero bytes, so once allowed it is binary.
     let r = read(&p, &ReadOptions { accept_large: true, ..Default::default() }).unwrap();
     assert_eq!(r, ReadResult::Binary { size: LARGE_FILE_LIMIT + 1 });
+    // workbench.editorLargeFileConfirmation moves the limit either way.
+    let r = read(&p, &ReadOptions { large_file_limit: Some(LARGE_FILE_LIMIT * 2), ..Default::default() }).unwrap();
+    assert_eq!(r, ReadResult::Binary { size: LARGE_FILE_LIMIT + 1 });
+    let small = 1024 * 1024;
+    let r = read(&p, &ReadOptions { large_file_limit: Some(small), ..Default::default() }).unwrap();
+    assert_eq!(r, ReadResult::TooLarge { size: LARGE_FILE_LIMIT + 1, limit: small });
+  }
+
+  #[test]
+  fn read_reports_readonly_permissions() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("ro.txt");
+    std::fs::write(&p, "x").unwrap();
+    let stat_of = |p: &Path| match read(p, &opts(false)).unwrap() {
+      ReadResult::Text { stat, .. } => stat,
+      other => panic!("{other:?}"),
+    };
+    assert!(!stat_of(&p).readonly);
+    let mut perms = std::fs::metadata(&p).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(&p, perms).unwrap();
+    assert!(stat_of(&p).readonly);
   }
 
   #[test]

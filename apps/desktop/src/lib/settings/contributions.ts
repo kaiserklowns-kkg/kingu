@@ -12,16 +12,23 @@ import { settings, USER_SETTINGS_KEY, WORKSPACE_SETTINGS_PATH } from './settings
 import { systemSettings } from './systemSettings.svelte';
 import { USER_KEYBINDINGS_KEY } from '#lib/workbench/keybindings.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
+import { themeSettingFor } from '#lib/workbench/workbenchOptions.ts';
 
 const GROUPS: Record<string, string> = { light: 'light themes', dark: 'dark themes', hcDark: 'high contrast themes', hcLight: 'high contrast themes' };
 
 const report = (e: unknown) => notifications.error(`บันทึกการตั้งค่าไม่สำเร็จ: ${e instanceof Error ? e.message : e}`);
 
 /** Preferences: Color Theme — arrow keys preview, Enter keeps, Escape restores (like VS Code).
- * With window.autoDetectColorScheme on, the pick sets the preferred theme of the OS's current scheme. */
+ * With window.autoDetectColorScheme (or high contrast detection) on, the pick sets the preferred theme in effect. */
 export function pickColorTheme() {
 	const dark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true;
-	const target = settings.get<boolean>('window.autoDetectColorScheme') ? (dark ? 'workbench.preferredDarkColorTheme' : 'workbench.preferredLightColorTheme') : 'workbench.colorTheme';
+	const highContrast = window.matchMedia?.('(prefers-contrast: more), (forced-colors: active)').matches ?? false;
+	const target = themeSettingFor({
+		autoDetectHighContrast: settings.get<boolean>('window.autoDetectHighContrast'),
+		autoDetectColorScheme: settings.get<boolean>('window.autoDetectColorScheme'),
+		highContrast,
+		prefersDark: dark
+	});
 	const original = settings.get<string>(target);
 	let lastGroup = '';
 	const items: PickItem[] = THEMES.map((t) => {
@@ -56,7 +63,8 @@ export function registerSettingsCommands(): () => void {
 			title: 'Open Settings (UI)',
 			category: 'Preferences',
 			key: 'cmd+,',
-			run: () => systemSettings.show()
+			// workbench.settings.editor: the settings page, or settings.json like VS Code's JSON editor.
+			run: () => (settings.get('workbench.settings.editor') === 'json' ? commands.run('workbench.action.openSettingsJson') : systemSettings.show())
 		}),
 		commands.register({
 			id: 'workbench.action.openSettingsJson',

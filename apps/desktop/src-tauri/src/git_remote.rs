@@ -168,7 +168,7 @@ fn run_net_streaming(
   timeout: Duration,
   on_err: &mut dyn FnMut(&str),
 ) -> Result<NetOutput, Stopped> {
-  let mut cmd: Command = crate::shell_env::command("git");
+  let mut cmd: Command = crate::git::command();
   cmd.envs(env.iter().copied());
   cmd
     .arg("-C")
@@ -277,7 +277,7 @@ pub fn net_error(op: &str, stderr: &str) -> String {
   let why = if is_auth_failure(stderr) {
     format!("{AUTH_FAILED}: Kingu ไม่ถามรหัสผ่านเอง เปิดใน Terminal เพื่อยืนยันตัวตนแล้วลองใหม่")
   } else if lower.contains("not possible to fast-forward") || lower.contains("diverging branches") {
-    "pull แบบ fast-forward ไม่ได้ เพราะ branch แยกทางกับ upstream แล้ว (เปิด git.pullRebase หรือ merge เอง)".into()
+    "pull แบบ fast-forward ไม่ได้ เพราะ branch แยกทางกับ upstream แล้ว (ใช้ Git: Pull (Rebase) หรือ merge เอง)".into()
   } else if lower.contains("would be overwritten") {
     "การแก้ไขที่ยังไม่ commit จะถูกเขียนทับ ให้ commit หรือ stash ก่อน".into()
   } else if lower.contains("[rejected]") || lower.contains("updates were rejected") {
@@ -325,27 +325,121 @@ fn config(root: &Path, key: &str) -> Option<String> {
 // ---------------------------------------------------------------------------------------------
 // Fetch, pull, push
 
-pub fn fetch(root: &Path, cancel: &AtomicBool, timeout: Duration) -> Result<(), String> {
-  net(root, &["fetch", "--prune"], cancel, timeout).map(|_| ())
+/// Fetch flags (VS Code: `git.autofetch: "all"` fetches every remote, `git.pruneOnFetch`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FetchOptions {
+  pub all: bool,
+  pub prune: bool,
 }
 
-/// `--ff-only` (never a surprise merge commit) unless `rebase`.
-pub fn pull(root: &Path, rebase: bool, cancel: &AtomicBool, timeout: Duration) -> Result<(), String> {
+pub fn fetch_args(opts: &FetchOptions) -> Vec<&'static str> {
+  let mut args = vec!["fetch"];
+  if opts.all {
+    args.push("--all");
+  }
+  if opts.prune {
+    args.push("--prune");
+  }
+  args
+}
+
+pub fn fetch(root: &Path, opts: &FetchOptions, cancel: &AtomicBool, timeout: Duration) -> Result<(), String> {
+  net(root, &fetch_args(opts), cancel, timeout).map(|_| ())
+}
+
+/// Pull flags (VS Code: Pull (Rebase) and `git.rebaseWhenSync`, `git.pullTags`, `git.autoStash`,
+/// `git.fetchOnPull`, `git.replaceTagsWhenPull`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PullOptions {
+  pub rebase: bool,
+  pub tags: bool,
+  pub auto_stash: bool,
+  /// Fetch every remote and branch first.
+  pub fetch_all: bool,
+  /// On a tag conflict, take the remote's tags and pull again.
+  pub replace_tags: bool,
+}
+
+/// `--ff-only` (never a surprise merge commit) unless `rebase`; `--no-rebase` so a `pull.rebase`
+/// config cannot override the ff-only default.
+pub fn pull_args(opts: &PullOptions) -> Vec<&'static str> {
+  let mut args = vec!["pull"];
+  if opts.tags {
+    args.push("--tags");
+  }
+  if opts.auto_stash {
+    args.push("--autostash");
+  }
+  if opts.rebase {
+    args.push("--rebase");
+  } else {
+    args.extend(["--no-rebase", "--ff-only"]);
+  }
+  args
+}
+
+/// git's refusal to move a local tag that differs from the remote's.
+fn is_tag_conflict(err: &str) -> bool {
+  err.contains("would clobber existing tag")
+}
+
+pub fn pull(root: &Path, opts: &PullOptions, cancel: &AtomicBool, timeout: Duration) -> Result<(), String> {
   let Some(branch) = current_branch(root) else {
     return Err("HEAD ไม่ได้อยู่บน branch (detached) จึง pull ไม่ได้".into());
   };
   if config(root, &format!("branch.{branch}.merge")).is_none() {
     return Err(format!("branch {branch} ยังไม่มี upstream ให้ Publish Branch ก่อน"));
   }
-  let mode = if rebase { "--rebase" } else { "--ff-only" };
-  // `--no-rebase` so a `pull.rebase` config cannot override the ff-only default.
-  let args: &[&str] = if rebase { &["pull", mode] } else { &["pull", "--no-rebase", mode] };
-  net(root, args, cancel, timeout).map(|_| ())
+  if opts.fetch_all {
+    net(root, &["fetch", "--all"], cancel, timeout)?;
+  }
+  match net(root, &pull_args(opts), cancel, timeout) {
+    Err(e) if opts.replace_tags && is_tag_conflict(&e) => {
+      net(root, &["fetch", "--tags", "--force"], cancel, timeout)?;
+      net(root, &pull_args(opts), cancel, timeout).map(|_| ())
+    }
+    Err(e) if is_tag_conflict(&e) => Err(format!("tag ในเครื่องขัดกับ tag ของ remote เปิด git.replaceTagsWhenPull เพื่อใช้ tag ของ remote แทน\n{e}")),
+    r => r.map(|_| ()),
+  }
+}
+
+/// How Push (Force) forces (VS Code's ForcePushMode, from `git.useForcePushWithLease` and
+/// `git.useForcePushIfIncludes`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ForcePush {
+  Force,
+  WithLease,
+  WithLeaseIfIncludes,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PushOptions {
+  pub force: Option<ForcePush>,
+  /// `git.followTagsWhenSync`: push annotated tags too.
+  pub follow_tags: bool,
+}
+
+pub fn push_flags(opts: &PushOptions) -> Vec<&'static str> {
+  let mut flags = vec!["push"];
+  match opts.force {
+    Some(ForcePush::Force) => flags.push("--force"),
+    Some(ForcePush::WithLease) => flags.push("--force-with-lease"),
+    Some(ForcePush::WithLeaseIfIncludes) => flags.extend(["--force-with-lease", "--force-if-includes"]),
+    None => {}
+  }
+  if opts.follow_tags {
+    flags.push("--follow-tags");
+  }
+  flags
 }
 
 /// Pushes the current branch to its upstream; with no upstream, publishes it to `remote`
 /// (default `origin`) with `-u` (VS Code's Publish Branch). Returns the upstream pushed to.
-pub fn push(root: &Path, remote: Option<&str>, cancel: &AtomicBool, timeout: Duration) -> Result<String, String> {
+pub fn push(root: &Path, remote: Option<&str>, opts: &PushOptions, cancel: &AtomicBool, timeout: Duration) -> Result<String, String> {
   let Some(branch) = current_branch(root) else {
     return Err("HEAD ไม่ได้อยู่บน branch (detached) สร้าง branch ก่อนแล้วจึง push".into());
   };
@@ -353,7 +447,9 @@ pub fn push(root: &Path, remote: Option<&str>, cancel: &AtomicBool, timeout: Dur
   match (tracked, remote) {
     (Some((r, merge)), None) if r != "." => {
       let spec = format!("refs/heads/{branch}:{merge}");
-      net(root, &["push", "--", &r, &spec], cancel, timeout)?;
+      let mut args = push_flags(opts);
+      args.extend(["--", &r, &spec]);
+      net(root, &args, cancel, timeout)?;
       Ok(format!("{r}/{}", merge.strip_prefix("refs/heads/").unwrap_or(&merge)))
     }
     _ => {
@@ -366,18 +462,21 @@ pub fn push(root: &Path, remote: Option<&str>, cancel: &AtomicBool, timeout: Dur
           format!("ไม่มี remote ชื่อ {r}")
         });
       }
-      net(root, &["push", "-u", "--", r, &format!("refs/heads/{branch}:refs/heads/{branch}")], cancel, timeout)?;
+      let spec = format!("refs/heads/{branch}:refs/heads/{branch}");
+      let mut args = push_flags(opts);
+      args.extend(["-u", "--", r, &spec]);
+      net(root, &args, cancel, timeout)?;
       Ok(format!("{r}/{branch}"))
     }
   }
 }
 
 /// Pull, then push when there is anything to push (VS Code's Sync Changes).
-pub fn sync(root: &Path, rebase: bool, cancel: &AtomicBool, timeout: Duration) -> Result<(), String> {
-  pull(root, rebase, cancel, timeout)?;
+pub fn sync(root: &Path, pull_opts: &PullOptions, push_opts: &PushOptions, cancel: &AtomicBool, timeout: Duration) -> Result<(), String> {
+  pull(root, pull_opts, cancel, timeout)?;
   let ahead = run(root, &["rev-list", "--count", "@{upstream}..HEAD"]).map(|o| String::from_utf8_lossy(&o).trim().to_owned());
   if ahead.as_deref().is_ok_and(|n| n != "0") {
-    push(root, None, cancel, timeout)?;
+    push(root, None, push_opts, cancel, timeout)?;
   }
   Ok(())
 }
@@ -398,11 +497,22 @@ pub struct BranchRef {
   pub worktree: Option<String>,
   pub commit: String,
   pub subject: String,
+  /// A tag (Checkout to… lists them with `git.checkoutType`); checked out detached.
+  pub tag: bool,
+  /// Commit (or tag) date, seconds since the epoch, for `git.branchSortOrder: committerdate`.
+  pub date: i64,
 }
 
-const REF_FORMAT: &str = "--format=%(refname)%00%(refname:short)%00%(HEAD)%00%(upstream:short)%00%(worktreepath)%00%(objectname:short)%00%(subject)";
+/// `git for-each-ref` fields; the hash is `hash_len` long (`git.commitShortHashLength`), a tag's
+/// the commit it points at.
+fn ref_format(hash_len: u8) -> String {
+  let n = hash_len.clamp(4, 40);
+  format!(
+    "--format=%(refname)%00%(refname:short)%00%(HEAD)%00%(upstream:short)%00%(worktreepath)%00%(if)%(*objectname)%(then)%(*objectname:short={n})%(else)%(objectname:short={n})%(end)%00%(subject)%00%(creatordate:unix)"
+  )
+}
 
-/// Parses `git for-each-ref` with [`REF_FORMAT`]. `here` is this worktree's top level, so a
+/// Parses `git for-each-ref` with [`ref_format`]. `here` is this worktree's top level, so a
 /// branch checked out here is not reported as used by another worktree.
 pub fn parse_refs(text: &str, here: &Path) -> Vec<BranchRef> {
   let mut out = Vec::new();
@@ -412,6 +522,7 @@ pub fn parse_refs(text: &str, here: &Path) -> Vec<BranchRef> {
       continue;
     }
     let remote = f[0].starts_with("refs/remotes/");
+    let tag = f[0].starts_with("refs/tags/");
     // `origin/HEAD` points at another remote branch.
     if remote && f[0].ends_with("/HEAD") {
       continue;
@@ -426,6 +537,8 @@ pub fn parse_refs(text: &str, here: &Path) -> Vec<BranchRef> {
       worktree: other,
       commit: f[5].to_owned(),
       subject: f[6].to_owned(),
+      tag,
+      date: f.get(7).and_then(|d| d.parse().ok()).unwrap_or(0),
     });
   }
   out
@@ -440,9 +553,20 @@ fn toplevel(root: &Path) -> Result<std::path::PathBuf, String> {
   Ok(std::path::PathBuf::from(String::from_utf8_lossy(&out).trim()))
 }
 
-/// Local then remote branches, each sorted by name.
+/// Local then remote branches, each sorted by name (tests; the webview asks [`refs`]).
+#[cfg(test)]
 pub fn branches(root: &Path) -> Result<Vec<BranchRef>, String> {
-  let out = run(root, &["for-each-ref", REF_FORMAT, "refs/heads", "refs/remotes"])?;
+  refs(root, 7, false)
+}
+
+/// Local then remote branches, then tags with `tags`, each sorted by name.
+pub fn refs(root: &Path, hash_len: u8, tags: bool) -> Result<Vec<BranchRef>, String> {
+  let format = ref_format(hash_len);
+  let mut args = vec!["for-each-ref", format.as_str(), "refs/heads", "refs/remotes"];
+  if tags {
+    args.push("refs/tags");
+  }
+  let out = run(root, &args)?;
   Ok(parse_refs(&String::from_utf8_lossy(&out), &toplevel(root)?))
 }
 
@@ -470,11 +594,57 @@ fn branch_error(what: &str, name: &str, e: &str) -> String {
 
 /// Switches to local branch `name`; a remote branch `origin/x` checks out (creating when needed)
 /// the local `x` tracking it. Returns the local branch now checked out.
+#[cfg(test)]
 pub fn checkout(root: &Path, name: &str, remote: bool) -> Result<String, String> {
+  checkout_with(root, name, remote, &CheckoutOptions::default(), &AtomicBool::new(false))
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CheckoutOptions {
+  /// `name` is a tag: check it out detached.
+  pub tag: bool,
+  /// `git.pullBeforeCheckout`: fast-forward a local branch with no outgoing commits from its
+  /// upstream first.
+  pub pull_before: bool,
+}
+
+/// `git fetch <remote> <merge>:refs/heads/<branch>`: fast-forwards a branch that is not checked
+/// out (git refuses anything but a fast-forward without `+`). Skipped when the branch has
+/// commits its upstream lacks, or no upstream.
+pub fn fast_forward_branch(root: &Path, branch: &str, cancel: &AtomicBool, timeout: Duration) -> Result<bool, String> {
+  let (Some(remote), Some(merge)) = (config(root, &format!("branch.{branch}.remote")), config(root, &format!("branch.{branch}.merge"))) else {
+    return Ok(false);
+  };
+  if remote == "." {
+    return Ok(false);
+  }
+  let outgoing = run(root, &["rev-list", "--count", &format!("{branch}@{{upstream}}..refs/heads/{branch}")]).map(|o| String::from_utf8_lossy(&o).trim().to_owned());
+  if outgoing.as_deref().is_ok_and(|n| n != "0") {
+    return Ok(false);
+  }
+  net(root, &["fetch", "--", &remote, &format!("{merge}:refs/heads/{branch}")], cancel, timeout)?;
+  Ok(true)
+}
+
+pub fn checkout_with(root: &Path, name: &str, remote: bool, opts: &CheckoutOptions, cancel: &AtomicBool) -> Result<String, String> {
   check_rev(name).map_err(|_| format!("ชื่อ branch ไม่ถูกต้อง: {name:?}"))?;
+  if opts.tag {
+    if !ref_exists(root, &format!("refs/tags/{name}")) {
+      return Err(format!("ไม่พบ tag {name}"));
+    }
+    run(root, &["switch", "--detach", &format!("refs/tags/{name}")]).map_err(|e| branch_error("check out", name, &e))?;
+    return Ok(name.to_owned());
+  }
   if !remote {
     if !ref_exists(root, &format!("refs/heads/{name}")) {
       return Err(format!("ไม่พบ branch {name}"));
+    }
+    if opts.pull_before && current_branch(root).as_deref() != Some(name) {
+      // Like VS Code, a failed fast-forward (offline, diverged) does not stop the checkout.
+      if let Err(e) = fast_forward_branch(root, name, cancel, NET_TIMEOUT) {
+        log::warn!("git.pullBeforeCheckout {name}: {e}");
+      }
     }
     run(root, &["switch", "--no-guess", name]).map_err(|e| branch_error("check out", name, &e))?;
     return Ok(name.to_owned());
@@ -552,7 +722,7 @@ pub struct Stash {
 /// `git stash` takes no paths here, and with `--literal-pathspecs` (which [`run`] adds) git 2.56
 /// silently leaves untracked files out of `stash push --include-untracked`.
 fn run_unliteral(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-  let out = crate::shell_env::command("git").arg("-C").arg(root).args(args).stdin(Stdio::null()).output().map_err(|e| format!("git: {e}"))?;
+  let out = crate::git::command().arg("-C").arg(root).args(args).stdin(Stdio::null()).output().map_err(|e| format!("git: {e}"))?;
   if !out.status.success() {
     let err = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr });
     return Err(format!("git {}: {}", args.first().unwrap_or(&""), err.trim()));
@@ -816,24 +986,39 @@ async fn exclusive_in<T: Send + 'static>(
 }
 
 #[tauri::command]
-pub async fn git_fetch(ws: State<'_, Workspace>, ops: State<'_, GitOps>, slug: Option<String>) -> Result<(), String> {
-  exclusive_in(&ws, &ops, slug.as_deref(), |root, c| fetch(root, c, NET_TIMEOUT)).await
+pub async fn git_fetch(ws: State<'_, Workspace>, ops: State<'_, GitOps>, options: Option<FetchOptions>, slug: Option<String>) -> Result<(), String> {
+  let opts = options.unwrap_or_default();
+  exclusive_in(&ws, &ops, slug.as_deref(), move |root, c| fetch(root, &opts, c, NET_TIMEOUT)).await
 }
 
+/// `rebase` is kept for older callers; `options` carries VS Code's pull settings.
 #[tauri::command]
-pub async fn git_pull(ws: State<'_, Workspace>, ops: State<'_, GitOps>, rebase: Option<bool>, slug: Option<String>) -> Result<(), String> {
-  exclusive_in(&ws, &ops, slug.as_deref(), move |root, c| pull(root, rebase.unwrap_or(false), c, NET_TIMEOUT)).await
+pub async fn git_pull(ws: State<'_, Workspace>, ops: State<'_, GitOps>, rebase: Option<bool>, options: Option<PullOptions>, slug: Option<String>) -> Result<(), String> {
+  let mut opts = options.unwrap_or_default();
+  opts.rebase |= rebase.unwrap_or(false);
+  exclusive_in(&ws, &ops, slug.as_deref(), move |root, c| pull(root, &opts, c, NET_TIMEOUT)).await
 }
 
 /// Pushes, or publishes to `remote` when the branch has no upstream. Returns the upstream.
 #[tauri::command]
-pub async fn git_push(ws: State<'_, Workspace>, ops: State<'_, GitOps>, remote: Option<String>, slug: Option<String>) -> Result<String, String> {
-  exclusive_in(&ws, &ops, slug.as_deref(), move |root, c| push(root, remote.as_deref(), c, NET_TIMEOUT)).await
+pub async fn git_push(ws: State<'_, Workspace>, ops: State<'_, GitOps>, remote: Option<String>, options: Option<PushOptions>, slug: Option<String>) -> Result<String, String> {
+  let opts = options.unwrap_or_default();
+  exclusive_in(&ws, &ops, slug.as_deref(), move |root, c| push(root, remote.as_deref(), &opts, c, NET_TIMEOUT)).await
 }
 
 #[tauri::command]
-pub async fn git_sync(ws: State<'_, Workspace>, ops: State<'_, GitOps>, rebase: Option<bool>, slug: Option<String>) -> Result<(), String> {
-  exclusive_in(&ws, &ops, slug.as_deref(), move |root, c| sync(root, rebase.unwrap_or(false), c, NET_TIMEOUT)).await
+pub async fn git_sync(
+  ws: State<'_, Workspace>,
+  ops: State<'_, GitOps>,
+  rebase: Option<bool>,
+  options: Option<PullOptions>,
+  push_options: Option<PushOptions>,
+  slug: Option<String>,
+) -> Result<(), String> {
+  let mut opts = options.unwrap_or_default();
+  opts.rebase |= rebase.unwrap_or(false);
+  let push_opts = push_options.unwrap_or_default();
+  exclusive_in(&ws, &ops, slug.as_deref(), move |root, c| sync(root, &opts, &push_opts, c, NET_TIMEOUT)).await
 }
 
 /// Cancels the running operation (the status bar's progress item).
@@ -843,14 +1028,15 @@ pub fn git_cancel(ops: State<'_, GitOps>) -> bool {
 }
 
 #[tauri::command]
-pub async fn git_refs(ws: State<'_, Workspace>) -> Result<Vec<BranchRef>, String> {
+pub async fn git_refs(ws: State<'_, Workspace>, hash_length: Option<u8>, tags: Option<bool>) -> Result<Vec<BranchRef>, String> {
   let root = ws.root()?;
-  tauri::async_runtime::spawn_blocking(move || branches(&root)).await.map_err(|e| e.to_string())?
+  tauri::async_runtime::spawn_blocking(move || refs(&root, hash_length.unwrap_or(7), tags.unwrap_or(false))).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn git_checkout(ws: State<'_, Workspace>, ops: State<'_, GitOps>, name: String, remote: bool) -> Result<String, String> {
-  exclusive(&ws, &ops, move |root, _| checkout(root, &name, remote)).await
+pub async fn git_checkout(ws: State<'_, Workspace>, ops: State<'_, GitOps>, name: String, remote: bool, options: Option<CheckoutOptions>) -> Result<String, String> {
+  let opts = options.unwrap_or_default();
+  exclusive(&ws, &ops, move |root, c| checkout_with(root, &name, remote, &opts, c)).await
 }
 
 #[tauri::command]
@@ -957,13 +1143,13 @@ mod tests {
     commit(&a, "two.txt", "2\n");
     commit(&a, "three.txt", "3\n");
     assert_eq!(ab(&a), (2, 0));
-    assert_eq!(push(&a, None, &no(), T).unwrap(), "origin/main");
+    assert_eq!(push(&a, None, &PushOptions::default(), &no(), T).unwrap(), "origin/main");
     assert_eq!(ab(&a), (0, 0));
 
     assert_eq!(ab(&b), (0, 0), "b has not fetched yet");
-    fetch(&b, &no(), T).unwrap();
+    fetch(&b, &FetchOptions::default(), &no(), T).unwrap();
     assert_eq!(ab(&b), (0, 2));
-    pull(&b, false, &no(), T).unwrap();
+    pull(&b, &PullOptions::default(), &no(), T).unwrap();
     assert_eq!(ab(&b), (0, 0));
     assert!(b.join("three.txt").exists());
   }
@@ -972,13 +1158,13 @@ mod tests {
   fn ff_only_pull_refuses_divergence_and_rebase_sync_resolves_it() {
     let (_tmp, a, b) = setup();
     commit(&a, "from-a.txt", "a\n");
-    push(&a, None, &no(), T).unwrap();
+    push(&a, None, &PushOptions::default(), &no(), T).unwrap();
     commit(&b, "from-b.txt", "b\n");
-    let err = pull(&b, false, &no(), T).unwrap_err();
+    let err = pull(&b, &PullOptions::default(), &no(), T).unwrap_err();
     assert!(err.contains("fast-forward"), "{err}");
-    sync(&b, true, &no(), T).unwrap();
+    sync(&b, &PullOptions { rebase: true, ..Default::default() }, &PushOptions::default(), &no(), T).unwrap();
     assert_eq!(ab(&b), (0, 0));
-    fetch(&a, &no(), T).unwrap();
+    fetch(&a, &FetchOptions::default(), &no(), T).unwrap();
     assert_eq!(ab(&a), (0, 1));
   }
 
@@ -989,12 +1175,12 @@ mod tests {
     commit(&b, "x.txt", "x\n");
     let st = status(&b).unwrap().unwrap();
     assert_eq!((st.branch.as_deref(), st.upstream.as_deref()), (Some("feature/x"), None));
-    assert!(pull(&b, false, &no(), T).unwrap_err().contains("upstream"));
-    assert!(push(&b, Some("nope"), &no(), T).unwrap_err().contains("nope"));
-    assert_eq!(push(&b, None, &no(), T).unwrap(), "origin/feature/x");
+    assert!(pull(&b, &PullOptions::default(), &no(), T).unwrap_err().contains("upstream"));
+    assert!(push(&b, Some("nope"), &PushOptions::default(), &no(), T).unwrap_err().contains("nope"));
+    assert_eq!(push(&b, None, &PushOptions::default(), &no(), T).unwrap(), "origin/feature/x");
     assert_eq!(status(&b).unwrap().unwrap().upstream.as_deref(), Some("origin/feature/x"));
 
-    fetch(&a, &no(), T).unwrap();
+    fetch(&a, &FetchOptions::default(), &no(), T).unwrap();
     let refs = branches(&a).unwrap();
     let remote = refs.iter().find(|r| r.name == "origin/feature/x").expect("remote branch listed");
     assert!(remote.remote && !remote.current);
@@ -1097,6 +1283,85 @@ mod tests {
     assert!(err.contains("worktree อื่น") && err.contains(".kingu/worktrees/t1"), "{err}");
     let err = delete_branch(&a, "kingu/t1", true).unwrap_err();
     assert!(err.contains("worktree อื่น"), "{err}");
+  }
+
+  #[test]
+  fn net_args_follow_the_settings() {
+    assert_eq!(fetch_args(&FetchOptions::default()), ["fetch"]);
+    assert_eq!(fetch_args(&FetchOptions { all: true, prune: true }), ["fetch", "--all", "--prune"]);
+    assert_eq!(pull_args(&PullOptions::default()), ["pull", "--no-rebase", "--ff-only"]);
+    let all = PullOptions { rebase: true, tags: true, auto_stash: true, fetch_all: true, replace_tags: true };
+    assert_eq!(pull_args(&all), ["pull", "--tags", "--autostash", "--rebase"]);
+    assert_eq!(push_flags(&PushOptions::default()), ["push"]);
+    assert_eq!(push_flags(&PushOptions { force: Some(ForcePush::Force), follow_tags: true }), ["push", "--force", "--follow-tags"]);
+    assert_eq!(push_flags(&PushOptions { force: Some(ForcePush::WithLease), follow_tags: false }), ["push", "--force-with-lease"]);
+    assert_eq!(push_flags(&PushOptions { force: Some(ForcePush::WithLeaseIfIncludes), follow_tags: false }), ["push", "--force-with-lease", "--force-if-includes"]);
+  }
+
+  #[test]
+  fn pulls_with_autostash_and_force_pushes_with_lease() {
+    let (_tmp, a, b) = setup();
+    commit(&a, "two.txt", "2\n");
+    push(&a, None, &PushOptions::default(), &no(), T).unwrap();
+    write(&b, "a.txt", "local edit\n");
+    // a.txt is not touched upstream, but a dirty tree is stashed and restored around the pull.
+    pull(&b, &PullOptions { rebase: true, auto_stash: true, ..Default::default() }, &no(), T).unwrap();
+    assert!(b.join("two.txt").exists());
+    assert_eq!(std::fs::read_to_string(b.join("a.txt")).unwrap(), "local edit\n");
+
+    // b rewrites history: a plain push is rejected, a lease push wins.
+    git(&b, &["reset", "-q", "--hard", "HEAD~1"]);
+    commit(&b, "rewritten.txt", "r\n");
+    assert!(push(&b, None, &PushOptions::default(), &no(), T).is_err());
+    push(&b, None, &PushOptions { force: Some(ForcePush::WithLease), follow_tags: false }, &no(), T).unwrap();
+    fetch(&a, &FetchOptions { all: true, prune: true }, &no(), T).unwrap();
+    assert_eq!(ab(&a), (1, 1));
+  }
+
+  #[test]
+  fn sync_follows_tags_and_pull_replaces_conflicting_tags() {
+    let (_tmp, a, b) = setup();
+    commit(&a, "two.txt", "2\n");
+    git(&a, &["tag", "-a", "v1", "-m", "v1"]);
+    sync(&a, &PullOptions::default(), &PushOptions { force: None, follow_tags: true }, &no(), T).unwrap();
+    // b has its own v1 on another commit: pulling tags conflicts until replace_tags.
+    git(&b, &["tag", "v1"]);
+    let tags = PullOptions { tags: true, ..Default::default() };
+    let err = pull(&b, &tags, &no(), T).unwrap_err();
+    assert!(err.contains("git.replaceTagsWhenPull"), "{err}");
+    pull(&b, &PullOptions { replace_tags: true, ..tags }, &no(), T).unwrap();
+    let v1 = git(&b, &["rev-parse", "v1^{commit}"]);
+    assert_eq!(v1, git(&b, &["rev-parse", "HEAD"]));
+  }
+
+  #[test]
+  fn lists_tags_with_dates_and_hash_length_and_checks_them_out_detached() {
+    let (_tmp, a, _b) = setup();
+    git(&a, &["tag", "-a", "v1", "-m", "release"]);
+    let list = refs(&a, 10, true).unwrap();
+    let v1 = list.iter().find(|r| r.name == "v1").expect("tag listed");
+    assert!(v1.tag && !v1.remote && v1.date > 0);
+    assert_eq!(v1.commit.len(), 10);
+    assert_eq!(v1.commit, git(&a, &["rev-parse", "--short=10", "HEAD"]).trim());
+    assert!(!refs(&a, 7, false).unwrap().iter().any(|r| r.tag));
+    commit(&a, "two.txt", "2\n");
+    let opts = CheckoutOptions { tag: true, pull_before: false };
+    assert_eq!(checkout_with(&a, "v1", false, &opts, &no()).unwrap(), "v1");
+    assert!(status(&a).unwrap().unwrap().detached);
+    assert!(!a.join("two.txt").exists());
+  }
+
+  #[test]
+  fn pull_before_checkout_fast_forwards_the_branch() {
+    let (_tmp, a, b) = setup();
+    git(&b, &["switch", "-q", "-c", "side"]);
+    commit(&a, "two.txt", "2\n");
+    push(&a, None, &PushOptions::default(), &no(), T).unwrap();
+    fetch(&b, &FetchOptions::default(), &no(), T).unwrap();
+    let before = git(&b, &["rev-parse", "main"]);
+    checkout_with(&b, "main", false, &CheckoutOptions { tag: false, pull_before: true }, &no()).unwrap();
+    assert_ne!(git(&b, &["rev-parse", "main"]), before);
+    assert!(b.join("two.txt").exists());
   }
 
   #[test]

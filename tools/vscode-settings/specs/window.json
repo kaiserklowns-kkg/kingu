@@ -1,0 +1,101 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/window.ts",
+	"export": "WINDOW_SETTINGS",
+	"what": "window.*",
+	"entries": [
+		{
+			"id": "window.zoomLevel",
+			"group": "Window",
+			"th": "ระดับการซูมของหน้าต่าง แต่ละขั้นใหญ่หรือเล็กลง 20%",
+			"scope": "application"
+		},
+		{
+			"id": "window.titleSeparator",
+			"group": "Window",
+			"th": "ตัวคั่นที่ใช้แทน ${separator} ใน window.title"
+		},
+		{
+			"id": "window.commandCenter",
+			"group": "Window",
+			"th": "แสดง command center ช่องค้นหาคำสั่งกลางแถบชื่อเรื่อง"
+		},
+		{
+			"id": "window.menuBarVisibility",
+			"group": "Window",
+			"th": "การแสดงเมนูในหน้าต่างบน Linux และ Windows ส่วน macOS ใช้เมนูของระบบ",
+			"enumTh": [
+				"แสดงเมนูบนแถบชื่อเรื่อง ซ่อนเมื่อเต็มจอ",
+				"แสดงเมนูเสมอแม้เต็มจอ",
+				"ซ่อนเมนู กด Alt เพื่อแสดง",
+				"ซ่อนเมนูเสมอ",
+				"รวมเมนูไว้ในปุ่มเดียว"
+			]
+		},
+		{
+			"id": "window.autoDetectColorScheme",
+			"group": "Window",
+			"th": "เปลี่ยนธีมตามโหมดสว่างหรือมืดของระบบ ใช้ workbench.preferredDarkColorTheme และ preferredLightColorTheme"
+		},
+		{
+			"id": "window.autoDetectHighContrast",
+			"group": "Window",
+			"th": "ใช้ธีม high contrast เมื่อระบบเปิดโหมดเพิ่มคอนทราสต์"
+		},
+		{
+			"id": "window.systemColorTheme",
+			"group": "Window",
+			"th": "สีของส่วนที่ระบบวาด เช่น กล่องโต้ตอบ เมนู และแถบหน้าต่าง",
+			"enumTh": [
+				"ตามสีของระบบ",
+				"ตามชนิดของธีมสีที่ใช้ สว่างหรือมืด",
+				"ใช้สีสว่างเสมอ",
+				"ใช้สีมืดเสมอ"
+			]
+		},
+		{
+			"id": "window.density.editorTabHeight",
+			"group": "Window",
+			"th": "ความสูงของแท็บ editor แบบปกติหรือกะทัดรัด",
+			"enumTh": [
+				"ความสูงปกติ",
+				"แท็บเตี้ยลงแบบกะทัดรัด"
+			]
+		},
+		{
+			"id": "window.restoreWindows",
+			"group": "Window",
+			"th": "สิ่งที่เปิดคืนเมื่อเริ่ม Kingu ซึ่งมีหน้าต่างเดียว ทุกค่ายกเว้น none จะเปิดโฟลเดอร์ล่าสุดคืน",
+			"enumTh": [
+				"เปิดโฟลเดอร์ล่าสุดคืนเสมอ",
+				"เปิดโฟลเดอร์ล่าสุดคืน",
+				"เปิดโฟลเดอร์ล่าสุดคืน",
+				"เปิดโฟลเดอร์ล่าสุดคืน",
+				"เริ่มด้วยหน้าต่างว่าง"
+			]
+		},
+		{
+			"id": "window.confirmBeforeClose",
+			"group": "Window",
+			"th": "ถามก่อนปิดหน้าต่างหรือออกจาก Kingu",
+			"enumOnly": [
+				"always",
+				"never"
+			],
+			"enumTh": [
+				"ถามทุกครั้ง",
+				"",
+				"ไม่ถาม"
+			]
+		},
+		{
+			"id": "window.enableMenuBarMnemonics",
+			"group": "Window",
+			"th": "เปิดเมนูด้วย Alt กับตัวอักษรขีดเส้นใต้ บน Linux และ Windows"
+		},
+		{
+			"id": "window.customMenuBarAltFocus",
+			"group": "Window",
+			"th": "กด Alt แล้วปล่อยเพื่อโฟกัสเมนูบาร์ บน Linux และ Windows"
+		}
+	]
+}

@@ -65,17 +65,57 @@ pub fn terminal_link_target(ws: State<'_, Workspace>, ptys: State<'_, Ptys>, key
   Ok(link_target(&text, &bases, home.as_deref(), &root))
 }
 
-/// A web link clicked in a terminal: the default browser opens it.
+/// The scheme of a terminal link, when `terminal.integrated.allowedLinkSchemes` lets it open.
+/// Web links go to the browser; other allowed schemes (`mailto:`…) to the system handler. `file`
+/// links are opened in the editor by the page, and script-like schemes never open.
+pub fn openable_scheme(url: &str, allowed: Option<&[String]>) -> Result<String, String> {
+  let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
+  let scheme = parsed.scheme().to_ascii_lowercase();
+  if let Some(allowed) = allowed
+    && !allowed.iter().any(|s| s.eq_ignore_ascii_case(&scheme))
+  {
+    return Err(format!("{scheme}: ไม่อยู่ใน terminal.integrated.allowedLinkSchemes"));
+  }
+  if matches!(scheme.as_str(), "file" | "javascript" | "data" | "vbscript") {
+    return Err(format!("{scheme}: เปิดจาก terminal ไม่ได้"));
+  }
+  if allowed.is_none() && !matches!(scheme.as_str(), "http" | "https") {
+    return Err(format!("{scheme}: เปิดได้เฉพาะลิงก์ http/https"));
+  }
+  Ok(scheme)
+}
+
+/// A link clicked in a terminal: web links open in the default browser, other schemes the user
+/// allowed (`allowed`: terminal.integrated.allowedLinkSchemes) in their system handler.
 #[tauri::command]
-pub fn terminal_open_url(url: String) -> Result<(), String> {
-  crate::system::open_web_url(&url)
+pub fn terminal_open_url(url: String, allowed: Option<Vec<String>>) -> Result<(), String> {
+  let scheme = openable_scheme(&url, allowed.as_deref())?;
+  if scheme == "http" || scheme == "https" {
+    return crate::system::open_web_url(&url);
+  }
+  let program = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+  std::process::Command::new(program).arg(&url).spawn().map(|_| ()).map_err(|e| format!("{program}: {e}"))
 }
 
 #[cfg(test)]
 mod tests {
   use std::fs;
 
-  use super::{LinkTarget, link_target};
+  use super::{LinkTarget, link_target, openable_scheme};
+
+  #[test]
+  fn allowed_link_schemes() {
+    let allowed: Vec<String> = ["file", "http", "https", "mailto"].iter().map(|s| s.to_string()).collect();
+    assert_eq!(openable_scheme("https://example.com", Some(&allowed)).unwrap(), "https");
+    assert_eq!(openable_scheme("mailto:a@b.c", Some(&allowed)).unwrap(), "mailto");
+    assert!(openable_scheme("ftp://x", Some(&allowed)).is_err());
+    assert!(openable_scheme("file:///etc/passwd", Some(&allowed)).is_err());
+    let js = vec!["javascript".to_string()];
+    assert!(openable_scheme("javascript:alert(1)", Some(&js)).is_err());
+    assert!(openable_scheme("http://x", Some(&[])).is_err());
+    assert!(openable_scheme("mailto:a@b.c", None).is_err());
+    assert_eq!(openable_scheme("http://x", None).unwrap(), "http");
+  }
 
   #[test]
   fn resolves_relative_absolute_and_home_paths_inside_the_folder() {

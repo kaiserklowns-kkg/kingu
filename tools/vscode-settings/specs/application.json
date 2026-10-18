@@ -1,0 +1,17 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/application.ts",
+	"export": "APPLICATION_SETTINGS",
+	"what": "keyboard.* and application.*",
+	"entries": [
+		{
+			"id": "keyboard.dispatch",
+			"group": "Application",
+			"th": "จับคู่คีย์ลัดจากตำแหน่งปุ่มบนคีย์บอร์ด หรือจากตัวอักษรที่ปุ่มพิมพ์ตาม layout"
+		},
+		{
+			"id": "application.shellEnvironmentResolutionTimeout",
+			"group": "Application",
+			"th": "เวลาสูงสุดเป็นวินาทีที่รออ่าน PATH จาก login shell ตอนเปิด Kingu จาก Dock หรือ Finder มีผลเมื่อเปิด Kingu ครั้งถัดไป"
+		}
+	]
+}
