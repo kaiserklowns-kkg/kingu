@@ -115,6 +115,11 @@ export function groups(entries: StatusEntry[]): { staged: Resource[]; changes: R
 	return { staged: staged.sort(byPath), changes: changes.sort(byPath) };
 }
 
+/** git.enableSmartCommit with nothing staged: what to stage first (`git.smartCommitChanges`). Conflicts are left to the user. */
+export function smartCommitPaths(changes: readonly Resource[], mode: 'all' | 'tracked'): string[] {
+	return changes.filter((r) => !r.entry.conflict && (mode === 'all' || r.entry.worktree !== '?')).map((r) => r.entry.path);
+}
+
 /** `src/lib/a.ts` → `['a.ts', 'src/lib']`. */
 export function splitPath(path: string): [name: string, dir: string] {
 	const i = path.lastIndexOf('/');

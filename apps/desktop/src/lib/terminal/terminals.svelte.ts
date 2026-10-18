@@ -4,6 +4,8 @@
 // per folder, and comes back after a reload, a folder switch or an app restart: each terminal
 // re-attaches to its PTY under `panelKey(tag, id)`.
 
+import { ask } from '@tauri-apps/plugin-dialog';
+import { settings } from '#lib/settings/settings.svelte.ts';
 import { killPty } from './pty.ts';
 import { panelKey, parsePanelTerminals, persist, restore, storeName, withoutRun } from './sessions.ts';
 
@@ -62,6 +64,17 @@ class Terminals {
 		this.list = [...this.list, { id, title: opts.title ?? 'zsh', run: opts.run }];
 		this.active = id;
 		return id;
+	}
+
+	/** Kill Terminal from the panel: asks first when terminal.integrated.confirmOnKill says so. */
+	async kill(id: number) {
+		const t = this.list.find((x) => x.id === id);
+		if (!t) return;
+		if (settings.get<string>('terminal.integrated.confirmOnKill') !== 'never') {
+			const ok = await ask(`ปิด terminal "${t.title}"? โปรเซสที่รันอยู่ในนั้นจะถูกหยุด`, { title: 'Kill Terminal', kind: 'warning', okLabel: 'Kill', cancelLabel: 'ยกเลิก' });
+			if (!ok) return;
+		}
+		this.close(id);
 	}
 
 	close(id: number) {

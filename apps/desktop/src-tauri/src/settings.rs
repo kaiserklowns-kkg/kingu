@@ -1,5 +1,6 @@
 //! Settings files, like VS Code's user `settings.json` and workspace `.vscode/settings.json`:
 //! user settings live in the app config dir, workspace settings in `<workspace>/.kingu/settings.json`.
+//! User keybindings live next to the user settings (`keybindings.json`, VS Code's file).
 //! The webview names a scope, never a path. Writes go to a temp file in the same directory and
 //! are renamed over the target, so a crash never leaves a half-written settings file.
 
@@ -11,6 +12,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::workspace::Workspace;
 
 const FILE: &str = "settings.json";
+const KEYBINDINGS_FILE: &str = "keybindings.json";
 const WORKSPACE_DIR: &str = ".kingu";
 const MAX_BYTES: usize = 1024 * 1024;
 
@@ -25,6 +27,8 @@ pub struct SettingsFile {
 pub enum Scope {
   User,
   Workspace,
+  /// The user `keybindings.json`.
+  Keybindings,
 }
 
 impl Scope {
@@ -32,6 +36,7 @@ impl Scope {
     match s {
       "user" => Ok(Self::User),
       "workspace" => Ok(Self::Workspace),
+      "keybindings" => Ok(Self::Keybindings),
       _ => Err(format!("unknown settings scope: {s}")),
     }
   }
@@ -180,6 +185,7 @@ fn path_for(app: &AppHandle, ws: &Workspace, scope: Scope) -> Result<PathBuf, St
   match scope {
     Scope::User => Ok(user_path(&app.path().app_config_dir().map_err(|e| e.to_string())?)),
     Scope::Workspace => workspace_path(&ws.root()?),
+    Scope::Keybindings => Ok(app.path().app_config_dir().map_err(|e| e.to_string())?.join(KEYBINDINGS_FILE)),
   }
 }
 
@@ -211,6 +217,7 @@ mod tests {
   fn parses_only_known_scopes() {
     assert_eq!(Scope::parse("user").unwrap(), Scope::User);
     assert_eq!(Scope::parse("workspace").unwrap(), Scope::Workspace);
+    assert_eq!(Scope::parse("keybindings").unwrap(), Scope::Keybindings);
     assert!(Scope::parse("../etc").is_err());
   }
 

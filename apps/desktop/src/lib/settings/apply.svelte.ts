@@ -12,12 +12,15 @@ import { status } from '#lib/workbench/status.svelte.ts';
 import { theme } from '#lib/theme/theme.svelte.ts';
 import { isDiffKey } from '#lib/workbench/scm.ts';
 import { languageOf, openModels, saveFile } from '#lib/workbench/editorModels.ts';
+import { keybindings } from '#lib/workbench/keybindings.svelte.ts';
+import { commands } from '#lib/workbench/commands.svelte.ts';
 import { editorOptionsFrom, effectiveTheme, enabledGlobs, indentFrom, terminalOptionsFrom, type Indent, type SaveReason } from './mappings';
 import { jsonSchema } from './registry';
 import { settings } from './settings.svelte';
 import { settingSchemas } from './schemas.svelte';
 
 const SETTINGS_SCHEMA_URI = 'kingu://schemas/settings';
+const KEYBINDINGS_SCHEMA_URI = 'kingu://schemas/keybindings';
 const get = <T>(id: string) => settings.get<T>(id);
 
 /** Monaco editor options from settings (VS Code: editor.* configuration). */
@@ -29,13 +32,13 @@ function applyIndent(model: Monaco.editor.ITextModel, i: Indent) {
 	else model.updateOptions({ tabSize: i.tabSize, insertSpaces: i.insertSpaces });
 }
 
-/** The workspace file a model shows (models live at `file:///<tab key>`). */
-const pathOf = (model: Monaco.editor.ITextModel) => model.uri.path.slice(1);
+/** The tab key a model shows (a workspace file, or the user settings.json / keybindings.json). */
+const pathOf = (model: Monaco.editor.ITextModel) => openModels().find(([, m]) => m === model)?.[0] ?? model.uri.path.slice(1);
 const isActiveModel = (model: Monaco.editor.ITextModel) => editors.focusedFile !== null && pathOf(model) === editors.focusedFile;
 
 async function autoSave(paths: string[], reason: SaveReason) {
 	for (const path of paths) {
-		if (!editors.isDirty(path) || isDiffKey(path)) continue;
+		if (!path || !editors.isDirty(path) || isDiffKey(path)) continue;
 		await saveFile(path, reason).catch((e) => status.flash(`บันทึกอัตโนมัติไม่สำเร็จ: ${e}`));
 	}
 }
@@ -74,14 +77,33 @@ export function installEditorSettings(monaco: typeof Monaco) {
 		// (contributed Snap settings included, so it follows them).
 		$effect(() => {
 			const schema = jsonSchema(settingSchemas.all);
+			const ids = commands.all.map((c) => c.id).sort();
+			// keybindings.json: completion of command ids (and their removal form `-id`).
+			const keys = {
+				type: 'array',
+				items: {
+					type: 'object',
+					required: ['key', 'command'],
+					properties: {
+						key: { type: 'string', description: 'คีย์ เช่น cmd+shift+p หรือ cmd+k cmd+t (The key or key sequence.)' },
+						command: { type: 'string', enum: [...ids, ...ids.map((id) => `-${id}`)] },
+						when: { type: 'string', description: 'ยังไม่ประเมินใน Kingu (Not evaluated yet.)' }
+					}
+				}
+			};
 			untrack(() => {
 				const opts = monaco.json.jsonDefaults.diagnosticsOptions;
+				const ours = new Set([SETTINGS_SCHEMA_URI, KEYBINDINGS_SCHEMA_URI]);
 				monaco.json.jsonDefaults.setDiagnosticsOptions({
 					...opts,
 					validate: true,
 					allowComments: true,
 					trailingCommas: 'ignore',
-					schemas: [...(opts.schemas ?? []).filter((s) => s.uri !== SETTINGS_SCHEMA_URI), { uri: SETTINGS_SCHEMA_URI, fileMatch: ['**/settings.json'], schema }]
+					schemas: [
+						...(opts.schemas ?? []).filter((s) => !ours.has(s.uri)),
+						{ uri: SETTINGS_SCHEMA_URI, fileMatch: ['**/settings.json'], schema },
+						{ uri: KEYBINDINGS_SCHEMA_URI, fileMatch: ['**/keybindings.json'], schema: keys }
+					]
 				});
 			});
 		});
@@ -155,6 +177,7 @@ async function setZoom(level: number) {
 /** Settings service, theme following, zoom, window-level auto save and the Rust-side settings. Call once from the workbench. */
 export function installSettings(): () => void {
 	const uninstallSettings = settings.install();
+	const uninstallKeybindings = keybindings.install();
 	const onBlur = () => {
 		const mode = settings.get('files.autoSave');
 		if (mode === 'onFocusChange' && editors.focusedFile) void autoSave([editors.focusedFile], 'focusChange');
@@ -192,6 +215,7 @@ export function installSettings(): () => void {
 	});
 	return () => {
 		uninstallSettings();
+		uninstallKeybindings();
 		window.removeEventListener('blur', onBlur);
 		scheme?.removeEventListener('change', onScheme);
 		disposeEffects();

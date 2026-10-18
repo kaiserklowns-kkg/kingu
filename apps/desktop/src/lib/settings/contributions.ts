@@ -10,6 +10,7 @@ import { findTheme, THEMES } from '#lib/theme/themes.ts';
 import { SCHEMA } from './registry';
 import { settings, USER_SETTINGS_KEY, WORKSPACE_SETTINGS_PATH } from './settings.svelte';
 import { systemSettings } from './systemSettings.svelte';
+import { USER_KEYBINDINGS_KEY } from '#lib/workbench/keybindings.svelte.ts';
 
 const GROUPS: Record<string, string> = { light: 'light themes', dark: 'dark themes', hcDark: 'high contrast themes', hcLight: 'high contrast themes' };
 
@@ -73,6 +74,12 @@ export function registerSettingsCommands(): () => void {
 				systemSettings.close();
 				editors.open(WORKSPACE_SETTINGS_PATH, { preview: false });
 			}
+		}),
+		commands.register({
+			id: 'workbench.action.openGlobalKeybindingsFile',
+			title: 'Open Keyboard Shortcuts (JSON)',
+			category: 'Preferences',
+			run: () => (systemSettings.close(), editors.open(USER_KEYBINDINGS_KEY, { preview: false }))
 		}),
 		commands.register({ id: 'workbench.action.selectTheme', title: 'Color Theme', category: 'Preferences', key: 'cmd+k cmd+t', run: pickColorTheme }),
 		commands.register({ id: 'workbench.action.zoomIn', title: 'Zoom In', category: 'View', key: 'cmd+=', run: () => zoom(1) }),

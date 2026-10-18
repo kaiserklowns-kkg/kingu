@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { decoration, diffKey, fileDecorations, fileOf, groups, isDiffKey, splitPath, tabLabel, type StatusEntry } from './scm';
+import { decoration, diffKey, fileDecorations, fileOf, groups, isDiffKey, smartCommitPaths, splitPath, tabLabel, type StatusEntry } from './scm';
 
 const e = (path: string, index: string | null, worktree: string | null, extra: Partial<StatusEntry> = {}): StatusEntry => ({
 	path,
@@ -81,5 +81,13 @@ describe('fileDecorations', () => {
 		expect(d.get('wt/a/y.ts')?.letter).toBe('!');
 		expect(d.get('wt/a')?.color).toBe('#E4676B');
 		expect(d.get('wt')?.color).toBe('#E4676B');
+	});
+});
+
+describe('git.enableSmartCommit', () => {
+	test('stages all changes or tracked ones only, never conflicts', () => {
+		const { changes } = groups([e('a.ts', null, 'M'), e('new.ts', null, '?'), e('c.ts', 'U', 'U', { conflict: true }), e('d.ts', null, 'D')]);
+		expect(smartCommitPaths(changes, 'all')).toEqual(['a.ts', 'd.ts', 'new.ts']);
+		expect(smartCommitPaths(changes, 'tracked')).toEqual(['a.ts', 'd.ts']);
 	});
 });

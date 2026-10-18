@@ -5,6 +5,8 @@
 	import { FitAddon } from '@xterm/addon-fit';
 	import '@xterm/xterm/css/xterm.css';
 	import { bindTerminalSettings } from '#lib/settings/apply.svelte.ts';
+	import { shellFrom, shellPlatform, terminalOptionsFrom } from '#lib/settings/mappings.ts';
+	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { system } from '#lib/workbench/system.svelte.ts';
 
 	/**
@@ -20,11 +22,9 @@
 
 	onMount(() => {
 		const term = new Terminal({
-			fontFamily: "Menlo, Monaco, 'Courier New', 'IBM Plex Sans Thai', monospace",
-			fontSize: 12,
-			lineHeight: 1.2,
-			cursorBlink: true,
-			// Font and colors follow the settings and color theme (bindTerminalSettings); these are first-paint values.
+			// The terminal settings from the start (scrollback sizes the buffer); bindTerminalSettings keeps them live.
+			...terminalOptionsFrom((id) => settings.get(id)),
+			// The color theme's colors replace this first-paint background.
 			theme: { background: '#181818', foreground: '#CCCCCC' }
 		});
 		const fit = new FitAddon();
@@ -75,7 +75,9 @@
 			if (!attachChecked || live || spawning || disposed || !sized()) return;
 			spawning = true;
 			fit.fit();
-			invoke<Attached>('pty_spawn', { key, cols: term.cols, rows: term.rows, onData: channel(), slug: slug ?? null, run: run ?? null })
+			// terminal.integrated.shell / shellArgs / env / cwd (user settings) for the new shell.
+			const terminal = shellFrom((id) => settings.get(id), shellPlatform());
+			invoke<Attached>('pty_spawn', { key, cols: term.cols, rows: term.rows, onData: channel(), slug: slug ?? null, run: run ?? null, terminal })
 				.then((a) => (connected(a), void system.refresh()))
 				.catch(failed);
 		}

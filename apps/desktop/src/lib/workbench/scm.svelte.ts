@@ -25,7 +25,7 @@ import {
 } from '#lib/workbench/scmRemote.ts';
 import { commands } from './commands.svelte';
 import { editors } from './editors.svelte';
-import { groups, type GitStatus } from './scm';
+import { groups, smartCommitPaths, type GitStatus } from './scm';
 import { status } from './status.svelte';
 
 class Scm {
@@ -164,8 +164,18 @@ class Scm {
 		return this.#net('push', 'git_push', {}, 'push แล้ว', terminalCommand('push'));
 	}
 
-	sync() {
+	async sync() {
 		if (this.#unpublished()) return this.publish();
+		if (settings.get<boolean>('git.confirmSync')) {
+			const target = this.repo?.upstream ?? 'remote';
+			const ok = await ask(`จะ pull และ push commit จากและไปยัง '${target}' (This action will pull and push commits from and to '${target}'.)`, {
+				title: 'Git: Sync',
+				kind: 'info',
+				okLabel: 'OK',
+				cancelLabel: 'Cancel'
+			});
+			if (!ok) return false;
+		}
 		const rebase = this.#rebase;
 		return this.#net('sync', 'git_sync', { rebase }, 'sync แล้ว', terminalCommand('sync', { rebase }));
 	}
@@ -314,12 +324,35 @@ class Scm {
 			return;
 		}
 		if (!amend && !this.groups.staged.length) {
-			status.flash(this.groups.changes.length ? 'ยังไม่มีไฟล์ที่ stage: กด + ที่ไฟล์ก่อน commit' : 'ไม่มีการเปลี่ยนแปลงให้ commit');
-			return;
+			// git.enableSmartCommit: nothing staged commits the changes (all, or tracked only).
+			const smart = settings.get<boolean>('git.enableSmartCommit') ? smartCommitPaths(this.groups.changes, settings.get('git.smartCommitChanges')) : [];
+			if (!smart.length) {
+				status.flash(this.groups.changes.length ? 'ยังไม่มีไฟล์ที่ stage: กด + ที่ไฟล์ก่อน commit' : 'ไม่มีการเปลี่ยนแปลงให้ commit');
+				return;
+			}
+			if (!(await this.stage(smart))) return;
 		}
 		if (await this.#run('git_commit', { message, amend })) {
 			this.message = '';
 			status.flash(amend ? 'แก้ commit ล่าสุดแล้ว' : 'commit แล้ว');
+			// git.postCommitCommand
+			const after = settings.get<string>('git.postCommitCommand');
+			if (after === 'push') await this.push();
+			else if (after === 'sync') await this.sync();
+		}
+	}
+
+	/** git.autofetch: a quiet fetch; failures (offline, no credentials) only go to the log, like VS Code. */
+	async autoFetch() {
+		if (this.op || !this.repo?.remotes.length) return;
+		this.op = OP_LABELS.fetch;
+		try {
+			await invoke('git_fetch');
+		} catch (e) {
+			clientLog('info', `git autofetch: ${e}`);
+		} finally {
+			this.op = null;
+			await this.refresh();
 		}
 	}
 }
@@ -339,6 +372,12 @@ export function installScm(): () => void {
 			const now = editors.dirtyCount();
 			if (now < dirty) void scm.refresh();
 			dirty = now;
+		});
+		// git.autofetch every git.autofetchPeriod seconds while a repository with a remote is open.
+		$effect(() => {
+			if (!settings.get<boolean>('git.autofetch') || !scm.repo?.remotes.length) return;
+			const timer = setInterval(() => void scm.autoFetch(), settings.get<number>('git.autofetchPeriod') * 1000);
+			return () => clearInterval(timer);
 		});
 	});
 

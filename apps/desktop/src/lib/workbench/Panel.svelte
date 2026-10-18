@@ -48,7 +48,7 @@
 			<button aria-label="New Terminal" title="New Terminal" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => terminals.open()}>
 				<Icon name="plus" size={16} />
 			</button>
-			<button aria-label="Kill Terminal" title="Kill Terminal" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => terminals.close(terminals.active)}>
+			<button aria-label="Kill Terminal" title="Kill Terminal" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => terminals.kill(terminals.active)}>
 				<Icon name="trash" size={15} />
 			</button>
 		{/if}
@@ -93,7 +93,7 @@
 									tabindex="-1"
 									aria-label="Kill {t.title}"
 									class="invisible grid size-4 place-items-center rounded group-hover:visible hover:bg-(--vscode-toolbar-hoverBackground)"
-									onclick={(e) => (e.stopPropagation(), terminals.close(t.id))}
+									onclick={(e) => (e.stopPropagation(), void terminals.kill(t.id))}
 									onkeydown={() => {}}><Icon name="close" size={12} /></span
 								>
 							</button>

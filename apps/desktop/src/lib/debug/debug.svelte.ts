@@ -6,6 +6,8 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { clientLog } from '#lib/client-log.ts';
 import { installItems, type InstallInfo } from '#lib/lsp/model.ts';
+import { opensOnStart } from '#lib/settings/mappings.ts';
+import { settings } from '#lib/settings/settings.svelte.ts';
 import { terminals } from '#lib/terminal/terminals.svelte.ts';
 import { commands } from '#lib/workbench/commands.svelte.ts';
 import { editors } from '#lib/workbench/editors.svelte.ts';
@@ -50,6 +52,8 @@ class Debug {
 	/** The current (or last) session's state; null before the first session in this folder. */
 	model = $state.raw<DebugModel | null>(null);
 	configName = $state('');
+	/** For the `openOnFirstSessionStart` settings: sessions started since Kingu opened. */
+	#sessionsStarted = 0;
 	breakpoints = $state.raw<B.BreakpointMap>({});
 	watches = $state<string[]>([]);
 	watchResults = $state.raw<Record<string, WatchResult>>({});
@@ -159,6 +163,8 @@ class Debug {
 		if (!root) return status.flash('เปิดโฟลเดอร์ก่อนเริ่ม debug');
 		const picked = await this.#pickConfig();
 		if (!picked) return;
+		// debug.saveBeforeStart
+		if (settings.get('debug.saveBeforeStart') !== 'none' && editors.hasDirty()) await commands.run('workbench.action.files.saveAll');
 		let { config } = picked;
 		const { generated } = picked;
 		const active = editors.active;
@@ -228,9 +234,14 @@ class Debug {
 		this.model = model;
 		this.configName = config.name;
 		this.watchResults = {};
-		layout.sideView = 'debug';
-		layout.sidebarVisible = true;
-		if (config.console !== 'integratedTerminal') layout.showPanel('debugConsole');
+		// debug.openDebug / debug.internalConsoleOptions (a launch config's own internalConsoleOptions wins).
+		const first = this.#sessionsStarted++ === 0;
+		if (opensOnStart(settings.get('debug.openDebug'), first)) {
+			layout.sideView = 'debug';
+			layout.sidebarVisible = true;
+		}
+		const consoleOption = typeof config.internalConsoleOptions === 'string' ? config.internalConsoleOptions : settings.get<string>('debug.internalConsoleOptions');
+		if (config.console !== 'integratedTerminal' && opensOnStart(consoleOption, first)) layout.showPanel('debugConsole');
 		const out = (category: string, text: string) => (this.model = model = appendOutput(this.model ?? model, category, text));
 		if (config.preLaunchTask) out('console', `ข้าม preLaunchTask "${config.preLaunchTask}" (Kingu ยังไม่รองรับ tasks.json) — build เองก่อนถ้าจำเป็น\n`);
 		if (build) {
