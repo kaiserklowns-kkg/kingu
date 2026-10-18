@@ -88,6 +88,27 @@ export function summarize(checks: Check[]): CheckCounts {
 	return out;
 }
 
+/** What a poll compares to tell "nothing changed" (and back off): the PR's state and every check. */
+export const prSignature = (pr: Pr | null) => (pr ? `${pr.state}|${(pr.statusCheckRollup ?? []).map((c) => `${c.name ?? c.context}:${c.status}:${c.conclusion}:${c.state}`).join('|')}` : '');
+
+export const CHECKS_POLL = { base: 60_000, settled: 120_000, closed: 15 * 60_000, maxError: 15 * 60_000 };
+
+/**
+ * When the Checks tab looks at the PR again (Orca's checks polling policy): every minute while
+ * checks run or there is no PR yet, backing off to two minutes once an open PR's checks settle
+ * and stop changing; a closed PR every 15 minutes; a merged one with settled checks never. A
+ * failed look backs off from a minute, doubling up to 15. `null` = stop polling.
+ */
+export function checksPollDelay(pr: Pr | null, o: { failed: boolean; unchanged: boolean; prev: number }): number | null {
+	if (o.failed) return Math.min(Math.max(CHECKS_POLL.base, o.prev * 2), CHECKS_POLL.maxError);
+	if (!pr) return CHECKS_POLL.base;
+	const pending = summarize(pr.statusCheckRollup ?? []).pending > 0;
+	if (pr.state === 'MERGED') return pending ? CHECKS_POLL.base : null;
+	if (pr.state === 'CLOSED') return CHECKS_POLL.closed;
+	if (pending || !o.unchanged) return CHECKS_POLL.base;
+	return Math.min(Math.max(o.prev * 2, CHECKS_POLL.base), CHECKS_POLL.settled);
+}
+
 /** GitHub's merge state as Orca labels it. */
 export function mergeLabel(pr: Pr, counts: CheckCounts): string {
 	if (pr.state === 'MERGED') return 'Merged';

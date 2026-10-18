@@ -56,6 +56,9 @@ pub struct Port {
   name: String,
   /// Started under Kingu (a terminal, an agent, a dev server); others are "external".
   ours: bool,
+  /// The process's working directory, which tells the ADE whose worktree the server belongs to
+  /// (`None` where it can't be read: another user's process, or no `lsof`).
+  cwd: Option<String>,
 }
 
 fn parse_ps(text: &str) -> Vec<Proc> {
@@ -262,10 +265,50 @@ pub fn ports(daemon: Option<u32>) -> Result<Vec<Port>, String> {
     .into_iter()
     // IPv4 and IPv6 sockets of one server show up twice.
     .filter(|(pid, _, _, port)| seen.insert((*pid, *port)))
-    .map(|(pid, name, address, port)| Port { port, address, pid, ours: ours.contains(&pid), name })
+    .map(|(pid, name, address, port)| Port { port, address, pid, ours: ours.contains(&pid), name, cwd: None })
     .collect();
+  let mut pids: Vec<u32> = ports.iter().map(|p| p.pid).collect();
+  pids.sort_unstable();
+  pids.dedup();
+  let cwds = cwds(&pids);
+  for p in &mut ports {
+    p.cwd = cwds.get(&p.pid).cloned();
+  }
   ports.sort_by(|a, b| b.ours.cmp(&a.ours).then(a.port.cmp(&b.port)));
   Ok(ports)
+}
+
+/// Working directories of `pids`: `/proc/<pid>/cwd` on Linux, one `lsof -d cwd` call elsewhere.
+fn cwds(pids: &[u32]) -> std::collections::HashMap<u32, String> {
+  if pids.is_empty() {
+    return Default::default();
+  }
+  if cfg!(target_os = "linux") {
+    return pids.iter().filter_map(|pid| Some((*pid, std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?.to_string_lossy().into_owned()))).collect();
+  }
+  let list = pids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+  // `lsof` exits 1 when some pid has gone meanwhile; what it printed is still right.
+  match Command::new("lsof").args(["-a", "-nP", "-d", "cwd", "-p", &list, "-F", "pn"]).output() {
+    Ok(out) => parse_lsof_cwd(&String::from_utf8_lossy(&out.stdout)),
+    Err(_) => Default::default(),
+  }
+}
+
+/// `lsof -d cwd -F pn` output: `p<pid>` then `n<path>`.
+fn parse_lsof_cwd(text: &str) -> std::collections::HashMap<u32, String> {
+  let mut out = std::collections::HashMap::new();
+  let mut pid = 0u32;
+  for line in text.lines() {
+    let (tag, rest) = line.split_at(line.len().min(1));
+    match tag {
+      "p" => pid = rest.parse().unwrap_or(0),
+      "n" if pid != 0 && rest.starts_with('/') => {
+        out.insert(pid, rest.to_owned());
+      }
+      _ => {}
+    }
+  }
+  out
 }
 
 /// SIGTERM to a process, but only one that runs under Kingu: the webview can never stop
@@ -377,6 +420,14 @@ mod tests {
       parse_lsof(out),
       [(501, "node".into(), "127.0.0.1".into(), 5173), (501, "node".into(), "[::1]".into(), 5173), (77, "postgres".into(), "*".into(), 5432)]
     );
+  }
+
+  #[test]
+  fn parses_working_directories() {
+    let m = parse_lsof_cwd("p501\nfcwd\nn/Users/me/app/.kingu/worktrees/fix-login\np77\nfcwd\nn/\np9\nfcwd\nnbogus\n");
+    assert_eq!(m.get(&501).map(String::as_str), Some("/Users/me/app/.kingu/worktrees/fix-login"));
+    assert_eq!(m.get(&77).map(String::as_str), Some("/"));
+    assert!(!m.contains_key(&9));
   }
 
   #[test]

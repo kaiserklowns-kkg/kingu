@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
+	import { prStatuses } from './prStatus.svelte.ts';
 	// Orca's Checks tab for the selected worktree's branch: its pull request (number, state, an
 	// editable title, merge state and the actions for that state: merge with a method, mark ready,
 	// close, reopen), an action strip (Fix failing checks with the task's agent), the CI checks
@@ -10,7 +12,7 @@
 	import type { MenuNode } from '#lib/workbench/menus.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
-	import { ask } from '#lib/workbench/dialogService.svelte.ts';
+	import { ask } from '#lib/workbench/messageBox.ts';
 	import { renderMarkdown } from '#lib/workbench/markdown.ts';
 	import { adeTasks } from './tasks.svelte';
 	import { checkKind, checkLabel, checkRank, fixPrompt, mergeLabel, reactionPills, REACTIONS, summarize, type Check, type Pr, type PrComment, type ReviewThread } from './checks';
@@ -18,49 +20,30 @@
 
 	let { slug }: { slug: string } = $props();
 
-	let pr = $state<Pr | null>(null);
-	let loaded = $state(false);
-	let loading = $state(false);
-	let error = $state('');
-	let updatedAt = $state<number | null>(null);
+	// The PR comes from the store every view of this worktree shares (one `gh` read, one poll).
+	const entry = $derived(prStatuses.bySlug[slug]);
+	const pr = $derived(entry?.raw ?? null);
+	const loaded = $derived(!!entry && (entry.at > 0 || !entry.loading));
+	const loading = $derived(!!entry?.loading);
+	const error = $derived(entry?.error ?? '');
+	const updatedAt = $derived(entry?.at || null);
 	let listOpen = $state(true);
 	let busy = $state<string | null>(null);
 	let actionError = $state('');
 
-	let delay = 60_000;
-	let signature = '';
-	async function refresh() {
-		if (loading) return;
-		loading = true;
-		try {
-			const next = await invoke<Pr | null>('gh_pr_view', { slug: slug || null });
-			const sig = (next?.statusCheckRollup ?? []).map((c) => `${c.name}:${c.status}:${c.conclusion}`).join('|');
-			delay = sig === signature ? Math.min(delay * 2, 120_000) : 60_000;
-			signature = sig;
-			pr = next;
-			error = '';
-			updatedAt = Date.now();
-			if (next) void loadComments();
-		} catch (e) {
-			error = String(e);
-		}
-		loaded = true;
-		loading = false;
-	}
+	const refresh = () => prStatuses.refresh(slug);
 	$effect(() => {
-		void slug;
-		let timer: ReturnType<typeof setTimeout>;
-		const tick = async () => {
-			if (document.visibilityState === 'visible') await refresh();
-			timer = setTimeout(tick, delay);
-		};
-		void tick();
-		window.addEventListener('focus', refresh);
-		return () => (clearTimeout(timer), window.removeEventListener('focus', refresh));
+		const s = slug;
+		return untrack(() => prStatuses.watch(s));
+	});
+	// Comments and review threads follow each fresh read of an open PR.
+	$effect(() => {
+		if (!entry?.at || !entry.raw) return;
+		untrack(() => void (loadComments(), loadThreads()));
 	});
 
 	/** The backend's "gh is not installed" error. */
-	const ghMissing = $derived(error.includes('ติดตั้ง GitHub CLI'));
+	const ghMissing = $derived(error.includes('ติดตั้ง GitHub CLI') || error.includes('ไม่พบ gh'));
 	const checks = $derived([...(pr?.statusCheckRollup ?? [])].sort((a, b) => checkRank(a) - checkRank(b)));
 	const counts = $derived(summarize(checks));
 	const failing = $derived(checks.filter((c) => ['failure', 'cancelled'].includes(checkKind(c))));
@@ -169,6 +152,7 @@
 
 	// --- Comments -----------------------------------------------------------------------------
 	let comments = $state<PrComment[]>([]);
+	let commentsError = $state('');
 	let audience = $state<'all' | 'humans' | 'bots'>('all');
 	let draft = $state('');
 	let composing = $state(false);
@@ -176,8 +160,10 @@
 		try {
 			const r = await invoke<{ comments: PrComment[]; reviews: PrComment[] }>('gh_pr_comments', { slug: slug || null });
 			comments = [...(r.comments ?? []), ...(r.reviews ?? []).filter((x) => x.body?.trim())].sort((a, b) => Date.parse(a.createdAt ?? a.submittedAt ?? '') - Date.parse(b.createdAt ?? b.submittedAt ?? ''));
-		} catch {
-			// Checks still show without comments.
+			commentsError = '';
+		} catch (e) {
+			// Checks still show without comments; say why the comments are missing.
+			commentsError = String(e);
 		}
 	}
 	const isBot = (c: PrComment) => /\[bot\]$|bot$|^github-actions|dependabot|renovate|codecov|coderabbit/i.test(c.author?.login ?? '');
@@ -212,9 +198,6 @@
 			threads = [];
 		}
 	}
-	$effect(() => {
-		if (pr?.number) void loadThreads();
-	});
 	const open_ = $derived(threads.filter((t) => !t.isResolved));
 	const resolved = $derived(threads.filter((t) => t.isResolved));
 	async function resolveThread(t: ReviewThread) {
@@ -503,7 +486,7 @@
 						{@render reactions(c)}
 					</div>
 				{:else}
-					{#if !composing}<p class="py-5 text-center text-[11px] {MUTED}">{audience === 'bots' ? 'No bot comments.' : audience === 'humans' ? 'No human comments.' : 'No comments yet.'}</p>{/if}
+					{#if commentsError}<p class="py-5 text-center text-[11px] text-(--vscode-errorForeground)" title={commentsError}>Couldn't load comments.</p>{:else if !composing}<p class="py-5 text-center text-[11px] {MUTED}">{audience === 'bots' ? 'No bot comments.' : audience === 'humans' ? 'No human comments.' : 'No comments yet.'}</p>{/if}
 				{/each}
 				{#if composing}
 					<div class="rounded-md border border-(--vscode-widget-border) bg-(--vscode-editor-background)">

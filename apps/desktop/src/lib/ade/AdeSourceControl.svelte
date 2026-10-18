@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	// Orca's Source Control tab for the selected worktree (the folder or a task's worktree): a
 	// header with the PR link, a name filter and more actions, the branch → base line with ahead /
 	// behind and the +/− line total, the commit box (inside the scroll area) with Orca's primary
@@ -10,15 +12,16 @@
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
 	import type { MenuNode } from '#lib/workbench/menus.ts';
 	import { status as statusBar } from '#lib/workbench/status.svelte.ts';
-	import { ask } from '#lib/workbench/dialogService.svelte.ts';
+	import { ask } from '#lib/workbench/messageBox.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
-	import { commitDiffKey, decoration, diffKey, splitPath, taskDiffKey, type GitStatus, type StatusEntry } from '#lib/workbench/scm.ts';
+	import { commitDiffKey, decoration, diffKey, splitPath, taskDiffKey, type StatusEntry } from '#lib/workbench/scm.ts';
 	import { fileIcon } from '#lib/workbench/fileIcons.ts';
 	import { adeLayout, PRIMARY } from './adeLayout.svelte';
 	import { rightSidebar } from './rightSidebar.svelte.ts';
+	import { prStatuses } from './prStatus.svelte.ts';
 	import { adeTasks } from './tasks.svelte';
 	import { worktreeDir } from './keys';
-	import { drafts } from './scmDrafts';
+	import { draftKey, drafts } from './scmDrafts';
 	import { quick } from '#lib/workbench/quick.svelte.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { aiTextEnabled, generateCommitMessage, generatePrDetails, prTemplate } from './aiText.svelte';
@@ -28,29 +31,26 @@
 	const key = $derived(slug || PRIMARY);
 	const task = $derived(slug ? adeTasks.find(slug) : undefined);
 
-	type NumStat = { unstaged: Record<string, [number, number]>; staged: Record<string, [number, number]> };
-	let repo = $state<GitStatus | null>(null);
-	let stats = $state<NumStat>({ unstaged: {}, staged: {} });
-	let loaded = $state(false);
+	/** Status and line counts come from the watcher-driven repo the Explorer also decorates from. */
+	const gitRepo = $derived(rightSidebar.repo(slug));
+	const repo = $derived(gitRepo.repo);
+	const stats = $derived(gitRepo.stats);
+	const loaded = $derived(gitRepo.loaded);
 	let busy = $state<string | null>(null);
+	/** The last action's failure (the status read's own error is `gitRepo.error`). */
 	let error = $state('');
 
-	async function refresh() {
-		try {
-			const [s, n] = await Promise.all([invoke<GitStatus | null>('git_status', { slug: slug || null }), invoke<NumStat>('git_numstat', { slug: slug || null }).catch(() => ({ unstaged: {}, staged: {} }))]);
-			repo = s;
-			stats = n;
-		} catch (e) {
-			error = String(e);
-		}
-		loaded = true;
-	}
+	const refresh = () => gitRepo.refresh();
+	// Watcher batches re-read the status; a minute's safety poll catches what the watcher can't
+	// see (refs moved by a fetch elsewhere), and coming back to the window looks again, PR included.
+	const SAFETY_POLL = 60_000;
 	$effect(() => {
 		void slug;
 		void refresh();
-		const timer = setInterval(refresh, 5000);
-		window.addEventListener('focus', refresh);
-		return () => (clearInterval(timer), window.removeEventListener('focus', refresh));
+		const timer = setInterval(() => document.visibilityState === 'visible' && void refresh(), SAFETY_POLL);
+		const onFocus = () => void (refresh(), checkPr());
+		window.addEventListener('focus', onFocus);
+		return () => (clearInterval(timer), window.removeEventListener('focus', onFocus));
 	});
 
 	async function run(label: string, cmd: string, args: Record<string, unknown>): Promise<boolean> {
@@ -98,6 +98,8 @@
 	const staged = $derived(repo?.entries.filter((e) => e.index && !e.conflict && e.worktree !== '?').length ?? 0);
 	const stageable = $derived(repo?.entries.filter((e) => e.worktree).length ?? 0);
 	const conflicts = $derived(repo?.entries.filter((e) => e.conflict).length ?? 0);
+	/** Changed tracked files not staged yet (untracked files don't stop a merge from continuing). */
+	const unstagedTracked = $derived(repo?.entries.filter((e) => e.worktree && e.worktree !== '?' && !e.conflict).length ?? 0);
 	const lineTotal = $derived.by(() => {
 		let a = 0;
 		let d = 0;
@@ -107,11 +109,12 @@
 
 	// --- Commit box --------------------------------------------------------------------------------
 	let message = $state('');
+	const draft = $derived(draftKey(workspace.root, key));
 	$effect(() => {
-		message = drafts.get(key) ?? '';
+		message = drafts.get(draft) ?? '';
 	});
 	$effect(() => {
-		drafts.set(key, message);
+		drafts.set(draft, message);
 	});
 	const rows = $derived(Math.min(12, Math.max(2, message.split('\n').length)));
 
@@ -136,7 +139,7 @@
 		const text = message.trim();
 		if (!text) return;
 		if (await run('Commit', 'git_commit', { message: text })) {
-			if (drafts.get(key) === message) message = '';
+			if (drafts.get(draft) === message) message = '';
 			if (then) await run(then === 'push' ? 'Push' : 'Sync', 'git_sync', {});
 		}
 	}
@@ -262,9 +265,11 @@
 		const file = slug ? taskDiffKey(slug, r.entry.path) : diffKey(r.entry.path);
 		adeLayout.openFile(key, file, { preview: !permanent });
 	}
-	async function discard(list: Row[]) {
+	/** `all`: the section's Discard All (worded so), else these rows (a selection). */
+	async function discard(list: Row[], all = false) {
 		if (!list.length) return;
 		const untracked = list.every((r) => r.area === 'untracked');
+		const deletes = list.filter((r) => r.area === 'untracked').length;
 		const one = list.length === 1 ? splitPath(list[0].entry.path)[0] : null;
 		const deleted = one && list[0].entry.worktree === 'D';
 		const [title, body, ok] = one
@@ -275,16 +280,89 @@
 					: [`Discard changes to "${one}"?`, 'This will revert the unstaged changes to this file. This cannot be undone.', 'Discard']
 			: untracked
 				? [`Delete ${list.length} untracked files?`, `This will permanently delete these ${list.length} untracked files. This cannot be undone.`, `Delete ${list.length}`]
-				: ['Discard all unstaged changes?', `This will revert unstaged changes in ${list.length} files. This cannot be undone.`, 'Discard all'];
+				: all
+					? ['Discard all unstaged changes?', `This will revert unstaged changes in ${list.length} files. This cannot be undone.`, 'Discard all']
+					: [
+							`Discard changes to ${list.length} files?`,
+							`This will revert the unstaged changes in ${list.length - deletes} file${list.length - deletes === 1 ? '' : 's'}${deletes ? ` and permanently delete ${deletes} untracked file${deletes === 1 ? '' : 's'}` : ''}. This cannot be undone.`,
+							`Discard ${list.length}`
+						];
 		if (!(await ask(body, { title, kind: 'warning', okLabel: ok, cancelLabel: 'Cancel' }))) return;
 		await run('Discard', 'git_discard', { paths: list.map((r) => r.entry.path), deleteUntracked: list.some((r) => r.area === 'untracked') });
 	}
 	const stage = (list: Row[]) => list.length && run('Stage', 'git_stage', { paths: list.map((r) => r.entry.path) });
 	const unstage = (list: Row[]) => list.length && run('Unstage', 'git_unstage', { paths: list.map((r) => r.entry.path) });
 
+	// --- Multi-select and bulk actions (Orca's bulk action bar) ----------------------------------------
+	const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
+	const rowId = (r: Row) => `${r.area}\u0000${r.entry.path}`;
+	/** The rows in the order they show (collapsed sections left out), for ⇧-click ranges. */
+	const shownRows = $derived(SECTION_ORDER.flatMap((sec) => (collapsed[sec.area] ? [] : tree ? grouped(sections[sec.area]).flatMap((g) => g.rows) : sections[sec.area])));
+	const picked = new SvelteSet<string>();
+	let anchor: string | null = null;
+	const pickedRows = $derived(shownRows.filter((r) => picked.has(rowId(r))));
+	// Rows that left (staged, committed, filtered away) drop out of the selection.
+	$effect(() => {
+		const ids = new Set(shownRows.map(rowId));
+		untrack(() => {
+			for (const id of [...picked]) if (!ids.has(id)) picked.delete(id);
+		});
+	});
+	function clickRow(e: MouseEvent, r: Row) {
+		const id = rowId(r);
+		if (e.shiftKey) {
+			const ids = shownRows.map(rowId);
+			const from = anchor && ids.includes(anchor) ? anchor : id;
+			const [a, b] = [ids.indexOf(from), ids.indexOf(id)].sort((x, y) => x - y);
+			picked.clear();
+			for (const x of ids.slice(a, b + 1)) picked.add(x);
+			anchor = from;
+			return;
+		}
+		if (isMac ? e.metaKey : e.ctrlKey) {
+			if (picked.has(id)) picked.delete(id);
+			else picked.add(id);
+			anchor = id;
+			return;
+		}
+		picked.clear();
+		anchor = id;
+		open(r);
+	}
+	/** What a row's action covers: the selection when the row is in it, else the row. */
+	const rowsFor = (r: Row) => (picked.size > 1 && picked.has(rowId(r)) ? pickedRows : [r]);
+	const bulk = $derived({
+		stage: pickedRows.filter((r) => r.area !== 'staged' && !r.entry.conflict),
+		unstage: pickedRows.filter((r) => r.area === 'staged'),
+		discard: pickedRows.filter((r) => r.area !== 'staged' && !r.entry.conflict)
+	});
+	async function runBulk(what: 'stage' | 'unstage' | 'discard', list: Row[]) {
+		if (what === 'stage') await stage(list);
+		else if (what === 'unstage') await unstage(list);
+		else await discard(list);
+	}
+
 	let rowMenu = $state<{ row: Row; x: number; y: number } | null>(null);
 	const ROW_ITEMS: MenuNode[] = [menuItem('view', 'View'), menuSeparator, menuItem('copyPath', 'Copy Path'), menuItem('copyRel', 'Copy Relative Path'), menuSeparator, menuItem('reveal', 'Reveal in Finder'), menuSeparator, menuItem('explorer', 'Open in File Explorer')];
+	/** The row menu, with Stage / Unstage / Discard for the selection the row is part of. */
+	function rowItems(r: Row): MenuNode[] {
+		const list = rowsFor(r);
+		if (list.length < 2) return ROW_ITEMS;
+		const n = (k: 'stage' | 'unstage' | 'discard') => list.filter((x) => (k === 'unstage' ? x.area === 'staged' : x.area !== 'staged' && !x.entry.conflict)).length;
+		return [
+			menuItem('bulkStage', `Stage ${n('stage')} Files`, { enabled: n('stage') > 0 }),
+			menuItem('bulkUnstage', `Unstage ${n('unstage')} Files`, { enabled: n('unstage') > 0 }),
+			menuItem('bulkDiscard', `Discard ${n('discard')} Files`, { enabled: n('discard') > 0 }),
+			menuSeparator,
+			menuItem('copyRel', `Copy ${list.length} Relative Paths`)
+		];
+	}
 	function runRow(id: string, r: Row) {
+		const list = rowsFor(r);
+		if (id === 'bulkStage') return void runBulk('stage', list.filter((x) => x.area !== 'staged' && !x.entry.conflict));
+		if (id === 'bulkUnstage') return void runBulk('unstage', list.filter((x) => x.area === 'staged'));
+		if (id === 'bulkDiscard') return void runBulk('discard', list.filter((x) => x.area !== 'staged' && !x.entry.conflict));
+		if (id === 'copyRel' && list.length > 1) return void navigator.clipboard.writeText(list.map((x) => x.entry.path).join('\n'));
 		const rel = slug ? `${worktreeDir(slug)}/${r.entry.path}` : r.entry.path;
 		if (id === 'view') open(r);
 		else if (id === 'copyPath') void navigator.clipboard.writeText(`${workspace.root}/${rel}`);
@@ -363,24 +441,27 @@
 			error = String(e);
 		}
 	}
+	const operation = $derived(repo?.operation ?? null);
+	const opName = $derived(operation ? ({ merge: 'merge', rebase: 'rebase', 'cherry-pick': 'cherry-pick', revert: 'revert' } as const)[operation] : 'merge / rebase');
 	async function abortOp() {
-		if (!(await ask('Abort the merge, rebase or cherry-pick in progress? Its partial changes are discarded.', { title: 'Abort', kind: 'warning', okLabel: 'Abort', cancelLabel: 'Cancel' }))) return;
+		if (!(await ask(`Abort the ${opName} in progress? Its partial changes are discarded.`, { title: 'Abort', kind: 'warning', okLabel: 'Abort', cancelLabel: 'Cancel' }))) return;
 		await run('Abort', 'git_abort', {});
+	}
+	/** Every conflict resolved and staged: finish the operation with git's prepared message. */
+	async function continueOp() {
+		if (await run('Continue', 'git_continue', {})) statusBar.flash(`Continued the ${opName}.`, 3000);
 	}
 
 	// --- PR composer (Orca: replaces the commit box when the branch can open a PR) -----------
+	// The branch's PR from the store the Checks tab and the task page share: `undefined` until
+	// read, `null` when the branch has none (or gh could not tell).
 	type PrInfo = { number: number; url: string } | null;
-	let prInfo = $state<PrInfo | undefined>(undefined);
-	async function checkPr() {
-		try {
-			prInfo = await invoke<PrInfo>('gh_pr_view', { slug: slug || null });
-		} catch {
-			prInfo = null;
-		}
-	}
+	const prEntry = $derived(prStatuses.bySlug[slug]);
+	const prInfo = $derived<PrInfo | undefined>(prEntry && (prEntry.at || !prEntry.loading) ? prEntry.pr && { number: prEntry.pr.number, url: prEntry.pr.url } : undefined);
+	const checkPr = () => prStatuses.refresh(slug);
 	$effect(() => {
-		void slug;
-		void checkPr();
+		const s = slug;
+		untrack(() => void prStatuses.refresh(s));
 	});
 	let prTitle = $state('');
 	let prBody = $state('');
@@ -458,10 +539,11 @@
 							{@const n = (r.area === 'staged' ? stats.staged : stats.unstaged)[r.entry.path]}
 							<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 							<div
-								class="group relative flex cursor-pointer items-center gap-1 py-1 pr-3 transition-colors hover:bg-(--vscode-list-hoverBackground)/60"
+								class={['group relative flex cursor-pointer items-center gap-1 py-1 pr-3 transition-colors', picked.size > 1 && picked.has(rowId(r)) ? 'bg-(--vscode-list-inactiveSelectionBackground)' : 'hover:bg-(--vscode-list-hoverBackground)/60']}
 								title={r.entry.path}
+								aria-selected={picked.size > 1 && picked.has(rowId(r))}
 								style:padding-left="{depth * 12 + 20}px"
-								onclick={() => open(r)}
+								onclick={(e) => clickRow(e, r)}
 								ondblclick={() => open(r, true)}
 								oncontextmenu={(e) => (e.preventDefault(), (rowMenu = { row: r, x: e.clientX, y: e.clientY }))}
 							>
@@ -550,16 +632,25 @@
 
 		<!-- Body -->
 		<div class="relative flex min-h-0 flex-1 flex-col overflow-auto pt-1">
-			{#if conflicts}
+			{#if conflicts || operation}
 				<div class="px-3 pb-2">
 					<div class="flex gap-2 rounded-md border border-amber-500/25 bg-amber-500/5 px-3 py-2">
 						<span class="mt-0.5 text-amber-400"><Icon name="warning" size={16} /></span>
 						<div>
-							<div class="text-xs font-medium">Conflicts: {conflicts} unresolved</div>
-							<div class="mt-1 text-[11px] {MUTED}">Resolved files move back to normal changes after they leave the live conflict state.</div>
+							{#if conflicts}
+								<div class="text-xs font-medium">Conflicts: {conflicts} unresolved</div>
+								<div class="mt-1 text-[11px] {MUTED}">Resolved files move back to normal changes after they leave the live conflict state.</div>
+							{:else}
+								<div class="text-xs font-medium">{opName[0].toUpperCase() + opName.slice(1)} in progress</div>
+								<div class="mt-1 text-[11px] {MUTED}">Conflicts are resolved. Stage the remaining changes, then continue.</div>
+							{/if}
 							<div class="mt-2 flex flex-col gap-1.5">
-								<button class="h-7 w-full rounded-md bg-(--vscode-button-background) text-xs text-(--vscode-button-foreground) disabled:opacity-50" disabled={!slug || !!busy} title={slug ? '' : 'Open a task worktree to resolve conflicts with its agent.'} onclick={resolveWithAi}>Resolve with AI</button>
-								<button class="h-7 w-full rounded-md border border-(--vscode-widget-border) text-xs hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-50" disabled={!!busy} onclick={abortOp}>{busy === 'Abort' ? 'Aborting…' : 'Abort merge / rebase'}</button>
+								{#if conflicts}
+									<button class="h-7 w-full rounded-md bg-(--vscode-button-background) text-xs text-(--vscode-button-foreground) disabled:opacity-50" disabled={!slug || !!busy} title={slug ? '' : 'Open a task worktree to resolve conflicts with its agent.'} onclick={resolveWithAi}>Resolve with AI</button>
+								{:else}
+									<button class="h-7 w-full rounded-md bg-(--vscode-button-background) text-xs text-(--vscode-button-foreground) disabled:opacity-50" disabled={!!busy || unstagedTracked > 0} title={unstagedTracked ? 'Stage every change first.' : ''} onclick={continueOp}>{busy === 'Continue' ? 'Continuing…' : `Continue ${opName}`}</button>
+								{/if}
+								<button class="h-7 w-full rounded-md border border-(--vscode-widget-border) text-xs hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-50" disabled={!!busy} onclick={abortOp}>{busy === 'Abort' ? 'Aborting…' : `Abort ${opName}`}</button>
 							</div>
 						</div>
 					</div>
@@ -641,7 +732,7 @@
 							}}><Icon name="chevronDown" size={13} /></button
 						>
 					</div>
-					{#if error}<p class="mt-1 text-[11px] break-words text-(--vscode-errorForeground)" role="alert">{error}</p>{/if}
+					{#if error || gitRepo.error}<p class="mt-1 text-[11px] break-words text-(--vscode-errorForeground)" role="alert">{error || gitRepo.error}</p>{/if}
 				</div>
 			{/if}
 
@@ -659,7 +750,7 @@
 							{#if !filter}
 								<span class="ml-auto flex items-center">
 									{#if sec.area !== 'staged'}
-										<button class={ACT} title={sec.area === 'untracked' ? 'Delete all untracked' : 'Discard all'} aria-label={sec.area === 'untracked' ? 'Delete all untracked' : 'Discard all'} disabled={!!busy} onclick={() => discard(list)}><Icon name={sec.area === 'untracked' ? 'trash' : 'discard'} size={14} /></button>
+										<button class={ACT} title={sec.area === 'untracked' ? 'Delete all untracked' : 'Discard all'} aria-label={sec.area === 'untracked' ? 'Delete all untracked' : 'Discard all'} disabled={!!busy} onclick={() => discard(list, true)}><Icon name={sec.area === 'untracked' ? 'trash' : 'discard'} size={14} /></button>
 										<button class={ACT} title="Stage all" aria-label="Stage all" disabled={!!busy} onclick={() => stage(list)}><Icon name="plus" size={14} /></button>
 									{:else}
 										<button class={ACT} title="Unstage all" aria-label="Unstage all" disabled={!!busy} onclick={() => unstage(list)}><Icon name="minus" size={14} /></button>
@@ -680,6 +771,15 @@
 					{/if}
 				{/if}
 			{/each}
+			{#if pickedRows.length > 1}
+				<div class="sticky bottom-0 z-10 mx-2 mt-2 flex items-center gap-1 rounded-md border border-(--vscode-widget-border) bg-(--vscode-sideBar-background) px-2 py-1 shadow-md" role="toolbar" aria-label="Selected files">
+					<span class="min-w-0 flex-1 truncate text-[11px] font-medium tabular-nums">{pickedRows.length} selected</span>
+					<button class={ACT} title="Stage {bulk.stage.length}" aria-label="Stage selected" disabled={!!busy || !bulk.stage.length} onclick={() => runBulk('stage', bulk.stage)}><Icon name="plus" size={14} /></button>
+					<button class={ACT} title="Unstage {bulk.unstage.length}" aria-label="Unstage selected" disabled={!!busy || !bulk.unstage.length} onclick={() => runBulk('unstage', bulk.unstage)}><Icon name="minus" size={14} /></button>
+					<button class={ACT} title="Discard {bulk.discard.length}" aria-label="Discard selected" disabled={!!busy || !bulk.discard.length} onclick={() => runBulk('discard', bulk.discard)}><Icon name="discard" size={14} /></button>
+					<button class={ACT} title="Clear selection" aria-label="Clear selection" onclick={() => picked.clear()}><Icon name="close" size={14} /></button>
+				</div>
+			{/if}
 			{#if filter && !SECTION_ORDER.some((s) => sections[s.area].length)}
 				<div class="px-4 py-6">
 					<div class="text-sm font-medium">No matching files</div>
@@ -764,7 +864,7 @@
 {/if}
 {#if rowMenu}
 	{@const r = rowMenu.row}
-	<PopupMenu items={ROW_ITEMS} label="Change" x={rowMenu.x} y={rowMenu.y} onRun={(n) => n.type === 'item' && runRow(n.id, r)} onClose={() => (rowMenu = null)} />
+	<PopupMenu items={rowItems(r)} label="Change" x={rowMenu.x} y={rowMenu.y} onRun={(n) => n.type === 'item' && runRow(n.id, r)} onClose={() => (rowMenu = null)} />
 {/if}
 {#if headerMenu}
 	<PopupMenu items={headerItems} label="Source control actions" x={headerMenu.x} y={headerMenu.y} onRun={(n) => n.type === 'item' && runHeader(n.id)} onClose={() => (headerMenu = null)} />

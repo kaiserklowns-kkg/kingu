@@ -363,30 +363,6 @@ async fn git_log(ws: State<'_, Workspace>, slug: Option<String>, limit: Option<u
   blocking(move || git::log(&root, limit.unwrap_or(50))).await
 }
 
-/// The pull request of the worktree's branch and its checks (`gh pr view --json`), or null when
-/// the branch has none. Errors when `gh` is missing or not signed in.
-#[tauri::command]
-async fn gh_pr_view(ws: State<'_, Workspace>, slug: Option<String>) -> Result<Option<serde_json::Value>, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
-  blocking(move || {
-    let gh = agent::review::gh_bin().ok_or("ยังไม่ได้ติดตั้ง GitHub CLI (gh)")?;
-    let out = shell_env::command(&gh)
-      .current_dir(&root)
-      .args(["pr", "view", "--json", "number,title,state,url,isDraft,headRefName,baseRefName,mergeable,reviewDecision,statusCheckRollup,additions,deletions,author,createdAt,autoMergeRequest"])
-      .output()
-      .map_err(|e| format!("gh: {e}"))?;
-    if !out.status.success() {
-      let err = String::from_utf8_lossy(&out.stderr);
-      if err.contains("no pull requests found") {
-        return Ok(None);
-      }
-      return Err(format!("gh pr view: {}", err.trim()));
-    }
-    serde_json::from_slice(&out.stdout).map(Some).map_err(|e| e.to_string())
-  })
-  .await
-}
-
 #[tauri::command]
 fn open_web_url(url: String) -> Result<(), String> {
   system::open_web_url(&url)
@@ -603,26 +579,26 @@ async fn delete_claude_session(ws: State<'_, Workspace>, path: String) -> Result
   let projects = home.join(".claude").join("projects");
   let dir = p.parent().and_then(|d| d.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
   let prefix = sessions::encode(&root);
-  let ours = p.starts_with(&projects) && p.extension().and_then(|e| e.to_str()) == Some("jsonl") && (dir == prefix || dir.starts_with(&format!("{prefix}-")));
+  let plain = p.components().all(|c| matches!(c, std::path::Component::RootDir | std::path::Component::Normal(_)));
+  let ours = plain && p.starts_with(&projects) && p.extension().and_then(|e| e.to_str()) == Some("jsonl") && (dir == prefix || dir.starts_with(&format!("{prefix}-")));
   if !ours {
     return Err("Only sessions of this folder can be deleted.".into());
   }
   blocking(move || trash::delete(&p).map_err(|e| e.to_string())).await
 }
 
-/// Aborts the merge, rebase or cherry-pick in progress (Source Control's conflict card).
+/// Aborts the merge, rebase, cherry-pick or revert in progress (Source Control's conflict card).
 #[tauri::command]
-async fn git_abort(ws: State<'_, Workspace>, slug: Option<String>) -> Result<String, String> {
+async fn git_abort(ws: State<'_, Workspace>, slug: Option<String>) -> Result<git::Operation, String> {
   let root = git_dir(&ws, slug.as_deref())?;
-  blocking(move || {
-    for op in ["merge", "rebase", "cherry-pick"] {
-      if git::run(&root, &[op, "--abort"]).is_ok() {
-        return Ok(op.to_owned());
-      }
-    }
-    Err("No merge, rebase or cherry-pick is in progress.".into())
-  })
-  .await
+  blocking(move || git::abort_operation(&root)).await
+}
+
+/// Continues the merge, rebase, cherry-pick or revert once its conflicts are resolved and staged.
+#[tauri::command]
+async fn git_continue(ws: State<'_, Workspace>, slug: Option<String>) -> Result<git::Operation, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || git::continue_operation(&root)).await
 }
 
 /// HEAD version of a file for the diff editor; empty when the file is not in HEAD.
@@ -1027,15 +1003,39 @@ fn fs_rename(ws: State<'_, Workspace>, from: String, to: String) -> Result<(), S
   Ok(())
 }
 
+/// Where deleted entries are kept for the explorer's undo (cleared at every launch).
+fn undo_stash(app: &AppHandle) -> Result<PathBuf, String> {
+  Ok(app.path().app_cache_dir().map_err(|e| e.to_string())?.join("file-undo"))
+}
+
 /// Moves to the Trash, or deletes for good when `use_trash` is false (`files.enableTrash`); the
-/// webview confirms first.
+/// webview confirms first. A trashed entry returns the token that undoes it with `fs_restore`
+/// (`None` when it was too large to keep a copy of); a delete for good keeps no copy.
 #[tauri::command]
-async fn fs_delete(ws: State<'_, Workspace>, rel: String, use_trash: Option<bool>) -> Result<(), String> {
+async fn fs_delete(ws: State<'_, Workspace>, app: AppHandle, rel: String, use_trash: Option<bool>) -> Result<Option<String>, String> {
   let root = ws.root()?;
   let r = rel.clone();
-  let use_trash = use_trash.unwrap_or(true);
-  blocking(move || fileops::delete(&root, &r, use_trash)).await?;
-  log::info!("{} {rel}", if use_trash { "moved to the Trash:" } else { "deleted" });
+  let token = if use_trash.unwrap_or(true) {
+    let stash = undo_stash(&app)?;
+    let token = blocking(move || fileops::trash_with_undo(&root, &r, &stash)).await?;
+    log::info!("moved to the Trash: {rel}");
+    token
+  } else {
+    blocking(move || fileops::delete_for_good(&root, &r)).await?;
+    log::info!("deleted {rel}");
+    None
+  };
+  Ok(token)
+}
+
+/// Undoes `fs_delete`: puts the kept copy back at `rel`.
+#[tauri::command]
+async fn fs_restore(ws: State<'_, Workspace>, app: AppHandle, rel: String, token: String) -> Result<(), String> {
+  let root = ws.root()?;
+  let stash = undo_stash(&app)?;
+  let r = rel.clone();
+  blocking(move || fileops::restore(&root, &r, &token, &stash)).await?;
+  log::info!("restored {rel}");
   Ok(())
 }
 
@@ -1165,6 +1165,12 @@ pub fn run() {
       accounts::install(app)?;
       git::load_git_path(&app.path().app_config_dir()?);
       menu::install(app.handle());
+      // The explorer's undo history lives in the webview, so last run's undo copies are orphans.
+      if let Ok(stash) = undo_stash(app.handle()) {
+        std::thread::spawn(move || {
+          let _ = std::fs::remove_dir_all(stash);
+        });
+      }
       if let Some(root) = start
         && let Err(e) = switch_root(app.handle(), Some(&root))
       {
@@ -1195,6 +1201,7 @@ pub fn run() {
       fs_create_dir,
       fs_rename,
       fs_delete,
+      fs_restore,
       fs_reveal,
       fs_copy,
       fs_move,
@@ -1218,7 +1225,6 @@ pub fn run() {
       git_pull_ff_only,
       git_rebase,
       git_log,
-      gh_pr_view,
       open_web_url,
       gh_pr_action,
       gh_pr_edit_title,
@@ -1236,6 +1242,7 @@ pub fn run() {
       gh_react,
       delete_claude_session,
       git_abort,
+      git_continue,
       usage_fetch,
       usage_detect,
       floating_note_new,
@@ -1310,7 +1317,7 @@ pub fn run() {
       agent::git_show_ref,
       agent::gh_status,
       agent::worktree_pr_create,
-      agent::worktree_pr_status,
+      agent::worktree_pr,
       agent::worktree_pr_merge,
       agent::gh_merge_settings,
       agent::worktree_pr_check_logs,

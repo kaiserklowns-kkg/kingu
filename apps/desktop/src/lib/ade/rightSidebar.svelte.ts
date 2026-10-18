@@ -3,12 +3,13 @@
 // search per worktree (fileSearchStateByWorktree), the Show Dotfiles / Show Git Ignored Files
 // toggles, each task worktree's Source Control, and the shortcuts and palette commands.
 
+import { FileUndo } from './fileUndo.ts';
 import { commands } from '#lib/workbench/commands.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { scm } from '#lib/workbench/scm.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { adeLayout } from './adeLayout.svelte.ts';
-import { touchesWorktree, toggleTab, visibleTabs, type RightTab } from './rightSidebar.ts';
+import { cleanTabs, touchesWorktree, toggleTab, visibleTabs, type RightTab } from './rightSidebar.ts';
 import { adeTasks } from './tasks.svelte.ts';
 import { WorktreeRepo } from './worktreeRepo.svelte.ts';
 
@@ -25,7 +26,9 @@ const proxied = <T>(value: T): T => {
 
 const freshFind = (): FindState => ({ view: 'names', query: '', options: { matchCase: false, wholeWord: false, regex: false, include: '', exclude: '', details: false } });
 
-function readSaved(): { showDotfiles?: boolean; showIgnored?: boolean } {
+type Saved = { showDotfiles?: boolean; showIgnored?: boolean; tabs?: Record<string, unknown> };
+
+function readSaved(): Saved {
 	try {
 		return JSON.parse(localStorage.getItem(KEY) ?? '{}') ?? {};
 	} catch {
@@ -41,14 +44,23 @@ class RightSidebar {
 	/** Bumped to focus the Explorer's find box (⌘⇧F). */
 	focusFind = $state(0);
 	#repos = new Map<string, WorktreeRepo>();
+	#undo = new Map<string, FileUndo>();
+	/** The folder `#tabs` belongs to, and every other folder's saved tabs (Orca keeps the tab per worktree across restarts). */
+	#root: string | null = null;
+	#savedTabs: Record<string, unknown> = {};
 
 	constructor() {
 		const s = readSaved();
 		if (typeof s.showDotfiles === 'boolean') this.showDotfiles = s.showDotfiles;
 		if (typeof s.showIgnored === 'boolean') this.showIgnored = s.showIgnored;
+		if (s.tabs && typeof s.tabs === 'object') this.#savedTabs = s.tabs;
 		$effect.root(() => {
 			$effect(() => {
-				const snapshot = { showDotfiles: this.showDotfiles, showIgnored: this.showIgnored };
+				const all = { ...this.#savedTabs };
+				if (this.#root) (delete all[this.#root], (all[this.#root] = { ...this.#tabs }));
+				// The 50 most recently opened folders.
+				const tabs = Object.fromEntries(Object.entries(all).slice(-50));
+				const snapshot = { showDotfiles: this.showDotfiles, showIgnored: this.showIgnored, tabs };
 				try {
 					localStorage.setItem(KEY, JSON.stringify(snapshot));
 				} catch {
@@ -73,6 +85,8 @@ class RightSidebar {
 	}
 
 	setTab(key: string, tab: RightTab) {
+		// Re-inserted so the saved map keeps the most recently used worktrees last (see `cleanTabs`).
+		delete this.#tabs[key];
 		this.#tabs[key] = tab;
 	}
 
@@ -108,12 +122,14 @@ class RightSidebar {
 		this.focusFind++;
 	}
 
-	/** Source Control of task worktree `slug`, kept while the app runs. */
+	/** Git status of task worktree `slug` ('' = the folder itself), kept while the app runs and
+	 * re-read on watcher batches that touch it: the one source for the Explorer's decorations and
+	 * the Source Control tab. */
 	repo(slug: string): WorktreeRepo {
 		let r = this.#repos.get(slug);
 		if (!r) {
 			r = new WorktreeRepo(slug);
-			r.onChange = () => void adeTasks.refreshStat(slug);
+			if (slug) r.onChange = () => void adeTasks.refreshStat(slug);
 			this.#repos.set(slug, r);
 		}
 		return r;
@@ -124,15 +140,25 @@ class RightSidebar {
 		for (const [slug, r] of this.#repos) {
 			if (!r.loaded || !touchesWorktree(paths, slug)) continue;
 			void r.refresh();
-			void adeTasks.refreshStat(slug);
+			if (slug) void adeTasks.refreshStat(slug);
 		}
 	}
 
-	/** Another folder: nothing of the old one's worktrees stays. */
-	reset() {
-		this.#tabs = {};
+	/** The Explorer's undo / redo history of worktree `slug` ('' = the folder itself). */
+	undo(slug: string): FileUndo {
+		let h = this.#undo.get(slug);
+		if (!h) this.#undo.set(slug, (h = new FileUndo()));
+		return h;
+	}
+
+	/** Another folder: nothing of the old one's worktrees stays, except the tabs saved for it. */
+	reset(root: string | null = workspace.root) {
+		if (this.#root) this.#savedTabs = { ...this.#savedTabs, [this.#root]: { ...this.#tabs } };
+		this.#root = root;
+		this.#tabs = root ? cleanTabs(this.#savedTabs[root]) : {};
 		this.#find.clear();
 		this.#repos.clear();
+		this.#undo.clear();
 	}
 }
 
@@ -154,13 +180,15 @@ export function installRightSidebar(): () => void {
 			when: () => agents() && rightSidebar.isGit(adeLayout.key),
 			run: () => rightSidebar.toggle('changes')
 		}),
+		commands.register({ id: 'kingu.agents.rightSidebar.ports', title: 'Right Side Bar: Ports', category: 'Agents', when: agents, run: () => rightSidebar.toggle('ports') }),
 		commands.register({ id: 'kingu.agents.rightSidebar.checks', title: 'Right Side Bar: Checks', category: 'Agents', when: () => agents() && rightSidebar.isGit(adeLayout.key), run: () => rightSidebar.toggle('checks') })
 	];
 	const unwatch = workspace.onAnyChange((paths) => rightSidebar.changed(paths));
 	let root = workspace.root;
+	rightSidebar.reset(root);
 	const stop = $effect.root(() => {
 		$effect(() => {
-			if (workspace.root !== root) rightSidebar.reset();
+			if (workspace.root !== root) rightSidebar.reset(workspace.root);
 			root = workspace.root;
 		});
 	});
