@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	// Orca's Source Control tab for the selected worktree (the folder or a task's worktree): a
 	// header with the PR link, a name filter and more actions, the branch → base line with ahead /
 	// behind and the +/− line total, the commit box (inside the scroll area) with Orca's primary
@@ -262,9 +263,11 @@
 		const file = slug ? taskDiffKey(slug, r.entry.path) : diffKey(r.entry.path);
 		adeLayout.openFile(key, file, { preview: !permanent });
 	}
-	async function discard(list: Row[]) {
+	/** `all`: the section's Discard All (worded so), else these rows (a selection). */
+	async function discard(list: Row[], all = false) {
 		if (!list.length) return;
 		const untracked = list.every((r) => r.area === 'untracked');
+		const deletes = list.filter((r) => r.area === 'untracked').length;
 		const one = list.length === 1 ? splitPath(list[0].entry.path)[0] : null;
 		const deleted = one && list[0].entry.worktree === 'D';
 		const [title, body, ok] = one
@@ -275,16 +278,89 @@
 					: [`Discard changes to "${one}"?`, 'This will revert the unstaged changes to this file. This cannot be undone.', 'Discard']
 			: untracked
 				? [`Delete ${list.length} untracked files?`, `This will permanently delete these ${list.length} untracked files. This cannot be undone.`, `Delete ${list.length}`]
-				: ['Discard all unstaged changes?', `This will revert unstaged changes in ${list.length} files. This cannot be undone.`, 'Discard all'];
+				: all
+					? ['Discard all unstaged changes?', `This will revert unstaged changes in ${list.length} files. This cannot be undone.`, 'Discard all']
+					: [
+							`Discard changes to ${list.length} files?`,
+							`This will revert the unstaged changes in ${list.length - deletes} file${list.length - deletes === 1 ? '' : 's'}${deletes ? ` and permanently delete ${deletes} untracked file${deletes === 1 ? '' : 's'}` : ''}. This cannot be undone.`,
+							`Discard ${list.length}`
+						];
 		if (!(await ask(body, { title, kind: 'warning', okLabel: ok, cancelLabel: 'Cancel' }))) return;
 		await run('Discard', 'git_discard', { paths: list.map((r) => r.entry.path), deleteUntracked: list.some((r) => r.area === 'untracked') });
 	}
 	const stage = (list: Row[]) => list.length && run('Stage', 'git_stage', { paths: list.map((r) => r.entry.path) });
 	const unstage = (list: Row[]) => list.length && run('Unstage', 'git_unstage', { paths: list.map((r) => r.entry.path) });
 
+	// --- Multi-select and bulk actions (Orca's bulk action bar) ----------------------------------------
+	const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
+	const rowId = (r: Row) => `${r.area}\u0000${r.entry.path}`;
+	/** The rows in the order they show (collapsed sections left out), for ⇧-click ranges. */
+	const shownRows = $derived(SECTION_ORDER.flatMap((sec) => (collapsed[sec.area] ? [] : tree ? grouped(sections[sec.area]).flatMap((g) => g.rows) : sections[sec.area])));
+	const picked = new SvelteSet<string>();
+	let anchor: string | null = null;
+	const pickedRows = $derived(shownRows.filter((r) => picked.has(rowId(r))));
+	// Rows that left (staged, committed, filtered away) drop out of the selection.
+	$effect(() => {
+		const ids = new Set(shownRows.map(rowId));
+		untrack(() => {
+			for (const id of [...picked]) if (!ids.has(id)) picked.delete(id);
+		});
+	});
+	function clickRow(e: MouseEvent, r: Row) {
+		const id = rowId(r);
+		if (e.shiftKey) {
+			const ids = shownRows.map(rowId);
+			const from = anchor && ids.includes(anchor) ? anchor : id;
+			const [a, b] = [ids.indexOf(from), ids.indexOf(id)].sort((x, y) => x - y);
+			picked.clear();
+			for (const x of ids.slice(a, b + 1)) picked.add(x);
+			anchor = from;
+			return;
+		}
+		if (isMac ? e.metaKey : e.ctrlKey) {
+			if (picked.has(id)) picked.delete(id);
+			else picked.add(id);
+			anchor = id;
+			return;
+		}
+		picked.clear();
+		anchor = id;
+		open(r);
+	}
+	/** What a row's action covers: the selection when the row is in it, else the row. */
+	const rowsFor = (r: Row) => (picked.size > 1 && picked.has(rowId(r)) ? pickedRows : [r]);
+	const bulk = $derived({
+		stage: pickedRows.filter((r) => r.area !== 'staged' && !r.entry.conflict),
+		unstage: pickedRows.filter((r) => r.area === 'staged'),
+		discard: pickedRows.filter((r) => r.area !== 'staged' && !r.entry.conflict)
+	});
+	async function runBulk(what: 'stage' | 'unstage' | 'discard', list: Row[]) {
+		if (what === 'stage') await stage(list);
+		else if (what === 'unstage') await unstage(list);
+		else await discard(list);
+	}
+
 	let rowMenu = $state<{ row: Row; x: number; y: number } | null>(null);
 	const ROW_ITEMS: MenuNode[] = [menuItem('view', 'View'), menuSeparator, menuItem('copyPath', 'Copy Path'), menuItem('copyRel', 'Copy Relative Path'), menuSeparator, menuItem('reveal', 'Reveal in Finder'), menuSeparator, menuItem('explorer', 'Open in File Explorer')];
+	/** The row menu, with Stage / Unstage / Discard for the selection the row is part of. */
+	function rowItems(r: Row): MenuNode[] {
+		const list = rowsFor(r);
+		if (list.length < 2) return ROW_ITEMS;
+		const n = (k: 'stage' | 'unstage' | 'discard') => list.filter((x) => (k === 'unstage' ? x.area === 'staged' : x.area !== 'staged' && !x.entry.conflict)).length;
+		return [
+			menuItem('bulkStage', `Stage ${n('stage')} Files`, { enabled: n('stage') > 0 }),
+			menuItem('bulkUnstage', `Unstage ${n('unstage')} Files`, { enabled: n('unstage') > 0 }),
+			menuItem('bulkDiscard', `Discard ${n('discard')} Files`, { enabled: n('discard') > 0 }),
+			menuSeparator,
+			menuItem('copyRel', `Copy ${list.length} Relative Paths`)
+		];
+	}
 	function runRow(id: string, r: Row) {
+		const list = rowsFor(r);
+		if (id === 'bulkStage') return void runBulk('stage', list.filter((x) => x.area !== 'staged' && !x.entry.conflict));
+		if (id === 'bulkUnstage') return void runBulk('unstage', list.filter((x) => x.area === 'staged'));
+		if (id === 'bulkDiscard') return void runBulk('discard', list.filter((x) => x.area !== 'staged' && !x.entry.conflict));
+		if (id === 'copyRel' && list.length > 1) return void navigator.clipboard.writeText(list.map((x) => x.entry.path).join('\n'));
 		const rel = slug ? `${worktreeDir(slug)}/${r.entry.path}` : r.entry.path;
 		if (id === 'view') open(r);
 		else if (id === 'copyPath') void navigator.clipboard.writeText(`${workspace.root}/${rel}`);
@@ -458,10 +534,11 @@
 							{@const n = (r.area === 'staged' ? stats.staged : stats.unstaged)[r.entry.path]}
 							<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 							<div
-								class="group relative flex cursor-pointer items-center gap-1 py-1 pr-3 transition-colors hover:bg-(--vscode-list-hoverBackground)/60"
+								class={['group relative flex cursor-pointer items-center gap-1 py-1 pr-3 transition-colors', picked.size > 1 && picked.has(rowId(r)) ? 'bg-(--vscode-list-inactiveSelectionBackground)' : 'hover:bg-(--vscode-list-hoverBackground)/60']}
 								title={r.entry.path}
+								aria-selected={picked.size > 1 && picked.has(rowId(r))}
 								style:padding-left="{depth * 12 + 20}px"
-								onclick={() => open(r)}
+								onclick={(e) => clickRow(e, r)}
 								ondblclick={() => open(r, true)}
 								oncontextmenu={(e) => (e.preventDefault(), (rowMenu = { row: r, x: e.clientX, y: e.clientY }))}
 							>
@@ -664,7 +741,7 @@
 							{#if !filter}
 								<span class="ml-auto flex items-center">
 									{#if sec.area !== 'staged'}
-										<button class={ACT} title={sec.area === 'untracked' ? 'Delete all untracked' : 'Discard all'} aria-label={sec.area === 'untracked' ? 'Delete all untracked' : 'Discard all'} disabled={!!busy} onclick={() => discard(list)}><Icon name={sec.area === 'untracked' ? 'trash' : 'discard'} size={14} /></button>
+										<button class={ACT} title={sec.area === 'untracked' ? 'Delete all untracked' : 'Discard all'} aria-label={sec.area === 'untracked' ? 'Delete all untracked' : 'Discard all'} disabled={!!busy} onclick={() => discard(list, true)}><Icon name={sec.area === 'untracked' ? 'trash' : 'discard'} size={14} /></button>
 										<button class={ACT} title="Stage all" aria-label="Stage all" disabled={!!busy} onclick={() => stage(list)}><Icon name="plus" size={14} /></button>
 									{:else}
 										<button class={ACT} title="Unstage all" aria-label="Unstage all" disabled={!!busy} onclick={() => unstage(list)}><Icon name="minus" size={14} /></button>
@@ -685,6 +762,15 @@
 					{/if}
 				{/if}
 			{/each}
+			{#if pickedRows.length > 1}
+				<div class="sticky bottom-0 z-10 mx-2 mt-2 flex items-center gap-1 rounded-md border border-(--vscode-widget-border) bg-(--vscode-sideBar-background) px-2 py-1 shadow-md" role="toolbar" aria-label="Selected files">
+					<span class="min-w-0 flex-1 truncate text-[11px] font-medium tabular-nums">{pickedRows.length} selected</span>
+					<button class={ACT} title="Stage {bulk.stage.length}" aria-label="Stage selected" disabled={!!busy || !bulk.stage.length} onclick={() => runBulk('stage', bulk.stage)}><Icon name="plus" size={14} /></button>
+					<button class={ACT} title="Unstage {bulk.unstage.length}" aria-label="Unstage selected" disabled={!!busy || !bulk.unstage.length} onclick={() => runBulk('unstage', bulk.unstage)}><Icon name="minus" size={14} /></button>
+					<button class={ACT} title="Discard {bulk.discard.length}" aria-label="Discard selected" disabled={!!busy || !bulk.discard.length} onclick={() => runBulk('discard', bulk.discard)}><Icon name="discard" size={14} /></button>
+					<button class={ACT} title="Clear selection" aria-label="Clear selection" onclick={() => picked.clear()}><Icon name="close" size={14} /></button>
+				</div>
+			{/if}
 			{#if filter && !SECTION_ORDER.some((s) => sections[s.area].length)}
 				<div class="px-4 py-6">
 					<div class="text-sm font-medium">No matching files</div>
@@ -769,7 +855,7 @@
 {/if}
 {#if rowMenu}
 	{@const r = rowMenu.row}
-	<PopupMenu items={ROW_ITEMS} label="Change" x={rowMenu.x} y={rowMenu.y} onRun={(n) => n.type === 'item' && runRow(n.id, r)} onClose={() => (rowMenu = null)} />
+	<PopupMenu items={rowItems(r)} label="Change" x={rowMenu.x} y={rowMenu.y} onRun={(n) => n.type === 'item' && runRow(n.id, r)} onClose={() => (rowMenu = null)} />
 {/if}
 {#if headerMenu}
 	<PopupMenu items={headerItems} label="Source control actions" x={headerMenu.x} y={headerMenu.y} onRun={(n) => n.type === 'item' && runHeader(n.id)} onClose={() => (headerMenu = null)} />
