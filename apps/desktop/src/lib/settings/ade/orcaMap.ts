@@ -102,9 +102,9 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['artifactSharingEnabled', null, 'needs-feature', 'artifacts'],
 	['skipDeleteArtifactConfirm', null, 'needs-feature', 'artifacts'],
 	['nestedWorkerMaxDepth', null, 'needs-feature', 'dispatched workers'],
-	['floatingTerminalEnabled', null, 'needs-feature', 'floating workspace'],
-	['floatingTerminalCwd', null, 'needs-feature', 'floating workspace'],
-	['floatingTerminalTriggerLocation', null, 'needs-feature', 'floating workspace'],
+	['floatingTerminalEnabled', 'kingu.floating.enabled', 'added'],
+	['floatingTerminalCwd', 'kingu.floating.cwd', 'added'],
+	['floatingTerminalTriggerLocation', 'kingu.floating.triggerLocation', 'added'],
 	['experimentalWslHosts', null, 'not-applicable', 'Windows / WSL'],
 	// --- Editor / diff (VS Code keys in the IDE settings)
 	['editorAutoSave', 'files.autoSave', 'mapped'],
