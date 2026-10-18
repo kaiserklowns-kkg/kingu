@@ -18,6 +18,7 @@
 	import { isLinear, issueRef } from './issues.ts';
 	import { cliOf } from './agentCli';
 	import { adeLayout } from './adeLayout.svelte';
+	import { hunkReview } from './hunkReview.svelte.ts';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
 	import { editors } from '#lib/workbench/editors.svelte.ts';
 	import { changesKey } from '#lib/workbench/viewers.ts';
@@ -77,11 +78,8 @@
 		return adeTasks.reject(slug, paths, splitPath(f.path)[0]);
 	}
 
-	function rejectUnaccepted() {
-		const files = stat?.files.filter((f) => !accepted.has(f.path)) ?? [];
-		const paths = files.flatMap((f) => (f.orig_path ? [f.path, f.orig_path] : [f.path]));
-		return adeTasks.reject(slug, paths, `${files.length} ไฟล์ที่ยังไม่ยอมรับ`);
-	}
+	/** Unaccepted files go back to the base; files with accepted hunks keep those (hunkReview). */
+	const rejectUnaccepted = () => hunkReview.rejectUnaccepted(slug);
 
 	async function sendFollowUp(e: Event) {
 		e.preventDefault();

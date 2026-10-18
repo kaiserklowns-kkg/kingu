@@ -21,6 +21,8 @@
 	import { diffNotes } from '#lib/ade/diffNotes.svelte.ts';
 	import { notesOfFile } from '#lib/ade/diffNotes.ts';
 	import { installDiffNotes, type DiffNotesHandle, type NoteFile } from '#lib/ade/diffNoteZones.ts';
+	import { hunkReview } from '#lib/ade/hunkReview.svelte.ts';
+	import { installHunkToolbars, type HunkToolbars } from '#lib/ade/hunkToolbars.ts';
 
 	let { active, onfail, reportLanguage = false }: { active: string | null; onfail: (key: string) => void; reportLanguage?: boolean } = $props();
 	const activeKey = $derived(active);
@@ -30,6 +32,9 @@
 	let api = $state<typeof import('#lib/editor/monaco.ts') | undefined>();
 	let diff = $state.raw<Monaco.editor.IStandaloneDiffEditor | undefined>();
 	let notesUi: DiffNotesHandle | undefined;
+	/** Accept / reject per hunk on task diffs (hunkReview). */
+	let hunksUi: HunkToolbars | undefined;
+	let detachHunks: (() => void) | undefined;
 	let shown: { original: Monaco.editor.ITextModel; modified: Monaco.editor.ITextModel } | undefined;
 	/** The key whose models are in the editor (the zones belong to it). */
 	let shownKey = $state<string | null>(null);
@@ -77,6 +82,8 @@
 				...diffEditorOptionsFrom((id) => settings.get(id))
 			});
 			notesUi = installDiffNotes(m.monaco, d, () => noteFile(shownKey));
+			hunksUi = installHunkToolbars(d, () => (shownKey && isTaskDiffKey(shownKey) ? shownKey : null));
+			detachHunks = hunkReview.attach(hunksUi);
 			d.getModifiedEditor().addAction({
 				id: 'kingu.diff.addReviewNote',
 				label: 'เพิ่มโน้ตรีวิว (Add Review Note)',
@@ -90,6 +97,8 @@
 		return () => {
 			disposed = true;
 			notesUi?.dispose();
+			detachHunks?.();
+			hunksUi?.dispose();
 			diff?.dispose();
 			shown?.original.dispose();
 			shown?.modified.dispose();
@@ -152,6 +161,8 @@
 			shown = next;
 			shownKey = key;
 			shownLanguage = language;
+			if (isTaskDiffKey(key)) void hunkReview.load(key);
+			else hunksUi?.refresh();
 		} catch (e) {
 			clientLog('error', `diff ${rel}: ${e}`);
 			onfail(key);
@@ -173,6 +184,16 @@
 		void fileNotes;
 		for (const n of fileNotes) void diffNotes.sending[n.id];
 		notesUi?.refresh();
+	});
+
+	// The hunk toolbars follow the accepted marks of the shown task file.
+	$effect(() => {
+		const key = shownKey;
+		const meta = key && isTaskDiffKey(key) ? hunkReview.meta(key) : undefined;
+		void meta?.accepted;
+		void meta?.accepted_hunks;
+		void (key && hunkReview.files[key]);
+		hunksUi?.refresh();
 	});
 
 	// A note picked in the notes list: scroll to its line once its file is shown.
@@ -276,5 +297,57 @@
 	}
 	:global(.kg-note-zone) {
 		z-index: 5;
+	}
+	:global(.kg-hunk-bars) {
+		position: absolute;
+		top: 0;
+		left: 0;
+		height: 0;
+		overflow: visible;
+		pointer-events: none;
+	}
+	:global(.kg-hunk-bar) {
+		position: absolute;
+		display: flex;
+		align-items: center;
+		gap: 2px;
+		height: 18px;
+		padding: 0 2px;
+		border: 1px solid var(--vscode-widget-border, transparent);
+		border-radius: 4px;
+		font-size: 11px;
+		line-height: 16px;
+		color: var(--vscode-foreground);
+		background: var(--vscode-editorWidget-background);
+		pointer-events: auto;
+		opacity: 0.55;
+	}
+	:global(.kg-hunk-bar:hover),
+	:global(.kg-hunk-bar-current) {
+		opacity: 1;
+	}
+	:global(.kg-hunk-bar button) {
+		padding: 0 4px;
+		border-radius: 3px;
+		cursor: pointer;
+	}
+	:global(.kg-hunk-bar button:hover) {
+		background: var(--vscode-toolbar-hoverBackground);
+	}
+	:global(.kg-hunk-bar-ok button:first-of-type) {
+		color: #73c991;
+	}
+	:global(.kg-hunk-count) {
+		padding: 0 2px;
+		color: var(--vscode-descriptionForeground);
+	}
+	:global(.kg-hunk-current) {
+		background: var(--vscode-editor-rangeHighlightBackground, rgba(255, 255, 255, 0.04));
+	}
+	:global(.kg-hunk-current-gutter) {
+		border-left: 2px solid var(--vscode-focusBorder);
+	}
+	:global(.kg-hunk-accepted-gutter) {
+		border-left: 2px solid #73c991;
 	}
 </style>
