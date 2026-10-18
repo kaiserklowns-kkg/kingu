@@ -87,13 +87,15 @@ import {
 	type ScriptRun
 } from './worktreeSettings.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
+import { t } from '#lib/i18n/index.ts';
 
-const SCRIPT_TITLES: Record<ScriptKind, string> = {
-	setup: 'สคริปต์ตั้งค่า worktree',
-	archive: 'สคริปต์ก่อนลบ worktree',
-	tabs: 'แท็บเริ่มต้นจาก kingu.yaml',
-	issue: 'คำสั่งของ issue'
-};
+const scriptTitle = (kind: ScriptKind): string =>
+	({
+		setup: t('adeTasks.tasks.scriptTitle.setup'),
+		archive: t('adeTasks.tasks.scriptTitle.archive'),
+		tabs: t('adeTasks.tasks.scriptTitle.tabs'),
+		issue: t('adeTasks.tasks.scriptTitle.issue')
+	})[kind];
 
 class AdeTasks {
 	list = $state<TaskMeta[]>([]);
@@ -195,7 +197,7 @@ class AdeTasks {
 			this.list = adopted;
 			if (adopted !== tasks) await this.#save(adopted);
 		} catch (e) {
-			notifications.error(`โหลดงานไม่ได้: ${e}`);
+			notifications.error(t('adeTasks.tasks.loadFailed', { error: String(e) }));
 			clientLog('error', `tasks_load: ${e}`);
 		}
 		this.loaded = true;
@@ -234,7 +236,7 @@ class AdeTasks {
 		const snapshot = $state.snapshot(next) as TaskMeta[];
 		this.#saving = this.#saving.then(() =>
 			invoke<void>('tasks_save', { tasks: snapshot }).catch((e) => {
-				notifications.error(`บันทึก tasks.json ไม่ได้: ${e}`);
+				notifications.error(t('adeTasks.tasks.saveFailed', { error: String(e) }));
 				clientLog('error', `tasks_save: ${e}`);
 			})
 		);
@@ -255,7 +257,7 @@ class AdeTasks {
 		try {
 			return await f();
 		} catch (e) {
-			notifications.error(`${label}ไม่สำเร็จ: ${e}`);
+			notifications.error(t('adeTasks.tasks.stepFailed', { step: label, error: String(e) }));
 			clientLog('error', `${slug} ${label}: ${e}`);
 		} finally {
 			delete this.busy[slug];
@@ -297,22 +299,22 @@ class AdeTasks {
 		const mode = input.mode ?? (settings.get<RunMode>('kingu.agent.runMode') === 'timeline' ? 'timeline' : 'terminal');
 		const cli = mode === 'terminal' ? agentCommand((k) => settings.get<string>(k)) : null;
 		if (mode === 'terminal' && !cli) {
-			status.flash('kingu.agent.cli และ kingu.agent.args.* ต้องเป็นคำสั่งธรรมดา เช่น claude หรือ codex --full-auto (ไม่มีอักขระของ shell)', 10000);
+			status.flash(t('adeTasks.tasks.badCli'), 10000);
 			return;
 		}
 		const prefix = branchPrefix(settings.get<string>('kingu.worktree.branchPrefix'));
 		if (prefix === null) {
-			status.flash('kingu.worktree.branchPrefix ไม่ถูกต้อง: ใช้ได้เฉพาะ a-z A-Z 0-9 . _ / - และห้ามขึ้นต้นด้วย - / หรือ .', 10000);
+			status.flash(t('adeTasks.tasks.badBranchPrefix'), 10000);
 			return;
 		}
 		if (settings.get<boolean>('kingu.worktree.refreshBaseOnCreate') === true && base !== 'HEAD') {
-			const note = await invoke<string | null>('worktree_refresh_base', { base }).catch((e) => `อัปเดต ${base} ไม่ได้: ${e}`);
+			const note = await invoke<string | null>('worktree_refresh_base', { base }).catch((e) => t('adeTasks.tasks.refreshBaseFailed', { base, error: String(e) }));
 			if (note) status.flash(note, 8000);
 		}
 		try {
 			await invoke<WorktreeInfo>('worktree_create', { slug, base, prefix });
 		} catch (e) {
-			notifications.error(`สร้าง worktree ไม่ได้: ${e}`);
+			notifications.error(t('adeTasks.tasks.createWorktreeFailed', { error: String(e) }));
 			return;
 		}
 		await this.#save([...this.list, newTask({ slug, title, prompt, base, agent: cli ? cliAgent(cli) : undefined, issue: input.issue, origin: input.origin }, Date.now())]);
@@ -347,8 +349,8 @@ class AdeTasks {
 		const root = workspace.root ?? '';
 		if (st && !this.#yamlReported.has(root) && (st.error || st.config?.warnings.length)) {
 			this.#yamlReported.add(root);
-			if (st.error) notifications.warn(`ไม่ได้ใช้ kingu.yaml: ${st.error}`);
-			else notifications.warn(`kingu.yaml: ละบางส่วนไว้ — ${st.config!.warnings.slice(0, 5).join('; ')}`);
+			if (st.error) notifications.warn(t('adeTasks.tasks.yamlIgnored', { error: st.error }));
+			else notifications.warn(t('adeTasks.tasks.yamlPartial', { warnings: st.config!.warnings.slice(0, 5).join('; ') }));
 		}
 		return st;
 	}
@@ -362,7 +364,7 @@ class AdeTasks {
 	 */
 	async #approvedPlan(kind: ScriptKind, opts: { interactive: boolean; ask?: boolean; what: string }): Promise<ScriptPlan | null> {
 		const plan = await invoke<ScriptPlan | null>('worktree_script', { kind }).catch((e) => {
-			notifications.error(`อ่านสคริปต์ ${kind} ของ worktree ไม่ได้: ${e}`);
+			notifications.error(t('adeTasks.tasks.readScriptFailed', { kind, error: String(e) }));
 			return null;
 		});
 		if (!plan) return null;
@@ -370,19 +372,19 @@ class AdeTasks {
 		const untrusted = !!shared && !shared.trusted;
 		if (!untrusted && !opts.ask) return plan;
 		if (!opts.interactive) {
-			if (untrusted) notifications.warn(`ไม่ได้รัน ${shared!.path}: ยังไม่ได้เชื่อถือ (หรือมันเปลี่ยนไป)`);
+			if (untrusted) notifications.warn(t('adeTasks.tasks.scriptNotTrusted', { path: shared!.path }));
 			return untrusted ? null : plan;
 		}
 		const parts = [
-			...(shared ? [`${shared.path}${untrusted ? ' (มากับ repository และจะรันด้วยสิทธิ์ของคุณ)' : ''}:\n${scriptPreview(shared.content)}`] : []),
-			...(plan.local ? [`สคริปต์ของคุณ (kingu.repo.*):\n${scriptPreview(plan.local)}`] : [])
+			...(shared ? [t(untrusted ? 'adeTasks.tasks.scriptSharedUntrusted' : 'adeTasks.tasks.scriptShared', { path: shared.path, preview: scriptPreview(shared.content) })] : []),
+			...(plan.local ? [t('adeTasks.tasks.scriptLocal', { preview: scriptPreview(plan.local) })] : [])
 		];
-		const intro = untrusted ? `โฟลเดอร์นี้มีคำสั่งจาก repository ที่จะรัน${opts.what}:` : `รันคำสั่งเหล่านี้${opts.what}?`;
-		const ok = await ask(`${intro}\n\n${parts.join('\n\n')}${untrusted ? '\n\nเชื่อถือคำสั่งของ repository นี้และรัน? (ถ้าเนื้อหาเปลี่ยน จะถามอีกครั้ง)' : ''}`, {
-			title: SCRIPT_TITLES[kind],
+		const intro = t(untrusted ? 'adeTasks.tasks.introUntrusted' : 'adeTasks.tasks.introTrusted', { where: opts.what });
+		const ok = await ask(`${intro}\n\n${parts.join('\n\n')}${untrusted ? `\n\n${t('adeTasks.tasks.trustQuestion')}` : ''}`, {
+			title: scriptTitle(kind),
 			kind: 'warning',
-			okLabel: untrusted ? 'เชื่อถือและรัน' : 'รัน',
-			cancelLabel: 'ไม่รัน'
+			okLabel: untrusted ? t('adeTasks.tasks.trustAndRun') : t('common.run'),
+			cancelLabel: t('adeTasks.tasks.dontRun')
 		});
 		if (!ok) return null;
 		if (untrusted) {
@@ -405,7 +407,7 @@ class AdeTasks {
 		const root = workspace.root;
 		const policy = setupPolicy(settings.get<string>('kingu.worktree.setupScript'));
 		if (!root || policy === 'off') return null;
-		const plan = await this.#approvedPlan('setup', { interactive, ask: policy === 'ask', what: ' ใน worktree ใหม่ของงาน' });
+		const plan = await this.#approvedPlan('setup', { interactive, ask: policy === 'ask', what: t('adeTasks.tasks.where.setup') });
 		if (!plan) return null;
 		try {
 			const file = await invoke<string | null>('worktree_script_prepare', { kind: 'setup' });
@@ -415,7 +417,7 @@ class AdeTasks {
 			adeLayout.newTerminal(slug, { title: 'Setup', run: setupCommand(file, root, `${root}/${worktreeDir(slug)}`, slug, marker), background: true });
 			return marker ?? null;
 		} catch (e) {
-			notifications.error(`รันสคริปต์ตั้งค่าไม่ได้: ${e}`);
+			notifications.error(t('adeTasks.tasks.setupRunFailed', { error: String(e) }));
 			return null;
 		}
 	}
@@ -423,12 +425,12 @@ class AdeTasks {
 	/** Orca's wait-for-setup: the agent starts once the Setup terminal finished (at most 30 minutes). */
 	async #waitForSetup(slug: string, marker: string) {
 		const until = Date.now() + 30 * 60_000;
-		this.busy[slug] = 'รอสคริปต์ตั้งค่า';
+		this.busy[slug] = t('adeTasks.tasks.busy.waitingSetup');
 		try {
 			while (Date.now() < until && this.find(slug)) {
 				const code = await invoke<number | null>('worktree_setup_status', { marker }).catch(() => null);
 				if (code !== null) {
-					if (code !== 0) notifications.warn(`สคริปต์ตั้งค่าของ ${slug} จบด้วย exit code ${code} — เริ่ม agent ต่อ`);
+					if (code !== 0) notifications.warn(t('adeTasks.tasks.setupExited', { slug, code }));
 					return;
 				}
 				await new Promise((r) => setTimeout(r, 1000));
@@ -443,13 +445,13 @@ class AdeTasks {
 		const tabs = yaml?.config?.defaultTabs ?? [];
 		if (!tabs.length) return;
 		const withCommands = tabs.some((t) => t.command);
-		const plan = withCommands ? await this.#approvedPlan('tabs', { interactive, what: ' ในแท็บเริ่มต้นของ worktree ใหม่' }) : null;
+		const plan = withCommands ? await this.#approvedPlan('tabs', { interactive, what: t('adeTasks.tasks.where.tabs') }) : null;
 		for (const t of defaultTabsToOpen(tabs, plan?.shared?.content ?? null)) adeLayout.newTerminal(slug, { ...t, background: true });
 	}
 
 	/** Orca's issue command: kingu.repo.issueCommand, else kingu.yaml issueCommand (trusted), in a terminal of an issue's task. */
 	async #runIssueCommand(slug: string, issue: IssueLink, interactive: boolean) {
-		const plan = await this.#approvedPlan('issue', { interactive, what: ` สำหรับ issue #${issue.number}` });
+		const plan = await this.#approvedPlan('issue', { interactive, what: t('adeTasks.tasks.where.issue', { number: issue.number }) });
 		const command = plan?.local ?? plan?.shared?.content;
 		if (!command?.trim()) return;
 		adeLayout.newTerminal(slug, { title: `#${issue.number}`, run: issueCommandArgv(command, issue.number, issue.url), background: true });
@@ -461,21 +463,21 @@ class AdeTasks {
 	 */
 	async #runArchive(slug: string): Promise<boolean> {
 		if (settings.get<string>('kingu.worktree.archiveScript') === 'off') return true;
-		const plan = await this.#approvedPlan('archive', { interactive: true, what: ' ใน worktree ก่อนลบ' });
+		const plan = await this.#approvedPlan('archive', { interactive: true, what: t('adeTasks.tasks.where.archive') });
 		if (!plan) return true;
-		const script = { path: plan.shared?.path ?? 'สคริปต์ก่อนลบของคุณ' };
-		this.busy[slug] = `รัน ${script.path}`;
+		const script = { path: plan.shared?.path ?? t('adeTasks.tasks.yourArchiveScript') };
+		this.busy[slug] = t('adeTasks.tasks.busy.running', { path: script.path });
 		try {
 			const r = await invoke<ScriptRun | null>('worktree_archive_run', { slug });
 			if (!r || (r.code === 0 && !r.timed_out)) return true;
-			return await ask(`${script.path} ${scriptRunSummary(r)}\n\n${r.output.trim().slice(-1500)}\n\nลบ worktree ต่อไหม?`, {
-				title: 'สคริปต์ก่อนลบ worktree',
+			return await ask(t('adeTasks.tasks.archiveResult', { path: script.path, summary: scriptRunSummary(r), output: r.output.trim().slice(-1500) }), {
+				title: scriptTitle('archive'),
 				kind: 'warning',
-				okLabel: 'ลบต่อ',
-				cancelLabel: 'ยกเลิก'
+				okLabel: t('adeTasks.tasks.deleteAnyway'),
+				cancelLabel: t('common.cancel')
 			});
 		} catch (e) {
-			return await ask(`รัน ${script.path} ไม่ได้: ${e}\n\nลบ worktree ต่อไหม?`, { title: 'สคริปต์ก่อนลบ worktree', kind: 'warning', okLabel: 'ลบต่อ', cancelLabel: 'ยกเลิก' });
+			return await ask(t('adeTasks.tasks.archiveRunFailed', { path: script.path, error: String(e) }), { title: scriptTitle('archive'), kind: 'warning', okLabel: t('adeTasks.tasks.deleteAnyway'), cancelLabel: t('common.cancel') });
 		} finally {
 			delete this.busy[slug];
 		}
@@ -489,10 +491,10 @@ class AdeTasks {
 	async createFromIssue(issue: Issue, opts: { base: string; mode?: RunMode }): Promise<string | undefined> {
 		const existing = taskForIssue(this.list, issue.number);
 		if (existing) {
-			const open = await ask(`มีงานของ issue #${issue.number} อยู่แล้ว: "${existing.title}" (${this.branchOf(existing.slug)})\n\nเปิดงานนั้นแทน?`, {
-				title: 'งานจาก issue',
-				okLabel: 'เปิดงานเดิม',
-				cancelLabel: 'ยกเลิก'
+			const open = await ask(t('adeTasks.tasks.issueTaskExists', { number: issue.number, title: existing.title, branch: this.branchOf(existing.slug) }), {
+				title: t('adeTasks.tasks.issueTaskTitle'),
+				okLabel: t('adeTasks.tasks.openExisting'),
+				cancelLabel: t('common.cancel')
 			});
 			if (open) this.openTask(existing.slug);
 			return;
@@ -518,10 +520,10 @@ class AdeTasks {
 	async createFromLinearIssue(issue: LinearIssue, opts: { base: string; mode?: RunMode }): Promise<string | undefined> {
 		const existing = taskForLinearIssue(this.list, issue.identifier);
 		if (existing) {
-			const open = await ask(`มีงานของ ${issue.identifier} อยู่แล้ว: "${existing.title}" (${this.branchOf(existing.slug)})\n\nเปิดงานนั้นแทน?`, {
-				title: 'งานจาก Linear issue',
-				okLabel: 'เปิดงานเดิม',
-				cancelLabel: 'ยกเลิก'
+			const open = await ask(t('adeTasks.tasks.linearTaskExists', { id: issue.identifier, title: existing.title, branch: this.branchOf(existing.slug) }), {
+				title: t('adeTasks.tasks.linearTaskTitle'),
+				okLabel: t('adeTasks.tasks.openExisting'),
+				cancelLabel: t('common.cancel')
 			});
 			if (open) this.openTask(existing.slug);
 			return;
@@ -576,7 +578,7 @@ class AdeTasks {
 		let opencodeDir: string | null = null;
 		if (hookFile && settings.get<boolean>('kingu.agent.statusHooks') !== false) {
 			opencodeDir = await invoke<string | null>('agent_status_hooks_install', { agent: profile.id, program: programOf(cli) }).catch((e) => {
-				status.flash(`ติดตั้ง status hooks ของ ${profile.title} ไม่ได้: ${e}`, 8000);
+				status.flash(t('adeTasks.tasks.hooksFailed', { agent: profile.title, error: String(e) }), 8000);
 				return null;
 			});
 		}
@@ -608,7 +610,7 @@ class AdeTasks {
 			await runtime.start(slug, prompt, null, images);
 			await this.#patch(slug, { status: 'running' });
 		} catch (e) {
-			notifications.error(`เริ่ม agent ไม่ได้: ${e}`);
+			notifications.error(t('adeTasks.tasks.startAgentFailed', { error: String(e) }));
 			await this.#patch(slug, { status: 'failed' });
 		}
 	}
@@ -623,7 +625,7 @@ class AdeTasks {
 			if (meta.status !== 'running') await this.#patch(slug, { status: 'running' });
 			return true;
 		} catch (e) {
-			notifications.error(`ส่งข้อความถึง agent ไม่ได้: ${e}`);
+			notifications.error(t('adeTasks.tasks.sendMessageFailed', { error: String(e) }));
 			return false;
 		}
 	}
@@ -638,7 +640,7 @@ class AdeTasks {
 	}
 
 	answer(slug: string, requestId: string, decision: Decision, message?: string, answers?: Record<string, string>) {
-		return runtime.answer(slug, requestId, decision, message, answers).catch((e) => notifications.error(`ตอบคำขออนุญาตไม่ได้: ${e}`));
+		return runtime.answer(slug, requestId, decision, message, answers).catch((e) => notifications.error(t('adeTasks.tasks.answerFailed', { error: String(e) })));
 	}
 
 	/** Stops the current turn; the session stays open for follow-ups. */
@@ -689,7 +691,7 @@ class AdeTasks {
 	 */
 	async remove(slug: string) {
 		if (runtime.isWorking(slug)) {
-			status.flash('หยุด agent ก่อนลบงาน');
+			status.flash(t('adeTasks.tasks.stopAgentFirst'));
 			return;
 		}
 		if (settings.get<boolean>('kingu.worktree.confirmRemove') !== false) adeDialogs.open({ kind: 'remove', slug });
@@ -703,7 +705,7 @@ class AdeTasks {
 	 */
 	async removeConfirmed(slug: string, opts: { deleteBranch: BranchRemoval; force: boolean }): Promise<boolean> {
 		if (runtime.isWorking(slug)) {
-			status.flash('หยุด agent ก่อนลบงาน');
+			status.flash(t('adeTasks.tasks.stopAgentFirst'));
 			return false;
 		}
 		const path = worktreeDir(slug);
@@ -721,15 +723,15 @@ class AdeTasks {
 			} catch (e) {
 				const dirty = /modified|untracked|dirty/i.test(String(e));
 				if (!dirty || opts.force) {
-					notifications.error(`ลบไม่ได้: ${e}`);
+					notifications.error(t('adeTasks.tasks.removeFailed', { error: String(e) }));
 					return false;
 				}
-				const force = await ask(`worktree ${path} มีการแก้ไขที่ยังไม่ commit\n\nลบทิ้งทั้งหมด? กู้คืนไม่ได้`, { title: 'มีงานที่ยังไม่ commit', kind: 'warning', okLabel: 'ลบทิ้ง', cancelLabel: 'ยกเลิก' });
+				const force = await ask(t('adeTasks.tasks.dirtyAsk', { path }), { title: t('adeTasks.tasks.dirtyTitle'), kind: 'warning', okLabel: t('adeTasks.tasks.discard'), cancelLabel: t('common.cancel') });
 				if (!force) return false;
 				try {
 					kept = await invoke<string | null>('worktree_remove', { slug, force: true, deleteBranch });
 				} catch (e2) {
-					notifications.error(`ลบไม่ได้: ${e2}`);
+					notifications.error(t('adeTasks.tasks.removeFailed', { error: String(e2) }));
 					return false;
 				}
 			}
@@ -747,7 +749,7 @@ class AdeTasks {
 		delete this.statErrors[slug];
 		await this.#save(removeTask(this.list, slug));
 		appMode.forget(slug);
-		status.flash(kept ? `ลบงาน ${slug} แล้ว — เก็บ branch ${kept} ไว้เพราะยังไม่ merge (ลบเองได้ด้วย git branch -D)` : `ลบงาน ${slug} แล้ว`, kept ? 10000 : undefined);
+		status.flash(kept ? t('adeTasks.tasks.removedKeptBranch', { slug, branch: kept }) : t('adeTasks.tasks.removed', { slug }), kept ? 10000 : undefined);
 		return true;
 	}
 
@@ -777,7 +779,7 @@ class AdeTasks {
 		const stat = this.stats[slug];
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta || !ids.length) return false;
-		const n = await this.#step(slug, 'ปฏิเสธการเปลี่ยนแปลง', () => invoke<number>('worktree_reject_hunks', { slug, base: stat?.base ?? meta.base, path, ids }));
+		const n = await this.#step(slug, t('adeTasks.tasks.step.rejectChanges'), () => invoke<number>('worktree_reject_hunks', { slug, base: stat?.base ?? meta.base, path, ids }));
 		await this.refreshStat(slug);
 		return n !== undefined;
 	}
@@ -787,15 +789,15 @@ class AdeTasks {
 	async reject(slug: string, paths: string[], label: string, confirmEmpty = false): Promise<boolean> {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta || (!paths.length && !confirmEmpty)) return false;
-		const ok = await ask(`ทิ้งการเปลี่ยนแปลงของ ${label} ใน worktree ${slug}?\n\nไฟล์จะกลับเป็นแบบใน ${meta.base} (ไฟล์ที่เพิ่มใหม่จะถูกลบ) กู้คืนไม่ได้`, {
-			title: 'ปฏิเสธการเปลี่ยนแปลง',
+		const ok = await ask(t('adeTasks.tasks.rejectAsk', { label, slug, base: meta.base }), {
+			title: t('adeTasks.tasks.rejectTitle'),
 			kind: 'warning',
-			okLabel: 'ทิ้งการเปลี่ยนแปลง',
-			cancelLabel: 'ยกเลิก'
+			okLabel: t('adeTasks.tasks.rejectOk'),
+			cancelLabel: t('common.cancel')
 		});
 		if (!ok) return false;
 		if (paths.length) {
-			await this.#step(slug, 'ปฏิเสธไฟล์', () => invoke('worktree_reject', { slug, base: meta.base, paths }));
+			await this.#step(slug, t('adeTasks.tasks.step.rejectFiles'), () => invoke('worktree_reject', { slug, base: meta.base, paths }));
 			await this.refreshStat(slug);
 		}
 		return true;
@@ -803,12 +805,12 @@ class AdeTasks {
 
 	async commit(slug: string, msg: string) {
 		if (!msg.trim()) {
-			status.flash('ใส่ข้อความ commit ก่อน');
+			status.flash(t('adeTasks.git.commitMessageFirst'));
 			return false;
 		}
-		const done = await this.#step(slug, 'commit', () => invoke('worktree_commit', { slug, message: msg }).then(() => true));
+		const done = await this.#step(slug, t('adeTasks.tasks.step.commit'), () => invoke('worktree_commit', { slug, message: msg }).then(() => true));
 		await this.refreshStat(slug);
-		if (done) status.flash(`commit ใน ${this.branchOf(slug)} แล้ว`);
+		if (done) status.flash(t('adeTasks.git.committed', { branch: this.branchOf(slug) }));
 		return !!done;
 	}
 
@@ -820,13 +822,13 @@ class AdeTasks {
 	async merge(slug: string, mode: 'ff' | 'merge') {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta) return;
-		const how = mode === 'ff' ? 'แบบ fast-forward' : 'แบบ merge commit';
-		const ok = await ask(`รวม ${this.branchOf(slug)} เข้า ${meta.base} ${how} ในเครื่อง?`, { title: 'Merge เข้า base', okLabel: 'Merge', cancelLabel: 'ยกเลิก' });
+		const how = mode === 'ff' ? t('adeTasks.tasks.mergeFastForward') : t('adeTasks.tasks.mergeCommit');
+		const ok = await ask(t('adeTasks.tasks.mergeAsk', { branch: this.branchOf(slug), base: meta.base, how }), { title: t('adeTasks.tasks.mergeTitle'), okLabel: t('adeTasks.tasks.mergeOk'), cancelLabel: t('common.cancel') });
 		if (!ok) return;
-		const r = await this.#step(slug, 'merge', () => invoke<MergeResult>('worktree_merge', { slug, base: meta.base, mode }));
+		const r = await this.#step(slug, t('adeTasks.tasks.step.merge'), () => invoke<MergeResult>('worktree_merge', { slug, base: meta.base, mode }));
 		if (r) {
 			await this.#patch(slug, { merged_at: Date.now(), status: 'done' });
-			status.flash(`merge เข้า ${meta.base} แล้ว (${r.fast_forward ? 'fast-forward' : 'merge commit'} ${r.commit.slice(0, 8)})`, 8000);
+			status.flash(t('adeTasks.tasks.merged', { base: meta.base, kind: r.fast_forward ? 'fast-forward' : 'merge commit', commit: r.commit.slice(0, 8) }), 8000);
 		}
 		await this.refreshStat(slug);
 	}
@@ -841,11 +843,11 @@ class AdeTasks {
 		if (!meta) return;
 		const gh = await this.checkGh();
 		if (!gh?.installed) {
-			await message('ยังไม่ได้ติดตั้ง GitHub CLI (gh)\n\nติดตั้ง: brew install gh\nแล้วเข้าสู่ระบบ: gh auth login', { title: 'สร้าง PR', kind: 'info' });
+			await message(t('adeTasks.tasks.ghMissing'), { title: t('adeTasks.tasks.createPrTitle'), kind: 'info' });
 			return;
 		}
 		if (!gh.authenticated) {
-			await message(`gh ยังไม่ได้เข้าสู่ระบบ\n\nรันในเทอร์มินัล: gh auth login\n\n${gh.detail}`, { title: 'สร้าง PR', kind: 'info' });
+			await message(t('adeTasks.tasks.ghSignedOut', { detail: gh.detail }), { title: t('adeTasks.tasks.createPrTitle'), kind: 'info' });
 			return;
 		}
 		adeDialogs.open({ kind: 'pr', slug });
@@ -871,10 +873,10 @@ class AdeTasks {
 	/** Pushes the branch and opens the PR from the form; the error text when it failed (the form shows it). */
 	async submitPr(slug: string, form: PrForm): Promise<string | null> {
 		const meta = this.list.find((t) => t.slug === slug);
-		if (!meta) return 'ไม่พบงาน';
+		if (!meta) return t('adeTasks.tasks.taskNotFound');
 		const problem = prFormProblem(form, this.branchOf(slug));
 		if (problem) return problem;
-		this.busy[slug] = 'สร้าง PR';
+		this.busy[slug] = t('adeTasks.tasks.busy.createPr');
 		let url: string;
 		try {
 			url = await invoke<string>('worktree_pr_create', {
@@ -886,18 +888,18 @@ class AdeTasks {
 				open: settings.get<boolean>('kingu.pr.openAfterCreate') === true
 			});
 		} catch (e) {
-			clientLog('error', `${slug} สร้าง PR: ${e}`);
+			clientLog('error', `${slug} create PR: ${e}`);
 			return String(e);
 		} finally {
 			delete this.busy[slug];
 		}
 		await this.#patch(slug, { pr_url: url || null });
-		status.flash(url ? `เปิด PR แล้ว: ${url}` : 'เปิด PR แล้ว', 10000);
+		status.flash(url ? t('adeTasks.tasks.prOpenedUrl', { url }) : t('adeTasks.tasks.prOpened'), 10000);
 		void prStatuses.refresh(slug);
 		if (url && meta.issue && settings.get<boolean>('kingu.issues.commentOnPr') === true) {
 			const link = meta.issue;
 			const posted = isLinear(link) ? invoke('linear_issue_comment', { id: link.key, body: prComment(url) }) : invoke('gh_issue_comment', { number: link.number, body: prComment(url) });
-			posted.catch((e) => status.flash(`comment ใน issue ${issueRef(link)} ไม่ได้: ${e}`, 8000));
+			posted.catch((e) => status.flash(t('adeTasks.tasks.issueCommentFailed', { ref: issueRef(link), error: String(e) }), 8000));
 		}
 		return null;
 	}
@@ -933,7 +935,7 @@ class AdeTasks {
 				() => true,
 				() => false
 			);
-			status.flash(copied ? `คัดลอก prompt ${what} แล้ว วางให้ agent ได้เลย` : `คัดลอก prompt ${what} ไม่ได้`, 8000);
+			status.flash(copied ? t('adeTasks.tasks.promptCopied', { what }) : t('adeTasks.tasks.promptCopyFailed', { what }), 8000);
 			return copied;
 		}
 		const cli = cliOf(meta.agent);
@@ -942,11 +944,11 @@ class AdeTasks {
 			else if (cli) await this.#launchCli(slug, cli, { prompt });
 			else await this.followUp(slug, prompt);
 		} catch (e) {
-			status.flash(`ส่ง ${what} ให้ agent ไม่ได้: ${e}`, 10000);
+			status.flash(t('adeTasks.tasks.sendToAgentFailed', { what, error: String(e) }), 10000);
 			return false;
 		}
 		this.openTask(slug);
-		status.flash(`ส่ง ${what} ให้ agent แล้ว`);
+		status.flash(t('adeTasks.tasks.sentToAgent', { what }));
 		return true;
 	}
 
@@ -954,13 +956,13 @@ class AdeTasks {
 	async mergePr(slug: string, method: MergeMethod, deleteBranch: boolean) {
 		const pr = prStatuses.bySlug[slug]?.pr;
 		if (!pr) return;
-		const branchNote = deleteBranch && pr.head_ref ? `\nและลบ branch ${pr.head_ref} บน GitHub` : '';
-		const ok = await ask(`${MERGE_LABEL[method]} PR #${pr.number}?\n\nจะอัปเดต pull request บน GitHub${branchNote}`, { title: 'Merge PR', okLabel: MERGE_LABEL[method], cancelLabel: 'ยกเลิก' });
+		const branchNote = deleteBranch && pr.head_ref ? `\n${t('adeTasks.tasks.mergePrDeleteBranch', { branch: pr.head_ref })}` : '';
+		const ok = await ask(`${t('adeTasks.tasks.mergePrAsk', { method: MERGE_LABEL[method], number: pr.number })}${branchNote}`, { title: t('adeTasks.tasks.mergePrTitle'), okLabel: MERGE_LABEL[method], cancelLabel: t('common.cancel') });
 		if (!ok) return;
-		const r = await this.#step(slug, 'merge PR', () => invoke<MergeOutcome>('worktree_pr_merge', { slug, url: pr.url, number: pr.number, method, deleteBranch }));
+		const r = await this.#step(slug, t('adeTasks.tasks.step.mergePr'), () => invoke<MergeOutcome>('worktree_pr_merge', { slug, url: pr.url, number: pr.number, method, deleteBranch }));
 		if (!r) return;
 		if (slug && this.list.some((t) => t.slug === slug)) await this.#patch(slug, { merged_at: Date.now(), status: 'done' });
-		status.flash(`merge PR #${pr.number} แล้ว${r.deleted_branch ? ` · ลบ branch ${r.deleted_branch} บน GitHub แล้ว` : ''}${r.branch_note ? ` · ${r.branch_note}` : ''}`, 10000);
+		status.flash([t('adeTasks.tasks.mergedPr', { number: pr.number }), r.deleted_branch ? t('adeTasks.tasks.deletedRemoteBranch', { branch: r.deleted_branch }) : '', r.branch_note ?? ''].filter(Boolean).join(' · '), 10000);
 		await prStatuses.refresh(slug);
 	}
 
@@ -969,8 +971,8 @@ class AdeTasks {
 		const pr = prStatuses.bySlug[slug]?.pr;
 		if (!pr) return;
 		const checks = brokenChecks(pr.checks).map((c) => ({ name: c.name, url: c.url, run_id: c.run_id ?? null, job_id: c.job_id ?? null }));
-		const logs = checks.length ? ((await this.#step(slug, 'อ่าน log ของ check', () => invoke<CheckLog[]>('worktree_pr_check_logs', { slug, url: pr.url, checks }))) ?? []) : [];
-		await this.sendToAgent(slug, buildFixChecksPrompt(pr, logs), 'งานแก้ checks ที่ล้มเหลว');
+		const logs = checks.length ? ((await this.#step(slug, t('adeTasks.tasks.step.checkLogs'), () => invoke<CheckLog[]>('worktree_pr_check_logs', { slug, url: pr.url, checks }))) ?? []) : [];
+		await this.sendToAgent(slug, buildFixChecksPrompt(pr, logs), t('adeTasks.tasks.what.fixChecks'));
 	}
 
 	/** Orca's "resolve comments": the selected unresolved review threads, sent to the agent. */
@@ -978,14 +980,14 @@ class AdeTasks {
 		const pr = prStatuses.bySlug[slug]?.pr;
 		if (!pr || !threads.length) return;
 		const path = workspace.root ? (slug ? `${workspace.root}/${worktreeDir(slug)}` : workspace.root) : null;
-		await this.sendToAgent(slug, buildCommentsPrompt(pr, threads, path), `คอมเมนต์รีวิว ${threads.length} รายการ`);
+		await this.sendToAgent(slug, buildCommentsPrompt(pr, threads, path), t('adeTasks.tasks.what.reviewComments', { count: threads.length }));
 	}
 
 	/** Resolves (or reopens) a review thread on GitHub. */
 	async resolveThread(slug: string, id: string, resolve = true) {
 		const pr = prStatuses.bySlug[slug]?.pr;
 		if (!pr) return;
-		const done = await this.#step(slug, resolve ? 'resolve thread' : 'เปิด thread อีกครั้ง', () => invoke<boolean>('gh_resolve_thread', { slug, url: pr.url, threadId: id, resolve }));
+		const done = await this.#step(slug, resolve ? t('adeTasks.tasks.step.resolveThread') : t('adeTasks.tasks.step.reopenThread'), () => invoke<boolean>('gh_resolve_thread', { slug, url: pr.url, threadId: id, resolve }));
 		if (done !== undefined) prStatuses.markResolved(slug, id, done);
 	}
 
@@ -1026,8 +1028,9 @@ class AdeTasks {
 		else if (agents.pendingCount) {
 			// Permission requests of runs started in another folder.
 			const other = agents.list.find((r) => r.pending.length);
-			status.flash(`agent ในโฟลเดอร์ ${other?.root ?? 'อื่น'} รอคุณอนุญาต (งาน ${other?.slug ?? ''})`, 8000);
-		} else status.flash('ไม่มีงานที่รอคุณ');
+			const slug = other?.slug ?? '';
+			status.flash(other?.root ? t('adeTasks.tasks.otherFolderWaiting', { folder: other.root, slug }) : t('adeTasks.tasks.anotherFolderWaiting', { slug }), 8000);
+		} else status.flash(t('adeTasks.tasks.nothingWaiting'));
 	}
 
 	/** Diff of a worktree file against the task's fork point, in a `taskdiff://` tab. */
@@ -1061,8 +1064,8 @@ class AdeTasks {
 		}
 		const changed = new Set(this.stats[slug]?.files.map((f) => f.path));
 		quick.pick({
-			placeholder: `เปิดไฟล์ใน worktree ${slug}`,
-			items: files.map((f) => ({ id: f, label: f, description: changed.has(f) ? 'แก้ไข' : undefined })),
+			placeholder: t('adeTasks.tasks.quickOpenPlaceholder', { slug }),
+			items: files.map((f) => ({ id: f, label: f, description: changed.has(f) ? t('adeTasks.tasks.modified') : undefined })),
 			onAccept: (item) => editors.open(`${worktreeDir(slug)}/${item.id}`, { preview: true })
 		});
 	}
@@ -1070,7 +1073,7 @@ class AdeTasks {
 	/** Palette: pick a task to open. */
 	pickTask() {
 		quick.pick({
-			placeholder: 'เลือกงาน',
+			placeholder: t('adeTasks.tasks.pickTask'),
 			items: this.views.map((v) => ({ id: v.meta.slug, label: v.meta.title, description: this.branchOf(v.meta.slug) })),
 			onAccept: (item) => this.openTask(item.id)
 		});
@@ -1142,27 +1145,27 @@ export function installAde(): () => void {
 	const unregister = [
 		// No keybinding: ⌘⇧A (Ctrl+Shift+A) switches to the Agents layout (workbench.action.toggleAgentsMode).
 		commands.register({ id: 'kingu.agents.show', title: 'Show Agents', category: 'View', run: () => adeTasks.showView() }),
-		commands.register({ id: 'kingu.agents.newTask', title: 'งานใหม่ (New Task)', category: 'Agents', when: hasRoot, run: () => (adeTasks.showView(), (adeTasks.composing = true)) }),
+		commands.register({ id: 'kingu.agents.newTask', title: 'New Task', category: 'Agents', when: hasRoot, run: () => (adeTasks.showView(), (adeTasks.composing = true)) }),
 		commands.register({ id: 'kingu.agents.openBoard', title: 'Open Board', category: 'Agents', when: hasRoot, run: () => adeTasks.openBoard() }),
-		commands.register({ id: 'kingu.agents.nextAttention', title: 'เปิดงานถัดไปที่รอคุณ (Next Task Needing Attention)', category: 'Agents', when: hasRoot, run: () => adeTasks.openNext() }),
+		commands.register({ id: 'kingu.agents.nextAttention', title: 'Next Task Needing Attention', category: 'Agents', when: hasRoot, run: () => adeTasks.openNext() }),
 		commands.register({ id: 'kingu.agents.openTask', title: 'Open Task...', category: 'Agents', when: () => adeTasks.list.length > 0, run: () => adeTasks.pickTask() }),
 		// Orca's sourceControl.sendReviewNotes (unbound): the notes of the worktree in front.
 		commands.register({
 			id: 'kingu.agents.sendReviewNotes',
-			title: 'ส่งโน้ตรีวิวถึง agent (Send Review Notes to Agent)',
+			title: 'Send Review Notes to Agent',
 			category: 'Agents',
 			when: hasRoot,
 			run: () => {
 				const active = editors.active;
 				const key = appMode.isAgents ? adeLayout.key : active ? (slugOfTaskKey(active) ?? parseTaskDiffKey(active)?.slug ?? '') : '';
 				const notes = diffNotes.list(key);
-				if (!notes.length) return status.flash('ไม่มีโน้ตรีวิวที่ยังไม่ได้ส่ง');
+				if (!notes.length) return status.flash(t('adeTasks.tasks.noReviewNotes'));
 				return diffNotes.send(key, notes);
 			}
 		}),
 		commands.register({
 			id: 'kingu.agents.renameTask',
-			title: 'เปลี่ยนชื่องาน (Rename Task)',
+			title: 'Rename Task',
 			category: 'Agents',
 			key: 'cmd+alt+r',
 			when: () => appMode.isAgents && !!appMode.activeSession && !!adeTasks.find(appMode.activeSession),
@@ -1172,12 +1175,12 @@ export function installAde(): () => void {
 		commands.register({ id: 'kingu.agent.chooseCli', title: 'Choose CLI…', category: 'Agent', run: () => chooseAgentCli() }),
 		commands.register({
 			id: 'kingu.agents.untrustWorktreeScripts',
-			title: 'เลิกเชื่อถือสคริปต์ของ worktree (Untrust Worktree Scripts)',
+			title: 'Untrust Worktree Scripts',
 			category: 'Agents',
 			when: hasRoot,
 			run: () =>
 				Promise.all(['setup', 'archive', 'tabs', 'issue'].map((kind) => invoke('worktree_script_trust', { kind, trusted: false, hash: null })))
-					.then(() => status.flash('เลิกเชื่อถือคำสั่งของ repository (kingu.yaml, .kingu/setup.sh, .kingu/archive.sh) ของโฟลเดอร์นี้แล้ว ครั้งหน้าจะถามก่อนรัน'))
+					.then(() => status.flash(t('adeTasks.tasks.untrusted')))
 					.catch((e) => notifications.error(e))
 		})
 	];

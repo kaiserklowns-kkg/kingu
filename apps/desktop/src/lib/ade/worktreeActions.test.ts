@@ -25,7 +25,7 @@ describe('jump rows', () => {
 			{ label: 'กำลังทำ', tasks: [{ slug: 'b', title: 'B', status: 'กำลังทำ' }] }
 		]);
 		expect(rows.map((r) => [r.key, r.group])).toEqual([
-			['', 'โฟลเดอร์'],
+			['', 'Folder'],
 			['a', 'รอคุณ'],
 			['b', 'กำลังทำ']
 		]);

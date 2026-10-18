@@ -2,6 +2,8 @@
 // prefix, the default base branch and what happens to the branch when a task is removed. Pure,
 // so `bun test` covers it; Rust checks the prefix again (agent/worktree.rs validate_prefix).
 
+import { t } from '#lib/i18n/index.ts';
+
 export const DEFAULT_BRANCH_PREFIX = 'kingu/';
 
 /** The same rules as Rust's `validate_prefix`: ASCII letters, digits and `._/-`, may be empty. */
@@ -118,23 +120,24 @@ export const setupPolicy = (setting: string | undefined): SetupPolicy => (settin
 
 /** The archive script's result in one line for the status bar or the dialog. */
 export function scriptRunSummary(r: ScriptRun): string {
-	if (r.timed_out) return 'ใช้เวลานานเกินจึงหยุดไว้';
-	if (r.code === 0) return 'สำเร็จ';
-	return r.code === null ? 'ถูกหยุดกลางคัน' : `จบด้วย exit code ${r.code}`;
+	if (r.timed_out) return t('adeTasks.worktreeSettings.timedOut');
+	if (r.code === 0) return t('adeTasks.worktreeSettings.succeeded');
+	return r.code === null ? t('adeTasks.worktreeSettings.interrupted') : t('adeTasks.worktreeSettings.exited', { code: r.code });
 }
 
 /** What the trust dialog shows of a script: its first lines, so a long one stays readable. */
 export function scriptPreview(content: string, maxLines = 20): string {
 	const lines = content.replace(/\s+$/, '').split('\n');
-	return lines.length > maxLines ? [...lines.slice(0, maxLines), `… (อีก ${lines.length - maxLines} บรรทัด)`].join('\n') : lines.join('\n');
+	return lines.length > maxLines ? [...lines.slice(0, maxLines), t('adeTasks.worktreeSettings.moreLines', { count: lines.length - maxLines })].join('\n') : lines.join('\n');
 }
 
-/** The remove dialog's branch choice (defaults from `branchRemoval`). */
-export const BRANCH_CHOICES: { id: BranchRemoval; label: string }[] = [
-	{ id: 'keep', label: 'เก็บ branch ไว้' },
-	{ id: 'safe', label: 'ลบ branch ถ้า merge แล้ว (git branch -d) ไม่เช่นนั้นเก็บไว้' },
-	{ id: 'force', label: 'ลบ branch แม้ยังไม่ merge (git branch -D)' }
-];
+/** The remove dialog's branch choice (defaults from `branchRemoval`); `label` is read in the current UI language. */
+export const BRANCH_CHOICES: { readonly id: BranchRemoval; readonly label: string }[] = (['keep', 'safe', 'force'] as const).map((id) => ({
+	id,
+	get label() {
+		return t(`adeTasks.worktreeSettings.branch.${id}`);
+	}
+}));
 
 /** Orca's DeleteWorktreeTargetPreview limit: changed paths listed in the remove dialog. */
 export const DIRTY_PREVIEW = 10;
@@ -148,4 +151,4 @@ export function dirtyPreview(entries: { path: string; index: string | null; work
 	return { count: entries.length, files, more: Math.max(0, entries.length - files.length) };
 }
 
-export const dirtyLabel = (n: number) => (n === 0 ? 'ไม่มีการแก้ไขที่ยังไม่ commit หรือไฟล์ untracked' : `การแก้ไขที่ยังไม่ commit หรือ untracked ${n} รายการ`);
+export const dirtyLabel = (n: number) => (n === 0 ? t('adeTasks.worktreeSettings.dirtyNone') : t('adeTasks.worktreeSettings.dirtyCount', { count: n }));

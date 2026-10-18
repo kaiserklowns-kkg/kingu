@@ -23,6 +23,7 @@ import { uniqueSlug } from './model.ts';
 import { parseSchedule, upcoming } from './schedule.ts';
 import { adeTasks } from './tasks.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
+import { t } from '#lib/i18n/index.ts';
 
 const CONSENT_STORE = 'kingu.automations.consent';
 const TICK_MS = 30_000;
@@ -110,7 +111,7 @@ class AdeAutomations {
 			if (this.#root !== root) return;
 			this.list = list;
 		} catch (e) {
-			notifications.error(`โหลด automations ไม่ได้: ${e}`);
+			notifications.error(t('adeTasks.automations.loadFailed', { error: String(e) }));
 			clientLog('error', `automations_load: ${e}`);
 		}
 		this.loaded = true;
@@ -124,7 +125,7 @@ class AdeAutomations {
 		this.#saving = this.#saving.then(() => {
 			if (root !== workspace.root) return;
 			return invoke<void>('automations_save', { automations: snapshot }).catch((e) => {
-				notifications.error(`บันทึก automations.json ไม่ได้: ${e}`);
+				notifications.error(t('adeTasks.automations.saveFailed', { error: String(e) }));
 				clientLog('error', `automations_save: ${e}`);
 			});
 		});
@@ -140,16 +141,18 @@ class AdeAutomations {
 		const now = Date.now();
 		const next = upcoming(a.schedule, now, now);
 		const mode = a.mode ?? (settings.get<string>('kingu.agent.runMode') === 'timeline' ? 'timeline' : 'terminal');
-		return ask(
-			`เปิด automation "${a.name}"?\n\nตารางเวลา: ${a.schedule}\nรอบถัดไป: ${formatWhen(next, now)}\nแตกจาก: ${a.base ?? 'branch ปัจจุบันของโฟลเดอร์'} · โหมด: ${mode}\n\nทุกรอบจะสร้าง worktree และเริ่ม agent เองขณะ Kingu เปิดอยู่ ซึ่งใช้ token`,
-			{ title: 'เปิด Automation', kind: 'warning', okLabel: 'เปิดใช้', cancelLabel: 'ยกเลิก' }
-		);
+		return ask(t('adeTasks.automations.enableAsk', { name: a.name, schedule: a.schedule, next: formatWhen(next, now), base: a.base ?? t('adeTasks.automations.folderBranch'), mode }), {
+			title: t('adeTasks.automations.enableTitle'),
+			kind: 'warning',
+			okLabel: t('adeTasks.automations.enableOk'),
+			cancelLabel: t('common.cancel')
+		});
 	}
 
 	validate(input: AutomationInput): string | null {
-		if (!input.name.trim()) return 'ใส่ชื่อ automation';
-		if (input.name.trim().length > 100) return 'ชื่อยาวได้ไม่เกิน 100 ตัวอักษร';
-		if (!input.prompt.trim()) return 'ใส่คำสั่งให้ agent';
+		if (!input.name.trim()) return t('adeTasks.automations.nameRequired');
+		if (input.name.trim().length > 100) return t('adeTasks.automations.nameTooLong');
+		if (!input.prompt.trim()) return t('adeTasks.automations.promptRequired');
 		const parsed = parseSchedule(input.schedule);
 		return parsed.ok ? null : parsed.error;
 	}
@@ -166,7 +169,7 @@ class AdeAutomations {
 			const taken = new Set(this.list.map((a) => a.id));
 			const a = newAutomation({ ...input, id: uniqueSlug(`auto-${input.name}`, taken) }, now);
 			await this.#save([...this.list, a]);
-			status.flash(`สร้าง automation "${a.name}" แล้ว (ยังปิดอยู่ — เปิดเมื่อพร้อม)`, 6000);
+			status.flash(t('adeTasks.automations.created', { name: a.name }), 6000);
 			return true;
 		}
 		const old = this.find(id);
@@ -178,7 +181,7 @@ class AdeAutomations {
 				next.enabled_at = now;
 			} else {
 				next.enabled = false;
-				status.flash(`บันทึกแล้ว แต่ปิด "${next.name}" ไว้จนกว่าจะยืนยัน`, 6000);
+				status.flash(t('adeTasks.automations.savedOff', { name: next.name }), 6000);
 			}
 		}
 		await this.#save(this.list.map((a) => (a.id === id ? next : a)));
@@ -196,7 +199,7 @@ class AdeAutomations {
 		if (!(await this.#confirmEnable(a))) return;
 		this.#setConsent(a, id);
 		await this.#patch(id, { enabled: true, enabled_at: Date.now() });
-		if (!this.globalEnabled) status.flash('automation เปิดแล้ว แต่ Automations ทั้งหมดถูกหยุดอยู่ (kingu.automations.enabled)', 8000);
+		if (!this.globalEnabled) status.flash(t('adeTasks.automations.globallyPaused'), 8000);
 	}
 
 	async remove(id: string) {
@@ -204,7 +207,7 @@ class AdeAutomations {
 		if (!a) return;
 		// kingu.automations.confirmDelete (Orca's skipDeleteAutomationConfirm, inverted).
 		const confirm = settings.get<boolean>('kingu.automations.confirmDelete') !== false;
-		if (confirm && !(await ask(`ลบ automation "${a.name}"?\n\nงานที่เคยสร้างไว้ยังอยู่`, { title: 'ลบ Automation', kind: 'warning', okLabel: 'ลบ', cancelLabel: 'ยกเลิก' }))) return;
+		if (confirm && !(await ask(t('adeTasks.automations.deleteAsk', { name: a.name }), { title: t('adeTasks.automations.deleteTitle'), kind: 'warning', okLabel: t('common.delete'), cancelLabel: t('common.cancel') }))) return;
 		this.#setConsent(null, id);
 		delete this.#handled[id];
 		if (this.editing?.id === id) this.editing = null;
@@ -216,7 +219,7 @@ class AdeAutomations {
 		const a = this.find(id);
 		if (!a) return;
 		if (a.last_task_slug && isWorking(a.last_task_slug)) {
-			const ok = await ask(`งานรอบก่อน (kingu/${a.last_task_slug}) ยังทำงานอยู่\n\nเริ่มอีกรอบเลยไหม?`, { title: 'Run Now', okLabel: 'เริ่ม', cancelLabel: 'ยกเลิก' });
+			const ok = await ask(t('adeTasks.automations.previousStillRunning', { slug: a.last_task_slug }), { title: t('adeTasks.automations.runNowTitle'), okLabel: t('adeTasks.automations.start'), cancelLabel: t('common.cancel') });
 			if (!ok) return;
 		}
 		await this.#start(a, null);
@@ -227,13 +230,13 @@ class AdeAutomations {
 		const now = Date.now();
 		const slug = await adeTasks.create({ title: runTitle(a.name, new Date(due ?? now)), prompt: a.prompt, base: a.base ?? '', mode: a.mode ?? undefined, open: false, slugHint: a.id, origin: 'automation' });
 		if (!slug) {
-			await this.#patch(a.id, { last_skip: { at: now, reason: 'สร้างงานไม่สำเร็จ (ดูข้อความใน status bar)' } });
+			await this.#patch(a.id, { last_skip: { at: now, reason: t('adeTasks.automations.createFailed') } });
 			return;
 		}
 		await this.#patch(a.id, { last_run_at: now, last_task_slug: slug, last_skip: null });
 		clientLog('info', `automation ${a.id} started task ${slug}`);
-		status.flash(`Automation เริ่มงาน: ${a.name} → ${adeTasks.branchOf(slug)}`, 8000);
-		if (settings.get<boolean>('kingu.agent.notifications') !== false) void notify(`Automation เริ่มงาน: ${a.name}`, adeTasks.branchOf(slug));
+		status.flash(t('adeTasks.automations.started', { name: a.name, branch: adeTasks.branchOf(slug) }), 8000);
+		if (settings.get<boolean>('kingu.agent.notifications') !== false) void notify(t('adeTasks.automations.startedNotification', { name: a.name }), adeTasks.branchOf(slug));
 	}
 
 	/** The runner: what is due now, re-checked against the file so another window cannot double it. */
@@ -275,9 +278,9 @@ class AdeAutomations {
 	async pauseAll() {
 		try {
 			await settings.set('kingu.automations.enabled', false, 'user');
-			status.flash('หยุด Automations ทั้งหมดแล้ว — เปิดอีกครั้งได้ที่หน้า Automations หรือ Settings', 8000);
+			status.flash(t('adeTasks.automations.pausedAll'), 8000);
 		} catch (e) {
-			notifications.error(`หยุด Automations ไม่ได้: ${e}`);
+			notifications.error(t('adeTasks.automations.pauseFailed', { error: String(e) }));
 		}
 	}
 
@@ -285,7 +288,7 @@ class AdeAutomations {
 		try {
 			await settings.set('kingu.automations.enabled', undefined, 'user');
 		} catch (e) {
-			notifications.error(`เปิด Automations ไม่ได้: ${e}`);
+			notifications.error(t('adeTasks.automations.resumeFailed', { error: String(e) }));
 		}
 	}
 
@@ -299,8 +302,8 @@ class AdeAutomations {
 
 	pickAndRun() {
 		quick.pick({
-			placeholder: 'เลือก automation ที่จะเริ่มตอนนี้',
-			items: this.list.map((a) => ({ id: a.id, label: a.name, description: `${a.schedule}${this.isActive(a) ? '' : ' · ปิดอยู่'}` })),
+			placeholder: t('adeTasks.automations.pickPlaceholder'),
+			items: this.list.map((a) => ({ id: a.id, label: a.name, description: this.isActive(a) ? a.schedule : t('adeTasks.automations.scheduleOff', { schedule: a.schedule }) })),
 			onAccept: (item) => void this.runNow(item.id)
 		});
 	}

@@ -18,6 +18,7 @@ import { issueRef, mergeIssueLists, tasksByIssue, type Issue } from './issues.ts
 import type { IssueLink } from './model.ts';
 import { adeTasks } from './tasks.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
+import { t } from '#lib/i18n/index.ts';
 
 export type IssueFilter = { mine: boolean; label: string; search: string };
 const LIMIT = 50;
@@ -90,9 +91,9 @@ class AdeIssues {
 	/** A GitHub issue through gh; a task's Linear link in the browser. */
 	open(issue: Pick<Issue, 'number'> | IssueLink) {
 		if ('provider' in issue && issue.provider === 'linear') {
-			return invoke('linear_issue_open', { url: issue.url }).catch((e) => notifications.error(`เปิด ${issueRef(issue)} ไม่ได้: ${e}`));
+			return invoke('linear_issue_open', { url: issue.url }).catch((e) => notifications.error(t('adeTasks.issues.openFailed', { ref: issueRef(issue), error: String(e) })));
 		}
-		return invoke('gh_issue_open', { number: issue.number }).catch((e) => notifications.error(`เปิด issue #${issue.number} ไม่ได้: ${e}`));
+		return invoke('gh_issue_open', { number: issue.number }).catch((e) => notifications.error(t('adeTasks.issues.openFailed', { ref: `#${issue.number}`, error: String(e) })));
 	}
 
 	openPage() {
@@ -103,28 +104,28 @@ class AdeIssues {
 
 	/** Palette: an open issue (assigned to me first), then the base branch and run mode, then the task. */
 	async pickAndStart() {
-		status.flash('กำลังโหลด issues…', 3000);
+		status.flash(t('adeTasks.issues.loading'), 3000);
 		let mine: Issue[];
 		let all: Issue[];
 		try {
 			[mine, all] = await Promise.all([this.fetch({ mine: true }), this.fetch({ mine: false, limit: 100 })]);
 		} catch (e) {
-			notifications.error(`โหลด issues ไม่ได้: ${e}`);
+			notifications.error(t('adeTasks.issues.loadFailed', { error: String(e) }));
 			return;
 		}
 		const rows = mergeIssueLists(mine, all);
 		if (!rows.length) {
-			status.flash('ไม่มี issue ที่เปิดอยู่');
+			status.flash(t('adeTasks.issues.none'));
 			return;
 		}
 		const firstOther = rows.findIndex((r) => !r.mine);
 		const picked = await quick.choose({
-			placeholder: 'เลือก issue ที่จะเริ่มงาน',
+			placeholder: t('adeTasks.issues.pickPlaceholder'),
 			items: rows.map((r, i) => ({
 				id: String(r.issue.number),
 				label: `#${r.issue.number} ${r.issue.title}`,
-				description: [this.tasks.has(r.issue.number) ? 'มีงานแล้ว' : '', ...r.issue.labels.map((l) => l.name)].filter(Boolean).join(' · ') || undefined,
-				separator: i === 0 && r.mine ? 'มอบหมายให้ฉัน' : i === firstOther ? 'issue ที่เปิดอยู่ทั้งหมด' : undefined
+				description: [this.tasks.has(r.issue.number) ? t('adeTasks.issues.hasTask') : '', ...r.issue.labels.map((l) => l.name)].filter(Boolean).join(' · ') || undefined,
+				separator: i === 0 && r.mine ? t('adeTasks.issues.assignedToMe') : i === firstOther ? t('adeTasks.issues.allOpen') : undefined
 			}))
 		});
 		const issue = picked && rows.find((r) => String(r.issue.number) === picked.id)?.issue;
@@ -139,8 +140,8 @@ class AdeIssues {
 		const current = defaultBase();
 		const branches = adeTasks.branches.length ? [current, ...adeTasks.branches.filter((b) => b !== current)] : [''];
 		const base = await quick.choose({
-			placeholder: `แตกจาก branch ไหน (งาน #${issue.number})`,
-			items: branches.map((b) => ({ id: b, label: b || 'HEAD', description: b === current ? 'branch ปัจจุบัน' : undefined }))
+			placeholder: t('adeTasks.issues.basePlaceholder', { ref: `#${issue.number}` }),
+			items: branches.map((b) => ({ id: b, label: b || 'HEAD', description: b === current ? t('adeTasks.issues.currentBranch') : undefined }))
 		});
 		if (!base) return;
 		const preferred = defaultRunMode();
@@ -149,7 +150,7 @@ class AdeIssues {
 			{ id: 'timeline', label: 'Timeline' }
 		];
 		const mode = await quick.choose({
-			placeholder: 'วิธีรัน agent',
+			placeholder: t('adeTasks.issues.runModePlaceholder'),
 			items: [...modes].sort((a, b) => Number(b.id === preferred) - Number(a.id === preferred))
 		});
 		if (!mode) return;

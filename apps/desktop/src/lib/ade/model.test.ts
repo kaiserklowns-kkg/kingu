@@ -291,7 +291,7 @@ describe('editor keys', () => {
 		expect(isDiffKey(key)).toBe(true);
 		expect(parseTaskDiffKey(key)).toEqual({ slug: 'fix', rel: 'src/a b.ts' });
 		expect(fileOf(key)).toBe('.kingu/worktrees/fix/src/a b.ts');
-		expect(tabLabel(key)).toBe('a b.ts (task fix)');
+		expect(tabLabel(key)).toBe('a b.ts (งาน fix)');
 		expect(remapPath(key, '.kingu', 'x')).toBeNull();
 		expect(parseTaskDiffKey('diff:src/a.ts')).toBeNull();
 		expect(fileOf('diff:src/a.ts')).toBe('src/a.ts');

@@ -11,6 +11,8 @@
 // Wall-clock times: a time skipped by a DST jump runs at the shifted time (02:30 → 03:30); a time
 // that occurs twice when clocks fall back runs once (the first). `every` counts real elapsed time.
 
+import { t, type MessageKey } from '#lib/i18n/index.ts';
+
 export const MIN_INTERVAL_MS = 15 * 60_000;
 const MAX_INTERVAL_MS = 7 * 24 * 60 * 60_000;
 /** A date matching dom/month/dow at least this often, else the schedule never runs (Feb 29 needs 8 years around 2100). */
@@ -35,7 +37,7 @@ const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const range = (lo: number, hi: number) => Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
 
-const HELP = 'ใช้ได้: daily 09:00, weekdays 09:00, weekly mon,thu 09:00, every 30m, every 2h หรือ cron 5 ช่อง (นาที ชั่วโมง วัน เดือน วันในสัปดาห์)';
+const help = () => t('adeTasks.schedule.help');
 
 class ScheduleError extends Error {}
 const fail = (msg: string): never => {
@@ -44,10 +46,10 @@ const fail = (msg: string): never => {
 
 function parseTime(text: string): [number, number] {
 	const m = /^(\d{1,2}):(\d{2})$/.exec(text);
-	if (!m) fail(`เวลา "${text}" ต้องอยู่ในรูป HH:MM เช่น 09:00`);
+	if (!m) fail(t('adeTasks.schedule.timeFormat', { text }));
 	const h = Number(m![1]);
 	const min = Number(m![2]);
-	if (h > 23 || min > 59) fail(`เวลา "${text}" ไม่มีจริง (ชั่วโมง 0-23 นาที 0-59)`);
+	if (h > 23 || min > 59) fail(t('adeTasks.schedule.timeInvalid', { text }));
 	return [h, min];
 }
 
@@ -55,36 +57,38 @@ function atTime(h: number, min: number, dow: number[]): Schedule {
 	return { kind: 'cron', minute: [min], hour: [h], dom: range(1, 31), month: range(1, 12), dow, either: false };
 }
 
-type FieldSpec = { name: string; lo: number; hi: number; names?: string[]; namesFrom?: number };
+/** `name`: the field's catalog key, translated when an error names it. */
+type FieldSpec = { name: MessageKey & `adeTasks.schedule.field.${string}`; lo: number; hi: number; names?: string[]; namesFrom?: number };
 const FIELDS: FieldSpec[] = [
-	{ name: 'นาที', lo: 0, hi: 59 },
-	{ name: 'ชั่วโมง', lo: 0, hi: 23 },
-	{ name: 'วันที่', lo: 1, hi: 31 },
-	{ name: 'เดือน', lo: 1, hi: 12, names: MONTHS, namesFrom: 1 },
+	{ name: 'adeTasks.schedule.field.minute', lo: 0, hi: 59 },
+	{ name: 'adeTasks.schedule.field.hour', lo: 0, hi: 23 },
+	{ name: 'adeTasks.schedule.field.day', lo: 1, hi: 31 },
+	{ name: 'adeTasks.schedule.field.month', lo: 1, hi: 12, names: MONTHS, namesFrom: 1 },
 	// 7 is Sunday too.
-	{ name: 'วันในสัปดาห์', lo: 0, hi: 7, names: DAYS, namesFrom: 0 }
+	{ name: 'adeTasks.schedule.field.weekday', lo: 0, hi: 7, names: DAYS, namesFrom: 0 }
 ];
+const fieldName = (f: FieldSpec) => t(f.name);
 
 function parseValue(text: string, f: FieldSpec): number {
 	if (/^\d+$/.test(text)) {
 		const n = Number(text);
-		if (n < f.lo || n > f.hi) fail(`ช่อง${f.name}: ${n} อยู่นอกช่วง ${f.lo}-${f.hi}`);
+		if (n < f.lo || n > f.hi) fail(t('adeTasks.schedule.outOfRange', { field: fieldName(f), value: n, lo: f.lo, hi: f.hi }));
 		return n;
 	}
 	const i = f.names?.indexOf(text) ?? -1;
-	if (i < 0) fail(`ช่อง${f.name}: ไม่รู้จัก "${text}"`);
+	if (i < 0) fail(t('adeTasks.schedule.unknownValue', { field: fieldName(f), text }));
 	return i + f.namesFrom!;
 }
 
 function parseField(text: string, f: FieldSpec): number[] {
 	const out = new Set<number>();
 	for (const item of text.split(',')) {
-		if (!item) fail(`ช่อง${f.name}: มีจุลภาคเกิน`);
+		if (!item) fail(t('adeTasks.schedule.extraComma', { field: fieldName(f) }));
 		const [span, stepText, extra] = item.split('/');
-		if (extra !== undefined) fail(`ช่อง${f.name}: "${item}" ไม่ถูกต้อง`);
+		if (extra !== undefined) fail(t('adeTasks.schedule.badItem', { field: fieldName(f), item }));
 		let step = 1;
 		if (stepText !== undefined) {
-			if (!/^\d+$/.test(stepText) || Number(stepText) < 1) fail(`ช่อง${f.name}: ระยะห่าง "${stepText}" ต้องเป็นจำนวนเต็มบวก`);
+			if (!/^\d+$/.test(stepText) || Number(stepText) < 1) fail(t('adeTasks.schedule.badStep', { field: fieldName(f), step: stepText }));
 			step = Number(stepText);
 		}
 		let lo: number;
@@ -92,9 +96,9 @@ function parseField(text: string, f: FieldSpec): number[] {
 		if (span === '*') [lo, hi] = [f.lo, f.hi];
 		else if (span.includes('-')) {
 			const [a, b, more] = span.split('-');
-			if (more !== undefined || !a || !b) fail(`ช่อง${f.name}: ช่วง "${span}" ไม่ถูกต้อง`);
+			if (more !== undefined || !a || !b) fail(t('adeTasks.schedule.badRange', { field: fieldName(f), range: span }));
 			[lo, hi] = [parseValue(a, f), parseValue(b, f)];
-			if (lo > hi) fail(`ช่อง${f.name}: ช่วง "${span}" ต้องเรียงจากน้อยไปมาก`);
+			if (lo > hi) fail(t('adeTasks.schedule.rangeOrder', { field: fieldName(f), range: span }));
 		} else {
 			lo = parseValue(span, f);
 			// `5/15`: from 5 to the end of the range, every 15.
@@ -113,24 +117,24 @@ function parseCron(parts: string[]): Schedule {
 	const gaps = minute.slice(1).map((m, i) => m - minute[i]);
 	const adjacentHours = hour.some((h) => hour.includes((h + 1) % 24));
 	if (adjacentHours) gaps.push(60 - minute[minute.length - 1] + minute[0]);
-	if (gaps.some((g) => g < 15)) fail('cron นี้รันถี่เกินไป: แต่ละรอบต้องห่างกันอย่างน้อย 15 นาที');
+	if (gaps.some((g) => g < 15)) fail(t('adeTasks.schedule.tooOften'));
 	return { kind: 'cron', minute, hour, dom, month, dow, either };
 }
 
 function parseInner(text: string): Schedule {
 	const words = text.trim().toLowerCase().split(/\s+/).filter(Boolean);
-	if (!words.length) fail(`ยังไม่ได้ใส่ตารางเวลา — ${HELP}`);
+	if (!words.length) fail(t('adeTasks.schedule.empty', { help: help() }));
 	const [head, ...rest] = words;
 	if (head === 'daily' || head === 'weekdays') {
-		if (rest.length !== 1) fail(`"${head}" ต้องตามด้วยเวลา เช่น ${head} 09:00`);
+		if (rest.length !== 1) fail(t('adeTasks.schedule.needsTime', { head }));
 		const [h, m] = parseTime(rest[0]);
 		return atTime(h, m, head === 'daily' ? range(0, 6) : range(1, 5));
 	}
 	if (head === 'weekly') {
-		if (rest.length !== 2) fail('"weekly" ต้องตามด้วยวันและเวลา เช่น weekly mon,thu 09:00');
+		if (rest.length !== 2) fail(t('adeTasks.schedule.weeklyNeeds'));
 		const days = rest[0].split(',').map((d) => {
 			const i = DAYS.indexOf(d);
-			if (i < 0) fail(`ไม่รู้จักวัน "${d}" (ใช้ mon tue wed thu fri sat sun)`);
+			if (i < 0) fail(t('adeTasks.schedule.unknownDay', { day: d }));
 			return i;
 		});
 		const [h, m] = parseTime(rest[1]);
@@ -138,18 +142,18 @@ function parseInner(text: string): Schedule {
 	}
 	if (head === 'every') {
 		const m = rest.length === 1 ? /^(\d+)(m|h)$/.exec(rest[0]) : null;
-		if (!m) fail('"every" ต้องตามด้วยจำนวนและหน่วย เช่น every 30m หรือ every 2h');
+		if (!m) fail(t('adeTasks.schedule.everyNeeds'));
 		const ms = Number(m![1]) * (m![2] === 'h' ? 3_600_000 : 60_000);
-		if (ms < MIN_INTERVAL_MS) fail('ระยะห่างสั้นที่สุดคือ 15 นาที (every 15m)');
-		if (ms > MAX_INTERVAL_MS) fail('ระยะห่างยาวที่สุดคือ 7 วัน (every 168h) — ใช้ weekly แทน');
+		if (ms < MIN_INTERVAL_MS) fail(t('adeTasks.schedule.minInterval'));
+		if (ms > MAX_INTERVAL_MS) fail(t('adeTasks.schedule.maxInterval'));
 		return { kind: 'every', ms };
 	}
 	if (words.length === 5 && /^[\d*]/.test(head)) {
 		const s = parseCron(words);
-		if (!nextRun(s, new Date(2000, 0, 1))) fail('cron นี้ไม่มีวันที่ตรงเลย (เช่น 31 กุมภาพันธ์)');
+		if (!nextRun(s, new Date(2000, 0, 1))) fail(t('adeTasks.schedule.noDate'));
 		return s;
 	}
-	return fail(`ไม่รู้จักตารางเวลา "${text.trim()}" — ${HELP}`);
+	return fail(t('adeTasks.schedule.unknown', { text: text.trim(), help: help() }));
 }
 
 export function parseSchedule(text: string): ParseResult {
