@@ -185,7 +185,10 @@
 						<Icon name="cpu" size={13} />
 						<span class="min-w-0 flex-1 truncate" title="pid {p.pid}">{p.name}</span>
 						<span class="text-xs text-(--vscode-descriptionForeground) tabular-nums">{formatBytes(p.rss_bytes)}</span>
-						{#if confirming === `pid:${p.pid}`}
+						{#if p.name === 'kingu-ptyd'}
+							<!-- The terminal daemon holds every terminal; stop terminals one by one instead. -->
+							<span class="w-6"></span>
+						{:else if confirming === `pid:${p.pid}`}
 							<button class="rounded-md bg-(--vscode-errorForeground) px-2 text-xs leading-5 text-white" onclick={() => (system.kill(p.pid, p.name), (confirming = null))}>ยืนยัน</button>
 						{:else}
 							<button class="{ROW_BTN} opacity-0 group-hover:opacity-100 focus-visible:opacity-100" aria-label="หยุด {p.name}" title="หยุดโปรเซสนี้" onclick={() => (confirming = `pid:${p.pid}`)}><Icon name="stopProcess" size={14} /></button>
