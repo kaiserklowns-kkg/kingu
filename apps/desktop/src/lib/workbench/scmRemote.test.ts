@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { GitStatus } from '#lib/workbench/scm.ts';
 import {
-	AUTH_FAILED,
 	CREATE_BRANCH,
 	CREATE_BRANCH_FROM,
 	branchLabel,
@@ -112,7 +111,8 @@ test('stash items', () => {
 });
 
 test('auth errors are recognised by the Rust message prefix', () => {
-	expect(isAuthError(`${AUTH_FAILED}: ...\nfatal: Authentication failed`)).toBe(true);
+	expect(isAuthError('Authentication with the remote failed: ...\nfatal: Authentication failed')).toBe(true);
+	expect(isAuthError('ยืนยันตัวตนกับ remote ไม่สำเร็จ: ...')).toBe(true);
 	expect(isAuthError('git fetch ไม่สำเร็จ')).toBe(false);
 });
 

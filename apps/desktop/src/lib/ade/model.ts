@@ -184,6 +184,30 @@ export function removeTask(list: TaskMeta[], slug: string): TaskMeta[] {
 	return list.filter((t) => t.slug !== slug);
 }
 
+/** A change Rust's `tasks_update` applies to tasks.json as it is on disk (agent/tasks.rs `TaskChange`). */
+export type TaskChange =
+	| { kind: 'upsert'; task: TaskMeta }
+	| { kind: 'patch'; slug: string; fields: Partial<Omit<TaskMeta, 'slug'>> }
+	| { kind: 'remove'; slug: string };
+
+/**
+ * What turned `prev` into `next`, task by task: new or changed tasks are upserted, missing ones
+ * removed. Sent instead of the whole list, so another window's edits to other tasks survive.
+ */
+export function taskChanges(prev: readonly TaskMeta[], next: readonly TaskMeta[]): TaskChange[] {
+	const before = new Map(prev.map((t) => [t.slug, JSON.stringify(t)]));
+	const after = new Set(next.map((t) => t.slug));
+	const out: TaskChange[] = [];
+	for (const t of next) if (before.get(t.slug) !== JSON.stringify(t)) out.push({ kind: 'upsert', task: t });
+	for (const t of prev) if (!after.has(t.slug)) out.push({ kind: 'remove', slug: t.slug });
+	return out;
+}
+
+/** `patchTask`'s fields as one patch change (with the bumped `updated_at`), for `tasks_update`. */
+export function patchChange(slug: string, patch: Partial<Omit<TaskMeta, 'slug'>>, now: number): TaskChange {
+	return { kind: 'patch', slug, fields: { ...patch, updated_at: now } };
+}
+
 /** Merges `patch` into the task and bumps `updated_at`; unknown slugs leave the list unchanged. */
 export function patchTask(list: TaskMeta[], slug: string, patch: Partial<Omit<TaskMeta, 'slug'>>, now: number): TaskMeta[] {
 	return list.map((t) => (t.slug === slug ? { ...t, ...patch, slug, updated_at: now } : t));

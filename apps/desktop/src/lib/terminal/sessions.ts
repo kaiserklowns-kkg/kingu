@@ -46,9 +46,20 @@ export function orphanKeys(live: string[], wanted: Set<string>, tag: string): st
 	return live.filter((k) => keyTag(k) === tag && !wanted.has(k));
 }
 
-/** Live PTYs this window does not show (other folders, or left over from an older build). */
+/** An agent CLI's PTY: it belongs to its task session (VS Code's Agents window owns session terminals). */
+export const isCliKey = (key: string) => key.startsWith('cli:');
+
+/**
+ * Live terminal PTYs this window does not show (other folders, or left over from an older build).
+ * Agent CLIs are not among them: another folder's agents keep working (`backgroundAgentKeys`).
+ */
 export function backgroundKeys(live: string[], wanted: Set<string>): string[] {
-	return live.filter((k) => !wanted.has(k));
+	return live.filter((k) => !wanted.has(k) && !isCliKey(k));
+}
+
+/** Agent CLI PTYs this window does not show; ended only after their own confirmation. */
+export function backgroundAgentKeys(live: string[], wanted: Set<string>): string[] {
+	return live.filter((k) => !wanted.has(k) && isCliKey(k));
 }
 
 type Storage = Pick<globalThis.Storage, 'getItem' | 'setItem'>;

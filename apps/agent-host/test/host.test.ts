@@ -8,7 +8,7 @@ import type { AgentEvent } from '../src/protocol.ts';
 type Out = { jsonrpc: '2.0'; id?: number | string | null; method?: string; params?: any; result?: unknown; error?: { code: number; message: string } };
 
 /** A fake session: for each user message, asks to run Bash once and reports the decision. */
-function fakeQuery(log: { options?: Options; prompts: string[]; interrupted: number; permission?: PermissionResult; tool?: { name: string; input: Record<string, unknown> } }): QueryFn {
+function fakeQuery(log: { options?: Options; prompts: string[]; interrupted: number; changes?: string[]; permission?: PermissionResult; tool?: { name: string; input: Record<string, unknown> } }): QueryFn {
 	return ({ prompt, options }) => {
 		log.options = options;
 		const gen = (async function* () {
@@ -42,6 +42,12 @@ function fakeQuery(log: { options?: Options; prompts: string[]; interrupted: num
 		return Object.assign(gen, {
 			interrupt: async () => {
 				log.interrupted++;
+			},
+			setModel: async (model?: string) => {
+				(log.changes ??= []).push(`model:${model}`);
+			},
+			setPermissionMode: async (mode: string) => {
+				(log.changes ??= []).push(`mode:${mode}`);
 			}
 		});
 	};
@@ -147,6 +153,38 @@ describe('agent host protocol', () => {
 		await call(2, 'interrupt', { runId: 1 });
 		expect(log.interrupted).toBe(1);
 		expect(log.permission?.behavior).toBe('deny');
+	});
+
+	test('set_options changes the live session model and permission mode', async () => {
+		const { log, event, call } = setup();
+		await call(1, 'start', { runId: 1, cwd: '/w', prompt: 'x' });
+		await event('permission_request');
+		expect((await call(2, 'set_options', { runId: 1, model: 'claude-sonnet-5' })).result).toEqual({ model: 'claude-sonnet-5', permissionMode: null });
+		expect((await call(3, 'set_options', { runId: 1, permissionMode: 'plan' })).result).toEqual({ model: null, permissionMode: 'plan' });
+		expect(log.changes).toEqual(['model:claude-sonnet-5', 'mode:plan']);
+		expect((await call(4, 'set_options', { runId: 1, permissionMode: 'bypassPermissions' })).error?.message).toContain('permission mode');
+		expect((await call(5, 'set_options', { runId: 1 })).error?.message).toContain('nothing to change');
+		expect((await call(6, 'set_options', { runId: 9, model: 'm' })).error?.code).toBe(1);
+		expect(log.changes).toHaveLength(2);
+	});
+
+	test('set_options says so when the SDK cannot change options', async () => {
+		const out: Out[] = [];
+		const host = new AgentHost({
+			// A session that waits on its inbox and has no setModel/setPermissionMode.
+			query: ({ prompt }) =>
+				Object.assign(
+					(async function* () {
+						for await (const _ of prompt) yield { type: 'system', subtype: 'status' };
+					})(),
+					{ interrupt: async () => {} }
+				),
+			write: (m) => out.push(JSON.parse(JSON.stringify(m)))
+		});
+		await host.handleLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'start', params: { runId: 1, cwd: '/w', prompt: 'x' } }));
+		const err = await host.dispatch('set_options', { runId: 1, model: 'm' }).catch((e: Error) => e.message);
+		expect(String(err)).toContain('cannot change the model');
+		await host.dispatch('shutdown', null);
 	});
 
 	test('passes model and resume through', async () => {

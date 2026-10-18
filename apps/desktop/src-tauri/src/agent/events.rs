@@ -31,21 +31,36 @@ fn yes() -> bool {
 pub enum AgentEvent {
   /// Session start (`system`/`init`).
   System { subtype: String, session_id: Option<String>, model: Option<String> },
-  Message { role: String, text: String },
-  /// Streaming chunk of assistant text or thinking (`block`); the full `Message`/`Thinking` follows.
+  /// `parent_tool_use_id` (also on `Thinking`, `ToolUse`, `ToolResult`): set on a subagent's own
+  /// events, the id of the Task/Agent call that started it (the chat nests them under that call).
+  Message {
+    role: String,
+    text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent_tool_use_id: Option<String>,
+  },
+  /// Streaming chunk of the main agent's text or thinking (`block`); the full `Message`/`Thinking` follows.
   Delta { block: String, text: String },
-  Thinking { text: String },
+  Thinking {
+    text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent_tool_use_id: Option<String>,
+  },
   ToolUse {
     id: String,
     name: String,
     #[serde(default)]
     input: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent_tool_use_id: Option<String>,
   },
   ToolResult {
     tool_use_id: String,
     content: String,
     #[serde(default)]
     is_error: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent_tool_use_id: Option<String>,
   },
   Result {
     subtype: String,
@@ -75,6 +90,25 @@ pub enum AgentEvent {
   },
   /// A permission request was answered (`allow`/`allow_always`/`deny`) or `cancelled`.
   PermissionResolved { request_id: String, decision: String },
+  /// A file's content just before an edit tool changed it (the host's PreToolUse hook). Rust
+  /// stores it in the chat's snapshot store (`chat_edits`) and never passes it on.
+  FileSnapshot {
+    tool_use_id: String,
+    tool: String,
+    path: String,
+    existed: bool,
+    #[serde(default)]
+    size: u64,
+    #[serde(default)]
+    content_b64: Option<String>,
+    #[serde(default)]
+    skipped: Option<String>,
+  },
+  /// Added by Rust after a chat's user message: that message is request `request` of the chat,
+  /// the checkpoint "Restore checkpoint" goes back to. Kept in the transcript.
+  Checkpoint { request: u32 },
+  /// Added by Rust: the chat's working set changed (an edit was recorded, a turn ended). Live only.
+  EditsChanged { request: Option<u32> },
   Error { message: String },
   /// Output the host did not understand, passed through untouched.
   Raw { line: String },
@@ -124,6 +158,20 @@ mod tests {
   }
 
   #[test]
+  fn keeps_a_subagents_parent_call() {
+    for v in [
+      json!({"kind": "tool_use", "id": "t2", "name": "Grep", "input": {"pattern": "x"}, "parent_tool_use_id": "task-1"}),
+      json!({"kind": "tool_result", "tool_use_id": "t2", "content": "a.ts:1", "is_error": false, "parent_tool_use_id": "task-1"}),
+      json!({"kind": "message", "role": "assistant", "text": "พบแล้ว", "parent_tool_use_id": "task-1"}),
+      json!({"kind": "thinking", "text": "hm", "parent_tool_use_id": "task-1"}),
+    ] {
+      assert_eq!(serde_json::to_value(AgentEvent::from_host(v.clone())).unwrap(), v);
+    }
+    let ev = AgentEvent::from_host(json!({"kind": "message", "role": "assistant", "text": "hi"}));
+    assert!(matches!(ev, AgentEvent::Message { parent_tool_use_id: None, .. }));
+  }
+
+  #[test]
   fn unknown_or_malformed_events_become_raw() {
     for v in [json!({"kind": "nope"}), json!({"kind": "message"}), json!("x"), json!({"no": "kind"})] {
       assert_eq!(AgentEvent::from_host(v.clone()), AgentEvent::Raw { line: v.to_string() });
@@ -132,7 +180,7 @@ mod tests {
 
   #[test]
   fn serializes_with_a_kind_tag() {
-    let v = serde_json::to_value(AgentEvent::ToolUse { id: "1".into(), name: "Bash".into(), input: json!({}) }).unwrap();
+    let v = serde_json::to_value(AgentEvent::ToolUse { id: "1".into(), name: "Bash".into(), input: json!({}), parent_tool_use_id: None }).unwrap();
     assert_eq!(v, json!({"kind":"tool_use","id":"1","name":"Bash","input":{}}));
     let v = serde_json::to_value(AgentEvent::Exit { code: Some(0), signal: None, stopped: false }).unwrap();
     assert_eq!(v, json!({"kind":"exit","code":0,"signal":null,"stopped":false}));

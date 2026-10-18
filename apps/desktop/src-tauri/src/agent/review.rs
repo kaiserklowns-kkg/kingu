@@ -4,11 +4,14 @@
 //! `--literal-pathspecs`, paths after `--`); revisions are checked with `git::check_rev` and
 //! resolved to commit ids before use.
 
+use crate::i18n::msg::AgentMsg;
+use crate::tr;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::git::{self, check_rel, check_rev};
+use crate::git_queue::{self, Scope};
 
 use super::worktree::{task_branch, validate_slug, worktree_path};
 
@@ -259,6 +262,7 @@ pub fn reject(dir: &Path, base: &str, paths: &[String]) -> Result<(), String> {
   for p in paths {
     check_rel(dir, p)?;
   }
+  let _queue = git_queue::lock(dir, Scope::Worktree, "restore (reject)")?;
   for p in paths {
     if git::run(dir, &["cat-file", "-e", &format!("{mb}:./{p}")]).is_ok() {
       git::run(dir, &["restore", &format!("--source={mb}"), "--staged", "--worktree", "--", p])?;
@@ -275,6 +279,8 @@ pub fn reject(dir: &Path, base: &str, paths: &[String]) -> Result<(), String> {
 
 /// Stages everything in the worktree and commits it.
 pub fn commit_all(dir: &Path, message: &str) -> Result<(), String> {
+  // One queued operation: nothing else may stage or commit between the add and the commit.
+  let _queue = git_queue::lock(dir, Scope::Repository, "commit")?;
   git::stage(dir, &[".".into()])?;
   git::commit(dir, message, &git::CommitOptions::default())
 }
@@ -296,20 +302,23 @@ pub fn merge_local(repo: &Path, slug: &str, base: &str, merge_commit: bool) -> R
     return Err("cannot merge a task into its own branch".into());
   }
   if !clean(&dir, true)? {
-    return Err(format!("{slug}: มีการเปลี่ยนแปลงที่ยังไม่ commit, commit หรือทิ้งก่อน merge"));
+    return Err(tr!(AgentMsg::MergeDirty, slug));
   }
+  let label = format!("merge {branch}");
+  let _queue = git_queue::lock(repo, Scope::Refs, &label)?;
   let task = resolve_commit(repo, &format!("refs/heads/{branch}"))?;
   let old = resolve_commit(repo, &format!("refs/heads/{base}"))?;
   if count(repo, &[&task, &format!("^{old}")])? == 0 {
-    return Err(format!("{branch}: ไม่มี commit ใหม่ให้ merge เข้า {base}"));
+    return Err(tr!(AgentMsg::NothingToMerge, branch, base));
   }
   let ff_possible = git::run(repo, &["merge-base", "--is-ancestor", &old, &task]).is_ok();
   let target = super::worktree::list(repo)?.into_iter().find(|w| w.branch.as_deref() == Some(base) && !w.bare);
   match target {
     Some(w) => {
       let at = PathBuf::from(&w.path);
+      let _checkout = git_queue::lock(&at, Scope::Repository, &label)?;
       if !clean(&at, false)? {
-        return Err(format!("{}: {base} มีการแก้ไขที่ยังไม่ commit", w.path));
+        return Err(tr!(AgentMsg::BaseCheckoutDirty, path = w.path, base));
       }
       let msg = format!("Merge {branch} into {base}");
       let args: Vec<&str> =
@@ -322,8 +331,8 @@ pub fn merge_local(repo: &Path, slug: &str, base: &str, merge_commit: bool) -> R
       log::info!("merged {branch} into {base} at {} ({commit})", w.path);
       Ok(MergeResult { fast_forward: commit == task, commit, checkout: Some(w.path) })
     }
-    None if merge_commit => Err(format!("{base} ไม่ได้ checkout อยู่ที่ไหน: merge commit ต้อง checkout {base} ก่อน")),
-    None if !ff_possible => Err(format!("{base} มี commit ใหม่: fast-forward ไม่ได้, checkout {base} แล้วใช้ merge commit")),
+    None if merge_commit => Err(tr!(AgentMsg::BaseNotCheckedOut, base)),
+    None if !ff_possible => Err(tr!(AgentMsg::BaseAhead, base)),
     None => {
       let msg = format!("kingu: fast-forward {base} to {branch}");
       git::run(repo, &["update-ref", "-m", &msg, &format!("refs/heads/{base}"), &task, &old])?;
@@ -382,9 +391,9 @@ pub fn pr_create(gh: &Path, dir: &Path, slug: &str, base: &str, title: &str, bod
   if title.trim().is_empty() {
     return Err("PR title is empty".into());
   }
-  git::run(dir, &["remote", "get-url", "origin"]).map_err(|_| "ไม่มี remote ชื่อ origin".to_owned())?;
+  git::run(dir, &["remote", "get-url", "origin"]).map_err(|_| tr!(AgentMsg::NoOrigin))?;
   let branch = task_branch(dir, slug)?;
-  git::run(dir, &["push", "-u", "origin", &format!("refs/heads/{branch}:refs/heads/{branch}")])?;
+  git_queue::with(dir, Scope::Refs, "push", || git::run(dir, &["push", "-u", "origin", &format!("refs/heads/{branch}:refs/heads/{branch}")]))?;
   let out = crate::shell_env::command(gh)
     .current_dir(dir)
     .args(pr_create_args(base, &branch, title, body, draft))
@@ -743,7 +752,7 @@ mod tests {
   #[test]
   fn commits_and_fast_forwards_main_checkout() {
     let (_tmp, repo, wt) = setup();
-    assert!(merge_local(&repo, "t", "main", false).unwrap_err().contains("ไม่มี commit"));
+    assert!(merge_local(&repo, "t", "main", false).unwrap_err().contains("no new commits"));
     write(&wt, "feature.txt", "f\n");
     assert!(merge_local(&repo, "t", "main", false).unwrap_err().contains("commit"), "dirty worktree refused");
     commit_all(&wt, "add feature").unwrap();

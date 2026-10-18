@@ -7,6 +7,7 @@
 	// failures first with the failed log excerpt, then the comments with a composer. Polls every
 	// 60 seconds while shown (doubling to 120 when nothing changes), and on window focus.
 	import { invoke } from '@tauri-apps/api/core';
+	import { isRustError } from '#lib/i18n/rustErrors.ts';
 	import Icon from '#lib/workbench/Icon.svelte';
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
 	import type { MenuNode } from '#lib/workbench/menus.ts';
@@ -44,7 +45,7 @@
 	});
 
 	/** The backend's "gh is not installed" error. */
-	const ghMissing = $derived(error.includes('ติดตั้ง GitHub CLI') || error.includes('ไม่พบ gh'));
+	const ghMissing = $derived(isRustError(error, 'ghMissing'));
 	const checks = $derived([...(pr?.statusCheckRollup ?? [])].sort((a, b) => checkRank(a) - checkRank(b)));
 	const counts = $derived(summarize(checks));
 	const failing = $derived(checks.filter((c) => ['failure', 'cancelled'].includes(checkKind(c))));

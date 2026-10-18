@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 
 use tauri::State;
 
+use crate::i18n::msg::WorkspaceMsg;
+use crate::tr;
 use crate::workspace::Workspace;
-
-const IDENTITY_HINT: &str = "ยังไม่ได้ตั้งชื่อผู้เขียนของ git ให้รัน git config --global user.name \"ชื่อคุณ\" และ git config --global user.email \"you@example.com\" แล้วลองใหม่";
 
 fn git(dir: &Path, args: &[&str]) -> Result<(), String> {
   crate::git::run(dir, args).map(|_| ())
@@ -36,19 +36,19 @@ pub fn init(dir: &Path, initial_commit: bool) -> Result<(), String> {
 pub fn init_with(dir: &Path, initial_commit: bool, branch: Option<&str>) -> Result<(), String> {
   let branch = branch.map(str::trim).filter(|b| !b.is_empty());
   if !dir.is_absolute() || !dir.is_dir() {
-    return Err(format!("{}: ไม่ใช่โฟลเดอร์", dir.display()));
+    return Err(tr!(WorkspaceMsg::NotAFolder, path = dir.display()));
   }
   if is_repo_root(dir) {
-    return Err(format!("{} เป็น git repository อยู่แล้ว", dir.display()));
+    return Err(tr!(WorkspaceMsg::AlreadyRepo, path = dir.display()));
   }
   let mut args = vec!["init"];
   if let Some(b) = branch {
     if b.starts_with('-') || crate::git::run(dir, &["check-ref-format", "--branch", b]).is_err() {
-      return Err(format!("ชื่อ branch เริ่มต้นไม่ถูกต้อง: {b:?} (git.defaultBranchName)"));
+      return Err(tr!(WorkspaceMsg::BadDefaultBranch, name = format!("{b:?}")));
     }
     args.extend(["-b", b]);
   }
-  git(dir, &args).map_err(|e| format!("git init ไม่สำเร็จ: {e}"))?;
+  git(dir, &args).map_err(|e| tr!(WorkspaceMsg::InitFailed, detail = e))?;
   if !initial_commit {
     return Ok(());
   }
@@ -58,9 +58,9 @@ pub fn init_with(dir: &Path, initial_commit: bool, branch: Option<&str>) -> Resu
     let _ = std::fs::remove_dir_all(dir.join(".git"));
     let lower = e.to_lowercase();
     return Err(if lower.contains("please tell me who you are") || lower.contains("user.name") || lower.contains("user.email") {
-      IDENTITY_HINT.to_owned()
+      tr!(WorkspaceMsg::IdentityHint)
     } else {
-      format!("สร้าง commit แรกไม่สำเร็จ: {e}")
+      tr!(WorkspaceMsg::FirstCommitFailed, detail = e)
     });
   }
   Ok(())
@@ -69,10 +69,10 @@ pub fn init_with(dir: &Path, initial_commit: bool, branch: Option<&str>) -> Resu
 /// A project folder name: one path segment, not `.`/`..`, no control characters.
 fn check_name(name: &str) -> Result<(), String> {
   if name.is_empty() {
-    return Err("ใส่ชื่อโปรเจกต์".into());
+    return Err(tr!(WorkspaceMsg::NameRequired));
   }
   if name.contains(['/', '\\']) || name == "." || name == ".." || name.starts_with('-') || name.chars().any(char::is_control) || name.len() > 255 {
-    return Err(format!("ชื่อโปรเจกต์ใช้ไม่ได้: {name:?} (ห้ามมี / หรือเป็น . / ..)"));
+    return Err(tr!(WorkspaceMsg::BadName, name = format!("{name:?}")));
   }
   Ok(())
 }
@@ -83,20 +83,20 @@ pub fn create(parent: &Path, name: &str) -> Result<PathBuf, String> {
   let name = name.trim();
   check_name(name)?;
   if !parent.is_absolute() {
-    return Err("โฟลเดอร์ที่จะสร้างโปรเจกต์ต้องเป็น path เต็ม".into());
+    return Err(tr!(WorkspaceMsg::ParentNotAbsolute));
   }
-  std::fs::create_dir_all(parent).map_err(|e| format!("สร้างโฟลเดอร์ {} ไม่ได้: {e}", parent.display()))?;
+  std::fs::create_dir_all(parent).map_err(|e| tr!(WorkspaceMsg::CreateFolderFailed, path = parent.display(), detail = e))?;
   let target = parent.join(name);
   let created = match std::fs::create_dir(&target) {
     Ok(()) => true,
     Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
       let empty = target.is_dir() && !target.is_symlink() && std::fs::read_dir(&target).is_ok_and(|mut d| d.next().is_none());
       if !empty {
-        return Err(format!("มี \"{name}\" อยู่ที่นี่แล้วและไม่ว่าง"));
+        return Err(tr!(WorkspaceMsg::NotEmpty, name));
       }
       false
     }
-    Err(e) => return Err(format!("สร้างโฟลเดอร์ {} ไม่ได้: {e}", target.display())),
+    Err(e) => return Err(tr!(WorkspaceMsg::CreateFolderFailed, path = target.display(), detail = e)),
   };
   if let Err(e) = init(&target, true) {
     if created {
@@ -139,7 +139,7 @@ mod tests {
     let p = create(&parent, " demo ").unwrap();
     assert_eq!(p, parent.join("demo"));
     assert_eq!(log(&p).trim(), "Initial commit");
-    assert!(create(&parent, "demo").unwrap_err().contains("ไม่ว่าง"));
+    assert!(create(&parent, "demo").unwrap_err().contains("not empty"));
     std::fs::create_dir(parent.join("empty")).unwrap();
     assert!(create(&parent, "empty").is_ok());
     for bad in ["", "a/b", "..", ".", "-x"] {
@@ -157,7 +157,7 @@ mod tests {
     init(&dir, false).unwrap();
     assert!(dir.join(".git").is_dir());
     assert!(crate::git::run(&dir, &["rev-parse", "--verify", "HEAD"]).is_err(), "no commit without initial_commit");
-    assert!(init(&dir, false).unwrap_err().contains("อยู่แล้ว"));
+    assert!(init(&dir, false).unwrap_err().contains("already a git repository"));
 
     let trunk = tmp.path().join("trunk");
     std::fs::create_dir(&trunk).unwrap();

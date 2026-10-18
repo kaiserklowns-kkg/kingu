@@ -3,6 +3,9 @@
 //! whatever is checked out there, so changing the prefix never loses an existing task.
 //! Drives the `git` CLI directly (no shell), so arguments are never re-parsed.
 
+use crate::git_queue::{self, Scope};
+use crate::i18n::msg::AgentMsg;
+use crate::tr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -53,7 +56,7 @@ pub fn validate_prefix(prefix: &str) -> Result<(), String> {
     && !prefix.contains("..")
     && !prefix.contains("//")
     && !prefix.contains("/.");
-  if ok { Ok(()) } else { Err(format!("branch prefix \"{prefix}\" ไม่ถูกต้อง (ใช้ได้เฉพาะ a-z A-Z 0-9 . _ / -)")) }
+  if ok { Ok(()) } else { Err(tr!(AgentMsg::BadBranchPrefix, prefix)) }
 }
 
 /// The branch checked out in a worktree (`None`: detached).
@@ -70,7 +73,7 @@ pub fn current_branch(dir: &Path) -> Result<Option<String>, String> {
 
 /// The task's branch, refusing a detached worktree (nothing to merge, push or delete).
 pub fn task_branch(dir: &Path, slug: &str) -> Result<String, String> {
-  current_branch(dir)?.ok_or_else(|| format!("worktree {slug} ไม่ได้อยู่บน branch (detached HEAD)"))
+  current_branch(dir)?.ok_or_else(|| tr!(AgentMsg::DetachedWorktree, slug))
 }
 
 fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
@@ -106,8 +109,9 @@ pub fn create(repo: &Path, slug: &str, base: Option<&str>, prefix: Option<&str>)
     return Err(format!("{}: already exists", path.display()));
   }
   let branch = format!("{prefix}{slug}");
-  git(repo, &["check-ref-format", "--branch", &branch]).map_err(|_| format!("{branch}: ชื่อ branch ไม่ถูกต้อง"))?;
+  git(repo, &["check-ref-format", "--branch", &branch]).map_err(|_| tr!(AgentMsg::BadBranchName, branch))?;
   let path_str = path.to_str().ok_or("worktree path is not valid UTF-8")?;
+  let _queue = git_queue::lock(repo, Scope::Refs, "worktree add")?;
   git(repo, &["worktree", "add", "-b", &branch, "--", path_str, commit])?;
   log::info!("worktree {slug} created at {path_str} from {base} ({commit})");
   list(repo)?
@@ -134,6 +138,7 @@ pub fn refresh_base(repo: &Path, base: &str, timeout: std::time::Duration) -> Re
     return Ok(None);
   }
   let cancel = std::sync::atomic::AtomicBool::new(false);
+  let _queue = git_queue::lock(repo, Scope::Refs, "fetch (refresh base)")?;
   crate::git_remote::net_env(repo, &["fetch", "--quiet", "--no-tags", "--", &remote, &merge], &[], &cancel, timeout)?;
   let fetched = git(repo, &["rev-parse", "--verify", "--quiet", "FETCH_HEAD^{commit}"])?.trim().to_owned();
   let local = git(repo, &["rev-parse", &format!("refs/heads/{base}")])?.trim().to_owned();
@@ -141,14 +146,15 @@ pub fn refresh_base(repo: &Path, base: &str, timeout: std::time::Duration) -> Re
     return Ok(None);
   }
   if git(repo, &["merge-base", "--is-ancestor", &local, &fetched]).is_err() {
-    return Ok(Some(format!("{base} มี commit ที่ไม่อยู่บน {remote} จึงไม่ได้อัปเดต (fast-forward ไม่ได้)")));
+    return Ok(Some(tr!(AgentMsg::BaseNotFastForward, base, remote)));
   }
   let short = &fetched[..fetched.len().min(8)];
   match list(repo)?.into_iter().find(|w| w.branch.as_deref() == Some(base) && !w.bare) {
     Some(w) => {
       let at = Path::new(&w.path);
+      let _checkout = git_queue::lock(at, Scope::Repository, "merge --ff-only (refresh base)")?;
       if !git(at, &["status", "--porcelain", "--untracked-files=no"])?.trim().is_empty() {
-        return Ok(Some(format!("{base} มีการแก้ไขที่ยังไม่ commit ที่ {} จึงไม่ได้อัปเดต", w.path)));
+        return Ok(Some(tr!(AgentMsg::BaseDirty, base, path = w.path)));
       }
       git(at, &["merge", "--ff-only", "--quiet", &fetched])?;
     }
@@ -157,7 +163,7 @@ pub fn refresh_base(repo: &Path, base: &str, timeout: std::time::Duration) -> Re
     }
   }
   log::info!("refreshed {base} from {remote} to {fetched}");
-  Ok(Some(format!("อัปเดต {base} จาก {remote} แล้ว ({short})")))
+  Ok(Some(tr!(AgentMsg::BaseUpdated, base, remote, short)))
 }
 
 /// What removing a task does with its branch (`kingu.worktree.deleteBranchOnRemove`).
@@ -188,6 +194,9 @@ pub fn remove(repo: &Path, slug: &str, force: bool, branch: DeleteBranch) -> Res
   let path = worktree_path(repo, slug);
   let path_str = path.to_str().ok_or("worktree path is not valid UTF-8")?;
   let name = if branch == DeleteBranch::Keep { None } else { current_branch(&path).ok().flatten() };
+  let _queue = git_queue::lock(repo, Scope::Refs, "worktree remove")?;
+  // Nothing may be staging or rejecting inside the worktree while it goes away.
+  let _tree = if path.exists() { Some(git_queue::lock(&path, Scope::Worktree, "worktree remove")?) } else { None };
   let mut args = vec!["worktree", "remove"];
   if force {
     args.push("--force");
@@ -387,7 +396,7 @@ mod tests {
     // main checked out in the clone: fast-forwarded there.
     commit(&origin, "a.txt");
     let new_main = git(&origin, &["rev-parse", "main"]).unwrap();
-    assert!(refresh_base(&clone, "main", t).unwrap().unwrap().contains("อัปเดต main"));
+    assert!(refresh_base(&clone, "main", t).unwrap().unwrap().contains("Updated main"));
     assert_eq!(git(&clone, &["rev-parse", "main"]).unwrap(), new_main);
     assert!(clone.join("a.txt").is_file());
 
@@ -401,11 +410,11 @@ mod tests {
     run(&origin, &["checkout", "-q", "main"]);
     commit(&origin, "c.txt");
     std::fs::write(clone.join("a.txt"), "edited").unwrap();
-    assert!(refresh_base(&clone, "main", t).unwrap().unwrap().contains("ยังไม่ commit"));
+    assert!(refresh_base(&clone, "main", t).unwrap().unwrap().contains("uncommitted"));
     run(&clone, &["checkout", "-q", "--", "a.txt"]);
     commit(&clone, "local.txt");
     let local = git(&clone, &["rev-parse", "main"]).unwrap();
-    assert!(refresh_base(&clone, "main", t).unwrap().unwrap().contains("fast-forward ไม่ได้"));
+    assert!(refresh_base(&clone, "main", t).unwrap().unwrap().contains("cannot fast-forward"));
     assert_eq!(git(&clone, &["rev-parse", "main"]).unwrap(), local);
   }
 

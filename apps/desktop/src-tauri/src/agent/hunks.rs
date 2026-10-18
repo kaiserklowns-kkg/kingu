@@ -15,6 +15,7 @@ use std::process::Stdio;
 use sha2::{Digest, Sha256};
 
 use crate::git::{self, check_rel};
+use crate::git_queue::{self, Scope};
 
 use super::review::{self, merge_base};
 
@@ -257,6 +258,8 @@ pub fn reject_hunks(dir: &Path, base: &str, rel: &str, ids: &[String]) -> Result
     return Err("invalid hunk id".into());
   }
   let fork = merge_base(dir, base)?;
+  // Read and applied under one lock, so no other Kingu operation changes the file in between.
+  let _queue = git_queue::lock(dir, Scope::Worktree, "apply -R (reject hunks)")?;
   let parsed = load(dir, &fork, rel)?;
   let current = match &parsed {
     Some(d) => to_file_hunks(rel, d),

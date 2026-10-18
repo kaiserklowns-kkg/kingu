@@ -22,6 +22,8 @@
 	import { notesOfFile } from '#lib/ade/diffNotes.ts';
 	import { installDiffNotes, type DiffNotesHandle, type NoteFile } from '#lib/ade/diffNoteZones.ts';
 	import { hunkReview } from '#lib/ade/hunkReview.svelte.ts';
+	import { chatEdits } from '#lib/agent/chatEdits.svelte.ts';
+	import { isChatEditKey, parseChatEditKey } from '#lib/agent/chatEdits.ts';
 	import { installHunkToolbars, type HunkToolbars } from '#lib/ade/hunkToolbars.ts';
 
 	let { active, onfail, reportLanguage = false }: { active: string | null; onfail: (key: string) => void; reportLanguage?: boolean } = $props();
@@ -42,7 +44,7 @@
 
 	/** The worktree and file a diff key's notes belong to: the task, or the folder for Source Control diffs. */
 	function noteFile(key: string | null): NoteFile | null {
-		if (!key || !isDiffKey(key)) return null;
+		if (!key || !isDiffKey(key) || isChatEditKey(key)) return null;
 		const task = parseTaskDiffKey(key);
 		return task ? { key: task.slug, file: task.rel } : { key: '', file: fileOf(key) };
 	}
@@ -112,8 +114,10 @@
 		return invoke<string>('read_workspace_file', { rel }).catch(() => '');
 	}
 
-	/** Left side: HEAD for Source Control diffs; the task's fork point for task diffs (`taskdiff://`). */
+	/** Left side: HEAD for Source Control diffs; the task's fork point for task diffs (`taskdiff://`);
+	 * the file before the agent's pending changes for a chat's working set (`chatedit://`). */
 	async function original(key: string, rel: string): Promise<{ text: string; path: string }> {
+		if (isChatEditKey(key)) return chatEdits.original(key);
 		if (isTaskDiffKey(key)) {
 			let base = adeTasks.diffBase(key);
 			if (!base) {
@@ -174,6 +178,8 @@
 		const key = activeKey;
 		void scm.repo;
 		if (key && isTaskDiffKey(key)) void adeTasks.stats[parseTaskDiffKey(key)?.slug ?? ''];
+		// A chat's working set changed (another edit, Keep, Undo).
+		if (key && isChatEditKey(key)) void chatEdits.views[parseChatEditKey(key)?.chatId ?? ''];
 		if (api && key && isDiffKey(key)) void show(api, key);
 	});
 

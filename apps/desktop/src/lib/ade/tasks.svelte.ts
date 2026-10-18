@@ -31,9 +31,12 @@ import {
 	groupTasks,
 	newTask,
 	nextNeedingAttention,
+	patchChange,
 	patchTask,
 	pruneAccepted,
 	removeTask,
+	taskChanges,
+	type TaskChange,
 	renamedTitle,
 	runSummary,
 	toTaskRuntime,
@@ -48,6 +51,8 @@ import {
 	type TaskView
 } from './model';
 import { runtime } from './runtime.svelte';
+import { tabsOfTask, touchedTasks } from './agentGuard';
+import { confirmAgentIdle } from './agentGuard.svelte';
 import { adeLayout } from './adeLayout.svelte';
 import { agentCommand, cliAgent, cliOf, launchOptions, withLaunchOptions, type RunMode } from './agentCli';
 import { profileOf, programOf } from '#lib/ade/agentProfiles.ts';
@@ -108,6 +113,12 @@ class AdeTasks {
 	branches = $state<string[]>([]);
 	gh = $state<GhStatus | null>(null);
 	loaded = $state(false);
+	/**
+	 * The folder whose tasks.json and worktrees were last read without an error. `loaded` is also
+	 * set after a failed read (with an empty list); only this says the list can be trusted to end
+	 * the terminals and agent CLIs of tasks that are gone.
+	 */
+	loadedRoot = $state<string | null>(null);
 	busy = $state<Record<string, string>>({});
 	/** Ticks every 30s so "time ago" labels move. */
 	now = $state(Date.now());
@@ -182,6 +193,7 @@ class AdeTasks {
 		this.worktrees = [];
 		this.listed = [];
 		this.loaded = false;
+		this.loadedRoot = null;
 		if (!root) return;
 		try {
 			const [tasks, worktrees, branches] = await Promise.all([
@@ -197,6 +209,7 @@ class AdeTasks {
 			const adopted = adoptOrphans(tasks, this.worktrees.map((w) => w.slug!), base, Date.now());
 			this.list = adopted;
 			if (adopted !== tasks) await this.#save(adopted);
+			if (this.#root === root) this.loadedRoot = root;
 		} catch (e) {
 			notifications.error(t('adeTasks.tasks.loadFailed', { error: String(e) }));
 			clientLog('error', `tasks_load: ${e}`);
@@ -232,16 +245,37 @@ class AdeTasks {
 		}
 	}
 
-	#save(next: TaskMeta[]): Promise<void> {
-		this.list = next;
-		const snapshot = $state.snapshot(next) as TaskMeta[];
-		this.#saving = this.#saving.then(() =>
-			invoke<void>('tasks_save', { tasks: snapshot }).catch((e) => {
+	/** Writes of ours still queued; the stored list comes back only when the last one lands. */
+	#pending = 0;
+
+	/**
+	 * Sends `changes` (not the whole list): Rust applies them to tasks.json as it is on disk under
+	 * one lock per file, so another window's (or a later Kingu's) edits to other tasks and fields
+	 * are kept, and returns the stored list, which this window then shows.
+	 */
+	#write(changes: TaskChange[]): Promise<void> {
+		if (!changes.length) return this.#saving;
+		const root = this.#root;
+		const payload = $state.snapshot(changes) as TaskChange[];
+		this.#pending++;
+		this.#saving = this.#saving.then(async () => {
+			try {
+				const stored = await invoke<TaskMeta[]>('tasks_update', { changes: payload });
+				if (this.#pending === 1 && this.#root === root) this.list = stored;
+			} catch (e) {
 				notifications.error(t('adeTasks.tasks.saveFailed', { error: String(e) }));
-				clientLog('error', `tasks_save: ${e}`);
-			})
-		);
+				clientLog('error', `tasks_update: ${e}`);
+			} finally {
+				this.#pending--;
+			}
+		});
 		return this.#saving;
+	}
+
+	#save(next: TaskMeta[]): Promise<void> {
+		const changes = taskChanges(this.list, next);
+		this.list = next;
+		return this.#write(changes);
 	}
 
 	/** A PR created for the task outside its Review page (Source Control's composer). */
@@ -249,8 +283,12 @@ class AdeTasks {
 		return this.#patch(slug, { pr_url: url || null });
 	}
 
+	/** Only these fields of the task are written: another window's edits to its other fields stay. */
 	#patch(slug: string, patch: Partial<Omit<TaskMeta, 'slug'>>) {
-		return this.#save(patchTask(this.list, slug, patch, Date.now()));
+		if (!this.list.some((t) => t.slug === slug)) return this.#saving;
+		const now = Date.now();
+		this.list = patchTask(this.list, slug, patch, now);
+		return this.#write([patchChange(slug, patch, now)]);
 	}
 
 	async #step<T>(slug: string, label: string, f: () => Promise<T>): Promise<T | undefined> {
@@ -308,7 +346,9 @@ class AdeTasks {
 			status.flash(t('adeTasks.tasks.badBranchPrefix'), 10000);
 			return;
 		}
-		if (settings.get<boolean>('kingu.worktree.refreshBaseOnCreate') === true && base !== 'HEAD') {
+		// A base checked out in a task worktree whose agent works is left alone unless the user says so.
+		const refresh = settings.get<boolean>('kingu.worktree.refreshBaseOnCreate') === true && base !== 'HEAD';
+		if (refresh && (await this.#agentIdleOrConfirmed(null, base, t('adeTasks.tasks.step.refreshBase', { base })))) {
 			const note = await invoke<string | null>('worktree_refresh_base', { base }).catch((e) => t('adeTasks.tasks.refreshBaseFailed', { base, error: String(e) }));
 			if (note) status.flash(note, 8000);
 		}
@@ -719,6 +759,22 @@ class AdeTasks {
 		// kingu.worktree.alwaysForceDelete (Orca): uncommitted changes go without asking again.
 		opts = { ...opts, force: opts.force || settings.get<boolean>('kingu.worktree.alwaysForceDelete') === true };
 		let kept: string | null = null;
+		// Unsaved editors of the task (its worktree files, an edited diff) would be lost with it: ask.
+		const tabs = tabsOfTask(
+			editors.allTabs().map((t) => t.path),
+			slug,
+			(p) => parseTaskDiffKey(p)?.slug
+		);
+		const unsaved = tabs.filter((p) => editors.isDirty(p));
+		if (unsaved.length) {
+			const go = await ask(t('adeTasks.tasks.removeUnsavedAsk', { slug, count: unsaved.length }), {
+				title: t('adeTasks.tasks.removeUnsavedTitle'),
+				kind: 'warning',
+				okLabel: t('adeTasks.tasks.removeUnsavedOk'),
+				cancelLabel: t('common.cancel')
+			});
+			if (!go) return false;
+		}
 		if (hasWorktree) {
 			// An idle session still runs in the worktree: end it with the task.
 			if (runtime.isLive(slug)) await this.stop(slug);
@@ -745,9 +801,8 @@ class AdeTasks {
 		runtime.forget(slug);
 		cliSessions.end(slug);
 		diffNotes.forget(slug);
-		for (const t of editors.allTabs().map((t) => t.path)) {
-			if (slugOfTaskKey(t) === slug || parseTaskDiffKey(t)?.slug === slug) editors.closeEverywhere(t);
-		}
+		// The user saw (and accepted) the unsaved ones above; the files are gone with the worktree.
+		for (const p of tabs) editors.closeEverywhere(p);
 		this.worktrees = this.worktrees.filter((w) => w.slug !== slug);
 		this.listed = this.listed.filter((w) => w.slug !== slug);
 		delete this.stats[slug];
@@ -762,7 +817,8 @@ class AdeTasks {
 	// Review
 
 	toggleAccept(slug: string, path: string) {
-		return this.#save(toggleAccepted(this.list, slug, path, Date.now()));
+		const accepted = toggleAccepted(this.list, slug, path, Date.now()).find((t) => t.slug === slug)?.accepted;
+		return accepted ? this.#patch(slug, { accepted }) : this.#saving;
 	}
 
 	/** Accepted file and hunk marks from the hunkReview.ts reducers (saved like toggleAccept). */
@@ -779,11 +835,21 @@ class AdeTasks {
 		if (!sameMarks(meta.accepted_hunks, next)) return this.#patch(slug, { accepted_hunks: next });
 	}
 
+	/**
+	 * Commit, reject, merge and refresh-base touch a task worktree (and, for merge and refresh, the
+	 * checkout of `branch`). While an agent works there they ask first, with the native message
+	 * box (VS Code's Agents window keeps a working session's worktree to the agent). True: go on.
+	 */
+	#agentIdleOrConfirmed(slug: string | null, branch: string | null, action: string): Promise<boolean> {
+		return confirmAgentIdle(touchedTasks(slug, branch, this.worktrees), action);
+	}
+
 	/** Takes back hunks `ids` of `path` (no confirmation: one change at a time, like VS Code's Undo this Change). */
 	async rejectHunks(slug: string, path: string, ids: string[]): Promise<boolean> {
 		const stat = this.stats[slug];
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta || !ids.length) return false;
+		if (!(await this.#agentIdleOrConfirmed(slug, null, t('adeTasks.tasks.step.rejectChanges')))) return false;
 		const n = await this.#step(slug, t('adeTasks.tasks.step.rejectChanges'), () => invoke<number>('worktree_reject_hunks', { slug, base: stat?.base ?? meta.base, path, ids }));
 		await this.refreshStat(slug);
 		return n !== undefined;
@@ -794,6 +860,7 @@ class AdeTasks {
 	async reject(slug: string, paths: string[], label: string, confirmEmpty = false): Promise<boolean> {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta || (!paths.length && !confirmEmpty)) return false;
+		if (!(await this.#agentIdleOrConfirmed(slug, null, t('adeTasks.tasks.step.rejectFiles')))) return false;
 		const ok = await ask(t('adeTasks.tasks.rejectAsk', { label, slug, base: meta.base }), {
 			title: t('adeTasks.tasks.rejectTitle'),
 			kind: 'warning',
@@ -813,6 +880,7 @@ class AdeTasks {
 			status.flash(t('adeTasks.git.commitMessageFirst'));
 			return false;
 		}
+		if (!(await this.#agentIdleOrConfirmed(slug, null, t('adeTasks.tasks.step.commit')))) return false;
 		const done = await this.#step(slug, t('adeTasks.tasks.step.commit'), () => invoke('worktree_commit', { slug, message: msg }).then(() => true));
 		await this.refreshStat(slug);
 		if (done) status.flash(t('adeTasks.git.committed', { branch: this.branchOf(slug) }));
@@ -828,6 +896,7 @@ class AdeTasks {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta) return;
 		const how = mode === 'ff' ? t('adeTasks.tasks.mergeFastForward') : t('adeTasks.tasks.mergeCommit');
+		if (!(await this.#agentIdleOrConfirmed(slug, meta.base, t('adeTasks.tasks.step.merge')))) return;
 		const ok = await ask(t('adeTasks.tasks.mergeAsk', { branch: this.branchOf(slug), base: meta.base, how }), { title: t('adeTasks.tasks.mergeTitle'), okLabel: t('adeTasks.tasks.mergeOk'), cancelLabel: t('common.cancel') });
 		if (!ok) return;
 		const r = await this.#step(slug, t('adeTasks.tasks.step.merge'), () => invoke<MergeResult>('worktree_merge', { slug, base: meta.base, mode }));

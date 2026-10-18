@@ -57,7 +57,14 @@
 				if (editors.activeGroupId !== group) return;
 				const model = ed.getModel();
 				const sels = ed.getSelections() ?? [];
-				editors.selection = { chars: model ? sels.reduce((n, sel) => n + model.getValueLengthInRange(sel), 0) : 0, count: Math.max(1, sels.length) };
+				const primary = ed.getSelection();
+				// A selection ending at column 1 of a line does not take that line (VS Code's chat selection context).
+				const endLine = primary && primary.endColumn === 1 && primary.endLineNumber > primary.startLineNumber ? primary.endLineNumber - 1 : primary?.endLineNumber;
+				editors.selection = {
+					chars: model ? sels.reduce((n, sel) => n + model.getValueLengthInRange(sel), 0) : 0,
+					count: Math.max(1, sels.length),
+					...(primary && !primary.isEmpty() && endLine ? { range: { startLine: primary.startLineNumber, endLine } } : {})
+				};
 			});
 			// Indentation and line endings change from the status bar pickers and Monaco's own actions.
 			const reportModel = () => {
@@ -92,6 +99,15 @@
 				return nearestWord ? (model.getWordAtPosition(sel.getPosition())?.word ?? '') : '';
 			},
 			focus: () => editor?.focus(),
+			insertText: (text) => {
+				const sel = editor?.getSelection();
+				if (!editor?.getModel() || !sel || (api && editor.getOption(api.monaco.editor.EditorOption.readOnly))) return false;
+				editor.pushUndoStop();
+				editor.executeEdits('chat.insertAtCursor', [{ range: sel, text, forceMoveMarkers: true }]);
+				editor.pushUndoStop();
+				editor.focus();
+				return true;
+			},
 			peek: (line, column) => {
 				if (!editor) return;
 				const range = { startLineNumber: line, startColumn: column, endLineNumber: line, endColumn: column };

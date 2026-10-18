@@ -3,6 +3,8 @@
 //! threads (`gh api graphql`, Orca's query) with resolving one. `gh` never prompts here
 //! (`GH_PROMPT_DISABLED`, `GIT_TERMINAL_PROMPT=0`, no stdin) and every call has a timeout.
 
+use crate::i18n::msg::AgentMsg;
+use crate::tr;
 use std::io::Read;
 use std::path::Path;
 use std::process::Stdio;
@@ -71,7 +73,7 @@ pub fn gh_run(gh: &Path, dir: &Path, args: &[String], timeout: Duration, tail: O
       Ok(None) => {
         let _ = child.kill();
         let _ = child.wait();
-        return Err(format!("gh {what} ใช้เวลานานเกิน {} วินาที จึงหยุดไว้", timeout.as_secs()));
+        return Err(tr!(AgentMsg::GhTimeout, what, secs = timeout.as_secs()));
       }
       Err(e) => return Err(format!("gh: {e}")),
     }
@@ -106,7 +108,7 @@ fn plain(s: &str) -> bool {
 
 impl RepoRef {
   pub fn from_pr_url(url: &str) -> Result<Self, String> {
-    let bad = || format!("ลิงก์ PR ไม่ถูกต้อง: {url:?}");
+    let bad = || tr!(AgentMsg::BadPrUrl, url = format!("{url:?}"));
     let rest = url.strip_prefix("https://").ok_or_else(bad)?;
     let mut parts = rest.split('/');
     let (Some(host), Some(owner), Some(repo), Some("pull"), Some(n)) = (parts.next(), parts.next(), parts.next(), parts.next(), parts.next()) else {
@@ -192,22 +194,22 @@ pub fn merge_settings(gh: &Path, dir: &Path, repo: &RepoRef) -> Result<RepoMerge
 /// plus the states its merge button is never offered in).
 pub fn merge_blocker(pr: &PrStatus) -> Option<String> {
   if pr.state == "MERGED" {
-    return Some("PR นี้ merge แล้ว".into());
+    return Some(tr!(AgentMsg::PrMerged));
   }
   if pr.state == "CLOSED" {
-    return Some("PR นี้ถูกปิดแล้ว".into());
+    return Some(tr!(AgentMsg::PrClosed));
   }
   if pr.draft {
-    return Some("PR นี้ยังเป็น draft ให้เปลี่ยนเป็น Ready for review บน GitHub ก่อน".into());
+    return Some(tr!(AgentMsg::PrDraft));
   }
   match pr.review.as_str() {
-    "REVIEW_REQUIRED" => return Some("PR นี้ต้องได้รับการอนุมัติ (review) ก่อนจึงจะ merge ได้".into()),
-    "CHANGES_REQUESTED" => return Some("ผู้รีวิวขอให้แก้ PR นี้ จึงยัง merge ไม่ได้".into()),
+    "REVIEW_REQUIRED" => return Some(tr!(AgentMsg::PrReviewRequired)),
+    "CHANGES_REQUESTED" => return Some(tr!(AgentMsg::PrChangesRequested)),
     _ => {}
   }
   if pr.mergeable == "CONFLICTING" {
     let base = if pr.base_ref.is_empty() { "base" } else { &pr.base_ref };
-    return Some(format!("PR นี้มี conflict กับ {base} อัปเดต branch กับ {base} แล้วแก้ conflict ก่อน merge"));
+    return Some(tr!(AgentMsg::PrConflict, base));
   }
   None
 }
@@ -237,7 +239,7 @@ pub fn merge(gh: &Path, dir: &Path, pr_url: &str, number: u64, method: MergeMeth
   let view = gh_run(gh, dir, &strings(&["pr", "view", &number.to_string(), "--repo", &repo.slug(), "--json", &fields]), GH_TIMEOUT, None)?;
   let pr = parse_pr_status(&view)?;
   if pr.number != number {
-    return Err(format!("gh pr view ตอบ PR #{} แทน #{number}", pr.number));
+    return Err(tr!(AgentMsg::PrViewWrongNumber, got = pr.number, number));
   }
   if let Some(why) = merge_blocker(&pr) {
     return Err(why);
@@ -250,7 +252,7 @@ pub fn merge(gh: &Path, dir: &Path, pr_url: &str, number: u64, method: MergeMeth
   let cross = serde_json::from_str::<serde_json::Value>(&view).ok().and_then(|v| v["isCrossRepository"].as_bool()).unwrap_or(true);
   let branch = pr.head_ref.clone();
   if cross || branch.is_empty() || branch.starts_with('-') || branch.contains("..") {
-    return Ok(MergeOutcome { deleted_branch: None, branch_note: Some("ไม่ได้ลบ branch เพราะ branch อยู่ใน repository อื่น (fork)".into()) });
+    return Ok(MergeOutcome { deleted_branch: None, branch_note: Some(tr!(AgentMsg::ForkBranchKept)) });
   }
   let mut args = repo.api();
   args.extend(strings(&["-X", "DELETE", &repo.rest(&format!("git/refs/heads/{}", path_escape(&branch)))]));
@@ -258,7 +260,7 @@ pub fn merge(gh: &Path, dir: &Path, pr_url: &str, number: u64, method: MergeMeth
     Ok(_) => MergeOutcome { deleted_branch: Some(branch), branch_note: None },
     // GitHub's own "automatically delete head branches" may have deleted it already.
     Err(e) if e.contains("Reference does not exist") || e.contains("HTTP 422") => MergeOutcome { deleted_branch: Some(branch), branch_note: None },
-    Err(e) => MergeOutcome { deleted_branch: None, branch_note: Some(format!("merge แล้ว แต่ลบ branch {branch} บน GitHub ไม่ได้: {e}")) },
+    Err(e) => MergeOutcome { deleted_branch: None, branch_note: Some(tr!(AgentMsg::BranchDeleteFailed, branch, detail = e)) },
   })
 }
 
@@ -484,7 +486,7 @@ pub fn parse_threads(json: &str) -> Result<Vec<ReviewThread>, String> {
   let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("gh api graphql: {e}"))?;
   let pr = &v["data"]["repository"]["pullRequest"];
   if pr.is_null() {
-    return Err(format!("อ่าน review threads ไม่ได้: {}", graphql_errors(&v).unwrap_or_else(|| "ไม่พบ pull request".into())));
+    return Err(tr!(AgentMsg::ReviewThreadsFailed, detail = graphql_errors(&v).unwrap_or_else(|| tr!(AgentMsg::NoPullRequest))));
   }
   let nodes = pr["reviewThreads"]["nodes"].as_array().cloned().unwrap_or_default();
   Ok(
@@ -546,7 +548,7 @@ pub fn valid_node_id(id: &str) -> bool {
 /// Resolves (or reopens) review thread `id`; returns its new `isResolved`.
 pub fn resolve_thread(gh: &Path, dir: &Path, pr_url: &str, id: &str, resolve: bool) -> Result<bool, String> {
   if !valid_node_id(id) {
-    return Err(format!("thread id ไม่ถูกต้อง: {id:?}"));
+    return Err(tr!(AgentMsg::BadThreadId, id = format!("{id:?}")));
   }
   let repo = RepoRef::from_pr_url(pr_url)?;
   let mutation = if resolve { "resolveReviewThread" } else { "unresolveReviewThread" };
@@ -558,7 +560,7 @@ pub fn resolve_thread(gh: &Path, dir: &Path, pr_url: &str, id: &str, resolve: bo
   if let Some(e) = graphql_errors(&v) {
     return Err(format!("{mutation}: {e}"));
   }
-  v["data"][mutation]["thread"]["isResolved"].as_bool().ok_or_else(|| format!("{mutation}: ไม่มีผลลัพธ์จาก GitHub"))
+  v["data"][mutation]["thread"]["isResolved"].as_bool().ok_or_else(|| tr!(AgentMsg::NoGithubResult, mutation))
 }
 
 #[cfg(test)]
@@ -635,9 +637,9 @@ mod tests {
   fn merge_preflight_refuses_what_github_would_refuse() {
     let tmp = tempfile::tempdir().unwrap();
     for (review, mergeable, draft, want) in [
-      ("REVIEW_REQUIRED", "MERGEABLE", false, "อนุมัติ"),
-      ("CHANGES_REQUESTED", "MERGEABLE", false, "ขอให้แก้"),
-      ("APPROVED", "CONFLICTING", false, "conflict กับ main"),
+      ("REVIEW_REQUIRED", "MERGEABLE", false, "approving review"),
+      ("CHANGES_REQUESTED", "MERGEABLE", false, "requested changes"),
+      ("APPROVED", "CONFLICTING", false, "conflicts with main"),
       ("", "MERGEABLE", true, "draft"),
     ] {
       let view = fixture(tmp.path(), "view.json", &view_json(review, mergeable, draft, false));
@@ -673,7 +675,7 @@ mod tests {
     let tmp = tempfile::tempdir().unwrap();
     let (gh, _) = fake_gh(tmp.path(), "*) sleep 5;;");
     let err = gh_run(&gh, tmp.path(), &strings(&["pr", "view"]), Duration::from_millis(200), None).unwrap_err();
-    assert!(err.contains("นานเกิน"), "{err}");
+    assert!(err.contains("took longer"), "{err}");
   }
 
   #[test]

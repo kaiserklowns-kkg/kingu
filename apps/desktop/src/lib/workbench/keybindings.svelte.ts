@@ -3,6 +3,7 @@
 // does not parse keeps the last good bindings and says so in the status bar.
 
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { status } from './status.svelte';
 import { NO_USER_KEYBINDINGS, parseKeybindings, userKeybindings, type UserKeybindings } from './keybindingsModel';
 import { t } from '#lib/i18n/index.ts';
@@ -38,7 +39,12 @@ class Keybindings {
 		void this.load();
 		const onFocus = () => void this.load();
 		window.addEventListener('focus', onFocus);
-		return () => window.removeEventListener('focus', onFocus);
+		// keybindings.json edited while Kingu has focus (Rust watches the config dir).
+		const unlisten = listen<string>('settings://changed', (e) => e.payload === 'keybindings' && void this.load());
+		return () => {
+			window.removeEventListener('focus', onFocus);
+			void unlisten.then((u) => u());
+		};
 	}
 }
 

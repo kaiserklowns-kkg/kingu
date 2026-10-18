@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
 	adeKey,
+	backgroundAgentKeys,
 	backgroundKeys,
 	cliKey,
 	isValidKey,
@@ -68,8 +69,10 @@ describe('session keys', () => {
 		const other = rootTag('/other');
 		const live = [panelKey(tag, 1), panelKey(tag, 2), cliKey(tag, 'x', 1), panelKey(other, 1), 'panel:7'];
 		expect(orphanKeys(live, new Set([panelKey(tag, 2), adeKey(tag, '', 't1')]), tag)).toEqual([panelKey(tag, 1), cliKey(tag, 'x', 1)]);
-		// Background: everything the window does not show, any folder.
-		expect(backgroundKeys(live, new Set([panelKey(tag, 2)]))).toEqual([panelKey(tag, 1), cliKey(tag, 'x', 1), panelKey(other, 1), 'panel:7']);
+		// Background: every terminal the window does not show, any folder; agent CLIs apart.
+		const withAgents = [...live, cliKey(other, 'y', 2), 'cli:fix:1700000000000'];
+		expect(backgroundKeys(withAgents, new Set([panelKey(tag, 2)]))).toEqual([panelKey(tag, 1), panelKey(other, 1), 'panel:7']);
+		expect(backgroundAgentKeys(withAgents, new Set([cliKey(tag, 'x', 1)]))).toEqual([cliKey(other, 'y', 2), 'cli:fix:1700000000000']);
 	});
 });
 

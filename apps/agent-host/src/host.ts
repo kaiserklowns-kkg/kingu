@@ -10,12 +10,15 @@
 import { readFileSync } from 'node:fs';
 import type { CanUseTool, Options, PermissionResult, PermissionUpdate, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { normalize, summarizeTool } from './normalize.ts';
+import { snapshotHooks } from './snapshots.ts';
 import { checkAnswers, isAskUserQuestion, QUESTIONS_DISMISSED } from './questions.ts';
 import {
 	PERMISSION_MODES,
 	type AgentEvent,
 	type AnswerParams,
 	type Decision,
+	type PermissionMode,
+	type SetOptionsParams,
 	type RpcRequest,
 	type RpcResponse,
 	type SendParams,
@@ -23,7 +26,12 @@ import {
 } from './protocol.ts';
 
 /** The subset of the SDK's `Query` the host uses. */
-export type QueryLike = AsyncIterable<unknown> & { interrupt(): Promise<unknown> };
+export type QueryLike = AsyncIterable<unknown> & {
+	interrupt(): Promise<unknown>;
+	/** Mid-session changes (streaming input only); optional so older fakes still fit. */
+	setModel?(model?: string): Promise<void>;
+	setPermissionMode?(mode: PermissionMode): Promise<void>;
+};
 export type QueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => QueryLike;
 
 export const DEFAULT_MODEL = 'claude-opus-5-5';
@@ -138,6 +146,7 @@ class RpcError extends Error {
 const INVALID_PARAMS = -32602;
 const METHOD_NOT_FOUND = -32601;
 const RUN_NOT_FOUND = 1;
+const UNSUPPORTED = 2;
 
 function need<T>(cond: T, message: string): asserts cond {
 	if (!cond) throw new RpcError(INVALID_PARAMS, message);
@@ -199,6 +208,8 @@ export class AgentHost {
 				return this.stop(this.run(p.runId));
 			case 'answer':
 				return this.answer(p as AnswerParams);
+			case 'set_options':
+				return this.setOptions(p as SetOptionsParams);
 			case 'shutdown':
 				await Promise.all([...this.runs.values()].map((r) => this.stop(r)));
 				return null;
@@ -237,6 +248,7 @@ export class AgentHost {
 		need(Array.isArray(unset) && unset.every((k) => typeof k === 'string' && ENV_NAME.test(k)), 'unsetEnv must be variable names');
 		const accountEnv = Object.keys(extraEnv).length || unset.length ? runEnv(this.deps.options?.env ?? process.env, extraEnv, unset) : null;
 		const images = imageBlocks(p.images, this.read);
+		need(p.snapshots === undefined || p.snapshots === null || typeof p.snapshots === 'boolean', 'snapshots must be a boolean');
 
 		const run = new Run(p.runId);
 		this.runs.set(run.id, run);
@@ -253,10 +265,14 @@ export class AgentHost {
 			...(plugins.length ? { plugins: plugins.map((path) => ({ type: 'local' as const, path, skipMcpDiscovery: true })) } : {}),
 			...(accountEnv ? { env: accountEnv } : {}),
 			includePartialMessages: true,
+			// Subagents' text and thinking too (not only their tool calls): the chat nests them under the Task call.
+			forwardSubagentText: true,
 			// User + project settings: CLAUDE.md and the user's own allow/deny rules apply.
 			settingSources: ['user', 'project', 'local'],
 			abortController: run.abort,
 			canUseTool: this.canUseTool(run),
+			// Before an edit tool runs (in every permission mode): the file's prior content.
+			...(p.snapshots ? { hooks: snapshotHooks(p.cwd, (ev) => this.emit(run.id, ev), (line) => this.log(`run ${run.id}: ${line}`)) } : {}),
 			stderr: (data) => {
 				for (const line of data.split('\n')) if (line.trim()) this.emit(run.id, { kind: 'stderr', line });
 			}
@@ -313,6 +329,31 @@ export class AgentHost {
 		run.inbox.push(p.text, imageBlocks(p.images, this.read));
 		this.emit(run.id, { kind: 'message', role: 'user', text: shownText(p.text, p.images) });
 		return null;
+	}
+
+	/**
+	 * Changes the live session's model and/or permission mode (the SDK's `setModel` /
+	 * `setPermissionMode`); they apply from the next response on. Returns what was applied.
+	 */
+	async setOptions(p: SetOptionsParams) {
+		const run = this.run(p.runId);
+		const model = p.model ?? undefined;
+		const mode = p.permissionMode ?? undefined;
+		need(model === undefined || (typeof model === 'string' && model.trim() && model.length <= 200), 'model must be a non-empty string');
+		need(mode === undefined || PERMISSION_MODES.includes(mode), `unsupported permission mode ${String(mode)}`);
+		need(model !== undefined || mode !== undefined, 'nothing to change');
+		const q = run.query;
+		need(q && !run.exited, 'run has ended');
+		if (model !== undefined) {
+			if (!q.setModel) throw new RpcError(UNSUPPORTED, 'this agent SDK cannot change the model mid-session');
+			await q.setModel(model);
+		}
+		if (mode !== undefined) {
+			if (!q.setPermissionMode) throw new RpcError(UNSUPPORTED, 'this agent SDK cannot change the permission mode mid-session');
+			await q.setPermissionMode(mode);
+		}
+		this.log(`run ${run.id}: options changed${model !== undefined ? ' (model)' : ''}${mode !== undefined ? ` (mode ${mode})` : ''}`);
+		return { model: model ?? null, permissionMode: mode ?? null };
 	}
 
 	async interrupt(run: Run) {

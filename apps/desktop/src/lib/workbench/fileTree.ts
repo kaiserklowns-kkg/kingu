@@ -75,6 +75,20 @@ export function workspaceFiles(changed: string[]): string[] {
 	return changed.filter((p) => p !== '.git' && !p.startsWith('.git/'));
 }
 
+/** A path inside a task worktree (`.kingu/worktrees/…`) or its git metadata (`.git/worktrees/…`). */
+export function inTaskWorktree(p: string): boolean {
+	return p === '.kingu/worktrees' || p.startsWith('.kingu/worktrees/') || p === '.git/worktrees' || p.startsWith('.git/worktrees/');
+}
+
+/**
+ * The part of a watcher batch the IDE's own views (Explorer, Source Control) react to: agents
+ * writing into task worktrees churn constantly, and those belong to the ADE's worktree views
+ * (`touchesWorktree`), which still get every path. Open editors still get worktree files too.
+ */
+export function ideChanges(changed: string[]): string[] {
+	return changed.filter((p) => !inTaskWorktree(p));
+}
+
 /** VS Code's recent list label: folder name, then the parent path with the home folder as `~`. */
 export function recentLabel(path: string, home = ''): { label: string; detail: string } {
 	const i = path.lastIndexOf('/');

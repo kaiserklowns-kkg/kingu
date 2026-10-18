@@ -197,7 +197,7 @@ fn sink(tx: &SyncSender<Vec<u8>>, closed: &Arc<AtomicBool>, key: &str, stream: u
 fn handle(host: &Host, request: Request, tx: &SyncSender<Vec<u8>>, closed: &Arc<AtomicBool>) -> Result<Value, String> {
   let json = |v: Result<Value, serde_json::Error>| v.map_err(|e| e.to_string());
   match request {
-    Request::Hello(_) => Err("hello ซ้ำ".into()),
+    Request::Hello(_) => Err("duplicate hello".into()),
     Request::Spawn { key, cwd, cols, rows, run, env, shell, args, unset, clean_env, stream } => {
       let env = env.unwrap_or_default();
       let spec = ShellSpec { cwd: Path::new(&cwd), cols, rows, run: run.as_deref(), env: &env, shell: shell.as_deref(), args: args.as_deref(), unset: &unset, clean_env };
@@ -236,21 +236,21 @@ pub fn parse_args(args: impl IntoIterator<Item = String>, version: &str) -> Resu
   let mut idle = Duration::from_secs(30 * 60);
   let mut it = args.into_iter();
   while let Some(a) = it.next() {
-    let mut value = || it.next().ok_or(format!("{a} ต้องมีค่า"));
+    let mut value = || it.next().ok_or(format!("{a} needs a value"));
     match a.as_str() {
       "--dir" => dir = Some(PathBuf::from(value()?)),
       "--name" => name = value()?,
       "--idle-minutes" => idle = Duration::from_secs(value()?.parse::<u64>().map_err(|e| e.to_string())? * 60),
       "--idle-seconds" => idle = Duration::from_secs(value()?.parse::<u64>().map_err(|e| e.to_string())?),
-      _ => return Err(format!("ไม่รู้จัก argument {a}")),
+      _ => return Err(format!("unknown argument {a}")),
     }
   }
   if name.is_empty() || name.contains('/') || name.starts_with('.') {
-    return Err(format!("ชื่อ socket ไม่ถูกต้อง: {name:?}"));
+    return Err(format!("invalid socket name: {name:?}"));
   }
-  let dir = dir.ok_or("ต้องระบุ --dir")?;
+  let dir = dir.ok_or("--dir is required")?;
   if !dir.is_absolute() {
-    return Err("--dir ต้องเป็น absolute path".into());
+    return Err("--dir must be an absolute path".into());
   }
   Ok(Config { dir, name, idle, version: version.to_string() })
 }

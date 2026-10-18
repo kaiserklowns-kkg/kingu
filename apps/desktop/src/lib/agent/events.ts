@@ -37,16 +37,23 @@ export type ResultEvent = {
 	usage?: Usage | null;
 };
 
+/** On a subagent's own events: the id of the Task/Agent `tool_use` that started it (absent otherwise). */
+type Parent = { parent_tool_use_id?: string | null };
+
 export type AgentEvent =
 	| { kind: 'system'; subtype: string; session_id: string | null; model: string | null }
-	| { kind: 'message'; role: string; text: string }
+	| ({ kind: 'message'; role: string; text: string } & Parent)
 	| { kind: 'delta'; block: 'text' | 'thinking' | string; text: string }
-	| { kind: 'thinking'; text: string }
-	| { kind: 'tool_use'; id: string; name: string; input: unknown }
-	| { kind: 'tool_result'; tool_use_id: string; content: string; is_error: boolean }
+	| ({ kind: 'thinking'; text: string } & Parent)
+	| ({ kind: 'tool_use'; id: string; name: string; input: unknown } & Parent)
+	| ({ kind: 'tool_result'; tool_use_id: string; content: string; is_error: boolean } & Parent)
 	| ResultEvent
 	| PermissionRequest
 	| { kind: 'permission_resolved'; request_id: string; decision: Decision | 'cancelled' }
+	/** Added by Rust after a chat's user message: that message is request `request` (its checkpoint). */
+	| { kind: 'checkpoint'; request: number }
+	/** Added by Rust: the chat's working set changed (chatEdits reloads it). Not a timeline entry. */
+	| { kind: 'edits_changed'; request: number | null }
 	| { kind: 'error'; message: string }
 	| { kind: 'raw'; line: string }
 	| { kind: 'stderr'; line: string }
@@ -98,7 +105,7 @@ export const STATUS_LABEL: Readonly<Record<RunStatus, string>> = {
 };
 
 /** Timeline entries: every event except streaming deltas and permission bookkeeping. */
-export type TimelineEvent = Exclude<AgentEvent, { kind: 'delta' } | { kind: 'permission_resolved' }>;
+export type TimelineEvent = Exclude<AgentEvent, { kind: 'delta' } | { kind: 'permission_resolved' } | { kind: 'edits_changed' }>;
 
 export type RunState = {
 	status: RunStatus;
@@ -150,6 +157,8 @@ export function applyEvent(s: RunState, ev: AgentEvent): void {
 			s.decisions[ev.request_id] = ev.decision;
 			if (!s.ended) s.status = live(s);
 			return;
+		case 'edits_changed':
+			return;
 		case 'permission_request':
 			if (!s.ended) {
 				s.pending.push(ev);
@@ -157,11 +166,13 @@ export function applyEvent(s: RunState, ev: AgentEvent): void {
 			}
 			break;
 		case 'message':
+			// A subagent's message does not end the main agent's streaming text (deltas are the main agent's).
+			if (ev.parent_tool_use_id) break;
 			if (ev.role === 'assistant') s.draft.text = '';
 			else if (!s.ended) s.status = live(s);
 			break;
 		case 'thinking':
-			s.draft.thinking = '';
+			if (!ev.parent_tool_use_id) s.draft.thinking = '';
 			break;
 		case 'system':
 			s.sessionId = ev.session_id ?? s.sessionId;

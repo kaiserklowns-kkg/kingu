@@ -9,6 +9,8 @@ use tauri::State;
 
 use crate::pty::Ptys;
 use crate::workspace::Workspace;
+use crate::i18n::msg::CoreMsg;
+use crate::tr;
 
 /// A link's file, as the editors key it: relative to the open folder with `/` separators.
 #[derive(serde::Serialize, Debug, Clone, PartialEq, Eq)]
@@ -74,13 +76,13 @@ pub fn openable_scheme(url: &str, allowed: Option<&[String]>) -> Result<String, 
   if let Some(allowed) = allowed
     && !allowed.iter().any(|s| s.eq_ignore_ascii_case(&scheme))
   {
-    return Err(format!("{scheme}: ไม่อยู่ใน terminal.integrated.allowedLinkSchemes"));
+    return Err(tr!(CoreMsg::SchemeNotAllowed, scheme));
   }
   if matches!(scheme.as_str(), "file" | "javascript" | "data" | "vbscript") {
-    return Err(format!("{scheme}: เปิดจาก terminal ไม่ได้"));
+    return Err(tr!(CoreMsg::SchemeBlocked, scheme));
   }
   if allowed.is_none() && !matches!(scheme.as_str(), "http" | "https") {
-    return Err(format!("{scheme}: เปิดได้เฉพาะลิงก์ http/https"));
+    return Err(tr!(CoreMsg::HttpOnly, scheme));
   }
   Ok(scheme)
 }

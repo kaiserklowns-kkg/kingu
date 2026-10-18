@@ -8,6 +8,8 @@ mod fileops;
 mod floating;
 mod fs;
 mod git;
+mod git_queue;
+mod i18n;
 mod glob;
 mod git_remote;
 mod linear;
@@ -370,7 +372,7 @@ fn open_web_url(url: String) -> Result<(), String> {
 
 /// Runs `gh` in `dir`; its stderr becomes the error.
 fn gh_run(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-  let gh = agent::review::gh_bin().ok_or("ยังไม่ได้ติดตั้ง GitHub CLI (gh)")?;
+  let gh = agent::review::gh_bin().ok_or_else(agent::issues::gh_missing)?;
   let out = shell_env::command(&gh).current_dir(dir).env("GH_PROMPT_DISABLED", "1").args(args).output().map_err(|e| format!("gh: {e}"))?;
   if !out.status.success() {
     return Err(format!("gh {}: {}", args.first().unwrap_or(&""), String::from_utf8_lossy(&out.stderr).trim()));
@@ -505,7 +507,7 @@ async fn gh_pr_create(ws: State<'_, Workspace>, slug: Option<String>, base: Stri
     return Err("Enter a pull request title.".into());
   }
   blocking(move || {
-    git::run(&root, &["push", "-q", "-u", "origin", "HEAD"]).map_err(|e| format!("Push failed. Resolve the push error, then try again. {e}"))?;
+    git_queue::with(&root, git_queue::Scope::Refs, "push", || git::run(&root, &["push", "-q", "-u", "origin", "HEAD"])).map_err(|e| format!("Push failed. Resolve the push error, then try again. {e}"))?;
     let mut args = vec!["pr", "create", "--base", base.as_str(), "--title", title.trim(), "--body", body.as_str()];
     if draft {
       args.push("--draft");
@@ -634,7 +636,7 @@ fn pty_spawn(
       agent::worktree::validate_slug(&slug)?;
       let dir = agent::worktree::worktree_path(&ws.root()?, &slug);
       if !dir.is_dir() {
-        return Err(format!("ไม่พบ worktree ของงาน {slug}"));
+        return Err(crate::tr!(crate::i18n::msg::CoreMsg::NoTaskWorktree, slug));
       }
       dir
     }
@@ -791,7 +793,7 @@ fn search_text(
     return Err("query is empty".into());
   }
   let rg = search::find_rg(std::env::var_os("KINGU_RG"), shell_env::path())?;
-  searches.start(&rg, &ws.root()?, &options, move |ev| on_event.send(ev).is_ok())
+  searches.start(&rg, &ws.root()?, &search::for_workspace(options), move |ev| on_event.send(ev).is_ok())
 }
 
 /// Search: Replace. Rewrites the matches of the last search (refusing files changed since) and
@@ -849,7 +851,7 @@ fn lsp_start(
 }
 
 /// Whether the server for `language` can be started now (re-resolved on every call, so a server
-/// installed meanwhile is found): its path, or the "ไม่ได้ติดตั้ง …" error.
+/// installed meanwhile is found): its path, or the "Not installed: …" error.
 #[tauri::command]
 fn lsp_check(ws: State<'_, Workspace>, language: String) -> Result<String, String> {
   lsp::check(&language, &ws.root()?).map(|p| p.to_string_lossy().into_owned())
@@ -877,7 +879,7 @@ fn dap_start(
   dap::start_for(&sessions, &ws.root()?, &debug_type, python.as_deref().map(Path::new), on_event)
 }
 
-/// The adapter program for `debug_type`, or the "ไม่ได้ติดตั้ง …" error (re-resolved every call).
+/// The adapter program for `debug_type`, or the "Not installed: …" error (re-resolved every call).
 #[tauri::command]
 async fn dap_check(ws: State<'_, Workspace>, debug_type: String, python: Option<String>) -> Result<String, String> {
   let root = ws.root()?;
@@ -1128,6 +1130,7 @@ pub fn run() {
     .manage(pty::Ptys::default())
     .manage(system::KeepAwake::default())
     .manage(Arc::new(agent::AgentHost::default()))
+    .manage(Arc::new(agent::chat_edits::ChatEdits::default()))
     .manage(Arc::new(search::Searches::default()))
     .manage(WorktreeSearches::default())
     .manage(lsp::Servers::default())
@@ -1143,6 +1146,10 @@ pub fn run() {
         settings::user_value(&config_dir, "application.shellEnvironmentResolutionTimeout").as_ref(),
       ));
       net_proxy::init(&config_dir);
+      app.manage(settings::ConfigWatcher::default());
+      if let Err(e) = settings::watch_config(app.handle(), &config_dir) {
+        log::warn!("settings watcher: {e}");
+      }
       system::set_config_dir(config_dir);
       // Release builds too: a rotating, size-limited Kingu.log in the app log dir (logging.rs).
       app.handle().plugin(logging::plugin())?;
@@ -1166,6 +1173,11 @@ pub fn run() {
       team::install(app)?;
       accounts::install(app)?;
       git::load_git_path(&app.path().app_config_dir()?);
+      // A git operation waiting for another one in the same repository (status bar).
+      let queue_events = app.handle().clone();
+      git_queue::set_notifier(move |e| {
+        let _ = queue_events.emit("git-queue", e);
+      });
       menu::install(app.handle());
       // The explorer's undo history lives in the webview, so last run's undo copies are orphans.
       if let Ok(stash) = undo_stash(app.handle()) {
@@ -1182,6 +1194,7 @@ pub fn run() {
     })
     .invoke_handler(tauri::generate_handler![
       app_info,
+      i18n::app_set_locale,
       system_stats,
       fs_read_data_url,
       system_ports,
@@ -1300,8 +1313,19 @@ pub fn run() {
       agent::agent_answer_permission,
       agent::agent_interrupt,
       agent::agent_stop,
+      agent::agent_set_options,
+      agent::chats_load,
+      agent::chats_save,
+      agent::chat_transcript_load,
+      agent::chat_transcript_delete,
+      agent::chat_edits_list,
+      agent::chat_edits_original,
+      agent::chat_edits_keep,
+      agent::chat_edits_undo,
+      agent::chat_edits_restore,
       agent::tasks_load,
       agent::tasks_save,
+      agent::tasks_update,
       agent::diff_notes_load,
       agent::diff_notes_save,
       agent::worktree_commits,

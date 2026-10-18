@@ -14,6 +14,7 @@ import { lsp } from '#lib/lsp/lsp.svelte.ts';
 import { eolFor, type SaveReason } from '#lib/settings/mappings.ts';
 import { readTextResource, writeTextResource, type FileStat, type ReadOptions, type TextRead } from '#lib/settings/resources.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
+import { diskChangeAction, type AutoSaveMode } from './textFiles';
 import { editors } from './editors.svelte';
 import { invoke } from '@tauri-apps/api/core';
 import { runSaveParticipants } from './textFileSave';
@@ -36,6 +37,8 @@ export type ModelEntry = {
 	explicitLanguage?: boolean;
 	/** A save found a newer file on disk; auto save stops until it is resolved (VS Code's conflict mode). */
 	inConflict?: boolean;
+	/** Saves in flight: their own watcher event is not a change by someone else. */
+	saving?: number;
 };
 
 /** A file that opens as a placeholder instead of a text editor (VS Code's binary / too large / error editors). */
@@ -201,7 +204,8 @@ export async function saveFile(path: string, reasonOrOptions: SaveReason | SaveO
 	const encoding = opts.encoding ?? entry.encoding;
 	// files.saveConflictResolution `overwriteFileOnDisk`: a newer file on disk is overwritten without asking.
 	const overwrite = opts.overwrite || settings.get<string>('files.saveConflictResolution') === 'overwriteFileOnDisk';
-	const result = await writeTextResource(path, entry.model.getValue(), encoding, overwrite ? undefined : entry.stat);
+	entry.saving = (entry.saving ?? 0) + 1;
+	const result = await writeTextResource(path, entry.model.getValue(), encoding, overwrite ? undefined : entry.stat).finally(() => entry.saving!--);
 	if (result.kind === 'conflict') {
 		entry.inConflict = true;
 		textFileHooks.conflict(path);
@@ -319,12 +323,18 @@ export async function saveAs(path: string): Promise<string | null> {
 
 /**
  * The file watcher saw `paths` change on disk: a clean model takes the new contents (undoable, and
- * every group showing it follows); a dirty one keeps the user's version.
+ * every group showing it follows); a dirty one keeps the user's version, and when the disk really
+ * changed (an agent editing a task worktree file that is open here) auto save pauses for it and
+ * the save conflict flow shows (`diskChangeAction`).
  */
 export async function reloadClean(paths: string[]) {
 	for (const path of paths) {
 		const entry = entries.get(path);
-		if (!entry || entry.model.getAlternativeVersionId() !== entry.savedVersion) continue;
+		if (!entry) continue;
+		if (entry.model.getAlternativeVersionId() !== entry.savedVersion) {
+			await pauseIfChangedOnDisk(path, entry);
+			continue;
+		}
 		let file: Extract<TextRead, { kind: 'text' }>;
 		try {
 			file = await readText(path, { encoding: entry.encoding, acceptBinary: true, acceptLarge: true });
@@ -339,6 +349,28 @@ export async function reloadClean(paths: string[]) {
 		replaceWithDisk(entry, file);
 		if (changed) clientLog('info', `reloaded ${path} (changed on disk)`);
 	}
+}
+
+/** A dirty model whose file changed on disk: conflict mode (auto save stops), prompting when auto save is on. */
+async function pauseIfChangedOnDisk(path: string, entry: ModelEntry) {
+	if (entry.inConflict || entry.saving || !entry.stat || isUntitled(path)) return;
+	let disk: Extract<TextRead, { kind: 'text' }>;
+	try {
+		disk = await readText(path, { encoding: entry.encoding, acceptBinary: true, acceptLarge: true });
+	} catch {
+		return; // deleted: saving recreates it, as before
+	}
+	if (entry.saving || entry.model.isDisposed()) return;
+	const action = diskChangeAction({
+		dirty: entry.model.getAlternativeVersionId() !== entry.savedVersion,
+		inConflict: !!entry.inConflict,
+		diskDiffers: !!disk.stat && disk.stat.hash !== entry.stat?.hash,
+		autoSave: settings.get<AutoSaveMode>('files.autoSave')
+	});
+	if (action !== 'conflict' && action !== 'pause') return;
+	entry.inConflict = true;
+	clientLog('info', `${path} changed on disk while it has unsaved changes; auto save paused`);
+	if (action === 'conflict') textFileHooks.conflict(path);
 }
 
 /** The most recent view state of each file in any group (`workbench.editor.sharedViewState`). */

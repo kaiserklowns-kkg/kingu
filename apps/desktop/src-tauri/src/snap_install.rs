@@ -23,8 +23,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
+use crate::i18n::msg::SnapMsg;
 use crate::settings::write_atomic;
 use crate::snap::{MANIFEST, MAX_MANIFEST_BYTES, REPO_DIR, Source, SnapInfo, TrustData, USER_DIR, config_dir, is_snap_id, read_snap, repo_snaps_dir};
+use crate::tr;
 use crate::workspace::Workspace;
 
 pub const ORIGIN_FILE: &str = ".kingu-snap.json";
@@ -109,7 +111,7 @@ fn is_ref(r: &str) -> bool {
 }
 
 fn bad_url(url: &str) -> String {
-  format!("URL ของ git ไม่ถูกต้องหรือไม่รองรับ: {url:?} (ใช้ https://…, ssh://…, git@host:path หรือ path ในเครื่อง)")
+  tr!(SnapMsg::GitUrlInvalid, url = format!("{url:?}"))
 }
 
 /// Accepts https, ssh (URL or `user@host:path`), and local paths (absolute or `file://`). Refuses
@@ -124,7 +126,7 @@ pub fn parse_git_source(input: &str) -> Result<GitSpec, String> {
   if let Some(r) = git_ref
     && !is_ref(r)
   {
-    return Err(format!("ชื่อ branch หรือ tag หลัง # ไม่ถูกต้อง: {r:?}"));
+    return Err(tr!(SnapMsg::RefInvalid, git_ref = format!("{r:?}")));
   }
   if url.is_empty() || url.len() > 2048 || url.starts_with('-') || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
     return Err(bad_url(url));
@@ -172,9 +174,9 @@ struct Budget {
 /// origin record at the top; a symlink, a special file or going over the limits is an error.
 fn walk(dir: &Path, prefix: &str, depth: usize, budget: &mut Budget, out: &mut Vec<String>) -> Result<(), String> {
   if depth > MAX_DEPTH {
-    return Err(format!("โฟลเดอร์ซ้อนลึกเกิน {MAX_DEPTH} ชั้น"));
+    return Err(tr!(SnapMsg::TooDeep, max = MAX_DEPTH));
   }
-  let mut entries: Vec<_> = std::fs::read_dir(dir).map_err(|e| format!("อ่าน {} ไม่ได้: {e}", dir.display()))?.flatten().collect();
+  let mut entries: Vec<_> = std::fs::read_dir(dir).map_err(|e| tr!(SnapMsg::ReadFailed, path = dir.display(), detail = e))?.flatten().collect();
   entries.sort_by_key(|e| e.file_name());
   for entry in entries {
     let name = entry.file_name().to_string_lossy().into_owned();
@@ -182,9 +184,9 @@ fn walk(dir: &Path, prefix: &str, depth: usize, budget: &mut Budget, out: &mut V
       continue;
     }
     let rel = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
-    let meta = std::fs::symlink_metadata(entry.path()).map_err(|e| format!("อ่าน {rel} ไม่ได้: {e}"))?;
+    let meta = std::fs::symlink_metadata(entry.path()).map_err(|e| tr!(SnapMsg::ReadFailed, path = rel, detail = e))?;
     if meta.file_type().is_symlink() {
-      return Err(format!("{rel} เป็น symlink — snap ต้องไม่มี symlink"));
+      return Err(tr!(SnapMsg::SourceSymlink, path = rel));
     }
     if meta.is_dir() {
       walk(&entry.path(), &rel, depth + 1, budget, out)?;
@@ -192,11 +194,11 @@ fn walk(dir: &Path, prefix: &str, depth: usize, budget: &mut Budget, out: &mut V
       budget.files += 1;
       budget.bytes += meta.len();
       if budget.files > MAX_FILES || budget.bytes > MAX_BYTES {
-        return Err(format!("ใหญ่เกินไป (ได้ไม่เกิน {MAX_FILES} ไฟล์ และ {} MB)", MAX_BYTES / 1024 / 1024));
+        return Err(tr!(SnapMsg::SourceTooBig, files = MAX_FILES, mb = MAX_BYTES / 1024 / 1024));
       }
       out.push(rel);
     } else {
-      return Err(format!("{rel} ไม่ใช่ไฟล์หรือโฟลเดอร์ธรรมดา"));
+      return Err(tr!(SnapMsg::NotPlain, path = rel));
     }
   }
   Ok(())
@@ -210,13 +212,13 @@ fn files_of(dir: &Path) -> Result<Vec<String>, String> {
 
 /// Copies `files` (from `walk`) of `from` into `to`, keeping permissions (a task may run a script).
 fn copy_files(from: &Path, to: &Path, files: &[String]) -> Result<(), String> {
-  std::fs::create_dir_all(to).map_err(|e| format!("สร้าง {} ไม่ได้: {e}", to.display()))?;
+  std::fs::create_dir_all(to).map_err(|e| tr!(SnapMsg::CreateFailed, path = to.display(), detail = e))?;
   for rel in files {
     let dst = to.join(rel);
     if let Some(parent) = dst.parent() {
-      std::fs::create_dir_all(parent).map_err(|e| format!("สร้าง {} ไม่ได้: {e}", parent.display()))?;
+      std::fs::create_dir_all(parent).map_err(|e| tr!(SnapMsg::CreateFailed, path = parent.display(), detail = e))?;
     }
-    std::fs::copy(from.join(rel), &dst).map_err(|e| format!("คัดลอก {rel} ไม่ได้: {e}"))?;
+    std::fs::copy(from.join(rel), &dst).map_err(|e| tr!(SnapMsg::CopyFailed, path = rel, detail = e))?;
   }
   Ok(())
 }
@@ -260,7 +262,7 @@ fn candidates(src: &Path) -> Result<Vec<Candidate>, String> {
     let snap = match peek_id(&text).filter(|id| is_snap_id(id)) {
       Some(id) => read_snap(src, &id, Source::User, None, &trust),
       None => {
-        let e = crate::snap::parse_manifest(&text, "").err().unwrap_or_else(|| "id ไม่ถูกต้อง".into());
+        let e = crate::snap::parse_manifest(&text, "").err().unwrap_or_else(|| tr!(SnapMsg::InvalidIdShort));
         let mut s = read_snap(src, "invalid", Source::User, None, &trust);
         s.error = Some(e);
         s
@@ -283,7 +285,7 @@ fn candidates(src: &Path) -> Result<Vec<Candidate>, String> {
     }
   }
   if out.is_empty() {
-    return Err(format!("ไม่พบ {MANIFEST} ที่รากของแหล่งนี้ หรือใน snaps/<id>/{MANIFEST}"));
+    return Err(tr!(SnapMsg::NoManifestInSource, manifest = MANIFEST));
   }
   Ok(out)
 }
@@ -303,7 +305,7 @@ fn new_stage(staging: &Path) -> Result<(String, PathBuf), String> {
   prune_staging(staging);
   let token = unique();
   let dir = staging.join(&token);
-  std::fs::create_dir_all(&dir).map_err(|e| format!("สร้าง {} ไม่ได้: {e}", dir.display()))?;
+  std::fs::create_dir_all(&dir).map_err(|e| tr!(SnapMsg::CreateFailed, path = dir.display(), detail = e))?;
   Ok((token, dir))
 }
 
@@ -358,7 +360,7 @@ fn clone(dir: &Path, spec: &GitSpec, timeout: Duration) -> Result<String, String
   crate::git_remote::net_env(dir, &args, &env, &AtomicBool::new(false), timeout)?;
   let src = dir.join("src");
   let commit = crate::git::run(&src, &["rev-parse", "HEAD"]).map(|o| String::from_utf8_lossy(&o).trim().to_string())?;
-  std::fs::remove_dir_all(src.join(".git")).map_err(|e| format!("ลบ .git ของสำเนาไม่ได้: {e}"))?;
+  std::fs::remove_dir_all(src.join(".git")).map_err(|e| tr!(SnapMsg::RemoveGitFailed, detail = e))?;
   Ok(commit)
 }
 
@@ -377,12 +379,12 @@ pub fn prepare_git(staging: &Path, user_dir: &Path, input: &str, timeout: Durati
 pub fn prepare_folder(staging: &Path, user_dir: &Path, path: &str) -> Result<Prepared, String> {
   let from = Path::new(path);
   if !from.is_absolute() {
-    return Err("ต้องเป็น path เต็มของโฟลเดอร์".into());
+    return Err(tr!(SnapMsg::FolderPathNotAbsolute));
   }
   match std::fs::symlink_metadata(from) {
-    Ok(m) if m.file_type().is_symlink() => return Err("โฟลเดอร์นี้เป็น symlink — ไม่รองรับ".into()),
+    Ok(m) if m.file_type().is_symlink() => return Err(tr!(SnapMsg::FolderIsSymlink)),
     Ok(m) if m.is_dir() => {}
-    _ => return Err(format!("ไม่พบโฟลเดอร์ {path}")),
+    _ => return Err(tr!(SnapMsg::FolderNotFound, path)),
   }
   staged(staging, |token, dir| {
     let files = files_of(from)?;
@@ -395,10 +397,10 @@ pub fn prepare_folder(staging: &Path, user_dir: &Path, path: &str) -> Result<Pre
 /// Fetches a git-installed snap again from its origin (same URL and ref) for an update.
 pub fn prepare_update(staging: &Path, user_dir: &Path, id: &str, timeout: Duration) -> Result<Prepared, String> {
   if !is_snap_id(id) {
-    return Err(format!("id \"{id}\" ไม่ถูกต้อง"));
+    return Err(tr!(SnapMsg::InvalidId, id));
   }
-  let origin = read_origin(&user_dir.join(id)).ok_or_else(|| format!("snap \"{id}\" ไม่ได้ติดตั้งผ่าน Kingu จึงอัปเดตไม่ได้"))?;
-  let url = origin.url.ok_or_else(|| format!("snap \"{id}\" ไม่ได้ติดตั้งจาก git จึงอัปเดตไม่ได้ (ติดตั้งจากโฟลเดอร์ใหม่แทน)"))?;
+  let origin = read_origin(&user_dir.join(id)).ok_or_else(|| tr!(SnapMsg::NotInstalledByKingu, id))?;
+  let url = origin.url.ok_or_else(|| tr!(SnapMsg::NotFromGit, id))?;
   let spec = parse_git_source(&match &origin.git_ref {
     Some(r) => format!("{url}#{r}"),
     None => url,
@@ -407,7 +409,7 @@ pub fn prepare_update(staging: &Path, user_dir: &Path, id: &str, timeout: Durati
   p.candidates.retain(|c| c.snap.id == id);
   if p.candidates.is_empty() {
     cancel(staging, &p.token);
-    return Err(format!("repo นี้ไม่มี snap \"{id}\" แล้ว"));
+    return Err(tr!(SnapMsg::RepoDropped, id));
   }
   Ok(p)
 }
@@ -449,25 +451,25 @@ fn fetch_commit(dir: &Path, spec: &GitSpec, commit: &str, timeout: Duration) -> 
     let r = spec.git_ref.as_deref().unwrap_or("HEAD");
     git(&src, &["fetch", "-q", "--no-tags", "--no-recurse-submodules", "--", &spec.url, r])?;
   }
-  git(&src, &["checkout", "-q", "--detach", commit]).map_err(|_| format!("ไม่พบ commit {commit} ใน {} — ทีมอาจตรึงไว้ที่ commit ที่ถูกลบไปแล้ว", spec.url))?;
+  git(&src, &["checkout", "-q", "--detach", commit]).map_err(|_| tr!(SnapMsg::PinnedCommitMissing, commit, url = spec.url))?;
   let head = crate::git::run(&src, &["rev-parse", "HEAD"]).map(|o| String::from_utf8_lossy(&o).trim().to_string())?;
   if head != commit {
-    return Err(format!("ได้ commit {head} แทน {commit} ที่ทีมตรึงไว้"));
+    return Err(tr!(SnapMsg::PinnedCommitMismatch, head, commit));
   }
-  std::fs::remove_dir_all(src.join(".git")).map_err(|e| format!("ลบ .git ของสำเนาไม่ได้: {e}"))
+  std::fs::remove_dir_all(src.join(".git")).map_err(|e| tr!(SnapMsg::RemoveGitFailed, detail = e))
 }
 
 /// Stages a team snap at its pinned commit. Refuses before the confirm when the snap there is
 /// broken or its hash is not the one the team approved.
 pub fn prepare_pinned(staging: &Path, user_dir: &Path, pin: &Pin, timeout: Duration) -> Result<Prepared, String> {
   if !is_snap_id(&pin.id) || !is_commit(&pin.commit) || !is_sha256(&pin.sha256) {
-    return Err(format!("ข้อมูล snap \"{}\" ของทีมไม่ถูกต้อง", pin.id));
+    return Err(tr!(SnapMsg::TeamPinInvalid, id = pin.id));
   }
   let spec = parse_git_source(&pin.url)?;
   if let Some(r) = &pin.git_ref
     && !is_ref(r)
   {
-    return Err(format!("ชื่อ branch หรือ tag ของทีมไม่ถูกต้อง: {r:?}"));
+    return Err(tr!(SnapMsg::TeamRefInvalid, git_ref = format!("{r:?}")));
   }
   let spec = GitSpec { git_ref: pin.git_ref.clone(), ..spec };
   let mut p = staged(staging, |token, dir| {
@@ -482,15 +484,15 @@ pub fn prepare_pinned(staging: &Path, user_dir: &Path, pin: &Pin, timeout: Durat
     Err(msg)
   };
   let Some(c) = p.candidates.first() else {
-    return refuse(&p, format!("commit {} ไม่มี snap \"{}\"", short(&pin.commit), pin.id));
+    return refuse(&p, tr!(SnapMsg::CommitLacksSnap, commit = short(&pin.commit), id = pin.id));
   };
   if let Some(e) = &c.snap.error {
-    return refuse(&p, format!("snap \"{}\" ที่ commit นี้มีข้อผิดพลาด: {e}", pin.id));
+    return refuse(&p, tr!(SnapMsg::CommitSnapBroken, id = pin.id, detail = e));
   }
   if c.snap.hash != pin.sha256 {
     return refuse(
       &p,
-      format!("SHA-256 ของ snap \"{}\" ไม่ตรงกับที่ทีมอนุมัติ (ได้ {} ทีมอนุมัติ {}) — ไม่ติดตั้ง แจ้งผู้ดูแลทีม", pin.id, short(&c.snap.hash), short(&pin.sha256)),
+      tr!(SnapMsg::HashMismatch, id = pin.id, got = short(&c.snap.hash), approved = short(&pin.sha256)),
     );
   }
   p.existing.retain(|e| e.id == pin.id);
@@ -507,21 +509,21 @@ pub fn cancel(staging: &Path, token: &str) {
 /// confirmed; `replace` allows replacing an installed snap from the same origin (an update).
 pub fn commit(staging: &Path, user_dir: &Path, token: &str, id: &str, hash: &str, replace: bool) -> Result<(), String> {
   if !is_token(token) || !is_snap_id(id) {
-    return Err("ข้อมูลการติดตั้งไม่ถูกต้อง".into());
+    return Err(tr!(SnapMsg::InstallDataInvalid));
   }
   let dir = staging.join(token);
   let origin: Origin = std::fs::read(dir.join(STAGED_META))
     .ok()
     .and_then(|b| serde_json::from_slice(&b).ok())
-    .ok_or("ไม่พบสำเนาที่เตรียมไว้ (อาจหมดเวลาแล้ว) — เริ่มติดตั้งใหม่")?;
+    .ok_or_else(|| tr!(SnapMsg::StagingGone))?;
   let src = dir.join("src");
   files_of(&src)?;
-  let cand = candidates(&src)?.into_iter().find(|c| c.snap.id == id).ok_or_else(|| format!("ไม่พบ snap \"{id}\" ในสำเนาที่เตรียมไว้"))?;
+  let cand = candidates(&src)?.into_iter().find(|c| c.snap.id == id).ok_or_else(|| tr!(SnapMsg::NotInStaging, id))?;
   if let Some(e) = &cand.snap.error {
-    return Err(format!("snap \"{id}\" มีข้อผิดพลาด ติดตั้งไม่ได้: {e}"));
+    return Err(tr!(SnapMsg::InstallBroken, id, detail = e));
   }
   if cand.snap.hash != hash {
-    return Err(format!("snap \"{id}\" เปลี่ยนไประหว่างรอยืนยัน — เริ่มติดตั้งใหม่"));
+    return Err(tr!(SnapMsg::ChangedWhileWaiting, id));
   }
   let from = if cand.rel.is_empty() { src } else { src.join(&cand.rel) };
   let result = {
@@ -535,20 +537,20 @@ pub fn commit(staging: &Path, user_dir: &Path, token: &str, id: &str, hash: &str
 /// Copies `from` into `user_dir/<id>` beside the old one, then swaps with renames, so a reader
 /// sees the old snap or the new one, never a mix.
 fn install_dir(user_dir: &Path, id: &str, from: &Path, origin: &Origin, replace: bool) -> Result<(), String> {
-  std::fs::create_dir_all(user_dir).map_err(|e| format!("สร้าง {} ไม่ได้: {e}", user_dir.display()))?;
+  std::fs::create_dir_all(user_dir).map_err(|e| tr!(SnapMsg::CreateFailed, path = user_dir.display(), detail = e))?;
   let target = user_dir.join(id);
   let exists = match std::fs::symlink_metadata(&target) {
-    Ok(m) if m.file_type().is_symlink() || !m.is_dir() => return Err(format!("{} ไม่ใช่โฟลเดอร์ธรรมดา — ลบออกก่อน", target.display())),
+    Ok(m) if m.file_type().is_symlink() || !m.is_dir() => return Err(tr!(SnapMsg::TargetNotFolder, path = target.display())),
     Ok(_) => true,
     Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
-    Err(e) => return Err(format!("อ่าน {} ไม่ได้: {e}", target.display())),
+    Err(e) => return Err(tr!(SnapMsg::ReadFailed, path = target.display(), detail = e)),
   };
   if exists {
     if !replace {
-      return Err(format!("มี snap \"{id}\" ติดตั้งอยู่แล้ว — ใช้ Update หรือถอนการติดตั้งก่อน"));
+      return Err(tr!(SnapMsg::AlreadyInstalled, id));
     }
     if !read_origin(&target).is_some_and(|o| o.same_source(origin)) {
-      return Err(format!("snap \"{id}\" ที่ติดตั้งอยู่มาจากที่อื่น — ถอนการติดตั้งก่อนแล้วค่อยติดตั้งใหม่"));
+      return Err(tr!(SnapMsg::InstalledElsewhere, id));
     }
   }
   let stamp = unique();
@@ -557,7 +559,7 @@ fn install_dir(user_dir: &Path, id: &str, from: &Path, origin: &Origin, replace:
     copy_files(from, &tmp, &files_of(from)?)?;
     let record = Origin { installed_at: now_secs(), ..origin.clone() };
     let text = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
-    std::fs::write(tmp.join(ORIGIN_FILE), text + "\n").map_err(|e| format!("บันทึก {ORIGIN_FILE} ไม่ได้: {e}"))
+    std::fs::write(tmp.join(ORIGIN_FILE), text + "\n").map_err(|e| tr!(SnapMsg::SaveFileFailed, file = ORIGIN_FILE, detail = e))
   };
   if let Err(e) = build() {
     let _ = std::fs::remove_dir_all(&tmp);
@@ -566,18 +568,18 @@ fn install_dir(user_dir: &Path, id: &str, from: &Path, origin: &Origin, replace:
   if !exists {
     return std::fs::rename(&tmp, &target).map_err(|e| {
       let _ = std::fs::remove_dir_all(&tmp);
-      format!("ย้าย snap เข้าที่ไม่ได้: {e}")
+      tr!(SnapMsg::MoveInFailed, detail = e)
     });
   }
   let old = user_dir.join(format!(".old-{id}-{stamp}"));
   std::fs::rename(&target, &old).map_err(|e| {
     let _ = std::fs::remove_dir_all(&tmp);
-    format!("ย้าย snap เดิมออกไม่ได้: {e}")
+    tr!(SnapMsg::MoveOldFailed, detail = e)
   })?;
   if let Err(e) = std::fs::rename(&tmp, &target) {
     let _ = std::fs::rename(&old, &target);
     let _ = std::fs::remove_dir_all(&tmp);
-    return Err(format!("ย้าย snap ใหม่เข้าที่ไม่ได้: {e}"));
+    return Err(tr!(SnapMsg::MoveNewFailed, detail = e));
   }
   let _ = std::fs::remove_dir_all(&old);
   Ok(())
@@ -589,10 +591,10 @@ fn install_dir(user_dir: &Path, id: &str, from: &Path, origin: &Origin, replace:
 /// Hands the user snap folder `id` to `trash` (the system Trash in the app, a stand-in in tests).
 pub fn uninstall(user_dir: &Path, id: &str, trash: impl FnOnce(&Path) -> Result<(), String>) -> Result<(), String> {
   if !is_snap_id(id) {
-    return Err(format!("id \"{id}\" ไม่ถูกต้อง"));
+    return Err(tr!(SnapMsg::InvalidId, id));
   }
   let path = user_dir.join(id);
-  std::fs::symlink_metadata(&path).map_err(|_| format!("ไม่พบ snap \"{id}\" ในโฟลเดอร์ snaps ของคุณ"))?;
+  std::fs::symlink_metadata(&path).map_err(|_| tr!(SnapMsg::NotInUserSnaps, id))?;
   let _guard = INSTALL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
   trash(&path)
 }
@@ -604,9 +606,9 @@ pub fn ensure_repo_snaps_dir(root: &Path) -> Result<PathBuf, String> {
   for part in REPO_DIR {
     dir.push(part);
     match std::fs::symlink_metadata(&dir) {
-      Ok(m) if m.file_type().is_symlink() || !m.is_dir() => return Err(format!("{} ไม่ใช่โฟลเดอร์ธรรมดา", dir.display())),
+      Ok(m) if m.file_type().is_symlink() || !m.is_dir() => return Err(tr!(SnapMsg::NotPlainFolder, path = dir.display())),
       Ok(_) => {}
-      Err(_) => std::fs::create_dir(&dir).map_err(|e| format!("สร้าง {} ไม่ได้: {e}", dir.display()))?,
+      Err(_) => std::fs::create_dir(&dir).map_err(|e| tr!(SnapMsg::CreateFailed, path = dir.display(), detail = e))?,
     }
   }
   Ok(dir)
@@ -614,41 +616,48 @@ pub fn ensure_repo_snaps_dir(root: &Path) -> Result<PathBuf, String> {
 
 pub fn template(id: &str, name: &str) -> String {
   let name = toml::Value::String(name.to_string()).to_string();
+  let header = tr!(SnapMsg::TemplateHeader);
+  let id_rule = tr!(SnapMsg::TemplateId);
+  let permissions = tr!(SnapMsg::TemplatePermissions);
+  let secrets = tr!(SnapMsg::TemplateSecrets);
+  let tasks = tr!(SnapMsg::TemplateTasks);
+  let settings = tr!(SnapMsg::TemplateSettings, id);
+  let greeting = toml::Value::String(tr!(SnapMsg::TemplateGreeting)).to_string();
+  let mcp = tr!(SnapMsg::TemplateMcp);
+  let skills = tr!(SnapMsg::TemplateSkills);
   format!(
-    r#"# Kingu Snap: แพ็กของงาน การตั้งค่า MCP server และ skill ที่ใช้ได้ทั้งใน IDE และ ADE
-# id ต้องตรงกับชื่อโฟลเดอร์ (a-z, 0-9, - ยาวไม่เกิน 40 ตัว)
+    r#"# {header}
+# {id_rule}
 id = "{id}"
 name = {name}
 version = "0.1.0"
 description = ""
 
-# สิทธิ์: แสดงให้ผู้ใช้เห็นก่อนเชื่อถือ และบังคับใช้ตอนรันงานและ MCP server (sandbox)
-# network = false ปิดเครือข่าย IP ทั้งหมด (รวม localhost) fs = "worktree" เขียนได้เฉพาะโฟลเดอร์งานและ temp
-# secrets = ตัวแปร environment ที่ส่งให้ได้ ตัวอื่นที่ดูเหมือน token/key/password จะถูกตัดออก
+# {permissions}
 [permissions]
 network = false
 fs = "worktree"   # "worktree" | "home"
-secrets = []      # ชื่อ secret ที่ต้องใช้
+secrets = []      # {secrets}
 
-# งานที่รันใน terminal: command เป็น argv (ไม่ผ่าน shell) ใช้ ${{setting:<key>}} แทนค่าการตั้งค่าได้
+# {tasks}
 [[tasks]]
 id = "hello"
 title = "Say hello"
 command = ["echo", "${{setting:greeting}}"]
 
-# การตั้งค่า: ขึ้นในหน้าการตั้งค่าระบบเป็น snap.{id}.<key>
+# {settings}
 [[settings]]
 key = "greeting"
 type = "string"   # "string" | "boolean" | "number"
 default = "Hello from {id}"
-description = "ข้อความที่งาน hello พิมพ์"
+description = {greeting}
 
-# MCP server (stdio) ที่ส่งให้ agent ใช้เป็น tool
+# {mcp}
 # [mcp.example]
 # command = ["my-mcp-server", "--stdio"]
 # env = {{ LOG_LEVEL = "info" }}
 
-# Skill ของ agent: โฟลเดอร์ใน snap ที่มี SKILL.md
+# {skills}
 # [[skills]]
 # path = "skills/my-skill"
 "#
@@ -658,20 +667,20 @@ description = "ข้อความที่งาน hello พิมพ์"
 /// Writes a new snap folder `base/<id>` with a commented template; returns its `snap.toml`.
 pub fn create(base: &Path, id: &str, name: &str) -> Result<PathBuf, String> {
   if !is_snap_id(id) {
-    return Err(format!("id \"{id}\" ไม่ถูกต้อง (ใช้ a-z, 0-9, - ขึ้นต้นด้วยตัวอักษรหรือตัวเลข ยาวไม่เกิน 40 ตัว)"));
+    return Err(tr!(SnapMsg::InvalidIdRules, id));
   }
   let name = name.trim();
   if name.is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control) {
-    return Err("ชื่อ snap ต้องไม่ว่างและยาวไม่เกิน 100 ตัวอักษร".into());
+    return Err(tr!(SnapMsg::NameInvalid));
   }
   let _guard = INSTALL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
   let dir = base.join(id);
   if std::fs::symlink_metadata(&dir).is_ok() {
-    return Err(format!("มี {} อยู่แล้ว", dir.display()));
+    return Err(tr!(SnapMsg::AlreadyExists, path = dir.display()));
   }
-  std::fs::create_dir_all(&dir).map_err(|e| format!("สร้าง {} ไม่ได้: {e}", dir.display()))?;
+  std::fs::create_dir_all(&dir).map_err(|e| tr!(SnapMsg::CreateFailed, path = dir.display(), detail = e))?;
   let file = dir.join(MANIFEST);
-  std::fs::write(&file, template(id, name)).map_err(|e| format!("เขียน {} ไม่ได้: {e}", file.display()))?;
+  std::fs::write(&file, template(id, name)).map_err(|e| tr!(SnapMsg::WriteFailed, path = file.display(), detail = e))?;
   Ok(file)
 }
 
@@ -730,10 +739,10 @@ pub fn read_lock(root: &Path) -> Option<Lock> {
 
 /// Writes the lock for the valid repo snaps in `list`; returns how many it pins.
 pub fn write_lock(root: &Path, list: &[SnapInfo]) -> Result<usize, String> {
-  repo_snaps_dir(root).ok_or("โฟลเดอร์นี้ไม่มี .kingu/snaps")?;
-  let file = lock_path(root).ok_or(".kingu ไม่ใช่โฟลเดอร์ธรรมดา")?;
+  repo_snaps_dir(root).ok_or_else(|| tr!(SnapMsg::NoRepoSnaps))?;
+  let file = lock_path(root).ok_or_else(|| tr!(SnapMsg::KinguNotFolder))?;
   if std::fs::symlink_metadata(&file).is_ok_and(|m| !m.is_file()) {
-    return Err(format!("{} ไม่ใช่ไฟล์ธรรมดา", file.display()));
+    return Err(tr!(SnapMsg::NotPlainFile, path = file.display()));
   }
   let mut snaps: Vec<LockEntry> = list
     .iter()
@@ -743,7 +752,7 @@ pub fn write_lock(root: &Path, list: &[SnapInfo]) -> Result<usize, String> {
   snaps.sort_by(|a, b| a.id.cmp(&b.id));
   let count = snaps.len();
   let text = serde_json::to_string_pretty(&Lock { version: 1, snaps }).map_err(|e| e.to_string())?;
-  write_atomic(&file, &(text + "\n")).map_err(|e| format!("เขียน {LOCK_FILE} ไม่ได้: {e}"))?;
+  write_atomic(&file, &(text + "\n")).map_err(|e| tr!(SnapMsg::WriteFailed, path = LOCK_FILE, detail = e))?;
   Ok(count)
 }
 
@@ -796,7 +805,7 @@ pub fn snap_install_cancel(app: AppHandle, token: String) -> Result<(), String> 
 #[tauri::command]
 pub async fn snap_uninstall(app: AppHandle, id: String) -> Result<(), String> {
   blocking(move || {
-    uninstall(&user_dir(&app)?, &id, |p| trash::delete(p).map_err(|e| format!("ย้ายไปถังขยะไม่ได้: {e}")))?;
+    uninstall(&user_dir(&app)?, &id, |p| trash::delete(p).map_err(|e| tr!(SnapMsg::TrashFailed, detail = e)))?;
     log::info!("snap {id}: uninstalled");
     Ok(())
   })
@@ -815,17 +824,17 @@ pub fn snap_new(app: AppHandle, ws: State<'_, Workspace>, id: String, name: Stri
       Ok(format!("{USER_MANIFEST_KEY}{id}/{MANIFEST}"))
     }
     "repo" => {
-      let root = ws.root().map_err(|_| "ยังไม่ได้เปิดโฟลเดอร์".to_string())?;
+      let root = ws.root().map_err(|_| tr!(SnapMsg::NoFolderOpen))?;
       create(&ensure_repo_snaps_dir(&root)?, &id, &name)?;
       Ok(format!("{}/{}/{id}/{MANIFEST}", REPO_DIR[0], REPO_DIR[1]))
     }
-    _ => Err("ที่เก็บ snap ไม่ถูกต้อง".into()),
+    _ => Err(tr!(SnapMsg::StoreInvalid)),
   }
 }
 
 #[tauri::command]
 pub fn snap_lock(app: AppHandle, ws: State<'_, Workspace>) -> Result<usize, String> {
-  let root = ws.root().map_err(|_| "ยังไม่ได้เปิดโฟลเดอร์".to_string())?;
+  let root = ws.root().map_err(|_| tr!(SnapMsg::NoFolderOpen))?;
   let config = config_dir(&app)?;
   let trust = TrustData::load(&config.join(crate::snap::TRUST_FILE));
   let list = crate::snap::discover(&config.join(USER_DIR), Some(&root), &trust);
@@ -836,30 +845,30 @@ pub fn snap_lock(app: AppHandle, ws: State<'_, Workspace>) -> Result<usize, Stri
 pub fn snap_reveal(app: AppHandle, ws: State<'_, Workspace>, id: String, source: String) -> Result<(), String> {
   // A broken snap's folder name need not be a valid id, but it is one plain name in the snaps dir.
   if id.is_empty() || id.starts_with('.') || id.contains(['/', '\\']) {
-    return Err(format!("id \"{id}\" ไม่ถูกต้อง"));
+    return Err(tr!(SnapMsg::InvalidId, id));
   }
   let base = match source.as_str() {
     "user" => user_dir(&app)?,
-    "repo" => repo_snaps_dir(&ws.root().map_err(|_| "ยังไม่ได้เปิดโฟลเดอร์".to_string())?).ok_or("โฟลเดอร์นี้ไม่มี .kingu/snaps")?,
-    _ => return Err("ที่มาของ snap ไม่ถูกต้อง".into()),
+    "repo" => repo_snaps_dir(&ws.root().map_err(|_| tr!(SnapMsg::NoFolderOpen))?).ok_or_else(|| tr!(SnapMsg::NoRepoSnaps))?,
+    _ => return Err(tr!(SnapMsg::SourceInvalid)),
   };
   let path = base.join(&id);
-  std::fs::symlink_metadata(&path).map_err(|_| format!("ไม่พบ {}", path.display()))?;
+  std::fs::symlink_metadata(&path).map_err(|_| tr!(SnapMsg::PathNotFound, path = path.display()))?;
   crate::fileops::reveal_path(&path)
 }
 
 /// `<user snaps>/<id>/snap.toml`, refusing symlinks.
 fn user_manifest(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
   if !is_snap_id(id) {
-    return Err(format!("id \"{id}\" ไม่ถูกต้อง"));
+    return Err(tr!(SnapMsg::InvalidId, id));
   }
   let dir = user_dir(app)?.join(id);
   if !std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
-    return Err(format!("ไม่พบ snap \"{id}\""));
+    return Err(tr!(SnapMsg::NotFound, id));
   }
   let file = dir.join(MANIFEST);
   if std::fs::symlink_metadata(&file).is_ok_and(|m| !m.is_file()) {
-    return Err(format!("{MANIFEST} ต้องเป็นไฟล์ธรรมดา"));
+    return Err(tr!(SnapMsg::ManifestNotPlainFile, manifest = MANIFEST));
   }
   Ok(file)
 }
@@ -868,15 +877,15 @@ fn user_manifest(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
 pub fn snap_manifest_read(app: AppHandle, id: String) -> Result<String, String> {
   let file = user_manifest(&app, &id)?;
   if std::fs::metadata(&file).map(|m| m.len()).unwrap_or_default() > MAX_MANIFEST_BYTES {
-    return Err(format!("{MANIFEST} ใหญ่เกินไป"));
+    return Err(tr!(SnapMsg::ManifestTooBig, manifest = MANIFEST));
   }
-  std::fs::read_to_string(&file).map_err(|e| format!("อ่าน {MANIFEST} ไม่ได้: {e}"))
+  std::fs::read_to_string(&file).map_err(|e| tr!(SnapMsg::ManifestUnreadable, manifest = MANIFEST, detail = e))
 }
 
 #[tauri::command]
 pub fn snap_manifest_write(app: AppHandle, id: String, content: String) -> Result<(), String> {
   if content.len() as u64 > MAX_MANIFEST_BYTES {
-    return Err(format!("{MANIFEST} ใหญ่เกินไป"));
+    return Err(tr!(SnapMsg::ManifestTooBig, manifest = MANIFEST));
   }
   write_atomic(&user_manifest(&app, &id)?, &content)
 }
@@ -999,7 +1008,7 @@ mod tests {
     let again = prepare_git(&e.staging, &e.user, bare.to_str().unwrap(), T).unwrap();
     assert_eq!(again.existing.len(), 1);
     let h = again.candidates[0].snap.hash.clone();
-    assert!(commit(&e.staging, &e.user, &again.token, "go", &h, false).unwrap_err().contains("ติดตั้งอยู่แล้ว"));
+    assert!(commit(&e.staging, &e.user, &again.token, "go", &h, false).unwrap_err().contains("already installed"));
   }
 
   #[test]
@@ -1031,10 +1040,10 @@ mod tests {
     assert_eq!(p.origin.git_ref.as_deref(), Some("v1"));
     let bad = p.candidates[0].snap.hash.clone();
     let rust = p.candidates[2].snap.hash.clone();
-    assert!(commit(&e.staging, &e.user, &p.token, "bad", &bad, false).unwrap_err().contains("ข้อผิดพลาด"));
+    assert!(commit(&e.staging, &e.user, &p.token, "bad", &bad, false).unwrap_err().contains("has an error"));
     // A refused commit removes the staging copy: start again.
     let p = prepare_git(&e.staging, &e.user, &format!("file://{}#v1", bare.display()), T).unwrap();
-    assert!(commit(&e.staging, &e.user, &p.token, "rust", "not-the-hash", false).unwrap_err().contains("เปลี่ยนไป"));
+    assert!(commit(&e.staging, &e.user, &p.token, "rust", "not-the-hash", false).unwrap_err().contains("changed while waiting"));
     let p = prepare_git(&e.staging, &e.user, &format!("file://{}#v1", bare.display()), T).unwrap();
     commit(&e.staging, &e.user, &p.token, "rust", &rust, false).unwrap();
     assert!(e.user.join("rust/snap.toml").is_file() && !e.user.join("go").exists());
@@ -1058,16 +1067,16 @@ mod tests {
       assert!(prepare_folder(&e.staging, &e.user, link.to_str().unwrap()).unwrap_err().contains("symlink"));
     }
     std::fs::write(src.join("big.bin"), vec![0u8; MAX_BYTES as usize + 1]).unwrap();
-    assert!(prepare_folder(&e.staging, &e.user, src.to_str().unwrap()).unwrap_err().contains("ใหญ่เกิน"));
+    assert!(prepare_folder(&e.staging, &e.user, src.to_str().unwrap()).unwrap_err().contains("Too large"));
     std::fs::remove_file(src.join("big.bin")).unwrap();
     for i in 0..MAX_FILES {
       std::fs::write(src.join(format!("f{i}")), "").unwrap();
     }
-    assert!(prepare_folder(&e.staging, &e.user, src.to_str().unwrap()).unwrap_err().contains("ใหญ่เกิน"));
+    assert!(prepare_folder(&e.staging, &e.user, src.to_str().unwrap()).unwrap_err().contains("Too large"));
 
     let empty = e.tmp.path().join("empty");
     std::fs::create_dir_all(&empty).unwrap();
-    assert!(prepare_folder(&e.staging, &e.user, empty.to_str().unwrap()).unwrap_err().contains("ไม่พบ snap.toml"));
+    assert!(prepare_folder(&e.staging, &e.user, empty.to_str().unwrap()).unwrap_err().contains("No snap.toml"));
     assert!(prepare_folder(&e.staging, &e.user, "relative").is_err());
     // Failed prepares leave no staging folders behind.
     assert_eq!(std::fs::read_dir(&e.staging).map(|r| r.count()).unwrap_or(0), 0);
@@ -1108,7 +1117,7 @@ mod tests {
     commit(&e.staging, &e.user, &p.token, "mine", &p.candidates[0].snap.hash, true).unwrap();
     assert!(std::fs::read_to_string(e.user.join("mine/snap.toml")).unwrap().contains("version = \"2\""));
     // A git snap is not an update source for a folder install, so update refuses.
-    assert!(prepare_update(&e.staging, &e.user, "mine", T).unwrap_err().contains("ไม่ได้ติดตั้งจาก git"));
+    assert!(prepare_update(&e.staging, &e.user, "mine", T).unwrap_err().contains("not installed from git"));
   }
 
   #[test]
@@ -1141,7 +1150,7 @@ mod tests {
     std::fs::create_dir_all(&other).unwrap();
     std::fs::write(other.join("snap.toml"), manifest("go", "9", false)).unwrap();
     let p = prepare_folder(&e.staging, &e.user, other.to_str().unwrap()).unwrap();
-    assert!(commit(&e.staging, &e.user, &p.token, "go", &p.candidates[0].snap.hash, true).unwrap_err().contains("มาจากที่อื่น"));
+    assert!(commit(&e.staging, &e.user, &p.token, "go", &p.candidates[0].snap.hash, true).unwrap_err().contains("comes from somewhere else"));
   }
 
   fn head(work: &Path) -> String {
@@ -1188,7 +1197,7 @@ mod tests {
     let pin = Pin { id: "go".into(), url: bare.display().to_string(), git_ref: None, commit: head(&work), sha256: "0".repeat(64) };
 
     let err = prepare_pinned(&e.staging, &e.user, &pin, T).unwrap_err();
-    assert!(err.contains("ไม่ตรงกับที่ทีมอนุมัติ"), "{err}");
+    assert!(err.contains("does not match what the team approved"), "{err}");
     assert!(!e.user.join("go").exists());
     assert_eq!(std::fs::read_dir(&e.staging).map(|r| r.count()).unwrap_or(0), 0, "refused staging is removed");
 
@@ -1196,7 +1205,7 @@ mod tests {
     let missing = Pin { commit: "1".repeat(40), sha256: real.clone(), ..pin.clone() };
     assert!(prepare_pinned(&e.staging, &e.user, &missing, T).is_err());
     let other_id = Pin { id: "rust".into(), sha256: real.clone(), ..pin.clone() };
-    assert!(prepare_pinned(&e.staging, &e.user, &other_id, T).unwrap_err().contains("ไม่มี snap"));
+    assert!(prepare_pinned(&e.staging, &e.user, &other_id, T).unwrap_err().contains("has no snap"));
     for bad in [Pin { commit: "abc".into(), ..pin.clone() }, Pin { sha256: "AB".repeat(32), ..pin.clone() }, Pin { url: "ext::sh -c x".into(), ..pin.clone() }, Pin { git_ref: Some("-x".into()), ..pin.clone() }] {
       assert!(prepare_pinned(&e.staging, &e.user, &bad, T).is_err(), "{bad:?}");
     }
@@ -1217,7 +1226,7 @@ mod tests {
     let fake_trash = |p: &Path| std::fs::rename(p, bin.join("go")).map_err(|e| e.to_string());
     uninstall(&e.user, "go", fake_trash).unwrap();
     assert!(!e.user.join("go").exists() && bin.join("go/snap.toml").is_file());
-    assert!(uninstall(&e.user, "go", |_| Ok(())).unwrap_err().contains("ไม่พบ"));
+    assert!(uninstall(&e.user, "go", |_| Ok(())).unwrap_err().contains("not found"));
     assert!(uninstall(&e.user, "../x", |_| Ok(())).is_err());
   }
 
@@ -1232,7 +1241,7 @@ mod tests {
     assert_eq!(list[0].tasks.len(), 1);
     assert_eq!(list[0].settings.len(), 1);
     assert!(file.ends_with("hello/snap.toml"));
-    assert!(create(&e.user, "hello", "again").unwrap_err().contains("อยู่แล้ว"));
+    assert!(create(&e.user, "hello", "again").unwrap_err().contains("already exists"));
     assert!(create(&e.user, "Bad", "x").is_err());
     assert!(create(&e.user, "ok", " ").is_err());
 

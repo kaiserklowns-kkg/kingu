@@ -2,6 +2,7 @@
 
 import { isPreviewKey, previewTarget } from './viewers';
 import { t } from '#lib/i18n/index.ts';
+import { isChatEditKey, parseChatEditKey } from '#lib/agent/chatEdits.ts';
 
 export type StatusEntry = {
 	path: string;
@@ -159,11 +160,14 @@ export function parseCommitDiffKey(key: string): { slug: string; hash: string; r
 	return slug && hash && rest.length ? { slug: slug === '_' ? '' : slug, hash, rel: rest.join('/') } : null;
 }
 
-export const isDiffKey = (key: string) => key.startsWith(DIFF_PREFIX) || isTaskDiffKey(key) || isCommitDiffKey(key);
+/** A chat's working-set file, its snapshot before the agent's edits vs now: `chatedit://<chat id>/<file>` (agent/chatEdits.ts). */
+export const isDiffKey = (key: string) => key.startsWith(DIFF_PREFIX) || isTaskDiffKey(key) || isCommitDiffKey(key) || isChatEditKey(key);
 /** The workspace file behind an editor tab key (itself for plain file tabs; a task diff's file
  * lives in the worktree under `.kingu/worktrees/<slug>/`). */
 export function fileOf(key: string): string {
 	if (isPreviewKey(key)) return previewTarget(key);
+	const chatEdit = parseChatEditKey(key);
+	if (chatEdit) return chatEdit.rel;
 	const task = parseTaskDiffKey(key);
 	if (task) return `.kingu/worktrees/${task.slug}/${task.rel}`;
 	const commit = parseCommitDiffKey(key);
@@ -178,6 +182,7 @@ export function tabLabel(key: string): string {
 	if (task) return t('workbench.scm.taskDiffLabel', { name, slug: task.slug });
 	const commit = parseCommitDiffKey(key);
 	if (commit) return `${name} (${commit.hash.slice(0, 7)})`;
+	if (isChatEditKey(key)) return t('chatEdits.diffLabel', { name });
 	if (isPreviewKey(key)) return `Preview ${name}`;
 	return isDiffKey(key) ? `${name} (Working Tree)` : name;
 }

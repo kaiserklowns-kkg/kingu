@@ -78,7 +78,7 @@ impl Client {
     let daemon: Hello = match read_frame::<ServerFrame>(&mut reader) {
       Ok(Some(ServerFrame::Reply { id: 1, ok, error: None })) => serde_json::from_value(ok).map_err(|e| unavailable(e.to_string()))?,
       Ok(Some(ServerFrame::Reply { error: Some(e), .. })) => return Err(unavailable(e)),
-      Ok(_) => return Err(unavailable("ไม่ได้รับ hello จาก daemon".into())),
+      Ok(_) => return Err(unavailable("no hello from the daemon".into())),
       Err(e) => return Err(unavailable(e.to_string())),
     };
     if !compatible(&ours, &daemon) {
@@ -110,12 +110,12 @@ impl Client {
 
   fn send(&self, id: u64, request: Request) -> Result<(), String> {
     if !self.is_connected() {
-      return Err("terminal daemon หลุดการเชื่อมต่อ".into());
+      return Err("The terminal daemon disconnected".into());
     }
     let mut w = self.inner.writer.lock().unwrap();
     w.write_all(&encode(&ClientFrame { id, request })).map_err(|e| {
       self.inner.closed.store(true, Ordering::SeqCst);
-      format!("ส่งคำสั่งถึง terminal daemon ไม่ได้: {e}")
+      format!("could not send a request to the terminal daemon: {e}")
     })
   }
 
@@ -130,7 +130,7 @@ impl Client {
     }
     let reply = rx.recv_timeout(CALL_TIMEOUT);
     self.inner.pending.lock().unwrap().remove(&id);
-    reply.unwrap_or_else(|_| Err("terminal daemon ไม่ตอบ".into()))
+    reply.unwrap_or_else(|_| Err("the terminal daemon did not answer".into()))
   }
 
   fn call_as<T: serde::de::DeserializeOwned>(&self, request: Request) -> Result<T, String> {
@@ -224,11 +224,11 @@ fn read_loop(mut reader: BufReader<UnixStream>, inner: &Inner) {
   }
   inner.closed.store(true, Ordering::SeqCst);
   for (_, tx) in inner.pending.lock().unwrap().drain() {
-    let _ = tx.send(Err("terminal daemon หลุดการเชื่อมต่อ".into()));
+    let _ = tx.send(Err("The terminal daemon disconnected".into()));
   }
   let mut streams = inner.streams.lock().unwrap();
   for (_, (_, mut sink)) in streams.sinks.drain() {
-    sink("\r\n[terminal daemon หลุดการเชื่อมต่อ]\r\n".into());
+    sink("\r\n[terminal daemon disconnected]\r\n".into());
   }
   streams.by_key.clear();
 }
@@ -263,7 +263,7 @@ pub fn connect_or_start(launch: &Launch) -> Result<Client, String> {
     match Client::connect(&path, &launch.app_version) {
       Ok(c) => return Ok(c),
       Err(ConnectError::Incompatible(h)) => {
-        last = format!("daemon ที่ {} ใช้ protocol {} (รองรับตั้งแต่ {})", path.display(), h.protocol, h.min_compatible);
+        last = format!("the daemon at {} speaks protocol {} (compatible from {})", path.display(), h.protocol, h.min_compatible);
         continue;
       }
       Err(ConnectError::Unavailable(_)) => {}
@@ -274,15 +274,15 @@ pub fn connect_or_start(launch: &Launch) -> Result<Client, String> {
       match Client::connect(&path, &launch.app_version) {
         Ok(c) => return Ok(c),
         Err(ConnectError::Incompatible(h)) => {
-          last = format!("daemon ที่ {} ใช้ protocol {}", path.display(), h.protocol);
+          last = format!("the daemon at {} speaks protocol {}", path.display(), h.protocol);
           break;
         }
-        Err(ConnectError::Unavailable(e)) if Instant::now() >= until => return Err(format!("เริ่ม terminal daemon ไม่สำเร็จ: {e}")),
+        Err(ConnectError::Unavailable(e)) if Instant::now() >= until => return Err(format!("could not start the terminal daemon: {e}")),
         Err(ConnectError::Unavailable(_)) => std::thread::sleep(Duration::from_millis(25)),
       }
     }
   }
-  Err(format!("ใช้ terminal daemon ไม่ได้: {last}"))
+  Err(format!("the terminal daemon is unavailable: {last}"))
 }
 
 /// Starts the daemon in its own session (no controlling terminal, not in the app's process group,
@@ -315,7 +315,7 @@ fn start(launch: &Launch, name: &str) -> Result<(), String> {
       Ok(())
     });
   }
-  let mut child = cmd.spawn().map_err(|e| format!("เริ่ม {} ไม่ได้: {e}", launch.bin.display()))?;
+  let mut child = cmd.spawn().map_err(|e| format!("could not start {}: {e}", launch.bin.display()))?;
   // Reaped here if it exits while the app runs (idle, or another daemon won the lock).
   std::thread::spawn(move || {
     let _ = child.wait();

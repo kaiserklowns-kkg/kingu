@@ -3,12 +3,18 @@
 	// a footer row (context chips + send). Enter sends, Shift+Enter adds a line (IME-safe).
 	// `attach`: images and files can come along (Orca's composer attachments): paste an image,
 	// drop files from Finder or pick them with the paperclip; they show as chips above the footer.
+	// Chat extras (VS Code's chatInputPart), all optional: `context` chips (the active editor's file
+	// as implicit context, `#`-picked files), ↑/↓ through `history` from an empty input, `#` calls
+	// `onhash`, and while `running` a Stop button (Enter still sends: the panel queues it).
 	import type { Snippet } from 'svelte';
 	import { open } from '@tauri-apps/plugin-dialog';
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { status } from '#lib/workbench/status.svelte.ts';
+	import { t } from '#lib/i18n/index.ts';
 	import { addAttachments, type Attachment } from './attachments.ts';
 	import { clipboardImage, onFileDrop, savePastedImage } from './attachInput.ts';
+	import { contextLabel, type ContextFile } from './chatPrompt.ts';
+	import { hashTrigger, recallPrompt, type HistoryCursor } from './chatInput.ts';
 
 	let {
 		value = $bindable(''),
@@ -20,7 +26,15 @@
 		attach = false,
 		attachments = $bindable([]),
 		onsubmit,
-		chips
+		chips,
+		context = [],
+		oncontexttoggle,
+		oncontextremove,
+		history = [],
+		running = false,
+		onstop,
+		onhash,
+		sendLabel
 	}: {
 		value?: string;
 		placeholder: string;
@@ -32,11 +46,28 @@
 		attachments?: Attachment[];
 		onsubmit: (text: string, attachments: Attachment[]) => void;
 		chips?: Snippet;
+		/** Attached files; an implicit one (the active editor's) can be turned off and on. */
+		context?: (ContextFile & { disabled?: boolean })[];
+		oncontexttoggle?: (file: ContextFile) => void;
+		oncontextremove?: (file: ContextFile) => void;
+		/** This chat's earlier prompts, oldest first (↑/↓). */
+		history?: string[];
+		/** A turn is running: show Stop. */
+		running?: boolean;
+		onstop?: () => void;
+		/** `#` typed at the start of a word: attach a file. */
+		onhash?: () => void;
+		sendLabel?: string;
 	} = $props();
 
 	let area: HTMLTextAreaElement | undefined = $state();
 	let box: HTMLDivElement | undefined = $state();
 	let dragOver = $state(false);
+	let cursor: HistoryCursor = null;
+
+	export function focus() {
+		area?.focus();
+	}
 
 	$effect(() => {
 		if (!attach || !box) return;
@@ -50,12 +81,12 @@
 		try {
 			attachments = addAttachments(attachments, [await savePastedImage(image)]);
 		} catch (err) {
-			status.flash(`วางรูปไม่ได้: ${err}`, 8000);
+			status.flash(t('chatView.pasteFailed', { error: String(err) }), 8000);
 		}
 	}
 
 	async function pick() {
-		const picked = await open({ multiple: true, directory: false, title: 'แนบไฟล์หรือรูป' }).catch(() => null);
+		const picked = await open({ multiple: true, directory: false, title: t('chatView.attach') }).catch(() => null);
 		if (picked) attachments = addAttachments(attachments, Array.isArray(picked) ? picked : [picked]);
 	}
 	const maxRows = $derived(size === 'lg' ? 12 : 8);
@@ -81,6 +112,7 @@
 	function send() {
 		const text = value.trim();
 		if (!text || disabled || busy) return;
+		cursor = null;
 		onsubmit(text, $state.snapshot(attachments));
 	}
 
@@ -88,8 +120,32 @@
 		if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
 			e.preventDefault();
 			send();
+			return;
+		}
+		if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && !e.isComposing && area) {
+			// Only from the first / last line, so the caret still moves inside a long prompt.
+			const before = value.slice(0, area.selectionStart);
+			const after = value.slice(area.selectionEnd);
+			if (e.key === 'ArrowUp' ? before.includes('\n') : after.includes('\n')) return;
+			const next = recallPrompt(history, cursor, e.key === 'ArrowUp' ? 'up' : 'down', value);
+			if (!next) return;
+			e.preventDefault();
+			cursor = next.cursor;
+			value = next.text;
+			queueMicrotask(() => area?.setSelectionRange(value.length, value.length));
 		}
 	}
+
+	function oninput() {
+		if (!onhash || !area) return;
+		const at = hashTrigger(value, area.selectionStart);
+		if (at < 0) return;
+		value = value.slice(0, at) + value.slice(at + 1);
+		queueMicrotask(() => area?.setSelectionRange(at, at));
+		onhash();
+	}
+
+	const CHIP_BTN = 'grid size-4 shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)';
 </script>
 
 <div
@@ -100,6 +156,37 @@
 		size === 'lg' ? 'p-2.5 shadow-[0_2px_12px_rgba(0,0,0,0.25)]' : 'p-1.5'
 	]}
 >
+	{#if context.length}
+		<ul class="flex flex-wrap gap-1 px-1 pb-1" aria-label={t('chatView.context')}>
+			{#each context as f (f.path + (f.implicit ? ':implicit' : ''))}
+				{@const label = contextLabel(f)}
+				<li
+					class={[
+						'flex max-w-64 items-center gap-1 rounded border px-1.5 py-0.5 text-xs text-(--vscode-foreground)',
+						f.disabled ? 'border-dashed border-(--vscode-widget-border) opacity-60' : 'border-(--vscode-widget-border)'
+					]}
+					title={f.path}
+				>
+					<Icon name="file" size={12} />
+					<span class={['truncate', f.disabled && 'line-through']}>{label}</span>
+					{#if f.implicit}
+						<span class="shrink-0 text-(--vscode-descriptionForeground)">{f.range ? t('chatView.currentSelection') : t('chatView.currentFile')}</span>
+						<button
+							type="button"
+							class={CHIP_BTN}
+							aria-label={f.disabled ? t('chatView.includeFile', { name: label }) : t('chatView.excludeFile', { name: label })}
+							title={f.disabled ? t('chatView.includeFile', { name: label }) : t('chatView.excludeFile', { name: label })}
+							onclick={() => oncontexttoggle?.(f)}><Icon name={f.disabled ? 'plus' : 'eyeOff'} size={10} /></button
+						>
+					{:else}
+						<button type="button" class={CHIP_BTN} aria-label={t('chatView.removeAttachment', { name: label })} onclick={() => oncontextremove?.(f)}
+							><Icon name="close" size={10} /></button
+						>
+					{/if}
+				</li>
+			{/each}
+		</ul>
+	{/if}
 	<textarea
 		bind:this={area}
 		bind:value
@@ -109,6 +196,7 @@
 		aria-label={placeholder}
 		{onkeydown}
 		{onpaste}
+		{oninput}
 		style="outline: none; box-shadow: none"
 		class={[
 			'w-full resize-none bg-transparent px-1 text-(--vscode-input-foreground) outline-none focus-visible:outline-none placeholder:text-(--vscode-input-placeholderForeground)',
@@ -116,15 +204,15 @@
 		]}
 	></textarea>
 	{#if attachments.length}
-		<ul class="flex flex-wrap gap-1 px-1 pt-1" aria-label="ไฟล์แนบ">
+		<ul class="flex flex-wrap gap-1 px-1 pt-1" aria-label={t('chatView.attachments')}>
 			{#each attachments as a (a.path)}
 				<li class="flex max-w-56 items-center gap-1 rounded border border-(--vscode-widget-border) px-1.5 py-0.5 text-xs text-(--vscode-foreground)" title={a.path}>
 					<Icon name={a.image ? 'image' : 'file'} size={12} />
 					<span class="truncate">{a.name}</span>
 					<button
 						type="button"
-						class="grid size-4 shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)"
-						aria-label="เอา {a.name} ออก"
+						class={CHIP_BTN}
+						aria-label={t('chatView.removeAttachment', { name: a.name })}
 						onclick={() => (attachments = attachments.filter((x) => x.path !== a.path))}><Icon name="close" size={10} /></button
 					>
 				</li>
@@ -138,22 +226,33 @@
 		{#if attach}
 			<button
 				type="button"
-				aria-label="แนบไฟล์หรือรูป"
-				title="แนบไฟล์หรือรูป (วางรูปหรือลากไฟล์มาวางก็ได้)"
+				aria-label={t('chatView.attach')}
+				title={t('chatView.attachHint')}
 				class="grid size-6 shrink-0 place-items-center rounded text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-50"
 				{disabled}
 				onclick={pick}><Icon name="attach" size={14} /></button
 			>
 		{/if}
-		<button
-			type="button"
-			aria-label="ส่ง (Enter)"
-			title="ส่ง (Enter) · ขึ้นบรรทัดใหม่ (Shift+Enter)"
-			class="grid size-7 shrink-0 place-items-center rounded-full bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:opacity-90 disabled:bg-transparent disabled:text-(--vscode-descriptionForeground) disabled:opacity-60"
-			disabled={!value.trim() || disabled || busy}
-			onclick={send}
-		>
-			{#if busy}<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>{:else}<Icon name="send" size={14} />{/if}
-		</button>
+		{#if running && onstop}
+			<button
+				type="button"
+				aria-label={t('chatView.stop')}
+				title={t('chatView.stop')}
+				class="grid size-7 shrink-0 place-items-center rounded-full text-(--vscode-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
+				onclick={() => onstop?.()}><Icon name="stop" size={14} /></button
+			>
+		{/if}
+		{#if !(running && onstop) || value.trim()}
+			<button
+				type="button"
+				aria-label={sendLabel ?? t('chatView.send')}
+				title={`${sendLabel ?? t('chatView.send')} · ${t('chatView.newLine')}`}
+				class="grid size-7 shrink-0 place-items-center rounded-full bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:opacity-90 disabled:bg-transparent disabled:text-(--vscode-descriptionForeground) disabled:opacity-60"
+				disabled={!value.trim() || disabled || busy}
+				onclick={send}
+			>
+				{#if busy}<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>{:else}<Icon name="send" size={14} />{/if}
+			</button>
+		{/if}
 	</div>
 </div>
