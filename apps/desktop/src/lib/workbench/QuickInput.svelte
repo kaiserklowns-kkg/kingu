@@ -6,7 +6,7 @@
 	import { fileIcon, type FileIconSpec } from './fileIcons';
 	import { quick, type PickItem, type Picker } from './quick.svelte';
 	import { untrack } from 'svelte';
-	import { rank, type Match } from './fuzzy';
+	import { highlightRuns, rank, type Match } from './fuzzy';
 	import { keyLabel } from './keys';
 
 	type Item = { label: string; detail?: string; key?: string; match?: Match; icon?: FileIconSpec; separator?: string; pick?: PickItem; run: () => void };
@@ -92,10 +92,7 @@
 		e.preventDefault();
 	}
 
-	function parts(text: string, positions: number[] = []) {
-		const set = new Set(positions);
-		return [...text].map((ch, i) => ({ ch, hit: set.has(i) }));
-	}
+	const parts = (text: string, positions: number[] = []) => highlightRuns(text, positions);
 </script>
 
 {#if quick.visible}
@@ -132,7 +129,7 @@
 					>
 						{#if item.icon}<FileIcon icon={item.icon} />{/if}
 						<span class="truncate">
-							{#each parts(item.label, item.match?.positions) as p, k (k)}<span class={p.hit ? 'font-bold text-(--vscode-list-highlightForeground)' : undefined}>{p.ch}</span>{/each}
+							{#each parts(item.label, item.match?.positions) as p, k (k)}<span class={p.hit ? 'font-bold text-(--vscode-list-highlightForeground)' : undefined}>{p.text}</span>{/each}
 						</span>
 						{#if item.detail}<span class="truncate text-xs text-(--vscode-descriptionForeground)">{item.detail}</span>{/if}
 						{#if item.separator}<span class="ml-auto shrink-0 text-xs text-(--vscode-descriptionForeground)">{item.separator}</span>{/if}

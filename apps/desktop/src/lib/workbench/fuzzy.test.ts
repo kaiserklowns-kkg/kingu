@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { fuzzyMatch, rank } from './fuzzy';
+import { fuzzyMatch, rank, highlightRuns } from './fuzzy';
 import { eventKey, keyLabel, matches, parseChord } from './keys';
 
 describe('fuzzyMatch', () => {
@@ -37,5 +37,24 @@ describe('keybindings', () => {
 		expect(keyLabel('cmd+shift+p', true)).toBe('⇧⌘P');
 		expect(keyLabel('ctrl+`', true)).toBe('⌃`');
 		expect(keyLabel('cmd+b', false)).toBe('Ctrl+B');
+	});
+});
+
+describe('highlightRuns', () => {
+	test('keeps Thai vowels and tone marks with their letter', () => {
+		const text = 'ลองหาอีกครั้ง';
+		const m = fuzzyMatch('อีก', text)!;
+		const runs = highlightRuns(text, m.positions);
+		expect(runs.map((r) => r.text).join('')).toBe(text);
+		// No run starts with a combining mark (U+0E31, U+0E34–U+0E3A, U+0E47–U+0E4E).
+		expect(runs.every((r) => !/^[ัิ-ฺ็-๎]/.test(r.text))).toBe(true);
+	});
+	test('merges neighbours with the same state', () => {
+		expect(highlightRuns('abcd', [1, 2])).toEqual([
+			{ text: 'a', hit: false },
+			{ text: 'bc', hit: true },
+			{ text: 'd', hit: false }
+		]);
+		expect(highlightRuns('abc')).toEqual([{ text: 'abc', hit: false }]);
 	});
 });
