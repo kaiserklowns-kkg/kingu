@@ -18,6 +18,9 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::i18n::msg::AccountsMsg;
+use crate::tr;
+
 use serde::Serialize;
 use tauri::{Manager, State};
 
@@ -199,7 +202,7 @@ impl Accounts {
   pub fn set_key(&self, id: &str, key: &str) -> Result<(), String> {
     let a = self.inner.lock().unwrap().store.get(id)?.clone();
     if a.kind != Kind::ApiKey {
-      return Err("บัญชีนี้ใช้การ login ไม่ใช่ API key".into());
+      return Err(tr!(AccountsMsg::UsesLogin));
     }
     let key = key.trim();
     store::validate_api_key(a.provider, key)?;
@@ -236,8 +239,8 @@ impl Accounts {
       let a = self.inner.lock().unwrap().store.get(id)?.clone();
       if !self.identity(&a).signed_in {
         return Err(match a.kind {
-          Kind::ApiKey => format!("ตั้ง API key ของ {} ก่อนเลือกใช้", a.label),
-          Kind::Subscription => format!("login บัญชี {} ก่อนเลือกใช้", a.label),
+          Kind::ApiKey => tr!(AccountsMsg::SetKeyFirst, label = a.label),
+          Kind::Subscription => tr!(AccountsMsg::LoginFirst, label = a.label),
         });
       }
     }
@@ -347,7 +350,7 @@ impl Accounts {
       .map(|s| {
         let (id, label) = match &s.account {
           Some(a) => (self.identity(a), a.label.clone()),
-          None => (self.own_identity(s.provider), "บัญชีของคุณเอง".to_owned()),
+          None => (self.own_identity(s.provider), tr!(AccountsMsg::OwnAccount)),
         };
         (s.key.clone(), (id, label))
       })
@@ -561,7 +564,7 @@ mod tests {
     let claude = rows.iter().find(|r| r.key == "claude:own").unwrap();
     assert_eq!(claude.status, "error");
     assert_eq!(claude.failure, Some(Failure::StaleToken));
-    assert!(claude.error.as_deref().unwrap().contains("login ใหม่"));
+    assert!(claude.error.as_deref().unwrap().contains("log in again"));
     // Even a manual refresh does not resend a refused token.
     {
       let mut inner = a.inner.lock().unwrap();
