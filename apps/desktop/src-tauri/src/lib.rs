@@ -8,6 +8,7 @@ mod glob;
 mod git_remote;
 mod lsp;
 mod menu;
+mod project;
 mod pty;
 mod replace;
 mod search;
@@ -584,6 +585,7 @@ pub fn run() {
     .manage(lsp::Servers::default())
     .manage(dap::Sessions::default())
     .manage(git_remote::GitOps::default())
+    .manage(git_remote::CloneOps::default())
     .manage(menu::MenuState::default())
     .setup(|app| {
       shell_env::init();
@@ -663,6 +665,10 @@ pub fn run() {
       git_remote::git_stash_list,
       git_remote::git_stash_apply,
       git_remote::git_stash_drop,
+      git_remote::git_clone,
+      git_remote::git_clone_cancel,
+      project::git_init,
+      project::project_create,
       pty_spawn,
       pty::pty_write,
       pty::pty_resize,
@@ -698,6 +704,11 @@ pub fn run() {
       agent::gh_status,
       agent::worktree_pr_create,
       agent::worktree_pr_status,
+      agent::worktree_pr_merge,
+      agent::gh_merge_settings,
+      agent::worktree_pr_check_logs,
+      agent::worktree_pr_threads,
+      agent::gh_resolve_thread,
       agent::scripts::worktree_script,
       agent::scripts::worktree_script_trust,
       agent::scripts::worktree_script_prepare,

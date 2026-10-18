@@ -27,6 +27,8 @@ import { commands } from './commands.svelte';
 import { editors } from './editors.svelte';
 import { groups, smartCommitPaths, type GitStatus } from './scm';
 import { status } from './status.svelte';
+import { repoDialog } from './repoDialog.svelte.ts';
+import { workspace } from './workspace.svelte.ts';
 
 class Scm {
 	repo = $state<GitStatus | null>(null);
@@ -61,6 +63,16 @@ class Scm {
 			this.#inflight = null;
 		})();
 		return this.#inflight;
+	}
+
+	/**
+	 * VS Code's Initialize Repository for the open folder. `initialCommit` (the ADE) adds an empty
+	 * first commit so worktrees have a branch to fork from (Orca's new projects start that way).
+	 */
+	async init(initialCommit = false): Promise<boolean> {
+		const ok = await this.#run('git_init', { initialCommit });
+		if (ok) status.flash(initialCommit ? 'สร้าง git repository พร้อม commit แรกแล้ว' : 'สร้าง git repository แล้ว');
+		return ok;
 	}
 
 	/** Runs a git command, reports failure in the status bar, then re-reads status. */
@@ -383,6 +395,8 @@ export function installScm(): () => void {
 
 	const unregister = [
 		commands.register({ id: 'git.refresh', title: 'Git: Refresh', run: () => scm.refresh() }),
+		commands.register({ id: 'git.init', title: 'Git: Initialize Repository', when: () => scm.loaded && scm.repo === null && workspace.root !== null, run: () => scm.init() }),
+		commands.register({ id: 'git.clone', title: 'Git: Clone', run: () => repoDialog.show('clone') }),
 		commands.register({ id: 'git.commit', title: 'Git: Commit', when: () => scm.repo !== null, run: () => scm.commit() }),
 		commands.register({ id: 'git.commitAmend', title: 'Git: Commit (Amend)', when: () => scm.repo !== null, run: () => scm.commit({ amend: true }) }),
 		commands.register({

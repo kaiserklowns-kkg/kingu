@@ -9,6 +9,7 @@ pub mod events;
 pub mod hooks;
 pub mod host;
 pub mod issues;
+pub mod pr;
 pub mod review;
 pub mod scripts;
 pub mod tasks;
@@ -321,4 +322,63 @@ pub async fn gh_issue_open(ws: State<'_, Workspace>, number: u64) -> Result<(), 
   let root = ws.root()?;
   let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
   blocking(move || issues::open_web(&gh, &root, number)).await
+}
+
+/// Where a PR command runs: the task worktree `slug`, or the open folder for `''` (the ADE's
+/// Checks tab of the folder itself).
+fn pr_dir(ws: &Workspace, slug: &str) -> Result<std::path::PathBuf, String> {
+  let root = ws.root()?;
+  if slug.is_empty() { Ok(root) } else { review::task_dir(&root, slug) }
+}
+
+/// Merges the PR (`merge`, `squash` or `rebase`) after re-checking it on GitHub (Orca's merge);
+/// `delete_branch` also deletes its head branch on GitHub. The webview confirms first.
+#[tauri::command]
+pub async fn worktree_pr_merge(
+  ws: State<'_, Workspace>,
+  slug: String,
+  url: String,
+  number: u64,
+  method: String,
+  delete_branch: Option<bool>,
+) -> Result<pr::MergeOutcome, String> {
+  let dir = pr_dir(&ws, &slug)?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let method = pr::MergeMethod::parse(&method)?;
+  blocking(move || pr::merge(&gh, &dir, &url, number, method, delete_branch.unwrap_or(false))).await
+}
+
+/// Merge methods the PR's repository allows and the viewer's default (`gh repo view`).
+#[tauri::command]
+pub async fn gh_merge_settings(ws: State<'_, Workspace>, slug: String, url: String) -> Result<pr::RepoMergeSettings, String> {
+  let dir = pr_dir(&ws, &slug)?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let repo = pr::RepoRef::from_pr_url(&url)?;
+  blocking(move || pr::merge_settings(&gh, &dir, &repo)).await
+}
+
+/// Log excerpts of failed checks' GitHub Actions jobs, for the "fix failing checks" prompt.
+#[tauri::command]
+pub async fn worktree_pr_check_logs(ws: State<'_, Workspace>, slug: String, url: String, checks: Vec<pr::CheckRef>) -> Result<Vec<pr::CheckLog>, String> {
+  let dir = pr_dir(&ws, &slug)?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  blocking(move || pr::check_logs(&gh, &dir, &url, &checks)).await
+}
+
+/// Review threads of the PR (resolved ones included; the webview filters).
+#[tauri::command]
+pub async fn worktree_pr_threads(ws: State<'_, Workspace>, slug: String, url: String, number: u64) -> Result<Vec<pr::ReviewThread>, String> {
+  let dir = pr_dir(&ws, &slug)?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  blocking(move || pr::review_threads(&gh, &dir, &url, number)).await
+}
+
+/// Resolves (or, with `resolve: false`, reopens) a review thread; returns its new state.
+#[tauri::command]
+pub async fn gh_resolve_thread(ws: State<'_, Workspace>, slug: String, url: String, thread_id: String, resolve: bool) -> Result<bool, String> {
+  let dir = pr_dir(&ws, &slug)?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let done = blocking(move || pr::resolve_thread(&gh, &dir, &url, &thread_id, resolve)).await?;
+  log::info!("review thread {}", if done { "resolved" } else { "reopened" });
+  Ok(done)
 }

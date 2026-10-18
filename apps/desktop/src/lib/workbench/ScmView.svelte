@@ -8,6 +8,7 @@
 	import { keyLabel } from './keys';
 	import { diffKey as headDiffKey, splitPath, type Resource, type ScmSource } from './scm';
 	import { scm as folderScm } from './scm.svelte';
+	import { repoDialog } from './repoDialog.svelte.ts';
 	import { appMode } from './mode.svelte';
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 
@@ -175,7 +176,19 @@
 	{#if !scm.loaded}
 		<p class="px-5 py-1 text-(--vscode-descriptionForeground)">กำลังอ่านสถานะ git...</p>
 	{:else if !scm.repo}
-		<p class="px-5 py-1 text-(--vscode-descriptionForeground)">The folder currently open doesn't have a git repository.</p>
+		<!-- VS Code's welcome view for a folder without a repository. -->
+		<div class="flex flex-col gap-3 px-5 py-1 leading-normal">
+			<p>The folder currently open doesn't have a git repository. You can initialize a repository which will enable source control features powered by git.</p>
+			<button
+				class="h-[26px] w-full rounded-sm bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:brightness-110 disabled:opacity-50"
+				disabled={folderScm.busy || !!source}
+				onclick={() => folderScm.init()}
+			>
+				Initialize Repository
+			</button>
+			<p class="text-(--vscode-descriptionForeground)">หรือ clone repository จาก URL</p>
+			<button class="h-[26px] w-full rounded-sm border border-(--vscode-widget-border) hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => repoDialog.show('clone')}>Clone Repository</button>
+		</div>
 	{:else}
 		<div class="flex shrink-0 flex-col gap-1.5 px-2 pt-1 pb-2">
 			<textarea

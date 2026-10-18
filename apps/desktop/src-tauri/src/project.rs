@@ -1,0 +1,157 @@
+//! New projects (Orca's `repos:create`): a folder with `git init` and an empty initial commit, so
+//! HEAD is on a branch and worktrees can fork from it; and `git init` for an open folder that is
+//! not a repository yet (VS Code's Initialize Repository; the ADE also wants the first commit).
+
+use std::path::{Path, PathBuf};
+
+use tauri::State;
+
+use crate::workspace::Workspace;
+
+const IDENTITY_HINT: &str = "ยังไม่ได้ตั้งชื่อผู้เขียนของ git ให้รัน git config --global user.name \"ชื่อคุณ\" และ git config --global user.email \"you@example.com\" แล้วลองใหม่";
+
+fn git(dir: &Path, args: &[&str]) -> Result<(), String> {
+  crate::git::run(dir, args).map(|_| ())
+}
+
+/// Tests' initial commits must not depend on (or prompt through) the user's global git config.
+#[cfg(test)]
+const COMMIT_CONFIG: &[&str] = &["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"];
+#[cfg(not(test))]
+const COMMIT_CONFIG: &[&str] = &[];
+
+/// The folder is the top of a repository already (a parent repository does not count).
+fn is_repo_root(dir: &Path) -> bool {
+  dir.join(".git").exists()
+}
+
+/// `git init` in `dir`, plus an empty "Initial commit" when `initial_commit`. A failed commit
+/// removes the `.git` this created, so the folder is as it was (Orca).
+pub fn init(dir: &Path, initial_commit: bool) -> Result<(), String> {
+  if !dir.is_absolute() || !dir.is_dir() {
+    return Err(format!("{}: ไม่ใช่โฟลเดอร์", dir.display()));
+  }
+  if is_repo_root(dir) {
+    return Err(format!("{} เป็น git repository อยู่แล้ว", dir.display()));
+  }
+  git(dir, &["init"]).map_err(|e| format!("git init ไม่สำเร็จ: {e}"))?;
+  if !initial_commit {
+    return Ok(());
+  }
+  let mut args = COMMIT_CONFIG.to_vec();
+  args.extend(["commit", "--allow-empty", "-m", "Initial commit"]);
+  if let Err(e) = git(dir, &args) {
+    let _ = std::fs::remove_dir_all(dir.join(".git"));
+    let lower = e.to_lowercase();
+    return Err(if lower.contains("please tell me who you are") || lower.contains("user.name") || lower.contains("user.email") {
+      IDENTITY_HINT.to_owned()
+    } else {
+      format!("สร้าง commit แรกไม่สำเร็จ: {e}")
+    });
+  }
+  Ok(())
+}
+
+/// A project folder name: one path segment, not `.`/`..`, no control characters.
+fn check_name(name: &str) -> Result<(), String> {
+  if name.is_empty() {
+    return Err("ใส่ชื่อโปรเจกต์".into());
+  }
+  if name.contains(['/', '\\']) || name == "." || name == ".." || name.starts_with('-') || name.chars().any(char::is_control) || name.len() > 255 {
+    return Err(format!("ชื่อโปรเจกต์ใช้ไม่ได้: {name:?} (ห้ามมี / หรือเป็น . / ..)"));
+  }
+  Ok(())
+}
+
+/// Creates `<parent>/<name>` (an existing empty folder is fine, a non-empty one is refused), then
+/// `git init` with an empty initial commit. A folder this created is removed again on failure.
+pub fn create(parent: &Path, name: &str) -> Result<PathBuf, String> {
+  let name = name.trim();
+  check_name(name)?;
+  if !parent.is_absolute() {
+    return Err("โฟลเดอร์ที่จะสร้างโปรเจกต์ต้องเป็น path เต็ม".into());
+  }
+  std::fs::create_dir_all(parent).map_err(|e| format!("สร้างโฟลเดอร์ {} ไม่ได้: {e}", parent.display()))?;
+  let target = parent.join(name);
+  let created = match std::fs::create_dir(&target) {
+    Ok(()) => true,
+    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+      let empty = target.is_dir() && !target.is_symlink() && std::fs::read_dir(&target).is_ok_and(|mut d| d.next().is_none());
+      if !empty {
+        return Err(format!("มี \"{name}\" อยู่ที่นี่แล้วและไม่ว่าง"));
+      }
+      false
+    }
+    Err(e) => return Err(format!("สร้างโฟลเดอร์ {} ไม่ได้: {e}", target.display())),
+  };
+  if let Err(e) = init(&target, true) {
+    if created {
+      let _ = std::fs::remove_dir_all(&target);
+    }
+    return Err(e);
+  }
+  log::info!("created project {}", target.display());
+  Ok(target)
+}
+
+/// `git init` in the open folder (`initial_commit` from the ADE, which needs a branch to fork
+/// worktrees from).
+#[tauri::command]
+pub async fn git_init(ws: State<'_, Workspace>, initial_commit: Option<bool>) -> Result<(), String> {
+  let root = ws.root()?;
+  tauri::async_runtime::spawn_blocking(move || init(&root, initial_commit.unwrap_or(false))).await.map_err(|e| e.to_string())??;
+  log::info!("git init in the open folder");
+  Ok(())
+}
+
+/// Creates a new project under `parent`; returns its path to open.
+#[tauri::command]
+pub async fn project_create(parent: String, name: String) -> Result<String, String> {
+  tauri::async_runtime::spawn_blocking(move || create(Path::new(&parent), &name).map(|p| p.display().to_string())).await.map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn log(dir: &Path) -> String {
+    String::from_utf8(crate::git::run(dir, &["log", "--format=%s"]).unwrap()).unwrap()
+  }
+
+  #[test]
+  fn creates_a_project_with_an_initial_commit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let parent = tmp.path().join("kingu/projects");
+    let p = create(&parent, " demo ").unwrap();
+    assert_eq!(p, parent.join("demo"));
+    assert_eq!(log(&p).trim(), "Initial commit");
+    assert!(create(&parent, "demo").unwrap_err().contains("ไม่ว่าง"));
+    std::fs::create_dir(parent.join("empty")).unwrap();
+    assert!(create(&parent, "empty").is_ok());
+    for bad in ["", "a/b", "..", ".", "-x"] {
+      assert!(create(&parent, bad).is_err(), "{bad:?}");
+    }
+    assert!(create(Path::new("rel"), "x").is_err());
+  }
+
+  #[test]
+  fn inits_an_existing_folder_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("plain");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("notes.txt"), "x").unwrap();
+    init(&dir, false).unwrap();
+    assert!(dir.join(".git").is_dir());
+    assert!(crate::git::run(&dir, &["rev-parse", "--verify", "HEAD"]).is_err(), "no commit without initial_commit");
+    assert!(init(&dir, false).unwrap_err().contains("อยู่แล้ว"));
+
+    let ade = tmp.path().join("ade");
+    std::fs::create_dir(&ade).unwrap();
+    std::fs::write(ade.join("keep.txt"), "x").unwrap();
+    init(&ade, true).unwrap();
+    assert_eq!(log(&ade).trim(), "Initial commit");
+    let tracked = String::from_utf8(crate::git::run(&ade, &["ls-files"]).unwrap()).unwrap();
+    assert!(tracked.is_empty(), "the initial commit is empty");
+    assert!(init(&tmp.path().join("missing"), false).is_err());
+  }
+}

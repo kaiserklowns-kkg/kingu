@@ -16,6 +16,8 @@
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
 	import { actionsFor, runWorktreeAction } from './worktreeMenu.svelte';
 	import type { WorktreeAction } from './worktreeActions';
+	import { repoDialog } from '#lib/workbench/repoDialog.svelte.ts';
+	import { scm } from '#lib/workbench/scm.svelte.ts';
 
 	/** Needs-attention first, then in progress, then done (Orca keeps busy worktrees on top). */
 	const ordered = $derived([...adeTasks.groups.attention, ...adeTasks.groups.active, ...adeTasks.groups.done]);
@@ -30,6 +32,31 @@
 		adeLayout.show(PRIMARY);
 		adeLayout.select(PRIMARY, 'main');
 		newSession();
+	}
+
+	/** The open folder is not a git repository: tasks need one (Orca adds only git projects). */
+	const notGit = $derived(!!workspace.root && scm.loaded && scm.repo === null);
+	async function initGit() {
+		if (await scm.init(true)) await adeTasks.load();
+	}
+
+	// Orca's Projects "+": add a project (open, clone, create), next to a new task here.
+	let addMenu = $state<{ x: number; y: number; keyboard: boolean } | null>(null);
+	const ADD_ITEMS = $derived([
+		menuItem('task', 'งานใหม่ (worktree ใหม่)', { enabled: !!workspace.root && !notGit }),
+		menuSeparator,
+		menuItem('open', 'เปิดโฟลเดอร์…'),
+		menuItem('clone', 'Clone repository…'),
+		menuItem('create', 'สร้างโปรเจกต์ใหม่…')
+	]);
+	function openAddMenu(e: MouseEvent) {
+		const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		addMenu = { x: r.right - 220, y: r.bottom + 2, keyboard: e.detail === 0 };
+	}
+	function runAdd(id: string) {
+		if (id === 'task') newTask();
+		else if (id === 'open') void commands.run('workbench.action.files.openFolder');
+		else void repoDialog.show(id === 'clone' ? 'clone' : 'create');
 	}
 
 	// Orca's worktree context menu: right-click a card (or its ⋯ button).
@@ -91,8 +118,12 @@
 	<div class="flex h-7 shrink-0 items-center gap-0.5 pr-2 pl-4">
 		<span class="flex-1 text-[13px] text-(--vscode-descriptionForeground)">Projects</span>
 		<button class={HEADER_ACTION} aria-label="รีเฟรช" title="รีเฟรช" disabled={!workspace.root} onclick={() => adeTasks.load()}><Icon name="refresh" size={15} /></button>
-		<button class={HEADER_ACTION} aria-label="งานใหม่ (worktree ใหม่)" title="งานใหม่ (worktree ใหม่)" disabled={!workspace.root} onclick={newTask}><Icon name="plus" size={16} /></button>
+		<button class={HEADER_ACTION} aria-label="เพิ่ม: งานใหม่หรือโปรเจกต์" title="งานใหม่ / เปิด, clone หรือสร้างโปรเจกต์" aria-haspopup="menu" onclick={openAddMenu}><Icon name="plus" size={16} /></button>
 	</div>
+
+	{#if addMenu}
+		<PopupMenu items={ADD_ITEMS} label="เพิ่ม" x={addMenu.x} y={addMenu.y} focusFirst={addMenu.keyboard} onRun={(node) => node.type === 'item' && runAdd(node.id)} onClose={() => (addMenu = null)} />
+	{/if}
 
 	{#if menu}
 		<!-- PopupMenu closes (menu = null) before it runs the item, so the key is taken here. -->
@@ -112,7 +143,9 @@
 		{#if !workspace.root}
 			<div class="space-y-2 px-2 py-3 text-xs text-(--vscode-descriptionForeground)">
 				<p>เปิดโฟลเดอร์ที่เป็น git repository ก่อน แล้วจึงสร้างงานให้ agent ได้</p>
-				<button class="text-(--vscode-textLink-foreground) hover:underline" onclick={() => commands.run('workbench.action.files.openFolder')}>เปิดโฟลเดอร์…</button>
+				<button class="block text-(--vscode-textLink-foreground) hover:underline" onclick={() => commands.run('workbench.action.files.openFolder')}>เปิดโฟลเดอร์…</button>
+				<button class="block text-(--vscode-textLink-foreground) hover:underline" onclick={() => repoDialog.show('clone')}>Clone repository…</button>
+				<button class="block text-(--vscode-textLink-foreground) hover:underline" onclick={() => repoDialog.show('create')}>สร้างโปรเจกต์ใหม่…</button>
 			</div>
 		{:else}
 			<div class="flex h-9 items-center gap-2 px-2 text-[14px] font-semibold">
@@ -120,6 +153,12 @@
 				<span class="truncate">{workspace.name}</span>
 			</div>
 
+			{#if notGit}
+				<div class="mb-2 space-y-1.5 rounded-lg border border-(--vscode-widget-border) px-2.5 py-2 text-xs">
+					<p class="text-(--vscode-descriptionForeground)">โฟลเดอร์นี้ยังไม่เป็น git repository งานของ agent ต้องแตก git worktree จึงยังสร้างงานไม่ได้</p>
+					<button class="text-(--vscode-textLink-foreground) hover:underline disabled:opacity-50" disabled={scm.busy} onclick={initGit}>เริ่มใช้ git (git init + commit แรก)</button>
+				</div>
+			{/if}
 			<div class="space-y-1.5">
 				{#if primaryShown}
 					<button
