@@ -22,6 +22,8 @@ export type TaskMeta = {
 	pr_url: string | null;
 	/** Files accepted in review. */
 	accepted: string[];
+	/** Hunks accepted in review, by file (Rust `hunks::Hunk::id`); a file in `accepted` covers all of its hunks. */
+	accepted_hunks?: Record<string, string[]>;
 	merged_at: number | null;
 	/** Claude session of the latest run, resumed by follow-ups (also after a restart). */
 	session_id: string | null;
