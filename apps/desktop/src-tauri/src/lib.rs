@@ -8,6 +8,7 @@ mod menu;
 mod pty;
 mod replace;
 mod search;
+mod sessions;
 mod settings;
 mod shell_env;
 mod snap;
@@ -334,6 +335,164 @@ fn open_web_url(url: String) -> Result<(), String> {
   system::open_web_url(&url)
 }
 
+/// Runs `gh` in `dir`; its stderr becomes the error.
+fn gh_run(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+  let gh = agent::review::gh_bin().ok_or("ยังไม่ได้ติดตั้ง GitHub CLI (gh)")?;
+  let out = shell_env::command(&gh).current_dir(dir).env("GH_PROMPT_DISABLED", "1").args(args).output().map_err(|e| format!("gh: {e}"))?;
+  if !out.status.success() {
+    return Err(format!("gh {}: {}", args.first().unwrap_or(&""), String::from_utf8_lossy(&out.stderr).trim()));
+  }
+  Ok(out.stdout)
+}
+
+/// Checks tab actions on the branch's PR: `merge` (with `squash` / `merge` / `rebase`), `close`,
+/// `reopen`, `ready` (out of draft).
+#[tauri::command]
+async fn gh_pr_action(ws: State<'_, Workspace>, slug: Option<String>, action: String, method: Option<String>) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || {
+    let flag = match method.as_deref() {
+      Some("merge") => "--merge",
+      Some("rebase") => "--rebase",
+      _ => "--squash",
+    };
+    let args: Vec<&str> = match action.as_str() {
+      "merge" => vec!["pr", "merge", flag],
+      "close" => vec!["pr", "close"],
+      "reopen" => vec!["pr", "reopen"],
+      "ready" => vec!["pr", "ready"],
+      other => return Err(format!("{other}: unknown PR action")),
+    };
+    gh_run(&root, &args).map(|_| ())
+  })
+  .await
+}
+
+#[tauri::command]
+async fn gh_pr_edit_title(ws: State<'_, Workspace>, slug: Option<String>, title: String) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  if title.trim().is_empty() {
+    return Err("PR title is empty".into());
+  }
+  blocking(move || gh_run(&root, &["pr", "edit", "--title", title.trim()]).map(|_| ())).await
+}
+
+/// The PR's conversation comments and reviews (`gh pr view --json comments,reviews`).
+#[tauri::command]
+async fn gh_pr_comments(ws: State<'_, Workspace>, slug: Option<String>) -> Result<serde_json::Value, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || {
+    let out = gh_run(&root, &["pr", "view", "--json", "comments,reviews"])?;
+    serde_json::from_slice(&out).map_err(|e| e.to_string())
+  })
+  .await
+}
+
+#[tauri::command]
+async fn gh_pr_comment(ws: State<'_, Workspace>, slug: Option<String>, body: String) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  if body.trim().is_empty() {
+    return Err("Comment is empty".into());
+  }
+  if body.len() > 60_000 {
+    return Err("Comment is too large to submit safely.".into());
+  }
+  blocking(move || gh_run(&root, &["pr", "comment", "--body", &body]).map(|_| ())).await
+}
+
+/// The failed steps' log of a GitHub Actions check (from its details URL), last 150 lines.
+#[tauri::command]
+async fn gh_check_log(ws: State<'_, Workspace>, slug: Option<String>, url: String) -> Result<String, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  let run = url.split("/actions/runs/").nth(1).and_then(|r| r.split(['/', '?']).next()).filter(|r| r.chars().all(|c| c.is_ascii_digit()) && !r.is_empty()).map(str::to_owned);
+  let Some(run) = run else { return Err("No inline details are available for this check.".into()) };
+  blocking(move || {
+    let out = gh_run(&root, &["run", "view", &run, "--log-failed"])?;
+    let text = String::from_utf8_lossy(&out);
+    let lines: Vec<&str> = text.lines().collect();
+    Ok(lines[lines.len().saturating_sub(150)..].join("\n"))
+  })
+  .await
+}
+
+/// Files a commit changed (`git show --name-status`), for the Commits panel.
+#[tauri::command]
+async fn git_show_files(ws: State<'_, Workspace>, slug: Option<String>, hash: String) -> Result<Vec<(String, String)>, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  git::check_rev(&hash)?;
+  blocking(move || {
+    let out = git::run(&root, &["show", "--name-status", "--format=", "--end-of-options", &hash])?;
+    Ok(String::from_utf8_lossy(&out).lines().filter_map(|l| l.split_once('\t')).map(|(s, p)| (s.chars().next().unwrap_or('M').to_string(), p.rsplit('\t').next().unwrap_or(p).to_owned())).collect())
+  })
+  .await
+}
+
+/// Commits ahead of and behind `base` (Change Base Ref's compare).
+#[tauri::command]
+async fn git_compare(ws: State<'_, Workspace>, slug: Option<String>, base: String) -> Result<(u32, u32), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  git::check_rev(&base)?;
+  blocking(move || {
+    let out = git::run(&root, &["rev-list", "--left-right", "--count", &format!("{base}...HEAD")])?;
+    let text = String::from_utf8_lossy(&out);
+    let mut n = text.split_whitespace().map(|x| x.parse::<u32>().unwrap_or(0));
+    let (behind, ahead) = (n.next().unwrap_or(0), n.next().unwrap_or(0));
+    Ok((ahead, behind))
+  })
+  .await
+}
+
+/// Local and remote branch names, for the base ref picker.
+#[tauri::command]
+async fn git_refs(ws: State<'_, Workspace>, slug: Option<String>) -> Result<Vec<String>, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || {
+    let out = git::run(&root, &["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"])?;
+    Ok(String::from_utf8_lossy(&out).lines().filter(|l| !l.is_empty() && !l.ends_with("/HEAD")).map(str::to_owned).collect())
+  })
+  .await
+}
+
+/// Source Control AI: a commit message for the staged diff, written by Claude Code (`claude -p`).
+/// Only runs when the user presses the sparkle button.
+#[tauri::command]
+async fn ai_commit_message(ws: State<'_, Workspace>, slug: Option<String>) -> Result<String, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || {
+    let diff = git::run(&root, &["diff", "--cached", "--no-color"])?;
+    if diff.is_empty() {
+      return Err("Stage at least one file to generate a message.".into());
+    }
+    let diff = String::from_utf8_lossy(&diff[..diff.len().min(120_000)]).into_owned();
+    let prompt = "Write a git commit message for the staged diff on stdin. First line: imperative summary under 72 characters. Then, only if useful, a blank line and a short body. Output only the message, no code fences.";
+    let mut child = shell_env::command("claude")
+      .current_dir(&root)
+      .args(["-p", prompt])
+      .stdin(std::process::Stdio::piped())
+      .stdout(std::process::Stdio::piped())
+      .stderr(std::process::Stdio::piped())
+      .spawn()
+      .map_err(|e| format!("claude: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+      use std::io::Write;
+      stdin.write_all(diff.as_bytes()).map_err(|e| e.to_string())?;
+    }
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    if !out.status.success() {
+      return Err(format!("claude: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+  })
+  .await
+}
+
+/// Claude Code sessions run in the open folder or its worktrees (Agents tab).
+#[tauri::command]
+async fn claude_sessions(ws: State<'_, Workspace>, limit: Option<usize>) -> Result<Vec<sessions::Session>, String> {
+  let root = ws.root()?;
+  blocking(move || Ok(sessions::list(&root, limit.unwrap_or(250)))).await
+}
+
 /// HEAD version of a file for the diff editor; empty when the file is not in HEAD.
 #[tauri::command]
 async fn git_show_head(ws: State<'_, Workspace>, rel: String) -> Result<String, String> {
@@ -631,6 +790,16 @@ pub fn run() {
       git_log,
       gh_pr_view,
       open_web_url,
+      gh_pr_action,
+      gh_pr_edit_title,
+      gh_pr_comments,
+      gh_pr_comment,
+      gh_check_log,
+      git_show_files,
+      git_compare,
+      git_refs,
+      ai_commit_message,
+      claude_sessions,
       usage_fetch,
       usage_detect,
       floating_note_new,

@@ -18,6 +18,7 @@
 	import { adeTasks } from './tasks.svelte';
 	import { worktreeDir } from './keys';
 	import { drafts } from './scmDrafts';
+	import { quick } from '#lib/workbench/quick.svelte.ts';
 
 	/** '' for the folder itself, else a task slug. */
 	let { slug }: { slug: string } = $props();
@@ -196,7 +197,13 @@
 	// --- ⋯ menu: list or tree, refresh ---------------------------------------------------------
 	let tree = $state(false);
 	let headerMenu = $state<{ x: number; y: number } | null>(null);
-	const headerItems = $derived<MenuNode[]>([menuItem('view', tree ? 'View as list' : 'View as tree'), menuItem('refresh', 'Refresh')]);
+	const headerItems = $derived<MenuNode[]>([menuItem('view', tree ? 'View as list' : 'View as tree'), menuItem('base', 'Change Base Ref…'), menuItem('compare', 'Refresh branch compare'), menuItem('refresh', 'Refresh')]);
+	function runHeader(id: string) {
+		if (id === 'view') tree = !tree;
+		else if (id === 'base') void changeBase();
+		else if (id === 'compare') void loadCompare();
+		else void (refresh(), !collapsed.history && loadCommits());
+	}
 	/** Tree view: rows under their folder (the whole folder path, like Orca's compacted chains). */
 	function grouped(list: Row[]): { dir: string; rows: Row[] }[] {
 		const by = new Map<string, Row[]>();
@@ -226,6 +233,16 @@
 	$effect(() => {
 		if (!collapsed.history) void loadCommits();
 	});
+	let commitFiles = $state<Record<string, [string, string][] | null | undefined>>({});
+	async function toggleCommit(hash: string) {
+		openCommit = openCommit === hash ? null : hash;
+		if (openCommit !== hash || hash in commitFiles) return;
+		try {
+			commitFiles[hash] = await invoke<[string, string][]>('git_show_files', { slug: slug || null, hash });
+		} catch {
+			commitFiles[hash] = null;
+		}
+	}
 	let commitMenu = $state<{ c: Commit; x: number; y: number } | null>(null);
 	const COMMIT_ITEMS: MenuNode[] = [menuItem('hash', 'Copy commit hash'), menuItem('message', 'Copy commit message')];
 	async function runCommit(id: string, c: Commit) {
@@ -274,9 +291,75 @@
 	}
 
 	const prNumber = $derived(task?.meta.pr_url?.match(/\/(\d+)\/?$/)?.[1]);
-	const base = $derived(slug ? (task?.meta.base ?? null) : (repo?.upstream ?? null));
-	const ahead = $derived(slug ? (task?.stat?.ahead ?? 0) : (repo?.ahead ?? 0));
-	const behind = $derived(slug ? (task?.stat?.behind ?? 0) : (repo?.behind ?? 0));
+	// Change Base Ref (Orca): a compare target chosen for this worktree, remembered per folder.
+	const baseKey = $derived(`kingu.scm.base:${workspace.root}:${key}`);
+	let baseOverride = $state<string | null>(null);
+	$effect(() => {
+		try {
+			baseOverride = localStorage.getItem(baseKey);
+		} catch {
+			baseOverride = null;
+		}
+	});
+	let compare = $state<{ ahead: number; behind: number } | null>(null);
+	let compareError = $state('');
+	async function loadCompare() {
+		if (!baseOverride) return void (compare = null);
+		try {
+			const [a, b] = await invoke<[number, number]>('git_compare', { slug: slug || null, base: baseOverride });
+			compare = { ahead: a, behind: b };
+			compareError = '';
+		} catch (e) {
+			compare = null;
+			compareError = String(e);
+		}
+	}
+	$effect(() => {
+		void baseOverride;
+		void repo?.head;
+		void loadCompare();
+	});
+	async function changeBase() {
+		const refs = await invoke<string[]>('git_refs', { slug: slug || null }).catch(() => []);
+		const current = baseOverride ?? base;
+		quick.pick({
+			placeholder: 'Pick the branch compare target for this repository',
+			items: [{ id: '@default', label: 'Use default', description: slug ? task?.meta.base : (repo?.upstream ?? 'upstream') }, ...refs.map((r, i) => ({ id: r, label: r, description: r === current ? 'Current' : undefined, separator: i === 0 ? 'branches' : undefined }))],
+			activeId: current ?? undefined,
+			onAccept: (item) => {
+				const next = item.id === '@default' ? null : item.id;
+				baseOverride = next;
+				try {
+					if (next) localStorage.setItem(baseKey, next);
+					else localStorage.removeItem(baseKey);
+				} catch {
+					// Kept for this window.
+				}
+			}
+		});
+	}
+	const defaultBase = $derived(slug ? (task?.meta.base ?? null) : (repo?.upstream ?? null));
+	const base = $derived(baseOverride ?? defaultBase);
+	const ahead = $derived(compare ? compare.ahead : slug ? (task?.stat?.ahead ?? 0) : (repo?.ahead ?? 0));
+	const behind = $derived(compare ? compare.behind : slug ? (task?.stat?.behind ?? 0) : (repo?.behind ?? 0));
+
+	// --- AI commit message (Claude Code writes it from the staged diff; only on click) -------
+	let generating = $state(false);
+	const aiReason = $derived(
+		generating ? 'Generating commit message…' : busy === 'Commit' ? 'Commit in progress…' : !staged ? 'Stage at least one file to generate a message.' : message.trim() ? 'Clear the message to regenerate.' : 'Generate commit message with AI'
+	);
+	async function generate() {
+		if (generating || !staged || message.trim()) return;
+		generating = true;
+		error = '';
+		try {
+			const text = await invoke<string>('ai_commit_message', { slug: slug || null });
+			if (!message.trim()) message = text;
+		} catch (e) {
+			error = String(e);
+		}
+		generating = false;
+	}
 	const cleanBranch = $derived(loaded && repo && !repo.entries.length && !ahead);
 
 	const HEADER_BTN = 'grid size-7 shrink-0 place-items-center rounded-sm text-(--vscode-descriptionForeground) transition-colors hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)';
@@ -371,7 +454,7 @@
 					{#if base}
 						<div class="flex min-w-0 items-center gap-1.5">
 							<span class="opacity-70">→</span>
-							<span class="truncate font-mono text-[10.5px] font-medium text-(--vscode-foreground)/90">{base.replace(/^refs\/(remotes|heads|tags)\//, '')}</span>
+							<button class="truncate font-mono text-[10.5px] font-medium text-(--vscode-foreground)/90 underline decoration-(--vscode-widget-border) underline-offset-2 hover:decoration-current" title="Change base ref ({base})" aria-label="Change base ref: {base}" onclick={changeBase}>{base.replace(/^refs\/(remotes|heads|tags)\//, '')}</button>
 							{#if ahead}<span class="shrink-0 tabular-nums opacity-70" title="{ahead} commit{ahead === 1 ? '' : 's'} ahead of {base}">↑{ahead}</span>{/if}
 							{#if behind}<span class="shrink-0 tabular-nums opacity-70" title="{behind} commit{behind === 1 ? '' : 's'} behind {base}">↓{behind}</span>{/if}
 						</div>
@@ -403,14 +486,25 @@
 			{#if !conflicts}
 				<div class="px-3 pb-2">
 					{#if !cleanBranch}
+						<div class="relative">
 						<textarea
-							class="mt-0.5 min-h-14 w-full resize-none rounded-md border border-(--vscode-input-border,var(--vscode-widget-border)) bg-(--vscode-input-background) px-2 py-1.5 text-xs outline-none placeholder:text-(--vscode-input-placeholderForeground) focus-visible:border-(--vscode-focusBorder) disabled:cursor-not-allowed disabled:opacity-60"
+							class="mt-0.5 min-h-14 w-full resize-none rounded-md border border-(--vscode-input-border,var(--vscode-widget-border)) bg-(--vscode-input-background) py-1.5 pr-8 pl-2 text-xs outline-none placeholder:text-(--vscode-input-placeholderForeground) focus-visible:border-(--vscode-focusBorder) disabled:cursor-not-allowed disabled:opacity-60"
 							placeholder="Message"
 							aria-label="Commit message"
 							{rows}
 							disabled={!!busy || !staged}
 							bind:value={message}
 						></textarea>
+						<button
+							class={['absolute top-1.5 right-1.5 grid size-5 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)', (generating || !staged || !!message.trim()) && !generating && 'cursor-not-allowed opacity-40']}
+							aria-label="Generate commit message with AI"
+							aria-disabled={!staged || !!message.trim()}
+							title={aiReason}
+							onclick={generate}
+						>
+							<span class={['grid place-items-center', generating && 'animate-spin']}><Icon name={generating ? 'refresh' : 'sparkle'} size={13} /></span>
+						</button>
+						</div>
 					{/if}
 					<div class={['flex items-stretch', !cleanBranch && 'mt-1']}>
 						<button
@@ -502,7 +596,7 @@
 									<div
 										class="grid min-h-[26px] cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-1.5 px-3 py-0.5 text-xs hover:bg-(--vscode-list-hoverBackground)/60"
 										title={c.subject}
-										onclick={() => (openCommit = isOpen ? null : c.hash)}
+										onclick={() => toggleCommit(c.hash)}
 										oncontextmenu={(e) => (e.preventDefault(), (commitMenu = { c, x: e.clientX, y: e.clientY }))}
 									>
 										<svg width="11" height="26" aria-hidden="true" class="text-[#3794ff]">
@@ -519,6 +613,22 @@
 									{#if isOpen}
 										<div class="border-l border-(--vscode-widget-border)/60 bg-(--vscode-list-inactiveSelectionBackground)/20 py-1 pl-9 text-[11px] {MUTED}">
 											<div>{c.author} · {ago(c.time)} · <span class="font-mono">{c.short}</span></div>
+											{#if commitFiles[c.hash] === undefined}
+												<div>Loading files…</div>
+											{:else if commitFiles[c.hash] === null}
+												<div class="text-(--vscode-errorForeground)">Failed to load commit files</div>
+											{:else}
+												{#each commitFiles[c.hash] ?? [] as [st, path] (path)}
+													{@const [fname, fdir] = splitPath(path)}
+													<div class="flex items-center gap-1.5 pr-3" title={path}>
+														<span style:color={decoration(st).color}><FileIcon icon={fileIcon(fname)} size={12} /></span>
+														<span class="truncate text-(--vscode-foreground)">{fname}</span><span class="truncate opacity-70">{fdir}</span>
+														<span class="ml-auto w-4 shrink-0 text-center text-[10px] font-bold" style:color={decoration(st).color}>{st}</span>
+													</div>
+												{:else}
+													<div>No file changes in this commit</div>
+												{/each}
+											{/if}
 										</div>
 									{/if}
 								{:else}
@@ -541,7 +651,7 @@
 	<PopupMenu items={ROW_ITEMS} label="Change" x={rowMenu.x} y={rowMenu.y} onRun={(n) => n.type === 'item' && runRow(n.id, r)} onClose={() => (rowMenu = null)} />
 {/if}
 {#if headerMenu}
-	<PopupMenu items={headerItems} label="Source control actions" x={headerMenu.x} y={headerMenu.y} onRun={(n) => n.type === 'item' && (n.id === 'view' ? (tree = !tree) : void (refresh(), !collapsed.history && loadCommits()))} onClose={() => (headerMenu = null)} />
+	<PopupMenu items={headerItems} label="Source control actions" x={headerMenu.x} y={headerMenu.y} onRun={(n) => n.type === 'item' && runHeader(n.id)} onClose={() => (headerMenu = null)} />
 {/if}
 {#if commitMenu}
 	{@const c = commitMenu.c}

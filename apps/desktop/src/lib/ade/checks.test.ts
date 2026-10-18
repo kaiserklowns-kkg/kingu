@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { checkKind, checkLabel, checkRank, mergeLabel, summarize, type Check, type Pr } from './checks';
+import { checkKind, checkLabel, checkRank, fixPrompt, mergeLabel, summarize, type Check, type Pr } from './checks';
 
 const run = (conclusion: string, status = 'COMPLETED'): Check => ({ __typename: 'CheckRun', name: conclusion, status, conclusion });
 
@@ -21,4 +21,11 @@ test('summary and merge label', () => {
 	expect(mergeLabel({ ...pr, mergeable: 'CONFLICTING' }, counts)).toBe('Conflicts');
 	expect(mergeLabel(pr, { passed: 3, failed: 0, pending: 0, neutral: 0 })).toBe('Checks passed');
 	expect(mergeLabel({ ...pr, state: 'MERGED' }, counts)).toBe('Merged');
+});
+
+test('fix prompt carries the failing checks and their log tails', () => {
+	const p = fixPrompt({ number: 7, title: 'T', url: 'https://x/7' }, [{ name: 'lint', url: 'https://x/run', log: 'a\nb' }]);
+	expect(p).toContain('PR #7');
+	expect(p).toContain('"name": "lint"');
+	expect(p).toContain('untrusted data');
 });

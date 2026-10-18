@@ -179,6 +179,7 @@
 		else if (e.key === 'Enter' && cur) void runRow('rename', cur);
 		else if ((e.key === 'Backspace' && e.metaKey) || e.key === 'Delete') void deletePicked();
 		else if (e.code === 'KeyC' && e.altKey && e.metaKey) void copyPicked(!e.shiftKey);
+		else if (e.code === 'KeyZ' && e.metaKey) void undo(e.shiftKey);
 		else handled = false;
 		if (handled) e.preventDefault();
 	}
@@ -230,6 +231,7 @@
 			const to = `${dir ? dir + '/' : ''}${from.split('/').pop()}`;
 			try {
 				await invoke('fs_rename', { from, to });
+				record({ kind: 'move', from, to });
 			} catch (err) {
 				status.error(`Failed to move '${from.split('/').pop()}'. ${err}`);
 			}
@@ -311,6 +313,40 @@
 				}
 		}
 	}
+	// --- Undo / redo of file operations (Orca keeps 50; a new op clears redo) ----------------
+	type Op = { kind: 'move'; from: string; to: string } | { kind: 'create'; rel: string; dir: boolean };
+	let undoStack: Op[] = [];
+	let redoStack: Op[] = [];
+	function record(op: Op) {
+		undoStack = [...undoStack.slice(-49), op];
+		redoStack = [];
+	}
+	async function apply(op: Op, reverse: boolean) {
+		if (op.kind === 'move') {
+			const [from, to] = reverse ? [op.to, op.from] : [op.from, op.to];
+			await invoke('fs_rename', { from, to });
+			await Promise.all([parentOf(from), parentOf(to)].map(load));
+		} else if (reverse) {
+			await invoke('fs_delete', { rel: op.rel });
+			await load(parentOf(op.rel));
+		} else {
+			await invoke(op.dir ? 'fs_create_dir' : 'fs_create_file', { rel: op.rel });
+			await load(parentOf(op.rel));
+		}
+	}
+	async function undo(redo = false) {
+		const from = redo ? redoStack : undoStack;
+		const op = from[from.length - 1];
+		if (!op) return;
+		try {
+			await apply(op, !redo);
+			if (redo) (redoStack = redoStack.slice(0, -1)), (undoStack = [...undoStack, op]);
+			else (undoStack = undoStack.slice(0, -1)), (redoStack = [...redoStack, op]);
+		} catch (e) {
+			status.error(`Operation failed. ${e}`);
+		}
+	}
+
 	async function submitEdit() {
 		const e = edit;
 		edit = null;
@@ -318,8 +354,13 @@
 		if (!e || !name || (e.kind === 'rename' && name === e.rel?.split('/').pop())) return;
 		const target = e.parent ? `${e.parent}/${name}` : name;
 		try {
-			if (e.kind === 'rename') await invoke('fs_rename', { from: e.rel, to: target });
-			else await invoke(e.kind === 'file' ? 'fs_create_file' : 'fs_create_dir', { rel: target });
+			if (e.kind === 'rename') {
+				await invoke('fs_rename', { from: e.rel, to: target });
+				record({ kind: 'move', from: e.rel!, to: target });
+			} else {
+				await invoke(e.kind === 'file' ? 'fs_create_file' : 'fs_create_dir', { rel: target });
+				record({ kind: 'create', rel: target, dir: e.kind === 'folder' });
+			}
 			await load(e.parent);
 			if (e.kind === 'file') adeLayout.openFile(slug, target, { preview: false });
 			selected = target;
