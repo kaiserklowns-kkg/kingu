@@ -120,13 +120,25 @@ export function parseTaskDiffKey(key: string): { slug: string; rel: string } | n
 	return i <= 0 ? null : { slug: rest.slice(0, i), rel: rest.slice(i + 1) };
 }
 
-export const isDiffKey = (key: string) => key.startsWith(DIFF_PREFIX) || isTaskDiffKey(key);
+/** A file as one commit changed it: `commitdiff://<slug or _>/<hash>/<rel>` (Commits panel). */
+export const COMMIT_DIFF_PREFIX = 'commitdiff://';
+export const commitDiffKey = (slug: string, hash: string, rel: string) => `${COMMIT_DIFF_PREFIX}${slug || '_'}/${hash}/${rel}`;
+export const isCommitDiffKey = (key: string) => key.startsWith(COMMIT_DIFF_PREFIX);
+export function parseCommitDiffKey(key: string): { slug: string; hash: string; rel: string } | null {
+	if (!isCommitDiffKey(key)) return null;
+	const [slug, hash, ...rest] = key.slice(COMMIT_DIFF_PREFIX.length).split('/');
+	return slug && hash && rest.length ? { slug: slug === '_' ? '' : slug, hash, rel: rest.join('/') } : null;
+}
+
+export const isDiffKey = (key: string) => key.startsWith(DIFF_PREFIX) || isTaskDiffKey(key) || isCommitDiffKey(key);
 /** The workspace file behind an editor tab key (itself for plain file tabs; a task diff's file
  * lives in the worktree under `.kingu/worktrees/<slug>/`). */
 export function fileOf(key: string): string {
 	if (isPreviewKey(key)) return previewTarget(key);
 	const task = parseTaskDiffKey(key);
 	if (task) return `.kingu/worktrees/${task.slug}/${task.rel}`;
+	const commit = parseCommitDiffKey(key);
+	if (commit) return commit.slug ? `.kingu/worktrees/${commit.slug}/${commit.rel}` : commit.rel;
 	return key.startsWith(DIFF_PREFIX) ? key.slice(DIFF_PREFIX.length) : key;
 }
 
@@ -135,6 +147,8 @@ export function tabLabel(key: string): string {
 	const [name] = splitPath(fileOf(key));
 	const task = parseTaskDiffKey(key);
 	if (task) return `${name} (งาน ${task.slug})`;
+	const commit = parseCommitDiffKey(key);
+	if (commit) return `${name} (${commit.hash.slice(0, 7)})`;
 	if (isPreviewKey(key)) return `Preview ${name}`;
 	return isDiffKey(key) ? `${name} (Working Tree)` : name;
 }

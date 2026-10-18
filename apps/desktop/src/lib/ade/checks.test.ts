@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { checkKind, checkLabel, checkRank, fixPrompt, mergeLabel, summarize, type Check, type Pr } from './checks';
+import { checkKind, checkLabel, checkRank, fixPrompt, mergeLabel, reactionPills, summarize, type Check, type Pr } from './checks';
 
 const run = (conclusion: string, status = 'COMPLETED'): Check => ({ __typename: 'CheckRun', name: conclusion, status, conclusion });
 
@@ -28,4 +28,9 @@ test('fix prompt carries the failing checks and their log tails', () => {
 	expect(p).toContain('PR #7');
 	expect(p).toContain('"name": "lint"');
 	expect(p).toContain('untrusted data');
+});
+
+test('reaction pills keep GitHub order and skip zero counts', () => {
+	const pills = reactionPills({ reactionGroups: [{ content: 'HEART', users: { totalCount: 2 } }, { content: 'THUMBS_UP', reactors: { totalCount: 1 }, viewerHasReacted: true }, { content: 'EYES', users: { totalCount: 0 } }] });
+	expect(pills.map((p) => [p.emoji, p.count, p.mine])).toEqual([['👍', 1, true], ['❤️', 2, false]]);
 });

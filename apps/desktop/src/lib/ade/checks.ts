@@ -29,6 +29,7 @@ export type Pr = {
 	statusCheckRollup: Check[] | null;
 	additions?: number;
 	deletions?: number;
+	autoMergeRequest?: { enabledAt?: string } | null;
 };
 
 export type CheckKind = 'success' | 'failure' | 'cancelled' | 'pending' | 'skipped' | 'neutral' | 'action';
@@ -102,7 +103,38 @@ export function mergeLabel(pr: Pr, counts: CheckCounts): string {
 }
 
 /** A PR conversation comment or a review (`gh pr view --json comments,reviews`). */
-export type PrComment = { author?: { login?: string }; body?: string; createdAt?: string; submittedAt?: string; state?: string; url?: string };
+export type PrComment = {
+	id?: string;
+	author?: { login?: string };
+	body?: string;
+	createdAt?: string;
+	submittedAt?: string;
+	state?: string;
+	url?: string;
+	reactionGroups?: { content: string; users?: { totalCount: number }; reactors?: { totalCount: number }; viewerHasReacted?: boolean }[];
+};
+
+/** A review thread on the diff (GraphQL `reviewThreads`). */
+export type ReviewThread = { id: string; isResolved: boolean; path: string; line: number | null; comments: { nodes: PrComment[] } };
+
+export const REACTIONS: { content: string; emoji: string }[] = [
+	{ content: 'THUMBS_UP', emoji: '👍' },
+	{ content: 'THUMBS_DOWN', emoji: '👎' },
+	{ content: 'LAUGH', emoji: '😄' },
+	{ content: 'CONFUSED', emoji: '😕' },
+	{ content: 'HEART', emoji: '❤️' },
+	{ content: 'HOORAY', emoji: '🎉' },
+	{ content: 'ROCKET', emoji: '🚀' },
+	{ content: 'EYES', emoji: '👀' }
+];
+/** Reaction pills with their counts, in GitHub's order. */
+export function reactionPills(c: PrComment): { content: string; emoji: string; count: number; mine: boolean }[] {
+	return REACTIONS.flatMap((r) => {
+		const g = c.reactionGroups?.find((x) => x.content === r.content);
+		const count = g?.users?.totalCount ?? g?.reactors?.totalCount ?? 0;
+		return count ? [{ ...r, count, mine: !!g?.viewerHasReacted }] : [];
+	});
+}
 
 /** The prompt for the task's agent to fix failing checks (Orca's Fix pass). */
 export function fixPrompt(pr: Pick<Pr, 'number' | 'title' | 'url'>, failing: { name: string; url?: string; log: string }[]): string {

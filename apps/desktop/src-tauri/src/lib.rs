@@ -315,7 +315,7 @@ async fn gh_pr_view(ws: State<'_, Workspace>, slug: Option<String>) -> Result<Op
     let gh = agent::review::gh_bin().ok_or("ยังไม่ได้ติดตั้ง GitHub CLI (gh)")?;
     let out = shell_env::command(&gh)
       .current_dir(&root)
-      .args(["pr", "view", "--json", "number,title,state,url,isDraft,headRefName,baseRefName,mergeable,reviewDecision,statusCheckRollup,additions,deletions,author,createdAt"])
+      .args(["pr", "view", "--json", "number,title,state,url,isDraft,headRefName,baseRefName,mergeable,reviewDecision,statusCheckRollup,additions,deletions,author,createdAt,autoMergeRequest"])
       .output()
       .map_err(|e| format!("gh: {e}"))?;
     if !out.status.success() {
@@ -358,6 +358,8 @@ async fn gh_pr_action(ws: State<'_, Workspace>, slug: Option<String>, action: St
     };
     let args: Vec<&str> = match action.as_str() {
       "merge" => vec!["pr", "merge", flag],
+      "auto" => vec!["pr", "merge", "--auto", flag],
+      "disableAuto" => vec!["pr", "merge", "--disable-auto"],
       "close" => vec!["pr", "close"],
       "reopen" => vec!["pr", "reopen"],
       "ready" => vec!["pr", "ready"],
@@ -491,6 +493,146 @@ async fn ai_commit_message(ws: State<'_, Workspace>, slug: Option<String>) -> Re
 async fn claude_sessions(ws: State<'_, Workspace>, limit: Option<usize>) -> Result<Vec<sessions::Session>, String> {
   let root = ws.root()?;
   blocking(move || Ok(sessions::list(&root, limit.unwrap_or(250)))).await
+}
+
+/// Source Control's PR composer: pushes the branch (setting its upstream) and opens a PR.
+/// Returns the PR's URL.
+#[tauri::command]
+async fn gh_pr_create(ws: State<'_, Workspace>, slug: Option<String>, base: String, title: String, body: String, draft: bool) -> Result<String, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  git::check_rev(&base)?;
+  if title.trim().is_empty() {
+    return Err("Enter a pull request title.".into());
+  }
+  blocking(move || {
+    git::run(&root, &["push", "-q", "-u", "origin", "HEAD"]).map_err(|e| format!("Push failed. Resolve the push error, then try again. {e}"))?;
+    let mut args = vec!["pr", "create", "--base", base.as_str(), "--title", title.trim(), "--body", body.as_str()];
+    if draft {
+      args.push("--draft");
+    }
+    let out = gh_run(&root, &args)?;
+    Ok(String::from_utf8_lossy(&out).lines().rev().find(|l| l.starts_with("http")).unwrap_or_default().trim().to_owned())
+  })
+  .await
+}
+
+/// PR title and description written by Claude Code from the branch's diff against `base`
+/// (only on click). Returns `{title, body}`.
+#[tauri::command]
+async fn ai_pr_details(ws: State<'_, Workspace>, slug: Option<String>, base: String) -> Result<serde_json::Value, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  git::check_rev(&base)?;
+  blocking(move || {
+    let log = git::run(&root, &["log", "--format=- %s", &format!("{base}..HEAD")]).unwrap_or_default();
+    let diff = git::run(&root, &["diff", "--no-color", &format!("{base}...HEAD")]).unwrap_or_default();
+    let input = format!("Commits:\n{}\n\nDiff:\n{}", String::from_utf8_lossy(&log), String::from_utf8_lossy(&diff[..diff.len().min(120_000)]));
+    let prompt = "Write a pull request title and description for the commits and diff on stdin. Reply with exactly a first line holding the title (under 72 characters), a blank line, then a markdown description. No code fences around the whole reply.";
+    let mut child = shell_env::command("claude")
+      .current_dir(&root)
+      .args(["-p", prompt])
+      .stdin(std::process::Stdio::piped())
+      .stdout(std::process::Stdio::piped())
+      .stderr(std::process::Stdio::piped())
+      .spawn()
+      .map_err(|e| format!("claude: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+      use std::io::Write;
+      stdin.write_all(input.as_bytes()).map_err(|e| e.to_string())?;
+    }
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    if !out.status.success() {
+      return Err(format!("claude: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    let (title, body) = text.split_once('\n').unwrap_or((&text, ""));
+    Ok(serde_json::json!({ "title": title.trim().trim_start_matches('#').trim(), "body": body.trim() }))
+  })
+  .await
+}
+
+/// Review threads of the branch's PR (GitHub GraphQL through `gh api`).
+#[tauri::command]
+async fn gh_review_threads(ws: State<'_, Workspace>, slug: Option<String>, number: u64) -> Result<serde_json::Value, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || {
+    let query = "query($owner:String!,$repo:String!,$n:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$n){reviewThreads(first:100){nodes{id isResolved path line comments(first:50){nodes{id databaseId body createdAt author{login} reactionGroups{content viewerHasReacted reactors{totalCount}}}}}}}}}";
+    let out = gh_run(&root, &["api", "graphql", "-F", "owner={owner}", "-F", "repo={repo}", "-F", &format!("n={number}"), "-f", &format!("query={query}")])?;
+    serde_json::from_slice(&out).map_err(|e| e.to_string())
+  })
+  .await
+}
+
+/// Resolves or reopens a review thread.
+#[tauri::command]
+async fn gh_resolve_thread(ws: State<'_, Workspace>, slug: Option<String>, thread: String, resolve: bool) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || {
+    let m = if resolve { "resolveReviewThread" } else { "unresolveReviewThread" };
+    let query = format!("mutation($id:ID!){{{m}(input:{{threadId:$id}}){{thread{{id}}}}}}");
+    gh_run(&root, &["api", "graphql", "-f", &format!("id={thread}"), "-f", &format!("query={query}")]).map(|_| ())
+  })
+  .await
+}
+
+/// Replies inside a review thread.
+#[tauri::command]
+async fn gh_reply_thread(ws: State<'_, Workspace>, slug: Option<String>, thread: String, body: String) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  if body.trim().is_empty() {
+    return Err("Comment is empty".into());
+  }
+  blocking(move || {
+    let query = "mutation($id:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$id,body:$body}){comment{id}}}";
+    gh_run(&root, &["api", "graphql", "-f", &format!("id={thread}"), "-f", &format!("body={body}"), "-f", &format!("query={query}")]).map(|_| ())
+  })
+  .await
+}
+
+/// Adds or removes a reaction (THUMBS_UP, HEART, …) on a comment by its node id.
+#[tauri::command]
+async fn gh_react(ws: State<'_, Workspace>, slug: Option<String>, subject: String, content: String, remove: bool) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  const ALLOWED: [&str; 8] = ["THUMBS_UP", "THUMBS_DOWN", "LAUGH", "CONFUSED", "HEART", "HOORAY", "ROCKET", "EYES"];
+  if !ALLOWED.contains(&content.as_str()) {
+    return Err(format!("{content}: unknown reaction"));
+  }
+  blocking(move || {
+    let m = if remove { "removeReaction" } else { "addReaction" };
+    let query = format!("mutation($id:ID!,$c:ReactionContent!){{{m}(input:{{subjectId:$id,content:$c}}){{reaction{{content}}}}}}");
+    gh_run(&root, &["api", "graphql", "-f", &format!("id={subject}"), "-f", &format!("c={content}"), "-f", &format!("query={query}")]).map(|_| ())
+  })
+  .await
+}
+
+/// Moves a Claude Code session transcript of this folder to the Trash (Agents tab › Delete).
+#[tauri::command]
+async fn delete_claude_session(ws: State<'_, Workspace>, path: String) -> Result<(), String> {
+  let root = ws.root()?;
+  let p = std::path::PathBuf::from(&path);
+  let home = std::env::var_os("HOME").map(std::path::PathBuf::from).ok_or("no home folder")?;
+  let projects = home.join(".claude").join("projects");
+  let dir = p.parent().and_then(|d| d.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+  let prefix = sessions::encode(&root);
+  let ours = p.starts_with(&projects) && p.extension().and_then(|e| e.to_str()) == Some("jsonl") && (dir == prefix || dir.starts_with(&format!("{prefix}-")));
+  if !ours {
+    return Err("Only sessions of this folder can be deleted.".into());
+  }
+  blocking(move || trash::delete(&p).map_err(|e| e.to_string())).await
+}
+
+/// Aborts the merge, rebase or cherry-pick in progress (Source Control's conflict card).
+#[tauri::command]
+async fn git_abort(ws: State<'_, Workspace>, slug: Option<String>) -> Result<String, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || {
+    for op in ["merge", "rebase", "cherry-pick"] {
+      if git::run(&root, &[op, "--abort"]).is_ok() {
+        return Ok(op.to_owned());
+      }
+    }
+    Err("No merge, rebase or cherry-pick is in progress.".into())
+  })
+  .await
 }
 
 /// HEAD version of a file for the diff editor; empty when the file is not in HEAD.
@@ -800,6 +942,14 @@ pub fn run() {
       git_refs,
       ai_commit_message,
       claude_sessions,
+      gh_pr_create,
+      ai_pr_details,
+      gh_review_threads,
+      gh_resolve_thread,
+      gh_reply_thread,
+      gh_react,
+      delete_claude_session,
+      git_abort,
       usage_fetch,
       usage_detect,
       floating_note_new,

@@ -13,7 +13,7 @@
 	import { ask } from '#lib/workbench/dialogService.svelte.ts';
 	import { renderMarkdown } from '#lib/workbench/markdown.ts';
 	import { adeTasks } from './tasks.svelte';
-	import { checkKind, checkLabel, checkRank, fixPrompt, mergeLabel, summarize, type Check, type Pr, type PrComment } from './checks';
+	import { checkKind, checkLabel, checkRank, fixPrompt, mergeLabel, reactionPills, REACTIONS, summarize, type Check, type Pr, type PrComment, type ReviewThread } from './checks';
 	import { sessionAgo } from './agentsPanel';
 
 	let { slug }: { slug: string } = $props();
@@ -74,7 +74,7 @@
 	];
 	let method = $state('squash');
 	let actionMenu = $state<{ x: number; y: number } | null>(null);
-	async function act(action: 'merge' | 'close' | 'reopen' | 'ready') {
+	async function act(action: 'merge' | 'close' | 'reopen' | 'ready' | 'auto' | 'disableAuto') {
 		if (!pr) return;
 		if (action === 'close' || action === 'reopen') {
 			const ok = await ask(`This will ${action} the pull request.`, { title: `${action === 'close' ? 'Close' : 'Reopen'} PR #${pr.number}?`, kind: 'warning', okLabel: action === 'close' ? 'Close' : 'Reopen', cancelLabel: 'Cancel' });
@@ -88,7 +88,10 @@
 		actionError = '';
 		try {
 			await invoke('gh_pr_action', { slug: slug || null, action, method });
-			status.flash(action === 'merge' ? `PR #${pr.number} merged` : action === 'ready' ? 'PR marked ready for review' : `PR ${action === 'close' ? 'closed' : 'reopened'}`, 4000);
+			status.flash(
+				{ merge: `PR #${pr.number} merged`, ready: 'PR marked ready for review', close: 'PR closed', reopen: 'PR reopened', auto: 'Auto-merge enabled', disableAuto: 'Auto-merge disabled' }[action],
+				4000
+			);
 		} catch (e) {
 			actionError = String(e);
 		} finally {
@@ -99,10 +102,16 @@
 	const actionItems = $derived.by((): MenuNode[] => {
 		if (!pr) return [];
 		if (pr.isDraft) return [menuItem('close', 'Close PR')];
-		return [...METHODS.map((x) => menuItem(`m:${x.id}`, x.label, { checked: method === x.id })), menuSeparator, menuItem('close', 'Close PR')];
+		return [
+			pr.autoMergeRequest ? menuItem('disableAuto', 'Disable auto-merge') : menuItem('auto', 'Enable auto-merge'),
+			menuSeparator,
+			...METHODS.map((x) => menuItem(`m:${x.id}`, x.label, { checked: method === x.id })),
+			menuSeparator,
+			menuItem('close', 'Close PR')
+		];
 	});
 	function runAction(id: string) {
-		if (id === 'close') void act('close');
+		if (id === 'close' || id === 'auto' || id === 'disableAuto') void act(id);
 		else if (id.startsWith('m:')) method = id.slice(2);
 	}
 
@@ -189,6 +198,61 @@
 		busy = null;
 	}
 
+	// --- Review threads and reactions -----------------------------------------------------------
+	let threads = $state<ReviewThread[]>([]);
+	let showResolved = $state(false);
+	let replyTo = $state<string | null>(null);
+	let replyDraft = $state('');
+	async function loadThreads() {
+		if (!pr) return;
+		try {
+			const r = await invoke<{ data?: { repository?: { pullRequest?: { reviewThreads?: { nodes: ReviewThread[] } } } } }>('gh_review_threads', { slug: slug || null, number: pr.number });
+			threads = r.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [];
+		} catch {
+			threads = [];
+		}
+	}
+	$effect(() => {
+		if (pr?.number) void loadThreads();
+	});
+	const open_ = $derived(threads.filter((t) => !t.isResolved));
+	const resolved = $derived(threads.filter((t) => t.isResolved));
+	async function resolveThread(t: ReviewThread) {
+		busy = `thread:${t.id}`;
+		try {
+			await invoke('gh_resolve_thread', { slug: slug || null, thread: t.id, resolve: !t.isResolved });
+			t.isResolved = !t.isResolved;
+		} catch {
+			actionError = 'Could not update review thread. Check the GitHub API budget.';
+		}
+		busy = null;
+	}
+	async function reply(t: ReviewThread) {
+		const body = replyDraft.trim();
+		if (!body) return;
+		busy = `reply:${t.id}`;
+		try {
+			await invoke('gh_reply_thread', { slug: slug || null, thread: t.id, body });
+			replyDraft = '';
+			replyTo = null;
+			await loadThreads();
+		} catch {
+			actionError = 'Failed to post comment.';
+		}
+		busy = null;
+	}
+	let picker = $state<string | null>(null);
+	async function react(c: PrComment, content: string, remove = false) {
+		picker = null;
+		if (!c.id) return;
+		try {
+			await invoke('gh_react', { slug: slug || null, subject: c.id, content, remove });
+			await Promise.all([loadComments(), loadThreads()]);
+		} catch {
+			status.error('Failed to update reaction.');
+		}
+	}
+
 	const ICON: Record<ReturnType<typeof checkKind>, { name: 'checkCircle' | 'error' | 'circleDashed' | 'warning' | 'minus'; cls: string; spin?: boolean }> = {
 		success: { name: 'checkCircle', cls: 'text-emerald-500' },
 		failure: { name: 'error', cls: 'text-rose-500' },
@@ -211,6 +275,50 @@
 		actionMenu = { x: r.right - 248, y: r.bottom + 4 };
 	};
 </script>
+
+{#snippet reactions(c: PrComment)}
+	<div class="flex flex-wrap items-center gap-1 px-4 pb-2">
+		{#each reactionPills(c) as r (r.content)}
+			<button class={['h-6 rounded-full border px-2 text-[12px]', r.mine ? 'border-(--vscode-focusBorder) bg-(--vscode-list-inactiveSelectionBackground)' : 'border-(--vscode-widget-border)']} onclick={() => react(c, r.content, r.mine)}>{r.emoji} {r.count}</button>
+		{/each}
+		<span class="relative">
+			<button class="grid h-6 w-7 place-items-center rounded-full border border-(--vscode-widget-border) text-[12px] opacity-60 hover:opacity-100" aria-label="Add reaction" title="Add reaction" onclick={() => (picker = picker === c.id ? null : (c.id ?? null))}>☺+</button>
+			{#if picker && picker === c.id}
+				<span class="absolute bottom-7 left-0 z-20 grid grid-cols-4 gap-1 rounded-md border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) p-1 shadow-lg">
+					{#each REACTIONS as r (r.content)}<button class="grid size-7 place-items-center rounded hover:bg-(--vscode-list-hoverBackground)" aria-label={r.content} onclick={() => react(c, r.content)}>{r.emoji}</button>{/each}
+				</span>
+			{/if}
+		</span>
+	</div>
+{/snippet}
+
+{#snippet thread(t: ReviewThread)}
+	<div class="overflow-clip rounded-lg border border-(--vscode-widget-border) bg-(--vscode-editor-background)">
+		<div class="flex items-center gap-2 border-b border-(--vscode-widget-border)/60 px-3 py-1.5 text-[11px] {MUTED}">
+			<span class="min-w-0 flex-1 truncate font-mono">{t.path}{t.line ? `:L${t.line}` : ''}</span>
+			<button class="rounded px-1.5 py-0.5 text-[10px] hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-50" disabled={busy === `thread:${t.id}`} onclick={() => resolveThread(t)}>{t.isResolved ? 'Unresolve' : 'Resolve'}</button>
+			<button class="rounded px-1.5 py-0.5 text-[10px] hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => ((replyTo = t.id), (replyDraft = ''))}>Reply</button>
+		</div>
+		{#each t.comments.nodes as c, i (c.id ?? i)}
+			<div class={[i > 0 && 'border-t border-(--vscode-widget-border)/50 bg-(--vscode-list-inactiveSelectionBackground)/20 pl-3']}>
+				<div class="flex items-center gap-2 px-3 pt-2 text-[12px]"><span class="font-semibold">{c.author?.login ?? 'unknown'}</span><span class="text-[11px] {MUTED}">{sessionAgo(Date.parse(c.createdAt ?? ''), Date.now())}</span></div>
+				<!-- Safe: renderMarkdown escapes raw HTML and drops images and hrefs. -->
+				<div class="markdown-body px-4 py-1.5 text-[12px] leading-relaxed [overflow-wrap:anywhere]">{@html renderMarkdown(c.body ?? '')}</div>
+				{@render reactions(c)}
+			</div>
+		{/each}
+		{#if replyTo === t.id}
+			<div class="border-t border-(--vscode-widget-border) p-2">
+				<!-- svelte-ignore a11y_autofocus -->
+				<textarea class="min-h-16 w-full resize-none rounded-md border border-(--vscode-widget-border) bg-transparent px-2 py-1.5 text-[12px] outline-none" placeholder="Reply to {t.comments.nodes[0]?.author?.login ?? 'thread'}" aria-label="Reply" autofocus bind:value={replyDraft} onkeydown={(e) => (e.metaKey || e.ctrlKey) && e.key === 'Enter' && (e.preventDefault(), void reply(t))}></textarea>
+				<div class="mt-1 flex justify-end gap-1">
+					<button class="h-6 rounded px-2 text-[11px] hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => (replyTo = null)}>Cancel</button>
+					<button class="h-6 rounded bg-(--vscode-button-background) px-2 text-[11px] text-(--vscode-button-foreground) disabled:opacity-50" disabled={!replyDraft.trim() || busy === `reply:${t.id}`} onclick={() => reply(t)}>Reply</button>
+				</div>
+			</div>
+		{/if}
+	</div>
+{/snippet}
 
 <div class="flex min-h-0 flex-1 flex-col overflow-auto">
 	{#if !workspace.root}
@@ -358,7 +466,7 @@
 				<div class="flex items-center gap-1.5">
 					<span class={MUTED}><Icon name="question" size={14} /></span>
 					<span class="text-[11px] font-semibold tracking-wider uppercase {MUTED}">Comments</span>
-					<span class="rounded-full border border-(--vscode-widget-border) bg-(--vscode-list-inactiveSelectionBackground) px-1.5 py-px text-[10px] font-semibold tabular-nums">{comments.length}</span>
+					<span class="rounded-full border border-(--vscode-widget-border) bg-(--vscode-list-inactiveSelectionBackground) px-1.5 py-px text-[10px] font-semibold tabular-nums">{comments.length + threads.length}</span>
 					<span class="flex-1"></span>
 					<button class="grid size-6 place-items-center rounded {MUTED} hover:bg-(--vscode-toolbar-hoverBackground)" title={comments.length ? 'Add comment' : 'Start conversation'} aria-label="Add comment" onclick={() => (composing = true)}><Icon name="plus" size={13} /></button>
 				</div>
@@ -371,6 +479,16 @@
 				{/if}
 			</div>
 			<div class="flex flex-col gap-2 px-3 py-2">
+				{#if open_.length}
+					<div class="pt-1 text-[11px] font-semibold tracking-wider uppercase {MUTED}">Needs review · {open_.length}</div>
+					{#each open_ as t (t.id)}{@render thread(t)}{/each}
+				{/if}
+				{#if resolved.length}
+					<button class="flex items-center gap-1 py-1 text-left text-[11px] font-semibold tracking-wider uppercase {MUTED}" aria-expanded={showResolved} onclick={() => (showResolved = !showResolved)}>
+						<span class={['transition-transform', !showResolved && '-rotate-90']}><Icon name="chevronDown" size={12} /></span>Resolved · {resolved.length}
+					</button>
+					{#if showResolved}{#each resolved as t (t.id)}<div class="opacity-70">{@render thread(t)}</div>{/each}{/if}
+				{/if}
 				{#each shown as c, i (i)}
 					<div class="overflow-clip rounded-lg border border-(--vscode-widget-border) bg-(--vscode-editor-background)">
 						<div class="flex items-center gap-2 border-b border-(--vscode-widget-border)/60 px-3 py-2">
@@ -382,6 +500,7 @@
 						</div>
 						<!-- Safe: renderMarkdown escapes raw HTML and drops images and hrefs. -->
 						<div class="markdown-body px-4 py-2.5 text-[13px] leading-relaxed [overflow-wrap:anywhere]">{@html renderMarkdown(c.body ?? '')}</div>
+						{@render reactions(c)}
 					</div>
 				{:else}
 					{#if !composing}<p class="py-5 text-center text-[11px] {MUTED}">{audience === 'bots' ? 'No bot comments.' : audience === 'humans' ? 'No human comments.' : 'No comments yet.'}</p>{/if}

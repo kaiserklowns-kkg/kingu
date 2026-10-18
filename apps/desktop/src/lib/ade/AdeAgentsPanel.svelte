@@ -12,6 +12,7 @@
 	import { adeTasks } from './tasks.svelte';
 	import { STATUS_LABEL, type TaskView } from './model';
 	import { invoke } from '@tauri-apps/api/core';
+	import { ask } from '#lib/workbench/dialogService.svelte.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { PRIMARY } from './adeLayout.svelte';
 	import { sessionAgo } from './agentsPanel';
@@ -104,9 +105,13 @@
 					menuItem('resume', menu.x.task ? 'Resume in Worktree' : 'Resume in New Tab', { enabled: menu.x.task || !!menu.x.sessionId }),
 					menuItem('copyResume', 'Copy Resume Command', { enabled: !!menu.x.sessionId }),
 					menuSeparator,
+					menuItem('handoff', 'Hand Off to Another Agent'),
+					menuSeparator,
 					menuItem('copyId', 'Copy Session ID', { enabled: !!menu.x.sessionId }),
 					...(menu.x.logPath ? [menuItem('copyLog', 'Copy Log Path')] : []),
-					...(menu.x.prompt ? [menuItem('copyPrompt', 'Copy Prompt')] : [])
+					...(menu.x.prompt ? [menuItem('copyPrompt', 'Copy Prompt')] : []),
+					menuSeparator,
+					menuItem('delete', 'Delete', { enabled: !menu.x.task && !!menu.x.logPath })
 				]
 			: []
 	);
@@ -118,6 +123,26 @@
 			// A Claude Code session opens in a new terminal of its worktree with `claude --resume`.
 			adeLayout.newTerminal(x.worktree, { title: 'claude', run: ['claude', '--resume', x.sessionId ?? ''] });
 			return status.flash('claude session queued', 2000);
+		}
+		if (id === 'delete') {
+			const ok = await ask(`"${x.title}" will be deleted. Once deleted, it will no longer be resumable from Claude's own command line either.`, { title: 'Delete this session?', kind: 'warning', okLabel: 'Delete', cancelLabel: 'Cancel' });
+			if (!ok || !x.logPath) return;
+			try {
+				await invoke('delete_claude_session', { path: x.logPath });
+				status.flash('Session deleted', 2000);
+			} catch (e) {
+				status.error(`Couldn't delete the session. ${e}`);
+			}
+			return void loadCli();
+		}
+		if (id === 'handoff') {
+			// A new task whose agent picks up from this session's title, prompt and latest message.
+			const brief = [`Continue the work of the earlier agent session "${x.title}".`, x.prompt ? `Its original request:\n${x.prompt}` : '', x.preview ? `Where it left off:\n${x.preview}` : '', x.logPath ? `Its full transcript is at ${x.logPath} (read it for detail).` : '']
+				.filter(Boolean)
+				.join('\n\n');
+			const slug = await adeTasks.create({ title: `Continue: ${x.title}`.slice(0, 80), prompt: brief, base: '' });
+			if (slug) adeLayout.show(slug);
+			return;
 		}
 		const text = id === 'copyResume' ? `claude --resume ${x.sessionId}` : id === 'copyId' ? (x.sessionId ?? '') : id === 'copyLog' ? (x.logPath ?? '') : (x.prompt ?? '');
 		await navigator.clipboard.writeText(text);

@@ -306,7 +306,9 @@
 				return;
 			case 'delete':
 				try {
+					const content = r!.is_dir ? null : await invoke<string>('read_workspace_file', { rel: r!.rel }).catch(() => null);
 					await invoke('fs_delete', { rel: r!.rel });
+					if (content !== null && content.length <= 2_000_000) record({ kind: 'delete', rel: r!.rel, content });
 					await load(parentOf(r!.rel));
 				} catch (e) {
 					status.error(`Failed to move to Trash '${r!.name}'. ${e}`);
@@ -314,7 +316,7 @@
 		}
 	}
 	// --- Undo / redo of file operations (Orca keeps 50; a new op clears redo) ----------------
-	type Op = { kind: 'move'; from: string; to: string } | { kind: 'create'; rel: string; dir: boolean };
+	type Op = { kind: 'move'; from: string; to: string } | { kind: 'create'; rel: string; dir: boolean } | { kind: 'delete'; rel: string; content: string };
 	let undoStack: Op[] = [];
 	let redoStack: Op[] = [];
 	function record(op: Op) {
@@ -326,6 +328,13 @@
 			const [from, to] = reverse ? [op.to, op.from] : [op.from, op.to];
 			await invoke('fs_rename', { from, to });
 			await Promise.all([parentOf(from), parentOf(to)].map(load));
+		} else if (op.kind === 'delete') {
+			// Undo writes the file back with the text it had (Orca: readable text files only).
+			if (reverse) {
+				await invoke('fs_create_file', { rel: op.rel }).catch(() => {});
+				await invoke('fs_write_file', { rel: op.rel, content: op.content });
+			} else await invoke('fs_delete', { rel: op.rel });
+			await load(parentOf(op.rel));
 		} else if (reverse) {
 			await invoke('fs_delete', { rel: op.rel });
 			await load(parentOf(op.rel));

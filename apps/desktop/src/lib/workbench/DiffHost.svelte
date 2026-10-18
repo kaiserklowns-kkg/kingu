@@ -8,7 +8,7 @@
 	import type * as Monaco from 'monaco-editor';
 	import { clientLog } from '#lib/client-log.ts';
 	import { editors } from './editors.svelte';
-	import { fileOf, isDiffKey, isTaskDiffKey, parseTaskDiffKey } from './scm';
+	import { fileOf, isDiffKey, isTaskDiffKey, parseCommitDiffKey, parseTaskDiffKey } from './scm';
 	import { scm } from './scm.svelte';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 
@@ -79,7 +79,14 @@
 		const rel = fileOf(key);
 		const my = ++seq;
 		try {
-			const [orig, work] = await Promise.all([original(key, rel), workingCopy(m, rel)]);
+			const commit = parseCommitDiffKey(key);
+			// A commit diff compares the file before and after that commit (empty when added or deleted).
+			const [orig, work] = commit
+				? await Promise.all([
+						invoke<string>('git_show_ref', { slug: commit.slug || null, rev: `${commit.hash}^`, rel: commit.rel }).catch(() => '').then((text) => ({ text, path: `${commit.hash}^/${commit.rel}` })),
+						invoke<string>('git_show_ref', { slug: commit.slug || null, rev: commit.hash, rel: commit.rel }).catch(() => '')
+					])
+				: await Promise.all([original(key, rel), workingCopy(m, rel)]);
 			const head = orig.text;
 			const headPath = orig.path;
 			if (my !== seq || !diff || active !== key) return;
