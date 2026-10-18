@@ -4,10 +4,12 @@
 mod agent;
 mod git;
 mod lsp;
+mod snap;
 
 pub use agent::AgentMsg;
 pub use git::GitMsg;
 pub use lsp::LspMsg;
+pub use snap::SnapMsg;
 
 #[cfg(test)]
 use super::{Locale, Message};
@@ -28,6 +30,7 @@ pub fn all() -> Vec<Entry> {
   out.extend(AgentMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(GitMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(LspMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(SnapMsg::ALL.iter().map(|&m| entry(m)));
   out
 }
 
