@@ -11,6 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use serde_json::Value;
+use crate::i18n::msg::CoreMsg;
+use crate::tr;
 
 /// VS Code's `search.maxResults` default.
 pub const DEFAULT_MAX_RESULTS: usize = 20_000;
@@ -175,7 +177,7 @@ pub fn build_args(opts: &SearchOptions) -> Vec<OsString> {
 pub fn find_rg(env_rg: Option<OsString>, path_var: Option<OsString>) -> Result<PathBuf, String> {
   if let Some(rg) = env_rg.filter(|v| !v.is_empty()) {
     let rg = PathBuf::from(rg);
-    return if rg.is_file() { Ok(rg) } else { Err(format!("KINGU_RG={} ไม่พบไฟล์ ripgrep", rg.display())) };
+    return if rg.is_file() { Ok(rg) } else { Err(tr!(CoreMsg::RgOverrideMissing, path = rg.display())) };
   }
   let exe = if cfg!(windows) { "rg.exe" } else { "rg" };
   let from_path = path_var.iter().flat_map(std::env::split_paths).map(|d| d.join(exe));
@@ -183,7 +185,7 @@ pub fn find_rg(env_rg: Option<OsString>, path_var: Option<OsString>) -> Result<P
   from_path
     .chain(fallbacks)
     .find(|p| p.is_file())
-    .ok_or_else(|| "ไม่พบ ripgrep (rg): ติดตั้งด้วย `brew install ripgrep` หรือตั้ง KINGU_RG เป็น path ของ rg".to_string())
+    .ok_or_else(|| tr!(CoreMsg::RgMissing))
 }
 
 fn utf16_len(s: &str) -> u32 {
