@@ -16,6 +16,7 @@
 	import { taskTitleFromPrompt } from './composerText';
 	import { cliOf } from '#lib/ade/agentCli.ts';
 	import { openAgents } from '#lib/ade/agentsMode.svelte.ts';
+	import CliQuestion from '#lib/ade/CliQuestion.svelte';
 
 	let draft = $state('');
 	let followUp = $state('');
@@ -137,10 +138,11 @@
 					<div class="flex justify-center"><Icon name="terminal" size={28} /></div>
 					<p class="text-(--vscode-foreground)">งานนี้รัน {cliOf(meta.agent)?.[0]} ใน terminal</p>
 					<button class="text-(--vscode-textLink-foreground) hover:underline" onclick={() => openAgents()}>เปิดใน Agents (⇧⌘A)</button>
+					<CliQuestion slug={meta.slug} class="text-left text-xs" />
 				</div>
 			</div>
 		{:else if selected && meta}
-			<AgentTimeline {run} onanswer={(p, decision, message) => selected && adeTasks.answer(selected, p.request_id, decision, message)} class="h-full p-3">
+			<AgentTimeline {run} onanswer={(p, decision, message, answers) => selected && adeTasks.answer(selected, p.request_id, decision, message, answers)} class="h-full p-3">
 				{#snippet empty()}
 					<p class="text-(--vscode-descriptionForeground)">
 						ยังไม่มีบันทึกของรอบนี้{meta.session_id ? ' — พิมพ์ด้านล่างเพื่อทำงานต่อใน session เดิม' : ''}

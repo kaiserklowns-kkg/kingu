@@ -635,8 +635,8 @@ class AdeTasks {
 		return true;
 	}
 
-	answer(slug: string, requestId: string, decision: Decision, message?: string) {
-		return runtime.answer(slug, requestId, decision, message).catch((e) => notifications.error(`ตอบคำขออนุญาตไม่ได้: ${e}`));
+	answer(slug: string, requestId: string, decision: Decision, message?: string, answers?: Record<string, string>) {
+		return runtime.answer(slug, requestId, decision, message, answers).catch((e) => notifications.error(`ตอบคำขออนุญาตไม่ได้: ${e}`));
 	}
 
 	/** Stops the current turn; the session stays open for follow-ups. */
