@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 use tauri::State;
 
 use crate::git::{check_rev, run};
+use crate::git_queue::{self, Scope};
 use crate::i18n::Message;
 use crate::i18n::msg::GitMsg;
 use crate::tr;
@@ -349,6 +350,7 @@ pub fn fetch_args(opts: &FetchOptions) -> Vec<&'static str> {
 }
 
 pub fn fetch(root: &Path, opts: &FetchOptions, cancel: &AtomicBool, timeout: Duration) -> Result<(), String> {
+  let _queue = git_queue::lock(root, Scope::Refs, "fetch")?;
   net(root, &fetch_args(opts), cancel, timeout).map(|_| ())
 }
 
@@ -390,6 +392,7 @@ fn is_tag_conflict(err: &str) -> bool {
 }
 
 pub fn pull(root: &Path, opts: &PullOptions, cancel: &AtomicBool, timeout: Duration) -> Result<(), String> {
+  let _queue = git_queue::lock(root, Scope::Repository, "pull")?;
   let Some(branch) = current_branch(root) else {
     return Err(tr!(GitMsg::PullDetached));
   };
@@ -444,6 +447,7 @@ pub fn push_flags(opts: &PushOptions) -> Vec<&'static str> {
 /// Pushes the current branch to its upstream; with no upstream, publishes it to `remote`
 /// (default `origin`) with `-u` (VS Code's Publish Branch). Returns the upstream pushed to.
 pub fn push(root: &Path, remote: Option<&str>, opts: &PushOptions, cancel: &AtomicBool, timeout: Duration) -> Result<String, String> {
+  let _queue = git_queue::lock(root, Scope::Refs, "push")?;
   let Some(branch) = current_branch(root) else {
     return Err(tr!(GitMsg::PushDetached));
   };
@@ -477,6 +481,7 @@ pub fn push(root: &Path, remote: Option<&str>, opts: &PushOptions, cancel: &Atom
 
 /// Pull, then push when there is anything to push (VS Code's Sync Changes).
 pub fn sync(root: &Path, pull_opts: &PullOptions, push_opts: &PushOptions, cancel: &AtomicBool, timeout: Duration) -> Result<(), String> {
+  let _queue = git_queue::lock(root, Scope::Repository, "sync")?;
   pull(root, pull_opts, cancel, timeout)?;
   let ahead = run(root, &["rev-list", "--count", "@{upstream}..HEAD"]).map(|o| String::from_utf8_lossy(&o).trim().to_owned());
   if ahead.as_deref().is_ok_and(|n| n != "0") {
@@ -633,6 +638,7 @@ pub fn fast_forward_branch(root: &Path, branch: &str, cancel: &AtomicBool, timeo
 
 pub fn checkout_with(root: &Path, name: &str, remote: bool, opts: &CheckoutOptions, cancel: &AtomicBool) -> Result<String, String> {
   check_rev(name).map_err(|_| tr!(GitMsg::InvalidBranchName, name = format!("{name:?}")))?;
+  let _queue = git_queue::lock(root, Scope::Repository, "checkout")?;
   if opts.tag {
     if !ref_exists(root, &format!("refs/tags/{name}")) {
       return Err(tr!(GitMsg::TagNotFound, name));
@@ -679,6 +685,7 @@ pub fn checkout_with(root: &Path, name: &str, remote: bool, opts: &CheckoutOptio
 /// `git switch -c name [from]` (Create Branch / Create Branch From…).
 pub fn create_branch(root: &Path, name: &str, from: Option<&str>) -> Result<(), String> {
   check_branch_name(root, name)?;
+  let _queue = git_queue::lock(root, Scope::Repository, "switch -c")?;
   let mut args = vec!["switch", "-c", name];
   if let Some(from) = from {
     check_rev(from).map_err(|_| tr!(GitMsg::UnknownRev, rev = format!("{from:?}")))?;
@@ -703,6 +710,7 @@ pub fn delete_branch(root: &Path, name: &str, force: bool) -> Result<DeleteResul
   if current_branch(root).as_deref() == Some(name) {
     return Err(tr!(GitMsg::DeleteCurrent, name));
   }
+  let _queue = git_queue::lock(root, Scope::Refs, "branch -d")?;
   match run(root, &["branch", if force { "-D" } else { "-d" }, "--", name]) {
     Ok(_) => Ok(DeleteResult::Deleted),
     Err(e) if !force && e.contains("not fully merged") => Ok(DeleteResult::NotMerged),
@@ -726,7 +734,7 @@ pub struct Stash {
 /// `git stash` takes no paths here, and with `--literal-pathspecs` (which [`run`] adds) git 2.56
 /// silently leaves untracked files out of `stash push --include-untracked`.
 fn run_unliteral(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-  let out = crate::git::command().arg("-C").arg(root).args(args).stdin(Stdio::null()).output().map_err(|e| format!("git: {e}"))?;
+  let out = crate::git::command().arg("-C").arg(root).arg("--no-optional-locks").args(args).stdin(Stdio::null()).output().map_err(|e| format!("git: {e}"))?;
   if !out.status.success() {
     let err = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr });
     return Err(format!("git {}: {}", args.first().unwrap_or(&""), err.trim()));
@@ -741,6 +749,7 @@ fn stash_top(root: &Path) -> Option<String> {
 /// `git stash push`, untracked files included when `include_untracked` (VS Code's Stash
 /// (Include Untracked)).
 pub fn stash_push(root: &Path, message: Option<&str>, include_untracked: bool) -> Result<(), String> {
+  let _queue = git_queue::lock(root, Scope::Repository, "stash push")?;
   let before = stash_top(root);
   let mut args = vec!["stash", "push"];
   if include_untracked {
@@ -786,6 +795,7 @@ pub fn stash_list(root: &Path) -> Result<Vec<Stash>, String> {
 /// `git stash apply|pop stash@{index}`. A pop that conflicts keeps the stash (git's behaviour).
 pub fn stash_apply(root: &Path, index: u32, pop: bool) -> Result<(), String> {
   let sel = format!("stash@{{{index}}}");
+  let _queue = git_queue::lock(root, Scope::Repository, if pop { "stash pop" } else { "stash apply" })?;
   run_unliteral(root, &["stash", if pop { "pop" } else { "apply" }, &sel]).map(|_| ()).map_err(|e| {
     let lower = e.to_lowercase();
     if lower.contains("conflict") {
@@ -799,6 +809,7 @@ pub fn stash_apply(root: &Path, index: u32, pop: bool) -> Result<(), String> {
 }
 
 pub fn stash_drop(root: &Path, index: u32) -> Result<(), String> {
+  let _queue = git_queue::lock(root, Scope::Refs, "stash drop")?;
   run_unliteral(root, &["stash", "drop", &format!("stash@{{{index}}}")]).map(|_| ()).map_err(|e| tr!(GitMsg::StashDropFailed, detail = e))
 }
 

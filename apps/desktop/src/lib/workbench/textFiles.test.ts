@@ -5,6 +5,7 @@ import {
 	backupDelay,
 	closeAction,
 	confirmResult,
+	diskChangeAction,
 	encodingLabel,
 	encodingPicks,
 	ENCODINGS,
@@ -142,5 +143,18 @@ describe('encodings and status bar items', () => {
 		expect(isLargeModel(1000, 10)).toBe(false);
 		expect(formatSize(512)).toBe('512B');
 		expect(formatSize(10 * 1024 * 1024)).toBe('10.00MB');
+	});
+});
+
+describe('an open file changed on disk', () => {
+	const base = { dirty: true, inConflict: false, diskDiffers: true, autoSave: 'afterDelay' as const };
+	test('clean editors reload, dirty ones are never overwritten', () => {
+		expect(diskChangeAction({ ...base, dirty: false })).toBe('reload');
+		expect(diskChangeAction(base)).toBe('conflict');
+		expect(diskChangeAction({ ...base, autoSave: 'off' })).toBe('pause');
+	});
+	test('no new prompt when already in conflict or the content is the same', () => {
+		expect(diskChangeAction({ ...base, inConflict: true })).toBe('none');
+		expect(diskChangeAction({ ...base, diskDiffers: false })).toBe('none');
 	});
 });

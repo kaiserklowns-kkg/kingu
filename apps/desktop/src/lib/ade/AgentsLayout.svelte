@@ -42,6 +42,7 @@
 	import { adeLayout, PRIMARY } from './adeLayout.svelte';
 	import { rightSidebar } from './rightSidebar.svelte.ts';
 	import { adeTasks } from './tasks.svelte';
+	import { mayPruneSessions } from './agentGuard';
 	import { recordQuickOpenVisit } from './quickOpen.svelte.ts';
 	import { untrack } from 'svelte';
 	import { cliName, cliOf, type RunMode } from './agentCli';
@@ -83,9 +84,10 @@
 	});
 
 	// A removed task's terminals and agent CLI close with it (also a task of the previous folder,
-	// or one removed while the page was reloading).
+	// or one removed while the page was reloading). Only after this folder's tasks were read
+	// successfully: a failed tasks_load leaves an empty list, which must not end running agents.
 	$effect(() => {
-		if (!adeTasks.loaded) return;
+		if (!mayPruneSessions({ loaded: adeTasks.loaded, loadedRoot: adeTasks.loadedRoot, root: workspace.root })) return;
 		for (const k of new Set([...Object.keys(adeLayout.terminals), ...Object.keys(adeLayout.files)])) if (k !== PRIMARY && !adeTasks.find(k)) adeLayout.drop(k);
 		for (const s of Object.keys(cliSessions.sessions)) if (!adeTasks.find(s)) untrack(() => cliSessions.end(s));
 	});

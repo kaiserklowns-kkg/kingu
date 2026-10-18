@@ -12,6 +12,11 @@ crate::i18n::messages! {
       en: "Another git command is running; wait for it to finish",
       th: "มีคำสั่ง git อื่นกำลังทำงานอยู่ รอให้เสร็จก่อน",
     },
+    /// git_queue: an operation waited too long for another one in the same repository.
+    QueueTimeout {
+      en: "git {op} waited {secs} seconds for another git operation in this repository ({running}) and gave up; try again when it finishes",
+      th: "git {op} รอ git อีกงานใน repository นี้ ({running}) นาน {secs} วินาทีแล้วจึงยกเลิก ลองใหม่เมื่องานนั้นเสร็จ",
+    },
     Cancelled {
       en: "git {op} was cancelled",
       th: "ยกเลิก git {op} แล้ว",

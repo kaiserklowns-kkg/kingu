@@ -29,6 +29,10 @@
 	import { floating } from './floating.svelte';
 	import FloatingToggle from './FloatingToggle.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { gitQueue } from './gitQueue.svelte';
+	import { t } from '#lib/i18n/index.ts';
+
+	$effect(() => gitQueue.install());
 
 	const languageNames: Record<string, string> = {
 		typescript: 'TypeScript',
@@ -173,6 +177,12 @@
 		{:else}
 			<span class="flex h-full items-center gap-1 px-2" title="branch ของ worktree ที่เลือก"><Icon name="branch" size={14} />{branch}</span>
 		{/if}
+	{/if}
+	{#if gitQueue.first}
+		<!-- A git operation (IDE or ADE) waits for another one in the same repository (Rust's git_queue). -->
+		<span class="flex h-full items-center gap-1 px-2" title={t('workbench.scm.queueWaitingTitle', { running: gitQueue.first.running, count: gitQueue.first.count })}>
+			<span class="inline-block size-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent"></span>{t('workbench.scm.queueWaiting', { op: gitQueue.first.op, running: gitQueue.first.running })}
+		</span>
 	{/if}
 	{#if show('status.problems')}
 		<button class={ITEM} title={problemsTitle} onclick={toggleProblems}>
