@@ -140,7 +140,7 @@
 				</div>
 			</div>
 		{:else if selected && meta}
-			<AgentTimeline {run} onanswer={(p, decision, message) => selected && adeTasks.answer(selected, p.request_id, decision, message)} class="h-full p-3">
+			<AgentTimeline {run} onanswer={(p, decision, message, answers) => selected && adeTasks.answer(selected, p.request_id, decision, message, answers)} class="h-full p-3">
 				{#snippet empty()}
 					<p class="text-(--vscode-descriptionForeground)">
 						ยังไม่มีบันทึกของรอบนี้{meta.session_id ? ' — พิมพ์ด้านล่างเพื่อทำงานต่อใน session เดิม' : ''}

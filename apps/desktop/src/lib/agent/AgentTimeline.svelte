@@ -11,6 +11,8 @@
 	// and the ADE task page. Keeps the newest event in view.
 	import type { Snippet } from 'svelte';
 	import PermissionCard from './PermissionCard.svelte';
+	import QuestionCard from './QuestionCard.svelte';
+	import { answersFor, parseAsk } from './ask';
 	import { firstLine, formatUsage, toolArg, type Decision, type PermissionRequest } from './events';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { chatLook } from '#lib/ade/chatLook.ts';
@@ -22,7 +24,8 @@
 		class: klass = ''
 	}: {
 		run: TimelineRun | undefined;
-		onanswer?: (request: PermissionRequest, decision: Decision, message?: string) => void;
+		/** `answers`: an AskUserQuestion's, question text → answer (with `allow`). */
+		onanswer?: (request: PermissionRequest, decision: Decision, message?: string, answers?: Record<string, string>) => void;
 		empty?: Snippet;
 		class?: string;
 	} = $props();
@@ -44,6 +47,13 @@
 		deny: 'ไม่อนุญาต (denied)',
 		cancelled: 'ยกเลิก (cancelled)'
 	};
+	const QUESTION_LABEL: Record<string, string> = {
+		allow: 'ตอบแล้ว (answered)',
+		allow_always: 'ตอบแล้ว (answered)',
+		deny: 'ไม่ได้ตอบ (dismissed)',
+		cancelled: 'ยกเลิก (cancelled)'
+	};
+	const isAsk = (ev: PermissionRequest) => ev.tool === 'AskUserQuestion';
 </script>
 
 <div
@@ -80,12 +90,15 @@
 				{#if decided}
 					<div class="truncate font-mono text-neutral-500" title={ev.input_summary}>
 						<span class={decided === 'deny' || decided === 'cancelled' ? 'text-red-400' : 'text-emerald-400'}>◆</span>
-						{ev.tool}: {DECISION_LABEL[decided]}
+						{ev.tool}: {(isAsk(ev) ? QUESTION_LABEL : DECISION_LABEL)[decided]}
 					</div>
+				{:else if onanswer && !run.ended && isAsk(ev) && parseAsk(ev.input)}
+					{@const ask = parseAsk(ev.input)!}
+					<QuestionCard prompt={ask} onsubmit={(sels) => onanswer(ev, 'allow', undefined, answersFor(ask, sels))} ondismiss={() => onanswer(ev, 'deny')} />
 				{:else if onanswer && !run.ended}
 					<PermissionCard request={ev} onanswer={(decision, message) => onanswer(ev, decision, message)} />
 				{:else}
-					<div class="truncate font-mono text-amber-300" title={ev.input_summary}><span>◆</span> ขออนุญาตใช้ {ev.tool} (รอคำตอบ)</div>
+					<div class="truncate font-mono text-amber-300" title={ev.input_summary}><span>◆</span> {isAsk(ev) ? `ถาม: ${firstLine(ev.input_summary)}` : `ขออนุญาตใช้ ${ev.tool}`} (รอคำตอบ)</div>
 				{/if}
 			{:else if ev.kind === 'result'}
 				<div class={['rounded border px-2 py-1', ev.is_error ? 'border-red-800 text-red-300' : 'border-emerald-800 text-emerald-300']}>

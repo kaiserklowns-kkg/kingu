@@ -172,7 +172,7 @@
 						<button class={BUTTON_SECONDARY} onclick={() => (appMode.setMode('agents'), adeLayout.show(slug))}>เปิดใน Agents (⇧⌘A)</button>
 					</div>
 				{:else}
-					<AgentTimeline {run} onanswer={(p, decision, message) => adeTasks.answer(slug, p.request_id, decision, message)} class="flex-1 px-4 py-2">
+					<AgentTimeline {run} onanswer={(p, decision, message, answers) => adeTasks.answer(slug, p.request_id, decision, message, answers)} class="flex-1 px-4 py-2">
 						{#snippet empty()}
 							<p class="text-(--vscode-descriptionForeground)">
 								{run && !run.ended

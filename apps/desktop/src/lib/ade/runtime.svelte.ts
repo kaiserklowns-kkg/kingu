@@ -105,8 +105,8 @@ class Runtime {
 		else await this.start(slug, text, plan.resume, images);
 	}
 
-	answer(slug: string, requestId: string, decision: Decision, message?: string): Promise<void> {
-		return agents.answer(slug, requestId, decision, message);
+	answer(slug: string, requestId: string, decision: Decision, message?: string, answers?: Record<string, string>): Promise<void> {
+		return agents.answer(slug, requestId, decision, message, answers);
 	}
 
 	interrupt(slug: string): Promise<void> {

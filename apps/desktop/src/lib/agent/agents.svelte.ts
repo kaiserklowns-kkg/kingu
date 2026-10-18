@@ -8,7 +8,7 @@
  *   agents.start(slug, prompt, { root?, resume? })   start a run in `<root>/.kingu/worktrees/<slug>` (must exist);
  *                                                    model/permission mode come from settings `kingu.agent.*`
  *   agents.send(slug, text)   follow-up; restarts the task's last session (resume) if its run has ended
- *   agents.answer(slug, requestId, decision, message?)   decision: 'allow' | 'allow_always' | 'deny'
+ *   agents.answer(slug, requestId, decision, message?, answers?)   decision: 'allow' | 'allow_always' | 'deny'; answers: an AskUserQuestion's (question → answer)
  *   agents.interrupt(slug)    stop the current turn, keep the session
  *   agents.stop(slug)         end the run
  *   agents.onEvent(fn)        (slug, event) for every event of every run; returns an unsubscribe
@@ -100,10 +100,10 @@ class Agents {
 		await invoke('agent_send', { runId: run.runId, text, images: images.length ? images : null });
 	}
 
-	async answer(slug: string, requestId: string, decision: Decision, message?: string): Promise<void> {
+	async answer(slug: string, requestId: string, decision: Decision, message?: string, answers?: Record<string, string>): Promise<void> {
 		const run = this.runs[slug];
 		if (run?.runId === undefined) return;
-		await invoke('agent_answer_permission', { runId: run.runId, requestId, decision, message: message?.trim() || null });
+		await invoke('agent_answer_permission', { runId: run.runId, requestId, decision, message: message?.trim() || null, answers: answers ?? null });
 	}
 
 	async interrupt(slug: string): Promise<void> {
