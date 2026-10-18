@@ -1,6 +1,9 @@
 //! API keys of AI accounts: only in the OS keychain (macOS Keychain via `keyring`, like the team
 //! token), keyed by account id. Never in settings, never logged, never sent to the webview.
 
+use crate::i18n::msg::AccountsMsg;
+use crate::tr;
+
 pub const KEYCHAIN_SERVICE: &str = "dev.kingu.ai-accounts";
 
 pub trait SecretStore: Send + Sync {
@@ -23,13 +26,13 @@ impl SecretStore for Keychain {
   }
 
   fn set(&self, id: &str, secret: &str) -> Result<(), String> {
-    Self::entry(id)?.set_password(secret).map_err(|e| format!("บันทึก API key ลง Keychain ไม่สำเร็จ: {e}"))
+    Self::entry(id)?.set_password(secret).map_err(|e| tr!(AccountsMsg::SaveKeyFailed, detail = e))
   }
 
   fn delete(&self, id: &str) -> Result<(), String> {
     match Self::entry(id)?.delete_credential() {
       Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-      Err(e) => Err(format!("ลบ API key จาก Keychain ไม่สำเร็จ: {e}")),
+      Err(e) => Err(tr!(AccountsMsg::DeleteKeyFailed, detail = e)),
     }
   }
 }

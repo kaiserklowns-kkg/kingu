@@ -6,6 +6,7 @@
 import { untrack } from 'svelte';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { clientLog } from '#lib/client-log.ts';
+import { isRustError } from '#lib/i18n/rustErrors.ts';
 import { installItems, type InstallInfo } from '#lib/lsp/model.ts';
 import { opensOnStart } from '#lib/settings/mappings.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
@@ -32,8 +33,6 @@ type DapEvent = { type: 'message'; json: string } | { type: 'stderr'; line: stri
 type Active = { session: DebugSession; id: number | null; config: LaunchConfig; build?: string[]; noDebug: boolean };
 export type WatchResult = { value: string; error?: boolean };
 
-/** Start of Rust's "adapter not installed" error (`lsp::NOT_INSTALLED`). */
-const NOT_INSTALLED = 'ไม่ได้ติดตั้ง';
 const LAST_CONFIG = 'kingu.debug.lastConfig';
 const WATCHES = 'kingu.debug.watches';
 
@@ -364,7 +363,7 @@ class Debug {
 			out('stderr', `${message}\n`);
 			this.model = { ...this.model!, state: 'terminated' };
 			this.#active = null;
-			if (message.startsWith(NOT_INSTALLED)) void this.install(config.type);
+			if (isRustError(message, 'notInstalled')) void this.install(config.type);
 			else status.flash(message);
 			return;
 		}

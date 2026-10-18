@@ -57,6 +57,7 @@ import {
 import type { CodeAction, Command, CompletionItem, Diagnostic, DocumentSymbol, ServerCapabilities, SymbolInformation, WorkspaceEdit } from './protocol';
 import { applyWorkspaceEdit, type ApplyResult } from './workspaceEdit';
 import { t } from '#lib/i18n/index.ts';
+import { isRustError } from '#lib/i18n/rustErrors.ts';
 
 type MonacoApi = typeof Monaco;
 type LspEvent = { type: 'message'; json: string } | { type: 'stderr'; line: string } | { type: 'exit'; code: number | null };
@@ -70,8 +71,6 @@ const EXTERNAL_SCHEME = 'kingu-external';
 const LOG_LIMIT = 1000;
 const SYMBOLS_DELAY_MS = 400;
 const CODE_ACTION_COMMAND = 'kingu.lsp.codeAction';
-/** Start of Rust's "server not installed" error (`lsp::NOT_INSTALLED`). */
-const NOT_INSTALLED = 'ไม่ได้ติดตั้ง';
 const INSTALL_POLL_MS = 3000;
 /** Give up watching for an install after this long; window focus and Retry still re-check. */
 const INSTALL_WATCH_MS = 15 * 60 * 1000;
@@ -418,7 +417,7 @@ class Lsp {
 				return true;
 			} catch (e) {
 				const message = String(e);
-				this.#setStatus(info, { state: message.includes(NOT_INSTALLED) ? 'not-installed' : 'error', message });
+				this.#setStatus(info, { state: isRustError(message, 'notInstalled') ? 'not-installed' : 'error', message });
 				this.#append(message);
 				clientLog('error', `language server ${key}: ${message}`);
 				return false;

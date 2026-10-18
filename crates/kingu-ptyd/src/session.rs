@@ -65,7 +65,7 @@ fn tail_start(s: &str, cap: usize) -> usize {
 /// Session keys come from the webview; keep them short and plain.
 pub fn validate_key(key: &str) -> Result<(), String> {
   let ok = (1..=128).contains(&key.len()) && key.bytes().all(|b| b.is_ascii_alphanumeric() || b":_.-".contains(&b));
-  if ok { Ok(()) } else { Err(format!("terminal key ไม่ถูกต้อง: {key:?}")) }
+  if ok { Ok(()) } else { Err(format!("invalid terminal key: {key:?}")) }
 }
 
 /// Splits `buf` at the end of its last complete UTF-8 sequence, so a multi-byte
@@ -99,10 +99,10 @@ pub fn shell_quote(arg: &str) -> String {
 /// setting value can never become shell syntax).
 pub fn command_line(argv: &[String]) -> Result<String, String> {
   if argv.is_empty() || argv[0].is_empty() {
-    return Err("คำสั่งว่าง".into());
+    return Err("empty command".into());
   }
   if argv.iter().any(|a| a.contains('\0')) {
-    return Err("คำสั่งมีอักขระ NUL".into());
+    return Err("the command contains a NUL character".into());
   }
   Ok(argv.iter().map(|a| shell_quote(a)).collect::<Vec<_>>().join(" "))
 }
@@ -208,10 +208,10 @@ pub fn base_env(get: impl Fn(&str) -> Option<String>) -> Vec<(String, String)> {
 pub fn validate_shell(shell: &str) -> Result<&str, String> {
   let path = Path::new(shell);
   if !path.is_absolute() {
-    return Err(format!("shell ต้องเป็น path เต็ม: {shell}"));
+    return Err(format!("the shell must be an absolute path: {shell}"));
   }
   if !path.is_file() {
-    return Err(format!("ไม่พบ shell: {shell}"));
+    return Err(format!("shell not found: {shell}"));
   }
   Ok(shell)
 }
@@ -272,7 +272,7 @@ impl Host {
     if let Some(a) = self.attach_taking(key, Some((spec.cols, spec.rows)), &mut sink) {
       return Ok(a);
     }
-    self.spawn_shell(key, spec, sink.ok_or("terminal sink หาย")?)
+    self.spawn_shell(key, spec, sink.ok_or("terminal sink missing")?)
   }
 
   /// A login shell in `cwd`, as session `key`. With `run`, that command is typed into the shell
@@ -281,7 +281,7 @@ impl Host {
   pub fn spawn_shell(&self, key: &str, spec: &ShellSpec<'_>, sink: Sink) -> Result<Attached, String> {
     validate_key(key)?;
     if !spec.cwd.is_absolute() || !spec.cwd.is_dir() {
-      return Err(format!("ไม่พบโฟลเดอร์ {}", spec.cwd.display()));
+      return Err(format!("folder not found: {}", spec.cwd.display()));
     }
     let again = !self.started.lock().unwrap().insert(key.to_string());
     let line = if again { None } else { spec.run.map(command_line).transpose()? };

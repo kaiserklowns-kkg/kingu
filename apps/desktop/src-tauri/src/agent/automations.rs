@@ -2,6 +2,8 @@
 //! `<root>/.kingu/automations.json`. The webview owns the list, parses schedules and runs them
 //! while Kingu is open; Rust validates the whole list and writes it atomically, like tasks.json.
 
+use crate::i18n::msg::AgentMsg;
+use crate::tr;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -82,9 +84,9 @@ pub fn path(root: &Path) -> Result<PathBuf, String> {
 pub fn load(root: &Path) -> Result<Vec<Automation>, String> {
   let path = path(root)?;
   let Some(text) = read(&path)? else { return Ok(Vec::new()) };
-  let file: AutomationsFile = serde_json::from_str(&text).map_err(|e| format!("{}: อ่านไม่ได้ ({e})", path.display()))?;
+  let file: AutomationsFile = serde_json::from_str(&text).map_err(|e| tr!(AgentMsg::AutomationsUnreadable, path = path.display(), detail = e))?;
   if file.version > VERSION {
-    return Err(format!("{}: เขียนโดย Kingu รุ่นใหม่กว่า (version {})", path.display(), file.version));
+    return Err(tr!(AgentMsg::AutomationsNewer, path = path.display(), version = file.version));
   }
   validate(&file.automations).map_err(|e| format!("{}: {e}", path.display()))?;
   Ok(file.automations)
@@ -92,43 +94,43 @@ pub fn load(root: &Path) -> Result<Vec<Automation>, String> {
 
 pub fn validate(list: &[Automation]) -> Result<(), String> {
   if list.len() > MAX_AUTOMATIONS {
-    return Err(format!("มี automation ได้ไม่เกิน {MAX_AUTOMATIONS} รายการ"));
+    return Err(tr!(AgentMsg::TooManyAutomations, max = MAX_AUTOMATIONS));
   }
   let mut seen = HashSet::new();
   for a in list {
-    validate_slug(&a.id).map_err(|e| format!("id ของ automation ไม่ถูกต้อง: {e}"))?;
+    validate_slug(&a.id).map_err(|e| tr!(AgentMsg::BadAutomationId, detail = e))?;
     if !seen.insert(a.id.as_str()) {
-      return Err(format!("{}: id ซ้ำ", a.id));
+      return Err(tr!(AgentMsg::DuplicateAutomationId, id = a.id));
     }
     let name = a.name.trim();
     if name.is_empty() || a.name.chars().count() > MAX_NAME || a.name.chars().any(char::is_control) {
-      return Err(format!("{}: ชื่อต้องยาว 1-{MAX_NAME} ตัวอักษรและไม่มีอักขระควบคุม", a.id));
+      return Err(tr!(AgentMsg::BadAutomationName, id = a.id, max = MAX_NAME));
     }
     if a.prompt.trim().is_empty() {
-      return Err(format!("{}: ต้องมีคำสั่งให้ agent", a.id));
+      return Err(tr!(AgentMsg::AutomationNoPrompt, id = a.id));
     }
     if a.prompt.len() > MAX_PROMPT {
-      return Err(format!("{}: คำสั่งยาวเกิน {MAX_PROMPT} ไบต์", a.id));
+      return Err(tr!(AgentMsg::AutomationPromptTooLong, id = a.id, max = MAX_PROMPT));
     }
     let schedule = a.schedule.trim();
     if schedule.is_empty() || a.schedule.len() > MAX_SCHEDULE || !a.schedule.chars().all(|c| c == ' ' || c.is_ascii_graphic()) {
-      return Err(format!("{}: ตารางเวลาไม่ถูกต้อง", a.id));
+      return Err(tr!(AgentMsg::AutomationBadSchedule, id = a.id));
     }
     if let Some(base) = &a.base {
-      crate::git::check_rev(base).map_err(|e| format!("{}: branch ไม่ถูกต้อง ({e})", a.id))?;
+      crate::git::check_rev(base).map_err(|e| tr!(AgentMsg::AutomationBadBranch, id = a.id, detail = e))?;
     }
     if let Some(mode) = &a.mode
       && !MODES.contains(&mode.as_str())
     {
-      return Err(format!("{}: ไม่รู้จักโหมด {mode}", a.id));
+      return Err(tr!(AgentMsg::AutomationUnknownMode, id = a.id, mode));
     }
     if let Some(slug) = &a.last_task_slug {
-      validate_slug(slug).map_err(|e| format!("{}: งานล่าสุดไม่ถูกต้อง ({e})", a.id))?;
+      validate_slug(slug).map_err(|e| tr!(AgentMsg::AutomationBadLastTask, id = a.id, detail = e))?;
     }
     if let Some(skip) = &a.last_skip
       && (skip.reason.len() > MAX_REASON || skip.reason.chars().any(char::is_control))
     {
-      return Err(format!("{}: เหตุผลที่ข้ามยาวเกิน {MAX_REASON} ไบต์หรือมีอักขระควบคุม", a.id));
+      return Err(tr!(AgentMsg::AutomationBadSkipReason, id = a.id, max = MAX_REASON));
     }
   }
   Ok(())

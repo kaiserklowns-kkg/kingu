@@ -11,6 +11,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::i18n::msg::AccountsMsg;
+use crate::tr;
+
 pub const FILE: &str = "ai-accounts.json";
 pub const DIR: &str = "ai-accounts";
 const MAX_LABEL: usize = 60;
@@ -27,7 +30,7 @@ impl Provider {
     match s {
       "claude" => Ok(Self::Claude),
       "codex" => Ok(Self::Codex),
-      _ => Err(format!("ไม่รู้จักผู้ให้บริการ {s}")),
+      _ => Err(tr!(AccountsMsg::UnknownProvider, name = s)),
     }
   }
 
@@ -69,7 +72,7 @@ impl Kind {
     match s {
       "subscription" => Ok(Self::Subscription),
       "api_key" => Ok(Self::ApiKey),
-      _ => Err(format!("ไม่รู้จักชนิดบัญชี {s}")),
+      _ => Err(tr!(AccountsMsg::UnknownKind, name = s)),
     }
   }
 }
@@ -112,10 +115,10 @@ pub fn new_id(seed: u64) -> String {
 pub fn clean_label(label: &str) -> Result<String, String> {
   let label: String = label.trim().chars().filter(|c| !c.is_control()).collect();
   if label.is_empty() {
-    return Err("ตั้งชื่อบัญชีก่อน".into());
+    return Err(tr!(AccountsMsg::NameRequired));
   }
   if label.chars().count() > MAX_LABEL {
-    return Err(format!("ชื่อบัญชียาวเกิน {MAX_LABEL} ตัวอักษร"));
+    return Err(tr!(AccountsMsg::NameTooLong, max = MAX_LABEL));
   }
   Ok(label)
 }
@@ -149,11 +152,11 @@ impl Store {
 
   pub fn save(&self) -> Result<(), String> {
     let text = serde_json::to_string_pretty(&self.data).map_err(|e| e.to_string())?;
-    write_atomic(&self.path, text.as_bytes()).map_err(|e| format!("บันทึกรายการบัญชีไม่สำเร็จ: {e}"))
+    write_atomic(&self.path, text.as_bytes()).map_err(|e| tr!(AccountsMsg::SaveListFailed, detail = e))
   }
 
   pub fn get(&self, id: &str) -> Result<&Account, String> {
-    self.data.accounts.iter().find(|a| a.id == id).ok_or_else(|| "ไม่พบบัญชีนี้แล้ว".to_owned())
+    self.data.accounts.iter().find(|a| a.id == id).ok_or_else(|| tr!(AccountsMsg::AccountGone))
   }
 
   pub fn add(&mut self, provider: Provider, kind: Kind, label: &str, now: u64) -> Result<Account, String> {
@@ -164,7 +167,7 @@ impl Store {
   }
 
   pub fn remove(&mut self, id: &str) -> Result<Account, String> {
-    let i = self.data.accounts.iter().position(|a| a.id == id).ok_or("ไม่พบบัญชีนี้แล้ว")?;
+    let i = self.data.accounts.iter().position(|a| a.id == id).ok_or_else(|| tr!(AccountsMsg::AccountGone))?;
     let account = self.data.accounts.remove(i);
     self.prune();
     Ok(account)
@@ -179,7 +182,7 @@ impl Store {
       Some(id) => {
         let a = self.get(id)?;
         if a.provider != provider {
-          return Err("บัญชีนี้เป็นของผู้ให้บริการอื่น".into());
+          return Err(tr!(AccountsMsg::OtherProvider));
         }
         self.data.active.insert(provider, id.to_owned());
       }
@@ -257,11 +260,11 @@ pub fn agent_env(account: Option<&Account>, root: &Path, api_key: Option<String>
         Provider::Claude => "CLAUDE_CONFIG_DIR",
         Provider::Codex => "CODEX_HOME",
       };
-      env.set.insert(var.into(), dir.to_str().ok_or("path ของบัญชีไม่ใช่ UTF-8")?.to_owned());
+      env.set.insert(var.into(), dir.to_str().ok_or_else(|| tr!(AccountsMsg::PathNotUtf8))?.to_owned());
       env.unset = auth_vars.iter().map(|s| (*s).to_owned()).collect();
     }
     Kind::ApiKey => {
-      let key = api_key.filter(|k| !k.is_empty()).ok_or_else(|| format!("บัญชี {} ยังไม่มี API key ใน Keychain", a.label))?;
+      let key = api_key.filter(|k| !k.is_empty()).ok_or_else(|| tr!(AccountsMsg::NoKeyInKeychain, label = a.label))?;
       env.set.insert(auth_vars[0].into(), key);
       if a.provider == Provider::Claude {
         // An auth token would win over the key.
@@ -276,10 +279,10 @@ pub fn agent_env(account: Option<&Account>, root: &Path, api_key: Option<String>
 /// CLI login with the account's folder). `env` because a quoted `VAR=value` is not an assignment.
 pub fn login_argv(a: &Account, root: &Path) -> Result<Vec<String>, String> {
   if a.kind != Kind::Subscription {
-    return Err("บัญชี API key ไม่ต้อง login ใช้ \"ตั้ง API key\" แทน".into());
+    return Err(tr!(AccountsMsg::ApiKeyNoLogin));
   }
   let dir = account_dir(root, a.provider, &a.id);
-  let dir = dir.to_str().ok_or("path ของบัญชีไม่ใช่ UTF-8")?;
+  let dir = dir.to_str().ok_or_else(|| tr!(AccountsMsg::PathNotUtf8))?;
   Ok(match a.provider {
     Provider::Claude => vec!["env".into(), format!("CLAUDE_CONFIG_DIR={dir}"), "claude".into(), "auth".into(), "login".into(), "--claudeai".into()],
     Provider::Codex => vec!["env".into(), format!("CODEX_HOME={dir}"), "codex".into(), "login".into()],
@@ -293,7 +296,7 @@ pub fn validate_api_key(provider: Provider, key: &str) -> Result<(), String> {
     Provider::Claude => "sk-ant-",
     Provider::Codex => "sk-",
   };
-  if ok_chars && key.starts_with(prefix) { Ok(()) } else { Err(format!("API key ของ {} ต้องขึ้นต้นด้วย {prefix}", provider.title())) }
+  if ok_chars && key.starts_with(prefix) { Ok(()) } else { Err(tr!(AccountsMsg::KeyPrefix, provider = provider.title(), prefix)) }
 }
 
 // ---- account folder setup ------------------------------------------------------------------
@@ -361,7 +364,7 @@ pub fn seed_claude_json(personal: &str) -> Option<String> {
 /// `~/.claude.json`). Only creates entries inside `dir`; never writes into `personal`.
 /// Codex: copies `config.toml` once so models/profiles carry over (auth stays per account).
 pub fn prepare_dir(provider: Provider, dir: &Path, personal: Option<&Path>, personal_json: Option<&Path>) -> Result<(), String> {
-  std::fs::create_dir_all(dir).map_err(|e| format!("สร้างโฟลเดอร์บัญชีไม่ได้: {e}"))?;
+  std::fs::create_dir_all(dir).map_err(|e| tr!(AccountsMsg::CreateDirFailed, detail = e))?;
   #[cfg(unix)]
   {
     use std::os::unix::fs::PermissionsExt;
@@ -372,7 +375,7 @@ pub fn prepare_dir(provider: Provider, dir: &Path, personal: Option<&Path>, pers
     && !dir.join(".claude.json").exists()
     && let Some(seed) = std::fs::read_to_string(src).ok().as_deref().and_then(seed_claude_json)
   {
-    write_private(&dir.join(".claude.json"), seed.as_bytes()).map_err(|e| format!("สร้าง .claude.json ของบัญชีไม่ได้: {e}"))?;
+    write_private(&dir.join(".claude.json"), seed.as_bytes()).map_err(|e| tr!(AccountsMsg::CreateClaudeJsonFailed, detail = e))?;
   }
   let Some(personal) = personal.filter(|p| p.is_dir() && *p != dir) else { return Ok(()) };
   match provider {
@@ -381,14 +384,14 @@ pub fn prepare_dir(provider: Provider, dir: &Path, personal: Option<&Path>, pers
         let (src, dst) = (personal.join(name), dir.join(name));
         if src.exists() && std::fs::symlink_metadata(&dst).is_err() {
           #[cfg(unix)]
-          std::os::unix::fs::symlink(&src, &dst).map_err(|e| format!("ลิงก์ {name} ไม่ได้: {e}"))?;
+          std::os::unix::fs::symlink(&src, &dst).map_err(|e| tr!(AccountsMsg::LinkFailed, name, detail = e))?;
         }
       }
     }
     Provider::Codex => {
       let (src, dst) = (personal.join("config.toml"), dir.join("config.toml"));
       if src.is_file() && !dst.exists() {
-        std::fs::copy(&src, &dst).map_err(|e| format!("คัดลอก config.toml ไม่ได้: {e}"))?;
+        std::fs::copy(&src, &dst).map_err(|e| tr!(AccountsMsg::CopyConfigFailed, detail = e))?;
       }
     }
   }
@@ -407,14 +410,14 @@ fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 /// Symlinks inside are removed as links, never followed.
 pub fn remove_dir(root: &Path, provider: Provider, id: &str) -> Result<(), String> {
   if !valid_id(id) {
-    return Err("id ของบัญชีไม่ถูกต้อง".into());
+    return Err(tr!(AccountsMsg::BadAccountId));
   }
   let dir = account_dir(root, provider, id);
   match std::fs::symlink_metadata(&dir) {
     Err(_) => Ok(()),
-    Ok(m) if m.file_type().is_symlink() || !m.is_dir() => Err("โฟลเดอร์บัญชีไม่ใช่โฟลเดอร์ปกติ ไม่ลบ".into()),
+    Ok(m) if m.file_type().is_symlink() || !m.is_dir() => Err(tr!(AccountsMsg::NotPlainDir)),
     // remove_dir_all does not follow symlinks inside the tree.
-    Ok(_) => std::fs::remove_dir_all(&dir).map_err(|e| format!("ลบโฟลเดอร์บัญชีไม่ได้: {e}")),
+    Ok(_) => std::fs::remove_dir_all(&dir).map_err(|e| tr!(AccountsMsg::DeleteDirFailed, detail = e)),
   }
 }
 

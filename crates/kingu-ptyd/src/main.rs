@@ -28,7 +28,7 @@ fn main() {
 #[cfg(not(unix))]
 fn main() {
   if std::env::args().nth(1).as_deref() == Some(kingu_ptyd::sandbox::SUBCOMMAND) {
-    eprintln!("kingu: ระบบปฏิบัติการนี้ยังไม่รองรับ sandbox ของ Snap");
+    eprintln!("kingu: this operating system does not support the Snap sandbox yet");
     std::process::exit(126);
   }
   eprintln!("kingu-ptyd: not supported on this platform (terminals run inside the app)");

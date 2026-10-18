@@ -8,6 +8,8 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
+use crate::i18n::msg::LinearMsg;
+use crate::tr;
 use crate::agent::issues::{truncate, IssueComment, IssueLabel, MAX_BODY, MAX_COMMENT, MAX_COMMENTS, MAX_LIMIT};
 
 pub const ENDPOINT: &str = "https://api.linear.app/graphql";
@@ -17,8 +19,6 @@ const MAX_KEY: usize = 256;
 const MAX_COMMENT_POST: usize = 16 * 1024;
 /// Comments fetched per issue; the latest `MAX_COMMENTS` are kept.
 const COMMENTS_FETCHED: usize = 100;
-pub const NOT_CONNECTED: &str = "ยังไม่ได้เชื่อมต่อ Linear: รันคำสั่ง Linear: Connect แล้ววาง personal API key";
-const AUTH_FAILED: &str = "Linear ไม่รับ API key นี้ (ถูกเพิกถอนหรือไม่ถูกต้อง): เชื่อมต่อใหม่ด้วย Linear: Connect";
 
 const ISSUE_FIELDS: &str = "id identifier number title url branchName description priority priorityLabel updatedAt
   state { name type color } team { key } assignee { displayName } labels(first: 50) { nodes { name color } }";
@@ -111,7 +111,7 @@ impl Transport for Http {
     // Personal API keys go as the bare Authorization value; OAuth tokens would need `Bearer`.
     let res = self.client.post(&self.endpoint).header("Authorization", key).json(body).send().map_err(|e| {
       let e = e.without_url();
-      if e.is_timeout() { "Linear ไม่ตอบภายในเวลาที่กำหนด".to_owned() } else { format!("เชื่อมต่อ Linear ไม่ได้ ตรวจสอบอินเทอร์เน็ต ({e})") }
+      if e.is_timeout() { tr!(LinearMsg::Timeout) } else { tr!(LinearMsg::Connect, detail = e) }
     })?;
     let status = res.status().as_u16();
     Ok((status, res.text().unwrap_or_default()))
@@ -141,22 +141,23 @@ fn valid_team(key: &str) -> bool {
 /// The `data` of a GraphQL response, or a message the user can act on.
 pub fn response_data(status: u16, body: &str) -> Result<Value, String> {
   if matches!(status, 401 | 403) {
-    return Err(AUTH_FAILED.into());
+    return Err(tr!(LinearMsg::AuthFailed));
   }
   if status == 429 {
-    return Err("Linear จำกัดจำนวนคำขอชั่วคราว ลองใหม่ในอีกสักครู่".into());
+    return Err(tr!(LinearMsg::RateLimited));
   }
   if status >= 500 {
-    return Err(format!("Linear ขัดข้อง (HTTP {status}) ลองใหม่ภายหลัง"));
+    return Err(tr!(LinearMsg::ServerError, status));
   }
-  let v: Value = serde_json::from_str(body).map_err(|_| format!("Linear: อ่านผลไม่ได้ (HTTP {status})"))?;
+  let v: Value = serde_json::from_str(body).map_err(|_| tr!(LinearMsg::BadResponse, status))?;
   if let Some(err) = v["errors"].as_array().and_then(|a| a.first()) {
     let code = err["extensions"]["code"].as_str().unwrap_or_default().to_ascii_uppercase();
-    let message = err["message"].as_str().unwrap_or("ล้มเหลว");
+    let failed = tr!(LinearMsg::Failed);
+    let message = err["message"].as_str().unwrap_or(&failed);
     return Err(match code.as_str() {
-      "AUTHENTICATION_ERROR" | "FORBIDDEN" => AUTH_FAILED.into(),
-      "RATELIMITED" => "Linear จำกัดจำนวนคำขอชั่วคราว ลองใหม่ในอีกสักครู่".into(),
-      _ if message.to_lowercase().contains("entity not found") => "ไม่พบ issue นี้ใน Linear (หรือไม่มีสิทธิ์เข้าถึง)".into(),
+      "AUTHENTICATION_ERROR" | "FORBIDDEN" => tr!(LinearMsg::AuthFailed),
+      "RATELIMITED" => tr!(LinearMsg::RateLimited),
+      _ if message.to_lowercase().contains("entity not found") => tr!(LinearMsg::IssueNotFound),
       _ => format!("Linear: {message}"),
     });
   }
@@ -165,7 +166,7 @@ pub fn response_data(status: u16, body: &str) -> Result<Value, String> {
   }
   match v.get("data") {
     Some(d) if !d.is_null() => Ok(d.clone()),
-    _ => Err("Linear: ผลไม่มีข้อมูล".into()),
+    _ => Err(tr!(LinearMsg::NoData)),
   }
 }
 
@@ -181,7 +182,7 @@ fn text(v: &Value, k: &str) -> String {
 pub fn parse_viewer(data: &Value) -> Result<Viewer, String> {
   let v = &data["viewer"];
   if v.is_null() {
-    return Err("Linear: ไม่พบข้อมูลผู้ใช้".into());
+    return Err(tr!(LinearMsg::NoViewer));
   }
   let name = [text(v, "displayName"), text(v, "name")].into_iter().find(|n| !n.is_empty()).unwrap_or_default();
   Ok(Viewer { name, email: text(v, "email"), organization: text(&data["organization"], "name") })
@@ -191,7 +192,7 @@ pub fn parse_issue(v: &Value) -> Result<LinearIssue, String> {
   let identifier = text(v, "identifier");
   let id = text(v, "id");
   if id.is_empty() || !valid_identifier(&identifier) {
-    return Err("Linear: issue ไม่มี identifier".into());
+    return Err(tr!(LinearMsg::NoIdentifier));
   }
   let number = v["number"].as_u64().or_else(|| identifier.rsplit('-').next()?.parse().ok()).unwrap_or(0);
   let labels = v["labels"]["nodes"]
@@ -230,7 +231,7 @@ fn done(i: &LinearIssue) -> bool {
 }
 
 fn nodes(conn: &Value) -> Result<Vec<LinearIssue>, String> {
-  conn["nodes"].as_array().ok_or("Linear: ผลไม่ใช่รายการ issue")?.iter().map(parse_issue).collect()
+  conn["nodes"].as_array().ok_or_else(|| tr!(LinearMsg::NotIssueList))?.iter().map(parse_issue).collect()
 }
 
 /// The list query and its variables for `q`.
@@ -238,7 +239,7 @@ pub fn list_request(q: &IssueQuery) -> Result<(String, Value), String> {
   let first = q.limit.clamp(1, MAX_LIMIT);
   let team = q.team.as_deref().map(str::trim).filter(|t| !t.is_empty());
   if let Some(t) = team.filter(|t| !valid_team(t)) {
-    return Err(format!("team key ของ Linear ไม่ถูกต้อง: {t}"));
+    return Err(tr!(LinearMsg::BadTeamKey, team = t));
   }
   if let Some(term) = q.search.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
     // searchIssues takes no state filter of its own: finished issues are dropped after parsing.
@@ -260,7 +261,7 @@ pub fn list_request(q: &IssueQuery) -> Result<(String, Value), String> {
     "assigned" => format!("query KinguLinearAssigned{head} {{ viewer {{ assignedIssues{args} {{ nodes {{ {ISSUE_FIELDS} }} }} }} }}"),
     "created" => format!("query KinguLinearCreated{head} {{ viewer {{ createdIssues{args} {{ nodes {{ {ISSUE_FIELDS} }} }} }} }}"),
     "open" => format!("query KinguLinearIssues{head} {{ issues{args} {{ nodes {{ {ISSUE_FIELDS} }} }} }}"),
-    f => return Err(format!("ตัวกรอง issue ของ Linear ไม่ถูกต้อง: {f}")),
+    f => return Err(tr!(LinearMsg::BadFilter, filter = f)),
   };
   Ok((query, vars))
 }
@@ -270,7 +271,7 @@ pub fn parse_list(data: &Value) -> Result<Vec<LinearIssue>, String> {
   let conn = [&data["searchIssues"], &data["viewer"]["assignedIssues"], &data["viewer"]["createdIssues"], &data["issues"]]
     .into_iter()
     .find(|c| !c.is_null())
-    .ok_or("Linear: ผลไม่มีรายการ issue")?;
+    .ok_or_else(|| tr!(LinearMsg::NoIssueList))?;
   Ok(nodes(conn)?.into_iter().filter(|i| !done(i)).collect())
 }
 
@@ -278,7 +279,7 @@ pub fn parse_list(data: &Value) -> Result<Vec<LinearIssue>, String> {
 pub fn parse_view(data: &Value) -> Result<LinearIssueDetail, String> {
   let v = &data["issue"];
   if v.is_null() {
-    return Err("ไม่พบ issue นี้ใน Linear (หรือไม่มีสิทธิ์เข้าถึง)".into());
+    return Err(tr!(LinearMsg::IssueNotFound));
   }
   let issue = parse_issue(v)?;
   let mut all: Vec<IssueComment> = v["comments"]["nodes"]
@@ -299,7 +300,7 @@ pub fn parse_view(data: &Value) -> Result<LinearIssueDetail, String> {
 }
 
 fn issue_ref(id: &str) -> Result<(), String> {
-  if valid_identifier(id) || valid_uuid(id) { Ok(()) } else { Err(format!("รหัส issue ของ Linear ไม่ถูกต้อง: {id}")) }
+  if valid_identifier(id) || valid_uuid(id) { Ok(()) } else { Err(tr!(LinearMsg::BadIssueId, id)) }
 }
 
 pub fn viewer(t: &dyn Transport, key: &str) -> Result<Viewer, String> {
@@ -323,14 +324,14 @@ pub fn view(t: &dyn Transport, key: &str, id: &str) -> Result<LinearIssueDetail,
 pub fn comment(t: &dyn Transport, key: &str, id: &str, body: &str) -> Result<(), String> {
   issue_ref(id)?;
   if body.trim().is_empty() || body.len() > MAX_COMMENT_POST {
-    return Err(format!("ข้อความ comment ต้องยาว 1-{MAX_COMMENT_POST} bytes"));
+    return Err(tr!(LinearMsg::CommentLength, max = MAX_COMMENT_POST));
   }
   // Tasks keep the identifier; commentCreate is given the issue's UUID.
   let uuid = if valid_uuid(id) {
     id.to_owned()
   } else {
     let data = request(t, key, "query KinguLinearIssueId($id: String!) { issue(id: $id) { id } }", json!({ "id": id }))?;
-    data["issue"]["id"].as_str().filter(|u| valid_uuid(u)).ok_or("ไม่พบ issue นี้ใน Linear (หรือไม่มีสิทธิ์เข้าถึง)")?.to_owned()
+    data["issue"]["id"].as_str().filter(|u| valid_uuid(u)).ok_or_else(|| tr!(LinearMsg::IssueNotFound))?.to_owned()
   };
   let data = request(
     t,
@@ -338,13 +339,13 @@ pub fn comment(t: &dyn Transport, key: &str, id: &str, body: &str) -> Result<(),
     "mutation KinguLinearComment($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
     json!({ "input": { "issueId": uuid, "body": body } }),
   )?;
-  if data["commentCreate"]["success"].as_bool() == Some(true) { Ok(()) } else { Err("Linear ไม่ได้บันทึก comment".into()) }
+  if data["commentCreate"]["success"].as_bool() == Some(true) { Ok(()) } else { Err(tr!(LinearMsg::CommentNotSaved)) }
 }
 
 /// Only a Linear page opens from a task's Linear link.
 pub fn linear_url(url: &str) -> Result<url::Url, String> {
   let u = url::Url::parse(url).map_err(|e| e.to_string())?;
-  if u.scheme() == "https" && u.host_str() == Some("linear.app") { Ok(u) } else { Err("เปิดได้เฉพาะลิงก์ https://linear.app".into()) }
+  if u.scheme() == "https" && u.host_str() == Some("linear.app") { Ok(u) } else { Err(tr!(LinearMsg::OnlyLinearLinks)) }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -359,7 +360,7 @@ fn stored_key() -> Option<String> {
 }
 
 fn key_or_err() -> Result<String, String> {
-  stored_key().ok_or_else(|| NOT_CONNECTED.to_owned())
+  stored_key().ok_or_else(|| tr!(LinearMsg::NotConnected))
 }
 
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
@@ -381,11 +382,11 @@ pub async fn linear_status() -> Result<Option<Viewer>, String> {
 pub async fn linear_connect(api_key: String) -> Result<Viewer, String> {
   let key = api_key.trim().to_owned();
   if !valid_key(&key) {
-    return Err("API key ไม่ถูกต้อง: สร้างได้ที่ Linear > Settings > Security & access > Personal API keys".into());
+    return Err(tr!(LinearMsg::BadKey));
   }
   blocking(move || {
     let v = viewer(&Http::new()?, &key)?;
-    entry()?.set_password(&key).map_err(|e| format!("บันทึก API key ลง Keychain ไม่สำเร็จ: {e}"))?;
+    entry()?.set_password(&key).map_err(|e| tr!(LinearMsg::SaveKeyFailed, detail = e))?;
     log::info!("linear connected ({})", v.organization);
     Ok(v)
   })
@@ -399,7 +400,7 @@ pub fn linear_disconnect() -> Result<(), String> {
       log::info!("linear disconnected");
       Ok(())
     }
-    Err(e) => Err(format!("ลบ API key จาก Keychain ไม่สำเร็จ: {e}")),
+    Err(e) => Err(tr!(LinearMsg::DeleteKeyFailed, detail = e)),
   }
 }
 
@@ -521,11 +522,11 @@ mod tests {
 
   #[test]
   fn explains_failures_without_the_key() {
-    assert_eq!(response_data(401, "").unwrap_err(), AUTH_FAILED);
+    assert_eq!(response_data(401, "").unwrap_err(), tr!(LinearMsg::AuthFailed));
     let gql = |code: &str, msg: &str| json!({ "errors": [{ "message": msg, "extensions": { "code": code } }], "data": null }).to_string();
-    assert_eq!(response_data(400, &gql("AUTHENTICATION_ERROR", "Authentication required")).unwrap_err(), AUTH_FAILED);
-    assert!(response_data(400, &gql("RATELIMITED", "x")).unwrap_err().contains("จำกัดจำนวนคำขอ"));
-    assert!(response_data(200, &gql("INVALID_INPUT", "Entity not found: Issue")).unwrap_err().contains("ไม่พบ issue"));
+    assert_eq!(response_data(400, &gql("AUTHENTICATION_ERROR", "Authentication required")).unwrap_err(), tr!(LinearMsg::AuthFailed));
+    assert!(response_data(400, &gql("RATELIMITED", "x")).unwrap_err().contains("rate limiting"));
+    assert!(response_data(200, &gql("INVALID_INPUT", "Entity not found: Issue")).unwrap_err().contains("Issue not found"));
     assert_eq!(response_data(200, &gql("", "odd")).unwrap_err(), "Linear: odd");
     assert!(response_data(502, "<html>").unwrap_err().contains("HTTP 502"));
     assert!(response_data(200, "not json").is_err());

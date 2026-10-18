@@ -18,6 +18,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::creds::{Secret, Token};
+use crate::i18n::msg::AccountsMsg;
+use crate::tr;
 
 pub const CLAUDE_USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 pub const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
@@ -122,9 +124,9 @@ fn claude_window(v: &Value, minutes: u32) -> Option<Window> {
 
 /// The body of `/api/oauth/usage`.
 pub fn parse_claude(body: &str) -> Result<Usage, String> {
-  let v: Value = serde_json::from_str(body).map_err(|e| format!("อ่านข้อมูล usage ไม่ได้: {e}"))?;
+  let v: Value = serde_json::from_str(body).map_err(|e| tr!(AccountsMsg::BadUsageData, detail = e))?;
   if !v.is_object() {
-    return Err("อ่านข้อมูล usage ไม่ได้".into());
+    return Err(tr!(AccountsMsg::UsageUnreadable));
   }
   let mut models = BTreeMap::new();
   if let Some(obj) = v.as_object() {
@@ -143,8 +145,8 @@ pub fn parse_claude(body: &str) -> Result<Usage, String> {
 /// The body of `wham/usage`. Windows are told apart by length (5 h / 7 d, ±1 min), else
 /// primary = session and secondary = weekly (Orca's rule).
 pub fn parse_codex(body: &str) -> Result<Usage, String> {
-  let v: Value = serde_json::from_str(body).map_err(|e| format!("อ่านข้อมูล usage ไม่ได้: {e}"))?;
-  let Some(plan) = v["plan_type"].as_str() else { return Err("ข้อมูล usage ของ Codex ไม่มี plan_type".into()) };
+  let v: Value = serde_json::from_str(body).map_err(|e| tr!(AccountsMsg::BadUsageData, detail = e))?;
+  let Some(plan) = v["plan_type"].as_str() else { return Err(tr!(AccountsMsg::NoPlanType)) };
   let window = |w: &Value| -> Option<Window> {
     let pct = w["used_percent"].as_f64()?;
     let minutes = w["limit_window_seconds"].as_f64().filter(|s| *s > 0.0).map(|s| (s / 60.0).ceil() as u32);
@@ -192,15 +194,15 @@ pub enum Failure {
 impl Failure {
   pub fn message(&self, provider_title: &str) -> String {
     match self {
-      Self::NotSignedIn => format!("ยังไม่ได้ login {provider_title}"),
-      Self::ApiKey => "ใช้ API key (คิดตามการใช้งาน ไม่มีโควตาแพ็กเกจ)".into(),
-      Self::StaleToken => format!("token หมดอายุ: เปิด {provider_title} ในบัญชีนี้หรือ login ใหม่"),
-      Self::MissingScope => "token ไม่มีสิทธิ์อ่าน usage: login ใหม่".into(),
-      Self::RateLimited => "ถูกจำกัดการเรียก usage ชั่วคราว จะลองใหม่ภายหลัง".into(),
-      Self::Server => format!("เซิร์ฟเวอร์ {provider_title} ขัดข้อง จะลองใหม่ภายหลัง"),
-      Self::Network => "เชื่อมต่อไม่ได้ จะลองใหม่ภายหลัง".into(),
-      Self::Parse => "อ่านข้อมูล usage ไม่ได้".into(),
-      Self::KeychainUnavailable => "อ่าน Keychain ไม่ได้ (ล็อกอยู่?)".into(),
+      Self::NotSignedIn => tr!(AccountsMsg::NotSignedIn, provider = provider_title),
+      Self::ApiKey => tr!(AccountsMsg::ApiKeyBilling),
+      Self::StaleToken => tr!(AccountsMsg::StaleToken, provider = provider_title),
+      Self::MissingScope => tr!(AccountsMsg::MissingScope),
+      Self::RateLimited => tr!(AccountsMsg::RateLimited),
+      Self::Server => tr!(AccountsMsg::ServerDown, provider = provider_title),
+      Self::Network => tr!(AccountsMsg::Network),
+      Self::Parse => tr!(AccountsMsg::UsageUnreadable),
+      Self::KeychainUnavailable => tr!(AccountsMsg::KeychainUnavailable),
     }
   }
 

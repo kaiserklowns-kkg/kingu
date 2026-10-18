@@ -11,6 +11,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
+use crate::i18n::msg::LspMsg;
+use crate::tr;
 use tauri::State;
 use tauri::ipc::Channel;
 
@@ -99,7 +101,7 @@ pub enum Package {
 pub struct ServerSpec {
   /// Key shared by languages served by one process (`javascript` uses `typescript`).
   pub key: &'static str,
-  /// Shown to the user, e.g. in "ไม่ได้ติดตั้ง TypeScript language server".
+  /// Shown to the user, e.g. in "Not installed: TypeScript language server".
   pub display: &'static str,
   /// Executable names in order of preference (basedpyright before pyright).
   pub binaries: &'static [&'static str],
@@ -178,9 +180,6 @@ pub(crate) fn find_executable(name: &str, path: Option<&OsStr>, home: Option<&Pa
   extra_dirs(home, root).into_iter().map(|d| d.join(name)).find(|p| is_executable(p)).map(|p| (p, false))
 }
 
-/// Prefix of every "server not installed" error; the webview keys its Install offer off it.
-pub const NOT_INSTALLED: &str = "ไม่ได้ติดตั้ง";
-
 /// `KINGU_LSP_<KEY>` (a path to the server binary), else the first of `binaries` found on
 /// `path` + the extra dirs.
 pub fn resolve_binary(
@@ -195,16 +194,11 @@ pub fn resolve_binary(
     return if is_executable(&p) {
       Ok(p)
     } else {
-      Err(format!("{NOT_INSTALLED} {}: {} (จาก {}) ไม่ใช่ไฟล์ที่รันได้", spec.display, p.display(), override_name(spec)))
+      Err(tr!(LspMsg::NotExecutable, name = spec.display, path = p.display(), var = override_name(spec)))
     };
   }
   spec.binaries.iter().find_map(|b| find_executable(b, path, home, root)).map(|(p, _)| p).ok_or_else(|| {
-    format!(
-      "{NOT_INSTALLED} {} (ไม่พบ {} ใน PATH; ติดตั้งได้จากแถบสถานะ หรือตั้ง {} เป็นพาธของโปรแกรม)",
-      spec.display,
-      spec.binaries.join(" หรือ "),
-      override_name(spec)
-    )
+    tr!(LspMsg::NotOnPath, name = spec.display, binaries = spec.binaries.join(&tr!(LspMsg::Or)), var = override_name(spec))
   })
 }
 
@@ -214,7 +208,7 @@ pub fn override_name(spec: &ServerSpec) -> String {
 
 /// The server binary for `language`, or the "not installed" error (no process is started).
 pub fn check(language: &str, root: &Path) -> Result<PathBuf, String> {
-  let spec = spec_for(language).ok_or_else(|| format!("ไม่มี language server สำหรับ {language}"))?;
+  let spec = spec_for(language).ok_or_else(|| tr!(LspMsg::NoServer, language))?;
   let home = std::env::var_os("HOME").map(PathBuf::from);
   resolve_binary(&spec, std::env::var_os(override_name(&spec)), crate::shell_env::path().as_deref(), home.as_deref(), root)
 }
@@ -274,7 +268,7 @@ pub struct InstallInfo {
 
 /// Install commands for the server of `language` usable on this machine (login-shell PATH).
 pub fn install_info(language: &str, root: &Path) -> Result<InstallInfo, String> {
-  let spec = spec_for(language).ok_or_else(|| format!("ไม่มี language server สำหรับ {language}"))?;
+  let spec = spec_for(language).ok_or_else(|| tr!(LspMsg::NoServer, language))?;
   let home = std::env::var_os("HOME").map(PathBuf::from);
   let path = crate::shell_env::path();
   let methods = install_methods(&spec, |tool| {
@@ -462,9 +456,9 @@ fn kill(server: &Server) {
 // Commands
 
 /// Starts the server for `language`; its messages stream over `on_event`. Fails with
-/// "ไม่ได้ติดตั้ง <server> (…)" ([`NOT_INSTALLED`]) when the binary cannot be found.
+/// "Not installed: <server> (…)" (`LspMsg::NotOnPath`) when the binary cannot be found.
 pub fn start_for(servers: &Servers, root: &Path, language: &str, on_event: Channel<LspEvent>) -> Result<u32, String> {
-  let spec = spec_for(language).ok_or_else(|| format!("ไม่มี language server สำหรับ {language}"))?;
+  let spec = spec_for(language).ok_or_else(|| tr!(LspMsg::NoServer, language))?;
   let home = std::env::var_os("HOME").map(PathBuf::from);
   let program = check(language, root)?;
   let env = server_env(crate::shell_env::vars_os(), &program, home.as_deref());
@@ -611,13 +605,13 @@ mod tests {
     assert_eq!(resolve_binary(&rust, None, Some(bin.as_os_str()), Some(&home), &root).unwrap(), on_path);
 
     let err = resolve_binary(&MISSING, None, Some(bin.as_os_str()), Some(&home), &root).unwrap_err();
-    assert!(err.starts_with("ไม่ได้ติดตั้ง Missing server"), "{err}");
-    assert!(err.starts_with(NOT_INSTALLED), "{err}");
+    assert!(err.starts_with("Not installed: Missing server"), "{err}");
+    assert!(err.starts_with("Not installed:"), "{err}");
     assert!(err.contains("kingu-test-no-such-server") && err.contains("KINGU_LSP_MISSING"), "{err}");
 
     let custom = fake_bin(tmp.path(), "my-server", "");
     assert_eq!(resolve_binary(&MISSING, Some(custom.clone().into()), None, None, &root).unwrap(), custom);
-    assert!(resolve_binary(&MISSING, Some("/nonexistent/srv".into()), None, None, &root).unwrap_err().starts_with(NOT_INSTALLED));
+    assert!(resolve_binary(&MISSING, Some("/nonexistent/srv".into()), None, None, &root).unwrap_err().starts_with("Not installed:"));
   }
 
   #[cfg(unix)]

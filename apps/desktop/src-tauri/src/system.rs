@@ -5,6 +5,8 @@ use std::process::{Child, Command};
 use std::sync::Mutex;
 
 use crate::pty::PtyInfo;
+use crate::i18n::msg::CoreMsg;
+use crate::tr;
 
 /// The `caffeinate` process that keeps the Mac awake while it runs (`None`: off).
 #[derive(Default)]
@@ -373,7 +375,7 @@ pub fn browser_command(browser: Option<&str>, url: &str, macos: bool) -> (String
 pub fn open_web_url(url: &str) -> Result<(), String> {
   let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
   if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
-    return Err(format!("{}: เปิดได้เฉพาะลิงก์ http/https", parsed.scheme()));
+    return Err(tr!(CoreMsg::HttpOnly, scheme = parsed.scheme()));
   }
   let (program, args) = browser_command(external_browser().as_deref(), parsed.as_str(), cfg!(target_os = "macos"));
   Command::new(&program).args(&args).spawn().map(|_| ()).map_err(|e| format!("{program}: {e}"))

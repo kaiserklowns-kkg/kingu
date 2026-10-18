@@ -18,7 +18,9 @@ use std::time::Duration;
 use tauri::State;
 use tauri::ipc::Channel;
 
-use crate::lsp::{self, FrameDecoder, InstallInfo, LspEvent, NOT_INSTALLED, Package, ServerSpec, encode};
+use crate::i18n::msg::LspMsg;
+use crate::lsp::{self, FrameDecoder, InstallInfo, LspEvent, Package, ServerSpec, encode};
+use crate::tr;
 
 /// Adapter → webview traffic has the LSP transport's shape: a message, a stderr line, the exit.
 pub type DapEvent = LspEvent;
@@ -39,7 +41,7 @@ pub enum Connect {
 pub struct Adapter {
   /// `lldb`, `go` or `debugpy`; also the `KINGU_DAP_<KEY>` override's suffix.
   pub key: &'static str,
-  /// Shown in "ไม่ได้ติดตั้ง <display>".
+  /// Shown in "Not installed: <display>".
   pub display: &'static str,
   pub binaries: &'static [&'static str],
   pub args: &'static [&'static str],
@@ -92,7 +94,7 @@ pub struct Resolved {
 /// Homebrew's llvm is keg-only, so its lldb-dap is never on PATH.
 const LLVM_DIRS: &[&str] = &["/opt/homebrew/opt/llvm/bin", "/usr/local/opt/llvm/bin"];
 
-/// The adapter program and arguments, or the "ไม่ได้ติดตั้ง …" error. `python` is the launch
+/// The adapter program and arguments, or the "Not installed: …" error. `python` is the launch
 /// configuration's interpreter, tried first for debugpy.
 pub fn resolve(adapter: &Adapter, python: Option<&Path>, probe: &Probe) -> Result<Resolved, String> {
   let args = adapter.args.iter().map(|s| s.to_string()).collect();
@@ -102,7 +104,7 @@ pub fn resolve(adapter: &Adapter, python: Option<&Path>, probe: &Probe) -> Resul
     return if lsp::is_executable(&p) {
       found(p)
     } else {
-      Err(format!("{NOT_INSTALLED} {}: {} (จาก {}) ไม่ใช่ไฟล์ที่รันได้", adapter.display, p.display(), override_name(adapter)))
+      Err(tr!(LspMsg::NotExecutable, name = adapter.display, path = p.display(), var = override_name(adapter)))
     };
   }
   let find = |name: &str| lsp::find_executable(name, probe.path, probe.home, probe.root).map(|(p, _)| p);
@@ -122,8 +124,8 @@ pub fn resolve(adapter: &Adapter, python: Option<&Path>, probe: &Probe) -> Resul
         return found(p.clone());
       }
       Err(match candidates.first() {
-        Some(p) => format!("{NOT_INSTALLED} debugpy ({} ไม่มีโมดูล debugpy; ติดตั้งด้วย python3 -m pip install debugpy หรือตั้ง {} เป็นพาธของ python ที่มี debugpy)", p.display(), override_name(adapter)),
-        None => format!("{NOT_INSTALLED} debugpy (ไม่พบ python3 ใน PATH)"),
+        Some(p) => tr!(LspMsg::NoDebugpy, python = p.display(), var = override_name(adapter)),
+        None => tr!(LspMsg::NoPython),
       })
     }
     _ => {
@@ -133,12 +135,7 @@ pub fn resolve(adapter: &Adapter, python: Option<&Path>, probe: &Probe) -> Resul
       let program = on_path.or_else(|| if adapter.key == "lldb" { keg() } else { None }).or_else(xcrun);
       program.map_or_else(
         || {
-          Err(format!(
-            "{NOT_INSTALLED} {} (ไม่พบ {} ใน PATH; ติดตั้งได้จาก Run and Debug หรือตั้ง {} เป็นพาธของโปรแกรม)",
-            adapter.display,
-            adapter.binaries.join(" หรือ "),
-            override_name(adapter)
-          ))
+          Err(tr!(LspMsg::AdapterNotOnPath, name = adapter.display, binaries = adapter.binaries.join(&tr!(LspMsg::Or)), var = override_name(adapter)))
         },
         found,
       )
@@ -167,7 +164,7 @@ fn python_has_debugpy(python: &Path) -> bool {
 
 /// Resolves on this machine (login-shell PATH, `xcrun`, a real `import debugpy`).
 pub fn check(debug_type: &str, python: Option<&Path>, root: &Path) -> Result<(Adapter, Resolved), String> {
-  let adapter = adapter_for(debug_type).ok_or_else(|| format!("ไม่รองรับ debugger ชนิด \"{debug_type}\" (รองรับ lldb, go, debugpy)"))?;
+  let adapter = adapter_for(debug_type).ok_or_else(|| tr!(LspMsg::UnsupportedDebugType, debug_type))?;
   let home = std::env::var_os("HOME").map(PathBuf::from);
   let path = crate::shell_env::path();
   let probe = Probe {
@@ -184,7 +181,7 @@ pub fn check(debug_type: &str, python: Option<&Path>, root: &Path) -> Result<(Ad
 
 /// Install commands for the adapter of `debug_type` usable on this machine.
 pub fn install_info(debug_type: &str, root: &Path) -> Result<InstallInfo, String> {
-  let adapter = adapter_for(debug_type).ok_or_else(|| format!("ไม่รองรับ debugger ชนิด \"{debug_type}\""))?;
+  let adapter = adapter_for(debug_type).ok_or_else(|| tr!(LspMsg::UnknownDebugType, debug_type))?;
   let home = std::env::var_os("HOME").map(PathBuf::from);
   let path = crate::shell_env::path();
   let spec = ServerSpec { key: adapter.key, display: adapter.display, binaries: adapter.binaries, args: &[], install: adapter.install };
@@ -294,8 +291,8 @@ impl Sessions {
         }));
         let connected = addr_rx
           .recv_timeout(TCP_WAIT)
-          .map_err(|_| format!("{} ไม่ได้เปิด DAP server ภายใน {} วินาที", launch.program.display(), TCP_WAIT.as_secs()))
-          .and_then(|addr| TcpStream::connect(&addr).map_err(|e| format!("เชื่อมต่อ debug adapter ที่ {addr} ไม่ได้: {e}")));
+          .map_err(|_| tr!(LspMsg::NoDapServer, program = launch.program.display(), secs = TCP_WAIT.as_secs()))
+          .and_then(|addr| TcpStream::connect(&addr).map_err(|e| tr!(LspMsg::ConnectAdapter, addr, detail = e)));
         let stream = match connected {
           Ok(s) => s,
           Err(e) => {
@@ -367,13 +364,13 @@ impl Sessions {
   }
 
   pub fn send(&self, id: u32, json: &str) -> Result<(), String> {
-    let s = self.running.lock().unwrap().get(&id).cloned().ok_or("ไม่มี debug session นี้แล้ว")?;
+    let s = self.running.lock().unwrap().get(&id).cloned().ok_or_else(|| tr!(LspMsg::NoSession))?;
     s.tx.send(encode(json)).map_err(|_| "debug adapter input is closed".to_string())
   }
 
   /// Kills the adapter and its process group (the client sends `disconnect` first when it can).
   pub fn stop(&self, id: u32) -> Result<(), String> {
-    let s = self.running.lock().unwrap().get(&id).cloned().ok_or("ไม่มี debug session นี้แล้ว")?;
+    let s = self.running.lock().unwrap().get(&id).cloned().ok_or_else(|| tr!(LspMsg::NoSession))?;
     kill_group(s.pid, &s.child);
     Ok(())
   }
@@ -438,13 +435,13 @@ pub struct BuildResult {
 
 /// Runs `argv` in `cwd` with the login-shell PATH and waits for it (no shell involved).
 pub fn run_build(argv: &[String], cwd: &Path) -> Result<BuildResult, String> {
-  let (program, args) = argv.split_first().ok_or("ไม่มีคำสั่ง build")?;
+  let (program, args) = argv.split_first().ok_or_else(|| tr!(LspMsg::NoBuildCommand))?;
   let out = crate::shell_env::command(program)
     .args(args)
     .current_dir(cwd)
     .stdin(Stdio::null())
     .output()
-    .map_err(|e| format!("รัน {program} ไม่ได้: {e}"))?;
+    .map_err(|e| tr!(LspMsg::RunFailed, program, detail = e))?;
   let mut output = String::from_utf8_lossy(&out.stdout).into_owned();
   output.push_str(&String::from_utf8_lossy(&out.stderr));
   Ok(BuildResult { success: out.status.success(), output })
@@ -525,7 +522,7 @@ mod tests {
     if !elsewhere {
       // Nothing anywhere (xcrun included): the Thai "not installed" error the install flow keys off.
       let err = resolve(&lldb, None, &probe(&bin, &root, &no_xcrun, &yes)).unwrap_err();
-      assert!(err.starts_with("ไม่ได้ติดตั้ง lldb-dap"), "{err}");
+      assert!(err.starts_with("Not installed: lldb-dap"), "{err}");
       assert!(err.contains("lldb-vscode") && err.contains("KINGU_DAP_LLDB"), "{err}");
       // xcrun's answer when nothing is on PATH.
       let from_xcrun = fake_bin(&tmp.path().join("xcode"), "lldb-dap");
@@ -542,7 +539,7 @@ mod tests {
     // Delve, over TCP.
     let go = adapter_for("go").unwrap();
     if !["/opt/homebrew/bin/dlv", "/usr/local/bin/dlv"].iter().any(|p| Path::new(p).exists()) {
-      assert!(resolve(&go, None, &probe(&bin, &root, &no_xcrun, &yes)).unwrap_err().starts_with("ไม่ได้ติดตั้ง Delve (dlv)"));
+      assert!(resolve(&go, None, &probe(&bin, &root, &no_xcrun, &yes)).unwrap_err().starts_with("Not installed: Delve (dlv)"));
     }
     let dlv = fake_bin(&bin, "dlv");
     let r = resolve(&go, None, &probe(&bin, &root, &no_xcrun, &yes)).unwrap();
@@ -570,7 +567,7 @@ mod tests {
     let mk = |has: &dyn Fn(&Path) -> bool| resolve(&debugpy, Some(&venv_python), &probe(&bin, &root, &no_xcrun, has));
     // No python3 on PATH, the configured one lacks debugpy.
     let err = mk(&never).unwrap_err();
-    assert!(err.starts_with("ไม่ได้ติดตั้ง debugpy") && err.contains("pip install debugpy"), "{err}");
+    assert!(err.starts_with("Not installed: debugpy") && err.contains("pip install debugpy"), "{err}");
     // The launch configuration's interpreter has it.
     let r = mk(&only_venv).unwrap();
     assert_eq!((r.program, r.args), (venv_python.clone(), vec!["-m".to_string(), "debugpy.adapter".into()]));

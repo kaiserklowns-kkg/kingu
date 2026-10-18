@@ -8,6 +8,7 @@ mod fileops;
 mod floating;
 mod fs;
 mod git;
+mod i18n;
 mod glob;
 mod git_remote;
 mod linear;
@@ -370,7 +371,7 @@ fn open_web_url(url: String) -> Result<(), String> {
 
 /// Runs `gh` in `dir`; its stderr becomes the error.
 fn gh_run(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-  let gh = agent::review::gh_bin().ok_or("ยังไม่ได้ติดตั้ง GitHub CLI (gh)")?;
+  let gh = agent::review::gh_bin().ok_or_else(agent::issues::gh_missing)?;
   let out = shell_env::command(&gh).current_dir(dir).env("GH_PROMPT_DISABLED", "1").args(args).output().map_err(|e| format!("gh: {e}"))?;
   if !out.status.success() {
     return Err(format!("gh {}: {}", args.first().unwrap_or(&""), String::from_utf8_lossy(&out.stderr).trim()));
@@ -634,7 +635,7 @@ fn pty_spawn(
       agent::worktree::validate_slug(&slug)?;
       let dir = agent::worktree::worktree_path(&ws.root()?, &slug);
       if !dir.is_dir() {
-        return Err(format!("ไม่พบ worktree ของงาน {slug}"));
+        return Err(crate::tr!(crate::i18n::msg::CoreMsg::NoTaskWorktree, slug));
       }
       dir
     }
@@ -835,7 +836,7 @@ fn lsp_start(
 }
 
 /// Whether the server for `language` can be started now (re-resolved on every call, so a server
-/// installed meanwhile is found): its path, or the "ไม่ได้ติดตั้ง …" error.
+/// installed meanwhile is found): its path, or the "Not installed: …" error.
 #[tauri::command]
 fn lsp_check(ws: State<'_, Workspace>, language: String) -> Result<String, String> {
   lsp::check(&language, &ws.root()?).map(|p| p.to_string_lossy().into_owned())
@@ -863,7 +864,7 @@ fn dap_start(
   dap::start_for(&sessions, &ws.root()?, &debug_type, python.as_deref().map(Path::new), on_event)
 }
 
-/// The adapter program for `debug_type`, or the "ไม่ได้ติดตั้ง …" error (re-resolved every call).
+/// The adapter program for `debug_type`, or the "Not installed: …" error (re-resolved every call).
 #[tauri::command]
 async fn dap_check(ws: State<'_, Workspace>, debug_type: String, python: Option<String>) -> Result<String, String> {
   let root = ws.root()?;
@@ -1168,6 +1169,7 @@ pub fn run() {
     })
     .invoke_handler(tauri::generate_handler![
       app_info,
+      i18n::app_set_locale,
       system_stats,
       fs_read_data_url,
       system_ports,

@@ -13,6 +13,8 @@
 //! settings.json, never from the webview or the repository. `kingu.repo.scriptSource` (Orca's
 //! command source policy) picks which of the two run.
 
+use crate::i18n::msg::AgentMsg;
+use crate::tr;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -129,10 +131,10 @@ fn read_legacy(root: &Path, name: &str) -> Result<Option<String>, String> {
     Err(e) => return Err(format!("{}: {e}", file.display())),
   };
   if meta.len() > MAX_BYTES {
-    return Err(format!(".kingu/{name} ใหญ่เกิน {} KB", MAX_BYTES / 1024));
+    return Err(tr!(AgentMsg::ScriptTooLarge, name, kb = MAX_BYTES / 1024));
   }
   let bytes = std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
-  String::from_utf8(bytes).map(Some).map_err(|_| format!(".kingu/{name} ไม่ใช่ UTF-8"))
+  String::from_utf8(bytes).map(Some).map_err(|_| tr!(AgentMsg::ScriptNotUtf8, name))
 }
 
 /// The default tabs' commands as one text the user reviews and trusts together.
@@ -216,9 +218,9 @@ pub fn plan(config_dir: &Path, root: &Path, kind: Kind, trust: &TrustData) -> Re
 
 /// Trusts the shared text the user was shown (`expected`); refuses when it changed since.
 pub fn trust(config_dir: &Path, root: &Path, kind: Kind, expected: &str) -> Result<(), String> {
-  let (path, content) = shared_text(root, kind)?.ok_or_else(|| format!("โฟลเดอร์นี้ไม่มีสคริปต์ {kind:?} ของ repository"))?;
+  let (path, content) = shared_text(root, kind)?.ok_or_else(|| tr!(AgentMsg::NoRepoScript, kind = format!("{kind:?}")))?;
   if sha256_hex(content.as_bytes()) != expected {
-    return Err(format!("{path} เปลี่ยนไปแล้ว — ตรวจอีกครั้งก่อนเชื่อถือ"));
+    return Err(tr!(AgentMsg::ScriptChanged, path));
   }
   set_script_trust(config_dir, root, kind.trust_key(), Some(expected))
 }
@@ -255,7 +257,7 @@ pub fn prepare(config_dir: &Path, trust: &TrustData, cache_dir: &Path, root: &Pa
   if let Some(s) = &plan.shared
     && !s.trusted
   {
-    return Err(format!("{} ยังไม่ได้รับความเชื่อถือ (หรือเปลี่ยนไปหลังจากเชื่อถือ)", s.path));
+    return Err(tr!(AgentMsg::ScriptNotTrusted, path = s.path));
   }
   let dir = cache_dir.join(CACHE_DIR);
   std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -432,7 +434,7 @@ pub fn worktree_script_trust(app: AppHandle, ws: State<'_, Workspace>, kind: Str
   let root = ws.root()?;
   let config = crate::snap::config_dir(&app)?;
   if trusted {
-    trust(&config, &root, kind, hash.as_deref().ok_or("ต้องระบุ hash ของสคริปต์ที่ตรวจแล้ว")?)?;
+    trust(&config, &root, kind, hash.as_deref().ok_or_else(|| tr!(AgentMsg::ScriptHashRequired))?)?;
   } else {
     untrust(&config, &root, kind)?;
   }
@@ -540,11 +542,11 @@ mod tests {
     assert!(!s.trusted);
     assert_eq!(s.path, ".kingu/setup.sh");
     // Untrusted: nothing is copied for running.
-    assert!(prepare(&config, &load(&config), &cache, &root, Kind::Setup).unwrap_err().contains("ความเชื่อถือ"));
+    assert!(prepare(&config, &load(&config), &cache, &root, Kind::Setup).unwrap_err().contains("not trusted"));
     assert!(!cache.join(CACHE_DIR).exists());
 
     // Trusting what was shown, then running a copy of exactly that.
-    assert!(trust(&config, &root, Kind::Setup, "not-the-hash").unwrap_err().contains("เปลี่ยนไป"));
+    assert!(trust(&config, &root, Kind::Setup, "not-the-hash").unwrap_err().contains("has changed"));
     trust(&config, &root, Kind::Setup, &s.hash).unwrap();
     let file = prepare(&config, &load(&config), &cache, &root, Kind::Setup).unwrap().unwrap();
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "bun install\n");

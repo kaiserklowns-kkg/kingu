@@ -5,6 +5,8 @@
 //! `kingu.git.ai.customCommand`), read here, never from the page or the repository. Also the
 //! repository's pull request template (Orca's "use template").
 
+use crate::i18n::msg::AgentMsg;
+use crate::tr;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -44,7 +46,7 @@ pub const AGENTS: &[&str] = &["claude", "codex", "gemini", "qwen", "opencode", "
 /// CLI's own default.
 pub fn invocation(agent: &str, model: &str, prompt: &str) -> Result<Invocation, String> {
   if !model.is_empty() && !valid_model(model) {
-    return Err(format!("kingu.git.ai.model: {model:?} ไม่ใช่ชื่อ model ที่ใช้ได้"));
+    return Err(tr!(AgentMsg::BadAiModel, model = format!("{model:?}")));
   }
   let m = |flag: &str| if model.is_empty() { vec![] } else { vec![flag.to_owned(), model.to_owned()] };
   let s = |v: &[&str]| v.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
@@ -59,7 +61,7 @@ pub fn invocation(agent: &str, model: &str, prompt: &str) -> Result<Invocation, 
     "gemini" | "qwen" => ([s(&[agent]), m("--model"), s(&["--approval-mode", "plan", "-p"]), vec![prompt.to_owned()]].concat(), None),
     "cursor" => ([s(&["cursor-agent", "--print", "--mode", "ask", "--output-format", "text"]), m("--model"), vec![prompt.to_owned()]].concat(), None),
     "copilot" => ([s(&["copilot", "--silent", "--no-custom-instructions"]), m("--model"), s(&["--prompt"]), vec![prompt.to_owned()]].concat(), None),
-    _ => return Err(format!("{agent}: ยังไม่รองรับการสร้างข้อความด้วย agent นี้ — เลือก {} หรือ custom", AGENTS.join(", "))),
+    _ => return Err(tr!(AgentMsg::AiAgentUnsupported, agent, agents = AGENTS.join(", "))),
   };
   Ok(Invocation { argv, stdin })
 }
@@ -79,7 +81,7 @@ pub fn split_command(cmd: &str) -> Result<Vec<String>, String> {
           match chars.next() {
             Some('\'') => break,
             Some(x) => cur.push(x),
-            None => return Err("คำสั่งมี ' ที่ไม่ปิด".into()),
+            None => return Err(tr!(AgentMsg::UnclosedSingleQuote)),
           }
         }
       }
@@ -90,16 +92,16 @@ pub fn split_command(cmd: &str) -> Result<Vec<String>, String> {
             Some('"') => break,
             Some('\\') => match chars.next() {
               Some(x) => cur.push(x),
-              None => return Err("คำสั่งจบด้วย \\".into()),
+              None => return Err(tr!(AgentMsg::TrailingBackslash)),
             },
             Some(x) => cur.push(x),
-            None => return Err("คำสั่งมี \" ที่ไม่ปิด".into()),
+            None => return Err(tr!(AgentMsg::UnclosedDoubleQuote)),
           }
         }
       }
       '\\' => {
         any = true;
-        cur.push(chars.next().ok_or("คำสั่งจบด้วย \\")?);
+        cur.push(chars.next().ok_or_else(|| tr!(AgentMsg::TrailingBackslash))?);
       }
       c if c.is_whitespace() => {
         if any {
@@ -124,7 +126,7 @@ pub fn split_command(cmd: &str) -> Result<Vec<String>, String> {
 pub fn custom_invocation(template: &str, prompt: &str) -> Result<Invocation, String> {
   let words = split_command(template)?;
   if words.is_empty() {
-    return Err("kingu.git.ai.customCommand ว่างอยู่".into());
+    return Err(tr!(AgentMsg::CustomCommandEmpty));
   }
   if words.iter().any(|w| w.contains("{prompt}")) {
     Ok(Invocation { argv: words.iter().map(|w| w.replace("{prompt}", prompt)).collect(), stdin: None })
@@ -196,15 +198,15 @@ pub fn run(inv: &Invocation, dir: &Path, timeout: Duration) -> Result<String, St
   let stdout = String::from_utf8_lossy(&out_reader.join().unwrap_or_default()).into_owned();
   let stderr = String::from_utf8_lossy(&err_reader.join().unwrap_or_default()).into_owned();
   let Some(status) = status else {
-    return Err(format!("{program} ใช้เวลานานเกิน {} วินาทีจึงหยุดไว้", timeout.as_secs()));
+    return Err(tr!(AgentMsg::ProgramTimeout, program, secs = timeout.as_secs()));
   };
   if !status.success() {
     let detail = if stderr.trim().is_empty() { stdout.trim() } else { stderr.trim() };
-    return Err(format!("{program} จบด้วย {}: {}", status.code().map_or("signal".into(), |c| c.to_string()), tail(detail, 1500)));
+    return Err(tr!(AgentMsg::ProgramExited, program, code = status.code().map_or("signal".into(), |c| c.to_string()), detail = tail(detail, 1500)));
   }
   let text = tail(stdout.trim(), MAX_OUTPUT);
   if text.is_empty() {
-    return Err(format!("{program} ไม่ได้ตอบอะไรกลับมา"));
+    return Err(tr!(AgentMsg::ProgramNoOutput, program));
   }
   Ok(text)
 }
@@ -218,7 +220,7 @@ fn tail(s: &str, max: usize) -> String {
 
 fn head(s: &str, max: usize) -> String {
   match s.char_indices().nth(max) {
-    Some((i, _)) => format!("{}\n…(ตัดไว้ {} ตัวอักษร)", &s[..i], s.len() - i),
+    Some((i, _)) => format!("{}\n…({} more characters cut)", &s[..i], s.len() - i),
     None => s.to_owned(),
   }
 }
@@ -343,7 +345,7 @@ pub async fn ai_pr_context(ws: State<'_, Workspace>, slug: String, base: String)
 #[tauri::command]
 pub async fn ai_generate(app: AppHandle, ws: State<'_, Workspace>, slug: Option<String>, prompt: String) -> Result<String, String> {
   if prompt.len() > MAX_PROMPT {
-    return Err("prompt ยาวเกินไป".into());
+    return Err(tr!(AgentMsg::PromptTooLong));
   }
   let dir = repo_dir(&ws, slug.as_deref())?;
   let config = app.path().app_config_dir().map_err(|e| e.to_string())?;
@@ -424,7 +426,7 @@ mod tests {
     let err = run(&Invocation { argv: vec![s.clone(), "fail".into()], stdin: None }, tmp.path(), TIMEOUT).unwrap_err();
     assert!(err.contains("3") && err.contains("boom"), "{err}");
     let err = run(&Invocation { argv: vec![s, "sleep".into()], stdin: None }, tmp.path(), Duration::from_millis(300)).unwrap_err();
-    assert!(err.contains("นานเกิน"), "{err}");
+    assert!(err.contains("took longer"), "{err}");
     assert!(run(&Invocation { argv: vec!["/nonexistent/agent".into()], stdin: None }, tmp.path(), TIMEOUT).is_err());
   }
 
