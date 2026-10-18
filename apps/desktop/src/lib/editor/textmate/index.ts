@@ -99,6 +99,8 @@ const languages: Record<string, LanguageGrammar> = {
 		tokenTypes: { 'meta.tag string.quoted': OTHER }
 	}
 };
+// Until a Svelte grammar is vendored: markup, <script> and <style> highlight as in HTML.
+languages.svelte = languages.html;
 
 class TextMateState implements monaco.languages.IState {
 	constructor(readonly stack: StateStack) {}

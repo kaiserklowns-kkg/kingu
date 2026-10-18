@@ -121,6 +121,14 @@ export const SETTINGS: SettingSchema[] = [
 		description: 'การแสดงอักขระช่องว่าง (Controls how the editor should render whitespace characters.)'
 	},
 	{
+		id: 'kingu.lsp.disabled',
+		group: 'Text Editor',
+		type: 'string',
+		default: '',
+		description:
+			'language server ที่ไม่ต้องการให้เริ่ม: ชื่อภาษาหรือ server คั่นด้วยจุลภาค เช่น `python, yaml` (Language servers not to start: comma-separated language ids or server keys — rust, typescript, go, svelte, python, json, css, html, yaml, toml.)'
+	},
+	{
 		id: 'files.autoSave',
 		group: 'Files',
 		type: 'string',
