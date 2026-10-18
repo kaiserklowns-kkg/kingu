@@ -48,7 +48,7 @@ describe('ADE settings registry (Orca settings as kingu.*)', () => {
 			'kingu.agent.notifications.hiddenWorkspaces',
 			...SETTINGS.filter((s) => s.id.startsWith('kingu.agent.env.')).map((s) => s.id)
 		];
-		const yours = ['kingu.repo.setupScript', 'kingu.repo.archiveScript', 'kingu.repo.issueCommand', 'kingu.repo.scriptSource', 'kingu.repo.symlinkPaths', 'kingu.git.ai.commitInstructions', 'kingu.git.ai.prInstructions'];
+		const yours = ['kingu.repo.setupScript', 'kingu.repo.archiveScript', 'kingu.repo.issueCommand', 'kingu.repo.scriptSource', 'kingu.repo.symlinkPaths', 'kingu.git.ai.commitInstructions', 'kingu.git.ai.prInstructions', 'kingu.git.ai.branchNameInstructions'];
 		for (const id of userOnly) expect([id, SCHEMA.get(id)?.scope]).toEqual([id, 'application']);
 		for (const id of yours) expect([id, SCHEMA.get(id)?.scope]).toEqual([id, 'local']);
 		// The repository's .kingu/settings.json sets none of them; the problems list says why.

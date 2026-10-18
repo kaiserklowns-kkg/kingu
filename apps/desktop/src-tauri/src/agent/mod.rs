@@ -26,6 +26,7 @@ pub mod status_hooks;
 pub mod tasks;
 pub mod trust;
 pub mod worktree;
+pub mod worktree_from;
 
 use std::sync::Arc;
 

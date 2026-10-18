@@ -921,6 +921,14 @@ struct FilesChanged {
   paths: Vec<String>,
 }
 
+/// Emitted when the open folder's repository changed a branch ref, HEAD or its worktrees.
+const WORKTREES_CHANGED: &str = "ade:worktrees-changed";
+
+#[derive(Clone, serde::Serialize)]
+struct WorktreesChanged {
+  root: String,
+}
+
 /// Makes `dir` the open folder (none for `None`). The old folder's language servers and running
 /// search are stopped first and the watcher moves to the new root. Returns the canonical root.
 fn switch_root(app: &AppHandle, dir: Option<&Path>) -> Result<Option<PathBuf>, String> {
@@ -943,6 +951,20 @@ fn switch_root(app: &AppHandle, dir: Option<&Path>) -> Result<Option<PathBuf>, S
   // A folder that cannot be watched (e.g. out of inotify handles) still opens.
   if let Err(e) = app.state::<watcher::FileWatcher>().watch(root.as_deref(), emit) {
     log::error!("{e}");
+  }
+  // The ADE follows branch switches and worktrees added or removed outside Kingu.
+  let common = root.as_deref().map(|r| git_queue::repo_keys(r).0).filter(|c| c.join("HEAD").is_file());
+  let handle = app.clone();
+  let label = root.as_ref().map(|r| r.display().to_string()).unwrap_or_default();
+  let emit_git = move || {
+    let _ = handle.emit(WORKTREES_CHANGED, WorktreesChanged { root: label.clone() });
+  };
+  if let Err(e) = app.state::<watcher::GitWatcher>().watch(common.as_deref(), emit_git) {
+    log::warn!("{e}");
+  }
+  // A folder Kingu wrote into before: its .kingu/ stays out of git status from now on.
+  if let Some(r) = root.as_deref().filter(|r| r.join(".kingu").is_dir()) {
+    agent::worktree::exclude_kingu_soon(r);
   }
   let recent = app.state::<Recent>();
   let saved = match &root {
@@ -1126,6 +1148,7 @@ pub fn run() {
     .plugin(tauri_plugin_notification::init())
     .manage(Workspace::default())
     .manage(watcher::FileWatcher::default())
+    .manage(watcher::GitWatcher::default())
     .manage(window::CloseGuard::default())
     .manage(pty::Ptys::default())
     .manage(system::KeepAwake::default())
@@ -1295,6 +1318,11 @@ pub fn run() {
       worktree_refresh_base,
       worktree_list,
       worktree_remove,
+      agent::worktree_from::worktree_create_from_branch,
+      agent::worktree_from::worktree_create_from_pr,
+      agent::worktree_from::worktree_rename_branch,
+      agent::worktree_from::gh_pr_lookup,
+      agent::worktree_from::gh_pr_list,
       agent::agent_start,
       notify::agent_notify,
       dialog::message_box,

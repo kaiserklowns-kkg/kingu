@@ -77,6 +77,15 @@ export const GIT_SETTINGS: SettingSchema[] = [
 		scope: 'local'
 	},
 	{
+		id: 'kingu.git.ai.branchNameInstructions',
+		group: AI,
+		type: 'string',
+		default: '',
+		description:
+			'คำสั่งเพิ่มเติมสำหรับการตั้งชื่อ branch จากงาน (kingu.worktree.autoRenameBranch) วางไว้ก่อน prompt ตั้งต่อ repository ได้ (Orca: instructionsByOperation.branchName) (Naming guidance for branches named from the work, put before the prompt; can be set per repository.)',
+		scope: 'local'
+	},
+	{
 		id: 'kingu.git.compareAgainstUpstream',
 		group: AI,
 		type: 'boolean',
