@@ -8,6 +8,7 @@
 pub mod client;
 pub mod outbox;
 pub mod payload;
+pub mod snaps;
 
 use std::collections::HashMap;
 use std::path::PathBuf;

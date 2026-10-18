@@ -20,6 +20,8 @@ import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { setMcpProvider, setSkillPluginProvider } from '#lib/ade/mcp.ts';
+import { team } from '#lib/team/team.svelte.ts';
+import { approveSummary, canApprove, isApprovable, type TeamCatalog } from './teamSnaps.ts';
 import {
 	installSummary,
 	isActive,
@@ -268,6 +270,78 @@ class Snaps {
 		await this.load();
 	}
 
+	/** The team Snap catalog; null when no team server is set or not signed in (see `teamError`). */
+	teamCatalog = $state<TeamCatalog | null>(null);
+	teamError = $state<string | null>(null);
+	teamLoading = $state(false);
+	#teamSeq = 0;
+
+	async loadTeam() {
+		const serverUrl = team.serverUrl;
+		const seq = ++this.#teamSeq;
+		if (!serverUrl || !team.status?.signed_in) {
+			this.teamCatalog = null;
+			this.teamError = null;
+			return;
+		}
+		this.teamLoading = true;
+		try {
+			const catalog = await invoke<TeamCatalog>('team_snap_catalog', { serverUrl });
+			if (seq !== this.#teamSeq) return;
+			if (JSON.stringify(catalog) !== JSON.stringify($state.snapshot(this.teamCatalog))) this.teamCatalog = catalog;
+			this.teamError = null;
+		} catch (e) {
+			if (seq === this.#teamSeq) this.teamError = String(e);
+		} finally {
+			if (seq === this.#teamSeq) this.teamLoading = false;
+		}
+	}
+
+	/** Installs a team snap at the commit the team pinned; Rust refuses it unless its hash is the approved one. */
+	async installTeam(id: string) {
+		await this.#exclusive(`กำลังดึง ${id} ตามที่ทีมตรึงไว้…`, async () => {
+			const prepared = await this.#prepare(() => invoke<PreparedInstall>('snap_install_team', { serverUrl: team.serverUrl, id }));
+			if (prepared) await this.#confirmAndCommit(prepared);
+		});
+	}
+
+	/** Snap: Approve for Team… (owner/lead) — pins an installed git snap's commit and hash for everyone. */
+	async approveForTeam(id?: string) {
+		if (!canApprove(this.teamCatalog?.role)) {
+			status.flash('เฉพาะ owner หรือ lead ของทีมที่อนุมัติ snap ได้ (ต้องลงชื่อเข้าใช้ทีมก่อน)');
+			return;
+		}
+		const target = id ?? (await this.#pick(this.list.filter(isApprovable), 'เลือก Snap ที่จะอนุมัติให้ทีม (ติดตั้งจาก git)'));
+		const snap = this.list.find((s) => s.source === 'user' && s.id === target);
+		if (!target || !snap) return;
+		if (!isApprovable(snap)) {
+			status.flash(`snap “${snap.name}” ต้องติดตั้งจาก git (https:// หรือ ssh) ก่อนจึงอนุมัติให้ทีมได้`);
+			return;
+		}
+		const level = await quick.choose({
+			placeholder: `อนุมัติ ${snap.name} v${snap.version} ให้ทีม`,
+			items: [
+				{ id: 'optional', label: 'ไม่บังคับ', description: 'ทุกคนติดตั้งได้เอง' },
+				{ id: 'required', label: 'จำเป็น (required)', description: 'แจ้งคนที่ยังไม่ได้ติดตั้ง' }
+			]
+		});
+		if (!level) return;
+		const required = level.id === 'required';
+		const note = await quick.input({ placeholder: 'หมายเหตุถึงทีม (ไม่ใส่ก็ได้)', hint: (v) => (v.trim() ? `หมายเหตุ: ${v.trim()}` : 'กด Enter เพื่อข้าม') });
+		if (note === undefined) return;
+		const sure = await ask(approveSummary(snap, required), { title: `อนุมัติ Snap “${snap.name}” ให้ทีม?`, kind: 'warning', okLabel: 'อนุมัติ', cancelLabel: 'ยกเลิก' });
+		if (!sure) return;
+		await this.#exclusive(`กำลังอนุมัติ ${snap.name}…`, async () => {
+			try {
+				await invoke('team_snap_approve', { serverUrl: team.serverUrl, id: snap.id, required, note: note.trim() || null });
+				status.flash(`อนุมัติ snap “${snap.name}” v${snap.version} ให้ทีมแล้ว`);
+			} catch (e) {
+				await message(String(e), { title: 'อนุมัติ Snap ไม่สำเร็จ', kind: 'error' });
+			}
+			await this.loadTeam();
+		});
+	}
+
 	/** Runs a task of an active snap in a new terminal of the mode that is showing. */
 	runTask(snapId: string, taskId: string) {
 		const snap = this.list.find((s) => s.id === snapId && isActive(s));
@@ -328,10 +402,15 @@ export function installSnaps(): () => void {
 		clearTimeout(reloadTimer);
 		reloadTimer = setTimeout(() => void snaps.load(), RELOAD_DEBOUNCE_MS);
 	};
+	// The desktop has no event stream from the team server, so the catalog is re-read on focus.
+	const reloadAll = () => {
+		reloadSoon();
+		void snaps.loadTeam();
+	};
 	const stopWatching = workspace.onFilesChanged((paths) => {
 		if (touchesRepoSnaps(paths)) reloadSoon();
 	});
-	window.addEventListener('focus', reloadSoon);
+	window.addEventListener('focus', reloadAll);
 	let taskCommands: (() => void)[] = [];
 	const unregisterTasks = () => {
 		taskCommands.forEach((u) => u());
@@ -341,6 +420,11 @@ export function installSnaps(): () => void {
 		$effect(() => {
 			void workspace.root;
 			untrack(() => void snaps.load());
+		});
+		$effect(() => {
+			void team.serverUrl;
+			void team.status?.signed_in;
+			untrack(() => void snaps.loadTeam());
 		});
 		$effect(() => {
 			const list = snaps.list;
@@ -375,6 +459,7 @@ export function installSnaps(): () => void {
 		commands.register({ id: 'snap.update', title: 'Update Snap…', category: 'Snap', run: () => snaps.update() }),
 		commands.register({ id: 'snap.uninstall', title: 'Uninstall Snap…', category: 'Snap', run: () => snaps.uninstall() }),
 		commands.register({ id: 'snap.new', title: 'New Snap…', category: 'Snap', run: () => snaps.newSnap() }),
+		commands.register({ id: 'snap.approveForTeam', title: 'Approve Snap for Team…', category: 'Snap', when: () => canApprove(snaps.teamCatalog?.role), run: () => snaps.approveForTeam() }),
 		commands.register({ id: 'snap.lock', title: 'Write snaps.lock', category: 'Snap', when: () => workspace.root !== null, run: () => snaps.lock() }),
 		// VS Code's Extensions view key.
 		commands.register({ id: 'workbench.view.snaps', title: 'Show Snaps', category: 'View', key: 'cmd+shift+x', run: () => ((layout.sideView = 'snaps'), (layout.sidebarVisible = true)) })
@@ -382,7 +467,7 @@ export function installSnaps(): () => void {
 	return () => {
 		clearTimeout(reloadTimer);
 		stopWatching();
-		window.removeEventListener('focus', reloadSoon);
+		window.removeEventListener('focus', reloadAll);
 		stopEffects();
 		unregisterTasks();
 		unregister.forEach((u) => u());

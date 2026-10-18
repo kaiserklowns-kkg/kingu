@@ -32,6 +32,10 @@ type Principal struct {
 // canWrite reports whether the principal may mutate data.
 func (p *Principal) canWrite() bool { return p.Role != "viewer" }
 
+// canAdmin reports whether the principal may change org-wide policy such as
+// the team Snap catalog (owners and leads).
+func (p *Principal) canAdmin() bool { return p.Role == "owner" || p.Role == "lead" }
+
 // Authenticator turns request credentials into a Principal.
 //
 // Implementations return (nil, nil) when the request carries no credential of

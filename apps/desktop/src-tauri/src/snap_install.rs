@@ -36,7 +36,7 @@ pub const MAX_FILES: usize = 2000;
 pub const MAX_BYTES: u64 = 20 * 1024 * 1024;
 const MAX_DEPTH: usize = 32;
 const STAGING_TTL: Duration = Duration::from_secs(60 * 60);
-const CLONE_TIMEOUT: Duration = Duration::from_secs(120);
+pub(crate) const CLONE_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Serializes changes to the user snaps dir (install, update, uninstall, new).
 static INSTALL_LOCK: Mutex<()> = Mutex::new(());
@@ -412,6 +412,91 @@ pub fn prepare_update(staging: &Path, user_dir: &Path, id: &str, timeout: Durati
   Ok(p)
 }
 
+/// A team-approved snap: install exactly `commit` of `url`, and only if snap `id` there hashes to
+/// `sha256` (the trust hash, `SnapInfo::hash`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pin {
+  pub id: String,
+  pub url: String,
+  pub git_ref: Option<String>,
+  pub commit: String,
+  pub sha256: String,
+}
+
+pub fn is_commit(s: &str) -> bool {
+  s.len() == 40 && s.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+pub fn is_sha256(s: &str) -> bool {
+  s.len() == 64 && s.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Fetches `commit` of `spec` into `<dir>/src` and checks it out, with the same restrictions as
+/// `clone`. Tries a shallow fetch of the commit itself first (needs the server to allow it, as
+/// GitHub and protocol v2 do), then the ref's (or default branch's) full history.
+fn fetch_commit(dir: &Path, spec: &GitSpec, commit: &str, timeout: Duration) -> Result<(), String> {
+  const SAFE: [&str; 6] = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.ext.allow=never"];
+  let env = [("GIT_ALLOW_PROTOCOL", "https:ssh:file"), ("GIT_LFS_SKIP_SMUDGE", "1")];
+  let stop = AtomicBool::new(false);
+  let git = |root: &Path, args: &[&str]| -> Result<String, String> {
+    let all: Vec<&str> = SAFE.iter().copied().chain(args.iter().copied()).collect();
+    crate::git_remote::net_env(root, &all, &env, &stop, timeout)
+  };
+  git(dir, &["init", "-q", "--template=", "src"])?;
+  let src = dir.join("src");
+  let shallow = git(&src, &["fetch", "-q", "--depth", "1", "--no-tags", "--no-recurse-submodules", "--", &spec.url, commit]);
+  if shallow.is_err() {
+    let r = spec.git_ref.as_deref().unwrap_or("HEAD");
+    git(&src, &["fetch", "-q", "--no-tags", "--no-recurse-submodules", "--", &spec.url, r])?;
+  }
+  git(&src, &["checkout", "-q", "--detach", commit]).map_err(|_| format!("ไม่พบ commit {commit} ใน {} — ทีมอาจตรึงไว้ที่ commit ที่ถูกลบไปแล้ว", spec.url))?;
+  let head = crate::git::run(&src, &["rev-parse", "HEAD"]).map(|o| String::from_utf8_lossy(&o).trim().to_string())?;
+  if head != commit {
+    return Err(format!("ได้ commit {head} แทน {commit} ที่ทีมตรึงไว้"));
+  }
+  std::fs::remove_dir_all(src.join(".git")).map_err(|e| format!("ลบ .git ของสำเนาไม่ได้: {e}"))
+}
+
+/// Stages a team snap at its pinned commit. Refuses before the confirm when the snap there is
+/// broken or its hash is not the one the team approved.
+pub fn prepare_pinned(staging: &Path, user_dir: &Path, pin: &Pin, timeout: Duration) -> Result<Prepared, String> {
+  if !is_snap_id(&pin.id) || !is_commit(&pin.commit) || !is_sha256(&pin.sha256) {
+    return Err(format!("ข้อมูล snap \"{}\" ของทีมไม่ถูกต้อง", pin.id));
+  }
+  let spec = parse_git_source(&pin.url)?;
+  if let Some(r) = &pin.git_ref
+    && !is_ref(r)
+  {
+    return Err(format!("ชื่อ branch หรือ tag ของทีมไม่ถูกต้อง: {r:?}"));
+  }
+  let spec = GitSpec { git_ref: pin.git_ref.clone(), ..spec };
+  let mut p = staged(staging, |token, dir| {
+    fetch_commit(dir, &spec, &pin.commit, timeout)?;
+    let origin = Origin { url: Some(spec.url.clone()), git_ref: spec.git_ref.clone(), commit: Some(pin.commit.clone()), path: None, installed_at: 0 };
+    finish_stage(token.to_string(), dir, origin, user_dir)
+  })?;
+  p.candidates.retain(|c| c.snap.id == pin.id);
+  let short = |h: &str| h.get(..12).unwrap_or(h).to_string();
+  let refuse = |p: &Prepared, msg: String| -> Result<Prepared, String> {
+    cancel(staging, &p.token);
+    Err(msg)
+  };
+  let Some(c) = p.candidates.first() else {
+    return refuse(&p, format!("commit {} ไม่มี snap \"{}\"", short(&pin.commit), pin.id));
+  };
+  if let Some(e) = &c.snap.error {
+    return refuse(&p, format!("snap \"{}\" ที่ commit นี้มีข้อผิดพลาด: {e}", pin.id));
+  }
+  if c.snap.hash != pin.sha256 {
+    return refuse(
+      &p,
+      format!("SHA-256 ของ snap \"{}\" ไม่ตรงกับที่ทีมอนุมัติ (ได้ {} ทีมอนุมัติ {}) — ไม่ติดตั้ง แจ้งผู้ดูแลทีม", pin.id, short(&c.snap.hash), short(&pin.sha256)),
+    );
+  }
+  p.existing.retain(|e| e.id == pin.id);
+  Ok(p)
+}
+
 pub fn cancel(staging: &Path, token: &str) {
   if is_token(token) {
     let _ = std::fs::remove_dir_all(staging.join(token));
@@ -663,15 +748,15 @@ pub fn write_lock(root: &Path, list: &[SnapInfo]) -> Result<usize, String> {
 // ---------------------------------------------------------------------------------------------
 // Commands
 
-fn staging_dir(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn staging_dir(app: &AppHandle) -> Result<PathBuf, String> {
   Ok(app.path().app_cache_dir().map_err(|e| e.to_string())?.join(STAGING_DIR))
 }
 
-fn user_dir(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn user_dir(app: &AppHandle) -> Result<PathBuf, String> {
   Ok(config_dir(app)?.join(USER_DIR))
 }
 
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+pub(crate) async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
   tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
@@ -1055,6 +1140,69 @@ mod tests {
     std::fs::write(other.join("snap.toml"), manifest("go", "9", false)).unwrap();
     let p = prepare_folder(&e.staging, &e.user, other.to_str().unwrap()).unwrap();
     assert!(commit(&e.staging, &e.user, &p.token, "go", &p.candidates[0].snap.hash, true).unwrap_err().contains("มาจากที่อื่น"));
+  }
+
+  fn head(work: &Path) -> String {
+    String::from_utf8(Command::new("git").arg("-C").arg(work).args(["rev-parse", "HEAD"]).output().unwrap().stdout).unwrap().trim().to_string()
+  }
+
+  #[test]
+  fn installs_a_team_pin_at_its_commit_not_the_tip() {
+    let e = env();
+    let v1 = manifest("go", "1.0.0", false);
+    let bare = remote(e.tmp.path(), &[("snap.toml", &v1)]);
+    let work = e.tmp.path().join("work");
+    let first = head(&work);
+    commit_files(&work, &[("snap.toml", &manifest("go", "2.0.0", true))]);
+    push(e.tmp.path());
+    let pin = Pin { id: "go".into(), url: format!("file://{}", bare.display()), git_ref: Some("main".into()), commit: first.clone(), sha256: crate::snap::sha256_hex(v1.as_bytes()) };
+
+    let p = prepare_pinned(&e.staging, &e.user, &pin, T).unwrap();
+    assert_eq!(p.candidates.len(), 1);
+    let s = &p.candidates[0].snap;
+    assert_eq!((s.version.as_str(), s.hash.as_str()), ("1.0.0", pin.sha256.as_str()));
+    assert_eq!(p.origin.commit.as_deref(), Some(first.as_str()));
+    assert_eq!(p.origin.git_ref.as_deref(), Some("main"));
+    assert!(!e.user.join("go").exists(), "nothing installed before the confirm");
+    commit(&e.staging, &e.user, &p.token, "go", &s.hash, false).unwrap();
+    assert!(std::fs::read_to_string(e.user.join("go/snap.toml")).unwrap().contains("1.0.0"));
+    assert!(!e.user.join("go/.git").exists());
+    assert_eq!(read_origin(&e.user.join("go")).unwrap().commit.as_deref(), Some(first.as_str()));
+
+    // Re-pinned to the tip: replaces the install from the same origin (a team update).
+    let tip = head(&work);
+    let pin2 = Pin { commit: tip.clone(), sha256: crate::snap::sha256_hex(manifest("go", "2.0.0", true).as_bytes()), ..pin.clone() };
+    let p = prepare_pinned(&e.staging, &e.user, &pin2, T).unwrap();
+    assert_eq!(p.existing.len(), 1);
+    commit(&e.staging, &e.user, &p.token, "go", &p.candidates[0].snap.hash, true).unwrap();
+    assert_eq!(read_origin(&e.user.join("go")).unwrap().commit.as_deref(), Some(tip.as_str()));
+  }
+
+  #[test]
+  fn refuses_a_team_pin_whose_hash_or_commit_does_not_match() {
+    let e = env();
+    let bare = remote(e.tmp.path(), &[("snap.toml", &manifest("go", "1.0.0", false))]);
+    let work = e.tmp.path().join("work");
+    let pin = Pin { id: "go".into(), url: bare.display().to_string(), git_ref: None, commit: head(&work), sha256: "0".repeat(64) };
+
+    let err = prepare_pinned(&e.staging, &e.user, &pin, T).unwrap_err();
+    assert!(err.contains("ไม่ตรงกับที่ทีมอนุมัติ"), "{err}");
+    assert!(!e.user.join("go").exists());
+    assert_eq!(std::fs::read_dir(&e.staging).map(|r| r.count()).unwrap_or(0), 0, "refused staging is removed");
+
+    let real = crate::snap::sha256_hex(manifest("go", "1.0.0", false).as_bytes());
+    let missing = Pin { commit: "1".repeat(40), sha256: real.clone(), ..pin.clone() };
+    assert!(prepare_pinned(&e.staging, &e.user, &missing, T).is_err());
+    let other_id = Pin { id: "rust".into(), sha256: real.clone(), ..pin.clone() };
+    assert!(prepare_pinned(&e.staging, &e.user, &other_id, T).unwrap_err().contains("ไม่มี snap"));
+    for bad in [Pin { commit: "abc".into(), ..pin.clone() }, Pin { sha256: "AB".repeat(32), ..pin.clone() }, Pin { url: "ext::sh -c x".into(), ..pin.clone() }, Pin { git_ref: Some("-x".into()), ..pin.clone() }] {
+      assert!(prepare_pinned(&e.staging, &e.user, &bad, T).is_err(), "{bad:?}");
+    }
+    assert_eq!(std::fs::read_dir(&e.staging).map(|r| r.count()).unwrap_or(0), 0);
+    // The right hash installs.
+    let ok = Pin { sha256: real, ..pin };
+    let p = prepare_pinned(&e.staging, &e.user, &ok, T).unwrap();
+    commit(&e.staging, &e.user, &p.token, "go", &p.candidates[0].snap.hash, false).unwrap();
   }
 
   #[test]
