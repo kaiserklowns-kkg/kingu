@@ -95,13 +95,15 @@
 	</div>
 
 	{#if menu}
+		<!-- PopupMenu closes (menu = null) before it runs the item, so the key is taken here. -->
+		{@const key = menu.key}
 		<PopupMenu
 			items={menuItems}
 			label="Worktree"
 			x={menu.x}
 			y={menu.y}
 			focusFirst={menu.keyboard}
-			onRun={(node) => node.type === 'item' && menu && runWorktreeAction(menu.key, node.id as WorktreeAction)}
+			onRun={(node) => node.type === 'item' && runWorktreeAction(key, node.id as WorktreeAction)}
 			onClose={() => (menu = null)}
 		/>
 	{/if}
@@ -168,7 +170,7 @@
 								<span class="shrink-0 font-mono text-[11px]"><span class="text-[#73C991]">+{totals.added}</span> <span class="text-[#F48771]">−{totals.deleted}</span></span>
 							{/if}
 						</span>
-						<span class="mt-0.5 block truncate pl-4 font-mono text-xs text-(--vscode-descriptionForeground)">kingu/{v.meta.slug}</span>
+						<span class="mt-0.5 block truncate pl-4 font-mono text-xs text-(--vscode-descriptionForeground)">{adeTasks.branchOf(v.meta.slug)}</span>
 						<span class="mt-1 flex items-center gap-1.5 pl-4 text-xs">
 							<span class={['shrink-0', v.status === 'waiting' ? 'text-(--vscode-editorWarning-foreground)' : 'text-(--vscode-descriptionForeground)']}><Icon name="agent" size={12} /></span>
 							<span class={['min-w-0 flex-1 truncate', v.status === 'waiting' ? 'text-(--vscode-editorWarning-foreground)' : 'text-(--vscode-foreground)/80']}>{summary(v)}</span>

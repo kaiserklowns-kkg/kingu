@@ -11,6 +11,7 @@
 	import { taskDiffKey, type ScmSource } from '#lib/workbench/scm.ts';
 	import { worktreeDir } from './keys.ts';
 	import { rightSidebar } from './rightSidebar.svelte.ts';
+	import { adeTasks } from './tasks.svelte.ts';
 	import TaskPage from './TaskPage.svelte';
 
 	let { slug }: { slug: string } = $props();
@@ -55,7 +56,7 @@
 	<div class="flex h-8 shrink-0 items-center gap-1 pr-1 pl-3 text-[13px]">
 		<Icon name="branch" size={14} />
 		<span class="min-w-0 flex-1 truncate font-medium" title={st?.upstream ? `${st.branch} → ${st.upstream}` : (st?.branch ?? '')}>
-			{st?.branch ?? st?.head ?? (slug ? `kingu/${slug}` : '')}
+			{st?.branch ?? st?.head ?? (slug ? adeTasks.branchOf(slug) : '')}
 			{#if st && (st.ahead || st.behind)}<span class="ml-1 font-mono text-xs text-(--vscode-descriptionForeground)">↑{st.ahead} ↓{st.behind}</span>{/if}
 		</span>
 		<button class={ACTION} disabled={busy || !st?.branch} aria-label={unpublished ? 'Publish Branch' : 'Sync'} title={unpublished ? 'Publish Branch' : 'Sync (pull แล้ว push)'} onclick={() => remote(unpublished ? 'push' : 'sync')}>
