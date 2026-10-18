@@ -3,7 +3,6 @@
 	// base and starts the agent in it. ⌘Enter submits, Escape closes.
 	import { onMount } from 'svelte';
 	import { keyLabel } from '#lib/workbench/keys.ts';
-	import { status } from '#lib/workbench/status.svelte.ts';
 	import { uniqueSlug } from './model';
 	import { adeTasks } from './tasks.svelte';
 	import { BUTTON, BUTTON_SECONDARY, INPUT } from './ui';
@@ -20,7 +19,7 @@
 
 	onMount(() => {
 		void adeTasks.refreshBranches().then(() => {
-			if (!base) base = status.branch && adeTasks.branches.includes(status.branch) ? status.branch : (adeTasks.branches[0] ?? '');
+			if (!base) base = adeTasks.defaultBase();
 		});
 		input?.focus();
 	});

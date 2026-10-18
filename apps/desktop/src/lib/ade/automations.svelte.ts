@@ -229,8 +229,8 @@ class AdeAutomations {
 		}
 		await this.#patch(a.id, { last_run_at: now, last_task_slug: slug, last_skip: null });
 		clientLog('info', `automation ${a.id} started task ${slug}`);
-		status.flash(`Automation เริ่มงาน: ${a.name} → kingu/${slug}`, 8000);
-		if (settings.get<boolean>('kingu.agent.notifications') !== false) void notify(`Automation เริ่มงาน: ${a.name}`, `kingu/${slug}`);
+		status.flash(`Automation เริ่มงาน: ${a.name} → ${adeTasks.branchOf(slug)}`, 8000);
+		if (settings.get<boolean>('kingu.agent.notifications') !== false) void notify(`Automation เริ่มงาน: ${a.name}`, adeTasks.branchOf(slug));
 	}
 
 	/** The runner: what is due now, re-checked against the file so another window cannot double it. */

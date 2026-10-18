@@ -3,7 +3,7 @@
 // SDK session). A CLI task stores `cli:<command>` as its agent. Per-CLI behaviour (resume, MCP,
 // status) lives in agentProfiles.ts. Pure, so `bun test` covers it.
 
-import { programOf } from '#lib/ade/agentProfiles.ts';
+import { profileOf, programOf } from '#lib/ade/agentProfiles.ts';
 
 export { claudeResume, claudeStart, cliResume } from '#lib/ade/agentProfiles.ts';
 
@@ -33,3 +33,21 @@ export const cliName = (argv: string[]) => programOf(argv);
 /** Output in the last 2.5s means the agent is working (Orca's spinner); otherwise it waits for you. */
 export const WORKING_MS = 2500;
 export const isWorking = (lastOutput: number | undefined, now: number) => lastOutput !== undefined && now - lastOutput < WORKING_MS;
+
+/** The setting with a profile's extra arguments, e.g. `kingu.agent.args.codex`. */
+export const agentArgsSetting = (profileId: string) => `kingu.agent.args.${profileId}`;
+
+/**
+ * The command a new terminal task runs: `kingu.agent.cli` (default `claude`), plus the extra
+ * arguments set for that CLI's profile (`kingu.agent.args.<id>`), so switching CLIs with the
+ * picker keeps each one's flags. Null when either is not a plain command.
+ */
+export function agentCommand(get: (id: string) => string | undefined): string[] | null {
+	const base = parseCliCommand(get('kingu.agent.cli') || 'claude');
+	if (!base) return null;
+	const profile = profileOf(base);
+	const extra = profile.id === 'custom' ? '' : (get(agentArgsSetting(profile.id)) ?? '').trim();
+	if (!extra) return base;
+	const args = parseCliCommand(extra);
+	return args ? [...base, ...args] : null;
+}

@@ -10,6 +10,7 @@ pub mod hooks;
 pub mod host;
 pub mod issues;
 pub mod review;
+pub mod setup;
 pub mod tasks;
 pub mod worktree;
 

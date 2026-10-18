@@ -21,7 +21,7 @@ export type IssueFilter = { mine: boolean; label: string; search: string };
 const LIMIT = 50;
 
 export const defaultRunMode = (): RunMode => (settings.get<string>('kingu.agent.runMode') === 'timeline' ? 'timeline' : 'terminal');
-export const defaultBase = () => (status.branch && adeTasks.branches.includes(status.branch) ? status.branch : (adeTasks.branches[0] ?? ''));
+export const defaultBase = () => adeTasks.defaultBase();
 
 class AdeIssues {
 	list = $state<Issue[]>([]);

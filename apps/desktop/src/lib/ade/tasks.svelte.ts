@@ -47,7 +47,7 @@ import {
 } from './model';
 import { runtime } from './runtime.svelte';
 import { adeLayout } from './adeLayout.svelte';
-import { cliAgent, cliOf, parseCliCommand, type RunMode } from './agentCli';
+import { agentCommand, cliAgent, cliOf, type RunMode } from './agentCli';
 import { profileOf } from '#lib/ade/agentProfiles.ts';
 import { chooseAgentCli } from '#lib/ade/agentPicker.ts';
 import { cliSessions } from './cliSessions.svelte';
@@ -55,6 +55,7 @@ import { mcpServers, skillPlugins } from './mcp';
 import { prStatuses } from './prStatus.svelte';
 import { issueLink, issuePrompt, issueSlug, issueTaskTitle, prBody, prComment, taskForIssue, type Issue, type IssueDetail } from './issues.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
+import { branchPrefix, defaultBaseBranch, deleteBranchOnRemove, scriptPreview, setupCommand, type SetupScript } from './worktreeSettings.ts';
 
 class AdeTasks {
 	list = $state<TaskMeta[]>([]);
@@ -117,6 +118,16 @@ class AdeTasks {
 
 	find(slug: string): TaskView | undefined {
 		return this.views.find((v) => v.meta.slug === slug);
+	}
+
+	/** The base branch new tasks start from: `kingu.worktree.baseBranch`, else the folder's current branch. */
+	defaultBase(): string {
+		return defaultBaseBranch(settings.get<string>('kingu.worktree.baseBranch'), status.branch, this.branches);
+	}
+
+	/** The branch checked out in the task's worktree (its prefix came from `kingu.worktree.branchPrefix`). */
+	branchOf(slug: string): string {
+		return this.worktrees.find((w) => w.slug === slug)?.branch ?? `kingu/${slug}`;
 	}
 
 	async load() {
@@ -227,16 +238,21 @@ class AdeTasks {
 		const taken = new Set([...this.list.map((t) => t.slug), ...this.worktrees.map((w) => w.slug ?? '')]);
 		const slug = uniqueSlug(input.slug ?? (input.slugHint ? `${input.slugHint} ${title}` : title), taken);
 		const prompt = input.prompt.trim() || title;
-		// Without a pick, fork from the folder's current branch (so merging back has a branch).
-		const base = input.base || status.branch || 'HEAD';
+		// Without a pick, fork from kingu.worktree.baseBranch or the folder's current branch (so merging back has a branch).
+		const base = input.base || this.defaultBase() || status.branch || 'HEAD';
 		const mode = input.mode ?? (settings.get<RunMode>('kingu.agent.runMode') === 'timeline' ? 'timeline' : 'terminal');
-		const cli = mode === 'terminal' ? parseCliCommand(settings.get<string>('kingu.agent.cli') ?? '') : null;
+		const cli = mode === 'terminal' ? agentCommand((k) => settings.get<string>(k)) : null;
 		if (mode === 'terminal' && !cli) {
-			status.flash('kingu.agent.cli ต้องเป็นคำสั่งธรรมดา เช่น claude หรือ codex --full-auto (ไม่มีอักขระของ shell)', 10000);
+			status.flash('kingu.agent.cli และ kingu.agent.args.* ต้องเป็นคำสั่งธรรมดา เช่น claude หรือ codex --full-auto (ไม่มีอักขระของ shell)', 10000);
+			return;
+		}
+		const prefix = branchPrefix(settings.get<string>('kingu.worktree.branchPrefix'));
+		if (prefix === null) {
+			status.flash('kingu.worktree.branchPrefix ไม่ถูกต้อง: ใช้ได้เฉพาะ a-z A-Z 0-9 . _ / - และห้ามขึ้นต้นด้วย - / หรือ .', 10000);
 			return;
 		}
 		try {
-			await invoke<WorktreeInfo>('worktree_create', { slug, base });
+			await invoke<WorktreeInfo>('worktree_create', { slug, base, prefix });
 		} catch (e) {
 			status.flash(`สร้าง worktree ไม่ได้: ${e}`, 10000);
 			return;
@@ -244,10 +260,49 @@ class AdeTasks {
 		await this.#save([...this.list, newTask({ slug, title, prompt, base, agent: cli ? cliAgent(cli) : undefined, issue: input.issue }, Date.now())]);
 		this.worktrees = (await invoke<WorktreeInfo[]>('worktree_list').catch(() => this.worktrees)).filter((w) => w.slug);
 		if (input.open !== false) this.openTask(slug);
+		await this.#runSetup(slug, input.open !== false);
 		// After the prompt: claude's --mcp-config takes several values and would swallow it.
 		if (cli) await this.#launchCli(slug, cli, { prompt });
 		else await this.run(slug, prompt);
 		return slug;
+	}
+
+	/**
+	 * The folder's `.kingu/setup.sh` (`kingu.worktree.setupScript`), in a "Setup" terminal of the
+	 * new worktree. It comes with the repository, so it runs only once you trusted exactly this
+	 * content, like a repo snap; `interactive: false` (automations) never asks and skips it.
+	 */
+	async #runSetup(slug: string, interactive: boolean) {
+		const root = workspace.root;
+		if (!root || settings.get<string>('kingu.worktree.setupScript') === 'off') return;
+		const script = await invoke<SetupScript | null>('worktree_setup_script').catch((e) => {
+			status.flash(`อ่าน .kingu/setup.sh ไม่ได้: ${e}`, 8000);
+			return null;
+		});
+		if (!script) return;
+		if (!script.trusted) {
+			if (!interactive) {
+				status.flash(`ไม่ได้รัน ${script.path} ใน ${slug}: ยังไม่ได้เชื่อถือสคริปต์นี้ (หรือมันเปลี่ยนไป)`, 10000);
+				return;
+			}
+			const ok = await ask(
+				`โฟลเดอร์นี้มีสคริปต์ตั้งค่า worktree (${script.path}) ซึ่งมากับ repository และจะรันด้วยสิทธิ์ของคุณใน worktree ใหม่ทุกงาน:\n\n${scriptPreview(script.content)}\n\nเชื่อถือสคริปต์นี้และรันเลย? (ถ้าสคริปต์เปลี่ยน จะถามอีกครั้ง)`,
+				{ title: 'สคริปต์ตั้งค่า worktree', kind: 'warning', okLabel: 'เชื่อถือและรัน', cancelLabel: 'ไม่รัน' }
+			);
+			if (!ok) return;
+			try {
+				await invoke('worktree_setup_trust', { trusted: true, hash: script.hash });
+			} catch (e) {
+				status.flash(String(e), 10000);
+				return;
+			}
+		}
+		try {
+			const file = await invoke<string | null>('worktree_setup_prepare');
+			if (file) adeLayout.newTerminal(slug, { title: 'Setup', run: setupCommand(file, root, `${root}/${worktreeDir(slug)}`), background: true });
+		} catch (e) {
+			status.flash(`รัน ${script.path} ไม่ได้: ${e}`, 10000);
+		}
 	}
 
 	/**
@@ -258,7 +313,7 @@ class AdeTasks {
 	async createFromIssue(issue: Issue, opts: { base: string; mode?: RunMode }): Promise<string | undefined> {
 		const existing = taskForIssue(this.list, issue.number);
 		if (existing) {
-			const open = await ask(`มีงานของ issue #${issue.number} อยู่แล้ว: "${existing.title}" (kingu/${existing.slug})\n\nเปิดงานนั้นแทน?`, {
+			const open = await ask(`มีงานของ issue #${issue.number} อยู่แล้ว: "${existing.title}" (${this.branchOf(existing.slug)})\n\nเปิดงานนั้นแทน?`, {
 				title: 'งานจาก issue',
 				okLabel: 'เปิดงานเดิม',
 				cancelLabel: 'ยกเลิก'
@@ -383,7 +438,7 @@ class AdeTasks {
 		if (rt.status === 'review' || rt.status === 'failed') void this.refreshStat(slug);
 	}
 
-	/** Removes the worktree (the branch `kingu/<slug>` is kept) and forgets the task. */
+	/** Removes the worktree (its branch is kept unless kingu.worktree.deleteBranchOnRemove says otherwise) and forgets the task. */
 	async remove(slug: string) {
 		if (runtime.isWorking(slug)) {
 			status.flash('หยุด agent ก่อนลบงาน');
@@ -391,12 +446,17 @@ class AdeTasks {
 		}
 		const path = worktreeDir(slug);
 		const hasWorktree = this.worktrees.some((w) => w.slug === slug);
+		const meta = this.list.find((t) => t.slug === slug);
+		const merged = !!meta?.merged_at || prStatuses.bySlug[slug]?.pr?.state === 'MERGED';
+		const deleteBranch = deleteBranchOnRemove(settings.get<string>('kingu.worktree.deleteBranchOnRemove'), { merged });
+		const branch = this.branchOf(slug);
 		if (hasWorktree) {
-			if (!(await ask(`ลบ worktree ${path}?\n\nbranch kingu/${slug} จะยังอยู่ (ลบเองได้ด้วย git branch -D)`, { title: 'ลบงาน', kind: 'warning', okLabel: 'ลบ', cancelLabel: 'ยกเลิก' }))) return;
+			const branchNote = deleteBranch ? `branch ${branch} จะถูกลบด้วย (kingu.worktree.deleteBranchOnRemove)` : `branch ${branch} จะยังอยู่ (ลบเองได้ด้วย git branch -D)`;
+			if (!(await ask(`ลบ worktree ${path}?\n\n${branchNote}`, { title: 'ลบงาน', kind: 'warning', okLabel: 'ลบ', cancelLabel: 'ยกเลิก' }))) return;
 			// An idle session still runs in the worktree: end it with the task.
 			if (runtime.isLive(slug)) await this.stop(slug);
 			try {
-				await invoke('worktree_remove', { slug, force: false, deleteBranch: false });
+				await invoke('worktree_remove', { slug, force: false, deleteBranch });
 			} catch (e) {
 				const dirty = /modified|untracked|dirty/i.test(String(e));
 				if (!dirty) {
@@ -406,7 +466,7 @@ class AdeTasks {
 				const force = await ask(`worktree ${path} มีการแก้ไขที่ยังไม่ commit\n\nลบทิ้งทั้งหมด? กู้คืนไม่ได้`, { title: 'มีงานที่ยังไม่ commit', kind: 'warning', okLabel: 'ลบทิ้ง', cancelLabel: 'ยกเลิก' });
 				if (!force) return;
 				try {
-					await invoke('worktree_remove', { slug, force: true, deleteBranch: false });
+					await invoke('worktree_remove', { slug, force: true, deleteBranch });
 				} catch (e2) {
 					status.flash(`ลบไม่ได้: ${e2}`, 10000);
 					return;
@@ -456,7 +516,7 @@ class AdeTasks {
 		}
 		const done = await this.#step(slug, 'commit', () => invoke('worktree_commit', { slug, message: msg }).then(() => true));
 		await this.refreshStat(slug);
-		if (done) status.flash(`commit ใน kingu/${slug} แล้ว`);
+		if (done) status.flash(`commit ใน ${this.branchOf(slug)} แล้ว`);
 		return !!done;
 	}
 
@@ -469,7 +529,7 @@ class AdeTasks {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta) return;
 		const how = mode === 'ff' ? 'แบบ fast-forward' : 'แบบ merge commit';
-		const ok = await ask(`รวม kingu/${slug} เข้า ${meta.base} ${how} ในเครื่อง?`, { title: 'Merge เข้า base', okLabel: 'Merge', cancelLabel: 'ยกเลิก' });
+		const ok = await ask(`รวม ${this.branchOf(slug)} เข้า ${meta.base} ${how} ในเครื่อง?`, { title: 'Merge เข้า base', okLabel: 'Merge', cancelLabel: 'ยกเลิก' });
 		if (!ok) return;
 		const r = await this.#step(slug, 'merge', () => invoke<MergeResult>('worktree_merge', { slug, base: meta.base, mode }));
 		if (r) {
@@ -499,7 +559,7 @@ class AdeTasks {
 		const stat = this.stats[slug];
 		if (stat?.dirty && !(await ask('มีการแก้ไขที่ยังไม่ commit ซึ่งจะไม่อยู่ใน PR\n\nสร้าง PR ต่อไหม?', { title: 'สร้าง PR', okLabel: 'สร้าง PR', cancelLabel: 'ยกเลิก' })))
 			return;
-		if (!(await ask(`push kingu/${slug} ไปที่ origin แล้วเปิด PR เข้า ${meta.base}?`, { title: 'สร้าง PR', okLabel: 'สร้าง PR', cancelLabel: 'ยกเลิก' }))) return;
+		if (!(await ask(`push ${this.branchOf(slug)} ไปที่ origin แล้วเปิด PR เข้า ${meta.base}?`, { title: 'สร้าง PR', okLabel: 'สร้าง PR', cancelLabel: 'ยกเลิก' }))) return;
 		const body = prBody(meta);
 		const url = await this.#step(slug, 'สร้าง PR', () => invoke<string>('worktree_pr_create', { slug, base: meta.base, title: meta.title, body }));
 		if (url !== undefined) {
@@ -590,7 +650,7 @@ class AdeTasks {
 	pickTask() {
 		quick.pick({
 			placeholder: 'เลือกงาน',
-			items: this.views.map((v) => ({ id: v.meta.slug, label: v.meta.title, description: `kingu/${v.meta.slug}` })),
+			items: this.views.map((v) => ({ id: v.meta.slug, label: v.meta.title, description: this.branchOf(v.meta.slug) })),
 			onAccept: (item) => this.openTask(item.id)
 		});
 	}
@@ -616,7 +676,7 @@ export function installAde(): () => void {
 			if (!adeTasks.loaded || !workspace.root) return;
 			const folder = workspace.name;
 			for (const view of adeTasks.views) {
-				const task = toTeamTask(view, folder);
+				const task = toTeamTask(view, folder, adeTasks.branchOf(view.meta.slug));
 				const key = syncKey(task);
 				if (teamSent.get(task.id) === key) continue;
 				teamSent.set(task.id, key);

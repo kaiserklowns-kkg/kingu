@@ -59,7 +59,7 @@
 	$effect(() => {
 		if (!workspace.root || slug) return;
 		void adeTasks.refreshBranches().then(() => {
-			if (!base || !adeTasks.branches.includes(base)) base = status.branch && adeTasks.branches.includes(status.branch) ? status.branch : (adeTasks.branches[0] ?? '');
+			if (!base || !adeTasks.branches.includes(base)) base = adeTasks.defaultBase();
 		});
 	});
 

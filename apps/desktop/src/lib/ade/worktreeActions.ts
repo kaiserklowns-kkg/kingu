@@ -41,9 +41,9 @@ export type JumpRow = { key: string; label: string; description: string; group: 
 /** Worktree Jump palette rows: the folder first, then tasks needing you, in progress, done. */
 export function jumpRows(
 	folder: { name: string; branch: string },
-	groups: { label: string; tasks: { slug: string; title: string; status: string }[] }[]
+	groups: { label: string; tasks: { slug: string; title: string; status: string; branch?: string }[] }[]
 ): JumpRow[] {
 	const rows: JumpRow[] = [{ key: '', label: folder.name, description: `primary · ${folder.branch || 'HEAD'}`, group: 'โฟลเดอร์' }];
-	for (const g of groups) for (const t of g.tasks) rows.push({ key: t.slug, label: t.title, description: `${t.status} · kingu/${t.slug}`, group: g.label });
+	for (const g of groups) for (const t of g.tasks) rows.push({ key: t.slug, label: t.title, description: `${t.status} · ${t.branch ?? `kingu/${t.slug}`}`, group: g.label });
 	return rows;
 }

@@ -713,6 +713,19 @@ pub fn set_trust(config_dir: &Path, root: &Path, id: &str, trusted: bool, expect
   data.save(&file)
 }
 
+/// Trusts exactly `sha256` (or with `None` revokes) a repository script under a reserved `key`
+/// that no snap id can take (it starts with `.`), in the same trust file as repo snaps.
+pub fn set_script_trust(config_dir: &Path, root: &Path, key: &str, sha256: Option<&str>) -> Result<(), String> {
+  if !key.starts_with('.') {
+    return Err(format!("{key}: not a script trust key"));
+  }
+  let file = config_dir.join(TRUST_FILE);
+  let _guard = TRUST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+  let mut data = TrustData::load(&file);
+  data.set(root, key, sha256);
+  data.save(&file)
+}
+
 // ---------------------------------------------------------------------------------------------
 // Skill plugins for agents
 //

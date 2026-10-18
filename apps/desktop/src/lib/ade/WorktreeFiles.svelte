@@ -25,6 +25,7 @@
 	import { editors } from '#lib/workbench/editors.svelte.ts';
 	import { worktreeDir } from './keys.ts';
 	import { adeLayout } from './adeLayout.svelte.ts';
+	import { adeTasks } from './tasks.svelte.ts';
 	import { openEditor } from './agentsMode.svelte.ts';
 	import { rightSidebar } from './rightSidebar.svelte.ts';
 	import { contentRows, contentSummary, filesOf, nameMatches, rowLook, touchesWorktree, type NameRow } from './rightSidebar.ts';
@@ -585,7 +586,7 @@
 		}
 	});
 
-	const title = $derived(slug ? `kingu/${slug}` : workspace.name);
+	const title = $derived(slug ? adeTasks.branchOf(slug) : workspace.name);
 	const OPTION = 'grid size-5 place-items-center rounded-sm text-[11px] font-semibold';
 	const HEADER_ACTION = 'grid size-6 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-40';
 </script>

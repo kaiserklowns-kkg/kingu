@@ -263,8 +263,9 @@ fn worktree_create(
   ws: State<'_, Workspace>,
   slug: String,
   base: Option<String>,
+  prefix: Option<String>,
 ) -> Result<agent::worktree::WorktreeInfo, String> {
-  agent::worktree::create(&ws.root()?, &slug, base.as_deref())
+  agent::worktree::create(&ws.root()?, &slug, base.as_deref(), prefix.as_deref())
 }
 
 #[tauri::command]
@@ -649,6 +650,9 @@ pub fn run() {
       agent::gh_status,
       agent::worktree_pr_create,
       agent::worktree_pr_status,
+      agent::setup::worktree_setup_script,
+      agent::setup::worktree_setup_trust,
+      agent::setup::worktree_setup_prepare,
       agent::gh_issues_list,
       agent::gh_issue_view,
       agent::gh_issue_comment,

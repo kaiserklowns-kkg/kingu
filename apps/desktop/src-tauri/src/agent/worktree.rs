@@ -1,4 +1,6 @@
-//! One git worktree per task: `<repo>/.kingu/worktrees/<slug>` on branch `kingu/<slug>`.
+//! One git worktree per task: `<repo>/.kingu/worktrees/<slug>` on branch `<prefix><slug>`
+//! (`kingu.worktree.branchPrefix`, default `kingu/`). The folder makes it a task; its branch is
+//! whatever is checked out there, so changing the prefix never loses an existing task.
 //! Drives the `git` CLI directly (no shell), so arguments are never re-parsed.
 
 use std::path::{Path, PathBuf};
@@ -6,7 +8,8 @@ use std::process::Command;
 
 pub const MAX_SLUG_LEN: usize = 48;
 const WORKTREES_DIR: &str = ".kingu/worktrees";
-const BRANCH_PREFIX: &str = "kingu/";
+pub const DEFAULT_BRANCH_PREFIX: &str = "kingu/";
+const MAX_PREFIX_LEN: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct WorktreeInfo {
@@ -41,8 +44,33 @@ pub fn worktree_path(repo: &Path, slug: &str) -> PathBuf {
   repo.join(WORKTREES_DIR).join(slug)
 }
 
-pub fn branch_name(slug: &str) -> String {
-  format!("{BRANCH_PREFIX}{slug}")
+/// A branch prefix (`kingu/`, `feature/`, `bright-`, or empty): ASCII letters, digits and `._/-`,
+/// not starting with `-`, `/` or `.`, no `..` or `//`; git checks the full name too.
+pub fn validate_prefix(prefix: &str) -> Result<(), String> {
+  let ok = prefix.len() <= MAX_PREFIX_LEN
+    && prefix.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'/' | b'-'))
+    && !prefix.starts_with(['-', '/', '.'])
+    && !prefix.contains("..")
+    && !prefix.contains("//")
+    && !prefix.contains("/.");
+  if ok { Ok(()) } else { Err(format!("branch prefix \"{prefix}\" ไม่ถูกต้อง (ใช้ได้เฉพาะ a-z A-Z 0-9 . _ / -)")) }
+}
+
+/// The branch checked out in a worktree (`None`: detached).
+pub fn current_branch(dir: &Path) -> Result<Option<String>, String> {
+  let out = Command::new("git")
+    .arg("-C")
+    .arg(dir)
+    .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
+    .output()
+    .map_err(|e| format!("git: {e}"))?;
+  let name = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+  Ok((out.status.success() && !name.is_empty()).then_some(name))
+}
+
+/// The task's branch, refusing a detached worktree (nothing to merge, push or delete).
+pub fn task_branch(dir: &Path, slug: &str) -> Result<String, String> {
+  current_branch(dir)?.ok_or_else(|| format!("worktree {slug} ไม่ได้อยู่บน branch (detached HEAD)"))
 }
 
 fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
@@ -59,9 +87,12 @@ fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
   Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// Creates the task worktree on a new branch from `base` (default `HEAD`).
-pub fn create(repo: &Path, slug: &str, base: Option<&str>) -> Result<WorktreeInfo, String> {
+/// Creates the task worktree on a new branch `<prefix><slug>` (default prefix `kingu/`) from
+/// `base` (default `HEAD`).
+pub fn create(repo: &Path, slug: &str, base: Option<&str>, prefix: Option<&str>) -> Result<WorktreeInfo, String> {
   validate_slug(slug)?;
+  let prefix = prefix.unwrap_or(DEFAULT_BRANCH_PREFIX);
+  validate_prefix(prefix)?;
   let base = base.map(str::trim).filter(|b| !b.is_empty()).unwrap_or("HEAD");
   if base.starts_with('-') {
     return Err(format!("{base}: invalid base ref"));
@@ -74,7 +105,8 @@ pub fn create(repo: &Path, slug: &str, base: Option<&str>) -> Result<WorktreeInf
   if path.exists() {
     return Err(format!("{}: already exists", path.display()));
   }
-  let branch = branch_name(slug);
+  let branch = format!("{prefix}{slug}");
+  git(repo, &["check-ref-format", "--branch", &branch]).map_err(|_| format!("{branch}: ชื่อ branch ไม่ถูกต้อง"))?;
   let path_str = path.to_str().ok_or("worktree path is not valid UTF-8")?;
   git(repo, &["worktree", "add", "-b", &branch, "--", path_str, commit])?;
   log::info!("worktree {slug} created at {path_str} from {base} ({commit})");
@@ -88,28 +120,29 @@ pub fn list(repo: &Path) -> Result<Vec<WorktreeInfo>, String> {
   Ok(parse_porcelain(&git(repo, &["worktree", "list", "--porcelain"])?))
 }
 
-/// Removes the task worktree; with `delete_branch`, also deletes `kingu/<slug>`.
+/// Removes the task worktree; with `delete_branch`, also deletes the branch it had checked out.
 pub fn remove(repo: &Path, slug: &str, force: bool, delete_branch: bool) -> Result<(), String> {
   validate_slug(slug)?;
   let path = worktree_path(repo, slug);
   let path_str = path.to_str().ok_or("worktree path is not valid UTF-8")?;
+  let branch = if delete_branch { current_branch(&path).ok().flatten() } else { None };
   let mut args = vec!["worktree", "remove"];
   if force {
     args.push("--force");
   }
   args.extend(["--", path_str]);
   git(repo, &args)?;
-  if delete_branch {
-    git(repo, &["branch", "-D", "--", &branch_name(slug)])?;
+  if let Some(branch) = branch {
+    git(repo, &["branch", "-D", "--", &branch])?;
   }
   log::info!("worktree {slug} removed");
   Ok(())
 }
 
-fn slug_of(path: &str, branch: Option<&str>) -> Option<String> {
-  let slug = branch?.strip_prefix(BRANCH_PREFIX)?;
-  let in_dir = Path::new(path).parent()?.ends_with(WORKTREES_DIR);
-  (in_dir && Path::new(path).file_name()?.to_str()? == slug && validate_slug(slug).is_ok()).then(|| slug.to_owned())
+fn slug_of(path: &str) -> Option<String> {
+  let path = Path::new(path);
+  let slug = path.file_name()?.to_str()?;
+  (path.parent()?.ends_with(WORKTREES_DIR) && validate_slug(slug).is_ok()).then(|| slug.to_owned())
 }
 
 pub fn parse_porcelain(text: &str) -> Vec<WorktreeInfo> {
@@ -141,7 +174,7 @@ pub fn parse_porcelain(text: &str) -> Vec<WorktreeInfo> {
     if w.path.is_empty() {
       continue;
     }
-    w.slug = slug_of(&w.path, w.branch.as_deref());
+    w.slug = if w.bare { None } else { slug_of(&w.path) };
     out.push(w);
   }
   out
@@ -182,7 +215,7 @@ mod tests {
   #[test]
   fn creates_lists_and_removes_a_worktree() {
     let (_tmp, repo) = temp_repo();
-    let w = create(&repo, "fix-login", None).unwrap();
+    let w = create(&repo, "fix-login", None, None).unwrap();
     assert_eq!(w.slug.as_deref(), Some("fix-login"));
     assert_eq!(w.branch.as_deref(), Some("kingu/fix-login"));
     let path = worktree_path(&repo, "fix-login");
@@ -198,7 +231,7 @@ mod tests {
     let status = git(&repo, &["status", "--porcelain"]).unwrap();
     assert_eq!(status, "");
 
-    assert!(create(&repo, "fix-login", None).unwrap_err().contains("already exists"));
+    assert!(create(&repo, "fix-login", None, None).unwrap_err().contains("already exists"));
 
     remove(&repo, "fix-login", false, true).unwrap();
     assert!(!path.exists());
@@ -210,12 +243,45 @@ mod tests {
   fn creates_from_a_base_ref_and_rejects_bad_input() {
     let (_tmp, repo) = temp_repo();
     let main = git(&repo, &["rev-parse", "main"]).unwrap();
-    let w = create(&repo, "from-main", Some("main")).unwrap();
+    let w = create(&repo, "from-main", Some("main"), None).unwrap();
     assert_eq!(w.head.as_deref(), Some(main.trim()));
-    assert!(create(&repo, "nope", Some("no-such-ref")).unwrap_err().contains("not a commit"));
-    assert!(create(&repo, "nope", Some("--orphan")).is_err());
-    assert!(create(&repo, "../escape", None).is_err());
+    assert!(create(&repo, "nope", Some("no-such-ref"), None).unwrap_err().contains("not a commit"));
+    assert!(create(&repo, "nope", Some("--orphan"), None).is_err());
+    assert!(create(&repo, "../escape", None, None).is_err());
     assert!(remove(&repo, "missing", false, false).is_err());
+  }
+
+  #[test]
+  fn uses_the_branch_prefix_and_finds_tasks_by_folder() {
+    let (_tmp, repo) = temp_repo();
+    run(&repo, &["branch", "develop"]);
+    let develop = git(&repo, &["rev-parse", "develop"]).unwrap();
+    let w = create(&repo, "custom", Some("develop"), Some("feature/")).unwrap();
+    assert_eq!(w.branch.as_deref(), Some("feature/custom"));
+    assert_eq!(w.slug.as_deref(), Some("custom"));
+    assert_eq!(w.head.as_deref(), Some(develop.trim()));
+    let dir = worktree_path(&repo, "custom");
+    assert_eq!(task_branch(&dir, "custom").unwrap(), "feature/custom");
+    let flat = create(&repo, "flat", None, Some("")).unwrap();
+    assert_eq!(flat.branch.as_deref(), Some("flat"));
+    // A worktree on a default-prefix branch is still a task after the prefix changes.
+    create(&repo, "old", None, None).unwrap();
+    let slugs: Vec<_> = list(&repo).unwrap().into_iter().filter_map(|w| w.slug).collect();
+    assert_eq!(slugs, ["custom", "flat", "old"]);
+    for bad in ["-x/", "/x", "../", "a//b", "a b/", "x~", ".hidden/", "a/.b/"] {
+      assert!(validate_prefix(bad).is_err(), "{bad}");
+      assert!(create(&repo, "nope", None, Some(bad)).is_err(), "{bad}");
+    }
+    // Allowed by the character rules, refused by git as a ref name.
+    assert!(create(&repo, "nope", None, Some("x.lock/")).is_err());
+    remove(&repo, "custom", false, true).unwrap();
+    assert!(git(&repo, &["branch", "--list", "feature/custom"]).unwrap().trim().is_empty());
+    let old = worktree_path(&repo, "old");
+    run(&old, &["checkout", "-q", "--detach"]);
+    assert!(task_branch(&old, "old").unwrap_err().contains("detached"));
+    // Removing a detached task worktree with delete_branch keeps every branch.
+    remove(&repo, "old", false, true).unwrap();
+    assert!(!git(&repo, &["branch", "--list", "kingu/old"]).unwrap().trim().is_empty());
   }
 
   #[test]
