@@ -2,11 +2,10 @@
 	// Agents layout body, laid out like Orca: side bar (search, Tasks, Projects → worktrees) | the
 	// selected worktree's active tab (the agent session, the new-task composer for the folder
 	// itself, a terminal in that worktree, or a file / task diff opened from the right side bar;
-	// Tasks shows the board, Automations its page) | right side bar (Files or Changes of that worktree). Terminals stay
+	// Tasks shows the board, Automations its page) | right side bar (RightSidebar.svelte: Explorer, Agents, Source Control, Checks of that worktree). Terminals stay
 	// mounted while hidden so their shells keep running; a file tab's editor mounts when shown.
 	import Icon from '#lib/workbench/Icon.svelte';
 	import Sash from '#lib/workbench/Sash.svelte';
-	import ScmView from '#lib/workbench/ScmView.svelte';
 	import DiffHost from '#lib/workbench/DiffHost.svelte';
 	import AdeEditor from './AdeEditor.svelte';
 	import { keyOfTabId } from './adeTabs.ts';
@@ -26,8 +25,8 @@
 	import AutomationsPage from './AutomationsPage.svelte';
 	import IssuesPage from './IssuesPage.svelte';
 	import TaskPage from './TaskPage.svelte';
-	import WorktreeFiles from './WorktreeFiles.svelte';
-	import { adeLayout, PRIMARY, type RightTab } from './adeLayout.svelte';
+	import RightSidebar from './RightSidebar.svelte';
+	import { adeLayout, PRIMARY } from './adeLayout.svelte';
 	import { adeTasks } from './tasks.svelte';
 	import { untrack } from 'svelte';
 	import { cliName, cliOf, type RunMode } from './agentCli';
@@ -37,10 +36,6 @@
 	import { STATUS_LABEL, timeAgo } from './model';
 
 	let body: HTMLDivElement | undefined = $state();
-	const RIGHT_TABS: { id: RightTab; label: string; icon: IconName }[] = [
-		{ id: 'files', label: 'Files', icon: 'files' },
-		{ id: 'changes', label: 'Changes', icon: 'git' }
-	];
 	const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 	const maxSide = () => (body?.clientWidth ?? 1200) * 0.45;
 	const key = $derived(adeLayout.key);
@@ -257,34 +252,8 @@
 			onDrag={(d) => (appMode.panelWidth = clamp(appMode.panelWidth - d, 260, maxSide()))}
 			onReset={() => (appMode.panelWidth = 360)}
 		/>
-		<aside aria-label={adeLayout.rightTab === 'files' ? 'Files' : 'Changes'} class={[FRAME, 'flex shrink-0 flex-col bg-(--vscode-sideBar-background)']} style:width="{appMode.panelWidth}px">
-			<!-- Orca's right side bar tabs. -->
-			<div class="flex h-[35px] shrink-0 items-stretch gap-0.5 border-b border-(--vscode-sideBar-border) px-1.5" role="tablist" aria-label="Right Side Bar">
-				{#each RIGHT_TABS as t (t.id)}
-					{@const on = adeLayout.rightTab === t.id}
-					<button
-						role="tab"
-						aria-selected={on}
-						class={['relative flex items-center gap-1.5 px-2 text-[13px]', on ? 'text-(--vscode-foreground)' : 'text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)']}
-						title={t.label}
-						onclick={() => (adeLayout.rightTab = t.id)}
-					>
-						<Icon name={t.icon} size={15} />{t.label}
-						{#if on}<span class="absolute inset-x-1 bottom-0 h-0.5 rounded-full bg-(--vscode-focusBorder)"></span>{/if}
-					</button>
-				{/each}
-				<span class="flex-1"></span>
-				<button class="my-auto grid size-6 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="ซ่อน side bar ขวา" title="ซ่อน (⌥⌘B)" onclick={() => (appMode.panelVisible = false)}>
-					<Icon name="close" size={14} />
-				</button>
-			</div>
-			{#if adeLayout.rightTab === 'files'}
-				{#if workspace.root}{#key key}<WorktreeFiles slug={slug ?? ''} />{/key}{/if}
-			{:else if slug}
-				{#key slug}<TaskPage {slug} sections="review" />{/key}
-			{:else if workspace.root}
-				<div class="flex min-h-0 flex-1 flex-col pt-2"><ScmView /></div>
-			{/if}
+		<aside aria-label="Right Side Bar" class={[FRAME, 'flex shrink-0 flex-col bg-(--vscode-sideBar-background)']} style:width="{appMode.panelWidth}px">
+			{#if workspace.root}<RightSidebar key={slug ?? PRIMARY} />{/if}
 		</aside>
 	{/if}
 </div>

@@ -5,6 +5,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { clientLog } from '#lib/client-log.ts';
 import { groups, type GitStatus, type ScmSource } from '#lib/workbench/scm.ts';
+import { settings } from '#lib/settings/settings.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 
 export class WorktreeRepo implements ScmSource {
@@ -74,6 +75,15 @@ export class WorktreeRepo implements ScmSource {
 
 	discard(paths: string[], deleteUntracked: boolean) {
 		return this.#run('git_discard', { paths, deleteUntracked });
+	}
+
+	/** Push (publishing the task branch to origin the first time), pull, fetch or sync, in the worktree. */
+	async remote(op: 'push' | 'pull' | 'fetch' | 'sync'): Promise<boolean> {
+		const rebase = settings.get<boolean>('git.pullRebase') === true;
+		const args = op === 'pull' || op === 'sync' ? { rebase } : {};
+		const ok = await this.#run(`git_${op}`, args);
+		if (ok) status.flash(`${op} kingu/${this.slug} แล้ว`);
+		return ok;
 	}
 
 	async commit({ amend = false } = {}) {

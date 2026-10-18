@@ -11,8 +11,7 @@
 	import { aggregateStats, formatSummaryUsage, reviewChip, STATUS_LABEL, timeAgo, type FileChange } from './model';
 	import { runtime } from './runtime.svelte';
 	import { adeTasks } from './tasks.svelte';
-	import { prLine, sortChecks, summarizeChecks, type CheckState } from './prChecks';
-	import { prStatuses } from './prStatus.svelte';
+	import PrChecks from './PrChecks.svelte';
 	import { issues } from './issues.svelte.ts';
 	import { cliOf } from './agentCli';
 	import { adeLayout } from './adeLayout.svelte';
@@ -20,7 +19,8 @@
 	import { BUTTON, BUTTON_SECONDARY, ICON_BUTTON, INPUT, LETTER_COLOR, STATUS_DOT, TONE } from './ui';
 
 	/** `timeline` / `review`: one half, for the Agents layout's main area and changes panel. */
-	let { slug, sections = 'all' }: { slug: string; sections?: 'all' | 'timeline' | 'review' } = $props();
+	/** `embedded`: inside the ADE right side bar's Source Control, which has its own commit box and Checks tab. */
+	let { slug, sections = 'all', embedded = false }: { slug: string; sections?: 'all' | 'timeline' | 'review'; embedded?: boolean } = $props();
 
 	const view = $derived(adeTasks.find(slug));
 	/** The task runs its agent CLI in a terminal (Orca way), not the timeline. */
@@ -57,22 +57,6 @@
 			if (!adeTasks.gh) void adeTasks.checkGh();
 		});
 	});
-
-	// The branch's PR and CI checks, once gh is known to be logged in (only `slug` and that matter).
-	$effect(() => {
-		const s = slug;
-		if (sections === 'timeline' || !adeTasks.gh?.authenticated) return;
-		untrack(() => void prStatuses.refresh(s));
-		return () => prStatuses.stop(s);
-	});
-	const CHECK_DOT: Record<CheckState, string> = {
-		success: 'bg-[#73C991]',
-		failure: 'bg-(--vscode-errorForeground)',
-		pending: 'bg-(--vscode-editorInfo-foreground) animate-pulse',
-		cancelled: 'bg-(--vscode-descriptionForeground)',
-		neutral: 'bg-(--vscode-descriptionForeground)',
-		skipped: 'bg-(--vscode-descriptionForeground)'
-	};
 
 	const statusText = (f: FileChange) =>
 		({ M: 'แก้ไข', A: 'เพิ่ม', D: 'ลบ', R: 'เปลี่ยนชื่อ', C: 'คัดลอก', T: 'เปลี่ยนชนิด', '?': 'ไฟล์ใหม่ (untracked)' })[f.status] ?? f.status;
@@ -209,7 +193,7 @@
 			<!-- Review -->
 			<section aria-label="Review" class="flex min-h-0 flex-col overflow-y-auto text-xs">
 				<div class="flex shrink-0 items-center gap-2 px-3 pt-2">
-					<h2 class="text-[11px] font-bold text-(--vscode-descriptionForeground) uppercase">Review</h2>
+					<h2 class="text-[11px] font-bold text-(--vscode-descriptionForeground) uppercase">{embedded ? 'เทียบกับ base (Committed on Branch)' : 'Review'}</h2>
 					{#if totals}
 						<span class="font-mono"><span class="text-[#73C991]">+{totals.added}</span> <span class="text-[#F48771]">−{totals.deleted}</span></span>
 						<span class="text-(--vscode-descriptionForeground)">{totals.files} ไฟล์{totals.binary ? ` (binary ${totals.binary})` : ''}</span>
@@ -260,6 +244,7 @@
 						</div>
 					{/if}
 
+					{#if !embedded}
 					<div class="mt-3 space-y-1.5 border-t border-(--vscode-widget-border) px-3 pt-3">
 						<label class="block text-[11px] font-bold text-(--vscode-descriptionForeground) uppercase" for="commit-{slug}">Commit</label>
 						<textarea id="commit-{slug}" class={[INPUT, 'h-16 resize-y font-mono']} bind:value={commitMsg} onkeydown={onCommitKey} aria-label="ข้อความ commit"></textarea>
@@ -267,6 +252,7 @@
 							<Icon name="check" size={12} /> Commit {stat.dirty ? '' : '(ไม่มีอะไรให้ commit)'}
 						</button>
 					</div>
+					{/if}
 
 					<div class="mt-3 space-y-1.5 border-t border-(--vscode-widget-border) px-3 py-3">
 						<div class="text-[11px] font-bold text-(--vscode-descriptionForeground) uppercase">ส่งงาน</div>
@@ -290,40 +276,8 @@
 						{#if busy}<p class="text-(--vscode-editorInfo-foreground)">{busy}…</p>{/if}
 					</div>
 
-					{#if adeTasks.gh?.authenticated}
-						{@const entry = prStatuses.bySlug[slug]}
-						{@const pr = entry?.pr}
-						<!-- Orca's Checks: the branch's pull request and its CI runs (gh pr view). -->
-						<div class="space-y-1.5 border-t border-(--vscode-widget-border) px-3 py-3">
-							<div class="flex items-center gap-1 text-[11px] font-bold text-(--vscode-descriptionForeground) uppercase">
-								<span class="flex-1">Checks</span>
-								<button class={ICON_BUTTON} aria-label="รีเฟรช checks" title="รีเฟรช" disabled={entry?.loading} onclick={() => prStatuses.refresh(slug)}><Icon name="refresh" size={14} /></button>
-							</div>
-							{#if pr}
-								{@const sum = summarizeChecks(pr.checks)}
-								<a class="flex items-center gap-1.5 hover:underline" href={pr.url} target="_blank" rel="noreferrer" title={pr.url}>
-									<Icon name="pullRequest" size={12} /><span class="truncate">#{pr.number} {pr.title}</span>
-								</a>
-								<p class="text-(--vscode-descriptionForeground)">
-									{prLine(pr)}{#if sum.total} · ผ่าน {sum.passed}/{sum.total}{#if sum.pending} · กำลังรัน {sum.pending}{/if}{#if sum.failed} · ล้มเหลว {sum.failed}{/if}{/if}
-								</p>
-								{#each sortChecks(pr.checks) as c (c.name)}
-									<div class="flex items-center gap-1.5">
-										<span class={['size-2 shrink-0 rounded-full', CHECK_DOT[c.state]]} title={c.state}></span>
-										{#if c.url}<a class="min-w-0 flex-1 truncate hover:underline" href={c.url} target="_blank" rel="noreferrer">{c.name}</a>{:else}<span class="min-w-0 flex-1 truncate">{c.name}</span>{/if}
-										<span class="shrink-0 text-(--vscode-descriptionForeground)">{c.state}</span>
-									</div>
-								{:else}
-									<p class="text-(--vscode-descriptionForeground)">PR นี้ยังไม่มี CI check</p>
-								{/each}
-							{:else if entry?.error}
-								<p class="text-(--vscode-errorForeground)">{entry.error}</p>
-							{:else if entry && !entry.loading}
-								<p class="text-(--vscode-descriptionForeground)">kingu/{slug} ยังไม่มี pull request</p>
-							{:else}
-								<p class="text-(--vscode-descriptionForeground)">กำลังอ่านสถานะ PR…</p>
-							{/if}
-						</div>
+					{#if adeTasks.gh?.authenticated && !embedded}
+						<div class="border-t border-(--vscode-widget-border) px-3 py-3"><PrChecks {slug} /></div>
 					{/if}
 				{:else}
 					<p class="px-3 py-2 text-(--vscode-descriptionForeground)">กำลังอ่านการเปลี่ยนแปลง…</p>

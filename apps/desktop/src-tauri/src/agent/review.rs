@@ -412,13 +412,16 @@ pub fn is_no_pr(stderr: &str) -> bool {
   e.contains("no pull requests found") || e.contains("no open pull requests")
 }
 
-/// The pull request of `kingu/<slug>` (`None` when the branch has none) via `gh pr view`.
-pub fn pr_status(gh: &Path, dir: &Path, slug: &str) -> Result<Option<PrStatus>, String> {
-  let branch = branch_name(slug);
+/// The pull request of `kingu/<slug>`, or of the branch checked out in `dir` when `slug` is
+/// `None` (the open folder itself), via `gh pr view`; `None` when the branch has none.
+pub fn pr_status(gh: &Path, dir: &Path, slug: Option<&str>) -> Result<Option<PrStatus>, String> {
+  let mut args = vec!["pr".to_owned(), "view".to_owned()];
+  args.extend(slug.map(branch_name));
+  args.extend(["--json".to_owned(), PR_FIELDS.to_owned()]);
   let out = crate::shell_env::command(gh)
     .current_dir(dir)
     .env("GH_PROMPT_DISABLED", "1")
-    .args(["pr", "view", &branch, "--json", PR_FIELDS])
+    .args(&args)
     .output()
     .map_err(|e| format!("gh: {e}"))?;
   if !out.status.success() {
@@ -632,6 +635,23 @@ mod tests {
     crate::git::mark_ignored(&wt, &mut entries);
     let ignored: Vec<&str> = entries.iter().filter(|e| e.ignored).map(|e| e.name.as_str()).collect();
     assert_eq!(ignored, ["run.log"]);
+  }
+
+  /// Source Control › Push in a task worktree publishes its own branch (to a local bare remote).
+  #[test]
+  fn push_from_the_task_worktree_publishes_its_branch() {
+    let (tmp, repo, wt) = setup();
+    let remote = tmp.path().join("remote.git");
+    git_ok(tmp.path(), &["init", "-q", "--bare", remote.to_str().unwrap()]);
+    git_ok(&repo, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    write(&wt, "new.txt", "n\n");
+    crate::git::stage(&wt, &["new.txt".into()]).unwrap();
+    crate::git::commit(&wt, "add new", false).unwrap();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let upstream = crate::git_remote::push(&wt, None, &cancel, std::time::Duration::from_secs(30)).unwrap();
+    assert_eq!(upstream, "origin/kingu/t");
+    assert_eq!(git_ok(&remote, &["log", "-1", "--format=%s", "kingu/t"]).trim(), "add new");
+    assert!(git_ok(&remote, &["branch", "--list", "main"]).trim().is_empty());
   }
 
   /// Files › Contents runs ripgrep in the worktree: paths come back relative to it and the

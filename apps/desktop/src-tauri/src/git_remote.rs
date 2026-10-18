@@ -594,38 +594,52 @@ pub fn stash_drop(root: &Path, index: u32) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Tauri commands. Every operation targets the open folder (never a task worktree) and holds the
-// single-operation slot, so a checkout cannot race a pull.
+// Tauri commands. Every operation targets the open folder, or (fetch, pull, push and sync, from
+// the ADE's right side bar) a task worktree `slug`, and holds the single-operation slot, so a
+// checkout cannot race a pull.
 
 async fn exclusive<T: Send + 'static>(
   ws: &Workspace,
   ops: &GitOps,
   f: impl FnOnce(&Path, &AtomicBool) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
+  exclusive_in(ws, ops, None, f).await
+}
+
+async fn exclusive_in<T: Send + 'static>(
+  ws: &Workspace,
+  ops: &GitOps,
+  slug: Option<&str>,
+  f: impl FnOnce(&Path, &AtomicBool) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
   let root = ws.root()?;
+  let dir = match slug {
+    Some(s) => crate::agent::review::task_dir(&root, s)?,
+    None => root,
+  };
   let guard = ops.begin()?;
-  tauri::async_runtime::spawn_blocking(move || f(&root, guard.flag())).await.map_err(|e| e.to_string())?
+  tauri::async_runtime::spawn_blocking(move || f(&dir, guard.flag())).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn git_fetch(ws: State<'_, Workspace>, ops: State<'_, GitOps>) -> Result<(), String> {
-  exclusive(&ws, &ops, |root, c| fetch(root, c, NET_TIMEOUT)).await
+pub async fn git_fetch(ws: State<'_, Workspace>, ops: State<'_, GitOps>, slug: Option<String>) -> Result<(), String> {
+  exclusive_in(&ws, &ops, slug.as_deref(), |root, c| fetch(root, c, NET_TIMEOUT)).await
 }
 
 #[tauri::command]
-pub async fn git_pull(ws: State<'_, Workspace>, ops: State<'_, GitOps>, rebase: Option<bool>) -> Result<(), String> {
-  exclusive(&ws, &ops, move |root, c| pull(root, rebase.unwrap_or(false), c, NET_TIMEOUT)).await
+pub async fn git_pull(ws: State<'_, Workspace>, ops: State<'_, GitOps>, rebase: Option<bool>, slug: Option<String>) -> Result<(), String> {
+  exclusive_in(&ws, &ops, slug.as_deref(), move |root, c| pull(root, rebase.unwrap_or(false), c, NET_TIMEOUT)).await
 }
 
 /// Pushes, or publishes to `remote` when the branch has no upstream. Returns the upstream.
 #[tauri::command]
-pub async fn git_push(ws: State<'_, Workspace>, ops: State<'_, GitOps>, remote: Option<String>) -> Result<String, String> {
-  exclusive(&ws, &ops, move |root, c| push(root, remote.as_deref(), c, NET_TIMEOUT)).await
+pub async fn git_push(ws: State<'_, Workspace>, ops: State<'_, GitOps>, remote: Option<String>, slug: Option<String>) -> Result<String, String> {
+  exclusive_in(&ws, &ops, slug.as_deref(), move |root, c| push(root, remote.as_deref(), c, NET_TIMEOUT)).await
 }
 
 #[tauri::command]
-pub async fn git_sync(ws: State<'_, Workspace>, ops: State<'_, GitOps>, rebase: Option<bool>) -> Result<(), String> {
-  exclusive(&ws, &ops, move |root, c| sync(root, rebase.unwrap_or(false), c, NET_TIMEOUT)).await
+pub async fn git_sync(ws: State<'_, Workspace>, ops: State<'_, GitOps>, rebase: Option<bool>, slug: Option<String>) -> Result<(), String> {
+  exclusive_in(&ws, &ops, slug.as_deref(), move |root, c| sync(root, rebase.unwrap_or(false), c, NET_TIMEOUT)).await
 }
 
 /// Cancels the running operation (the status bar's progress item).

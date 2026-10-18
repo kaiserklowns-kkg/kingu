@@ -237,12 +237,17 @@ pub async fn gh_status() -> Result<review::GhStatus, String> {
   blocking(|| Ok(review::gh_status(review::gh_bin()))).await
 }
 
-/// The task branch's pull request and its CI checks (`None` when there is no PR yet).
+/// The task branch's pull request and its CI checks (`None` when there is no PR yet). An empty
+/// `slug` is the open folder itself: the PR of its checked-out branch (the ADE's Checks tab).
 #[tauri::command]
 pub async fn worktree_pr_status(ws: State<'_, Workspace>, slug: String) -> Result<Option<review::PrStatus>, String> {
-  let dir = review::task_dir(&ws.root()?, &slug)?;
+  let root = ws.root()?;
   let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
-  blocking(move || review::pr_status(&gh, &dir, &slug)).await
+  if slug.is_empty() {
+    return blocking(move || review::pr_status(&gh, &root, None)).await;
+  }
+  let dir = review::task_dir(&root, &slug)?;
+  blocking(move || review::pr_status(&gh, &dir, Some(&slug))).await
 }
 
 /// Pushes the task branch and runs `gh pr create`; returns the PR URL.

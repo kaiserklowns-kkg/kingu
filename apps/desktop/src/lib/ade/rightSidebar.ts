@@ -5,23 +5,29 @@
 import type { Decoration } from '#lib/workbench/scm.ts';
 import type { FileMatches, TextMatch } from '#lib/workbench/searchResults.ts';
 
-export type RightTab = 'files' | 'search' | 'changes' | 'checks';
+export type RightTab = 'files' | 'agents' | 'changes' | 'checks';
 
-export type RightTabInfo = { id: RightTab; label: string; icon: 'files' | 'search' | 'git' | 'tasks'; key: string };
+export type RightTabInfo = { id: RightTab; label: string; icon: 'files' | 'agentsLayout' | 'branch' | 'tasks'; key?: string; gitOnly?: boolean };
 
-/** Orca's order: Explorer, Search, Source Control, Checks. `key` is the shortcut that shows the tab. */
+/** Orca's tab strip: Explorer, Agents, Source Control, Checks (the last two only in a git repository). */
 export const RIGHT_TABS: RightTabInfo[] = [
 	{ id: 'files', label: 'Explorer', icon: 'files', key: 'cmd+shift+e' },
-	{ id: 'search', label: 'Search', icon: 'search', key: 'cmd+shift+f' },
-	{ id: 'changes', label: 'Source Control', icon: 'git', key: 'ctrl+shift+g' },
-	{ id: 'checks', label: 'Checks', icon: 'tasks', key: 'cmd+shift+k' }
+	{ id: 'agents', label: 'Agents', icon: 'agentsLayout' },
+	{ id: 'changes', label: 'Source Control', icon: 'branch', key: 'cmd+shift+g', gitOnly: true },
+	{ id: 'checks', label: 'Checks', icon: 'tasks', gitOnly: true }
 ];
 
 export const isRightTab = (v: unknown): v is RightTab => RIGHT_TABS.some((t) => t.id === v);
 
+/** The tabs a worktree shows, and the one in front (a git-only tab falls back to Explorer). */
+export function visibleTabs(isGit: boolean, wanted: RightTab): { tabs: RightTabInfo[]; active: RightTab } {
+	const tabs = RIGHT_TABS.filter((t) => isGit || !t.gitOnly);
+	return { tabs, active: tabs.some((t) => t.id === wanted) ? wanted : 'files' };
+}
+
 /**
  * A tab shortcut: shows that tab (and the side bar); pressed again while the tab is already in
- * front, it hides the side bar (VS Code / Orca toggle a view the same way).
+ * front, it hides the side bar (Orca's `sidebar.*.toggle`).
  */
 export function toggleTab(state: { visible: boolean; tab: RightTab }, tab: RightTab): { visible: boolean; tab: RightTab } {
 	if (state.visible && state.tab === tab) return { visible: false, tab };
@@ -34,18 +40,18 @@ export const fold = (s: string) => s.normalize('NFC').toLocaleLowerCase();
 export type NameRow = { rel: string; name: string; depth: number; is_dir: boolean };
 
 /**
- * Files › Names: every file of the worktree whose name contains `query`, shown as a tree with
- * the folders above each match (always expanded). `files` are worktree-relative; folders whose
- * own name matches bring nothing extra (Orca filters files, folders are only context). At most
- * `limit` files are kept, so a one-letter query in a huge tree stays responsive.
+ * Files › Names (Orca's file filter): the query splits on spaces and a file matches when every
+ * part is in its worktree-relative path, case-insensitively (not fuzzy). Matches show as a tree
+ * with their folders. At most `limit` files are kept, so a one-letter query stays responsive.
  */
 export function nameMatches(files: string[], query: string, limit = 2000): { rows: NameRow[]; total: number } {
-	const q = fold(query.trim());
-	if (!q) return { rows: [], total: 0 };
+	const tokens = fold(query).split(/\s+/).filter(Boolean);
+	if (!tokens.length) return { rows: [], total: 0 };
 	const hits: string[] = [];
 	let total = 0;
 	for (const f of files) {
-		if (!fold(f.slice(f.lastIndexOf('/') + 1)).includes(q)) continue;
+		const path = fold(f);
+		if (!tokens.every((t) => path.includes(t))) continue;
 		total++;
 		if (hits.length < limit) hits.push(f);
 	}
@@ -124,6 +130,20 @@ export function filesOf(paths: string[], slug: string): string[] {
 	if (!slug) return paths.filter((p) => p !== '.git' && !p.startsWith('.git/') && !p.startsWith('.kingu/'));
 	const dir = `.kingu/worktrees/${slug}`;
 	return paths.filter((p) => p === '' || p === dir || p.startsWith(dir + '/'));
+}
+
+/** An argv as one line to paste into a shell (Copy Resume Command). */
+export function shellJoin(argv: readonly string[]): string {
+	return argv.map((a) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replaceAll("'", `'\\''`)}'`)).join(' ');
+}
+
+export type SessionSort = 'updated' | 'created';
+type SessionLike = { meta: { slug: string; created_at: number; updated_at: number } };
+
+/** Agents tab (Orca's session history): the sessions newest first, by last update or creation. */
+export function sortSessions<T extends SessionLike>(views: readonly T[], by: SessionSort): T[] {
+	const at = (v: T) => (by === 'created' ? v.meta.created_at : v.meta.updated_at);
+	return [...views].sort((a, b) => at(b) - at(a) || a.meta.slug.localeCompare(b.meta.slug));
 }
 
 /** How a tree row looks: ignored entries dim with a badge (no git letter); else the git decoration. */

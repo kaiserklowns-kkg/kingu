@@ -1,7 +1,7 @@
 // Agents layout (ADE) state, laid out like Orca: the selected worktree (the folder itself or a
 // task's worktree, `appMode.activeSession`), its tabs (the agent session or new-task composer,
 // then terminals started in that worktree, then files and task diffs opened from the right side
-// bar), the board instead of a worktree, and the right side bar's tab. Terminals stay mounted
+// bar), and the board instead of a worktree (the right side bar's own state: rightSidebar.svelte.ts). Terminals stay mounted
 // while their worktree is not shown. File tabs edit the IDE's shared text models (editorModels.ts),
 // so dirty state and Save are per file, whichever layout shows it.
 
@@ -14,8 +14,6 @@ import { killPty } from '#lib/terminal/pty.ts';
 import { adeKey, parseAdeTerminals, persist, restore, storeName, withoutRun } from '#lib/terminal/sessions.ts';
 import { activeAfterClose, adeTabs, fileTabId, keyOfTabId, openFileTab, pinFileTab, type AdeTab, type FileTab, type TerminalTab } from './adeTabs.ts';
 
-import type { RightTab } from './rightSidebar.ts';
-export type { RightTab };
 export type CenterPage = 'board' | 'automations' | 'issues';
 /** Worktree key: '' for the folder itself (Orca's "primary" worktree), else the task slug. */
 export const PRIMARY = '';
@@ -24,7 +22,6 @@ const STORE = 'kingu.adeTerminals';
 class AdeLayout {
 	/** The center shows a page from the side bar's top (Tasks = the board, Automations or Issues) instead of a worktree. */
 	page = $state<CenterPage | null>(null);
-	rightTab = $state<RightTab>('changes');
 	/** The side bar's search box: filters worktrees by title or branch. */
 	query = $state('');
 	terminals = $state<Record<string, TerminalTab[]>>({});
@@ -195,6 +192,28 @@ class AdeLayout {
 		delete this.terminals[key];
 		delete this.files[key];
 		delete this.active[key];
+	}
+
+	/** A rename in the right side bar's tree: file tabs follow it (`move` returns the new key or null). */
+	remapFiles(move: (key: string) => string | null) {
+		for (const [k, list] of Object.entries(this.files)) {
+			if (!list.some((f) => move(f.key) !== null)) continue;
+			this.files[k] = list.map((f) => ({ ...f, key: move(f.key) ?? f.key }));
+			const active = keyOfTabId(this.active[k] ?? '');
+			const moved = active !== null ? move(active) : null;
+			if (moved !== null) this.active[k] = fileTabId(moved);
+		}
+	}
+
+	/** A delete in the right side bar's tree: its file tabs close without asking (the file is in the Trash). */
+	dropFiles(keys: string[]) {
+		const gone = new Set(keys);
+		for (const [k, list] of Object.entries(this.files)) {
+			if (!list.some((f) => gone.has(f.key))) continue;
+			const active = keyOfTabId(this.active[k] ?? '');
+			if (active !== null && gone.has(active)) this.active[k] = 'main';
+			this.files[k] = list.filter((f) => !gone.has(f.key));
+		}
 	}
 
 	/** Another folder: file tabs of the old one close (the IDE closes its editors too). */

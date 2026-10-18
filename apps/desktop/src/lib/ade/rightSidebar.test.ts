@@ -1,7 +1,22 @@
 import { describe, expect, test } from 'bun:test';
 import { fileDecorations } from '#lib/workbench/scm.ts';
 import type { FileMatches } from '#lib/workbench/searchResults.ts';
-import { contentRows, contentSummary, filesOf, fold, isRightTab, nameMatches, RIGHT_TABS, rowLook, toggleTab, touchesWorktree, treeRows } from './rightSidebar.ts';
+import { contentRows, contentSummary, filesOf, fold, isRightTab, nameMatches, RIGHT_TABS, rowLook, toggleTab, touchesWorktree, treeRows, visibleTabs, shellJoin, sortSessions } from './rightSidebar.ts';
+
+describe('Agents tab', () => {
+	const v = (slug: string, created_at: number, updated_at: number) => ({ meta: { slug, created_at, updated_at } });
+
+	test('sessions newest first by update or creation', () => {
+		const views = [v('a', 1, 5), v('b', 3, 4), v('c', 2, 9)];
+		expect(sortSessions(views, 'updated').map((x) => x.meta.slug)).toEqual(['c', 'a', 'b']);
+		expect(sortSessions(views, 'created').map((x) => x.meta.slug)).toEqual(['b', 'c', 'a']);
+	});
+
+	test('resume command quoted for a shell', () => {
+		expect(shellJoin(['claude', '--resume', 'abc-123'])).toBe('claude --resume abc-123');
+		expect(shellJoin(['env', 'A=b c', "it's"])).toBe(`env 'A=b c' 'it'\\''s'`);
+	});
+});
 
 describe('watcher batches per worktree', () => {
 	test('task worktree: its files and its git metadata', () => {
@@ -21,9 +36,15 @@ describe('watcher batches per worktree', () => {
 
 describe('tabs', () => {
 	test('Orca order and ids', () => {
-		expect(RIGHT_TABS.map((t) => t.id)).toEqual(['files', 'search', 'changes', 'checks']);
+		expect(RIGHT_TABS.map((t) => t.id)).toEqual(['files', 'agents', 'changes', 'checks']);
 		expect(isRightTab('checks')).toBe(true);
 		expect(isRightTab('nope')).toBe(false);
+	});
+
+	test('Source Control and Checks only in a git repository', () => {
+		expect(visibleTabs(false, 'changes')).toEqual({ tabs: RIGHT_TABS.slice(0, 2), active: 'files' });
+		expect(visibleTabs(true, 'checks').active).toBe('checks');
+		expect(visibleTabs(false, 'agents').active).toBe('agents');
 	});
 
 	test('a tab shortcut shows the tab, pressed again on it hides the side bar', () => {
@@ -36,14 +57,16 @@ describe('tabs', () => {
 describe('Names filter', () => {
 	const files = ['src/lib/App.svelte', 'src/lib/app.ts', 'src/main.ts', 'README.md', 'docs/คู่มือ.md', 'docs/อ่านก่อน.txt'];
 
-	test('matches file names case-insensitively, with their folders as context', () => {
+	test('matches paths case-insensitively, with their folders as context', () => {
 		const { rows, total } = nameMatches(files, 'APP');
 		expect(total).toBe(2);
 		expect(rows.map((r) => `${'  '.repeat(r.depth)}${r.name}${r.is_dir ? '/' : ''}`)).toEqual(['src/', '  lib/', '    App.svelte', '    app.ts']);
 	});
 
-	test('only the name matches, not the folder path', () => {
-		expect(nameMatches(files, 'lib').total).toBe(0);
+	test('every space-separated part must be in the path (Orca: substring, not fuzzy)', () => {
+		expect(nameMatches(files, 'lib ts').rows.filter((r) => !r.is_dir).map((r) => r.rel)).toEqual(['src/lib/app.ts']);
+		expect(nameMatches(files, 'src').total).toBe(3);
+		expect(nameMatches(files, 'apts').total).toBe(0);
 	});
 
 	test('Thai names, also when typed decomposed', () => {
