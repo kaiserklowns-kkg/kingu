@@ -18,13 +18,32 @@ export type Reveal = { line: number; column: number; endColumn?: number; focus?:
 /** What a group's editor host exposes to commands that act on "the active editor". */
 export type EditorHostHandle = {
 	gotoLine: (line: number, column?: number) => void;
-	selectionText: () => string;
+	/** The selected text; with `nearestWord`, the word at the cursor when nothing is selected (search.seedWithNearestWord). */
+	selectionText: (nearestWord?: boolean) => string;
 	focus: () => void;
 	/** Runs a Monaco editor action (`actions.find`, `undo`…) on the shown file; false when none is shown. */
 	trigger: (actionId: string) => boolean;
 	/** Shows a position without moving focus (Quick Open's symbol preview). */
 	peek?: (line: number, column: number) => void;
 };
+
+// The editor management settings the group model follows (VS Code's IEditorPartOptions).
+G.setBehaviour(() => ({
+	closeEmptyGroups: settings.get<boolean>('workbench.editor.closeEmptyGroups'),
+	focusRecentEditorAfterClose: settings.get<boolean>('workbench.editor.focusRecentEditorAfterClose'),
+	openPositioning: settings.get<G.OpenPositioning>('workbench.editor.openPositioning'),
+	splitSizing: settings.get<G.SplitSizing>('workbench.editor.splitSizing')
+}));
+
+/** `workbench.editor.limit.*`, or null when the limit is off. */
+export function editorLimit(): G.EditorLimit | null {
+	if (!settings.get<boolean>('workbench.editor.limit.enabled')) return null;
+	return {
+		value: settings.get<number>('workbench.editor.limit.value'),
+		perEditorGroup: settings.get<boolean>('workbench.editor.limit.perEditorGroup'),
+		excludeDirty: settings.get<boolean>('workbench.editor.limit.excludeDirty')
+	};
+}
 
 class Editors {
 	model = $state<G.GroupsModel>(G.createGroupsModel());
@@ -132,9 +151,9 @@ class Editors {
 	trigger(actionId: string): boolean {
 		return this.#target()?.trigger(actionId) ?? false;
 	}
-	/** The active editor's selected text, '' when none. */
-	selectionText(): string {
-		return this.#target()?.selectionText() ?? '';
+	/** The active editor's selected text, '' when none (`nearestWord`: the word at the cursor instead). */
+	selectionText(nearestWord = false): string {
+		return this.#target()?.selectionText(nearestWord) ?? '';
 	}
 	focusGroup(id: number) {
 		this.activateGroup(id);
@@ -151,10 +170,31 @@ class Editors {
 	open(path: string, { preview = true, reveal, group }: { preview?: boolean; reveal?: Reveal; group?: number } = {}) {
 		// workbench.editor.enablePreview: false opens every editor pinned.
 		if (!settings.get('workbench.editor.enablePreview')) preview = false;
+		// workbench.editor.revealIfOpen: a group that already shows the file, before opening it again here.
+		if (group === undefined && settings.get<boolean>('workbench.editor.revealIfOpen')) group = G.groupShowing(this.model, path) ?? undefined;
 		G.openEditor(this.model, path, { preview, group });
 		// The file may be dirty in the Agents layout only.
 		if (this.#dirty.has(path)) G.setDirty(this.model, path, true);
 		if (reveal) this.pendingReveal = { ...reveal, path, group: this.model.activeGroup };
+		this.enforceLimit();
+	}
+
+	/** `workbench.editor.limit.*`: closes the least recently used editors beyond the limit, never the active one. */
+	enforceLimit() {
+		const limit = editorLimit();
+		const g = this.activeGroup;
+		if (limit) G.enforceLimit(this.model, limit, g.active ? { group: g.id, path: g.active } : undefined);
+	}
+
+	/**
+	 * Go to Definition and friends into `path`. The editor the navigation starts from stops being a
+	 * preview unless `workbench.editor.enablePreviewFromCodeNavigation` (VS Code pins it, so the
+	 * target does not replace it).
+	 */
+	openFromCodeNavigation(path: string, line: number, column: number) {
+		const from = this.activeGroup.tabs.find((t) => t.path === this.active);
+		if (from?.preview && from.path !== path && !settings.get<boolean>('workbench.editor.enablePreviewFromCodeNavigation')) this.pin(from.path);
+		this.openAt(path, line, column, { preview: true });
 	}
 
 	/** Opens the Source Control diff of `rel` (HEAD vs working tree) as its own tab. */
@@ -258,11 +298,14 @@ class Editors {
 		if (id !== null) this.focusGroup(id);
 	}
 
-	/** VS Code's "Open to the Side" (⌘Enter in Quick Open): the group to the right, created if needed. */
+	/**
+	 * VS Code's "Open to the Side" (⌘Enter in Quick Open): the group to the right, or below with
+	 * `workbench.editor.openSideBySideDirection: down`, created if needed.
+	 */
 	openToSide(path: string, reveal?: Reveal) {
-		const order = G.groupOrder(this.model);
-		let target: number | null | undefined = order[order.indexOf(this.model.activeGroup) + 1];
-		if (target === undefined) target = G.addGroup(this.model, this.model.activeGroup, 'right');
+		const direction = settings.get<'right' | 'down'>('workbench.editor.openSideBySideDirection') === 'down' ? 'down' : 'right';
+		let target: number | null = G.neighbourGroup(this.model, this.model.activeGroup, direction);
+		if (target === null) target = G.addGroup(this.model, this.model.activeGroup, direction);
 		if (target === null) return this.open(path, { reveal });
 		this.open(path, { preview: false, group: target, reveal });
 		this.focusRequest = target;
@@ -283,6 +326,38 @@ class Editors {
 
 	evenSplit(splitId: number) {
 		G.evenSplit(this.model, splitId);
+	}
+
+	/**
+	 * Close Editor from the keyboard (⌘W) on a pinned editor: with
+	 * `workbench.editor.preventPinnedEditorClose` keyboard or keyboardAndMouse it stays open and the
+	 * most recent unpinned editor is shown instead (VS Code). Returns true when it did that.
+	 */
+	keepPinnedOnKeyboardClose(): boolean {
+		const prevent = settings.get<string>('workbench.editor.preventPinnedEditorClose');
+		if ((prevent !== 'keyboard' && prevent !== 'keyboardAndMouse') || !this.active || !this.isSticky(this.active)) return false;
+		const next = G.nextUnpinned(this.model);
+		if (next) {
+			this.open(next[1], { group: next[0] });
+			this.focusRequest = next[0];
+		}
+		return true;
+	}
+
+	/** Middle click on a tab: pinned tabs stay with `workbench.editor.preventPinnedEditorClose` mouse or keyboardAndMouse. */
+	mayMiddleClickClose(path: string, group = this.model.activeGroup): boolean {
+		const prevent = settings.get<string>('workbench.editor.preventPinnedEditorClose');
+		return !((prevent === 'mouse' || prevent === 'keyboardAndMouse') && this.isSticky(path, group));
+	}
+
+	/** VS Code's Toggle Editor Group Sizes (expand / even). */
+	toggleExpandGroup(group = this.model.activeGroup) {
+		G.toggleExpandGroup(this.model, group);
+	}
+
+	/** VS Code's Maximize Editor Group (the group alone until toggled back). */
+	toggleMaximizeGroup(group = this.model.activeGroup) {
+		G.toggleMaximizeGroup(this.model, group);
 	}
 }
 

@@ -341,7 +341,7 @@ class Lsp {
 					return true;
 				}
 				if (resource.scheme !== 'file') return false;
-				editors.openAt(resource.path.replace(/^\//, ''), at.line, at.column, { preview: true });
+				editors.openFromCodeNavigation(resource.path.replace(/^\//, ''), at.line, at.column);
 				return true;
 			}
 		});
