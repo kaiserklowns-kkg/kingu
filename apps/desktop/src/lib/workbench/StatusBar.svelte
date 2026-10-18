@@ -84,7 +84,11 @@
 		title={counts.needsInput ? 'เลือก session ที่รอคุณ' : 'Agents (⇧⌘A)'}
 		onclick={() => (counts.needsInput ? pickSession() : openAgents())}
 	>
-		<Icon name="agent" size={14} />{counts.inProgress} กำลังทำ
+		{#if counts.inProgress}
+			<span class="size-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" aria-hidden="true"></span>
+		{:else}
+			<Icon name="activity" size={14} />
+		{/if}{counts.inProgress} กำลังทำ
 		{#if counts.needsInput}<span class="text-(--vscode-editorWarning-foreground)">· {counts.needsInput} รอคุณ</span>{/if}
 	</button>
 	<UsageStatus />

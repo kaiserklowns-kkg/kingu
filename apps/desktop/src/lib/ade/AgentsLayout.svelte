@@ -250,23 +250,24 @@
 			onReset={() => (appMode.panelWidth = 360)}
 		/>
 		<aside aria-label={adeLayout.rightTab === 'files' ? 'Files' : 'Changes'} class={[FRAME, 'flex shrink-0 flex-col bg-(--vscode-sideBar-background)']} style:width="{appMode.panelWidth}px">
-			<!-- Orca's right side bar tabs. -->
-			<div class="flex h-[35px] shrink-0 items-stretch gap-0.5 border-b border-(--vscode-sideBar-border) px-1.5" role="tablist" aria-label="Right Side Bar">
+			<!-- The IDE panel's tabs (PROBLEMS / OUTPUT / TERMINAL) for Orca's right side bar. -->
+			<div class="flex h-(--kg-part-title-height) shrink-0 items-center gap-1 px-2" role="tablist" aria-label="Right Side Bar">
 				{#each RIGHT_TABS as t (t.id)}
 					{@const on = adeLayout.rightTab === t.id}
 					<button
 						role="tab"
 						aria-selected={on}
-						class={['relative flex items-center gap-1.5 px-2 text-[13px]', on ? 'text-(--vscode-foreground)' : 'text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)']}
-						title={t.label}
-						onclick={() => (adeLayout.rightTab = t.id)}
+						class={[
+							'h-full border-b px-2 text-[11px] uppercase',
+							on
+								? 'border-(--vscode-panelTitle-activeBorder) text-(--vscode-panelTitle-activeForeground)'
+								: 'border-transparent text-(--vscode-panelTitle-inactiveForeground) hover:text-(--vscode-panelTitle-activeForeground)'
+						]}
+						onclick={() => (adeLayout.rightTab = t.id)}>{t.label}</button
 					>
-						<Icon name={t.icon} size={15} />{t.label}
-						{#if on}<span class="absolute inset-x-1 bottom-0 h-0.5 rounded-full bg-(--vscode-focusBorder)"></span>{/if}
-					</button>
 				{/each}
 				<span class="flex-1"></span>
-				<button class="my-auto grid size-6 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="ซ่อน side bar ขวา" title="ซ่อน (⌥⌘B)" onclick={() => (appMode.panelVisible = false)}>
+				<button class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="ซ่อน side bar ขวา" title="ซ่อน (⌥⌘B)" onclick={() => (appMode.panelVisible = false)}>
 					<Icon name="close" size={14} />
 				</button>
 			</div>

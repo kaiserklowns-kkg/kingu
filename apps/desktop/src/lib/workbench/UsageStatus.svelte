@@ -83,7 +83,7 @@
 		<div class={DIVIDER}></div>
 		<button class="flex w-full flex-col gap-1.5 px-3.5 py-2.5 text-left hover:bg-(--vscode-list-hoverBackground)" onclick={() => go('usage')}>
 			<span class="flex w-full items-center gap-2.5">
-				<span class="grid size-6 shrink-0 place-items-center rounded-md border border-(--vscode-widget-border) bg-(--vscode-editor-background)"><Icon name="agent" size={15} /></span>
+				<span class="grid size-6 shrink-0 place-items-center rounded-md border border-(--vscode-widget-border) bg-(--vscode-editor-background)"><Icon name="usage" size={14} /></span>
 				<span class="min-w-0 shrink truncate text-[13px] font-medium">Claude<span class="font-normal text-(--vscode-descriptionForeground)">&nbsp;· Arkai</span></span>
 				<span class="ml-auto flex shrink-0 items-center gap-2 text-xs">
 					{#if !top}
