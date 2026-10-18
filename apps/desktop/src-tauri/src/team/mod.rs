@@ -26,6 +26,9 @@ use client::{HttpTransport, Keychain, SendError, TokenStore, Transport, normaliz
 use outbox::{Entry, Outbox};
 use payload::{RunSync, TaskSync, valid_project_id};
 
+use crate::i18n::msg::TeamMsg;
+use crate::tr;
+
 pub const STATUS_EVENT: &str = "team://status";
 const OUTBOX_FILE: &str = "team-outbox.json";
 /// Re-check for a token this long after finding none.
@@ -323,16 +326,16 @@ pub async fn team_sign_in(app: AppHandle, team: State<'_, Team>, server_url: Str
   let server = normalize_server_url(&server_url)?;
   let token = token.trim().to_owned();
   if !valid_token(&token) {
-    return Err("token ต้องขึ้นต้นด้วย kgu_ และยาว 47 ตัวอักษร".into());
+    return Err(tr!(TeamMsg::BadTokenFormat));
   }
   let srv = server.clone();
   let me = tauri::async_runtime::spawn_blocking(move || -> Result<serde_json::Value, String> {
     let me = HttpTransport::new()?.me(&srv, &token).map_err(|e| match e {
-      SendError::Unauthorized(_) => "token ไม่ถูกต้อง หมดอายุ หรือถูกเพิกถอน".to_owned(),
-      SendError::Retryable(m) => format!("เชื่อมต่อเซิร์ฟเวอร์ทีมไม่ได้: {m}"),
-      SendError::Permanent(m) => format!("เซิร์ฟเวอร์ตอบกลับไม่ถูกต้อง: {m}"),
+      SendError::Unauthorized(_) => tr!(TeamMsg::TokenRejected),
+      SendError::Retryable(m) => tr!(TeamMsg::Unreachable, detail = m),
+      SendError::Permanent(m) => tr!(TeamMsg::BadResponse, detail = m),
     })?;
-    Keychain::set(&srv, &token).map_err(|e| format!("บันทึก token ลง Keychain ไม่สำเร็จ: {e}"))?;
+    Keychain::set(&srv, &token).map_err(|e| tr!(TeamMsg::SaveTokenFailed, detail = e))?;
     Ok(me)
   })
   .await
@@ -389,7 +392,7 @@ impl Team {
   fn enqueue(&self, server_url: &str, project: &str, item: outbox::Item) -> Result<usize, String> {
     let server = normalize_server_url(server_url)?;
     if !valid_project_id(project) {
-      return Err("kingu.team.project ต้องเป็น project id (uuid) จากเซิร์ฟเวอร์ทีม".into());
+      return Err(tr!(TeamMsg::BadProjectId));
     }
     item.validate()?;
     let pending = {

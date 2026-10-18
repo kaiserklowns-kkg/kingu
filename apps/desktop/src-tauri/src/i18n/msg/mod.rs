@@ -1,19 +1,23 @@
 //! The catalogs, one file per area (keeps parallel work from colliding). A new area: add the
 //! file, `mod` + `pub use` it here and list its enum in `all()`.
 
+mod accounts;
 mod agent;
 mod core;
 mod git;
 mod linear;
 mod lsp;
 mod workspace;
+mod team;
 
+pub use accounts::AccountsMsg;
 pub use agent::AgentMsg;
 pub use core::CoreMsg;
 pub use git::GitMsg;
 pub use linear::LinearMsg;
 pub use lsp::LspMsg;
 pub use workspace::WorkspaceMsg;
+pub use team::TeamMsg;
 
 #[cfg(test)]
 use super::{Locale, Message};
@@ -31,12 +35,14 @@ fn entry<M: Message>(m: M) -> Entry {
 #[cfg(test)]
 pub fn all() -> Vec<Entry> {
   let mut out = Vec::new();
+  out.extend(AccountsMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(AgentMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(CoreMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(GitMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(LinearMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(LspMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(WorkspaceMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(TeamMsg::ALL.iter().map(|&m| entry(m)));
   out
 }
 
