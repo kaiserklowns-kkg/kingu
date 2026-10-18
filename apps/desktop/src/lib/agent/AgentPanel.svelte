@@ -13,6 +13,7 @@
 	import ChatList from './ChatList.svelte';
 	import Composer from './Composer.svelte';
 	import ChatEditsBar from './ChatEditsBar.svelte';
+	import ChatTodoBar from './ChatTodoBar.svelte';
 	import RestoreCheckpoint from './RestoreCheckpoint.svelte';
 	import { chatEdits } from './chatEdits.svelte.ts';
 	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
@@ -410,6 +411,7 @@
 			<ChatList
 				run={chatRun}
 				{cwd}
+				chatId={chatMeta.id}
 				root={workspace.root}
 				onanswer={(p, decision, message, answers) => chatMeta && chats.answer(chatMeta.id, p.request_id, decision, message, answers)}
 				actions={{ retry: () => chatMeta && void chats.retry(chatMeta.id), edit: editRequest }}
@@ -447,6 +449,7 @@
 	{#if !showList}
 		<div class="shrink-0 p-2">
 			<!-- chat edits bar -->
+			{#if chatMeta}<ChatTodoBar {turns} {running} />{/if}
 			{#if chatMeta}<ChatEditsBar chatId={chatMeta.id} />{/if}
 			{#if queued.length}
 				<ul class="mb-1.5 space-y-1" aria-label={t('chatView.queued')}>

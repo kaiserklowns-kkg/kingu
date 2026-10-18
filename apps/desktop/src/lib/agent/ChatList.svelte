@@ -11,9 +11,10 @@
 
 <script lang="ts">
 	// A run as VS Code's chat list (chatListRenderer): each request, then its response made of
-	// parts: markdown with code block actions, thinking (collapsed), tool calls as one-line rows
-	// that expand to their input and output, approval and question cards, errors with Retry, and a
-	// "Working…" row while the turn runs. Internal events are not shown (chatParts.ts). Shared by
+	// parts: markdown with code block actions, thinking (collapsed), tool calls (ChatToolRow:
+	// one-line rows that expand to their input and output, edited-file pills, plan cards, subagents
+	// with their own calls nested), approval and question cards, errors with Retry, a "Working…" row
+	// while the turn runs, and "N files changed" under a finished chat request. Internal events are not shown (chatParts.ts). Shared by
 	// the Agent panel and the ADE task page.
 	import type { Snippet } from 'svelte';
 	import Icon from '#lib/workbench/Icon.svelte';
@@ -24,8 +25,10 @@
 	import PermissionCard from './PermissionCard.svelte';
 	import QuestionCard from './QuestionCard.svelte';
 	import ChatMarkdown from './ChatMarkdown.svelte';
+	import ChatToolRow from './ChatToolRow.svelte';
+	import ChatRequestChanges from './ChatRequestChanges.svelte';
 	import { answersFor, parseAsk } from './ask';
-	import { buildTurns, responseText, toolLabel, type Part, type ToolPart } from './chatParts';
+	import { buildTurns, responseText, type Part } from './chatParts';
 	import { contextLabel } from './chatPrompt';
 	import { formatUsage, type Decision, type PermissionRequest } from './events';
 
@@ -38,6 +41,7 @@
 		empty,
 		checkpoint,
 		reverted,
+		chatId = null,
 		class: klass = ''
 	}: {
 		run: ChatView | undefined;
@@ -53,6 +57,8 @@
 		checkpoint?: Snippet<[number]>;
 		/** Chat edits: whether a request was reverted by a restored checkpoint (dimmed, like VS Code). */
 		reverted?: (request: number) => boolean;
+		/** The agent chat shown (edited-file pills open its diffs; "N files changed" per request); null for ADE tasks. */
+		chatId?: string | null;
 		class?: string;
 	} = $props();
 
@@ -87,17 +93,14 @@
 	}
 
 	const toggle = (key: string) => (open[key] = !open[key]);
-	const pretty = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v, null, 2));
 	/** The part that shows the turn is busy: no spinner under a streaming text or an open question. */
 	const showsProgress = (parts: Part[]) => {
 		const last = parts[parts.length - 1];
 		return !(last && ((last.kind === 'markdown' && last.streaming) || last.kind === 'confirmation'));
 	};
-	const toolInput = (tool: ToolPart) => {
-		const o = tool.input && typeof tool.input === 'object' ? (tool.input as Record<string, unknown>) : null;
-		if (tool.name === 'Bash' && typeof o?.command === 'string') return o.command;
-		return pretty(tool.input);
-	};
+	/** Tool calls of a turn waiting for approval (a subagent's row counts its own). */
+	const pendingTools = (parts: Part[]) =>
+		new Set(parts.flatMap((p) => (p.kind === 'confirmation' && !run?.decisions[p.request.request_id] && p.request.tool_use_id ? [p.request.tool_use_id] : [])));
 	const isAsk = (r: PermissionRequest) => r.tool === 'AskUserQuestion';
 	const ACTION = 'grid size-[22px] place-items-center rounded text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)';
 </script>
@@ -166,39 +169,7 @@
 								{/if}
 							</div>
 						{:else if part.kind === 'tool'}
-							{@const done = !!part.result || turn.done}
-							<div>
-								<button
-									type="button"
-									class="flex w-full min-w-0 items-center gap-1.5 text-left text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)"
-									aria-expanded={!!open[key]}
-									onclick={() => toggle(key)}
-								>
-									{#if !done}
-										<span class="size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-current border-t-transparent"></span>
-									{:else if part.result?.isError}
-										<span class="shrink-0 text-(--vscode-errorForeground)"><Icon name="error" size={13} /></span>
-									{:else}
-										<span class="shrink-0 text-(--vscode-charts-green,#73C991)"><Icon name="check" size={13} /></span>
-									{/if}
-									<span class="min-w-0 flex-1 truncate">{toolLabel(part.name, part.input, done, cwd)}</span>
-									<Icon name={open[key] ? 'chevronDown' : 'chevronRight'} size={12} />
-								</button>
-								{#if open[key]}
-									<div class="mt-1 ml-[18px] space-y-1 font-mono">
-										<div class="text-xs text-(--vscode-descriptionForeground)">{t('chatView.toolInput')}</div>
-										<pre class="max-h-48 overflow-auto rounded border border-(--vscode-widget-border) px-2 py-1 break-all whitespace-pre-wrap">{toolInput(part)}</pre>
-										{#if part.result}
-											<div class="text-xs text-(--vscode-descriptionForeground)">{t('chatView.toolOutput')}</div>
-											<pre
-												class={[
-													'max-h-64 overflow-auto rounded border border-(--vscode-widget-border) px-2 py-1 break-all whitespace-pre-wrap',
-													part.result.isError && 'text-(--vscode-errorForeground)'
-												]}>{part.result.content || t('chatView.toolNoOutput')}</pre>
-										{/if}
-									</div>
-								{/if}
-							</div>
+							<ChatToolRow {part} turnDone={turn.done} {cwd} {root} {chatId} pending={pendingTools(turn.parts)} />
 						{:else if part.kind === 'confirmation'}
 							{@const ev = part.request}
 							{@const decided = run?.decisions[ev.request_id]}
@@ -236,6 +207,10 @@
 							<span class="size-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent"></span>
 							{t('chatView.working')}
 						</div>
+					{/if}
+
+					{#if turn.done && chatId && turn.checkpoint != null && !dim}
+						<ChatRequestChanges {chatId} request={turn.checkpoint} />
 					{/if}
 
 					{#if turn.done && turn.request && turn.parts.length}
