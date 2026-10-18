@@ -5,7 +5,7 @@
   "build": {
     "frontendDist": "../build",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "bun run dev",
+    "beforeDevCommand": "cargo build -p kingu-ptyd && bun run dev",
     "beforeBuildCommand": "bun run build"
   },
   "app": {

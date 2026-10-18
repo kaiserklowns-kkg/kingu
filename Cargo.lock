@@ -2174,10 +2174,10 @@ name = "kingu-desktop"
 version = "0.1.0"
 dependencies = [
  "keyring",
+ "kingu-ptyd",
  "libc",
  "log",
  "notify",
- "portable-pty",
  "regex",
  "reqwest",
  "serde",
@@ -2192,6 +2192,17 @@ dependencies = [
  "toml 1.1.8+spec-1.1.0",
  "trash",
  "url",
+]
+
+[[package]]
+name = "kingu-ptyd"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

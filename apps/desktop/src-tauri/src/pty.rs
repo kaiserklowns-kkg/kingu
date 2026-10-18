@@ -1,444 +1,259 @@
-//! PTY sessions for the integrated terminal: spawn a login shell, stream its output over a
-//! Tauri channel, and accept input and resizes from the webview.
+//! PTY sessions for the integrated terminal, keyed by a name the webview picks (`panel:<root>:3`,
+//! `cli:<root>:<slug>:…`), streamed to the webview over a Tauri channel.
 //!
-//! Sessions live in this process, keyed by a name the webview picks (`panel:3`, `cli:<slug>:…`),
-//! so they outlive a webview reload: the reloaded page asks for the same key and re-attaches,
-//! getting the recent output replayed from the session's scrollback. Surviving an app quit would
-//! need a separate daemon owning the PTYs.
+//! Backends (`kingu_ptyd`): on macOS and Linux the sessions live in `kingu-ptyd`, a per-user
+//! daemon the app starts and talks to over a Unix socket, so terminals and agent CLIs keep
+//! running after Kingu quits and the next launch re-attaches to them. On Windows, or when the
+//! daemon cannot start, they live in this process (they then end with the app).
 
-use std::collections::{HashMap, HashSet};
-use std::io::{Read, Write};
-use std::path::Path;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+#[cfg(unix)]
 use std::sync::{Arc, Mutex};
 
-use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
+use kingu_ptyd::{Attached, Host, SessionInfo, ShellSpec, Sink};
 use tauri::State;
 use tauri::ipc::Channel;
 
-/// Output kept per session for a re-attaching webview.
-const SCROLLBACK_BYTES: usize = 256 * 1024;
-const EXITED: &str = "\r\n[process exited]\r\n";
+pub use kingu_ptyd::validate_key;
 
-/// The last `cap` bytes of a session's output. Trimmed lazily, so a busy terminal does not move
-/// the whole buffer on every chunk.
-pub struct Scrollback {
-  text: String,
-  cap: usize,
+#[cfg(unix)]
+const DAEMON_NAME: &str = "kingu-ptyd";
+
+#[cfg(unix)]
+struct Daemon {
+  launch: kingu_ptyd::client::Launch,
+  /// The current connection; only ever locked briefly.
+  client: Mutex<Option<Arc<kingu_ptyd::client::Client>>>,
+  /// Held while (re)connecting, which can take seconds when the daemon has to start.
+  connecting: Mutex<()>,
 }
 
-impl Scrollback {
-  pub fn new(cap: usize) -> Self {
-    Self { text: String::new(), cap }
+#[cfg(unix)]
+impl Daemon {
+  fn new(launch: kingu_ptyd::client::Launch) -> Self {
+    Self { launch, client: Mutex::new(None), connecting: Mutex::new(()) }
   }
 
-  pub fn push(&mut self, chunk: &str) {
-    self.text.push_str(chunk);
-    if self.text.len() > self.cap + self.cap / 4 {
-      let start = tail_start(&self.text, self.cap);
-      self.text.drain(..start);
+  /// The connection, made again (starting the daemon if it has exited) when it dropped.
+  fn client(&self) -> Result<Arc<kingu_ptyd::client::Client>, String> {
+    let _one = self.connecting.lock().unwrap();
+    if let Some(c) = self.client.lock().unwrap().as_ref().filter(|c| c.is_connected()) {
+      return Ok(c.clone());
     }
+    let c = Arc::new(kingu_ptyd::client::connect_or_start(&self.launch)?);
+    log::info!("terminal daemon: connected (pid {}, version {})", c.daemon().pid, c.daemon().app_version);
+    *self.client.lock().unwrap() = Some(c.clone());
+    Ok(c)
   }
 
-  pub fn contents(&self) -> &str {
-    &self.text[tail_start(&self.text, self.cap)..]
-  }
-}
-
-/// Where the last `cap` bytes of `s` start: on a character boundary, and at the next line when
-/// one is close, so a replay rarely begins inside an escape sequence.
-fn tail_start(s: &str, cap: usize) -> usize {
-  if s.len() <= cap {
-    return 0;
-  }
-  let mut i = s.len() - cap;
-  while !s.is_char_boundary(i) {
-    i += 1;
-  }
-  match s[i..].find('\n') {
-    Some(nl) if nl < 4096 => i + nl + 1,
-    _ => i,
+  /// The connection as it is, without reconnecting: keystrokes and resizes run on the main
+  /// thread (in order) and must never wait for a daemon to start.
+  fn connected(&self) -> Result<Arc<kingu_ptyd::client::Client>, String> {
+    self.client.lock().unwrap().clone().ok_or_else(|| "terminal daemon หลุดการเชื่อมต่อ".to_string())
   }
 }
 
-/// Session keys come from the webview; keep them short and plain.
-pub fn validate_key(key: &str) -> Result<(), String> {
-  let ok = (1..=128).contains(&key.len()) && key.bytes().all(|b| b.is_ascii_alphanumeric() || b":_.-".contains(&b));
-  if ok { Ok(()) } else { Err(format!("terminal key ไม่ถูกต้อง: {key:?}")) }
+enum Backend {
+  Local(Host),
+  #[cfg(unix)]
+  Daemon(Daemon),
 }
-
-/// Output of one session: the scrollback, and the webview channel while one is attached.
-struct Output {
-  scrollback: Scrollback,
-  sink: Option<Channel<String>>,
-}
-
-impl Output {
-  fn emit(&mut self, text: String) {
-    self.scrollback.push(&text);
-    // A reloaded page leaves a dead channel: stop forwarding until the next attach, keep buffering.
-    if let Some(sink) = &self.sink
-      && sink.send(text).is_err()
-    {
-      self.sink = None;
-    }
-  }
-}
-
-struct Session {
-  id: u32,
-  writer: Box<dyn Write + Send>,
-  master: Box<dyn MasterPty + Send>,
-  child: Box<dyn portable_pty::Child + Send + Sync>,
-  output: Arc<Mutex<Output>>,
-}
-
-impl Session {
-  /// Ends the shell off the caller's thread (`kill` waits up to ~200ms for SIGHUP to work).
-  fn kill(mut self) {
-    std::thread::spawn(move || {
-      let _ = self.child.kill();
-      let _ = self.child.wait();
-    });
-  }
-}
-
-type Sessions = Arc<Mutex<HashMap<String, Session>>>;
 
 #[derive(Default)]
 pub struct Ptys {
-  next_id: AtomicU32,
-  sessions: Sessions,
-  /// Keys spawned by this process. One whose shell exited starts again without its `run`
-  /// command, so a reload never re-types an agent CLI's first prompt.
-  started: Mutex<HashSet<String>>,
+  /// Private per-user directory for the daemon's socket, lock and log (set at startup).
+  dir: OnceLock<PathBuf>,
+  backend: OnceLock<Backend>,
 }
 
-/// What `pty_spawn` returns: output to write before live data, and whether a new shell started.
-#[derive(serde::Serialize)]
-pub struct Attached {
-  pub replay: String,
-  pub spawned: bool,
+/// Where the daemon's socket lives: `$XDG_RUNTIME_DIR/kingu` on Linux, else `<app data>/ptyd`,
+/// unless that path is too long for a Unix socket (macOS allows 104 bytes).
+pub fn daemon_dir(app_data: &Path, runtime_dir: Option<PathBuf>, temp: &Path, uid: u32) -> PathBuf {
+  let preferred = runtime_dir.filter(|d| d.is_absolute()).map(|d| d.join("kingu")).unwrap_or_else(|| app_data.join("ptyd"));
+  // Room for the longer fallback name (`kingu-ptyd-1-v<version>.sock`).
+  let socket_len = preferred.join(kingu_ptyd::protocol::socket_name()).as_os_str().len() + 12;
+  if socket_len < 104 { preferred } else { temp.join(format!("kingu-ptyd-{uid}")) }
 }
 
-fn size(cols: u16, rows: u16) -> PtySize {
-  PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }
-}
-
-/// Splits `buf` at the end of its last complete UTF-8 sequence, so a multi-byte
-/// character cut by a read boundary is held back for the next chunk.
-fn utf8_prefix_len(buf: &[u8]) -> usize {
-  match std::str::from_utf8(buf) {
-    Ok(_) => buf.len(),
-    Err(e) if e.error_len().is_none() => e.valid_up_to(),
-    // Invalid bytes, not a cut: emit everything and let lossy decoding replace them.
-    Err(_) => buf.len(),
+/// The daemon executable: `KINGU_PTYD`, else `kingu-ptyd` next to the app executable (release:
+/// Tauri's `externalBin` puts it in `Contents/MacOS`; dev: `cargo build` puts it in `target/debug`).
+pub fn find_daemon(override_var: Option<std::ffi::OsString>, exe_dir: Option<&Path>) -> Result<PathBuf, String> {
+  if let Some(p) = override_var.filter(|o| !o.is_empty()).map(PathBuf::from) {
+    return if p.is_file() { Ok(p) } else { Err(format!("KINGU_PTYD={}: ไม่พบไฟล์", p.display())) };
   }
+  let name = if cfg!(windows) { "kingu-ptyd.exe" } else { "kingu-ptyd" };
+  exe_dir.map(|d| d.join(name)).filter(|p| p.is_file()).ok_or_else(|| format!("ไม่พบ {name} ข้างตัวแอป (ตั้ง KINGU_PTYD หรือ cargo build -p kingu-ptyd)"))
 }
 
-/// Environment variables a parent Claude Code session leaves behind.
-pub fn is_agent_session_marker(key: &str) -> bool {
-  key == "CLAUDECODE" || key.starts_with("CLAUDE_CODE_")
-}
-
-/// POSIX shell quoting for one argument: bare when it only has safe characters, else in single
-/// quotes (`'` becomes `'\''`). Newlines stay inside the quotes, so a multi-line prompt is one argument.
-pub fn shell_quote(arg: &str) -> String {
-  let safe = !arg.is_empty() && arg.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_./=:@%+,".contains(&b));
-  if safe {
-    arg.to_string()
-  } else {
-    format!("'{}'", arg.replace('\'', "'\\''"))
+impl Ptys {
+  /// Records the daemon directory and connects in the background, so the first terminal rarely waits.
+  pub fn init(app: &tauri::AppHandle, dir: PathBuf) {
+    use tauri::Manager;
+    let _ = app.state::<Ptys>().dir.set(dir);
+    let handle = app.clone();
+    std::thread::spawn(move || {
+      let _ = handle.state::<Ptys>().backend();
+    });
   }
-}
 
-/// The command line typed into a new terminal for `run` (each argument quoted, so a prompt or a
-/// setting value can never become shell syntax).
-pub fn command_line(argv: &[String]) -> Result<String, String> {
-  if argv.is_empty() || argv[0].is_empty() {
-    return Err("คำสั่งว่าง".into());
+  fn backend(&self) -> &Backend {
+    self.backend.get_or_init(|| self.choose())
   }
-  if argv.iter().any(|a| a.contains('\0')) {
-    return Err("คำสั่งมีอักขระ NUL".into());
-  }
-  Ok(argv.iter().map(|a| shell_quote(a)).collect::<Vec<_>>().join(" "))
-}
 
-/// Re-attaches the webview to the live session `key`, if there is one: `on_data` replaces the old
-/// channel and gets everything after the returned replay. With a size (the terminal is shown), the
-/// PTY takes it; a terminal attached while hidden keeps the old size until it is shown.
-pub fn attach(ptys: &Ptys, key: &str, size_now: Option<(u16, u16)>, on_data: Channel<String>) -> Option<Attached> {
-  let sessions = ptys.sessions.lock().unwrap();
-  let s = sessions.get(key)?;
-  let replay = {
-    // Under the output lock, so no chunk is both replayed and sent, or lost in between.
-    let mut out = s.output.lock().unwrap();
-    out.sink = Some(on_data);
-    out.scrollback.contents().to_string()
-  };
-  if let Some((cols, rows)) = size_now {
-    let same = s.master.get_size().is_ok_and(|now| now.cols == cols && now.rows == rows);
-    if same {
-      // A full-screen program (an agent CLI) repaints on SIGWINCH; an unchanged size sends none.
+  fn choose(&self) -> Backend {
+    #[cfg(unix)]
+    {
+      if std::env::var("KINGU_PTY_BACKEND").is_ok_and(|v| v == "local") {
+        log::info!("terminals: in-process (KINGU_PTY_BACKEND=local)");
+        return Backend::Local(Host::default());
+      }
+      let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
+      let launch = find_daemon(std::env::var_os("KINGU_PTYD"), exe_dir.as_deref()).and_then(|bin| {
+        let dir = self.dir.get().cloned().ok_or("ยังไม่รู้โฟลเดอร์ของ daemon")?;
+        Ok(kingu_ptyd::client::Launch { bin, dir, app_version: env!("CARGO_PKG_VERSION").into(), args: Vec::new(), env: Vec::new() })
+      });
+      let connected = launch.and_then(|launch| {
+        let daemon = Daemon::new(launch);
+        daemon.client().map(|_| daemon)
+      });
+      match connected {
+        Ok(daemon) => return Backend::Daemon(daemon),
+        Err(e) => log::warn!("terminals: {DAEMON_NAME} unavailable ({e}); running in-process, they end when Kingu quits"),
+      }
+    }
+    Backend::Local(Host::default())
+  }
+
+  /// Attaches to `key`, else starts a login shell for it in `cwd` (typing `run` once).
+  pub fn open(&self, key: &str, cwd: &Path, cols: u16, rows: u16, run: Option<&[String]>, sink: Sink) -> Result<Attached, String> {
+    let spec = ShellSpec { cwd, cols, rows, run, env: &Default::default() };
+    match self.backend() {
+      Backend::Local(host) => host.open(key, &spec, sink),
       #[cfg(unix)]
-      if let Some(group) = s.master.process_group_leader() {
-        unsafe { libc::killpg(group, libc::SIGWINCH) };
-      }
-    } else {
-      let _ = s.master.resize(size(cols, rows));
+      Backend::Daemon(d) => d.client()?.spawn(key, &spec, sink),
     }
   }
-  Some(Attached { replay, spawned: false })
+
+  pub fn attach(&self, key: &str, size: Option<(u16, u16)>, sink: Sink) -> Result<Option<Attached>, String> {
+    match self.backend() {
+      Backend::Local(host) => Ok(host.attach(key, size, sink)),
+      #[cfg(unix)]
+      Backend::Daemon(d) => d.client()?.attach(key, size, sink),
+    }
+  }
+
+  pub fn write(&self, key: &str, data: &str) -> Result<(), String> {
+    match self.backend() {
+      Backend::Local(host) => host.write(key, data.as_bytes()),
+      #[cfg(unix)]
+      Backend::Daemon(d) => d.connected()?.write(key, data),
+    }
+  }
+
+  pub fn resize(&self, key: &str, cols: u16, rows: u16) -> Result<(), String> {
+    match self.backend() {
+      Backend::Local(host) => host.resize(key, cols, rows),
+      #[cfg(unix)]
+      Backend::Daemon(d) => d.connected()?.resize(key, cols, rows),
+    }
+  }
+
+  pub fn kill(&self, key: &str) -> Result<bool, String> {
+    match self.backend() {
+      Backend::Local(host) => Ok(host.kill(key)),
+      #[cfg(unix)]
+      Backend::Daemon(d) => d.client()?.kill(key),
+    }
+  }
+
+  pub fn list(&self) -> Result<Vec<SessionInfo>, String> {
+    match self.backend() {
+      Backend::Local(host) => Ok(host.list()),
+      #[cfg(unix)]
+      Backend::Daemon(d) => d.client()?.list(),
+    }
+  }
+
+  /// `"daemon"` when sessions outlive the app, else `"local"`.
+  pub fn kind(&self) -> &'static str {
+    match self.backend() {
+      Backend::Local(_) => "local",
+      #[cfg(unix)]
+      Backend::Daemon(_) => "daemon",
+    }
+  }
 }
 
-/// A login shell in `cwd`, as session `key`. With `run`, that command is typed into the shell once
-/// it starts (like Orca starting an agent CLI in a worktree terminal): when it exits, the shell
-/// stays open. A key whose earlier shell exited gets a plain shell.
-pub fn spawn_shell(ptys: &Ptys, key: &str, cwd: &Path, cols: u16, rows: u16, on_data: Channel<String>, run: Option<&[String]>) -> Result<Attached, String> {
-  let again = !ptys.started.lock().unwrap().insert(key.to_string());
-  let line = if again { None } else { run.map(command_line).transpose()? };
-  let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-  let mut cmd = CommandBuilder::new(shell);
-  cmd.arg("-l");
-  cmd.cwd(cwd);
-  spawn(ptys, key, cmd, cols, rows, on_data, line)
+/// A webview channel as a session viewer; a reloaded page leaves a dead channel, which ends it.
+pub fn channel_sink(on_data: Channel<String>) -> Sink {
+  Box::new(move |text| on_data.send(text).is_ok())
 }
 
-fn spawn(ptys: &Ptys, key: &str, mut cmd: CommandBuilder, cols: u16, rows: u16, on_data: Channel<String>, line: Option<String>) -> Result<Attached, String> {
-  let pair = native_pty_system().openpty(size(cols, rows)).map_err(|e| e.to_string())?;
-  cmd.env("TERM", "xterm-256color");
-  cmd.env("COLORTERM", "truecolor");
-  // An agent CLI started here must be a session of its own, not a child of whatever Claude Code
-  // session launched Kingu (its markers turn off transcripts and change behaviour).
-  for (key, _) in std::env::vars_os() {
-    if is_agent_session_marker(&key.to_string_lossy()) {
-      cmd.env_remove(&key);
-    }
-  }
-  let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
-  drop(pair.slave);
-
-  let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-  let mut writer = pair.master.take_writer().map_err(|e| e.to_string())?;
-  if let Some(line) = line {
-    // The tty buffers it until the shell reads its first line.
-    writer.write_all(format!("{line}\r").as_bytes()).map_err(|e| e.to_string())?;
-  }
-  let id = ptys.next_id.fetch_add(1, Ordering::Relaxed) + 1;
-  let output = Arc::new(Mutex::new(Output { scrollback: Scrollback::new(SCROLLBACK_BYTES), sink: Some(on_data) }));
-
-  let out = output.clone();
-  let sessions = ptys.sessions.clone();
-  let owner = key.to_string();
-  std::thread::spawn(move || {
-    let mut chunk = [0u8; 8192];
-    let mut pending: Vec<u8> = Vec::new();
-    loop {
-      match reader.read(&mut chunk) {
-        Ok(0) | Err(_) => break,
-        Ok(n) => {
-          pending.extend_from_slice(&chunk[..n]);
-          let cut = utf8_prefix_len(&pending);
-          if cut == 0 {
-            continue;
-          }
-          let text = String::from_utf8_lossy(&pending[..cut]).into_owned();
-          pending.drain(..cut);
-          out.lock().unwrap().emit(text);
-        }
-      }
-    }
-    out.lock().unwrap().emit(EXITED.to_string());
-    // The shell is gone: drop the session, unless a kill (or a new shell under this key) got there first.
-    let ended = {
-      let mut map = sessions.lock().unwrap();
-      if map.get(&owner).is_some_and(|s| s.id == id) { map.remove(&owner) } else { None }
-    };
-    if let Some(mut s) = ended {
-      let _ = s.child.wait();
-    }
-  });
-
-  let session = Session { id, writer, master: pair.master, child, output };
-  if let Some(old) = ptys.sessions.lock().unwrap().insert(key.to_string(), session) {
-    old.kill();
-  }
-  Ok(Attached { replay: String::new(), spawned: true })
-}
-
-/// Re-attaches to a live session without starting one (a terminal mounted hidden after a reload,
-/// so an agent CLI's output keeps reaching the page). Null when `key` has no live shell.
-#[tauri::command]
+/// Re-attaches to a live session without starting one (a terminal mounted hidden after a reload
+/// or restart, so an agent CLI's output keeps reaching the page). Null when `key` has no live shell.
+#[tauri::command(async)]
 pub fn pty_attach(ptys: State<'_, Ptys>, key: String, cols: Option<u16>, rows: Option<u16>, on_data: Channel<String>) -> Result<Option<Attached>, String> {
   validate_key(&key)?;
-  Ok(attach(&ptys, &key, cols.zip(rows), on_data))
+  ptys.attach(&key, cols.zip(rows), channel_sink(on_data))
 }
 
+/// Sync, so keystrokes reach the shell in the order they were typed (async commands run concurrently).
 #[tauri::command]
 pub fn pty_write(ptys: State<'_, Ptys>, key: String, data: String) -> Result<(), String> {
-  let mut sessions = ptys.sessions.lock().unwrap();
-  let s = sessions.get_mut(&key).ok_or("no such terminal")?;
-  s.writer.write_all(data.as_bytes()).map_err(|e| e.to_string())
+  ptys.write(&key, &data)
 }
 
 #[tauri::command]
 pub fn pty_resize(ptys: State<'_, Ptys>, key: String, cols: u16, rows: u16) -> Result<(), String> {
-  let sessions = ptys.sessions.lock().unwrap();
-  let s = sessions.get(&key).ok_or("no such terminal")?;
-  s.master.resize(size(cols, rows)).map_err(|e| e.to_string())
+  ptys.resize(&key, cols, rows)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pty_kill(ptys: State<'_, Ptys>, key: String) -> Result<(), String> {
-  let removed = ptys.sessions.lock().unwrap().remove(&key);
-  if let Some(s) = removed {
+  if ptys.kill(&key)? {
     log::info!("terminal {key} killed");
-    s.kill();
   }
   Ok(())
 }
 
-/// Keys of the live sessions, so a reloaded page can kill the ones it no longer shows.
-#[tauri::command]
-pub fn pty_list(ptys: State<'_, Ptys>) -> Vec<String> {
-  ptys.sessions.lock().unwrap().keys().cloned().collect()
+/// Live sessions (key, cwd, alive), so the page can re-attach after a restart and kill the ones it
+/// no longer shows.
+#[tauri::command(async)]
+pub fn pty_list(ptys: State<'_, Ptys>) -> Result<Vec<SessionInfo>, String> {
+  ptys.list()
+}
+
+/// Where sessions live: `"daemon"` (they survive quitting Kingu) or `"local"`.
+#[tauri::command(async)]
+pub fn pty_backend(ptys: State<'_, Ptys>) -> Result<&'static str, String> {
+  Ok(ptys.kind())
 }
 
 #[cfg(test)]
 mod tests {
-  use std::io::Write;
-  use std::path::Path;
-  use std::sync::{Arc, Mutex};
-  use std::time::{Duration, Instant};
+  use std::path::{Path, PathBuf};
 
-  use portable_pty::CommandBuilder;
-  use tauri::ipc::{Channel, InvokeResponseBody};
-
-  use super::{Ptys, Scrollback, attach, command_line, is_agent_session_marker, shell_quote, spawn, tail_start, utf8_prefix_len, validate_key};
+  use super::{daemon_dir, find_daemon};
 
   #[test]
-  fn holds_back_a_cut_thai_character() {
-    let thai = "ก".as_bytes(); // 3 bytes
-    let mut buf = b"ok ".to_vec();
-    buf.extend_from_slice(&thai[..2]);
-    assert_eq!(utf8_prefix_len(&buf), 3);
-    buf.push(thai[2]);
-    assert_eq!(utf8_prefix_len(&buf), buf.len());
+  fn daemon_dir_prefers_the_runtime_dir_and_stays_short() {
+    let data = Path::new("/Users/u/Library/Application Support/ai.anthov.kingu.studio");
+    assert_eq!(daemon_dir(data, None, Path::new("/tmp"), 501), data.join("ptyd"));
+    assert_eq!(daemon_dir(data, Some("/run/user/501".into()), Path::new("/tmp"), 501), PathBuf::from("/run/user/501/kingu"));
+    assert_eq!(daemon_dir(data, Some("relative".into()), Path::new("/tmp"), 501), data.join("ptyd"));
+    let long = PathBuf::from(format!("/Users/{}/Library/Application Support/ai.anthov.kingu.studio", "x".repeat(60)));
+    assert_eq!(daemon_dir(&long, None, Path::new("/tmp"), 501), PathBuf::from("/tmp/kingu-ptyd-501"));
   }
 
   #[test]
-  fn passes_invalid_bytes_through() {
-    assert_eq!(utf8_prefix_len(&[b'a', 0xff, b'b']), 3);
-  }
-
-  #[test]
-  fn drops_parent_agent_session_markers() {
-    assert!(is_agent_session_marker("CLAUDECODE"));
-    assert!(is_agent_session_marker("CLAUDE_CODE_CHILD_SESSION"));
-    assert!(!is_agent_session_marker("ANTHROPIC_API_KEY"));
-    assert!(!is_agent_session_marker("PATH"));
-  }
-
-  #[test]
-  fn quotes_arguments_for_the_shell() {
-    assert_eq!(shell_quote("go"), "go");
-    assert_eq!(shell_quote("./..."), "./...");
-    assert_eq!(shell_quote("แก้บั๊ก login"), "'แก้บั๊ก login'");
-    assert_eq!(shell_quote("it's $(rm -rf ~)"), "'it'\\''s $(rm -rf ~)'");
-    assert_eq!(shell_quote(""), "''");
-    assert_eq!(command_line(&["claude".into(), "a\nb".into()]).unwrap(), "claude 'a\nb'");
-    assert!(command_line(&[]).is_err());
-    assert!(command_line(&["x\0".into()]).is_err());
-  }
-
-  #[test]
-  fn scrollback_keeps_the_tail_within_its_cap() {
-    let mut sb = Scrollback::new(100);
-    sb.push("hello ");
-    assert_eq!(sb.contents(), "hello ");
-    for i in 0..1000 {
-      sb.push(&format!("{i:04}"));
-    }
-    assert!(sb.contents().len() <= 100);
-    assert!(sb.contents().ends_with("0999"));
-    // The buffer itself is trimmed too, not only the view of it.
-    assert!(sb.text.len() <= 125);
-  }
-
-  #[test]
-  fn scrollback_cuts_on_a_character_boundary() {
-    // 3-byte Thai characters: a 10-byte cap lands inside one; the cut moves forward to the next.
-    let s = "กขคงจฉ";
-    let start = tail_start(s, 10);
-    assert!(s.is_char_boundary(start));
-    assert_eq!(&s[start..], "งจฉ");
-    let mut sb = Scrollback::new(10);
-    for _ in 0..50 {
-      sb.push("กข");
-    }
-    assert!(sb.contents().len() <= 10);
-    assert!(sb.contents().chars().all(|c| c == 'ก' || c == 'ข'));
-  }
-
-  #[test]
-  fn scrollback_prefers_starting_at_a_line() {
-    let s = format!("{}\nline two\n", "x".repeat(50));
-    assert_eq!(&s[tail_start(&s, 20)..], "line two\n");
-  }
-
-  fn collecting() -> (Channel<String>, Arc<Mutex<String>>) {
-    let seen = Arc::new(Mutex::new(String::new()));
-    let sink = seen.clone();
-    let channel = Channel::new(move |body| {
-      if let InvokeResponseBody::Json(json) = body {
-        sink.lock().unwrap().push_str(&serde_json::from_str::<String>(&json).unwrap_or_default());
-      }
-      Ok(())
-    });
-    (channel, seen)
-  }
-
-  fn wait_for(what: &str, check: impl Fn() -> bool) {
-    let until = Instant::now() + Duration::from_secs(10);
-    while !check() {
-      assert!(Instant::now() < until, "timed out waiting for {what}");
-      std::thread::sleep(Duration::from_millis(20));
-    }
-  }
-
-  #[test]
-  fn reattaches_with_replay_and_drops_the_session_on_exit() {
-    if !Path::new("/bin/sh").exists() {
-      return;
-    }
-    let ptys = Ptys::default();
-    let mut cmd = CommandBuilder::new("/bin/sh");
-    cmd.args(["-c", "echo first; read line; echo got $line"]);
-    let (first, seen) = collecting();
-    let spawned = spawn(&ptys, "test:1", cmd, 80, 24, first, None).unwrap();
-    assert!(spawned.spawned);
-    wait_for("first output", || seen.lock().unwrap().contains("first"));
-
-    // A reload: a new channel attaches, gets the output so far, and the shell keeps running.
-    let (second, live) = collecting();
-    let attached = attach(&ptys, "test:1", Some((100, 30)), second).unwrap();
-    assert!(!attached.spawned);
-    assert!(attached.replay.contains("first"));
-    ptys.sessions.lock().unwrap().get_mut("test:1").unwrap().writer.write_all(b"again\r").unwrap();
-    wait_for("output on the new channel", || live.lock().unwrap().contains("got again"));
-    wait_for("exit", || ptys.sessions.lock().unwrap().is_empty());
-    assert!(live.lock().unwrap().contains("[process exited]"));
-    assert!(attach(&ptys, "test:1", None, collecting().0).is_none());
-  }
-
-  #[test]
-  fn validates_session_keys() {
-    for ok in ["panel:1", "ade::t3", "ade:fix-login:t12", "cli:fix-login:1700000000000", "a.b_c-D"] {
-      assert!(validate_key(ok).is_ok(), "{ok}");
-    }
-    for bad in ["", "a b", "a/b", "ก", "x\n", &"k".repeat(129)] {
-      assert!(validate_key(bad).is_err(), "{bad:?}");
-    }
-    assert!(validate_key(&"k".repeat(128)).is_ok());
+  fn finds_the_daemon_next_to_the_app_or_from_the_env() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(find_daemon(None, Some(tmp.path())).is_err());
+    let bin = tmp.path().join(if cfg!(windows) { "kingu-ptyd.exe" } else { "kingu-ptyd" });
+    std::fs::write(&bin, "").unwrap();
+    assert_eq!(find_daemon(None, Some(tmp.path())).unwrap(), bin);
+    assert_eq!(find_daemon(Some(bin.clone().into()), None).unwrap(), bin);
+    assert!(find_daemon(Some(tmp.path().join("nope").into()), Some(tmp.path())).is_err());
   }
 }

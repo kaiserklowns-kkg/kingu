@@ -126,6 +126,13 @@ needs no capability; a JS-side menu would need `core:menu:*` entries.
 | App Sandbox, `network.client` | no | no | not sandboxed: an IDE spawns shells, git, LSPs and agents anywhere |
 | camera, microphone, location, etc. | no | no | unused |
 
+The terminal host daemon `Contents/MacOS/kingu-ptyd` (crates/kingu-ptyd, built by
+`tools/build-ptyd.ts` as `externalBin`) is re-signed by `build-desktop.ts` with the hardened runtime,
+**no** entitlements and identifier `ai.anthov.kingu.studio.ptyd`; `release-verify.ts` checks it is
+present (`bundle.ptyd`) and its identifier, runtime flag and empty entitlements (`sign.kingu-ptyd.*`).
+It listens only on a 0600 Unix socket inside a 0700 per-user directory and rejects peers of another
+uid (`getpeereid` / `SO_PEERCRED`).
+
 Info.plist adds only `NSDesktopFolderUsageDescription`, `NSDocumentsFolderUsageDescription`,
 `NSDownloadsFolderUsageDescription` (projects opened there, and the terminal/agents/git running in
 them, trigger TCC prompts).

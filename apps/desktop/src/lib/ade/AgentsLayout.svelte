@@ -15,7 +15,6 @@
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { isDiffKey } from '#lib/workbench/scm.ts';
 	import Terminal from '#lib/terminal/Terminal.svelte';
-	import { adeKey, cliKey } from '#lib/terminal/sessions.ts';
 	import Composer from '#lib/agent/Composer.svelte';
 	import { taskTitleFromPrompt } from '#lib/agent/composerText.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
@@ -188,13 +187,13 @@
 		<!-- Agent CLIs (each task's main tab when it runs the Orca way), then every worktree's terminals. -->
 		{#each Object.entries(cliSessions.sessions) as [s, sess] (s + sess.startedAt)}
 			<div class={['absolute inset-0 bg-(--vscode-terminal-background,var(--vscode-panel-background))', (adeLayout.board || s !== key || activeTab !== 'main') && 'hidden']}>
-				<Terminal key={cliKey(s, sess.startedAt)} slug={s} run={sess.run} onoutput={() => cliSessions.output(s)} />
+				<Terminal key={cliSessions.ptyKey(s, sess.startedAt)} slug={s} run={cliSessions.runOf(s)} onoutput={() => cliSessions.output(s)} />
 			</div>
 		{/each}
 		{#each Object.entries(adeLayout.terminals) as [k, list] (k)}
 			{#each list as t (t.id)}
 				<div class={['absolute inset-0 bg-(--vscode-terminal-background,var(--vscode-panel-background))', (adeLayout.board || k !== key || activeTab !== t.id) && 'hidden']}>
-					<Terminal key={adeKey(k, t.id)} slug={k || undefined} run={t.run} />
+					<Terminal key={adeLayout.ptyKey(k, t.id)} slug={k || undefined} run={t.run} />
 				</div>
 			{/each}
 		{/each}
