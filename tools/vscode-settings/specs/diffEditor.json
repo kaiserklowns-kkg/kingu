@@ -1,0 +1,109 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/diffEditor.ts",
+	"export": "DIFF_EDITOR_SETTINGS",
+	"what": "diffEditor.*",
+	"entries": [
+		{
+			"id": "diffEditor.diffAlgorithm",
+			"group": "Diff Editor",
+			"th": "อัลกอริทึมที่ใช้คำนวณ diff",
+			"en": "Controls which algorithm computes the diff."
+		},
+		{
+			"id": "diffEditor.experimental.showEmptyDecorations",
+			"group": "Diff Editor",
+			"th": "แสดงเครื่องหมายว่างตรงตำแหน่งที่มีการแทรกหรือลบอักขระ"
+		},
+		{
+			"id": "diffEditor.experimental.showMoves",
+			"group": "Diff Editor",
+			"th": "แสดงโค้ดที่ถูกย้ายตำแหน่ง"
+		},
+		{
+			"id": "diffEditor.experimental.useTrueInlineView",
+			"group": "Diff Editor",
+			"th": "ในมุมมองแบบ inline ให้แสดงคำที่เปลี่ยนในบรรทัดเดียวกัน"
+		},
+		{
+			"id": "diffEditor.hideOriginalLineNumbers",
+			"group": "Diff Editor",
+			"th": "ซ่อนเลขบรรทัดต้นฉบับในมุมมองแบบ inline ค่า null ใช้ค่าเริ่มต้นของ editor"
+		},
+		{
+			"id": "diffEditor.hideUnchangedRegions.contextLineCount",
+			"group": "Diff Editor",
+			"th": "จำนวนบรรทัดบริบทรอบส่วนที่ไม่เปลี่ยน"
+		},
+		{
+			"id": "diffEditor.hideUnchangedRegions.enabled",
+			"group": "Diff Editor",
+			"th": "ซ่อนส่วนที่ไม่เปลี่ยนใน diff"
+		},
+		{
+			"id": "diffEditor.hideUnchangedRegions.minimumLineCount",
+			"group": "Diff Editor",
+			"th": "จำนวนบรรทัดขั้นต่ำของส่วนที่ไม่เปลี่ยนที่จะถูกซ่อน"
+		},
+		{
+			"id": "diffEditor.hideUnchangedRegions.revealLineCount",
+			"group": "Diff Editor",
+			"th": "จำนวนบรรทัดที่เปิดเผยเพิ่มต่อครั้งในส่วนที่ไม่เปลี่ยน"
+		},
+		{
+			"id": "diffEditor.ignoreTrimWhitespace",
+			"group": "Diff Editor",
+			"th": "ไม่นับช่องว่างหน้าและท้ายบรรทัดเป็นการเปลี่ยนแปลง"
+		},
+		{
+			"id": "diffEditor.maxComputationTime",
+			"group": "Diff Editor",
+			"th": "เวลาสูงสุดเป็นมิลลิวินาทีในการคำนวณ diff ค่า 0 คือไม่จำกัด"
+		},
+		{
+			"id": "diffEditor.maxFileSize",
+			"group": "Diff Editor",
+			"th": "ขนาดไฟล์สูงสุดเป็น MB ที่จะคำนวณ diff ค่า 0 คือไม่จำกัด"
+		},
+		{
+			"id": "diffEditor.renderGutterMenu",
+			"group": "Diff Editor",
+			"th": "แสดงขอบพิเศษสำหรับคำสั่งย้อนกลับและ stage"
+		},
+		{
+			"id": "diffEditor.renderIndicators",
+			"group": "Diff Editor",
+			"th": "แสดงเครื่องหมาย + และ - หน้าบรรทัดที่เพิ่มและลบ"
+		},
+		{
+			"id": "diffEditor.renderMarginRevertIcon",
+			"group": "Diff Editor",
+			"th": "แสดงลูกศรที่ขอบซ้ายเพื่อย้อนการเปลี่ยนแปลง"
+		},
+		{
+			"id": "diffEditor.renderSideBySide",
+			"group": "Diff Editor",
+			"th": "แสดง diff แบบสองฝั่ง"
+		},
+		{
+			"id": "diffEditor.renderSideBySideInlineBreakpoint",
+			"group": "Diff Editor",
+			"th": "ถ้า diff editor แคบกว่าค่านี้จะใช้มุมมองแบบ inline"
+		},
+		{
+			"id": "diffEditor.useInlineViewWhenSpaceIsLimited",
+			"group": "Diff Editor",
+			"th": "ใช้มุมมองแบบ inline เมื่อพื้นที่แคบ"
+		},
+		{
+			"id": "diffEditor.wordWrap",
+			"group": "Diff Editor",
+			"th": "การตัดบรรทัดใน diff",
+			"enumTh": [
+				"ไม่ตัดบรรทัด",
+				"ตัดบรรทัดตามความกว้าง",
+				"ตาม editor.wordWrap"
+			],
+			"en": "Controls how lines wrap in the diff editor."
+		}
+	]
+}

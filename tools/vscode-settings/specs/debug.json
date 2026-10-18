@@ -1,0 +1,159 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/debug.ts",
+	"export": "DEBUG_SETTINGS",
+	"what": "debug.*",
+	"entries": [
+		{
+			"id": "debug.openDebug",
+			"group": "Debug",
+			"th": "เปิดมุมมอง Run and Debug เมื่อใด"
+		},
+		{
+			"id": "debug.internalConsoleOptions",
+			"group": "Debug",
+			"th": "เปิด Debug Console เมื่อใด"
+		},
+		{
+			"id": "debug.saveBeforeStart",
+			"group": "Debug",
+			"th": "บันทึก editor ใดบ้างก่อนเริ่ม debug",
+			"enumTh": [
+				"บันทึกทุก editor ในกลุ่มที่ใช้งานอยู่",
+				"บันทึกทุก editor ในกลุ่มที่ใช้งานอยู่ ยกเว้นไฟล์ untitled",
+				"ไม่บันทึก"
+			]
+		},
+		{
+			"id": "debug.showVariableTypes",
+			"group": "Debug",
+			"th": "แสดงชนิดของตัวแปรในมุมมอง Variables ระหว่าง debug"
+		},
+		{
+			"id": "debug.allowBreakpointsEverywhere",
+			"group": "Debug",
+			"th": "ให้ตั้ง breakpoint ได้ในทุกไฟล์ ไม่ใช่เฉพาะภาษาที่มี debugger"
+		},
+		{
+			"id": "debug.gutterMiddleClickAction",
+			"group": "Debug",
+			"th": "สิ่งที่ทำเมื่อคลิกปุ่มกลางของเมาส์ที่ขอบ editor",
+			"enumTh": [
+				"เพิ่ม logpoint",
+				"เพิ่ม breakpoint แบบมีเงื่อนไข",
+				"เพิ่ม triggered breakpoint",
+				"ไม่ทำอะไร"
+			]
+		},
+		{
+			"id": "debug.openExplorerOnEnd",
+			"group": "Debug",
+			"th": "เปิดมุมมอง Explorer เองเมื่อ debug session จบ"
+		},
+		{
+			"id": "debug.inlineValues",
+			"group": "Debug",
+			"th": "แสดงค่าของตัวแปรต่อท้ายบรรทัดใน editor ระหว่าง debug",
+			"enumTh": [
+				"แสดงเสมอ",
+				"ไม่แสดง",
+				"แสดงเมื่อภาษารองรับตำแหน่งของค่า"
+			]
+		},
+		{
+			"id": "debug.toolBarLocation",
+			"group": "Debug",
+			"th": "ตำแหน่งของแถบเครื่องมือ debug",
+			"enumTh": [
+				"ลอยอยู่เหนือทุกมุมมอง",
+				"อยู่ในมุมมอง Run and Debug เท่านั้น",
+				"อยู่ใน command center ของแถบชื่อหน้าต่าง",
+				"ไม่แสดง"
+			]
+		},
+		{
+			"id": "debug.showInStatusBar",
+			"group": "Debug",
+			"th": "แสดงรายการ debug ในแถบสถานะเมื่อใด",
+			"enumTh": [
+				"ไม่แสดง",
+				"แสดงเสมอ",
+				"แสดงหลังเริ่ม debug ครั้งแรก"
+			]
+		},
+		{
+			"id": "debug.console.closeOnEnd",
+			"group": "Debug",
+			"th": "ปิด Debug Console เองเมื่อ debug session จบ"
+		},
+		{
+			"id": "debug.console.fontSize",
+			"group": "Debug",
+			"th": "ขนาดตัวอักษรของ Debug Console เป็นพิกเซล"
+		},
+		{
+			"id": "debug.console.fontFamily",
+			"group": "Debug",
+			"th": "ฟอนต์ของ Debug Console"
+		},
+		{
+			"id": "debug.console.lineHeight",
+			"group": "Debug",
+			"th": "ความสูงบรรทัดของ Debug Console เป็นพิกเซล ค่า 0 คือคำนวณจากขนาดตัวอักษร"
+		},
+		{
+			"id": "debug.console.wordWrap",
+			"group": "Debug",
+			"th": "ตัดบรรทัดใน Debug Console"
+		},
+		{
+			"id": "debug.console.historySuggestions",
+			"group": "Debug",
+			"th": "แนะนำสิ่งที่เคยพิมพ์ใน Debug Console"
+		},
+		{
+			"id": "debug.console.collapseIdenticalLines",
+			"group": "Debug",
+			"th": "ยุบบรรทัดที่ซ้ำกันติดกันใน Debug Console และแสดงจำนวนครั้ง"
+		},
+		{
+			"id": "debug.console.acceptSuggestionOnEnter",
+			"group": "Debug",
+			"th": "กด Enter เพื่อเลือกคำแนะนำใน Debug Console"
+		},
+		{
+			"id": "debug.console.maximumLines",
+			"group": "Debug",
+			"th": "จำนวนบรรทัดสูงสุดที่ Debug Console เก็บไว้"
+		},
+		{
+			"id": "debug.focusWindowOnBreak",
+			"group": "Debug",
+			"th": "ดึงหน้าต่างขึ้นมาด้านหน้าเมื่อ debugger หยุด"
+		},
+		{
+			"id": "debug.focusEditorOnBreak",
+			"group": "Debug",
+			"th": "ย้าย focus ไปที่ editor เมื่อ debugger หยุด"
+		},
+		{
+			"id": "debug.showBreakpointsInOverviewRuler",
+			"group": "Debug",
+			"th": "แสดง breakpoint ในแถบ overview ruler ของ editor"
+		},
+		{
+			"id": "debug.breakpointsView.presentation",
+			"group": "Debug",
+			"th": "แสดง breakpoint เป็นต้นไม้แยกตามไฟล์ หรือเป็นรายการเดียว"
+		},
+		{
+			"id": "debug.confirmOnExit",
+			"group": "Debug",
+			"th": "ถามก่อนปิดหน้าต่างเมื่อมี debug session ทำงานอยู่"
+		},
+		{
+			"id": "debug.enableStatusBarColor",
+			"group": "Debug",
+			"th": "เปลี่ยนสีแถบสถานะระหว่าง debug"
+		}
+	]
+}

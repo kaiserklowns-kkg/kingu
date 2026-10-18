@@ -1,0 +1,306 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/editorManagement.ts",
+	"export": "EDITOR_MANAGEMENT_SETTINGS",
+	"what": "workbench.editor.* and editor associations",
+	"entries": [
+		{
+			"id": "workbench.editor.showTabs",
+			"group": "Workbench",
+			"th": "การแสดงแท็บของ editor",
+			"enumTh": [
+				"แท็บทุก editor",
+				"แท็บเดียวของ editor ที่ใช้งาน",
+				"ไม่แสดงแท็บ"
+			]
+		},
+		{
+			"id": "workbench.editor.tabSizing",
+			"group": "Workbench",
+			"th": "ขนาดของแท็บ",
+			"enumTh": [
+				"กว้างพอดีชื่อเสมอ",
+				"หดได้เมื่อพื้นที่ไม่พอ",
+				"กว้างเท่ากันทุกแท็บ"
+			]
+		},
+		{
+			"id": "workbench.editor.tabSizingFixedMinWidth",
+			"group": "Workbench",
+			"th": "ความกว้างต่ำสุดของแท็บเมื่อขนาดแท็บเป็น fixed"
+		},
+		{
+			"id": "workbench.editor.tabSizingFixedMaxWidth",
+			"group": "Workbench",
+			"th": "ความกว้างสูงสุดของแท็บเมื่อขนาดแท็บเป็น fixed"
+		},
+		{
+			"id": "workbench.editor.pinnedTabSizing",
+			"group": "Workbench",
+			"th": "ขนาดของแท็บที่ปักหมุดไว้",
+			"enumTh": [
+				"ขนาดเท่าแท็บอื่น",
+				"แสดงเฉพาะไอคอน",
+				"หดเหลือพอเห็นชื่อบางส่วน"
+			]
+		},
+		{
+			"id": "workbench.editor.pinnedTabsOnSeparateRow",
+			"group": "Workbench",
+			"th": "แสดงแท็บที่ปักหมุดในแถวแยกด้านบน"
+		},
+		{
+			"id": "workbench.editor.wrapTabs",
+			"group": "Workbench",
+			"th": "ขึ้นบรรทัดใหม่ให้แท็บเมื่อเกินความกว้าง แทนการเลื่อน"
+		},
+		{
+			"id": "workbench.editor.showIcons",
+			"group": "Workbench",
+			"th": "แสดงไอคอนไฟล์บนแท็บ"
+		},
+		{
+			"id": "workbench.editor.showTabIndex",
+			"group": "Workbench",
+			"th": "แสดงลำดับที่ของแท็บ"
+		},
+		{
+			"id": "workbench.editor.highlightModifiedTabs",
+			"group": "Workbench",
+			"th": "ขีดเส้นบนแท็บที่ยังไม่บันทึก"
+		},
+		{
+			"id": "workbench.editor.labelFormat",
+			"group": "Workbench",
+			"th": "รูปแบบคำอธิบายโฟลเดอร์ต่อท้ายชื่อแท็บ",
+			"enumTh": [
+				"แสดงโฟลเดอร์เฉพาะเมื่อชื่อไฟล์ซ้ำกัน",
+				"แสดงชื่อโฟลเดอร์แม่",
+				"แสดงพาธโฟลเดอร์เทียบกับ workspace",
+				"แสดงพาธโฟลเดอร์เต็ม"
+			]
+		},
+		{
+			"id": "workbench.editor.untitled.labelFormat",
+			"group": "Workbench",
+			"th": "ชื่อแท็บของไฟล์ที่ยังไม่มีชื่อ",
+			"enumTh": [
+				"ใช้บรรทัดแรกของเนื้อหา",
+				"ใช้ชื่อ Untitled-N"
+			]
+		},
+		{
+			"id": "workbench.editor.customLabels.enabled",
+			"group": "Workbench",
+			"th": "ใช้ชื่อแท็บที่กำหนดเองตาม pattern"
+		},
+		{
+			"id": "workbench.editor.customLabels.patterns",
+			"group": "Workbench",
+			"th": "ชื่อแท็บที่กำหนดเอง: glob ของพาธ ไปยังแม่แบบชื่อ เช่น ${dirname}/${filename}.${extname}"
+		},
+		{
+			"id": "workbench.editor.decorations.colors",
+			"group": "Workbench",
+			"th": "ใช้สีของสถานะ Git กับชื่อแท็บ"
+		},
+		{
+			"id": "workbench.editor.decorations.badges",
+			"group": "Workbench",
+			"th": "แสดงตัวอักษรสถานะ Git บนแท็บ"
+		},
+		{
+			"id": "workbench.editor.tabActionLocation",
+			"group": "Workbench",
+			"th": "ตำแหน่งปุ่มปิดและปุ่มเลิกปักหมุดบนแท็บ",
+			"enumTh": [
+				"ด้านซ้าย",
+				"ด้านขวา"
+			]
+		},
+		{
+			"id": "workbench.editor.tabActionCloseVisibility",
+			"group": "Workbench",
+			"th": "แสดงปุ่มปิดบนแท็บ"
+		},
+		{
+			"id": "workbench.editor.tabActionUnpinVisibility",
+			"group": "Workbench",
+			"th": "แสดงปุ่มเลิกปักหมุดบนแท็บที่ปักหมุด"
+		},
+		{
+			"id": "workbench.editor.tabActionReserveSpace",
+			"group": "Workbench",
+			"th": "เว้นที่ให้ปุ่มบนแท็บเสมอ แม้ปุ่มจะซ่อนอยู่"
+		},
+		{
+			"id": "workbench.editor.titleScrollbarSizing",
+			"group": "Workbench",
+			"th": "ความหนาของแถบเลื่อนของแถบแท็บ",
+			"enumTh": [
+				"ขนาดปกติ",
+				"ขนาดใหญ่ จับง่ายขึ้น"
+			]
+		},
+		{
+			"id": "workbench.editor.titleScrollbarVisibility",
+			"group": "Workbench",
+			"th": "การแสดงแถบเลื่อนของแถบแท็บ",
+			"enumTh": [
+				"แสดงเมื่อชี้เมาส์",
+				"แสดงเสมอ",
+				"ไม่แสดง"
+			]
+		},
+		{
+			"id": "workbench.editor.doubleClickTabToToggleEditorGroupSizes",
+			"group": "Workbench",
+			"th": "ดับเบิลคลิกแท็บเพื่อขยายกลุ่ม editor",
+			"enumTh": [
+				"ขยายกลุ่มเต็มพื้นที่และซ่อนกลุ่มอื่น",
+				"ขยายกลุ่มให้ใหญ่ที่สุดโดยไม่ซ่อนกลุ่มอื่น",
+				"ไม่ทำอะไร"
+			]
+		},
+		{
+			"id": "workbench.editor.scrollToSwitchTabs",
+			"group": "Workbench",
+			"th": "หมุนล้อเมาส์บนแถบแท็บเพื่อสลับแท็บ กด Shift เพื่อสลับพฤติกรรมชั่วคราว"
+		},
+		{
+			"id": "workbench.editor.mouseBackForwardToNavigate",
+			"group": "Workbench",
+			"th": "ใช้ปุ่มเมาส์ที่ 4 และ 5 เพื่อย้อนกลับและไปข้างหน้า"
+		},
+		{
+			"id": "workbench.editor.navigationScope",
+			"group": "Workbench",
+			"th": "ขอบเขตของประวัติ Go Back และ Go Forward",
+			"enumTh": [
+				"ทุก editor ทุกกลุ่ม",
+				"เฉพาะกลุ่ม editor ที่ใช้งาน",
+				"เฉพาะ editor ที่ใช้งาน"
+			]
+		},
+		{
+			"id": "workbench.editor.preventPinnedEditorClose",
+			"group": "Workbench",
+			"th": "ป้องกันไม่ให้ปิดแท็บที่ปักหมุดด้วยคีย์บอร์ดหรือคลิกกลาง",
+			"enumTh": [
+				"ป้องกันทั้งคีย์บอร์ดและคลิกกลาง",
+				"ป้องกันเฉพาะคีย์บอร์ด",
+				"ป้องกันเฉพาะคลิกกลาง",
+				"ไม่ป้องกัน"
+			]
+		},
+		{
+			"id": "workbench.editor.openPositioning",
+			"group": "Workbench",
+			"th": "ตำแหน่งของแท็บที่เปิดใหม่",
+			"enumTh": [
+				"ทางซ้ายของแท็บที่ใช้งาน",
+				"ทางขวาของแท็บที่ใช้งาน",
+				"แท็บแรก",
+				"แท็บสุดท้าย"
+			]
+		},
+		{
+			"id": "workbench.editor.openSideBySideDirection",
+			"group": "Workbench",
+			"th": "ทิศทางที่เปิด editor ไว้ข้างกัน",
+			"enumTh": [
+				"ทางขวา",
+				"ด้านล่าง"
+			]
+		},
+		{
+			"id": "workbench.editor.splitSizing",
+			"group": "Workbench",
+			"th": "ขนาดของกลุ่ม editor เมื่อแบ่งหน้าจอ",
+			"enumTh": [
+				"แบ่งครึ่งกลุ่มเดิม เว้นแต่ทุกกลุ่มเท่ากันอยู่แล้วจึงเฉลี่ยทั้งหมด",
+				"เฉลี่ยทุกกลุ่มให้เท่ากัน",
+				"แบ่งครึ่งกลุ่มที่ใช้งาน"
+			]
+		},
+		{
+			"id": "workbench.editor.closeEmptyGroups",
+			"group": "Workbench",
+			"th": "ปิดกลุ่ม editor อัตโนมัติเมื่อแท็บสุดท้ายถูกปิด"
+		},
+		{
+			"id": "workbench.editor.focusRecentEditorAfterClose",
+			"group": "Workbench",
+			"th": "เมื่อปิดแท็บ ให้ไปที่แท็บที่ใช้ล่าสุด แทนแท็บถัดไป"
+		},
+		{
+			"id": "workbench.editor.revealIfOpen",
+			"group": "Workbench",
+			"th": "ถ้าไฟล์เปิดอยู่ในกลุ่มอื่นแล้ว ให้ไปที่กลุ่มนั้นแทนการเปิดซ้ำ"
+		},
+		{
+			"id": "workbench.editor.limit.enabled",
+			"group": "Workbench",
+			"th": "จำกัดจำนวน editor ที่เปิด โดยปิดแท็บที่ใช้น้อยที่สุดก่อน"
+		},
+		{
+			"id": "workbench.editor.limit.value",
+			"group": "Workbench",
+			"th": "จำนวน editor สูงสุดที่เปิดได้"
+		},
+		{
+			"id": "workbench.editor.limit.perEditorGroup",
+			"group": "Workbench",
+			"th": "นับขีดจำกัดแยกต่อกลุ่ม editor"
+		},
+		{
+			"id": "workbench.editor.limit.excludeDirty",
+			"group": "Workbench",
+			"th": "ไม่นับ editor ที่ยังไม่บันทึกในขีดจำกัด"
+		},
+		{
+			"id": "workbench.editor.restoreEditors",
+			"group": "Workbench",
+			"th": "เปิดแท็บเดิมคืนเมื่อเปิดโฟลเดอร์อีกครั้ง"
+		},
+		{
+			"id": "workbench.editor.restoreViewState",
+			"group": "Workbench",
+			"th": "จำตำแหน่งเลื่อนและเคอร์เซอร์ของไฟล์ที่ปิดไป เมื่อเปิดใหม่"
+		},
+		{
+			"id": "workbench.editor.sharedViewState",
+			"group": "Workbench",
+			"th": "ใช้ตำแหน่งล่าสุดจากกลุ่มอื่น เมื่อกลุ่มนี้ไม่เคยเปิดไฟล์นั้น"
+		},
+		{
+			"id": "workbench.editor.enablePreviewFromQuickOpen",
+			"group": "Workbench",
+			"th": "เปิดไฟล์จาก Quick Open เป็นแท็บพรีวิว"
+		},
+		{
+			"id": "workbench.editor.enablePreviewFromCodeNavigation",
+			"group": "Workbench",
+			"th": "ให้แท็บพรีวิวยังเป็นพรีวิวเมื่อกระโดดไปยังโค้ดอื่นจากแท็บนั้น"
+		},
+		{
+			"id": "workbench.editor.empty.hint",
+			"group": "Workbench",
+			"th": "แสดงคำแนะนำในไฟล์ใหม่ที่ยังว่าง",
+			"enumTh": [
+				"แสดงคำแนะนำ",
+				"ซ่อน"
+			]
+		},
+		{
+			"id": "workbench.editor.closeOnFileDelete",
+			"group": "Workbench",
+			"th": "ปิดแท็บเมื่อไฟล์ถูกลบนอก Kingu"
+		},
+		{
+			"id": "workbench.editorLargeFileConfirmation",
+			"group": "Workbench",
+			"th": "ขนาดไฟล์เป็น MB ที่ต้องยืนยันก่อนเปิดใน editor",
+			"default": 10
+		}
+	]
+}

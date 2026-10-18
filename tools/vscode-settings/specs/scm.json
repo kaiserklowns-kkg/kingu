@@ -1,0 +1,81 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/scm.ts",
+	"export": "SCM_SETTINGS",
+	"what": "scm.*",
+	"entries": [
+		{
+			"id": "scm.countBadge",
+			"group": "Source Control",
+			"th": "ตัวเลขบนไอคอน Source Control Kingu แสดง repository เดียว ค่า focused จึงเท่ากับ all",
+			"enumTh": [
+				"รวมการเปลี่ยนแปลงทั้งหมด",
+				"นับเฉพาะ repository ที่เลือกอยู่",
+				"ไม่แสดงตัวเลข"
+			]
+		},
+		{
+			"id": "scm.alwaysShowActions",
+			"group": "Source Control",
+			"th": "แสดงปุ่มของแต่ละไฟล์ตลอดโดยไม่ต้องชี้เมาส์"
+		},
+		{
+			"id": "scm.defaultViewMode",
+			"group": "Source Control",
+			"th": "แสดงการเปลี่ยนแปลงเป็นต้นไม้ตามโฟลเดอร์หรือเป็นรายการ",
+			"enumTh": [
+				"แสดงเป็นต้นไม้ตามโฟลเดอร์",
+				"แสดงเป็นรายการ"
+			]
+		},
+		{
+			"id": "scm.defaultViewSortKey",
+			"group": "Source Control",
+			"th": "การเรียงการเปลี่ยนแปลงเมื่อแสดงเป็นรายการ",
+			"enumTh": [
+				"เรียงตามชื่อไฟล์",
+				"เรียงตาม path",
+				"เรียงตามสถานะ"
+			]
+		},
+		{
+			"id": "scm.autoReveal",
+			"group": "Source Control",
+			"th": "เลือกไฟล์ใน Source Control ตาม editor ที่เปิดอยู่"
+		},
+		{
+			"id": "scm.inputFontFamily",
+			"group": "Source Control",
+			"th": "ฟอนต์ของช่องข้อความ commit ใช้ default สำหรับฟอนต์ของ workbench หรือ editor สำหรับฟอนต์ของ editor"
+		},
+		{
+			"id": "scm.inputFontSize",
+			"group": "Source Control",
+			"th": "ขนาดตัวอักษรของช่องข้อความ commit เป็นพิกเซล"
+		},
+		{
+			"id": "scm.inputMaxLineCount",
+			"group": "Source Control",
+			"th": "จำนวนบรรทัดสูงสุดที่ช่องข้อความ commit ขยายได้"
+		},
+		{
+			"id": "scm.inputMinLineCount",
+			"group": "Source Control",
+			"th": "จำนวนบรรทัดต่ำสุดของช่องข้อความ commit"
+		},
+		{
+			"id": "scm.showActionButton",
+			"group": "Source Control",
+			"th": "แสดงปุ่มหลักใต้ช่องข้อความ commit"
+		},
+		{
+			"id": "scm.showInputActionButton",
+			"group": "Source Control",
+			"th": "แสดงปุ่ม commit ในช่องข้อความ commit"
+		},
+		{
+			"id": "scm.compactFolders",
+			"group": "Source Control",
+			"th": "รวมโฟลเดอร์ที่มีโฟลเดอร์ย่อยเดียวเป็นแถวเดียวเมื่อแสดงเป็นต้นไม้"
+		}
+	]
+}

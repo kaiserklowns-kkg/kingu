@@ -1,0 +1,338 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/terminal.ts",
+	"export": "TERMINAL_SETTINGS",
+	"what": "terminal.*",
+	"entries": [
+		{
+			"id": "terminal.integrated.fontWeight",
+			"group": "Terminal",
+			"th": "น้ำหนักตัวอักษรของ terminal"
+		},
+		{
+			"id": "terminal.integrated.lineHeight",
+			"group": "Terminal",
+			"th": "ตัวคูณความสูงบรรทัดของ terminal"
+		},
+		{
+			"id": "terminal.integrated.letterSpacing",
+			"group": "Terminal",
+			"th": "ระยะห่างตัวอักษรเป็นพิกเซล"
+		},
+		{
+			"id": "terminal.integrated.cursorStyle",
+			"group": "Terminal",
+			"th": "รูปแบบเคอร์เซอร์ของ terminal"
+		},
+		{
+			"id": "terminal.integrated.cursorBlinking",
+			"group": "Terminal",
+			"th": "เคอร์เซอร์ของ terminal กะพริบ"
+		},
+		{
+			"id": "terminal.integrated.cursorWidth",
+			"group": "Terminal",
+			"th": "ความกว้างเคอร์เซอร์เมื่อ cursorStyle เป็น line"
+		},
+		{
+			"id": "terminal.integrated.scrollback",
+			"group": "Terminal",
+			"th": "จำนวนบรรทัดย้อนหลังที่เก็บไว้"
+		},
+		{
+			"id": "terminal.integrated.copyOnSelection",
+			"group": "Terminal",
+			"th": "คัดลอกข้อความที่เลือกใน terminal ทันที"
+		},
+		{
+			"id": "terminal.integrated.macOptionIsMeta",
+			"group": "Terminal",
+			"th": "ใช้ปุ่ม Option เป็น Meta บน macOS"
+		},
+		{
+			"id": "terminal.integrated.altClickMovesCursor",
+			"group": "Terminal",
+			"th": "⌥/Alt + คลิกเพื่อย้ายเคอร์เซอร์ของ shell"
+		},
+		{
+			"id": "terminal.integrated.drawBoldTextInBrightColors",
+			"group": "Terminal",
+			"th": "ตัวหนาใช้สีสว่าง"
+		},
+		{
+			"id": "terminal.integrated.minimumContrastRatio",
+			"group": "Terminal",
+			"th": "ปรับสีตัวอักษรให้มีความต่างของสีอย่างน้อยเท่านี้ 1 = ไม่ปรับ"
+		},
+		{
+			"id": "terminal.integrated.mouseWheelScrollSensitivity",
+			"group": "Terminal",
+			"th": "ตัวคูณความเร็วเลื่อนด้วยล้อเมาส์"
+		},
+		{
+			"id": "terminal.integrated.fastScrollSensitivity",
+			"group": "Terminal",
+			"th": "ตัวคูณความเร็วเลื่อนเมื่อกด ⌥/Alt"
+		},
+		{
+			"id": "terminal.integrated.cwd",
+			"group": "Terminal",
+			"th": "โฟลเดอร์เริ่มต้นของ terminal ใน panel"
+		},
+		{
+			"id": "terminal.integrated.env.osx",
+			"group": "Terminal",
+			"th": "ตัวแปร environment เพิ่มเติมของ terminal บน macOS",
+			"scope": "application"
+		},
+		{
+			"id": "terminal.integrated.env.linux",
+			"group": "Terminal",
+			"th": "ตัวแปร environment เพิ่มเติมของ terminal บน Linux",
+			"scope": "application"
+		},
+		{
+			"id": "terminal.integrated.confirmOnKill",
+			"group": "Terminal",
+			"th": "ถามก่อนปิด terminal ที่มีโปรเซสทำงานอยู่",
+			"enumTh": [
+				"ไม่ถาม",
+				"ถามเมื่อ terminal อยู่ในพื้นที่ editor",
+				"ถามเมื่อ terminal อยู่ใน panel",
+				"ถามทั้งใน editor และ panel"
+			]
+		},
+		{
+			"id": "terminal.integrated.fontWeightBold",
+			"group": "Terminal",
+			"th": "น้ำหนักตัวอักษรของข้อความตัวหนาใน terminal"
+		},
+		{
+			"id": "terminal.integrated.cursorStyleInactive",
+			"group": "Terminal",
+			"th": "รูปแบบเคอร์เซอร์เมื่อ terminal ไม่ได้โฟกัส"
+		},
+		{
+			"id": "terminal.integrated.tabStopWidth",
+			"group": "Terminal",
+			"th": "จำนวนช่องของ tab stop ใน terminal"
+		},
+		{
+			"id": "terminal.integrated.wordSeparators",
+			"group": "Terminal",
+			"th": "ตัวอักษรที่ใช้แบ่งคำเมื่อดับเบิลคลิกเลือกคำใน terminal"
+		},
+		{
+			"id": "terminal.integrated.macOptionClickForcesSelection",
+			"group": "Terminal",
+			"th": "บน macOS ⌥ + คลิกบังคับเลือกข้อความแม้โปรแกรมจะจับเมาส์อยู่"
+		},
+		{
+			"id": "terminal.integrated.rightClickBehavior",
+			"group": "Terminal",
+			"th": "สิ่งที่เกิดขึ้นเมื่อคลิกขวาใน terminal",
+			"enumTh": [
+				"แสดงเมนู",
+				"คัดลอกเมื่อมีข้อความที่เลือก ไม่เช่นนั้นวาง",
+				"วางเสมอ",
+				"เลือกคำใต้เคอร์เซอร์แล้วแสดงเมนู",
+				"ไม่ทำอะไร"
+			]
+		},
+		{
+			"id": "terminal.integrated.middleClickBehavior",
+			"group": "Terminal",
+			"th": "สิ่งที่เกิดขึ้นเมื่อคลิกปุ่มกลางใน terminal",
+			"enumTh": [
+				"ไม่ทำอะไรพิเศษ",
+				"วางข้อความจาก clipboard"
+			]
+		},
+		{
+			"id": "terminal.integrated.smoothScrolling",
+			"group": "Terminal",
+			"th": "เลื่อน terminal แบบนุ่มนวลเมื่อใช้ล้อเมาส์"
+		},
+		{
+			"id": "terminal.integrated.ignoreBracketedPasteMode",
+			"group": "Terminal",
+			"th": "ไม่ใช้ bracketed paste แม้โปรแกรมใน terminal จะขอ"
+		},
+		{
+			"id": "terminal.integrated.fontRendering",
+			"group": "Terminal",
+			"th": "การแสดงผลตัวอักษรของ terminal บน macOS",
+			"enumTh": [
+				"ใช้แบบเดียวกับ workbench",
+				"ลบรอยหยักแบบ grayscale"
+			]
+		},
+		{
+			"id": "terminal.integrated.enableVisualBell",
+			"group": "Terminal",
+			"th": "แสดงไอคอนกระดิ่งเมื่อโปรแกรมใน terminal ส่งเสียงกระดิ่ง"
+		},
+		{
+			"id": "terminal.integrated.bellDuration",
+			"group": "Terminal",
+			"th": "เวลาเป็นมิลลิวินาทีที่ไอคอนกระดิ่งแสดงอยู่"
+		},
+		{
+			"id": "terminal.integrated.enableMultiLinePasteWarning",
+			"group": "Terminal",
+			"th": "เตือนก่อนวางข้อความหลายบรรทัดลงใน terminal",
+			"enumTh": [
+				"เตือนเมื่อ shell ไม่รองรับ bracketed paste",
+				"เตือนเสมอ",
+				"ไม่เตือน"
+			]
+		},
+		{
+			"id": "terminal.integrated.showLinkHover",
+			"group": "Terminal",
+			"th": "แสดงคำแนะนำเมื่อเลื่อนเมาส์ไปบนลิงก์ใน terminal"
+		},
+		{
+			"id": "terminal.integrated.enableFileLinks",
+			"group": "Terminal",
+			"th": "ตรวจหาลิงก์ไปยังไฟล์ใน terminal",
+			"enumTh": [
+				"ไม่ตรวจหา",
+				"ตรวจหาเสมอ",
+				"ตรวจหาเมื่อไม่ใช่ remote"
+			]
+		},
+		{
+			"id": "terminal.integrated.allowedLinkSchemes",
+			"group": "Terminal",
+			"th": "scheme ของลิงก์ที่เปิดได้จาก terminal"
+		},
+		{
+			"id": "terminal.integrated.ignoreProcessNames",
+			"group": "Terminal",
+			"th": "ชื่อโปรเซสที่ไม่นับว่ากำลังทำงานเมื่อถามก่อนปิด terminal"
+		},
+		{
+			"id": "terminal.integrated.splitCwd",
+			"group": "Terminal",
+			"th": "โฟลเดอร์เริ่มต้นของ terminal ที่แยกออกมา",
+			"enumTh": [
+				"โฟลเดอร์ราก workspace",
+				"โฟลเดอร์ที่ terminal ต้นทางเริ่ม",
+				"โฟลเดอร์ปัจจุบันของ terminal ต้นทาง"
+			]
+		},
+		{
+			"id": "terminal.integrated.hideOnLastClosed",
+			"group": "Terminal",
+			"th": "ซ่อน panel ของ terminal เมื่อปิด terminal สุดท้าย"
+		},
+		{
+			"id": "terminal.integrated.hideOnStartup",
+			"group": "Terminal",
+			"th": "ซ่อน panel ของ terminal ตอนเริ่ม Kingu",
+			"enumTh": [
+				"ไม่ซ่อน",
+				"ซ่อนเมื่อไม่มี terminal ที่กู้คืนมา",
+				"ซ่อนเสมอ"
+			]
+		},
+		{
+			"id": "terminal.integrated.enablePersistentSessions",
+			"group": "Terminal",
+			"th": "เก็บ session ของ terminal ไว้หลัง reload หรือเปิด Kingu ใหม่"
+		},
+		{
+			"id": "terminal.integrated.inheritEnv",
+			"group": "Terminal",
+			"th": "shell ใหม่รับ environment ของ Kingu"
+		},
+		{
+			"id": "terminal.integrated.detectLocale",
+			"group": "Terminal",
+			"th": "ตั้งค่า $LANG ของ shell ให้ตรงกับภาษาของ Kingu",
+			"enumTh": [
+				"ตั้งเมื่อ $LANG ยังไม่ใช่ UTF-8",
+				"ไม่ตั้ง",
+				"ตั้งเสมอ"
+			]
+		},
+		{
+			"id": "terminal.integrated.resizeDimensionsOverlay.enabled",
+			"group": "Terminal",
+			"th": "แสดงจำนวนคอลัมน์และแถวขณะปรับขนาด terminal"
+		},
+		{
+			"id": "terminal.integrated.mouseWheelZoom",
+			"group": "Terminal",
+			"th": "กดปุ่ม ⌘ หรือ Ctrl แล้วหมุนล้อเมาส์เพื่อซูมตัวอักษรของ terminal"
+		},
+		{
+			"id": "terminal.integrated.autoReplies",
+			"group": "Terminal",
+			"th": "ข้อความที่ตอบให้อัตโนมัติเมื่อเจอข้อความนั้นใน terminal"
+		},
+		{
+			"id": "terminal.integrated.enableNotifications",
+			"group": "Terminal",
+			"th": "แสดงการแจ้งเตือนที่โปรแกรมใน terminal ส่งมาด้วย OSC 99"
+		},
+		{
+			"id": "terminal.integrated.confirmOnExit",
+			"group": "Terminal",
+			"th": "ถามก่อนปิดหน้าต่างเมื่อยังมี session ของ terminal",
+			"enumTh": [
+				"ไม่ถาม",
+				"ถามเสมอเมื่อมี terminal",
+				"ถามเมื่อมีโปรเซสทำงานใน terminal"
+			]
+		},
+		{
+			"id": "terminal.integrated.sendKeybindingsToShell",
+			"group": "Terminal",
+			"th": "ส่งคีย์ลัดส่วนใหญ่ไปยัง shell แทน workbench"
+		},
+		{
+			"id": "terminal.integrated.commandsToSkipShell",
+			"group": "Terminal",
+			"th": "คำสั่งที่คีย์ลัดไม่ถูกส่งไปยัง shell แต่ให้ workbench จัดการ"
+		},
+		{
+			"id": "terminal.integrated.allowChords",
+			"group": "Terminal",
+			"th": "ให้คีย์ลัดสองจังหวะทำงานขณะอยู่ใน terminal"
+		},
+		{
+			"id": "terminal.integrated.tabs.enabled",
+			"group": "Terminal",
+			"th": "แสดงรายการ terminal ข้าง terminal"
+		},
+		{
+			"id": "terminal.integrated.tabs.hideCondition",
+			"group": "Terminal",
+			"th": "เงื่อนไขที่ซ่อนรายการ terminal",
+			"enumTh": [
+				"แสดงเสมอ",
+				"ซ่อนเมื่อมี terminal เดียว",
+				"ซ่อนเมื่อมีกลุ่มเดียว"
+			]
+		},
+		{
+			"id": "terminal.integrated.tabs.location",
+			"group": "Terminal",
+			"th": "ตำแหน่งของรายการ terminal",
+			"enumTh": [
+				"ซ้าย",
+				"ขวา"
+			]
+		},
+		{
+			"id": "terminal.integrated.tabs.focusMode",
+			"group": "Terminal",
+			"th": "คลิกครั้งเดียวหรือดับเบิลคลิกที่รายการเพื่อโฟกัส terminal",
+			"enumTh": [
+				"คลิกครั้งเดียว",
+				"ดับเบิลคลิก"
+			]
+		}
+	]
+}

@@ -8,7 +8,8 @@
 	import { commands } from '#lib/workbench/commands.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
-	import { allowedIn, scopeRule, settingsInView, settingTitle, validate, type SettingSchema, type SettingScope } from './registry';
+	import { allowedIn, mergesByKey, scopeRule, settingsInView, settingSubgroup, settingTitle, SUBGROUPS, validate, type SettingSchema, type SettingScope } from './registry';
+	import { schemaChoices } from './jsonSchema';
 	import { settings } from './settings.svelte';
 	import { settingSchemas } from './schemas.svelte';
 	import ListSetting from './ListSetting.svelte';
@@ -32,10 +33,20 @@
 	const scopeProblems = $derived(settings.problems.filter((p) => p.scope === scope));
 	/** Theme pickers show the theme's label, other enums their value (like VS Code). */
 	const labelled = (s: SettingSchema) => s.id.endsWith('ColorTheme');
+	/**
+	 * Groups in registry order; inside a group its own settings first, then each VS Code sub-group
+	 * (Text Editor › Cursor, Workbench › Breadcrumbs, …) under its own heading.
+	 */
 	const groups = $derived.by(() => {
-		const out = new Map<string, SettingSchema[]>();
-		for (const s of visible) out.set(s.group, [...(out.get(s.group) ?? []), s]);
-		return [...out];
+		const out = new Map<string, Map<string | null, SettingSchema[]>>();
+		for (const s of visible) {
+			const subs = out.get(s.group) ?? new Map<string | null, SettingSchema[]>([[null, []]]);
+			out.set(s.group, subs);
+			const sub = settingSubgroup(s);
+			subs.set(sub, [...(subs.get(sub) ?? []), s]);
+		}
+		const order = (group: string) => [null, ...(SUBGROUPS[group] ?? []).map(([label]) => label)];
+		return [...out].map(([group, subs]) => [group, order(group).flatMap((sub) => (subs.get(sub)?.length ? [[sub, subs.get(sub)!] as const] : []))] as const);
 	});
 	const layer = $derived(settings.layer(scope));
 
@@ -44,8 +55,10 @@
 		const own = validate(s, settings.inspect(s.id, scope));
 		const below = BELOW[scope].filter((sc) => allowedIn(s, sc)).map((sc) => validate(s, settings.inspect(s.id, sc)));
 		// Object settings merge across layers (files.exclude adds to the defaults).
-		if (s.type === 'object') return Object.assign({}, s.default, ...below.toReversed(), own);
-		return own ?? below.find((v) => v !== undefined) ?? s.default;
+		if (mergesByKey(s)) return Object.assign({}, s.default, ...below.toReversed(), own);
+		// `null` is a real value for some VS Code settings (search.maxResults: no limit).
+		const inherited = below.find((v) => v !== undefined);
+		return own !== undefined ? own : inherited !== undefined ? inherited : s.default;
 	}
 
 	const modifiedHere = (s: SettingSchema) => settings.inspect(s.id, scope) !== undefined;
@@ -70,6 +83,25 @@
 			return;
 		}
 		void update(s, n);
+	}
+
+	/** A dropdown value for a json setting's finite choices (`true`, `"active"`, `null` …). */
+	const choiceKey = (v: unknown) => JSON.stringify(v);
+	const choiceLabel = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v));
+
+	/**
+	 * VS Code's "Edit in settings.json" for values the editor has no control for: the key goes into
+	 * this scope's file with the value in effect (unless it is already there), then the file opens.
+	 */
+	async function editInJson(s: SettingSchema) {
+		if (!modifiedHere(s) && scope !== 'repo') {
+			try {
+				await settings.set(s.id, shown(s), scope);
+			} catch (e) {
+				notifications.error(`บันทึกการตั้งค่าไม่สำเร็จ: ${e instanceof Error ? e.message : e}`);
+			}
+		}
+		openJson();
 	}
 
 	function openJson() {
@@ -126,8 +158,10 @@
 
 	<div class="min-h-0 flex-1 overflow-y-auto">
 		<div class="mx-auto w-full max-w-[1000px] px-6 pb-8">
-			{#each groups as [group, list] (group)}
+			{#each groups as [group, subs] (group)}
 				<h2 class="mt-5 mb-1 text-lg font-semibold text-(--vscode-settings-headerForeground)">{group}</h2>
+				{#each subs as [sub, list] (sub ?? '')}
+				{#if sub}<h3 class="mt-4 mb-1 text-[15px] font-semibold text-(--vscode-settings-headerForeground)">{sub}</h3>{/if}
 				{#each list as s (s.id)}
 					{@const title = settingTitle(s)}
 					{@const value = shown(s)}
@@ -184,6 +218,25 @@
 								{/if}
 							{:else if s.type === 'array' || s.type === 'object'}
 								<ListSetting schema={s} {value} {disabled} onchange={(v) => update(s, v)} />
+							{:else if s.type === 'json'}
+								{@const choices = schemaChoices(s.schema)}
+								{#if choices}
+									<select
+										class="mt-1.5 h-[26px] min-w-[200px] rounded-sm border border-(--vscode-dropdown-border) bg-(--vscode-dropdown-background) px-1 text-[13px] text-(--vscode-dropdown-foreground) outline-none focus:border-(--vscode-focusBorder)"
+										value={choiceKey(value)}
+										{disabled}
+										onchange={(e) => update(s, choices.find((c) => choiceKey(c) === e.currentTarget.value))}
+									>
+										{#each choices as option (choiceKey(option))}
+											<option value={choiceKey(option)}>{choiceLabel(option)}</option>
+										{/each}
+									</select>
+								{:else}
+									<div class="mt-1.5 flex max-w-[500px] items-center gap-2">
+										<code class="min-w-0 flex-1 truncate rounded-sm bg-(--vscode-textCodeBlock-background) px-1.5 py-0.5 text-xs" title={JSON.stringify(value, null, 2)}>{JSON.stringify(value)}</code>
+										<button class="shrink-0 text-xs text-(--vscode-textLink-foreground) hover:underline" {disabled} onclick={() => editInJson(s)}>Edit in settings.json</button>
+									</div>
+								{/if}
 							{:else}
 								<input
 									type="text"
@@ -201,6 +254,7 @@
 							<p class="mt-1 text-xs text-(--vscode-editorWarning-foreground)">{scopeRule(s)}</p>
 						{/if}
 					</div>
+				{/each}
 				{/each}
 			{:else}
 				<p class="mt-6 text-(--vscode-descriptionForeground)">ไม่พบการตั้งค่าที่ตรงกับ “{query}”</p>
