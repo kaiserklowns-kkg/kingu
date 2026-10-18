@@ -156,6 +156,18 @@ fn spawn_reader(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHa
 
 /// Runs git with no way to prompt, until it exits, `cancel` is set or `timeout` passes.
 fn run_net(root: &Path, args: &[&str], env: &[(&str, &str)], cancel: &AtomicBool, timeout: Duration) -> Result<NetOutput, Stopped> {
+  run_net_streaming(root, args, env, cancel, timeout, &mut |_| {})
+}
+
+/// [`run_net`] handing each chunk of stderr to `on_err` as it arrives (clone progress).
+fn run_net_streaming(
+  root: &Path,
+  args: &[&str],
+  env: &[(&str, &str)],
+  cancel: &AtomicBool,
+  timeout: Duration,
+  on_err: &mut dyn FnMut(&str),
+) -> Result<NetOutput, Stopped> {
   let mut cmd: Command = crate::shell_env::command("git");
   cmd.envs(env.iter().copied());
   cmd
@@ -182,9 +194,26 @@ fn run_net(root: &Path, args: &[&str], env: &[(&str, &str)], cancel: &AtomicBool
     Err(e) => return Ok(NetOutput { ok: false, stdout: String::new(), stderr: format!("git: {e}") }),
   };
   let out = spawn_reader(child.stdout.take());
-  let err = spawn_reader(child.stderr.take());
+  let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+  let mut pipe = child.stderr.take();
+  let err = std::thread::spawn(move || {
+    let mut buf = [0u8; 8192];
+    while let Some(Ok(n)) = pipe.as_mut().map(|p| p.read(&mut buf)) {
+      if n == 0 || tx.send(buf[..n].to_vec()).is_err() {
+        break;
+      }
+    }
+  });
+  let mut stderr = Vec::new();
+  let mut drain = |stderr: &mut Vec<u8>| {
+    while let Ok(chunk) = rx.try_recv() {
+      on_err(&String::from_utf8_lossy(&chunk));
+      stderr.extend_from_slice(&chunk);
+    }
+  };
   let deadline = Instant::now() + timeout;
   let result = loop {
+    drain(&mut stderr);
     match child.try_wait() {
       Ok(Some(status)) => break Ok(status.success()),
       Ok(None) => {}
@@ -205,7 +234,9 @@ fn run_net(root: &Path, args: &[&str], env: &[(&str, &str)], cancel: &AtomicBool
     std::thread::sleep(Duration::from_millis(40));
   };
   let stdout = out.join().unwrap_or_default();
-  let stderr = err.join().unwrap_or_default();
+  let _ = err.join();
+  drain(&mut stderr);
+  let stderr = String::from_utf8_lossy(&stderr).into_owned();
   result.map(|ok| NetOutput { ok, stdout, stderr })
 }
 
@@ -225,7 +256,11 @@ pub(crate) fn net_env(root: &Path, args: &[&str], env: &[(&str, &str)], cancel: 
     rest = tail;
   }
   let op = rest.first().copied().unwrap_or("");
-  match run_net(root, args, env, cancel, timeout) {
+  net_result(op, run_net(root, args, env, cancel, timeout), timeout)
+}
+
+fn net_result(op: &str, result: Result<NetOutput, Stopped>, timeout: Duration) -> Result<String, String> {
+  match result {
     Err(Stopped::Cancelled) => Err(format!("ยกเลิก git {op} แล้ว")),
     Err(Stopped::TimedOut) => Err(format!("git {op} ใช้เวลานานเกิน {} วินาที จึงหยุดไว้", timeout.as_secs())),
     Ok(o) if o.ok => Ok(o.stdout),
@@ -591,6 +626,165 @@ pub fn stash_apply(root: &Path, index: u32, pop: bool) -> Result<(), String> {
 
 pub fn stash_drop(root: &Path, index: u32) -> Result<(), String> {
   run_unliteral(root, &["stash", "drop", &format!("stash@{{{index}}}")]).map(|_| ()).map_err(|e| format!("ลบ stash ไม่สำเร็จ\n{e}"))
+}
+
+// ---------------------------------------------------------------------------------------------
+// Clone (Orca: repo-clone-lifecycle.ts, repo-clone-path.ts)
+
+/// A clone may move a large repository; Cancel stops it sooner.
+pub const CLONE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
+/// A repository URL the user may clone: https, ssh or scp-like `user@host:path`, checked like the
+/// snap installer's sources. Local paths and `file://` are refused for user input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloneUrl {
+  url: String,
+  protocols: &'static str,
+}
+
+impl CloneUrl {
+  pub fn parse(input: &str) -> Result<Self, String> {
+    let input = input.trim();
+    let bad = || format!("URL ของ repository ไม่ถูกต้องหรือไม่รองรับ: {input:?} (ใช้ https://…, ssh://… หรือ git@host:owner/repo.git)");
+    if input.contains('#') {
+      return Err(bad());
+    }
+    let spec = crate::snap_install::parse_git_source(input).map_err(|_| bad())?;
+    if spec.url.to_ascii_lowercase().starts_with("file:") || spec.url.starts_with('/') {
+      return Err(bad());
+    }
+    Ok(Self { url: spec.url, protocols: "https:ssh" })
+  }
+
+  /// A local repository URL (`file://`), which only tests may clone.
+  #[cfg(test)]
+  pub fn local_for_test(url: &str) -> Self {
+    Self { url: url.to_owned(), protocols: "file" }
+  }
+
+  pub fn as_str(&self) -> &str {
+    &self.url
+  }
+}
+
+/// The folder git would clone into: the URL's last path segment without `.git` (Orca's
+/// `deriveCloneRepoNameFromUrl`), never `.`, `..` or anything but one plain name.
+pub fn clone_repo_name(url: &str) -> Result<String, String> {
+  let source = url.trim_end_matches('/');
+  let source = source.strip_suffix(".git").unwrap_or(source);
+  let name = source.rsplit(['/', ':']).next().unwrap_or_default();
+  if name.is_empty() || name == "." || name == ".." || name.starts_with('-') || name.contains('\\') || name.chars().any(char::is_control) {
+    return Err("ตั้งชื่อโฟลเดอร์จาก URL นี้ไม่ได้".into());
+  }
+  Ok(name.to_owned())
+}
+
+/// Progress git prints while cloning (`Receiving objects:  42% (…)`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct CloneProgress {
+  pub phase: String,
+  pub percent: u8,
+}
+
+/// Progress lines in a chunk of `git clone --progress` stderr (Orca: `^([\w\s]+):\s+(\d+)%`);
+/// `carry` keeps a line cut by the chunk boundary for the next call. Lines end with `\r` while
+/// git redraws them, `\n` when done.
+pub fn parse_clone_progress(carry: &mut String, chunk: &str) -> Vec<CloneProgress> {
+  carry.push_str(chunk);
+  let mut out = Vec::new();
+  while let Some(i) = carry.find(['\r', '\n']) {
+    let line: String = carry.drain(..=i).collect();
+    let line = line.trim_end_matches(['\r', '\n']);
+    let line = line.strip_prefix("remote: ").unwrap_or(line);
+    let Some((phase, rest)) = line.split_once(':') else { continue };
+    if phase.is_empty() || !phase.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '_') {
+      continue;
+    }
+    let Some((pct, _)) = rest.split_once('%') else { continue };
+    if let Ok(p) = pct.trim().parse::<u8>() {
+      out.push(CloneProgress { phase: phase.trim().to_owned(), percent: p.min(100) });
+    }
+  }
+  out
+}
+
+/// Empties a folder that was empty before a failed clone into it.
+fn empty_dir(dir: &Path) {
+  if let Ok(entries) = std::fs::read_dir(dir) {
+    for e in entries.flatten() {
+      let p = e.path();
+      let _ = if p.is_dir() && !p.is_symlink() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) };
+    }
+  }
+}
+
+/// Clones `url` into `<dest>/<repo name>` without prompting (Orca's clone: `--progress`, the URL
+/// after `--`); `dest` is created when missing. A folder this created is removed again when the
+/// clone fails or is cancelled; an existing one must be empty. Returns the clone's path.
+pub fn clone_repo(url: &CloneUrl, dest: &Path, cancel: &AtomicBool, timeout: Duration, progress: &mut dyn FnMut(CloneProgress)) -> Result<std::path::PathBuf, String> {
+  if !dest.is_absolute() {
+    return Err("โฟลเดอร์ปลายทางต้องเป็น path เต็ม".into());
+  }
+  let name = clone_repo_name(url.as_str())?;
+  std::fs::create_dir_all(dest).map_err(|e| format!("สร้างโฟลเดอร์ {} ไม่ได้: {e}", dest.display()))?;
+  let target = dest.join(&name);
+  let created = match std::fs::create_dir(&target) {
+    Ok(()) => true,
+    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+      let empty = target.is_dir() && !target.is_symlink() && std::fs::read_dir(&target).is_ok_and(|mut d| d.next().is_none());
+      if !empty {
+        return Err(format!("มี {} อยู่แล้วและไม่ว่าง เลือกโฟลเดอร์ปลายทางอื่น", target.display()));
+      }
+      false
+    }
+    Err(e) => return Err(format!("สร้างโฟลเดอร์ {} ไม่ได้: {e}", target.display())),
+  };
+  let target_str = target.to_str().ok_or("path ปลายทางไม่ใช่ UTF-8")?;
+  let env = [("GIT_ALLOW_PROTOCOL", url.protocols)];
+  let mut carry = String::new();
+  let result = run_net_streaming(dest, &["clone", "--progress", "--", url.as_str(), target_str], &env, cancel, timeout, &mut |chunk| {
+    for p in parse_clone_progress(&mut carry, chunk) {
+      progress(p);
+    }
+  });
+  match net_result("clone", result, timeout) {
+    Ok(_) => Ok(target),
+    Err(e) => {
+      if created {
+        let _ = std::fs::remove_dir_all(&target);
+      } else {
+        empty_dir(&target);
+      }
+      Err(e)
+    }
+  }
+}
+
+/// The clone slot: one clone at a time, apart from the open folder's operations ([`GitOps`]).
+#[derive(Default, Clone)]
+pub struct CloneOps(pub GitOps);
+
+/// Clones `url` into `<destination>/<repo>`; progress streams over `on_progress`. Returns the
+/// path to open.
+#[tauri::command]
+pub async fn git_clone(ops: State<'_, CloneOps>, url: String, destination: String, on_progress: tauri::ipc::Channel<CloneProgress>) -> Result<String, String> {
+  let url = CloneUrl::parse(&url)?;
+  let guard = ops.0.begin().map_err(|_| "กำลัง clone อยู่แล้ว รอให้เสร็จหรือยกเลิกก่อน".to_owned())?;
+  let dest = std::path::PathBuf::from(destination);
+  let path = tauri::async_runtime::spawn_blocking(move || {
+    clone_repo(&url, &dest, guard.flag(), CLONE_TIMEOUT, &mut |p| {
+      let _ = on_progress.send(p);
+    })
+  })
+  .await
+  .map_err(|e| e.to_string())??;
+  log::info!("cloned into {}", path.display());
+  Ok(path.display().to_string())
+}
+
+#[tauri::command]
+pub fn git_clone_cancel(ops: State<'_, CloneOps>) -> bool {
+  ops.0.cancel()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1010,4 +1204,90 @@ mod tests {
     assert!(err.contains("ยกเลิก"), "{err}");
     assert!(started.elapsed() < Duration::from_secs(10));
   }
+  #[test]
+  fn clone_urls_accept_https_and_ssh_only() {
+    for ok in ["https://github.com/acme/app.git", "ssh://git@github.com/acme/app", "git@github.com:acme/app.git", "  https://gitlab.com/g/sub/app  "] {
+      assert!(CloneUrl::parse(ok).is_ok(), "{ok}");
+    }
+    for bad in [
+      "file:///tmp/repo",
+      "FILE:///tmp/repo",
+      "/tmp/repo",
+      "http://github.com/a/b",
+      "git://github.com/a/b",
+      "ext::sh -c touch% /tmp/pwned",
+      "-uhttps://x/y",
+      "https://github.com/a/b#main",
+      "https://-oProxy/x",
+      "",
+      "../repo",
+    ] {
+      assert!(CloneUrl::parse(bad).is_err(), "{bad}");
+    }
+  }
+
+  #[test]
+  fn clone_folder_name_comes_from_the_url() {
+    assert_eq!(clone_repo_name("https://github.com/acme/app.git").unwrap(), "app");
+    assert_eq!(clone_repo_name("git@github.com:acme/my-lib").unwrap(), "my-lib");
+    assert_eq!(clone_repo_name("git@host:repo.git").unwrap(), "repo");
+    assert_eq!(clone_repo_name("https://h/x/tool/").unwrap(), "tool");
+    assert!(clone_repo_name("https://h/..").is_err());
+    assert!(clone_repo_name("https://h/.git").is_err());
+  }
+
+  #[test]
+  fn parses_clone_progress_across_chunks() {
+    let mut carry = String::new();
+    let mut all = parse_clone_progress(&mut carry, "Cloning into 'app'...\nremote: Counting objects:  50% (1/2)\rremote: Counting objects: 100% (2/2), done.\nReceiving obj");
+    all.extend(parse_clone_progress(&mut carry, "ects:  42% (5/12)\rResolving deltas: 100% (3/3), done.\nwarning: x/y: odd 10% thing\n"));
+    let got: Vec<(&str, u8)> = all.iter().map(|p| (p.phase.as_str(), p.percent)).collect();
+    assert_eq!(got, [("Counting objects", 50), ("Counting objects", 100), ("Receiving objects", 42), ("Resolving deltas", 100)]);
+  }
+
+  #[test]
+  fn clones_a_local_bare_repository_and_cleans_up_failures() {
+    let (tmp, _a, _b) = setup();
+    let tmp = tmp.path().canonicalize().unwrap();
+    std::fs::rename(tmp.join("origin.git"), tmp.join("app.git")).unwrap();
+    let url = CloneUrl::local_for_test(&format!("file://{}/app.git", tmp.display()));
+    assert!(CloneUrl::parse(url.as_str()).is_err(), "user input may not clone file://");
+
+    let dest = tmp.join("projects/nested");
+    let mut seen = Vec::new();
+    let path = clone_repo(&url, &dest, &no(), T, &mut |p| seen.push(p)).unwrap();
+    assert_eq!(path, dest.join("app"));
+    assert_eq!(std::fs::read_to_string(path.join("a.txt")).unwrap(), "a\n");
+    assert!(seen.iter().all(|p| p.percent <= 100));
+
+    let err = clone_repo(&url, &dest, &no(), T, &mut |_| {}).unwrap_err();
+    assert!(err.contains("ไม่ว่าง"), "{err}");
+
+    let missing = CloneUrl::local_for_test(&format!("file://{}/missing.git", tmp.display()));
+    assert!(clone_repo(&missing, &dest, &no(), T, &mut |_| {}).is_err());
+    assert!(!dest.join("missing").exists(), "a failed clone leaves no folder behind");
+
+    std::fs::create_dir(dest.join("empty")).unwrap();
+    let to_empty = CloneUrl::local_for_test(&format!("file://{}/empty.git", tmp.display()));
+    assert!(clone_repo(&to_empty, &dest, &no(), T, &mut |_| {}).is_err());
+    assert!(dest.join("empty").is_dir(), "an existing empty folder is kept");
+
+    // Only the allowed protocols run, whatever the URL says.
+    let http = CloneUrl { url: "https://example.invalid/x.git".into(), protocols: "file" };
+    assert!(clone_repo(&http, &dest, &no(), T, &mut |_| {}).is_err());
+    assert!(!dest.join("x").exists());
+    assert!(clone_repo(&url, Path::new("relative"), &no(), T, &mut |_| {}).is_err());
+  }
+
+  #[test]
+  fn cancelling_a_clone_removes_its_folder() {
+    let (tmp, _a, _b) = setup();
+    let tmp = tmp.path().canonicalize().unwrap();
+    let url = CloneUrl::local_for_test(&format!("file://{}/origin.git", tmp.display()));
+    let dest = tmp.join("out");
+    let err = clone_repo(&url, &dest, &AtomicBool::new(true), T, &mut |_| {}).unwrap_err();
+    assert!(err.contains("ยกเลิก"), "{err}");
+    assert!(!dest.join("origin").exists());
+  }
+
 }

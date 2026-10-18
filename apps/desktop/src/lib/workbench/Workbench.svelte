@@ -12,6 +12,8 @@
 	import EditorPart from './EditorPart.svelte';
 	import Panel from './Panel.svelte';
 	import QuickInput from './QuickInput.svelte';
+	import RepoDialog from './RepoDialog.svelte';
+	import { repoDialog } from './repoDialog.svelte.ts';
 	import Sash from './Sash.svelte';
 	import SideBar from './SideBar.svelte';
 	import StatusBar from './StatusBar.svelte';
@@ -78,6 +80,7 @@
 				keyWhen: () => !document.activeElement?.closest('.xterm'),
 				run: () => workspace.showRecent()
 			}),
+			commands.register({ id: 'kingu.newProject', title: 'New Project...', category: 'File', run: () => repoDialog.show('create') }),
 			commands.register({ id: 'workbench.action.clearRecentFiles', title: 'Clear Recently Opened', category: 'File', run: () => workspace.clearRecent() }),
 			// Go Back / Go Forward (VS Code: ⌃- / ⌃⇧- on macOS, Alt+←/→ elsewhere).
 			commands.register({ id: 'workbench.action.navigateBack', title: 'Go Back', key: 'alt+left', mac: 'ctrl+-', when: () => navigation.canGoBack, run: () => navigation.back() }),
@@ -375,4 +378,5 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 	<div class={['contents', !settings.get<boolean>('workbench.statusBar.visible') && '[&>*]:hidden']}><StatusBar /></div>
 	<QuickInput />
 	<AdeDialogs />
+	<RepoDialog />
 </div>

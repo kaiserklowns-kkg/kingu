@@ -370,6 +370,23 @@ pub struct PrCheck {
   /// `pending`, `success`, `failure`, `neutral`, `skipped` or `cancelled`.
   pub state: &'static str,
   pub url: Option<String>,
+  /// GitHub Actions run and job ids from the check's URL (`…/actions/runs/<run>/job/<job>`); a
+  /// job id is also its check-run id. Used to fetch the failed job's log.
+  pub run_id: Option<u64>,
+  pub job_id: Option<u64>,
+}
+
+/// `(run, job)` ids in a GitHub Actions details URL; other check URLs have none.
+pub fn actions_ids(url: Option<&str>) -> (Option<u64>, Option<u64>) {
+  let Some(url) = url else { return (None, None) };
+  let Some((_, rest)) = url.split_once("/actions/runs/") else { return (None, None) };
+  let mut parts = rest.split(['/', '?', '#']);
+  let run = parts.next().and_then(|r| r.parse().ok());
+  let job = match (parts.next(), parts.next()) {
+    (Some("job" | "jobs"), Some(j)) => j.parse().ok(),
+    _ => None,
+  };
+  (run, job)
 }
 
 /// The task branch's pull request as GitHub sees it (Orca's Checks panel).
@@ -385,11 +402,16 @@ pub struct PrStatus {
   pub review: String,
   /// `MERGEABLE`, `CONFLICTING` or `UNKNOWN`.
   pub mergeable: String,
+  /// GitHub's `mergeStateStatus`: `CLEAN`, `BLOCKED`, `BEHIND`, `DIRTY`, `UNSTABLE`, `HAS_HOOKS`,
+  /// `DRAFT` or `UNKNOWN` (empty when gh does not report it).
+  pub merge_state: String,
+  pub head_ref: String,
+  pub base_ref: String,
   pub checks: Vec<PrCheck>,
 }
 
 /// `gh pr view --json` fields read by `parse_pr_status`.
-pub const PR_FIELDS: &str = "number,url,title,state,isDraft,reviewDecision,mergeable,statusCheckRollup";
+pub const PR_FIELDS: &str = "number,url,title,state,isDraft,reviewDecision,mergeable,mergeStateStatus,headRefName,baseRefName,statusCheckRollup";
 
 fn check_state(status: &str, conclusion: &str) -> &'static str {
   // CheckRun: status QUEUED/IN_PROGRESS/COMPLETED + conclusion; StatusContext: state only.
@@ -417,13 +439,15 @@ pub fn parse_pr_status(json: &str) -> Result<PrStatus, String> {
         .map(|c| {
           let s = |k: &str| c[k].as_str().unwrap_or_default();
           if s("__typename") == "StatusContext" {
-            PrCheck { name: s("context").to_owned(), state: check_state("", s("state")), url: c["targetUrl"].as_str().map(str::to_owned) }
+            PrCheck { name: s("context").to_owned(), state: check_state("", s("state")), url: c["targetUrl"].as_str().map(str::to_owned), run_id: None, job_id: None }
           } else {
             let name = match (s("workflowName"), s("name")) {
               ("", n) => n.to_owned(),
               (w, n) => format!("{w} / {n}"),
             };
-            PrCheck { name, state: check_state(s("status"), s("conclusion")), url: c["detailsUrl"].as_str().map(str::to_owned) }
+            let url = c["detailsUrl"].as_str().map(str::to_owned);
+            let (run_id, job_id) = actions_ids(url.as_deref());
+            PrCheck { name, state: check_state(s("status"), s("conclusion")), url, run_id, job_id }
           }
         })
         .collect()
@@ -437,6 +461,9 @@ pub fn parse_pr_status(json: &str) -> Result<PrStatus, String> {
     draft: v["isDraft"].as_bool().unwrap_or(false),
     review: text("reviewDecision"),
     mergeable: text("mergeable"),
+    merge_state: text("mergeStateStatus"),
+    head_ref: text("headRefName"),
+    base_ref: text("baseRefName"),
     checks,
   })
 }
@@ -811,6 +838,9 @@ mod tests {
     let states: Vec<_> = pr.checks.iter().map(|c| (c.name.as_str(), c.state)).collect();
     assert_eq!(states, [("CI / test", "success"), ("lint", "pending"), ("CI / e2e", "failure"), ("vercel", "pending"), ("ci/legacy", "failure")]);
     assert_eq!(pr.checks[0].url.as_deref(), Some("https://x/1"));
+    assert_eq!(actions_ids(Some("https://github.com/o/r/actions/runs/77/job/901")), (Some(77), Some(901)));
+    assert_eq!(actions_ids(Some("https://github.com/o/r/actions/runs/77?pr=3")), (Some(77), None));
+    assert_eq!(actions_ids(Some("https://vercel.com/x")), (None, None));
     assert_eq!(pr.checks[2].url, None);
   }
 

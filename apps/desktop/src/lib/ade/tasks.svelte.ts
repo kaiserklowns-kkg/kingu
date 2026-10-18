@@ -59,6 +59,12 @@ import { diffNotes } from './diffNotes.svelte.ts';
 import { adeDialogs } from './dialogs.svelte.ts';
 import { prefillPr, prFormProblem, type Commit, type PrForm } from './prForm.ts';
 import { issueLink, issuePrompt, issueSlug, issueTaskTitle, prComment, taskForIssue, type Issue, type IssueDetail } from './issues.ts';
+import { brokenChecks, MERGE_LABEL, type MergeMethod } from './prChecks.ts';
+import { buildCommentsPrompt, buildFixChecksPrompt, type CheckLog } from './prPrompts.ts';
+import type { ReviewThread } from './prComments.ts';
+
+/** Rust `worktree_pr_merge`'s answer. */
+type MergeOutcome = { deleted_branch: string | null; branch_note: string | null };
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { branchPrefix, branchRemoval, type BranchRemoval, defaultBaseBranch, scriptPreview, scriptRunSummary, setupCommand, setupPolicy, type ScriptRun, type WorktreeScript } from './worktreeSettings.ts';
 
@@ -705,6 +711,77 @@ class AdeTasks {
 		if (!this.list.some((t) => t.slug === slug)) return;
 		if (appMode.isAgents) appMode.sessionsVisible = true;
 		this.renaming = slug;
+	}
+
+	// -------------------------------------------------------------------------------------------
+	// Landing the PR (Orca's Checks panel: merge, fix failing checks, review comments)
+
+	/**
+	 * Hands `prompt` to the task's agent: pasted into its running CLI, a new CLI session when none
+	 * runs, or a follow-up in the timeline. The folder itself (`''`) has no agent, so the prompt
+	 * is copied for the user to paste where they like.
+	 */
+	async sendToAgent(slug: string, prompt: string, what: string): Promise<boolean> {
+		const meta = slug ? this.list.find((t) => t.slug === slug) : undefined;
+		if (!meta) {
+			const copied = await navigator.clipboard.writeText(prompt).then(
+				() => true,
+				() => false
+			);
+			status.flash(copied ? `คัดลอก prompt ${what} แล้ว วางให้ agent ได้เลย` : `คัดลอก prompt ${what} ไม่ได้`, 8000);
+			return copied;
+		}
+		const cli = cliOf(meta.agent);
+		try {
+			if (cli && cliSessions.has(slug)) await cliSessions.paste(slug, prompt);
+			else if (cli) await this.#launchCli(slug, cli, { prompt });
+			else await this.followUp(slug, prompt);
+		} catch (e) {
+			status.flash(`ส่ง ${what} ให้ agent ไม่ได้: ${e}`, 10000);
+			return false;
+		}
+		this.openTask(slug);
+		status.flash(`ส่ง ${what} ให้ agent แล้ว`);
+		return true;
+	}
+
+	/** Merges the PR on GitHub after confirming (Orca's merge button); the task becomes done. */
+	async mergePr(slug: string, method: MergeMethod, deleteBranch: boolean) {
+		const pr = prStatuses.bySlug[slug]?.pr;
+		if (!pr) return;
+		const branchNote = deleteBranch && pr.head_ref ? `\nและลบ branch ${pr.head_ref} บน GitHub` : '';
+		const ok = await ask(`${MERGE_LABEL[method]} PR #${pr.number}?\n\nจะอัปเดต pull request บน GitHub${branchNote}`, { title: 'Merge PR', okLabel: MERGE_LABEL[method], cancelLabel: 'ยกเลิก' });
+		if (!ok) return;
+		const r = await this.#step(slug, 'merge PR', () => invoke<MergeOutcome>('worktree_pr_merge', { slug, url: pr.url, number: pr.number, method, deleteBranch }));
+		if (!r) return;
+		if (slug && this.list.some((t) => t.slug === slug)) await this.#patch(slug, { merged_at: Date.now(), status: 'done' });
+		status.flash(`merge PR #${pr.number} แล้ว${r.deleted_branch ? ` · ลบ branch ${r.deleted_branch} บน GitHub แล้ว` : ''}${r.branch_note ? ` · ${r.branch_note}` : ''}`, 10000);
+		await prStatuses.refresh(slug);
+	}
+
+	/** Orca's "fix failing checks": the broken checks with their failed jobs' log tails, sent to the agent. */
+	async fixChecks(slug: string) {
+		const pr = prStatuses.bySlug[slug]?.pr;
+		if (!pr) return;
+		const checks = brokenChecks(pr.checks).map((c) => ({ name: c.name, url: c.url, run_id: c.run_id ?? null, job_id: c.job_id ?? null }));
+		const logs = checks.length ? ((await this.#step(slug, 'อ่าน log ของ check', () => invoke<CheckLog[]>('worktree_pr_check_logs', { slug, url: pr.url, checks }))) ?? []) : [];
+		await this.sendToAgent(slug, buildFixChecksPrompt(pr, logs), 'งานแก้ checks ที่ล้มเหลว');
+	}
+
+	/** Orca's "resolve comments": the selected unresolved review threads, sent to the agent. */
+	async fixComments(slug: string, threads: ReviewThread[]) {
+		const pr = prStatuses.bySlug[slug]?.pr;
+		if (!pr || !threads.length) return;
+		const path = workspace.root ? (slug ? `${workspace.root}/${worktreeDir(slug)}` : workspace.root) : null;
+		await this.sendToAgent(slug, buildCommentsPrompt(pr, threads, path), `คอมเมนต์รีวิว ${threads.length} รายการ`);
+	}
+
+	/** Resolves (or reopens) a review thread on GitHub. */
+	async resolveThread(slug: string, id: string, resolve = true) {
+		const pr = prStatuses.bySlug[slug]?.pr;
+		if (!pr) return;
+		const done = await this.#step(slug, resolve ? 'resolve thread' : 'เปิด thread อีกครั้ง', () => invoke<boolean>('gh_resolve_thread', { slug, url: pr.url, threadId: id, resolve }));
+		if (done !== undefined) prStatuses.markResolved(slug, id, done);
 	}
 
 	markDone(slug: string, done = true) {

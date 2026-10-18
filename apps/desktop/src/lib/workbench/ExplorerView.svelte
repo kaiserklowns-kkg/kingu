@@ -12,6 +12,7 @@
 	import { keyLabel } from './keys';
 	import { status } from './status.svelte';
 	import { workspace } from './workspace.svelte';
+	import { repoDialog } from './repoDialog.svelte.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { isNonTextEditor } from '#lib/settings/resources.ts';
 	import { isDiffKey } from './scm';
@@ -215,6 +216,13 @@
 			>
 				Open Folder
 			</button>
+			<button
+				class="h-[26px] w-full rounded-sm bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:bg-[var(--vscode-button-hoverBackground,#026EC1)]"
+				onclick={() => repoDialog.show('clone')}
+			>
+				Clone Repository
+			</button>
+			<button class="h-[26px] w-full rounded-sm border border-(--vscode-widget-border) hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => repoDialog.show('create')}>New Project</button>
 			{#if workspace.recent.length}
 				<div>
 					<p class="mb-1 text-(--vscode-descriptionForeground)">Recent</p>

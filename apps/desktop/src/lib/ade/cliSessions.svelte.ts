@@ -185,6 +185,16 @@ class CliSessions {
 		}
 	}
 
+	/** Pastes `prompt` into the task's running CLI and submits it (a follow-up such as "fix the failing checks"). */
+	async paste(slug: string, prompt: string) {
+		const key = this.key(slug);
+		if (!key) throw new Error('ไม่มี agent CLI ที่รันอยู่ในงานนี้');
+		await invoke('pty_write', { key, data: pasteText(prompt) });
+		await new Promise((r) => setTimeout(r, 300));
+		await invoke('pty_write', { key, data: '\r' });
+		this.#last[slug] = Date.now();
+	}
+
 	/** Pastes each waiting prompt once its CLI's composer is up, then presses Enter. */
 	#typeDuePrompts() {
 		for (const [slug, prompt] of Object.entries(this.#typePrompts)) {

@@ -1,13 +1,16 @@
 <script lang="ts">
 	// Orca's Checks: the task branch's pull request and its CI runs (`gh pr view`), shared by the
-	// task page's review and the ADE right side bar's Checks tab. Polls while checks run.
+	// task page's review and the ADE right side bar's Checks tab. Polls while checks run. Also
+	// lands the PR the Orca way: merge, "fix failing checks" and the review comments.
 	import { untrack } from 'svelte';
 	import Icon from '#lib/workbench/Icon.svelte';
-	import { prLine, sortChecks, summarizeChecks, type CheckState } from './prChecks';
+	import { brokenChecks, prLine, sortChecks, summarizeChecks, type CheckState } from './prChecks.ts';
+	import PrComments from './PrComments.svelte';
+	import PrMerge from './PrMerge.svelte';
 	import { prStatuses } from './prStatus.svelte';
 	import { adeTasks } from './tasks.svelte';
 	import { scm } from '#lib/workbench/scm.svelte.ts';
-	import { ICON_BUTTON } from './ui';
+	import { BUTTON_SECONDARY, ICON_BUTTON } from './ui.ts';
 
 	/** `slug` '' is the folder itself: the PR of its checked-out branch. */
 	let { slug, title = true }: { slug: string; title?: boolean } = $props();
@@ -52,6 +55,7 @@
 		<p class="text-(--vscode-descriptionForeground)">
 			{prLine(pr)}{#if sum.total} · ผ่าน {sum.passed}/{sum.total}{#if sum.pending} · กำลังรัน {sum.pending}{/if}{#if sum.failed} · ล้มเหลว {sum.failed}{/if}{/if}
 		</p>
+		<PrMerge {slug} {pr} />
 		{#each sortChecks(pr.checks) as c (c.name)}
 			<div class="flex items-center gap-1.5">
 				<span class={['size-2 shrink-0 rounded-full', CHECK_DOT[c.state]]} title={c.state}></span>
@@ -61,6 +65,14 @@
 		{:else}
 			<p class="text-(--vscode-descriptionForeground)">PR นี้ยังไม่มี CI check</p>
 		{/each}
+		{#if pr.state === 'OPEN' && brokenChecks(pr.checks).length}
+			<button class={BUTTON_SECONDARY} disabled={!!adeTasks.busy[slug]} title={slug ? 'ส่ง check ที่ล้มเหลวพร้อม log ให้ agent ของงานนี้แก้' : 'คัดลอก prompt ไปวางให้ agent'} onclick={() => adeTasks.fixChecks(slug)}>
+				<Icon name="send" size={12} /> {slug ? 'ให้ agent แก้ checks ที่ล้มเหลว' : 'คัดลอก prompt แก้ checks'}
+			</button>
+		{/if}
+		{#if pr.state === 'OPEN'}
+			<div class="border-t border-(--vscode-widget-border) pt-2"><PrComments {slug} /></div>
+		{/if}
 	{:else if entry?.error}
 		<p class="text-(--vscode-errorForeground)">{entry.error}</p>
 	{:else if entry && !entry.loading}
