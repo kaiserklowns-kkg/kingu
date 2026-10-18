@@ -6,7 +6,7 @@
 // so dirty state and Save are per file, whichever layout shows it.
 
 import { ask } from '@tauri-apps/plugin-dialog';
-import { editors } from '#lib/workbench/editors.svelte.ts';
+import { editors, type Reveal } from '#lib/workbench/editors.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { isDiffKey } from '#lib/workbench/scm.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
@@ -14,7 +14,8 @@ import { killPty } from '#lib/terminal/pty.ts';
 import { adeKey, parseAdeTerminals, persist, restore, storeName, withoutRun } from '#lib/terminal/sessions.ts';
 import { activeAfterClose, adeTabs, fileTabId, keyOfTabId, openFileTab, pinFileTab, type AdeTab, type FileTab, type TerminalTab } from './adeTabs.ts';
 
-export type RightTab = 'files' | 'changes';
+import type { RightTab } from './rightSidebar.ts';
+export type { RightTab };
 export type CenterPage = 'board' | 'automations' | 'issues';
 /** Worktree key: '' for the folder itself (Orca's "primary" worktree), else the task slug. */
 export const PRIMARY = '';
@@ -110,8 +111,12 @@ class AdeLayout {
 		return Object.values(this.files).flatMap((list) => list.filter((f) => !isDiffKey(f.key)).map((f) => f.key));
 	}
 
+	/** Where the next editor that shows `path` puts the cursor (a Contents search hit). */
+	pendingReveal = $state<(Reveal & { path: string }) | null>(null);
+
 	/** Opens a workspace file or a `taskdiff://` key as a tab of worktree `key` (a preview unless `preview: false`). */
-	openFile(key: string, file: string, { preview = true }: { preview?: boolean } = {}) {
+	openFile(key: string, file: string, { preview = true, reveal }: { preview?: boolean; reveal?: Reveal } = {}) {
+		this.pendingReveal = reveal ? { ...reveal, path: file } : null;
 		// workbench.editor.enablePreview: false opens every editor pinned, here too.
 		if (!settings.get('workbench.editor.enablePreview')) preview = false;
 		this.files[key] = openFileTab(this.files[key] ?? [], file, preview, (k) => editors.isDirty(k));

@@ -605,6 +605,62 @@ mod tests {
     assert!(task_dir(&repo, "../x").is_err());
   }
 
+  /// The ADE's right side bar runs Source Control in the task worktree (`slug` on git_*):
+  /// status, stage, commit and ignore marks there never touch the open folder's repository.
+  #[test]
+  fn source_control_runs_inside_the_task_worktree() {
+    let (_tmp, repo, wt) = setup();
+    write(&wt, "edit.txt", "one\nTWO\nthree\n");
+    write(&wt, "new.txt", "n\n");
+    write(&wt, "run.log", "x\n");
+    let st = crate::git::status(&wt).unwrap().unwrap();
+    assert_eq!(st.branch.as_deref(), Some("kingu/t"));
+    let paths: Vec<&str> = st.entries.iter().map(|e| e.path.as_str()).collect();
+    assert_eq!(paths, ["edit.txt", "new.txt"]);
+    assert!(crate::git::status(&repo).unwrap().unwrap().entries.is_empty());
+
+    crate::git::check_rel(&wt, "new.txt").unwrap();
+    crate::git::stage(&wt, &["edit.txt".into()]).unwrap();
+    crate::git::commit(&wt, "edit", false).unwrap();
+    let st = crate::git::status(&wt).unwrap().unwrap();
+    assert_eq!(st.entries.len(), 1);
+    assert_eq!(st.entries[0].worktree.as_deref(), Some("?"));
+    assert_eq!(git_ok(&repo, &["log", "-1", "--format=%s", "kingu/t"]).trim(), "edit");
+    assert_eq!(git_ok(&repo, &["log", "-1", "--format=%s", "main"]).trim(), "init");
+
+    let mut entries = crate::fs::list_dir(&repo, &wt).unwrap();
+    crate::git::mark_ignored(&wt, &mut entries);
+    let ignored: Vec<&str> = entries.iter().filter(|e| e.ignored).map(|e| e.name.as_str()).collect();
+    assert_eq!(ignored, ["run.log"]);
+  }
+
+  /// Files › Contents runs ripgrep in the worktree: paths come back relative to it and the
+  /// worktree's own `.gitignore` applies (its `.git` is a file, not a folder).
+  #[test]
+  fn content_search_in_a_worktree_uses_its_ignore_rules() {
+    use crate::search::{SearchEvent, SearchOptions, Searches, find_rg};
+    let Ok(rg) = find_rg(std::env::var_os("KINGU_RG"), std::env::var_os("PATH")) else {
+      eprintln!("rg not found, skipping");
+      return;
+    };
+    let (_tmp, _repo, wt) = setup();
+    write(&wt, "run.log", "needle\n");
+    write(&wt, "src/ไทย.txt", "needle ไทย\n");
+    let searches = std::sync::Arc::new(Searches::default());
+    let (tx, rx) = std::sync::mpsc::channel();
+    let opts = SearchOptions { query: "needle".into(), ..Default::default() };
+    searches.start(&rg, &wt, &opts, move |ev| tx.send(ev).is_ok()).unwrap();
+    let mut files = Vec::new();
+    for ev in rx {
+      match ev {
+        SearchEvent::File { path, .. } => files.push(path),
+        SearchEvent::Done { .. } => break,
+        SearchEvent::Error { message } => panic!("{message}"),
+      }
+    }
+    assert_eq!(files, ["src/ไทย.txt"]);
+  }
+
   #[test]
   fn parses_numstat_and_name_status() {
     let n = parse_numstat("1\t2\ta.txt\0-\t-\tbin\0\x30\t0\t\0old\0new\0");

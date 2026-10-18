@@ -6,10 +6,21 @@
 	import { fileIcon } from './fileIcons';
 	import { editors } from './editors.svelte';
 	import { keyLabel } from './keys';
-	import { diffKey, splitPath, type Resource } from './scm';
-	import { scm } from './scm.svelte';
+	import { diffKey as headDiffKey, splitPath, type Resource, type ScmSource } from './scm';
+	import { scm as folderScm } from './scm.svelte';
 	import { appMode } from './mode.svelte';
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
+
+	/**
+	 * `source`: another repository than the open folder's (a task worktree in the ADE's right side
+	 * bar); `diffKey` / `fileKey` then name its diff and file tabs.
+	 */
+	let {
+		source,
+		diffKey = headDiffKey,
+		fileKey = (rel: string) => rel
+	}: { source?: ScmSource; diffKey?: (rel: string) => string; fileKey?: (rel: string) => string } = $props();
+	const scm = $derived(source ?? folderScm);
 
 	type Confirm = { key: string; paths: string[]; untracked: boolean; text: string };
 
@@ -63,8 +74,9 @@
 
 	// In the Agents layout (the folder's own Changes panel) diffs and files open as ADE tabs.
 	const openDiff = (rel: string, preview: boolean) =>
-		appMode.isAgents ? adeLayout.openFile(adeLayout.key, diffKey(rel), { preview }) : editors.openDiff(rel, { preview });
-	const openFile = (rel: string) => (appMode.isAgents ? adeLayout.openFile(adeLayout.key, rel, { preview: false }) : editors.open(rel, { preview: false }));
+		appMode.isAgents ? adeLayout.openFile(adeLayout.key, diffKey(rel), { preview }) : editors.open(diffKey(rel), { preview });
+	const openFile = (rel: string) =>
+		appMode.isAgents ? adeLayout.openFile(adeLayout.key, fileKey(rel), { preview: false }) : editors.open(fileKey(rel), { preview: false });
 
 	function rowActions(r: Resource): Action[] {
 		const path = r.entry.path;
