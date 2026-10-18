@@ -9,6 +9,20 @@
 	import { SNAPS_SECTION_ID } from './registry';
 	import { settingSchemas } from './schemas.svelte';
 	import SettingsEditor from './SettingsEditor.svelte';
+	import AppearancePage from './pages/AppearancePage.svelte';
+	import ShortcutsPage from './pages/ShortcutsPage.svelte';
+	import AboutPage from './pages/AboutPage.svelte';
+	import ArkaiPage from './pages/ArkaiPage.svelte';
+	import type { IconName } from '#lib/workbench/Icon.svelte';
+	import type { SettingsPageId } from './systemSettings.svelte';
+
+	// Dedicated pages above the settings groups (Orca's General / Shortcuts panes) and About at the bottom.
+	const PAGES: { id: SettingsPageId; label: string; icon: IconName }[] = [
+		{ id: 'appearance', label: 'Appearance', icon: 'layout' },
+		{ id: 'shortcuts', label: 'Keyboard Shortcuts', icon: 'keyboard' },
+		{ id: 'arkai', label: 'Arkai', icon: 'agent' }
+	];
+	const PAGE_LABEL: Record<SettingsPageId, string> = { appearance: 'Appearance', shortcuts: 'Keyboard Shortcuts', arkai: 'Arkai', about: 'About Kingu' };
 	import { systemSettings } from './systemSettings.svelte';
 
 	let query = $state('');
@@ -16,10 +30,12 @@
 	const sectionOf = (group: string | null) =>
 		group && !query ? (settingSchemas.sections.find((s) => s.groups.includes(group))?.label ?? '') : query ? 'ผลการค้นหา' : 'การตั้งค่าทั้งหมด (IDE + ADE)';
 	const showSnaps = $derived(systemSettings.snaps && !query);
+	const page = $derived(query ? null : systemSettings.page);
 
 	function select(group: string | null) {
 		systemSettings.group = group;
 		systemSettings.snaps = false;
+		systemSettings.page = null;
 		query = '';
 	}
 
@@ -42,7 +58,14 @@
 			<Icon name="settings" size={15} /> การตั้งค่า
 		</div>
 		<div class="min-h-0 flex-1 space-y-3 overflow-y-auto px-2 pb-3">
-			<button class={[ITEM, systemSettings.group === null && !showSnaps && !query && SELECTED]} onclick={() => select(null)}>ทั้งหมด</button>
+			<div class="space-y-0.5">
+				{#each PAGES as p (p.id)}
+					<button class={[ITEM, page === p.id && SELECTED]} aria-current={page === p.id ? 'true' : undefined} onclick={() => ((query = ''), systemSettings.showPage(p.id))}>
+						<Icon name={p.icon} size={14} /><span class="flex-1 truncate">{p.label}</span>
+					</button>
+				{/each}
+			</div>
+			<button class={[ITEM, systemSettings.group === null && !showSnaps && !page && !query && SELECTED]} onclick={() => select(null)}>ทั้งหมด</button>
 			{#each settingSchemas.sections as sec (sec.id)}
 				<div>
 					<div class="px-2.5 pb-1 text-[11px] font-semibold tracking-wide text-(--vscode-descriptionForeground) uppercase">{sec.label}</div>
@@ -66,10 +89,17 @@
 				</div>
 			{/each}
 		</div>
+		<div class="shrink-0 border-t border-(--vscode-sideBar-border) p-2">
+			<button class={[ITEM, page === 'about' && SELECTED]} aria-current={page === 'about' ? 'true' : undefined} onclick={() => ((query = ''), systemSettings.showPage('about'))}>
+				<Icon name="info" size={14} /><span class="flex-1 truncate">About Kingu</span>
+			</button>
+		</div>
 	</nav>
 	<div class="flex min-w-0 flex-1 flex-col">
 		<div class="flex h-[35px] shrink-0 items-center gap-2 border-b border-(--vscode-widget-border) pr-2 pl-6 text-[13px]">
-			{#if showSnaps}
+			{#if page}
+				<span>{PAGE_LABEL[page]}</span>
+			{:else if showSnaps}
 				<span class="text-(--vscode-descriptionForeground)">Snaps</span><span class="text-(--vscode-descriptionForeground)">›</span><span>จัดการ Snaps</span>
 			{:else}
 				<span class="text-(--vscode-descriptionForeground)">{sectionOf(systemSettings.group)}</span>
@@ -81,7 +111,11 @@
 			</button>
 		</div>
 		<div class="min-h-0 flex-1">
-			{#if showSnaps}<SnapsView />{:else}<SettingsEditor group={systemSettings.group} bind:query />{/if}
+			{#if page === 'appearance'}<AppearancePage />
+			{:else if page === 'shortcuts'}<ShortcutsPage />
+			{:else if page === 'arkai'}<ArkaiPage />
+			{:else if page === 'about'}<AboutPage />
+			{:else if showSnaps}<SnapsView />{:else}<SettingsEditor group={systemSettings.group} bind:query />{/if}
 		</div>
 	</div>
 </section>

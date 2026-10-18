@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
 	import FileIcon from './FileIcon.svelte';
+	import { scm } from './scm.svelte';
+	import { entryChanges, fileDecorations } from './scm';
 	import Icon from './Icon.svelte';
 	import { fileIcon, folderIcon } from './fileIcons';
 	import { explorer, type Row } from './explorer.svelte';
@@ -13,6 +15,7 @@
 	let { workspaceName }: { workspaceName: string } = $props();
 
 	const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
+	const decorations = $derived(fileDecorations(entryChanges(scm.repo?.entries ?? [])));
 
 	let open = $state(true);
 	let inputError = $state('');
@@ -107,12 +110,12 @@
 		try {
 			await navigator.clipboard.writeText(text);
 		} catch (e) {
-			status.flash(`คัดลอกไม่ได้: ${e}`);
+			status.error(`คัดลอกไม่ได้: ${e}`);
 		}
 	}
 
 	function reveal(rel: string | null) {
-		invoke('fs_reveal', { rel: rel ?? '' }).catch((e) => status.flash(String(e), 8000));
+		invoke('fs_reveal', { rel: rel ?? '' }).catch((e) => status.error(String(e), 8000));
 	}
 
 	type MenuItem = { label: string; key?: string; run: () => unknown } | 'sep';
@@ -188,20 +191,23 @@
 		<div class="flex flex-col gap-3 px-5 py-2 leading-normal">
 			<p>ยังไม่ได้เปิดโฟลเดอร์</p>
 			<button
-				class="h-[26px] w-full rounded-sm bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:bg-[var(--vscode-button-hoverBackground,#026EC1)]"
+				class="flex h-8 w-full items-center justify-center gap-2 rounded-md bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:bg-[var(--vscode-button-hoverBackground,#026EC1)]"
 				onclick={() => workspace.pickFolder()}
 			>
-				Open Folder
+				<Icon name="folder" size={15} />Open Folder
 			</button>
 			{#if workspace.recent.length}
 				<div>
-					<p class="mb-1 text-(--vscode-descriptionForeground)">Recent</p>
-					<ul>
+					<p class="mb-1 text-[11px] font-medium text-(--vscode-descriptionForeground) uppercase">Recent</p>
+					<ul class="-mx-2">
 						{#each workspace.recent.slice(0, 5) as path (path)}
 							{@const r = recentLabel(path)}
-							<li class="flex min-w-0 items-baseline gap-2">
-								<button class="truncate text-(--vscode-textLink-foreground) hover:underline" title={path} onclick={() => workspace.openFolder(path)}>{r.label}</button>
-								<span class="truncate text-xs text-(--vscode-descriptionForeground)">{r.detail}</span>
+							<li>
+								<button class="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left hover:bg-(--vscode-list-hoverBackground)" title={path} onclick={() => workspace.openFolder(path)}>
+									<span class="shrink-0 text-(--vscode-descriptionForeground)"><Icon name="folder" size={14} /></span>
+									<span class="truncate text-(--vscode-textLink-foreground)">{r.label}</span>
+									<span class="min-w-0 truncate text-xs text-(--vscode-descriptionForeground)">{r.detail}</span>
+								</button>
 							</li>
 						{/each}
 					</ul>
@@ -295,7 +301,7 @@
 							aria-selected={explorer.selected === row.rel}
 							aria-expanded={row.is_dir ? row.expanded : undefined}
 							class={[
-								'flex h-(--kg-row-height) w-full items-center gap-1 pr-2 text-left leading-(--kg-row-height) outline-offset-[-1px]',
+								'mx-1.5 flex h-(--kg-row-height) w-[calc(100%-12px)] items-center gap-1 rounded-md pr-2 text-left leading-(--kg-row-height) outline-offset-[-1px]',
 								explorer.selected === row.rel
 									? 'bg-(--vscode-list-activeSelectionBackground) text-(--vscode-list-activeSelectionForeground) outline outline-1 outline-(--vscode-focusBorder)'
 									: 'hover:bg-(--vscode-list-hoverBackground)',
@@ -318,7 +324,9 @@
 								{#if row.is_dir}<Icon name={row.expanded ? 'chevronDown' : 'chevronRight'} size={16} />{/if}
 							</span>
 							<FileIcon icon={row.is_dir ? folderIcon(row.rel, row.expanded) : fileIcon(row.name)} />
-							<span class="truncate">{row.name}</span>
+							<span class={['min-w-0 flex-1 truncate', row.ignored && 'italic opacity-55']} style:color={decorations.get(row.rel)?.color}>{row.name}</span>
+							{#if row.ignored}<span class="shrink-0 pr-3 pl-2 opacity-55" title="ถูก .gitignore"><Icon name="ignored" size={12} /></span>
+							{:else if decorations.has(row.rel)}{@const deco = decorations.get(row.rel)!}<span class="shrink-0 pr-3 pl-2 text-[11px] font-semibold" style:color={deco.color}>{deco.letter || '•'}</span>{/if}
 						</button>
 					{/if}
 				{/each}

@@ -1,6 +1,38 @@
 @import 'tailwindcss';
 @import '../lib/workbench/theme.css';
 
+/* Kingu's rounder radius scale: buttons, inputs, menus and cards all use these, so one place sets
+   the feel (Tailwind's defaults are 2–8px; the framed parts are 10px). */
+@theme {
+	--radius: 6px;
+	--radius-xs: 3px;
+	--radius-sm: 5px;
+	--radius-md: 7px;
+	--radius-lg: 10px;
+}
+
+/* UI font per OS (`data-platform`, set from workbench/platform.ts). macOS is live; Windows and
+   Oceans are prepared. Thai falls back to each OS's Thai UI font. */
+:root {
+	--kg-ui-font: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', 'IBM Plex Sans Thai', 'Thonburi', sans-serif;
+}
+:root[data-platform='windows'] {
+	--kg-ui-font: 'Segoe UI Variable Text', 'Segoe UI', 'Leelawadee UI', 'Tahoma', sans-serif;
+}
+:root[data-platform='linux'] {
+	--kg-ui-font: system-ui, 'Ubuntu', 'Cantarell', 'Noto Sans', 'Noto Sans Thai', sans-serif;
+}
+/* Oceans: placeholder until its type guidelines arrive. */
+:root[data-platform='oceans'] {
+	--kg-ui-font: system-ui, 'IBM Plex Sans Thai', sans-serif;
+}
+
+/* VS Code's modern layout: the status bar sits on the frame background, 32px from the framed parts'
+   bottom edge to the window's (4px gap + 28px bar), measured from VS Code itself. */
+:root {
+	--kg-statusbar-height: 28px;
+}
+
 /* VS Code's UI font stack and 13px base size; Thai falls back to IBM Plex Sans Thai if installed. */
 html,
 body {
@@ -9,7 +41,7 @@ body {
 	overflow: hidden;
 	background: var(--vscode-editor-background);
 	color: var(--vscode-foreground);
-	font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', 'IBM Plex Sans Thai', 'Thonburi', sans-serif;
+	font-family: var(--kg-ui-font);
 	font-size: 13px;
 	/* WKWebView (macOS) still needs the prefix: without it ⌘A selects the whole workbench. */
 	-webkit-user-select: none;
@@ -29,3 +61,69 @@ textarea,
 	outline: 1px solid var(--vscode-focusBorder);
 	outline-offset: -1px;
 }
+
+/* Thin rounded scrollbars that only darken on hover, like VS Code's overlay scrollbars
+   (Monaco and xterm draw their own). */
+* {
+	scrollbar-width: thin;
+	scrollbar-color: var(--vscode-scrollbarSlider-background, rgba(121, 121, 121, 0.4)) transparent;
+}
+::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+::-webkit-scrollbar-thumb {
+	border: 3px solid transparent;
+	border-radius: 999px;
+	background: var(--vscode-scrollbarSlider-background, rgba(121, 121, 121, 0.4)) padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+	background: var(--vscode-scrollbarSlider-hoverBackground, rgba(100, 100, 100, 0.7)) padding-box;
+}
+::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
+/* Accessibility (VS Code: workbench.reduceMotion; Orca: prefers-reduced-motion / forced-colors).
+   Reduced motion stops every animation and transition, including spinners' movement. */
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+}
+
+/* Forced colors (Windows High Contrast): backgrounds are replaced by the system palette, so parts
+   and selections that only differ by background get system-colored borders and highlights. */
+@media (forced-colors: active) {
+	:focus-visible {
+		outline: 2px solid Highlight;
+	}
+	[aria-selected='true'],
+	[aria-current='true'],
+	[aria-pressed='true'],
+	[aria-checked='true'] {
+		forced-color-adjust: none;
+		background: Highlight;
+		color: HighlightText;
+	}
+	.rounded-\[8px\].border,
+	[role='dialog'],
+	[role='alertdialog'],
+	[role='menu'],
+	[role='tooltip'] {
+		border-color: CanvasText !important;
+	}
+	.sash:hover,
+	.sash.active {
+		background: Highlight;
+	}
+}
+

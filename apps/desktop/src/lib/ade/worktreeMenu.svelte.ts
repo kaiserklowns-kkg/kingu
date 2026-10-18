@@ -13,6 +13,7 @@ import { worktreeDir } from './keys';
 import { COLUMNS, STATUS_LABEL } from './model';
 import { adeTasks } from './tasks.svelte';
 import { jumpRows, worktreeActions, type WorktreeAction } from './worktreeActions';
+import { prompt } from '#lib/workbench/dialogService.svelte.ts';
 
 const FOLDER_ID = '@folder';
 
@@ -27,7 +28,7 @@ async function copy(text: string, what: string) {
 		await navigator.clipboard.writeText(text);
 		status.flash(`คัดลอก${what}แล้ว`);
 	} catch {
-		status.flash(`คัดลอก${what}ไม่ได้`);
+		status.error(`คัดลอก${what}ไม่ได้`);
 	}
 }
 
@@ -47,11 +48,13 @@ export function runWorktreeAction(key: string, id: WorktreeAction) {
 		case 'quickOpen':
 			return slug ? adeTasks.quickOpen(slug) : commands.run('workbench.action.quickOpen');
 		case 'reveal':
-			return invoke('fs_reveal', { rel: slug ? worktreeDir(slug) : '' }).catch((e) => status.flash(String(e)));
+			return invoke('fs_reveal', { rel: slug ? worktreeDir(slug) : '' }).catch((e) => status.error(String(e)));
 		case 'copyPath':
 			return workspace.root && copy(slug ? `${workspace.root}/${worktreeDir(slug)}` : workspace.root, ' path ');
 		case 'copyBranch':
 			return slug && copy(`kingu/${slug}`, 'ชื่อ branch ');
+		case 'rename':
+			return slug && renameTask(slug);
 		case 'markDone':
 			return slug && adeTasks.markDone(slug);
 		case 'reopen':
@@ -94,3 +97,11 @@ export function installWorktreeCommands(): () => void {
 	];
 	return () => unregister.forEach((u) => u());
 }
+
+/** Orca's worktree meta dialog, reduced to what a task has: its title. */
+export async function renameTask(slug: string) {
+	const current = adeTasks.find(slug)?.meta.title ?? slug;
+	const title = await prompt(`ชื่อใหม่ของงาน kingu/${slug} (branch และ worktree ใช้ชื่อเดิม)`, { title: 'แก้ชื่องาน', value: current, okLabel: 'บันทึก' });
+	if (title !== null && title.trim() && title.trim() !== current) await adeTasks.rename(slug, title);
+}
+

@@ -29,6 +29,7 @@
 	};
 	const ITEM = $derived(vertical ? 'relative grid size-12 place-items-center' : 'relative grid h-full w-8 place-items-center');
 	const ICON = $derived(vertical ? 24 : 16);
+	const agentLabel = $derived(titled('Arkai', 'workbench.action.toggleAuxiliaryBar'));
 </script>
 
 <!-- 48px wide, 48px items, 24px icons, 2px active indicator on the left (VS Code activitybarPart);
@@ -37,7 +38,7 @@
 	aria-label="Activity Bar"
 	class={
 		vertical
-			? 'flex w-(--kg-activitybar-width) shrink-0 flex-col items-center border-r border-(--vscode-activityBar-border) bg-(--vscode-activityBar-background)'
+			? 'mr-[4px] flex w-(--kg-activitybar-width) shrink-0 flex-col items-center rounded-[8px] border border-(--vscode-widget-border)'
 			: 'flex h-full items-center'
 	}
 >
@@ -62,7 +63,7 @@
 			onclick={() => layout.showView(v.view)}
 		>
 			{#if on}<span class={vertical ? 'absolute inset-y-0 left-0 w-0.5 bg-(--vscode-activityBar-activeBorder)' : 'absolute inset-x-1 bottom-0 h-px bg-(--vscode-foreground)'}></span>{/if}
-			<Icon name={v.icon} size={ICON} stroke={1.5} />
+			<Icon name={v.icon} size={ICON} filled={on} />
 			{#if badge}
 				<span
 					class={[
@@ -75,19 +76,16 @@
 			{/if}
 		</button>
 	{/each}
-	{#if vertical}
-		{@const agentLabel = titled('Agent', 'workbench.action.toggleAuxiliaryBar')}
-		<button
-			aria-label={agentLabel}
-			aria-pressed={layout.auxVisible}
-			title={agentLabel}
-			class={[
-				'relative grid size-12 place-items-center',
-				layout.auxVisible ? 'text-(--vscode-activityBar-foreground)' : 'text-(--vscode-activityBar-inactiveForeground) hover:text-(--vscode-activityBar-foreground)'
-			]}
-			onclick={() => (layout.auxVisible = !layout.auxVisible)}
-		>
-			<Icon name="agent" size={24} stroke={1.5} />
-		</button>
-	{/if}
+	<button
+		aria-label={agentLabel}
+		aria-pressed={layout.auxVisible}
+		title={agentLabel}
+		class={[
+			ITEM,
+			layout.auxVisible ? 'text-(--vscode-activityBar-foreground)' : 'text-(--vscode-activityBar-inactiveForeground) hover:text-(--vscode-activityBar-foreground)'
+		]}
+		onclick={() => (layout.auxVisible = !layout.auxVisible)}
+	>
+		<Icon name="agent" size={ICON} />
+	</button>
 </nav>

@@ -10,6 +10,7 @@ mod search;
 mod settings;
 mod shell_env;
 mod snap;
+mod system;
 mod team;
 mod watcher;
 mod workspace;
@@ -44,6 +45,36 @@ fn app_info(ws: State<'_, Workspace>) -> AppInfo {
   }
 }
 
+/// Status bar resources (memory, CPU, processes, terminals, keep-awake), polled by the webview.
+#[tauri::command]
+async fn system_stats(ptys: State<'_, pty::Ptys>, keep: State<'_, system::KeepAwake>) -> Result<system::Stats, String> {
+  Ok(system::stats(ptys.list(), &keep))
+}
+
+/// Listening TCP ports for the status bar's Ports popup.
+#[tauri::command]
+async fn system_ports() -> Result<Vec<system::Port>, String> {
+  blocking(system::ports).await
+}
+
+/// Stops a process Kingu started (Resource Manager / Ports "Stop Process").
+#[tauri::command]
+fn system_kill(pid: u32) -> Result<(), String> {
+  system::kill(pid)
+}
+
+/// Opens `http://localhost:<port>` in the default browser.
+#[tauri::command]
+fn open_local_url(url: String) -> Result<(), String> {
+  system::open_local_url(&url)
+}
+
+/// Keeps the Mac awake (display and idle sleep) while on, like Orca's ☕ toggle.
+#[tauri::command]
+fn keep_awake_set(keep: State<'_, system::KeepAwake>, on: bool) -> Result<bool, String> {
+  keep.set(on)
+}
+
 /// Webview errors and milestones, so they show up in the app log (WKWebView has no CDP).
 #[tauri::command]
 fn client_log(level: String, message: String) {
@@ -65,11 +96,20 @@ fn read_workspace_file(ws: State<'_, Workspace>, rel: String) -> Result<String, 
   std::fs::read_to_string(&path).map_err(|e| format!("{rel}: {e}"))
 }
 
+/// An image of the workspace as a `data:` URL, for the editor's image viewer.
+#[tauri::command]
+async fn fs_read_data_url(ws: State<'_, Workspace>, rel: String) -> Result<String, String> {
+  let path = resolve_in(&ws.root()?, &rel)?;
+  blocking(move || fs::image_data_url(&path, 4 * MAX_OPEN_BYTES).map_err(|e| format!("{rel}: {e}"))).await
+}
+
 #[tauri::command]
 fn fs_list_dir(ws: State<'_, Workspace>, rel: String) -> Result<Vec<fs::DirEntry>, String> {
   let root = ws.root()?;
   let dir = if rel.is_empty() { root.clone() } else { resolve_in(&root, &rel)? };
-  fs::list_dir(&root, &dir)
+  let mut entries = fs::list_dir(&root, &dir)?;
+  git::mark_ignored(&dir, &mut entries);
+  Ok(entries)
 }
 
 const QUICK_OPEN_LIMIT: usize = 20_000;
@@ -379,6 +419,7 @@ pub fn run() {
     .manage(Workspace::default())
     .manage(watcher::FileWatcher::default())
     .manage(pty::Ptys::default())
+    .manage(system::KeepAwake::default())
     .manage(Arc::new(agent::AgentHost::default()))
     .manage(Arc::new(search::Searches::default()))
     .manage(lsp::Servers::default())
@@ -407,6 +448,12 @@ pub fn run() {
     })
     .invoke_handler(tauri::generate_handler![
       app_info,
+      system_stats,
+      fs_read_data_url,
+      system_ports,
+      system_kill,
+      open_local_url,
+      keep_awake_set,
       client_log,
       read_workspace_file,
       fs_list_dir,
@@ -445,6 +492,8 @@ pub fn run() {
       agent::tasks_save,
       agent::git_branches,
       agent::worktree_diff_stat,
+      agent::worktree_diff_text,
+      agent::git_diff_text,
       agent::worktree_reject,
       agent::worktree_commit,
       agent::worktree_merge,

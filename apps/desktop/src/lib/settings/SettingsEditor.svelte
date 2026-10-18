@@ -46,7 +46,7 @@
 			const remove = value === undefined || (scope === 'user' && value === s.default);
 			await settings.set(s.id, remove ? undefined : value, scope);
 		} catch (e) {
-			status.flash(`บันทึกการตั้งค่าไม่สำเร็จ: ${e instanceof Error ? e.message : e}`);
+			status.error(`บันทึกการตั้งค่าไม่สำเร็จ: ${e instanceof Error ? e.message : e}`);
 		}
 	}
 
@@ -68,12 +68,15 @@
 <div class="flex h-full flex-col bg-(--vscode-editor-background) text-(--vscode-foreground)">
 	<div class="mx-auto flex w-full max-w-[1000px] shrink-0 flex-col gap-2 px-6 pt-3">
 		<div class="flex items-center gap-2">
+			<label class="relative flex min-w-0 flex-1 items-center">
+			<span class="pointer-events-none absolute left-2.5 text-(--vscode-input-placeholderForeground)"><Icon name="search" size={15} /></span>
 			<input
 				bind:value={query}
 				aria-label="ค้นหาการตั้งค่า"
 				placeholder="ค้นหาการตั้งค่า (Search settings)"
-				class="h-[30px] min-w-0 flex-1 rounded-sm border border-(--vscode-input-border) bg-(--vscode-input-background) px-2 text-sm text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground) focus:border-(--vscode-focusBorder)"
+				class="h-8 min-w-0 flex-1 rounded-md border pl-8 border-(--vscode-input-border) bg-(--vscode-input-background) pr-2 text-sm text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground) focus:border-(--vscode-focusBorder)"
 			/>
+			</label>
 			<button
 				title="Open Settings (JSON)"
 				aria-label="Open Settings (JSON)"
@@ -110,7 +113,7 @@
 					{@const title = settingTitle(s)}
 					{@const value = shown(s)}
 					{@const disabled = !allowedIn(s, scope)}
-					<div class={['relative py-2 pr-2 pl-4', modifiedHere(s) && 'border-l-2 border-(--vscode-settings-modifiedItemIndicator) pl-[14px]']}>
+					<div class={['relative rounded-md py-2 pr-2 pl-4 hover:bg-(--vscode-list-hoverBackground)/50', modifiedHere(s) && 'rounded-l-none border-l-2 border-(--vscode-settings-modifiedItemIndicator) pl-[14px]']}>
 						<div class="flex items-center gap-2 text-[13px]">
 							<span><span class="text-(--vscode-descriptionForeground)">{title.category}:</span> <span class="font-semibold">{title.label}</span></span>
 							{#if settings.inspect(s.id, otherScope) !== undefined && allowedIn(s, otherScope)}

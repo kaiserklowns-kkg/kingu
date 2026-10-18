@@ -8,6 +8,8 @@
 	import { keyLabel } from './keys';
 	import { diffKey, splitPath, type Resource } from './scm';
 	import { scm } from './scm.svelte';
+	import { appMode } from './mode.svelte';
+	import { changesKey } from './viewers';
 
 	type Confirm = { key: string; paths: string[]; untracked: boolean; text: string };
 
@@ -123,7 +125,7 @@
 			{@const [name, dir] = splitPath(r.entry.path)}
 			<div
 				class={[
-					'group/row flex h-(--kg-row-height) items-center pr-2 leading-(--kg-row-height)',
+					'group/row mx-1.5 flex h-(--kg-row-height) items-center rounded-md pr-2 leading-(--kg-row-height)',
 					selected === key
 						? 'bg-(--vscode-list-activeSelectionBackground) text-(--vscode-list-activeSelectionForeground)'
 						: editors.active === diffKey(r.entry.path)
@@ -186,6 +188,7 @@
 				])}
 			{/if}
 			{@render group('changes', 'Changes', scm.groups.changes, [
+				{ icon: 'files', label: 'ดูการเปลี่ยนแปลงทั้งหมดในหน้าเดียว', run: () => (appMode.setMode('workbench'), editors.open(changesKey(), { preview: false })), hidden: !scm.groups.changes.length && !scm.groups.staged.length },
 				{ icon: 'discard', label: 'Discard All Changes', run: () => askDiscard('group:changes', scm.groups.changes), hidden: !scm.groups.changes.length },
 				{ icon: 'plus', label: 'Stage All Changes', run: () => scm.stage(scm.groups.changes.map((r) => r.entry.path)), hidden: !scm.groups.changes.length }
 			])}

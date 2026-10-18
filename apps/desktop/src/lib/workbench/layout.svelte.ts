@@ -28,6 +28,23 @@ class Layout {
 	panelWidth = $state(400);
 	sideView = $state<SideView>('explorer');
 	panelTab = $state<PanelTab>('terminal');
+	/** Zen Mode (VS Code ⌘K Z): only the editor and the title bar; not persisted. */
+	zen = $state(false);
+	#beforeZen: { sidebar: boolean; panel: boolean; aux: boolean } | null = null;
+
+	/** Hides the side bars, the panel and the status bar; toggling again restores them as they were. */
+	toggleZen() {
+		if (!this.zen) {
+			this.#beforeZen = { sidebar: this.sidebarVisible, panel: this.panelVisible, aux: this.auxVisible };
+			this.sidebarVisible = this.panelVisible = this.auxVisible = false;
+			this.zen = true;
+			return;
+		}
+		const b = this.#beforeZen;
+		if (b) [this.sidebarVisible, this.panelVisible, this.auxVisible] = [b.sidebar, b.panel, b.aux];
+		this.#beforeZen = null;
+		this.zen = false;
+	}
 
 	constructor() {
 		const saved = readSaved();

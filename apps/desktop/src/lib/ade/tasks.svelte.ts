@@ -9,7 +9,7 @@ import { team } from '#lib/team/team.svelte.ts';
 import { syncKey, toTeamTask } from './teamSync.ts';
 import { untrack } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
-import { ask, message } from '@tauri-apps/plugin-dialog';
+import { ask, confirm, message } from '#lib/workbench/dialogService.svelte.ts';
 import { clientLog } from '#lib/client-log.ts';
 import { agents } from '#lib/agent/agents.svelte.ts';
 import type { Decision, WorktreeInfo } from '#lib/agent/events.ts';
@@ -137,7 +137,7 @@ class AdeTasks {
 			this.list = adopted;
 			if (adopted !== tasks) await this.#save(adopted);
 		} catch (e) {
-			status.flash(`โหลดงานไม่ได้: ${e}`, 8000);
+			status.error(`โหลดงานไม่ได้: ${e}`, 8000);
 			clientLog('error', `tasks_load: ${e}`);
 		}
 		this.loaded = true;
@@ -173,7 +173,7 @@ class AdeTasks {
 		const snapshot = $state.snapshot(next) as TaskMeta[];
 		this.#saving = this.#saving.then(() =>
 			invoke<void>('tasks_save', { tasks: snapshot }).catch((e) => {
-				status.flash(`บันทึก tasks.json ไม่ได้: ${e}`, 8000);
+				status.error(`บันทึก tasks.json ไม่ได้: ${e}`, 8000);
 				clientLog('error', `tasks_save: ${e}`);
 			})
 		);
@@ -189,7 +189,7 @@ class AdeTasks {
 		try {
 			return await f();
 		} catch (e) {
-			status.flash(`${label}ไม่สำเร็จ: ${e}`, 10000);
+			status.error(`${label}ไม่สำเร็จ: ${e}`, 10000);
 			clientLog('error', `${slug} ${label}: ${e}`);
 		} finally {
 			delete this.busy[slug];
@@ -221,7 +221,7 @@ class AdeTasks {
 		try {
 			await invoke<WorktreeInfo>('worktree_create', { slug, base });
 		} catch (e) {
-			status.flash(`สร้าง worktree ไม่ได้: ${e}`, 10000);
+			status.error(`สร้าง worktree ไม่ได้: ${e}`, 10000);
 			return;
 		}
 		await this.#save([...this.list, newTask({ slug, title, prompt, base, agent: cli ? cliAgent(cli) : undefined }, Date.now())]);
@@ -248,7 +248,7 @@ class AdeTasks {
 			await runtime.start(slug, prompt);
 			await this.#patch(slug, { status: 'running' });
 		} catch (e) {
-			status.flash(`เริ่ม agent ไม่ได้: ${e}`, 10000);
+			status.error(`เริ่ม agent ไม่ได้: ${e}`, 10000);
 			await this.#patch(slug, { status: 'failed' });
 		}
 	}
@@ -261,22 +261,22 @@ class AdeTasks {
 			await runtime.followUp(slug, text, meta.session_id);
 			if (meta.status !== 'running') await this.#patch(slug, { status: 'running' });
 		} catch (e) {
-			status.flash(`ส่งข้อความถึง agent ไม่ได้: ${e}`, 10000);
+			status.error(`ส่งข้อความถึง agent ไม่ได้: ${e}`, 10000);
 		}
 	}
 
 	answer(slug: string, requestId: string, decision: Decision, message?: string) {
-		return runtime.answer(slug, requestId, decision, message).catch((e) => status.flash(`ตอบคำขออนุญาตไม่ได้: ${e}`, 8000));
+		return runtime.answer(slug, requestId, decision, message).catch((e) => status.error(`ตอบคำขออนุญาตไม่ได้: ${e}`, 8000));
 	}
 
 	/** Stops the current turn; the session stays open for follow-ups. */
 	interrupt(slug: string) {
-		return runtime.interrupt(slug).catch((e) => status.flash(String(e), 8000));
+		return runtime.interrupt(slug).catch((e) => status.error(String(e), 8000));
 	}
 
 	/** Ends the run (continue later with a follow-up, which resumes the session). */
 	stop(slug: string) {
-		return runtime.stop(slug).catch((e) => status.flash(String(e), 8000));
+		return runtime.stop(slug).catch((e) => status.error(String(e), 8000));
 	}
 
 	/**
@@ -300,8 +300,11 @@ class AdeTasks {
 		if (rt.status === 'review' || rt.status === 'failed') void this.refreshStat(slug);
 	}
 
-	/** Removes the worktree (the branch `kingu/<slug>` is kept) and forgets the task. */
-	async remove(slug: string) {
+	/**
+	 * Removes the worktree and forgets the task. `confirmed` skips the first question (a caller that
+	 * already asked, like Clean Up Tasks); a worktree with uncommitted work still asks before forcing.
+	 */
+	async remove(slug: string, opts: { confirmed?: boolean; deleteBranch?: boolean } = {}) {
 		if (runtime.isWorking(slug)) {
 			status.flash('หยุด agent ก่อนลบงาน');
 			return;
@@ -309,27 +312,31 @@ class AdeTasks {
 		const path = worktreeDir(slug);
 		const hasWorktree = this.worktrees.some((w) => w.slug === slug);
 		if (hasWorktree) {
-			if (!(await ask(`ลบ worktree ${path}?\n\nbranch kingu/${slug} จะยังอยู่ (ลบเองได้ด้วย git branch -D)`, { title: 'ลบงาน', kind: 'warning', okLabel: 'ลบ', cancelLabel: 'ยกเลิก' }))) return;
+			const choice = opts.confirmed
+				? { ok: true, checked: opts.deleteBranch ?? false }
+				: await confirm(`ลบ worktree ${path}?`, { title: 'ลบงาน', kind: 'warning', okLabel: 'ลบ', cancelLabel: 'ยกเลิก', checkbox: { label: `ลบ branch kingu/${slug} ด้วย` } });
+			if (!choice.ok) return;
+			const deleteBranch = choice.checked;
 			// An idle session still runs in the worktree: end it with the task.
 			if (runtime.isLive(slug)) await this.stop(slug);
 			try {
-				await invoke('worktree_remove', { slug, force: false, deleteBranch: false });
+				await invoke('worktree_remove', { slug, force: false, deleteBranch });
 			} catch (e) {
 				const dirty = /modified|untracked|dirty/i.test(String(e));
 				if (!dirty) {
-					status.flash(`ลบไม่ได้: ${e}`, 10000);
+					status.error(`ลบไม่ได้: ${e}`, 10000);
 					return;
 				}
 				const force = await ask(`worktree ${path} มีการแก้ไขที่ยังไม่ commit\n\nลบทิ้งทั้งหมด? กู้คืนไม่ได้`, { title: 'มีงานที่ยังไม่ commit', kind: 'warning', okLabel: 'ลบทิ้ง', cancelLabel: 'ยกเลิก' });
 				if (!force) return;
 				try {
-					await invoke('worktree_remove', { slug, force: true, deleteBranch: false });
+					await invoke('worktree_remove', { slug, force: true, deleteBranch });
 				} catch (e2) {
-					status.flash(`ลบไม่ได้: ${e2}`, 10000);
+					status.error(`ลบไม่ได้: ${e2}`, 10000);
 					return;
 				}
 			}
-		} else if (!(await ask(`ลบงาน "${this.list.find((t) => t.slug === slug)?.title ?? slug}" ออกจากรายการ?`, { title: 'ลบงาน', okLabel: 'ลบ', cancelLabel: 'ยกเลิก' }))) return;
+		} else if (!opts.confirmed && !(await ask(`ลบงาน "${this.list.find((t) => t.slug === slug)?.title ?? slug}" ออกจากรายการ?`, { title: 'ลบงาน', okLabel: 'ลบ', cancelLabel: 'ยกเลิก' }))) return;
 		if (!hasWorktree && runtime.isLive(slug)) await this.stop(slug);
 		runtime.forget(slug);
 		cliSessions.end(slug);
@@ -429,6 +436,12 @@ class AdeTasks {
 		return this.#patch(slug, { status: done ? 'done' : 'review' });
 	}
 
+	/** Renames a task (its branch and worktree keep their slug). */
+	rename(slug: string, title: string) {
+		const t = title.trim();
+		return t ? this.#patch(slug, { title: t }) : undefined;
+	}
+
 	// -------------------------------------------------------------------------------------------
 	// Navigation
 
@@ -487,7 +500,7 @@ class AdeTasks {
 		try {
 			files = await invoke<string[]>('worktree_list_files', { slug });
 		} catch (e) {
-			status.flash(String(e), 8000);
+			status.error(String(e), 8000);
 			return;
 		}
 		const changed = new Set(this.stats[slug]?.files.map((f) => f.path));

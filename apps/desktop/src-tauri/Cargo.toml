@@ -28,6 +28,8 @@ tauri-plugin-dialog = "=2.8.1"
 notify = "=8.2.0"
 trash = "=5.2.9"
 regex = "1"
+# Image viewer (fs_read_data_url): files as data: URLs.
+base64 = "0.22.1"
 # Team sync (src/team): token in the OS keychain, HTTPS via the system TLS stack.
 keyring = "=4.2.0"
 reqwest = { version = "=0.13.5", default-features = false, features = ["blocking", "json", "native-tls"] }

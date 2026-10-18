@@ -50,7 +50,7 @@ class Scm {
 			await invoke(cmd, args);
 			return true;
 		} catch (e) {
-			status.flash(String(e), 8000);
+			status.error(String(e), 8000);
 			clientLog('error', `${cmd}: ${e}`);
 			return false;
 		} finally {

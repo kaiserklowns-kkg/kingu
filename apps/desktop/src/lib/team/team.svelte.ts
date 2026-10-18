@@ -62,7 +62,7 @@ class Team {
 			await invoke('team_sign_out', { serverUrl: this.serverUrl });
 			statusBar.flash('ออกจากระบบทีมแล้ว (ลบ token จาก Keychain)');
 		} catch (e) {
-			statusBar.flash(`ออกจากระบบทีมไม่สำเร็จ: ${message(e)}`);
+			statusBar.error(`ออกจากระบบทีมไม่สำเร็จ: ${message(e)}`);
 		}
 		await this.refresh();
 	}
@@ -78,7 +78,7 @@ class Team {
 			const pending = await invoke<number>('team_sync_task', { serverUrl, project, task: buildTaskSync(task) });
 			if (this.status) this.status = { ...this.status, pending };
 		} catch (e) {
-			statusBar.flash(`ซิงก์งานไปยังทีมไม่ได้: ${message(e)}`);
+			statusBar.error(`ซิงก์งานไปยังทีมไม่ได้: ${message(e)}`);
 		}
 	}
 

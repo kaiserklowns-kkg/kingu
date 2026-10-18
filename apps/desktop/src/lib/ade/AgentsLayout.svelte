@@ -30,7 +30,8 @@
 	import { untrack } from 'svelte';
 	import { cliName, cliOf, cliResume, type RunMode } from './agentCli';
 	import { cliSessions } from './cliSessions.svelte';
-	import { BUTTON, BUTTON_SECONDARY } from './ui';
+	import { BUTTON, BUTTON_SECONDARY, STATUS_DOT } from './ui';
+	import { STATUS_LABEL, timeAgo } from './model';
 
 	let body: HTMLDivElement | undefined = $state();
 	const RIGHT_TABS: { id: RightTab; label: string; icon: IconName }[] = [
@@ -77,6 +78,20 @@
 		lastRoot = root;
 	});
 
+	// The empty composer's helpers: starters fill the prompt (they never start a task), recent tasks reopen one.
+	const STARTERS: { icon: IconName; label: string; text: string }[] = [
+		{ icon: 'bug', label: 'แก้บั๊ก', text: 'แก้บั๊ก: ' },
+		{ icon: 'check', label: 'เขียน test', text: 'เขียน test ให้ ' },
+		{ icon: 'code', label: 'เพิ่มฟีเจอร์', text: 'เพิ่มฟีเจอร์ ' },
+		{ icon: 'refresh', label: 'Refactor', text: 'Refactor ' }
+	];
+	const recent = $derived([...adeTasks.views].sort((a, b) => b.meta.updated_at - a.meta.updated_at).slice(0, 4));
+	let nudge = $state(0);
+	function starter(text: string) {
+		draft = draft.trim() ? `${text}${draft}` : text;
+		nudge++; // remounts the composer, which autofocuses
+	}
+
 	async function start(text: string) {
 		busy = true;
 		try {
@@ -89,21 +104,24 @@
 			busy = false;
 		}
 	}
+	// VS Code's modern layout: each part is a softly rounded pane on the title bar's color, 4px apart.
+	const FRAME = 'min-h-0 overflow-hidden rounded-[8px] border border-(--vscode-widget-border)';
 </script>
 
-<div bind:this={body} class="flex min-h-0 flex-1 bg-(--vscode-editor-background) text-(--vscode-foreground)">
+<div bind:this={body} class="flex min-h-0 flex-1 bg-(--vscode-titleBar-activeBackground) px-[4px] pb-[4px] text-(--vscode-foreground)">
 	{#if appMode.sessionsVisible}
-		<aside aria-label="Side Bar" class="flex shrink-0 flex-col border-r border-(--vscode-sideBar-border) bg-(--vscode-sideBar-background)" style:width="{appMode.sessionsWidth}px">
+		<aside aria-label="Side Bar" class={[FRAME, 'flex shrink-0 flex-col bg-(--vscode-sideBar-background)']} style:width="{appMode.sessionsWidth}px">
 			{#key workspace.root}<AdeSidebar />{/key}
 		</aside>
 		<Sash
+				gap
 			orientation="vertical"
 			onDrag={(d) => (appMode.sessionsWidth = clamp(appMode.sessionsWidth + d, SIDEBAR_MIN, maxSide()))}
 			onReset={() => (appMode.sessionsWidth = 280)}
 		/>
 	{/if}
 
-	<main class="flex min-w-0 flex-1 flex-col overflow-hidden">
+	<main class={[FRAME, 'flex min-w-0 flex-1 flex-col bg-(--vscode-editor-background)']}>
 		<AdeTabBar />
 		<div class="relative min-h-0 flex-1">
 		{#if adeLayout.board}
@@ -119,7 +137,7 @@
 						<AdeEditor
 							path={activeFile}
 							onedit={() => adeLayout.pin(key, activeFile)}
-							onfail={(e) => (status.flash(`เปิดไฟล์ไม่ได้: ${e}`), adeLayout.closeFile(key, activeFile))}
+							onfail={(e) => (status.error(`เปิดไฟล์ไม่ได้: ${e}`), adeLayout.closeFile(key, activeFile))}
 						/>
 					</div>
 				{/key}
@@ -130,7 +148,7 @@
 					<!-- After a restart the CLI is not running: continue its session or start fresh (never on its own). -->
 					<div class="grid h-full place-items-center p-6">
 						<div class="max-w-md space-y-3 text-center">
-							<div class="flex justify-center text-(--vscode-descriptionForeground)"><Icon name="terminal" size={28} stroke={1.3} /></div>
+							<div class="flex justify-center text-(--vscode-descriptionForeground)"><Icon name="terminal" size={28} /></div>
 							<p>{cliName(cli)} ของงานนี้ไม่ได้รันอยู่</p>
 							<p class="text-xs text-(--vscode-descriptionForeground)">งานรันใน terminal ของ worktree <span class="font-mono">kingu/{slug}</span></p>
 							<div class="flex justify-center gap-2">
@@ -146,11 +164,12 @@
 				<div class="grid h-full place-items-center p-6">
 					{#if workspace.root}
 						<div class="w-full max-w-[640px] space-y-3">
-							<div class="flex items-center gap-2 text-(--vscode-descriptionForeground)">
-								<Icon name="agent" size={20} stroke={1.4} />
-								<h1 class="text-base font-medium text-(--vscode-foreground)">อยากให้ agent ทำอะไร</h1>
+							<div class="mb-5 flex flex-col items-center gap-2 text-center">
+								<Icon name="agent" size={44} />
+								<h1 class="text-lg font-semibold text-(--vscode-foreground)">อยากให้ Arkai ทำอะไร</h1>
+								<p class="text-[13px] text-(--vscode-descriptionForeground)">แต่ละงานได้ worktree ของตัวเอง ทำหลายงานพร้อมกันได้โดยไม่ชนกัน</p>
 							</div>
-							{#key focusKey}
+							{#key `${focusKey}:${nudge}`}
 								<Composer bind:value={draft} size="lg" autofocus placeholder="อธิบายงาน เช่น เพิ่มปุ่ม export รายงานเป็น CSV…" {busy} onsubmit={start}>
 									{#snippet chips()}
 										<label class="inline-flex shrink-0 items-center gap-1 rounded-sm border border-(--vscode-widget-border) px-1.5 py-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" title="วิธีรัน agent">
@@ -173,7 +192,33 @@
 									{/snippet}
 								</Composer>
 							{/key}
+							<div class="flex flex-wrap gap-1.5">
+								{#each STARTERS as s (s.label)}
+									<button class="flex h-7 items-center gap-1.5 rounded-full border border-(--vscode-widget-border) px-3 text-xs text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)" disabled={busy} onclick={() => starter(s.text)}>
+										<Icon name={s.icon} size={13} />{s.label}
+									</button>
+								{/each}
+							</div>
 							<p class="text-xs text-(--vscode-descriptionForeground)">สร้าง worktree ใหม่บน branch <span class="font-mono">kingu/…</span> แล้วเริ่ม {mode === 'terminal' ? `${cliSetting || 'claude'} ใน terminal ของ worktree` : 'agent (timeline)'} · Enter เพื่อเริ่ม · Shift+Enter ขึ้นบรรทัดใหม่</p>
+							{#if recent.length}
+								<section class="pt-5" aria-label="งานล่าสุด">
+									<h2 class="mb-2 text-xs font-medium text-(--vscode-descriptionForeground)">งานล่าสุด</h2>
+									<div class="grid grid-cols-2 gap-2">
+										{#each recent as v (v.meta.slug)}
+											<button class="min-w-0 rounded-lg border border-(--vscode-widget-border) px-3 py-2.5 text-left hover:bg-(--vscode-list-hoverBackground)" onclick={() => adeLayout.show(v.meta.slug)}>
+												<span class="flex items-center gap-2">
+													<span class={['size-2 shrink-0 rounded-full', STATUS_DOT[v.status]]} title={STATUS_LABEL[v.status]}></span>
+													<span class="min-w-0 flex-1 truncate text-[13px]">{v.meta.title}</span>
+												</span>
+												<span class="mt-1 flex gap-2 pl-4 text-xs text-(--vscode-descriptionForeground)">
+													<span class="min-w-0 flex-1 truncate font-mono">kingu/{v.meta.slug}</span>
+													<span class="shrink-0">{timeAgo(v.meta.updated_at, adeTasks.now)}</span>
+												</span>
+											</button>
+										{/each}
+									</div>
+								</section>
+							{/if}
 						</div>
 					{:else}
 						<p class="text-sm text-(--vscode-descriptionForeground)">เปิดโฟลเดอร์ที่เป็น git repository ก่อน</p>
@@ -199,11 +244,12 @@
 
 	{#if appMode.panelVisible}
 		<Sash
+				gap
 			orientation="vertical"
 			onDrag={(d) => (appMode.panelWidth = clamp(appMode.panelWidth - d, 260, maxSide()))}
 			onReset={() => (appMode.panelWidth = 360)}
 		/>
-		<aside aria-label={adeLayout.rightTab === 'files' ? 'Files' : 'Changes'} class="flex shrink-0 flex-col overflow-hidden border-l border-(--vscode-sideBar-border) bg-(--vscode-sideBar-background)" style:width="{appMode.panelWidth}px">
+		<aside aria-label={adeLayout.rightTab === 'files' ? 'Files' : 'Changes'} class={[FRAME, 'flex shrink-0 flex-col bg-(--vscode-sideBar-background)']} style:width="{appMode.panelWidth}px">
 			<!-- Orca's right side bar tabs. -->
 			<div class="flex h-[35px] shrink-0 items-stretch gap-0.5 border-b border-(--vscode-sideBar-border) px-1.5" role="tablist" aria-label="Right Side Bar">
 				{#each RIGHT_TABS as t (t.id)}

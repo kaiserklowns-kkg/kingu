@@ -22,19 +22,22 @@
 	const activeTab = $derived(adeLayout.activeTab(key));
 	const attention = $derived(sessionsAttentionLabel(adeTasks.counts.needsInput));
 
-	const TAB = 'group flex max-w-60 min-w-0 shrink-0 cursor-default items-center gap-1.5 border-r border-(--vscode-editorGroupHeader-tabsBorder,var(--vscode-widget-border)) pr-1.5 pl-3 text-[13px]';
+	// Same look as the IDE's editor tabs: rounded tops in the strip, an accent line on the active one.
+	const TAB = 'group relative flex h-[30px] max-w-60 min-w-0 shrink-0 cursor-default items-center gap-1.5 rounded-t-lg pr-1.5 pl-3 text-[13px] transition-colors';
 	const ACTIVE = 'bg-(--vscode-tab-activeBackground) text-(--vscode-tab-activeForeground)';
+	const ACCENT = 'absolute inset-x-2.5 top-0 h-0.5 rounded-b-full bg-(--vscode-tab-activeBorderTop)';
 	const INACTIVE = 'text-(--vscode-tab-inactiveForeground) hover:bg-(--vscode-tab-hoverBackground)';
 </script>
 
-<div class="flex h-[35px] shrink-0 items-stretch border-b border-(--vscode-editorGroupHeader-tabsBorder,var(--vscode-widget-border)) bg-(--vscode-editorGroupHeader-tabsBackground)">
+<div class="flex h-[35px] shrink-0 items-end gap-0.5 border-b border-(--vscode-editorGroupHeader-tabsBorder,var(--vscode-widget-border)) bg-(--vscode-editorGroupHeader-tabsBackground) px-1">
 	{#if adeLayout.board}
 		<div class={[TAB, ACTIVE]}>
+			<span class={ACCENT}></span>
 			<Icon name="tasks" size={14} /> Tasks
-			<button class="grid size-5 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="ปิด Tasks" onclick={() => (adeLayout.board = false)}><Icon name="close" size={13} /></button>
+			<button class="grid size-5 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="ปิด Tasks" onclick={() => (adeLayout.board = false)}><Icon name="close" size={13} /></button>
 		</div>
 	{:else}
-		<div class="flex min-w-0 items-stretch overflow-x-auto" role="tablist" aria-label="แท็บของ worktree">
+		<div class="flex min-w-0 items-end gap-0.5 overflow-x-auto [scrollbar-width:none]" role="tablist" aria-label="แท็บของ worktree">
 			{#each tabs as t (t.id)}
 				{@const active = t.id === activeTab}
 				<div
@@ -47,6 +50,7 @@
 					onauxclick={(e) => e.button === 1 && t.kind !== 'agent' && t.kind !== 'compose' && adeLayout.close(key, t.id)}
 					ondblclick={() => (t.kind === 'file' || t.kind === 'diff') && adeLayout.pin(key, t.key)}
 				>
+					{#if active}<span class={ACCENT}></span>{/if}
 					{#if t.kind === 'agent' && view}
 						<span class={['size-2 shrink-0 rounded-full', STATUS_DOT[view.status]]} title={STATUS_LABEL[view.status]}></span>
 						<span class="truncate" title={view.meta.title}>{view.meta.title}</span>
@@ -60,7 +64,7 @@
 					{#if t.kind !== 'agent' && t.kind !== 'compose'}
 						{@const dirty = t.kind === 'file' && editors.isDirty(t.key)}
 						<button
-							class={['grid size-5 shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)', !active && !dirty && 'invisible group-hover:visible']}
+							class={['grid size-5 shrink-0 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)', !active && !dirty && 'invisible group-hover:visible']}
 							aria-label={dirty ? `${t.label} ยังไม่บันทึก: ปิด` : `ปิด ${t.label}`}
 							title="ปิด"
 							onclick={(e) => (e.stopPropagation(), adeLayout.close(key, t.id))}
@@ -78,7 +82,7 @@
 				</div>
 			{/each}
 		</div>
-		<div class="flex items-center px-1">
+		<div class="flex items-center self-center px-1">
 			<button
 				class="grid size-6 place-items-center rounded-md enabled:hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-35"
 				aria-label="Terminal ใหม่ใน worktree นี้"

@@ -99,7 +99,7 @@ describe('schema', () => {
 			'workbench.navigationControl.enabled': true,
 			'workbench.layoutControl.enabled': true,
 			'workbench.layoutControl.type': 'both',
-			'workbench.activityBar.location': 'default',
+			'workbench.activityBar.location': 'top',
 			'workbench.sideBar.location': 'left',
 			'workbench.panel.defaultLocation': 'bottom',
 			'workbench.panel.alignment': 'center',

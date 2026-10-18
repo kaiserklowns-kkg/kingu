@@ -5,9 +5,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import { settings, USER_SETTINGS_KEY, WORKSPACE_SETTINGS_PATH, SETTINGS_EDITOR_KEY } from './settings.svelte';
 import { isAdeEditor } from '#lib/ade/keys.ts';
+import { isChangesKey, isImagePath, isPreviewKey } from '#lib/workbench/viewers.ts';
+import { isNotebookPath } from '#lib/workbench/notebook.ts';
 
-/** Tabs with no text model (the Settings editor UI, ADE task pages and the board). */
-export const isNonTextEditor = (key: string) => key === SETTINGS_EDITOR_KEY || isAdeEditor(key);
+/** Tabs with no text model (the Settings editor UI, ADE task pages and the board, images, Markdown previews). */
+export const isNonTextEditor = (key: string) => key === SETTINGS_EDITOR_KEY || isAdeEditor(key) || isImagePath(key) || isPreviewKey(key) || isNotebookPath(key) || isChangesKey(key);
 
 export async function readResource(key: string): Promise<string> {
 	if (key === USER_SETTINGS_KEY) {

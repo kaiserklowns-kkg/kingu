@@ -9,7 +9,7 @@ import { status } from './status.svelte';
 import { TITLE_BAR_TOGGLES, toggleChecked } from './titlebar';
 
 export function setUserSetting(id: string, value: unknown) {
-	settings.set(id, value, 'user').catch((e) => status.flash(`บันทึกการตั้งค่า ${id} ไม่ได้: ${e}`, 8000));
+	settings.set(id, value, 'user').catch((e) => status.error(`บันทึกการตั้งค่า ${id} ไม่ได้: ${e}`, 8000));
 }
 
 function toggleSetting(id: string) {

@@ -325,7 +325,7 @@
 					aria-expanded={row.kind === 'file' ? !row.collapsed : undefined}
 					aria-level={row.kind === 'file' ? 1 : 2}
 					class={[
-						'group/row flex h-(--kg-row-height) cursor-pointer items-center gap-1 pr-3 leading-(--kg-row-height) whitespace-nowrap',
+						'group/row mx-1.5 flex h-(--kg-row-height) cursor-pointer items-center gap-1 rounded-md pr-3 leading-(--kg-row-height) whitespace-nowrap',
 						selected === i
 							? 'bg-(--vscode-list-activeSelectionBackground) text-(--vscode-list-activeSelectionForeground)'
 							: 'hover:bg-(--vscode-list-hoverBackground)'

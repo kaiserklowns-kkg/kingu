@@ -4,7 +4,16 @@
 	import { lsp } from '#lib/lsp/lsp.svelte.ts';
 	import DiffHost from './DiffHost.svelte';
 	import EditorHost from './EditorHost.svelte';
+	import ImageViewer from './ImageViewer.svelte';
+	import MarkdownPreview from './MarkdownPreview.svelte';
+	import { hasPreview, isChangesKey, isCsvPath, isImagePath, isPreviewKey, previewTarget } from './viewers';
+	import CombinedDiff from './CombinedDiff.svelte';
+	import CsvPreview from './CsvPreview.svelte';
+	import NotebookViewer from './NotebookViewer.svelte';
+	import { isNotebookPath } from './notebook';
+	import { commands } from './commands.svelte';
 	import FileIcon from './FileIcon.svelte';
+	import KinguMark from './KinguMark.svelte';
 	import Icon from './Icon.svelte';
 	import { editors } from './editors.svelte';
 	import { editorLabel } from './editorLabel';
@@ -30,11 +39,13 @@
 	const settingsActive = $derived(activePath === SETTINGS_EDITOR_KEY);
 	const adeActive = $derived(activePath !== null && isAdeEditor(activePath));
 	const taskSlug = $derived(activePath ? slugOfTaskKey(activePath) : null);
-	const crumbs = $derived(!activePath || settingsActive || adeActive ? [] : activePath === USER_SETTINGS_KEY ? ['User', 'settings.json'] : fileOf(activePath).split('/'));
+	const crumbs = $derived(!activePath || settingsActive || adeActive || isChangesKey(activePath) ? [] : activePath === USER_SETTINGS_KEY ? ['User', 'settings.json'] : fileOf(activePath).split('/'));
 	const label = editorLabel;
 	const iconOf = (key: string) =>
 		fileIcon(key === SETTINGS_EDITOR_KEY || key === USER_SETTINGS_KEY ? 'settings.json' : isAdeEditor(key) ? 'tasks.md' : fileOf(key));
 	const diffActive = $derived(activePath !== null && isDiffKey(activePath));
+	/** Images and Markdown previews have their own viewers instead of Monaco. */
+	const viewerActive = $derived(activePath !== null && (isImagePath(activePath) || isPreviewKey(activePath) || isNotebookPath(activePath) || isChangesKey(activePath)));
 	// The diff editor exists only while this group has a diff tab.
 	const hasDiff = $derived(tabs.some((t) => isDiffKey(t.path)));
 	// Enclosing symbols from the language server's document symbols, like VS Code's outline crumbs.
@@ -76,7 +87,8 @@
 		['Go to File', 'cmd+p'],
 		['Split Editor', 'cmd+\\'],
 		['Toggle Terminal', 'ctrl+`'],
-		['Toggle Agent', 'cmd+alt+b']
+		['Toggle Arkai', 'cmd+alt+b'],
+		['Zen Mode', 'cmd+k z']
 	];
 </script>
 
@@ -90,7 +102,7 @@
 			role="tablist"
 			tabindex="-1"
 			aria-label="Editor tabs"
-			class="flex h-(--kg-tab-height) shrink-0 overflow-x-auto bg-(--vscode-editorGroupHeader-tabsBackground) [scrollbar-width:none]"
+			class="flex h-(--kg-tab-height) shrink-0 items-end gap-0.5 overflow-x-auto bg-(--vscode-editorGroupHeader-tabsBackground) px-1 [scrollbar-width:none]"
 			ondragover={(e) => dragOver(e, tabs.length)}
 			ondragleave={() => (dropTarget = null)}
 			ondrop={(e) => drop(e, tabs.length)}
@@ -105,8 +117,8 @@
 					ondrop={(e) => drop(e, i)}
 					ondragend={() => (dropTarget = null)}
 					class={[
-						'group relative flex h-full shrink-0 items-center gap-1.5 border-r border-(--vscode-tab-border) pl-2.5',
-						active ? 'bg-(--vscode-tab-activeBackground)' : 'bg-(--vscode-tab-inactiveBackground) hover:bg-(--vscode-tab-hoverBackground)',
+						'group relative flex h-[calc(100%-5px)] shrink-0 items-center gap-1.5 rounded-t-lg pl-2.5 transition-colors',
+						active ? 'bg-(--vscode-tab-activeBackground)' : 'hover:bg-(--vscode-tab-hoverBackground)',
 						active
 							? focused
 								? 'text-(--vscode-tab-activeForeground)'
@@ -116,7 +128,7 @@
 								: 'text-[var(--vscode-tab-unfocusedInactiveForeground,#9d9d9d80)]'
 					]}
 				>
-					{#if active && focused}<span class="absolute inset-x-0 top-0 h-px bg-(--vscode-tab-activeBorderTop)"></span>{/if}
+					{#if active && focused}<span class="absolute inset-x-2.5 top-0 h-0.5 rounded-b-full bg-(--vscode-tab-activeBorderTop)"></span>{/if}
 					{#if dropTarget === i}<span class="absolute inset-y-0 left-0 w-0.5 bg-(--vscode-focusBorder)"></span>{/if}
 					<span class={['flex', !focused && 'opacity-60']}><FileIcon icon={iconOf(tab.path)} /></span>
 					<button
@@ -132,7 +144,7 @@
 					</button>
 					<button
 						aria-label={tab.dirty ? `${label(tab.path)} ยังไม่บันทึก: ปิด` : `ปิด ${label(tab.path)}`}
-						class={['mr-1 grid size-5 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)', !active && !tab.dirty && 'invisible group-hover:visible']}
+						class={['mr-1 grid size-5 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)', !active && !tab.dirty && 'invisible group-hover:visible']}
 						onclick={(e) => close(tab.path, e.altKey)}
 					>
 						{#if tab.dirty}
@@ -157,16 +169,37 @@
 				<Icon name="chevronRight" size={14} />
 				<button class="whitespace-nowrap hover:text-(--vscode-foreground)" onclick={() => editors.gotoLine(s.range.start.line + 1, s.range.start.character + 1)}>{s.name}</button>
 			{/each}
+			{#if hasPreview(activePath)}
+				<!-- VS Code's "Open Preview to the Side" in the editor title of a Markdown file (and CSV, like Orca). -->
+				<button
+					class="ml-auto flex shrink-0 items-center gap-1 rounded-md px-1.5 text-xs hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)"
+					title="เปิด preview ด้านข้าง (⌘K V)"
+					onclick={() => (editors.focusGroup(group), commands.run('markdown.showPreviewToSide'))}
+				>
+					<Icon name="openExternal" size={13} />Preview
+				</button>
+			{/if}
 		</nav>
 	{/if}
 
 	<div class="relative min-h-0 flex-1">
-		<div class={['absolute inset-0', (!activePath || diffActive || settingsActive || adeActive) && 'invisible']}>
+		<div class={['absolute inset-0', (!activePath || diffActive || settingsActive || adeActive || viewerActive) && 'invisible']}>
 			<EditorHost {group} />
 		</div>
 		{#if hasDiff}
 			<div class={['absolute inset-0', !diffActive && 'invisible']}>
 				<DiffHost active={activePath} onfail={(key) => editors.close(key, { force: true, group })} reportLanguage={focused} />
+			</div>
+		{/if}
+		{#if activePath && isImagePath(activePath)}
+			<div class="absolute inset-0">{#key activePath}<ImageViewer path={activePath} />{/key}</div>
+		{:else if activePath && isChangesKey(activePath)}
+			<div class="absolute inset-0">{#key activePath}<CombinedDiff changesKey={activePath} />{/key}</div>
+		{:else if activePath && isNotebookPath(activePath)}
+			<div class="absolute inset-0">{#key activePath}<NotebookViewer path={activePath} />{/key}</div>
+		{:else if activePath && isPreviewKey(activePath)}
+			<div class="absolute inset-0">
+				{#key activePath}{#if isCsvPath(previewTarget(activePath))}<CsvPreview previewKey={activePath} />{:else}<MarkdownPreview previewKey={activePath} />{/if}{/key}
 			</div>
 		{/if}
 		{#if settingsActive}
@@ -179,12 +212,19 @@
 		{/if}
 		{#if !activePath && editors.groups.length === 1}
 			<div class="absolute inset-0 grid place-items-center">
-				<dl class="grid grid-cols-[auto_auto] gap-x-4 gap-y-2 text-(--vscode-descriptionForeground)">
-					{#each watermark as [label, key] (label)}
-						<dt class="text-right">{label}</dt>
-						<dd class="font-mono tracking-widest">{keyLabel(key)}</dd>
-					{/each}
-				</dl>
+				<div class="flex flex-col items-center gap-6">
+					<span class="text-(--vscode-foreground) opacity-15"><KinguMark size={88} /></span>
+					<dl class="grid grid-cols-[auto_auto] items-center gap-x-4 gap-y-2.5 text-(--vscode-descriptionForeground)">
+						{#each watermark as [label, key] (label)}
+							<dt class="text-right">{label}</dt>
+							<dd class="flex gap-1">
+								{#each keyLabel(key).split(' ') as chord, ci (ci)}
+									<kbd class="rounded-md border border-(--vscode-widget-border) bg-(--vscode-editorGroupHeader-tabsBackground) px-1.5 py-0.5 font-sans text-xs tracking-wider">{chord}</kbd>
+								{/each}
+							</dd>
+						{/each}
+					</dl>
+				</div>
 			</div>
 		{/if}
 	</div>

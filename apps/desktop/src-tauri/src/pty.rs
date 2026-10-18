@@ -15,12 +15,37 @@ struct Session {
   writer: Box<dyn Write + Send>,
   master: Box<dyn MasterPty + Send>,
   child: Box<dyn portable_pty::Child + Send + Sync>,
+  /// Where the shell started, so the Resource Manager can group terminals by workspace.
+  cwd: std::path::PathBuf,
+}
+
+/// One live terminal for the status bar's Resource Manager.
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct PtyInfo {
+  pub id: u32,
+  pub pid: Option<u32>,
+  pub cwd: String,
 }
 
 #[derive(Default)]
 pub struct Ptys {
   next_id: AtomicU32,
   sessions: Mutex<HashMap<u32, Session>>,
+}
+
+impl Ptys {
+  /// Terminals still open (a session lives until the webview kills it).
+  pub fn list(&self) -> Vec<PtyInfo> {
+    let mut out: Vec<PtyInfo> = self
+      .sessions
+      .lock()
+      .unwrap()
+      .iter()
+      .map(|(id, s)| PtyInfo { id: *id, pid: s.child.process_id(), cwd: s.cwd.display().to_string() })
+      .collect();
+    out.sort_by_key(|p| p.id);
+    out
+  }
 }
 
 fn size(cols: u16, rows: u16) -> PtySize {
@@ -105,7 +130,7 @@ pub fn spawn_shell(ptys: &Ptys, cwd: &Path, cols: u16, rows: u16, on_data: Chann
     }
   });
 
-  ptys.sessions.lock().unwrap().insert(id, Session { writer, master: pair.master, child });
+  ptys.sessions.lock().unwrap().insert(id, Session { writer, master: pair.master, child, cwd: cwd.to_path_buf() });
   Ok(id)
 }
 

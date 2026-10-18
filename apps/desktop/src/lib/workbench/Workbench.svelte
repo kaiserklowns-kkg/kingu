@@ -6,9 +6,25 @@
 	// body and status bar, which stay mounted (hidden) so editors and terminals keep their state.
 	import { onMount, untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
-	import { ask, message } from '@tauri-apps/plugin-dialog';
+	import { ask } from './dialogService.svelte';
+	import Dialog from './Dialog.svelte';
+	import { dialogs } from './dialogService.svelte';
 	import AgentPanel from '#lib/agent/AgentPanel.svelte';
 	import ActivityBar from './ActivityBar.svelte';
+	import Icon from './Icon.svelte';
+	import Toasts from './Toasts.svelte';
+	import CleanupDialog from '#lib/ade/CleanupDialog.svelte';
+	import { cleanup } from '#lib/ade/cleanup.svelte.ts';
+	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
+	import Tooltips from './Tooltips.svelte';
+	import FloatingTerminal from './FloatingTerminal.svelte';
+	import Welcome from './Welcome.svelte';
+	import { welcome } from './welcomeTour.svelte';
+	import { floating } from './floating.svelte';
+	import { installSignals } from './signals.svelte';
+	import { platform } from './platform.svelte';
+	import { PROFILES, type Platform } from './platform';
+	import { hasPreview, previewKey } from './viewers';
 	import EditorPart from './EditorPart.svelte';
 	import Panel from './Panel.svelte';
 	import QuickInput from './QuickInput.svelte';
@@ -16,7 +32,7 @@
 	import SideBar from './SideBar.svelte';
 	import StatusBar from './StatusBar.svelte';
 	import TitleBar from './TitleBar.svelte';
-	import { commands, installKeybindings, keyOf } from './commands.svelte';
+	import { commands, installKeybindings } from './commands.svelte';
 	import { editors } from './editors.svelte';
 	import { explorer } from './explorer.svelte';
 	import { layout, PANEL_MIN, SIDEBAR_MIN } from './layout.svelte';
@@ -28,7 +44,7 @@
 	import { installSettings } from '#lib/settings/apply.svelte.ts';
 	import { registerSettingsCommands } from '#lib/settings/contributions.ts';
 	import { installAde } from '#lib/ade/tasks.svelte.ts';
-	import { isMac, keyLabel } from './keys';
+	import { isMac } from './keys';
 	import { installNativeMenu } from './appMenu.svelte';
 	import { navigation } from './navigation.svelte';
 	import { appMode } from './mode.svelte';
@@ -61,7 +77,24 @@
 	// register() reads and writes the registry, which an effect would re-run on forever.
 	onMount(() => {
 		void workspace.init().then(() => invoke<string | null>('git_branch').then((b) => (status.branch = b)));
+		welcome.maybeShow();
 		const unregister = [
+			installSignals(),
+			// Shows another OS's chrome (window controls, fonts) on this machine; real users keep macOS's.
+			commands.register({
+				id: 'kingu.dev.previewPlatform',
+				title: 'Preview Platform UI (Windows → Oceans → actual)',
+				category: 'Developer',
+				key: 'ctrl+alt+cmd+p',
+				run: () => {
+					const order: (Platform | null)[] = ['windows', 'oceans', null];
+					const next = order[(order.indexOf(platform.preview) + 1) % order.length];
+					platform.setPreview(next);
+					status.flash(next ? `Preview UI: ${PROFILES[next].label}` : `Preview UI: ปิด (ใช้ ${PROFILES[platform.current].label})`, 4000);
+				}
+			}),
+			commands.register({ id: 'kingu.agents.cleanup', title: 'Clean Up Tasks…', category: 'Agents', when: () => adeTasks.views.length > 0, run: () => (cleanup.open = true) }),
+			commands.register({ id: 'kingu.welcome.show', title: 'Welcome: Show Getting Started', category: 'Help', run: () => (welcome.open = true) }),
 			commands.register({ id: 'workbench.action.files.openFolder', title: 'Open Folder...', category: 'File', key: 'cmd+o', run: () => workspace.pickFolder() }),
 			commands.register({ id: 'workbench.action.openRecent', title: 'Open Recent...', category: 'File', key: 'ctrl+r',
 				// The shell's reverse search keeps ctrl+r inside the terminal (the menu still opens the picker).
@@ -104,6 +137,7 @@
 			commands.register({ id: 'workbench.files.action.refreshFilesExplorer', title: 'Refresh Explorer', category: 'File', when: () => workspace.root !== null, run: () => explorer.refresh(['']) }),
 			commands.register({ id: 'workbench.files.action.collapseExplorerFolders', title: 'Collapse Folders in Explorer', category: 'File', when: () => workspace.root !== null, run: () => explorer.collapseAll() }),
 			commands.register({ id: 'workbench.action.quickOpen', title: 'Go to File...', key: 'cmd+p', run: () => quick.show('') }),
+			commands.register({ id: 'workbench.action.gotoSymbol', title: 'Go to Symbol in Editor...', key: 'cmd+shift+o', when: () => !appMode.isAgents && editors.active !== null, run: () => quick.show('@') }),
 			commands.register({ id: 'workbench.action.showCommands', title: 'Show All Commands', key: 'cmd+shift+p', palette: false, run: () => quick.show('>') }),
 			// In Agents mode ⌘B / ⌘J toggle the sessions side bar and the changes panel instead.
 			commands.register({
@@ -112,6 +146,45 @@
 				category: 'View',
 				key: 'cmd+b',
 				run: () => (appMode.isAgents ? (appMode.sessionsVisible = !appMode.sessionsVisible) : (layout.sidebarVisible = !layout.sidebarVisible))
+			}),
+			commands.register({
+				id: 'workbench.action.toggleZenMode',
+				title: 'Toggle Zen Mode',
+				category: 'View',
+				key: 'cmd+k z',
+				when: () => !appMode.isAgents,
+				run: () => layout.toggleZen()
+			}),
+			// Markdown: Open Preview / Open Preview to the Side (VS Code's markdown-language-features).
+			commands.register({
+				id: 'markdown.showPreview',
+				title: 'Open Preview (Markdown, CSV)',
+				category: 'Markdown',
+				key: 'cmd+shift+v',
+				when: () => !appMode.isAgents && editors.active !== null && hasPreview(editors.active),
+				run: () => editors.open(previewKey(editors.active!), { preview: false })
+			}),
+			commands.register({
+				id: 'markdown.showPreviewToSide',
+				title: 'Open Preview to the Side (Markdown, CSV)',
+				category: 'Markdown',
+				key: 'cmd+k v',
+				when: () => !appMode.isAgents && editors.active !== null && hasPreview(editors.active),
+				run: () => {
+					const rel = editors.active!;
+					const side = editors.split('right');
+					if (side === null) return editors.open(previewKey(rel), { preview: false });
+					// The split copies the Markdown tab; the side group shows only the preview.
+					editors.open(previewKey(rel), { preview: false, group: side });
+					editors.close(rel, { group: side });
+				}
+			}),
+			commands.register({
+				id: 'kingu.floatingTerminal.toggle',
+				title: 'Toggle Floating Terminal',
+				category: 'Terminal',
+				key: 'cmd+alt+t',
+				run: () => floating.toggle()
 			}),
 			commands.register({
 				id: 'workbench.action.toggleAuxiliaryBar',
@@ -231,19 +304,13 @@
 
 	/** Help: Keyboard Shortcuts — a read-only list of commands and their keys (runs the picked one). */
 	function showKeybindings() {
-		const withKeys = commands.all.filter((c) => keyOf(c)).sort((a, b) => a.title.localeCompare(b.title));
-		quick.pick({
-			placeholder: 'คีย์ลัด (Keyboard Shortcuts)',
-			items: withKeys.map((c) => ({ id: c.id, label: `${c.category ? `${c.category}: ` : ''}${c.title}`, description: `${keyLabel(keyOf(c)!)}  ·  ${c.id}` })),
-			onAccept: (item) => void commands.run(item.id)
-		});
+		systemSettings.showPage('shortcuts');
 	}
 
-	async function showAbout() {
-		const info = await invoke<{ name: string; version: string; os: string; arch: string }>('app_info').catch(() => null);
-		await message(info ? `${info.name} ${info.version}
-${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
+	function showAbout() {
+		systemSettings.showPage('about');
 	}
+
 
 	const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 	const maxSide = () => (middle?.clientWidth ?? 1200) * 0.45;
@@ -260,6 +327,8 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 	/** +1 when dragging a sash rightward/downward grows the part. */
 	const sideSign = $derived(sideBarAt === 'left' ? 1 : -1);
 	const panelSign = $derived(panelAt === 'top' || panelAt === 'left' ? 1 : -1);
+	// VS Code's modern layout: each part is a softly rounded pane on the title bar's color, 4px apart.
+	const FRAME = 'min-h-0 overflow-hidden rounded-[8px] border border-(--vscode-widget-border)';
 </script>
 
 <svelte:window onfocus={() => (focused = true)} onblur={() => (focused = false)} />
@@ -268,7 +337,7 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 	<!-- One title bar and one status bar for the IDE and the Agents layout. -->
 	<TitleBar workspaceName={workspaceName || 'Kingu'} {focused} />
 
-	<div bind:this={middle} class={['workbench-body grid min-h-0 flex-1', (appMode.isAgents || systemSettings.visible) && 'hidden']}
+	<div bind:this={middle} class={['workbench-body grid min-h-0 flex-1 bg-(--vscode-titleBar-activeBackground) px-[4px] pb-[4px]', (appMode.isAgents || systemSettings.visible) && 'hidden']}
 		style:grid-template-areas={gridTemplateAreas(grid)}
 		style:grid-template-columns={gridTemplateColumns(grid)}
 		style:grid-template-rows={gridTemplateRows(grid)}
@@ -278,22 +347,24 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 		<div
 			style:grid-area="side"
 			style:width="{layout.sidebarWidth}px"
-			class={['min-h-0 border-(--vscode-sideBar-border)', sideBarAt === 'left' ? 'border-r' : 'border-l', !layout.sidebarVisible && 'hidden']}
+			class={[FRAME, !layout.sidebarVisible && 'hidden']}
 		>
 			<SideBar {workspaceName} />
 		</div>
 		<div style:grid-area="sashS" class={['flex', !layout.sidebarVisible && 'hidden']}>
 			<Sash
+				gap
 				orientation="vertical"
 				onDrag={(d) => (layout.sidebarWidth = clamp(layout.sidebarWidth + sideSign * d, SIDEBAR_MIN, maxSide()))}
 				onReset={() => (layout.sidebarWidth = 300)}
 			/>
 		</div>
 
-		<div style:grid-area="edit" class="min-h-0 min-w-0"><EditorPart /></div>
+		<div style:grid-area="edit" class={[FRAME, 'min-w-0']}><EditorPart /></div>
 
 		<div style:grid-area="sashP" class={['flex', panelBeside ? 'flex-row' : 'flex-col', !layout.panelVisible && 'hidden']}>
 			<Sash
+				gap
 				orientation={panelBeside ? 'vertical' : 'horizontal'}
 				onDrag={(d) =>
 					panelBeside
@@ -306,13 +377,14 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 			style:grid-area="panel"
 			style:height={panelBeside ? undefined : `${layout.panelHeight}px`}
 			style:width={panelBeside ? `${layout.panelWidth}px` : undefined}
-			class={['min-h-0 min-w-0 overflow-hidden', !layout.panelVisible && 'hidden']}
+			class={[FRAME, 'min-w-0', !layout.panelVisible && 'hidden']}
 		>
 			<Panel />
 		</div>
 
 		<div style:grid-area="sashX" class={['flex', !layout.auxVisible && 'hidden']}>
 			<Sash
+				gap
 				orientation="vertical"
 				onDrag={(d) => (layout.auxWidth = clamp(layout.auxWidth - sideSign * d, SIDEBAR_MIN, maxSide()))}
 				onReset={() => (layout.auxWidth = 360)}
@@ -323,12 +395,12 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 			style:grid-area="aux"
 			style:width="{layout.auxWidth}px"
 			class={[
-				'flex min-h-0 flex-col border-(--vscode-sideBar-border) bg-(--vscode-sideBar-background)',
-				sideBarAt === 'left' ? 'border-l' : 'border-r',
+				FRAME,
+				'flex flex-col bg-(--vscode-sideBar-background)',
 				!layout.auxVisible && 'hidden'
 			]}
 		>
-			<div class="flex h-(--kg-part-title-height) shrink-0 items-center pl-3 text-[11px] text-(--vscode-sideBarTitle-foreground) uppercase">Agent</div>
+			<div class="flex h-(--kg-part-title-height) shrink-0 items-center gap-2 pl-3 text-[11px] font-medium text-(--vscode-sideBarTitle-foreground) uppercase"><Icon name="agent" size={15} />Arkai</div>
 			<!-- Tasks are worktrees of the open folder: a new folder gets a fresh panel. -->
 			<div class="min-h-0 flex-1">
 				{#key workspace.root}<AgentPanel />{/key}
@@ -341,6 +413,12 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 	<!-- System settings (IDE + ADE) over the content of either mode. -->
 	{#if systemSettings.visible}<SettingsPage />{/if}
 
-	<StatusBar />
+	{#if !layout.zen}<StatusBar />{/if}
+	<FloatingTerminal />
+	{#if welcome.open}<Welcome />{/if}
+	<Toasts />
+	{#if cleanup.open}<CleanupDialog />{/if}
+	{#if dialogs.current}<Dialog />{/if}
+	<Tooltips />
 	<QuickInput />
 </div>

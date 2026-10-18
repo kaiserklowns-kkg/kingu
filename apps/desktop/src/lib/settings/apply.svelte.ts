@@ -22,6 +22,7 @@ export function editorOptions(): Monaco.editor.IEditorOptions {
 		fontFamily: settings.get<string>('editor.fontFamily'),
 		wordWrap: settings.get<'off' | 'on' | 'wordWrapColumn' | 'bounded'>('editor.wordWrap'),
 		minimap: { enabled: settings.get<boolean>('editor.minimap.enabled') },
+		stickyScroll: { enabled: settings.get<boolean>('editor.stickyScroll.enabled') },
 		renderWhitespace: settings.get<'none' | 'boundary' | 'selection' | 'trailing' | 'all'>('editor.renderWhitespace')
 	};
 }
@@ -48,7 +49,7 @@ const isActiveModel = (model: Monaco.editor.ITextModel) => editors.focusedFile !
 function saveActive(model?: Monaco.editor.ITextModel) {
 	const path = editors.focusedFile;
 	if (!path || !editors.isDirty(path) || (model && !isActiveModel(model))) return;
-	void Promise.resolve(commands.run('workbench.action.files.save')).catch((e) => status.flash(`บันทึกอัตโนมัติไม่สำเร็จ: ${e}`));
+	void Promise.resolve(commands.run('workbench.action.files.save')).catch((e) => status.error(`บันทึกอัตโนมัติไม่สำเร็จ: ${e}`));
 }
 
 let monacoInstalled = false;

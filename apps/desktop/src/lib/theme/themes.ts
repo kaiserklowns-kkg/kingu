@@ -12,6 +12,11 @@ export type ThemeInfo = {
 };
 
 export const THEMES: ThemeInfo[] = [
+	// Kingu's own: VS Code 2026 with neutral, translucent chrome (selection and borders as white/black alpha) and monochrome buttons.
+	{ id: 'Kingu Dark', label: 'Kingu Dark', file: 'kingu-dark.json', type: 'dark' },
+	{ id: 'Kingu Light', label: 'Kingu Light', file: 'kingu-light.json', type: 'light' },
+	{ id: 'Light 2026', label: '2026 Light', file: '2026-light.json', type: 'light' },
+	{ id: 'Dark 2026', label: '2026 Dark', file: '2026-dark.json', type: 'dark' },
 	{ id: 'Light Modern', label: 'Light Modern', file: 'light_modern.json', type: 'light' },
 	{ id: 'Light+', label: 'Light+', file: 'light_plus.json', type: 'light' },
 	{ id: 'Dark Modern', label: 'Dark Modern', file: 'dark_modern.json', type: 'dark' },

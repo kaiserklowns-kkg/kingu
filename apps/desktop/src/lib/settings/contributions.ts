@@ -13,7 +13,7 @@ import { systemSettings } from './systemSettings.svelte';
 
 const GROUPS: Record<string, string> = { light: 'light themes', dark: 'dark themes', hcDark: 'high contrast themes', hcLight: 'high contrast themes' };
 
-const report = (e: unknown) => status.flash(`บันทึกการตั้งค่าไม่สำเร็จ: ${e instanceof Error ? e.message : e}`);
+const report = (e: unknown) => status.error(`บันทึกการตั้งค่าไม่สำเร็จ: ${e instanceof Error ? e.message : e}`);
 
 /** Preferences: Color Theme — arrow keys preview, Enter keeps, Escape restores (like VS Code). */
 export function pickColorTheme() {

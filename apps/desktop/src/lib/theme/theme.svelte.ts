@@ -4,7 +4,7 @@
 
 import { parseJsonc } from '../settings/jsonc';
 import { setActiveTheme } from './current';
-import { chromeVariables, terminalTheme } from './colors';
+import { chromeVariables, resolveColor, terminalTheme } from './colors';
 import { findTheme, isDarkType, loadTheme, type ThemeInfo } from './themes';
 import type { FlatTheme } from '../editor/textmate/theme';
 
@@ -88,3 +88,20 @@ class ThemeService {
 }
 
 export const theme = new ThemeService();
+
+/** A few colors of a theme for its preview card in Settings › Appearance (loads the theme lazily). */
+export async function themeSwatch(info: ThemeInfo): Promise<Record<'chrome' | 'side' | 'editor' | 'fg' | 'muted' | 'accent' | 'border' | 'selection', string>> {
+	const flat = await flatTheme(info);
+	const c = (id: string, fallback: string) => resolveColor(id, flat.colors, info.type) ?? fallback;
+	return {
+		chrome: c('titleBar.activeBackground', '#222'),
+		side: c('sideBar.background', '#222'),
+		editor: c('editor.background', '#111'),
+		fg: c('editor.foreground', '#ccc'),
+		muted: c('descriptionForeground', '#888'),
+		accent: c('button.background', '#0078D4'),
+		border: c('widget.border', '#0000'),
+		selection: c('list.activeSelectionBackground', '#0078D455')
+	};
+}
+

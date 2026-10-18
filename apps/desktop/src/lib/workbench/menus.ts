@@ -172,6 +172,7 @@ export const MENUS: Menu[] = [
 					{ command: 'workbench.action.toggleSidebarVisibility', label: 'Primary Side Bar', toggle: true },
 					{ command: 'workbench.action.toggleAuxiliaryBar', label: 'Secondary Side Bar', toggle: true },
 					{ command: 'workbench.action.togglePanel', label: 'Panel', toggle: true },
+					{ command: 'workbench.action.toggleZenMode', label: 'Zen Mode', toggle: true },
 					{ command: 'workbench.action.customizeLayout', label: 'Customize Layout...' },
 					SEP,
 					{ command: 'workbench.action.zoomIn', label: 'Zoom In' },
@@ -230,9 +231,10 @@ export const MENUS: Menu[] = [
 		id: 'help',
 		label: '&Help',
 		items: [
+			{ command: 'kingu.welcome.show', label: 'Welcome' },
 			{ command: 'workbench.action.openGlobalKeybindings', label: 'Keyboard Shortcuts' },
-			{ ...SEP, platform: 'other' },
-			{ command: 'workbench.action.showAboutDialog', label: 'About', platform: 'other' }
+			SEP,
+			{ command: 'workbench.action.showAboutDialog', label: 'About Kingu' }
 		]
 	}
 ];

@@ -10,6 +10,7 @@
 	import { matchesQuery } from './adeTabs';
 	import { aggregateStats, STATUS_LABEL, timeAgo, type TaskView } from './model';
 	import { adeTasks } from './tasks.svelte';
+	import { cleanup } from './cleanup.svelte';
 	import { STATUS_DOT } from './ui';
 	import { newSession } from './agentsMode.svelte';
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
@@ -70,6 +71,7 @@
 
 	<div class="flex h-7 shrink-0 items-center gap-0.5 pr-2 pl-4">
 		<span class="flex-1 text-[13px] text-(--vscode-descriptionForeground)">Projects</span>
+		<button class={HEADER_ACTION} aria-label="ล้างงาน" title="ล้างงาน (Clean Up Tasks)" disabled={!adeTasks.views.length} onclick={() => (cleanup.open = true)}><Icon name="trash" size={14} /></button>
 		<button class={HEADER_ACTION} aria-label="รีเฟรช" title="รีเฟรช" disabled={!workspace.root} onclick={() => adeTasks.load()}><Icon name="refresh" size={15} /></button>
 		<button class={HEADER_ACTION} aria-label="งานใหม่ (worktree ใหม่)" title="งานใหม่ (worktree ใหม่)" disabled={!workspace.root} onclick={newTask}><Icon name="plus" size={16} /></button>
 	</div>
@@ -126,7 +128,14 @@
 						oncontextmenu={(e) => openMenu(v.meta.slug, e)}
 					>
 						<span class="group/card flex items-center gap-2">
-							<span class={['size-2 shrink-0 rounded-full', STATUS_DOT[v.status]]} title={STATUS_LABEL[v.status]}></span>
+							<!-- Orca's worktree marker: a bell when the agent waits for you, a spinner while it works. -->
+							{#if v.status === 'waiting'}
+								<span class="kg-ring -mx-0.5 shrink-0 text-(--vscode-editorWarning-foreground)" title={STATUS_LABEL[v.status]}><Icon name="bell" size={13} filled /></span>
+							{:else if v.status === 'running'}
+								<span class="size-2.5 shrink-0 animate-spin rounded-full border-[1.5px] border-(--vscode-editorInfo-foreground) border-t-transparent" title={STATUS_LABEL[v.status]}></span>
+							{:else}
+								<span class={['size-2 shrink-0 rounded-full', STATUS_DOT[v.status]]} title={STATUS_LABEL[v.status]}></span>
+							{/if}
 							<span class="min-w-0 flex-1 truncate text-[13px]" title={v.meta.title}>{v.meta.title}</span>
 							<span
 								role="button"
@@ -157,3 +166,30 @@
 	</div>
 
 </div>
+
+<style>
+	/* The waiting bell rings now and then, unless the user asks for less motion. */
+	.kg-ring {
+		animation: kg-ring 2.4s ease-in-out infinite;
+		transform-origin: 50% 10%;
+	}
+	@keyframes kg-ring {
+		0%, 80%, 100% {
+			transform: rotate(0);
+		}
+		84% {
+			transform: rotate(14deg);
+		}
+		90% {
+			transform: rotate(-12deg);
+		}
+		95% {
+			transform: rotate(6deg);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.kg-ring {
+			animation: none;
+		}
+	}
+</style>

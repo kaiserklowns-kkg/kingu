@@ -5,7 +5,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { homeDir } from '@tauri-apps/api/path';
-import { ask, open } from '@tauri-apps/plugin-dialog';
+import { open } from '@tauri-apps/plugin-dialog';
+import { ask } from './dialogService.svelte';
 import { clientLog } from '#lib/client-log.ts';
 import { lsp } from '#lib/lsp/lsp.svelte.ts';
 import { settings, WORKSPACE_SETTINGS_PATH } from '#lib/settings/settings.svelte.ts';
@@ -61,7 +62,7 @@ class Workspace {
 		try {
 			root = await invoke<string>('workspace_open', { path });
 		} catch (e) {
-			status.flash(`เปิดโฟลเดอร์ไม่ได้: ${e}`, 8000);
+			status.error(`เปิดโฟลเดอร์ไม่ได้: ${e}`, 8000);
 			// VS Code drops a recent entry that no longer opens.
 			if (this.recent.includes(path)) await invoke('workspace_recent_remove', { path }).catch(() => {});
 			await this.loadRecent();
@@ -76,7 +77,7 @@ class Workspace {
 		try {
 			await invoke('workspace_close');
 		} catch (e) {
-			status.flash(String(e), 8000);
+			status.error(String(e), 8000);
 			return;
 		}
 		this.#switched(null);
@@ -88,7 +89,7 @@ class Workspace {
 	}
 
 	async clearRecent() {
-		await invoke('workspace_recent_clear').catch((e) => status.flash(String(e)));
+		await invoke('workspace_recent_clear').catch((e) => status.error(String(e)));
 		await this.loadRecent();
 	}
 

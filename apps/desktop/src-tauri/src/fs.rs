@@ -9,6 +9,8 @@ pub struct DirEntry {
   /// Path relative to the workspace root, `/`-separated.
   pub rel: String,
   pub is_dir: bool,
+  /// Matched by `.gitignore` (shown dimmed, like Orca and VS Code). Filled in by `git::mark_ignored`.
+  pub ignored: bool,
 }
 
 /// Directories the Explorer hides and quick open never walks (VS Code's `files.exclude` defaults
@@ -37,10 +39,38 @@ pub fn list_dir(root: &Path, dir: &Path) -> Result<Vec<DirEntry>, String> {
     }
     // Follows symlinks for the kind, but a dangling link still lists as a file.
     let is_dir = entry.path().is_dir();
-    entries.push(DirEntry { rel: rel_of(root, &entry.path()), name, is_dir });
+    entries.push(DirEntry { rel: rel_of(root, &entry.path()), name, is_dir, ignored: false });
   }
   entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
   Ok(entries)
+}
+
+/// Image types the editor shows in its image viewer, by extension.
+pub fn image_mime(path: &Path) -> Option<&'static str> {
+  let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+  Some(match ext.as_str() {
+    "png" => "image/png",
+    "jpg" | "jpeg" => "image/jpeg",
+    "gif" => "image/gif",
+    "webp" => "image/webp",
+    "svg" => "image/svg+xml",
+    "ico" => "image/x-icon",
+    "bmp" => "image/bmp",
+    "avif" => "image/avif",
+    _ => return None,
+  })
+}
+
+/// An image as a `data:` URL for the image viewer (the CSP allows `img-src data:`).
+pub fn image_data_url(path: &Path, max_bytes: u64) -> Result<String, String> {
+  use base64::Engine;
+  let mime = image_mime(path).ok_or("not an image")?;
+  let len = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
+  if len > max_bytes {
+    return Err(format!("larger than {} MB", max_bytes / (1024 * 1024)));
+  }
+  let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+  Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
 }
 
 /// Every file under `root` for quick open, skipping `NOT_WALKED` and symlinked directories,
@@ -96,5 +126,17 @@ mod tests {
     std::fs::write(root.join("node_modules/x/i.js"), "").unwrap();
     assert_eq!(list_files(root, 100), ["src/lib/a.ts"]);
     assert_eq!(list_files(root, 1).len(), 1);
+  }
+
+  #[test]
+  fn images_become_data_urls() {
+    let tmp = tempfile::tempdir().unwrap();
+    let png = tmp.path().join("a.PNG");
+    std::fs::write(&png, [0x89, b'P', b'N', b'G']).unwrap();
+    assert_eq!(image_data_url(&png, 1024).unwrap(), "data:image/png;base64,iVBORw==");
+    assert!(image_data_url(&png, 2).unwrap_err().contains("larger"));
+    let txt = tmp.path().join("a.txt");
+    std::fs::write(&txt, "x").unwrap();
+    assert!(image_data_url(&txt, 1024).is_err());
   }
 }

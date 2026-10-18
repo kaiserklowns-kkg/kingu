@@ -22,6 +22,7 @@ const CHECKED: Record<string, () => boolean> = {
 	'workbench.action.toggleSidebarVisibility': () => layout.sidebarVisible,
 	'workbench.action.toggleAuxiliaryBar': () => layout.auxVisible,
 	'workbench.action.togglePanel': () => layout.panelVisible,
+	'workbench.action.toggleZenMode': () => layout.zen,
 	// Not a check mark: the Agents menu item reads "Open in Editor" while in Agents mode.
 	'workbench.action.toggleAgentsMode': () => appMode.isAgents
 };

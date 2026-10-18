@@ -154,7 +154,7 @@ class Lsp {
 			openCodeEditor: (_source, resource, selection) => {
 				const at = selection && 'startLineNumber' in selection ? { line: selection.startLineNumber, column: selection.startColumn } : selection ? { line: selection.lineNumber, column: selection.column } : { line: 1, column: 1 };
 				if (resource.scheme === EXTERNAL_SCHEME) {
-					statusBar.flash(`${resource.path} อยู่นอก workspace จึงเปิดไม่ได้`);
+					statusBar.error(`${resource.path} อยู่นอก workspace จึงเปิดไม่ได้`);
 					return true;
 				}
 				if (resource.scheme !== 'file') return false;
@@ -432,11 +432,11 @@ class Lsp {
 			if (!action.edit && client.canResolveCodeAction) action = (await client.resolveCodeAction(action)) ?? action;
 			if (action.edit) {
 				const r = await this.applyWorkspaceEdit(action.edit);
-				if (!r.applied) return statusBar.flash(`${action.title}: ${r.failureReason}`);
+				if (!r.applied) return statusBar.error(`${action.title}: ${r.failureReason}`);
 			}
 			if (action.command) await this.#execute(client, action.command);
 		} catch (e) {
-			statusBar.flash(`${item.title}: ${e instanceof Error ? e.message : e}`);
+			statusBar.error(`${item.title}: ${e instanceof Error ? e.message : e}`);
 		}
 	}
 
@@ -652,7 +652,7 @@ class Lsp {
 						provideDocumentFormattingEdits: async (model, options, token) => {
 							const d = this.#lookup(model);
 							const fmt = { tabSize: options.tabSize, insertSpaces: options.insertSpaces };
-							return toMonacoTextEdits(d && (await d.client.formatting(d.uri, fmt, token).catch((e) => (statusBar.flash(`Format: ${e}`), null))));
+							return toMonacoTextEdits(d && (await d.client.formatting(d.uri, fmt, token).catch((e) => (statusBar.error(`Format: ${e}`), null))));
 						}
 					})
 				);
@@ -664,7 +664,7 @@ class Lsp {
 						provideDocumentRangeFormattingEdits: async (model, range, options, token) => {
 							const d = this.#lookup(model);
 							const fmt = { tabSize: options.tabSize, insertSpaces: options.insertSpaces };
-							return toMonacoTextEdits(d && (await d.client.rangeFormatting(d.uri, toLspRange(range), fmt, token).catch((e) => (statusBar.flash(`Format: ${e}`), null))));
+							return toMonacoTextEdits(d && (await d.client.rangeFormatting(d.uri, toLspRange(range), fmt, token).catch((e) => (statusBar.error(`Format: ${e}`), null))));
 						}
 					})
 				);

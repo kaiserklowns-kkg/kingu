@@ -130,7 +130,7 @@ class Search {
 		try {
 			results = await invoke<ReplaceResult[]>('search_replace', { request });
 		} catch (e) {
-			status.flash(`Replace failed: ${e}`);
+			status.error(`Replace failed: ${e}`);
 			clientLog('error', `search_replace: ${e}`);
 			return;
 		} finally {

@@ -8,6 +8,8 @@
 	import { untrack } from 'svelte';
 	import { rank, type Match } from './fuzzy';
 	import { keyLabel } from './keys';
+	import { lsp } from '#lib/lsp/lsp.svelte.ts';
+	import { flattenSymbols } from './symbols';
 
 	type Item = { label: string; detail?: string; key?: string; match?: Match; icon?: FileIconSpec; separator?: string; pick?: PickItem; run: () => void };
 
@@ -52,6 +54,23 @@
 				key: keyOf(item),
 				match,
 				run: () => commands.run(item.id)
+			}));
+		}
+		// Go to Symbol in Editor: the active file's language-server symbols.
+		if (v.startsWith('@')) {
+			const rel = editors.active;
+			const syms = rel ? lsp.symbols.get(rel) : undefined;
+			if (!rel) return [{ label: 'เปิดไฟล์ก่อนแล้วจึงค้น symbol ได้', run: () => {} }];
+			if (!syms?.length) return [{ label: lsp.hasServer(editors.language) ? 'ยังไม่มี symbol (language server กำลังอ่านไฟล์)' : 'ไฟล์นี้ไม่มี language server จึงไม่มี symbol', run: () => {} }];
+			const q = v.slice(1).trim();
+			const flat = flattenSymbols(syms);
+			const list = q ? rank(q, flat, (s) => s.name, 200).map(({ item, match }) => ({ item, match })) : flat.map((item) => ({ item, match: undefined }));
+			return list.map(({ item, match }) => ({
+				label: item.name,
+				detail: [item.kind, item.container].filter(Boolean).join(' · '),
+				separator: `:${item.line}`,
+				match,
+				run: () => editors.gotoLine(item.line, item.column)
 			}));
 		}
 		if (v.startsWith(':')) {
@@ -103,7 +122,7 @@
 		role="dialog"
 		aria-label="Quick open"
 		tabindex="-1"
-		class="fixed top-[calc(var(--kg-titlebar-height)+2px)] left-1/2 z-50 w-[min(600px,62vw)] -translate-x-1/2 rounded-md border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) p-1.5 text-(--vscode-quickInput-foreground) shadow-[0_0_8px_2px_rgba(0,0,0,0.36)]"
+		class="fixed top-[calc(var(--kg-titlebar-height)+2px)] left-1/2 z-50 w-[min(600px,62vw)] -translate-x-1/2 rounded-xl border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) p-2 text-(--vscode-quickInput-foreground) shadow-2xl shadow-black/50"
 		onfocusout={(e) => {
 			if (!e.currentTarget.contains(e.relatedTarget as Node | null)) quick.hide();
 		}}
@@ -113,17 +132,17 @@
 			bind:value={quick.value}
 			oninput={() => (index = 0)}
 			onkeydown={onKey}
-			aria-label="ค้นหาไฟล์ พิมพ์ > เพื่อดูคำสั่ง หรือ : เพื่อไปบรรทัด"
-			placeholder={quick.picker?.placeholder ?? 'ค้นหาไฟล์ตามชื่อ (พิมพ์ > สำหรับคำสั่ง, : สำหรับไปบรรทัด)'}
-			class="h-[26px] w-full rounded-sm border border-(--vscode-focusBorder) bg-(--vscode-input-background) px-1.5 text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground)"
+			aria-label="ค้นหาไฟล์ พิมพ์ > เพื่อดูคำสั่ง @ เพื่อหา symbol หรือ : เพื่อไปบรรทัด"
+			placeholder={quick.picker?.placeholder ?? 'ค้นหาไฟล์ตามชื่อ (> คำสั่ง, @ symbol ในไฟล์, : ไปบรรทัด)'}
+			class="h-8 w-full rounded-lg border border-(--vscode-focusBorder) bg-(--vscode-input-background) px-2.5 text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground)"
 		/>
-		<ul role="listbox" aria-label="ผลลัพธ์" class="mt-1 max-h-[440px] overflow-y-auto">
+		<ul role="listbox" aria-label="ผลลัพธ์" class="mt-1.5 max-h-[440px] overflow-y-auto">
 			{#each items as item, i (i)}
 				<li role="option" aria-selected={i === index}>
 					<button
 						tabindex="-1"
 						class={[
-							'flex h-(--kg-row-height) w-full items-center gap-2 rounded-sm px-1.5 text-left',
+							'flex h-7 w-full items-center gap-2 rounded-md px-2 text-left',
 							i === index ? 'bg-(--vscode-quickInputList-focusBackground) text-(--vscode-list-activeSelectionForeground)' : 'hover:bg-(--vscode-list-hoverBackground)'
 						]}
 						onmousemove={() => (index = i)}

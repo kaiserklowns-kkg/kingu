@@ -51,7 +51,7 @@ class Snaps {
 			await invoke('snap_trust', { id, trusted: on, hash: on ? snap.hash : null });
 			status.flash(on ? `เชื่อถือ snap “${snap.name}” แล้ว` : `เลิกเชื่อถือ snap “${snap.name}” แล้ว`);
 		} catch (e) {
-			status.flash(`เปลี่ยนการเชื่อถือ snap ไม่สำเร็จ: ${e}`);
+			status.error(`เปลี่ยนการเชื่อถือ snap ไม่สำเร็จ: ${e}`);
 		}
 		await this.load();
 	}
@@ -94,7 +94,7 @@ class Snaps {
 		try {
 			return await invoke<string[]>('snap_skill_plugins', { ids });
 		} catch (e) {
-			status.flash(`เตรียม skill ของ snap ไม่สำเร็จ agent จะเริ่มโดยไม่มี skill: ${e}`, 8000);
+			status.error(`เตรียม skill ของ snap ไม่สำเร็จ agent จะเริ่มโดยไม่มี skill: ${e}`, 8000);
 			return [];
 		}
 	}
