@@ -170,7 +170,7 @@ pub struct RequestView {
   pub reverted: bool,
   pub head_moved: bool,
   /// Files this request changed (any state but reverted).
-  pub files: usize,
+  pub paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -693,7 +693,10 @@ pub fn view(store: &Store, prefix: String, running: bool) -> Result<View, String
       at: r.at,
       reverted: r.reverted,
       head_moved: r.head_moved,
-      files: f.entries.iter().filter(|e| e.request == r.index && e.state != State::Reverted).map(|e| &e.path).collect::<HashSet<_>>().len(),
+      paths: {
+        let mut seen = HashSet::new();
+        f.entries.iter().filter(|e| e.request == r.index && e.state != State::Reverted && seen.insert(e.path.as_str())).map(|e| e.path.clone()).collect()
+      },
     })
     .collect();
   Ok(View { prefix, running, files, requests })
@@ -887,6 +890,15 @@ impl ChatEdits {
   /// snapshot itself is dropped, a `Checkpoint` follows each user message, `EditsChanged` tells
   /// the webview to reload the working set, and `Exit` stays last).
   pub fn on_event(&self, root: &Path, id: &str, cwd: &Path, ev: AgentEvent) -> Vec<AgentEvent> {
+    // Streaming chunks and the rest pass straight through.
+    let relevant = match &ev {
+      AgentEvent::Message { role, .. } => role == "user",
+      AgentEvent::FileSnapshot { .. } | AgentEvent::Result { .. } | AgentEvent::Exit { .. } => true,
+      _ => false,
+    };
+    if !relevant {
+      return vec![ev];
+    }
     let mut live = self.live.lock().unwrap();
     let state = live.entry(key(root, id)).or_default();
     let store = match Store::open(root, id, cwd) {
