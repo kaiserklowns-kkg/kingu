@@ -52,8 +52,8 @@ fn app_info(ws: State<'_, Workspace>) -> AppInfo {
 
 /// Status bar resources (memory, CPU, processes, terminals, keep-awake), polled by the webview.
 #[tauri::command]
-async fn system_stats(ptys: State<'_, pty::Ptys>, keep: State<'_, system::KeepAwake>) -> Result<system::Stats, String> {
-  Ok(system::stats(ptys.terminals(), ptys.daemon_pid(), &keep))
+async fn system_stats(app: tauri::AppHandle, ptys: State<'_, pty::Ptys>, keep: State<'_, system::KeepAwake>) -> Result<system::Stats, String> {
+  Ok(system::stats(ptys.terminals(), ptys.daemon_pid(), &system::webkit_pids(&app), &keep))
 }
 
 /// Listening TCP ports for the status bar's Ports popup.

@@ -185,8 +185,8 @@
 						<Icon name="cpu" size={13} />
 						<span class="min-w-0 flex-1 truncate" title="pid {p.pid}">{p.name}</span>
 						<span class="text-xs text-(--vscode-descriptionForeground) tabular-nums">{formatBytes(p.rss_bytes)}</span>
-						{#if p.name === 'kingu-ptyd'}
-							<!-- The terminal daemon holds every terminal; stop terminals one by one instead. -->
+						{#if p.stoppable === false}
+							<!-- The terminal daemon holds every terminal (stop them one by one); WebKit's processes are the window. -->
 							<span class="w-6"></span>
 						{:else if confirming === `pid:${p.pid}`}
 							<button class="rounded-md bg-(--vscode-errorForeground) px-2 text-xs leading-5 text-white" onclick={() => (system.kill(p.pid, p.name), (confirming = null))}>ยืนยัน</button>

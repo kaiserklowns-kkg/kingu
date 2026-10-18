@@ -5,6 +5,7 @@
 	import { FitAddon } from '@xterm/addon-fit';
 	import '@xterm/xterm/css/xterm.css';
 	import { bindTerminalSettings } from '#lib/settings/apply.svelte.ts';
+	import { system } from '#lib/workbench/system.svelte.ts';
 
 	/**
 	 * `key`: the PTY session (sessions.ts). A live one is re-attached with its recent output
@@ -75,7 +76,7 @@
 			spawning = true;
 			fit.fit();
 			invoke<Attached>('pty_spawn', { key, cols: term.cols, rows: term.rows, onData: channel(), slug: slug ?? null, run: run ?? null })
-				.then(connected)
+				.then((a) => (connected(a), void system.refresh()))
 				.catch(failed);
 		}
 

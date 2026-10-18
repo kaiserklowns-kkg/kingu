@@ -5,7 +5,7 @@ import { status } from './status.svelte';
 import { pushSample, type KeepAwakeMode } from './system';
 
 export type PtyInfo = { id: string; pid: number | null; cwd: string };
-export type ProcessRow = { pid: number; ppid: number; rss_bytes: number; cpu: number; name: string };
+export type ProcessRow = { pid: number; ppid: number; rss_bytes: number; cpu: number; name: string; stoppable?: boolean };
 type Stats = {
 	memory_bytes: number | null;
 	cpu_percent: number | null;
