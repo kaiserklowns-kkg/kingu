@@ -30,6 +30,7 @@ describe('normalize', () => {
 		expect(r).toMatchObject({ kind: 'result', is_error: true, result: 'too many turns', total_cost_usd: null, usage: { input_tokens: 3, output_tokens: 4, cache_read_input_tokens: 0 } });
 	});
 
+<<<<<<< HEAD
 	test('keeps the uuid of main-chain messages as an anchor after their events', () => {
 		const uuid = '0b5e9a1c-4c1d-4e2f-9a3b-1234567890ab';
 		expect(normalize({ type: 'assistant', uuid, message: { content: [{ type: 'text', text: 'เสร็จ' }] } })).toEqual([
@@ -42,6 +43,37 @@ describe('normalize', () => {
 		expect(normalize({ type: 'user', uuid, isReplay: true, message: { content: 'x' } }).some((e) => e.kind === 'anchor')).toBe(false);
 		expect(normalize({ type: 'assistant', uuid: 'x; rm', message: { content: 'x' } }).some((e) => e.kind === 'anchor')).toBe(false);
 		expect(normalize({ type: 'result', subtype: 'success', uuid }).some((e) => e.kind === 'anchor')).toBe(false);
+=======
+	test("a subagent's messages carry its Task call's id; its prompt is dropped", () => {
+		const parent = 'task-1';
+		expect(
+			normalize({
+				type: 'assistant',
+				parent_tool_use_id: parent,
+				message: {
+					content: [
+						{ type: 'thinking', thinking: 'ดูก่อน' },
+						{ type: 'text', text: 'กำลังค้น' },
+						{ type: 'tool_use', id: 't2', name: 'Grep', input: { pattern: 'x' } }
+					]
+				}
+			})
+		).toEqual([
+			{ kind: 'thinking', text: 'ดูก่อน', parent_tool_use_id: parent },
+			{ kind: 'message', role: 'assistant', text: 'กำลังค้น', parent_tool_use_id: parent },
+			{ kind: 'tool_use', id: 't2', name: 'Grep', input: { pattern: 'x' }, parent_tool_use_id: parent }
+		]);
+		expect(
+			normalize({
+				type: 'user',
+				parent_tool_use_id: parent,
+				message: { content: [{ type: 'text', text: 'Find x' }, { type: 'tool_result', tool_use_id: 't2', content: 'a.ts:1' }] }
+			})
+		).toEqual([{ kind: 'tool_result', tool_use_id: 't2', content: 'a.ts:1', is_error: false, parent_tool_use_id: parent }]);
+		expect(normalize({ type: 'user', parent_tool_use_id: parent, message: { content: 'Find x' } })).toEqual([]);
+		// Main-agent events stay without the field.
+		expect(normalize({ type: 'assistant', parent_tool_use_id: null, message: { content: 'hi' } })).toEqual([{ kind: 'message', role: 'assistant', text: 'hi' }]);
+>>>>>>> kaiserklowns-kkg/kingu-continue-development
 	});
 
 	test('maps text and thinking deltas of the main agent only', () => {

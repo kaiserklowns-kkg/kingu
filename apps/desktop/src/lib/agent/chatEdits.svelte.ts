@@ -9,6 +9,8 @@
  *                                          (asks first about files with unsaved editor changes)
  *   restoreCheckpoint(chatId, request)     reverts request `request` and every later one, after a confirm
  *   chatEdits.openDiff(chatId, path)       snapshot vs current in a `chatedit://` diff tab
+ *   chatEdits.openAll(chatId, paths)       View All File Changes of a request (one tab per file)
+ *   chatEdits.openEdited(chatId, rel, …)   an edited-file pill: the diff, or the file once kept
  *   chatEdits.isReverted(chatId, request)  for the timeline to grey reverted responses
  *
  * Rust does the work (`chat_edits_*` commands): path checks, the git queue lane, and refusing
@@ -153,13 +155,31 @@ class ChatEditsStore {
 		if (report.skipped.length) notifications.info(t('chatEdits.skipped', { count: report.skipped.length }));
 	}
 
-	/** The file's diff (snapshot vs now); a file without a snapshot opens as itself. */
-	openDiff(chatId: string, path: string) {
+	/**
+	 * The file's diff (snapshot vs now); a file without a snapshot opens as itself. False when the
+	 * file is not in the working set (kept, undone, or not changed by this chat).
+	 */
+	openDiff(chatId: string, path: string, preview = true): boolean {
 		const v = this.views[chatId];
 		const f = v?.files.find((x) => x.path === path);
-		if (!v || !f) return;
-		if (f.restorable) editors.open(chatEditKey(chatId, workspacePath(v.prefix, path)), { preview: true });
-		else if (!f.deleted) editors.open(workspacePath(v.prefix, path), { preview: true });
+		if (!v || !f) return false;
+		if (f.restorable) editors.open(chatEditKey(chatId, workspacePath(v.prefix, path)), { preview });
+		else if (!f.deleted) editors.open(workspacePath(v.prefix, path), { preview });
+		return true;
+	}
+
+	/** View All File Changes of a request: each file's diff in its own tab (a file that left the working set opens as itself). */
+	openAll(chatId: string, paths: readonly string[]) {
+		const v = this.views[chatId];
+		if (!v) return;
+		for (const p of paths) if (!this.openDiff(chatId, p, false)) editors.open(workspacePath(v.prefix, p), { preview: false });
+	}
+
+	/** An edit tool's file (relative to the chat's cwd): its diff while in the working set, else the file. */
+	openEdited(chatId: string | null, rel: string, fallback: string) {
+		if (chatId && this.openDiff(chatId, rel)) return;
+		const v = chatId ? this.views[chatId] : undefined;
+		editors.open(v ? workspacePath(v.prefix, rel) : fallback, { preview: true });
 	}
 
 	/** For DiffHost: the left side of a `chatedit://` tab. */

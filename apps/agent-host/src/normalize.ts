@@ -28,23 +28,27 @@ function contentText(v: unknown): string {
 
 function blocks(msg: Obj, role: string): AgentEvent[] | null {
 	const content = isObj(msg.message) ? msg.message.content : undefined;
-	if (typeof content === 'string') return [{ kind: 'message', role, text: content }];
+	// A subagent's message (inside a Task/Agent call): its events name that call, so the chat nests them.
+	const parentId = str(msg.parent_tool_use_id);
+	const parent = parentId ? { parent_tool_use_id: parentId } : {};
+	if (typeof content === 'string') return [{ kind: 'message', role, text: content, ...parent }];
 	if (!Array.isArray(content)) return null;
 	return content.map((b): AgentEvent => {
 		if (!isObj(b)) return { kind: 'raw', line: JSON.stringify(b) };
 		switch (b.type) {
 			case 'text':
-				return { kind: 'message', role, text: str(b.text) ?? '' };
+				return { kind: 'message', role, text: str(b.text) ?? '', ...parent };
 			case 'thinking':
-				return { kind: 'thinking', text: str(b.thinking) ?? '' };
+				return { kind: 'thinking', text: str(b.thinking) ?? '', ...parent };
 			case 'tool_use':
-				return { kind: 'tool_use', id: str(b.id) ?? '', name: str(b.name) ?? '', input: b.input ?? null };
+				return { kind: 'tool_use', id: str(b.id) ?? '', name: str(b.name) ?? '', input: b.input ?? null, ...parent };
 			case 'tool_result':
 				return {
 					kind: 'tool_result',
 					tool_use_id: str(b.tool_use_id) ?? '',
 					content: truncate(contentText(b.content), MAX_TOOL_RESULT_CHARS),
-					is_error: b.is_error === true
+					is_error: b.is_error === true,
+					...parent
 				};
 			default:
 				return { kind: 'raw', line: JSON.stringify(b) };
@@ -101,8 +105,14 @@ export function normalize(msg: unknown): AgentEvent[] {
 		case 'assistant':
 			return withAnchor(msg, blocks(msg, 'assistant') ?? raw());
 		case 'user':
+<<<<<<< HEAD
 			// Replayed/synthetic user turns only carry tool results worth showing.
 			return withAnchor(msg, (blocks(msg, 'user') ?? raw()).filter((e) => e.kind !== 'message' || !msg.isSynthetic));
+=======
+			// Replayed/synthetic user turns only carry tool results worth showing. A subagent's prompt
+			// (user text under a Task call) is that call's input already, and never a new request.
+			return (blocks(msg, 'user') ?? raw()).filter((e) => e.kind !== 'message' || !(msg.isSynthetic || msg.parent_tool_use_id));
+>>>>>>> kaiserklowns-kkg/kingu-continue-development
 		case 'stream_event': {
 			const ev = isObj(msg.event) ? msg.event : null;
 			if (!ev || ev.type !== 'content_block_delta' || !isObj(ev.delta) || msg.parent_tool_use_id) return [];
