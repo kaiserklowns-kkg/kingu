@@ -3,7 +3,7 @@
 // Login runs the provider CLI's own login in a Kingu terminal with the account's folder.
 
 import { invoke } from '@tauri-apps/api/core';
-import { ask } from '@tauri-apps/plugin-dialog';
+import { ask } from '#lib/workbench/messageBox.ts';
 import { commands } from '#lib/workbench/commands.svelte.ts';
 import { layout } from '#lib/workbench/layout.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';

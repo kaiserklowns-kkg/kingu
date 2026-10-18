@@ -1,7 +1,7 @@
 // The close guard's live side: asks the PTY host what each terminal runs in front of its shell
 // and, when terminal.integrated.confirmOnKill covers that location, asks before killing it.
 
-import { ask } from '@tauri-apps/plugin-dialog';
+import { ask } from '#lib/workbench/messageBox.ts';
 import { KNOWN_BINS } from '#lib/ade/agentProfiles.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { asksOnKill, closePrompt, runningJobs, type TerminalLocation } from './closeGuard.ts';

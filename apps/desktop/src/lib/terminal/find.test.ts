@@ -1,5 +1,7 @@
 import { expect, test } from 'bun:test';
-import { findKey, findStatus, HIGHLIGHT_LIMIT } from './find.ts';
+import { Terminal } from '@xterm/xterm';
+import { SearchAddon } from '@xterm/addon-search';
+import { FIND_TERMINAL_OPTIONS, findKey, findStatus, HIGHLIGHT_LIMIT, runFind } from './find.ts';
 import { terminalMenu } from './terminalMenu.ts';
 
 const key = (k: Partial<KeyboardEvent>) => ({ key: '', code: '', shiftKey: false, altKey: false, metaKey: false, ctrlKey: false, ...k });
@@ -40,4 +42,39 @@ test('context menu: VS Code items in the panel, Orca items in the ADE', () => {
 	expect(split.find((n) => n.type === 'item' && n.id === 'expand')).toMatchObject({ text: 'Collapse Pane' });
 	expect(split.find((n) => n.type === 'item' && n.id === 'splitRight')).toMatchObject({ keyLabel: '⌘D' });
 	expect(ids(terminalMenu('ade', { hasSelection: false, panes: false }))).toEqual(['copy', 'selectAll', 'paste', '-', 'clear', 'reset']);
+});
+
+// A real xterm buffer (not opened: no DOM), searched through the same addon and options as Terminal.svelte.
+async function bufferWith(text: string, options: object = FIND_TERMINAL_OPTIONS) {
+	const term = new Terminal({ cols: 80, rows: 10, ...options });
+	// select() needs the DOM selection service; the match is still reported without it.
+	(term as unknown as { select: () => void }).select = () => {};
+	const search = new SearchAddon({ highlightLimit: HIGHLIGHT_LIMIT });
+	term.loadAddon(search);
+	await new Promise<void>((done) => term.write(text, done));
+	const results: { resultIndex: number; resultCount: number }[] = [];
+	search.onDidChangeResults((r) => results.push(r));
+	return { term, search, results };
+}
+
+const OFF = { caseSensitive: false, wholeWord: false, regex: false };
+
+test('terminal find matches visible text and reports the count (IDE and ADE)', async () => {
+	for (const flavor of ['ide', 'ade'] as const) {
+		const { search, results } = await bufferWith('> echo src/App.tsx:3:10 https://example.com\r\nsrc/App.tsx:3:10 https://example.com\r\n');
+		expect(runFind(search, flavor, 'App', OFF, flavor === 'ide' ? 'previous' : 'next', true)).toBe(true);
+		expect(results.at(-1)?.resultCount).toBe(2);
+		expect(results.at(-1)?.resultIndex).toBeGreaterThanOrEqual(0);
+		expect(runFind(search, flavor, 'example', OFF, 'next')).toBe(true);
+		expect(results.at(-1)?.resultCount).toBe(2);
+		expect(runFind(search, flavor, 'app', { ...OFF, caseSensitive: true }, 'next')).toBe(false);
+		expect(results.at(-1)?.resultCount).toBe(0);
+		expect(runFind(search, flavor, 'App', { ...OFF, wholeWord: true }, 'next')).toBe(true);
+		expect(runFind(search, flavor, 'ex.mple', { ...OFF, regex: true }, 'next')).toBe(true);
+	}
+});
+
+test('match highlighting is a proposed xterm API: without the flag every search throws', async () => {
+	const { search } = await bufferWith('App\r\n', {});
+	expect(() => runFind(search, 'ide', 'App', OFF, 'next')).toThrow(/allowProposedApi/);
 });

@@ -10,7 +10,7 @@
 	// worktree in the center; a double click keeps the tab. The watcher re-lists changed folders.
 	import { untrack } from 'svelte';
 	import { Channel, invoke } from '@tauri-apps/api/core';
-	import { ask } from '@tauri-apps/plugin-dialog';
+	import { ask } from '#lib/workbench/messageBox.ts';
 	import FileIcon from '#lib/workbench/FileIcon.svelte';
 	import Icon from '#lib/workbench/Icon.svelte';
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';

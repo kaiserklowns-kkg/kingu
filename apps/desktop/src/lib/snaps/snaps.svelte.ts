@@ -7,7 +7,8 @@
 
 import { untrack } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
-import { ask, message, open } from '@tauri-apps/plugin-dialog';
+import { open } from '@tauri-apps/plugin-dialog';
+import { ask, message } from '#lib/workbench/messageBox.ts';
 import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 import { settingSchemas } from '#lib/settings/schemas.svelte.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';

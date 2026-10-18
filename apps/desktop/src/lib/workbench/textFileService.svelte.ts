@@ -13,7 +13,7 @@
 import { untrack } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import { invoke } from '@tauri-apps/api/core';
-import { message } from '@tauri-apps/plugin-dialog';
+import { choose } from '#lib/workbench/messageBox.ts';
 import { clientLog } from '#lib/client-log.ts';
 import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 import type { FileStat, ReadOptions } from '#lib/settings/resources.ts';
@@ -262,7 +262,7 @@ class TextFileService {
 	/** Save / Don't Save / Cancel for `paths` (VS Code's showSaveConfirm). */
 	async confirmSave(paths: string[]): Promise<ConfirmResult> {
 		const c = saveConfirm(paths.map(editorLabel));
-		const answer = await message(c.detail, { title: c.message, kind: 'warning', buttons: { yes: c.save, no: c.dontSave, cancel: c.cancel } });
+		const answer = await choose(c.detail, { title: c.message, kind: 'warning', buttons: [c.save, c.dontSave, c.cancel], cancelId: 2, dontSaveId: 1 });
 		return confirmResult(answer, c);
 	}
 
@@ -320,10 +320,11 @@ class TextFileService {
 			} catch (e) {
 				clientLog('error', `backup before shutdown: ${e}`);
 				const force = reason === 'quit' ? 'ออกอยู่ดี (Quit Anyway)' : 'ปิดอยู่ดี (Close Anyway)';
-				const answer = await message(`${remaining.map(editorLabel).join('\n')}\nลองบันทึกหรือย้อนการแก้ไขก่อนแล้วลองใหม่ (${e})`, {
+				const answer = await choose(`${remaining.map(editorLabel).join('\n')}\nลองบันทึกหรือย้อนการแก้ไขก่อนแล้วลองใหม่ (${e})`, {
 					title: 'สำรองไฟล์ที่ยังไม่บันทึกไม่สำเร็จ (The following editors with unsaved changes could not be saved to the backup location.)',
 					kind: 'error',
-					buttons: { ok: 'OK', cancel: force }
+					buttons: ['OK', force],
+					cancelId: 0
 				});
 				return answer === force;
 			}

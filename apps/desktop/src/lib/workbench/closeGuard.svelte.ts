@@ -6,7 +6,7 @@
 import { untrack } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { ask } from '@tauri-apps/plugin-dialog';
+import { ask } from '#lib/workbench/messageBox.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { editors } from './editors.svelte';
 import { textFiles } from './textFileService.svelte';

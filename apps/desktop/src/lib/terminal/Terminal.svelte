@@ -16,7 +16,7 @@
 	import PopupMenu from '#lib/workbench/PopupMenu.svelte';
 	import type { MenuNode } from '#lib/workbench/menus.ts';
 	import TerminalFind from './TerminalFind.svelte';
-	import { HIGHLIGHT_LIMIT } from './find.ts';
+	import { FIND_TERMINAL_OPTIONS, HIGHLIGHT_LIMIT } from './find.ts';
 	import { cellText, detectLinks, linkHint, linkModifierDown, MAX_LINE, type TerminalLink } from './links.ts';
 	import { linkTarget, openUrl } from './pty.ts';
 	import { registerTerminal } from './registry.ts';
@@ -120,6 +120,7 @@
 		const t = new Terminal({
 			// The terminal settings from the start (scrollback sizes the buffer); bindTerminalSettings keeps them live.
 			...terminalOptionsFrom((id) => settings.get(id)),
+			...FIND_TERMINAL_OPTIONS,
 			// The color theme's colors replace this first-paint background.
 			theme: { background: '#181818', foreground: '#CCCCCC' },
 			// OSC 8 hyperlinks follow the same modifier rule as detected links.
