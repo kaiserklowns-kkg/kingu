@@ -24,6 +24,7 @@ import {
 	type ViewMode
 } from './searchResults';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
+import { t } from '#lib/i18n/index.ts';
 
 /** Streamed files are appended in batches so a big result set re-renders a few times, not per file. */
 const FLUSH_MS = 50;
@@ -157,7 +158,7 @@ class Search {
 		try {
 			results = await invoke<ReplaceResult[]>('search_replace', { request });
 		} catch (e) {
-			notifications.error(`Replace failed: ${e}`);
+			notifications.error(t('workbench.search.replaceFailed', { error: String(e) }));
 			clientLog('error', `search_replace: ${e}`);
 			return;
 		} finally {

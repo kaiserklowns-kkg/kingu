@@ -8,6 +8,7 @@ import { visibleSymbols, symbolPathText } from './breadcrumbs';
 import { commands } from './commands.svelte';
 import { editors } from './editors.svelte';
 import { status } from './status.svelte';
+import { t } from '#lib/i18n/index.ts';
 
 const get = <T>(id: string) => settings.get<T>(id);
 
@@ -32,7 +33,7 @@ export function installBreadcrumbs(): () => void {
 			when: () => get<boolean>('breadcrumbs.enabled') && activeSymbols().length > 0,
 			run: () => {
 				const text = symbolPathText(activeSymbols(), get);
-				if (text) void navigator.clipboard?.writeText(text).then(() => status.flash(`คัดลอก ${text}`));
+				if (text) void navigator.clipboard?.writeText(text).then(() => status.flash(t('workbench.breadcrumbs.copied', { text })));
 			}
 		})
 	];

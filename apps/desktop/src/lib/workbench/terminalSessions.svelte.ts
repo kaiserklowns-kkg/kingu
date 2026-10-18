@@ -13,6 +13,7 @@ import { terminals } from '#lib/terminal/terminals.svelte.ts';
 import { commands } from './commands.svelte';
 import { status } from './status.svelte';
 import { workspace } from './workspace.svelte';
+import { t } from '#lib/i18n/index.ts';
 
 /** PTY keys of every terminal the window shows now. */
 function shown(): Set<string> {
@@ -52,18 +53,18 @@ export function installTerminalSessions(): () => void {
 		run: async () => {
 			const keys = backgroundKeys((await listPtys()).map((s) => s.key), shown());
 			if (!keys.length) {
-				status.flash('ไม่มี terminal ที่รันอยู่เบื้องหลัง');
+				status.flash(t('workbench.terminalSessions.none'));
 				return;
 			}
-			const ok = await ask(`ปิด ${keys.length} terminal ที่รันอยู่เบื้องหลัง (ของโฟลเดอร์อื่น หรือที่ไม่ได้แสดงในหน้าต่างนี้)?\n\nโปรแกรมที่รันอยู่ในนั้น รวมถึง agent CLI จะถูกปิดด้วย`, {
+			const ok = await ask(t('workbench.terminalSessions.confirm', { count: keys.length }), {
 				title: 'Kill All Background Sessions',
 				kind: 'warning',
-				okLabel: `ปิด ${keys.length} terminal`,
-				cancelLabel: 'ยกเลิก'
+				okLabel: t('workbench.terminalSessions.killButton', { count: keys.length }),
+				cancelLabel: t('common.cancel')
 			});
 			if (!ok) return;
 			for (const key of keys) killPty(key);
-			status.flash(`ปิด ${keys.length} terminal เบื้องหลังแล้ว`);
+			status.flash(t('workbench.terminalSessions.killed', { count: keys.length }));
 		}
 	});
 

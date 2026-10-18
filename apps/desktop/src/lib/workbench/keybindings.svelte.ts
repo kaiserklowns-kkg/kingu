@@ -5,6 +5,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { status } from './status.svelte';
 import { NO_USER_KEYBINDINGS, parseKeybindings, userKeybindings, type UserKeybindings } from './keybindingsModel';
+import { t } from '#lib/i18n/index.ts';
 
 /** Editor tab key of the user keybindings.json (outside the workspace, like the user settings.json). */
 export const USER_KEYBINDINGS_KEY = 'settings://user/keybindings.json';
@@ -29,7 +30,7 @@ class Keybindings {
 			this.error = '';
 		} catch (e) {
 			this.error = `keybindings.json: ${e instanceof Error ? e.message : e}`;
-			status.flash(`${this.error} — ใช้คีย์ลัดชุดล่าสุดที่อ่านได้`, 8000);
+			status.flash(t('workbench.keybindings.parseError', { error: this.error }), 8000);
 		}
 	}
 

@@ -11,7 +11,7 @@ import { layout } from '#lib/workbench/layout.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
 import {
-	OP_LABELS,
+	opLabel,
 	checkoutItems,
 	checkoutTarget,
 	deletableBranches,
@@ -54,6 +54,7 @@ import { repoDialog } from './repoDialog.svelte.ts';
 import { workspace } from './workspace.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { isUntitled } from './untitled';
+import { t } from '#lib/i18n/index.ts';
 
 const get = <T>(id: string) => settings.get<T>(id);
 
@@ -109,7 +110,7 @@ class Scm {
 		if (hitLimit && !this.#limitWarned && !get<boolean>('git.ignoreLimitWarning')) {
 			this.#limitWarned = true;
 			void notifications
-				.prompt('warning', `repository นี้มีการเปลี่ยนแปลงมากเกินไป จึงแสดงเพียง ${limit} รายการแรก (Too many changes were detected. Only the first ${limit} changes will be shown below.)`, ["Don't Show Again"], { source: 'Git' })
+				.prompt('warning', t('workbench.scm.tooManyChanges', { limit }), [t('workbench.scm.dontShowAgain')], { source: 'Git' })
 				.then((c) => {
 					if (c) void settings.set('git.ignoreLimitWarning', true, 'user');
 				});
@@ -124,7 +125,7 @@ class Scm {
 	 */
 	async init(initialCommit = false): Promise<boolean> {
 		const ok = await this.#run('git_init', { initialCommit, defaultBranch: get<string>('git.defaultBranchName') });
-		if (ok) status.flash(initialCommit ? 'สร้าง git repository พร้อม commit แรกแล้ว' : 'สร้าง git repository แล้ว');
+		if (ok) status.flash(initialCommit ? t('workbench.scm.initializedWithCommit') : t('workbench.scm.initialized'));
 		return ok;
 	}
 
@@ -184,7 +185,7 @@ class Scm {
 	/** Runs `fn` as the one operation, shows its error, then re-reads status (and the branch). */
 	async #exclusive<T>(label: string, fn: () => Promise<T>, terminal?: string[]): Promise<T | undefined> {
 		if (this.op) {
-			status.flash('มีคำสั่ง git อื่นกำลังทำงานอยู่ รอให้เสร็จก่อน');
+			status.flash(t('workbench.scm.busy'));
 			return undefined;
 		}
 		this.op = label;
@@ -203,7 +204,7 @@ class Scm {
 
 	/** git never prompts inside Kingu; a terminal running the same command can. */
 	async #offerTerminal(text: string, run: string[]) {
-		const open = await ask(text, { title: 'Git', kind: 'warning', okLabel: 'Open in Terminal', cancelLabel: 'ปิด' });
+		const open = await ask(text, { title: 'Git', kind: 'warning', okLabel: t('workbench.scm.openInTerminal'), cancelLabel: t('common.close') });
 		if (!open) return;
 		appMode.setMode('workbench');
 		terminals.open({ title: run.slice(0, 2).join(' '), run });
@@ -211,7 +212,7 @@ class Scm {
 	}
 
 	async #net(op: NetOp, cmd: string, args: Record<string, unknown>, done: string, terminal: string[]) {
-		const ok = await this.#exclusive(OP_LABELS[op], () => invoke(cmd, args).then(() => true), terminal);
+		const ok = await this.#exclusive(opLabel(op), () => invoke(cmd, args).then(() => true), terminal);
 		if (ok) status.flash(done);
 		return ok === true;
 	}
@@ -226,34 +227,33 @@ class Scm {
 
 	fetch() {
 		const options = fetchOptions(get);
-		return this.#net('fetch', 'git_fetch', { options }, 'fetch แล้ว', terminalCommand('fetch', { prune: options.prune }));
+		return this.#net('fetch', 'git_fetch', { options }, t('workbench.scm.fetched'), terminalCommand('fetch', { prune: options.prune }));
 	}
 
 	/** Pull, or Pull (Rebase) (VS Code's git.pullRebase command). */
 	pull({ rebase = false } = {}) {
 		const options = pullOptions(get, { rebase });
-		return this.#net('pull', 'git_pull', { options }, 'pull แล้ว', terminalCommand('pull', { pull: pullCommand(options) }));
+		return this.#net('pull', 'git_pull', { options }, t('workbench.scm.pulled'), terminalCommand('pull', { pull: pullCommand(options) }));
 	}
 
 	/** Push; a branch without an upstream is published instead (VS Code offers the same). */
 	async push({ force = false } = {}) {
 		if (this.#unpublished()) return this.publish();
 		if (force && !(await this.#confirmForce())) return false;
-		const ok = await this.#net('push', 'git_push', { options: pushOptions(get, { force }) }, 'push แล้ว', terminalCommand('push'));
-		if (ok && get<boolean>('git.showPushSuccessNotification')) notifications.info('push สำเร็จ (Successfully pushed.)', { source: 'Git' });
+		const ok = await this.#net('push', 'git_push', { options: pushOptions(get, { force }) }, t('workbench.scm.pushed'), terminalCommand('push'));
+		if (ok && get<boolean>('git.showPushSuccessNotification')) notifications.info(t('workbench.scm.pushSucceeded'), { source: 'Git' });
 		return ok;
 	}
 
 	/** Push (Force): `git.allowForcePush`, asked first unless `git.confirmForcePush` is off. */
 	async #confirmForce(): Promise<boolean> {
 		if (!get<boolean>('git.allowForcePush')) {
-			notifications.warn('Force push ปิดอยู่ เปิด git.allowForcePush ก่อน (Force push is not allowed, please enable it with the "git.allowForcePush" setting.)');
+			notifications.warn(t('workbench.scm.forcePushDisabled'));
 			return false;
 		}
 		if (!get<boolean>('git.confirmForcePush')) return true;
-		const text =
-			'กำลังจะ force push ซึ่งอาจเขียนทับงานของคนอื่นบน remote ทำต่อไหม? (You are about to force push your changes, this action could be destructive and could inadvertently overwrite changes made by others. Are you sure to continue?)';
-		const choice = await messageBox(text, { title: 'Git: Push (Force)', kind: 'warning', buttons: ['OK', 'Always', 'Cancel'] });
+		const text = t('workbench.scm.confirmForcePush');
+		const choice = await messageBox(text, { title: 'Git: Push (Force)', kind: 'warning', buttons: [t('common.ok'), t('workbench.scm.always'), t('common.cancel')] });
 		if (choice === 1) await settings.set('git.confirmForcePush', false, 'user');
 		return choice === 0 || choice === 1;
 	}
@@ -262,17 +262,17 @@ class Scm {
 		if (this.#unpublished()) return this.publish();
 		if (get<boolean>('git.confirmSync')) {
 			const target = this.repo?.upstream ?? 'remote';
-			const ok = await ask(`จะ pull และ push commit จากและไปยัง '${target}' (This action will pull and push commits from and to '${target}'.)`, {
+			const ok = await ask(t('workbench.scm.confirmSync', { target }), {
 				title: 'Git: Sync',
 				kind: 'info',
-				okLabel: 'OK',
-				cancelLabel: 'Cancel'
+				okLabel: t('common.ok'),
+				cancelLabel: t('common.cancel')
 			});
 			if (!ok) return false;
 		}
 		const options = pullOptions(get, { sync: true });
 		const pushOpts = pushOptions(get, { sync: true });
-		return this.#net('sync', 'git_sync', { options, pushOptions: pushOpts }, 'sync แล้ว', terminalCommand('sync', { pull: pullCommand(options) }));
+		return this.#net('sync', 'git_sync', { options, pushOptions: pushOpts }, t('workbench.scm.synced'), terminalCommand('sync', { pull: pullCommand(options) }));
 	}
 
 	/** Publish Branch: `push -u <remote> <branch>`, to origin unless another remote is the only one. */
@@ -280,20 +280,20 @@ class Scm {
 		const branch = this.repo?.branch;
 		const remotes = this.repo?.remotes ?? [];
 		if (!branch) {
-			notifications.warn('HEAD ไม่ได้อยู่บน branch สร้าง branch ก่อนแล้วจึง publish');
+			notifications.warn(t('workbench.scm.publishDetached'));
 			return false;
 		}
 		let remote = remotes.includes('origin') ? 'origin' : remotes.length === 1 ? remotes[0] : undefined;
 		if (!remote && remotes.length) {
-			remote = (await quick.choose({ placeholder: `เลือก remote ที่จะ publish branch '${branch}' ไป`, items: remotes.map((r) => ({ id: r, label: r })) }))?.id;
+			remote = (await quick.choose({ placeholder: t('workbench.scm.pickPublishRemote', { branch }), items: remotes.map((r) => ({ id: r, label: r })) }))?.id;
 			if (!remote) return false;
 		}
 		if (!remote) {
-			await showMessage('repository นี้ยังไม่มี remote ให้เพิ่มด้วย git remote add ก่อน', { title: 'Git', kind: 'info' });
+			await showMessage(t('workbench.scm.noRemotes'), { title: 'Git', kind: 'info' });
 			return false;
 		}
-		const ok = await this.#net('publish', 'git_push', { remote, options: pushOptions(get) }, `publish ${branch} ไปที่ ${remote} แล้ว`, terminalCommand('publish', { remote, branch }));
-		if (ok && get<boolean>('git.showPushSuccessNotification')) notifications.info('push สำเร็จ (Successfully pushed.)', { source: 'Git' });
+		const ok = await this.#net('publish', 'git_push', { remote, options: pushOptions(get) }, t('workbench.scm.published', { branch, remote }), terminalCommand('publish', { remote, branch }));
+		if (ok && get<boolean>('git.showPushSuccessNotification')) notifications.info(t('workbench.scm.pushSucceeded'), { source: 'Git' });
 		return ok;
 	}
 
@@ -313,20 +313,20 @@ class Scm {
 		const refs = await this.#refs({ tags: types.includes('tags') });
 		if (!refs) return;
 		const items = checkoutItems(refs, { types, sort: get('git.branchSortOrder'), details: get<boolean>('git.showReferenceDetails') });
-		const item = await quick.choose({ placeholder: 'เลือก branch หรือ tag ที่จะ checkout (Select a branch or tag to checkout)', items });
+		const item = await quick.choose({ placeholder: t('workbench.scm.pickCheckout'), items });
 		const target = item && checkoutTarget(item.id, refs);
 		if (!target) return;
 		if (target.kind === 'create') return this.createBranch();
 		if (target.kind === 'createFrom') return this.createBranchFrom(refs);
 		if (target.kind === 'worktree') {
-			const text = `branch ${target.ref.name} ถูก check out อยู่ใน worktree อื่น (${target.ref.worktree}) git ไม่ยอมให้ branch เดียวกันถูก check out สองที่ เปิดงานนั้นใน Agents แทน`;
+			const text = t('workbench.scm.checkedOutElsewhere', { branch: target.ref.name, worktree: target.ref.worktree ?? '' });
 			await showMessage(text, { title: 'Git', kind: 'info' });
 			return;
 		}
 		const { name, remote, tag = false } = target.ref;
 		const options = { tag, pullBefore: get<boolean>('git.pullBeforeCheckout') };
-		const local = await this.#exclusive('กำลัง checkout...', () => invoke<string>('git_checkout', { name, remote, options }));
-		if (local) status.flash(`checkout ${local} แล้ว`);
+		const local = await this.#exclusive(t('workbench.scm.checkingOut'), () => invoke<string>('git_checkout', { name, remote, options }));
+		if (local) status.flash(t('workbench.scm.checkedOut', { branch: local }));
 	}
 
 	/**
@@ -340,11 +340,11 @@ class Scm {
 		const whitespaceChar = get<string>('git.branchWhitespaceChar');
 		const random = get<boolean>('git.branchRandomName.enable') ? randomBranchName(get<string[]>('git.branchRandomName.dictionary'), whitespaceChar) : '';
 		const typed = await quick.input({
-			placeholder: from ? `ชื่อ branch ใหม่จาก ${from} (Branch name)` : 'ชื่อ branch ใหม่ (Branch name)',
+			placeholder: from ? t('workbench.scm.branchNameFrom', { from }) : t('workbench.scm.branchName'),
 			hint: (v) => {
 				const name = branchName(v || random, { prefix, whitespaceChar });
-				if (!name) return 'พิมพ์ชื่อ branch แล้วกด Enter';
-				return branchNameError(name, get<string>('git.branchValidationRegex')) ?? `สร้าง branch '${name}' แล้ว checkout`;
+				if (!name) return t('workbench.scm.branchNameHint');
+				return branchNameError(name, get<string>('git.branchValidationRegex')) ?? t('workbench.scm.branchCreateHint', { name });
 			}
 		});
 		if (typed === undefined) return;
@@ -355,9 +355,9 @@ class Scm {
 			notifications.warn(invalid);
 			return;
 		}
-		const ok = await this.#exclusive('กำลังสร้าง branch...', () => invoke('git_create_branch', { name, from: from ?? null }).then(() => true));
+		const ok = await this.#exclusive(t('workbench.scm.creatingBranch'), () => invoke('git_create_branch', { name, from: from ?? null }).then(() => true));
 		if (!ok) return;
-		status.flash(`สร้างและ checkout ${name} แล้ว`);
+		status.flash(t('workbench.scm.branchCreated', { name }));
 		return name;
 	}
 
@@ -366,7 +366,7 @@ class Scm {
 		if (!all) return;
 		const details = get<boolean>('git.showReferenceDetails');
 		const items = all.filter((r) => !r.tag).map((r) => ({ id: r.name, label: r.name, description: details ? `${r.commit} ${r.subject}`.trim() : undefined }));
-		const from = await quick.choose({ placeholder: 'เลือก ref ที่จะสร้าง branch ใหม่จาก (Select a ref to create the branch from)', items });
+		const from = await quick.choose({ placeholder: t('workbench.scm.pickBranchFrom'), items });
 		if (from) await this.createBranch(from.id);
 	}
 
@@ -376,24 +376,24 @@ class Scm {
 		if (!refs) return;
 		const items = deletableBranches(refs);
 		if (!items.length) {
-			notifications.info('ไม่มี branch ที่ลบได้ (branch ปัจจุบันและ branch ของ worktree ลบไม่ได้)');
+			notifications.info(t('workbench.scm.noDeletableBranches'));
 			return;
 		}
-		const pick = await quick.choose({ placeholder: 'เลือก branch ที่จะลบ (Select a branch to delete)', items });
+		const pick = await quick.choose({ placeholder: t('workbench.scm.pickDeleteBranch'), items });
 		if (!pick) return;
 		const name = pick.id;
-		const result = await this.#exclusive('กำลังลบ branch...', () => invoke<DeleteResult>('git_delete_branch', { name, force: false }));
-		if (result === 'deleted') status.flash(`ลบ branch ${name} แล้ว`);
+		const result = await this.#exclusive(t('workbench.scm.deletingBranch'), () => invoke<DeleteResult>('git_delete_branch', { name, force: false }));
+		if (result === 'deleted') status.flash(t('workbench.scm.branchDeleted', { name }));
 		if (result !== 'not_merged') return;
-		const force = await ask(`branch ${name} ยังไม่ได้ merge ลบทิ้งเลยไหม? commit ที่มีเฉพาะใน branch นี้จะหายไป`, {
-			title: 'Delete Branch',
+		const force = await ask(t('workbench.scm.confirmForceDeleteBranch', { name }), {
+			title: t('workbench.scm.deleteBranch'),
 			kind: 'warning',
-			okLabel: 'Delete Branch',
-			cancelLabel: 'Cancel'
+			okLabel: t('workbench.scm.deleteBranch'),
+			cancelLabel: t('common.cancel')
 		});
 		if (!force) return;
-		const forced = await this.#exclusive('กำลังลบ branch...', () => invoke<DeleteResult>('git_delete_branch', { name, force: true }));
-		if (forced === 'deleted') status.flash(`ลบ branch ${name} แล้ว`);
+		const forced = await this.#exclusive(t('workbench.scm.deletingBranch'), () => invoke<DeleteResult>('git_delete_branch', { name, force: true }));
+		if (forced === 'deleted') status.flash(t('workbench.scm.branchDeleted', { name }));
 	}
 
 	/**
@@ -404,9 +404,10 @@ class Scm {
 		const staged = new Set(this.groups.staged.map((r) => r.entry.path));
 		const files = filesToSave(dirtyRepoFiles(), get<SavePrompt>(setting), staged);
 		if (!files.length) return true;
-		const list = files.length === 1 ? files[0] : `${files.length} ไฟล์`;
-		const text = `${list} ยังไม่ได้บันทึก การแก้ไขที่ยังไม่บันทึกจะไม่ถูก${action} บันทึกก่อนไหม? (The following files have unsaved changes which won't be included if you proceed. Would you like to save them first?)`;
-		const choice = await messageBox(text, { title: 'Git', kind: 'warning', buttons: ['Save All & Continue', 'Continue', 'Cancel'] });
+		const list = files.length === 1 ? files[0] : t('workbench.scm.nFiles', { count: files.length });
+		const params = { files: list };
+		const text = action === 'stash' ? t('workbench.scm.saveBeforeStash', params) : t('workbench.scm.saveBeforeCommit', params);
+		const choice = await messageBox(text, { title: 'Git', kind: 'warning', buttons: [t('workbench.scm.saveAllAndContinue'), t('common.continue'), t('common.cancel')] });
 		if (choice === 2) return false;
 		if (choice === 0) for (const f of files) await saveFile(f);
 		return true;
@@ -420,14 +421,14 @@ class Scm {
 		if (!(await this.#saveFirst('git.promptToSaveFilesBeforeStash', 'stash'))) return;
 		const fromInput = get<boolean>('git.useCommitInputAsStashMessage') ? this.message.trim().split('\n')[0] : '';
 		const typed = await quick.input({
-			placeholder: 'ข้อความ stash (ไม่ใส่ก็ได้) — Stash message',
-			hint: (v) => (v || fromInput ? `stash ด้วยข้อความ '${v || fromInput}'` : 'กด Enter เพื่อ stash โดยไม่ใส่ข้อความ')
+			placeholder: t('workbench.scm.stashMessage'),
+			hint: (v) => (v || fromInput ? t('workbench.scm.stashWithMessage', { message: v || fromInput }) : t('workbench.scm.stashNoMessage'))
 		});
 		if (typed === undefined) return;
 		const message = typed || fromInput;
-		const ok = await this.#exclusive('กำลัง stash...', () => invoke('git_stash_push', { message: message || null, includeUntracked }).then(() => true));
+		const ok = await this.#exclusive(t('workbench.scm.stashing'), () => invoke('git_stash_push', { message: message || null, includeUntracked }).then(() => true));
 		if (ok) {
-			status.flash('stash แล้ว');
+			status.flash(t('workbench.scm.stashed'));
 			this.closeDiffs();
 		}
 	}
@@ -441,7 +442,7 @@ class Scm {
 			return undefined;
 		}
 		if (!list.length) {
-			status.flash('ไม่มี stash');
+			status.flash(t('workbench.scm.noStashes'));
 			return undefined;
 		}
 		const pick = await quick.choose({ placeholder, items: stashItems(list) });
@@ -449,25 +450,25 @@ class Scm {
 	}
 
 	async stashApply({ pop = false } = {}) {
-		const s = await this.#pickStash(pop ? 'เลือก stash ที่จะ pop (Pick a stash to pop)' : 'เลือก stash ที่จะ apply (Pick a stash to apply)');
+		const s = await this.#pickStash(pop ? t('workbench.scm.pickStashPop') : t('workbench.scm.pickStashApply'));
 		if (!s) return;
-		const ok = await this.#exclusive('กำลังนำ stash กลับมา...', () => invoke('git_stash_apply', { index: s.index, pop }).then(() => true));
-		if (ok) status.flash(pop ? 'pop stash แล้ว' : 'apply stash แล้ว');
+		const ok = await this.#exclusive(t('workbench.scm.applyingStash'), () => invoke('git_stash_apply', { index: s.index, pop }).then(() => true));
+		if (ok) status.flash(pop ? t('workbench.scm.stashPopped') : t('workbench.scm.stashApplied'));
 	}
 
 	async stashDrop() {
-		const s = await this.#pickStash('เลือก stash ที่จะลบ (Pick a stash to drop)');
+		const s = await this.#pickStash(t('workbench.scm.pickStashDrop'));
 		if (!s) return;
-		const sure = await ask(`ลบ stash@{${s.index}}: ${s.message}? กู้คืนไม่ได้`, { title: 'Drop Stash', kind: 'warning', okLabel: 'Drop', cancelLabel: 'Cancel' });
+		const sure = await ask(t('workbench.scm.confirmDropStash', { ref: `stash@{${s.index}}`, message: s.message }), { title: t('workbench.scm.dropStash'), kind: 'warning', okLabel: t('workbench.scm.drop'), cancelLabel: t('common.cancel') });
 		if (!sure) return;
-		const ok = await this.#exclusive('กำลังลบ stash...', () => invoke('git_stash_drop', { index: s.index }).then(() => true));
-		if (ok) status.flash('ลบ stash แล้ว');
+		const ok = await this.#exclusive(t('workbench.scm.droppingStash'), () => invoke('git_stash_drop', { index: s.index }).then(() => true));
+		if (ok) status.flash(t('workbench.scm.stashDropped'));
 	}
 
 	/** An OK / Always / Cancel question whose Always turns `setting` off. */
 	async #confirm(setting: string, text: string, title: string): Promise<boolean> {
 		if (!get<boolean>(setting)) return true;
-		const choice = await messageBox(text, { title, kind: 'warning', buttons: ['OK', 'Always', 'Cancel'] });
+		const choice = await messageBox(text, { title, kind: 'warning', buttons: [t('common.ok'), t('workbench.scm.always'), t('common.cancel')] });
 		if (choice === 1) await settings.set(setting, false, 'user');
 		return choice === 0 || choice === 1;
 	}
@@ -478,8 +479,8 @@ class Scm {
 		const mode = get<string>('git.branchProtectionPrompt');
 		if (mode === 'alwaysCommit') return true;
 		if (mode === 'alwaysCommitToNewBranch') return 'newBranch';
-		const text = `branch '${this.repo?.branch}' ถูกป้องกันไว้ และอาจ push ขึ้น remote ไม่ได้ จะทำอย่างไร? (You are trying to commit to a protected branch and you might not have permission to push your commits to the remote. How would you like to proceed?)`;
-		const choice = await messageBox(text, { title: 'Git', kind: 'warning', buttons: ['Commit', 'Commit to a New Branch', 'Cancel'] });
+		const text = t('workbench.scm.protectedBranch', { branch: this.repo?.branch ?? '' });
+		const choice = await messageBox(text, { title: 'Git', kind: 'warning', buttons: [t('workbench.scm.commit'), t('workbench.scm.commitToNewBranch'), t('common.cancel')] });
 		return choice === 0 ? true : choice === 1 ? 'newBranch' : false;
 	}
 
@@ -494,8 +495,8 @@ class Scm {
 		);
 		const blocking = blockingProblems(problems, get<Record<string, string>>('git.diagnosticsCommitHook.sources'), new Set(paths));
 		if (!blocking.length) return true;
-		const text = `ไฟล์ที่จะ commit มีปัญหา ${blocking.length} รายการ เช่น ${blocking[0].path}: ${blocking[0].message} (The changes being committed have unresolved diagnostics.)`;
-		const choice = await messageBox(text, { title: 'Git', kind: 'warning', buttons: ['Commit Anyway', 'Show Problems', 'Cancel'] });
+		const text = t('workbench.scm.diagnostics', { count: blocking.length, path: blocking[0].path, message: blocking[0].message });
+		const choice = await messageBox(text, { title: 'Git', kind: 'warning', buttons: [t('workbench.scm.commitAnyway'), t('workbench.scm.showProblems'), t('common.cancel')] });
 		if (choice === 1) {
 			appMode.setMode('workbench');
 			layout.showPanel('problems');
@@ -510,34 +511,35 @@ class Scm {
 	async commit({ amend = false, noVerify = false, empty = false } = {}) {
 		const message = this.message.trim();
 		if (!message) {
-			status.flash('ใส่ข้อความ commit ก่อน');
+			status.flash(t('workbench.scm.enterMessage'));
 			return;
 		}
 		if (get<boolean>('git.requireGitUserConfig') && !(await invoke<boolean>('git_user_configured').catch(() => true))) {
-			await showMessage("ตั้ง user.name และ user.email ของ git ก่อน commit (Make sure you configure your 'user.name' and 'user.email' in git.)", { title: 'Git', kind: 'warning' });
+			await showMessage(t('workbench.scm.userConfig'), { title: 'Git', kind: 'warning' });
 			return;
 		}
 		if (noVerify) {
 			if (!get<boolean>('git.allowNoVerifyCommit')) return;
-			const text = 'กำลัง commit โดยข้าม pre-commit hook ทำต่อไหม? (You are about to commit your changes without verification, this skips pre-commit hooks and can be undesirable. Are you sure to continue?)';
+			const text = t('workbench.scm.confirmNoVerify');
 			if (!(await this.#confirm('git.confirmNoVerifyCommit', text, 'Git: Commit (No Verify)'))) return;
 		}
-		if (empty && !(await this.#confirm('git.confirmEmptyCommits', 'สร้าง commit ว่างไหม? (Are you sure you want to create an empty commit?)', 'Git: Commit Empty'))) return;
+		if (empty && !(await this.#confirm('git.confirmEmptyCommits', t('workbench.scm.confirmEmpty'), 'Git: Commit Empty'))) return;
 		if (!(await this.#saveFirst('git.promptToSaveFilesBeforeCommit', 'commit'))) return;
 		if (!amend && !empty && !this.groups.staged.length) {
 			const changes = [...this.groups.changes, ...this.groups.untracked];
 			let smart = get<boolean>('git.enableSmartCommit');
 			if (!smart && changes.length && get<boolean>('git.suggestSmartCommit')) {
-				const choice = await notifications.prompt('info', 'ยังไม่มีไฟล์ที่ stage จะ stage ทุกการเปลี่ยนแปลงแล้ว commit เลยไหม? (There are no staged changes to commit. Would you like to stage all your changes and commit them directly?)', ['Yes', 'Always', 'Never'], { source: 'Git' });
-				if (choice === 'Always') await settings.set('git.enableSmartCommit', true, 'user');
-				if (choice === 'Never') await settings.set('git.suggestSmartCommit', false, 'user');
-				if (choice !== 'Yes' && choice !== 'Always') return;
+				const [yes, always, never] = [t('common.yes'), t('workbench.scm.always'), t('workbench.scm.never')];
+				const choice = await notifications.prompt('info', t('workbench.scm.suggestSmartCommit'), [yes, always, never], { source: 'Git' });
+				if (choice === always) await settings.set('git.enableSmartCommit', true, 'user');
+				if (choice === never) await settings.set('git.suggestSmartCommit', false, 'user');
+				if (choice !== yes && choice !== always) return;
 				smart = true;
 			}
 			// git.enableSmartCommit: nothing staged commits the changes (all, or tracked only).
 			const paths = smart ? smartCommitPaths(changes, get('git.smartCommitChanges')) : [];
 			if (!paths.length) {
-				status.flash(changes.length ? 'ยังไม่มีไฟล์ที่ stage: กด + ที่ไฟล์ก่อน commit' : 'ไม่มีการเปลี่ยนแปลงให้ commit');
+				status.flash(changes.length ? t('workbench.scm.nothingStaged') : t('workbench.scm.noChanges'));
 				return;
 			}
 			if (!(await this.stage(paths))) return;
@@ -549,7 +551,7 @@ class Scm {
 		if (target === 'newBranch' && !(await this.createBranch())) return;
 		if (await this.#run('git_commit', { message, options: commitOptions(get, { amend, noVerify, empty }) })) {
 			this.message = '';
-			status.flash(amend ? 'แก้ commit ล่าสุดแล้ว' : 'commit แล้ว');
+			status.flash(amend ? t('workbench.scm.amended') : t('workbench.scm.committed'));
 			this.closeDiffs(committed);
 			// git.postCommitCommand
 			const after = get<string>('git.postCommitCommand');
@@ -561,7 +563,7 @@ class Scm {
 	/** git.autofetch: a quiet fetch (every remote with `"all"`); failures only go to the log, like VS Code. */
 	async autoFetch() {
 		if (this.op || !this.repo?.remotes.length) return;
-		this.op = OP_LABELS.fetch;
+		this.op = opLabel('fetch');
 		try {
 			await invoke('git_fetch', { options: fetchOptions(get, { auto: true }) });
 		} catch (e) {

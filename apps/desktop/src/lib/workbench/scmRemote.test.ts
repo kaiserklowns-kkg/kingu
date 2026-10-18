@@ -49,7 +49,7 @@ describe('syncItem', () => {
 
 	test('offers Publish without an upstream or when it is gone, only with a remote', () => {
 		expect(syncItem(repo({ upstream: null }))?.command).toBe('git.publish');
-		expect(syncItem(repo({ upstream_gone: true }))?.title).toContain('ถูกลบ');
+		expect(syncItem(repo({ upstream_gone: true }))?.title).toContain('was deleted');
 		expect(syncItem(repo({ upstream: null, remotes: [] }))).toBeNull();
 	});
 

@@ -1,3 +1,4 @@
+import { t } from '#lib/i18n/index.ts';
 // The decisions behind saving, closing and quitting with unsaved editors, and the encoding and
 // status bar tables, kept pure so `bun test` covers them. Each follows the VS Code source named
 // beside it; textFileService.svelte.ts runs them against the real editors and dialogs.
@@ -82,8 +83,7 @@ export type ConfirmResult = 'save' | 'dontSave' | 'cancel';
 export function fileNamesMessage(names: string[]): string {
 	const lines = names.slice(0, MAX_CONFIRM_FILES);
 	const more = names.length - MAX_CONFIRM_FILES;
-	if (more === 1) lines.push('...1 additional file not shown');
-	else if (more > 1) lines.push(`...${more} additional files not shown`);
+	if (more > 0) lines.push(t('workbench.textFiles.moreNotShown', { count: more }));
 	lines.push('');
 	return lines.join('\n');
 }
@@ -91,21 +91,21 @@ export function fileNamesMessage(names: string[]): string {
 export type SaveConfirm = { message: string; detail: string; save: string; dontSave: string; cancel: string };
 
 export function saveConfirm(names: string[]): SaveConfirm {
-	const lost = 'การแก้ไขจะหายไปถ้าไม่บันทึก (Your changes will be lost if you don’t save them.)';
+	const lost = t('workbench.textFiles.changesLost');
 	if (names.length === 1)
 		return {
-			message: `บันทึกการแก้ไขใน ${names[0]} หรือไม่? (Do you want to save the changes you made to ${names[0]}?)`,
+			message: t('workbench.textFiles.saveOne', { name: names[0] }),
 			detail: lost,
-			save: 'บันทึก (Save)',
-			dontSave: 'ไม่บันทึก (Don’t Save)',
-			cancel: 'ยกเลิก (Cancel)'
+			save: t('common.save'),
+			dontSave: t('common.dontSave'),
+			cancel: t('common.cancel')
 		};
 	return {
-		message: `บันทึกการแก้ไขใน ${names.length} ไฟล์ต่อไปนี้หรือไม่? (Do you want to save the changes to the following ${names.length} files?)`,
+		message: t('workbench.textFiles.saveMany', { count: names.length }),
 		detail: fileNamesMessage(names) + '\n' + lost,
-		save: 'บันทึกทั้งหมด (Save All)',
-		dontSave: 'ไม่บันทึก (Don’t Save)',
-		cancel: 'ยกเลิก (Cancel)'
+		save: t('workbench.textFiles.saveAll'),
+		dontSave: t('common.dontSave'),
+		cancel: t('common.cancel')
 	};
 }
 
@@ -180,7 +180,7 @@ export function restorePlan(backups: BackupHeader[], open: ReadonlySet<string>):
 export type ConflictChoice = 'compare' | 'overwrite' | 'revert';
 
 export function conflictMessage(name: string): string {
-	return `บันทึก '${name}' ไม่สำเร็จ: ไฟล์บนดิสก์ใหม่กว่า เปรียบเทียบกับเวอร์ชันของคุณ หรือเขียนทับด้วยการแก้ไขของคุณ (Failed to save '${name}': The content of the file is newer. Please compare your version with the file contents or overwrite the content of the file with your changes.)`;
+	return t('workbench.textFiles.conflict', { name });
 }
 
 // --- Status bar (editorStatus.ts)

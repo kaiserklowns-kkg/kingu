@@ -15,6 +15,7 @@ import { floatingKey } from '#lib/terminal/sessions.ts';
 /** Floating tabs are not restored, so each launch's shells get their own keys. */
 const LAUNCH = Date.now().toString(36);
 import { anchorButton, anchorRect, buttonPos, DEFAULT_BOUNDS, DEFAULT_BUTTON, maximizedRect, rectFromAnchor, type Anchor, type AnchoredBounds, type Rect } from './floating';
+import { t } from '#lib/i18n/index.ts';
 
 const VIEW_KEY = 'kingu.floating.view';
 const BOUNDS_KEY = 'kingu.floating.bounds';
@@ -148,7 +149,7 @@ class Floating {
 			const path = await invoke<string>('floating_note_new');
 			this.#add({ kind: 'note', title: path.split('/').pop() ?? 'Untitled.md', path });
 		} catch (e) {
-			status.error(`Failed to create untitled markdown file. ${e}`);
+			status.error(t('workbench.floating.newNoteFailed', { error: String(e) }));
 		}
 	}
 	async openNote() {
@@ -160,7 +161,7 @@ class Floating {
 			if (open) return this.select(open.id);
 			this.#add({ kind: 'note', title: picked.split('/').pop() ?? picked, path: picked });
 		} catch (e) {
-			status.error(`Failed to open markdown file. ${e}`);
+			status.error(t('workbench.floating.openNoteFailed', { error: String(e) }));
 		}
 	}
 	rename(id: string, title: string) {

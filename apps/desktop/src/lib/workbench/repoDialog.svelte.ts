@@ -11,6 +11,7 @@ import { ask } from './messageBox.ts';
 import { afterClone, cloneParent, cloneUrlError, defaultParents, projectNameError, type CloneProgress } from './repoDialog.ts';
 import { status } from './status.svelte.ts';
 import { workspace } from './workspace.svelte.ts';
+import { t } from '#lib/i18n/index.ts';
 
 export type RepoDialogMode = 'clone' | 'create';
 
@@ -46,7 +47,7 @@ class RepoDialog {
 	}
 
 	async pickParent() {
-		const dir = await open({ directory: true, multiple: false, title: this.mode === 'clone' ? 'Clone ไปที่โฟลเดอร์' : 'สร้างโปรเจกต์ในโฟลเดอร์', defaultPath: this.parent || undefined });
+		const dir = await open({ directory: true, multiple: false, title: this.mode === 'clone' ? t('workbench.repoDialog.cloneInto') : t('workbench.repoDialog.createIn'), defaultPath: this.parent || undefined });
 		if (typeof dir === 'string') {
 			this.parent = dir;
 			this.error = null;
@@ -54,7 +55,7 @@ class RepoDialog {
 	}
 
 	async clone() {
-		const bad = cloneUrlError(this.url) ?? (this.parent.trim() ? null : 'เลือกโฟลเดอร์ปลายทาง');
+		const bad = cloneUrlError(this.url) ?? (this.parent.trim() ? null : t('workbench.repoDialog.pickDestination'));
 		if (bad) {
 			this.error = bad;
 			return;
@@ -76,16 +77,16 @@ class RepoDialog {
 		}
 		if (this.#cancelled) {
 			this.mode = null;
-			status.flash('ยกเลิก clone แล้ว');
+			status.flash(t('workbench.repoDialog.cloneCancelled'));
 			return;
 		}
 		if (!path) return;
 		this.mode = null;
-		status.flash(`clone แล้ว: ${path}`);
+		status.flash(t('workbench.repoDialog.cloned', { path }));
 		// git.openAfterClone
 		const then = afterClone(settings.get<string>('git.openAfterClone'), workspace.root !== null);
 		if (then === 'stay') return;
-		if (then === 'ask' && !(await ask(`เปิด repository ที่ clone มาไหม? (Would you like to open the cloned repository?)\n${path}`, { title: 'Git', okLabel: 'Open', cancelLabel: 'Cancel' }))) return;
+		if (then === 'ask' && !(await ask(`${t('workbench.repoDialog.openCloned')}\n${path}`, { title: 'Git', okLabel: t('common.open'), cancelLabel: t('common.cancel') }))) return;
 		await workspace.openFolder(path);
 	}
 
@@ -95,7 +96,7 @@ class RepoDialog {
 	}
 
 	async create() {
-		const bad = projectNameError(this.name) ?? (this.parent.trim() ? null : 'เลือกโฟลเดอร์ที่จะสร้างโปรเจกต์');
+		const bad = projectNameError(this.name) ?? (this.parent.trim() ? null : t('workbench.repoDialog.pickProjectParent'));
 		if (bad) {
 			this.error = bad;
 			return;
@@ -112,7 +113,7 @@ class RepoDialog {
 		}
 		if (!path) return;
 		this.mode = null;
-		status.flash(`สร้างโปรเจกต์แล้ว: ${path}`);
+		status.flash(t('workbench.repoDialog.created', { path }));
 		await workspace.openFolder(path);
 	}
 }

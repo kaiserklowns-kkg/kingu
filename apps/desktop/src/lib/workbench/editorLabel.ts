@@ -10,6 +10,7 @@ import { customLabel, customLabelPatterns, untitledLabel } from './tabLabels';
 import { changesSlug, isChangesKey } from './viewers';
 import { isUntitled, untitledName } from './untitled';
 import { workspace } from './workspace.svelte';
+import { t } from '#lib/i18n/index.ts';
 
 const compiled = new WeakMap<object, ReturnType<typeof customLabelPatterns>>();
 
@@ -26,9 +27,9 @@ function custom(key: string): string | undefined {
 export function editorLabel(key: string): string {
 	if (key === SETTINGS_EDITOR_KEY) return 'Settings';
 	if (isUntitled(key)) return untitledLabel(untitledName(key), untitledFirstLines.get(key) ?? '', settings.get<'content' | 'name'>('workbench.editor.untitled.labelFormat'));
-	if (isBoardKey(key)) return 'บอร์ดงาน';
-	if (isChangesKey(key)) return changesSlug(key) ? `การเปลี่ยนแปลง: ${adeTasks.find(changesSlug(key))?.meta.title ?? changesSlug(key)}` : 'การเปลี่ยนแปลงทั้งหมด';
+	if (isBoardKey(key)) return t('workbench.editorLabel.board');
+	if (isChangesKey(key)) return changesSlug(key) ? t('workbench.editorLabel.changes', { title: adeTasks.find(changesSlug(key))?.meta.title ?? changesSlug(key) ?? '' }) : t('workbench.editorLabel.allChanges');
 	const slug = slugOfTaskKey(key);
-	if (slug) return `งาน: ${adeTasks.find(slug)?.meta.title ?? slug}`;
+	if (slug) return t('workbench.editorLabel.task', { title: adeTasks.find(slug)?.meta.title ?? slug });
 	return custom(key) ?? tabLabel(key);
 }

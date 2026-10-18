@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { ask, CANCEL, choose } from '#lib/workbench/messageBox.ts';
+import { ask, cancelLabel, choose } from '#lib/workbench/messageBox.ts';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { clientLog } from '#lib/client-log.ts';
 import { enabledGlobs, hiddenBySibling, isExcluded, siblingClauses, sortEntries, type LexicographicOrder, type SortOrder } from '#lib/settings/mappings.ts';
@@ -9,6 +9,7 @@ import { affectedBy, baseName, dirsToRefresh, isUnder, joinRel, parentOf, remapP
 import { notifications } from './notifications.svelte';
 import { compactChain, compactLabel, dropTarget, moveQuestion, planTransfer, rangeSelection, topLevel } from './explorerModel';
 import { nestFiles } from './fileNesting';
+import { t } from '#lib/i18n/index.ts';
 
 /** macOS file systems ignore case, so file nesting does too (VS Code's PathCaseSensitive check). */
 const CASE_SENSITIVE_FS = !(typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac'));
@@ -276,16 +277,16 @@ class Explorer {
 	 */
 	async transfer(paths: string[], dir: string, copy: boolean, confirm: boolean): Promise<boolean> {
 		const { ops, refused } = planTransfer(paths, dir, copy);
-		if (refused.length) notifications.warn(`ย้ายหรือคัดลอกโฟลเดอร์เข้าไปในตัวเองไม่ได้ (Cannot move or copy a folder into itself): ${refused.join(', ')}`);
+		if (refused.length) notifications.warn(t('workbench.explorer.intoItself', { paths: refused.join(', ') }));
 		if (!ops.length) return true;
 		if (!copy && editors.allTabs().some((t) => t.dirty && ops.some((o) => remapPath(t.path, o.from, o.to) !== null))) {
-			notifications.warn('มีไฟล์ที่ยังไม่บันทึกอยู่ในรายการที่จะย้าย: บันทึกก่อนย้าย (Save the files before moving them.)');
+			notifications.warn(t('workbench.explorer.saveBeforeMove'));
 			return false;
 		}
 		if (!copy && confirm && settings.get<boolean>('explorer.confirmDragAndDrop')) {
-			const yes = 'ย้าย (Move)';
-			const always = 'ย้าย ไม่ต้องถามอีก (Do Not Ask Again)';
-			const r = await choose(moveQuestion(ops.map((o) => o.from), dir, baseName(this.#rootName())), { title: 'Move', kind: 'warning', buttons: [yes, always, CANCEL], cancelId: 2 });
+			const yes = t('workbench.explorer.move');
+			const always = t('workbench.explorer.moveDontAsk');
+			const r = await choose(moveQuestion(ops.map((o) => o.from), dir, baseName(this.#rootName())), { title: t('workbench.explorer.move'), kind: 'warning', buttons: [yes, always, cancelLabel()], cancelId: 2 });
 			if (r === always) await settings.set('explorer.confirmDragAndDrop', false, 'user');
 			else if (r !== yes) return false;
 		}
@@ -331,7 +332,7 @@ class Explorer {
 		} catch (e) {
 			if (!/already exists/.test(String(e))) throw e;
 		}
-		if (from === to) throw new Error(`'${baseName(from)}' มีอยู่แล้วในโฟลเดอร์นี้ (explorer.incrementalNaming is disabled.)`);
+		if (from === to) throw new Error(t('workbench.explorer.exists', { name: baseName(from) }));
 		if (!(await this.#replaceExisting(to))) return null;
 		return invoke<string>('fs_copy', { from, toDir: dir, naming });
 	}
@@ -350,11 +351,11 @@ class Explorer {
 	/** Asks to replace `to`, then deletes it (files.enableTrash) and closes its tabs. */
 	async #replaceExisting(to: string): Promise<boolean> {
 		const replace = await ask(
-			`มี '${baseName(to)}' อยู่ในโฟลเดอร์ปลายทางแล้ว แทนที่หรือไม่? (A file or folder with the name '${baseName(to)}' already exists in the destination folder. Do you want to replace it?)\n\n${this.#useTrash() ? 'ของเดิมจะถูกย้ายไปถังขยะ' : 'ของเดิมจะถูกลบถาวร'}`,
-			{ title: 'Replace', kind: 'warning', okLabel: 'แทนที่ (Replace)', cancelLabel: 'ยกเลิก' }
+			`${t('workbench.explorer.replaceQuestion', { name: baseName(to) })}\n\n${this.#useTrash() ? t('workbench.explorer.replaceTrash') : t('workbench.explorer.replacePermanent')}`,
+			{ title: t('workbench.explorer.replace'), kind: 'warning', okLabel: t('workbench.explorer.replace'), cancelLabel: t('common.cancel') }
 		);
 		if (!replace) return false;
-		if (editors.allTabs().some((t) => t.dirty && affectedBy([t.path], to).length)) throw new Error(`${to}: มีการแก้ไขที่ยังไม่บันทึก`);
+		if (editors.allTabs().some((t) => t.dirty && affectedBy([t.path], to).length)) throw new Error(t('workbench.explorer.targetDirty', { path: to }));
 		await invoke('fs_delete', { rel: to, useTrash: this.#useTrash() });
 		for (const t of affectedBy([...editors.openPaths()], to)) editors.closeEverywhere(t);
 		this.#forget(to);
@@ -384,7 +385,7 @@ class Explorer {
 			// explorer.autoOpenDroppedFile: one dropped file opens in the editor.
 			if (created.length === 1 && !this.isDir(created[0]) && settings.get<boolean>('explorer.autoOpenDroppedFile')) editors.open(created[0], { preview: true });
 		} catch (e) {
-			notifications.error(`คัดลอกไฟล์เข้ามาไม่สำเร็จ (Copy failed): ${e}`);
+			notifications.error(t('workbench.explorer.copyFailed', { error: String(e) }));
 		}
 	}
 
@@ -450,7 +451,7 @@ class Explorer {
 	}
 
 	async #rename(from: string, to: string) {
-		if (editors.allTabs().some((t) => t.dirty && remapPath(t.path, from, to) !== null)) throw new Error('มีไฟล์ที่ยังไม่บันทึกอยู่ข้างใน: บันทึกก่อนเปลี่ยนชื่อ');
+		if (editors.allTabs().some((t) => t.dirty && remapPath(t.path, from, to) !== null)) throw new Error(t('workbench.explorer.saveBeforeRename'));
 		await invoke('fs_rename', { from, to });
 		this.editing = null;
 		// Keep the folder's expansion state under its new name.
@@ -476,19 +477,19 @@ class Explorer {
 		const isDir = this.isDir(rel);
 		const tabs = affectedBy([...editors.openPaths()], rel);
 		const dirty = new Set(editors.allTabs().filter((t) => t.dirty && tabs.includes(t.path)).map((t) => t.path)).size;
-		const what = isDir ? `โฟลเดอร์ '${baseName(rel)}' และทุกอย่างข้างใน` : `'${baseName(rel)}'`;
+		const name = baseName(rel);
 		// explorer.confirmDelete off skips the question, except when unsaved edits would be lost or
 		// the delete is permanent (files.enableTrash off), like VS Code.
 		const useTrash = this.#useTrash();
 		const confirm = settings.get<boolean>('explorer.confirmDelete') || dirty > 0 || !useTrash;
-		const unsaved = dirty ? `\n\nมี ${dirty} ไฟล์ที่ยังไม่บันทึก การแก้ไขจะหายไป` : '';
+		const unsaved = dirty ? `\n\n${t('workbench.explorer.unsavedLost', { count: dirty })}` : '';
 		const ok =
 			!confirm ||
 			(await ask(
 				useTrash
-					? `ย้าย ${what} ไปที่ถังขยะ?${unsaved}\n\nกู้คืนได้จากถังขยะ`
-					: `ลบ ${what} ถาวร? (Are you sure you want to permanently delete '${baseName(rel)}'?)${unsaved}\n\nการลบนี้ย้อนกลับไม่ได้ (This action is irreversible!)`,
-				{ title: 'Delete', kind: 'warning', okLabel: useTrash ? 'ย้ายไปถังขยะ' : 'ลบถาวร (Delete)', cancelLabel: 'ยกเลิก' }
+					? `${isDir ? t('workbench.explorer.trashFolder', { name }) : t('workbench.explorer.trashFile', { name })}${unsaved}\n\n${t('workbench.explorer.restoreFromTrash')}`
+					: `${isDir ? t('workbench.explorer.deleteFolder', { name }) : t('workbench.explorer.deleteFile', { name })}${unsaved}\n\n${t('workbench.explorer.irreversible')}`,
+				{ title: t('common.delete'), kind: 'warning', okLabel: useTrash ? t('workbench.explorer.moveToTrash') : t('common.delete'), cancelLabel: t('common.cancel') }
 			));
 		if (!ok) return;
 		try {
@@ -510,14 +511,14 @@ class Explorer {
 		const useTrash = this.#useTrash();
 		const confirm = settings.get<boolean>('explorer.confirmDelete') || dirty > 0 || !useTrash;
 		const list = targets.map((t) => (this.isDir(t) ? `${baseName(t)}/` : baseName(t))).join('\n');
-		const unsaved = dirty ? `\n\nมี ${dirty} ไฟล์ที่ยังไม่บันทึก การแก้ไขจะหายไป` : '';
+		const unsaved = dirty ? `\n\n${t('workbench.explorer.unsavedLost', { count: dirty })}` : '';
 		const ok =
 			!confirm ||
 			(await ask(
 				useTrash
-					? `ย้าย ${targets.length} รายการต่อไปนี้ไปที่ถังขยะ? (Are you sure you want to delete the following ${targets.length} files?)\n\n${list}${unsaved}\n\nกู้คืนได้จากถังขยะ`
-					: `ลบ ${targets.length} รายการต่อไปนี้ถาวร? (Are you sure you want to permanently delete the following ${targets.length} files?)\n\n${list}${unsaved}\n\nการลบนี้ย้อนกลับไม่ได้ (This action is irreversible!)`,
-				{ title: 'Delete', kind: 'warning', okLabel: useTrash ? 'ย้ายไปถังขยะ' : 'ลบถาวร (Delete)', cancelLabel: 'ยกเลิก' }
+					? `${t('workbench.explorer.trashMany', { count: targets.length })}\n\n${list}${unsaved}\n\n${t('workbench.explorer.restoreFromTrash')}`
+					: `${t('workbench.explorer.deleteMany', { count: targets.length })}\n\n${list}${unsaved}\n\n${t('workbench.explorer.irreversible')}`,
+				{ title: t('common.delete'), kind: 'warning', okLabel: useTrash ? t('workbench.explorer.moveToTrash') : t('common.delete'), cancelLabel: t('common.cancel') }
 			));
 		if (!ok) return;
 		for (const rel of targets) {

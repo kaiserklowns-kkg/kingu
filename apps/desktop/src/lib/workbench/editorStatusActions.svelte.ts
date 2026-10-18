@@ -14,10 +14,10 @@ import { quick, type PickItem } from './quick.svelte';
 import { status } from './status.svelte';
 import { textFiles } from './textFileService.svelte';
 import { associationKey, encodingPicks, indentLabel, tabSizePicks } from './textFiles';
+import { t } from '#lib/i18n/index.ts';
 
 type MonacoModule = typeof import('#lib/editor/monaco.ts');
 
-const NO_EDITOR = 'ไม่มีตัวแก้ไขข้อความที่เปิดอยู่ (No text editor active at this time)';
 
 function active(): { path: string; entry: ModelEntry } | null {
 	const path = editors.focusedFile;
@@ -26,7 +26,8 @@ function active(): { path: string; entry: ModelEntry } | null {
 }
 
 async function noEditor() {
-	await quick.choose({ placeholder: NO_EDITOR, items: [{ id: '', label: NO_EDITOR }] });
+	const text = t('workbench.editorStatus.noEditor');
+	await quick.choose({ placeholder: text, items: [{ id: '', label: text }] });
 }
 
 /** Keeps the status bar items in step with the model they describe. */
@@ -50,13 +51,13 @@ export async function changeLanguageMode() {
 	const current = model.getLanguageId();
 	const ids = m.monaco.languages.getLanguages().map((l) => l.id);
 	const items: PickItem[] = [];
-	if (model.getValueLength() > 0) items.push({ id: AUTO, label: 'ตรวจหาอัตโนมัติ (Auto Detect)' });
+	if (model.getValueLength() > 0) items.push({ id: AUTO, label: t('workbench.editorStatus.autoDetect') });
 	const fileKey = associationKey(a.path);
-	if (isWorkspaceTextFile(a.path)) items.push({ id: CONFIGURE, label: `Configure File Association for '${fileKey.replace(/^\*/, '')}'...` });
+	if (isWorkspaceTextFile(a.path)) items.push({ id: CONFIGURE, label: t('workbench.editorStatus.configureAssociation', { pattern: fileKey.replace(/^\*/, '') }) });
 	languageNames(ids).forEach(({ id, name }, i) =>
 		items.push({ id, label: name, description: id === current ? `(${id}) - Configured Language` : `(${id})`, separator: i === 0 ? 'languages (identifier)' : undefined })
 	);
-	const pick = await quick.choose({ placeholder: 'เลือกภาษา (Select Language Mode)', items, activeId: current });
+	const pick = await quick.choose({ placeholder: t('workbench.editorStatus.selectLanguage'), items, activeId: current });
 	if (!pick) return;
 	if (pick.id === CONFIGURE) return configureFileAssociation(m, a.path);
 	let language = pick.id;
@@ -79,10 +80,10 @@ async function configureFileAssociation(m: MonacoModule, path: string) {
 		label: name,
 		description: id === currentAssociation ? 'Current Association' : undefined
 	}));
-	const pick = await quick.choose({ placeholder: `เลือกภาษาที่จะใช้กับ '${key.replace(/^\*/, '')}' (Select Language Mode to Associate with '${key.replace(/^\*/, '')}')`, items, activeId: currentAssociation });
+	const pick = await quick.choose({ placeholder: t('workbench.editorStatus.selectAssociation', { pattern: key.replace(/^\*/, '') }), items, activeId: currentAssociation });
 	if (!pick) return;
 	const current = (settings.inspect('files.associations', 'user') as Record<string, string> | undefined) ?? {};
-	await settings.set('files.associations', { ...current, [key]: pick.id }, 'user').catch((e) => status.flash(`ตั้งค่า files.associations ไม่ได้: ${e}`, 8000));
+	await settings.set('files.associations', { ...current, [key]: pick.id }, 'user').catch((e) => status.flash(t('workbench.editorStatus.associationFailed', { error: String(e) }), 8000));
 }
 
 // --- End of Line
@@ -96,7 +97,7 @@ export async function changeEOL() {
 		{ id: 'LF', label: 'LF' },
 		{ id: 'CRLF', label: 'CRLF' }
 	];
-	const pick = await quick.choose({ placeholder: 'เลือกตัวขึ้นบรรทัดใหม่ (Select End of Line Sequence)', items, activeId: model.getEOL() === '\n' ? 'LF' : 'CRLF' });
+	const pick = await quick.choose({ placeholder: t('workbench.editorStatus.selectEol'), items, activeId: model.getEOL() === '\n' ? 'LF' : 'CRLF' });
 	if (!pick || model.isDisposed()) return;
 	const { EndOfLineSequence } = m.monaco.editor;
 	// Undoable and marks the file dirty, like VS Code's pushEOL.
@@ -113,22 +114,22 @@ export async function changeIndentation() {
 	if (!a) return noEditor();
 	const { model } = a.entry;
 	const items: PickItem[] = [
-		{ id: 'spaces', label: 'Indent Using Spaces', description: 'เยื้องด้วยช่องว่าง', separator: 'change view' },
-		{ id: 'tabs', label: 'Indent Using Tabs', description: 'เยื้องด้วยแท็บ' },
-		{ id: 'display', label: 'Change Tab Display Size', description: 'ความกว้างของแท็บ' },
-		{ id: 'detect', label: 'Detect Indentation from Content', description: 'ตรวจจากเนื้อหาไฟล์', separator: 'convert file' },
-		{ id: 'editor.action.indentationToSpaces', label: 'Convert Indentation to Spaces' },
-		{ id: 'editor.action.indentationToTabs', label: 'Convert Indentation to Tabs' },
-		{ id: 'editor.action.trimTrailingWhitespace', label: 'Trim Trailing Whitespace' }
+		{ id: 'spaces', label: t('workbench.editorStatus.indentSpaces'), separator: t('workbench.editorStatus.changeView') },
+		{ id: 'tabs', label: t('workbench.editorStatus.indentTabs') },
+		{ id: 'display', label: t('workbench.editorStatus.tabDisplaySize') },
+		{ id: 'detect', label: t('workbench.editorStatus.detectIndent'), separator: t('workbench.editorStatus.convertFile') },
+		{ id: 'editor.action.indentationToSpaces', label: t('workbench.editorStatus.toSpaces') },
+		{ id: 'editor.action.indentationToTabs', label: t('workbench.editorStatus.toTabs') },
+		{ id: 'editor.action.trimTrailingWhitespace', label: t('workbench.editorStatus.trimWhitespace') }
 	];
-	const pick = await quick.choose({ placeholder: 'เลือกการทำงาน (Select Action)', items });
+	const pick = await quick.choose({ placeholder: t('workbench.editorStatus.selectAction'), items });
 	if (!pick || model.isDisposed()) return;
 	const configured = { tabSize: settings.get<number>('editor.tabSize'), insertSpaces: settings.get<boolean>('editor.insertSpaces') };
 	if (pick.id === 'detect') model.detectIndentation(configured.insertSpaces, configured.tabSize);
 	else if (pick.id.startsWith('editor.action.')) editors.trigger(pick.id);
 	else {
 		const size = await quick.choose({
-			placeholder: 'เลือกขนาดแท็บของไฟล์นี้ (Select Tab Size for Current File)',
+			placeholder: t('workbench.editorStatus.selectTabSize'),
 			items: tabSizePicks(configured.tabSize, model.getOptions().tabSize),
 			activeId: String(Math.min(model.getOptions().tabSize, 8))
 		});
@@ -146,14 +147,14 @@ export async function changeEncoding() {
 	const a = active();
 	if (!a) return noEditor();
 	if (!isWorkspaceTextFile(a.path)) {
-		status.flash('ไฟล์นี้ใช้ UTF-8 เสมอ');
+		status.flash(t('workbench.editorStatus.alwaysUtf8'));
 		return;
 	}
 	const action = await quick.choose({
-		placeholder: 'เลือกการทำงาน (Select Action)',
+		placeholder: t('workbench.editorStatus.selectAction'),
 		items: [
-			{ id: 'reopen', label: 'เปิดใหม่ด้วย Encoding (Reopen with Encoding)' },
-			{ id: 'save', label: 'บันทึกด้วย Encoding (Save with Encoding)' }
+			{ id: 'reopen', label: t('workbench.editorStatus.reopenWithEncoding') },
+			{ id: 'save', label: t('workbench.editorStatus.saveWithEncoding') }
 		]
 	});
 	if (!action) return;
@@ -164,7 +165,7 @@ export async function changeEncoding() {
 		.catch(() => undefined);
 	const configured = settings.get<string>('files.encoding');
 	const pick = await quick.choose({
-		placeholder: reopen ? 'เลือก encoding ที่จะเปิดไฟล์ (Select File Encoding to Reopen File)' : 'เลือก encoding ที่จะบันทึก (Select File Encoding to Save with)',
+		placeholder: reopen ? t('workbench.editorStatus.selectReopenEncoding') : t('workbench.editorStatus.selectSaveEncoding'),
 		items: encodingPicks(configured, guessed),
 		activeId: a.entry.encoding
 	});
@@ -172,10 +173,10 @@ export async function changeEncoding() {
 	if (reopen) {
 		// VS Code: a dirty file has to be saved (or reverted) before it can be decoded again.
 		if (editors.isDirty(a.path)) {
-			status.flash('ไฟล์มีการแก้ไขที่ยังไม่บันทึก: บันทึกก่อนแล้วจึงเปิดใหม่ด้วย encoding อื่น', 8000);
+			status.flash(t('workbench.editorStatus.saveBeforeReopen'), 8000);
 			return;
 		}
-		await revertFile(a.path, pick.id).catch((e) => status.flash(`เปิดใหม่ไม่สำเร็จ: ${e}`, 8000));
+		await revertFile(a.path, pick.id).catch((e) => status.flash(t('workbench.editorStatus.reopenFailed', { error: String(e) }), 8000));
 	} else await saveFile(a.path, { encoding: pick.id });
 	textFiles.syncEncoding(a.path);
 }

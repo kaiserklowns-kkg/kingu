@@ -1,3 +1,4 @@
+import { t } from '#lib/i18n/index.ts';
 // Jupyter notebooks (.ipynb, nbformat 4) for the notebook viewer (Orca's IpynbViewer): cells and
 // their saved outputs, normalized for display. Read-only: nothing is executed.
 
@@ -31,7 +32,7 @@ function outputsOf(cell: Json): NotebookOutput[] {
 
 export function parseNotebook(json: string): Notebook {
 	const nb = JSON.parse(json) as Json;
-	if (!Array.isArray(nb.cells)) throw new Error('ไม่ใช่ notebook รุ่น 4 (ไม่มี cells)');
+	if (!Array.isArray(nb.cells)) throw new Error(t('workbench.notebook.notV4'));
 	const meta = (nb.metadata ?? {}) as Json;
 	const language = String(((meta.language_info ?? {}) as Json).name ?? ((meta.kernelspec ?? {}) as Json).language ?? 'python');
 	const cells = (nb.cells as Json[]).map((c) => ({

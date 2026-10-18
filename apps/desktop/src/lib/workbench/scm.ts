@@ -1,6 +1,7 @@
 // Pure Source Control helpers (no runes, so they are unit-testable). Shapes mirror Rust `git.rs`.
 
 import { isPreviewKey, previewTarget } from './viewers';
+import { t } from '#lib/i18n/index.ts';
 
 export type StatusEntry = {
 	path: string;
@@ -170,11 +171,11 @@ export function fileOf(key: string): string {
 	return key.startsWith(DIFF_PREFIX) ? key.slice(DIFF_PREFIX.length) : key;
 }
 
-/** Tab label: `a.ts`, or `a.ts (Working Tree)` for a diff, like VS Code; `a.ts (งาน slug)` for a task diff. */
+/** Tab label: `a.ts`, or `a.ts (Working Tree)` for a diff, like VS Code; `a.ts (task slug)` for a task diff. */
 export function tabLabel(key: string): string {
 	const [name] = splitPath(fileOf(key));
 	const task = parseTaskDiffKey(key);
-	if (task) return `${name} (งาน ${task.slug})`;
+	if (task) return t('workbench.scm.taskDiffLabel', { name, slug: task.slug });
 	const commit = parseCommitDiffKey(key);
 	if (commit) return `${name} (${commit.hash.slice(0, 7)})`;
 	if (isPreviewKey(key)) return `Preview ${name}`;

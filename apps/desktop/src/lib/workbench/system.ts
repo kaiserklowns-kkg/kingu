@@ -1,11 +1,12 @@
+import { t } from '#lib/i18n/index.ts';
 // Pure helpers for the status bar's resource items (see system.svelte.ts).
 
 export type KeepAwakeMode = 'off' | 'auto' | 'on';
 
-export const KEEP_AWAKE_MODES: { id: KeepAwakeMode; label: string; description: string }[] = [
-	{ id: 'on', label: 'On', description: 'ไม่หลับตลอดเวลาที่ Kingu เปิดอยู่' },
-	{ id: 'auto', label: 'Auto', description: 'ไม่หลับขณะ agent กำลังทำงาน' },
-	{ id: 'off', label: 'Off', description: 'หลับตามปกติของระบบ' }
+export const KEEP_AWAKE_MODES: { id: KeepAwakeMode; readonly label: string; readonly description: string }[] = [
+	{ id: 'on', get label() { return t('workbench.system.keepAwakeOn'); }, get description() { return t('workbench.system.keepAwakeOnDetail'); } },
+	{ id: 'auto', get label() { return t('workbench.system.keepAwakeAuto'); }, get description() { return t('workbench.system.keepAwakeAutoDetail'); } },
+	{ id: 'off', get label() { return t('workbench.system.keepAwakeOff'); }, get description() { return t('workbench.system.keepAwakeOffDetail'); } }
 ];
 
 /** `791.1 MB`, `1.2 GB`. */

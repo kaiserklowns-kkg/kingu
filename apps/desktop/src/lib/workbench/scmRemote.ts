@@ -3,6 +3,7 @@
 
 import type { PickItem } from '#lib/workbench/quick.svelte.ts';
 import type { GitStatus } from '#lib/workbench/scm.ts';
+import { t } from '#lib/i18n/index.ts';
 
 export type BranchRef = {
 	/** `main`, or `origin/main` for a remote branch. */
@@ -35,12 +36,12 @@ export function syncItem(repo: GitStatus | null): SyncItem | null {
 	if (!repo?.branch || repo.detached) return null;
 	if (!repo.upstream || repo.upstream_gone) {
 		if (!repo.remotes.length) return null;
-		const why = repo.upstream_gone ? `upstream ${repo.upstream} ถูกลบไปแล้ว ` : '';
-		return { label: '', title: `${why}Publish Branch: push ${repo.branch} ขึ้น remote`, command: 'git.publish' };
+		const title = repo.upstream_gone ? t('workbench.scmRemote.publishGone', { upstream: repo.upstream ?? '', branch: repo.branch }) : t('workbench.scmRemote.publish', { branch: repo.branch });
+		return { label: '', title, command: 'git.publish' };
 	}
 	return {
 		label: `↓${repo.behind} ↑${repo.ahead}`,
-		title: `Synchronize Changes: pull ${repo.behind} และ push ${repo.ahead} commit กับ ${repo.upstream}`,
+		title: t('workbench.scmRemote.sync', { behind: repo.behind, ahead: repo.ahead, upstream: repo.upstream }),
 		command: 'git.sync'
 	};
 }
@@ -79,13 +80,13 @@ export function sortRefs(refs: readonly BranchRef[], sort: BranchSortOrder): Bra
 export function checkoutItems(refs: BranchRef[], { create = true, types = ['local', 'remote', 'tags'], sort = 'alphabetically', details = true }: CheckoutItemOptions = {}): PickItem[] {
 	const items: PickItem[] = [];
 	if (create) {
-		items.push({ id: CREATE_BRANCH, label: '+ Create new branch...' }, { id: CREATE_BRANCH_FROM, label: '+ Create new branch from...' });
+		items.push({ id: CREATE_BRANCH, label: t('workbench.scmRemote.createBranch') }, { id: CREATE_BRANCH_FROM, label: t('workbench.scmRemote.createBranchFrom') });
 	}
 	const free = refs.filter((r) => !r.current && !r.worktree);
 	const of: Record<CheckoutType, [string, BranchRef[], string]> = {
-		local: ['branches', free.filter((r) => !r.remote && !r.tag), ''],
-		remote: ['remote branches', free.filter((r) => r.remote), ''],
-		tags: ['tags', free.filter((r) => r.tag), TAG_PREFIX]
+		local: [t('workbench.scmRemote.branches'), free.filter((r) => !r.remote && !r.tag), ''],
+		remote: [t('workbench.scmRemote.remoteBranches'), free.filter((r) => r.remote), ''],
+		tags: [t('workbench.scmRemote.tags'), free.filter((r) => r.tag), TAG_PREFIX]
 	};
 	for (const type of new Set(types)) {
 		const [title, list, prefix] = of[type] ?? ['', [], ''];
@@ -96,7 +97,7 @@ export function checkoutItems(refs: BranchRef[], { create = true, types = ['loca
 	refs
 		.filter((r) => r.worktree && !r.remote)
 		.forEach((r, i) =>
-			items.push({ id: WORKTREE_PREFIX + r.name, label: r.name, description: `ใช้อยู่ใน worktree ${r.worktree}`, separator: i === 0 ? 'ใช้อยู่ใน worktree อื่น' : undefined })
+			items.push({ id: WORKTREE_PREFIX + r.name, label: r.name, description: t('workbench.scmRemote.inWorktree', { worktree: r.worktree ?? '' }), separator: i === 0 ? t('workbench.scmRemote.inOtherWorktrees') : undefined })
 		);
 	return items;
 }
@@ -147,11 +148,18 @@ export function terminalCommand(op: NetOp, { rebase = false, remote = 'origin', 
 	}
 }
 
-/** Status bar progress text for a running operation. */
-export const OP_LABELS: Record<NetOp, string> = {
-	fetch: 'กำลัง fetch...',
-	pull: 'กำลัง pull...',
-	push: 'กำลัง push...',
-	publish: 'กำลัง publish branch...',
-	sync: 'กำลัง sync...'
-};
+/** Status bar progress text for a running operation (in the current UI language). */
+export function opLabel(op: NetOp): string {
+	switch (op) {
+		case 'fetch':
+			return t('workbench.scmRemote.fetching');
+		case 'pull':
+			return t('workbench.scmRemote.pulling');
+		case 'push':
+			return t('workbench.scmRemote.pushing');
+		case 'publish':
+			return t('workbench.scmRemote.publishing');
+		case 'sync':
+			return t('workbench.scmRemote.syncing');
+	}
+}

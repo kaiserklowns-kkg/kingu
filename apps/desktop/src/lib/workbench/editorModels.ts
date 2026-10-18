@@ -19,6 +19,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { runSaveParticipants } from './textFileSave';
 import { defaultLanguage, isUntitled, suggestedName } from './untitled';
 import { notifications } from './notifications.svelte';
+import { t } from '#lib/i18n/index.ts';
 
 type MonacoModule = typeof import('#lib/editor/monaco.ts');
 export type ModelEntry = {
@@ -290,12 +291,12 @@ export async function saveAs(path: string): Promise<string | null> {
 			dir: !isUntitled(path) && slash > 0 ? path.slice(0, slash) : null
 		});
 	} catch (e) {
-		notifications.error(`บันทึกเป็นไฟล์ใหม่ไม่สำเร็จ (Save As failed): ${e}`);
+		notifications.error(t('workbench.editorModels.saveAsFailed', { error: String(e) }));
 		return null;
 	}
 	if (!saved) return null;
 	if (!saved.rel) {
-		notifications.info(`บันทึกไว้ที่ ${saved.path} ซึ่งอยู่นอกโฟลเดอร์ที่เปิด จึงเปิดเป็นแท็บไม่ได้ (Saved outside the open folder.)`);
+		notifications.info(t('workbench.editorModels.savedOutside', { path: saved.path }));
 		if (isUntitled(path)) {
 			editors.setDirty(path, false);
 			editors.closeEverywhere(path);

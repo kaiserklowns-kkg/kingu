@@ -6,6 +6,7 @@
 import type { Get } from '#lib/settings/mappings.ts';
 import { globToRegExp } from '#lib/settings/mappings.ts';
 import type { Resource, StatusEntry } from './scm';
+import { t } from '#lib/i18n/index.ts';
 
 // ---------------------------------------------------------------------------------------------
 // git arguments (Rust takes these as option structs: git.rs / git_remote.rs)
@@ -99,7 +100,7 @@ export function branchNameError(name: string, regex: string): string | null {
 	} catch {
 		return null;
 	}
-	return re.test(name) ? null : `ชื่อ branch ต้องตรงกับ ${regex} (Branch name needs to match regex: ${regex})`;
+	return re.test(name) ? null : t('workbench.scmSettings.branchNameRegex', { regex });
 }
 
 /** `git.branchProtection`: whether `branch` matches one of the glob patterns. */

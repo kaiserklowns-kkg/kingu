@@ -19,6 +19,7 @@ import { isUntitled, nextUntitledKey } from './untitled';
 import { workspace } from './workspace.svelte';
 import type { SplitDirection } from './editorGroups';
 import { isNonTextEditor } from '#lib/settings/resources.ts';
+import { t } from '#lib/i18n/index.ts';
 
 
 /** A tab that is a workspace file (or a diff of one), so it has a path to copy or reveal. */
@@ -30,7 +31,7 @@ async function copyText(text: string) {
 	try {
 		await navigator.clipboard.writeText(text);
 	} catch (e) {
-		notifications.error(`คัดลอกไม่ได้ (Copy failed): ${e}`);
+		notifications.error(t('workbench.editorCommands.copyFailed', { error: String(e) }));
 	}
 }
 
@@ -86,7 +87,7 @@ function showMru(delta: 1 | -1) {
 	quick.pick({
 		id: 'editorMru',
 		quickNavigate: true,
-		placeholder: 'เลือกแท็บที่จะเปิด (Select an editor to open)',
+		placeholder: t('workbench.editorCommands.selectEditor'),
 		items: mru.map((path) => ({ id: path, label: editorLabel(path), description: isFileEditor(path) ? fileOf(path) : undefined })),
 		activeId: start,
 		onAccept: (item) => editors.open(item.id, { group })
@@ -105,7 +106,7 @@ export function showAllEditors(byMru = false) {
 		}))
 	);
 	quick.pick({
-		placeholder: 'ค้นหาแท็บที่เปิดอยู่ (Search open editors by name)',
+		placeholder: t('workbench.editorCommands.searchEditors'),
 		items,
 		onAccept: (item) => {
 			const [gid, path] = item.id.split('\u0000');
@@ -150,7 +151,7 @@ export function installEditorCommands(): () => void {
 			category: 'View',
 			key: 'cmd+shift+t',
 			run: () => {
-				if (!editors.reopenClosed()) status.flash('ไม่มีแท็บที่ปิดไปให้เปิดคืน (No closed editor to reopen)');
+				if (!editors.reopenClosed()) status.flash(t('workbench.editorCommands.noClosedEditor'));
 			}
 		}),
 		commands.register({ id: 'workbench.action.nextEditor', title: 'Open Next Editor', category: 'View', key: 'ctrl+pagedown', mac: 'cmd+alt+right', when: hasEditor, run: () => editors.openNeighbour(1) }),
@@ -194,7 +195,7 @@ export function installEditorCommands(): () => void {
 			title: 'Revert File',
 			category: 'File',
 			when: () => editors.focusedFile !== null && editors.isDirty(editors.focusedFile),
-			run: () => revertFile(editors.focusedFile!).catch((e) => notifications.error(`Revert ไม่สำเร็จ: ${e}`))
+			run: () => revertFile(editors.focusedFile!).catch((e) => notifications.error(t('workbench.editorCommands.revertFailed', { error: String(e) })))
 		}),
 		commands.register({ id: 'copyFilePath', title: 'Copy Path of Active File', category: 'File', key: 'alt+ctrl+c', mac: 'alt+cmd+c', keyWhen: notInExplorerOrEditor, when: () => hasEditor() && isFileEditor(active()!), run: () => copyPath(active()!) }),
 		commands.register({ id: 'copyRelativeFilePath', title: 'Copy Relative Path of Active File', category: 'File', key: 'ctrl+shift+alt+c', mac: 'alt+shift+cmd+c', keyWhen: notInExplorerOrEditor, when: () => hasEditor() && isFileEditor(active()!), run: () => copyRelativePath(active()!) }),
