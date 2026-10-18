@@ -31,10 +31,12 @@ export type EditorHostHandle = {
 	languages?: () => LanguageInfo[];
 	/** Shows a position without moving focus (Quick Open's symbol preview). */
 	peek?: (line: number, column: number) => void;
+	/** Replaces the selection (or inserts at the cursor) with `text` as one undoable edit; false when no file is shown. */
+	insertText?: (text: string) => boolean;
 };
 export type LanguageInfo = { id: string; name: string; extensions: string[] };
 /** VS Code's selection status: characters selected and how many selections (cursors). */
-export type SelectionInfo = { chars: number; count: number };
+export type SelectionInfo = { chars: number; count: number; /** The primary selection's lines, when it is not empty. */ range?: { startLine: number; endLine: number } };
 
 // The editor management settings the group model follows (VS Code's IEditorPartOptions).
 G.setBehaviour(() => ({
@@ -171,6 +173,10 @@ class Editors {
 		return this.#hosts.get(this.model.activeGroup)?.languages?.() ?? [];
 	}
 	/** The active editor's selected text, '' when none (`nearestWord`: the word at the cursor instead). */
+	/** Chat's Insert at Cursor: into the editor in front, focused. */
+	insertText(text: string): boolean {
+		return this.#target()?.insertText?.(text) ?? false;
+	}
 	selectionText(nearestWord = false): string {
 		return this.#target()?.selectionText(nearestWord) ?? '';
 	}

@@ -1,84 +1,128 @@
 <script lang="ts">
-	// Agent panel (secondary side bar), laid out like VS Code's Chat view: a session switcher on
-	// top, the selected session's timeline, and the composer pinned to the bottom.
+	// Agent panel (secondary side bar), laid out like VS Code's Chat view: title actions on top,
+	// the chat's request/response list (ChatList), and the chat input (Composer) pinned to the
+	// bottom with its context chips, Ask/Agent mode and model pickers.
 	// Sessions are this folder's chats (`chats`: an agent-host session in the folder or a task's
-	// worktree, no worktree of its own, persisted with its transcript) and its ADE tasks. Timeline
-	// tasks keep their follow-up composer (through `adeTasks`); terminal tasks are read-only rows
-	// with "Open in Agents": a hand-off only, which never sends and never clears a draft. The chat
-	// never types into a terminal and never starts a CLI.
-	import { untrack } from 'svelte';
+	// worktree, persisted with its transcript). The history list (≡) shows them, and the folder's
+	// ADE tasks in their own "Agents (ADE)" section as read-only rows that open in Agents. The
+	// panel opens on the most recent chat, else a new one; never on a task. The chat never types
+	// into a terminal and never starts a CLI.
+	import { onMount, untrack } from 'svelte';
+	import { invoke } from '@tauri-apps/api/core';
 	import type { Attachment } from './attachments.ts';
-	import AgentTimeline from './AgentTimeline.svelte';
+	import ChatList from './ChatList.svelte';
 	import Composer from './Composer.svelte';
-	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
+	import Icon from '#lib/workbench/Icon.svelte';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 	import { runtime } from '#lib/ade/runtime.svelte.ts';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
+	import { editors } from '#lib/workbench/editors.svelte.ts';
+	import { quick } from '#lib/workbench/quick.svelte.ts';
+	import { recentFiles } from '#lib/workbench/recentFiles.svelte.ts';
+	import { rankFiles } from '#lib/workbench/quickAccess.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { ask } from '#lib/workbench/messageBox.ts';
 	import { t } from '#lib/i18n/index.ts';
-	import { STATUS_LABEL, type RunStatus } from './events';
+	import { timeAgo } from '#lib/ade/model.ts';
+	import { STATUS_LABEL } from './events';
 	import { cliOf } from '#lib/ade/agentCli.ts';
-	import { openAgents } from '#lib/ade/agentsMode.svelte.ts';
-	import CliQuestion from '#lib/ade/CliQuestion.svelte';
 	import { chats } from './chats.svelte.ts';
-	import { PERMISSION_MODES, sessionRows, type ChatCwd, type PermissionMode } from './chats.ts';
+	import { chatCwdPath, historySections, initialChat, type ChatCwd } from './chats.ts';
+	import { assemblePrompt, isFileKey, promptPath, relativeTo, resolveContext, type ContextFile } from './chatPrompt.ts';
+	import { AGENT_APPROVALS, modeOf, permissionFor, turnBusy, type AgentApproval, type ChatMode } from './chatInput.ts';
+	import { buildTurns, promptHistory, type Turn } from './chatParts.ts';
+	import { chatSignals, registerChatCommands } from './chatCommands.svelte.ts';
 
-	type Selection = { kind: 'chat'; id: string } | { kind: 'task'; slug: string } | null;
-
-	let selected = $state<Selection>(null);
+	let selectedId = $state<string | null>(null);
 	let composingNew = $state(false);
 	let showList = $state(false);
 	let busy = $state(false);
-	let draft = $state('');
-	let draftFiles = $state<Attachment[]>([]);
-	let followUp = $state('');
-	let followUpFiles = $state<Attachment[]>([]);
-	let renaming = $state(false);
+	let input = $state('');
+	let files = $state<Attachment[]>([]);
+	/** Files attached with `#` (or brought back by Edit). */
+	let picked = $state<{ path: string; range?: { startLine: number; endLine: number } }[]>([]);
+	/** The active file whose implicit chip the user turned off. */
+	let implicitOff = $state<string | null>(null);
+	/** Edit request: the input holds an earlier request, sent as a new message. */
+	let editing = $state(false);
+	let renamingId = $state<string | null>(null);
 	let renameText = $state('');
-	/** New chat picks: where it runs ('' = this folder, else a task slug), model, permission mode. */
+	/** New chat picks: where it runs ('' = this folder, else a task slug), model, mode. */
 	let newWhere = $state('');
 	let newModel = $state(chats.defaults().model ?? '');
-	let newMode = $state<PermissionMode>(chats.defaults().permissionMode);
-	/** Where the last model / mode change took effect, shown under the composer. */
+	let newMode = $state<ChatMode>(modeOf(chats.defaults().permissionMode));
+	/** Agent mode's approval, kept while Ask is picked. */
+	let approval = $state<AgentApproval>(chats.defaults().permissionMode === 'acceptEdits' ? 'acceptEdits' : 'default');
+	/** Where the last model / mode change took effect, shown under the input. */
 	let optionNote = $state('');
+	let composer: ReturnType<typeof Composer> | undefined = $state();
+	let root: HTMLDivElement;
 
-	const chatMeta = $derived(selected?.kind === 'chat' ? chats.get(selected.id) : undefined);
-	const chatRun = $derived(selected?.kind === 'chat' ? chats.run(selected.id) : undefined);
-	const taskMeta = $derived(selected?.kind === 'task' ? adeTasks.list.find((x) => x.slug === (selected as { slug: string }).slug) : undefined);
-	const taskRun = $derived(taskMeta ? runtime.run(taskMeta.slug) : undefined);
-	const taskRt = $derived(taskMeta ? runtime.get(taskMeta.slug) : undefined);
-	const terminalTask = $derived(!!taskMeta && !!cliOf(taskMeta.agent));
-	const rows = $derived(
-		sessionRows(
+	const chatMeta = $derived(selectedId ? chats.get(selectedId) : undefined);
+	const chatRun = $derived(selectedId ? chats.run(selectedId) : undefined);
+	const turns = $derived(chatRun ? buildTurns(chatRun) : []);
+	const history = $derived(promptHistory(turns));
+	const queued = $derived(chatMeta ? chats.queue(chatMeta.id) : []);
+	const chatLive = $derived(!!chatRun && !chatRun.ended);
+	const running = $derived(turnBusy(chatRun));
+	const sections = $derived(
+		historySections(
 			chats.list,
-			adeTasks.list.map((x) => ({ slug: x.slug, title: x.title, created_at: x.created_at, updated_at: x.updated_at, terminal: !!cliOf(x.agent) }))
+			adeTasks.list.map((x) => ({ slug: x.slug, title: x.title, created_at: x.created_at, updated_at: x.updated_at, terminal: !!cliOf(x.agent) })),
+			(r) => (r.kind === 'chat' ? chats.run(r.id)?.status : runtime.run(r.slug)?.status)
 		)
 	);
-	const chatLive = $derived(!!chatRun && !chatRun.ended);
-	const chatWorking = $derived(chatLive && chatRun?.status !== 'idle');
 	const taskWorktrees = $derived(adeTasks.worktrees.filter((w) => w.slug).map((w) => w.slug as string));
+	const cwd = $derived(workspace.root && chatMeta ? chatCwdPath(workspace.root, chatMeta.cwd) : workspace.root);
+	const mode = $derived(chatMeta ? modeOf(chatMeta.permission_mode) : newMode);
 
-	// A different folder: its chats, nothing selected.
+	// Implicit context (VS Code's "current file"): the active editor's file and selection.
+	const activeFile = $derived(isFileKey(editors.active) ? editors.active : null);
+	const implicit = $derived(activeFile ? { path: activeFile, range: editors.selection.range, implicit: true, disabled: implicitOff === activeFile } : null);
+	const contextChips = $derived([...(implicit && !picked.some((p) => p.path === implicit.path && !p.range) ? [implicit] : []), ...picked]);
+
+	onMount(() => {
+		chatSignals.el = root;
+		const off = registerChatCommands();
+		return () => {
+			off();
+			if (chatSignals.el === root) chatSignals.el = null;
+		};
+	});
+
+	// ⌃⌘I / ⌘L: focus the input. ⌘N in the chat: a new chat. Only requests made while mounted
+	// count (the panel is mounted again for every folder).
+	let seenFocus = chatSignals.focus;
+	let seenNew = chatSignals.newChat;
+	$effect(() => {
+		const n = chatSignals.focus;
+		if (n === seenFocus) return;
+		seenFocus = n;
+		untrack(() => queueMicrotask(() => composer?.focus()));
+	});
+	$effect(() => {
+		const n = chatSignals.newChat;
+		if (n === seenNew) return;
+		seenNew = n;
+		untrack(() => newChat());
+	});
+
+	// A different folder: its chats, the most recent one shown.
 	$effect(() => {
 		void workspace.root;
 		untrack(() => {
-			selected = null;
+			selectedId = null;
 			composingNew = false;
 			showList = false;
 			void chats.load();
 		});
 	});
 
-	// Drop a removed session; with nothing selected, show the newest one (or the new chat composer).
+	// Drop a removed chat; with nothing selected, show the most recent one (or a new chat).
 	$effect(() => {
-		if (selected?.kind === 'chat' && chats.loaded && !chats.get(selected.id)) selected = null;
-		if (selected?.kind === 'task' && adeTasks.loaded && !adeTasks.list.some((x) => x.slug === (selected as { slug: string }).slug)) selected = null;
-		if (selected === null && !composingNew && chats.loaded) {
-			const r = rows[0];
-			if (r) selected = r.kind === 'chat' ? { kind: 'chat', id: r.id } : { kind: 'task', slug: r.slug };
-		}
+		if (selectedId && chats.loaded && !chats.get(selectedId)) selectedId = null;
+		if (selectedId === null && !composingNew && chats.loaded) selectedId = initialChat(chats.list);
 	});
 
 	// Settings load after the panel: pick up the default model once it is known.
@@ -86,42 +130,68 @@
 		if (!newModel) newModel = chats.defaults().model ?? '';
 	});
 
-	// A chat opened after a restart: rebuild its timeline from the saved transcript.
+	// A chat opened after a restart: rebuild its list from the saved transcript.
 	$effect(() => {
-		if (selected?.kind !== 'chat') return;
-		const id = selected.id;
+		if (!selectedId) return;
+		const id = selectedId;
 		untrack(() => void chats.open(id));
 	});
 
-	function select(s: Selection) {
-		selected = s;
+	function resetInput() {
+		input = '';
+		files = [];
+		picked = [];
+		editing = false;
+	}
+
+	function select(id: string) {
+		selectedId = id;
 		composingNew = false;
 		showList = false;
-		renaming = false;
+		renamingId = null;
 		optionNote = '';
+		editing = false;
 	}
 
 	function newChat() {
-		selected = null;
+		selectedId = null;
 		composingNew = true;
 		showList = false;
-		renaming = false;
+		renamingId = null;
 		optionNote = '';
+		resetInput();
 		const d = chats.defaults();
 		newModel = d.model ?? '';
-		newMode = d.permissionMode;
+		newMode = modeOf(d.permissionMode);
+		queueMicrotask(() => composer?.focus());
 	}
 
-	async function startChat(text: string, attachments: Attachment[]) {
+	/** The request's prompt: the text and its attached files (read now), plus its images. */
+	async function outgoing(text: string, attachments: Attachment[], runsInRoot: boolean) {
+		const rootDir = workspace.root ?? '';
+		const dropped = attachments.filter((a) => !a.image).map((a) => ({ path: relativeTo(workspace.root, a.path) }));
+		const list = [...(implicit && !implicit.disabled ? [implicit] : []), ...picked, ...dropped];
+		const context = await resolveContext(list, (rel) => invoke<string>('read_workspace_file', { rel }), (rel) => promptPath(rel, rootDir, runsInRoot));
+		return { text: assemblePrompt(text, context), images: attachments.filter((a) => a.image).map((a) => a.path) };
+	}
+
+	async function submit(text: string, attachments: Attachment[]) {
+		if (busy) return;
 		busy = true;
 		try {
-			const cwd: ChatCwd = newWhere ? { kind: 'task', slug: newWhere } : { kind: 'folder' };
-			const id = await chats.create({ prompt: text, cwd, model: newModel.trim() || chats.defaults().model, permissionMode: newMode, attachments });
-			if (id) {
-				select({ kind: 'chat', id });
-				draft = '';
-				draftFiles = [];
+			if (!chatMeta) {
+				const where: ChatCwd = newWhere ? { kind: 'task', slug: newWhere } : { kind: 'folder' };
+				const message = await outgoing(text, attachments, where.kind === 'folder');
+				const id = await chats.create({ prompt: text, cwd: where, model: newModel.trim() || chats.defaults().model, permissionMode: permissionFor(newMode, approval), message });
+				if (id) {
+					select(id);
+					resetInput();
+				}
+				return;
 			}
+			const message = await outgoing(text, attachments, chatMeta.cwd.kind === 'folder');
+			const sent = await chats.submit(chatMeta.id, message, text);
+			if (sent) resetInput();
 		} catch (e) {
 			status.flash(t('chat.sendFailed', { error: String(e) }), 10000);
 		} finally {
@@ -129,50 +199,65 @@
 		}
 	}
 
-	async function sendChat(text: string, attachments: Attachment[]) {
-		if (!chatMeta || chatRun?.status === 'starting') return;
-		const sent = await chats.send(chatMeta.id, text, attachments);
-		if (sent) {
-			followUp = '';
-			followUpFiles = [];
-		}
+	function editRequest(req: NonNullable<Turn['request']>) {
+		input = req.text;
+		// Prompt paths are workspace-relative, or absolute under the folder when the chat runs in a task worktree.
+		picked = req.files.map((f) => ({ path: relativeTo(workspace.root, f.path), ...(f.range ? { range: f.range } : {}) }));
+		files = [];
+		editing = true;
+		queueMicrotask(() => composer?.focus());
 	}
 
-	async function sendTask(text: string, attachments: Attachment[]) {
-		if (!taskMeta || taskRun?.status === 'starting') return;
-		followUp = '';
-		followUpFiles = [];
-		await adeTasks.followUp(taskMeta.slug, text, attachments);
+	async function pickFile() {
+		const all = await invoke<string[]>('fs_list_files').catch(() => [] as string[]);
+		const item = await quick.choose({
+			placeholder: t('chatView.pickFile'),
+			items: [],
+			dynamic: (q) => {
+				const ranked = rankFiles(q, all, recentFiles.list, 50);
+				const list = ranked.length ? ranked.map((r) => r.path) : q ? [] : all.slice(0, 50);
+				return list.map((path) => ({ id: path, label: path.split('/').pop() || path, description: path, icon: path }));
+			}
+		});
+		if (item && !picked.some((p) => p.path === item.id && !p.range)) picked = [...picked, { path: item.id }];
+		queueMicrotask(() => composer?.focus());
+	}
+
+	async function setMode(next: ChatMode, nextApproval = approval) {
+		approval = nextApproval;
+		if (!chatMeta) {
+			newMode = next;
+			return;
+		}
+		const when = await chats.setPermissionMode(chatMeta.id, permissionFor(next, nextApproval));
+		optionNote = when === 'live' ? t('chat.panel.appliedNow') : when === 'next' ? t('chat.panel.appliedNext') : '';
 	}
 
 	async function changeModel(model: string) {
-		if (!chatMeta) return;
+		if (!chatMeta) {
+			newModel = model;
+			return;
+		}
 		const when = await chats.setModel(chatMeta.id, model);
 		optionNote = when === 'live' ? t('chat.panel.appliedNow') : when === 'next' ? t('chat.panel.appliedNext') : '';
 	}
 
-	async function changeMode(mode: PermissionMode) {
-		if (!chatMeta) return;
-		const when = await chats.setPermissionMode(chatMeta.id, mode);
-		optionNote = when === 'live' ? t('chat.panel.appliedNow') : when === 'next' ? t('chat.panel.appliedNext') : '';
-	}
-
-	function startRename() {
-		if (!chatMeta) return;
-		renameText = chatMeta.title;
-		renaming = true;
+	function startRename(id: string, title: string) {
+		renameText = title;
+		renamingId = id;
 	}
 
 	function finishRename(save: boolean) {
-		if (!renaming) return;
-		if (save && chatMeta) chats.rename(chatMeta.id, renameText);
-		renaming = false;
+		if (!renamingId) return;
+		if (save) chats.rename(renamingId, renameText);
+		renamingId = null;
 	}
 
-	async function removeChat() {
-		if (!chatMeta) return;
-		const ok = await ask(t('chat.panel.deleteConfirm', { title: chatMeta.title }), { kind: 'warning', okLabel: t('common.delete') });
-		if (ok && (await chats.remove(chatMeta.id))) selected = null;
+	async function removeChat(id: string) {
+		const meta = chats.get(id);
+		if (!meta) return;
+		const ok = await ask(t('chat.panel.deleteConfirm', { title: meta.title }), { kind: 'warning', okLabel: t('common.delete') });
+		if (ok && (await chats.remove(id)) && selectedId === id) selectedId = null;
 	}
 
 	/** "Promote to task": a new ADE task (own worktree) started with the chat's first prompt. The chat stays. */
@@ -180,74 +265,64 @@
 		if (!chatMeta) return;
 		busy = true;
 		try {
-			const slug = await adeTasks.create({ title: chatMeta.title, prompt: chatMeta.prompt || chatMeta.title, base: '', mode: 'timeline', open: false });
-			if (slug) select({ kind: 'task', slug });
+			await adeTasks.create({ title: chatMeta.title, prompt: chatMeta.prompt || chatMeta.title, base: '', mode: 'timeline', open: false });
 		} finally {
 			busy = false;
 		}
 	}
 
-	const cwdLabel = (cwd: ChatCwd) => (cwd.kind === 'folder' ? workspace.name || t('chat.panel.cwdFolder') : `kingu/${cwd.slug}`);
-	const MODE_LABEL: Record<PermissionMode, () => string> = {
+	function openTaskInAgents(slug: string) {
+		appMode.setMode('agents');
+		adeTasks.openTask(slug);
+	}
+
+	const cwdLabel = (where: ChatCwd) => (where.kind === 'folder' ? workspace.name || t('chat.panel.cwdFolder') : `kingu/${where.slug}`);
+	const APPROVAL_LABEL: Record<AgentApproval, () => string> = {
 		default: () => t('chat.panel.mode.default'),
-		acceptEdits: () => t('chat.panel.mode.acceptEdits'),
-		plan: () => t('chat.panel.mode.plan')
+		acceptEdits: () => t('chat.panel.mode.acceptEdits')
 	};
 	/** Model choices: the default from settings, the chat's own, and Claude's aliases. */
 	function modelChoices(current: string | null): string[] {
 		const d = chats.defaults().model;
 		return [...new Set([current, d, 'opus', 'sonnet', 'haiku'].filter((m): m is string => !!m))];
 	}
-	const rowStatus = (r: (typeof rows)[number]): RunStatus | undefined => (r.kind === 'chat' ? chats.run(r.id)?.status : runtime.run(r.slug)?.status);
-
-	const DOT: Record<RunStatus, string> = {
-		starting: 'bg-(--vscode-descriptionForeground)',
-		running: 'bg-(--vscode-editorInfo-foreground) animate-pulse',
-		waiting: 'bg-(--vscode-editorWarning-foreground)',
-		idle: 'bg-[#73C991]',
-		stopped: 'bg-(--vscode-descriptionForeground)',
-		failed: 'bg-(--vscode-errorForeground)',
-		done: 'bg-(--vscode-descriptionForeground)'
-	};
+	const STATE_DOT = { working: 'bg-(--vscode-editorInfo-foreground) animate-pulse', needsInput: 'bg-(--vscode-editorWarning-foreground)' } as const;
+	const STATE_LABEL = { working: () => t('team.agent.status.running'), needsInput: () => t('team.agent.status.waiting') } as const;
 	const ICON_BTN = 'grid size-[22px] shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-40';
-	const TEXT_BTN = 'rounded-sm border border-(--vscode-widget-border) px-1.5 hover:bg-(--vscode-toolbar-hoverBackground)';
 	const CHIP_SELECT =
 		'h-5 max-w-32 truncate rounded-sm border border-transparent bg-transparent text-xs text-(--vscode-descriptionForeground) outline-none hover:border-(--vscode-widget-border) focus:border-(--vscode-focusBorder)';
 	// Starters fill the prompt (they never send), like the Agents layout's empty composer.
-	const STARTERS: { icon: IconName; label: () => string; text: () => string }[] = [
+	const STARTERS = [
 		{ icon: 'bug', label: () => t('chat.panel.starter.bug'), text: () => t('chat.panel.starter.bugText') },
 		{ icon: 'check', label: () => t('chat.panel.starter.test'), text: () => t('chat.panel.starter.testText') },
 		{ icon: 'code', label: () => t('chat.panel.starter.explain'), text: () => t('chat.panel.starter.explainText') }
-	];
-	const title = $derived(composingNew || !selected ? t('chat.panel.newChat') : (chatMeta?.title ?? taskMeta?.title ?? ''));
+	] as const;
+	const title = $derived(chatMeta?.title ?? t('chat.panel.newChat'));
+	const placeholder = $derived(
+		!workspace.root
+			? t('chat.panel.noFolder')
+			: !chatMeta
+				? t('chat.panel.placeholderStart')
+				: running
+					? t('chatView.placeholderQueue')
+					: mode === 'ask'
+						? t('chatView.placeholderAsk')
+						: t('chatView.placeholderAgent')
+	);
 </script>
 
-<div class="flex h-full flex-col text-[13px]">
-	<!-- Session switcher + actions (VS Code chat view title actions). -->
+<div bind:this={root} class="flex h-full flex-col text-[13px]" data-chat-view>
+	<!-- Title actions (VS Code's chat view title): history, the chat's title, new chat, Agents. -->
 	<div class="flex h-[30px] shrink-0 items-center gap-1 px-2">
 		<button
 			class={[ICON_BTN, showList && 'bg-(--vscode-toolbar-activeBackground)']}
-			aria-label={t('chat.panel.sessions')}
-			title={t('chat.panel.sessions')}
+			aria-label={t('chatView.history')}
+			title={t('chatView.history')}
 			aria-pressed={showList}
 			onclick={() => (showList = !showList)}><Icon name="menu" size={16} /></button
 		>
-		{#if renaming && chatMeta}
-			<input
-				class="h-[22px] min-w-0 flex-1 rounded-sm border border-(--vscode-focusBorder) bg-(--vscode-input-background) px-1 text-[13px] text-(--vscode-input-foreground) outline-none"
-				aria-label={t('chat.panel.rename')}
-				bind:value={renameText}
-				onkeydown={(e) => {
-					if (e.key === 'Enter' && !e.isComposing) finishRename(true);
-					else if (e.key === 'Escape') finishRename(false);
-				}}
-				onblur={() => finishRename(true)}
-				{@attach (el) => el.focus()}
-			/>
-		{:else}
-			<span class="min-w-0 flex-1 truncate" title={title}>{title}</span>
-		{/if}
-		<button class={ICON_BTN} aria-label={t('chat.panel.newChat')} title={t('chat.panel.newChat')} disabled={!workspace.root} onclick={newChat}><Icon name="plus" size={16} /></button>
+		<span class="min-w-0 flex-1 truncate" {title}>{showList ? t('chatView.history') : title}</span>
+		<button class={ICON_BTN} aria-label={t('chat.panel.newChat')} title={t('chatView.newChatKey')} disabled={!workspace.root} onclick={newChat}><Icon name="plus" size={16} /></button>
 		<button class={ICON_BTN} aria-label={t('chat.panel.openInAgents')} title={t('chat.panel.openInAgents')} onclick={() => appMode.setMode('agents')}>
 			<Icon name="agentsLayout" size={16} />
 		</button>
@@ -255,86 +330,92 @@
 
 	{#if !showList && chatMeta}
 		<div class="flex shrink-0 items-center gap-2 px-3 pb-1.5 text-xs text-(--vscode-descriptionForeground)">
-			{#if chatRun && !chatRun.ended}<span class={['size-2 shrink-0 rounded-full', DOT[chatRun.status]]} title={STATUS_LABEL[chatRun.status]}></span>{/if}
+			{#if chatRun && !chatRun.ended}<span class={['size-2 shrink-0 rounded-full', running ? STATE_DOT.working : 'bg-[#73C991]']} title={STATUS_LABEL[chatRun.status]}></span>{/if}
 			<span class="flex min-w-0 flex-1 items-center gap-1 truncate" title={t('chat.panel.cwdLabel')}>
 				<Icon name={chatMeta.cwd.kind === 'folder' ? 'folder' : 'branch'} size={12} />
 				<span class="truncate font-mono">{cwdLabel(chatMeta.cwd)}</span>
 			</span>
-			{#if chatWorking && chatRun?.runId !== undefined}
-				<button class={TEXT_BTN} title={t('chat.panel.stopTurn')} onclick={() => chatMeta && chats.interrupt(chatMeta.id)}>{t('chat.panel.stopTurnLabel')}</button>
-			{/if}
 			{#if chatLive}
 				<button class="hover:text-(--vscode-errorForeground)" title={t('chat.panel.endSession')} onclick={() => chatMeta && chats.stop(chatMeta.id)}>{t('chat.panel.endSessionLabel')}</button>
 			{/if}
-			<button class={ICON_BTN} aria-label={t('chat.panel.rename')} title={t('chat.panel.rename')} onclick={startRename}><Icon name="edit" size={13} /></button>
+			<button class={ICON_BTN} aria-label={t('chat.panel.rename')} title={t('chat.panel.rename')} onclick={() => chatMeta && ((showList = true), startRename(chatMeta.id, chatMeta.title))}>
+				<Icon name="edit" size={13} />
+			</button>
 			<button class={ICON_BTN} aria-label={t('chat.panel.promote')} title={t('chat.panel.promoteHint')} disabled={busy} onclick={promote}><Icon name="tasks" size={13} /></button>
-			<button class={ICON_BTN} aria-label={t('chat.panel.delete')} title={t('chat.panel.delete')} disabled={chatLive} onclick={removeChat}><Icon name="trash" size={13} /></button>
-		</div>
-	{:else if !showList && taskMeta}
-		<div class="flex shrink-0 items-center gap-2 px-3 pb-1.5 text-xs text-(--vscode-descriptionForeground)">
-			{#if taskRun}<span class={['size-2 shrink-0 rounded-full', DOT[taskRun.status]]} title={STATUS_LABEL[taskRun.status]}></span>{/if}
-			<button class="min-w-0 flex-1 truncate text-left font-mono hover:underline" title={t('chat.panel.openTask')} onclick={() => taskMeta && adeTasks.openTask(taskMeta.slug)}
-				>kingu/{taskMeta.slug}</button
-			>
-			{#if taskRt?.working && taskRun?.runId !== undefined}
-				<button class={TEXT_BTN} title={t('chat.panel.stopTurn')} onclick={() => taskMeta && adeTasks.interrupt(taskMeta.slug)}>{t('chat.panel.stopTurnLabel')}</button>
-			{/if}
-			{#if taskRt?.live && !terminalTask}
-				<button class="hover:text-(--vscode-errorForeground)" title={t('chat.panel.endSession')} onclick={() => taskMeta && adeTasks.stop(taskMeta.slug)}>{t('chat.panel.endSessionLabel')}</button>
-			{/if}
+			<button class={ICON_BTN} aria-label={t('chat.panel.delete')} title={t('chat.panel.delete')} disabled={chatLive} onclick={() => chatMeta && removeChat(chatMeta.id)}><Icon name="trash" size={13} /></button>
 		</div>
 	{/if}
 
 	<div class="min-h-0 flex-1 overflow-hidden border-t border-(--vscode-sideBar-border)">
 		{#if showList}
-			<!-- Sessions of this folder, newest first. -->
-			<ul class="h-full overflow-y-auto py-1" aria-label={t('chat.panel.sessions')}>
-				{#each rows as r (r.kind === 'chat' ? `c:${r.id}` : `t:${r.slug}`)}
-					{@const st = rowStatus(r)}
-					{@const active = (r.kind === 'chat' && selected?.kind === 'chat' && selected.id === r.id) || (r.kind === 'task' && selected?.kind === 'task' && selected.slug === r.slug)}
-					<li class={['flex h-[26px] items-center gap-1.5 px-3 hover:bg-(--vscode-list-hoverBackground)', active && 'bg-(--vscode-list-inactiveSelectionBackground)']}>
-						<button
-							class="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-							onclick={() => select(r.kind === 'chat' ? { kind: 'chat', id: r.id } : { kind: 'task', slug: r.slug })}
+			<!-- History (VS Code's agent sessions): chats, then the folder's ADE tasks (read-only here). -->
+			<div class="h-full overflow-y-auto py-1">
+				<ul aria-label={t('chatView.chats')}>
+					{#each sections.chats as r (r.id)}
+						<li
+							class={[
+								'group/row flex h-[38px] items-center gap-2 px-3 hover:bg-(--vscode-list-hoverBackground)',
+								selectedId === r.id && 'bg-(--vscode-list-inactiveSelectionBackground)'
+							]}
 						>
-							<span class="shrink-0 text-(--vscode-descriptionForeground)"><Icon name={r.kind === 'chat' ? 'agent' : r.terminal ? 'terminal' : 'branch'} size={14} /></span>
-							<span class="min-w-0 flex-1 truncate">{r.title}</span>
-							{#if st && st !== 'done' && st !== 'stopped'}<span class={['size-2 shrink-0 rounded-full', DOT[st]]} title={STATUS_LABEL[st]}></span>{/if}
-						</button>
-						{#if r.kind === 'task' && r.terminal}
-							<!-- Hand-off only: never sends, never clears a draft. -->
-							<button class="shrink-0 text-xs text-(--vscode-textLink-foreground) hover:underline" onclick={() => openAgents()}>{t('chat.panel.openInAgentsShort')}</button>
-						{/if}
-					</li>
-				{:else}
-					<li class="px-3 py-2 text-(--vscode-descriptionForeground)">{t('chat.panel.noSessions')}</li>
-				{/each}
-			</ul>
+							{#if renamingId === r.id}
+								<input
+									class="h-[22px] min-w-0 flex-1 rounded-sm border border-(--vscode-focusBorder) bg-(--vscode-input-background) px-1 text-[13px] text-(--vscode-input-foreground) outline-none"
+									aria-label={t('chat.panel.rename')}
+									bind:value={renameText}
+									onkeydown={(e) => {
+										if (e.key === 'Enter' && !e.isComposing) finishRename(true);
+										else if (e.key === 'Escape') finishRename(false);
+									}}
+									onblur={() => finishRename(true)}
+									{@attach (el) => el.focus()}
+								/>
+							{:else}
+								<button class="flex min-w-0 flex-1 items-center gap-2 text-left" onclick={() => select(r.id)}>
+									<span class="shrink-0 text-(--vscode-descriptionForeground)"><Icon name="agent" size={14} /></span>
+									<span class="flex min-w-0 flex-1 flex-col">
+										<span class="truncate">{r.title}</span>
+										<span class="truncate text-xs text-(--vscode-descriptionForeground)">{r.state ? STATE_LABEL[r.state]() : timeAgo(r.at, Date.now())}</span>
+									</span>
+									{#if r.state}<span class={['size-2 shrink-0 rounded-full', STATE_DOT[r.state]]} title={STATE_LABEL[r.state]()}></span>{/if}
+								</button>
+								<span class="flex shrink-0 opacity-0 group-hover/row:opacity-100 focus-within:opacity-100">
+									<button class={ICON_BTN} aria-label={t('chat.panel.rename')} title={t('chat.panel.rename')} onclick={() => startRename(r.id, r.title)}><Icon name="edit" size={13} /></button>
+									<button class={ICON_BTN} aria-label={t('chat.panel.delete')} title={t('chat.panel.delete')} disabled={!!r.state} onclick={() => removeChat(r.id)}><Icon name="trash" size={13} /></button>
+								</span>
+							{/if}
+						</li>
+					{:else}
+						<li class="px-3 py-2 text-(--vscode-descriptionForeground)">{t('chatView.noChats')}</li>
+					{/each}
+				</ul>
+				{#if sections.tasks.length}
+					<div class="mt-2 px-3 pt-2 pb-1 text-[11px] font-medium text-(--vscode-descriptionForeground) uppercase">{t('chatView.adeSection')}</div>
+					<ul aria-label={t('chatView.adeSection')}>
+						{#each sections.tasks as r (r.slug)}
+							<li class="flex h-[26px] items-center gap-1.5 px-3 text-(--vscode-descriptionForeground)" title={t('chatView.adeReadOnly')}>
+								<Icon name={r.terminal ? 'terminal' : 'branch'} size={14} />
+								<span class="min-w-0 flex-1 truncate">{r.title}</span>
+								{#if r.state}<span class={['size-2 shrink-0 rounded-full', STATE_DOT[r.state]]} title={STATE_LABEL[r.state]()}></span>{/if}
+								<button class="shrink-0 text-xs text-(--vscode-textLink-foreground) hover:underline" onclick={() => openTaskInAgents(r.slug)}>{t('chat.panel.openInAgentsShort')}</button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</div>
 		{:else if chatMeta}
-			<AgentTimeline
+			<ChatList
 				run={chatRun}
+				{cwd}
+				root={workspace.root}
 				onanswer={(p, decision, message, answers) => chatMeta && chats.answer(chatMeta.id, p.request_id, decision, message, answers)}
+				actions={{ retry: () => chatMeta && void chats.retry(chatMeta.id), edit: editRequest }}
 				class="h-full p-3"
 			>
 				{#snippet empty()}
 					<p class="text-(--vscode-descriptionForeground)">{t('chat.panel.noHistory')}</p>
 				{/snippet}
-			</AgentTimeline>
-		{:else if taskMeta && terminalTask}
-			<div class="grid h-full place-items-center p-6 text-center">
-				<div class="max-w-64 space-y-2 text-(--vscode-descriptionForeground)">
-					<div class="flex justify-center"><Icon name="terminal" size={28} /></div>
-					<p class="text-(--vscode-foreground)">{t('chat.panel.terminalHint', { cli: cliOf(taskMeta.agent)?.[0] ?? '' })}</p>
-					<button class="text-(--vscode-textLink-foreground) hover:underline" onclick={() => openAgents()}>{t('chat.panel.openInAgents')}</button>
-					<CliQuestion slug={taskMeta.slug} class="text-left text-xs" />
-				</div>
-			</div>
-		{:else if taskMeta}
-			<AgentTimeline run={taskRun} onanswer={(p, decision, message, answers) => taskMeta && adeTasks.answer(taskMeta.slug, p.request_id, decision, message, answers)} class="h-full p-3">
-				{#snippet empty()}
-					<p class="text-(--vscode-descriptionForeground)">{taskMeta?.session_id ? t('chat.panel.noTaskHistoryResume') : t('chat.panel.noTaskHistory')}</p>
-				{/snippet}
-			</AgentTimeline>
+			</ChatList>
 		{:else}
 			<div class="grid h-full place-items-center p-6 text-center">
 				<div class="flex max-w-72 flex-col items-center gap-2 text-(--vscode-descriptionForeground)">
@@ -345,7 +426,7 @@
 						{#each STARTERS as s (s.icon)}
 							<button
 								class="flex h-7 items-center gap-1.5 rounded-full border border-(--vscode-widget-border) px-3 text-xs hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)"
-								onclick={() => (draft = draft.trim() ? `${s.text()}${draft}` : s.text())}
+								onclick={() => (input = input.trim() ? `${s.text()}${input}` : s.text())}
 							>
 								<Icon name={s.icon} size={13} />{s.label()}
 							</button>
@@ -356,71 +437,79 @@
 		{/if}
 	</div>
 
-	<div class="shrink-0 p-2">
-		{#if showList}
-			<!-- The list has no composer; pick a session or start a new chat. -->
-		{:else if chatMeta}
+	{#if !showList}
+		<div class="shrink-0 p-2">
+			<!-- chat edits bar -->
+			{#if queued.length}
+				<ul class="mb-1.5 space-y-1" aria-label={t('chatView.queued')}>
+					{#each queued as q (q.n)}
+						<li class="flex items-center gap-1.5 rounded border border-dashed border-(--vscode-widget-border) px-2 py-1 text-xs text-(--vscode-descriptionForeground)">
+							<Icon name="clock" size={12} />
+							<span class="min-w-0 flex-1 truncate" title={q.label}>{t('chatView.queuedItem', { text: q.label })}</span>
+							<button class={ICON_BTN} aria-label={t('chatView.unqueue')} title={t('chatView.unqueue')} onclick={() => chatMeta && chats.unqueue(chatMeta.id, q.n)}><Icon name="close" size={12} /></button>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+			{#if editing}
+				<div class="mb-1.5 flex items-start gap-1.5 rounded border border-(--vscode-widget-border) px-2 py-1 text-xs text-(--vscode-descriptionForeground)" role="note">
+					<Icon name="info" size={12} />
+					<span class="min-w-0 flex-1">{t('chatView.editNotice')}</span>
+					<button class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" onclick={resetInput}>{t('common.cancel')}</button>
+				</div>
+			{/if}
 			<Composer
-				bind:value={followUp}
+				bind:this={composer}
+				bind:value={input}
 				attach
-				bind:attachments={followUpFiles}
-				placeholder={chatLive ? t('chat.panel.placeholderLive') : (chatRun?.sessionId ?? chatMeta.session_id) ? t('chat.panel.placeholderResume') : t('chat.panel.placeholderNew')}
-				disabled={chatRun?.status === 'starting'}
-				onsubmit={sendChat}
+				bind:attachments={files}
+				{placeholder}
+				disabled={!workspace.root}
+				{busy}
+				{history}
+				{running}
+				onstop={() => chatMeta && chats.interrupt(chatMeta.id)}
+				onhash={pickFile}
+				context={contextChips}
+				oncontexttoggle={(f) => (implicitOff = implicitOff === f.path ? null : f.path)}
+				oncontextremove={(f) => (picked = picked.filter((p) => !(p.path === f.path && p.range?.startLine === f.range?.startLine)))}
+				sendLabel={running ? t('chatView.queue') : undefined}
+				onsubmit={submit}
 			>
 				{#snippet chips()}
-					<select class={CHIP_SELECT} aria-label={t('chat.panel.model')} title={t('chat.panel.model')} value={chatMeta.model ?? ''} onchange={(e) => changeModel(e.currentTarget.value)}>
-						{#each modelChoices(chatMeta.model) as m (m)}<option value={m}>{m}</option>{/each}
+					{#if !chatMeta}
+						<select class={CHIP_SELECT} aria-label={t('chat.panel.cwdLabel')} title={t('chat.panel.cwdLabel')} bind:value={newWhere}>
+							<option value="">{workspace.name || t('chat.panel.cwdFolder')}</option>
+							{#each taskWorktrees as slug (slug)}<option value={slug}>kingu/{slug}</option>{/each}
+						</select>
+					{/if}
+					<select class={CHIP_SELECT} aria-label={t('chatView.mode')} title={t('chatView.modeHint')} value={mode} onchange={(e) => setMode(e.currentTarget.value as ChatMode)}>
+						<option value="ask">{t('chatView.mode.ask')}</option>
+						<option value="agent">{t('chatView.mode.agent')}</option>
 					</select>
+					{#if mode === 'agent'}
+						<select
+							class={CHIP_SELECT}
+							aria-label={t('chat.panel.mode')}
+							title={t('chat.panel.mode')}
+							value={chatMeta ? (chatMeta.permission_mode ?? 'default') : approval}
+							onchange={(e) => setMode('agent', e.currentTarget.value as AgentApproval)}
+						>
+							{#each AGENT_APPROVALS as m (m)}<option value={m}>{APPROVAL_LABEL[m]()}</option>{/each}
+						</select>
+					{/if}
 					<select
 						class={CHIP_SELECT}
-						aria-label={t('chat.panel.mode')}
-						title={t('chat.panel.mode')}
-						value={chatMeta.permission_mode ?? 'default'}
-						onchange={(e) => changeMode(e.currentTarget.value as PermissionMode)}
+						aria-label={t('chat.panel.model')}
+						title={t('chat.panel.model')}
+						value={chatMeta ? (chatMeta.model ?? '') : newModel}
+						onchange={(e) => changeModel(e.currentTarget.value)}
 					>
-						{#each PERMISSION_MODES as m (m)}<option value={m}>{MODE_LABEL[m]()}</option>{/each}
+						{#each modelChoices(chatMeta ? chatMeta.model : newModel) as m (m)}<option value={m}>{m}</option>{/each}
 					</select>
 				{/snippet}
 			</Composer>
 			{#if optionNote}<p class="px-1 pt-1 text-xs text-(--vscode-descriptionForeground)" role="status">{optionNote}</p>{/if}
-		{:else if taskMeta && terminalTask}
-			<!-- The CLI takes input in its own terminal. -->
-		{:else if taskMeta}
-			<Composer
-				bind:value={followUp}
-				attach
-				bind:attachments={followUpFiles}
-				placeholder={taskRt?.live ? t('chat.panel.placeholderLive') : (taskRun?.sessionId ?? taskMeta.session_id) ? t('chat.panel.placeholderResume') : t('chat.panel.placeholderNew')}
-				disabled={taskRun?.status === 'starting'}
-				onsubmit={sendTask}
-			>
-				{#snippet chips()}<span class="truncate">{taskRun?.model ?? taskMeta.model ?? ''}</span>{/snippet}
-			</Composer>
-		{:else}
-			<Composer
-				bind:value={draft}
-				attach
-				bind:attachments={draftFiles}
-				placeholder={t('chat.panel.placeholderStart')}
-				disabled={!workspace.root}
-				{busy}
-				autofocus={composingNew}
-				onsubmit={startChat}
-			>
-				{#snippet chips()}
-					<select class={CHIP_SELECT} aria-label={t('chat.panel.cwdLabel')} title={t('chat.panel.cwdLabel')} bind:value={newWhere}>
-						<option value="">{workspace.name || t('chat.panel.cwdFolder')}</option>
-						{#each taskWorktrees as slug (slug)}<option value={slug}>kingu/{slug}</option>{/each}
-					</select>
-					<select class={CHIP_SELECT} aria-label={t('chat.panel.model')} title={t('chat.panel.model')} bind:value={newModel}>
-						{#each modelChoices(newModel) as m (m)}<option value={m}>{m}</option>{/each}
-					</select>
-					<select class={CHIP_SELECT} aria-label={t('chat.panel.mode')} title={t('chat.panel.mode')} bind:value={newMode}>
-						{#each PERMISSION_MODES as m (m)}<option value={m}>{MODE_LABEL[m]()}</option>{/each}
-					</select>
-				{/snippet}
-			</Composer>
-		{/if}
-	</div>
+		</div>
+	{/if}
 </div>
