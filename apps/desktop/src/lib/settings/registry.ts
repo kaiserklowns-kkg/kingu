@@ -218,6 +218,16 @@ export const SETTINGS: SettingSchema[] = [
 			'คำสั่ง agent CLI สำหรับโหมด terminal เช่น claude, codex หรือ claude --model opus — prompt จะต่อท้ายเป็นอาร์กิวเมนต์สุดท้าย ห้ามมีอักขระของ shell (The agent CLI for the terminal mode; the prompt is appended as its last argument.)'
 	},
 	{
+		id: 'kingu.automations.enabled',
+		group: 'Agent',
+		type: 'boolean',
+		default: true,
+		description:
+			'สวิตช์รวมของ Automations: ปิดเพื่อหยุดทุก automation ที่ตั้งเวลาไว้ทุกโฟลเดอร์ (แต่ละอันยังต้องเปิดเองก่อนจะทำงาน) (Global switch for scheduled automations; each one must still be enabled on its own.)',
+		// User-only: a repository's workspace settings must not turn scheduled agent runs back on.
+		scope: 'application'
+	},
+	{
 		id: 'kingu.team.serverUrl',
 		group: 'Team',
 		type: 'string',

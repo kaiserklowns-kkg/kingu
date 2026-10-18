@@ -535,6 +535,8 @@ pub fn run() {
       agent::agent_stop,
       agent::tasks_load,
       agent::tasks_save,
+      agent::automations_load,
+      agent::automations_save,
       agent::git_branches,
       agent::worktree_diff_stat,
       agent::worktree_reject,

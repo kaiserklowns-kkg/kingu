@@ -204,8 +204,9 @@ class AdeTasks {
 	 * Creates the worktree, saves the task and starts the agent; opens the task page. `mode`:
 	 * `terminal` runs the agent CLI (`kingu.agent.cli`) in a terminal of the worktree, the Orca way;
 	 * `timeline` runs it through the agent host. Without one, `kingu.agent.runMode` decides.
+	 * `open: false` (automations) leaves the user's view alone.
 	 */
-	async create(input: { title: string; prompt: string; base: string; mode?: RunMode }): Promise<string | undefined> {
+	async create(input: { title: string; prompt: string; base: string; mode?: RunMode; open?: boolean }): Promise<string | undefined> {
 		const title = input.title.trim();
 		if (!title || !workspace.root) return;
 		const taken = new Set([...this.list.map((t) => t.slug), ...this.worktrees.map((w) => w.slug ?? '')]);
@@ -227,7 +228,7 @@ class AdeTasks {
 		}
 		await this.#save([...this.list, newTask({ slug, title, prompt, base, agent: cli ? cliAgent(cli) : undefined }, Date.now())]);
 		this.worktrees = (await invoke<WorktreeInfo[]>('worktree_list').catch(() => this.worktrees)).filter((w) => w.slug);
-		this.openTask(slug);
+		if (input.open !== false) this.openTask(slug);
 		// After the prompt: claude's --mcp-config takes several values and would swallow it.
 		if (cli) await this.#launchCli(slug, cli, { prompt });
 		else await this.run(slug, prompt);

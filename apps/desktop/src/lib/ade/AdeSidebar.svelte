@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Agents layout side bar, laid out like Orca's: a search box and Tasks (the board) on top, then
+	// Agents layout side bar, laid out like Orca's: a search box, Tasks (the board) and Automations on top, then
 	// Projects: the open folder with its worktrees as cards. The folder itself is the "primary"
 	// worktree; each task is a worktree on `kingu/<slug>` with its agent session listed under it.
 	import Icon from '#lib/workbench/Icon.svelte';
@@ -10,6 +10,7 @@
 	import { matchesQuery } from './adeTabs';
 	import { aggregateStats, STATUS_LABEL, timeAgo, type TaskView } from './model';
 	import { adeTasks } from './tasks.svelte';
+	import { automations } from './automations.svelte.ts';
 	import { STATUS_DOT } from './ui';
 	import { newSession } from './agentsMode.svelte';
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
@@ -60,10 +61,21 @@
 				onkeydown={(e) => e.key === 'Escape' && (adeLayout.query = '')}
 			/>
 		</label>
-		<button class={[NAV, adeLayout.board && 'bg-(--vscode-list-activeSelectionBackground)/40']} aria-pressed={adeLayout.board} onclick={() => (adeLayout.board = !adeLayout.board)}>
+		<button class={[NAV, adeLayout.page === 'board' && 'bg-(--vscode-list-activeSelectionBackground)/40']} aria-pressed={adeLayout.page === 'board'} onclick={() => adeLayout.togglePage('board')}>
 			<Icon name="tasks" size={16} /> <span class="flex-1 text-left">Tasks</span>
 			{#if adeTasks.counts.needsInput}
 				<span class="rounded-full bg-(--vscode-editorWarning-foreground) px-1.5 text-[10px] leading-4 font-semibold text-black" title="รอคุณ">{adeTasks.counts.needsInput}</span>
+			{/if}
+		</button>
+		<button
+			class={[NAV, adeLayout.page === 'automations' && 'bg-(--vscode-list-activeSelectionBackground)/40']}
+			aria-pressed={adeLayout.page === 'automations'}
+			disabled={!workspace.root}
+			onclick={() => adeLayout.togglePage('automations')}
+		>
+			<Icon name="clock" size={16} /> <span class="flex-1 text-left">Automations</span>
+			{#if automations.activeCount}
+				<span class="text-[11px] text-(--vscode-descriptionForeground)" title={automations.globalEnabled ? 'automation ที่เปิดอยู่' : 'หยุดทั้งหมดอยู่'}>{automations.globalEnabled ? automations.activeCount : 'หยุด'}</span>
 			{/if}
 		</button>
 	</div>

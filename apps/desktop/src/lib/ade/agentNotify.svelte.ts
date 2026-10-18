@@ -10,7 +10,7 @@ import { adeTasks } from './tasks.svelte';
 
 let allowed: boolean | null = null;
 
-async function notify(title: string, body: string) {
+export async function notify(title: string, body: string) {
 	try {
 		if (allowed === null) allowed = (await isPermissionGranted()) || (await requestPermission()) === 'granted';
 		if (allowed) sendNotification({ title, body });

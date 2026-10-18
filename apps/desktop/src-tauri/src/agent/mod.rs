@@ -3,6 +3,7 @@
 //! `tasks` persists task metadata and `review` drives the review / merge / PR flow of the
 //! Agents view.
 
+pub mod automations;
 pub mod events;
 pub mod hooks;
 pub mod host;
@@ -133,6 +134,17 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
 #[tauri::command]
 pub fn tasks_load(ws: State<'_, Workspace>) -> Result<Vec<tasks::TaskMeta>, String> {
   ws.current().map_or(Ok(Vec::new()), |root| tasks::load(&root))
+}
+
+/// Automations of the open folder; empty with no folder open.
+#[tauri::command]
+pub fn automations_load(ws: State<'_, Workspace>) -> Result<Vec<automations::Automation>, String> {
+  ws.current().map_or(Ok(Vec::new()), |root| automations::load(&root))
+}
+
+#[tauri::command]
+pub fn automations_save(ws: State<'_, Workspace>, automations: Vec<automations::Automation>) -> Result<(), String> {
+  automations::save(&ws.root()?, &automations)
 }
 
 #[tauri::command]
