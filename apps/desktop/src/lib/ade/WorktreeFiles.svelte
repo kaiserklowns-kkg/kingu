@@ -6,9 +6,11 @@
 	// over the whole worktree) or Contents (ripgrep in the worktree, case / word / regex, include and
 	// exclude, results per file, a click opens at the match); and the lazy tree with git letters,
 	// ignored entries dimmed, a context menu, inline new / rename, delete to Trash, drag to move,
+	// undo / redo of those (⌘Z / ⌘⇧Z),
 	// keyboard navigation, and the active file revealed. Rows click open as a preview tab of this
 	// worktree in the center; a double click keeps the tab. The watcher re-lists changed folders.
 	import { untrack } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import { Channel, invoke } from '@tauri-apps/api/core';
 	import { ask } from '#lib/workbench/messageBox.ts';
 	import FileIcon from '#lib/workbench/FileIcon.svelte';
@@ -21,9 +23,11 @@
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { keyLabel } from '#lib/workbench/keys.ts';
 	import { entryChanges, fileDecorations, fileOf, isDiffKey } from '#lib/workbench/scm.ts';
+	import { rangeSelection, topLevel } from '#lib/workbench/explorerModel.ts';
 	import { affectedBy, baseName, dirsToRefresh, isUnder, joinRel, parentOf, remapPath, stemLength, validateName } from '#lib/workbench/fileTree.ts';
 	import { splitPreview, type FileMatches, type SearchEvent } from '#lib/workbench/searchResults.ts';
 	import { editors } from '#lib/workbench/editors.svelte.ts';
+	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { worktreeDir } from './keys.ts';
 	import { adeLayout } from './adeLayout.svelte.ts';
 	import { adeTasks } from './tasks.svelte.ts';
@@ -52,6 +56,9 @@
 	let error = $state('');
 	let refreshing = $state(false);
 	let selected = $state<string | null>(null);
+	/** ⌘-click / ⇧-click selection (Orca's multi-select); meaningful from two rows up, else `selected` is it. */
+	const picked = new SvelteSet<string>();
+	let anchor: string | null = null;
 	let editing = $state<Editing | null>(null);
 	let inputError = $state('');
 	let dropTarget = $state<string | null>(null);
@@ -80,7 +87,7 @@
 		untrack(() => {
 			children = {};
 			open = {};
-			selected = null;
+			selectOnly(null);
 			editing = null;
 			void load(b);
 		});
@@ -167,8 +174,43 @@
 		return out;
 	});
 
+	// --- Selection ---------------------------------------------------------------------------------
+
+	function selectOnly(rel: string | null) {
+		selected = rel;
+		picked.clear();
+		anchor = rel;
+	}
+	const isPicked = (rel: string) => (picked.size > 1 ? picked.has(rel) : selected === rel);
+	function pickRange(rel: string) {
+		const from = anchor ?? selected;
+		picked.clear();
+		for (const r of rangeSelection(rows.map((x) => x.rel), from, rel)) picked.add(r);
+		anchor = from;
+		selected = rel;
+	}
+	function pickToggle(rel: string) {
+		if (picked.size <= 1 && selected) (picked.clear(), picked.add(selected));
+		if (picked.has(rel)) {
+			picked.delete(rel);
+			selected = [...picked].at(-1) ?? null;
+		} else {
+			picked.add(rel);
+			selected = rel;
+		}
+		anchor = rel;
+	}
+	/** A row click: plain opens it alone; ⌘ (Ctrl) toggles it; ⇧ selects the range from the anchor. */
+	function clickRow(e: MouseEvent, r: Row) {
+		if (e.shiftKey) return pickRange(r.rel);
+		if (isMac ? e.metaKey : e.ctrlKey) return pickToggle(r.rel);
+		activate(r);
+	}
+	/** What an action on `rel` covers: the whole selection when `rel` is part of it, else `rel`. */
+	const targets = (rel: string) => (picked.size > 1 && picked.has(rel) ? topLevel([...picked]) : [rel]);
+
 	function activate(r: { rel: string; is_dir: boolean }, preview = true) {
-		selected = r.rel;
+		selectOnly(r.rel);
 		if (r.is_dir) void toggle(r.rel);
 		else adeLayout.openFile(slug, r.rel, { preview });
 	}
@@ -188,7 +230,7 @@
 			const dirs: string[] = [];
 			for (let d = parentOf(file); d && d !== base; d = parentOf(d)) dirs.unshift(d);
 			for (const d of dirs) await expand(d);
-			selected = file;
+			if (picked.size <= 1) selectOnly(file);
 			queueMicrotask(() => tree?.querySelector<HTMLElement>(`[data-rel="${CSS.escape(file)}"]`)?.scrollIntoView({ block: 'nearest' }));
 		});
 	});
@@ -214,7 +256,7 @@
 
 	function startRename(rel: string | null = selected) {
 		if (!rel || rel === base) return;
-		selected = rel;
+		selectOnly(rel);
 		editing = { kind: 'rename', rel, is_dir: isDir(rel) };
 	}
 
@@ -236,11 +278,24 @@
 			if (edit.kind === 'rename') await move(edit.rel, joinRel(parentOf(edit.rel), name));
 			else {
 				const rel = joinRel(edit.parent, name);
-				await invoke(edit.kind === 'file' ? 'fs_create_file' : 'fs_create_dir', { rel });
+				const create = edit.kind === 'file' ? 'fs_create_file' : 'fs_create_dir';
+				await invoke(create, { rel });
 				editing = null;
+				// Undo trashes it (keeping a copy, since it may have been edited since); redo puts that copy back.
+				let token: string | null = null;
+				history.push({
+					label: edit.kind === 'file' ? 'New File' : 'New Folder',
+					undo: async () => {
+						token = await deleteEntry(rel);
+					},
+					redo: async () => {
+						if (token) await restoreEntry(rel, token);
+						else await invoke(create, { rel }), await load(parentOf(rel));
+					}
+				});
 				for (let d = parentOf(rel); d && d !== base; d = parentOf(d)) open[d] = true;
 				await Promise.all([edit.parent, ...rel.split('/').slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join('/'))].filter((d) => isUnder(d, base)).map(load));
-				selected = rel;
+				selectOnly(rel);
 				if (edit.kind === 'file') adeLayout.openFile(slug, rel, { preview: false });
 			}
 		} catch (e) {
@@ -249,8 +304,9 @@
 		return null;
 	}
 
-	/** Rename or drag-move: open tabs (here and in the IDE) follow; unsaved edits block it. */
-	async function move(from: string, to: string) {
+	/** Rename or drag-move: open tabs (here and in the IDE) follow; unsaved edits block it.
+	 * `record` adds it to the undo history (undo and redo themselves move without recording). */
+	async function move(from: string, to: string, record = true) {
 		if (editors.allTabs().some((t) => t.dirty && remapPath(t.path, from, to) !== null)) throw new Error('มีไฟล์ที่ยังไม่บันทึกอยู่ข้างใน: บันทึกก่อนย้ายหรือเปลี่ยนชื่อ');
 		await invoke('fs_rename', { from, to });
 		editing = null;
@@ -261,35 +317,125 @@
 			open[to + k.slice(from.length)] = true;
 		}
 		await Promise.all([parentOf(from), parentOf(to), ...wasOpen.map((k) => to + k.slice(from.length))].map(load));
-		selected = to;
+		selectOnly(to);
 		const remap = (path: string) => remapPath(path, from, to);
 		editors.remap(remap);
 		adeLayout.remapFiles(remap);
+		if (record)
+			history.push({ label: parentOf(from) === parentOf(to) ? 'Rename' : 'Move', undo: () => move(to, from, false), redo: () => move(from, to, false) });
+	}
+
+	// --- Undo / redo (⌘Z / ⌘⇧Z in the tree) --------------------------------------------------------
+
+	const history = $derived(rightSidebar.undo(slug));
+
+	/** `files.enableTrash`, as the IDE explorer reads it. */
+	const useTrash = () => settings.get<boolean>('files.enableTrash') !== false;
+
+	/** Trashes `rel` (or deletes it for good with the Trash off) and lets go of its tabs; resolves to
+	 * the token that restores it (null when Rust kept no copy: too large, or deleted for good). */
+	async function deleteEntry(rel: string): Promise<string | null> {
+		const tabs = affectedBy([...editors.openPaths(), ...adeLayout.openFiles()], rel);
+		const token = await invoke<string | null>('fs_delete', { rel, useTrash: useTrash() });
+		for (const t of tabs) editors.closeEverywhere(t);
+		adeLayout.dropFiles(Object.values(adeLayout.files).flatMap((list) => list.map((f) => f.key)).filter((k) => isUnder(fileOf(k), rel)));
+		if (selected && isUnder(selected, rel)) selected = null;
+		for (const p of [...picked]) if (isUnder(p, rel)) picked.delete(p);
+		await load(parentOf(rel));
+		return token;
+	}
+
+	async function restoreEntry(rel: string, token: string) {
+		await invoke('fs_restore', { rel, token });
+		await load(parentOf(rel));
+		selectOnly(rel);
+	}
+
+	async function undoRedo(how: 'undo' | 'redo') {
+		try {
+			const label = await history[how]();
+			if (label) status.flash(`${how === 'undo' ? 'Undo' : 'Redo'} ${label}`);
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : String(e));
+		}
 	}
 
 	async function remove(rel: string | null = selected) {
 		if (!rel || rel === base) return;
-		const folder = isDir(rel);
-		const what = folder ? `โฟลเดอร์ '${baseName(rel)}' และทุกอย่างข้างใน` : `'${baseName(rel)}'`;
-		const tabs = affectedBy([...editors.openPaths(), ...adeLayout.openFiles()], rel);
+		const list = targets(rel).filter((r) => r !== base);
+		if (!list.length) return;
+		const what =
+			list.length > 1 ? `${list.length} รายการที่เลือก` : isDir(list[0]) ? `โฟลเดอร์ '${baseName(list[0])}' และทุกอย่างข้างใน` : `'${baseName(list[0])}'`;
+		const tabs = list.flatMap((r) => affectedBy([...editors.openPaths(), ...adeLayout.openFiles()], r));
 		const dirty = new Set(editors.allTabs().filter((t) => t.dirty && tabs.includes(t.path)).map((t) => t.path)).size;
-		const ok = await ask(`ย้าย ${what} ไปที่ถังขยะ?${dirty ? `\n\nมี ${dirty} ไฟล์ที่ยังไม่บันทึก การแก้ไขจะหายไป` : ''}\n\nกู้คืนได้จากถังขยะ`, {
+		const trash = useTrash();
+		const unsaved = dirty ? `\n\nมี ${dirty} ไฟล์ที่ยังไม่บันทึก การแก้ไขจะหายไป` : '';
+		const question = trash ? `ย้าย ${what} ไปที่ถังขยะ?${unsaved}\n\nกู้คืนได้จากถังขยะ หรือกด ${isMac ? '⌘Z' : 'Ctrl+Z'}` : `ลบ ${what} ถาวร?${unsaved}\n\nกู้คืนไม่ได้ (files.enableTrash ปิดอยู่)`;
+		const ok = await ask(question, {
 			title: 'Delete',
 			kind: 'warning',
-			okLabel: 'ย้ายไปถังขยะ',
+			okLabel: trash ? 'ย้ายไปถังขยะ' : 'ลบถาวร',
 			cancelLabel: 'ยกเลิก'
 		});
 		if (!ok) return;
-		try {
-			await invoke('fs_delete', { rel });
-		} catch (e) {
-			notifications.error(e);
-			return;
+		picked.clear();
+		// One undo step for the whole delete; entries too large to keep a copy of are left to the Trash.
+		let kept: { rel: string; token: string }[] = [];
+		for (const r of list) {
+			try {
+				const token = await deleteEntry(r);
+				if (token) kept.push({ rel: r, token });
+			} catch (e) {
+				notifications.error(e);
+			}
 		}
-		for (const t of tabs) editors.closeEverywhere(t);
-		adeLayout.dropFiles(Object.values(adeLayout.files).flatMap((list) => list.map((f) => f.key)).filter((k) => isUnder(fileOf(k), rel)));
-		if (selected && isUnder(selected, rel)) selected = null;
-		await load(parentOf(rel));
+		if (!kept.length) return;
+		history.push({
+			label: kept.length > 1 ? `Delete ${kept.length} items` : 'Delete',
+			undo: async () => {
+				if (!kept.length) throw new Error('ไม่มีสำเนาให้กู้คืน: กู้จากถังขยะแทน');
+				for (const k of [...kept].reverse()) await restoreEntry(k.rel, k.token);
+				kept = kept.map((k) => ({ ...k, token: '' }));
+			},
+			redo: async () => {
+				const again: { rel: string; token: string }[] = [];
+				for (const k of kept) {
+					const token = await deleteEntry(k.rel);
+					if (token) again.push({ rel: k.rel, token });
+				}
+				kept = again;
+			}
+		});
+	}
+
+	/** Copies next to themselves (`name copy.ts`, Rust picks the free name); one undo step trashes the copies. */
+	async function duplicate(list: string[]) {
+		const made: string[] = [];
+		for (const from of list) {
+			try {
+				made.push(await invoke<string>('fs_copy', { from, toDir: parentOf(from) }));
+			} catch (e) {
+				notifications.error(e);
+			}
+		}
+		if (!made.length) return;
+		await Promise.all([...new Set(made.map(parentOf))].map(load));
+		picked.clear();
+		if (made.length > 1) for (const m of made) picked.add(m);
+		selected = made.at(-1) ?? null;
+		let kept: { rel: string; token: string | null }[] = made.map((rel) => ({ rel, token: null }));
+		history.push({
+			label: made.length > 1 ? `Duplicate ${made.length} items` : 'Duplicate',
+			undo: async () => {
+				kept = await Promise.all(kept.map(async (k) => ({ rel: k.rel, token: await deleteEntry(k.rel) })));
+			},
+			redo: async () => {
+				for (const k of kept) {
+					if (!k.token) throw new Error(`'${baseName(k.rel)}' ไม่มีสำเนาให้กู้คืน`);
+					await restoreEntry(k.rel, k.token);
+				}
+			}
+		});
 	}
 
 	function openTerminalAt(rel: string) {
@@ -310,7 +456,8 @@
 		e.preventDefault();
 		e.stopPropagation();
 		const rel = target ?? base;
-		selected = target;
+		if (!target || !(picked.size > 1 && picked.has(target))) selectOnly(target);
+		const many = target ? targets(target) : [];
 		const dir = isDir(rel);
 		const items: MenuNode[] = [
 			menuItem('newFile', 'New File...'),
@@ -323,18 +470,19 @@
 		if (dir) items.push(menuItem('terminal', 'Open in Terminal'), menuItem('findIn', 'Find in Folder...'));
 		if (dir && target && open[rel]) items.push(menuItem('collapse', 'Collapse Folder'));
 		items.push(menuItem('reveal', REVEAL, { keyLabel: keyLabel('alt+cmd+r') }));
-		if (target) items.push(menuSeparator, menuItem('rename', 'Rename...', { keyLabel: isMac ? '↵' : 'F2' }), menuItem('delete', 'Delete', { keyLabel: isMac ? '⌘⌫' : 'Delete' }));
+		if (target) items.push(menuSeparator, menuItem('duplicate', many.length > 1 ? `Duplicate ${many.length} Items` : 'Duplicate'), menuItem('rename', 'Rename...', { keyLabel: isMac ? '↵' : 'F2', enabled: many.length <= 1 }), menuItem('delete', many.length > 1 ? `Delete ${many.length} Items` : 'Delete', { keyLabel: isMac ? '⌘⌫' : 'Delete' }));
 		const run = (id: string) => {
 			if (id === 'newFile') void startCreate('file', target);
 			else if (id === 'newFolder') void startCreate('folder', target);
-			else if (id === 'copyPath') void copy(abs(rel));
-			else if (id === 'copyRel') void copy(local(rel) || '.', 'relative path');
+			else if (id === 'copyPath') void copy(many.length > 1 ? many.map(abs).join('\n') : abs(rel));
+			else if (id === 'copyRel') void copy(many.length > 1 ? many.map(local).join('\n') : local(rel) || '.', 'relative path');
 			else if (id === 'terminal') openTerminalAt(rel);
 			else if (id === 'findIn') findInFolder(rel);
 			else if (id === 'collapse') open[rel] = false;
 			else if (id === 'reveal') void reveal(rel);
 			else if (id === 'rename') startRename(rel);
 			else if (id === 'delete') void remove(rel);
+			else if (id === 'duplicate') void duplicate(many);
 		};
 		menu = { x: e.clientX, y: e.clientY, items, run, label: target ? baseName(target) : title };
 	}
@@ -407,8 +555,9 @@
 
 	// --- Keyboard (Orca's tree keys) --------------------------------------------------------------
 
-	function focusRow(rel: string) {
-		selected = rel;
+	function focusRow(rel: string, extend = false) {
+		if (extend) pickRange(rel);
+		else selectOnly(rel);
 		tree?.querySelector<HTMLElement>(`[data-rel="${CSS.escape(rel)}"]`)?.focus();
 	}
 
@@ -419,8 +568,16 @@
 		const mod = isMac ? e.metaKey : e.ctrlKey;
 		const page = Math.max(1, Math.round(list.length / 10));
 		const go = (n: number) => list.length && focusRow(list[Math.max(0, Math.min(list.length - 1, n))].rel);
-		if (e.key === 'ArrowDown') go(i + 1);
+		if (e.shiftKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+			const n = Math.max(0, Math.min(list.length - 1, e.key === 'ArrowDown' ? i + 1 : i - 1));
+			if (list.length) focusRow(list[n].rel, true);
+		} else if (e.key === 'ArrowDown') go(i + 1);
 		else if (e.key === 'ArrowUp') go(i < 0 ? 0 : i - 1);
+		else if (e.key === 'Escape' && picked.size > 1) selectOnly(selected);
+		else if (mod && !e.shiftKey && !e.altKey && e.code === 'KeyA') {
+			picked.clear();
+			for (const r of list) picked.add(r.rel);
+		}
 		else if (e.key === 'Home') go(0);
 		else if (e.key === 'End') go(list.length - 1);
 		else if (e.key === 'PageDown') go(i + page);
@@ -435,6 +592,8 @@
 		else if ((e.key === 'Enter' && isMac && !mod) || e.key === 'F2') startRename();
 		else if (e.key === 'Enter' && row) activate(row, false);
 		else if ((isMac && mod && e.key === 'Backspace') || (!isMac && e.key === 'Delete')) void remove();
+		else if (mod && !e.altKey && e.code === 'KeyZ') void undoRedo(e.shiftKey ? 'redo' : 'undo');
+		else if (!isMac && mod && !e.altKey && e.code === 'KeyY') void undoRedo('redo');
 		else if (mod && e.altKey && e.code === 'KeyC') void (e.shiftKey ? copy(local(selected ?? base) || '.', 'relative path') : copy(abs(selected ?? base)));
 		else if (mod && e.altKey && e.code === 'KeyR') void reveal(selected ?? base);
 		else return;
@@ -446,8 +605,10 @@
 
 	let hoverTimer: ReturnType<typeof setTimeout> | undefined;
 	function onDragStart(e: DragEvent, r: Row) {
+		const list = targets(r.rel);
 		e.dataTransfer?.setData('application/x-kingu-rel', r.rel);
-		e.dataTransfer?.setData('text/plain', abs(r.rel));
+		e.dataTransfer?.setData('application/x-kingu-rels', JSON.stringify(list));
+		e.dataTransfer?.setData('text/plain', list.map(abs).join('\n'));
 		if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copyMove';
 	}
 	function dropDir(r: Row | null) {
@@ -465,17 +626,42 @@
 		}
 	}
 	async function onDrop(e: DragEvent, r: Row | null) {
-		const from = e.dataTransfer?.getData('application/x-kingu-rel');
+		const one = e.dataTransfer?.getData('application/x-kingu-rel');
+		let list: string[] = one ? [one] : [];
+		try {
+			const many = JSON.parse(e.dataTransfer?.getData('application/x-kingu-rels') || '[]');
+			if (Array.isArray(many) && many.length && many.every((x) => typeof x === 'string')) list = many;
+		} catch {
+			// A single row's drag.
+		}
 		const dir = dropDir(r);
 		dropTarget = null;
 		clearTimeout(hoverTimer);
-		if (!from) return;
+		if (!list.length) return;
 		e.preventDefault();
-		if (from === dir || parentOf(from) === dir || isUnder(dir, from)) return;
-		try {
-			await move(from, joinRel(dir, baseName(from)));
-		} catch (err) {
-			notifications.error(err instanceof Error ? err.message : String(err));
+		const moves = list.filter((from) => from !== dir && parentOf(from) !== dir && !isUnder(dir, from)).map((from) => ({ from, to: joinRel(dir, baseName(from)) }));
+		const done: typeof moves = [];
+		for (const m of moves) {
+			try {
+				await move(m.from, m.to, moves.length === 1);
+				done.push(m);
+			} catch (err) {
+				notifications.error(err instanceof Error ? err.message : String(err));
+			}
+		}
+		if (done.length > 1)
+			history.push({
+				label: `Move ${done.length} items`,
+				undo: async () => {
+					for (const m of [...done].reverse()) await move(m.to, m.from, false);
+				},
+				redo: async () => {
+					for (const m of done) await move(m.from, m.to, false);
+				}
+			});
+		if (done.length > 1) {
+			picked.clear();
+			for (const m of done) picked.add(m.to);
 		}
 	}
 
@@ -752,18 +938,18 @@
 					<button
 						role="treeitem"
 						data-rel={r.rel}
-						aria-selected={selected === r.rel}
+						aria-selected={isPicked(r.rel)}
 						aria-expanded={r.is_dir ? r.open : undefined}
 						draggable="true"
 						class={[
 							'flex h-[22px] w-full items-center gap-1 pr-2 text-left outline-offset-[-1px]',
-							selected === r.rel ? 'bg-(--vscode-list-inactiveSelectionBackground) focus:bg-(--vscode-list-activeSelectionBackground) focus:outline focus:outline-1 focus:outline-(--vscode-focusBorder)' : 'hover:bg-(--vscode-list-hoverBackground)',
+							isPicked(r.rel) ? 'bg-(--vscode-list-inactiveSelectionBackground) focus:bg-(--vscode-list-activeSelectionBackground) focus:outline focus:outline-1 focus:outline-(--vscode-focusBorder)' : 'hover:bg-(--vscode-list-hoverBackground)',
 							r.is_dir && dropTarget === r.rel && 'bg-(--vscode-list-dropBackground,#383B3D)'
 						]}
 						style:padding-left="{8 + r.depth * 12}px"
 						title={r.rel}
-						onclick={() => activate(r)}
-						ondblclick={() => !r.is_dir && activate(r, false)}
+						onclick={(e) => clickRow(e, r)}
+						ondblclick={(e) => !r.is_dir && !e.shiftKey && !(isMac ? e.metaKey : e.ctrlKey) && activate(r, false)}
 						oncontextmenu={(e) => rowMenu(e, r.rel)}
 						ondragstart={(e) => onDragStart(e, r)}
 						ondragover={(e) => (e.stopPropagation(), onDragOver(e, r))}

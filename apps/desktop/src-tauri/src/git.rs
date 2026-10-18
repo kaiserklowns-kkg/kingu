@@ -63,7 +63,30 @@ pub struct GitStatus {
   pub upstream_gone: bool,
   /// Configured remotes (`git remote`), for Publish Branch.
   pub remotes: Vec<String>,
+  /// The merge, rebase, cherry-pick or revert waiting for its conflicts (see [`operation`]).
+  pub operation: Option<Operation>,
   pub entries: Vec<StatusEntry>,
+}
+
+/// A multi-step git operation stopped half-way, usually on conflicts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Operation {
+  Merge,
+  Rebase,
+  CherryPick,
+  Revert,
+}
+
+impl Operation {
+  fn verb(self) -> &'static str {
+    match self {
+      Operation::Merge => "merge",
+      Operation::Rebase => "rebase",
+      Operation::CherryPick => "cherry-pick",
+      Operation::Revert => "revert",
+    }
+  }
 }
 
 /// One changed path. `index` / `worktree` are git's XY letters (`M`, `A`, `D`, `R`, `C`, `T`, `U`),
@@ -230,7 +253,52 @@ pub fn status_with(root: &Path, opts: &StatusOptions) -> Result<Option<GitStatus
   let out = run(root, &args.iter().map(String::as_str).collect::<Vec<_>>())?;
   let mut st = parse_status(&String::from_utf8_lossy(&out), &prefix);
   st.remotes = remotes(root)?;
+  st.operation = operation(root);
   Ok(Some(st))
+}
+
+/// The operation in progress, read from the markers git leaves in this worktree's git dir
+/// (a linked worktree has its own, under `.git/worktrees/<name>`). A rebase wins over the
+/// cherry-pick it runs internally.
+pub fn operation(root: &Path) -> Option<Operation> {
+  let out = run(root, &["rev-parse", "--absolute-git-dir"]).ok()?;
+  let dir = std::path::PathBuf::from(String::from_utf8_lossy(&out).trim());
+  operation_in(&dir)
+}
+
+fn operation_in(git_dir: &Path) -> Option<Operation> {
+  if git_dir.join("rebase-merge").is_dir() || git_dir.join("rebase-apply").is_dir() {
+    Some(Operation::Rebase)
+  } else if git_dir.join("MERGE_HEAD").is_file() {
+    Some(Operation::Merge)
+  } else if git_dir.join("CHERRY_PICK_HEAD").is_file() {
+    Some(Operation::CherryPick)
+  } else if git_dir.join("REVERT_HEAD").is_file() {
+    Some(Operation::Revert)
+  } else {
+    None
+  }
+}
+
+/// Aborts the operation in progress; returns which one.
+pub fn abort_operation(root: &Path) -> Result<Operation, String> {
+  let op = operation(root).ok_or("No merge, rebase, cherry-pick or revert is in progress.")?;
+  run(root, &[op.verb(), "--abort"])?;
+  Ok(op)
+}
+
+/// Continues the operation in progress once its conflicts are resolved and staged, keeping git's
+/// prepared message (no editor: `core.editor=true` accepts it as is). Unresolved paths stop it
+/// before git is asked.
+pub fn continue_operation(root: &Path) -> Result<Operation, String> {
+  let op = operation(root).ok_or("No merge, rebase, cherry-pick or revert is in progress.")?;
+  let out = run(root, &["diff", "--name-only", "--diff-filter=U", "-z"])?;
+  let unresolved = out.split(|b| *b == 0).filter(|s| !s.is_empty()).count();
+  if unresolved > 0 {
+    return Err(format!("{unresolved} file(s) still have conflicts. Resolve and stage them first."));
+  }
+  run(root, &["-c", "core.editor=true", op.verb(), "--continue"])?;
+  Ok(op)
 }
 
 /// `git remote`: configured remote names.
@@ -255,6 +323,7 @@ pub fn parse_status(text: &str, prefix: &str) -> GitStatus {
     detached: false,
     upstream_gone: false,
     remotes: Vec::new(),
+    operation: None,
     entries: Vec::new(),
   };
   let mut has_ab = false;
@@ -576,6 +645,47 @@ mod tests {
   }
   use std::process::Command;
   use std::path::PathBuf;
+
+  fn sh_git(dir: &Path, args: &[&str]) -> bool {
+    Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]).args(args).output().unwrap().status.success()
+  }
+
+  #[test]
+  fn reads_the_operation_markers() {
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    assert_eq!(operation_in(d), None);
+    std::fs::write(d.join("CHERRY_PICK_HEAD"), "x").unwrap();
+    assert_eq!(operation_in(d), Some(Operation::CherryPick));
+    std::fs::write(d.join("MERGE_HEAD"), "x").unwrap();
+    assert_eq!(operation_in(d), Some(Operation::Merge));
+    std::fs::create_dir(d.join("rebase-merge")).unwrap();
+    assert_eq!(operation_in(d), Some(Operation::Rebase));
+  }
+
+  #[test]
+  fn continues_a_merge_only_once_conflicts_are_resolved() {
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    assert!(sh_git(d, &["init", "-q", "-b", "main"]));
+    std::fs::write(d.join("a.txt"), "base\n").unwrap();
+    assert!(sh_git(d, &["add", "."]) && sh_git(d, &["commit", "-qm", "base"]));
+    assert!(sh_git(d, &["checkout", "-qb", "other"]));
+    std::fs::write(d.join("a.txt"), "other\n").unwrap();
+    assert!(sh_git(d, &["commit", "-qam", "other"]));
+    assert!(sh_git(d, &["checkout", "-q", "main"]));
+    std::fs::write(d.join("a.txt"), "main\n").unwrap();
+    assert!(sh_git(d, &["commit", "-qam", "main"]));
+    assert!(!sh_git(d, &["merge", "-q", "other"]));
+    assert_eq!(operation(d), Some(Operation::Merge));
+    assert!(continue_operation(d).unwrap_err().contains("1 file(s) still have conflicts"));
+    std::fs::write(d.join("a.txt"), "both\n").unwrap();
+    assert!(sh_git(d, &["add", "a.txt"]));
+    // `continue_operation` commits through `run`, so the repository needs its own identity.
+    assert!(sh_git(d, &["config", "user.name", "t"]) && sh_git(d, &["config", "user.email", "t@t"]) && sh_git(d, &["config", "commit.gpgsign", "false"]));
+    assert_eq!(continue_operation(d), Ok(Operation::Merge));
+    assert_eq!(operation(d), None);
+  }
 
   #[test]
   fn marks_ignored_entries_of_a_folder() {

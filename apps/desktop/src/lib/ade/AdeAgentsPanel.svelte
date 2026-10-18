@@ -12,7 +12,7 @@
 	import { adeTasks } from './tasks.svelte';
 	import { STATUS_LABEL, type TaskView } from './model';
 	import { invoke } from '@tauri-apps/api/core';
-	import { ask } from '#lib/workbench/dialogService.svelte.ts';
+	import { ask } from '#lib/workbench/messageBox.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { PRIMARY } from './adeLayout.svelte';
 	import { sessionAgo } from './agentsPanel';
@@ -29,18 +29,41 @@
 	type CliSession = { id: string; title: string; preview: string | null; cwd: string | null; branch: string | null; model: string | null; messages: number; created: number; updated: number; path: string };
 	let cli = $state<CliSession[]>([]);
 	let loading = $state(false);
+	let loadError = $state('');
+	/** The folder the last read was for: an answer for a folder we left is dropped. */
+	let reading: string | null = null;
 	async function loadCli() {
+		const root = workspace.root;
+		reading = root;
 		loading = true;
 		try {
-			cli = await invoke<CliSession[]>('claude_sessions', { limit: 250 });
-		} catch {
+			const next = await invoke<CliSession[]>('claude_sessions', { limit: 250 });
+			if (reading !== root) return;
+			cli = next;
+			loadError = '';
+		} catch (e) {
+			if (reading !== root) return;
 			cli = [];
+			loadError = String(e);
+		} finally {
+			if (reading === root) loading = false;
 		}
-		loading = false;
 	}
+	// Claude Code writes its transcripts outside the folder, so the watcher never sees them: read
+	// again when the folder changes, when the window comes back, and when a task's run ends.
 	$effect(() => {
 		void workspace.root;
 		void loadCli();
+		const onFocus = () => void loadCli();
+		window.addEventListener('focus', onFocus);
+		return () => window.removeEventListener('focus', onFocus);
+	});
+	const running = $derived(adeTasks.views.filter((v) => v.status === 'running').length);
+	let wasRunning = 0;
+	$effect(() => {
+		const now = running;
+		if (now < wasRunning) void loadCli();
+		wasRunning = now;
 	});
 
 	/** One row: a Kingu task's session or a Claude Code session run in this folder. */
@@ -260,6 +283,7 @@
 			<div class="flex h-full flex-col items-center justify-center px-4 text-center {MUTED}">
 				<span class="mb-3 opacity-50"><Icon name="agentsLayout" size={28} /></span>
 				<p class="text-sm font-medium">{total ? 'No sessions match the current filters' : 'No agent sessions found'}</p>
+				{#if loadError}<p class="mt-1 text-[11px] break-words text-(--vscode-errorForeground)" title={loadError}>Couldn't read Claude Code's sessions.</p>{/if}
 			</div>
 		{/each}
 	</div>

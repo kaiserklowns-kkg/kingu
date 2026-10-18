@@ -1,4 +1,4 @@
-// A task branch's pull request and CI checks (Orca's Checks panel), from Rust `worktree_pr_status`
+// A task branch's pull request and CI checks (Orca's Checks panel), from Rust `worktree_pr` (its `status`)
 // (`gh pr view`). Pure, so `bun test` covers it.
 
 export type CheckState = 'pending' | 'success' | 'failure' | 'neutral' | 'skipped' | 'cancelled';
