@@ -29,6 +29,7 @@
 	function pickerItems(picker: Picker, q: string): Item[] {
 		const list = picker.items;
 		const toItem = (pick: PickItem, match?: Match): Item => ({ label: pick.label, detail: pick.description, separator: q ? undefined : pick.separator, match, pick, run: () => picker.onAccept(pick) });
+		if (picker.dynamic) return picker.dynamic(q).map((p) => toItem(p));
 		if (!q) return list.map((p) => toItem(p));
 		return rank(q, list, (p) => p.label, 100).map(({ item, match }) => toItem(item, match));
 	}

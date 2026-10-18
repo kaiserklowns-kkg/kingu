@@ -13,6 +13,8 @@ export type Picker = {
 	onAccept: (item: PickItem) => void;
 	/** Closed without accepting (Escape, focus lost). */
 	onCancel?: () => void;
+	/** Items computed from the typed text instead of filtering `items` (an input box). */
+	dynamic?: (value: string) => PickItem[];
 };
 
 class Quick {
@@ -35,6 +37,18 @@ class Quick {
 		this.value = '';
 		this.visible = true;
 		this.session++;
+	}
+
+	/** `pick` as a promise: the accepted item, undefined when dismissed. */
+	choose(picker: Omit<Picker, 'onAccept' | 'onCancel'>): Promise<PickItem | undefined> {
+		return new Promise((resolve) => this.pick({ ...picker, onAccept: resolve, onCancel: () => resolve(undefined) }));
+	}
+
+	/** VS Code's showInputBox: the typed (trimmed) text on Enter, undefined when dismissed.
+	 * `hint` is the row shown under the input for the current text. */
+	async input(opts: { placeholder: string; hint: (value: string) => string }): Promise<string | undefined> {
+		const item = await this.choose({ placeholder: opts.placeholder, items: [], dynamic: (value) => [{ id: value, label: opts.hint(value) }] });
+		return item?.id;
 	}
 
 	hide({ accepted = false } = {}) {

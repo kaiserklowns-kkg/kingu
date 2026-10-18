@@ -14,6 +14,9 @@
 	import StatusResources from './StatusResources.svelte';
 	import PopupMenu, { menuItem } from './PopupMenu.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { commands } from '#lib/workbench/commands.svelte.ts';
+	import { scm } from '#lib/workbench/scm.svelte.ts';
+	import { syncItem } from '#lib/workbench/scmRemote.ts';
 
 	const languageNames: Record<string, string> = {
 		typescript: 'TypeScript',
@@ -33,6 +36,7 @@
 	// One status bar for the IDE and the Agents layout: the branch of what you are looking at (the
 	// selected worktree in Agents), problems, agent activity and cost in both; editor items in the IDE.
 	const branch = $derived(appMode.isAgents && adeLayout.key ? `kingu/${adeLayout.key}` : status.branch);
+	const sync = $derived(syncItem(scm.repo));
 	const counts = $derived(adeTasks.counts);
 	const cost = $derived(adeTasks.views.reduce((sum, v) => sum + (runtime.run(v.meta.slug)?.result?.total_cost_usd ?? v.meta.last_run?.cost_usd ?? 0), 0));
 	const editorItems = $derived(!appMode.isAgents && editors.active);
@@ -57,8 +61,22 @@
 	oncontextmenu={(e) => (e.preventDefault(), (menu = { x: e.clientX, y: e.clientY - 4 - 22 * TOGGLES.length - 12 }))}
 	class="flex h-(--kg-statusbar-height) shrink-0 items-center border-t border-(--vscode-statusBar-border) bg-(--vscode-statusBar-background) text-xs leading-(--kg-statusbar-height) text-(--vscode-statusBar-foreground)"
 >
-	{#if branch}
-		<span class="flex h-full items-center gap-1 px-2" title={appMode.isAgents && adeLayout.key ? 'branch ของ worktree ที่เลือก' : 'branch ปัจจุบัน'}><Icon name="branch" size={14} />{branch}</span>
+	{#if appMode.isAgents && adeLayout.key}
+		<span class="flex h-full items-center gap-1 px-2" title="branch ของ worktree ที่เลือก"><Icon name="branch" size={14} />{branch}</span>
+	{:else if branch}
+		<!-- VS Code's branch item (Checkout to…) and sync item next to it. -->
+		<button class={ITEM} title={`branch ปัจจุบัน${scm.repo?.detached ? ' (detached HEAD)' : ''}: คลิกเพื่อ Checkout to...`} onclick={() => commands.run('git.checkout')}>
+			<Icon name="branch" size={14} />{branch}
+		</button>
+		{#if scm.op}
+			<button class={ITEM} title="คลิกเพื่อยกเลิก" onclick={() => scm.cancel()}>
+				<span class="inline-block size-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent"></span>{scm.op}
+			</button>
+		{:else if sync}
+			<button class={ITEM} title={sync.title} onclick={() => commands.run(sync.command)}>
+				<Icon name={sync.command === 'git.publish' ? 'send' : 'refresh'} size={14} />{sync.label}
+			</button>
+		{/if}
 	{/if}
 	<button class={ITEM} onclick={() => (appMode.setMode('workbench'), layout.showPanel('problems'))}>
 		<Icon name="error" size={14} />{lsp.counts.errors} <Icon name="warning" size={14} />{lsp.counts.warnings}
