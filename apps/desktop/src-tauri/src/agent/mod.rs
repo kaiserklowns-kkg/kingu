@@ -18,6 +18,7 @@ pub mod notes;
 pub mod open_in;
 pub mod pr;
 pub mod review;
+pub mod rewind;
 pub mod scripts;
 pub mod status_hooks;
 pub mod tasks;
@@ -62,7 +63,8 @@ fn run_dir(open_root: &std::path::Path, root: Option<&str>, slug: Option<&str>, 
 /// Runs the agent and streams its events over `on_event`. Where: the task worktree `slug` (the
 /// ADE's calls), or `cwd` (`run_dir`). `chat_id`: the run belongs to that chat of `root`; its
 /// events are appended to the chat's transcript and only one run of a chat is live at a time.
-/// `resume` continues an earlier session (its `session_id`), refused while a live run holds it.
+/// `resume` continues an earlier session (its `session_id`), refused while a live run holds it;
+/// with `resume_at` (a chat after a rewind or fork), only up to that message, in a fork of it.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn agent_start(
@@ -77,6 +79,7 @@ pub async fn agent_start(
   model: Option<String>,
   permission_mode: Option<String>,
   resume: Option<String>,
+  resume_at: Option<String>,
   mcp_servers: Option<std::collections::BTreeMap<String, host::McpServer>>,
   plugins: Option<Vec<String>>,
   images: Option<Vec<String>>,
@@ -100,6 +103,9 @@ pub async fn agent_start(
   {
     return Err("invalid session id to resume".into());
   }
+  if resume_at.as_deref().is_some_and(|u| !rewind::valid_uuid(u) || resume.is_none()) {
+    return Err("invalid message to resume at".into());
+  }
   if let Some(servers) = &mcp_servers {
     host::validate_mcp_servers(servers)?;
   }
@@ -114,7 +120,9 @@ pub async fn agent_start(
     Some(id) => Some(chats::Transcript::new(&open_root, id)?),
     None => None,
   };
-  let owner = chat_id.as_deref().map(|id| format!("chat:{}:{id}", open_root.display()));
+  let owner = chat_id.as_deref().map(|id| chat_owner(&open_root, id));
+  // A chat's rewind points so far: the run stamps its checkpoints from them.
+  let anchors = chat_id.as_deref().map(|id| std::sync::Mutex::new(rewind::anchors(&open_root, id)));
   let mcp_servers = mcp_servers.filter(|m| !m.is_empty());
   let account = {
     use tauri::Manager;
@@ -130,6 +138,7 @@ pub async fn agent_start(
     model: model.filter(|m| !m.trim().is_empty()),
     permission_mode,
     resume,
+    resume_at,
     mcp_servers,
     plugins,
     env: (!account.set.is_empty()).then_some(host::SecretEnv(account.set)),
@@ -156,14 +165,20 @@ pub async fn agent_start(
           None if matches!(ev, AgentEvent::FileSnapshot { .. }) => Vec::new(),
           None => vec![ev],
         };
-        for ev in events {
+        for mut ev in events {
+          if let Some(a) = &anchors {
+            a.lock().unwrap().observe(&mut ev);
+          }
           // Transcript first, so a chat reopened right after an event has it.
           if let Some(t) = &transcript
             && let Err(e) = t.append(&ev)
           {
             log::warn!("chat transcript: {e}");
           }
-          let _ = on_event.send(ev);
+          // Rewind points are Rust's own.
+          if !matches!(ev, AgentEvent::Anchor { .. }) {
+            let _ = on_event.send(ev);
+          }
         }
       }),
     )
@@ -171,7 +186,18 @@ pub async fn agent_start(
   .await
   .map_err(|e| e.to_string())??;
   log::info!("agent run {id} started for {what}{}", if resuming { " (resumed)" } else { "" });
+  // A new run makes the chat's last rewind final.
+  if let Some(chat) = chat_id.as_deref()
+    && let Err(e) = rewind::clear_redo(&open_root, chat)
+  {
+    log::warn!("chat {chat}: redo: {e}");
+  }
   Ok(id)
+}
+
+/// The owner key of a chat's live run (`host::Owners`).
+fn chat_owner(root: &std::path::Path, id: &str) -> String {
+  format!("chat:{}:{id}", root.display())
 }
 
 /// Changes a live run's model and/or permission mode from its next response on.
@@ -301,6 +327,53 @@ pub async fn chat_edits_restore(ws: State<'_, Workspace>, edits: State<'_, Arc<c
   .await?;
   log::info!("chat edits: restored checkpoint {request} ({} file(s))", report.restored.len() + report.deleted.len());
   Ok(report)
+}
+
+/// Rewinds the chat to before request `request` (Restore checkpoint, Edit request, Retry): the
+/// files it and later requests changed go back, the transcript loses those requests, and the
+/// result says where the next run continues the conversation. `stack`: Redo should also undo the
+/// rewind made before this one (no run since). Refused while a run of the chat is live.
+#[tauri::command]
+pub async fn chat_rewind(
+  ws: State<'_, Workspace>,
+  agents: State<'_, Arc<AgentHost>>,
+  edits: State<'_, Arc<chat_edits::ChatEdits>>,
+  id: String,
+  request: u32,
+  stack: bool,
+) -> Result<rewind::Rewound, String> {
+  chats::check_id(&id)?;
+  let root = ws.root()?;
+  if agents.owner_live(&chat_owner(&root, &id)) {
+    return Err(crate::tr!(crate::i18n::msg::AgentMsg::ChatBusy));
+  }
+  let edits = edits.inner().clone();
+  let r = blocking(move || edits.with(&root, &id, true, |_| rewind::rewind(&root, &id, request, stack, edits_store(&root, &id)?.as_ref()))).await?;
+  log::info!("chat rewound to request {request} ({} file(s))", r.report.restored.len() + r.report.deleted.len());
+  Ok(r)
+}
+
+/// Redo: undoes the chat's rewinds since its last run (files and transcript).
+#[tauri::command]
+pub async fn chat_rewind_redo(ws: State<'_, Workspace>, agents: State<'_, Arc<AgentHost>>, edits: State<'_, Arc<chat_edits::ChatEdits>>, id: String) -> Result<chat_edits::Report, String> {
+  chats::check_id(&id)?;
+  let root = ws.root()?;
+  if agents.owner_live(&chat_owner(&root, &id)) {
+    return Err(crate::tr!(crate::i18n::msg::AgentMsg::ChatBusy));
+  }
+  let edits = edits.inner().clone();
+  blocking(move || edits.with(&root, &id, true, |_| rewind::redo(&root, &id, edits_store(&root, &id)?.as_ref()))).await
+}
+
+/// Fork: the new chat `new_id` gets chat `id`'s conversation before request `before` (all of it
+/// with none); the result is where its first run continues. The webview adds it to chats.json.
+#[tauri::command]
+pub async fn chat_fork(ws: State<'_, Workspace>, edits: State<'_, Arc<chat_edits::ChatEdits>>, id: String, new_id: String, before: Option<u32>) -> Result<rewind::Resume, String> {
+  chats::check_id(&id)?;
+  chats::check_id(&new_id)?;
+  let root = ws.root()?;
+  let edits = edits.inner().clone();
+  blocking(move || edits.with(&root, &id, false, |_| rewind::fork(&root, &id, &new_id, before, edits_store(&root, &id)?.as_ref()))).await
 }
 
 async fn on_host<T: Send + 'static>(

@@ -767,14 +767,7 @@ pub fn restore_checkpoint(store: &Store, index: u32) -> Result<Report, String> {
   if !f.requests.iter().any(|r| r.index == index) {
     return Err(tr!(AgentMsg::EditNoRequest, index = index + 1));
   }
-  let mut firsts: Vec<Entry> = Vec::new();
-  let mut later: Vec<&Entry> = f.entries.iter().filter(|e| e.request >= index && e.state != State::Reverted).collect();
-  later.sort_by_key(|e| e.request);
-  for e in later {
-    if !firsts.iter().any(|x| x.path == e.path) {
-      firsts.push(e.clone());
-    }
-  }
+  let firsts = checkpoint_firsts(&f, index);
   let _queue = git_queue::lock(&store.cwd, Scope::Worktree, "restore checkpoint")?;
   let mut report = Report::default();
   for e in &firsts {
@@ -788,6 +781,82 @@ pub fn restore_checkpoint(store: &Store, index: u32) -> Result<Report, String> {
   }
   store.save(&f)?;
   Ok(report)
+}
+
+/// The entries Restore checkpoint of `index` puts back: per file, the earliest change of request
+/// `index` or a later one (not yet reverted).
+fn checkpoint_firsts(f: &EditsFile, index: u32) -> Vec<Entry> {
+  let mut firsts: Vec<Entry> = Vec::new();
+  let mut later: Vec<&Entry> = f.entries.iter().filter(|e| e.request >= index && e.state != State::Reverted).collect();
+  later.sort_by_key(|e| e.request);
+  for e in later {
+    if !firsts.iter().any(|x| x.path == e.path) {
+      firsts.push(e.clone());
+    }
+  }
+  firsts
+}
+
+/// What Redo of a rewind puts back: the edits file from before it and the files it changed, as
+/// they were (their contents in the snapshot store).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct EditsRedo {
+  pub file: EditsFile,
+  pub files: Vec<(String, Before)>,
+}
+
+impl EditsRedo {
+  /// `later` (a rewind made after this one, before Redo) folded in: Redo goes back to before
+  /// the first. Files this one already has keep their contents from then.
+  pub fn stack(self, later: EditsRedo) -> EditsRedo {
+    let mut files = self.files;
+    for (path, before) in later.files {
+      if !files.iter().any(|(p, _)| *p == path) {
+        files.push((path, before));
+      }
+    }
+    EditsRedo { file: self.file, files }
+  }
+}
+
+/// Restore checkpoint for a rewind of the conversation: like `restore_checkpoint`, after storing
+/// the current contents of the files it changes (for Redo). A request the store does not know
+/// changed nothing (it is not an error here).
+pub fn rewind_files(store: &Store, index: u32) -> Result<(Report, EditsRedo), String> {
+  let f = store.load()?;
+  if !f.requests.iter().any(|r| r.index == index) {
+    return Ok((Report::default(), EditsRedo { file: f, files: Vec::new() }));
+  }
+  let mut files = Vec::new();
+  for e in checkpoint_firsts(&f, index) {
+    let now = match store.current(&e.path) {
+      Ok(Some(bytes)) => store.put(&bytes)?,
+      Ok(None) => Before::Absent,
+      Err(reason) => Before::Unknown { reason },
+    };
+    files.push((e.path, now));
+  }
+  let report = restore_checkpoint(store, index)?;
+  Ok((report, EditsRedo { file: f, files }))
+}
+
+/// Redo of a rewind: the files and the edits file as they were before it.
+pub fn redo_files(store: &Store, redo: &EditsRedo) -> Result<Report, String> {
+  let _queue = git_queue::lock(&store.cwd, Scope::Worktree, "redo checkpoint")?;
+  let mut report = Report::default();
+  for (path, before) in &redo.files {
+    store.restore(path, before, &mut report)?;
+  }
+  store.save(&redo.file)?;
+  Ok(report)
+}
+
+/// A forked chat's store: the requests of `from` before `below` (all with none), with no
+/// entries, so the copied transcript's checkpoints stay known and new requests number after them.
+pub fn seed_fork(from: &Store, to: &Store, below: Option<u32>) -> Result<(), String> {
+  let f = from.load()?;
+  let requests = f.requests.into_iter().filter(|r| below.is_none_or(|b| r.index < b)).collect();
+  to.save(&EditsFile { version: VERSION, cwd: String::new(), requests, entries: Vec::new() })
 }
 
 /// Lines added and removed between `a` and `b` (a minimal line diff, Myers); `None` when either
@@ -928,7 +997,7 @@ impl ChatEdits {
           } else {
             state.queued.push_back(index);
           }
-          vec![ev, AgentEvent::Checkpoint { request: index }]
+          vec![ev, AgentEvent::Checkpoint { request: index, session_id: None, resume_at: None }]
         }
         Err(e) => {
           log::warn!("chat edits {id}: request: {e}");
@@ -1265,13 +1334,13 @@ mod tests {
       usage: None,
     };
     let out = edits.on_event(&root, "c", &root, user("first"));
-    assert_eq!(out[1], AgentEvent::Checkpoint { request: 0 });
+    assert_eq!(out[1], AgentEvent::Checkpoint { request: 0, session_id: None, resume_at: None });
     assert!(edits.running(&root, "c"));
     assert!(edits.with(&root, "c", true, |_| Ok(())).unwrap_err().contains("still working"));
     assert_eq!(edits.on_event(&root, "c", &root, snap("0")), [AgentEvent::EditsChanged { request: Some(0) }]);
     write(&root, "a.txt", "1");
     // A follow-up sent mid-turn is the next request, starting when this turn ends.
-    assert_eq!(edits.on_event(&root, "c", &root, user("second"))[1], AgentEvent::Checkpoint { request: 1 });
+    assert_eq!(edits.on_event(&root, "c", &root, user("second"))[1], AgentEvent::Checkpoint { request: 1, session_id: None, resume_at: None });
     assert!(edits.on_event(&root, "c", &root, snap("1")).is_empty(), "same file, same request");
     edits.on_event(&root, "c", &root, result());
     edits.on_event(&root, "c", &root, snap("1"));

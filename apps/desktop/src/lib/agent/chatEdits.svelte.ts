@@ -97,7 +97,7 @@ class ChatEditsStore {
 		}
 		const targets = undoTargets(v, paths);
 		if (paths === null && targets.length > 1 && !(await ask(t('chatEdits.undoAllConfirm', { count: targets.length }), { kind: 'warning', okLabel: t('chatEdits.undoAll') }))) return false;
-		if (!(await this.#confirmDirty(targets))) return false;
+		if (!(await this.confirmDirty(targets))) return false;
 		try {
 			const report = await invoke<Report>('chat_edits_undo', { id: chatId, paths });
 			this.views[chatId] = applyUndo(v, report);
@@ -122,7 +122,7 @@ class ChatEditsStore {
 		}
 		const targets = restoreTargets(v, request);
 		if (!(await ask(t('chatEdits.restoreConfirm', { count: targets.length }), { kind: 'warning', okLabel: t('chatEdits.restoreOk') }))) return false;
-		if (!(await this.#confirmDirty(targets))) return false;
+		if (!(await this.confirmDirty(targets))) return false;
 		try {
 			const report = await invoke<Report>('chat_edits_restore', { id: chatId, request });
 			this.views[chatId] = applyRestore(v, request);
@@ -136,7 +136,8 @@ class ChatEditsStore {
 		}
 	}
 
-	async #confirmDirty(targets: string[]): Promise<boolean> {
+	/** Asks before writing over files with unsaved editor changes; true to go on. */
+	async confirmDirty(targets: string[]): Promise<boolean> {
 		const dirty = dirtyOf(targets, (p) => editors.isDirty(p));
 		if (!dirty.length) return true;
 		return ask(t('chatEdits.dirtyConfirm', { count: dirty.length, paths: dirty.slice(0, 3).join(', ') + (dirty.length > 3 ? ', …' : '') }), {

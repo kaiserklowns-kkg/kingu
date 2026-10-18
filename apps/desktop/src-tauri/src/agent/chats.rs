@@ -68,6 +68,10 @@ pub struct ChatMeta {
   /// The agent session; a message after the run ended resumes it.
   #[serde(default)]
   pub session_id: Option<String>,
+  /// After a rewind or a fork: the next run resumes `session_id` up to this message only, in a
+  /// fork of it (`rewind`); cleared once that run reports its own session.
+  #[serde(default)]
+  pub resume_at: Option<String>,
   #[serde(default)]
   pub model: Option<String>,
   #[serde(default)]
@@ -135,6 +139,9 @@ pub fn validate(chats: &[ChatMeta]) -> Result<(), String> {
     }
     if c.session_id.as_deref().is_some_and(|id| !valid_session_id(id)) {
       return Err(format!("{}: invalid session id", c.id));
+    }
+    if c.resume_at.as_deref().is_some_and(|u| !super::rewind::valid_uuid(u) || c.session_id.is_none()) {
+      return Err(format!("{}: invalid resume point", c.id));
     }
     if c.model.as_deref().is_some_and(|m| !valid_model(m)) {
       return Err(format!("{}: invalid model", c.id));
@@ -258,9 +265,9 @@ pub fn for_transcript(ev: &AgentEvent) -> Option<AgentEvent> {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct Line {
-  t: u64,
-  event: AgentEvent,
+pub(super) struct Line {
+  pub t: u64,
+  pub event: AgentEvent,
 }
 
 fn now_ms() -> u64 {
@@ -326,7 +333,7 @@ impl Transcript {
 }
 
 /// `write_atomic` without the settings size cap (a transcript is bounded by `MAX_TRANSCRIPT_BYTES`).
-fn write_atomic_big(path: &Path, content: &str) -> Result<(), String> {
+pub(super) fn write_atomic_big(path: &Path, content: &str) -> Result<(), String> {
   if content.len() as u64 <= 1024 * 1024 {
     return write_atomic(path, content);
   }
@@ -346,7 +353,8 @@ fn write_atomic_big(path: &Path, content: &str) -> Result<(), String> {
 }
 
 /// The newest `MAX_LOADED_EVENTS` events of the chat, oldest first; empty without a transcript.
-/// Lines that do not parse (a torn last line after a crash) are skipped.
+/// Lines that do not parse (a torn last line after a crash) are skipped, and so are `Anchor`s
+/// (rewind points, for Rust only).
 pub fn load_transcript(root: &Path, id: &str) -> Result<Vec<AgentEvent>, String> {
   let path = transcript_path(root, id)?;
   let bytes = match std::fs::read(&path) {
@@ -357,7 +365,12 @@ pub fn load_transcript(root: &Path, id: &str) -> Result<Vec<AgentEvent>, String>
   // A file grown past the cap by hand: read only its tail.
   let from = bytes.len().saturating_sub(2 * MAX_TRANSCRIPT_BYTES as usize);
   let text = String::from_utf8_lossy(&bytes[from..]);
-  let mut events: Vec<AgentEvent> = text.lines().filter_map(|l| serde_json::from_str::<Line>(l).ok()).map(|l| l.event).collect();
+  let mut events: Vec<AgentEvent> = text
+    .lines()
+    .filter_map(|l| serde_json::from_str::<Line>(l).ok())
+    .map(|l| l.event)
+    .filter(|e| !matches!(e, AgentEvent::Anchor { .. }))
+    .collect();
   if events.len() > MAX_LOADED_EVENTS {
     events.drain(..events.len() - MAX_LOADED_EVENTS);
   }
@@ -385,6 +398,7 @@ mod tests {
       prompt: "อธิบาย main.rs".into(),
       cwd: ChatCwd::Folder,
       session_id: Some("0b5e-4c1d_9".into()),
+      resume_at: None,
       model: Some("claude-opus-5-5[1m]".into()),
       permission_mode: Some("acceptEdits".into()),
       created_at: 1,
@@ -444,6 +458,9 @@ mod tests {
     assert!(bad(|c| c.prompt = "x".repeat(MAX_PROMPT + 1)));
     assert!(bad(|c| c.cwd = ChatCwd::Task { slug: "../etc".into() }));
     assert!(bad(|c| c.session_id = Some("--resume; rm".into())));
+    assert!(bad(|c| c.resume_at = Some("not-a-uuid".into())));
+    assert!(bad(|c| (c.session_id, c.resume_at) = (None, Some("0b5e9a1c-4c1d-4e2f-9a3b-1234567890ab".into()))));
+    assert!(validate(&[ChatMeta { resume_at: Some("0b5e9a1c-4c1d-4e2f-9a3b-1234567890ab".into()), ..chat("a") }]).is_ok());
     assert!(bad(|c| c.model = Some("opus --dangerously".into())));
     assert!(bad(|c| c.model = Some(" ".into())));
     assert!(bad(|c| c.permission_mode = Some("bypassPermissions".into())));

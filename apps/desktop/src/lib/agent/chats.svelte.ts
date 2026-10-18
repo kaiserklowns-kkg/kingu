@@ -10,7 +10,10 @@
  *   chats.send(id, message)            into the live run, else a new run resuming its session
  *   chats.submit(id, message)          send, or queue it while a turn runs (sent when the turn ends)
  *   chats.queue(id) / unqueue(id, n)   the chat's queued requests
- *   chats.retry(id)                    sends the last request again
+ *   chats.retry(id)                    sends the last request again (chatRewind.retry rewinds first)
+ *   chats.fork(id, before)             Fork Conversation: a new chat with the conversation before
+ *                                      request `before` (all of it with null); returns its id
+ *   chats.stopAndWait(id) / reload(id, resume)   for rewinds (chatRewind.svelte.ts)
  *   chats.setModel / setPermissionMode applied to the live session (SDK setModel / setPermissionMode)
  *                                      or saved for the next run; returns which
  *   chats.answer / interrupt / stop / rename / remove / promote
@@ -32,10 +35,12 @@ import { applyEvent, initialRun, type AgentEvent, type Decision, type RunState }
 import { buildTurns, lastRequest } from './chatParts.ts';
 import { withoutImagesLine } from './chatPrompt.ts';
 import { shouldDrain, turnBusy } from './chatInput.ts';
+import { forkTitle, rewoundMeta, type ForkPoint } from './chatRewind.ts';
 import {
 	chatCwdPath,
 	chatSendPlan,
 	newChat,
+	newChatId,
 	optionChange,
 	patchChat,
 	PERMISSION_MODES,
@@ -145,7 +150,9 @@ class Chats {
 			if (this.runs[runKey(root, id)]) return;
 			const meta = this.get(id);
 			const s = replayTranscript(events);
-			s.sessionId ??= meta?.session_id ?? null;
+			// A rewound or forked chat continues where Rust said, not from the transcript's last session.
+			if (meta?.resume_at) s.sessionId = meta.session_id;
+			else s.sessionId ??= meta?.session_id ?? null;
 			this.runs[runKey(root, id)] = { ...s, id, root, runId: undefined, startedAt: meta?.updated_at ?? 0 };
 		} catch (e) {
 			clientLog('info', `chat ${id}: transcript not loaded: ${e}`);
@@ -182,6 +189,8 @@ class Chats {
 		const mcp = mcpServers(cwd);
 		const plugins = await skillPlugins();
 		let savedSession = meta.session_id;
+		// After a rewind or fork: this run continues the session only up to that message (in a fork of it).
+		const resumeAt = resume && resume === meta.session_id ? (meta.resume_at ?? null) : null;
 		const onEvent = new Channel<AgentEvent>();
 		onEvent.onmessage = (ev) => {
 			applyEvent(state, ev);
@@ -191,7 +200,7 @@ class Chats {
 			if ((ev.kind === 'result' || ev.kind === 'exit') && shouldDrain(this.queues[key]?.length ?? 0, state)) queueMicrotask(() => void this.#drain(root, meta.id));
 			if ((ev.kind === 'system' || ev.kind === 'result') && ev.session_id && ev.session_id !== savedSession) {
 				savedSession = ev.session_id;
-				this.#patch(root, meta.id, { session_id: ev.session_id });
+				this.#patch(root, meta.id, { session_id: ev.session_id, resume_at: null });
 			}
 			if (ev.kind === 'result' || ev.kind === 'exit') this.#patch(root, meta.id, { last_run: runSummary({ ...state, slug: meta.id }, Date.now(), state.startedAt) });
 		};
@@ -204,6 +213,7 @@ class Chats {
 				model: meta.model,
 				permissionMode: meta.permission_mode,
 				resume,
+				resumeAt,
 				mcpServers: Object.keys(mcp).length ? mcp : null,
 				plugins: plugins.length ? plugins : null,
 				images: images.length ? images : null,
@@ -282,6 +292,74 @@ class Chats {
 		const text = withoutImagesLine(last.sent);
 		const known = this.#lastImages.get(runKey(root, id));
 		return (await this.submit(id, { text, images: known?.text === text ? known.images : [] }, last.text)) !== false;
+	}
+
+	/** The text and images of the last request sent, while known (Retry sends the images again). */
+	lastSent(id: string): OutgoingMessage | undefined {
+		return this.root ? this.#lastImages.get(runKey(this.root, id)) : undefined;
+	}
+
+	/** Stops the chat's run and waits for its end; false when it did not end in time. */
+	async stopAndWait(id: string, timeoutMs = 8000): Promise<boolean> {
+		const run = this.run(id);
+		if (!run || run.ended) return true;
+		if (run.runId === undefined) return false;
+		const ended = new Promise<boolean>((resolve) => {
+			const timer = setTimeout(() => {
+				off();
+				resolve(this.run(id)?.ended ?? true);
+			}, timeoutMs);
+			const off = this.onEvent((chat, ev) => {
+				if (chat !== id || ev.kind !== 'exit') return;
+				clearTimeout(timer);
+				off();
+				resolve(true);
+			});
+		});
+		await this.stop(id);
+		return ended;
+	}
+
+	/**
+	 * After Rust rewrote the chat's transcript (a rewind or its Redo): the timeline is the saved
+	 * one again, and the next run continues the conversation from `resume`. Its queue is dropped.
+	 */
+	async reload(id: string, resume: ForkPoint) {
+		const root = this.root;
+		if (!root || !this.get(id)) return;
+		const key = runKey(root, id);
+		const events = await invoke<AgentEvent[]>('chat_transcript_load', { id }).catch(() => [] as AgentEvent[]);
+		const s = replayTranscript(events);
+		const meta = rewoundMeta(resume);
+		s.sessionId = meta.session_id;
+		this.runs[key] = { ...s, id, root, runId: undefined, startedAt: this.get(id)?.updated_at ?? 0 };
+		delete this.queues[key];
+		this.#lastImages.delete(key);
+		this.#patch(root, id, meta);
+	}
+
+	/**
+	 * Fork Conversation: a new chat with this chat's conversation before request `before` (all of
+	 * it with null), titled "Forked: …"; its first message continues from there. The source chat
+	 * is unchanged. Returns the new chat's id.
+	 */
+	async fork(id: string, before: number | null): Promise<string | undefined> {
+		const root = this.root;
+		const meta = this.get(id);
+		if (!root || !meta) return;
+		const now = Date.now();
+		const newId = newChatId(now);
+		try {
+			const point = await invoke<ForkPoint>('chat_fork', { id, newId, before });
+			const title = forkTitle(meta.title, t('chatRewind.forkedPrefix'), (title) => t('chatRewind.forkedTitle', { title }));
+			const fork: ChatMeta = { ...meta, id: newId, title: renamedChatTitle('', title) ?? meta.title, ...rewoundMeta(point), created_at: now, updated_at: now, last_run: null };
+			this.#save([...this.list, fork], root);
+			await this.#saving;
+			return newId;
+		} catch (e) {
+			notifications.error(t('chatRewind.forkFailed', { error: String(e) }));
+			return undefined;
+		}
 	}
 
 	async answer(id: string, requestId: string, decision: Decision, message?: string, answers?: Record<string, string>) {

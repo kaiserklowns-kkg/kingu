@@ -22,6 +22,8 @@ export type ChatMeta = {
 	prompt: string;
 	cwd: ChatCwd;
 	session_id: string | null;
+	/** After a rewind or a fork: the next run resumes `session_id` up to this message, in a fork of it (Rust `rewind.rs`). */
+	resume_at?: string | null;
 	model: string | null;
 	permission_mode: PermissionMode | null;
 	/** Unix ms. */

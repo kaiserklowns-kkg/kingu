@@ -133,6 +133,9 @@ pub struct StartRequest {
   pub model: Option<String>,
   pub permission_mode: Option<String>,
   pub resume: Option<String>,
+  /// With `resume`: continue only up to this message, in a fork of the session (`rewind`).
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub resume_at: Option<String>,
   /// MCP servers for the run (from trusted Snaps); omitted when there are none.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub mcp_servers: Option<std::collections::BTreeMap<String, McpServer>>,
@@ -206,6 +209,10 @@ impl Owners {
 
   pub fn holds_session(&self, id: &str) -> bool {
     self.by_key.contains_key(&session_key(id))
+  }
+
+  pub fn holds(&self, owner: &str) -> bool {
+    self.by_key.contains_key(owner)
   }
 }
 
@@ -483,6 +490,11 @@ impl AgentHost {
     }
   }
 
+  /// Whether a live run holds `owner` (a `StartRequest::owner` key, e.g. `chat:<root>:<id>`).
+  pub fn owner_live(&self, owner: &str) -> bool {
+    self.owners.lock().unwrap().holds(owner)
+  }
+
   /// Whether a live run of this app holds the agent session `id`.
   pub fn session_live(&self, id: &str) -> bool {
     self.owners.lock().unwrap().holds_session(id)
@@ -734,6 +746,7 @@ done"#,
     let first = host.start(StartRequest { resume: Some("s-old".into()), owner: Some("chat:/r:c-1".into()), ..req("/w") }, sink.clone()).unwrap();
     assert!(matches!(next(&rx), AgentEvent::System { .. }));
     assert!(host.session_live("s-old") && host.session_live("s-new"));
+    assert!(host.owner_live("chat:/r:c-1") && !host.owner_live("chat:/r:c-2"));
     let err = host.start(StartRequest { resume: Some("s-old".into()), ..req("/w") }, sink.clone()).unwrap_err();
     assert!(err.contains("already running"), "{err}");
     assert!(host.start(StartRequest { resume: Some("s-new".into()), ..req("/w") }, sink.clone()).is_err(), "the session it reported is held too");
@@ -742,7 +755,7 @@ done"#,
     host.set_options(first, Some("claude-sonnet-5"), Some("plan")).unwrap();
     host.stop(first).unwrap();
     assert!(matches!(next(&rx), AgentEvent::Exit { stopped: true, .. }));
-    assert!(!host.session_live("s-old") && !host.session_live("s-new"));
+    assert!(!host.session_live("s-old") && !host.session_live("s-new") && !host.owner_live("chat:/r:c-1"));
     let second = host.start(StartRequest { resume: Some("s-old".into()), owner: Some("chat:/r:c-1".into()), ..req("/w") }, sink).unwrap();
     assert_ne!(first, second);
 
@@ -802,6 +815,13 @@ exit 3"#
     assert_eq!(wire["images"], json!(["/c/a.png"]));
     let wire = serde_json::to_value(StartRequest { cwd: "/w".into(), prompt: "x".into(), ..Default::default() }).unwrap();
     assert!(wire.get("images").is_none());
+  }
+
+  #[test]
+  fn resume_at_is_sent_as_resume_at_only_when_set() {
+    let req = StartRequest { cwd: "/w".into(), prompt: "x".into(), resume: Some("s".into()), resume_at: Some("0b5e9a1c-4c1d-4e2f-9a3b-000000000001".into()), ..Default::default() };
+    assert_eq!(serde_json::to_value(req).unwrap()["resumeAt"], "0b5e9a1c-4c1d-4e2f-9a3b-000000000001");
+    assert!(serde_json::to_value(StartRequest::default()).unwrap().get("resumeAt").is_none());
   }
 
   #[test]

@@ -89,9 +89,21 @@ pub enum AgentEvent {
     #[serde(default)]
     skipped: Option<String>,
   },
+  /// The agent session's uuid of the SDK message whose events came just before (the host's
+  /// `anchor`). Kept in a chat's transcript (its rewind points: `rewind::Anchors`), never passed
+  /// to the webview.
+  Anchor { uuid: String },
   /// Added by Rust after a chat's user message: that message is request `request` of the chat,
-  /// the checkpoint "Restore checkpoint" goes back to. Kept in the transcript.
-  Checkpoint { request: u32 },
+  /// the checkpoint "Restore checkpoint" goes back to. Kept in the transcript. `session_id` and
+  /// `resume_at`: where the conversation before this request ends (the last `Anchor` before it
+  /// and its session); none for a chat's first request.
+  Checkpoint {
+    request: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resume_at: Option<String>,
+  },
   /// Added by Rust: the chat's working set changed (an edit was recorded, a turn ended). Live only.
   EditsChanged { request: Option<u32> },
   Error { message: String },

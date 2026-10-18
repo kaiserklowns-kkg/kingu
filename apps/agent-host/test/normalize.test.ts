@@ -30,6 +30,20 @@ describe('normalize', () => {
 		expect(r).toMatchObject({ kind: 'result', is_error: true, result: 'too many turns', total_cost_usd: null, usage: { input_tokens: 3, output_tokens: 4, cache_read_input_tokens: 0 } });
 	});
 
+	test('keeps the uuid of main-chain messages as an anchor after their events', () => {
+		const uuid = '0b5e9a1c-4c1d-4e2f-9a3b-1234567890ab';
+		expect(normalize({ type: 'assistant', uuid, message: { content: [{ type: 'text', text: 'เสร็จ' }] } })).toEqual([
+			{ kind: 'message', role: 'assistant', text: 'เสร็จ' },
+			{ kind: 'anchor', uuid }
+		]);
+		expect(normalize({ type: 'user', uuid, message: { content: [{ type: 'tool_result', tool_use_id: 't', content: 'ok' }] } }).at(-1)).toEqual({ kind: 'anchor', uuid });
+		// A subagent's messages, replays and malformed uuids are not resume points.
+		expect(normalize({ type: 'assistant', uuid, parent_tool_use_id: 'tu1', message: { content: 'x' } }).some((e) => e.kind === 'anchor')).toBe(false);
+		expect(normalize({ type: 'user', uuid, isReplay: true, message: { content: 'x' } }).some((e) => e.kind === 'anchor')).toBe(false);
+		expect(normalize({ type: 'assistant', uuid: 'x; rm', message: { content: 'x' } }).some((e) => e.kind === 'anchor')).toBe(false);
+		expect(normalize({ type: 'result', subtype: 'success', uuid }).some((e) => e.kind === 'anchor')).toBe(false);
+	});
+
 	test('maps text and thinking deltas of the main agent only', () => {
 		const delta = (d: object, parent: string | null = null) => normalize({ type: 'stream_event', event: { type: 'content_block_delta', delta: d }, parent_tool_use_id: parent });
 		expect(delta({ type: 'text_delta', text: 'สวัส' })).toEqual([{ kind: 'delta', block: 'text', text: 'สวัส' }]);

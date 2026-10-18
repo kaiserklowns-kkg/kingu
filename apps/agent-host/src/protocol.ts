@@ -16,6 +16,12 @@ export type StartParams = {
 	permissionMode?: PermissionMode | null;
 	/** Session id to continue (from an earlier `system`/`result` event). */
 	resume?: string | null;
+	/**
+	 * With `resume`: continue from this message (an `anchor` uuid) and drop what came after it,
+	 * in a fork of the session (the SDK's `resumeSessionAt` + `forkSession`; the new session id
+	 * comes back in `system`). Rewinding a chat, or forking it, uses it.
+	 */
+	resumeAt?: string | null;
 	/** Stdio MCP servers for this run (from trusted Snaps), by name. */
 	mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>;
 	/** Skill plugin folders of active Snaps (absolute; Rust checks they are ones Kingu generated). */
@@ -56,6 +62,11 @@ export type AgentEvent =
 	/** Streaming text/thinking chunk; the complete `message`/`thinking` event follows. */
 	| { kind: 'delta'; block: 'text' | 'thinking'; text: string }
 	| { kind: 'thinking'; text: string }
+	/**
+	 * The session-log uuid of the SDK message whose events came just before (main-chain user and
+	 * assistant messages only). The last one before a request is where `resumeAt` rewinds to.
+	 */
+	| { kind: 'anchor'; uuid: string }
 	| { kind: 'tool_use'; id: string; name: string; input: unknown }
 	| { kind: 'tool_result'; tool_use_id: string; content: string; is_error: boolean }
 	| {

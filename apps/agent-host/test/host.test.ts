@@ -193,6 +193,17 @@ describe('agent host protocol', () => {
 		expect(log.options).toMatchObject({ model: 'claude-sonnet-5', resume: 'sess-0', permissionMode: 'default' });
 	});
 
+	test('resumeAt rewinds in a fork of the session; it needs resume and a uuid', async () => {
+		const { log, call } = setup();
+		const at = '0b5e9a1c-4c1d-4e2f-9a3b-1234567890ab';
+		await call(1, 'start', { runId: 1, cwd: '/w', prompt: 'x', resume: 'sess-0', resumeAt: at });
+		expect(log.options).toMatchObject({ resume: 'sess-0', resumeSessionAt: at, forkSession: true });
+		await call(2, 'start', { runId: 2, cwd: '/w', prompt: 'x', resume: 'sess-0' });
+		expect(log.options && 'resumeSessionAt' in log.options).toBe(false);
+		expect((await call(3, 'start', { runId: 3, cwd: '/w', prompt: 'x', resumeAt: at })).error?.message).toContain('resumeAt');
+		expect((await call(4, 'start', { runId: 4, cwd: '/w', prompt: 'x', resume: 's', resumeAt: '--fork' })).error?.message).toContain('resumeAt');
+	});
+
 	test('hands Snap MCP servers to the SDK as stdio servers', async () => {
 		const { log, call } = setup();
 		await call(1, 'start', { runId: 1, cwd: '/w', prompt: 'x', mcpServers: { 'go-gopls': { command: 'gopls', args: ['mcp'] } } });
