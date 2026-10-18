@@ -39,6 +39,44 @@ pub fn relevant(root: &Path, path: &Path) -> Option<String> {
   Some(parts.join("/"))
 }
 
+/// `files.watcherInclude`: extra folders inside the workspace to watch, for the ones the
+/// recursive watch on the root misses (a symlinked folder: the OS reports its target's paths).
+/// Each resolves to `(the real folder, its workspace-relative path)`; paths outside the
+/// workspace, missing ones and ones the root watch already covers are dropped.
+pub fn resolve_includes(root: &Path, raw: &[String]) -> Vec<(PathBuf, String)> {
+  let real_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+  let mut out = Vec::new();
+  for r in raw.iter().map(|r| r.trim()).filter(|r| !r.is_empty()) {
+    let p = Path::new(r);
+    let full = if p.is_absolute() { p.to_path_buf() } else { root.join(p) };
+    let Ok(rel) = full.strip_prefix(root) else { continue };
+    if rel.components().any(|c| !matches!(c, Component::Normal(_))) {
+      continue;
+    }
+    let Ok(real) = full.canonicalize() else { continue };
+    if real.starts_with(&real_root) {
+      continue;
+    }
+    let rel = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/");
+    out.push((real, rel));
+  }
+  out
+}
+
+/// The workspace-relative path of an event: under the root, or under one of the included
+/// folders (reported at their real path).
+pub fn map_event(root: &Path, includes: &[(PathBuf, String)], path: &Path) -> Option<String> {
+  if path.starts_with(root) {
+    return relevant(root, path);
+  }
+  includes.iter().find(|(real, _)| path.starts_with(real)).and_then(|(real, rel)| {
+    let inner = relevant(real, path)?;
+    let joined = if inner.is_empty() { rel.clone() } else { format!("{rel}/{inner}") };
+    // The joined path gets the same noise filter as a path under the root.
+    relevant(Path::new("/"), &Path::new("/").join(&joined))
+  })
+}
+
 /// Collects one debounced batch: blocks for the first path, then gathers until quiet.
 /// `None` once the sender is gone (the watcher was replaced).
 pub fn next_batch(rx: &Receiver<String>, quiet: Duration, max_wait: Duration) -> Option<BTreeSet<String>> {
@@ -64,6 +102,10 @@ pub struct FileWatcher {
   current: Mutex<Option<notify::RecommendedWatcher>>,
   /// `files.watcherExclude`, compiled; read by the running watcher's callback.
   exclude: Arc<RwLock<Vec<regex::Regex>>>,
+  /// `files.watcherInclude` as set, and what it resolved to for the watched root.
+  include_raw: Mutex<Vec<String>>,
+  includes: Arc<RwLock<Vec<(PathBuf, String)>>>,
+  root: Mutex<Option<PathBuf>>,
 }
 
 impl FileWatcher {
@@ -73,16 +115,44 @@ impl FileWatcher {
     *self.exclude.write().unwrap_or_else(|e| e.into_inner()) = compiled;
   }
 
+  /// Replaces the `files.watcherInclude` paths; the running watcher watches the new ones at once.
+  pub fn set_include(&self, paths: &[String]) {
+    *self.include_raw.lock().unwrap_or_else(|e| e.into_inner()) = paths.to_vec();
+    let root = self.root.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let mut current = self.current.lock().unwrap_or_else(|e| e.into_inner());
+    if let (Some(root), Some(w)) = (root, current.as_mut()) {
+      self.rewatch_includes(&root, w);
+    }
+  }
+
+  fn rewatch_includes(&self, root: &Path, w: &mut notify::RecommendedWatcher) {
+    let raw = self.include_raw.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let next = resolve_includes(root, &raw);
+    let mut includes = self.includes.write().unwrap_or_else(|e| e.into_inner());
+    for (real, _) in includes.iter() {
+      let _ = w.unwatch(real);
+    }
+    for (real, rel) in &next {
+      match w.watch(real, RecursiveMode::Recursive) {
+        Ok(()) => log::info!("also watching {rel} ({})", real.display()),
+        Err(e) => log::warn!("watch {}: {e}", real.display()),
+      }
+    }
+    *includes = next;
+  }
+
   /// Replaces the watcher with one on `root` (none when `None`). `emit` gets each batch.
   pub fn watch(&self, root: Option<&Path>, emit: impl Fn(Vec<String>) + Send + 'static) -> Result<(), String> {
     let mut current = self.current.lock().unwrap_or_else(|e| e.into_inner());
     // Dropping the old watcher drops its sender, which ends its debounce thread.
     *current = None;
+    *self.root.lock().unwrap_or_else(|e| e.into_inner()) = root.map(Path::to_path_buf);
     let Some(root) = root else { return Ok(()) };
     let root: PathBuf = root.to_path_buf();
     let (tx, rx) = channel::<String>();
     let event_root = root.clone();
     let exclude = Arc::clone(&self.exclude);
+    let includes = Arc::clone(&self.includes);
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
       let Ok(ev) = res else { return };
       if matches!(ev.kind, EventKind::Access(_)) {
@@ -92,7 +162,7 @@ impl FileWatcher {
         let _ = tx.send(String::new());
       }
       for p in &ev.paths {
-        if let Some(rel) = relevant(&event_root, p)
+        if let Some(rel) = map_event(&event_root, &includes.read().unwrap_or_else(|e| e.into_inner()), p)
           && !crate::glob::is_excluded(&rel, &exclude.read().unwrap_or_else(|e| e.into_inner()))
         {
           let _ = tx.send(rel);
@@ -106,6 +176,7 @@ impl FileWatcher {
         emit(batch.into_iter().collect());
       }
     });
+    self.rewatch_includes(&root, &mut watcher);
     *current = Some(watcher);
     log::info!("watching {}", root.display());
     Ok(())
@@ -133,6 +204,28 @@ mod tests {
     // Not a component match: a file merely named like an ignored folder prefix.
     assert_eq!(rel("/ws/targets.md").as_deref(), Some("targets.md"));
     assert_eq!(rel("/other/a.ts"), None);
+  }
+
+  #[test]
+  fn includes_resolve_symlinked_folders_inside_the_workspace() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = tmp.path().canonicalize().unwrap();
+    let root = base.join("ws");
+    let outside = base.join("shared");
+    std::fs::create_dir_all(root.join("plain")).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, root.join("linked")).unwrap();
+    let got = resolve_includes(&root, &["linked".into(), "plain".into(), "../shared".into(), "missing".into(), base.join("ws/linked").display().to_string()]);
+    #[cfg(unix)]
+    assert_eq!(got, [(outside.clone(), "linked".to_string()), (outside.clone(), "linked".to_string())]);
+    assert_eq!(map_event(&root, &got, &root.join("plain/a.ts")).as_deref(), Some("plain/a.ts"));
+    #[cfg(unix)]
+    {
+      assert_eq!(map_event(&root, &got, &outside.join("x/b.ts")).as_deref(), Some("linked/x/b.ts"));
+      assert_eq!(map_event(&root, &got, &outside.join("node_modules/b.ts")), None);
+    }
+    assert_eq!(map_event(&root, &got, &base.join("elsewhere/c.ts")), None);
   }
 
   #[test]

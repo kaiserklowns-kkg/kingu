@@ -4,14 +4,18 @@
 
 export type LineEdit = { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number; text: string };
 
-/** `files.trimTrailingWhitespace`. Lines in `keep` (the cursors' lines on auto save) are left alone, like VS Code. */
-export function trimTrailingWhitespaceEdits(lines: readonly string[], keep: ReadonlySet<number> = new Set()): LineEdit[] {
+/**
+ * `files.trimTrailingWhitespace`. Lines in `keep` (the cursors' lines on auto save) are left alone,
+ * like VS Code. `skip(line, column)` says whitespace starting there must stay
+ * (files.trimTrailingWhitespaceInRegexAndStrings off: it is inside a string or a regex).
+ */
+export function trimTrailingWhitespaceEdits(lines: readonly string[], keep: ReadonlySet<number> = new Set(), skip?: (line: number, column: number) => boolean): LineEdit[] {
 	const edits: LineEdit[] = [];
 	lines.forEach((line, i) => {
 		const n = i + 1;
 		if (keep.has(n)) return;
 		const m = /[ \t]+$/.exec(line);
-		if (m) edits.push({ startLineNumber: n, startColumn: m.index + 1, endLineNumber: n, endColumn: line.length + 1, text: '' });
+		if (m && !skip?.(n, m.index + 1)) edits.push({ startLineNumber: n, startColumn: m.index + 1, endLineNumber: n, endColumn: line.length + 1, text: '' });
 	});
 	return edits;
 }
