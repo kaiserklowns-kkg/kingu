@@ -145,6 +145,7 @@ export function parseAdeTerminals(raw: unknown): AdeTerminalsState | null {
 					n: t.n as number,
 					title: optString(t.title),
 					run: optArgv(t.run),
+					...(typeof t.color === 'string' && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(t.color) ? { color: t.color } : {}),
 					// One pane left that is not the tab's first keeps its tree: the tree names its PTY.
 					...(layout && (layout.type === 'split' || layout.id !== t.id) ? { layout } : {}),
 					...(layout && pane && panes.includes(pane) ? { pane } : {}),

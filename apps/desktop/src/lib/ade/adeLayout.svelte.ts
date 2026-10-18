@@ -353,10 +353,10 @@ class AdeLayout {
 	}
 
 	/** A terminal in that worktree; `run` is typed into its shell (an agent CLI, a Snap task). `background`: open it without switching to it. */
-	newTerminal(key: string, opts: { title?: string; run?: string[]; background?: boolean; index?: number } = {}): string {
+	newTerminal(key: string, opts: { title?: string; run?: string[]; background?: boolean; index?: number; color?: string } = {}): string {
 		const list = this.terminals[key] ?? [];
 		const n = list.reduce((m, t) => Math.max(m, t.n), 0) + 1;
-		const tab: TerminalTab = { id: `t${++this.#seq}`, n, title: opts.title, run: opts.run };
+		const tab: TerminalTab = { id: `t${++this.#seq}`, n, title: opts.title, run: opts.run, ...(opts.color ? { color: opts.color } : {}) };
 		const at = opts.index === undefined ? list.length : Math.min(Math.max(opts.index, 0), list.length);
 		this.terminals[key] = [...list.slice(0, at), tab, ...list.slice(at)];
 		if (opts.background) return tab.id;

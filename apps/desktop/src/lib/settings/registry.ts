@@ -346,12 +346,12 @@ const CORE_SETTINGS: SettingSchema[] = [
 		default: 'auto',
 		enum: ['auto', 'ask', 'off'],
 		enumDescriptions: [
-			'รัน .kingu/setup.sh ของโฟลเดอร์ใน terminal "Setup" ของ worktree ใหม่ ถามให้เชื่อถือก่อนครั้งแรกและทุกครั้งที่สคริปต์เปลี่ยน (Run the folder\'s .kingu/setup.sh in a Setup terminal of each new worktree; asks you to trust it first and whenever it changes.)',
+			'รันสคริปต์ตั้งค่าใน terminal "Setup" ของ worktree ใหม่ ของ repository ต้องเชื่อถือก่อนครั้งแรกและทุกครั้งที่เนื้อหาเปลี่ยน (Run the setup in a Setup terminal of each new worktree; the repository\'s needs your trust first and whenever it changes.)',
 			'ถามทุกครั้งก่อนรัน (Ask every time before running it.)',
 			'ไม่รันสคริปต์ตั้งค่า (Never run the setup script.)'
 		],
 		description:
-			'สคริปต์ตั้งค่า worktree (Orca: setup run policy) จาก scripts.setup ใน kingu.yaml (หรือ .kingu/setup.sh แบบเดิม) และ/หรือ kingu.repo.setupScript เช่น bun install, คัดลอก .env ได้ KINGU_ROOT_PATH, KINGU_WORKTREE_PATH และ KINGU_WORKSPACE_NAME ใน environment automation ไม่ถามและข้ามสคริปต์ที่ยังไม่เชื่อถือ ตั้งต่อ repository ได้ในแท็บ Repository (Worktree setup script from kingu.yaml scripts.setup (or the older .kingu/setup.sh) and/or kingu.repo.setupScript; gets KINGU_ROOT_PATH, KINGU_WORKTREE_PATH and KINGU_WORKSPACE_NAME. Automations never ask and skip an untrusted script. Can be set per repository.)',
+			'สคริปต์ตั้งค่า worktree (Orca: setup run policy) จาก scripts.setup ใน kingu.yaml (หรือ .kingu/setup.sh แบบเดิม) และ/หรือ kingu.repo.setupScript ตาม kingu.repo.scriptSource เช่น bun install, คัดลอก .env ได้ KINGU_ROOT_PATH, KINGU_WORKTREE_PATH และ KINGU_WORKSPACE_NAME ใน environment automation ไม่ถามและข้ามสคริปต์ที่ยังไม่เชื่อถือ ตั้งต่อ repository ได้ในแท็บ Repository (Worktree setup: kingu.yaml scripts.setup, else the older .kingu/setup.sh, and/or kingu.repo.setupScript per kingu.repo.scriptSource; gets KINGU_ROOT_PATH, KINGU_WORKTREE_PATH and KINGU_WORKSPACE_NAME. Automations never ask and skip an untrusted script. Can be set per repository.)',
 		// It decides whether repository code runs: the user's settings or per-repo store only.
 		scope: 'local'
 	},
@@ -362,7 +362,7 @@ const CORE_SETTINGS: SettingSchema[] = [
 		default: 'auto',
 		enum: ['auto', 'off'],
 		enumDescriptions: [
-			'รัน .kingu/archive.sh ของโฟลเดอร์ใน worktree ก่อนลบ (เช่น หยุด container) ถามให้เชื่อถือก่อนเหมือน setup ถ้าล้มเหลวจะถามว่าจะลบต่อไหม (Run the folder\'s .kingu/archive.sh in the worktree before it is removed; trusted like the setup script; a failure asks whether to go on.)',
+			'รันสคริปต์ก่อนลบใน worktree (เช่น หยุด container) ของ repository ต้องเชื่อถือก่อนเหมือน setup ถ้าล้มเหลวจะถามว่าจะลบต่อไหม (Run the archive script in the worktree before it is removed; the repository\'s is trusted like the setup script; a failure asks whether to go on.)',
 			'ไม่รันสคริปต์ก่อนลบ (Never run the archive script.)'
 		],
 		description:

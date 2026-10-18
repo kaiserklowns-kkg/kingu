@@ -49,14 +49,67 @@ export function branchRemoval(setting: string | undefined, task: { merged: boole
 }
 
 export type WorktreeScript = { path: string; content: string; hash: string; trusted: boolean };
+/** Rust `scripts::ScriptPlan`: what runs for one kind — the repository's (trusted or not) and / or yours. */
+export type ScriptPlan = { shared: WorktreeScript | null; local: string | null };
+export type ScriptKind = 'setup' | 'archive' | 'tabs' | 'issue';
+
+/** Rust `kingu_yaml::KinguYaml`: the repository's kingu.yaml, normalised. */
+export type DefaultTab = { title: string | null; color: string | null; command: string | null };
+export type KinguYaml = {
+	scripts: { setup: string | null; archive: string | null };
+	setupAgentStartupPolicy: 'start-immediately' | 'wait-for-setup' | null;
+	issueCommand: string | null;
+	defaultTabs: DefaultTab[];
+	sharedDirectories: string[];
+	warnings: string[];
+};
+export type KinguYamlStatus = { found: boolean; config: KinguYaml | null; error: string | null };
+
+/** The default tabs' commands as Rust's `scripts::tabs_text` writes them (what you trust together). */
+export function tabsText(tabs: readonly DefaultTab[]): string | null {
+	const parts = tabs.filter((t) => t.command).map((t) => `# ${t.title ?? 'Terminal'}\n${t.command}`);
+	return parts.length ? `${parts.join('\n\n')}\n` : null;
+}
+
+/**
+ * The terminal tabs to open in a new worktree from kingu.yaml `defaultTabs`: with their commands
+ * only when `trusted` is exactly the text you trusted (else, or under `local-only`, plain tabs).
+ */
+export function defaultTabsToOpen(tabs: readonly DefaultTab[], trusted: string | null): { title?: string; color?: string; run?: string[] }[] {
+	const runCommands = trusted !== null && trusted === tabsText(tabs);
+	return tabs.map((t) => ({
+		...(t.title ? { title: t.title } : {}),
+		...(t.color ? { color: t.color } : {}),
+		...(runCommands && t.command ? { run: ['sh', '-c', t.command] } : {})
+	}));
+}
+
+/** `kingu.worktree.setupAgentStartup`; when you never set it, kingu.yaml's setupAgentStartupPolicy. */
+export function agentStartup(setting: string | undefined, setByYou: boolean, yaml: string | null | undefined): 'start-immediately' | 'wait-for-setup' {
+	const v = setByYou ? setting : (yaml ?? setting);
+	return v === 'wait-for-setup' ? 'wait-for-setup' : 'start-immediately';
+}
+
+/**
+ * Orca's issue command in a terminal: `{{issue}}` and `{{artifact_url}}` become the shell
+ * variables KINGU_ISSUE / KINGU_ARTIFACT_URL (set with `env`), so an issue's URL is never pasted
+ * into the command text.
+ */
+export function issueCommandArgv(command: string, issue: number, url: string): string[] {
+	const text = command.replaceAll('{{issue}}', '"$KINGU_ISSUE"').replaceAll('{{artifact_url}}', '"$KINGU_ARTIFACT_URL"');
+	return ['env', `KINGU_ISSUE=${issue}`, `KINGU_ARTIFACT_URL=${url}`, 'sh', '-c', text];
+}
 export type ScriptRun = { code: number | null; timed_out: boolean; output: string };
 
 /**
  * The setup terminal's command: the trusted copy of `.kingu/setup.sh`, told where the folder and
  * worktree are (Orca's ORCA_ROOT_PATH / ORCA_WORKTREE_PATH / ORCA_WORKSPACE_NAME).
  */
-export function setupCommand(file: string, root: string, worktree: string, slug: string): string[] {
-	return ['env', `KINGU_ROOT_PATH=${root}`, `KINGU_WORKTREE_PATH=${worktree}`, `KINGU_WORKSPACE_NAME=${slug}`, 'sh', file];
+export function setupCommand(file: string, root: string, worktree: string, slug: string, marker?: string): string[] {
+	const env = ['env', `KINGU_ROOT_PATH=${root}`, `KINGU_WORKTREE_PATH=${worktree}`, `KINGU_WORKSPACE_NAME=${slug}`];
+	// wait-for-setup: the exit status goes to `marker`, which the agent's start waits for.
+	if (marker) return [...env, 'sh', '-c', 'sh "$1"; s=$?; printf %s "$s" > "$2"; exit "$s"', 'kingu-setup', file, marker];
+	return [...env, 'sh', file];
 }
 
 /** `kingu.worktree.setupScript`: run a trusted script without asking, ask every time, or never. */

@@ -40,6 +40,8 @@ toml = "1.1.8"
 sha2 = "0.10.9"
 encoding_rs = "=0.8.42"
 chardetng = "=1.0.0"
+# The repository config file kingu.yaml (src/agent/kingu_yaml.rs): the event parser only, no encoding_rs.
+yaml-rust2 = { version = "=0.13.0", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -9,6 +9,8 @@ export type TerminalTab = {
 	n: number;
 	title?: string;
 	run?: string[];
+	/** A `#rgb` / `#rrggbb` tab color (kingu.yaml defaultTabs). */
+	color?: string;
 	/** Split panes (Orca's pane layout); absent while the tab is one pane, whose id is the tab's. */
 	layout?: PaneNode;
 	/** The focused pane of a split tab. */
@@ -65,7 +67,7 @@ export function pushClosed(stack: ClosedTab[], tab: ClosedTab, cap = 10): Closed
  */
 export type FileTab = { key: string; preview: boolean };
 export type AdeTab =
-	| { id: string; kind: 'agent' | 'compose' | 'terminal'; label: string }
+	| { id: string; kind: 'agent' | 'compose' | 'terminal'; label: string; color?: string }
 	| { id: string; kind: 'file' | 'diff'; label: string; key: string; preview: boolean };
 
 /** Prefixed so a file named like a terminal id (`t1`, `main`) cannot clash with it. */
@@ -77,7 +79,7 @@ export function adeTabs(key: string, terminals: TerminalTab[], files: FileTab[] 
 	const main: AdeTab = key ? { id: 'main', kind: 'agent', label: 'Agent' } : { id: 'main', kind: 'compose', label: 'งานใหม่' };
 	return [
 		main,
-		...terminals.map((t) => ({ id: t.id, kind: 'terminal' as const, label: t.title ?? `Terminal ${t.n}` })),
+		...terminals.map((t) => ({ id: t.id, kind: 'terminal' as const, label: t.title ?? `Terminal ${t.n}`, ...(t.color ? { color: t.color } : {}) })),
 		...files.map((f) => ({
 			id: fileTabId(f.key),
 			kind: isDiffKey(f.key) ? ('diff' as const) : ('file' as const),

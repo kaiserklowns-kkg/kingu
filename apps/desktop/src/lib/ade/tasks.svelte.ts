@@ -68,8 +68,31 @@ import type { ReviewThread } from './prComments.ts';
 /** Rust `worktree_pr_merge`'s answer. */
 type MergeOutcome = { deleted_branch: string | null; branch_note: string | null };
 import { settings } from '#lib/settings/settings.svelte.ts';
-import { branchPrefix, branchRemoval, type BranchRemoval, defaultBaseBranch, scriptPreview, scriptRunSummary, setupCommand, setupPolicy, type ScriptRun, type WorktreeScript } from './worktreeSettings.ts';
+import {
+	agentStartup,
+	branchPrefix,
+	branchRemoval,
+	type BranchRemoval,
+	defaultBaseBranch,
+	defaultTabsToOpen,
+	issueCommandArgv,
+	type KinguYamlStatus,
+	scriptPreview,
+	scriptRunSummary,
+	setupCommand,
+	setupPolicy,
+	type ScriptKind,
+	type ScriptPlan,
+	type ScriptRun
+} from './worktreeSettings.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
+
+const SCRIPT_TITLES: Record<ScriptKind, string> = {
+	setup: 'สคริปต์ตั้งค่า worktree',
+	archive: 'สคริปต์ก่อนลบ worktree',
+	tabs: 'แท็บเริ่มต้นจาก kingu.yaml',
+	issue: 'คำสั่งของ issue'
+};
 
 class AdeTasks {
 	list = $state<TaskMeta[]>([]);
@@ -290,7 +313,13 @@ class AdeTasks {
 		this.listed = listed;
 		this.worktrees = listed.filter((w) => w.slug);
 		if (input.open !== false) this.openTask(slug);
-		await this.#runSetup(slug, input.open !== false);
+		const yaml = await this.#kinguYaml();
+		// kingu.yaml worktree.sharedDirectories and kingu.repo.symlinkPaths (Orca): linked from the main checkout.
+		await invoke<string[]>('worktree_link_shared', { slug }).catch((e) => clientLog('info', `link shared ${slug}: ${e}`));
+		const marker = await this.#runSetup(slug, input.open !== false, yaml);
+		await this.#openDefaultTabs(slug, input.open !== false, yaml);
+		if (input.issue && input.issue.provider !== 'linear') await this.#runIssueCommand(slug, input.issue, input.open !== false);
+		if (marker) await this.#waitForSetup(slug, marker);
 		// After the prompt: claude's --mcp-config takes several values and would swallow it.
 		const attachments = input.attachments ?? [];
 		if (cli) await this.#launchCli(slug, cli, { prompt: promptWithAttachments(prompt, attachments) });
@@ -301,58 +330,122 @@ class AdeTasks {
 		return slug;
 	}
 
-	/**
-	 * A repository script (`.kingu/setup.sh` / `.kingu/archive.sh`) ready to run: it comes with the
-	 * repository, so it needs your trust in exactly this content, like a repo snap (Orca asks the
-	 * same way). `ask: true` (kingu.worktree.setupScript = ask) confirms even a trusted one.
-	 * `interactive: false` (automations) never asks and skips an untrusted script. Returns the
-	 * script when it may run, else null.
-	 */
-	async #approvedScript(kind: 'setup' | 'archive', opts: { interactive: boolean; ask?: boolean; what: string }): Promise<WorktreeScript | null> {
-		const script = await invoke<WorktreeScript | null>('worktree_script', { kind }).catch((e) => {
-			notifications.error(`อ่าน .kingu/${kind}.sh ไม่ได้: ${e}`);
+	/** The open folder's kingu.yaml; its problems are reported once per folder (the file is then ignored or partly used). */
+	#yamlReported = new Set<string>();
+	async #kinguYaml(): Promise<KinguYamlStatus | null> {
+		const st = await invoke<KinguYamlStatus>('kingu_yaml').catch((e) => {
+			clientLog('info', `kingu_yaml: ${e}`);
 			return null;
 		});
-		if (!script) return null;
-		if (script.trusted && !opts.ask) return script;
-		if (!opts.interactive) {
-			if (!script.trusted) notifications.warn(`ไม่ได้รัน ${script.path}: ยังไม่ได้เชื่อถือสคริปต์นี้ (หรือมันเปลี่ยนไป)`);
-			return null;
+		const root = workspace.root ?? '';
+		if (st && !this.#yamlReported.has(root) && (st.error || st.config?.warnings.length)) {
+			this.#yamlReported.add(root);
+			if (st.error) notifications.warn(`ไม่ได้ใช้ kingu.yaml: ${st.error}`);
+			else notifications.warn(`kingu.yaml: ละบางส่วนไว้ — ${st.config!.warnings.slice(0, 5).join('; ')}`);
 		}
-		const intro = script.trusted
-			? `รัน ${script.path} ${opts.what}?`
-			: `โฟลเดอร์นี้มี ${script.path} ซึ่งมากับ repository และจะรันด้วยสิทธิ์ของคุณ${opts.what}:`;
-		const ok = await ask(`${intro}\n\n${scriptPreview(script.content)}${script.trusted ? '' : '\n\nเชื่อถือสคริปต์นี้และรัน? (ถ้าสคริปต์เปลี่ยน จะถามอีกครั้ง)'}`, {
-			title: kind === 'setup' ? 'สคริปต์ตั้งค่า worktree' : 'สคริปต์ก่อนลบ worktree',
+		return st;
+	}
+
+	/**
+	 * What may run for `kind` (Rust `scripts::plan`): the repository's text (kingu.yaml, or the older
+	 * `.kingu/<kind>.sh`) needs your trust in exactly this content, like a repo snap (Orca asks the
+	 * same way); your own per-repository script (kingu.repo.*) does not. `ask: true`
+	 * (kingu.worktree.setupScript = ask) confirms even a trusted one. `interactive: false`
+	 * (automations) never asks and skips anything untrusted. Returns the plan when it may run, else null.
+	 */
+	async #approvedPlan(kind: ScriptKind, opts: { interactive: boolean; ask?: boolean; what: string }): Promise<ScriptPlan | null> {
+		const plan = await invoke<ScriptPlan | null>('worktree_script', { kind }).catch((e) => {
+			notifications.error(`อ่านสคริปต์ ${kind} ของ worktree ไม่ได้: ${e}`);
+			return null;
+		});
+		if (!plan) return null;
+		const shared = plan.shared;
+		const untrusted = !!shared && !shared.trusted;
+		if (!untrusted && !opts.ask) return plan;
+		if (!opts.interactive) {
+			if (untrusted) notifications.warn(`ไม่ได้รัน ${shared!.path}: ยังไม่ได้เชื่อถือ (หรือมันเปลี่ยนไป)`);
+			return untrusted ? null : plan;
+		}
+		const parts = [
+			...(shared ? [`${shared.path}${untrusted ? ' (มากับ repository และจะรันด้วยสิทธิ์ของคุณ)' : ''}:\n${scriptPreview(shared.content)}`] : []),
+			...(plan.local ? [`สคริปต์ของคุณ (kingu.repo.*):\n${scriptPreview(plan.local)}`] : [])
+		];
+		const intro = untrusted ? `โฟลเดอร์นี้มีคำสั่งจาก repository ที่จะรัน${opts.what}:` : `รันคำสั่งเหล่านี้${opts.what}?`;
+		const ok = await ask(`${intro}\n\n${parts.join('\n\n')}${untrusted ? '\n\nเชื่อถือคำสั่งของ repository นี้และรัน? (ถ้าเนื้อหาเปลี่ยน จะถามอีกครั้ง)' : ''}`, {
+			title: SCRIPT_TITLES[kind],
 			kind: 'warning',
-			okLabel: script.trusted ? 'รัน' : 'เชื่อถือและรัน',
+			okLabel: untrusted ? 'เชื่อถือและรัน' : 'รัน',
 			cancelLabel: 'ไม่รัน'
 		});
 		if (!ok) return null;
-		if (!script.trusted) {
+		if (untrusted) {
 			try {
-				await invoke('worktree_script_trust', { kind, trusted: true, hash: script.hash });
+				await invoke('worktree_script_trust', { kind, trusted: true, hash: shared!.hash });
 			} catch (e) {
 				notifications.error(e);
 				return null;
 			}
 		}
-		return script;
+		return plan;
 	}
 
-	/** The folder's `.kingu/setup.sh` (`kingu.worktree.setupScript`), in a "Setup" terminal of the new worktree (Orca's new-tab mode). */
-	async #runSetup(slug: string, interactive: boolean) {
+	/**
+	 * The setup (`kingu.worktree.setupScript`) in a background "Setup" terminal of the new worktree
+	 * (Orca's new-tab mode). Returns the file its exit status goes to when the agent waits for it
+	 * (`kingu.worktree.setupAgentStartup`, else kingu.yaml setupAgentStartupPolicy).
+	 */
+	async #runSetup(slug: string, interactive: boolean, yaml: KinguYamlStatus | null): Promise<string | null> {
 		const root = workspace.root;
 		const policy = setupPolicy(settings.get<string>('kingu.worktree.setupScript'));
-		if (!root || policy === 'off') return;
-		const script = await this.#approvedScript('setup', { interactive, ask: policy === 'ask', what: ' ใน worktree ใหม่ของงาน' });
-		if (!script) return;
+		if (!root || policy === 'off') return null;
+		const plan = await this.#approvedPlan('setup', { interactive, ask: policy === 'ask', what: ' ใน worktree ใหม่ของงาน' });
+		if (!plan) return null;
 		try {
 			const file = await invoke<string | null>('worktree_script_prepare', { kind: 'setup' });
-			if (file) adeLayout.newTerminal(slug, { title: 'Setup', run: setupCommand(file, root, `${root}/${worktreeDir(slug)}`, slug), background: true });
+			if (!file) return null;
+			const startup = agentStartup(settings.get<string>('kingu.worktree.setupAgentStartup'), settings.sourceOf('kingu.worktree.setupAgentStartup') !== 'default', yaml?.config?.setupAgentStartupPolicy);
+			const marker = startup === 'wait-for-setup' ? await invoke<string>('worktree_setup_marker', { slug }) : undefined;
+			adeLayout.newTerminal(slug, { title: 'Setup', run: setupCommand(file, root, `${root}/${worktreeDir(slug)}`, slug, marker), background: true });
+			return marker ?? null;
 		} catch (e) {
-			notifications.error(`รัน ${script.path} ไม่ได้: ${e}`);
+			notifications.error(`รันสคริปต์ตั้งค่าไม่ได้: ${e}`);
+			return null;
 		}
+	}
+
+	/** Orca's wait-for-setup: the agent starts once the Setup terminal finished (at most 30 minutes). */
+	async #waitForSetup(slug: string, marker: string) {
+		const until = Date.now() + 30 * 60_000;
+		this.busy[slug] = 'รอสคริปต์ตั้งค่า';
+		try {
+			while (Date.now() < until && this.find(slug)) {
+				const code = await invoke<number | null>('worktree_setup_status', { marker }).catch(() => null);
+				if (code !== null) {
+					if (code !== 0) notifications.warn(`สคริปต์ตั้งค่าของ ${slug} จบด้วย exit code ${code} — เริ่ม agent ต่อ`);
+					return;
+				}
+				await new Promise((r) => setTimeout(r, 1000));
+			}
+		} finally {
+			delete this.busy[slug];
+		}
+	}
+
+	/** kingu.yaml `defaultTabs` (Orca): terminal tabs made once for a new worktree; their commands need your trust. */
+	async #openDefaultTabs(slug: string, interactive: boolean, yaml: KinguYamlStatus | null) {
+		const tabs = yaml?.config?.defaultTabs ?? [];
+		if (!tabs.length) return;
+		const withCommands = tabs.some((t) => t.command);
+		const plan = withCommands ? await this.#approvedPlan('tabs', { interactive, what: ' ในแท็บเริ่มต้นของ worktree ใหม่' }) : null;
+		for (const t of defaultTabsToOpen(tabs, plan?.shared?.content ?? null)) adeLayout.newTerminal(slug, { ...t, background: true });
+	}
+
+	/** Orca's issue command: kingu.repo.issueCommand, else kingu.yaml issueCommand (trusted), in a terminal of an issue's task. */
+	async #runIssueCommand(slug: string, issue: IssueLink, interactive: boolean) {
+		const plan = await this.#approvedPlan('issue', { interactive, what: ` สำหรับ issue #${issue.number}` });
+		const command = plan?.local ?? plan?.shared?.content;
+		if (!command?.trim()) return;
+		adeLayout.newTerminal(slug, { title: `#${issue.number}`, run: issueCommandArgv(command, issue.number, issue.url), background: true });
 	}
 
 	/**
@@ -361,8 +454,9 @@ class AdeTasks {
 	 */
 	async #runArchive(slug: string): Promise<boolean> {
 		if (settings.get<string>('kingu.worktree.archiveScript') === 'off') return true;
-		const script = await this.#approvedScript('archive', { interactive: true, what: ' ใน worktree ก่อนลบ' });
-		if (!script) return true;
+		const plan = await this.#approvedPlan('archive', { interactive: true, what: ' ใน worktree ก่อนลบ' });
+		if (!plan) return true;
+		const script = { path: plan.shared?.path ?? 'สคริปต์ก่อนลบของคุณ' };
 		this.busy[slug] = `รัน ${script.path}`;
 		try {
 			const r = await invoke<ScriptRun | null>('worktree_archive_run', { slug });
@@ -608,6 +702,8 @@ class AdeTasks {
 		const path = worktreeDir(slug);
 		const hasWorktree = this.hasWorktree(slug);
 		const deleteBranch = opts.deleteBranch;
+		// kingu.worktree.alwaysForceDelete (Orca): uncommitted changes go without asking again.
+		opts = { ...opts, force: opts.force || settings.get<boolean>('kingu.worktree.alwaysForceDelete') === true };
 		let kept: string | null = null;
 		if (hasWorktree) {
 			// An idle session still runs in the worktree: end it with the task.
@@ -1035,8 +1131,8 @@ export function installAde(): () => void {
 			category: 'Agents',
 			when: hasRoot,
 			run: () =>
-				Promise.all(['setup', 'archive'].map((kind) => invoke('worktree_script_trust', { kind, trusted: false, hash: null })))
-					.then(() => status.flash('เลิกเชื่อถือ .kingu/setup.sh และ .kingu/archive.sh ของโฟลเดอร์นี้แล้ว ครั้งหน้าจะถามก่อนรัน'))
+				Promise.all(['setup', 'archive', 'tabs', 'issue'].map((kind) => invoke('worktree_script_trust', { kind, trusted: false, hash: null })))
+					.then(() => status.flash('เลิกเชื่อถือคำสั่งของ repository (kingu.yaml, .kingu/setup.sh, .kingu/archive.sh) ของโฟลเดอร์นี้แล้ว ครั้งหน้าจะถามก่อนรัน'))
 					.catch((e) => notifications.error(e))
 		})
 	];
