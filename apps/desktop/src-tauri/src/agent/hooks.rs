@@ -1,8 +1,9 @@
 //! Agent CLI status through Claude Code hooks (how Orca knows an agent is working, waiting for a
 //! permission answer or done). A CLI task starts `claude --settings <json>` whose hooks append each
 //! hook's JSON payload (stdin) as one line to `<app cache>/agent-hooks/<token>.jsonl`; the webview
-//! reads new lines with `agent_hook_read`. The token is random per CLI session, so a file name
-//! never carries a task name or path.
+//! reads new lines with `agent_hook_read`. codex appends its `notify` payloads to the same kind of
+//! file (`agent_hook_file`; the command is built in agentProfiles.ts). The token is random per CLI
+//! session, so a file name never carries a task name or path.
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -19,13 +20,19 @@ pub fn valid_token(token: &str) -> bool {
   (8..=64).contains(&token.len()) && token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
-/// `--settings` JSON with a command hook per event that appends the payload to `file`.
-pub fn settings_json(file: &Path) -> Result<String, String> {
+/// The hook file's path as it goes single-quoted into a shell command; our own path never
+/// contains a quote, but check.
+pub fn quotable_path(file: &Path) -> Result<&str, String> {
   let path = file.to_str().ok_or("hook path is not valid UTF-8")?;
-  // Single-quoted for the shell the hook runs in; our own path never contains a quote, but check.
   if path.contains('\'') || path.contains('\n') {
     return Err("hook path cannot be quoted".into());
   }
+  Ok(path)
+}
+
+/// `--settings` JSON with a command hook per event that appends the payload to `file`.
+pub fn settings_json(file: &Path) -> Result<String, String> {
+  let path = quotable_path(file)?;
   let command = format!("{{ cat; echo; }} >> '{path}'");
   let entry = serde_json::json!([{ "hooks": [{ "type": "command", "command": command }] }]);
   let hooks: serde_json::Map<String, serde_json::Value> = EVENTS.iter().map(|e| (e.to_string(), entry.clone())).collect();
@@ -69,15 +76,27 @@ fn file_of(app: &AppHandle, token: &str) -> Result<PathBuf, String> {
   Ok(app.path().app_cache_dir().map_err(|e| e.to_string())?.join(DIR).join(format!("{token}.jsonl")))
 }
 
-/// The `--settings` JSON for a new CLI session (creates the hooks folder; starts with an empty file).
-#[tauri::command]
-pub fn agent_hook_settings(app: AppHandle, token: String) -> Result<String, String> {
-  let file = file_of(&app, &token)?;
+/// A new session's hook file, empty (creates the hooks folder).
+fn fresh_file(app: &AppHandle, token: &str) -> Result<PathBuf, String> {
+  let file = file_of(app, token)?;
   if let Some(dir) = file.parent() {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
   }
   std::fs::write(&file, b"").map_err(|e| e.to_string())?;
-  settings_json(&file)
+  Ok(file)
+}
+
+/// The `--settings` JSON for a new claude session.
+#[tauri::command]
+pub fn agent_hook_settings(app: AppHandle, token: String) -> Result<String, String> {
+  settings_json(&fresh_file(&app, &token)?)
+}
+
+/// The hook file of a new session whose CLI appends to it itself (codex `notify`).
+#[tauri::command]
+pub fn agent_hook_file(app: AppHandle, token: String) -> Result<String, String> {
+  let file = fresh_file(&app, &token)?;
+  quotable_path(&file).map(str::to_owned)
 }
 
 #[tauri::command]
@@ -113,6 +132,8 @@ mod tests {
       assert_eq!(json["hooks"][e][0]["hooks"][0]["command"], "{ cat; echo; } >> '/c/agent-hooks/t.jsonl'");
     }
     assert!(settings_json(Path::new("/it's/t.jsonl")).is_err());
+    assert_eq!(quotable_path(Path::new("/c/agent-hooks/t.jsonl")).unwrap(), "/c/agent-hooks/t.jsonl");
+    assert!(quotable_path(Path::new("/c/a\nb.jsonl")).is_err());
   }
 
   #[test]

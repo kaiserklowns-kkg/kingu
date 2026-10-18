@@ -586,6 +586,8 @@ pub fn run() {
       worktree_remove,
       agent::agent_start,
       agent::hooks::agent_hook_settings,
+      agent::hooks::agent_hook_file,
+      agent::cli::agent_cli_found,
       agent::hooks::agent_hook_read,
       agent::hooks::agent_hook_clear,
       agent::agent_send,

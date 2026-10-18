@@ -47,9 +47,11 @@ import {
 } from './model';
 import { runtime } from './runtime.svelte';
 import { adeLayout } from './adeLayout.svelte';
-import { claudeResume, claudeStart, cliAgent, cliOf, cliResume, cliStart, isClaude, parseCliCommand, type RunMode } from './agentCli';
+import { cliAgent, cliOf, parseCliCommand, type RunMode } from './agentCli';
+import { profileOf } from '#lib/ade/agentProfiles.ts';
+import { chooseAgentCli } from '#lib/ade/agentPicker.ts';
 import { cliSessions } from './cliSessions.svelte';
-import { cliWithMcp, mcpServers, skillPlugins } from './mcp';
+import { mcpServers, skillPlugins } from './mcp';
 import { prStatuses } from './prStatus.svelte';
 import { issueLink, issuePrompt, issueSlug, issueTaskTitle, prBody, prComment, taskForIssue, type Issue, type IssueDetail } from './issues.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
@@ -287,29 +289,40 @@ class AdeTasks {
 	}
 
 	/**
-	 * Starts the task's CLI in its worktree terminal. claude gets a session id we choose (saved, so a
-	 * restart resumes exactly it) and hooks reporting its state; other CLIs run as configured.
+	 * Starts the task's CLI in its worktree terminal the way its profile says (agentProfiles.ts):
+	 * claude gets a session id we choose (saved, so a restart resumes exactly it) and hooks
+	 * reporting its state; codex a notify program reporting finished turns and its session id;
+	 * others run as configured, with the Snap MCP servers where the CLI takes them.
 	 */
 	async #launchCli(slug: string, cli: string[], how: { prompt: string } | { resume: string | null } | { fresh: true }) {
 		const root = workspace.root ? `${workspace.root}/${worktreeDir(slug)}` : null;
-		const extras = async (argv: string[]) => cliWithMcp(argv, mcpServers(root), await skillPlugins());
-		if (!isClaude(cli)) {
-			const argv = 'prompt' in how ? cliStart(cli, how.prompt) : 'resume' in how ? (cliResume(cli) ?? cli) : cli;
-			return cliSessions.start(slug, await extras(argv));
-		}
+		const profile = profileOf(cli);
 		const token = crypto.randomUUID();
-		const settings = await invoke<string>('agent_hook_settings', { token }).catch((e) => {
-			clientLog('error', `agent hooks for ${slug}: ${e}`);
-			return null;
-		});
-		let argv: string[];
-		if ('resume' in how) argv = claudeResume(cli, how.resume, settings);
-		else {
-			const sessionId = crypto.randomUUID();
-			argv = 'prompt' in how ? claudeStart(cli, how.prompt, sessionId, settings) : [...cli, '--session-id', sessionId, ...(settings ? ['--settings', settings] : [])];
-			await this.#patch(slug, { session_id: sessionId });
-		}
-		cliSessions.start(slug, await extras(argv), settings ? token : undefined);
+		const hookSettings =
+			profile.status === 'hooks'
+				? await invoke<string>('agent_hook_settings', { token }).catch((e) => {
+						clientLog('error', `agent hooks for ${slug}: ${e}`);
+						return null;
+					})
+				: null;
+		const hookFile =
+			profile.status === 'notify'
+				? await invoke<string>('agent_hook_file', { token }).catch((e) => {
+						clientLog('error', `agent notify for ${slug}: ${e}`);
+						return null;
+					})
+				: null;
+		const sessionId = profile.ownsSessionId && !('resume' in how) ? crypto.randomUUID() : undefined;
+		const launch = profile.launch(cli, how, { sessionId, hookSettings, hookFile, servers: mcpServers(root), plugins: profile.skills ? await skillPlugins() : [] });
+		if (sessionId) await this.#patch(slug, { session_id: sessionId });
+		cliSessions.start(slug, launch.argv, hookSettings || hookFile ? token : undefined, launch.typePrompt);
+	}
+
+	/** A CLI reported its session id (codex notify): saved so a restart resumes exactly it. */
+	learnCliSession(slug: string, id: string) {
+		const meta = this.list.find((t) => t.slug === slug);
+		const cli = meta && cliOf(meta.agent);
+		if (cli && profileOf(cli).status === 'notify' && meta.session_id !== id) void this.#patch(slug, { session_id: id });
 	}
 
 	/** Starts the agent in the task worktree through the agents store. */
@@ -642,12 +655,15 @@ export function installAde(): () => void {
 		commands.register({ id: 'kingu.agents.openBoard', title: 'Open Board', category: 'Agents', when: hasRoot, run: () => adeTasks.openBoard() }),
 		commands.register({ id: 'kingu.agents.nextAttention', title: 'เปิดงานถัดไปที่รอคุณ (Next Task Needing Attention)', category: 'Agents', when: hasRoot, run: () => adeTasks.openNext() }),
 		commands.register({ id: 'kingu.agents.openTask', title: 'Open Task...', category: 'Agents', when: () => adeTasks.list.length > 0, run: () => adeTasks.pickTask() }),
-		commands.register({ id: 'kingu.agents.refresh', title: 'Refresh Tasks', category: 'Agents', when: hasRoot, run: () => adeTasks.load() })
+		commands.register({ id: 'kingu.agents.refresh', title: 'Refresh Tasks', category: 'Agents', when: hasRoot, run: () => adeTasks.load() }),
+		commands.register({ id: 'kingu.agent.chooseCli', title: 'Choose CLI…', category: 'Agent', run: () => chooseAgentCli() })
 	];
+	cliSessions.onSessionId = (slug, id) => adeTasks.learnCliSession(slug, id);
 	return () => {
 		stopEffects();
 		clearInterval(tick);
 		window.removeEventListener('focus', onFocus);
+		cliSessions.onSessionId = null;
 		unregister.forEach((u) => u());
 	};
 }

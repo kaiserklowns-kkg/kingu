@@ -9,15 +9,17 @@ import type { Decision } from '#lib/agent/events.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { followUpPlan, toTaskRuntime, type TaskRuntime } from './model';
 import { cliName } from './agentCli';
+import { profileOf } from '#lib/ade/agentProfiles.ts';
 import { cliSessions } from './cliSessions.svelte';
 
 /** A task whose agent CLI runs in a terminal: working while it prints, else waiting for you. */
 function cliRuntime(slug: string): TaskRuntime | undefined {
 	const s = cliSessions.sessions[slug];
 	if (!s) return;
-	// claude reports its state through hooks; other CLIs fall back to "printing = working".
+	// claude reports its state through hooks; other CLIs fall back to "printing = working" (codex's
+	// notify adds the session id and the turn's last answer).
 	const hook = cliSessions.hooks[slug];
-	if (hook && hook.phase !== 'starting') {
+	if (hook && hook.phase !== 'starting' && profileOf(s.run).status === 'hooks') {
 		const working = hook.phase === 'working';
 		return {
 			slug,
@@ -38,9 +40,9 @@ function cliRuntime(slug: string): TaskRuntime | undefined {
 		runStatus: working ? 'running' : 'idle',
 		live: true,
 		working,
-		lastEvent: working ? `${cliName(s.run)} กำลังทำงานใน terminal` : `${cliName(s.run)} รอคุณใน terminal`,
+		lastEvent: working ? `${cliName(s.run)} กำลังทำงานใน terminal` : (hook?.message ?? `${cliName(s.run)} รอคุณใน terminal`),
 		pendingPermissions: 0,
-		sessionId: null,
+		sessionId: hook?.sessionId ?? null,
 		updatedAt: cliSessions.lastOutput(slug)
 	};
 }

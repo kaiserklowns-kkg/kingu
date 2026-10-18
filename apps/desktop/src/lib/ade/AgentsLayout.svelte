@@ -30,7 +30,8 @@
 	import { adeLayout, PRIMARY, type RightTab } from './adeLayout.svelte';
 	import { adeTasks } from './tasks.svelte';
 	import { untrack } from 'svelte';
-	import { cliName, cliOf, cliResume, isClaude, type RunMode } from './agentCli';
+	import { cliName, cliOf, type RunMode } from './agentCli';
+	import { profileOf } from '#lib/ade/agentProfiles.ts';
 	import { cliSessions } from './cliSessions.svelte';
 	import { BUTTON, BUTTON_SECONDARY, STATUS_DOT } from './ui';
 	import { STATUS_LABEL, timeAgo } from './model';
@@ -48,8 +49,8 @@
 	const activeFile = $derived(keyOfTabId(activeTab));
 	/** The selected task runs its agent CLI in a terminal (the Orca way). */
 	const cli = $derived(slug ? cliOf(adeTasks.find(slug)?.meta.agent ?? '') : null);
-	/** claude resumes its own session (id saved at start); other CLIs their latest one where they can. */
-	const resume = $derived(cli ? (isClaude(cli) || cliResume(cli)) : null);
+	/** Resumes the task's own session when its id is saved, else the CLI's latest one, where the CLI can. */
+	const resume = $derived(cli ? profileOf(cli).canResume : null);
 
 	// The folder's "new task" composer (Orca: a new worktree with an agent).
 	let draft = $state('');
