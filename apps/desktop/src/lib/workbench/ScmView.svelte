@@ -156,9 +156,16 @@
 
 <section class="flex min-h-0 flex-1 flex-col">
 	{#if !scm.loaded}
-		<p class="px-5 py-1 text-(--vscode-descriptionForeground)">กำลังอ่านสถานะ git...</p>
+		<p class="flex items-center gap-2 px-5 py-2 text-(--vscode-descriptionForeground)">
+			<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>กำลังอ่านสถานะ git…
+		</p>
 	{:else if !scm.repo}
-		<p class="px-5 py-1 text-(--vscode-descriptionForeground)">The folder currently open doesn't have a git repository.</p>
+		<!-- VS Code's "no repository" welcome view. -->
+		<div class="flex flex-col items-center gap-2 px-6 py-8 text-center text-(--vscode-descriptionForeground)">
+			<span class="text-(--vscode-foreground) opacity-70"><Icon name="git" size={32} /></span>
+			<p class="text-(--vscode-foreground)">โฟลเดอร์นี้ยังไม่เป็น git repository</p>
+			<p class="text-xs leading-relaxed">รัน <code class="rounded bg-(--vscode-input-background) px-1 font-mono">git init</code> ใน terminal (⌃`) แล้วกลับมาที่นี่ หรือเปิดโฟลเดอร์ที่เป็น repository อยู่แล้ว (⌘O)</p>
+		</div>
 	{:else}
 		<div class="flex shrink-0 flex-col gap-1.5 px-2 pt-1 pb-2">
 			<textarea

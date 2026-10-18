@@ -15,6 +15,51 @@
 	import { adeTasks } from './tasks.svelte';
 	import { STATUS_DOT } from './ui';
 	import { sessionsAttentionLabel } from '#lib/workbench/titlebar.ts';
+	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
+	import { status } from '#lib/workbench/status.svelte.ts';
+	import { invoke } from '@tauri-apps/api/core';
+	import type { AdeTab } from './adeTabs';
+
+	// Tab context menu, like the IDE's: close tabs, copy or reveal a file. The agent session and the
+	// composer stay (they are the worktree itself).
+	let menu = $state<{ tab: AdeTab; x: number; y: number } | null>(null);
+	const closable = (t: AdeTab) => t.kind !== 'agent' && t.kind !== 'compose';
+	const menuItems = $derived.by(() => {
+		if (!menu) return [];
+		const t = menu.tab;
+		const i = tabs.findIndex((x) => x.id === t.id);
+		const file = t.kind === 'file' || t.kind === 'diff';
+		return [
+			menuItem('close', 'Close', { enabled: closable(t) }),
+			menuItem('others', 'Close Others', { enabled: tabs.some((x) => x.id !== t.id && closable(x)) }),
+			menuItem('right', 'Close to the Right', { enabled: tabs.slice(i + 1).some(closable) }),
+			menuSeparator,
+			menuItem('copyPath', 'Copy Path', { enabled: file }),
+			menuItem('reveal', 'Reveal in Finder', { enabled: file }),
+			menuItem('keep', 'Keep Open', { enabled: file && 'preview' in t && t.preview })
+		];
+	});
+	async function runMenu(id: string, t: AdeTab) {
+		const i = tabs.findIndex((x) => x.id === t.id);
+		const rel = 'key' in t ? fileOf(t.key) : '';
+		switch (id) {
+			case 'close':
+				return adeLayout.close(key, t.id);
+			case 'others':
+			case 'right':
+				for (const x of (id === 'others' ? tabs.filter((x) => x.id !== t.id) : tabs.slice(i + 1)).filter(closable)) adeLayout.close(key, x.id);
+				return;
+			case 'copyPath': {
+				const text = workspace.root ? `${workspace.root}/${rel}` : rel;
+				await navigator.clipboard.writeText(text);
+				return status.flash(`คัดลอก ${text} แล้ว`, 3000);
+			}
+			case 'reveal':
+				return invoke('fs_reveal', { rel }).catch((e) => status.error(String(e)));
+			case 'keep':
+				return 'key' in t && adeLayout.pin(key, t.key);
+		}
+	}
 
 	const key = $derived(adeLayout.key);
 	const view = $derived(key ? adeTasks.find(key) : undefined);
@@ -49,6 +94,7 @@
 					onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), adeLayout.select(key, t.id))}
 					onauxclick={(e) => e.button === 1 && t.kind !== 'agent' && t.kind !== 'compose' && adeLayout.close(key, t.id)}
 					ondblclick={() => (t.kind === 'file' || t.kind === 'diff') && adeLayout.pin(key, t.key)}
+					oncontextmenu={(e) => (e.preventDefault(), (menu = { tab: t, x: e.clientX, y: e.clientY }))}
 				>
 					{#if active}<span class={ACCENT}></span>{/if}
 					{#if t.kind === 'agent' && view}
@@ -105,6 +151,11 @@
 		</button>
 	{/if}
 </div>
+
+{#if menu}
+	{@const target = menu.tab}
+	<PopupMenu items={menuItems} label="Tab" x={menu.x} y={menu.y} onRun={(node) => node.type === 'item' && runMenu(node.id, target)} onClose={() => (menu = null)} />
+{/if}
 
 <style>
 	/* "N sessions require input": a gentle blink, off when the user asks for less motion. */

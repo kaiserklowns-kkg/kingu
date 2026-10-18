@@ -282,6 +282,8 @@
 			</span>
 		{:else if search.running}
 			<span>กำลังค้นหา… {shownMatches ? summarize(shownMatches, search.files.length) : ''}</span>
+		{:else if !search.query}
+			<span class="text-xs">พิมพ์เพื่อค้นหาในทุกไฟล์ · ใช้ปุ่ม Aa / ab / .* ในช่องค้นหาเพื่อเลือกตัวพิมพ์ คำเต็ม หรือ regex</span>
 		{/if}
 		{#if search.query}
 			<div class="ml-auto flex shrink-0 items-center">
