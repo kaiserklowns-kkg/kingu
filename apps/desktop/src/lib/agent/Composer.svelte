@@ -9,6 +9,9 @@
 	// `commands`: `/` at the start of the input opens their list (SlashSuggest; ↑/↓, Enter/Tab, Esc).
 	// While `running`, Send is a split button (SendMenu): Enter runs `queueDefault`, ⌥Enter the
 	// other of queue / steer, and `onsubmit` gets which (`how`). `footer`: extra footer controls.
+	// `mentions`: a `#` or `@` word opens their list in place of `onhash` (Add Context sources and
+	// files, SlashSuggest again); picking one takes the word out and calls `onmention`.
+	// `onaddcontext`: an "Add Context..." button leads the context row.
 	import type { Snippet } from 'svelte';
 	import { open } from '@tauri-apps/plugin-dialog';
 	import Icon from '#lib/workbench/Icon.svelte';
@@ -18,7 +21,8 @@
 	import { clipboardImage, onFileDrop, savePastedImage } from './attachInput.ts';
 	import { contextLabel, type ContextFile } from './chatPrompt.ts';
 	import { hashTrigger, recallPrompt, type HistoryCursor } from './chatInput.ts';
-	import SlashSuggest from './SlashSuggest.svelte';
+	import SlashSuggest, { type SuggestItem } from './SlashSuggest.svelte';
+	import { mentionQuery, removeMention } from './chatContext.ts';
 	import SendMenu from './SendMenu.svelte';
 	import { completeCommand, filterCommands, moveActive, slashQuery, type SlashItem } from './slashCommands.ts';
 	import { sendHowFor, type QueueDefault, type SendHow } from './requestQueuing.ts';
@@ -45,7 +49,11 @@
 		sendLabel,
 		commands = [],
 		queueDefault = 'queue',
-		footer
+		footer,
+		mentions,
+		onmention,
+		onmentionopen,
+		onaddcontext
 	}: {
 		value?: string;
 		placeholder: string;
@@ -77,6 +85,12 @@
 		/** What Enter does while a turn runs. */
 		queueDefault?: QueueDefault;
 		footer?: Snippet;
+		/** The `#` / `@` list for what follows the trigger. */
+		mentions?: (query: string) => SuggestItem[];
+		onmention?: (item: SuggestItem) => void;
+		/** The `#` / `@` list just opened (a moment to refresh what it lists). */
+		onmentionopen?: () => void;
+		onaddcontext?: () => void;
 	} = $props();
 
 	let area: HTMLTextAreaElement | undefined = $state();
@@ -92,6 +106,22 @@
 	const slashItems = $derived(slashText === null ? [] : filterCommands(commands, slashText));
 	const slashOpen = $derived(slashItems.length > 0 && slashClosed !== value.split(/\s/, 1)[0]);
 	const listId = `slash-${Math.random().toString(36).slice(2, 8)}`;
+	// `#` / `@` (only while the `/` list is closed).
+	const mention = $derived(mentions && !slashOpen ? mentionQuery(value, caret) : null);
+	let mentionActive = $state(0);
+	/** Esc closed the list for the mention starting here. */
+	let mentionClosed = $state<number | null>(null);
+	const mentionItems = $derived(mention && mentions ? mentions(mention.query) : []);
+	const mentionOpen = $derived(!!mention && mentionItems.length > 0 && mentionClosed !== mention.start);
+	const mentionStart = $derived(mention?.start ?? null);
+	$effect(() => {
+		void mention?.query;
+		mentionActive = 0;
+	});
+	$effect(() => {
+		if (mentionStart === null) mentionClosed = null;
+		else onmentionopen?.();
+	});
 	$effect(() => {
 		void slashText;
 		slashActive = 0;
@@ -99,6 +129,15 @@
 
 	function trackCaret() {
 		if (area) caret = area.selectionStart;
+	}
+
+	function pickMention(item: SuggestItem) {
+		if (!mention) return;
+		const next = removeMention(value, mention.start, caret);
+		value = next.text;
+		caret = next.caret;
+		queueMicrotask(() => area?.setSelectionRange(next.caret, next.caret));
+		onmention?.(item);
 	}
 
 	function pickCommand(item: SlashItem) {
@@ -160,6 +199,24 @@
 	}
 
 	function onkeydown(e: KeyboardEvent) {
+		if (mentionOpen && mention && !e.isComposing) {
+			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+				e.preventDefault();
+				mentionActive = moveActive(mentionActive, mentionItems.length, e.key === 'ArrowDown' ? 'down' : 'up');
+				return;
+			}
+			if ((e.key === 'Enter' && !e.shiftKey && !e.altKey) || e.key === 'Tab') {
+				e.preventDefault();
+				pickMention(mentionItems[mentionActive] ?? mentionItems[0]);
+				return;
+			}
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				e.stopPropagation();
+				mentionClosed = mention.start;
+				return;
+			}
+		}
 		if (slashOpen && !e.isComposing) {
 			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
 				e.preventDefault();
@@ -199,7 +256,7 @@
 
 	function oninput() {
 		trackCaret();
-		if (!onhash || !area) return;
+		if (mentions || !onhash || !area) return;
 		const at = hashTrigger(value, area.selectionStart);
 		if (at < 0) return;
 		value = value.slice(0, at) + value.slice(at + 1);
@@ -219,10 +276,23 @@
 	]}
 >
 	{#if slashOpen}
-		<SlashSuggest items={slashItems} active={slashActive} id={listId} onpick={pickCommand} />
+		<SlashSuggest items={slashItems} active={slashActive} id={listId} onpick={(item) => pickCommand(item as SlashItem)} />
+	{:else if mentionOpen}
+		<SlashSuggest items={mentionItems} active={mentionActive} id={listId} onpick={(item) => pickMention(item)} prefix="" label={t('chatContext.list')} hint={t('chatContext.hint')} />
 	{/if}
-	{#if context.length || contextExtra}
+	{#if context.length || contextExtra || onaddcontext}
 		<ul class="hidden flex-wrap gap-1 px-1 pb-1 has-[>li:not(:empty)]:flex" aria-label={t('chatView.context')}>
+			{#if onaddcontext}
+				<li class="flex">
+					<button
+						type="button"
+						class="flex items-center gap-1 rounded border border-(--vscode-widget-border) px-1.5 py-0.5 text-xs text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground) disabled:opacity-50"
+						title={t('chatContext.addHint')}
+						{disabled}
+						onclick={() => onaddcontext?.()}><Icon name="plus" size={12} />{t('chatContext.add')}</button
+					>
+				</li>
+			{/if}
 			{#each context as f (f.path + (f.implicit ? ':implicit' : ''))}
 				{@const label = contextLabel(f)}
 				<li
@@ -265,11 +335,11 @@
 		{oninput}
 		onkeyup={trackCaret}
 		onclick={trackCaret}
-		role={commands.length ? 'combobox' : undefined}
-		aria-expanded={commands.length ? slashOpen : undefined}
-		aria-controls={slashOpen ? listId : undefined}
-		aria-autocomplete={commands.length ? 'list' : undefined}
-		aria-activedescendant={slashOpen ? `${listId}-${slashActive}` : undefined}
+		role={commands.length || mentions ? 'combobox' : undefined}
+		aria-expanded={commands.length || mentions ? slashOpen || mentionOpen : undefined}
+		aria-controls={slashOpen || mentionOpen ? listId : undefined}
+		aria-autocomplete={commands.length || mentions ? 'list' : undefined}
+		aria-activedescendant={slashOpen ? `${listId}-${slashActive}` : mentionOpen ? `${listId}-${mentionActive}` : undefined}
 		style="outline: none; box-shadow: none"
 		class={[
 			'w-full resize-none bg-transparent px-1 text-(--vscode-input-foreground) outline-none focus-visible:outline-none placeholder:text-(--vscode-input-placeholderForeground)',

@@ -9,7 +9,7 @@
 
 import { readFileSync } from 'node:fs';
 import type { CanUseTool, HookCallbackMatcher, Options, PermissionResult, PermissionUpdate, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import { contextTokensOf, contextWindowOf, isUuid, normalize, ruleTexts, slashCommands, summarizeTool } from './normalize.ts';
+import { contextTokensOf, contextWindowOf, isUuid, modelOptions, normalize, ruleTexts, slashCommands, summarizeTool } from './normalize.ts';
 import { snapshotHooks } from './snapshots.ts';
 import { Guards } from './guards/index.ts';
 import { checkAnswers, isAskUserQuestion, QUESTIONS_DISMISSED } from './questions.ts';
@@ -35,6 +35,8 @@ export type QueryLike = AsyncIterable<unknown> & {
 	setPermissionMode?(mode: PermissionMode): Promise<void>;
 	/** The session's slash commands with descriptions (for the composer's `/` list). */
 	supportedCommands?(): Promise<unknown[]>;
+	/** The models the session can use (for the chat's model picker). */
+	supportedModels?(): Promise<unknown[]>;
 	/** How full the context window is (`detail: 'summary'` answers from the last response). */
 	getContextUsage?(opts?: { detail?: 'summary' | 'full' }): Promise<{ totalTokens?: unknown; maxTokens?: unknown }>;
 };
@@ -360,16 +362,28 @@ export class AgentHost {
 		this.finish(run, failure ? 1 : 0);
 	}
 
-	/** The session's slash commands, with descriptions, as a `commands` event (skipped on failure). */
+	/**
+	 * The session's slash commands, with descriptions, as a `commands` event, and its models as a
+	 * `models` event (each skipped on failure).
+	 */
 	private async listCommands(run: Run) {
 		run.commandsAsked = true;
 		const q = run.query;
-		if (!q?.supportedCommands) return;
-		try {
-			const list = await withTimeout(q.supportedCommands(), CONTROL_TIMEOUT_MS);
-			if (!run.exited) this.emit(run.id, { kind: 'commands', commands: slashCommands(list) });
-		} catch (e) {
-			this.log(`run ${run.id}: commands not listed: ${e instanceof Error ? e.message : String(e)}`);
+		if (q?.supportedCommands) {
+			try {
+				const list = await withTimeout(q.supportedCommands(), CONTROL_TIMEOUT_MS);
+				if (!run.exited) this.emit(run.id, { kind: 'commands', commands: slashCommands(list) });
+			} catch (e) {
+				this.log(`run ${run.id}: commands not listed: ${e instanceof Error ? e.message : String(e)}`);
+			}
+		}
+		if (q?.supportedModels) {
+			try {
+				const models = modelOptions(await withTimeout(q.supportedModels(), CONTROL_TIMEOUT_MS));
+				if (!run.exited && models.length) this.emit(run.id, { kind: 'models', models });
+			} catch (e) {
+				this.log(`run ${run.id}: models not listed: ${e instanceof Error ? e.message : String(e)}`);
+			}
 		}
 	}
 

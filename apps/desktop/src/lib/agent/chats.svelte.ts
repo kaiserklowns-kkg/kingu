@@ -16,6 +16,7 @@
  *   chats.fork(id, before)             Fork Conversation: a new chat with the conversation before
  *                                      request `before` (all of it with null); returns its id
  *   chats.stopAndWait(id) / reload(id, resume)   for rewinds (chatRewind.svelte.ts)
+ *   chats.importFile(path)             Import Chat: a chat file as a new chat (no session yet)
  *   chats.setModel / setPermissionMode applied to the live session (SDK setModel / setPermissionMode)
  *                                      or saved for the next run; returns which. "Allow all"
  *                                      (`bypassPermissions`) is kept in memory only (`allowAll`)
@@ -392,6 +393,23 @@ class Chats {
 		delete this.queues[key];
 		this.#lastImages.delete(key);
 		this.#patch(root, id, meta);
+	}
+
+	/**
+	 * Import Chat: the chat file at `path` (Export Chat's, or VS Code's) becomes a new chat of this
+	 * folder, its history shown; its next message starts a new session. Returns its id and title.
+	 */
+	async importFile(path: string): Promise<{ id: string; title: string } | undefined> {
+		const root = this.root;
+		if (!root) return;
+		const now = Date.now();
+		const id = newChatId(now);
+		const got = await invoke<{ title: string; prompt: string; model: string | null; permission_mode: PermissionMode | null; created_at: number }>('chat_import', { path, newId: id });
+		const base = newChat({ prompt: got.prompt || got.title, cwd: { kind: 'folder' }, model: got.model, permissionMode: got.permission_mode }, now, id);
+		const title = renamedChatTitle('', got.title) ?? base.title;
+		this.#save([...this.list, { ...base, title, title_auto: false, created_at: Math.min(got.created_at, now) }], root);
+		await this.#saving;
+		return { id, title };
 	}
 
 	/**

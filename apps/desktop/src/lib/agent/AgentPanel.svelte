@@ -7,9 +7,17 @@
 	// ADE tasks in their own "Agents (ADE)" section as read-only rows that open in Agents. The
 	// panel opens on the most recent chat, else a new one; never on a task. The chat never types
 	// into a terminal and never starts a CLI.
+	// Add Context (⌘/, the context row's button, or `#` / `@` inline): files, folders, the selection,
+	// problems, git changes, terminal output, a clipboard image, a past chat, instructions
+	// (chatContextSources.svelte.ts). Export / Import Chat: a chat as a JSON file.
 	import { onMount, untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
-	import type { Attachment } from './attachments.ts';
+	import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
+	import { addAttachments, type Attachment } from './attachments.ts';
+	import type { SuggestItem } from './SlashSuggest.svelte';
+	import { contextFiles, mentionItems, pickContext, resolveMention, type ContextPick } from './chatContextSources.svelte.ts';
+	import { modelCatalog } from './modelCatalog.svelte.ts';
+	import { modelChoices } from './modelChoices.ts';
 	import ChatList from './ChatList.svelte';
 	import Composer from './Composer.svelte';
 	import ChatEditsBar from './ChatEditsBar.svelte';
@@ -26,9 +34,6 @@
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { editors } from '#lib/workbench/editors.svelte.ts';
-	import { quick } from '#lib/workbench/quick.svelte.ts';
-	import { recentFiles } from '#lib/workbench/recentFiles.svelte.ts';
-	import { rankFiles } from '#lib/workbench/quickAccess.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { ask } from '#lib/workbench/messageBox.ts';
 	import { t } from '#lib/i18n/index.ts';
@@ -39,7 +44,7 @@
 	import { chatRewind } from './chatRewind.svelte.ts';
 	import { chatCwdPath, groupByDate, historySections, initialChat, type ChatCwd, type DateGroup } from './chats.ts';
 	import RulesChip from './RulesChip.svelte';
-	import { assemblePrompt, isFileKey, promptPath, relativeTo, resolveContext, withoutImagesLine, type ContextFile } from './chatPrompt.ts';
+	import { assemblePrompt, isFileKey, promptPath, relativeTo, resolveContext, withoutImagesLine, type ContextText } from './chatPrompt.ts';
 	import { AGENT_APPROVALS, modeOf, permissionFor, turnBusy, type AgentApproval, type ChatMode } from './chatInput.ts';
 	import { buildTurns, promptHistory, type Turn } from './chatParts.ts';
 	import { chatSignals, registerChatCommands } from './chatCommands.svelte.ts';
@@ -52,6 +57,8 @@
 	let files = $state<Attachment[]>([]);
 	/** Files attached with `#` (or brought back by Edit). */
 	let picked = $state<{ path: string; range?: { startLine: number; endLine: number } }[]>([]);
+	/** Add Context's other context (problems, a diff, terminal output, a folder, a past chat). */
+	let texts = $state<ContextText[]>([]);
 	/** The active file whose implicit chip the user turned off. */
 	let implicitOff = $state<string | null>(null);
 	/** Edit request: the input holds an earlier request, sent as a new message. */
@@ -141,6 +148,27 @@
 	// count (the panel is mounted again for every folder).
 	let seenFocus = chatSignals.focus;
 	let seenNew = chatSignals.newChat;
+	let seenAdd = chatSignals.addContext;
+	let seenExport = chatSignals.exportChat;
+	let seenImport = chatSignals.importChat;
+	$effect(() => {
+		const n = chatSignals.addContext;
+		if (n === seenAdd) return;
+		seenAdd = n;
+		untrack(() => void addContext());
+	});
+	$effect(() => {
+		const n = chatSignals.exportChat;
+		if (n === seenExport) return;
+		seenExport = n;
+		untrack(() => void exportChat());
+	});
+	$effect(() => {
+		const n = chatSignals.importChat;
+		if (n === seenImport) return;
+		seenImport = n;
+		untrack(() => void importChat());
+	});
 	$effect(() => {
 		const n = chatSignals.focus;
 		if (n === seenFocus) return;
@@ -195,6 +223,7 @@
 		input = '';
 		files = [];
 		picked = [];
+		texts = [];
 		editing = false;
 	}
 
@@ -226,7 +255,7 @@
 		const dropped = attachments.filter((a) => !a.image).map((a) => ({ path: relativeTo(workspace.root, a.path) }));
 		const list = [...(implicit && !implicit.disabled ? [implicit] : []), ...picked, ...dropped];
 		const context = await resolveContext(list, (rel) => invoke<string>('read_workspace_file', { rel }), (rel) => promptPath(rel, rootDir, runsInRoot));
-		return { text: assemblePrompt(text, context), images: attachments.filter((a) => a.image).map((a) => a.path), files: list.map((f) => f.path) };
+		return { text: assemblePrompt(text, context, texts), images: attachments.filter((a) => a.image).map((a) => a.path), files: list.map((f) => f.path) };
 	}
 
 	async function submit(text: string, attachments: Attachment[], how?: SendHow) {
@@ -296,19 +325,68 @@
 		if (id) select(id);
 	}
 
-	async function pickFile() {
-		const all = await invoke<string[]>('fs_list_files').catch(() => [] as string[]);
-		const item = await quick.choose({
-			placeholder: t('chatView.pickFile'),
-			items: [],
-			dynamic: (q) => {
-				const ranked = rankFiles(q, all, recentFiles.list, 50);
-				const list = ranked.length ? ranked.map((r) => r.path) : q ? [] : all.slice(0, 50);
-				return list.map((path) => ({ id: path, label: path.split('/').pop() || path, description: path, icon: path }));
+	/** What Add Context gave: file chips, context texts and images. */
+	function attachPicks(picks: ContextPick[]) {
+		for (const p of picks) {
+			if (p.kind === 'image') files = addAttachments(files, [p.path]);
+			else if (p.kind === 'text') texts = [...texts.filter((x) => !(x.kind === p.text.kind && x.label === p.text.label)), p.text];
+			else {
+				const path = relativeTo(workspace.root, p.path);
+				const same = (x: (typeof picked)[number]) => x.path === path && x.range?.startLine === p.range?.startLine && x.range?.endLine === p.range?.endLine;
+				if (!picked.some(same)) picked = [...picked, { path, ...(p.range ? { range: p.range } : {}) }];
 			}
-		});
-		if (item && !picked.some((p) => p.path === item.id && !p.range)) picked = [...picked, { path: item.id }];
+		}
 		queueMicrotask(() => composer?.focus());
+	}
+
+	const contextEnv = () => ({ cwd, chatId: chatMeta?.id ?? null });
+
+	async function addContext() {
+		if (!workspace.root) return;
+		void contextFiles.refresh(workspace.root);
+		attachPicks(await pickContext(contextEnv()));
+	}
+
+	async function onmention(item: SuggestItem) {
+		attachPicks(await resolveMention(item, contextEnv()));
+	}
+
+	/** Implement on the plan card: Agent mode with edits allowed, then the plan is carried out (its approval, or a message). */
+	async function implement() {
+		if (!chatMeta) return;
+		const id = chatMeta.id;
+		const waiting = chatRun?.pending.find((p) => p.tool === 'ExitPlanMode');
+		await setMode('agent', 'acceptEdits');
+		if (waiting) chats.answer(id, waiting.request_id, 'allow');
+		else void chats.submit(id, { text: t('chatIo.implementPrompt'), images: [] }, t('chatIo.implementPrompt'));
+	}
+
+	async function exportChat() {
+		if (!chatMeta) return status.flash(t('chatIo.noChat'), 5000);
+		const id = chatMeta.id;
+		const name = chatMeta.title.replace(/[\\/:*?"<>|\s]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'chat';
+		const path = await saveDialog({ title: t('chatIo.export'), defaultPath: `${name}.json`, filters: [{ name: t('chatIo.filter'), extensions: ['json'] }] }).catch(() => null);
+		if (!path) return;
+		try {
+			await invoke('chat_export', { id, path });
+			status.flash(t('chatIo.exported', { path }), 6000);
+		} catch (e) {
+			status.flash(t('chatIo.exportFailed', { error: String(e) }), 10000);
+		}
+	}
+
+	async function importChat() {
+		if (!workspace.root) return status.flash(t('chatIo.noFolder'), 5000);
+		const path = await openDialog({ title: t('chatIo.import'), multiple: false, directory: false, filters: [{ name: t('chatIo.filter'), extensions: ['json'] }] }).catch(() => null);
+		if (!path || Array.isArray(path)) return;
+		try {
+			const got = await chats.importFile(path);
+			if (!got) return;
+			select(got.id);
+			status.flash(t('chatIo.imported', { title: got.title }), 8000);
+		} catch (e) {
+			status.flash(t('chatIo.importFailed', { error: String(e) }), 10000);
+		}
 	}
 
 	/** "Allow all" asks once per app session (a native warning) before any chat uses it. */
@@ -400,11 +478,7 @@
 		acceptEdits: () => t('chat.panel.mode.acceptEdits'),
 		bypassPermissions: () => t('chatInput.allowAll')
 	};
-	/** Model choices: the default from settings, the chat's own, and Claude's aliases. */
-	function modelChoices(current: string | null): string[] {
-		const d = chats.defaults().model;
-		return [...new Set([current, d, 'opus', 'sonnet', 'haiku'].filter((m): m is string => !!m))];
-	}
+	const TEXT_ICON: Record<string, IconName> = { problems: 'warning', 'git-diff': 'git', terminal: 'terminal', folder: 'folder', chat: 'agent' };
 	const STATE_DOT = { working: 'bg-(--vscode-editorInfo-foreground) animate-pulse', needsInput: 'bg-(--vscode-editorWarning-foreground)' } as const;
 	const STATE_LABEL = { working: () => t('team.agent.status.running'), needsInput: () => t('team.agent.status.waiting') } as const;
 	const ICON_BTN = 'grid size-[22px] shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-40';
@@ -532,7 +606,7 @@
 				chatId={chatMeta.id}
 				root={workspace.root}
 				onanswer={(p, decision, message, answers) => chatMeta && chats.answer(chatMeta.id, p.request_id, decision, message, answers)}
-				actions={{ retry: () => chatMeta && void chatRewind.retry(chatMeta.id), edit: editRequest, editInline }}
+				actions={{ retry: () => chatMeta && void chatRewind.retry(chatMeta.id), edit: editRequest, editInline, implement: mode === 'ask' ? implement : undefined }}
 				reverted={(r) => !!chatMeta && chatEdits.isReverted(chatMeta.id, r)}
 				class="h-full p-3"
 			>
@@ -612,7 +686,10 @@
 				{history}
 				{running}
 				onstop={() => chatMeta && chats.interrupt(chatMeta.id)}
-				onhash={pickFile}
+				mentions={(q) => mentionItems(q)}
+				{onmention}
+				onmentionopen={() => void contextFiles.refresh(workspace.root)}
+				onaddcontext={addContext}
 				context={contextChips}
 				oncontexttoggle={(f) => (implicitOff = implicitOff === f.path ? null : f.path)}
 				oncontextremove={(f) => (picked = picked.filter((p) => !(p.path === f.path && p.range?.startLine === f.range?.startLine)))}
@@ -655,7 +732,7 @@
 						value={chatMeta ? (chatMeta.model ?? '') : newModel}
 						onchange={(e) => changeModel(e.currentTarget.value)}
 					>
-						{#each modelChoices(chatMeta ? chatMeta.model : newModel) as m (m)}<option value={m}>{m}</option>{/each}
+						{#each modelChoices(chatMeta ? chatMeta.model : newModel, chats.defaults().model, modelCatalog.list) as m (m.value)}<option value={m.value} title={m.description || m.value}>{m.label}</option>{/each}
 					</select>
 				{/snippet}
 			</Composer>
@@ -666,5 +743,17 @@
 </div>
 
 {#snippet rulesChip()}
+	{#each texts as c, i (c.kind + c.label + i)}
+		<span class="flex max-w-64 items-center gap-1 rounded border border-(--vscode-widget-border) px-1.5 py-0.5 text-xs text-(--vscode-foreground)" title={c.text.slice(0, 500)}>
+			<Icon name={TEXT_ICON[c.kind] ?? 'note'} size={12} />
+			<span class="truncate">{c.label}</span>
+			<button
+				type="button"
+				class="grid size-4 shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)"
+				aria-label={t('chatView.removeAttachment', { name: c.label })}
+				onclick={() => (texts = texts.filter((x) => x !== c))}><Icon name="close" size={10} /></button
+			>
+		</span>
+	{/each}
 	<RulesChip {cwd} files={contextChips.filter((f) => !('disabled' in f && f.disabled)).map((f) => f.path)} />
 {/snippet}

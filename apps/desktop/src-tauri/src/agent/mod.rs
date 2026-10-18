@@ -6,6 +6,7 @@
 pub mod ai_text;
 pub mod automations;
 pub mod chat_edits;
+pub mod chat_io;
 pub mod chats;
 pub mod cli;
 pub mod events;
@@ -246,6 +247,44 @@ pub fn chats_save(ws: State<'_, Workspace>, chats: Vec<chats::ChatMeta>) -> Resu
 pub async fn chat_transcript_load(ws: State<'_, Workspace>, id: String) -> Result<Vec<AgentEvent>, String> {
   let root = ws.root()?;
   blocking(move || chats::load_transcript(&root, &id)).await
+}
+
+/// The working tree's changes where a chat runs (`cwd`: the open folder or a task worktree), for
+/// the chat's "Source Control" context.
+#[tauri::command]
+pub async fn chat_context_git_diff(ws: State<'_, Workspace>, cwd: String) -> Result<String, String> {
+  let root = ws.root()?;
+  blocking(move || chat_io::git_changes(&chats::resolve_cwd(&root, std::path::Path::new(&cwd))?)).await
+}
+
+/// Export Chat: chat `id` (its saved events) as JSON at `path`, which the user picked.
+#[tauri::command]
+pub async fn chat_export(ws: State<'_, Workspace>, id: String, path: String) -> Result<(), String> {
+  chats::check_id(&id)?;
+  let root = ws.root()?;
+  blocking(move || {
+    let meta = chats::load(&root)?.into_iter().find(|c| c.id == id).ok_or_else(|| crate::tr!(crate::i18n::msg::AgentMsg::BadChatId))?;
+    let events = chats::load_transcript(&root, &id)?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+    let text = chat_io::export_json(&meta, &events, now)?;
+    std::fs::write(&path, text).map_err(|e| format!("{path}: {e}"))
+  })
+  .await
+}
+
+/// Import Chat: a chat file at `path` (the user picked it) becomes chat `new_id`'s transcript;
+/// the webview adds the returned chat to chats.json.
+#[tauri::command]
+pub async fn chat_import(ws: State<'_, Workspace>, path: String, new_id: String) -> Result<chat_io::ImportedChat, String> {
+  chats::check_id(&new_id)?;
+  let root = ws.root()?;
+  blocking(move || {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+    let (chat, events) = chat_io::parse_import(&chat_io::read_import(std::path::Path::new(&path))?, now)?;
+    chat_io::write_import(&root, &new_id, &events)?;
+    Ok(chat)
+  })
+  .await
 }
 
 /// Deletes the chat's transcript (the webview drops it from chats.json). Refused while it runs.

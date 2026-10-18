@@ -439,6 +439,18 @@
 			find: openFind,
 			clear: () => t.clear(),
 			selectAll: () => t.selectAll(),
+			lines: () => {
+				const buf = t.buffer.active;
+				const out: string[] = [];
+				for (let i = 0; i < buf.length; i++) {
+					const line = buf.getLine(i);
+					const text = line?.translateToString(true) ?? '';
+					// A soft-wrapped row continues the line above.
+					if (line?.isWrapped && out.length) out[out.length - 1] += text;
+					else out.push(text);
+				}
+				return out;
+			},
 			write: (data) => void invoke('pty_write', { key, data }).catch((e) => status.flash(`พิมพ์ลง terminal ไม่ได้: ${e}`))
 		});
 

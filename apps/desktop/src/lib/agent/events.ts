@@ -19,6 +19,9 @@ export type Decision = 'allow' | 'allow_always' | 'allow_workspace' | 'allow_use
 /** A slash command the session knows (SDK `supportedCommands()`). */
 export type SessionCommand = { name: string; description: string; argument_hint: string };
 
+/** A model the session can use (SDK `supportedModels()`). */
+export type ModelOption = { value: string; display_name: string; description: string };
+
 /** How full the context window was after the last turn. */
 export type ContextUsage = { used: number; max: number };
 
@@ -58,6 +61,8 @@ export type AgentEvent =
 	| { kind: 'session_info'; slash_commands: string[]; tools: string[]; mcp_servers: { name: string; status: string }[] }
 	/** The session's slash commands with descriptions; replaces the last list. Not a timeline entry. */
 	| { kind: 'commands'; commands: SessionCommand[] }
+	/** The models the session can switch to; replaces the last list (modelCatalog). Not a timeline entry. */
+	| { kind: 'models'; models: ModelOption[] }
 	/** How full the context window is after a turn. Not a timeline entry. */
 	| { kind: 'context_usage'; used_tokens: number; max_tokens: number }
 	| ({ kind: 'message'; role: string; text: string } & Parent)
@@ -127,7 +132,7 @@ export const STATUS_LABEL: Readonly<Record<RunStatus, string>> = {
 /** Timeline entries: every event except streaming deltas and permission bookkeeping. */
 export type TimelineEvent = Exclude<
 	AgentEvent,
-	{ kind: 'delta' } | { kind: 'permission_resolved' } | { kind: 'edits_changed' } | { kind: 'session_info' } | { kind: 'commands' } | { kind: 'context_usage' }
+	{ kind: 'delta' } | { kind: 'permission_resolved' } | { kind: 'edits_changed' } | { kind: 'session_info' } | { kind: 'commands' } | { kind: 'models' } | { kind: 'context_usage' }
 >;
 
 export type RunState = {
@@ -194,6 +199,8 @@ export function applyEvent(s: RunState, ev: AgentEvent): void {
 			return;
 		case 'commands':
 			s.commands = ev.commands;
+			return;
+		case 'models':
 			return;
 		case 'context_usage':
 			if (ev.max_tokens > 0) s.context = { used: ev.used_tokens, max: ev.max_tokens };

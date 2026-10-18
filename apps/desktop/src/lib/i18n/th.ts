@@ -12,9 +12,10 @@ import { chatView } from './th/chatView';
 import { chatEdits } from './th/chatEdits';
 import { chatRewind } from './th/chatRewind';
 import { chatInput } from './th/chatInput';
+import { chatContext } from './th/chatContext';
 import { chatParts } from './th/chatParts';
 import { chatEditor } from './th/chatEditor';
 import { chatSystem } from './th/chatSystem';
 import { adeWorktrees } from './th/adeWorktrees';
 
-export const th = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatInput, ...adeWorktrees } satisfies Record<keyof typeof en, string>;
+export const th = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatInput, ...chatContext, ...adeWorktrees } satisfies Record<keyof typeof en, string>;

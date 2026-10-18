@@ -5,6 +5,7 @@ import {
 	CONTEXT_CLOSE,
 	CONTEXT_OPEN,
 	contextLabel,
+	cutText,
 	inlineContent,
 	isFileKey,
 	linesOf,
@@ -32,6 +33,20 @@ describe('prompt assembly', () => {
 		expect(p).toContain('<file path="src/a.ts" lines="2-4">\nb\nc\nd\n</file>');
 		expect(p).toContain('<file path="big.json" />');
 		expect(p).not.toContain('dup');
+	});
+
+	test('other context goes in the same block after the files, and parses back to the text', () => {
+		const p = assemblePrompt('why?', [{ path: 'a.ts', content: 'x' }], [{ kind: 'problems', label: 'Problems', text: 'a.ts:1:1 error: "bad" <x>' }]);
+		expect(p).toContain('<file path="a.ts">\nx\n</file>\n<context kind="problems" label="Problems">\na.ts:1:1 error: "bad" <x>\n</context>');
+		expect(p.endsWith(CONTEXT_CLOSE)).toBe(true);
+		expect(parseRequest(p)).toEqual({ text: 'why?', files: [{ path: 'a.ts' }], images: [] });
+		expect(parseRequest(assemblePrompt('only', [], [{ kind: 'terminal', label: 'T', text: 'ok' }])).text).toBe('only');
+	});
+
+	test('long context text is cut on a character boundary', () => {
+		expect(cutText('short')).toBe('short');
+		const cut = cutText('ก'.repeat(10), 7);
+		expect(cut).toBe('กก\n… (cut)');
 	});
 
 	test('the block parses back into the typed text and chips', () => {
