@@ -110,6 +110,8 @@
 			commands.register({ id: 'workbench.files.action.refreshFilesExplorer', title: 'Refresh Explorer', category: 'File', when: () => workspace.root !== null, run: () => explorer.refresh(['']) }),
 			commands.register({ id: 'workbench.files.action.collapseExplorerFolders', title: 'Collapse Folders in Explorer', category: 'File', when: () => workspace.root !== null, run: () => explorer.collapseAll() }),
 			commands.register({ id: 'workbench.action.quickOpen', title: 'Go to File...', key: 'cmd+p', run: () => quick.show('') }),
+			// VS Code's Developer: Reload Window; terminals and agent CLIs re-attach (they live in Rust).
+			commands.register({ id: 'workbench.action.reloadWindow', title: 'Reload Window', category: 'Developer', run: () => location.reload() }),
 			commands.register({ id: 'workbench.action.showCommands', title: 'Show All Commands', key: 'cmd+shift+p', palette: false, run: () => quick.show('>') }),
 			// In Agents mode ⌘B / ⌘J toggle the sessions side bar and the changes panel instead.
 			commands.register({
