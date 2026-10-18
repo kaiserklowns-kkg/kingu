@@ -8,10 +8,10 @@
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { adeLayout, PRIMARY } from './adeLayout.svelte';
 	import { matchesQuery } from './adeTabs';
-	import { aggregateStats, MAX_TITLE, STATUS_LABEL, timeAgo, type TaskView } from './model';
+	import { aggregateStats, isQuestion, MAX_TITLE, STATUS_LABEL, statusLabel, timeAgo, type TaskView } from './model';
 	import { adeTasks } from './tasks.svelte';
 	import { automations } from './automations.svelte.ts';
-	import { STATUS_DOT } from './ui';
+	import { QUESTION_TEXT, statusDot } from './ui';
 	import { newSession } from './agentsMode.svelte';
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
 	import { actionsFor, runWorktreeAction } from './worktreeMenu.svelte';
@@ -25,7 +25,7 @@
 	const primaryShown = $derived(matchesQuery(adeLayout.query, workspace.name, status.branch));
 	const selectedKey = $derived(adeLayout.board ? null : adeLayout.key);
 
-	const summary = (v: TaskView) => v.runtime?.lastEvent ?? v.meta.last_run?.summary ?? STATUS_LABEL[v.status];
+	const summary = (v: TaskView) => v.runtime?.lastEvent ?? v.meta.last_run?.summary ?? statusLabel(v);
 	const when = (v: TaskView) => Math.max(v.meta.updated_at, v.runtime?.updatedAt ?? 0);
 
 	function newTask() {
@@ -229,18 +229,20 @@
 					<button
 						class={[CARD, selected ? 'border-(--vscode-widget-border) bg-(--vscode-list-hoverBackground)' : 'border-transparent hover:bg-(--vscode-list-hoverBackground)']}
 						aria-current={selected ? 'true' : undefined}
-						aria-label="{v.meta.title} — {STATUS_LABEL[v.status]}"
+						aria-label="{v.meta.title} — {statusLabel(v)}"
 						onclick={() => adeLayout.show(v.meta.slug)}
 						oncontextmenu={(e) => openMenu(v.meta.slug, e)}
 					>
 						<span class="group/card flex items-center gap-2">
 							<!-- Orca's worktree marker: a bell when the agent waits for you, a spinner while it works. -->
-							{#if v.status === 'waiting'}
-								<span class="kg-ring -mx-0.5 shrink-0 text-(--vscode-editorWarning-foreground)" title={STATUS_LABEL[v.status]}><Icon name="bell" size={13} filled /></span>
+							{#if isQuestion(v)}
+								<span class="-mx-0.5 shrink-0 {QUESTION_TEXT}" title={statusLabel(v)}><Icon name="question" size={13} filled /></span>
+							{:else if v.status === 'waiting'}
+								<span class="kg-ring -mx-0.5 shrink-0 text-(--vscode-editorWarning-foreground)" title={statusLabel(v)}><Icon name="bell" size={13} filled /></span>
 							{:else if v.status === 'running'}
-								<span class="size-2.5 shrink-0 animate-spin rounded-full border-[1.5px] border-(--vscode-editorInfo-foreground) border-t-transparent" title={STATUS_LABEL[v.status]}></span>
+								<span class="size-2.5 shrink-0 animate-spin rounded-full border-[1.5px] border-(--vscode-editorInfo-foreground) border-t-transparent" title={statusLabel(v)}></span>
 							{:else}
-								<span class={['size-2 shrink-0 rounded-full', STATUS_DOT[v.status]]} title={STATUS_LABEL[v.status]}></span>
+								<span class={['size-2 shrink-0 rounded-full', statusDot(v)]} title={statusLabel(v)}></span>
 							{/if}
 							<!-- svelte-ignore a11y_no_static_element_interactions -->
 							<span class="min-w-0 flex-1 truncate text-[13px]" title="{v.meta.title} (ดับเบิลคลิกเพื่อเปลี่ยนชื่อ)" ondblclick={(e) => (e.stopPropagation(), adeTasks.startRename(v.meta.slug))}>{v.meta.title}</span>
@@ -259,8 +261,8 @@
 						</span>
 						<span class="mt-0.5 block truncate pl-4 font-mono text-xs text-(--vscode-descriptionForeground)">{adeTasks.branchOf(v.meta.slug)}</span>
 						<span class="mt-1 flex items-center gap-1.5 pl-4 text-xs">
-							<span class={['shrink-0', v.status === 'waiting' ? 'text-(--vscode-editorWarning-foreground)' : 'text-(--vscode-descriptionForeground)']}><Icon name="agent" size={12} /></span>
-							<span class={['min-w-0 flex-1 truncate', v.status === 'waiting' ? 'text-(--vscode-editorWarning-foreground)' : 'text-(--vscode-foreground)/80']}>{summary(v)}</span>
+							<span class={['shrink-0', isQuestion(v) ? QUESTION_TEXT : v.status === 'waiting' ? 'text-(--vscode-editorWarning-foreground)' : 'text-(--vscode-descriptionForeground)']}><Icon name={isQuestion(v) ? 'question' : 'agent'} size={12} /></span>
+							<span class={['min-w-0 flex-1 truncate', isQuestion(v) ? QUESTION_TEXT : v.status === 'waiting' ? 'text-(--vscode-editorWarning-foreground)' : 'text-(--vscode-foreground)/80']}>{summary(v)}</span>
 							<span class="shrink-0 text-[11px] text-(--vscode-descriptionForeground)">{timeAgo(when(v), adeTasks.now)}</span>
 						</span>
 					</button>

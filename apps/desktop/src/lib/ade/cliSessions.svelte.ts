@@ -12,6 +12,8 @@ import { isWorking } from './agentCli';
 import { applyHook, initialHookState, type HookState } from './agentHooks';
 import { pasteText, promptDue } from '#lib/ade/agentProfiles.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
+import { settings } from '#lib/settings/settings.svelte.ts';
+import { clientLog } from '#lib/client-log.ts';
 
 /** `hookToken`: the session reports its state through Claude Code hooks (claude CLIs). */
 export type CliSession = { run: string[]; startedAt: number; hookToken?: string };
@@ -41,7 +43,14 @@ class CliSessions {
 	onSessionId: ((slug: string, id: string) => void) | null = null;
 
 	constructor() {
+		// Orca removes its managed hooks when status hooks are turned off (never at startup).
+		let statusHooks: boolean | undefined;
 		$effect.root(() => {
+			$effect(() => {
+				const on = settings.get<boolean>('kingu.agent.statusHooks') !== false;
+				if (statusHooks === true && !on) void invoke('agent_status_hooks_remove').catch((e) => clientLog('error', `remove status hooks: ${e}`));
+				statusHooks = on;
+			});
 			$effect(() => {
 				const state = $state.snapshot(this.sessions);
 				if (this.#tag) persist(storeName(STORE, this.#tag), state);

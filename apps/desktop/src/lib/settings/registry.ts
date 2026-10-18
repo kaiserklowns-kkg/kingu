@@ -289,6 +289,26 @@ const CORE_SETTINGS: SettingSchema[] = [
 		// User-only: it is a program Kingu runs; a repository's workspace settings must not pick it.
 		scope: 'application'
 	},
+	{
+		id: 'kingu.agent.statusHooks',
+		group: 'Agent',
+		type: 'boolean',
+		default: true,
+		description:
+			'ให้ agent CLI อื่นนอกจาก claude รายงานสถานะ (กำลังทำ รออนุญาต ถามคำถาม เสร็จรอบ) ผ่าน hooks แบบ Orca: Kingu เพิ่ม hook ของตัวเองใน ~/.gemini/settings.json, ~/.cursor/hooks.json, ~/.copilot/hooks/kingu-desktop.json, ~/.factory/settings.json และ $CODEX_HOME/hooks.json (+ [hooks.state] ใน config.toml) ก่อนเริ่ม CLI นั้นครั้งแรก hook ทำงานเฉพาะใน terminal ที่ Kingu เปิด และเก็บไฟล์เดิมไว้ที่ <ไฟล์>.kingu.bak ส่วน opencode ใช้ plugin ต่อ session ไม่แก้ config ปิดเพื่อเอา hook ของ Kingu ออกจากไฟล์เหล่านั้น (Status hooks for non-Claude agent CLIs, like Orca: Kingu adds its own hook entries to those CLI configs; they only report inside Kingu terminals. Turning this off removes them.)',
+		// User-only: it edits the user's own CLI config files.
+		scope: 'application'
+	},
+	{
+		id: 'kingu.agent.trustWorkspace',
+		group: 'Agent',
+		type: 'boolean',
+		default: true,
+		description:
+			'เชื่อถือ worktree ของงานให้ agent CLI ก่อนเริ่ม (claude, codex, cursor-agent, copilot) เพื่อไม่ให้คำถาม "trust this folder?" ครั้งแรกกลืน prompt — Kingu เขียนลงไฟล์ config ของ CLI นั้นเฉพาะ path ของ worktree ที่ Kingu สร้าง (~/.claude.json หรือ $CLAUDE_CONFIG_DIR/.claude.json, $CODEX_HOME/config.toml, ~/.cursor/projects, ~/.copilot/config.json) เก็บไฟล์เดิมไว้ที่ <ไฟล์>.kingu.bak (Trust a task worktree for the agent CLI before it starts, so its first-run folder-trust prompt does not swallow the prompt. Edits only that CLI\'s config, only for Kingu worktrees, keeping a .kingu.bak copy.)',
+		// User-only: it edits the user's own CLI config files.
+		scope: 'application'
+	},
 	...agentArgsSettings(),
 	// --- Worktrees (Orca: worktree branch prefix, base branch, setup script, delete on remove)
 	{

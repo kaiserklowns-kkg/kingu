@@ -1,5 +1,6 @@
 mod accounts;
 mod agent;
+mod attachments;
 mod dap;
 mod fileops;
 mod fs;
@@ -9,6 +10,7 @@ mod git_remote;
 mod lsp;
 mod menu;
 mod project;
+mod notify;
 mod pty;
 mod replace;
 mod search;
@@ -256,7 +258,7 @@ fn pty_spawn(
   // Only an agent CLI's terminal (`cli:` keys) gets the active AI account's env, never an
   // ordinary terminal, so an API key does not leak into every shell.
   let mut env = terminal.env;
-  if let Some(program) = run.as_deref().and_then(<[String]>::first)
+  if let Some(program) = run.as_deref().and_then(agent::cli::program_of)
     && key.starts_with("cli:")
   {
     env.extend(accounts::env_for_program(&accounts, program)?);
@@ -681,6 +683,11 @@ pub fn run() {
       worktree_list,
       worktree_remove,
       agent::agent_start,
+      notify::agent_notify,
+      attachments::paste_image_save,
+      agent::trust::agent_trust_workspace,
+      agent::status_hooks::agent_status_hooks_install,
+      agent::status_hooks::agent_status_hooks_remove,
       agent::hooks::agent_hook_settings,
       agent::hooks::agent_hook_file,
       agent::cli::agent_cli_found,

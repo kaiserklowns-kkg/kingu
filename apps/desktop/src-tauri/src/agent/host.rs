@@ -143,6 +143,9 @@ pub struct StartRequest {
   /// Auth variables to drop from the run's env so they do not override that account.
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub unset_env: Vec<String>,
+  /// Image files sent with the first prompt (checked: attachments.rs).
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  pub images: Vec<String>,
 }
 
 /// Env values that may hold an API key: serialized for the sidecar, never shown by Debug.
@@ -412,9 +415,13 @@ impl AgentHost {
     proc.request(method, params, REQUEST_TIMEOUT).map(|_| ())
   }
 
-  /// A follow-up message in the run's session.
-  pub fn send(&self, run_id: u32, text: &str) -> Result<(), String> {
-    self.run_request(run_id, "send", json!({ "text": text }))
+  /// A follow-up message in the run's session, with image files (checked: attachments.rs).
+  pub fn send(&self, run_id: u32, text: &str, images: &[String]) -> Result<(), String> {
+    let mut params = json!({ "text": text });
+    if !images.is_empty() {
+      params["images"] = json!(images);
+    }
+    self.run_request(run_id, "send", params)
   }
 
   /// `decision`: `allow`, `allow_always` (this session) or `deny` (with an optional message).
@@ -541,7 +548,7 @@ read -r line
     host.stop(run).unwrap();
     assert_eq!(next(&rx), AgentEvent::Exit { code: None, signal: None, stopped: true });
     assert!(!host.is_running(run));
-    assert!(host.send(run, "again").unwrap_err().contains("no such agent run"));
+    assert!(host.send(run, "again", &[]).unwrap_err().contains("no such agent run"));
 
     let requests = std::fs::read_to_string(&log).unwrap();
     let lines: Vec<Value> = requests.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
@@ -591,6 +598,14 @@ exit 3"#
     let mut empty = BTreeMap::new();
     empty.insert("a".to_string(), McpServer { command: " ".into(), ..Default::default() });
     assert!(validate_mcp_servers(&empty).is_err());
+  }
+
+  #[test]
+  fn images_are_sent_only_when_attached() {
+    let wire = serde_json::to_value(StartRequest { cwd: "/w".into(), prompt: "x".into(), images: vec!["/c/a.png".into()], ..Default::default() }).unwrap();
+    assert_eq!(wire["images"], json!(["/c/a.png"]));
+    let wire = serde_json::to_value(StartRequest { cwd: "/w".into(), prompt: "x".into(), ..Default::default() }).unwrap();
+    assert!(wire.get("images").is_none());
   }
 
   #[test]

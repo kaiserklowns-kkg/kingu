@@ -2,7 +2,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { Options, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import { AgentHost, decisionResult, Inbox, runEnv, type QueryFn } from '../src/host.ts';
+import { AgentHost, decisionResult, imageBlocks, Inbox, MAX_IMAGE_BYTES, runEnv, shownText, type QueryFn } from '../src/host.ts';
 import type { AgentEvent } from '../src/protocol.ts';
 
 type Out = { jsonrpc: '2.0'; id?: number | string | null; method?: string; params?: any; result?: unknown; error?: { code: number; message: string } };
@@ -218,6 +218,53 @@ describe('agent host protocol', () => {
 		const kinds = out.filter((o) => o.method === 'event').map((o) => o.params.event.kind);
 		expect(kinds).toEqual(['message', 'system', 'error', 'exit']);
 		expect(out.at(-1)!.params.event).toEqual({ kind: 'exit', code: 1, signal: null, stopped: false });
+	});
+});
+
+describe('image attachments', () => {
+	const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+	test('image blocks first, then the text', async () => {
+		const inbox = new Inbox();
+		inbox.push('ดูรูปนี้', imageBlocks(['/c/a.png', '/c/b.JPG'], () => png));
+		const msg = (await inbox[Symbol.asyncIterator]().next()).value!;
+		expect(msg.message.content).toEqual([
+			{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw==' } },
+			{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'iVBORw==' } },
+			{ type: 'text', text: 'ดูรูปนี้' }
+		]);
+		expect(shownText('ดูรูปนี้', ['/c/a.png'])).toBe('ดูรูปนี้\n\n[แนบรูป: a.png]');
+		expect(shownText('x', [])).toBe('x');
+	});
+	test('limits', () => {
+		expect(imageBlocks(undefined, () => png)).toEqual([]);
+		expect(() => imageBlocks(['a.png'], () => png)).toThrow();
+		expect(() => imageBlocks(['/a.svg'], () => png)).toThrow();
+		expect(() => imageBlocks(['/a.png'], () => new Uint8Array(MAX_IMAGE_BYTES + 1))).toThrow();
+		expect(() => imageBlocks(Array(21).fill('/a.png'), () => png)).toThrow();
+		expect(() => imageBlocks(Array(5).fill('/a.png'), () => new Uint8Array(MAX_IMAGE_BYTES))).toThrow();
+	});
+	test('start and send carry images to the session', async () => {
+		const out: Out[] = [];
+		const seen: unknown[] = [];
+		const host = new AgentHost({
+			query: ({ prompt }) =>
+				Object.assign(
+					(async function* () {
+						for await (const m of prompt as AsyncIterable<SDKUserMessage>) seen.push(m.message.content);
+					})(),
+					{ interrupt: async () => {} }
+				),
+			write: (m) => out.push(m as Out),
+			readFile: () => png
+		});
+		await host.handleLine(JSON.stringify({ id: 1, method: 'start', params: { runId: 9, cwd: '/w', prompt: 'x', images: ['/c/a.png'] } }));
+		await host.handleLine(JSON.stringify({ id: 2, method: 'send', params: { runId: 9, text: 'y', images: ['/c/b.webp'] } }));
+		await host.handleLine(JSON.stringify({ id: 3, method: 'send', params: { runId: 9, text: 'z', images: ['relative.png'] } }));
+		await Bun.sleep(10);
+		expect(seen).toHaveLength(2);
+		expect((seen[1] as { source?: { media_type: string } }[])[0]?.source?.media_type).toBe('image/webp');
+		expect(out.find((o) => o.id === 3)?.error?.message).toContain('absolute');
+		await host.handleLine(JSON.stringify({ id: 4, method: 'stop', params: { runId: 9 } }));
 	});
 });
 

@@ -8,6 +8,9 @@
 	import { shellFrom, shellPlatform, terminalOptionsFrom } from '#lib/settings/mappings.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { system } from '#lib/workbench/system.svelte.ts';
+	import { status } from '#lib/workbench/status.svelte.ts';
+	import { clipboardImage, onFileDrop, savePastedImage } from '#lib/agent/attachInput.ts';
+	import { pastedImageText, terminalDropText } from '#lib/agent/attachments.ts';
 
 	/**
 	 * `key`: the PTY session (sessions.ts). A live one is re-attached with its recent output
@@ -88,6 +91,27 @@
 		const resized = term.onResize(({ cols, rows }) => {
 			if (live) invoke('pty_resize', { key, cols, rows }).catch(() => {});
 		});
+		// Orca's image paste: a clipboard holding only an image is saved and its path pasted, so an
+		// agent CLI attaches it; text pastes stay with xterm.
+		const onPaste = (e: ClipboardEvent) => {
+			const image = clipboardImage(e);
+			if (!image || !live) return;
+			e.preventDefault();
+			e.stopImmediatePropagation();
+			void savePastedImage(image)
+				.then((path) => invoke('pty_write', { key, data: pastedImageText(path) }))
+				.catch((err) => status.flash(`วางรูปไม่ได้: ${err}`, 8000));
+		};
+		host.addEventListener('paste', onPaste, true);
+		// Files dropped from Finder are typed as paths (images as a bracketed paste, like Orca).
+		const stopDrop = onFileDrop(host, {
+			drop: (paths) => {
+				const text = terminalDropText(paths);
+				if (!text || !live) return;
+				void invoke('pty_write', { key, data: text }).catch(() => {});
+				term.focus();
+			}
+		});
 		const unbindSettings = bindTerminalSettings(term, () => fit.fit());
 		const observer = new ResizeObserver(() => {
 			fit.fit();
@@ -98,6 +122,8 @@
 		// No pty_kill here: an unmount is also what a page reload does, and the shell must outlive it.
 		return () => {
 			disposed = true;
+			host.removeEventListener('paste', onPaste, true);
+			stopDrop();
 			observer.disconnect();
 			unbindSettings();
 			input.dispose();

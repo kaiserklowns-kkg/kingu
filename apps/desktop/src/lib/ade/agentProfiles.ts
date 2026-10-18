@@ -7,10 +7,12 @@ import { cliWithMcp, type McpServers } from '#lib/ade/mcp.ts';
 
 /**
  * Where a session's state comes from. `hooks`: Claude Code hooks (`--settings`) report every
- * phase. `notify`: codex's `notify` program reports each finished turn (and the session id);
- * working comes from the output. `output`: printing = working, else waiting for you.
+ * phase. `notify`: codex's `notify` program reports each finished turn (and the session id),
+ * and with `kingu.agent.statusHooks` its hooks.json hooks report every phase. `agent-hooks`: the
+ * status hooks Kingu installs for the CLI (Rust status_hooks.rs) report through the session's
+ * `KINGU_AGENT_HOOK_FILE`. Until hooks report (or without them): printing = working, else waiting.
  */
-export type StatusSource = 'hooks' | 'notify' | 'output';
+export type StatusSource = 'hooks' | 'notify' | 'agent-hooks' | 'output';
 /** The AI account (accounts module) whose env the CLI's terminal gets; Rust picks it by program name. */
 export type AccountProvider = 'claude' | 'codex';
 
@@ -20,8 +22,10 @@ export type LaunchContext = {
 	sessionId?: string;
 	/** claude: the `--settings` JSON with the hook commands. */
 	hookSettings?: string | null;
-	/** codex: the hook jsonl file its `notify` program appends to. */
+	/** codex, `agent-hooks` CLIs: the session's hook jsonl file (codex `notify`, `KINGU_AGENT_HOOK_FILE`). */
 	hookFile?: string | null;
+	/** opencode: the session's `OPENCODE_CONFIG_DIR` holding Kingu's status plugin. */
+	opencodeDir?: string | null;
 	servers: McpServers;
 	plugins: readonly string[];
 };
@@ -132,6 +136,19 @@ type Spec = Omit<AgentProfile, 'launch' | 'canResume' | 'mcp' | 'skills'> & {
 	mcpEnv?: (servers: McpServers) => Record<string, string>;
 };
 
+/** The session's status hook file (and opencode's plugin folder), as env for the CLI. */
+export function hookEnv(ctx: Pick<LaunchContext, 'hookFile' | 'opencodeDir'>): Record<string, string> {
+	return {
+		...(ctx.hookFile ? { KINGU_AGENT_HOOK_FILE: ctx.hookFile } : {}),
+		...(ctx.opencodeDir ? { OPENCODE_CONFIG_DIR: ctx.opencodeDir } : {})
+	};
+}
+
+const envPrefix = (env: Record<string, string>) => {
+	const e = Object.entries(env);
+	return e.length ? ['env', ...e.map(([k, v]) => `${k}=${v}`)] : [];
+};
+
 function simple(spec: Spec): AgentProfile {
 	const { prompt, resume, mcpArgs, mcpEnv, ...rest } = spec;
 	return {
@@ -140,7 +157,7 @@ function simple(spec: Spec): AgentProfile {
 		mcp: !!(mcpArgs || mcpEnv),
 		skills: false,
 		launch(base, how, ctx) {
-			const env = Object.entries(mcpEnv?.(ctx.servers) ?? {});
+			const env = Object.entries({ ...(rest.status === 'agent-hooks' ? hookEnv(ctx) : {}), ...(mcpEnv?.(ctx.servers) ?? {}) });
 			const head = [...(env.length ? ['env', ...env.map(([k, v]) => `${k}=${v}`)] : []), ...base, ...(mcpArgs?.(ctx.servers) ?? [])];
 			if ('resume' in how) return { argv: resume ? [...head, ...resume(how.resume)] : head };
 			if ('fresh' in how) return { argv: head };
@@ -200,7 +217,7 @@ const codex: AgentProfile = {
 	mcp: true,
 	skills: false,
 	launch(base, how, ctx) {
-		const head = [...base, ...codexMcpArgs(ctx.servers), ...(ctx.hookFile ? codexNotifyArgs(ctx.hookFile) : [])];
+		const head = [...envPrefix(hookEnv({ hookFile: ctx.hookFile })), ...base, ...codexMcpArgs(ctx.servers), ...(ctx.hookFile ? codexNotifyArgs(ctx.hookFile) : [])];
 		if ('resume' in how) return { argv: [...head, 'resume', how.resume ?? '--last'] };
 		if ('fresh' in how) return { argv: head };
 		return { argv: [...head, ...positional(how.prompt)] };
@@ -214,7 +231,7 @@ export const PROFILES: readonly AgentProfile[] = [
 		id: 'gemini',
 		title: 'Gemini CLI',
 		bins: ['gemini'],
-		status: 'output',
+		status: 'agent-hooks',
 		account: null,
 		ownsSessionId: false,
 		prompt: { kind: 'flag', flag: '--prompt-interactive' },
@@ -224,7 +241,7 @@ export const PROFILES: readonly AgentProfile[] = [
 		id: 'opencode',
 		title: 'OpenCode',
 		bins: ['opencode'],
-		status: 'output',
+		status: 'agent-hooks',
 		account: null,
 		ownsSessionId: false,
 		prompt: { kind: 'flag', flag: '--prompt' },
@@ -238,7 +255,7 @@ export const PROFILES: readonly AgentProfile[] = [
 		id: 'cursor',
 		title: 'Cursor Agent',
 		bins: ['cursor-agent'],
-		status: 'output',
+		status: 'agent-hooks',
 		account: null,
 		ownsSessionId: false,
 		prompt: { kind: 'argv' },
@@ -248,7 +265,7 @@ export const PROFILES: readonly AgentProfile[] = [
 		id: 'copilot',
 		title: 'GitHub Copilot CLI',
 		bins: ['copilot'],
-		status: 'output',
+		status: 'agent-hooks',
 		account: null,
 		ownsSessionId: false,
 		// `--prompt` runs once and exits; `--interactive` keeps the session.
@@ -278,7 +295,7 @@ export const PROFILES: readonly AgentProfile[] = [
 		id: 'droid',
 		title: 'Factory Droid',
 		bins: ['droid'],
-		status: 'output',
+		status: 'agent-hooks',
 		account: null,
 		ownsSessionId: false,
 		prompt: { kind: 'argv' },
@@ -345,7 +362,7 @@ export type PickRow = { id: string; label: string; description: string };
 
 /** What Kingu does with the CLI, for the picker row. */
 export function profileSummary(p: AgentProfile): string {
-	const status = p.status === 'hooks' ? 'สถานะจาก hooks' : p.status === 'notify' ? 'สถานะจาก notify' : 'สถานะจาก output';
+	const status = p.status === 'hooks' || p.status === 'agent-hooks' ? 'สถานะจาก hooks' : p.status === 'notify' ? 'สถานะจาก notify + hooks' : 'สถานะจาก output';
 	return [status, p.canResume ? 'resume ได้' : null, p.mcp ? 'MCP' : null, p.skills ? 'skills' : null, p.account ? `บัญชี ${p.account}` : null].filter(Boolean).join(' · ');
 }
 

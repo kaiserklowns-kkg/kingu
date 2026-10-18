@@ -2,7 +2,8 @@
 //! permission answer or done). A CLI task starts `claude --settings <json>` whose hooks append each
 //! hook's JSON payload (stdin) as one line to `<app cache>/agent-hooks/<token>.jsonl`; the webview
 //! reads new lines with `agent_hook_read`. codex appends its `notify` payloads to the same kind of
-//! file (`agent_hook_file`; the command is built in agentProfiles.ts). The token is random per CLI
+//! file (`agent_hook_file`; the command is built in agentProfiles.ts), and so do the status hooks
+//! of other CLIs (status_hooks.rs) through `KINGU_AGENT_HOOK_FILE`. The token is random per CLI
 //! session, so a file name never carries a task name or path.
 
 use std::io::{Read, Seek, SeekFrom};
@@ -11,8 +12,9 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
 const DIR: &str = "agent-hooks";
-/// The events that move a card: started, working, waiting for you (permission or idle), turn done, ended.
-pub const EVENTS: &[&str] = &["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "Stop", "SessionEnd"];
+/// The events that move a card: started, working, waiting for you (a permission prompt, a
+/// question, idle), turn done, ended.
+pub const EVENTS: &[&str] = &["SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Notification", "Stop", "SessionEnd"];
 /// One read returns at most this much (a long session catches up over several reads).
 const MAX_READ: u64 = 1 << 20;
 

@@ -24,8 +24,10 @@ export type StartParams = {
 	env?: Record<string, string>;
 	/** Auth variables removed from this run's env, so they do not override that account. */
 	unsetEnv?: string[];
+	/** Image files sent with the prompt (absolute paths, checked by Rust and again here). */
+	images?: string[];
 };
-export type SendParams = { runId: number; text: string };
+export type SendParams = { runId: number; text: string; images?: string[] };
 export type RunParams = { runId: number };
 /** `allow` once, `allow_always` for the rest of this session, or `deny` with an optional reason. */
 export type Decision = 'allow' | 'allow_always' | 'deny';

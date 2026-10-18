@@ -49,7 +49,7 @@ class Agents {
 		return () => this.#listeners.delete(fn);
 	}
 
-	async start(slug: string, prompt: string, opts: { root?: string; resume?: string | null } = {}): Promise<void> {
+	async start(slug: string, prompt: string, opts: { root?: string; resume?: string | null; images?: string[] } = {}): Promise<void> {
 		const prev = this.runs[slug];
 		if (prev && !prev.ended) throw new Error(`${slug}: งานนี้กำลังทำงานอยู่ (already running)`);
 		const root = opts.root ?? workspace.root;
@@ -80,6 +80,7 @@ class Agents {
 				resume,
 				mcpServers: Object.keys(mcp).length ? mcp : null,
 				plugins: plugins.length ? plugins : null,
+				images: opts.images?.length ? opts.images : null,
 				onEvent
 			});
 			clientLog('info', `agent run ${state.runId} started for ${slug}`);
@@ -90,12 +91,13 @@ class Agents {
 		}
 	}
 
-	async send(slug: string, text: string): Promise<void> {
+	/** `images`: image files sent with the message (Composer attachments). */
+	async send(slug: string, text: string, images: string[] = []): Promise<void> {
 		const run = this.runs[slug];
 		if (!run) throw new Error(`${slug}: no run`);
-		if (run.ended) return this.start(slug, text, { root: run.root, resume: run.sessionId });
+		if (run.ended) return this.start(slug, text, { root: run.root, resume: run.sessionId, images });
 		if (run.runId === undefined) throw new Error('ยังเริ่มไม่เสร็จ (still starting)');
-		await invoke('agent_send', { runId: run.runId, text });
+		await invoke('agent_send', { runId: run.runId, text, images: images.length ? images : null });
 	}
 
 	async answer(slug: string, requestId: string, decision: Decision, message?: string): Promise<void> {

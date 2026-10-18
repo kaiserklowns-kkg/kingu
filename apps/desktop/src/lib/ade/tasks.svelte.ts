@@ -49,8 +49,9 @@ import {
 import { runtime } from './runtime.svelte';
 import { adeLayout } from './adeLayout.svelte';
 import { agentCommand, cliAgent, cliOf, type RunMode } from './agentCli';
-import { profileOf } from '#lib/ade/agentProfiles.ts';
+import { profileOf, programOf } from '#lib/ade/agentProfiles.ts';
 import { chooseAgentCli } from '#lib/ade/agentPicker.ts';
+import { composeMessage, promptWithAttachments, type Attachment } from '#lib/agent/attachments.ts';
 import { cliSessions } from './cliSessions.svelte';
 import { mcpServers, skillPlugins } from './mcp';
 import { prStatuses } from './prStatus.svelte';
@@ -243,6 +244,8 @@ class AdeTasks {
 		slugHint?: string;
 		slug?: string;
 		issue?: IssueLink;
+		/** Composer attachments: image blocks for a timeline run, path references for a CLI. */
+		attachments?: Attachment[];
 	}): Promise<string | undefined> {
 		const title = input.title.trim();
 		if (!title || !workspace.root) return;
@@ -277,8 +280,12 @@ class AdeTasks {
 		if (input.open !== false) this.openTask(slug);
 		await this.#runSetup(slug, input.open !== false);
 		// After the prompt: claude's --mcp-config takes several values and would swallow it.
-		if (cli) await this.#launchCli(slug, cli, { prompt });
-		else await this.run(slug, prompt);
+		const attachments = input.attachments ?? [];
+		if (cli) await this.#launchCli(slug, cli, { prompt: promptWithAttachments(prompt, attachments) });
+		else {
+			const message = composeMessage(prompt, attachments);
+			await this.run(slug, message.text, message.images);
+		}
 		return slug;
 	}
 
@@ -417,14 +424,25 @@ class AdeTasks {
 					})
 				: null;
 		const hookFile =
-			profile.status === 'notify'
+			profile.status === 'notify' || profile.status === 'agent-hooks'
 				? await invoke<string>('agent_hook_file', { token }).catch((e) => {
-						clientLog('error', `agent notify for ${slug}: ${e}`);
+						clientLog('error', `agent status file for ${slug}: ${e}`);
 						return null;
 					})
 				: null;
+		// Orca's managed agent hooks: the CLI's status hooks are in place before it starts.
+		let opencodeDir: string | null = null;
+		if (hookFile && settings.get<boolean>('kingu.agent.statusHooks') !== false) {
+			opencodeDir = await invoke<string | null>('agent_status_hooks_install', { agent: profile.id, program: programOf(cli) }).catch((e) => {
+				status.flash(`ติดตั้ง status hooks ของ ${profile.title} ไม่ได้: ${e}`, 8000);
+				return null;
+			});
+		}
+		// Orca's trust presets: the CLI's first-run "trust this folder?" prompt would swallow the prompt.
+		if (settings.get<boolean>('kingu.agent.trustWorkspace') !== false)
+			await invoke('agent_trust_workspace', { slug, program: programOf(cli) }).catch((e) => clientLog('info', `trust ${slug}: ${e}`));
 		const sessionId = profile.ownsSessionId && !('resume' in how) ? crypto.randomUUID() : undefined;
-		const launch = profile.launch(cli, how, { sessionId, hookSettings, hookFile, servers: mcpServers(root), plugins: profile.skills ? await skillPlugins() : [] });
+		const launch = profile.launch(cli, how, { sessionId, hookSettings, hookFile, opencodeDir, servers: mcpServers(root), plugins: profile.skills ? await skillPlugins() : [] });
 		if (sessionId) await this.#patch(slug, { session_id: sessionId });
 		cliSessions.start(slug, launch.argv, hookSettings || hookFile ? token : undefined, launch.typePrompt);
 	}
@@ -437,9 +455,9 @@ class AdeTasks {
 	}
 
 	/** Starts the agent in the task worktree through the agents store. */
-	async run(slug: string, prompt: string) {
+	async run(slug: string, prompt: string, images: string[] = []) {
 		try {
-			await runtime.start(slug, prompt);
+			await runtime.start(slug, prompt, null, images);
 			await this.#patch(slug, { status: 'running' });
 		} catch (e) {
 			status.flash(`เริ่ม agent ไม่ได้: ${e}`, 10000);
@@ -448,11 +466,12 @@ class AdeTasks {
 	}
 
 	/** Follow-up message: into the open session, else resuming the task's session (saved in tasks.json). */
-	async followUp(slug: string, text: string): Promise<boolean> {
+	async followUp(slug: string, text: string, attachments: Attachment[] = []): Promise<boolean> {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta || !text.trim()) return false;
+		const message = composeMessage(text, attachments);
 		try {
-			await runtime.followUp(slug, text, meta.session_id);
+			await runtime.followUp(slug, message.text, meta.session_id, message.images);
 			if (meta.status !== 'running') await this.#patch(slug, { status: 'running' });
 			return true;
 		} catch (e) {

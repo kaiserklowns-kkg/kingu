@@ -34,6 +34,17 @@ pub fn found_on_path(names: &[String], path: Option<&OsStr>) -> Vec<String> {
   out
 }
 
+/// The program of a CLI's argv, past an `env VAR=value …` prefix (how Kingu hands a CLI its
+/// per-session env, e.g. the status hook file), like agentProfiles.ts `programOf`.
+pub fn program_of(argv: &[String]) -> Option<&String> {
+  let base = |w: &str| w.rsplit('/').next().unwrap_or(w).to_owned();
+  if argv.first().is_some_and(|w| base(w) == "env") {
+    let is_assign = |w: &str| w.split_once('=').is_some_and(|(k, _)| !k.is_empty() && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') && !k.as_bytes()[0].is_ascii_digit());
+    return argv[1..].iter().find(|w| !is_assign(w));
+  }
+  argv.first()
+}
+
 #[tauri::command]
 pub async fn agent_cli_found(names: Vec<String>) -> Result<Vec<String>, String> {
   tauri::async_runtime::spawn_blocking(move || found_on_path(&names, crate::shell_env::path().as_deref()))
@@ -43,6 +54,15 @@ pub async fn agent_cli_found(names: Vec<String>) -> Result<Vec<String>, String> 
 
 #[cfg(all(test, unix))]
 mod tests {
+  #[test]
+  fn program_past_an_env_prefix() {
+    let v = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(super::program_of(&v(&["claude", "-p"])).map(String::as_str), Some("claude"));
+    assert_eq!(super::program_of(&v(&["env", "A=1", "B_2=x=y", "codex", "x"])).map(String::as_str), Some("codex"));
+    assert_eq!(super::program_of(&v(&["/usr/bin/env", "A=1"])), None);
+    assert_eq!(super::program_of(&[]), None);
+  }
+
   use super::*;
   use std::os::unix::fs::PermissionsExt;
 

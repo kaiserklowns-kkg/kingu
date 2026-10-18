@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { Attachment } from '#lib/agent/attachments.ts';
 	// Agents layout body, laid out like Orca: side bar (search, Tasks, Projects → worktrees) | the
 	// selected worktree's active tab (the agent session, the new-task composer for the folder
 	// itself, a terminal in that worktree, or a file / task diff opened from the right side bar;
@@ -33,8 +34,8 @@
 	import { cliName, cliOf, type RunMode } from './agentCli';
 	import { profileOf } from '#lib/ade/agentProfiles.ts';
 	import { cliSessions } from './cliSessions.svelte';
-	import { BUTTON, BUTTON_SECONDARY, STATUS_DOT } from './ui';
-	import { STATUS_LABEL, timeAgo } from './model';
+	import { BUTTON, BUTTON_SECONDARY, statusDot } from './ui';
+	import { statusLabel, timeAgo } from './model';
 
 	let body: HTMLDivElement | undefined = $state();
 	const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
@@ -50,6 +51,7 @@
 
 	// The folder's "new task" composer (Orca: a new worktree with an agent).
 	let draft = $state('');
+	let draftFiles = $state<Attachment[]>([]);
 	let base = $state('');
 	let busy = $state(false);
 	let focusKey = $derived(appMode.composeRequest);
@@ -100,12 +102,13 @@
 		nudge++; // remounts the composer, which autofocuses
 	}
 
-	async function start(text: string) {
+	async function start(text: string, attachments: Attachment[]) {
 		busy = true;
 		try {
-			const created = await adeTasks.create({ title: taskTitleFromPrompt(text), prompt: text, base, mode });
+			const created = await adeTasks.create({ title: taskTitleFromPrompt(text), prompt: text, base, mode, attachments });
 			if (created) {
 				draft = '';
+				draftFiles = [];
 				adeLayout.show(created);
 			}
 		} finally {
@@ -181,7 +184,7 @@
 								<p class="text-[13px] text-(--vscode-descriptionForeground)">แต่ละงานได้ worktree ของตัวเอง ทำหลายงานพร้อมกันได้โดยไม่ชนกัน</p>
 							</div>
 							{#key `${focusKey}:${nudge}`}
-								<Composer bind:value={draft} size="lg" autofocus placeholder="อธิบายงาน เช่น เพิ่มปุ่ม export รายงานเป็น CSV…" {busy} onsubmit={start}>
+								<Composer bind:value={draft} attach bind:attachments={draftFiles} size="lg" autofocus placeholder="อธิบายงาน เช่น เพิ่มปุ่ม export รายงานเป็น CSV…" {busy} onsubmit={start}>
 									{#snippet chips()}
 										<label class="inline-flex shrink-0 items-center gap-1 rounded-sm border border-(--vscode-widget-border) px-1.5 py-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" title="วิธีรัน agent">
 											<Icon name={mode === 'terminal' ? 'terminal' : 'agent'} size={12} />
@@ -218,7 +221,7 @@
 										{#each recent as v (v.meta.slug)}
 											<button class="min-w-0 rounded-lg border border-(--vscode-widget-border) px-3 py-2.5 text-left hover:bg-(--vscode-list-hoverBackground)" onclick={() => adeLayout.show(v.meta.slug)}>
 												<span class="flex items-center gap-2">
-													<span class={['size-2 shrink-0 rounded-full', STATUS_DOT[v.status]]} title={STATUS_LABEL[v.status]}></span>
+													<span class={['size-2 shrink-0 rounded-full', statusDot(v)]} title={statusLabel(v)}></span>
 													<span class="min-w-0 flex-1 truncate text-[13px]">{v.meta.title}</span>
 												</span>
 												<span class="mt-1 flex gap-2 pl-4 text-xs text-(--vscode-descriptionForeground)">
