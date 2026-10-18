@@ -26,6 +26,8 @@ export type StartParams = {
 	unsetEnv?: string[];
 	/** Image files sent with the prompt (absolute paths, checked by Rust and again here). */
 	images?: string[];
+	/** Snapshot files before the edit tools change them (`file_snapshot` events; chats only). */
+	snapshots?: boolean;
 };
 export type SendParams = { runId: number; text: string; images?: string[] };
 export type RunParams = { runId: number };
@@ -84,6 +86,21 @@ export type AgentEvent =
 			can_always: boolean;
 	  }
 	| { kind: 'permission_resolved'; request_id: string; decision: Decision | 'cancelled' }
+	/**
+	 * A file's content just before an edit tool (Edit, MultiEdit, Write, NotebookEdit) changes it,
+	 * sent from a PreToolUse hook. `existed: false`: the tool creates it. `skipped`: no content
+	 * (outside the cwd, a symlink, ≥ 5 MB, or unreadable). Rust stores it and does not pass it on.
+	 */
+	| {
+			kind: 'file_snapshot';
+			tool_use_id: string;
+			tool: string;
+			path: string;
+			existed: boolean;
+			size: number;
+			content_b64: string | null;
+			skipped: 'outside' | 'symlink' | 'too_large' | 'unreadable' | null;
+	  }
 	| { kind: 'error'; message: string }
 	| { kind: 'raw'; line: string }
 	| { kind: 'stderr'; line: string }
