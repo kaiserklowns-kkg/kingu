@@ -6,6 +6,7 @@ import { DapClient } from './client.ts';
 import type { LaunchConfig } from './launch.ts';
 import { appendOutput, applyEvent, currentFrame, initialModel, selectFrame, withBreakpoints, withFrames, withScopes, withThreads, withVariables, type DebugModel } from './model.ts';
 import type { Breakpoint, Capabilities, Event, RunInTerminalArguments, SourceBreakpoint, StackFrame, Thread, Variable } from './protocol.ts';
+import { t } from '#lib/i18n/index.ts';
 
 export type SessionHost = {
 	/** Enabled breakpoints per absolute source path. */
@@ -43,7 +44,7 @@ export class DebugSession {
 		client.onReverseRequest('runInTerminal', (args: RunInTerminalArguments) => host.runInTerminal(args));
 		// Answered so adapters that ask (js-debug, debugpy subprocesses) do not hang; Kingu runs one session.
 		client.onReverseRequest('startDebugging', () => {
-			this.#output('console', 'Kingu ยังไม่รองรับ child debug session (startDebugging)\n');
+			this.#output('console', t('tools.debug.childUnsupported'));
 			return {};
 		});
 	}
@@ -235,6 +236,6 @@ export class DebugSession {
 		this.client.close('debug adapter exited');
 		this.#epoch++;
 		if (this.model.state !== 'terminated') this.#set(applyEvent(this.model, { seq: 0, type: 'event', event: 'terminated' }));
-		if (code) this.#output('stderr', `debug adapter จบการทำงาน (code ${code})\n`);
+		if (code) this.#output('stderr', t('tools.debug.adapterExited', { code }));
 	}
 }

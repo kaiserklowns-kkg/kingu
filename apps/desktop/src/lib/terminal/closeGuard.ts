@@ -4,6 +4,8 @@
 // "Running" is the PTY's foreground job (tcgetpgrp) when it is not the shell, like Orca's guard;
 // VS Code's terminal.integrated.ignoreProcessNames defaults are not counted.
 
+import { t } from '#lib/i18n/index.ts';
+
 export type ConfirmOnKill = 'never' | 'editor' | 'panel' | 'always';
 export type TerminalLocation = 'editor' | 'panel';
 export type ForegroundJob = { pid: number; name: string };
@@ -29,13 +31,13 @@ export function runningJobs(jobs: Record<string, ForegroundJob>, ignore: readonl
 export function closePrompt(location: TerminalLocation, names: string[], agentBins: readonly string[], label: string): { title: string; message: string; ok: string } {
 	const list = [...new Set(names.filter(Boolean))].join(', ');
 	if (location === 'panel') {
-		const message = names.length > 1 ? `ต้องการหยุด ${names.length} session ของ terminal ที่ทำงานอยู่?` : 'ต้องการหยุด session ของ terminal ที่ทำงานอยู่?';
-		return { title: 'Kill Terminal', message: `${message}${list ? `\n\n${list}` : ''}`, ok: 'หยุด (Terminate)' };
+		const message = names.length > 1 ? t('tools.terminal.kill.panelMany', { count: names.length }) : t('tools.terminal.kill.panelOne');
+		return { title: t('tools.terminal.kill.panelTitle'), message: `${message}${list ? `\n\n${list}` : ''}`, ok: t('tools.terminal.kill.terminate') };
 	}
 	const agent = names.some((n) => agentBins.includes(n));
 	return agent
-		? { title: 'หยุด agent นี้?', message: `ปิด terminal นี้จะหยุดงานที่ agent กำลังทำอยู่ (${list})\n\n${label}`, ok: 'หยุด Agent' }
-		: { title: 'หยุดคำสั่งที่กำลังรัน?', message: `ปิด terminal นี้จะหยุดคำสั่งที่รันอยู่ในนั้น${list ? ` (${list})` : ''}\n\n${label}`, ok: 'หยุดและปิด' };
+		? { title: t('tools.terminal.kill.agentTitle'), message: t('tools.terminal.kill.agentMessage', { list, label }), ok: t('tools.terminal.kill.agentOk') }
+		: { title: t('tools.terminal.kill.commandTitle'), message: t('tools.terminal.kill.commandMessage', { list: list ? ` (${list})` : '', label }), ok: t('tools.terminal.kill.commandOk') };
 }
 
 /** terminal.integrated.confirmOnExit: whether closing the window asks, given the live sessions and how many run a command. */

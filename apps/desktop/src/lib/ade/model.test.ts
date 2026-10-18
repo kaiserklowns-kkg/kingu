@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import {
 	renamedTitle,
 	MAX_TITLE,
@@ -38,6 +38,11 @@ import { applyEvent, initialRun, type AgentEvent, type PermissionRequest, type R
 import { BOARD_KEY, isAdeEditor, slugOfTaskKey, taskKey } from './keys';
 import { fileOf, isDiffKey, parseTaskDiffKey, tabLabel, taskDiffKey } from '../workbench/scm';
 import { remapPath } from '../workbench/fileTree';
+import { setLocale } from '#lib/i18n/index.ts';
+
+// These tests check the Thai UI text.
+beforeAll(() => setLocale('th'));
+afterAll(() => setLocale('en'));
 
 const meta = (slug: string, extra: Partial<TaskMeta> = {}): TaskMeta => ({ ...newTask({ slug, title: `Task ${slug}`, prompt: 'p', base: 'main' }, 1000), ...extra });
 const view = (m: TaskMeta, runtime?: TaskRuntime, stat?: DiffStat): TaskView => ({ meta: m, runtime, status: effectiveStatus(m, runtime), stat });

@@ -3,6 +3,7 @@
 // Pure: QuickInput.svelte turns these into rows.
 
 import { rank, type Match } from './fuzzy';
+import { t } from '#lib/i18n/index.ts';
 
 export type QuickMode =
 	| { kind: 'files'; query: string; line?: number; column?: number }
@@ -15,17 +16,17 @@ export type QuickMode =
 	| { kind: 'editors'; query: string; mru: boolean };
 
 /** The providers `?` lists, in VS Code's order. */
-export const QUICK_ACCESS_HELP: { prefix: string; label: string }[] = [
-	{ prefix: '', label: 'ไปที่ไฟล์ (Go to File)' },
-	{ prefix: '>', label: 'แสดงและรันคำสั่ง (Show and Run Commands)' },
-	{ prefix: ':', label: 'ไปที่บรรทัด/คอลัมน์ (Go to Line/Column)' },
-	{ prefix: '@', label: 'ไปที่สัญลักษณ์ในไฟล์ (Go to Symbol in Editor)' },
-	{ prefix: '@:', label: 'ไปที่สัญลักษณ์ในไฟล์ แยกตามชนิด (Go to Symbol in Editor by Category)' },
-	{ prefix: '#', label: 'ไปที่สัญลักษณ์ใน workspace (Go to Symbol in Workspace)' },
-	{ prefix: 'edt ', label: 'แท็บที่เปิดอยู่ทั้งหมด (Show All Opened Editors By Appearance)' },
-	{ prefix: 'edt mru ', label: 'แท็บที่เปิดอยู่ ตามที่ใช้ล่าสุด (Show All Opened Editors By Most Recently Used)' },
-	{ prefix: 'view ', label: 'เปิดมุมมอง (Open View)' },
-	{ prefix: '?', label: 'วิธีใช้ (Help)' }
+export const QUICK_ACCESS_HELP: { readonly prefix: string; readonly label: string }[] = [
+	{ prefix: '', get label() { return t('workbench.quickAccess.goToFile'); } },
+	{ prefix: '>', get label() { return t('workbench.quickAccess.commands'); } },
+	{ prefix: ':', get label() { return t('workbench.quickAccess.goToLine'); } },
+	{ prefix: '@', get label() { return t('workbench.quickAccess.symbol'); } },
+	{ prefix: '@:', get label() { return t('workbench.quickAccess.symbolByKind'); } },
+	{ prefix: '#', get label() { return t('workbench.quickAccess.workspaceSymbol'); } },
+	{ prefix: 'edt ', get label() { return t('workbench.quickAccess.editors'); } },
+	{ prefix: 'edt mru ', get label() { return t('workbench.quickAccess.editorsMru'); } },
+	{ prefix: 'view ', get label() { return t('workbench.quickAccess.view'); } },
+	{ prefix: '?', get label() { return t('workbench.quickAccess.help'); } }
 ];
 
 /** `42`, `42:5`, `42,5` → line and column (1-based); nothing for text that is not a position. */

@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { status } from './status.svelte';
 import { pushSample, type KeepAwakeMode } from './system';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
+import { t } from '#lib/i18n/index.ts';
 
 export type PtyInfo = { id: string; pid: number | null; cwd: string };
 export type ProcessRow = { pid: number; ppid: number; rss_bytes: number; cpu: number; name: string; stoppable?: boolean };
@@ -77,7 +78,7 @@ class SystemStats {
 	async kill(pid: number, label: string) {
 		try {
 			await invoke('system_kill', { pid });
-			status.flash(`หยุด ${label} แล้ว`, 3000);
+			status.flash(t('workbench.system.stopped', { label }), 3000);
 		} catch (e) {
 			notifications.error(e);
 		}
@@ -88,7 +89,7 @@ class SystemStats {
 		try {
 			await invoke('open_local_url', { url: `http://localhost:${port}` });
 		} catch (e) {
-			notifications.error(`เปิดเบราว์เซอร์ไม่ได้: ${e}`);
+			notifications.error(t('workbench.system.browserFailed', { error: String(e) }));
 		}
 	}
 }

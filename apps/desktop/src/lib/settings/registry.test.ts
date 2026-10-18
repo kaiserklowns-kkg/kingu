@@ -300,6 +300,6 @@ describe('http.* proxy settings', () => {
 		for (const ok of ['', 'http://proxy.example.com:8080', 'https://u:p@10.0.0.1:3128/', 'socks5h://[::1]:1080']) expect([ok, validate(proxy, ok)]).toEqual([ok, ok]);
 		for (const bad of ['proxy:8080', 'ftp://proxy:21', 'http://proxy:8080/path']) expect([bad, validate(proxy, bad)]).toEqual([bad, undefined]);
 		expect(settingProblems({ 'http.proxy': 'proxy:8080' }, 'user')).toHaveLength(1);
-		expect(settingProblems({ 'http.proxy': 'http://proxy:8080' }, 'workspace')[0].message).toContain('User');
+		expect(settingProblems({ 'http.proxy': 'http://proxy:8080' }, 'workspace')[0].message).toContain('user settings');
 	});
 });

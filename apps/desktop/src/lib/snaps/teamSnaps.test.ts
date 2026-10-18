@@ -1,7 +1,12 @@
 /// <reference types="bun" />
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { setLocale } from '#lib/i18n/index.ts';
 import type { SnapInfo } from './snapModel';
 import { approvalNote, approveSummary, canApprove, isApprovable, missingRequired, teamSnapStatus, type TeamSnap } from './teamSnaps';
+
+// These tests check the Thai wording.
+beforeAll(() => setLocale('th'));
+afterAll(() => setLocale('en'));
 
 const C1 = 'a'.repeat(40);
 const C2 = 'b'.repeat(40);

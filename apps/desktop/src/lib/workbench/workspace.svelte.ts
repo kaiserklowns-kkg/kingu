@@ -20,6 +20,7 @@ import { scm } from './scm.svelte';
 import { search } from './search.svelte';
 import { status } from './status.svelte';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
+import { t } from '#lib/i18n/index.ts';
 
 type FilesChanged = { root: string; paths: string[] };
 type Listener = (paths: string[]) => void;
@@ -64,7 +65,7 @@ class Workspace {
 		try {
 			root = await invoke<string>('workspace_open', { path });
 		} catch (e) {
-			notifications.error(`เปิดโฟลเดอร์ไม่ได้: ${e}`);
+			notifications.error(t('workbench.workspace.openFailed', { error: String(e) }));
 			// VS Code drops a recent entry that no longer opens.
 			if (this.recent.includes(path)) await invoke('workspace_recent_remove', { path }).catch(() => {});
 			await this.loadRecent();
@@ -108,7 +109,7 @@ class Workspace {
 		items.push({ id: OPEN, label: 'Open Folder...' });
 		if (this.recent.length) items.push({ id: CLEAR, label: 'Clear Recently Opened' });
 		quick.pick({
-			placeholder: 'เลือกโฟลเดอร์ที่จะเปิด',
+			placeholder: t('workbench.workspace.pickFolder'),
 			items,
 			onAccept: (item) => {
 				if (item.id === OPEN) void this.pickFolder();

@@ -2,6 +2,7 @@
 // of the Worktree Jump palette. Pure: the menu is data; Svelte code runs the chosen id.
 
 import type { TaskStatus } from './model';
+import { t } from '#lib/i18n/index.ts';
 
 export type WorktreeAction =
 	| 'open'
@@ -35,19 +36,19 @@ export function openInLabels(setting: Readonly<Record<string, unknown>> | undefi
 export function worktreeActions(w: { slug: string | null; status?: TaskStatus; running?: boolean; hasWorktree?: boolean; openIn?: readonly string[] }): ActionRow[] {
 	const task = w.slug !== null;
 	const rows: ActionRow[] = [
-		{ id: 'open', label: 'เปิด (Open)' },
-		{ id: 'openInEditor', label: 'เปิดใน Editor (Open in Editor)' },
-		{ id: 'newTerminal', label: 'Terminal ใหม่ใน worktree นี้' },
-		{ id: 'quickOpen', label: 'เปิดไฟล์… (Go to File)', enabled: !task || w.hasWorktree !== false },
+		{ id: 'open', label: t('adeTasks.worktree.open') },
+		{ id: 'openInEditor', label: t('adeTasks.worktree.openInEditor') },
+		{ id: 'newTerminal', label: t('adeTasks.worktree.newTerminal') },
+		{ id: 'quickOpen', label: t('adeTasks.worktree.quickOpen'), enabled: !task || w.hasWorktree !== false },
 		'separator',
-		{ id: 'reveal', label: 'แสดงใน Finder (Reveal in Finder)', enabled: !task || w.hasWorktree !== false },
-		...(w.openIn ?? []).map((label): ActionRow => ({ id: `openIn:${label}`, label: `เปิดใน ${label} (Open in ${label})`, enabled: !task || w.hasWorktree !== false })),
-		{ id: 'copyPath', label: 'คัดลอก path' }
+		{ id: 'reveal', label: t('adeTasks.worktree.reveal'), enabled: !task || w.hasWorktree !== false },
+		...(w.openIn ?? []).map((label): ActionRow => ({ id: `openIn:${label}`, label: t('adeTasks.worktree.openIn', { app: label }), enabled: !task || w.hasWorktree !== false })),
+		{ id: 'copyPath', label: t('adeTasks.worktree.copyPath') }
 	];
 	if (!task) return rows;
-	rows.push({ id: 'copyBranch', label: 'คัดลอกชื่อ branch' }, { id: 'rename', label: 'เปลี่ยนชื่อ… (Rename)' }, 'separator');
-	rows.push(w.status === 'done' ? { id: 'reopen', label: 'เปิดงานอีกครั้ง' } : { id: 'markDone', label: 'ปิดงาน (Mark as Done)', enabled: !w.running });
-	rows.push({ id: 'remove', label: 'ลบงานและ worktree…', enabled: !w.running });
+	rows.push({ id: 'copyBranch', label: t('adeTasks.worktree.copyBranch') }, { id: 'rename', label: t('adeTasks.worktree.rename') }, 'separator');
+	rows.push(w.status === 'done' ? { id: 'reopen', label: t('adeTasks.worktree.reopen') } : { id: 'markDone', label: t('adeTasks.worktree.markDone'), enabled: !w.running });
+	rows.push({ id: 'remove', label: t('adeTasks.worktree.remove'), enabled: !w.running });
 	return rows;
 }
 
@@ -58,7 +59,7 @@ export function jumpRows(
 	folder: { name: string; branch: string },
 	groups: { label: string; tasks: { slug: string; title: string; status: string; branch?: string }[] }[]
 ): JumpRow[] {
-	const rows: JumpRow[] = [{ key: '', label: folder.name, description: `primary · ${folder.branch || 'HEAD'}`, group: 'โฟลเดอร์' }];
+	const rows: JumpRow[] = [{ key: '', label: folder.name, description: `primary · ${folder.branch || 'HEAD'}`, group: t('adeTasks.worktree.folderGroup') }];
 	for (const g of groups) for (const t of g.tasks) rows.push({ key: t.slug, label: t.title, description: `${t.status} · ${t.branch ?? `kingu/${t.slug}`}`, group: g.label });
 	return rows;
 }

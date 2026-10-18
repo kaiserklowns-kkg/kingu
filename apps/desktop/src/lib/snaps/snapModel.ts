@@ -2,6 +2,7 @@
 // returns (src-tauri/src/snap.rs) and the pure logic around them, so `bun test` covers it.
 
 import type { SettingSchema } from '../settings/registry';
+import { t } from '#lib/i18n/index.ts';
 
 export type SnapSource = 'user' | 'repo';
 export type SnapSettingType = 'string' | 'boolean' | 'number';
@@ -188,9 +189,9 @@ export type SandboxPlan = { kind: 'enforce'; launcher: string; enforcer: string;
 /** How snaps run here: confined, unconfined because the user turned it off, or not at all. */
 export function sandboxPlan(info: SandboxInfo | null, mode: unknown): SandboxPlan {
 	if (mode === 'off') return { kind: 'off' };
-	if (!info) return { kind: 'refuse', reason: 'ยังตรวจ sandbox ของ Snap ไม่เสร็จ ลองอีกครั้ง' };
+	if (!info) return { kind: 'refuse', reason: t('tools.snaps.sandboxNotChecked') };
 	if (info.enforcer && info.launcher) return { kind: 'enforce', launcher: info.launcher, enforcer: info.enforcer, protect: info.protect };
-	return { kind: 'refuse', reason: info.problem ?? 'ไม่มีเครื่องมือบังคับสิทธิ์บนเครื่องนี้' };
+	return { kind: 'refuse', reason: info.problem ?? t('tools.snaps.noEnforcer') };
 }
 
 /**
@@ -222,23 +223,23 @@ export function sandboxTask(plan: SandboxPlan, p: SnapPermissions, root: string,
 	return { run: sandboxedArgv(plan, p, root, argv) };
 }
 
-const refusal = (reason: string) => `ไม่รันงานและ MCP server ของ Snap เพราะบังคับสิทธิ์ไม่ได้: ${reason} — ถ้ายอมรับความเสี่ยง ตั้ง ${SANDBOX_SETTING} เป็น "off"`;
+const refusal = (reason: string) => t('tools.snaps.refusal', { reason, setting: SANDBOX_SETTING });
 
 /** The refusal message for a plan that refuses (for the status bar). */
 export const sandboxRefusal = (plan: SandboxPlan) => (plan.kind === 'refuse' ? refusal(plan.reason) : null);
 
 /** The details page line: what enforces the permissions here. */
 export function enforcementLabel(plan: SandboxPlan): { text: string; tone: 'ok' | 'warn' | 'error' } {
-	if (plan.kind === 'enforce') return { text: `บังคับใช้: ${plan.enforcer}`, tone: 'ok' };
-	if (plan.kind === 'off') return { text: `ไม่ได้บังคับ (ปิดไว้ที่ ${SANDBOX_SETTING})`, tone: 'warn' };
-	return { text: `ไม่ได้บังคับ (${plan.reason}) — งานและ MCP server ของ snap จะไม่รัน`, tone: 'error' };
+	if (plan.kind === 'enforce') return { text: t('tools.snaps.enforcedBy', { enforcer: plan.enforcer }), tone: 'ok' };
+	if (plan.kind === 'off') return { text: t('tools.snaps.notEnforcedOff', { setting: SANDBOX_SETTING }), tone: 'warn' };
+	return { text: t('tools.snaps.notEnforcedRefuse', { reason: plan.reason }), tone: 'error' };
 }
 
 /** One line for the install/trust confirm. */
 export function enforcementNote(plan: SandboxPlan): string {
-	if (plan.kind === 'enforce') return `Kingu บังคับใช้สิทธิ์เหล่านี้ด้วย ${plan.enforcer}: งานและ MCP server เขียนไฟล์ได้เฉพาะที่ประกาศ ใช้เครือข่ายเฉพาะเมื่อประกาศ network และไม่เห็น secret ที่ไม่ได้ประกาศ`;
-	if (plan.kind === 'off') return `⚠ ไม่ได้บังคับใช้สิทธิ์: sandbox ปิดอยู่ (${SANDBOX_SETTING} = "off") snap รันได้ทุกอย่างที่คุณทำได้`;
-	return `สิทธิ์บังคับใช้ไม่ได้บนเครื่องนี้ (${plan.reason}) Kingu จะไม่รันงานและ MCP server ของ snap`;
+	if (plan.kind === 'enforce') return t('tools.snaps.noteEnforce', { enforcer: plan.enforcer });
+	if (plan.kind === 'off') return t('tools.snaps.noteOff', { setting: SANDBOX_SETTING });
+	return t('tools.snaps.noteRefuse', { reason: plan.reason });
 }
 
 /** Active snaps whose skills agents get (as plugins Rust writes into the app cache). */
@@ -259,16 +260,16 @@ export function runnableTasks(list: readonly SnapInfo[]): { snap: SnapInfo; task
 export type SnapStatus = { key: 'active' | 'untrusted' | 'error' | 'overridden'; label: string; tone: 'ok' | 'warn' | 'error' | 'muted' };
 
 export function snapStatus(s: SnapInfo): SnapStatus {
-	if (s.error) return { key: 'error', label: 'error', tone: 'error' };
-	if (s.overridden) return { key: 'overridden', label: 'overridden', tone: 'muted' };
-	if (!s.trusted) return { key: 'untrusted', label: 'ต้อง trust', tone: 'warn' };
-	return { key: 'active', label: 'active', tone: 'ok' };
+	if (s.error) return { key: 'error', label: t('tools.snaps.status.error'), tone: 'error' };
+	if (s.overridden) return { key: 'overridden', label: t('tools.snaps.status.overridden'), tone: 'muted' };
+	if (!s.trusted) return { key: 'untrusted', label: t('tools.snaps.status.untrusted'), tone: 'warn' };
+	return { key: 'active', label: t('tools.snaps.status.active'), tone: 'ok' };
 }
 
 /** The lock note of a repo snap, or null when there is nothing to say. */
 export function lockNote(s: SnapInfo): string | null {
-	if (s.lock === 'changed') return 'เปลี่ยนจาก lock';
-	if (s.lock === 'unlocked') return 'ไม่อยู่ใน lock';
+	if (s.lock === 'changed') return t('tools.snaps.lockChanged');
+	if (s.lock === 'unlocked') return t('tools.snaps.lockMissing');
 	return null;
 }
 
@@ -297,8 +298,8 @@ export function originLabel(o: SnapOrigin | null): string {
 
 export function permissionLines(p: SnapPermissions): string[] {
 	return [
-		`เครือข่าย (network): ${p.network ? 'ใช้' : 'ไม่ใช้'}`,
-		`ไฟล์ (fs): ${p.fs === 'home' ? 'home — ทั้งโฮมโฟลเดอร์' : 'worktree — เฉพาะโฟลเดอร์งาน'}`,
+		p.network ? t('tools.snaps.perm.networkOn') : t('tools.snaps.perm.networkOff'),
+		p.fs === 'home' ? t('tools.snaps.perm.fsHome') : t('tools.snaps.perm.fsWorktree'),
 		`Secrets: ${p.secrets.length ? p.secrets.join(', ') : '—'}`
 	];
 }
@@ -307,10 +308,10 @@ export function permissionLines(p: SnapPermissions): string[] {
 export function permissionDiff(before: SnapPermissions, after: SnapPermissions): { added: string[]; removed: string[] } {
 	const added: string[] = [];
 	const removed: string[] = [];
-	if (after.network && !before.network) added.push('ใช้เครือข่าย (network)');
-	if (!after.network && before.network) removed.push('ใช้เครือข่าย (network)');
-	if (after.fs === 'home' && before.fs !== 'home') added.push('เข้าถึงทั้งโฮมโฟลเดอร์ (fs = home)');
-	if (after.fs !== 'home' && before.fs === 'home') removed.push('เข้าถึงทั้งโฮมโฟลเดอร์ (fs = home)');
+	if (after.network && !before.network) added.push(t('tools.snaps.perm.useNetwork'));
+	if (!after.network && before.network) removed.push(t('tools.snaps.perm.useNetwork'));
+	if (after.fs === 'home' && before.fs !== 'home') added.push(t('tools.snaps.perm.homeAccess'));
+	if (after.fs !== 'home' && before.fs === 'home') removed.push(t('tools.snaps.perm.homeAccess'));
 	for (const s of after.secrets) if (!before.secrets.includes(s)) added.push(`secret ${s}`);
 	for (const s of before.secrets) if (!after.secrets.includes(s)) removed.push(`secret ${s}`);
 	return { added, removed };
@@ -319,50 +320,54 @@ export function permissionDiff(before: SnapPermissions, after: SnapPermissions):
 /** Counts and names of the tasks, MCP servers and skills a snap adds. */
 function contributionLines(s: SnapInfo): string[] {
 	const names = (xs: string[]) => (xs.length ? `: ${xs.join(', ')}` : '');
-	return [`งาน ${s.tasks.length}${names(s.tasks.map((t) => t.title))}`, `MCP server ${s.mcp.length}${names(s.mcp.map((m) => m.name))}`, `Skill ${s.skills.length}${names(s.skills.map((k) => k.name))}`];
+	return [
+		t('tools.snaps.contrib.tasks', { count: s.tasks.length, names: names(s.tasks.map((x) => x.title)) }),
+		t('tools.snaps.contrib.mcp', { count: s.mcp.length, names: names(s.mcp.map((m) => m.name)) }),
+		t('tools.snaps.contrib.skills', { count: s.skills.length, names: names(s.skills.map((k) => k.name)) })
+	];
 }
 
 /** The native confirm before an install: what it is, where from, what it may do. */
 export function installSummary(s: SnapInfo, origin: SnapOrigin, plan?: SandboxPlan): string {
 	return [
 		`${s.name} (${s.id}) v${s.version}`,
-		`จาก: ${originLabel(origin)}`,
+		t('tools.snaps.from', { origin: originLabel(origin) }),
 		'',
-		'สิทธิ์ที่ประกาศ:',
+		t('tools.snaps.declaredPermissions'),
 		...permissionLines(s.permissions).map((l) => `• ${l}`),
 		...(plan ? [enforcementNote(plan)] : []),
 		'',
-		'สิ่งที่เพิ่ม:',
+		t('tools.snaps.adds'),
 		...contributionLines(s).map((l) => `• ${l}`),
 		'',
-		'Snap ของคุณใช้งานได้ทันทีหลังติดตั้ง (รันงานและส่ง MCP/skill ให้ agent) — ติดตั้งเฉพาะจากแหล่งที่ไว้ใจ'
+		t('tools.snaps.installWarning')
 	].join('\n');
 }
 
 /** The native confirm before trusting a repo snap: what it may run, with the exact commands. */
 export function trustSummary(s: SnapInfo, plan?: SandboxPlan): string {
-	const commands = [...s.tasks.map((t) => `• งาน ${t.title}: ${t.command.join(' ')}`), ...s.mcp.map((m) => `• MCP ${m.name}: ${m.command.join(' ')}`)];
+	const commands = [...s.tasks.map((x) => t('tools.snaps.taskCommand', { title: x.title, command: x.command.join(' ') })), ...s.mcp.map((m) => `• MCP ${m.name}: ${m.command.join(' ')}`)];
 	return [
-		`${s.name} (${s.id}) v${s.version} จาก .kingu/snaps ของโฟลเดอร์นี้`,
+		t('tools.snaps.fromRepo', { name: s.name, id: s.id, version: s.version }),
 		'',
-		'สิทธิ์ที่ประกาศ:',
+		t('tools.snaps.declaredPermissions'),
 		...permissionLines(s.permissions).map((l) => `• ${l}`),
 		...(plan ? [enforcementNote(plan)] : []),
-		...(commands.length ? ['', 'คำสั่งที่จะรันได้:', ...commands] : []),
-		...(s.skills.length ? ['', `Skill ที่ส่งให้ agent: ${s.skills.map((k) => k.name).join(', ')}`] : []),
+		...(commands.length ? ['', t('tools.snaps.commandsToRun'), ...commands] : []),
+		...(s.skills.length ? ['', t('tools.snaps.skillsForAgents', { names: s.skills.map((k) => k.name).join(', ') })] : []),
 		'',
-		'ใครก็ตามที่แก้ repo นี้เขียน snap นี้ได้ — ถ้า snap.toml หรือ skill เปลี่ยน Kingu จะเลิกเชื่อถือให้อัตโนมัติ'
+		t('tools.snaps.repoTrustWarning')
 	].join('\n');
 }
 
 /** The native confirm before an update: versions, permission changes first, then the rest. */
 export function updateSummary(before: SnapInfo, after: SnapInfo, origin: SnapOrigin, plan?: SandboxPlan): string {
 	const { added, removed } = permissionDiff(before.permissions, after.permissions);
-	const lines = [`${after.name} (${after.id}): v${before.version || '?'} → v${after.version}`, `จาก: ${originLabel(origin)}`, ''];
-	if (added.length) lines.push('⚠ สิทธิ์ใหม่ที่ขอเพิ่ม:', ...added.map((a) => `• ${a}`), '');
-	if (removed.length) lines.push('สิทธิ์ที่เลิกใช้:', ...removed.map((r) => `• ${r}`), '');
-	if (!added.length && !removed.length) lines.push('สิทธิ์ไม่เปลี่ยน', '');
+	const lines = [`${after.name} (${after.id}): v${before.version || '?'} → v${after.version}`, t('tools.snaps.from', { origin: originLabel(origin) }), ''];
+	if (added.length) lines.push(t('tools.snaps.newPermissions'), ...added.map((a) => `• ${a}`), '');
+	if (removed.length) lines.push(t('tools.snaps.droppedPermissions'), ...removed.map((r) => `• ${r}`), '');
+	if (!added.length && !removed.length) lines.push(t('tools.snaps.permissionsUnchanged'), '');
 	if (plan) lines.push(enforcementNote(plan), '');
-	lines.push('หลังอัปเดต:', ...contributionLines(after).map((l) => `• ${l}`));
+	lines.push(t('tools.snaps.afterUpdate'), ...contributionLines(after).map((l) => `• ${l}`));
 	return lines.join('\n');
 }

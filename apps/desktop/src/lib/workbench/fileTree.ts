@@ -2,6 +2,7 @@
 // so they are unit-testable. Paths are workspace-relative and `/`-separated; '' is the root.
 
 import { DIFF_PREFIX, fileOf, isDiffKey, isTaskDiffKey } from './scm';
+import { t } from '#lib/i18n/index.ts';
 
 export function parentOf(rel: string): string {
 	const i = rel.lastIndexOf('/');
@@ -27,12 +28,12 @@ export function isUnder(rel: string, ancestor: string): boolean {
  * Returns an error message or null.
  */
 export function validateName(input: string): string | null {
-	if (!input || !input.trim()) return 'ต้องใส่ชื่อไฟล์หรือโฟลเดอร์';
-	if (input !== input.trim()) return 'ชื่อขึ้นต้นหรือลงท้ายด้วยช่องว่างไม่ได้';
-	if (input.startsWith('/') || input.includes('\\')) return 'ใช้ชื่อแบบ relative เท่านั้น';
+	if (!input || !input.trim()) return t('workbench.fileTree.nameRequired');
+	if (input !== input.trim()) return t('workbench.fileTree.whitespace');
+	if (input.startsWith('/') || input.includes('\\')) return t('workbench.fileTree.relativeOnly');
 	for (const seg of input.split('/')) {
-		if (!seg) return 'ชื่อมีส่วนว่างระหว่าง /';
-		if (seg === '.' || seg === '..') return `ใช้ "${seg}" เป็นชื่อไม่ได้`;
+		if (!seg) return t('workbench.fileTree.emptySegment');
+		if (seg === '.' || seg === '..') return t('workbench.fileTree.reservedName', { name: seg });
 	}
 	return null;
 }

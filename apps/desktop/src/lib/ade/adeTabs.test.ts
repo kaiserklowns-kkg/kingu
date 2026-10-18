@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { leaf, splitPane } from '#lib/terminal/paneLayout.ts';
 import {
 	activeAfterClose,
@@ -20,6 +20,11 @@ import {
 	type ClosedTab,
 	type TerminalTab
 } from './adeTabs';
+import { setLocale } from '#lib/i18n/index.ts';
+
+// These tests check the Thai UI text.
+beforeAll(() => setLocale('th'));
+afterAll(() => setLocale('en'));
 
 describe('adeTabs', () => {
 	test('the folder starts with the new-task composer', () => {

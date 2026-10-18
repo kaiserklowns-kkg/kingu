@@ -78,8 +78,8 @@ test('cell positions with Thai combining marks and wide characters', () => {
 });
 
 test('link hint and modifier follow VS Code', () => {
-	expect(linkHint('url', true, false)).toBe('เปิดลิงก์ (cmd + click)');
-	expect(linkHint('file', false, true)).toBe('เปิดไฟล์ใน editor (alt + click)');
+	expect(linkHint('url', true, false)).toBe('Follow link (cmd + click)');
+	expect(linkHint('file', false, true)).toBe('Open file in editor (alt + click)');
 	const e = { metaKey: true, ctrlKey: false, altKey: false };
 	expect(linkModifierDown(e, true, false)).toBe(true);
 	expect(linkModifierDown(e, false, false)).toBe(false);

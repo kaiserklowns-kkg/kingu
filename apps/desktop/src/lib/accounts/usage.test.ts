@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { chipText, footerRows, formatDuration, headline, level, percentLine, resetLabel, rowLevel, updatedAgo, windowLabel, type UsageRow } from './usage';
+import { setLocale } from '#lib/i18n/index.ts';
 
 const MIN = 60_000;
 const H = 60 * MIN;
@@ -101,8 +102,16 @@ test('history line is on a fixed 0–100 scale', () => {
 });
 
 test('updated ago', () => {
-	expect(updatedAgo(null, now)).toBe('ยังไม่เคยอัปเดต');
-	expect(updatedAgo(now - 30_000, now)).toBe('อัปเดตเมื่อสักครู่');
-	expect(updatedAgo(now - 5 * MIN, now)).toBe('อัปเดต 5 นาทีที่แล้ว');
-	expect(updatedAgo(now - 3 * H, now)).toBe('อัปเดต 3 ชั่วโมงที่แล้ว');
+	expect(updatedAgo(null, now)).toBe('Never updated');
+	expect(updatedAgo(now - 30_000, now)).toBe('Updated just now');
+	expect(updatedAgo(now - 5 * MIN, now)).toBe('Updated 5 minutes ago');
+	expect(updatedAgo(now - 1 * MIN, now)).toBe('Updated 1 minute ago');
+	expect(updatedAgo(now - 3 * H, now)).toBe('Updated 3 hours ago');
+	setLocale('th');
+	try {
+		expect(updatedAgo(now - 5 * MIN, now)).toBe('อัปเดต 5 นาทีที่แล้ว');
+		expect(chipText(row(), now)).toBe('ใช้ไป 71% 3d 6h');
+	} finally {
+		setLocale('en');
+	}
 });

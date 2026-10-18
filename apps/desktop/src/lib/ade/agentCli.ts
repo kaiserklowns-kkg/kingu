@@ -4,6 +4,7 @@
 // status) lives in agentProfiles.ts. Pure, so `bun test` covers it.
 
 import { profileOf, programOf } from '#lib/ade/agentProfiles.ts';
+import { t } from '#lib/i18n/index.ts';
 
 export { claudeResume, claudeStart, cliResume } from '#lib/ade/agentProfiles.ts';
 
@@ -95,9 +96,9 @@ export function withLaunchOptions(argv: readonly string[], o: LaunchOptions): st
  */
 export function launchOptions(profileId: string, get: (id: string) => unknown): LaunchOptions | string {
 	const program = cmdOverride(get('kingu.agent.cmdOverrides') as Record<string, unknown> | undefined, profileId);
-	if (program === null) return `kingu.agent.cmdOverrides.${profileId} ต้องเป็นคำสั่งหรือ path ธรรมดา (ไม่มีอักขระของ shell)`;
+	if (program === null) return t('ade.agentCli.badOverride', { setting: `kingu.agent.cmdOverrides.${profileId}` });
 	const env = profileId === 'custom' ? [] : envAssignments(get(agentEnvSetting(profileId)) as Record<string, unknown> | undefined);
-	if (env === null) return `${agentEnvSetting(profileId)} ต้องเป็นชื่อตัวแปรธรรมดา (A-Z 0-9 _) และค่าที่ไม่มีอักขระควบคุม`;
+	if (env === null) return t('ade.agentCli.badEnv', { setting: agentEnvSetting(profileId) });
 	return { program, env, claudeTeams: profileId === 'claude' && get('kingu.agent.claudeAgentTeams') === 'in-process' };
 }
 

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import {
 	addNote,
 	clearDelivered,
@@ -15,6 +15,11 @@ import {
 	updateNote,
 	type DiffNote
 } from './diffNotes';
+import { setLocale } from '#lib/i18n/index.ts';
+
+// These tests check the Thai UI text.
+beforeAll(() => setLocale('th'));
+afterAll(() => setLocale('en'));
 
 const note = (over: Partial<DiffNote> = {}): DiffNote => ({ id: 'n1', filePath: 'src/a.ts', lineNumber: 3, body: 'fix', createdAt: 1, ...over });
 

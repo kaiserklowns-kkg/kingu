@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { latestDue, nextRun, nextRuns, parseSchedule, upcoming, type Schedule } from './schedule.ts';
+import { setLocale } from '#lib/i18n/index.ts';
 
 // A zone with DST, so the transitions are exercised (2026: Mar 8 02:00 → 03:00, Nov 1 02:00 → 01:00).
 const savedTz = process.env.TZ;
@@ -47,7 +48,15 @@ describe('parseSchedule', () => {
 		expect(parsed('every 90m')).toEqual({ kind: 'every', ms: 90 * 60_000 });
 	});
 
+	test('explains mistakes in English', () => {
+		expect(error('')).toContain('No schedule yet');
+		expect(error('daily')).toContain('must be followed by a time');
+		expect(error('60 * * * *')).toBe('The minute field: 60 is outside 0-59');
+		expect(error('every 10m')).toContain('15 minutes');
+	});
+
 	test('explains mistakes in Thai', () => {
+		setLocale('th');
 		expect(error('')).toContain('ยังไม่ได้ใส่ตารางเวลา');
 		expect(error('daily')).toContain('ต้องตามด้วยเวลา');
 		expect(error('daily 24:00')).toContain('ไม่มีจริง');
@@ -70,6 +79,8 @@ describe('parseSchedule', () => {
 		expect(error('0 9 * *')).toContain('ไม่รู้จักตารางเวลา');
 		expect(error('hourly')).toContain('ไม่รู้จักตารางเวลา');
 		expect(error('0,,5 * * * *')).toContain('จุลภาค');
+		expect(error('60 * * * *')).toBe('ช่องนาที: 60 อยู่นอกช่วง 0-59');
+		setLocale('en');
 	});
 
 	test('a gap of 50 minutes inside one hour is fine when the hours are not adjacent', () => {

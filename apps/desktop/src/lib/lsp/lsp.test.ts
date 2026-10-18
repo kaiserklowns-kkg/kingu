@@ -301,8 +301,8 @@ describe('server table and status text', () => {
 		const ra = serverFor('rust')!;
 		expect(statusText(ra, { state: 'indexing' })).toBe('rust-analyzer: indexing…');
 		expect(statusText(ra, { state: 'ready' })).toBe('rust-analyzer: ready');
-		expect(statusText(serverFor('typescript')!, { state: 'not-installed', message: 'x' })).toBe('ไม่ได้ติดตั้ง TypeScript language server');
-		expect(statusText(serverFor('python')!, { state: 'not-installed' })).toBe('ไม่ได้ติดตั้ง basedpyright');
+		expect(statusText(serverFor('typescript')!, { state: 'not-installed', message: 'x' })).toBe('TypeScript language server not installed');
+		expect(statusText(serverFor('python')!, { state: 'not-installed' })).toBe('basedpyright not installed');
 	});
 
 	test('every language a file opens as reaches its server (keys as in Rust spec_for)', () => {
@@ -373,7 +373,7 @@ describe('server table and status text', () => {
 			]
 		};
 		expect(installItems(info)).toEqual([
-			{ id: '0', label: 'bun add -g svelte-language-server', description: 'แนะนำ' },
+			{ id: '0', label: 'bun add -g svelte-language-server', description: 'Recommended' },
 			{ id: '1', label: "'/Users/me/My Tools/npm' i -g svelte-language-server", description: undefined }
 		]);
 		expect(installItems({ ...info, methods: [] })).toEqual([]);

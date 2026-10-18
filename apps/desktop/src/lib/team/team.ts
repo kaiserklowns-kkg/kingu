@@ -2,6 +2,7 @@
 // `team_sync_run`, and the status bar label. Metadata only: never code, diffs, prompts or secrets.
 
 import type { StreamState } from './teamEvents.ts';
+import { t } from '#lib/i18n/index.ts';
 
 export const TASK_STATUSES = ['backlog', 'running', 'needs_input', 'review', 'done', 'failed'] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
@@ -150,19 +151,25 @@ export function buildRunSync(r: TeamRunInput, now: Date = new Date()): RunSync |
 	return out;
 }
 
-export const STREAM_LABEL: Record<string, string> = { connected: 'เชื่อมต่อแล้ว', reconnecting: 'กำลังเชื่อมต่อใหม่', off: 'ปิด' };
+/** The live-update stream's state, in the UI language. */
+export const streamLabel = (stream: string): string =>
+	stream === 'connected' ? t('team.team.stream.connected') : stream === 'reconnecting' ? t('team.team.stream.reconnecting') : t('team.team.stream.off');
 
 export type StatusLabel ={ text: string; tooltip: string; warn: boolean };
 
-/** Status bar item: "ทีม ✓" when connected, "ทีม: ออฟไลน์" when the server is unreachable. */
+/** Status bar item: "Team ✓" when connected, "Team: Offline" when the server is unreachable. */
 export function teamStatusLabel(serverUrl: string, s: TeamStatus | null): StatusLabel | null {
 	if (!serverUrl) return null;
-	const pending = s && s.pending > 0 ? ` • รอส่ง ${s.pending} รายการ` : '';
+	const pending = s && s.pending > 0 ? ` • ${t('team.team.pendingItems', { count: s.pending })}` : '';
 	if (!s || !s.signed_in) {
-		return { text: 'ทีม: ยังไม่ได้ลงชื่อเข้าใช้', tooltip: `${serverUrl} — คลิกเพื่อลงชื่อเข้าใช้${pending}`, warn: true };
+		return { text: t('team.team.statusSignedOut'), tooltip: `${t('team.team.tooltipSignIn', { server: serverUrl })}${pending}`, warn: true };
 	}
 	if (s.online === false) {
-		return { text: 'ทีม: ออฟไลน์', tooltip: `${s.server} ติดต่อไม่ได้ จะลองใหม่อัตโนมัติ${pending}${s.last_error ? ` (${s.last_error})` : ''}`, warn: true };
+		return { text: t('team.team.statusOffline'), tooltip: `${t('team.team.tooltipOffline', { server: s.server })}${pending}${s.last_error ? ` (${s.last_error})` : ''}`, warn: true };
 	}
-	return { text: s.stream === 'reconnecting' ? 'ทีม ↻' : 'ทีม ✓', tooltip: `เชื่อมต่อ ${s.server} แล้ว • อัปเดตสด: ${STREAM_LABEL[s.stream] ?? STREAM_LABEL.off}${pending}`, warn: false };
+	return {
+		text: s.stream === 'reconnecting' ? t('team.team.statusReconnecting') : t('team.team.statusConnected'),
+		tooltip: `${t('team.team.tooltipConnected', { server: s.server, stream: streamLabel(s.stream) })}${pending}`,
+		warn: false
+	};
 }

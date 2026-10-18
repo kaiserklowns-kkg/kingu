@@ -31,6 +31,6 @@ describe('clone dialog', () => {
 		for (const bad of ['', ' ', 'a/b', '..', '.', '-x']) expect(projectNameError(bad)).not.toBeNull();
 		expect(defaultParents('/Users/me/')).toEqual({ clone: '/Users/me/kingu', project: '/Users/me/kingu/projects' });
 		expect(progressLabel({ phase: 'Receiving objects', percent: 42 })).toBe('Receiving objects 42%');
-		expect(progressLabel(null)).toBe('กำลังเริ่ม clone…');
+		expect(progressLabel(null)).toBe('Starting clone…');
 	});
 });

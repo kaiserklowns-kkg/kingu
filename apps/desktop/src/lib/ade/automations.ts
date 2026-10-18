@@ -4,6 +4,7 @@
 
 import { latestDue, parseSchedule, upcoming } from './schedule.ts';
 import type { RunMode } from './agentCli.ts';
+import { t } from '#lib/i18n/index.ts';
 
 export type AutomationSkip = { at: number; reason: string };
 
@@ -84,9 +85,9 @@ export function decide(
 		if (!parsed.ok) continue;
 		const due = latestDue(parsed.schedule, anchorOf(a, lastRuns[a.id]), now);
 		if (due === null) continue;
-		if (now - due > MISSED_GRACE_MS && !a.catch_up) out.push({ id: a.id, due, action: 'skip', reason: 'พลาดรอบขณะ Kingu ปิดอยู่ (ไม่ได้เปิด catch-up)' });
+		if (now - due > MISSED_GRACE_MS && !a.catch_up) out.push({ id: a.id, due, action: 'skip', reason: t('adeTasks.automations.skipMissed') });
 		else if (a.last_task_slug && running(a.last_task_slug))
-			out.push({ id: a.id, due, action: 'skip', reason: `งานรอบก่อน (kingu/${a.last_task_slug}) ยังทำงานอยู่` });
+			out.push({ id: a.id, due, action: 'skip', reason: t('adeTasks.automations.skipStillRunning', { slug: a.last_task_slug }) });
 		else out.push({ id: a.id, due, action: 'run' });
 	}
 	return out;
@@ -112,12 +113,12 @@ export function consentKey(root: string, a: Pick<Automation, 'id' | 'prompt' | '
 	return JSON.stringify([root, a.id, a.prompt, a.schedule, a.base, a.mode]);
 }
 
-export function formatWhen(t: number | null, now: number): string {
-	if (t === null) return '—';
-	const d = new Date(t);
+export function formatWhen(at: number | null, now: number): string {
+	if (at === null) return '—';
+	const d = new Date(at);
 	const p = (n: number) => String(n).padStart(2, '0');
 	const today = new Date(now);
 	const sameDay = d.toDateString() === today.toDateString();
 	const time = `${p(d.getHours())}:${p(d.getMinutes())}`;
-	return sameDay ? `วันนี้ ${time}` : `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${time}`;
+	return sameDay ? t('adeTasks.automations.today', { time }) : `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${time}`;
 }

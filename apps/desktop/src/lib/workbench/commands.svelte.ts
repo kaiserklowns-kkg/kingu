@@ -9,6 +9,7 @@ import { currentContext } from './contextKeys.svelte';
 import { status } from './status.svelte';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { terminalStartsChord, workbenchTakesKey } from '#lib/terminal/behaviour.ts';
+import { t } from '#lib/i18n/index.ts';
 
 /** Every key that runs `cmd` on this platform: keybindings.json's first, then the default unless removed. */
 export function keysOf(cmd: { id: string; key?: string; mac?: string }, mac = isMac): string[] {
@@ -133,7 +134,7 @@ export function installKeybindings(): () => void {
 					return;
 				}
 			}
-			if (!inEditor) status.flash(`ไม่มีคำสั่งสำหรับปุ่ม (${chordLabel(first)}, ${chordLabel(e)})`);
+			if (!inEditor) status.flash(t('workbench.commands.noChord', { chord: `${chordLabel(first)}, ${chordLabel(e)}` }));
 			consume(e, inEditor);
 			return;
 		}
@@ -151,7 +152,7 @@ export function installKeybindings(): () => void {
 		if (startsChord) {
 			pending = e;
 			consume(e, inEditor);
-			status.flash(`(${chordLabel(e)}) ถูกกดแล้ว รอปุ่มที่สองของคีย์ลัด...`);
+			status.flash(t('workbench.commands.chordPending', { key: chordLabel(e) }));
 		}
 	};
 	window.addEventListener('keydown', onKey, true);

@@ -13,6 +13,7 @@ import { commands } from '#lib/workbench/commands.svelte.ts';
 import { noticeFor, noticeState, notificationSound, shouldNotify, type NoticeState } from './agentNotify';
 import { adeTasks } from './tasks.svelte';
 import { hiddenInSidebar } from './sidebarState.svelte';
+import { t } from '#lib/i18n/index.ts';
 
 let allowed: boolean | null = null;
 
@@ -47,9 +48,9 @@ export function installAgentNotifications(): () => void {
 	const unlisten = listen<{ slug: string | null }>('agent:notification-clicked', (e) => openNotifiedTask(e.payload.slug));
 	const unregister = commands.register({
 		id: 'kingu.agents.testNotification',
-		title: 'ส่งการแจ้งเตือนทดสอบ (Send Test Notification)',
+		title: 'Send Test Notification',
 		category: 'Agents',
-		run: () => notify('Kingu: ทดสอบการแจ้งเตือน', 'การแจ้งเตือนของ agent จะหน้าตาและเสียงแบบนี้')
+		run: () => notify(t('ade.notify.testTitle'), t('ade.notify.testBody'))
 	});
 	const stop = $effect.root(() => {
 		$effect(() => {

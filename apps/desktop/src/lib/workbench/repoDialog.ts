@@ -1,3 +1,4 @@
+import { t } from '#lib/i18n/index.ts';
 // Pure parts of the Clone Repository / New Project dialog (Orca's Add Project: clone and create
 // steps). Rust validates again (`CloneUrl::parse`, `project::create`); this only gives feedback
 // while typing. Free of runes so `bun test` covers it.
@@ -5,21 +6,21 @@
 /** Why `input` cannot be cloned, or null. https, ssh and `user@host:path` only, as Rust allows. */
 export function cloneUrlError(input: string): string | null {
 	const url = input.trim();
-	if (!url) return 'ใส่ URL ของ repository';
-	const usage = 'ใช้ https://…, ssh://… หรือ git@host:owner/repo.git';
-	if (/\s/.test(url) || url.startsWith('-') || url.includes('#')) return `URL ไม่ถูกต้อง: ${usage}`;
+	if (!url) return t('workbench.repoDialog.enterUrl');
+	const invalid = () => t('workbench.repoDialog.invalidUrl');
+	if (/\s/.test(url) || url.startsWith('-') || url.includes('#')) return invalid();
 	const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(url);
 	if (scheme) {
 		const s = scheme[1].toLowerCase();
-		if (s !== 'https' && s !== 'ssh') return `ไม่รองรับ ${s}:// ${usage}`;
+		if (s !== 'https' && s !== 'ssh') return t('workbench.repoDialog.unsupportedScheme', { scheme: s });
 		const host = url.slice(scheme[0].length).split('/')[0].split('@').pop() ?? '';
-		if (!host || host.startsWith('-') || !url.slice(scheme[0].length).includes('/')) return `URL ไม่ถูกต้อง: ${usage}`;
+		if (!host || host.startsWith('-') || !url.slice(scheme[0].length).includes('/')) return invalid();
 		return null;
 	}
-	if (url.includes('::')) return `URL ไม่ถูกต้อง: ${usage}`;
+	if (url.includes('::')) return invalid();
 	const scp = /^(?:([A-Za-z0-9._-]+)@)?([A-Za-z0-9._-]+):(.+)$/.exec(url);
 	if (scp && !scp[2].startsWith('-') && !(scp[1] ?? '').startsWith('-')) return null;
-	return `URL ไม่ถูกต้อง: ${usage}`;
+	return invalid();
 }
 
 /** The folder git clones into: the URL's last segment without `.git` (Orca's rule). */
@@ -32,9 +33,9 @@ export function repoNameFromUrl(input: string): string {
 /** Why `name` cannot be a project folder name, or null (Orca's create step rules). */
 export function projectNameError(name: string): string | null {
 	const n = name.trim();
-	if (!n) return 'ใส่ชื่อโปรเจกต์';
-	if (/[\\/]/.test(n) || n === '.' || n === '..') return 'ชื่อห้ามมี / และห้ามเป็น . หรือ ..';
-	if (n.startsWith('-')) return 'ชื่อห้ามขึ้นต้นด้วย -';
+	if (!n) return t('workbench.repoDialog.enterName');
+	if (/[\\/]/.test(n) || n === '.' || n === '..') return t('workbench.repoDialog.nameSlash');
+	if (n.startsWith('-')) return t('workbench.repoDialog.nameDash');
 	return null;
 }
 
@@ -63,5 +64,5 @@ export type CloneProgress = { phase: string; percent: number };
 
 /** `Receiving objects 42%`. */
 export function progressLabel(p: CloneProgress | null): string {
-	return p ? `${p.phase} ${p.percent}%` : 'กำลังเริ่ม clone…';
+	return p ? `${p.phase} ${p.percent}%` : t('workbench.repoDialog.startingClone');
 }

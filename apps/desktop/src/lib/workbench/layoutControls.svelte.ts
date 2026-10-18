@@ -8,9 +8,10 @@ import { quick, type PickItem } from './quick.svelte';
 import { status } from './status.svelte';
 import { TITLE_BAR_TOGGLES, toggleChecked } from './titlebar';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
+import { t } from '#lib/i18n/index.ts';
 
 export function setUserSetting(id: string, value: unknown) {
-	settings.set(id, value, 'user').catch((e) => notifications.error(`บันทึกการตั้งค่า ${id} ไม่ได้: ${e}`));
+	settings.set(id, value, 'user').catch((e) => notifications.error(t('workbench.layoutControls.saveFailed', { id, error: String(e) })));
 }
 
 function toggleSetting(id: string) {
@@ -75,7 +76,7 @@ export function customizeLayout(activeId?: string) {
 		separator: i === 0 || all[i - 1].section !== c.section ? c.section : undefined
 	}));
 	quick.pick({
-		placeholder: 'Customize Layout — เลือกเพื่อเปิด/ปิดหรือย้ายตำแหน่ง (Esc เพื่อปิด)',
+		placeholder: t('workbench.layoutControls.placeholder'),
 		items,
 		activeId,
 		onAccept: (item) => {

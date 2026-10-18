@@ -3,6 +3,7 @@
 // of runes so they are unit-testable. Paths are workspace-relative; '' is the root.
 
 import { baseName, isUnder, joinRel, parentOf } from './fileTree';
+import { t } from '#lib/i18n/index.ts';
 
 /** VS Code's `incrementFileName` (simple): `a.ts` → `a copy.ts` → `a copy 2.ts`. Rust (fileops.rs) does the same when it writes. */
 export function incrementFileName(name: string, isDir: boolean): string {
@@ -80,8 +81,8 @@ export const compactLabel = (chain: readonly string[]) => chain.map(baseName).jo
 export function moveQuestion(paths: readonly string[], target: string, root: string): string {
 	const into = target ? baseName(target) : root;
 	return paths.length === 1
-		? `ย้าย '${baseName(paths[0])}' ไปไว้ใน '${into}'? (Are you sure you want to move '${baseName(paths[0])}' into '${into}'?)`
-		: `ย้าย ${paths.length} รายการต่อไปนี้ไปไว้ใน '${into}'? (Are you sure you want to move the following ${paths.length} files into '${into}'?)\n\n${paths.map(baseName).join('\n')}`;
+		? t('workbench.explorer.moveOne', { name: baseName(paths[0]), into })
+		: `${t('workbench.explorer.moveMany', { count: paths.length, into })}\n\n${paths.map(baseName).join('\n')}`;
 }
 
 /**

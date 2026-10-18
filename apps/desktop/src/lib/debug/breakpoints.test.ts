@@ -38,7 +38,7 @@ test('glyphs: plain without a session, verified/unverified with the adapter answ
 	// The adapter answered for lines 4 and 9 (the enabled ones), in that order.
 	const answered = glyphs(list, [{ verified: true, line: 4 }, { verified: false, message: 'No code at line 9' }]);
 	expect(answered.map((g) => [g.line, g.kind, g.hover])).toEqual([
-		[2, 'disabled', 'Breakpoint (ปิดอยู่)'],
+		[2, 'disabled', 'Breakpoint (disabled)'],
 		[4, 'conditional', 'Breakpoint: n == 0'],
 		[9, 'unverified', 'No code at line 9']
 	]);

@@ -16,6 +16,7 @@ import { adeTasks } from './tasks.svelte';
 import { jumpRows, openInLabels, worktreeActions, type WorktreeAction } from './worktreeActions';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
+import { t } from '#lib/i18n/index.ts';
 
 const FOLDER_ID = '@folder';
 
@@ -28,15 +29,15 @@ export function actionsFor(key: string) {
 
 /** Opens a worktree folder (absolute) in a `kingu.worktree.openIn` app; Rust reads the command from the user's settings. */
 export function openWorktreeIn(label: string, path: string) {
-	invoke('worktree_open_in', { label, path }).catch((e) => notifications.error(`เปิดใน ${label} ไม่ได้: ${e}`));
+	invoke('worktree_open_in', { label, path }).catch((e) => notifications.error(t('adeTasks.worktree.openInFailed', { app: label, error: String(e) })));
 }
 
-async function copy(text: string, what: string) {
+async function copy(text: string, what: 'path' | 'branch') {
 	try {
 		await navigator.clipboard.writeText(text);
-		status.flash(`คัดลอก${what}แล้ว`);
+		status.flash(what === 'path' ? t('adeTasks.worktree.copiedPath') : t('adeTasks.worktree.copiedBranch'));
 	} catch {
-		notifications.error(`คัดลอก${what}ไม่ได้`);
+		notifications.error(what === 'path' ? t('adeTasks.worktree.copyPathFailed') : t('adeTasks.worktree.copyBranchFailed'));
 	}
 }
 
@@ -64,9 +65,9 @@ export function runWorktreeAction(key: string, id: WorktreeAction) {
 		case 'reveal':
 			return invoke('fs_reveal', { rel: slug ? worktreeDir(slug) : '' }).catch((e) => notifications.error(e));
 		case 'copyPath':
-			return workspace.root && copy(slug ? `${workspace.root}/${worktreeDir(slug)}` : workspace.root, ' path ');
+			return workspace.root && copy(slug ? `${workspace.root}/${worktreeDir(slug)}` : workspace.root, 'path');
 		case 'copyBranch':
-			return slug && copy(adeTasks.branchOf(slug), 'ชื่อ branch ');
+			return slug && copy(adeTasks.branchOf(slug), 'branch');
 		case 'rename':
 			return slug && adeTasks.startRename(slug);
 		case 'markDone':
@@ -80,14 +81,14 @@ export function runWorktreeAction(key: string, id: WorktreeAction) {
 
 /** Worktree Jump (⇧⌘J): the folder and every task worktree; Enter opens it in the Agents layout. */
 export function jumpToWorktree() {
-	if (!workspace.root) return status.flash('เปิดโฟลเดอร์ก่อน');
+	if (!workspace.root) return status.flash(t('adeTasks.worktree.openFolderFirst'));
 	const rows = jumpRows(
 		{ name: workspace.name ?? '', branch: status.branch ?? '' },
 		COLUMNS.map((c) => ({ label: c.label, tasks: adeTasks.groups[c.id].map((v) => ({ slug: v.meta.slug, title: v.meta.title, status: STATUS_LABEL[v.status], branch: adeTasks.branchOf(v.meta.slug) })) }))
 	);
 	let last = '';
 	quick.pick({
-		placeholder: 'ไปที่ worktree (Worktree Jump)',
+		placeholder: t('adeTasks.worktree.jumpPlaceholder'),
 		items: rows.map((r) => {
 			const separator = r.group !== last ? r.group : undefined;
 			last = r.group;

@@ -13,6 +13,7 @@ import { debug } from '#lib/debug/debug.svelte.ts';
 import { editors } from './editors.svelte';
 import { textFiles } from './textFileService.svelte';
 import type { ShutdownReason } from './textFiles';
+import { t } from '#lib/i18n/index.ts';
 
 const debugConfirmsExit = () => debug.active && settings.get('debug.confirmOnExit') === 'always';
 
@@ -23,8 +24,8 @@ export async function confirmClose(reason: ShutdownReason = 'quit'): Promise<boo
 	// terminal.integrated.confirmOnExit: live terminal sessions.
 	if (!(await confirmTerminalExit())) return false;
 	// debug.confirmOnExit: a debug session is running.
-	if (debugConfirmsExit() && !(await ask('มี debug session ทำงานอยู่ ต้องการหยุดแล้วออกหรือไม่?', { title: 'Kingu', kind: 'warning', okLabel: 'หยุด debug แล้วออก', cancelLabel: 'ยกเลิก' }))) return false;
-	if (!hadDirty && settings.get('window.confirmBeforeClose') === 'always') return ask('ออกจาก Kingu?', { title: 'Kingu', kind: 'info', okLabel: 'ออก', cancelLabel: 'ยกเลิก' });
+	if (debugConfirmsExit() && !(await ask(t('workbench.closeGuard.debugRunning'), { title: 'Kingu', kind: 'warning', okLabel: t('workbench.closeGuard.stopDebugAndQuit'), cancelLabel: t('common.cancel') }))) return false;
+	if (!hadDirty && settings.get('window.confirmBeforeClose') === 'always') return ask(t('workbench.closeGuard.quitQuestion'), { title: 'Kingu', kind: 'info', okLabel: t('workbench.closeGuard.quit'), cancelLabel: t('common.cancel') });
 	return true;
 }
 

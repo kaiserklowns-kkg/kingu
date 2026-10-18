@@ -39,9 +39,9 @@ describe('worktree settings', () => {
 		expect(setupPolicy('ask')).toBe('ask');
 		expect(setupPolicy('off')).toBe('off');
 		expect(setupPolicy('sometimes')).toBe('auto');
-		expect(scriptRunSummary({ code: 0, timed_out: false, output: '' })).toBe('สำเร็จ');
-		expect(scriptRunSummary({ code: 2, timed_out: false, output: '' })).toContain('exit code 2');
-		expect(scriptRunSummary({ code: null, timed_out: true, output: '' })).toContain('นานเกิน');
+		expect(scriptRunSummary({ code: 0, timed_out: false, output: '' })).toBe('succeeded');
+		expect(scriptRunSummary({ code: 2, timed_out: false, output: '' })).toContain('code 2');
+		expect(scriptRunSummary({ code: null, timed_out: true, output: '' })).toContain('too long');
 	});
 
 	test('setup command runs the trusted copy with the paths in its environment', () => {

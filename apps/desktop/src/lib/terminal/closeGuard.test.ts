@@ -24,10 +24,10 @@ test('only a job other than an idle shell counts as running', () => {
 });
 
 test('the prompt: VS Code wording in the panel, Orca wording (agent or command) in the ADE', () => {
-	expect(closePrompt('panel', ['sleep'], ['claude'], 'zsh')).toMatchObject({ title: 'Kill Terminal', ok: 'หยุด (Terminate)' });
-	expect(closePrompt('editor', ['claude'], ['claude'], 'Terminal 2')).toMatchObject({ title: 'หยุด agent นี้?', ok: 'หยุด Agent' });
+	expect(closePrompt('panel', ['sleep'], ['claude'], 'zsh')).toMatchObject({ title: 'Kill Terminal', ok: 'Terminate' });
+	expect(closePrompt('editor', ['claude'], ['claude'], 'Terminal 2')).toMatchObject({ title: 'Stop this agent?', ok: 'Stop Agent' });
 	const cmd = closePrompt('editor', ['npm', 'npm'], ['claude'], 'Terminal 1');
-	expect(cmd).toMatchObject({ title: 'หยุดคำสั่งที่กำลังรัน?', ok: 'หยุดและปิด' });
+	expect(cmd).toMatchObject({ title: 'Stop running command?', ok: 'Stop and Close' });
 	expect(cmd.message).toContain('(npm)');
 	expect(cmd.message).toContain('Terminal 1');
 });

@@ -3,6 +3,7 @@
 // TitleBar.svelte and AgentsTitleBar.svelte render it.
 
 import type { TaskStatus } from '#lib/ade/model.ts';
+import { t } from '#lib/i18n/index.ts';
 
 // --- Sizes -------------------------------------------------------------------------------------
 
@@ -75,10 +76,10 @@ export function inFilter(s: SessionState, filter: AgentsFilter): boolean {
 
 export type StatusSection = { id: Exclude<AgentsFilter, 'all'>; count: number; label: string; title: string };
 
-const SECTION_TEXT: Record<StatusSection['id'], [label: string, title: (n: number) => string]> = {
-	needsInput: ['รอคุณ', (n) => `${n} session รอคุณตอบ (Needs input)`],
-	inProgress: ['กำลังทำ', (n) => `${n} session กำลังทำงาน (In progress)`],
-	unread: ['ยังไม่อ่าน', (n) => `${n} session เสร็จแล้ว ยังไม่ได้เปิดดู (Unread)`]
+const SECTION_TEXT: Record<StatusSection['id'], [label: () => string, title: (n: number) => string]> = {
+	needsInput: [() => t('workbench.titlebar.needsInput'), (count) => t('workbench.titlebar.needsInputTitle', { count })],
+	inProgress: [() => t('workbench.titlebar.inProgress'), (count) => t('workbench.titlebar.inProgressTitle', { count })],
+	unread: [() => t('workbench.titlebar.unread'), (count) => t('workbench.titlebar.unreadTitle', { count })]
 };
 
 export type AgentStatusView = {
@@ -93,14 +94,14 @@ export function agentStatusView(counts: AgentCounts, mode: AgentsControlMode): A
 	if (mode === 'hidden') return { visible: false, unified: false, sections: [] };
 	const sections = (['needsInput', 'inProgress', 'unread'] as const)
 		.filter((id) => counts[id] > 0)
-		.map((id) => ({ id, count: counts[id], label: SECTION_TEXT[id][0], title: SECTION_TEXT[id][1](counts[id]) }));
+		.map((id) => ({ id, count: counts[id], label: SECTION_TEXT[id][0](), title: SECTION_TEXT[id][1](counts[id]) }));
 	return { visible: true, unified: mode === 'compact', sections };
 }
 
 /** The Agents layout's session pill: "N sessions require input" takes over from the workspace label. */
 export function sessionsAttentionLabel(needsInput: number): string | null {
 	if (needsInput <= 0) return null;
-	return needsInput === 1 ? '1 session requires input' : `${needsInput} sessions require input`;
+	return t('workbench.titlebar.sessionsNeedInput', { count: needsInput });
 }
 
 // --- Layout controls ---------------------------------------------------------------------------

@@ -8,12 +8,12 @@ const key = (k: Partial<KeyboardEvent>) => ({ key: '', code: '', shiftKey: false
 
 test('match count: VS Code style in the IDE, Orca style in the ADE', () => {
 	expect(findStatus('ide', '', -1, 0)).toBe('');
-	expect(findStatus('ide', 'x', -1, 0)).toBe('ไม่พบผลลัพธ์');
-	expect(findStatus('ide', 'x', 0, 5)).toBe('1 จาก 5');
-	expect(findStatus('ide', 'x', -1, 5)).toBe('? จาก 5');
-	expect(findStatus('ide', 'x', 3, HIGHLIGHT_LIMIT)).toBe(`4 จาก ${HIGHLIGHT_LIMIT}+`);
+	expect(findStatus('ide', 'x', -1, 0)).toBe('No results');
+	expect(findStatus('ide', 'x', 0, 5)).toBe('1 of 5');
+	expect(findStatus('ide', 'x', -1, 5)).toBe('? of 5');
+	expect(findStatus('ide', 'x', 3, HIGHLIGHT_LIMIT)).toBe(`4 of ${HIGHLIGHT_LIMIT}+`);
 	expect(findStatus('ade', '', -1, 0)).toBe('0/0');
-	expect(findStatus('ade', 'x', -1, 0)).toBe('ไม่พบ');
+	expect(findStatus('ade', 'x', -1, 0)).toBe('No results');
 	expect(findStatus('ade', 'x', 1, 7)).toBe('2/7');
 	expect(findStatus('ade', 'x', -1, 7)).toBe('7+');
 });

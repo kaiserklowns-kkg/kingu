@@ -8,6 +8,7 @@ import { status } from '#lib/workbench/status.svelte.ts';
 import { enabledBins, parseCliCommand } from '#lib/ade/agentCli.ts';
 import { CUSTOM_PICK, KNOWN_BINS, pickerItems, profileOf } from '#lib/ade/agentProfiles.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
+import { t } from '#lib/i18n/index.ts';
 
 export async function chooseAgentCli() {
 	const current = (settings.get<string>('kingu.agent.cli') ?? '').trim();
@@ -20,7 +21,7 @@ export async function chooseAgentCli() {
 		currentProfile?.id ?? null
 	);
 	const picked = await quick.choose({
-		placeholder: found.length ? 'เลือก agent CLI สำหรับโหมด terminal' : 'ไม่พบ agent CLI ที่รู้จักใน PATH ใช้คำสั่งเองได้',
+		placeholder: found.length ? t('ade.agentPicker.placeholder') : t('ade.agentPicker.placeholderNone'),
 		items: pickerItems(found, current),
 		activeId: currentProfile?.bins.find((b) => found.includes(b))
 	});
@@ -28,12 +29,12 @@ export async function chooseAgentCli() {
 	let value: string | undefined;
 	if (picked.id === CUSTOM_PICK) {
 		value = await quick.input({
-			placeholder: 'คำสั่ง agent CLI เช่น claude --model opus',
-			hint: (v) => (!v.trim() ? 'พิมพ์คำสั่งแล้วกด Enter' : parseCliCommand(v) ? `ใช้ "${v.trim()}" (${profileOf(parseCliCommand(v) ?? []).title})` : 'ห้ามมีอักขระของ shell')
+			placeholder: t('ade.agentPicker.inputPlaceholder'),
+			hint: (v) => (!v.trim() ? t('ade.agentPicker.hintEmpty') : parseCliCommand(v) ? t('ade.agentPicker.hintUse', { command: v.trim(), agent: profileOf(parseCliCommand(v) ?? []).title }) : t('ade.agentPicker.hintShell'))
 		});
 		if (!value?.trim()) return;
 		if (!parseCliCommand(value)) {
-			status.flash('คำสั่ง agent CLI ต้องเป็นคำสั่งธรรมดา (ไม่มีอักขระของ shell)', 8000);
+			status.flash(t('ade.agentPicker.plainCommand'), 8000);
 			return;
 		}
 		value = value.trim();
@@ -43,8 +44,8 @@ export async function chooseAgentCli() {
 	}
 	try {
 		await settings.set('kingu.agent.cli', value, 'user');
-		status.flash(`งานใหม่โหมด terminal จะใช้ ${value}`);
+		status.flash(t('ade.agentPicker.set', { command: value }));
 	} catch (e) {
-		notifications.error(`ตั้งค่า agent CLI ไม่ได้: ${e}`);
+		notifications.error(t('ade.agentPicker.setFailed', { error: String(e) }));
 	}
 }

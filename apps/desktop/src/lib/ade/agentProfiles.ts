@@ -4,6 +4,7 @@
 // A command that matches no profile runs as typed with the prompt as its last argument. Pure.
 
 import { cliWithMcp, type McpServers } from '#lib/ade/mcp.ts';
+import { t } from '#lib/i18n/index.ts';
 
 /**
  * Where a session's state comes from. `hooks`: Claude Code hooks (`--settings`) report every
@@ -362,8 +363,8 @@ export type PickRow = { id: string; label: string; description: string };
 
 /** What Kingu does with the CLI, for the picker row. */
 export function profileSummary(p: AgentProfile): string {
-	const status = p.status === 'hooks' || p.status === 'agent-hooks' ? 'สถานะจาก hooks' : p.status === 'notify' ? 'สถานะจาก notify + hooks' : 'สถานะจาก output';
-	return [status, p.canResume ? 'resume ได้' : null, p.mcp ? 'MCP' : null, p.skills ? 'skills' : null, p.account ? `บัญชี ${p.account}` : null].filter(Boolean).join(' · ');
+	const status = t(p.status === 'hooks' || p.status === 'agent-hooks' ? 'ade.agentProfiles.statusHooks' : p.status === 'notify' ? 'ade.agentProfiles.statusNotify' : 'ade.agentProfiles.statusOutput');
+	return [status, p.canResume ? t('ade.agentProfiles.canResume') : null, p.mcp ? 'MCP' : null, p.skills ? 'skills' : null, p.account ? t('ade.agentProfiles.account', { account: p.account }) : null].filter(Boolean).join(' · ');
 }
 
 /** Picker rows: the profiles whose program is in `found`, in profile order. */
@@ -373,7 +374,7 @@ export function pickerItems(found: readonly string[], current: string): PickRow[
 		const bin = p.bins.find((b) => have.has(b));
 		return bin ? [{ id: bin, label: p.title, description: `${bin} — ${profileSummary(p)}` }] : [];
 	});
-	rows.push({ id: CUSTOM_PICK, label: 'Custom…', description: current ? `ตอนนี้: ${current}` : 'พิมพ์คำสั่งเอง' });
+	rows.push({ id: CUSTOM_PICK, label: 'Custom…', description: current ? t('ade.agentProfiles.current', { command: current }) : t('ade.agentProfiles.typeCommand') });
 	return rows;
 }
 

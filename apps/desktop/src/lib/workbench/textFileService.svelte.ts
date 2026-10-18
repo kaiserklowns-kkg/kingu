@@ -43,6 +43,7 @@ import {
 	type ShutdownReason
 } from './textFiles';
 import { workspace } from './workspace.svelte';
+import { t } from '#lib/i18n/index.ts';
 
 export type Placeholder = { kind: 'binary' | 'tooLarge' | 'error'; size?: number; limit?: number; message?: string };
 type Backup = { key: string; meta: (BackupMeta & { stat?: FileStat }) | null; content: string };
@@ -100,7 +101,7 @@ class TextFileService {
 		textFileHooks.clean = (path) => this.#discardBackup(path);
 		textFileHooks.conflict = (path) => void this.#onConflict(path);
 		textFileHooks.unencodable = (path, ch) =>
-			status.flash(`บันทึก ${editorLabel(path)} ไม่ได้: encoding ${encodingLabel(getEntry(path)?.encoding ?? '')} ไม่มีอักขระ '${ch}' — ใช้ Save with Encoding (เช่น UTF-8)`, 10000);
+			status.flash(t('workbench.textFileService.unencodable', { name: editorLabel(path), encoding: encodingLabel(getEntry(path)?.encoding ?? ''), ch }), 10000);
 
 		// Backups of the folder being shown come back once it is open (startup, Open Folder).
 		let restoredFor: string | null | undefined;
@@ -136,10 +137,10 @@ class TextFileService {
 			this.#cancelBackup(path);
 			this.encodings.delete(path);
 		});
-		if (entry.lossy) status.flash(`${editorLabel(path)}: มีไบต์ที่ไม่ถูกต้องใน ${encodingLabel(entry.encoding)} — ใช้ Reopen with Encoding ก่อนแก้ไข`, 10000);
+		if (entry.lossy) status.flash(t('workbench.textFileService.lossy', { name: editorLabel(path), encoding: encodingLabel(entry.encoding) }), 10000);
 		// VS Code's largeFileOptimizations notice.
 		if (isLargeModel(model.getValueLength(), model.getLineCount()))
-			status.flash(`${editorLabel(path)}: ปิด tokenization, wrapping และ folding สำหรับไฟล์ใหญ่นี้เพื่อลดหน่วยความจำ`, 10000);
+			status.flash(t('workbench.textFileService.largeFile', { name: editorLabel(path) }), 10000);
 	}
 
 	syncEncoding(path: string) {
@@ -220,15 +221,15 @@ class TextFileService {
 		const choice = await quick.choose({
 			placeholder: conflictMessage(name),
 			items: [
-				{ id: 'compare', label: 'เปรียบเทียบ (Compare)', description: 'ดูเวอร์ชันบนดิสก์คู่กับของคุณ' },
-				{ id: 'overwrite', label: 'เขียนทับ (Overwrite)', description: 'บันทึกการแก้ไขของคุณทับไฟล์บนดิสก์' },
-				{ id: 'revert', label: 'ใช้เวอร์ชันบนดิสก์ (Revert)', description: 'ทิ้งการแก้ไขของคุณ' }
+				{ id: 'compare', label: t('workbench.textFileService.compare'), description: t('workbench.textFileService.compareDetail') },
+				{ id: 'overwrite', label: t('workbench.textFileService.overwrite'), description: t('workbench.textFileService.overwriteDetail') },
+				{ id: 'revert', label: t('workbench.textFileService.revert'), description: t('workbench.textFileService.revertDetail') }
 			]
 		});
 		if (choice?.id === 'overwrite') await this.overwrite(path);
 		else if (choice?.id === 'revert') await this.revert(path);
 		else if (choice?.id === 'compare') await this.openCompare(path);
-		else status.flash(`ยังไม่ได้บันทึก ${name}: ไฟล์บนดิสก์ใหม่กว่า`, 8000);
+		else status.flash(t('workbench.textFileService.notSavedNewer', { name }), 8000);
 	}
 
 	async openCompare(path: string) {
@@ -236,7 +237,7 @@ class TextFileService {
 			this.compare = { path, disk: await diskText(path) };
 			editors.open(path, { preview: false });
 		} catch (e) {
-			status.flash(`อ่าน ${editorLabel(path)} จากดิสก์ไม่ได้: ${e}`, 8000);
+			status.flash(t('workbench.textFileService.readFailed', { name: editorLabel(path), error: String(e) }), 8000);
 		}
 	}
 
@@ -247,13 +248,13 @@ class TextFileService {
 	/** VS Code's "Overwrite" / "Accept Your Changes". */
 	async overwrite(path: string) {
 		if (this.compare?.path === path) this.compare = null;
-		await saveFile(path, { overwrite: true }).catch((e) => status.flash(`บันทึกไม่สำเร็จ: ${e}`, 8000));
+		await saveFile(path, { overwrite: true }).catch((e) => status.flash(t('workbench.textFileService.saveFailed', { error: String(e) }), 8000));
 	}
 
 	/** VS Code's "Revert" / "Revert Your Changes": the disk contents win. */
 	async revert(path: string) {
 		if (this.compare?.path === path) this.compare = null;
-		await revertFile(path).catch((e) => status.flash(`โหลดจากดิสก์ไม่สำเร็จ: ${e}`, 8000));
+		await revertFile(path).catch((e) => status.flash(t('workbench.textFileService.revertFailed', { error: String(e) }), 8000));
 		this.syncEncoding(path);
 	}
 
@@ -319,11 +320,11 @@ class TextFileService {
 				return true;
 			} catch (e) {
 				clientLog('error', `backup before shutdown: ${e}`);
-				const force = reason === 'quit' ? 'ออกอยู่ดี (Quit Anyway)' : 'ปิดอยู่ดี (Close Anyway)';
-				const answer = await choose(`${remaining.map(editorLabel).join('\n')}\nลองบันทึกหรือย้อนการแก้ไขก่อนแล้วลองใหม่ (${e})`, {
-					title: 'สำรองไฟล์ที่ยังไม่บันทึกไม่สำเร็จ (The following editors with unsaved changes could not be saved to the backup location.)',
+				const force = reason === 'quit' ? t('workbench.textFileService.quitAnyway') : t('workbench.textFileService.closeAnyway');
+				const answer = await choose(`${remaining.map(editorLabel).join('\n')}\n${t('workbench.textFileService.backupRetry', { error: String(e) })}`, {
+					title: t('workbench.textFileService.backupFailed'),
 					kind: 'error',
-					buttons: ['OK', force],
+					buttons: [t('common.ok'), force],
 					cancelId: 0
 				});
 				return answer === force;
@@ -332,7 +333,7 @@ class TextFileService {
 		const choice = await this.confirmSave(remaining);
 		if (choice === 'cancel') return false;
 		if (choice === 'save') {
-			for (const p of remaining) await saveFile(p).catch((e) => status.flash(`บันทึก ${editorLabel(p)} ไม่สำเร็จ: ${e}`, 8000));
+			for (const p of remaining) await saveFile(p).catch((e) => status.flash(t('workbench.textFileService.saveFileFailed', { name: editorLabel(p), error: String(e) }), 8000));
 			return dirty().length === 0;
 		}
 		for (const p of remaining) this.#discardBackup(p);
@@ -341,12 +342,12 @@ class TextFileService {
 
 	/** A one-line description of a placeholder, for its editor. */
 	placeholderText(ph: Placeholder): string {
-		if (ph.kind === 'binary') return 'ไม่แสดงไฟล์นี้ในตัวแก้ไขข้อความ เพราะเป็นไฟล์ไบนารีหรือใช้ encoding ที่ไม่รองรับ (The file is not displayed in the text editor because it is either binary or uses an unsupported text encoding.)';
+		if (ph.kind === 'binary') return t('workbench.textFileService.binary');
 		if (ph.kind === 'tooLarge')
 			return ph.limit !== undefined && ph.size !== undefined && ph.size > ph.limit && ph.limit >= 1024 ** 3
-				? `ไฟล์ใหญ่เกินกว่าจะเปิดได้ (${formatSize(ph.size)}) (The file is too large to open.)`
-				: `ไม่แสดงไฟล์นี้ในตัวแก้ไขข้อความ เพราะใหญ่มาก (${formatSize(ph.size ?? 0)}) (The file is not displayed in the text editor because it is very large.)`;
-		return `เปิดไฟล์ไม่ได้ (The editor could not be opened): ${ph.message ?? ''}`;
+				? t('workbench.textFileService.tooLarge', { size: formatSize(ph.size) })
+				: t('workbench.textFileService.veryLarge', { size: formatSize(ph.size ?? 0) });
+		return t('workbench.textFileService.openFailed', { error: ph.message ?? '' });
 	}
 }
 

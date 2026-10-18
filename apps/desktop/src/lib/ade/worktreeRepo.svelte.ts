@@ -9,6 +9,7 @@ import { commitOptions, fetchOptions, pullOptions, pushOptions } from '#lib/work
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
+import { t } from '#lib/i18n/index.ts';
 
 /** Lines added / removed per path, unstaged and staged (`git_numstat`). */
 export type NumStat = { unstaged: Record<string, [number, number]>; staged: Record<string, [number, number]> };
@@ -103,23 +104,24 @@ export class WorktreeRepo implements ScmSource {
 						? { options: fetchOptions(get) }
 						: { options: pushOptions(get) };
 		const ok = await this.#run(`git_${op}`, args);
-		if (ok) status.flash(`${op} ${this.repo?.branch ?? this.slug} แล้ว`);
+		if (ok) status.flash(t('adeTasks.git.remoteDone', { op, branch: this.repo?.branch ?? this.slug }));
 		return ok;
 	}
 
 	async commit({ amend = false } = {}) {
 		const message = this.message.trim();
 		if (!message) {
-			status.flash('ใส่ข้อความ commit ก่อน');
+			status.flash(t('adeTasks.git.commitMessageFirst'));
 			return;
 		}
 		if (!amend && !this.groups.staged.length) {
-			status.flash(this.groups.changes.length ? 'ยังไม่มีไฟล์ที่ stage: กด + ที่ไฟล์ก่อน commit' : 'ไม่มีการเปลี่ยนแปลงให้ commit');
+			status.flash(this.groups.changes.length ? t('adeTasks.git.nothingStaged') : t('adeTasks.git.nothingToCommit'));
 			return;
 		}
 		if (await this.#run('git_commit', { message, options: commitOptions((id) => settings.get(id), { amend }) })) {
 			this.message = '';
-			status.flash(amend ? `แก้ commit ล่าสุดใน ${this.repo?.branch ?? this.slug} แล้ว` : `commit ใน ${this.repo?.branch ?? this.slug} แล้ว`);
+			const branch = this.repo?.branch ?? this.slug;
+			status.flash(amend ? t('adeTasks.git.amended', { branch }) : t('adeTasks.git.committed', { branch }));
 		}
 	}
 }

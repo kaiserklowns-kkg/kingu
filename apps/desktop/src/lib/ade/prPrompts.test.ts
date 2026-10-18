@@ -36,7 +36,7 @@ const thread = (id: string, over: Partial<ReviewThread> = {}): ReviewThread => (
 
 describe('merge gate (Orca presentGitHubPRMergeState)', () => {
 	test('mergeable and green', () => {
-		expect(mergePresentation(pr())).toMatchObject({ canMerge: true, tone: 'ok', label: 'Merge ได้' });
+		expect(mergePresentation(pr())).toMatchObject({ canMerge: true, tone: 'ok', label: 'Ready to merge' });
 	});
 	test('closed, merged, draft and review states block', () => {
 		expect(mergePresentation(pr({ state: 'MERGED' })).canMerge).toBe(false);
@@ -55,7 +55,7 @@ describe('merge gate (Orca presentGitHubPRMergeState)', () => {
 	test('unknown mergeability waits unless checks passed', () => {
 		expect(mergePresentation(pr({ mergeable: 'UNKNOWN', merge_state: '', checks: [] })).canMerge).toBe(false);
 		expect(mergePresentation(pr({ mergeable: 'UNKNOWN', merge_state: '' })).canMerge).toBe(true);
-		expect(mergePresentation(pr({ mergeable: 'UNKNOWN', merge_state: 'UNKNOWN', checks: [check('t', 'pending')] })).label).toBe('กำลังตรวจ');
+		expect(mergePresentation(pr({ mergeable: 'UNKNOWN', merge_state: 'UNKNOWN', checks: [check('t', 'pending')] })).label).toBe('Checking');
 	});
 	test('merge methods: repo default first, disallowed ones dropped', () => {
 		expect(mergeMethods(null)).toEqual({ defaultMethod: 'squash', methods: ['squash', 'merge', 'rebase'] });

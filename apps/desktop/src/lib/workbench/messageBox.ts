@@ -3,6 +3,7 @@
 // plugin's alerts with Thai labels ignored Escape (VS Code: Escape = Cancel).
 
 import { invoke } from '@tauri-apps/api/core';
+import { t } from '#lib/i18n/index.ts';
 
 export type MessageKind = 'info' | 'warning' | 'error';
 
@@ -17,7 +18,8 @@ export type MessageBoxOptions = {
 	dontSaveId?: number;
 };
 
-export const CANCEL = 'ยกเลิก (Cancel)';
+/** The Cancel button's label in the current UI language (Escape answers it either way). */
+export const cancelLabel = (): string => t('common.cancel');
 
 /** The request sent to Rust (pure, for tests). */
 export function messageBoxRequest(message: string, o: MessageBoxOptions) {
@@ -37,10 +39,10 @@ export async function choose(message: string, o: MessageBoxOptions): Promise<str
 
 /** OK / Cancel: true for OK. Same options as the dialog plugin's `ask`. */
 export async function ask(message: string, o: { title?: string; kind?: MessageKind; okLabel?: string; cancelLabel?: string } = {}): Promise<boolean> {
-	return (await messageBox(message, { title: o.title, kind: o.kind, buttons: [o.okLabel ?? 'OK', o.cancelLabel ?? CANCEL], cancelId: 1 })) === 0;
+	return (await messageBox(message, { title: o.title, kind: o.kind, buttons: [o.okLabel ?? t('common.ok'), o.cancelLabel ?? cancelLabel()], cancelId: 1 })) === 0;
 }
 
 /** A message with one OK button. */
 export async function message(text: string, o: { title?: string; kind?: MessageKind; okLabel?: string } = {}): Promise<void> {
-	await messageBox(text, { title: o.title, kind: o.kind, buttons: [o.okLabel ?? 'OK'], cancelId: 0 });
+	await messageBox(text, { title: o.title, kind: o.kind, buttons: [o.okLabel ?? t('common.ok')], cancelId: 0 });
 }

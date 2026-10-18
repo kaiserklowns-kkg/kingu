@@ -1,6 +1,8 @@
 // Mirrors `AgentEvent` / `WorktreeInfo` in src-tauri/src/agent (and apps/agent-host/src/protocol.ts),
 // plus the pure reducer that folds a run's events into what the UI shows.
 
+import { t } from '#lib/i18n/index.ts';
+
 export type Usage = {
 	input_tokens: number;
 	output_tokens: number;
@@ -70,14 +72,29 @@ export type WorktreeInfo = {
  */
 export type RunStatus = 'starting' | 'running' | 'waiting' | 'idle' | 'stopped' | 'failed' | 'done';
 
-export const STATUS_LABEL: Record<RunStatus, string> = {
-	starting: 'กำลังเริ่ม',
-	running: 'กำลังทำงาน',
-	waiting: 'รอคุณ',
-	idle: 'พร้อมรับคำสั่ง',
-	stopped: 'หยุดแล้ว',
-	failed: 'ล้มเหลว',
-	done: 'จบแล้ว'
+/** A run status in the UI language. Getters, so `STATUS_LABEL[s]` in markup follows kingu.uiLanguage. */
+export const STATUS_LABEL: Readonly<Record<RunStatus, string>> = {
+	get starting() {
+		return t('team.agent.status.starting');
+	},
+	get running() {
+		return t('team.agent.status.running');
+	},
+	get waiting() {
+		return t('team.agent.status.waiting');
+	},
+	get idle() {
+		return t('team.agent.status.idle');
+	},
+	get stopped() {
+		return t('team.agent.status.stopped');
+	},
+	get failed() {
+		return t('team.agent.status.failed');
+	},
+	get done() {
+		return t('team.agent.status.done');
+	}
 };
 
 /** Timeline entries: every event except streaming deltas and permission bookkeeping. */

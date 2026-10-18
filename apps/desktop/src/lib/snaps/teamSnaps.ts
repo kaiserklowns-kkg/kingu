@@ -2,6 +2,7 @@
 // Snaps view shows for each approved snap against what is installed here.
 
 import { originLabel, permissionLines, type SnapInfo, type SnapOrigin, type SnapPermissions } from './snapModel.ts';
+import { t as tr } from '#lib/i18n/index.ts';
 
 /** Mirrors `team::snaps::TeamSnap` in Rust (snake_case, like the server). */
 export type TeamSnap = {
@@ -31,10 +32,10 @@ export const installedFor = (t: TeamSnap, list: readonly SnapInfo[]) => list.fin
 /** Installed at exactly the approved commit with the approved hash, installed otherwise, or not installed. */
 export function teamSnapStatus(t: TeamSnap, list: readonly SnapInfo[]): TeamSnapStatus {
 	const s = installedFor(t, list);
-	if (!s) return { key: 'missing', label: 'ยังไม่ได้ติดตั้ง', tone: 'muted', detail: `ทีมอนุมัติ v${t.version} @ ${t.commit_sha.slice(0, 7)}` };
-	if (!s.error && s.hash === t.manifest_sha256 && s.origin?.commit === t.commit_sha) return { key: 'match', label: 'ตรงกับทีม', tone: 'ok', detail: `v${t.version} @ ${t.commit_sha.slice(0, 7)}` };
+	if (!s) return { key: 'missing', label: tr('tools.teamSnaps.notInstalled'), tone: 'muted', detail: tr('tools.teamSnaps.teamApprovedAt', { version: t.version, commit: t.commit_sha.slice(0, 7) }) };
+	if (!s.error && s.hash === t.manifest_sha256 && s.origin?.commit === t.commit_sha) return { key: 'match', label: tr('tools.teamSnaps.matches'), tone: 'ok', detail: `v${t.version} @ ${t.commit_sha.slice(0, 7)}` };
 	const here = `${s.version ? `v${s.version}` : '?'}${s.origin?.commit ? ` @ ${s.origin.commit.slice(0, 7)}` : ''}`;
-	return { key: 'different', label: 'ต่างจากทีม', tone: 'warn', detail: `เครื่องนี้ ${here} · ทีม v${t.version} @ ${t.commit_sha.slice(0, 7)}` };
+	return { key: 'different', label: tr('tools.teamSnaps.differs'), tone: 'warn', detail: tr('tools.teamSnaps.differsDetail', { here, version: t.version, commit: t.commit_sha.slice(0, 7) }) };
 }
 
 /** Required snaps that are not installed here (installed-but-different still counts as present). */
@@ -53,7 +54,7 @@ export function isApprovable(s: SnapInfo): boolean {
 export function approvalNote(s: SnapInfo, items: readonly TeamSnap[]): string | null {
 	const t = items.find((i) => i.snap_id === s.id);
 	if (!t || s.source !== 'user') return null;
-	return teamSnapStatus(t, [s]).key === 'match' ? 'ทีมอนุมัติ' : 'ทีมอนุมัติเวอร์ชันอื่น';
+	return teamSnapStatus(t, [s]).key === 'match' ? tr('tools.teamSnaps.approved') : tr('tools.teamSnaps.approvedOther');
 }
 
 /** The native confirm before approving: exactly what the team will be pinned to. */
@@ -61,13 +62,13 @@ export function approveSummary(s: SnapInfo, required: boolean): string {
 	const origin = s.origin as SnapOrigin;
 	return [
 		`${s.name} (${s.id}) v${s.version}`,
-		`จาก: ${originLabel(origin)}`,
+		tr('tools.snaps.from', { origin: originLabel(origin) }),
 		`SHA-256: ${s.hash}`,
 		'',
-		'สิทธิ์ที่ประกาศ:',
+		tr('tools.snaps.declaredPermissions'),
 		...permissionLines(s.permissions).map((l) => `• ${l}`),
 		'',
-		required ? 'ทุกคนในทีมจะเห็นว่า snap นี้จำเป็น (required)' : 'ทุกคนในทีมติดตั้งได้จากส่วน “ทีม” ของ Snaps',
-		'ส่งไปเซิร์ฟเวอร์ทีมเฉพาะข้อมูลข้างบน ไม่ส่งไฟล์ของ snap'
+		required ? tr('tools.teamSnaps.requiredNote') : tr('tools.teamSnaps.optionalNote'),
+		tr('tools.teamSnaps.sentNote')
 	].join('\n');
 }

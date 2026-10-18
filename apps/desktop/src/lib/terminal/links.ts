@@ -3,6 +3,8 @@
 // `", line 12`) and its no-suffix unix path regex, plus Orca's bare file names (`README.md`).
 // A file candidate is only a link once Rust has found the file (`terminal_link_target`).
 
+import { t } from '#lib/i18n/index.ts';
+
 export type FileLink = { kind: 'file'; start: number; end: number; path: string; line?: number; column?: number };
 export type UrlLink = { kind: 'url'; start: number; end: number; url: string };
 export type TerminalLink = FileLink | UrlLink;
@@ -176,7 +178,7 @@ export function cellText(cells: string[]): { text: string; cellAt: number[] } {
 /** VS Code's hover text: how to follow a link with the link modifier. */
 export function linkHint(kind: TerminalLink['kind'], mac: boolean, altModifier: boolean): string {
 	const click = altModifier ? (mac ? 'option + click' : 'alt + click') : mac ? 'cmd + click' : 'ctrl + click';
-	return `${kind === 'url' ? 'เปิดลิงก์' : 'เปิดไฟล์ใน editor'} (${click})`;
+	return kind === 'url' ? t('tools.terminal.link.openUrl', { click }) : t('tools.terminal.link.openFile', { click });
 }
 
 /** The link modifier is held (VS Code: ⌘ on macOS, Ctrl elsewhere; Alt when editor.multiCursorModifier is ctrlCmd). */

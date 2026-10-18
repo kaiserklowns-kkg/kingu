@@ -4,6 +4,7 @@
 
 import { COLORS, type Decoration } from '#lib/workbench/scm.ts';
 import type { FileMatches, TextMatch } from '#lib/workbench/searchResults.ts';
+import { t } from '#lib/i18n/index.ts';
 
 export type RightTab = 'files' | 'agents' | 'changes' | 'checks' | 'ports' | 'review';
 
@@ -119,11 +120,11 @@ export function contentRows(files: FileMatches[], collapsed: ReadonlySet<string>
 	return rows;
 }
 
-/** "12 ผลใน 3 ไฟล์" plus a note when ripgrep stopped at the limit. */
+/** "12 results in 3 files" plus a note when ripgrep stopped at the limit. */
 export function contentSummary(files: FileMatches[], limitHit: boolean): string {
 	const matches = files.reduce((n, f) => n + f.matches.length, 0);
-	if (!files.length) return 'ไม่พบ';
-	return `${matches} ผลใน ${files.length} ไฟล์${limitHit ? ' (แสดงเฉพาะส่วนแรก ลองค้นให้เจาะจงขึ้น)' : ''}`;
+	if (!files.length) return t('ade.search.none');
+	return t(limitHit ? 'ade.search.summaryLimited' : 'ade.search.summary', { matches, files: files.length });
 }
 
 /**

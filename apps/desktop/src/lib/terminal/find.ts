@@ -4,6 +4,7 @@
 
 import type { ISearchOptions, SearchAddon } from '@xterm/addon-search';
 import type { TerminalFlavor } from './terminalMenu.ts';
+import { t } from '#lib/i18n/index.ts';
 
 /** VS Code's XtermTerminalConstants.SearchHighlightLimit. */
 export const HIGHLIGHT_LIMIT = 20000;
@@ -15,14 +16,14 @@ export type FindKeyAction = 'next' | 'previous' | 'close' | 'caseSensitive' | 'w
 export function findStatus(flavor: TerminalFlavor, query: string, index: number, count: number): string {
 	if (flavor === 'ade') {
 		if (!query) return '0/0';
-		if (count === 0) return 'ไม่พบ';
+		if (count === 0) return t('tools.terminal.find.none');
 		if (index < 0) return `${count}+`;
 		return `${index + 1}/${count}`;
 	}
 	if (!query) return '';
-	if (count === 0) return 'ไม่พบผลลัพธ์';
+	if (count === 0) return t('tools.terminal.find.noResults');
 	const total = count >= HIGHLIGHT_LIMIT ? `${HIGHLIGHT_LIMIT}+` : String(count);
-	return `${index < 0 ? '?' : index + 1} จาก ${total}`;
+	return t('tools.terminal.find.of', { index: index < 0 ? '?' : index + 1, total });
 }
 
 /** What a key in the find input does. */

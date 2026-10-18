@@ -3,6 +3,7 @@
 // (Orca's worktree visibility). Pure, so `bun test` covers it.
 
 import type { TaskStatus } from './model';
+import { t } from '#lib/i18n/index.ts';
 
 /** `repo`: one group for the open folder (Kingu shows one project), so it lists like `none`. */
 export type GroupBy = 'none' | 'workspace-status' | 'pr-status' | 'repo';
@@ -68,11 +69,11 @@ export function sortTasks<T extends SidebarTask>(list: T[], sortBy: SortBy): T[]
 export type Group<T> = { id: string; label: string; tasks: T[] };
 
 export const PR_GROUPS: { id: string; label: string }[] = [
-	{ id: 'open', label: 'PR เปิดอยู่ (Open)' },
-	{ id: 'draft', label: 'PR ฉบับร่าง (Draft)' },
-	{ id: 'merged', label: 'Merge แล้ว (Merged)' },
-	{ id: 'closed', label: 'ปิดแล้ว (Closed)' },
-	{ id: 'none', label: 'ยังไม่มี PR (No PR)' }
+	{ id: 'open', get label() { return t('ade.sidebar.prOpen'); } },
+	{ id: 'draft', get label() { return t('ade.sidebar.prDraft'); } },
+	{ id: 'merged', get label() { return t('ade.sidebar.prMerged'); } },
+	{ id: 'closed', get label() { return t('ade.sidebar.prClosed'); } },
+	{ id: 'none', get label() { return t('ade.sidebar.prNone'); } }
 ];
 
 export function prGroupOf(t: Pick<SidebarTask, 'prState' | 'prDraft'>): string {
@@ -89,9 +90,9 @@ export function prGroupOf(t: Pick<SidebarTask, 'prState' | 'prDraft'>): string {
 }
 
 const STATUS_GROUPS: { id: string; label: string; of: (s: TaskStatus) => boolean }[] = [
-	{ id: 'attention', label: 'รอคุณ', of: (s) => ATTENTION.includes(s) },
-	{ id: 'active', label: 'กำลังทำ', of: (s) => s === 'running' },
-	{ id: 'done', label: 'เสร็จแล้ว', of: (s) => s === 'done' }
+	{ id: 'attention', get label() { return t('ade.model.colAttention'); }, of: (s) => ATTENTION.includes(s) },
+	{ id: 'active', get label() { return t('ade.model.colActive'); }, of: (s) => s === 'running' },
+	{ id: 'done', get label() { return t('ade.model.colDone'); }, of: (s) => s === 'done' }
 ];
 
 /** The visible tasks, filtered, sorted and grouped; empty groups are left out. `none` is one unnamed group. */
