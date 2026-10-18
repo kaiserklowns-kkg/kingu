@@ -18,7 +18,7 @@
 	import { rightSidebar } from './rightSidebar.svelte.ts';
 	import { adeTasks } from './tasks.svelte';
 	import { worktreeDir } from './keys';
-	import { drafts } from './scmDrafts';
+	import { draftKey, drafts } from './scmDrafts';
 	import { quick } from '#lib/workbench/quick.svelte.ts';
 
 	/** '' for the folder itself, else a task slug. */
@@ -104,11 +104,12 @@
 
 	// --- Commit box --------------------------------------------------------------------------------
 	let message = $state('');
+	const draft = $derived(draftKey(workspace.root, key));
 	$effect(() => {
-		message = drafts.get(key) ?? '';
+		message = drafts.get(draft) ?? '';
 	});
 	$effect(() => {
-		drafts.set(key, message);
+		drafts.set(draft, message);
 	});
 	const rows = $derived(Math.min(12, Math.max(2, message.split('\n').length)));
 
@@ -133,7 +134,7 @@
 		const text = message.trim();
 		if (!text) return;
 		if (await run('Commit', 'git_commit', { message: text })) {
-			if (drafts.get(key) === message) message = '';
+			if (drafts.get(draft) === message) message = '';
 			if (then) await run(then === 'push' ? 'Push' : 'Sync', 'git_sync', {});
 		}
 	}
