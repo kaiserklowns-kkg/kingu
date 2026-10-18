@@ -24,7 +24,13 @@
 		markdown: 'Markdown',
 		css: 'CSS',
 		html: 'HTML',
-		ini: 'TOML',
+		ini: 'Ini',
+		toml: 'TOML',
+		svelte: 'Svelte',
+		python: 'Python',
+		yaml: 'YAML',
+		scss: 'SCSS',
+		less: 'Less',
 		plaintext: 'Plain Text'
 	};
 
@@ -87,7 +93,7 @@
 		<button
 			class={['h-full max-w-80 truncate px-2 hover:bg-(--vscode-toolbar-hoverBackground)', languageStatus.state === 'not-installed' || languageStatus.state === 'error' ? 'text-(--vscode-editorWarning-foreground)' : '']}
 			title={languageStatus.tooltip}
-			onclick={() => layout.showPanel('output')}>{languageStatus.text}</button
+			onclick={() => (languageStatus.state === 'not-installed' ? lsp.install(editors.language) : layout.showPanel('output'))}>{languageStatus.text}</button
 		>
 	{/if}
 	{#if editorItems}

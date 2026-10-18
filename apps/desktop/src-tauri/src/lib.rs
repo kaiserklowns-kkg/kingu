@@ -301,6 +301,19 @@ fn lsp_start(
   lsp::start_for(&servers, &ws.root()?, &language, on_event)
 }
 
+/// Whether the server for `language` can be started now (re-resolved on every call, so a server
+/// installed meanwhile is found): its path, or the "ไม่ได้ติดตั้ง …" error.
+#[tauri::command]
+fn lsp_check(ws: State<'_, Workspace>, language: String) -> Result<String, String> {
+  lsp::check(&language, &ws.root()?).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Install commands for the server of `language` that this machine's tools can run.
+#[tauri::command]
+fn lsp_install_methods(ws: State<'_, Workspace>, language: String) -> Result<lsp::InstallInfo, String> {
+  lsp::install_info(&language, &ws.root()?)
+}
+
 // ---------------------------------------------------------------------------------------------
 // Open Folder (VS Code: workbench.action.files.openFolder, File: Open Recent)
 
@@ -520,6 +533,8 @@ pub fn run() {
       search_cancel,
       search_replace,
       lsp_start,
+      lsp_check,
+      lsp_install_methods,
       lsp::lsp_send,
       lsp::lsp_stop,
       settings::settings_read,

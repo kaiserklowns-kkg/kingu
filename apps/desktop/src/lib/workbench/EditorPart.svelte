@@ -48,10 +48,17 @@
 			}),
 			commands.register({
 				id: 'kingu.lsp.restart',
-				title: 'Restart Language Server',
-				category: 'Developer',
+				title: 'Restart',
+				category: 'Language Server',
 				when: () => lsp.hasServer(editors.language),
 				run: () => lsp.restart(editors.language)
+			}),
+			commands.register({
+				id: 'kingu.lsp.installMissing',
+				title: 'Install Missing…',
+				category: 'Language Server',
+				when: () => lsp.missing().length > 0,
+				run: () => lsp.installMissing(editors.language)
 			})
 		];
 		// File watcher: clean open models follow the file on disk.
