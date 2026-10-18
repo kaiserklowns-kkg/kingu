@@ -20,6 +20,8 @@
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { invoke } from '@tauri-apps/api/core';
 	import type { AdeTab } from './adeTabs';
+	import { terminalBells } from './terminalBell.svelte';
+	import { t as tr } from '#lib/i18n/index.ts';
 
 	// Tab context menu, like the IDE's: close tabs, copy or reveal a file. The agent session and the
 	// composer stay (they are the worktree itself).
@@ -108,6 +110,10 @@
 					{:else}
 						{#if t.kind === 'terminal' && t.color}<span class="size-2 shrink-0 rounded-full" style:background={t.color} aria-hidden="true"></span>{/if}
 						<Icon name={t.kind === 'compose' ? 'agent' : 'terminal'} size={14} /><span class="truncate">{t.label}</span>
+					{/if}
+					{#if !active && terminalBells.has(key, t.id)}
+						<!-- kingu.agent.notifications.terminalBell: this terminal rang while hidden. -->
+						<span class="size-1.5 shrink-0 rounded-full bg-(--vscode-activityBarBadge-background)" role="status" aria-label={tr('ade.bell.dot')} title={tr('ade.bell.dot')}></span>
 					{/if}
 					{#if t.kind !== 'agent' && t.kind !== 'compose'}
 						{@const dirty = t.kind === 'file' && editors.isDirty(t.key)}

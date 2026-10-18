@@ -106,6 +106,44 @@ pub fn agent_hook_read(app: AppHandle, token: String, offset: u64) -> Result<Hoo
   read_from(&file_of(&app, &token)?, offset)
 }
 
+/// The hook token of an ADE terminal pane (Orca's per-pane hook env): every terminal of a task's
+/// worktree gets `KINGU_AGENT_HOOK_FILE`, so an agent CLI typed by hand in any pane reports its
+/// state too (through the status hooks Kingu installs; status_hooks.rs). Derived from the PTY key,
+/// so the page finds the file again after a reload without storing anything.
+pub fn pane_token(key: &str) -> String {
+  format!("pane-{}", &crate::snap::sha256_hex(key.as_bytes())[..32])
+}
+
+/// The hook file a new pane's shell gets as `KINGU_AGENT_HOOK_FILE` (the folder is created).
+pub fn pane_file(app: &AppHandle, key: &str) -> Result<PathBuf, String> {
+  let file = file_of(app, &pane_token(key))?;
+  if let Some(dir) = file.parent() {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+  }
+  Ok(file)
+}
+
+/// A new pane starts with an empty hook file (an old one of the same key is from a shell that is gone).
+pub fn pane_file_reset(app: &AppHandle, key: &str) {
+  if let Ok(file) = file_of(app, &pane_token(key)) {
+    let _ = std::fs::write(file, b"");
+  }
+}
+
+/// New hook events of an ADE terminal pane (see `pane_token`).
+#[tauri::command]
+pub fn agent_pane_hook_read(app: AppHandle, key: String, offset: u64) -> Result<HookRead, String> {
+  crate::pty::validate_key(&key)?;
+  read_from(&file_of(&app, &pane_token(&key))?, offset)
+}
+
+/// The pane was closed.
+#[tauri::command]
+pub fn agent_pane_hook_clear(app: AppHandle, key: String) -> Result<(), String> {
+  crate::pty::validate_key(&key)?;
+  agent_hook_clear(app, pane_token(&key))
+}
+
 /// The session ended or its task was removed.
 #[tauri::command]
 pub fn agent_hook_clear(app: AppHandle, token: String) -> Result<(), String> {
@@ -136,6 +174,15 @@ mod tests {
     assert!(settings_json(Path::new("/it's/t.jsonl")).is_err());
     assert_eq!(quotable_path(Path::new("/c/agent-hooks/t.jsonl")).unwrap(), "/c/agent-hooks/t.jsonl");
     assert!(quotable_path(Path::new("/c/a\nb.jsonl")).is_err());
+  }
+
+  #[test]
+  fn pane_tokens_are_valid_and_stable_per_key() {
+    let a = pane_token("ade:abc:fix-login:t1");
+    assert!(valid_token(&a));
+    assert_eq!(a, pane_token("ade:abc:fix-login:t1"));
+    assert_ne!(a, pane_token("ade:abc:fix-login:t2"));
+    assert!(!a.contains("fix-login"));
   }
 
   #[test]

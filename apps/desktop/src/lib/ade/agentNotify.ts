@@ -37,3 +37,16 @@ export function notificationSound(setting: string | undefined): string | undefin
 	// mac-notification-sys plays the system default for this name.
 	return setting === 'default' ? 'NSUserNotificationDefaultSoundName' : setting;
 }
+
+/** One terminal rings at most this often (a shell beeps on every failed tab completion). */
+export const BELL_THROTTLE_MS = 10_000;
+
+/**
+ * Orca's notifications.terminalBell (`kingu.agent.notifications.terminalBell`, default off): a
+ * bell (BEL) from a terminal you are not looking at marks its tab and notifies, at most once per
+ * BELL_THROTTLE_MS per terminal. `mark`: the tab's dot; `notify`: the system notification too.
+ */
+export function bellAction(enabled: boolean, visible: boolean, lastAt: number | undefined, now: number): { mark: boolean; notify: boolean } {
+	if (!enabled || visible) return { mark: false, notify: false };
+	return { mark: true, notify: lastAt === undefined || now - lastAt >= BELL_THROTTLE_MS };
+}

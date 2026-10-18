@@ -4,12 +4,16 @@
 // belong to the open folder and are kept in localStorage per folder: after a reload, a folder
 // switch or an app restart (the kingu-ptyd daemon keeps the CLIs running) each one whose PTY is
 // still alive re-attaches under `cliKey`; the others are gone, and the user continues the task.
+// A CLI that quits without its SessionEnd hook (Ctrl-C, a crash) is found through the PTY list
+// (`reconcile`, fed by paneAgents.svelte.ts) and ends; its terminal title is status evidence too.
 
 import { invoke } from '@tauri-apps/api/core';
 import { killPty } from '#lib/terminal/pty.ts';
 import { cliKey, liveCliSessions, parseCliSessions, persist, restore, storeName } from '#lib/terminal/sessions.ts';
 import { isWorking } from './agentCli';
 import { applyHook, initialHookState, type HookState } from './agentHooks';
+import { checkLiveness, type Liveness, type PtyListing } from './agentPresence';
+import { applyTitle, type TitleTrack } from './agentTitle';
 import { pasteText, profileOf, promptDue } from '#lib/ade/agentProfiles.ts';
 import { askKeysFor, isComplete, typeAskKeys, type AskSelection } from '#lib/agent/ask.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
@@ -33,6 +37,10 @@ class CliSessions {
 	hooks = $state<Record<string, HookState>>({});
 	#offsets: Record<string, number> = {};
 	#polling = false;
+	/** Each session's terminal title as status evidence (agentTitle.ts). */
+	titles = $state<Record<string, TitleTrack>>({});
+	/** Each session's process liveness from the PTY list (agentPresence.ts). */
+	#live: Record<string, Liveness> = {};
 
 	/** Root tag of the folder whose sessions these are; null until loaded. */
 	#tag = $state<string | null>(null);
@@ -67,6 +75,8 @@ class CliSessions {
 		this.sessions = kept;
 		this.hooks = {};
 		this.#offsets = {};
+		this.titles = {};
+		this.#live = {};
 		this.#restored = new Set(Object.keys(kept));
 		for (const [slug, s] of Object.entries(kept)) if (s.hookToken) this.hooks[slug] = initialHookState(Date.now());
 		this.#tag = tag;
@@ -79,6 +89,8 @@ class CliSessions {
 		this.sessions = {};
 		this.hooks = {};
 		this.#offsets = {};
+		this.titles = {};
+		this.#live = {};
 		this.#last = {};
 		this.#typePrompts = {};
 		this.#sawOutput.clear();
@@ -119,6 +131,8 @@ class CliSessions {
 		this.#offsets[slug] = 0;
 		if (hookToken) this.hooks[slug] = initialHookState(Date.now());
 		else delete this.hooks[slug];
+		delete this.titles[slug];
+		delete this.#live[slug];
 		this.#last[slug] = Date.now();
 		this.#tick();
 	}
@@ -130,6 +144,8 @@ class CliSessions {
 		if (token) void invoke('agent_hook_clear', { token }).catch(() => {});
 		delete this.hooks[slug];
 		delete this.#offsets[slug];
+		delete this.titles[slug];
+		delete this.#live[slug];
 		delete this.sessions[slug];
 		delete this.#last[slug];
 		delete this.#typePrompts[slug];
@@ -197,6 +213,35 @@ class CliSessions {
 		if (t - (this.#last[slug] ?? 0) > 500) this.#last[slug] = t;
 	}
 
+	/** The terminal's title changed (OSC 0/2). */
+	title(slug: string, title: string) {
+		if (!this.sessions[slug]) return;
+		this.titles[slug] = applyTitle(this.titles[slug], title, Date.now());
+	}
+
+	/**
+	 * One PTY listing: a session whose shell is back in front (the CLI quit without its SessionEnd
+	 * hook) or gone ends, the way Orca retires a row whose process is certifiably dead.
+	 */
+	reconcile(list: readonly PtyListing[], foregroundKnown: boolean) {
+		const byKey = new Map(list.map((p) => [p.key, p]));
+		const now = Date.now();
+		for (const [slug, s] of Object.entries(this.sessions)) {
+			const was = this.#live[slug];
+			const next = checkLiveness(was, byKey.get(this.ptyKey(slug, s.startedAt)), now, foregroundKnown);
+			this.#live[slug] = next;
+			if (next.ended && !was?.ended && this.hooks[slug]?.phase !== 'ended') {
+				clientLog('info', `agent CLI of ${slug} exited without a SessionEnd hook`);
+				this.hooks[slug] = applyHook(this.hooks[slug] ?? initialHookState(now), { kingu_hook: 'kingu', event: 'ProcessExit' }, now);
+			}
+		}
+	}
+
+	/** The session's CLI has ended (SessionEnd hook, or its process is gone); its terminal may still show the shell. */
+	ended(slug: string): boolean {
+		return this.hooks[slug]?.phase === 'ended';
+	}
+
 	lastOutput(slug: string): number | undefined {
 		return this.#last[slug];
 	}
@@ -211,7 +256,8 @@ class CliSessions {
 		this.#polling = true;
 		try {
 			for (const [slug, s] of Object.entries(this.sessions)) {
-				if (!s.hookToken) continue;
+				// A CLI whose process is gone reports nothing more.
+				if (!s.hookToken || this.#live[slug]?.ended) continue;
 				const r = await invoke<{ events: object[]; offset: number }>('agent_hook_read', { token: s.hookToken, offset: this.#offsets[slug] ?? 0 }).catch(() => null);
 				if (!r || !this.sessions[slug]) continue;
 				this.#offsets[slug] = r.offset;

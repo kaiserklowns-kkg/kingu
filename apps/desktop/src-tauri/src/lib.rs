@@ -684,7 +684,21 @@ fn pty_spawn(
       Err(e) => log::warn!("terminal history: {e}"),
     }
   }
+  // Every terminal of a task's worktree gets its own status hook file, so an agent CLI started by
+  // hand in any pane reports its state (status_hooks.rs; inert for every other program).
+  let pane_hooks = key.starts_with("ade:") && slug.is_some() && !env.contains_key("KINGU_AGENT_HOOK_FILE") && !unset.iter().any(|k| k == "KINGU_AGENT_HOOK_FILE");
+  if pane_hooks {
+    match agent::hooks::pane_file(&app, &key).and_then(|f| agent::hooks::quotable_path(&f).map(str::to_owned)) {
+      Ok(file) => {
+        env.insert("KINGU_AGENT_HOOK_FILE".into(), file);
+      }
+      Err(e) => log::warn!("terminal {key}: no agent status file ({e})"),
+    }
+  }
   let attached = ptys.open(&key, &cwd, cols, rows, run.as_deref(), &env, shell, terminal.args.as_deref(), &unset, clean_env, pty::channel_sink(on_data))?;
+  if attached.spawned && pane_hooks {
+    agent::hooks::pane_file_reset(&app, &key);
+  }
   if attached.spawned {
     log::info!("terminal {key} started ({cols}x{rows})");
   } else {
@@ -1293,6 +1307,8 @@ pub fn run() {
       agent::cli::agent_cli_found,
       agent::hooks::agent_hook_read,
       agent::hooks::agent_hook_clear,
+      agent::hooks::agent_pane_hook_read,
+      agent::hooks::agent_pane_hook_clear,
       agent::agent_send,
       agent::agent_answer_permission,
       agent::agent_interrupt,

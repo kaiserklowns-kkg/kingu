@@ -3,6 +3,7 @@
 
 import { firstLine, formatUsage, slugify, toolArg, type AgentEvent, type RunState, type RunStatus } from '#lib/agent/events.ts';
 import { isQuestionTool, questionText } from './agentHooks.ts';
+import type { AgentRow } from './agentPresence.ts';
 import { locale, t } from '#lib/i18n/index.ts';
 
 export type TaskStatus = 'running' | 'waiting' | 'review' | 'done' | 'failed';
@@ -80,6 +81,8 @@ export type TaskRuntime = {
 	error?: string;
 	/** Unix ms of the latest event. */
 	updatedAt?: number;
+	/** Agents found in the task's other terminal panes (agentPresence.ts), one row each. */
+	agents?: AgentRow[];
 };
 
 export type FileChange = {

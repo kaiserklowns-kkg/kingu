@@ -110,3 +110,12 @@ describe('claude argv', () => {
 		expect(claudeResume(['claude'], null, 'S')).toEqual(['claude', '--continue', '--settings', 'S']);
 	});
 });
+
+describe('process exit (Kingu)', () => {
+	test('a CLI gone without SessionEnd ends its session, whatever it was doing', () => {
+		const s = run([{ hook_event_name: 'UserPromptSubmit', prompt: 'go' }, { hook_event_name: 'PermissionRequest', tool_name: 'Bash' }, { kingu_hook: 'kingu', event: 'ProcessExit' }]);
+		expect(s).toMatchObject({ phase: 'ended', permission: false, question: false, hooks: true, message: 'agent ปิดไปแล้ว' });
+		expect(needsInput(s)).toBe(false);
+		expect(run([{ kingu_hook: 'kingu', event: 'Other' }]).phase).toBe('starting');
+	});
+});

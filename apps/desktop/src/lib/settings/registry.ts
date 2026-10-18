@@ -283,6 +283,15 @@ const CORE_SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.agent.notifications.terminalBell',
+		group: 'Agent',
+		type: 'boolean',
+		default: false,
+		description:
+			'แจ้งเตือนเมื่อ terminal ของงานที่คุณไม่ได้ดูอยู่ส่งเสียงเตือน (BEL) เช่น build เสร็จ และติดจุดที่แท็บนั้น (Notify and mark the tab when a task terminal you are not looking at rings the bell.)',
+		scope: 'application'
+	},
+	{
 		id: 'kingu.agent.notifications.sound',
 		group: 'Agent',
 		type: 'string',
