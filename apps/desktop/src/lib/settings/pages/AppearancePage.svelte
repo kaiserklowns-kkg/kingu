@@ -95,7 +95,8 @@
 			<Switch id="kingu.statusBar.keepAwake.visible" label="กันเครื่องหลับ (☕)" hint="โหมด On / Auto / Off อยู่ในหน้า Arkai" />
 			<Switch id="kingu.statusBar.resources.visible" label="Resource Manager" hint="หน่วยความจำและ terminal ที่เปิดอยู่" />
 			<Switch id="kingu.statusBar.ports.visible" label="Ports" hint="พอร์ตที่โปรเซสของ Kingu เปิดอยู่" />
-			<Switch id="kingu.statusBar.usage.visible" label="Usage" hint="โควตา session และรายสัปดาห์ของ Claude" />
+			<Switch id="kingu.statusBar.claudeUsage.visible" label="Claude Usage" hint="โควตา session และรายสัปดาห์ของ Claude" />
+			<Switch id="kingu.statusBar.codexUsage.visible" label="Codex Usage" hint="โควตาของ Codex (เมื่อติดตั้ง Codex CLI)" />
 		</div>
 	</div>
 </div>

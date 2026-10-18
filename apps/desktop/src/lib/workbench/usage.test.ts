@@ -1,48 +1,102 @@
 import { describe, expect, test } from 'bun:test';
-import { headline, liveWindows, parseRateLimit, percentLabel, resetIn, severity, spend, type LimitWindow } from './usage';
+import {
+	applyStale,
+	backoff,
+	countdown,
+	errorLabel,
+	hasValue,
+	headline,
+	nextTick,
+	parseLiveLimit,
+	percentLabel,
+	planName,
+	resetsIn,
+	rowState,
+	spend,
+	updatedLabel,
+	windowLength,
+	type ProviderState
+} from './usage';
 
 const NOW = Date.UTC(2026, 9, 18, 12, 0);
-const event = (info: Record<string, unknown>) => JSON.stringify({ type: 'rate_limit_event', rate_limit_info: info, uuid: 'u', session_id: 's' });
-const win = (id: LimitWindow['id'], utilization: number, resetsAt: number | null = null): LimitWindow => ({ id, utilization, resetsAt, status: 'allowed', seenAt: NOW });
+const MIN = 60_000;
+const state = (o: Partial<ProviderState> = {}): ProviderState => ({
+	provider: 'claude',
+	status: 'ok',
+	session: null,
+	weekly: null,
+	planType: null,
+	error: null,
+	failureKind: null,
+	retryAtMs: null,
+	updatedAt: NOW,
+	...o
+});
+const win = (usedPercent: number, resetsAt: number | null = null, windowMinutes = 300) => ({ usedPercent, windowMinutes, resetsAt });
 
-describe('parseRateLimit', () => {
-	test('reads a fraction and a reset in seconds', () => {
-		const w = parseRateLimit(event({ status: 'allowed', rateLimitType: 'seven_day', utilization: 0.71, resetsAt: 1_760_800_000 }), NOW);
-		expect(w).toEqual({ id: 'seven_day', utilization: 71, resetsAt: 1_760_800_000_000, status: 'allowed', seenAt: NOW });
+describe('formats (Orca)', () => {
+	test('countdown', () => {
+		expect(countdown(0)).toBe('now');
+		expect(countdown(30_000)).toBe('0m');
+		expect(countdown(45 * MIN)).toBe('45m');
+		expect(countdown(125 * MIN)).toBe('2h 5m');
+		expect(countdown(120 * MIN)).toBe('2h');
+		expect(countdown((3 * 24 + 6) * 60 * MIN + 40 * MIN)).toBe('3d 6h');
+		expect(countdown(48 * 60 * MIN)).toBe('2d');
+		expect(resetsIn(-1)).toBe('Resets now');
 	});
-	test('a rejected window without utilization is full', () => {
-		expect(parseRateLimit(event({ status: 'rejected', rateLimitType: 'five_hour' }), NOW)?.utilization).toBe(100);
+	test('window length', () => {
+		expect([10_080, 300, 60, 30, 20_160, 2880, 120, 90].map(windowLength)).toEqual(['wk', '5h', '1h', '30m', '2wk', '2d', '2h', '90m']);
 	});
-	test('ignores other messages, unknown windows and bad JSON', () => {
-		expect(parseRateLimit(JSON.stringify({ type: 'system' }), NOW)).toBeNull();
-		expect(parseRateLimit(event({ rateLimitType: 'hourly', utilization: 0.5 }), NOW)).toBeNull();
-		expect(parseRateLimit(event({ status: 'allowed', rateLimitType: 'five_hour' }), NOW)).toBeNull();
-		expect(parseRateLimit('{oops', NOW)).toBeNull();
+	test('percent and plan', () => {
+		expect(percentLabel(71.4, 'used')).toBe('71% used');
+		expect(percentLabel(71.4, 'remaining')).toBe('29% left');
+		expect(planName('chatgpt_plus')).toBe('ChatGPT Plus');
+		expect(updatedLabel(NOW - 5 * MIN, NOW)).toBe('Updated 5m ago');
+		expect(updatedLabel(null, NOW)).toBe('Not yet updated');
 	});
 });
 
-test('liveWindows drops windows that have reset and keeps Claude order', () => {
-	const ws = [win('seven_day', 40, NOW + 1000), win('five_hour', 10, NOW + 1000), win('seven_day_opus', 90, NOW - 1)];
-	expect(liveWindows(ws, NOW).map((w) => w.id)).toEqual(['five_hour', 'seven_day']);
+test('headline is the most used window, the earlier one on a tie', () => {
+	expect(headline(state({ session: win(30), weekly: win(71, null, 10_080) }))?.label).toBe('Weekly');
+	expect(headline(state({ session: win(50), weekly: win(50, null, 10_080) }))?.label).toBe('Session');
+	expect(headline(null)).toBeNull();
 });
 
-test('headline is the most used window, earliest reset on a tie', () => {
-	expect(headline([win('five_hour', 30), win('seven_day', 71)])?.id).toBe('seven_day');
-	expect(headline([win('seven_day', 50, NOW + 9), win('five_hour', 50, NOW + 1)])?.id).toBe('five_hour');
-	expect(headline([])).toBeNull();
+test('row states and chip visibility', () => {
+	expect(rowState(null).kind).toBe('loading');
+	expect(rowState(state({ status: 'unavailable', failureKind: 'missing-credentials' })).kind).toBe('sign-in');
+	expect(rowState(state({ status: 'error', failureKind: 'stale-token' }))).toEqual({ kind: 'error', label: 'Updates when Claude runs' });
+	expect(rowState(state({ session: win(5) })).kind).toBe('usage');
+	expect(errorLabel(state({ status: 'error', error: 'Claude usage is rate limited right now.', failureKind: 'rate-limited' }))).toBe('Limited');
+	expect(hasValue(state({ status: 'unavailable' }))).toBe(false);
+	expect(hasValue(state({ status: 'fetching' }))).toBe(false);
+	expect(hasValue(state({ status: 'error' }))).toBe(true);
 });
 
-test('labels', () => {
-	expect(percentLabel(71.4, 'used')).toBe('71% used');
-	expect(percentLabel(71.4, 'remaining')).toBe('29% left');
-	expect(resetIn(NOW + (3 * 24 + 6) * 3_600_000 + 5 * 60_000, NOW)).toBe('3d 6h');
-	expect(resetIn(NOW + 134 * 60_000, NOW)).toBe('2h 14m');
-	expect(resetIn(NOW + 45 * 60_000, NOW)).toBe('45m');
-	expect(resetIn(NOW + 10_000, NOW)).toBe('<1m');
-	expect(resetIn(null, NOW)).toBe('');
-	expect(severity({ utilization: 50, status: 'allowed' })).toBe('ok');
-	expect(severity({ utilization: 71, status: 'allowed' })).toBe('warn');
-	expect(severity({ utilization: 20, status: 'rejected' })).toBe('critical');
+test('a failed refresh keeps recent windows', () => {
+	const prev = state({ session: win(40), updatedAt: NOW - 10 * MIN });
+	const failed = state({ status: 'error', error: 'x', failureKind: 'network' });
+	expect(applyStale(prev, failed, NOW).session?.usedPercent).toBe(40);
+	expect(applyStale(state({ session: win(40), updatedAt: NOW - 31 * MIN }), failed, NOW).session).toBeNull();
+	expect(applyStale(state({ session: win(40), updatedAt: NOW - 2 * 3600_000 }), { ...failed, failureKind: 'rate-limited' }, NOW).session?.usedPercent).toBe(40);
+});
+
+test('backoff and tick', () => {
+	expect([1, 2, 3, 6, 20].map(backoff)).toEqual([30_000, 60_000, 120_000, 900_000, 900_000]);
+	expect(nextTick([NOW + 90_500], NOW)).toBe(30_501);
+	expect(nextTick([], NOW)).toBe(MIN);
+});
+
+test('live rate_limit_event', () => {
+	const line = (info: Record<string, unknown>) => JSON.stringify({ type: 'rate_limit_event', rate_limit_info: info });
+	expect(parseLiveLimit(line({ rateLimitType: 'seven_day', utilization: 0.71, resetsAt: 1_792_324_800 }))).toEqual({
+		key: 'weekly',
+		window: { usedPercent: 71, windowMinutes: 10_080, resetsAt: 1_792_324_800_000 }
+	});
+	expect(parseLiveLimit(line({ rateLimitType: 'five_hour', status: 'rejected' }))?.window.usedPercent).toBe(100);
+	expect(parseLiveLimit(line({ rateLimitType: 'seven_day_opus', utilization: 0.5 }))).toBeNull();
+	expect(parseLiveLimit('{oops')).toBeNull();
 });
 
 test('spend buckets the latest run of each task by day', () => {
@@ -60,5 +114,4 @@ test('spend buckets the latest run of each task by day', () => {
 	expect(s.week).toBe(2);
 	expect(s.tokens).toBe(450);
 	expect(s.rows.map((r) => r.slug)).toEqual(['a', 'b', 'c']);
-	expect(s.days).toHaveLength(7);
 });

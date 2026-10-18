@@ -32,6 +32,8 @@
 <div
 	bind:this={panel}
 	role="dialog"
+	tabindex="-1"
+	oncontextmenu={(e) => (e.preventDefault(), e.stopPropagation())}
 	aria-label={label}
 	class="fixed z-50 flex max-h-[70vh] flex-col overflow-hidden rounded-lg border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) text-[13px] text-(--vscode-foreground) shadow-xl shadow-black/40"
 	style:right={align === 'right' ? `${right}px` : undefined}

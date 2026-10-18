@@ -386,11 +386,19 @@ export const SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
-		id: 'kingu.statusBar.usage.visible',
+		id: 'kingu.statusBar.claudeUsage.visible',
 		group: 'Status Bar',
 		type: 'boolean',
 		default: true,
-		description: 'แสดงโควตาการใช้งาน Claude ใน status bar (Show Claude usage limits in the status bar.)',
+		description: 'แสดงโควตาของ Claude ใน status bar เมื่อติดตั้ง Claude Code (Claude Usage: show Claude token and cost usage for the active workspace.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.statusBar.codexUsage.visible',
+		group: 'Status Bar',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงโควตาของ Codex ใน status bar เมื่อติดตั้ง Codex CLI (Codex Usage: show Codex token and cost usage for the active workspace.)',
 		scope: 'application'
 	},
 	{

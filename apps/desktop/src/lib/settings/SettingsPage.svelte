@@ -26,10 +26,10 @@
 		{ id: 'arkai', label: 'Arkai', icon: 'agent' },
 		{ id: 'terminal', label: 'Terminal', icon: 'terminal' },
 		{ id: 'account', label: 'บัญชีและทีม', icon: 'account' },
-		{ id: 'usage', label: 'Usage', icon: 'usage' },
+		{ id: 'usage', label: 'Stats & Usage', icon: 'usage' },
 		{ id: 'shortcuts', label: 'Keyboard Shortcuts', icon: 'keyboard' }
 	];
-	const PAGE_LABEL: Record<SettingsPageId, string> = { appearance: 'Appearance', arkai: 'Arkai', terminal: 'Terminal', account: 'บัญชีและทีม', usage: 'Usage', shortcuts: 'Keyboard Shortcuts', about: 'About Kingu' };
+	const PAGE_LABEL: Record<SettingsPageId, string> = { appearance: 'Appearance', arkai: 'Arkai', terminal: 'Terminal', account: 'บัญชีและทีม', usage: 'Stats & Usage', shortcuts: 'Keyboard Shortcuts', about: 'About Kingu' };
 	import { systemSettings } from './systemSettings.svelte';
 
 	let query = $state('');

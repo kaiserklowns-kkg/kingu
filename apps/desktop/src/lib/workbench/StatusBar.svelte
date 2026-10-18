@@ -14,6 +14,9 @@
 	import StatusResources from './StatusResources.svelte';
 	import NotificationsBell from './NotificationsBell.svelte';
 	import UsageStatus from './UsageStatus.svelte';
+	import { usage } from './usage.svelte';
+	import { PROVIDER_NAME } from './usage';
+	import { tick } from 'svelte';
 	import PopupMenu, { menuItem, menuSeparator } from './PopupMenu.svelte';
 	import { floating } from './floating.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
@@ -62,12 +65,35 @@
 
 	// Right-click: every entry with a check to hide it (VS Code's status bar context menu); Orca's
 	// items keep their settings, VS Code's are remembered like VS Code does, outside settings.
-	const ORCA_TOGGLES = [
-		{ id: 'kingu.statusBar.usage.visible', label: 'Usage' },
-		{ id: 'kingu.statusBar.keepAwake.visible', label: 'Keep Awake' },
+	// Orca's entries: a usage toggle per installed agent, then Resource Manager and Ports.
+	const ORCA_TOGGLES = $derived([
+		...usage.active.map((p) => ({ id: `kingu.statusBar.${p}Usage.visible`, label: `${PROVIDER_NAME[p]} Usage` })),
 		{ id: 'kingu.statusBar.resources.visible', label: 'Resource Manager' },
 		{ id: 'kingu.statusBar.ports.visible', label: 'Ports' }
-	];
+	]);
+
+	// Orca's density ladder: when the bar runs out of room, usage drops its labels and bars, then
+	// shows one value per provider.
+	let footer: HTMLElement | undefined = $state();
+	let density = $state(0);
+	$effect(() => {
+		if (!footer) return;
+		const el = footer;
+		let busy = false;
+		const fit = async () => {
+			if (busy) return;
+			busy = true;
+			for (let level = 0; level <= 2; level++) {
+				density = level;
+				await tick();
+				if (el.scrollWidth <= el.clientWidth + 1) break;
+			}
+			busy = false;
+		};
+		const ro = new ResizeObserver(() => void fit());
+		ro.observe(el);
+		return () => ro.disconnect();
+	});
 	const ENTRIES = [
 		{ id: 'status.scm', label: 'Source Control' },
 		{ id: 'status.problems', label: 'Problems' },
@@ -87,7 +113,7 @@
 		menuSeparator,
 		menuItem('floating', floating.visible ? 'Hide Floating Terminal' : 'Show Floating Terminal', { keyLabel: '⌥⌘T' })
 	]);
-	const MENU_HEIGHT = 22 * (ENTRIES.length + ORCA_TOGGLES.length + 1) + 2 * 9 + 8;
+	const MENU_HEIGHT = $derived(22 * (ENTRIES.length + ORCA_TOGGLES.length + 1) + 2 * 9 + 8);
 	function toggleItem(id: string) {
 		if (id === 'floating') return floating.toggle();
 		if (id.startsWith('status.')) return statusEntries.toggle(id);
@@ -98,8 +124,9 @@
 
 <!-- 22px, items 22px line-height (VS Code statusbarPart). -->
 <footer
+	bind:this={footer}
 	oncontextmenu={(e) => (e.preventDefault(), (menu = { x: e.clientX, y: Math.max(4, e.clientY - 4 - MENU_HEIGHT) }))}
-	class="flex h-(--kg-statusbar-height) shrink-0 items-center bg-(--vscode-statusBar-background) text-xs leading-(--kg-statusbar-height) text-(--vscode-statusBar-foreground)"
+	class="flex h-(--kg-statusbar-height) shrink-0 items-center overflow-hidden whitespace-nowrap bg-(--vscode-statusBar-background) text-xs leading-(--kg-statusbar-height) text-(--vscode-statusBar-foreground)"
 >
 	{#if branch && show('status.scm')}
 		{#if repo}
@@ -133,7 +160,7 @@
 			<span class="truncate">{lsp.progress}</span>
 		</button>
 	{/if}
-	<UsageStatus />
+	<UsageStatus compact={density >= 1} tightest={density >= 2} />
 	{#if status.message}<span class="truncate px-2">{status.message}</span>{/if}
 	<div class="flex-1"></div>
 	<TeamStatus />

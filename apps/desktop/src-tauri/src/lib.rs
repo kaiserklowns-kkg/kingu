@@ -12,6 +12,7 @@ mod shell_env;
 mod snap;
 mod system;
 mod team;
+mod usage;
 mod watcher;
 mod workspace;
 
@@ -205,6 +206,23 @@ async fn git_checkout(ws: State<'_, Workspace>, branch: String) -> Result<(), St
 async fn git_sync(ws: State<'_, Workspace>) -> Result<(), String> {
   let root = ws.root()?;
   blocking(move || git::sync(&root)).await
+}
+
+/// Usage limits of one agent provider (`claude` or `codex`) for the status bar.
+#[tauri::command]
+async fn usage_fetch(provider: String) -> Result<usage::ProviderUsage, String> {
+  blocking(move || match provider.as_str() {
+    "claude" => Ok(usage::fetch_claude()),
+    "codex" => Ok(usage::fetch_codex()),
+    other => Err(format!("{other}: unknown provider")),
+  })
+  .await
+}
+
+/// Agent CLIs installed on this computer.
+#[tauri::command]
+async fn usage_detect() -> Result<Vec<String>, String> {
+  blocking(|| Ok(usage::detect())).await
 }
 
 /// HEAD version of a file for the diff editor; empty when the file is not in HEAD.
@@ -489,6 +507,8 @@ pub fn run() {
       git_commit,
       git_checkout,
       git_sync,
+      usage_fetch,
+      usage_detect,
       git_show_head,
       pty_spawn,
       pty::pty_write,
