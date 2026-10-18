@@ -305,6 +305,72 @@ pub fn numstat(root: &Path) -> Result<NumStat, String> {
   Ok(NumStat { unstaged: parse_numstat(&String::from_utf8_lossy(&unstaged)), staged: parse_numstat(&String::from_utf8_lossy(&staged)) })
 }
 
+/// Source Control remote actions, each on its own (Orca's dropdown): push (optionally force with
+/// lease), pull (optionally fast-forward only), fetch, and rebase onto a remote base.
+pub fn push(root: &Path, force_with_lease: bool) -> Result<(), String> {
+  let mut args = vec!["push", "-q"];
+  if force_with_lease {
+    args.push("--force-with-lease");
+  }
+  run_remote(root, &args)
+}
+
+pub fn pull(root: &Path, ff_only: bool) -> Result<(), String> {
+  run_remote(root, &["pull", "-q", "--no-edit", if ff_only { "--ff-only" } else { "--no-rebase" }])
+}
+
+pub fn fetch(root: &Path) -> Result<(), String> {
+  run_remote(root, &["fetch", "-q", "--prune"])
+}
+
+pub fn rebase(root: &Path, base: &str) -> Result<(), String> {
+  check_rev(base)?;
+  run_remote(root, &["fetch", "-q"])?;
+  run(root, &["rebase", "-q", "--end-of-options", base]).map(|_| ())
+}
+
+/// One commit of the Commits panel.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Commit {
+  pub hash: String,
+  pub short: String,
+  pub subject: String,
+  pub author: String,
+  /// Unix seconds.
+  pub time: i64,
+  /// Branch and tag names pointing at this commit.
+  pub refs: Vec<String>,
+}
+
+pub fn parse_log(text: &str) -> Vec<Commit> {
+  text
+    .split('\x1e')
+    .filter_map(|rec| {
+      let mut f = rec.trim_start_matches('\n').split('\x1f');
+      let hash = f.next()?.to_owned();
+      if hash.is_empty() {
+        return None;
+      }
+      let short = f.next()?.to_owned();
+      let author = f.next()?.to_owned();
+      let time = f.next()?.parse().ok()?;
+      let refs = f.next()?.split(", ").map(|r| r.trim().trim_start_matches("HEAD -> ").to_owned()).filter(|r| !r.is_empty() && r != "HEAD").collect();
+      let subject = f.next().unwrap_or("").trim_end().to_owned();
+      Some(Commit { hash, short, subject, author, time, refs })
+    })
+    .collect()
+}
+
+/// The latest `limit` commits of HEAD; empty before the first commit.
+pub fn log(root: &Path, limit: u32) -> Result<Vec<Commit>, String> {
+  if !has_head(root) {
+    return Ok(Vec::new());
+  }
+  let n = format!("-n{}", limit.clamp(1, 500));
+  let out = run(root, &["log", &n, "--format=%H%x1f%h%x1f%an%x1f%at%x1f%D%x1f%s%x1e", "HEAD"])?;
+  Ok(parse_log(&String::from_utf8_lossy(&out)))
+}
+
 /// Status bar branch picker (VS Code's `git.checkout`): switches to a local branch.
 pub fn checkout(root: &Path, branch: &str) -> Result<(), String> {
   check_rev(branch)?;
@@ -358,6 +424,14 @@ pub fn show_at(root: &Path, rev: &str, rel: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn parses_log() {
+    let c = parse_log("abc\x1fab\x1fAnn\x1f100\x1fHEAD -> main, origin/main, tag: v1\x1fFix it\x1e\ndef\x1fde\x1fBo\x1f90\x1f\x1fInit\x1e");
+    assert_eq!(c.len(), 2);
+    assert_eq!(c[0].refs, vec!["main", "origin/main", "tag: v1"]);
+    assert_eq!((c[1].short.as_str(), c[1].subject.as_str(), c[1].time), ("de", "Init", 90));
+  }
 
   #[test]
   fn parses_numstat() {

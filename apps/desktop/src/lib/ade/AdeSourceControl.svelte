@@ -141,26 +141,101 @@
 		if (!p.enabled) return;
 		if (p.kind === 'commit') return void commit();
 		if (p.kind === 'stage') return void run('Stage All', 'git_stage', { paths: (repo?.entries ?? []).filter((e) => e.worktree).map((e) => e.path) });
-		// Kingu's sync pulls then pushes; with nothing to pull it only pushes, and without an upstream it publishes.
+		if (p.kind === 'push') return void run('Push', 'git_push', {});
+		if (p.kind === 'pull') return void run('Pull', 'git_pull', {});
+		// Sync pulls then pushes; without an upstream it publishes the branch to origin.
 		return void run(p.label, 'git_sync', {});
 	}
 	let more = $state<{ x: number; y: number } | null>(null);
-	const moreItems = $derived<MenuNode[]>([
-		menuItem('commit', 'Commit', { enabled: !!staged && !!message.trim() && !busy }),
-		menuItem('commitPush', 'Commit & Push', { enabled: !!staged && !!message.trim() && !busy && !!repo?.upstream }),
-		menuItem('commitSync', 'Commit & Sync', { enabled: !!staged && !!message.trim() && !busy && !!repo?.upstream }),
-		menuSeparator,
-		menuItem('push', repo?.ahead ? `Push (${repo.ahead})` : 'Push', { enabled: !!repo?.upstream && !!repo.ahead && !busy }),
-		menuItem('pull', repo?.behind ? `Pull (${repo.behind})` : 'Pull', { enabled: !!repo?.upstream && !!repo.behind && !busy }),
-		menuItem('sync', repo && (repo.ahead || repo.behind) ? `Sync (↓${repo.behind} ↑${repo.ahead})` : 'Sync', { enabled: !!repo?.upstream && !busy }),
-		menuItem('publish', 'Publish Branch', { enabled: !!repo?.branch && !repo.upstream && !busy })
-	]);
+	const remoteBase = $derived(slug ? (task?.meta.base ? `origin/${task.meta.base}` : null) : null);
+	const moreItems = $derived.by((): MenuNode[] => {
+		const can = !!staged && !!message.trim() && !busy;
+		const up = !!repo?.upstream && !busy;
+		return [
+			menuItem('commit', 'Commit', { enabled: can }),
+			menuItem('commitPush', 'Commit & Push', { enabled: can && !!repo?.upstream }),
+			menuItem('commitSync', 'Commit & Sync', { enabled: can && !!repo?.upstream }),
+			menuSeparator,
+			menuItem('push', repo?.ahead ? `Push (${repo.ahead})` : 'Push', { enabled: up && !!repo?.ahead }),
+			menuItem('forcePush', repo?.ahead ? `Force Push (${repo.ahead})` : 'Force Push', { enabled: up && !!repo?.ahead && !!repo.behind }),
+			menuItem('pull', repo?.behind ? `Pull (${repo.behind})` : 'Pull', { enabled: up && !!repo?.behind }),
+			menuItem('ff', repo?.behind ? `Fast-forward (${repo.behind})` : 'Fast-forward', { enabled: up && !!repo?.behind }),
+			menuItem('sync', repo && (repo.ahead || repo.behind) ? `Sync (↓${repo.behind} ↑${repo.ahead})` : 'Sync', { enabled: up && !!(repo?.ahead || repo?.behind) }),
+			menuItem('rebase', remoteBase ? `Rebase from ${remoteBase}` : 'Rebase from Base', { enabled: !!remoteBase && !busy }),
+			menuItem('fetch', 'Fetch', { enabled: !busy }),
+			menuItem('publish', 'Publish Branch', { enabled: !!repo?.branch && !repo.upstream && !busy })
+		];
+	});
 	function runMore(id: string) {
-		if (id === 'commit') void commit();
-		else if (id === 'commitPush') void commit('push');
-		else if (id === 'commitSync') void commit('sync');
-		else void run(id === 'publish' ? 'Publish Branch' : id[0].toUpperCase() + id.slice(1), 'git_sync', {});
+		switch (id) {
+			case 'commit':
+				return void commit();
+			case 'commitPush':
+				return void commit('push');
+			case 'commitSync':
+				return void commit('sync');
+			case 'push':
+				return void run('Push', 'git_push', {});
+			case 'forcePush':
+				return void ask('Force push with lease? Commits on the remote that you do not have locally will be replaced.', { title: 'Force Push', kind: 'warning', okLabel: 'Force Push', cancelLabel: 'Cancel' }).then((ok) => ok && run('Force Push', 'git_push', { force: true }));
+			case 'pull':
+				return void run('Pull', 'git_pull', {});
+			case 'ff':
+				return void run('Fast-forward', 'git_pull', { ffOnly: true });
+			case 'sync':
+				return void run('Sync', 'git_sync', {});
+			case 'rebase':
+				return void (remoteBase && run('Rebase', 'git_rebase', { base: remoteBase }));
+			case 'fetch':
+				return void run('Fetch', 'git_fetch', {});
+			case 'publish':
+				return void run('Publish Branch', 'git_sync', {});
+		}
 	}
+
+	// --- ⋯ menu: list or tree, refresh ---------------------------------------------------------
+	let tree = $state(false);
+	let headerMenu = $state<{ x: number; y: number } | null>(null);
+	const headerItems = $derived<MenuNode[]>([menuItem('view', tree ? 'View as list' : 'View as tree'), menuItem('refresh', 'Refresh')]);
+	/** Tree view: rows under their folder (the whole folder path, like Orca's compacted chains). */
+	function grouped(list: Row[]): { dir: string; rows: Row[] }[] {
+		const by = new Map<string, Row[]>();
+		for (const r of list) {
+			const d = splitPath(r.entry.path)[1];
+			by.set(d, [...(by.get(d) ?? []), r]);
+		}
+		return [...by].sort(([a], [b]) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b))).map(([dir, rows]) => ({ dir, rows }));
+	}
+
+	// --- Commits panel (collapsed by default) ---------------------------------------------------
+	type Commit = { hash: string; short: string; subject: string; author: string; time: number; refs: string[] };
+	let commits = $state<Commit[] | null>(null);
+	let commitsError = $state('');
+	let commitsLoading = $state(false);
+	let openCommit = $state<string | null>(null);
+	async function loadCommits() {
+		commitsLoading = true;
+		try {
+			commits = await invoke<Commit[]>('git_log', { slug: slug || null, limit: 50 });
+			commitsError = '';
+		} catch (e) {
+			commitsError = String(e);
+		}
+		commitsLoading = false;
+	}
+	$effect(() => {
+		if (!collapsed.history) void loadCommits();
+	});
+	let commitMenu = $state<{ c: Commit; x: number; y: number } | null>(null);
+	const COMMIT_ITEMS: MenuNode[] = [menuItem('hash', 'Copy commit hash'), menuItem('message', 'Copy commit message')];
+	async function runCommit(id: string, c: Commit) {
+		await navigator.clipboard.writeText(id === 'hash' ? c.hash : c.subject);
+		statusBar.flash(id === 'hash' ? 'Commit hash copied' : 'Commit message copied', 2000);
+	}
+	const ago = (t: number) => {
+		const s = Math.max(0, Date.now() / 1000 - t);
+		return s < 60 ? 'now' : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86_400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86_400)}d`;
+	};
 
 	// --- Row and section actions ----------------------------------------------------------------
 	function open(r: Row, permanent = false) {
@@ -209,6 +284,36 @@
 	const MUTED = 'text-(--vscode-descriptionForeground)';
 </script>
 
+{#snippet fileRow(r: Row, depth: number)}
+							{@const [name, dir0] = splitPath(r.entry.path)}
+							{@const dir = tree ? '' : dir0}
+							{@const n = (r.area === 'staged' ? stats.staged : stats.unstaged)[r.entry.path]}
+							<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+							<div
+								class="group relative flex cursor-pointer items-center gap-1 py-1 pr-3 transition-colors hover:bg-(--vscode-list-hoverBackground)/60"
+								title={r.entry.path}
+								style:padding-left="{depth * 12 + 20}px"
+								onclick={() => open(r)}
+								ondblclick={() => open(r, true)}
+								oncontextmenu={(e) => (e.preventDefault(), (rowMenu = { row: r, x: e.clientX, y: e.clientY }))}
+							>
+								<span style:color={r.color}><FileIcon icon={fileIcon(name)} size={14} /></span>
+								<span class="min-w-0 flex-1 truncate text-xs">{name}{#if dir}<span class="ml-1.5 text-[11px] {MUTED}">{dir}</span>{/if}</span>
+								{#if n}<span class="shrink-0 text-[10px] tabular-nums"><span class="text-[#81b88b]">+{n[0]}</span> <span class="text-[#c74e39]">-{n[1]}</span></span>{/if}
+								<span class="w-4 shrink-0 text-center text-[10px] font-bold" style:color={r.color}>{r.letter}</span>
+								<span class="pointer-events-none absolute inset-y-0 right-0 flex items-center gap-1.5 bg-(--vscode-list-hoverBackground) pr-3 pl-2 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
+									{#if r.area !== 'staged' && !r.entry.conflict}
+										<button class={ACT} title={r.area === 'untracked' ? 'Delete untracked file' : r.entry.worktree === 'D' ? 'Restore file' : 'Discard changes'} aria-label={r.area === 'untracked' ? 'Delete untracked file' : 'Discard changes'} onclick={(e) => (e.stopPropagation(), discard([r]))}>
+											<Icon name={r.area === 'untracked' ? 'trash' : 'discard'} size={14} />
+										</button>
+										<button class={ACT} title="Stage" aria-label="Stage" onclick={(e) => (e.stopPropagation(), stage([r]))}><Icon name="plus" size={14} /></button>
+									{:else if r.area === 'staged'}
+										<button class={ACT} title="Unstage" aria-label="Unstage" onclick={(e) => (e.stopPropagation(), unstage([r]))}><Icon name="minus" size={14} /></button>
+									{/if}
+								</span>
+							</div>
+{/snippet}
+
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="relative flex h-full min-h-0 flex-col overflow-hidden" onkeydown={(e) => (e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.shiftKey && !e.altKey && primary.kind === 'commit' && primary.enabled && (e.preventDefault(), void commit())}>
 	{#if !workspace.root}
@@ -244,7 +349,15 @@
 						<Icon name="search" size={14} />
 						{#if filter}<span class="absolute top-1 right-1 size-1.5 rounded-full bg-current"></span>{/if}
 					</button>
-					<button class={HEADER_BTN} aria-label="Refresh" title="Refresh" onclick={refresh}><Icon name="refresh" size={14} /></button>
+					<button
+						class={HEADER_BTN}
+						aria-label="More source control actions"
+						title="More source control actions"
+						onclick={(e) => {
+							const r = e.currentTarget.getBoundingClientRect();
+							headerMenu = { x: r.right - 248, y: r.bottom + 4 };
+						}}><Icon name="more" size={14} /></button
+					>
 				{/if}
 			</div>
 			{#if repo?.branch || repo?.head}
@@ -347,33 +460,14 @@
 						</div>
 					</div>
 					{#if !isCollapsed}
-						{#each list as r (r.area + r.entry.path)}
-							{@const [name, dir] = splitPath(r.entry.path)}
-							{@const n = (r.area === 'staged' ? stats.staged : stats.unstaged)[r.entry.path]}
-							<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-							<div
-								class="group relative flex cursor-pointer items-center gap-1 py-1 pr-3 pl-5 transition-colors hover:bg-(--vscode-list-hoverBackground)/60"
-								title={r.entry.path}
-								onclick={() => open(r)}
-								ondblclick={() => open(r, true)}
-								oncontextmenu={(e) => (e.preventDefault(), (rowMenu = { row: r, x: e.clientX, y: e.clientY }))}
-							>
-								<span style:color={r.color}><FileIcon icon={fileIcon(name)} size={14} /></span>
-								<span class="min-w-0 flex-1 truncate text-xs">{name}{#if dir}<span class="ml-1.5 text-[11px] {MUTED}">{dir}</span>{/if}</span>
-								{#if n}<span class="shrink-0 text-[10px] tabular-nums"><span class="text-[#81b88b]">+{n[0]}</span> <span class="text-[#c74e39]">-{n[1]}</span></span>{/if}
-								<span class="w-4 shrink-0 text-center text-[10px] font-bold" style:color={r.color}>{r.letter}</span>
-								<span class="pointer-events-none absolute inset-y-0 right-0 flex items-center gap-1.5 bg-(--vscode-list-hoverBackground) pr-3 pl-2 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
-									{#if r.area !== 'staged' && !r.entry.conflict}
-										<button class={ACT} title={r.area === 'untracked' ? 'Delete untracked file' : r.entry.worktree === 'D' ? 'Restore file' : 'Discard changes'} aria-label={r.area === 'untracked' ? 'Delete untracked file' : 'Discard changes'} onclick={(e) => (e.stopPropagation(), discard([r]))}>
-											<Icon name={r.area === 'untracked' ? 'trash' : 'discard'} size={14} />
-										</button>
-										<button class={ACT} title="Stage" aria-label="Stage" onclick={(e) => (e.stopPropagation(), stage([r]))}><Icon name="plus" size={14} /></button>
-									{:else if r.area === 'staged'}
-										<button class={ACT} title="Unstage" aria-label="Unstage" onclick={(e) => (e.stopPropagation(), unstage([r]))}><Icon name="minus" size={14} /></button>
-									{/if}
-								</span>
-							</div>
-						{/each}
+						{#if tree}
+							{#each grouped(list) as g (g.dir)}
+								{#if g.dir}<div class="flex items-center gap-1 py-1 pr-3 pl-2 text-xs {MUTED}"><Icon name="folder" size={12} /><span class="truncate">{g.dir}</span><span class="ml-auto w-4 text-center text-[10px] font-bold tabular-nums opacity-80">{g.rows.length}</span></div>{/if}
+								{#each g.rows as r (r.area + r.entry.path)}{@render fileRow(r, g.dir ? 1 : 0)}{/each}
+							{/each}
+						{:else}
+							{#each list as r (r.area + r.entry.path)}{@render fileRow(r, 0)}{/each}
+						{/if}
 					{/if}
 				{/if}
 			{/each}
@@ -381,6 +475,58 @@
 				<div class="px-4 py-6">
 					<div class="text-sm font-medium">No matching files</div>
 					<div class="mt-1 text-xs {MUTED}">No changed files match "{filter}"</div>
+				</div>
+			{/if}
+			{#if !filter}
+				<!-- Commits: sticky at the bottom, collapsed by default (Orca). -->
+				<div class="sticky bottom-0 z-10 mt-auto shrink-0 border-t border-(--vscode-widget-border) bg-(--vscode-sideBar-background)/95 backdrop-blur-sm">
+					<div class="flex h-7 items-center pr-3 pl-1">
+						<button class="flex min-w-0 flex-1 items-center gap-1 text-[11px] font-semibold tracking-wider text-(--vscode-foreground)/70 uppercase" aria-expanded={!collapsed.history} onclick={() => (collapsed.history = !collapsed.history)}>
+							<span class={['transition-transform', collapsed.history && '-rotate-90']}><Icon name="chevronDown" size={12} /></span>Commits
+							{#if commits}<span class="text-[10px] tabular-nums">{commits.length}{commits.length >= 50 ? '+' : ''}</span>{/if}
+						</button>
+						<button class="grid place-items-center rounded p-0.5 {MUTED} hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="Refresh commits" title="Refresh commits" onclick={() => (collapsed.history ? (collapsed.history = false) : void loadCommits())}>
+							<span class={['grid place-items-center', commitsLoading && 'animate-spin']}><Icon name="refresh" size={12} /></span>
+						</button>
+					</div>
+					{#if !collapsed.history}
+						<div class="max-h-[min(256px,33vh)] overflow-y-auto pb-1">
+							{#if commitsError}
+								<p class="px-6 py-2 text-[11px] text-(--vscode-errorForeground)">{commitsError}</p>
+							{:else if !commits}
+								<p class="px-6 py-2 text-[11px] {MUTED}">Loading graph...</p>
+							{:else}
+								{#each commits as c, i (c.hash)}
+									{@const isOpen = openCommit === c.hash}
+									<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+									<div
+										class="grid min-h-[26px] cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-1.5 px-3 py-0.5 text-xs hover:bg-(--vscode-list-hoverBackground)/60"
+										title={c.subject}
+										onclick={() => (openCommit = isOpen ? null : c.hash)}
+										oncontextmenu={(e) => (e.preventDefault(), (commitMenu = { c, x: e.clientX, y: e.clientY }))}
+									>
+										<svg width="11" height="26" aria-hidden="true" class="text-[#3794ff]">
+											{#if i > 0}<line x1="5.5" y1="0" x2="5.5" y2="13" stroke="currentColor" stroke-width="1.5" />{/if}
+											{#if i < commits.length - 1}<line x1="5.5" y1="13" x2="5.5" y2="26" stroke="currentColor" stroke-width="1.5" />{/if}
+											<circle cx="5.5" cy="13" r={i === 0 ? 4.5 : 3.5} fill={i === 0 ? 'none' : 'currentColor'} stroke="currentColor" stroke-width="1.5" />
+										</svg>
+										<span class="truncate">{c.subject}</span>
+										<span class="flex shrink-0 items-center gap-1">
+											{#each c.refs.slice(0, 2) as ref (ref)}<span class="max-w-[8rem] truncate rounded-full border border-(--vscode-widget-border) px-1.5 py-0.5 text-[10px] {ref.startsWith('origin/') ? 'text-[#b66dff]' : 'text-[#3794ff]'}">{ref}</span>{/each}
+											{#if c.refs.length > 2}<span class="text-[10px] {MUTED}">+{c.refs.length - 2}</span>{/if}
+										</span>
+									</div>
+									{#if isOpen}
+										<div class="border-l border-(--vscode-widget-border)/60 bg-(--vscode-list-inactiveSelectionBackground)/20 py-1 pl-9 text-[11px] {MUTED}">
+											<div>{c.author} · {ago(c.time)} · <span class="font-mono">{c.short}</span></div>
+										</div>
+									{/if}
+								{:else}
+									<p class="px-6 py-2 text-[11px] {MUTED}">No commits yet</p>
+								{/each}
+							{/if}
+						</div>
+					{/if}
 				</div>
 			{/if}
 		</div>
@@ -393,4 +539,11 @@
 {#if rowMenu}
 	{@const r = rowMenu.row}
 	<PopupMenu items={ROW_ITEMS} label="Change" x={rowMenu.x} y={rowMenu.y} onRun={(n) => n.type === 'item' && runRow(n.id, r)} onClose={() => (rowMenu = null)} />
+{/if}
+{#if headerMenu}
+	<PopupMenu items={headerItems} label="Source control actions" x={headerMenu.x} y={headerMenu.y} onRun={(n) => n.type === 'item' && (n.id === 'view' ? (tree = !tree) : void (refresh(), !collapsed.history && loadCommits()))} onClose={() => (headerMenu = null)} />
+{/if}
+{#if commitMenu}
+	{@const c = commitMenu.c}
+	<PopupMenu items={COMMIT_ITEMS} label="Commit" x={commitMenu.x} y={commitMenu.y} onRun={(n) => n.type === 'item' && void runCommit(n.id, c)} onClose={() => (commitMenu = null)} />
 {/if}

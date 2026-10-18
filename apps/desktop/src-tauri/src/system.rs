@@ -213,6 +213,17 @@ pub fn open_local_url(url: &str) -> Result<(), String> {
   Command::new(program).arg(parsed.as_str()).spawn().map(|_| ()).map_err(|e| format!("{program}: {e}"))
 }
 
+/// A pull request or check page in the default browser: https only, so nothing local or
+/// scriptable can be opened this way.
+pub fn open_web_url(url: &str) -> Result<(), String> {
+  let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
+  if parsed.scheme() != "https" || parsed.host_str().is_none() {
+    return Err("only https links open in the browser".into());
+  }
+  let program = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+  Command::new(program).arg(parsed.as_str()).spawn().map(|_| ()).map_err(|e| format!("{program}: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;

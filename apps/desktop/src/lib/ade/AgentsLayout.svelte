@@ -24,6 +24,8 @@
 	import TaskPage from './TaskPage.svelte';
 	import WorktreeFiles from './WorktreeFiles.svelte';
 	import AdeSourceControl from './AdeSourceControl.svelte';
+	import AdeChecks from './AdeChecks.svelte';
+	import AdeAgentsPanel from './AdeAgentsPanel.svelte';
 	import { adeLayout, PRIMARY, type RightTab } from './adeLayout.svelte';
 	import { adeTasks } from './tasks.svelte';
 	import { untrack } from 'svelte';
@@ -52,7 +54,9 @@
 	// merge, PR) is Kingu's own and only exists for a task.
 	const RIGHT_TABS = $derived<{ id: RightTab; label: string; icon: IconName; key?: string }[]>([
 		{ id: 'files', label: 'Explorer', icon: 'files', key: '⇧⌘E' },
+		{ id: 'agents', label: 'Agents', icon: 'agentsLayout' },
 		{ id: 'changes', label: 'Source Control', icon: 'git', key: '⇧⌘G' },
+		{ id: 'checks', label: 'Checks', icon: 'listChecks' },
 		...(slug ? [{ id: 'review' as const, label: 'Review', icon: 'pullRequest' as const }] : [])
 	]);
 	const rightTab = $derived(adeLayout.rightTab === 'review' && !slug ? 'changes' : adeLayout.rightTab);
@@ -264,7 +268,7 @@
 			onReset={() => (appMode.panelWidth = 350)}
 		/>
 		<aside aria-label={RIGHT_TABS.find((t) => t.id === rightTab)?.label} class={[FRAME, 'flex shrink-0 flex-col bg-(--vscode-sideBar-background)']} style:width="{appMode.panelWidth}px">
-			<!-- Orca's right side bar header: 36px, icon tabs with an underline, the toggle at the right. -->
+			<!-- Orca's right side bar header: 36px, icon tabs with an underline (the title bar holds the toggle). -->
 			<div class="flex h-[36px] min-h-[36px] shrink-0 items-center overflow-hidden border-b border-(--vscode-widget-border)">
 				<div class="flex min-w-0 flex-1 items-center overflow-hidden pl-2" role="tablist" aria-label="Right Side Bar">
 					{#each RIGHT_TABS as t (t.id)}
@@ -282,22 +286,18 @@
 						</button>
 					{/each}
 				</div>
-				<button class="mr-1 grid h-7 place-items-center rounded px-2 text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)" aria-label="Toggle right sidebar" title="Toggle right sidebar (⌘L)" onclick={() => (appMode.panelVisible = false)}>
-					<Icon name="sidebarRight" size={16} />
-				</button>
 			</div>
 			{#if rightTab === 'files'}
 				{#if workspace.root}{#key key}<WorktreeFiles slug={slug ?? ''} />{/key}{/if}
 			{:else if rightTab === 'changes'}
 				{#key key}<AdeSourceControl slug={slug ?? ''} />{/key}
+			{:else if rightTab === 'agents'}
+				<AdeAgentsPanel slug={slug ?? ''} />
+			{:else if rightTab === 'checks'}
+				{#key key}<AdeChecks slug={slug ?? ''} />{/key}
 			{:else if slug}
 				{#key slug}<TaskPage {slug} sections="review" />{/key}
 			{/if}
 		</aside>
-	{:else}
-		<!-- Orca's opener while the right side bar is closed: top right of the content. -->
-		<button class="absolute top-[6px] right-[10px] z-10 grid h-7 place-items-center rounded px-2 text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)" aria-label="Toggle right sidebar" title="Toggle right sidebar (⌘L)" onclick={() => (appMode.panelVisible = true)}>
-			<Icon name="sidebarRight" size={16} />
-		</button>
 	{/if}
 </div>

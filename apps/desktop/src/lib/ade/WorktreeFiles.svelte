@@ -116,10 +116,125 @@
 	});
 
 	let selected = $state<string | null>(null);
+	/** Multi-selection (⌘-click toggles, Shift-click extends from `selected`). */
+	let picked = $state<string[]>([]);
 	function activate(r: Row, preview = true) {
 		selected = r.rel;
+		picked = [r.rel];
 		if (r.is_dir) void toggle(r.rel);
 		else adeLayout.openFile(slug, r.rel, { preview });
+	}
+	function click(e: MouseEvent, r: Row) {
+		if (e.metaKey) {
+			picked = picked.includes(r.rel) ? picked.filter((p) => p !== r.rel) : [...picked, r.rel];
+			selected = r.rel;
+			return;
+		}
+		if (e.shiftKey && selected) {
+			const order = visibleRows.map((x) => x.rel);
+			const [a, b] = [order.indexOf(selected), order.indexOf(r.rel)].sort((x, y) => x - y);
+			if (a >= 0) picked = order.slice(a, b + 1);
+			return;
+		}
+		activate(r);
+	}
+	const isPicked = (rel: string) => picked.includes(rel) || selected === rel;
+
+	// --- Keyboard (Orca: arrows move, → / ← open and close folders, Space opens, Enter renames) ---
+	let tree: HTMLDivElement | undefined = $state();
+	function focusRow(rel: string) {
+		selected = rel;
+		queueMicrotask(() => tree?.querySelector<HTMLElement>(`[data-rel="${CSS.escape(rel)}"]`)?.scrollIntoView({ block: 'nearest' }));
+	}
+	async function onTreeKey(e: KeyboardEvent) {
+		if (edit || (e.target as HTMLElement).tagName === 'INPUT') return;
+		const order = visibleRows;
+		const i = order.findIndex((r) => r.rel === selected);
+		const cur = order[i];
+		const go = (j: number, extend = false) => {
+			const r = order[Math.max(0, Math.min(order.length - 1, j))];
+			if (!r) return;
+			if (extend && selected) picked = [...new Set([...picked, selected, r.rel])];
+			else picked = [r.rel];
+			focusRow(r.rel);
+		};
+		const page = Math.max(1, Math.floor(order.length / 10));
+		let handled = true;
+		if (e.key === 'ArrowDown') go(i < 0 ? 0 : i + 1, e.shiftKey);
+		else if (e.key === 'ArrowUp') go(i < 0 ? order.length - 1 : i - 1, e.shiftKey);
+		else if (e.key === 'Home') go(0);
+		else if (e.key === 'End') go(order.length - 1);
+		else if (e.key === 'PageDown') go(i + page);
+		else if (e.key === 'PageUp') go(i - page);
+		else if (e.key === 'ArrowRight' && cur?.is_dir) {
+			if (!cur.open) await toggle(cur.rel);
+			else go(i + 1);
+		} else if (e.key === 'ArrowLeft' && cur) {
+			if (cur.is_dir && cur.open) await toggle(cur.rel);
+			else {
+				const parent = parentOf(cur.rel);
+				if (parent && parent !== base) focusRow(parent), (picked = [parent]);
+			}
+		} else if (e.key === ' ' && cur) activate(cur);
+		else if (e.key === 'Enter' && cur) void runRow('rename', cur);
+		else if ((e.key === 'Backspace' && e.metaKey) || e.key === 'Delete') void deletePicked();
+		else if (e.code === 'KeyC' && e.altKey && e.metaKey) void copyPicked(!e.shiftKey);
+		else handled = false;
+		if (handled) e.preventDefault();
+	}
+	const pickedRows = () => visibleRows.filter((r) => isPicked(r.rel));
+	async function copyPicked(absolute: boolean) {
+		const rows = pickedRows();
+		if (!rows.length) return;
+		await navigator.clipboard.writeText(rows.map((r) => (absolute ? `${workspace.root}/${r.rel}` : relInside(r.rel))).join('\n'));
+		status.flash(rows.length > 1 ? 'Paths copied' : 'Path copied', 2000);
+	}
+	async function deletePicked() {
+		// Nested selections collapse to their top-level roots; each goes to the Trash.
+		const rows = pickedRows();
+		const roots = rows.filter((r) => !rows.some((o) => o !== r && r.rel.startsWith(o.rel + '/')));
+		for (const r of roots) await runRow('delete', r);
+		picked = [];
+	}
+
+	// --- Drag to move into a folder (500 ms hover opens a closed folder) -----------------------
+	let dragging = $state<string[]>([]);
+	let dropDir = $state<string | null>(null);
+	let hoverTimer: ReturnType<typeof setTimeout> | undefined;
+	function dragStart(e: DragEvent, r: Row) {
+		dragging = isPicked(r.rel) && picked.length > 1 ? [...picked] : [r.rel];
+		e.dataTransfer?.setData('text/plain', dragging.join('\n'));
+		if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+	}
+	function dragOver(e: DragEvent, r: Row | null) {
+		if (!dragging.length) return;
+		const dir = r ? (r.is_dir ? r.rel : parentOf(r.rel)) : base;
+		const bad = dragging.some((d) => dir === d || dir.startsWith(d + '/') || parentOf(d) === dir);
+		if (bad) return void (dropDir = null);
+		e.preventDefault();
+		if (dropDir !== dir) {
+			dropDir = dir;
+			clearTimeout(hoverTimer);
+			if (r?.is_dir && !r.open) hoverTimer = setTimeout(() => void toggle(r.rel), 500);
+		}
+	}
+	async function dropOn(e: DragEvent) {
+		e.preventDefault();
+		clearTimeout(hoverTimer);
+		const dir = dropDir;
+		const moving = dragging;
+		dragging = [];
+		dropDir = null;
+		if (dir === null) return;
+		for (const from of moving) {
+			const to = `${dir ? dir + '/' : ''}${from.split('/').pop()}`;
+			try {
+				await invoke('fs_rename', { from, to });
+			} catch (err) {
+				status.error(`Failed to move '${from.split('/').pop()}'. ${err}`);
+			}
+		}
+		await Promise.all([...new Set([dir, ...moving.map(parentOf)])].map(load));
 	}
 
 	// --- Orca's toolbar menu: dotfiles and git-ignored files, Open in Finder ---------------------
@@ -145,8 +260,8 @@
 		return [
 			...base,
 			menuSeparator,
-			menuItem('copyPath', 'Copy Path', { keyLabel: '⌥⌘C' }),
-			menuItem('copyRel', 'Copy Relative Path', { keyLabel: '⌥⇧⌘C' }),
+			menuItem('copyPath', picked.length > 1 ? 'Copy Paths' : 'Copy Path', { keyLabel: '⌥⌘C' }),
+			menuItem('copyRel', picked.length > 1 ? 'Copy Relative Paths' : 'Copy Relative Path', { keyLabel: '⌥⇧⌘C' }),
 			...(r.is_dir ? [menuItem('terminal', 'Open in Terminal')] : [menuItem('view', 'View File')]),
 			...(r.is_dir && r.open ? [menuItem('collapse', 'Collapse Folder')] : []),
 			...(r.is_dir ? [menuItem('find', 'Find in Folder')] : []),
@@ -169,9 +284,9 @@
 				edit = { kind: id === 'newFile' ? 'file' : 'folder', parent: dir, depth, value: '' };
 				return;
 			case 'copyPath':
-				return void navigator.clipboard.writeText(`${workspace.root}/${r!.rel}`);
+				return void copyPicked(true);
 			case 'copyRel':
-				return void navigator.clipboard.writeText(relInside(r!.rel));
+				return void copyPicked(false);
 			case 'terminal':
 				return void adeLayout.newTerminal(slug);
 			case 'view':
@@ -305,10 +420,16 @@
 	{:else}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
-			class="min-h-0 flex-1 overflow-y-auto py-2 text-xs"
+			bind:this={tree}
+			class={['min-h-0 flex-1 overflow-y-auto py-2 text-xs outline-none', dropDir === base && 'bg-(--vscode-widget-border)/40']}
 			role="tree"
-			tabindex="-1"
+			tabindex="0"
 			aria-label="Files"
+			aria-multiselectable="true"
+			onkeydown={onTreeKey}
+			ondragover={(e) => e.target === e.currentTarget && dragOver(e, null)}
+			ondrop={dropOn}
+			ondragend={() => ((dragging = []), (dropDir = null))}
 			oncontextmenu={(e) => e.target === e.currentTarget && (e.preventDefault(), (rowMenu = { row: null, x: e.clientX, y: e.clientY }))}
 			ondblclick={(e) => e.target === e.currentTarget && runRow('newFile', null)}
 		>
@@ -323,15 +444,23 @@
 					{@const deco = decorations.get(r.rel)}
 					<button
 						role="treeitem"
-						aria-selected={selected === r.rel}
+						aria-selected={isPicked(r.rel)}
 						aria-expanded={r.is_dir ? r.open : undefined}
-						class={['flex w-full items-center gap-1 rounded-sm px-2 py-1 text-left transition-colors', selected === r.rel ? 'bg-(--vscode-list-inactiveSelectionBackground)/70' : 'hover:bg-(--vscode-list-hoverBackground)']}
+						data-rel={r.rel}
+						tabindex="-1"
+						draggable="true"
+						class={[
+							'flex w-full items-center gap-1 rounded-sm px-2 py-1 text-left transition-colors',
+							dropDir !== null && (dropDir === r.rel || (!r.is_dir && parentOf(r.rel) === dropDir)) ? 'bg-(--vscode-widget-border)' : isPicked(r.rel) ? 'bg-(--vscode-list-inactiveSelectionBackground)/70' : 'hover:bg-(--vscode-list-hoverBackground)',
+							dragging.includes(r.rel) && 'opacity-50'
+						]}
+						ondragstart={(e) => dragStart(e, r)}
+						ondragover={(e) => dragOver(e, r)}
 						style:padding-left="{r.depth * 16 + 8}px"
 						title={r.rel}
-						onclick={() => activate(r)}
+						onclick={(e) => click(e, r)}
 						ondblclick={() => !r.is_dir && activate(r, false)}
-						oncontextmenu={(e) => (e.preventDefault(), (selected = r.rel), (rowMenu = { row: r, x: e.clientX, y: e.clientY }))}
-						onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), runRow('rename', r))}
+						oncontextmenu={(e) => (e.preventDefault(), !isPicked(r.rel) && ((picked = [r.rel]), (selected = r.rel)), (rowMenu = { row: r, x: e.clientX, y: e.clientY }))}
 					>
 						<span class={['grid size-3 shrink-0 place-items-center text-(--vscode-descriptionForeground) transition-transform', r.is_dir && r.open && 'rotate-90']}>{#if r.is_dir}<Icon name="chevronRight" size={12} />{/if}</span>
 						<FileIcon icon={r.is_dir ? folderIcon(r.rel, r.open) : fileIcon(r.name)} />
@@ -353,5 +482,5 @@
 {/if}
 {#if rowMenu}
 	{@const r = rowMenu.row}
-	<PopupMenu items={rowItems} label="File" x={rowMenu.x} y={rowMenu.y} onRun={(n) => n.type === 'item' && void runRow(n.id, r)} onClose={() => (rowMenu = null)} />
+	<PopupMenu items={rowItems} label="File" x={rowMenu.x} y={rowMenu.y} onRun={(n) => n.type === 'item' && void (n.id === 'delete' && picked.length > 1 ? deletePicked() : runRow(n.id, r))} onClose={() => (rowMenu = null)} />
 {/if}

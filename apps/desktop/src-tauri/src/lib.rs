@@ -274,6 +274,66 @@ async fn git_numstat(ws: State<'_, Workspace>, slug: Option<String>) -> Result<g
   blocking(move || git::numstat(&root)).await
 }
 
+#[tauri::command]
+async fn git_push(ws: State<'_, Workspace>, slug: Option<String>, force: Option<bool>) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || git::push(&root, force.unwrap_or(false))).await
+}
+
+#[tauri::command]
+async fn git_pull(ws: State<'_, Workspace>, slug: Option<String>, ff_only: Option<bool>) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || git::pull(&root, ff_only.unwrap_or(false))).await
+}
+
+#[tauri::command]
+async fn git_fetch(ws: State<'_, Workspace>, slug: Option<String>) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || git::fetch(&root)).await
+}
+
+#[tauri::command]
+async fn git_rebase(ws: State<'_, Workspace>, slug: Option<String>, base: String) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || git::rebase(&root, &base)).await
+}
+
+/// The Commits panel of Source Control.
+#[tauri::command]
+async fn git_log(ws: State<'_, Workspace>, slug: Option<String>, limit: Option<u32>) -> Result<Vec<git::Commit>, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || git::log(&root, limit.unwrap_or(50))).await
+}
+
+/// The pull request of the worktree's branch and its checks (`gh pr view --json`), or null when
+/// the branch has none. Errors when `gh` is missing or not signed in.
+#[tauri::command]
+async fn gh_pr_view(ws: State<'_, Workspace>, slug: Option<String>) -> Result<Option<serde_json::Value>, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || {
+    let gh = agent::review::gh_bin().ok_or("ยังไม่ได้ติดตั้ง GitHub CLI (gh)")?;
+    let out = shell_env::command(&gh)
+      .current_dir(&root)
+      .args(["pr", "view", "--json", "number,title,state,url,isDraft,headRefName,baseRefName,mergeable,reviewDecision,statusCheckRollup,additions,deletions,author,createdAt"])
+      .output()
+      .map_err(|e| format!("gh: {e}"))?;
+    if !out.status.success() {
+      let err = String::from_utf8_lossy(&out.stderr);
+      if err.contains("no pull requests found") {
+        return Ok(None);
+      }
+      return Err(format!("gh pr view: {}", err.trim()));
+    }
+    serde_json::from_slice(&out.stdout).map(Some).map_err(|e| e.to_string())
+  })
+  .await
+}
+
+#[tauri::command]
+fn open_web_url(url: String) -> Result<(), String> {
+  system::open_web_url(&url)
+}
+
 /// HEAD version of a file for the diff editor; empty when the file is not in HEAD.
 #[tauri::command]
 async fn git_show_head(ws: State<'_, Workspace>, rel: String) -> Result<String, String> {
@@ -564,6 +624,13 @@ pub fn run() {
       git_checkout,
       git_sync,
       git_numstat,
+      git_push,
+      git_pull,
+      git_fetch,
+      git_rebase,
+      git_log,
+      gh_pr_view,
+      open_web_url,
       usage_fetch,
       usage_detect,
       floating_note_new,
