@@ -58,6 +58,10 @@
 	import { installEditorRestore } from './editorRestore.svelte';
 	import { textFiles } from './textFileService.svelte';
 	import { registerEditorStatusCommands } from './editorStatusActions.svelte';
+	import { installEditorCommands } from './editorCommands.svelte';
+	import { installNotificationCommands } from './notificationCommands.svelte';
+	import NotificationToasts from './NotificationToasts.svelte';
+	import { recentFiles } from './recentFiles.svelte';
 
 	// Opening a file or diff (Quick Open, a review file, settings.json) closes the system settings page.
 	// `editors.active` also re-runs on focus changes, so only a different editor closes it.
@@ -85,7 +89,12 @@
 				run: () => workspace.showRecent()
 			}),
 			commands.register({ id: 'kingu.newProject', title: 'New Project...', category: 'File', run: () => repoDialog.show('create') }),
-			commands.register({ id: 'workbench.action.clearRecentFiles', title: 'Clear Recently Opened', category: 'File', run: () => workspace.clearRecent() }),
+			commands.register({ id: 'workbench.action.clearRecentFiles', title: 'Clear Recently Opened', category: 'File', run: () => (recentFiles.clear(), workspace.clearRecent()) }),
+			commands.register({ id: 'workbench.action.clearEditorHistory', title: 'Clear Editor History', category: 'View', run: () => recentFiles.clear() }),
+			// Quick access prefixes (VS Code: ⇧⌘O `@`, ⌘T `#`).
+			commands.register({ id: 'workbench.action.gotoSymbol', title: 'Go to Symbol in Editor...', key: 'cmd+shift+o', when: () => editors.active !== null, run: () => quick.show('@') }),
+			commands.register({ id: 'workbench.action.showAllSymbols', title: 'Go to Symbol in Workspace...', key: 'cmd+t', run: () => quick.show('#') }),
+			commands.register({ id: 'workbench.action.quickOpenView', title: 'Quick Open View', key: 'ctrl+q', palette: false, run: () => quick.show('view ') }),
 			// Go Back / Go Forward (VS Code: ⌃- / ⌃⇧- on macOS, Alt+←/→ elsewhere).
 			// Off macOS Alt+←/→ move between split terminals while a panel terminal has focus (VS Code).
 			commands.register({ id: 'workbench.action.navigateBack', title: 'Go Back', key: 'alt+left', mac: 'ctrl+-', when: () => navigation.canGoBack, keyWhen: () => isMac || !panelTerminalFocus(), run: () => navigation.back() }),
@@ -183,6 +192,7 @@
 				id: 'workbench.action.closeEditorsInGroup',
 				title: 'Close All Editors in Group',
 				category: 'View',
+				key: 'cmd+k w',
 				when: () => editors.tabs.length > 0 || editors.groups.length > 1,
 				// One Save / Don't Save / Cancel for every dirty tab, then the rest close (VS Code's Close All).
 				run: async () => {
@@ -198,7 +208,7 @@
 				when: () => editors.active !== null,
 				run: () => editors.moveActiveEditorToNextGroup()
 			}),
-			commands.register({ id: 'workbench.action.keepEditor', title: 'Keep Editor', category: 'View', when: () => editors.active !== null, run: () => editors.active && editors.pin(editors.active) })
+			commands.register({ id: 'workbench.action.keepEditor', title: 'Keep Editor', category: 'View', key: 'cmd+k enter', when: () => editors.active !== null, run: () => editors.active && editors.pin(editors.active) })
 		];
 		const uninstall = installKeybindings();
 		const uninstallMenu = installNativeMenu();
@@ -223,7 +233,13 @@
 		const unregisterEditorStatus = registerEditorStatusCommands();
 		const uninstallCloseGuard = installCloseGuard();
 		const uninstallEditorRestore = installEditorRestore();
+		const uninstallEditorCommands = installEditorCommands();
+		const uninstallRecentFiles = recentFiles.install();
+		const uninstallNotificationCommands = installNotificationCommands();
 		return () => {
+			uninstallNotificationCommands();
+			uninstallRecentFiles();
+			uninstallEditorCommands();
 			uninstallEditorRestore();
 			uninstallCloseGuard();
 			unregisterEditorStatus();
@@ -395,4 +411,5 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 	<QuickInput />
 	<AdeDialogs />
 	<RepoDialog />
+	<NotificationToasts />
 </div>

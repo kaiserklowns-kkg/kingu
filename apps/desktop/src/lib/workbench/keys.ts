@@ -43,8 +43,8 @@ export function matches(chord: Chord, e: Pick<KeyboardEvent, 'key' | 'code' | 'm
 	);
 }
 
-const MAC_KEY_LABELS: Record<string, string> = { left: '←', right: '→', up: '↑', down: '↓', enter: '↩', escape: '⎋', backspace: '⌫' };
-const KEY_LABELS: Record<string, string> = { left: 'LeftArrow', right: 'RightArrow', up: 'UpArrow', down: 'DownArrow' };
+const MAC_KEY_LABELS: Record<string, string> = { left: '←', right: '→', up: '↑', down: '↓', enter: '↩', escape: '⎋', backspace: '⌫', pageup: 'PageUp', pagedown: 'PageDown' };
+const KEY_LABELS: Record<string, string> = { left: 'LeftArrow', right: 'RightArrow', up: 'UpArrow', down: 'DownArrow', pageup: 'PageUp', pagedown: 'PageDown' };
 const keyName = (key: string) => (key.length === 1 || /^f\d+$/.test(key) ? key.toUpperCase() : key.charAt(0).toUpperCase() + key.slice(1));
 
 /** Display label in VS Code's macOS style (⌃⌥⇧⌘) or `Ctrl+Shift+P` elsewhere; chord parts joined by a space. */
@@ -97,7 +97,11 @@ const ACCELERATOR_KEYS: Record<string, string> = {
 	space: 'Space',
 	tab: 'Tab',
 	backspace: 'Backspace',
-	delete: 'Delete'
+	delete: 'Delete',
+	pageup: 'PageUp',
+	pagedown: 'PageDown',
+	home: 'Home',
+	end: 'End'
 };
 
 /**

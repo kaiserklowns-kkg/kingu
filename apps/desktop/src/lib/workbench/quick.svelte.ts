@@ -25,6 +25,10 @@ export type Picker = {
 	onCancel?: () => void;
 	/** Items computed from the typed text instead of filtering `items` (an input box). */
 	dynamic?: (value: string) => PickItem[];
+	/** Names the picker, so a command can tell its own picker is open (⌃Tab pressed again). */
+	id?: string;
+	/** VS Code's quickNavigate: releasing Ctrl/Cmd accepts the focused item (the ⌃Tab switcher). */
+	quickNavigate?: boolean;
 };
 
 class Quick {
@@ -33,6 +37,12 @@ class Quick {
 	picker = $state<Picker | null>(null);
 	/** Bumped on every show/pick, so the widget resets even when it stays open in between. */
 	session = $state(0);
+	/** A request to move the focused item by `delta` (wrapping), bumped by `moveSelection`. */
+	step = $state({ n: 0, delta: 0 });
+
+	moveSelection(delta: number) {
+		this.step = { n: this.step.n + 1, delta };
+	}
 
 	show(prefix = '') {
 		this.hide();

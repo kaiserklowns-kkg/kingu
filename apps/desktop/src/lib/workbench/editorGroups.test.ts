@@ -1,7 +1,18 @@
 import { describe, expect, test } from 'bun:test';
 import {
+	activateGroup,
 	activeGroupOf,
 	addGroup,
+	closeAllEditors,
+	closeOthers,
+	closeSaved,
+	closeToRight,
+	mruOf,
+	neighbourEditor,
+	reopenClosed,
+	setActiveEditor,
+	stickEditor,
+	unstickEditor,
 	closeAllGroups,
 	closeAllInGroup,
 	closeEditor,
@@ -277,5 +288,98 @@ describe('workspace file operations', () => {
 		expect(m.groups).toHaveLength(1);
 		expect(openPaths(m).size).toBe(0);
 		expect(m.root.type).toBe('group');
+	});
+});
+
+describe('editor commands (VS Code editorCommands.ts)', () => {
+	const four = () => {
+		const m = createGroupsModel();
+		for (const p of ['a', 'b', 'c', 'd']) openEditor(m, p, { preview: false });
+		return m;
+	};
+
+	test('close others / to the right / saved keep dirty tabs', () => {
+		let m = four();
+		setDirty(m, 'a', true);
+		expect(closeOthers(m, 1, 'c')).toEqual(['a']);
+		expect(paths(m, 1)).toEqual(['a', 'c']);
+		expect(getGroup(m, 1)!.active).toBe('c');
+		m = four();
+		setActiveEditor(m, 1, 'd');
+		expect(closeToRight(m, 1, 'b')).toEqual([]);
+		expect(paths(m, 1)).toEqual(['a', 'b']);
+		expect(getGroup(m, 1)!.active).toBe('b');
+		m = four();
+		setDirty(m, 'b', true);
+		closeSaved(m, 1);
+		expect(paths(m, 1)).toEqual(['b']);
+	});
+
+	test('closing focuses the most recently used editor', () => {
+		const m = four();
+		setActiveEditor(m, 1, 'a');
+		setActiveEditor(m, 1, 'd');
+		closeEditor(m, 1, 'd');
+		expect(getGroup(m, 1)!.active).toBe('a');
+		expect(mruOf(m, 1)).toEqual(['a', 'c', 'b']);
+	});
+
+	test('reopen closed editor restores the position and skips missing files', () => {
+		const m = four();
+		closeEditor(m, 1, 'b');
+		closeEditor(m, 1, 'c');
+		expect(reopenClosed(m, (p) => p !== 'c')).toBe('b');
+		expect(paths(m, 1)).toEqual(['a', 'b', 'd']);
+		expect(reopenClosed(m)).toBeNull();
+		openEditor(m, 'untitled:Untitled-1', { preview: false });
+		closeEditor(m, 1, 'untitled:Untitled-1', { force: true });
+		expect(reopenClosed(m)).toBeNull();
+	});
+
+	test('a moved editor is not reopened in its old group', () => {
+		const m = four();
+		const g2 = addGroup(m, 1, 'right')!;
+		moveEditor(m, 1, 'b', g2);
+		expect(reopenClosed(m)).toBeNull();
+	});
+
+	test('next/previous editor wraps across groups', () => {
+		const m = createGroupsModel();
+		openEditor(m, 'a', { preview: false });
+		openEditor(m, 'b', { preview: false });
+		const g2 = addGroup(m, 1, 'right')!;
+		openEditor(m, 'c', { preview: false, group: g2 });
+		expect(neighbourEditor(m, 1)).toEqual([1, 'a']);
+		expect(neighbourEditor(m, -1)).toEqual([1, 'b']);
+		activateGroup(m, 1);
+		setActiveEditor(m, 1, 'b');
+		expect(neighbourEditor(m, 1)).toEqual([g2, 'c']);
+		expect(neighbourEditor(m, 1, { inGroup: true })).toEqual([1, 'a']);
+		expect(neighbourEditor(m, -1)).toEqual([1, 'a']);
+	});
+
+	test('sticky tabs stay first and new tabs open after them', () => {
+		const m = four();
+		stickEditor(m, 1, 'c');
+		expect(paths(m, 1)).toEqual(['c', 'a', 'b', 'd']);
+		setActiveEditor(m, 1, 'c');
+		openEditor(m, 'e', { preview: false });
+		expect(paths(m, 1)).toEqual(['c', 'e', 'a', 'b', 'd']);
+		stickEditor(m, 1, 'd');
+		unstickEditor(m, 1, 'c');
+		expect(paths(m, 1)).toEqual(['d', 'c', 'e', 'a', 'b']);
+		expect(getGroup(m, 1)!.tabs[0].sticky).toBe(true);
+	});
+
+	test('split left and up put the new group first', () => {
+		const m = createGroupsModel();
+		openEditor(m, 'a', { preview: false });
+		const left = splitEditor(m, 'left')!;
+		expect(groupOrder(m)).toEqual([left, 1]);
+		const up = splitEditor(m, 'up')!;
+		expect(groupOrder(m)).toEqual([up, left, 1]);
+		expect(paths(m, up)).toEqual(['a']);
+		expect(closeAllEditors(m)).toEqual([]);
+		expect(m.groups).toHaveLength(1);
 	});
 });

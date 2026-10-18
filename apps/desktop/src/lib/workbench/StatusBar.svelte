@@ -21,6 +21,7 @@
 	import { syncItem } from '#lib/workbench/scmRemote.ts';
 	import { languageName } from '#lib/editor/languages.ts';
 	import { textFiles } from './textFileService.svelte';
+	import { notifications } from './notifications.svelte';
 
 	const languageStatus = $derived(lsp.statusFor(editors.language));
 
@@ -117,6 +118,15 @@
 		<button class={ITEM} title="Select End of Line Sequence" onclick={() => commands.run('workbench.action.editor.changeEOL')}>{editors.eol}</button>
 		<button class={ITEM} title="Select Language Mode" onclick={() => commands.run('workbench.action.editor.changeLanguageMode')}>{languageName(editors.language)}</button>
 	{/if}
+	<!-- VS Code's notifications bell, always the right-most item. -->
+	<button
+		class={ITEM}
+		aria-label={notifications.doNotDisturb ? 'Notifications (Do Not Disturb)' : notifications.unread ? `Notifications: ${notifications.unread} new` : 'Notifications'}
+		title={notifications.doNotDisturb ? 'Do Not Disturb' : notifications.unread ? `${notifications.unread} New Notifications` : 'No Notifications'}
+		onclick={() => notifications.toggleCenter()}
+	>
+		<Icon name={notifications.doNotDisturb ? 'bellSlash' : notifications.unread ? 'bellDot' : 'bell'} size={14} />
+	</button>
 </footer>
 
 {#if menu}

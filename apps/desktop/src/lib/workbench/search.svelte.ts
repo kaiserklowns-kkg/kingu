@@ -11,6 +11,7 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { editors } from './editors.svelte';
 import { status } from './status.svelte';
 import { rebaseMatches, seedFromSelection, type FileMatches, type ReplaceEdit, type ReplaceResult, type SearchEvent, type SearchOptions, type TextMatch } from './searchResults';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 /** Streamed files are appended in batches so a big result set re-renders a few times, not per file. */
 const FLUSH_MS = 50;
@@ -133,7 +134,7 @@ class Search {
 		try {
 			results = await invoke<ReplaceResult[]>('search_replace', { request });
 		} catch (e) {
-			status.flash(`Replace failed: ${e}`);
+			notifications.error(`Replace failed: ${e}`);
 			clientLog('error', `search_replace: ${e}`);
 			return;
 		} finally {

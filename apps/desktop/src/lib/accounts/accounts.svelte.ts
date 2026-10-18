@@ -13,6 +13,7 @@ import { terminals } from '#lib/terminal/terminals.svelte.ts';
 import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 import { team } from '#lib/team/team.svelte.ts';
 import { PROVIDER_TITLE, type AccountsView, type AccountView, type Kind, type Provider, type Sample, type UsageRow } from './usage';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 /** Rust decides whether a request is due (15 min, backoff); asking every minute is cheap. */
 const POLL_MS = 60_000;
@@ -38,7 +39,7 @@ class Accounts {
 		try {
 			this.rows = await invoke<UsageRow[]>('ai_usage_refresh', { force });
 		} catch (e) {
-			if (force) status.flash(`รีเฟรช usage ไม่สำเร็จ: ${message(e)}`);
+			if (force) notifications.error(`รีเฟรช usage ไม่สำเร็จ: ${message(e)}`);
 		} finally {
 			this.now = Date.now();
 			if (force) this.refreshing = false;
@@ -49,7 +50,7 @@ class Accounts {
 		try {
 			this.view = await invoke<AccountsView>('ai_accounts_list');
 		} catch (e) {
-			status.flash(`อ่านรายการบัญชี AI ไม่ได้: ${message(e)}`);
+			notifications.error(`อ่านรายการบัญชี AI ไม่ได้: ${message(e)}`);
 		}
 	}
 
@@ -101,7 +102,7 @@ class Accounts {
 				systemSettings.showAccounts();
 			}
 		} catch (e) {
-			status.flash(`เพิ่มบัญชีไม่สำเร็จ: ${message(e)}`);
+			notifications.error(`เพิ่มบัญชีไม่สำเร็จ: ${message(e)}`);
 		}
 	}
 
@@ -117,7 +118,7 @@ class Accounts {
 			status.flash('ทำตามขั้นตอน login ใน terminal (เบราว์เซอร์จะเปิดให้) Kingu จะตรวจให้เองเมื่อเสร็จ', 8000);
 			void this.#watchLogin(id);
 		} catch (e) {
-			status.flash(`เริ่ม login ไม่ได้: ${message(e)}`);
+			notifications.error(`เริ่ม login ไม่ได้: ${message(e)}`);
 		}
 	}
 
@@ -181,7 +182,7 @@ class Accounts {
 			await this.#changed();
 			status.flash(`ลบบัญชี "${a.label}" แล้ว`);
 		} catch (e) {
-			status.flash(`ลบบัญชีไม่สำเร็จ: ${message(e)}`);
+			notifications.error(`ลบบัญชีไม่สำเร็จ: ${message(e)}`);
 		}
 	}
 

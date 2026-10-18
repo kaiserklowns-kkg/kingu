@@ -20,6 +20,12 @@
 	import FilePlaceholder from './FilePlaceholder.svelte';
 	import SaveConflictCompare from './SaveConflictCompare.svelte';
 	import { textFiles } from './textFileService.svelte';
+	import PopupMenu, { menuItem, menuSeparator } from './PopupMenu.svelte';
+	import type { MenuNode } from './menus';
+	import { commands, keyOf } from './commands.svelte';
+	import { isMac } from './keys';
+	import * as cmd from './editorCommands.svelte';
+	import { isUntitled } from './untitled';
 
 	let { group }: { group: number } = $props();
 
@@ -87,6 +93,87 @@
 		editors.moveEditor(from.group, from.path, group, index);
 	}
 
+	// --- Tab context menu (VS Code: MenuId.EditorTitleContext, editorTabsControl.ts) -------------
+
+	let tabMenu = $state<{ x: number; y: number; path: string } | null>(null);
+
+	/** The key of a workbench command for the menu's right column. */
+	const keyFor = (id: string) => {
+		const c = commands.get(id);
+		const k = c && keyOf(c);
+		return k ? keyLabel(k) : undefined;
+	};
+
+	function tabMenuItems(path: string): MenuNode[] {
+		const tab = tabs.find((t) => t.path === path);
+		const i = tabs.findIndex((t) => t.path === path);
+		const file = cmd.isFileEditor(path);
+		const item = (id: string, text: string, opts: { enabled?: boolean; key?: string } = {}) => menuItem(id, text, { enabled: opts.enabled, keyLabel: opts.key ?? keyFor(id) });
+		return [
+			item('close', 'Close', { key: keyFor('workbench.action.closeActiveEditor') }),
+			item('closeOthers', 'Close Others', { enabled: tabs.length > 1, key: keyFor('workbench.action.closeOtherEditors') }),
+			item('closeRight', 'Close to the Right', { enabled: i < tabs.length - 1, key: keyFor('workbench.action.closeEditorsToTheRight') }),
+			item('closeSaved', 'Close Saved', { enabled: tabs.some((t) => !t.dirty), key: keyFor('workbench.action.closeUnmodifiedEditors') }),
+			item('closeAll', 'Close All', { key: keyFor('workbench.action.closeEditorsInGroup') }),
+			menuSeparator,
+			item('copyPath', 'Copy Path', { enabled: file, key: keyFor('copyFilePath') }),
+			item('copyRelativePath', 'Copy Relative Path', { enabled: file, key: keyFor('copyRelativeFilePath') }),
+			menuSeparator,
+			item('revealOS', isMac ? 'Reveal in Finder' : 'Reveal in File Explorer', { enabled: file, key: keyFor('revealFileInOS') }),
+			item('revealExplorer', 'Reveal in Explorer View', { enabled: file }),
+			menuSeparator,
+			...(tab?.preview ? [item('keep', 'Keep Open', { key: keyFor('workbench.action.keepEditor') })] : []),
+			item('pin', tab?.sticky ? 'Unpin' : 'Pin', { key: keyFor(tab?.sticky ? 'workbench.action.unpinEditor' : 'workbench.action.pinEditor') }),
+			menuSeparator,
+			menuItem('splitUp', 'Split Up'),
+			menuItem('splitDown', 'Split Down'),
+			menuItem('splitLeft', 'Split Left'),
+			menuItem('splitRight', 'Split Right')
+		];
+	}
+
+	/** Runs a tab menu item on `path` (captured when the menu opened: PopupMenu closes before it runs). */
+	function runTabMenu(id: string, path: string) {
+		switch (id) {
+			case 'close':
+				return close(path, false);
+			case 'closeOthers':
+				return cmd.closeOthers(group, path);
+			case 'closeRight':
+				return cmd.closeToRight(group, path);
+			case 'closeSaved':
+				return cmd.closeSaved(group);
+			case 'closeAll':
+				return cmd.closeAllInGroup(group);
+			case 'copyPath':
+				return cmd.copyPath(path);
+			case 'copyRelativePath':
+				return cmd.copyRelativePath(path);
+			case 'revealOS':
+				return cmd.revealInOS(path);
+			case 'revealExplorer':
+				return cmd.revealInExplorer(path);
+			case 'keep':
+				return editors.pin(path, group);
+			case 'pin':
+				return cmd.togglePinned(group, path);
+			case 'splitUp':
+				return cmd.splitFrom(group, path, 'up');
+			case 'splitDown':
+				return cmd.splitFrom(group, path, 'down');
+			case 'splitLeft':
+				return cmd.splitFrom(group, path, 'left');
+			case 'splitRight':
+				return cmd.splitFrom(group, path, 'right');
+		}
+	}
+
+	function openTabMenu(e: MouseEvent, path: string) {
+		e.preventDefault();
+		editors.activateGroup(group);
+		tabMenu = { x: e.clientX, y: Math.min(e.clientY, window.innerHeight - 20 * 22), path };
+	}
+
 	const watermark = [
 		['Show All Commands', 'cmd+shift+p'],
 		['Go to File', 'cmd+p'],
@@ -121,6 +208,7 @@
 					ondragover={(e) => dragOver(e, i)}
 					ondrop={(e) => drop(e, i)}
 					ondragend={() => (dropTarget = null)}
+					oncontextmenu={(e) => openTabMenu(e, tab.path)}
 					class={[
 						'group relative flex h-full items-center gap-1.5 border-r border-(--vscode-tab-border) pl-2.5',
 						tabSizing === 'fit' ? 'shrink-0' : tabSizing === 'shrink' ? 'min-w-[80px] shrink' : 'w-[160px] min-w-[80px] shrink',
@@ -138,10 +226,11 @@
 					{:else if active && focused}<span class="absolute inset-x-0 top-0 h-px bg-(--vscode-tab-activeBorderTop)"></span>{/if}
 					{#if dropTarget === i}<span class="absolute inset-y-0 left-0 w-0.5 bg-(--vscode-focusBorder)"></span>{/if}
 					<span class={['flex', !focused && 'opacity-60']}><FileIcon icon={iconOf(tab.path)} /></span>
+					{#if tab.sticky}<span class="flex text-(--vscode-icon-foreground) opacity-80" title="Pinned"><Icon name="pin" size={12} /></span>{/if}
 					<button
 						role="tab"
 						aria-selected={active}
-						title={tab.path}
+						title={isUntitled(tab.path) ? label(tab.path) : tab.path}
 						class={['h-full min-w-0 truncate pr-1 whitespace-nowrap', tabSizing !== 'fit' && 'flex-1 text-left', tab.preview && 'italic']}
 						onclick={() => editors.open(tab.path, { preview: tab.preview, group })}
 						ondblclick={() => editors.pin(tab.path, group)}
@@ -214,3 +303,8 @@
 		{/if}
 	</div>
 </section>
+
+{#if tabMenu}
+	{@const m = tabMenu}
+	<PopupMenu items={tabMenuItems(m.path)} label="Editor tab" x={m.x} y={m.y} onRun={(node) => node.type === 'item' && runTabMenu(node.id, m.path)} onClose={() => (tabMenu = null)} />
+{/if}

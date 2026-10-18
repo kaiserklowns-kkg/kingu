@@ -3,7 +3,9 @@
 
 import { eventLabel as chordLabel, isMac, isMenuEcho, isModifierKey, keyOf as defaultKeyOf, matches, parseChord, splitKeybinding } from './keys';
 import { keybindings } from './keybindings.svelte';
-import { keysFor } from './keybindingsModel';
+import { keysFor, whenKey } from './keybindingsModel';
+import { evaluateWhen } from './contextKey';
+import { currentContext } from './contextKeys.svelte';
 import { status } from './status.svelte';
 
 /** Every key that runs `cmd` on this platform: keybindings.json's first, then the default unless removed. */
@@ -11,9 +13,10 @@ export function keysOf(cmd: { id: string; key?: string; mac?: string }, mac = is
 	return keysFor(cmd.id, defaultKeyOf(cmd, mac), keybindings.user);
 }
 
-/** The key menus, the palette and tooltips show for `cmd` (the user's own wins). */
-export function keyOf(cmd: { id: string; key?: string; mac?: string }, mac = isMac): string | undefined {
-	return keysOf(cmd, mac)[0];
+/** The key menus, the palette and tooltips show for `cmd` (the user's own wins), else the key
+ * of whoever owns it (Monaco for editor actions). */
+export function keyOf(cmd: { id: string; key?: string; mac?: string; ownerKey?: () => string | undefined }, mac = isMac): string | undefined {
+	return keysOf(cmd, mac)[0] ?? (keybindings.user.removed.get(cmd.id) === 'all' ? undefined : cmd.ownerKey?.());
 }
 
 export type Command = {
@@ -30,6 +33,8 @@ export type Command = {
 	/** Extra condition for the keybinding only (VS Code's keybinding `when`, e.g. not in the
 	 * terminal), so menus and the palette still run the command. */
 	keyWhen?: () => boolean;
+	/** A key bound outside this registry (Monaco's own keybinding of an editor action), for display only. */
+	ownerKey?: () => string | undefined;
 	run: () => unknown;
 };
 
@@ -77,11 +82,19 @@ export const commands = new Commands();
  */
 export function installKeybindings(): () => void {
 	let pending: KeyboardEvent | null = null;
-	const enabled = (cmd: Command) => (!cmd.when || cmd.when()) && (!cmd.keyWhen || cmd.keyWhen());
+	type Binding = { cmd: Command; parts: string[]; user: boolean; when?: string };
+	let ctx: ReturnType<typeof currentContext> | null = null;
+	/** keybindings.json's `when` on top of the command's own conditions; the context is read once per keypress. */
+	const enabled = (b: Binding) => (!b.cmd.when || b.cmd.when()) && (!b.cmd.keyWhen || b.cmd.keyWhen()) && (!b.when || evaluateWhen(b.when, (ctx ??= currentContext())));
 	/** Every (command, chord parts) pair; user keybindings first, so they win over a default on the same key. */
-	const bindings = () => {
-		const user = keybindings.user.added;
-		const all = commands.all.flatMap((cmd) => keysOf(cmd).map((key) => ({ cmd, parts: splitKeybinding(key), user: user.get(cmd.id)?.includes(key) ?? false })));
+	const bindings = (): Binding[] => {
+		const { added, when } = keybindings.user;
+		const all = commands.all.flatMap((cmd) =>
+			keysOf(cmd).map((key) => {
+				const user = added.get(cmd.id)?.includes(key) ?? false;
+				return { cmd, parts: splitKeybinding(key), user, when: user ? when.get(whenKey(cmd.id, key)) : undefined };
+			})
+		);
 		return [...all.filter((b) => b.user), ...all.filter((b) => !b.user)];
 	};
 	const runByKey = (cmd: Command) => {
@@ -95,15 +108,17 @@ export function installKeybindings(): () => void {
 	};
 	const onKey = (e: KeyboardEvent) => {
 		if (isModifierKey(e)) return;
+		ctx = null;
 		const inEditor = e.target instanceof Element && e.target.closest('.monaco-editor') !== null;
 		if (pending) {
 			const first = pending;
 			pending = null;
-			for (const { cmd, parts: p } of bindings()) {
-				if (p.length === 2 && enabled(cmd) && matches(parseChord(p[0]), first) && matches(parseChord(p[1]), e)) {
+			for (const b of bindings()) {
+				const p = b.parts;
+				if (p.length === 2 && matches(parseChord(p[0]), first) && matches(parseChord(p[1]), e) && enabled(b)) {
 					consume(e, inEditor);
 					status.flash('', 0);
-					runByKey(cmd);
+					runByKey(b.cmd);
 					return;
 				}
 			}
@@ -111,16 +126,15 @@ export function installKeybindings(): () => void {
 			consume(e, inEditor);
 			return;
 		}
-		for (const { cmd, parts: p } of bindings()) {
-			if (!enabled(cmd) || p.length !== 1) continue;
-			if (matches(parseChord(p[0]), e)) {
-				e.preventDefault();
-				e.stopPropagation();
-				runByKey(cmd);
-				return;
-			}
+		const all = bindings();
+		for (const b of all) {
+			if (b.parts.length !== 1 || !matches(parseChord(b.parts[0]), e) || !enabled(b)) continue;
+			e.preventDefault();
+			e.stopPropagation();
+			runByKey(b.cmd);
+			return;
 		}
-		const startsChord = bindings().some(({ cmd, parts: p }) => p.length === 2 && enabled(cmd) && matches(parseChord(p[0]), e));
+		const startsChord = all.some((b) => b.parts.length === 2 && matches(parseChord(b.parts[0]), e) && enabled(b));
 		if (startsChord) {
 			pending = e;
 			consume(e, inEditor);

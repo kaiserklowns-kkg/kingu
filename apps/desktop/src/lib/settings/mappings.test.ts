@@ -185,6 +185,16 @@ describe('explorer sort order', () => {
 		expect(names('filesFirst')).toEqual(['A.md', 'b.ts', 'c.md', 'file2.ts', 'file10.ts', 'lib', 'src']);
 		expect(names('type')).toEqual(['lib', 'src', 'A.md', 'c.md', 'b.ts', 'file2.ts', 'file10.ts']);
 	});
+	test('modified: folders first, newest first, then by name', () => {
+		const dated = [
+			{ name: 'old.ts', is_dir: false, modified: 1 },
+			{ name: 'new.ts', is_dir: false, modified: 9 },
+			{ name: 'dir', is_dir: true, modified: 0 },
+			{ name: 'b.ts', is_dir: false, modified: 5 },
+			{ name: 'a.ts', is_dir: false, modified: 5 }
+		];
+		expect(sortEntries(dated, 'modified').map((e) => e.name)).toEqual(['dir', 'new.ts', 'a.ts', 'b.ts', 'old.ts']);
+	});
 });
 
 describe('save', () => {

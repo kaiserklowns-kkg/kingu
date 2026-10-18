@@ -15,6 +15,7 @@
 	import { attachDebugEditor, type DebugDecorations } from '#lib/debug/editorDebug.ts';
 	import { indentLabel } from './textFiles';
 	import { textFiles } from './textFileService.svelte';
+	import { installEditorActions } from './editorActions.svelte';
 
 	let { group }: { group: number } = $props();
 
@@ -40,6 +41,7 @@
 			installEditorSettings(m.monaco);
 			// The editor settings from the first paint; installEditorSettings keeps them live.
 			const ed = m.monaco.editor.create(host, { ...editorOptions(), theme: m.THEME_ID, automaticLayout: true });
+			installEditorActions(m.monaco, ed);
 			const { CursorChangeReason } = m.monaco.editor;
 			ed.onDidChangeCursorPosition((e) => {
 				if (editors.activeGroupId !== group) return;
@@ -67,6 +69,12 @@
 				return model && sel && !sel.isEmpty() ? model.getValueInRange(sel) : '';
 			},
 			focus: () => editor?.focus(),
+			peek: (line, column) => {
+				if (!editor) return;
+				const range = { startLineNumber: line, startColumn: column, endLineNumber: line, endColumn: column };
+				editor.revealRangeInCenter(range);
+				editor.setSelection(range);
+			},
 			trigger: (actionId) => {
 				if (!editor?.getModel()) return false;
 				editor.focus();

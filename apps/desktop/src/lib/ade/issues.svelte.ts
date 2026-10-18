@@ -16,6 +16,7 @@ import { adeLayout } from './adeLayout.svelte.ts';
 import type { RunMode } from './agentCli.ts';
 import { mergeIssueLists, tasksByIssue, type Issue } from './issues.ts';
 import { adeTasks } from './tasks.svelte.ts';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 export type IssueFilter = { mine: boolean; label: string; search: string };
 const LIMIT = 50;
@@ -86,7 +87,7 @@ class AdeIssues {
 	}
 
 	open(issue: Pick<Issue, 'number'>) {
-		return invoke('gh_issue_open', { number: issue.number }).catch((e) => status.flash(`เปิด issue #${issue.number} ไม่ได้: ${e}`, 8000));
+		return invoke('gh_issue_open', { number: issue.number }).catch((e) => notifications.error(`เปิด issue #${issue.number} ไม่ได้: ${e}`));
 	}
 
 	openPage() {
@@ -103,7 +104,7 @@ class AdeIssues {
 		try {
 			[mine, all] = await Promise.all([this.fetch({ mine: true }), this.fetch({ mine: false, limit: 100 })]);
 		} catch (e) {
-			status.flash(`โหลด issues ไม่ได้: ${e}`, 10000);
+			notifications.error(`โหลด issues ไม่ได้: ${e}`);
 			return;
 		}
 		const rows = mergeIssueLists(mine, all);

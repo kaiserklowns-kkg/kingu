@@ -231,8 +231,8 @@ export function associatedLanguage(rel: string, associations: Readonly<Record<st
 	return found;
 }
 
-export type SortOrder = 'default' | 'mixed' | 'filesFirst' | 'type';
-type Sortable = { name: string; is_dir: boolean };
+export type SortOrder = 'default' | 'mixed' | 'filesFirst' | 'type' | 'modified';
+type Sortable = { name: string; is_dir: boolean; modified?: number };
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 const extOf = (name: string) => {
@@ -240,14 +240,15 @@ const extOf = (name: string) => {
 	return i > 0 ? name.slice(i + 1).toLowerCase() : '';
 };
 
-/** `explorer.sortOrder` (VS Code's explorer sorter, without `modified`). */
+/** `explorer.sortOrder` (VS Code's explorer sorter; `modified` is newest first, folders first). */
 export function sortEntries<T extends Sortable>(entries: readonly T[], order: SortOrder): T[] {
 	const byName = (a: T, b: T) => collator.compare(a.name, b.name);
 	const cmp: Record<SortOrder, (a: T, b: T) => number> = {
 		default: (a, b) => Number(b.is_dir) - Number(a.is_dir) || byName(a, b),
 		mixed: byName,
 		filesFirst: (a, b) => Number(a.is_dir) - Number(b.is_dir) || byName(a, b),
-		type: (a, b) => Number(b.is_dir) - Number(a.is_dir) || (a.is_dir ? 0 : collator.compare(extOf(a.name), extOf(b.name))) || byName(a, b)
+		type: (a, b) => Number(b.is_dir) - Number(a.is_dir) || (a.is_dir ? 0 : collator.compare(extOf(a.name), extOf(b.name))) || byName(a, b),
+		modified: (a, b) => Number(b.is_dir) - Number(a.is_dir) || (b.modified ?? 0) - (a.modified ?? 0) || byName(a, b)
 	};
 	return [...entries].sort(cmp[order] ?? cmp.default);
 }

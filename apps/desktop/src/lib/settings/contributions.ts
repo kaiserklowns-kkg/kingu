@@ -11,10 +11,11 @@ import { SCHEMA } from './registry';
 import { settings, USER_SETTINGS_KEY, WORKSPACE_SETTINGS_PATH } from './settings.svelte';
 import { systemSettings } from './systemSettings.svelte';
 import { USER_KEYBINDINGS_KEY } from '#lib/workbench/keybindings.svelte.ts';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 const GROUPS: Record<string, string> = { light: 'light themes', dark: 'dark themes', hcDark: 'high contrast themes', hcLight: 'high contrast themes' };
 
-const report = (e: unknown) => status.flash(`บันทึกการตั้งค่าไม่สำเร็จ: ${e instanceof Error ? e.message : e}`);
+const report = (e: unknown) => notifications.error(`บันทึกการตั้งค่าไม่สำเร็จ: ${e instanceof Error ? e.message : e}`);
 
 /** Preferences: Color Theme — arrow keys preview, Enter keeps, Escape restores (like VS Code).
  * With window.autoDetectColorScheme on, the pick sets the preferred theme of the OS's current scheme. */

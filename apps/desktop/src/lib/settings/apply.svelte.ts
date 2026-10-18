@@ -19,6 +19,7 @@ import { editorOptionsFrom, effectiveTheme, enabledGlobs, indentFrom, terminalOp
 import { jsonSchema } from './registry';
 import { settings } from './settings.svelte';
 import { settingSchemas } from './schemas.svelte';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 const SETTINGS_SCHEMA_URI = 'kingu://schemas/settings';
 const KEYBINDINGS_SCHEMA_URI = 'kingu://schemas/keybindings';
@@ -40,7 +41,7 @@ const isActiveModel = (model: Monaco.editor.ITextModel) => editors.focusedFile !
 async function autoSave(paths: string[], reason: SaveReason) {
 	for (const path of paths) {
 		if (!path || !editors.isDirty(path) || isDiffKey(path)) continue;
-		await saveFile(path, reason).catch((e) => status.flash(`บันทึกอัตโนมัติไม่สำเร็จ: ${e}`));
+		await saveFile(path, reason).catch((e) => notifications.error(`บันทึกอัตโนมัติไม่สำเร็จ: ${e}`));
 	}
 }
 

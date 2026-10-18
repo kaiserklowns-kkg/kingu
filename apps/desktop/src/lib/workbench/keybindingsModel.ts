@@ -1,14 +1,21 @@
 // User keybindings (VS Code: keybindings.json). Pure: parsing and how user entries change a
 // command's default key. `{ "key": "cmd+i", "command": "x" }` adds a key; `"-x"` removes x's
-// default (or only the given key). `when` clauses are not evaluated: an entry with one is kept
-// and applies everywhere the command's own condition allows.
+// default (or only the given key). An entry's `when` clause is kept per key and evaluated at key
+// time (contextKey.ts), on top of the command's own condition.
 
 import { parseJsonc } from '#lib/settings/jsonc.ts';
 
 export type KeybindingEntry = { key?: string; command: string; when?: string };
-export type UserKeybindings = { added: ReadonlyMap<string, string[]>; removed: ReadonlyMap<string, ReadonlySet<string> | 'all'> };
+export type UserKeybindings = {
+	added: ReadonlyMap<string, string[]>;
+	removed: ReadonlyMap<string, ReadonlySet<string> | 'all'>;
+	/** `when` of a user key, by `whenKey(command, key)`. */
+	when: ReadonlyMap<string, string>;
+};
 
-export const NO_USER_KEYBINDINGS: UserKeybindings = { added: new Map(), removed: new Map() };
+export const whenKey = (command: string, key: string) => `${command}\u0000${normalizeKey(key)}`;
+
+export const NO_USER_KEYBINDINGS: UserKeybindings = { added: new Map(), removed: new Map(), when: new Map() };
 
 /** `cmd+shift+P  cmd+k` → `cmd+shift+p cmd+k`. */
 export const normalizeKey = (key: string) =>
@@ -30,6 +37,7 @@ export function parseKeybindings(text: string): KeybindingEntry[] {
 export function userKeybindings(entries: readonly KeybindingEntry[]): UserKeybindings {
 	const added = new Map<string, string[]>();
 	const removed = new Map<string, Set<string> | 'all'>();
+	const when = new Map<string, string>();
 	for (const e of entries) {
 		const key = typeof e.key === 'string' ? normalizeKey(e.key) : '';
 		if (e.command.startsWith('-')) {
@@ -41,9 +49,11 @@ export function userKeybindings(entries: readonly KeybindingEntry[]): UserKeybin
 		} else if (key) {
 			// Later entries win: the newest key comes first (it is the one menus show).
 			added.set(e.command, [key, ...(added.get(e.command) ?? []).filter((k) => k !== key)]);
+			if (typeof e.when === 'string' && e.when.trim()) when.set(whenKey(e.command, key), e.when);
+			else when.delete(whenKey(e.command, key));
 		}
 	}
-	return { added, removed };
+	return { added, removed, when };
 }
 
 /** The keys that run `id`: the user's own first, then the default unless it was removed. */
