@@ -87,15 +87,21 @@ func checkRef(field, v string) *apiError {
 	return nil
 }
 
-// checkRepoURL accepts https://, ssh:// and scp-style git@host:path remotes
+func checkRepoURL(v string) *apiError { return checkGitURL("repo_url", v) }
+
+// checkGitURL accepts https://, ssh:// and scp-style git@host:path remotes
 // and rejects anything carrying credentials: the server must never store
 // secrets.
-func checkRepoURL(v string) *apiError {
-	if err := checkText("repo_url", v, maxRepoURLLen, true); err != nil {
+func checkGitURL(field, v string) *apiError {
+	if err := checkText(field, v, maxRepoURLLen, true); err != nil {
 		return err
 	}
 	if strings.ContainsAny(v, " \t") {
-		return errBadRequest("invalid_input", "repo_url must not contain whitespace")
+		return errBadRequest("invalid_input", field+" must not contain whitespace")
+	}
+	// git would read a leading dash as an option.
+	if strings.HasPrefix(v, "-") {
+		return errBadRequest("invalid_input", field+" must not start with -")
 	}
 	// scp-like syntax: user@host:path (no scheme).
 	if !strings.Contains(v, "://") {
@@ -104,28 +110,28 @@ func checkRepoURL(v string) *apiError {
 		if at > 0 && colon > at+1 && colon < len(v)-1 && !strings.Contains(v[:at], ":") {
 			return nil
 		}
-		return errBadRequest("invalid_input", "repo_url must be an https://, ssh:// or user@host:path remote")
+		return errBadRequest("invalid_input", field+" must be an https://, ssh:// or user@host:path remote")
 	}
 	u, err := url.Parse(v)
 	if err != nil || u.Host == "" {
-		return errBadRequest("invalid_input", "repo_url is not a valid URL")
+		return errBadRequest("invalid_input", field+" is not a valid URL")
 	}
 	switch u.Scheme {
 	case "https":
 		if u.User != nil {
-			return errBadRequest("invalid_input", "repo_url must not embed credentials")
+			return errBadRequest("invalid_input", field+" must not embed credentials")
 		}
 	case "ssh":
 		if u.User != nil {
 			if _, hasPassword := u.User.Password(); hasPassword {
-				return errBadRequest("invalid_input", "repo_url must not embed credentials")
+				return errBadRequest("invalid_input", field+" must not embed credentials")
 			}
 		}
 	default:
-		return errBadRequest("invalid_input", "repo_url scheme must be https or ssh")
+		return errBadRequest("invalid_input", field+" scheme must be https or ssh")
 	}
 	if u.RawQuery != "" || u.Fragment != "" {
-		return errBadRequest("invalid_input", "repo_url must not have a query or fragment")
+		return errBadRequest("invalid_input", field+" must not have a query or fragment")
 	}
 	return nil
 }

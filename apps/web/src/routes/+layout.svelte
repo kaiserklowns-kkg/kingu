@@ -8,7 +8,8 @@
 
 	const nav = [
 		{ href: '/', label: 'บอร์ดทีม' },
-		{ href: '/runs', label: 'ประวัติการรัน' }
+		{ href: '/runs', label: 'ประวัติการรัน' },
+		{ href: '/snaps', label: 'Snap ของทีม' }
 	];
 </script>
 
