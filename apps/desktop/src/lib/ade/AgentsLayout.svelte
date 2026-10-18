@@ -27,6 +27,7 @@
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import AdeSidebar from './AdeSidebar.svelte';
+	import { sidebarTint } from './sidebarView';
 	import AdeTabBar from './AdeTabBar.svelte';
 	import type { IconName } from '#lib/workbench/Icon.svelte';
 	import Board from './Board.svelte';
@@ -152,12 +153,21 @@
 	function openLinkedFile(k: string, rel: string, line?: number, column?: number) {
 		adeLayout.openFile(k, rel, { preview: false, reveal: line ? { line, column: column ?? 1, focus: true } : undefined });
 	}
+
+	// kingu.sidebar.appearance / tintColor / tintOpacity (Orca's left side bar appearance).
+	const sidebarLook = $derived(sidebarTint(settings.get<string>('kingu.sidebar.appearance'), settings.get('kingu.sidebar.tintColor'), settings.get('kingu.sidebar.tintOpacity')));
 </script>
 
 <!-- Same framed parts as the IDE workbench: each zone has its own rounded frame, the sashes are the gaps. -->
 <div bind:this={body} class="flex min-h-0 flex-1 bg-(--vscode-titleBar-activeBackground) px-1.5 pb-1.5 text-(--vscode-foreground)">
 	{#if appMode.sessionsVisible}
-		<aside aria-label="Side Bar" class={[FRAME, 'flex shrink-0 flex-col bg-(--vscode-sideBar-background)']} style:width="{appMode.sessionsWidth}px">
+		<aside
+			aria-label="Side Bar"
+			class={[FRAME, 'flex shrink-0 flex-col bg-(--vscode-sideBar-background)']}
+			style:width="{appMode.sessionsWidth}px"
+			style:background-color={sidebarLook?.backgroundColor}
+			style:background-image={sidebarLook?.backgroundImage}
+		>
 			{#key workspace.root}<AdeSidebar />{/key}
 		</aside>
 		<Sash

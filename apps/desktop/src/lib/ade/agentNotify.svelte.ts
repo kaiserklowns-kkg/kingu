@@ -12,6 +12,7 @@ import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { commands } from '#lib/workbench/commands.svelte.ts';
 import { noticeFor, noticeState, notificationSound, shouldNotify, type NoticeState } from './agentNotify';
 import { adeTasks } from './tasks.svelte';
+import { hiddenInSidebar } from './sidebarState.svelte';
 
 let allowed: boolean | null = null;
 
@@ -55,8 +56,10 @@ export function installAgentNotifications(): () => void {
 			const views = adeTasks.views.map((v) => ({ slug: v.meta.slug, state: noticeState(v.status, v.runtime?.question), title: v.meta.title, lastEvent: v.runtime?.lastEvent }));
 			untrack(() => {
 				const events = settings.get<string>('kingu.agent.notifications.events');
+				// kingu.agent.notifications.hiddenWorkspaces off: tasks the side bar's filters hide stay quiet (Orca's notifyHiddenWorkspaces).
+				const quietHidden = settings.get<boolean>('kingu.agent.notifications.hiddenWorkspaces') === false;
 				for (const v of views) {
-					const notice = agentNotifyAllowed(v.slug) ? noticeFor(seen.get(v.slug), v.state, v, events) : null;
+					const notice = agentNotifyAllowed(v.slug) && !(quietHidden && hiddenInSidebar(v.slug)) ? noticeFor(seen.get(v.slug), v.state, v, events) : null;
 					seen.set(v.slug, v.state);
 					if (notice) void notify(notice.title, notice.body, v.slug);
 				}

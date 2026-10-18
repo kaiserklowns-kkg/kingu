@@ -6,6 +6,11 @@
 	import { COLUMNS } from './model';
 	import { adeTasks } from './tasks.svelte';
 	import { BUTTON, ICON_BUTTON } from './ui';
+	import { settings } from '#lib/settings/settings.svelte.ts';
+
+	// Orca's workspace board look: column width (px) and column opacity.
+	const width = $derived(settings.get<number>('kingu.board.columnWidth'));
+	const opacity = $derived(Math.round(settings.get<number>('kingu.board.opacity') * 100));
 </script>
 
 <div class="flex h-full flex-col overflow-hidden bg-(--vscode-editor-background) text-(--vscode-foreground)">
@@ -19,10 +24,14 @@
 	{#if adeTasks.composing}
 		<div class="max-w-xl shrink-0 px-2"><NewTaskForm /></div>
 	{/if}
-	<div class="grid min-h-0 flex-1 grid-cols-3 gap-3 overflow-hidden p-3">
+	<div class="grid min-h-0 flex-1 gap-3 overflow-x-auto overflow-y-hidden p-3" style:grid-template-columns="repeat(3, {width}px)">
 		{#each COLUMNS as col (col.id)}
 			{@const list = adeTasks.groups[col.id]}
-			<section aria-label={col.label} class="flex min-h-0 flex-col rounded border border-(--vscode-widget-border) bg-(--vscode-sideBar-background)">
+			<section
+				aria-label={col.label}
+				class="flex min-h-0 flex-col rounded border border-(--vscode-widget-border)"
+				style:background="color-mix(in srgb, var(--vscode-sideBar-background) {opacity}%, transparent)"
+			>
 				<h2 class="flex shrink-0 items-center gap-2 px-3 py-2 text-xs font-semibold" title={col.hint}>
 					{col.label}
 					<span class="rounded-full bg-(--vscode-badge-background) px-1.5 text-[10px] leading-4 font-normal text-(--vscode-badge-foreground)">{list.length}</span>

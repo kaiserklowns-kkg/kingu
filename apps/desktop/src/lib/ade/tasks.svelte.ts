@@ -74,6 +74,8 @@ import { notifications } from '#lib/workbench/notifications.svelte.ts';
 class AdeTasks {
 	list = $state<TaskMeta[]>([]);
 	worktrees = $state<WorktreeInfo[]>([]);
+	/** Every worktree git lists for the folder, Kingu's or not (the side bar's external worktree cards). */
+	listed = $state<WorktreeInfo[]>([]);
 	stats = $state<Record<string, DiffStat>>({});
 	statErrors = $state<Record<string, string>>({});
 	branches = $state<string[]>([]);
@@ -151,6 +153,7 @@ class AdeTasks {
 		this.stats = {};
 		this.statErrors = {};
 		this.worktrees = [];
+		this.listed = [];
 		this.loaded = false;
 		if (!root) return;
 		try {
@@ -161,6 +164,7 @@ class AdeTasks {
 			]);
 			if (this.#root !== root) return;
 			this.worktrees = worktrees.filter((w) => w.slug);
+			this.listed = worktrees;
 			this.branches = branches;
 			const base = status.branch && branches.includes(status.branch) ? status.branch : (branches[0] ?? 'HEAD');
 			const adopted = adoptOrphans(tasks, this.worktrees.map((w) => w.slug!), base, Date.now());
@@ -280,7 +284,9 @@ class AdeTasks {
 			return;
 		}
 		await this.#save([...this.list, newTask({ slug, title, prompt, base, agent: cli ? cliAgent(cli) : undefined, issue: input.issue, origin: input.origin }, Date.now())]);
-		this.worktrees = (await invoke<WorktreeInfo[]>('worktree_list').catch(() => this.worktrees)).filter((w) => w.slug);
+		const listed = await invoke<WorktreeInfo[]>('worktree_list').catch(() => this.listed);
+		this.listed = listed;
+		this.worktrees = listed.filter((w) => w.slug);
 		if (input.open !== false) this.openTask(slug);
 		await this.#runSetup(slug, input.open !== false);
 		// After the prompt: claude's --mcp-config takes several values and would swallow it.
@@ -631,6 +637,7 @@ class AdeTasks {
 			if (slugOfTaskKey(t) === slug || parseTaskDiffKey(t)?.slug === slug) editors.closeEverywhere(t);
 		}
 		this.worktrees = this.worktrees.filter((w) => w.slug !== slug);
+		this.listed = this.listed.filter((w) => w.slug !== slug);
 		delete this.stats[slug];
 		delete this.statErrors[slug];
 		await this.#save(removeTask(this.list, slug));

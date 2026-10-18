@@ -172,6 +172,9 @@ async function setZoom(level: number) {
 }
 
 /** Settings service, theme following, zoom, window-level auto save and the Rust-side settings. Call once from the workbench. */
+/** routes/layout.css's interface font stack, kept behind a kingu.ui.fontFamily choice. */
+const UI_FONT_STACK = "-apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', 'IBM Plex Sans Thai', 'Thonburi', sans-serif";
+
 export function installSettings(): () => void {
 	const uninstallSettings = settings.install();
 	const uninstallKeybindings = keybindings.install();
@@ -203,6 +206,11 @@ export function installSettings(): () => void {
 			const root = document.documentElement.style;
 			root.setProperty('--kg-tree-indent', `${settings.get<number>('workbench.tree.indent')}px`);
 			root.setProperty('--kg-list-scroll-behavior', settings.get<boolean>('workbench.list.smoothScrolling') ? 'smooth' : 'auto');
+		});
+		// kingu.ui.fontFamily (Orca's appFontFamily): the interface font, ahead of the default stack.
+		$effect(() => {
+			const font = (settings.get<string>('kingu.ui.fontFamily') ?? '').trim();
+			document.body.style.fontFamily = font ? `${font}, ${UI_FONT_STACK}` : '';
 		});
 		// files.watcherExclude: Rust drops matching events before they reach the workbench.
 		$effect(() => {

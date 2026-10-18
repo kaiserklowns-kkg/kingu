@@ -18,12 +18,54 @@
 	import type { WorktreeAction } from './worktreeActions';
 	import { repoDialog } from '#lib/workbench/repoDialog.svelte.ts';
 	import { scm } from '#lib/workbench/scm.svelte.ts';
+	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { baseName, cardProperties, externalWorktrees, hexColor, sidebarGroups, type Visibility } from './sidebarView';
+	import { sidebarPrefs, sidebarTask } from './sidebarState.svelte';
+	import { prStatuses } from './prStatus.svelte';
+	import { isLinear, issueRef } from './issues.ts';
+	import { openWorktreeIn } from './worktreeMenu.svelte';
+	import { openInLabels } from './worktreeActions';
 
-	/** Needs-attention first, then in progress, then done (Orca keeps busy worktrees on top). */
-	const ordered = $derived([...adeTasks.groups.attention, ...adeTasks.groups.active, ...adeTasks.groups.done]);
-	const shown = $derived(ordered.filter((v) => matchesQuery(adeLayout.query, v.meta.title, adeTasks.branchOf(v.meta.slug))));
-	const primaryShown = $derived(matchesQuery(adeLayout.query, workspace.name, status.branch));
+	// The ADE Sidebar settings (Orca's sidebar UI preferences): filters, sort, grouping and card properties.
+	const prefs = $derived(sidebarPrefs());
+	const groups = $derived(
+		sidebarGroups(
+			adeTasks.views.filter((v) => matchesQuery(adeLayout.query, v.meta.title, adeTasks.branchOf(v.meta.slug))).map(sidebarTask),
+			prefs
+		)
+	);
+	const shownCount = $derived(groups.reduce((n, g) => n + g.tasks.length, 0));
+	const props = $derived(cardProperties(settings.get<unknown[]>('kingu.sidebar.cardProperties'), settings.get<boolean>('kingu.sidebar.compactCards') === true));
+	const primaryShown = $derived(settings.get<boolean>('kingu.sidebar.hideDefaultBranch') !== true && !prefs.showActiveOnly && matchesQuery(adeLayout.query, workspace.name, status.branch));
 	const selectedKey = $derived(adeLayout.board ? null : adeLayout.key);
+	// Repository display (Orca's per-repo display name, badge color and icon).
+	const repoName = $derived((settings.get<string>('kingu.repo.displayName') ?? '').trim() || workspace.name);
+	const repoBadge = $derived(hexColor(settings.get<string>('kingu.repo.badgeColor')));
+	const repoIcon = $derived([...(settings.get<string>('kingu.repo.icon') ?? '').trim()].slice(0, 2).join(''));
+	// Worktrees Kingu did not make (Orca's external / agent worktree visibility): read-only cards.
+	const externals = $derived(
+		workspace.root
+			? externalWorktrees(adeTasks.listed, workspace.root, {
+					external: settings.get<Visibility>('kingu.worktree.externalVisibility'),
+					agent: settings.get<Visibility>('kingu.worktree.agentVisibility'),
+					custom: settings.get<string[]>('kingu.worktree.visibilitySources')
+				}).filter((w) => matchesQuery(adeLayout.query, baseName(w.path), w.branch ?? ''))
+			: []
+	);
+	const openIn = $derived(openInLabels(settings.get<Record<string, unknown>>('kingu.worktree.openIn')));
+	let externalMenu = $state<{ path: string; x: number; y: number } | null>(null);
+
+	// PR state for grouping and the card's PR property: read once per task (gh) when either needs it.
+	const asked = new Set<string>();
+	$effect(() => {
+		if (prefs.groupBy !== 'pr-status' && !props.has('pr')) return;
+		for (const v of adeTasks.views) {
+			const slug = v.meta.slug;
+			if (asked.has(slug) || prStatuses.bySlug[slug]) continue;
+			asked.add(slug);
+			void prStatuses.refresh(slug, { threads: false });
+		}
+	});
 
 	const summary = (v: TaskView) => v.runtime?.lastEvent ?? v.meta.last_run?.summary ?? statusLabel(v);
 	const when = (v: TaskView) => Math.max(v.meta.updated_at, v.runtime?.updatedAt ?? 0);
@@ -127,6 +169,7 @@
 				<span class="rounded-full bg-(--vscode-editorWarning-foreground) px-1.5 text-[10px] leading-4 font-semibold text-black" title="รอคุณ">{adeTasks.counts.needsInput}</span>
 			{/if}
 		</button>
+		{#if settings.get<boolean>('kingu.sidebar.showAutomations') !== false}
 		<button
 			class={[NAV, adeLayout.page === 'automations' && 'bg-(--vscode-list-activeSelectionBackground)/40']}
 			aria-pressed={adeLayout.page === 'automations'}
@@ -138,6 +181,8 @@
 				<span class="text-[11px] text-(--vscode-descriptionForeground)" title={automations.globalEnabled ? 'automation ที่เปิดอยู่' : 'หยุดทั้งหมดอยู่'}>{automations.globalEnabled ? automations.activeCount : 'หยุด'}</span>
 			{/if}
 		</button>
+		{/if}
+		{#if settings.get<boolean>('kingu.sidebar.showIssues') !== false}
 		<button
 			class={[NAV, adeLayout.page === 'issues' && 'bg-(--vscode-list-activeSelectionBackground)/40']}
 			aria-pressed={adeLayout.page === 'issues'}
@@ -146,6 +191,7 @@
 		>
 			<Icon name="bug" size={16} /> <span class="flex-1 text-left">Issues</span>
 		</button>
+		{/if}
 	</div>
 
 	<div class="flex h-7 shrink-0 items-center gap-0.5 pr-2 pl-4">
@@ -156,6 +202,22 @@
 
 	{#if addMenu}
 		<PopupMenu items={ADD_ITEMS} label="เพิ่ม" x={addMenu.x} y={addMenu.y} focusFirst={addMenu.keyboard} onRun={(node) => node.type === 'item' && runAdd(node.id)} onClose={() => (addMenu = null)} />
+	{/if}
+
+	{#if externalMenu}
+		{@const path = externalMenu.path}
+		<PopupMenu
+			items={[...openIn.map((l) => menuItem(`openIn:${l}`, `เปิดใน ${l} (Open in ${l})`)), ...(openIn.length ? [menuSeparator] : []), menuItem('copyPath', 'คัดลอก path')]}
+			label="Worktree"
+			x={externalMenu.x}
+			y={externalMenu.y}
+			onRun={(node) => {
+				if (node.type !== 'item') return;
+				if (node.id.startsWith('openIn:')) openWorktreeIn(node.id.slice(7), path);
+				else void navigator.clipboard.writeText(path).then(() => status.flash('คัดลอก path แล้ว'));
+			}}
+			onClose={() => (externalMenu = null)}
+		/>
 	{/if}
 
 	{#if menu}
@@ -181,9 +243,16 @@
 				<button class="block text-(--vscode-textLink-foreground) hover:underline" onclick={() => repoDialog.show('create')}>สร้างโปรเจกต์ใหม่…</button>
 			</div>
 		{:else}
-			<div class="flex h-9 items-center gap-2 px-2 text-[14px] font-semibold">
-				<Icon name="folder" size={16} />
-				<span class="truncate">{workspace.name}</span>
+			<div class="flex h-9 items-center gap-2 px-2 text-[14px] font-semibold" title={workspace.root}>
+				{#if repoIcon}
+					<span class="grid size-4 shrink-0 place-items-center text-[13px] leading-none">{repoIcon}</span>
+				{:else}
+					<Icon name="folder" size={16} />
+				{/if}
+				<span class="truncate">{repoName}</span>
+				{#if repoBadge}
+					<span class="size-2 shrink-0 rounded-full" style:background={repoBadge} aria-hidden="true"></span>
+				{/if}
 			</div>
 
 			{#if notGit}
@@ -209,8 +278,17 @@
 					</button>
 				{/if}
 
-				{#each shown as v (v.meta.slug)}
+				{#each groups as g (g.id)}
+				{#if g.label}
+					<div class="flex items-center gap-1.5 px-2 pt-2 pb-0.5 text-[11px] font-semibold tracking-wide text-(--vscode-descriptionForeground) uppercase">
+						<span class="truncate">{g.label}</span>
+						<span class="font-normal">{g.tasks.length}</span>
+					</div>
+				{/if}
+				{#each g.tasks as t (t.slug)}
+					{@const v = t.view}
 					{@const selected = selectedKey === v.meta.slug}
+					{@const pr = prStatuses.bySlug[v.meta.slug]?.pr}
 					{@const totals = v.stat ? aggregateStats(v.stat.files) : null}
 					{#if adeTasks.renaming === v.meta.slug}
 						<div class={[CARD, 'border-(--vscode-focusBorder) bg-(--vscode-list-hoverBackground)']}>
@@ -241,7 +319,7 @@
 								<span class="kg-ring -mx-0.5 shrink-0 text-(--vscode-editorWarning-foreground)" title={statusLabel(v)}><Icon name="bell" size={13} filled /></span>
 							{:else if v.status === 'running'}
 								<span class="size-2.5 shrink-0 animate-spin rounded-full border-[1.5px] border-(--vscode-editorInfo-foreground) border-t-transparent" title={statusLabel(v)}></span>
-							{:else}
+							{:else if props.has('status')}
 								<span class={['size-2 shrink-0 rounded-full', statusDot(v)]} title={statusLabel(v)}></span>
 							{/if}
 							<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -255,20 +333,61 @@
 								onclick={(e) => openMenu(v.meta.slug, e)}
 								onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && openMenu(v.meta.slug, e as unknown as MouseEvent)}>⋯</span
 							>
-							{#if totals && (totals.added || totals.deleted)}
+							{#if props.has('diff') && totals && (totals.added || totals.deleted)}
 								<span class="shrink-0 font-mono text-[11px]"><span class="text-[#73C991]">+{totals.added}</span> <span class="text-[#F48771]">−{totals.deleted}</span></span>
 							{/if}
 						</span>
-						<span class="mt-0.5 block truncate pl-4 font-mono text-xs text-(--vscode-descriptionForeground)">{adeTasks.branchOf(v.meta.slug)}</span>
-						<span class="mt-1 flex items-center gap-1.5 pl-4 text-xs">
-							<span class={['shrink-0', isQuestion(v) ? QUESTION_TEXT : v.status === 'waiting' ? 'text-(--vscode-editorWarning-foreground)' : 'text-(--vscode-descriptionForeground)']}><Icon name={isQuestion(v) ? 'question' : 'agent'} size={12} /></span>
-							<span class={['min-w-0 flex-1 truncate', isQuestion(v) ? QUESTION_TEXT : v.status === 'waiting' ? 'text-(--vscode-editorWarning-foreground)' : 'text-(--vscode-foreground)/80']}>{summary(v)}</span>
-							<span class="shrink-0 text-[11px] text-(--vscode-descriptionForeground)">{timeAgo(when(v), adeTasks.now)}</span>
-						</span>
+						{#if props.has('branch') || props.has('pr') || props.has('issue') || props.has('automation')}
+							<span class="mt-0.5 flex items-center gap-1.5 truncate pl-4 text-xs text-(--vscode-descriptionForeground)">
+								{#if props.has('branch')}<span class="min-w-0 flex-1 truncate font-mono">{adeTasks.branchOf(v.meta.slug)}</span>{:else}<span class="flex-1"></span>{/if}
+								{#if props.has('automation') && v.meta.origin === 'automation'}
+									<span class="shrink-0 rounded border border-(--vscode-widget-border) px-1 text-[10px] leading-4" title="งานที่ automation สร้าง">auto</span>
+								{/if}
+								{#if props.has('issue') && v.meta.issue}
+									<span class="shrink-0 font-mono" title="{isLinear(v.meta.issue) ? 'Linear' : 'GitHub'}: {v.meta.issue.title}">{issueRef(v.meta.issue)}</span>
+								{/if}
+								{#if props.has('pr') && pr}
+									<span class="shrink-0 font-mono" title="PR #{pr.number}: {pr.title} ({pr.draft ? 'DRAFT' : pr.state})">PR #{pr.number}</span>
+								{/if}
+							</span>
+						{/if}
+						{#if props.has('activity') || props.has('time')}
+							<span class="mt-1 flex items-center gap-1.5 pl-4 text-xs">
+								{#if props.has('activity')}
+									<span class={['shrink-0', isQuestion(v) ? QUESTION_TEXT : v.status === 'waiting' ? 'text-(--vscode-editorWarning-foreground)' : 'text-(--vscode-descriptionForeground)']}><Icon name={isQuestion(v) ? 'question' : 'agent'} size={12} /></span>
+									<span class={['min-w-0 flex-1 truncate', isQuestion(v) ? QUESTION_TEXT : v.status === 'waiting' ? 'text-(--vscode-editorWarning-foreground)' : 'text-(--vscode-foreground)/80']}>{summary(v)}</span>
+								{:else}<span class="flex-1"></span>{/if}
+								{#if props.has('time')}<span class="shrink-0 text-[11px] text-(--vscode-descriptionForeground)">{timeAgo(when(v), adeTasks.now)}</span>{/if}
+							</span>
+						{/if}
 					</button>
 					{/if}
 				{/each}
-				{#if adeLayout.query && !shown.length && !primaryShown}
+				{/each}
+
+				{#each externals as w (w.path)}
+					<!-- Not made by Kingu (Orca's external / agent worktrees): a read-only card that opens the folder elsewhere. -->
+					<button
+						class={[CARD, 'border-transparent hover:bg-(--vscode-list-hoverBackground)']}
+						title="{w.path} — worktree ที่ Kingu ไม่ได้สร้าง ({w.kind === 'agent' ? 'ของ agent' : 'ภายนอก'})"
+						onclick={(e) => {
+							const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+							externalMenu = { path: w.path, x: r.left + 16, y: r.bottom + 2 };
+						}}
+						oncontextmenu={(e) => {
+							e.preventDefault();
+							externalMenu = { path: w.path, x: e.clientX, y: e.clientY };
+						}}
+					>
+						<span class="flex items-center gap-2">
+							<span class="size-2 shrink-0 rounded-full border border-(--vscode-descriptionForeground)"></span>
+							<span class="min-w-0 flex-1 truncate text-[13px]">{baseName(w.path)}</span>
+							<span class="shrink-0 rounded border border-(--vscode-widget-border) px-1.5 text-[11px] leading-4 text-(--vscode-descriptionForeground)">{w.kind === 'agent' ? 'agent' : 'external'}</span>
+						</span>
+						<span class="mt-0.5 block truncate pl-4 font-mono text-xs text-(--vscode-descriptionForeground)">{w.branch ?? (w.detached ? 'detached HEAD' : '')}</span>
+					</button>
+				{/each}
+				{#if adeLayout.query && !shownCount && !primaryShown && !externals.length}
 					<p class="px-2 py-1 text-xs text-(--vscode-descriptionForeground)">ไม่พบ worktree ที่ตรงกับ “{adeLayout.query}”</p>
 				{/if}
 			</div>

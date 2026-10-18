@@ -14,12 +14,24 @@ export type WorktreeAction =
 	| 'copyPath'
 	| 'markDone'
 	| 'reopen'
-	| 'remove';
+	| 'remove'
+	| `openIn:${string}`;
 
 export type ActionRow = { id: WorktreeAction; label: string; enabled?: boolean } | 'separator';
 
-/** The folder itself (`slug` null) or a task worktree; `running`: its agent is mid-turn. */
-export function worktreeActions(w: { slug: string | null; status?: TaskStatus; running?: boolean; hasWorktree?: boolean }): ActionRow[] {
+/** At most this many `kingu.worktree.openIn` apps (Orca's Open In rows). */
+export const MAX_OPEN_IN = 8;
+
+/** The `kingu.worktree.openIn` labels with a non-empty command, in order, at most MAX_OPEN_IN. */
+export function openInLabels(setting: Readonly<Record<string, unknown>> | undefined): string[] {
+	return Object.entries(setting ?? {})
+		.filter(([label, cmd]) => label.trim() && typeof cmd === 'string' && cmd.trim())
+		.map(([label]) => label)
+		.slice(0, MAX_OPEN_IN);
+}
+
+/** The folder itself (`slug` null) or a task worktree; `running`: its agent is mid-turn. `openIn`: Open In app labels. */
+export function worktreeActions(w: { slug: string | null; status?: TaskStatus; running?: boolean; hasWorktree?: boolean; openIn?: readonly string[] }): ActionRow[] {
 	const task = w.slug !== null;
 	const rows: ActionRow[] = [
 		{ id: 'open', label: 'เปิด (Open)' },
@@ -28,6 +40,7 @@ export function worktreeActions(w: { slug: string | null; status?: TaskStatus; r
 		{ id: 'quickOpen', label: 'เปิดไฟล์… (Go to File)', enabled: !task || w.hasWorktree !== false },
 		'separator',
 		{ id: 'reveal', label: 'แสดงใน Finder (Reveal in Finder)', enabled: !task || w.hasWorktree !== false },
+		...(w.openIn ?? []).map((label): ActionRow => ({ id: `openIn:${label}`, label: `เปิดใน ${label} (Open in ${label})`, enabled: !task || w.hasWorktree !== false })),
 		{ id: 'copyPath', label: 'คัดลอก path' }
 	];
 	if (!task) return rows;

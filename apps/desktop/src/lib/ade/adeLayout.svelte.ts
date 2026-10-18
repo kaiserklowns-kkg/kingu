@@ -37,6 +37,7 @@ import {
 	type FileTab,
 	type TerminalTab
 } from './adeTabs.ts';
+import { switcherOrder } from './sidebarView.ts';
 
 export type CenterPage = 'board' | 'automations' | 'issues';
 /** Worktree key: '' for the folder itself (Orca's "primary" worktree), else the task slug. */
@@ -234,7 +235,9 @@ class AdeLayout {
 	switchRecent(step: 1 | -1) {
 		const key = this.key;
 		if (!this.switcher) {
-			const ids = mruOrder(this.mru[key] ?? [], this.tabs(key).map((t) => t.id), this.activeTab(key));
+			const all = this.tabs(key).map((t) => t.id);
+			// kingu.tabs.ctrlTabOrder (Orca's ctrlTabOrderMode): by recent use, or the strip order from the active tab.
+			const ids = switcherOrder(settings.get<string>('kingu.tabs.ctrlTabOrder'), mruOrder(this.mru[key] ?? [], all, this.activeTab(key)), all);
 			if (ids.length < 2) return;
 			this.switcher = { key, ids, index: switcherStep(0, step, ids.length) };
 		} else this.switcher = { ...this.switcher, index: switcherStep(this.switcher.index, step, this.switcher.ids.length) };
