@@ -220,7 +220,7 @@ fn tail(s: &str, max: usize) -> String {
 
 fn head(s: &str, max: usize) -> String {
   match s.char_indices().nth(max) {
-    Some((i, _)) => format!("{}\n…(ตัดไว้ {} ตัวอักษร)", &s[..i], s.len() - i),
+    Some((i, _)) => format!("{}\n…({} more characters cut)", &s[..i], s.len() - i),
     None => s.to_owned(),
   }
 }
