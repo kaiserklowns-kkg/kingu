@@ -12,7 +12,7 @@ const STATUS: Record<TaskStatus, TeamStatus> = {
 };
 
 /** `folder` disambiguates tasks with the same slug in different repositories. */
-export function toTeamTask(view: TaskView, folder: string): TeamTaskInput {
+export function toTeamTask(view: TaskView, folder: string, branch = `kingu/${view.meta.slug}`): TeamTaskInput {
 	const { meta, stat } = view;
 	const totals = stat ? aggregateStats(stat.files) : undefined;
 	const finished = view.status === 'done' || view.status === 'failed' ? (meta.merged_at ?? meta.updated_at) : null;
@@ -20,7 +20,7 @@ export function toTeamTask(view: TaskView, folder: string): TeamTaskInput {
 		id: `${folder}:${meta.slug}`,
 		title: meta.title,
 		status: STATUS[view.status],
-		branch: `kingu/${meta.slug}`,
+		branch,
 		agent: meta.agent,
 		model: meta.model,
 		additions: totals?.added,

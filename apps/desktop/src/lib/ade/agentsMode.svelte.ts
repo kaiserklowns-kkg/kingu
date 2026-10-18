@@ -64,7 +64,7 @@ export function pickSession() {
 		adeTasks.groups[col.id].map((v, i) => ({
 			id: v.meta.slug,
 			label: v.meta.title,
-			description: `${STATUS_LABEL[v.status]} · kingu/${v.meta.slug}`,
+			description: `${STATUS_LABEL[v.status]} · ${adeTasks.branchOf(v.meta.slug)}`,
 			separator: i === 0 ? col.label : undefined
 		}))
 	);

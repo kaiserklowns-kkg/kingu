@@ -5,7 +5,7 @@ const t = { title: 'แก้บั๊ก', lastEvent: 'Claude needs your permis
 
 describe('agent notifications', () => {
 	test('needs a permission answer', () => {
-		expect(noticeFor('running', 'waiting', t)).toEqual({ title: 'รอคุณอนุญาต: แก้บั๊ก', body: t.lastEvent });
+		expect(noticeFor('running', 'waiting', t)).toEqual({ title: 'รอคุณอนุญาต: แก้บั๊ก', body: t.lastEvent, kind: 'attention' });
 	});
 	test('a finished turn and a failure', () => {
 		expect(noticeFor('running', 'review', { title: 'x' })?.title).toBe('เสร็จรอบแล้ว: x');

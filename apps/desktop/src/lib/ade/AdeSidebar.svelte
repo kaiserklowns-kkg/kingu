@@ -19,7 +19,7 @@
 
 	/** Needs-attention first, then in progress, then done (Orca keeps busy worktrees on top). */
 	const ordered = $derived([...adeTasks.groups.attention, ...adeTasks.groups.active, ...adeTasks.groups.done]);
-	const shown = $derived(ordered.filter((v) => matchesQuery(adeLayout.query, v.meta.title, `kingu/${v.meta.slug}`)));
+	const shown = $derived(ordered.filter((v) => matchesQuery(adeLayout.query, v.meta.title, adeTasks.branchOf(v.meta.slug))));
 	const primaryShown = $derived(matchesQuery(adeLayout.query, workspace.name, status.branch));
 	const selectedKey = $derived(adeLayout.board ? null : adeLayout.key);
 

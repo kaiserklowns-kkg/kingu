@@ -51,7 +51,7 @@ export function runWorktreeAction(key: string, id: WorktreeAction) {
 		case 'copyPath':
 			return workspace.root && copy(slug ? `${workspace.root}/${worktreeDir(slug)}` : workspace.root, ' path ');
 		case 'copyBranch':
-			return slug && copy(`kingu/${slug}`, 'ชื่อ branch ');
+			return slug && copy(adeTasks.branchOf(slug), 'ชื่อ branch ');
 		case 'markDone':
 			return slug && adeTasks.markDone(slug);
 		case 'reopen':
@@ -66,7 +66,7 @@ export function jumpToWorktree() {
 	if (!workspace.root) return status.flash('เปิดโฟลเดอร์ก่อน');
 	const rows = jumpRows(
 		{ name: workspace.name ?? '', branch: status.branch ?? '' },
-		COLUMNS.map((c) => ({ label: c.label, tasks: adeTasks.groups[c.id].map((v) => ({ slug: v.meta.slug, title: v.meta.title, status: STATUS_LABEL[v.status] })) }))
+		COLUMNS.map((c) => ({ label: c.label, tasks: adeTasks.groups[c.id].map((v) => ({ slug: v.meta.slug, title: v.meta.title, status: STATUS_LABEL[v.status], branch: adeTasks.branchOf(v.meta.slug) })) }))
 	);
 	let last = '';
 	quick.pick({

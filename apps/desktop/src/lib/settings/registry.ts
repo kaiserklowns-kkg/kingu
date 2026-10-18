@@ -4,6 +4,7 @@
 
 import { DEFAULT_THEME, THEMES } from '../theme/themes';
 import { defaultTitleTemplate } from '../workbench/title';
+import { PROFILES } from '../ade/agentProfiles';
 
 const MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
 
@@ -22,6 +23,19 @@ export type SettingSchema =
 	| (Base & { type: 'boolean'; default: boolean })
 	| (Base & { type: 'number'; default: number; minimum?: number; maximum?: number; integer?: boolean })
 	| (Base & { type: 'string'; default: string; enum?: readonly string[]; enumDescriptions?: readonly string[] });
+
+/** `kingu.agent.args.<profile>`: extra arguments per known agent CLI (agentCli.ts agentCommand). */
+function agentArgsSettings(): SettingSchema[] {
+	return PROFILES.map((p) => ({
+		id: `kingu.agent.args.${p.id}`,
+		group: 'Agent',
+		type: 'string' as const,
+		default: '',
+		description: `อาร์กิวเมนต์เพิ่มเติมเมื่อ kingu.agent.cli เป็น ${p.title} (${p.bins.join(', ')}) ต่อท้ายคำสั่งก่อน prompt ห้ามมีอักขระของ shell (Extra arguments for ${p.title} when it is the agent CLI, added before the prompt.)`,
+		// User-only: flags such as --dangerously-skip-permissions must not come from a repository.
+		scope: 'application' as const
+	}));
+}
 
 export const DEFAULT_FONT_FAMILY = "Menlo, Monaco, 'Courier New', 'IBM Plex Sans Thai', monospace";
 
@@ -174,7 +188,8 @@ export const SETTINGS: SettingSchema[] = [
 		group: 'Agent',
 		type: 'string',
 		default: 'claude-opus-5-5',
-		description: 'โมเดลที่ agent ใช้ (The Claude model agent runs use.)'
+		description:
+			'โมเดล Claude ของงานโหมด timeline (agent host) ส่วนโหมด terminal ใช้ค่าของ CLI เอง หรือใส่ --model ใน kingu.agent.args.claude (The Claude model of timeline-mode runs; terminal-mode CLIs use their own, or --model in kingu.agent.args.claude.)'
 	},
 	{
 		id: 'kingu.agent.permissionMode',
@@ -187,7 +202,10 @@ export const SETTINGS: SettingSchema[] = [
 			'แก้ไขไฟล์ใน worktree ได้เลย ถามเฉพาะคำสั่งอื่น (Accept file edits automatically.)',
 			'วางแผนเท่านั้น ไม่แก้ไขไฟล์ (Plan only; no edits or commands.)'
 		],
-		description: 'โหมดการขออนุญาตของ agent (How the agent asks for permission to use tools.)'
+		description:
+			'โหมดการขออนุญาตของงานโหมด timeline ส่วนโหมด terminal CLI ถามเองตาม flag ของมัน (How timeline-mode runs ask for permission to use tools; terminal-mode CLIs follow their own flags.)',
+		// User-only: a repository's workspace settings must not loosen the user's permission prompts.
+		scope: 'application'
 	},
 	{
 		id: 'kingu.agent.runMode',
@@ -207,7 +225,50 @@ export const SETTINGS: SettingSchema[] = [
 		type: 'boolean',
 		default: true,
 		description:
-			'แจ้งเตือนของระบบเมื่อ agent รอคุณอนุญาต เสร็จรอบ หรือล้มเหลว ขณะที่คุณไม่ได้ดูหน้าต่าง Kingu (Show a system notification when an agent needs you while the window is not focused.)'
+			'แจ้งเตือนของระบบเมื่อ agent รอคุณอนุญาต เสร็จรอบ หรือล้มเหลว (Show a system notification when an agent needs you.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.agent.notifications.suppressWhenFocused',
+		group: 'Agent',
+		type: 'boolean',
+		default: true,
+		description:
+			'ไม่แจ้งเตือนงานที่คุณเปิดดูอยู่ขณะหน้าต่าง Kingu อยู่ด้านหน้า ปิดเพื่อแจ้งเตือนทุกครั้ง (Avoid notifying about the task on screen while Kingu is focused; off notifies always.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.agent.notifications.events',
+		group: 'Agent',
+		type: 'string',
+		default: 'all',
+		enum: ['all', 'attention'],
+		enumDescriptions: [
+			'รอคุณอนุญาต เสร็จรอบ และล้มเหลว (Needs permission, finished a turn, failed.)',
+			'เฉพาะที่ต้องให้คุณทำอะไร: รอคุณอนุญาตและล้มเหลว (Only needs permission and failed.)'
+		],
+		description: 'เหตุการณ์ของ agent ที่แจ้งเตือน (Which agent events notify you.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.agent.notifications.sound',
+		group: 'Agent',
+		type: 'string',
+		default: 'default',
+		enum: ['none', 'default', 'Glass', 'Ping', 'Pop', 'Hero', 'Submarine', 'Tink'],
+		enumDescriptions: [
+			'ไม่มีเสียง (Silent.)',
+			'เสียงแจ้งเตือนของระบบ (The system notification sound.)',
+			'Glass',
+			'Ping',
+			'Pop',
+			'Hero',
+			'Submarine',
+			'Tink'
+		],
+		description:
+			'เสียงของการแจ้งเตือน agent (เสียงของ macOS) ลองได้ที่ Agents: ส่งการแจ้งเตือนทดสอบ (Sound of agent notifications; macOS system sounds. Try it with Agents: Send Test Notification.)',
+		scope: 'application'
 	},
 	{
 		id: 'kingu.agent.cli',
@@ -215,7 +276,107 @@ export const SETTINGS: SettingSchema[] = [
 		type: 'string',
 		default: 'claude',
 		description:
-			'คำสั่ง agent CLI สำหรับโหมด terminal เช่น claude, codex, gemini, opencode, cursor-agent หรือ claude --model opus — CLI ที่ Kingu รู้จักได้ prompt, resume, MCP และสถานะตามที่ CLI นั้นรองรับ คำสั่งอื่นได้ prompt ต่อท้ายเป็นอาร์กิวเมนต์สุดท้าย ห้ามมีอักขระของ shell เลือกได้จาก Agent: Choose CLI… (The agent CLI for the terminal mode; known CLIs get their own prompt, resume, MCP and status handling, others get the prompt as their last argument.)'
+			'คำสั่ง agent CLI สำหรับโหมด terminal เช่น claude, codex, gemini, opencode, cursor-agent หรือ claude --model opus — CLI ที่ Kingu รู้จักได้ prompt, resume, MCP และสถานะตามที่ CLI นั้นรองรับ คำสั่งอื่นได้ prompt ต่อท้ายเป็นอาร์กิวเมนต์สุดท้าย ห้ามมีอักขระของ shell เลือกได้จาก Agent: Choose CLI… (The agent CLI for the terminal mode; known CLIs get their own prompt, resume, MCP and status handling, others get the prompt as their last argument.)',
+		// User-only: it is a program Kingu runs; a repository's workspace settings must not pick it.
+		scope: 'application'
+	},
+	...agentArgsSettings(),
+	// --- Worktrees (Orca: worktree branch prefix, base branch, setup script, delete on remove)
+	{
+		id: 'kingu.worktree.branchPrefix',
+		group: 'Worktrees',
+		type: 'string',
+		default: 'kingu/',
+		description:
+			'คำนำหน้าชื่อ branch ของงานใหม่ เช่น kingu/ feature/ หรือเว้นว่าง ใช้ได้เฉพาะ a-z A-Z 0-9 . _ / - งานเดิมใช้ branch เดิมต่อ (Prefix of new task branches, e.g. kingu/ or feature/; may be empty. Existing tasks keep their branch.)'
+	},
+	{
+		id: 'kingu.worktree.baseBranch',
+		group: 'Worktrees',
+		type: 'string',
+		default: '',
+		description:
+			'branch ตั้งต้นของงานใหม่ เช่น main หรือ develop เว้นว่างเพื่อใช้ branch ปัจจุบันของโฟลเดอร์ (ถ้าไม่มี branch นี้ในเครื่องก็ใช้ branch ปัจจุบัน) (Default base branch of new tasks; empty uses the folder\'s current branch, as does a branch that does not exist locally.)'
+	},
+	{
+		id: 'kingu.worktree.setupScript',
+		group: 'Worktrees',
+		type: 'string',
+		default: 'auto',
+		enum: ['auto', 'ask', 'off'],
+		enumDescriptions: [
+			'รัน .kingu/setup.sh ของโฟลเดอร์ใน terminal "Setup" ของ worktree ใหม่ ถามให้เชื่อถือก่อนครั้งแรกและทุกครั้งที่สคริปต์เปลี่ยน (Run the folder\'s .kingu/setup.sh in a Setup terminal of each new worktree; asks you to trust it first and whenever it changes.)',
+			'ถามทุกครั้งก่อนรัน (Ask every time before running it.)',
+			'ไม่รันสคริปต์ตั้งค่า (Never run the setup script.)'
+		],
+		description:
+			'สคริปต์ตั้งค่า worktree (เช่น bun install, คัดลอก .env) ได้ KINGU_ROOT_PATH, KINGU_WORKTREE_PATH และ KINGU_WORKSPACE_NAME ใน environment automation ไม่ถามและข้ามสคริปต์ที่ยังไม่เชื่อถือ (Worktree setup script, e.g. install dependencies; gets KINGU_ROOT_PATH, KINGU_WORKTREE_PATH and KINGU_WORKSPACE_NAME. Automations never ask and skip an untrusted script.)',
+		// User-only: it decides whether repository code runs on the user's machine.
+		scope: 'application'
+	},
+	{
+		id: 'kingu.worktree.archiveScript',
+		group: 'Worktrees',
+		type: 'string',
+		default: 'auto',
+		enum: ['auto', 'off'],
+		enumDescriptions: [
+			'รัน .kingu/archive.sh ของโฟลเดอร์ใน worktree ก่อนลบ (เช่น หยุด container) ถามให้เชื่อถือก่อนเหมือน setup ถ้าล้มเหลวจะถามว่าจะลบต่อไหม (Run the folder\'s .kingu/archive.sh in the worktree before it is removed; trusted like the setup script; a failure asks whether to go on.)',
+			'ไม่รันสคริปต์ก่อนลบ (Never run the archive script.)'
+		],
+		description: 'สคริปต์ก่อนลบ worktree หยุดเองหลัง 120 วินาที (Archive script run before a task worktree is removed; stopped after 120 seconds.)',
+		// User-only: it decides whether repository code runs on the user's machine.
+		scope: 'application'
+	},
+	{
+		id: 'kingu.worktree.confirmRemove',
+		group: 'Worktrees',
+		type: 'boolean',
+		default: true,
+		description:
+			'ถามก่อนลบงานและ worktree (worktree ที่มีงานยังไม่ commit ยังถามเสมอ) (Ask before removing a task and its worktree; a worktree with uncommitted work always asks.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.worktree.refreshBaseOnCreate',
+		group: 'Worktrees',
+		type: 'boolean',
+		default: false,
+		description:
+			'ก่อนสร้างงาน fetch branch ตั้งต้นจาก upstream แล้ว fast-forward เมื่อปลอดภัย (ไม่มี commit ในเครื่องที่ยังไม่ push และไม่มีการแก้ไขที่ยังไม่ commit) (Keep the local base up to date: fetch it and fast-forward it when safe before a task forks from it.)',
+		// User-only: it talks to the network and moves a local branch.
+		scope: 'application'
+	},
+	{
+		id: 'kingu.worktree.deleteBranchOnRemove',
+		group: 'Worktrees',
+		type: 'string',
+		default: 'deleteMerged',
+		enum: ['keep', 'deleteMerged', 'delete'],
+		enumDescriptions: [
+			'เก็บ branch ไว้ (Keep the branch.)',
+			'ลบ branch ที่ merge แล้ว (git branch -d หรือรู้ว่า merge ในเครื่อง/PR merged) เก็บ branch ที่ยังไม่ merge ไว้ (Delete it when merged — git sees it merged, or the task was merged locally or its PR was; keep unmerged ones.)',
+			'ลบ branch ทุกครั้ง แม้ยังไม่ merge (Always delete it, even unmerged.)'
+		],
+		description: 'เมื่อลบงาน จะลบ branch ของงานด้วยหรือไม่ (Whether removing a task also deletes its branch.)',
+		// User-only: deleting branches is the user's call, not a repository's.
+		scope: 'application'
+	},
+	// --- Pull requests (Orca: PR creation defaults)
+	{
+		id: 'kingu.pr.draft',
+		group: 'Pull Requests',
+		type: 'boolean',
+		default: false,
+		description: 'สร้าง PR ของงานเป็น draft (Create task pull requests as drafts.)'
+	},
+	{
+		id: 'kingu.pr.openAfterCreate',
+		group: 'Pull Requests',
+		type: 'boolean',
+		default: false,
+		description: 'เปิด PR ในเบราว์เซอร์หลังสร้าง (Open the pull request in the browser after creating it.)',
+		scope: 'application'
 	},
 	{
 		id: 'kingu.automations.enabled',
@@ -417,6 +578,16 @@ export const SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.statusBar.usage.display',
+		group: 'Status Bar',
+		type: 'string',
+		default: 'used',
+		enum: ['used', 'remaining'],
+		enumDescriptions: ['เปอร์เซ็นต์ที่ใช้ไป (Percent used.)', 'เปอร์เซ็นต์ที่เหลือ (Percent remaining.)'],
+		description: 'usage ใน status bar แสดงที่ใช้ไปหรือที่เหลือ (Show usage as used or remaining.)',
+		scope: 'application'
+	},
+	{
 		id: 'kingu.statusBar.keepAwake.visible',
 		group: 'Status Bar',
 		type: 'boolean',
@@ -473,7 +644,7 @@ export type SettingsSection = { id: string; label: string; groups: string[] };
 export const SETTINGS_SECTIONS: SettingsSection[] = [
 	{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Status Bar', 'Team', 'Snap Sandbox'] },
 	{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Files', 'Terminal', 'Git'] },
-	{ id: 'ade', label: 'ADE (Agents)', groups: ['Agent'] }
+	{ id: 'ade', label: 'ADE (Agents)', groups: ['Agent', 'Worktrees', 'Pull Requests'] }
 ];
 
 export const SNAPS_SECTION_ID = 'snaps';

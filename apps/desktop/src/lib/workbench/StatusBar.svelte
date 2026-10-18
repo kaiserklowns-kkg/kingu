@@ -43,7 +43,7 @@
 
 	// One status bar for the IDE and the Agents layout: the branch of what you are looking at (the
 	// selected worktree in Agents), problems, agent activity and cost in both; editor items in the IDE.
-	const branch = $derived(appMode.isAgents && adeLayout.key ? `kingu/${adeLayout.key}` : status.branch);
+	const branch = $derived(appMode.isAgents && adeLayout.key ? adeTasks.branchOf(adeLayout.key) : status.branch);
 	const sync = $derived(syncItem(scm.repo));
 	const counts = $derived(adeTasks.counts);
 	const cost = $derived(adeTasks.views.reduce((sum, v) => sum + (runtime.run(v.meta.slug)?.result?.total_cost_usd ?? v.meta.last_run?.cost_usd ?? 0), 0));

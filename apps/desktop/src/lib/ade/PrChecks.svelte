@@ -31,7 +31,7 @@
 		skipped: 'bg-(--vscode-descriptionForeground)'
 	};
 	const entry = $derived(prStatuses.bySlug[slug]);
-	const branch = $derived(slug ? `kingu/${slug}` : (scm.repo?.branch ?? 'branch นี้'));
+	const branch = $derived(slug ? adeTasks.branchOf(slug) : (scm.repo?.branch ?? 'branch นี้'));
 	const pr = $derived(entry?.pr);
 </script>
 

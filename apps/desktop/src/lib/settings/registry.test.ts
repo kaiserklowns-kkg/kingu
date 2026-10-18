@@ -117,6 +117,62 @@ describe('schema', () => {
 	});
 });
 
+describe('ADE settings', () => {
+	test('worktree and agent settings with Orca-like defaults and Thai + English descriptions', () => {
+		const m = resolveSettings({}, {});
+		const expected: Record<string, unknown> = {
+			'kingu.worktree.branchPrefix': 'kingu/',
+			'kingu.worktree.baseBranch': '',
+			'kingu.worktree.setupScript': 'auto',
+			'kingu.worktree.deleteBranchOnRemove': 'deleteMerged',
+			'kingu.worktree.archiveScript': 'auto',
+			'kingu.worktree.confirmRemove': true,
+			'kingu.worktree.refreshBaseOnCreate': false,
+			'kingu.pr.draft': false,
+			'kingu.pr.openAfterCreate': false,
+			'kingu.statusBar.usage.display': 'used',
+			'kingu.agent.notifications': true,
+			'kingu.agent.notifications.suppressWhenFocused': true,
+			'kingu.agent.notifications.events': 'all',
+			'kingu.agent.notifications.sound': 'default',
+			'kingu.agent.args.claude': '',
+			'kingu.agent.args.codex': ''
+		};
+		for (const [id, v] of Object.entries(expected)) {
+			expect([id, m.get(id)?.value]).toEqual([id, v]);
+			const d = SCHEMA.get(id)!.description;
+			expect([id, /[฀-๿]/.test(d), /\([A-Z][^)]*\.\)/.test(d)]).toEqual([id, true, true]);
+		}
+		expect(settingsSections().find((s) => s.id === 'ade')?.groups).toEqual(['Agent', 'Worktrees', 'Pull Requests']);
+	});
+
+	test('settings that run commands, loosen prompts or delete branches are user-only', () => {
+		const userOnly = [
+			'kingu.agent.cli',
+			'kingu.agent.permissionMode',
+			'kingu.worktree.setupScript',
+			'kingu.worktree.deleteBranchOnRemove',
+			'kingu.worktree.archiveScript',
+			'kingu.worktree.refreshBaseOnCreate',
+			'kingu.automations.enabled',
+			'kingu.snaps.sandbox',
+			...SETTINGS.filter((s) => s.id.startsWith('kingu.agent.args.')).map((s) => s.id)
+		];
+		expect(userOnly.length).toBeGreaterThan(10);
+		const workspace = Object.fromEntries(userOnly.map((id) => [id, SCHEMA.get(id)!.type === 'string' ? 'x' : true]));
+		workspace['kingu.agent.cli'] = './evil.sh';
+		workspace['kingu.agent.args.claude'] = '--dangerously-skip-permissions';
+		workspace['kingu.worktree.setupScript'] = 'auto';
+		workspace['kingu.worktree.deleteBranchOnRemove'] = 'delete';
+		const m = resolveSettings({}, workspace);
+		for (const id of userOnly) expect([id, m.get(id)?.source]).toEqual([id, 'default']);
+		// A team convention may come from the repository.
+		const ws = resolveSettings({}, { 'kingu.worktree.branchPrefix': 'feature/', 'kingu.worktree.baseBranch': 'develop' });
+		expect(ws.get('kingu.worktree.branchPrefix')).toEqual({ value: 'feature/', source: 'workspace' });
+		expect(ws.get('kingu.worktree.baseBranch')).toEqual({ value: 'develop', source: 'workspace' });
+	});
+});
+
 describe('settings sections', () => {
 	// Contributed (Snap) settings, as snapModel.snapSettingSchemas makes them.
 	const contributed: SettingSchema[] = [

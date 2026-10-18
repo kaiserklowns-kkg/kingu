@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use crate::git::{self, check_rel, check_rev};
 
-use super::worktree::{branch_name, validate_slug, worktree_path};
+use super::worktree::{task_branch, validate_slug, worktree_path};
 
 /// Untracked files larger than this are counted as changed but not line-counted.
 const MAX_COUNT_BYTES: u64 = 5 * 1024 * 1024;
@@ -223,14 +223,14 @@ fn clean(dir: &Path, untracked: bool) -> Result<bool, String> {
   Ok(git::run(dir, &["status", "--porcelain", "-z", flag])?.is_empty())
 }
 
-/// Merges `kingu/<slug>` into the local branch `base`. Where `base` is checked out (the main
+/// Merges the task branch (`kingu/<slug>` by default) into the local branch `base`. Where `base` is checked out (the main
 /// folder or another worktree) that checkout must have no tracked changes and runs `git merge`
 /// (`--ff-only`, or `--no-ff` for a merge commit; a conflicting merge is aborted). When it is
 /// not checked out anywhere, only a fast-forward is possible and just the ref moves.
 pub fn merge_local(repo: &Path, slug: &str, base: &str, merge_commit: bool) -> Result<MergeResult, String> {
   let dir = task_dir(repo, slug)?;
   check_branch(repo, base)?;
-  let branch = branch_name(slug);
+  let branch = task_branch(&dir, slug)?;
   if base == branch {
     return Err("cannot merge a task into its own branch".into());
   }
@@ -306,18 +306,27 @@ pub fn gh_status(bin: Option<PathBuf>) -> GhStatus {
   }
 }
 
-/// Pushes `kingu/<slug>` to `origin` and opens a pull request against `base`; returns its URL.
-pub fn pr_create(gh: &Path, dir: &Path, slug: &str, base: &str, title: &str, body: &str) -> Result<String, String> {
+/// `gh pr create` arguments; `draft` from `kingu.pr.draft` (Orca's PR creation defaults).
+pub fn pr_create_args(base: &str, branch: &str, title: &str, body: &str, draft: bool) -> Vec<String> {
+  let mut args = vec!["pr".to_owned(), "create".to_owned(), format!("--base={base}"), format!("--head={branch}"), format!("--title={title}"), format!("--body={body}")];
+  if draft {
+    args.push("--draft".to_owned());
+  }
+  args
+}
+
+/// Pushes the task branch to `origin` and opens a pull request against `base`; returns its URL.
+pub fn pr_create(gh: &Path, dir: &Path, slug: &str, base: &str, title: &str, body: &str, draft: bool) -> Result<String, String> {
   check_rev(base)?;
   if title.trim().is_empty() {
     return Err("PR title is empty".into());
   }
   git::run(dir, &["remote", "get-url", "origin"]).map_err(|_| "ไม่มี remote ชื่อ origin".to_owned())?;
-  let branch = branch_name(slug);
+  let branch = task_branch(dir, slug)?;
   git::run(dir, &["push", "-u", "origin", &format!("refs/heads/{branch}:refs/heads/{branch}")])?;
   let out = crate::shell_env::command(gh)
     .current_dir(dir)
-    .args(["pr", "create", &format!("--base={base}"), &format!("--head={branch}"), &format!("--title={title}"), &format!("--body={body}")])
+    .args(pr_create_args(base, &branch, title, body, draft))
     .output()
     .map_err(|e| format!("gh: {e}"))?;
   if !out.status.success() {
@@ -412,11 +421,13 @@ pub fn is_no_pr(stderr: &str) -> bool {
   e.contains("no pull requests found") || e.contains("no open pull requests")
 }
 
-/// The pull request of `kingu/<slug>`, or of the branch checked out in `dir` when `slug` is
+/// The pull request of the task branch, or of the branch checked out in `dir` when `slug` is
 /// `None` (the open folder itself), via `gh pr view`; `None` when the branch has none.
 pub fn pr_status(gh: &Path, dir: &Path, slug: Option<&str>) -> Result<Option<PrStatus>, String> {
   let mut args = vec!["pr".to_owned(), "view".to_owned()];
-  args.extend(slug.map(branch_name));
+  if let Some(slug) = slug {
+    args.push(task_branch(dir, slug)?);
+  }
   args.extend(["--json".to_owned(), PR_FIELDS.to_owned()]);
   let out = crate::shell_env::command(gh)
     .current_dir(dir)
@@ -468,13 +479,20 @@ mod tests {
     write(&repo, "old.txt", "a\nb\nc\nd\ne\nf\n");
     git_ok(&repo, &["add", "."]);
     git_ok(&repo, &["commit", "-q", "-m", "init"]);
-    worktree::create(&repo, "t", Some("main")).unwrap();
+    worktree::create(&repo, "t", Some("main"), None).unwrap();
     let wt = task_dir(&repo, "t").unwrap();
     (tmp, repo, wt)
   }
 
   fn file<'a>(st: &'a DiffStat, path: &str) -> &'a FileChange {
     st.files.iter().find(|f| f.path == path).unwrap_or_else(|| panic!("{path} not in {:?}", st.files))
+  }
+
+  #[test]
+  fn pr_create_arguments_keep_values_attached_and_add_draft() {
+    let args = pr_create_args("main", "kingu/t", "--title", "-b", false);
+    assert_eq!(args, ["pr", "create", "--base=main", "--head=kingu/t", "--title=--title", "--body=-b"]);
+    assert_eq!(pr_create_args("main", "kingu/t", "x", "", true).last().map(String::as_str), Some("--draft"));
   }
 
   #[test]

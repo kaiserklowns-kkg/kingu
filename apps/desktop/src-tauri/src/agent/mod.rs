@@ -10,6 +10,7 @@ pub mod hooks;
 pub mod host;
 pub mod issues;
 pub mod review;
+pub mod scripts;
 pub mod tasks;
 pub mod worktree;
 
@@ -258,10 +259,24 @@ pub async fn worktree_pr_create(
   base: String,
   title: String,
   body: String,
+  draft: Option<bool>,
+  open: Option<bool>,
 ) -> Result<String, String> {
   let dir = review::task_dir(&ws.root()?, &slug)?;
   let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
-  let url = blocking(move || review::pr_create(&gh, &dir, &slug, &base, &title, &body)).await?;
+  let draft = draft.unwrap_or(false);
+  let url = blocking(move || {
+    let url = review::pr_create(&gh, &dir, &slug, &base, &title, &body, draft)?;
+    // kingu.pr.openAfterCreate: best effort, the PR exists either way.
+    if open.unwrap_or(false) && url.starts_with("https://") {
+      let shown = crate::shell_env::command(&gh).current_dir(&dir).args(["pr", "view", &url, "--web"]).output();
+      if !shown.as_ref().is_ok_and(|o| o.status.success()) {
+        log::warn!("gh pr view --web {url} failed");
+      }
+    }
+    Ok(url)
+  })
+  .await?;
   log::info!("opened PR {url}");
   Ok(url)
 }

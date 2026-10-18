@@ -263,8 +263,19 @@ fn worktree_create(
   ws: State<'_, Workspace>,
   slug: String,
   base: Option<String>,
+  prefix: Option<String>,
 ) -> Result<agent::worktree::WorktreeInfo, String> {
-  agent::worktree::create(&ws.root()?, &slug, base.as_deref())
+  agent::worktree::create(&ws.root()?, &slug, base.as_deref(), prefix.as_deref())
+}
+
+/// Before a task forks from `base`: fast-forward it from its upstream when safe
+/// (`kingu.worktree.refreshBaseOnCreate`); returns what happened, for the status bar.
+#[tauri::command]
+async fn worktree_refresh_base(ws: State<'_, Workspace>, base: String) -> Result<Option<String>, String> {
+  let root = ws.root()?;
+  tauri::async_runtime::spawn_blocking(move || agent::worktree::refresh_base(&root, &base, std::time::Duration::from_secs(30)))
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -273,14 +284,17 @@ fn worktree_list(ws: State<'_, Workspace>) -> Result<Vec<agent::worktree::Worktr
   ws.current().map_or(Ok(Vec::new()), |root| agent::worktree::list(&root))
 }
 
+/// `delete_branch`: `keep` (default), `safe` (`git branch -d`) or `force`; returns the branch a
+/// safe delete kept because it is not merged.
 #[tauri::command]
 fn worktree_remove(
   ws: State<'_, Workspace>,
   slug: String,
   force: Option<bool>,
-  delete_branch: Option<bool>,
-) -> Result<(), String> {
-  agent::worktree::remove(&ws.root()?, &slug, force.unwrap_or(false), delete_branch.unwrap_or(false))
+  delete_branch: Option<String>,
+) -> Result<Option<String>, String> {
+  let branch = agent::worktree::DeleteBranch::parse(delete_branch.as_deref())?;
+  agent::worktree::remove(&ws.root()?, &slug, force.unwrap_or(false), branch)
 }
 
 /// Find in Files: streams ripgrep matches per file; a new search cancels the previous one.
@@ -623,6 +637,7 @@ pub fn run() {
       pty::pty_list,
       pty::pty_backend,
       worktree_create,
+      worktree_refresh_base,
       worktree_list,
       worktree_remove,
       agent::agent_start,
@@ -649,6 +664,10 @@ pub fn run() {
       agent::gh_status,
       agent::worktree_pr_create,
       agent::worktree_pr_status,
+      agent::scripts::worktree_script,
+      agent::scripts::worktree_script_trust,
+      agent::scripts::worktree_script_prepare,
+      agent::scripts::worktree_archive_run,
       agent::gh_issues_list,
       agent::gh_issue_view,
       agent::gh_issue_comment,

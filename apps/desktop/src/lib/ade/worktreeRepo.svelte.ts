@@ -82,7 +82,7 @@ export class WorktreeRepo implements ScmSource {
 		const rebase = settings.get<boolean>('git.pullRebase') === true;
 		const args = op === 'pull' || op === 'sync' ? { rebase } : {};
 		const ok = await this.#run(`git_${op}`, args);
-		if (ok) status.flash(`${op} kingu/${this.slug} แล้ว`);
+		if (ok) status.flash(`${op} ${this.repo?.branch ?? this.slug} แล้ว`);
 		return ok;
 	}
 
@@ -98,7 +98,7 @@ export class WorktreeRepo implements ScmSource {
 		}
 		if (await this.#run('git_commit', { message, amend })) {
 			this.message = '';
-			status.flash(amend ? `แก้ commit ล่าสุดใน kingu/${this.slug} แล้ว` : `commit ใน kingu/${this.slug} แล้ว`);
+			status.flash(amend ? `แก้ commit ล่าสุดใน ${this.repo?.branch ?? this.slug} แล้ว` : `commit ใน ${this.repo?.branch ?? this.slug} แล้ว`);
 		}
 	}
 }
