@@ -3,6 +3,8 @@
 //! it will use, and the app folders a snap must never write (trust store, settings, skill
 //! plugins), so `fs = "home"` cannot untrust-proof itself or turn the sandbox off.
 
+use crate::i18n::msg::SnapMsg;
+use crate::tr;
 use serde::Serialize;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
@@ -13,12 +15,12 @@ pub struct SandboxInfo {
   enforcer: Option<String>,
   launcher: Option<String>,
   protect: Vec<String>,
-  /// Why snaps cannot be confined here (Thai, shown to the user).
+  /// Why snaps cannot be confined here (in the UI language, shown to the user).
   problem: Option<String>,
 }
 
 fn info(enforcer: Result<&str, String>, launcher: Result<PathBuf, String>, protect: Vec<PathBuf>) -> SandboxInfo {
-  let launcher = launcher.and_then(|p| p.to_str().map(str::to_owned).ok_or_else(|| "path ของ kingu-ptyd ไม่ใช่ UTF-8".into()));
+  let launcher = launcher.and_then(|p| p.to_str().map(str::to_owned).ok_or_else(|| tr!(SnapMsg::LauncherNotUtf8)));
   let problem = match (&enforcer, &launcher) {
     (Err(e), _) | (_, Err(e)) => Some(e.clone()),
     _ => None,
@@ -35,7 +37,7 @@ fn info(enforcer: Result<&str, String>, launcher: Result<PathBuf, String>, prote
 pub fn snap_sandbox_info(app: AppHandle) -> SandboxInfo {
   let enforcer = kingu_ptyd::sandbox::enforcer(crate::shell_env::path().as_deref());
   let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from));
-  let launcher = if cfg!(unix) { crate::pty::find_daemon(std::env::var_os("KINGU_PTYD"), exe_dir.as_deref()) } else { Err("ระบบปฏิบัติการนี้ยังไม่รองรับ sandbox ของ Snap".into()) };
+  let launcher = if cfg!(unix) { crate::pty::find_daemon(std::env::var_os("KINGU_PTYD"), exe_dir.as_deref()) } else { Err(tr!(SnapMsg::SandboxUnsupported)) };
   let paths = app.path();
   // On macOS the config and data dirs are the same folder.
   let mut protect: Vec<PathBuf> = [paths.app_config_dir(), paths.app_data_dir(), paths.app_cache_dir()].into_iter().flatten().collect();
@@ -51,9 +53,9 @@ mod tests {
   fn info_reports_the_first_problem() {
     let ok = info(Ok("sandbox-exec"), Ok("/A/kingu-ptyd".into()), vec!["/cfg".into()]);
     assert_eq!(ok, SandboxInfo { enforcer: Some("sandbox-exec".into()), launcher: Some("/A/kingu-ptyd".into()), protect: vec!["/cfg".into()], problem: None });
-    let no_bwrap = info(Err("ไม่พบ bwrap".into()), Ok("/A/kingu-ptyd".into()), vec![]);
-    assert_eq!((no_bwrap.enforcer, no_bwrap.problem.as_deref()), (None, Some("ไม่พบ bwrap")));
-    let no_launcher = info(Ok("bwrap"), Err("ไม่พบ kingu-ptyd".into()), vec![]);
-    assert_eq!((no_launcher.launcher, no_launcher.problem.as_deref()), (None, Some("ไม่พบ kingu-ptyd")));
+    let no_bwrap = info(Err("bwrap not found".into()), Ok("/A/kingu-ptyd".into()), vec![]);
+    assert_eq!((no_bwrap.enforcer, no_bwrap.problem.as_deref()), (None, Some("bwrap not found")));
+    let no_launcher = info(Ok("bwrap"), Err("kingu-ptyd not found".into()), vec![]);
+    assert_eq!((no_launcher.launcher, no_launcher.problem.as_deref()), (None, Some("kingu-ptyd not found")));
   }
 }

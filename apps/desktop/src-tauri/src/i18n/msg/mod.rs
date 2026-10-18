@@ -7,8 +7,9 @@ mod core;
 mod git;
 mod linear;
 mod lsp;
-mod workspace;
+mod snap;
 mod team;
+mod workspace;
 
 pub use accounts::AccountsMsg;
 pub use agent::AgentMsg;
@@ -16,8 +17,9 @@ pub use core::CoreMsg;
 pub use git::GitMsg;
 pub use linear::LinearMsg;
 pub use lsp::LspMsg;
-pub use workspace::WorkspaceMsg;
+pub use snap::SnapMsg;
 pub use team::TeamMsg;
+pub use workspace::WorkspaceMsg;
 
 #[cfg(test)]
 use super::{Locale, Message};
@@ -41,8 +43,9 @@ pub fn all() -> Vec<Entry> {
   out.extend(GitMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(LinearMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(LspMsg::ALL.iter().map(|&m| entry(m)));
-  out.extend(WorkspaceMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(SnapMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(TeamMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(WorkspaceMsg::ALL.iter().map(|&m| entry(m)));
   out
 }
 
