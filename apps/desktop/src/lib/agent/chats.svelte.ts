@@ -42,6 +42,8 @@ import { shouldDrain, turnBusy, type RunPermissionMode } from './chatInput.ts';
 import type { SendHow } from './requestQueuing.ts';
 import { chatTitlePrompt, parseChatTitle } from './chatTitle.ts';
 import { forkTitle, rewoundMeta, type ForkPoint } from './chatRewind.ts';
+import { chatsToResume, RESUME_PROMPT } from './chatResume.ts';
+import { status } from '#lib/workbench/status.svelte.ts';
 import {
 	chatCwdPath,
 	chatSendPlan,
@@ -147,6 +149,23 @@ class Chats {
 			notifications.error(t('chat.loadFailed', { error: String(e) }));
 		}
 		this.loaded = true;
+		void this.#resumeCutOff(root);
+	}
+
+	/** Folders whose cut-off chats were looked at in this app session (once each). */
+	#resumeChecked = new Set<string>();
+
+	/** Chats Kingu quit in the middle of: continued (kingu.chat.resumeWorkOnRestart), else just no longer marked working. */
+	async #resumeCutOff(root: string) {
+		if (this.#resumeChecked.has(root)) return;
+		this.#resumeChecked.add(root);
+		const cut = chatsToResume(this.list, (id) => !!this.runs[runKey(root, id)]);
+		if (!cut.length) return;
+		for (const c of cut) this.#patch(root, c.id, { working: false });
+		if (settings.get<boolean>('kingu.chat.resumeWorkOnRestart') !== true) return;
+		let sent = 0;
+		for (const c of cut) if (await this.send(c.id, { text: RESUME_PROMPT, images: [], files: [] })) sent++;
+		if (sent) status.flash(t('adeWorkflow.chatsResumed', { count: sent }));
 	}
 
 	/** Saves the open folder's list (in order: one write at a time). Runs of another folder are not saved here. */
@@ -226,7 +245,7 @@ class Chats {
 				savedSession = ev.session_id;
 				this.#patch(root, meta.id, { session_id: ev.session_id, resume_at: null });
 			}
-			if (ev.kind === 'result' || ev.kind === 'exit') this.#patch(root, meta.id, { last_run: runSummary({ ...state, slug: meta.id }, Date.now(), state.startedAt) });
+			if (ev.kind === 'result' || ev.kind === 'exit') this.#patch(root, meta.id, { last_run: runSummary({ ...state, slug: meta.id }, Date.now(), state.startedAt), working: false });
 			// The chat's first answer (its timeline keeps earlier runs): time for an AI title.
 			if (ev.kind === 'result' && !ev.is_error && state.items.filter((i) => i.kind === 'result').length === 1) void this.#aiTitle(root, meta.id, ev.result);
 		};
@@ -250,7 +269,7 @@ class Chats {
 				onEvent
 			});
 			clientLog('info', `agent run ${state.runId} started for chat ${meta.id}`);
-			this.#patch(root, meta.id, {});
+			this.#patch(root, meta.id, { working: true });
 		} catch (e) {
 			applyEvent(state, { kind: 'error', message: String(e) });
 			applyEvent(state, { kind: 'exit', code: null, signal: null, stopped: false });
@@ -271,7 +290,7 @@ class Chats {
 			if (plan.kind === 'send') {
 				if (run?.runId === undefined) throw new Error(t('team.agent.stillStarting'));
 				await invoke('agent_send', { runId: run.runId, text: message.text, images: message.images.length ? message.images : null });
-				this.#patch(root, id, {});
+				this.#patch(root, id, { working: true });
 			} else await this.#start(root, meta, message.text, plan.resume, message.images, message.files);
 			return true;
 		} catch (e) {
@@ -408,7 +427,7 @@ class Chats {
 		try {
 			const point = await invoke<ForkPoint>('chat_fork', { id, newId, before });
 			const title = forkTitle(meta.title, t('chatRewind.forkedPrefix'), (title) => t('chatRewind.forkedTitle', { title }));
-			const fork: ChatMeta = { ...meta, id: newId, title: renamedChatTitle('', title) ?? meta.title, ...rewoundMeta(point), created_at: now, updated_at: now, last_run: null };
+			const fork: ChatMeta = { ...meta, id: newId, title: renamedChatTitle('', title) ?? meta.title, ...rewoundMeta(point), created_at: now, updated_at: now, last_run: null, working: false };
 			this.#save([...this.list, fork], root);
 			await this.#saving;
 			return newId;

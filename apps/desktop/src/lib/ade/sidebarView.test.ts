@@ -47,6 +47,13 @@ describe('ADE side bar (Orca sidebar preferences)', () => {
 		// One project: `repo` lists like `none`; `manual` (the dragged order) sorts like `recent` here.
 		expect(sidebarGroups([task('x')], prefs({ groupBy: 'repo' })).map((g) => g.id)).toEqual(['all']);
 		expect(sidebarGroups([], prefs())).toEqual([]);
+		// Workflow: the board's columns, a task without one in In progress.
+		const flow = [task('a', { workflowStatus: 'in-review' }), task('b'), task('c', { workflowStatus: 'todo' })];
+		expect(sidebarGroups(flow, prefs({ groupBy: 'workflow' })).map((g) => [g.id, g.tasks.map((t) => t.slug)])).toEqual([
+			['workflow:todo', ['c']],
+			['workflow:in-progress', ['b']],
+			['workflow:in-review', ['a']]
+		]);
 	});
 
 	test('card properties', () => {

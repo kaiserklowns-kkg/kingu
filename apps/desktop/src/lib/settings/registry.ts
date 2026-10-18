@@ -290,6 +290,15 @@ const CORE_SETTINGS: SettingSchema[] = [
 			'ให้ agent ในแชตทำตามไฟล์กฎของโปรเจกต์นอกจาก CLAUDE.md: AGENTS.md, .cursor/rules/*.mdc และ .github/copilot-instructions.md (Cursor: rules) (Chat agents follow the project\'s rules files besides CLAUDE.md: AGENTS.md, .cursor/rules/*.mdc and .github/copilot-instructions.md.)'
 	},
 	{
+		id: 'kingu.chat.resumeWorkOnRestart',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: false,
+		description:
+			'แชตที่ agent กำลังทำงานอยู่ตอน Kingu ปิด จะทำต่อเองเมื่อเปิดโฟลเดอร์นั้นอีกครั้ง (Orca: nativeChatResumeWorkOnRestart) (Chats whose agent was working when Kingu quit continue on their own when the folder opens again.)',
+		scope: 'application'
+	},
+	{
 		id: 'kingu.agent.notifications',
 		group: 'Agent',
 		type: 'boolean',

@@ -8,7 +8,8 @@
 export const RUST_ERRORS = {
 	ghMissing: { en: 'GitHub CLI (gh) not found', th: 'ไม่พบ GitHub CLI (gh)' },
 	remoteAuthFailed: { en: 'Authentication with the remote failed', th: 'ยืนยันตัวตนกับ remote ไม่สำเร็จ' },
-	notInstalled: { en: 'Not installed: ', th: 'ไม่ได้ติดตั้ง ' }
+	notInstalled: { en: 'Not installed: ', th: 'ไม่ได้ติดตั้ง ' },
+	worktreeOrphan: { en: 'Git no longer tracks ', th: 'git ไม่รู้จัก ' }
 } as const;
 
 export type RustErrorId = keyof typeof RUST_ERRORS;

@@ -32,6 +32,8 @@ export type ChatMeta = {
 	created_at: number;
 	updated_at: number;
 	last_run: RunSummary | null;
+	/** A turn was running when saved; still set at launch: Kingu quit mid-turn (chatResume.ts). */
+	working?: boolean;
 };
 
 /** Rust's limits (chats.rs). */

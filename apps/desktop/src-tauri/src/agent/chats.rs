@@ -91,6 +91,10 @@ pub struct ChatMeta {
   pub updated_at: u64,
   #[serde(default)]
   pub last_run: Option<RunSummary>,
+  /// A turn was running when this was saved; still set at the next launch means Kingu quit
+  /// mid-turn (`kingu.chat.resumeWorkOnRestart` continues those chats).
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub working: bool,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -424,6 +428,7 @@ mod tests {
         num_turns: Some(1),
         started_at: Some(1),
       }),
+      working: false,
     }
   }
 
@@ -431,7 +436,7 @@ mod tests {
   fn chats_round_trip_and_start_empty() {
     let tmp = tempfile::tempdir().unwrap();
     assert_eq!(load(tmp.path()).unwrap(), []);
-    let chats = vec![chat("c-1"), ChatMeta { cwd: ChatCwd::Task { slug: "fix-login".into() }, ..chat("c-2") }];
+    let chats = vec![chat("c-1"), ChatMeta { cwd: ChatCwd::Task { slug: "fix-login".into() }, working: true, ..chat("c-2") }];
     save(tmp.path(), &chats).unwrap();
     assert_eq!(load(tmp.path()).unwrap(), chats);
     let text = std::fs::read_to_string(tmp.path().join(".kingu/chats.json")).unwrap();

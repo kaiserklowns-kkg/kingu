@@ -4,6 +4,7 @@
 import { firstLine, formatUsage, slugify, toolArg, type AgentEvent, type RunState, type RunStatus } from '#lib/agent/events.ts';
 import { isQuestionTool, questionText } from './agentHooks.ts';
 import type { AgentRow } from './agentPresence.ts';
+import type { SessionRef } from './sessionHistory.ts';
 import { locale, t } from '#lib/i18n/index.ts';
 
 export type TaskStatus = 'running' | 'waiting' | 'review' | 'done' | 'failed';
@@ -38,6 +39,10 @@ export type TaskMeta = {
 	/** The branch still has the name made from the title and waits for one made from the work
 	 *  (Orca's autoRenameBranchFromWork); absent once renamed, or for a branch you chose. */
 	auto_name?: boolean;
+	/** The board column you put it in (Orca's workspace status, workflow.ts); absent: the default column. */
+	workflow_status?: string | null;
+	/** Earlier agent sessions, newest first (sessionHistory.ts); `session_id` is the latest. */
+	sessions?: SessionRef[];
 };
 
 /** Mirrors Rust `agent::tasks::IssueLink`. No `provider` means GitHub (links saved before Linear came). */

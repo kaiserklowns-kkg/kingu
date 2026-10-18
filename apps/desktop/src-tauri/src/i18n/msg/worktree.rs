@@ -39,5 +39,17 @@ crate::i18n::messages! {
       en: "Branch {branch} is already pushed, so it keeps its name",
       th: "branch {branch} ถูก push แล้ว จึงคงชื่อเดิมไว้",
     },
+    RemoveLocked {
+      en: "Worktree {slug} is locked by git; run git worktree unlock on it first",
+      th: "worktree {slug} ถูก git ล็อกไว้ ให้รัน git worktree unlock ก่อน",
+    },
+    RemoveOrphan {
+      en: "Git no longer tracks {path} but the folder is still there; remove it again to delete the folder",
+      th: "git ไม่รู้จัก {path} แล้วแต่โฟลเดอร์ยังอยู่ กดลบอีกครั้งเพื่อลบโฟลเดอร์ทิ้ง",
+    },
+    RemoveNotWorktree {
+      en: "{path} is not a git worktree, so Kingu leaves it alone; delete the folder yourself, then remove the task again",
+      th: "{path} ไม่ใช่ git worktree Kingu จึงไม่แตะมัน ลบโฟลเดอร์เองแล้วลบงานอีกครั้ง",
+    },
   }
 }

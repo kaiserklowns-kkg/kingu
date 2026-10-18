@@ -23,6 +23,10 @@ const MAX_SESSION_ID: usize = 128;
 const MAX_ACCEPTED_HUNKS: usize = 20_000;
 pub const MAX_SUMMARY: usize = 2000;
 const MAX_ISSUE_URL: usize = 2048;
+/// Sessions a task remembers (`TaskMeta::sessions`).
+pub const MAX_SESSIONS: usize = 20;
+const MAX_WORKFLOW_STATUS: usize = 40;
+const MAX_AGENT: usize = 256;
 /// What created a task other than you (Orca's automation / CLI workspace badges); the side bar can hide them.
 pub const ORIGINS: &[&str] = &["automation"];
 
@@ -110,6 +114,23 @@ pub struct TaskMeta {
   /// (Orca's autoRenameBranchFromWork); absent once renamed, or for a branch you chose.
   #[serde(default, skip_serializing_if = "std::ops::Not::not")]
   pub auto_name: bool,
+  /// The board column you put the task in (Orca's workspace status: `todo`, `in-progress`,
+  /// `in-review`, `completed`, or a column of `kingu.board.statuses`); absent: the default column.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub workflow_status: Option<String>,
+  /// Earlier agent sessions of the task, newest first (Continue Session…); `session_id` is the latest.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub sessions: Vec<SessionRef>,
+}
+
+/// One agent session a task ran, so it can be continued later (or handed to another agent).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SessionRef {
+  pub id: String,
+  /// The task's agent when the session ran (`claude-code`, or `cli:<command>`).
+  pub agent: String,
+  /// Unix milliseconds the session was first seen.
+  pub at: u64,
 }
 
 /// Session ids go to the agent host as `resume`: keep them to plain id characters.
@@ -191,8 +212,21 @@ pub fn validate(tasks: &[TaskMeta]) -> Result<(), String> {
     if let Some(r) = &t.last_run {
       validate_run_summary(&t.slug, r)?;
     }
+    if let Some(w) = &t.workflow_status
+      && !valid_workflow_status(w)
+    {
+      return Err(format!("{}: invalid workflow status", t.slug));
+    }
+    if t.sessions.len() > MAX_SESSIONS || t.sessions.iter().any(|s| !valid_session_id(&s.id) || s.agent.is_empty() || s.agent.len() > MAX_AGENT) {
+      return Err(format!("{}: invalid sessions", t.slug));
+    }
   }
   Ok(())
+}
+
+/// A board column id: lowercase letters, digits and `-`, 1-40 characters.
+pub fn valid_workflow_status(id: &str) -> bool {
+  !id.is_empty() && id.len() <= MAX_WORKFLOW_STATUS && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') && !id.starts_with('-')
 }
 
 /// A saved run summary (tasks.json and chats.json); `owner` names the task or chat in errors.
@@ -323,6 +357,8 @@ mod tests {
       issue: Some(IssueLink { number: 42, url: "https://github.com/acme/app/issues/42".into(), title: "แก้ login".into(), provider: "github".into(), key: None }),
       origin: Some("automation".into()),
       auto_name: false,
+      workflow_status: Some("in-review".into()),
+      sessions: vec![SessionRef { id: "0b5e-4c1d_9".into(), agent: "claude-code".into(), at: 1 }],
     }
   }
 
@@ -367,6 +403,7 @@ mod tests {
     let t = &load(tmp.path()).unwrap()[0];
     assert_eq!((t.agent.as_str(), t.updated_at, t.accepted.len(), t.accepted_hunks.len()), ("claude-code", 0, 0, 0));
     assert_eq!((t.session_id.as_deref(), t.last_run.as_ref(), t.issue.as_ref(), t.origin.as_deref()), (None, None, None, None));
+    assert_eq!((t.workflow_status.as_deref(), t.sessions.len()), (None, 0));
   }
 
   #[test]
@@ -397,6 +434,10 @@ mod tests {
     assert!(bad(|t| t.origin = Some("cli; rm".into())));
     assert!(bad(|t| t.accepted_hunks = BTreeMap::from([("b.txt".into(), vec!["../x".into()])])));
     assert!(bad(|t| t.accepted_hunks = BTreeMap::from([(String::new(), vec!["ab".into()])])));
+    assert!(bad(|t| t.workflow_status = Some("In Review".into())));
+    assert!(bad(|t| t.workflow_status = Some(String::new())));
+    assert!(bad(|t| t.sessions[0].id = "--resume; rm".into()));
+    assert!(bad(|t| t.sessions = vec![t.sessions[0].clone(); MAX_SESSIONS + 1]));
     assert!(save(tmp.path(), &[task("a"), task("a")]).is_err());
     assert!(!tmp.path().join(".kingu/tasks.json").exists());
   }
