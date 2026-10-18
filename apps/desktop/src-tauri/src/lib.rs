@@ -12,6 +12,7 @@ mod git_remote;
 mod linear;
 mod lsp;
 mod menu;
+mod net_proxy;
 mod project;
 mod notify;
 mod pty;
@@ -331,6 +332,14 @@ fn pty_spawn(
     && key.starts_with("cli:")
   {
     env.extend(accounts::env_for_program(&accounts, program)?);
+  }
+  // http.proxy for agent CLIs (they call model APIs), unless terminal.integrated.env sets or unsets it.
+  if key.starts_with("cli:") {
+    for (k, v) in net_proxy::env() {
+      if !env.contains_key(&k) && !unset.contains(&k) {
+        env.insert(k, v);
+      }
+    }
   }
   let shell = terminal.shell.as_deref().filter(|s| !s.trim().is_empty());
   // kingu.terminal.scopeHistoryByWorktree (ADE terminals): history of their own per worktree.
@@ -768,6 +777,7 @@ pub fn run() {
       shell_env::init(shell_env::resolution_timeout(
         settings::user_value(&config_dir, "application.shellEnvironmentResolutionTimeout").as_ref(),
       ));
+      net_proxy::init(&config_dir);
       system::set_config_dir(config_dir);
       if cfg!(debug_assertions) {
         app.handle().plugin(

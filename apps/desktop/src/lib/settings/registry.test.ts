@@ -287,3 +287,19 @@ describe('VS Code IDE settings', () => {
 		for (const s of SETTINGS.filter((x) => !x.id.startsWith('kingu.'))) expect([s.id, all.includes(`'${s.id}'`) || all.includes(asRead(s.id))]).toEqual([s.id, true]);
 	});
 });
+
+describe('http.* proxy settings', () => {
+	const proxy = SCHEMA.get('http.proxy')!;
+
+	test('user-only, in Application › Proxy', () => {
+		for (const id of ['http.proxy', 'http.noProxy', 'http.proxyStrictSSL', 'http.proxyAuthorization']) expect([id, SCHEMA.get(id)?.scope, SCHEMA.get(id)?.group]).toEqual([id, 'application', 'Application']);
+		expect(settingsInView('', null).some((s) => s.id === 'http.proxy')).toBe(true);
+	});
+
+	test("VS Code's URL pattern decides which proxy values apply", () => {
+		for (const ok of ['', 'http://proxy.example.com:8080', 'https://u:p@10.0.0.1:3128/', 'socks5h://[::1]:1080']) expect([ok, validate(proxy, ok)]).toEqual([ok, ok]);
+		for (const bad of ['proxy:8080', 'ftp://proxy:21', 'http://proxy:8080/path']) expect([bad, validate(proxy, bad)]).toEqual([bad, undefined]);
+		expect(settingProblems({ 'http.proxy': 'proxy:8080' }, 'user')).toHaveLength(1);
+		expect(settingProblems({ 'http.proxy': 'http://proxy:8080' }, 'workspace')[0].message).toContain('User');
+	});
+});

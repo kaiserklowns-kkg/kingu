@@ -36,7 +36,7 @@ type Base = {
 export type SettingSchema =
 	| (Base & { type: 'boolean'; default: boolean })
 	| (Base & { type: 'number'; default: number; minimum?: number; maximum?: number; integer?: boolean })
-	| (Base & { type: 'string'; default: string; enum?: readonly string[]; enumDescriptions?: readonly string[] })
+	| (Base & { type: 'string'; default: string; enum?: readonly string[]; enumDescriptions?: readonly string[]; pattern?: string })
 	/** `itemEnum`: the values an item may take (VS Code: `items.enum`, e.g. `git.checkoutType`). */
 	| (Base & { type: 'array'; items: 'string' | 'number'; itemEnum?: readonly string[]; default: readonly (string | number)[] })
 	/**
@@ -660,6 +660,7 @@ export const SUBGROUPS: Readonly<Record<string, readonly (readonly [string, read
 	Window: [['New Window', ['window.*newwindow*']]],
 	Application: [
 		['Keyboard', ['keyboard.*']],
+		['Proxy', ['http.*']],
 		['Experimental', ['application.experimental.*']],
 		['Other', ['application.*']]
 	]
@@ -739,6 +740,7 @@ export function validate(schema: SettingSchema, value: unknown): unknown {
 		}
 		case 'string':
 			if (typeof value !== 'string') return undefined;
+			if (schema.pattern && !new RegExp(schema.pattern, 'u').test(value)) return undefined;
 			return schema.enum && !schema.enum.includes(value) && schema.id !== 'workbench.colorTheme' ? undefined : value;
 		case 'array':
 			if (!Array.isArray(value)) return undefined;
@@ -827,7 +829,7 @@ export function scopeRule(s: SettingSchema): string {
 function describeType(s: SettingSchema): string {
 	switch (s.type) {
 		case 'string':
-			return s.enum ? `one of ${s.enum.map((e) => JSON.stringify(e)).join(', ')}` : 'a string';
+			return s.enum ? `one of ${s.enum.map((e) => JSON.stringify(e)).join(', ')}` : s.pattern ? `a string matching ${s.pattern}` : 'a string';
 		case 'number':
 			return `${s.integer ? 'an integer' : 'a number'}${s.minimum !== undefined ? ` >= ${s.minimum}` : ''}${s.maximum !== undefined ? ` <= ${s.maximum}` : ''}`;
 		case 'boolean':

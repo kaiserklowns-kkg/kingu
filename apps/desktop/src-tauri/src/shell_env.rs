@@ -59,20 +59,24 @@ pub fn path() -> Option<OsString> {
 
 /// `Command::new(program)` with PATH set to [`path`], for tools that look up other tools (git
 /// hooks and credential helpers, `gh` calling `git`), as the agent host gets it.
+/// `http.proxy` / `http.noProxy` go in as `HTTPS_PROXY`, `NO_PROXY` and friends when set.
 pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
   let mut cmd = Command::new(program);
   if let Some(p) = path() {
     cmd.env("PATH", p);
   }
+  cmd.envs(crate::net_proxy::env());
   cmd
 }
 
-/// The process environment with PATH replaced by [`path`].
+/// The process environment with PATH replaced by [`path`] and the `http.proxy` variables set.
 pub fn vars_os() -> Vec<(OsString, OsString)> {
-  let mut vars: Vec<_> = std::env::vars_os().filter(|(k, _)| k != "PATH").collect();
+  let proxy = crate::net_proxy::env();
+  let mut vars: Vec<_> = std::env::vars_os().filter(|(k, _)| k != "PATH" && !proxy.iter().any(|(n, _)| k == n.as_str())).collect();
   if let Some(p) = path() {
     vars.push(("PATH".into(), p));
   }
+  vars.extend(proxy.into_iter().map(|(k, v)| (k.into(), v.into())));
   vars
 }
 

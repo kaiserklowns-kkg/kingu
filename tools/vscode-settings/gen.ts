@@ -92,6 +92,8 @@ function entry(e: (typeof spec.entries)[number]): string {
 		if (t === 'integer') o.integer = true;
 	} else if ((t === 'string' || (t === undefined && s.enum?.length)) && !s.anyOf && !s.oneOf && (!s.enum || s.enum.every((x: unknown) => typeof x === 'string'))) {
 		Object.assign(o, { type: 'string', default: def });
+		// VS Code's `pattern` (e.g. http.proxy's URL form): a value that doesn't match is ignored.
+		if (s.pattern && !s.enum) o.pattern = s.pattern;
 		if (s.enum) {
 			// `enumOnly`: the values Kingu supports (an ENUM_SUBSETS entry); `enumTh` follows VS Code's full enum.
 			const keep = (v: string) => !e.enumOnly || e.enumOnly.includes(v);

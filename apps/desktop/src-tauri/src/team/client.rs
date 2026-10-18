@@ -83,7 +83,7 @@ pub struct HttpTransport {
 
 impl HttpTransport {
   pub fn new() -> Result<Self, String> {
-    let client = reqwest::blocking::Client::builder()
+    let client = crate::net_proxy::client_builder()?
       .timeout(Duration::from_secs(15))
       .connect_timeout(Duration::from_secs(5))
       .redirect(reqwest::redirect::Policy::none())

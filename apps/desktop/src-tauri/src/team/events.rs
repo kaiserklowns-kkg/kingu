@@ -247,7 +247,7 @@ impl Default for StreamConfig {
 
 pub fn http_client(cfg: &StreamConfig) -> Result<reqwest::blocking::Client, String> {
   // In the blocking client `timeout` bounds each read of the body, not the whole stream.
-  reqwest::blocking::Client::builder()
+  crate::net_proxy::client_builder()?
     .timeout(cfg.read_timeout)
     .connect_timeout(Duration::from_secs(5))
     .redirect(reqwest::redirect::Policy::none())

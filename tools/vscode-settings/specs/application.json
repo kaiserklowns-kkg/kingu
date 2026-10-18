@@ -1,7 +1,7 @@
 {
 	"out": "apps/desktop/src/lib/settings/vscode/application.ts",
 	"export": "APPLICATION_SETTINGS",
-	"what": "keyboard.* and application.*",
+	"what": "keyboard.*, application.* and http.*",
 	"entries": [
 		{
 			"id": "keyboard.dispatch",
@@ -12,6 +12,30 @@
 			"id": "application.shellEnvironmentResolutionTimeout",
 			"group": "Application",
 			"th": "เวลาสูงสุดเป็นวินาทีที่รออ่าน PATH จาก login shell ตอนเปิด Kingu จาก Dock หรือ Finder มีผลเมื่อเปิด Kingu ครั้งถัดไป"
+		},
+		{
+			"id": "http.proxy",
+			"group": "Application",
+			"th": "proxy ที่ Kingu ใช้ออกอินเทอร์เน็ต เช่น http://proxy.example.com:8080 ใช้กับคำขอของ Kingu เอง คือเซิร์ฟเวอร์ทีม, Linear และ usage ของบัญชี AI และส่งเป็น HTTPS_PROXY/HTTP_PROXY ให้ git, gh, language server, agent host และ agent CLI ใน terminal ของ ADE ว่างไว้เพื่อใช้ค่าจากตัวแปร http_proxy/https_proxy",
+			"scope": "application"
+		},
+		{
+			"id": "http.noProxy",
+			"group": "Application",
+			"th": "ชื่อโดเมนที่ไม่ผ่าน proxy เช่น localhost หรือ .corp.example.com ส่งเป็น NO_PROXY ให้โปรแกรมที่ Kingu เรียกด้วย",
+			"scope": "application"
+		},
+		{
+			"id": "http.proxyStrictSSL",
+			"group": "Application",
+			"th": "ตรวจใบรับรอง TLS ของคำขอของ Kingu เองเมื่อใช้ proxy ปิดเฉพาะเมื่อ proxy ขององค์กรเปลี่ยนใบรับรอง ซึ่งไม่ปลอดภัย",
+			"scope": "application"
+		},
+		{
+			"id": "http.proxyAuthorization",
+			"group": "Application",
+			"th": "ค่าที่ส่งเป็น header Proxy-Authorization ในคำขอของ Kingu เอง เช่น Basic … ส่วนโปรแกรมอื่นให้ใส่ชื่อผู้ใช้และรหัสผ่านใน URL ของ http.proxy แทน",
+			"scope": "application"
 		}
 	]
 }

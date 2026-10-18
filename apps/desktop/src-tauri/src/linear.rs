@@ -94,7 +94,7 @@ impl Http {
   }
 
   pub fn with_endpoint(endpoint: &str) -> Result<Self, String> {
-    let client = reqwest::blocking::Client::builder()
+    let client = crate::net_proxy::client_builder()?
       .timeout(Duration::from_secs(20))
       .connect_timeout(Duration::from_secs(5))
       // A redirect could carry the key to another host.
