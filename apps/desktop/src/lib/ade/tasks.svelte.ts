@@ -291,7 +291,8 @@ class AdeTasks {
 	 * restart resumes exactly it) and hooks reporting its state; other CLIs run as configured.
 	 */
 	async #launchCli(slug: string, cli: string[], how: { prompt: string } | { resume: string | null } | { fresh: true }) {
-		const extras = async (argv: string[]) => cliWithMcp(argv, mcpServers(), await skillPlugins());
+		const root = workspace.root ? `${workspace.root}/${worktreeDir(slug)}` : null;
+		const extras = async (argv: string[]) => cliWithMcp(argv, mcpServers(root), await skillPlugins());
 		if (!isClaude(cli)) {
 			const argv = 'prompt' in how ? cliStart(cli, how.prompt) : 'resume' in how ? (cliResume(cli) ?? cli) : cli;
 			return cliSessions.start(slug, await extras(argv));

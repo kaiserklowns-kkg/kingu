@@ -6,11 +6,12 @@
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
-	import { isActive, isUpdatable, lockNote, originLabel, settingId, settingsGroup, snapKey, type SnapInfo } from './snapModel.ts';
+	import { enforcementLabel, isActive, isUpdatable, lockNote, originLabel, SANDBOX_SETTING, settingId, settingsGroup, snapKey, type SnapInfo } from './snapModel.ts';
 	import { snaps } from './snaps.svelte.ts';
 
 	let reloading = $state(false);
 	const shown = $derived(systemSettings.snapKey ? snaps.list.filter((s) => snapKey(s) === systemSettings.snapKey) : snaps.list);
+	const enforcement = $derived(enforcementLabel(snaps.sandbox));
 
 	async function reload() {
 		reloading = true;
@@ -53,6 +54,14 @@
 		</p>
 		{#if snaps.error}
 			<p role="alert" class="mt-3 rounded-md border border-(--vscode-editorError-foreground) px-2 py-1 text-xs text-(--vscode-errorForeground)">โหลด Snaps ไม่สำเร็จ: {snaps.error}</p>
+		{/if}
+
+		{#if snaps.sandbox.kind === 'off'}
+			<p role="alert" class="mt-3 flex items-start gap-1.5 rounded-md border border-(--vscode-editorWarning-foreground) px-2 py-1.5 text-xs text-(--vscode-editorWarning-foreground)">
+				<Icon name="warning" size={14} />
+				<span>ปิดการบังคับสิทธิ์ของ Snap อยู่ (<code>{SANDBOX_SETTING}</code> = "off") งานและ MCP server ของทุก snap รันได้ทุกอย่างที่คุณทำได้ รวมถึงเห็น token ใน environment</span>
+				<button class="ml-auto shrink-0 text-(--vscode-textLink-foreground) hover:underline" onclick={() => systemSettings.show('Snap Sandbox')}>ตั้งค่า</button>
+			</p>
 		{/if}
 
 		{#if snaps.busy}<p class="mt-3 text-xs text-(--vscode-descriptionForeground)">{snaps.busy}</p>{/if}
@@ -111,7 +120,9 @@
 								<li>ไฟล์ (fs): {s.permissions.fs === 'home' ? 'home — ทั้งโฮมโฟลเดอร์' : 'worktree — เฉพาะโฟลเดอร์งาน'}</li>
 								<li>Secrets: {s.permissions.secrets.length ? s.permissions.secrets.join(', ') : '—'}</li>
 							</ul>
-							<p class="mt-1 text-[11px] text-(--vscode-descriptionForeground) opacity-80">ประกาศไว้ให้ตรวจเท่านั้น ยังไม่ได้บังคับใช้ (not enforced yet)</p>
+							<p class={['mt-1 text-[11px]', TONE[enforcement.tone]]} title="งานและ MCP server ของ snap รันผ่าน kingu-ptyd snap-exec: เขียนไฟล์ได้เฉพาะที่ประกาศ อ่านได้ทั้งเครื่อง ไม่เห็น secret ที่ไม่ได้ประกาศ">
+								{enforcement.text}
+							</p>
 						</div>
 						<div>
 							<div class={LABEL}>MCP servers</div>

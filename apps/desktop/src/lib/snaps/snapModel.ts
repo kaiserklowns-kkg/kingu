@@ -151,19 +151,94 @@ export function expandArgv(command: readonly string[], values: Record<string, Se
 /**
  * MCP servers handed to agents: active snaps only, keyed `<snapId>-<serverName>`, with
  * `${setting:…}` expanded in command and env. A server whose program expands to nothing is left out.
+ * With `sandbox`, each server runs through the launcher confined to its snap's permissions in
+ * `root` (the agent's worktree); when the sandbox refuses (or there is no root) servers are left out.
  */
-export function mcpServersOf(list: readonly SnapInfo[], get: (id: string) => unknown = () => undefined): Record<string, McpServerSpec> {
+export function mcpServersOf(list: readonly SnapInfo[], get: (id: string) => unknown = () => undefined, sandbox?: { plan: SandboxPlan; root: string | null }): Record<string, McpServerSpec> {
 	const out: Record<string, McpServerSpec> = {};
 	for (const s of list) {
 		if (!isActive(s)) continue;
 		const values = settingValues(s, get);
 		for (const m of s.mcp) {
-			const [command, ...args] = expandArgv(m.command, values);
-			if (!command) continue;
-			out[`${s.id}-${m.name}`] = { command, args, env: expandEnv(m.env, values) };
+			const argv = expandArgv(m.command, values);
+			if (!argv.length) continue;
+			const env = expandEnv(m.env, values);
+			let run = argv;
+			if (sandbox && sandbox.plan.kind !== 'off') {
+				if (sandbox.plan.kind === 'refuse' || !sandbox.root) continue;
+				run = sandboxedArgv(sandbox.plan, s.permissions, sandbox.root, argv, Object.keys(env));
+			}
+			const [command, ...args] = run;
+			out[`${s.id}-${m.name}`] = { command, args, env };
 		}
 	}
 	return out;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Sandbox: tasks and MCP servers run as `kingu-ptyd snap-exec … -- <argv>`, which strips
+// undeclared credentials from the environment and execs sandbox-exec (macOS) or bwrap (Linux).
+
+export const SANDBOX_SETTING = 'kingu.snaps.sandbox';
+export type SandboxMode = 'enforce' | 'off';
+/** `snap_sandbox_info` (src-tauri/src/snap_sandbox.rs). */
+export type SandboxInfo = { enforcer: string | null; launcher: string | null; protect: string[]; problem: string | null };
+export type SandboxPlan = { kind: 'enforce'; launcher: string; enforcer: string; protect: string[] } | { kind: 'off' } | { kind: 'refuse'; reason: string };
+
+/** How snaps run here: confined, unconfined because the user turned it off, or not at all. */
+export function sandboxPlan(info: SandboxInfo | null, mode: unknown): SandboxPlan {
+	if (mode === 'off') return { kind: 'off' };
+	if (!info) return { kind: 'refuse', reason: 'ยังตรวจ sandbox ของ Snap ไม่เสร็จ ลองอีกครั้ง' };
+	if (info.enforcer && info.launcher) return { kind: 'enforce', launcher: info.launcher, enforcer: info.enforcer, protect: info.protect };
+	return { kind: 'refuse', reason: info.problem ?? 'ไม่มีเครื่องมือบังคับสิทธิ์บนเครื่องนี้' };
+}
+
+/**
+ * `launcher snap-exec … -- argv` for a snap's permissions. `keep` names variables the snap sets
+ * itself (an MCP server's env) so the launcher does not strip them as credentials.
+ */
+export function sandboxedArgv(plan: Extract<SandboxPlan, { kind: 'enforce' }>, p: SnapPermissions, root: string, argv: readonly string[], keep: readonly string[] = []): string[] {
+	return [
+		plan.launcher,
+		'snap-exec',
+		'--network',
+		p.network ? 'on' : 'off',
+		'--fs',
+		p.fs,
+		'--root',
+		root,
+		...p.secrets.flatMap((s) => ['--secret', s]),
+		...keep.flatMap((k) => ['--keep', k]),
+		...plan.protect.flatMap((d) => ['--protect', d]),
+		'--',
+		...argv
+	];
+}
+
+/** The terminal command of a task under `plan`, or why it may not run. */
+export function sandboxTask(plan: SandboxPlan, p: SnapPermissions, root: string, argv: string[]): { run: string[] } | { error: string } {
+	if (plan.kind === 'off') return { run: argv };
+	if (plan.kind === 'refuse') return { error: refusal(plan.reason) };
+	return { run: sandboxedArgv(plan, p, root, argv) };
+}
+
+const refusal = (reason: string) => `ไม่รันงานและ MCP server ของ Snap เพราะบังคับสิทธิ์ไม่ได้: ${reason} — ถ้ายอมรับความเสี่ยง ตั้ง ${SANDBOX_SETTING} เป็น "off"`;
+
+/** The refusal message for a plan that refuses (for the status bar). */
+export const sandboxRefusal = (plan: SandboxPlan) => (plan.kind === 'refuse' ? refusal(plan.reason) : null);
+
+/** The details page line: what enforces the permissions here. */
+export function enforcementLabel(plan: SandboxPlan): { text: string; tone: 'ok' | 'warn' | 'error' } {
+	if (plan.kind === 'enforce') return { text: `บังคับใช้: ${plan.enforcer}`, tone: 'ok' };
+	if (plan.kind === 'off') return { text: `ไม่ได้บังคับ (ปิดไว้ที่ ${SANDBOX_SETTING})`, tone: 'warn' };
+	return { text: `ไม่ได้บังคับ (${plan.reason}) — งานและ MCP server ของ snap จะไม่รัน`, tone: 'error' };
+}
+
+/** One line for the install/trust confirm. */
+export function enforcementNote(plan: SandboxPlan): string {
+	if (plan.kind === 'enforce') return `Kingu บังคับใช้สิทธิ์เหล่านี้ด้วย ${plan.enforcer}: งานและ MCP server เขียนไฟล์ได้เฉพาะที่ประกาศ ใช้เครือข่ายเฉพาะเมื่อประกาศ network และไม่เห็น secret ที่ไม่ได้ประกาศ`;
+	if (plan.kind === 'off') return `⚠ ไม่ได้บังคับใช้สิทธิ์: sandbox ปิดอยู่ (${SANDBOX_SETTING} = "off") snap รันได้ทุกอย่างที่คุณทำได้`;
+	return `สิทธิ์บังคับใช้ไม่ได้บนเครื่องนี้ (${plan.reason}) Kingu จะไม่รันงานและ MCP server ของ snap`;
 }
 
 /** Active snaps whose skills agents get (as plugins Rust writes into the app cache). */
@@ -248,13 +323,14 @@ function contributionLines(s: SnapInfo): string[] {
 }
 
 /** The native confirm before an install: what it is, where from, what it may do. */
-export function installSummary(s: SnapInfo, origin: SnapOrigin): string {
+export function installSummary(s: SnapInfo, origin: SnapOrigin, plan?: SandboxPlan): string {
 	return [
 		`${s.name} (${s.id}) v${s.version}`,
 		`จาก: ${originLabel(origin)}`,
 		'',
 		'สิทธิ์ที่ประกาศ:',
 		...permissionLines(s.permissions).map((l) => `• ${l}`),
+		...(plan ? [enforcementNote(plan)] : []),
 		'',
 		'สิ่งที่เพิ่ม:',
 		...contributionLines(s).map((l) => `• ${l}`),
@@ -264,13 +340,14 @@ export function installSummary(s: SnapInfo, origin: SnapOrigin): string {
 }
 
 /** The native confirm before trusting a repo snap: what it may run, with the exact commands. */
-export function trustSummary(s: SnapInfo): string {
+export function trustSummary(s: SnapInfo, plan?: SandboxPlan): string {
 	const commands = [...s.tasks.map((t) => `• งาน ${t.title}: ${t.command.join(' ')}`), ...s.mcp.map((m) => `• MCP ${m.name}: ${m.command.join(' ')}`)];
 	return [
 		`${s.name} (${s.id}) v${s.version} จาก .kingu/snaps ของโฟลเดอร์นี้`,
 		'',
 		'สิทธิ์ที่ประกาศ:',
 		...permissionLines(s.permissions).map((l) => `• ${l}`),
+		...(plan ? [enforcementNote(plan)] : []),
 		...(commands.length ? ['', 'คำสั่งที่จะรันได้:', ...commands] : []),
 		...(s.skills.length ? ['', `Skill ที่ส่งให้ agent: ${s.skills.map((k) => k.name).join(', ')}`] : []),
 		'',
@@ -279,12 +356,13 @@ export function trustSummary(s: SnapInfo): string {
 }
 
 /** The native confirm before an update: versions, permission changes first, then the rest. */
-export function updateSummary(before: SnapInfo, after: SnapInfo, origin: SnapOrigin): string {
+export function updateSummary(before: SnapInfo, after: SnapInfo, origin: SnapOrigin, plan?: SandboxPlan): string {
 	const { added, removed } = permissionDiff(before.permissions, after.permissions);
 	const lines = [`${after.name} (${after.id}): v${before.version || '?'} → v${after.version}`, `จาก: ${originLabel(origin)}`, ''];
 	if (added.length) lines.push('⚠ สิทธิ์ใหม่ที่ขอเพิ่ม:', ...added.map((a) => `• ${a}`), '');
 	if (removed.length) lines.push('สิทธิ์ที่เลิกใช้:', ...removed.map((r) => `• ${r}`), '');
 	if (!added.length && !removed.length) lines.push('สิทธิ์ไม่เปลี่ยน', '');
+	if (plan) lines.push(enforcementNote(plan), '');
 	lines.push('หลังอัปเดต:', ...contributionLines(after).map((l) => `• ${l}`));
 	return lines.join('\n');
 }

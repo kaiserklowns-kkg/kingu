@@ -25,4 +25,10 @@ describe('MCP for agent CLIs', () => {
 		expect(cliWithMcp(['codex'], servers)).toEqual(['codex']);
 		expect(claudeMcpConfig({})).toBeNull();
 	});
+	test('a sandboxed snap server keeps the launcher as its command in --mcp-config', () => {
+		const wrapped = { 'go-gopls': { command: '/App/kingu-ptyd', args: ['snap-exec', '--network', 'off', '--fs', 'worktree', '--root', '/w', '--', 'gopls', 'mcp'], env: {} } };
+		const config = JSON.parse(cliWithMcp(['claude'], wrapped)[2]);
+		expect(config.mcpServers['go-gopls'].command).toBe('/App/kingu-ptyd');
+		expect(config.mcpServers['go-gopls'].args.slice(-3)).toEqual(['--', 'gopls', 'mcp']);
+	});
 });

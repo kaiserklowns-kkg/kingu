@@ -2,7 +2,8 @@
 // running a task in the mode that is showing (an IDE panel terminal in the folder root, or an
 // ADE terminal tab in the selected worktree), and what active snaps contribute: palette
 // commands, settings schemas, MCP servers and skills. Rust decides `trusted`; nothing here runs a repo
-// snap's command unless it is trusted (see snapModel.isActive).
+// snap's command unless it is trusted (see snapModel.isActive). Tasks and MCP servers run confined to
+// their snap's permissions (snapModel.sandboxPlan) unless the user turned `kingu.snaps.sandbox` off.
 
 import { untrack } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
@@ -22,12 +23,17 @@ import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { setMcpProvider, setSkillPluginProvider } from '#lib/ade/mcp.ts';
 import { team } from '#lib/team/team.svelte.ts';
 import { approveSummary, canApprove, isApprovable, type TeamCatalog } from './teamSnaps.ts';
+import { worktreeDir } from '#lib/ade/keys.ts';
 import {
 	installSummary,
 	isActive,
 	isUpdatable,
 	mcpServersOf,
 	runnableTasks,
+	SANDBOX_SETTING,
+	sandboxPlan,
+	sandboxRefusal,
+	sandboxTask,
 	skillSnapIds,
 	snapSettingSchemas,
 	taskArgv,
@@ -37,6 +43,8 @@ import {
 	updateSummary,
 	type McpServerSpec,
 	type PreparedInstall,
+	type SandboxInfo,
+	type SandboxPlan,
 	type SnapInfo
 } from './snapModel.ts';
 
@@ -46,10 +54,20 @@ class Snaps {
 	/** `snap_list` itself failed (a broken snap is listed with its own error instead). */
 	error = $state<string | null>(null);
 	#seq = 0;
+	/** What can confine snaps on this machine (`snap_sandbox_info`), read once. */
+	sandboxInfo = $state<SandboxInfo | null>(null);
+
+	/** How tasks and MCP servers run now: confined, unconfined (setting off) or refused. */
+	get sandbox(): SandboxPlan {
+		return sandboxPlan(this.sandboxInfo, settings.get(SANDBOX_SETTING));
+	}
 
 	/** Re-reads every snap. A slower, older read never overwrites a newer one. */
 	async load() {
 		const seq = ++this.#seq;
+		if (!this.sandboxInfo) {
+			this.sandboxInfo = await invoke<SandboxInfo>('snap_sandbox_info').catch((e) => ({ enforcer: null, launcher: null, protect: [], problem: String(e) }));
+		}
 		try {
 			const list = await invoke<SnapInfo[]>('snap_list');
 			if (seq !== this.#seq) return;
@@ -185,7 +203,7 @@ class Snaps {
 
 	/** Trust from a row of the Snaps view: the same review as the details page, as a native confirm. */
 	async confirmTrust(s: SnapInfo) {
-		const sure = await ask(trustSummary(s), { title: `เชื่อถือ Snap “${s.name}”?`, kind: 'warning', okLabel: 'เชื่อถือ', cancelLabel: 'ยกเลิก' });
+		const sure = await ask(trustSummary(s, this.sandbox), { title: `เชื่อถือ Snap “${s.name}”?`, kind: 'warning', okLabel: 'เชื่อถือ', cancelLabel: 'ยกเลิก' });
 		if (sure) await this.trust(s.id, true);
 	}
 
@@ -254,7 +272,7 @@ class Snaps {
 			return cancel();
 		}
 		const existing = p.existing.find((e) => e.id === s.id);
-		const sure = await ask(existing ? updateSummary(existing, s, p.origin) : installSummary(s, p.origin), {
+		const sure = await ask(existing ? updateSummary(existing, s, p.origin, this.sandbox) : installSummary(s, p.origin, this.sandbox), {
 			title: existing ? `อัปเดต Snap “${s.name}”?` : `ติดตั้ง Snap “${s.name}”?`,
 			kind: 'warning',
 			okLabel: existing ? 'อัปเดต' : 'ติดตั้ง',
@@ -354,11 +372,20 @@ class Snaps {
 			status.flash('เปิดโฟลเดอร์ก่อนรันงานของ snap (Open a folder first)');
 			return;
 		}
-		const run = taskArgv(snap, task, (id) => settings.get(id));
-		if (!run.length) {
+		const argv = taskArgv(snap, task, (id) => settings.get(id));
+		if (!argv.length) {
 			status.flash(`งาน ${task.title} ไม่มีโปรแกรมให้รัน (การตั้งค่าที่เป็นชื่อโปรแกรมว่างอยู่)`);
 			return;
 		}
+		// The folder the terminal opens in: the selected task worktree in the ADE, else the folder.
+		const slug = appMode.isAgents ? adeLayout.key : '';
+		const root = slug ? `${workspace.root}/${worktreeDir(slug)}` : workspace.root;
+		const confined = sandboxTask(this.sandbox, snap.permissions, root, argv);
+		if ('error' in confined) {
+			status.flash(confined.error, 10000);
+			return;
+		}
+		const { run } = confined;
 		const title = `${task.title} (${snap.name})`;
 		systemSettings.close();
 		if (appMode.isAgents) adeLayout.newTerminal(adeLayout.key, { title, run });
@@ -368,9 +395,12 @@ class Snaps {
 		}
 	}
 
-	/** MCP servers of trusted, valid snaps for agents, keyed `<snapId>-<serverName>`. */
-	mcpServers(): Record<string, McpServerSpec> {
-		return mcpServersOf(this.list, (id) => settings.get(id));
+	/** MCP servers of trusted, valid snaps for an agent in `root`, keyed `<snapId>-<serverName>`, confined like tasks. */
+	mcpServers(root: string | null): Record<string, McpServerSpec> {
+		const plan = this.sandbox;
+		const refused = sandboxRefusal(plan);
+		if (refused && this.list.some((s) => isActive(s) && s.mcp.length)) status.flash(refused, 10000);
+		return mcpServersOf(this.list, (id) => settings.get(id), { plan, root });
 	}
 
 	/** Skill plugin folders of active snaps for an agent run (Rust lists the snaps again and writes them into the app cache). */
@@ -393,7 +423,7 @@ const RELOAD_DEBOUNCE_MS = 300;
 /** Workbench wiring: loads snaps per folder, registers their settings and commands. */
 export function installSnaps(): () => void {
 	// Agents (timeline and CLI) get the MCP servers of active snaps when a run starts.
-	setMcpProvider(() => snaps.mcpServers());
+	setMcpProvider((root) => snaps.mcpServers(root));
 	setSkillPluginProvider(() => snaps.skillPlugins());
 	// Editing a repo snap reloads the list (the watcher reports `.kingu/snaps/**`); the user snaps
 	// dir is not watched, so they are re-listed when the window gets focus (listing is cheap).

@@ -15,6 +15,7 @@
  */
 
 import { mcpServers, skillPlugins } from '#lib/ade/mcp.ts';
+import { worktreeDir } from '#lib/ade/keys.ts';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { clientLog } from '#lib/client-log.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
@@ -63,7 +64,7 @@ class Agents {
 		}
 		this.runs[slug] = run;
 		const state = this.runs[slug]; // the reactive proxy
-		const mcp = mcpServers();
+		const mcp = mcpServers(`${root}/${worktreeDir(slug)}`);
 		const plugins = await skillPlugins();
 		const onEvent = new Channel<AgentEvent>();
 		onEvent.onmessage = (ev) => {

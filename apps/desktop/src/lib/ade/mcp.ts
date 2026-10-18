@@ -1,20 +1,22 @@
 // What trusted Snaps hand to agents: MCP servers and skill plugins. The Snap store registers
-// itself as the provider; agents read it when a run starts: the timeline through the agent
+// itself as the provider; agents read it when a run starts, passing their worktree (the folder
+// the servers are confined to; see snapModel.sandboxedArgv): the timeline through the agent
 // host's `mcpServers` / `plugins`, the claude CLI through `--mcp-config` (a JSON string
 // argument) and `--plugin-dir` (one folder per flag). Pure.
 
 export type McpServer = { command: string; args: string[]; env: Record<string, string> };
 export type McpServers = Record<string, McpServer>;
 
-let provider: () => McpServers = () => ({});
+let provider: (root: string | null) => McpServers = () => ({});
 let pluginProvider: () => Promise<string[]> = async () => [];
 
-export function setMcpProvider(fn: () => McpServers) {
+export function setMcpProvider(fn: (root: string | null) => McpServers) {
 	provider = fn;
 }
 
-export function mcpServers(): McpServers {
-	return provider();
+/** MCP servers for an agent working in `root`. */
+export function mcpServers(root: string | null): McpServers {
+	return provider(root);
 }
 
 /** Skill plugin folders (written by Rust into the app cache) come from the Snap store too. */

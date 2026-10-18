@@ -54,7 +54,9 @@ struct Manifest {
   skills: Vec<RawSkill>,
 }
 
-/// Declared and shown to the user before trust; enforcement is phase 2.
+/// Shown to the user before trust and enforced when a task or MCP server runs (`kingu-ptyd
+/// snap-exec`, see `kingu_ptyd::sandbox`). A snap without the table gets the default: no
+/// network, writes only in the folder or task worktree, no secrets.
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Permissions {
@@ -62,7 +64,8 @@ pub struct Permissions {
   pub network: bool,
   #[serde(default)]
   pub fs: FsAccess,
-  /// Names only; values will live in the Keychain.
+  /// Names of environment variables passed through to the snap (others that look like
+  /// credentials are removed). Keychain-backed values are not supported yet.
   #[serde(default)]
   pub secrets: Vec<String>,
 }
