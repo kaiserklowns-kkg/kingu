@@ -71,6 +71,7 @@
 	import { installLinear } from '#lib/ade/linear.svelte.ts';
 	import LinearConnect from '#lib/ade/LinearConnect.svelte';
 	import { installSnaps } from '#lib/snaps/snaps.svelte.ts';
+	import { installVault } from '#lib/vault/vault.svelte.ts';
 	import { installDebug } from '#lib/debug/debug.svelte.ts';
 	import DebugToolbar from '#lib/debug/DebugToolbar.svelte';
 	import { installBreadcrumbs } from './breadcrumbsCommands.svelte';
@@ -320,6 +321,7 @@
 		const uninstallLinear = installLinear();
 		const uninstallLayout = installLayoutCommands();
 		const uninstallSnaps = installSnaps();
+		const uninstallVault = installVault();
 		const uninstallTerminalSessions = installTerminalSessions();
 		const uninstallTerminalCommands = installTerminalCommands();
 		const uninstallAdeCommands = installAdeCommands();
@@ -354,6 +356,7 @@
 			uninstallTerminalCommands();
 			uninstallTerminalSessions();
 			uninstallSnaps();
+			uninstallVault();
 			uninstallLayout();
 			uninstallAgentsMode();
 			uninstallWorktreeCommands();

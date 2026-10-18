@@ -10,9 +10,10 @@ import { isNotebookPath } from '#lib/workbench/notebook.ts';
 import { keybindings, USER_KEYBINDINGS_KEY } from '#lib/workbench/keybindings.svelte.ts';
 import { KEYBINDINGS_TEMPLATE } from '#lib/workbench/keybindingsModel.ts';
 import { isUntitled } from '#lib/workbench/untitled.ts';
+import { isVaultKey } from '#lib/vault/vault.ts';
 
-/** Tabs with no text model (the Settings editor UI, ADE task pages and the board, images, Markdown previews). */
-export const isNonTextEditor = (key: string) => key === SETTINGS_EDITOR_KEY || isAdeEditor(key) || isImagePath(key) || isPreviewKey(key) || isNotebookPath(key) || isChangesKey(key);
+/** Tabs with no text model (the Settings editor UI, ADE task pages and the board, images, Markdown previews, AI Vault transcripts). */
+export const isNonTextEditor = (key: string) => key === SETTINGS_EDITOR_KEY || isAdeEditor(key) || isImagePath(key) || isPreviewKey(key) || isNotebookPath(key) || isChangesKey(key) || isVaultKey(key);
 
 /** A user snap's manifest (`snap://user/<id>/snap.toml`): it lives in the app config dir, outside the workspace. */
 const userSnapId = (key: string) => /^snap:\/\/user\/([a-z0-9][a-z0-9-]{0,39})\/snap\.toml$/.exec(key)?.[1];
