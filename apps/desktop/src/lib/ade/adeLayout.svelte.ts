@@ -15,13 +15,14 @@ import { adeKey, parseAdeTerminals, persist, restore, storeName, withoutRun } fr
 import { activeAfterClose, adeTabs, fileTabId, keyOfTabId, openFileTab, pinFileTab, type AdeTab, type FileTab, type TerminalTab } from './adeTabs.ts';
 
 export type RightTab = 'files' | 'changes';
+export type CenterPage = 'board' | 'automations';
 /** Worktree key: '' for the folder itself (Orca's "primary" worktree), else the task slug. */
 export const PRIMARY = '';
 const STORE = 'kingu.adeTerminals';
 
 class AdeLayout {
-	/** The center shows the task board (Tasks in the side bar) instead of a worktree. */
-	board = $state(false);
+	/** The center shows a page from the side bar's top (Tasks = the board, or Automations) instead of a worktree. */
+	page = $state<CenterPage | null>(null);
 	rightTab = $state<RightTab>('changes');
 	/** The side bar's search box: filters worktrees by title or branch. */
 	query = $state('');
@@ -68,6 +69,19 @@ class AdeLayout {
 	/** PTY keys of every worktree terminal tab. */
 	ptyKeys(): string[] {
 		return Object.entries(this.terminals).flatMap(([k, list]) => list.map((t) => this.ptyKey(k, t.id)));
+	}
+
+	/** A page (the board or Automations) covers the worktree; false shows the worktree again. */
+	get board(): boolean {
+		return this.page !== null;
+	}
+	set board(on: boolean) {
+		this.page = on ? 'board' : null;
+	}
+
+	/** Shows a page, or the worktree again when it is already shown. */
+	togglePage(page: CenterPage) {
+		this.page = this.page === page ? null : page;
 	}
 
 	get key(): string {

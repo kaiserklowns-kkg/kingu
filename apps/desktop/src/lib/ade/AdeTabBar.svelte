@@ -30,8 +30,8 @@
 <div class="flex h-[35px] shrink-0 items-stretch border-b border-(--vscode-editorGroupHeader-tabsBorder,var(--vscode-widget-border)) bg-(--vscode-editorGroupHeader-tabsBackground)">
 	{#if adeLayout.board}
 		<div class={[TAB, ACTIVE]}>
-			<Icon name="tasks" size={14} /> Tasks
-			<button class="grid size-5 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="ปิด Tasks" onclick={() => (adeLayout.board = false)}><Icon name="close" size={13} /></button>
+			{#if adeLayout.page === 'automations'}<Icon name="clock" size={14} /> Automations{:else}<Icon name="tasks" size={14} /> Tasks{/if}
+			<button class="grid size-5 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" aria-label={adeLayout.page === 'automations' ? 'ปิด Automations' : 'ปิด Tasks'} onclick={() => (adeLayout.board = false)}><Icon name="close" size={13} /></button>
 		</div>
 	{:else}
 		<div class="flex min-w-0 items-stretch overflow-x-auto" role="tablist" aria-label="แท็บของ worktree">

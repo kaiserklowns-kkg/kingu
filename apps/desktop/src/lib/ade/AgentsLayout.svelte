@@ -2,7 +2,7 @@
 	// Agents layout body, laid out like Orca: side bar (search, Tasks, Projects → worktrees) | the
 	// selected worktree's active tab (the agent session, the new-task composer for the folder
 	// itself, a terminal in that worktree, or a file / task diff opened from the right side bar;
-	// Tasks shows the board) | right side bar (Files or Changes of that worktree). Terminals stay
+	// Tasks shows the board, Automations its page) | right side bar (Files or Changes of that worktree). Terminals stay
 	// mounted while hidden so their shells keep running; a file tab's editor mounts when shown.
 	import Icon from '#lib/workbench/Icon.svelte';
 	import Sash from '#lib/workbench/Sash.svelte';
@@ -23,6 +23,7 @@
 	import AdeTabBar from './AdeTabBar.svelte';
 	import type { IconName } from '#lib/workbench/Icon.svelte';
 	import Board from './Board.svelte';
+	import AutomationsPage from './AutomationsPage.svelte';
 	import TaskPage from './TaskPage.svelte';
 	import WorktreeFiles from './WorktreeFiles.svelte';
 	import { adeLayout, PRIMARY, type RightTab } from './adeLayout.svelte';
@@ -126,7 +127,9 @@
 	<main class={[FRAME, 'flex min-w-0 flex-1 flex-col bg-(--vscode-editor-background)']}>
 		<AdeTabBar />
 		<div class="relative min-h-0 flex-1">
-		{#if adeLayout.board}
+		{#if adeLayout.page === 'automations'}
+			<AutomationsPage />
+		{:else if adeLayout.board}
 			<Board />
 		{:else if activeFile !== null}
 			{#if isDiffKey(activeFile)}
