@@ -34,7 +34,12 @@ const MAX_TITLE: usize = 200;
 /// The chat's first prompt (for "Promote to task"); the webview cuts it to this.
 pub const MAX_PROMPT: usize = 2000;
 const MAX_MODEL: usize = 128;
+/// The modes a saved chat may keep. "Allow all" (`bypassPermissions`) is never saved: `chats.json`
+/// lives in the folder, so a repository could ship one that turns every prompt off.
 pub const PERMISSION_MODES: &[&str] = &["default", "acceptEdits", "plan"];
+/// The modes a run may start with or switch to: the saved ones, and "Allow all", which the user
+/// picks (and confirms) in the chat for that session only.
+pub const RUN_PERMISSION_MODES: &[&str] = &["default", "acceptEdits", "plan", "bypassPermissions"];
 
 /// Transcript bounds: the file never grows past this; when it would, the oldest lines go until
 /// it is at most half of it.

@@ -10,7 +10,17 @@ export type Usage = {
 	cache_creation_input_tokens: number;
 };
 
-export type Decision = 'allow' | 'allow_always' | 'deny';
+/**
+ * `allow` once; "always" for this session (`allow_always`), this folder (`allow_workspace`: the
+ * folder's `.claude/settings.local.json`, not committed) or everywhere (`allow_user`); or `deny`.
+ */
+export type Decision = 'allow' | 'allow_always' | 'allow_workspace' | 'allow_user' | 'deny';
+
+/** A slash command the session knows (SDK `supportedCommands()`). */
+export type SessionCommand = { name: string; description: string; argument_hint: string };
+
+/** How full the context window was after the last turn. */
+export type ContextUsage = { used: number; max: number };
 
 export type PermissionRequest = {
 	kind: 'permission_request';
@@ -23,6 +33,8 @@ export type PermissionRequest = {
 	diff: { added: number; removed: number } | null;
 	input: unknown;
 	can_always: boolean;
+	/** The rules an "always" answer adds (`Bash(npm test:*)`); absent or empty: the whole tool. */
+	rules?: string[];
 };
 
 export type ResultEvent = {
@@ -42,6 +54,12 @@ type Parent = { parent_tool_use_id?: string | null };
 
 export type AgentEvent =
 	| { kind: 'system'; subtype: string; session_id: string | null; model: string | null }
+	/** What the session started with: its slash command names, tools and MCP servers. Not a timeline entry. */
+	| { kind: 'session_info'; slash_commands: string[]; tools: string[]; mcp_servers: { name: string; status: string }[] }
+	/** The session's slash commands with descriptions; replaces the last list. Not a timeline entry. */
+	| { kind: 'commands'; commands: SessionCommand[] }
+	/** How full the context window is after a turn. Not a timeline entry. */
+	| { kind: 'context_usage'; used_tokens: number; max_tokens: number }
 	| ({ kind: 'message'; role: string; text: string } & Parent)
 	| { kind: 'delta'; block: 'text' | 'thinking' | string; text: string }
 	| ({ kind: 'thinking'; text: string } & Parent)
@@ -107,7 +125,10 @@ export const STATUS_LABEL: Readonly<Record<RunStatus, string>> = {
 };
 
 /** Timeline entries: every event except streaming deltas and permission bookkeeping. */
-export type TimelineEvent = Exclude<AgentEvent, { kind: 'delta' } | { kind: 'permission_resolved' } | { kind: 'edits_changed' }>;
+export type TimelineEvent = Exclude<
+	AgentEvent,
+	{ kind: 'delta' } | { kind: 'permission_resolved' } | { kind: 'edits_changed' } | { kind: 'session_info' } | { kind: 'commands' } | { kind: 'context_usage' }
+>;
 
 export type RunState = {
 	status: RunStatus;
@@ -124,6 +145,10 @@ export type RunState = {
 	result: ResultEvent | null;
 	error: string | null;
 	ended: boolean;
+	/** The session's slash commands: with descriptions once listed, else the names from its start. */
+	commands: SessionCommand[];
+	/** After the last turn; null until one has finished. */
+	context: ContextUsage | null;
 };
 
 /** Oldest timeline entries are dropped past this, so a long session stays responsive. */
@@ -140,7 +165,9 @@ export function initialRun(): RunState {
 		model: null,
 		result: null,
 		error: null,
-		ended: false
+		ended: false,
+		commands: [],
+		context: null
 	};
 }
 
@@ -160,6 +187,16 @@ export function applyEvent(s: RunState, ev: AgentEvent): void {
 			if (!s.ended) s.status = live(s);
 			return;
 		case 'edits_changed':
+			return;
+		case 'session_info':
+			// Names only: a list with descriptions (`commands`) is not replaced by them.
+			if (!s.commands.some((c) => c.description || c.argument_hint)) s.commands = ev.slash_commands.map((name) => ({ name, description: '', argument_hint: '' }));
+			return;
+		case 'commands':
+			s.commands = ev.commands;
+			return;
+		case 'context_usage':
+			if (ev.max_tokens > 0) s.context = { used: ev.used_tokens, max: ev.max_tokens };
 			return;
 		case 'permission_request':
 			if (!s.ended) {

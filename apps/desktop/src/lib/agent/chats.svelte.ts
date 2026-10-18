@@ -8,14 +8,17 @@
  *   chats.open(id)                     loads the saved transcript once (after a restart)
  *   chats.create({ prompt, cwd, model, permissionMode, message })  new chat + first run
  *   chats.send(id, message)            into the live run, else a new run resuming its session
- *   chats.submit(id, message)          send, or queue it while a turn runs (sent when the turn ends)
- *   chats.queue(id) / unqueue(id, n)   the chat's queued requests
+ *   chats.submit(id, message, label, how)  while a turn runs: queue it (sent when the turn ends),
+ *                                      steer (into the running session now) or stop and send
+ *   chats.queue(id) / unqueue(id, n)   the chat's queued requests; takeQueued / sendQueuedNow
+ *                                      (Edit / Send Immediately on a queued row)
  *   chats.retry(id)                    sends the last request again (chatRewind.retry rewinds first)
  *   chats.fork(id, before)             Fork Conversation: a new chat with the conversation before
  *                                      request `before` (all of it with null); returns its id
  *   chats.stopAndWait(id) / reload(id, resume)   for rewinds (chatRewind.svelte.ts)
  *   chats.setModel / setPermissionMode applied to the live session (SDK setModel / setPermissionMode)
- *                                      or saved for the next run; returns which
+ *                                      or saved for the next run; returns which. "Allow all"
+ *                                      (`bypassPermissions`) is kept in memory only (`allowAll`)
  *   chats.answer / interrupt / stop / rename / remove / promote
  *   (after a chat's first answer: an AI title, unless renamed; chatTitle.ts)
  *
@@ -35,7 +38,8 @@ import { t } from '#lib/i18n/index.ts';
 import { applyEvent, initialRun, type AgentEvent, type Decision, type RunState } from './events';
 import { buildTurns, lastRequest } from './chatParts.ts';
 import { withoutImagesLine } from './chatPrompt.ts';
-import { shouldDrain, turnBusy } from './chatInput.ts';
+import { shouldDrain, turnBusy, type RunPermissionMode } from './chatInput.ts';
+import type { SendHow } from './requestQueuing.ts';
 import { chatTitlePrompt, parseChatTitle } from './chatTitle.ts';
 import { forkTitle, rewoundMeta, type ForkPoint } from './chatRewind.ts';
 import {
@@ -87,6 +91,14 @@ class Chats {
 
 	/** Requests typed while a turn ran, by run key, oldest first. */
 	queues = $state<Record<string, QueuedMessage[]>>({});
+
+	/**
+	 * Chats in "Allow all" (`bypassPermissions`) until the app quits, by run key. Never saved:
+	 * chats.json is in the folder, so a repository could ship one that turns every prompt off.
+	 */
+	allowAll = $state<Record<string, true>>({});
+	/** The user confirmed "Allow all" once in this app session. */
+	allowAllConfirmed = false;
 
 	#listeners = new Set<Listener>();
 	#saving: Promise<unknown> = Promise.resolve();
@@ -167,11 +179,13 @@ class Chats {
 		}
 	}
 
-	async create(input: { prompt: string; cwd: ChatCwd; model: string | null; permissionMode: PermissionMode; message: OutgoingMessage }): Promise<string | undefined> {
+	async create(input: { prompt: string; cwd: ChatCwd; model: string | null; permissionMode: RunPermissionMode; message: OutgoingMessage }): Promise<string | undefined> {
 		const root = workspace.root;
 		if (!root || !input.prompt.trim()) return;
 		if (root !== this.root) await this.load();
-		const meta = newChat({ prompt: input.prompt, cwd: input.cwd, model: input.model, permissionMode: input.permissionMode }, Date.now());
+		const allowAll = input.permissionMode === 'bypassPermissions';
+		const meta = newChat({ prompt: input.prompt, cwd: input.cwd, model: input.model, permissionMode: allowAll ? 'default' : (input.permissionMode as PermissionMode) }, Date.now());
+		if (allowAll) this.allowAll[runKey(root, meta.id)] = true;
 		this.#save([...this.list, meta], root);
 		await this.#saving;
 		this.#lastImages.set(runKey(root, meta.id), input.message);
@@ -190,6 +204,8 @@ class Chats {
 			run.decisions = prev.decisions;
 			run.result = prev.result;
 			run.sessionId = prev.sessionId;
+			run.commands = prev.commands;
+			run.context = prev.context;
 		}
 		this.runs[key] = run;
 		const state = this.runs[key];
@@ -221,7 +237,7 @@ class Chats {
 				chatId: meta.id,
 				prompt,
 				model: meta.model,
-				permissionMode: meta.permission_mode,
+				permissionMode: this.allowAll[key] ? 'bypassPermissions' : meta.permission_mode,
 				resume,
 				resumeAt,
 				mcpServers: Object.keys(mcp).length ? mcp : null,
@@ -264,12 +280,19 @@ class Chats {
 		}
 	}
 
-	/** Sends now, or queues the request while a turn runs (VS Code queues it); 'queued' or whether it was sent. */
-	async submit(id: string, message: OutgoingMessage, label: string): Promise<'queued' | boolean> {
+	/**
+	 * Sends now, or while a turn runs (`how`): queues it (VS Code's Add to Queue), steers (into the
+	 * running session now: the SDK reads it at its next opportunity) or stops the turn and sends.
+	 * 'queued' or whether it was sent.
+	 */
+	async submit(id: string, message: OutgoingMessage, label: string, how: SendHow = 'queue'): Promise<'queued' | boolean> {
 		const root = this.root;
 		if (!root) return false;
 		const key = runKey(root, id);
-		if (turnBusy(this.runs[key]) || this.queues[key]?.length) {
+		const busy = turnBusy(this.runs[key]);
+		if (how === 'stop' && busy) await this.interrupt(id);
+		if (how !== 'queue') return this.send(id, message);
+		if (busy || this.queues[key]?.length) {
 			this.queues[key] = [...(this.queues[key] ?? []), { ...message, label, n: ++this.#queued }];
 			return 'queued';
 		}
@@ -284,6 +307,25 @@ class Chats {
 		if (!this.root) return;
 		const key = runKey(this.root, id);
 		this.queues[key] = (this.queues[key] ?? []).filter((q) => q.n !== n);
+	}
+
+	/** Edit on a queued row: takes it out of the queue for the input. */
+	takeQueued(id: string, n: number): QueuedMessage | undefined {
+		const item = this.queue(id).find((q) => q.n === n);
+		if (item) this.unqueue(id, n);
+		return item;
+	}
+
+	/** Send Immediately on a queued row: out of the queue and into the running session (steer). */
+	async sendQueuedNow(id: string, n: number): Promise<boolean> {
+		const item = this.takeQueued(id, n);
+		if (!item) return false;
+		const sent = await this.send(id, { text: item.text, images: item.images });
+		if (!sent && this.root) {
+			const key = runKey(this.root, id);
+			this.queues[key] = [item, ...(this.queues[key] ?? [])];
+		}
+		return sent;
 	}
 
 	/** Sends the queue's head once the turn is over (the rest follow turn by turn). */
@@ -399,11 +441,27 @@ class Chats {
 		return this.#setOption(id, { model: model.trim() || null }, { model: model.trim() || null });
 	}
 
-	async setPermissionMode(id: string, mode: PermissionMode): Promise<'live' | 'next' | null> {
-		return this.#setOption(id, { permission_mode: mode }, { permissionMode: mode });
+	/** "Allow all" stays in memory (`allowAll`); the chat keeps an Agent mode it can save. */
+	async setPermissionMode(id: string, mode: RunPermissionMode): Promise<'live' | 'next' | null> {
+		const meta = this.get(id);
+		if (!this.root || !meta) return null;
+		const key = runKey(this.root, id);
+		if (mode === 'bypassPermissions') {
+			const when = await this.#setOption(id, { permission_mode: meta.permission_mode === 'plan' ? 'default' : meta.permission_mode }, { permissionMode: mode });
+			if (when) this.allowAll[key] = true;
+			return when;
+		}
+		const when = await this.#setOption(id, { permission_mode: mode }, { permissionMode: mode });
+		if (when) delete this.allowAll[key];
+		return when;
 	}
 
-	async #setOption(id: string, patch: Partial<ChatMeta>, wire: { model?: string | null; permissionMode?: PermissionMode }): Promise<'live' | 'next' | null> {
+	/** The chat runs with "Allow all". */
+	isAllowAll(id: string): boolean {
+		return !!this.root && !!this.allowAll[runKey(this.root, id)];
+	}
+
+	async #setOption(id: string, patch: Partial<ChatMeta>, wire: { model?: string | null; permissionMode?: RunPermissionMode }): Promise<'live' | 'next' | null> {
 		const root = this.root;
 		if (!root || !this.get(id)) return null;
 		const run = this.run(id);
@@ -467,6 +525,7 @@ class Chats {
 		}
 		delete this.runs[runKey(root, id)];
 		delete this.queues[runKey(root, id)];
+		delete this.allowAll[runKey(root, id)];
 		this.#save(removeChat(this.list, id), root);
 		return true;
 	}

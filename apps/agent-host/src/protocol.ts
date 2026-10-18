@@ -5,8 +5,9 @@
 // Host → Rust notifications: `ready` once at startup, `event` {runId, event} for every run event.
 // Field names in events are snake_case, mirroring `AgentEvent` in src-tauri/src/agent/events.rs.
 
-export type PermissionMode = 'default' | 'acceptEdits' | 'plan';
-export const PERMISSION_MODES: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan'];
+/** `bypassPermissions` is "Allow all": no prompts at all (the app confirms it with the user first). */
+export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions';
+export const PERMISSION_MODES: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan', 'bypassPermissions'];
 
 export type StartParams = {
 	runId: number;
@@ -43,8 +44,13 @@ export type SendParams = { runId: number; text: string; images?: string[] };
 export type RunParams = { runId: number };
 /** Mid-session change of the live run's model and/or permission mode (at least one). */
 export type SetOptionsParams = { runId: number; model?: string | null; permissionMode?: PermissionMode | null };
-/** `allow` once, `allow_always` for the rest of this session, or `deny` with an optional reason. */
-export type Decision = 'allow' | 'allow_always' | 'deny';
+/**
+ * `allow` once; `allow_always` for the rest of this session; `allow_workspace` from now on in this
+ * folder (the SDK writes the rule to `.claude/settings.local.json`, which is not committed);
+ * `allow_user` everywhere (`~/.claude/settings.json`); or `deny` with an optional reason.
+ */
+export type Decision = 'allow' | 'allow_always' | 'allow_workspace' | 'allow_user' | 'deny';
+export const DECISIONS: readonly Decision[] = ['allow', 'allow_always', 'allow_workspace', 'allow_user', 'deny'];
 /**
  * `answers`: for an AskUserQuestion request (with `allow`), each question's text → the user's answer
  * (an option label, labels joined by ", " for a multi-select, or their own words).
@@ -60,11 +66,20 @@ export type Usage = {
 
 export type DiffStats = { added: number; removed: number };
 
+/** A slash command the session knows (SDK `SlashCommand`): built in, a skill, or `.claude/commands`. */
+export type SlashCommandInfo = { name: string; description: string; argument_hint: string };
+
 /** On the events of a subagent's own conversation: the id of the Task/Agent `tool_use` that started it. */
 export type Parent = { parent_tool_use_id?: string };
 
 export type AgentEvent =
 	| { kind: 'system'; subtype: string; session_id: string | null; model: string | null }
+	/** What the session started with (`system`/`init`): its slash command names, tools and MCP servers. */
+	| { kind: 'session_info'; slash_commands: string[]; tools: string[]; mcp_servers: { name: string; status: string }[] }
+	/** The session's slash commands with descriptions (`supportedCommands()`, or a `commands_changed` push). Replaces the last list. */
+	| { kind: 'commands'; commands: SlashCommandInfo[] }
+	/** How full the context window is after a turn: `used_tokens` of `max_tokens`. */
+	| { kind: 'context_usage'; used_tokens: number; max_tokens: number }
 	| ({ kind: 'message'; role: string; text: string } & Parent)
 	/** Streaming text/thinking chunk of the main agent; the complete `message`/`thinking` event follows. */
 	| { kind: 'delta'; block: 'text' | 'thinking'; text: string }
@@ -102,6 +117,8 @@ export type AgentEvent =
 			input: unknown;
 			/** False when "allow always" would grant more than this one action. */
 			can_always: boolean;
+			/** The rules an "always" answer adds, readable (`Bash(npm test:*)`); empty: the whole tool. */
+			rules: string[];
 	  }
 	| { kind: 'permission_resolved'; request_id: string; decision: Decision | 'cancelled' }
 	/**

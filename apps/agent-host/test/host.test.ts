@@ -1,7 +1,7 @@
 // Protocol tests with a fake SDK `query()`: no model calls, no Claude Code process.
 
 import { describe, expect, test } from 'bun:test';
-import type { Options, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { Options, PermissionResult, PermissionUpdate, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { AgentHost, decisionResult, imageBlocks, Inbox, MAX_IMAGE_BYTES, runEnv, shownText, type QueryFn } from '../src/host.ts';
 import type { AgentEvent } from '../src/protocol.ts';
 
@@ -125,7 +125,7 @@ describe('agent host protocol', () => {
 		await call(4, 'answer', { runId: 1, requestId: 'req-2', decision: 'allow_always' });
 		await event('result', mark);
 		expect(log.prompts).toEqual(['one', 'two']);
-		// "Always" is turned into a session-scoped rule, never written to settings files.
+		// Plain "always" is a session-scoped rule, not written to a settings file.
 		expect(log.permission).toMatchObject({ behavior: 'allow', updatedPermissions: [{ type: 'addRules', destination: 'session' }] });
 
 		await call(5, 'stop', { runId: 1 });
@@ -155,6 +155,42 @@ describe('agent host protocol', () => {
 		expect(log.permission?.behavior).toBe('deny');
 	});
 
+	test('lists the session commands and reports the context window after a turn', async () => {
+		const out: Out[] = [];
+		const asked: string[] = [];
+		const host = new AgentHost({
+			write: (m) => out.push(JSON.parse(JSON.stringify(m))),
+			query: ({ prompt }) => {
+				const gen = (async function* () {
+					yield { type: 'system', subtype: 'init', session_id: 's', model: 'm', slash_commands: ['compact'], tools: [], mcp_servers: [] };
+					for await (const _ of prompt) {
+						yield { type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 10, cache_read_input_tokens: 990, output_tokens: 50 } } };
+						yield { type: 'result', subtype: 'success', is_error: false, session_id: 's', modelUsage: { m: { inputTokens: 1, outputTokens: 1, contextWindow: 200000 } } };
+					}
+				})();
+				return Object.assign(gen, {
+					interrupt: async () => {},
+					supportedCommands: async () => (asked.push('commands'), [{ name: 'compact', description: 'Clear history but keep a summary', argumentHint: '<instructions>' }])
+				});
+			}
+		});
+		await host.handleLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'start', params: { runId: 1, cwd: '/w', prompt: 'x' } }));
+		const evs = () => out.filter((o) => o.method === 'event').map((o) => o.params.event as AgentEvent);
+		for (let i = 0; i < 50 && !evs().some((e) => e.kind === 'context_usage'); i++) await Bun.sleep(2);
+		expect(asked).toEqual(['commands']);
+		expect(evs().find((e) => e.kind === 'commands')).toEqual({ kind: 'commands', commands: [{ name: 'compact', description: 'Clear history but keep a summary', argument_hint: '<instructions>' }] });
+		expect(evs().find((e) => e.kind === 'context_usage')).toEqual({ kind: 'context_usage', used_tokens: 1050, max_tokens: 200000 });
+		expect(evs().find((e) => e.kind === 'session_info')).toMatchObject({ slash_commands: ['compact'] });
+		await host.dispatch('stop', { runId: 1 });
+	});
+
+	test('permission requests carry the rules an "always" answer would add', async () => {
+		const { event, call } = setup();
+		await call(1, 'start', { runId: 1, cwd: '/w', prompt: 'x' });
+		expect((await event('permission_request')).params.event.rules).toEqual(['Bash(rm -rf build)']);
+		expect((await call(2, 'answer', { runId: 1, requestId: 'req-1', decision: 'allow_never' })).error?.message).toContain('bad decision');
+	});
+
 	test('set_options changes the live session model and permission mode', async () => {
 		const { log, event, call } = setup();
 		await call(1, 'start', { runId: 1, cwd: '/w', prompt: 'x' });
@@ -162,10 +198,13 @@ describe('agent host protocol', () => {
 		expect((await call(2, 'set_options', { runId: 1, model: 'claude-sonnet-5' })).result).toEqual({ model: 'claude-sonnet-5', permissionMode: null });
 		expect((await call(3, 'set_options', { runId: 1, permissionMode: 'plan' })).result).toEqual({ model: null, permissionMode: 'plan' });
 		expect(log.changes).toEqual(['model:claude-sonnet-5', 'mode:plan']);
-		expect((await call(4, 'set_options', { runId: 1, permissionMode: 'bypassPermissions' })).error?.message).toContain('permission mode');
+		expect((await call(4, 'set_options', { runId: 1, permissionMode: 'dontAsk' })).error?.message).toContain('permission mode');
+		// "Allow all" is the user's pick; the session was started able to take it.
+		expect((await call(5, 'set_options', { runId: 1, permissionMode: 'bypassPermissions' })).result).toEqual({ model: null, permissionMode: 'bypassPermissions' });
+		expect(log.options?.allowDangerouslySkipPermissions).toBe(true);
 		expect((await call(5, 'set_options', { runId: 1 })).error?.message).toContain('nothing to change');
 		expect((await call(6, 'set_options', { runId: 9, model: 'm' })).error?.code).toBe(1);
-		expect(log.changes).toHaveLength(2);
+		expect(log.changes).toHaveLength(3);
 	});
 
 	test('set_options says so when the SDK cannot change options', async () => {
@@ -239,7 +278,7 @@ describe('agent host protocol', () => {
 		const { host, out, call } = setup();
 		expect((await call(1, 'start', { runId: 1, cwd: 'relative', prompt: 'x' })).error?.code).toBe(-32602);
 		expect((await call(2, 'start', { runId: 1, cwd: '/w', prompt: '  ' })).error?.message).toBe('prompt is empty');
-		expect((await call(3, 'start', { runId: 1, cwd: '/w', prompt: 'x', permissionMode: 'bypassPermissions' })).error?.message).toContain('unsupported permission mode');
+		expect((await call(3, 'start', { runId: 1, cwd: '/w', prompt: 'x', permissionMode: 'auto' })).error?.message).toContain('unsupported permission mode');
 		expect((await call(6, 'start', { runId: 1, cwd: '/w', prompt: 'x', mcpServers: { bad: { command: ' ' } } })).error?.message).toContain('command is empty');
 		expect((await call(7, 'start', { runId: 1, cwd: '/w', prompt: 'x', plugins: ['relative/plugin'] })).error?.message).toContain('plugins must be absolute');
 		expect((await call(8, 'start', { runId: 1, cwd: '/w', prompt: 'x', plugins: '/one' })).error?.message).toContain('plugins must be absolute');
@@ -376,6 +415,22 @@ describe('AskUserQuestion', () => {
 
 	test('other tools take no answers', () => {
 		expect(() => decisionResult('allow', { input: {}, suggestions: [], tool: 'Bash' }, null, { a: 'b' })).toThrow('takes no answers');
+	});
+});
+
+test('decisionResult saves "always" rules where the user chose', () => {
+	const suggestions: PermissionUpdate[] = [
+		{ type: 'addRules' as const, rules: [{ toolName: 'Bash', ruleContent: 'npm test:*' }], behavior: 'allow' as const, destination: 'localSettings' as const },
+		{ type: 'setMode' as const, mode: 'acceptEdits' as const, destination: 'session' as const }
+	];
+	const p = { input: { command: 'npm test' }, suggestions, tool: 'Bash' };
+	const rule = { type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm test:*' }], behavior: 'allow' };
+	expect(decisionResult('allow_always', p, null)).toMatchObject({ updatedPermissions: [{ ...rule, destination: 'session' }, { type: 'setMode', destination: 'session' }] });
+	// A settings file only gets the allow rules, never a mode switch.
+	expect(decisionResult('allow_workspace', p, null)).toEqual({ behavior: 'allow', updatedInput: p.input, updatedPermissions: [{ ...rule, destination: 'localSettings' }] as never });
+	expect(decisionResult('allow_user', p, null)).toEqual({ behavior: 'allow', updatedInput: p.input, updatedPermissions: [{ ...rule, destination: 'userSettings' }] as never });
+	expect(decisionResult('allow_user', { input: {}, suggestions: suggestions.slice(1), tool: 'Edit' }, null)).toMatchObject({
+		updatedPermissions: [{ type: 'addRules', rules: [{ toolName: 'Edit' }], behavior: 'allow', destination: 'userSettings' }]
 	});
 });
 

@@ -26,11 +26,42 @@ fn yes() -> bool {
   true
 }
 
+/// An MCP server of the session and how it is (`connected`, `failed`, `needs-auth`, `pending`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct McpServerState {
+  pub name: String,
+  #[serde(default)]
+  pub status: String,
+}
+
+/// A slash command the session knows (built in, a skill, or `.claude/commands`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SlashCommand {
+  pub name: String,
+  #[serde(default)]
+  pub description: String,
+  #[serde(default)]
+  pub argument_hint: String,
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentEvent {
   /// Session start (`system`/`init`).
   System { subtype: String, session_id: Option<String>, model: Option<String> },
+  /// What the session started with: its slash command names, tools and MCP servers.
+  SessionInfo {
+    #[serde(default)]
+    slash_commands: Vec<String>,
+    #[serde(default)]
+    tools: Vec<String>,
+    #[serde(default)]
+    mcp_servers: Vec<McpServerState>,
+  },
+  /// The session's slash commands with descriptions; replaces the last list.
+  Commands { commands: Vec<SlashCommand> },
+  /// How full the context window is after a turn.
+  ContextUsage { used_tokens: u64, max_tokens: u64 },
   /// `parent_tool_use_id` (also on `Thinking`, `ToolUse`, `ToolResult`): set on a subagent's own
   /// events, the id of the Task/Agent call that started it (the chat nests them under that call).
   Message {
@@ -87,8 +118,12 @@ pub enum AgentEvent {
     input: Value,
     #[serde(default = "yes")]
     can_always: bool,
+    /// The rules an "always" answer adds (`Bash(npm test:*)`); empty: the whole tool.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    rules: Vec<String>,
   },
-  /// A permission request was answered (`allow`/`allow_always`/`deny`) or `cancelled`.
+  /// A permission request was answered (`allow`, `allow_always`, `allow_workspace`, `allow_user`,
+  /// `deny`) or `cancelled`.
   PermissionResolved { request_id: String, decision: String },
   /// A file's content just before an edit tool changed it (the host's PreToolUse hook). Rust
   /// stores it in the chat's snapshot store (`chat_edits`) and never passes it on.
@@ -177,6 +212,23 @@ mod tests {
     let ev = json!({"kind": "guard_blocked", "tool": "Bash", "tool_use_id": "tu1", "check": "security", "threats": ["rm_rf_root_bare"], "detail": "Recursive deletion of root filesystem"});
     assert!(matches!(AgentEvent::from_host(ev.clone()), AgentEvent::GuardBlocked { ref check, .. } if check == "security"));
     assert_eq!(serde_json::to_value(AgentEvent::from_host(ev.clone())).unwrap(), ev);
+  }
+
+  #[test]
+  fn round_trips_session_commands_and_context() {
+    for v in [
+      json!({"kind": "session_info", "slash_commands": ["compact"], "tools": ["Bash"], "mcp_servers": [{"name": "gh", "status": "connected"}]}),
+      json!({"kind": "commands", "commands": [{"name": "review", "description": "Review a PR", "argument_hint": "<pr>"}]}),
+      json!({"kind": "context_usage", "used_tokens": 1200, "max_tokens": 200000}),
+    ] {
+      assert_eq!(serde_json::to_value(AgentEvent::from_host(v.clone())).unwrap(), v);
+    }
+    let req = json!({
+      "kind": "permission_request", "request_id": "r1", "tool": "Bash", "tool_use_id": null, "title": null,
+      "input_summary": "npm test", "detail": null, "diff": null, "input": {}, "can_always": true, "rules": ["Bash(npm test:*)"]
+    });
+    assert_eq!(serde_json::to_value(AgentEvent::from_host(req.clone())).unwrap(), req);
+    assert!(matches!(AgentEvent::from_host(json!({"kind": "session_info"})), AgentEvent::SessionInfo { .. }));
   }
 
   #[test]

@@ -540,7 +540,9 @@ impl AgentHost {
     self.run_request(run_id, "send", params)
   }
 
-  /// `decision`: `allow`, `allow_always` (this session) or `deny` (with an optional message).
+  /// `decision`: `allow`, `allow_always` (this session), `allow_workspace` (the folder's
+  /// `.claude/settings.local.json`), `allow_user` (the user's settings) or `deny` (with an
+  /// optional message).
   /// `answers`: an AskUserQuestion's answers (question text → answer), sent with `allow`; the
   /// sidecar checks them against the questions it holds.
   pub fn answer_permission(
@@ -581,9 +583,12 @@ impl AgentHost {
   }
 }
 
+/// How a permission request can be answered (the sidecar's `Decision`).
+pub const DECISIONS: &[&str] = &["allow", "allow_always", "allow_workspace", "allow_user", "deny"];
+
 /// The `answer` request's params; `answers` only with an allow.
 fn answer_params(request_id: &str, decision: &str, message: Option<&str>, answers: Option<&HashMap<String, String>>) -> Result<Value, String> {
-  if !matches!(decision, "allow" | "allow_always" | "deny") {
+  if !DECISIONS.contains(&decision) {
     return Err(format!("{decision}: unknown decision"));
   }
   let mut params = json!({ "requestId": request_id, "decision": decision, "message": message });
@@ -981,7 +986,7 @@ sleep 60"#;
     let (sink, _rx) = collect();
     let err = host.start(req("relative/path"), sink.clone()).unwrap_err();
     assert!(err.contains("absolute"), "{err}");
-    let err = host.start(StartRequest { permission_mode: Some("bypassPermissions".into()), ..req("/w") }, sink).unwrap_err();
+    let err = host.start(StartRequest { permission_mode: Some("dontAsk".into()), ..req("/w") }, sink).unwrap_err();
     assert!(err.contains("permission mode"), "{err}");
     host.shutdown();
   }

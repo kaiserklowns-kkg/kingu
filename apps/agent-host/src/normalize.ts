@@ -2,7 +2,7 @@
 // Pure and loosely typed on input, so a newer SDK adding fields or message types never breaks it:
 // anything unrecognized becomes a `raw` event instead of being dropped.
 
-import type { AgentEvent, DiffStats, Usage } from './protocol.ts';
+import type { AgentEvent, DiffStats, SlashCommandInfo, Usage } from './protocol.ts';
 
 /** Tool results can be whole files; the timeline only needs a preview. */
 export const MAX_TOOL_RESULT_CHARS = 4000;
@@ -94,14 +94,80 @@ export function usageOf(msg: Obj): Usage | null {
 	return null;
 }
 
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+
+/** The init message's command names, tools and MCP servers (none on an older CLI without them). */
+function sessionInfo(msg: Obj): AgentEvent[] {
+	if (!Array.isArray(msg.slash_commands) && !Array.isArray(msg.tools) && !Array.isArray(msg.mcp_servers)) return [];
+	const servers = Array.isArray(msg.mcp_servers) ? msg.mcp_servers.filter(isObj) : [];
+	return [
+		{
+			kind: 'session_info',
+			slash_commands: strings(msg.slash_commands),
+			tools: strings(msg.tools),
+			mcp_servers: servers.map((s) => ({ name: str(s.name) ?? '', status: str(s.status) ?? '' })).filter((s) => s.name)
+		}
+	];
+}
+
+/** SDK `SlashCommand[]` → the wire shape (descriptions cut to one readable line). */
+export function slashCommands(list: unknown): SlashCommandInfo[] {
+	if (!Array.isArray(list)) return [];
+	const seen = new Set<string>();
+	const out: SlashCommandInfo[] = [];
+	for (const c of list) {
+		const name = isObj(c) ? str(c.name)?.replace(/^\//, '').trim() : null;
+		if (!isObj(c) || !name || seen.has(name)) continue;
+		seen.add(name);
+		out.push({ name, description: truncate(str(c.description)?.trim() ?? '', MAX_SUMMARY_CHARS), argument_hint: truncate(str(c.argumentHint)?.trim() ?? '', 200) });
+	}
+	return out;
+}
+
+/** The largest `contextWindow` in a result's `modelUsage` (the main model's), or null. */
+export function contextWindowOf(msg: Obj): number | null {
+	if (!isObj(msg.modelUsage)) return null;
+	const sizes = Object.values(msg.modelUsage).map((m) => (isObj(m) ? (num(m.contextWindow) ?? 0) : 0));
+	const max = Math.max(0, ...sizes);
+	return max > 0 ? max : null;
+}
+
+/**
+ * What the main agent's latest API call put in the context window (prompt with cache, plus its
+ * output, which the next call reads back), from an `assistant` message; null for a subagent's.
+ */
+export function contextTokensOf(msg: Obj): number | null {
+	if (msg.type !== 'assistant' || msg.parent_tool_use_id || !isObj(msg.message) || !isObj(msg.message.usage)) return null;
+	const u = msg.message.usage;
+	const total = (num(u.input_tokens) ?? 0) + (num(u.cache_read_input_tokens) ?? 0) + (num(u.cache_creation_input_tokens) ?? 0) + (num(u.output_tokens) ?? 0);
+	return total > 0 ? total : null;
+}
+
+/** SDK permission suggestions → readable rules (`Bash(npm test:*)`, `WebFetch`). */
+export function ruleTexts(suggestions: unknown): string[] {
+	if (!Array.isArray(suggestions)) return [];
+	const out: string[] = [];
+	for (const s of suggestions) {
+		if (!isObj(s) || (s.type !== 'addRules' && s.type !== 'replaceRules') || s.behavior !== 'allow' || !Array.isArray(s.rules)) continue;
+		for (const r of s.rules) {
+			const tool = isObj(r) ? str(r.toolName) : null;
+			if (!tool) continue;
+			const content = isObj(r) ? str(r.ruleContent) : null;
+			out.push(truncate(content ? `${tool}(${content})` : tool, MAX_SUMMARY_CHARS));
+		}
+	}
+	return [...new Set(out)];
+}
+
 /** Maps one SDK message to events; unknown messages become `raw`. */
 export function normalize(msg: unknown): AgentEvent[] {
 	const raw = (): AgentEvent[] => [{ kind: 'raw', line: truncate(JSON.stringify(msg) ?? String(msg), MAX_TOOL_RESULT_CHARS) }];
 	if (!isObj(msg)) return raw();
 	switch (msg.type) {
 		case 'system':
+			if (msg.subtype === 'commands_changed') return Array.isArray(msg.commands) ? [{ kind: 'commands', commands: slashCommands(msg.commands) }] : [];
 			if (msg.subtype !== 'init') return []; // status/hook/task chatter: not timeline material
-			return [{ kind: 'system', subtype: 'init', session_id: str(msg.session_id), model: str(msg.model) }];
+			return [{ kind: 'system', subtype: 'init', session_id: str(msg.session_id), model: str(msg.model) }, ...sessionInfo(msg)];
 		case 'assistant':
 			return withAnchor(msg, blocks(msg, 'assistant') ?? raw());
 		case 'user':

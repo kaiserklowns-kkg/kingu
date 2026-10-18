@@ -34,6 +34,18 @@ function fold(events: AgentEvent[]) {
 }
 
 describe('applyEvent', () => {
+	test('session commands and context usage are kept on the run, not in the timeline', () => {
+		const names: AgentEvent = { kind: 'session_info', slash_commands: ['compact', 'review'], tools: [], mcp_servers: [] };
+		let s = fold([names]);
+		expect(s.commands.map((c) => c.name)).toEqual(['compact', 'review']);
+		s = fold([names, { kind: 'commands', commands: [{ name: 'compact', description: 'Summarize', argument_hint: '' }] }, names]);
+		// A later init's names do not replace the list with descriptions.
+		expect(s.commands).toEqual([{ name: 'compact', description: 'Summarize', argument_hint: '' }]);
+		s = fold([{ kind: 'context_usage', used_tokens: 1000, max_tokens: 200000 }, { kind: 'context_usage', used_tokens: 5, max_tokens: 0 }]);
+		expect(s.context).toEqual({ used: 1000, max: 200000 });
+		expect(s.items).toEqual([]);
+	});
+
 	test('a turn with a permission prompt: running → waiting → running → idle', () => {
 		const s = initialRun();
 		expect(s.status).toBe('starting');

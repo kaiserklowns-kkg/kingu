@@ -9,11 +9,12 @@
 
 import { readFileSync } from 'node:fs';
 import type { CanUseTool, HookCallbackMatcher, Options, PermissionResult, PermissionUpdate, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import { isUuid, normalize, summarizeTool } from './normalize.ts';
+import { contextTokensOf, contextWindowOf, isUuid, normalize, ruleTexts, slashCommands, summarizeTool } from './normalize.ts';
 import { snapshotHooks } from './snapshots.ts';
 import { Guards } from './guards/index.ts';
 import { checkAnswers, isAskUserQuestion, QUESTIONS_DISMISSED } from './questions.ts';
 import {
+	DECISIONS,
 	PERMISSION_MODES,
 	type AgentEvent,
 	type AnswerParams,
@@ -32,6 +33,10 @@ export type QueryLike = AsyncIterable<unknown> & {
 	/** Mid-session changes (streaming input only); optional so older fakes still fit. */
 	setModel?(model?: string): Promise<void>;
 	setPermissionMode?(mode: PermissionMode): Promise<void>;
+	/** The session's slash commands with descriptions (for the composer's `/` list). */
+	supportedCommands?(): Promise<unknown[]>;
+	/** How full the context window is (`detail: 'summary'` answers from the last response). */
+	getContextUsage?(opts?: { detail?: 'summary' | 'full' }): Promise<{ totalTokens?: unknown; maxTokens?: unknown }>;
 };
 export type QueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => QueryLike;
 
@@ -39,6 +44,19 @@ export const DEFAULT_MODEL = 'claude-opus-5-5';
 const DENIED_BY_USER = 'ผู้ใช้ไม่อนุญาต (The user denied this action.)';
 /** After `stop`, how long to wait for the SDK to wind down before reporting the exit anyway. */
 export const STOP_GRACE_MS = 5000;
+/** How long a side request to the SDK (commands, context usage) may take before it is skipped. */
+export const CONTROL_TIMEOUT_MS = 5000;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => reject(new Error('timed out')), ms);
+		(timer as { unref?: () => void }).unref?.();
+		p.then(
+			(v) => (clearTimeout(timer), resolve(v)),
+			(e) => (clearTimeout(timer), reject(e))
+		);
+	});
+}
 
 /** An image content block (base64), as the Messages API takes it. */
 export type ImageBlock = { type: 'image'; source: { type: 'base64'; media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; data: string } };
@@ -132,6 +150,10 @@ class Run {
 	query: QueryLike | null = null;
 	stopped = false;
 	exited = false;
+	/** The session's commands were asked for (once per run, after its first init). */
+	commandsAsked = false;
+	/** Context tokens of the main agent's latest API call (`contextTokensOf`). */
+	contextTokens: number | null = null;
 	constructor(readonly id: number) {}
 }
 
@@ -279,6 +301,9 @@ export class AgentHost {
 			cwd: p.cwd,
 			model: p.model || DEFAULT_MODEL,
 			permissionMode: mode,
+			// Lets the user switch a live session to "Allow all" (`setPermissionMode`); the mode
+			// itself only ever comes from the user's pick, which the app confirms first.
+			allowDangerouslySkipPermissions: true,
 			resume: p.resume || undefined,
 			// Rewind / fork: the session up to `resumeAt`, as a new session (the original stays whole).
 			...(resumeAt ? { resumeSessionAt: resumeAt, forkSession: true } : {}),
@@ -321,13 +346,54 @@ export class AgentHost {
 		try {
 			for await (const msg of run.query!) {
 				if (run.exited) break;
+				const m = msg as Record<string, unknown> | null;
+				const tokens = m && typeof m === 'object' ? contextTokensOf(m) : null;
+				if (tokens !== null) run.contextTokens = tokens;
 				for (const ev of normalize(msg)) this.emit(run.id, ev);
+				if (m?.type === 'system' && m.subtype === 'init' && !run.commandsAsked) void this.listCommands(run);
+				if (m?.type === 'result') void this.reportContext(run, contextWindowOf(m));
 			}
 		} catch (e) {
 			if (!run.stopped) failure = e instanceof Error ? e.message : String(e);
 		}
 		if (failure) this.emit(run.id, { kind: 'error', message: failure });
 		this.finish(run, failure ? 1 : 0);
+	}
+
+	/** The session's slash commands, with descriptions, as a `commands` event (skipped on failure). */
+	private async listCommands(run: Run) {
+		run.commandsAsked = true;
+		const q = run.query;
+		if (!q?.supportedCommands) return;
+		try {
+			const list = await withTimeout(q.supportedCommands(), CONTROL_TIMEOUT_MS);
+			if (!run.exited) this.emit(run.id, { kind: 'commands', commands: slashCommands(list) });
+		} catch (e) {
+			this.log(`run ${run.id}: commands not listed: ${e instanceof Error ? e.message : String(e)}`);
+		}
+	}
+
+	/**
+	 * After a turn: how full the context window is, as a `context_usage` event. The SDK's own count
+	 * when it has one, else the main agent's last call against the result's `contextWindow`.
+	 */
+	private async reportContext(run: Run, window: number | null) {
+		let used = run.contextTokens;
+		let max = window;
+		const q = run.query;
+		if (q?.getContextUsage) {
+			try {
+				const u = await withTimeout(q.getContextUsage({ detail: 'summary' }), CONTROL_TIMEOUT_MS);
+				if (typeof u?.totalTokens === 'number' && typeof u.maxTokens === 'number' && u.maxTokens > 0) {
+					used = u.totalTokens;
+					max = u.maxTokens;
+				}
+			} catch (e) {
+				this.log(`run ${run.id}: context usage not read: ${e instanceof Error ? e.message : String(e)}`);
+			}
+		}
+		if (run.exited || used === null || !max) return;
+		this.emit(run.id, { kind: 'context_usage', used_tokens: Math.round(used), max_tokens: Math.round(max) });
 	}
 
 	/** Emits the run's single `exit` and forgets it. */
@@ -405,7 +471,7 @@ export class AgentHost {
 		const pending = run.pending.get(p.requestId);
 		if (!pending) throw new RpcError(RUN_NOT_FOUND, `no pending permission request ${p.requestId}`);
 		const decision: Decision = p.decision;
-		need(['allow', 'allow_always', 'deny'].includes(decision), `bad decision ${decision}`);
+		need(DECISIONS.includes(decision), `bad decision ${decision}`);
 		// Checked before the request is taken: bad answers leave the question waiting.
 		let result: PermissionResult;
 		try {
@@ -443,14 +509,19 @@ export class AgentHost {
 					diff,
 					input,
 					// Answering a question is never a rule to keep.
-					can_always: !opts.suppressAlwaysAllowRule && !isAskUserQuestion(tool)
+					can_always: !opts.suppressAlwaysAllowRule && !isAskUserQuestion(tool),
+					rules: ruleTexts(opts.suggestions)
 				});
 			});
 	}
 }
 
+/** Where each "always" answer saves its rules (SDK `PermissionUpdateDestination`). */
+const DESTINATION = { allow_always: 'session', allow_workspace: 'localSettings', allow_user: 'userSettings' } as const;
+
 /**
- * The SDK result for the user's answer; "always" grants are scoped to this session only.
+ * The SDK result for the user's answer. "Always" grants go to the session, this folder's
+ * `.claude/settings.local.json` (not committed) or the user's settings, by `DESTINATION`.
  * AskUserQuestion is answered, not allowed: its answers go back in `updatedInput.answers`
  * (questions.ts), and allowing it without them throws.
  */
@@ -465,9 +536,11 @@ export function decisionResult(
 	if (question) return { behavior: 'allow', updatedInput: { ...p.input, answers: checkAnswers(p.input, answers) } };
 	if (answers != null) throw new Error(`${p.tool} takes no answers`);
 	if (decision === 'allow') return { behavior: 'allow', updatedInput: p.input };
-	const fromSuggestions = p.suggestions.map((s) => ({ ...s, destination: 'session' as const }));
-	const updatedPermissions: PermissionUpdate[] = fromSuggestions.length
-		? fromSuggestions
-		: [{ type: 'addRules', rules: [{ toolName: p.tool }], behavior: 'allow', destination: 'session' }];
+	const destination = DESTINATION[decision];
+	// Saved to a settings file: only allow rules (a suggested mode switch or extra directory stays
+	// a session matter, never the user's or folder's default).
+	const kept = destination === 'session' ? p.suggestions : p.suggestions.filter((s) => s.type === 'addRules' && s.behavior === 'allow');
+	const fromSuggestions = kept.map((s) => ({ ...s, destination }));
+	const updatedPermissions: PermissionUpdate[] = fromSuggestions.length ? fromSuggestions : [{ type: 'addRules', rules: [{ toolName: p.tool }], behavior: 'allow', destination }];
 	return { behavior: 'allow', updatedInput: p.input, updatedPermissions };
 }
