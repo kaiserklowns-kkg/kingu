@@ -100,6 +100,24 @@ pub fn mark_ignored(dir: &Path, entries: &mut [crate::fs::DirEntry]) {
   for e in entries.iter_mut() {
     e.ignored = ignored.contains(e.name.as_bytes());
   }
+  mark_untracked_dirs(dir, entries);
+}
+
+/// Sets `untracked` on the folders of `dir` that hold no tracked file: `ls-files --others
+/// --directory` names such a folder as `name/` (a folder with some tracked files lists its new
+/// files one by one instead).
+fn mark_untracked_dirs(dir: &Path, entries: &mut [crate::fs::DirEntry]) {
+  let names: Vec<&str> = entries.iter().filter(|e| e.is_dir && !e.ignored).map(|e| e.name.as_str()).collect();
+  if names.is_empty() {
+    return;
+  }
+  let mut args = vec!["ls-files", "-z", "--others", "--directory", "--exclude-standard", "--"];
+  args.extend(names);
+  let Ok(out) = run(dir, &args) else { return };
+  let untracked: std::collections::HashSet<&[u8]> = out.split(|b| *b == 0).filter_map(|s| s.strip_suffix(b"/")).collect();
+  for e in entries.iter_mut() {
+    e.untracked = e.is_dir && untracked.contains(e.name.as_bytes());
+  }
 }
 
 pub(crate) fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
@@ -335,6 +353,18 @@ mod tests {
     mark_ignored(dir, &mut entries);
     let ignored: Vec<&str> = entries.iter().filter(|e| e.ignored).map(|e| e.name.as_str()).collect();
     assert_eq!(ignored, ["target", "run.log"]);
+
+    // A folder with nothing tracked is untracked; one with a tracked file is not, even with new files.
+    std::fs::create_dir(dir.join("new dir")).unwrap();
+    std::fs::write(dir.join("new dir/x.ts"), "").unwrap();
+    std::fs::write(dir.join("src/old.ts"), "").unwrap();
+    git(dir, &["add", "src/old.ts"]);
+    git(dir, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"]);
+    std::fs::write(dir.join("src/new.ts"), "").unwrap();
+    let mut entries = crate::fs::list_dir(dir, dir).unwrap();
+    mark_ignored(dir, &mut entries);
+    let untracked: Vec<&str> = entries.iter().filter(|e| e.untracked).map(|e| e.name.as_str()).collect();
+    assert_eq!(untracked, ["new dir"]);
 
     // Outside a repository nothing is marked.
     let plain = tempfile::tempdir().unwrap();

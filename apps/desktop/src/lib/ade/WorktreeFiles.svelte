@@ -29,7 +29,7 @@
 	import { rightSidebar } from './rightSidebar.svelte.ts';
 	import { contentRows, contentSummary, filesOf, nameMatches, rowLook, touchesWorktree, type NameRow } from './rightSidebar.ts';
 
-	type Entry = { name: string; rel: string; is_dir: boolean; ignored?: boolean };
+	type Entry = { name: string; rel: string; is_dir: boolean; ignored?: boolean; untracked?: boolean };
 	type Row = Entry & { depth: number; open: boolean };
 	type Editing = { kind: 'file' | 'folder'; parent: string } | { kind: 'rename'; rel: string; is_dir: boolean };
 
@@ -746,7 +746,7 @@
 					</div>
 				{:else}
 					{@const r = item.row}
-					{@const look = rowLook(r.rel, r.ignored, decorations, ignoredDirs)}
+					{@const look = rowLook(r.rel, r.ignored, decorations, ignoredDirs, r.untracked)}
 					<button
 						role="treeitem"
 						data-rel={r.rel}

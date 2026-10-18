@@ -41,7 +41,7 @@ export interface ScmSource {
 }
 
 // VS Code gitDecoration.* dark colors.
-const COLORS = {
+export const COLORS = {
 	modified: '#E2C08D',
 	added: '#73C991',
 	deleted: '#F48771',

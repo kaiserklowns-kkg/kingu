@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { fileDecorations } from '#lib/workbench/scm.ts';
+import { COLORS, fileDecorations } from '#lib/workbench/scm.ts';
 import type { FileMatches } from '#lib/workbench/searchResults.ts';
 import { contentRows, contentSummary, filesOf, fold, isRightTab, nameMatches, RIGHT_TABS, rowLook, toggleTab, touchesWorktree, treeRows, visibleTabs, shellJoin, sortSessions } from './rightSidebar.ts';
 
@@ -116,6 +116,7 @@ describe('row look', () => {
 	test('ignored wins over git; ignored folders make their children ignored', () => {
 		expect(rowLook('target', true, decos)).toEqual({ ignored: true });
 		expect(rowLook('target/debug/x', false, decos, new Set(['target']))).toEqual({ ignored: true });
+		expect(rowLook('docs', false, decos, new Set(), true)).toEqual({ ignored: false, deco: { letter: 'U', color: COLORS.added } });
 	});
 
 	test('untracked is green U, folders get the colour only', () => {

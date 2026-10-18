@@ -2,7 +2,7 @@
 // name filter over the whole worktree, the Contents search results grouped per file, and the
 // tree's ignored / git decorations. Free of runes so `bun test` covers them.
 
-import type { Decoration } from '#lib/workbench/scm.ts';
+import { COLORS, type Decoration } from '#lib/workbench/scm.ts';
 import type { FileMatches, TextMatch } from '#lib/workbench/searchResults.ts';
 
 export type RightTab = 'files' | 'agents' | 'changes' | 'checks';
@@ -149,9 +149,17 @@ export function sortSessions<T extends SessionLike>(views: readonly T[], by: Ses
 /** How a tree row looks: ignored entries dim with a badge (no git letter); else the git decoration. */
 export type RowLook = { ignored: true } | { ignored: false; deco: Decoration | undefined };
 
-export function rowLook(rel: string, ignored: boolean | undefined, decorations: ReadonlyMap<string, Decoration>, ignoredDirs: ReadonlySet<string> = new Set()): RowLook {
+export function rowLook(
+	rel: string,
+	ignored: boolean | undefined,
+	decorations: ReadonlyMap<string, Decoration>,
+	ignoredDirs: ReadonlySet<string> = new Set(),
+	untracked = false
+): RowLook {
 	if (ignored) return { ignored: true };
 	// Inside an ignored folder everything is ignored too (git check-ignore only marked the folder).
 	for (let i = rel.lastIndexOf('/'); i > 0; i = rel.lastIndexOf('/', i - 1)) if (ignoredDirs.has(rel.slice(0, i))) return { ignored: true };
+	// A folder with nothing tracked gets Orca's `U`, not the dot of a folder with changes inside.
+	if (untracked) return { ignored: false, deco: { letter: 'U', color: COLORS.added } };
 	return { ignored: false, deco: decorations.get(rel) };
 }
