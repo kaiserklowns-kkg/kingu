@@ -1307,6 +1307,8 @@ pub fn run() {
       agent::chat_edits_keep,
       agent::chat_edits_undo,
       agent::chat_edits_restore,
+      agent::chat_edits_hunks,
+      agent::chat_edits_hunk,
       agent::tasks_load,
       agent::tasks_save,
       agent::tasks_update,

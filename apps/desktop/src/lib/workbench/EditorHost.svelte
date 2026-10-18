@@ -16,6 +16,7 @@
 	import { isNonTextEditor } from '#lib/settings/resources.ts';
 	import { editorOptions, installEditorSettings } from '#lib/settings/apply.svelte.ts';
 	import { attachDebugEditor, type DebugDecorations } from '#lib/debug/editorDebug.ts';
+	import { attachChatEditDecorations, type ChatEditDecorations } from '#lib/agent/chatEditDecorations.svelte.ts';
 	import { indentLabel } from './textFiles';
 	import { textFiles } from './textFileService.svelte';
 	import { installEditorActions } from './editorActions.svelte';
@@ -31,6 +32,8 @@
 	let switching = false;
 	/** Breakpoint glyphs and the stopped line for the shown file. */
 	let debugDecorations = $state<DebugDecorations | undefined>();
+	/** The agent chat's pending changes of the shown file, with Keep / Undo per change. */
+	let chatEditDecorations = $state<ChatEditDecorations | undefined>();
 
 	const path = $derived(editors.group(group)?.active ?? null);
 	const isActiveGroup = $derived(editors.activeGroupId === group);
@@ -80,6 +83,7 @@
 			ed.onDidChangeModelContent((e) => e.eol && reportModel());
 			ed.onDidFocusEditorText(() => editors.activateGroup(group));
 			debugDecorations = attachDebugEditor(m.monaco, ed, () => shown);
+			chatEditDecorations = attachChatEditDecorations(m.monaco, ed, () => shown);
 			editor = ed;
 			clientLog('info', `editor ready (group ${group})`);
 		});
@@ -141,6 +145,7 @@
 			disposed = true;
 			unregister();
 			debugDecorations?.dispose();
+			chatEditDecorations?.dispose();
 			if (editor && shown) saveViewState(group, shown, editor.saveViewState());
 			// Models are shared and outlive this editor; only detach.
 			editor?.setModel(null);
@@ -194,6 +199,12 @@
 	$effect(() => {
 		void shown;
 		debugDecorations?.render();
+	});
+
+	// Chat edits follow the working sets, the file on disk and the shown file.
+	$effect(() => {
+		void shown;
+		chatEditDecorations?.render();
 	});
 
 	// The status bar follows the active group's editor.
@@ -317,5 +328,86 @@
 	}
 	:global(.kg-debug-line-focused) {
 		background: var(--vscode-editor-focusedStackFrameHighlightBackground, rgba(122, 189, 122, 0.3));
+	}
+	/* Agent chat edits (VS Code chatEditingEditorController / chatEditorOverlay CSS). */
+	:global(.kg-ce-added) {
+		background: var(--vscode-diffEditor-insertedLineBackground, rgba(155, 185, 85, 0.2));
+	}
+	:global(.kg-ce-added-gutter) {
+		border-left: 3px solid var(--vscode-editorGutter-addedBackground, #2ea043);
+	}
+	:global(.kg-ce-removed) {
+		white-space: pre;
+		overflow: hidden;
+		opacity: 0.85;
+		background: var(--vscode-diffEditor-removedLineBackground, rgba(255, 0, 0, 0.2));
+	}
+	:global(.kg-ce-removed-margin) {
+		border-left: 3px solid var(--vscode-editorGutter-deletedBackground, #f85149);
+		background: var(--vscode-diffEditor-removedLineBackground, rgba(255, 0, 0, 0.2));
+	}
+	:global(.kg-ce-widgets) {
+		position: absolute;
+		top: 0;
+		left: 0;
+		height: 0;
+		overflow: visible;
+		pointer-events: none;
+	}
+	:global(.kg-ce-hunk-bar),
+	:global(.kg-ce-overlay) {
+		position: absolute;
+		display: flex;
+		align-items: center;
+		gap: 2px;
+		border: 1px solid var(--vscode-widget-border, transparent);
+		color: var(--vscode-foreground);
+		background: var(--vscode-editorWidget-background);
+		box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+		pointer-events: auto;
+		white-space: nowrap;
+	}
+	:global(.kg-ce-hunk-bar) {
+		height: 20px;
+		padding: 0 2px;
+		border-radius: 4px;
+		font-size: 11px;
+	}
+	:global(.kg-ce-overlay) {
+		height: 28px;
+		padding: 0 4px;
+		border-radius: 6px;
+		font-size: 12px;
+	}
+	:global(.kg-ce-hunk-bar button),
+	:global(.kg-ce-overlay button) {
+		padding: 0 6px;
+		height: calc(100% - 6px);
+		border-radius: 3px;
+		cursor: pointer;
+	}
+	:global(.kg-ce-hunk-bar button:hover),
+	:global(.kg-ce-overlay button:hover) {
+		background: var(--vscode-toolbar-hoverBackground);
+	}
+	:global(.kg-ce-overlay .kg-ce-primary) {
+		color: var(--vscode-button-foreground);
+		background: var(--vscode-button-background);
+	}
+	:global(.kg-ce-overlay .kg-ce-primary:hover) {
+		background: var(--vscode-button-hoverBackground);
+	}
+	:global(.kg-ce-icon) {
+		min-width: 22px;
+	}
+	:global(.kg-ce-count) {
+		padding: 0 6px;
+		color: var(--vscode-descriptionForeground);
+	}
+	:global(.kg-ce-sep) {
+		width: 1px;
+		height: 16px;
+		margin: 0 2px;
+		background: var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
 	}
 </style>

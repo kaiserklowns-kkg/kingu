@@ -342,6 +342,15 @@ crate::i18n::messages! {
       en: "This chat has no request {index}",
       th: "แชตนี้ไม่มีคำขอที่ {index}",
     },
+    /// Keep / Undo of one change in the editor (agent/chat_edits/hunks.rs).
+    EditHunkGone {
+      en: "{path}: that change is no longer there (the file changed since); look at its changes again",
+      th: "{path}: ไม่มีการแก้ตรงนั้นแล้ว (ไฟล์เปลี่ยนไปหลังจากนั้น) ลองดูการแก้ของไฟล์อีกครั้ง",
+    },
+    EditHunkNoRoom {
+      en: "{path}: the chat's snapshot store is full, so this change cannot be kept on its own; keep the whole file instead",
+      th: "{path}: ที่เก็บสำเนาของแชตเต็มแล้ว จึงเก็บการแก้นี้แยกไม่ได้ ให้เก็บทั้งไฟล์แทน",
+    },
     EditCwdChanged {
       en: "The chat's edits were made in {path}, not in this folder",
       th: "การแก้ไขของแชตนี้ทำใน {path} ไม่ใช่โฟลเดอร์นี้",
