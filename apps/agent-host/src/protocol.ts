@@ -64,20 +64,14 @@ export type AgentEvent =
 	| ({ kind: 'message'; role: string; text: string } & Parent)
 	/** Streaming text/thinking chunk of the main agent; the complete `message`/`thinking` event follows. */
 	| { kind: 'delta'; block: 'text' | 'thinking'; text: string }
-<<<<<<< HEAD
-	| { kind: 'thinking'; text: string }
+	| ({ kind: 'thinking'; text: string } & Parent)
 	/**
 	 * The session-log uuid of the SDK message whose events came just before (main-chain user and
 	 * assistant messages only). The last one before a request is where `resumeAt` rewinds to.
 	 */
 	| { kind: 'anchor'; uuid: string }
-	| { kind: 'tool_use'; id: string; name: string; input: unknown }
-	| { kind: 'tool_result'; tool_use_id: string; content: string; is_error: boolean }
-=======
-	| ({ kind: 'thinking'; text: string } & Parent)
 	| ({ kind: 'tool_use'; id: string; name: string; input: unknown } & Parent)
 	| ({ kind: 'tool_result'; tool_use_id: string; content: string; is_error: boolean } & Parent)
->>>>>>> kaiserklowns-kkg/kingu-continue-development
 	| {
 			kind: 'result';
 			subtype: string;

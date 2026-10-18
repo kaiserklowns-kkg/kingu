@@ -105,14 +105,9 @@ export function normalize(msg: unknown): AgentEvent[] {
 		case 'assistant':
 			return withAnchor(msg, blocks(msg, 'assistant') ?? raw());
 		case 'user':
-<<<<<<< HEAD
-			// Replayed/synthetic user turns only carry tool results worth showing.
-			return withAnchor(msg, (blocks(msg, 'user') ?? raw()).filter((e) => e.kind !== 'message' || !msg.isSynthetic));
-=======
 			// Replayed/synthetic user turns only carry tool results worth showing. A subagent's prompt
 			// (user text under a Task call) is that call's input already, and never a new request.
-			return (blocks(msg, 'user') ?? raw()).filter((e) => e.kind !== 'message' || !(msg.isSynthetic || msg.parent_tool_use_id));
->>>>>>> kaiserklowns-kkg/kingu-continue-development
+			return withAnchor(msg, (blocks(msg, 'user') ?? raw()).filter((e) => e.kind !== 'message' || !(msg.isSynthetic || msg.parent_tool_use_id)));
 		case 'stream_event': {
 			const ev = isObj(msg.event) ? msg.event : null;
 			if (!ev || ev.type !== 'content_block_delta' || !isObj(ev.delta) || msg.parent_tool_use_id) return [];
