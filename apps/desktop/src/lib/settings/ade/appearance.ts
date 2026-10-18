@@ -1,10 +1,21 @@
 // Orca's Appearance / General pages: app-wide look and tab behaviour (System section, group Appearance).
-// Applied by ade/appearance.svelte.ts (UI font, side bar tint) and adeLayout (Ctrl+Tab order).
+// Applied by ade/appearance.svelte.ts (UI font, side bar tint), adeLayout (Ctrl+Tab order) and
+// i18n/locale.svelte.ts (kingu.uiLanguage).
 import type { SettingSchema } from '../registry';
 
 const G = 'Appearance';
 
 export const APPEARANCE_SETTINGS: SettingSchema[] = [
+	{
+		id: 'kingu.uiLanguage',
+		group: G,
+		type: 'string',
+		default: 'auto',
+		enum: ['auto', 'th', 'en'],
+		enumDescriptions: ['ตามภาษาของระบบ: ไทยถ้าระบบเป็นภาษาไทย นอกนั้นอังกฤษ (The OS language: Thai if the OS is Thai, else English.)', 'ภาษาไทย (Thai.)', 'ภาษาอังกฤษ (English.)'],
+		description: 'ภาษาของหน้าจอ Kingu (ข้อความ การแจ้งเตือน กล่องถาม) เปลี่ยนแล้วมีผลทันที ชื่อคำสั่งใน Command Palette เป็นอังกฤษเสมอ (Orca: uiLanguage) (Language of the Kingu interface; applies right away.)',
+		scope: 'application'
+	},
 	{
 		id: 'kingu.ui.fontFamily',
 		group: G,

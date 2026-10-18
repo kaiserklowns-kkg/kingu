@@ -82,7 +82,7 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['openInApplications', 'kingu.worktree.openIn', 'added'],
 	['appIcon', null, 'needs-feature', 'alternate app icons'],
 	['showMenuBarIcon', null, 'needs-feature', 'menu bar / tray icon'],
-	['uiLanguage', null, 'needs-feature', 'interface translations'],
+	['uiLanguage', 'kingu.uiLanguage', 'added', 'auto / th / en; Rust error text stays Thai for now'],
 	['windowBackgroundBlur', null, 'needs-feature', 'window vibrancy'],
 	['tabAutoGenerateTitle', null, 'needs-feature', 'AI-generated tab titles'],
 	['confirmClosePinnedTab', null, 'needs-feature', 'pinned ADE tabs'],

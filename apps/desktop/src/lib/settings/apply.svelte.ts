@@ -24,6 +24,7 @@ import { jsonSchema } from './registry';
 import { settings } from './settings.svelte';
 import { settingSchemas } from './schemas.svelte';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
+import { installUiLanguage } from '#lib/i18n/locale.svelte.ts';
 
 const SETTINGS_SCHEMA_URI = 'kingu://schemas/settings';
 const KEYBINDINGS_SCHEMA_URI = 'kingu://schemas/keybindings';
@@ -214,6 +215,8 @@ const UI_FONT_STACK = "-apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI
 export function installSettings(): () => void {
 	const uninstallSettings = settings.install();
 	const uninstallKeybindings = keybindings.install();
+	// kingu.uiLanguage: the language t() answers in, live.
+	const uninstallUiLanguage = installUiLanguage();
 	const onBlur = () => {
 		const mode = settings.get('files.autoSave');
 		if (mode === 'onFocusChange' && editors.focusedFile) void autoSave([editors.focusedFile], 'focusChange');
@@ -269,6 +272,7 @@ export function installSettings(): () => void {
 	return () => {
 		uninstallSettings();
 		uninstallKeybindings();
+		uninstallUiLanguage();
 		window.removeEventListener('blur', onBlur);
 		scheme?.removeEventListener('change', onScheme);
 		contrast?.removeEventListener('change', onContrast);
