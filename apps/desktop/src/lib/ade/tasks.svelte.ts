@@ -206,11 +206,12 @@ class AdeTasks {
 	 * `timeline` runs it through the agent host. Without one, `kingu.agent.runMode` decides.
 	 * `open: false` (automations) leaves the user's view alone.
 	 */
-	async create(input: { title: string; prompt: string; base: string; mode?: RunMode; open?: boolean }): Promise<string | undefined> {
+	/** `slugHint`: the branch name to start from when the title has no Latin letters (e.g. an automation id). */
+	async create(input: { title: string; prompt: string; base: string; mode?: RunMode; open?: boolean; slugHint?: string }): Promise<string | undefined> {
 		const title = input.title.trim();
 		if (!title || !workspace.root) return;
 		const taken = new Set([...this.list.map((t) => t.slug), ...this.worktrees.map((w) => w.slug ?? '')]);
-		const slug = uniqueSlug(title, taken);
+		const slug = uniqueSlug(input.slugHint ? `${input.slugHint} ${title}` : title, taken);
 		const prompt = input.prompt.trim() || title;
 		// Without a pick, fork from the folder's current branch (so merging back has a branch).
 		const base = input.base || status.branch || 'HEAD';

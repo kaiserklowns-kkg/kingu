@@ -222,7 +222,7 @@ class AdeAutomations {
 	/** Creates the task like the composer does; `due` null = Run now (it keeps the schedule's window). */
 	async #start(a: Automation, due: number | null) {
 		const now = Date.now();
-		const slug = await adeTasks.create({ title: runTitle(a.name, new Date(due ?? now)), prompt: a.prompt, base: a.base ?? '', mode: a.mode ?? undefined, open: false });
+		const slug = await adeTasks.create({ title: runTitle(a.name, new Date(due ?? now)), prompt: a.prompt, base: a.base ?? '', mode: a.mode ?? undefined, open: false, slugHint: a.id });
 		if (!slug) {
 			await this.#patch(a.id, { last_skip: { at: now, reason: 'สร้างงานไม่สำเร็จ (ดูข้อความใน status bar)' } });
 			return;
