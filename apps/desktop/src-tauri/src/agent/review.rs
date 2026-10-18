@@ -327,6 +327,110 @@ pub fn pr_create(gh: &Path, dir: &Path, slug: &str, base: &str, title: &str, bod
   Ok(url)
 }
 
+/// One CI check of a pull request (a GitHub Actions run or a commit status).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct PrCheck {
+  pub name: String,
+  /// `pending`, `success`, `failure`, `neutral`, `skipped` or `cancelled`.
+  pub state: &'static str,
+  pub url: Option<String>,
+}
+
+/// The task branch's pull request as GitHub sees it (Orca's Checks panel).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct PrStatus {
+  pub number: u64,
+  pub url: String,
+  pub title: String,
+  /// `OPEN`, `CLOSED` or `MERGED`.
+  pub state: String,
+  pub draft: bool,
+  /// `APPROVED`, `CHANGES_REQUESTED`, `REVIEW_REQUIRED` or empty.
+  pub review: String,
+  /// `MERGEABLE`, `CONFLICTING` or `UNKNOWN`.
+  pub mergeable: String,
+  pub checks: Vec<PrCheck>,
+}
+
+/// `gh pr view --json` fields read by `parse_pr_status`.
+pub const PR_FIELDS: &str = "number,url,title,state,isDraft,reviewDecision,mergeable,statusCheckRollup";
+
+fn check_state(status: &str, conclusion: &str) -> &'static str {
+  // CheckRun: status QUEUED/IN_PROGRESS/COMPLETED + conclusion; StatusContext: state only.
+  match (status, conclusion) {
+    (s, _) if !s.is_empty() && s != "COMPLETED" => "pending",
+    (_, "SUCCESS") => "success",
+    (_, "FAILURE" | "ERROR" | "TIMED_OUT" | "ACTION_REQUIRED" | "STARTUP_FAILURE") => "failure",
+    (_, "CANCELLED") => "cancelled",
+    (_, "SKIPPED" | "STALE") => "skipped",
+    (_, "NEUTRAL") => "neutral",
+    (_, "PENDING" | "EXPECTED" | "") => "pending",
+    _ => "neutral",
+  }
+}
+
+/// `gh pr view --json PR_FIELDS` output → the status Kingu shows.
+pub fn parse_pr_status(json: &str) -> Result<PrStatus, String> {
+  let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("gh pr view: {e}"))?;
+  let text = |k: &str| v[k].as_str().unwrap_or_default().to_owned();
+  let checks = v["statusCheckRollup"]
+    .as_array()
+    .map(|items| {
+      items
+        .iter()
+        .map(|c| {
+          let s = |k: &str| c[k].as_str().unwrap_or_default();
+          if s("__typename") == "StatusContext" {
+            PrCheck { name: s("context").to_owned(), state: check_state("", s("state")), url: c["targetUrl"].as_str().map(str::to_owned) }
+          } else {
+            let name = match (s("workflowName"), s("name")) {
+              ("", n) => n.to_owned(),
+              (w, n) => format!("{w} / {n}"),
+            };
+            PrCheck { name, state: check_state(s("status"), s("conclusion")), url: c["detailsUrl"].as_str().map(str::to_owned) }
+          }
+        })
+        .collect()
+    })
+    .unwrap_or_default();
+  Ok(PrStatus {
+    number: v["number"].as_u64().ok_or("gh pr view: no PR number")?,
+    url: text("url"),
+    title: text("title"),
+    state: text("state"),
+    draft: v["isDraft"].as_bool().unwrap_or(false),
+    review: text("reviewDecision"),
+    mergeable: text("mergeable"),
+    checks,
+  })
+}
+
+/// `gh pr view` saying the branch has no pull request yet ("No pull requests found for branch …";
+/// gh capitalises it differently across versions): not an error.
+pub fn is_no_pr(stderr: &str) -> bool {
+  let e = stderr.to_lowercase();
+  e.contains("no pull requests found") || e.contains("no open pull requests")
+}
+
+/// The pull request of `kingu/<slug>` (`None` when the branch has none) via `gh pr view`.
+pub fn pr_status(gh: &Path, dir: &Path, slug: &str) -> Result<Option<PrStatus>, String> {
+  let branch = branch_name(slug);
+  let out = crate::shell_env::command(gh)
+    .current_dir(dir)
+    .env("GH_PROMPT_DISABLED", "1")
+    .args(["pr", "view", &branch, "--json", PR_FIELDS])
+    .output()
+    .map_err(|e| format!("gh: {e}"))?;
+  if !out.status.success() {
+    let err = String::from_utf8_lossy(&out.stderr);
+    if is_no_pr(&err) {
+      return Ok(None);
+    }
+    return Err(format!("gh pr view: {}", err.trim()));
+  }
+  parse_pr_status(&String::from_utf8_lossy(&out.stdout)).map(Some)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -521,4 +625,37 @@ mod tests {
     let st = gh_status(None);
     assert!(!st.installed && !st.authenticated);
   }
+
+  #[test]
+  fn parses_pr_status_with_check_runs_and_statuses() {
+    let json = r#"{"number":12,"url":"https://github.com/o/r/pull/12","title":"แก้บั๊ก","state":"OPEN","isDraft":false,
+      "reviewDecision":"REVIEW_REQUIRED","mergeable":"MERGEABLE","statusCheckRollup":[
+      {"__typename":"CheckRun","name":"test","workflowName":"CI","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":"https://x/1"},
+      {"__typename":"CheckRun","name":"lint","workflowName":"","status":"IN_PROGRESS","conclusion":"","detailsUrl":"https://x/2"},
+      {"__typename":"CheckRun","name":"e2e","workflowName":"CI","status":"COMPLETED","conclusion":"TIMED_OUT","detailsUrl":null},
+      {"__typename":"StatusContext","context":"vercel","state":"PENDING","targetUrl":"https://v"},
+      {"__typename":"StatusContext","context":"ci/legacy","state":"ERROR","targetUrl":null}]}"#;
+    let pr = parse_pr_status(json).unwrap();
+    assert_eq!((pr.number, pr.state.as_str(), pr.draft, pr.review.as_str(), pr.mergeable.as_str()), (12, "OPEN", false, "REVIEW_REQUIRED", "MERGEABLE"));
+    let states: Vec<_> = pr.checks.iter().map(|c| (c.name.as_str(), c.state)).collect();
+    assert_eq!(states, [("CI / test", "success"), ("lint", "pending"), ("CI / e2e", "failure"), ("vercel", "pending"), ("ci/legacy", "failure")]);
+    assert_eq!(pr.checks[0].url.as_deref(), Some("https://x/1"));
+    assert_eq!(pr.checks[2].url, None);
+  }
+
+  #[test]
+  fn no_pr_yet_is_not_an_error() {
+    assert!(is_no_pr("No pull requests found for branch \"kingu/x\"\n"));
+    assert!(is_no_pr("no pull requests found for branch \"ui/batch4\""));
+    assert!(!is_no_pr("HTTP 401: Bad credentials"));
+  }
+
+  #[test]
+  fn pr_without_checks_and_bad_json() {
+    let pr = parse_pr_status(r#"{"number":3,"url":"u","title":"t","state":"MERGED","isDraft":true,"reviewDecision":"","mergeable":"UNKNOWN","statusCheckRollup":null}"#).unwrap();
+    assert!(pr.checks.is_empty() && pr.draft && pr.state == "MERGED");
+    assert!(parse_pr_status("not json").is_err());
+    assert!(parse_pr_status("{}").is_err());
+  }
+
 }

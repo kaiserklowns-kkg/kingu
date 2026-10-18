@@ -516,6 +516,7 @@ pub fn run() {
       agent::git_show_ref,
       agent::gh_status,
       agent::worktree_pr_create,
+      agent::worktree_pr_status,
       search_text,
       search_cancel,
       search_replace,

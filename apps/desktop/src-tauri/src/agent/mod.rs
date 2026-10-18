@@ -209,6 +209,14 @@ pub async fn gh_status() -> Result<review::GhStatus, String> {
   blocking(|| Ok(review::gh_status(review::gh_bin()))).await
 }
 
+/// The task branch's pull request and its CI checks (`None` when there is no PR yet).
+#[tauri::command]
+pub async fn worktree_pr_status(ws: State<'_, Workspace>, slug: String) -> Result<Option<review::PrStatus>, String> {
+  let dir = review::task_dir(&ws.root()?, &slug)?;
+  let gh = review::gh_bin().ok_or("ไม่พบ gh: ติดตั้งด้วย `brew install gh` แล้ว `gh auth login`")?;
+  blocking(move || review::pr_status(&gh, &dir, &slug)).await
+}
+
 /// Pushes the task branch and runs `gh pr create`; returns the PR URL.
 #[tauri::command]
 pub async fn worktree_pr_create(

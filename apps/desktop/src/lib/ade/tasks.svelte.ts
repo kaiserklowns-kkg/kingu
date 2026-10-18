@@ -49,6 +49,7 @@ import { adeLayout } from './adeLayout.svelte';
 import { claudeResume, claudeStart, cliAgent, cliOf, cliResume, cliStart, isClaude, parseCliCommand, type RunMode } from './agentCli';
 import { cliSessions } from './cliSessions.svelte';
 import { cliWithMcp, mcpServers, skillPlugins } from './mcp';
+import { prStatuses } from './prStatus.svelte';
 import { settings } from '#lib/settings/settings.svelte.ts';
 
 class AdeTasks {
@@ -446,6 +447,7 @@ class AdeTasks {
 		if (url !== undefined) {
 			await this.#patch(slug, { pr_url: url || null });
 			status.flash(url ? `เปิด PR แล้ว: ${url}` : 'เปิด PR แล้ว', 10000);
+			void prStatuses.refresh(slug);
 		}
 	}
 
