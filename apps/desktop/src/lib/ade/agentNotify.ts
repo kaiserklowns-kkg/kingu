@@ -3,12 +3,32 @@
 
 import type { TaskStatus } from './model';
 
-export type Notice = { title: string; body: string };
+export type Notice = { title: string; body: string; kind: 'attention' | 'finished' };
 
-export function noticeFor(prev: TaskStatus | undefined, next: TaskStatus, task: { title: string; lastEvent?: string }): Notice | null {
+/** `kingu.agent.notifications.events`: `attention` leaves out finished turns. */
+export function noticeFor(prev: TaskStatus | undefined, next: TaskStatus, task: { title: string; lastEvent?: string }, events = 'all'): Notice | null {
 	if (prev === undefined || prev === next) return null;
-	if (next === 'waiting') return { title: `รอคุณอนุญาต: ${task.title}`, body: task.lastEvent || 'agent ขออนุญาตใช้เครื่องมือ' };
-	if (next === 'failed') return { title: `งานล้มเหลว: ${task.title}`, body: task.lastEvent || 'ดูรายละเอียดใน Agents' };
-	if (prev === 'running' && next === 'review') return { title: `เสร็จรอบแล้ว: ${task.title}`, body: task.lastEvent || 'รอคุณรีวิว' };
+	if (next === 'waiting') return { title: `รอคุณอนุญาต: ${task.title}`, body: task.lastEvent || 'agent ขออนุญาตใช้เครื่องมือ', kind: 'attention' };
+	if (next === 'failed') return { title: `งานล้มเหลว: ${task.title}`, body: task.lastEvent || 'ดูรายละเอียดใน Agents', kind: 'attention' };
+	if (prev === 'running' && next === 'review' && events !== 'attention') return { title: `เสร็จรอบแล้ว: ${task.title}`, body: task.lastEvent || 'รอคุณรีวิว', kind: 'finished' };
 	return null;
+}
+
+export type NotifySettings = { enabled: boolean; when: string };
+
+/**
+ * Whether a task's notice is shown: never with notifications off; with `when: unfocused` only
+ * while the window is not focused; with `always` also while focused, except for the task on screen.
+ */
+export function shouldNotify(s: NotifySettings, focused: boolean, viewing: boolean): boolean {
+	if (!s.enabled) return false;
+	if (!focused) return true;
+	return s.when === 'always' && !viewing;
+}
+
+/** `kingu.agent.notifications.sound` → the notification's sound name (macOS), or none. */
+export function notificationSound(setting: string | undefined): string | undefined {
+	if (!setting || setting === 'none') return undefined;
+	// mac-notification-sys plays the system default for this name.
+	return setting === 'default' ? 'NSUserNotificationDefaultSoundName' : setting;
 }
