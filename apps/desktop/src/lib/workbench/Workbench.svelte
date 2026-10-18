@@ -6,7 +6,7 @@
 	// body and status bar, which stay mounted (hidden) so editors and terminals keep their state.
 	import { onMount, untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
-	import { message } from '@tauri-apps/plugin-dialog';
+	import { message } from '#lib/workbench/messageBox.ts';
 	import AgentPanel from '#lib/agent/AgentPanel.svelte';
 	import ActivityBar from './ActivityBar.svelte';
 	import EditorPart from './EditorPart.svelte';

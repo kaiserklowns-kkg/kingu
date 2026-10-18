@@ -5,7 +5,7 @@
 // while their worktree is not shown. File tabs edit the IDE's shared text models (editorModels.ts),
 // so dirty state and Save are per file, whichever layout shows it.
 
-import { ask } from '@tauri-apps/plugin-dialog';
+import { ask } from '#lib/workbench/messageBox.ts';
 import { editors, type Reveal } from '#lib/workbench/editors.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { isDiffKey } from '#lib/workbench/scm.ts';

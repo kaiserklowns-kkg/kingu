@@ -9,7 +9,7 @@ import { team } from '#lib/team/team.svelte.ts';
 import { syncKey, toTeamTask } from './teamSync.ts';
 import { untrack } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
-import { ask, message } from '@tauri-apps/plugin-dialog';
+import { ask, message } from '#lib/workbench/messageBox.ts';
 import { clientLog } from '#lib/client-log.ts';
 import { agents } from '#lib/agent/agents.svelte.ts';
 import type { Decision, WorktreeInfo } from '#lib/agent/events.ts';

@@ -4,7 +4,7 @@
 // across app restarts). The previous folder's terminals are unmounted, not killed.
 
 import { untrack } from 'svelte';
-import { ask } from '@tauri-apps/plugin-dialog';
+import { ask } from '#lib/workbench/messageBox.ts';
 import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 import { cliSessions } from '#lib/ade/cliSessions.svelte.ts';
 import { killPty, listPtys } from '#lib/terminal/pty.ts';

@@ -2,7 +2,7 @@
 // re-read on view open, after every git operation, after a save and on window focus.
 
 import { invoke } from '@tauri-apps/api/core';
-import { ask, message as showMessage } from '@tauri-apps/plugin-dialog';
+import { ask, message as showMessage } from '#lib/workbench/messageBox.ts';
 import { clientLog } from '#lib/client-log.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { terminals } from '#lib/terminal/terminals.svelte.ts';

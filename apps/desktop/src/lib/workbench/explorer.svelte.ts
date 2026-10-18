@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { ask, message } from '@tauri-apps/plugin-dialog';
+import { ask, CANCEL, choose } from '#lib/workbench/messageBox.ts';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { clientLog } from '#lib/client-log.ts';
 import { enabledGlobs, isExcluded, sortEntries, type SortOrder } from '#lib/settings/mappings.ts';
@@ -211,9 +211,9 @@ class Explorer {
 		if (!copy && confirm && settings.get<boolean>('explorer.confirmDragAndDrop')) {
 			const yes = 'ย้าย (Move)';
 			const always = 'ย้าย ไม่ต้องถามอีก (Do Not Ask Again)';
-			const r = await message(moveQuestion(ops.map((o) => o.from), dir, baseName(this.#rootName())), { title: 'Move', kind: 'warning', buttons: { yes, no: always, cancel: 'ยกเลิก (Cancel)' } });
-			if (r === always || r === 'No') await settings.set('explorer.confirmDragAndDrop', false, 'user');
-			else if (r !== yes && r !== 'Yes') return false;
+			const r = await choose(moveQuestion(ops.map((o) => o.from), dir, baseName(this.#rootName())), { title: 'Move', kind: 'warning', buttons: [yes, always, CANCEL], cancelId: 2 });
+			if (r === always) await settings.set('explorer.confirmDragAndDrop', false, 'user');
+			else if (r !== yes) return false;
 		}
 		const created: string[] = [];
 		for (const op of ops) {

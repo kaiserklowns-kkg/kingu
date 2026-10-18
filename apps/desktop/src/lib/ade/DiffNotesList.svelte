@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Review notes of a worktree (Orca's Source Control notes shelf): every note with its file and
 	// lines (click opens the diff there), edit / delete, and Send to the agent, Copy, Clear.
-	import { ask } from '@tauri-apps/plugin-dialog';
+	import { ask } from '#lib/workbench/messageBox.ts';
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { diffKey, splitPath, taskDiffKey } from '#lib/workbench/scm.ts';
 	import { editors } from '#lib/workbench/editors.svelte.ts';

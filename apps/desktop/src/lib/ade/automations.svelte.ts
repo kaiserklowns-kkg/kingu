@@ -6,7 +6,7 @@
 // ship an enabled automations.json), and `kingu.automations.enabled` stops them all.
 
 import { invoke } from '@tauri-apps/api/core';
-import { ask } from '@tauri-apps/plugin-dialog';
+import { ask } from '#lib/workbench/messageBox.ts';
 import { clientLog } from '#lib/client-log.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';

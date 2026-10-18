@@ -3,6 +3,7 @@ mod agent;
 mod attachments;
 mod backup;
 mod dap;
+mod dialog;
 mod fileops;
 mod fs;
 mod git;
@@ -800,6 +801,7 @@ pub fn run() {
       worktree_remove,
       agent::agent_start,
       notify::agent_notify,
+      dialog::message_box,
       attachments::paste_image_save,
       agent::trust::agent_trust_workspace,
       agent::status_hooks::agent_status_hooks_install,
