@@ -321,6 +321,70 @@ pub fn delete(root: &Path, id: &str) -> Result<(), String> {
   }
 }
 
+/// Blobs and temp files younger than this are never collected: one may be on its way into an
+/// edits file that has not been written yet.
+const GC_GRACE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// The snapshot blobs `file` refers to: every entry's `before` and kept-hunk `base`.
+pub fn referenced(file: &EditsFile, out: &mut HashSet<String>) {
+  for e in &file.entries {
+    for b in [Some(&e.before), e.base.as_ref()].into_iter().flatten() {
+      if let Before::File { hash, .. } = b {
+        out.insert(hash.clone());
+      }
+    }
+  }
+}
+
+/// Deletes chat `id`'s snapshot blobs that neither its edits file nor its Redo (`redo`: what the
+/// last rewinds would put back) refers to any more, and temp files a crash left: entries dropped
+/// by the `MAX_ENTRIES` bound, a hunk base moved on, a Redo made final by the next run. Only
+/// regular files named like a blob (or like our temp files) older than `GC_GRACE` go, and
+/// nothing goes when either file cannot be read. The caller holds the edits lock with the chat
+/// idle. Returns how many files went.
+pub fn collect_garbage(root: &Path, id: &str, redo: impl FnOnce() -> Result<Option<EditsRedo>, String>, now: std::time::SystemTime) -> Result<usize, String> {
+  let dir = chat_dir(root, id)?;
+  let Ok(listing) = std::fs::read_dir(dir.join(SNAPSHOTS)) else { return Ok(0) };
+  let mut keep = HashSet::new();
+  if let Some(text) = read_text(&dir.join(FILE))? {
+    let file: EditsFile = serde_json::from_str(&text).map_err(|e| format!("{FILE}: {e}"))?;
+    referenced(&file, &mut keep);
+  }
+  if let Some(r) = redo()? {
+    r.referenced(&mut keep);
+  }
+  let mut removed = 0;
+  for e in listing.flatten() {
+    let name = e.file_name().to_string_lossy().into_owned();
+    let blob = name.len() == 64 && name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    let temp = name.starts_with('.') && name.ends_with(".tmp");
+    if !((blob && !keep.contains(&name)) || temp) {
+      continue;
+    }
+    let Ok(meta) = std::fs::symlink_metadata(e.path()) else { continue };
+    let old = meta.modified().ok().and_then(|m| now.duration_since(m).ok()).is_some_and(|age| age >= GC_GRACE);
+    if meta.is_file() && old && std::fs::remove_file(e.path()).is_ok() {
+      removed += 1;
+    }
+  }
+  Ok(removed)
+}
+
+/// The chats of `root` that have an edits folder (`.kingu/chats/<id>/`).
+pub fn chats_with_edits(root: &Path) -> Vec<String> {
+  let Some(chats) = transcript_path(root, "c").ok().and_then(|p| p.parent().map(Path::to_path_buf)) else { return Vec::new() };
+  let mut ids: Vec<String> = std::fs::read_dir(chats)
+    .into_iter()
+    .flatten()
+    .flatten()
+    .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+    .map(|e| e.file_name().to_string_lossy().into_owned())
+    .filter(|id| check_id(id).is_ok())
+    .collect();
+  ids.sort();
+  ids
+}
+
 fn write_atomic_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
   let dir = path.parent().ok_or("no parent")?;
   std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -823,6 +887,16 @@ pub struct EditsRedo {
 }
 
 impl EditsRedo {
+  /// The blobs Redo would put back, and those of the edits file it restores.
+  pub fn referenced(&self, out: &mut HashSet<String>) {
+    referenced(&self.file, out);
+    for (_, b) in &self.files {
+      if let Before::File { hash, .. } = b {
+        out.insert(hash.clone());
+      }
+    }
+  }
+
   /// `later` (a rewind made after this one, before Redo) folded in: Redo goes back to before
   /// the first. Files this one already has keep their contents from then.
   pub fn stack(self, later: EditsRedo) -> EditsRedo {
@@ -949,6 +1023,8 @@ struct Live {
 #[derive(Default)]
 pub struct ChatEdits {
   live: Mutex<HashMap<String, Live>>,
+  /// Folders whose chats' snapshot stores were swept this app session.
+  swept: Mutex<HashSet<PathBuf>>,
 }
 
 fn key(root: &Path, id: &str) -> String {
@@ -970,6 +1046,26 @@ impl ChatEdits {
       return Err(tr!(AgentMsg::EditsBusy));
     }
     f(running)
+  }
+
+  /// Deletes chat `id`'s unreferenced snapshot blobs ([`collect_garbage`]); skipped while its
+  /// turn runs. Failures only log: the blobs stay.
+  pub fn collect(&self, root: &Path, id: &str) -> usize {
+    self
+      .with(root, id, true, |_| collect_garbage(root, id, || super::rewind::redo_edits(root, id), std::time::SystemTime::now()))
+      .unwrap_or_else(|e| {
+        log::info!("chat edits {id}: snapshots not collected: {e}");
+        0
+      })
+  }
+
+  /// [`collect`](Self::collect) for every chat of `root`, once per folder per app session (the
+  /// first time its chats load).
+  pub fn sweep_once(&self, root: &Path) -> usize {
+    if !self.swept.lock().unwrap().insert(root.to_path_buf()) {
+      return 0;
+    }
+    chats_with_edits(root).iter().map(|id| self.collect(root, id)).sum()
   }
 
   /// Folds one event of the chat's run into its edits; returns the events to pass on (the
@@ -1128,6 +1224,46 @@ mod tests {
     let names: Vec<_> = std::fs::read_dir(root.join(".kingu/chats/c/snapshots")).unwrap().flatten().collect();
     assert_eq!(names.len(), 2);
     assert!(store.get("../../x").is_err());
+  }
+
+  #[test]
+  fn unreferenced_snapshots_are_collected() {
+    let (_t, root) = tmp();
+    let store = Store::open(&root, "c", &root).unwrap();
+    let r = begin_request(&store, 1).unwrap();
+    write(&root, "a.txt", "one\n");
+    tool_edit(&store, r, "a.txt", "two\n");
+    let Before::File { hash: kept, .. } = store.put(b"one\n").unwrap() else { panic!() };
+    let Before::File { hash: orphan, .. } = store.put(b"nobody refers to this").unwrap() else { panic!() };
+    let Before::File { hash: redo, .. } = store.put(b"redo would put this back").unwrap() else { panic!() };
+    let blobs = root.join(".kingu/chats/c/snapshots");
+    std::fs::write(blobs.join(".x.123.tmp"), "torn").unwrap();
+    std::fs::write(blobs.join("notes.txt"), "not ours").unwrap();
+    let names = || {
+      let mut n: Vec<String> = std::fs::read_dir(&blobs).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+      n.sort();
+      n
+    };
+    let redo_of = |hash: &str| EditsRedo { file: EditsFile::default(), files: vec![("b.txt".into(), Before::File { hash: hash.into(), size: 1 })] };
+    let now = std::time::SystemTime::now();
+    // Everything is new: nothing goes before the grace period.
+    assert_eq!(collect_garbage(&root, "c", || Ok(None), now).unwrap(), 0);
+    let later = now + GC_GRACE + std::time::Duration::from_secs(1);
+    // An unreadable Redo or edits file: nothing goes.
+    assert!(collect_garbage(&root, "c", || Err("bad redo".into()), later).is_err());
+    assert_eq!(names().len(), 5);
+    assert_eq!(collect_garbage(&root, "c", || Ok(Some(redo_of(&redo))), later).unwrap(), 2, "the orphan and the temp file");
+    let mut want = vec![kept.clone(), redo.clone(), "notes.txt".to_owned()];
+    want.sort();
+    assert_eq!(names(), want);
+    assert!(!names().contains(&orphan));
+    // Once Redo is final its blob is unreferenced too; the undo snapshot stays.
+    assert_eq!(collect_garbage(&root, "c", || Ok(None), later).unwrap(), 1);
+    assert_eq!(original(&store, "a.txt").unwrap(), "one\n");
+    std::fs::write(root.join(".kingu/chats/c/edits.json"), "{").unwrap();
+    assert!(collect_garbage(&root, "c", || Ok(None), later).is_err(), "a broken edits file keeps everything");
+    assert!(names().contains(&kept));
+    assert_eq!(chats_with_edits(&root), ["c"]);
   }
 
   #[cfg(unix)]

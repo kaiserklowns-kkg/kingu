@@ -156,6 +156,11 @@ fn load_redo(root: &Path, id: &str) -> Result<Option<Redo>, String> {
   }
 }
 
+/// The files and edits file Redo would put back (their snapshot blobs must be kept).
+pub fn redo_edits(root: &Path, id: &str) -> Result<Option<EditsRedo>, String> {
+  Ok(load_redo(root, id)?.and_then(|r| r.edits))
+}
+
 /// Drops what Redo would put back: a run of the chat started, so the rewind is final.
 pub fn clear_redo(root: &Path, id: &str) -> Result<(), String> {
   let path = redo_path(root, id)?;

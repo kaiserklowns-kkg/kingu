@@ -108,5 +108,10 @@ crate::i18n::messages! {
       en: "Worktree of task {slug} not found",
       th: "ไม่พบ worktree ของงาน {slug}",
     },
+    // vault/mod.rs
+    VaultNotASession {
+      en: "That file is not a session of this agent",
+      th: "ไฟล์นี้ไม่ใช่ session ของ agent นี้",
+    },
   }
 }

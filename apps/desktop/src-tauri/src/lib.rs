@@ -33,6 +33,7 @@ mod terminal_links;
 mod team;
 mod usage;
 mod textfile;
+mod vault;
 mod watcher;
 mod window;
 mod workspace;
@@ -1154,6 +1155,7 @@ pub fn run() {
     .manage(system::KeepAwake::default())
     .manage(Arc::new(agent::AgentHost::default()))
     .manage(Arc::new(agent::chat_edits::ChatEdits::default()))
+    .manage(Arc::new(vault::Vault::default()))
     .manage(Arc::new(search::Searches::default()))
     .manage(WorktreeSearches::default())
     .manage(lsp::Servers::default())
@@ -1273,6 +1275,10 @@ pub fn run() {
       git_compare,
       git_ref_names,
       claude_sessions,
+      vault::vault_list,
+      vault::vault_search,
+      vault::vault_transcript,
+      vault::vault_stats,
       gh_pr_create,
       gh_review_threads,
       gh_reply_thread,

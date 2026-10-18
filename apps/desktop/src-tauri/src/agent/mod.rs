@@ -230,10 +230,19 @@ pub async fn agent_set_options(agents: State<'_, Arc<AgentHost>>, run_id: u32, m
   on_host(&agents, move |a| a.set_options(run_id, model.as_deref(), permission_mode.as_deref())).await
 }
 
-/// Chats of the open folder; empty with no folder open.
+/// Chats of the open folder; empty with no folder open. The first load of a folder also sweeps
+/// its chats' snapshot stores for blobs nothing refers to any more (in the background).
 #[tauri::command]
-pub fn chats_load(ws: State<'_, Workspace>) -> Result<Vec<chats::ChatMeta>, String> {
-  ws.current().map_or(Ok(Vec::new()), |root| chats::load(&root))
+pub fn chats_load(ws: State<'_, Workspace>, edits: State<'_, Arc<chat_edits::ChatEdits>>) -> Result<Vec<chats::ChatMeta>, String> {
+  let Some(root) = ws.current() else { return Ok(Vec::new()) };
+  let (edits, swept) = (edits.inner().clone(), root.clone());
+  std::thread::spawn(move || {
+    let n = edits.sweep_once(&swept);
+    if n > 0 {
+      log::info!("chat edits: {n} unreferenced snapshot files removed");
+    }
+  });
+  chats::load(&root)
 }
 
 #[tauri::command]
@@ -303,10 +312,15 @@ pub async fn chat_edits_keep(ws: State<'_, Workspace>, edits: State<'_, Arc<chat
   let root = ws.root()?;
   let edits = edits.inner().clone();
   blocking(move || {
-    edits.with(&root, &id, false, |_| match edits_store(&root, &id)? {
+    let kept = edits.with(&root, &id, false, |_| match edits_store(&root, &id)? {
       Some(store) => chat_edits::keep(&store, paths.as_deref()),
       None => Ok(0),
-    })
+    })?;
+    // Keep All: the edits file may have dropped settled entries, and with them their blobs.
+    if paths.is_none() {
+      edits.collect(&root, &id);
+    }
+    Ok(kept)
   })
   .await
 }
