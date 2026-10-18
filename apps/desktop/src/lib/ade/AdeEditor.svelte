@@ -11,9 +11,11 @@
 	// goes through the IDE's Save command (it saves the ADE's active file while the ADE is in
 	// front). Editor settings and the theme reach it through installEditorSettings' Monaco hooks.
 	// Mounted only while its tab is shown; the model outlives it and the view state is kept here.
+	// A file that cannot open as text goes to the text file service (`onfail`), which shows the
+	// IDE's placeholder with "Open Anyway" instead of this editor.
 	import { onMount } from 'svelte';
 	import { clientLog } from '#lib/client-log.ts';
-	import { installEditorSettings } from '#lib/settings/apply.svelte.ts';
+	import { editorOptions, installEditorSettings } from '#lib/settings/apply.svelte.ts';
 	import { modelEntry } from '#lib/workbench/editorModels.ts';
 	import { adeLayout } from './adeLayout.svelte.ts';
 
@@ -46,17 +48,8 @@
 				installEditorSettings(m.monaco);
 				const entry = await modelEntry(m, file);
 				if (disposed || entry.model.isDisposed()) return;
-				editor = m.monaco.editor.create(host, {
-					model: entry.model,
-					theme: m.THEME_ID,
-					automaticLayout: true,
-					fontFamily: "Menlo, Monaco, 'Courier New', 'IBM Plex Sans Thai', monospace",
-					fontSize: 12,
-					lineHeight: 18,
-					minimap: { enabled: true },
-					scrollBeyondLastLine: true,
-					renderLineHighlight: 'all'
-				});
+				// The IDE's editor settings from the first paint, as EditorHost does.
+				editor = m.monaco.editor.create(host, { ...editorOptions(), model: entry.model, theme: m.THEME_ID, automaticLayout: true });
 				const view = views.get(file);
 				if (view) editor.restoreViewState(view);
 				// A reload from disk (the agent changed the file) is not the user's edit.

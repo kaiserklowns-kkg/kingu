@@ -131,6 +131,50 @@ export function closeAction(o: { dirty: boolean; openElsewhere: boolean; autoSav
 	return 'ask';
 }
 
+/** What closing editors needs from the workbench (the IDE's groups or the Agents layout's tabs). */
+export type ClosePorts = {
+	isDirty: (path: string) => boolean;
+	/** Another editor keeps showing the file's model, so closing this one loses nothing. */
+	openElsewhere: (path: string) => boolean;
+	autoSave: AutoSaveMode;
+	isMac: boolean;
+	save: (path: string, reason?: 'focusChange' | 'windowChange') => Promise<boolean>;
+	/** Save / Don't Save / Cancel for these paths. */
+	confirm: (paths: string[]) => Promise<ConfirmResult>;
+	/** Unsaved edits are thrown away: their hot exit backup goes too. */
+	discardBackup: (path: string) => void;
+	/** Shows the only file asked about, so the user sees what the question is about. */
+	reveal?: (path: string) => void;
+};
+
+/**
+ * VS Code's handleDirtyClosing for `paths`: resolves to the ones that may close now, in order.
+ * `discard` closes without asking (⌥-click). One dialog covers every dirty file.
+ */
+export async function settleClose(paths: string[], p: ClosePorts, { discard = false } = {}): Promise<string[]> {
+	const ok: string[] = [];
+	const ask: string[] = [];
+	for (const path of paths) {
+		const dirty = p.isDirty(path);
+		const elsewhere = p.openElsewhere(path);
+		if (dirty && discard && !elsewhere) p.discardBackup(path);
+		const action = discard ? 'close' : closeAction({ dirty, openElsewhere: elsewhere, autoSave: p.autoSave, isMac: p.isMac });
+		if (action === 'close') ok.push(path);
+		else if (action === 'save' && (await p.save(path, p.autoSave === 'onFocusChange' ? 'focusChange' : 'windowChange'))) ok.push(path);
+		else ask.push(path);
+	}
+	if (!ask.length) return ok;
+	if (ask.length === 1) p.reveal?.(ask[0]);
+	const choice = await p.confirm(ask);
+	if (choice === 'cancel') return ok;
+	for (const path of ask) {
+		if (choice === 'save' && !(await p.save(path))) continue;
+		if (choice === 'dontSave') p.discardBackup(path);
+		ok.push(path);
+	}
+	return ok;
+}
+
 // --- Quitting, closing the window, switching folders (nativeWorkingCopyBackupTracker)
 
 export type HotExit = 'off' | 'onExit' | 'onExitAndWindowClose';

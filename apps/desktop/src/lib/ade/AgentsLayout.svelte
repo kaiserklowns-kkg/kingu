@@ -1,6 +1,5 @@
 <script lang="ts">
 	import type { Attachment } from '#lib/agent/attachments.ts';
-	import { notifications } from '#lib/workbench/notifications.svelte.ts';
 	// Agents layout body, laid out like Orca: side bar (search, Tasks, Projects → worktrees) | the
 	// selected worktree's active tab (the agent session, the new-task composer for the folder
 	// itself, a terminal in that worktree, or a file / task diff opened from the right side bar;
@@ -10,6 +9,9 @@
 	import Sash from '#lib/workbench/Sash.svelte';
 	import DiffHost from '#lib/workbench/DiffHost.svelte';
 	import AdeEditor from './AdeEditor.svelte';
+	import FilePlaceholder from '#lib/workbench/FilePlaceholder.svelte';
+	import SaveConflictCompare from '#lib/workbench/SaveConflictCompare.svelte';
+	import { textFiles } from '#lib/workbench/textFileService.svelte.ts';
 	import { keyOfTabId } from './adeTabs.ts';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
@@ -209,15 +211,22 @@
 					<DiffHost active={activeFile} onfail={(k) => adeLayout.closeFile(key, k)} />
 				</div>
 			{:else}
-				{#key activeFile}
-					<div class="absolute inset-0">
-						<AdeEditor
-							path={activeFile}
-							onedit={() => adeLayout.pin(key, activeFile)}
-							onfail={(e) => (notifications.error(`เปิดไฟล์ไม่ได้: ${e}`), adeLayout.closeFile(key, activeFile))}
-						/>
-					</div>
-				{/key}
+				<!-- The IDE's text file service: binary, too large and unreadable files keep their tab as a
+				     placeholder with "Open Anyway", and a save conflict opens its compare here. -->
+				{@const placeholder = textFiles.placeholder(activeFile)}
+				{#if placeholder}
+					<div class="absolute inset-0"><FilePlaceholder path={activeFile} {placeholder} /></div>
+				{:else}
+					{#key activeFile}
+						<div class="absolute inset-0">
+							<AdeEditor path={activeFile} onedit={() => adeLayout.pin(key, activeFile)} onfail={(e) => textFiles.openFailed(activeFile, e)} />
+						</div>
+					{/key}
+					{#if textFiles.compare?.path === activeFile}
+						{@const c = textFiles.compare}
+						<div class="absolute inset-0">{#key c}<SaveConflictCompare path={c.path} disk={c.disk} />{/key}</div>
+					{/if}
+				{/if}
 			{/if}
 		{:else if activeTab === 'main'}
 			{#if slug && cli}
