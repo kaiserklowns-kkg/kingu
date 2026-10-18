@@ -412,13 +412,16 @@ pub fn is_no_pr(stderr: &str) -> bool {
   e.contains("no pull requests found") || e.contains("no open pull requests")
 }
 
-/// The pull request of `kingu/<slug>` (`None` when the branch has none) via `gh pr view`.
-pub fn pr_status(gh: &Path, dir: &Path, slug: &str) -> Result<Option<PrStatus>, String> {
-  let branch = branch_name(slug);
+/// The pull request of `kingu/<slug>`, or of the branch checked out in `dir` when `slug` is
+/// `None` (the open folder itself), via `gh pr view`; `None` when the branch has none.
+pub fn pr_status(gh: &Path, dir: &Path, slug: Option<&str>) -> Result<Option<PrStatus>, String> {
+  let mut args = vec!["pr".to_owned(), "view".to_owned()];
+  args.extend(slug.map(branch_name));
+  args.extend(["--json".to_owned(), PR_FIELDS.to_owned()]);
   let out = crate::shell_env::command(gh)
     .current_dir(dir)
     .env("GH_PROMPT_DISABLED", "1")
-    .args(["pr", "view", &branch, "--json", PR_FIELDS])
+    .args(&args)
     .output()
     .map_err(|e| format!("gh: {e}"))?;
   if !out.status.success() {
@@ -603,6 +606,79 @@ mod tests {
     assert!(task_dir(&repo, "fake").is_err());
     assert!(task_dir(&repo, "missing").is_err());
     assert!(task_dir(&repo, "../x").is_err());
+  }
+
+  /// The ADE's right side bar runs Source Control in the task worktree (`slug` on git_*):
+  /// status, stage, commit and ignore marks there never touch the open folder's repository.
+  #[test]
+  fn source_control_runs_inside_the_task_worktree() {
+    let (_tmp, repo, wt) = setup();
+    write(&wt, "edit.txt", "one\nTWO\nthree\n");
+    write(&wt, "new.txt", "n\n");
+    write(&wt, "run.log", "x\n");
+    let st = crate::git::status(&wt).unwrap().unwrap();
+    assert_eq!(st.branch.as_deref(), Some("kingu/t"));
+    let paths: Vec<&str> = st.entries.iter().map(|e| e.path.as_str()).collect();
+    assert_eq!(paths, ["edit.txt", "new.txt"]);
+    assert!(crate::git::status(&repo).unwrap().unwrap().entries.is_empty());
+
+    crate::git::check_rel(&wt, "new.txt").unwrap();
+    crate::git::stage(&wt, &["edit.txt".into()]).unwrap();
+    crate::git::commit(&wt, "edit", false).unwrap();
+    let st = crate::git::status(&wt).unwrap().unwrap();
+    assert_eq!(st.entries.len(), 1);
+    assert_eq!(st.entries[0].worktree.as_deref(), Some("?"));
+    assert_eq!(git_ok(&repo, &["log", "-1", "--format=%s", "kingu/t"]).trim(), "edit");
+    assert_eq!(git_ok(&repo, &["log", "-1", "--format=%s", "main"]).trim(), "init");
+
+    let mut entries = crate::fs::list_dir(&repo, &wt).unwrap();
+    crate::git::mark_ignored(&wt, &mut entries);
+    let ignored: Vec<&str> = entries.iter().filter(|e| e.ignored).map(|e| e.name.as_str()).collect();
+    assert_eq!(ignored, ["run.log"]);
+  }
+
+  /// Source Control › Push in a task worktree publishes its own branch (to a local bare remote).
+  #[test]
+  fn push_from_the_task_worktree_publishes_its_branch() {
+    let (tmp, repo, wt) = setup();
+    let remote = tmp.path().join("remote.git");
+    git_ok(tmp.path(), &["init", "-q", "--bare", remote.to_str().unwrap()]);
+    git_ok(&repo, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    write(&wt, "new.txt", "n\n");
+    crate::git::stage(&wt, &["new.txt".into()]).unwrap();
+    crate::git::commit(&wt, "add new", false).unwrap();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let upstream = crate::git_remote::push(&wt, None, &cancel, std::time::Duration::from_secs(30)).unwrap();
+    assert_eq!(upstream, "origin/kingu/t");
+    assert_eq!(git_ok(&remote, &["log", "-1", "--format=%s", "kingu/t"]).trim(), "add new");
+    assert!(git_ok(&remote, &["branch", "--list", "main"]).trim().is_empty());
+  }
+
+  /// Files › Contents runs ripgrep in the worktree: paths come back relative to it and the
+  /// worktree's own `.gitignore` applies (its `.git` is a file, not a folder).
+  #[test]
+  fn content_search_in_a_worktree_uses_its_ignore_rules() {
+    use crate::search::{SearchEvent, SearchOptions, Searches, find_rg};
+    let Ok(rg) = find_rg(std::env::var_os("KINGU_RG"), std::env::var_os("PATH")) else {
+      eprintln!("rg not found, skipping");
+      return;
+    };
+    let (_tmp, _repo, wt) = setup();
+    write(&wt, "run.log", "needle\n");
+    write(&wt, "src/ไทย.txt", "needle ไทย\n");
+    let searches = std::sync::Arc::new(Searches::default());
+    let (tx, rx) = std::sync::mpsc::channel();
+    let opts = SearchOptions { query: "needle".into(), ..Default::default() };
+    searches.start(&rg, &wt, &opts, move |ev| tx.send(ev).is_ok()).unwrap();
+    let mut files = Vec::new();
+    for ev in rx {
+      match ev {
+        SearchEvent::File { path, .. } => files.push(path),
+        SearchEvent::Done { .. } => break,
+        SearchEvent::Error { message } => panic!("{message}"),
+      }
+    }
+    assert_eq!(files, ["src/ไทย.txt"]);
   }
 
   #[test]

@@ -157,40 +157,53 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
   tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
+/// The repository a Source Control command acts on: the open folder, or the task worktree
+/// `slug` (the ADE's right side bar works on the selected worktree).
+fn repo_dir(ws: &Workspace, slug: Option<&str>) -> Result<PathBuf, String> {
+  let root = ws.root()?;
+  match slug {
+    Some(s) => agent::review::task_dir(&root, s),
+    None => Ok(root),
+  }
+}
+
 /// Source Control view: branch, ahead/behind and changed files; `None` outside a repository.
 #[tauri::command]
-async fn git_status(ws: State<'_, Workspace>) -> Result<Option<git::GitStatus>, String> {
-  let Some(root) = ws.current() else { return Ok(None) };
-  blocking(move || git::status(&root)).await
+async fn git_status(ws: State<'_, Workspace>, slug: Option<String>) -> Result<Option<git::GitStatus>, String> {
+  if slug.is_none() && ws.current().is_none() {
+    return Ok(None);
+  }
+  let dir = repo_dir(&ws, slug.as_deref())?;
+  blocking(move || git::status(&dir)).await
 }
 
 #[tauri::command]
-async fn git_stage(ws: State<'_, Workspace>, paths: Vec<String>) -> Result<(), String> {
-  let root = ws.root()?;
-  let paths = checked(&root, paths)?;
-  blocking(move || git::stage(&root, &paths)).await
+async fn git_stage(ws: State<'_, Workspace>, paths: Vec<String>, slug: Option<String>) -> Result<(), String> {
+  let dir = repo_dir(&ws, slug.as_deref())?;
+  let paths = checked(&dir, paths)?;
+  blocking(move || git::stage(&dir, &paths)).await
 }
 
 #[tauri::command]
-async fn git_unstage(ws: State<'_, Workspace>, paths: Vec<String>) -> Result<(), String> {
-  let root = ws.root()?;
-  let paths = checked(&root, paths)?;
-  blocking(move || git::unstage(&root, &paths)).await
+async fn git_unstage(ws: State<'_, Workspace>, paths: Vec<String>, slug: Option<String>) -> Result<(), String> {
+  let dir = repo_dir(&ws, slug.as_deref())?;
+  let paths = checked(&dir, paths)?;
+  blocking(move || git::unstage(&dir, &paths)).await
 }
 
 /// Deleting untracked files needs `delete_untracked`, set only after the user confirmed.
 #[tauri::command]
-async fn git_discard(ws: State<'_, Workspace>, paths: Vec<String>, delete_untracked: Option<bool>) -> Result<(), String> {
-  let root = ws.root()?;
-  let paths = checked(&root, paths)?;
-  blocking(move || git::discard(&root, &paths, delete_untracked.unwrap_or(false))).await
+async fn git_discard(ws: State<'_, Workspace>, paths: Vec<String>, delete_untracked: Option<bool>, slug: Option<String>) -> Result<(), String> {
+  let dir = repo_dir(&ws, slug.as_deref())?;
+  let paths = checked(&dir, paths)?;
+  blocking(move || git::discard(&dir, &paths, delete_untracked.unwrap_or(false))).await
 }
 
 #[tauri::command]
-async fn git_commit(ws: State<'_, Workspace>, message: String, amend: Option<bool>) -> Result<(), String> {
-  let root = ws.root()?;
-  blocking(move || git::commit(&root, &message, amend.unwrap_or(false))).await?;
-  log::info!("committed");
+async fn git_commit(ws: State<'_, Workspace>, message: String, amend: Option<bool>, slug: Option<String>) -> Result<(), String> {
+  let dir = repo_dir(&ws, slug.as_deref())?;
+  blocking(move || git::commit(&dir, &message, amend.unwrap_or(false))).await?;
+  log::info!("committed{}", slug.map(|s| format!(" in task {s}")).unwrap_or_default());
   Ok(())
 }
 
@@ -295,6 +308,33 @@ async fn search_replace(ws: State<'_, Workspace>, request: replace::ReplaceReque
   let written: usize = results.iter().filter(|r| r.outcome == replace::Outcome::Written).map(|r| r.replaced).sum();
   log::info!("search_replace: {written} replacements written in {} files", results.len());
   Ok(results)
+}
+
+/// The ADE's right side bar (Files › Contents): its own ripgrep slot, so it never cancels the
+/// IDE's Find in Files, run in the selected worktree so that worktree's ignore files apply.
+#[derive(Default)]
+struct WorktreeSearches(Arc<search::Searches>);
+
+#[tauri::command]
+fn worktree_search(
+  ws: State<'_, Workspace>,
+  searches: State<'_, WorktreeSearches>,
+  slug: Option<String>,
+  options: search::SearchOptions,
+  on_event: Channel<search::SearchEvent>,
+) -> Result<u32, String> {
+  if options.query.is_empty() {
+    searches.0.cancel();
+    return Err("query is empty".into());
+  }
+  let dir = repo_dir(&ws, slug.as_deref())?;
+  let rg = search::find_rg(std::env::var_os("KINGU_RG"), shell_env::path())?;
+  searches.0.start(&rg, &dir, &options, move |ev| on_event.send(ev).is_ok())
+}
+
+#[tauri::command]
+fn worktree_search_cancel(searches: State<'_, WorktreeSearches>) {
+  searches.0.cancel();
 }
 
 #[tauri::command]
@@ -496,6 +536,7 @@ pub fn run() {
     .manage(system::KeepAwake::default())
     .manage(Arc::new(agent::AgentHost::default()))
     .manage(Arc::new(search::Searches::default()))
+    .manage(WorktreeSearches::default())
     .manage(lsp::Servers::default())
     .manage(dap::Sessions::default())
     .manage(git_remote::GitOps::default())
@@ -614,6 +655,8 @@ pub fn run() {
       agent::gh_issue_open,
       search_text,
       search_cancel,
+      worktree_search,
+      worktree_search_cancel,
       search_replace,
       lsp_start,
       lsp_check,

@@ -15,10 +15,24 @@
 	import { clientLog } from '#lib/client-log.ts';
 	import { installEditorSettings } from '#lib/settings/apply.svelte.ts';
 	import { modelEntry } from '#lib/workbench/editorModels.ts';
+	import { adeLayout } from './adeLayout.svelte.ts';
 
 	let { path, onedit, onfail }: { path: string; onedit: () => void; onfail: (error: unknown) => void } = $props();
 
 	let host: HTMLDivElement;
+	let shownEditor = $state.raw<MonacoTypes.editor.IStandaloneCodeEditor | undefined>();
+
+	// A Contents search hit for this file: select the match (also when the tab is already shown).
+	$effect(() => {
+		const r = adeLayout.pendingReveal;
+		const ed = shownEditor;
+		if (!ed || !r || r.path !== path) return;
+		adeLayout.pendingReveal = null;
+		const range = { startLineNumber: r.line, startColumn: r.column, endLineNumber: r.line, endColumn: r.endColumn ?? r.column };
+		ed.setSelection(range);
+		ed.revealRangeInCenterIfOutsideViewport(range);
+		if (r.focus) ed.focus();
+	});
 
 	onMount(() => {
 		let disposed = false;
@@ -49,6 +63,7 @@
 				editor.onDidChangeModelContent(() => entry.reloading || onedit());
 				editor.focus();
 				const ed = editor;
+				shownEditor = ed;
 				unregister = editors.registerAdeEditor({
 					gotoLine: (line, column = 1) => {
 						ed.setPosition({ lineNumber: line, column });

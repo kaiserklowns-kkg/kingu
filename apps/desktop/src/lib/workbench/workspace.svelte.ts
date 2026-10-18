@@ -32,6 +32,7 @@ class Workspace {
 	name = $derived(this.root ? this.root.split('/').pop() || this.root : '');
 
 	#listeners = new Set<Listener>();
+	#raw = new Set<Listener>();
 	#home = '';
 
 	async init() {
@@ -122,6 +123,12 @@ class Workspace {
 		return () => this.#listeners.delete(fn);
 	}
 
+	/** Every watcher batch, git internals included (a task worktree's index lives in `.git/worktrees/`). */
+	onAnyChange(fn: Listener): () => void {
+		this.#raw.add(fn);
+		return () => this.#raw.delete(fn);
+	}
+
 	/** Every view of the old folder goes: editors, language servers, tree, search, source control. */
 	#switched(root: string | null) {
 		editors.closeAll();
@@ -150,6 +157,7 @@ class Workspace {
 		listen<FilesChanged>('workspace:files-changed', (e) => {
 			if (!this.root || e.payload.root !== this.root) return;
 			void scm.refresh();
+			for (const fn of this.#raw) fn(e.payload.paths);
 			const files = workspaceFiles(e.payload.paths);
 			if (!files.length) return;
 			void explorer.refresh(files);

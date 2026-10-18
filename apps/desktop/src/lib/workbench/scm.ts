@@ -26,6 +26,20 @@ export type GitStatus = {
 /** A row in one of the two groups ("Staged Changes" / "Changes"). */
 export type Resource = { entry: StatusEntry; staged: boolean; letter: string; color: string; deleted: boolean };
 
+/** What the Source Control view drives: the open folder's repository, or one task worktree's. */
+export interface ScmSource {
+	readonly repo: GitStatus | null;
+	readonly loaded: boolean;
+	readonly busy: boolean;
+	message: string;
+	readonly groups: { staged: Resource[]; changes: Resource[] };
+	refresh(): Promise<void>;
+	stage(paths: string[]): Promise<boolean>;
+	unstage(paths: string[]): Promise<boolean>;
+	discard(paths: string[], deleteUntracked: boolean): Promise<boolean>;
+	commit(opts?: { amend?: boolean }): Promise<void>;
+}
+
 // VS Code gitDecoration.* dark colors.
 const COLORS = {
 	modified: '#E2C08D',

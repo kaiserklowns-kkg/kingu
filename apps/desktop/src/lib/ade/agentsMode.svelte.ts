@@ -14,6 +14,7 @@ import { COLUMNS, STATUS_LABEL } from './model';
 import { BOARD_KEY, slugOfTaskKey, taskKey, worktreeDir } from './keys';
 import { adeTasks } from './tasks.svelte';
 import { adeLayout, PRIMARY } from './adeLayout.svelte';
+import { installRightSidebar } from './rightSidebar.svelte.ts';
 import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 
 /** The session to show when entering the Agents layout: the task tab in front, else the last one, else the first needing attention. */
@@ -120,13 +121,14 @@ export function installAgentsMode(): () => void {
 		commands.register({ id: 'kingu.agents.pickSession', title: 'Switch Session...', category: 'Agents', when: hasRoot, run: pickSession }),
 		commands.register({ id: 'kingu.agents.newSession', title: 'New Session', category: 'Agents', when: hasRoot, run: () => (appMode.isAgents ? newSession() : openAgentsNew()) }),
 		commands.register({ id: 'kingu.agents.toggleSessions', title: 'Toggle Sessions Side Bar', category: 'Agents', when: () => appMode.isAgents, run: () => (appMode.sessionsVisible = !appMode.sessionsVisible) }),
-		commands.register({ id: 'kingu.agents.toggleChangesPanel', title: 'Toggle Changes Panel', category: 'Agents', when: () => appMode.isAgents, run: () => (appMode.panelVisible = !appMode.panelVisible) }),
 		commands.register({ id: 'kingu.agents.sessionBack', title: 'Previous Session', category: 'Agents', when: () => appMode.isAgents && appMode.canGoBack, run: () => appMode.back() }),
 		commands.register({ id: 'kingu.agents.sessionForward', title: 'Next Session', category: 'Agents', when: () => appMode.isAgents && appMode.canGoForward, run: () => appMode.forward() })
 	];
+	const uninstallRight = installRightSidebar();
 	return () => {
 		stop();
 		unregister.forEach((u) => u());
+		uninstallRight();
 	};
 }
 
