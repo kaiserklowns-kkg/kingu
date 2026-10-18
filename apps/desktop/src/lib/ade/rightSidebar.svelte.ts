@@ -180,6 +180,7 @@ export function installRightSidebar(): () => void {
 			when: () => agents() && rightSidebar.isGit(adeLayout.key),
 			run: () => rightSidebar.toggle('changes')
 		}),
+		commands.register({ id: 'kingu.agents.rightSidebar.ports', title: 'Right Side Bar: Ports', category: 'Agents', when: agents, run: () => rightSidebar.toggle('ports') }),
 		commands.register({ id: 'kingu.agents.rightSidebar.checks', title: 'Right Side Bar: Checks', category: 'Agents', when: () => agents() && rightSidebar.isGit(adeLayout.key), run: () => rightSidebar.toggle('checks') })
 	];
 	const unwatch = workspace.onAnyChange((paths) => rightSidebar.changed(paths));

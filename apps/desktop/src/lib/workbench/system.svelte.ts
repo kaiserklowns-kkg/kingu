@@ -14,7 +14,7 @@ type Stats = {
 	processes: ProcessRow[];
 	keep_awake: boolean | null;
 };
-export type Port = { port: number; address: string; pid: number; name: string; ours: boolean };
+export type Port = { port: number; address: string; pid: number; name: string; ours: boolean; cwd?: string | null };
 
 const POLL_MS = 5000;
 const PORTS_POLL_MS = 15000;

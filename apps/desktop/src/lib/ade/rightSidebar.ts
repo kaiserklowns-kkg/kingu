@@ -5,17 +5,18 @@
 import { COLORS, type Decoration } from '#lib/workbench/scm.ts';
 import type { FileMatches, TextMatch } from '#lib/workbench/searchResults.ts';
 
-export type RightTab = 'files' | 'agents' | 'changes' | 'checks' | 'review';
+export type RightTab = 'files' | 'agents' | 'changes' | 'checks' | 'ports' | 'review';
 
-export type RightTabInfo = { id: RightTab; label: string; icon: 'files' | 'agentsLayout' | 'git' | 'listChecks' | 'pullRequest'; key?: string; gitOnly?: boolean; taskOnly?: boolean };
+export type RightTabInfo = { id: RightTab; label: string; icon: 'files' | 'agentsLayout' | 'git' | 'listChecks' | 'ports' | 'pullRequest'; key?: string; gitOnly?: boolean; taskOnly?: boolean };
 
-/** Orca's tab strip: Explorer, Agents, Source Control, Checks (the last two only in a git repository),
+/** Orca's tab strip: Explorer, Agents, Source Control, Checks (those two only in a git repository), Ports,
  * then Kingu's own Review (accept, merge, PR), which only a task has. */
 export const RIGHT_TABS: RightTabInfo[] = [
 	{ id: 'files', label: 'Explorer', icon: 'files', key: 'cmd+shift+e' },
 	{ id: 'agents', label: 'Agents', icon: 'agentsLayout' },
 	{ id: 'changes', label: 'Source Control', icon: 'git', key: 'cmd+shift+g', gitOnly: true },
 	{ id: 'checks', label: 'Checks', icon: 'listChecks', gitOnly: true },
+	{ id: 'ports', label: 'Ports', icon: 'ports' },
 	{ id: 'review', label: 'Review', icon: 'pullRequest', taskOnly: true }
 ];
 
@@ -175,4 +176,21 @@ export function rowLook(
 	// A folder with nothing tracked gets Orca's `U`, not the dot of a folder with changes inside.
 	if (untracked) return { ignored: false, deco: { letter: 'U', color: COLORS.added } };
 	return { ignored: false, deco: decorations.get(rel) };
+}
+
+/**
+ * Whose server a listening port is (Orca's port attribution by working directory): a task's slug
+ * when the process runs inside `.kingu/worktrees/<slug>`, '' for the folder itself, null for
+ * anything else. Deepest match wins, so a task worktree is never taken for the folder around it.
+ */
+export function portOwner(cwd: string | null | undefined, root: string | null): string | null {
+	if (!cwd || !root) return null;
+	const norm = (p: string) => p.replace(/\/+$/, '');
+	const c = norm(cwd);
+	const r = norm(root);
+	if (c !== r && !c.startsWith(`${r}/`)) return null;
+	const rest = c.slice(r.length + 1);
+	const m = rest.match(/^\.kingu\/worktrees\/([^/]+)/);
+	if (m) return m[1];
+	return rest === '.kingu' || rest.startsWith('.kingu/') ? null : '';
 }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { COLORS, fileDecorations } from '#lib/workbench/scm.ts';
 import type { FileMatches } from '#lib/workbench/searchResults.ts';
-import { cleanTabs, SAVED_TABS_MAX, contentRows, contentSummary, filesOf, fold, isRightTab, nameMatches, RIGHT_TABS, rowLook, toggleTab, touchesWorktree, treeRows, visibleTabs, shellJoin, sortSessions } from './rightSidebar.ts';
+import { portOwner, cleanTabs, SAVED_TABS_MAX, contentRows, contentSummary, filesOf, fold, isRightTab, nameMatches, RIGHT_TABS, rowLook, toggleTab, touchesWorktree, treeRows, visibleTabs, shellJoin, sortSessions } from './rightSidebar.ts';
 
 describe('Agents tab', () => {
 	const v = (slug: string, created_at: number, updated_at: number) => ({ meta: { slug, created_at, updated_at } });
@@ -36,13 +36,13 @@ describe('watcher batches per worktree', () => {
 
 describe('tabs', () => {
 	test('Orca order and ids', () => {
-		expect(RIGHT_TABS.map((t) => t.id)).toEqual(['files', 'agents', 'changes', 'checks', 'review']);
+		expect(RIGHT_TABS.map((t) => t.id)).toEqual(['files', 'agents', 'changes', 'checks', 'ports', 'review']);
 		expect(isRightTab('checks')).toBe(true);
 		expect(isRightTab('nope')).toBe(false);
 	});
 
 	test('Source Control and Checks only in a git repository', () => {
-		expect(visibleTabs(false, 'changes')).toEqual({ tabs: RIGHT_TABS.slice(0, 2), active: 'files' });
+		expect(visibleTabs(false, 'changes')).toEqual({ tabs: RIGHT_TABS.filter((t) => ['files', 'agents', 'ports'].includes(t.id)), active: 'files' });
 		expect(visibleTabs(true, 'checks').active).toBe('checks');
 		expect(visibleTabs(false, 'agents').active).toBe('agents');
 	});
@@ -50,7 +50,7 @@ describe('tabs', () => {
 	test('Review only for a task', () => {
 		expect(visibleTabs(true, 'review').active).toBe('files');
 		expect(visibleTabs(true, 'review', true).active).toBe('review');
-		expect(visibleTabs(true, 'files', true).tabs.map((t) => t.id)).toEqual(['files', 'agents', 'changes', 'checks', 'review']);
+		expect(visibleTabs(true, 'files', true).tabs.map((t) => t.id)).toEqual(['files', 'agents', 'changes', 'checks', 'ports', 'review']);
 	});
 
 	test('a tab shortcut shows the tab, pressed again on it hides the side bar', () => {
@@ -140,4 +140,17 @@ test('saved tabs are read back safely', () => {
 	const kept = Object.keys(cleanTabs(many));
 	expect(kept.length).toBe(SAVED_TABS_MAX);
 	expect(kept[0]).toBe('w5');
+});
+
+test('ports belong to the worktree their process runs in', () => {
+	const root = '/Users/me/app';
+	expect(portOwner('/Users/me/app/.kingu/worktrees/fix-login/web', root)).toBe('fix-login');
+	expect(portOwner('/Users/me/app/.kingu/worktrees/fix-login', root)).toBe('fix-login');
+	expect(portOwner('/Users/me/app/packages/web', root)).toBe('');
+	expect(portOwner('/Users/me/app/', root)).toBe('');
+	expect(portOwner('/Users/me/app/.kingu', root)).toBeNull();
+	expect(portOwner('/Users/me/application', root)).toBeNull();
+	expect(portOwner('/', root)).toBeNull();
+	expect(portOwner(null, root)).toBeNull();
+	expect(portOwner('/Users/me/app', null)).toBeNull();
 });

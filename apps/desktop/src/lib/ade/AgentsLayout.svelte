@@ -36,6 +36,7 @@
 	import AdeSourceControl from './AdeSourceControl.svelte';
 	import AdeChecks from './AdeChecks.svelte';
 	import AdeAgentsPanel from './AdeAgentsPanel.svelte';
+	import AdePortsPanel from './AdePortsPanel.svelte';
 	import { adeLayout, PRIMARY } from './adeLayout.svelte';
 	import { rightSidebar } from './rightSidebar.svelte.ts';
 	import { adeTasks } from './tasks.svelte';
@@ -359,6 +360,8 @@
 				<AdeAgentsPanel slug={slug ?? ''} />
 			{:else if tabs.active === 'checks'}
 				{#key key}<AdeChecks slug={slug ?? ''} />{/key}
+			{:else if tabs.active === 'ports'}
+				<AdePortsPanel slug={slug ?? ''} />
 			{:else if slug}
 				{#key slug}<TaskPage {slug} sections="review" />{/key}
 			{/if}
