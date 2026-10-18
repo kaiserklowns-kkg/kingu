@@ -30,6 +30,37 @@ describe('normalize', () => {
 		expect(r).toMatchObject({ kind: 'result', is_error: true, result: 'too many turns', total_cost_usd: null, usage: { input_tokens: 3, output_tokens: 4, cache_read_input_tokens: 0 } });
 	});
 
+	test("a subagent's messages carry its Task call's id; its prompt is dropped", () => {
+		const parent = 'task-1';
+		expect(
+			normalize({
+				type: 'assistant',
+				parent_tool_use_id: parent,
+				message: {
+					content: [
+						{ type: 'thinking', thinking: 'ดูก่อน' },
+						{ type: 'text', text: 'กำลังค้น' },
+						{ type: 'tool_use', id: 't2', name: 'Grep', input: { pattern: 'x' } }
+					]
+				}
+			})
+		).toEqual([
+			{ kind: 'thinking', text: 'ดูก่อน', parent_tool_use_id: parent },
+			{ kind: 'message', role: 'assistant', text: 'กำลังค้น', parent_tool_use_id: parent },
+			{ kind: 'tool_use', id: 't2', name: 'Grep', input: { pattern: 'x' }, parent_tool_use_id: parent }
+		]);
+		expect(
+			normalize({
+				type: 'user',
+				parent_tool_use_id: parent,
+				message: { content: [{ type: 'text', text: 'Find x' }, { type: 'tool_result', tool_use_id: 't2', content: 'a.ts:1' }] }
+			})
+		).toEqual([{ kind: 'tool_result', tool_use_id: 't2', content: 'a.ts:1', is_error: false, parent_tool_use_id: parent }]);
+		expect(normalize({ type: 'user', parent_tool_use_id: parent, message: { content: 'Find x' } })).toEqual([]);
+		// Main-agent events stay without the field.
+		expect(normalize({ type: 'assistant', parent_tool_use_id: null, message: { content: 'hi' } })).toEqual([{ kind: 'message', role: 'assistant', text: 'hi' }]);
+	});
+
 	test('maps text and thinking deltas of the main agent only', () => {
 		const delta = (d: object, parent: string | null = null) => normalize({ type: 'stream_event', event: { type: 'content_block_delta', delta: d }, parent_tool_use_id: parent });
 		expect(delta({ type: 'text_delta', text: 'สวัส' })).toEqual([{ kind: 'delta', block: 'text', text: 'สวัส' }]);

@@ -59,6 +59,9 @@ export type DiffStats = { added: number; removed: number };
 /** A slash command the session knows (SDK `SlashCommand`): built in, a skill, or `.claude/commands`. */
 export type SlashCommandInfo = { name: string; description: string; argument_hint: string };
 
+/** On the events of a subagent's own conversation: the id of the Task/Agent `tool_use` that started it. */
+export type Parent = { parent_tool_use_id?: string };
+
 export type AgentEvent =
 	| { kind: 'system'; subtype: string; session_id: string | null; model: string | null }
 	/** What the session started with (`system`/`init`): its slash command names, tools and MCP servers. */
@@ -67,12 +70,12 @@ export type AgentEvent =
 	| { kind: 'commands'; commands: SlashCommandInfo[] }
 	/** How full the context window is after a turn: `used_tokens` of `max_tokens`. */
 	| { kind: 'context_usage'; used_tokens: number; max_tokens: number }
-	| { kind: 'message'; role: string; text: string }
-	/** Streaming text/thinking chunk; the complete `message`/`thinking` event follows. */
+	| ({ kind: 'message'; role: string; text: string } & Parent)
+	/** Streaming text/thinking chunk of the main agent; the complete `message`/`thinking` event follows. */
 	| { kind: 'delta'; block: 'text' | 'thinking'; text: string }
-	| { kind: 'thinking'; text: string }
-	| { kind: 'tool_use'; id: string; name: string; input: unknown }
-	| { kind: 'tool_result'; tool_use_id: string; content: string; is_error: boolean }
+	| ({ kind: 'thinking'; text: string } & Parent)
+	| ({ kind: 'tool_use'; id: string; name: string; input: unknown } & Parent)
+	| ({ kind: 'tool_result'; tool_use_id: string; content: string; is_error: boolean } & Parent)
 	| {
 			kind: 'result';
 			subtype: string;
