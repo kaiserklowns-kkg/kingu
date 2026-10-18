@@ -37,7 +37,11 @@ function resumed(m: DebugModel): DebugModel {
 
 export function appendOutput(m: DebugModel, category: string, text: string): DebugModel {
 	if (!text) return m;
-	const output = [...m.output, { category, text }];
+	// Output of another kind (lldb's warning, then the program's stdout) starts on its own line even
+	// when the previous chunk did not end with one.
+	const prev = m.output.at(-1);
+	const lead = prev && prev.category !== category && !prev.text.endsWith('\n') ? '\n' : '';
+	const output = [...m.output, { category, text: lead + text }];
 	return { ...m, output: output.length > OUTPUT_LIMIT ? output.slice(-OUTPUT_LIMIT) : output };
 }
 

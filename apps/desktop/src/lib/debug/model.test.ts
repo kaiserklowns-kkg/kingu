@@ -71,3 +71,10 @@ test('frame locations are workspace-relative or null', () => {
 	expect(frameLocation(f(), '/Users/me/ws')).toBeNull();
 	expect(frameLocation(null, '/ws')).toBeNull();
 });
+
+test('output of another kind starts on a new line', () => {
+	let m = appendOutput(initialModel(), 'console', 'warning: no rust plugin.');
+	m = appendOutput(m, 'stdout', 'answer = 42\n');
+	m = appendOutput(m, 'stdout', 'more');
+	expect(m.output.map((o) => o.text)).toEqual(['warning: no rust plugin.', '\nanswer = 42\n', 'more']);
+});
