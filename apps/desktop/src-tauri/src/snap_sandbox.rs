@@ -37,7 +37,9 @@ pub fn snap_sandbox_info(app: AppHandle) -> SandboxInfo {
   let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from));
   let launcher = if cfg!(unix) { crate::pty::find_daemon(std::env::var_os("KINGU_PTYD"), exe_dir.as_deref()) } else { Err("ระบบปฏิบัติการนี้ยังไม่รองรับ sandbox ของ Snap".into()) };
   let paths = app.path();
-  let protect = [paths.app_config_dir(), paths.app_data_dir(), paths.app_cache_dir()].into_iter().flatten().collect();
+  // On macOS the config and data dirs are the same folder.
+  let mut protect: Vec<PathBuf> = [paths.app_config_dir(), paths.app_data_dir(), paths.app_cache_dir()].into_iter().flatten().collect();
+  protect.dedup();
   info(enforcer.as_ref().map(|e| e.name()).map_err(Clone::clone), launcher, protect)
 }
 
