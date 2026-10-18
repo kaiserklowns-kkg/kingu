@@ -12,7 +12,10 @@
 	import type { Attachment } from './attachments.ts';
 	import ChatList from './ChatList.svelte';
 	import Composer from './Composer.svelte';
-	import Icon from '#lib/workbench/Icon.svelte';
+	import ChatEditsBar from './ChatEditsBar.svelte';
+	import RestoreCheckpoint from './RestoreCheckpoint.svelte';
+	import { chatEdits } from './chatEdits.svelte.ts';
+	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 	import { runtime } from '#lib/ade/runtime.svelte.ts';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
@@ -410,8 +413,12 @@
 				root={workspace.root}
 				onanswer={(p, decision, message, answers) => chatMeta && chats.answer(chatMeta.id, p.request_id, decision, message, answers)}
 				actions={{ retry: () => chatMeta && void chats.retry(chatMeta.id), edit: editRequest }}
+				reverted={(r) => !!chatMeta && chatEdits.isReverted(chatMeta.id, r)}
 				class="h-full p-3"
 			>
+				{#snippet checkpoint(request)}
+					{#if chatMeta}<RestoreCheckpoint chatId={chatMeta.id} {request} />{/if}
+				{/snippet}
 				{#snippet empty()}
 					<p class="text-(--vscode-descriptionForeground)">{t('chat.panel.noHistory')}</p>
 				{/snippet}
@@ -440,6 +447,7 @@
 	{#if !showList}
 		<div class="shrink-0 p-2">
 			<!-- chat edits bar -->
+			{#if chatMeta}<ChatEditsBar chatId={chatMeta.id} />{/if}
 			{#if queued.length}
 				<ul class="mb-1.5 space-y-1" aria-label={t('chatView.queued')}>
 					{#each queued as q (q.n)}

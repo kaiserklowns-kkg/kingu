@@ -243,7 +243,9 @@ fn bounded_input(v: &Value) -> Value {
 pub fn for_transcript(ev: &AgentEvent) -> Option<AgentEvent> {
   let mut ev = ev.clone();
   match &mut ev {
-    AgentEvent::Delta { .. } | AgentEvent::Stderr { .. } | AgentEvent::Raw { .. } => return None,
+    AgentEvent::Delta { .. } | AgentEvent::Stderr { .. } | AgentEvent::Raw { .. } | AgentEvent::FileSnapshot { .. } | AgentEvent::EditsChanged { .. } => {
+      return None;
+    }
     AgentEvent::Message { text, .. } => cut(text, MAX_TEXT),
     AgentEvent::Thinking { text } => cut(text, MAX_THINKING),
     AgentEvent::ToolUse { input, .. } | AgentEvent::PermissionRequest { input, .. } => *input = bounded_input(input),

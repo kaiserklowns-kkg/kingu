@@ -36,6 +36,8 @@
 		cwd = null,
 		root = null,
 		empty,
+		checkpoint,
+		reverted,
 		class: klass = ''
 	}: {
 		run: ChatView | undefined;
@@ -47,6 +49,10 @@
 		/** The open folder: file links open relative to it. */
 		root?: string | null;
 		empty?: Snippet;
+		/** Chat edits: an action on each request (Restore checkpoint), given its request index. */
+		checkpoint?: Snippet<[number]>;
+		/** Chat edits: whether a request was reverted by a restored checkpoint (dimmed, like VS Code). */
+		reverted?: (request: number) => boolean;
 		class?: string;
 	} = $props();
 
@@ -110,6 +116,8 @@
 		{#if turns.length}
 			{#each turns as turn, ti (ti)}
 				{@const last = ti === turns.length - 1}
+				{@const dim = turn.checkpoint != null && !!reverted?.(turn.checkpoint)}
+				<div class={['flex flex-col gap-3', dim && 'opacity-50']}>
 				{#if turn.request}
 					{@const req = turn.request}
 					<!-- Request -->
@@ -136,6 +144,7 @@
 							<button type="button" class={ACTION} title={t('chatView.copyRequest')} aria-label={t('chatView.copyRequest')} onclick={() => copy(req.text, -1 - ti)}>
 								<Icon name={copied === -1 - ti ? 'check' : 'copy'} size={13} />
 							</button>
+							{#if checkpoint && turn.checkpoint != null}{@render checkpoint(turn.checkpoint)}{/if}
 						</div>
 					</div>
 				{/if}
@@ -247,6 +256,7 @@
 							{/if}
 						</div>
 					{/if}
+				</div>
 				</div>
 			{/each}
 		{:else}

@@ -34,6 +34,8 @@ export type Turn = {
 	result: ResultEvent | null;
 	/** False while the agent is still working on it. */
 	done: boolean;
+	/** The chat request (checkpoint) index Rust gave the user message; null outside chats. */
+	checkpoint?: number | null;
 };
 
 export type ChatView = Pick<RunState, 'items' | 'draft' | 'decisions' | 'ended'> & { status?: RunStatus };
@@ -114,6 +116,10 @@ export function buildTurns(run: ChatView): Turn[] {
 				cur = null;
 				break;
 			}
+			case 'checkpoint':
+				// Comes right after its user message: that turn is this request (Restore checkpoint).
+				if (cur) (cur as Turn).checkpoint = ev.request;
+				break;
 			case 'error':
 				current().parts.push({ kind: 'error', message: ev.message });
 				break;

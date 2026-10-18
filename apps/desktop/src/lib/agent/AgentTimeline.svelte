@@ -15,13 +15,19 @@
 		run,
 		onanswer,
 		empty,
+		checkpoint,
+		reverted,
 		class: klass = ''
 	}: {
 		run: TimelineRun | undefined;
 		onanswer?: (request: PermissionRequest, decision: Decision, message?: string, answers?: Record<string, string>) => void;
 		empty?: Snippet;
+		/** A chat's request row action (Restore checkpoint), rendered at each `checkpoint` event. */
+		checkpoint?: Snippet<[number]>;
+		/** Requests whose file changes were undone by Restore checkpoint: their entries are greyed. */
+		reverted?: (request: number) => boolean;
 		class?: string;
 	} = $props();
 </script>
 
-<ChatList {run} {onanswer} {empty} class={klass} />
+<ChatList {run} {onanswer} {empty} {checkpoint} {reverted} class={klass} />

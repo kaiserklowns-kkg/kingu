@@ -47,6 +47,10 @@ export type AgentEvent =
 	| ResultEvent
 	| PermissionRequest
 	| { kind: 'permission_resolved'; request_id: string; decision: Decision | 'cancelled' }
+	/** Added by Rust after a chat's user message: that message is request `request` (its checkpoint). */
+	| { kind: 'checkpoint'; request: number }
+	/** Added by Rust: the chat's working set changed (chatEdits reloads it). Not a timeline entry. */
+	| { kind: 'edits_changed'; request: number | null }
 	| { kind: 'error'; message: string }
 	| { kind: 'raw'; line: string }
 	| { kind: 'stderr'; line: string }
@@ -98,7 +102,7 @@ export const STATUS_LABEL: Readonly<Record<RunStatus, string>> = {
 };
 
 /** Timeline entries: every event except streaming deltas and permission bookkeeping. */
-export type TimelineEvent = Exclude<AgentEvent, { kind: 'delta' } | { kind: 'permission_resolved' }>;
+export type TimelineEvent = Exclude<AgentEvent, { kind: 'delta' } | { kind: 'permission_resolved' } | { kind: 'edits_changed' }>;
 
 export type RunState = {
 	status: RunStatus;
@@ -149,6 +153,8 @@ export function applyEvent(s: RunState, ev: AgentEvent): void {
 			s.pending = s.pending.filter((p) => p.request_id !== ev.request_id);
 			s.decisions[ev.request_id] = ev.decision;
 			if (!s.ended) s.status = live(s);
+			return;
+		case 'edits_changed':
 			return;
 		case 'permission_request':
 			if (!s.ended) {

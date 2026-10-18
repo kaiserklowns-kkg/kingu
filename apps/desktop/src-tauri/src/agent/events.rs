@@ -75,6 +75,25 @@ pub enum AgentEvent {
   },
   /// A permission request was answered (`allow`/`allow_always`/`deny`) or `cancelled`.
   PermissionResolved { request_id: String, decision: String },
+  /// A file's content just before an edit tool changed it (the host's PreToolUse hook). Rust
+  /// stores it in the chat's snapshot store (`chat_edits`) and never passes it on.
+  FileSnapshot {
+    tool_use_id: String,
+    tool: String,
+    path: String,
+    existed: bool,
+    #[serde(default)]
+    size: u64,
+    #[serde(default)]
+    content_b64: Option<String>,
+    #[serde(default)]
+    skipped: Option<String>,
+  },
+  /// Added by Rust after a chat's user message: that message is request `request` of the chat,
+  /// the checkpoint "Restore checkpoint" goes back to. Kept in the transcript.
+  Checkpoint { request: u32 },
+  /// Added by Rust: the chat's working set changed (an edit was recorded, a turn ended). Live only.
+  EditsChanged { request: Option<u32> },
   Error { message: String },
   /// Output the host did not understand, passed through untouched.
   Raw { line: String },

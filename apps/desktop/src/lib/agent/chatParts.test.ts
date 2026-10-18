@@ -39,6 +39,21 @@ function fold(events: AgentEvent[]) {
 const kinds = (turn: Turn) => turn.parts.map((p) => p.kind);
 
 describe('buildTurns', () => {
+	test('each chat turn knows its checkpoint (request index) for Restore checkpoint', () => {
+		const run = fold([
+			{ kind: 'message', role: 'user', text: 'first' },
+			{ kind: 'checkpoint', request: 0 },
+			{ kind: 'message', role: 'assistant', text: 'a' },
+			{ kind: 'message', role: 'user', text: 'second' },
+			{ kind: 'checkpoint', request: 1 },
+			{ kind: 'message', role: 'assistant', text: 'b' }
+		]);
+		expect(buildTurns(run).map((t) => [t.request?.text, t.checkpoint])).toEqual([
+			['first', 0],
+			['second', 1]
+		]);
+	});
+
 	test('a request and its response; the result text is not shown again', () => {
 		const run = fold([
 			{ kind: 'system', subtype: 'init', session_id: 's-1', model: 'claude-opus-5-5' },

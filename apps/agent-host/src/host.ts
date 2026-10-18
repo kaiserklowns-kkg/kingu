@@ -10,6 +10,7 @@
 import { readFileSync } from 'node:fs';
 import type { CanUseTool, Options, PermissionResult, PermissionUpdate, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { normalize, summarizeTool } from './normalize.ts';
+import { snapshotHooks } from './snapshots.ts';
 import { checkAnswers, isAskUserQuestion, QUESTIONS_DISMISSED } from './questions.ts';
 import {
 	PERMISSION_MODES,
@@ -247,6 +248,7 @@ export class AgentHost {
 		need(Array.isArray(unset) && unset.every((k) => typeof k === 'string' && ENV_NAME.test(k)), 'unsetEnv must be variable names');
 		const accountEnv = Object.keys(extraEnv).length || unset.length ? runEnv(this.deps.options?.env ?? process.env, extraEnv, unset) : null;
 		const images = imageBlocks(p.images, this.read);
+		need(p.snapshots === undefined || p.snapshots === null || typeof p.snapshots === 'boolean', 'snapshots must be a boolean');
 
 		const run = new Run(p.runId);
 		this.runs.set(run.id, run);
@@ -267,6 +269,8 @@ export class AgentHost {
 			settingSources: ['user', 'project', 'local'],
 			abortController: run.abort,
 			canUseTool: this.canUseTool(run),
+			// Before an edit tool runs (in every permission mode): the file's prior content.
+			...(p.snapshots ? { hooks: snapshotHooks(p.cwd, (ev) => this.emit(run.id, ev), (line) => this.log(`run ${run.id}: ${line}`)) } : {}),
 			stderr: (data) => {
 				for (const line of data.split('\n')) if (line.trim()) this.emit(run.id, { kind: 'stderr', line });
 			}

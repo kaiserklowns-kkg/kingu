@@ -5,6 +5,7 @@
 
 pub mod ai_text;
 pub mod automations;
+pub mod chat_edits;
 pub mod chats;
 pub mod cli;
 pub mod events;
@@ -119,6 +120,10 @@ pub async fn agent_start(
     use tauri::Manager;
     app.state::<crate::accounts::Accounts>().agent_env(crate::accounts::store::Provider::Claude)?
   };
+  let edits = chat_id.as_ref().map(|id| {
+    use tauri::Manager;
+    (app.state::<Arc<chat_edits::ChatEdits>>().inner().clone(), open_root.clone(), id.clone(), dir.clone())
+  });
   let req = host::StartRequest {
     cwd,
     prompt,
@@ -130,6 +135,7 @@ pub async fn agent_start(
     env: (!account.set.is_empty()).then_some(host::SecretEnv(account.set)),
     unset_env: account.unset,
     images,
+    snapshots: edits.is_some(),
     owner,
   };
   let resuming = req.resume.is_some();
@@ -144,13 +150,21 @@ pub async fn agent_start(
     agents.start(
       req,
       Arc::new(move |ev| {
-        // Transcript first, so a chat reopened right after an event has it.
-        if let Some(t) = &transcript
-          && let Err(e) = t.append(&ev)
-        {
-          log::warn!("chat transcript: {e}");
+        // A chat's edits first: snapshots are stored (not passed on), checkpoints added.
+        let events = match &edits {
+          Some((edits, root, id, cwd)) => edits.on_event(root, id, cwd, ev),
+          None if matches!(ev, AgentEvent::FileSnapshot { .. }) => Vec::new(),
+          None => vec![ev],
+        };
+        for ev in events {
+          // Transcript first, so a chat reopened right after an event has it.
+          if let Some(t) = &transcript
+            && let Err(e) = t.append(&ev)
+          {
+            log::warn!("chat transcript: {e}");
+          }
+          let _ = on_event.send(ev);
         }
-        let _ = on_event.send(ev);
       }),
     )
   })
@@ -200,7 +214,93 @@ pub async fn chat_transcript_delete(ws: State<'_, Workspace>, agents: State<'_, 
     return Err(crate::tr!(crate::i18n::msg::AgentMsg::ChatBusy));
   }
   let root = ws.root()?;
-  blocking(move || chats::delete_transcript(&root, &id)).await
+  blocking(move || {
+    chats::delete_transcript(&root, &id)?;
+    chat_edits::delete(&root, &id)
+  })
+  .await
+}
+
+/// The chat's edits store, with its cwd checked to still be the open folder or one of its task
+/// worktrees; `None` before the chat changed any file.
+fn edits_store(root: &std::path::Path, id: &str) -> Result<Option<chat_edits::Store>, String> {
+  chat_edits::Store::existing(root, id, |cwd| chats::resolve_cwd(root, cwd))
+}
+
+/// The chat's working set (files changed and not yet kept or undone) and its requests.
+#[tauri::command]
+pub async fn chat_edits_list(ws: State<'_, Workspace>, edits: State<'_, Arc<chat_edits::ChatEdits>>, id: String) -> Result<Option<chat_edits::View>, String> {
+  let root = ws.root()?;
+  let edits = edits.inner().clone();
+  blocking(move || {
+    edits.with(&root, &id, false, |running| {
+      let Some(store) = edits_store(&root, &id)? else { return Ok(None) };
+      let prefix = store.cwd().strip_prefix(&root).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+      chat_edits::view(&store, prefix, running).map(Some)
+    })
+  })
+  .await
+}
+
+/// The working set's "before" of `path` (relative to the chat's cwd), for its diff.
+#[tauri::command]
+pub async fn chat_edits_original(ws: State<'_, Workspace>, edits: State<'_, Arc<chat_edits::ChatEdits>>, id: String, path: String) -> Result<String, String> {
+  let root = ws.root()?;
+  let edits = edits.inner().clone();
+  blocking(move || {
+    edits.with(&root, &id, false, |_| {
+      let store = edits_store(&root, &id)?.ok_or_else(|| crate::tr!(crate::i18n::msg::AgentMsg::EditNotRestorable, path = path.clone()))?;
+      chat_edits::original(&store, &path)
+    })
+  })
+  .await
+}
+
+/// Keep: `paths` (all with none) leave the working set as they are.
+#[tauri::command]
+pub async fn chat_edits_keep(ws: State<'_, Workspace>, edits: State<'_, Arc<chat_edits::ChatEdits>>, id: String, paths: Option<Vec<String>>) -> Result<usize, String> {
+  let root = ws.root()?;
+  let edits = edits.inner().clone();
+  blocking(move || {
+    edits.with(&root, &id, false, |_| match edits_store(&root, &id)? {
+      Some(store) => chat_edits::keep(&store, paths.as_deref()),
+      None => Ok(0),
+    })
+  })
+  .await
+}
+
+/// Undo: `paths` (all with none) go back to before the agent changed them. Refused while the
+/// chat's turn runs; the webview asks first about files with unsaved editor changes.
+#[tauri::command]
+pub async fn chat_edits_undo(ws: State<'_, Workspace>, edits: State<'_, Arc<chat_edits::ChatEdits>>, id: String, paths: Option<Vec<String>>) -> Result<chat_edits::Report, String> {
+  let root = ws.root()?;
+  let edits = edits.inner().clone();
+  let report = blocking(move || {
+    edits.with(&root, &id, true, |_| match edits_store(&root, &id)? {
+      Some(store) => chat_edits::undo(&store, paths.as_deref()),
+      None => Ok(chat_edits::Report::default()),
+    })
+  })
+  .await?;
+  log::info!("chat edits: undid {} file(s), deleted {}", report.restored.len(), report.deleted.len());
+  Ok(report)
+}
+
+/// Restore checkpoint: undoes the changes of request `request` and every later one.
+#[tauri::command]
+pub async fn chat_edits_restore(ws: State<'_, Workspace>, edits: State<'_, Arc<chat_edits::ChatEdits>>, id: String, request: u32) -> Result<chat_edits::Report, String> {
+  let root = ws.root()?;
+  let edits = edits.inner().clone();
+  let report = blocking(move || {
+    edits.with(&root, &id, true, |_| match edits_store(&root, &id)? {
+      Some(store) => chat_edits::restore_checkpoint(&store, request),
+      None => Err(crate::tr!(crate::i18n::msg::AgentMsg::EditNoRequest, index = request + 1)),
+    })
+  })
+  .await?;
+  log::info!("chat edits: restored checkpoint {request} ({} file(s))", report.restored.len() + report.deleted.len());
+  Ok(report)
 }
 
 async fn on_host<T: Send + 'static>(
