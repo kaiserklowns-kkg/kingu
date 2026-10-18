@@ -10,11 +10,14 @@ import { editors } from '#lib/workbench/editors.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { isDiffKey } from '#lib/workbench/scm.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
+import { killPty } from '#lib/terminal/pty.ts';
+import { adeKey, parseAdeTerminals, persist, restore } from '#lib/terminal/sessions.ts';
 import { activeAfterClose, adeTabs, fileTabId, keyOfTabId, openFileTab, pinFileTab, type AdeTab, type FileTab, type TerminalTab } from './adeTabs.ts';
 
 export type RightTab = 'files' | 'changes';
 /** Worktree key: '' for the folder itself (Orca's "primary" worktree), else the task slug. */
 export const PRIMARY = '';
+const STORE = 'kingu.adeTerminals';
 
 class AdeLayout {
 	/** The center shows the task board (Tasks in the side bar) instead of a worktree. */
@@ -27,7 +30,25 @@ class AdeLayout {
 	files = $state<Record<string, FileTab[]>>({});
 	/** Active tab per worktree ('main', a terminal id or a file tab id). */
 	active = $state<Record<string, string>>({});
-	#seq = 0;
+	#seq = $state(0);
+
+	constructor() {
+		// Terminal tabs survive a webview reload (their PTYs do too); file tabs start over.
+		const saved = restore(STORE, parseAdeTerminals);
+		if (saved) {
+			this.terminals = saved.terminals;
+			this.active = saved.active;
+			this.#seq = saved.seq;
+		}
+		$effect.root(() => {
+			$effect(() => persist(STORE, { terminals: $state.snapshot(this.terminals), active: $state.snapshot(this.active), seq: this.#seq }));
+		});
+	}
+
+	/** PTY keys of every worktree terminal tab. */
+	ptyKeys(): string[] {
+		return Object.entries(this.terminals).flatMap(([k, list]) => list.map((t) => adeKey(k, t.id)));
+	}
 
 	get key(): string {
 		return appMode.activeSession ?? PRIMARY;
@@ -123,6 +144,7 @@ class AdeLayout {
 	closeTerminal(key: string, id: string) {
 		const list = this.terminals[key] ?? [];
 		if (!list.some((t) => t.id === id)) return;
+		killPty(adeKey(key, id));
 		// Closing the active tab shows its neighbour (like an editor tab), else the main tab.
 		this.active[key] = activeAfterClose(this.tabs(key).map((t) => t.id), id, this.activeTab(key));
 		this.terminals[key] = list.filter((t) => t.id !== id);
@@ -130,6 +152,7 @@ class AdeLayout {
 
 	/** A removed task: its terminals and file tabs go away with it. */
 	drop(key: string) {
+		for (const t of this.terminals[key] ?? []) killPty(adeKey(key, t.id));
 		delete this.terminals[key];
 		delete this.files[key];
 		delete this.active[key];

@@ -37,6 +37,9 @@
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import AgentsLayout from '#lib/ade/AgentsLayout.svelte';
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
+	import { cliSessions } from '#lib/ade/cliSessions.svelte.ts';
+	import { terminals } from '#lib/terminal/terminals.svelte.ts';
+	import { reapOrphans } from '#lib/terminal/pty.ts';
 	import SettingsPage from '#lib/settings/SettingsPage.svelte';
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 	import { installAgentsMode } from '#lib/ade/agentsMode.svelte.ts';
@@ -61,6 +64,8 @@
 	// register() reads and writes the registry, which an effect would re-run on forever.
 	onMount(() => {
 		void workspace.init().then(() => invoke<string | null>('git_branch').then((b) => (status.branch = b)));
+		// Shells outlive a page reload; ones the restored page no longer has would otherwise leak.
+		void reapOrphans(() => new Set([...terminals.keys(), ...adeLayout.ptyKeys(), ...cliSessions.ptyKeys()]));
 		const unregister = [
 			commands.register({ id: 'workbench.action.files.openFolder', title: 'Open Folder...', category: 'File', key: 'cmd+o', run: () => workspace.pickFolder() }),
 			commands.register({ id: 'workbench.action.openRecent', title: 'Open Recent...', category: 'File', key: 'ctrl+r',

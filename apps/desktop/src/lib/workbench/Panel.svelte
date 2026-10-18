@@ -4,15 +4,21 @@
 	import { lsp } from '#lib/lsp/lsp.svelte.ts';
 	import Terminal from '#lib/terminal/Terminal.svelte';
 	import { terminals } from '#lib/terminal/terminals.svelte.ts';
+	import { panelKey } from '#lib/terminal/sessions.ts';
 	import Icon from './Icon.svelte';
 	import { layout, type PanelTab } from './layout.svelte';
 	import { workspace } from './workspace.svelte';
 
 	// A new folder starts over with one shell (a task's command must not re-run in another root).
-	let lastRoot = untrack(() => workspace.root);
+	// The first root seen after startup is not a switch: a reloaded page keeps its terminals.
+	let lastRoot: string | null | undefined;
 	$effect(() => {
+		if (!workspace.ready) return;
 		const root = workspace.root;
-		if (root === lastRoot) return;
+		if (lastRoot === undefined || root === lastRoot) {
+			lastRoot = root;
+			return;
+		}
 		lastRoot = root;
 		untrack(() => terminals.reset());
 	});
@@ -81,7 +87,7 @@
 				{#key workspace.root}
 					<div class="relative min-w-0 flex-1">
 						{#each terminals.list as t (t.id)}
-							<div class={['absolute inset-0', t.id !== terminals.active && 'invisible']}><Terminal run={t.run} /></div>
+							<div class={['absolute inset-0', t.id !== terminals.active && 'invisible']}><Terminal key={panelKey(t.id)} run={t.run} /></div>
 						{/each}
 					</div>
 				{/key}
