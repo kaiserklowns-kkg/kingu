@@ -13,16 +13,21 @@
 	import ShortcutsPage from './pages/ShortcutsPage.svelte';
 	import AboutPage from './pages/AboutPage.svelte';
 	import ArkaiPage from './pages/ArkaiPage.svelte';
+	import TerminalPage from './pages/TerminalPage.svelte';
+	import AccountPage from './pages/AccountPage.svelte';
+	import { settings } from './settings.svelte';
 	import type { IconName } from '#lib/workbench/Icon.svelte';
 	import type { SettingsPageId } from './systemSettings.svelte';
 
 	// Dedicated pages above the settings groups (Orca's General / Shortcuts panes) and About at the bottom.
 	const PAGES: { id: SettingsPageId; label: string; icon: IconName }[] = [
 		{ id: 'appearance', label: 'Appearance', icon: 'layout' },
-		{ id: 'shortcuts', label: 'Keyboard Shortcuts', icon: 'keyboard' },
-		{ id: 'arkai', label: 'Arkai', icon: 'agent' }
+		{ id: 'arkai', label: 'Arkai', icon: 'agent' },
+		{ id: 'terminal', label: 'Terminal', icon: 'terminal' },
+		{ id: 'account', label: 'บัญชีและทีม', icon: 'account' },
+		{ id: 'shortcuts', label: 'Keyboard Shortcuts', icon: 'keyboard' }
 	];
-	const PAGE_LABEL: Record<SettingsPageId, string> = { appearance: 'Appearance', shortcuts: 'Keyboard Shortcuts', arkai: 'Arkai', about: 'About Kingu' };
+	const PAGE_LABEL: Record<SettingsPageId, string> = { appearance: 'Appearance', arkai: 'Arkai', terminal: 'Terminal', account: 'บัญชีและทีม', shortcuts: 'Keyboard Shortcuts', about: 'About Kingu' };
 	import { systemSettings } from './systemSettings.svelte';
 
 	let query = $state('');
@@ -30,6 +35,7 @@
 	const sectionOf = (group: string | null) =>
 		group && !query ? (settingSchemas.sections.find((s) => s.groups.includes(group))?.label ?? '') : query ? 'ผลการค้นหา' : 'การตั้งค่าทั้งหมด (IDE + ADE)';
 	const showSnaps = $derived(systemSettings.snaps && !query);
+	const modifiedCount = $derived(settingSchemas.all.filter((s) => settings.inspect(s.id, 'user') !== undefined || settings.inspect(s.id, 'workspace') !== undefined).length);
 	const page = $derived(query ? null : systemSettings.page);
 
 	function select(group: string | null) {
@@ -65,7 +71,12 @@
 					</button>
 				{/each}
 			</div>
+			<div class="px-2.5 pt-1 pb-1 text-[11px] font-semibold tracking-wide text-(--vscode-descriptionForeground) uppercase">การตั้งค่าทั้งหมด</div>
 			<button class={[ITEM, systemSettings.group === null && !showSnaps && !page && !query && SELECTED]} onclick={() => select(null)}>ทั้งหมด</button>
+			<button class={[ITEM, query.trim() === '@modified' && SELECTED]} onclick={() => (select(null), (query = '@modified'))}>
+				<span class="flex-1 truncate">แก้ไขแล้ว</span>
+				<span class="text-[11px] text-(--vscode-descriptionForeground)">{modifiedCount}</span>
+			</button>
 			{#each settingSchemas.sections as sec (sec.id)}
 				<div>
 					<div class="px-2.5 pb-1 text-[11px] font-semibold tracking-wide text-(--vscode-descriptionForeground) uppercase">{sec.label}</div>
@@ -114,6 +125,8 @@
 			{#if page === 'appearance'}<AppearancePage />
 			{:else if page === 'shortcuts'}<ShortcutsPage />
 			{:else if page === 'arkai'}<ArkaiPage />
+			{:else if page === 'terminal'}<TerminalPage />
+			{:else if page === 'account'}<AccountPage />
 			{:else if page === 'about'}<AboutPage />
 			{:else if showSnaps}<SnapsView />{:else}<SettingsEditor group={systemSettings.group} bind:query />{/if}
 		</div>

@@ -6,7 +6,8 @@
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { commands } from '#lib/workbench/commands.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
-	import { allowedIn, settingsInView, settingTitle, validate, type SettingSchema, type SettingScope } from './registry';
+	import { allowedIn, parseSettingsQuery, settingsInView, settingTitle, validate, type SettingSchema, type SettingScope } from './registry';
+	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
 	import { settings } from './settings.svelte';
 	import { settingSchemas } from './schemas.svelte';
 
@@ -18,7 +19,27 @@
 	let { group = null, query = $bindable('') }: { group?: string | null; query?: string } = $props();
 	let scope = $state<SettingScope>('user');
 
-	const visible = $derived(settingsInView(query, group, settingSchemas.all));
+	const parsed = $derived(parseSettingsQuery(query));
+	// `@modified` lists what this scope changed, across every group (VS Code's filter).
+	const visible = $derived(
+		parsed.modified
+			? settingsInView(parsed.text, null, settingSchemas.all).filter((s) => settings.inspect(s.id, scope) !== undefined)
+			: settingsInView(query, group, settingSchemas.all)
+	);
+
+	// The gear menu of a setting (VS Code: Reset Setting, Copy Setting ID, Copy Setting as JSON).
+	let gear = $state<{ s: SettingSchema; x: number; y: number } | null>(null);
+	const gearItems = $derived(
+		gear
+			? [menuItem('reset', 'Reset Setting', { enabled: settings.inspect(gear.s.id, scope) !== undefined }), menuSeparator, menuItem('copyId', 'Copy Setting ID'), menuItem('copyJson', 'Copy Setting as JSON')]
+			: []
+	);
+	async function runGear(id: string, s: SettingSchema) {
+		if (id === 'reset') return update(s, undefined);
+		const text = id === 'copyId' ? s.id : `"${s.id}": ${JSON.stringify(shown(s))}`;
+		await navigator.clipboard.writeText(text);
+		status.flash(`คัดลอก ${text} แล้ว`, 3000);
+	}
 	const groups = $derived.by(() => {
 		const out = new Map<string, SettingSchema[]>();
 		for (const s of visible) out.set(s.group, [...(out.get(s.group) ?? []), s]);
@@ -113,15 +134,27 @@
 					{@const title = settingTitle(s)}
 					{@const value = shown(s)}
 					{@const disabled = !allowedIn(s, scope)}
-					<div class={['relative rounded-md py-2 pr-2 pl-4 hover:bg-(--vscode-list-hoverBackground)/50', modifiedHere(s) && 'rounded-l-none border-l-2 border-(--vscode-settings-modifiedItemIndicator) pl-[14px]']}>
+					<div class={['group/setting relative rounded-md py-2 pr-2 pl-4 hover:bg-(--vscode-list-hoverBackground)/50', modifiedHere(s) && 'rounded-l-none border-l-2 border-(--vscode-settings-modifiedItemIndicator) pl-[14px]']}>
 						<div class="flex items-center gap-2 text-[13px]">
 							<span><span class="text-(--vscode-descriptionForeground)">{title.category}:</span> <span class="font-semibold">{title.label}</span></span>
 							{#if settings.inspect(s.id, otherScope) !== undefined && allowedIn(s, otherScope)}
 								<span class="text-xs text-(--vscode-descriptionForeground) italic">({scope === 'user' ? 'Also modified in: Workspace' : 'Modified in: User'})</span>
 							{/if}
-							{#if modifiedHere(s)}
-								<button class="ml-auto text-xs text-(--vscode-textLink-foreground) hover:underline" onclick={() => update(s, undefined)}>Reset</button>
-							{/if}
+							<span class="ml-auto flex items-center gap-2">
+								{#if modifiedHere(s)}
+									<button class="text-xs text-(--vscode-textLink-foreground) hover:underline" onclick={() => update(s, undefined)}>Reset</button>
+								{/if}
+								<button
+									class="grid size-6 place-items-center rounded-md text-(--vscode-descriptionForeground) opacity-0 group-hover/setting:opacity-100 hover:bg-(--vscode-toolbar-hoverBackground) focus-visible:opacity-100"
+									aria-label="การทำงานของ {s.id}"
+									title="More Actions…"
+									aria-haspopup="menu"
+									onclick={(e) => {
+										const r = e.currentTarget.getBoundingClientRect();
+										gear = { s, x: r.right - 248, y: r.bottom + 2 };
+									}}><Icon name="settings" size={14} /></button
+								>
+							</span>
 						</div>
 						<div class="mt-0.5 text-[11px] text-(--vscode-descriptionForeground) opacity-80">{s.id}</div>
 						{#if s.type === 'boolean'}
@@ -184,3 +217,9 @@
 		</div>
 	</div>
 </div>
+
+{#if gear}
+	{@const target = gear.s}
+	<PopupMenu items={gearItems} label="Setting" x={gear.x} y={gear.y} onRun={(node) => node.type === 'item' && runGear(node.id, target)} onClose={() => (gear = null)} />
+{/if}
+

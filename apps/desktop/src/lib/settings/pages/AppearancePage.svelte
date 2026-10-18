@@ -6,6 +6,7 @@
 	import { themeSwatch } from '#lib/theme/theme.svelte.ts';
 	import { settings } from '../settings.svelte';
 	import { SETTINGS } from '../registry';
+	import Switch from './Switch.svelte';
 
 	let swatches = $state<Record<string, Awaited<ReturnType<typeof themeSwatch>>>>({});
 	onMount(() => {
@@ -87,6 +88,13 @@
 				<span class="w-10 text-center font-mono text-[13px] tabular-nums">{zoom > 0 ? `+${zoom}` : zoom}</span>
 				<button class={BTN} aria-label="ซูมเข้า" disabled={zoom >= 5} onclick={() => set('window.zoomLevel', zoom + 1)}><Icon name="plus" size={14} /></button>
 			</div>
+		</div>
+
+		<h2 class="mt-8 mb-2.5 text-xs font-semibold tracking-wide text-(--vscode-descriptionForeground) uppercase">Status bar</h2>
+		<div class="divide-y divide-(--vscode-widget-border) rounded-xl border border-(--vscode-widget-border)">
+			<Switch id="kingu.statusBar.keepAwake.visible" label="กันเครื่องหลับ (☕)" hint="โหมด On / Auto / Off อยู่ในหน้า Arkai" />
+			<Switch id="kingu.statusBar.resources.visible" label="Resource Manager" hint="หน่วยความจำและ terminal ที่เปิดอยู่" />
+			<Switch id="kingu.statusBar.ports.visible" label="Ports" hint="พอร์ตที่โปรเซสของ Kingu เปิดอยู่" />
 		</div>
 	</div>
 </div>

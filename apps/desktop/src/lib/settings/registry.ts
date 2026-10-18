@@ -435,6 +435,12 @@ export function settingsSections(schemas: SettingSchema[] = SETTINGS): SettingsS
 }
 
 /** Settings shown for a TOC selection (`null` = all) and a search query (searching spans every group). */
+/** VS Code's settings search filters: `@modified` (changed in the scope shown) plus free text. */
+export function parseSettingsQuery(query: string): { modified: boolean; text: string } {
+	const modified = /(^|\s)@modified\b/.test(query);
+	return { modified, text: query.replace(/(^|\s)@modified\b/g, ' ').trim() };
+}
+
 export function settingsInView(query: string, group: string | null, schemas: SettingSchema[] = SETTINGS): SettingSchema[] {
 	return schemas.filter((s) => (query.trim() ? matchesQuery(s, query) : group === null || s.group === group));
 }

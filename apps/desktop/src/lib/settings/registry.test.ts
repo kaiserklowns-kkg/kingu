@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { jsonSchema, matchesQuery, resolveSettings, SCHEMA, SETTINGS, SETTINGS_SECTIONS, settingsInView, settingsSections, settingTitle, validate, type SettingSchema } from './registry';
+import { jsonSchema, matchesQuery, parseSettingsQuery, resolveSettings, SCHEMA, SETTINGS, SETTINGS_SECTIONS, settingsInView, settingsSections, settingTitle, validate, type SettingSchema } from './registry';
 
 const value = (m: ReturnType<typeof resolveSettings>, id: string) => m.get(id);
 
@@ -151,3 +151,13 @@ describe('settings sections', () => {
 		expect(settingsInView('fontSize', 'Agent').map((s) => s.id)).toEqual(['editor.fontSize', 'terminal.integrated.fontSize']);
 	});
 });
+
+describe('parseSettingsQuery', () => {
+	test('@modified is a filter, the rest is the text', () => {
+		expect(parseSettingsQuery('@modified font')).toEqual({ modified: true, text: 'font' });
+		expect(parseSettingsQuery('font @modified')).toEqual({ modified: true, text: 'font' });
+		expect(parseSettingsQuery('fontSize')).toEqual({ modified: false, text: 'fontSize' });
+		expect(parseSettingsQuery('a@modifiedb').modified).toBe(false);
+	});
+});
+
