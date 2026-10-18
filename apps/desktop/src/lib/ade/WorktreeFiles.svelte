@@ -14,6 +14,9 @@
 	import { adeTasks } from './tasks.svelte';
 	import { scm } from '#lib/workbench/scm.svelte.ts';
 	import { entryChanges, fileDecorations } from '#lib/workbench/scm.ts';
+	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
+	import type { MenuNode } from '#lib/workbench/menus.ts';
+	import { status } from '#lib/workbench/status.svelte.ts';
 
 	type Entry = { name: string; rel: string; is_dir: boolean; ignored?: boolean };
 	type Row = Entry & { depth: number; open: boolean };
@@ -112,80 +115,243 @@
 		return out;
 	});
 
+	let selected = $state<string | null>(null);
 	function activate(r: Row, preview = true) {
+		selected = r.rel;
 		if (r.is_dir) void toggle(r.rel);
 		else adeLayout.openFile(slug, r.rel, { preview });
 	}
+
+	// --- Orca's toolbar menu: dotfiles and git-ignored files, Open in Finder ---------------------
+	let showDotfiles = $state(true);
+	let showIgnored = $state(true);
+	const visibleRows = $derived(rows.filter((r) => (showDotfiles || !r.name.startsWith('.')) && (showIgnored || !r.ignored)));
+	const anyOpen = $derived(Object.values(open).some(Boolean));
+	let moreMenu = $state<{ x: number; y: number } | null>(null);
+	const moreItems = $derived<MenuNode[]>([menuItem('dotfiles', 'Show Dotfiles', { checked: showDotfiles }), menuItem('ignored', 'Show Git Ignored Files', { checked: showIgnored }), menuSeparator, menuItem('finder', 'Open in Finder')]);
+	function runMore(id: string) {
+		if (id === 'dotfiles') showDotfiles = !showDotfiles;
+		else if (id === 'ignored') showIgnored = !showIgnored;
+		else void invoke('fs_reveal', { rel: base }).catch((e) => status.error(String(e)));
+	}
+	const refreshAll = () => Promise.all([base, ...Object.keys(open).filter((k) => open[k])].map(load));
+
+	// --- Row menu, inline create / rename, delete to the Trash (Orca: no confirmation) ---------
+	let rowMenu = $state<{ row: Row | null; x: number; y: number } | null>(null);
+	const rowItems = $derived.by((): MenuNode[] => {
+		const r = rowMenu?.row;
+		const base: MenuNode[] = [menuItem('newFile', 'New File'), menuItem('newFolder', 'New Folder')];
+		if (!r) return base;
+		return [
+			...base,
+			menuSeparator,
+			menuItem('copyPath', 'Copy Path', { keyLabel: '⌥⌘C' }),
+			menuItem('copyRel', 'Copy Relative Path', { keyLabel: '⌥⇧⌘C' }),
+			...(r.is_dir ? [menuItem('terminal', 'Open in Terminal')] : [menuItem('view', 'View File')]),
+			...(r.is_dir && r.open ? [menuItem('collapse', 'Collapse Folder')] : []),
+			...(r.is_dir ? [menuItem('find', 'Find in Folder')] : []),
+			menuItem('reveal', 'Reveal in Finder'),
+			menuSeparator,
+			menuItem('rename', 'Rename', { keyLabel: '↩' }),
+			menuItem('delete', 'Delete', { keyLabel: '⌘⌫' })
+		];
+	});
+	let edit = $state<{ kind: 'file' | 'folder' | 'rename'; parent: string; rel?: string; depth: number; value: string } | null>(null);
+	const parentOf = (rel: string) => (rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '');
+	const relInside = (rel: string) => (base && rel.startsWith(base + '/') ? rel.slice(base.length + 1) : rel);
+	async function runRow(id: string, r: Row | null) {
+		const dir = r ? (r.is_dir ? r.rel : parentOf(r.rel)) : base;
+		const depth = r ? (r.is_dir ? r.depth + 1 : r.depth) : 0;
+		switch (id) {
+			case 'newFile':
+			case 'newFolder':
+				if (r?.is_dir && !r.open) await toggle(r.rel);
+				edit = { kind: id === 'newFile' ? 'file' : 'folder', parent: dir, depth, value: '' };
+				return;
+			case 'copyPath':
+				return void navigator.clipboard.writeText(`${workspace.root}/${r!.rel}`);
+			case 'copyRel':
+				return void navigator.clipboard.writeText(relInside(r!.rel));
+			case 'terminal':
+				return void adeLayout.newTerminal(slug);
+			case 'view':
+				return activate(r!);
+			case 'collapse':
+				for (const k of Object.keys(open)) if (k === r!.rel || k.startsWith(r!.rel + '/')) open[k] = false;
+				return;
+			case 'find':
+				by = 'contents';
+				return;
+			case 'reveal':
+				return void invoke('fs_reveal', { rel: r!.rel }).catch((e) => status.error(String(e)));
+			case 'rename':
+				edit = { kind: 'rename', parent: parentOf(r!.rel), rel: r!.rel, depth: r!.depth, value: r!.name };
+				return;
+			case 'delete':
+				try {
+					await invoke('fs_delete', { rel: r!.rel });
+					await load(parentOf(r!.rel));
+				} catch (e) {
+					status.error(`Failed to move to Trash '${r!.name}'. ${e}`);
+				}
+		}
+	}
+	async function submitEdit() {
+		const e = edit;
+		edit = null;
+		const name = e?.value.trim();
+		if (!e || !name || (e.kind === 'rename' && name === e.rel?.split('/').pop())) return;
+		const target = e.parent ? `${e.parent}/${name}` : name;
+		try {
+			if (e.kind === 'rename') await invoke('fs_rename', { from: e.rel, to: target });
+			else await invoke(e.kind === 'file' ? 'fs_create_file' : 'fs_create_dir', { rel: target });
+			await load(e.parent);
+			if (e.kind === 'file') adeLayout.openFile(slug, target, { preview: false });
+			selected = target;
+		} catch (err) {
+			status.error(`Failed to ${e.kind === 'rename' ? 'rename' : 'create'} '${name}'. ${err}`);
+		}
+	}
+	const editAfter = $derived.by(() => {
+		if (!edit || edit.kind === 'rename') return null;
+		// New items go after the parent's visible subtree (Orca), or at the top for the root.
+		if (edit.parent === base) return '';
+		let last = edit.parent;
+		for (const r of visibleRows) if (r.rel.startsWith(edit.parent + '/')) last = r.rel;
+		return last;
+	});
+	const TOOL = 'grid size-6 place-items-center rounded-md text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground) disabled:opacity-50';
 </script>
 
-<div class="flex h-full min-h-0 flex-col">
-	<div class="flex h-9 shrink-0 items-center gap-1 pr-1 pl-3">
-		<span class="min-w-0 flex-1 truncate text-[13px] font-medium">{slug ? `kingu/${slug}` : workspace.name}</span>
-		<button class="grid size-6 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="รีเฟรช" title="รีเฟรช" onclick={() => Promise.all([base, ...Object.keys(open).filter((k) => open[k])].map(load))}>
-			<Icon name="refresh" size={15} />
-		</button>
-		<button class="grid size-6 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="ยุบทั้งหมด" title="ยุบทั้งหมด" onclick={() => (open = {})}>
-			<Icon name="collapseAll" size={15} />
-		</button>
+{#snippet inlineInput(depth: number, isFolder: boolean)}
+	<div class="flex h-[26px] w-full items-center gap-1 px-2" style:padding-left="{depth * 16 + 8}px">
+		<span class="size-3 shrink-0"></span>
+		<FileIcon icon={isFolder ? folderIcon('', false) : fileIcon(edit?.value || 'file')} />
+		<!-- svelte-ignore a11y_autofocus -->
+		<input
+			class="min-w-0 flex-1 rounded-sm border border-(--vscode-focusBorder) bg-transparent px-1 text-xs outline-none"
+			aria-label={edit?.kind === 'rename' ? 'Rename' : isFolder ? 'New folder name' : 'New file name'}
+			autofocus
+			spellcheck="false"
+			value={edit?.value}
+			oninput={(e) => edit && (edit.value = e.currentTarget.value)}
+			onfocus={(e) => {
+				const v = e.currentTarget.value;
+				const dot = v.lastIndexOf('.');
+				e.currentTarget.setSelectionRange(0, dot > 0 ? dot : v.length);
+			}}
+			onkeydown={(e) => (e.key === 'Enter' ? (e.preventDefault(), void submitEdit()) : e.key === 'Escape' ? (edit = null) : undefined)}
+			onblur={() => setTimeout(() => edit && void submitEdit(), 150)}
+		/>
 	</div>
-	<label class="mx-2 mb-1.5 flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-(--vscode-input-border,var(--vscode-widget-border)) bg-(--vscode-input-background) px-2 text-[13px] focus-within:border-(--vscode-focusBorder)">
-		<Icon name="search" size={13} />
-		<span class="sr-only">หาไฟล์</span>
-		<input class="min-w-0 flex-1 bg-transparent outline-none placeholder:text-(--vscode-input-placeholderForeground)" placeholder={by === 'names' ? 'Find files (โฟลเดอร์ที่เปิดแล้ว)' : 'ค้นหาในเนื้อหาไฟล์'} bind:value={filter} />
-	</label>
-	<div class="mx-2 mb-2 grid shrink-0 grid-cols-2 rounded-md bg-(--vscode-input-background) p-0.5 text-xs" role="radiogroup" aria-label="ค้นหาจาก">
-		{#each [['names', 'Names'], ['contents', 'Contents']] as const as [id, label] (id)}
-			<button
-				role="radio"
-				aria-checked={by === id}
-				class={['h-6 rounded-[5px]', by === id ? 'bg-(--vscode-editor-background) text-(--vscode-foreground) shadow-sm' : 'text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)']}
-				onclick={() => (by = id)}>{label}</button
-			>
-		{/each}
+{/snippet}
+
+<div class="flex h-full min-h-0 flex-col">
+	<!-- Orca's toolbar: the worktree's name, Collapse All, Refresh, more actions. -->
+	<div class="flex h-8 min-h-8 shrink-0 items-center gap-2 border-b border-(--vscode-widget-border) px-2">
+		<span class="min-w-0 flex-1 truncate text-xs font-medium" title={slug ? `kingu/${slug}` : workspace.name}>{slug ? `kingu/${slug}` : workspace.name}</span>
+		<button class={[TOOL, (by !== 'names' || filter || !anyOpen) && 'cursor-not-allowed opacity-50']} aria-label="Collapse All" title="Collapse All" aria-disabled={by !== 'names' || !!filter || !anyOpen} onclick={() => by === 'names' && !filter && (open = {})}><Icon name="collapseAll" size={13} /></button>
+		<button class={TOOL} aria-label="Refresh Explorer" title="Refresh Explorer" disabled={by !== 'names'} onclick={refreshAll}><Icon name="refresh" size={13} /></button>
+		<button
+			class={TOOL}
+			aria-label="More Explorer Actions"
+			title="More Explorer Actions"
+			onclick={(e) => {
+				const rr = e.currentTarget.getBoundingClientRect();
+				moreMenu = { x: rr.right - 248, y: rr.bottom + 4 };
+			}}><Icon name="more" size={13} /></button
+		>
+	</div>
+	<!-- Query block: the name filter (or content search) over the Names | Contents switch. -->
+	<div class="shrink-0 border-b border-(--vscode-widget-border) px-2 py-1.5">
+		<div class="flex flex-col gap-1">
+			<label class="flex h-7 items-center gap-1 rounded-sm border border-(--vscode-widget-border) bg-(--vscode-input-background)/50 px-1.5 focus-within:border-(--vscode-focusBorder)">
+				<span class="text-(--vscode-descriptionForeground)"><Icon name={by === 'names' ? 'menu' : 'search'} size={13} /></span>
+				<input class="min-w-0 flex-1 bg-transparent py-1 text-xs outline-none placeholder:text-(--vscode-input-placeholderForeground)/50" spellcheck="false" placeholder={by === 'names' ? 'Find files' : 'Search'} aria-label={by === 'names' ? 'Find files' : 'Search file contents'} bind:value={filter} />
+				{#if by === 'contents' && searching}<span class="size-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent opacity-60"></span>{/if}
+				{#if filter}<button class="grid place-items-center rounded p-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="Clear file filter" onclick={() => (filter = '')}><Icon name="close" size={12} /></button>{/if}
+			</label>
+			<div class="flex h-7 w-full items-center gap-0.5 rounded-md bg-(--vscode-input-background)/40 p-0.5" role="radiogroup" aria-label="Explorer search mode">
+				{#each [['names', 'Names', 'Filter files by name'], ['contents', 'Contents', 'Search file contents']] as const as [id, label, aria] (id)}
+					<button
+						role="radio"
+						aria-checked={by === id}
+						aria-label={aria}
+						class={['h-full min-w-0 flex-1 rounded-sm px-2 text-[11px]', by === id ? 'bg-(--vscode-editor-background) font-medium text-(--vscode-foreground) shadow-xs' : 'text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)']}
+						onclick={() => (by = id)}>{label}</button
+					>
+				{/each}
+			</div>
+		</div>
 	</div>
 	{#if by === 'contents' && filter.trim()}
-		<div class="min-h-0 flex-1 overflow-y-auto pb-2 text-[13px]" aria-label="ผลการค้นหา">
+		<div class="min-h-0 flex-1 overflow-y-auto py-2 text-xs" aria-label="Search results">
 			{#each hits as h (h.path)}
 				{@const name = h.path.slice(h.path.lastIndexOf('/') + 1)}
-				<button class="mx-1.5 flex h-[22px] w-[calc(100%-12px)] items-center gap-1.5 rounded-md px-2 text-left hover:bg-(--vscode-list-hoverBackground)" title={h.path} onclick={() => adeLayout.openFile(slug, h.path, { preview: true })}>
+				<button class="flex h-[26px] w-full items-center gap-1.5 rounded-sm px-2 text-left hover:bg-(--vscode-list-hoverBackground)" title={h.path} onclick={() => adeLayout.openFile(slug, h.path, { preview: true })}>
 					<FileIcon icon={fileIcon(name)} />
 					<span class="truncate">{name}</span>
-					<span class="min-w-0 flex-1 truncate text-xs text-(--vscode-descriptionForeground)">{h.path.slice(base ? base.length + 1 : 0, -name.length - 1)}</span>
+					<span class="min-w-0 flex-1 truncate text-[11px] text-(--vscode-descriptionForeground)">{h.path.slice(base ? base.length + 1 : 0, -name.length - 1)}</span>
 				</button>
 				{#each h.lines as l (l.line)}
-					<button class="mx-1.5 block h-[22px] w-[calc(100%-12px)] truncate rounded-md pr-2 pl-8 text-left font-mono text-xs text-(--vscode-descriptionForeground) hover:bg-(--vscode-list-hoverBackground) hover:text-(--vscode-foreground)" onclick={() => adeLayout.openFile(slug, h.path, { preview: true })}>
+					<button class="block h-[22px] w-full truncate rounded-sm pr-2 pl-8 text-left font-mono text-[11px] text-(--vscode-descriptionForeground) hover:bg-(--vscode-list-hoverBackground) hover:text-(--vscode-foreground)" onclick={() => adeLayout.openFile(slug, h.path, { preview: true })}>
 						<span class="opacity-60">{l.line}</span> {l.text}
 					</button>
 				{/each}
 			{:else}
-				<p class="px-3 py-2 text-xs text-(--vscode-descriptionForeground)">{searching ? 'กำลังค้นหา…' : 'ไม่พบ'}</p>
+				{#if searching}<p class="px-3 py-2 text-[11px] text-(--vscode-descriptionForeground)">Searching…</p>{/if}
 			{/each}
 		</div>
 	{:else}
-	<div class="min-h-0 flex-1 overflow-y-auto pb-2 text-[13px]" role="tree" aria-label="Files">
-		{#if error}
-			<p class="px-3 text-xs text-(--vscode-errorForeground)">{error}</p>
-		{/if}
-		{#each rows as r (r.rel)}
-			<button
-				role="treeitem"
-				aria-selected="false"
-				aria-expanded={r.is_dir ? r.open : undefined}
-				class="mx-1.5 flex h-[22px] w-[calc(100%-12px)] items-center gap-1 rounded-md pr-2 text-left hover:bg-(--vscode-list-hoverBackground)"
-				style:padding-left="{8 + r.depth * 12}px"
-				title={r.rel}
-				onclick={() => activate(r)}
-				ondblclick={() => !r.is_dir && activate(r, false)}
-			>
-				<span class="grid w-4 shrink-0 place-items-center text-(--vscode-icon-foreground)">
-					{#if r.is_dir}<Icon name={r.open ? 'chevronDown' : 'chevronRight'} size={14} />{/if}
-				</span>
-				<FileIcon icon={r.is_dir ? folderIcon(r.rel, r.open) : fileIcon(r.name)} />
-				<span class={['min-w-0 flex-1 truncate', r.ignored && 'italic opacity-55']} style:color={decorations.get(r.rel)?.color}>{r.name}</span>
-				{#if r.ignored}<span class="shrink-0 pl-2 opacity-55" title="ถูก .gitignore"><Icon name="ignored" size={12} /></span>
-				{:else if decorations.has(r.rel)}{@const deco = decorations.get(r.rel)!}<span class="shrink-0 pl-2 text-[11px] font-semibold" style:color={deco.color}>{deco.letter || '•'}</span>{/if}
-			</button>
-		{/each}
-	</div>
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="min-h-0 flex-1 overflow-y-auto py-2 text-xs"
+			role="tree"
+			tabindex="-1"
+			aria-label="Files"
+			oncontextmenu={(e) => e.target === e.currentTarget && (e.preventDefault(), (rowMenu = { row: null, x: e.clientX, y: e.clientY }))}
+			ondblclick={(e) => e.target === e.currentTarget && runRow('newFile', null)}
+		>
+			{#if error}
+				<p class="px-3 text-center text-[11px] text-(--vscode-errorForeground)">Could not load files for this workspace: {error}</p>
+			{/if}
+			{#if editAfter === ''}{@render inlineInput(0, edit?.kind === 'folder')}{/if}
+			{#each visibleRows as r (r.rel)}
+				{#if edit?.kind === 'rename' && edit.rel === r.rel}
+					{@render inlineInput(r.depth, r.is_dir)}
+				{:else}
+					{@const deco = decorations.get(r.rel)}
+					<button
+						role="treeitem"
+						aria-selected={selected === r.rel}
+						aria-expanded={r.is_dir ? r.open : undefined}
+						class={['flex w-full items-center gap-1 rounded-sm px-2 py-1 text-left transition-colors', selected === r.rel ? 'bg-(--vscode-list-inactiveSelectionBackground)/70' : 'hover:bg-(--vscode-list-hoverBackground)']}
+						style:padding-left="{r.depth * 16 + 8}px"
+						title={r.rel}
+						onclick={() => activate(r)}
+						ondblclick={() => !r.is_dir && activate(r, false)}
+						oncontextmenu={(e) => (e.preventDefault(), (selected = r.rel), (rowMenu = { row: r, x: e.clientX, y: e.clientY }))}
+						onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), runRow('rename', r))}
+					>
+						<span class={['grid size-3 shrink-0 place-items-center text-(--vscode-descriptionForeground) transition-transform', r.is_dir && r.open && 'rotate-90']}>{#if r.is_dir}<Icon name="chevronRight" size={12} />{/if}</span>
+						<FileIcon icon={r.is_dir ? folderIcon(r.rel, r.open) : fileIcon(r.name)} />
+						<span class={['min-w-0 flex-1 truncate', r.ignored && 'pr-0.5 italic opacity-55']} style:color={deco?.color}>{r.name}</span>
+						{#if deco?.letter}<span class="mr-2 ml-auto shrink-0 text-[10px] font-semibold tracking-wide" style:color={deco.color}>{deco.letter}</span>
+						{:else if r.ignored}<span class="mr-2 ml-auto shrink-0 opacity-55" aria-label="Ignored by .gitignore"><Icon name="ignored" size={12} /></span>{/if}
+					</button>
+					{#if editAfter === r.rel}{@render inlineInput(edit?.depth ?? 0, edit?.kind === 'folder')}{/if}
+				{/if}
+			{:else}
+				{#if !error && !edit}<p class="px-4 text-center text-[11px] text-(--vscode-descriptionForeground)">{filter ? 'No files match this filter' : 'No files in this workspace'}</p>{/if}
+			{/each}
+		</div>
 	{/if}
 </div>
+
+{#if moreMenu}
+	<PopupMenu items={moreItems} label="More Explorer Actions" x={moreMenu.x} y={moreMenu.y} onRun={(n) => n.type === 'item' && runMore(n.id)} onClose={() => (moreMenu = null)} />
+{/if}
+{#if rowMenu}
+	{@const r = rowMenu.row}
+	<PopupMenu items={rowItems} label="File" x={rowMenu.x} y={rowMenu.y} onRun={(n) => n.type === 'item' && void runRow(n.id, r)} onClose={() => (rowMenu = null)} />
+{/if}

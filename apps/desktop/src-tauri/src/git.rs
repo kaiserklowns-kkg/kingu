@@ -269,6 +269,42 @@ pub fn local_branches(root: &Path) -> Result<Vec<String>, String> {
   Ok(String::from_utf8_lossy(&out).lines().map(str::to_owned).filter(|l| !l.is_empty()).collect())
 }
 
+/// `+added -deleted` per path for the working tree (`unstaged`) and the index (`staged`);
+/// binary files are left out.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct NumStat {
+  pub unstaged: std::collections::HashMap<String, (u32, u32)>,
+  pub staged: std::collections::HashMap<String, (u32, u32)>,
+}
+
+pub fn parse_numstat(text: &str) -> std::collections::HashMap<String, (u32, u32)> {
+  text
+    .lines()
+    .filter_map(|l| {
+      let mut f = l.splitn(3, '\t');
+      let (a, d, path) = (f.next()?.parse().ok()?, f.next()?.parse().ok()?, f.next()?);
+      // Renames read `old => new` or `dir/{old => new}`; keep the new path.
+      let path = match (path.find('{'), path.find(" => ")) {
+        (Some(open), Some(_)) => {
+          let close = path.find('}')?;
+          let inner = &path[open + 1..close];
+          let new = inner.split(" => ").nth(1)?;
+          format!("{}{}{}", &path[..open], new, &path[close + 1..]).replace("//", "/")
+        }
+        (None, Some(arrow)) => path[arrow + 4..].to_owned(),
+        _ => path.to_owned(),
+      };
+      Some((path, (a, d)))
+    })
+    .collect()
+}
+
+pub fn numstat(root: &Path) -> Result<NumStat, String> {
+  let unstaged = run(root, &["diff", "--numstat"])?;
+  let staged = if has_head(root) { run(root, &["diff", "--cached", "--numstat"])? } else { Vec::new() };
+  Ok(NumStat { unstaged: parse_numstat(&String::from_utf8_lossy(&unstaged)), staged: parse_numstat(&String::from_utf8_lossy(&staged)) })
+}
+
 /// Status bar branch picker (VS Code's `git.checkout`): switches to a local branch.
 pub fn checkout(root: &Path, branch: &str) -> Result<(), String> {
   check_rev(branch)?;
@@ -322,6 +358,15 @@ pub fn show_at(root: &Path, rev: &str, rel: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn parses_numstat() {
+    let m = parse_numstat("3\t1\tsrc/a.ts\n-\t-\timg.png\n2\t0\tsrc/{old => new}/b.ts\n1\t1\tx.rs => y.rs\n");
+    assert_eq!(m.get("src/a.ts"), Some(&(3, 1)));
+    assert_eq!(m.get("src/new/b.ts"), Some(&(2, 0)));
+    assert_eq!(m.get("y.rs"), Some(&(1, 1)));
+    assert!(!m.contains_key("img.png"));
+  }
   use std::process::Command;
   use std::path::PathBuf;
 

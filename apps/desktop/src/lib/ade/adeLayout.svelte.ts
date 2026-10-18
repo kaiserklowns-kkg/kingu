@@ -12,7 +12,7 @@ import { isDiffKey } from '#lib/workbench/scm.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { activeAfterClose, adeTabs, fileTabId, keyOfTabId, openFileTab, pinFileTab, type AdeTab, type FileTab, type TerminalTab } from './adeTabs.ts';
 
-export type RightTab = 'files' | 'changes';
+export type RightTab = 'files' | 'changes' | 'review';
 /** Worktree key: '' for the folder itself (Orca's "primary" worktree), else the task slug. */
 export const PRIMARY = '';
 

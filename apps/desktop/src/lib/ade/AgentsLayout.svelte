@@ -6,7 +6,6 @@
 	// mounted while hidden so their shells keep running; a file tab's editor mounts when shown.
 	import Icon from '#lib/workbench/Icon.svelte';
 	import Sash from '#lib/workbench/Sash.svelte';
-	import ScmView from '#lib/workbench/ScmView.svelte';
 	import DiffHost from '#lib/workbench/DiffHost.svelte';
 	import AdeEditor from './AdeEditor.svelte';
 	import { keyOfTabId } from './adeTabs.ts';
@@ -24,23 +23,39 @@
 	import Board from './Board.svelte';
 	import TaskPage from './TaskPage.svelte';
 	import WorktreeFiles from './WorktreeFiles.svelte';
+	import AdeSourceControl from './AdeSourceControl.svelte';
 	import { adeLayout, PRIMARY, type RightTab } from './adeLayout.svelte';
 	import { adeTasks } from './tasks.svelte';
 	import { untrack } from 'svelte';
+	import { commands } from '#lib/workbench/commands.svelte.ts';
 	import { cliName, cliOf, cliResume, type RunMode } from './agentCli';
 	import { cliSessions } from './cliSessions.svelte';
 	import { BUTTON, BUTTON_SECONDARY, STATUS_DOT } from './ui';
 	import { STATUS_LABEL, timeAgo } from './model';
 
 	let body: HTMLDivElement | undefined = $state();
-	const RIGHT_TABS: { id: RightTab; label: string; icon: IconName }[] = [
-		{ id: 'files', label: 'Files', icon: 'files' },
-		{ id: 'changes', label: 'Changes', icon: 'git' }
-	];
 	const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+	// Orca's right side bar shortcuts in the Agents layout: ⌘L toggles it, ⇧⌘E / ⇧⌘G open a tab.
+	$effect(() => {
+		const open = (tab: RightTab) => ((adeLayout.rightTab = tab), (appMode.panelVisible = true));
+		const off = untrack(() => [
+			commands.register({ id: 'kingu.agents.toggleRightSidebar', title: 'Toggle Right Sidebar', category: 'Agents', key: 'cmd+l', when: () => appMode.isAgents, run: () => (appMode.panelVisible = !appMode.panelVisible) }),
+			commands.register({ id: 'kingu.agents.showExplorer', title: 'Show Explorer', category: 'Agents', key: 'cmd+shift+e', when: () => appMode.isAgents, run: () => open('files') }),
+			commands.register({ id: 'kingu.agents.showSourceControl', title: 'Show Source Control', category: 'Agents', key: 'cmd+shift+g', when: () => appMode.isAgents, run: () => open('changes') })
+		]);
+		return () => off.forEach((u) => u());
+	});
 	const maxSide = () => (body?.clientWidth ?? 1200) * 0.45;
 	const key = $derived(adeLayout.key);
 	const slug = $derived(key && adeTasks.find(key) ? key : null);
+	// Orca's right side bar tabs: icon only, the title and shortcut in the tooltip. Review (accept,
+	// merge, PR) is Kingu's own and only exists for a task.
+	const RIGHT_TABS = $derived<{ id: RightTab; label: string; icon: IconName; key?: string }[]>([
+		{ id: 'files', label: 'Explorer', icon: 'files', key: '⇧⌘E' },
+		{ id: 'changes', label: 'Source Control', icon: 'git', key: '⇧⌘G' },
+		...(slug ? [{ id: 'review' as const, label: 'Review', icon: 'pullRequest' as const }] : [])
+	]);
+	const rightTab = $derived(adeLayout.rightTab === 'review' && !slug ? 'changes' : adeLayout.rightTab);
 	const activeTab = $derived(adeLayout.activeTab(key));
 	const activeFile = $derived(keyOfTabId(activeTab));
 	/** The selected task runs its agent CLI in a terminal (the Orca way). */
@@ -107,7 +122,7 @@
 	const FRAME = 'min-h-0 overflow-hidden rounded-[8px] border border-(--vscode-widget-border)';
 </script>
 
-<div bind:this={body} class="flex min-h-0 flex-1 bg-(--vscode-titleBar-activeBackground) px-[4px] pb-[4px] text-(--vscode-foreground)">
+<div bind:this={body} class="relative flex min-h-0 flex-1 bg-(--vscode-titleBar-activeBackground) px-[4px] pb-[4px] text-(--vscode-foreground)">
 	{#if appMode.sessionsVisible}
 		<aside aria-label="Side Bar" class={[FRAME, 'flex shrink-0 flex-col bg-(--vscode-sideBar-background)']} style:width="{appMode.sessionsWidth}px">
 			{#key workspace.root}<AdeSidebar />{/key}
@@ -245,38 +260,44 @@
 		<Sash
 				gap
 			orientation="vertical"
-			onDrag={(d) => (appMode.panelWidth = clamp(appMode.panelWidth - d, 260, maxSide()))}
-			onReset={() => (appMode.panelWidth = 360)}
+			onDrag={(d) => (appMode.panelWidth = clamp(appMode.panelWidth - d, 220, Math.max(220, window.innerWidth - 320)))}
+			onReset={() => (appMode.panelWidth = 350)}
 		/>
-		<aside aria-label={adeLayout.rightTab === 'files' ? 'Files' : 'Changes'} class={[FRAME, 'flex shrink-0 flex-col bg-(--vscode-sideBar-background)']} style:width="{appMode.panelWidth}px">
-			<!-- The IDE panel's tabs (PROBLEMS / OUTPUT / TERMINAL) for Orca's right side bar. -->
-			<div class="flex h-(--kg-part-title-height) shrink-0 items-center gap-1 px-2" role="tablist" aria-label="Right Side Bar">
-				{#each RIGHT_TABS as t (t.id)}
-					{@const on = adeLayout.rightTab === t.id}
-					<button
-						role="tab"
-						aria-selected={on}
-						class={[
-							'h-full border-b px-2 text-[11px] uppercase',
-							on
-								? 'border-(--vscode-panelTitle-activeBorder) text-(--vscode-panelTitle-activeForeground)'
-								: 'border-transparent text-(--vscode-panelTitle-inactiveForeground) hover:text-(--vscode-panelTitle-activeForeground)'
-						]}
-						onclick={() => (adeLayout.rightTab = t.id)}>{t.label}</button
-					>
-				{/each}
-				<span class="flex-1"></span>
-				<button class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="ซ่อน side bar ขวา" title="ซ่อน (⌥⌘B)" onclick={() => (appMode.panelVisible = false)}>
-					<Icon name="close" size={14} />
+		<aside aria-label={RIGHT_TABS.find((t) => t.id === rightTab)?.label} class={[FRAME, 'flex shrink-0 flex-col bg-(--vscode-sideBar-background)']} style:width="{appMode.panelWidth}px">
+			<!-- Orca's right side bar header: 36px, icon tabs with an underline, the toggle at the right. -->
+			<div class="flex h-[36px] min-h-[36px] shrink-0 items-center overflow-hidden border-b border-(--vscode-widget-border)">
+				<div class="flex min-w-0 flex-1 items-center overflow-hidden pl-2" role="tablist" aria-label="Right Side Bar">
+					{#each RIGHT_TABS as t (t.id)}
+						{@const on = rightTab === t.id}
+						<button
+							role="tab"
+							aria-selected={on}
+							aria-label={t.label}
+							title={t.key ? `${t.label} (${t.key})` : t.label}
+							class={['relative flex h-[36px] w-9 shrink-0 items-center justify-center transition-colors', on ? 'text-(--vscode-foreground)' : 'text-(--vscode-descriptionForeground)/60 hover:text-(--vscode-descriptionForeground)']}
+							onclick={() => (adeLayout.rightTab = t.id)}
+						>
+							<Icon name={t.icon} size={16} filled={on} />
+							{#if on}<span class="absolute right-[25%] bottom-0 left-[25%] h-[2px] rounded-t bg-(--vscode-foreground)"></span>{/if}
+						</button>
+					{/each}
+				</div>
+				<button class="mr-1 grid h-7 place-items-center rounded px-2 text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)" aria-label="Toggle right sidebar" title="Toggle right sidebar (⌘L)" onclick={() => (appMode.panelVisible = false)}>
+					<Icon name="sidebarRight" size={16} />
 				</button>
 			</div>
-			{#if adeLayout.rightTab === 'files'}
+			{#if rightTab === 'files'}
 				{#if workspace.root}{#key key}<WorktreeFiles slug={slug ?? ''} />{/key}{/if}
+			{:else if rightTab === 'changes'}
+				{#key key}<AdeSourceControl slug={slug ?? ''} />{/key}
 			{:else if slug}
 				{#key slug}<TaskPage {slug} sections="review" />{/key}
-			{:else if workspace.root}
-				<div class="flex min-h-0 flex-1 flex-col pt-2"><ScmView /></div>
 			{/if}
 		</aside>
+	{:else}
+		<!-- Orca's opener while the right side bar is closed: top right of the content. -->
+		<button class="absolute top-[6px] right-[10px] z-10 grid h-7 place-items-center rounded px-2 text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)" aria-label="Toggle right sidebar" title="Toggle right sidebar (⌘L)" onclick={() => (appMode.panelVisible = true)}>
+			<Icon name="sidebarRight" size={16} />
+		</button>
 	{/if}
 </div>

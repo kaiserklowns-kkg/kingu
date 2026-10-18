@@ -155,6 +155,20 @@ fn checked(root: &Path, paths: Vec<String>) -> Result<Vec<String>, String> {
   Ok(paths)
 }
 
+/// The repository a Source Control command acts on: the open folder, or a task's worktree
+/// (`slug`), so the Agents layout's right side bar works for whichever worktree is selected.
+fn git_dir(ws: &Workspace, slug: Option<&str>) -> Result<PathBuf, String> {
+  let root = ws.root()?;
+  match slug {
+    None | Some("") => Ok(root),
+    Some(slug) => {
+      agent::worktree::validate_slug(slug)?;
+      let dir = agent::worktree::worktree_path(&root, slug);
+      if dir.is_dir() { Ok(dir) } else { Err(format!("ไม่พบ worktree ของงาน {slug}")) }
+    }
+  }
+}
+
 /// Runs a git operation off the main thread (status can take a while in a large repository).
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
   tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
@@ -162,36 +176,39 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
 
 /// Source Control view: branch, ahead/behind and changed files; `None` outside a repository.
 #[tauri::command]
-async fn git_status(ws: State<'_, Workspace>) -> Result<Option<git::GitStatus>, String> {
-  let Some(root) = ws.current() else { return Ok(None) };
+async fn git_status(ws: State<'_, Workspace>, slug: Option<String>) -> Result<Option<git::GitStatus>, String> {
+  if ws.current().is_none() {
+    return Ok(None);
+  }
+  let root = git_dir(&ws, slug.as_deref())?;
   blocking(move || git::status(&root)).await
 }
 
 #[tauri::command]
-async fn git_stage(ws: State<'_, Workspace>, paths: Vec<String>) -> Result<(), String> {
-  let root = ws.root()?;
+async fn git_stage(ws: State<'_, Workspace>, paths: Vec<String>, slug: Option<String>) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
   let paths = checked(&root, paths)?;
   blocking(move || git::stage(&root, &paths)).await
 }
 
 #[tauri::command]
-async fn git_unstage(ws: State<'_, Workspace>, paths: Vec<String>) -> Result<(), String> {
-  let root = ws.root()?;
+async fn git_unstage(ws: State<'_, Workspace>, paths: Vec<String>, slug: Option<String>) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
   let paths = checked(&root, paths)?;
   blocking(move || git::unstage(&root, &paths)).await
 }
 
 /// Deleting untracked files needs `delete_untracked`, set only after the user confirmed.
 #[tauri::command]
-async fn git_discard(ws: State<'_, Workspace>, paths: Vec<String>, delete_untracked: Option<bool>) -> Result<(), String> {
-  let root = ws.root()?;
+async fn git_discard(ws: State<'_, Workspace>, paths: Vec<String>, delete_untracked: Option<bool>, slug: Option<String>) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
   let paths = checked(&root, paths)?;
   blocking(move || git::discard(&root, &paths, delete_untracked.unwrap_or(false))).await
 }
 
 #[tauri::command]
-async fn git_commit(ws: State<'_, Workspace>, message: String, amend: Option<bool>) -> Result<(), String> {
-  let root = ws.root()?;
+async fn git_commit(ws: State<'_, Workspace>, message: String, amend: Option<bool>, slug: Option<String>) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
   blocking(move || git::commit(&root, &message, amend.unwrap_or(false))).await?;
   log::info!("committed");
   Ok(())
@@ -204,8 +221,8 @@ async fn git_checkout(ws: State<'_, Workspace>, branch: String) -> Result<(), St
 }
 
 #[tauri::command]
-async fn git_sync(ws: State<'_, Workspace>) -> Result<(), String> {
-  let root = ws.root()?;
+async fn git_sync(ws: State<'_, Workspace>, slug: Option<String>) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
   blocking(move || git::sync(&root)).await
 }
 
@@ -248,6 +265,13 @@ fn floating_note_write(path: String, text: String) -> Result<(), String> {
 fn floating_dir(app: AppHandle) -> Result<String, String> {
   let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
   Ok(floating::app_dir(&data)?.display().to_string())
+}
+
+/// Lines added and deleted per changed file (`git diff --numstat`), unstaged and staged.
+#[tauri::command]
+async fn git_numstat(ws: State<'_, Workspace>, slug: Option<String>) -> Result<git::NumStat, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || git::numstat(&root)).await
 }
 
 /// HEAD version of a file for the diff editor; empty when the file is not in HEAD.
@@ -539,6 +563,7 @@ pub fn run() {
       git_commit,
       git_checkout,
       git_sync,
+      git_numstat,
       usage_fetch,
       usage_detect,
       floating_note_new,
