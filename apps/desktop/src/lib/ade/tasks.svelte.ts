@@ -59,7 +59,8 @@ import { quickOpenWorktree } from './quickOpen.svelte.ts';
 import { diffNotes } from './diffNotes.svelte.ts';
 import { adeDialogs } from './dialogs.svelte.ts';
 import { prefillPr, prFormProblem, type Commit, type PrForm } from './prForm.ts';
-import { issueLink, issuePrompt, issueSlug, issueTaskTitle, prComment, taskForIssue, type Issue, type IssueDetail } from './issues.ts';
+import { isLinear, issueLink, issuePrompt, issueRef, issueSlug, issueTaskTitle, prComment, taskForIssue, type Issue, type IssueDetail } from './issues.ts';
+import { linearLink, linearPrompt, linearSlug, linearTaskTitle, taskForLinearIssue, type LinearIssue, type LinearIssueDetail } from './linear.ts';
 import { brokenChecks, MERGE_LABEL, type MergeMethod } from './prChecks.ts';
 import { buildCommentsPrompt, buildFixChecksPrompt, type CheckLog } from './prPrompts.ts';
 import type { ReviewThread } from './prComments.ts';
@@ -399,6 +400,35 @@ class AdeTasks {
 		});
 	}
 
+	/**
+	 * A task for a Linear issue: like `createFromIssue`, with the description and latest comments
+	 * from Linear, "Fixes ENG-123", and a branch `kingu/eng-123-<words>` that Linear links to the PR.
+	 */
+	async createFromLinearIssue(issue: LinearIssue, opts: { base: string; mode?: RunMode }): Promise<string | undefined> {
+		const existing = taskForLinearIssue(this.list, issue.identifier);
+		if (existing) {
+			const open = await ask(`มีงานของ ${issue.identifier} อยู่แล้ว: "${existing.title}" (${this.branchOf(existing.slug)})\n\nเปิดงานนั้นแทน?`, {
+				title: 'งานจาก Linear issue',
+				okLabel: 'เปิดงานเดิม',
+				cancelLabel: 'ยกเลิก'
+			});
+			if (open) this.openTask(existing.slug);
+			return;
+		}
+		const detail = await invoke<LinearIssueDetail>('linear_issue_view', { id: issue.identifier }).catch((e) => {
+			clientLog('info', `linear_issue_view ${issue.identifier}: ${e}`);
+			return issue;
+		});
+		return this.create({
+			title: linearTaskTitle(issue),
+			prompt: linearPrompt(detail),
+			base: opts.base,
+			mode: opts.mode,
+			slug: linearSlug(issue),
+			issue: linearLink(issue)
+		});
+	}
+
 	/** After a restart: start the task's CLI again in its worktree, continuing its latest session where the CLI can. */
 	async resumeCli(slug: string, fresh = false) {
 		const meta = this.list.find((t) => t.slug === slug);
@@ -711,8 +741,9 @@ class AdeTasks {
 		status.flash(url ? `เปิด PR แล้ว: ${url}` : 'เปิด PR แล้ว', 10000);
 		void prStatuses.refresh(slug);
 		if (url && meta.issue && settings.get<boolean>('kingu.issues.commentOnPr') === true) {
-			const number = meta.issue.number;
-			invoke('gh_issue_comment', { number, body: prComment(url) }).catch((e) => status.flash(`comment ใน issue #${number} ไม่ได้: ${e}`, 8000));
+			const link = meta.issue;
+			const posted = isLinear(link) ? invoke('linear_issue_comment', { id: link.key, body: prComment(url) }) : invoke('gh_issue_comment', { number: link.number, body: prComment(url) });
+			posted.catch((e) => status.flash(`comment ใน issue ${issueRef(link)} ไม่ได้: ${e}`, 8000));
 		}
 		return null;
 	}

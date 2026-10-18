@@ -436,9 +436,17 @@ const CORE_SETTINGS: SettingSchema[] = [
 		type: 'boolean',
 		default: false,
 		description:
-			'เมื่อสร้าง PR ของงานที่เริ่มจาก GitHub issue ให้ comment ใน issue ว่า "Kingu เริ่มงานนี้ใน PR …" ด้วยบัญชี gh ของคุณ (Comment on the issue with the PR link when a task started from a GitHub issue opens its PR.)',
+			'เมื่อสร้าง PR ของงานที่เริ่มจาก GitHub หรือ Linear issue ให้ comment ใน issue ว่า "Kingu เริ่มงานนี้ใน PR …" ด้วยบัญชี gh หรือ Linear API key ของคุณ (Comment on the issue with the PR link when a task started from a GitHub or Linear issue opens its PR.)',
 		// User-only: a repository's workspace settings must not post comments under the user's account.
 		scope: 'application'
+	},
+	{
+		id: 'kingu.linear.team',
+		group: 'Agent',
+		type: 'string',
+		default: '',
+		description:
+			'team key ของ Linear (เช่น ENG) ที่ Linear: Start Task from Issue… แสดง issue ว่างไว้เพื่อแสดงทุกทีม ตั้งต่อ repository ได้ (Linear team key to list issues from; empty lists every team.)'
 	},
 	{
 		id: 'kingu.team.serverUrl',

@@ -14,6 +14,7 @@
 	import PrChecks from './PrChecks.svelte';
 	import DiffNotesList from './DiffNotesList.svelte';
 	import { issues } from './issues.svelte.ts';
+	import { isLinear, issueRef } from './issues.ts';
 	import { cliOf } from './agentCli';
 	import { adeLayout } from './adeLayout.svelte';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
@@ -117,7 +118,7 @@
 				{#if meta.pr_url}<a class="text-(--vscode-textLink-foreground) hover:underline" href={meta.pr_url} target="_blank" rel="noreferrer">{meta.pr_url}</a>{/if}
 				{#if meta.issue}
 					{@const issue = meta.issue}
-					<button class="text-(--vscode-textLink-foreground) hover:underline" title="เปิด issue บน GitHub: {issue.url}" onclick={() => issues.open(issue)}>issue #{issue.number}</button>
+					<button class="text-(--vscode-textLink-foreground) hover:underline" title="เปิด issue บน {isLinear(issue) ? 'Linear' : 'GitHub'}: {issue.url}" onclick={() => issues.open(issue)}>issue {issueRef(issue)}</button>
 				{/if}
 				<span class="flex-1"></span>
 				{#if running && run?.runId !== undefined}

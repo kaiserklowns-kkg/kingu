@@ -27,12 +27,12 @@ export type TaskMeta = {
 	session_id: string | null;
 	/** How the latest run (or turn) ended, saved so the card can show it after a restart. */
 	last_run: RunSummary | null;
-	/** The GitHub issue the task was started from; its PR body says `Fixes #number`. */
+	/** The issue the task was started from; its PR body says `Fixes #number` (`Fixes ENG-123` for Linear). */
 	issue: IssueLink | null;
 };
 
-/** Mirrors Rust `agent::tasks::IssueLink`. */
-export type IssueLink = { number: number; url: string; title: string };
+/** Mirrors Rust `agent::tasks::IssueLink`. No `provider` means GitHub (links saved before Linear came). */
+export type IssueLink = { number: number; url: string; title: string; provider?: 'github' | 'linear'; key?: string };
 
 /** Mirrors Rust `agent::tasks::RunSummary`. */
 export type RunSummary = {

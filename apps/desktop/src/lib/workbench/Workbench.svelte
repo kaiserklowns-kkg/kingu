@@ -52,6 +52,8 @@
 	import { installAgentNotifications } from '#lib/ade/agentNotify.svelte.ts';
 	import { installAutomations } from '#lib/ade/automations.svelte.ts';
 	import { installIssues } from '#lib/ade/issues.svelte.ts';
+	import { installLinear } from '#lib/ade/linear.svelte.ts';
+	import LinearConnect from '#lib/ade/LinearConnect.svelte';
 	import { installSnaps } from '#lib/snaps/snaps.svelte.ts';
 	import { installDebug } from '#lib/debug/debug.svelte.ts';
 	import { installCloseGuard, quit } from './closeGuard.svelte';
@@ -222,6 +224,7 @@
 		const uninstallAgentNotifications = installAgentNotifications();
 		const uninstallAutomations = installAutomations();
 		const uninstallIssues = installIssues();
+		const uninstallLinear = installLinear();
 		const uninstallLayout = installLayoutCommands();
 		const uninstallSnaps = installSnaps();
 		const uninstallTerminalSessions = installTerminalSessions();
@@ -254,6 +257,7 @@
 			uninstallAgentsMode();
 			uninstallWorktreeCommands();
 			uninstallIssues();
+			uninstallLinear();
 			uninstallAutomations();
 			uninstallAgentNotifications();
 			uninstallAde();
@@ -409,6 +413,7 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 	<!-- workbench.statusBar.visible (kept mounted so its items keep their state). -->
 	<div class={['contents', !settings.get<boolean>('workbench.statusBar.visible') && '[&>*]:hidden']}><StatusBar /></div>
 	<QuickInput />
+	<LinearConnect />
 	<AdeDialogs />
 	<RepoDialog />
 	<NotificationToasts />

@@ -1,0 +1,95 @@
+// Linear issues as agent tasks: pure helpers (no runes, no Tauri) for the palette and
+// `adeTasks.createFromLinearIssue`. Shapes mirror Rust `linear.rs`.
+
+import { slugify } from '#lib/agent/events.ts';
+import type { IssueComment, IssueLabel } from './issues.ts';
+import type { IssueLink, TaskMeta } from './model.ts';
+
+export type LinearViewer = { name: string; email: string; organization: string };
+
+export type LinearIssue = {
+	id: string;
+	/** `ENG-123`. */
+	identifier: string;
+	number: number;
+	title: string;
+	url: string;
+	state: string;
+	/** `backlog`, `unstarted`, `started`, `triage` (finished ones are never listed). */
+	state_type: string;
+	state_color: string;
+	/** 0 none, 1 urgent … 4 low. */
+	priority: number;
+	priority_label: string;
+	team: string;
+	assignee: string | null;
+	labels: IssueLabel[];
+	updated_at: string;
+	branch_name: string;
+	description: string;
+	description_truncated: boolean;
+};
+
+export type LinearIssueDetail = LinearIssue & { comments: IssueComment[]; comments_omitted: number };
+
+/** `assigned`/`created` are the viewer's; `open` is every unfinished issue. */
+export type LinearFilter = 'assigned' | 'created' | 'open';
+
+/** Comments beyond this many bytes stay out of the prompt (tasks.json caps prompts at 64 KB). */
+const MAX_PROMPT_COMMENTS = 24 * 1024;
+const SLUG_WORDS = 6;
+
+export function linearLink(issue: Pick<LinearIssue, 'number' | 'url' | 'title' | 'identifier'>): IssueLink {
+	return { number: issue.number, url: issue.url, title: issue.title, provider: 'linear', key: issue.identifier };
+}
+
+/** Branch name base: `eng-123-<first title words>`. Linear links a PR whose branch holds the identifier. */
+export function linearSlug(issue: Pick<LinearIssue, 'identifier' | 'title'>): string {
+	const words = slugify(issue.title).split('-').filter(Boolean);
+	// slugify falls back to `task-<time>` for a title with no Latin letters.
+	const latin = /[a-z0-9]/i.test(issue.title) ? words.slice(0, SLUG_WORDS) : [];
+	return slugify([issue.identifier.toLowerCase(), ...latin].join(' '));
+}
+
+/** Task title shown on cards: `ENG-123 <title>`. */
+export function linearTaskTitle(issue: Pick<LinearIssue, 'identifier' | 'title'>): string {
+	return `${issue.identifier} ${issue.title.trim()}`.slice(0, 200).trim();
+}
+
+/** The agent's instructions: the issue (title, link, state, description, latest comments) and how to reference it. */
+export function linearPrompt(issue: LinearIssue | LinearIssueDetail): string {
+	const parts = [`แก้ Linear issue ${issue.identifier}: ${issue.title.trim()}`, `ลิงก์: ${issue.url}`];
+	const facts = [issue.state && `สถานะ: ${issue.state}`, issue.priority ? `priority: ${issue.priority_label}` : '', issue.labels.length ? `labels: ${issue.labels.map((l) => l.name).join(', ')}` : '']
+		.filter(Boolean)
+		.join(' · ');
+	if (facts) parts.push(facts);
+	const body = issue.description.trim();
+	parts.push(`## รายละเอียดของ issue\n\n${body || '(ไม่มีรายละเอียด)'}${issue.description_truncated ? '\n\n(ตัดเนื้อหาที่เหลือออก ดูฉบับเต็มที่ลิงก์)' : ''}`);
+	if ('comments' in issue && issue.comments.length) {
+		let size = 0;
+		const kept: string[] = [];
+		for (const c of [...issue.comments].reverse()) {
+			const text = `${c.author} (${c.created_at.slice(0, 10)}):\n${c.body.trim()}`;
+			if (size + text.length > MAX_PROMPT_COMMENTS) break;
+			size += text.length;
+			kept.unshift(text);
+		}
+		const omitted = issue.comments_omitted + issue.comments.length - kept.length;
+		if (kept.length) parts.push(`## ความคิดเห็น${omitted ? ` (ล่าสุด ${kept.length} จาก ${kept.length + omitted})` : ''}\n\n${kept.join('\n\n')}`);
+	}
+	parts.push(
+		`## สิ่งที่ต้องทำ\n\nแก้ปัญหาตาม issue นี้ใน repository นี้ เพิ่มหรือแก้ test ตามสมควร แล้ว commit โดยใส่ "Fixes ${issue.identifier}" ในข้อความ commit (และใน PR ถ้าสร้าง) เพื่อให้ Linear ปิด issue เมื่อ merge`
+	);
+	return parts.join('\n\n');
+}
+
+/** The task already started from Linear issue `identifier`, if any (the newest when there are several). */
+export function taskForLinearIssue<T extends Pick<TaskMeta, 'issue' | 'created_at'>>(list: T[], identifier: string): T | undefined {
+	return list.filter((t) => t.issue?.provider === 'linear' && t.issue.key === identifier).sort((a, b) => b.created_at - a.created_at)[0];
+}
+
+/** Assigned to me first, then the other open ones, without repeats (the palette's list). */
+export function mergeLinearLists(mine: LinearIssue[], all: LinearIssue[]): { issue: LinearIssue; mine: boolean }[] {
+	const seen = new Set(mine.map((i) => i.id));
+	return [...mine.map((issue) => ({ issue, mine: true })), ...all.filter((i) => !seen.has(i.id)).map((issue) => ({ issue, mine: false }))];
+}

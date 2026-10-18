@@ -9,6 +9,7 @@ mod fs;
 mod git;
 mod glob;
 mod git_remote;
+mod linear;
 mod lsp;
 mod menu;
 mod project;
@@ -845,6 +846,13 @@ pub fn run() {
       agent::gh_issue_view,
       agent::gh_issue_comment,
       agent::gh_issue_open,
+      linear::linear_status,
+      linear::linear_connect,
+      linear::linear_disconnect,
+      linear::linear_issues_list,
+      linear::linear_issue_view,
+      linear::linear_issue_comment,
+      linear::linear_issue_open,
       search_text,
       search_cancel,
       worktree_search,
