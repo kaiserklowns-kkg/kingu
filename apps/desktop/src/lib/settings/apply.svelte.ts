@@ -11,11 +11,15 @@ import { editors } from '#lib/workbench/editors.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { theme } from '#lib/theme/theme.svelte.ts';
 import { isDiffKey } from '#lib/workbench/scm.ts';
-import { openModels, refreshLanguages, saveFile } from '#lib/workbench/editorModels.ts';
+import { getEntry, openModels, refreshLanguages, saveFile } from '#lib/workbench/editorModels.ts';
+import { isWorkspaceTextFile } from './resources';
+import { isUntitled } from '#lib/workbench/untitled.ts';
 import { indentLabel } from '#lib/workbench/textFiles.ts';
 import { keybindings } from '#lib/workbench/keybindings.svelte.ts';
 import { commands } from '#lib/workbench/commands.svelte.ts';
-import { editorOptionsFrom, effectiveTheme, enabledGlobs, indentFrom, terminalOptionsFrom, type Indent, type SaveReason } from './mappings';
+import { autoSaves, editorConfigurationFrom, editorOptionsFrom, effectiveTheme, enabledGlobs, indentFrom, modelOptionsFrom, terminalOptionsFrom, type Indent, type SaveReason } from './mappings';
+import { setMaxTokenizationLineLength } from '#lib/editor/tokenizationLimit.ts';
+import { runFocusChangeCodeActions } from '#lib/workbench/textFileSave.ts';
 import { jsonSchema } from './registry';
 import { settings } from './settings.svelte';
 import { settingSchemas } from './schemas.svelte';
@@ -30,17 +34,30 @@ export const editorOptions = (): Monaco.editor.IEditorOptions & Monaco.editor.IG
 
 function applyIndent(model: Monaco.editor.ITextModel, i: Indent) {
 	if (model.isDisposed()) return;
-	if (i.detect) model.detectIndentation(i.insertSpaces, i.tabSize);
-	else model.updateOptions({ tabSize: i.tabSize, insertSpaces: i.insertSpaces });
+	if (i.detect) {
+		model.detectIndentation(i.insertSpaces, i.tabSize);
+		model.updateOptions({ trimAutoWhitespace: i.trimAutoWhitespace });
+	} else model.updateOptions(modelOptionsFrom(i));
 }
 
 /** The tab key a model shows (a workspace file, or the user settings.json / keybindings.json). */
 const pathOf = (model: Monaco.editor.ITextModel) => openModels().find(([, m]) => m === model)?.[0] ?? model.uri.path.slice(1);
 const isActiveModel = (model: Monaco.editor.ITextModel) => editors.focusedFile !== null && pathOf(model) === editors.focusedFile;
 
+let monacoApi: typeof Monaco | undefined;
+
+/** Error markers on the open model of `path` (files.autoSaveWhenNoErrors). */
+function hasErrors(path: string): boolean {
+	const model = getEntry(path)?.model;
+	if (!monacoApi || !model || model.isDisposed()) return false;
+	return monacoApi.editor.getModelMarkers({ resource: model.uri }).some((m) => m.severity === monacoApi!.MarkerSeverity.Error);
+}
+
 async function autoSave(paths: string[], reason: SaveReason) {
 	for (const path of paths) {
 		if (!path || !editors.isDirty(path) || isDiffKey(path)) continue;
+		// files.autoSaveWorkspaceFilesOnly / files.autoSaveWhenNoErrors
+		if (!autoSaves(get, { inWorkspace: isWorkspaceTextFile(path) && !isUntitled(path), hasErrors: hasErrors(path) })) continue;
 		await saveFile(path, reason).catch((e) => notifications.error(`บันทึกอัตโนมัติไม่สำเร็จ: ${e}`));
 	}
 }
@@ -54,6 +71,7 @@ let monacoInstalled = false;
 export function installEditorSettings(monaco: typeof Monaco) {
 	if (monacoInstalled) return;
 	monacoInstalled = true;
+	monacoApi = monaco;
 
 	const timers = new WeakMap<Monaco.editor.ITextModel, ReturnType<typeof setTimeout>>();
 	monaco.editor.onDidCreateModel((model) => {
@@ -75,6 +93,19 @@ export function installEditorSettings(monaco: typeof Monaco) {
 	});
 
 	$effect.root(() => {
+		// Monaco's configuration service: what its contributions read instead of editor options.
+		$effect(() => {
+			const values = editorConfigurationFrom(get);
+			// Loaded with Monaco (this runs once Monaco is in), so the workbench start does not pull it in.
+			untrack(() => void import('#lib/editor/monacoConfiguration.ts').then(({ updateMonacoConfiguration }) => updateMonacoConfiguration(values)));
+		});
+		// Kingu's TextMate tokenizer skips long lines like Monaco's Monarch one.
+		$effect(() => setMaxTokenizationLineLength(get<number>('editor.maxTokenizationLineLength')));
+		// editor.codeActions.triggerOnFocusChange: the newly active editor's model.
+		$effect(() => {
+			const path = editors.focusedFile;
+			untrack(() => void runFocusChangeCodeActions(openModels().find(([p]) => p === path)?.[1]));
+		});
 		// settings.json is JSONC; give it completion and validation from the schema registry
 		// (contributed Snap settings included, so it follows them).
 		$effect(() => {
@@ -145,9 +176,12 @@ export function bindTerminalSettings(term: Terminal, refit: () => void): () => v
 		$effect(() => {
 			const options = terminalOptionsFrom(get);
 			const colors = theme.terminal;
+			const fontRendering = get<string>('terminal.integrated.fontRendering');
 			untrack(() => {
 				for (const [k, v] of Object.entries(options)) if (v !== undefined) (term.options as Record<string, unknown>)[k] = v;
 				if (colors.background) term.options.theme = colors;
+				// terminal.integrated.fontRendering: grayscale antialiasing on macOS (`inherit` follows the workbench).
+				term.element?.style.setProperty('-webkit-font-smoothing', fontRendering === 'grayscale' && isMacUA() ? 'antialiased' : '');
 				refit();
 			});
 		});
@@ -157,6 +191,8 @@ export function bindTerminalSettings(term: Terminal, refit: () => void): () => v
 		dispose();
 	};
 }
+
+const isMacUA = () => typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
 
 /** `window.zoomLevel`: each level is 20%, like Electron's zoom in VS Code. */
 export const zoomFactor = (level: number) => Math.pow(1.2, level);
@@ -179,6 +215,8 @@ export function installSettings(): () => void {
 		const mode = settings.get('files.autoSave');
 		if (mode === 'onFocusChange' && editors.focusedFile) void autoSave([editors.focusedFile], 'focusChange');
 		else if (mode === 'onWindowChange') void autoSave(editors.dirtyPaths(), 'windowChange');
+		// editor.codeActions.triggerOnFocusChange: the window lost focus.
+		void runFocusChangeCodeActions(openModels().find(([p]) => p === editors.focusedFile)?.[1]);
 	};
 	window.addEventListener('blur', onBlur);
 
@@ -187,10 +225,15 @@ export function installSettings(): () => void {
 	let prefersDark = $state(scheme?.matches ?? true);
 	const onScheme = (e: MediaQueryListEvent) => (prefersDark = e.matches);
 	scheme?.addEventListener('change', onScheme);
+	// window.autoDetectHighContrast: macOS "Increase contrast" (prefers-contrast: more) or forced colors.
+	const contrast = window.matchMedia?.('(prefers-contrast: more), (forced-colors: active)');
+	let highContrast = $state(contrast?.matches ?? false);
+	const onContrast = (e: MediaQueryListEvent) => (highContrast = e.matches);
+	contrast?.addEventListener('change', onContrast);
 
 	const disposeEffects = $effect.root(() => {
 		$effect(() => {
-			const id = effectiveTheme(get, prefersDark);
+			const id = effectiveTheme(get, prefersDark, highContrast);
 			// Wait for the files so the default theme does not flash before the user's.
 			if (settings.loaded) untrack(() => void theme.apply(id));
 		});
@@ -209,12 +252,18 @@ export function installSettings(): () => void {
 			const globs = enabledGlobs(settings.get('files.watcherExclude'));
 			if (settings.loaded) untrack(() => void invoke('watcher_set_exclude', { globs }).catch(() => {}));
 		});
+		// files.watcherInclude: extra (symlinked) folders the watcher also watches.
+		$effect(() => {
+			const paths = [...settings.get<string[]>('files.watcherInclude')];
+			if (settings.loaded) untrack(() => void invoke('watcher_set_include', { paths }).catch(() => {}));
+		});
 	});
 	return () => {
 		uninstallSettings();
 		uninstallKeybindings();
 		window.removeEventListener('blur', onBlur);
 		scheme?.removeEventListener('change', onScheme);
+		contrast?.removeEventListener('change', onContrast);
 		disposeEffects();
 	};
 }
