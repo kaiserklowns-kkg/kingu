@@ -163,6 +163,13 @@ export const SETTINGS: SettingSchema[] = [
 		description: 'ฟอนต์ของ terminal เว้นว่างเพื่อใช้ editor.fontFamily (Defaults to editor.fontFamily when empty.)'
 	},
 	{
+		id: 'git.pullRebase',
+		group: 'Git',
+		type: 'boolean',
+		default: false,
+		description: 'Pull และ Sync ด้วย rebase แทน fast-forward อย่างเดียว (Force git to use rebase when running the pull command.)'
+	},
+	{
 		id: 'kingu.agent.model',
 		group: 'Agent',
 		type: 'string',
@@ -412,7 +419,7 @@ export type SettingsSection = { id: string; label: string; groups: string[] };
  */
 export const SETTINGS_SECTIONS: SettingsSection[] = [
 	{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Status Bar', 'Team'] },
-	{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Files', 'Terminal'] },
+	{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Files', 'Terminal', 'Git'] },
 	{ id: 'ade', label: 'ADE (Agents)', groups: ['Agent'] }
 ];
 

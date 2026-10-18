@@ -16,6 +16,10 @@ export type GitStatus = {
 	upstream: string | null;
 	ahead: number;
 	behind: number;
+	detached: boolean;
+	/** The upstream is configured but its remote branch is gone. */
+	upstream_gone: boolean;
+	remotes: string[];
 	entries: StatusEntry[];
 };
 

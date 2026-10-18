@@ -2,6 +2,7 @@ mod agent;
 mod fileops;
 mod fs;
 mod git;
+mod git_remote;
 mod lsp;
 mod menu;
 mod pty;
@@ -439,6 +440,7 @@ pub fn run() {
     .manage(Arc::new(agent::AgentHost::default()))
     .manage(Arc::new(search::Searches::default()))
     .manage(lsp::Servers::default())
+    .manage(git_remote::GitOps::default())
     .manage(menu::MenuState::default())
     .setup(|app| {
       shell_env::init();
@@ -500,6 +502,19 @@ pub fn run() {
       git_discard,
       git_commit,
       git_show_head,
+      git_remote::git_fetch,
+      git_remote::git_pull,
+      git_remote::git_push,
+      git_remote::git_sync,
+      git_remote::git_cancel,
+      git_remote::git_refs,
+      git_remote::git_checkout,
+      git_remote::git_create_branch,
+      git_remote::git_delete_branch,
+      git_remote::git_stash_push,
+      git_remote::git_stash_list,
+      git_remote::git_stash_apply,
+      git_remote::git_stash_drop,
       pty_spawn,
       pty::pty_write,
       pty::pty_resize,

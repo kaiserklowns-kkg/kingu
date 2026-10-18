@@ -16,9 +16,18 @@ pub struct GitStatus {
   pub branch: Option<String>,
   /// Short commit id, `None` before the first commit.
   pub head: Option<String>,
+  /// Tracking branch (`origin/main`), `None` when the branch has none (Publish Branch).
   pub upstream: Option<String>,
+  /// Commits on HEAD not on the upstream / on the upstream not on HEAD (git's `branch.ab`, the
+  /// same counts as `git rev-list --left-right --count @{upstream}...HEAD`).
   pub ahead: u32,
   pub behind: u32,
+  /// HEAD is a commit, not a branch.
+  pub detached: bool,
+  /// The upstream is configured but its remote branch no longer exists (deleted, then pruned).
+  pub upstream_gone: bool,
+  /// Configured remotes (`git remote`), for Publish Branch.
+  pub remotes: Vec<String>,
   pub entries: Vec<StatusEntry>,
 }
 
@@ -133,7 +142,15 @@ fn has_head(root: &Path) -> bool {
 pub fn status(root: &Path) -> Result<Option<GitStatus>, String> {
   let Some(prefix) = prefix(root) else { return Ok(None) };
   let out = run(root, &["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all", "--", "."])?;
-  Ok(Some(parse_status(&String::from_utf8_lossy(&out), &prefix)))
+  let mut st = parse_status(&String::from_utf8_lossy(&out), &prefix);
+  st.remotes = remotes(root)?;
+  Ok(Some(st))
+}
+
+/// `git remote`: configured remote names.
+pub fn remotes(root: &Path) -> Result<Vec<String>, String> {
+  let out = run(root, &["remote"])?;
+  Ok(String::from_utf8_lossy(&out).lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_owned).collect())
 }
 
 fn code(c: char) -> Option<String> {
@@ -143,7 +160,18 @@ fn code(c: char) -> Option<String> {
 /// Parses `git status --porcelain=v2 -z --branch`. Repository-relative paths are made relative
 /// to `prefix` (the workspace's folder in the repository); paths outside it are dropped.
 pub fn parse_status(text: &str, prefix: &str) -> GitStatus {
-  let mut st = GitStatus { branch: None, head: None, upstream: None, ahead: 0, behind: 0, entries: Vec::new() };
+  let mut st = GitStatus {
+    branch: None,
+    head: None,
+    upstream: None,
+    ahead: 0,
+    behind: 0,
+    detached: false,
+    upstream_gone: false,
+    remotes: Vec::new(),
+    entries: Vec::new(),
+  };
+  let mut has_ab = false;
   let strip = |p: &str| p.strip_prefix(prefix).map(str::to_owned);
   let mut records = text.split('\0');
   while let Some(rec) = records.next() {
@@ -156,6 +184,7 @@ pub fn parse_status(text: &str, prefix: &str) -> GitStatus {
           "branch.head" if value != "(detached)" => st.branch = Some(value.to_owned()),
           "branch.upstream" => st.upstream = Some(value.to_owned()),
           "branch.ab" => {
+            has_ab = true;
             for n in value.split(' ') {
               if let Some(a) = n.strip_prefix('+') {
                 st.ahead = a.parse().unwrap_or(0);
@@ -199,6 +228,9 @@ pub fn parse_status(text: &str, prefix: &str) -> GitStatus {
       _ => {}
     }
   }
+  st.detached = st.branch.is_none() && st.head.is_some();
+  // git leaves out `branch.ab` when the upstream ref is missing.
+  st.upstream_gone = st.upstream.is_some() && !has_ab;
   st
 }
 
@@ -385,6 +417,10 @@ mod tests {
     assert_eq!((st.branch, st.head), (None, None));
     assert_eq!(st.upstream.as_deref(), Some("origin/main"));
     assert_eq!((st.ahead, st.behind), (3, 2));
+    assert!(!st.detached, "no commit yet");
+    assert!(!st.upstream_gone);
+    let gone = parse_status("# branch.oid abc\0# branch.head (detached)\0# branch.upstream origin/x\0", "");
+    assert!(gone.detached && gone.upstream_gone);
     let paths: Vec<_> = st.entries.iter().map(|e| e.path.as_str()).collect();
     assert_eq!(paths, ["conf.txt", "to.txt", "new.txt"]);
     assert!(st.entries[0].conflict);
