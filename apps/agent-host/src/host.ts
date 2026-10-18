@@ -105,6 +105,13 @@ function need<T>(cond: T, message: string): asserts cond {
 	if (!cond) throw new RpcError(INVALID_PARAMS, message);
 }
 
+/** `base` with `set` over it and `unset` removed: one run's env for its AI account. */
+export function runEnv(base: Record<string, string | undefined>, set: Record<string, string>, unset: string[]): Record<string, string | undefined> {
+	const env = { ...base, ...set };
+	for (const k of unset) delete env[k];
+	return env;
+}
+
 export class AgentHost {
 	private runs = new Map<number, Run>();
 	private newId: () => string;
@@ -182,6 +189,12 @@ export class AgentHost {
 		for (const [name, s] of Object.entries(mcp)) need(typeof s?.command === 'string' && s.command.trim(), `mcp server ${name}: command is empty`);
 		const plugins = p.plugins ?? [];
 		need(Array.isArray(plugins) && plugins.every((d) => typeof d === 'string' && d.startsWith('/')), 'plugins must be absolute paths');
+		const extraEnv = p.env ?? {};
+		const unset = p.unsetEnv ?? [];
+		const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
+		need(typeof extraEnv === 'object' && !Array.isArray(extraEnv) && Object.entries(extraEnv).every(([k, v]) => ENV_NAME.test(k) && typeof v === 'string'), 'env must map variable names to strings');
+		need(Array.isArray(unset) && unset.every((k) => typeof k === 'string' && ENV_NAME.test(k)), 'unsetEnv must be variable names');
+		const accountEnv = Object.keys(extraEnv).length || unset.length ? runEnv(this.deps.options?.env ?? process.env, extraEnv, unset) : null;
 
 		const run = new Run(p.runId);
 		this.runs.set(run.id, run);
@@ -196,6 +209,7 @@ export class AgentHost {
 				: {}),
 			// Skills only: Kingu owns the MCP connections (mcpServers above), so a plugin never adds its own.
 			...(plugins.length ? { plugins: plugins.map((path) => ({ type: 'local' as const, path, skipMcpDiscovery: true })) } : {}),
+			...(accountEnv ? { env: accountEnv } : {}),
 			includePartialMessages: true,
 			// User + project settings: CLAUDE.md and the user's own allow/deny rules apply.
 			settingSources: ['user', 'project', 'local'],

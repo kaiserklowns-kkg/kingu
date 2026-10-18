@@ -9,11 +9,14 @@ class SystemSettings {
 	snaps = $state(false);
 	/** One snap's details (`<source>/<id>`) in the Snaps view, or `null` for all of them. */
 	snapKey = $state<string | null>(null);
+	/** The AI accounts view (Manage Accounts) instead of the settings editor. */
+	accounts = $state(false);
 
 	show(group: string | null = null) {
 		this.group = group;
 		this.snaps = false;
 		this.snapKey = null;
+		this.accounts = false;
 		this.visible = true;
 	}
 
@@ -21,6 +24,15 @@ class SystemSettings {
 		this.group = null;
 		this.snaps = true;
 		this.snapKey = snapKey;
+		this.accounts = false;
+		this.visible = true;
+	}
+
+	showAccounts() {
+		this.group = null;
+		this.snaps = false;
+		this.snapKey = null;
+		this.accounts = true;
 		this.visible = true;
 	}
 

@@ -20,6 +20,10 @@ export type StartParams = {
 	mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>;
 	/** Skill plugin folders of active Snaps (absolute; Rust checks they are ones Kingu generated). */
 	plugins?: string[];
+	/** The active Claude account (`CLAUDE_CONFIG_DIR` or `ANTHROPIC_API_KEY`), over the host's env. Never logged. */
+	env?: Record<string, string>;
+	/** Auth variables removed from this run's env, so they do not override that account. */
+	unsetEnv?: string[];
 };
 export type SendParams = { runId: number; text: string };
 export type RunParams = { runId: number };

@@ -38,6 +38,7 @@
 	import AgentsLayout from '#lib/ade/AgentsLayout.svelte';
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 	import { installTerminalSessions } from './terminalSessions.svelte';
+	import { accounts } from '#lib/accounts/accounts.svelte.ts';
 	import SettingsPage from '#lib/settings/SettingsPage.svelte';
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 	import { installAgentsMode } from '#lib/ade/agentsMode.svelte.ts';
@@ -202,7 +203,9 @@
 		const uninstallSnaps = installSnaps();
 		const uninstallTerminalSessions = installTerminalSessions();
 		const uninstallDebug = installDebug();
+		const uninstallAccounts = accounts.install();
 		return () => {
+			uninstallAccounts();
 			uninstallDebug();
 			uninstallTerminalSessions();
 			uninstallSnaps();

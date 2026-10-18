@@ -67,7 +67,21 @@ pub async fn agent_start(
   }
   let cwd = cwd.to_str().ok_or("worktree path is not valid UTF-8")?.to_owned();
   let mcp_servers = mcp_servers.filter(|m| !m.is_empty());
-  let req = host::StartRequest { cwd, prompt, model: model.filter(|m| !m.trim().is_empty()), permission_mode, resume, mcp_servers, plugins };
+  let account = {
+    use tauri::Manager;
+    app.state::<crate::accounts::Accounts>().agent_env(crate::accounts::store::Provider::Claude)?
+  };
+  let req = host::StartRequest {
+    cwd,
+    prompt,
+    model: model.filter(|m| !m.trim().is_empty()),
+    permission_mode,
+    resume,
+    mcp_servers,
+    plugins,
+    env: (!account.set.is_empty()).then_some(host::SecretEnv(account.set)),
+    unset_env: account.unset,
+  };
   let resuming = req.resume.is_some();
   let agents = agents.inner().clone();
   // Spawning the sidecar and its first answer can take a moment: keep it off the main thread.

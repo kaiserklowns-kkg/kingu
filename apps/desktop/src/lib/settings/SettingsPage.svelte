@@ -5,6 +5,7 @@
 	// view. Escape or ✕ closes it.
 	import Icon from '#lib/workbench/Icon.svelte';
 	import SnapsView from '#lib/snaps/SnapsView.svelte';
+	import AccountsView from '#lib/accounts/AccountsView.svelte';
 	import { snaps } from '#lib/snaps/snaps.svelte.ts';
 	import { SNAPS_SECTION_ID } from './registry';
 	import { settingSchemas } from './schemas.svelte';
@@ -16,10 +17,12 @@
 	const sectionOf = (group: string | null) =>
 		group && !query ? (settingSchemas.sections.find((s) => s.groups.includes(group))?.label ?? '') : query ? 'ผลการค้นหา' : 'การตั้งค่าทั้งหมด (IDE + ADE)';
 	const showSnaps = $derived(systemSettings.snaps && !query);
+	const showAccounts = $derived(systemSettings.accounts && !query);
 
 	function select(group: string | null) {
 		systemSettings.group = group;
 		systemSettings.snaps = false;
+		systemSettings.accounts = false;
 		query = '';
 	}
 
@@ -42,10 +45,19 @@
 			<Icon name="settings" size={15} /> การตั้งค่า
 		</div>
 		<div class="min-h-0 flex-1 space-y-3 overflow-y-auto px-2 pb-3">
-			<button class={[ITEM, systemSettings.group === null && !showSnaps && !query && SELECTED]} onclick={() => select(null)}>ทั้งหมด</button>
+			<button class={[ITEM, systemSettings.group === null && !showSnaps && !showAccounts && !query && SELECTED]} onclick={() => select(null)}>ทั้งหมด</button>
 			{#each settingSchemas.sections as sec (sec.id)}
 				<div>
 					<div class="px-2.5 pb-1 text-[11px] font-semibold tracking-wide text-(--vscode-descriptionForeground) uppercase">{sec.label}</div>
+					{#if sec.id === 'system'}
+						<button
+							class={[ITEM, showAccounts && SELECTED]}
+							aria-current={showAccounts ? 'true' : undefined}
+							onclick={() => (systemSettings.showAccounts(), (query = ''))}
+						>
+							<span class="flex-1 truncate">บัญชี AI (Accounts)</span>
+						</button>
+					{/if}
 					{#if sec.id === SNAPS_SECTION_ID}
 						<button
 							class={[ITEM, showSnaps && SELECTED]}
@@ -57,7 +69,7 @@
 						</button>
 					{/if}
 					{#each sec.groups as g (g)}
-						{@const current = systemSettings.group === g && !showSnaps && !query}
+						{@const current = systemSettings.group === g && !showSnaps && !showAccounts && !query}
 						<button class={[ITEM, current && SELECTED]} aria-current={current ? 'true' : undefined} onclick={() => select(g)}>
 							<span class="flex-1 truncate">{g}</span>
 							<span class="text-[11px] text-(--vscode-descriptionForeground)">{count(g)}</span>
@@ -69,7 +81,9 @@
 	</nav>
 	<div class="flex min-w-0 flex-1 flex-col">
 		<div class="flex h-[35px] shrink-0 items-center gap-2 border-b border-(--vscode-widget-border) pr-2 pl-6 text-[13px]">
-			{#if showSnaps}
+			{#if showAccounts}
+				<span class="text-(--vscode-descriptionForeground)">ระบบ (System)</span><span class="text-(--vscode-descriptionForeground)">›</span><span>บัญชี AI</span>
+			{:else if showSnaps}
 				<span class="text-(--vscode-descriptionForeground)">Snaps</span><span class="text-(--vscode-descriptionForeground)">›</span><span>จัดการ Snaps</span>
 			{:else}
 				<span class="text-(--vscode-descriptionForeground)">{sectionOf(systemSettings.group)}</span>
@@ -81,7 +95,7 @@
 			</button>
 		</div>
 		<div class="min-h-0 flex-1">
-			{#if showSnaps}<SnapsView />{:else}<SettingsEditor group={systemSettings.group} bind:query />{/if}
+			{#if showAccounts}<AccountsView />{:else if showSnaps}<SnapsView />{:else}<SettingsEditor group={systemSettings.group} bind:query />{/if}
 		</div>
 	</div>
 </section>
