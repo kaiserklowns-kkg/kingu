@@ -22,8 +22,12 @@ export type GitStatus = {
 	/** The upstream is configured but its remote branch is gone. */
 	upstream_gone: boolean;
 	remotes: string[];
+	/** A merge, rebase, cherry-pick or revert stopped half-way (usually on conflicts). */
+	operation?: GitOperation | null;
 	entries: StatusEntry[];
 };
+
+export type GitOperation = 'merge' | 'rebase' | 'cherry-pick' | 'revert';
 
 /** A row in one of the two groups ("Staged Changes" / "Changes"). */
 export type Resource = { entry: StatusEntry; staged: boolean; letter: string; color: string; deleted: boolean };

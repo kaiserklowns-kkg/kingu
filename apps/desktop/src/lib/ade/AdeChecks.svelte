@@ -10,10 +10,10 @@
 	import type { MenuNode } from '#lib/workbench/menus.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
-	import { ask } from '#lib/workbench/dialogService.svelte.ts';
+	import { ask } from '#lib/workbench/messageBox.ts';
 	import { renderMarkdown } from '#lib/workbench/markdown.ts';
 	import { adeTasks } from './tasks.svelte';
-	import { checkKind, checkLabel, checkRank, fixPrompt, mergeLabel, reactionPills, REACTIONS, summarize, type Check, type Pr, type PrComment, type ReviewThread } from './checks';
+	import { checksPollDelay, checkKind, checkLabel, checkRank, fixPrompt, mergeLabel, reactionPills, REACTIONS, summarize, type Check, type Pr, type PrComment, type ReviewThread } from './checks';
 	import { sessionAgo } from './agentsPanel';
 
 	let { slug }: { slug: string } = $props();
@@ -29,34 +29,61 @@
 
 	let delay = 60_000;
 	let signature = '';
-	async function refresh() {
-		if (loading) return;
+	/** Bumped when the panel goes away or the worktree changes, so a late answer is dropped. */
+	let generation = 0;
+	/** Looks at the PR again; resolves to whether the look succeeded. */
+	async function refresh(): Promise<boolean> {
+		if (loading) return !error;
+		const gen = generation;
 		loading = true;
+		let ok = true;
 		try {
 			const next = await invoke<Pr | null>('gh_pr_view', { slug: slug || null });
-			const sig = (next?.statusCheckRollup ?? []).map((c) => `${c.name}:${c.status}:${c.conclusion}`).join('|');
-			delay = sig === signature ? Math.min(delay * 2, 120_000) : 60_000;
+			if (gen !== generation) return true;
+			const sig = next ? `${next.state}|${(next.statusCheckRollup ?? []).map((c) => `${c.name}:${c.status}:${c.conclusion}`).join('|')}` : '';
+			const unchanged = sig === signature;
 			signature = sig;
 			pr = next;
 			error = '';
 			updatedAt = Date.now();
-			if (next) void loadComments();
+			delay = checksPollDelay(next, { failed: false, unchanged, prev: delay }) ?? 0;
+			if (next) void loadComments(), void loadThreads();
 		} catch (e) {
+			if (gen !== generation) return true;
+			ok = false;
 			error = String(e);
+			delay = checksPollDelay(null, { failed: true, unchanged: false, prev: delay }) ?? 0;
+		} finally {
+			if (gen === generation) (loaded = true), (loading = false);
 		}
-		loaded = true;
-		loading = false;
+		return ok;
 	}
 	$effect(() => {
 		void slug;
-		let timer: ReturnType<typeof setTimeout>;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let cancelled = false;
+		const schedule = () => {
+			clearTimeout(timer);
+			// 0 = nothing left to watch (a merged PR with settled checks); focus still looks again.
+			if (!cancelled && delay > 0) timer = setTimeout(tick, delay);
+		};
 		const tick = async () => {
 			if (document.visibilityState === 'visible') await refresh();
-			timer = setTimeout(tick, delay);
+			schedule();
+		};
+		const onFocus = async () => {
+			await refresh();
+			schedule();
 		};
 		void tick();
-		window.addEventListener('focus', refresh);
-		return () => (clearTimeout(timer), window.removeEventListener('focus', refresh));
+		window.addEventListener('focus', onFocus);
+		return () => {
+			cancelled = true;
+			generation++;
+			loading = false;
+			clearTimeout(timer);
+			window.removeEventListener('focus', onFocus);
+		};
 	});
 
 	/** The backend's "gh is not installed" error. */
@@ -169,6 +196,7 @@
 
 	// --- Comments -----------------------------------------------------------------------------
 	let comments = $state<PrComment[]>([]);
+	let commentsError = $state('');
 	let audience = $state<'all' | 'humans' | 'bots'>('all');
 	let draft = $state('');
 	let composing = $state(false);
@@ -176,8 +204,10 @@
 		try {
 			const r = await invoke<{ comments: PrComment[]; reviews: PrComment[] }>('gh_pr_comments', { slug: slug || null });
 			comments = [...(r.comments ?? []), ...(r.reviews ?? []).filter((x) => x.body?.trim())].sort((a, b) => Date.parse(a.createdAt ?? a.submittedAt ?? '') - Date.parse(b.createdAt ?? b.submittedAt ?? ''));
-		} catch {
-			// Checks still show without comments.
+			commentsError = '';
+		} catch (e) {
+			// Checks still show without comments; say why the comments are missing.
+			commentsError = String(e);
 		}
 	}
 	const isBot = (c: PrComment) => /\[bot\]$|bot$|^github-actions|dependabot|renovate|codecov|coderabbit/i.test(c.author?.login ?? '');
@@ -212,9 +242,6 @@
 			threads = [];
 		}
 	}
-	$effect(() => {
-		if (pr?.number) void loadThreads();
-	});
 	const open_ = $derived(threads.filter((t) => !t.isResolved));
 	const resolved = $derived(threads.filter((t) => t.isResolved));
 	async function resolveThread(t: ReviewThread) {
@@ -503,7 +530,7 @@
 						{@render reactions(c)}
 					</div>
 				{:else}
-					{#if !composing}<p class="py-5 text-center text-[11px] {MUTED}">{audience === 'bots' ? 'No bot comments.' : audience === 'humans' ? 'No human comments.' : 'No comments yet.'}</p>{/if}
+					{#if commentsError}<p class="py-5 text-center text-[11px] text-(--vscode-errorForeground)" title={commentsError}>Couldn't load comments.</p>{:else if !composing}<p class="py-5 text-center text-[11px] {MUTED}">{audience === 'bots' ? 'No bot comments.' : audience === 'humans' ? 'No human comments.' : 'No comments yet.'}</p>{/if}
 				{/each}
 				{#if composing}
 					<div class="rounded-md border border-(--vscode-widget-border) bg-(--vscode-editor-background)">

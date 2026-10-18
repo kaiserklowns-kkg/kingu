@@ -108,12 +108,14 @@ class RightSidebar {
 		this.focusFind++;
 	}
 
-	/** Source Control of task worktree `slug`, kept while the app runs. */
+	/** Git status of task worktree `slug` ('' = the folder itself), kept while the app runs and
+	 * re-read on watcher batches that touch it: the one source for the Explorer's decorations and
+	 * the Source Control tab. */
 	repo(slug: string): WorktreeRepo {
 		let r = this.#repos.get(slug);
 		if (!r) {
 			r = new WorktreeRepo(slug);
-			r.onChange = () => void adeTasks.refreshStat(slug);
+			if (slug) r.onChange = () => void adeTasks.refreshStat(slug);
 			this.#repos.set(slug, r);
 		}
 		return r;
@@ -124,7 +126,7 @@ class RightSidebar {
 		for (const [slug, r] of this.#repos) {
 			if (!r.loaded || !touchesWorktree(paths, slug)) continue;
 			void r.refresh();
-			void adeTasks.refreshStat(slug);
+			if (slug) void adeTasks.refreshStat(slug);
 		}
 	}
 

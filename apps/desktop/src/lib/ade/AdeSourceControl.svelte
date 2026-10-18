@@ -10,9 +10,9 @@
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
 	import type { MenuNode } from '#lib/workbench/menus.ts';
 	import { status as statusBar } from '#lib/workbench/status.svelte.ts';
-	import { ask } from '#lib/workbench/dialogService.svelte.ts';
+	import { ask } from '#lib/workbench/messageBox.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
-	import { commitDiffKey, decoration, diffKey, splitPath, taskDiffKey, type GitStatus, type StatusEntry } from '#lib/workbench/scm.ts';
+	import { commitDiffKey, decoration, diffKey, splitPath, taskDiffKey, type StatusEntry } from '#lib/workbench/scm.ts';
 	import { fileIcon } from '#lib/workbench/fileIcons.ts';
 	import { adeLayout, PRIMARY } from './adeLayout.svelte';
 	import { rightSidebar } from './rightSidebar.svelte.ts';
@@ -26,29 +26,26 @@
 	const key = $derived(slug || PRIMARY);
 	const task = $derived(slug ? adeTasks.find(slug) : undefined);
 
-	type NumStat = { unstaged: Record<string, [number, number]>; staged: Record<string, [number, number]> };
-	let repo = $state<GitStatus | null>(null);
-	let stats = $state<NumStat>({ unstaged: {}, staged: {} });
-	let loaded = $state(false);
+	/** Status and line counts come from the watcher-driven repo the Explorer also decorates from. */
+	const gitRepo = $derived(rightSidebar.repo(slug));
+	const repo = $derived(gitRepo.repo);
+	const stats = $derived(gitRepo.stats);
+	const loaded = $derived(gitRepo.loaded);
 	let busy = $state<string | null>(null);
+	/** The last action's failure (the status read's own error is `gitRepo.error`). */
 	let error = $state('');
 
-	async function refresh() {
-		try {
-			const [s, n] = await Promise.all([invoke<GitStatus | null>('git_status', { slug: slug || null }), invoke<NumStat>('git_numstat', { slug: slug || null }).catch(() => ({ unstaged: {}, staged: {} }))]);
-			repo = s;
-			stats = n;
-		} catch (e) {
-			error = String(e);
-		}
-		loaded = true;
-	}
+	const refresh = () => gitRepo.refresh();
+	// Watcher batches re-read the status; a minute's safety poll catches what the watcher can't
+	// see (refs moved by a fetch elsewhere), and coming back to the window looks again, PR included.
+	const SAFETY_POLL = 60_000;
 	$effect(() => {
 		void slug;
 		void refresh();
-		const timer = setInterval(refresh, 5000);
-		window.addEventListener('focus', refresh);
-		return () => (clearInterval(timer), window.removeEventListener('focus', refresh));
+		const timer = setInterval(() => document.visibilityState === 'visible' && void refresh(), SAFETY_POLL);
+		const onFocus = () => void (refresh(), checkPr());
+		window.addEventListener('focus', onFocus);
+		return () => (clearInterval(timer), window.removeEventListener('focus', onFocus));
 	});
 
 	async function run(label: string, cmd: string, args: Record<string, unknown>): Promise<boolean> {
@@ -96,6 +93,8 @@
 	const staged = $derived(repo?.entries.filter((e) => e.index && !e.conflict && e.worktree !== '?').length ?? 0);
 	const stageable = $derived(repo?.entries.filter((e) => e.worktree).length ?? 0);
 	const conflicts = $derived(repo?.entries.filter((e) => e.conflict).length ?? 0);
+	/** Changed tracked files not staged yet (untracked files don't stop a merge from continuing). */
+	const unstagedTracked = $derived(repo?.entries.filter((e) => e.worktree && e.worktree !== '?' && !e.conflict).length ?? 0);
 	const lineTotal = $derived.by(() => {
 		let a = 0;
 		let d = 0;
@@ -361,9 +360,15 @@
 			error = String(e);
 		}
 	}
+	const operation = $derived(repo?.operation ?? null);
+	const opName = $derived(operation ? ({ merge: 'merge', rebase: 'rebase', 'cherry-pick': 'cherry-pick', revert: 'revert' } as const)[operation] : 'merge / rebase');
 	async function abortOp() {
-		if (!(await ask('Abort the merge, rebase or cherry-pick in progress? Its partial changes are discarded.', { title: 'Abort', kind: 'warning', okLabel: 'Abort', cancelLabel: 'Cancel' }))) return;
+		if (!(await ask(`Abort the ${opName} in progress? Its partial changes are discarded.`, { title: 'Abort', kind: 'warning', okLabel: 'Abort', cancelLabel: 'Cancel' }))) return;
 		await run('Abort', 'git_abort', {});
+	}
+	/** Every conflict resolved and staged: finish the operation with git's prepared message. */
+	async function continueOp() {
+		if (await run('Continue', 'git_continue', {})) statusBar.flash(`Continued the ${opName}.`, 3000);
 	}
 
 	// --- PR composer (Orca: replaces the commit box when the branch can open a PR) -----------
@@ -545,16 +550,25 @@
 
 		<!-- Body -->
 		<div class="relative flex min-h-0 flex-1 flex-col overflow-auto pt-1">
-			{#if conflicts}
+			{#if conflicts || operation}
 				<div class="px-3 pb-2">
 					<div class="flex gap-2 rounded-md border border-amber-500/25 bg-amber-500/5 px-3 py-2">
 						<span class="mt-0.5 text-amber-400"><Icon name="warning" size={16} /></span>
 						<div>
-							<div class="text-xs font-medium">Conflicts: {conflicts} unresolved</div>
-							<div class="mt-1 text-[11px] {MUTED}">Resolved files move back to normal changes after they leave the live conflict state.</div>
+							{#if conflicts}
+								<div class="text-xs font-medium">Conflicts: {conflicts} unresolved</div>
+								<div class="mt-1 text-[11px] {MUTED}">Resolved files move back to normal changes after they leave the live conflict state.</div>
+							{:else}
+								<div class="text-xs font-medium">{opName[0].toUpperCase() + opName.slice(1)} in progress</div>
+								<div class="mt-1 text-[11px] {MUTED}">Conflicts are resolved. Stage the remaining changes, then continue.</div>
+							{/if}
 							<div class="mt-2 flex flex-col gap-1.5">
-								<button class="h-7 w-full rounded-md bg-(--vscode-button-background) text-xs text-(--vscode-button-foreground) disabled:opacity-50" disabled={!slug || !!busy} title={slug ? '' : 'Open a task worktree to resolve conflicts with its agent.'} onclick={resolveWithAi}>Resolve with AI</button>
-								<button class="h-7 w-full rounded-md border border-(--vscode-widget-border) text-xs hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-50" disabled={!!busy} onclick={abortOp}>{busy === 'Abort' ? 'Aborting…' : 'Abort merge / rebase'}</button>
+								{#if conflicts}
+									<button class="h-7 w-full rounded-md bg-(--vscode-button-background) text-xs text-(--vscode-button-foreground) disabled:opacity-50" disabled={!slug || !!busy} title={slug ? '' : 'Open a task worktree to resolve conflicts with its agent.'} onclick={resolveWithAi}>Resolve with AI</button>
+								{:else}
+									<button class="h-7 w-full rounded-md bg-(--vscode-button-background) text-xs text-(--vscode-button-foreground) disabled:opacity-50" disabled={!!busy || unstagedTracked > 0} title={unstagedTracked ? 'Stage every change first.' : ''} onclick={continueOp}>{busy === 'Continue' ? 'Continuing…' : `Continue ${opName}`}</button>
+								{/if}
+								<button class="h-7 w-full rounded-md border border-(--vscode-widget-border) text-xs hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-50" disabled={!!busy} onclick={abortOp}>{busy === 'Abort' ? 'Aborting…' : `Abort ${opName}`}</button>
 							</div>
 						</div>
 					</div>
@@ -632,7 +646,7 @@
 							}}><Icon name="chevronDown" size={13} /></button
 						>
 					</div>
-					{#if error}<p class="mt-1 text-[11px] break-words text-(--vscode-errorForeground)" role="alert">{error}</p>{/if}
+					{#if error || gitRepo.error}<p class="mt-1 text-[11px] break-words text-(--vscode-errorForeground)" role="alert">{error || gitRepo.error}</p>{/if}
 				</div>
 			{/if}
 

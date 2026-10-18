@@ -644,26 +644,26 @@ async fn delete_claude_session(ws: State<'_, Workspace>, path: String) -> Result
   let projects = home.join(".claude").join("projects");
   let dir = p.parent().and_then(|d| d.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
   let prefix = sessions::encode(&root);
-  let ours = p.starts_with(&projects) && p.extension().and_then(|e| e.to_str()) == Some("jsonl") && (dir == prefix || dir.starts_with(&format!("{prefix}-")));
+  let plain = p.components().all(|c| matches!(c, std::path::Component::RootDir | std::path::Component::Normal(_)));
+  let ours = plain && p.starts_with(&projects) && p.extension().and_then(|e| e.to_str()) == Some("jsonl") && (dir == prefix || dir.starts_with(&format!("{prefix}-")));
   if !ours {
     return Err("Only sessions of this folder can be deleted.".into());
   }
   blocking(move || trash::delete(&p).map_err(|e| e.to_string())).await
 }
 
-/// Aborts the merge, rebase or cherry-pick in progress (Source Control's conflict card).
+/// Aborts the merge, rebase, cherry-pick or revert in progress (Source Control's conflict card).
 #[tauri::command]
-async fn git_abort(ws: State<'_, Workspace>, slug: Option<String>) -> Result<String, String> {
+async fn git_abort(ws: State<'_, Workspace>, slug: Option<String>) -> Result<git::Operation, String> {
   let root = git_dir(&ws, slug.as_deref())?;
-  blocking(move || {
-    for op in ["merge", "rebase", "cherry-pick"] {
-      if git::run(&root, &[op, "--abort"]).is_ok() {
-        return Ok(op.to_owned());
-      }
-    }
-    Err("No merge, rebase or cherry-pick is in progress.".into())
-  })
-  .await
+  blocking(move || git::abort_operation(&root)).await
+}
+
+/// Continues the merge, rebase, cherry-pick or revert once its conflicts are resolved and staged.
+#[tauri::command]
+async fn git_continue(ws: State<'_, Workspace>, slug: Option<String>) -> Result<git::Operation, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || git::continue_operation(&root)).await
 }
 
 /// HEAD version of a file for the diff editor; empty when the file is not in HEAD.
@@ -1220,6 +1220,7 @@ pub fn run() {
       gh_react,
       delete_claude_session,
       git_abort,
+      git_continue,
       usage_fetch,
       usage_detect,
       floating_note_new,

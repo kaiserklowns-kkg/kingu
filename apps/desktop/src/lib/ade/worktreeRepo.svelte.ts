@@ -9,9 +9,14 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
+/** Lines added / removed per path, unstaged and staged (`git_numstat`). */
+export type NumStat = { unstaged: Record<string, [number, number]>; staged: Record<string, [number, number]> };
+
 export class WorktreeRepo implements ScmSource {
+	/** A task slug, or '' for the folder itself (the primary worktree). */
 	readonly slug: string;
 	repo = $state<GitStatus | null>(null);
+	stats = $state<NumStat>({ unstaged: {}, staged: {} });
 	loaded = $state(false);
 	busy = $state(false);
 	message = $state('');
@@ -35,7 +40,13 @@ export class WorktreeRepo implements ScmSource {
 			do {
 				this.#again = false;
 				try {
-					this.repo = await invoke<GitStatus | null>('git_status', { slug: this.slug });
+					const slug = this.slug || null;
+					const [repo, stats] = await Promise.all([
+						invoke<GitStatus | null>('git_status', { slug }),
+						invoke<NumStat>('git_numstat', { slug }).catch(() => ({ unstaged: {}, staged: {} }))
+					]);
+					this.repo = repo;
+					this.stats = stats;
 					this.error = '';
 				} catch (e) {
 					this.repo = null;
@@ -51,7 +62,7 @@ export class WorktreeRepo implements ScmSource {
 	async #run(cmd: string, args: Record<string, unknown>): Promise<boolean> {
 		this.busy = true;
 		try {
-			await invoke(cmd, { ...args, slug: this.slug });
+			await invoke(cmd, { ...args, slug: this.slug || null });
 			return true;
 		} catch (e) {
 			notifications.error(e);

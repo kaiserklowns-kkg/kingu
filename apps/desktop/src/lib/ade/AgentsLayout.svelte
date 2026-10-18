@@ -4,7 +4,7 @@
 	// Agents layout body, laid out like Orca: side bar (search, Tasks, Projects → worktrees) | the
 	// selected worktree's active tab (the agent session, the new-task composer for the folder
 	// itself, a terminal in that worktree, or a file / task diff opened from the right side bar;
-	// Tasks shows the board, Automations its page) | right side bar (RightSidebar.svelte: Explorer, Agents, Source Control, Checks of that worktree). Terminals stay
+	// Tasks shows the board, Automations its page) | right side bar (Explorer, Agents, Source Control, Checks and Review of that worktree). Terminals stay
 	// mounted while hidden so their shells keep running; a file tab's editor mounts when shown.
 	import Icon from '#lib/workbench/Icon.svelte';
 	import Sash from '#lib/workbench/Sash.svelte';
