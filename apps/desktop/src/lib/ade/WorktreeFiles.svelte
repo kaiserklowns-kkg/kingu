@@ -401,6 +401,36 @@
 		});
 	}
 
+	/** Copies next to themselves (`name copy.ts`, Rust picks the free name); one undo step trashes the copies. */
+	async function duplicate(list: string[]) {
+		const made: string[] = [];
+		for (const from of list) {
+			try {
+				made.push(await invoke<string>('fs_copy', { from, toDir: parentOf(from) }));
+			} catch (e) {
+				notifications.error(e);
+			}
+		}
+		if (!made.length) return;
+		await Promise.all([...new Set(made.map(parentOf))].map(load));
+		picked.clear();
+		if (made.length > 1) for (const m of made) picked.add(m);
+		selected = made.at(-1) ?? null;
+		let kept: { rel: string; token: string | null }[] = made.map((rel) => ({ rel, token: null }));
+		history.push({
+			label: made.length > 1 ? `Duplicate ${made.length} items` : 'Duplicate',
+			undo: async () => {
+				kept = await Promise.all(kept.map(async (k) => ({ rel: k.rel, token: await deleteEntry(k.rel) })));
+			},
+			redo: async () => {
+				for (const k of kept) {
+					if (!k.token) throw new Error(`'${baseName(k.rel)}' ไม่มีสำเนาให้กู้คืน`);
+					await restoreEntry(k.rel, k.token);
+				}
+			}
+		});
+	}
+
 	function openTerminalAt(rel: string) {
 		const dir = isDir(rel) ? rel : parentOf(rel);
 		const id = adeLayout.newTerminal(slug, { title: baseName(dir) || undefined, run: dir === base ? undefined : ['cd', abs(dir)] });
@@ -433,7 +463,7 @@
 		if (dir) items.push(menuItem('terminal', 'Open in Terminal'), menuItem('findIn', 'Find in Folder...'));
 		if (dir && target && open[rel]) items.push(menuItem('collapse', 'Collapse Folder'));
 		items.push(menuItem('reveal', REVEAL, { keyLabel: keyLabel('alt+cmd+r') }));
-		if (target) items.push(menuSeparator, menuItem('rename', 'Rename...', { keyLabel: isMac ? '↵' : 'F2', enabled: many.length <= 1 }), menuItem('delete', many.length > 1 ? `Delete ${many.length} Items` : 'Delete', { keyLabel: isMac ? '⌘⌫' : 'Delete' }));
+		if (target) items.push(menuSeparator, menuItem('duplicate', many.length > 1 ? `Duplicate ${many.length} Items` : 'Duplicate'), menuItem('rename', 'Rename...', { keyLabel: isMac ? '↵' : 'F2', enabled: many.length <= 1 }), menuItem('delete', many.length > 1 ? `Delete ${many.length} Items` : 'Delete', { keyLabel: isMac ? '⌘⌫' : 'Delete' }));
 		const run = (id: string) => {
 			if (id === 'newFile') void startCreate('file', target);
 			else if (id === 'newFolder') void startCreate('folder', target);
@@ -445,6 +475,7 @@
 			else if (id === 'reveal') void reveal(rel);
 			else if (id === 'rename') startRename(rel);
 			else if (id === 'delete') void remove(rel);
+			else if (id === 'duplicate') void duplicate(many);
 		};
 		menu = { x: e.clientX, y: e.clientY, items, run, label: target ? baseName(target) : title };
 	}
