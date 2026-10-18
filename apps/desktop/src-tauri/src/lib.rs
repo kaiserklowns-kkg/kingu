@@ -163,16 +163,24 @@ async fn git_show_head(ws: State<'_, Workspace>, rel: String) -> Result<String, 
   blocking(move || git::show_head(&root, &rel)).await
 }
 
+/// Terminal session `key`: re-attaches to its live shell (`run` is not typed again), else starts one.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn pty_spawn(
   ws: State<'_, Workspace>,
   ptys: State<'_, pty::Ptys>,
+  key: String,
   cols: u16,
   rows: u16,
   on_data: Channel<String>,
   slug: Option<String>,
   run: Option<Vec<String>>,
-) -> Result<u32, String> {
+) -> Result<pty::Attached, String> {
+  pty::validate_key(&key)?;
+  if let Some(attached) = pty::attach(&ptys, &key, Some((cols, rows)), on_data.clone()) {
+    log::info!("terminal {key} re-attached ({cols}x{rows})");
+    return Ok(attached);
+  }
   // A task terminal starts in the task's worktree (the ADE's per-worktree terminals).
   // No folder open: the terminal starts in the home folder, like VS Code's empty window.
   let cwd = match slug {
@@ -186,9 +194,9 @@ fn pty_spawn(
     }
     None => ws.current().or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("/")),
   };
-  let id = pty::spawn_shell(&ptys, &cwd, cols, rows, on_data, run.as_deref())?;
-  log::info!("terminal {id} started ({cols}x{rows})");
-  Ok(id)
+  let started = pty::spawn_shell(&ptys, &key, &cwd, cols, rows, on_data, run.as_deref())?;
+  log::info!("terminal {key} started ({cols}x{rows})");
+  Ok(started)
 }
 
 #[tauri::command]
@@ -434,6 +442,8 @@ pub fn run() {
       pty::pty_write,
       pty::pty_resize,
       pty::pty_kill,
+      pty::pty_attach,
+      pty::pty_list,
       worktree_create,
       worktree_list,
       worktree_remove,
