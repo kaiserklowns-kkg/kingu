@@ -7,6 +7,8 @@
 	import { ICON_BUTTON, QUESTION_TEXT, statusDot, TONE } from './ui';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
 	import { issues } from './issues.svelte.ts';
+	import { isLinear, issueRef } from './issues.ts';
+	import CacheTimer from './CacheTimer.svelte';
 
 	let { view }: { view: TaskView } = $props();
 	/** The session shown in the Agents layout. */
@@ -46,6 +48,7 @@
 	<div class="flex items-center gap-1.5">
 		<span class={['size-2 shrink-0 rounded-full', statusDot(view)]} title={statusLabel(view)}></span>
 		<span class="min-w-0 flex-1 truncate font-medium text-(--vscode-foreground)" title={meta.title}>{meta.title}</span>
+		<CacheTimer {view} />
 		<span class="shrink-0 text-(--vscode-descriptionForeground)">{timeAgo(when, adeTasks.now)}</span>
 	</div>
 	<div class="mt-1 flex items-center gap-1 truncate font-mono text-[11px] text-(--vscode-descriptionForeground)" title="kingu/{meta.slug} ← {meta.base}">
@@ -55,7 +58,7 @@
 		<span class="min-w-0 flex-1 truncate">{meta.agent}{model ? ` · ${model}` : ''}</span>
 		{#if meta.issue}
 			{@const issue = meta.issue}
-			<button class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" title="เปิด issue #{issue.number} บน GitHub: {issue.title}" onclick={(e) => (e.stopPropagation(), issues.open(issue))}>#{issue.number}</button>
+			<button class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" title="เปิด issue {issueRef(issue)} บน {isLinear(issue) ? 'Linear' : 'GitHub'}: {issue.title}" onclick={(e) => (e.stopPropagation(), issues.open(issue))}>{issueRef(issue)}</button>
 		{/if}
 	</div>
 	{#if busy}

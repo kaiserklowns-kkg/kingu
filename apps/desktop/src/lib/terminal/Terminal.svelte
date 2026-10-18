@@ -13,13 +13,19 @@
 	import { clipboardImage, onFileDrop, savePastedImage } from '#lib/agent/attachInput.ts';
 	import { pastedImageText, terminalDropText } from '#lib/agent/attachments.ts';
 	import { isMac, keyLabel } from '#lib/workbench/keys.ts';
+	import { ask } from '#lib/workbench/messageBox.ts';
+	import { notifications } from '#lib/workbench/notifications.svelte.ts';
+	import Icon from '#lib/workbench/Icon.svelte';
+	import { AutoReplies, linkSchemeAllowed, Osc99, pasteNeedsWarning, rightClickAction, zoomedFontSize } from './behaviour.ts';
 	import PopupMenu from '#lib/workbench/PopupMenu.svelte';
 	import type { MenuNode } from '#lib/workbench/menus.ts';
 	import TerminalFind from './TerminalFind.svelte';
 	import { FIND_TERMINAL_OPTIONS, HIGHLIGHT_LIMIT } from './find.ts';
 	import { cellText, detectLinks, linkHint, linkModifierDown, MAX_LINE, type TerminalLink } from './links.ts';
 	import { linkTarget, openUrl } from './pty.ts';
-	import { registerTerminal } from './registry.ts';
+	import { registerTerminal, touchTerminal } from './registry.ts';
+	import { bindAdeTerminal, copiedSelection, type AdeBinding } from './adeTerminal.svelte.ts';
+	import { quickCommandInput, quickCommands } from './adeTerminalOptions.ts';
 	import { isBuiltin, terminalMenu, type MenuState, type TerminalFlavor } from './terminalMenu.ts';
 
 	/**
@@ -72,6 +78,14 @@
 	let findSeed = $state('');
 	let menu = $state<{ x: number; y: number; items: MenuNode[] } | null>(null);
 	let hint = $state<{ x: number; y: number; text: string } | null>(null);
+	/** terminal.integrated.enableVisualBell: the bell icon, shown for terminal.integrated.bellDuration. */
+	let bell = $state(false);
+	/** terminal.integrated.resizeDimensionsOverlay.enabled: `cols × rows` while the terminal is resized. */
+	let dimensions = $state<string | null>(null);
+
+	const setting = <T,>(id: string) => settings.get<T>(id);
+	/** terminal.integrated.allowedLinkSchemes. */
+	const schemeAllowed = (url: string) => linkSchemeAllowed(url, setting<string[]>('terminal.integrated.allowedLinkSchemes'));
 
 	/** VS Code: Alt follows links when editor.multiCursorModifier is ctrlCmd, else ⌘ (Ctrl off macOS). */
 	const altModifier = () => settings.get<string>('editor.multiCursorModifier') === 'ctrlCmd';
@@ -86,22 +100,54 @@
 	function runBuiltin(id: string) {
 		if (!term) return;
 		if (id === 'copy') {
-			const text = term.getSelection();
+			const text = copiedSelection(term, flavor === 'ade');
 			if (text) void navigator.clipboard?.writeText(text).catch(() => {});
 		} else if (id === 'paste') {
-			void navigator.clipboard
-				?.readText()
-				.then((text) => text && term?.paste(text))
-				.catch(() => status.flash('อ่าน clipboard ไม่ได้'));
+			pasteClipboard();
 		} else if (id === 'selectAll') term.selectAll();
 		else if (id === 'clear') term.clear();
 		else if (id === 'reset') term.reset();
 		term.focus();
 	}
 
+	/** Pastes `text`, asking first for multi-line text (terminal.integrated.enableMultiLinePasteWarning). */
+	async function pasteText(text: string) {
+		const t = term;
+		if (!t || !text) return;
+		if (pasteNeedsWarning(setting<string>('terminal.integrated.enableMultiLinePasteWarning'), text, t.modes.bracketedPasteMode)) {
+			const lines = text.replace(/\r?\n$/, '').split(/\r?\n/).length;
+			const ok = await ask(`วางข้อความ ${lines} บรรทัดลงใน terminal? (Are you sure you want to paste ${lines} lines of text into the terminal?)`, {
+				title: 'Terminal',
+				kind: 'warning',
+				okLabel: 'วาง (Paste)'
+			});
+			if (!ok) return;
+		}
+		t.paste(text);
+	}
+
+	function pasteClipboard() {
+		void navigator.clipboard
+			?.readText()
+			.then((text) => pasteText(text))
+			.catch(() => status.flash('อ่าน clipboard ไม่ได้'));
+	}
+
 	function openMenu(e: MouseEvent) {
-		e.preventDefault();
 		if (!term) return;
+		// terminal.integrated.rightClickBehavior (selectWord: xterm has selected the word already).
+		const action = rightClickAction(setting<string>('terminal.integrated.rightClickBehavior'), term.hasSelection());
+		if (action === 'none') return;
+		e.preventDefault();
+		if (action === 'copy') {
+			void navigator.clipboard?.writeText(term.getSelection()).catch(() => {});
+			term.clearSelection();
+			return;
+		}
+		if (action === 'paste') {
+			pasteClipboard();
+			return;
+		}
 		const labels: Record<string, string | undefined> = {
 			copy: keyLabel(isMac ? 'cmd+c' : 'ctrl+shift+c'),
 			paste: keyLabel(isMac ? 'cmd+v' : 'ctrl+v'),
@@ -109,14 +155,24 @@
 			clear: flavor === 'ade' || isMac ? keyLabel('cmd+k') : undefined,
 			...keyLabels
 		};
-		const items = terminalMenu(flavor, { hasSelection: term.hasSelection(), ...menuState?.() }, (id) => labels[id]);
+		const quick = flavor === 'ade' ? quickCommands(settings.get<Record<string, unknown>>('kingu.terminal.quickCommands')) : [];
+		const items = terminalMenu(flavor, { hasSelection: term.hasSelection(), quick: quick.map((q) => q.label), ...menuState?.() }, (id) => labels[id]);
 		menu = { x: e.clientX, y: e.clientY, items };
 	}
 
 	function runMenu(node: MenuNode) {
 		if (node.type !== 'item') return;
 		if (isBuiltin(node.id)) runBuiltin(node.id);
+		else if (node.id.startsWith('quick:')) runQuick(Number(node.id.slice(6)));
 		else onaction?.(node.id);
+	}
+
+	/** A `kingu.terminal.quickCommands` entry typed into this shell (Orca's quick commands). */
+	function runQuick(index: number) {
+		const q = quickCommands(settings.get<Record<string, unknown>>('kingu.terminal.quickCommands'))[index];
+		if (!q) return;
+		invoke('pty_write', { key, data: quickCommandInput(q.command) }).catch((e) => status.flash(`รันคำสั่งไม่ได้: ${e}`));
+		term?.focus();
 	}
 
 	onMount(() => {
@@ -129,7 +185,7 @@
 			// OSC 8 hyperlinks follow the same modifier rule as detected links.
 			linkHandler: {
 				activate: (e, uri) => {
-					if (linkModifierDown(e, isMac, altModifier()) && /^https?:/i.test(uri)) void openUrl(uri).catch((err) => status.flash(`เปิดลิงก์ไม่ได้: ${err}`));
+					if (linkModifierDown(e, isMac, altModifier()) && schemeAllowed(uri)) void openUrl(uri, setting<string[]>('terminal.integrated.allowedLinkSchemes')).catch((err) => status.flash(`เปิดลิงก์ไม่ได้: ${err}`));
 				},
 				hover: (e, uri) => showHint(e, linkHint('url', isMac, altModifier()) + ` ${uri}`),
 				leave: () => (hint = null)
@@ -143,9 +199,19 @@
 		t.loadAddon(finder);
 		t.open(host);
 		fit.fit();
+		const unbindSettings = bindTerminalSettings(t, () => fit.fit());
+		// Orca's Terminal page (kingu.terminal.*) for ADE terminals; the IDE panel keeps VS Code's behaviour.
+		const ade: AdeBinding | null = flavor === 'ade' ? bindAdeTerminal(t, host, root, () => fit.fit()) : null;
 
 		let live = false;
 		let disposed = false;
+		// terminal.integrated.autoReplies: rebuilt when the setting changes.
+		let replies = new AutoReplies({});
+		const stopReplies = $effect.root(() => {
+			$effect(() => {
+				replies = new AutoReplies(settings.get<Record<string, string | null>>('terminal.integrated.autoReplies'));
+			});
+		});
 		// Live output can arrive before the attach or spawn call returns its replay: hold it until then.
 		let early: string[] = [];
 		// A fresh channel per call: Tauri ends a channel when its Rust side is dropped.
@@ -155,13 +221,20 @@
 				if (disposed) return;
 				if (live) t.write(chunk);
 				else early.push(chunk);
+				if (!replies.empty) for (const reply of replies.feed(chunk, performance.now())) invoke('pty_write', { key, data: reply }).catch(() => {});
 				onoutput?.();
 			};
 			return ch;
 		}
 		function connected(a: Attached) {
 			if (disposed) return;
-			if (a.replay) t.write(a.replay);
+			if (a.replay) {
+				// Replayed output must not re-run an old OSC 52 clipboard write.
+				if (ade) ade.replaying = true;
+				t.write(a.replay, () => {
+					if (ade) ade.replaying = false;
+				});
+			}
 			for (const chunk of early) t.write(chunk);
 			early = [];
 			live = true;
@@ -188,7 +261,11 @@
 			spawning = true;
 			fit.fit();
 			// terminal.integrated.shell / shellArgs / env / cwd (user settings) for the new shell.
-			const terminal = shellFrom((id) => settings.get(id), shellPlatform());
+			const terminal = {
+				...shellFrom((id) => settings.get(id), shellPlatform()),
+				// kingu.terminal.scopeHistoryByWorktree: an ADE shell keeps its own history per worktree.
+				scopeHistory: flavor === 'ade' && settings.get<boolean>('kingu.terminal.scopeHistoryByWorktree') !== false
+			};
 			invoke<Attached>('pty_spawn', { key, cols: t.cols, rows: t.rows, onData: channel(), slug: slug ?? null, run: run ?? null, terminal, cwdFrom: cwdFrom ?? null, floatingCwd: floatingCwd ?? null })
 				.then((a) => (connected(a), void system.refresh()))
 				.catch(failed);
@@ -197,14 +274,62 @@
 		const input = t.onData((data) => {
 			if (live) invoke('pty_write', { key, data }).catch(() => {});
 		});
+		let dimensionsTimer: ReturnType<typeof setTimeout> | undefined;
 		const resized = t.onResize(({ cols, rows }) => {
 			if (live) invoke('pty_resize', { key, cols, rows }).catch(() => {});
+			// terminal.integrated.resizeDimensionsOverlay.enabled: only for a shown terminal that already runs.
+			if (live && sized() && setting<boolean>('terminal.integrated.resizeDimensionsOverlay.enabled')) {
+				dimensions = `${cols} × ${rows}`;
+				clearTimeout(dimensionsTimer);
+				dimensionsTimer = setTimeout(() => (dimensions = null), 1000);
+			}
 		});
+		// terminal.integrated.enableVisualBell / bellDuration.
+		let bellTimer: ReturnType<typeof setTimeout> | undefined;
+		const rang = t.onBell(() => {
+			if (!setting<boolean>('terminal.integrated.enableVisualBell')) return;
+			bell = true;
+			clearTimeout(bellTimer);
+			bellTimer = setTimeout(() => (bell = false), setting<number>('terminal.integrated.bellDuration'));
+		});
+		// terminal.integrated.enableNotifications: OSC 99 desktop notifications from programs in the terminal.
+		const osc99 = new Osc99();
+		const notifier = t.parser.registerOscHandler(99, (data) => {
+			const n = osc99.handle(data);
+			if (n && setting<boolean>('terminal.integrated.enableNotifications')) notifications.info(n.body ? `${n.title ? `${n.title}: ` : ''}${n.body}` : n.title, { source: 'Terminal' });
+			return true;
+		});
+		// terminal.integrated.middleClickBehavior: paste on a middle click.
+		const onAuxClick = (e: MouseEvent) => {
+			if (e.button !== 1 || setting<string>('terminal.integrated.middleClickBehavior') !== 'paste') return;
+			e.preventDefault();
+			pasteClipboard();
+		};
+		host.addEventListener('auxclick', onAuxClick);
+		// terminal.integrated.mouseWheelZoom: ⌘ (Ctrl elsewhere) + wheel changes terminal.integrated.fontSize.
+		const onWheel = (e: WheelEvent) => {
+			if (!setting<boolean>('terminal.integrated.mouseWheelZoom') || !(isMac ? e.metaKey : e.ctrlKey)) return;
+			e.preventDefault();
+			e.stopPropagation();
+			const size = zoomedFontSize(setting<number>('terminal.integrated.fontSize'), e.deltaY);
+			if (size !== setting<number>('terminal.integrated.fontSize')) void settings.set('terminal.integrated.fontSize', size, 'user').catch(() => {});
+		};
+		host.addEventListener('wheel', onWheel, { capture: true, passive: false });
 		// Orca's image paste: a clipboard holding only an image is saved and its path pasted, so an
 		// agent CLI attaches it; text pastes stay with xterm.
 		const onPaste = (e: ClipboardEvent) => {
 			const image = clipboardImage(e);
-			if (!image || !live) return;
+			if (!image) {
+				// Text: terminal.integrated.enableMultiLinePasteWarning may ask first.
+				const text = e.clipboardData?.getData('text/plain') ?? '';
+				if (text && pasteNeedsWarning(setting<string>('terminal.integrated.enableMultiLinePasteWarning'), text, t.modes.bracketedPasteMode)) {
+					e.preventDefault();
+					e.stopImmediatePropagation();
+					void pasteText(text);
+				}
+				return;
+			}
+			if (!live) return;
 			e.preventDefault();
 			e.stopImmediatePropagation();
 			void savePastedImage(image)
@@ -221,7 +346,6 @@
 				t.focus();
 			}
 		});
-				const unbindSettings = bindTerminalSettings(t, () => fit.fit());
 		const observer = new ResizeObserver(() => {
 			fit.fit();
 			start();
@@ -266,7 +390,9 @@
 			const found = detectLinks(text)
 				.map((l) => ({ l, from: pos[cellAt[l.start]], to: pos[cellAt[l.end - 1]] }))
 				.filter(({ from, to }) => from && to && from.y <= y && to.y >= y);
-			const resolved = await Promise.all(found.map(async (f) => ({ ...f, rel: f.l.kind === 'file' ? await target(f.l.path) : null })));
+			// terminal.integrated.enableFileLinks: `off` keeps only web links (`notRemote` is on: Kingu's terminals are local).
+			const fileLinks = setting<string>('terminal.integrated.enableFileLinks') !== 'off';
+			const resolved = await Promise.all(found.filter((f) => fileLinks || f.l.kind === 'url').map(async (f) => ({ ...f, rel: f.l.kind === 'file' ? await target(f.l.path) : null })));
 			const out = resolved.filter((f) => f.l.kind === 'url' || f.rel !== null).map(({ l, from, to, rel }) => toLink(l, from, to, rel, text));
 			return out.length ? out : undefined;
 		}
@@ -277,7 +403,9 @@
 				decorations: { pointerCursor: true, underline: true },
 				activate(e) {
 					if (!linkModifierDown(e, isMac, altModifier())) return;
-					if (l.kind === 'url') void openUrl(l.url).catch((err) => status.flash(`เปิดลิงก์ไม่ได้: ${err}`));
+					if (l.kind === 'url') {
+						if (schemeAllowed(l.url)) void openUrl(l.url, setting<string[]>('terminal.integrated.allowedLinkSchemes')).catch((err) => status.flash(`เปิดลิงก์ไม่ได้: ${err}`));
+					}
 					else if (rel) onopenfile?.(rel, l.line, l.column);
 				},
 				hover: (e) => showHint(e, linkHint(l.kind, isMac, altModifier())),
@@ -285,7 +413,10 @@
 			};
 		}
 
-		const onFocus = () => onfocus?.();
+		const onFocus = () => {
+			touchTerminal(key);
+			onfocus?.();
+		};
 		t.textarea?.addEventListener('focus', onFocus);
 		const unregister = registerTerminal({
 			key,
@@ -294,18 +425,27 @@
 			focus: () => t.focus(),
 			find: openFind,
 			clear: () => t.clear(),
-			selectAll: () => t.selectAll()
+			selectAll: () => t.selectAll(),
+			write: (data) => void invoke('pty_write', { key, data }).catch((e) => status.flash(`พิมพ์ลง terminal ไม่ได้: ${e}`))
 		});
 
 		// No pty_kill here: an unmount is also what a page reload does, and the shell must outlive it.
 		return () => {
 			disposed = true;
+			stopReplies();
+			clearTimeout(dimensionsTimer);
+			clearTimeout(bellTimer);
+			rang.dispose();
+			notifier.dispose();
+			host.removeEventListener('auxclick', onAuxClick);
+			host.removeEventListener('wheel', onWheel, { capture: true });
 			host.removeEventListener('paste', onPaste, true);
 			stopDrop();
 			unregister();
 			t.textarea?.removeEventListener('focus', onFocus);
 			observer.disconnect();
 			unbindSettings();
+			ade?.dispose();
 			links.dispose();
 			input.dispose();
 			resized.dispose();
@@ -314,15 +454,29 @@
 	});
 
 	function showHint(e: MouseEvent, text: string) {
+		// terminal.integrated.showLinkHover.
+		if (!setting<boolean>('terminal.integrated.showLinkHover')) return;
 		const r = root.getBoundingClientRect();
 		hint = { x: e.clientX - r.left, y: e.clientY - r.top, text };
 	}
 </script>
 
-<div bind:this={root} class="relative h-full w-full" role="presentation" oncontextmenu={openMenu}>
+<div bind:this={root} class="relative h-full w-full" role="presentation" data-ade-terminal={flavor === 'ade' ? '' : undefined} oncontextmenu={openMenu}>
 	<div bind:this={host} class="h-full w-full px-2 pt-1"></div>
 	{#if finding && term && search}
 		<TerminalFind {term} {search} {flavor} seed={findSeed} request={findRequest} onclose={() => (finding = false)} />
+	{/if}
+	{#if bell}
+		<div class="pointer-events-none absolute top-1 right-3 z-30 text-(--vscode-terminal-foreground,var(--vscode-foreground))" role="status" aria-label="Terminal bell">
+			<Icon name="bell" size={14} />
+		</div>
+	{/if}
+	{#if dimensions}
+		<div
+			class="pointer-events-none absolute top-1/2 left-1/2 z-30 -translate-x-1/2 -translate-y-1/2 rounded-[3px] border border-(--vscode-widget-border) bg-(--vscode-editorWidget-background) px-2 py-0.5 font-mono text-xs text-(--vscode-editorWidget-foreground,var(--vscode-foreground)) shadow"
+		>
+			{dimensions}
+		</div>
 	{/if}
 	{#if hint}
 		<div
@@ -337,3 +491,11 @@
 {#if menu}
 	<PopupMenu items={menu.items} label="Terminal" x={menu.x} y={menu.y} onRun={runMenu} onClose={() => (menu = null)} />
 {/if}
+
+<style>
+	/* kingu.terminal.mouseHideWhileTyping */
+	:global(.kingu-mouse-hidden),
+	:global(.kingu-mouse-hidden *) {
+		cursor: none !important;
+	}
+</style>

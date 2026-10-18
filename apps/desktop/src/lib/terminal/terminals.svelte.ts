@@ -5,13 +5,15 @@
 // re-attaches to its PTY under `panelKey(tag, id)`. Split Terminal (⌘\) puts terminals side by
 // side in a group, like VS Code's terminal groups; the panel shows the active terminal's group.
 
+import { untrack } from 'svelte';
 import { quick } from '#lib/workbench/quick.svelte.ts';
+import { layout } from '#lib/workbench/layout.svelte.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { confirmKill } from './confirmKill.ts';
 import { cyclePane, equalize, hasLeaf, leaf, leaves, removePane, setRatio, splitPane, type PaneNode, type PanePath, type SplitDirection } from './paneLayout.ts';
 import { killPty } from './pty.ts';
 import { focusTerminal } from './registry.ts';
-import { panelKey, parsePanelTerminals, persist, restore, storeName, withoutRun } from './sessions.ts';
+import { hideOnStartup, panelKey, parsePanelTerminals, persist, restore, storeName, withoutRun } from './sessions.ts';
 
 /** `cwdFrom`: a split starts in that terminal's current directory (not kept across reloads). */
 export type PanelTerminal = { id: number; title: string; run?: string[]; cwdFrom?: string };
@@ -26,9 +28,15 @@ class Terminals {
 	/** Root tag of the folder whose terminals these are; null until loaded (nothing mounts). */
 	tag = $state<string | null>(null);
 	#seq = $state(0);
+	#started = false;
 
 	constructor() {
 		$effect.root(() => {
+			// Showing the terminal view with no terminal (the last one closed) starts one, like VS Code.
+			$effect(() => {
+				const shown = this.tag !== null && layout.panelVisible && layout.panelTab === 'terminal';
+				if (shown) untrack(() => this.list.length === 0 && this.open());
+			});
 			$effect(() => {
 				const state = { list: $state.snapshot(this.list).map(({ cwdFrom: _, ...t }) => t), active: this.active, seq: this.#seq, groups: $state.snapshot(this.groups) };
 				if (this.tag) persist(storeName(STORE, this.tag), state);
@@ -38,8 +46,14 @@ class Terminals {
 
 	/** Shows folder `tag`'s terminals: the saved list, else one shell. */
 	load(tag: string) {
-		const saved = restore(storeName(STORE, tag), parsePanelTerminals);
-		if (saved) {
+		// terminal.integrated.enablePersistentSessions: off, the last list is not restored (its shells are then left over and killed).
+		const saved = settings.get<boolean>('terminal.integrated.enablePersistentSessions') ? restore(storeName(STORE, tag), parsePanelTerminals) : null;
+		const restored = !!saved && saved.list.length > 0;
+		if (!this.#started) {
+			this.#started = true;
+			if (layout.panelTab === 'terminal' && hideOnStartup(settings.get<string>('terminal.integrated.hideOnStartup'), restored)) layout.panelVisible = false;
+		}
+		if (saved && restored) {
 			this.list = saved.list.map(withoutRun);
 			this.active = saved.active;
 			this.#seq = saved.seq;
@@ -157,10 +171,10 @@ class Terminals {
 		this.groups = this.groups.flatMap((tree, i) => (i !== g ? [tree] : rest ? [equalize(rest)] : []));
 		this.list = this.list.filter((t) => t.id !== id);
 		if (!this.list.length) {
-			const fresh = ++this.#seq;
-			this.list = [{ id: fresh, title: 'zsh' }];
-			this.groups = [leaf(String(fresh))];
-			this.active = fresh;
+			// The terminal view stays empty (VS Code); terminal.integrated.hideOnLastClosed also hides the
+			// panel. Showing it again, or New Terminal, starts a terminal.
+			this.groups = [];
+			if (settings.get<boolean>('terminal.integrated.hideOnLastClosed') && layout.panelTab === 'terminal') layout.panelVisible = false;
 			return;
 		}
 		if (this.active !== id) return;

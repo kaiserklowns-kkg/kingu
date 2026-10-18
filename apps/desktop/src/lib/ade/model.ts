@@ -27,12 +27,14 @@ export type TaskMeta = {
 	session_id: string | null;
 	/** How the latest run (or turn) ended, saved so the card can show it after a restart. */
 	last_run: RunSummary | null;
-	/** The GitHub issue the task was started from; its PR body says `Fixes #number`. */
+	/** The issue the task was started from; its PR body says `Fixes #number` (`Fixes ENG-123` for Linear). */
 	issue: IssueLink | null;
+	/** `automation`: an automation started it (Orca's automation badge); absent when you did. */
+	origin?: 'automation' | null;
 };
 
-/** Mirrors Rust `agent::tasks::IssueLink`. */
-export type IssueLink = { number: number; url: string; title: string };
+/** Mirrors Rust `agent::tasks::IssueLink`. No `provider` means GitHub (links saved before Linear came). */
+export type IssueLink = { number: number; url: string; title: string; provider?: 'github' | 'linear'; key?: string };
 
 /** Mirrors Rust `agent::tasks::RunSummary`. */
 export type RunSummary = {
@@ -123,7 +125,7 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
 // ---------------------------------------------------------------------------------------------
 // tasks.json reducers (immutable: each returns a new list)
 
-export function newTask(input: { slug: string; title: string; prompt: string; base: string; agent?: string; issue?: IssueLink | null }, now: number): TaskMeta {
+export function newTask(input: { slug: string; title: string; prompt: string; base: string; agent?: string; issue?: IssueLink | null; origin?: 'automation' }, now: number): TaskMeta {
 	return {
 		slug: input.slug,
 		title: input.title.trim(),
@@ -139,7 +141,8 @@ export function newTask(input: { slug: string; title: string; prompt: string; ba
 		merged_at: null,
 		session_id: null,
 		last_run: null,
-		issue: input.issue ?? null
+		issue: input.issue ?? null,
+		...(input.origin ? { origin: input.origin } : {})
 	};
 }
 

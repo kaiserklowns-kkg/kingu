@@ -3,6 +3,7 @@
 // for the Run and Debug view, the Debug Console, the editors' breakpoint glyphs and the status bar.
 // One session at a time (Rust keeps a table, so more can come later).
 
+import { untrack } from 'svelte';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { clientLog } from '#lib/client-log.ts';
 import { installItems, type InstallInfo } from '#lib/lsp/model.ts';
@@ -19,7 +20,9 @@ import { status } from '#lib/workbench/status.svelte.ts';
 import * as B from './breakpoints.ts';
 import { DapClient } from './client.ts';
 import { generatedConfigs, LAUNCH_FILES, parseLaunchJson, runInTerminalArgv, substitute, type Generated, type LaunchConfig } from './launch.ts';
-import { appendOutput, currentFrame, frameLocation, initialModel, stateLabel, type DebugModel } from './model.ts';
+import { appendOutput, currentFrame, frameLocation, initialModel, outputLimit, stateLabel, type DebugModel } from './model.ts';
+import { canSetBreakpoint, editorsToSave, opensOnBreak } from './debugSettings.ts';
+import { isUntitled } from '#lib/workbench/untitled.ts';
 import type { StackFrame } from './protocol.ts';
 import { DebugSession } from './session.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
@@ -54,8 +57,8 @@ class Debug {
 	/** The current (or last) session's state; null before the first session in this folder. */
 	model = $state.raw<DebugModel | null>(null);
 	configName = $state('');
-	/** For the `openOnFirstSessionStart` settings: sessions started since Kingu opened. */
-	#sessionsStarted = 0;
+	/** For the `openOnFirstSessionStart` / `onFirstSessionStart` settings: sessions started since Kingu opened. */
+	sessionsStarted = $state(0);
 	breakpoints = $state.raw<B.BreakpointMap>({});
 	watches = $state<string[]>([]);
 	watchResults = $state.raw<Record<string, WatchResult>>({});
@@ -69,6 +72,8 @@ class Debug {
 	label = $derived(stateLabel(this.model));
 
 	#active: Active | null = null;
+	/** Breakpoints hit in this session (`rel:line`): their triggered breakpoints are now sent. */
+	triggered = $state.raw<ReadonlySet<string>>(new Set());
 	#rootLoaded: Promise<string> | undefined;
 
 	// --- Folder ------------------------------------------------------------------------------------
@@ -108,12 +113,18 @@ class Debug {
 		this.breakpoints = map;
 		if (this.root) save(B.storageKey(this.root), JSON.stringify(map));
 		const session = this.#active?.session;
-		if (session) void session.setBreakpoints(this.#abs(rel), B.sourceBreakpoints(map[rel]));
+		if (session) void session.setBreakpoints(this.#abs(rel), B.sourceBreakpoints(map[rel], this.triggered));
 	}
 
-	/** F9 / glyph margin click; defaults to the active editor's cursor line. */
-	toggleBreakpoint(rel = editors.active, line = editors.cursor.line) {
+	/** F9 / glyph margin click; defaults to the active editor's cursor line. Outside a debuggable
+	 * language only with `debug.allowBreakpointsEverywhere` (an existing one can still be removed). */
+	toggleBreakpoint(rel = editors.active, line = editors.cursor.line, language = editors.language) {
 		if (!isWorkspaceFile(rel)) return;
+		const has = this.breakpoints[rel]?.some((b) => b.line === line);
+		if (!has && !canSetBreakpoint(language, settings.get<boolean>('debug.allowBreakpointsEverywhere'))) {
+			status.flash(`ตั้ง breakpoint ในไฟล์ ${language} ไม่ได้ — เปิด debug.allowBreakpointsEverywhere เพื่อตั้งได้ทุกไฟล์`);
+			return;
+		}
 		void this.#ensureRoot().then(() => this.#setBreakpoints(B.toggle(this.breakpoints, rel, line), rel));
 	}
 
@@ -144,6 +155,37 @@ class Debug {
 		if (cond !== undefined) this.#setBreakpoints(B.setCondition(this.breakpoints, rel, line, cond), rel);
 	}
 
+	/** Logpoint on the cursor line (VS Code: Add Logpoint…): `{expr}` in the message is evaluated. */
+	async editLogMessage(rel = editors.active, line = editors.cursor.line) {
+		if (!isWorkspaceFile(rel)) return;
+		await this.#ensureRoot();
+		const current = this.breakpoints[rel]?.find((b) => b.line === line)?.logMessage ?? '';
+		const message = await quick.input({
+			placeholder: `ข้อความ logpoint บรรทัด ${line}${current ? ` (ตอนนี้: ${current})` : ''} — ใส่ {นิพจน์} ได้ Enter ว่างเพื่อลบ`,
+			hint: (v) => (v ? `log ${v}` : 'breakpoint ธรรมดา')
+		});
+		if (message !== undefined) this.#setBreakpoints(B.setLogMessage(this.breakpoints, rel, line, message), rel);
+	}
+
+	/** Triggered breakpoint on the cursor line (VS Code: Add Triggered Breakpoint…): pick the breakpoint that enables it. */
+	async editTrigger(rel = editors.active, line = editors.cursor.line) {
+		if (!isWorkspaceFile(rel)) return;
+		await this.#ensureRoot();
+		const others = Object.entries(this.breakpoints).flatMap(([r, list]) => list.filter((b) => !(r === rel && b.line === line)).map((b) => B.breakpointKey(r, b.line)));
+		if (!others.length) return status.flash('ยังไม่มี breakpoint อื่นให้เป็นตัวเปิด — ตั้ง breakpoint ก่อน');
+		const item = await quick.choose({ placeholder: `breakpoint บรรทัด ${line} จะทำงานหลังหยุดที่…`, items: others.map((k) => ({ id: k, label: k })) });
+		if (item) this.#setBreakpoints(B.setTriggeredBy(this.breakpoints, rel, line, item.id), rel);
+	}
+
+	/** A hit breakpoint enables the breakpoints it triggers (sent to the debugger from now on). */
+	#hit(loc: { rel: string; line: number } | null) {
+		if (!loc) return;
+		const key = B.breakpointKey(loc.rel, loc.line);
+		if (this.triggered.has(key) || !this.breakpoints[loc.rel]?.some((b) => b.line === loc.line && b.enabled)) return;
+		this.triggered = new Set([...this.triggered, key]);
+		for (const [rel, list] of Object.entries(this.breakpoints)) if (list.some((b) => b.triggeredBy === key)) this.#setBreakpoints(this.breakpoints, rel);
+	}
+
 	/** Editors tracked breakpoint lines through an edit. */
 	moveBreakpoints(rel: string, lines: number[]) {
 		const next = B.moveTo(this.breakpoints, rel, lines);
@@ -165,8 +207,12 @@ class Debug {
 		if (!root) return status.flash('เปิดโฟลเดอร์ก่อนเริ่ม debug');
 		const picked = await this.#pickConfig();
 		if (!picked) return;
-		// debug.saveBeforeStart
-		if (settings.get('debug.saveBeforeStart') !== 'none' && editors.hasDirty()) await commands.run('workbench.action.files.saveAll');
+		// debug.saveBeforeStart: the dirty editors of the active group (untitled ones ask where to save).
+		const toSave = editorsToSave(settings.get<string>('debug.saveBeforeStart'), editors.tabs.map((t) => t.path), (p) => editors.isDirty(p), isUntitled);
+		if (toSave.length) {
+			const { saveFile } = await import('#lib/workbench/editorModels.ts');
+			for (const path of toSave) await saveFile(path, 'explicit');
+		}
 		let { config } = picked;
 		const { generated } = picked;
 		const active = editors.active;
@@ -234,10 +280,11 @@ class Debug {
 	async #launch(config: LaunchConfig, noDebug: boolean, build?: string[]) {
 		let model = initialModel();
 		this.model = model;
+		this.triggered = new Set();
 		this.configName = config.name;
 		this.watchResults = {};
 		// debug.openDebug / debug.internalConsoleOptions (a launch config's own internalConsoleOptions wins).
-		const first = this.#sessionsStarted++ === 0;
+		const first = this.sessionsStarted++ === 0;
 		if (opensOnStart(settings.get('debug.openDebug'), first)) {
 			layout.sideView = 'debug';
 			layout.sidebarVisible = true;
@@ -270,7 +317,7 @@ class Debug {
 				breakpoints: () => {
 					const all: Record<string, ReturnType<typeof B.sourceBreakpoints>> = {};
 					for (const [rel, list] of Object.entries(this.breakpoints)) {
-						const bps = B.sourceBreakpoints(list);
+						const bps = B.sourceBreakpoints(list, this.triggered);
 						if (bps.length) all[this.#abs(rel)] = bps;
 					}
 					return all;
@@ -284,7 +331,9 @@ class Debug {
 					if (this.#active?.session === session) this.model = m;
 				},
 				stopped: (frame) => {
+					this.#hit(frameLocation(frame, this.root));
 					this.#reveal(frame);
+					this.#onBreak();
 					void this.#evaluateWatches();
 				},
 				terminated: () => void this.#finish(session)
@@ -390,9 +439,20 @@ class Debug {
 		return this.#active?.session.expand(ref).catch(() => []) ?? Promise.resolve([]);
 	}
 
+	/** debug.openDebug: openOnDebugBreak, debug.focusWindowOnBreak. */
+	#onBreak() {
+		if (opensOnBreak(settings.get<string>('debug.openDebug'))) {
+			layout.sideView = 'debug';
+			layout.sidebarVisible = true;
+		}
+		if (settings.get<boolean>('debug.focusWindowOnBreak') && !document.hasFocus())
+			void import('@tauri-apps/api/window').then(({ getCurrentWindow }) => getCurrentWindow().setFocus()).catch(() => {});
+	}
+
+	/** debug.focusEditorOnBreak: the editor at the stopped line takes focus (else it only scrolls there). */
 	#reveal(frame: StackFrame | null) {
 		const loc = frameLocation(frame, this.root);
-		if (loc) editors.open(loc.rel, { reveal: { line: loc.line, column: loc.column } });
+		if (loc) editors.open(loc.rel, { reveal: { line: loc.line, column: loc.column, focus: settings.get<boolean>('debug.focusEditorOnBreak') } });
 		else if (frame?.source?.path) notifications.warn(`${frame.source.path} อยู่นอก workspace จึงเปิดไม่ได้`);
 	}
 
@@ -502,6 +562,26 @@ export const debug = new Debug();
 /** Commands and keys (VS Code ids and default keybindings). Returns the uninstaller. */
 export function installDebug(): () => void {
 	debug.reset();
+	// debug.openExplorerOnEnd / debug.console.closeOnEnd when a session ends; debug.console.maximumLines.
+	let lastState: string | undefined;
+	const disposeEffects = $effect.root(() => {
+		$effect(() => {
+			const state = debug.model?.state;
+			const ended = state === 'terminated' && lastState !== undefined && lastState !== 'terminated';
+			lastState = state;
+			if (!ended) return;
+			untrack(() => {
+				if (settings.get<boolean>('debug.openExplorerOnEnd')) {
+					layout.sideView = 'explorer';
+					layout.sidebarVisible = true;
+				}
+				if (settings.get<boolean>('debug.console.closeOnEnd') && layout.panelTab === 'debugConsole') layout.panelVisible = false;
+			});
+		});
+		$effect(() => {
+			outputLimit.max = settings.get<number>('debug.console.maximumLines');
+		});
+	});
 	const unregister = [
 		commands.register({ id: 'workbench.action.debug.start', title: 'Start Debugging', category: 'Debug', key: 'f5', run: () => debug.start() }),
 		commands.register({ id: 'workbench.action.debug.run', title: 'Start Without Debugging', category: 'Debug', key: 'ctrl+f5', when: () => !debug.active, run: () => debug.start({ noDebug: true }) }),
@@ -515,10 +595,15 @@ export function installDebug(): () => void {
 		commands.register({ id: 'workbench.action.debug.pause', title: 'Pause', category: 'Debug', key: 'f6', when: () => debug.running, run: () => debug.pause() }),
 		commands.register({ id: 'editor.debug.action.toggleBreakpoint', title: 'Toggle Breakpoint', category: 'Debug', key: 'f9', when: () => isWorkspaceFile(editors.active), run: () => debug.toggleBreakpoint() }),
 		commands.register({ id: 'editor.debug.action.conditionalBreakpoint', title: 'Add Conditional Breakpoint...', category: 'Debug', when: () => isWorkspaceFile(editors.active), run: () => debug.editCondition() }),
+		commands.register({ id: 'editor.debug.action.triggerByBreakpoint', title: 'Add Triggered Breakpoint...', category: 'Debug', when: () => isWorkspaceFile(editors.active), run: () => debug.editTrigger() }),
+		commands.register({ id: 'editor.debug.action.addLogPoint', title: 'Add Logpoint...', category: 'Debug', when: () => isWorkspaceFile(editors.active), run: () => debug.editLogMessage() }),
 		commands.register({ id: 'workbench.debug.viewlet.action.removeAllBreakpoints', title: 'Remove All Breakpoints', category: 'Debug', run: () => debug.removeAllBreakpoints() }),
 		commands.register({ id: 'workbench.action.debug.configure', title: 'Open launch.json', category: 'Debug', run: () => debug.openLaunchJson() }),
 		commands.register({ id: 'workbench.view.debug', title: 'Show Run and Debug', category: 'View', key: 'cmd+shift+d', keyWhen: () => !appMode.isAgents, run: () => ((layout.sideView = 'debug'), (layout.sidebarVisible = true)) }),
 		commands.register({ id: 'workbench.debug.action.toggleRepl', title: 'Focus on Debug Console View', category: 'View', run: () => layout.showPanel('debugConsole') })
 	];
-	return () => unregister.forEach((u) => u());
+	return () => {
+		disposeEffects();
+		unregister.forEach((u) => u());
+	};
 }

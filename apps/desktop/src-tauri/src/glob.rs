@@ -64,9 +64,55 @@ pub fn is_excluded(rel: &str, globs: &[Regex]) -> bool {
   }
 }
 
+/// One sibling clause of an exclude map (VS Code: `"**/*.js": { "when": "$(basename).ts" }`).
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct SiblingClause {
+  pub glob: String,
+  pub when: String,
+}
+
+/// Compiled sibling clauses: a file matching `glob` is hidden when the file named by `when`
+/// (with `$(basename)` = its name without the extension) is next to it.
+pub struct SiblingClauses(Vec<(Regex, String)>);
+
+impl SiblingClauses {
+  pub fn new(clauses: &[SiblingClause]) -> Self {
+    Self(clauses.iter().filter_map(|c| Some((to_regex(c.glob.trim())?, c.when.clone()))).collect())
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.0.is_empty()
+  }
+
+  /// Whether `rel` is hidden by a clause, `exists` telling whether a workspace-relative path exists.
+  pub fn hides(&self, rel: &str, exists: impl Fn(&str) -> bool) -> bool {
+    let (dir, name) = rel.rsplit_once('/').map_or(("", rel), |(d, n)| (d, n));
+    let base = name.rsplit_once('.').map_or(name, |(b, _)| b);
+    self.0.iter().any(|(re, when)| {
+      if !re.is_match(rel) {
+        return false;
+      }
+      let sibling = when.replace("$(basename)", base);
+      exists(&if dir.is_empty() { sibling } else { format!("{dir}/{sibling}") })
+    })
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn sibling_clauses_hide_a_file_next_to_its_source() {
+    let clauses = SiblingClauses::new(&[SiblingClause { glob: "**/*.js".into(), when: "$(basename).ts".into() }]);
+    let files = ["src/a.ts", "src/a.js", "src/b.js", "c.ts", "c.js"];
+    let exists = |p: &str| files.contains(&p);
+    assert!(clauses.hides("src/a.js", exists));
+    assert!(!clauses.hides("src/b.js", exists));
+    assert!(clauses.hides("c.js", exists));
+    assert!(!clauses.hides("src/a.ts", exists));
+    assert!(SiblingClauses::new(&[]).is_empty());
+  }
 
   fn compiled(globs: &[&str]) -> Vec<Regex> {
     globs.iter().filter_map(|g| to_regex(g)).collect()

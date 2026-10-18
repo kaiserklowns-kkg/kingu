@@ -37,3 +37,10 @@ export function closePrompt(location: TerminalLocation, names: string[], agentBi
 		? { title: 'หยุด agent นี้?', message: `ปิด terminal นี้จะหยุดงานที่ agent กำลังทำอยู่ (${list})\n\n${label}`, ok: 'หยุด Agent' }
 		: { title: 'หยุดคำสั่งที่กำลังรัน?', message: `ปิด terminal นี้จะหยุดคำสั่งที่รันอยู่ในนั้น${list ? ` (${list})` : ''}\n\n${label}`, ok: 'หยุดและปิด' };
 }
+
+/** terminal.integrated.confirmOnExit: whether closing the window asks, given the live sessions and how many run a command. */
+export function confirmsOnExit(setting: string, sessions: number, running: number): boolean {
+	if (setting === 'always') return sessions > 0;
+	if (setting === 'hasChildProcesses') return running > 0;
+	return false;
+}

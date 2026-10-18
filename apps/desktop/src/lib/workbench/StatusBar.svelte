@@ -15,6 +15,10 @@
 	import { commands } from './commands.svelte';
 	import { syncItem } from './scmRemote';
 	import { textFiles } from './textFileService.svelte';
+	import { statusItemShown } from '#lib/debug/debugSettings.ts';
+	import { problemAt } from '#lib/lsp/problemsSettings.ts';
+	import { severityName } from '#lib/lsp/convert.ts';
+	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 	import StatusResources from './StatusResources.svelte';
 	import NotificationsBell from './NotificationsBell.svelte';
 	import UsageStatus from './UsageStatus.svelte';
@@ -40,6 +44,16 @@
 	};
 
 	const languageStatus = $derived(lsp.statusFor(editors.language));
+	// debug.showInStatusBar / debug.enableStatusBarColor
+	const debugItem = $derived(debug.active || statusItemShown(settings.get<string>('debug.showInStatusBar'), debug.sessionsStarted));
+	const debugColored = $derived(debug.active && settings.get<boolean>('debug.enableStatusBarColor'));
+	// problems.visibility (off: a warning item opens the setting) / problems.showCurrentInStatus
+	const problemsHidden = $derived(settings.get<boolean>('problems.visibility') === false);
+	const currentProblem = $derived.by(() => {
+		if (!settings.get<boolean>('problems.showCurrentInStatus') || problemsHidden || !editors.active) return null;
+		const file = lsp.problems.find((f) => f.rel === editors.active);
+		return file ? problemAt(file.items, { line: editors.cursor.line - 1, character: editors.cursor.column - 1 }) : null;
+	});
 
 	// VS Code's entries on the left (branch, sync, problems) and the editor's on the right; Orca's
 	// usage, resources and ports in between. Branch and changes follow the selected worktree in Agents.
@@ -132,7 +146,13 @@
 <footer
 	bind:this={footer}
 	oncontextmenu={(e) => (e.preventDefault(), (menu = { x: e.clientX, y: Math.max(4, e.clientY - 4 - MENU_HEIGHT) }))}
-	class="flex h-(--kg-statusbar-height) shrink-0 items-center overflow-hidden whitespace-nowrap bg-(--vscode-statusBar-background) text-xs leading-(--kg-statusbar-height) text-(--vscode-statusBar-foreground)"
+	class={[
+		'flex h-(--kg-statusbar-height) shrink-0 items-center overflow-hidden whitespace-nowrap text-xs leading-(--kg-statusbar-height)',
+		// debug.enableStatusBarColor: the bar turns orange while debugging, like VS Code.
+		debugColored
+			? 'bg-(--vscode-statusBar-debuggingBackground,#cc6633) text-(--vscode-statusBar-debuggingForeground,#ffffff)'
+			: 'bg-(--vscode-statusBar-background) text-(--vscode-statusBar-foreground)'
+	]}
 >
 	{#if branch && show('status.scm')}
 		{#if repo}
@@ -140,11 +160,12 @@
 			<button class={ITEM} title="{branch}{dirty ? '*' : ''}{repo.detached ? ' (detached HEAD)' : ''}, Checkout Branch/Tag..." onclick={() => commands.run('git.checkout')}>
 				<Icon name="branch" size={14} />{branch}{dirty ? '*' : ''}
 			</button>
-			{#if scm.op}
+			<!-- git.showProgress: the running operation; git.enableStatusBarSync: the sync item. -->
+			{#if scm.op && settings.get<boolean>('git.showProgress')}
 				<button class={ITEM} title="คลิกเพื่อยกเลิก (Cancel)" onclick={() => scm.cancel()}>
 					<span class="inline-block size-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent"></span>{scm.op}
 				</button>
-			{:else if sync}
+			{:else if sync && !scm.op && settings.get<boolean>('git.enableStatusBarSync')}
 				<button class={ITEM} title={sync.title} onclick={() => commands.run(sync.command)}>
 					<Icon name={sync.command === 'git.publish' ? 'publish' : 'sync'} size={14} />{#if sync.label}<span class="tabular-nums">{sync.label}</span>{/if}
 				</button>
@@ -159,16 +180,31 @@
 			{#if counts.infos}<Icon name="info" size={14} />{counts.infos}{/if}
 		</button>
 	{/if}
+	{#if problemsHidden}
+		<button class={ITEM} title="Problems are turned off. Click to open settings." aria-label="Problems are turned off" onclick={() => systemSettings.show('Problems')}>
+			<Icon name="ignored" size={14} />
+		</button>
+	{/if}
+	{#if currentProblem}
+		{@const sev = severityName(currentProblem.severity)}
+		<button class={[ITEM, 'max-w-96 min-w-0']} title={currentProblem.message} onclick={() => (appMode.setMode('workbench'), layout.showPanel('problems'))}>
+			<Icon name={sev === 'error' ? 'error' : sev === 'warning' ? 'warning' : 'info'} size={14} /><span class="truncate">{currentProblem.message.split('\n')[0]}</span>
+		</button>
+	{/if}
 	{#if lsp.progress && lsp.progress !== languageStatus?.text}
 		<button class="flex h-full min-w-0 items-center gap-1 truncate px-2 hover:bg-(--vscode-toolbar-hoverBackground)" title={lsp.progress} onclick={() => layout.showPanel('output')}>
 			<span class="inline-block size-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent"></span>
 			<span class="truncate">{lsp.progress}</span>
 		</button>
 	{/if}
-	{#if debug.active}
-		<!-- VS Code's debug status item: the running configuration; opens Run and Debug. -->
-		<button class={ITEM} title="Run and Debug" onclick={() => (appMode.setMode('workbench'), (layout.sideView = 'debug'), (layout.sidebarVisible = true))}>
-			<Icon name="bug" size={14} />{debug.configName}: {debug.label}
+	{#if debugItem}
+		<!-- VS Code's debug status item: the running (or last) configuration; opens Run and Debug, or starts debugging when idle. -->
+		<button
+			class={ITEM}
+			title={debug.active ? 'Run and Debug' : 'Start Debugging'}
+			onclick={() => (debug.active ? (appMode.setMode('workbench'), (layout.sideView = 'debug'), (layout.sidebarVisible = true)) : void commands.run('workbench.action.debug.start'))}
+		>
+			<Icon name="bug" size={14} />{debug.active ? `${debug.configName}: ${debug.label}` : debug.configName || 'Run and Debug'}
 		</button>
 	{/if}
 	<UsageStatus compact={density >= 1} tightest={density >= 2} />

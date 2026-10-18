@@ -1,0 +1,1211 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/editor.ts",
+	"export": "EDITOR_SETTINGS",
+	"what": "editor.*",
+	"entries": [
+		{
+			"id": "editor.acceptSuggestionOnCommitCharacter",
+			"group": "Text Editor",
+			"th": "ยอมรับคำแนะนำเมื่อพิมพ์อักขระ commit เช่นเซมิโคลอนใน JavaScript"
+		},
+		{
+			"id": "editor.acceptSuggestionOnEnter",
+			"group": "Text Editor",
+			"th": "กด Enter เพื่อรับคำแนะนำ",
+			"enumTh": [
+				"Enter รับคำแนะนำ",
+				"รับเมื่อทำให้ข้อความเปลี่ยน",
+				"ใช้ Tab เท่านั้น"
+			]
+		},
+		{
+			"id": "editor.accessibilityPageSize",
+			"group": "Text Editor",
+			"th": "จำนวนบรรทัดที่โปรแกรมอ่านหน้าจออ่านได้ในครั้งเดียว"
+		},
+		{
+			"id": "editor.accessibilitySupport",
+			"group": "Text Editor",
+			"th": "โหมดที่ปรับ editor ให้เหมาะกับโปรแกรมอ่านหน้าจอ"
+		},
+		{
+			"id": "editor.allowVariableFonts",
+			"group": "Text Editor",
+			"th": "อนุญาตฟอนต์แบบ variable ใน editor"
+		},
+		{
+			"id": "editor.allowVariableFontsInAccessibilityMode",
+			"group": "Text Editor",
+			"th": "อนุญาตฟอนต์แบบ variable ในโหมดช่วยการเข้าถึง"
+		},
+		{
+			"id": "editor.allowVariableLineHeights",
+			"group": "Text Editor",
+			"th": "อนุญาตให้แต่ละบรรทัดสูงไม่เท่ากัน"
+		},
+		{
+			"id": "editor.autoClosingBrackets",
+			"group": "Text Editor",
+			"th": "ปิดวงเล็บให้อัตโนมัติ"
+		},
+		{
+			"id": "editor.autoClosingComments",
+			"group": "Text Editor",
+			"th": "ปิด comment ให้อัตโนมัติเมื่อพิมพ์ตัวเปิด comment"
+		},
+		{
+			"id": "editor.autoClosingDelete",
+			"group": "Text Editor",
+			"th": "ลบวงเล็บหรือเครื่องหมายคำพูดตัวปิดที่ติดกันไปพร้อมกันเมื่อลบตัวเปิด"
+		},
+		{
+			"id": "editor.autoClosingOvertype",
+			"group": "Text Editor",
+			"th": "พิมพ์ทับวงเล็บหรือเครื่องหมายคำพูดตัวปิดแทนการแทรกเพิ่ม"
+		},
+		{
+			"id": "editor.autoClosingQuotes",
+			"group": "Text Editor",
+			"th": "ปิดเครื่องหมายคำพูดให้อัตโนมัติ"
+		},
+		{
+			"id": "editor.autoIndent",
+			"group": "Text Editor",
+			"th": "ปรับการเยื้องอัตโนมัติเมื่อพิมพ์ วาง หรือย้ายบรรทัด"
+		},
+		{
+			"id": "editor.autoIndentOnPaste",
+			"group": "Text Editor",
+			"th": "จัดย่อหน้าเนื้อหาที่วางให้อัตโนมัติ"
+		},
+		{
+			"id": "editor.autoIndentOnPasteWithinString",
+			"group": "Text Editor",
+			"th": "จัดย่อหน้าอัตโนมัติแม้วางลงภายในสตริง เมื่อเปิด autoIndentOnPaste"
+		},
+		{
+			"id": "editor.autoSurround",
+			"group": "Text Editor",
+			"th": "ครอบข้อความที่เลือกเมื่อพิมพ์วงเล็บหรือเครื่องหมายคำพูด"
+		},
+		{
+			"id": "editor.bracketPairColorization.enabled",
+			"group": "Text Editor",
+			"th": "ระบายสีวงเล็บเป็นคู่"
+		},
+		{
+			"id": "editor.bracketPairColorization.independentColorPoolPerBracketType",
+			"group": "Text Editor",
+			"th": "ให้วงเล็บแต่ละชนิดมีชุดสีของตัวเอง"
+		},
+		{
+			"id": "editor.codeActions.triggerOnFocusChange",
+			"group": "Text Editor",
+			"th": "รัน codeActionsOnSave แบบ always เมื่อโฟกัสเปลี่ยน ขณะ files.autoSave เป็น afterDelay"
+		},
+		{
+			"id": "editor.codeActionsOnSave",
+			"group": "Text Editor",
+			"th": "code action ที่รันตอนบันทึก เช่น { \"source.organizeImports\": \"explicit\", \"source.fixAll\": \"explicit\" } — \"explicit\" เฉพาะบันทึกเอง, \"always\" รวมบันทึกอัตโนมัติด้วย",
+			"schema": {
+				"type": [
+					"object",
+					"array"
+				],
+				"additionalProperties": {
+					"enum": [
+						"always",
+						"explicit",
+						"never",
+						true,
+						false
+					]
+				},
+				"items": {
+					"type": "string"
+				}
+			},
+			"note": "VS Code's schema types the map values as strings but also accepts true/false (older settings files)."
+		},
+		{
+			"id": "editor.codeActionWidget.includeNearbyQuickFixes",
+			"group": "Text Editor",
+			"th": "แสดง Quick Fix ที่ใกล้ที่สุดในบรรทัดแม้เคอร์เซอร์ไม่ได้อยู่บน diagnostic"
+		},
+		{
+			"id": "editor.codeActionWidget.showHeaders",
+			"group": "Text Editor",
+			"th": "แสดงหัวกลุ่มในเมนู Code Action"
+		},
+		{
+			"id": "editor.colorDecorators",
+			"group": "Text Editor",
+			"th": "แสดงตัวอย่างสีหน้าค่าสีและตัวเลือกสี"
+		},
+		{
+			"id": "editor.colorDecoratorsActivatedOn",
+			"group": "Text Editor",
+			"th": "เงื่อนไขที่ตัวเลือกสีจะเปิดจากตัวอย่างสี"
+		},
+		{
+			"id": "editor.colorDecoratorsLimit",
+			"group": "Text Editor",
+			"th": "จำนวนตัวอย่างสีสูงสุดที่แสดงใน editor พร้อมกัน"
+		},
+		{
+			"id": "editor.columnSelection",
+			"group": "Text Editor",
+			"th": "ให้การเลือกด้วยเมาส์และคีย์บอร์ดเป็นการเลือกแบบคอลัมน์"
+		},
+		{
+			"id": "editor.comments.ignoreEmptyLines",
+			"group": "Text Editor",
+			"th": "ข้ามบรรทัดว่างเมื่อสลับ เพิ่ม หรือลบ comment แบบบรรทัด"
+		},
+		{
+			"id": "editor.comments.insertSpace",
+			"group": "Text Editor",
+			"th": "เว้นวรรคหนึ่งช่องหลังเครื่องหมาย comment"
+		},
+		{
+			"id": "editor.copyWithSyntaxHighlighting",
+			"group": "Text Editor",
+			"th": "คัดลอกสีไวยากรณ์ไปยังคลิปบอร์ดด้วย"
+		},
+		{
+			"id": "editor.cursorBlinking",
+			"group": "Text Editor",
+			"th": "แอนิเมชันการกะพริบของเคอร์เซอร์"
+		},
+		{
+			"id": "editor.cursorHeight",
+			"group": "Text Editor",
+			"th": "ความสูงของเคอร์เซอร์เมื่อ cursorStyle เป็น line ค่า 0 คือเต็มบรรทัด"
+		},
+		{
+			"id": "editor.cursorSmoothCaretAnimation",
+			"group": "Text Editor",
+			"th": "แอนิเมชันเคอร์เซอร์แบบลื่น",
+			"enumTh": [
+				"ปิด",
+				"เฉพาะเมื่อย้ายเคอร์เซอร์เอง",
+				"ทุกครั้ง"
+			]
+		},
+		{
+			"id": "editor.cursorStyle",
+			"group": "Text Editor",
+			"th": "รูปแบบเคอร์เซอร์"
+		},
+		{
+			"id": "editor.cursorSurroundingLines",
+			"group": "Text Editor",
+			"th": "จำนวนบรรทัดที่เห็นรอบเคอร์เซอร์อย่างน้อย"
+		},
+		{
+			"id": "editor.cursorSurroundingLinesStyle",
+			"group": "Text Editor",
+			"th": "เมื่อใดที่บังคับใช้ cursorSurroundingLines"
+		},
+		{
+			"id": "editor.cursorWidth",
+			"group": "Text Editor",
+			"th": "ความกว้างของเคอร์เซอร์เมื่อ cursorStyle เป็น line"
+		},
+		{
+			"id": "editor.defaultColorDecorators",
+			"group": "Text Editor",
+			"th": "แสดงตัวอย่างสีด้วยตัวหาสีพื้นฐานของ editor"
+		},
+		{
+			"id": "editor.definitionLinkOpensInPeek",
+			"group": "Text Editor",
+			"th": "ให้การคลิก Go to Definition ด้วยเมาส์เปิดหน้าต่าง peek เสมอ"
+		},
+		{
+			"id": "editor.doubleClickSelectsBlock",
+			"group": "Text Editor",
+			"th": "ดับเบิลคลิกข้างวงเล็บหรือเครื่องหมายคำพูดเพื่อเลือกเนื้อหาข้างใน"
+		},
+		{
+			"id": "editor.dragAndDrop",
+			"group": "Text Editor",
+			"th": "ลากข้อความที่เลือกไปวางได้"
+		},
+		{
+			"id": "editor.dropIntoEditor.enabled",
+			"group": "Text Editor",
+			"th": "ลากไฟล์มาวางในเนื้อหาของ editor ได้โดยกด Shift ค้างไว้"
+		},
+		{
+			"id": "editor.dropIntoEditor.showDropSelector",
+			"group": "Text Editor",
+			"th": "แสดงตัวเลือกวิธีวางหลังลากไฟล์มาวาง"
+		},
+		{
+			"id": "editor.editContext",
+			"group": "Text Editor",
+			"th": "ใช้ EditContext API แทน textarea ในการรับข้อความ"
+		},
+		{
+			"id": "editor.emptySelectionClipboard",
+			"group": "Text Editor",
+			"th": "คัดลอกโดยไม่ได้เลือก = คัดลอกทั้งบรรทัด"
+		},
+		{
+			"id": "editor.experimentalWhitespaceRendering",
+			"group": "Text Editor",
+			"th": "วิธีวาดอักขระช่องว่างแบบใหม่"
+		},
+		{
+			"id": "editor.fastScrollSensitivity",
+			"group": "Text Editor",
+			"th": "ตัวคูณความเร็วการเลื่อนเมื่อกด Alt"
+		},
+		{
+			"id": "editor.find.addExtraSpaceOnTop",
+			"group": "Text Editor",
+			"th": "เว้นที่ด้านบนเมื่อเปิดแถบค้นหา จะได้เลื่อนเลยบรรทัดแรกได้"
+		},
+		{
+			"id": "editor.find.autoFindInSelection",
+			"group": "Text Editor",
+			"th": "เมื่อใดที่เปิด Find in Selection ให้อัตโนมัติ"
+		},
+		{
+			"id": "editor.find.closeOnResult",
+			"group": "Text Editor",
+			"th": "ปิดแถบค้นหาเมื่อการไปยังผลลัพธ์ถัดไปเจอผล"
+		},
+		{
+			"id": "editor.find.cursorMoveOnType",
+			"group": "Text Editor",
+			"th": "ย้ายเคอร์เซอร์ไปยังผลที่ตรงกันระหว่างพิมพ์คำค้นหา"
+		},
+		{
+			"id": "editor.find.findOnType",
+			"group": "Text Editor",
+			"th": "ค้นหาทันทีระหว่างพิมพ์"
+		},
+		{
+			"id": "editor.find.history",
+			"group": "Text Editor",
+			"th": "วิธีเก็บประวัติคำค้นหา"
+		},
+		{
+			"id": "editor.find.loop",
+			"group": "Text Editor",
+			"th": "ค้นหาวนกลับไปต้นไฟล์หรือท้ายไฟล์เมื่อไม่เจอผลถัดไป"
+		},
+		{
+			"id": "editor.find.replaceHistory",
+			"group": "Text Editor",
+			"th": "วิธีเก็บประวัติคำแทนที่"
+		},
+		{
+			"id": "editor.find.seedSearchStringFromSelection",
+			"group": "Text Editor",
+			"th": "ใช้ข้อความที่เลือกเป็นคำค้นหาเริ่มต้น"
+		},
+		{
+			"id": "editor.folding",
+			"group": "Text Editor",
+			"th": "พับโค้ดได้"
+		},
+		{
+			"id": "editor.foldingHighlight",
+			"group": "Text Editor",
+			"th": "ไฮไลต์ช่วงที่พับไว้"
+		},
+		{
+			"id": "editor.foldingImportsByDefault",
+			"group": "Text Editor",
+			"th": "พับช่วง import ให้อัตโนมัติ"
+		},
+		{
+			"id": "editor.foldingMaximumRegions",
+			"group": "Text Editor",
+			"th": "จำนวนช่วงที่พับได้สูงสุด"
+		},
+		{
+			"id": "editor.foldingStrategy",
+			"group": "Text Editor",
+			"th": "วิธีคำนวณช่วงที่พับได้"
+		},
+		{
+			"id": "editor.fontLigatures",
+			"group": "Text Editor",
+			"th": "เปิด font ligatures เช่น => เป็นลูกศร"
+		},
+		{
+			"id": "editor.fontVariations",
+			"group": "Text Editor",
+			"th": "ตั้งค่า font variations ของฟอนต์แบบ variable"
+		},
+		{
+			"id": "editor.fontWeight",
+			"group": "Text Editor",
+			"th": "น้ำหนักตัวอักษรของ editor"
+		},
+		{
+			"id": "editor.formatOnPaste",
+			"group": "Text Editor",
+			"th": "จัดรูปแบบข้อความที่วาง ต้องมี language server ที่จัดรูปแบบช่วงได้"
+		},
+		{
+			"id": "editor.formatOnSave",
+			"group": "Text Editor",
+			"th": "จัดรูปแบบไฟล์ด้วย language server ตอนบันทึก"
+		},
+		{
+			"id": "editor.formatOnType",
+			"group": "Text Editor",
+			"th": "จัดรูปแบบบรรทัดหลังพิมพ์"
+		},
+		{
+			"id": "editor.fullwidthCharacterWidth",
+			"group": "Text Editor",
+			"th": "ความกว้างที่ใช้วาดอักขระเต็มความกว้าง"
+		},
+		{
+			"id": "editor.glyphMargin",
+			"group": "Text Editor",
+			"th": "แสดงขอบสำหรับ breakpoint"
+		},
+		{
+			"id": "editor.gotoLocation.alternativeDeclarationCommand",
+			"group": "Text Editor",
+			"th": "คำสั่งที่รันแทนเมื่อ Go to Declaration ได้ตำแหน่งปัจจุบัน"
+		},
+		{
+			"id": "editor.gotoLocation.alternativeDefinitionCommand",
+			"group": "Text Editor",
+			"th": "คำสั่งที่รันแทนเมื่อ Go to Definition ได้ตำแหน่งปัจจุบัน"
+		},
+		{
+			"id": "editor.gotoLocation.alternativeImplementationCommand",
+			"group": "Text Editor",
+			"th": "คำสั่งที่รันแทนเมื่อ Go to Implementation ได้ตำแหน่งปัจจุบัน"
+		},
+		{
+			"id": "editor.gotoLocation.alternativeReferenceCommand",
+			"group": "Text Editor",
+			"th": "คำสั่งที่รันแทนเมื่อ Go to Reference ได้ตำแหน่งปัจจุบัน"
+		},
+		{
+			"id": "editor.gotoLocation.alternativeTypeDefinitionCommand",
+			"group": "Text Editor",
+			"th": "คำสั่งที่รันแทนเมื่อ Go to Type Definition ได้ตำแหน่งปัจจุบัน"
+		},
+		{
+			"id": "editor.gotoLocation.multipleDeclarations",
+			"group": "Text Editor",
+			"th": "สิ่งที่ Go to Declaration ทำเมื่อเจอหลายตำแหน่ง"
+		},
+		{
+			"id": "editor.gotoLocation.multipleDefinitions",
+			"group": "Text Editor",
+			"th": "สิ่งที่ Go to Definition ทำเมื่อเจอหลายตำแหน่ง"
+		},
+		{
+			"id": "editor.gotoLocation.multipleImplementations",
+			"group": "Text Editor",
+			"th": "สิ่งที่ Go to Implementations ทำเมื่อเจอหลายตำแหน่ง"
+		},
+		{
+			"id": "editor.gotoLocation.multipleReferences",
+			"group": "Text Editor",
+			"th": "สิ่งที่ Go to References ทำเมื่อเจอหลายตำแหน่ง"
+		},
+		{
+			"id": "editor.gotoLocation.multipleTypeDefinitions",
+			"group": "Text Editor",
+			"th": "สิ่งที่ Go to Type Definition ทำเมื่อเจอหลายตำแหน่ง"
+		},
+		{
+			"id": "editor.guides.bracketPairs",
+			"group": "Text Editor",
+			"th": "แสดงเส้นนำของคู่วงเล็บ"
+		},
+		{
+			"id": "editor.guides.bracketPairsHorizontal",
+			"group": "Text Editor",
+			"th": "แสดงเส้นนำแนวนอนของคู่วงเล็บ"
+		},
+		{
+			"id": "editor.guides.highlightActiveBracketPair",
+			"group": "Text Editor",
+			"th": "ไฮไลต์คู่วงเล็บที่เคอร์เซอร์อยู่"
+		},
+		{
+			"id": "editor.guides.highlightActiveIndentation",
+			"group": "Text Editor",
+			"th": "ไฮไลต์เส้นย่อหน้าที่เคอร์เซอร์อยู่"
+		},
+		{
+			"id": "editor.guides.indentation",
+			"group": "Text Editor",
+			"th": "แสดงเส้นนำการเยื้อง"
+		},
+		{
+			"id": "editor.hideCursorInOverviewRuler",
+			"group": "Text Editor",
+			"th": "ซ่อนตำแหน่งเคอร์เซอร์ในแถบภาพรวมด้านขวา"
+		},
+		{
+			"id": "editor.hover.above",
+			"group": "Text Editor",
+			"th": "แสดง hover เหนือบรรทัดถ้ามีที่ว่าง"
+		},
+		{
+			"id": "editor.hover.delay",
+			"group": "Text Editor",
+			"th": "หน่วงเวลาเป็นมิลลิวินาทีก่อนแสดง hover"
+		},
+		{
+			"id": "editor.hover.enabled",
+			"group": "Text Editor",
+			"th": "แสดง hover"
+		},
+		{
+			"id": "editor.hover.hidingDelay",
+			"group": "Text Editor",
+			"th": "หน่วงเวลาเป็นมิลลิวินาทีก่อนซ่อน hover ต้องเปิด hover.sticky"
+		},
+		{
+			"id": "editor.hover.showLongLineWarning",
+			"group": "Text Editor",
+			"th": "แสดง hover เตือนบรรทัดยาว เช่นเมื่อข้ามการ tokenize"
+		},
+		{
+			"id": "editor.hover.sticky",
+			"group": "Text Editor",
+			"th": "ให้ hover ค้างอยู่เมื่อเลื่อนเมาส์ไปบนมัน"
+		},
+		{
+			"id": "editor.indentSize",
+			"group": "Text Editor",
+			"th": "จำนวนช่องว่างของการย่อหน้า หรือ tabSize เพื่อใช้ค่าของ editor.tabSize"
+		},
+		{
+			"id": "editor.inertialScroll",
+			"group": "Text Editor",
+			"th": "เลื่อนแบบมีแรงเฉื่อย เหมาะกับทัชแพดบน Linux"
+		},
+		{
+			"id": "editor.largeFileOptimizations",
+			"group": "Text Editor",
+			"th": "จัดการไฟล์ใหญ่เป็นพิเศษ ปิดความสามารถที่ใช้หน่วยความจำมาก"
+		},
+		{
+			"id": "editor.letterSpacing",
+			"group": "Text Editor",
+			"th": "ระยะห่างตัวอักษรเป็นพิกเซล"
+		},
+		{
+			"id": "editor.lightbulb.enabled",
+			"group": "Text Editor",
+			"th": "แสดงหลอดไฟ Code Action ใน editor"
+		},
+		{
+			"id": "editor.lineHeight",
+			"group": "Text Editor",
+			"th": "ความสูงบรรทัด 0 = คำนวณจากขนาดตัวอักษร ค่าน้อยกว่า 8 คือตัวคูณของขนาดตัวอักษร"
+		},
+		{
+			"id": "editor.lineNumbers",
+			"group": "Text Editor",
+			"th": "การแสดงเลขบรรทัด",
+			"enumTh": [
+				"ไม่แสดงเลขบรรทัด",
+				"แสดงเลขบรรทัด",
+				"แสดงระยะจากบรรทัดของเคอร์เซอร์",
+				"แสดงทุก 10 บรรทัด"
+			]
+		},
+		{
+			"id": "editor.linkedEditing",
+			"group": "Text Editor",
+			"th": "แก้แท็กเปิด/ปิด HTML พร้อมกัน"
+		},
+		{
+			"id": "editor.links",
+			"group": "Text Editor",
+			"th": "ตรวจหาลิงก์และทำให้คลิกได้"
+		},
+		{
+			"id": "editor.matchBrackets",
+			"group": "Text Editor",
+			"th": "ไฮไลต์วงเล็บคู่"
+		},
+		{
+			"id": "editor.maxTokenizationLineLength",
+			"group": "Text Editor",
+			"th": "บรรทัดที่ยาวเกินค่านี้จะไม่ถูก tokenize เพื่อประสิทธิภาพ"
+		},
+		{
+			"id": "editor.minimap.autohide",
+			"group": "Text Editor",
+			"th": "ซ่อน minimap อัตโนมัติ"
+		},
+		{
+			"id": "editor.minimap.markSectionHeaderRegex",
+			"group": "Text Editor",
+			"th": "regex ที่ใช้หาหัวข้อส่วนใน comment"
+		},
+		{
+			"id": "editor.minimap.maxColumn",
+			"group": "Text Editor",
+			"th": "จำกัดความกว้าง minimap เป็นจำนวนคอลัมน์สูงสุด"
+		},
+		{
+			"id": "editor.minimap.renderCharacters",
+			"group": "Text Editor",
+			"th": "แสดงตัวอักษรจริงใน minimap แทนบล็อกสี"
+		},
+		{
+			"id": "editor.minimap.scale",
+			"group": "Text Editor",
+			"th": "สเกลของเนื้อหาใน minimap"
+		},
+		{
+			"id": "editor.minimap.sectionHeaderFontSize",
+			"group": "Text Editor",
+			"th": "ขนาดตัวอักษรของหัวข้อส่วนใน minimap"
+		},
+		{
+			"id": "editor.minimap.sectionHeaderLetterSpacing",
+			"group": "Text Editor",
+			"th": "ระยะห่างตัวอักษรของหัวข้อส่วนใน minimap"
+		},
+		{
+			"id": "editor.minimap.showMarkSectionHeaders",
+			"group": "Text Editor",
+			"th": "แสดง comment แบบ MARK: เป็นหัวข้อส่วนใน minimap"
+		},
+		{
+			"id": "editor.minimap.showRegionSectionHeaders",
+			"group": "Text Editor",
+			"th": "แสดง region ที่มีชื่อเป็นหัวข้อส่วนใน minimap"
+		},
+		{
+			"id": "editor.minimap.showSlider",
+			"group": "Text Editor",
+			"th": "เมื่อใดที่แสดงแถบเลื่อนของ minimap"
+		},
+		{
+			"id": "editor.minimap.side",
+			"group": "Text Editor",
+			"th": "ด้านที่แสดง minimap"
+		},
+		{
+			"id": "editor.minimap.size",
+			"group": "Text Editor",
+			"th": "ขนาดของ minimap"
+		},
+		{
+			"id": "editor.mouseMiddleClickAction",
+			"group": "Text Editor",
+			"th": "สิ่งที่เกิดขึ้นเมื่อคลิกปุ่มกลางของเมาส์ใน editor"
+		},
+		{
+			"id": "editor.mouseWheelScrollSensitivity",
+			"group": "Text Editor",
+			"th": "ตัวคูณระยะเลื่อนของลูกล้อเมาส์"
+		},
+		{
+			"id": "editor.mouseWheelZoom",
+			"group": "Text Editor",
+			"th": "ซูมตัวอักษรด้วย ⌘ + ล้อเมาส์"
+		},
+		{
+			"id": "editor.multiCursorLimit",
+			"group": "Text Editor",
+			"th": "จำนวนเคอร์เซอร์สูงสุดใน editor"
+		},
+		{
+			"id": "editor.multiCursorMergeOverlapping",
+			"group": "Text Editor",
+			"th": "รวมเคอร์เซอร์ที่ซ้อนทับกัน"
+		},
+		{
+			"id": "editor.multiCursorModifier",
+			"group": "Text Editor",
+			"th": "ปุ่มที่ใช้เพิ่มเคอร์เซอร์ด้วยเมาส์",
+			"enumTh": [
+				"⌘ บน macOS, Ctrl บนระบบอื่น",
+				"⌥ บน macOS, Alt บนระบบอื่น"
+			]
+		},
+		{
+			"id": "editor.multiCursorPaste",
+			"group": "Text Editor",
+			"th": "วิธีวางเมื่อจำนวนบรรทัดที่วางเท่ากับจำนวนเคอร์เซอร์"
+		},
+		{
+			"id": "editor.occurrencesHighlight",
+			"group": "Text Editor",
+			"th": "ไฮไลต์คำเดียวกันในไฟล์นี้หรือในทุกไฟล์ที่เปิด"
+		},
+		{
+			"id": "editor.occurrencesHighlightDelay",
+			"group": "Text Editor",
+			"th": "หน่วงเวลาเป็นมิลลิวินาทีก่อนไฮไลต์คำเดียวกัน"
+		},
+		{
+			"id": "editor.overtypeCursorStyle",
+			"group": "Text Editor",
+			"th": "รูปแบบเคอร์เซอร์ในโหมดพิมพ์ทับ"
+		},
+		{
+			"id": "editor.overtypeOnPaste",
+			"group": "Text Editor",
+			"th": "ให้การวางพิมพ์ทับข้อความในโหมดพิมพ์ทับ"
+		},
+		{
+			"id": "editor.overviewRulerBorder",
+			"group": "Text Editor",
+			"th": "วาดเส้นขอบรอบแถบภาพรวมด้านขวา"
+		},
+		{
+			"id": "editor.padding.bottom",
+			"group": "Text Editor",
+			"th": "ระยะว่างระหว่างขอบล่างของ editor กับบรรทัดสุดท้าย"
+		},
+		{
+			"id": "editor.padding.top",
+			"group": "Text Editor",
+			"th": "ระยะว่างระหว่างขอบบนของ editor กับบรรทัดแรก"
+		},
+		{
+			"id": "editor.parameterHints.cycle",
+			"group": "Text Editor",
+			"th": "ให้รายการ parameter hints วนกลับเมื่อถึงท้ายรายการ"
+		},
+		{
+			"id": "editor.parameterHints.enabled",
+			"group": "Text Editor",
+			"th": "แสดงคำใบ้พารามิเตอร์ขณะพิมพ์"
+		},
+		{
+			"id": "editor.pasteAs.enabled",
+			"group": "Text Editor",
+			"th": "เลือกวิธีวางเนื้อหาได้หลายแบบ"
+		},
+		{
+			"id": "editor.pasteAs.showPasteSelector",
+			"group": "Text Editor",
+			"th": "แสดงตัวเลือกวิธีวางหลังวาง"
+		},
+		{
+			"id": "editor.peekWidgetDefaultFocus",
+			"group": "Text Editor",
+			"th": "โฟกัส editor หรือรายการในหน้าต่าง peek"
+		},
+		{
+			"id": "editor.quickSuggestions",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำอัตโนมัติขณะพิมพ์ในโค้ด"
+		},
+		{
+			"id": "editor.quickSuggestionsDelay",
+			"group": "Text Editor",
+			"th": "หน่วงเวลาเป็นมิลลิวินาทีก่อนแสดงคำแนะนำอัตโนมัติ"
+		},
+		{
+			"id": "editor.renderControlCharacters",
+			"group": "Text Editor",
+			"th": "แสดงอักขระควบคุม"
+		},
+		{
+			"id": "editor.renderFinalNewline",
+			"group": "Text Editor",
+			"th": "แสดงเลขบรรทัดสุดท้ายเมื่อไฟล์จบด้วยการขึ้นบรรทัดใหม่"
+		},
+		{
+			"id": "editor.renderLineHighlight",
+			"group": "Text Editor",
+			"th": "การไฮไลต์บรรทัดปัจจุบัน"
+		},
+		{
+			"id": "editor.renderLineHighlightOnlyWhenFocus",
+			"group": "Text Editor",
+			"th": "ไฮไลต์บรรทัดปัจจุบันเฉพาะเมื่อ editor มีโฟกัส"
+		},
+		{
+			"id": "editor.renderRichScreenReaderContent",
+			"group": "Text Editor",
+			"th": "ส่งเนื้อหาแบบละเอียดให้โปรแกรมอ่านหน้าจอเมื่อเปิด editContext"
+		},
+		{
+			"id": "editor.roundedSelection",
+			"group": "Text Editor",
+			"th": "ทำมุมการเลือกให้โค้งมน"
+		},
+		{
+			"id": "editor.rulers",
+			"group": "Text Editor",
+			"th": "เส้นแนวตั้งที่คอลัมน์ที่กำหนด เช่น [80, 120]"
+		},
+		{
+			"id": "editor.scrollbar.horizontal",
+			"group": "Text Editor",
+			"th": "การแสดงแถบเลื่อนแนวนอน"
+		},
+		{
+			"id": "editor.scrollbar.horizontalScrollbarSize",
+			"group": "Text Editor",
+			"th": "ความสูงของแถบเลื่อนแนวนอน"
+		},
+		{
+			"id": "editor.scrollbar.ignoreHorizontalScrollbarInContentHeight",
+			"group": "Text Editor",
+			"th": "ไม่นับแถบเลื่อนแนวนอนในความสูงของเนื้อหา"
+		},
+		{
+			"id": "editor.scrollbar.scrollByPage",
+			"group": "Text Editor",
+			"th": "คลิกที่แถบเลื่อนแล้วเลื่อนทีละหน้าแทนการกระโดดไปตำแหน่งที่คลิก"
+		},
+		{
+			"id": "editor.scrollbar.vertical",
+			"group": "Text Editor",
+			"th": "การแสดงแถบเลื่อนแนวตั้ง"
+		},
+		{
+			"id": "editor.scrollbar.verticalScrollbarSize",
+			"group": "Text Editor",
+			"th": "ความกว้างของแถบเลื่อนแนวตั้ง"
+		},
+		{
+			"id": "editor.scrollBeyondLastColumn",
+			"group": "Text Editor",
+			"th": "จำนวนอักขระที่เลื่อนแนวนอนเลยคอลัมน์สุดท้ายได้"
+		},
+		{
+			"id": "editor.scrollBeyondLastLine",
+			"group": "Text Editor",
+			"th": "เลื่อนเลยบรรทัดสุดท้ายได้"
+		},
+		{
+			"id": "editor.scrollOnMiddleClick",
+			"group": "Text Editor",
+			"th": "เลื่อน editor ด้วยการกดปุ่มกลางของเมาส์"
+		},
+		{
+			"id": "editor.scrollPredominantAxis",
+			"group": "Text Editor",
+			"th": "เลื่อนตามแกนหลักเท่านั้นเมื่อเลื่อนทั้งแนวตั้งและแนวนอนพร้อมกัน"
+		},
+		{
+			"id": "editor.selectionClipboard",
+			"group": "Text Editor",
+			"th": "รองรับคลิปบอร์ด primary ของ Linux"
+		},
+		{
+			"id": "editor.selectionHighlight",
+			"group": "Text Editor",
+			"th": "ไฮไลต์ข้อความที่ตรงกับส่วนที่เลือก"
+		},
+		{
+			"id": "editor.selectionHighlightMaxLength",
+			"group": "Text Editor",
+			"th": "จำนวนอักขระสูงสุดของข้อความที่เลือกที่จะไฮไลต์คำที่ตรงกัน 0 คือไม่จำกัด"
+		},
+		{
+			"id": "editor.selectionHighlightMultiline",
+			"group": "Text Editor",
+			"th": "ไฮไลต์ผลที่ตรงกับข้อความที่เลือกแม้คร่อมหลายบรรทัด"
+		},
+		{
+			"id": "editor.showDeprecated",
+			"group": "Text Editor",
+			"th": "ขีดฆ่าชื่อที่เลิกใช้แล้ว"
+		},
+		{
+			"id": "editor.showFoldingControls",
+			"group": "Text Editor",
+			"th": "เมื่อใดที่แสดงปุ่มพับโค้ดที่ขอบซ้าย"
+		},
+		{
+			"id": "editor.showUnused",
+			"group": "Text Editor",
+			"th": "ทำให้โค้ดที่ไม่ได้ใช้จางลง"
+		},
+		{
+			"id": "editor.smartSelect.selectLeadingAndTrailingWhitespace",
+			"group": "Text Editor",
+			"th": "เลือกช่องว่างนำหน้าและต่อท้ายเสมอ"
+		},
+		{
+			"id": "editor.smartSelect.selectSubwords",
+			"group": "Text Editor",
+			"th": "เลือกคำย่อย เช่น foo ใน fooBar หรือ foo_bar"
+		},
+		{
+			"id": "editor.smoothScrolling",
+			"group": "Text Editor",
+			"th": "เลื่อนแบบมีแอนิเมชัน"
+		},
+		{
+			"id": "editor.snippetSuggestions",
+			"group": "Text Editor",
+			"th": "ตำแหน่งของ snippet ในรายการคำแนะนำ"
+		},
+		{
+			"id": "editor.stablePeek",
+			"group": "Text Editor",
+			"th": "ให้หน้าต่าง peek เปิดค้างแม้ดับเบิลคลิกเนื้อหาหรือกด Escape"
+		},
+		{
+			"id": "editor.stickyScroll.defaultModel",
+			"group": "Text Editor",
+			"th": "แบบจำลองที่ใช้เลือกบรรทัดที่ติดอยู่ด้านบน"
+		},
+		{
+			"id": "editor.stickyScroll.enabled",
+			"group": "Text Editor",
+			"th": "ตรึงหัวของ scope ที่ซ้อนกันไว้ด้านบนขณะเลื่อน"
+		},
+		{
+			"id": "editor.stickyScroll.maxLineCount",
+			"group": "Text Editor",
+			"th": "จำนวนบรรทัดที่ติดด้านบนสูงสุด"
+		},
+		{
+			"id": "editor.stickyScroll.scrollWithEditor",
+			"group": "Text Editor",
+			"th": "ให้บรรทัดที่ติดด้านบนเลื่อนแนวนอนตาม editor"
+		},
+		{
+			"id": "editor.stickyTabStops",
+			"group": "Text Editor",
+			"th": "จำลองการเลือกแบบแท็บเมื่อย่อหน้าด้วยช่องว่าง"
+		},
+		{
+			"id": "editor.suggest.filterGraceful",
+			"group": "Text Editor",
+			"th": "กรองและเรียงคำแนะนำโดยยอมให้พิมพ์ผิดเล็กน้อย"
+		},
+		{
+			"id": "editor.suggest.insertMode",
+			"group": "Text Editor",
+			"th": "เขียนทับคำเมื่อยอมรับคำแนะนำหรือไม่"
+		},
+		{
+			"id": "editor.suggest.localityBonus",
+			"group": "Text Editor",
+			"th": "ให้คำที่อยู่ใกล้เคอร์เซอร์อยู่ลำดับต้น"
+		},
+		{
+			"id": "editor.suggest.matchOnWordStartOnly",
+			"group": "Text Editor",
+			"th": "อักขระแรกที่พิมพ์ต้องตรงกับต้นคำเมื่อกรองคำแนะนำ"
+		},
+		{
+			"id": "editor.suggest.preview",
+			"group": "Text Editor",
+			"th": "แสดงตัวอย่างผลของคำแนะนำใน editor"
+		},
+		{
+			"id": "editor.suggest.selectionMode",
+			"group": "Text Editor",
+			"th": "เลือกคำแนะนำแรกไว้ให้เมื่อรายการแสดงหรือไม่"
+		},
+		{
+			"id": "editor.suggest.showClasses",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท class"
+		},
+		{
+			"id": "editor.suggest.showColors",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท color"
+		},
+		{
+			"id": "editor.suggest.showConstants",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท constant"
+		},
+		{
+			"id": "editor.suggest.showConstructors",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท constructor"
+		},
+		{
+			"id": "editor.suggest.showDeprecated",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำที่เลิกใช้แล้ว"
+		},
+		{
+			"id": "editor.suggest.showEnumMembers",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท enumMember"
+		},
+		{
+			"id": "editor.suggest.showEnums",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท enum"
+		},
+		{
+			"id": "editor.suggest.showEvents",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท event"
+		},
+		{
+			"id": "editor.suggest.showFields",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท field"
+		},
+		{
+			"id": "editor.suggest.showFiles",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท file"
+		},
+		{
+			"id": "editor.suggest.showFolders",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท folder"
+		},
+		{
+			"id": "editor.suggest.showFunctions",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท function"
+		},
+		{
+			"id": "editor.suggest.showIcons",
+			"group": "Text Editor",
+			"th": "แสดงไอคอนในรายการคำแนะนำ"
+		},
+		{
+			"id": "editor.suggest.showInlineDetails",
+			"group": "Text Editor",
+			"th": "แสดงรายละเอียดคำแนะนำต่อท้ายชื่อในรายการ"
+		},
+		{
+			"id": "editor.suggest.showInterfaces",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท interface"
+		},
+		{
+			"id": "editor.suggest.showIssues",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท issues"
+		},
+		{
+			"id": "editor.suggest.showKeywords",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท keyword"
+		},
+		{
+			"id": "editor.suggest.showMethods",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท method"
+		},
+		{
+			"id": "editor.suggest.showModules",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท module"
+		},
+		{
+			"id": "editor.suggest.showOperators",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท operator"
+		},
+		{
+			"id": "editor.suggest.showProperties",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท property"
+		},
+		{
+			"id": "editor.suggest.showReferences",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท reference"
+		},
+		{
+			"id": "editor.suggest.showSnippets",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท snippet"
+		},
+		{
+			"id": "editor.suggest.showStatusBar",
+			"group": "Text Editor",
+			"th": "แสดงแถบสถานะท้ายรายการคำแนะนำ"
+		},
+		{
+			"id": "editor.suggest.showStructs",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท struct"
+		},
+		{
+			"id": "editor.suggest.showTypeParameters",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท typeParameter"
+		},
+		{
+			"id": "editor.suggest.showUnits",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท unit"
+		},
+		{
+			"id": "editor.suggest.showUsers",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท user"
+		},
+		{
+			"id": "editor.suggest.showValues",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท value"
+		},
+		{
+			"id": "editor.suggest.showVariables",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภท variable"
+		},
+		{
+			"id": "editor.suggest.showWords",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำประเภทข้อความ"
+		},
+		{
+			"id": "editor.suggest.snippetsPreventQuickSuggestions",
+			"group": "Text Editor",
+			"th": "ไม่แสดงคำแนะนำอัตโนมัติขณะอยู่ใน snippet"
+		},
+		{
+			"id": "editor.suggestFontSize",
+			"group": "Text Editor",
+			"th": "ขนาดตัวอักษรของรายการคำแนะนำ 0 คือใช้ editor.fontSize"
+		},
+		{
+			"id": "editor.suggestLineHeight",
+			"group": "Text Editor",
+			"th": "ความสูงบรรทัดของรายการคำแนะนำ 0 คือใช้ editor.lineHeight"
+		},
+		{
+			"id": "editor.suggestOnTriggerCharacters",
+			"group": "Text Editor",
+			"th": "แสดงคำแนะนำเมื่อพิมพ์อักขระกระตุ้น เช่น ."
+		},
+		{
+			"id": "editor.suggestSelection",
+			"group": "Text Editor",
+			"th": "วิธีเลือกคำแนะนำไว้ล่วงหน้าเมื่อแสดงรายการ"
+		},
+		{
+			"id": "editor.tabCompletion",
+			"group": "Text Editor",
+			"th": "เติมคำด้วย Tab"
+		},
+		{
+			"id": "editor.tabFocusMode",
+			"group": "Text Editor",
+			"th": "ให้ปุ่ม Tab ย้ายโฟกัสออกจาก editor แทนการแทรกแท็บ"
+		},
+		{
+			"id": "editor.trimAutoWhitespace",
+			"group": "Text Editor",
+			"th": "ลบช่องว่างท้ายบรรทัดที่ editor แทรกให้อัตโนมัติ"
+		},
+		{
+			"id": "editor.trimWhitespaceOnDelete",
+			"group": "Text Editor",
+			"th": "ลบช่องว่างย่อหน้าของบรรทัดถัดไปด้วยเมื่อลบการขึ้นบรรทัด"
+		},
+		{
+			"id": "editor.unfoldOnClickAfterEndOfLine",
+			"group": "Text Editor",
+			"th": "คลิกพื้นที่ว่างหลังบรรทัดที่พับไว้เพื่อคลายการพับ"
+		},
+		{
+			"id": "editor.unicodeHighlight.allowedCharacters",
+			"group": "Text Editor",
+			"th": "อักขระที่อนุญาตและไม่ต้องไฮไลต์"
+		},
+		{
+			"id": "editor.unicodeHighlight.allowedLocales",
+			"group": "Text Editor",
+			"th": "อักขระที่ใช้ทั่วไปใน locale ที่อนุญาตจะไม่ถูกไฮไลต์"
+		},
+		{
+			"id": "editor.unicodeHighlight.ambiguousCharacters",
+			"group": "Text Editor",
+			"th": "ไฮไลต์อักขระที่หน้าตาคล้ายอักขระ ASCII พื้นฐาน"
+		},
+		{
+			"id": "editor.unicodeHighlight.includeComments",
+			"group": "Text Editor",
+			"th": "ไฮไลต์อักขระ Unicode ใน comment ด้วย"
+		},
+		{
+			"id": "editor.unicodeHighlight.includeStrings",
+			"group": "Text Editor",
+			"th": "ไฮไลต์อักขระ Unicode ในสตริงด้วย"
+		},
+		{
+			"id": "editor.unicodeHighlight.invisibleCharacters",
+			"group": "Text Editor",
+			"th": "ไฮไลต์อักขระที่มองไม่เห็นหรือไม่มีความกว้าง"
+		},
+		{
+			"id": "editor.unicodeHighlight.nonBasicASCII",
+			"group": "Text Editor",
+			"th": "ไฮไลต์อักขระทุกตัวที่ไม่ใช่ ASCII พื้นฐาน"
+		},
+		{
+			"id": "editor.unusualLineTerminators",
+			"group": "Text Editor",
+			"th": "ลบตัวจบบรรทัดแปลก ๆ ที่อาจทำให้เกิดปัญหา"
+		},
+		{
+			"id": "editor.useTabStops",
+			"group": "Text Editor",
+			"th": "แทรกและลบช่องว่างตามตำแหน่งแท็บ"
+		},
+		{
+			"id": "editor.wordBasedSuggestions",
+			"group": "Text Editor",
+			"th": "แนะนำคำจากเนื้อหาในเอกสาร"
+		},
+		{
+			"id": "editor.wordBreak",
+			"group": "Text Editor",
+			"th": "กฎการตัดคำของข้อความจีน ญี่ปุ่น เกาหลี"
+		},
+		{
+			"id": "editor.wordSegmenterLocales",
+			"group": "Text Editor",
+			"th": "locale ที่ใช้แบ่งคำเมื่อเลื่อนหรือทำงานทีละคำ เช่น th สำหรับภาษาไทย"
+		},
+		{
+			"id": "editor.wordSeparators",
+			"group": "Text Editor",
+			"th": "อักขระที่ใช้แบ่งคำเมื่อเลื่อนหรือทำงานทีละคำ"
+		},
+		{
+			"id": "editor.wordWrapColumn",
+			"group": "Text Editor",
+			"th": "คอลัมน์ที่ตัดบรรทัด เมื่อ editor.wordWrap เป็น wordWrapColumn หรือ bounded"
+		},
+		{
+			"id": "editor.wordWrapIndicator",
+			"group": "Text Editor",
+			"th": "แสดงสัญลักษณ์ที่คอลัมน์ตัดบรรทัดของบรรทัดที่ถูกตัด"
+		},
+		{
+			"id": "editor.wrapOnEscapedLineFeeds",
+			"group": "Text Editor",
+			"th": "ตัดบรรทัดที่ข้อความ \\n ในสตริงเมื่อเปิด wordWrap"
+		},
+		{
+			"id": "editor.wrappingIndent",
+			"group": "Text Editor",
+			"th": "การย่อหน้าของบรรทัดที่ถูกตัด"
+		},
+		{
+			"id": "editor.wrappingStrategy",
+			"group": "Text Editor",
+			"th": "อัลกอริทึมที่ใช้คำนวณจุดตัดบรรทัด"
+		}
+	]
+}

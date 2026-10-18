@@ -7,6 +7,7 @@ import { defaultTitleTemplate } from '../workbench/title';
 import { PROFILES } from '../ade/agentProfiles';
 import { IDE_SETTINGS } from './ideSettings';
 import { ADE_SECTION_GROUPS, ADE_SETTINGS, SYSTEM_SECTION_GROUPS } from './ade';
+import { describeSchema, matchesSchema, schemaTypes, type JsonSchema } from './jsonSchema';
 
 const MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
 
@@ -35,10 +36,20 @@ type Base = {
 export type SettingSchema =
 	| (Base & { type: 'boolean'; default: boolean })
 	| (Base & { type: 'number'; default: number; minimum?: number; maximum?: number; integer?: boolean })
-	| (Base & { type: 'string'; default: string; enum?: readonly string[]; enumDescriptions?: readonly string[] })
-	| (Base & { type: 'array'; items: 'string' | 'number'; default: readonly (string | number)[] })
-	/** A map like `files.exclude` (glob → true). Layers merge key by key, like VS Code's object settings. */
-	| (Base & { type: 'object'; values: 'boolean' | 'string' | 'boolean|string'; default: Readonly<Record<string, boolean | string>> });
+	| (Base & { type: 'string'; default: string; enum?: readonly string[]; enumDescriptions?: readonly string[]; pattern?: string })
+	/** `itemEnum`: the values an item may take (VS Code: `items.enum`, e.g. `git.checkoutType`). */
+	| (Base & { type: 'array'; items: 'string' | 'number'; itemEnum?: readonly string[]; default: readonly (string | number)[] })
+	/**
+	 * A map like `files.exclude` (glob → true). Layers merge key by key, like VS Code's object
+	 * settings. `boolean|when`: VS Code's exclude maps, whose values may also be a sibling clause
+	 * (`{ "when": "$(basename).ts" }`).
+	 */
+	| (Base & { type: 'object'; values: 'boolean' | 'string' | 'boolean|string' | 'boolean|when'; default: Readonly<Record<string, boolean | string>> })
+	/**
+	 * Any other VS Code schema (unions such as `boolean | "on"`, nullable values, objects with fixed
+	 * properties): validated with `schema`, edited in settings.json like VS Code's "Edit in settings.json".
+	 */
+	| (Base & { type: 'json'; schema: JsonSchema; default: unknown });
 
 /** `kingu.agent.args.<profile>`: extra arguments per known agent CLI (agentCli.ts agentCommand). */
 function agentArgsSettings(): SettingSchema[] {
@@ -63,7 +74,7 @@ const CORE_SETTINGS: SettingSchema[] = [
 		default: DEFAULT_THEME,
 		enum: THEMES.map((t) => t.id),
 		enumDescriptions: THEMES.map((t) => t.label),
-		description: 'ธีมสีของ workbench และ editor (Specifies the color theme used in the workbench.)',
+		description: 'ธีมสีของ workbench และ editor (Specifies the color theme used in the workbench when `#window.autoDetectColorScheme#` is not enabled.)',
 		scope: 'application'
 	},
 	{
@@ -71,17 +82,8 @@ const CORE_SETTINGS: SettingSchema[] = [
 		group: 'Workbench',
 		type: 'boolean',
 		default: true,
-		description: 'เปิดไฟล์เป็นแท็บพรีวิว (ตัวเอียง) จนกว่าจะแก้ไขหรือดับเบิลคลิก (Controls whether opened editors show as preview editors.)'
-	},
-	{
-		id: 'window.zoomLevel',
-		group: 'Window',
-		type: 'number',
-		default: 0,
-		minimum: -8,
-		maximum: 8,
-		description: 'ระดับการซูมของหน้าต่าง แต่ละขั้นคือ 20% (Adjust the zoom level of the window; each step is 20% larger or smaller.)',
-		scope: 'application'
+		description:
+			"เปิดไฟล์เป็นแท็บพรีวิว ชื่อตัวเอียง ซึ่งถูกแทนที่ด้วยไฟล์ถัดไปจนกว่าจะแก้ไขหรือดับเบิลคลิก (Controls whether preview mode is used when editors open. There is a maximum of one preview mode editor per editor group. This editor displays its filename in italics on its tab or title label and in the Open Editors view. Its contents will be replaced by the next editor opened in preview mode. Making a change in a preview mode editor will persist it, as will a double-click on its label, or the 'Keep Open' option in its label context menu. Opening a file from Explorer with a double-click persists its editor immediately.)"
 	},
 	{
 		id: 'editor.fontSize',
@@ -90,7 +92,7 @@ const CORE_SETTINGS: SettingSchema[] = [
 		default: 12,
 		minimum: 6,
 		maximum: 100,
-		description: 'ขนาดตัวอักษรเป็นพิกเซล (Controls the font size in pixels.)'
+		description: 'ขนาดตัวอักษรของ editor เป็นพิกเซล (Controls the font size in pixels.)'
 	},
 	{
 		id: 'editor.fontFamily',
@@ -105,9 +107,10 @@ const CORE_SETTINGS: SettingSchema[] = [
 		type: 'number',
 		default: 4,
 		minimum: 1,
-		maximum: 32,
+		maximum: 100,
 		integer: true,
-		description: 'จำนวนช่องว่างต่อหนึ่งแท็บ (The number of spaces a tab is equal to.)',
+		description:
+			'จำนวนช่องว่างต่อหนึ่งแท็บ (The number of spaces a tab is equal to. This setting is overridden based on the file contents when `#editor.detectIndentation#` is on.)',
 		scope: 'resource'
 	},
 	{
@@ -115,7 +118,8 @@ const CORE_SETTINGS: SettingSchema[] = [
 		group: 'Text Editor',
 		type: 'boolean',
 		default: true,
-		description: 'แทรกช่องว่างเมื่อกด Tab (Insert spaces when pressing Tab.)',
+		description:
+			'แทรกช่องว่างแทนอักขระแท็บเมื่อกด Tab (Insert spaces when pressing `Tab`. This setting is overridden based on the file contents when `#editor.detectIndentation#` is on.)',
 		scope: 'resource'
 	},
 	{
@@ -123,7 +127,8 @@ const CORE_SETTINGS: SettingSchema[] = [
 		group: 'Text Editor',
 		type: 'boolean',
 		default: true,
-		description: 'ตรวจหาการเยื้องจากเนื้อหาไฟล์ แทน tabSize/insertSpaces (Detect tab size and insert spaces from the file content.)',
+		description:
+			'ตรวจหา tabSize และ insertSpaces จากเนื้อหาไฟล์ตอนเปิด (Controls whether `#editor.tabSize#` and `#editor.insertSpaces#` will be automatically detected when a file is opened based on the file contents.)',
 		scope: 'resource'
 	},
 	{
@@ -132,7 +137,12 @@ const CORE_SETTINGS: SettingSchema[] = [
 		type: 'string',
 		default: 'off',
 		enum: ['off', 'on', 'wordWrapColumn', 'bounded'],
-		enumDescriptions: ['ไม่ตัดบรรทัด', 'ตัดบรรทัดตามความกว้าง viewport', 'ตัดที่ editor.wordWrapColumn', 'ตัดที่ค่าที่น้อยกว่าระหว่าง viewport กับ wordWrapColumn'],
+		enumDescriptions: [
+			'ไม่ตัดบรรทัด (Lines will never wrap.)',
+			'ตัดบรรทัดตามความกว้าง viewport (Lines will wrap at the viewport width.)',
+			'ตัดที่ editor.wordWrapColumn (Lines will wrap at `#editor.wordWrapColumn#`.)',
+			'ตัดที่ค่าที่น้อยกว่าระหว่าง viewport กับ wordWrapColumn (Lines will wrap at the minimum of viewport and `#editor.wordWrapColumn#`.)'
+		],
 		description: 'การตัดบรรทัด (Controls how lines should wrap.)'
 	},
 	{
@@ -148,6 +158,13 @@ const CORE_SETTINGS: SettingSchema[] = [
 		type: 'string',
 		default: 'selection',
 		enum: ['none', 'boundary', 'selection', 'trailing', 'all'],
+		enumDescriptions: [
+			'ไม่แสดง',
+			'แสดงทุกช่องว่าง ยกเว้นช่องว่างเดี่ยวระหว่างคำ (Render whitespace characters except for single spaces between words.)',
+			'แสดงเฉพาะในข้อความที่เลือก (Render whitespace characters only on selected text.)',
+			'แสดงเฉพาะช่องว่างท้ายบรรทัด (Render only trailing whitespace characters.)',
+			'แสดงทั้งหมด'
+		],
 		description: 'การแสดงอักขระช่องว่าง (Controls how the editor should render whitespace characters.)'
 	},
 	{
@@ -195,14 +212,7 @@ const CORE_SETTINGS: SettingSchema[] = [
 		group: 'Terminal',
 		type: 'string',
 		default: '',
-		description: 'ฟอนต์ของ terminal เว้นว่างเพื่อใช้ editor.fontFamily (Defaults to editor.fontFamily when empty.)'
-	},
-	{
-		id: 'git.pullRebase',
-		group: 'Git',
-		type: 'boolean',
-		default: false,
-		description: 'Pull และ Sync ด้วย rebase แทน fast-forward อย่างเดียว (Force git to use rebase when running the pull command.)'
+		description: "ฟอนต์ของ terminal เว้นว่างเพื่อใช้ฟอนต์ของ editor (Controls the font family of the terminal. Defaults to `#editor.fontFamily#`'s value.)"
 	},
 	{
 		id: 'kingu.agent.model',
@@ -346,12 +356,12 @@ const CORE_SETTINGS: SettingSchema[] = [
 		default: 'auto',
 		enum: ['auto', 'ask', 'off'],
 		enumDescriptions: [
-			'รัน .kingu/setup.sh ของโฟลเดอร์ใน terminal "Setup" ของ worktree ใหม่ ถามให้เชื่อถือก่อนครั้งแรกและทุกครั้งที่สคริปต์เปลี่ยน (Run the folder\'s .kingu/setup.sh in a Setup terminal of each new worktree; asks you to trust it first and whenever it changes.)',
+			'รันสคริปต์ตั้งค่าใน terminal "Setup" ของ worktree ใหม่ ของ repository ต้องเชื่อถือก่อนครั้งแรกและทุกครั้งที่เนื้อหาเปลี่ยน (Run the setup in a Setup terminal of each new worktree; the repository\'s needs your trust first and whenever it changes.)',
 			'ถามทุกครั้งก่อนรัน (Ask every time before running it.)',
 			'ไม่รันสคริปต์ตั้งค่า (Never run the setup script.)'
 		],
 		description:
-			'สคริปต์ตั้งค่า worktree (Orca: setup run policy) จาก scripts.setup ใน kingu.yaml (หรือ .kingu/setup.sh แบบเดิม) และ/หรือ kingu.repo.setupScript เช่น bun install, คัดลอก .env ได้ KINGU_ROOT_PATH, KINGU_WORKTREE_PATH และ KINGU_WORKSPACE_NAME ใน environment automation ไม่ถามและข้ามสคริปต์ที่ยังไม่เชื่อถือ ตั้งต่อ repository ได้ในแท็บ Repository (Worktree setup script from kingu.yaml scripts.setup, the older .kingu/setup.sh and/or kingu.repo.setupScript; gets KINGU_ROOT_PATH, KINGU_WORKTREE_PATH and KINGU_WORKSPACE_NAME. Automations never ask and skip an untrusted script. Can be set per repository.)',
+			'สคริปต์ตั้งค่า worktree (Orca: setup run policy) จาก scripts.setup ใน kingu.yaml (หรือ .kingu/setup.sh แบบเดิม) และ/หรือ kingu.repo.setupScript ตาม kingu.repo.scriptSource เช่น bun install, คัดลอก .env ได้ KINGU_ROOT_PATH, KINGU_WORKTREE_PATH และ KINGU_WORKSPACE_NAME ใน environment automation ไม่ถามและข้ามสคริปต์ที่ยังไม่เชื่อถือ ตั้งต่อ repository ได้ในแท็บ Repository (Worktree setup: kingu.yaml scripts.setup, else the older .kingu/setup.sh, and/or kingu.repo.setupScript per kingu.repo.scriptSource; gets KINGU_ROOT_PATH, KINGU_WORKTREE_PATH and KINGU_WORKSPACE_NAME. Automations never ask and skip an untrusted script. Can be set per repository.)',
 		// It decides whether repository code runs: the user's settings or per-repo store only.
 		scope: 'local'
 	},
@@ -362,7 +372,7 @@ const CORE_SETTINGS: SettingSchema[] = [
 		default: 'auto',
 		enum: ['auto', 'off'],
 		enumDescriptions: [
-			'รัน .kingu/archive.sh ของโฟลเดอร์ใน worktree ก่อนลบ (เช่น หยุด container) ถามให้เชื่อถือก่อนเหมือน setup ถ้าล้มเหลวจะถามว่าจะลบต่อไหม (Run the folder\'s .kingu/archive.sh in the worktree before it is removed; trusted like the setup script; a failure asks whether to go on.)',
+			'รันสคริปต์ก่อนลบใน worktree (เช่น หยุด container) ของ repository ต้องเชื่อถือก่อนเหมือน setup ถ้าล้มเหลวจะถามว่าจะลบต่อไหม (Run the archive script in the worktree before it is removed; the repository\'s is trusted like the setup script; a failure asks whether to go on.)',
 			'ไม่รันสคริปต์ก่อนลบ (Never run the archive script.)'
 		],
 		description:
@@ -436,9 +446,17 @@ const CORE_SETTINGS: SettingSchema[] = [
 		type: 'boolean',
 		default: false,
 		description:
-			'เมื่อสร้าง PR ของงานที่เริ่มจาก GitHub issue ให้ comment ใน issue ว่า "Kingu เริ่มงานนี้ใน PR …" ด้วยบัญชี gh ของคุณ (Comment on the issue with the PR link when a task started from a GitHub issue opens its PR.)',
+			'เมื่อสร้าง PR ของงานที่เริ่มจาก GitHub หรือ Linear issue ให้ comment ใน issue ว่า "Kingu เริ่มงานนี้ใน PR …" ด้วยบัญชี gh หรือ Linear API key ของคุณ (Comment on the issue with the PR link when a task started from a GitHub or Linear issue opens its PR.)',
 		// User-only: a repository's workspace settings must not post comments under the user's account.
 		scope: 'application'
+	},
+	{
+		id: 'kingu.linear.team',
+		group: 'Agent',
+		type: 'string',
+		default: '',
+		description:
+			'team key ของ Linear (เช่น ENG) ที่ Linear: Start Task from Issue… แสดง issue ว่างไว้เพื่อแสดงทุกทีม ตั้งต่อ repository ได้ (Linear team key to list issues from; empty lists every team.)'
 	},
 	{
 		id: 'kingu.team.serverUrl',
@@ -478,99 +496,8 @@ const CORE_SETTINGS: SettingSchema[] = [
 		group: 'Window',
 		type: 'string',
 		default: defaultTitleTemplate(MAC),
-		description:
-			'ชื่อหน้าต่างจากตัวแปร: ${activeEditorShort} ${activeEditorMedium} ${activeEditorLong} ${activeFolderShort} ${folderName} ${folderPath} ${rootName} ${rootPath} ${activeRepositoryBranchName} ${dirty} ${appName} ${separator} (Controls the window title based on the current context; the variables are substituted.)',
+		description: 'ชื่อหน้าต่างจากตัวแปร โดยแทนค่าตัวแปร ${...} ตามบริบท ส่วน ${profileName} และ ${remoteName} ว่างเสมอเพราะ Kingu ไม่มีโปรไฟล์และ remote (Controls the window title based on the current context such as the opened workspace or active editor. Variables are substituted based on the context:\n- `${activeEditorShort}`: the file name (e.g. myFile.txt).\n- `${activeEditorMedium}`: the path of the file relative to the workspace folder (e.g. myFolder/myFileFolder/myFile.txt).\n- `${activeEditorLong}`: the full path of the file (e.g. /Users/Development/myFolder/myFileFolder/myFile.txt).\n- `${activeEditorLanguageId}`: the language identifier of the active editor (e.g. typescript).\n- `${activeFolderShort}`: the name of the folder the file is contained in (e.g. myFileFolder).\n- `${activeFolderMedium}`: the path of the folder the file is contained in, relative to the workspace folder (e.g. myFolder/myFileFolder).\n- `${activeFolderLong}`: the full path of the folder the file is contained in (e.g. /Users/Development/myFolder/myFileFolder).\n- `${folderName}`: name of the workspace folder the file is contained in (e.g. myFolder).\n- `${folderPath}`: file path of the workspace folder the file is contained in (e.g. /Users/Development/myFolder).\n- `${rootName}`: name of the workspace with optional remote name and workspace indicator if applicable (e.g. myFolder, myRemoteFolder [SSH] or myWorkspace (Workspace)).\n- `${rootNameShort}`: shortened name of the workspace without suffixes (e.g. myFolder, myRemoteFolder or myWorkspace).\n- `${rootPath}`: file path of the opened workspace or folder (e.g. /Users/Development/myWorkspace).\n- `${profileName}`: name of the profile in which the workspace is opened (e.g. Data Science (Profile)). Ignored if default profile is used.\n- `${appName}`: e.g. Kingu.\n- `${remoteName}`: e.g. SSH\n- `${dirty}`: an indicator for when the active editor has unsaved changes.\n- `${focusedView}`: the name of the view that is currently focused.\n- `${activeRepositoryName}`: the name of the active repository (e.g. vscode).\n- `${activeRepositoryBranchName}`: the name of the active branch in the active repository (e.g. main).\n- `${activeEditorState}`: provides information about the state of the active editor (e.g. modified). This will be appended by default when in screen reader mode with `accessibility.windowTitleOptimized` enabled.\n- `${separator}`: a conditional separator (" - ") that only shows when surrounded by variables with values or static text.)',
 		scope: 'application'
-	},
-	{
-		id: 'window.titleSeparator',
-		group: 'Window',
-		type: 'string',
-		default: ' — ',
-		description: 'ตัวคั่นที่ใช้แทน ${separator} ใน window.title (Separator used by window.title.)',
-		scope: 'application'
-	},
-	{
-		id: 'window.commandCenter',
-		group: 'Window',
-		type: 'boolean',
-		default: true,
-		description: 'แสดง command center (ช่องค้นหา) กลางแถบชื่อเรื่อง แถบจะสูง 30px เมื่อปิด (Show the command center in the title bar.)',
-		scope: 'application'
-	},
-	{
-		id: 'window.menuBarVisibility',
-		group: 'Window',
-		type: 'string',
-		default: 'classic',
-		enum: ['classic', 'compact', 'hidden'],
-		enumDescriptions: [
-			'แสดงเมนูเต็มในแถบชื่อเรื่อง (The menu is displayed at the top of the window.)',
-			'รวมเมนูไว้ในปุ่มแฮมเบอร์เกอร์ (The menu is displayed as a compact button.)',
-			'ซ่อนเมนู (The menu is hidden.)'
-		],
-		description: 'การแสดงเมนูในหน้าต่างบน Windows/Linux (macOS ใช้เมนูของระบบ) (Controls the visibility of the in-window menu bar on Windows and Linux.)',
-		scope: 'application'
-	},
-	{
-		id: 'workbench.navigationControl.enabled',
-		group: 'Workbench',
-		type: 'boolean',
-		default: true,
-		description: 'แสดงปุ่มย้อนกลับ/ไปข้างหน้าใน command center (Controls whether the navigation controls are shown in the command center.)',
-		scope: 'application'
-	},
-	{
-		id: 'workbench.layoutControl.enabled',
-		group: 'Workbench',
-		type: 'boolean',
-		default: true,
-		description: 'แสดงปุ่มควบคุมเลย์เอาต์ในแถบชื่อเรื่อง (Controls whether the layout controls in the title bar are shown.)',
-		scope: 'application'
-	},
-	{
-		id: 'workbench.layoutControl.type',
-		group: 'Workbench',
-		type: 'string',
-		default: 'both',
-		enum: ['toggles', 'menu', 'both'],
-		enumDescriptions: [
-			'ปุ่มเปิด/ปิด side bar, panel และ secondary side bar (Shows toggles for the side bars and panel.)',
-			'ปุ่มเดียวที่เปิดเมนูเลย์เอาต์ (Shows a single button with a dropdown of layout options.)',
-			'แสดงทั้งปุ่มเปิด/ปิดและเมนู (Shows both the toggles and the menu.)'
-		],
-		description: 'รูปแบบของปุ่มควบคุมเลย์เอาต์ในแถบชื่อเรื่อง (Controls whether the layout control is a single menu button, toggles, or both.)',
-		scope: 'application'
-	},
-	{
-		id: 'workbench.activityBar.location',
-		group: 'Workbench',
-		type: 'string',
-		// Kingu puts the view switcher on top of the side bar, unlike VS Code's `default`.
-		default: 'top',
-		enum: ['default', 'top', 'hidden'],
-		enumDescriptions: [
-			'แถบแนวตั้งข้าง side bar (Show the activity bar to the side of the primary side bar.)',
-			'ไอคอนอยู่บนหัว side bar บัญชีและการตั้งค่าย้ายไปแถบชื่อเรื่อง (Show the activity bar at the top of the primary side bar; Accounts and Manage move to the title bar.)',
-			'ซ่อน บัญชีและการตั้งค่าย้ายไปแถบชื่อเรื่อง (Hide the activity bar.)'
-		],
-		description: 'ตำแหน่งของ activity bar (Controls the location of the activity bar.)'
-	},
-	{
-		id: 'workbench.sideBar.location',
-		group: 'Workbench',
-		type: 'string',
-		default: 'left',
-		enum: ['left', 'right'],
-		description: 'ตำแหน่งของ primary side bar ซ้ายหรือขวา secondary side bar จะอยู่ฝั่งตรงข้าม (Controls the location of the primary side bar.)'
-	},
-	{
-		id: 'workbench.panel.defaultLocation',
-		group: 'Workbench',
-		type: 'string',
-		default: 'bottom',
-		enum: ['bottom', 'top', 'left', 'right'],
-		description: 'ตำแหน่งของ panel (terminal, problems, output) (Controls where the panel is shown.)'
 	},
 	{
 		id: 'workbench.panel.alignment',
@@ -764,8 +691,8 @@ export type SettingsSection = { id: string; label: string; groups: string[] };
  */
 export const SETTINGS_SECTIONS: SettingsSection[] = (
 	[
-		{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', ...SYSTEM_SECTION_GROUPS, 'Status Bar', 'Accessibility', 'Team', 'Snap Sandbox'] },
-		{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Terminal', 'Git', 'Debug'] },
+		{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Application', ...SYSTEM_SECTION_GROUPS, 'Status Bar', 'Accessibility', 'Team', 'Snap Sandbox'] },
+		{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Source Control', 'Git', 'Terminal', 'Debug', 'Problems'] },
 		{ id: 'ade', label: 'ADE (Agents)', groups: ADE_SECTION_GROUPS }
 	] satisfies SettingsSection[]
 ).map((sec) => ({ ...sec, groups: sec.groups.filter((g) => SETTINGS.some((s) => s.group === g)) }));
@@ -783,15 +710,76 @@ export function settingsSections(schemas: SettingSchema[] = SETTINGS): SettingsS
 	return [...SETTINGS_SECTIONS, { id: SNAPS_SECTION_ID, label: 'Snaps', groups: contributed }];
 }
 
-/** Settings shown for a TOC selection (`null` = all) and a search query (searching spans every group).
- * `@modified` keeps only settings set in a file (`modified` says which), like VS Code's filter. */
+/**
+ * VS Code's settings table of contents below a group (settingsLayout.ts): a setting goes to the
+ * first sub-group whose pattern matches its id (case-insensitive, `*` = anything), else it stays
+ * in the group itself.
+ */
+export const SUBGROUPS: Readonly<Record<string, readonly (readonly [string, readonly string[]])[]>> = {
+	'Text Editor': [
+		['Cursor', ['editor.cursor*']],
+		['Find', ['editor.find.*']],
+		['Font', ['editor.font*']],
+		['Formatting', ['editor.format*']],
+		['Minimap', ['editor.minimap.*']],
+		['Suggestions', ['editor.*suggest*']]
+	],
+	Workbench: [
+		[
+			'Appearance',
+			['workbench.activityBar.*', 'workbench.*color*', 'workbench.fontAliasing', 'workbench.iconTheme', 'workbench.sidebar.location', 'workbench.*.visible', 'workbench.tips.enabled', 'workbench.tree.*', 'workbench.view.*']
+		],
+		['Breadcrumbs', ['breadcrumbs.*']],
+		['Editor Management', ['workbench.editor.*']],
+		['Settings Editor', ['workbench.settings.*']]
+	],
+	Window: [['New Window', ['window.*newwindow*']]],
+	Application: [
+		['Keyboard', ['keyboard.*']],
+		['Proxy', ['http.*']],
+		['Experimental', ['application.experimental.*']],
+		['Other', ['application.*']]
+	]
+};
+
+const patternCache = new Map<string, RegExp>();
+const patternRe = (p: string) => {
+	let re = patternCache.get(p);
+	if (!re) patternCache.set(p, (re = new RegExp(`^${p.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`, 'i')));
+	return re;
+};
+
+/** The sub-group of a setting within its group (`editor.cursorStyle` → "Cursor"), or null. */
+export function settingSubgroup(schema: Pick<SettingSchema, 'id' | 'group'>): string | null {
+	for (const [label, patterns] of SUBGROUPS[schema.group] ?? []) if (patterns.some((p) => patternRe(p).test(schema.id))) return label;
+	return null;
+}
+
+/** The sub-groups a group shows in the table of contents (only ones that hold settings). */
+export function subgroupsOf(group: string, schemas: SettingSchema[] = SETTINGS): string[] {
+	const used = new Set(schemas.filter((s) => s.group === group).map(settingSubgroup));
+	return (SUBGROUPS[group] ?? []).map(([label]) => label).filter((l) => used.has(l));
+}
+
+/** A table of contents selection: a group, or `Group/Sub-group`. */
+export const tocKey = (group: string, subgroup?: string | null) => (subgroup ? `${group}/${subgroup}` : group);
+
+function inSelection(s: SettingSchema, selection: string): boolean {
+	const slash = selection.indexOf('/');
+	if (slash < 0) return s.group === selection;
+	return s.group === selection.slice(0, slash) && settingSubgroup(s) === selection.slice(slash + 1);
+}
+
+/** Settings shown for a TOC selection (`null` = all, a group, or `Group/Sub-group`) and a search query
+ * (searching spans every group). `@modified` keeps only settings set in a file (`modified` says
+ * which), like VS Code's filter. */
 export function settingsInView(query: string, group: string | null, schemas: SettingSchema[] = SETTINGS, modified: (id: string) => boolean = () => false): SettingSchema[] {
 	const { filters, text } = parseQuery(query);
 	return schemas.filter((s) => {
 		if (filters.modified && !modified(s.id)) return false;
 		if (filters.id && !filters.id.some((id) => s.id.toLowerCase().includes(id))) return false;
 		if (text) return matchesQuery(s, text);
-		return filters.modified || filters.id ? true : group === null || s.group === group;
+		return filters.modified || filters.id ? true : group === null || inSelection(s, group);
 	});
 }
 
@@ -810,6 +798,10 @@ export function parseQuery(query: string): { filters: { modified: boolean; id: s
 
 export const SCHEMA = new Map(SETTINGS.map((s) => [s.id, s]));
 
+/** A sibling clause in an exclude map: `{ "when": "$(basename).ts" }`. */
+export const isSiblingClause = (v: unknown): v is { when: string } =>
+	!!v && typeof v === 'object' && !Array.isArray(v) && typeof (v as { when?: unknown }).when === 'string' && Object.keys(v).length === 1;
+
 /** The value if it fits the schema, else undefined (so the next layer down applies). */
 export function validate(schema: SettingSchema, value: unknown): unknown {
 	switch (schema.type) {
@@ -824,15 +816,20 @@ export function validate(schema: SettingSchema, value: unknown): unknown {
 		}
 		case 'string':
 			if (typeof value !== 'string') return undefined;
+			if (schema.pattern && !new RegExp(schema.pattern, 'u').test(value)) return undefined;
 			return schema.enum && !schema.enum.includes(value) && schema.id !== 'workbench.colorTheme' ? undefined : value;
 		case 'array':
 			if (!Array.isArray(value)) return undefined;
-			return value.every((v) => (schema.items === 'number' ? typeof v === 'number' && Number.isFinite(v) : typeof v === 'string')) ? value : undefined;
+			return value.every((v) => (schema.items === 'number' ? typeof v === 'number' && Number.isFinite(v) : typeof v === 'string' && (!schema.itemEnum || schema.itemEnum.includes(v))))
+				? value
+				: undefined;
 		case 'object': {
 			if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-			const ok = (v: unknown) => schema.values.split('|').includes(typeof v);
+			const ok = (v: unknown) => (schema.values === 'boolean|when' ? typeof v === 'boolean' || isSiblingClause(v) : schema.values.split('|').includes(typeof v));
 			return Object.values(value).every(ok) ? value : undefined;
 		}
+		case 'json':
+			return value !== undefined && matchesSchema(schema.schema, value) ? value : undefined;
 	}
 }
 
@@ -865,13 +862,25 @@ export function resolveSettings(
 		const ws = allowedIn(s, 'workspace') ? validate(s, workspace[s.id]) : undefined;
 		const us = validate(s, user[s.id]);
 		const source = rp !== undefined ? 'repo' : ws !== undefined ? 'workspace' : us !== undefined ? 'user' : 'default';
-		if (s.type === 'object' && source !== 'default') out.set(s.id, { value: { ...s.default, ...(us as object), ...(ws as object), ...(rp as object) }, source });
-		else out.set(s.id, { value: rp ?? ws ?? us ?? s.default, source });
+		if (mergesByKey(s) && source !== 'default') out.set(s.id, { value: { ...(s.default as object), ...(us as object), ...(ws as object), ...(rp as object) }, source });
+		// By source, not `??`: `null` is a real value for some settings (search.maxResults: no limit).
+		else out.set(s.id, { value: source === 'repo' ? rp : source === 'workspace' ? ws : source === 'user' ? us : s.default, source });
 	}
 	return out;
 }
 
-export type SettingProblem = { scope: SettingScope; id: string; message: string };
+/**
+ * Object settings (`files.exclude`, `editor.unicodeHighlight.allowedCharacters`, …) merge key by
+ * key across the layers, like VS Code's object configuration values.
+ */
+export function mergesByKey(s: SettingSchema): boolean {
+	if (s.type === 'object') return true;
+	if (s.type !== 'json') return false;
+	const types = schemaTypes(s.schema);
+	return types?.length === 1 && types[0] === 'object';
+}
+
+export type SettingProblem ={ scope: SettingScope; id: string; message: string };
 
 /** Values in a file that are ignored (VS Code underlines them in settings.json; the editor lists them). */
 export function settingProblems(values: Record<string, unknown>, scope: SettingScope, schemas: SettingSchema[] = SETTINGS): SettingProblem[] {
@@ -896,15 +905,17 @@ export function scopeRule(s: SettingSchema): string {
 function describeType(s: SettingSchema): string {
 	switch (s.type) {
 		case 'string':
-			return s.enum ? `one of ${s.enum.map((e) => JSON.stringify(e)).join(', ')}` : 'a string';
+			return s.enum ? `one of ${s.enum.map((e) => JSON.stringify(e)).join(', ')}` : s.pattern ? `a string matching ${s.pattern}` : 'a string';
 		case 'number':
 			return `${s.integer ? 'an integer' : 'a number'}${s.minimum !== undefined ? ` >= ${s.minimum}` : ''}${s.maximum !== undefined ? ` <= ${s.maximum}` : ''}`;
 		case 'boolean':
 			return 'true or false';
 		case 'array':
-			return `an array of ${s.items}s`;
+			return s.itemEnum ? `an array of ${s.itemEnum.map((e) => JSON.stringify(e)).join(', ')}` : `an array of ${s.items}s`;
 		case 'object':
-			return `an object of ${s.values.replace('|', ' or ')} values`;
+			return s.values === 'boolean|when' ? 'an object of true, false or { "when": "$(basename).ext" } values' : `an object of ${s.values.replace('|', ' or ')} values`;
+		case 'json':
+			return describeSchema(s.schema);
 	}
 }
 
@@ -930,6 +941,10 @@ export function settingTitle(schema: SettingSchema): { category: string; label: 
 export function jsonSchema(schemas: SettingSchema[] = SETTINGS) {
 	const properties: Record<string, unknown> = {};
 	for (const s of schemas) {
+		if (s.type === 'json') {
+			properties[s.id] = { ...s.schema, default: s.default, description: s.description };
+			continue;
+		}
 		const base: Record<string, unknown> = { type: s.type, default: s.default, description: s.description };
 		if (s.type === 'string' && s.enum) {
 			base.enum = s.enum;
@@ -940,8 +955,12 @@ export function jsonSchema(schemas: SettingSchema[] = SETTINGS) {
 			if (s.minimum !== undefined) base.minimum = s.minimum;
 			if (s.maximum !== undefined) base.maximum = s.maximum;
 		}
-		if (s.type === 'array') base.items = { type: s.items };
-		if (s.type === 'object') base.additionalProperties = { type: s.values.split('|') };
+		if (s.type === 'array') base.items = s.itemEnum ? { type: s.items, enum: s.itemEnum } : { type: s.items };
+		if (s.type === 'object')
+			base.additionalProperties =
+				s.values === 'boolean|when'
+					? { anyOf: [{ type: 'boolean' }, { type: 'object', properties: { when: { type: 'string', pattern: '\\w*\\$\\(basename\\)\\w*' } } }] }
+					: { type: s.values.split('|') };
 		properties[s.id] = base;
 	}
 	return { type: 'object', properties };

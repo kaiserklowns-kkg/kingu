@@ -1,0 +1,133 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/explorer.ts",
+	"export": "EXPLORER_SETTINGS",
+	"what": "explorer.*",
+	"entries": [
+		{
+			"id": "explorer.confirmDelete",
+			"group": "Explorer",
+			"th": "ถามก่อนย้ายไฟล์ไปถังขยะ"
+		},
+		{
+			"id": "explorer.sortOrder",
+			"group": "Explorer",
+			"th": "การเรียงไฟล์และโฟลเดอร์ใน Explorer",
+			"enumTh": [
+				"โฟลเดอร์ก่อน แล้วเรียงตามชื่อ",
+				"ไฟล์และโฟลเดอร์ปนกันตามชื่อ",
+				"ไฟล์ก่อนโฟลเดอร์",
+				"โฟลเดอร์ก่อน แล้วเรียงตามนามสกุลไฟล์",
+				"โฟลเดอร์ก่อน แล้วเรียงตามเวลาแก้ไขล่าสุด",
+				"โฟลเดอร์ก่อน แล้วไฟล์ที่มีไฟล์ซ้อนอยู่ แล้วเรียงตามชื่อ"
+			]
+		},
+		{
+			"id": "explorer.compactFolders",
+			"group": "Explorer",
+			"th": "รวมโฟลเดอร์ที่มีโฟลเดอร์ย่อยเดียวเป็นแถวเดียว เช่น src/lib/utils"
+		},
+		{
+			"id": "explorer.enableDragAndDrop",
+			"group": "Explorer",
+			"th": "ลากและวางเพื่อย้ายไฟล์และโฟลเดอร์ใน Explorer"
+		},
+		{
+			"id": "explorer.confirmDragAndDrop",
+			"group": "Explorer",
+			"th": "ถามก่อนย้ายไฟล์และโฟลเดอร์ด้วยการลากและวาง"
+		},
+		{
+			"id": "explorer.autoReveal",
+			"group": "Explorer",
+			"th": "เลือกและแสดงไฟล์ของ editor ที่เปิดอยู่ใน Explorer อัตโนมัติ"
+		},
+		{
+			"id": "explorer.excludeGitIgnore",
+			"group": "Explorer",
+			"th": "ซ่อนไฟล์ที่ .gitignore ไม่สนใจออกจาก Explorer"
+		},
+		{
+			"id": "explorer.autoRevealExclude",
+			"group": "Explorer",
+			"th": "pattern ของไฟล์และโฟลเดอร์ที่ไม่ต้องเลือกให้ใน Explorer เมื่อเปิดไฟล์",
+			"objectValues": "boolean|when"
+		},
+		{
+			"id": "explorer.sortOrderLexicographicOptions",
+			"group": "Explorer",
+			"th": "วิธีเรียงชื่อไฟล์และโฟลเดอร์ตามตัวอักษร",
+			"enumTh": [
+				"ตัวพิมพ์ใหญ่และเล็กปนกัน",
+				"ชื่อที่ขึ้นต้นด้วยตัวพิมพ์ใหญ่มาก่อน",
+				"ชื่อที่ขึ้นต้นด้วยตัวพิมพ์เล็กมาก่อน",
+				"เรียงตามรหัส Unicode"
+			]
+		},
+		{
+			"id": "explorer.sortOrderReverse",
+			"group": "Explorer",
+			"th": "กลับลำดับการเรียงไฟล์และโฟลเดอร์"
+		},
+		{
+			"id": "explorer.decorations.colors",
+			"group": "Explorer",
+			"th": "ใช้สีแสดงสถานะไฟล์ใน Explorer เช่น แก้ไขแล้วหรือไฟล์ใหม่"
+		},
+		{
+			"id": "explorer.decorations.badges",
+			"group": "Explorer",
+			"th": "แสดงตัวอักษรสถานะไฟล์ท้ายชื่อใน Explorer"
+		},
+		{
+			"id": "explorer.incrementalNaming",
+			"group": "Explorer",
+			"th": "วิธีตั้งชื่อใหม่เมื่อวางไฟล์ซ้ำชื่อเดิม",
+			"enumTh": [
+				"เติมคำว่า copy ต่อท้ายชื่อ",
+				"เพิ่มตัวเลขในชื่อ",
+				"ไม่ตั้งชื่อใหม่ ถามว่าจะเขียนทับไหม"
+			]
+		},
+		{
+			"id": "explorer.autoOpenDroppedFile",
+			"group": "Explorer",
+			"th": "เปิดไฟล์ที่ลากมาวางใน Explorer อัตโนมัติ"
+		},
+		{
+			"id": "explorer.copyRelativePathSeparator",
+			"group": "Explorer",
+			"th": "ตัวคั่นพาธเมื่อคัดลอก relative path",
+			"enumTh": [
+				"ใช้ /",
+				"ใช้ \\",
+				"ตามระบบปฏิบัติการ"
+			]
+		},
+		{
+			"id": "explorer.copyPathSeparator",
+			"group": "Explorer",
+			"th": "ตัวคั่นพาธเมื่อคัดลอกพาธเต็ม",
+			"enumTh": [
+				"ใช้ /",
+				"ใช้ \\",
+				"ตามระบบปฏิบัติการ"
+			]
+		},
+		{
+			"id": "explorer.fileNesting.enabled",
+			"group": "Explorer",
+			"th": "ซ้อนไฟล์ที่เกี่ยวข้องกันไว้ใต้ไฟล์หลักใน Explorer"
+		},
+		{
+			"id": "explorer.fileNesting.expand",
+			"group": "Explorer",
+			"th": "กางไฟล์ที่ซ้อนอยู่ไว้ตั้งแต่แรก"
+		},
+		{
+			"id": "explorer.fileNesting.patterns",
+			"group": "Explorer",
+			"th": "กฎการซ้อนไฟล์ แต่ละรายการคือ pattern ของไฟล์หลักกับรายชื่อไฟล์ที่ซ้อนใต้มัน",
+			"objectValues": "string"
+		}
+	]
+}

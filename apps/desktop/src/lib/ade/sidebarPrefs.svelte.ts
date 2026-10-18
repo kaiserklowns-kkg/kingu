@@ -1,66 +1,83 @@
-// Agents side bar state that Orca keeps across restarts: grouping, sort, card layout, filters,
-// collapsed groups, the activity view, and per folder the pinned worktrees and manual order.
+// Agents side bar preferences. Grouping, sort, card layout and the Filters switches are the
+// `kingu.sidebar.*` user settings (Orca's sidebar UI preferences; settings.json and the Settings
+// page edit the same values). What only this side bar remembers stays in local storage: collapsed
+// groups, the activity view, "except default branch", and per folder the pinned worktrees, manual
+// order and hand-marked unread ones.
 
+import { settings } from '#lib/settings/settings.svelte.ts';
 import type { Filters, GroupBy, SortBy } from './sidebarModel';
 
 const KEY = 'kingu.ade.sidebar';
 
 type PerRoot = { pinned: string[]; manual: string[]; unread: string[] };
-type Saved = { groupBy: GroupBy; sortBy: SortBy; compact: boolean; filters: Filters; collapsed: string[]; activity: boolean; roots: Record<string, PerRoot> };
+type Saved = { exceptDefault: boolean; collapsed: string[]; activity: boolean; roots: Record<string, PerRoot> };
 
-const DEFAULTS: Saved = {
-	groupBy: 'repo',
-	sortBy: 'recent',
-	compact: false,
-	filters: { hideSleeping: false, exceptDefault: true, hideDefault: false },
-	collapsed: [],
-	activity: false,
-	roots: {}
-};
+const DEFAULTS: Saved = { exceptDefault: true, collapsed: [], activity: false, roots: {} };
+
+/** Filter switch → its setting (`exceptDefault` is not one). */
+const FILTER_SETTING = {
+	hideSleeping: 'kingu.sidebar.hideSleeping',
+	hideDefault: 'kingu.sidebar.hideDefaultBranch',
+	showActiveOnly: 'kingu.sidebar.showActiveOnly',
+	hideAutomation: 'kingu.sidebar.hideAutomationTasks',
+	hideDetached: 'kingu.sidebar.hideDetachedHead'
+} as const satisfies Partial<Record<keyof Filters, string>>;
 
 function load(): Saved {
 	try {
 		const s = JSON.parse(localStorage.getItem(KEY) ?? '{}');
-		return { ...DEFAULTS, ...s, filters: { ...DEFAULTS.filters, ...s.filters } };
+		// Older saves kept the filters (and grouping) here; only `exceptDefault` still lives here.
+		return { ...DEFAULTS, ...s, exceptDefault: s.exceptDefault ?? s.filters?.exceptDefault ?? DEFAULTS.exceptDefault };
 	} catch {
 		return DEFAULTS;
 	}
 }
 
+const setUser = (id: string, value: unknown) => void settings.set(id, value, 'user');
+
 class SidebarPrefs {
 	#s = $state<Saved>(load());
 
-	get groupBy() {
-		return this.#s.groupBy;
+	get groupBy(): GroupBy {
+		return settings.get<GroupBy>('kingu.sidebar.groupBy');
 	}
 	set groupBy(v: GroupBy) {
-		this.#s.groupBy = v;
+		setUser('kingu.sidebar.groupBy', v);
 		this.#s.collapsed = [];
 		this.#save();
 	}
-	get sortBy() {
-		return this.#s.sortBy;
+	get sortBy(): SortBy {
+		return settings.get<SortBy>('kingu.sidebar.sortBy');
 	}
 	set sortBy(v: SortBy) {
-		this.#s.sortBy = v;
-		this.#save();
+		setUser('kingu.sidebar.sortBy', v);
 	}
 	get compact() {
-		return this.#s.compact;
+		return settings.get<boolean>('kingu.sidebar.compactCards') === true;
 	}
 	set compact(v: boolean) {
-		this.#s.compact = v;
-		this.#save();
+		setUser('kingu.sidebar.compactCards', v);
 	}
 	get filters(): Filters {
-		return this.#s.filters;
+		const on = (k: keyof typeof FILTER_SETTING) => settings.get<boolean>(FILTER_SETTING[k]) === true;
+		return {
+			hideSleeping: on('hideSleeping'),
+			hideDefault: on('hideDefault'),
+			showActiveOnly: on('showActiveOnly'),
+			hideAutomation: on('hideAutomation'),
+			hideDetached: on('hideDetached'),
+			exceptDefault: this.#s.exceptDefault
+		};
 	}
 	setFilter(key: keyof Filters, v: boolean) {
-		this.#s.filters[key] = v;
-		this.#save();
+		if (key === 'exceptDefault') {
+			this.#s.exceptDefault = v;
+			this.#save();
+		} else setUser(FILTER_SETTING[key], v);
 	}
 	clearFilters() {
-		this.#s.filters = { ...DEFAULTS.filters };
+		for (const id of Object.values(FILTER_SETTING)) setUser(id, undefined);
+		this.#s.exceptDefault = DEFAULTS.exceptDefault;
 		this.#save();
 	}
 	get activity() {

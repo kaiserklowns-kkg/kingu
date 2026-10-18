@@ -2,6 +2,7 @@
 // the repo config file `kingu.yaml` (Orca's orca.yaml). The per-repo values live in Kingu's own
 // per-repository store (settings scope `repo`), so they are the user's, never the repository's:
 // anything that runs a command is `local` (user or per-repo store, never `.kingu/settings.json`).
+// Rust reads the command ones itself (agent/scripts.rs); ade/tasks.svelte.ts runs the plan.
 import type { SettingSchema } from '../registry';
 
 export const REPO_SETTINGS: SettingSchema[] = [
@@ -46,7 +47,7 @@ export const REPO_SETTINGS: SettingSchema[] = [
 		type: 'string',
 		default: '',
 		description:
-			'คำสั่งที่รันใน terminal ของงานที่เริ่มจาก GitHub issue (Orca: Custom GitHub Issue Command) แทนที่ issueCommand ใน kingu.yaml ใช้ {{issue}} แทนเลข issue และ {{artifact_url}} แทน URL ของ issue (Command run in a new terminal of a task started from a GitHub issue; overrides kingu.yaml issueCommand. {{issue}} and {{artifact_url}} are substituted.)',
+			'คำสั่งที่รันใน terminal ใหม่ของงานที่เริ่มจาก GitHub issue (Orca: Custom GitHub Issue Command) แทนที่ issueCommand ใน kingu.yaml ใช้ {{issue}} แทนเลข issue และ {{artifact_url}} แทน URL ของ issue ซึ่งส่งเป็นตัวแปร $KINGU_ISSUE / $KINGU_ARTIFACT_URL (Command run in a new terminal of a task started from a GitHub issue; overrides kingu.yaml issueCommand. {{issue}} and {{artifact_url}} become $KINGU_ISSUE and $KINGU_ARTIFACT_URL.)',
 		scope: 'local'
 	},
 	{
@@ -71,19 +72,6 @@ export const REPO_SETTINGS: SettingSchema[] = [
 		],
 		description:
 			'เริ่ม agent เมื่อไรเมื่อ worktree มีสคริปต์ตั้งค่า (Orca: setup agent startup policy) ถ้าไม่ได้ตั้งไว้จะใช้ setupAgentStartupPolicy ใน kingu.yaml (When the agent starts in a worktree that runs a setup script; unset falls back to kingu.yaml setupAgentStartupPolicy.)'
-	},
-	{
-		id: 'kingu.worktree.setupScriptLaunchMode',
-		group: 'Worktrees',
-		type: 'string',
-		default: 'new-tab',
-		enum: ['new-tab', 'split-vertical', 'split-horizontal'],
-		enumDescriptions: [
-			'แท็บ "Setup" แยกที่ไม่แย่งโฟกัส (A background Setup tab.)',
-			'แบ่งจอแนวตั้งข้าง terminal ของ agent (A pane beside the agent terminal.)',
-			'แบ่งจอแนวนอนใต้ terminal ของ agent (A pane below the agent terminal.)'
-		],
-		description: 'สคริปต์ตั้งค่า worktree รันที่ไหน (Orca: setup script launch mode) (Where the setup script runs in a new worktree.)'
 	},
 	{
 		id: 'kingu.worktree.alwaysForceDelete',

@@ -1,0 +1,182 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/breadcrumbs.ts",
+	"export": "BREADCRUMBS_SETTINGS",
+	"what": "breadcrumbs.*",
+	"entries": [
+		{
+			"id": "breadcrumbs.enabled",
+			"group": "Workbench",
+			"th": "เปิดหรือปิดแถบ breadcrumbs สำหรับนำทาง"
+		},
+		{
+			"id": "breadcrumbs.filePath",
+			"group": "Workbench",
+			"th": "แสดง path ของไฟล์ใน breadcrumbs หรือไม่และแสดงอย่างไร",
+			"enumTh": [
+				"แสดง path ทั้งหมด",
+				"ไม่แสดง path",
+				"แสดงเฉพาะชื่อไฟล์"
+			]
+		},
+		{
+			"id": "breadcrumbs.symbolPath",
+			"group": "Workbench",
+			"th": "แสดง symbol ใน breadcrumbs หรือไม่และแสดงอย่างไร",
+			"enumTh": [
+				"แสดงทุก symbol",
+				"ไม่แสดง symbol",
+				"แสดงเฉพาะ symbol ปัจจุบัน"
+			]
+		},
+		{
+			"id": "breadcrumbs.symbolSortOrder",
+			"group": "Workbench",
+			"th": "ลำดับของ symbol ในรายการที่เปิดจาก breadcrumbs",
+			"enumTh": [
+				"เรียงตามตำแหน่งในไฟล์",
+				"เรียงตามชื่อ",
+				"เรียงตามชนิดของ symbol"
+			]
+		},
+		{
+			"id": "breadcrumbs.icons",
+			"group": "Workbench",
+			"th": "แสดงไอคอนใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.symbolPathSeparator",
+			"group": "Workbench",
+			"th": "ตัวคั่นเมื่อคัดลอก path ของ symbol จาก breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showFiles",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด file ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showModules",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด module ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showNamespaces",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด namespace ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showPackages",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด package ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showClasses",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด class ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showMethods",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด method ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showProperties",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด property ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showFields",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด field ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showConstructors",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด constructor ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showEnums",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด enum ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showInterfaces",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด interface ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showFunctions",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด function ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showVariables",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด variable ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showConstants",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด constant ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showStrings",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด string ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showNumbers",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด number ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showBooleans",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด boolean ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showArrays",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด array ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showObjects",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด object ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showKeys",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด key ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showNull",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด null ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showEnumMembers",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด enum member ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showStructs",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด struct ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showEvents",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด event ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showOperators",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด operator ใน breadcrumbs"
+		},
+		{
+			"id": "breadcrumbs.showTypeParameters",
+			"group": "Workbench",
+			"th": "แสดง symbol ชนิด type parameter ใน breadcrumbs"
+		}
+	]
+}

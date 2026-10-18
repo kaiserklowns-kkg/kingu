@@ -113,7 +113,8 @@ describe('schema', () => {
 		expect(String(m.get('window.title')?.value)).toContain('${activeEditorShort}${separator}${rootName}');
 		for (const id of [...Object.keys(expected), 'window.title']) {
 			const d = SCHEMA.get(id)!.description;
-			expect([id, /[฀-๿]/.test(d), /\([A-Z][^)]*\.\)/.test(d)]).toEqual([id, true, true]);
+			// Thai first, then VS Code's English description in parentheses (which may hold parentheses itself).
+			expect([id, /^[^(]*[฀-๿]/.test(d), /\([\s\S]*[A-Za-z][\s\S]*\)$/.test(d)]).toEqual([id, true, true]);
 		}
 		expect(SCHEMA.get('kingu.agentsControl.enabled')).toMatchObject({ enum: ['hidden', 'badge', 'compact'] });
 		expect(resolveSettings({ 'workbench.layoutControl.type': 'sideways' }, {}).get('workbench.layoutControl.type')?.source).toBe('default');
@@ -146,7 +147,7 @@ describe('ADE settings', () => {
 			const d = SCHEMA.get(id)!.description;
 			expect([id, /[฀-๿]/.test(d), /\([A-Z][^)]*\.\)/.test(d)]).toEqual([id, true, true]);
 		}
-		expect(settingsSections().find((s) => s.id === 'ade')?.groups.slice(0, 2)).toEqual(['Agent', 'Notifications']);
+		expect(settingsSections().find((s) => s.id === 'ade')?.groups.slice(0, 3)).toEqual(['Agent', 'Agent Chat', 'Notifications']);
 	});
 
 	test('settings that run commands, loosen prompts or delete branches are user-only', () => {
@@ -207,7 +208,11 @@ describe('settings sections', () => {
 	test('a group filters, a query searches everything', () => {
 		expect(settingsInView('', 'Terminal').every((s) => s.group === 'Terminal')).toBe(true);
 		expect(settingsInView('', null)).toHaveLength(SETTINGS.length);
-		expect(settingsInView('fontSize', 'Agent').map((s) => s.id)).toEqual(['editor.fontSize', 'terminal.integrated.fontSize']);
+		const found = settingsInView('fontSize', 'Agent').map((s) => s.id);
+		expect(found.slice(0, 2)).toEqual(['editor.fontSize', 'terminal.integrated.fontSize']);
+		expect(found.every((id) => id.toLowerCase().includes('fontsize'))).toBe(true);
+		expect(found).toContain('debug.console.fontSize');
+		expect(found).toContain('kingu.chat.fontSize');
 	});
 });
 
@@ -215,7 +220,7 @@ describe('VS Code IDE settings', () => {
 	test('object settings merge key by key, workspace over user over default', () => {
 		const m = resolveSettings({ 'files.exclude': { '**/tmp': true, '**/.git': false } }, { 'files.exclude': { '**/out': true } });
 		expect(m.get('files.exclude')).toEqual({
-			value: { '**/.git': false, '**/.svn': true, '**/.hg': true, '**/CVS': true, '**/.DS_Store': true, '**/Thumbs.db': true, '**/tmp': true, '**/out': true },
+			value: { '**/.git': false, '**/.svn': true, '**/.hg': true, '**/.jj': true, '**/.DS_Store': true, '**/Thumbs.db': true, '**/tmp': true, '**/out': true },
 			source: 'workspace'
 		});
 		expect(resolveSettings({ 'files.exclude': { x: 'yes' } }, {}).get('files.exclude')?.source).toBe('default');
@@ -242,7 +247,7 @@ describe('VS Code IDE settings', () => {
 		const modified = (id: string) => id === 'editor.fontSize' || id === 'files.autoSave';
 		expect(settingsInView('@modified', null, SETTINGS, modified).map((s) => s.id)).toEqual(['editor.fontSize', 'files.autoSave']);
 		expect(settingsInView('@modified font', 'Agent', SETTINGS, modified).map((s) => s.id)).toEqual(['editor.fontSize']);
-		expect(settingsInView('@id:files.autoSave', null).map((s) => s.id)).toEqual(['files.autoSave', 'files.autoSaveDelay']);
+		expect(settingsInView('@id:files.autoSave', null).map((s) => s.id)).toEqual(['files.autoSave', 'files.autoSaveDelay', 'files.autoSaveWorkspaceFilesOnly', 'files.autoSaveWhenNoErrors']);
 		expect(parseQuery('@modified  tab size')).toEqual({ filters: { modified: true, id: null }, text: 'tab size' });
 	});
 
@@ -254,7 +259,8 @@ describe('VS Code IDE settings', () => {
 	test('every IDE setting: Thai + English description, a valid default, a known section', () => {
 		const sectionGroups = new Set(SETTINGS_SECTIONS.flatMap((s) => s.groups));
 		for (const s of IDE_SETTINGS) {
-			expect([s.id, /[฀-๿]/.test(s.description), /\([A-Z][^)]*\.\)/.test(s.description)]).toEqual([s.id, true, true]);
+			// Thai first, then VS Code's English description in parentheses (which may hold parentheses itself).
+			expect([s.id, /^[^(]*[฀-๿]/.test(s.description), /\([\s\S]*[A-Za-z][\s\S]*\)$/.test(s.description)]).toEqual([s.id, true, true]);
 			expect([s.id, validate(s, s.default) !== undefined]).toEqual([s.id, true]);
 			expect([s.id, sectionGroups.has(s.group)]).toEqual([s.id, true]);
 		}
@@ -266,8 +272,10 @@ describe('VS Code IDE settings', () => {
 		const walk = (dir: string) => {
 			for (const name of readdirSync(dir)) {
 				const p = join(dir, name);
-				if (statSync(p).isDirectory()) walk(p);
-				else if (/\.(ts|svelte|rs)$/.test(name) && !/\.test\.ts$|registry\.ts$|ideSettings\.ts$/.test(name)) sources.push(readFileSync(p, 'utf8'));
+				if (statSync(p).isDirectory()) {
+					if (name !== 'testdata') walk(p);
+				}
+				else if (/\.(ts|svelte|rs)$/.test(name) && !/\.test\.ts$|registry\.ts$|ideSettings\.ts$/.test(name) && !p.includes('/settings/vscode/')) sources.push(readFileSync(p, 'utf8'));
 			}
 		};
 		walk(join(import.meta.dir, '..'));
@@ -277,5 +285,21 @@ describe('VS Code IDE settings', () => {
 		// Per-platform terminal settings are read as `terminal.integrated.shell.${platform}`.
 		const asRead = (id: string) => id.replace(/\.(osx|linux)$/, '.${platform}');
 		for (const s of SETTINGS.filter((x) => !x.id.startsWith('kingu.'))) expect([s.id, all.includes(`'${s.id}'`) || all.includes(asRead(s.id))]).toEqual([s.id, true]);
+	});
+});
+
+describe('http.* proxy settings', () => {
+	const proxy = SCHEMA.get('http.proxy')!;
+
+	test('user-only, in Application › Proxy', () => {
+		for (const id of ['http.proxy', 'http.noProxy', 'http.proxyStrictSSL', 'http.proxyAuthorization']) expect([id, SCHEMA.get(id)?.scope, SCHEMA.get(id)?.group]).toEqual([id, 'application', 'Application']);
+		expect(settingsInView('', null).some((s) => s.id === 'http.proxy')).toBe(true);
+	});
+
+	test("VS Code's URL pattern decides which proxy values apply", () => {
+		for (const ok of ['', 'http://proxy.example.com:8080', 'https://u:p@10.0.0.1:3128/', 'socks5h://[::1]:1080']) expect([ok, validate(proxy, ok)]).toEqual([ok, ok]);
+		for (const bad of ['proxy:8080', 'ftp://proxy:21', 'http://proxy:8080/path']) expect([bad, validate(proxy, bad)]).toEqual([bad, undefined]);
+		expect(settingProblems({ 'http.proxy': 'proxy:8080' }, 'user')).toHaveLength(1);
+		expect(settingProblems({ 'http.proxy': 'http://proxy:8080' }, 'workspace')[0].message).toContain('User');
 	});
 });

@@ -2,17 +2,25 @@ import { invoke } from '@tauri-apps/api/core';
 import { ask, CANCEL, choose } from '#lib/workbench/messageBox.ts';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { clientLog } from '#lib/client-log.ts';
-import { enabledGlobs, isExcluded, sortEntries, type SortOrder } from '#lib/settings/mappings.ts';
+import { enabledGlobs, hiddenBySibling, isExcluded, siblingClauses, sortEntries, type LexicographicOrder, type SortOrder } from '#lib/settings/mappings.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { editors } from './editors.svelte';
 import { affectedBy, baseName, dirsToRefresh, isUnder, joinRel, parentOf, remapPath, validateName } from './fileTree';
 import { notifications } from './notifications.svelte';
 import { compactChain, compactLabel, dropTarget, moveQuestion, planTransfer, rangeSelection, topLevel } from './explorerModel';
+import { nestFiles } from './fileNesting';
+
+/** macOS file systems ignore case, so file nesting does too (VS Code's PathCaseSensitive check). */
+const CASE_SENSITIVE_FS = !(typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac'));
 
 /** `ignored`: matched by `.gitignore` (drawn dimmed). `modified`: ms since the epoch. */
 export type DirEntry = { name: string; rel: string; is_dir: boolean; ignored?: boolean; modified?: number };
-/** `chain`: the folders a compacted row stands for (explorer.compactFolders), outermost first. */
-export type Row = DirEntry & { depth: number; expanded: boolean; chain?: string[] };
+/**
+ * `chain`: the folders a compacted row stands for (explorer.compactFolders), outermost first.
+ * `nests`: how many files are nested under this file (explorer.fileNesting); `expanded` is then
+ * whether they show.
+ */
+export type Row = DirEntry & { depth: number; expanded: boolean; chain?: string[]; nests?: number };
 /** Files cut or copied in the Explorer (VS Code keeps its own file clipboard). */
 export type FileClipboard = { paths: string[]; cut: boolean };
 /** The inline input row (VS Code's explorer edit box): a new entry in `parent`, or a rename of `rel`. */
@@ -33,6 +41,8 @@ class Explorer {
 	clipboard = $state<FileClipboard | null>(null);
 	/** A row the view should focus once it is rendered (Reveal in Explorer View). */
 	focusRequest = $state<string | null>(null);
+	/** Nested files' parents whose expansion differs from explorer.fileNesting.expand. */
+	nestToggled = new SvelteSet<string>();
 
 	async load(rel: string) {
 		try {
@@ -88,6 +98,50 @@ class Explorer {
 
 	collapseAll() {
 		this.expanded.clear();
+		this.nestToggled.clear();
+		if (settings.get<boolean>('explorer.fileNesting.expand')) for (const parent of this.#nestParents()) this.nestToggled.add(parent);
+	}
+
+	// --- File nesting (explorer.fileNesting.*) ---------------------------------------------------
+
+	/** The nests of a loaded folder: a parent file's rel → the entries nested under it. */
+	nestsOf(rel: string): Map<string, DirEntry[]> {
+		const out = new Map<string, DirEntry[]>();
+		if (!settings.get<boolean>('explorer.fileNesting.enabled')) return out;
+		const files = this.#shownEntries(rel).filter((e) => !e.is_dir);
+		const byName = new Map(files.map((e) => [e.name, e]));
+		const nested = nestFiles(
+			files.map((e) => e.name),
+			baseName(rel),
+			settings.get<Record<string, unknown>>('explorer.fileNesting.patterns'),
+			CASE_SENSITIVE_FS
+		);
+		for (const [parent, children] of nested) out.set(byName.get(parent)!.rel, children.map((n) => byName.get(n)!));
+		return out;
+	}
+
+	isNestExpanded(rel: string): boolean {
+		return settings.get<boolean>('explorer.fileNesting.expand') !== this.nestToggled.has(rel);
+	}
+
+	toggleNest(rel: string, open = !this.isNestExpanded(rel)) {
+		if (open === this.isNestExpanded(rel)) return;
+		if (this.nestToggled.has(rel)) this.nestToggled.delete(rel);
+		else this.nestToggled.add(rel);
+	}
+
+	*#nestParents() {
+		for (const dir of this.children.keys()) yield* this.nestsOf(dir).keys();
+	}
+
+	/** explorer.sortOrder, explorer.sortOrderLexicographicOptions and explorer.sortOrderReverse. */
+	#sort<T extends DirEntry & { hasNests?: boolean }>(entries: T[]): T[] {
+		return sortEntries(
+			entries,
+			settings.get<SortOrder>('explorer.sortOrder'),
+			settings.get<LexicographicOrder>('explorer.sortOrderLexicographicOptions'),
+			settings.get<boolean>('explorer.sortOrderReverse')
+		);
 	}
 
 	#forget(rel: string) {
@@ -95,12 +149,22 @@ class Explorer {
 		for (const k of [...this.expanded]) if (isUnder(k, rel)) this.expanded.delete(k);
 	}
 
-	/** A folder's entries as shown: files.exclude and explorer.excludeGitIgnore hide, explorer.sortOrder sorts. */
-	visibleChildren(rel: string): DirEntry[] {
+	/** A folder's entries that files.exclude and explorer.excludeGitIgnore leave. */
+	#shownEntries(rel: string): DirEntry[] {
 		const exclude = enabledGlobs(settings.get('files.exclude'));
 		const gitIgnored = settings.get<boolean>('explorer.excludeGitIgnore');
-		const shown = (this.children.get(rel) ?? []).filter((e) => !(gitIgnored && e.ignored) && !isExcluded(e.rel, exclude));
-		return sortEntries(shown, settings.get<SortOrder>('explorer.sortOrder'));
+		const entries = this.children.get(rel) ?? [];
+		// files.exclude sibling clauses (`"**/*.js": { "when": "$(basename).ts" }`) look at this folder.
+		const clauses = siblingClauses(settings.get('files.exclude'));
+		const here = new Set(entries.map((e) => e.rel));
+		return entries.filter((e) => !(gitIgnored && e.ignored) && !isExcluded(e.rel, exclude) && !hiddenBySibling(e.rel, clauses, (p) => here.has(p)));
+	}
+
+	/** A folder's entries as shown, sorted; files nested under another file (explorer.fileNesting) are left out. */
+	visibleChildren(rel: string): (DirEntry & { hasNests?: boolean })[] {
+		const nests = this.nestsOf(rel);
+		const nested = new Set([...nests.values()].flat().map((e) => e.rel));
+		return this.#sort(this.#shownEntries(rel).filter((e) => !nested.has(e.rel)).map((e) => (nests.has(e.rel) ? { ...e, hasNests: true } : e)));
 	}
 
 	/** Visible rows in display order, like VS Code's flattened tree. With explorer.compactFolders an
@@ -110,7 +174,15 @@ class Explorer {
 		const compact = settings.get<boolean>('explorer.compactFolders');
 		const loaded = (rel: string) => (this.expanded.has(rel) && this.children.has(rel) ? this.visibleChildren(rel) : null);
 		const walk = (rel: string, depth: number) => {
+			const nests = this.nestsOf(rel);
 			for (const e of this.visibleChildren(rel)) {
+				const nestedFiles = nests.get(e.rel);
+				if (nestedFiles) {
+					const open = this.isNestExpanded(e.rel);
+					out.push({ ...e, depth, expanded: open, nests: nestedFiles.length });
+					if (open) for (const child of this.#sort(nestedFiles)) out.push({ ...child, depth: depth + 1, expanded: false });
+					continue;
+				}
 				const chain = compact && e.is_dir ? compactChain(e.rel, loaded) : [e.rel];
 				const last = chain[chain.length - 1];
 				const entry = chain.length > 1 ? (this.children.get(parentOf(last))?.find((c) => c.rel === last) ?? e) : e;
@@ -127,6 +199,8 @@ class Explorer {
 	async reveal(rel: string) {
 		const parts = rel.split('/');
 		for (let i = 0; i < parts.length; i++) await this.expand(parts.slice(0, i).join('/'));
+		// A file nested under another one (explorer.fileNesting): open its nest.
+		for (const [parent, nested] of this.nestsOf(parentOf(rel))) if (nested.some((e) => e.rel === rel)) this.toggleNest(parent, true);
 		this.select(rel);
 	}
 
@@ -218,7 +292,11 @@ class Explorer {
 		const created: string[] = [];
 		for (const op of ops) {
 			try {
-				if (copy) created.push(await invoke<string>('fs_copy', { from: op.from, toDir: dir }));
+				if (copy) {
+					const to = await this.#copyReplacing(op.from, dir, op.to);
+					if (to === null) continue;
+					created.push(to);
+				}
 				else {
 					const to = await this.#moveReplacing(op.from, dir, op.to);
 					if (to === null) continue;
@@ -242,26 +320,49 @@ class Explorer {
 		return true;
 	}
 
-	/** Rust never overwrites: a clash asks "Replace?" (VS Code), then trashes the old one first. */
+	/**
+	 * Copy (paste, ⌥-drag): a clash gets a new name by explorer.incrementalNaming; with naming
+	 * `disabled` it asks "Replace?" like a move, then copies over the old one.
+	 */
+	async #copyReplacing(from: string, dir: string, to: string): Promise<string | null> {
+		const naming = settings.get<string>('explorer.incrementalNaming');
+		try {
+			return await invoke<string>('fs_copy', { from, toDir: dir, naming });
+		} catch (e) {
+			if (!/already exists/.test(String(e))) throw e;
+		}
+		if (from === to) throw new Error(`'${baseName(from)}' มีอยู่แล้วในโฟลเดอร์นี้ (explorer.incrementalNaming is disabled.)`);
+		if (!(await this.#replaceExisting(to))) return null;
+		return invoke<string>('fs_copy', { from, toDir: dir, naming });
+	}
+
+	/** Rust never overwrites: a clash asks "Replace?" (VS Code), then deletes the old one first. */
 	async #moveReplacing(from: string, dir: string, to: string): Promise<string | null> {
 		try {
 			return await invoke<string>('fs_move', { from, toDir: dir });
 		} catch (e) {
 			if (!/already exists/.test(String(e))) throw e;
 		}
-		const replace = await ask(`มี '${baseName(to)}' อยู่ในโฟลเดอร์ปลายทางแล้ว แทนที่หรือไม่? (A file or folder with the name '${baseName(to)}' already exists in the destination folder. Do you want to replace it?)\n\nของเดิมจะถูกย้ายไปถังขยะ`, {
-			title: 'Replace',
-			kind: 'warning',
-			okLabel: 'แทนที่ (Replace)',
-			cancelLabel: 'ยกเลิก'
-		});
-		if (!replace) return null;
-		if (editors.allTabs().some((t) => t.dirty && affectedBy([t.path], to).length)) throw new Error(`${to}: มีการแก้ไขที่ยังไม่บันทึก`);
-		await invoke('fs_delete', { rel: to });
-		for (const t of affectedBy([...editors.openPaths()], to)) editors.closeEverywhere(t);
-		this.#forget(to);
+		if (!(await this.#replaceExisting(to))) return null;
 		return invoke<string>('fs_move', { from, toDir: dir });
 	}
+
+	/** Asks to replace `to`, then deletes it (files.enableTrash) and closes its tabs. */
+	async #replaceExisting(to: string): Promise<boolean> {
+		const replace = await ask(
+			`มี '${baseName(to)}' อยู่ในโฟลเดอร์ปลายทางแล้ว แทนที่หรือไม่? (A file or folder with the name '${baseName(to)}' already exists in the destination folder. Do you want to replace it?)\n\n${this.#useTrash() ? 'ของเดิมจะถูกย้ายไปถังขยะ' : 'ของเดิมจะถูกลบถาวร'}`,
+			{ title: 'Replace', kind: 'warning', okLabel: 'แทนที่ (Replace)', cancelLabel: 'ยกเลิก' }
+		);
+		if (!replace) return false;
+		if (editors.allTabs().some((t) => t.dirty && affectedBy([t.path], to).length)) throw new Error(`${to}: มีการแก้ไขที่ยังไม่บันทึก`);
+		await invoke('fs_delete', { rel: to, useTrash: this.#useTrash() });
+		for (const t of affectedBy([...editors.openPaths()], to)) editors.closeEverywhere(t);
+		this.#forget(to);
+		return true;
+	}
+
+	/** files.enableTrash: deletes go to the Trash, or are permanent. */
+	#useTrash = () => settings.get<boolean>('files.enableTrash');
 
 	#afterMove(from: string, to: string) {
 		const wasExpanded = [...this.expanded].filter((k) => isUnder(k, from));
@@ -273,13 +374,15 @@ class Explorer {
 	/** Files dropped from Finder: copied into `dir` (Rust only accepts the paths of the last drop). */
 	async importDropped(paths: string[], dir: string) {
 		try {
-			const created = await invoke<string[]>('fs_import', { paths, toDir: dir });
+			const created = await invoke<string[]>('fs_import', { paths, toDir: dir, naming: settings.get<string>('explorer.incrementalNaming') });
 			if (dir) this.expanded.add(dir);
 			await this.refresh([...created, dir]);
 			if (dir && !this.children.has(dir)) await this.load(dir);
 			this.selection.clear();
 			for (const c of created) this.selection.add(c);
 			this.selected = created.at(-1) ?? this.selected;
+			// explorer.autoOpenDroppedFile: one dropped file opens in the editor.
+			if (created.length === 1 && !this.isDir(created[0]) && settings.get<boolean>('explorer.autoOpenDroppedFile')) editors.open(created[0], { preview: true });
 		} catch (e) {
 			notifications.error(`คัดลอกไฟล์เข้ามาไม่สำเร็จ (Copy failed): ${e}`);
 		}
@@ -365,7 +468,7 @@ class Explorer {
 		editors.remap((path) => remapPath(path, from, to));
 	}
 
-	/** Delete: confirm, move to the Trash, close its tabs. Acts on the whole selection when `rel` is in it. */
+	/** Delete: confirm, move to the Trash (or delete for good: files.enableTrash), close its tabs. Acts on the whole selection when `rel` is in it. */
 	async delete(rel = this.selected) {
 		if (!rel) return;
 		const targets = this.targets(rel);
@@ -374,19 +477,22 @@ class Explorer {
 		const tabs = affectedBy([...editors.openPaths()], rel);
 		const dirty = new Set(editors.allTabs().filter((t) => t.dirty && tabs.includes(t.path)).map((t) => t.path)).size;
 		const what = isDir ? `โฟลเดอร์ '${baseName(rel)}' และทุกอย่างข้างใน` : `'${baseName(rel)}'`;
-		// explorer.confirmDelete off skips the question, except when unsaved edits would be lost.
-		const confirm = settings.get<boolean>('explorer.confirmDelete') || dirty > 0;
+		// explorer.confirmDelete off skips the question, except when unsaved edits would be lost or
+		// the delete is permanent (files.enableTrash off), like VS Code.
+		const useTrash = this.#useTrash();
+		const confirm = settings.get<boolean>('explorer.confirmDelete') || dirty > 0 || !useTrash;
+		const unsaved = dirty ? `\n\nมี ${dirty} ไฟล์ที่ยังไม่บันทึก การแก้ไขจะหายไป` : '';
 		const ok =
 			!confirm ||
-			(await ask(`ย้าย ${what} ไปที่ถังขยะ?${dirty ? `\n\nมี ${dirty} ไฟล์ที่ยังไม่บันทึก การแก้ไขจะหายไป` : ''}\n\nกู้คืนได้จากถังขยะ`, {
-				title: 'Delete',
-				kind: 'warning',
-				okLabel: 'ย้ายไปถังขยะ',
-				cancelLabel: 'ยกเลิก'
-			}));
+			(await ask(
+				useTrash
+					? `ย้าย ${what} ไปที่ถังขยะ?${unsaved}\n\nกู้คืนได้จากถังขยะ`
+					: `ลบ ${what} ถาวร? (Are you sure you want to permanently delete '${baseName(rel)}'?)${unsaved}\n\nการลบนี้ย้อนกลับไม่ได้ (This action is irreversible!)`,
+				{ title: 'Delete', kind: 'warning', okLabel: useTrash ? 'ย้ายไปถังขยะ' : 'ลบถาวร (Delete)', cancelLabel: 'ยกเลิก' }
+			));
 		if (!ok) return;
 		try {
-			await invoke('fs_delete', { rel });
+			await invoke('fs_delete', { rel, useTrash });
 		} catch (e) {
 			notifications.error(String(e));
 			return;
@@ -401,20 +507,22 @@ class Explorer {
 	async #deleteMany(targets: string[]) {
 		const tabs = targets.flatMap((t) => affectedBy([...editors.openPaths()], t));
 		const dirty = new Set(editors.allTabs().filter((t) => t.dirty && tabs.includes(t.path)).map((t) => t.path)).size;
-		const confirm = settings.get<boolean>('explorer.confirmDelete') || dirty > 0;
+		const useTrash = this.#useTrash();
+		const confirm = settings.get<boolean>('explorer.confirmDelete') || dirty > 0 || !useTrash;
 		const list = targets.map((t) => (this.isDir(t) ? `${baseName(t)}/` : baseName(t))).join('\n');
+		const unsaved = dirty ? `\n\nมี ${dirty} ไฟล์ที่ยังไม่บันทึก การแก้ไขจะหายไป` : '';
 		const ok =
 			!confirm ||
-			(await ask(`ย้าย ${targets.length} รายการต่อไปนี้ไปที่ถังขยะ? (Are you sure you want to delete the following ${targets.length} files?)\n\n${list}${dirty ? `\n\nมี ${dirty} ไฟล์ที่ยังไม่บันทึก การแก้ไขจะหายไป` : ''}\n\nกู้คืนได้จากถังขยะ`, {
-				title: 'Delete',
-				kind: 'warning',
-				okLabel: 'ย้ายไปถังขยะ',
-				cancelLabel: 'ยกเลิก'
-			}));
+			(await ask(
+				useTrash
+					? `ย้าย ${targets.length} รายการต่อไปนี้ไปที่ถังขยะ? (Are you sure you want to delete the following ${targets.length} files?)\n\n${list}${unsaved}\n\nกู้คืนได้จากถังขยะ`
+					: `ลบ ${targets.length} รายการต่อไปนี้ถาวร? (Are you sure you want to permanently delete the following ${targets.length} files?)\n\n${list}${unsaved}\n\nการลบนี้ย้อนกลับไม่ได้ (This action is irreversible!)`,
+				{ title: 'Delete', kind: 'warning', okLabel: useTrash ? 'ย้ายไปถังขยะ' : 'ลบถาวร (Delete)', cancelLabel: 'ยกเลิก' }
+			));
 		if (!ok) return;
 		for (const rel of targets) {
 			try {
-				await invoke('fs_delete', { rel });
+				await invoke('fs_delete', { rel, useTrash });
 			} catch (e) {
 				notifications.error(String(e));
 				break;

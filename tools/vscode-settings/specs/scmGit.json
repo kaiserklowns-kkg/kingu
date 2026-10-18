@@ -1,0 +1,386 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/scmGit.ts",
+	"export": "GIT_SETTINGS",
+	"what": "git.* (the built-in Git extension)",
+	"entries": [
+		{
+			"id": "git.enabled",
+			"group": "Git",
+			"th": "เปิดใช้ Git ใน Kingu ปิดแล้วจะไม่รันคำสั่ง git เลย"
+		},
+		{
+			"id": "git.path",
+			"group": "Git",
+			"th": "path ของโปรแกรม git หรือรายการ path ที่ลองตามลำดับ เว้นว่างเพื่อใช้ git จาก PATH"
+		},
+		{
+			"id": "git.autorefresh",
+			"group": "Git",
+			"th": "อ่านสถานะ git ใหม่อัตโนมัติเมื่อกลับมาที่หน้าต่างหรือบันทึกไฟล์"
+		},
+		{
+			"id": "git.autofetch",
+			"group": "Git",
+			"th": "fetch จาก remote เป็นระยะ ค่า all จะ fetch ทุก remote"
+		},
+		{
+			"id": "git.autofetchPeriod",
+			"group": "Git",
+			"th": "ระยะห่างเป็นวินาทีระหว่างการ fetch อัตโนมัติ"
+		},
+		{
+			"id": "git.defaultBranchName",
+			"group": "Git",
+			"th": "ชื่อ branch เริ่มต้นเมื่อสร้าง repository ใหม่"
+		},
+		{
+			"id": "git.branchPrefix",
+			"group": "Git",
+			"th": "คำนำหน้าที่เติมให้ชื่อ branch ใหม่"
+		},
+		{
+			"id": "git.branchProtection",
+			"group": "Git",
+			"th": "รายการ branch ที่ป้องกันไว้ ใช้ glob ได้ จะถามก่อน commit ลง branch เหล่านี้"
+		},
+		{
+			"id": "git.branchProtectionPrompt",
+			"group": "Git",
+			"th": "สิ่งที่ทำเมื่อ commit ลง branch ที่ป้องกันไว้",
+			"enumTh": [
+				"commit ลง branch ที่ป้องกันไว้เลย",
+				"commit ลง branch ใหม่เสมอ",
+				"ถามทุกครั้ง"
+			]
+		},
+		{
+			"id": "git.branchValidationRegex",
+			"group": "Git",
+			"th": "regular expression ที่ชื่อ branch ใหม่ต้องตรง"
+		},
+		{
+			"id": "git.branchWhitespaceChar",
+			"group": "Git",
+			"th": "ตัวอักษรที่ใช้แทนช่องว่างในชื่อ branch ใหม่และคั่นคำของชื่อสุ่ม"
+		},
+		{
+			"id": "git.branchRandomName.enable",
+			"group": "Git",
+			"th": "สุ่มชื่อ branch ให้เมื่อสร้าง branch ใหม่ กด Enter โดยไม่พิมพ์เพื่อใช้ชื่อสุ่ม"
+		},
+		{
+			"id": "git.branchRandomName.dictionary",
+			"group": "Git",
+			"th": "ชุดคำที่ใช้สุ่มชื่อ branch ทีละคำตามลำดับ"
+		},
+		{
+			"id": "git.confirmSync",
+			"group": "Git",
+			"th": "ถามก่อน sync"
+		},
+		{
+			"id": "git.countBadge",
+			"group": "Git",
+			"th": "สิ่งที่นับในตัวเลขของ Git บนไอคอน Source Control",
+			"enumTh": [
+				"นับทุกการเปลี่ยนแปลง",
+				"นับเฉพาะไฟล์ที่ track อยู่",
+				"ไม่แสดงตัวเลข"
+			]
+		},
+		{
+			"id": "git.checkoutType",
+			"group": "Git",
+			"th": "ชนิดของ ref ที่แสดงใน Checkout to... ตามลำดับ"
+		},
+		{
+			"id": "git.ignoreLimitWarning",
+			"group": "Git",
+			"th": "ไม่ต้องเตือนเมื่อมีการเปลี่ยนแปลงเกิน git.statusLimit"
+		},
+		{
+			"id": "git.defaultCloneDirectory",
+			"group": "Git",
+			"th": "โฟลเดอร์เริ่มต้นที่จะ clone repository ไปเก็บ"
+		},
+		{
+			"id": "git.enableSmartCommit",
+			"group": "Git",
+			"th": "commit การเปลี่ยนแปลงทั้งหมดเมื่อยังไม่มีไฟล์ที่ stage"
+		},
+		{
+			"id": "git.smartCommitChanges",
+			"group": "Git",
+			"th": "สิ่งที่ smart commit stage ให้",
+			"enumTh": [
+				"stage ทุกการเปลี่ยนแปลง",
+				"stage เฉพาะไฟล์ที่ git track อยู่"
+			]
+		},
+		{
+			"id": "git.suggestSmartCommit",
+			"group": "Git",
+			"th": "เสนอให้เปิด smart commit เมื่อ commit โดยยังไม่มีไฟล์ที่ stage"
+		},
+		{
+			"id": "git.enableCommitSigning",
+			"group": "Git",
+			"th": "เซ็น commit ด้วย GPG, X.509 หรือ SSH ตามที่ตั้งไว้ใน git"
+		},
+		{
+			"id": "git.confirmEmptyCommits",
+			"group": "Git",
+			"th": "ถามก่อนสร้าง commit ว่างด้วยคำสั่ง Git: Commit Empty"
+		},
+		{
+			"id": "git.decorations.enabled",
+			"group": "Git",
+			"th": "แสดงสีและตัวอักษรสถานะ git ใน Explorer"
+		},
+		{
+			"id": "git.enableStatusBarSync",
+			"group": "Git",
+			"th": "แสดงปุ่ม Sync ใน status bar"
+		},
+		{
+			"id": "git.followTagsWhenSync",
+			"group": "Git",
+			"th": "push annotated tag ไปด้วยเมื่อ sync"
+		},
+		{
+			"id": "git.replaceTagsWhenPull",
+			"group": "Git",
+			"th": "ใช้ tag ของ remote แทน tag ในเครื่องเมื่อขัดกันตอน pull"
+		},
+		{
+			"id": "git.promptToSaveFilesBeforeStash",
+			"group": "Git",
+			"th": "ถามให้บันทึกไฟล์ที่ยังไม่บันทึกก่อน stash",
+			"enumTh": [
+				"ถามเมื่อมีไฟล์ใดยังไม่บันทึก",
+				"ถามเฉพาะไฟล์ที่ stage แล้ว",
+				"ไม่ถาม"
+			]
+		},
+		{
+			"id": "git.promptToSaveFilesBeforeCommit",
+			"group": "Git",
+			"th": "ถามให้บันทึกไฟล์ที่ยังไม่บันทึกก่อน commit",
+			"enumTh": [
+				"ถามเมื่อมีไฟล์ใดยังไม่บันทึก",
+				"ถามเฉพาะไฟล์ที่ stage แล้ว",
+				"ไม่ถาม"
+			]
+		},
+		{
+			"id": "git.postCommitCommand",
+			"group": "Git",
+			"th": "คำสั่งที่รันต่อหลัง commit สำเร็จ",
+			"enumTh": [
+				"ไม่รันอะไร",
+				"push หลัง commit",
+				"pull แล้ว push หลัง commit"
+			]
+		},
+		{
+			"id": "git.openAfterClone",
+			"group": "Git",
+			"th": "เปิด repository ที่ clone มาเลยหรือไม่ Kingu มีหน้าต่างเดียว ค่า alwaysNewWindow จึงเปิดในหน้าต่างนี้",
+			"enumTh": [
+				"เปิดเสมอ",
+				"เปิดเสมอ ในหน้าต่างนี้เพราะ Kingu มีหน้าต่างเดียว",
+				"เปิดเมื่อยังไม่ได้เปิดโฟลเดอร์ใด",
+				"ถามทุกครั้ง"
+			]
+		},
+		{
+			"id": "git.showInlineOpenFileAction",
+			"group": "Git",
+			"th": "แสดงปุ่ม Open File ที่แต่ละไฟล์ใน Source Control"
+		},
+		{
+			"id": "git.showPushSuccessNotification",
+			"group": "Git",
+			"th": "แจ้งเตือนเมื่อ push สำเร็จ"
+		},
+		{
+			"id": "git.inputValidation",
+			"group": "Git",
+			"th": "เตือนเมื่อข้อความ commit ยาวเกินกำหนด"
+		},
+		{
+			"id": "git.inputValidationLength",
+			"group": "Git",
+			"th": "ความยาวบรรทัดของข้อความ commit ที่เริ่มเตือน"
+		},
+		{
+			"id": "git.inputValidationSubjectLength",
+			"group": "Git",
+			"th": "ความยาวบรรทัดแรกของข้อความ commit ที่เริ่มเตือน ค่า null ใช้ git.inputValidationLength"
+		},
+		{
+			"id": "git.alwaysShowStagedChangesResourceGroup",
+			"group": "Git",
+			"th": "แสดงกลุ่ม Staged Changes เสมอแม้ไม่มีไฟล์"
+		},
+		{
+			"id": "git.alwaysSignOff",
+			"group": "Git",
+			"th": "เติม Signed-off-by ให้ทุก commit"
+		},
+		{
+			"id": "git.ignoreSubmodules",
+			"group": "Git",
+			"th": "ไม่แสดงการเปลี่ยนแปลงใน submodule"
+		},
+		{
+			"id": "git.showProgress",
+			"group": "Git",
+			"th": "แสดงความคืบหน้าของคำสั่ง git ใน status bar"
+		},
+		{
+			"id": "git.rebaseWhenSync",
+			"group": "Git",
+			"th": "ใช้ rebase เมื่อ sync"
+		},
+		{
+			"id": "git.pullBeforeCheckout",
+			"group": "Git",
+			"th": "fast-forward branch ที่ไม่มี commit ค้าง push ก่อน checkout"
+		},
+		{
+			"id": "git.fetchOnPull",
+			"group": "Git",
+			"th": "fetch ทุก remote และทุก branch เมื่อ pull"
+		},
+		{
+			"id": "git.pruneOnFetch",
+			"group": "Git",
+			"th": "ลบ remote branch ที่ไม่มีแล้วเมื่อ fetch"
+		},
+		{
+			"id": "git.pullTags",
+			"group": "Git",
+			"th": "fetch tag ทั้งหมดเมื่อ pull"
+		},
+		{
+			"id": "git.autoStash",
+			"group": "Git",
+			"th": "stash การแก้ไขก่อน pull แล้วนำกลับมาหลัง pull สำเร็จ"
+		},
+		{
+			"id": "git.allowForcePush",
+			"group": "Git",
+			"th": "เปิดคำสั่ง Git: Push Force"
+		},
+		{
+			"id": "git.useForcePushWithLease",
+			"group": "Git",
+			"th": "force push แบบปลอดภัยด้วย force-with-lease"
+		},
+		{
+			"id": "git.useForcePushIfIncludes",
+			"group": "Git",
+			"th": "force push แบบปลอดภัยด้วย force-if-includes ต้องเปิด git.useForcePushWithLease ด้วย"
+		},
+		{
+			"id": "git.confirmForcePush",
+			"group": "Git",
+			"th": "ถามก่อน force push"
+		},
+		{
+			"id": "git.allowNoVerifyCommit",
+			"group": "Git",
+			"th": "เปิดคำสั่ง Git: Commit No Verify ที่ข้าม pre-commit และ commit-msg hook"
+		},
+		{
+			"id": "git.confirmNoVerifyCommit",
+			"group": "Git",
+			"th": "ถามก่อน commit โดยข้าม hook"
+		},
+		{
+			"id": "git.closeDiffOnOperation",
+			"group": "Git",
+			"th": "ปิด diff editor เองเมื่อ stash, commit, discard, stage หรือ unstage ไฟล์นั้น"
+		},
+		{
+			"id": "git.openDiffOnClick",
+			"group": "Git",
+			"th": "คลิกไฟล์ใน Source Control แล้วเปิด diff ถ้าปิดจะเปิดไฟล์ตามปกติ"
+		},
+		{
+			"id": "git.branchSortOrder",
+			"group": "Git",
+			"th": "การเรียง branch ใน Checkout to...",
+			"enumTh": [
+				"เรียงตามวันที่ commit ใหม่สุดก่อน",
+				"เรียงตามชื่อ"
+			]
+		},
+		{
+			"id": "git.untrackedChanges",
+			"group": "Git",
+			"th": "การแสดงไฟล์ที่ยังไม่ track",
+			"enumTh": [
+				"แสดงรวมกับ Changes",
+				"แสดงในกลุ่ม Untracked Changes ของตัวเอง",
+				"ไม่แสดงและไม่ถูก commit"
+			]
+		},
+		{
+			"id": "git.requireGitUserConfig",
+			"group": "Git",
+			"th": "ต้องตั้ง user.name และ user.email ของ git ก่อน commit"
+		},
+		{
+			"id": "git.showCommitInput",
+			"group": "Git",
+			"th": "แสดงช่องข้อความ commit ใน Source Control"
+		},
+		{
+			"id": "git.useCommitInputAsStashMessage",
+			"group": "Git",
+			"th": "ใช้ข้อความในช่อง commit เป็นข้อความ stash เมื่อไม่ได้พิมพ์"
+		},
+		{
+			"id": "git.showActionButton",
+			"group": "Git",
+			"th": "ปุ่มที่แสดงใต้ช่องข้อความ commit ได้แก่ Commit, Publish Branch และ Sync Changes"
+		},
+		{
+			"id": "git.statusLimit",
+			"group": "Git",
+			"th": "จำนวนการเปลี่ยนแปลงสูงสุดที่แสดง 0 คือไม่จำกัด"
+		},
+		{
+			"id": "git.similarityThreshold",
+			"group": "Git",
+			"th": "เกณฑ์ความเหมือนเป็นเปอร์เซ็นต์ที่ถือว่าไฟล์ถูกเปลี่ยนชื่อ"
+		},
+		{
+			"id": "git.commitShortHashLength",
+			"group": "Git",
+			"th": "ความยาว hash แบบสั้นของ commit"
+		},
+		{
+			"id": "git.diagnosticsCommitHook.enabled",
+			"group": "Git",
+			"th": "ตรวจปัญหาจาก language server ในไฟล์ที่จะ commit ก่อน commit"
+		},
+		{
+			"id": "git.diagnosticsCommitHook.sources",
+			"group": "Git",
+			"th": "แหล่งของปัญหาและความรุนแรงต่ำสุดที่ทำให้ถามก่อน commit"
+		},
+		{
+			"id": "git.discardUntrackedChangesToTrash",
+			"group": "Git",
+			"th": "ย้ายไฟล์ที่ยังไม่ track ไปถังขยะแทนการลบถาวรเมื่อ discard"
+		},
+		{
+			"id": "git.showReferenceDetails",
+			"group": "Git",
+			"th": "แสดง commit ล่าสุดของแต่ละ ref ในตัวเลือก branch"
+		}
+	]
+}

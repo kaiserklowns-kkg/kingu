@@ -23,6 +23,8 @@
 	import { worktreeDir } from './keys';
 	import { draftKey, drafts } from './scmDrafts';
 	import { quick } from '#lib/workbench/quick.svelte.ts';
+	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { aiTextEnabled, generateCommitMessage, generatePrDetails, prTemplate } from './aiText.svelte';
 
 	/** '' for the folder itself, else a task slug. */
 	let { slug }: { slug: string } = $props();
@@ -478,7 +480,10 @@
 		prBusy = 'generate';
 		prError = '';
 		try {
-			const r = await invoke<{ title: string; body: string }>('ai_pr_details', { slug: slug || null, base: base ?? prBase });
+			// kingu.git.ai.* (agent, model, instructions) and kingu.pr.useTemplate decide how.
+			const key = slug || PRIMARY;
+			const template = settings.get<boolean>('kingu.pr.useTemplate') === true ? await prTemplate(key) : null;
+			const r = await generatePrDetails(key, base ?? prBase, template);
 			if (!prTitle.trim()) prTitle = r.title;
 			if (!prBody.trim()) prBody = r.body;
 		} catch (e) {
@@ -514,7 +519,7 @@
 		generating = true;
 		error = '';
 		try {
-			const text = await invoke<string>('ai_commit_message', { slug: slug || null });
+			const text = await generateCommitMessage(slug || null);
 			if (!message.trim()) message = text;
 		} catch (e) {
 			error = String(e);
@@ -664,9 +669,11 @@
 						<span class={MUTED}><Icon name="pullRequest" size={14} /></span>
 						<span class="text-xs font-medium">New pull request</span>
 						<span class="flex-1"></span>
+						{#if aiTextEnabled()}
 						<button class="flex h-6 items-center gap-1 rounded-md border border-(--vscode-widget-border) px-2 text-[11px] hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-50" aria-label="Generate pull request details with AI" disabled={!!prBusy} onclick={generatePr}>
 							<span class={['grid place-items-center', prBusy === 'generate' && 'animate-spin']}><Icon name={prBusy === 'generate' ? 'refresh' : 'sparkle'} size={12} /></span>{prBusy === 'generate' ? 'Generating…' : 'Generate'}
 						</button>
+						{/if}
 					</div>
 					<input class="h-8 w-full rounded-md border border-(--vscode-widget-border) bg-(--vscode-input-background) px-2 text-xs font-medium outline-none focus:border-(--vscode-focusBorder)" placeholder="Title" aria-label="Pull Request title" bind:value={prTitle} />
 					<textarea class="min-h-[7rem] w-full resize-y rounded-md border border-(--vscode-widget-border) bg-(--vscode-input-background) px-2 py-1.5 text-xs outline-none focus:border-(--vscode-focusBorder)" rows="6" placeholder="Description (optional)" bind:value={prBody}></textarea>
@@ -692,6 +699,7 @@
 							disabled={!!busy || !staged}
 							bind:value={message}
 						></textarea>
+						{#if aiTextEnabled()}
 						<button
 							class={['absolute top-1.5 right-1.5 grid size-5 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)', (generating || !staged || !!message.trim()) && !generating && 'cursor-not-allowed opacity-40']}
 							aria-label="Generate commit message with AI"
@@ -701,6 +709,7 @@
 						>
 							<span class={['grid place-items-center', generating && 'animate-spin']}><Icon name={generating ? 'refresh' : 'sparkle'} size={13} /></span>
 						</button>
+						{/if}
 						</div>
 					{/if}
 					<div class={['flex items-stretch', !cleanBranch && 'mt-1']}>

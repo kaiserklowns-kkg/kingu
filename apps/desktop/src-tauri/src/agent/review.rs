@@ -276,7 +276,7 @@ pub fn reject(dir: &Path, base: &str, paths: &[String]) -> Result<(), String> {
 /// Stages everything in the worktree and commits it.
 pub fn commit_all(dir: &Path, message: &str) -> Result<(), String> {
   git::stage(dir, &[".".into()])?;
-  git::commit(dir, message, false)
+  git::commit(dir, message, &git::CommitOptions::default())
 }
 
 fn clean(dir: &Path, untracked: bool) -> Result<bool, String> {
@@ -814,7 +814,7 @@ mod tests {
 
     crate::git::check_rel(&wt, "new.txt").unwrap();
     crate::git::stage(&wt, &["edit.txt".into()]).unwrap();
-    crate::git::commit(&wt, "edit", false).unwrap();
+    crate::git::commit(&wt, "edit", &Default::default()).unwrap();
     let st = crate::git::status(&wt).unwrap().unwrap();
     assert_eq!(st.entries.len(), 1);
     assert_eq!(st.entries[0].worktree.as_deref(), Some("?"));
@@ -836,9 +836,9 @@ mod tests {
     git_ok(&repo, &["remote", "add", "origin", remote.to_str().unwrap()]);
     write(&wt, "new.txt", "n\n");
     crate::git::stage(&wt, &["new.txt".into()]).unwrap();
-    crate::git::commit(&wt, "add new", false).unwrap();
+    crate::git::commit(&wt, "add new", &Default::default()).unwrap();
     let cancel = std::sync::atomic::AtomicBool::new(false);
-    let upstream = crate::git_remote::push(&wt, None, &cancel, std::time::Duration::from_secs(30)).unwrap();
+    let upstream = crate::git_remote::push(&wt, None, &Default::default(), &cancel, std::time::Duration::from_secs(30)).unwrap();
     assert_eq!(upstream, "origin/kingu/t");
     assert_eq!(git_ok(&remote, &["log", "-1", "--format=%s", "kingu/t"]).trim(), "add new");
     assert!(git_ok(&remote, &["branch", "--list", "main"]).trim().is_empty());

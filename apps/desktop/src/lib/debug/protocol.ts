@@ -15,7 +15,7 @@ export type Capabilities = {
 };
 
 export type Source = { name?: string; path?: string; sourceReference?: number };
-export type SourceBreakpoint = { line: number; condition?: string };
+export type SourceBreakpoint = { line: number; condition?: string; logMessage?: string };
 export type Breakpoint = { id?: number; verified: boolean; message?: string; line?: number; source?: Source };
 export type Thread = { id: number; name: string };
 export type StackFrame = { id: number; name: string; source?: Source; line: number; column: number; presentationHint?: string };

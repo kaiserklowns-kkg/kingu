@@ -43,5 +43,8 @@ test('manual order and name', () => {
 
 test('short time and filter count', () => {
 	expect([30_000, 5 * MIN, 3 * 60 * MIN, 50 * 60 * MIN].map((d) => shortAgo(NOW - d, NOW))).toEqual(['now', '5m', '3h', '2d']);
-	expect(activeFilterCount({ hideSleeping: true, exceptDefault: true, hideDefault: false })).toBe(2);
+	const off = { hideSleeping: false, exceptDefault: false, hideDefault: false, showActiveOnly: false, hideAutomation: false, hideDetached: false };
+	expect(activeFilterCount({ ...off, hideSleeping: true, exceptDefault: true })).toBe(2);
+	expect(activeFilterCount({ ...off, exceptDefault: true })).toBe(0);
+	expect(activeFilterCount({ ...off, showActiveOnly: true, hideAutomation: true, hideDetached: true })).toBe(3);
 });

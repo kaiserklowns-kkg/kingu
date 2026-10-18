@@ -1,5 +1,6 @@
 <script lang="ts">
-	// VS Code's sash: 4px hit area, focus-border highlight after a 300ms hover.
+	// VS Code's sash: a `workbench.sash.size` hit area (4px) that takes no layout space, and the
+	// focus-border highlight after `workbench.sash.hoverDelay` (300ms) of hovering.
 	let {
 		orientation,
 		onDrag,
@@ -37,6 +38,8 @@
 		orientation === 'vertical' ? [!gap && '-mx-[2px]', 'w-(--kg-sash-size) cursor-ew-resize'] : [!gap && '-my-[2px]', 'h-(--kg-sash-size) cursor-ns-resize'],
 		dragging && 'active'
 	]}
+	style:margin-inline={orientation === 'vertical' ? 'calc(var(--kg-sash-size) / -2)' : undefined}
+	style:margin-block={orientation === 'horizontal' ? 'calc(var(--kg-sash-size) / -2)' : undefined}
 	onpointerdown={down}
 	onpointermove={move}
 	onpointerup={() => (dragging = false)}
@@ -45,7 +48,7 @@
 
 <style>
 	.sash {
-		transition: background-color 0.1s ease-out 0.3s;
+		transition: background-color 0.1s ease-out var(--kg-sash-hover-delay, 300ms);
 	}
 	.sash:hover,
 	.sash.active {

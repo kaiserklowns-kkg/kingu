@@ -37,6 +37,7 @@ import {
 	type FileTab,
 	type TerminalTab
 } from './adeTabs.ts';
+import { switcherOrder } from './sidebarView.ts';
 
 export type CenterPage = 'board' | 'automations' | 'issues';
 /** Worktree key: '' for the folder itself (Orca's "primary" worktree), else the task slug. */
@@ -234,7 +235,9 @@ class AdeLayout {
 	switchRecent(step: 1 | -1) {
 		const key = this.key;
 		if (!this.switcher) {
-			const ids = mruOrder(this.mru[key] ?? [], this.tabs(key).map((t) => t.id), this.activeTab(key));
+			const all = this.tabs(key).map((t) => t.id);
+			// kingu.tabs.ctrlTabOrder (Orca's ctrlTabOrderMode): by recent use, or the strip order from the active tab.
+			const ids = switcherOrder(settings.get<string>('kingu.tabs.ctrlTabOrder'), mruOrder(this.mru[key] ?? [], all, this.activeTab(key)), all);
 			if (ids.length < 2) return;
 			this.switcher = { key, ids, index: switcherStep(0, step, ids.length) };
 		} else this.switcher = { ...this.switcher, index: switcherStep(this.switcher.index, step, this.switcher.ids.length) };
@@ -350,10 +353,10 @@ class AdeLayout {
 	}
 
 	/** A terminal in that worktree; `run` is typed into its shell (an agent CLI, a Snap task). `background`: open it without switching to it. */
-	newTerminal(key: string, opts: { title?: string; run?: string[]; background?: boolean; index?: number } = {}): string {
+	newTerminal(key: string, opts: { title?: string; run?: string[]; background?: boolean; index?: number; color?: string } = {}): string {
 		const list = this.terminals[key] ?? [];
 		const n = list.reduce((m, t) => Math.max(m, t.n), 0) + 1;
-		const tab: TerminalTab = { id: `t${++this.#seq}`, n, title: opts.title, run: opts.run };
+		const tab: TerminalTab = { id: `t${++this.#seq}`, n, title: opts.title, run: opts.run, ...(opts.color ? { color: opts.color } : {}) };
 		const at = opts.index === undefined ? list.length : Math.min(Math.max(opts.index, 0), list.length);
 		this.terminals[key] = [...list.slice(0, at), tab, ...list.slice(at)];
 		if (opts.background) return tab.id;

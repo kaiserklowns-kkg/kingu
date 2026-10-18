@@ -14,7 +14,8 @@ import { status } from '#lib/workbench/status.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { adeLayout } from './adeLayout.svelte.ts';
 import type { RunMode } from './agentCli.ts';
-import { mergeIssueLists, tasksByIssue, type Issue } from './issues.ts';
+import { issueRef, mergeIssueLists, tasksByIssue, type Issue } from './issues.ts';
+import type { IssueLink } from './model.ts';
 import { adeTasks } from './tasks.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
@@ -86,7 +87,11 @@ class AdeIssues {
 		return slug;
 	}
 
-	open(issue: Pick<Issue, 'number'>) {
+	/** A GitHub issue through gh; a task's Linear link in the browser. */
+	open(issue: Pick<Issue, 'number'> | IssueLink) {
+		if ('provider' in issue && issue.provider === 'linear') {
+			return invoke('linear_issue_open', { url: issue.url }).catch((e) => notifications.error(`เปิด ${issueRef(issue)} ไม่ได้: ${e}`));
+		}
 		return invoke('gh_issue_open', { number: issue.number }).catch((e) => notifications.error(`เปิด issue #${issue.number} ไม่ได้: ${e}`));
 	}
 

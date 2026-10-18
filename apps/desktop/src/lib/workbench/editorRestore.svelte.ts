@@ -1,12 +1,14 @@
 // Restores a folder's open editors when it opens (at startup, after Open Folder, after a reload)
 // and keeps the list up to date while it is open. With nothing to restore,
-// `workbench.startupEditor: readme` opens the folder's README.
+// `workbench.startupEditor` opens the folder's README (`readme`), a new untitled file
+// (`newUntitledFile`) or a new terminal (`terminal`, in the panel: Kingu's terminals live there).
 
 import { untrack } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { persist, restore, rootTag, storeName } from '#lib/terminal/sessions.ts';
 import { editors } from './editors.svelte';
+import { commands } from './commands.svelte';
 import { openEditorsState, parseOpenEditors, readmeOf } from './openEditors';
 import { workspace } from './workspace.svelte';
 
@@ -21,14 +23,19 @@ export function installEditorRestore(): () => void {
 	async function show(root: string) {
 		const mine = ++generation;
 		tag = null;
-		const saved = restore(storeName(STORE, rootTag(root)), parseOpenEditors);
+		// workbench.editor.restoreEditors: off leaves only the editors with unsaved changes (hot exit restores those).
+		const saved = settings.get<boolean>('workbench.editor.restoreEditors') ? restore(storeName(STORE, rootTag(root)), parseOpenEditors) : null;
 		if (saved?.paths.length) {
 			for (const path of saved.paths) editors.open(path, { preview: false });
 			if (saved.active) editors.open(saved.active, { preview: false });
-		} else if (settings.get('workbench.startupEditor') === 'readme') {
-			const entries = await invoke<{ name: string; is_dir: boolean }[]>('fs_list_dir', { rel: '' }).catch(() => []);
-			const readme = readmeOf(entries.filter((e) => !e.is_dir).map((e) => e.name));
-			if (mine === generation && readme && editors.openPaths().size === 0) editors.open(readme, { preview: true });
+		} else {
+			const startup = settings.get<string>('workbench.startupEditor');
+			if (startup === 'readme') {
+				const entries = await invoke<{ name: string; is_dir: boolean }[]>('fs_list_dir', { rel: '' }).catch(() => []);
+				const readme = readmeOf(entries.filter((e) => !e.is_dir).map((e) => e.name));
+				if (mine === generation && readme && editors.openPaths().size === 0) editors.open(readme, { preview: true });
+			} else if (startup === 'newUntitledFile' && editors.openPaths().size === 0) void commands.run('workbench.action.files.newUntitledFile');
+			else if (startup === 'terminal') void commands.run('workbench.action.terminal.new');
 		}
 		if (mine === generation) tag = rootTag(root);
 	}

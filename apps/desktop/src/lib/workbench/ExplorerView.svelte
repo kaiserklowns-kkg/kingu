@@ -18,12 +18,17 @@
 	import { isDiffKey } from './scm';
 	import { isUntitled } from './untitled';
 	import { notifications } from './notifications.svelte';
-	import { dropTarget } from './explorerModel';
+	import { autoRevealOf, dropTarget, withPathSeparator } from './explorerModel';
+	import { enabledGlobs, hiddenBySibling, isExcluded, siblingClauses } from '#lib/settings/mappings.ts';
 
 	let { workspaceName }: { workspaceName: string } = $props();
 
 	const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
-	const decorations = $derived(fileDecorations(entryChanges(scm.repo?.entries ?? [])));
+	// git.decorations.enabled: git's colors and letters in the explorer.
+	const decorations = $derived(fileDecorations(settings.get<boolean>('git.decorations.enabled') ? entryChanges(scm.repo?.entries ?? []) : []));
+	/** explorer.decorations.colors / explorer.decorations.badges. */
+	const decoColors = $derived(settings.get<boolean>('explorer.decorations.colors'));
+	const decoBadges = $derived(settings.get<boolean>('explorer.decorations.badges'));
 
 	let open = $state(true);
 	let inputError = $state('');
@@ -121,14 +126,21 @@
 	/** workbench.tree.indent */
 	const indent = $derived(settings.get<number>('workbench.tree.indent'));
 
-	// explorer.autoReveal: the active editor's file is expanded to, selected and scrolled into view.
+	// explorer.autoReveal: the active editor's file is expanded to, selected and scrolled into view
+	// (`focusNoScroll`: not scrolled); explorer.autoRevealExclude leaves matching files alone.
 	$effect(() => {
 		const active = editors.active;
-		if (!active || !workspace.root || !settings.get<boolean>('explorer.autoReveal') || isDiffKey(active) || isUntitled(active) || isNonTextEditor(active) || active.includes('://')) return;
+		if (!active || !workspace.root || isDiffKey(active) || isUntitled(active) || isNonTextEditor(active) || active.includes('://')) return;
+		const autoRevealExclude = settings.get<Record<string, unknown>>('explorer.autoRevealExclude');
+		// Sibling clauses (`{ "when": "$(basename).ts" }`) look at the folder's listed entries.
+		const listed = (p: string) => !!explorer.children.get(p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '')?.some((e) => e.rel === p);
+		const excluded = isExcluded(active, enabledGlobs(autoRevealExclude)) || hiddenBySibling(active, siblingClauses(autoRevealExclude), listed);
+		const { reveal, scroll } = autoRevealOf(settings.get('explorer.autoReveal'), excluded);
+		if (!reveal) return;
 		// Untracked: the tree loading folders on the way must not re-run this (and re-select the file).
 		untrack(() =>
 			explorer.reveal(active).then(() => {
-				if (editors.active === active) queueMicrotask(() => tree?.querySelector<HTMLElement>(`[data-rel="${CSS.escape(active)}"]`)?.scrollIntoView({ block: 'nearest' }));
+				if (scroll && editors.active === active) queueMicrotask(() => tree?.querySelector<HTMLElement>(`[data-rel="${CSS.escape(active)}"]`)?.scrollIntoView({ block: 'nearest' }));
 			})
 		);
 	});
@@ -157,12 +169,14 @@
 		explorer.select(rel);
 	}
 
-	/** Row click: ⌘ toggles, ⇧ extends, a plain click selects and opens (VS Code's list). */
+	/** Row click: ⌘ toggles, ⇧ extends, a plain click selects and opens (VS Code's list). The
+	 * twistie of a file with nested files (explorer.fileNesting) opens or closes the nest. */
 	function onRowClick(e: MouseEvent, row: Row) {
 		if (isMac ? e.metaKey : e.ctrlKey) return explorer.toggleSelect(row.rel);
 		if (e.shiftKey) return explorer.selectRange(row.rel);
 		select(row.rel);
 		if (row.is_dir) void (row.expanded ? explorer.collapse(row) : explorer.expand(row.rel));
+		else if (row.nests && (e.target as HTMLElement).closest('[data-twistie]')) explorer.toggleNest(row.rel);
 		else editors.open(row.rel, { preview: true });
 	}
 
@@ -221,6 +235,9 @@
 	// --- Commands on the selection (VS Code explorer keybindings) -------------------------------
 
 	const absPath = (rel: string) => (rel ? `${workspace.root}/${rel}` : (workspace.root ?? ''));
+	/** Copy Path / Copy Relative Path with explorer.copyPathSeparator / explorer.copyRelativePathSeparator. */
+	const copyAbs = (rels: string[]) => copy(rels.map((r) => withPathSeparator(absPath(r), settings.get<string>('explorer.copyPathSeparator'))).join('\n'));
+	const copyRel = (rels: string[]) => copy(rels.map((r) => withPathSeparator(r || '.', settings.get<string>('explorer.copyRelativePathSeparator'))).join('\n'));
 
 	async function copy(text: string) {
 		try {
@@ -249,8 +266,8 @@
 		items.push(
 			{ label: 'Paste', key: keyLabel('cmd+v'), enabled: explorer.clipboard !== null, run: () => explorer.paste(target) },
 			'sep',
-			{ label: 'Copy Path', key: keyLabel('alt+cmd+c'), run: () => copy(target ? explorer.targets(target).map(absPath).join('\n') : absPath('')) },
-			{ label: 'Copy Relative Path', key: keyLabel('alt+shift+cmd+c'), run: () => copy(target ? explorer.targets(target).join('\n') : '.') }
+			{ label: 'Copy Path', key: keyLabel('alt+cmd+c'), run: () => copyAbs(target ? explorer.targets(target) : ['']) },
+			{ label: 'Copy Relative Path', key: keyLabel('alt+shift+cmd+c'), run: () => copyRel(target ? explorer.targets(target) : ['']) }
 		);
 		if (target) {
 			items.push('sep');
@@ -292,7 +309,7 @@
 			if (!sel) return;
 			void explorer.delete(sel);
 		} else if (mod && e.altKey && e.code === 'KeyC') {
-			void copy(e.shiftKey ? (sel ?? '.') : absPath(sel ?? ''));
+			void (e.shiftKey ? copyRel([sel ?? '']) : copyAbs([sel ?? '']));
 		} else if (mod && e.altKey && e.code === 'KeyR') {
 			reveal(sel);
 		} else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -309,6 +326,7 @@
 			if (!row) return;
 			if (e.key === 'ArrowRight' && row.is_dir && !row.expanded) void explorer.expand(row.rel);
 			else if (e.key === 'ArrowLeft' && row.is_dir && row.expanded) explorer.collapse(row);
+			else if (row.nests && (e.key === 'ArrowRight') !== row.expanded) explorer.toggleNest(row.rel);
 			else if (e.key === 'ArrowLeft') {
 				const parent = sel.includes('/') ? sel.slice(0, sel.lastIndexOf('/')) : null;
 				const up = parent && explorer.rows().find((r) => r.rel === parent || r.chain?.includes(parent));
@@ -485,13 +503,13 @@
 							ondrop={(e) => onDrop(e, row)}
 							ondragend={() => (dragTarget = null)}
 						>
-							<span class="flex w-4 shrink-0 justify-center text-(--vscode-icon-foreground)">
-								{#if row.is_dir}<Icon name={row.expanded ? 'chevronDown' : 'chevronRight'} size={16} />{/if}
+							<span class="flex w-4 shrink-0 justify-center text-(--vscode-icon-foreground)" data-twistie>
+								{#if row.is_dir || row.nests}<Icon name={row.expanded ? 'chevronDown' : 'chevronRight'} size={16} />{/if}
 							</span>
 							<FileIcon icon={row.is_dir ? folderIcon(row.rel, row.expanded) : fileIcon(row.name)} />
-							<span class={['min-w-0 flex-1 truncate', row.ignored && 'italic opacity-55']} style:color={decorations.get(row.rel)?.color}>{row.name}</span>
+							<span class={['min-w-0 flex-1 truncate', row.ignored && 'italic opacity-55']} style:color={decoColors ? decorations.get(row.rel)?.color : undefined}>{row.name}</span>
 							{#if row.ignored}<span class="shrink-0 pr-3 pl-2 opacity-55" title="ถูก .gitignore"><Icon name="ignored" size={12} /></span>
-							{:else if decorations.has(row.rel)}{@const deco = decorations.get(row.rel)!}<span class="shrink-0 pr-3 pl-2 text-[11px] font-semibold" style:color={deco.color}>{deco.letter || '•'}</span>{/if}
+							{:else if decoBadges && decorations.has(row.rel)}{@const deco = decorations.get(row.rel)!}<span class="shrink-0 pr-3 pl-2 text-[11px] font-semibold" style:color={decoColors ? deco.color : undefined}>{deco.letter || '•'}</span>{/if}
 						</button>
 					{/if}
 				{/each}

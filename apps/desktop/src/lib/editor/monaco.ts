@@ -3,6 +3,7 @@ import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
 import JsonWorker from 'monaco-editor/language/json/json.worker?worker';
 import TsWorker from 'monaco-editor/language/typescript/ts.worker?worker';
 import { EXTRA_LANGUAGES, registerMonacoLanguages } from './languages.ts';
+import { monacoLoaded } from './monacoConfiguration.ts';
 
 self.MonacoEnvironment = {
 	getWorker(_id, label) {
@@ -91,6 +92,9 @@ for (const [id, load, tokens] of borrowed) {
 		});
 	});
 }
+
+// Every contribution is registered now: settings may reach Monaco's configuration service.
+monacoLoaded();
 
 export { languageFor } from './languages.ts';
 export { monaco };

@@ -38,7 +38,8 @@ export interface ScmSource {
 	readonly loaded: boolean;
 	readonly busy: boolean;
 	message: string;
-	readonly groups: { staged: Resource[]; changes: Resource[] };
+	/** `untracked`: untracked files in their own group (`git.untrackedChanges: separate`). */
+	readonly groups: { staged: Resource[]; changes: Resource[]; untracked?: Resource[] };
 	refresh(): Promise<void>;
 	stage(paths: string[]): Promise<boolean>;
 	unstage(paths: string[]): Promise<boolean>;

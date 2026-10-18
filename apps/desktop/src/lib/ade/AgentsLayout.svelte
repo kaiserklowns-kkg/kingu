@@ -18,7 +18,7 @@
 	import PaneSplitView from '#lib/terminal/PaneSplitView.svelte';
 	import { leaf } from '#lib/terminal/paneLayout.ts';
 	import { keyLabel, keyOf } from '#lib/workbench/keys.ts';
-	import { tabPanes } from './adeTabs.ts';
+	import { activePane, tabPanes } from './adeTabs.ts';
 	import { ADE_SHORTCUTS } from './adeShortcuts.ts';
 	import RecentTabSwitcher from './RecentTabSwitcher.svelte';
 	import Composer from '#lib/agent/Composer.svelte';
@@ -26,6 +26,7 @@
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import AdeSidebar from './AdeSidebar.svelte';
+	import { sidebarTint } from './sidebarView';
 	import AdeTabBar from './AdeTabBar.svelte';
 	import type { IconName } from '#lib/workbench/Icon.svelte';
 	import Board from './Board.svelte';
@@ -160,11 +161,20 @@
 	function openLinkedFile(k: string, rel: string, line?: number, column?: number) {
 		adeLayout.openFile(k, rel, { preview: false, reveal: line ? { line, column: column ?? 1, focus: true } : undefined });
 	}
+
+	// kingu.sidebar.appearance / tintColor / tintOpacity (Orca's left side bar appearance).
+	const sidebarLook = $derived(sidebarTint(settings.get<string>('kingu.sidebar.appearance'), settings.get('kingu.sidebar.tintColor'), settings.get('kingu.sidebar.tintOpacity')));
 </script>
 
 <div bind:this={body} class="relative flex min-h-0 flex-1 bg-(--vscode-titleBar-activeBackground) px-[4px] pb-[4px] text-(--vscode-foreground)">
 	{#if appMode.sessionsVisible}
-		<aside aria-label="Side Bar" class={[FRAME, 'flex shrink-0 flex-col bg-(--vscode-sideBar-background)']} style:width="{appMode.sessionsWidth}px">
+		<aside
+			aria-label="Side Bar"
+			class={[FRAME, 'flex shrink-0 flex-col bg-(--vscode-sideBar-background)']}
+			style:width="{appMode.sessionsWidth}px"
+			style:background-color={sidebarLook?.backgroundColor}
+			style:background-image={sidebarLook?.backgroundImage}
+		>
 			{#key workspace.root}<AdeSidebar />{/key}
 		</aside>
 		<Sash
@@ -303,7 +313,7 @@
 			{#each list as t (t.id)}
 				<div class={['absolute inset-0 bg-(--vscode-terminal-background,var(--vscode-panel-background))', (adeLayout.board || k !== key || activeTab !== t.id) && 'hidden']}>
 					<!-- Orca's pane splits: every pane is its own PTY (`t<n>` ids; the first pane's id is the tab's). -->
-					<PaneSplitView tree={t.layout ?? leaf(t.id)} expanded={t.expanded ?? null} onresize={(path, ratio) => adeLayout.resizePane(k, t.id, path, ratio)}>
+					<PaneSplitView tree={t.layout ?? leaf(t.id)} expanded={t.expanded ?? null} active={activePane(t)} onresize={(path, ratio) => adeLayout.resizePane(k, t.id, path, ratio)}>
 						{#snippet pane(p)}
 							<Terminal
 								key={adeLayout.ptyKey(k, p)}

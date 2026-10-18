@@ -3,13 +3,16 @@
 //! `tasks` persists task metadata and `review` drives the review / merge / PR flow of the
 //! Agents view.
 
+pub mod ai_text;
 pub mod automations;
 pub mod cli;
 pub mod events;
 pub mod hooks;
 pub mod host;
 pub mod issues;
+pub mod kingu_yaml;
 pub mod notes;
+pub mod open_in;
 pub mod pr;
 pub mod review;
 pub mod scripts;

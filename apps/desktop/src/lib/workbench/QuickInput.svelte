@@ -3,7 +3,7 @@
 	// picks the provider (quickAccess.ts): '' files with recently opened first, '>' commands,
 	// ':' line, '@' / '@:' symbols in the editor, '#' workspace symbols, 'edt ' open editors,
 	// 'view ' views, '?' help. `quick.pick` shows a custom list instead (createQuickPick).
-	import { enabledGlobs, isExcluded } from '#lib/settings/mappings.ts';
+	import { enabledGlobs, hiddenBySibling, isExcluded, siblingClauses } from '#lib/settings/mappings.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { lsp } from '#lib/lsp/lsp.svelte.ts';
 	import { invoke } from '@tauri-apps/api/core';
@@ -17,6 +17,7 @@
 	import { isMac, keyLabel } from './keys';
 	import { flattenSymbols, parseQuickInput, pickSymbols, QUICK_ACCESS_HELP, rankFiles, SYMBOL_KIND_NAMES, type FlatSymbol } from './quickAccess';
 	import { recentFiles } from './recentFiles.svelte';
+	import { withRecentFirst } from './workbenchOptions';
 	import { layout } from './layout.svelte';
 	import { editorLabel } from './editorLabel';
 	import { fileOf, isDiffKey } from './scm';
@@ -66,11 +67,19 @@
 		index = p?.activeId ? Math.max(0, p.items.findIndex((i) => i.id === p.activeId)) : 0;
 		previewFrom = null;
 		docSymbols = { path: null, list: [] };
-		queueMicrotask(() => input?.focus());
+		queueMicrotask(() => {
+			input?.focus();
+			// Restored input (preserveInput) starts selected, like VS Code: typing replaces it.
+			if (quick.selectRestored) input?.select();
+		});
 		if (p) return;
 		// files.exclude and search.exclude apply to Quick Open, like VS Code.
 		const exclude = untrack(() => [...enabledGlobs(settings.get('files.exclude')), ...enabledGlobs(settings.get('search.exclude'))]);
-		invoke<string[]>('fs_list_files').then((v) => (files = v.filter((f) => !isExcluded(f, exclude))));
+		const clauses = untrack(() => siblingClauses(settings.get('files.exclude'), settings.get('search.exclude')));
+		invoke<string[]>('fs_list_files').then((v) => {
+			const all = new Set(v);
+			files = v.filter((f) => !isExcluded(f, exclude) && !hiddenBySibling(f, clauses, (p) => all.has(p)));
+		});
 	});
 
 	// `@`: the active file's document symbols (from the language server).
@@ -86,10 +95,12 @@
 		});
 	});
 
-	// `#`: workspace symbols, debounced like VS Code's symbol search.
+	// `#`: workspace symbols, debounced like VS Code's symbol search; also under the file results
+	// when search.quickOpen.includeSymbols is on and something is typed.
 	$effect(() => {
-		if (mode?.kind !== 'workspaceSymbol') return;
-		const q = mode.query;
+		const withFiles = mode?.kind === 'files' && !!mode.query && settings.get<boolean>('search.quickOpen.includeSymbols');
+		if (mode?.kind !== 'workspaceSymbol' && !withFiles) return;
+		const q = mode?.kind === 'workspaceSymbol' || mode?.kind === 'files' ? mode.query : '';
 		untrack(() => (wsSymbols = { query: q, list: wsSymbols.list, busy: true }));
 		const timer = setTimeout(() => {
 			void lsp.workspaceSymbols(q).then((list) => {
@@ -156,7 +167,8 @@
 			detail: slash > 0 ? path.slice(0, slash) : '',
 			separator,
 			match: match && { score: match.score, positions: match.positions.filter((p) => p > slash).map((p) => p - slash - 1) },
-			run: () => editors.open(path, { preview: !reveal, reveal }),
+			// workbench.editor.enablePreviewFromQuickOpen (off: Quick Open keeps what it opens).
+			run: () => editors.open(path, { preview: settings.get<boolean>('workbench.editor.enablePreviewFromQuickOpen'), reveal }),
 			side: () => editors.openToSide(path, reveal)
 		};
 	}
@@ -168,7 +180,19 @@
 			case 'commands': {
 				const all = commands.paletteItems();
 				const label = (c: (typeof all)[number]) => (c.category ? `${c.category}: ${c.title}` : c.title);
-				return rank(m.query, all, label, 100).map(({ item, match }) => ({ label: label(item), key: keyOf(item), match, run: () => commands.run(item.id) }));
+				// workbench.commandPalette.history: recently used commands first, VS Code's "recently used" group.
+				const history = quick.commandHistory.slice(0, Math.max(0, settings.get<number>('workbench.commandPalette.history')));
+				const ranked = withRecentFirst(rank(m.query, all, label, 100), (r) => r.item.id, history);
+				return ranked.map(({ item: { item, match }, recent }, i) => ({
+					label: label(item),
+					key: keyOf(item),
+					match,
+					separator: !history.length ? undefined : i === 0 && recent ? 'recently used' : !recent && (i === 0 || ranked[i - 1].recent) ? 'other commands' : undefined,
+					run: () => {
+						quick.recordCommand(item.id);
+						void commands.run(item.id);
+					}
+				}));
 			}
 			case 'line': {
 				if (!editors.active) return [{ label: 'เปิดไฟล์ก่อนแล้วจึงไปบรรทัดได้ (Open a text editor first to go to a line.)', run: () => {} }];
@@ -245,8 +269,23 @@
 				}));
 			}
 			case 'files': {
-				const ranked = rankFiles(m.query, files, recentFiles.list.filter((p) => p !== (m.query ? null : editors.active)));
-				return ranked.map((r, i) => fileItem(r.path, r.match, i === 0 && r.recent ? 'recently opened' : !r.recent && (i === 0 || ranked[i - 1].recent) ? 'file results' : undefined, m.line, m.column));
+				// search.quickOpen.includeHistory / search.quickOpen.history.filterSortOrder / search.quickOpen.includeSymbols.
+				const ranked = rankFiles(m.query, files, recentFiles.list.filter((p) => p !== (m.query ? null : editors.active)), 60, {
+					includeHistory: settings.get<boolean>('search.quickOpen.includeHistory'),
+					sortOrder: settings.get<'default' | 'recency'>('search.quickOpen.history.filterSortOrder')
+				});
+				const fileRows = ranked.map((r, i) => fileItem(r.path, r.match, i === 0 && r.recent ? 'recently opened' : !r.recent && (i === 0 || ranked[i - 1].recent) ? 'file results' : undefined, m.line, m.column));
+				if (!m.query || !settings.get<boolean>('search.quickOpen.includeSymbols') || wsSymbols.query !== m.query) return fileRows;
+				const symbolRows = rank(m.query, wsSymbols.list, (s) => s.name, 30).map(({ item: s, match }, i) => ({
+					label: s.name,
+					detail: [SYMBOL_KIND_NAMES[s.kind], s.container, s.rel].filter(Boolean).join(' · '),
+					icon: fileIcon(s.rel),
+					match,
+					separator: i === 0 ? 'symbol results' : undefined,
+					run: () => editors.openAt(s.rel, s.line, s.column),
+					side: () => editors.openToSide(s.rel, { line: s.line, column: s.column, focus: true })
+				}));
+				return [...fileRows, ...symbolRows];
 			}
 		}
 	});
@@ -307,7 +346,8 @@
 		tabindex="-1"
 		class="fixed top-[calc(var(--kg-titlebar-height)+2px)] left-1/2 z-50 w-[min(600px,62vw)] -translate-x-1/2 rounded-xl border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) p-2 text-(--vscode-quickInput-foreground) shadow-2xl shadow-black/50"
 		onfocusout={(e) => {
-			if (!e.currentTarget.contains(e.relatedTarget as Node | null)) cancel();
+			// workbench.quickOpen.closeOnFocusLost
+			if (!e.currentTarget.contains(e.relatedTarget as Node | null) && settings.get<boolean>('workbench.quickOpen.closeOnFocusLost')) cancel();
 		}}
 	>
 		<input

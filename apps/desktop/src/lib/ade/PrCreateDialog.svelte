@@ -6,6 +6,9 @@
 	import { adeTasks } from './tasks.svelte.ts';
 	import { prFormProblem, prSubmitLabel, type PrForm } from './prForm.ts';
 	import { BUTTON, BUTTON_SECONDARY, INPUT } from './ui.ts';
+	import Icon from '#lib/workbench/Icon.svelte';
+	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { aiText, aiTextEnabled, generatePrDetails, prTemplate } from './aiText.svelte.ts';
 
 	let { slug, onClose }: { slug: string; onClose: () => void } = $props();
 
@@ -15,12 +18,31 @@
 	let error = $state('');
 	let busy = $state(false);
 
+	/** The repository's PR template when kingu.pr.useTemplate is on (the agent fills it too). */
+	let template: string | null = null;
 	$effect(() => {
 		const s = slug;
-		void adeTasks.prDefaults(s).then((f) => {
-			if (s === slug && !form) form = f;
+		void adeTasks.prDefaults(s).then(async (f) => {
+			if (s !== slug || form || !f) return;
+			template = settings.get<boolean>('kingu.pr.useTemplate') === true ? await prTemplate(s) : null;
+			form = template ? { ...f, body: adeTasks.prBodyFrom(s, template) } : f;
+			// kingu.pr.generateDetailsOnOpen: draft the title and description right away.
+			if (aiTextEnabled() && settings.get<boolean>('kingu.pr.generateDetailsOnOpen') === true) void draft();
 		});
 	});
+
+	// Orca's PR details generation (kingu.git.ai.*): replaces the title and description.
+	const drafting = $derived(aiText.busy[slug] === 'pr');
+	async function draft() {
+		if (!form) return;
+		error = '';
+		try {
+			const d = await generatePrDetails(slug, form.base, template);
+			if (form) form = { ...form, title: d.title, body: adeTasks.prBodyFrom(slug, d.body) };
+		} catch (e) {
+			error = `สร้างรายละเอียด PR ไม่ได้: ${e instanceof Error ? e.message : e}`;
+		}
+	}
 
 	const problem = $derived(form ? prFormProblem(form, branch) : 'กำลังเตรียม…');
 	const bases = $derived(form && !adeTasks.branches.includes(form.base) ? [form.base, ...adeTasks.branches] : adeTasks.branches);
@@ -54,12 +76,25 @@
 		<form class="space-y-2.5" onsubmit={submit}>
 			<p class="text-xs text-(--vscode-descriptionForeground)">push <span class="font-mono">{branch}</span> ไปที่ origin แล้วเปิด PR</p>
 			<label class="block space-y-1">
-				<span class="text-xs text-(--vscode-descriptionForeground)">ชื่อ (Title)</span>
-				<input class={INPUT} bind:value={form.title} placeholder="Title" use:focusTitle disabled={busy} />
+				<span class="flex items-center text-xs text-(--vscode-descriptionForeground)">
+					<span class="flex-1">ชื่อ (Title)</span>
+					{#if aiTextEnabled()}
+						<button
+							type="button"
+							class="flex items-center gap-1 rounded px-1 text-(--vscode-textLink-foreground) hover:underline disabled:opacity-50"
+							disabled={busy || drafting}
+							title="ให้ agent เขียนชื่อและรายละเอียดจาก commit ของ branch (Generate PR details)"
+							onclick={draft}
+						>
+							<Icon name="sparkle" size={12} />{drafting ? 'agent กำลังเขียน…' : 'ให้ agent เขียน'}
+						</button>
+					{/if}
+				</span>
+				<input class={INPUT} bind:value={form.title} placeholder="Title" use:focusTitle disabled={busy || drafting} />
 			</label>
 			<label class="block space-y-1">
 				<span class="text-xs text-(--vscode-descriptionForeground)">รายละเอียด (Description)</span>
-				<textarea class={[INPUT, 'h-40 resize-y font-mono text-xs']} bind:value={form.body} placeholder="Description (optional)" disabled={busy} onkeydown={onBodyKey}></textarea>
+				<textarea class={[INPUT, 'h-40 resize-y font-mono text-xs']} bind:value={form.body} placeholder="Description (optional)" disabled={busy || drafting} onkeydown={onBodyKey}></textarea>
 			</label>
 			<div class="flex flex-wrap items-center gap-3">
 				<label class="flex items-center gap-1.5">

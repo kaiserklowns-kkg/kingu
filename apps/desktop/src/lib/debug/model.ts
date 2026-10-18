@@ -24,7 +24,10 @@ export type DebugModel = {
 	exitCode: number | null;
 };
 
-export const OUTPUT_LIMIT = 5000;
+/** VS Code's `debug.console.maximumLines` default. */
+export const OUTPUT_LIMIT = 10000;
+/** The Debug Console's line limit (`debug.console.maximumLines`, set by debug.svelte.ts). */
+export const outputLimit = { max: OUTPUT_LIMIT };
 
 export function initialModel(): DebugModel {
 	return { state: 'initializing', threads: [], stopped: null, frames: [], frameId: null, scopes: [], variables: {}, output: [], verified: {}, exitCode: null };
@@ -42,7 +45,8 @@ export function appendOutput(m: DebugModel, category: string, text: string): Deb
 	const prev = m.output.at(-1);
 	const lead = prev && prev.category !== category && !prev.text.endsWith('\n') ? '\n' : '';
 	const output = [...m.output, { category, text: lead + text }];
-	return { ...m, output: output.length > OUTPUT_LIMIT ? output.slice(-OUTPUT_LIMIT) : output };
+	const max = Math.max(1, outputLimit.max);
+	return { ...m, output: output.length > max ? output.slice(-max) : output };
 }
 
 export function applyEvent(m: DebugModel, ev: Event): DebugModel {

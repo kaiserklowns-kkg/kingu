@@ -27,6 +27,7 @@
 	import { affectedBy, baseName, dirsToRefresh, isUnder, joinRel, parentOf, remapPath, stemLength, validateName } from '#lib/workbench/fileTree.ts';
 	import { splitPreview, type FileMatches, type SearchEvent } from '#lib/workbench/searchResults.ts';
 	import { editors } from '#lib/workbench/editors.svelte.ts';
+	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { worktreeDir } from './keys.ts';
 	import { adeLayout } from './adeLayout.svelte.ts';
 	import { adeTasks } from './tasks.svelte.ts';
@@ -328,11 +329,14 @@
 
 	const history = $derived(rightSidebar.undo(slug));
 
-	/** Trashes `rel` and lets go of its tabs; resolves to the token that restores it (null when
-	 * Rust kept no copy: too large). */
+	/** `files.enableTrash`, as the IDE explorer reads it. */
+	const useTrash = () => settings.get<boolean>('files.enableTrash') !== false;
+
+	/** Trashes `rel` (or deletes it for good with the Trash off) and lets go of its tabs; resolves to
+	 * the token that restores it (null when Rust kept no copy: too large, or deleted for good). */
 	async function deleteEntry(rel: string): Promise<string | null> {
 		const tabs = affectedBy([...editors.openPaths(), ...adeLayout.openFiles()], rel);
-		const token = await invoke<string | null>('fs_delete', { rel });
+		const token = await invoke<string | null>('fs_delete', { rel, useTrash: useTrash() });
 		for (const t of tabs) editors.closeEverywhere(t);
 		adeLayout.dropFiles(Object.values(adeLayout.files).flatMap((list) => list.map((f) => f.key)).filter((k) => isUnder(fileOf(k), rel)));
 		if (selected && isUnder(selected, rel)) selected = null;
@@ -364,10 +368,13 @@
 			list.length > 1 ? `${list.length} รายการที่เลือก` : isDir(list[0]) ? `โฟลเดอร์ '${baseName(list[0])}' และทุกอย่างข้างใน` : `'${baseName(list[0])}'`;
 		const tabs = list.flatMap((r) => affectedBy([...editors.openPaths(), ...adeLayout.openFiles()], r));
 		const dirty = new Set(editors.allTabs().filter((t) => t.dirty && tabs.includes(t.path)).map((t) => t.path)).size;
-		const ok = await ask(`ย้าย ${what} ไปที่ถังขยะ?${dirty ? `\n\nมี ${dirty} ไฟล์ที่ยังไม่บันทึก การแก้ไขจะหายไป` : ''}\n\nกู้คืนได้จากถังขยะ หรือกด ${isMac ? '⌘Z' : 'Ctrl+Z'}`, {
+		const trash = useTrash();
+		const unsaved = dirty ? `\n\nมี ${dirty} ไฟล์ที่ยังไม่บันทึก การแก้ไขจะหายไป` : '';
+		const question = trash ? `ย้าย ${what} ไปที่ถังขยะ?${unsaved}\n\nกู้คืนได้จากถังขยะ หรือกด ${isMac ? '⌘Z' : 'Ctrl+Z'}` : `ลบ ${what} ถาวร?${unsaved}\n\nกู้คืนไม่ได้ (files.enableTrash ปิดอยู่)`;
+		const ok = await ask(question, {
 			title: 'Delete',
 			kind: 'warning',
-			okLabel: 'ย้ายไปถังขยะ',
+			okLabel: trash ? 'ย้ายไปถังขยะ' : 'ลบถาวร',
 			cancelLabel: 'ยกเลิก'
 		});
 		if (!ok) return;

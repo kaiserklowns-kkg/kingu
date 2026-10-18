@@ -69,9 +69,17 @@ export function issuePrompt(issue: Issue | IssueDetail): string {
 	return parts.join('\n\n');
 }
 
-/** PR body of a task: its prompt, plus `Fixes #N` when it came from an issue (GitHub closes the issue on merge). */
+/** A GitHub link (no provider) or a Linear one. */
+export const isLinear = (link: IssueLink): boolean => link.provider === 'linear';
+
+/** How a task names its issue: `#42` on GitHub, `ENG-123` on Linear. */
+export function issueRef(link: IssueLink): string {
+	return isLinear(link) && link.key ? link.key : `#${link.number}`;
+}
+
+/** PR body of a task: its prompt, plus `Fixes #N` (or `Fixes ENG-123`) when it came from an issue; GitHub and Linear close it on merge. */
 export function prBody(meta: Pick<TaskMeta, 'slug' | 'prompt' | 'issue'>): string {
-	const fixes = meta.issue ? `Fixes #${meta.issue.number}\n\n` : '';
+	const fixes = meta.issue ? `Fixes ${issueRef(meta.issue)}\n\n` : '';
 	return `${fixes}${meta.prompt}\n\n---\nสร้างจากงาน Kingu \`${meta.slug}\``;
 }
 
@@ -80,15 +88,15 @@ export function prComment(url: string): string {
 	return `Kingu เริ่มงานนี้ใน PR ${url}`;
 }
 
-/** The task already started from issue `number`, if any (the newest when there are several). */
+/** The task already started from GitHub issue `number`, if any (the newest when there are several). */
 export function taskForIssue<T extends Pick<TaskMeta, 'issue' | 'created_at'>>(list: T[], number: number): T | undefined {
-	return list.filter((t) => t.issue?.number === number).sort((a, b) => b.created_at - a.created_at)[0];
+	return list.filter((t) => t.issue && !isLinear(t.issue) && t.issue.number === number).sort((a, b) => b.created_at - a.created_at)[0];
 }
 
-/** Issue number → its task's slug, for the Issues page's "has a task" links. */
+/** GitHub issue number → its task's slug, for the Issues page's "has a task" links. */
 export function tasksByIssue(list: Pick<TaskMeta, 'issue' | 'slug' | 'created_at'>[]): Map<number, string> {
 	const map = new Map<number, string>();
-	for (const t of [...list].sort((a, b) => a.created_at - b.created_at)) if (t.issue) map.set(t.issue.number, t.slug);
+	for (const t of [...list].sort((a, b) => a.created_at - b.created_at)) if (t.issue && !isLinear(t.issue)) map.set(t.issue.number, t.slug);
 	return map;
 }
 

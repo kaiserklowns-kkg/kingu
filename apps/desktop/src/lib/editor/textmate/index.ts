@@ -17,6 +17,7 @@ import {
 import { onActiveTheme, type ActiveTheme } from '../../theme/current';
 import { monacoBase } from '../../theme/themes';
 import { editorColors, textMateRules } from './theme';
+import { plainLineTokens, skipsTokenization } from '../tokenizationLimit';
 
 /** One Monaco theme id, redefined on every color theme change (editors pass it at creation). */
 export const THEME_ID = 'kingu-color-theme';
@@ -198,6 +199,8 @@ async function init() {
 					getInitialState: () => new TextMateState(INITIAL),
 					tokenizeEncoded(line, state) {
 						const prev = state as TextMateState;
+						// editor.maxTokenizationLineLength: long lines stay plain and keep the state.
+						if (skipsTokenization(line.length)) return { tokens: plainLineTokens(monaco.languages.getEncodedLanguageId(languageId)), endState: prev };
 						const result = grammar.tokenizeLine2(line, prev.stack, TIME_LIMIT_MS);
 						// A line that hit the time limit keeps the previous state, as VS Code does.
 						const endState = result.stoppedEarly ? prev : new TextMateState(result.ruleStack);

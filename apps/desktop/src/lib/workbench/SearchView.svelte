@@ -6,10 +6,25 @@
 	// The tree is virtualized at the 22px row height, so 20,000 matches stay cheap.
 	import FileIcon from './FileIcon.svelte';
 	import Icon from './Icon.svelte';
-	import { fileIcon } from './fileIcons';
+	import { fileIcon, folderIcon } from './fileIcons';
 	import { editors } from './editors.svelte';
 	import { search } from './search.svelte';
-	import { basename, dirname, flattenResults, previewReplacement, replaceConfirmText, splitPreview, summarize, type FileMatches, type ResultRow } from './searchResults';
+	import {
+		basename,
+		dirname,
+		flattenResults,
+		previewReplacement,
+		replaceConfirmText,
+		sortResults,
+		splitPreview,
+		summarize,
+		type FileMatches,
+		type ResultRow,
+		type ResultSortOrder
+	} from './searchResults';
+	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { scm } from './scm.svelte';
+	import { entryChanges, fileDecorations } from './scm';
 
 	const ROW = 22;
 	const OVERSCAN = 10;
@@ -21,7 +36,15 @@
 	let selected = $state(-1);
 	let confirmAll = $state(false);
 
-	const rows = $derived(flattenResults(search.files, search.collapsed));
+	// search.sortOrder and the List / Tree view mode (search.defaultViewMode).
+	const rows = $derived(flattenResults(sortResults(search.files, settings.get<ResultSortOrder>('search.sortOrder')), search.collapsed, search.viewMode));
+	/** search.showLineNumbers, search.decorations.colors / search.decorations.badges. */
+	const lineNumbers = $derived(settings.get<boolean>('search.showLineNumbers'));
+	const decoColors = $derived(settings.get<boolean>('search.decorations.colors'));
+	const decoBadges = $derived(settings.get<boolean>('search.decorations.badges'));
+	const decorations = $derived(decoColors || decoBadges ? fileDecorations(entryChanges(scm.repo?.entries ?? [])) : new Map());
+	const PAD = 8;
+	const INDENT = 20;
 	const first = $derived(Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN));
 	const visible = $derived(rows.slice(first, first + Math.ceil(viewHeight / ROW) + 2 * OVERSCAN));
 	const shownMatches = $derived(search.files.reduce((n, f) => n + f.matches.length, 0));
@@ -37,7 +60,7 @@
 		void search.replace(search.files);
 	}
 
-	function replaceRow(row: ResultRow, e: MouseEvent) {
+	function replaceRow(row: Exclude<ResultRow, { kind: 'folder' }>, e: MouseEvent) {
 		e.stopPropagation();
 		const scope: FileMatches[] = row.kind === 'file' ? [row.file] : [{ ...row.file, matches: [row.match] }];
 		void search.replace(scope);
@@ -69,6 +92,10 @@
 	});
 
 	function open(row: ResultRow, pin: boolean) {
+		if (row.kind === 'folder') {
+			search.toggleCollapsed(row.key);
+			return;
+		}
 		if (row.kind === 'file') {
 			search.toggleCollapsed(row.file.path);
 			return;
@@ -97,9 +124,9 @@
 			else select(selected - 1);
 		} else if (e.key === 'Enter' && row) open(row, false);
 		else if (e.key === 'ArrowLeft' && row) {
-			if (row.kind === 'file' && !row.collapsed) search.toggleCollapsed(row.file.path);
+			if (row.kind !== 'match' && !row.collapsed) search.toggleCollapsed(row.key);
 			else if (row.kind === 'match') select(rows.findIndex((r) => r.kind === 'file' && r.file === row.file));
-		} else if (e.key === 'ArrowRight' && row?.kind === 'file' && row.collapsed) search.toggleCollapsed(row.file.path);
+		} else if (e.key === 'ArrowRight' && row && row.kind !== 'match' && row.collapsed) search.toggleCollapsed(row.key);
 		else return;
 		e.preventDefault();
 	}
@@ -151,6 +178,7 @@
 						bind:value={search.query}
 						oninput={() => search.schedule()}
 						onkeydown={onInputKey}
+						onfocus={() => search.seedOnFocus(editors.selectionText(settings.get<boolean>('search.seedWithNearestWord')))}
 						aria-label="Search"
 						placeholder="Search"
 						spellcheck="false"
@@ -290,7 +318,13 @@
 				{#each [
 					{ label: 'Refresh', icon: 'refresh', run: () => void search.run(), show: true },
 					{ label: 'Clear Search Results', icon: 'close', run: () => search.clear(), show: true },
-					{ label: 'Collapse All', icon: 'collapseAll', run: () => search.collapseAll(), show: search.files.length > 0 }
+					{ label: 'Collapse All', icon: 'collapseAll', run: () => search.collapseAll(), show: search.files.length > 0 },
+					{
+						label: search.viewMode === 'tree' ? 'View as List' : 'View as Tree',
+						icon: search.viewMode === 'tree' ? 'rows' : 'folder',
+						run: () => (search.viewMode = search.viewMode === 'tree' ? 'list' : 'tree'),
+						show: true
+					}
 				] as const as a (a.label)}
 					{#if a.show}
 						<button
@@ -325,15 +359,15 @@
 					role="treeitem"
 					tabindex="-1"
 					aria-selected={selected === i}
-					aria-expanded={row.kind === 'file' ? !row.collapsed : undefined}
-					aria-level={row.kind === 'file' ? 1 : 2}
+					aria-expanded={row.kind !== 'match' ? !row.collapsed : undefined}
+					aria-level={row.depth + 1}
 					class={[
 						'group/row mx-1.5 flex h-(--kg-row-height) cursor-pointer items-center gap-1 rounded-md pr-3 leading-(--kg-row-height) whitespace-nowrap',
 						selected === i
 							? 'bg-(--vscode-list-activeSelectionBackground) text-(--vscode-list-activeSelectionForeground)'
 							: 'hover:bg-(--vscode-list-hoverBackground)'
 					]}
-					style:padding-left={row.kind === 'file' ? '8px' : '28px'}
+					style:padding-left="{PAD + row.depth * INDENT}px"
 					onclick={() => {
 						selected = i;
 						open(row, false);
@@ -341,12 +375,18 @@
 					}}
 					ondblclick={() => row.kind === 'match' && open(row, true)}
 				>
-					{#if row.kind === 'file'}
+					{#if row.kind === 'folder'}
+						<span class="flex w-4 shrink-0 justify-center text-(--vscode-icon-foreground)"><Icon name={row.collapsed ? 'chevronRight' : 'chevronDown'} size={16} /></span>
+						<span class="flex w-4 shrink-0 justify-center"><FileIcon icon={folderIcon(row.path, !row.collapsed)} /></span>
+						<span class="min-w-0 truncate" title={row.path}>{basename(row.path)}</span>
+					{:else if row.kind === 'file'}
+						{@const deco = decorations.get(row.file.path)}
 						<span class="flex w-4 shrink-0 justify-center text-(--vscode-icon-foreground)"><Icon name={row.collapsed ? 'chevronRight' : 'chevronDown'} size={16} /></span>
 						<span class="flex w-4 shrink-0 justify-center"><FileIcon icon={fileIcon(row.file.path)} /></span>
 						<span class="min-w-0 truncate" title={row.file.path}>
-							{basename(row.file.path)}<span class="ml-1.5 text-[0.9em] text-(--vscode-descriptionForeground)">{dirname(row.file.path)}</span>
+							<span style:color={decoColors ? deco?.color : undefined}>{basename(row.file.path)}</span>{#if search.viewMode === 'list'}<span class="ml-1.5 text-[0.9em] text-(--vscode-descriptionForeground)">{dirname(row.file.path)}</span>{/if}
 						</span>
+						{#if decoBadges && deco}<span class="shrink-0 text-[11px] font-semibold" style:color={decoColors ? deco.color : undefined}>{deco.letter || '•'}</span>{/if}
 						{#if canReplace}
 							<button
 								class="ml-auto hidden size-5 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) group-hover/row:grid hover:bg-(--vscode-toolbar-hoverBackground)"
@@ -363,6 +403,7 @@
 						>
 					{:else}
 						{@const p = splitPreview(row.match)}
+						{#if lineNumbers}<span class="shrink-0 text-(--vscode-descriptionForeground)">{row.match.line}</span>{/if}
 						{#if search.showReplace}
 							<span class="min-w-0 truncate" title="{row.match.line}: {row.match.preview}"
 								>{p.before}<span class="bg-[var(--vscode-diffEditor-removedTextBackground,#FF000033)] line-through">{p.match}</span><span

@@ -106,6 +106,7 @@
 						<span class={['truncate', t.preview && 'italic']} title={t.kind === 'diff' ? `${fileOf(t.key)} (diff ของงาน)` : t.key}>{t.label}</span>
 						{#if t.kind === 'diff'}<Icon name="git" size={12} />{/if}
 					{:else}
+						{#if t.kind === 'terminal' && t.color}<span class="size-2 shrink-0 rounded-full" style:background={t.color} aria-hidden="true"></span>{/if}
 						<Icon name={t.kind === 'compose' ? 'agent' : 'terminal'} size={14} /><span class="truncate">{t.label}</span>
 					{/if}
 					{#if t.kind !== 'agent' && t.kind !== 'compose'}

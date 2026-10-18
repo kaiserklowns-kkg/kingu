@@ -26,6 +26,7 @@ export function linkTarget(key: string, text: string): Promise<string | null> {
 		.catch(() => null);
 }
 
-export function openUrl(url: string): Promise<void> {
-	return invoke('terminal_open_url', { url });
+/** Opens a terminal link; `allowed` is terminal.integrated.allowedLinkSchemes (Rust checks it again). */
+export function openUrl(url: string, allowed?: string[]): Promise<void> {
+	return invoke('terminal_open_url', { url, allowed: allowed ?? null });
 }

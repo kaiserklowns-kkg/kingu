@@ -50,8 +50,9 @@ export async function writeResource(key: string, content: string): Promise<void>
  * settings, keybindings and snap manifests are always UTF-8 and owned by Kingu. */
 export const isWorkspaceTextFile = (key: string) => key !== USER_SETTINGS_KEY && key !== USER_KEYBINDINGS_KEY && !userSnapId(key);
 
-export type FileStat = { mtime: number; size: number; hash: string };
-export type ReadOptions = { encoding?: string; defaultEncoding?: string; autoGuess?: boolean; acceptBinary?: boolean; acceptLarge?: boolean };
+/** `readonly`: the file's permissions say it cannot be written (files.readonlyFromPermissions). */
+export type FileStat = { mtime: number; size: number; hash: string; readonly?: boolean };
+export type ReadOptions = { encoding?: string; defaultEncoding?: string; autoGuess?: boolean; acceptBinary?: boolean; acceptLarge?: boolean; largeFileLimit?: number };
 export type TextRead =
 	| { kind: 'text'; content: string; encoding: string; lossy: boolean; stat?: FileStat }
 	| { kind: 'binary'; size: number }

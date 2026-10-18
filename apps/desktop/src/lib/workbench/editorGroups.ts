@@ -10,7 +10,7 @@
 /** `sticky`: pinned with Pin Editor (VS Code's sticky tabs), kept first in the strip. */
 export type EditorTab = { path: string; preview: boolean; dirty: boolean; sticky?: boolean };
 /** `mru`: the group's editors, most recently active first (VS Code's EditorGroupModel.mru). */
-export type EditorGroup = { id: number; tabs: EditorTab[]; active: string | null; mru: string[] };
+export type EditorGroup = { id: number; tabs: EditorTab[]; active: string | null; mru: string[]; used?: Record<string, number> };
 /** A closed editor, for Reopen Closed Editor (⇧⌘T). */
 export type ClosedEditor = { path: string; group: number; index: number; sticky: boolean };
 export type GroupLeaf = { type: 'group'; id: number };
@@ -20,12 +20,39 @@ export type GroupsModel = {
 	groups: EditorGroup[];
 	root: GridNode;
 	activeGroup: number;
+	/** A group shown alone in the editor area (VS Code's Maximize Editor Group); null otherwise. */
+	maximized?: number | null;
+	/** A group expanded to most of the grid (VS Code's toggleExpandGroup); null otherwise. */
+	expanded?: number | null;
 	/** Next id for a group or split node. */
 	nextId: number;
 	/** Recently closed editors, newest last. */
 	closed: ClosedEditor[];
 };
 export type SplitDirection = 'right' | 'down' | 'left' | 'up';
+
+/** `workbench.editor.openPositioning`. */
+export type OpenPositioning = 'left' | 'right' | 'first' | 'last';
+/** `workbench.editor.splitSizing`. */
+export type SplitSizing = 'auto' | 'distribute' | 'split';
+/** `workbench.editor.limit.*`, as one value (null when the limit is off). */
+export type EditorLimit = { value: number; perEditorGroup: boolean; excludeDirty: boolean };
+
+export type Behaviour = { closeEmptyGroups: boolean; focusRecentEditorAfterClose: boolean; openPositioning: OpenPositioning; splitSizing: SplitSizing };
+
+/** VS Code's defaults of the editor management settings the model follows (IEditorPartOptions). */
+export const DEFAULT_BEHAVIOUR: Behaviour = { closeEmptyGroups: true, focusRecentEditorAfterClose: true, openPositioning: 'right', splitSizing: 'auto' };
+
+let behaviourOf: () => Behaviour = () => DEFAULT_BEHAVIOUR;
+const behaviour = () => behaviourOf();
+
+/** Where the model reads those settings from (editors.svelte.ts: the settings; tests: a fixed value). */
+export function setBehaviour(source: (() => Behaviour) | null) {
+	behaviourOf = source ?? (() => DEFAULT_BEHAVIOUR);
+}
+
+/** Global use order of `group\0path`, for the editor limit across groups (VS Code's EditorsObserver). */
+let clock = 0;
 
 /** VS Code keeps this many recently closed editors. */
 export const MAX_CLOSED = 20;
@@ -61,6 +88,7 @@ export function openPaths(m: GroupsModel): Set<string> {
 
 function touch(g: EditorGroup, path: string) {
 	g.mru = [path, ...(g.mru ?? []).filter((p) => p !== path)];
+	(g.used ??= {})[path] = ++clock;
 }
 
 function forget(g: EditorGroup, path: string) {
@@ -71,7 +99,26 @@ function forget(g: EditorGroup, path: string) {
 const stickyCount = (g: EditorGroup) => g.tabs.filter((t) => t.sticky).length;
 
 export function activateGroup(m: GroupsModel, id: number) {
-	if (getGroup(m, id)) m.activeGroup = id;
+	if (!getGroup(m, id)) return;
+	m.activeGroup = id;
+	// Working in another group leaves the maximized one (VS Code restores the grid).
+	if (m.maximized != null && m.maximized !== id) m.maximized = null;
+}
+
+/** Where a new tab goes in `g` (`workbench.editor.openPositioning`); pinned tabs always stay first. */
+export function insertIndex(g: EditorGroup, positioning: OpenPositioning = behaviour().openPositioning): number {
+	const sticky = stickyCount(g);
+	const active = g.active ? g.tabs.findIndex((t) => t.path === g.active) : -1;
+	switch (positioning) {
+		case 'first':
+			return sticky;
+		case 'last':
+			return g.tabs.length;
+		case 'left':
+			return Math.max(sticky, active < 0 ? 0 : active);
+		default:
+			return Math.max(sticky, active < 0 ? g.tabs.length : active + 1);
+	}
 }
 
 export function openEditor(m: GroupsModel, path: string, { preview = true, group = m.activeGroup }: { preview?: boolean; group?: number } = {}) {
@@ -86,14 +133,45 @@ export function openEditor(m: GroupsModel, path: string, { preview = true, group
 		if (previewIdx >= 0) {
 			forget(g, g.tabs[previewIdx].path);
 			g.tabs[previewIdx] = tab;
-		} else {
-			const at = g.active ? g.tabs.findIndex((t) => t.path === g.active) + 1 : g.tabs.length;
-			g.tabs.splice(Math.max(at, stickyCount(g)), 0, tab);
-		}
+		} else g.tabs.splice(insertIndex(g), 0, tab);
 	}
 	g.active = path;
 	touch(g, path);
 	m.activeGroup = g.id;
+}
+
+/** `workbench.editor.revealIfOpen`: a group (the active one first) that already shows `path`. */
+export function groupShowing(m: GroupsModel, path: string): number | null {
+	if (activeGroupOf(m).tabs.some((t) => t.path === path)) return m.activeGroup;
+	for (const id of groupOrder(m)) if (getGroup(m, id)?.tabs.some((t) => t.path === path)) return id;
+	return null;
+}
+
+/**
+ * `workbench.editor.limit.*`: closes the least recently used editors beyond the limit, in the
+ * group or across all groups. Dirty and pinned (sticky) editors and `keep` never close; with
+ * `excludeDirty` dirty editors do not count either. Returns the closed [group, path] pairs.
+ */
+export function enforceLimit(m: GroupsModel, limit: EditorLimit, keep?: { group: number; path: string }): [number, string][] {
+	if (!(limit.value > 0)) return [];
+	const pools = limit.perEditorGroup ? m.groups.map((g) => [g]) : [m.groups];
+	const closed: [number, string][] = [];
+	for (const pool of pools) {
+		const all = pool
+			.flatMap((g) => g.tabs.map((t) => ({ g, t, used: g.used?.[t.path] ?? 0 })))
+			.filter(({ t }) => !(limit.excludeDirty && t.dirty))
+			.sort((a, b) => a.used - b.used);
+		let excess = all.length - limit.value;
+		for (const { g, t } of all) {
+			if (excess <= 0) break;
+			if (t.dirty || t.sticky || (keep && keep.group === g.id && keep.path === t.path)) continue;
+			if (closeEditor(m, g.id, t.path)) {
+				closed.push([g.id, t.path]);
+				excess--;
+			}
+		}
+	}
+	return closed;
 }
 
 export function setActiveEditor(m: GroupsModel, group: number, path: string) {
@@ -138,10 +216,15 @@ export function closeEditor(m: GroupsModel, group: number, path: string, { force
 		m.closed = [...(m.closed ?? []).filter((c) => c.path !== path), { path, group, index: i, sticky: !!tab.sticky }].slice(-MAX_CLOSED);
 	}
 	forget(g, path);
-	// workbench.editor.focusRecentEditorAfterClose (default on): the most recently used editor.
-	if (g.active === path) g.active = g.mru.find((p) => g.tabs.some((t) => t.path === p)) ?? g.tabs[Math.min(i, g.tabs.length - 1)]?.path ?? null;
+	if (g.used) delete g.used[path];
+	// workbench.editor.focusRecentEditorAfterClose: the most recently used editor, else the one that took its place.
+	if (g.active === path) {
+		const recent = behaviour().focusRecentEditorAfterClose ? g.mru.find((p) => g.tabs.some((t) => t.path === p)) : undefined;
+		g.active = recent ?? g.tabs[Math.min(i, g.tabs.length - 1)]?.path ?? null;
+	}
 	if (g.active) touch(g, g.active);
-	if (!g.tabs.length && m.groups.length > 1) removeGroup(m, group);
+	// workbench.editor.closeEmptyGroups
+	if (!g.tabs.length && m.groups.length > 1 && behaviour().closeEmptyGroups) removeGroup(m, group);
 	return true;
 }
 
@@ -265,7 +348,7 @@ export function closeAllInGroup(m: GroupsModel, group: number, { force = false }
 	for (const tab of [...g.tabs]) if (!closeEditor(m, group, tab.path, { force })) kept.push(tab.path);
 	// The last close may already have removed the group.
 	const still = getGroup(m, group);
-	if (still && !still.tabs.length && m.groups.length > 1) removeGroup(m, group);
+	if (still && !still.tabs.length && m.groups.length > 1 && behaviour().closeEmptyGroups) removeGroup(m, group);
 	return kept;
 }
 
@@ -293,6 +376,8 @@ export function remapEditors(m: GroupsModel, remap: (path: string) => string | n
 /** Force-closes every tab in every group, leaving one empty group (the folder was switched). */
 export function closeAllGroups(m: GroupsModel) {
 	for (const g of [...m.groups]) closeAllInGroup(m, g.id, { force: true });
+	// Even with workbench.editor.closeEmptyGroups off, a new folder starts with one group.
+	for (const g of [...m.groups]) if (m.groups.length > 1) removeGroup(m, g.id);
 }
 
 type Located = { node: GridNode; parent: GroupSplit | null; index: number };
@@ -325,12 +410,19 @@ export function addGroup(m: GroupsModel, reference: number, direction: SplitDire
 	const leaf: GroupLeaf = { type: 'group', id };
 	const orientation = direction === 'right' || direction === 'left' ? 'row' : 'column';
 	const before = direction === 'left' || direction === 'up';
+	m.maximized = null;
 	if (at.parent && at.parent.direction === orientation) {
-		const half = at.parent.sizes[at.index] / 2;
-		at.parent.sizes[at.index] = half;
+		const sizes = at.parent.sizes;
+		// workbench.editor.splitSizing: `split` halves the group, `distribute` evens the row, and
+		// `auto` (VS Code's Sizing.Auto) distributes when the row is already even, else splits.
+		const even = sizes.every((s) => Math.abs(s - sizes[0]) < 1e-6);
+		const distribute = behaviour().splitSizing === 'distribute' || (behaviour().splitSizing === 'auto' && even);
+		const half = sizes[at.index] / 2;
+		sizes[at.index] = half;
 		const pos = before ? at.index : at.index + 1;
 		at.parent.children.splice(pos, 0, leaf);
-		at.parent.sizes.splice(pos, 0, half);
+		sizes.splice(pos, 0, half);
+		if (distribute) at.parent.sizes = sizes.map(() => 1 / sizes.length);
 	} else {
 		const ref: GroupLeaf = { type: 'group', id: reference };
 		const split: GroupSplit = { type: 'split', id: m.nextId++, direction: orientation, children: before ? [leaf, ref] : [ref, leaf], sizes: [0.5, 0.5] };
@@ -341,6 +433,8 @@ export function addGroup(m: GroupsModel, reference: number, direction: SplitDire
 
 export function removeGroup(m: GroupsModel, id: number) {
 	if (m.groups.length <= 1) return;
+	if (m.maximized === id) m.maximized = null;
+	if (m.expanded === id) m.expanded = null;
 	const order = groupOrder(m);
 	const at = locate(m, (n) => n.type === 'group' && n.id === id);
 	if (!at?.parent) return;
@@ -462,4 +556,79 @@ export function resizeSplit(m: GroupsModel, splitId: number, i: number, delta: n
 export function evenSplit(m: GroupsModel, splitId: number) {
 	const node = locate(m, (n) => n.type === 'split' && n.id === splitId)?.node;
 	if (node?.type === 'split') node.sizes = node.children.map(() => 1 / node.children.length);
+}
+
+/** Evens every split of the grid (VS Code's arrangeGroups EVEN). */
+export function evenAll(m: GroupsModel) {
+	const walk = (n: GridNode) => {
+		if (n.type !== 'split') return;
+		n.sizes = n.children.map(() => 1 / n.children.length);
+		n.children.forEach(walk);
+	};
+	walk(m.root);
+	m.expanded = null;
+}
+
+/**
+ * VS Code's toggleExpandGroup (a double click on a pinned tab with
+ * `workbench.editor.doubleClickTabToToggleEditorGroupSizes: expand`): the group takes most of the
+ * grid, its siblings shrink to the minimum; again evens the grid.
+ */
+export function toggleExpandGroup(m: GroupsModel, id: number) {
+	if (m.expanded === id) return evenAll(m);
+	let target = locate(m, (n) => n.type === 'group' && n.id === id);
+	if (!target) return;
+	while (target?.parent) {
+		const split = target.parent;
+		const others = split.children.length - 1;
+		split.sizes = split.children.map((_, i) => (i === target!.index ? 1 - others * MIN_SIZE : MIN_SIZE));
+		const node: GridNode = split;
+		target = locate(m, (n) => n === node);
+	}
+	m.expanded = id;
+}
+
+/**
+ * ⌘W on a pinned (sticky) editor with `workbench.editor.preventPinnedEditorClose` keyboard: the
+ * most recently used unpinned editor of the active group, else of any group, to show instead.
+ */
+export function nextUnpinned(m: GroupsModel): [number, string] | null {
+	const g = activeGroupOf(m);
+	const unpinned = (gr: EditorGroup) => mruOf(m, gr.id).filter((p) => !gr.tabs.find((t) => t.path === p)?.sticky);
+	const own = unpinned(g)[0];
+	if (own) return [g.id, own];
+	let best: [number, string, number] | null = null;
+	for (const gr of m.groups)
+		for (const p of unpinned(gr)) {
+			const used = gr.used?.[p] ?? 0;
+			if (!best || used > best[2]) best = [gr.id, p, used];
+		}
+	return best && [best[0], best[1]];
+}
+
+/**
+ * The group right of (`right`) or below (`down`) group `id` in the grid, or null (VS Code's
+ * SIDE_GROUP lookup for `workbench.editor.openSideBySideDirection`).
+ */
+export function neighbourGroup(m: GroupsModel, id: number, direction: 'right' | 'down'): number | null {
+	const orientation = direction === 'right' ? 'row' : 'column';
+	let at = locate(m, (n) => n.type === 'group' && n.id === id);
+	while (at?.parent) {
+		const split = at.parent;
+		if (split.direction === orientation && at.index + 1 < split.children.length) {
+			let node = split.children[at.index + 1];
+			while (node.type === 'split') node = node.children[0];
+			return node.id;
+		}
+		const node: GridNode = split;
+		at = locate(m, (n) => n === node);
+	}
+	return null;
+}
+
+/** VS Code's toggleMaximizeGroup: the group alone in the editor area until toggled or another group is used. */
+export function toggleMaximizeGroup(m: GroupsModel, id: number) {
+	if (m.groups.length < 2 && m.maximized == null) return;
+	m.maximized = m.maximized === id ? null : id;
+	if (m.maximized != null) m.activeGroup = id;
 }

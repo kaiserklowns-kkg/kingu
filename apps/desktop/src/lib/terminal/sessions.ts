@@ -147,6 +147,7 @@ export function parseAdeTerminals(raw: unknown): AdeTerminalsState | null {
 					n: t.n as number,
 					title: optString(t.title),
 					run: optArgv(t.run),
+					...(typeof t.color === 'string' && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(t.color) ? { color: t.color } : {}),
 					// One pane left that is not the tab's first keeps its tree: the tree names its PTY.
 					...(layout && (layout.type === 'split' || layout.id !== t.id) ? { layout } : {}),
 					...(layout && pane && panes.includes(pane) ? { pane } : {}),
@@ -185,4 +186,9 @@ export function liveCliSessions(saved: CliSessionsState, tag: string, live: Set<
 	const gone: CliSessionsState = {};
 	for (const [slug, s] of Object.entries(saved)) (live.has(cliKey(tag, slug, s.startedAt)) ? kept : gone)[slug] = s;
 	return { kept, gone };
+}
+
+/** terminal.integrated.hideOnStartup: whether the terminal view hides on the first load (`restored`: a saved list came back). */
+export function hideOnStartup(setting: string, restored: boolean): boolean {
+	return setting === 'always' || (setting === 'whenEmpty' && !restored);
 }

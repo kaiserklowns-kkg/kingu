@@ -6,7 +6,8 @@
 // scrolls keep one entry up to date); a file switch or a larger jump (Go to Line, Go to Definition,
 // a search result) adds an entry and drops the forward entries, like a browser.
 
-export type Location = { path: string; line: number; column: number };
+/** `group`: the editor group it was recorded in (for `workbench.editor.navigationScope`). */
+export type Location = { path: string; line: number; column: number; group?: number };
 
 export const NEARBY_LINES = 10;
 export const MAX_ENTRIES = 50;
@@ -54,15 +55,26 @@ export class NavigationHistory {
 		return true;
 	}
 
-	/** Moves back and returns the location to show, or null at the start. */
-	back(): Location | null {
-		if (!this.canGoBack) return null;
-		return { ...this.#stack[--this.#index] };
+	/**
+	 * Moves back to the previous entry `inScope` accepts (`workbench.editor.navigationScope`: every
+	 * entry, the active group's or the active editor's) and returns it, or null when there is none.
+	 */
+	back(inScope: (loc: Location) => boolean = () => true): Location | null {
+		for (let i = this.#index - 1; i >= 0; i--)
+			if (inScope(this.#stack[i])) {
+				this.#index = i;
+				return { ...this.#stack[i] };
+			}
+		return null;
 	}
 
-	forward(): Location | null {
-		if (!this.canGoForward) return null;
-		return { ...this.#stack[++this.#index] };
+	forward(inScope: (loc: Location) => boolean = () => true): Location | null {
+		for (let i = this.#index + 1; i < this.#stack.length; i++)
+			if (inScope(this.#stack[i])) {
+				this.#index = i;
+				return { ...this.#stack[i] };
+			}
+		return null;
 	}
 
 	/** Drops the entries whose file matches (deleted files, a closed folder). */

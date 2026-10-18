@@ -12,8 +12,10 @@
 	import { runtime } from './runtime.svelte';
 	import { adeTasks } from './tasks.svelte';
 	import PrChecks from './PrChecks.svelte';
+	import CacheTimer from './CacheTimer.svelte';
 	import DiffNotesList from './DiffNotesList.svelte';
 	import { issues } from './issues.svelte.ts';
+	import { isLinear, issueRef } from './issues.ts';
 	import { cliOf } from './agentCli';
 	import { adeLayout } from './adeLayout.svelte';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
@@ -109,6 +111,7 @@
 			<div class="flex items-center gap-2">
 				<span class={['size-2.5 shrink-0 rounded-full', STATUS_DOT[view.status]]}></span>
 				<h1 class="min-w-0 flex-1 truncate text-base font-semibold" title={meta.title}>{meta.title}</h1>
+				<CacheTimer {view} />
 				<span class="rounded-full border border-(--vscode-widget-border) px-2 text-xs">{STATUS_LABEL[view.status]}</span>
 				<span class={['rounded-full border px-2 text-xs', TONE[chip.tone]]}>{chip.label}</span>
 			</div>
@@ -119,7 +122,7 @@
 				{#if meta.pr_url}<a class="text-(--vscode-textLink-foreground) hover:underline" href={meta.pr_url} target="_blank" rel="noreferrer">{meta.pr_url}</a>{/if}
 				{#if meta.issue}
 					{@const issue = meta.issue}
-					<button class="text-(--vscode-textLink-foreground) hover:underline" title="เปิด issue บน GitHub: {issue.url}" onclick={() => issues.open(issue)}>issue #{issue.number}</button>
+					<button class="text-(--vscode-textLink-foreground) hover:underline" title="เปิด issue บน {isLinear(issue) ? 'Linear' : 'GitHub'}: {issue.url}" onclick={() => issues.open(issue)}>issue {issueRef(issue)}</button>
 				{/if}
 				<span class="flex-1"></span>
 				{#if running && run?.runId !== undefined}

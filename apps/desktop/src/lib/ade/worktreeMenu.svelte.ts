@@ -13,7 +13,8 @@ import { quickOpenWorktree } from './quickOpen.svelte.ts';
 import { worktreeDir } from './keys';
 import { COLUMNS, STATUS_LABEL } from './model';
 import { adeTasks } from './tasks.svelte';
-import { jumpRows, worktreeActions, type WorktreeAction } from './worktreeActions';
+import { jumpRows, openInLabels, worktreeActions, type WorktreeAction } from './worktreeActions';
+import { settings } from '#lib/settings/settings.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 const FOLDER_ID = '@folder';
@@ -21,7 +22,13 @@ const FOLDER_ID = '@folder';
 /** The card menu of a worktree (`key` '' = the folder itself). */
 export function actionsFor(key: string) {
 	const view = key ? adeTasks.find(key) : undefined;
-	return worktreeActions({ slug: key || null, status: view?.status, running: !!view?.runtime?.working, hasWorktree: !view?.statError });
+	const openIn = openInLabels(settings.get<Record<string, unknown>>('kingu.worktree.openIn'));
+	return worktreeActions({ slug: key || null, status: view?.status, running: !!view?.runtime?.working, hasWorktree: !view?.statError, openIn });
+}
+
+/** Opens a worktree folder (absolute) in a `kingu.worktree.openIn` app; Rust reads the command from the user's settings. */
+export function openWorktreeIn(label: string, path: string) {
+	invoke('worktree_open_in', { label, path }).catch((e) => notifications.error(`เปิดใน ${label} ไม่ได้: ${e}`));
 }
 
 async function copy(text: string, what: string) {
@@ -35,6 +42,10 @@ async function copy(text: string, what: string) {
 
 export function runWorktreeAction(key: string, id: WorktreeAction) {
 	const slug = key || null;
+	if (id.startsWith('openIn:')) {
+		if (workspace.root) openWorktreeIn(id.slice(7), slug ? `${workspace.root}/${worktreeDir(slug)}` : workspace.root);
+		return;
+	}
 	switch (id) {
 		case 'open':
 			appMode.setMode('agents');

@@ -33,3 +33,31 @@ export function snippet(body: string, max = 120): string {
 export function withResolved(threads: ReviewThread[], id: string, resolved: boolean): ReviewThread[] {
 	return threads.map((t) => (t.id === id ? { ...t, resolved } : t));
 }
+
+// ---------------------------------------------------------------------------------------------
+// Bots (Orca's PR comment audience filter; `kingu.pr.botAuthors` adds logins)
+
+/** Review services that post from ordinary accounts, matched inside the login. */
+const REVIEW_SERVICES = ['coderabbit', 'codex-connector', 'sonarcloud', 'sonarqube', 'codecov', 'greptile', 'sourcery-ai', 'deepsource', 'snyk', 'graphite-app', 'qodo'];
+
+export type Audience = 'all' | 'people' | 'bots';
+
+/** The logins of `kingu.pr.botAuthors`, lowercased, without `@`. */
+export function botOverrides(setting: readonly unknown[] | undefined): Set<string> {
+	return new Set((setting ?? []).filter((x): x is string => typeof x === 'string').map((x) => x.trim().replace(/^@/, '').toLowerCase()).filter(Boolean));
+}
+
+/** A bot: GitHub's `[bot]` accounts, a known review service, a `-bot`/`bot` login, or one the user listed. */
+export function isBotAuthor(login: string, overrides: ReadonlySet<string>): boolean {
+	const l = login.trim().replace(/^@/, '').toLowerCase();
+	if (!l) return false;
+	if (overrides.has(l) || l.endsWith('[bot]')) return true;
+	if (REVIEW_SERVICES.some((s) => l.includes(s))) return true;
+	return /(?:^|[-_])bot$/.test(l) || /dependabot|renovate/.test(l);
+}
+
+/** Threads whose first comment is from the chosen audience. */
+export function byAudience(threads: ReviewThread[], audience: Audience, overrides: ReadonlySet<string>): ReviewThread[] {
+	if (audience === 'all') return threads;
+	return threads.filter((t) => isBotAuthor(t.comments[0]?.author ?? '', overrides) === (audience === 'bots'));
+}

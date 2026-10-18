@@ -41,6 +41,7 @@
 	import { status } from './status.svelte';
 	import { workspace } from './workspace.svelte';
 	import { installSettings } from '#lib/settings/apply.svelte.ts';
+	import { installWorkbenchAppearance } from './workbenchAppearance.svelte';
 	import { registerSettingsCommands } from '#lib/settings/contributions.ts';
 	import { installAde } from '#lib/ade/tasks.svelte.ts';
 	import { isMac } from './keys';
@@ -65,8 +66,13 @@
 	import { installAgentNotifications } from '#lib/ade/agentNotify.svelte.ts';
 	import { installAutomations } from '#lib/ade/automations.svelte.ts';
 	import { installIssues } from '#lib/ade/issues.svelte.ts';
+	import { installLinear } from '#lib/ade/linear.svelte.ts';
+	import LinearConnect from '#lib/ade/LinearConnect.svelte';
 	import { installSnaps } from '#lib/snaps/snaps.svelte.ts';
 	import { installDebug } from '#lib/debug/debug.svelte.ts';
+	import DebugToolbar from '#lib/debug/DebugToolbar.svelte';
+	import { installBreadcrumbs } from './breadcrumbsCommands.svelte';
+	import { installProblemsSettings } from '#lib/lsp/problemsCommands.svelte.ts';
 	import { installCloseGuard, quit } from './closeGuard.svelte';
 	import { installEditorRestore } from './editorRestore.svelte';
 	import { textFiles } from './textFileService.svelte';
@@ -244,7 +250,7 @@
 				}
 			}),
 			commands.register({ id: 'workbench.view.explorer', title: 'Show Explorer', category: 'View', key: 'cmd+shift+e', keyWhen: () => !appMode.isAgents, run: () => ((layout.sideView = 'explorer'), (layout.sidebarVisible = true)) }),
-			commands.register({ id: 'workbench.action.findInFiles', title: 'Search: Find in Files', key: 'cmd+shift+f', keyWhen: () => !appMode.isAgents, run: () => ((layout.sideView = 'search'), (layout.sidebarVisible = true), search.reveal(editors.selectionText())) }),
+			commands.register({ id: 'workbench.action.findInFiles', title: 'Search: Find in Files', key: 'cmd+shift+f', keyWhen: () => !appMode.isAgents, run: () => ((layout.sideView = 'search'), (layout.sidebarVisible = true), search.reveal(editors.selectionText(settings.get<boolean>('search.seedWithNearestWord')))) }),
 			commands.register({ id: 'workbench.view.scm', title: 'Show Source Control', category: 'View', key: 'ctrl+shift+g', run: () => ((layout.sideView = 'scm'), (layout.sidebarVisible = true)) }),
 			commands.register({ id: 'workbench.actions.view.problems', title: 'Focus on Problems View', category: 'View', key: 'cmd+shift+m', run: () => layout.showPanel('problems') }),
 			commands.register({
@@ -258,7 +264,7 @@
 				run: () => {
 					if (adeInFront()) adeLayout.closeActive();
 					else if (!editors.active) editors.removeGroup();
-					else void textFiles.closeEditors([editors.active]);
+					else if (!editors.keepPinnedOnKeyboardClose()) void textFiles.closeEditors([editors.active]);
 				}
 			}),
 			// Editor groups (VS Code editorCommands.ts / editorActions.ts, macOS keys).
@@ -294,6 +300,7 @@
 		const uninstallScm = installScm();
 		const uninstallWatcher = workspace.install();
 		const uninstallSettings = installSettings();
+		const uninstallAppearance = installWorkbenchAppearance();
 		const unregisterSettings = registerSettingsCommands();
 		const uninstallAde = installAde();
 		const uninstallAgentsMode = installAgentsMode();
@@ -301,12 +308,15 @@
 		const uninstallAgentNotifications = installAgentNotifications();
 		const uninstallAutomations = installAutomations();
 		const uninstallIssues = installIssues();
+		const uninstallLinear = installLinear();
 		const uninstallLayout = installLayoutCommands();
 		const uninstallSnaps = installSnaps();
 		const uninstallTerminalSessions = installTerminalSessions();
 		const uninstallTerminalCommands = installTerminalCommands();
 		const uninstallAdeCommands = installAdeCommands();
 		const uninstallDebug = installDebug();
+		const uninstallBreadcrumbs = installBreadcrumbs();
+		const uninstallProblemsSettings = installProblemsSettings();
 		const uninstallAccounts = accounts.install();
 		const uninstallTextFiles = textFiles.install();
 		const unregisterEditorStatus = registerEditorStatusCommands();
@@ -324,6 +334,8 @@
 			unregisterEditorStatus();
 			uninstallTextFiles();
 			uninstallAccounts();
+			uninstallProblemsSettings();
+			uninstallBreadcrumbs();
 			uninstallDebug();
 			uninstallAdeCommands();
 			uninstallTerminalCommands();
@@ -333,6 +345,7 @@
 			uninstallAgentsMode();
 			uninstallWorktreeCommands();
 			uninstallIssues();
+			uninstallLinear();
 			uninstallAutomations();
 			uninstallAgentNotifications();
 			uninstallAde();
@@ -340,6 +353,7 @@
 			uninstall();
 			uninstallScm();
 			uninstallWatcher();
+			uninstallAppearance();
 			uninstallSettings();
 			unregisterSettings();
 			unregister.forEach((u) => u());
@@ -405,6 +419,7 @@
 <div class="flex h-screen flex-col overflow-hidden">
 	<!-- One title bar and one status bar for the IDE and the Agents layout. -->
 	<TitleBar workspaceName={workspaceName || 'Kingu'} {focused} />
+	<DebugToolbar placement="floating" />
 
 	<div bind:this={middle} class={['workbench-body grid min-h-0 flex-1 bg-(--vscode-titleBar-activeBackground) px-[4px] pb-[4px]', (appMode.isAgents || systemSettings.visible) && 'hidden']}
 		style:grid-template-areas={gridTemplateAreas(grid)}
@@ -489,6 +504,7 @@
 	{#if cleanup.open}<CleanupDialog />{/if}
 	<Tooltips />
 	<QuickInput />
+	<LinearConnect />
 	<AdeDialogs />
 	<RepoDialog />
 	<NotificationToasts />

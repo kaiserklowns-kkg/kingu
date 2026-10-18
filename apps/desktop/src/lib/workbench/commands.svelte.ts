@@ -7,6 +7,8 @@ import { keysFor, whenKey } from './keybindingsModel';
 import { evaluateWhen } from './contextKey';
 import { currentContext } from './contextKeys.svelte';
 import { status } from './status.svelte';
+import { settings } from '#lib/settings/settings.svelte.ts';
+import { terminalStartsChord, workbenchTakesKey } from '#lib/terminal/behaviour.ts';
 
 /** Every key that runs `cmd` on this platform: keybindings.json's first, then the default unless removed. */
 export function keysOf(cmd: { id: string; key?: string; mac?: string }, mac = isMac): string[] {
@@ -110,6 +112,11 @@ export function installKeybindings(): () => void {
 		if (isModifierKey(e)) return;
 		ctx = null;
 		const inEditor = e.target instanceof Element && e.target.closest('.monaco-editor') !== null;
+		// A focused terminal keeps the keys terminal.integrated.sendKeybindingsToShell / commandsToSkipShell give the shell.
+		const inTerminal = e.target instanceof Element && e.target.closest('.xterm') !== null;
+		const takes = (cmd: Command) =>
+			!inTerminal ||
+			workbenchTakesKey(cmd.id, e.metaKey, settings.get<boolean>('terminal.integrated.sendKeybindingsToShell'), settings.get<string[]>('terminal.integrated.commandsToSkipShell'));
 		if (pending) {
 			const first = pending;
 			pending = null;
@@ -128,13 +135,15 @@ export function installKeybindings(): () => void {
 		}
 		const all = bindings();
 		for (const b of all) {
-			if (b.parts.length !== 1 || !matches(parseChord(b.parts[0]), e) || !enabled(b)) continue;
+			if (b.parts.length !== 1 || !matches(parseChord(b.parts[0]), e) || !enabled(b) || !takes(b.cmd)) continue;
 			e.preventDefault();
 			e.stopPropagation();
 			runByKey(b.cmd);
 			return;
 		}
-		const startsChord = all.some((b) => b.parts.length === 2 && matches(parseChord(b.parts[0]), e) && enabled(b));
+		// terminal.integrated.allowChords: off, a chord's first key goes to the shell instead.
+		const chordsHere = !inTerminal || terminalStartsChord(settings.get<boolean>('terminal.integrated.allowChords'), e.key);
+		const startsChord = chordsHere && all.some((b) => b.parts.length === 2 && matches(parseChord(b.parts[0]), e) && enabled(b) && takes(b.cmd));
 		if (startsChord) {
 			pending = e;
 			consume(e, inEditor);

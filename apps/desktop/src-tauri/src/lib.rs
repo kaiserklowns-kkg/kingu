@@ -10,8 +10,10 @@ mod fs;
 mod git;
 mod glob;
 mod git_remote;
+mod linear;
 mod lsp;
 mod menu;
+mod net_proxy;
 mod project;
 mod notify;
 mod pty;
@@ -224,12 +226,12 @@ fn repo_dir(ws: &Workspace, slug: Option<&str>) -> Result<PathBuf, String> {
 
 /// Source Control view: branch, ahead/behind and changed files; `None` outside a repository.
 #[tauri::command]
-async fn git_status(ws: State<'_, Workspace>, slug: Option<String>) -> Result<Option<git::GitStatus>, String> {
+async fn git_status(ws: State<'_, Workspace>, slug: Option<String>, options: Option<git::StatusOptions>) -> Result<Option<git::GitStatus>, String> {
   if slug.is_none() && ws.current().is_none() {
     return Ok(None);
   }
   let dir = repo_dir(&ws, slug.as_deref())?;
-  blocking(move || git::status(&dir)).await
+  blocking(move || git::status_with(&dir, &options.unwrap_or_default())).await
 }
 
 #[tauri::command]
@@ -246,20 +248,40 @@ async fn git_unstage(ws: State<'_, Workspace>, paths: Vec<String>, slug: Option<
   blocking(move || git::unstage(&dir, &paths)).await
 }
 
-/// Deleting untracked files needs `delete_untracked`, set only after the user confirmed.
+/// Deleting untracked files needs `delete_untracked`, set only after the user confirmed;
+/// `to_trash` (git.discardUntrackedChangesToTrash) moves them to the trash instead.
 #[tauri::command]
-async fn git_discard(ws: State<'_, Workspace>, paths: Vec<String>, delete_untracked: Option<bool>, slug: Option<String>) -> Result<(), String> {
+async fn git_discard(ws: State<'_, Workspace>, paths: Vec<String>, delete_untracked: Option<bool>, to_trash: Option<bool>, slug: Option<String>) -> Result<(), String> {
   let dir = repo_dir(&ws, slug.as_deref())?;
   let paths = checked(&dir, paths)?;
-  blocking(move || git::discard(&dir, &paths, delete_untracked.unwrap_or(false))).await
+  blocking(move || git::discard(&dir, &paths, delete_untracked.unwrap_or(false), to_trash.unwrap_or(false))).await
 }
 
+/// `options` carries the commit flags of VS Code's git settings (sign-off, signing) and commands
+/// (Commit (No Verify), Commit Empty); `amend` is kept for older callers.
 #[tauri::command]
-async fn git_commit(ws: State<'_, Workspace>, message: String, amend: Option<bool>, slug: Option<String>) -> Result<(), String> {
+async fn git_commit(ws: State<'_, Workspace>, message: String, amend: Option<bool>, options: Option<git::CommitOptions>, slug: Option<String>) -> Result<(), String> {
   let dir = repo_dir(&ws, slug.as_deref())?;
-  blocking(move || git::commit(&dir, &message, amend.unwrap_or(false))).await?;
+  let mut opts = options.unwrap_or_default();
+  opts.amend |= amend.unwrap_or(false);
+  blocking(move || git::commit(&dir, &message, &opts)).await?;
   log::info!("committed{}", slug.map(|s| format!(" in task {s}")).unwrap_or_default());
   Ok(())
+}
+
+/// `git.path` changed in the user settings: Rust re-reads it from the file itself (it picks the
+/// program git commands run, so the webview never passes the path).
+#[tauri::command]
+fn git_reload_path(app: AppHandle) -> Result<(), String> {
+  git::load_git_path(&app.path().app_config_dir().map_err(|e| e.to_string())?);
+  Ok(())
+}
+
+/// `git.requireGitUserConfig`: whether `user.name` and `user.email` are configured.
+#[tauri::command]
+async fn git_user_configured(ws: State<'_, Workspace>, slug: Option<String>) -> Result<bool, String> {
+  let dir = repo_dir(&ws, slug.as_deref())?;
+  blocking(move || Ok(git::user_configured(&dir))).await
 }
 
 /// Usage limits of one agent provider (`claude` or `codex`) for the status bar.
@@ -462,39 +484,6 @@ async fn git_ref_names(ws: State<'_, Workspace>, slug: Option<String>) -> Result
   .await
 }
 
-/// Source Control AI: a commit message for the staged diff, written by Claude Code (`claude -p`).
-/// Only runs when the user presses the sparkle button.
-#[tauri::command]
-async fn ai_commit_message(ws: State<'_, Workspace>, slug: Option<String>) -> Result<String, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
-  blocking(move || {
-    let diff = git::run(&root, &["diff", "--cached", "--no-color"])?;
-    if diff.is_empty() {
-      return Err("Stage at least one file to generate a message.".into());
-    }
-    let diff = String::from_utf8_lossy(&diff[..diff.len().min(120_000)]).into_owned();
-    let prompt = "Write a git commit message for the staged diff on stdin. First line: imperative summary under 72 characters. Then, only if useful, a blank line and a short body. Output only the message, no code fences.";
-    let mut child = shell_env::command("claude")
-      .current_dir(&root)
-      .args(["-p", prompt])
-      .stdin(std::process::Stdio::piped())
-      .stdout(std::process::Stdio::piped())
-      .stderr(std::process::Stdio::piped())
-      .spawn()
-      .map_err(|e| format!("claude: {e}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-      use std::io::Write;
-      stdin.write_all(diff.as_bytes()).map_err(|e| e.to_string())?;
-    }
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
-    if !out.status.success() {
-      return Err(format!("claude: {}", String::from_utf8_lossy(&out.stderr).trim()));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
-  })
-  .await
-}
-
 /// Claude Code sessions run in the open folder or its worktrees (Agents tab).
 #[tauri::command]
 async fn claude_sessions(ws: State<'_, Workspace>, limit: Option<usize>) -> Result<Vec<sessions::Session>, String> {
@@ -519,40 +508,6 @@ async fn gh_pr_create(ws: State<'_, Workspace>, slug: Option<String>, base: Stri
     }
     let out = gh_run(&root, &args)?;
     Ok(String::from_utf8_lossy(&out).lines().rev().find(|l| l.starts_with("http")).unwrap_or_default().trim().to_owned())
-  })
-  .await
-}
-
-/// PR title and description written by Claude Code from the branch's diff against `base`
-/// (only on click). Returns `{title, body}`.
-#[tauri::command]
-async fn ai_pr_details(ws: State<'_, Workspace>, slug: Option<String>, base: String) -> Result<serde_json::Value, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
-  git::check_rev(&base)?;
-  blocking(move || {
-    let log = git::run(&root, &["log", "--format=- %s", &format!("{base}..HEAD")]).unwrap_or_default();
-    let diff = git::run(&root, &["diff", "--no-color", &format!("{base}...HEAD")]).unwrap_or_default();
-    let input = format!("Commits:\n{}\n\nDiff:\n{}", String::from_utf8_lossy(&log), String::from_utf8_lossy(&diff[..diff.len().min(120_000)]));
-    let prompt = "Write a pull request title and description for the commits and diff on stdin. Reply with exactly a first line holding the title (under 72 characters), a blank line, then a markdown description. No code fences around the whole reply.";
-    let mut child = shell_env::command("claude")
-      .current_dir(&root)
-      .args(["-p", prompt])
-      .stdin(std::process::Stdio::piped())
-      .stdout(std::process::Stdio::piped())
-      .stderr(std::process::Stdio::piped())
-      .spawn()
-      .map_err(|e| format!("claude: {e}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-      use std::io::Write;
-      stdin.write_all(input.as_bytes()).map_err(|e| e.to_string())?;
-    }
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
-    if !out.status.success() {
-      return Err(format!("claude: {}", String::from_utf8_lossy(&out.stderr).trim()));
-    }
-    let text = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-    let (title, body) = text.split_once('\n').unwrap_or((&text, ""));
-    Ok(serde_json::json!({ "title": title.trim().trim_start_matches('#').trim(), "body": body.trim() }))
   })
   .await
 }
@@ -654,6 +609,7 @@ async fn git_show_head(ws: State<'_, Workspace>, rel: String) -> Result<String, 
 #[tauri::command(async)]
 #[allow(clippy::too_many_arguments)]
 fn pty_spawn(
+  app: AppHandle,
   ws: State<'_, Workspace>,
   ptys: State<'_, pty::Ptys>,
   accounts: State<'_, accounts::Accounts>,
@@ -666,16 +622,17 @@ fn pty_spawn(
   terminal: Option<TerminalSettings>,
   cwd_from: Option<String>,
   floating_cwd: Option<String>,
-  app: AppHandle,
 ) -> Result<kingu_ptyd::Attached, String> {
   pty::validate_key(&key)?;
   // A split pane starts where its source pane's shell is now (VS Code's splitCwd "inherited",
   // Orca's resolve-split-cwd), else where a new terminal would.
-  let inherited = cwd_from.as_deref().and_then(|from| ptys.live_cwd(from));
+  // terminal.integrated.splitCwd picks which directory (inherited, the source's initial one, or the root).
+  let split_mode = terminal.as_ref().and_then(|t| t.split_cwd.clone()).unwrap_or_else(|| "inherited".into());
+  let inherited = cwd_from.as_deref().and_then(|from| pty::split_cwd(&split_mode, || ptys.live_cwd(from), || ptys.initial_cwd(from), ws.current()));
   // A task terminal starts in the task's worktree (the ADE's per-worktree terminals); a floating
   // workspace terminal in its own directory setting. No folder open: the terminal starts in the
   // home folder, like VS Code's empty window.
-  let cwd = match (inherited, slug) {
+  let cwd = match (inherited, slug.clone()) {
     (Some(dir), _) => dir,
     (None, _) if floating_cwd.is_some() => {
       let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -698,14 +655,42 @@ fn pty_spawn(
   let terminal = terminal.unwrap_or_default();
   // Only an agent CLI's terminal (`cli:` keys) gets the active AI account's env, never an
   // ordinary terminal, so an API key does not leak into every shell.
-  let mut env = terminal.env;
+  // terminal.integrated.env.*: a `null` value removes the variable.
+  let (mut env, unset) = pty::split_env(terminal.env);
+  // terminal.integrated.inheritEnv / detectLocale.
+  let clean_env = terminal.inherit_env == Some(false);
+  let current_lang = env.get("LANG").cloned().or_else(|| if clean_env || unset.iter().any(|k| k == "LANG") { None } else { std::env::var("LANG").ok() });
+  if let Some(lang) = pty::lang_env(terminal.detect_locale.as_deref().unwrap_or("auto"), current_lang.as_deref(), terminal.locale.as_deref()) {
+    env.insert("LANG".into(), lang);
+  }
   if let Some(program) = run.as_deref().and_then(agent::cli::program_of)
     && key.starts_with("cli:")
   {
     env.extend(accounts::env_for_program(&accounts, program)?);
   }
+  // http.proxy for agent CLIs (they call model APIs), unless terminal.integrated.env sets or unsets it.
+  if key.starts_with("cli:") {
+    for (k, v) in net_proxy::env() {
+      if !env.contains_key(&k) && !unset.contains(&k) {
+        env.insert(k, v);
+      }
+    }
+  }
   let shell = terminal.shell.as_deref().filter(|s| !s.trim().is_empty());
-  let attached = ptys.open(&key, &cwd, cols, rows, run.as_deref(), &env, shell, terminal.args.as_deref(), pty::channel_sink(on_data))?;
+  // kingu.terminal.scopeHistoryByWorktree (ADE terminals): history of their own per worktree.
+  if terminal.scope_history && !key.starts_with("cli:") {
+    let scope = match slug.as_deref() {
+      Some(s) => agent::worktree::worktree_path(&ws.root()?, s),
+      None => ws.current().unwrap_or_else(|| cwd.clone()),
+    };
+    let program = shell.map(str::to_owned).or_else(|| std::env::var("SHELL").ok()).unwrap_or_default();
+    let history = app.path().app_data_dir().map_err(|e| e.to_string())?.join("terminal-history");
+    match pty::scoped_history_env(&program, &history, &scope) {
+      Ok(vars) => env.extend(vars),
+      Err(e) => log::warn!("terminal history: {e}"),
+    }
+  }
+  let attached = ptys.open(&key, &cwd, cols, rows, run.as_deref(), &env, shell, terminal.args.as_deref(), &unset, clean_env, pty::channel_sink(on_data))?;
   if attached.spawned {
     log::info!("terminal {key} started ({cols}x{rows})");
   } else {
@@ -717,18 +702,35 @@ fn pty_spawn(
 /// `terminal.integrated.*` for a new shell, read by the webview from the user's settings
 /// (they are user-only, so a folder's workspace settings cannot pick the program that runs).
 #[derive(Debug, Default, serde::Deserialize)]
-#[serde(default)]
+#[serde(default, rename_all = "camelCase")]
 struct TerminalSettings {
   shell: Option<String>,
   args: Option<Vec<String>>,
-  env: BTreeMap<String, String>,
+  /// `terminal.integrated.env.*`: `null` removes a variable.
+  env: BTreeMap<String, Option<String>>,
   cwd: Option<String>,
+  /// `kingu.terminal.scopeHistoryByWorktree` for an ADE terminal.
+  #[serde(rename = "scopeHistory")]
+  scope_history: bool,
+  /// `terminal.integrated.inheritEnv`.
+  inherit_env: Option<bool>,
+  /// `terminal.integrated.detectLocale` and the UI locale it uses.
+  detect_locale: Option<String>,
+  locale: Option<String>,
+  /// `terminal.integrated.splitCwd`.
+  split_cwd: Option<String>,
 }
 
 /// `files.watcherExclude`.
 #[tauri::command]
 fn watcher_set_exclude(watcher: State<'_, watcher::FileWatcher>, globs: Vec<String>) {
   watcher.set_exclude(&globs);
+}
+
+/// `files.watcherInclude`.
+#[tauri::command]
+fn watcher_set_include(watcher: State<'_, watcher::FileWatcher>, paths: Vec<String>) {
+  watcher.set_include(&paths);
 }
 
 #[tauri::command]
@@ -1002,15 +1004,23 @@ fn undo_stash(app: &AppHandle) -> Result<PathBuf, String> {
   Ok(app.path().app_cache_dir().map_err(|e| e.to_string())?.join("file-undo"))
 }
 
-/// Moves to the Trash; the webview confirms first. Returns the token that undoes it with
-/// `fs_restore`, or `None` when the entry was too large to keep a copy of.
+/// Moves to the Trash, or deletes for good when `use_trash` is false (`files.enableTrash`); the
+/// webview confirms first. A trashed entry returns the token that undoes it with `fs_restore`
+/// (`None` when it was too large to keep a copy of); a delete for good keeps no copy.
 #[tauri::command]
-async fn fs_delete(ws: State<'_, Workspace>, app: AppHandle, rel: String) -> Result<Option<String>, String> {
+async fn fs_delete(ws: State<'_, Workspace>, app: AppHandle, rel: String, use_trash: Option<bool>) -> Result<Option<String>, String> {
   let root = ws.root()?;
-  let stash = undo_stash(&app)?;
   let r = rel.clone();
-  let token = blocking(move || fileops::trash_with_undo(&root, &r, &stash)).await?;
-  log::info!("moved {rel} to the Trash");
+  let token = if use_trash.unwrap_or(true) {
+    let stash = undo_stash(&app)?;
+    let token = blocking(move || fileops::trash_with_undo(&root, &r, &stash)).await?;
+    log::info!("moved to the Trash: {rel}");
+    token
+  } else {
+    blocking(move || fileops::delete_for_good(&root, &r)).await?;
+    log::info!("deleted {rel}");
+    None
+  };
   Ok(token)
 }
 
@@ -1032,9 +1042,9 @@ fn fs_reveal(ws: State<'_, Workspace>, rel: String) -> Result<(), String> {
 
 /// Paste / ⌥-drag: copies `from` into the folder `to_dir`; returns the new path (`a copy.ts` on a clash).
 #[tauri::command]
-async fn fs_copy(ws: State<'_, Workspace>, from: String, to_dir: String) -> Result<String, String> {
+async fn fs_copy(ws: State<'_, Workspace>, from: String, to_dir: String, naming: Option<fileops::Naming>) -> Result<String, String> {
   let root = ws.root()?;
-  let rel = blocking(move || fileops::copy(&root, &from, &to_dir)).await?;
+  let rel = blocking(move || fileops::copy(&root, &from, &to_dir, naming.unwrap_or_default())).await?;
   log::info!("copied to {rel}");
   Ok(rel)
 }
@@ -1054,14 +1064,20 @@ struct DroppedPaths(std::sync::Mutex<Vec<PathBuf>>);
 
 /// External drop (Finder → Explorer): copies the dropped `paths` into the folder `to_dir`.
 #[tauri::command]
-async fn fs_import(ws: State<'_, Workspace>, dropped: State<'_, DroppedPaths>, paths: Vec<String>, to_dir: String) -> Result<Vec<String>, String> {
+async fn fs_import(
+  ws: State<'_, Workspace>,
+  dropped: State<'_, DroppedPaths>,
+  paths: Vec<String>,
+  to_dir: String,
+  naming: Option<fileops::Naming>,
+) -> Result<Vec<String>, String> {
   let root = ws.root()?;
   let allowed = dropped.0.lock().map_err(|e| e.to_string())?.clone();
   let sources: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
   if let Some(bad) = sources.iter().find(|p| !allowed.contains(p)) {
     return Err(format!("{}: not a dropped file", bad.display()));
   }
-  let rels = blocking(move || fileops::import(&root, &sources, &to_dir)).await?;
+  let rels = blocking(move || fileops::import(&root, &sources, &to_dir, naming.unwrap_or_default())).await?;
   log::info!("imported {} dropped item(s)", rels.len());
   Ok(rels)
 }
@@ -1115,7 +1131,13 @@ pub fn run() {
     .manage(menu::MenuState::default())
     .manage(DroppedPaths::default())
     .setup(|app| {
-      shell_env::init();
+      let config_dir = app.path().app_config_dir()?;
+      // application.shellEnvironmentResolutionTimeout (user settings only: it is read before any folder opens).
+      shell_env::init(shell_env::resolution_timeout(
+        settings::user_value(&config_dir, "application.shellEnvironmentResolutionTimeout").as_ref(),
+      ));
+      net_proxy::init(&config_dir);
+      system::set_config_dir(config_dir);
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()
@@ -1142,6 +1164,7 @@ pub fn run() {
       pty::Ptys::init(app.handle(), pty::daemon_dir(&data, runtime, &std::env::temp_dir(), uid));
       team::install(app)?;
       accounts::install(app)?;
+      git::load_git_path(&app.path().app_config_dir()?);
       menu::install(app.handle());
       // The explorer's undo history lives in the webview, so last run's undo copies are orphans.
       if let Ok(stash) = undo_stash(app.handle()) {
@@ -1196,6 +1219,8 @@ pub fn run() {
       git_unstage,
       git_discard,
       git_commit,
+      git_reload_path,
+      git_user_configured,
       git_numstat,
       git_force_push,
       git_pull_ff_only,
@@ -1210,10 +1235,8 @@ pub fn run() {
       git_show_files,
       git_compare,
       git_ref_names,
-      ai_commit_message,
       claude_sessions,
       gh_pr_create,
-      ai_pr_details,
       gh_review_threads,
       gh_thread_resolve,
       gh_reply_thread,
@@ -1300,13 +1323,30 @@ pub fn run() {
       agent::worktree_pr_threads,
       agent::gh_resolve_thread,
       agent::scripts::worktree_script,
+      agent::open_in::worktree_open_in,
+      agent::ai_text::ai_commit_context,
+      agent::ai_text::ai_pr_context,
+      agent::ai_text::ai_generate,
+      agent::ai_text::ai_pr_template,
+      agent::ai_text::git_base_upstream,
       agent::scripts::worktree_script_trust,
       agent::scripts::worktree_script_prepare,
+      agent::scripts::worktree_setup_marker,
+      agent::scripts::worktree_setup_status,
+      agent::scripts::worktree_link_shared,
+      agent::kingu_yaml::kingu_yaml,
       agent::scripts::worktree_archive_run,
       agent::gh_issues_list,
       agent::gh_issue_view,
       agent::gh_issue_comment,
       agent::gh_issue_open,
+      linear::linear_status,
+      linear::linear_connect,
+      linear::linear_disconnect,
+      linear::linear_issues_list,
+      linear::linear_issue_view,
+      linear::linear_issue_comment,
+      linear::linear_issue_open,
       search_text,
       search_cancel,
       worktree_search,
@@ -1327,6 +1367,7 @@ pub fn run() {
       settings::settings_read,
       settings::settings_write,
       watcher_set_exclude,
+      watcher_set_include,
       window::window_close_guard,
       window::window_close_confirmed,
       snap::snap_list,

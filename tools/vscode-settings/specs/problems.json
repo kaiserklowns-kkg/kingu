@@ -1,0 +1,36 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/problems.ts",
+	"export": "PROBLEMS_SETTINGS",
+	"what": "problems.*",
+	"entries": [
+		{
+			"id": "problems.visibility",
+			"group": "Problems",
+			"th": "แสดงปัญหาใน editor และ workbench"
+		},
+		{
+			"id": "problems.autoReveal",
+			"group": "Problems",
+			"th": "ให้มุมมอง Problems เลื่อนไปที่ไฟล์ที่เปิดอยู่เอง"
+		},
+		{
+			"id": "problems.defaultViewMode",
+			"group": "Problems",
+			"th": "รูปแบบเริ่มต้นของมุมมอง Problems เป็นตารางหรือต้นไม้"
+		},
+		{
+			"id": "problems.showCurrentInStatus",
+			"group": "Problems",
+			"th": "แสดงปัญหาที่ตำแหน่ง cursor ในแถบสถานะ"
+		},
+		{
+			"id": "problems.sortOrder",
+			"group": "Problems",
+			"th": "ลำดับการไล่ดูปัญหา",
+			"enumTh": [
+				"เรียงตามความรุนแรง",
+				"เรียงตามตำแหน่ง"
+			]
+		}
+	]
+}

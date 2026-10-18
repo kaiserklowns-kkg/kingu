@@ -334,20 +334,67 @@ pub fn open_local_url(url: &str) -> Result<(), String> {
   Command::new(program).arg(parsed.as_str()).spawn().map(|_| ()).map_err(|e| format!("{program}: {e}"))
 }
 
+static CONFIG_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// The app config dir, where the user's settings.json lives (set once at startup).
+pub fn set_config_dir(dir: std::path::PathBuf) {
+  let _ = CONFIG_DIR.set(dir);
+}
+
+/// `workbench.externalBrowser` from the user's settings.json only: it names a program to run, so
+/// a folder's workspace settings can never set it (VS Code marks it restricted).
+fn external_browser() -> Option<String> {
+  let value = crate::settings::user_value(CONFIG_DIR.get()?, "workbench.externalBrowser")?;
+  value.as_str().map(str::trim).filter(|s| !s.is_empty()).map(String::from)
+}
+
+/// How to open `url` (VS Code's `workbench.externalBrowser`): the system default with no browser
+/// set; a known name (`chrome`, `edge`, `firefox`, `safari`…) or a macOS `.app` through `open -a`;
+/// any other absolute path is the browser executable itself.
+pub fn browser_command(browser: Option<&str>, url: &str, macos: bool) -> (String, Vec<String>) {
+  let default = || if macos { "open" } else { "xdg-open" }.to_string();
+  let Some(browser) = browser else { return (default(), vec![url.into()]) };
+  let known = |mac: &str, linux: &str| if macos { (default(), vec!["-a".into(), mac.into(), url.into()]) } else { (linux.into(), vec![url.into()]) };
+  match browser.to_ascii_lowercase().as_str() {
+    "chrome" => known("Google Chrome", "google-chrome"),
+    "chromium" => known("Chromium", "chromium"),
+    "edge" => known("Microsoft Edge", "microsoft-edge"),
+    "firefox" => known("Firefox", "firefox"),
+    "safari" => known("Safari", "safari"),
+    "brave" => known("Brave Browser", "brave-browser"),
+    "opera" => known("Opera", "opera"),
+    _ if macos && browser.trim_end_matches('/').ends_with(".app") => (default(), vec!["-a".into(), browser.into(), url.into()]),
+    _ => (browser.into(), vec![url.into()]),
+  }
+}
+
 /// Opens a web page (`http`/`https` only: a terminal link, pull request or check page must never
-/// launch other handlers) in the default browser.
+/// launch other handlers) in `workbench.externalBrowser`, else the default browser.
 pub fn open_web_url(url: &str) -> Result<(), String> {
   let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
   if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
     return Err(format!("{}: เปิดได้เฉพาะลิงก์ http/https", parsed.scheme()));
   }
-  let program = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-  Command::new(program).arg(parsed.as_str()).spawn().map(|_| ()).map_err(|e| format!("{program}: {e}"))
+  let (program, args) = browser_command(external_browser().as_deref(), parsed.as_str(), cfg!(target_os = "macos"));
+  Command::new(&program).args(&args).spawn().map(|_| ()).map_err(|e| format!("{program}: {e}"))
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn external_browser_command() {
+    let url = "https://example.com/";
+    let cmd = |b: Option<&str>, mac: bool| browser_command(b, url, mac);
+    let v = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(cmd(None, true), ("open".into(), v(&[url])));
+    assert_eq!(cmd(None, false), ("xdg-open".into(), v(&[url])));
+    assert_eq!(cmd(Some("chrome"), true), ("open".into(), v(&["-a", "Google Chrome", url])));
+    assert_eq!(cmd(Some("Firefox"), false), ("firefox".into(), v(&[url])));
+    assert_eq!(cmd(Some("/Applications/Arc.app"), true), ("open".into(), v(&["-a", "/Applications/Arc.app", url])));
+    assert_eq!(cmd(Some("/usr/bin/vivaldi"), false), ("/usr/bin/vivaldi".into(), v(&[url])));
+  }
 
   #[test]
   fn web_links_open_only_http_and_https() {

@@ -4,7 +4,7 @@
 
 import type { Column, TaskStatus } from './model';
 
-export type GroupBy = 'none' | 'status' | 'repo';
+export type { GroupBy } from './sidebarView';
 export type SortBy = 'name' | 'smart' | 'recent' | 'manual';
 export const SORT_LABEL: Record<SortBy, string> = { name: 'Name', smart: 'Agent Activity', recent: 'Recent', manual: 'Manual' };
 
@@ -92,6 +92,8 @@ export function shortAgo(then: number, now: number): string {
 	return `${Math.floor(s / 86_400)}d`;
 }
 
-export type Filters = { hideSleeping: boolean; exceptDefault: boolean; hideDefault: boolean };
+/** The Filters switches: `kingu.sidebar.*` settings, except `exceptDefault` (a side bar preference). */
+export type Filters = { hideSleeping: boolean; exceptDefault: boolean; hideDefault: boolean; showActiveOnly: boolean; hideAutomation: boolean; hideDetached: boolean };
 /** The active-filter count on the options button. */
-export const activeFilterCount = (f: Filters) => Number(f.hideSleeping) + Number(f.hideSleeping && f.exceptDefault) + Number(f.hideDefault);
+export const activeFilterCount = (f: Filters) =>
+	Number(f.hideSleeping) + Number(f.hideSleeping && f.exceptDefault) + Number(f.hideDefault) + Number(f.showActiveOnly) + Number(f.hideAutomation) + Number(f.hideDetached);

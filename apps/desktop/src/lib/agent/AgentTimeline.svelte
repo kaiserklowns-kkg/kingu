@@ -12,6 +12,8 @@
 	import type { Snippet } from 'svelte';
 	import PermissionCard from './PermissionCard.svelte';
 	import { firstLine, formatUsage, toolArg, type Decision, type PermissionRequest } from './events';
+	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { chatLook } from '#lib/ade/chatLook.ts';
 
 	let {
 		run,
@@ -26,6 +28,8 @@
 	} = $props();
 
 	let timeline: HTMLDivElement;
+	// Orca's chat appearance (kingu.chat.*): text and code size, width, contrast, terminal font.
+	const look = $derived(chatLook((id) => settings.get(id)));
 
 	$effect(() => {
 		void run?.items.length;
@@ -42,7 +46,16 @@
 	};
 </script>
 
-<div bind:this={timeline} class={['kg-selectable min-h-0 space-y-1 overflow-y-auto text-xs', klass]} aria-live="polite">
+<div
+	bind:this={timeline}
+	class={['kg-selectable kg-chat min-h-0 overflow-y-auto', klass]}
+	aria-live="polite"
+	style:font-size="{look.fontSize}px"
+	style:--kg-chat-code-size="{look.codeFontSize}px"
+	style:font-family={look.fontFamily}
+	style:filter={look.contrast === 100 ? undefined : `contrast(${look.contrast}%)`}
+>
+	<div class="mx-auto space-y-1" style:max-width={look.maxWidth}>
 	{#if run && (run.items.length || run.draft.text || run.draft.thinking)}
 		{#each run.items as ev, i (i)}
 			{#if ev.kind === 'tool_use'}
@@ -97,4 +110,12 @@
 	{:else}
 		{@render empty?.()}
 	{/if}
+	</div>
 </div>
+
+<style>
+	/* kingu.chat.codeFontSize: tool calls, commands and other monospace lines. */
+	.kg-chat :global(.font-mono) {
+		font-size: var(--kg-chat-code-size);
+	}
+</style>

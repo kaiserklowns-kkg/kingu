@@ -5,15 +5,20 @@ import { invoke } from '@tauri-apps/api/core';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
-import { parseCliCommand } from '#lib/ade/agentCli.ts';
+import { enabledBins, parseCliCommand } from '#lib/ade/agentCli.ts';
 import { CUSTOM_PICK, KNOWN_BINS, pickerItems, profileOf } from '#lib/ade/agentProfiles.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 export async function chooseAgentCli() {
 	const current = (settings.get<string>('kingu.agent.cli') ?? '').trim();
-	const found = await invoke<string[]>('agent_cli_found', { names: KNOWN_BINS }).catch(() => [] as string[]);
 	const currentArgv = parseCliCommand(current);
 	const currentProfile = currentArgv ? profileOf(currentArgv) : null;
+	// kingu.agent.disabled (Orca's disabledTuiAgents) hides agents; detection itself stays a PATH scan.
+	const found = enabledBins(
+		await invoke<string[]>('agent_cli_found', { names: KNOWN_BINS }).catch(() => [] as string[]),
+		settings.get<string[]>('kingu.agent.disabled'),
+		currentProfile?.id ?? null
+	);
 	const picked = await quick.choose({
 		placeholder: found.length ? 'เลือก agent CLI สำหรับโหมด terminal' : 'ไม่พบ agent CLI ที่รู้จักใน PATH ใช้คำสั่งเองได้',
 		items: pickerItems(found, current),

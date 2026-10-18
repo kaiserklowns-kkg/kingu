@@ -1,0 +1,134 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/search.ts",
+	"export": "SEARCH_SETTINGS",
+	"what": "search.*",
+	"entries": [
+		{
+			"id": "search.exclude",
+			"group": "Search",
+			"th": "glob ที่ไม่ค้นหา",
+			"objectValues": "boolean|when"
+		},
+		{
+			"id": "search.useIgnoreFiles",
+			"group": "Search",
+			"th": "ใช้ .gitignore และ .ignore ตอนค้นหา"
+		},
+		{
+			"id": "search.useGlobalIgnoreFiles",
+			"group": "Search",
+			"th": "ใช้ไฟล์ ignore ส่วนกลางของ git"
+		},
+		{
+			"id": "search.useParentIgnoreFiles",
+			"group": "Search",
+			"th": "ใช้ .gitignore ของโฟลเดอร์แม่ที่อยู่นอก workspace"
+		},
+		{
+			"id": "search.followSymlinks",
+			"group": "Search",
+			"th": "ตาม symlink ตอนค้นหา"
+		},
+		{
+			"id": "search.smartCase",
+			"group": "Search",
+			"th": "ไม่สนตัวพิมพ์เล็กใหญ่ ยกเว้นคำค้นมีตัวพิมพ์ใหญ่"
+		},
+		{
+			"id": "search.maxResults",
+			"group": "Search",
+			"th": "จำนวนผลลัพธ์สูงสุด"
+		},
+		{
+			"id": "search.searchOnType",
+			"group": "Search",
+			"th": "ค้นหาขณะพิมพ์"
+		},
+		{
+			"id": "search.searchOnTypeDebouncePeriod",
+			"group": "Search",
+			"th": "หน่วงเวลา"
+		},
+		{
+			"id": "search.ripgrep.maxThreads",
+			"group": "Search",
+			"th": "จำนวน thread ที่ใช้ค้นหา 0 = ให้ ripgrep เลือกเอง"
+		},
+		{
+			"id": "search.sortOrder",
+			"group": "Search",
+			"th": "ลำดับไฟล์ในผลการค้นหา",
+			"enumTh": [
+				"ตามชื่อโฟลเดอร์และชื่อไฟล์",
+				"ตามชื่อไฟล์ ไม่สนโฟลเดอร์",
+				"ตามนามสกุลไฟล์",
+				"ไฟล์ที่แก้ไขล่าสุดก่อน",
+				"ไฟล์ที่เจอมากสุดก่อน",
+				"ไฟล์ที่เจอน้อยสุดก่อน"
+			]
+		},
+		{
+			"id": "search.collapseResults",
+			"group": "Search",
+			"th": "ยุบหรือกางผลการค้นหาของแต่ละไฟล์",
+			"enumTh": [
+				"ยุบไฟล์ที่เจอมากกว่า 10 ที่",
+				"ยุบทุกไฟล์",
+				"กางทุกไฟล์"
+			]
+		},
+		{
+			"id": "search.showLineNumbers",
+			"group": "Search",
+			"th": "แสดงเลขบรรทัดในผลการค้นหา"
+		},
+		{
+			"id": "search.seedWithNearestWord",
+			"group": "Search",
+			"th": "ใช้คำที่ cursor อยู่เป็นคำค้นเมื่อไม่ได้เลือกข้อความ"
+		},
+		{
+			"id": "search.seedOnFocus",
+			"group": "Search",
+			"th": "ใช้ข้อความที่เลือกใน editor เป็นคำค้นเมื่อโฟกัสมุมมอง Search"
+		},
+		{
+			"id": "search.decorations.colors",
+			"group": "Search",
+			"th": "ใช้สีแสดงสถานะไฟล์ในผลการค้นหา"
+		},
+		{
+			"id": "search.decorations.badges",
+			"group": "Search",
+			"th": "แสดงตัวอักษรสถานะไฟล์ในผลการค้นหา"
+		},
+		{
+			"id": "search.defaultViewMode",
+			"group": "Search",
+			"th": "มุมมองเริ่มต้นของผลการค้นหา",
+			"enumTh": [
+				"แบบต้นไม้ตามโฟลเดอร์",
+				"แบบรายการ"
+			]
+		},
+		{
+			"id": "search.quickOpen.includeSymbols",
+			"group": "Search",
+			"th": "แสดงสัญลักษณ์จาก language server ใน Quick Open ด้วย"
+		},
+		{
+			"id": "search.quickOpen.includeHistory",
+			"group": "Search",
+			"th": "แสดงไฟล์ที่เพิ่งเปิดใน Quick Open"
+		},
+		{
+			"id": "search.quickOpen.history.filterSortOrder",
+			"group": "Search",
+			"th": "ลำดับไฟล์ที่เพิ่งเปิดใน Quick Open ขณะพิมพ์ค้นหา",
+			"enumTh": [
+				"ตามความตรงกับคำค้น",
+				"ตามที่เปิดล่าสุด"
+			]
+		}
+	]
+}

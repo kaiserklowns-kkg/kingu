@@ -15,6 +15,7 @@
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 	import { openAgents } from '#lib/ade/agentsMode.svelte.ts';
 	import { appMode } from './mode.svelte';
+	import DebugToolbar from '#lib/debug/DebugToolbar.svelte';
 
 	let { label, folderName }: { label: string; folderName: string | null } = $props();
 
@@ -136,6 +137,8 @@
 			</div>
 		{/if}
 	{/if}
+	<!-- debug.toolBarLocation: commandCenter -->
+	<DebugToolbar placement="commandCenter" />
 </div>
 
 {#if menu}
