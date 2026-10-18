@@ -18,6 +18,8 @@
 //!   (no `..`, no `.git`, not a symlink, nearest existing ancestor inside the cwd).
 //! - Undo / Restore checkpoint write files under the worktree's git queue lane and are refused
 //!   while a turn of the chat runs. Keep only clears the entry.
+//! - Keep / Undo of one change (hunk) of a file: [`hunks`]. A kept hunk moves the file's diff base
+//!   (`Entry::base`) on from its snapshot.
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::Write;
@@ -33,6 +35,9 @@ use crate::tr;
 
 use super::chats::{check_id, transcript_path};
 use super::events::AgentEvent;
+
+mod hunks;
+pub use hunks::{FileEditHunks, file_hunks, keep_hunk, undo_hunk};
 
 /// Files this large are not snapshotted (the host has the same limit).
 pub const MAX_SNAPSHOT_BYTES: u64 = 5 * 1024 * 1024;
@@ -112,6 +117,17 @@ pub struct Entry {
   pub state: State,
   #[serde(default)]
   pub at: u64,
+  /// On the pending head entry of a file: `before` with the hunks kept so far applied (what the
+  /// working set diffs and file Undo goes back to). Restore checkpoint still uses `before`.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub base: Option<Before>,
+}
+
+impl Entry {
+  /// What the working set compares the file with: the snapshot, moved on by kept hunks.
+  pub fn working_base(&self) -> &Before {
+    self.base.as_ref().unwrap_or(&self.before)
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -515,7 +531,7 @@ pub fn record_snapshot(store: &Store, request: u32, path: &str, existed: bool, c
     (None, Some(bytes)) => store.put(bytes)?,
     (None, None) => Before::Unknown { reason: Skip::Unreadable },
   };
-  f.entries.push(Entry { path: rel, request, before, source: Source::Tool, state: State::Pending, at: now_ms() });
+  f.entries.push(Entry { path: rel, request, before, source: Source::Tool, state: State::Pending, at: now_ms(), base: None });
   store.save(&f)?;
   Ok(true)
 }
@@ -604,7 +620,7 @@ pub fn end_turn(store: &Store, request: u32, base: Option<&Baseline>) -> Result<
   let any = !changed.is_empty() || head_moved;
   let at = now_ms();
   for (path, before) in changed {
-    f.entries.push(Entry { path, request, before, source: Source::Shell, state: State::Pending, at });
+    f.entries.push(Entry { path, request, before, source: Source::Shell, state: State::Pending, at, base: None });
   }
   if any {
     store.save(&f)?;
@@ -650,12 +666,13 @@ pub fn view(store: &Store, prefix: String, running: bool) -> Result<View, String
   for e in pending_heads(&f) {
     let now = store.current(&e.path);
     let deleted = matches!(now, Ok(None));
-    let before = match &e.before {
+    let base = e.working_base();
+    let before = match base {
       Before::File { hash, .. } => store.get(hash).ok(),
       _ => None,
     };
     // An edit that was denied, or changed back: nothing to show.
-    let unchanged = match (&e.before, &now) {
+    let unchanged = match (base, &now) {
       (Before::Absent, Ok(None)) => true,
       (Before::File { .. }, Ok(Some(cur))) => before.as_deref() == Some(cur.as_slice()),
       _ => false,
@@ -663,7 +680,7 @@ pub fn view(store: &Store, prefix: String, running: bool) -> Result<View, String
     if unchanged {
       continue;
     }
-    let counts = match (&e.before, &now) {
+    let counts = match (base, &now) {
       (Before::Absent, Ok(Some(cur))) => line_counts(b"", cur),
       (Before::File { .. }, Ok(Some(cur))) => before.as_deref().and_then(|b| line_counts(b, cur)),
       (Before::File { .. }, Ok(None)) => before.as_deref().and_then(|b| line_counts(b, b"")),
@@ -707,7 +724,7 @@ pub fn view(store: &Store, prefix: String, running: bool) -> Result<View, String
 pub fn original(store: &Store, rel: &str) -> Result<String, String> {
   let f = store.load()?;
   let head = pending_heads(&f).into_iter().find(|e| e.path == rel).ok_or_else(|| tr!(AgentMsg::EditNotRestorable, path = rel))?;
-  match &head.before {
+  match head.working_base() {
     Before::File { hash, .. } => Ok(String::from_utf8_lossy(&store.get(hash)?).into_owned()),
     Before::Absent => Ok(String::new()),
     Before::Unknown { .. } => Err(tr!(AgentMsg::EditNotRestorable, path = rel)),
@@ -747,7 +764,7 @@ pub fn undo(store: &Store, paths: Option<&[String]>) -> Result<Report, String> {
   let mut report = Report::default();
   let mut done = HashSet::new();
   for e in &heads {
-    store.restore(&e.path, &e.before, &mut report)?;
+    store.restore(&e.path, e.working_base(), &mut report)?;
     if e.before.restorable() {
       done.insert(e.path.clone());
     }

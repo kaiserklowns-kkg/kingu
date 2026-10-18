@@ -287,6 +287,45 @@ pub async fn chat_edits_undo(ws: State<'_, Workspace>, edits: State<'_, Arc<chat
   Ok(report)
 }
 
+/// The changes (hunks) of working-set file `path` (relative to the chat's cwd): its base against
+/// the file on disk, for the editor's Keep / Undo per change.
+#[tauri::command]
+pub async fn chat_edits_hunks(ws: State<'_, Workspace>, edits: State<'_, Arc<chat_edits::ChatEdits>>, id: String, path: String) -> Result<chat_edits::FileEditHunks, String> {
+  let root = ws.root()?;
+  let edits = edits.inner().clone();
+  blocking(move || {
+    edits.with(&root, &id, false, |_| match edits_store(&root, &id)? {
+      Some(store) => chat_edits::file_hunks(&store, &path),
+      None => Ok(chat_edits::FileEditHunks { path: path.clone(), ..Default::default() }),
+    })
+  })
+  .await
+}
+
+/// Keep (`keep`) or Undo one change of `path`; returns the file's changes after it. Refused while
+/// the chat's turn runs; Undo writes the file under the git queue lane like file Undo.
+#[tauri::command]
+pub async fn chat_edits_hunk(
+  ws: State<'_, Workspace>,
+  edits: State<'_, Arc<chat_edits::ChatEdits>>,
+  id: String,
+  path: String,
+  hunk: String,
+  keep: bool,
+) -> Result<chat_edits::FileEditHunks, String> {
+  let root = ws.root()?;
+  let edits = edits.inner().clone();
+  let out = blocking(move || {
+    edits.with(&root, &id, true, |_| {
+      let store = edits_store(&root, &id)?.ok_or_else(|| crate::tr!(crate::i18n::msg::AgentMsg::EditHunkGone, path = path.clone()))?;
+      if keep { chat_edits::keep_hunk(&store, &path, &hunk) } else { chat_edits::undo_hunk(&store, &path, &hunk) }
+    })
+  })
+  .await?;
+  log::info!("chat edits: {} one change, {} left", if keep { "kept" } else { "undid" }, out.hunks.len());
+  Ok(out)
+}
+
 /// Restore checkpoint: undoes the changes of request `request` and every later one.
 #[tauri::command]
 pub async fn chat_edits_restore(ws: State<'_, Workspace>, edits: State<'_, Arc<chat_edits::ChatEdits>>, id: String, request: u32) -> Result<chat_edits::Report, String> {
