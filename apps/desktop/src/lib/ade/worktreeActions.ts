@@ -12,6 +12,7 @@ export type WorktreeAction =
 	| 'copyBranch'
 	| 'rename'
 	| 'copyPath'
+	| 'rename'
 	| 'markDone'
 	| 'reopen'
 	| 'remove'

@@ -1,6 +1,8 @@
 // The system settings page: one page for the IDE and the ADE, opened over the content area in
 // either mode (⌘, or the gear in the title bar), so changing a setting never switches modes.
 
+export type SettingsPageId = 'appearance' | 'arkai' | 'terminal' | 'account' | 'accounts' | 'usage' | 'shortcuts' | 'about';
+
 class SystemSettings {
 	visible = $state(false);
 	/** The table of contents selection: a settings group, or `null` for all. */
@@ -9,14 +11,14 @@ class SystemSettings {
 	snaps = $state(false);
 	/** One snap's details (`<source>/<id>`) in the Snaps view, or `null` for all of them. */
 	snapKey = $state<string | null>(null);
-	/** The AI accounts view (Manage Accounts) instead of the settings editor. */
-	accounts = $state(false);
+	/** A dedicated page instead of the settings editor (Orca's settings panes; `accounts` is Manage Accounts). */
+	page = $state<SettingsPageId | null>(null);
 
 	show(group: string | null = null) {
 		this.group = group;
 		this.snaps = false;
 		this.snapKey = null;
-		this.accounts = false;
+		this.page = null;
 		this.visible = true;
 	}
 
@@ -24,16 +26,21 @@ class SystemSettings {
 		this.group = null;
 		this.snaps = true;
 		this.snapKey = snapKey;
-		this.accounts = false;
+		this.page = null;
 		this.visible = true;
 	}
 
-	showAccounts() {
+	showPage(page: SettingsPageId) {
 		this.group = null;
 		this.snaps = false;
 		this.snapKey = null;
-		this.accounts = true;
+		this.page = page;
 		this.visible = true;
+	}
+
+	/** The AI accounts view (Orca's Manage Accounts). */
+	showAccounts() {
+		this.showPage('accounts');
 	}
 
 	close() {

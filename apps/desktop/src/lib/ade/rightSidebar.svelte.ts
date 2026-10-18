@@ -63,9 +63,13 @@ class RightSidebar {
 		return key ? !!adeTasks.find(key) : scm.repo !== null;
 	}
 
-	/** The tab in front for worktree `key` (Explorer until another is chosen there). */
+	/** The tabs worktree `key` shows and the one in front (Explorer until another is chosen there). */
+	tabs(key: string) {
+		return visibleTabs(this.isGit(key), this.#tabs[key] ?? 'files', !!key && !!adeTasks.find(key));
+	}
+
 	tab(key: string): RightTab {
-		return visibleTabs(this.isGit(key), this.#tabs[key] ?? 'files').active;
+		return this.tabs(key).active;
 	}
 
 	setTab(key: string, tab: RightTab) {

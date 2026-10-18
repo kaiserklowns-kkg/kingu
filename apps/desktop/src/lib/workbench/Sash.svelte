@@ -4,8 +4,15 @@
 	let {
 		orientation,
 		onDrag,
-		onReset
-	}: { orientation: 'vertical' | 'horizontal'; onDrag: (delta: number) => void; onReset?: () => void } = $props();
+		onReset,
+		gap = false
+	}: {
+		orientation: 'vertical' | 'horizontal';
+		onDrag: (delta: number) => void;
+		onReset?: () => void;
+		/** Between framed parts: takes its 4px as the gap instead of overlapping the neighbours. */
+		gap?: boolean;
+	} = $props();
 
 	let dragging = $state(false);
 	let last = 0;
@@ -28,7 +35,7 @@
 	aria-orientation={orientation}
 	class={[
 		'sash relative z-10 shrink-0 bg-transparent',
-		orientation === 'vertical' ? 'w-(--kg-sash-size) cursor-ew-resize' : 'h-(--kg-sash-size) cursor-ns-resize',
+		orientation === 'vertical' ? [!gap && '-mx-[2px]', 'w-(--kg-sash-size) cursor-ew-resize'] : [!gap && '-my-[2px]', 'h-(--kg-sash-size) cursor-ns-resize'],
 		dragging && 'active'
 	]}
 	style:margin-inline={orientation === 'vertical' ? 'calc(var(--kg-sash-size) / -2)' : undefined}

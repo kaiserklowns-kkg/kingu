@@ -4,8 +4,10 @@
 
 import type { TaskStatus } from './model';
 
-export type GroupBy = 'none' | 'workspace-status' | 'pr-status';
-export type SortBy = 'smart' | 'recent' | 'name';
+/** `repo`: one group for the open folder (Kingu shows one project), so it lists like `none`. */
+export type GroupBy = 'none' | 'workspace-status' | 'pr-status' | 'repo';
+/** `manual`: the order the user dragged (the side bar keeps it); sorted here like `recent`. */
+export type SortBy = 'smart' | 'recent' | 'name' | 'manual';
 export type CardProperty = 'status' | 'branch' | 'diff' | 'activity' | 'time' | 'pr' | 'issue' | 'automation';
 export const CARD_PROPERTIES: readonly CardProperty[] = ['status', 'branch', 'diff', 'activity', 'time', 'pr', 'issue', 'automation'];
 /** Orca's default card: everything on. */
@@ -59,13 +61,13 @@ export function sortTasks<T extends SidebarTask>(list: T[], sortBy: SortBy): T[]
 	const recent = (a: T, b: T) => b.updatedAt - a.updatedAt;
 	const copy = [...list];
 	if (sortBy === 'name') return copy.sort((a, b) => a.title.localeCompare(b.title, 'th') || a.slug.localeCompare(b.slug));
-	if (sortBy === 'recent') return copy.sort(recent);
+	if (sortBy === 'recent' || sortBy === 'manual') return copy.sort(recent);
 	return copy.sort((a, b) => RANK[a.status] - RANK[b.status] || recent(a, b));
 }
 
 export type Group<T> = { id: string; label: string; tasks: T[] };
 
-const PR_GROUPS: { id: string; label: string }[] = [
+export const PR_GROUPS: { id: string; label: string }[] = [
 	{ id: 'open', label: 'PR เปิดอยู่ (Open)' },
 	{ id: 'draft', label: 'PR ฉบับร่าง (Draft)' },
 	{ id: 'merged', label: 'Merge แล้ว (Merged)' },
@@ -98,7 +100,7 @@ export function sidebarGroups<T extends SidebarTask>(list: T[], p: SidebarPrefs)
 		list.filter((t) => !hiddenBy(t, p)),
 		p.sortBy
 	);
-	if (p.groupBy === 'none') return shown.length ? [{ id: 'all', label: '', tasks: shown }] : [];
+	if (p.groupBy === 'none' || p.groupBy === 'repo') return shown.length ? [{ id: 'all', label: '', tasks: shown }] : [];
 	const defs = p.groupBy === 'pr-status' ? PR_GROUPS.map((g) => ({ ...g, of: (t: T) => prGroupOf(t) === g.id })) : STATUS_GROUPS.map((g) => ({ ...g, of: (t: T) => g.of(t.status) }));
 	return defs.map((g) => ({ id: g.id, label: g.label, tasks: shown.filter(g.of) })).filter((g) => g.tasks.length);
 }

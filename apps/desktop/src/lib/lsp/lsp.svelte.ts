@@ -662,7 +662,7 @@ class Lsp {
 			if (!action.edit && client.canResolveCodeAction) action = (await client.resolveCodeAction(action)) ?? action;
 			if (action.edit) {
 				const r = await this.applyWorkspaceEdit(action.edit);
-				if (!r.applied) return statusBar.flash(`${action.title}: ${r.failureReason}`);
+				if (!r.applied) return statusBar.error(`${action.title}: ${r.failureReason}`);
 			}
 			if (action.command) await this.#execute(client, action.command);
 		} catch (e) {

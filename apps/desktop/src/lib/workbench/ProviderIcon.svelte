@@ -1,0 +1,19 @@
+<script lang="ts">
+	// Provider marks for the usage item (Orca shows each agent's brand at 13px): a drawn starburst
+	// in Claude's orange, Phosphor's OpenAI mark for Codex.
+	import { OpenAiLogoIcon } from 'phosphor-svelte';
+	import type { ProviderId } from './usage';
+
+	let { provider, size = 13 }: { provider: ProviderId; size?: number } = $props();
+	const RAYS = Array.from({ length: 12 }, (_, i) => i * 30);
+</script>
+
+{#if provider === 'claude'}
+	<svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" class="shrink-0">
+		{#each RAYS as deg, i (deg)}
+			<rect x="10.9" y={i % 2 ? 2.6 : 1} width="2.2" height={i % 2 ? 9.4 : 11} rx="1.1" fill="#D97757" transform="rotate({deg} 12 12)" />
+		{/each}
+	</svg>
+{:else}
+	<OpenAiLogoIcon {size} weight="bold" class="shrink-0" />
+{/if}

@@ -114,7 +114,7 @@
 	aria-label={label}
 	tabindex="-1"
 	class={[
-		'absolute z-50 min-w-[240px] rounded-md border border-[color:var(--vscode-menu-border,#454545)] bg-[var(--vscode-menu-background,#1F1F1F)] py-1 text-[13px] text-[color:var(--vscode-menu-foreground,#CCCCCC)] shadow-[0_2px_8px_rgba(0,0,0,0.36)] outline-none',
+		'absolute z-50 min-w-[240px] rounded-lg border border-[color:var(--vscode-menu-border,#454545)] bg-[var(--vscode-menu-background,#1F1F1F)] py-1 text-[13px] text-[color:var(--vscode-menu-foreground,#CCCCCC)] shadow-xl shadow-black/40 outline-none',
 		submenu ? 'top-[-5px] left-full' : 'top-full left-0'
 	]}
 	onkeydown={onKey}
@@ -134,7 +134,7 @@
 					aria-expanded={node.type === 'submenu' ? openSub === index : undefined}
 					tabindex="-1"
 					class={[
-						'mx-1 flex h-6 w-[calc(100%-8px)] items-center gap-2 rounded px-2 text-left',
+						'mx-1 flex h-[26px] w-[calc(100%-8px)] items-center gap-2 rounded-md px-2 text-left',
 						disabled ? 'opacity-40' : 'hover:bg-[var(--vscode-menu-selectionBackground,#0078D4)] hover:text-[color:var(--vscode-menu-selectionForeground,#FFFFFF)] focus:bg-[var(--vscode-menu-selectionBackground,#0078D4)] focus:text-[color:var(--vscode-menu-selectionForeground,#FFFFFF)]',
 						openSub === index && 'bg-[var(--vscode-menu-selectionBackground,#0078D4)] text-[color:var(--vscode-menu-selectionForeground,#FFFFFF)]',
 						'outline-none'

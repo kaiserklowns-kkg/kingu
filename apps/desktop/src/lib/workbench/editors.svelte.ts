@@ -23,9 +23,18 @@ export type EditorHostHandle = {
 	focus: () => void;
 	/** Runs a Monaco editor action (`actions.find`, `undo`…) on the shown file; false when none is shown. */
 	trigger: (actionId: string) => boolean;
+	/** Changes the shown model's line endings (an undoable edit, like VS Code's status bar picker). */
+	setEol?: (eol: 'LF' | 'CRLF') => void;
+	/** Changes the shown model's language mode. */
+	setLanguage?: (id: string) => void;
+	/** Every registered language: id, name and its first extension. */
+	languages?: () => LanguageInfo[];
 	/** Shows a position without moving focus (Quick Open's symbol preview). */
 	peek?: (line: number, column: number) => void;
 };
+export type LanguageInfo = { id: string; name: string; extensions: string[] };
+/** VS Code's selection status: characters selected and how many selections (cursors). */
+export type SelectionInfo = { chars: number; count: number };
 
 // The editor management settings the group model follows (VS Code's IEditorPartOptions).
 G.setBehaviour(() => ({
@@ -51,6 +60,7 @@ class Editors {
 	language = $state('');
 	indent = $state('');
 	eol = $state('');
+	selection = $state<SelectionInfo>({ chars: 0, count: 1 });
 	/** Consumed by the editor host of `group` once `path`'s model is shown there. */
 	pendingReveal = $state<(Reveal & { path: string; group: number }) | null>(null);
 	/** A group whose editor should take keyboard focus once it shows a model. */
@@ -150,6 +160,15 @@ class Editors {
 	/** Runs a Monaco action in the active group's editor (menu items such as Find, Go to Definition). */
 	trigger(actionId: string): boolean {
 		return this.#target()?.trigger(actionId) ?? false;
+	}
+	setEol(eol: 'LF' | 'CRLF') {
+		this.#hosts.get(this.model.activeGroup)?.setEol?.(eol);
+	}
+	setLanguage(id: string) {
+		this.#hosts.get(this.model.activeGroup)?.setLanguage?.(id);
+	}
+	languages(): LanguageInfo[] {
+		return this.#hosts.get(this.model.activeGroup)?.languages?.() ?? [];
 	}
 	/** The active editor's selected text, '' when none (`nearestWord`: the word at the cursor instead). */
 	selectionText(nearestWord = false): string {

@@ -19,6 +19,8 @@
 	import { cliOf } from './agentCli';
 	import { adeLayout } from './adeLayout.svelte';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
+	import { editors } from '#lib/workbench/editors.svelte.ts';
+	import { changesKey } from '#lib/workbench/viewers.ts';
 	import { BUTTON, BUTTON_SECONDARY, ICON_BUTTON, INPUT, LETTER_COLOR, STATUS_DOT, TONE } from './ui';
 
 	/** `timeline` / `review`: one half, for the Agents layout's main area and changes panel. */
@@ -203,6 +205,7 @@
 						<span class="text-(--vscode-descriptionForeground)">{totals.files} ไฟล์{totals.binary ? ` (binary ${totals.binary})` : ''}</span>
 					{/if}
 					<span class="flex-1"></span>
+					<button class={ICON_BUTTON} aria-label="ดูการเปลี่ยนแปลงทั้งหมดในหน้าเดียว" title="ดูการเปลี่ยนแปลงทั้งหมดในหน้าเดียว" onclick={() => (appMode.setMode('workbench'), editors.open(changesKey(slug), { preview: false }))}><Icon name="files" size={14} /></button>
 					<button class={ICON_BUTTON} aria-label="รีเฟรช" title="รีเฟรช" onclick={() => adeTasks.refreshStat(slug)}><Icon name="refresh" size={14} /></button>
 				</div>
 				{#if view.statError}

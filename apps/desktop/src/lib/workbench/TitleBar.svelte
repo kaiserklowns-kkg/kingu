@@ -16,6 +16,8 @@
 	import { editorLabel } from './editorLabel';
 	import { editors } from './editors.svelte';
 	import { isMac, keyLabel } from './keys';
+	import WindowControls from './WindowControls.svelte';
+	import { platform } from './platform.svelte';
 	import { layout } from './layout.svelte';
 	import { titleBarToggleChecked } from './layoutControls.svelte';
 	import { status } from './status.svelte';
@@ -225,16 +227,17 @@
 	oncontextmenu={onContextMenu}
 	style:height="{height}px"
 	class={[
-		'titlebar relative flex shrink-0 items-center border-b border-(--vscode-titleBar-border) select-none',
+		// No bottom border: the framed parts below start right under it (VS Code's modern layout).
+		'titlebar relative flex shrink-0 items-center select-none',
 		focused
 			? 'bg-(--vscode-titleBar-activeBackground) text-(--vscode-titleBar-activeForeground)'
 			: 'inactive bg-(--vscode-titleBar-inactiveBackground) text-(--vscode-titleBar-inactiveForeground) [&>*]:opacity-60'
 	]}
 >
 	<div class="titlebar-left flex h-full min-w-0 flex-[1_1_20%] items-center overflow-hidden">
-		{#if isMac}
-			<!-- The overlay title bar's traffic lights. -->
-			<div class="h-full w-[70px] shrink-0"></div>
+		{#if platform.profile.windowControls === 'traffic-lights'}
+			<!-- The overlay title bar's traffic lights (macOS draws them; we leave room). -->
+			<div class="h-full shrink-0" style:width="{platform.profile.leftInset}px"></div>
 		{:else}
 			<div class="grid h-full w-[35px] shrink-0 place-items-center text-(--vscode-titleBar-activeForeground)" aria-hidden="true">
 				<Icon name="kingu" size={16} />
@@ -305,6 +308,7 @@
 			</button>
 		{/if}
 	</div>
+	<WindowControls />
 </header>
 
 {#if popup}

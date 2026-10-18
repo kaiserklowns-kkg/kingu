@@ -14,6 +14,7 @@
 	import { repoDialog } from './repoDialog.svelte.ts';
 	import { appMode } from './mode.svelte';
 	import { commands } from './commands.svelte';
+	import { changesKey } from './viewers';
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 
@@ -235,7 +236,7 @@
 				{@const [name, dir] = splitPath(r.entry.path)}
 				<div
 					class={[
-						'group/row flex h-(--kg-row-height) items-center pr-2 leading-(--kg-row-height)',
+						'group/row mx-1.5 flex h-(--kg-row-height) items-center rounded-md pr-2 leading-(--kg-row-height)',
 						selected === key
 							? 'bg-(--vscode-list-activeSelectionBackground) text-(--vscode-list-activeSelectionForeground)'
 							: editors.active === diffKey(r.entry.path)
@@ -268,22 +269,25 @@
 
 <section class="flex min-h-0 flex-1 flex-col">
 	{#if !scm.loaded}
-		<p class="px-5 py-1 text-(--vscode-descriptionForeground)">กำลังอ่านสถานะ git...</p>
+		<p class="flex items-center gap-2 px-5 py-2 text-(--vscode-descriptionForeground)">
+			<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>กำลังอ่านสถานะ git…
+		</p>
 	{:else if !scm.repo && !source && folderScm.disabled}
 		<p class="px-5 py-1 leading-normal text-(--vscode-descriptionForeground)">Git ถูกปิดอยู่ เปิดได้ที่การตั้งค่า git.enabled (Git is disabled.)</p>
 	{:else if !scm.repo}
 		<!-- VS Code's welcome view for a folder without a repository. -->
-		<div class="flex flex-col gap-3 px-5 py-1 leading-normal">
-			<p>The folder currently open doesn't have a git repository. You can initialize a repository which will enable source control features powered by git.</p>
+		<div class="flex flex-col items-center gap-2 px-6 py-8 text-center text-(--vscode-descriptionForeground)">
+			<span class="text-(--vscode-foreground) opacity-70"><Icon name="git" size={32} /></span>
+			<p class="text-(--vscode-foreground)">โฟลเดอร์นี้ยังไม่เป็น git repository</p>
+			<p class="text-xs leading-relaxed">สร้าง repository เพื่อใช้ Source Control (git) ได้ หรือ clone repository จาก URL</p>
 			<button
-				class="h-[26px] w-full rounded-sm bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:brightness-110 disabled:opacity-50"
+				class="mt-1 h-[26px] w-full rounded-md bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:brightness-110 disabled:opacity-50"
 				disabled={folderScm.busy || !!source}
 				onclick={() => folderScm.init()}
 			>
 				Initialize Repository
 			</button>
-			<p class="text-(--vscode-descriptionForeground)">หรือ clone repository จาก URL</p>
-			<button class="h-[26px] w-full rounded-sm border border-(--vscode-widget-border) hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => repoDialog.show('clone')}>Clone Repository</button>
+			<button class="h-[26px] w-full rounded-md border border-(--vscode-widget-border) text-(--vscode-foreground) hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => repoDialog.show('clone')}>Clone Repository</button>
 		</div>
 	{:else}
 		<div class="flex shrink-0 flex-col gap-1.5 px-2 pt-1 pb-2">
@@ -349,6 +353,7 @@
 				])}
 			{/if}
 			{@render group('changes', 'Changes', scm.groups.changes, [
+				{ icon: 'files', label: 'ดูการเปลี่ยนแปลงทั้งหมดในหน้าเดียว', run: () => (appMode.setMode('workbench'), editors.open(changesKey(), { preview: false })), hidden: !scm.groups.changes.length && !scm.groups.staged.length },
 				{ icon: 'discard', label: 'Discard All Changes', run: () => askDiscard('group:changes', scm.groups.changes), hidden: !scm.groups.changes.length },
 				{ icon: 'plus', label: 'Stage All Changes', run: () => scm.stage(scm.groups.changes.map((r) => r.entry.path)), hidden: !scm.groups.changes.length }
 			])}

@@ -4,7 +4,19 @@
 	import { lsp } from '#lib/lsp/lsp.svelte.ts';
 	import DiffHost from './DiffHost.svelte';
 	import EditorHost from './EditorHost.svelte';
+	import ImageViewer from './ImageViewer.svelte';
+	import MarkdownPreview from './MarkdownPreview.svelte';
+	import { hasPreview, isChangesKey, isCsvPath, isImagePath, isPreviewKey, previewTarget } from './viewers';
+	import CombinedDiff from './CombinedDiff.svelte';
+	import CsvPreview from './CsvPreview.svelte';
+	import NotebookViewer from './NotebookViewer.svelte';
+	import { isNotebookPath } from './notebook';
+	import { invoke } from '@tauri-apps/api/core';
+	import { status } from './status.svelte';
+	import { workspace } from './workspace.svelte';
+	import { isNonTextEditor } from '#lib/settings/resources.ts';
 	import FileIcon from './FileIcon.svelte';
+	import KinguMark from './KinguMark.svelte';
 	import Icon from './Icon.svelte';
 	import { editors } from './editors.svelte';
 	import { editorLabel } from './editorLabel';
@@ -12,7 +24,6 @@
 	import { keyLabel } from './keys';
 	import { entryChanges, fileDecorations, fileOf, isDiffKey } from './scm';
 	import { scm } from './scm.svelte';
-	import { workspace } from './workspace.svelte';
 	import { tabDescription, type LabelFormat } from './tabLabels';
 	import { emptyUntitled } from './editorModels';
 	import type { EditorTab } from './editorGroups';
@@ -45,7 +56,7 @@
 	const settingsActive = $derived(activePath === SETTINGS_EDITOR_KEY);
 	const adeActive = $derived(activePath !== null && isAdeEditor(activePath));
 	const taskSlug = $derived(activePath ? slugOfTaskKey(activePath) : null);
-	const crumbs = $derived(!activePath || settingsActive || adeActive ? [] : activePath === USER_SETTINGS_KEY
+	const crumbs = $derived(!activePath || settingsActive || adeActive || isChangesKey(activePath) ? [] : activePath === USER_SETTINGS_KEY
 					? ['User', 'settings.json']
 					: activePath === USER_KEYBINDINGS_KEY
 						? ['User', 'keybindings.json']
@@ -55,7 +66,11 @@
 	const label = editorLabel;
 	const iconOf = (key: string) =>
 		fileIcon(key === SETTINGS_EDITOR_KEY || key === USER_SETTINGS_KEY ? 'settings.json' : isAdeEditor(key) ? 'tasks.md' : fileOf(key));
+	/** Breadcrumbs of a workspace file are clickable (not the Settings editor's or user settings'). */
+	const crumbsAreFiles = $derived(!!activePath && activePath !== USER_SETTINGS_KEY && !isChangesKey(activePath) && crumbs.length > 0);
 	const diffActive = $derived(activePath !== null && isDiffKey(activePath));
+	/** Images and Markdown previews have their own viewers instead of Monaco. */
+	const viewerActive = $derived(activePath !== null && (isImagePath(activePath) || isPreviewKey(activePath) || isNotebookPath(activePath) || isChangesKey(activePath)));
 	// The diff editor exists only while this group has a diff tab.
 	const hasDiff = $derived(tabs.some((t) => isDiffKey(t.path)));
 	// Enclosing symbols from the language server's document symbols, like VS Code's outline crumbs.
@@ -255,8 +270,32 @@
 		['Go to File', 'cmd+p'],
 		['Split Editor', 'cmd+\\'],
 		['Toggle Terminal', 'ctrl+`'],
-		['Toggle Agent', 'cmd+alt+b']
+		['Toggle Arkai', 'cmd+alt+b'],
+		['Zen Mode', 'cmd+k z']
 	];
+
+	// Breadcrumb folders open a list of their entries (VS Code's breadcrumb picker).
+	type Entry = { name: string; rel: string; is_dir: boolean };
+	let folderMenu = $state<{ x: number; y: number; rel: string; entries: Entry[] } | null>(null);
+	async function openFolderCrumb(rel: string, x: number, y: number) {
+		try {
+			const entries = await invoke<Entry[]>('fs_list_dir', { rel });
+			folderMenu = { x, y, rel, entries };
+		} catch (e) {
+			status.error(String(e));
+		}
+	}
+	const folderItems = $derived(
+		folderMenu ? (folderMenu.entries.length ? folderMenu.entries.map((e) => menuItem(e.rel, e.is_dir ? `${e.name}/` : e.name)) : [menuItem('', '(ว่าง)', { enabled: false })]) : []
+	);
+	function runFolderCrumb(rel: string) {
+		const entry = folderMenu?.entries.find((e) => e.rel === rel);
+		const at = folderMenu;
+		folderMenu = null;
+		if (!entry || !at) return;
+		if (entry.is_dir) void openFolderCrumb(entry.rel, at.x, at.y);
+		else editors.open(entry.rel, { preview: true, group });
+	}
 </script>
 
 <section
@@ -278,7 +317,7 @@
 			{#each rows as row, r (r)}
 				<div
 					class={[
-						'kg-tab-row flex min-h-(--kg-tab-height)',
+						'kg-tab-row flex min-h-(--kg-tab-height) items-end gap-0.5 px-1',
 						wrapTabs ? 'flex-wrap' : 'overflow-x-auto overflow-y-hidden',
 						`kg-tab-scroll-${scrollbar}`,
 						pinnedRow && r === 0 && 'border-b border-(--vscode-editorGroupHeader-tabsBorder,var(--vscode-tab-border))'
@@ -303,7 +342,7 @@
 							oncontextmenu={(e) => openTabMenu(e, tab.path)}
 							style={size.style}
 							class={[
-								'group relative flex h-(--kg-tab-height) items-center gap-1.5 border-r border-(--vscode-tab-border)',
+								'group relative flex h-[calc(var(--kg-tab-height)-5px)] items-center gap-1.5 rounded-t-lg transition-colors',
 								actionsLeft ? 'pr-2.5 pl-1' : 'pl-2.5',
 								size.cls,
 								active ? 'bg-(--vscode-tab-activeBackground)' : 'bg-(--vscode-tab-inactiveBackground) hover:bg-(--vscode-tab-hoverBackground)',
@@ -316,8 +355,8 @@
 										: 'text-[var(--vscode-tab-unfocusedInactiveForeground,#9d9d9d80)]'
 							]}
 						>
-							{#if highlightModified && tab.dirty}<span class="absolute inset-x-0 top-0 h-0.5 bg-(--vscode-tab-activeModifiedBorder,#3399cc)"></span>
-							{:else if active && focused}<span class="absolute inset-x-0 top-0 h-px bg-(--vscode-tab-activeBorderTop)"></span>{/if}
+							{#if highlightModified && tab.dirty}<span class="absolute inset-x-2.5 top-0 h-0.5 rounded-b-full bg-(--vscode-tab-activeModifiedBorder,#3399cc)"></span>
+							{:else if active && focused}<span class="absolute inset-x-2.5 top-0 h-0.5 rounded-b-full bg-(--vscode-tab-activeBorderTop)"></span>{/if}
 							{#if dropTarget === i}<span class="absolute inset-y-0 left-0 w-0.5 bg-(--vscode-focusBorder)"></span>{/if}
 							{#if showIcons || compact}<span class={['flex', !focused && 'opacity-60']}><FileIcon icon={iconOf(tab.path)} /></span>{/if}
 							{#if !compact}
@@ -351,7 +390,7 @@
 								<button
 									aria-label="Unpin {label(tab.path)}"
 									title="Unpin"
-									class={['grid size-5 shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)', actionsLeft ? 'order-first' : 'mr-1']}
+									class={['grid size-5 shrink-0 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)', actionsLeft ? 'order-first' : 'mr-1']}
 									onclick={() => editors.unstick(tab.path, group)}
 								>
 									{#if tab.dirty}
@@ -365,7 +404,7 @@
 								<button
 									aria-label={tab.dirty ? `${label(tab.path)} ยังไม่บันทึก: ปิด` : `ปิด ${label(tab.path)}`}
 									class={[
-										'size-5 shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)',
+										'size-5 shrink-0 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)',
 										actionsLeft ? 'order-first' : 'mr-1',
 										// workbench.editor.tabActionReserveSpace: a clean inactive tab keeps (or drops) the button's space.
 										active || tab.dirty ? 'grid' : reserveSpace ? 'invisible grid group-hover:visible' : 'hidden group-hover:grid'
@@ -394,7 +433,20 @@
 			{#each shownCrumbs as c, i (i)}
 				{#if i > 0}<Icon name="chevronRight" size={14} />{/if}
 				{#if crumbIcons && i === shownCrumbs.length - 1}<span class="flex shrink-0"><FileIcon icon={iconOf(activePath)} /></span>{/if}
-				<span class="whitespace-nowrap">{c}</span>
+				{#if crumbsAreFiles}
+					{@const at = crumbs.length - shownCrumbs.length + i}
+					<button
+						class="rounded px-0.5 whitespace-nowrap hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)"
+						title={at < crumbs.length - 1 ? 'ไฟล์ในโฟลเดอร์นี้' : 'ไฟล์ข้างเคียง'}
+						onclick={(e) => {
+							const r = e.currentTarget.getBoundingClientRect();
+							// A folder lists itself; the file name lists its folder (its siblings).
+							void openFolderCrumb(crumbs.slice(0, at < crumbs.length - 1 ? at + 1 : at).join('/'), r.left, r.bottom + 2);
+						}}>{c}</button
+					>
+				{:else}
+					<span class="whitespace-nowrap">{c}</span>
+				{/if}
 			{/each}
 			{#each symbolCrumbs as s, i (i)}
 				{#if shownCrumbs.length || i > 0}<Icon name="chevronRight" size={14} />{/if}
@@ -402,11 +454,21 @@
 					{#if crumbIcons}<span class={['codicon', symbolCodicon(s.kind)]} aria-hidden="true"></span>{/if}{s.name}
 				</button>
 			{/each}
+			{#if hasPreview(activePath)}
+				<!-- VS Code's "Open Preview to the Side" in the editor title of a Markdown file (and CSV, like Orca). -->
+				<button
+					class="ml-auto flex shrink-0 items-center gap-1 rounded-md px-1.5 text-xs hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)"
+					title="เปิด preview ด้านข้าง (⌘K V)"
+					onclick={() => (editors.focusGroup(group), commands.run('markdown.showPreviewToSide'))}
+				>
+					<Icon name="openExternal" size={13} />Preview
+				</button>
+			{/if}
 		</nav>
 	{/if}
 
 	<div class="relative min-h-0 flex-1">
-		<div class={['absolute inset-0', (!activePath || diffActive || settingsActive || adeActive || placeholder) && 'invisible']}>
+		<div class={['absolute inset-0', (!activePath || diffActive || settingsActive || adeActive || viewerActive || placeholder) && 'invisible']}>
 			<EditorHost {group} />
 		</div>
 		{#if activePath && emptyUntitled.has(activePath) && settings.get('workbench.editor.empty.hint') === 'text'}
@@ -427,6 +489,17 @@
 				<DiffHost active={activePath} onfail={(key) => editors.close(key, { force: true, group })} reportLanguage={focused} />
 			</div>
 		{/if}
+		{#if activePath && isImagePath(activePath)}
+			<div class="absolute inset-0">{#key activePath}<ImageViewer path={activePath} />{/key}</div>
+		{:else if activePath && isChangesKey(activePath)}
+			<div class="absolute inset-0">{#key activePath}<CombinedDiff changesKey={activePath} />{/key}</div>
+		{:else if activePath && isNotebookPath(activePath)}
+			<div class="absolute inset-0">{#key activePath}<NotebookViewer path={activePath} />{/key}</div>
+		{:else if activePath && isPreviewKey(activePath)}
+			<div class="absolute inset-0">
+				{#key activePath}{#if isCsvPath(previewTarget(activePath))}<CsvPreview previewKey={activePath} />{:else}<MarkdownPreview previewKey={activePath} />{/if}{/key}
+			</div>
+		{/if}
 		{#if settingsActive}
 			<div class="absolute inset-0"><SettingsEditor /></div>
 		{/if}
@@ -438,12 +511,19 @@
 		<!-- workbench.tips.enabled: the shortcut watermark of an empty editor area. -->
 		{#if !activePath && editors.groups.length === 1 && settings.get<boolean>('workbench.tips.enabled')}
 			<div class="absolute inset-0 grid place-items-center">
-				<dl class="grid grid-cols-[auto_auto] gap-x-4 gap-y-2 text-(--vscode-descriptionForeground)">
-					{#each watermark as [label, key] (label)}
-						<dt class="text-right">{label}</dt>
-						<dd class="font-mono tracking-widest">{keyLabel(key)}</dd>
-					{/each}
-				</dl>
+				<div class="flex flex-col items-center gap-6">
+					<span class="text-(--vscode-foreground) opacity-15"><KinguMark size={88} /></span>
+					<dl class="grid grid-cols-[auto_auto] items-center gap-x-4 gap-y-2.5 text-(--vscode-descriptionForeground)">
+						{#each watermark as [label, key] (label)}
+							<dt class="text-right">{label}</dt>
+							<dd class="flex gap-1">
+								{#each keyLabel(key).split(' ') as chord, ci (ci)}
+									<kbd class="rounded-md border border-(--vscode-widget-border) bg-(--vscode-editorGroupHeader-tabsBackground) px-1.5 py-0.5 font-sans text-xs tracking-wider">{chord}</kbd>
+								{/each}
+							</dd>
+						{/each}
+					</dl>
+				</div>
 			</div>
 		{/if}
 	</div>
@@ -468,6 +548,9 @@
 {#if tabMenu}
 	{@const m = tabMenu}
 	<PopupMenu items={tabMenuItems(m.path)} label="Editor tab" x={m.x} y={m.y} onRun={(node) => node.type === 'item' && runTabMenu(node.id, m.path)} onClose={() => (tabMenu = null)} />
+{/if}
+{#if folderMenu}
+	<PopupMenu items={folderItems} label="Breadcrumb" x={folderMenu.x} y={folderMenu.y} focusFirst onRun={(node) => node.type === 'item' && runFolderCrumb(node.id)} onClose={() => (folderMenu = null)} />
 {/if}
 
 <style>

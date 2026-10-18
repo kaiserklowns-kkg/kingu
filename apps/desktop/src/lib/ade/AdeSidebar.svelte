@@ -1,45 +1,50 @@
 <script lang="ts">
-	// Agents layout side bar, laid out like Orca's: a search box, Tasks (the board), Automations and Issues on top, then
-	// Projects: the open folder with its worktrees as cards. The folder itself is the "primary"
-	// worktree; each task is a worktree on `kingu/<slug>` with its agent session listed under it.
-	import Icon from '#lib/workbench/Icon.svelte';
+	// The Agents layout side bar, built like Orca's worktree sidebar: Search (the worktree jump
+	// palette), Tasks (the board), Automations and Issues on top, a "Projects" header with the activity view, workspace
+	// options, add project and new workspace, then the folder as a project group with a card per
+	// worktree (status slot, title, branch, the agent row with its last message and time). Orca's
+	// footer is left out: Settings, Help and the board already live elsewhere in Kingu (title bar
+	// gear, Settings, the Tasks row); Reveal active workspace is on the project header.
+	import { untrack } from 'svelte';
+	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
+	import ProviderIcon from '#lib/workbench/ProviderIcon.svelte';
+	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
+	import type { MenuNode } from '#lib/workbench/menus.ts';
 	import { commands } from '#lib/workbench/commands.svelte.ts';
+	import { appMode } from '#lib/workbench/mode.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
+	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
+	import { invoke } from '@tauri-apps/api/core';
 	import { adeLayout, PRIMARY } from './adeLayout.svelte';
-	import { matchesQuery } from './adeTabs';
-	import { aggregateStats, isQuestion, MAX_TITLE, STATUS_LABEL, statusLabel, timeAgo, type TaskView } from './model';
-	import { adeTasks } from './tasks.svelte';
+	import { worktreeDir } from './keys';
+	import { COLUMNS, MAX_TITLE, STATUS_LABEL, type TaskView } from './model';
 	import { automations } from './automations.svelte.ts';
-	import { QUESTION_TEXT, statusDot } from './ui';
-	import { newSession } from './agentsMode.svelte';
-	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
-	import { actionsFor, runWorktreeAction } from './worktreeMenu.svelte';
-	import type { WorktreeAction } from './worktreeActions';
 	import { repoDialog } from '#lib/workbench/repoDialog.svelte.ts';
 	import { scm } from '#lib/workbench/scm.svelte.ts';
+	import { adeTasks } from './tasks.svelte';
+	import { cleanup } from './cleanup.svelte';
+	import { newSession } from './agentsMode.svelte';
+	import { jumpToWorktree } from './worktreeMenu.svelte';
+	import { activeFilterCount, cardStatus, CARD_STATUS_LABEL, reorder, shortAgo, SORT_LABEL, sortItems, statusColumn, type CardStatus, type GroupBy, type SortBy } from './sidebarModel';
+	import { sidebarPrefs as prefs } from './sidebarPrefs.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
-	import { baseName, cardProperties, externalWorktrees, hexColor, sidebarGroups, type Visibility } from './sidebarView';
-	import { sidebarPrefs, sidebarTask } from './sidebarState.svelte';
+	import { aggregateStats } from './model';
+	import { baseName, cardProperties, externalWorktrees, hexColor, hiddenBy, PR_GROUPS, prGroupOf, type Visibility } from './sidebarView';
+	import { sidebarPrefs as sidebarFilters, sidebarTask } from './sidebarState.svelte';
 	import { prStatuses } from './prStatus.svelte';
 	import { isLinear, issueRef } from './issues.ts';
-	import { openWorktreeIn } from './worktreeMenu.svelte';
-	import { openInLabels } from './worktreeActions';
+	import { actionsFor, openWorktreeIn, runWorktreeAction } from './worktreeMenu.svelte';
+	import type { WorktreeAction } from './worktreeActions';
 
-	// The ADE Sidebar settings (Orca's sidebar UI preferences): filters, sort, grouping and card properties.
-	const prefs = $derived(sidebarPrefs());
-	const groups = $derived(
-		sidebarGroups(
-			adeTasks.views.filter((v) => matchesQuery(adeLayout.query, v.meta.title, adeTasks.branchOf(v.meta.slug))).map(sidebarTask),
-			prefs
-		)
-	);
-	const shownCount = $derived(groups.reduce((n, g) => n + g.tasks.length, 0));
-	const props = $derived(cardProperties(settings.get<unknown[]>('kingu.sidebar.cardProperties'), settings.get<boolean>('kingu.sidebar.compactCards') === true));
-	const primaryShown = $derived(settings.get<boolean>('kingu.sidebar.hideDefaultBranch') !== true && !prefs.showActiveOnly && matchesQuery(adeLayout.query, workspace.name, status.branch));
+	const root = $derived(workspace.root ?? '');
+	const now = $derived(adeTasks.now);
 	const selectedKey = $derived(adeLayout.board ? null : adeLayout.key);
+
+	// Card properties (kingu.sidebar.cardProperties; compact cards show only the status and title).
+	const props = $derived(cardProperties(settings.get<unknown[]>('kingu.sidebar.cardProperties'), prefs.compact));
 	// Repository display (Orca's per-repo display name, badge color and icon).
-	const repoName = $derived((settings.get<string>('kingu.repo.displayName') ?? '').trim() || workspace.name);
+	const repoName = $derived((settings.get<string>('kingu.repo.displayName') ?? '').trim() || (workspace.name ?? ''));
 	const repoBadge = $derived(hexColor(settings.get<string>('kingu.repo.badgeColor')));
 	const repoIcon = $derived([...(settings.get<string>('kingu.repo.icon') ?? '').trim()].slice(0, 2).join(''));
 	// Worktrees Kingu did not make (Orca's external / agent worktree visibility): read-only cards.
@@ -49,82 +54,102 @@
 					external: settings.get<Visibility>('kingu.worktree.externalVisibility'),
 					agent: settings.get<Visibility>('kingu.worktree.agentVisibility'),
 					custom: settings.get<string[]>('kingu.worktree.visibilitySources')
-				}).filter((w) => matchesQuery(adeLayout.query, baseName(w.path), w.branch ?? ''))
+				})
 			: []
 	);
-	const openIn = $derived(openInLabels(settings.get<Record<string, unknown>>('kingu.worktree.openIn')));
 	let externalMenu = $state<{ path: string; x: number; y: number } | null>(null);
 
 	// PR state for grouping and the card's PR property: read once per task (gh) when either needs it.
-	const asked = new Set<string>();
+	const askedPr = new Set<string>();
 	$effect(() => {
 		if (prefs.groupBy !== 'pr-status' && !props.has('pr')) return;
 		for (const v of adeTasks.views) {
 			const slug = v.meta.slug;
-			if (asked.has(slug) || prStatuses.bySlug[slug]) continue;
-			asked.add(slug);
+			if (askedPr.has(slug) || prStatuses.bySlug[slug]) continue;
+			askedPr.add(slug);
 			void prStatuses.refresh(slug, { threads: false });
 		}
 	});
 
-	const summary = (v: TaskView) => v.runtime?.lastEvent ?? v.meta.last_run?.summary ?? statusLabel(v);
-	const when = (v: TaskView) => Math.max(v.meta.updated_at, v.runtime?.updatedAt ?? 0);
-
-	function newTask() {
-		adeLayout.show(PRIMARY);
-		adeLayout.select(PRIMARY, 'main');
-		newSession();
-	}
-
-	/** The open folder is not a git repository: tasks need one (Orca adds only git projects). */
-	const notGit = $derived(!!workspace.root && scm.loaded && scm.repo === null);
-	async function initGit() {
-		if (await scm.init(true)) await adeTasks.load();
-	}
-
-	// Orca's Projects "+": add a project (open, clone, create), next to a new task here.
-	let addMenu = $state<{ x: number; y: number; keyboard: boolean } | null>(null);
-	const ADD_ITEMS = $derived([
-		menuItem('task', 'งานใหม่ (worktree ใหม่)', { enabled: !!workspace.root && !notGit }),
-		menuSeparator,
-		menuItem('open', 'เปิดโฟลเดอร์…'),
-		menuItem('clone', 'Clone repository…'),
-		menuItem('create', 'สร้างโปรเจกต์ใหม่…')
-	]);
-	function openAddMenu(e: MouseEvent) {
-		const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-		addMenu = { x: r.right - 220, y: r.bottom + 2, keyboard: e.detail === 0 };
-	}
-	function runAdd(id: string) {
-		if (id === 'task') newTask();
-		else if (id === 'open') void commands.run('workbench.action.files.openFolder');
-		else void repoDialog.show(id === 'clone' ? 'clone' : 'create');
-	}
-
-	// Orca's worktree context menu: right-click a card (or its ⋯ button).
-	let menu = $state<{ key: string; x: number; y: number; keyboard: boolean } | null>(null);
-	const menuItems = $derived(
-		menu ? actionsFor(menu.key).map((r) => (r === 'separator' ? menuSeparator : menuItem(r.id, r.label, { enabled: r.enabled ?? true }))) : []
+	// --- Rows ---------------------------------------------------------------------------------
+	type Row = { key: string; title: string; branch: string; view?: TaskView; created: number; activity: number };
+	const lastActivity = (v: TaskView) => Math.max(v.meta.updated_at, v.runtime?.updatedAt ?? 0, v.meta.last_run?.at ?? 0);
+	const primaryRow = $derived<Row>({ key: PRIMARY, title: workspace.name ?? '', branch: status.branch || 'HEAD', created: 0, activity: 0 });
+	const taskRows = $derived<Row[]>(
+		adeTasks.views
+			.filter((v) => !hiddenBy(sidebarTask(v), sidebarFilters()))
+			.map((v) => ({ key: v.meta.slug, title: v.meta.title, branch: adeTasks.branchOf(v.meta.slug), view: v, created: v.meta.created_at, activity: lastActivity(v) }))
 	);
-	function openMenu(key: string, e: MouseEvent) {
-		e.preventDefault();
-		e.stopPropagation();
-		const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-		menu = e.type === 'contextmenu' && e.clientX ? { key, x: e.clientX, y: e.clientY, keyboard: false } : { key, x: r.right - 248, y: r.bottom + 2, keyboard: e.detail === 0 };
-	}
+	const sorted = $derived(
+		sortItems(
+			taskRows.map((r) => ({ ...r, slug: r.key, status: r.view!.status, createdAt: r.created, lastActivityAt: r.activity })),
+			prefs.sortBy,
+			now,
+			prefs.manual(root)
+		)
+	);
+	const showPrimary = $derived(!prefs.filters.hideDefault && !prefs.filters.showActiveOnly && !(prefs.filters.hideSleeping && !prefs.filters.exceptDefault && !(adeLayout.terminals[PRIMARY]?.length ?? 0)));
+	const pinned = $derived(prefs.pinned(root).map((k) => (k === PRIMARY ? primaryRow : sorted.find((r) => r.key === k))).filter((r): r is Row => !!r));
 
-	// Orca's WorktreeTitleInlineRename: Enter or leaving the box saves, Escape cancels; empty or
-	// unchanged keeps the old name. Only the display name changes, never the branch.
+	type Group = { id: string; label: string; icon: IconName; tone?: string; rows: Row[]; repo?: boolean };
+	const groups = $derived.by((): Group[] => {
+		const out: Group[] = [];
+		if (pinned.length) out.push({ id: 'pinned', label: 'Pinned', icon: 'pin', rows: pinned });
+		const all = [...(showPrimary ? [primaryRow] : []), ...sorted];
+		if (prefs.groupBy === 'repo') out.push({ id: `repo:${root}`, label: repoName, icon: 'folder', rows: all, repo: true });
+		else if (prefs.groupBy === 'pr-status')
+			for (const pg of PR_GROUPS) {
+				const rows = all.filter((r) => (r.view ? prGroupOf(sidebarTask(r.view)) : 'none') === pg.id);
+				if (rows.length) out.push({ id: `pr:${pg.id}`, label: pg.label, icon: 'pullRequest', rows });
+			}
+		else if (prefs.groupBy === 'workspace-status')
+			for (const c of COLUMNS) {
+				const rows = all.filter((r) => (r.view ? statusColumn(r.view.status) : 'active') === c.id);
+				if (rows.length) out.push({ id: `status:${c.id}`, label: c.label, icon: c.id === 'attention' ? 'bell' : c.id === 'active' ? 'activity' : 'checkCircle', rows });
+			}
+		else out.push({ id: 'all', label: '', icon: 'menu', rows: all });
+		return out;
+	});
+	/** Every card in display order, for arrow-key navigation. */
+	const order = $derived(groups.flatMap((g) => (prefs.isCollapsed(g.id) ? [] : g.rows.map((r) => r.key))).filter((k, i, a) => a.indexOf(k) === i));
+
+	// --- State per card ------------------------------------------------------------------------
+	function stateOf(r: Row): CardStatus {
+		const tabs = (adeLayout.terminals[r.key]?.length ?? 0) > 0;
+		return r.view ? cardStatus(r.view.status, !!r.view.runtime?.working, tabs) : tabs ? 'active' : 'inactive';
+	}
+	function isUnread(r: Row): boolean {
+		if (prefs.markedUnread(root).includes(r.key)) return true;
+		if (!r.view) return false;
+		const s = adeTasks.stateOf(r.view);
+		return !!s.finishedAt && s.finishedAt > (s.viewedAt ?? 0);
+	}
+	function setUnread(key: string, on: boolean) {
+		prefs.setMarkedUnread(root, key, on);
+		if (!on) appMode.markViewed(key);
+		else if (appMode.viewedAt[key]) delete appMode.viewedAt[key];
+	}
+	function activate(key: string) {
+		adeLayout.board = false;
+		adeLayout.show(key);
+		if (prefs.markedUnread(root).includes(key)) prefs.setMarkedUnread(root, key, false);
+	}
+	const agentText = (v: TaskView) => v.runtime?.lastEvent ?? v.meta.last_run?.summary ?? STATUS_LABEL[v.status];
+	const agentName = (v: TaskView) => (v.meta.agent ? v.meta.agent.charAt(0).toUpperCase() + v.meta.agent.slice(1) : 'Agent');
+
+	// --- Alt held: the quick delete button (Orca) --------------------------------------------
+	let altHeld = $state(false);
+	const onKey = (e: KeyboardEvent) => (altHeld = e.altKey);
+
+	// --- Inline rename (Orca's WorktreeTitleInlineRename) -------------------------------------
+	// adeTasks.renaming says which card edits (the menu, the palette and double-click start it).
+	// Enter or leaving the box saves, Escape cancels; empty or unchanged keeps the old name.
 	let renameValue = $state('');
 	let saving = false;
 	$effect(() => {
 		const slug = adeTasks.renaming;
 		if (slug) renameValue = adeTasks.find(slug)?.meta.title ?? '';
 	});
-	function focusSelect(node: HTMLInputElement) {
-		node.focus();
-		node.select();
-	}
 	async function commitRename(slug: string) {
 		if (saving || adeTasks.renaming !== slug) return;
 		saving = true;
@@ -146,279 +171,525 @@
 		}
 	}
 
-	const NAV = 'flex h-8 w-full items-center gap-2.5 rounded-md px-2.5 text-[13px] hover:bg-(--vscode-list-hoverBackground)';
-	const HEADER_ACTION = 'grid size-6 place-items-center rounded-md text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground) disabled:opacity-40';
-	const CARD = 'block w-full rounded-lg border px-2.5 py-2 text-left outline-none focus-visible:border-(--vscode-focusBorder)';
+	// --- Projects: the folder must be a git repository; add a project (open, clone, create) -----
+	/** The open folder is not a git repository: tasks need one (Orca adds only git projects). */
+	const notGit = $derived(!!workspace.root && scm.loaded && scm.repo === null);
+	async function initGit() {
+		if (await scm.init(true)) await adeTasks.load();
+	}
+	let addMenu = $state<{ x: number; y: number } | null>(null);
+	const ADD_ITEMS: MenuNode[] = [menuItem('open', 'เปิดโฟลเดอร์… (Open Folder)'), menuItem('clone', 'Clone repository…'), menuItem('create', 'สร้างโปรเจกต์ใหม่… (New Project)')];
+	function runAdd(id: string) {
+		if (id === 'open') void commands.run('workbench.action.files.openFolder');
+		else void repoDialog.show(id === 'clone' ? 'clone' : 'create');
+	}
+
+	// --- Context menu -------------------------------------------------------------------------
+	let menu = $state<{ key: string; x: number; y: number } | null>(null);
+	const SIDEBAR_IDS = ['pin', 'unpin', 'markRead', 'markUnread', 'sleep'];
+	const menuItems = $derived.by((): MenuNode[] => {
+		if (!menu) return [];
+		const key = menu.key;
+		const isPinned = prefs.pinned(root).includes(key);
+		const unread = isUnread(key === PRIMARY ? primaryRow : (sorted.find((r) => r.key === key) ?? primaryRow));
+		const hasPanels = (adeLayout.terminals[key]?.length ?? 0) + (adeLayout.files[key]?.length ?? 0) > 0;
+		return [
+			...actionsFor(key).map((r) => (r === 'separator' ? menuSeparator : menuItem(r.id, r.label, { enabled: r.enabled ?? true }))),
+			menuSeparator,
+			menuItem(isPinned ? 'unpin' : 'pin', isPinned ? 'Unpin' : 'Pin'),
+			menuItem(unread ? 'markRead' : 'markUnread', unread ? 'Mark Read' : 'Mark Unread'),
+			menuItem('sleep', 'Sleep', { enabled: hasPanels })
+		];
+	});
+	function runMenu(id: string, key: string) {
+		if (!SIDEBAR_IDS.includes(id)) return runWorktreeAction(key, id as WorktreeAction);
+		if (id === 'pin' || id === 'unpin') return prefs.setPinned(root, key, id === 'pin');
+		if (id === 'markRead' || id === 'markUnread') return setUnread(key, id === 'markUnread');
+		// Sleep closes the worktree's terminals and tabs; its folder, branch and agent session stay.
+		adeLayout.drop(key);
+	}
+	function openMenu(key: string, e: MouseEvent) {
+		e.preventDefault();
+		menu = { key, x: e.clientX, y: e.clientY };
+	}
+
+	// --- Drag to reorder (Orca switches the sort to Manual) ------------------------------------
+	let dragging = $state<string | null>(null);
+	let dropBefore = $state<string | null>(null);
+	function drop(before: string | null) {
+		const slug = dragging;
+		dragging = dropBefore = null;
+		if (!slug || slug === PRIMARY || slug === before) return;
+		const visible = sorted.map((r) => r.key);
+		prefs.setManual(root, reorder(visible, slug, before === PRIMARY ? (visible[0] ?? null) : before));
+		if (prefs.sortBy !== 'manual') {
+			const previous = prefs.sortBy;
+			prefs.sortBy = 'manual';
+			status.flash(`Sort changed to Manual · Manual keeps workspaces where you drop them. (เดิม: ${SORT_LABEL[previous]})`, 8000);
+		}
+	}
+
+	// --- Keyboard: arrows move and activate (Orca's listbox) -----------------------------------
+	let list: HTMLDivElement | undefined = $state();
+	function move(delta: number) {
+		if (!order.length) return;
+		const i = selectedKey ? order.indexOf(selectedKey) : -1;
+		const next = order[Math.max(0, Math.min(order.length - 1, i < 0 ? 0 : i + delta))];
+		activate(next);
+		queueMicrotask(() => list?.querySelector(`[data-worktree-id="${CSS.escape(next)}"]`)?.scrollIntoView({ block: 'nearest' }));
+	}
+	function onListKey(e: KeyboardEvent) {
+		if (e.target !== e.currentTarget) return;
+		if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+			e.preventDefault();
+			move(e.key === 'ArrowDown' ? 1 : -1);
+		}
+	}
+	// Registered once (register reads and writes the command list, so not tracked).
+	$effect(() => {
+		const off = untrack(() => [
+			commands.register({ id: 'kingu.agents.worktreeDown', title: 'Next Worktree', category: 'Agents', key: 'cmd+shift+down', when: () => appMode.isAgents, run: () => move(1) }),
+			commands.register({ id: 'kingu.agents.worktreeUp', title: 'Previous Worktree', category: 'Agents', key: 'cmd+shift+up', when: () => appMode.isAgents, run: () => move(-1) }),
+			commands.register({
+				id: 'kingu.agents.deleteWorkspace',
+				title: 'Delete Workspace',
+				category: 'Agents',
+				key: 'cmd+shift+backspace',
+				when: () => appMode.isAgents && !!selectedKey && selectedKey !== PRIMARY,
+				run: () => selectedKey && runWorktreeAction(selectedKey, 'remove')
+			}),
+			commands.register({ id: 'kingu.agents.revealActiveWorkspace', title: 'Reveal Active Workspace', category: 'Agents', when: () => appMode.isAgents, run: () => reveal() }),
+			commands.register({ id: 'kingu.agents.focusWorktreeList', title: 'Focus Worktree List', category: 'Agents', key: 'cmd+shift+0', when: () => appMode.isAgents, run: () => list?.focus() })
+		]);
+		return () => off.forEach((u) => u());
+	});
+
+	// --- Reveal active workspace ---------------------------------------------------------------
+	let revealed = $state<string | null>(null);
+	function reveal() {
+		const key = selectedKey ?? PRIMARY;
+		const g = groups.find((g) => g.rows.some((r) => r.key === key));
+		if (g && prefs.isCollapsed(g.id)) prefs.toggleCollapsed(g.id);
+		revealed = key;
+		queueMicrotask(() => list?.querySelector(`[data-worktree-id="${CSS.escape(key)}"]`)?.scrollIntoView({ block: 'center' }));
+		setTimeout(() => (revealed = null), 1500);
+	}
+
+	// --- Header, options and footer menus ------------------------------------------------------
+	let options = $state<{ x: number; y: number } | null>(null);
+	let repoMenu = $state<{ x: number; y: number } | null>(null);
+	const filterCount = $derived(activeFilterCount(prefs.filters));
+	const repoItems: MenuNode[] = [menuItem('settings', 'Project Settings'), menuItem('reveal', 'Reveal in Finder'), menuSeparator, menuItem('remove', 'Remove Project')];
+	function runRepo(id: string) {
+		if (id === 'settings') systemSettings.show();
+		else if (id === 'reveal') void invoke('fs_reveal', { rel: '' }).catch((e) => status.error(String(e)));
+		else if (id === 'remove') commands.run('workbench.action.closeFolder');
+	}
+	function newWorkspace() {
+		adeLayout.show(PRIMARY);
+		adeLayout.select(PRIMARY, 'main');
+		newSession();
+	}
+	$effect(() => {
+		// Keep the selection's group open when the selection changes from outside (palette, board).
+		const key = selectedKey;
+		if (!key) return;
+		untrack(() => {
+			const g = groups.find((g) => g.rows.some((r) => r.key === key));
+			if (g && prefs.isCollapsed(g.id)) prefs.toggleCollapsed(g.id);
+		});
+	});
+
+	const NAV = 'group flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] font-medium tracking-tight transition-colors';
+	const NAV_OFF = 'text-(--vscode-sideBar-foreground)/60 hover:bg-(--vscode-sideBar-foreground)/8';
+	const NAV_ON = 'bg-(--vscode-list-inactiveSelectionBackground) text-(--vscode-foreground)';
+	const HEADER_BTN = 'grid size-6 place-items-center rounded-md text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground) disabled:opacity-40';
+	const REVEAL = 'grid size-5 max-w-0 -ml-1.5 place-items-center overflow-hidden rounded-md text-(--vscode-descriptionForeground) opacity-0 transition-all group-hover/header:ml-0 group-hover/header:max-w-5 group-hover/header:opacity-100 hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground) focus-visible:ml-0 focus-visible:max-w-5 focus-visible:opacity-100';
+	const MUTED = 'text-(--vscode-descriptionForeground)';
+	const SEG = 'h-6 grow basis-0 rounded px-1 text-[10px]';
 </script>
 
-<div class="flex h-full min-h-0 flex-col text-(--vscode-foreground)">
-	<div class="shrink-0 space-y-0.5 px-2 pt-2 pb-3">
-		<label class="mb-1.5 flex h-8 items-center gap-2 rounded-lg bg-(--vscode-input-background) px-2.5 text-[13px] focus-within:outline focus-within:outline-1 focus-within:outline-(--vscode-focusBorder)">
-			<Icon name="search" size={15} />
-			<span class="sr-only">ค้นหา worktree</span>
-			<input
-				class="min-w-0 flex-1 bg-transparent outline-none placeholder:text-(--vscode-input-placeholderForeground)"
-				placeholder="Search"
-				bind:value={adeLayout.query}
-				onkeydown={(e) => e.key === 'Escape' && (adeLayout.query = '')}
-			/>
-		</label>
-		<button class={[NAV, adeLayout.page === 'board' && 'bg-(--vscode-list-activeSelectionBackground)/40']} aria-pressed={adeLayout.page === 'board'} onclick={() => adeLayout.togglePage('board')}>
-			<Icon name="tasks" size={16} /> <span class="flex-1 text-left">Tasks</span>
-			{#if adeTasks.counts.needsInput}
-				<span class="rounded-full bg-(--vscode-editorWarning-foreground) px-1.5 text-[10px] leading-4 font-semibold text-black" title="รอคุณ">{adeTasks.counts.needsInput}</span>
-			{/if}
-		</button>
-		{#if settings.get<boolean>('kingu.sidebar.showAutomations') !== false}
-		<button
-			class={[NAV, adeLayout.page === 'automations' && 'bg-(--vscode-list-activeSelectionBackground)/40']}
-			aria-pressed={adeLayout.page === 'automations'}
-			disabled={!workspace.root}
-			onclick={() => adeLayout.togglePage('automations')}
+<svelte:window onkeydown={onKey} onkeyup={onKey} onblur={() => (altHeld = false)} />
+
+{#snippet statusDot(s: CardStatus, size = 'size-2')}
+	{#if s === 'working'}
+		<span class="size-2.5 animate-spin rounded-full border-2 border-yellow-500 border-t-transparent"></span>
+	{:else if s === 'permission'}
+		<span class="text-violet-400"><Icon name="question" size={12} filled /></span>
+	{:else if s === 'failed'}
+		<span class="size-1.5 rounded-full bg-red-500"></span>
+	{:else if s === 'done' || s === 'active'}
+		<span class={[size, 'rounded-full bg-emerald-500']}></span>
+	{:else}
+		<span class={[size, 'rounded-full bg-neutral-500/40']}></span>
+	{/if}
+{/snippet}
+
+{#snippet card(r: Row, groupId: string)}
+	{@const s = stateOf(r)}
+	{@const active = selectedKey === r.key}
+	{@const unread = isUnread(r)}
+	{@const secondary = active && groupId !== 'pinned' && prefs.pinned(root).includes(r.key)}
+	<div role="option" aria-selected={active} aria-current={active ? 'page' : undefined} data-worktree-id={r.key} class={['relative px-1 pb-1', dragging === r.key && 'opacity-0']}>
+		{#if dropBefore === r.key}<div class="absolute inset-x-2 -top-px h-0.5 rounded-full bg-(--vscode-focusBorder)"></div>{/if}
+		<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+		<div
+			draggable={adeTasks.renaming !== r.key && r.key !== PRIMARY}
+			class={[
+				'group/worktree-card relative ml-1 flex cursor-pointer flex-col rounded-lg border pr-1.5 pl-1.5 transition-[background-color,border-color,box-shadow] duration-200 select-none',
+				prefs.compact ? 'py-2' : 'pt-1.25 pb-1.5',
+				active && !secondary
+					? 'border-(--vscode-foreground)/18 bg-(--vscode-foreground)/10 shadow-[0_1px_2px_rgb(255_255_255/0.03)]'
+					: secondary
+						? 'border-(--vscode-focusBorder)/25 bg-(--vscode-list-inactiveSelectionBackground)/45'
+						: 'border-transparent hover:bg-(--vscode-list-hoverBackground)/60',
+				revealed === r.key && 'ring-[1.5px] ring-(--vscode-focusBorder)/70'
+			]}
+			onclick={() => activate(r.key)}
+			ondblclick={() => r.view && adeTasks.startRename(r.key)}
+			oncontextmenu={(e) => openMenu(r.key, e)}
+			ondragstart={(e) => ((dragging = r.key), e.dataTransfer?.setData('text/plain', r.key))}
+			ondragend={() => (dragging = dropBefore = null)}
+			ondragover={(e) => dragging && dragging !== r.key && (e.preventDefault(), (dropBefore = r.key))}
+			ondrop={(e) => (e.preventDefault(), drop(r.key))}
 		>
-			<Icon name="clock" size={16} /> <span class="flex-1 text-left">Automations</span>
-			{#if automations.activeCount}
-				<span class="text-[11px] text-(--vscode-descriptionForeground)" title={automations.globalEnabled ? 'automation ที่เปิดอยู่' : 'หยุดทั้งหมดอยู่'}>{automations.globalEnabled ? automations.activeCount : 'หยุด'}</span>
+			<div class={['flex w-full min-w-0 gap-0.5', prefs.compact ? 'items-center' : 'items-start']}>
+				<!-- Status slot: the unread bell, else the status dot (hover shows a faint bell to mark unread). -->
+				<button
+					class="group/status mt-[2px] grid size-4 shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground) active:scale-95"
+					aria-label={unread ? 'Mark as read' : 'Mark as unread'}
+					title="{CARD_STATUS_LABEL[s] ? `${CARD_STATUS_LABEL[s]} · ` : ''}{unread ? 'Mark read' : 'Mark unread'}"
+					onclick={(e) => (e.stopPropagation(), setUnread(r.key, !unread))}
+					ondblclick={(e) => e.stopPropagation()}
+				>
+					{#if unread}
+						<span class="text-amber-400 drop-shadow-sm"><Icon name="bell" size={13} filled /></span>
+					{:else}
+						<span class="grid place-items-center group-hover/status:hidden">{#if props.has('status')}{@render statusDot(s)}{/if}</span>
+						<span class="hidden text-(--vscode-descriptionForeground)/40 group-hover/status:block"><Icon name="bell" size={12} /></span>
+					{/if}
+				</button>
+				<div class="flex min-w-0 flex-1 flex-col gap-1.5 pl-1">
+					<div class="flex min-w-0 items-center justify-between gap-2">
+						<div class="flex min-w-0 flex-1 items-center gap-1.5">
+							{#if groupId === 'pinned' || prefs.groupBy !== 'repo'}
+								<span class="grid size-4 shrink-0 place-items-center rounded-[4px] border border-(--vscode-widget-border) bg-(--vscode-list-inactiveSelectionBackground)/55" title={workspace.name}><Icon name="folder" size={11} /></span>
+							{/if}
+							{#if adeTasks.renaming === r.key}
+								<!-- svelte-ignore a11y_autofocus -->
+								<input
+									class="h-5 min-w-0 flex-1 border-0 bg-transparent p-0 text-[13px] leading-5 outline-none"
+									aria-label="Rename workspace"
+									autofocus
+									maxlength={MAX_TITLE}
+									bind:value={renameValue}
+									onclick={(e) => e.stopPropagation()}
+									onkeydown={(e) => onRenameKey(e, r.key)}
+									onblur={() => void commitRename(r.key)}
+									onfocus={(e) => e.currentTarget.select()}
+								/>
+							{:else}
+								<!-- svelte-ignore a11y_no_static_element_interactions -->
+								<span class={['truncate text-[13px] leading-5', unread ? 'font-semibold text-(--vscode-foreground)' : 'font-normal text-(--vscode-foreground)']} title={r.title} ondblclick={(e) => (e.stopPropagation(), r.view && adeTasks.startRename(r.key))}>
+									{#if unread}<span class="sr-only">Unread: </span>{/if}{r.title}
+								</span>
+							{/if}
+							{#if r.key === PRIMARY && !prefs.compact}
+								<span class="h-4 shrink-0 rounded border border-(--vscode-foreground)/20 bg-(--vscode-foreground)/[0.06] px-1.5 text-[10px] leading-[14px] font-medium text-(--vscode-foreground)/70" title="Primary worktree (original clone directory)">primary</span>
+							{/if}
+						</div>
+						<div class="ml-auto flex shrink-0 items-center gap-1">
+							{#if r.key === PRIMARY && prefs.compact}
+								<span class="text-amber-400" aria-label="Primary worktree"><Icon name="kingu" size={12} /></span>
+							{/if}
+							{#if altHeld && r.key !== PRIMARY}
+								<button
+									class="grid size-4 place-items-center rounded opacity-0 group-focus-within/worktree-card:opacity-100 group-hover/worktree-card:opacity-100 hover:bg-red-500/10 hover:text-red-400"
+									aria-label="Delete workspace"
+									title="Delete workspace"
+									onclick={(e) => (e.stopPropagation(), runWorktreeAction(r.key, 'remove'))}><Icon name="trash" size={13} /></button
+								>
+							{/if}
+						</div>
+					</div>
+					{#if !prefs.compact}
+						{@const pr = r.view && props.has('pr') ? prStatuses.bySlug[r.key]?.pr : null}
+						{@const totals = r.view?.stat && props.has('diff') ? aggregateStats(r.view.stat.files) : null}
+						{@const issue = props.has('issue') ? r.view?.meta.issue : null}
+						{@const auto = props.has('automation') && r.view?.meta.origin === 'automation'}
+						{#if props.has('branch') || pr || issue || auto || (totals && (totals.added || totals.deleted))}
+							<div class="flex min-w-0 items-center gap-1.5 text-[11px] leading-none {MUTED}">
+								{#if props.has('branch')}<span class="min-w-0 flex-1 truncate" title={r.branch}>{r.branch}</span>{:else}<span class="flex-1"></span>{/if}
+								{#if auto}<span class="shrink-0 rounded border border-(--vscode-widget-border) px-1 text-[10px] leading-[14px]" title="งานที่ automation สร้าง">auto</span>{/if}
+								{#if issue}<span class="shrink-0 font-mono" title="{isLinear(issue) ? 'Linear' : 'GitHub'}: {issue.title}">{issueRef(issue)}</span>{/if}
+								{#if pr}<span class="shrink-0 font-mono" title="PR #{pr.number}: {pr.title} ({pr.draft ? 'DRAFT' : pr.state})">PR #{pr.number}</span>{/if}
+								{#if totals && (totals.added || totals.deleted)}<span class="shrink-0 font-mono"><span class="text-[#73C991]">+{totals.added}</span> <span class="text-[#F48771]">−{totals.deleted}</span></span>{/if}
+							</div>
+						{/if}
+						{#if props.has('activity') && r.view && (r.view.runtime || r.view.meta.last_run)}
+							{@const v = r.view}
+							<!-- Orca's inline agent row: state, agent, "agent - last message", model, time. -->
+							<div class="flex h-6 items-center gap-1 rounded-sm px-1 text-[11px] leading-none {MUTED} hover:bg-(--vscode-list-hoverBackground)">
+								<span class="grid size-3 shrink-0 place-items-center">{@render statusDot(s, 'size-1.5')}</span>
+								<span class="shrink-0">{#if v.meta.agent === 'codex'}<ProviderIcon provider="codex" />{:else}<ProviderIcon provider="claude" />{/if}</span>
+								<span class={['min-w-0 flex-1 truncate', unread ? 'font-semibold text-(--vscode-foreground)' : 'text-(--vscode-descriptionForeground)/90']}>
+									{agentName(v)}<span class="opacity-65"> - {agentText(v)}</span>
+								</span>
+								{#if v.runtime?.model ?? v.meta.model}<span class="max-w-24 shrink-0 truncate font-mono text-[10px] opacity-80">{v.runtime?.model ?? v.meta.model}</span>{/if}
+								{#if props.has('time')}<span class="shrink-0 text-[10px] tabular-nums opacity-60">{shortAgo(r.activity, now)}</span>{/if}
+							</div>
+						{/if}
+					{/if}
+				</div>
+			</div>
+		</div>
+	</div>
+{/snippet}
+
+<div class="flex h-full min-h-0 flex-col bg-(--vscode-sideBar-background) text-(--vscode-sideBar-foreground)">
+	<!-- Top nav: Search (the worktree palette), then the center's pages: Tasks (the board), Automations, Issues. -->
+	<nav class="flex flex-col gap-0.5 px-2 pt-2 pb-1">
+		<button class="{NAV} bg-(--vscode-sideBar-foreground)/5 {NAV_OFF}" aria-label="Search worktrees" onclick={jumpToWorktree}>
+			<span class="text-(--vscode-sideBar-foreground)/30"><Icon name="search" size={16} /></span>
+			<span class="flex-1">Search</span>
+			<span class="hidden gap-0.5 group-hover:flex group-focus-visible:flex">
+				{#each ['⇧', '⌘', 'J'] as k (k)}<kbd class="min-w-4 rounded border border-(--vscode-widget-border) bg-(--vscode-sideBar-foreground)/8 px-1 py-px text-center font-sans text-[9px] text-(--vscode-sideBar-foreground)/55">{k}</kbd>{/each}
+			</span>
+		</button>
+		{#each ([{ page: 'board', icon: 'menu', label: 'Tasks' }, { page: 'automations', icon: 'clock', label: 'Automations' }, { page: 'issues', icon: 'bug', label: 'Issues' }] as const).filter((n) => settings.get<boolean>(n.page === 'automations' ? 'kingu.sidebar.showAutomations' : n.page === 'issues' ? 'kingu.sidebar.showIssues' : '') !== false) as n (n.page)}
+			{@const on = adeLayout.page === n.page}
+			<button class="{NAV} {on ? NAV_ON : NAV_OFF}" aria-current={on ? 'page' : undefined} disabled={n.page !== 'board' && !workspace.root} onclick={() => adeLayout.togglePage(n.page)}>
+				<span class={on ? '' : 'text-(--vscode-sideBar-foreground)/30'}><Icon name={n.icon} size={16} /></span>
+				<span class="flex-1">{n.label}</span>
+				{#if n.page === 'board' && adeTasks.counts.needsInput}
+					<span class="rounded-full bg-(--vscode-editorWarning-foreground) px-1.5 text-[10px] leading-4 font-semibold text-black" title="รอคุณ">{adeTasks.counts.needsInput}</span>
+				{:else if n.page === 'automations' && automations.activeCount}
+					<span class="text-[11px] {MUTED}" title={automations.globalEnabled ? 'automation ที่เปิดอยู่' : 'หยุดทั้งหมดอยู่'}>{automations.globalEnabled ? automations.activeCount : 'หยุด'}</span>
+				{/if}
+			</button>
+		{/each}
+	</nav>
+
+	<!-- Section header: "Projects" with the activity view, options, add project, new workspace. -->
+	<div class="mt-2 flex h-8 min-w-0 shrink-0 items-center justify-between gap-1.5 px-2">
+		<span class="min-w-0 truncate pr-0.5 pl-2 text-xs font-semibold select-none {MUTED}">{prefs.groupBy === 'repo' ? 'Projects' : 'Workspaces'}</span>
+		<div class="flex shrink-0 items-center gap-1">
+			<button class={[HEADER_BTN, prefs.activity && 'bg-(--vscode-focusBorder)/15 text-(--vscode-focusBorder)']} aria-label={prefs.activity ? 'Turn off activity view' : 'View activity'} title={prefs.activity ? 'Turn off activity view' : 'View activity'} onclick={() => (prefs.activity = !prefs.activity)}>
+				<Icon name="bell" size={14} />
+			</button>
+			{#if !prefs.activity}
+				<button
+					class="{HEADER_BTN} relative"
+					aria-label={filterCount ? `Workspace options (${filterCount} active)` : 'Workspace options'}
+					title={filterCount ? `Workspace options (${filterCount} active)` : 'Workspace options'}
+					onclick={(e) => {
+						const r = e.currentTarget.getBoundingClientRect();
+						options = options ? null : { x: r.right + 8, y: r.top };
+					}}
+				>
+					<Icon name="sliders" size={14} />
+					{#if filterCount}<span class="absolute -top-0.5 -right-0.5 grid size-3 place-items-center rounded-full bg-(--vscode-focusBorder) text-[8px] font-semibold text-white">{filterCount}</span>{/if}
+				</button>
 			{/if}
-		</button>
-		{/if}
-		{#if settings.get<boolean>('kingu.sidebar.showIssues') !== false}
-		<button
-			class={[NAV, adeLayout.page === 'issues' && 'bg-(--vscode-list-activeSelectionBackground)/40']}
-			aria-pressed={adeLayout.page === 'issues'}
-			disabled={!workspace.root}
-			onclick={() => adeLayout.togglePage('issues')}
-		>
-			<Icon name="bug" size={16} /> <span class="flex-1 text-left">Issues</span>
-		</button>
-		{/if}
+			<button
+				class={HEADER_BTN}
+				aria-label="Add project"
+				title="Add project (open, clone or create)"
+				aria-haspopup="menu"
+				onclick={(e) => {
+					const r = e.currentTarget.getBoundingClientRect();
+					addMenu = { x: r.right - 220, y: r.bottom + 2 };
+				}}><Icon name="newFolder" size={14} /></button
+			>
+			<button class={HEADER_BTN} aria-label="New workspace" title="New workspace" disabled={!workspace.root || notGit} onclick={newWorkspace}><Icon name="plus" size={15} /></button>
+		</div>
 	</div>
 
-	<div class="flex h-7 shrink-0 items-center gap-0.5 pr-2 pl-4">
-		<span class="flex-1 text-[13px] text-(--vscode-descriptionForeground)">Projects</span>
-		<button class={HEADER_ACTION} aria-label="รีเฟรช" title="รีเฟรช" disabled={!workspace.root} onclick={() => adeTasks.load()}><Icon name="refresh" size={15} /></button>
-		<button class={HEADER_ACTION} aria-label="เพิ่ม: งานใหม่หรือโปรเจกต์" title="งานใหม่ / เปิด, clone หรือสร้างโปรเจกต์" aria-haspopup="menu" onclick={openAddMenu}><Icon name="plus" size={16} /></button>
-	</div>
-
-	{#if addMenu}
-		<PopupMenu items={ADD_ITEMS} label="เพิ่ม" x={addMenu.x} y={addMenu.y} focusFirst={addMenu.keyboard} onRun={(node) => node.type === 'item' && runAdd(node.id)} onClose={() => (addMenu = null)} />
-	{/if}
-
-	{#if externalMenu}
-		{@const path = externalMenu.path}
-		<PopupMenu
-			items={[...openIn.map((l) => menuItem(`openIn:${l}`, `เปิดใน ${l} (Open in ${l})`)), ...(openIn.length ? [menuSeparator] : []), menuItem('copyPath', 'คัดลอก path')]}
-			label="Worktree"
-			x={externalMenu.x}
-			y={externalMenu.y}
-			onRun={(node) => {
-				if (node.type !== 'item') return;
-				if (node.id.startsWith('openIn:')) openWorktreeIn(node.id.slice(7), path);
-				else void navigator.clipboard.writeText(path).then(() => status.flash('คัดลอก path แล้ว'));
-			}}
-			onClose={() => (externalMenu = null)}
-		/>
-	{/if}
-
-	{#if menu}
-		<!-- PopupMenu closes (menu = null) before it runs the item, so the key is taken here. -->
-		{@const key = menu.key}
-		<PopupMenu
-			items={menuItems}
-			label="Worktree"
-			x={menu.x}
-			y={menu.y}
-			focusFirst={menu.keyboard}
-			onRun={(node) => node.type === 'item' && runWorktreeAction(key, node.id as WorktreeAction)}
-			onClose={() => (menu = null)}
-		/>
-	{/if}
-
-	<div class="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+	<div
+		bind:this={list}
+		role="listbox"
+		aria-label="Worktrees"
+		tabindex="0"
+		class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pt-px pl-1 outline-none focus-visible:ring-1 focus-visible:ring-(--vscode-focusBorder) focus-visible:ring-inset"
+		onkeydown={onListKey}
+		ondragover={(e) => dragging && e.preventDefault()}
+		ondrop={(e) => (e.preventDefault(), drop(null))}
+	>
 		{#if !workspace.root}
-			<div class="space-y-2 px-2 py-3 text-xs text-(--vscode-descriptionForeground)">
-				<p>เปิดโฟลเดอร์ที่เป็น git repository ก่อน แล้วจึงสร้างงานให้ agent ได้</p>
-				<button class="block text-(--vscode-textLink-foreground) hover:underline" onclick={() => commands.run('workbench.action.files.openFolder')}>เปิดโฟลเดอร์…</button>
-				<button class="block text-(--vscode-textLink-foreground) hover:underline" onclick={() => repoDialog.show('clone')}>Clone repository…</button>
-				<button class="block text-(--vscode-textLink-foreground) hover:underline" onclick={() => repoDialog.show('create')}>สร้างโปรเจกต์ใหม่…</button>
+			<div class="space-y-2 px-4 py-6 text-center text-[11px] {MUTED}">
+				<p>No workspaces found</p>
+				<button class="block w-full text-(--vscode-textLink-foreground) hover:underline" onclick={() => commands.run('workbench.action.files.openFolder')}>Add project</button>
+				<button class="block w-full text-(--vscode-textLink-foreground) hover:underline" onclick={() => repoDialog.show('clone')}>Clone repository…</button>
+				<button class="block w-full text-(--vscode-textLink-foreground) hover:underline" onclick={() => repoDialog.show('create')}>สร้างโปรเจกต์ใหม่…</button>
 			</div>
+		{:else if prefs.activity}
+			<!-- Activity view: every agent session, the ones that need you first. -->
+			{#each sortItems(taskRows.map((r) => ({ ...r, slug: r.key, status: r.view!.status, createdAt: r.created, lastActivityAt: r.activity })), 'smart', now) as r (r.key)}
+				{@const s = stateOf(r)}
+				<button class={['flex h-7 w-[calc(100%-8px)] items-center gap-1.5 rounded-md px-2 text-left text-[12px] hover:bg-(--vscode-list-hoverBackground)', selectedKey === r.key && 'bg-(--vscode-foreground)/10']} onclick={() => activate(r.key)}>
+					<span class="grid size-3 shrink-0 place-items-center">{@render statusDot(s, 'size-1.5')}</span>
+					<span class="min-w-0 flex-1 truncate">{r.title}<span class="opacity-60"> - {agentText(r.view!)}</span></span>
+					<span class="shrink-0 text-[10px] opacity-60">{shortAgo(r.activity, now)}</span>
+				</button>
+			{:else}
+				<p class="px-4 py-6 text-center text-[11px] {MUTED}">No agent activity yet</p>
+			{/each}
 		{:else}
-			<div class="flex h-9 items-center gap-2 px-2 text-[14px] font-semibold" title={workspace.root}>
-				{#if repoIcon}
-					<span class="grid size-4 shrink-0 place-items-center text-[13px] leading-none">{repoIcon}</span>
-				{:else}
-					<Icon name="folder" size={16} />
-				{/if}
-				<span class="truncate">{repoName}</span>
-				{#if repoBadge}
-					<span class="size-2 shrink-0 rounded-full" style:background={repoBadge} aria-hidden="true"></span>
-				{/if}
-			</div>
-
 			{#if notGit}
-				<div class="mb-2 space-y-1.5 rounded-lg border border-(--vscode-widget-border) px-2.5 py-2 text-xs">
-					<p class="text-(--vscode-descriptionForeground)">โฟลเดอร์นี้ยังไม่เป็น git repository งานของ agent ต้องแตก git worktree จึงยังสร้างงานไม่ได้</p>
+				<div class="mx-2 mb-2 space-y-1.5 rounded-lg border border-(--vscode-widget-border) px-2.5 py-2 text-xs">
+					<p class={MUTED}>โฟลเดอร์นี้ยังไม่เป็น git repository งานของ agent ต้องแตก git worktree จึงยังสร้างงานไม่ได้</p>
 					<button class="text-(--vscode-textLink-foreground) hover:underline disabled:opacity-50" disabled={scm.busy} onclick={initGit}>เริ่มใช้ git (git init + commit แรก)</button>
 				</div>
 			{/if}
-			<div class="space-y-1.5">
-				{#if primaryShown}
-					<button
-						class={[CARD, selectedKey === PRIMARY ? 'border-(--vscode-widget-border) bg-(--vscode-list-hoverBackground)' : 'border-transparent hover:bg-(--vscode-list-hoverBackground)']}
-						aria-current={selectedKey === PRIMARY ? 'true' : undefined}
-						onclick={() => adeLayout.show(PRIMARY)}
-						oncontextmenu={(e) => openMenu(PRIMARY, e)}
-					>
-						<span class="flex items-center gap-2">
-							<span class="size-2 shrink-0 rounded-full bg-[#73C991]"></span>
-							<span class="truncate text-[13px]">{workspace.name}</span>
-							<span class="shrink-0 rounded border border-(--vscode-widget-border) px-1.5 text-[11px] leading-4 text-(--vscode-descriptionForeground)">primary</span>
-						</span>
-						<span class="mt-0.5 block truncate pl-4 text-xs text-(--vscode-descriptionForeground)">{status.branch || 'HEAD'}</span>
-					</button>
-				{/if}
-
-				{#each groups as g (g.id)}
-				{#if g.label}
-					<div class="flex items-center gap-1.5 px-2 pt-2 pb-0.5 text-[11px] font-semibold tracking-wide text-(--vscode-descriptionForeground) uppercase">
-						<span class="truncate">{g.label}</span>
-						<span class="font-normal">{g.tasks.length}</span>
+			{#each groups as g, gi (g.id)}
+				{@const collapsed = prefs.isCollapsed(g.id)}
+				{#if g.id !== 'all'}
+					<div class={['sticky -top-px z-20 bg-(--vscode-sideBar-background)', gi > 0 && 'pt-1']}>
+						<div
+							role="button"
+							tabindex="0"
+							aria-expanded={!collapsed}
+							class="group/header relative flex h-7 w-full cursor-pointer items-center gap-1.5 pr-2 pl-2.5 text-left"
+							onclick={() => prefs.toggleCollapsed(g.id)}
+							onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), prefs.toggleCollapsed(g.id))}
+						>
+							{#if g.repo && repoIcon}
+								<span class="grid size-4 shrink-0 place-items-center text-[12px] leading-none">{repoIcon}</span>
+							{:else}
+								<span class={['grid size-4 shrink-0 place-items-center rounded-[4px]', g.repo ? 'bg-amber-500/15 text-amber-400' : MUTED]}><Icon name={g.icon} size={12} /></span>
+							{/if}
+							<span class="truncate text-[13px] leading-none font-semibold">{g.label}</span>
+							{#if g.repo && repoBadge}<span class="size-2 shrink-0 rounded-full" style:background={repoBadge} aria-hidden="true"></span>{/if}
+							<span class="ml-auto flex items-center">
+								{#if g.repo}
+									<button
+										class={REVEAL}
+										aria-label="Project actions for {g.label}"
+										title="Project actions"
+										onclick={(e) => {
+											e.stopPropagation();
+											const rr = e.currentTarget.getBoundingClientRect();
+											repoMenu = { x: rr.right - 248, y: rr.bottom + 6 };
+										}}><Icon name="more" size={14} /></button
+									>
+									<button class={REVEAL} aria-label="Reveal active workspace" title="Reveal active workspace" onclick={(e) => (e.stopPropagation(), reveal())}><Icon name="crosshair" size={13} /></button>
+									<button class={REVEAL} aria-label="Create workspace for {g.label}" title="Create workspace for {g.label}" onclick={(e) => (e.stopPropagation(), newWorkspace())}><Icon name="plus" size={12} /></button>
+								{/if}
+								<span class={['grid size-5 place-items-center rounded-md transition-transform hover:bg-(--vscode-toolbar-hoverBackground)', collapsed && '-rotate-90']}><Icon name="chevronDown" size={14} /></span>
+							</span>
+						</div>
 					</div>
 				{/if}
-				{#each g.tasks as t (t.slug)}
-					{@const v = t.view}
-					{@const selected = selectedKey === v.meta.slug}
-					{@const pr = prStatuses.bySlug[v.meta.slug]?.pr}
-					{@const totals = v.stat ? aggregateStats(v.stat.files) : null}
-					{#if adeTasks.renaming === v.meta.slug}
-						<div class={[CARD, 'border-(--vscode-focusBorder) bg-(--vscode-list-hoverBackground)']}>
-							<input
-								class="h-6 w-full rounded-sm border border-(--vscode-focusBorder) bg-(--vscode-input-background) px-1.5 text-[13px] text-(--vscode-input-foreground) outline-none"
-								aria-label="เปลี่ยนชื่องาน"
-								maxlength={MAX_TITLE}
-								bind:value={renameValue}
-								use:focusSelect
-								onkeydown={(e) => onRenameKey(e, v.meta.slug)}
-								onblur={() => void commitRename(v.meta.slug)}
-							/>
-							<span class="mt-0.5 block truncate pl-1 font-mono text-xs text-(--vscode-descriptionForeground)" title="branch ไม่เปลี่ยน">{adeTasks.branchOf(v.meta.slug)}</span>
-						</div>
-					{:else}
+				{#if !collapsed}
+					{#each g.rows as r (r.key)}{@render card(r, g.id)}{/each}
+				{/if}
+			{/each}
+			{#each externals as w (w.path)}
+				<!-- Not made by Kingu (Orca's external / agent worktrees): a read-only card that opens the folder elsewhere. -->
+				<div class="relative px-1 pb-1">
 					<button
-						class={[CARD, selected ? 'border-(--vscode-widget-border) bg-(--vscode-list-hoverBackground)' : 'border-transparent hover:bg-(--vscode-list-hoverBackground)']}
-						aria-current={selected ? 'true' : undefined}
-						aria-label="{v.meta.title} — {statusLabel(v)}"
-						onclick={() => adeLayout.show(v.meta.slug)}
-						oncontextmenu={(e) => openMenu(v.meta.slug, e)}
-					>
-						<span class="group/card flex items-center gap-2">
-							<!-- Orca's worktree marker: a bell when the agent waits for you, a spinner while it works. -->
-							{#if isQuestion(v)}
-								<span class="-mx-0.5 shrink-0 {QUESTION_TEXT}" title={statusLabel(v)}><Icon name="question" size={13} filled /></span>
-							{:else if v.status === 'waiting'}
-								<span class="kg-ring -mx-0.5 shrink-0 text-(--vscode-editorWarning-foreground)" title={statusLabel(v)}><Icon name="bell" size={13} filled /></span>
-							{:else if v.status === 'running'}
-								<span class="size-2.5 shrink-0 animate-spin rounded-full border-[1.5px] border-(--vscode-editorInfo-foreground) border-t-transparent" title={statusLabel(v)}></span>
-							{:else if props.has('status')}
-								<span class={['size-2 shrink-0 rounded-full', statusDot(v)]} title={statusLabel(v)}></span>
-							{/if}
-							<!-- svelte-ignore a11y_no_static_element_interactions -->
-							<span class="min-w-0 flex-1 truncate text-[13px]" title="{v.meta.title} (ดับเบิลคลิกเพื่อเปลี่ยนชื่อ)" ondblclick={(e) => (e.stopPropagation(), adeTasks.startRename(v.meta.slug))}>{v.meta.title}</span>
-							<span
-								role="button"
-								tabindex="0"
-								aria-label="การทำงานของ worktree"
-								title="การทำงานของ worktree"
-								class="grid size-5 shrink-0 place-items-center rounded opacity-0 group-hover/card:opacity-100 hover:bg-(--vscode-toolbar-hoverBackground) focus-visible:opacity-100"
-								onclick={(e) => openMenu(v.meta.slug, e)}
-								onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && openMenu(v.meta.slug, e as unknown as MouseEvent)}>⋯</span
-							>
-							{#if props.has('diff') && totals && (totals.added || totals.deleted)}
-								<span class="shrink-0 font-mono text-[11px]"><span class="text-[#73C991]">+{totals.added}</span> <span class="text-[#F48771]">−{totals.deleted}</span></span>
-							{/if}
-						</span>
-						{#if props.has('branch') || props.has('pr') || props.has('issue') || props.has('automation')}
-							<span class="mt-0.5 flex items-center gap-1.5 truncate pl-4 text-xs text-(--vscode-descriptionForeground)">
-								{#if props.has('branch')}<span class="min-w-0 flex-1 truncate font-mono">{adeTasks.branchOf(v.meta.slug)}</span>{:else}<span class="flex-1"></span>{/if}
-								{#if props.has('automation') && v.meta.origin === 'automation'}
-									<span class="shrink-0 rounded border border-(--vscode-widget-border) px-1 text-[10px] leading-4" title="งานที่ automation สร้าง">auto</span>
-								{/if}
-								{#if props.has('issue') && v.meta.issue}
-									<span class="shrink-0 font-mono" title="{isLinear(v.meta.issue) ? 'Linear' : 'GitHub'}: {v.meta.issue.title}">{issueRef(v.meta.issue)}</span>
-								{/if}
-								{#if props.has('pr') && pr}
-									<span class="shrink-0 font-mono" title="PR #{pr.number}: {pr.title} ({pr.draft ? 'DRAFT' : pr.state})">PR #{pr.number}</span>
-								{/if}
-							</span>
-						{/if}
-						{#if props.has('activity') || props.has('time')}
-							<span class="mt-1 flex items-center gap-1.5 pl-4 text-xs">
-								{#if props.has('activity')}
-									<span class={['shrink-0', isQuestion(v) ? QUESTION_TEXT : v.status === 'waiting' ? 'text-(--vscode-editorWarning-foreground)' : 'text-(--vscode-descriptionForeground)']}><Icon name={isQuestion(v) ? 'question' : 'agent'} size={12} /></span>
-									<span class={['min-w-0 flex-1 truncate', isQuestion(v) ? QUESTION_TEXT : v.status === 'waiting' ? 'text-(--vscode-editorWarning-foreground)' : 'text-(--vscode-foreground)/80']}>{summary(v)}</span>
-								{:else}<span class="flex-1"></span>{/if}
-								{#if props.has('time')}<span class="shrink-0 text-[11px] text-(--vscode-descriptionForeground)">{timeAgo(when(v), adeTasks.now)}</span>{/if}
-							</span>
-						{/if}
-					</button>
-					{/if}
-				{/each}
-				{/each}
-
-				{#each externals as w (w.path)}
-					<!-- Not made by Kingu (Orca's external / agent worktrees): a read-only card that opens the folder elsewhere. -->
-					<button
-						class={[CARD, 'border-transparent hover:bg-(--vscode-list-hoverBackground)']}
+						class="ml-1 flex w-[calc(100%-4px)] flex-col rounded-lg border border-transparent py-1.5 pr-1.5 pl-1.5 text-left hover:bg-(--vscode-list-hoverBackground)/60"
 						title="{w.path} — worktree ที่ Kingu ไม่ได้สร้าง ({w.kind === 'agent' ? 'ของ agent' : 'ภายนอก'})"
 						onclick={(e) => {
-							const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-							externalMenu = { path: w.path, x: r.left + 16, y: r.bottom + 2 };
+							const rr = e.currentTarget.getBoundingClientRect();
+							externalMenu = { path: w.path, x: rr.left + 16, y: rr.bottom + 2 };
 						}}
-						oncontextmenu={(e) => {
-							e.preventDefault();
-							externalMenu = { path: w.path, x: e.clientX, y: e.clientY };
-						}}
+						oncontextmenu={(e) => (e.preventDefault(), (externalMenu = { path: w.path, x: e.clientX, y: e.clientY }))}
 					>
-						<span class="flex items-center gap-2">
+						<span class="flex min-w-0 items-center gap-1.5">
 							<span class="size-2 shrink-0 rounded-full border border-(--vscode-descriptionForeground)"></span>
 							<span class="min-w-0 flex-1 truncate text-[13px]">{baseName(w.path)}</span>
-							<span class="shrink-0 rounded border border-(--vscode-widget-border) px-1.5 text-[11px] leading-4 text-(--vscode-descriptionForeground)">{w.kind === 'agent' ? 'agent' : 'external'}</span>
+							<span class="shrink-0 rounded border border-(--vscode-foreground)/20 px-1.5 text-[10px] leading-[14px] {MUTED}">{w.kind === 'agent' ? 'agent' : 'external'}</span>
 						</span>
-						<span class="mt-0.5 block truncate pl-4 font-mono text-xs text-(--vscode-descriptionForeground)">{w.branch ?? (w.detached ? 'detached HEAD' : '')}</span>
+						<span class="mt-1 truncate pl-3.5 text-[11px] leading-none {MUTED}">{w.branch ?? (w.detached ? 'detached HEAD' : '')}</span>
 					</button>
-				{/each}
-				{#if adeLayout.query && !shownCount && !primaryShown && !externals.length}
-					<p class="px-2 py-1 text-xs text-(--vscode-descriptionForeground)">ไม่พบ worktree ที่ตรงกับ “{adeLayout.query}”</p>
-				{/if}
-			</div>
+				</div>
+			{/each}
+			{#if !order.length && !groups.some((g) => g.rows.length)}
+				<div class="px-4 py-6 text-center text-[11px] {MUTED}">
+					<p>No workspaces found</p>
+					{#if filterCount}<button class="mt-2 inline-flex items-center gap-1 rounded-md bg-(--vscode-button-secondaryBackground) px-2 py-1 text-(--vscode-button-secondaryForeground)" onclick={() => prefs.clearFilters()}><Icon name="error" size={12} />Clear Filters</button>{/if}
+				</div>
+			{/if}
 		{/if}
 	</div>
 
 </div>
 
-<style>
-	/* The waiting bell rings now and then, unless the user asks for less motion. */
-	.kg-ring {
-		animation: kg-ring 2.4s ease-in-out infinite;
-		transform-origin: 50% 10%;
-	}
-	@keyframes kg-ring {
-		0%, 80%, 100% {
-			transform: rotate(0);
-		}
-		84% {
-			transform: rotate(14deg);
-		}
-		90% {
-			transform: rotate(-12deg);
-		}
-		95% {
-			transform: rotate(6deg);
-		}
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.kg-ring {
-			animation: none;
-		}
-	}
-</style>
+{#if menu}
+	{@const key = menu.key}
+	<PopupMenu items={menuItems} label="Workspace" x={menu.x} y={menu.y} onRun={(node) => node.type === 'item' && runMenu(node.id, key)} onClose={() => (menu = null)} />
+{/if}
+{#if externalMenu}
+	{@const path = externalMenu.path}
+	{@const openIn = actionsFor('').flatMap((r) => (r !== 'separator' && r.id.startsWith('openIn:') ? [r] : []))}
+	<PopupMenu
+		items={[...openIn.map((r) => menuItem(r.id, r.label)), ...(openIn.length ? [menuSeparator] : []), menuItem('copyPath', 'คัดลอก path')]}
+		label="Worktree"
+		x={externalMenu.x}
+		y={externalMenu.y}
+		onRun={(node) => {
+			if (node.type !== 'item') return;
+			if (node.id.startsWith('openIn:')) openWorktreeIn(node.id.slice(7), path);
+			else void navigator.clipboard.writeText(path).then(() => status.flash('คัดลอก path แล้ว'));
+		}}
+		onClose={() => (externalMenu = null)}
+	/>
+{/if}
+{#if addMenu}
+	<PopupMenu items={ADD_ITEMS} label="Add project" x={addMenu.x} y={addMenu.y} onRun={(node) => node.type === 'item' && runAdd(node.id)} onClose={() => (addMenu = null)} />
+{/if}
+{#if repoMenu}
+	<PopupMenu items={repoItems} label="Project actions" x={repoMenu.x} y={repoMenu.y} onRun={(node) => node.type === 'item' && runRepo(node.id)} onClose={() => (repoMenu = null)} />
+{/if}
+{#if options}
+	<div class="fixed inset-0 z-40" role="presentation" onpointerdown={() => (options = null)}></div>
+	<div
+		role="menu"
+		aria-label="Workspace options"
+		tabindex="-1"
+		class="fixed z-50 w-72 rounded-lg border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) pb-2 text-xs text-(--vscode-foreground) shadow-xl shadow-black/40"
+		style:left="{Math.min(options.x, window.innerWidth - 296)}px"
+		style:top="{Math.min(options.y, window.innerHeight - 420)}px"
+		onkeydown={(e) => e.key === 'Escape' && (options = null)}
+	>
+		<div class="px-3 pt-2.5 pb-1 text-sm">Workspace options</div>
+		<div class="px-3 pt-2 pb-1 text-[11px] {MUTED}">Group by</div>
+		<div class="mx-3 flex h-6 rounded-md bg-(--vscode-editor-background)/50 p-px">
+			{#each [['none', 'None'], ['workspace-status', 'Status'], ['pr-status', 'PR'], ['repo', 'Project']] as [id, label] (id)}
+				<button class={[SEG, prefs.groupBy === id ? 'bg-(--vscode-foreground)/10 font-semibold' : MUTED]} onclick={() => (prefs.groupBy = id as GroupBy)}>{label}</button>
+			{/each}
+		</div>
+		<div class="my-2 border-t border-(--vscode-widget-border)"></div>
+		<div class="flex items-center justify-between px-3 pb-1 text-[11px] {MUTED}">Sort by<span>{SORT_LABEL[prefs.sortBy]}</span></div>
+		{#each Object.entries(SORT_LABEL) as [id, label] (id)}
+			<button
+				role="menuitemradio"
+				aria-checked={prefs.sortBy === id}
+				class="flex w-full items-center gap-2 px-3 py-1 text-left text-[12px] hover:bg-(--vscode-list-hoverBackground)"
+				title={id === 'smart' ? 'Agents that need attention, then most recent activity.' : id === 'manual' ? 'Drag workspaces to arrange them within each group.' : undefined}
+				onclick={() => (prefs.sortBy = id as SortBy)}
+			>
+				<span class="grid size-3.5 place-items-center">{#if prefs.sortBy === id}<span class="size-1.5 rounded-full bg-current"></span>{/if}</span>{label}
+			</button>
+		{/each}
+		<div class="my-2 border-t border-(--vscode-widget-border)"></div>
+		<div class="px-3 pb-1 text-[11px] {MUTED}">Card layout</div>
+		{#each [[false, 'Detailed'], [true, 'Compact']] as [v, label] (label)}
+			<button role="menuitemradio" aria-checked={prefs.compact === v} class="flex w-full items-center gap-2 px-3 py-1 text-left text-[12px] hover:bg-(--vscode-list-hoverBackground)" onclick={() => (prefs.compact = v as boolean)}>
+				<span class="grid size-3.5 place-items-center">{#if prefs.compact === v}<span class="size-1.5 rounded-full bg-current"></span>{/if}</span>{label}
+			</button>
+		{/each}
+		<div class="my-2 border-t border-(--vscode-widget-border)"></div>
+		<div class="px-3 pb-1 text-[11px] font-semibold {MUTED}">Filters</div>
+		{#each [{ key: 'showActiveOnly', label: 'Show active only', icon: 'activity', indent: false, show: true }, { key: 'hideSleeping', label: 'Hide sleeping', icon: 'sleep', indent: false, show: true }, { key: 'exceptDefault', label: 'Except default branch', icon: 'git', indent: true, show: prefs.filters.hideSleeping }, { key: 'hideDefault', label: 'Hide default branch', icon: 'git', indent: false, show: true }, { key: 'hideAutomation', label: 'Hide automation workspaces', icon: 'clock', indent: false, show: true }, { key: 'hideDetached', label: 'Hide detached HEAD', icon: 'git', indent: false, show: true }] as f (f.key)}
+			{#if f.show}
+				{@const on = prefs.filters[f.key as 'hideSleeping']}
+				<button role="switch" aria-checked={on} class={['mx-1 flex w-[calc(100%-8px)] items-center gap-2 rounded-[5px] py-1.5 pr-2 text-[12px] font-medium hover:bg-(--vscode-list-hoverBackground)', f.indent ? 'pl-7' : 'pl-2']} onclick={() => prefs.setFilter(f.key as 'hideSleeping', !on)}>
+					<Icon name={f.icon as IconName} size={13} /><span class="flex-1 text-left">{f.label}</span>
+					<span class={['relative h-3.5 w-6 rounded-full transition-colors', on ? 'bg-(--vscode-focusBorder)' : 'bg-(--vscode-widget-border)']}><span class={['absolute top-0.5 size-2.5 rounded-full bg-white transition-all', on ? 'left-3' : 'left-0.5']}></span></span>
+				</button>
+			{/if}
+		{/each}
+	</div>
+{/if}

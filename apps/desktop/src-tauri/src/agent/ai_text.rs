@@ -307,7 +307,8 @@ pub fn pr_template(dir: &Path) -> Option<String> {
 
 fn repo_dir(ws: &Workspace, slug: Option<&str>) -> Result<PathBuf, String> {
   let root = ws.root()?;
-  match slug {
+  // An empty slug is the open folder itself (the ADE's primary worktree).
+  match slug.filter(|s| !s.is_empty()) {
     Some(s) => super::review::task_dir(&root, s),
     None => Ok(root),
   }

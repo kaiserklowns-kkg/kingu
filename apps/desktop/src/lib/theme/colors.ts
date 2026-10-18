@@ -33,6 +33,14 @@ export const COLOR_DEFAULTS: Record<string, Defaults> = {
 	'textPreformat.foreground': ['#D7BA7D', '#A31515', '#FFFFFF', '#FFFFFF'],
 	'toolbar.hoverBackground': ['#5A5D5E50', '#B8B8B850', null, null],
 	'scrollbarSlider.background': [t('#797979', 0.4), t('#646464', 0.4), t('contrastBorder', 0.6), t('contrastBorder', 0.4)],
+	'scrollbarSlider.hoverBackground': [t('#646464', 0.7), t('#646464', 0.7), t('contrastBorder', 0.8), t('contrastBorder', 0.8)],
+	// Context menus and dropdown menus (VS Code menuBackground … menuSeparatorBackground defaults).
+	'menu.background': ['dropdown.background', 'dropdown.background', 'dropdown.background', 'dropdown.background'],
+	'menu.foreground': ['dropdown.foreground', 'dropdown.foreground', 'dropdown.foreground', 'dropdown.foreground'],
+	'menu.border': [null, null, 'contrastBorder', 'contrastBorder'],
+	'menu.selectionBackground': ['list.activeSelectionBackground', 'list.activeSelectionBackground', 'list.activeSelectionBackground', 'list.activeSelectionBackground'],
+	'menu.selectionForeground': ['list.activeSelectionForeground', 'list.activeSelectionForeground', 'list.activeSelectionForeground', 'list.activeSelectionForeground'],
+	'menu.separatorBackground': ['#606060', '#D4D4D4', 'contrastBorder', 'contrastBorder'],
 
 	'titleBar.activeBackground': ['#3C3C3C', '#DDDDDD', '#000000', '#FFFFFF'],
 	'titleBar.activeForeground': ['#CCCCCC', '#333333', '#FFFFFF', '#292929'],

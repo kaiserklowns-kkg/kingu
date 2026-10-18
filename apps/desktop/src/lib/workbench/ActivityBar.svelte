@@ -54,7 +54,7 @@
 	aria-label="Activity Bar"
 	class={
 		vertical
-			? 'flex shrink-0 flex-col items-center border-r border-(--vscode-activityBar-border) bg-(--vscode-activityBar-background)'
+			? 'mr-[4px] flex shrink-0 flex-col items-center rounded-[8px] border border-(--vscode-widget-border)'
 			: 'flex h-full items-center'
 	}
 	style:width={vertical ? `${metrics.width}px` : undefined}

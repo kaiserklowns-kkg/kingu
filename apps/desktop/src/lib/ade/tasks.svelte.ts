@@ -239,6 +239,11 @@ class AdeTasks {
 		return this.#saving;
 	}
 
+	/** A PR created for the task outside its Review page (Source Control's composer). */
+	linkPr(slug: string, url: string) {
+		return this.#patch(slug, { pr_url: url || null });
+	}
+
 	#patch(slug: string, patch: Partial<Omit<TaskMeta, 'slug'>>) {
 		return this.#save(patchTask(this.list, slug, patch, Date.now()));
 	}
@@ -957,6 +962,7 @@ class AdeTasks {
 	markDone(slug: string, done = true) {
 		return this.#patch(slug, { status: done ? 'done' : 'review' });
 	}
+
 
 	// -------------------------------------------------------------------------------------------
 	// Navigation

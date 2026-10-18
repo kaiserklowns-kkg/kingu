@@ -11,7 +11,6 @@
 	import DiffHost from '#lib/workbench/DiffHost.svelte';
 	import AdeEditor from './AdeEditor.svelte';
 	import { keyOfTabId } from './adeTabs.ts';
-	import { SIDEBAR_MIN } from '#lib/workbench/layout.svelte.ts';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { isDiffKey } from '#lib/workbench/scm.ts';
@@ -34,8 +33,12 @@
 	import AutomationsPage from './AutomationsPage.svelte';
 	import IssuesPage from './IssuesPage.svelte';
 	import TaskPage from './TaskPage.svelte';
-	import RightSidebar from './RightSidebar.svelte';
+	import WorktreeFiles from './WorktreeFiles.svelte';
+	import AdeSourceControl from './AdeSourceControl.svelte';
+	import AdeChecks from './AdeChecks.svelte';
+	import AdeAgentsPanel from './AdeAgentsPanel.svelte';
 	import { adeLayout, PRIMARY } from './adeLayout.svelte';
+	import { rightSidebar } from './rightSidebar.svelte.ts';
 	import { adeTasks } from './tasks.svelte';
 	import { recordQuickOpenVisit } from './quickOpen.svelte.ts';
 	import { untrack } from 'svelte';
@@ -50,6 +53,9 @@
 	const maxSide = () => (body?.clientWidth ?? 1200) * 0.45;
 	const key = $derived(adeLayout.key);
 	const slug = $derived(key && adeTasks.find(key) ? key : null);
+	// Orca's right side bar tabs: icon only, the title and shortcut in the tooltip; the shortcuts and
+	// each worktree's tab live in rightSidebar.svelte.ts. Review (accept, merge, PR) is Kingu's own, for a task.
+	const tabs = $derived(rightSidebar.tabs(key));
 	const activeTab = $derived(adeLayout.activeTab(key));
 	const activeFile = $derived(keyOfTabId(activeTab));
 	/** The selected task runs its agent CLI in a terminal (the Orca way). */
@@ -123,7 +129,8 @@
 			busy = false;
 		}
 	}
-	const FRAME = 'min-h-0 overflow-hidden rounded-[10px] border border-(--vscode-widget-border)';
+	// VS Code's modern layout: each part is a softly rounded pane on the title bar's color, 4px apart.
+	const FRAME = 'min-h-0 overflow-hidden rounded-[8px] border border-(--vscode-widget-border)';
 
 	/** Shortcut labels in a pane's context menu (Orca shows them next to its items). */
 	const label = (s: { key?: string; mac?: string }) => {
@@ -158,8 +165,7 @@
 	const sidebarLook = $derived(sidebarTint(settings.get<string>('kingu.sidebar.appearance'), settings.get('kingu.sidebar.tintColor'), settings.get('kingu.sidebar.tintOpacity')));
 </script>
 
-<!-- Same framed parts as the IDE workbench: each zone has its own rounded frame, the sashes are the gaps. -->
-<div bind:this={body} class="flex min-h-0 flex-1 bg-(--vscode-titleBar-activeBackground) px-1.5 pb-1.5 text-(--vscode-foreground)">
+<div bind:this={body} class="relative flex min-h-0 flex-1 bg-(--vscode-titleBar-activeBackground) px-[4px] pb-[4px] text-(--vscode-foreground)">
 	{#if appMode.sessionsVisible}
 		<aside
 			aria-label="Side Bar"
@@ -171,8 +177,9 @@
 			{#key workspace.root}<AdeSidebar />{/key}
 		</aside>
 		<Sash
+				gap
 			orientation="vertical"
-			onDrag={(d) => (appMode.sessionsWidth = clamp(appMode.sessionsWidth + d, SIDEBAR_MIN, maxSide()))}
+			onDrag={(d) => (appMode.sessionsWidth = clamp(appMode.sessionsWidth + d, 220, Math.min(500, maxSide())))}
 			onReset={() => (appMode.sessionsWidth = 280)}
 		/>
 	{/if}
@@ -329,12 +336,42 @@
 
 	{#if appMode.panelVisible}
 		<Sash
+				gap
 			orientation="vertical"
-			onDrag={(d) => (appMode.panelWidth = clamp(appMode.panelWidth - d, 260, maxSide()))}
-			onReset={() => (appMode.panelWidth = 360)}
+			onDrag={(d) => (appMode.panelWidth = clamp(appMode.panelWidth - d, 220, Math.max(220, window.innerWidth - 320)))}
+			onReset={() => (appMode.panelWidth = 350)}
 		/>
-		<aside aria-label="Right Side Bar" class={[FRAME, 'flex shrink-0 flex-col bg-(--vscode-sideBar-background)']} style:width="{appMode.panelWidth}px">
-			{#if workspace.root}<RightSidebar key={slug ?? PRIMARY} />{/if}
+		<aside aria-label={tabs.tabs.find((t) => t.id === tabs.active)?.label} class={[FRAME, 'flex shrink-0 flex-col bg-(--vscode-sideBar-background)']} style:width="{appMode.panelWidth}px">
+			<!-- Orca's right side bar header: 36px, icon tabs with an underline (the title bar holds the toggle). -->
+			<div class="flex h-[36px] min-h-[36px] shrink-0 items-center overflow-hidden border-b border-(--vscode-widget-border)">
+				<div class="flex min-w-0 flex-1 items-center overflow-hidden pl-2" role="tablist" aria-label="Right Side Bar">
+					{#each tabs.tabs as t (t.id)}
+						{@const on = tabs.active === t.id}
+						<button
+							role="tab"
+							aria-selected={on}
+							aria-label={t.label}
+							title={t.key ? `${t.label} (${keyLabel(t.key)})` : t.label}
+							class={['relative flex h-[36px] w-9 shrink-0 items-center justify-center transition-colors', on ? 'text-(--vscode-foreground)' : 'text-(--vscode-descriptionForeground)/60 hover:text-(--vscode-descriptionForeground)']}
+							onclick={() => rightSidebar.setTab(key, t.id)}
+						>
+							<Icon name={t.icon} size={16} filled={on} />
+							{#if on}<span class="absolute right-[25%] bottom-0 left-[25%] h-[2px] rounded-t bg-(--vscode-foreground)"></span>{/if}
+						</button>
+					{/each}
+				</div>
+			</div>
+			{#if tabs.active === 'files'}
+				{#if workspace.root}{#key key}<WorktreeFiles slug={slug ?? ''} />{/key}{/if}
+			{:else if tabs.active === 'changes'}
+				{#key key}<AdeSourceControl slug={slug ?? ''} />{/key}
+			{:else if tabs.active === 'agents'}
+				<AdeAgentsPanel slug={slug ?? ''} />
+			{:else if tabs.active === 'checks'}
+				{#key key}<AdeChecks slug={slug ?? ''} />{/key}
+			{:else if slug}
+				{#key slug}<TaskPage {slug} sections="review" />{/key}
+			{/if}
 		</aside>
 	{/if}
 </div>

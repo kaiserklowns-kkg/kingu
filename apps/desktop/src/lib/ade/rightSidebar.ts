@@ -5,23 +5,25 @@
 import { COLORS, type Decoration } from '#lib/workbench/scm.ts';
 import type { FileMatches, TextMatch } from '#lib/workbench/searchResults.ts';
 
-export type RightTab = 'files' | 'agents' | 'changes' | 'checks';
+export type RightTab = 'files' | 'agents' | 'changes' | 'checks' | 'review';
 
-export type RightTabInfo = { id: RightTab; label: string; icon: 'files' | 'agentsLayout' | 'branch' | 'tasks'; key?: string; gitOnly?: boolean };
+export type RightTabInfo = { id: RightTab; label: string; icon: 'files' | 'agentsLayout' | 'git' | 'listChecks' | 'pullRequest'; key?: string; gitOnly?: boolean; taskOnly?: boolean };
 
-/** Orca's tab strip: Explorer, Agents, Source Control, Checks (the last two only in a git repository). */
+/** Orca's tab strip: Explorer, Agents, Source Control, Checks (the last two only in a git repository),
+ * then Kingu's own Review (accept, merge, PR), which only a task has. */
 export const RIGHT_TABS: RightTabInfo[] = [
 	{ id: 'files', label: 'Explorer', icon: 'files', key: 'cmd+shift+e' },
 	{ id: 'agents', label: 'Agents', icon: 'agentsLayout' },
-	{ id: 'changes', label: 'Source Control', icon: 'branch', key: 'cmd+shift+g', gitOnly: true },
-	{ id: 'checks', label: 'Checks', icon: 'tasks', gitOnly: true }
+	{ id: 'changes', label: 'Source Control', icon: 'git', key: 'cmd+shift+g', gitOnly: true },
+	{ id: 'checks', label: 'Checks', icon: 'listChecks', gitOnly: true },
+	{ id: 'review', label: 'Review', icon: 'pullRequest', taskOnly: true }
 ];
 
 export const isRightTab = (v: unknown): v is RightTab => RIGHT_TABS.some((t) => t.id === v);
 
-/** The tabs a worktree shows, and the one in front (a git-only tab falls back to Explorer). */
-export function visibleTabs(isGit: boolean, wanted: RightTab): { tabs: RightTabInfo[]; active: RightTab } {
-	const tabs = RIGHT_TABS.filter((t) => isGit || !t.gitOnly);
+/** The tabs a worktree shows, and the one in front (a hidden tab falls back to Explorer). */
+export function visibleTabs(isGit: boolean, wanted: RightTab, isTask = false): { tabs: RightTabInfo[]; active: RightTab } {
+	const tabs = RIGHT_TABS.filter((t) => (isGit || !t.gitOnly) && (isTask || !t.taskOnly));
 	return { tabs, active: tabs.some((t) => t.id === wanted) ? wanted : 'files' };
 }
 

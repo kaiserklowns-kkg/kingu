@@ -218,6 +218,40 @@ pub fn diff_stat(dir: &Path, base: &str) -> Result<DiffStat, String> {
   })
 }
 
+/// Unified diff of everything that differs from `from` (a commit) in `dir`'s working tree, plus
+/// untracked files as new-file diffs, for the combined diff view. Cut at `limit` bytes.
+pub fn diff_text(dir: &Path, from: &str, limit: usize) -> Result<String, String> {
+  let mut out = text(git::run(dir, &["diff", "--no-color", "-M", from, "--"])?);
+  let untracked = text(git::run(dir, &["ls-files", "--others", "--exclude-standard", "-z"])?);
+  for path in untracked.split('\0').filter(|p| !p.is_empty()) {
+    if out.len() > limit {
+      break;
+    }
+    out.push_str(&format!("diff --git a/{path} b/{path}\nnew file mode 100644\n"));
+    match std::fs::read(dir.join(path)).ok().and_then(|b| String::from_utf8(b).ok()) {
+      Some(body) => {
+        let lines: Vec<&str> = body.lines().collect();
+        out.push_str(&format!("--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,{} @@\n", lines.len()));
+        for line in lines {
+          out.push('+');
+          out.push_str(line);
+          out.push('\n');
+        }
+      }
+      None => out.push_str(&format!("Binary files /dev/null and b/{path} differ\n")),
+    }
+  }
+  if out.len() > limit {
+    let mut cut = limit;
+    while !out.is_char_boundary(cut) {
+      cut -= 1;
+    }
+    out.truncate(cut);
+    out.push_str("\n\\ kingu: diff truncated\n");
+  }
+  Ok(out)
+}
+
 /// Rejects changes: each path goes back to how it was at the fork point. A file that did not
 /// exist there (added, untracked, a rename's destination) is removed from the index and disk.
 pub fn reject(dir: &Path, base: &str, paths: &[String]) -> Result<(), String> {
@@ -540,6 +574,20 @@ mod tests {
 
   fn file<'a>(st: &'a DiffStat, path: &str) -> &'a FileChange {
     st.files.iter().find(|f| f.path == path).unwrap_or_else(|| panic!("{path} not in {:?}", st.files))
+  }
+
+  #[test]
+  fn diff_text_has_tracked_and_untracked_changes() {
+    let (_tmp, _repo, wt) = setup();
+    assert_eq!(diff_text(&wt, "HEAD", 1 << 20).unwrap(), "");
+    write(&wt, "edit.txt", "one\nTWO\nthree\nfour\n");
+    write(&wt, "fresh.txt", "hello\nworld\n");
+    let d = diff_text(&wt, "HEAD", 1 << 20).unwrap();
+    assert!(d.contains("diff --git a/edit.txt b/edit.txt"), "{d}");
+    assert!(d.contains("+TWO"), "{d}");
+    assert!(d.contains("diff --git a/fresh.txt b/fresh.txt\nnew file mode 100644\n--- /dev/null\n+++ b/fresh.txt\n@@ -0,0 +1,2 @@\n+hello\n+world\n"), "{d}");
+    let cut = diff_text(&wt, "HEAD", 40).unwrap();
+    assert!(cut.ends_with("\\ kingu: diff truncated\n"), "{cut}");
   }
 
   #[test]

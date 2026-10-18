@@ -310,6 +310,8 @@
 			</span>
 		{:else if search.running}
 			<span>กำลังค้นหา… {shownMatches ? summarize(shownMatches, search.files.length) : ''}</span>
+		{:else if !search.query}
+			<span class="text-xs">พิมพ์เพื่อค้นหาในทุกไฟล์ · ใช้ปุ่ม Aa / ab / .* ในช่องค้นหาเพื่อเลือกตัวพิมพ์ คำเต็ม หรือ regex</span>
 		{/if}
 		{#if search.query}
 			<div class="ml-auto flex shrink-0 items-center">
@@ -360,7 +362,7 @@
 					aria-expanded={row.kind !== 'match' ? !row.collapsed : undefined}
 					aria-level={row.depth + 1}
 					class={[
-						'group/row flex h-(--kg-row-height) cursor-pointer items-center gap-1 pr-3 leading-(--kg-row-height) whitespace-nowrap',
+						'group/row mx-1.5 flex h-(--kg-row-height) cursor-pointer items-center gap-1 rounded-md pr-3 leading-(--kg-row-height) whitespace-nowrap',
 						selected === i
 							? 'bg-(--vscode-list-activeSelectionBackground) text-(--vscode-list-activeSelectionForeground)'
 							: 'hover:bg-(--vscode-list-hoverBackground)'

@@ -5,6 +5,7 @@ mod backup;
 mod dap;
 mod dialog;
 mod fileops;
+mod floating;
 mod fs;
 mod git;
 mod glob;
@@ -18,6 +19,7 @@ mod notify;
 mod pty;
 mod replace;
 mod search;
+mod sessions;
 mod settings;
 mod shell_env;
 mod snap;
@@ -26,6 +28,7 @@ mod snap_sandbox;
 mod system;
 mod terminal_links;
 mod team;
+mod usage;
 mod textfile;
 mod watcher;
 mod window;
@@ -114,6 +117,13 @@ fn read_workspace_file(ws: State<'_, Workspace>, rel: String) -> Result<String, 
   std::fs::read_to_string(&path).map_err(|e| format!("{rel}: {e}"))
 }
 
+/// An image of the workspace as a `data:` URL, for the editor's image viewer.
+#[tauri::command]
+async fn fs_read_data_url(ws: State<'_, Workspace>, rel: String) -> Result<String, String> {
+  let path = resolve_in(&ws.root()?, &rel)?;
+  blocking(move || fs::image_data_url(&path, 4 * MAX_OPEN_BYTES).map_err(|e| format!("{rel}: {e}"))).await
+}
+
 /// Opens a file for a text editor: decoded with its encoding, or a binary / too-large answer the
 /// editor shows as a placeholder (VS Code's text file service read).
 #[tauri::command]
@@ -193,6 +203,12 @@ fn checked(root: &Path, paths: Vec<String>) -> Result<Vec<String>, String> {
   Ok(paths)
 }
 
+/// The repository a Source Control command acts on: the open folder, or a task's worktree
+/// (`slug`), so the Agents layout's right side bar works for whichever worktree is selected.
+fn git_dir(ws: &Workspace, slug: Option<&str>) -> Result<PathBuf, String> {
+  repo_dir(ws, slug.filter(|s| !s.is_empty()))
+}
+
 /// Runs a git operation off the main thread (status can take a while in a large repository).
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
   tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
@@ -268,6 +284,343 @@ async fn git_user_configured(ws: State<'_, Workspace>, slug: Option<String>) -> 
   blocking(move || Ok(git::user_configured(&dir))).await
 }
 
+/// Usage limits of one agent provider (`claude` or `codex`) for the status bar.
+#[tauri::command]
+async fn usage_fetch(provider: String) -> Result<usage::ProviderUsage, String> {
+  blocking(move || match provider.as_str() {
+    "claude" => Ok(usage::fetch_claude()),
+    "codex" => Ok(usage::fetch_codex()),
+    other => Err(format!("{other}: unknown provider")),
+  })
+  .await
+}
+
+/// Agent CLIs installed on this computer.
+#[tauri::command]
+async fn usage_detect() -> Result<Vec<String>, String> {
+  blocking(|| Ok(usage::detect())).await
+}
+
+/// Floating workspace notes: a new `Untitled.md` in the app-owned folder, then read and save.
+#[tauri::command]
+fn floating_note_new(app: AppHandle) -> Result<String, String> {
+  let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+  Ok(floating::new_note(&data)?.display().to_string())
+}
+
+#[tauri::command]
+fn floating_note_read(path: String) -> Result<String, String> {
+  floating::read_note(&path)
+}
+
+#[tauri::command]
+fn floating_note_write(path: String, text: String) -> Result<(), String> {
+  floating::write_note(&path, &text)
+}
+
+/// The app-owned floating workspace folder (where Open Markdown starts).
+#[tauri::command]
+fn floating_dir(app: AppHandle) -> Result<String, String> {
+  let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+  Ok(floating::app_dir(&data)?.display().to_string())
+}
+
+/// Lines added and deleted per changed file (`git diff --numstat`), unstaged and staged.
+#[tauri::command]
+async fn git_numstat(ws: State<'_, Workspace>, slug: Option<String>) -> Result<git::NumStat, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || git::numstat(&root)).await
+}
+
+#[tauri::command]
+/// Force push with lease (the ADE's Source Control menu); a plain push is `git_remote::git_push`.
+async fn git_force_push(ws: State<'_, Workspace>, slug: Option<String>) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || git::push(&root, true)).await
+}
+
+#[tauri::command]
+/// Fast-forward only (the ADE's Source Control menu); a plain pull is `git_remote::git_pull`.
+async fn git_pull_ff_only(ws: State<'_, Workspace>, slug: Option<String>) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || git::pull(&root, true)).await
+}
+
+#[tauri::command]
+async fn git_rebase(ws: State<'_, Workspace>, slug: Option<String>, base: String) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || git::rebase(&root, &base)).await
+}
+
+/// The Commits panel of Source Control.
+#[tauri::command]
+async fn git_log(ws: State<'_, Workspace>, slug: Option<String>, limit: Option<u32>) -> Result<Vec<git::Commit>, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || git::log(&root, limit.unwrap_or(50))).await
+}
+
+/// The pull request of the worktree's branch and its checks (`gh pr view --json`), or null when
+/// the branch has none. Errors when `gh` is missing or not signed in.
+#[tauri::command]
+async fn gh_pr_view(ws: State<'_, Workspace>, slug: Option<String>) -> Result<Option<serde_json::Value>, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || {
+    let gh = agent::review::gh_bin().ok_or("ยังไม่ได้ติดตั้ง GitHub CLI (gh)")?;
+    let out = shell_env::command(&gh)
+      .current_dir(&root)
+      .args(["pr", "view", "--json", "number,title,state,url,isDraft,headRefName,baseRefName,mergeable,reviewDecision,statusCheckRollup,additions,deletions,author,createdAt,autoMergeRequest"])
+      .output()
+      .map_err(|e| format!("gh: {e}"))?;
+    if !out.status.success() {
+      let err = String::from_utf8_lossy(&out.stderr);
+      if err.contains("no pull requests found") {
+        return Ok(None);
+      }
+      return Err(format!("gh pr view: {}", err.trim()));
+    }
+    serde_json::from_slice(&out.stdout).map(Some).map_err(|e| e.to_string())
+  })
+  .await
+}
+
+#[tauri::command]
+fn open_web_url(url: String) -> Result<(), String> {
+  system::open_web_url(&url)
+}
+
+/// Runs `gh` in `dir`; its stderr becomes the error.
+fn gh_run(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+  let gh = agent::review::gh_bin().ok_or("ยังไม่ได้ติดตั้ง GitHub CLI (gh)")?;
+  let out = shell_env::command(&gh).current_dir(dir).env("GH_PROMPT_DISABLED", "1").args(args).output().map_err(|e| format!("gh: {e}"))?;
+  if !out.status.success() {
+    return Err(format!("gh {}: {}", args.first().unwrap_or(&""), String::from_utf8_lossy(&out.stderr).trim()));
+  }
+  Ok(out.stdout)
+}
+
+/// Checks tab actions on the branch's PR: `merge` (with `squash` / `merge` / `rebase`), `close`,
+/// `reopen`, `ready` (out of draft).
+#[tauri::command]
+async fn gh_pr_action(ws: State<'_, Workspace>, slug: Option<String>, action: String, method: Option<String>) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || {
+    let flag = match method.as_deref() {
+      Some("merge") => "--merge",
+      Some("rebase") => "--rebase",
+      _ => "--squash",
+    };
+    let args: Vec<&str> = match action.as_str() {
+      "merge" => vec!["pr", "merge", flag],
+      "auto" => vec!["pr", "merge", "--auto", flag],
+      "disableAuto" => vec!["pr", "merge", "--disable-auto"],
+      "close" => vec!["pr", "close"],
+      "reopen" => vec!["pr", "reopen"],
+      "ready" => vec!["pr", "ready"],
+      other => return Err(format!("{other}: unknown PR action")),
+    };
+    gh_run(&root, &args).map(|_| ())
+  })
+  .await
+}
+
+#[tauri::command]
+async fn gh_pr_edit_title(ws: State<'_, Workspace>, slug: Option<String>, title: String) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  if title.trim().is_empty() {
+    return Err("PR title is empty".into());
+  }
+  blocking(move || gh_run(&root, &["pr", "edit", "--title", title.trim()]).map(|_| ())).await
+}
+
+/// The PR's conversation comments and reviews (`gh pr view --json comments,reviews`).
+#[tauri::command]
+async fn gh_pr_comments(ws: State<'_, Workspace>, slug: Option<String>) -> Result<serde_json::Value, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || {
+    let out = gh_run(&root, &["pr", "view", "--json", "comments,reviews"])?;
+    serde_json::from_slice(&out).map_err(|e| e.to_string())
+  })
+  .await
+}
+
+#[tauri::command]
+async fn gh_pr_comment(ws: State<'_, Workspace>, slug: Option<String>, body: String) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  if body.trim().is_empty() {
+    return Err("Comment is empty".into());
+  }
+  if body.len() > 60_000 {
+    return Err("Comment is too large to submit safely.".into());
+  }
+  blocking(move || gh_run(&root, &["pr", "comment", "--body", &body]).map(|_| ())).await
+}
+
+/// The failed steps' log of a GitHub Actions check (from its details URL), last 150 lines.
+#[tauri::command]
+async fn gh_check_log(ws: State<'_, Workspace>, slug: Option<String>, url: String) -> Result<String, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  let run = url.split("/actions/runs/").nth(1).and_then(|r| r.split(['/', '?']).next()).filter(|r| r.chars().all(|c| c.is_ascii_digit()) && !r.is_empty()).map(str::to_owned);
+  let Some(run) = run else { return Err("No inline details are available for this check.".into()) };
+  blocking(move || {
+    let out = gh_run(&root, &["run", "view", &run, "--log-failed"])?;
+    let text = String::from_utf8_lossy(&out);
+    let lines: Vec<&str> = text.lines().collect();
+    Ok(lines[lines.len().saturating_sub(150)..].join("\n"))
+  })
+  .await
+}
+
+/// Files a commit changed (`git show --name-status`), for the Commits panel.
+#[tauri::command]
+async fn git_show_files(ws: State<'_, Workspace>, slug: Option<String>, hash: String) -> Result<Vec<(String, String)>, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  git::check_rev(&hash)?;
+  blocking(move || {
+    let out = git::run(&root, &["show", "--name-status", "--format=", "--end-of-options", &hash])?;
+    Ok(String::from_utf8_lossy(&out).lines().filter_map(|l| l.split_once('\t')).map(|(s, p)| (s.chars().next().unwrap_or('M').to_string(), p.rsplit('\t').next().unwrap_or(p).to_owned())).collect())
+  })
+  .await
+}
+
+/// Commits ahead of and behind `base` (Change Base Ref's compare).
+#[tauri::command]
+async fn git_compare(ws: State<'_, Workspace>, slug: Option<String>, base: String) -> Result<(u32, u32), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  git::check_rev(&base)?;
+  blocking(move || {
+    let out = git::run(&root, &["rev-list", "--left-right", "--count", &format!("{base}...HEAD")])?;
+    let text = String::from_utf8_lossy(&out);
+    let mut n = text.split_whitespace().map(|x| x.parse::<u32>().unwrap_or(0));
+    let (behind, ahead) = (n.next().unwrap_or(0), n.next().unwrap_or(0));
+    Ok((ahead, behind))
+  })
+  .await
+}
+
+/// Local and remote branch names, for the base ref picker.
+#[tauri::command]
+async fn git_ref_names(ws: State<'_, Workspace>, slug: Option<String>) -> Result<Vec<String>, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || {
+    let out = git::run(&root, &["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"])?;
+    Ok(String::from_utf8_lossy(&out).lines().filter(|l| !l.is_empty() && !l.ends_with("/HEAD")).map(str::to_owned).collect())
+  })
+  .await
+}
+
+/// Claude Code sessions run in the open folder or its worktrees (Agents tab).
+#[tauri::command]
+async fn claude_sessions(ws: State<'_, Workspace>, limit: Option<usize>) -> Result<Vec<sessions::Session>, String> {
+  let root = ws.root()?;
+  blocking(move || Ok(sessions::list(&root, limit.unwrap_or(250)))).await
+}
+
+/// Source Control's PR composer: pushes the branch (setting its upstream) and opens a PR.
+/// Returns the PR's URL.
+#[tauri::command]
+async fn gh_pr_create(ws: State<'_, Workspace>, slug: Option<String>, base: String, title: String, body: String, draft: bool) -> Result<String, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  git::check_rev(&base)?;
+  if title.trim().is_empty() {
+    return Err("Enter a pull request title.".into());
+  }
+  blocking(move || {
+    git::run(&root, &["push", "-q", "-u", "origin", "HEAD"]).map_err(|e| format!("Push failed. Resolve the push error, then try again. {e}"))?;
+    let mut args = vec!["pr", "create", "--base", base.as_str(), "--title", title.trim(), "--body", body.as_str()];
+    if draft {
+      args.push("--draft");
+    }
+    let out = gh_run(&root, &args)?;
+    Ok(String::from_utf8_lossy(&out).lines().rev().find(|l| l.starts_with("http")).unwrap_or_default().trim().to_owned())
+  })
+  .await
+}
+
+/// Review threads of the branch's PR (GitHub GraphQL through `gh api`).
+#[tauri::command]
+async fn gh_review_threads(ws: State<'_, Workspace>, slug: Option<String>, number: u64) -> Result<serde_json::Value, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || {
+    let query = "query($owner:String!,$repo:String!,$n:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$n){reviewThreads(first:100){nodes{id isResolved path line comments(first:50){nodes{id databaseId body createdAt author{login} reactionGroups{content viewerHasReacted reactors{totalCount}}}}}}}}}";
+    let out = gh_run(&root, &["api", "graphql", "-F", "owner={owner}", "-F", "repo={repo}", "-F", &format!("n={number}"), "-f", &format!("query={query}")])?;
+    serde_json::from_slice(&out).map_err(|e| e.to_string())
+  })
+  .await
+}
+
+/// Resolves or reopens a review thread.
+#[tauri::command]
+async fn gh_thread_resolve(ws: State<'_, Workspace>, slug: Option<String>, thread: String, resolve: bool) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || {
+    let m = if resolve { "resolveReviewThread" } else { "unresolveReviewThread" };
+    let query = format!("mutation($id:ID!){{{m}(input:{{threadId:$id}}){{thread{{id}}}}}}");
+    gh_run(&root, &["api", "graphql", "-f", &format!("id={thread}"), "-f", &format!("query={query}")]).map(|_| ())
+  })
+  .await
+}
+
+/// Replies inside a review thread.
+#[tauri::command]
+async fn gh_reply_thread(ws: State<'_, Workspace>, slug: Option<String>, thread: String, body: String) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  if body.trim().is_empty() {
+    return Err("Comment is empty".into());
+  }
+  blocking(move || {
+    let query = "mutation($id:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$id,body:$body}){comment{id}}}";
+    gh_run(&root, &["api", "graphql", "-f", &format!("id={thread}"), "-f", &format!("body={body}"), "-f", &format!("query={query}")]).map(|_| ())
+  })
+  .await
+}
+
+/// Adds or removes a reaction (THUMBS_UP, HEART, …) on a comment by its node id.
+#[tauri::command]
+async fn gh_react(ws: State<'_, Workspace>, slug: Option<String>, subject: String, content: String, remove: bool) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  const ALLOWED: [&str; 8] = ["THUMBS_UP", "THUMBS_DOWN", "LAUGH", "CONFUSED", "HEART", "HOORAY", "ROCKET", "EYES"];
+  if !ALLOWED.contains(&content.as_str()) {
+    return Err(format!("{content}: unknown reaction"));
+  }
+  blocking(move || {
+    let m = if remove { "removeReaction" } else { "addReaction" };
+    let query = format!("mutation($id:ID!,$c:ReactionContent!){{{m}(input:{{subjectId:$id,content:$c}}){{reaction{{content}}}}}}");
+    gh_run(&root, &["api", "graphql", "-f", &format!("id={subject}"), "-f", &format!("c={content}"), "-f", &format!("query={query}")]).map(|_| ())
+  })
+  .await
+}
+
+/// Moves a Claude Code session transcript of this folder to the Trash (Agents tab › Delete).
+#[tauri::command]
+async fn delete_claude_session(ws: State<'_, Workspace>, path: String) -> Result<(), String> {
+  let root = ws.root()?;
+  let p = std::path::PathBuf::from(&path);
+  let home = std::env::var_os("HOME").map(std::path::PathBuf::from).ok_or("no home folder")?;
+  let projects = home.join(".claude").join("projects");
+  let dir = p.parent().and_then(|d| d.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+  let prefix = sessions::encode(&root);
+  let ours = p.starts_with(&projects) && p.extension().and_then(|e| e.to_str()) == Some("jsonl") && (dir == prefix || dir.starts_with(&format!("{prefix}-")));
+  if !ours {
+    return Err("Only sessions of this folder can be deleted.".into());
+  }
+  blocking(move || trash::delete(&p).map_err(|e| e.to_string())).await
+}
+
+/// Aborts the merge, rebase or cherry-pick in progress (Source Control's conflict card).
+#[tauri::command]
+async fn git_abort(ws: State<'_, Workspace>, slug: Option<String>) -> Result<String, String> {
+  let root = git_dir(&ws, slug.as_deref())?;
+  blocking(move || {
+    for op in ["merge", "rebase", "cherry-pick"] {
+      if git::run(&root, &[op, "--abort"]).is_ok() {
+        return Ok(op.to_owned());
+      }
+    }
+    Err("No merge, rebase or cherry-pick is in progress.".into())
+  })
+  .await
+}
+
 /// HEAD version of a file for the diff editor; empty when the file is not in HEAD.
 #[tauri::command]
 async fn git_show_head(ws: State<'_, Workspace>, rel: String) -> Result<String, String> {
@@ -292,6 +645,7 @@ fn pty_spawn(
   run: Option<Vec<String>>,
   terminal: Option<TerminalSettings>,
   cwd_from: Option<String>,
+  floating_cwd: Option<String>,
 ) -> Result<kingu_ptyd::Attached, String> {
   pty::validate_key(&key)?;
   // A split pane starts where its source pane's shell is now (VS Code's splitCwd "inherited",
@@ -299,10 +653,15 @@ fn pty_spawn(
   // terminal.integrated.splitCwd picks which directory (inherited, the source's initial one, or the root).
   let split_mode = terminal.as_ref().and_then(|t| t.split_cwd.clone()).unwrap_or_else(|| "inherited".into());
   let inherited = cwd_from.as_deref().and_then(|from| pty::split_cwd(&split_mode, || ptys.live_cwd(from), || ptys.initial_cwd(from), ws.current()));
-  // A task terminal starts in the task's worktree (the ADE's per-worktree terminals).
-  // No folder open: the terminal starts in the home folder, like VS Code's empty window.
+  // A task terminal starts in the task's worktree (the ADE's per-worktree terminals); a floating
+  // workspace terminal in its own directory setting. No folder open: the terminal starts in the
+  // home folder, like VS Code's empty window.
   let cwd = match (inherited, slug.clone()) {
     (Some(dir), _) => dir,
+    (None, _) if floating_cwd.is_some() => {
+      let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+      floating::terminal_cwd(floating_cwd.as_deref().unwrap_or("~"), &data)?
+    }
     (None, Some(slug)) => {
       agent::worktree::validate_slug(&slug)?;
       let dir = agent::worktree::worktree_path(&ws.root()?, &slug);
@@ -817,6 +1176,7 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       app_info,
       system_stats,
+      fs_read_data_url,
       system_ports,
       system_kill,
       open_local_url,
@@ -854,6 +1214,35 @@ pub fn run() {
       git_commit,
       git_reload_path,
       git_user_configured,
+      git_numstat,
+      git_force_push,
+      git_pull_ff_only,
+      git_rebase,
+      git_log,
+      gh_pr_view,
+      open_web_url,
+      gh_pr_action,
+      gh_pr_edit_title,
+      gh_pr_comments,
+      gh_pr_comment,
+      gh_check_log,
+      git_show_files,
+      git_compare,
+      git_ref_names,
+      claude_sessions,
+      gh_pr_create,
+      gh_review_threads,
+      gh_thread_resolve,
+      gh_reply_thread,
+      gh_react,
+      delete_claude_session,
+      git_abort,
+      usage_fetch,
+      usage_detect,
+      floating_note_new,
+      floating_note_read,
+      floating_note_write,
+      floating_dir,
       git_show_head,
       git_remote::git_fetch,
       git_remote::git_pull,
@@ -911,6 +1300,8 @@ pub fn run() {
       agent::automations_save,
       agent::git_branches,
       agent::worktree_diff_stat,
+      agent::worktree_diff_text,
+      agent::git_diff_text,
       agent::worktree_reject,
       agent::worktree_commit,
       agent::worktree_merge,

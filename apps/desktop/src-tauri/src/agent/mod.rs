@@ -215,6 +215,26 @@ pub async fn worktree_diff_stat(ws: State<'_, Workspace>, slug: String, base: St
   blocking(move || review::diff_stat(&dir, &base)).await
 }
 
+const DIFF_TEXT_LIMIT: usize = 2 * 1024 * 1024;
+
+/// Unified diff of a task worktree since its fork point (combined diff view).
+#[tauri::command]
+pub async fn worktree_diff_text(ws: State<'_, Workspace>, slug: String, base: String) -> Result<String, String> {
+  let dir = review::task_dir(&ws.root()?, &slug)?;
+  blocking(move || {
+    let mb = review::merge_base(&dir, &base)?;
+    review::diff_text(&dir, &mb, DIFF_TEXT_LIMIT)
+  })
+  .await
+}
+
+/// Unified diff of the open folder's working tree against HEAD (combined diff view).
+#[tauri::command]
+pub async fn git_diff_text(ws: State<'_, Workspace>) -> Result<String, String> {
+  let root = ws.root()?;
+  blocking(move || review::diff_text(&root, "HEAD", DIFF_TEXT_LIMIT)).await
+}
+
 /// Restores `paths` in the task worktree to their state at the fork point (the webview confirms).
 #[tauri::command]
 pub async fn worktree_reject(ws: State<'_, Workspace>, slug: String, base: String, paths: Vec<String>) -> Result<(), String> {

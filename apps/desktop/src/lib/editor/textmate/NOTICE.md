@@ -1,6 +1,7 @@
 # Third-party notice: TextMate grammars and VS Code themes
 
-The files in `grammars/` and `themes/` are copied unmodified from the
+`themes/kingu-dark.json` and `themes/kingu-light.json` are Kingu's own themes (they `include` the
+VS Code 2026 themes below). The other files in `grammars/` and `themes/` are copied unmodified from the
 [microsoft/vscode](https://github.com/microsoft/vscode) repository (taken from a
 local fork at VS Code 1.143.0). Only one file was renamed:
 `Regular Expressions (JavaScript).tmLanguage` → `RegularExpressionsJavaScript.tmLanguage`.
@@ -31,6 +32,8 @@ local fork at VS Code 1.143.0). Only one file was renamed:
 | themes/light_vs.json | extensions/theme-defaults/themes/light_vs.json | microsoft/vscode | MIT |
 | themes/hc_black.json | extensions/theme-defaults/themes/hc_black.json | microsoft/vscode | MIT |
 | themes/hc_light.json | extensions/theme-defaults/themes/hc_light.json | microsoft/vscode | MIT |
+| themes/2026-dark.json | extensions/theme-defaults/themes/2026-dark.json (VS Code 1.142.0) | microsoft/vscode | MIT |
+| themes/2026-light.json | extensions/theme-defaults/themes/2026-light.json (VS Code 1.142.0) | microsoft/vscode | MIT |
 
 There is no Svelte grammar here: VS Code does not ship one, so `.svelte` files
 use the HTML grammar for now.

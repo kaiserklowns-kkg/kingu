@@ -513,6 +513,20 @@ const CORE_SETTINGS: SettingSchema[] = [
 		],
 		description: 'การจัดแนวของ panel เมื่ออยู่ด้านล่างหรือด้านบน (Controls the alignment of the panel when it is at the bottom or top.)'
 	},
+	{
+		id: 'kingu.accessibility.signals',
+		group: 'Accessibility',
+		type: 'string',
+		default: 'agents',
+		enum: ['off', 'agents', 'all'],
+		enumDescriptions: [
+			'ไม่มีเสียง (No sounds.)',
+			'มีเสียงเมื่อ agent รอคุณ ทำเสร็จ หรือล้มเหลว (Sound when an agent waits for you, finishes or fails.)',
+			'เหมือน agents และมีเสียงเมื่อเกิดข้อผิดพลาด (Agents, plus a sound for errors.)'
+		],
+		description: 'เสียงแจ้งเหตุการณ์ (accessibility signals) (Plays a sound for agent and error events.)',
+		scope: 'application'
+	},
 	// --- Status bar resources (Orca's footer)
 	{
 		id: 'kingu.keepAwake',
@@ -581,6 +595,68 @@ const CORE_SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.floating.enabled',
+		group: 'Terminal',
+		type: 'boolean',
+		default: true,
+		description: 'เปิดใช้ Floating Workspace: ปุ่มและหน้าต่างลอย (Enable Floating Workspace: shows the floating workspace button and panel.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.floating.cwd',
+		group: 'Terminal',
+		type: 'string',
+		default: '~',
+		description: 'โฟลเดอร์เริ่มต้นของ terminal ใน Floating Workspace (Terminal Directory: new floating terminal tabs start here.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.floating.triggerLocation',
+		group: 'Terminal',
+		type: 'string',
+		default: 'floating-button',
+		enum: ['floating-button', 'status-bar'],
+		enumDescriptions: ['ปุ่มลอยมุมหน้าต่าง (Floating Button.)', 'ปุ่มใน status bar (Status Bar.)'],
+		description: 'ตำแหน่งปุ่มเปิด Floating Workspace คีย์ลัดใช้ได้เสมอ (Toggle Button Location: the keyboard shortcut works regardless.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.statusBar.claudeUsage.visible',
+		group: 'Status Bar',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงโควตาของ Claude ใน status bar เมื่อติดตั้ง Claude Code (Claude Usage: show Claude token and cost usage for the active workspace.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.statusBar.codexUsage.visible',
+		group: 'Status Bar',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงโควตาของ Codex ใน status bar เมื่อติดตั้ง Codex CLI (Codex Usage: show Codex token and cost usage for the active workspace.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.usage.display',
+		group: 'Status Bar',
+		type: 'string',
+		default: 'used',
+		enum: ['used', 'remaining'],
+		enumDescriptions: ['แสดงเปอร์เซ็นต์ที่ใช้ไปแล้ว (Show the percentage used.)', 'แสดงเปอร์เซ็นต์ที่เหลือ (Show the percentage left.)'],
+		description: 'แสดงโควตาเป็นส่วนที่ใช้ไปหรือส่วนที่เหลือ (Show usage as used or remaining.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.usage.mode',
+		group: 'Status Bar',
+		type: 'string',
+		default: 'compact',
+		enum: ['detailed', 'compact'],
+		enumDescriptions: ['แถบ ป้ายชื่อ และเปอร์เซ็นต์ของทุกช่วงเวลา (Full usage with bars, labels and percentages.)', 'สรุปบรรทัดเดียวต่อผู้ให้บริการ (One summary per provider.)'],
+		description: 'รูปแบบของหน้าต่าง Usage (Layout of the usage popup.)',
+		scope: 'application'
+	},
+	{
 		id: 'kingu.agentsControl.enabled',
 		group: 'Agent',
 		type: 'string',
@@ -615,7 +691,7 @@ export type SettingsSection = { id: string; label: string; groups: string[] };
  */
 export const SETTINGS_SECTIONS: SettingsSection[] = (
 	[
-		{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Application', ...SYSTEM_SECTION_GROUPS, 'Status Bar', 'Team', 'Snap Sandbox'] },
+		{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Application', ...SYSTEM_SECTION_GROUPS, 'Status Bar', 'Accessibility', 'Team', 'Snap Sandbox'] },
 		{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Source Control', 'Git', 'Terminal', 'Debug', 'Problems'] },
 		{ id: 'ade', label: 'ADE (Agents)', groups: ADE_SECTION_GROUPS }
 	] satisfies SettingsSection[]

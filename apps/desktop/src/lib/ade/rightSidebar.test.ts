@@ -36,7 +36,7 @@ describe('watcher batches per worktree', () => {
 
 describe('tabs', () => {
 	test('Orca order and ids', () => {
-		expect(RIGHT_TABS.map((t) => t.id)).toEqual(['files', 'agents', 'changes', 'checks']);
+		expect(RIGHT_TABS.map((t) => t.id)).toEqual(['files', 'agents', 'changes', 'checks', 'review']);
 		expect(isRightTab('checks')).toBe(true);
 		expect(isRightTab('nope')).toBe(false);
 	});
@@ -45,6 +45,12 @@ describe('tabs', () => {
 		expect(visibleTabs(false, 'changes')).toEqual({ tabs: RIGHT_TABS.slice(0, 2), active: 'files' });
 		expect(visibleTabs(true, 'checks').active).toBe('checks');
 		expect(visibleTabs(false, 'agents').active).toBe('agents');
+	});
+
+	test('Review only for a task', () => {
+		expect(visibleTabs(true, 'review').active).toBe('files');
+		expect(visibleTabs(true, 'review', true).active).toBe('review');
+		expect(visibleTabs(true, 'files', true).tabs.map((t) => t.id)).toEqual(['files', 'agents', 'changes', 'checks', 'review']);
 	});
 
 	test('a tab shortcut shows the tab, pressed again on it hides the side bar', () => {

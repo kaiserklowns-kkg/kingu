@@ -11,28 +11,29 @@ export const SIDEBAR_SETTINGS: SettingSchema[] = [
 		id: 'kingu.sidebar.groupBy',
 		group: G,
 		type: 'string',
-		default: 'none',
-		enum: ['none', 'workspace-status', 'pr-status'],
+		default: 'repo',
+		enum: ['repo', 'none', 'workspace-status', 'pr-status'],
 		enumDescriptions: [
+			'กลุ่มของโปรเจกต์ที่เปิดอยู่ (By project.)',
 			'รายการเดียว (One list.)',
 			'แบ่งตามสถานะงาน: รอคุณ / กำลังทำ / เสร็จแล้ว (By task status.)',
 			'แบ่งตามสถานะ PR: เปิด / ร่าง / merge แล้ว / ปิด / ไม่มี PR (By pull request state.)'
 		],
-		description:
-			'จัดกลุ่ม worktree ในแถบข้างของ Agents (Orca: groupBy; แบบ repo ไม่มีเพราะ Kingu แสดงทีละโฟลเดอร์) (How the Agents side bar groups worktrees; Orca\'s by-repo grouping does not apply since Kingu shows one folder.)'
+		description: 'จัดกลุ่ม worktree ในแถบข้างของ Agents ค่าเริ่มต้นตาม Orca คือตามโปรเจกต์ (How the Agents side bar groups worktrees; Orca groups by project.)'
 	},
 	{
 		id: 'kingu.sidebar.sortBy',
 		group: G,
 		type: 'string',
 		default: 'recent',
-		enum: ['smart', 'recent', 'name'],
+		enum: ['smart', 'recent', 'name', 'manual'],
 		enumDescriptions: [
 			'งานที่รอคุณก่อน แล้วกำลังทำ แล้วเสร็จแล้ว ใหม่สุดก่อนในแต่ละส่วน (Needs you first, then working, then done; newest first in each.)',
 			'มีความเคลื่อนไหวล่าสุดก่อน (Most recent activity first.)',
-			'ตามชื่อ (By name.)'
+			'ตามชื่อ (By name.)',
+			'ตามที่ลากวางไว้เอง (Where you dragged them.)'
 		],
-		description: 'ลำดับ worktree ในแถบข้างของ Agents (Orca: sortBy ค่าเริ่มต้นตาม Orca คือ recent) (How the Agents side bar orders worktrees; Orca defaults to most recent first.)'
+		description: 'ลำดับ worktree ในแถบข้างของ Agents ค่าเริ่มต้นตาม Orca คือล่าสุดก่อน ลากการ์ดเพื่อเปลี่ยนเป็น manual (How the Agents side bar orders worktrees; dragging a card switches to manual.)'
 	},
 	{
 		id: 'kingu.sidebar.showActiveOnly',

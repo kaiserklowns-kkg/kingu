@@ -39,7 +39,7 @@
 	aria-label="{meta.title} — {statusLabel(view)}"
 	aria-current={selected ? 'true' : undefined}
 	class={[
-		'group relative cursor-pointer rounded border bg-(--vscode-editor-background) p-2 text-xs outline-none hover:border-(--vscode-focusBorder)/60 focus-visible:border-(--vscode-focusBorder)',
+		'group relative cursor-pointer rounded-lg border bg-(--vscode-editor-background) p-2.5 text-xs outline-none transition-[border-color,box-shadow] hover:border-(--vscode-focusBorder)/60 hover:shadow-md hover:shadow-black/25 focus-visible:border-(--vscode-focusBorder)',
 		selected ? 'border-(--vscode-focusBorder)' : 'border-(--vscode-widget-border)'
 	]}
 	onclick={() => adeTasks.openTask(meta.slug)}

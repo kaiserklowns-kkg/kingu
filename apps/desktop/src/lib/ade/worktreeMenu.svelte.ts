@@ -111,3 +111,8 @@ export function installWorktreeCommands(): () => void {
 	];
 	return () => unregister.forEach((u) => u());
 }
+
+/** Orca's worktree rename: the title edits in place on the task's sidebar row. */
+export function renameTask(slug: string) {
+	adeTasks.startRename(slug);
+}

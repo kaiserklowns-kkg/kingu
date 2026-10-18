@@ -41,6 +41,7 @@
 		slug,
 		run,
 		cwdFrom,
+		floatingCwd,
 		flavor = 'ide',
 		menuState,
 		keyLabels = {},
@@ -53,6 +54,8 @@
 		slug?: string;
 		run?: string[];
 		cwdFrom?: string;
+		/** A floating workspace terminal, started in that directory setting (`~` = home). */
+		floatingCwd?: string;
 		flavor?: TerminalFlavor;
 		menuState?: () => Omit<MenuState, 'hasSelection'>;
 		keyLabels?: Record<string, string | undefined>;
@@ -263,7 +266,7 @@
 				// kingu.terminal.scopeHistoryByWorktree: an ADE shell keeps its own history per worktree.
 				scopeHistory: flavor === 'ade' && settings.get<boolean>('kingu.terminal.scopeHistoryByWorktree') !== false
 			};
-			invoke<Attached>('pty_spawn', { key, cols: t.cols, rows: t.rows, onData: channel(), slug: slug ?? null, run: run ?? null, terminal, cwdFrom: cwdFrom ?? null })
+			invoke<Attached>('pty_spawn', { key, cols: t.cols, rows: t.rows, onData: channel(), slug: slug ?? null, run: run ?? null, terminal, cwdFrom: cwdFrom ?? null, floatingCwd: floatingCwd ?? null })
 				.then((a) => (connected(a), void system.refresh()))
 				.catch(failed);
 		}

@@ -1,6 +1,7 @@
 <script lang="ts">
-	// A popup that opens above a status bar item, right-aligned to it (Orca's status bar popovers),
-	// or left-aligned for items on the left. Closes on Escape, a click outside, or the window losing focus.
+	// A popup that opens above a status bar item, right-aligned to it (left-aligned for items at the
+	// left end), as Orca's status bar popovers.
+	// Closes on Escape, a click outside, or the window losing focus.
 	import type { Snippet } from 'svelte';
 
 	type Props = { anchor: HTMLElement; label: string; width?: number; align?: 'left' | 'right'; onClose: () => void; children: Snippet };
@@ -31,6 +32,8 @@
 <div
 	bind:this={panel}
 	role="dialog"
+	tabindex="-1"
+	oncontextmenu={(e) => (e.preventDefault(), e.stopPropagation())}
 	aria-label={label}
 	class="fixed z-50 flex max-h-[70vh] flex-col overflow-hidden rounded-lg border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) text-[13px] text-(--vscode-foreground) shadow-xl shadow-black/40"
 	style:right={align === 'right' ? `${right}px` : undefined}

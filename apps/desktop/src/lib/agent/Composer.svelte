@@ -95,7 +95,7 @@
 <div
 	bind:this={box}
 	class={[
-		'flex flex-col rounded-md border bg-(--vscode-input-background) focus-within:border-(--vscode-focusBorder)',
+		'flex flex-col rounded-xl border bg-(--vscode-input-background) transition-colors focus-within:border-(--vscode-focusBorder)',
 		dragOver ? 'border-(--vscode-focusBorder) border-dashed' : 'border-(--vscode-input-border,var(--vscode-widget-border))',
 		size === 'lg' ? 'p-2.5 shadow-[0_2px_12px_rgba(0,0,0,0.25)]' : 'p-1.5'
 	]}
@@ -149,7 +149,7 @@
 			type="button"
 			aria-label="ส่ง (Enter)"
 			title="ส่ง (Enter) · ขึ้นบรรทัดใหม่ (Shift+Enter)"
-			class="grid size-6 shrink-0 place-items-center rounded bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:opacity-90 disabled:bg-transparent disabled:text-(--vscode-descriptionForeground) disabled:opacity-60"
+			class="grid size-7 shrink-0 place-items-center rounded-full bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:opacity-90 disabled:bg-transparent disabled:text-(--vscode-descriptionForeground) disabled:opacity-60"
 			disabled={!value.trim() || disabled || busy}
 			onclick={send}
 		>

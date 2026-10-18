@@ -17,7 +17,7 @@ describe('ADE side bar (Orca sidebar preferences)', () => {
 			m.get('kingu.board.opacity')?.value,
 			m.get('kingu.worktree.externalVisibility')?.value,
 			m.get('kingu.tabs.ctrlTabOrder')?.value
-		]).toEqual(['none', 'recent', false, 308, 1, 'hide', 'mru']);
+		]).toEqual(['repo', 'recent', false, 308, 1, 'hide', 'mru']);
 		expect(resolveSettings({ 'kingu.board.columnWidth': 50 }, {}).get('kingu.board.columnWidth')?.source).toBe('default');
 	});
 
@@ -44,6 +44,8 @@ describe('ADE side bar (Orca sidebar preferences)', () => {
 		expect(prGroupOf({ prState: 'OPEN', prDraft: true })).toBe('draft');
 		expect(prGroupOf({ prState: null })).toBe('none');
 		expect(sidebarGroups([task('x', { prState: 'MERGED' })], prefs({ groupBy: 'pr-status' }))[0].id).toBe('merged');
+		// One project: `repo` lists like `none`; `manual` (the dragged order) sorts like `recent` here.
+		expect(sidebarGroups([task('x')], prefs({ groupBy: 'repo' })).map((g) => g.id)).toEqual(['all']);
 		expect(sidebarGroups([], prefs())).toEqual([]);
 	});
 

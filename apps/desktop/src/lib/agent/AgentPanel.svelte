@@ -7,7 +7,7 @@
 	// Agents view and board; follow-ups resume the task's session.
 	import AgentTimeline from './AgentTimeline.svelte';
 	import Composer from './Composer.svelte';
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 	import { runtime } from '#lib/ade/runtime.svelte.ts';
@@ -74,6 +74,12 @@
 		done: 'bg-(--vscode-descriptionForeground)'
 	};
 	const ICON_BTN = 'grid size-[22px] shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-40';
+	// Starters fill the prompt (they never start a task), like the Agents layout's empty composer.
+	const STARTERS: { icon: IconName; label: string; text: string }[] = [
+		{ icon: 'bug', label: 'แก้บั๊ก', text: 'แก้บั๊ก: ' },
+		{ icon: 'check', label: 'เขียน test', text: 'เขียน test ให้ ' },
+		{ icon: 'code', label: 'อธิบายโค้ด', text: 'อธิบายการทำงานของ ' }
+	];
 </script>
 
 <div class="flex h-full flex-col text-[13px]">
@@ -143,10 +149,20 @@
 			</AgentTimeline>
 		{:else}
 			<div class="grid h-full place-items-center p-6 text-center">
-				<div class="max-w-64 space-y-2 text-(--vscode-descriptionForeground)">
-					<div class="flex justify-center"><Icon name="agent" size={28} /></div>
-					<p class="text-(--vscode-foreground)">สั่งงานให้ agent</p>
-					<p class="text-xs leading-5">แต่ละงานได้ git worktree ของตัวเอง agent จะขออนุญาตก่อนรันคำสั่งหรือแก้ไฟล์</p>
+				<div class="flex max-w-72 flex-col items-center gap-2 text-(--vscode-descriptionForeground)">
+					<span class="text-(--vscode-foreground)"><Icon name="agent" size={40} /></span>
+					<p class="text-sm font-semibold text-(--vscode-foreground)">สั่งงานให้ Arkai</p>
+					<p class="text-xs leading-5">แต่ละงานได้ git worktree ของตัวเอง Arkai จะขออนุญาตก่อนรันคำสั่งหรือแก้ไฟล์</p>
+					<div class="mt-2 flex flex-wrap justify-center gap-1.5">
+						{#each STARTERS as s (s.label)}
+							<button
+								class="flex h-7 items-center gap-1.5 rounded-full border border-(--vscode-widget-border) px-3 text-xs hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)"
+								onclick={() => (draft = draft.trim() ? `${s.text}${draft}` : s.text)}
+							>
+								<Icon name={s.icon} size={13} />{s.label}
+							</button>
+						{/each}
+					</div>
 				</div>
 			</div>
 		{/if}
@@ -167,7 +183,7 @@
 				{#snippet chips()}<span class="truncate">{run?.model ?? meta.model ?? model}</span>{/snippet}
 			</Composer>
 		{:else}
-			<Composer bind:value={draft} attach bind:attachments={draftFiles} placeholder="อยากให้ agent ทำอะไร เช่น แก้บั๊กหน้า login…" {busy} autofocus={composingNew} onsubmit={start}>
+			<Composer bind:value={draft} attach bind:attachments={draftFiles} placeholder="อยากให้ Arkai ทำอะไร เช่น แก้บั๊กหน้า login…" {busy} autofocus={composingNew} onsubmit={start}>
 				{#snippet chips()}<span class="truncate">{model}</span><span aria-hidden="true">·</span><span>worktree ใหม่</span>{/snippet}
 			</Composer>
 		{/if}

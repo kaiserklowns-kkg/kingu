@@ -67,6 +67,7 @@ class Scm {
 	/** `git.enabled` is off: no git runs at all. */
 	disabled = $state(false);
 	busy = $state(false);
+	syncing = $state(false);
 	message = $state('');
 	/** `git.untrackedChanges`: untracked files with the changes, in their own group, or hidden. */
 	groups = $derived(splitUntracked(groups(this.repo?.entries ?? []), settings.get<UntrackedMode>('git.untrackedChanges')));

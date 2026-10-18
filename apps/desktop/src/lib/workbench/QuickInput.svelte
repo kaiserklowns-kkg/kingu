@@ -51,6 +51,15 @@
 
 	const mode = $derived(quick.picker ? null : parseQuickInput(quick.value));
 
+	let list: HTMLUListElement | undefined = $state();
+
+	// Keep the focused row in view (the current item of a long list, arrow keys).
+	$effect(() => {
+		void index;
+		void items.length;
+		queueMicrotask(() => list?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' }));
+	});
+
 	$effect(() => {
 		if (!quick.visible) return;
 		void quick.session;
@@ -335,7 +344,7 @@
 		role="dialog"
 		aria-label="Quick open"
 		tabindex="-1"
-		class="fixed top-[calc(var(--kg-titlebar-height)+2px)] left-1/2 z-50 w-[min(600px,62vw)] -translate-x-1/2 rounded-md border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) p-1.5 text-(--vscode-quickInput-foreground) shadow-[0_0_8px_2px_rgba(0,0,0,0.36)]"
+		class="fixed top-[calc(var(--kg-titlebar-height)+2px)] left-1/2 z-50 w-[min(600px,62vw)] -translate-x-1/2 rounded-xl border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) p-2 text-(--vscode-quickInput-foreground) shadow-2xl shadow-black/50"
 		onfocusout={(e) => {
 			// workbench.quickOpen.closeOnFocusLost
 			if (!e.currentTarget.contains(e.relatedTarget as Node | null) && settings.get<boolean>('workbench.quickOpen.closeOnFocusLost')) cancel();
@@ -348,15 +357,15 @@
 			onkeydown={onKey}
 			aria-label="ค้นหาไฟล์ พิมพ์ > เพื่อดูคำสั่ง : เพื่อไปบรรทัด @ เพื่อไปที่สัญลักษณ์ หรือ ? เพื่อดูวิธีใช้"
 			{placeholder}
-			class="h-[26px] w-full rounded-sm border border-(--vscode-focusBorder) bg-(--vscode-input-background) px-1.5 text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground)"
+			class="h-8 w-full rounded-lg border border-(--vscode-focusBorder) bg-(--vscode-input-background) px-2.5 text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground)"
 		/>
-		<ul role="listbox" aria-label="ผลลัพธ์" class="mt-1 max-h-[440px] overflow-y-auto">
+		<ul bind:this={list} role="listbox" aria-label="ผลลัพธ์" class="mt-1.5 max-h-[440px] overflow-y-auto">
 			{#each items as item, i (i)}
 				<li role="option" aria-selected={i === index} class={[item.separator && i > 0 && 'mt-px border-t border-(--vscode-widget-border)']}>
 					<button
 						tabindex="-1"
 						class={[
-							'flex h-(--kg-row-height) w-full items-center gap-2 rounded-sm px-1.5 text-left',
+							'flex h-7 w-full items-center gap-2 rounded-md px-2 text-left',
 							i === index ? 'bg-(--vscode-quickInputList-focusBackground) text-(--vscode-list-activeSelectionForeground)' : 'hover:bg-(--vscode-list-hoverBackground)'
 						]}
 						onmousemove={() => (index = i)}

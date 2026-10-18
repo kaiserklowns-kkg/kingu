@@ -20,6 +20,8 @@ export function rootTag(root: string | null): string {
 export const panelKey = (tag: string, id: number) => `panel:${tag}:${id}`;
 /** A terminal tab of an ADE worktree ('' is the folder itself). */
 export const adeKey = (tag: string, worktree: string, tabId: string) => `ade:${tag}:${worktree}:${tabId}`;
+/** A floating workspace terminal tab; `launch` keeps one app launch's tabs apart from the last one's. */
+export const floatingKey = (launch: string, tabId: string) => `floating:${launch}:${tabId}`;
 /** A task's agent CLI; `startedAt` makes a restarted CLI a new session. */
 export const cliKey = (tag: string, slug: string, startedAt: number) => `cli:${tag}:${slug}:${startedAt}`;
 

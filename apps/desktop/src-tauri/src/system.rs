@@ -325,11 +325,11 @@ pub fn browser_command(browser: Option<&str>, url: &str, macos: bool) -> (String
   }
 }
 
-/// Opens a web page (`http`/`https` only: a terminal link must never launch other handlers) in
-/// `workbench.externalBrowser`, else the default browser.
+/// Opens a web page (`http`/`https` only: a terminal link, pull request or check page must never
+/// launch other handlers) in `workbench.externalBrowser`, else the default browser.
 pub fn open_web_url(url: &str) -> Result<(), String> {
   let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
-  if !matches!(parsed.scheme(), "http" | "https") {
+  if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
     return Err(format!("{}: เปิดได้เฉพาะลิงก์ http/https", parsed.scheme()));
   }
   let (program, args) = browser_command(external_browser().as_deref(), parsed.as_str(), cfg!(target_os = "macos"));

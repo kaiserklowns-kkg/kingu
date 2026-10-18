@@ -96,7 +96,7 @@
 				aria-expanded={isOpen}
 				data-uri={file.uri}
 				title={file.label}
-				class="flex h-(--kg-row-height) w-full items-center gap-1 pr-2 pl-1 text-left hover:bg-(--vscode-list-hoverBackground)"
+				class="mx-1.5 flex h-(--kg-row-height) w-[calc(100%-12px)] items-center gap-1 rounded-md pr-2 pl-1 text-left hover:bg-(--vscode-list-hoverBackground)"
 				onclick={() => toggle(file.uri)}
 			>
 				<Icon name={isOpen ? 'chevronDown' : 'chevronRight'} size={16} />
@@ -114,7 +114,7 @@
 						aria-selected="false"
 						disabled={file.rel === null}
 						title={d.message}
-						class="flex min-h-(--kg-row-height) w-full items-start gap-1.5 py-0.5 pr-2 pl-7 text-left hover:bg-(--vscode-list-hoverBackground) disabled:cursor-default"
+						class="mx-1.5 flex min-h-(--kg-row-height) w-[calc(100%-12px)] items-start gap-1.5 rounded-md py-0.5 pr-2 pl-7 text-left hover:bg-(--vscode-list-hoverBackground) disabled:cursor-default"
 						onclick={() => open(file, d)}
 					>
 						<span class={['mt-px shrink-0', color[sev]]}><Icon name={icon[sev]} size={14} /></span>
