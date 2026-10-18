@@ -184,3 +184,8 @@ export function liveCliSessions(saved: CliSessionsState, tag: string, live: Set<
 	for (const [slug, s] of Object.entries(saved)) (live.has(cliKey(tag, slug, s.startedAt)) ? kept : gone)[slug] = s;
 	return { kept, gone };
 }
+
+/** terminal.integrated.hideOnStartup: whether the terminal view hides on the first load (`restored`: a saved list came back). */
+export function hideOnStartup(setting: string, restored: boolean): boolean {
+	return setting === 'always' || (setting === 'whenEmpty' && !restored);
+}

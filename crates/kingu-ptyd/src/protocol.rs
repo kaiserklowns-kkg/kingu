@@ -62,6 +62,12 @@ pub enum Request {
     shell: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     args: Option<Vec<String>>,
+    /// Variables removed from the shell's environment (`terminal.integrated.env.*` set to null).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    unset: Vec<String>,
+    /// Start from a minimal environment (`terminal.integrated.inheritEnv: false`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    clean_env: bool,
     stream: u64,
   },
   /// Attach to a live `key` only; the reply is null when there is none.
@@ -144,6 +150,8 @@ mod tests {
           env: Some(BTreeMap::from([("A".into(), "b".into())])),
           shell: Some("/bin/bash".into()),
           args: Some(vec!["--login".into()]),
+          unset: vec!["OLDPWD".into()],
+          clean_env: true,
           stream: 7,
         },
       },

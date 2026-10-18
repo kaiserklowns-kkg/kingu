@@ -198,9 +198,9 @@ fn handle(host: &Host, request: Request, tx: &SyncSender<Vec<u8>>, closed: &Arc<
   let json = |v: Result<Value, serde_json::Error>| v.map_err(|e| e.to_string());
   match request {
     Request::Hello(_) => Err("hello ซ้ำ".into()),
-    Request::Spawn { key, cwd, cols, rows, run, env, shell, args, stream } => {
+    Request::Spawn { key, cwd, cols, rows, run, env, shell, args, unset, clean_env, stream } => {
       let env = env.unwrap_or_default();
-      let spec = ShellSpec { cwd: Path::new(&cwd), cols, rows, run: run.as_deref(), env: &env, shell: shell.as_deref(), args: args.as_deref() };
+      let spec = ShellSpec { cwd: Path::new(&cwd), cols, rows, run: run.as_deref(), env: &env, shell: shell.as_deref(), args: args.as_deref(), unset: &unset, clean_env };
       let attached = host.open(&key, &spec, sink(tx, closed, &key, stream))?;
       if attached.spawned {
         log(format!("terminal {key} started in {cwd}"));
