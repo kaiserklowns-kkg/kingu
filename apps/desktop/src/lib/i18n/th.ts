@@ -16,5 +16,6 @@ import { chatParts } from './th/chatParts';
 import { chatEditor } from './th/chatEditor';
 import { chatSystem } from './th/chatSystem';
 import { adeWorktrees } from './th/adeWorktrees';
+import { mcp } from './th/mcp';
 
-export const th = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatInput, ...adeWorktrees } satisfies Record<keyof typeof en, string>;
+export const th = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatInput, ...adeWorktrees, ...mcp } satisfies Record<keyof typeof en, string>;

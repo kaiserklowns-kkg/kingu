@@ -14,6 +14,7 @@ pub mod hunks;
 pub mod host;
 pub mod issues;
 pub mod kingu_yaml;
+pub mod mcp;
 pub mod notes;
 pub mod open_in;
 pub mod pr;
@@ -137,6 +138,19 @@ pub async fn agent_start(
   // A chat's rewind points so far: the run stamps its checkpoints from them.
   let anchors = chat_id.as_deref().map(|id| std::sync::Mutex::new(rewind::anchors(&open_root, id)));
   let mcp_servers = mcp_servers.filter(|m| !m.is_empty());
+  // The project's .mcp.json servers (Claude Code reads them itself): only trusted, enabled ones
+  // start; servers the user turned off lose their tools.
+  let mcp_plan = {
+    let (root, dir) = (open_root.clone(), dir.clone());
+    let passed: std::collections::BTreeSet<String> = mcp_servers.iter().flat_map(|m| m.keys().cloned()).collect();
+    let config = crate::snap::config_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+      let trust = crate::snap::TrustData::load(&config.join(crate::snap::TRUST_FILE));
+      mcp::run_plan(&root, &dir, &passed, &mcp::disabled_ids(&config), &trust)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+  };
   let account = {
     use tauri::Manager;
     app.state::<crate::accounts::Accounts>().agent_env(crate::accounts::store::Provider::Claude)?
@@ -153,6 +167,8 @@ pub async fn agent_start(
     resume,
     resume_at,
     mcp_servers,
+    project_mcp: mcp_plan.project,
+    disallowed_tools: mcp_plan.disallowed_tools,
     plugins,
     env: (!account.set.is_empty()).then_some(host::SecretEnv(account.set)),
     unset_env: account.unset,

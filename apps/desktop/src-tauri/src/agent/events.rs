@@ -34,6 +34,20 @@ pub struct McpServerState {
   pub status: String,
 }
 
+/// An MCP server of the live session now: its status, error line, where it came from and its tools.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct McpServerLive {
+  pub name: String,
+  #[serde(default)]
+  pub status: String,
+  #[serde(default)]
+  pub error: Option<String>,
+  #[serde(default)]
+  pub source: Option<String>,
+  #[serde(default)]
+  pub tools: Vec<String>,
+}
+
 /// A slash command the session knows (built in, a skill, or `.claude/commands`).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SlashCommand {
@@ -57,6 +71,11 @@ pub enum AgentEvent {
     tools: Vec<String>,
     #[serde(default)]
     mcp_servers: Vec<McpServerState>,
+  },
+  /// The session's MCP servers as they are now (after the start and each turn); replaces the last list.
+  McpStatus {
+    #[serde(default)]
+    servers: Vec<McpServerLive>,
   },
   /// The session's slash commands with descriptions; replaces the last list.
   Commands { commands: Vec<SlashCommand> },
@@ -220,6 +239,7 @@ mod tests {
       json!({"kind": "session_info", "slash_commands": ["compact"], "tools": ["Bash"], "mcp_servers": [{"name": "gh", "status": "connected"}]}),
       json!({"kind": "commands", "commands": [{"name": "review", "description": "Review a PR", "argument_hint": "<pr>"}]}),
       json!({"kind": "context_usage", "used_tokens": 1200, "max_tokens": 200000}),
+      json!({"kind": "mcp_status", "servers": [{"name": "gh", "status": "failed", "error": "spawn gh ENOENT", "source": "user", "tools": ["search"]}]}),
     ] {
       assert_eq!(serde_json::to_value(AgentEvent::from_host(v.clone())).unwrap(), v);
     }

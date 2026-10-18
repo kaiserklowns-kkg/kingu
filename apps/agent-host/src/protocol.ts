@@ -23,8 +23,16 @@ export type StartParams = {
 	 * comes back in `system`). Rewinding a chat, or forking it, uses it.
 	 */
 	resumeAt?: string | null;
-	/** Stdio MCP servers for this run (from trusted Snaps), by name. */
-	mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>;
+	/** MCP servers Kingu hands this run (Snaps, the user's mcp.json, trusted .vscode/.cursor ones), by name. */
+	mcpServers?: Record<string, McpServerParams>;
+	/**
+	 * The project's `.mcp.json` servers (which Claude Code reads itself, `settingSources`): which
+	 * may run. Rust decides from Kingu's trust store and the user's disabled list; a name in
+	 * `disabled` never starts, whatever the user's Claude settings approve.
+	 */
+	projectMcp?: { enabled?: string[]; disabled?: string[] } | null;
+	/** Tools the session must not have: `mcp__<server>` for each MCP server the user turned off. */
+	disallowedTools?: string[];
 	/** Skill plugin folders of active Snaps (absolute; Rust checks they are ones Kingu generated). */
 	plugins?: string[];
 	/** The active Claude account (`CLAUDE_CONFIG_DIR` or `ANTHROPIC_API_KEY`), over the host's env. Never logged. */
@@ -40,6 +48,17 @@ export type StartParams = {
 	/** Project rules (AGENTS.md, .cursor/rules, …; Rust agent/rules.rs) appended to Claude Code's system prompt. */
 	systemPromptAppend?: string | null;
 };
+/** An MCP server: a program over stdio (`type` absent or `stdio`), or a remote one over `http` / `sse`. */
+export type McpServerParams = {
+	type?: 'stdio' | 'http' | 'sse';
+	command?: string;
+	args?: string[];
+	env?: Record<string, string>;
+	url?: string;
+	headers?: Record<string, string>;
+};
+export const MCP_TYPES = ['stdio', 'http', 'sse'] as const;
+
 export type SendParams = { runId: number; text: string; images?: string[] };
 export type RunParams = { runId: number };
 /** Mid-session change of the live run's model and/or permission mode (at least one). */
@@ -69,6 +88,9 @@ export type DiffStats = { added: number; removed: number };
 /** A slash command the session knows (SDK `SlashCommand`): built in, a skill, or `.claude/commands`. */
 export type SlashCommandInfo = { name: string; description: string; argument_hint: string };
 
+/** One MCP server of the live session (SDK `mcpServerStatus()`): `tools` are their bare names. */
+export type McpServerLive = { name: string; status: string; error: string | null; source: string | null; tools: string[] };
+
 /** On the events of a subagent's own conversation: the id of the Task/Agent `tool_use` that started it. */
 export type Parent = { parent_tool_use_id?: string };
 
@@ -76,6 +98,8 @@ export type AgentEvent =
 	| { kind: 'system'; subtype: string; session_id: string | null; model: string | null }
 	/** What the session started with (`system`/`init`): its slash command names, tools and MCP servers. */
 	| { kind: 'session_info'; slash_commands: string[]; tools: string[]; mcp_servers: { name: string; status: string }[] }
+	/** The session's MCP servers as they are now (after the start, and after each turn). Replaces the last list. */
+	| { kind: 'mcp_status'; servers: McpServerLive[] }
 	/** The session's slash commands with descriptions (`supportedCommands()`, or a `commands_changed` push). Replaces the last list. */
 	| { kind: 'commands'; commands: SlashCommandInfo[] }
 	/** How full the context window is after a turn: `used_tokens` of `max_tokens`. */

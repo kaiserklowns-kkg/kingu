@@ -9,16 +9,18 @@
 
 import { readFileSync } from 'node:fs';
 import type { CanUseTool, HookCallbackMatcher, Options, PermissionResult, PermissionUpdate, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import { contextTokensOf, contextWindowOf, isUuid, normalize, ruleTexts, slashCommands, summarizeTool } from './normalize.ts';
+import { contextTokensOf, contextWindowOf, isUuid, mcpStatus, normalize, ruleTexts, slashCommands, summarizeTool } from './normalize.ts';
 import { snapshotHooks } from './snapshots.ts';
 import { Guards } from './guards/index.ts';
 import { checkAnswers, isAskUserQuestion, QUESTIONS_DISMISSED } from './questions.ts';
 import {
 	DECISIONS,
+	MCP_TYPES,
 	PERMISSION_MODES,
 	type AgentEvent,
 	type AnswerParams,
 	type Decision,
+	type McpServerParams,
 	type PermissionMode,
 	type SetOptionsParams,
 	type RpcRequest,
@@ -37,6 +39,8 @@ export type QueryLike = AsyncIterable<unknown> & {
 	supportedCommands?(): Promise<unknown[]>;
 	/** How full the context window is (`detail: 'summary'` answers from the last response). */
 	getContextUsage?(opts?: { detail?: 'summary' | 'full' }): Promise<{ totalTokens?: unknown; maxTokens?: unknown }>;
+	/** The session's MCP servers, their status and tools (the MCP Servers view). */
+	mcpServerStatus?(): Promise<unknown[]>;
 };
 export type QueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => QueryLike;
 
@@ -83,6 +87,30 @@ export function imageBlocks(paths: unknown, read: (path: string) => Uint8Array):
 		return { type: 'image', source: { type: 'base64', media_type: media, data: Buffer.from(bytes).toString('base64') } };
 	});
 }
+
+/** After the start, MCP servers are asked again this much later (they connect in the background). */
+export const MCP_RECHECK_MS = 5000;
+
+/** A server name as Claude Code puts it in tool names (`mcp__<name>__<tool>`). */
+const MCP_NAME = /^[A-Za-z0-9_-]{1,81}$/;
+
+/** Checks one `mcpServers` entry and turns it into the SDK's config (stdio, or http / sse). */
+export function mcpConfig(name: string, s: McpServerParams): NonNullable<Options['mcpServers']>[string] {
+	need(MCP_NAME.test(name), `mcp server ${name}: invalid name`);
+	need(typeof s === 'object' && s !== null, `mcp server ${name}: not an object`);
+	const type = s.type ?? 'stdio';
+	need((MCP_TYPES as readonly string[]).includes(type), `mcp server ${name}: unsupported type ${String(type)}`);
+	if (type === 'stdio') {
+		need(typeof s.command === 'string' && s.command.trim(), `mcp server ${name}: command is empty`);
+		return { type: 'stdio', command: s.command!, args: s.args ?? [], env: s.env ?? {} };
+	}
+	need(typeof s.url === 'string' && /^https?:\/\/[^\s]+$/.test(s.url), `mcp server ${name}: url must be http(s)`);
+	const headers = s.headers ?? {};
+	need(typeof headers === 'object' && !Array.isArray(headers) && Object.values(headers).every((v) => typeof v === 'string'), `mcp server ${name}: headers must map names to strings`);
+	return { type: type as 'http' | 'sse', url: s.url!, ...(Object.keys(headers).length ? { headers } : {}) };
+}
+
+const isNames = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string' && x.length > 0 && x.length <= 200);
 
 /** Rules appended to the system prompt; Rust keeps them under 128 KB. */
 export const MAX_SYSTEM_APPEND = 256 * 1024;
@@ -152,6 +180,8 @@ class Run {
 	exited = false;
 	/** The session's commands were asked for (once per run, after its first init). */
 	commandsAsked = false;
+	/** An `mcp_status` was sent (so an empty list after it is sent too). */
+	mcpReported = false;
 	/** Context tokens of the main agent's latest API call (`contextTokensOf`). */
 	contextTokens: number | null = null;
 	constructor(readonly id: number) {}
@@ -272,7 +302,11 @@ export class AgentHost {
 
 		const mcp = p.mcpServers ?? {};
 		need(typeof mcp === 'object' && !Array.isArray(mcp), 'mcpServers must be an object');
-		for (const [name, s] of Object.entries(mcp)) need(typeof s?.command === 'string' && s.command.trim(), `mcp server ${name}: command is empty`);
+		const mcpServers = Object.fromEntries(Object.entries(mcp).map(([name, s]) => [name, mcpConfig(name, s)]));
+		const projectMcp = p.projectMcp ?? null;
+		need(projectMcp === null || (typeof projectMcp === 'object' && isNames(projectMcp.enabled ?? []) && isNames(projectMcp.disabled ?? [])), 'projectMcp must list server names');
+		const disallowed = p.disallowedTools ?? [];
+		need(isNames(disallowed), 'disallowedTools must be tool names');
 		const plugins = p.plugins ?? [];
 		need(Array.isArray(plugins) && plugins.every((d) => typeof d === 'string' && d.startsWith('/')), 'plugins must be absolute paths');
 		const extraEnv = p.env ?? {};
@@ -307,9 +341,14 @@ export class AgentHost {
 			resume: p.resume || undefined,
 			// Rewind / fork: the session up to `resumeAt`, as a new session (the original stays whole).
 			...(resumeAt ? { resumeSessionAt: resumeAt, forkSession: true } : {}),
-			...(Object.keys(mcp).length
-				? { mcpServers: Object.fromEntries(Object.entries(mcp).map(([name, s]) => [name, { type: 'stdio' as const, command: s.command, args: s.args ?? [], env: s.env ?? {} }])) }
+			...(Object.keys(mcpServers).length ? { mcpServers } : {}),
+			// The project's .mcp.json (Claude Code reads it itself): only what Kingu trusts runs; a
+			// rejected name wins over any approval in the user's Claude settings.
+			...(projectMcp && (projectMcp.enabled?.length || projectMcp.disabled?.length)
+				? { settings: { enabledMcpjsonServers: projectMcp.enabled ?? [], disabledMcpjsonServers: projectMcp.disabled ?? [] } }
 				: {}),
+			// MCP servers the user turned off (also ones from their own Claude settings).
+			...(disallowed.length ? { disallowedTools: disallowed } : {}),
 			// Skills only: Kingu owns the MCP connections (mcpServers above), so a plugin never adds its own.
 			...(plugins.length ? { plugins: plugins.map((path) => ({ type: 'local' as const, path, skipMcpDiscovery: true })) } : {}),
 			...(accountEnv ? { env: accountEnv } : {}),
@@ -350,8 +389,15 @@ export class AgentHost {
 				const tokens = m && typeof m === 'object' ? contextTokensOf(m) : null;
 				if (tokens !== null) run.contextTokens = tokens;
 				for (const ev of normalize(msg)) this.emit(run.id, ev);
-				if (m?.type === 'system' && m.subtype === 'init' && !run.commandsAsked) void this.listCommands(run);
-				if (m?.type === 'result') void this.reportContext(run, contextWindowOf(m));
+				if (m?.type === 'system' && m.subtype === 'init' && !run.commandsAsked) {
+					void this.listCommands(run);
+					void this.reportMcp(run);
+					setTimeout(() => void this.reportMcp(run), MCP_RECHECK_MS).unref?.();
+				}
+				if (m?.type === 'result') {
+					void this.reportContext(run, contextWindowOf(m));
+					void this.reportMcp(run);
+				}
 			}
 		} catch (e) {
 			if (!run.stopped) failure = e instanceof Error ? e.message : String(e);
@@ -370,6 +416,21 @@ export class AgentHost {
 			if (!run.exited) this.emit(run.id, { kind: 'commands', commands: slashCommands(list) });
 		} catch (e) {
 			this.log(`run ${run.id}: commands not listed: ${e instanceof Error ? e.message : String(e)}`);
+		}
+	}
+
+	/** The session's MCP servers now, as an `mcp_status` event (skipped on failure or when there are none). */
+	private async reportMcp(run: Run) {
+		const q = run.query;
+		if (run.exited || !q?.mcpServerStatus) return;
+		try {
+			const servers = mcpStatus(await withTimeout(q.mcpServerStatus(), CONTROL_TIMEOUT_MS));
+			if (!run.exited && (servers.length || run.mcpReported)) {
+				run.mcpReported = true;
+				this.emit(run.id, { kind: 'mcp_status', servers });
+			}
+		} catch (e) {
+			this.log(`run ${run.id}: MCP status not read: ${e instanceof Error ? e.message : String(e)}`);
 		}
 	}
 

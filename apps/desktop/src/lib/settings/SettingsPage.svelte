@@ -17,6 +17,8 @@
 	import TerminalPage from './pages/TerminalPage.svelte';
 	import AccountPage from './pages/AccountPage.svelte';
 	import UsagePage from './pages/UsagePage.svelte';
+	import McpPage from '#lib/mcp/McpPage.svelte';
+	import { t } from '#lib/i18n/index.ts';
 	import { settings } from './settings.svelte';
 	import type { IconName } from '#lib/workbench/Icon.svelte';
 	import type { SettingsPageId } from './systemSettings.svelte';
@@ -29,9 +31,16 @@
 		{ id: 'account', label: 'บัญชีและทีม', icon: 'account' },
 		{ id: 'accounts', label: 'บัญชี AI (Accounts)', icon: 'key' },
 		{ id: 'usage', label: 'Stats & Usage', icon: 'usage' },
+		{
+			id: 'mcp',
+			get label() {
+				return t('mcp.title');
+			},
+			icon: 'sliders'
+		},
 		{ id: 'shortcuts', label: 'Keyboard Shortcuts', icon: 'keyboard' }
 	];
-	const PAGE_LABEL: Record<SettingsPageId, string> = { appearance: 'Appearance', arkai: 'Arkai', terminal: 'Terminal', account: 'บัญชีและทีม', accounts: 'บัญชี AI (Accounts)', usage: 'Stats & Usage', shortcuts: 'Keyboard Shortcuts', about: 'About Kingu' };
+	const PAGE_LABEL: Record<SettingsPageId, string> = { appearance: 'Appearance', arkai: 'Arkai', terminal: 'Terminal', account: 'บัญชีและทีม', accounts: 'บัญชี AI (Accounts)', usage: 'Stats & Usage', mcp: 'MCP', shortcuts: 'Keyboard Shortcuts', about: 'About Kingu' };
 	import { systemSettings } from './systemSettings.svelte';
 
 	let query = $state('');
@@ -150,6 +159,7 @@
 			{:else if page === 'account'}<AccountPage />
 			{:else if page === 'accounts'}<AccountsView />
 			{:else if page === 'usage'}<UsagePage />
+			{:else if page === 'mcp'}<McpPage />
 			{:else if page === 'about'}<AboutPage />
 			{:else if showSnaps}<SnapsView />{:else}<SettingsEditor group={systemSettings.group} bind:query />{/if}
 		</div>

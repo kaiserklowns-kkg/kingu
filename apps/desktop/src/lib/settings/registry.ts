@@ -290,6 +290,15 @@ const CORE_SETTINGS: SettingSchema[] = [
 			'ให้ agent ในแชตทำตามไฟล์กฎของโปรเจกต์นอกจาก CLAUDE.md: AGENTS.md, .cursor/rules/*.mdc และ .github/copilot-instructions.md (Cursor: rules) (Chat agents follow the project\'s rules files besides CLAUDE.md: AGENTS.md, .cursor/rules/*.mdc and .github/copilot-instructions.md.)'
 	},
 	{
+		id: 'kingu.mcp.disabled',
+		group: 'Agent Chat',
+		type: 'array',
+		items: 'string',
+		default: [],
+		description:
+			'MCP server ที่ปิดไว้ (`<แหล่ง>:<ชื่อ>` เช่น `user:github`, `project:db`, `snap:go-gopls`) agent ที่เริ่มหลังจากนี้จะไม่ได้ server เหล่านี้ เปิด/ปิดได้ที่หน้า MCP Servers (MCP servers turned off, as `<source>:<name>`; agents started afterwards do not get them. Toggle them on the MCP Servers page.)'
+	},
+	{
 		id: 'kingu.agent.notifications',
 		group: 'Agent',
 		type: 'boolean',

@@ -2,7 +2,7 @@
 // Pure and loosely typed on input, so a newer SDK adding fields or message types never breaks it:
 // anything unrecognized becomes a `raw` event instead of being dropped.
 
-import type { AgentEvent, DiffStats, SlashCommandInfo, Usage } from './protocol.ts';
+import type { AgentEvent, DiffStats, McpServerLive, SlashCommandInfo, Usage } from './protocol.ts';
 
 /** Tool results can be whole files; the timeline only needs a preview. */
 export const MAX_TOOL_RESULT_CHARS = 4000;
@@ -120,6 +120,27 @@ export function slashCommands(list: unknown): SlashCommandInfo[] {
 		if (!isObj(c) || !name || seen.has(name)) continue;
 		seen.add(name);
 		out.push({ name, description: truncate(str(c.description)?.trim() ?? '', MAX_SUMMARY_CHARS), argument_hint: truncate(str(c.argumentHint)?.trim() ?? '', 200) });
+	}
+	return out;
+}
+
+/** At most this many MCP servers, and tools per server, are reported. */
+const MAX_MCP_SERVERS = 64;
+const MAX_MCP_TOOLS = 500;
+
+/**
+ * SDK `McpServerStatus[]` → the wire shape: names, status, the error line, where the server came
+ * from and its tools' names. Server-supplied text is cut short; malformed entries are dropped.
+ */
+export function mcpStatus(list: unknown): McpServerLive[] {
+	if (!Array.isArray(list)) return [];
+	const out: McpServerLive[] = [];
+	for (const s of list.slice(0, MAX_MCP_SERVERS)) {
+		const name = isObj(s) ? str(s.name) : null;
+		if (!isObj(s) || !name) continue;
+		const tools = Array.isArray(s.tools) ? s.tools.slice(0, MAX_MCP_TOOLS).flatMap((t) => (isObj(t) && str(t.name) ? [truncate(str(t.name)!, 200)] : [])) : [];
+		const error = str(s.error);
+		out.push({ name: truncate(name, 200), status: str(s.status) ?? '', error: error ? truncate(error, MAX_SUMMARY_CHARS) : null, source: str(s.source) ?? str(s.scope), tools });
 	}
 	return out;
 }

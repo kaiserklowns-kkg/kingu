@@ -11,6 +11,9 @@ import { keybindings, USER_KEYBINDINGS_KEY } from '#lib/workbench/keybindings.sv
 import { KEYBINDINGS_TEMPLATE } from '#lib/workbench/keybindingsModel.ts';
 import { isUntitled } from '#lib/workbench/untitled.ts';
 
+/** Kingu's user mcp.json (the MCP store's `USER_MCP_KEY`): in the app config dir, read and saved by Rust. */
+const USER_MCP_KEY = 'mcp://user/mcp.json';
+
 /** Tabs with no text model (the Settings editor UI, ADE task pages and the board, images, Markdown previews). */
 export const isNonTextEditor = (key: string) => key === SETTINGS_EDITOR_KEY || isAdeEditor(key) || isImagePath(key) || isPreviewKey(key) || isNotebookPath(key) || isChangesKey(key);
 
@@ -22,6 +25,7 @@ export async function readResource(key: string): Promise<string> {
 	if (isUntitled(key)) return '';
 	const snapId = userSnapId(key);
 	if (snapId) return invoke<string>('snap_manifest_read', { id: snapId });
+	if (key === USER_MCP_KEY) return invoke<string>('mcp_user_read');
 	if (key === USER_SETTINGS_KEY) {
 		const file = await invoke<{ content: string | null }>('settings_read', { scope: 'user' });
 		return file.content ?? '{\n}\n';
@@ -39,16 +43,18 @@ export async function writeResource(key: string, content: string): Promise<void>
 	if (key === USER_SETTINGS_KEY) await invoke('settings_write', { scope: 'user', content });
 	else if (key === USER_KEYBINDINGS_KEY) await invoke('settings_write', { scope: 'keybindings', content });
 	else if (snapId) await invoke('snap_manifest_write', { id: snapId, content });
+	else if (key === USER_MCP_KEY) await invoke('mcp_user_write', { content });
 	else await invoke('fs_write_file', { rel: key, content });
 	if (key === USER_SETTINGS_KEY || key === WORKSPACE_SETTINGS_PATH) await settings.load();
 	if (key === USER_KEYBINDINGS_KEY) await keybindings.load();
 	// The user snaps dir is not watched; loaded lazily to keep the snaps store out of this module's imports.
 	if (snapId) await import('#lib/snaps/snaps.svelte.ts').then((m) => m.snaps.load());
+	if (key === USER_MCP_KEY) await import('#lib/mcp/mcp.svelte.ts').then((m) => m.mcp.load());
 }
 
 /** Workspace files are read and saved with their encoding and checked for save conflicts; the
  * settings, keybindings and snap manifests are always UTF-8 and owned by Kingu. */
-export const isWorkspaceTextFile = (key: string) => key !== USER_SETTINGS_KEY && key !== USER_KEYBINDINGS_KEY && !userSnapId(key);
+export const isWorkspaceTextFile = (key: string) => key !== USER_SETTINGS_KEY && key !== USER_KEYBINDINGS_KEY && key !== USER_MCP_KEY && !userSnapId(key);
 
 /** `readonly`: the file's permissions say it cannot be written (files.readonlyFromPermissions). */
 export type FileStat = { mtime: number; size: number; hash: string; readonly?: boolean };
