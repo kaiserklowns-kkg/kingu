@@ -8,6 +8,8 @@
 	import { keyLabel } from './keys';
 	import { diffKey, splitPath, type Resource } from './scm';
 	import { scm } from './scm.svelte';
+	import { appMode } from './mode.svelte';
+	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 
 	type Confirm = { key: string; paths: string[]; untracked: boolean; text: string };
 
@@ -59,10 +61,15 @@
 
 	type Action = { icon: IconName; label: string; run: () => unknown; hidden?: boolean };
 
+	// In the Agents layout (the folder's own Changes panel) diffs and files open as ADE tabs.
+	const openDiff = (rel: string, preview: boolean) =>
+		appMode.isAgents ? adeLayout.openFile(adeLayout.key, diffKey(rel), { preview }) : editors.openDiff(rel, { preview });
+	const openFile = (rel: string) => (appMode.isAgents ? adeLayout.openFile(adeLayout.key, rel, { preview: false }) : editors.open(rel, { preview: false }));
+
 	function rowActions(r: Resource): Action[] {
 		const path = r.entry.path;
 		return [
-			{ icon: 'goToFile', label: 'Open File', run: () => editors.open(path, { preview: false }), hidden: r.deleted },
+			{ icon: 'goToFile', label: 'Open File', run: () => openFile(path), hidden: r.deleted },
 			{ icon: 'discard', label: 'Discard Changes', run: () => askDiscard(rowKey(r), [r]), hidden: r.staged },
 			r.staged
 				? { icon: 'minus', label: 'Unstage Changes', run: () => scm.unstage([path]) }
@@ -136,9 +143,9 @@
 					title={r.entry.orig_path ? `${r.entry.orig_path} → ${r.entry.path}` : r.entry.path}
 					onclick={() => {
 						selected = key;
-						editors.openDiff(r.entry.path, { preview: true });
+						openDiff(r.entry.path, true);
 					}}
-					ondblclick={() => editors.openDiff(r.entry.path, { preview: false })}
+					ondblclick={() => openDiff(r.entry.path, false)}
 				>
 					<FileIcon icon={fileIcon(name)} />
 					<span class={['shrink-0 truncate', r.deleted && 'line-through']}>{name}</span>

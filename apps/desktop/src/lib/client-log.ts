@@ -6,7 +6,13 @@ export function clientLog(level: 'info' | 'error', message: string): void {
 
 export function forwardWindowErrors(): () => void {
 	const onError = (e: ErrorEvent) => clientLog('error', `${e.message} (${e.filename}:${e.lineno})`);
-	const onRejection = (e: PromiseRejectionEvent) => clientLog('error', `unhandled rejection: ${String(e.reason)}`);
+	// Monaco rejects a diff computation that a closed or replaced diff editor cancelled: not an error.
+	const BENIGN = ['no diff result available'];
+	const onRejection = (e: PromiseRejectionEvent) => {
+		const text = String(e.reason);
+		if (BENIGN.some((b) => text.includes(b))) return e.preventDefault();
+		clientLog('error', `unhandled rejection: ${text}`);
+	};
 	window.addEventListener('error', onError);
 	window.addEventListener('unhandledrejection', onRejection);
 	return () => {

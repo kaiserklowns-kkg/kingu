@@ -8,6 +8,7 @@ import { SvelteSet } from 'svelte/reactivity';
 import { diffKey } from './scm';
 import * as G from './editorGroups';
 import { settings } from '#lib/settings/settings.svelte.ts';
+import { appMode } from './mode.svelte';
 
 export type { EditorTab, EditorGroup, GridNode, SplitDirection } from './editorGroups';
 export type Cursor = { line: number; column: number };
@@ -105,16 +106,29 @@ class Editors {
 		};
 	}
 
+	/** The editor of the Agents layout's active file tab, while it is mounted. */
+	#ade: EditorHostHandle | null = null;
+	registerAdeEditor(handle: EditorHostHandle): () => void {
+		this.#ade = handle;
+		return () => {
+			if (this.#ade === handle) this.#ade = null;
+		};
+	}
+	/** Go to Line, menu actions and the selection act on what is in front: the ADE's editor in Agents. */
+	#target(): EditorHostHandle | undefined {
+		return (appMode.isAgents && this.#ade) || this.#hosts.get(this.model.activeGroup);
+	}
+
 	gotoLine(line: number, column = 1) {
-		this.#hosts.get(this.model.activeGroup)?.gotoLine(line, column);
+		this.#target()?.gotoLine(line, column);
 	}
 	/** Runs a Monaco action in the active group's editor (menu items such as Find, Go to Definition). */
 	trigger(actionId: string): boolean {
-		return this.#hosts.get(this.model.activeGroup)?.trigger(actionId) ?? false;
+		return this.#target()?.trigger(actionId) ?? false;
 	}
 	/** The active editor's selected text, '' when none. */
 	selectionText(): string {
-		return this.#hosts.get(this.model.activeGroup)?.selectionText() ?? '';
+		return this.#target()?.selectionText() ?? '';
 	}
 	focusGroup(id: number) {
 		this.activateGroup(id);
