@@ -247,7 +247,7 @@ pub fn for_transcript(ev: &AgentEvent) -> Option<AgentEvent> {
       return None;
     }
     AgentEvent::Message { text, .. } => cut(text, MAX_TEXT),
-    AgentEvent::Thinking { text } => cut(text, MAX_THINKING),
+    AgentEvent::Thinking { text, .. } => cut(text, MAX_THINKING),
     AgentEvent::ToolUse { input, .. } | AgentEvent::PermissionRequest { input, .. } => *input = bounded_input(input),
     AgentEvent::ToolResult { content, .. } => cut(content, MAX_TOOL_RESULT),
     AgentEvent::Result { result: Some(r), .. } => cut(r, MAX_TEXT),
@@ -492,7 +492,7 @@ mod tests {
   }
 
   fn msg(text: &str) -> AgentEvent {
-    AgentEvent::Message { role: "assistant".into(), text: text.into() }
+    AgentEvent::Message { role: "assistant".into(), text: text.into(), parent_tool_use_id: None }
   }
 
   #[test]
@@ -502,12 +502,12 @@ mod tests {
     assert_eq!(load_transcript(tmp.path(), "c-1").unwrap(), [], "no transcript yet");
     let events = [
       AgentEvent::System { subtype: "init".into(), session_id: Some("s-1".into()), model: Some("m".into()) },
-      AgentEvent::Message { role: "user".into(), text: "แก้บั๊ก".into() },
+      AgentEvent::Message { role: "user".into(), text: "แก้บั๊ก".into(), parent_tool_use_id: None },
       AgentEvent::Delta { block: "text".into(), text: "ก".into() },
       AgentEvent::Stderr { line: "secret-ish".into() },
       AgentEvent::Raw { line: "{}".into() },
-      AgentEvent::ToolUse { id: "t1".into(), name: "Write".into(), input: json!({"file_path": "a.rs", "content": "x".repeat(10_000)}) },
-      AgentEvent::ToolResult { tool_use_id: "t1".into(), content: "y".repeat(20_000), is_error: false },
+      AgentEvent::ToolUse { id: "t1".into(), name: "Write".into(), input: json!({"file_path": "a.rs", "content": "x".repeat(10_000)}), parent_tool_use_id: None },
+      AgentEvent::ToolResult { tool_use_id: "t1".into(), content: "y".repeat(20_000), is_error: false, parent_tool_use_id: None },
       msg("เสร็จ"),
       AgentEvent::Exit { code: Some(0), signal: None, stopped: false },
     ];
