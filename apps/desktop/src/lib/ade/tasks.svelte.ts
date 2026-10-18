@@ -47,6 +47,8 @@ import {
 	type TaskView
 } from './model';
 import { runtime } from './runtime.svelte';
+import { touchedTasks } from './agentGuard';
+import { confirmAgentIdle } from './agentGuard.svelte';
 import { adeLayout } from './adeLayout.svelte';
 import { agentCommand, cliAgent, cliOf, launchOptions, withLaunchOptions, type RunMode } from './agentCli';
 import { profileOf, programOf } from '#lib/ade/agentProfiles.ts';
@@ -307,7 +309,9 @@ class AdeTasks {
 			status.flash(t('adeTasks.tasks.badBranchPrefix'), 10000);
 			return;
 		}
-		if (settings.get<boolean>('kingu.worktree.refreshBaseOnCreate') === true && base !== 'HEAD') {
+		// A base checked out in a task worktree whose agent works is left alone unless the user says so.
+		const refresh = settings.get<boolean>('kingu.worktree.refreshBaseOnCreate') === true && base !== 'HEAD';
+		if (refresh && (await this.#agentIdleOrConfirmed(null, base, t('adeTasks.tasks.step.refreshBase', { base })))) {
 			const note = await invoke<string | null>('worktree_refresh_base', { base }).catch((e) => t('adeTasks.tasks.refreshBaseFailed', { base, error: String(e) }));
 			if (note) status.flash(note, 8000);
 		}
@@ -774,11 +778,21 @@ class AdeTasks {
 		if (!sameMarks(meta.accepted_hunks, next)) return this.#patch(slug, { accepted_hunks: next });
 	}
 
+	/**
+	 * Commit, reject, merge and refresh-base touch a task worktree (and, for merge and refresh, the
+	 * checkout of `branch`). While an agent works there they ask first, with the native message
+	 * box (VS Code's Agents window keeps a working session's worktree to the agent). True: go on.
+	 */
+	#agentIdleOrConfirmed(slug: string | null, branch: string | null, action: string): Promise<boolean> {
+		return confirmAgentIdle(touchedTasks(slug, branch, this.worktrees), action);
+	}
+
 	/** Takes back hunks `ids` of `path` (no confirmation: one change at a time, like VS Code's Undo this Change). */
 	async rejectHunks(slug: string, path: string, ids: string[]): Promise<boolean> {
 		const stat = this.stats[slug];
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta || !ids.length) return false;
+		if (!(await this.#agentIdleOrConfirmed(slug, null, t('adeTasks.tasks.step.rejectChanges')))) return false;
 		const n = await this.#step(slug, t('adeTasks.tasks.step.rejectChanges'), () => invoke<number>('worktree_reject_hunks', { slug, base: stat?.base ?? meta.base, path, ids }));
 		await this.refreshStat(slug);
 		return n !== undefined;
@@ -789,6 +803,7 @@ class AdeTasks {
 	async reject(slug: string, paths: string[], label: string, confirmEmpty = false): Promise<boolean> {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta || (!paths.length && !confirmEmpty)) return false;
+		if (!(await this.#agentIdleOrConfirmed(slug, null, t('adeTasks.tasks.step.rejectFiles')))) return false;
 		const ok = await ask(t('adeTasks.tasks.rejectAsk', { label, slug, base: meta.base }), {
 			title: t('adeTasks.tasks.rejectTitle'),
 			kind: 'warning',
@@ -808,6 +823,7 @@ class AdeTasks {
 			status.flash(t('adeTasks.git.commitMessageFirst'));
 			return false;
 		}
+		if (!(await this.#agentIdleOrConfirmed(slug, null, t('adeTasks.tasks.step.commit')))) return false;
 		const done = await this.#step(slug, t('adeTasks.tasks.step.commit'), () => invoke('worktree_commit', { slug, message: msg }).then(() => true));
 		await this.refreshStat(slug);
 		if (done) status.flash(t('adeTasks.git.committed', { branch: this.branchOf(slug) }));
@@ -823,6 +839,7 @@ class AdeTasks {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta) return;
 		const how = mode === 'ff' ? t('adeTasks.tasks.mergeFastForward') : t('adeTasks.tasks.mergeCommit');
+		if (!(await this.#agentIdleOrConfirmed(slug, meta.base, t('adeTasks.tasks.step.merge')))) return;
 		const ok = await ask(t('adeTasks.tasks.mergeAsk', { branch: this.branchOf(slug), base: meta.base, how }), { title: t('adeTasks.tasks.mergeTitle'), okLabel: t('adeTasks.tasks.mergeOk'), cancelLabel: t('common.cancel') });
 		if (!ok) return;
 		const r = await this.#step(slug, t('adeTasks.tasks.step.merge'), () => invoke<MergeResult>('worktree_merge', { slug, base: meta.base, mode }));

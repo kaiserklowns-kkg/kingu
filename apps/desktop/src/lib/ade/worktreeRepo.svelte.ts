@@ -10,6 +10,7 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
+import { confirmAgentIdle } from './agentGuard.svelte';
 
 /** Lines added / removed per path, unstaged and staged (`git_numstat`). */
 export type NumStat = { unstaged: Record<string, [number, number]>; staged: Record<string, [number, number]> };
@@ -87,7 +88,13 @@ export class WorktreeRepo implements ScmSource {
 		return this.#run('git_unstage', { paths: [...all] });
 	}
 
-	discard(paths: string[], deleteUntracked: boolean) {
+	/** Writes into the worktree: asks first while its agent works. */
+	async #agentOk(action: string) {
+		return !this.slug || confirmAgentIdle([this.slug], action);
+	}
+
+	async discard(paths: string[], deleteUntracked: boolean) {
+		if (!(await this.#agentOk(t('adeTasks.git.discardAction')))) return false;
 		return this.#run('git_discard', { paths, deleteUntracked, toTrash: settings.get<boolean>('git.discardUntrackedChangesToTrash') });
 	}
 
@@ -103,6 +110,7 @@ export class WorktreeRepo implements ScmSource {
 					: op === 'fetch'
 						? { options: fetchOptions(get) }
 						: { options: pushOptions(get) };
+		if ((op === 'pull' || op === 'sync') && !(await this.#agentOk(op))) return false;
 		const ok = await this.#run(`git_${op}`, args);
 		if (ok) status.flash(t('adeTasks.git.remoteDone', { op, branch: this.repo?.branch ?? this.slug }));
 		return ok;
@@ -118,6 +126,7 @@ export class WorktreeRepo implements ScmSource {
 			status.flash(this.groups.changes.length ? t('adeTasks.git.nothingStaged') : t('adeTasks.git.nothingToCommit'));
 			return;
 		}
+		if (!(await this.#agentOk(t('adeTasks.tasks.step.commit')))) return;
 		if (await this.#run('git_commit', { message, options: commitOptions((id) => settings.get(id), { amend }) })) {
 			this.message = '';
 			const branch = this.repo?.branch ?? this.slug;
