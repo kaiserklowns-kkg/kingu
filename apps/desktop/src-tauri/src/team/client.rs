@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use super::payload::TaskSync;
+use super::outbox::Item;
 
 /// Keychain service name for team tokens; the account is the normalized server URL.
 pub const KEYCHAIN_SERVICE: &str = "dev.kingu.team";
@@ -54,23 +54,26 @@ pub enum SendError {
 }
 
 pub fn classify(status: u16, body: &str) -> Result<(), SendError> {
-  let detail = || {
-    let code = serde_json::from_str::<serde_json::Value>(body)
+  let code = || {
+    serde_json::from_str::<serde_json::Value>(body)
       .ok()
       .and_then(|v| v["error"]["code"].as_str().map(str::to_owned))
-      .unwrap_or_default();
-    format!("HTTP {status} {code}").trim().to_owned()
+      .unwrap_or_default()
   };
+  let detail = || format!("HTTP {status} {}", code()).trim().to_owned();
   match status {
     200..=299 => Ok(()),
     401 | 403 => Err(SendError::Unauthorized(detail())),
     408 | 429 | 500..=599 => Err(SendError::Retryable(detail())),
+    // A run whose task has not reached the server yet: the task is sent first, so retry.
+    409 if code() == "task_not_synced" => Err(SendError::Retryable(detail())),
     _ => Err(SendError::Permanent(detail())),
   }
 }
 
 pub trait Transport: Send + Sync {
-  fn put_task(&self, server: &str, token: &str, project: &str, task: &TaskSync) -> Result<(), SendError>;
+  /// Delivers one task or run state.
+  fn put(&self, server: &str, token: &str, project: &str, item: &Item) -> Result<(), SendError>;
 }
 
 pub trait TokenStore: Send + Sync {
@@ -149,13 +152,17 @@ pub fn server_message(body: &str) -> Option<String> {
 }
 
 impl Transport for HttpTransport {
-  fn put_task(&self, server: &str, token: &str, project: &str, task: &TaskSync) -> Result<(), SendError> {
-    // client_task_id matches [A-Za-z0-9._:-], which is path-safe.
+  fn put(&self, server: &str, token: &str, project: &str, item: &Item) -> Result<(), SendError> {
+    // Client task and run ids match [A-Za-z0-9._:-], which is path-safe.
+    let (url, body) = match item {
+      Item::Task(t) => (format!("{server}/v1/tasks/{}/sync", t.client_task_id), t.wire_body(project)),
+      Item::Run(r) => (format!("{server}/v1/tasks/{}/runs/{}/sync", r.client_task_id, r.client_run_id), r.wire_body(project)),
+    };
     let res = self
       .client
-      .put(format!("{server}/v1/tasks/{}/sync", task.client_task_id))
+      .put(url)
       .bearer_auth(token)
-      .json(&task.wire_body(project))
+      .json(&body)
       .send()
       .map_err(|e| SendError::Retryable(e.without_url().to_string()))?;
     let status = res.status().as_u16();
@@ -229,6 +236,8 @@ mod tests {
     assert!(matches!(classify(429, ""), Err(SendError::Retryable(_))));
     assert!(matches!(classify(503, ""), Err(SendError::Retryable(_))));
     assert!(matches!(classify(422, ""), Err(SendError::Permanent(_))));
+    assert!(matches!(classify(409, r#"{"error":{"code":"task_not_synced"}}"#), Err(SendError::Retryable(m)) if m == "HTTP 409 task_not_synced"));
+    assert!(matches!(classify(409, r#"{"error":{"code":"conflict"}}"#), Err(SendError::Permanent(_))));
     assert!(matches!(classify(404, ""), Err(SendError::Permanent(_))));
   }
 }

@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { buildTaskSync, clientTaskId, teamStatusLabel, type TeamStatus } from './team';
+import { buildRunSync, buildTaskSync, clientTaskId, issueSource, teamStatusLabel, type TeamRunInput, type TeamStatus } from './team';
 
 const now = new Date('2026-10-17T10:00:00.000Z');
 
@@ -51,4 +51,70 @@ describe('teamStatusLabel', () => {
 		expect(teamStatusLabel('https://t.example', s({ stream: 'off' }))?.tooltip).toContain('อัปเดตสด: ปิด');
 	});
 	test('signed out', () => expect(teamStatusLabel('https://t.example', s({ signed_in: false }))?.text).toBe('ทีม: ยังไม่ได้ลงชื่อเข้าใช้'));
+});
+
+describe('issueSource', () => {
+	test('GitHub issues name their repository when the URL is github.com', () => {
+		expect(issueSource({ number: 42, url: 'https://github.com/acme/app/issues/42', provider: 'github' })).toEqual({ source: 'github', external_ref: 'acme/app#42' });
+		// Links saved before Linear have no provider: GitHub.
+		expect(issueSource({ number: 7, url: 'https://github.com/acme/app/issues/7?x=1' })).toEqual({ source: 'github', external_ref: 'acme/app#7' });
+		expect(issueSource({ number: 7, url: 'https://ghe.example.com/acme/app/issues/7' })).toEqual({ source: 'github', external_ref: '#7' });
+	});
+
+	test('Linear uses the identifier; bad links are left out', () => {
+		expect(issueSource({ number: 123, url: 'https://linear.app/acme/issue/ENG-123/x', provider: 'linear', key: 'ENG-123' })).toEqual({ source: 'linear', external_ref: 'ENG-123' });
+		expect(issueSource({ number: 1, url: 'https://linear.app/x', provider: 'linear' })).toBeUndefined();
+		expect(issueSource({ number: 0, url: 'https://github.com/a/b/issues/0' })).toBeUndefined();
+		expect(issueSource(null)).toBeUndefined();
+	});
+
+	test('buildTaskSync carries the issue', () => {
+		const p = buildTaskSync({ id: 't', title: 'Fix', status: 'review', issue: { number: 42, url: 'https://github.com/acme/app/issues/42' } }, now);
+		expect(p).toMatchObject({ source: 'github', external_ref: 'acme/app#42' });
+		expect(buildTaskSync({ id: 't', title: 'Fix', status: 'review' }, now)).not.toHaveProperty('source');
+	});
+});
+
+describe('buildRunSync', () => {
+	const run: TeamRunInput = {
+		taskId: 'shop web:fix-login',
+		agent: 'claude-code',
+		model: 'claude-opus-5-5',
+		status: 'done',
+		startedAt: Date.parse('2026-10-17T09:00:00Z'),
+		at: Date.parse('2026-10-17T09:05:00Z'),
+		inputTokens: 1500,
+		outputTokens: 300,
+		costUsd: 0.4213
+	};
+
+	test('maps a run to the payload, keyed by its start', () => {
+		expect(buildRunSync(run, now)).toEqual({
+			client_task_id: 'shop-web:fix-login',
+			client_run_id: String(Date.parse('2026-10-17T09:00:00Z')),
+			adapter: 'claude-code',
+			model: 'claude-opus-5-5',
+			exit_reason: 'done',
+			started_at: '2026-10-17T09:00:00.000Z',
+			ended_at: '2026-10-17T09:05:00.000Z',
+			input_tokens: 1500,
+			output_tokens: 300,
+			cost_usd: 0.4213,
+			updated_at: now.toISOString()
+		});
+	});
+
+	test('only finished turns and ended runs; unknown cost is left out', () => {
+		expect(buildRunSync({ ...run, status: 'running' }, now)).toBeNull();
+		expect(buildRunSync({ ...run, status: 'waiting' }, now)).toBeNull();
+		expect(buildRunSync({ ...run, status: 'idle' }, now)?.exit_reason).toBe('idle');
+		expect(buildRunSync({ ...run, startedAt: 0 }, now)).toBeNull();
+		const p = buildRunSync({ ...run, costUsd: null, inputTokens: null, outputTokens: undefined, model: null }, now)!;
+		expect(p).not.toHaveProperty('cost_usd');
+		expect(p).not.toHaveProperty('model');
+		expect([p.input_tokens, p.output_tokens]).toEqual([0, 0]);
+		expect(buildRunSync({ ...run, costUsd: Number.NaN }, now)).not.toHaveProperty('cost_usd');
+		// A turn end before the start (clock step) is clamped.
+		expect(buildRunSync({ ...run, at: run.startedAt - 1000 }, now)?.ended_at).toBe('2026-10-17T09:00:00.000Z');
+	});
 });

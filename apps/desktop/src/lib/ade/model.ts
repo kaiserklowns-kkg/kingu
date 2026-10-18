@@ -48,6 +48,8 @@ export type RunSummary = {
 	input_tokens: number | null;
 	output_tokens: number | null;
 	num_turns: number | null;
+	/** Unix ms the run (agent process) started; the team server's run id. Older summaries lack it. */
+	started_at?: number | null;
 };
 
 /**
@@ -285,11 +287,12 @@ export function toTaskRuntime(run: RunView, updatedAt?: number): TaskRuntime {
 	};
 }
 
-/** What tasks.json keeps of a run: written after each turn and when the run ends. */
-export function runSummary(run: RunView, now: number): RunSummary {
+/** What tasks.json keeps of a run: written after each turn and when the run ends. `startedAt`: the run's start (Unix ms). */
+export function runSummary(run: RunView, now: number, startedAt?: number): RunSummary {
 	const r = run.result;
 	const u = r?.usage;
 	return {
+		...(startedAt !== undefined ? { started_at: startedAt } : {}),
 		status: run.status,
 		at: now,
 		summary: lastEventOf({ ...run, pending: [] }) ?? null,

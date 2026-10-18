@@ -6,7 +6,7 @@
 // destructive steps with a native dialog and report results in the status bar.
 
 import { team } from '#lib/team/team.svelte.ts';
-import { syncKey, toTeamTask } from './teamSync.ts';
+import { runKey, syncKey, toTeamRun, toTeamTask } from './teamSync.ts';
 import { untrack } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
 import { ask, message } from '#lib/workbench/messageBox.ts';
@@ -663,7 +663,7 @@ class AdeTasks {
 		if (rt.model && rt.model !== meta.model) patch.model = rt.model;
 		if (run.sessionId && run.sessionId !== meta.session_id) patch.session_id = run.sessionId;
 		if (run.ended || run.status === 'idle') {
-			const summary = runSummary(run, Date.now());
+			const summary = runSummary(run, Date.now(), run.startedAt);
 			if (!sameSummary(summary, meta.last_run)) patch.last_run = summary;
 		}
 		if (Object.keys(patch).length) void this.#patch(slug, patch);
@@ -1062,17 +1062,26 @@ export function installAde(): () => void {
 				void diffNotes.load();
 			});
 		});
-		// Team server: send each task's metadata when its status, branch or diff stats change.
+		// Team server: send each task's metadata when its status, branch or diff stats change, and
+		// its latest run's timings, tokens and cost after each turn and when the run ends.
 		const teamSent = new Map<string, string>();
+		const teamRunSent = new Map<string, string>();
 		$effect(() => {
 			if (!adeTasks.loaded || !workspace.root) return;
 			const folder = workspace.name;
 			for (const view of adeTasks.views) {
 				const task = toTeamTask(view, folder, adeTasks.branchOf(view.meta.slug));
 				const key = syncKey(task);
-				if (teamSent.get(task.id) === key) continue;
-				teamSent.set(task.id, key);
-				untrack(() => void team.syncTask(task));
+				if (teamSent.get(task.id) !== key) {
+					teamSent.set(task.id, key);
+					untrack(() => void team.syncTask(task));
+				}
+				const run = toTeamRun(view, folder);
+				if (!run) continue;
+				const rkey = runKey(run);
+				if (teamRunSent.get(task.id) === rkey) continue;
+				teamRunSent.set(task.id, rkey);
+				untrack(() => void team.syncRun(run));
 			}
 		});
 		// "Unread": a session counts as seen while its task page is in front (tab or Agents layout).

@@ -173,6 +173,10 @@ describe('agents store → TaskRuntime adapter', () => {
 		const s = runSummary(run([init, ok, exit()]), 5000);
 		expect(s).toEqual({ status: 'done', at: 5000, summary: 'agent ทำงานเสร็จ', error: null, cost_usd: 0.1, input_tokens: 1500, output_tokens: 200, num_turns: 2 });
 		expect(formatSummaryUsage(s)).toBe('$0.1000 · 1.5k in · 200 out · 2 turns');
+		// The run's start (team sync's run id) is kept when known; a new run is a different summary.
+		const started = runSummary(run([init, ok, exit()]), 5000, 1234);
+		expect(started.started_at).toBe(1234);
+		expect(sameSummary(started, { ...started, started_at: 9999 })).toBe(false);
 		expect(sameSummary(s, { ...s, at: 9 })).toBe(true);
 		expect(sameSummary(s, { ...s, status: 'stopped' })).toBe(false);
 		expect(sameSummary(s, null)).toBe(false);

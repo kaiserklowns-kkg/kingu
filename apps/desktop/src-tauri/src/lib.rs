@@ -1391,6 +1391,7 @@ pub fn run() {
       team::team_sign_out,
       team::team_status,
       team::team_sync_task,
+      team::team_sync_run,
       team::team_sync_now,
       team::team_events_start,
       team::team_events_stop,

@@ -1,24 +1,84 @@
-//! Durable outbox of task states waiting to reach the team server. Persisted as JSON under the
-//! app data dir (temp file + rename, so a crash never leaves half a file), coalesced per task so
-//! only the newest state of each task is kept, and bounded.
+//! Durable outbox of task and run states waiting to reach the team server. Persisted as JSON
+//! under the app data dir (temp file + rename, so a crash never leaves half a file), coalesced per
+//! task (and per run) so only the newest state of each is kept, and bounded.
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::payload::TaskSync;
+use super::payload::{RunSync, TaskSync};
 
 /// Hard cap on queued tasks; the oldest are dropped first.
 pub const MAX_ENTRIES: usize = 1000;
 const BASE_BACKOFF_MS: u64 = 1_000;
 const MAX_BACKOFF_MS: u64 = 5 * 60 * 1000;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// What an entry delivers. Stored as `"task": {...}` or `"run": {...}` next to the entry's own
+/// fields, so outbox files written before runs existed still load.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Item {
+  #[serde(rename = "task")]
+  Task(TaskSync),
+  #[serde(rename = "run")]
+  Run(RunSync),
+}
+
+impl Item {
+  pub fn validate(&self) -> Result<(), String> {
+    match self {
+      Item::Task(t) => t.validate(),
+      Item::Run(r) => r.validate(),
+    }
+  }
+
+  /// Client time of this state (newest wins).
+  pub fn updated_at(&self) -> &str {
+    match self {
+      Item::Task(t) => &t.updated_at,
+      Item::Run(r) => &r.updated_at,
+    }
+  }
+
+  /// Coalescing key: the task, or the task's run.
+  fn key(&self) -> (&str, Option<&str>) {
+    match self {
+      Item::Task(t) => (&t.client_task_id, None),
+      Item::Run(r) => (&r.client_task_id, Some(&r.client_run_id)),
+    }
+  }
+
+  pub fn is_run(&self) -> bool {
+    matches!(self, Item::Run(_))
+  }
+
+  /// For logs: ids only.
+  pub fn label(&self) -> String {
+    match self.key() {
+      (task, None) => task.to_owned(),
+      (task, Some(run)) => format!("{task} run {run}"),
+    }
+  }
+}
+
+impl From<TaskSync> for Item {
+  fn from(t: TaskSync) -> Self {
+    Item::Task(t)
+  }
+}
+
+impl From<RunSync> for Item {
+  fn from(r: RunSync) -> Self {
+    Item::Run(r)
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Entry {
   /// Normalized server base URL (see `client::normalize_server_url`).
   pub server: String,
   pub project: String,
-  pub task: TaskSync,
+  #[serde(flatten)]
+  pub item: Item,
   #[serde(default)]
   pub attempts: u32,
   /// Unix ms before which the entry is not retried.
@@ -29,12 +89,25 @@ pub struct Entry {
 }
 
 impl Entry {
-  pub fn new(server: String, project: String, task: TaskSync) -> Self {
-    Self { server, project, task, attempts: 0, next_attempt_ms: 0, last_error: None }
+  pub fn new(server: String, project: String, item: impl Into<Item>) -> Self {
+    Self { server, project, item: item.into(), attempts: 0, next_attempt_ms: 0, last_error: None }
   }
 
-  fn same_task(&self, other: &Entry) -> bool {
-    self.server == other.server && self.project == other.project && self.task.client_task_id == other.task.client_task_id
+  fn same_key(&self, other: &Entry) -> bool {
+    self.server == other.server && self.project == other.project && self.item.key() == other.item.key()
+  }
+
+  /// `other` is this very state (not a newer one of the same task or run).
+  fn same_state(&self, other: &Entry) -> bool {
+    self.same_key(other) && self.item == other.item
+  }
+
+  #[cfg(test)]
+  pub fn task(&self) -> &TaskSync {
+    match &self.item {
+      Item::Task(t) => t,
+      Item::Run(_) => panic!("not a task entry"),
+    }
   }
 }
 
@@ -62,7 +135,7 @@ impl Outbox {
   pub fn load(path: PathBuf) -> Self {
     let entries = match std::fs::read(&path) {
       Ok(bytes) => match serde_json::from_slice::<File>(&bytes) {
-        Ok(f) => f.entries.into_iter().filter(|e| e.task.validate().is_ok()).collect(),
+        Ok(f) => f.entries.into_iter().filter(|e| e.item.validate().is_ok()).collect(),
         Err(e) => {
           log::warn!("team outbox {} unreadable ({e}); moving aside", path.display());
           let _ = std::fs::rename(&path, path.with_extension("json.corrupt"));
@@ -93,11 +166,12 @@ impl Outbox {
     self.entries.iter().filter(|e| e.server == server).count()
   }
 
-  /// Queues a task state. A newer state replaces a queued older one for the same task (and
-  /// resets its backoff); an older state than the queued one is ignored. Returns false if ignored.
+  /// Queues a task or run state. A newer state replaces a queued older one for the same task or
+  /// run (and resets its backoff); an older state than the queued one is ignored. Returns false if
+  /// ignored.
   pub fn enqueue(&mut self, entry: Entry) -> bool {
-    if let Some(existing) = self.entries.iter_mut().find(|e| e.same_task(&entry)) {
-      if entry.task.updated_at < existing.task.updated_at {
+    if let Some(existing) = self.entries.iter_mut().find(|e| e.same_key(&entry)) {
+      if entry.item.updated_at() < existing.item.updated_at() {
         return false;
       }
       *existing = entry;
@@ -106,16 +180,17 @@ impl Outbox {
     self.entries.push(entry);
     if self.entries.len() > MAX_ENTRIES {
       let drop = self.entries.len() - MAX_ENTRIES;
-      log::warn!("team outbox full; dropping {drop} oldest task states");
+      log::warn!("team outbox full; dropping {drop} oldest states");
       self.entries.drain(..drop);
     }
     true
   }
 
-  /// Entries whose retry time has come, oldest first.
+  /// Entries whose retry time has come: tasks before runs (a run needs its task on the server),
+  /// oldest first within each.
   pub fn due(&self, now_ms: u64) -> Vec<Entry> {
     let mut due: Vec<Entry> = self.entries.iter().filter(|e| e.next_attempt_ms <= now_ms).cloned().collect();
-    due.sort_by_key(|e| e.next_attempt_ms);
+    due.sort_by_key(|e| (e.item.is_run(), e.next_attempt_ms));
     due
   }
 
@@ -126,15 +201,15 @@ impl Outbox {
 
   /// The server accepted `sent`. Removes it unless a newer state was queued meanwhile.
   pub fn complete(&mut self, sent: &Entry) {
-    self.entries.retain(|e| !(e.same_task(sent) && e.task == sent.task));
+    self.entries.retain(|e| !e.same_state(sent));
   }
 
   /// Sending `sent` failed. Retryable failures back off; permanent ones (validation, 4xx) are
   /// dropped so one bad state cannot block the queue.
   pub fn fail(&mut self, sent: &Entry, now_ms: u64, error: &str, retryable: bool) {
-    let Some(i) = self.entries.iter().position(|e| e.same_task(sent) && e.task == sent.task) else { return };
+    let Some(i) = self.entries.iter().position(|e| e.same_state(sent)) else { return };
     if !retryable {
-      log::warn!("team sync dropped {}: {error}", sent.task.client_task_id);
+      log::warn!("team sync dropped {}: {error}", sent.item.label());
       self.entries.remove(i);
       return;
     }
@@ -188,7 +263,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-  use super::super::payload::sample;
+  use super::super::payload::{sample, sample_run};
   use super::*;
 
   const S: &str = "https://team.example.com";
@@ -206,7 +281,54 @@ mod tests {
     assert!(o.enqueue(entry("a", "review", "2026-10-17T10:01:00Z")));
     assert!(!o.enqueue(entry("a", "running", "2026-10-17T09:59:00Z")), "older state ignored");
     assert_eq!(o.len(), 2);
-    assert_eq!(o.entries()[0].task.status, "review");
+    assert_eq!(o.entries()[0].task().status, "review");
+  }
+
+  fn run_entry(task: &str, run: &str, at: &str) -> Entry {
+    Entry::new(S.into(), P.into(), sample_run(task, run, at))
+  }
+
+  #[test]
+  fn runs_coalesce_per_run_and_go_after_tasks() {
+    let mut o = Outbox::in_memory();
+    assert!(o.enqueue(run_entry("a", "r1", "2026-10-17T10:00:00Z")));
+    assert!(o.enqueue(entry("a", "running", "2026-10-17T10:00:00Z")));
+    assert!(o.enqueue(run_entry("a", "r2", "2026-10-17T10:00:00Z")));
+    let mut newer = run_entry("a", "r1", "2026-10-17T10:01:00Z");
+    if let Item::Run(r) = &mut newer.item {
+      r.cost_usd = Some(1.5);
+    }
+    assert!(o.enqueue(newer));
+    assert!(!o.enqueue(run_entry("a", "r1", "2026-10-17T09:00:00Z")), "older run state ignored");
+    assert_eq!(o.len(), 3, "task + two runs; a run does not replace its task");
+    let due = o.due(0);
+    assert!(!due[0].item.is_run(), "the task goes first");
+    let r1 = due.iter().find_map(|e| match &e.item {
+      Item::Run(r) if r.client_run_id == "r1" => Some(r),
+      _ => None,
+    });
+    assert_eq!(r1.unwrap().cost_usd, Some(1.5));
+  }
+
+  #[test]
+  fn reads_outbox_files_from_before_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("team-outbox.json");
+    let old = serde_json::json!({"version": 1, "entries": [{
+      "server": S, "project": P, "attempts": 2, "next_attempt_ms": 5, "last_error": "503",
+      "task": {"client_task_id": "a", "title": "t", "status": "running", "updated_at": "2026-10-17T10:00:00Z"}
+    }]});
+    std::fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
+    let o = Outbox::load(path.clone());
+    assert_eq!(o.len(), 1);
+    assert_eq!((o.entries()[0].task().client_task_id.as_str(), o.entries()[0].attempts), ("a", 2));
+    // Runs round-trip next to tasks.
+    let mut o = o;
+    o.enqueue(run_entry("a", "r1", "2026-10-17T10:00:00Z"));
+    o.save().unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("\"run\"") && text.contains("\"task\""));
+    assert_eq!(Outbox::load(path).entries(), o.entries());
   }
 
   #[test]
@@ -244,7 +366,7 @@ mod tests {
     o.enqueue(entry("a", "done", "2026-10-17T10:05:00Z"));
     o.complete(&in_flight);
     assert_eq!(o.len(), 1);
-    assert_eq!(o.entries()[0].task.status, "done");
+    assert_eq!(o.entries()[0].task().status, "done");
     // A failure report for the stale in-flight state doesn't touch the newer one either.
     o.fail(&in_flight, 0, "x", false);
     assert_eq!(o.len(), 1);
@@ -266,7 +388,7 @@ mod tests {
       o.enqueue(entry(&format!("t{i}"), "running", "2026-10-17T10:00:00Z"));
     }
     assert_eq!(o.len(), MAX_ENTRIES);
-    assert_eq!(o.entries()[0].task.client_task_id, "t5");
+    assert_eq!(o.entries()[0].task().client_task_id, "t5");
   }
 
   #[test]
@@ -305,8 +427,15 @@ mod tests {
     let mut o = Outbox::load(path.clone());
     o.enqueue(entry("ok", "running", "2026-10-17T10:00:00Z"));
     let mut bad = entry("bad", "running", "2026-10-17T10:00:00Z");
-    bad.task.title = "diff --git a/x b/x".into();
+    if let Item::Task(t) = &mut bad.item {
+      t.title = "diff --git a/x b/x".into();
+    }
     o.entries.push(bad);
+    let mut bad_run = run_entry("bad", "r", "2026-10-17T10:00:00Z");
+    if let Item::Run(r) = &mut bad_run.item {
+      r.cost_usd = Some(-1.0);
+    }
+    o.entries.push(bad_run);
     o.save().unwrap();
     assert_eq!(Outbox::load(path).len(), 1);
   }
