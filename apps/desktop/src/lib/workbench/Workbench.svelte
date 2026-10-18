@@ -41,6 +41,7 @@
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 	import { installAgentsMode } from '#lib/ade/agentsMode.svelte.ts';
 	import { installWorktreeCommands } from '#lib/ade/worktreeMenu.svelte.ts';
+	import { installAgentNotifications } from '#lib/ade/agentNotify.svelte.ts';
 	import { installSnaps } from '#lib/snaps/snaps.svelte.ts';
 
 	// Opening a file or diff (Quick Open, a review file, settings.json) closes the system settings page.
@@ -188,6 +189,7 @@
 		const uninstallAde = installAde();
 		const uninstallAgentsMode = installAgentsMode();
 		const uninstallWorktreeCommands = installWorktreeCommands();
+		const uninstallAgentNotifications = installAgentNotifications();
 		const uninstallLayout = installLayoutCommands();
 		const uninstallSnaps = installSnaps();
 		return () => {
@@ -195,6 +197,7 @@
 			uninstallLayout();
 			uninstallAgentsMode();
 			uninstallWorktreeCommands();
+			uninstallAgentNotifications();
 			uninstallAde();
 			uninstallMenu();
 			uninstall();

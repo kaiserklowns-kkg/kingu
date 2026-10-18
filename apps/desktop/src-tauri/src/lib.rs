@@ -376,6 +376,7 @@ fn fs_reveal(ws: State<'_, Workspace>, rel: String) -> Result<(), String> {
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
+    .plugin(tauri_plugin_notification::init())
     .manage(Workspace::default())
     .manage(watcher::FileWatcher::default())
     .manage(pty::Ptys::default())
