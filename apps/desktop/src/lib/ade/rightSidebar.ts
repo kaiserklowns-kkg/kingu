@@ -21,6 +21,17 @@ export const RIGHT_TABS: RightTabInfo[] = [
 
 export const isRightTab = (v: unknown): v is RightTab => RIGHT_TABS.some((t) => t.id === v);
 
+/** Saved tabs per folder are capped at this many worktrees (the most recently set kept). */
+export const SAVED_TABS_MAX = 200;
+
+/** A saved `{ worktree: tab }` map read back: unknown tabs dropped, and the newest
+ * `SAVED_TABS_MAX` worktrees kept (keys are in insertion order, newest last). */
+export function cleanTabs(v: unknown): Record<string, RightTab> {
+	if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+	const ok = Object.entries(v as Record<string, unknown>).filter((e): e is [string, RightTab] => isRightTab(e[1]));
+	return Object.fromEntries(ok.slice(-SAVED_TABS_MAX));
+}
+
 /** The tabs a worktree shows, and the one in front (a hidden tab falls back to Explorer). */
 export function visibleTabs(isGit: boolean, wanted: RightTab, isTask = false): { tabs: RightTabInfo[]; active: RightTab } {
 	const tabs = RIGHT_TABS.filter((t) => (isGit || !t.gitOnly) && (isTask || !t.taskOnly));

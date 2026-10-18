@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { COLORS, fileDecorations } from '#lib/workbench/scm.ts';
 import type { FileMatches } from '#lib/workbench/searchResults.ts';
-import { contentRows, contentSummary, filesOf, fold, isRightTab, nameMatches, RIGHT_TABS, rowLook, toggleTab, touchesWorktree, treeRows, visibleTabs, shellJoin, sortSessions } from './rightSidebar.ts';
+import { cleanTabs, SAVED_TABS_MAX, contentRows, contentSummary, filesOf, fold, isRightTab, nameMatches, RIGHT_TABS, rowLook, toggleTab, touchesWorktree, treeRows, visibleTabs, shellJoin, sortSessions } from './rightSidebar.ts';
 
 describe('Agents tab', () => {
 	const v = (slug: string, created_at: number, updated_at: number) => ({ meta: { slug, created_at, updated_at } });
@@ -130,4 +130,14 @@ describe('row look', () => {
 		expect(rowLook('docs', false, decos)).toEqual({ ignored: false, deco: { letter: '', color: '#73C991' } });
 		expect(rowLook('README.md', false, decos)).toEqual({ ignored: false, deco: undefined });
 	});
+});
+
+test('saved tabs are read back safely', () => {
+	expect(cleanTabs(null)).toEqual({});
+	expect(cleanTabs(['files'])).toEqual({});
+	expect(cleanTabs({ a: 'checks', b: 'bogus', '': 'agents' })).toEqual({ a: 'checks', '': 'agents' });
+	const many = Object.fromEntries(Array.from({ length: SAVED_TABS_MAX + 5 }, (_, i) => [`w${i}`, 'files']));
+	const kept = Object.keys(cleanTabs(many));
+	expect(kept.length).toBe(SAVED_TABS_MAX);
+	expect(kept[0]).toBe('w5');
 });

@@ -9,7 +9,7 @@ import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { scm } from '#lib/workbench/scm.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { adeLayout } from './adeLayout.svelte.ts';
-import { touchesWorktree, toggleTab, visibleTabs, type RightTab } from './rightSidebar.ts';
+import { cleanTabs, touchesWorktree, toggleTab, visibleTabs, type RightTab } from './rightSidebar.ts';
 import { adeTasks } from './tasks.svelte.ts';
 import { WorktreeRepo } from './worktreeRepo.svelte.ts';
 
@@ -26,7 +26,9 @@ const proxied = <T>(value: T): T => {
 
 const freshFind = (): FindState => ({ view: 'names', query: '', options: { matchCase: false, wholeWord: false, regex: false, include: '', exclude: '', details: false } });
 
-function readSaved(): { showDotfiles?: boolean; showIgnored?: boolean } {
+type Saved = { showDotfiles?: boolean; showIgnored?: boolean; tabs?: Record<string, unknown> };
+
+function readSaved(): Saved {
 	try {
 		return JSON.parse(localStorage.getItem(KEY) ?? '{}') ?? {};
 	} catch {
@@ -43,14 +45,22 @@ class RightSidebar {
 	focusFind = $state(0);
 	#repos = new Map<string, WorktreeRepo>();
 	#undo = new Map<string, FileUndo>();
+	/** The folder `#tabs` belongs to, and every other folder's saved tabs (Orca keeps the tab per worktree across restarts). */
+	#root: string | null = null;
+	#savedTabs: Record<string, unknown> = {};
 
 	constructor() {
 		const s = readSaved();
 		if (typeof s.showDotfiles === 'boolean') this.showDotfiles = s.showDotfiles;
 		if (typeof s.showIgnored === 'boolean') this.showIgnored = s.showIgnored;
+		if (s.tabs && typeof s.tabs === 'object') this.#savedTabs = s.tabs;
 		$effect.root(() => {
 			$effect(() => {
-				const snapshot = { showDotfiles: this.showDotfiles, showIgnored: this.showIgnored };
+				const all = { ...this.#savedTabs };
+				if (this.#root) (delete all[this.#root], (all[this.#root] = { ...this.#tabs }));
+				// The 50 most recently opened folders.
+				const tabs = Object.fromEntries(Object.entries(all).slice(-50));
+				const snapshot = { showDotfiles: this.showDotfiles, showIgnored: this.showIgnored, tabs };
 				try {
 					localStorage.setItem(KEY, JSON.stringify(snapshot));
 				} catch {
@@ -75,6 +85,8 @@ class RightSidebar {
 	}
 
 	setTab(key: string, tab: RightTab) {
+		// Re-inserted so the saved map keeps the most recently used worktrees last (see `cleanTabs`).
+		delete this.#tabs[key];
 		this.#tabs[key] = tab;
 	}
 
@@ -139,9 +151,11 @@ class RightSidebar {
 		return h;
 	}
 
-	/** Another folder: nothing of the old one's worktrees stays. */
-	reset() {
-		this.#tabs = {};
+	/** Another folder: nothing of the old one's worktrees stays, except the tabs saved for it. */
+	reset(root: string | null = workspace.root) {
+		if (this.#root) this.#savedTabs = { ...this.#savedTabs, [this.#root]: { ...this.#tabs } };
+		this.#root = root;
+		this.#tabs = root ? cleanTabs(this.#savedTabs[root]) : {};
 		this.#find.clear();
 		this.#repos.clear();
 		this.#undo.clear();
@@ -170,9 +184,10 @@ export function installRightSidebar(): () => void {
 	];
 	const unwatch = workspace.onAnyChange((paths) => rightSidebar.changed(paths));
 	let root = workspace.root;
+	rightSidebar.reset(root);
 	const stop = $effect.root(() => {
 		$effect(() => {
-			if (workspace.root !== root) rightSidebar.reset();
+			if (workspace.root !== root) rightSidebar.reset(workspace.root);
 			root = workspace.root;
 		});
 	});
