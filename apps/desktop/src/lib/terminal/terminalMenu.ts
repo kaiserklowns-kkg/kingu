@@ -14,6 +14,8 @@ export type MenuState = {
 	expanded?: boolean;
 	/** ADE: false for an agent CLI's own terminal, which cannot be split, retitled or closed from here. */
 	panes?: boolean;
+	/** ADE: `kingu.terminal.quickCommands` labels, offered as `quick:<index>` items (Orca's quick commands). */
+	quick?: string[];
 };
 
 /** Ids the terminal runs itself; the rest go to its owner (`onaction`). */
@@ -51,6 +53,7 @@ export function terminalMenu(flavor: TerminalFlavor, s: MenuState, keyLabel: (id
 		sep,
 		item('rename', 'Set Title…', keyLabel('rename')),
 		...(s.split ? [sep, item('closePane', 'Close Pane', keyLabel('closePane'))] : []),
+		...(s.quick?.length ? [sep, ...s.quick.map((label, i) => item(`quick:${i}`, `Run: ${label}`))] : []),
 		sep,
 		...clear
 	];

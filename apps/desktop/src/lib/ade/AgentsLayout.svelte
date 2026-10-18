@@ -19,7 +19,7 @@
 	import PaneSplitView from '#lib/terminal/PaneSplitView.svelte';
 	import { leaf } from '#lib/terminal/paneLayout.ts';
 	import { keyLabel, keyOf } from '#lib/workbench/keys.ts';
-	import { tabPanes } from './adeTabs.ts';
+	import { activePane, tabPanes } from './adeTabs.ts';
 	import { ADE_SHORTCUTS } from './adeShortcuts.ts';
 	import RecentTabSwitcher from './RecentTabSwitcher.svelte';
 	import Composer from '#lib/agent/Composer.svelte';
@@ -295,7 +295,7 @@
 			{#each list as t (t.id)}
 				<div class={['absolute inset-0 bg-(--vscode-terminal-background,var(--vscode-panel-background))', (adeLayout.board || k !== key || activeTab !== t.id) && 'hidden']}>
 					<!-- Orca's pane splits: every pane is its own PTY (`t<n>` ids; the first pane's id is the tab's). -->
-					<PaneSplitView tree={t.layout ?? leaf(t.id)} expanded={t.expanded ?? null} onresize={(path, ratio) => adeLayout.resizePane(k, t.id, path, ratio)}>
+					<PaneSplitView tree={t.layout ?? leaf(t.id)} expanded={t.expanded ?? null} active={activePane(t)} onresize={(path, ratio) => adeLayout.resizePane(k, t.id, path, ratio)}>
 						{#snippet pane(p)}
 							<Terminal
 								key={adeLayout.ptyKey(k, p)}

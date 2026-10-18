@@ -259,6 +259,7 @@ async fn git_show_head(ws: State<'_, Workspace>, rel: String) -> Result<String, 
 #[tauri::command(async)]
 #[allow(clippy::too_many_arguments)]
 fn pty_spawn(
+  app: AppHandle,
   ws: State<'_, Workspace>,
   ptys: State<'_, pty::Ptys>,
   accounts: State<'_, accounts::Accounts>,
@@ -277,7 +278,7 @@ fn pty_spawn(
   let inherited = cwd_from.as_deref().and_then(|from| ptys.live_cwd(from));
   // A task terminal starts in the task's worktree (the ADE's per-worktree terminals).
   // No folder open: the terminal starts in the home folder, like VS Code's empty window.
-  let cwd = match (inherited, slug) {
+  let cwd = match (inherited, slug.clone()) {
     (Some(dir), _) => dir,
     (None, Some(slug)) => {
       agent::worktree::validate_slug(&slug)?;
@@ -303,6 +304,19 @@ fn pty_spawn(
     env.extend(accounts::env_for_program(&accounts, program)?);
   }
   let shell = terminal.shell.as_deref().filter(|s| !s.trim().is_empty());
+  // kingu.terminal.scopeHistoryByWorktree (ADE terminals): history of their own per worktree.
+  if terminal.scope_history && !key.starts_with("cli:") {
+    let scope = match slug.as_deref() {
+      Some(s) => agent::worktree::worktree_path(&ws.root()?, s),
+      None => ws.current().unwrap_or_else(|| cwd.clone()),
+    };
+    let program = shell.map(str::to_owned).or_else(|| std::env::var("SHELL").ok()).unwrap_or_default();
+    let history = app.path().app_data_dir().map_err(|e| e.to_string())?.join("terminal-history");
+    match pty::scoped_history_env(&program, &history, &scope) {
+      Ok(vars) => env.extend(vars),
+      Err(e) => log::warn!("terminal history: {e}"),
+    }
+  }
   let attached = ptys.open(&key, &cwd, cols, rows, run.as_deref(), &env, shell, terminal.args.as_deref(), pty::channel_sink(on_data))?;
   if attached.spawned {
     log::info!("terminal {key} started ({cols}x{rows})");
@@ -321,6 +335,9 @@ struct TerminalSettings {
   args: Option<Vec<String>>,
   env: BTreeMap<String, String>,
   cwd: Option<String>,
+  /// `kingu.terminal.scopeHistoryByWorktree` for an ADE terminal.
+  #[serde(rename = "scopeHistory")]
+  scope_history: bool,
 }
 
 /// `files.watcherExclude`.

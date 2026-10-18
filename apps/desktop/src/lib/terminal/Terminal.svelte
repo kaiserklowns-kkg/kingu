@@ -19,7 +19,9 @@
 	import { FIND_TERMINAL_OPTIONS, HIGHLIGHT_LIMIT } from './find.ts';
 	import { cellText, detectLinks, linkHint, linkModifierDown, MAX_LINE, type TerminalLink } from './links.ts';
 	import { linkTarget, openUrl } from './pty.ts';
-	import { registerTerminal } from './registry.ts';
+	import { registerTerminal, touchTerminal } from './registry.ts';
+	import { bindAdeTerminal, copiedSelection, type AdeBinding } from './adeTerminal.svelte.ts';
+	import { quickCommandInput, quickCommands } from './adeTerminalOptions.ts';
 	import { isBuiltin, terminalMenu, type MenuState, type TerminalFlavor } from './terminalMenu.ts';
 
 	/**
@@ -83,7 +85,7 @@
 	function runBuiltin(id: string) {
 		if (!term) return;
 		if (id === 'copy') {
-			const text = term.getSelection();
+			const text = copiedSelection(term, flavor === 'ade');
 			if (text) void navigator.clipboard?.writeText(text).catch(() => {});
 		} else if (id === 'paste') {
 			void navigator.clipboard
@@ -106,14 +108,24 @@
 			clear: flavor === 'ade' || isMac ? keyLabel('cmd+k') : undefined,
 			...keyLabels
 		};
-		const items = terminalMenu(flavor, { hasSelection: term.hasSelection(), ...menuState?.() }, (id) => labels[id]);
+		const quick = flavor === 'ade' ? quickCommands(settings.get<Record<string, unknown>>('kingu.terminal.quickCommands')) : [];
+		const items = terminalMenu(flavor, { hasSelection: term.hasSelection(), quick: quick.map((q) => q.label), ...menuState?.() }, (id) => labels[id]);
 		menu = { x: e.clientX, y: e.clientY, items };
 	}
 
 	function runMenu(node: MenuNode) {
 		if (node.type !== 'item') return;
 		if (isBuiltin(node.id)) runBuiltin(node.id);
+		else if (node.id.startsWith('quick:')) runQuick(Number(node.id.slice(6)));
 		else onaction?.(node.id);
+	}
+
+	/** A `kingu.terminal.quickCommands` entry typed into this shell (Orca's quick commands). */
+	function runQuick(index: number) {
+		const q = quickCommands(settings.get<Record<string, unknown>>('kingu.terminal.quickCommands'))[index];
+		if (!q) return;
+		invoke('pty_write', { key, data: quickCommandInput(q.command) }).catch((e) => status.flash(`รันคำสั่งไม่ได้: ${e}`));
+		term?.focus();
 	}
 
 	onMount(() => {
@@ -140,6 +152,9 @@
 		t.loadAddon(finder);
 		t.open(host);
 		fit.fit();
+		const unbindSettings = bindTerminalSettings(t, () => fit.fit());
+		// Orca's Terminal page (kingu.terminal.*) for ADE terminals; the IDE panel keeps VS Code's behaviour.
+		const ade: AdeBinding | null = flavor === 'ade' ? bindAdeTerminal(t, host, root, () => fit.fit()) : null;
 
 		let live = false;
 		let disposed = false;
@@ -158,7 +173,13 @@
 		}
 		function connected(a: Attached) {
 			if (disposed) return;
-			if (a.replay) t.write(a.replay);
+			if (a.replay) {
+				// Replayed output must not re-run an old OSC 52 clipboard write.
+				if (ade) ade.replaying = true;
+				t.write(a.replay, () => {
+					if (ade) ade.replaying = false;
+				});
+			}
 			for (const chunk of early) t.write(chunk);
 			early = [];
 			live = true;
@@ -185,7 +206,11 @@
 			spawning = true;
 			fit.fit();
 			// terminal.integrated.shell / shellArgs / env / cwd (user settings) for the new shell.
-			const terminal = shellFrom((id) => settings.get(id), shellPlatform());
+			const terminal = {
+				...shellFrom((id) => settings.get(id), shellPlatform()),
+				// kingu.terminal.scopeHistoryByWorktree: an ADE shell keeps its own history per worktree.
+				scopeHistory: flavor === 'ade' && settings.get<boolean>('kingu.terminal.scopeHistoryByWorktree') !== false
+			};
 			invoke<Attached>('pty_spawn', { key, cols: t.cols, rows: t.rows, onData: channel(), slug: slug ?? null, run: run ?? null, terminal, cwdFrom: cwdFrom ?? null })
 				.then((a) => (connected(a), void system.refresh()))
 				.catch(failed);
@@ -218,7 +243,6 @@
 				t.focus();
 			}
 		});
-				const unbindSettings = bindTerminalSettings(t, () => fit.fit());
 		const observer = new ResizeObserver(() => {
 			fit.fit();
 			start();
@@ -282,7 +306,10 @@
 			};
 		}
 
-		const onFocus = () => onfocus?.();
+		const onFocus = () => {
+			touchTerminal(key);
+			onfocus?.();
+		};
 		t.textarea?.addEventListener('focus', onFocus);
 		const unregister = registerTerminal({
 			key,
@@ -291,7 +318,8 @@
 			focus: () => t.focus(),
 			find: openFind,
 			clear: () => t.clear(),
-			selectAll: () => t.selectAll()
+			selectAll: () => t.selectAll(),
+			write: (data) => void invoke('pty_write', { key, data }).catch((e) => status.flash(`พิมพ์ลง terminal ไม่ได้: ${e}`))
 		});
 
 		// No pty_kill here: an unmount is also what a page reload does, and the shell must outlive it.
@@ -303,6 +331,7 @@
 			t.textarea?.removeEventListener('focus', onFocus);
 			observer.disconnect();
 			unbindSettings();
+			ade?.dispose();
 			links.dispose();
 			input.dispose();
 			resized.dispose();
@@ -316,7 +345,7 @@
 	}
 </script>
 
-<div bind:this={root} class="relative h-full w-full" role="presentation" oncontextmenu={openMenu}>
+<div bind:this={root} class="relative h-full w-full" role="presentation" data-ade-terminal={flavor === 'ade' ? '' : undefined} oncontextmenu={openMenu}>
 	<div bind:this={host} class="h-full w-full px-2 pt-1"></div>
 	{#if finding && term && search}
 		<TerminalFind {term} {search} {flavor} seed={findSeed} request={findRequest} onclose={() => (finding = false)} />
@@ -334,3 +363,11 @@
 {#if menu}
 	<PopupMenu items={menu.items} label="Terminal" x={menu.x} y={menu.y} onRun={runMenu} onClose={() => (menu = null)} />
 {/if}
+
+<style>
+	/* kingu.terminal.mouseHideWhileTyping */
+	:global(.kingu-mouse-hidden),
+	:global(.kingu-mouse-hidden *) {
+		cursor: none !important;
+	}
+</style>

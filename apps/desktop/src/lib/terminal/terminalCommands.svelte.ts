@@ -4,8 +4,24 @@
 import { commands } from '#lib/workbench/commands.svelte.ts';
 import { layout } from '#lib/workbench/layout.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
-import { focusedTerminal, terminalHandle } from './registry.ts';
+import { quick } from '#lib/workbench/quick.svelte.ts';
+import { status } from '#lib/workbench/status.svelte.ts';
+import { settings } from '#lib/settings/settings.svelte.ts';
+import { focusedTerminal, lastAdeTerminal, terminalHandle } from './registry.ts';
 import { terminals } from './terminals.svelte.ts';
+import { quickCommandInput, quickCommands } from './adeTerminalOptions.ts';
+
+/** Orca's quick commands (`kingu.terminal.quickCommands`): pick one, typed into the last used ADE terminal. */
+async function runQuickCommand() {
+	const list = quickCommands(settings.get<Record<string, unknown>>('kingu.terminal.quickCommands'));
+	const target = focusedTerminal('ade') ?? lastAdeTerminal();
+	if (!list.length) return status.flash('ยังไม่มีคำสั่งด่วน ตั้งได้ที่ kingu.terminal.quickCommands');
+	if (!target) return status.flash('เปิด terminal ใน Agents ก่อน');
+	const picked = await quick.choose({ placeholder: 'เลือกคำสั่งด่วนที่จะรันใน terminal', items: list.map((q, i) => ({ id: String(i), label: q.label, description: q.command.split('\n')[0] })) });
+	if (!picked) return;
+	target.write(quickCommandInput(list[Number(picked.id)].command));
+	target.focus();
+}
 
 /** A panel terminal has focus (VS Code's `terminalFocus`). */
 export const panelTerminalFocus = () => !appMode.isAgents && focusedTerminal('ide') !== null;
@@ -76,7 +92,8 @@ export function installTerminalCommands(): () => void {
 			run: () => terminals.focusPane(1)
 		}),
 		commands.register({ id: 'workbench.action.terminal.rename', title: 'Rename...', category: 'Terminal', when: panelShown, run: () => terminals.rename() }),
-		commands.register({ id: 'workbench.action.terminal.kill', title: 'Kill the Active Terminal Instance', category: 'Terminal', when: panelShown, run: () => terminals.kill(terminals.active) })
+		commands.register({ id: 'workbench.action.terminal.kill', title: 'Kill the Active Terminal Instance', category: 'Terminal', when: panelShown, run: () => terminals.kill(terminals.active) }),
+		commands.register({ id: 'kingu.terminal.runQuickCommand', title: 'Run Quick Command…', category: 'Terminal', run: () => void runQuickCommand() })
 	];
 	return () => unregister.forEach((u) => u());
 }

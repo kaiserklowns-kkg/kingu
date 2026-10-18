@@ -284,11 +284,47 @@ pub fn terminal_cwd(setting: Option<&str>, folder: Option<&Path>, fallback: Path
   }
 }
 
+/// Orca's terminalScopeHistoryByWorktree: the env that gives a new shell its own history for the
+/// worktree `scope` (a path): `HISTFILE` under `<history_root>/<hash>/` for bash and zsh, a
+/// `fish_history` session name for fish. Other shells get nothing. The folder is created.
+pub fn scoped_history_env(shell: &str, history_root: &Path, scope: &Path) -> Result<Vec<(String, String)>, String> {
+  let name = Path::new(shell).file_name().and_then(|n| n.to_str()).unwrap_or("").trim_start_matches('-');
+  let id = &crate::snap::sha256_hex(scope.to_string_lossy().as_bytes())[..16];
+  let file = match name {
+    "zsh" => "zsh_history",
+    "bash" => "bash_history",
+    // fish keeps every session in its own data dir; the name may only hold [A-Za-z0-9_].
+    "fish" => return Ok(vec![("fish_history".into(), format!("kingu_{id}"))]),
+    _ => return Ok(vec![]),
+  };
+  let dir = history_root.join(id);
+  std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+  Ok(vec![("HISTFILE".into(), dir.join(file).display().to_string())])
+}
+
 #[cfg(test)]
 mod tests {
   use std::path::{Path, PathBuf};
 
-  use super::{daemon_dir, find_daemon, terminal_cwd};
+  use super::{daemon_dir, find_daemon, scoped_history_env, terminal_cwd};
+
+  #[test]
+  fn scoped_history_is_per_worktree_and_per_shell() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (a, b) = (Path::new("/repo/.kingu/worktrees/a"), Path::new("/repo/.kingu/worktrees/b"));
+    let za = scoped_history_env("/bin/zsh", tmp.path(), a).unwrap();
+    let zb = scoped_history_env("zsh", tmp.path(), b).unwrap();
+    assert_eq!(za.len(), 1);
+    assert_eq!(za[0].0, "HISTFILE");
+    assert!(za[0].1.ends_with("zsh_history") && za[0].1.starts_with(&tmp.path().display().to_string()));
+    assert_ne!(za, zb);
+    assert!(Path::new(&za[0].1).parent().unwrap().is_dir());
+    assert!(scoped_history_env("/usr/local/bin/bash", tmp.path(), a).unwrap()[0].1.ends_with("bash_history"));
+    let fish = scoped_history_env("/opt/homebrew/bin/fish", tmp.path(), a).unwrap();
+    assert_eq!(fish[0].0, "fish_history");
+    assert!(fish[0].1.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+    assert_eq!(scoped_history_env("nu", tmp.path(), a).unwrap(), vec![]);
+  }
 
   #[test]
   fn terminal_cwd_resolves_against_the_folder() {
