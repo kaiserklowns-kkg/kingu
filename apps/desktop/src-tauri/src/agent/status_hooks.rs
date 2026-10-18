@@ -22,6 +22,8 @@
 //! turned off) takes them out. Config files that do not parse are left alone; writes are atomic
 //! with a `.kingu.bak` copy (trust.rs `replace_file`).
 
+use crate::i18n::msg::AgentMsg;
+use crate::tr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -365,7 +367,7 @@ pub fn apply(agent: Agent, file: &Path, script: &Path, on: bool) -> Result<bool,
     Ok(Some(c)) => c,
     Ok(None) if !on => return Ok(false),
     Ok(None) => Map::new(),
-    Err(_) => return Err(format!("{} อ่านไม่ได้ (ไม่ใช่ JSON) จึงไม่แก้", file.display())),
+    Err(_) => return Err(tr!(AgentMsg::NotJson, path = file.display())),
   };
   let before = config.clone();
   let defs = if on {
@@ -403,7 +405,7 @@ pub fn apply(agent: Agent, file: &Path, script: &Path, on: bool) -> Result<bool,
       Err(e) => return Err(e.to_string()),
     };
     if toml::from_str::<toml::Table>(text.trim_start_matches('\u{feff}')).is_err() {
-      return Err(format!("{} อ่านไม่ได้ (ไม่ใช่ TOML) จึงไม่แก้", toml_file.display()));
+      return Err(tr!(AgentMsg::NotToml, path = toml_file.display()));
     }
     let next = codex_state_edit(&text, &entries);
     if next != text {

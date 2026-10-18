@@ -3,6 +3,8 @@
 //! from the webview), the folder must be the open folder or one of its git worktrees, and the
 //! folder is passed as the last argument without a shell.
 
+use crate::i18n::msg::AgentMsg;
+use crate::tr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -24,16 +26,16 @@ pub fn argv(command: &str, path: &str) -> Result<Vec<String>, String> {
   if let Some(app) = command.strip_prefix("app:") {
     let app = app.trim();
     if app.is_empty() || app.starts_with('-') {
-      return Err("app: ต้องตามด้วยชื่อแอป".into());
+      return Err(tr!(AgentMsg::OpenInAppName));
     }
     if !cfg!(target_os = "macos") {
-      return Err("app:<ชื่อแอป> ใช้ได้เฉพาะ macOS".into());
+      return Err(tr!(AgentMsg::OpenInAppMacOnly));
     }
     return Ok(vec!["open".into(), "-a".into(), app.into(), "--".into(), path.into()]);
   }
   let mut words = super::ai_text::split_command(command)?;
   if words.is_empty() {
-    return Err("ไม่มีคำสั่ง".into());
+    return Err(tr!(AgentMsg::NoCommand));
   }
   words.push(path.into());
   Ok(words)
@@ -42,14 +44,14 @@ pub fn argv(command: &str, path: &str) -> Result<Vec<String>, String> {
 /// The command for `label` in the user's setting (the first MAX_APPS entries).
 pub fn command_for(setting: Option<serde_json::Value>, label: &str) -> Result<String, String> {
   let apps = setting.filter(|v| v.is_object()).unwrap_or_else(default_apps);
-  let map = apps.as_object().ok_or("kingu.worktree.openIn ต้องเป็น object")?;
+  let map = apps.as_object().ok_or_else(|| tr!(AgentMsg::OpenInNotObject))?;
   map
     .iter()
     .filter(|(k, v)| !k.trim().is_empty() && v.as_str().is_some_and(|s| !s.trim().is_empty()))
     .take(MAX_APPS)
     .find(|(k, _)| *k == label)
     .and_then(|(_, v)| v.as_str().map(str::to_owned))
-    .ok_or_else(|| format!("ไม่มี \"{label}\" ใน {SETTING}"))
+    .ok_or_else(|| tr!(AgentMsg::OpenInMissing, label, setting = SETTING))
 }
 
 /// `path` when it is `root` or one of its git worktrees (canonical paths compared).
@@ -60,7 +62,7 @@ pub fn checked_folder(root: &Path, path: &str) -> Result<PathBuf, String> {
   if known.iter().filter_map(|k| k.canonicalize().ok()).any(|k| k == want) {
     Ok(want)
   } else {
-    Err(format!("{path} ไม่ใช่ worktree ของโฟลเดอร์ที่เปิดอยู่"))
+    Err(tr!(AgentMsg::NotAWorktree, path))
   }
 }
 
@@ -71,7 +73,7 @@ pub fn worktree_open_in(app: AppHandle, ws: State<'_, Workspace>, label: String,
   let config = app.path().app_config_dir().map_err(|e| e.to_string())?;
   let command = command_for(crate::settings::user_value(&config, SETTING), &label)?;
   let argv = argv(&command, &folder.display().to_string())?;
-  let (program, args) = argv.split_first().ok_or("ไม่มีคำสั่ง")?;
+  let (program, args) = argv.split_first().ok_or_else(|| tr!(AgentMsg::NoCommand))?;
   let mut child = crate::shell_env::command(program)
     .args(args)
     .current_dir(&folder)

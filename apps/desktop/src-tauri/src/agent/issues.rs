@@ -1,7 +1,7 @@
 //! GitHub issues as agent tasks (Orca's "Tasks from GitHub"): list and read the open folder's
 //! issues and comment on one, all through `gh` run in the folder root with prompts disabled and a
-//! timeout. Parsing is pure (`parse_issues`, `parse_issue_view`) and errors become Thai messages
-//! saying what to fix (`gh` missing, not logged in, no GitHub remote).
+//! timeout. Parsing is pure (`parse_issues`, `parse_issue_view`) and errors become messages (in the UI
+//! language) saying what to fix (`gh` missing, not logged in, no GitHub remote).
 
 use std::io::Read;
 
@@ -98,7 +98,7 @@ fn login(v: &serde_json::Value) -> String {
 }
 
 fn issue_of(v: &serde_json::Value) -> Result<Issue, String> {
-  let number = v["number"].as_u64().ok_or("gh: issue ไม่มีหมายเลข")?;
+  let number = v["number"].as_u64().ok_or_else(|| tr!(AgentMsg::IssueNoNumber))?;
   let labels = v["labels"]
     .as_array()
     .map(|a| a.iter().map(|l| IssueLabel { name: text(l, "name"), color: text(l, "color") }).filter(|l| !l.name.is_empty()).collect())
@@ -121,13 +121,13 @@ fn issue_of(v: &serde_json::Value) -> Result<Issue, String> {
 
 /// `gh issue list --json LIST_FIELDS` output.
 pub fn parse_issues(json: &str) -> Result<Vec<Issue>, String> {
-  let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("gh issue list: อ่านผลไม่ได้ ({e})"))?;
-  v.as_array().ok_or("gh issue list: ผลไม่ใช่รายการ")?.iter().map(issue_of).collect()
+  let v: serde_json::Value = serde_json::from_str(json).map_err(|e| tr!(AgentMsg::GhUnreadable, op = "gh issue list", detail = e))?;
+  v.as_array().ok_or_else(|| tr!(AgentMsg::GhNotAList))?.iter().map(issue_of).collect()
 }
 
 /// `gh issue view --json VIEW_FIELDS` output; keeps the latest `MAX_COMMENTS` comments.
 pub fn parse_issue_view(json: &str) -> Result<IssueDetail, String> {
-  let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("gh issue view: อ่านผลไม่ได้ ({e})"))?;
+  let v: serde_json::Value = serde_json::from_str(json).map_err(|e| tr!(AgentMsg::GhUnreadable, op = "gh issue view", detail = e))?;
   let issue = issue_of(&v)?;
   let all = v["comments"].as_array().map(Vec::as_slice).unwrap_or_default();
   let skip = all.len().saturating_sub(MAX_COMMENTS);
@@ -142,22 +142,22 @@ pub fn parse_issue_view(json: &str) -> Result<IssueDetail, String> {
 pub fn gh_error(op: &str, stderr: &str) -> String {
   let e = stderr.to_lowercase();
   if e.contains("gh auth login") || e.contains("not logged in") || e.contains("authentication required") || e.contains("http 401") || e.contains("bad credentials") {
-    "gh ยังไม่ได้เข้าสู่ระบบ: รัน `gh auth login` ในเทอร์มินัล".into()
+    tr!(AgentMsg::GhNotLoggedIn)
   } else if e.contains("no git remotes")
     || e.contains("none of the git remotes")
     || e.contains("not a git repository")
     || e.contains("could not determine base repo")
     || e.contains("unable to determine")
   {
-    "โฟลเดอร์นี้ไม่มี remote ที่ชี้ไป GitHub (เช่น origin บน github.com)".into()
+    tr!(AgentMsg::NoGithubRemote)
   } else if e.contains("could not resolve to a repository") || e.contains("http 404") {
-    "ไม่พบ repository หรือ issue นี้บน GitHub (หรือไม่มีสิทธิ์เข้าถึง)".into()
+    tr!(AgentMsg::GithubNotFound)
   } else if e.contains("disabled issues") || e.contains("issues are disabled") {
-    "repository นี้ปิด Issues ไว้".into()
+    tr!(AgentMsg::IssuesDisabled)
   } else if e.contains("error connecting") || e.contains("could not connect") || e.contains("no such host") || e.contains("timeout") {
-    "เชื่อมต่อ GitHub ไม่ได้ ตรวจสอบอินเทอร์เน็ต".into()
+    tr!(AgentMsg::GithubUnreachable)
   } else {
-    let first = stderr.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("ล้มเหลว");
+    let first = stderr.lines().map(str::trim).find(|l| !l.is_empty()).map_or_else(|| tr!(AgentMsg::Failed), str::to_owned);
     format!("{op}: {first}")
   }
 }
@@ -210,7 +210,7 @@ fn run_gh(gh: &Path, dir: &Path, op: &str, args: &[String]) -> Result<String, St
       Ok(None) => {
         kill_tree(&mut child);
         let _ = (out.join(), err.join());
-        return Err(format!("{op}: gh ไม่ตอบภายใน {} วินาที", TIMEOUT.as_secs()));
+        return Err(tr!(AgentMsg::GhNoReply, op, secs = TIMEOUT.as_secs()));
       }
       Err(e) => {
         kill_tree(&mut child);
@@ -230,12 +230,12 @@ fn valid_login(s: &str) -> bool {
 /// `gh issue list` arguments for `q` (values as `--flag=value`, so none can pass for an option).
 pub fn list_args(q: &IssueQuery) -> Result<Vec<String>, String> {
   if !matches!(q.state.as_str(), "open" | "closed" | "all") {
-    return Err(format!("สถานะ issue ไม่ถูกต้อง: {}", q.state));
+    return Err(tr!(AgentMsg::BadIssueState, state = q.state));
   }
   let mut args = vec!["issue".into(), "list".into(), format!("--state={}", q.state), format!("--limit={}", q.limit.clamp(1, MAX_LIMIT)), format!("--json={LIST_FIELDS}")];
   if let Some(a) = q.assignee.as_deref().filter(|a| !a.is_empty()) {
     if !valid_login(a) {
-      return Err(format!("ชื่อผู้รับผิดชอบไม่ถูกต้อง: {a}"));
+      return Err(tr!(AgentMsg::BadAssignee, name = a));
     }
     args.push(format!("--assignee={a}"));
   }
@@ -260,7 +260,7 @@ pub fn view(gh: &Path, dir: &Path, number: u64) -> Result<IssueDetail, String> {
 
 pub fn comment(gh: &Path, dir: &Path, number: u64, body: &str) -> Result<(), String> {
   if body.trim().is_empty() || body.len() > MAX_COMMENT_POST {
-    return Err(format!("ข้อความ comment ต้องยาว 1-{MAX_COMMENT_POST} bytes"));
+    return Err(tr!(AgentMsg::CommentLength, max = MAX_COMMENT_POST));
   }
   run_gh(gh, dir, "gh issue comment", &["issue".into(), "comment".into(), number.to_string(), format!("--body={body}")]).map(|_| ())
 }
@@ -331,8 +331,8 @@ mod tests {
     assert!(gh_error("gh issue list", "no git remotes found").contains("remote"));
     assert!(gh_error("gh issue list", "none of the git remotes configured for this repository point to a known GitHub host").contains("remote"));
     assert!(gh_error("gh issue list", "failed to run git: fatal: not a git repository").contains("remote"));
-    assert!(gh_error("gh issue list", "GraphQL: Could not resolve to a Repository with the name 'a/b'.").contains("ไม่พบ repository"));
-    assert!(gh_error("gh issue list", "the 'acme/app' repository has disabled issues").contains("ปิด Issues"));
+    assert!(gh_error("gh issue list", "GraphQL: Could not resolve to a Repository with the name 'a/b'.").contains("Repository or issue not found"));
+    assert!(gh_error("gh issue list", "the 'acme/app' repository has disabled issues").contains("Issues turned off"));
     assert_eq!(gh_error("gh issue list", "\n  something odd\nmore"), "gh issue list: something odd");
   }
 
