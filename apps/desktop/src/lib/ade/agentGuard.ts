@@ -22,6 +22,14 @@ export function tabsOfTask(paths: readonly string[], slug: string, diffSlug: (pa
 	return [...new Set(paths.filter((p) => slugOfTaskKey(p) === slug || diffSlug(p) === slug || p.startsWith(dir)))];
 }
 
+/**
+ * Whether the task list may end the terminals and agent CLIs of tasks missing from it: only once
+ * the open folder's tasks were read successfully (a failed read leaves an empty list).
+ */
+export function mayPruneSessions(o: { loaded: boolean; loadedRoot: string | null; root: string | null }): boolean {
+	return o.loaded && !!o.root && o.loadedRoot === o.root;
+}
+
 /** The first of `slugs` whose agent is working, or null. */
 export function workingTask(slugs: readonly string[], isWorking: (slug: string) => boolean): string | null {
 	return slugs.find((s) => isWorking(s)) ?? null;

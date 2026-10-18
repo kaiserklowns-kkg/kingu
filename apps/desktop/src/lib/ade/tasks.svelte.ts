@@ -109,6 +109,12 @@ class AdeTasks {
 	branches = $state<string[]>([]);
 	gh = $state<GhStatus | null>(null);
 	loaded = $state(false);
+	/**
+	 * The folder whose tasks.json and worktrees were last read without an error. `loaded` is also
+	 * set after a failed read (with an empty list); only this says the list can be trusted to end
+	 * the terminals and agent CLIs of tasks that are gone.
+	 */
+	loadedRoot = $state<string | null>(null);
 	busy = $state<Record<string, string>>({});
 	/** Ticks every 30s so "time ago" labels move. */
 	now = $state(Date.now());
@@ -183,6 +189,7 @@ class AdeTasks {
 		this.worktrees = [];
 		this.listed = [];
 		this.loaded = false;
+		this.loadedRoot = null;
 		if (!root) return;
 		try {
 			const [tasks, worktrees, branches] = await Promise.all([
@@ -198,6 +205,7 @@ class AdeTasks {
 			const adopted = adoptOrphans(tasks, this.worktrees.map((w) => w.slug!), base, Date.now());
 			this.list = adopted;
 			if (adopted !== tasks) await this.#save(adopted);
+			if (this.#root === root) this.loadedRoot = root;
 		} catch (e) {
 			notifications.error(t('adeTasks.tasks.loadFailed', { error: String(e) }));
 			clientLog('error', `tasks_load: ${e}`);
