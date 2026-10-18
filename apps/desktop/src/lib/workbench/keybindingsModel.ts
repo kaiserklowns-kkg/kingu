@@ -65,6 +65,30 @@ export function keysFor(id: string, defaultKey: string | undefined, user: UserKe
 	return out;
 }
 
+// --- Layouts (the IDE is VS Code, the Agents layout is Orca)
+
+/** The layout a command's keybinding belongs to; unscoped commands are bound in both. */
+export type KeyScope = 'ide' | 'agents';
+
+/** The keys the commands scoped to `layout` own there. */
+export function ownedKeys(entries: Iterable<{ scope?: KeyScope; keys: readonly string[] }>, layout: KeyScope): Set<string> {
+	const owned = new Set<string>();
+	for (const e of entries) if (e.scope === layout) for (const k of e.keys) owned.add(normalizeKey(k));
+	return owned;
+}
+
+/**
+ * The keys of a command that are live in `layout`: none for a command scoped to the other layout,
+ * and an unscoped command's default steps aside where a scoped one owns the key (Orca's ⌘T opens
+ * a terminal tab in the Agents layout; VS Code's opens Go to Symbol in the IDE). A key the user
+ * bound themselves always stays.
+ */
+export function liveKeys(keys: readonly string[], scope: KeyScope | undefined, layout: KeyScope, owned: ReadonlySet<string>, userKeys: readonly string[] = []): string[] {
+	if (scope && scope !== layout) return [];
+	if (scope) return [...keys];
+	return keys.filter((k) => userKeys.includes(k) || !owned.has(normalizeKey(k)));
+}
+
 /** A starter file like VS Code's, with the format explained. */
 export const KEYBINDINGS_TEMPLATE = `// วางคีย์ลัดของคุณที่นี่ เพื่อเขียนทับคีย์ลัดเริ่มต้น (Place your key bindings in this file to override the defaults.)
 // { "key": "cmd+i", "command": "workbench.action.quickOpen" } เพิ่มคีย์ / "-workbench.action.quickOpen" ลบคีย์เริ่มต้น

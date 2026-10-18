@@ -1534,6 +1534,7 @@ export function installAde(): () => void {
 			title: 'Rename Task',
 			category: 'Agents',
 			key: 'cmd+alt+r',
+			scope: 'agents',
 			when: () => appMode.isAgents && !!appMode.activeSession && !!adeTasks.find(appMode.activeSession),
 			run: () => appMode.activeSession && adeTasks.startRename(appMode.activeSession)
 		}),

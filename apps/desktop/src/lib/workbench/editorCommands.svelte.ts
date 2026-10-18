@@ -20,6 +20,8 @@ import { workspace } from './workspace.svelte';
 import type { SplitDirection } from './editorGroups';
 import { isNonTextEditor } from '#lib/settings/resources.ts';
 import { t } from '#lib/i18n/index.ts';
+import { panelTerminalFocus } from '#lib/terminal/terminalCommands.svelte.ts';
+import { isMac } from './keys';
 
 
 /** A tab that is a workspace file (or a diff of one), so it has a path to copy or reveal. */
@@ -154,8 +156,8 @@ export function installEditorCommands(): () => void {
 				if (!editors.reopenClosed()) status.flash(t('workbench.editorCommands.noClosedEditor'));
 			}
 		}),
-		commands.register({ id: 'workbench.action.nextEditor', title: 'Open Next Editor', category: 'View', key: 'ctrl+pagedown', mac: 'cmd+alt+right', when: hasEditor, run: () => editors.openNeighbour(1) }),
-		commands.register({ id: 'workbench.action.previousEditor', title: 'Open Previous Editor', category: 'View', key: 'ctrl+pageup', mac: 'cmd+alt+left', when: hasEditor, run: () => editors.openNeighbour(-1) }),
+		commands.register({ id: 'workbench.action.nextEditor', title: 'Open Next Editor', category: 'View', key: 'ctrl+pagedown', mac: 'cmd+alt+right', when: hasEditor, keyWhen: () => !isMac || !panelTerminalFocus(), run: () => editors.openNeighbour(1) }),
+		commands.register({ id: 'workbench.action.previousEditor', title: 'Open Previous Editor', category: 'View', key: 'ctrl+pageup', mac: 'cmd+alt+left', when: hasEditor, keyWhen: () => !isMac || !panelTerminalFocus(), run: () => editors.openNeighbour(-1) }),
 		commands.register({ id: 'workbench.action.nextEditorInGroup', title: 'Open Next Editor in Group', category: 'View', when: hasEditor, run: () => editors.openNeighbour(1, true) }),
 		commands.register({ id: 'workbench.action.previousEditorInGroup', title: 'Open Previous Editor in Group', category: 'View', when: hasEditor, run: () => editors.openNeighbour(-1, true) }),
 		commands.register({

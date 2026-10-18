@@ -1,5 +1,5 @@
-// Orca's tab and pane shortcuts (adeShortcuts.ts) as commands. They run only while the Agents
-// layout is in front, so the same keys keep their IDE meaning there (⌘D, ⌘⇧D, ⌘T…).
+// Orca's tab and pane shortcuts (adeShortcuts.ts) as commands. Scoped to the Agents layout: there
+// they win over the IDE's commands on the same keys (⌘T, ⌘⇧T, ⌘D…), which keep them in the IDE.
 
 import { commands } from '#lib/workbench/commands.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
@@ -20,7 +20,7 @@ export function installAdeCommands(): () => void {
 		const t = terminal();
 		return !!t && tabPanes(t.tab).length > 1;
 	};
-	const cmd = (s: Shortcut, run: () => unknown, when: () => boolean = front) => commands.register({ ...s, category: 'Agents', when, run });
+	const cmd = (s: Shortcut, run: () => unknown, when: () => boolean = front) => commands.register({ ...s, category: 'Agents', scope: 'agents', when, run });
 	const unregister = [
 		cmd(K.newTerminal, () => adeLayout.newTerminal(adeLayout.key)),
 		cmd(K.reopenClosed, () => adeLayout.reopenClosed(adeLayout.key), () => front() && (adeLayout.closed[adeLayout.key]?.length ?? 0) > 0),
@@ -65,7 +65,7 @@ export function installAdeCommands(): () => void {
 			const t = terminal();
 			if (t) void adeLayout.closePane(t.key, t.tab.id);
 		}, split),
-		commands.register({ ...K.clear, category: 'Terminal', when: () => front() && focusedTerminal('ade') !== null, run: () => focusedTerminal('ade')?.clear() })
+		commands.register({ ...K.clear, category: 'Terminal', scope: 'agents', when: () => front() && focusedTerminal('ade') !== null, run: () => focusedTerminal('ade')?.clear() })
 	];
 	return () => unregister.forEach((u) => u());
 }

@@ -3,23 +3,35 @@
 
 import { eventLabel as chordLabel, isMac, isMenuEcho, isModifierKey, keyOf as defaultKeyOf, matches, parseChord, splitKeybinding } from './keys';
 import { keybindings } from './keybindings.svelte';
-import { keysFor, whenKey } from './keybindingsModel';
+import { keysFor, liveKeys, ownedKeys, whenKey, type KeyScope } from './keybindingsModel';
 import { evaluateWhen } from './contextKey';
 import { currentContext } from './contextKeys.svelte';
+import { appMode } from './mode.svelte';
 import { status } from './status.svelte';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { terminalStartsChord, workbenchTakesKey } from '#lib/terminal/behaviour.ts';
 import { t } from '#lib/i18n/index.ts';
 
-/** Every key that runs `cmd` on this platform: keybindings.json's first, then the default unless removed. */
-export function keysOf(cmd: { id: string; key?: string; mac?: string }, mac = isMac): string[] {
+type Keyed = { id: string; key?: string; mac?: string; scope?: KeyScope };
+
+/** Every key bound to `cmd` on this platform: keybindings.json's first, then the default unless removed. */
+export function keysOf(cmd: Keyed, mac = isMac): string[] {
 	return keysFor(cmd.id, defaultKeyOf(cmd, mac), keybindings.user);
+}
+
+/** The layout whose keys are live: Orca's in the Agents layout, VS Code's in the IDE. */
+export const keyLayout = (): KeyScope => (appMode.isAgents ? 'agents' : 'ide');
+
+/** The keys that run `cmd` in `layout` (keybindingsModel.liveKeys). */
+export function liveKeysOf(cmd: Keyed, layout = keyLayout(), mac = isMac): string[] {
+	const owned = mac === isMac ? commands.owned[layout] : ownedKeys(commands.all.map((c) => ({ scope: c.scope, keys: keysOf(c, mac) })), layout);
+	return liveKeys(keysOf(cmd, mac), cmd.scope, layout, owned, keybindings.user.added.get(cmd.id));
 }
 
 /** The key menus, the palette and tooltips show for `cmd` (the user's own wins), else the key
  * of whoever owns it (Monaco for editor actions). */
-export function keyOf(cmd: { id: string; key?: string; mac?: string; ownerKey?: () => string | undefined }, mac = isMac): string | undefined {
-	return keysOf(cmd, mac)[0] ?? (keybindings.user.removed.get(cmd.id) === 'all' ? undefined : cmd.ownerKey?.());
+export function keyOf(cmd: Keyed & { ownerKey?: () => string | undefined }, mac = isMac): string | undefined {
+	return liveKeysOf(cmd, keyLayout(), mac)[0] ?? (keybindings.user.removed.get(cmd.id) === 'all' ? undefined : cmd.ownerKey?.());
 }
 
 export type Command = {
@@ -36,6 +48,9 @@ export type Command = {
 	/** Extra condition for the keybinding only (VS Code's keybinding `when`, e.g. not in the
 	 * terminal), so menus and the palette still run the command. */
 	keyWhen?: () => boolean;
+	/** The layout this keybinding belongs to (keybindingsModel.liveKeys): `agents` for Orca's keys,
+	 * which win over an unscoped command's default there. Menus and the palette ignore it. */
+	scope?: KeyScope;
 	/** A key bound outside this registry (Monaco's own keybinding of an editor action), for display only. */
 	ownerKey?: () => string | undefined;
 	/** A default key of a higher weight wins over one of a lower weight on the same key while both
@@ -46,6 +61,11 @@ export type Command = {
 
 class Commands {
 	all = $state<Command[]>([]);
+	/** The keys the commands scoped to each layout own there. */
+	owned = $derived.by(() => {
+		const entries = this.all.map((c) => ({ scope: c.scope, keys: c.scope ? keysOf(c) : [] }));
+		return { ide: ownedKeys(entries, 'ide'), agents: ownedKeys(entries, 'agents') };
+	});
 	/** The last command run by a keybinding (see MENU_ECHO_MS in keys.ts). */
 	lastKeyRun: { id: string; at: number } | null = null;
 
@@ -96,7 +116,7 @@ export function installKeybindings(): () => void {
 	const bindings = (): Binding[] => {
 		const { added, when } = keybindings.user;
 		const all = commands.all.flatMap((cmd) =>
-			keysOf(cmd).map((key) => {
+			liveKeysOf(cmd).map((key) => {
 				const user = added.get(cmd.id)?.includes(key) ?? false;
 				return { cmd, parts: splitKeybinding(key), user, when: user ? when.get(whenKey(cmd.id, key)) : undefined };
 			})

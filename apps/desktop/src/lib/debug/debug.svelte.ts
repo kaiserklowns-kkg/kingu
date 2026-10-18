@@ -14,7 +14,6 @@ import { terminals } from '#lib/terminal/terminals.svelte.ts';
 import { commands } from '#lib/workbench/commands.svelte.ts';
 import { editors } from '#lib/workbench/editors.svelte.ts';
 import { layout } from '#lib/workbench/layout.svelte.ts';
-import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
 import { isDiffKey } from '#lib/workbench/scm.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
@@ -599,7 +598,7 @@ export function installDebug(): () => void {
 		commands.register({ id: 'editor.debug.action.addLogPoint', title: 'Add Logpoint...', category: 'Debug', when: () => isWorkspaceFile(editors.active), run: () => debug.editLogMessage() }),
 		commands.register({ id: 'workbench.debug.viewlet.action.removeAllBreakpoints', title: 'Remove All Breakpoints', category: 'Debug', run: () => debug.removeAllBreakpoints() }),
 		commands.register({ id: 'workbench.action.debug.configure', title: 'Open launch.json', category: 'Debug', run: () => debug.openLaunchJson() }),
-		commands.register({ id: 'workbench.view.debug', title: 'Show Run and Debug', category: 'View', key: 'cmd+shift+d', keyWhen: () => !appMode.isAgents, run: () => ((layout.sideView = 'debug'), (layout.sidebarVisible = true)) }),
+		commands.register({ id: 'workbench.view.debug', title: 'Show Run and Debug', category: 'View', key: 'cmd+shift+d', scope: 'ide', run: () => ((layout.sideView = 'debug'), (layout.sidebarVisible = true)) }),
 		commands.register({ id: 'workbench.debug.action.toggleRepl', title: 'Focus on Debug Console View', category: 'View', run: () => layout.showPanel('debugConsole') })
 	];
 	return () => {

@@ -168,15 +168,16 @@ export const rightSidebar = new RightSidebar();
 export function installRightSidebar(): () => void {
 	const agents = () => appMode.isAgents;
 	const unregister = [
-		commands.register({ id: 'kingu.agents.toggleRightSidebar', title: 'Toggle Right Side Bar', category: 'Agents', key: 'cmd+l', when: agents, run: () => (appMode.panelVisible = !appMode.panelVisible) }),
-		commands.register({ id: 'kingu.agents.rightSidebar.explorer', title: 'Right Side Bar: Explorer', category: 'Agents', key: 'cmd+shift+e', when: agents, run: () => rightSidebar.toggle('files') }),
-		commands.register({ id: 'kingu.agents.rightSidebar.search', title: 'Right Side Bar: Search File Contents', category: 'Agents', key: 'cmd+shift+f', when: agents, run: () => rightSidebar.searchContents() }),
+		commands.register({ id: 'kingu.agents.toggleRightSidebar', title: 'Toggle Right Side Bar', category: 'Agents', key: 'cmd+l', scope: 'agents', when: agents, run: () => (appMode.panelVisible = !appMode.panelVisible) }),
+		commands.register({ id: 'kingu.agents.rightSidebar.explorer', title: 'Right Side Bar: Explorer', category: 'Agents', key: 'cmd+shift+e', scope: 'agents', when: agents, run: () => rightSidebar.toggle('files') }),
+		commands.register({ id: 'kingu.agents.rightSidebar.search', title: 'Right Side Bar: Search File Contents', category: 'Agents', key: 'cmd+shift+f', scope: 'agents', when: agents, run: () => rightSidebar.searchContents() }),
 		commands.register({ id: 'kingu.agents.rightSidebar.agents', title: 'Right Side Bar: Agents', category: 'Agents', when: agents, run: () => rightSidebar.toggle('agents') }),
 		commands.register({
 			id: 'kingu.agents.rightSidebar.sourceControl',
 			title: 'Right Side Bar: Source Control',
 			category: 'Agents',
 			key: 'cmd+shift+g',
+			scope: 'agents',
 			when: () => agents() && rightSidebar.isGit(adeLayout.key),
 			run: () => rightSidebar.toggle('changes')
 		}),

@@ -270,8 +270,8 @@
 					else layout.showPanel('terminal');
 				}
 			}),
-			commands.register({ id: 'workbench.view.explorer', title: 'Show Explorer', category: 'View', key: 'cmd+shift+e', keyWhen: () => !appMode.isAgents, run: () => ((layout.sideView = 'explorer'), (layout.sidebarVisible = true)) }),
-			commands.register({ id: 'workbench.action.findInFiles', title: 'Search: Find in Files', key: 'cmd+shift+f', keyWhen: () => !appMode.isAgents, run: () => ((layout.sideView = 'search'), (layout.sidebarVisible = true), search.reveal(editors.selectionText(settings.get<boolean>('search.seedWithNearestWord')))) }),
+			commands.register({ id: 'workbench.view.explorer', title: 'Show Explorer', category: 'View', key: 'cmd+shift+e', scope: 'ide', run: () => ((layout.sideView = 'explorer'), (layout.sidebarVisible = true)) }),
+			commands.register({ id: 'workbench.action.findInFiles', title: 'Search: Find in Files', key: 'cmd+shift+f', scope: 'ide', run: () => ((layout.sideView = 'search'), (layout.sidebarVisible = true), search.reveal(editors.selectionText(settings.get<boolean>('search.seedWithNearestWord')))) }),
 			commands.register({ id: 'workbench.view.scm', title: 'Show Source Control', category: 'View', key: 'ctrl+shift+g', run: () => ((layout.sideView = 'scm'), (layout.sidebarVisible = true)) }),
 			commands.register({ id: 'workbench.actions.view.problems', title: 'Focus on Problems View', category: 'View', key: 'cmd+shift+m', run: () => layout.showPanel('problems') }),
 			commands.register({
