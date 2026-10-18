@@ -8,6 +8,7 @@ import { PROFILES } from '../ade/agentProfiles';
 import { IDE_SETTINGS } from './ideSettings';
 import { ADE_SECTION_GROUPS, ADE_SETTINGS, SYSTEM_SECTION_GROUPS } from './ade';
 import { describeSchema, matchesSchema, schemaTypes, type JsonSchema } from './jsonSchema';
+import { t } from '../i18n/index';
 
 const MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
 
@@ -890,7 +891,7 @@ export function settingProblems(values: Record<string, unknown>, scope: SettingS
 		const s = byId.get(id);
 		if (!s) continue;
 		if (!allowedIn(s, scope)) out.push({ scope, id, message: scopeRule(s) });
-		else if (validate(s, value) === undefined) out.push({ scope, id, message: `ค่า ${JSON.stringify(value)} ไม่ถูกต้อง จึงใช้ค่าจากชั้นถัดไปแทน (Expected ${describeType(s)}; the value is ignored.)` });
+		else if (validate(s, value) === undefined) out.push({ scope, id, message: t('settings.registry.invalidValue', { value: JSON.stringify(value), expected: describeType(s) }) });
 	}
 	return out;
 }
@@ -898,8 +899,8 @@ export function settingProblems(values: Record<string, unknown>, scope: SettingS
 /** Why a scope may not set this setting, for the editor and the problems list. */
 export function scopeRule(s: SettingSchema): string {
 	return s.scope === 'local'
-		? 'ตั้งได้เฉพาะใน User หรือ Repository (ที่ Kingu เก็บไว้เอง) ไม่ใช่ไฟล์ของ repository (This setting can only be applied in user or repository-local settings, never by the repository itself.)'
-		: 'ตั้งได้เฉพาะใน User จึงถูกละไว้ (This setting can only be applied in user settings.)';
+		? t('settings.registry.userOrRepoOnly')
+		: t('settings.registry.userOnly');
 }
 
 function describeType(s: SettingSchema): string {

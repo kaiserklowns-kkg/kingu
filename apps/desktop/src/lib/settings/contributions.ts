@@ -13,10 +13,11 @@ import { systemSettings } from './systemSettings.svelte';
 import { USER_KEYBINDINGS_KEY } from '#lib/workbench/keybindings.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { themeSettingFor } from '#lib/workbench/workbenchOptions.ts';
+import { t } from '#lib/i18n/index.ts';
 
-const GROUPS: Record<string, string> = { light: 'light themes', dark: 'dark themes', hcDark: 'high contrast themes', hcLight: 'high contrast themes' };
+const groupOf = (type: string) => (type === 'light' ? t('settings.contributions.lightThemes') : type === 'dark' ? t('settings.contributions.darkThemes') : t('settings.contributions.highContrastThemes'));
 
-const report = (e: unknown) => notifications.error(`บันทึกการตั้งค่าไม่สำเร็จ: ${e instanceof Error ? e.message : e}`);
+const report = (e: unknown) => notifications.error(t('settings.contributions.saveFailed', { error: String(e instanceof Error ? e.message : e) }));
 
 /** Preferences: Color Theme — arrow keys preview, Enter keeps, Escape restores (like VS Code).
  * With window.autoDetectColorScheme (or high contrast detection) on, the pick sets the preferred theme in effect. */
@@ -31,14 +32,14 @@ export function pickColorTheme() {
 	});
 	const original = settings.get<string>(target);
 	let lastGroup = '';
-	const items: PickItem[] = THEMES.map((t) => {
-		const group = GROUPS[t.type];
+	const items: PickItem[] = THEMES.map((th) => {
+		const group = groupOf(th.type);
 		const separator = group !== lastGroup ? group : undefined;
 		lastGroup = group;
-		return { id: t.id, label: t.label, separator };
+		return { id: th.id, label: th.label, separator };
 	});
 	quick.pick({
-		placeholder: 'เลือกธีมสี (ลูกศรขึ้น/ลงเพื่อดูตัวอย่าง) — Select Color Theme',
+		placeholder: t('settings.contributions.themePlaceholder'),
 		items,
 		activeId: findTheme(original).id,
 		onActive: (item) => void theme.apply(item.id),

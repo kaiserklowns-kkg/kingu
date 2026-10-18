@@ -25,6 +25,7 @@ import { settings } from './settings.svelte';
 import { settingSchemas } from './schemas.svelte';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { installUiLanguage } from '#lib/i18n/locale.svelte.ts';
+import { t } from '#lib/i18n/index.ts';
 
 const SETTINGS_SCHEMA_URI = 'kingu://schemas/settings';
 const KEYBINDINGS_SCHEMA_URI = 'kingu://schemas/keybindings';
@@ -59,7 +60,7 @@ async function autoSave(paths: string[], reason: SaveReason) {
 		if (!path || !editors.isDirty(path) || isDiffKey(path)) continue;
 		// files.autoSaveWorkspaceFilesOnly / files.autoSaveWhenNoErrors
 		if (!autoSaves(get, { inWorkspace: isWorkspaceTextFile(path) && !isUntitled(path), hasErrors: hasErrors(path) })) continue;
-		await saveFile(path, reason).catch((e) => notifications.error(`บันทึกอัตโนมัติไม่สำเร็จ: ${e}`));
+		await saveFile(path, reason).catch((e) => notifications.error(t('settings.apply.autoSaveFailed', { error: String(e) })));
 	}
 }
 
