@@ -8,5 +8,6 @@ import { team } from './th/team';
 import { settings } from './th/settings';
 import { tools } from './th/tools';
 import { chat } from './th/chat';
+import { chatEdits } from './th/chatEdits';
 
-export const th = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat } satisfies Record<keyof typeof en, string>;
+export const th = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat, ...chatEdits } satisfies Record<keyof typeof en, string>;

@@ -10,6 +10,9 @@
 	import type { Attachment } from './attachments.ts';
 	import AgentTimeline from './AgentTimeline.svelte';
 	import Composer from './Composer.svelte';
+	import ChatEditsBar from './ChatEditsBar.svelte';
+	import RestoreCheckpoint from './RestoreCheckpoint.svelte';
+	import { chatEdits } from './chatEdits.svelte.ts';
 	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 	import { runtime } from '#lib/ade/runtime.svelte.ts';
@@ -314,8 +317,12 @@
 			<AgentTimeline
 				run={chatRun}
 				onanswer={(p, decision, message, answers) => chatMeta && chats.answer(chatMeta.id, p.request_id, decision, message, answers)}
+				reverted={(r) => !!chatMeta && chatEdits.isReverted(chatMeta.id, r)}
 				class="h-full p-3"
 			>
+				{#snippet checkpoint(request)}
+					{#if chatMeta}<RestoreCheckpoint chatId={chatMeta.id} {request} />{/if}
+				{/snippet}
 				{#snippet empty()}
 					<p class="text-(--vscode-descriptionForeground)">{t('chat.panel.noHistory')}</p>
 				{/snippet}
@@ -360,6 +367,8 @@
 		{#if showList}
 			<!-- The list has no composer; pick a session or start a new chat. -->
 		{:else if chatMeta}
+			<!-- chat edits bar -->
+			<ChatEditsBar chatId={chatMeta.id} />
 			<Composer
 				bind:value={followUp}
 				attach

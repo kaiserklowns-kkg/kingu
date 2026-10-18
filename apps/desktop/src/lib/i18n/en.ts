@@ -8,7 +8,8 @@ import { team } from './en/team';
 import { settings } from './en/settings';
 import { tools } from './en/tools';
 import { chat } from './en/chat';
+import { chatEdits } from './en/chatEdits';
 
-export const en = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat } as const;
+export const en = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat, ...chatEdits } as const;
 
 export type MessageKey = keyof typeof en;

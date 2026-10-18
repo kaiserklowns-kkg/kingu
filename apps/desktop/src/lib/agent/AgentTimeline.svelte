@@ -16,17 +16,24 @@
 	import { firstLine, formatUsage, toolArg, type Decision, type PermissionRequest } from './events';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { chatLook } from '#lib/ade/chatLook.ts';
+	import { requestsOfItems } from './chatEdits.ts';
 
 	let {
 		run,
 		onanswer,
 		empty,
+		checkpoint,
+		reverted,
 		class: klass = ''
 	}: {
 		run: TimelineRun | undefined;
 		/** `answers`: an AskUserQuestion's, question text → answer (with `allow`). */
 		onanswer?: (request: PermissionRequest, decision: Decision, message?: string, answers?: Record<string, string>) => void;
 		empty?: Snippet;
+		/** A chat's request row action (Restore checkpoint), rendered at each `checkpoint` event. */
+		checkpoint?: Snippet<[number]>;
+		/** Requests whose file changes were undone by Restore checkpoint: their entries are greyed. */
+		reverted?: (request: number) => boolean;
 		class?: string;
 	} = $props();
 
@@ -54,6 +61,12 @@
 		cancelled: 'ยกเลิก (cancelled)'
 	};
 	const isAsk = (ev: PermissionRequest) => ev.tool === 'AskUserQuestion';
+	/** The request each item belongs to (from the `checkpoint` after its user message). */
+	const requestOf = $derived(reverted && run ? requestsOfItems(run.items) : []);
+	const dimmed = (i: number) => {
+		const r = requestOf[i];
+		return r != null && !!reverted?.(r);
+	};
 </script>
 
 <div
@@ -68,7 +81,10 @@
 	<div class="mx-auto space-y-1" style:max-width={look.maxWidth}>
 	{#if run && (run.items.length || run.draft.text || run.draft.thinking)}
 		{#each run.items as ev, i (i)}
-			{#if ev.kind === 'tool_use'}
+			<div class={[dimmed(i) && 'opacity-50']}>
+			{#if ev.kind === 'checkpoint'}
+				{@render checkpoint?.(ev.request)}
+			{:else if ev.kind === 'tool_use'}
 				<div class="truncate font-mono text-neutral-200" title={JSON.stringify(ev.input)}>
 					<span class="text-emerald-400">●</span>
 					{ev.name}({toolArg(ev.input)})
@@ -114,6 +130,7 @@
 			{:else if ev.kind === 'exit'}
 				<div class="text-neutral-400">{ev.stopped ? 'จบงานแล้ว' : `จบการทำงาน${ev.code ? ` (exit ${ev.code})` : ev.signal != null ? ` (signal ${ev.signal})` : ''}`}</div>
 			{/if}
+			</div>
 		{/each}
 		{#if run.draft.thinking}<p class="whitespace-pre-wrap text-neutral-500 italic">{run.draft.thinking}</p>{/if}
 		{#if run.draft.text}<p class="whitespace-pre-wrap text-neutral-100">{run.draft.text}<span class="animate-pulse">▍</span></p>{/if}
