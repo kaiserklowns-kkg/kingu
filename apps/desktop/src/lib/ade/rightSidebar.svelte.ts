@@ -3,6 +3,7 @@
 // search per worktree (fileSearchStateByWorktree), the Show Dotfiles / Show Git Ignored Files
 // toggles, each task worktree's Source Control, and the shortcuts and palette commands.
 
+import { FileUndo } from './fileUndo.ts';
 import { commands } from '#lib/workbench/commands.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { scm } from '#lib/workbench/scm.svelte.ts';
@@ -41,6 +42,7 @@ class RightSidebar {
 	/** Bumped to focus the Explorer's find box (⌘⇧F). */
 	focusFind = $state(0);
 	#repos = new Map<string, WorktreeRepo>();
+	#undo = new Map<string, FileUndo>();
 
 	constructor() {
 		const s = readSaved();
@@ -130,11 +132,19 @@ class RightSidebar {
 		}
 	}
 
+	/** The Explorer's undo / redo history of worktree `slug` ('' = the folder itself). */
+	undo(slug: string): FileUndo {
+		let h = this.#undo.get(slug);
+		if (!h) this.#undo.set(slug, (h = new FileUndo()));
+		return h;
+	}
+
 	/** Another folder: nothing of the old one's worktrees stays. */
 	reset() {
 		this.#tabs = {};
 		this.#find.clear();
 		this.#repos.clear();
+		this.#undo.clear();
 	}
 }
 

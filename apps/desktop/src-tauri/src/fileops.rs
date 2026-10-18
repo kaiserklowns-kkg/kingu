@@ -239,10 +239,107 @@ pub fn import(root: &Path, sources: &[PathBuf], to_dir: &str) -> Result<Vec<Stri
   Ok(out)
 }
 
-/// Moves `rel` to the Trash (VS Code's default `files.enableTrash`).
-pub fn trash(root: &Path, rel: &str) -> Result<(), String> {
+/// Deletes larger than this (all files of a folder together) go to the Trash without an undo copy.
+pub const UNDO_MAX_BYTES: u64 = 64 * 1024 * 1024;
+/// Undo copies kept; older ones are dropped (the explorer's undo history is as long).
+pub const UNDO_MAX_STEPS: usize = 50;
+
+/// Bytes under `path` (symlinks count as nothing), stopping once past `limit`.
+fn size_within(path: &Path, limit: u64) -> std::io::Result<Option<u64>> {
+  let meta = path.symlink_metadata()?;
+  if meta.file_type().is_symlink() {
+    return Ok(Some(0));
+  }
+  if !meta.is_dir() {
+    return Ok((meta.len() <= limit).then_some(meta.len()));
+  }
+  let mut total = 0;
+  for entry in std::fs::read_dir(path)? {
+    match size_within(&entry?.path(), limit - total)? {
+      Some(n) => total += n,
+      None => return Ok(None),
+    }
+  }
+  Ok(Some(total))
+}
+
+/// A fresh undo token: hex, unique within this process and across restarts.
+fn undo_token() -> String {
+  use std::sync::atomic::{AtomicU64, Ordering};
+  static SEQ: AtomicU64 = AtomicU64::new(0);
+  let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+  format!("{nanos:x}{:04x}", SEQ.fetch_add(1, Ordering::Relaxed) & 0xffff)
+}
+
+fn check_token(token: &str) -> Result<(), String> {
+  if token.is_empty() || token.len() > 48 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
+    return Err("not an undo token".into());
+  }
+  Ok(())
+}
+
+/// Moves `rel` to the Trash (VS Code's default `files.enableTrash`), first keeping a copy in
+/// `stash` so the delete can be undone (the Trash has no portable restore). Returns the token for
+/// [`restore`], or `None` when the entry was too large to copy, in which case it is only trashed.
+/// Old copies beyond [`UNDO_MAX_STEPS`] are dropped.
+pub fn trash_with_undo(root: &Path, rel: &str, stash: &Path) -> Result<Option<String>, String> {
+  delete_with_undo(root, rel, stash, |p| trash::delete(p).map_err(|e| e.to_string()))
+}
+
+fn delete_with_undo(root: &Path, rel: &str, stash: &Path, delete: impl FnOnce(&Path) -> Result<(), String>) -> Result<Option<String>, String> {
   let path = check_existing(root, rel)?;
-  trash::delete(&path).map_err(|e| format!("{rel}: {e}"))
+  let token = match size_within(&path, UNDO_MAX_BYTES) {
+    Ok(Some(_)) => {
+      let token = undo_token();
+      let dir = stash.join(&token);
+      let kept = std::fs::create_dir_all(&dir).and_then(|_| copy_entry(&path, &dir.join("entry")));
+      match kept {
+        Ok(()) => Some(token),
+        Err(e) => {
+          let _ = std::fs::remove_dir_all(&dir);
+          log::warn!("delete {rel}: no undo copy: {e}");
+          None
+        }
+      }
+    }
+    _ => None,
+  };
+  if let Err(e) = delete(&path) {
+    if let Some(t) = &token {
+      let _ = std::fs::remove_dir_all(stash.join(t));
+    }
+    return Err(format!("{rel}: {e}"));
+  }
+  prune_stash(stash, UNDO_MAX_STEPS);
+  Ok(token)
+}
+
+/// Undoes a [`trash_with_undo`]: puts the kept copy back at `rel`, which must be free again.
+pub fn restore(root: &Path, rel: &str, token: &str, stash: &Path) -> Result<(), String> {
+  check_token(token)?;
+  let dst = check_new(root, rel)?;
+  let dir = stash.join(token);
+  let kept = dir.join("entry");
+  kept.symlink_metadata().map_err(|_| format!("{rel}: the undo copy is gone"))?;
+  create_parents(rel, &dst)?;
+  if std::fs::rename(&kept, &dst).is_err() {
+    // Another volume: copy, then drop the stash.
+    copy_entry(&kept, &dst).map_err(|e| format!("{rel}: {e}"))?;
+  }
+  let _ = std::fs::remove_dir_all(&dir);
+  Ok(())
+}
+
+/// Keeps the newest `keep` undo copies (tokens sort by time).
+pub fn prune_stash(stash: &Path, keep: usize) {
+  let Ok(read) = std::fs::read_dir(stash) else { return };
+  let mut tokens: Vec<String> = read.filter_map(|e| e.ok()?.file_name().into_string().ok()).filter(|t| check_token(t).is_ok()).collect();
+  // Same-length hex of the same clock: longer = later, then lexical.
+  tokens.sort_by(|a, b| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+  let drop = tokens.len().saturating_sub(keep);
+  for t in &tokens[..drop] {
+    let _ = std::fs::remove_dir_all(stash.join(t));
+  }
 }
 
 /// Shows `rel` selected in Finder (Explorer on Windows, the containing folder elsewhere).
@@ -274,6 +371,60 @@ pub fn reveal_path(path: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+
+  #[test]
+  fn delete_keeps_an_undo_copy_and_restores_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("ws");
+    let stash = tmp.path().join("stash");
+    std::fs::create_dir_all(root.join("src/deep")).unwrap();
+    std::fs::write(root.join("src/deep/a.ts"), "one").unwrap();
+    let root = root.canonicalize().unwrap();
+    // Deleted outright rather than trashed, so the test leaves nothing in the user's Trash.
+    let token = delete_with_undo(&root, "src", &stash, |p| std::fs::remove_dir_all(p).map_err(|e| e.to_string())).unwrap();
+    let token = token.expect("small folders get an undo copy");
+    assert!(!root.join("src").exists());
+    restore(&root, "src", &token, &stash).unwrap();
+    assert_eq!(std::fs::read_to_string(root.join("src/deep/a.ts")).unwrap(), "one");
+    assert!(!stash.join(&token).exists());
+    assert!(restore(&root, "src", &token, &stash).is_err(), "a token restores once");
+  }
+
+  #[test]
+  fn restore_refuses_bad_tokens_and_taken_paths() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let stash = root.join(".stash");
+    std::fs::create_dir_all(stash.join("abc1/entry")).unwrap();
+    std::fs::write(root.join("x"), "").unwrap();
+    assert!(restore(&root, "y", "../etc", &stash).is_err());
+    assert!(restore(&root, "x", "abc1", &stash).unwrap_err().contains("already exists"));
+    assert!(restore(&root, "../y", "abc1", &stash).is_err());
+    restore(&root, "y", "abc1", &stash).unwrap();
+    assert!(root.join("y").is_dir());
+  }
+
+  #[test]
+  fn prunes_the_oldest_undo_copies() {
+    let tmp = tempfile::tempdir().unwrap();
+    for t in ["0a", "0b", "1a0", "ff", "not-a-token"] {
+      std::fs::create_dir(tmp.path().join(t)).unwrap();
+    }
+    prune_stash(tmp.path(), 2);
+    let mut left: Vec<String> = std::fs::read_dir(tmp.path()).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    left.sort();
+    assert_eq!(left, ["1a0", "ff", "not-a-token"]);
+  }
+
+  #[test]
+  fn size_stops_past_the_limit() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("a"), vec![0u8; 10]).unwrap();
+    std::fs::write(tmp.path().join("b"), vec![0u8; 10]).unwrap();
+    assert_eq!(size_within(tmp.path(), 100).unwrap(), Some(20));
+    assert_eq!(size_within(tmp.path(), 15).unwrap(), None);
+  }
+
   use super::*;
 
   fn ws() -> (tempfile::TempDir, PathBuf) {

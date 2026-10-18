@@ -1021,13 +1021,31 @@ fn fs_rename(ws: State<'_, Workspace>, from: String, to: String) -> Result<(), S
   Ok(())
 }
 
-/// Moves to the Trash; the webview confirms first.
+/// Where deleted entries are kept for the explorer's undo (cleared at every launch).
+fn undo_stash(app: &AppHandle) -> Result<PathBuf, String> {
+  Ok(app.path().app_cache_dir().map_err(|e| e.to_string())?.join("file-undo"))
+}
+
+/// Moves to the Trash; the webview confirms first. Returns the token that undoes it with
+/// `fs_restore`, or `None` when the entry was too large to keep a copy of.
 #[tauri::command]
-async fn fs_delete(ws: State<'_, Workspace>, rel: String) -> Result<(), String> {
+async fn fs_delete(ws: State<'_, Workspace>, app: AppHandle, rel: String) -> Result<Option<String>, String> {
   let root = ws.root()?;
+  let stash = undo_stash(&app)?;
   let r = rel.clone();
-  blocking(move || fileops::trash(&root, &r)).await?;
+  let token = blocking(move || fileops::trash_with_undo(&root, &r, &stash)).await?;
   log::info!("moved {rel} to the Trash");
+  Ok(token)
+}
+
+/// Undoes `fs_delete`: puts the kept copy back at `rel`.
+#[tauri::command]
+async fn fs_restore(ws: State<'_, Workspace>, app: AppHandle, rel: String, token: String) -> Result<(), String> {
+  let root = ws.root()?;
+  let stash = undo_stash(&app)?;
+  let r = rel.clone();
+  blocking(move || fileops::restore(&root, &r, &token, &stash)).await?;
+  log::info!("restored {rel}");
   Ok(())
 }
 
@@ -1149,6 +1167,12 @@ pub fn run() {
       team::install(app)?;
       accounts::install(app)?;
       menu::install(app.handle());
+      // The explorer's undo history lives in the webview, so last run's undo copies are orphans.
+      if let Ok(stash) = undo_stash(app.handle()) {
+        std::thread::spawn(move || {
+          let _ = std::fs::remove_dir_all(stash);
+        });
+      }
       if let Some(root) = start
         && let Err(e) = switch_root(app.handle(), Some(&root))
       {
@@ -1179,6 +1203,7 @@ pub fn run() {
       fs_create_dir,
       fs_rename,
       fs_delete,
+      fs_restore,
       fs_reveal,
       fs_copy,
       fs_move,

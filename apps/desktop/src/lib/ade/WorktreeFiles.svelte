@@ -6,6 +6,7 @@
 	// over the whole worktree) or Contents (ripgrep in the worktree, case / word / regex, include and
 	// exclude, results per file, a click opens at the match); and the lazy tree with git letters,
 	// ignored entries dimmed, a context menu, inline new / rename, delete to Trash, drag to move,
+	// undo / redo of those (⌘Z / ⌘⇧Z),
 	// keyboard navigation, and the active file revealed. Rows click open as a preview tab of this
 	// worktree in the center; a double click keeps the tab. The watcher re-lists changed folders.
 	import { untrack } from 'svelte';
@@ -236,8 +237,21 @@
 			if (edit.kind === 'rename') await move(edit.rel, joinRel(parentOf(edit.rel), name));
 			else {
 				const rel = joinRel(edit.parent, name);
-				await invoke(edit.kind === 'file' ? 'fs_create_file' : 'fs_create_dir', { rel });
+				const create = edit.kind === 'file' ? 'fs_create_file' : 'fs_create_dir';
+				await invoke(create, { rel });
 				editing = null;
+				// Undo trashes it (keeping a copy, since it may have been edited since); redo puts that copy back.
+				let token: string | null = null;
+				history.push({
+					label: edit.kind === 'file' ? 'New File' : 'New Folder',
+					undo: async () => {
+						token = await deleteEntry(rel);
+					},
+					redo: async () => {
+						if (token) await restoreEntry(rel, token);
+						else await invoke(create, { rel }), await load(parentOf(rel));
+					}
+				});
 				for (let d = parentOf(rel); d && d !== base; d = parentOf(d)) open[d] = true;
 				await Promise.all([edit.parent, ...rel.split('/').slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join('/'))].filter((d) => isUnder(d, base)).map(load));
 				selected = rel;
@@ -249,8 +263,9 @@
 		return null;
 	}
 
-	/** Rename or drag-move: open tabs (here and in the IDE) follow; unsaved edits block it. */
-	async function move(from: string, to: string) {
+	/** Rename or drag-move: open tabs (here and in the IDE) follow; unsaved edits block it.
+	 * `record` adds it to the undo history (undo and redo themselves move without recording). */
+	async function move(from: string, to: string, record = true) {
 		if (editors.allTabs().some((t) => t.dirty && remapPath(t.path, from, to) !== null)) throw new Error('มีไฟล์ที่ยังไม่บันทึกอยู่ข้างใน: บันทึกก่อนย้ายหรือเปลี่ยนชื่อ');
 		await invoke('fs_rename', { from, to });
 		editing = null;
@@ -265,6 +280,39 @@
 		const remap = (path: string) => remapPath(path, from, to);
 		editors.remap(remap);
 		adeLayout.remapFiles(remap);
+		if (record)
+			history.push({ label: parentOf(from) === parentOf(to) ? 'Rename' : 'Move', undo: () => move(to, from, false), redo: () => move(from, to, false) });
+	}
+
+	// --- Undo / redo (⌘Z / ⌘⇧Z in the tree) --------------------------------------------------------
+
+	const history = $derived(rightSidebar.undo(slug));
+
+	/** Trashes `rel` and lets go of its tabs; resolves to the token that restores it (null when
+	 * Rust kept no copy: too large). */
+	async function deleteEntry(rel: string): Promise<string | null> {
+		const tabs = affectedBy([...editors.openPaths(), ...adeLayout.openFiles()], rel);
+		const token = await invoke<string | null>('fs_delete', { rel });
+		for (const t of tabs) editors.closeEverywhere(t);
+		adeLayout.dropFiles(Object.values(adeLayout.files).flatMap((list) => list.map((f) => f.key)).filter((k) => isUnder(fileOf(k), rel)));
+		if (selected && isUnder(selected, rel)) selected = null;
+		await load(parentOf(rel));
+		return token;
+	}
+
+	async function restoreEntry(rel: string, token: string) {
+		await invoke('fs_restore', { rel, token });
+		await load(parentOf(rel));
+		selected = rel;
+	}
+
+	async function undoRedo(how: 'undo' | 'redo') {
+		try {
+			const label = await history[how]();
+			if (label) status.flash(`${how === 'undo' ? 'Undo' : 'Redo'} ${label}`);
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : String(e));
+		}
 	}
 
 	async function remove(rel: string | null = selected) {
@@ -273,23 +321,33 @@
 		const what = folder ? `โฟลเดอร์ '${baseName(rel)}' และทุกอย่างข้างใน` : `'${baseName(rel)}'`;
 		const tabs = affectedBy([...editors.openPaths(), ...adeLayout.openFiles()], rel);
 		const dirty = new Set(editors.allTabs().filter((t) => t.dirty && tabs.includes(t.path)).map((t) => t.path)).size;
-		const ok = await ask(`ย้าย ${what} ไปที่ถังขยะ?${dirty ? `\n\nมี ${dirty} ไฟล์ที่ยังไม่บันทึก การแก้ไขจะหายไป` : ''}\n\nกู้คืนได้จากถังขยะ`, {
+		const ok = await ask(`ย้าย ${what} ไปที่ถังขยะ?${dirty ? `\n\nมี ${dirty} ไฟล์ที่ยังไม่บันทึก การแก้ไขจะหายไป` : ''}\n\nกู้คืนได้จากถังขยะ หรือกด ${isMac ? '⌘Z' : 'Ctrl+Z'}`, {
 			title: 'Delete',
 			kind: 'warning',
 			okLabel: 'ย้ายไปถังขยะ',
 			cancelLabel: 'ยกเลิก'
 		});
 		if (!ok) return;
+		let token: string | null;
 		try {
-			await invoke('fs_delete', { rel });
+			token = await deleteEntry(rel);
 		} catch (e) {
 			notifications.error(e);
 			return;
 		}
-		for (const t of tabs) editors.closeEverywhere(t);
-		adeLayout.dropFiles(Object.values(adeLayout.files).flatMap((list) => list.map((f) => f.key)).filter((k) => isUnder(fileOf(k), rel)));
-		if (selected && isUnder(selected, rel)) selected = null;
-		await load(parentOf(rel));
+		// Too large to keep a copy of: only the Trash can bring it back.
+		if (!token) return;
+		history.push({
+			label: 'Delete',
+			undo: async () => {
+				if (!token) throw new Error(`'${baseName(rel)}' ไม่มีสำเนาให้กู้คืน: กู้จากถังขยะแทน`);
+				await restoreEntry(rel, token);
+				token = null;
+			},
+			redo: async () => {
+				token = await deleteEntry(rel);
+			}
+		});
 	}
 
 	function openTerminalAt(rel: string) {
@@ -435,6 +493,8 @@
 		else if ((e.key === 'Enter' && isMac && !mod) || e.key === 'F2') startRename();
 		else if (e.key === 'Enter' && row) activate(row, false);
 		else if ((isMac && mod && e.key === 'Backspace') || (!isMac && e.key === 'Delete')) void remove();
+		else if (mod && !e.altKey && e.code === 'KeyZ') void undoRedo(e.shiftKey ? 'redo' : 'undo');
+		else if (!isMac && mod && !e.altKey && e.code === 'KeyY') void undoRedo('redo');
 		else if (mod && e.altKey && e.code === 'KeyC') void (e.shiftKey ? copy(local(selected ?? base) || '.', 'relative path') : copy(abs(selected ?? base)));
 		else if (mod && e.altKey && e.code === 'KeyR') void reveal(selected ?? base);
 		else return;
