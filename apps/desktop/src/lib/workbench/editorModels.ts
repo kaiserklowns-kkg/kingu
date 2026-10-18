@@ -6,8 +6,11 @@
 import type * as Monaco from 'monaco-editor';
 import { clientLog } from '#lib/client-log.ts';
 import { lsp } from '#lib/lsp/lsp.svelte.ts';
+import { associatedLanguage, eolFor, type SaveReason } from '#lib/settings/mappings.ts';
 import { readResource, writeResource } from '#lib/settings/resources.ts';
+import { settings } from '#lib/settings/settings.svelte.ts';
 import { editors } from './editors.svelte';
+import { runSaveParticipants } from './textFileSave';
 
 type MonacoModule = typeof import('#lib/editor/monaco.ts');
 export type ModelEntry = { model: Monaco.editor.ITextModel; savedVersion: number; reloading?: boolean };
@@ -15,6 +18,7 @@ export type ModelEntry = { model: Monaco.editor.ITextModel; savedVersion: number
 const entries = new Map<string, ModelEntry>();
 const loading = new Map<string, Promise<ModelEntry>>();
 const views = new Map<string, Monaco.editor.ICodeEditorViewState | null>();
+let api: MonacoModule | undefined;
 
 // Workspace edits (LSP rename, code actions, Search: Replace) go into open files' models.
 editors.textModel = (path) => {
@@ -29,7 +33,8 @@ export function getEntry(path: string): ModelEntry | undefined {
 }
 
 /** The shared model of `path`, read from disk the first time any group shows it. */
-export function modelEntry(api: MonacoModule, path: string): Promise<ModelEntry> {
+export function modelEntry(m: MonacoModule, path: string): Promise<ModelEntry> {
+	api = m;
 	const existing = entries.get(path);
 	if (existing) return Promise.resolve(existing);
 	let pending = loading.get(path);
@@ -40,11 +45,13 @@ export function modelEntry(api: MonacoModule, path: string): Promise<ModelEntry>
 				// A references peek may already have made a preview model for this file.
 				const preview = lsp.adoptPreview(path);
 				if (preview && preview.getValue() !== text) preview.setValue(text);
-				const model = preview ?? api.monaco.editor.createModel(text, api.languageFor(path), api.monaco.Uri.file('/' + path));
+				const model = preview ?? m.monaco.editor.createModel(text, languageOf(m, path), m.monaco.Uri.file('/' + path));
+				// files.eol: a file with no line break yet takes the configured one (not counted as an edit).
+				if (!/\r?\n/.test(text)) model.setEOL(eolFor(settings.get('files.eol')) === '\n' ? m.monaco.editor.EndOfLineSequence.LF : m.monaco.editor.EndOfLineSequence.CRLF);
 				const entry: ModelEntry = { model, savedVersion: model.getAlternativeVersionId() };
 				model.onDidChangeContent(() => !entry.reloading && editors.setDirty(path, model.getAlternativeVersionId() !== entry.savedVersion));
 				entries.set(path, entry);
-				lsp.attach(api.monaco, model, path);
+				lsp.attach(m.monaco, model, path);
 				return entry;
 			})
 			.finally(() => loading.delete(path));
@@ -53,9 +60,23 @@ export function modelEntry(api: MonacoModule, path: string): Promise<ModelEntry>
 	return pending;
 }
 
-export async function saveFile(path: string) {
+/** `files.associations` over the extension's language, when the associated language exists. */
+export function languageOf(m: MonacoModule, path: string): string {
+	const id = associatedLanguage(path, settings.get('files.associations'));
+	return id && m.monaco.languages.getLanguages().some((l) => l.id === id) ? id : m.languageFor(path);
+}
+
+/** Every open model with its path, for settings that follow open files (files.associations). */
+export function openModels(): [string, Monaco.editor.ITextModel][] {
+	return [...entries].filter(([, e]) => !e.model.isDisposed()).map(([p, e]) => [p, e.model]);
+}
+
+/** Runs the save participants (format, trim…), then writes. `reason` is how the save was triggered. */
+export async function saveFile(path: string, reason: SaveReason = 'explicit') {
 	const entry = entries.get(path);
 	if (!entry) return;
+	if (api) await runSaveParticipants(api.monaco, entry.model, reason);
+	if (entry.model.isDisposed()) return;
 	await writeResource(path, entry.model.getValue());
 	entry.savedVersion = entry.model.getAlternativeVersionId();
 	editors.setDirty(path, false);
@@ -73,8 +94,10 @@ export async function reloadClean(paths: string[]) {
 		let text: string;
 		try {
 			text = await readResource(path);
-		} catch {
-			continue; // deleted or unreadable: the tab keeps the last contents
+		} catch (e) {
+			// Deleted: workbench.editor.closeOnFileDelete closes its (clean) tabs, else they keep the last contents.
+			if (settings.get<boolean>('workbench.editor.closeOnFileDelete') && /not found|No such file|os error 2/i.test(String(e))) editors.closeEverywhere(path);
+			continue;
 		}
 		const { model } = entry;
 		if (model.isDisposed() || model.getValue() === text || model.getAlternativeVersionId() !== entry.savedVersion) continue;

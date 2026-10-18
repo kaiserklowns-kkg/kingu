@@ -2,6 +2,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { clientLog } from '#lib/client-log.ts';
+import { enabledGlobs, isExcluded, sortEntries, type SortOrder } from '#lib/settings/mappings.ts';
+import { settings } from '#lib/settings/settings.svelte.ts';
 import { editors } from './editors.svelte';
 import { affectedBy, baseName, dirsToRefresh, isUnder, joinRel, parentOf, remapPath, validateName } from './fileTree';
 import { status } from './status.svelte';
@@ -67,11 +69,19 @@ class Explorer {
 		for (const k of [...this.expanded]) if (isUnder(k, rel)) this.expanded.delete(k);
 	}
 
+	/** A folder's entries as shown: files.exclude and explorer.excludeGitIgnore hide, explorer.sortOrder sorts. */
+	visibleChildren(rel: string): DirEntry[] {
+		const exclude = enabledGlobs(settings.get('files.exclude'));
+		const gitIgnored = settings.get<boolean>('explorer.excludeGitIgnore');
+		const shown = (this.children.get(rel) ?? []).filter((e) => !(gitIgnored && e.ignored) && !isExcluded(e.rel, exclude));
+		return sortEntries(shown, settings.get<SortOrder>('explorer.sortOrder'));
+	}
+
 	/** Visible rows in display order, like VS Code's flattened tree. */
 	rows(): Row[] {
 		const out: Row[] = [];
 		const walk = (rel: string, depth: number) => {
-			for (const e of this.children.get(rel) ?? []) {
+			for (const e of this.visibleChildren(rel)) {
 				const expanded = e.is_dir && this.expanded.has(e.rel);
 				out.push({ ...e, depth, expanded });
 				if (expanded) walk(e.rel, depth + 1);
@@ -79,6 +89,13 @@ class Explorer {
 		};
 		walk('', 0);
 		return out;
+	}
+
+	/** explorer.autoReveal: expands the folders above `rel` and selects it. */
+	async reveal(rel: string) {
+		const parts = rel.split('/');
+		for (let i = 0; i < parts.length; i++) await this.expand(parts.slice(0, i).join('/'));
+		this.selected = rel;
 	}
 
 	isDir(rel: string): boolean {
@@ -162,12 +179,16 @@ class Explorer {
 		const tabs = affectedBy([...editors.openPaths()], rel);
 		const dirty = new Set(editors.allTabs().filter((t) => t.dirty && tabs.includes(t.path)).map((t) => t.path)).size;
 		const what = isDir ? `โฟลเดอร์ '${baseName(rel)}' และทุกอย่างข้างใน` : `'${baseName(rel)}'`;
-		const ok = await ask(`ย้าย ${what} ไปที่ถังขยะ?${dirty ? `\n\nมี ${dirty} ไฟล์ที่ยังไม่บันทึก การแก้ไขจะหายไป` : ''}\n\nกู้คืนได้จากถังขยะ`, {
-			title: 'Delete',
-			kind: 'warning',
-			okLabel: 'ย้ายไปถังขยะ',
-			cancelLabel: 'ยกเลิก'
-		});
+		// explorer.confirmDelete off skips the question, except when unsaved edits would be lost.
+		const confirm = settings.get<boolean>('explorer.confirmDelete') || dirty > 0;
+		const ok =
+			!confirm ||
+			(await ask(`ย้าย ${what} ไปที่ถังขยะ?${dirty ? `\n\nมี ${dirty} ไฟล์ที่ยังไม่บันทึก การแก้ไขจะหายไป` : ''}\n\nกู้คืนได้จากถังขยะ`, {
+				title: 'Delete',
+				kind: 'warning',
+				okLabel: 'ย้ายไปถังขยะ',
+				cancelLabel: 'ยกเลิก'
+			}));
 		if (!ok) return;
 		try {
 			await invoke('fs_delete', { rel });

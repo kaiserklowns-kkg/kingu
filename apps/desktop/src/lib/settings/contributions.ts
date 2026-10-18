@@ -15,9 +15,12 @@ const GROUPS: Record<string, string> = { light: 'light themes', dark: 'dark them
 
 const report = (e: unknown) => status.flash(`บันทึกการตั้งค่าไม่สำเร็จ: ${e instanceof Error ? e.message : e}`);
 
-/** Preferences: Color Theme — arrow keys preview, Enter keeps, Escape restores (like VS Code). */
+/** Preferences: Color Theme — arrow keys preview, Enter keeps, Escape restores (like VS Code).
+ * With window.autoDetectColorScheme on, the pick sets the preferred theme of the OS's current scheme. */
 export function pickColorTheme() {
-	const original = settings.get<string>('workbench.colorTheme');
+	const dark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true;
+	const target = settings.get<boolean>('window.autoDetectColorScheme') ? (dark ? 'workbench.preferredDarkColorTheme' : 'workbench.preferredLightColorTheme') : 'workbench.colorTheme';
+	const original = settings.get<string>(target);
 	let lastGroup = '';
 	const items: PickItem[] = THEMES.map((t) => {
 		const group = GROUPS[t.type];
@@ -32,7 +35,7 @@ export function pickColorTheme() {
 		onActive: (item) => void theme.apply(item.id),
 		onAccept: (item) => {
 			void theme.apply(item.id);
-			settings.set('workbench.colorTheme', item.id === SCHEMA.get('workbench.colorTheme')?.default ? undefined : item.id, 'user').catch(report);
+			settings.set(target, item.id === SCHEMA.get(target)?.default ? undefined : item.id, 'user').catch(report);
 		},
 		onCancel: () => void theme.apply(original)
 	});

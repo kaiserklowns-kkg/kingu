@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import FileIcon from './FileIcon.svelte';
 	import { scm } from './scm.svelte';
@@ -11,6 +12,9 @@
 	import { keyLabel } from './keys';
 	import { status } from './status.svelte';
 	import { workspace } from './workspace.svelte';
+	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { isNonTextEditor } from '#lib/settings/resources.ts';
+	import { isDiffKey } from './scm';
 
 	let { workspaceName }: { workspaceName: string } = $props();
 
@@ -24,6 +28,21 @@
 
 	$effect(() => {
 		if (workspace.root && !explorer.children.has('')) explorer.load('');
+	});
+
+	/** workbench.tree.indent */
+	const indent = $derived(settings.get<number>('workbench.tree.indent'));
+
+	// explorer.autoReveal: the active editor's file is expanded to, selected and scrolled into view.
+	$effect(() => {
+		const active = editors.active;
+		if (!active || !workspace.root || !settings.get<boolean>('explorer.autoReveal') || isDiffKey(active) || isNonTextEditor(active) || active.includes('://')) return;
+		// Untracked: the tree loading folders on the way must not re-run this (and re-select the file).
+		untrack(() =>
+			explorer.reveal(active).then(() => {
+				if (editors.active === active) queueMicrotask(() => tree?.querySelector<HTMLElement>(`[data-rel="${CSS.escape(active)}"]`)?.scrollIntoView({ block: 'nearest' }));
+			})
+		);
 	});
 
 	type Item = { type: 'row'; row: Row } | { type: 'input'; depth: number; is_dir: boolean; value: string; key: string };
@@ -254,13 +273,14 @@
 				tabindex="-1"
 				aria-label="ไฟล์ใน workspace"
 				class="min-h-0 flex-1 overflow-y-auto outline-none"
+				style:scroll-behavior="var(--kg-list-scroll-behavior, auto)"
 				onkeydown={onTreeKey}
 				oncontextmenu={(e) => openMenu(e, null)}
 				onclick={(e) => e.target === e.currentTarget && select(null)}
 			>
 				{#each items as item (item.type === 'row' ? item.row.rel : item.key)}
 					{#if item.type === 'input'}
-						<div class="relative" style:padding-left="{8 + item.depth * 8}px">
+						<div class="relative" style:padding-left="{8 + item.depth * indent}px">
 							<div class="flex h-(--kg-row-height) items-center gap-1 pr-2">
 								<span class="flex w-4 shrink-0 justify-center text-(--vscode-icon-foreground)">
 									{#if item.is_dir}<Icon name="chevronRight" size={16} />{/if}
@@ -284,7 +304,7 @@
 								<p
 									role="alert"
 									class="absolute right-2 left-[calc(var(--pad)+20px)] z-10 border border-[color:var(--vscode-inputValidation-errorBorder,#BE1100)] bg-[var(--vscode-inputValidation-errorBackground,#5A1D1D)] px-1 py-0.5 text-xs whitespace-normal"
-									style:--pad="{8 + item.depth * 8}px"
+									style:--pad="{8 + item.depth * indent}px"
 								>
 									{inputError}
 								</p>
@@ -305,7 +325,7 @@
 								editors.active === row.rel && explorer.selected !== row.rel && 'bg-(--vscode-list-inactiveSelectionBackground)',
 								menu?.target === row.rel && 'outline outline-1 outline-(--vscode-focusBorder)'
 							]}
-							style:padding-left="{8 + row.depth * 8}px"
+							style:padding-left="{8 + row.depth * indent}px"
 							title={row.rel}
 							onclick={() => {
 								select(row.rel);

@@ -13,6 +13,7 @@
 	import { isDiffKey } from './scm';
 	import { workspace } from './workspace.svelte';
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
+	import { settings, USER_SETTINGS_KEY, WORKSPACE_SETTINGS_PATH } from '#lib/settings/settings.svelte.ts';
 
 	onMount(() => {
 		const unregister = [
@@ -33,7 +34,7 @@
 				category: 'File',
 				key: 'cmd+alt+s',
 				when: () => editors.hasDirty(),
-				run: () => Promise.all(editors.dirtyPaths().filter((p) => !isDiffKey(p)).map(saveFile))
+				run: () => Promise.all(editors.dirtyPaths().filter((p) => !isDiffKey(p)).map((p) => saveFile(p)))
 			}),
 			// Monaco owns these keys (⌘F, F12…); the commands exist for the menus and the palette.
 			...Object.entries(EDITOR_ACTIONS).map(([id, title]) =>
@@ -63,8 +64,11 @@
 		];
 		// File watcher: clean open models follow the file on disk.
 		const unwatch = workspace.onFilesChanged(reloadClean);
+		// The settings UI wrote a settings file: an open (clean) settings.json tab follows it.
+		const unwritten = settings.onDidWrite((scope) => reloadClean([scope === 'user' ? USER_SETTINGS_KEY : WORKSPACE_SETTINGS_PATH]));
 		return () => {
 			unwatch();
+			unwritten();
 			unregister.forEach((u) => u());
 			disposeAll();
 		};

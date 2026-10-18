@@ -67,7 +67,7 @@ fn sessions_survive_a_disconnect_and_replay_on_reattach() {
 
   let (sink, seen) = collecting();
   let env = [("PS1".to_string(), "$ ".to_string())].into();
-  let spec = ShellSpec { cwd: tmp.path(), cols: 80, rows: 24, run: None, env: &env };
+  let spec = ShellSpec { cwd: tmp.path(), cols: 80, rows: 24, run: None, env: &env, shell: None, args: None };
   let attached = first.spawn(key, &spec, sink).unwrap();
   assert!(attached.spawned);
   first.write(key, "echo kingu-$((6*7))\r").unwrap();

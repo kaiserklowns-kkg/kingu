@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { enabledGlobs, isExcluded } from '#lib/settings/mappings.ts';
+	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { invoke } from '@tauri-apps/api/core';
 	import { commands, keyOf } from './commands.svelte';
 	import { editors } from './editors.svelte';
@@ -22,7 +24,9 @@
 		index = p?.activeId ? Math.max(0, p.items.findIndex((i) => i.id === p.activeId)) : 0;
 		queueMicrotask(() => input?.focus());
 		if (p) return;
-		invoke<string[]>('fs_list_files').then((v) => (files = v));
+		// files.exclude and search.exclude apply to Quick Open, like VS Code.
+		const exclude = untrack(() => [...enabledGlobs(settings.get('files.exclude')), ...enabledGlobs(settings.get('search.exclude'))]);
+		invoke<string[]>('fs_list_files').then((v) => (files = v.filter((f) => !isExcluded(f, exclude))));
 	});
 
 	/** Custom pick list: original order (with group labels) until the user types. */

@@ -575,6 +575,26 @@ class Lsp {
 		return result;
 	}
 
+	/** `editor.codeActionsOnSave` (VS Code's CodeActionOnSaveParticipant): code actions of each kind
+	 * over the whole file, applied in order. Without a server for the file this does nothing. */
+	async codeActionsOnSave(model: Monaco.editor.ITextModel, kinds: string[]) {
+		const doc = this.#docs.get(model);
+		const d = this.#lookup(model);
+		if (!doc || !d || !kinds.length) return;
+		const markers = this.#monaco?.editor.getModelMarkers({ resource: model.uri, owner: MARKER_OWNER }) ?? [];
+		for (const kind of kinds) {
+			// triggerKind 2: Automatic, so servers only offer actions safe to apply unattended.
+			const context = { diagnostics: markers.map(markerToDiagnostic), only: [kind], triggerKind: 2 };
+			const items = await d.client.codeActions(d.uri, toLspRange(model.getFullModelRange()), context).catch(() => null);
+			for (const item of items ?? []) {
+				const k = typeof item.command === 'string' ? undefined : (item as CodeAction).kind;
+				if (k && k !== kind && !k.startsWith(`${kind}.`)) continue;
+				if ((item as CodeAction).disabled) continue;
+				await this.#runCodeAction(doc.key, item);
+			}
+		}
+	}
+
 	async #runCodeAction(key: string, item: Command | CodeAction) {
 		const client = this.#sessions.get(key)?.client;
 		if (!client?.ready) return;

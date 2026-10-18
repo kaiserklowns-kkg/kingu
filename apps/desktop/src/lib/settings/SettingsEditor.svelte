@@ -9,6 +9,7 @@
 	import { allowedIn, settingsInView, settingTitle, validate, type SettingSchema, type SettingScope } from './registry';
 	import { settings } from './settings.svelte';
 	import { settingSchemas } from './schemas.svelte';
+	import ListSetting from './ListSetting.svelte';
 
 	const SCOPES: [SettingScope, string][] = [
 		['user', 'User'],
@@ -18,7 +19,12 @@
 	let { group = null, query = $bindable('') }: { group?: string | null; query?: string } = $props();
 	let scope = $state<SettingScope>('user');
 
-	const visible = $derived(settingsInView(query, group, settingSchemas.all));
+	const isModified = (id: string) => settings.inspect(id, 'user') !== undefined || settings.inspect(id, 'workspace') !== undefined;
+	const visible = $derived(settingsInView(query, group, settingSchemas.all, isModified));
+	const problemsOf = (id: string) => settings.problems.filter((p) => p.id === id && p.scope === scope);
+	const scopeProblems = $derived(settings.problems.filter((p) => p.scope === scope));
+	/** Theme pickers show the theme's label, other enums their value (like VS Code). */
+	const labelled = (s: SettingSchema) => s.id.endsWith('ColorTheme');
 	const groups = $derived.by(() => {
 		const out = new Map<string, SettingSchema[]>();
 		for (const s of visible) out.set(s.group, [...(out.get(s.group) ?? []), s]);
@@ -29,12 +35,10 @@
 	/** What the control shows: the scope's own value, else what that scope inherits. */
 	function shown(s: SettingSchema): unknown {
 		const own = validate(s, settings.inspect(s.id, scope));
-		if (own !== undefined) return own;
-		if (scope === 'workspace') {
-			const user = validate(s, settings.inspect(s.id, 'user'));
-			if (user !== undefined) return user;
-		}
-		return s.default;
+		const user = scope === 'workspace' ? validate(s, settings.inspect(s.id, 'user')) : undefined;
+		// Object settings merge across layers (files.exclude adds to the defaults).
+		if (s.type === 'object') return { ...s.default, ...(user as object), ...(own as object) };
+		return own ?? user ?? s.default;
 	}
 
 	const modifiedHere = (s: SettingSchema) => settings.inspect(s.id, scope) !== undefined;
@@ -43,7 +47,7 @@
 	async function update(s: SettingSchema, value: unknown) {
 		try {
 			// Writing the default to the user file is the same as removing it, like VS Code.
-			const remove = value === undefined || (scope === 'user' && value === s.default);
+			const remove = value === undefined || (scope === 'user' && JSON.stringify(value) === JSON.stringify(s.default));
 			await settings.set(s.id, remove ? undefined : value, scope);
 		} catch (e) {
 			status.flash(`บันทึกการตั้งค่าไม่สำเร็จ: ${e instanceof Error ? e.message : e}`);
@@ -95,6 +99,11 @@
 			{/each}
 			<span class="ml-auto self-center truncate pb-1.5 text-xs text-(--vscode-descriptionForeground)" title={layer.path}>{layer.path}</span>
 		</div>
+		{#if scopeProblems.length}
+			<p role="alert" class="rounded-sm border border-(--vscode-editorWarning-foreground) px-2 py-1 text-xs text-(--vscode-editorWarning-foreground)">
+				มี {scopeProblems.length} ค่าใน settings.json ที่ใช้ไม่ได้และถูกละไว้: {scopeProblems.map((p) => p.id).join(', ')} (Invalid values fall back to the next layer.)
+			</p>
+		{/if}
 		{#if layer.error}
 			<p role="alert" class="rounded-sm border border-(--vscode-editorError-foreground) px-2 py-1 text-xs text-(--vscode-errorForeground)">
 				อ่าน settings.json ไม่ได้ ({layer.error}) — ใช้ค่าล่าสุดที่อ่านได้ แก้ไฟล์ผ่าน Open Settings (JSON)
@@ -145,7 +154,7 @@
 									{disabled}
 									onchange={(e) => onNumber(s, e.currentTarget)}
 								/>
-							{:else if s.enum}
+							{:else if s.type === 'string' && s.enum}
 								<select
 									class="mt-1.5 h-[26px] min-w-[200px] rounded-sm border border-(--vscode-dropdown-border) bg-(--vscode-dropdown-background) px-1 text-[13px] text-(--vscode-dropdown-foreground) outline-none focus:border-(--vscode-focusBorder)"
 									value={value as string}
@@ -153,13 +162,15 @@
 									onchange={(e) => update(s, e.currentTarget.value)}
 								>
 									{#each s.enum as option, i (option)}
-										<option value={option}>{s.enumDescriptions?.[i] && s.id === 'workbench.colorTheme' ? s.enumDescriptions[i] : option}</option>
+										<option value={option}>{s.enumDescriptions?.[i] && labelled(s) ? s.enumDescriptions[i] : option}</option>
 									{/each}
 								</select>
-								{#if s.enumDescriptions && s.id !== 'workbench.colorTheme'}
+								{#if s.enumDescriptions && !labelled(s)}
 									{@const i = s.enum.indexOf(value as string)}
 									{#if i >= 0 && s.enumDescriptions[i]}<p class="mt-1 text-xs text-(--vscode-descriptionForeground)">{s.enumDescriptions[i]}</p>{/if}
 								{/if}
+							{:else if s.type === 'array' || s.type === 'object'}
+								<ListSetting schema={s} {value} {disabled} onchange={(v) => update(s, v)} />
 							{:else}
 								<input
 									type="text"
@@ -170,6 +181,9 @@
 								/>
 							{/if}
 						{/if}
+						{#each problemsOf(s.id) as p (p.message)}
+							<p class="mt-1 text-xs text-(--vscode-editorWarning-foreground)">{p.message}</p>
+						{/each}
 						{#if disabled}
 							<p class="mt-1 text-xs text-(--vscode-editorWarning-foreground)">ตั้งค่านี้ได้เฉพาะใน User (This setting can only be applied in user settings.)</p>
 						{/if}

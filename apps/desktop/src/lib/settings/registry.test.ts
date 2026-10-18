@@ -87,7 +87,7 @@ describe('schema', () => {
 		const schema = jsonSchema() as { properties: Record<string, { type: string; enum?: string[] }> };
 		expect(Object.keys(schema.properties)).toHaveLength(SETTINGS.length);
 		expect(schema.properties['editor.tabSize'].type).toBe('integer');
-		expect(schema.properties['files.autoSave'].enum).toEqual(['off', 'afterDelay', 'onFocusChange']);
+		expect(schema.properties['files.autoSave'].enum).toEqual(['off', 'afterDelay', 'onFocusChange', 'onWindowChange']);
 	});
 
 	test('title bar and layout settings, with VS Code defaults and Thai + English descriptions', () => {

@@ -58,6 +58,10 @@ pub enum Request {
     run: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     env: Option<BTreeMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shell: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    args: Option<Vec<String>>,
     stream: u64,
   },
   /// Attach to a live `key` only; the reply is null when there is none.
@@ -138,6 +142,8 @@ mod tests {
           rows: 24,
           run: Some(vec!["claude".into(), "แก้\nบั๊ก".into()]),
           env: Some(BTreeMap::from([("A".into(), "b".into())])),
+          shell: Some("/bin/bash".into()),
+          args: Some(vec!["--login".into()]),
           stream: 7,
         },
       },

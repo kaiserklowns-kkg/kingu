@@ -135,10 +135,10 @@ impl Ptys {
     Backend::Local(Host::default())
   }
 
-  /// Attaches to `key`, else starts a login shell for it in `cwd` with `env` (typing `run` once).
+  /// Attaches to `key`, else starts `shell` (default: a login `$SHELL`) for it in `cwd` with `env` (typing `run` once).
   #[allow(clippy::too_many_arguments)]
-  pub fn open(&self, key: &str, cwd: &Path, cols: u16, rows: u16, run: Option<&[String]>, env: &BTreeMap<String, String>, sink: Sink) -> Result<Attached, String> {
-    let spec = ShellSpec { cwd, cols, rows, run, env };
+  pub fn open(&self, key: &str, cwd: &Path, cols: u16, rows: u16, run: Option<&[String]>, env: &BTreeMap<String, String>, shell: Option<&str>, args: Option<&[String]>, sink: Sink) -> Result<Attached, String> {
+    let spec = ShellSpec { cwd, cols, rows, run, env, shell, args };
     match self.backend() {
       Backend::Local(host) => host.open(key, &spec, sink),
       #[cfg(unix)]
@@ -256,11 +256,39 @@ pub fn pty_backend(ptys: State<'_, Ptys>) -> Result<&'static str, String> {
   Ok(ptys.kind())
 }
 
+/// `terminal.integrated.cwd` for a panel terminal: absolute, or relative to the open folder. A
+/// folder that does not exist falls back to the default (the open folder, else home).
+pub fn terminal_cwd(setting: Option<&str>, folder: Option<&Path>, fallback: PathBuf) -> PathBuf {
+  let Some(raw) = setting.map(str::trim).filter(|s| !s.is_empty()) else { return fallback };
+  let path = Path::new(raw);
+  let dir = if path.is_absolute() { path.to_path_buf() } else if let Some(f) = folder { f.join(path) } else { return fallback };
+  if dir.is_dir() {
+    dir
+  } else {
+    log::warn!("terminal.integrated.cwd {}: not a folder, using {}", dir.display(), fallback.display());
+    fallback
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use std::path::{Path, PathBuf};
 
-  use super::{daemon_dir, find_daemon};
+  use super::{daemon_dir, find_daemon, terminal_cwd};
+
+  #[test]
+  fn terminal_cwd_resolves_against_the_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir(root.join("apps")).unwrap();
+    let fallback = root.to_path_buf();
+    assert_eq!(terminal_cwd(None, Some(root), fallback.clone()), fallback);
+    assert_eq!(terminal_cwd(Some("  "), Some(root), fallback.clone()), fallback);
+    assert_eq!(terminal_cwd(Some("apps"), Some(root), fallback.clone()), root.join("apps"));
+    assert_eq!(terminal_cwd(Some(root.join("apps").to_str().unwrap()), None, fallback.clone()), root.join("apps"));
+    assert_eq!(terminal_cwd(Some("missing"), Some(root), fallback.clone()), fallback);
+    assert_eq!(terminal_cwd(Some("apps"), None, fallback.clone()), fallback);
+  }
 
   #[test]
   fn daemon_dir_prefers_the_runtime_dir_and_stays_short() {
