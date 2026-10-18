@@ -13,6 +13,10 @@ export type SnapMcp = { name: string; command: string[]; env: Record<string, str
 export type SnapPermissions = { network: boolean; fs: 'worktree' | 'home'; secrets: string[] };
 /** A skill folder (SKILL.md) of a snap; its files stay in Rust, which copies them into an agent plugin. */
 export type SnapSkill = { name: string; path: string; description: string };
+/** Where an installed user snap came from (`.kingu-snap.json`): git (`url`, `ref`, `commit`) or a folder (`path`). */
+export type SnapOrigin = { url: string | null; ref: string | null; commit: string | null; path: string | null; installed_at: number };
+/** A repo snap against `.kingu/snaps.lock` (null when the folder has no lock file). */
+export type LockStatus = 'locked' | 'changed' | 'unlocked';
 
 export type SnapInfo = {
 	id: string;
@@ -33,9 +37,19 @@ export type SnapInfo = {
 	settings: SnapSetting[];
 	mcp: SnapMcp[];
 	skills: SnapSkill[];
+	origin: SnapOrigin | null;
+	lock: LockStatus | null;
 };
 
+/** A snap found in a staged install source: `rel` is '' (manifest at the root) or `snaps/<id>`. */
+export type SnapCandidate = { rel: string; snap: SnapInfo };
+/** `snap_install_git` / `snap_install_folder` / `snap_update_prepare`: staged, not installed yet. */
+export type PreparedInstall = { token: string; origin: SnapOrigin; candidates: SnapCandidate[]; existing: SnapInfo[] };
+
 export type McpServerSpec = { command: string; args: string[]; env: Record<string, string> };
+
+/** Unique per listed snap: a user and a repo snap may share an id. */
+export const snapKey = (s: Pick<SnapInfo, 'source' | 'id'>) => `${s.source}/${s.id}`;
 
 /** Contributes tasks and MCP servers: valid, trusted and not shadowed. */
 export const isActive = (s: SnapInfo) => !s.error && s.trusted && !s.overridden;
@@ -156,9 +170,121 @@ export function mcpServersOf(list: readonly SnapInfo[], get: (id: string) => unk
 export const skillSnapIds = (list: readonly SnapInfo[]) => list.filter((s) => isActive(s) && s.skills.length > 0).map((s) => s.id);
 
 /** A watcher batch (workspace-relative paths) that may change the repo snaps: `.kingu/snaps` or a rescan. */
-export const touchesRepoSnaps = (paths: readonly string[]) => paths.some((p) => p === '' || p === '.kingu' || p === '.kingu/snaps' || p.startsWith('.kingu/snaps/'));
+export const touchesRepoSnaps = (paths: readonly string[]) =>
+	paths.some((p) => p === '' || p === '.kingu' || p === '.kingu/snaps' || p === '.kingu/snaps.lock' || p.startsWith('.kingu/snaps/'));
 
 /** Tasks that become commands (palette and Run buttons). */
 export function runnableTasks(list: readonly SnapInfo[]): { snap: SnapInfo; task: SnapTask }[] {
 	return list.filter(isActive).flatMap((snap) => snap.tasks.map((task) => ({ snap, task })));
+}
+
+// ---------------------------------------------------------------------------------------------
+// The Snaps view
+
+export type SnapStatus = { key: 'active' | 'untrusted' | 'error' | 'overridden'; label: string; tone: 'ok' | 'warn' | 'error' | 'muted' };
+
+export function snapStatus(s: SnapInfo): SnapStatus {
+	if (s.error) return { key: 'error', label: 'error', tone: 'error' };
+	if (s.overridden) return { key: 'overridden', label: 'overridden', tone: 'muted' };
+	if (!s.trusted) return { key: 'untrusted', label: 'ต้อง trust', tone: 'warn' };
+	return { key: 'active', label: 'active', tone: 'ok' };
+}
+
+/** The lock note of a repo snap, or null when there is nothing to say. */
+export function lockNote(s: SnapInfo): string | null {
+	if (s.lock === 'changed') return 'เปลี่ยนจาก lock';
+	if (s.lock === 'unlocked') return 'ไม่อยู่ใน lock';
+	return null;
+}
+
+/** Repo snaps waiting for the user to trust them (the activity bar badge). */
+export const pendingTrustCount = (list: readonly SnapInfo[]) => list.filter((s) => s.source === 'repo' && !s.error && !s.trusted).length;
+
+/** Case-insensitive match on name, id, description and task titles; every word must match. */
+export function filterSnaps(list: readonly SnapInfo[], query: string): SnapInfo[] {
+	const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+	if (!words.length) return [...list];
+	return list.filter((s) => {
+		const text = [s.name, s.id, s.description, ...s.tasks.map((t) => t.title)].join('\n').toLowerCase();
+		return words.every((w) => text.includes(w));
+	});
+}
+
+/** A user snap installed from git can be updated from its origin. */
+export const isUpdatable = (s: SnapInfo) => s.source === 'user' && !!s.origin?.url;
+
+/** `url#ref @ abc1234`, or the folder it was copied from. */
+export function originLabel(o: SnapOrigin | null): string {
+	if (!o) return '';
+	if (o.url) return `${o.url}${o.ref ? `#${o.ref}` : ''}${o.commit ? ` @ ${o.commit.slice(0, 7)}` : ''}`;
+	return o.path ?? '';
+}
+
+export function permissionLines(p: SnapPermissions): string[] {
+	return [
+		`เครือข่าย (network): ${p.network ? 'ใช้' : 'ไม่ใช้'}`,
+		`ไฟล์ (fs): ${p.fs === 'home' ? 'home — ทั้งโฮมโฟลเดอร์' : 'worktree — เฉพาะโฟลเดอร์งาน'}`,
+		`Secrets: ${p.secrets.length ? p.secrets.join(', ') : '—'}`
+	];
+}
+
+/** What an update adds (`added`, to call out) and drops, permission by permission. */
+export function permissionDiff(before: SnapPermissions, after: SnapPermissions): { added: string[]; removed: string[] } {
+	const added: string[] = [];
+	const removed: string[] = [];
+	if (after.network && !before.network) added.push('ใช้เครือข่าย (network)');
+	if (!after.network && before.network) removed.push('ใช้เครือข่าย (network)');
+	if (after.fs === 'home' && before.fs !== 'home') added.push('เข้าถึงทั้งโฮมโฟลเดอร์ (fs = home)');
+	if (after.fs !== 'home' && before.fs === 'home') removed.push('เข้าถึงทั้งโฮมโฟลเดอร์ (fs = home)');
+	for (const s of after.secrets) if (!before.secrets.includes(s)) added.push(`secret ${s}`);
+	for (const s of before.secrets) if (!after.secrets.includes(s)) removed.push(`secret ${s}`);
+	return { added, removed };
+}
+
+/** Counts and names of the tasks, MCP servers and skills a snap adds. */
+function contributionLines(s: SnapInfo): string[] {
+	const names = (xs: string[]) => (xs.length ? `: ${xs.join(', ')}` : '');
+	return [`งาน ${s.tasks.length}${names(s.tasks.map((t) => t.title))}`, `MCP server ${s.mcp.length}${names(s.mcp.map((m) => m.name))}`, `Skill ${s.skills.length}${names(s.skills.map((k) => k.name))}`];
+}
+
+/** The native confirm before an install: what it is, where from, what it may do. */
+export function installSummary(s: SnapInfo, origin: SnapOrigin): string {
+	return [
+		`${s.name} (${s.id}) v${s.version}`,
+		`จาก: ${originLabel(origin)}`,
+		'',
+		'สิทธิ์ที่ประกาศ:',
+		...permissionLines(s.permissions).map((l) => `• ${l}`),
+		'',
+		'สิ่งที่เพิ่ม:',
+		...contributionLines(s).map((l) => `• ${l}`),
+		'',
+		'Snap ของคุณใช้งานได้ทันทีหลังติดตั้ง (รันงานและส่ง MCP/skill ให้ agent) — ติดตั้งเฉพาะจากแหล่งที่ไว้ใจ'
+	].join('\n');
+}
+
+/** The native confirm before trusting a repo snap: what it may run, with the exact commands. */
+export function trustSummary(s: SnapInfo): string {
+	const commands = [...s.tasks.map((t) => `• งาน ${t.title}: ${t.command.join(' ')}`), ...s.mcp.map((m) => `• MCP ${m.name}: ${m.command.join(' ')}`)];
+	return [
+		`${s.name} (${s.id}) v${s.version} จาก .kingu/snaps ของโฟลเดอร์นี้`,
+		'',
+		'สิทธิ์ที่ประกาศ:',
+		...permissionLines(s.permissions).map((l) => `• ${l}`),
+		...(commands.length ? ['', 'คำสั่งที่จะรันได้:', ...commands] : []),
+		...(s.skills.length ? ['', `Skill ที่ส่งให้ agent: ${s.skills.map((k) => k.name).join(', ')}`] : []),
+		'',
+		'ใครก็ตามที่แก้ repo นี้เขียน snap นี้ได้ — ถ้า snap.toml หรือ skill เปลี่ยน Kingu จะเลิกเชื่อถือให้อัตโนมัติ'
+	].join('\n');
+}
+
+/** The native confirm before an update: versions, permission changes first, then the rest. */
+export function updateSummary(before: SnapInfo, after: SnapInfo, origin: SnapOrigin): string {
+	const { added, removed } = permissionDiff(before.permissions, after.permissions);
+	const lines = [`${after.name} (${after.id}): v${before.version || '?'} → v${after.version}`, `จาก: ${originLabel(origin)}`, ''];
+	if (added.length) lines.push('⚠ สิทธิ์ใหม่ที่ขอเพิ่ม:', ...added.map((a) => `• ${a}`), '');
+	if (removed.length) lines.push('สิทธิ์ที่เลิกใช้:', ...removed.map((r) => `• ${r}`), '');
+	if (!added.length && !removed.length) lines.push('สิทธิ์ไม่เปลี่ยน', '');
+	lines.push('หลังอัปเดต:', ...contributionLines(after).map((l) => `• ${l}`));
+	return lines.join('\n');
 }

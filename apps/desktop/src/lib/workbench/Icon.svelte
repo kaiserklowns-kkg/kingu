@@ -45,6 +45,7 @@
 		PlayIcon,
 		PlugIcon,
 		PlusIcon,
+		PuzzlePieceIcon,
 		ProhibitIcon,
 		SidebarSimpleIcon,
 		SquaresFourIcon,
@@ -127,7 +128,9 @@
 		stepOver: ArrowBendUpRightIcon,
 		stepInto: ArrowLineDownIcon,
 		stepOut: ArrowLineUpIcon,
-		breakpoint: CircleIcon
+		breakpoint: CircleIcon,
+		/** Snaps (Kingu's packs; VS Code's Extensions view). */
+		snap: PuzzlePieceIcon
 	} as const;
 	export type IconName = keyof typeof icons;
 

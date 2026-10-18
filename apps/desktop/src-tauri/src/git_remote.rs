@@ -155,8 +155,9 @@ fn spawn_reader(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHa
 }
 
 /// Runs git with no way to prompt, until it exits, `cancel` is set or `timeout` passes.
-fn run_net(root: &Path, args: &[&str], cancel: &AtomicBool, timeout: Duration) -> Result<NetOutput, Stopped> {
+fn run_net(root: &Path, args: &[&str], env: &[(&str, &str)], cancel: &AtomicBool, timeout: Duration) -> Result<NetOutput, Stopped> {
   let mut cmd: Command = crate::shell_env::command("git");
+  cmd.envs(env.iter().copied());
   cmd
     .arg("-C")
     .arg(root)
@@ -210,8 +211,21 @@ fn run_net(root: &Path, args: &[&str], cancel: &AtomicBool, timeout: Duration) -
 
 /// A network git command with the user-facing error for each way it can fail.
 fn net(root: &Path, args: &[&str], cancel: &AtomicBool, timeout: Duration) -> Result<String, String> {
-  let op = args.first().copied().unwrap_or("");
-  match run_net(root, args, cancel, timeout) {
+  net_env(root, args, &[], cancel, timeout)
+}
+
+/// `net` with extra environment variables (the snap installer restricts protocols and LFS).
+/// The operation name in messages is the first argument that is not a `-c key=value` option.
+pub(crate) fn net_env(root: &Path, args: &[&str], env: &[(&str, &str)], cancel: &AtomicBool, timeout: Duration) -> Result<String, String> {
+  let mut rest = args;
+  while let [flag, _, tail @ ..] = rest {
+    if *flag != "-c" {
+      break;
+    }
+    rest = tail;
+  }
+  let op = rest.first().copied().unwrap_or("");
+  match run_net(root, args, env, cancel, timeout) {
     Err(Stopped::Cancelled) => Err(format!("ยกเลิก git {op} แล้ว")),
     Err(Stopped::TimedOut) => Err(format!("git {op} ใช้เวลานานเกิน {} วินาที จึงหยุดไว้", timeout.as_secs())),
     Ok(o) if o.ok => Ok(o.stdout),

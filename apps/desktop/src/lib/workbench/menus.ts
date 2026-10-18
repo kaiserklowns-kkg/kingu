@@ -185,6 +185,7 @@ export const MENUS: Menu[] = [
 			{ command: 'workbench.view.explorer', label: 'Explorer' },
 			{ command: 'workbench.view.scm', label: 'Source Control' },
 			{ command: 'workbench.view.debug', label: 'Run' },
+			{ command: 'workbench.view.snaps', label: 'Snaps' },
 			{ command: 'workbench.actions.view.problems', label: 'Problems' },
 			SEP,
 			{ command: 'workbench.action.splitEditor', label: 'Split Editor' }

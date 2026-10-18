@@ -128,11 +128,16 @@ pub fn trash(root: &Path, rel: &str) -> Result<(), String> {
 /// Shows `rel` selected in Finder (Explorer on Windows, the containing folder elsewhere).
 pub fn reveal(root: &Path, rel: &str) -> Result<(), String> {
   let path = if rel.is_empty() { root.to_path_buf() } else { check_existing(root, rel)? };
+  reveal_path(&path).map_err(|e| format!("reveal {rel}: {e}"))
+}
+
+/// `reveal` for a path the caller already checked (e.g. a snap folder outside the workspace).
+pub fn reveal_path(path: &Path) -> Result<(), String> {
   let mut cmd;
   #[cfg(target_os = "macos")]
   {
     cmd = std::process::Command::new("open");
-    cmd.arg("-R").arg(&path);
+    cmd.arg("-R").arg(path);
   }
   #[cfg(target_os = "windows")]
   {
@@ -142,9 +147,9 @@ pub fn reveal(root: &Path, rel: &str) -> Result<(), String> {
   #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     cmd = std::process::Command::new("xdg-open");
-    cmd.arg(path.parent().unwrap_or(root));
+    cmd.arg(path.parent().unwrap_or(path));
   }
-  cmd.spawn().map(|_| ()).map_err(|e| format!("reveal {rel}: {e}"))
+  cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

@@ -7,16 +7,20 @@ class SystemSettings {
 	group = $state<string | null>(null);
 	/** The Snaps management view instead of the settings editor. */
 	snaps = $state(false);
+	/** One snap's details (`<source>/<id>`) in the Snaps view, or `null` for all of them. */
+	snapKey = $state<string | null>(null);
 
 	show(group: string | null = null) {
 		this.group = group;
 		this.snaps = false;
+		this.snapKey = null;
 		this.visible = true;
 	}
 
-	showSnaps() {
+	showSnaps(snapKey: string | null = null) {
 		this.group = null;
 		this.snaps = true;
+		this.snapKey = snapKey;
 		this.visible = true;
 	}
 

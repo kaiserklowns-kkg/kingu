@@ -30,7 +30,11 @@
 	const settingsActive = $derived(activePath === SETTINGS_EDITOR_KEY);
 	const adeActive = $derived(activePath !== null && isAdeEditor(activePath));
 	const taskSlug = $derived(activePath ? slugOfTaskKey(activePath) : null);
-	const crumbs = $derived(!activePath || settingsActive || adeActive ? [] : activePath === USER_SETTINGS_KEY ? ['User', 'settings.json'] : fileOf(activePath).split('/'));
+	const crumbs = $derived(!activePath || settingsActive || adeActive ? [] : activePath === USER_SETTINGS_KEY
+					? ['User', 'settings.json']
+					: activePath.startsWith('snap://user/')
+						? ['User Snaps', ...activePath.slice('snap://user/'.length).split('/')]
+						: fileOf(activePath).split('/'));
 	const label = editorLabel;
 	const iconOf = (key: string) =>
 		fileIcon(key === SETTINGS_EDITOR_KEY || key === USER_SETTINGS_KEY ? 'settings.json' : isAdeEditor(key) ? 'tasks.md' : fileOf(key));
