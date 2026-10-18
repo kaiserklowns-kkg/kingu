@@ -3,6 +3,7 @@
 // for the pure ones); ids, values and defaults follow VS Code so a VS Code settings.json carries over.
 
 import { THEMES } from '../theme/themes';
+import { ENCODINGS } from '../workbench/textFiles';
 import type { SettingSchema } from './registry';
 
 const FONT_WEIGHTS = ['normal', 'bold', '100', '200', '300', '400', '500', '600', '700', '800', '900'] as const;
@@ -407,6 +408,35 @@ export const IDE_SETTINGS: SettingSchema[] = [
 		enum: ['\n', '\r\n', 'auto'],
 		enumDescriptions: ['LF', 'CRLF', 'ตามระบบปฏิบัติการ (LF บน macOS/Linux)'],
 		description: 'อักขระขึ้นบรรทัดใหม่ของไฟล์ใหม่หรือไฟล์ที่ยังไม่มีบรรทัด (The default end of line character for new files.)'
+	},
+	{
+		id: 'files.encoding',
+		group: 'Files',
+		type: 'string',
+		default: 'utf8',
+		enum: Object.keys(ENCODINGS),
+		enumDescriptions: Object.values(ENCODINGS).map((e) => e.labelLong),
+		description: 'encoding เริ่มต้นตอนอ่านและเขียนไฟล์ (The default character set encoding to use when reading and writing files.)'
+	},
+	{
+		id: 'files.autoGuessEncoding',
+		group: 'Files',
+		type: 'boolean',
+		default: false,
+		description: 'เดา encoding ของไฟล์จากเนื้อหาตอนเปิด (When enabled, the editor will attempt to guess the character set encoding when opening files.)'
+	},
+	{
+		id: 'files.hotExit',
+		group: 'Files',
+		type: 'string',
+		default: 'onExit',
+		enum: ['off', 'onExit', 'onExitAndWindowClose'],
+		enumDescriptions: [
+			'ปิด hot exit: ถามให้บันทึกทุกครั้งที่ออก (Hot exit will be disabled. A prompt will show when attempting to close a window with editors that have unsaved changes.)',
+			'ออกจากแอปแล้วจำไฟล์ที่ยังไม่บันทึกไว้เปิดคืนครั้งหน้า (Hot exit will be triggered when the application is closed; on macOS closing the window asks.)',
+			'เหมือน onExit และรวมการปิดหน้าต่างหรือเปลี่ยนโฟลเดอร์ด้วย (Hot exit will also be triggered when a window with a folder is closed or the folder changes.)'
+		],
+		description: 'จำไฟล์ที่ยังไม่บันทึกไว้ระหว่างการเปิดปิดแอป (Controls whether unsaved files are remembered between sessions, allowing the save prompt when exiting the editor to be skipped.)'
 	},
 	{
 		id: 'files.trimTrailingWhitespace',

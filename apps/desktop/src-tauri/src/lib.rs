@@ -1,5 +1,6 @@
 mod accounts;
 mod agent;
+mod backup;
 mod dap;
 mod fileops;
 mod fs;
@@ -18,6 +19,7 @@ mod snap_install;
 mod snap_sandbox;
 mod system;
 mod team;
+mod textfile;
 mod watcher;
 mod window;
 mod workspace;
@@ -103,6 +105,35 @@ fn read_workspace_file(ws: State<'_, Workspace>, rel: String) -> Result<String, 
     return Err(format!("{rel}: larger than {MAX_OPEN_BYTES} bytes"));
   }
   std::fs::read_to_string(&path).map_err(|e| format!("{rel}: {e}"))
+}
+
+/// Opens a file for a text editor: decoded with its encoding, or a binary / too-large answer the
+/// editor shows as a placeholder (VS Code's text file service read).
+#[tauri::command]
+async fn textfile_read(ws: State<'_, Workspace>, rel: String, options: textfile::ReadOptions) -> Result<textfile::ReadResult, String> {
+  let path = resolve_in(&ws.root()?, &rel)?;
+  blocking(move || textfile::read(&path, &options).map_err(|e| format!("{rel}: {e}"))).await
+}
+
+/// Saves a text editor with its encoding. With `expected` (what the editor loaded or last saved)
+/// a file that changed on disk since is not overwritten: the result is a conflict.
+#[tauri::command]
+async fn textfile_write(
+  ws: State<'_, Workspace>,
+  rel: String,
+  content: String,
+  encoding: String,
+  expected: Option<textfile::Expected>,
+) -> Result<textfile::WriteResult, String> {
+  let path = textfile::resolve_for_write(&ws.root()?, &rel)?;
+  blocking(move || {
+    let result = textfile::write(&path, &content, &encoding, expected.as_ref()).map_err(|e| format!("{rel}: {e}"))?;
+    if matches!(result, textfile::WriteResult::Saved { .. }) {
+      log::info!("saved {rel} ({encoding})");
+    }
+    Ok(result)
+  })
+  .await
 }
 
 #[tauri::command]
@@ -630,6 +661,12 @@ pub fn run() {
       keep_awake_set,
       client_log,
       read_workspace_file,
+      textfile_read,
+      textfile_write,
+      backup::backup_write,
+      backup::backup_list,
+      backup::backup_read,
+      backup::backup_discard,
       fs_list_dir,
       fs_list_files,
       fs_write_file,
@@ -773,12 +810,12 @@ pub fn run() {
     .run(|app, event| {
       // Closing the window or a user quit (⌘Q) waits for the webview while it has something to ask.
       if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::CloseRequested { api, .. }, .. } = &event
-        && window::on_close_requested(app)
+        && window::on_close_requested(app, "close")
       {
         api.prevent_close();
       }
       if let tauri::RunEvent::ExitRequested { code: None, api, .. } = &event
-        && window::on_close_requested(app)
+        && window::on_close_requested(app, "quit")
       {
         api.prevent_exit();
       }

@@ -50,6 +50,8 @@
 	import { installDebug } from '#lib/debug/debug.svelte.ts';
 	import { installCloseGuard, quit } from './closeGuard.svelte';
 	import { installEditorRestore } from './editorRestore.svelte';
+	import { textFiles } from './textFileService.svelte';
+	import { registerEditorStatusCommands } from './editorStatusActions.svelte';
 
 	// Opening a file or diff (Quick Open, a review file, settings.json) closes the system settings page.
 	// `editors.active` also re-runs on focus changes, so only a different editor closes it.
@@ -110,7 +112,7 @@
 			commands.register({ id: 'workbench.files.action.collapseExplorerFolders', title: 'Collapse Folders in Explorer', category: 'File', when: () => workspace.root !== null, run: () => explorer.collapseAll() }),
 			commands.register({ id: 'workbench.action.quickOpen', title: 'Go to File...', key: 'cmd+p', run: () => quick.show('') }),
 			// VS Code's Developer: Reload Window; terminals and agent CLIs re-attach (they live in Rust).
-			commands.register({ id: 'workbench.action.reloadWindow', title: 'Reload Window', category: 'Developer', run: () => location.reload() }),
+			commands.register({ id: 'workbench.action.reloadWindow', title: 'Reload Window', category: 'Developer', run: async () => (await textFiles.beforeShutdown('reload')) && location.reload() }),
 			commands.register({ id: 'workbench.action.showCommands', title: 'Show All Commands', key: 'cmd+shift+p', palette: false, run: () => quick.show('>') }),
 			// In Agents mode ⌘B / ⌘J toggle the sessions side bar and the changes panel instead.
 			commands.register({
@@ -159,7 +161,7 @@
 					const adeFile = appMode.isAgents ? adeLayout.activeFile() : null;
 					if (adeFile) void adeLayout.closeFile(adeLayout.key, adeFile);
 					else if (!editors.active) editors.removeGroup();
-					else if (!editors.close(editors.active)) status.flash('มีการแก้ไขที่ยังไม่บันทึก: กด ⌘S ก่อนปิด');
+					else void textFiles.closeEditors([editors.active]);
 				}
 			}),
 			// Editor groups (VS Code editorCommands.ts / editorActions.ts, macOS keys).
@@ -173,8 +175,11 @@
 				title: 'Close All Editors in Group',
 				category: 'View',
 				when: () => editors.tabs.length > 0 || editors.groups.length > 1,
-				run: () => {
-					if (editors.closeAllInGroup().length) status.flash('มีการแก้ไขที่ยังไม่บันทึก: บันทึกก่อนปิดแท็บที่เหลือ');
+				// One Save / Don't Save / Cancel for every dirty tab, then the rest close (VS Code's Close All).
+				run: async () => {
+					const group = editors.activeGroupId;
+					await textFiles.closeEditors(editors.tabs.map((t) => t.path), group);
+					if (!editors.group(group)?.tabs.length) editors.closeAllInGroup(group);
 				}
 			}),
 			commands.register({
@@ -203,11 +208,15 @@
 		const uninstallTerminalSessions = installTerminalSessions();
 		const uninstallDebug = installDebug();
 		const uninstallAccounts = accounts.install();
+		const uninstallTextFiles = textFiles.install();
+		const unregisterEditorStatus = registerEditorStatusCommands();
 		const uninstallCloseGuard = installCloseGuard();
 		const uninstallEditorRestore = installEditorRestore();
 		return () => {
 			uninstallEditorRestore();
 			uninstallCloseGuard();
+			unregisterEditorStatus();
+			uninstallTextFiles();
 			uninstallAccounts();
 			uninstallDebug();
 			uninstallTerminalSessions();

@@ -39,3 +39,32 @@ export async function writeResource(key: string, content: string): Promise<void>
 	// The user snaps dir is not watched; loaded lazily to keep the snaps store out of this module's imports.
 	if (snapId) await import('#lib/snaps/snaps.svelte.ts').then((m) => m.snaps.load());
 }
+
+/** Workspace files are read and saved with their encoding and checked for save conflicts; the
+ * settings, keybindings and snap manifests are always UTF-8 and owned by Kingu. */
+export const isWorkspaceTextFile = (key: string) => key !== USER_SETTINGS_KEY && key !== USER_KEYBINDINGS_KEY && !userSnapId(key);
+
+export type FileStat = { mtime: number; size: number; hash: string };
+export type ReadOptions = { encoding?: string; defaultEncoding?: string; autoGuess?: boolean; acceptBinary?: boolean; acceptLarge?: boolean };
+export type TextRead =
+	| { kind: 'text'; content: string; encoding: string; lossy: boolean; stat?: FileStat }
+	| { kind: 'binary'; size: number }
+	| { kind: 'tooLarge'; size: number; limit: number };
+export type TextWrite = { kind: 'saved'; stat?: FileStat } | { kind: 'conflict'; stat: FileStat } | { kind: 'unencodable'; ch: string };
+
+/** `readResource` with encodings, binary and large file detection (Rust `textfile_read`). */
+export async function readTextResource(key: string, options: ReadOptions = {}): Promise<TextRead> {
+	if (!isWorkspaceTextFile(key)) return { kind: 'text', content: await readResource(key), encoding: 'utf8', lossy: false };
+	return invoke<TextRead>('textfile_read', { rel: key, options });
+}
+
+/** `writeResource` with the file's encoding; `expected` is the stat it was loaded with (none: overwrite). */
+export async function writeTextResource(key: string, content: string, encoding: string, expected?: FileStat): Promise<TextWrite> {
+	if (!isWorkspaceTextFile(key)) {
+		await writeResource(key, content);
+		return { kind: 'saved' };
+	}
+	const result = await invoke<TextWrite>('textfile_write', { rel: key, content, encoding, expected: expected ? { mtime: expected.mtime, hash: expected.hash } : null });
+	if (result.kind === 'saved' && key === WORKSPACE_SETTINGS_PATH) await settings.load();
+	return result;
+}

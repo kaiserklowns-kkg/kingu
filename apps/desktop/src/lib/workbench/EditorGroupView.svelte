@@ -11,14 +11,15 @@
 	import { fileIcon } from './fileIcons';
 	import { keyLabel } from './keys';
 	import { fileOf, isDiffKey } from './scm';
-	import { status } from './status.svelte';
 	import SettingsEditor from '#lib/settings/SettingsEditor.svelte';
 	import { settings, SETTINGS_EDITOR_KEY, USER_SETTINGS_KEY } from '#lib/settings/settings.svelte.ts';
 	import Board from '#lib/ade/Board.svelte';
 	import TaskPage from '#lib/ade/TaskPage.svelte';
 	import { isAdeEditor, isBoardKey, slugOfTaskKey } from '#lib/ade/keys.ts';
-	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 	import { USER_KEYBINDINGS_KEY } from './keybindings.svelte';
+	import FilePlaceholder from './FilePlaceholder.svelte';
+	import SaveConflictCompare from './SaveConflictCompare.svelte';
+	import { textFiles } from './textFileService.svelte';
 
 	let { group }: { group: number } = $props();
 
@@ -54,10 +55,13 @@
 	const tabSizing = $derived(settings.get<'fit' | 'shrink' | 'fixed'>('workbench.editor.tabSizing'));
 	const highlightModified = $derived(settings.get<boolean>('workbench.editor.highlightModifiedTabs'));
 
-	function close(path: string, force: boolean) {
-		// A file also open in the Agents layout keeps its model (and unsaved edits) there.
-		if (!editors.close(path, { force: force || adeLayout.openFiles().includes(path), group })) status.flash('มีการแก้ไขที่ยังไม่บันทึก: กด ⌘S ก่อน หรือกด ⌥ ค้างแล้วคลิก × เพื่อทิ้งการแก้ไข');
+	// A dirty file asks Save / Don't Save / Cancel (⌥-click discards); one also open in another
+	// group or the Agents layout keeps its model (and unsaved edits) there and closes at once.
+	function close(path: string, discard: boolean) {
+		void textFiles.closeEditors([path], group, { discard });
 	}
+	const placeholder = $derived(textFiles.placeholder(activePath));
+	const comparing = $derived(activePath !== null && textFiles.compare?.path === activePath ? textFiles.compare : null);
 
 	function dragStart(e: DragEvent, path: string) {
 		if (!e.dataTransfer) return;
@@ -176,9 +180,15 @@
 	{/if}
 
 	<div class="relative min-h-0 flex-1">
-		<div class={['absolute inset-0', (!activePath || diffActive || settingsActive || adeActive) && 'invisible']}>
+		<div class={['absolute inset-0', (!activePath || diffActive || settingsActive || adeActive || placeholder) && 'invisible']}>
 			<EditorHost {group} />
 		</div>
+		{#if activePath && placeholder}
+			<div class="absolute inset-0"><FilePlaceholder path={activePath} {placeholder} /></div>
+		{/if}
+		{#if comparing && focused}
+			<div class="absolute inset-0">{#key comparing}<SaveConflictCompare path={comparing.path} disk={comparing.disk} />{/key}</div>
+		{/if}
 		{#if hasDiff}
 			<div class={['absolute inset-0', !diffActive && 'invisible']}>
 				<DiffHost active={activePath} onfail={(key) => editors.close(key, { force: true, group })} reportLanguage={focused} />

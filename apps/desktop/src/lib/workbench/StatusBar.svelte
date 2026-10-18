@@ -19,25 +19,8 @@
 	import { commands } from '#lib/workbench/commands.svelte.ts';
 	import { scm } from '#lib/workbench/scm.svelte.ts';
 	import { syncItem } from '#lib/workbench/scmRemote.ts';
-
-	const languageNames: Record<string, string> = {
-		typescript: 'TypeScript',
-		javascript: 'JavaScript',
-		rust: 'Rust',
-		go: 'Go',
-		json: 'JSON',
-		markdown: 'Markdown',
-		css: 'CSS',
-		html: 'HTML',
-		ini: 'Ini',
-		toml: 'TOML',
-		svelte: 'Svelte',
-		python: 'Python',
-		yaml: 'YAML',
-		scss: 'SCSS',
-		less: 'Less',
-		plaintext: 'Plain Text'
-	};
+	import { languageName } from '#lib/editor/languages.ts';
+	import { textFiles } from './textFileService.svelte';
 
 	const languageStatus = $derived(lsp.statusFor(editors.language));
 
@@ -126,10 +109,13 @@
 	{/if}
 	{#if editorItems}
 		<button class="h-full px-2 hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => quick.show(':')}>Ln {editors.cursor.line}, Col {editors.cursor.column}</button>
-		<span class="px-2">{editors.indent}</span>
-		<span class="px-2">UTF-8</span>
-		<span class="px-2">{editors.eol}</span>
-		<span class="px-2">{languageNames[editors.language] ?? editors.language}</span>
+		<!-- VS Code's editor status items: each opens its picker (editorStatus.ts). -->
+		<button class={ITEM} title="Select Indentation" onclick={() => commands.run('changeEditorIndentation')}>{editors.indent}</button>
+		{#if textFiles.encodings.has(editors.focusedFile ?? '')}
+			<button class={ITEM} title="Select Encoding" onclick={() => commands.run('workbench.action.editor.changeEncoding')}>{textFiles.encodingOf(editors.focusedFile)}</button>
+		{/if}
+		<button class={ITEM} title="Select End of Line Sequence" onclick={() => commands.run('workbench.action.editor.changeEOL')}>{editors.eol}</button>
+		<button class={ITEM} title="Select Language Mode" onclick={() => commands.run('workbench.action.editor.changeLanguageMode')}>{languageName(editors.language)}</button>
 	{/if}
 </footer>
 

@@ -59,7 +59,7 @@ import { applyWorkspaceEdit, type ApplyResult } from './workspaceEdit';
 type MonacoApi = typeof Monaco;
 type LspEvent = { type: 'message'; json: string } | { type: 'stderr'; line: string } | { type: 'exit'; code: number | null };
 type Session = { info: ServerInfo; client: LanguageClient; id: number | null; ready: Promise<boolean> };
-type Doc = { rel: string; uri: string; key: string; model: Monaco.editor.ITextModel };
+type Doc = { rel: string; uri: string; key: string; model: Monaco.editor.ITextModel; dispose?: () => void };
 
 const MARKER_OWNER = 'lsp';
 const EXTERNAL_SCHEME = 'kingu-external';
@@ -112,6 +112,15 @@ class Lsp {
 
 	/** Called by EditorHost for every model it creates. */
 	attach(monaco: MonacoApi, model: Monaco.editor.ITextModel, rel: string) {
+		// A language change (Change Language Mode, files.associations) closes the document with the
+		// old server and opens it with the new one, as VS Code does.
+		if (!this.#languageWatched.has(model)) {
+			this.#languageWatched.add(model);
+			model.onDidChangeLanguage(() => {
+				this.#detach(model);
+				this.attach(monaco, model, rel);
+			});
+		}
 		const info = serverFor(model.getLanguageId());
 		if (!info || this.#docs.has(model)) return;
 		this.#init(monaco);
@@ -122,13 +131,23 @@ class Lsp {
 			this.#sessions.get(info.key)?.client.didChange(doc.uri, model.getValue());
 			this.#scheduleSymbols(doc);
 		});
-		model.onWillDispose(() => {
+		const disposing = model.onWillDispose(() => this.#detach(model));
+		doc.dispose = () => {
 			changed.dispose();
-			this.#docs.delete(model);
-			this.symbols.delete(rel);
-			if (doc.uri) this.#sessions.get(info.key)?.client.didClose(doc.uri);
-		});
+			disposing.dispose();
+		};
 		void this.#open(doc);
+	}
+
+	#languageWatched = new WeakSet<Monaco.editor.ITextModel>();
+
+	#detach(model: Monaco.editor.ITextModel) {
+		const doc = this.#docs.get(model);
+		if (!doc) return;
+		doc.dispose?.();
+		this.#docs.delete(model);
+		this.symbols.delete(doc.rel);
+		if (doc.uri) this.#sessions.get(doc.key)?.client.didClose(doc.uri);
 	}
 
 	didSave(model: Monaco.editor.ITextModel) {

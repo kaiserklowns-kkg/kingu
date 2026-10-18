@@ -11,7 +11,8 @@ import { editors } from '#lib/workbench/editors.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { theme } from '#lib/theme/theme.svelte.ts';
 import { isDiffKey } from '#lib/workbench/scm.ts';
-import { languageOf, openModels, saveFile } from '#lib/workbench/editorModels.ts';
+import { openModels, refreshLanguages, saveFile } from '#lib/workbench/editorModels.ts';
+import { indentLabel } from '#lib/workbench/textFiles.ts';
 import { keybindings } from '#lib/workbench/keybindings.svelte.ts';
 import { commands } from '#lib/workbench/commands.svelte.ts';
 import { editorOptionsFrom, effectiveTheme, enabledGlobs, indentFrom, terminalOptionsFrom, type Indent, type SaveReason } from './mappings';
@@ -118,7 +119,7 @@ export function installEditorSettings(monaco: typeof Monaco) {
 				const active = monaco.editor.getModels().find(isActiveModel);
 				if (active) {
 					const o = active.getOptions();
-					editors.indent = o.insertSpaces ? `Spaces: ${o.indentSize}` : `Tab Size: ${o.tabSize}`;
+					editors.indent = indentLabel(o);
 				}
 			});
 		});
@@ -126,12 +127,7 @@ export function installEditorSettings(monaco: typeof Monaco) {
 		$effect(() => {
 			void get('files.associations');
 			untrack(() => {
-				void import('#lib/editor/monaco.ts').then((m) => {
-					for (const [path, model] of openModels()) {
-						const language = languageOf(m, path);
-						if (model.getLanguageId() !== language) monaco.editor.setModelLanguage(model, language);
-					}
-				});
+				void import('#lib/editor/monaco.ts').then(refreshLanguages);
 			});
 		});
 	});
