@@ -92,7 +92,7 @@ export const TERMINAL_SETTINGS: SettingSchema[] = [
 		id: 'kingu.terminal.paddingX',
 		group: G,
 		type: 'number',
-		default: 8,
+		default: 4,
 		minimum: 0,
 		maximum: 64,
 		integer: true,
@@ -106,7 +106,7 @@ export const TERMINAL_SETTINGS: SettingSchema[] = [
 		minimum: 0,
 		maximum: 64,
 		integer: true,
-		description: 'ระยะขอบบนภายใน terminal เป็นพิกเซล (Orca: terminalPaddingY) (Top padding inside the terminal, in pixels.)'
+		description: 'ระยะขอบบนและล่างภายใน terminal เป็นพิกเซล (Orca: terminalPaddingY) (Vertical padding inside the terminal, in pixels.)'
 	},
 	{
 		id: 'kingu.terminal.allowOsc52Clipboard',
@@ -151,7 +151,7 @@ export const TERMINAL_SETTINGS: SettingSchema[] = [
 		group: G,
 		type: 'boolean',
 		default: false,
-		description: 'macOS: ปุ่ม ¥ บนคีย์บอร์ด JIS พิมพ์ \\ ใน terminal (Orca: terminalJISYenToBackslash) (macOS: the physical JIS Yen key types a backslash in the terminal.)'
+		description: 'macOS: ปุ่ม ¥ บนคีย์บอร์ด JIS พิมพ์ \\ ใน terminal (Orca: terminalJISYenToBackslash) (On macOS, the physical JIS Yen key types a backslash in the terminal.)'
 	},
 	{
 		id: 'kingu.terminal.tuiScrollSensitivity',

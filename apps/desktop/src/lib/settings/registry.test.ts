@@ -146,7 +146,7 @@ describe('ADE settings', () => {
 			const d = SCHEMA.get(id)!.description;
 			expect([id, /[฀-๿]/.test(d), /\([A-Z][^)]*\.\)/.test(d)]).toEqual([id, true, true]);
 		}
-		expect(settingsSections().find((s) => s.id === 'ade')?.groups.slice(0, 2)).toEqual(['Agent', 'Notifications']);
+		expect(settingsSections().find((s) => s.id === 'ade')?.groups.slice(0, 3)).toEqual(['Agent', 'Agent Chat', 'Notifications']);
 	});
 
 	test('settings that run commands, loosen prompts or delete branches are user-only', () => {
@@ -207,7 +207,7 @@ describe('settings sections', () => {
 	test('a group filters, a query searches everything', () => {
 		expect(settingsInView('', 'Terminal').every((s) => s.group === 'Terminal')).toBe(true);
 		expect(settingsInView('', null)).toHaveLength(SETTINGS.length);
-		expect(settingsInView('fontSize', 'Agent').map((s) => s.id)).toEqual(['editor.fontSize', 'terminal.integrated.fontSize']);
+		expect(settingsInView('fontSize', 'Agent').map((s) => s.id)).toEqual(['editor.fontSize', 'terminal.integrated.fontSize', 'kingu.chat.fontSize', 'kingu.chat.codeFontSize']);
 	});
 });
 

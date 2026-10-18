@@ -53,7 +53,7 @@ export const AGENT_SETTINGS: SettingSchema[] = [
 			'เปิด Agent Teams ของ Claude Code (ทดลอง) teammate ทำงานใน terminal เดียวกัน: --teammate-mode in-process และ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 (Experimental Claude Code agent teams, teammates in the same terminal.)'
 		],
 		description:
-			'Agent Teams ของ Claude Code เมื่อ kingu.agent.cli เป็น claude ในโหมด terminal (Orca: claudeAgentTeamsMode; แบบแยก pane ยังไม่รองรับ) (Claude Code agent teams for terminal-mode claude; Orca\'s native-panes mode is not supported.)',
+			'ทีม agent (Agent Teams) ของ Claude Code เมื่อ kingu.agent.cli เป็น claude ในโหมด terminal (Orca: claudeAgentTeamsMode; แบบแยก pane ยังไม่รองรับ) (Claude Code agent teams for terminal-mode claude; Orca\'s native-panes mode is not supported.)',
 		// User-only: it sets agent flags.
 		scope: 'application'
 	},

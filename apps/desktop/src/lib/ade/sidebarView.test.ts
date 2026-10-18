@@ -17,7 +17,7 @@ describe('ADE side bar (Orca sidebar preferences)', () => {
 			m.get('kingu.board.opacity')?.value,
 			m.get('kingu.worktree.externalVisibility')?.value,
 			m.get('kingu.tabs.ctrlTabOrder')?.value
-		]).toEqual(['none', 'smart', false, 308, 1, 'hide', 'mru']);
+		]).toEqual(['none', 'recent', false, 308, 1, 'hide', 'mru']);
 		expect(resolveSettings({ 'kingu.board.columnWidth': 50 }, {}).get('kingu.board.columnWidth')?.source).toBe('default');
 	});
 

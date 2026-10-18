@@ -46,7 +46,7 @@ export function bindAdeTerminal(term: Terminal, host: HTMLElement, root: HTMLEle
 				untrack(() => {
 					if (colors.background) term.options.theme = composeTheme(colors, s);
 					term.options.allowTransparency = s.backgroundOpacity < 1;
-					host.style.padding = `${s.paddingY}px ${s.paddingX}px 0 ${s.paddingX}px`;
+					host.style.padding = `${s.paddingY}px ${s.paddingX}px`;
 					refit();
 				});
 			});

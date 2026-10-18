@@ -25,14 +25,14 @@ export const SIDEBAR_SETTINGS: SettingSchema[] = [
 		id: 'kingu.sidebar.sortBy',
 		group: G,
 		type: 'string',
-		default: 'smart',
+		default: 'recent',
 		enum: ['smart', 'recent', 'name'],
 		enumDescriptions: [
 			'งานที่รอคุณก่อน แล้วกำลังทำ แล้วเสร็จแล้ว ใหม่สุดก่อนในแต่ละส่วน (Needs you first, then working, then done; newest first in each.)',
 			'มีความเคลื่อนไหวล่าสุดก่อน (Most recent activity first.)',
 			'ตามชื่อ (By name.)'
 		],
-		description: 'ลำดับ worktree ในแถบข้างของ Agents (Orca: sortBy) (How the Agents side bar orders worktrees.)'
+		description: 'ลำดับ worktree ในแถบข้างของ Agents (Orca: sortBy ค่าเริ่มต้นตาม Orca คือ recent) (How the Agents side bar orders worktrees; Orca defaults to most recent first.)'
 	},
 	{
 		id: 'kingu.sidebar.showActiveOnly',
