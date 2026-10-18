@@ -151,6 +151,12 @@ pub struct StartRequest {
   /// Snapshot files before the edit tools change them (chats: `chat_edits`); omitted when off.
   #[serde(skip_serializing_if = "std::ops::Not::not")]
   pub snapshots: bool,
+  /// Kingu's safety checks (`kingu.agent.safetyChecks`); omitted (on) unless turned off.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub safety_checks: Option<bool>,
+  /// Project rules (`rules::system_append`) after Claude Code's system prompt; omitted when none.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub system_prompt_append: Option<String>,
   /// What else this run owns while it is live besides its session (e.g. `chat:<root>:<id>`);
   /// not sent to the sidecar.
   #[serde(skip)]
@@ -802,6 +808,15 @@ exit 3"#
     assert_eq!(wire["images"], json!(["/c/a.png"]));
     let wire = serde_json::to_value(StartRequest { cwd: "/w".into(), prompt: "x".into(), ..Default::default() }).unwrap();
     assert!(wire.get("images").is_none());
+  }
+
+  #[test]
+  fn safety_checks_and_rules_are_sent_only_when_set() {
+    let wire = serde_json::to_value(StartRequest { cwd: "/w".into(), prompt: "x".into(), ..Default::default() }).unwrap();
+    assert!(wire.get("safetyChecks").is_none() && wire.get("systemPromptAppend").is_none());
+    let req = StartRequest { cwd: "/w".into(), prompt: "x".into(), safety_checks: Some(false), system_prompt_append: Some("# Project rules".into()), ..Default::default() };
+    let wire = serde_json::to_value(req).unwrap();
+    assert_eq!((wire["safetyChecks"].clone(), wire["systemPromptAppend"].clone()), (json!(false), json!("# Project rules")));
   }
 
   #[test]

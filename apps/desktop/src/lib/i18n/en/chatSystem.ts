@@ -1,0 +1,35 @@
+// UI strings of the chat's system features: safety checks (agent/guardText.ts), rules files
+// (agent/RulesChip.svelte), AI titles, notifications (ade/agentNotify.ts) and the history's date
+// groups (agent/chats.ts). Keys: 'chat.<feature>.<what>'. Thai in ../th/chatSystem.ts.
+export const chatSystem = {
+	'chat.guard.blocked': 'Blocked by Kingu safety check: {reason}',
+	'chat.guard.repetition': 'the same tool call a third time in a row',
+	'chat.guard.threat.rmRfRootBare': 'deleting the whole filesystem',
+	'chat.guard.threat.rmRfHomeOrRoot': 'deleting the home or root folder',
+	'chat.guard.threat.ddDestruction': 'overwriting a disk with dd',
+	'chat.guard.threat.formatDrive': 'formatting a system drive',
+	'chat.guard.threat.curlBashExecution': 'running a downloaded script in a shell',
+	'chat.guard.threat.reverseShell': 'opening a reverse shell',
+	'chat.guard.threat.sudoWithoutPassword': 'granting sudo without a password',
+	'chat.guard.threat.kernelModuleManipulation': 'loading or removing a kernel module',
+	'chat.rules.chip': '{count|# rule|# rules}',
+	'chat.rules.hint': 'Rules files the agent follows in this chat (AGENTS.md, .cursor/rules, Copilot instructions). Click to open one.',
+	'chat.rules.pick': 'Rules for this chat: open a file',
+	'chat.rules.kind.agents': 'AGENTS.md',
+	'chat.rules.kind.cursor': 'Cursor rule',
+	'chat.rules.kind.copilot': 'Copilot instructions',
+	'chat.rules.always': 'always',
+	'chat.rules.matched': 'matches the attached files',
+	'chat.notify.approvalTitle': 'Chat needs approval: {title}',
+	'chat.notify.approvalBody': 'Approval needed to continue',
+	'chat.notify.questionTitle': 'Chat has a question: {title}',
+	'chat.notify.questionBody': 'Questions need your input',
+	'chat.notify.finishedTitle': 'Chat finished: {title}',
+	'chat.notify.finishedBody': 'The agent finished its turn',
+	'chat.notify.failedTitle': 'Chat failed: {title}',
+	'chat.notify.failedBody': 'The agent stopped with an error',
+	'chat.history.today': 'Today',
+	'chat.history.yesterday': 'Yesterday',
+	'chat.history.week': 'Last 7 days',
+	'chat.history.older': 'Older'
+} as const;

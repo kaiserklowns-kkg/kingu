@@ -79,11 +79,12 @@ describe('PreToolUse snapshots', () => {
 		expect(readFileSync(join(cwd, 'a.txt'), 'utf8')).toBe('สาม\n');
 	});
 
-	test('no hooks unless the run asks for snapshots', async () => {
+	test('no snapshot hook unless the run asks for snapshots (the safety checks stay)', async () => {
 		const cwd = dir();
 		const { snaps, options } = await runEdits(cwd, [{ tool: 'Write', input: { file_path: join(cwd, 'x') }, apply: () => {} }], false);
 		expect(snaps).toEqual([]);
-		expect(options.hooks).toBeUndefined();
+		expect(options.hooks?.PreToolUse?.length).toBe(1);
+		expect(options.hooks?.PreToolUse?.[0]?.matcher).toBeUndefined();
 	});
 
 	test('outside the cwd, symlinks and huge files are reported without content', () => {

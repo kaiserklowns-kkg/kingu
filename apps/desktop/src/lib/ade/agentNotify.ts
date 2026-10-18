@@ -50,3 +50,18 @@ export function bellAction(enabled: boolean, visible: boolean, lastAt: number | 
 	if (!enabled || visible) return { mark: false, notify: false };
 	return { mark: true, notify: lastAt === undefined || now - lastAt >= BELL_THROTTLE_MS };
 }
+
+/**
+ * An agent chat's notice for one of its events (VS Code's chatWindowNotifier): a permission prompt
+ * or a question needs you, a turn finished (left out with `events` = `attention`) or failed.
+ */
+export function chatNoticeFor(ev: { kind: string; tool?: string; is_error?: boolean }, title: string, events = 'all'): Notice | null {
+	if (ev.kind === 'permission_request') {
+		return ev.tool === 'AskUserQuestion'
+			? { title: t('chat.notify.questionTitle', { title }), body: t('chat.notify.questionBody'), kind: 'attention' }
+			: { title: t('chat.notify.approvalTitle', { title }), body: t('chat.notify.approvalBody'), kind: 'attention' };
+	}
+	if (ev.kind !== 'result') return null;
+	if (ev.is_error) return { title: t('chat.notify.failedTitle', { title }), body: t('chat.notify.failedBody'), kind: 'attention' };
+	return events === 'attention' ? null : { title: t('chat.notify.finishedTitle', { title }), body: t('chat.notify.finishedBody'), kind: 'finished' };
+}

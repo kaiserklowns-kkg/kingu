@@ -122,6 +122,14 @@ export const AGENT_SETTINGS: SettingSchema[] = [
 		description: 'ใช้ฟอนต์ของ terminal (terminal.integrated.fontFamily) ในบทสนทนา (Orca: nativeChatAppearance.matchTerminalInterface) (Use the terminal font in the chat.)'
 	},
 	{
+		id: 'kingu.chat.aiTitles',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: true,
+		description:
+			'หลังคำตอบแรก ให้ agent ของ Source Control AI ตั้งชื่อแชตสั้น ๆ 3–6 คำ (ทำงานเฉพาะเมื่อเลือก kingu.git.ai.agent ไว้ และไม่แทนชื่อที่คุณเปลี่ยนเอง) (VS Code: AI chat titles) (After the first answer, the Source Control AI agent names the chat in 3–6 words; only when kingu.git.ai.agent is set, never over a name you chose.)'
+	},
+	{
 		id: 'kingu.automations.confirmDelete',
 		group: G,
 		type: 'boolean',

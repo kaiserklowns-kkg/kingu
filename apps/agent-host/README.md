@@ -9,6 +9,11 @@ starts one per app and talks newline-delimited JSON-RPC 2.0 over stdio; see `src
 - Notifications: `ready {sdkVersion}`, `event {runId, event}` (normalized `AgentEvent`, snake_case).
 - Permission prompts come from the SDK's `canUseTool`; "allow always" becomes a `session`-scoped
   rule, never written to settings files. Closing stdin ends every run and exits.
+- Safety checks (`src/guards/`, ported from goose by way of old Kingu's Arkai; Apache-2.0, see
+  NOTICE): a PreToolUse hook, so they hold in every permission mode. A catastrophic Bash command
+  (`rm -rf /`, `curl … | sh`, …) and the third identical tool call in a row are denied, with a
+  `guard_blocked` event. `start {safetyChecks: false}` turns them off.
+- `start {systemPromptAppend}`: project rules (Rust `agent/rules.rs`) after Claude Code's own prompt.
 
 ## Dev
 

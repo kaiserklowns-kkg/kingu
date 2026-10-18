@@ -32,7 +32,8 @@
 	import { STATUS_LABEL } from './events';
 	import { cliOf } from '#lib/ade/agentCli.ts';
 	import { chats } from './chats.svelte.ts';
-	import { chatCwdPath, historySections, initialChat, type ChatCwd } from './chats.ts';
+	import { chatCwdPath, groupByDate, historySections, initialChat, type ChatCwd, type DateGroup } from './chats.ts';
+	import RulesChip from './RulesChip.svelte';
 	import { assemblePrompt, isFileKey, promptPath, relativeTo, resolveContext, type ContextFile } from './chatPrompt.ts';
 	import { AGENT_APPROVALS, modeOf, permissionFor, turnBusy, type AgentApproval, type ChatMode } from './chatInput.ts';
 	import { buildTurns, promptHistory, type Turn } from './chatParts.ts';
@@ -77,6 +78,14 @@
 			(r) => (r.kind === 'chat' ? chats.run(r.id)?.status : runtime.run(r.slug)?.status)
 		)
 	);
+	/** The history's chats by Today / Yesterday / Last 7 days / Older. */
+	const chatGroups = $derived(groupByDate(sections.chats, Date.now()));
+	const GROUP_LABEL: Record<DateGroup, () => string> = {
+		today: () => t('chat.history.today'),
+		yesterday: () => t('chat.history.yesterday'),
+		week: () => t('chat.history.week'),
+		older: () => t('chat.history.older')
+	};
 	const taskWorktrees = $derived(adeTasks.worktrees.filter((w) => w.slug).map((w) => w.slug as string));
 	const cwd = $derived(workspace.root && chatMeta ? chatCwdPath(workspace.root, chatMeta.cwd) : workspace.root);
 	const mode = $derived(chatMeta ? modeOf(chatMeta.permission_mode) : newMode);
@@ -110,6 +119,14 @@
 		if (n === seenNew) return;
 		seenNew = n;
 		untrack(() => newChat());
+	});
+	// A clicked chat notification: show that chat.
+	let seenOpen = chatSignals.open?.n;
+	$effect(() => {
+		const req = chatSignals.open;
+		if (!req || req.n === seenOpen) return;
+		seenOpen = req.n;
+		untrack(() => chats.get(req.id) && select(req.id));
 	});
 
 	// A different folder: its chats, the most recent one shown.
@@ -176,7 +193,7 @@
 		const dropped = attachments.filter((a) => !a.image).map((a) => ({ path: relativeTo(workspace.root, a.path) }));
 		const list = [...(implicit && !implicit.disabled ? [implicit] : []), ...picked, ...dropped];
 		const context = await resolveContext(list, (rel) => invoke<string>('read_workspace_file', { rel }), (rel) => promptPath(rel, rootDir, runsInRoot));
-		return { text: assemblePrompt(text, context), images: attachments.filter((a) => a.image).map((a) => a.path) };
+		return { text: assemblePrompt(text, context), images: attachments.filter((a) => a.image).map((a) => a.path), files: list.map((f) => f.path) };
 	}
 
 	async function submit(text: string, attachments: Attachment[]) {
@@ -355,7 +372,9 @@
 			<!-- History (VS Code's agent sessions): chats, then the folder's ADE tasks (read-only here). -->
 			<div class="h-full overflow-y-auto py-1">
 				<ul aria-label={t('chatView.chats')}>
-					{#each sections.chats as r (r.id)}
+					{#each chatGroups as g (g.group)}
+						<li class="px-3 pt-2 pb-1 text-[11px] font-medium text-(--vscode-descriptionForeground) uppercase" role="presentation">{GROUP_LABEL[g.group]()}</li>
+						{#each g.rows as r (r.id)}
 						<li
 							class={[
 								'group/row flex h-[38px] items-center gap-2 px-3 hover:bg-(--vscode-list-hoverBackground)',
@@ -389,6 +408,7 @@
 								</span>
 							{/if}
 						</li>
+						{/each}
 					{:else}
 						<li class="px-3 py-2 text-(--vscode-descriptionForeground)">{t('chatView.noChats')}</li>
 					{/each}
@@ -485,6 +505,7 @@
 				oncontexttoggle={(f) => (implicitOff = implicitOff === f.path ? null : f.path)}
 				oncontextremove={(f) => (picked = picked.filter((p) => !(p.path === f.path && p.range?.startLine === f.range?.startLine)))}
 				sendLabel={running ? t('chatView.queue') : undefined}
+				contextExtra={rulesChip}
 				onsubmit={submit}
 			>
 				{#snippet chips()}
@@ -524,3 +545,7 @@
 		</div>
 	{/if}
 </div>
+
+{#snippet rulesChip()}
+	<RulesChip {cwd} files={contextChips.filter((f) => !('disabled' in f && f.disabled)).map((f) => f.path)} />
+{/snippet}

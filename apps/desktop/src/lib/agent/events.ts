@@ -54,6 +54,8 @@ export type AgentEvent =
 	| { kind: 'checkpoint'; request: number }
 	/** Added by Rust: the chat's working set changed (chatEdits reloads it). Not a timeline entry. */
 	| { kind: 'edits_changed'; request: number | null }
+	/** Kingu's safety check refused a tool call (agent-host guards/), in any permission mode. */
+	| { kind: 'guard_blocked'; tool: string; tool_use_id: string | null; check: 'security' | 'repetition'; threats: string[]; detail: string }
 	| { kind: 'error'; message: string }
 	| { kind: 'raw'; line: string }
 	| { kind: 'stderr'; line: string }

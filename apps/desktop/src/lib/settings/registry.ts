@@ -252,6 +252,22 @@ const CORE_SETTINGS: SettingSchema[] = [
 		description: 'วิธีรัน agent ของงานใหม่ใน Agents เลือกต่องานได้ตอนสร้าง (How new tasks run their agent; each task can pick when it is created.)'
 	},
 	{
+		id: 'kingu.agent.safetyChecks',
+		group: 'Agent',
+		type: 'boolean',
+		default: true,
+		description:
+			'บล็อกคำสั่ง shell ที่อันตรายร้ายแรง (เช่น rm -rf /, curl … | sh) และการเรียกเครื่องมือเดิมซ้ำเป็นครั้งที่สามติดกัน ในทุกโหมดการอนุญาต (Block catastrophic shell commands such as rm -rf / or curl … | sh, and the third identical tool call in a row, in every permission mode.)'
+	},
+	{
+		id: 'kingu.chat.rules.enabled',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: true,
+		description:
+			'ให้ agent ในแชตทำตามไฟล์กฎของโปรเจกต์นอกจาก CLAUDE.md: AGENTS.md, .cursor/rules/*.mdc และ .github/copilot-instructions.md (Cursor: rules) (Chat agents follow the project\'s rules files besides CLAUDE.md: AGENTS.md, .cursor/rules/*.mdc and .github/copilot-instructions.md.)'
+	},
+	{
 		id: 'kingu.agent.notifications',
 		group: 'Agent',
 		type: 'boolean',

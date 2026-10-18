@@ -59,8 +59,12 @@ pub enum ChatCwd {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ChatMeta {
   pub id: String,
-  /// From the first prompt; renameable.
+  /// From the first prompt, then the AI title (`ai_chat_title`); renameable.
   pub title: String,
+  /// The title is still Kingu's own (not renamed by the user), so an AI title may replace it.
+  /// False for chats saved before it existed.
+  #[serde(default)]
+  pub title_auto: bool,
   /// The first prompt (cut to `MAX_PROMPT`), for "Promote to task".
   #[serde(default)]
   pub prompt: String,
@@ -382,6 +386,7 @@ mod tests {
     ChatMeta {
       id: id.into(),
       title: format!("แชต {id}"),
+      title_auto: true,
       prompt: "อธิบาย main.rs".into(),
       cwd: ChatCwd::Folder,
       session_id: Some("0b5e-4c1d_9".into()),
@@ -422,7 +427,7 @@ mod tests {
     std::fs::create_dir(tmp.path().join(".kingu")).unwrap();
     std::fs::write(tmp.path().join(".kingu/chats.json"), r#"{"version":1,"chats":[{"id":"a","title":"A","cwd":{"kind":"folder"},"created_at":5}]}"#).unwrap();
     let c = &load(tmp.path()).unwrap()[0];
-    assert_eq!((c.prompt.as_str(), c.session_id.as_deref(), c.model.as_deref(), c.updated_at), ("", None, None, 0));
+    assert_eq!((c.prompt.as_str(), c.session_id.as_deref(), c.model.as_deref(), c.updated_at, c.title_auto), ("", None, None, 0, false));
     std::fs::write(tmp.path().join(".kingu/chats.json"), r#"{"version":9,"chats":[]}"#).unwrap();
     assert!(load(tmp.path()).unwrap_err().contains("newer Kingu"));
   }

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { bellAction, BELL_THROTTLE_MS, noticeFor, noticeState } from './agentNotify';
+import { bellAction, BELL_THROTTLE_MS, chatNoticeFor, noticeFor, noticeState } from './agentNotify';
 import { setLocale } from '#lib/i18n/index.ts';
 
 // These tests check the Thai UI text.
@@ -41,5 +41,16 @@ describe('terminal bell', () => {
 		expect(bellAction(true, false, undefined, 5)).toEqual({ mark: true, notify: true });
 		expect(bellAction(true, false, 5, 5 + BELL_THROTTLE_MS - 1)).toEqual({ mark: true, notify: false });
 		expect(bellAction(true, false, 5, 5 + BELL_THROTTLE_MS)).toEqual({ mark: true, notify: true });
+	});
+});
+
+describe('agent chat notifications', () => {
+	test('approval, a question, a finished or failed turn; nothing else', () => {
+		expect(chatNoticeFor({ kind: 'permission_request', tool: 'Bash' }, 'แก้บั๊ก')).toEqual({ title: 'แชตรอการอนุญาต: แก้บั๊ก', body: 'ต้องอนุญาตก่อนจึงจะทำงานต่อได้', kind: 'attention' });
+		expect(chatNoticeFor({ kind: 'permission_request', tool: 'AskUserQuestion' }, 'x')?.title).toBe('แชตมีคำถาม: x');
+		expect(chatNoticeFor({ kind: 'result', is_error: false }, 'x')).toMatchObject({ title: 'แชตเสร็จแล้ว: x', kind: 'finished' });
+		expect(chatNoticeFor({ kind: 'result', is_error: true }, 'x')?.kind).toBe('attention');
+		expect(chatNoticeFor({ kind: 'result', is_error: false }, 'x', 'attention')).toBeNull();
+		expect(chatNoticeFor({ kind: 'tool_use' }, 'x')).toBeNull();
 	});
 });

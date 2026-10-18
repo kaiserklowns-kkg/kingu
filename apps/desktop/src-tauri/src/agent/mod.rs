@@ -18,6 +18,7 @@ pub mod notes;
 pub mod open_in;
 pub mod pr;
 pub mod review;
+pub mod rules;
 pub mod scripts;
 pub mod status_hooks;
 pub mod tasks;
@@ -80,6 +81,8 @@ pub async fn agent_start(
   mcp_servers: Option<std::collections::BTreeMap<String, host::McpServer>>,
   plugins: Option<Vec<String>>,
   images: Option<Vec<String>>,
+  safety_checks: Option<bool>,
+  rules: Option<Vec<String>>,
   on_event: Channel<AgentEvent>,
 ) -> Result<u32, String> {
   if let Some(id) = chat_id.as_deref() {
@@ -110,6 +113,14 @@ pub async fn agent_start(
   let open_root = ws.root()?;
   let dir = run_dir(&open_root, root.as_deref(), slug.as_deref(), cwd.as_deref())?;
   let cwd = dir.to_str().ok_or("worktree path is not valid UTF-8")?.to_owned();
+  // A chat's rules files (kingu.chat.rules.enabled): `rules` are its attached files.
+  let system_prompt_append = match rules {
+    Some(files) => {
+      let (root, dir) = (open_root.clone(), dir.clone());
+      tauri::async_runtime::spawn_blocking(move || rules::system_append(&rules::discover(&root, &dir, &files))).await.map_err(|e| e.to_string())?
+    }
+    None => None,
+  };
   let transcript = match chat_id.as_deref() {
     Some(id) => Some(chats::Transcript::new(&open_root, id)?),
     None => None,
@@ -136,6 +147,8 @@ pub async fn agent_start(
     unset_env: account.unset,
     images,
     snapshots: edits.is_some(),
+    safety_checks: safety_checks.filter(|on| !on),
+    system_prompt_append,
     owner,
   };
   let resuming = req.resume.is_some();

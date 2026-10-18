@@ -27,6 +27,7 @@
 		attachments = $bindable([]),
 		onsubmit,
 		chips,
+		contextExtra,
 		context = [],
 		oncontexttoggle,
 		oncontextremove,
@@ -46,6 +47,8 @@
 		attachments?: Attachment[];
 		onsubmit: (text: string, attachments: Attachment[]) => void;
 		chips?: Snippet;
+		/** More of the context row after the files (the chat's rules chip); the row shows when it renders anything. */
+		contextExtra?: Snippet;
 		/** Attached files; an implicit one (the active editor's) can be turned off and on. */
 		context?: (ContextFile & { disabled?: boolean })[];
 		oncontexttoggle?: (file: ContextFile) => void;
@@ -156,8 +159,8 @@
 		size === 'lg' ? 'p-2.5 shadow-[0_2px_12px_rgba(0,0,0,0.25)]' : 'p-1.5'
 	]}
 >
-	{#if context.length}
-		<ul class="flex flex-wrap gap-1 px-1 pb-1" aria-label={t('chatView.context')}>
+	{#if context.length || contextExtra}
+		<ul class="hidden flex-wrap gap-1 px-1 pb-1 has-[>li:not(:empty)]:flex" aria-label={t('chatView.context')}>
 			{#each context as f (f.path + (f.implicit ? ':implicit' : ''))}
 				{@const label = contextLabel(f)}
 				<li
@@ -185,6 +188,7 @@
 					{/if}
 				</li>
 			{/each}
+			{#if contextExtra}<li class="contents">{@render contextExtra()}</li>{/if}
 		</ul>
 	{/if}
 	<textarea

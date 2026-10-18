@@ -50,7 +50,7 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['nativeChatAppearance.matchTerminalInterface', 'kingu.chat.matchTerminalFont', 'added', 'font only; the chat already follows the workbench theme'],
 	['nativeChatPermissionMode', 'kingu.agent.permissionMode', 'mapped'],
 	['experimentalNativeChat', 'kingu.agent.runMode', 'mapped'],
-	['nativeChatAutoName', null, 'needs-feature', 'chat auto-naming'],
+	['nativeChatAutoName', 'kingu.chat.aiTitles', 'added', 'runs the Source Control AI agent, only when kingu.git.ai.agent is set'],
 	['nativeChatInheritShellEnvironment', null, 'needs-feature', 'per-session environment control in the agent host'],
 	['nativeChatShellEnvironmentVariables', null, 'needs-feature', 'per-session environment control in the agent host'],
 	['nativeChatInlineVisuals', null, 'needs-feature', 'inline visuals in chat'],

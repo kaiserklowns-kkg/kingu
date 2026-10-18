@@ -14,7 +14,9 @@ import {
 	replayTranscript,
 	runKey,
 	historySections,
+	groupByDate,
 	initialChat,
+	wantsAiTitle,
 	sortChats,
 	type ChatMeta
 } from './chats';
@@ -38,6 +40,7 @@ describe('chat ids and new chats', () => {
 		expect(c).toEqual({
 			id: 'c-1',
 			title: 'อธิบาย main.rs',
+			title_auto: true,
 			prompt: 'อธิบาย   main.rs\nแล้วแก้ด้วย',
 			cwd: { kind: 'task', slug: 'fix-login' },
 			session_id: null,
@@ -178,5 +181,42 @@ describe('replaying a transcript', () => {
 	test('an empty transcript is an ended, empty run', () => {
 		const s = replayTranscript([]);
 		expect(s).toMatchObject({ ended: true, status: 'done', items: [] });
+	});
+});
+
+describe('AI titles', () => {
+	test('only a chat that still has its first-prompt title and was never renamed', () => {
+		const c = chat('a', 1);
+		expect(wantsAiTitle(c)).toBe(true);
+		expect(wantsAiTitle({ ...c, title_auto: false })).toBe(false);
+		expect(wantsAiTitle({ ...c, title_auto: undefined })).toBe(false); // saved before title_auto existed
+		expect(wantsAiTitle({ ...c, title: 'Fix the login bug' })).toBe(false); // already has an AI title
+		expect(wantsAiTitle({ ...c, prompt: '' })).toBe(false);
+	});
+});
+
+describe('history date groups', () => {
+	// Local time, so the day boundaries are the user's.
+	const now = new Date(2026, 9, 18, 15, 30).getTime();
+	const at = (d: number, h = 12) => new Date(2026, 9, d, h).getTime();
+
+	test('Today, Yesterday, Last 7 days and Older by calendar day, empty groups left out', () => {
+		const rows = [
+			{ id: 'future', at: now + 60_000 },
+			{ id: 'morning', at: at(18, 0) },
+			{ id: 'late-yesterday', at: at(17, 23) },
+			{ id: 'early-yesterday', at: new Date(2026, 9, 17, 0, 0).getTime() },
+			{ id: 'week', at: at(11) },
+			{ id: 'old', at: at(10, 23) },
+			{ id: 'older', at: at(1) }
+		];
+		expect(groupByDate(rows, now).map((g) => [g.group, g.rows.map((r) => r.id)])).toEqual([
+			['today', ['future', 'morning']],
+			['yesterday', ['late-yesterday', 'early-yesterday']],
+			['week', ['week']],
+			['older', ['old', 'older']]
+		]);
+		expect(groupByDate([{ id: 'x', at: at(1) }], now).map((g) => g.group)).toEqual(['older']);
+		expect(groupByDate([], now)).toEqual([]);
 	});
 });

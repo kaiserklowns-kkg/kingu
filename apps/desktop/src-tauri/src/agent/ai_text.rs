@@ -354,6 +354,35 @@ pub async fn ai_generate(app: AppHandle, ws: State<'_, Workspace>, slug: Option<
   tauri::async_runtime::spawn_blocking(move || run(&inv, &dir, TIMEOUT)).await.map_err(|e| e.to_string())?
 }
 
+/// How long generating a chat's title may take, and the prompt it may get.
+pub const TITLE_TIMEOUT: Duration = Duration::from_secs(60);
+pub const MAX_TITLE_PROMPT: usize = 8_000;
+
+/// Whether chat titles may run the source-control AI: only when the user picked its agent
+/// (`kingu.git.ai.agent`) and did not turn it off (`kingu.git.ai.enabled`), so a title never
+/// starts an agent CLI they did not choose.
+pub fn titles_configured(enabled: Option<&serde_json::Value>, agent: &str) -> bool {
+  enabled.and_then(|v| v.as_bool()) != Some(false) && !agent.trim().is_empty()
+}
+
+/// A chat's AI title (vscode's generateInitialChatTitleIfNeeded): the source-control AI agent
+/// run once on `prompt` (built by the webview, chatTitle.ts) in the open folder. `None` when the
+/// user has not set that agent up; the webview drops errors, the title then stays as it was.
+#[tauri::command]
+pub async fn ai_chat_title(app: AppHandle, ws: State<'_, Workspace>, prompt: String) -> Result<Option<String>, String> {
+  if prompt.trim().is_empty() || prompt.len() > MAX_TITLE_PROMPT {
+    return Err(tr!(AgentMsg::PromptTooLong));
+  }
+  let config = app.path().app_config_dir().map_err(|e| e.to_string())?;
+  if !titles_configured(crate::settings::user_value(&config, "kingu.git.ai.enabled").as_ref(), &user_string(&config, "kingu.git.ai.agent")) {
+    return Ok(None);
+  }
+  let dir = ws.root()?;
+  let inv = invocation_from_settings(&config, &prompt)?;
+  log::info!("chat title: {}", inv.argv[0]);
+  tauri::async_runtime::spawn_blocking(move || run(&inv, &dir, TITLE_TIMEOUT).map(Some)).await.map_err(|e| e.to_string())?
+}
+
 /// The task worktree's pull request template (`kingu.pr.useTemplate`), or `None`.
 #[tauri::command]
 pub async fn ai_pr_template(ws: State<'_, Workspace>, slug: String) -> Result<Option<String>, String> {
@@ -400,6 +429,16 @@ mod tests {
     let i = custom_invocation("llm --stdin", "P").unwrap();
     assert_eq!(i.stdin.as_deref(), Some("P"));
     assert!(custom_invocation("  ", "P").is_err());
+  }
+
+  #[test]
+  fn chat_titles_need_a_chosen_agent() {
+    use serde_json::json;
+    assert!(!titles_configured(None, ""), "nothing set up: no title run");
+    assert!(!titles_configured(None, "  "));
+    assert!(titles_configured(None, "claude"));
+    assert!(titles_configured(Some(&json!(true)), "custom"));
+    assert!(!titles_configured(Some(&json!(false)), "claude"), "source-control AI turned off");
   }
 
   #[test]

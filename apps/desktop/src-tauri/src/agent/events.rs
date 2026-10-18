@@ -104,6 +104,19 @@ pub enum AgentEvent {
     #[serde(default)]
     skipped: Option<String>,
   },
+  /// Kingu's safety check refused a tool call (the host's guards, in every permission mode):
+  /// `check` is `security` (a catastrophic shell command; `threats` are goose pattern names,
+  /// `detail` their descriptions) or `repetition` (the third identical call in a row).
+  GuardBlocked {
+    tool: String,
+    #[serde(default)]
+    tool_use_id: Option<String>,
+    check: String,
+    #[serde(default)]
+    threats: Vec<String>,
+    #[serde(default)]
+    detail: String,
+  },
   /// Added by Rust after a chat's user message: that message is request `request` of the chat,
   /// the checkpoint "Restore checkpoint" goes back to. Kept in the transcript.
   Checkpoint { request: u32 },
@@ -145,6 +158,13 @@ mod tests {
       "usage": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 2, "cache_creation_input_tokens": 1}
     });
     assert_eq!(serde_json::to_value(AgentEvent::from_host(result.clone())).unwrap(), result);
+  }
+
+  #[test]
+  fn guard_blocks_round_trip() {
+    let ev = json!({"kind": "guard_blocked", "tool": "Bash", "tool_use_id": "tu1", "check": "security", "threats": ["rm_rf_root_bare"], "detail": "Recursive deletion of root filesystem"});
+    assert!(matches!(AgentEvent::from_host(ev.clone()), AgentEvent::GuardBlocked { ref check, .. } if check == "security"));
+    assert_eq!(serde_json::to_value(AgentEvent::from_host(ev.clone())).unwrap(), ev);
   }
 
   #[test]
