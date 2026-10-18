@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { MAX_TOOL_RESULT_CHARS, normalize, summarizeTool } from '../src/normalize.ts';
+import { contextTokensOf, contextWindowOf, MAX_TOOL_RESULT_CHARS, normalize, ruleTexts, slashCommands, summarizeTool } from '../src/normalize.ts';
 
 describe('normalize', () => {
 	test('maps init, assistant blocks, tool results and results', () => {
-		expect(normalize({ type: 'system', subtype: 'init', session_id: 's-1', model: 'claude-opus-5-5', tools: [] })).toEqual([
+		expect(normalize({ type: 'system', subtype: 'init', session_id: 's-1', model: 'claude-opus-5-5' })).toEqual([
 			{ kind: 'system', subtype: 'init', session_id: 's-1', model: 'claude-opus-5-5' }
 		]);
 		expect(normalize({ type: 'system', subtype: 'status', status: 'compacting' })).toEqual([]);
@@ -45,6 +45,35 @@ describe('normalize', () => {
 		expect(normalize({ type: 'rate_limit_event' })).toEqual([{ kind: 'raw', line: '{"type":"rate_limit_event"}' }]);
 		expect(normalize('nope')[0]?.kind).toBe('raw');
 		expect(normalize({ type: 'assistant' })[0]?.kind).toBe('raw');
+	});
+
+	test('keeps what the session started with and its command list', () => {
+		const init = { type: 'system', subtype: 'init', session_id: 's', model: 'm', slash_commands: ['compact', 'review', 7], tools: ['Bash'], mcp_servers: [{ name: 'gh', status: 'connected', source: 'sdk' }, { status: 'x' }] };
+		expect(normalize(init)[1]).toEqual({ kind: 'session_info', slash_commands: ['compact', 'review'], tools: ['Bash'], mcp_servers: [{ name: 'gh', status: 'connected' }] });
+		const changed = { type: 'system', subtype: 'commands_changed', commands: [{ name: 'deploy', description: 'Ship it', argumentHint: '<env>' }] };
+		expect(normalize(changed)).toEqual([{ kind: 'commands', commands: [{ name: 'deploy', description: 'Ship it', argument_hint: '<env>' }] }]);
+		expect(slashCommands([{ name: '/a', description: 'x' }, { name: 'a', description: 'dup' }, { description: 'no name' }, null])).toEqual([{ name: 'a', description: 'x', argument_hint: '' }]);
+		expect(slashCommands('nope')).toEqual([]);
+	});
+
+	test('reads the context window and the main agent\'s last call', () => {
+		expect(contextWindowOf({ modelUsage: { opus: { contextWindow: 200000 }, haiku: { contextWindow: 100000 } } })).toBe(200000);
+		expect(contextWindowOf({ modelUsage: {} })).toBeNull();
+		expect(contextWindowOf({})).toBeNull();
+		const usage = { input_tokens: 5, cache_read_input_tokens: 1000, cache_creation_input_tokens: 20, output_tokens: 100 };
+		expect(contextTokensOf({ type: 'assistant', parent_tool_use_id: null, message: { usage } })).toBe(1125);
+		expect(contextTokensOf({ type: 'assistant', parent_tool_use_id: 'tu1', message: { usage } })).toBeNull();
+		expect(contextTokensOf({ type: 'user', message: { usage } })).toBeNull();
+	});
+
+	test('turns permission suggestions into readable rules', () => {
+		const suggestions = [
+			{ type: 'addRules', behavior: 'allow', destination: 'localSettings', rules: [{ toolName: 'Bash', ruleContent: 'npm test:*' }, { toolName: 'WebFetch' }] },
+			{ type: 'addRules', behavior: 'deny', destination: 'session', rules: [{ toolName: 'Bash', ruleContent: 'rm:*' }] },
+			{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }
+		];
+		expect(ruleTexts(suggestions)).toEqual(['Bash(npm test:*)', 'WebFetch']);
+		expect(ruleTexts(undefined)).toEqual([]);
 	});
 });
 
