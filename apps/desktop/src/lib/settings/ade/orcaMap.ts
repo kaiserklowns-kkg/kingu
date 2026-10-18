@@ -199,7 +199,8 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['terminalWindowsPowerShellImplementation', null, 'not-applicable', 'Windows only'],
 	['terminalWindowsWslDistro', null, 'not-applicable', 'Windows / WSL'],
 	// --- Side bar, board and worktree cards (Orca UI preferences)
-	['ui.groupBy', 'kingu.sidebar.groupBy', 'added', 'Orca groups by repo by default; Kingu shows one folder'],
+	['ui.groupBy', 'kingu.sidebar.groupBy', 'added', 'Orca groups by repo by default'],
+	['repos', 'kingu.projects.addOnOpen', 'added', "Orca's added projects; Kingu adds an opened folder (projects.json, Agents: Add Project…)"],
 	['ui.sortBy', 'kingu.sidebar.sortBy', 'added'],
 	['ui.showActiveOnly', 'kingu.sidebar.showActiveOnly', 'added'],
 	['ui.hideDefaultBranchWorkspace', 'kingu.sidebar.hideDefaultBranch', 'added'],
@@ -221,7 +222,7 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['ui.hideCliCreatedWorkspaces', null, 'needs-feature', 'a Kingu CLI that creates workspaces'],
 	['ui.agentsShowChildAgents', null, 'needs-feature', 'sub-agent rows'],
 	['ui.workspaceStatuses', null, 'needs-feature', 'custom board columns'],
-	['ui.projectOrderBy', null, 'not-applicable', 'Kingu shows one folder'],
+	['ui.projectOrderBy', null, 'needs-feature', 'project order (Kingu keeps the order they were added)'],
 	['ui.syncTaskStatusFromWorkspaceBoard', null, 'needs-feature', 'issue status sync'],
 	['showPinnedWorktreesInGroups', null, 'needs-feature', 'pinned worktrees'],
 	['nestWorkspaces', null, 'not-applicable', 'Kingu shows one folder'],
