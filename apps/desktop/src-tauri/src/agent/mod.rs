@@ -520,10 +520,11 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
   tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
-/// Task list of the open folder; empty with no folder open.
+/// Task list of the open folder (empty with no folder open), or of another added project `root`
+/// (the side bar shows every project's tasks).
 #[tauri::command]
-pub fn tasks_load(ws: State<'_, Workspace>) -> Result<Vec<tasks::TaskMeta>, String> {
-  ws.current().map_or(Ok(Vec::new()), |root| tasks::load(&root))
+pub fn tasks_load(ws: State<'_, Workspace>, projects: State<'_, crate::projects::Projects>, root: Option<String>) -> Result<Vec<tasks::TaskMeta>, String> {
+  crate::projects::root_arg(&ws, &projects, root)?.map_or(Ok(Vec::new()), |root| tasks::load(&root))
 }
 
 /// Automations of the open folder; empty with no folder open.

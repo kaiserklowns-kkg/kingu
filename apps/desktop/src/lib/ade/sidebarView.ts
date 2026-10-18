@@ -5,7 +5,7 @@
 import type { TaskStatus } from './model';
 import { t } from '#lib/i18n/index.ts';
 
-/** `repo`: one group for the open folder (Kingu shows one project), so it lists like `none`. */
+/** `repo`: one group per added project (projects.ts); within the open folder it lists like `none`. */
 export type GroupBy = 'none' | 'workspace-status' | 'pr-status' | 'repo';
 /** `manual`: the order the user dragged (the side bar keeps it); sorted here like `recent`. */
 export type SortBy = 'smart' | 'recent' | 'name' | 'manual';

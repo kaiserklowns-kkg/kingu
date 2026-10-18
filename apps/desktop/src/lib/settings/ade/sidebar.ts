@@ -14,12 +14,21 @@ export const SIDEBAR_SETTINGS: SettingSchema[] = [
 		default: 'repo',
 		enum: ['repo', 'none', 'workspace-status', 'pr-status'],
 		enumDescriptions: [
-			'กลุ่มของโปรเจกต์ที่เปิดอยู่ (By project.)',
+			'กลุ่มละโปรเจกต์ ทุกโปรเจกต์ที่เพิ่มไว้ (One group per added project.)',
 			'รายการเดียว (One list.)',
 			'แบ่งตามสถานะงาน: รอคุณ / กำลังทำ / เสร็จแล้ว (By task status.)',
 			'แบ่งตามสถานะ PR: เปิด / ร่าง / merge แล้ว / ปิด / ไม่มี PR (By pull request state.)'
 		],
 		description: 'จัดกลุ่ม worktree ในแถบข้างของ Agents ค่าเริ่มต้นตาม Orca คือตามโปรเจกต์ (How the Agents side bar groups worktrees; Orca groups by project.)'
+	},
+	{
+		id: 'kingu.projects.addOnOpen',
+		group: G,
+		type: 'boolean',
+		default: true,
+		description:
+			'เพิ่มโฟลเดอร์ที่เปิดเป็นโปรเจกต์ในแถบข้างของ Agents อัตโนมัติ แถบข้างแสดงงานและสถานะ agent ของทุกโปรเจกต์ที่เพิ่มไว้พร้อมกัน ตาม Orca (Add every opened folder to the Agents side bar\'s projects; the side bar shows the tasks and agent status of every added project at once, like Orca.)',
+		scope: 'application'
 	},
 	{
 		id: 'kingu.sidebar.sortBy',

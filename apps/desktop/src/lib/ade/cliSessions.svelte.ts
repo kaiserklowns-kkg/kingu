@@ -24,7 +24,9 @@ import { t } from '#lib/i18n/index.ts';
 /** `hookToken`: the session reports its state through Claude Code hooks (claude CLIs). */
 export type CliSession = { run: string[]; startedAt: number; hookToken?: string };
 
-const STORE = 'kingu.cliSessions';
+/** Per folder in localStorage (`storeName(CLI_SESSIONS_STORE, rootTag(root))`); projects.svelte.ts reads other folders'. */
+export const CLI_SESSIONS_STORE = 'kingu.cliSessions';
+const STORE = CLI_SESSIONS_STORE;
 
 class CliSessions {
 	sessions = $state<Record<string, CliSession>>({});

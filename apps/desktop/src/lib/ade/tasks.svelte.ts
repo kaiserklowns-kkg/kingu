@@ -60,6 +60,8 @@ import { profileOf, programOf } from '#lib/ade/agentProfiles.ts';
 import { chooseAgentCli } from '#lib/ade/agentPicker.ts';
 import { composeMessage, promptWithAttachments, type Attachment } from '#lib/agent/attachments.ts';
 import { cliSessions } from './cliSessions.svelte';
+import { projects } from './projects.svelte';
+import { projectBadge, strayRuns } from './projects';
 import { mcpServers, skillPlugins } from './mcp';
 import { prStatuses } from './prStatus.svelte';
 import { quickOpenWorktree } from './quickOpen.svelte.ts';
@@ -139,18 +141,21 @@ class AdeTasks {
 	attentionCount = $derived(this.groups.attention.length);
 	/** Tasks of the open folder that need a review (or failed); permission prompts are counted by `agents`. */
 	reviewCount = $derived(this.groups.attention.filter((v) => v.status !== 'waiting').length);
-	/** The title-bar "รอคุณ" badge: pending permission requests (every folder) + tasks to review. */
-	badgeCount = $derived(agents.pendingCount + this.reviewCount);
 	/**
-	 * Every agent session for the title bar's agents status: this folder's tasks, plus runs started
-	 * in other folders (they can still need input or be working).
+	 * The title-bar "รอคุณ" badge: pending permission requests (every folder) + tasks to review,
+	 * with the other added projects' CLI prompts and reviews (projects.ts projectBadge).
+	 */
+	badgeCount = $derived(agents.pendingCount + this.reviewCount + projectBadge(projects.all));
+	/**
+	 * Every agent session for the title bar's agents status: this folder's tasks, the other added
+	 * projects' tasks (agent-host runs and CLIs alike), plus runs started in folders that are not
+	 * added (they can still need input or be working).
 	 */
 	sessionStates: (SessionState & { slug: string })[] = $derived.by(() => {
 		const here = this.views.map((v) => ({ slug: v.meta.slug, ...this.stateOf(v) }));
-		const others = agents.list
-			.filter((r) => r.root !== workspace.root)
-			.map((r) => ({ slug: r.slug, status: toTaskRuntime(r).status, pending: r.pending.length }));
-		return [...here, ...others];
+		const projectTasks = projects.all.map(({ view }) => ({ slug: view.meta.slug, ...this.stateOf(view) }));
+		const others = strayRuns(agents.list, workspace.root, projects.added).map((r) => ({ slug: r.slug, status: toTaskRuntime(r).status, pending: r.pending.length }));
+		return [...here, ...projectTasks, ...others];
 	});
 	/** Needs input / in progress / unread, for the agents status widget and the session pill. */
 	counts = $derived(countSessions(this.sessionStates));
@@ -1354,6 +1359,8 @@ export function installAde(): () => void {
 		});
 	});
 	const tick = setInterval(() => (adeTasks.now = Date.now()), 30_000);
+	// The other added projects of the side bar (their tasks, agent status and notifications).
+	const uninstallProjects = projects.install();
 	// Refresh stats when the window regains focus (agents and terminals change worktrees).
 	const onFocus = () => void adeTasks.refreshStats();
 	window.addEventListener('focus', onFocus);
@@ -1415,6 +1422,7 @@ export function installAde(): () => void {
 		disposed = true;
 		stopGitWatch?.();
 		stopEffects();
+		uninstallProjects();
 		clearInterval(tick);
 		window.removeEventListener('focus', onFocus);
 		cliSessions.onSessionId = null;

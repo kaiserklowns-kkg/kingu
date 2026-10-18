@@ -18,6 +18,7 @@ mod lsp;
 mod menu;
 mod net_proxy;
 mod project;
+mod projects;
 mod notify;
 mod pty;
 mod replace;
@@ -762,9 +763,10 @@ async fn worktree_refresh_base(ws: State<'_, Workspace>, base: String) -> Result
 }
 
 #[tauri::command]
-fn worktree_list(ws: State<'_, Workspace>) -> Result<Vec<agent::worktree::WorktreeInfo>, String> {
-  // No folder open: no tasks to list (not an error in the Agent panel).
-  ws.current().map_or(Ok(Vec::new()), |root| agent::worktree::list(&root))
+fn worktree_list(ws: State<'_, Workspace>, projects: State<'_, projects::Projects>, root: Option<String>) -> Result<Vec<agent::worktree::WorktreeInfo>, String> {
+  // No folder open: no tasks to list (not an error in the Agent panel). `root`: another added
+  // project's worktrees, for the side bar.
+  projects::root_arg(&ws, &projects, root)?.map_or(Ok(Vec::new()), |root| agent::worktree::list(&root))
 }
 
 /// `delete_branch`: `keep` (default), `safe` (`git branch -d`) or `force`; returns the branch a
@@ -1184,6 +1186,7 @@ pub fn run() {
       let last = if restore.as_ref().and_then(|v| v.as_str()) == Some("none") { None } else { data.last.as_deref() };
       let start = workspace::startup_root(last, std::env::var_os("KINGU_WORKSPACE"));
       app.manage(recent);
+      app.manage(projects::Projects::load(app.path().app_data_dir()?.join("projects.json")));
       let data = app.path().app_data_dir()?;
       #[cfg(unix)]
       let (runtime, uid) = (
@@ -1304,6 +1307,9 @@ pub fn run() {
       git_remote::git_clone_cancel,
       project::git_init,
       project::project_create,
+      projects::projects_list,
+      projects::projects_add,
+      projects::projects_remove,
       pty_spawn,
       pty::pty_write,
       pty::pty_resize,
