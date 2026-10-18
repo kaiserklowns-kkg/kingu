@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"math"
 	"net/url"
 	"strings"
 	"unicode"
@@ -15,6 +16,11 @@ const (
 	maxRefLen         = 255
 	maxExternalRefLen = 500
 	maxShortTextLen   = 200
+
+	// maxRunTokens bounds a run's token counts (far above any real session).
+	maxRunTokens = 1_000_000_000_000
+	// maxRunCostUSD matches the agent_runs.cost_usd CHECK.
+	maxRunCostUSD = 1_000_000
 )
 
 var (
@@ -134,4 +140,33 @@ func checkGitURL(field, v string) *apiError {
 		return errBadRequest("invalid_input", field+" must not have a query or fragment")
 	}
 	return nil
+}
+
+// checkUsage validates a run's token counts and cost (USD, optional).
+func checkUsage(input, output int64, cost *float64) *apiError {
+	if input < 0 || output < 0 || input > maxRunTokens || output > maxRunTokens {
+		return errBadRequest("invalid_input", "token counts must be between 0 and 10^12")
+	}
+	if cost != nil && (math.IsNaN(*cost) || *cost < 0 || *cost > maxRunCostUSD) {
+		return errBadRequest("invalid_input", "cost_usd must be between 0 and 1000000")
+	}
+	return nil
+}
+
+// checkSource validates a task's issue source and reference: manual tasks
+// have no reference, github/linear/jira tasks must have one.
+func checkSource(source string, ref *string) *apiError {
+	if !taskSources[source] {
+		return errBadRequest("invalid_input", "source must be one of manual, github, linear, jira")
+	}
+	if source == "manual" {
+		if ref != nil {
+			return errBadRequest("invalid_input", "external_ref is not allowed for source manual")
+		}
+		return nil
+	}
+	if ref == nil {
+		return errBadRequest("invalid_input", "external_ref is required for source "+source)
+	}
+	return checkText("external_ref", *ref, maxExternalRefLen, true)
 }

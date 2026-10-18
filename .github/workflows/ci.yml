@@ -1,0 +1,164 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  # Svelte app + Tauri crate + terminal daemon. macOS: the desktop targets macOS first and has
+  # macOS-only code (cfg(target_os = "macos") deps, Keychain, `open`), which only builds and is
+  # only tested there. Tauri's macOS build needs no extra system packages.
+  desktop:
+    name: Desktop (macOS)
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Install JS dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Rust (stable, clippy)
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+          rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Like a developer machine: git tests make commits and repositories, and the real-ripgrep
+      # search tests skip without `rg`.
+      - name: Test tools (git identity, ripgrep)
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: |
+          git config --global user.name "Kingu CI"
+          git config --global user.email "ci@kingu.invalid"
+          git config --global init.defaultBranch main
+          command -v rg || brew install ripgrep
+
+      - name: Type check (svelte-check)
+        working-directory: apps/desktop
+        run: bun run check
+
+      - name: Unit tests (bun)
+        working-directory: apps/desktop
+        run: bun test src
+
+      # Also produces apps/desktop/build, which the Tauri crate embeds (frontendDist), so it must
+      # run before cargo.
+      - name: Build webview
+        working-directory: apps/desktop
+        run: bun run build
+
+      - name: cargo test
+        run: cargo test --workspace --locked
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  # Go team server. The integration tests start their own throwaway PostgreSQL cluster with
+  # initdb/pg_ctl (Unix socket only, see internal/api/api_test.go), so they need the server
+  # binaries rather than a service container.
+  server:
+    name: Team server (Go)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/server/go.mod
+          cache-dependency-path: apps/server/go.sum
+
+      - name: PostgreSQL binaries
+        run: |
+          if ! ls -d /usr/lib/postgresql/*/bin >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends postgresql
+          fi
+          bin=$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -n 1)
+          "$bin/postgres" --version
+          echo "KINGU_PG_BIN=$bin" >> "$GITHUB_ENV"
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        env:
+          # Fail instead of skipping when PostgreSQL is missing.
+          KINGU_REQUIRE_DB: "1"
+        run: go test -count=1 ./...
+
+  # SvelteKit team dashboard.
+  web:
+    name: Web dashboard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Install JS dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Type check
+        working-directory: apps/web
+        run: bun run check
+
+      - name: Unit tests
+        working-directory: apps/web
+        run: bun test src
+
+      - name: Build
+        working-directory: apps/web
+        run: bun run build
+
+  # Agent host sidecar. Its tests use a fake SDK query(): no model calls, no Claude Code process.
+  agent-host:
+    name: Agent host
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/agent-host
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Install JS dependencies
+        working-directory: .
+        run: bun install --frozen-lockfile
+
+      - name: Type check
+        run: bun run check
+
+      - name: Tests
+        run: bun test

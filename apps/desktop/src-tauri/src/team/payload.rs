@@ -1,4 +1,5 @@
-//! The task metadata the desktop syncs to the team server (`PUT /v1/tasks/{id}/sync`).
+//! The task and run metadata the desktop syncs to the team server (`PUT /v1/tasks/{id}/sync`,
+//! `PUT /v1/tasks/{id}/runs/{run}/sync`).
 //! Validated here with the same rules as the server, so bad payloads fail fast in the app
 //! instead of sitting in the outbox. Metadata only: anything that looks like file contents,
 //! a diff or a credential is rejected.
@@ -13,6 +14,11 @@ pub const MAX_TITLE_CHARS: usize = 300;
 const MAX_LINES: u32 = 100_000_000;
 const MAX_FILES: u32 = 1_000_000;
 pub const STATUSES: [&str; 6] = ["backlog", "running", "needs_input", "review", "done", "failed"];
+/// Where a task came from; `external_ref` is required for every source but `manual`.
+pub const SOURCES: [&str; 4] = ["manual", "github", "linear", "jira"];
+const MAX_EXTERNAL_REF_CHARS: usize = 500;
+const MAX_TOKENS: u64 = 1_000_000_000_000;
+const MAX_COST_USD: f64 = 1_000_000.0;
 
 static CLIENT_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9._:-]{1,128}$").unwrap());
 static UUID: LazyLock<Regex> =
@@ -54,7 +60,39 @@ pub struct TaskSync {
   pub started_at: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub finished_at: Option<String>,
+  /// `github`, `linear` or `jira` for a task started from an issue (absent = manual).
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub source: Option<String>,
+  /// The issue: `owner/repo#42` (or `#42`) on GitHub, `ENG-123` on Linear.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub external_ref: Option<String>,
   /// RFC 3339 client time of this state; the server ignores states older than the stored one.
+  pub updated_at: String,
+}
+
+/// One agent run of a synced task: timings, tokens and cost. Never prompts or transcripts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunSync {
+  pub client_task_id: String,
+  /// Stable per run (the run's start time), so retries and later states update one row.
+  pub client_run_id: String,
+  /// The agent (`claude-code`, `codex`, ...).
+  pub adapter: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub model: Option<String>,
+  /// How the run ended (`done`, `stopped`, `failed`) or `idle` after a turn.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub exit_reason: Option<String>,
+  pub started_at: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub ended_at: Option<String>,
+  #[serde(default)]
+  pub input_tokens: u64,
+  #[serde(default)]
+  pub output_tokens: u64,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub cost_usd: Option<f64>,
   pub updated_at: String,
 }
 
@@ -127,6 +165,16 @@ impl TaskSync {
     if let Some(m) = &self.model {
       text("model", m, 200)?;
     }
+    let source = self.source.as_deref().unwrap_or("manual");
+    if !SOURCES.contains(&source) {
+      return Err(format!("source: must be one of {}", SOURCES.join(", ")));
+    }
+    match (source, &self.external_ref) {
+      ("manual", Some(_)) => return Err("external_ref: not allowed for a manual task".into()),
+      ("manual", None) => {}
+      (_, None) => return Err(format!("external_ref: required for source {source}")),
+      (_, Some(r)) => text("external_ref", r, MAX_EXTERNAL_REF_CHARS)?,
+    }
     if let Some(d) = &self.diff_stats
       && (d.additions > MAX_LINES || d.deletions > MAX_LINES || d.files_changed > MAX_FILES)
     {
@@ -160,6 +208,67 @@ impl TaskSync {
   }
 }
 
+impl RunSync {
+  pub fn validate(&self) -> Result<(), String> {
+    for (field, id) in [("client_task_id", &self.client_task_id), ("client_run_id", &self.client_run_id)] {
+      if !CLIENT_ID.is_match(id) {
+        return Err(format!("{field}: must match [A-Za-z0-9._:-]{{1,128}}"));
+      }
+    }
+    text("adapter", &self.adapter, 100)?;
+    if let Some(m) = &self.model {
+      text("model", m, 200)?;
+    }
+    if let Some(r) = &self.exit_reason {
+      text("exit_reason", r, 200)?;
+    }
+    if self.input_tokens > MAX_TOKENS || self.output_tokens > MAX_TOKENS {
+      return Err("tokens: out of range".into());
+    }
+    if let Some(c) = self.cost_usd
+      && !(c.is_finite() && (0.0..=MAX_COST_USD).contains(&c))
+    {
+      return Err("cost_usd: must be between 0 and 1000000".into());
+    }
+    timestamp("started_at", &self.started_at)?;
+    timestamp("updated_at", &self.updated_at)?;
+    if let Some(e) = &self.ended_at {
+      timestamp("ended_at", e)?;
+      if self.started_at.ends_with('Z') && e.ends_with('Z') && *e < self.started_at {
+        return Err("ended_at: must not be before started_at".into());
+      }
+    }
+    Ok(())
+  }
+
+  /// The JSON body for `PUT /v1/tasks/{client_task_id}/runs/{client_run_id}/sync`.
+  pub fn wire_body(&self, project_id: &str) -> serde_json::Value {
+    let mut v = serde_json::to_value(self).expect("RunSync serializes");
+    let obj = v.as_object_mut().expect("object");
+    obj.remove("client_task_id");
+    obj.remove("client_run_id");
+    obj.insert("project_id".into(), project_id.into());
+    v
+  }
+}
+
+#[cfg(test)]
+pub(crate) fn sample_run(task: &str, run: &str, updated_at: &str) -> RunSync {
+  RunSync {
+    client_task_id: task.into(),
+    client_run_id: run.into(),
+    adapter: "claude-code".into(),
+    model: Some("opus".into()),
+    exit_reason: Some("done".into()),
+    started_at: "2026-10-17T09:00:00Z".into(),
+    ended_at: Some("2026-10-17T09:05:00Z".into()),
+    input_tokens: 1500,
+    output_tokens: 300,
+    cost_usd: Some(0.42),
+    updated_at: updated_at.into(),
+  }
+}
+
 #[cfg(test)]
 pub(crate) fn sample(id: &str, status: &str, updated_at: &str) -> TaskSync {
   TaskSync {
@@ -172,6 +281,8 @@ pub(crate) fn sample(id: &str, status: &str, updated_at: &str) -> TaskSync {
     diff_stats: Some(DiffStats { additions: 12, deletions: 3, files_changed: 2 }),
     started_at: Some("2026-10-17T09:00:00Z".into()),
     finished_at: None,
+    source: None,
+    external_ref: None,
     updated_at: updated_at.into(),
   }
 }
@@ -234,6 +345,68 @@ mod tests {
     assert!(serde_json::from_str::<TaskSync>(json).is_err());
     let nested = r#"{"client_task_id":"a","title":"t","status":"done","updated_at":"2026-10-17T10:00:00Z","diff_stats":{"additions":1,"deletions":0,"files_changed":1,"patch":"x"}}"#;
     assert!(serde_json::from_str::<TaskSync>(nested).is_err());
+  }
+
+  #[test]
+  fn source_and_external_ref() {
+    let linked = |s: &str, r: Option<&str>| with(|t| (t.source, t.external_ref) = (Some(s.into()), r.map(Into::into)));
+    assert_eq!(linked("github", Some("acme/app#42")), Ok(()));
+    assert_eq!(linked("linear", Some("ENG-123")), Ok(()));
+    assert_eq!(linked("manual", None), Ok(()));
+    assert!(linked("github", None).is_err(), "issue source needs a ref");
+    assert!(linked("manual", Some("#1")).is_err(), "manual has no ref");
+    assert!(linked("gitlab", Some("1")).is_err());
+    assert!(linked("github", Some(&"a".repeat(501))).is_err());
+    assert!(linked("github", Some(&format!("ghp_{}", "a".repeat(36)))).is_err(), "credential screened");
+    assert!(with(|t| t.external_ref = Some("#1".into())).is_err(), "ref without source is manual");
+    let body = {
+      let mut t = sample("task-1", "done", "2026-10-17T10:00:00Z");
+      (t.source, t.external_ref) = (Some("github".into()), Some("acme/app#42".into()));
+      t.wire_body("11111111-1111-1111-1111-111111111111")
+    };
+    assert_eq!((body["source"].as_str(), body["external_ref"].as_str()), (Some("github"), Some("acme/app#42")));
+    let plain = sample("task-1", "done", "2026-10-17T10:00:00Z").wire_body("11111111-1111-1111-1111-111111111111");
+    assert!(plain.get("source").is_none() && plain.get("external_ref").is_none());
+  }
+
+  fn run_with(f: impl FnOnce(&mut RunSync)) -> Result<(), String> {
+    let mut r = sample_run("task-1", "1760691600000", "2026-10-17T10:00:00Z");
+    f(&mut r);
+    r.validate()
+  }
+
+  #[test]
+  fn run_validation() {
+    assert_eq!(run_with(|_| {}), Ok(()));
+    assert_eq!(run_with(|r| (r.cost_usd, r.ended_at, r.model, r.exit_reason) = (None, None, None, None)), Ok(()));
+    type Mutation = Box<dyn FnOnce(&mut RunSync)>;
+    let bad: Vec<(&str, Mutation)> = vec![
+      ("run id", Box::new(|r| r.client_run_id = "a b".into())),
+      ("task id", Box::new(|r| r.client_task_id = String::new())),
+      ("adapter", Box::new(|r| r.adapter = " ".into())),
+      ("negative cost", Box::new(|r| r.cost_usd = Some(-0.1))),
+      ("nan cost", Box::new(|r| r.cost_usd = Some(f64::NAN))),
+      ("huge cost", Box::new(|r| r.cost_usd = Some(2e6))),
+      ("tokens", Box::new(|r| r.input_tokens = MAX_TOKENS + 1)),
+      ("order", Box::new(|r| r.ended_at = Some("2026-10-17T08:00:00Z".into()))),
+      ("timestamp", Box::new(|r| r.started_at = "today".into())),
+      ("secret", Box::new(|r| r.model = Some(format!("sk-{}", "a".repeat(30))))),
+      ("content", Box::new(|r| r.exit_reason = Some("diff --git a/x b/x".into()))),
+    ];
+    for (name, f) in bad {
+      assert!(run_with(f).is_err(), "{name} should be rejected");
+    }
+    let json = r#"{"client_task_id":"a","client_run_id":"1","adapter":"x","started_at":"2026-10-17T10:00:00Z","updated_at":"2026-10-17T10:00:00Z","transcript":"hi"}"#;
+    assert!(serde_json::from_str::<RunSync>(json).is_err(), "unknown fields rejected");
+  }
+
+  #[test]
+  fn run_wire_body_moves_ids_to_path() {
+    let body = sample_run("task-1", "r1", "2026-10-17T10:00:00Z").wire_body("11111111-1111-1111-1111-111111111111");
+    assert!(body.get("client_task_id").is_none() && body.get("client_run_id").is_none());
+    assert_eq!(body["project_id"], "11111111-1111-1111-1111-111111111111");
+    assert_eq!(body["cost_usd"], 0.42);
+    assert_eq!(body["input_tokens"], 1500);
   }
 
   #[test]

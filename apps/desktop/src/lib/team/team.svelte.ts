@@ -9,7 +9,7 @@ import { quick } from '#lib/workbench/quick.svelte.ts';
 import { status as statusBar } from '#lib/workbench/status.svelte.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
-import { buildTaskSync, STREAM_LABEL, teamStatusLabel, type TeamStatus, type TeamTaskInput } from './team';
+import { buildRunSync, buildTaskSync, STREAM_LABEL, teamStatusLabel, type TeamRunInput, type TeamStatus, type TeamTaskInput } from './team';
 import type { TeamEvent } from './teamEvents.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
@@ -84,6 +84,22 @@ class Team {
 			if (this.status) this.status = { ...this.status, pending };
 		} catch (e) {
 			notifications.error(`ซิงก์งานไปยังทีมไม่ได้: ${message(e)}`);
+		}
+	}
+
+	/**
+	 * Call when a run's turn finishes or the run ends: its timings, tokens and cost (never the
+	 * transcript). Same no-op and delivery rules as `syncTask`; the server keeps one row per run.
+	 */
+	async syncRun(input: TeamRunInput): Promise<void> {
+		const { serverUrl, project } = this;
+		const run = buildRunSync(input);
+		if (!serverUrl || !project || !run) return;
+		try {
+			const pending = await invoke<number>('team_sync_run', { serverUrl, project, run });
+			if (this.status) this.status = { ...this.status, pending };
+		} catch (e) {
+			notifications.error(`ซิงก์การรันไปยังทีมไม่ได้: ${message(e)}`);
 		}
 	}
 

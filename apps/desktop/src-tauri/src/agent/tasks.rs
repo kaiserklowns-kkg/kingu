@@ -61,6 +61,10 @@ pub struct RunSummary {
   pub output_tokens: Option<u64>,
   #[serde(default)]
   pub num_turns: Option<u32>,
+  /// Unix milliseconds the run (agent process) started; identifies the run for team sync.
+  /// Summaries saved before this field have none.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub started_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -229,6 +233,7 @@ mod tests {
         input_tokens: Some(1200),
         output_tokens: Some(34),
         num_turns: Some(2),
+        started_at: Some(1),
       }),
       issue: Some(IssueLink { number: 42, url: "https://github.com/acme/app/issues/42".into(), title: "แก้ login".into(), provider: "github".into(), key: None }),
       origin: Some("automation".into()),

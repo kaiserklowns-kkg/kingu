@@ -1,8 +1,10 @@
-//! Team visibility: syncs task METADATA (title, status, branch, agent, model, diff stats,
-//! timestamps; never code, diffs or secrets) to the Kingu team server.
+//! Team visibility: syncs task METADATA (title, status, branch, agent, model, diff stats, the
+//! issue it came from, timestamps) and each agent run's timings, tokens and cost to the Kingu team
+//! server. Never code, diffs, prompts, transcripts or secrets.
 //!
-//! The webview calls `team_sync_task` when a task changes; the state goes into a durable
-//! outbox and a background thread delivers it with retry and backoff. The personal access
+//! The webview calls `team_sync_task` when a task changes and `team_sync_run` when a run (or a
+//! turn) ends; the state goes into a durable outbox and a background thread delivers it with
+//! retry and backoff. The personal access
 //! token lives only in the OS keychain (macOS Keychain), never in settings or localStorage.
 
 pub mod client;
@@ -22,7 +24,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use events::{Signal, StreamState};
 use client::{HttpTransport, Keychain, SendError, TokenStore, Transport, normalize_server_url, valid_token};
 use outbox::{Entry, Outbox};
-use payload::{TaskSync, valid_project_id};
+use payload::{RunSync, TaskSync, valid_project_id};
 
 pub const STATUS_EVENT: &str = "team://status";
 const OUTBOX_FILE: &str = "team-outbox.json";
@@ -90,7 +92,7 @@ pub fn flush_once(
       continue;
     };
     report.signed_in = true;
-    let result = transport.put_task(&entry.server, &token, &entry.project, &entry.task);
+    let result = transport.put(&entry.server, &token, &entry.project, &entry.item);
     let mut outbox = inner.lock().unwrap();
     match result {
       Ok(()) => {
@@ -382,22 +384,35 @@ pub fn team_events_stop(app: AppHandle, team: State<'_, Team>) {
   team.stop_stream(&app, None);
 }
 
+impl Team {
+  /// Validates and queues one state; returns the number pending for its server.
+  fn enqueue(&self, server_url: &str, project: &str, item: outbox::Item) -> Result<usize, String> {
+    let server = normalize_server_url(server_url)?;
+    if !valid_project_id(project) {
+      return Err("kingu.team.project ต้องเป็น project id (uuid) จากเซิร์ฟเวอร์ทีม".into());
+    }
+    item.validate()?;
+    let pending = {
+      let mut outbox = self.shared.outbox.lock().unwrap();
+      outbox.enqueue(Entry::new(server.clone(), project.to_lowercase(), item));
+      outbox.pending_for(&server)
+    };
+    self.save();
+    self.kick();
+    Ok(pending)
+  }
+}
+
 /// Queues one task state for the team server. Returns the number of pending states.
 #[tauri::command]
 pub fn team_sync_task(team: State<'_, Team>, server_url: String, project: String, task: TaskSync) -> Result<usize, String> {
-  let server = normalize_server_url(&server_url)?;
-  if !valid_project_id(&project) {
-    return Err("kingu.team.project ต้องเป็น project id (uuid) จากเซิร์ฟเวอร์ทีม".into());
-  }
-  task.validate()?;
-  let pending = {
-    let mut outbox = team.shared.outbox.lock().unwrap();
-    outbox.enqueue(Entry::new(server.clone(), project.to_lowercase(), task));
-    outbox.pending_for(&server)
-  };
-  team.save();
-  team.kick();
-  Ok(pending)
+  team.enqueue(&server_url, &project, task.into())
+}
+
+/// Queues one run state (timings, tokens, cost) of a synced task. Returns the number pending.
+#[tauri::command]
+pub fn team_sync_run(team: State<'_, Team>, server_url: String, project: String, run: RunSync) -> Result<usize, String> {
+  team.enqueue(&server_url, &project, run.into())
 }
 
 /// "Sync now": retries everything immediately.
@@ -413,7 +428,8 @@ mod tests {
   use std::net::TcpListener;
   use std::sync::atomic::{AtomicUsize, Ordering};
 
-  use super::payload::sample;
+  use super::outbox::Item;
+  use super::payload::{sample, sample_run};
   use super::*;
 
   const S: &str = "http://127.0.0.1:1";
@@ -437,7 +453,7 @@ mod tests {
     }
   }
   impl Transport for FakeTransport {
-    fn put_task(&self, _: &str, token: &str, _: &str, _: &TaskSync) -> Result<(), SendError> {
+    fn put(&self, _: &str, token: &str, _: &str, _: &Item) -> Result<(), SendError> {
       assert_eq!(token, "kgu_tok");
       self.calls.fetch_add(1, Ordering::SeqCst);
       self.results.lock().unwrap().pop().unwrap_or(Ok(()))
@@ -503,6 +519,26 @@ mod tests {
     let o = outbox_with(&["a"]);
     let t = FakeTransport::new(vec![Err(SendError::Permanent("HTTP 422 content_not_allowed".into()))]);
     flush_once(&o, 0, &FakeStore(Some("kgu_tok")), &t);
+    assert_eq!(o.lock().unwrap().len(), 0);
+  }
+
+  #[test]
+  fn run_waits_for_its_task() {
+    let o = Mutex::new({
+      let mut o = Outbox::default();
+      o.enqueue(Entry::new(S.into(), P.into(), sample_run("a", "r1", "2026-10-17T10:00:00Z")));
+      o.enqueue(Entry::new(S.into(), P.into(), sample("a", "done", "2026-10-17T10:00:00Z")));
+      o
+    });
+    // The task goes first; the run hits "task not synced" (as when the task's send failed) and is kept.
+    let t = FakeTransport::new(vec![Ok(()), Err(super::client::classify(409, r#"{"error":{"code":"task_not_synced"}}"#).unwrap_err())]);
+    let r = flush_once(&o, 0, &FakeStore(Some("kgu_tok")), &t);
+    assert_eq!(r[S].sent, 1);
+    let left = o.lock().unwrap().entries().to_vec();
+    assert_eq!(left.len(), 1);
+    assert!(left[0].item.is_run() && left[0].attempts == 1);
+    let r = flush_once(&o, 60_000, &FakeStore(Some("kgu_tok")), &t);
+    assert_eq!(r[S].sent, 1);
     assert_eq!(o.lock().unwrap().len(), 0);
   }
 
@@ -583,5 +619,38 @@ mod tests {
     assert_eq!(body["project_id"], P);
     assert_eq!(body["status"], "review");
     assert!(body.get("client_task_id").is_none());
+  }
+
+  #[test]
+  fn http_transport_sends_runs() {
+    let (base, server) = serve(vec![200, 200]);
+    let o = Mutex::new({
+      let mut o = Outbox::default();
+      let mut task = sample("task-7", "done", "2026-10-17T10:00:00Z");
+      (task.source, task.external_ref) = (Some("github".into()), Some("acme/app#42".into()));
+      o.enqueue(Entry::new(base.clone(), P.into(), sample_run("task-7", "1760691600000", "2026-10-17T10:00:00Z")));
+      o.enqueue(Entry::new(base.clone(), P.into(), task));
+      o
+    });
+    let token = format!("kgu_{}", "b".repeat(43));
+    struct Store(String);
+    impl TokenStore for Store {
+      fn get(&self, _: &str) -> Option<String> {
+        Some(self.0.clone())
+      }
+    }
+    let r = flush_once(&o, 0, &Store(token), &HttpTransport::new().unwrap());
+    assert_eq!(r[&base].sent, 2);
+    let seen = server.join().unwrap();
+    assert_eq!(seen[0].0, "PUT /v1/tasks/task-7/sync HTTP/1.1", "task before its run");
+    let task: serde_json::Value = serde_json::from_str(&seen[0].2).unwrap();
+    assert_eq!((task["source"].as_str(), task["external_ref"].as_str()), (Some("github"), Some("acme/app#42")));
+    assert_eq!(seen[1].0, "PUT /v1/tasks/task-7/runs/1760691600000/sync HTTP/1.1");
+    let run: serde_json::Value = serde_json::from_str(&seen[1].2).unwrap();
+    assert_eq!(run["project_id"], P);
+    assert_eq!(run["cost_usd"], 0.42);
+    assert_eq!(run["output_tokens"], 300);
+    assert_eq!(run["exit_reason"], "done");
+    assert!(run.get("client_run_id").is_none());
   }
 }
