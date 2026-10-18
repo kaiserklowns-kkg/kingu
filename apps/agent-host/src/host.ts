@@ -10,6 +10,7 @@
 import { readFileSync } from 'node:fs';
 import type { CanUseTool, Options, PermissionResult, PermissionUpdate, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { normalize, summarizeTool } from './normalize.ts';
+import { checkAnswers, isAskUserQuestion, QUESTIONS_DISMISSED } from './questions.ts';
 import {
 	PERMISSION_MODES,
 	type AgentEvent,
@@ -337,8 +338,15 @@ export class AgentHost {
 		if (!pending) throw new RpcError(RUN_NOT_FOUND, `no pending permission request ${p.requestId}`);
 		const decision: Decision = p.decision;
 		need(['allow', 'allow_always', 'deny'].includes(decision), `bad decision ${decision}`);
+		// Checked before the request is taken: bad answers leave the question waiting.
+		let result: PermissionResult;
+		try {
+			result = decisionResult(decision, pending, p.message, p.answers);
+		} catch (e) {
+			throw new RpcError(INVALID_PARAMS, e instanceof Error ? e.message : String(e));
+		}
 		run.pending.delete(p.requestId);
-		pending.resolve(decisionResult(decision, pending, p.message));
+		pending.resolve(result);
 		this.emit(run.id, { kind: 'permission_resolved', request_id: p.requestId, decision });
 		this.log(`run ${run.id}: ${pending.tool} ${decision}`);
 		return null;
@@ -366,15 +374,28 @@ export class AgentHost {
 					detail: detail ?? opts.decisionReason ?? null,
 					diff,
 					input,
-					can_always: !opts.suppressAlwaysAllowRule
+					// Answering a question is never a rule to keep.
+					can_always: !opts.suppressAlwaysAllowRule && !isAskUserQuestion(tool)
 				});
 			});
 	}
 }
 
-/** The SDK result for the user's answer; "always" grants are scoped to this session only. */
-export function decisionResult(decision: Decision, p: Pick<Pending, 'input' | 'suggestions' | 'tool'>, message?: string | null): PermissionResult {
-	if (decision === 'deny') return { behavior: 'deny', message: message?.trim() || DENIED_BY_USER };
+/**
+ * The SDK result for the user's answer; "always" grants are scoped to this session only.
+ * AskUserQuestion is answered, not allowed: its answers go back in `updatedInput.answers`
+ * (questions.ts), and allowing it without them throws.
+ */
+export function decisionResult(
+	decision: Decision,
+	p: Pick<Pending, 'input' | 'suggestions' | 'tool'>,
+	message?: string | null,
+	answers?: Record<string, string> | null
+): PermissionResult {
+	const question = isAskUserQuestion(p.tool);
+	if (decision === 'deny') return { behavior: 'deny', message: message?.trim() || (question ? QUESTIONS_DISMISSED : DENIED_BY_USER) };
+	if (question) return { behavior: 'allow', updatedInput: { ...p.input, answers: checkAnswers(p.input, answers) } };
+	if (answers != null) throw new Error(`${p.tool} takes no answers`);
 	if (decision === 'allow') return { behavior: 'allow', updatedInput: p.input };
 	const fromSuggestions = p.suggestions.map((s) => ({ ...s, destination: 'session' as const }));
 	const updatedPermissions: PermissionUpdate[] = fromSuggestions.length

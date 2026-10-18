@@ -425,11 +425,17 @@ impl AgentHost {
   }
 
   /// `decision`: `allow`, `allow_always` (this session) or `deny` (with an optional message).
-  pub fn answer_permission(&self, run_id: u32, request_id: &str, decision: &str, message: Option<&str>) -> Result<(), String> {
-    if !matches!(decision, "allow" | "allow_always" | "deny") {
-      return Err(format!("{decision}: unknown decision"));
-    }
-    self.run_request(run_id, "answer", json!({ "requestId": request_id, "decision": decision, "message": message }))
+  /// `answers`: an AskUserQuestion's answers (question text → answer), sent with `allow`; the
+  /// sidecar checks them against the questions it holds.
+  pub fn answer_permission(
+    &self,
+    run_id: u32,
+    request_id: &str,
+    decision: &str,
+    message: Option<&str>,
+    answers: Option<&HashMap<String, String>>,
+  ) -> Result<(), String> {
+    self.run_request(run_id, "answer", answer_params(request_id, decision, message, answers)?)
   }
 
   /// Stops the current turn; the session stays open for follow-ups.
@@ -457,6 +463,21 @@ impl AgentHost {
       kill_group(&proc.child, proc.pid);
     }
   }
+}
+
+/// The `answer` request's params; `answers` only with an allow.
+fn answer_params(request_id: &str, decision: &str, message: Option<&str>, answers: Option<&HashMap<String, String>>) -> Result<Value, String> {
+  if !matches!(decision, "allow" | "allow_always" | "deny") {
+    return Err(format!("{decision}: unknown decision"));
+  }
+  let mut params = json!({ "requestId": request_id, "decision": decision, "message": message });
+  if let Some(answers) = answers {
+    if decision == "deny" {
+      return Err("answers go with allow, not deny".into());
+    }
+    params["answers"] = json!(answers);
+  }
+  Ok(params)
 }
 
 #[cfg(all(test, unix))]
@@ -498,6 +519,18 @@ reply() { echo "{\"jsonrpc\":\"2.0\",\"id\":$1,\"result\":null}"; }
 "#;
 
   #[test]
+  fn answers_ride_along_with_an_allow() {
+    let answers = HashMap::from([("Which library?".to_string(), "luxon".to_string())]);
+    assert_eq!(
+      answer_params("r1", "allow", None, Some(&answers)).unwrap(),
+      json!({"requestId": "r1", "decision": "allow", "message": null, "answers": {"Which library?": "luxon"}})
+    );
+    assert_eq!(answer_params("r1", "deny", Some("no"), None).unwrap(), json!({"requestId": "r1", "decision": "deny", "message": "no"}));
+    assert!(answer_params("r1", "deny", None, Some(&answers)).is_err());
+    assert!(answer_params("r1", "maybe", None, None).is_err());
+  }
+
+  #[test]
   fn permission_round_trip_with_a_fake_sidecar() {
     let tmp = tempfile::tempdir().unwrap();
     let log = tmp.path().join("requests.log");
@@ -537,8 +570,10 @@ read -r line
 
     // The sidecar is blocked on its next read until the user answers.
     assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
-    assert!(host.answer_permission(run, "r1", "maybe", None).is_err());
-    host.answer_permission(run, "r1", "allow_always", None).unwrap();
+    assert!(host.answer_permission(run, "r1", "maybe", None, None).is_err());
+    let answers = HashMap::from([("Which?".to_string(), "this".to_string())]);
+    assert!(host.answer_permission(run, "r1", "deny", None, Some(&answers)).is_err());
+    host.answer_permission(run, "r1", "allow_always", None, None).unwrap();
     assert_eq!(next(&rx), AgentEvent::PermissionResolved { request_id: "r1".into(), decision: "allow_always".into() });
     let AgentEvent::Result { total_cost_usd, usage, .. } = next(&rx) else { panic!("expected a result") };
     assert_eq!(total_cost_usd, Some(0.5));

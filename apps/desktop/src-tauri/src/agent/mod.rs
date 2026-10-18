@@ -132,6 +132,7 @@ pub async fn agent_send(agents: State<'_, Arc<AgentHost>>, run_id: u32, text: St
 }
 
 /// Answers a `permission_request`: `allow`, `allow_always` (this session) or `deny` + message.
+/// An AskUserQuestion request is answered with `allow` + `answers` (question text → answer).
 #[tauri::command]
 pub async fn agent_answer_permission(
   agents: State<'_, Arc<AgentHost>>,
@@ -139,8 +140,9 @@ pub async fn agent_answer_permission(
   request_id: String,
   decision: String,
   message: Option<String>,
+  answers: Option<std::collections::HashMap<String, String>>,
 ) -> Result<(), String> {
-  on_host(&agents, move |a| a.answer_permission(run_id, &request_id, &decision, message.as_deref())).await
+  on_host(&agents, move |a| a.answer_permission(run_id, &request_id, &decision, message.as_deref(), answers.as_ref())).await
 }
 
 /// Stops the current turn; the session stays open for follow-ups.

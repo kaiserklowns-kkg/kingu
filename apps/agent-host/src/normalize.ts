@@ -161,6 +161,10 @@ export function summarizeTool(tool: string, input: unknown): { summary: string; 
 		case 'WebSearch':
 			summary = str(o.query) ?? '';
 			break;
+		case 'AskUserQuestion':
+			// The questions themselves; their options travel in `input`.
+			summary = (Array.isArray(o.questions) ? o.questions : []).map((q) => (isObj(q) ? (str(q.question) ?? '') : '')).filter(Boolean).join('\n');
+			break;
 		default: {
 			const first = ['file_path', 'path', 'command', 'pattern', 'url', 'query', 'description'].map((k) => str(o[k])).find((v) => v);
 			summary = first ?? (Object.keys(o).length ? JSON.stringify(o) : '');

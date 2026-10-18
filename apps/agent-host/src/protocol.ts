@@ -31,7 +31,11 @@ export type SendParams = { runId: number; text: string; images?: string[] };
 export type RunParams = { runId: number };
 /** `allow` once, `allow_always` for the rest of this session, or `deny` with an optional reason. */
 export type Decision = 'allow' | 'allow_always' | 'deny';
-export type AnswerParams = { runId: number; requestId: string; decision: Decision; message?: string | null };
+/**
+ * `answers`: for an AskUserQuestion request (with `allow`), each question's text → the user's answer
+ * (an option label, labels joined by ", " for a multi-select, or their own words).
+ */
+export type AnswerParams = { runId: number; requestId: string; decision: Decision; message?: string | null; answers?: Record<string, string> | null };
 
 export type Usage = {
 	input_tokens: number;

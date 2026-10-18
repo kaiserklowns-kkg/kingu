@@ -8,7 +8,7 @@ import type { AgentEvent } from '../src/protocol.ts';
 type Out = { jsonrpc: '2.0'; id?: number | string | null; method?: string; params?: any; result?: unknown; error?: { code: number; message: string } };
 
 /** A fake session: for each user message, asks to run Bash once and reports the decision. */
-function fakeQuery(log: { options?: Options; prompts: string[]; interrupted: number; permission?: PermissionResult }): QueryFn {
+function fakeQuery(log: { options?: Options; prompts: string[]; interrupted: number; permission?: PermissionResult; tool?: { name: string; input: Record<string, unknown> } }): QueryFn {
 	return ({ prompt, options }) => {
 		log.options = options;
 		const gen = (async function* () {
@@ -18,7 +18,8 @@ function fakeQuery(log: { options?: Options; prompts: string[]; interrupted: num
 				log.prompts.push(text);
 				yield { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'กำลัง' } }, parent_tool_use_id: null };
 				yield { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'rm -rf build' } }] } };
-				const r = await options.canUseTool!('Bash', { command: 'rm -rf build', description: 'Clean' }, {
+				const tool = log.tool ?? { name: 'Bash', input: { command: 'rm -rf build', description: 'Clean' } };
+				const r = await options.canUseTool!(tool.name, tool.input, {
 					signal: options.abortController!.signal,
 					suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'rm -rf build' }], behavior: 'allow', destination: 'localSettings' }],
 					toolUseID: 'tu1',
@@ -280,6 +281,52 @@ describe('Inbox', () => {
 		inbox.close();
 		expect((await it.next()).done).toBe(true);
 		expect(() => inbox.push('c')).toThrow();
+	});
+});
+
+describe('AskUserQuestion', () => {
+	const input = {
+		questions: [
+			{ question: 'Which library?', header: 'Library', multiSelect: false, options: [{ label: 'date-fns', description: 'small' }, { label: 'luxon', description: 'zones' }] },
+			{ question: 'Which targets?', header: 'Targets', multiSelect: true, options: [{ label: 'web', description: '' }, { label: 'ios', description: '' }] }
+		]
+	};
+
+	test('the answers reach the SDK in updatedInput.answers, keyed by question text', async () => {
+		const { log, event, call } = setup();
+		log.tool = { name: 'AskUserQuestion', input };
+		await call(1, 'start', { runId: 1, cwd: '/w', prompt: 'ask me' });
+		const req = await event('permission_request');
+		expect(req.params.event).toMatchObject({ tool: 'AskUserQuestion', input_summary: 'Which library?\nWhich targets?', can_always: false, input });
+
+		// "allow" without answers (what the old flow sent) is refused and the question stays open.
+		const bare = await call(2, 'answer', { runId: 1, requestId: 'req-1', decision: 'allow' });
+		expect(bare.error?.message).toContain('answers');
+		const partial = await call(3, 'answer', { runId: 1, requestId: 'req-1', decision: 'allow', answers: { 'Which library?': 'luxon' } });
+		expect(partial.error?.message).toContain('Which targets?');
+		expect(log.permission).toBeUndefined();
+
+		const ok = await call(4, 'answer', { runId: 1, requestId: 'req-1', decision: 'allow', answers: { 'Which library?': 'luxon', 'Which targets?': 'web, ios' } });
+		expect(ok.result).toBeNull();
+		await event('result');
+		expect(log.permission).toEqual({ behavior: 'allow', updatedInput: { ...input, answers: { 'Which library?': 'luxon', 'Which targets?': 'web, ios' } } });
+	});
+
+	test('dismissing tells Claude to wait; a typed reason is passed on', () => {
+		const p = { input, suggestions: [], tool: 'AskUserQuestion' };
+		expect(decisionResult('deny', p, null)).toEqual({ behavior: 'deny', message: expect.stringContaining('dismissed') });
+		expect(decisionResult('deny', p, 'ถามทีหลัง')).toEqual({ behavior: 'deny', message: 'ถามทีหลัง' });
+		// "always" is no rule for a question: it answers like allow, with no permission update.
+		expect(decisionResult('allow_always', p, null, { 'Which library?': 'my own', 'Which targets?': 'web' })).toEqual({
+			behavior: 'allow',
+			updatedInput: { ...input, answers: { 'Which library?': 'my own', 'Which targets?': 'web' } }
+		});
+		expect(() => decisionResult('allow', p, null, { 'Which library?': 'x', 'Which targets?': 'y', 'Other?': 'z' })).toThrow('not asked');
+		expect(() => decisionResult('allow', p, null, { 'Which library?': ' ', 'Which targets?': 'y' })).toThrow('no answer');
+	});
+
+	test('other tools take no answers', () => {
+		expect(() => decisionResult('allow', { input: {}, suggestions: [], tool: 'Bash' }, null, { a: 'b' })).toThrow('takes no answers');
 	});
 });
 
