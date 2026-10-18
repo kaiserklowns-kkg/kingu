@@ -1,5 +1,5 @@
 <script lang="ts">
-	// Agents layout side bar, laid out like Orca's: a search box, Tasks (the board) and Automations on top, then
+	// Agents layout side bar, laid out like Orca's: a search box, Tasks (the board), Automations and Issues on top, then
 	// Projects: the open folder with its worktrees as cards. The folder itself is the "primary"
 	// worktree; each task is a worktree on `kingu/<slug>` with its agent session listed under it.
 	import Icon from '#lib/workbench/Icon.svelte';
@@ -77,6 +77,14 @@
 			{#if automations.activeCount}
 				<span class="text-[11px] text-(--vscode-descriptionForeground)" title={automations.globalEnabled ? 'automation ที่เปิดอยู่' : 'หยุดทั้งหมดอยู่'}>{automations.globalEnabled ? automations.activeCount : 'หยุด'}</span>
 			{/if}
+		</button>
+		<button
+			class={[NAV, adeLayout.page === 'issues' && 'bg-(--vscode-list-activeSelectionBackground)/40']}
+			aria-pressed={adeLayout.page === 'issues'}
+			disabled={!workspace.root}
+			onclick={() => adeLayout.togglePage('issues')}
+		>
+			<Icon name="bug" size={16} /> <span class="flex-1 text-left">Issues</span>
 		</button>
 	</div>
 

@@ -228,6 +228,16 @@ export const SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.issues.commentOnPr',
+		group: 'Agent',
+		type: 'boolean',
+		default: false,
+		description:
+			'เมื่อสร้าง PR ของงานที่เริ่มจาก GitHub issue ให้ comment ใน issue ว่า "Kingu เริ่มงานนี้ใน PR …" ด้วยบัญชี gh ของคุณ (Comment on the issue with the PR link when a task started from a GitHub issue opens its PR.)',
+		// User-only: a repository's workspace settings must not post comments under the user's account.
+		scope: 'application'
+	},
+	{
 		id: 'kingu.team.serverUrl',
 		group: 'Team',
 		type: 'string',

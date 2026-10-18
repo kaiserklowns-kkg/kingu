@@ -24,6 +24,7 @@
 	import type { IconName } from '#lib/workbench/Icon.svelte';
 	import Board from './Board.svelte';
 	import AutomationsPage from './AutomationsPage.svelte';
+	import IssuesPage from './IssuesPage.svelte';
 	import TaskPage from './TaskPage.svelte';
 	import WorktreeFiles from './WorktreeFiles.svelte';
 	import { adeLayout, PRIMARY, type RightTab } from './adeLayout.svelte';
@@ -129,6 +130,8 @@
 		<div class="relative min-h-0 flex-1">
 		{#if adeLayout.page === 'automations'}
 			<AutomationsPage />
+		{:else if adeLayout.page === 'issues'}
+			<IssuesPage />
 		{:else if adeLayout.board}
 			<Board />
 		{:else if activeFile !== null}

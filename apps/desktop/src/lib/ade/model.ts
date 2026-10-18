@@ -26,7 +26,12 @@ export type TaskMeta = {
 	session_id: string | null;
 	/** How the latest run (or turn) ended, saved so the card can show it after a restart. */
 	last_run: RunSummary | null;
+	/** The GitHub issue the task was started from; its PR body says `Fixes #number`. */
+	issue: IssueLink | null;
 };
+
+/** Mirrors Rust `agent::tasks::IssueLink`. */
+export type IssueLink = { number: number; url: string; title: string };
 
 /** Mirrors Rust `agent::tasks::RunSummary`. */
 export type RunSummary = {
@@ -110,7 +115,7 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
 // ---------------------------------------------------------------------------------------------
 // tasks.json reducers (immutable: each returns a new list)
 
-export function newTask(input: { slug: string; title: string; prompt: string; base: string; agent?: string }, now: number): TaskMeta {
+export function newTask(input: { slug: string; title: string; prompt: string; base: string; agent?: string; issue?: IssueLink | null }, now: number): TaskMeta {
 	return {
 		slug: input.slug,
 		title: input.title.trim(),
@@ -125,7 +130,8 @@ export function newTask(input: { slug: string; title: string; prompt: string; ba
 		accepted: [],
 		merged_at: null,
 		session_id: null,
-		last_run: null
+		last_run: null,
+		issue: input.issue ?? null
 	};
 }
 

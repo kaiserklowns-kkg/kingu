@@ -7,6 +7,7 @@ pub mod automations;
 pub mod events;
 pub mod hooks;
 pub mod host;
+pub mod issues;
 pub mod review;
 pub mod tasks;
 pub mod worktree;
@@ -225,7 +226,7 @@ pub async fn gh_status() -> Result<review::GhStatus, String> {
 #[tauri::command]
 pub async fn worktree_pr_status(ws: State<'_, Workspace>, slug: String) -> Result<Option<review::PrStatus>, String> {
   let dir = review::task_dir(&ws.root()?, &slug)?;
-  let gh = review::gh_bin().ok_or("ไม่พบ gh: ติดตั้งด้วย `brew install gh` แล้ว `gh auth login`")?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
   blocking(move || review::pr_status(&gh, &dir, &slug)).await
 }
 
@@ -239,8 +240,50 @@ pub async fn worktree_pr_create(
   body: String,
 ) -> Result<String, String> {
   let dir = review::task_dir(&ws.root()?, &slug)?;
-  let gh = review::gh_bin().ok_or("ไม่พบ gh: ติดตั้งด้วย `brew install gh` แล้ว `gh auth login`")?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
   let url = blocking(move || review::pr_create(&gh, &dir, &slug, &base, &title, &body)).await?;
   log::info!("opened PR {url}");
   Ok(url)
+}
+
+/// Issues of the open folder's GitHub repository (`gh issue list`). `assignee`: `@me` or none.
+#[tauri::command]
+pub async fn gh_issues_list(
+  ws: State<'_, Workspace>,
+  state: Option<String>,
+  assignee: Option<String>,
+  label: Option<String>,
+  search: Option<String>,
+  limit: Option<u32>,
+) -> Result<Vec<issues::Issue>, String> {
+  let root = ws.root()?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let q = issues::IssueQuery { state: state.unwrap_or_else(|| "open".into()), assignee, label, search, limit: limit.unwrap_or(50) };
+  blocking(move || issues::list(&gh, &root, &q)).await
+}
+
+/// One issue with its latest comments (`gh issue view`).
+#[tauri::command]
+pub async fn gh_issue_view(ws: State<'_, Workspace>, number: u64) -> Result<issues::IssueDetail, String> {
+  let root = ws.root()?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  blocking(move || issues::view(&gh, &root, number)).await
+}
+
+/// Comments on an issue (only when `kingu.issues.commentOnPr` is on; the webview decides).
+#[tauri::command]
+pub async fn gh_issue_comment(ws: State<'_, Workspace>, number: u64, body: String) -> Result<(), String> {
+  let root = ws.root()?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  blocking(move || issues::comment(&gh, &root, number, &body)).await?;
+  log::info!("commented on issue #{number}");
+  Ok(())
+}
+
+/// Opens the issue on GitHub in the default browser.
+#[tauri::command]
+pub async fn gh_issue_open(ws: State<'_, Workspace>, number: u64) -> Result<(), String> {
+  let root = ws.root()?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  blocking(move || issues::open_web(&gh, &root, number)).await
 }

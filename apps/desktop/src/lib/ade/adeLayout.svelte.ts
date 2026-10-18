@@ -15,13 +15,13 @@ import { adeKey, parseAdeTerminals, persist, restore, storeName, withoutRun } fr
 import { activeAfterClose, adeTabs, fileTabId, keyOfTabId, openFileTab, pinFileTab, type AdeTab, type FileTab, type TerminalTab } from './adeTabs.ts';
 
 export type RightTab = 'files' | 'changes';
-export type CenterPage = 'board' | 'automations';
+export type CenterPage = 'board' | 'automations' | 'issues';
 /** Worktree key: '' for the folder itself (Orca's "primary" worktree), else the task slug. */
 export const PRIMARY = '';
 const STORE = 'kingu.adeTerminals';
 
 class AdeLayout {
-	/** The center shows a page from the side bar's top (Tasks = the board, or Automations) instead of a worktree. */
+	/** The center shows a page from the side bar's top (Tasks = the board, Automations or Issues) instead of a worktree. */
 	page = $state<CenterPage | null>(null);
 	rightTab = $state<RightTab>('changes');
 	/** The side bar's search box: filters worktrees by title or branch. */
