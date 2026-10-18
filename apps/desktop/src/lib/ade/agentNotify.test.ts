@@ -1,5 +1,10 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { noticeFor, noticeState } from './agentNotify';
+import { setLocale } from '#lib/i18n/index.ts';
+
+// These tests check the Thai UI text.
+beforeAll(() => setLocale('th'));
+afterAll(() => setLocale('en'));
 
 const t = { title: 'แก้บั๊ก', lastEvent: 'Claude needs your permission to use Bash' };
 

@@ -38,6 +38,7 @@ import {
 	type TerminalTab
 } from './adeTabs.ts';
 import { switcherOrder } from './sidebarView.ts';
+import { t } from '#lib/i18n/index.ts';
 
 export type CenterPage = 'board' | 'automations' | 'issues';
 /** Worktree key: '' for the folder itself (Orca's "primary" worktree), else the task slug. */
@@ -200,7 +201,7 @@ class AdeLayout {
 		const tab = this.terminalTab(key, id);
 		if (!tab) return;
 		const current = this.#label(key, id);
-		const name = await quick.input({ placeholder: `ชื่อแท็บ (ตอนนี้: ${current})`, hint: (v) => (v.trim() ? `เปลี่ยนชื่อเป็น "${v.trim()}"` : `กด Enter เพื่อใช้ชื่อเดิม Terminal ${tab.n}`) });
+		const name = await quick.input({ placeholder: t('ade.tabs.renamePlaceholder', { name: current }), hint: (v) => (v.trim() ? t('ade.tabs.renameTo', { name: v.trim() }) : t('ade.tabs.renameKeep', { n: tab.n })) });
 		if (name === undefined) return;
 		this.#updateTab(key, id, (t) => ({ ...t, title: name.trim() || undefined }));
 	}
@@ -315,7 +316,7 @@ class AdeLayout {
 	async closeFile(key: string, file: string) {
 		if (editors.isDirty(file) && !this.#shownElsewhere(key, file)) {
 			const name = file.slice(file.lastIndexOf('/') + 1);
-			const ok = await ask(`${name} มีการแก้ไขที่ยังไม่บันทึก\n\nปิดแล้วทิ้งการแก้ไข?`, { title: 'ยังไม่ได้บันทึก', kind: 'warning', okLabel: 'ทิ้งการแก้ไข', cancelLabel: 'ยกเลิก' });
+			const ok = await ask(t('ade.tabs.unsavedMessage', { name }), { title: t('ade.tabs.unsavedTitle'), kind: 'warning', okLabel: t('ade.tabs.discard'), cancelLabel: t('common.cancel') });
 			if (!ok) return;
 		}
 		const list = this.files[key] ?? [];

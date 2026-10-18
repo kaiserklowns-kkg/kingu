@@ -1,6 +1,8 @@
 // A task branch's pull request and CI checks (Orca's Checks panel), from Rust `worktree_pr` (its `status`)
 // (`gh pr view`). Pure, so `bun test` covers it.
 
+import { t } from '#lib/i18n/index.ts';
+
 export type CheckState = 'pending' | 'success' | 'failure' | 'neutral' | 'skipped' | 'cancelled';
 export type PrCheck = { name: string; state: CheckState; url: string | null; run_id?: number | null; job_id?: number | null };
 export type PrStatus = {
@@ -37,11 +39,11 @@ export function sortChecks(checks: PrCheck[]): PrCheck[] {
 
 /** One line under the PR title: draft / merged / review decision / conflicts. */
 export function prLine(pr: PrStatus): string {
-	const parts = [pr.state === 'MERGED' ? 'merged แล้ว' : pr.state === 'CLOSED' ? 'ปิดแล้ว' : pr.draft ? 'draft' : 'open'];
-	if (pr.review === 'APPROVED') parts.push('อนุมัติแล้ว');
-	else if (pr.review === 'CHANGES_REQUESTED') parts.push('ขอให้แก้');
-	else if (pr.review === 'REVIEW_REQUIRED') parts.push('รอรีวิว');
-	if (pr.mergeable === 'CONFLICTING') parts.push('มี conflict กับ base');
+	const parts = [t(pr.state === 'MERGED' ? 'ade.prChecks.merged' : pr.state === 'CLOSED' ? 'ade.prChecks.closed' : pr.draft ? 'ade.prChecks.draft' : 'ade.prChecks.open')];
+	if (pr.review === 'APPROVED') parts.push(t('ade.prChecks.approved'));
+	else if (pr.review === 'CHANGES_REQUESTED') parts.push(t('ade.prChecks.changesRequested'));
+	else if (pr.review === 'REVIEW_REQUIRED') parts.push(t('ade.prChecks.reviewRequired'));
+	if (pr.mergeable === 'CONFLICTING') parts.push(t('ade.prChecks.conflictsWithBase'));
 	return parts.join(' · ');
 }
 
@@ -77,25 +79,25 @@ export type MergePresentation = { label: string; tone: MergeTone; tooltip: strin
  */
 export function mergePresentation(pr: PrStatus): MergePresentation {
 	const checks = summarizeChecks(pr.checks).overall;
-	const passed = (): MergePresentation => ({ label: 'Checks ผ่าน', tone: 'ok', tooltip: 'checks ผ่านแล้ว จะตรวจว่า merge ได้อีกครั้งก่อน merge', canMerge: true });
-	if (pr.state === 'MERGED') return { label: 'Merged', tone: 'neutral', tooltip: 'PR นี้ merge แล้ว', canMerge: false };
-	if (pr.state === 'CLOSED') return { label: 'ปิดแล้ว', tone: 'error', tooltip: 'PR นี้ถูกปิดแล้ว', canMerge: false };
-	if (pr.draft) return { label: 'Draft', tone: 'neutral', tooltip: 'PR นี้ยังเป็น draft', canMerge: false };
-	if (pr.review === 'REVIEW_REQUIRED') return { label: 'ต้องได้รับอนุมัติ', tone: 'warn', tooltip: 'GitHub ต้องการการอนุมัติ (review) ก่อน merge', canMerge: false };
-	if (pr.review === 'CHANGES_REQUESTED') return { label: 'ขอให้แก้', tone: 'error', tooltip: 'ผู้รีวิวขอให้แก้ PR นี้', canMerge: false };
+	const passed = (): MergePresentation => ({ label: t('ade.prChecks.passedLabel'), tone: 'ok', tooltip: t('ade.prChecks.passedTip'), canMerge: true });
+	if (pr.state === 'MERGED') return { label: t('ade.prChecks.mergedLabel'), tone: 'neutral', tooltip: t('ade.prChecks.mergedTip'), canMerge: false };
+	if (pr.state === 'CLOSED') return { label: t('ade.prChecks.closedLabel'), tone: 'error', tooltip: t('ade.prChecks.closedTip'), canMerge: false };
+	if (pr.draft) return { label: t('ade.prChecks.draftLabel'), tone: 'neutral', tooltip: t('ade.prChecks.draftTip'), canMerge: false };
+	if (pr.review === 'REVIEW_REQUIRED') return { label: t('ade.prChecks.approvalLabel'), tone: 'warn', tooltip: t('ade.prChecks.approvalTip'), canMerge: false };
+	if (pr.review === 'CHANGES_REQUESTED') return { label: t('ade.prChecks.changesLabel'), tone: 'error', tooltip: t('ade.prChecks.changesTip'), canMerge: false };
 	const state = pr.merge_state ?? '';
 	const known = !!pr.mergeable && pr.mergeable !== 'UNKNOWN';
-	if (!known && !state) return checks === 'success' ? passed() : { label: 'Merge', tone: 'neutral', tooltip: 'ยังไม่รู้สถานะการ merge ของ PR นี้', canMerge: false };
-	if (pr.mergeable === 'CONFLICTING' || state === 'DIRTY') return { label: 'มี conflict', tone: 'error', tooltip: 'GitHub บอกว่ามี conflict กับ base', canMerge: false };
-	if (state === 'BEHIND') return { label: 'ตามหลัง base', tone: 'warn', tooltip: 'อัปเดต branch กับ base ก่อน merge', canMerge: false };
-	if (state === 'BLOCKED') return { label: 'ถูกบล็อก', tone: 'error', tooltip: 'GitHub บล็อก PR นี้ไว้ (เช่น required check ไม่ผ่าน หรือกฎของ branch)', canMerge: false };
+	if (!known && !state) return checks === 'success' ? passed() : { label: t('ade.prChecks.mergeLabel'), tone: 'neutral', tooltip: t('ade.prChecks.unknownTip'), canMerge: false };
+	if (pr.mergeable === 'CONFLICTING' || state === 'DIRTY') return { label: t('ade.prChecks.conflictLabel'), tone: 'error', tooltip: t('ade.prChecks.conflictTip'), canMerge: false };
+	if (state === 'BEHIND') return { label: t('ade.prChecks.behindLabel'), tone: 'warn', tooltip: t('ade.prChecks.behindTip'), canMerge: false };
+	if (state === 'BLOCKED') return { label: t('ade.prChecks.blockedLabel'), tone: 'error', tooltip: t('ade.prChecks.blockedTip'), canMerge: false };
 	if (pr.mergeable === 'MERGEABLE' || state === 'CLEAN') {
-		if (checks === 'failure') return { label: 'Checks ล้มเหลว', tone: 'error', tooltip: 'GitHub ให้ merge ได้ แต่มี check ล้มเหลว', canMerge: true };
-		if (checks === 'pending') return { label: 'Checks กำลังรัน', tone: 'warn', tooltip: 'GitHub ให้ merge ได้ แต่ checks ยังรันอยู่', canMerge: true };
-		return { label: 'Merge ได้', tone: 'ok', tooltip: checks === 'success' ? 'GitHub ให้ merge ได้และ checks ผ่าน' : 'GitHub ให้ merge ได้', canMerge: true };
+		if (checks === 'failure') return { label: t('ade.prChecks.failedLabel'), tone: 'error', tooltip: t('ade.prChecks.failedTip'), canMerge: true };
+		if (checks === 'pending') return { label: t('ade.prChecks.pendingLabel'), tone: 'warn', tooltip: t('ade.prChecks.pendingTip'), canMerge: true };
+		return { label: t('ade.prChecks.mergeableLabel'), tone: 'ok', tooltip: checks === 'success' ? t('ade.prChecks.mergeablePassedTip') : t('ade.prChecks.mergeableTip'), canMerge: true };
 	}
 	if (checks === 'success') return passed();
-	return { label: 'กำลังตรวจ', tone: 'neutral', tooltip: 'GitHub ยังคำนวณสถานะการ merge อยู่', canMerge: false };
+	return { label: t('ade.prChecks.computingLabel'), tone: 'neutral', tooltip: t('ade.prChecks.computingTip'), canMerge: false };
 }
 
 /** Failed checks the "fix failing checks" prompt is about (Orca's broken checks: failure, cancelled, timed out). */

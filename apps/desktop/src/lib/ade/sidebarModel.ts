@@ -3,14 +3,41 @@
 // relative time of agent rows. Pure, so it is unit-testable.
 
 import type { Column, TaskStatus } from './model';
+import { t } from '#lib/i18n/index.ts';
 
 export type { GroupBy } from './sidebarView';
 export type SortBy = 'name' | 'smart' | 'recent' | 'manual';
-export const SORT_LABEL: Record<SortBy, string> = { name: 'Name', smart: 'Agent Activity', recent: 'Recent', manual: 'Manual' };
+export const SORT_LABEL: Record<SortBy, string> = {
+	get name() {
+		return t('ade.sidebar.sortName');
+	},
+	get smart() {
+		return t('ade.sidebar.sortSmart');
+	},
+	get recent() {
+		return t('ade.sidebar.sortRecent');
+	},
+	get manual() {
+		return t('ade.sidebar.sortManual');
+	}
+};
 
 /** Orca's worktree status, shown in the card's status slot. */
 export type CardStatus = 'working' | 'permission' | 'failed' | 'done' | 'active' | 'inactive';
-export const CARD_STATUS_LABEL: Partial<Record<CardStatus, string>> = { working: 'Working', permission: 'Needs permission', failed: 'Failed', done: 'Done' };
+export const CARD_STATUS_LABEL: Partial<Record<CardStatus, string>> = {
+	get working() {
+		return t('ade.sidebar.cardWorking');
+	},
+	get permission() {
+		return t('ade.sidebar.cardPermission');
+	},
+	get failed() {
+		return t('ade.sidebar.cardFailed');
+	},
+	get done() {
+		return t('ade.sidebar.cardDone');
+	}
+};
 
 export function cardStatus(status: TaskStatus, working: boolean, hasTabs: boolean): CardStatus {
 	if (status === 'waiting') return 'permission';

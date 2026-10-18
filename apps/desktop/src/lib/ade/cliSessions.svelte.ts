@@ -15,6 +15,7 @@ import { askKeysFor, isComplete, typeAskKeys, type AskSelection } from '#lib/age
 import { status } from '#lib/workbench/status.svelte.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { clientLog } from '#lib/client-log.ts';
+import { t } from '#lib/i18n/index.ts';
 
 /** `hookToken`: the session reports its state through Claude Code hooks (claude CLIs). */
 export type CliSession = { run: string[]; startedAt: number; hookToken?: string };
@@ -154,7 +155,7 @@ class CliSessions {
 			await invoke('pty_write', { key, data: '\r' });
 			return true;
 		} catch (e) {
-			status.flash(`ส่งถึง terminal ของ agent ไม่ได้: ${e}`, 8000);
+			status.flash(t('ade.cli.sendFailed', { error: String(e) }), 8000);
 			return false;
 		}
 	}
@@ -179,12 +180,12 @@ class CliSessions {
 			});
 			if (!done) return false;
 		} catch (e) {
-			status.flash(`ส่งคำตอบถึง terminal ของ agent ไม่ได้: ${e}`, 8000);
+			status.flash(t('ade.cli.answerFailed', { error: String(e) }), 8000);
 			return false;
 		}
 		// The CLI's next hook event takes over; until then the question is answered.
 		const now = this.hooks[slug];
-		if (now?.question) this.hooks[slug] = { ...now, phase: 'working', question: false, ask: undefined, message: 'ตอบคำถามแล้ว', at: Date.now() };
+		if (now?.question) this.hooks[slug] = { ...now, phase: 'working', question: false, ask: undefined, message: t('ade.cli.answered'), at: Date.now() };
 		this.#last[slug] = Date.now();
 		return true;
 	}
@@ -228,7 +229,7 @@ class CliSessions {
 	/** Pastes `prompt` into the task's running CLI and submits it (a follow-up such as "fix the failing checks"). */
 	async paste(slug: string, prompt: string) {
 		const key = this.key(slug);
-		if (!key) throw new Error('ไม่มี agent CLI ที่รันอยู่ในงานนี้');
+		if (!key) throw new Error(t('ade.cli.noneRunning'));
 		await invoke('pty_write', { key, data: pasteText(prompt) });
 		await new Promise((r) => setTimeout(r, 300));
 		await invoke('pty_write', { key, data: '\r' });

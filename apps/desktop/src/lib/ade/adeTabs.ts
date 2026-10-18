@@ -2,6 +2,7 @@
 
 import { leaves, type PaneNode } from '#lib/terminal/paneLayout.ts';
 import { fileOf, isDiffKey, splitPath } from '#lib/workbench/scm.ts';
+import { t } from '#lib/i18n/index.ts';
 
 /** `title`: a task or agent name instead of "Terminal n"; `run`: the command typed into its shell. */
 export type TerminalTab = {
@@ -76,7 +77,7 @@ export const keyOfTabId = (id: string) => (id.startsWith('f:') ? id.slice(2) : n
 
 /** The main tab (the task's agent session, or the new-task composer for the folder), its terminals, then its files. */
 export function adeTabs(key: string, terminals: TerminalTab[], files: FileTab[] = []): AdeTab[] {
-	const main: AdeTab = key ? { id: 'main', kind: 'agent', label: 'Agent' } : { id: 'main', kind: 'compose', label: 'งานใหม่' };
+	const main: AdeTab = key ? { id: 'main', kind: 'agent', label: 'Agent' } : { id: 'main', kind: 'compose', label: t('ade.tabs.newTask') };
 	return [
 		main,
 		...terminals.map((t) => ({ id: t.id, kind: 'terminal' as const, label: t.title ?? `Terminal ${t.n}`, ...(t.color ? { color: t.color } : {}) })),

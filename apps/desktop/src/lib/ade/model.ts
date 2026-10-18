@@ -3,6 +3,7 @@
 
 import { firstLine, formatUsage, slugify, toolArg, type AgentEvent, type RunState, type RunStatus } from '#lib/agent/events.ts';
 import { isQuestionTool, questionText } from './agentHooks.ts';
+import { locale, t } from '#lib/i18n/index.ts';
 
 export type TaskStatus = 'running' | 'waiting' | 'review' | 'done' | 'failed';
 
@@ -108,22 +109,33 @@ export type TaskView = { meta: TaskMeta; runtime?: TaskRuntime; status: TaskStat
 
 export type Column = 'attention' | 'active' | 'done';
 export const COLUMNS: { id: Column; label: string; hint: string }[] = [
-	{ id: 'attention', label: 'รอคุณ', hint: 'รออนุญาต รอรีวิว หรือมีปัญหา' },
-	{ id: 'active', label: 'กำลังทำ', hint: 'agent กำลังทำงาน' },
-	{ id: 'done', label: 'เสร็จแล้ว', hint: 'merge หรือปิดงานแล้ว' }
+	{ id: 'attention', get label() { return t('ade.model.colAttention'); }, get hint() { return t('ade.model.colAttentionHint'); } },
+	{ id: 'active', get label() { return t('ade.model.colActive'); }, get hint() { return t('ade.model.colActiveHint'); } },
+	{ id: 'done', get label() { return t('ade.model.colDone'); }, get hint() { return t('ade.model.colDoneHint'); } }
 ];
 
 /** The agent waits on your answer to its question (not a permission prompt). */
 export const isQuestion = (v: { status: TaskStatus; runtime?: Pick<TaskRuntime, 'question'> }) => v.status === 'waiting' && !!v.runtime?.question;
-export const QUESTION_LABEL = 'agent ถามคุณ';
-export const statusLabel = (v: { status: TaskStatus; runtime?: Pick<TaskRuntime, 'question'> }) => (isQuestion(v) ? QUESTION_LABEL : STATUS_LABEL[v.status]);
+export const questionLabel = () => t('ade.model.question');
+export const statusLabel = (v: { status: TaskStatus; runtime?: Pick<TaskRuntime, 'question'> }) => (isQuestion(v) ? questionLabel() : STATUS_LABEL[v.status]);
 
+/** Read at use time (getters), so the label follows kingu.uiLanguage. */
 export const STATUS_LABEL: Record<TaskStatus, string> = {
-	running: 'กำลังทำ',
-	waiting: 'รออนุญาต',
-	review: 'รอรีวิว',
-	done: 'เสร็จแล้ว',
-	failed: 'ล้มเหลว'
+	get running() {
+		return t('ade.model.statusRunning');
+	},
+	get waiting() {
+		return t('ade.model.statusWaiting');
+	},
+	get review() {
+		return t('ade.model.statusReview');
+	},
+	get done() {
+		return t('ade.model.statusDone');
+	},
+	get failed() {
+		return t('ade.model.statusFailed');
+	}
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -218,18 +230,18 @@ export function summarizeEvent(ev: AgentEvent): string | undefined {
 		case 'message':
 			return ev.role === 'assistant' ? firstLine(ev.text, 100) || undefined : undefined;
 		case 'result':
-			return ev.is_error ? `ล้มเหลว: ${firstLine(ev.result ?? ev.subtype, 80)}` : 'agent ทำงานเสร็จ';
+			return ev.is_error ? t('ade.model.eventFailed', { reason: firstLine(ev.result ?? ev.subtype, 80) }) : t('ade.model.eventFinished');
 		case 'exit':
-			return ev.stopped ? 'หยุดแล้ว' : ev.code == null && ev.signal == null ? undefined : ev.code === 0 ? undefined : `จบการทำงาน (exit ${ev.code ?? `signal ${ev.signal}`})`;
+			return ev.stopped ? t('ade.model.eventStopped') : ev.code == null && ev.signal == null ? undefined : ev.code === 0 ? undefined : t('ade.model.eventExited', { code: `exit ${ev.code ?? `signal ${ev.signal}`}` });
 		case 'error':
-			return `ข้อผิดพลาด: ${firstLine(ev.message, 80)}`;
+			return t('ade.model.eventError', { message: firstLine(ev.message, 80) });
 		case 'stderr':
 			return firstLine(ev.line, 80);
 		case 'permission_request':
-			if (isQuestionTool(ev.tool)) return `ถาม: ${firstLine(questionText(ev.input) ?? ev.input_summary, 80)}`;
-			return `ขออนุญาตใช้ ${ev.tool}${ev.input_summary ? `: ${firstLine(ev.input_summary, 60)}` : ''}`;
+			if (isQuestionTool(ev.tool)) return t('ade.model.eventQuestion', { question: firstLine(questionText(ev.input) ?? ev.input_summary, 80) });
+			return ev.input_summary ? t('ade.model.eventPermissionDetail', { tool: ev.tool, detail: firstLine(ev.input_summary, 60) }) : t('ade.model.eventPermission', { tool: ev.tool });
 		case 'system':
-			return ev.subtype === 'init' ? 'เริ่ม session' : undefined;
+			return ev.subtype === 'init' ? t('ade.model.eventSessionStarted') : undefined;
 		default:
 			return undefined;
 	}
@@ -278,7 +290,7 @@ export function toTaskRuntime(run: RunView, updatedAt?: number): TaskRuntime {
 		runStatus: run.status,
 		live: !run.ended,
 		working: !run.ended && (run.status === 'starting' || run.status === 'running' || run.status === 'waiting'),
-		lastEvent: lastEventOf(run) ?? (run.status === 'starting' ? 'กำลังเริ่ม' : undefined),
+		lastEvent: lastEventOf(run) ?? (run.status === 'starting' ? t('ade.model.starting') : undefined),
 		pendingPermissions: run.pending.length,
 		question: !run.ended && run.pending.some((p) => p.kind === 'permission_request' && isQuestionTool(p.tool)),
 		model: run.model ?? undefined,
@@ -392,25 +404,25 @@ export type Chip = { label: string; tone: 'neutral' | 'info' | 'warn' | 'ok' | '
 /** Review/PR state of a task for its card. */
 export function reviewChip(view: Pick<TaskView, 'meta' | 'stat' | 'statError'>): Chip {
 	const { meta, stat } = view;
-	if (meta.merged_at) return { label: 'merge แล้ว', tone: 'ok' };
-	if (meta.pr_url) return { label: 'เปิด PR แล้ว', tone: 'info' };
-	if (view.statError) return { label: 'ไม่มี worktree', tone: 'error' };
+	if (meta.merged_at) return { label: t('ade.model.chipMerged'), tone: 'ok' };
+	if (meta.pr_url) return { label: t('ade.model.chipPrOpen'), tone: 'info' };
+	if (view.statError) return { label: t('ade.model.chipNoWorktree'), tone: 'error' };
 	if (!stat) return { label: '…', tone: 'neutral' };
-	if (stat.dirty) return { label: 'ยังไม่ commit', tone: 'warn' };
-	if (stat.ahead > 0) return { label: `${stat.ahead} commit รอ merge`, tone: 'info' };
-	return { label: 'ไม่มีการเปลี่ยนแปลง', tone: 'neutral' };
+	if (stat.dirty) return { label: t('ade.model.chipUncommitted'), tone: 'warn' };
+	if (stat.ahead > 0) return { label: t('ade.model.chipAhead', { count: stat.ahead }), tone: 'info' };
+	return { label: t('ade.model.chipNoChanges'), tone: 'neutral' };
 }
 
-/** Thai relative time: เมื่อสักครู่, 5 นาทีที่แล้ว, 3 ชม.ที่แล้ว, 2 วันที่แล้ว. */
+/** Relative time in the UI language: just now / เมื่อสักครู่, 5 minutes ago / 5 นาทีที่แล้ว, … */
 export function timeAgo(then: number, now: number): string {
 	const s = Math.max(0, Math.floor((now - then) / 1000));
-	if (s < 60) return 'เมื่อสักครู่';
+	if (s < 60) return t('ade.model.justNow');
 	const m = Math.floor(s / 60);
-	if (m < 60) return `${m} นาทีที่แล้ว`;
+	if (m < 60) return t('ade.model.minutesAgo', { count: m });
 	const h = Math.floor(m / 60);
-	if (h < 24) return `${h} ชม.ที่แล้ว`;
+	if (h < 24) return t('ade.model.hoursAgo', { count: h });
 	const d = Math.floor(h / 24);
-	return d < 30 ? `${d} วันที่แล้ว` : new Date(then).toLocaleDateString('th-TH');
+	return d < 30 ? t('ade.model.daysAgo', { count: d }) : new Date(then).toLocaleDateString(locale() === 'th' ? 'th-TH' : 'en-US');
 }
 
 /** Default commit message: the task title, with the slug for traceability. */

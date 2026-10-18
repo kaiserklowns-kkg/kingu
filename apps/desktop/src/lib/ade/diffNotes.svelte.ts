@@ -12,6 +12,7 @@ import { cliOf } from './agentCli.ts';
 import { cliSessions } from './cliSessions.svelte.ts';
 import { addNote, clearDelivered, deleteNote, deliveryFor, formatNotes, parseNotes, updateNote, type DiffNote, type NoteTarget, type NotesByWorktree } from './diffNotes.ts';
 import { adeTasks } from './tasks.svelte.ts';
+import { t } from '#lib/i18n/index.ts';
 
 class DiffNotes {
 	byKey = $state<NotesByWorktree>({});
@@ -31,7 +32,7 @@ class DiffNotes {
 			const all = parseNotes(await invoke<unknown>('diff_notes_load'));
 			if (this.#root === root) this.byKey = all;
 		} catch (e) {
-			status.flash(`โหลดโน้ตรีวิวไม่ได้: ${e}`, 8000);
+			status.flash(t('ade.diffNotes.loadFailed', { error: String(e) }), 8000);
 		}
 	}
 
@@ -59,7 +60,7 @@ class DiffNotes {
 						if (before.length) this.byKey[key] = before;
 						else delete this.byKey[key];
 					}
-					status.flash(`บันทึกโน้ตไม่ได้: ${e}`, 8000);
+					status.flash(t('ade.diffNotes.saveFailed', { error: String(e) }), 8000);
 					clientLog('error', `diff_notes_save ${key}: ${e}`);
 					return false;
 				}
@@ -100,9 +101,9 @@ class DiffNotes {
 	async copy(notes: DiffNote[]) {
 		try {
 			await navigator.clipboard.writeText(formatNotes(notes));
-			status.flash(`คัดลอกโน้ต ${notes.length} รายการแล้ว`);
+			status.flash(t('ade.diffNotes.copied', { count: notes.length }));
 		} catch {
-			status.flash('คัดลอกโน้ตไม่ได้');
+			status.flash(t('ade.diffNotes.copyFailed'));
 		}
 	}
 
@@ -117,12 +118,12 @@ class DiffNotes {
 		if (how === 'none') return this.copy(pending);
 		const prompt = formatNotes(pending);
 		for (const n of pending) this.sending[n.id] = true;
-		status.flash('กำลังส่งโน้ต…');
+		status.flash(t('ade.diffNotes.sending'));
 		try {
 			const ok = how === 'cli' ? await cliSessions.send(key, prompt) : how === 'timeline' ? await adeTasks.followUp(key, prompt) : await adeTasks.startCliWith(key, prompt);
 			if (!ok) return;
 			await this.#set(key, clearDelivered(this.list(key), pending));
-			status.flash(`ส่งโน้ต ${pending.length} รายการถึง agent แล้ว`);
+			status.flash(t('ade.diffNotes.sent', { count: pending.length }));
 			// Show the agent that got them.
 			adeLayout.select(key, 'main');
 		} finally {

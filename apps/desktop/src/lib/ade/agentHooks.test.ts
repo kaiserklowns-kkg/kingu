@@ -1,6 +1,11 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { applyHook, initialHookState, isQuestionTool, needsInput } from './agentHooks';
 import { claudeResume, claudeStart } from './agentCli';
+import { setLocale } from '#lib/i18n/index.ts';
+
+// These tests check the Thai UI text.
+beforeAll(() => setLocale('th'));
+afterAll(() => setLocale('en'));
 
 const run = (events: object[]) => events.reduce((s: ReturnType<typeof initialHookState>, e, i) => applyHook(s, e, i + 1), initialHookState(0));
 

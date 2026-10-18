@@ -1,5 +1,10 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { prLine, sortChecks, summarizeChecks, type PrCheck } from './prChecks';
+import { setLocale } from '#lib/i18n/index.ts';
+
+// These tests check the Thai UI text.
+beforeAll(() => setLocale('th'));
+afterAll(() => setLocale('en'));
 
 const c = (name: string, state: PrCheck['state']): PrCheck => ({ name, state, url: null });
 

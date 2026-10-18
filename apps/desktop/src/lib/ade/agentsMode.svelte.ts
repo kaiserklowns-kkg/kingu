@@ -16,6 +16,7 @@ import { adeTasks } from './tasks.svelte';
 import { adeLayout, PRIMARY } from './adeLayout.svelte';
 import { installRightSidebar } from './rightSidebar.svelte.ts';
 import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
+import { t } from '#lib/i18n/index.ts';
 
 /** The session to show when entering the Agents layout: the task tab in front, else the last one, else the first needing attention. */
 function initialSession(): string | null {
@@ -69,11 +70,11 @@ export function pickSession() {
 		}))
 	);
 	if (!items.length) {
-		status.flash(workspace.root ? 'ยังไม่มีงาน: กด "งานใหม่" เพื่อเริ่ม session' : 'เปิดโฟลเดอร์ก่อน');
+		status.flash(workspace.root ? t('ade.agentsMode.noTasks') : t('ade.openFolderFirst'));
 		return;
 	}
 	quick.pick({
-		placeholder: 'เลือก session (งานของ agent)',
+		placeholder: t('ade.agentsMode.pickSession'),
 		items,
 		activeId: appMode.activeSession ?? undefined,
 		onAccept: (item) => adeLayout.show(item.id)

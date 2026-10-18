@@ -12,6 +12,7 @@ import { persist, restore } from '#lib/terminal/sessions.ts';
 import { adeLayout, PRIMARY } from './adeLayout.svelte.ts';
 import { worktreeDir } from './keys.ts';
 import { historyOf, historyScope, LISTING_CAP, parseHistory, parseTarget, rankWithHistory, recordVisit, relInWorktree, worktreeFile, type QuickOpenHistory } from './quickOpen.ts';
+import { t } from '#lib/i18n/index.ts';
 
 const STORE = 'kingu.quickOpenHistory.v1';
 
@@ -33,7 +34,7 @@ export function recordQuickOpenVisit(key: string, file: string) {
 /** Opens the quick open of worktree `key` ('' = the folder itself). */
 export async function quickOpenWorktree(key: string) {
 	const root = workspace.root;
-	if (!root) return status.flash('เปิดโฟลเดอร์ก่อน');
+	if (!root) return status.flash(t('ade.openFolderFirst'));
 	let files: string[];
 	try {
 		files = key === PRIMARY ? await invoke<string[]>('fs_list_files') : await invoke<string[]>('worktree_list_files', { slug: key });
@@ -46,13 +47,13 @@ export async function quickOpenWorktree(key: string) {
 	const clauses = siblingClauses(settings.get('files.exclude'), settings.get('search.exclude'));
 	const all = new Set(files);
 	files = files.filter((f) => !isExcluded(f, exclude) && !hiddenBySibling(f, clauses, (p) => all.has(p)));
-	if (files.length >= LISTING_CAP) status.flash(`worktree มีไฟล์มากกว่า ${LISTING_CAP} ไฟล์ อาจไม่แสดงครบ พิมพ์ชื่อให้เจาะจงขึ้น`, 6000);
+	if (files.length >= LISTING_CAP) status.flash(t('ade.quickOpen.tooMany', { count: LISTING_CAP }), 6000);
 	const listed = new Set(files);
 	const recent = historyOf(history, historyScope(root, key));
 	const dir = dirOf(key);
 	let at: { line?: number; column?: number } = {};
 	quick.pick({
-		placeholder: key === PRIMARY ? 'ไปที่ไฟล์… (path:บรรทัด เพื่อไปบรรทัด)' : `ไปที่ไฟล์ใน worktree ${key}… (path:บรรทัด เพื่อไปบรรทัด)`,
+		placeholder: key === PRIMARY ? t('ade.quickOpen.placeholder') : t('ade.quickOpen.placeholderWorktree', { worktree: key }),
 		items: [],
 		dynamic: (value) => {
 			const target = parseTarget(value, listed);
@@ -63,7 +64,7 @@ export async function quickOpenWorktree(key: string) {
 					id: r.path,
 					label: r.path.slice(slash + 1),
 					description: slash > 0 ? r.path.slice(0, slash) : '',
-					separator: r.recent ? 'ล่าสุด' : undefined,
+					separator: r.recent ? t('ade.quickOpen.recent') : undefined,
 					positions: r.positions.filter((p) => p > slash).map((p) => p - slash - 1),
 					icon: r.path
 				};

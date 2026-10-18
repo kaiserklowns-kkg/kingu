@@ -9,6 +9,7 @@ import type * as Monaco from 'monaco-editor';
 import DiffNoteCard from './DiffNoteCard.svelte';
 import { diffNotes } from './diffNotes.svelte.ts';
 import { commentableLines, lineTarget, notesOfFile, type NoteTarget } from './diffNotes.ts';
+import { t } from '#lib/i18n/index.ts';
 
 const BUTTON = 18;
 
@@ -36,8 +37,8 @@ export function installDiffNotes(monaco: typeof Monaco, diff: Monaco.editor.ISta
 	const plus = document.createElement('button');
 	plus.type = 'button';
 	plus.className = 'kg-note-add';
-	plus.title = 'เพิ่มโน้ตรีวิวถึง agent';
-	plus.setAttribute('aria-label', 'เพิ่มโน้ตรีวิว');
+	plus.title = t('ade.diffNotes.addTitle');
+	plus.setAttribute('aria-label', t('ade.diffNotes.addAria'));
 	plus.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>';
 	plus.style.display = 'none';
 	ed.getDomNode()?.appendChild(plus);
@@ -95,7 +96,7 @@ export function installDiffNotes(monaco: typeof Monaco, diff: Monaco.editor.ISta
 		zones = [];
 		const at = current();
 		if (!at || !ed.getModel()) return;
-		const send = diffNotes.delivery(at.key) === 'none' ? 'คัดลอกโน้ตนี้' : 'ส่งโน้ตนี้ถึง agent';
+		const send = diffNotes.delivery(at.key) === 'none' ? t('ade.diffNotes.copyThis') : t('ade.diffNotes.sendThis');
 		for (const n of notesOfFile(diffNotes.list(at.key), at.file)) {
 			zones.push(
 				addZone(n.lineNumber, {

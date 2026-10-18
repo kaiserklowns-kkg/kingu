@@ -2,6 +2,7 @@
 // permission answer, finished a turn and waits for review, or failed. Pure, so `bun test` covers it.
 
 import type { TaskStatus } from './model';
+import { t } from '#lib/i18n/index.ts';
 
 export type Notice = { title: string; body: string; kind: 'attention' | 'finished' };
 
@@ -12,10 +13,10 @@ export const noticeState = (status: TaskStatus, question?: boolean): NoticeState
 /** `kingu.agent.notifications.events`: `attention` leaves out finished turns. */
 export function noticeFor(prev: NoticeState | undefined, next: NoticeState, task: { title: string; lastEvent?: string }, events = 'all'): Notice | null {
 	if (prev === undefined || prev === next) return null;
-	if (next === 'question') return { title: `agent ถามคุณ: ${task.title}`, body: task.lastEvent || 'agent รอคำตอบของคุณ', kind: 'attention' };
-	if (next === 'waiting') return { title: `รอคุณอนุญาต: ${task.title}`, body: task.lastEvent || 'agent ขออนุญาตใช้เครื่องมือ', kind: 'attention' };
-	if (next === 'failed') return { title: `งานล้มเหลว: ${task.title}`, body: task.lastEvent || 'ดูรายละเอียดใน Agents', kind: 'attention' };
-	if ((prev === 'running' || prev === 'question') && next === 'review' && events !== 'attention') return { title: `เสร็จรอบแล้ว: ${task.title}`, body: task.lastEvent || 'รอคุณรีวิว', kind: 'finished' };
+	if (next === 'question') return { title: t('ade.notify.questionTitle', { task: task.title }), body: task.lastEvent || t('ade.notify.questionBody'), kind: 'attention' };
+	if (next === 'waiting') return { title: t('ade.notify.permissionTitle', { task: task.title }), body: task.lastEvent || t('ade.notify.permissionBody'), kind: 'attention' };
+	if (next === 'failed') return { title: t('ade.notify.failedTitle', { task: task.title }), body: task.lastEvent || t('ade.notify.failedBody'), kind: 'attention' };
+	if ((prev === 'running' || prev === 'question') && next === 'review' && events !== 'attention') return { title: t('ade.notify.finishedTitle', { task: task.title }), body: task.lastEvent || t('ade.notify.finishedBody'), kind: 'finished' };
 	return null;
 }
 

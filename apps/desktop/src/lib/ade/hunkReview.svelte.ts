@@ -15,6 +15,7 @@ import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 import { adeLayout } from './adeLayout.svelte';
 import { adeTasks } from './tasks.svelte';
 import { acceptHunk, afterRemoval, HUNK_SHORTCUTS as K, hunkAt, isHunkAccepted, openHunks, stepFile, stepFrom, toggleHunk, type FileHunks, type Hunk } from './hunkReview.ts';
+import { t } from '#lib/i18n/index.ts';
 
 /** A diff view showing (maybe) a task diff. */
 export type HunkView = {
@@ -127,7 +128,7 @@ class HunkReview {
 		if (!k || !files) return false;
 		const next = stepFile(files, k.rel, dir);
 		if (!next) {
-			status.flash('ไม่มีไฟล์อื่นที่เปลี่ยน');
+			status.flash(t('ade.hunks.noOtherFiles'));
 			return false;
 		}
 		this.openFile(k.slug, next, land);
@@ -189,7 +190,7 @@ class HunkReview {
 		}
 		this.#landing[at.key] = at.i;
 		if (await adeTasks.rejectHunks(k.slug, k.rel, [h.id])) {
-			status.flash('ปฏิเสธการเปลี่ยนแปลงนี้แล้ว');
+			status.flash(t('ade.hunks.rejected'));
 			const fh = await this.load(at.key);
 			if (fh && !fh.hunks.length) {
 				delete this.#landing[at.key];
@@ -239,12 +240,12 @@ class HunkReview {
 		const open = stat.files.filter((f) => !meta.accepted.includes(f.path));
 		const partial = open.filter((f) => (meta.accepted_hunks?.[f.path]?.length ?? 0) > 0);
 		const full = open.filter((f) => !partial.includes(f));
-		const label = partial.length ? `${full.length} ไฟล์ที่ยังไม่ยอมรับ และส่วนที่ยังไม่ยอมรับของอีก ${partial.length} ไฟล์` : `${full.length} ไฟล์ที่ยังไม่ยอมรับ`;
+		const label = partial.length ? t('ade.hunks.rejectFilesAndParts', { count: full.length, partial: partial.length }) : t('ade.hunks.rejectFiles', { count: full.length });
 		const paths = full.flatMap((f) => (f.orig_path ? [f.path, f.orig_path] : [f.path]));
 		if (!(await adeTasks.reject(slug, paths, label, partial.length > 0))) return;
 		for (const f of partial) {
 			const fh = await invoke<FileHunks>('worktree_hunks', { slug, base: stat.base, path: f.path }).catch((e) => {
-				status.flash(`อ่านการเปลี่ยนแปลงของ ${f.path} ไม่ได้: ${e}`);
+				status.flash(t('ade.hunks.readFailed', { path: f.path, error: String(e) }));
 				return null;
 			});
 			const now = adeTasks.list.find((t) => t.slug === slug) ?? meta;

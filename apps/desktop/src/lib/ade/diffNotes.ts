@@ -2,6 +2,8 @@
 // prompt that hands them to an agent. Pure; the store (diffNotes.svelte.ts) persists each
 // worktree's list in `.kingu/diff-notes.json` through Rust (agent/notes.rs, same shape).
 
+import { t } from '#lib/i18n/index.ts';
+
 /** Orca's DiffComment, minus the fields Kingu has no use for yet (markdown notes, sentAt, scope). */
 export type DiffNote = {
 	id: string;
@@ -96,7 +98,7 @@ export function notesOfFile(list: DiffNote[], filePath: string): DiffNote[] {
 export const sortedNotes = (list: DiffNote[]) => [...list].sort((a, b) => a.filePath.localeCompare(b.filePath) || a.lineNumber - b.lineNumber || a.createdAt - b.createdAt);
 
 export const locationLabel = (n: Pick<DiffNote, 'lineNumber' | 'startLine'>) =>
-	n.lineNumber === 0 ? 'ทั้งไฟล์' : n.startLine !== undefined && n.startLine !== n.lineNumber ? `บรรทัด ${n.startLine}-${n.lineNumber}` : `บรรทัด ${n.lineNumber}`;
+	n.lineNumber === 0 ? t('ade.diffNotes.wholeFile') : n.startLine !== undefined && n.startLine !== n.lineNumber ? t('ade.diffNotes.lines', { start: n.startLine, end: n.lineNumber }) : t('ade.diffNotes.line', { line: n.lineNumber });
 
 /**
  * Orca's formatDiffComment, verbatim: the pasted format is the contract between review notes and

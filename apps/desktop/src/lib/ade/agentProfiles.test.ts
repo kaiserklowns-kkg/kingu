@@ -194,6 +194,6 @@ describe('pasted prompts and codex notify', () => {
 	test('a codex turn-complete payload: idle, its thread id is the session', () => {
 		const s = applyHook(initialHookState(0), { type: 'agent-turn-complete', 'thread-id': 'th-1', 'turn-id': '1', 'last-assistant-message': 'แก้แล้ว\nรายละเอียด' } as object, 5);
 		expect(s).toMatchObject({ phase: 'idle', sessionId: 'th-1', message: 'แก้แล้ว', at: 5 });
-		expect(applyHook(s, { type: 'agent-turn-complete' }, 6)).toMatchObject({ sessionId: 'th-1', message: 'จบรอบ รอคุณ' });
+		expect(applyHook(s, { type: 'agent-turn-complete' }, 6)).toMatchObject({ sessionId: 'th-1', message: 'Turn finished, waiting for you' });
 	});
 });

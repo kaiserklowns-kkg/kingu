@@ -8,6 +8,7 @@ import { keyOf } from '#lib/workbench/commands.svelte.ts';
 import { keyLabel } from '#lib/workbench/keys.ts';
 import { hunkReview, type HunkView } from './hunkReview.svelte.ts';
 import { HUNK_SHORTCUTS, hunkAt, hunkLines, type Hunk } from './hunkReview.ts';
+import { t } from '#lib/i18n/index.ts';
 
 export type HunkToolbars = HunkView & { dispose(): void };
 
@@ -45,13 +46,13 @@ export function installHunkToolbars(diff: Monaco.editor.IStandaloneDiffEditor, s
 		label.textContent = `${i + 1}/${count}`;
 		const accept = document.createElement('button');
 		accept.type = 'button';
-		accept.textContent = ok ? '✓ ยอมรับแล้ว' : 'ยอมรับ';
-		accept.title = ok ? 'ยกเลิกการยอมรับ' : tip('ยอมรับการเปลี่ยนแปลงนี้ (Accept)', HUNK_SHORTCUTS.acceptHunk);
+		accept.textContent = ok ? t('ade.hunks.accepted') : t('ade.hunks.accept');
+		accept.title = ok ? t('ade.hunks.unaccept') : tip(t('ade.hunks.acceptTip'), HUNK_SHORTCUTS.acceptHunk);
 		accept.onclick = () => (ok ? hunkReview.toggle(key, i) : hunkReview.accept(key, i));
 		const reject = document.createElement('button');
 		reject.type = 'button';
-		reject.textContent = 'ปฏิเสธ';
-		reject.title = tip('ปฏิเสธ: คืนส่วนนี้เป็นแบบใน base (Reject)', HUNK_SHORTCUTS.rejectHunk);
+		reject.textContent = t('ade.hunks.reject');
+		reject.title = tip(t('ade.hunks.rejectTip'), HUNK_SHORTCUTS.rejectHunk);
 		reject.onclick = () => void hunkReview.reject(key, i);
 		el.append(label, accept, reject);
 		return el;

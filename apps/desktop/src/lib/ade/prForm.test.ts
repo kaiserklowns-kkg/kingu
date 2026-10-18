@@ -1,5 +1,10 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { branchTitle, humanizeBranchSlug, prefillPr, prFormProblem, prSubmitLabel } from './prForm';
+import { setLocale } from '#lib/i18n/index.ts';
+
+// These tests check the Thai UI text.
+beforeAll(() => setLocale('th'));
+afterAll(() => setLocale('en'));
 
 const meta = { slug: 'fix-login', title: 'แก้หน้า login', prompt: 'แก้ปุ่ม login ที่กดไม่ได้', base: 'main', issue: null };
 

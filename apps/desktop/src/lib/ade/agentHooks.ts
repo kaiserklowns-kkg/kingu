@@ -5,6 +5,7 @@
 // provider mappers do. Pure.
 
 import { parseAsk, type AskPrompt } from '#lib/agent/ask.ts';
+import { t } from '#lib/i18n/index.ts';
 
 export type HookPhase = 'starting' | 'working' | 'waiting' | 'idle' | 'ended';
 export type HookState = {
@@ -70,19 +71,19 @@ const inputOf = (p: Payload) => p.tool_input ?? p.toolInput ?? p.input ?? p.args
 
 type Patch = Partial<Pick<HookState, 'phase' | 'permission' | 'question' | 'ask' | 'message'>>;
 const working = (message?: string): Patch => ({ phase: 'working', permission: false, question: false, ask: undefined, ...(message ? { message } : {}) });
-const idle = (message = 'จบรอบ รอคุณ'): Patch => ({ phase: 'idle', permission: false, question: false, ask: undefined, message });
-const permission = (tool?: string, message?: string): Patch => ({ phase: 'waiting', permission: true, question: false, ask: undefined, message: message || (tool ? `ขออนุญาตใช้ ${tool}` : 'รอคุณอนุญาต') });
-const question = (input: unknown): Patch => ({ phase: 'waiting', permission: false, question: true, ask: parseAsk(input) ?? undefined, message: firstLine(questionText(input)) || 'agent ถามคุณ' });
+const idle = (message = t('ade.hooks.turnDone')): Patch => ({ phase: 'idle', permission: false, question: false, ask: undefined, message });
+const permission = (tool?: string, message?: string): Patch => ({ phase: 'waiting', permission: true, question: false, ask: undefined, message: message || (tool ? t('ade.model.eventPermission', { tool }) : t('ade.hooks.waitingPermission')) });
+const question = (input: unknown): Patch => ({ phase: 'waiting', permission: false, question: true, ask: parseAsk(input) ?? undefined, message: firstLine(questionText(input)) || t('ade.model.question') });
 const usingTool = (p: Payload) => {
 	const tool = toolOf(p);
-	return working(tool ? `ใช้ ${tool}` : 'กำลังทำงาน');
+	return working(tool ? t('ade.hooks.usingTool', { tool }) : t('ade.hooks.working'));
 };
 
 /** gemini (Orca gemini-events): before/after tool and agent are work; AfterAgent ends the turn. */
 function gemini(ev: string, p: Payload): Patch | null {
 	switch (ev) {
 		case 'BeforeAgent':
-			return working(firstLine(p.prompt) || 'กำลังทำงาน');
+			return working(firstLine(p.prompt) || t('ade.hooks.working'));
 		case 'BeforeTool':
 		case 'PreToolUse':
 			return usingTool(p);
@@ -100,11 +101,11 @@ function gemini(ev: string, p: Payload): Patch | null {
 function cursor(ev: string, p: Payload, prev: HookState): Patch | null {
 	switch (ev) {
 		case 'beforeSubmitPrompt':
-			return working(firstLine(p.prompt) || 'กำลังทำงาน');
+			return working(firstLine(p.prompt) || t('ade.hooks.working'));
 		case 'preToolUse':
 		case 'beforeShellExecution':
 		case 'beforeMCPExecution':
-			return working(str(p.command) ? `รัน ${firstLine(p.command, 60)}` : toolOf(p) ? `ใช้ ${toolOf(p)}` : 'กำลังทำงาน');
+			return working(str(p.command) ? t('ade.hooks.running', { command: firstLine(p.command, 60) }) : toolOf(p) ? t('ade.hooks.usingTool', { tool: toolOf(p)! }) : t('ade.hooks.working'));
 		case 'postToolUse':
 		case 'postToolUseFailure':
 		case 'sessionStart':
@@ -113,7 +114,7 @@ function cursor(ev: string, p: Payload, prev: HookState): Patch | null {
 			return prev.phase === 'idle' ? { message: firstLine(p.text) || prev.message } : working(firstLine(p.text) || undefined);
 		case 'stop':
 		case 'sessionEnd':
-			return idle(p.status && p.status !== 'completed' ? 'หยุดกลางคัน' : undefined);
+			return idle(p.status && p.status !== 'completed' ? t('ade.hooks.interrupted') : undefined);
 		default:
 			return null;
 	}
@@ -139,7 +140,7 @@ function copilot(ev: string, p: Payload): Patch | null {
 		case 'PostToolUseFailure':
 			return working();
 		case 'UserPromptSubmit':
-			return working(firstLine(p.prompt) || 'กำลังทำงาน');
+			return working(firstLine(p.prompt) || t('ade.hooks.working'));
 		case 'Notification':
 			if (p.notification_type === 'elicitation_dialog') return question(p);
 			if (p.notification_type === 'permission_prompt') return permission(undefined, firstLine(p.message));
@@ -151,7 +152,7 @@ function copilot(ev: string, p: Payload): Patch | null {
 		case 'SessionEnd':
 			return idle();
 		case 'ErrorOccurred':
-			return p.recoverable === true ? working() : idle(firstLine(str(p.error) ?? str((p.error as Payload | undefined)?.message)) || 'เกิดข้อผิดพลาด');
+			return p.recoverable === true ? working() : idle(firstLine(str(p.error) ?? str((p.error as Payload | undefined)?.message)) || t('ade.hooks.error'));
 		default:
 			return null;
 	}
@@ -163,7 +164,7 @@ const highRisk = (p: Payload) => [p, p.tool_input, p.input, p.arguments].some((x
 function droid(ev: string, p: Payload): Patch | null {
 	switch (ev) {
 		case 'UserPromptSubmit':
-			return working(firstLine(p.prompt) || 'กำลังทำงาน');
+			return working(firstLine(p.prompt) || t('ade.hooks.working'));
 		case 'PreToolUse':
 			if (isQuestionTool(toolOf(p))) return question(inputOf(p));
 			if (highRisk(p)) return permission(toolOf(p));
@@ -192,7 +193,7 @@ function codex(ev: string, p: Payload): Patch | null {
 		case 'SessionStart':
 			return working();
 		case 'UserPromptSubmit':
-			return working(firstLine(p.prompt) || 'กำลังทำงาน');
+			return working(firstLine(p.prompt) || t('ade.hooks.working'));
 		case 'PreToolUse':
 			return isQuestionTool(toolOf(p)) ? question(inputOf(p)) : usingTool(p);
 		case 'PostToolUse':
@@ -202,7 +203,7 @@ function codex(ev: string, p: Payload): Patch | null {
 		case 'Stop':
 			return idle(firstLine(p.last_assistant_message) || undefined);
 		case 'Interrupt':
-			return idle('หยุดกลางคัน');
+			return idle(t('ade.hooks.interrupted'));
 		default:
 			return null;
 	}
@@ -216,7 +217,7 @@ function opencode(ev: string, p: Payload): Patch | null {
 		case 'SessionIdle':
 			return idle();
 		case 'SessionStart':
-			return idle('พร้อมรับคำสั่ง');
+			return idle(t('ade.hooks.ready'));
 		case 'PermissionRequest':
 			return permission(str(p.permission) ?? str(p.type) ?? toolOf(p), firstLine(p.title) || undefined);
 		case 'AskUserQuestion':
@@ -232,29 +233,29 @@ const PROVIDERS: Partial<Record<string, (ev: string, p: Payload, prev: HookState
 function claude(ev: HookEvent, prev: HookState): Patch | null {
 	switch (ev.hook_event_name) {
 		case 'SessionStart':
-			return idle('พร้อมรับคำสั่ง');
+			return idle(t('ade.hooks.ready'));
 		case 'UserPromptSubmit':
-			return working(firstLine(ev.prompt) || 'กำลังทำงาน');
+			return working(firstLine(ev.prompt) || t('ade.hooks.working'));
 		case 'PreToolUse':
 			// AskUserQuestion runs as a tool that waits for your answer.
 			if (isQuestionTool(ev.tool_name)) return question(ev.tool_input);
-			return working(ev.tool_name ? `ใช้ ${ev.tool_name}` : 'กำลังทำงาน');
+			return working(ev.tool_name ? t('ade.hooks.usingTool', { tool: ev.tool_name }) : t('ade.hooks.working'));
 		case 'PermissionRequest':
 			return isQuestionTool(ev.tool_name) ? question(ev.tool_input) : permission(ev.tool_name);
 		case 'PostToolUse':
 			return working();
 		case 'Notification': {
-			if (ev.notification_type === 'elicitation_dialog') return { ...question(null), message: firstLine(ev.message) || 'agent ถามคุณ' };
+			if (ev.notification_type === 'elicitation_dialog') return { ...question(null), message: firstLine(ev.message) || t('ade.model.question') };
 			// While a question is open, Claude's "waiting for your input" is about that question.
 			if (prev.phase === 'waiting' && prev.question) return null;
 			// "Claude needs your permission to use Bash" vs. "Claude is waiting for your input".
 			const perm = ev.notification_type === 'permission_prompt' || /permission/i.test(ev.message ?? '');
-			return { phase: 'waiting', permission: perm, question: false, ask: undefined, message: firstLine(ev.message) || 'รอคุณ' };
+			return { phase: 'waiting', permission: perm, question: false, ask: undefined, message: firstLine(ev.message) || t('ade.hooks.waiting') };
 		}
 		case 'Stop':
 			return idle();
 		case 'SessionEnd':
-			return { phase: 'ended', permission: false, question: false, ask: undefined, message: 'จบ session' };
+			return { phase: 'ended', permission: false, question: false, ask: undefined, message: t('ade.hooks.sessionEnded') };
 		default:
 			return null;
 	}
@@ -264,7 +265,7 @@ export function applyHook(state: HookState, event: object, now: number): HookSta
 	const ev = event as HookEvent;
 	if (ev.type === 'agent-turn-complete') {
 		const sessionId = typeof ev['thread-id'] === 'string' && ev['thread-id'] ? ev['thread-id'] : state.sessionId;
-		return { ...state, at: now, sessionId, phase: 'idle', permission: false, question: false, ask: undefined, message: firstLine(ev['last-assistant-message']) || 'จบรอบ รอคุณ' };
+		return { ...state, at: now, sessionId, phase: 'idle', permission: false, question: false, ask: undefined, message: firstLine(ev['last-assistant-message']) || t('ade.hooks.turnDone') };
 	}
 	if (typeof ev.kingu_hook === 'string') {
 		const map = PROVIDERS[ev.kingu_hook];

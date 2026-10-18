@@ -12,6 +12,7 @@ import { cliName } from './agentCli';
 import { profileOf } from '#lib/ade/agentProfiles.ts';
 import { cliSessions } from './cliSessions.svelte';
 import { needsInput } from './agentHooks';
+import { t } from '#lib/i18n/index.ts';
 
 /** A task whose agent CLI runs in a terminal: working while it prints, else waiting for you. */
 function cliRuntime(slug: string): TaskRuntime | undefined {
@@ -44,7 +45,7 @@ function cliRuntime(slug: string): TaskRuntime | undefined {
 		runStatus: working ? 'running' : 'idle',
 		live: true,
 		working,
-		lastEvent: working ? `${cliName(s.run)} กำลังทำงานใน terminal` : (hook?.message ?? `${cliName(s.run)} รอคุณใน terminal`),
+		lastEvent: working ? t('ade.cli.working', { cli: cliName(s.run) }) : (hook?.message ?? t('ade.cli.waiting', { cli: cliName(s.run) })),
 		pendingPermissions: 0,
 		sessionId: hook?.sessionId ?? null,
 		updatedAt: cliSessions.lastOutput(slug)

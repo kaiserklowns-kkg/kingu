@@ -1,7 +1,12 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { COLORS, fileDecorations } from '#lib/workbench/scm.ts';
 import type { FileMatches } from '#lib/workbench/searchResults.ts';
 import { portOwner, cleanTabs, SAVED_TABS_MAX, contentRows, contentSummary, filesOf, fold, isRightTab, nameMatches, RIGHT_TABS, rowLook, toggleTab, touchesWorktree, treeRows, visibleTabs, shellJoin, sortSessions } from './rightSidebar.ts';
+import { setLocale } from '#lib/i18n/index.ts';
+
+// These tests check the Thai UI text.
+beforeAll(() => setLocale('th'));
+afterAll(() => setLocale('en'));
 
 describe('Agents tab', () => {
 	const v = (slug: string, created_at: number, updated_at: number) => ({ meta: { slug, created_at, updated_at } });
