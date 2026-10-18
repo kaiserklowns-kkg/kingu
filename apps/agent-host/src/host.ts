@@ -16,6 +16,8 @@ import {
 	type AgentEvent,
 	type AnswerParams,
 	type Decision,
+	type PermissionMode,
+	type SetOptionsParams,
 	type RpcRequest,
 	type RpcResponse,
 	type SendParams,
@@ -23,7 +25,12 @@ import {
 } from './protocol.ts';
 
 /** The subset of the SDK's `Query` the host uses. */
-export type QueryLike = AsyncIterable<unknown> & { interrupt(): Promise<unknown> };
+export type QueryLike = AsyncIterable<unknown> & {
+	interrupt(): Promise<unknown>;
+	/** Mid-session changes (streaming input only); optional so older fakes still fit. */
+	setModel?(model?: string): Promise<void>;
+	setPermissionMode?(mode: PermissionMode): Promise<void>;
+};
 export type QueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => QueryLike;
 
 export const DEFAULT_MODEL = 'claude-opus-5-5';
@@ -138,6 +145,7 @@ class RpcError extends Error {
 const INVALID_PARAMS = -32602;
 const METHOD_NOT_FOUND = -32601;
 const RUN_NOT_FOUND = 1;
+const UNSUPPORTED = 2;
 
 function need<T>(cond: T, message: string): asserts cond {
 	if (!cond) throw new RpcError(INVALID_PARAMS, message);
@@ -199,6 +207,8 @@ export class AgentHost {
 				return this.stop(this.run(p.runId));
 			case 'answer':
 				return this.answer(p as AnswerParams);
+			case 'set_options':
+				return this.setOptions(p as SetOptionsParams);
 			case 'shutdown':
 				await Promise.all([...this.runs.values()].map((r) => this.stop(r)));
 				return null;
@@ -313,6 +323,31 @@ export class AgentHost {
 		run.inbox.push(p.text, imageBlocks(p.images, this.read));
 		this.emit(run.id, { kind: 'message', role: 'user', text: shownText(p.text, p.images) });
 		return null;
+	}
+
+	/**
+	 * Changes the live session's model and/or permission mode (the SDK's `setModel` /
+	 * `setPermissionMode`); they apply from the next response on. Returns what was applied.
+	 */
+	async setOptions(p: SetOptionsParams) {
+		const run = this.run(p.runId);
+		const model = p.model ?? undefined;
+		const mode = p.permissionMode ?? undefined;
+		need(model === undefined || (typeof model === 'string' && model.trim() && model.length <= 200), 'model must be a non-empty string');
+		need(mode === undefined || PERMISSION_MODES.includes(mode), `unsupported permission mode ${String(mode)}`);
+		need(model !== undefined || mode !== undefined, 'nothing to change');
+		const q = run.query;
+		need(q && !run.exited, 'run has ended');
+		if (model !== undefined) {
+			if (!q.setModel) throw new RpcError(UNSUPPORTED, 'this agent SDK cannot change the model mid-session');
+			await q.setModel(model);
+		}
+		if (mode !== undefined) {
+			if (!q.setPermissionMode) throw new RpcError(UNSUPPORTED, 'this agent SDK cannot change the permission mode mid-session');
+			await q.setPermissionMode(mode);
+		}
+		this.log(`run ${run.id}: options changed${model !== undefined ? ' (model)' : ''}${mode !== undefined ? ` (mode ${mode})` : ''}`);
+		return { model: model ?? null, permissionMode: mode ?? null };
 	}
 
 	async interrupt(run: Run) {

@@ -1,7 +1,7 @@
 // Wire protocol between the Kingu desktop app (Rust) and this sidecar.
 //
 // Framing: one JSON-RPC 2.0 message per line on stdin/stdout (UTF-8, '\n'-terminated).
-// Rust → host requests:  start, send, interrupt, stop, answer, shutdown.
+// Rust → host requests:  start, send, interrupt, stop, answer, set_options, shutdown.
 // Host → Rust notifications: `ready` once at startup, `event` {runId, event} for every run event.
 // Field names in events are snake_case, mirroring `AgentEvent` in src-tauri/src/agent/events.rs.
 
@@ -29,6 +29,8 @@ export type StartParams = {
 };
 export type SendParams = { runId: number; text: string; images?: string[] };
 export type RunParams = { runId: number };
+/** Mid-session change of the live run's model and/or permission mode (at least one). */
+export type SetOptionsParams = { runId: number; model?: string | null; permissionMode?: PermissionMode | null };
 /** `allow` once, `allow_always` for the rest of this session, or `deny` with an optional reason. */
 export type Decision = 'allow' | 'allow_always' | 'deny';
 /**
