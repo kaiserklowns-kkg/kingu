@@ -51,6 +51,24 @@
 				if (!switching && shown && (e.reason === CursorChangeReason.Explicit || e.reason === CursorChangeReason.NotSet))
 					navigation.record({ path: shown, line: e.position.lineNumber, column: e.position.column });
 			});
+			ed.onDidChangeCursorSelection(() => {
+				if (editors.activeGroupId !== group) return;
+				const model = ed.getModel();
+				const sels = ed.getSelections() ?? [];
+				editors.selection = { chars: model ? sels.reduce((n, sel) => n + model.getValueLengthInRange(sel), 0) : 0, count: Math.max(1, sels.length) };
+			});
+			// Indentation and line endings change from the status bar pickers and Monaco's own actions.
+			const reportModel = () => {
+				const model = ed.getModel();
+				if (editors.activeGroupId !== group || !model) return;
+				const opts = model.getOptions();
+				editors.indent = opts.insertSpaces ? `Spaces: ${opts.indentSize}` : `Tab Size: ${opts.tabSize}`;
+				editors.eol = model.getEOL() === '\n' ? 'LF' : 'CRLF';
+				editors.language = model.getLanguageId();
+			};
+			ed.onDidChangeModelOptions(reportModel);
+			ed.onDidChangeModelLanguage(reportModel);
+			ed.onDidChangeModelContent((e) => e.eol && reportModel());
 			ed.onDidFocusEditorText(() => editors.activateGroup(group));
 			editor = ed;
 			clientLog('info', `editor ready (group ${group})`);
@@ -74,7 +92,22 @@
 				editor.focus();
 				editor.trigger('menu', actionId, null);
 				return true;
-			}
+			},
+			setEol: (eol) => {
+				const model = editor?.getModel();
+				if (!model || !api) return;
+				model.pushEOL(eol === 'LF' ? api.monaco.editor.EndOfLineSequence.LF : api.monaco.editor.EndOfLineSequence.CRLF);
+				editors.eol = eol;
+				editor?.focus();
+			},
+			setLanguage: (id) => {
+				const model = editor?.getModel();
+				if (!model || !api) return;
+				api.monaco.editor.setModelLanguage(model, id);
+				editor?.focus();
+			},
+			languages: () =>
+				(api?.monaco.languages.getLanguages() ?? []).map((l) => ({ id: l.id, name: l.aliases?.[0] ?? l.id, extensions: l.extensions ?? [] }))
 		});
 
 		return () => {

@@ -8,9 +8,9 @@
 	import { status } from './status.svelte';
 	import { appMode } from './mode.svelte';
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
-	import { openAgents, pickSession } from '#lib/ade/agentsMode.svelte.ts';
-	import { runtime } from '#lib/ade/runtime.svelte.ts';
-	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
+	import { scm } from './scm.svelte';
+	import { statusEntries } from './statusEntries.svelte';
+	import { pickEncoding, pickEol, pickIndentation, pickLanguage } from './editorStatusPickers';
 	import StatusResources from './StatusResources.svelte';
 	import NotificationsBell from './NotificationsBell.svelte';
 	import UsageStatus from './UsageStatus.svelte';
@@ -33,29 +33,64 @@
 
 	const languageStatus = $derived(lsp.statusFor(editors.language));
 
-	// One status bar for the IDE and the Agents layout: the branch of what you are looking at (the
-	// selected worktree in Agents), problems, agent activity and cost in both; editor items in the IDE.
-	const branch = $derived(appMode.isAgents && adeLayout.key ? `kingu/${adeLayout.key}` : status.branch);
-	const counts = $derived(adeTasks.counts);
-	const cost = $derived(adeTasks.views.reduce((sum, v) => sum + (runtime.run(v.meta.slug)?.result?.total_cost_usd ?? v.meta.last_run?.cost_usd ?? 0), 0));
+	// VS Code's entries on the left (branch, sync, problems) and the editor's on the right; Orca's
+	// usage, resources and ports in between. Branch and changes follow the selected worktree in Agents.
+	const worktree = $derived(appMode.isAgents && adeLayout.key ? adeLayout.key : null);
+	const branch = $derived(worktree ? `kingu/${worktree}` : status.branch);
+	const repo = $derived(worktree ? null : scm.repo);
+	const dirty = $derived(!!repo && repo.entries.length > 0);
 	const editorItems = $derived(!appMode.isAgents && editors.active);
+	const languageName = $derived(editors.languages().find((l) => l.id === editors.language)?.name ?? languageNames[editors.language] ?? editors.language);
+	const counts = $derived(lsp.counts);
+	const problemsTitle = $derived(
+		counts.errors + counts.warnings + counts.infos ? `Errors: ${counts.errors}, Warnings: ${counts.warnings}${counts.infos ? `, Infos: ${counts.infos}` : ''}` : 'No Problems'
+	);
+	/** VS Code's getSelectionLabel. */
+	const position = $derived.by(() => {
+		const { line, column } = editors.cursor;
+		const { chars, count } = editors.selection;
+		if (count > 1) return chars ? `${count} selections (${chars} characters selected)` : `${count} selections`;
+		return chars ? `Ln ${line}, Col ${column} (${chars} selected)` : `Ln ${line}, Col ${column}`;
+	});
 	const ITEM = 'flex h-full items-center gap-1 px-2 hover:bg-(--vscode-toolbar-hoverBackground)';
 
-	// Right-click: which resource items show (Orca's status bar context menu).
-	const TOGGLES = [
+	function toggleProblems() {
+		if (appMode.isAgents) appMode.setMode('workbench');
+		else if (layout.panelVisible && layout.panelTab === 'problems') return void (layout.panelVisible = false);
+		layout.showPanel('problems');
+	}
+
+	// Right-click: every entry with a check to hide it (VS Code's status bar context menu); Orca's
+	// items keep their settings, VS Code's are remembered like VS Code does, outside settings.
+	const ORCA_TOGGLES = [
+		{ id: 'kingu.statusBar.usage.visible', label: 'Usage' },
 		{ id: 'kingu.statusBar.keepAwake.visible', label: 'Keep Awake' },
 		{ id: 'kingu.statusBar.resources.visible', label: 'Resource Manager' },
-		{ id: 'kingu.statusBar.ports.visible', label: 'Ports' },
-		{ id: 'kingu.statusBar.usage.visible', label: 'Usage' }
+		{ id: 'kingu.statusBar.ports.visible', label: 'Ports' }
 	];
+	const ENTRIES = [
+		{ id: 'status.scm', label: 'Source Control' },
+		{ id: 'status.problems', label: 'Problems' },
+		{ id: 'status.editor.selection', label: 'Editor Selection' },
+		{ id: 'status.editor.indentation', label: 'Editor Indentation' },
+		{ id: 'status.editor.encoding', label: 'Editor Encoding' },
+		{ id: 'status.editor.eol', label: 'Editor End of Line' },
+		{ id: 'status.editor.mode', label: 'Editor Language' },
+		{ id: 'status.notifications', label: 'Notifications' }
+	];
+	const show = (id: string) => !statusEntries.hidden.has(id);
 	let menu = $state<{ x: number; y: number } | null>(null);
 	const menuItems = $derived([
-		...TOGGLES.map((t) => menuItem(t.id, t.label, { checked: settings.get<boolean>(t.id) !== false })),
+		...ENTRIES.map((t) => menuItem(t.id, t.label, { checked: show(t.id) })),
+		menuSeparator,
+		...ORCA_TOGGLES.map((t) => menuItem(t.id, t.label, { checked: settings.get<boolean>(t.id) !== false })),
 		menuSeparator,
 		menuItem('floating', floating.visible ? 'Hide Floating Terminal' : 'Show Floating Terminal', { keyLabel: '⌥⌘T' })
 	]);
+	const MENU_HEIGHT = 22 * (ENTRIES.length + ORCA_TOGGLES.length + 1) + 2 * 9 + 8;
 	function toggleItem(id: string) {
 		if (id === 'floating') return floating.toggle();
+		if (id.startsWith('status.')) return statusEntries.toggle(id);
 		const shown = settings.get<boolean>(id) !== false;
 		void settings.set(id, shown ? false : undefined, 'user');
 	}
@@ -63,36 +98,42 @@
 
 <!-- 22px, items 22px line-height (VS Code statusbarPart). -->
 <footer
-	oncontextmenu={(e) => (e.preventDefault(), (menu = { x: e.clientX, y: e.clientY - 4 - 22 * (TOGGLES.length + 1) - 22 }))}
+	oncontextmenu={(e) => (e.preventDefault(), (menu = { x: e.clientX, y: Math.max(4, e.clientY - 4 - MENU_HEIGHT) }))}
 	class="flex h-(--kg-statusbar-height) shrink-0 items-center bg-(--vscode-statusBar-background) text-xs leading-(--kg-statusbar-height) text-(--vscode-statusBar-foreground)"
 >
-	{#if branch}
-		<span class="flex h-full items-center gap-1 px-2" title={appMode.isAgents && adeLayout.key ? 'branch ของ worktree ที่เลือก' : 'branch ปัจจุบัน'}><Icon name="branch" size={14} />{branch}</span>
+	{#if branch && show('status.scm')}
+		{#if repo}
+			<button class={ITEM} title="{branch}{dirty ? '*' : ''}, Checkout Branch/Tag..." onclick={() => scm.checkout()}>
+				<Icon name="branch" size={14} />{branch}{dirty ? '*' : ''}
+			</button>
+			{#if repo.branch}
+				<button
+					class={ITEM}
+					title={repo.upstream ? `${branch}: Synchronize Changes${repo.behind || repo.ahead ? ` (${repo.behind}↓ ${repo.ahead}↑)` : ''}` : `Publish Branch`}
+					disabled={scm.syncing}
+					onclick={() => scm.sync()}
+				>
+					<span class={scm.syncing ? 'animate-spin' : ''}><Icon name={repo.upstream ? 'sync' : 'publish'} size={14} /></span>
+					{#if repo.upstream && (repo.behind || repo.ahead)}<span class="tabular-nums">{repo.behind}↓ {repo.ahead}↑</span>{/if}
+				</button>
+			{/if}
+		{:else}
+			<span class="flex h-full items-center gap-1 px-2" title="branch ของ worktree ที่เลือก"><Icon name="branch" size={14} />{branch}</span>
+		{/if}
 	{/if}
-	<button class={ITEM} onclick={() => (appMode.setMode('workbench'), layout.showPanel('problems'))}>
-		<Icon name="error" size={14} />{lsp.counts.errors} <Icon name="warning" size={14} />{lsp.counts.warnings}
-	</button>
+	{#if show('status.problems')}
+		<button class={ITEM} title={problemsTitle} onclick={toggleProblems}>
+			<Icon name="error" size={14} />{counts.errors} <Icon name="warning" size={14} />{counts.warnings}
+			{#if counts.infos}<Icon name="info" size={14} />{counts.infos}{/if}
+		</button>
+	{/if}
 	{#if lsp.progress && lsp.progress !== languageStatus?.text}
 		<button class="flex h-full min-w-0 items-center gap-1 truncate px-2 hover:bg-(--vscode-toolbar-hoverBackground)" title={lsp.progress} onclick={() => layout.showPanel('output')}>
 			<span class="inline-block size-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent"></span>
 			<span class="truncate">{lsp.progress}</span>
 		</button>
 	{/if}
-	<!-- Agents: in progress / waiting for you; opens the Agents layout (or the waiting session). -->
-	<button
-		class={ITEM}
-		title={counts.needsInput ? 'เลือก session ที่รอคุณ' : 'Agents (⇧⌘A)'}
-		onclick={() => (counts.needsInput ? pickSession() : openAgents())}
-	>
-		{#if counts.inProgress}
-			<span class="size-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent" aria-hidden="true"></span>
-		{:else}
-			<Icon name="activity" size={14} />
-		{/if}{counts.inProgress} กำลังทำ
-		{#if counts.needsInput}<span class="text-(--vscode-editorWarning-foreground)">· {counts.needsInput} รอคุณ</span>{/if}
-	</button>
 	<UsageStatus />
-	{#if cost > 0}<span class="px-2 tabular-nums" title="ค่าใช้จ่าย agent ในโฟลเดอร์นี้">${cost.toFixed(2)}</span>{/if}
 	{#if status.message}<span class="truncate px-2">{status.message}</span>{/if}
 	<div class="flex-1"></div>
 	<TeamStatus />
@@ -105,14 +146,14 @@
 		>
 	{/if}
 	{#if editorItems}
-		<button class="h-full px-2 hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => quick.show(':')}>Ln {editors.cursor.line}, Col {editors.cursor.column}</button>
-		<span class="px-2">{editors.indent}</span>
-		<span class="px-2">UTF-8</span>
-		<span class="px-2">{editors.eol}</span>
-		<span class="px-2">{languageNames[editors.language] ?? editors.language}</span>
+		{#if show('status.editor.selection')}<button class={ITEM} title="Go to Line/Column" onclick={() => quick.show(':')}>{position}</button>{/if}
+		{#if show('status.editor.indentation')}<button class={ITEM} title="Select Indentation" onclick={pickIndentation}>{editors.indent}</button>{/if}
+		{#if show('status.editor.encoding')}<button class={ITEM} title="Select Encoding" onclick={pickEncoding}>UTF-8</button>{/if}
+		{#if show('status.editor.eol')}<button class={ITEM} title="Select End of Line Sequence" onclick={pickEol}>{editors.eol}</button>{/if}
+		{#if show('status.editor.mode')}<button class={ITEM} title="Select Language Mode" onclick={pickLanguage}>{languageName}</button>{/if}
 	{/if}
 	<!-- VS Code keeps the notification bell at the far right. -->
-	<NotificationsBell />
+	{#if show('status.notifications')}<NotificationsBell />{/if}
 </footer>
 
 {#if menu}

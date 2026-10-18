@@ -195,6 +195,18 @@ async fn git_commit(ws: State<'_, Workspace>, message: String, amend: Option<boo
   Ok(())
 }
 
+#[tauri::command]
+async fn git_checkout(ws: State<'_, Workspace>, branch: String) -> Result<(), String> {
+  let root = ws.root()?;
+  blocking(move || git::checkout(&root, &branch)).await
+}
+
+#[tauri::command]
+async fn git_sync(ws: State<'_, Workspace>) -> Result<(), String> {
+  let root = ws.root()?;
+  blocking(move || git::sync(&root)).await
+}
+
 /// HEAD version of a file for the diff editor; empty when the file is not in HEAD.
 #[tauri::command]
 async fn git_show_head(ws: State<'_, Workspace>, rel: String) -> Result<String, String> {
@@ -475,6 +487,8 @@ pub fn run() {
       git_unstage,
       git_discard,
       git_commit,
+      git_checkout,
+      git_sync,
       git_show_head,
       pty_spawn,
       pty::pty_write,

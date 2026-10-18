@@ -16,6 +16,14 @@
 	let input: HTMLInputElement | undefined = $state();
 	let files = $state<string[]>([]);
 	let index = $state(0);
+	let list: HTMLUListElement | undefined = $state();
+
+	// Keep the focused row in view (the current item of a long list, arrow keys).
+	$effect(() => {
+		void index;
+		void items.length;
+		queueMicrotask(() => list?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' }));
+	});
 
 	$effect(() => {
 		if (!quick.visible) return;
@@ -136,7 +144,7 @@
 			placeholder={quick.picker?.placeholder ?? 'ค้นหาไฟล์ตามชื่อ (> คำสั่ง, @ symbol ในไฟล์, : ไปบรรทัด)'}
 			class="h-8 w-full rounded-lg border border-(--vscode-focusBorder) bg-(--vscode-input-background) px-2.5 text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground)"
 		/>
-		<ul role="listbox" aria-label="ผลลัพธ์" class="mt-1.5 max-h-[440px] overflow-y-auto">
+		<ul bind:this={list} role="listbox" aria-label="ผลลัพธ์" class="mt-1.5 max-h-[440px] overflow-y-auto">
 			{#each items as item, i (i)}
 				<li role="option" aria-selected={i === index}>
 					<button

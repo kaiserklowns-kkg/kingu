@@ -269,6 +269,42 @@ pub fn local_branches(root: &Path) -> Result<Vec<String>, String> {
   Ok(String::from_utf8_lossy(&out).lines().map(str::to_owned).filter(|l| !l.is_empty()).collect())
 }
 
+/// Status bar branch picker (VS Code's `git.checkout`): switches to a local branch.
+pub fn checkout(root: &Path, branch: &str) -> Result<(), String> {
+  check_rev(branch)?;
+  // The trailing `--` makes git read `branch` as a revision, never a path.
+  run(root, &["checkout", "-q", branch, "--"]).map(|_| ())
+}
+
+/// Network operations must fail rather than wait for a password nobody can type.
+fn run_remote(root: &Path, args: &[&str]) -> Result<(), String> {
+  let out = crate::shell_env::command("git")
+    .env("GIT_TERMINAL_PROMPT", "0")
+    .arg("-C")
+    .arg(root)
+    .args(args)
+    .output()
+    .map_err(|e| format!("git: {e}"))?;
+  if out.status.success() {
+    return Ok(());
+  }
+  let err = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr });
+  Err(format!("git {}: {}", args.first().unwrap_or(&""), err.trim()))
+}
+
+/// Status bar sync (VS Code's `git.sync`): pull, then push. Without an upstream the branch is
+/// published to `origin` instead (`git.publish`).
+pub fn sync(root: &Path) -> Result<(), String> {
+  let Some(st) = status(root)? else { return Err("not a git repository".into()) };
+  let Some(branch) = st.branch else { return Err("HEAD is detached".into()) };
+  if st.upstream.is_none() {
+    check_rev(&branch)?;
+    return run_remote(root, &["push", "-q", "-u", "origin", &branch]);
+  }
+  run_remote(root, &["pull", "-q", "--no-edit"])?;
+  run_remote(root, &["push", "-q"])
+}
+
 /// `rel` as of revision `rev` (for diffs against a task's base); empty when the file is not there.
 pub fn show_at(root: &Path, rev: &str, rel: &str) -> Result<String, String> {
   check_rev(rev)?;

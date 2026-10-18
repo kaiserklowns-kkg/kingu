@@ -7,12 +7,14 @@ import { commands } from './commands.svelte';
 import { editors } from './editors.svelte';
 import { groups, type GitStatus } from './scm';
 import { status } from './status.svelte';
+import { quick } from './quick.svelte';
 
 class Scm {
 	repo = $state<GitStatus | null>(null);
 	/** False until the first status read; then whether the workspace is a git repository. */
 	loaded = $state(false);
 	busy = $state(false);
+	syncing = $state(false);
 	message = $state('');
 	groups = $derived(groups(this.repo?.entries ?? []));
 	/** Activity bar badge: resources across both groups, like VS Code's `scm.countBadge: all`. */
@@ -41,6 +43,30 @@ class Scm {
 			this.#inflight = null;
 		})();
 		return this.#inflight;
+	}
+
+	/** VS Code's `git.checkout`: pick a local branch and switch to it. */
+	async checkout() {
+		if (!this.repo) return;
+		const branches = await invoke<string[]>('git_branches').catch(() => []);
+		const current = this.repo.branch;
+		quick.pick({
+			placeholder: 'Select a ref to checkout',
+			items: branches.map((b, i) => ({ id: b, label: b, description: b === current ? 'Current' : undefined, separator: i === 0 ? 'branches' : undefined })),
+			activeId: current ?? undefined,
+			onAccept: (item) => item.id !== current && void this.#run('git_checkout', { branch: item.id })
+		});
+	}
+
+	/** VS Code's `git.sync` (pull then push), or `git.publish` when the branch has no upstream. */
+	async sync() {
+		if (!this.repo || this.syncing) return;
+		this.syncing = true;
+		try {
+			if (await this.#run('git_sync', {})) status.flash(this.repo?.upstream ? 'ซิงก์แล้ว' : 'เผยแพร่ branch แล้ว');
+		} finally {
+			this.syncing = false;
+		}
 	}
 
 	/** Runs a git command, reports failure in the status bar, then re-reads status. */
@@ -112,6 +138,8 @@ export function installScm(): () => void {
 
 	const unregister = [
 		commands.register({ id: 'git.refresh', title: 'Git: Refresh', run: () => scm.refresh() }),
+		commands.register({ id: 'git.checkout', title: 'Git: Checkout to...', when: () => scm.repo !== null, run: () => scm.checkout() }),
+		commands.register({ id: 'git.sync', title: 'Git: Sync', when: () => scm.repo !== null, run: () => scm.sync() }),
 		commands.register({ id: 'git.commit', title: 'Git: Commit', when: () => scm.repo !== null, run: () => scm.commit() }),
 		commands.register({ id: 'git.commitAmend', title: 'Git: Commit (Amend)', when: () => scm.repo !== null, run: () => scm.commit({ amend: true }) }),
 		commands.register({
