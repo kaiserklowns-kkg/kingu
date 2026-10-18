@@ -10,7 +10,6 @@
 	import DiffHost from '#lib/workbench/DiffHost.svelte';
 	import AdeEditor from './AdeEditor.svelte';
 	import { keyOfTabId } from './adeTabs.ts';
-	import { SIDEBAR_MIN } from '#lib/workbench/layout.svelte.ts';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { isDiffKey } from '#lib/workbench/scm.ts';
@@ -116,7 +115,7 @@
 		<Sash
 				gap
 			orientation="vertical"
-			onDrag={(d) => (appMode.sessionsWidth = clamp(appMode.sessionsWidth + d, SIDEBAR_MIN, maxSide()))}
+			onDrag={(d) => (appMode.sessionsWidth = clamp(appMode.sessionsWidth + d, 220, Math.min(500, maxSide())))}
 			onReset={() => (appMode.sessionsWidth = 280)}
 		/>
 	{/if}
