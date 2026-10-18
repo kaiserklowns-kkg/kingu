@@ -909,7 +909,7 @@ impl ChatEdits {
   pub fn on_event(&self, root: &Path, id: &str, cwd: &Path, ev: AgentEvent) -> Vec<AgentEvent> {
     // Streaming chunks and the rest pass straight through.
     let relevant = match &ev {
-      AgentEvent::Message { role, .. } => role == "user",
+      AgentEvent::Message { role, parent_tool_use_id: None, .. } => role == "user",
       AgentEvent::FileSnapshot { .. } | AgentEvent::Result { .. } | AgentEvent::Exit { .. } => true,
       _ => false,
     };
@@ -938,7 +938,7 @@ impl ChatEdits {
         let added = warn("snapshot", record_snapshot(&store, request, &path, existed, content.as_deref(), skipped.as_deref()));
         if added { vec![AgentEvent::EditsChanged { request: Some(request) }] } else { Vec::new() }
       }
-      AgentEvent::Message { ref role, .. } if role == "user" => match begin_request(&store, now_ms()) {
+      AgentEvent::Message { ref role, parent_tool_use_id: None, .. } if role == "user" => match begin_request(&store, now_ms()) {
         Ok(index) => {
           if state.active.is_none() {
             state.active = Some((index, baseline(store.cwd())));
@@ -1261,7 +1261,7 @@ mod tests {
     let (_t, root) = tmp();
     write(&root, "a.txt", "0");
     let edits = ChatEdits::default();
-    let user = |t: &str| AgentEvent::Message { role: "user".into(), text: t.into() };
+    let user = |t: &str| AgentEvent::Message { role: "user".into(), text: t.into(), parent_tool_use_id: None };
     let snap = |content: &str| AgentEvent::FileSnapshot {
       tool_use_id: "t".into(),
       tool: "Edit".into(),
