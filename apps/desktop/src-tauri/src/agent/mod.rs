@@ -8,6 +8,7 @@ pub mod automations;
 pub mod cli;
 pub mod events;
 pub mod hooks;
+pub mod hunks;
 pub mod host;
 pub mod issues;
 pub mod kingu_yaml;
@@ -242,6 +243,22 @@ pub async fn worktree_reject(ws: State<'_, Workspace>, slug: String, base: Strin
   blocking(move || review::reject(&dir, &base, &paths)).await?;
   log::info!("task {slug}: rejected changes");
   Ok(())
+}
+
+/// The hunks of one file of the task worktree since it forked from `base` (per-hunk review).
+#[tauri::command]
+pub async fn worktree_hunks(ws: State<'_, Workspace>, slug: String, base: String, path: String) -> Result<hunks::FileHunks, String> {
+  let dir = review::task_dir(&ws.root()?, &slug)?;
+  blocking(move || hunks::file_hunks(&dir, &base, &path)).await
+}
+
+/// Restores the hunks `ids` of `path` in the task worktree to the fork point; the rest of the file stays.
+#[tauri::command]
+pub async fn worktree_reject_hunks(ws: State<'_, Workspace>, slug: String, base: String, path: String, ids: Vec<String>) -> Result<usize, String> {
+  let dir = review::task_dir(&ws.root()?, &slug)?;
+  let n = blocking(move || hunks::reject_hunks(&dir, &base, &path, &ids)).await?;
+  log::info!("task {slug}: rejected {n} hunk(s)");
+  Ok(n)
 }
 
 #[tauri::command]

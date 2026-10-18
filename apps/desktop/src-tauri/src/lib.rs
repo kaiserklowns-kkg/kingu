@@ -1303,6 +1303,8 @@ pub fn run() {
       agent::worktree_diff_text,
       agent::git_diff_text,
       agent::worktree_reject,
+      agent::worktree_hunks,
+      agent::worktree_reject_hunks,
       agent::worktree_commit,
       agent::worktree_merge,
       agent::worktree_list_files,
