@@ -38,3 +38,18 @@ export const cliName = (argv: string[]) => programOf(argv);
 /** Output in the last 2.5s means the agent is working (Orca's spinner); otherwise it waits for you. */
 export const WORKING_MS = 2500;
 export const isWorking = (lastOutput: number | undefined, now: number) => lastOutput !== undefined && now - lastOutput < WORKING_MS;
+
+export const isClaude = (argv: string[]) => programOf(argv) === 'claude';
+
+/**
+ * claude, started the way Kingu can follow it: a session id we choose (so a restart resumes exactly
+ * this session with `--resume`) and `--settings` hooks that report its state. Both before the prompt.
+ */
+export function claudeStart(argv: string[], prompt: string, sessionId: string, settings: string | null): string[] {
+	return [...argv, '--session-id', sessionId, ...(settings ? ['--settings', settings] : []), prompt];
+}
+
+/** Continue the task's own session when its id is known, else the latest one in the worktree. */
+export function claudeResume(argv: string[], sessionId: string | null, settings: string | null): string[] {
+	return [...argv, ...(sessionId ? ['--resume', sessionId] : ['--continue']), ...(settings ? ['--settings', settings] : [])];
+}

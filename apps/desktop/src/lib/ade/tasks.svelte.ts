@@ -46,7 +46,7 @@ import {
 } from './model';
 import { runtime } from './runtime.svelte';
 import { adeLayout } from './adeLayout.svelte';
-import { cliAgent, cliOf, cliResume, cliStart, parseCliCommand, type RunMode } from './agentCli';
+import { claudeResume, claudeStart, cliAgent, cliOf, cliResume, cliStart, isClaude, parseCliCommand, type RunMode } from './agentCli';
 import { cliSessions } from './cliSessions.svelte';
 import { cliWithMcp, mcpServers, skillPlugins } from './mcp';
 import { settings } from '#lib/settings/settings.svelte.ts';
@@ -228,7 +228,7 @@ class AdeTasks {
 		this.worktrees = (await invoke<WorktreeInfo[]>('worktree_list').catch(() => this.worktrees)).filter((w) => w.slug);
 		this.openTask(slug);
 		// After the prompt: claude's --mcp-config takes several values and would swallow it.
-		if (cli) cliSessions.start(slug, cliWithMcp(cliStart(cli, prompt), mcpServers(), await skillPlugins()));
+		if (cli) await this.#launchCli(slug, cli, { prompt });
 		else await this.run(slug, prompt);
 		return slug;
 	}
@@ -238,8 +238,32 @@ class AdeTasks {
 		const meta = this.list.find((t) => t.slug === slug);
 		const cli = meta && cliOf(meta.agent);
 		if (!cli) return;
-		const resume = fresh ? null : cliResume(cli);
-		cliSessions.start(slug, cliWithMcp(resume ?? cli, mcpServers(), await skillPlugins()));
+		await this.#launchCli(slug, cli, fresh ? { fresh: true } : { resume: meta.session_id });
+	}
+
+	/**
+	 * Starts the task's CLI in its worktree terminal. claude gets a session id we choose (saved, so a
+	 * restart resumes exactly it) and hooks reporting its state; other CLIs run as configured.
+	 */
+	async #launchCli(slug: string, cli: string[], how: { prompt: string } | { resume: string | null } | { fresh: true }) {
+		const extras = async (argv: string[]) => cliWithMcp(argv, mcpServers(), await skillPlugins());
+		if (!isClaude(cli)) {
+			const argv = 'prompt' in how ? cliStart(cli, how.prompt) : 'resume' in how ? (cliResume(cli) ?? cli) : cli;
+			return cliSessions.start(slug, await extras(argv));
+		}
+		const token = crypto.randomUUID();
+		const settings = await invoke<string>('agent_hook_settings', { token }).catch((e) => {
+			clientLog('error', `agent hooks for ${slug}: ${e}`);
+			return null;
+		});
+		let argv: string[];
+		if ('resume' in how) argv = claudeResume(cli, how.resume, settings);
+		else {
+			const sessionId = crypto.randomUUID();
+			argv = 'prompt' in how ? claudeStart(cli, how.prompt, sessionId, settings) : [...cli, '--session-id', sessionId, ...(settings ? ['--settings', settings] : [])];
+			await this.#patch(slug, { session_id: sessionId });
+		}
+		cliSessions.start(slug, await extras(argv), settings ? token : undefined);
 	}
 
 	/** Starts the agent in the task worktree through the agents store. */

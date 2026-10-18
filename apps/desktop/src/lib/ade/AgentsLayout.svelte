@@ -28,7 +28,7 @@
 	import { adeLayout, PRIMARY, type RightTab } from './adeLayout.svelte';
 	import { adeTasks } from './tasks.svelte';
 	import { untrack } from 'svelte';
-	import { cliName, cliOf, cliResume, type RunMode } from './agentCli';
+	import { cliName, cliOf, cliResume, isClaude, type RunMode } from './agentCli';
 	import { cliSessions } from './cliSessions.svelte';
 	import { BUTTON, BUTTON_SECONDARY } from './ui';
 
@@ -45,7 +45,8 @@
 	const activeFile = $derived(keyOfTabId(activeTab));
 	/** The selected task runs its agent CLI in a terminal (the Orca way). */
 	const cli = $derived(slug ? cliOf(adeTasks.find(slug)?.meta.agent ?? '') : null);
-	const resume = $derived(cli ? cliResume(cli) : null);
+	/** claude resumes its own session (id saved at start); other CLIs their latest one where they can. */
+	const resume = $derived(cli ? (isClaude(cli) || cliResume(cli)) : null);
 
 	// The folder's "new task" composer (Orca: a new worktree with an agent).
 	let draft = $state('');
@@ -134,7 +135,7 @@
 							<p>{cliName(cli)} ของงานนี้ไม่ได้รันอยู่</p>
 							<p class="text-xs text-(--vscode-descriptionForeground)">งานรันใน terminal ของ worktree <span class="font-mono">kingu/{slug}</span></p>
 							<div class="flex justify-center gap-2">
-								{#if resume}<button class={BUTTON} onclick={() => adeTasks.resumeCli(slug)}>ทำงานต่อ ({resume.join(' ')})</button>{/if}
+								{#if resume}<button class={BUTTON} onclick={() => adeTasks.resumeCli(slug)}>ทำงานต่อใน session เดิม</button>{/if}
 								<button class={resume ? BUTTON_SECONDARY : BUTTON} onclick={() => adeTasks.resumeCli(slug, true)}>เริ่ม {cli.join(' ')} ใหม่</button>
 							</div>
 						</div>
