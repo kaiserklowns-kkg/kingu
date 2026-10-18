@@ -31,6 +31,12 @@ export type SearchOptions = {
 	exclude: string;
 	use_ignore_files: boolean;
 	max_results?: number;
+	/** From settings (mappings.searchSettingsFrom): files.exclude + search.exclude globs and ripgrep flags. */
+	exclude_globs?: string[];
+	follow_symlinks?: boolean;
+	smart_case?: boolean;
+	use_global_ignore?: boolean;
+	use_parent_ignore?: boolean;
 };
 
 export type ResultRow =

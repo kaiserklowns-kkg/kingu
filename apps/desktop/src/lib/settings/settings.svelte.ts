@@ -4,7 +4,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { parseSettingsText, setProperty } from './jsonc';
-import { resolveSettings, type Resolved, type SettingScope } from './registry';
+import { resolveSettings, settingProblems, type Resolved, type SettingProblem, type SettingScope } from './registry';
 import { settingSchemas } from './schemas.svelte';
 
 type SettingsFile = { path: string; content: string | null };
@@ -22,7 +22,19 @@ class Settings {
 	workspace = $state<Layer>(emptyLayer());
 	loaded = $state(false);
 	readonly resolved: Map<string, Resolved> = $derived(resolveSettings(this.user.values, this.workspace.values, settingSchemas.all));
+	/** Values the files set but that are ignored (wrong type, out of range, user-only in the workspace file). */
+	readonly problems: SettingProblem[] = $derived([
+		...settingProblems(this.user.values, 'user', settingSchemas.all),
+		...settingProblems(this.workspace.values, 'workspace', settingSchemas.all)
+	]);
 	private writes = Promise.resolve();
+	#written = new Set<(scope: SettingScope) => void>();
+
+	/** Called after the settings UI rewrote a file, so an open settings.json tab shows the change. */
+	onDidWrite(fn: (scope: SettingScope) => void): () => void {
+		this.#written.add(fn);
+		return () => this.#written.delete(fn);
+	}
 
 	/** The effective value (workspace over user over default). */
 	get<T = unknown>(id: string): T {
@@ -70,6 +82,7 @@ class Settings {
 			const next = parseLayer({ path: layer.path, content: text }, layer);
 			if (scope === 'user') this.user = next;
 			else this.workspace = next;
+			for (const fn of this.#written) fn(scope);
 		};
 		const p = this.writes.then(run);
 		this.writes = p.catch(() => {});

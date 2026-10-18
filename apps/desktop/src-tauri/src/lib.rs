@@ -4,6 +4,7 @@ mod dap;
 mod fileops;
 mod fs;
 mod git;
+mod glob;
 mod git_remote;
 mod lsp;
 mod menu;
@@ -18,8 +19,10 @@ mod snap_sandbox;
 mod system;
 mod team;
 mod watcher;
+mod window;
 mod workspace;
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -228,6 +231,7 @@ fn pty_spawn(
   on_data: Channel<String>,
   slug: Option<String>,
   run: Option<Vec<String>>,
+  terminal: Option<TerminalSettings>,
 ) -> Result<kingu_ptyd::Attached, String> {
   pty::validate_key(&key)?;
   // A task terminal starts in the task's worktree (the ADE's per-worktree terminals).
@@ -241,21 +245,46 @@ fn pty_spawn(
       }
       dir
     }
-    None => ws.current().or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("/")),
+    None => {
+      let folder = ws.current();
+      let fallback = folder.clone().or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("/"));
+      pty::terminal_cwd(terminal.as_ref().and_then(|t| t.cwd.as_deref()), folder.as_deref(), fallback)
+    }
   };
+  let terminal = terminal.unwrap_or_default();
   // Only an agent CLI's terminal (`cli:` keys) gets the active AI account's env, never an
   // ordinary terminal, so an API key does not leak into every shell.
-  let env = match run.as_deref().and_then(<[String]>::first) {
-    Some(program) if key.starts_with("cli:") => accounts::env_for_program(&accounts, program)?,
-    _ => Default::default(),
-  };
-  let attached = ptys.open(&key, &cwd, cols, rows, run.as_deref(), &env, pty::channel_sink(on_data))?;
+  let mut env = terminal.env;
+  if let Some(program) = run.as_deref().and_then(<[String]>::first)
+    && key.starts_with("cli:")
+  {
+    env.extend(accounts::env_for_program(&accounts, program)?);
+  }
+  let shell = terminal.shell.as_deref().filter(|s| !s.trim().is_empty());
+  let attached = ptys.open(&key, &cwd, cols, rows, run.as_deref(), &env, shell, terminal.args.as_deref(), pty::channel_sink(on_data))?;
   if attached.spawned {
     log::info!("terminal {key} started ({cols}x{rows})");
   } else {
     log::info!("terminal {key} re-attached ({cols}x{rows})");
   }
   Ok(attached)
+}
+
+/// `terminal.integrated.*` for a new shell, read by the webview from the user's settings
+/// (they are user-only, so a folder's workspace settings cannot pick the program that runs).
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+struct TerminalSettings {
+  shell: Option<String>,
+  args: Option<Vec<String>>,
+  env: BTreeMap<String, String>,
+  cwd: Option<String>,
+}
+
+/// `files.watcherExclude`.
+#[tauri::command]
+fn watcher_set_exclude(watcher: State<'_, watcher::FileWatcher>, globs: Vec<String>) {
+  watcher.set_exclude(&globs);
 }
 
 #[tauri::command]
@@ -546,6 +575,7 @@ pub fn run() {
     .plugin(tauri_plugin_notification::init())
     .manage(Workspace::default())
     .manage(watcher::FileWatcher::default())
+    .manage(window::CloseGuard::default())
     .manage(pty::Ptys::default())
     .manage(system::KeepAwake::default())
     .manage(Arc::new(agent::AgentHost::default()))
@@ -566,7 +596,11 @@ pub fn run() {
       }
       // Reopen the last folder if it still exists, else KINGU_WORKSPACE, else the welcome view.
       let recent = Recent::load(app.path().app_data_dir()?.join("recent.json"));
-      let start = workspace::startup_root(recent.data().last.as_deref(), std::env::var_os("KINGU_WORKSPACE"));
+      // window.restoreWindows: "none" starts empty (KINGU_WORKSPACE still opens).
+      let restore = settings::user_value(&app.path().app_config_dir()?, "window.restoreWindows");
+      let data = recent.data();
+      let last = if restore.as_ref().and_then(|v| v.as_str()) == Some("none") { None } else { data.last.as_deref() };
+      let start = workspace::startup_root(last, std::env::var_os("KINGU_WORKSPACE"));
       app.manage(recent);
       let data = app.path().app_data_dir()?;
       #[cfg(unix)]
@@ -691,6 +725,9 @@ pub fn run() {
       dap::dap_stop,
       settings::settings_read,
       settings::settings_write,
+      watcher_set_exclude,
+      window::window_close_guard,
+      window::window_close_confirmed,
       snap::snap_list,
       snap::snap_trust,
       snap::snap_skill_plugins,
@@ -734,6 +771,17 @@ pub fn run() {
     .build(tauri::generate_context!())
     .expect("error while building tauri application")
     .run(|app, event| {
+      // Closing the window or a user quit (⌘Q) waits for the webview while it has something to ask.
+      if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::CloseRequested { api, .. }, .. } = &event
+        && window::on_close_requested(app)
+      {
+        api.prevent_close();
+      }
+      if let tauri::RunEvent::ExitRequested { code: None, api, .. } = &event
+        && window::on_close_requested(app)
+      {
+        api.prevent_exit();
+      }
       if let tauri::RunEvent::Exit = event {
         app.state::<lsp::Servers>().stop_all();
         app.state::<dap::Sessions>().stop_all();

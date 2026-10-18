@@ -6,7 +6,7 @@
 	// body and status bar, which stay mounted (hidden) so editors and terminals keep their state.
 	import { onMount, untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
-	import { ask, message } from '@tauri-apps/plugin-dialog';
+	import { message } from '@tauri-apps/plugin-dialog';
 	import AgentPanel from '#lib/agent/AgentPanel.svelte';
 	import ActivityBar from './ActivityBar.svelte';
 	import EditorPart from './EditorPart.svelte';
@@ -48,6 +48,8 @@
 	import { installIssues } from '#lib/ade/issues.svelte.ts';
 	import { installSnaps } from '#lib/snaps/snaps.svelte.ts';
 	import { installDebug } from '#lib/debug/debug.svelte.ts';
+	import { installCloseGuard, quit } from './closeGuard.svelte';
+	import { installEditorRestore } from './editorRestore.svelte';
 
 	// Opening a file or diff (Quick Open, a review file, settings.json) closes the system settings page.
 	// `editors.active` also re-runs on focus changes, so only a different editor closes it.
@@ -87,10 +89,7 @@
 				category: 'File',
 				// macOS quits through the app menu's Quit item.
 				when: () => !isMac,
-				run: async () => {
-					if (editors.hasDirty() && !(await ask(`มี ${editors.dirtyCount()} ไฟล์ที่ยังไม่บันทึก ออกจาก Kingu และทิ้งการแก้ไข?`, { title: 'ยังไม่ได้บันทึก', kind: 'warning', okLabel: 'ออก', cancelLabel: 'ยกเลิก' }))) return;
-					await invoke('app_quit');
-				}
+				run: quit
 			}),
 			commands.register({ id: 'workbench.action.closeFolder', title: 'Close Folder', category: 'Workspaces', when: () => workspace.root !== null, run: () => workspace.closeFolder() }),
 			commands.register({
@@ -204,7 +203,11 @@
 		const uninstallTerminalSessions = installTerminalSessions();
 		const uninstallDebug = installDebug();
 		const uninstallAccounts = accounts.install();
+		const uninstallCloseGuard = installCloseGuard();
+		const uninstallEditorRestore = installEditorRestore();
 		return () => {
+			uninstallEditorRestore();
+			uninstallCloseGuard();
 			uninstallAccounts();
 			uninstallDebug();
 			uninstallTerminalSessions();
@@ -365,6 +368,7 @@ ${info.os} ${info.arch}` : 'Kingu', { title: 'About Kingu', kind: 'info' });
 	<!-- System settings (IDE + ADE) over the content of either mode. -->
 	{#if systemSettings.visible}<SettingsPage />{/if}
 
-	<StatusBar />
+	<!-- workbench.statusBar.visible (kept mounted so its items keep their state). -->
+	<div class={['contents', !settings.get<boolean>('workbench.statusBar.visible') && '[&>*]:hidden']}><StatusBar /></div>
 	<QuickInput />
 </div>

@@ -5,6 +5,7 @@
 import { DEFAULT_THEME, THEMES } from '../theme/themes';
 import { defaultTitleTemplate } from '../workbench/title';
 import { PROFILES } from '../ade/agentProfiles';
+import { IDE_SETTINGS } from './ideSettings';
 
 const MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
 
@@ -22,7 +23,10 @@ type Base = {
 export type SettingSchema =
 	| (Base & { type: 'boolean'; default: boolean })
 	| (Base & { type: 'number'; default: number; minimum?: number; maximum?: number; integer?: boolean })
-	| (Base & { type: 'string'; default: string; enum?: readonly string[]; enumDescriptions?: readonly string[] });
+	| (Base & { type: 'string'; default: string; enum?: readonly string[]; enumDescriptions?: readonly string[] })
+	| (Base & { type: 'array'; items: 'string' | 'number'; default: readonly (string | number)[] })
+	/** A map like `files.exclude` (glob → true). Layers merge key by key, like VS Code's object settings. */
+	| (Base & { type: 'object'; values: 'boolean' | 'string' | 'boolean|string'; default: Readonly<Record<string, boolean | string>> });
 
 /** `kingu.agent.args.<profile>`: extra arguments per known agent CLI (agentCli.ts agentCommand). */
 function agentArgsSettings(): SettingSchema[] {
@@ -39,7 +43,7 @@ function agentArgsSettings(): SettingSchema[] {
 
 export const DEFAULT_FONT_FAMILY = "Menlo, Monaco, 'Courier New', 'IBM Plex Sans Thai', monospace";
 
-export const SETTINGS: SettingSchema[] = [
+const CORE_SETTINGS: SettingSchema[] = [
 	{
 		id: 'workbench.colorTheme',
 		group: 'Workbench',
@@ -147,8 +151,13 @@ export const SETTINGS: SettingSchema[] = [
 		group: 'Files',
 		type: 'string',
 		default: 'off',
-		enum: ['off', 'afterDelay', 'onFocusChange'],
-		enumDescriptions: ['ไม่บันทึกอัตโนมัติ', 'บันทึกหลังหยุดพิมพ์ตาม files.autoSaveDelay', 'บันทึกเมื่อ editor เสียโฟกัส'],
+		enum: ['off', 'afterDelay', 'onFocusChange', 'onWindowChange'],
+		enumDescriptions: [
+			'ไม่บันทึกอัตโนมัติ (An editor with changes is never saved automatically.)',
+			'บันทึกหลังหยุดพิมพ์ตาม files.autoSaveDelay (Saved after the configured files.autoSaveDelay.)',
+			'บันทึกเมื่อ editor เสียโฟกัส (Saved when the editor loses focus.)',
+			'บันทึกเมื่อหน้าต่างเสียโฟกัส (Saved when the window loses focus.)'
+		],
 		description: 'บันทึกไฟล์อัตโนมัติ (Controls auto save of editors that have unsaved changes.)'
 	},
 	{
@@ -635,6 +644,9 @@ export const SETTINGS: SettingSchema[] = [
 	}
 ];
 
+/** Every static setting: the core ones above plus the VS Code-derived IDE settings (ideSettings.ts). */
+export const SETTINGS: SettingSchema[] = [...CORE_SETTINGS, ...IDE_SETTINGS];
+
 export type SettingsSection = { id: string; label: string; groups: string[] };
 
 /**
@@ -643,7 +655,7 @@ export type SettingsSection = { id: string; label: string; groups: string[] };
  */
 export const SETTINGS_SECTIONS: SettingsSection[] = [
 	{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Status Bar', 'Team', 'Snap Sandbox'] },
-	{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Files', 'Terminal', 'Git'] },
+	{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Files', 'Explorer', 'Search', 'Terminal', 'Git', 'Debug'] },
 	{ id: 'ade', label: 'ADE (Agents)', groups: ['Agent', 'Worktrees', 'Pull Requests'] }
 ];
 
@@ -660,9 +672,29 @@ export function settingsSections(schemas: SettingSchema[] = SETTINGS): SettingsS
 	return [...SETTINGS_SECTIONS, { id: SNAPS_SECTION_ID, label: 'Snaps', groups: contributed }];
 }
 
-/** Settings shown for a TOC selection (`null` = all) and a search query (searching spans every group). */
-export function settingsInView(query: string, group: string | null, schemas: SettingSchema[] = SETTINGS): SettingSchema[] {
-	return schemas.filter((s) => (query.trim() ? matchesQuery(s, query) : group === null || s.group === group));
+/** Settings shown for a TOC selection (`null` = all) and a search query (searching spans every group).
+ * `@modified` keeps only settings set in a file (`modified` says which), like VS Code's filter. */
+export function settingsInView(query: string, group: string | null, schemas: SettingSchema[] = SETTINGS, modified: (id: string) => boolean = () => false): SettingSchema[] {
+	const { filters, text } = parseQuery(query);
+	return schemas.filter((s) => {
+		if (filters.modified && !modified(s.id)) return false;
+		if (filters.id && !filters.id.some((id) => s.id.toLowerCase().includes(id))) return false;
+		if (text) return matchesQuery(s, text);
+		return filters.modified || filters.id ? true : group === null || s.group === group;
+	});
+}
+
+/** Splits `@modified @id:editor.font size` into filters and the words left to match. */
+export function parseQuery(query: string): { filters: { modified: boolean; id: string[] | null }; text: string } {
+	let modified = false;
+	const ids: string[] = [];
+	const words: string[] = [];
+	for (const w of query.trim().split(/\s+/).filter(Boolean)) {
+		if (w.toLowerCase() === '@modified') modified = true;
+		else if (w.toLowerCase().startsWith('@id:')) ids.push(...w.slice(4).toLowerCase().split(',').filter(Boolean));
+		else words.push(w);
+	}
+	return { filters: { modified, id: ids.length ? ids : null }, text: words.join(' ') };
 }
 
 export const SCHEMA = new Map(SETTINGS.map((s) => [s.id, s]));
@@ -682,6 +714,14 @@ export function validate(schema: SettingSchema, value: unknown): unknown {
 		case 'string':
 			if (typeof value !== 'string') return undefined;
 			return schema.enum && !schema.enum.includes(value) && schema.id !== 'workbench.colorTheme' ? undefined : value;
+		case 'array':
+			if (!Array.isArray(value)) return undefined;
+			return value.every((v) => (schema.items === 'number' ? typeof v === 'number' && Number.isFinite(v) : typeof v === 'string')) ? value : undefined;
+		case 'object': {
+			if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+			const ok = (v: unknown) => schema.values.split('|').includes(typeof v);
+			return Object.values(value).every(ok) ? value : undefined;
+		}
 	}
 }
 
@@ -690,17 +730,47 @@ export const allowedIn = (schema: SettingSchema, scope: SettingScope) => scope =
 
 export type Resolved = { value: unknown; source: 'default' | SettingScope };
 
-/** Workspace over user over default, per setting. Unknown keys are ignored. */
+/** Workspace over user over default, per setting; object settings merge key by key. Unknown keys are ignored. */
 export function resolveSettings(user: Record<string, unknown>, workspace: Record<string, unknown>, schemas: SettingSchema[] = SETTINGS): Map<string, Resolved> {
 	const out = new Map<string, Resolved>();
 	for (const s of schemas) {
 		const ws = allowedIn(s, 'workspace') ? validate(s, workspace[s.id]) : undefined;
 		const us = validate(s, user[s.id]);
-		if (ws !== undefined) out.set(s.id, { value: ws, source: 'workspace' });
-		else if (us !== undefined) out.set(s.id, { value: us, source: 'user' });
-		else out.set(s.id, { value: s.default, source: 'default' });
+		const source = ws !== undefined ? 'workspace' : us !== undefined ? 'user' : 'default';
+		if (s.type === 'object' && source !== 'default') out.set(s.id, { value: { ...s.default, ...(us as object), ...(ws as object) }, source });
+		else out.set(s.id, { value: ws ?? us ?? s.default, source });
 	}
 	return out;
+}
+
+export type SettingProblem = { scope: SettingScope; id: string; message: string };
+
+/** Values in a file that are ignored (VS Code underlines them in settings.json; the editor lists them). */
+export function settingProblems(values: Record<string, unknown>, scope: SettingScope, schemas: SettingSchema[] = SETTINGS): SettingProblem[] {
+	const byId = new Map(schemas.map((s) => [s.id, s]));
+	const out: SettingProblem[] = [];
+	for (const [id, value] of Object.entries(values)) {
+		const s = byId.get(id);
+		if (!s) continue;
+		if (!allowedIn(s, scope)) out.push({ scope, id, message: 'ตั้งได้เฉพาะใน User จึงถูกละไว้ (This setting can only be applied in user settings.)' });
+		else if (validate(s, value) === undefined) out.push({ scope, id, message: `ค่า ${JSON.stringify(value)} ไม่ถูกต้อง จึงใช้ค่าจากชั้นถัดไปแทน (Expected ${describeType(s)}; the value is ignored.)` });
+	}
+	return out;
+}
+
+function describeType(s: SettingSchema): string {
+	switch (s.type) {
+		case 'string':
+			return s.enum ? `one of ${s.enum.map((e) => JSON.stringify(e)).join(', ')}` : 'a string';
+		case 'number':
+			return `${s.integer ? 'an integer' : 'a number'}${s.minimum !== undefined ? ` >= ${s.minimum}` : ''}${s.maximum !== undefined ? ` <= ${s.maximum}` : ''}`;
+		case 'boolean':
+			return 'true or false';
+		case 'array':
+			return `an array of ${s.items}s`;
+		case 'object':
+			return `an object of ${s.values.replace('|', ' or ')} values`;
+	}
 }
 
 /** Settings editor search: every word must appear in the id, its readable title, or the description. */
@@ -735,6 +805,8 @@ export function jsonSchema(schemas: SettingSchema[] = SETTINGS) {
 			if (s.minimum !== undefined) base.minimum = s.minimum;
 			if (s.maximum !== undefined) base.maximum = s.maximum;
 		}
+		if (s.type === 'array') base.items = { type: s.items };
+		if (s.type === 'object') base.additionalProperties = { type: s.values.split('|') };
 		properties[s.id] = base;
 	}
 	return { type: 'object', properties };

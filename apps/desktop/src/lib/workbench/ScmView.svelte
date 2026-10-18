@@ -198,7 +198,7 @@
 			</button>
 		</div>
 
-		<div class="min-h-0 flex-1 overflow-y-auto">
+		<div class="min-h-0 flex-1 overflow-y-auto" style:scroll-behavior="var(--kg-list-scroll-behavior, auto)">
 			{#if scm.groups.staged.length}
 				{@render group('staged', 'Staged Changes', scm.groups.staged, [
 					{ icon: 'minus', label: 'Unstage All Changes', run: () => scm.unstage(scm.groups.staged.map((r) => r.entry.path)) }

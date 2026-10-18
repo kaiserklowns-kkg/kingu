@@ -10,14 +10,18 @@ import { findTheme, THEMES } from '#lib/theme/themes.ts';
 import { SCHEMA } from './registry';
 import { settings, USER_SETTINGS_KEY, WORKSPACE_SETTINGS_PATH } from './settings.svelte';
 import { systemSettings } from './systemSettings.svelte';
+import { USER_KEYBINDINGS_KEY } from '#lib/workbench/keybindings.svelte.ts';
 
 const GROUPS: Record<string, string> = { light: 'light themes', dark: 'dark themes', hcDark: 'high contrast themes', hcLight: 'high contrast themes' };
 
 const report = (e: unknown) => status.flash(`บันทึกการตั้งค่าไม่สำเร็จ: ${e instanceof Error ? e.message : e}`);
 
-/** Preferences: Color Theme — arrow keys preview, Enter keeps, Escape restores (like VS Code). */
+/** Preferences: Color Theme — arrow keys preview, Enter keeps, Escape restores (like VS Code).
+ * With window.autoDetectColorScheme on, the pick sets the preferred theme of the OS's current scheme. */
 export function pickColorTheme() {
-	const original = settings.get<string>('workbench.colorTheme');
+	const dark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true;
+	const target = settings.get<boolean>('window.autoDetectColorScheme') ? (dark ? 'workbench.preferredDarkColorTheme' : 'workbench.preferredLightColorTheme') : 'workbench.colorTheme';
+	const original = settings.get<string>(target);
 	let lastGroup = '';
 	const items: PickItem[] = THEMES.map((t) => {
 		const group = GROUPS[t.type];
@@ -32,7 +36,7 @@ export function pickColorTheme() {
 		onActive: (item) => void theme.apply(item.id),
 		onAccept: (item) => {
 			void theme.apply(item.id);
-			settings.set('workbench.colorTheme', item.id === SCHEMA.get('workbench.colorTheme')?.default ? undefined : item.id, 'user').catch(report);
+			settings.set(target, item.id === SCHEMA.get(target)?.default ? undefined : item.id, 'user').catch(report);
 		},
 		onCancel: () => void theme.apply(original)
 	});
@@ -70,6 +74,12 @@ export function registerSettingsCommands(): () => void {
 				systemSettings.close();
 				editors.open(WORKSPACE_SETTINGS_PATH, { preview: false });
 			}
+		}),
+		commands.register({
+			id: 'workbench.action.openGlobalKeybindingsFile',
+			title: 'Open Keyboard Shortcuts (JSON)',
+			category: 'Preferences',
+			run: () => (systemSettings.close(), editors.open(USER_KEYBINDINGS_KEY, { preview: false }))
 		}),
 		commands.register({ id: 'workbench.action.selectTheme', title: 'Color Theme', category: 'Preferences', key: 'cmd+k cmd+t', run: pickColorTheme }),
 		commands.register({ id: 'workbench.action.zoomIn', title: 'Zoom In', category: 'View', key: 'cmd+=', run: () => zoom(1) }),

@@ -1,10 +1,20 @@
 // Command registry and keybindings (VS Code: registerAction2 → CommandsRegistry,
 // MenuId.CommandPalette when `f1`, KeybindingsRegistry). One window-level key listener.
 
-import { eventLabel as chordLabel, isMenuEcho, isModifierKey, keyOf, matches, parseChord, splitKeybinding } from './keys';
+import { eventLabel as chordLabel, isMac, isMenuEcho, isModifierKey, keyOf as defaultKeyOf, matches, parseChord, splitKeybinding } from './keys';
+import { keybindings } from './keybindings.svelte';
+import { keysFor } from './keybindingsModel';
 import { status } from './status.svelte';
 
-export { keyOf };
+/** Every key that runs `cmd` on this platform: keybindings.json's first, then the default unless removed. */
+export function keysOf(cmd: { id: string; key?: string; mac?: string }, mac = isMac): string[] {
+	return keysFor(cmd.id, defaultKeyOf(cmd, mac), keybindings.user);
+}
+
+/** The key menus, the palette and tooltips show for `cmd` (the user's own wins). */
+export function keyOf(cmd: { id: string; key?: string; mac?: string }, mac = isMac): string | undefined {
+	return keysOf(cmd, mac)[0];
+}
 
 export type Command = {
 	id: string;
@@ -67,10 +77,12 @@ export const commands = new Commands();
  */
 export function installKeybindings(): () => void {
 	let pending: KeyboardEvent | null = null;
-	const enabled = (cmd: Command) => keyOf(cmd) && (!cmd.when || cmd.when()) && (!cmd.keyWhen || cmd.keyWhen());
-	const parts = (cmd: Command) => {
-		const key = keyOf(cmd);
-		return key ? splitKeybinding(key) : [];
+	const enabled = (cmd: Command) => (!cmd.when || cmd.when()) && (!cmd.keyWhen || cmd.keyWhen());
+	/** Every (command, chord parts) pair; user keybindings first, so they win over a default on the same key. */
+	const bindings = () => {
+		const user = keybindings.user.added;
+		const all = commands.all.flatMap((cmd) => keysOf(cmd).map((key) => ({ cmd, parts: splitKeybinding(key), user: user.get(cmd.id)?.includes(key) ?? false })));
+		return [...all.filter((b) => b.user), ...all.filter((b) => !b.user)];
 	};
 	const runByKey = (cmd: Command) => {
 		commands.lastKeyRun = { id: cmd.id, at: performance.now() };
@@ -87,8 +99,7 @@ export function installKeybindings(): () => void {
 		if (pending) {
 			const first = pending;
 			pending = null;
-			for (const cmd of commands.all) {
-				const p = parts(cmd);
+			for (const { cmd, parts: p } of bindings()) {
 				if (p.length === 2 && enabled(cmd) && matches(parseChord(p[0]), first) && matches(parseChord(p[1]), e)) {
 					consume(e, inEditor);
 					status.flash('', 0);
@@ -100,8 +111,7 @@ export function installKeybindings(): () => void {
 			consume(e, inEditor);
 			return;
 		}
-		for (const cmd of commands.all) {
-			const p = parts(cmd);
+		for (const { cmd, parts: p } of bindings()) {
 			if (!enabled(cmd) || p.length !== 1) continue;
 			if (matches(parseChord(p[0]), e)) {
 				e.preventDefault();
@@ -110,10 +120,7 @@ export function installKeybindings(): () => void {
 				return;
 			}
 		}
-		const startsChord = commands.all.some((cmd) => {
-			const p = parts(cmd);
-			return p.length === 2 && enabled(cmd) && matches(parseChord(p[0]), e);
-		});
+		const startsChord = bindings().some(({ cmd, parts: p }) => p.length === 2 && enabled(cmd) && matches(parseChord(p[0]), e));
 		if (startsChord) {
 			pending = e;
 			consume(e, inEditor);

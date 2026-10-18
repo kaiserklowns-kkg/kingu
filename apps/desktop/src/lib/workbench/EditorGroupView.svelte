@@ -13,11 +13,12 @@
 	import { fileOf, isDiffKey } from './scm';
 	import { status } from './status.svelte';
 	import SettingsEditor from '#lib/settings/SettingsEditor.svelte';
-	import { SETTINGS_EDITOR_KEY, USER_SETTINGS_KEY } from '#lib/settings/settings.svelte.ts';
+	import { settings, SETTINGS_EDITOR_KEY, USER_SETTINGS_KEY } from '#lib/settings/settings.svelte.ts';
 	import Board from '#lib/ade/Board.svelte';
 	import TaskPage from '#lib/ade/TaskPage.svelte';
 	import { isAdeEditor, isBoardKey, slugOfTaskKey } from '#lib/ade/keys.ts';
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
+	import { USER_KEYBINDINGS_KEY } from './keybindings.svelte';
 
 	let { group }: { group: number } = $props();
 
@@ -32,6 +33,8 @@
 	const taskSlug = $derived(activePath ? slugOfTaskKey(activePath) : null);
 	const crumbs = $derived(!activePath || settingsActive || adeActive ? [] : activePath === USER_SETTINGS_KEY
 					? ['User', 'settings.json']
+					: activePath === USER_KEYBINDINGS_KEY
+						? ['User', 'keybindings.json']
 					: activePath.startsWith('snap://user/')
 						? ['User Snaps', ...activePath.slice('snap://user/'.length).split('/')]
 						: fileOf(activePath).split('/'));
@@ -45,6 +48,11 @@
 	// The cursor is tracked for the active group only, so other groups show just the path.
 	const symbolCrumbs = $derived(activePath && !diffActive && !settingsActive && !adeActive && focused ? lsp.crumbs(activePath, editors.cursor.line, editors.cursor.column) : []);
 	let dropTarget = $state<number | null>(null);
+	// workbench.editor.showTabs / tabSizing / highlightModifiedTabs
+	const showTabs = $derived(settings.get<'multiple' | 'single' | 'none'>('workbench.editor.showTabs'));
+	const shownTabs = $derived(showTabs === 'single' ? tabs.filter((t) => t.path === activePath) : tabs);
+	const tabSizing = $derived(settings.get<'fit' | 'shrink' | 'fixed'>('workbench.editor.tabSizing'));
+	const highlightModified = $derived(settings.get<boolean>('workbench.editor.highlightModifiedTabs'));
 
 	function close(path: string, force: boolean) {
 		// A file also open in the Agents layout keeps its model (and unsaved edits) there.
@@ -89,7 +97,7 @@
 	class="flex h-full min-w-0 flex-col bg-(--vscode-editor-background)"
 	onpointerdowncapture={() => editors.activateGroup(group)}
 >
-	{#if tabs.length || editors.groups.length > 1}
+	{#if showTabs !== 'none' && (tabs.length || editors.groups.length > 1)}
 		<div
 			role="tablist"
 			tabindex="-1"
@@ -99,8 +107,9 @@
 			ondragleave={() => (dropTarget = null)}
 			ondrop={(e) => drop(e, tabs.length)}
 		>
-			{#each tabs as tab, i (tab.path)}
+			{#each shownTabs as tab (tab.path)}
 				{@const active = tab.path === activePath}
+				{@const i = tabs.indexOf(tab)}
 				<div
 					role="presentation"
 					draggable="true"
@@ -109,7 +118,8 @@
 					ondrop={(e) => drop(e, i)}
 					ondragend={() => (dropTarget = null)}
 					class={[
-						'group relative flex h-full shrink-0 items-center gap-1.5 border-r border-(--vscode-tab-border) pl-2.5',
+						'group relative flex h-full items-center gap-1.5 border-r border-(--vscode-tab-border) pl-2.5',
+						tabSizing === 'fit' ? 'shrink-0' : tabSizing === 'shrink' ? 'min-w-[80px] shrink' : 'w-[160px] min-w-[80px] shrink',
 						active ? 'bg-(--vscode-tab-activeBackground)' : 'bg-(--vscode-tab-inactiveBackground) hover:bg-(--vscode-tab-hoverBackground)',
 						active
 							? focused
@@ -120,14 +130,15 @@
 								: 'text-[var(--vscode-tab-unfocusedInactiveForeground,#9d9d9d80)]'
 					]}
 				>
-					{#if active && focused}<span class="absolute inset-x-0 top-0 h-px bg-(--vscode-tab-activeBorderTop)"></span>{/if}
+					{#if highlightModified && tab.dirty}<span class="absolute inset-x-0 top-0 h-0.5 bg-(--vscode-tab-activeModifiedBorder,#3399cc)"></span>
+					{:else if active && focused}<span class="absolute inset-x-0 top-0 h-px bg-(--vscode-tab-activeBorderTop)"></span>{/if}
 					{#if dropTarget === i}<span class="absolute inset-y-0 left-0 w-0.5 bg-(--vscode-focusBorder)"></span>{/if}
 					<span class={['flex', !focused && 'opacity-60']}><FileIcon icon={iconOf(tab.path)} /></span>
 					<button
 						role="tab"
 						aria-selected={active}
 						title={tab.path}
-						class={['h-full pr-1 whitespace-nowrap', tab.preview && 'italic']}
+						class={['h-full min-w-0 truncate pr-1 whitespace-nowrap', tabSizing !== 'fit' && 'flex-1 text-left', tab.preview && 'italic']}
 						onclick={() => editors.open(tab.path, { preview: tab.preview, group })}
 						ondblclick={() => editors.pin(tab.path, group)}
 						onauxclick={(e) => e.button === 1 && close(tab.path, false)}
@@ -136,7 +147,7 @@
 					</button>
 					<button
 						aria-label={tab.dirty ? `${label(tab.path)} ยังไม่บันทึก: ปิด` : `ปิด ${label(tab.path)}`}
-						class={['mr-1 grid size-5 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)', !active && !tab.dirty && 'invisible group-hover:visible']}
+						class={['mr-1 grid size-5 shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)', !active && !tab.dirty && 'invisible group-hover:visible']}
 						onclick={(e) => close(tab.path, e.altKey)}
 					>
 						{#if tab.dirty}

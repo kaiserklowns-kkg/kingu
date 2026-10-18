@@ -5,6 +5,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import { settings, USER_SETTINGS_KEY, WORKSPACE_SETTINGS_PATH, SETTINGS_EDITOR_KEY } from './settings.svelte';
 import { isAdeEditor } from '#lib/ade/keys.ts';
+import { keybindings, USER_KEYBINDINGS_KEY } from '#lib/workbench/keybindings.svelte.ts';
+import { KEYBINDINGS_TEMPLATE } from '#lib/workbench/keybindingsModel.ts';
 
 /** Tabs with no text model (the Settings editor UI, ADE task pages and the board). */
 export const isNonTextEditor = (key: string) => key === SETTINGS_EDITOR_KEY || isAdeEditor(key);
@@ -19,15 +21,21 @@ export async function readResource(key: string): Promise<string> {
 		const file = await invoke<{ content: string | null }>('settings_read', { scope: 'user' });
 		return file.content ?? '{\n}\n';
 	}
+	if (key === USER_KEYBINDINGS_KEY) {
+		const file = await invoke<{ content: string | null }>('settings_read', { scope: 'keybindings' });
+		return file.content ?? KEYBINDINGS_TEMPLATE;
+	}
 	return invoke<string>('read_workspace_file', { rel: key });
 }
 
 export async function writeResource(key: string, content: string): Promise<void> {
 	const snapId = userSnapId(key);
 	if (key === USER_SETTINGS_KEY) await invoke('settings_write', { scope: 'user', content });
+	else if (key === USER_KEYBINDINGS_KEY) await invoke('settings_write', { scope: 'keybindings', content });
 	else if (snapId) await invoke('snap_manifest_write', { id: snapId, content });
 	else await invoke('fs_write_file', { rel: key, content });
 	if (key === USER_SETTINGS_KEY || key === WORKSPACE_SETTINGS_PATH) await settings.load();
+	if (key === USER_KEYBINDINGS_KEY) await keybindings.load();
 	// The user snaps dir is not watched; loaded lazily to keep the snaps store out of this module's imports.
 	if (snapId) await import('#lib/snaps/snaps.svelte.ts').then((m) => m.snaps.load());
 }

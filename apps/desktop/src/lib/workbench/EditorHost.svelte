@@ -11,7 +11,7 @@
 	import { navigation } from './navigation.svelte';
 	import { isDiffKey } from './scm';
 	import { isNonTextEditor } from '#lib/settings/resources.ts';
-	import { installEditorSettings } from '#lib/settings/apply.svelte.ts';
+	import { editorOptions, installEditorSettings } from '#lib/settings/apply.svelte.ts';
 	import { attachDebugEditor, type DebugDecorations } from '#lib/debug/editorDebug.ts';
 
 	let { group }: { group: number } = $props();
@@ -36,16 +36,8 @@
 			if (disposed) return;
 			api = m;
 			installEditorSettings(m.monaco);
-			const ed = m.monaco.editor.create(host, {
-				theme: m.THEME_ID,
-				automaticLayout: true,
-				fontFamily: "Menlo, Monaco, 'Courier New', 'IBM Plex Sans Thai', monospace",
-				fontSize: 12,
-				lineHeight: 18,
-				minimap: { enabled: true },
-				scrollBeyondLastLine: true,
-				renderLineHighlight: 'all'
-			});
+			// The editor settings from the first paint; installEditorSettings keeps them live.
+			const ed = m.monaco.editor.create(host, { ...editorOptions(), theme: m.THEME_ID, automaticLayout: true });
 			const { CursorChangeReason } = m.monaco.editor;
 			ed.onDidChangeCursorPosition((e) => {
 				if (editors.activeGroupId !== group) return;

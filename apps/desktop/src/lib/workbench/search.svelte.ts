@@ -6,12 +6,12 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { SvelteSet } from 'svelte/reactivity';
 import { clientLog } from '#lib/client-log.ts';
+import { searchSettingsFrom } from '#lib/settings/mappings.ts';
+import { settings } from '#lib/settings/settings.svelte.ts';
 import { editors } from './editors.svelte';
 import { status } from './status.svelte';
 import { rebaseMatches, seedFromSelection, type FileMatches, type ReplaceEdit, type ReplaceResult, type SearchEvent, type SearchOptions, type TextMatch } from './searchResults';
 
-/** VS Code's search-as-you-type delay (`search.searchOnTypeDebouncePeriod`). */
-const DEBOUNCE_MS = 300;
 /** Streamed files are appended in batches so a big result set re-renders a few times, not per file. */
 const FLUSH_MS = 50;
 
@@ -22,6 +22,7 @@ class Search {
 	isRegex = $state(false);
 	include = $state('');
 	exclude = $state('');
+	/** The view's "Use Exclude Settings and Ignore Files" toggle; off searches everything. */
 	useIgnoreFiles = $state(true);
 	showDetails = $state(false);
 	showReplace = $state(false);
@@ -51,14 +52,16 @@ class Search {
 			whole_word: this.wholeWord,
 			include: this.include,
 			exclude: this.exclude,
-			use_ignore_files: this.useIgnoreFiles
+			use_ignore_files: this.useIgnoreFiles && settings.get<boolean>('search.useIgnoreFiles'),
+			...searchSettingsFrom((id) => settings.get(id), this.useIgnoreFiles)
 		};
 	}
 
-	/** Search-as-you-type. */
+	/** Search-as-you-type (search.searchOnType, after search.searchOnTypeDebouncePeriod). Enter always searches. */
 	schedule() {
 		clearTimeout(this.#debounce);
-		this.#debounce = setTimeout(() => this.run(), DEBOUNCE_MS);
+		if (!settings.get<boolean>('search.searchOnType')) return;
+		this.#debounce = setTimeout(() => this.run(), settings.get<number>('search.searchOnTypeDebouncePeriod'));
 	}
 
 	async run() {

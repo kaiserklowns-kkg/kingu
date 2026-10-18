@@ -163,6 +163,7 @@ pub struct SessionInfo {
 }
 
 /// What `open` starts when `key` has no live session.
+#[derive(Clone, Copy)]
 pub struct ShellSpec<'a> {
   pub cwd: &'a Path,
   pub cols: u16,
@@ -170,6 +171,22 @@ pub struct ShellSpec<'a> {
   /// Typed into the new shell once, on the first spawn of this key.
   pub run: Option<&'a [String]>,
   pub env: &'a BTreeMap<String, String>,
+  /// `terminal.integrated.shell.*`: an absolute path; `None` uses `$SHELL` (else zsh).
+  pub shell: Option<&'a str>,
+  /// `terminal.integrated.shellArgs.*`; `None` starts a login shell (`-l`).
+  pub args: Option<&'a [String]>,
+}
+
+/// A configured shell must be an absolute path to an executable file (never looked up on PATH).
+pub fn validate_shell(shell: &str) -> Result<&str, String> {
+  let path = Path::new(shell);
+  if !path.is_absolute() {
+    return Err(format!("shell ต้องเป็น path เต็ม: {shell}"));
+  }
+  if !path.is_file() {
+    return Err(format!("ไม่พบ shell: {shell}"));
+  }
+  Ok(shell)
 }
 
 #[derive(Default)]
@@ -241,9 +258,15 @@ impl Host {
     }
     let again = !self.started.lock().unwrap().insert(key.to_string());
     let line = if again { None } else { spec.run.map(command_line).transpose()? };
-    let shell = std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/bin/zsh".into());
+    let shell = match spec.shell.filter(|s| !s.is_empty()) {
+      Some(s) => validate_shell(s)?.to_string(),
+      None => std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/bin/zsh".into()),
+    };
     let mut cmd = CommandBuilder::new(shell);
-    cmd.arg("-l");
+    match spec.args {
+      Some(args) => cmd.args(args),
+      None => cmd.arg("-l"),
+    }
     cmd.cwd(spec.cwd);
     for (k, v) in spec.env {
       if !is_agent_session_marker(k) {
@@ -364,13 +387,14 @@ impl Host {
 
 #[cfg(test)]
 pub(crate) mod tests {
+  use std::collections::BTreeMap;
   use std::path::Path;
   use std::sync::{Arc, Mutex};
   use std::time::{Duration, Instant};
 
   use portable_pty::CommandBuilder;
 
-  use super::{Host, Scrollback, Sink, command_line, is_agent_session_marker, shell_quote, tail_start, utf8_prefix_len, validate_key};
+  use super::{Host, Scrollback, ShellSpec, Sink, command_line, is_agent_session_marker, shell_quote, tail_start, utf8_prefix_len, validate_key};
 
   #[test]
   fn holds_back_a_cut_thai_character() {
@@ -516,6 +540,25 @@ pub(crate) mod tests {
     assert!(host.kill("test:gone"));
     assert!(!host.kill("test:gone"));
     drop(live);
+  }
+
+  #[test]
+  fn starts_the_configured_shell_with_its_args() {
+    if !Path::new("/bin/sh").exists() {
+      return;
+    }
+    let host = Host::default();
+    let env = BTreeMap::from([("KINGU_TEST_VAR".to_string(), "from-settings".to_string())]);
+    let args = ["-c".to_string(), "echo shell-$KINGU_TEST_VAR".to_string()];
+    let spec = ShellSpec { cwd: Path::new("/"), cols: 80, rows: 24, run: None, env: &env, shell: Some("/bin/sh"), args: Some(&args) };
+    let (sink, seen) = collecting();
+    host.spawn_shell("test:shell", &spec, sink).unwrap();
+    wait_for("the configured shell's output", || seen.lock().unwrap().contains("shell-from-settings"));
+
+    for bad in ["sh", "/nope/not-a-shell"] {
+      let spec = ShellSpec { shell: Some(bad), ..spec };
+      assert!(host.spawn_shell("test:bad", &spec, collecting().0).is_err(), "{bad}");
+    }
   }
 
   #[test]

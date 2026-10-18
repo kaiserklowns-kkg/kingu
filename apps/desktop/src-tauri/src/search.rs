@@ -33,6 +33,15 @@ pub struct SearchOptions {
   /// Respect `.gitignore` and friends (VS Code's "Use Exclude Settings and Ignore Files"). Default on.
   pub use_ignore_files: Option<bool>,
   pub max_results: Option<usize>,
+  /// `files.exclude` + `search.exclude` globs (VS Code glob syntax, which ripgrep's `--glob` reads).
+  pub exclude_globs: Vec<String>,
+  /// `search.followSymlinks`.
+  pub follow_symlinks: Option<bool>,
+  /// `search.smartCase`: case-insensitive unless the query has an uppercase letter.
+  pub smart_case: Option<bool>,
+  /// `search.useGlobalIgnoreFiles` / `search.useParentIgnoreFiles`; unset keeps ripgrep's default (on).
+  pub use_global_ignore: Option<bool>,
+  pub use_parent_ignore: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -98,7 +107,16 @@ pub fn build_args(opts: &SearchOptions) -> Vec<OsString> {
     "--crlf".into(),
     "--no-messages".into(),
   ];
-  args.push(if opts.match_case { "--case-sensitive" } else { "--ignore-case" }.into());
+  args.push(
+    if opts.match_case {
+      "--case-sensitive"
+    } else if opts.smart_case == Some(true) {
+      "--smart-case"
+    } else {
+      "--ignore-case"
+    }
+    .into(),
+  );
   if !opts.is_regex {
     args.push("--fixed-strings".into());
   }
@@ -107,6 +125,16 @@ pub fn build_args(opts: &SearchOptions) -> Vec<OsString> {
   }
   if !opts.use_ignore_files.unwrap_or(true) {
     args.push("--no-ignore".into());
+  } else {
+    if opts.use_global_ignore == Some(false) {
+      args.push("--no-ignore-global".into());
+    }
+    if opts.use_parent_ignore == Some(false) {
+      args.push("--no-ignore-parent".into());
+    }
+  }
+  if opts.follow_symlinks == Some(true) {
+    args.push("--follow".into());
   }
   // VS Code's default `files.exclude`/`search.exclude` that ignore files do not cover.
   for g in ["**/.git", "**/.git/**", "**/.DS_Store"] {
@@ -118,6 +146,10 @@ pub fn build_args(opts: &SearchOptions) -> Vec<OsString> {
     args.push(g);
   }
   for g in split_patterns(&opts.exclude) {
+    args.push("--glob".into());
+    args.push(format!("!{g}"));
+  }
+  for g in opts.exclude_globs.iter().map(|g| g.trim()).filter(|g| !g.is_empty() && !g.starts_with('!')) {
     args.push("--glob".into());
     args.push(format!("!{g}"));
   }
@@ -404,6 +436,35 @@ mod tests {
     assert!(args.contains(&"--case-sensitive".into()));
     assert!(args.contains(&"--word-regexp".into()));
     assert!(args.contains(&"--no-ignore".into()));
+  }
+
+  #[test]
+  fn applies_search_settings() {
+    let opts = SearchOptions {
+      query: "x".into(),
+      exclude_globs: vec!["**/node_modules".into(), " ".into(), "!sneaky".into(), "**/.DS_Store".into()],
+      follow_symlinks: Some(true),
+      smart_case: Some(true),
+      use_global_ignore: Some(false),
+      use_parent_ignore: Some(false),
+      ..Default::default()
+    };
+    let args = args_of(&opts);
+    assert!(has_pair(&args, "--glob", "!**/node_modules"));
+    assert!(!args.iter().any(|a| a.contains("sneaky")));
+    assert!(args.contains(&"--follow".into()));
+    assert!(args.contains(&"--smart-case".into()));
+    assert!(!args.contains(&"--ignore-case".into()));
+    assert!(args.contains(&"--no-ignore-global".into()));
+    assert!(args.contains(&"--no-ignore-parent".into()));
+    // Match Case wins over smart case; no ignore files at all drops the finer flags.
+    let args = args_of(&SearchOptions { match_case: true, use_ignore_files: Some(false), ..opts });
+    assert!(args.contains(&"--case-sensitive".into()));
+    assert!(args.contains(&"--no-ignore".into()));
+    assert!(!args.contains(&"--no-ignore-parent".into()));
+    // Unset settings keep ripgrep's own defaults (the ADE's worktree search sends none).
+    let args = args_of(&SearchOptions { query: "x".into(), ..Default::default() });
+    assert!(!args.iter().any(|a| a == "--follow" || a.starts_with("--no-ignore")));
   }
 
   #[test]
