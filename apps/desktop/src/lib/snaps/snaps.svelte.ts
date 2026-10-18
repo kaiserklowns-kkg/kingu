@@ -22,6 +22,7 @@ import { status } from '#lib/workbench/status.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { setMcpProvider, setSkillPluginProvider } from '#lib/ade/mcp.ts';
 import { team } from '#lib/team/team.svelte.ts';
+import { createSnapEventRouter, needsFocusReload } from '#lib/team/teamEvents.ts';
 import { approveSummary, canApprove, isApprovable, type TeamCatalog } from './teamSnaps.ts';
 import { worktreeDir } from '#lib/ade/keys.ts';
 import {
@@ -432,10 +433,12 @@ export function installSnaps(): () => void {
 		clearTimeout(reloadTimer);
 		reloadTimer = setTimeout(() => void snaps.load(), RELOAD_DEBOUNCE_MS);
 	};
-	// The desktop has no event stream from the team server, so the catalog is re-read on focus.
+	// The team catalog follows the server's event stream; focus re-reads it only while that is down.
+	const teamRouter = createSnapEventRouter(() => void snaps.loadTeam());
+	const stopTeamEvents = team.onEvent((e) => teamRouter.event(e));
 	const reloadAll = () => {
 		reloadSoon();
-		void snaps.loadTeam();
+		if (needsFocusReload(team.status?.stream)) void snaps.loadTeam();
 	};
 	const stopWatching = workspace.onFilesChanged((paths) => {
 		if (touchesRepoSnaps(paths)) reloadSoon();
@@ -455,6 +458,10 @@ export function installSnaps(): () => void {
 			void team.serverUrl;
 			void team.status?.signed_in;
 			untrack(() => void snaps.loadTeam());
+		});
+		$effect(() => {
+			const state = team.status?.stream;
+			untrack(() => teamRouter.stream(state));
 		});
 		$effect(() => {
 			const list = snaps.list;
@@ -498,6 +505,8 @@ export function installSnaps(): () => void {
 		clearTimeout(reloadTimer);
 		stopWatching();
 		window.removeEventListener('focus', reloadAll);
+		stopTeamEvents();
+		teamRouter.dispose();
 		stopEffects();
 		unregisterTasks();
 		unregister.forEach((u) => u());
