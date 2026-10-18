@@ -2,6 +2,7 @@
 // (Enter searches up, Shift+Enter down, "1 of 5", ⌥⌘C/W/R toggles); ADE terminals like Orca's
 // TerminalSearch (Enter next, Shift+Enter previous, "1/5"). Both use @xterm/addon-search.
 
+import type { ISearchOptions, SearchAddon } from '@xterm/addon-search';
 import type { TerminalFlavor } from './terminalMenu.ts';
 
 /** VS Code's XtermTerminalConstants.SearchHighlightLimit. */
@@ -49,4 +50,19 @@ export function findDecorations(flavor: TerminalFlavor) {
 	return flavor === 'ide'
 		? { matchBackground: '#5B2F10', matchOverviewRuler: '#D18616', activeMatchBackground: '#515C6A', activeMatchColorOverviewRuler: '#A0A0A0' }
 		: { matchBackground: '#5c4a00', matchBorder: '#5c4a00', matchOverviewRuler: '#ffcc00', activeMatchBackground: '#c4580e', activeMatchBorder: '#ffcf6b', activeMatchColorOverviewRuler: '#ff9900' };
+}
+
+/** Options every terminal needs for find: the search addon highlights matches with
+ *  `registerDecoration`, a proposed xterm API that throws without this flag, so every search
+ *  failed before reporting its results ("no results" for text on screen). */
+export const FIND_TERMINAL_OPTIONS = { allowProposedApi: true } as const;
+
+/** Runs one search step; an empty query clears the highlights. */
+export function runFind(search: Pick<SearchAddon, 'findNext' | 'findPrevious' | 'clearDecorations'>, flavor: TerminalFlavor, query: string, opts: FindOptions, dir: 'next' | 'previous', incremental = false): boolean {
+	if (!query) {
+		search.clearDecorations();
+		return false;
+	}
+	const o: ISearchOptions = { ...opts, incremental, decorations: findDecorations(flavor) };
+	return dir === 'next' ? search.findNext(query, o) : search.findPrevious(query, o);
 }

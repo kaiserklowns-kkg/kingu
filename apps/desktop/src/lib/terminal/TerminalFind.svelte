@@ -5,7 +5,7 @@
 	import type { SearchAddon } from '@xterm/addon-search';
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { isMac } from '#lib/workbench/keys.ts';
-	import { findDecorations, findKey, findStatus, type FindOptions } from './find.ts';
+	import { findKey, findStatus, runFind, type FindOptions } from './find.ts';
 	import type { TerminalFlavor } from './terminalMenu.ts';
 
 	let { term, search, flavor, seed = '', request, onclose }: { term: Terminal; search: SearchAddon; flavor: TerminalFlavor; seed?: string; request: number; onclose: () => void } = $props();
@@ -21,14 +21,10 @@
 
 	function run(dir: 'next' | 'previous', incremental = false) {
 		if (!query) {
-			search.clearDecorations();
 			index = -1;
 			count = 0;
-			return;
 		}
-		const o = { ...opts, incremental, decorations: findDecorations(flavor) };
-		if (dir === 'next') search.findNext(query, o);
-		else search.findPrevious(query, o);
+		runFind(search, flavor, query, opts, dir, incremental);
 	}
 	/** Typing searches from the current match: upward in the IDE (VS Code), downward in the ADE (Orca). */
 	const typed = () => run(flavor === 'ide' ? 'previous' : 'next', true);
@@ -96,7 +92,10 @@
 		<input
 			bind:this={input}
 			bind:value={query}
-			oninput={typed}
+			oninput={(e) => {
+				query = e.currentTarget.value;
+				typed();
+			}}
 			{onkeydown}
 			aria-label="ค้นหา"
 			placeholder="ค้นหา"
