@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 use tauri::State;
 
 use crate::git::{check_rev, run};
+use crate::i18n::Message;
 use crate::i18n::msg::GitMsg;
 use crate::tr;
 use crate::workspace::Workspace;
@@ -45,7 +46,7 @@ impl GitOps {
   pub fn begin(&self) -> Result<OpGuard, String> {
     let mut slot = self.0.lock().map_err(|e| e.to_string())?;
     if slot.is_some() {
-      return Err("มีคำสั่ง git อื่นกำลังทำงานอยู่ รอให้เสร็จก่อน".into());
+      return Err(tr!(GitMsg::Busy));
     }
     let cancel = Arc::new(AtomicBool::new(false));
     *slot = Some(cancel.clone());
@@ -264,8 +265,8 @@ pub(crate) fn net_env(root: &Path, args: &[&str], env: &[(&str, &str)], cancel: 
 
 fn net_result(op: &str, result: Result<NetOutput, Stopped>, timeout: Duration) -> Result<String, String> {
   match result {
-    Err(Stopped::Cancelled) => Err(format!("ยกเลิก git {op} แล้ว")),
-    Err(Stopped::TimedOut) => Err(format!("git {op} ใช้เวลานานเกิน {} วินาที จึงหยุดไว้", timeout.as_secs())),
+    Err(Stopped::Cancelled) => Err(tr!(GitMsg::Cancelled, op)),
+    Err(Stopped::TimedOut) => Err(tr!(GitMsg::TimedOut, op, secs = timeout.as_secs())),
     Ok(o) if o.ok => Ok(o.stdout),
     Ok(o) => {
       let msg = if o.stderr.trim().is_empty() { o.stdout.trim() } else { o.stderr.trim() };
@@ -274,23 +275,23 @@ fn net_result(op: &str, result: Result<NetOutput, Stopped>, timeout: Duration) -
   }
 }
 
-/// Thai explanation for the common failures, git's own output after it.
+/// An explanation for the common failures (in the UI language), git's own output after it.
 pub fn net_error(op: &str, stderr: &str) -> String {
   let lower = stderr.to_lowercase();
   let why = if is_auth_failure(stderr) {
     tr!(GitMsg::AuthFailed)
   } else if lower.contains("not possible to fast-forward") || lower.contains("diverging branches") {
-    "pull แบบ fast-forward ไม่ได้ เพราะ branch แยกทางกับ upstream แล้ว (ใช้ Git: Pull (Rebase) หรือ merge เอง)".into()
+    tr!(GitMsg::NotFastForward)
   } else if lower.contains("would be overwritten") {
-    "การแก้ไขที่ยังไม่ commit จะถูกเขียนทับ ให้ commit หรือ stash ก่อน".into()
+    tr!(GitMsg::WouldOverwrite)
   } else if lower.contains("[rejected]") || lower.contains("updates were rejected") {
-    "push ถูกปฏิเสธ เพราะ remote มี commit ที่ยังไม่มีในเครื่อง ให้ pull ก่อน".into()
+    tr!(GitMsg::PushRejected)
   } else if lower.contains("could not resolve host") || lower.contains("unable to access") || lower.contains("connection timed out") {
-    "ติดต่อ remote ไม่ได้ ตรวจการเชื่อมต่อเครือข่าย".into()
+    tr!(GitMsg::Unreachable)
   } else if lower.contains("conflict") {
-    "มี conflict ให้แก้ใน Source Control แล้ว commit".into()
+    tr!(GitMsg::Conflict)
   } else {
-    format!("git {op} ไม่สำเร็จ")
+    tr!(GitMsg::OpFailed, op)
   };
   if stderr.is_empty() { why } else { format!("{why}\n{stderr}") }
 }
@@ -308,7 +309,7 @@ pub fn check_branch_name(root: &Path, name: &str) -> Result<(), String> {
     || name.contains("@{")
     || name.chars().any(|c| c.is_whitespace() || c.is_control());
   if bad || run(root, &["check-ref-format", "--branch", name]).is_err() {
-    return Err(format!("ชื่อ branch ไม่ถูกต้อง: {name:?}"));
+    return Err(tr!(GitMsg::InvalidBranchName, name = format!("{name:?}")));
   }
   Ok(())
 }
@@ -390,10 +391,10 @@ fn is_tag_conflict(err: &str) -> bool {
 
 pub fn pull(root: &Path, opts: &PullOptions, cancel: &AtomicBool, timeout: Duration) -> Result<(), String> {
   let Some(branch) = current_branch(root) else {
-    return Err("HEAD ไม่ได้อยู่บน branch (detached) จึง pull ไม่ได้".into());
+    return Err(tr!(GitMsg::PullDetached));
   };
   if config(root, &format!("branch.{branch}.merge")).is_none() {
-    return Err(format!("branch {branch} ยังไม่มี upstream ให้ Publish Branch ก่อน"));
+    return Err(tr!(GitMsg::NoUpstream, branch));
   }
   if opts.fetch_all {
     net(root, &["fetch", "--all"], cancel, timeout)?;
@@ -403,7 +404,7 @@ pub fn pull(root: &Path, opts: &PullOptions, cancel: &AtomicBool, timeout: Durat
       net(root, &["fetch", "--tags", "--force"], cancel, timeout)?;
       net(root, &pull_args(opts), cancel, timeout).map(|_| ())
     }
-    Err(e) if is_tag_conflict(&e) => Err(format!("tag ในเครื่องขัดกับ tag ของ remote เปิด git.replaceTagsWhenPull เพื่อใช้ tag ของ remote แทน\n{e}")),
+    Err(e) if is_tag_conflict(&e) => Err(tr!(GitMsg::TagConflict, detail = e)),
     r => r.map(|_| ()),
   }
 }
@@ -444,7 +445,7 @@ pub fn push_flags(opts: &PushOptions) -> Vec<&'static str> {
 /// (default `origin`) with `-u` (VS Code's Publish Branch). Returns the upstream pushed to.
 pub fn push(root: &Path, remote: Option<&str>, opts: &PushOptions, cancel: &AtomicBool, timeout: Duration) -> Result<String, String> {
   let Some(branch) = current_branch(root) else {
-    return Err("HEAD ไม่ได้อยู่บน branch (detached) สร้าง branch ก่อนแล้วจึง push".into());
+    return Err(tr!(GitMsg::PushDetached));
   };
   let tracked = config(root, &format!("branch.{branch}.remote")).zip(config(root, &format!("branch.{branch}.merge")));
   match (tracked, remote) {
@@ -460,9 +461,9 @@ pub fn push(root: &Path, remote: Option<&str>, opts: &PushOptions, cancel: &Atom
       let r = remote.unwrap_or("origin");
       if !remotes.iter().any(|x| x == r) {
         return Err(if remotes.is_empty() {
-          "repository นี้ยังไม่มี remote ให้เพิ่มด้วย git remote add ก่อน".into()
+          tr!(GitMsg::NoRemotes)
         } else {
-          format!("ไม่มี remote ชื่อ {r}")
+          tr!(GitMsg::NoSuchRemote, remote = r)
         });
       }
       let spec = format!("refs/heads/{branch}:refs/heads/{branch}");
@@ -573,26 +574,26 @@ pub fn refs(root: &Path, hash_len: u8, tags: bool) -> Result<Vec<BranchRef>, Str
   Ok(parse_refs(&String::from_utf8_lossy(&out), &toplevel(root)?))
 }
 
-/// git's "already used by worktree at '<path>'" (and older "already checked out at"), in Thai.
+/// git's "already used by worktree at '<path>'" (and older "already checked out at"), explained.
 fn worktree_error(name: &str, stderr: &str) -> Option<String> {
   let lower = stderr.to_lowercase();
   let at = ["used by worktree at", "checked out at"].into_iter().find_map(|k| lower.find(k).map(|i| i + k.len()))?;
   let path = stderr[at..].trim().trim_matches(|c| c == '\'' || c == '"').lines().next().unwrap_or("").trim_end_matches('\'').to_owned();
-  Some(format!("branch {name} ถูก check out อยู่ใน worktree อื่น ({path}) git จึงไม่ยอมให้ใช้ที่นี่อีก"))
+  Some(tr!(GitMsg::InOtherWorktree, name, path))
 }
 
-fn branch_error(what: &str, name: &str, e: &str) -> String {
+fn branch_error(what: GitMsg, name: &str, e: &str) -> String {
   if let Some(msg) = worktree_error(name, e) {
     return msg;
   }
   let lower = e.to_lowercase();
   if lower.contains("would be overwritten") {
-    return format!("{what} {name} ไม่ได้: การแก้ไขที่ยังไม่ commit จะถูกเขียนทับ ให้ commit หรือ stash ก่อน\n{e}");
+    return tr!(GitMsg::BranchWouldOverwrite, what = what.text(crate::i18n::current()), name, detail = e);
   }
   if lower.contains("already exists") {
-    return format!("มี branch ชื่อ {name} อยู่แล้ว");
+    return tr!(GitMsg::BranchExists, name);
   }
-  format!("{what} {name} ไม่สำเร็จ\n{e}")
+  tr!(GitMsg::BranchOpFailed, what = what.text(crate::i18n::current()), name, detail = e)
 }
 
 /// Switches to local branch `name`; a remote branch `origin/x` checks out (creating when needed)
@@ -631,17 +632,17 @@ pub fn fast_forward_branch(root: &Path, branch: &str, cancel: &AtomicBool, timeo
 }
 
 pub fn checkout_with(root: &Path, name: &str, remote: bool, opts: &CheckoutOptions, cancel: &AtomicBool) -> Result<String, String> {
-  check_rev(name).map_err(|_| format!("ชื่อ branch ไม่ถูกต้อง: {name:?}"))?;
+  check_rev(name).map_err(|_| tr!(GitMsg::InvalidBranchName, name = format!("{name:?}")))?;
   if opts.tag {
     if !ref_exists(root, &format!("refs/tags/{name}")) {
-      return Err(format!("ไม่พบ tag {name}"));
+      return Err(tr!(GitMsg::TagNotFound, name));
     }
-    run(root, &["switch", "--detach", &format!("refs/tags/{name}")]).map_err(|e| branch_error("check out", name, &e))?;
+    run(root, &["switch", "--detach", &format!("refs/tags/{name}")]).map_err(|e| branch_error(GitMsg::WhatCheckOut, name, &e))?;
     return Ok(name.to_owned());
   }
   if !remote {
     if !ref_exists(root, &format!("refs/heads/{name}")) {
-      return Err(format!("ไม่พบ branch {name}"));
+      return Err(tr!(GitMsg::BranchNotFound, name));
     }
     if opts.pull_before && current_branch(root).as_deref() != Some(name) {
       // Like VS Code, a failed fast-forward (offline, diverged) does not stop the checkout.
@@ -649,28 +650,28 @@ pub fn checkout_with(root: &Path, name: &str, remote: bool, opts: &CheckoutOptio
         log::warn!("git.pullBeforeCheckout {name}: {e}");
       }
     }
-    run(root, &["switch", "--no-guess", name]).map_err(|e| branch_error("check out", name, &e))?;
+    run(root, &["switch", "--no-guess", name]).map_err(|e| branch_error(GitMsg::WhatCheckOut, name, &e))?;
     return Ok(name.to_owned());
   }
   if !ref_exists(root, &format!("refs/remotes/{name}")) {
-    return Err(format!("ไม่พบ remote branch {name}"));
+    return Err(tr!(GitMsg::RemoteBranchNotFound, name));
   }
   let remotes = crate::git::remotes(root)?;
   let local = remotes
     .iter()
     .filter_map(|r| name.strip_prefix(r.as_str()).and_then(|rest| rest.strip_prefix('/')))
     .min_by_key(|rest| rest.len())
-    .ok_or_else(|| format!("{name}: ไม่ใช่ branch ของ remote ที่รู้จัก"))?
+    .ok_or_else(|| tr!(GitMsg::NotRemoteBranch, name))?
     .to_owned();
   check_branch_name(root, &local)?;
   if ref_exists(root, &format!("refs/heads/{local}")) {
     let upstream = run(root, &["rev-parse", "--abbrev-ref", &format!("{local}@{{upstream}}")]).ok();
     if upstream.map(|o| String::from_utf8_lossy(&o).trim().to_owned()).as_deref() != Some(name) {
-      return Err(format!("มี branch {local} อยู่แล้วแต่ไม่ได้ track {name} ให้เลือก {local} แทน"));
+      return Err(tr!(GitMsg::LocalNotTracking, local, name));
     }
-    run(root, &["switch", "--no-guess", &local]).map_err(|e| branch_error("check out", &local, &e))?;
+    run(root, &["switch", "--no-guess", &local]).map_err(|e| branch_error(GitMsg::WhatCheckOut, &local, &e))?;
   } else {
-    run(root, &["switch", "-c", &local, "--track", name]).map_err(|e| branch_error("check out", name, &e))?;
+    run(root, &["switch", "-c", &local, "--track", name]).map_err(|e| branch_error(GitMsg::WhatCheckOut, name, &e))?;
   }
   Ok(local)
 }
@@ -680,10 +681,10 @@ pub fn create_branch(root: &Path, name: &str, from: Option<&str>) -> Result<(), 
   check_branch_name(root, name)?;
   let mut args = vec!["switch", "-c", name];
   if let Some(from) = from {
-    check_rev(from).map_err(|_| format!("ไม่รู้จัก {from:?}"))?;
+    check_rev(from).map_err(|_| tr!(GitMsg::UnknownRev, rev = format!("{from:?}")))?;
     args.push(from);
   }
-  run(root, &args).map(|_| ()).map_err(|e| branch_error("สร้าง branch", name, &e))
+  run(root, &args).map(|_| ()).map_err(|e| branch_error(GitMsg::WhatCreateBranch, name, &e))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -695,17 +696,17 @@ pub enum DeleteResult {
 }
 
 pub fn delete_branch(root: &Path, name: &str, force: bool) -> Result<DeleteResult, String> {
-  check_rev(name).map_err(|_| format!("ชื่อ branch ไม่ถูกต้อง: {name:?}"))?;
+  check_rev(name).map_err(|_| tr!(GitMsg::InvalidBranchName, name = format!("{name:?}")))?;
   if !ref_exists(root, &format!("refs/heads/{name}")) {
-    return Err(format!("ไม่พบ branch {name}"));
+    return Err(tr!(GitMsg::BranchNotFound, name));
   }
   if current_branch(root).as_deref() == Some(name) {
-    return Err(format!("ลบ branch ปัจจุบัน ({name}) ไม่ได้ ให้ check out branch อื่นก่อน"));
+    return Err(tr!(GitMsg::DeleteCurrent, name));
   }
   match run(root, &["branch", if force { "-D" } else { "-d" }, "--", name]) {
     Ok(_) => Ok(DeleteResult::Deleted),
     Err(e) if !force && e.contains("not fully merged") => Ok(DeleteResult::NotMerged),
-    Err(e) => Err(worktree_error(name, &e).unwrap_or_else(|| format!("ลบ branch {name} ไม่สำเร็จ\n{e}"))),
+    Err(e) => Err(worktree_error(name, &e).unwrap_or_else(|| tr!(GitMsg::DeleteFailed, name, detail = e))),
   }
 }
 
@@ -749,9 +750,9 @@ pub fn stash_push(root: &Path, message: Option<&str>, include_untracked: bool) -
   if let Some(m) = message {
     args.extend(["-m", m]);
   }
-  run_unliteral(root, &args).map_err(|e| format!("stash ไม่สำเร็จ\n{e}"))?;
+  run_unliteral(root, &args).map_err(|e| tr!(GitMsg::StashFailed, detail = e))?;
   if stash_top(root) == before {
-    return Err("ไม่มีการเปลี่ยนแปลงให้ stash".into());
+    return Err(tr!(GitMsg::NothingToStash));
   }
   Ok(())
 }
@@ -788,17 +789,17 @@ pub fn stash_apply(root: &Path, index: u32, pop: bool) -> Result<(), String> {
   run_unliteral(root, &["stash", if pop { "pop" } else { "apply" }, &sel]).map(|_| ()).map_err(|e| {
     let lower = e.to_lowercase();
     if lower.contains("conflict") {
-      format!("นำ stash กลับมาแล้วแต่มี conflict ให้แก้ใน Source Control{}\n{e}", if pop { " (stash ยังเก็บไว้)" } else { "" })
+      if pop { tr!(GitMsg::StashConflictKept, detail = e) } else { tr!(GitMsg::StashConflict, detail = e) }
     } else if lower.contains("would be overwritten") || lower.contains("already exists") {
-      format!("นำ stash กลับมาไม่ได้: ไฟล์ที่แก้ไขอยู่จะถูกเขียนทับ ให้ commit หรือ stash ก่อน\n{e}")
+      tr!(GitMsg::StashWouldOverwrite, detail = e)
     } else {
-      format!("นำ {sel} กลับมาไม่สำเร็จ\n{e}")
+      tr!(GitMsg::StashApplyFailed, stash = sel, detail = e)
     }
   })
 }
 
 pub fn stash_drop(root: &Path, index: u32) -> Result<(), String> {
-  run_unliteral(root, &["stash", "drop", &format!("stash@{{{index}}}")]).map(|_| ()).map_err(|e| format!("ลบ stash ไม่สำเร็จ\n{e}"))
+  run_unliteral(root, &["stash", "drop", &format!("stash@{{{index}}}")]).map(|_| ()).map_err(|e| tr!(GitMsg::StashDropFailed, detail = e))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -818,7 +819,7 @@ pub struct CloneUrl {
 impl CloneUrl {
   pub fn parse(input: &str) -> Result<Self, String> {
     let input = input.trim();
-    let bad = || format!("URL ของ repository ไม่ถูกต้องหรือไม่รองรับ: {input:?} (ใช้ https://…, ssh://… หรือ git@host:owner/repo.git)");
+    let bad = || tr!(GitMsg::BadCloneUrl, url = format!("{input:?}"));
     if input.contains('#') {
       return Err(bad());
     }
@@ -847,7 +848,7 @@ pub fn clone_repo_name(url: &str) -> Result<String, String> {
   let source = source.strip_suffix(".git").unwrap_or(source);
   let name = source.rsplit(['/', ':']).next().unwrap_or_default();
   if name.is_empty() || name == "." || name == ".." || name.starts_with('-') || name.contains('\\') || name.chars().any(char::is_control) {
-    return Err("ตั้งชื่อโฟลเดอร์จาก URL นี้ไม่ได้".into());
+    return Err(tr!(GitMsg::NoFolderName));
   }
   Ok(name.to_owned())
 }
@@ -896,23 +897,23 @@ fn empty_dir(dir: &Path) {
 /// clone fails or is cancelled; an existing one must be empty. Returns the clone's path.
 pub fn clone_repo(url: &CloneUrl, dest: &Path, cancel: &AtomicBool, timeout: Duration, progress: &mut dyn FnMut(CloneProgress)) -> Result<std::path::PathBuf, String> {
   if !dest.is_absolute() {
-    return Err("โฟลเดอร์ปลายทางต้องเป็น path เต็ม".into());
+    return Err(tr!(GitMsg::DestNotAbsolute));
   }
   let name = clone_repo_name(url.as_str())?;
-  std::fs::create_dir_all(dest).map_err(|e| format!("สร้างโฟลเดอร์ {} ไม่ได้: {e}", dest.display()))?;
+  std::fs::create_dir_all(dest).map_err(|e| tr!(GitMsg::CreateFolderFailed, path = dest.display(), detail = e))?;
   let target = dest.join(&name);
   let created = match std::fs::create_dir(&target) {
     Ok(()) => true,
     Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
       let empty = target.is_dir() && !target.is_symlink() && std::fs::read_dir(&target).is_ok_and(|mut d| d.next().is_none());
       if !empty {
-        return Err(format!("มี {} อยู่แล้วและไม่ว่าง เลือกโฟลเดอร์ปลายทางอื่น", target.display()));
+        return Err(tr!(GitMsg::DestNotEmpty, path = target.display()));
       }
       false
     }
-    Err(e) => return Err(format!("สร้างโฟลเดอร์ {} ไม่ได้: {e}", target.display())),
+    Err(e) => return Err(tr!(GitMsg::CreateFolderFailed, path = target.display(), detail = e)),
   };
-  let target_str = target.to_str().ok_or("path ปลายทางไม่ใช่ UTF-8")?;
+  let target_str = target.to_str().ok_or_else(|| tr!(GitMsg::DestNotUtf8))?;
   let env = [("GIT_ALLOW_PROTOCOL", url.protocols)];
   let mut carry = String::new();
   let result = run_net_streaming(dest, &["clone", "--progress", "--", url.as_str(), target_str], &env, cancel, timeout, &mut |chunk| {
@@ -942,7 +943,7 @@ pub struct CloneOps(pub GitOps);
 #[tauri::command]
 pub async fn git_clone(ops: State<'_, CloneOps>, url: String, destination: String, on_progress: tauri::ipc::Channel<CloneProgress>) -> Result<String, String> {
   let url = CloneUrl::parse(&url)?;
-  let guard = ops.0.begin().map_err(|_| "กำลัง clone อยู่แล้ว รอให้เสร็จหรือยกเลิกก่อน".to_owned())?;
+  let guard = ops.0.begin().map_err(|_| tr!(GitMsg::CloneBusy))?;
   let dest = std::path::PathBuf::from(destination);
   let path = tauri::async_runtime::spawn_blocking(move || {
     clone_repo(&url, &dest, guard.flag(), CLONE_TIMEOUT, &mut |p| {
@@ -1205,7 +1206,7 @@ mod tests {
     commit(&a, "two.txt", "2\n");
     create_branch(&a, "from-main", Some("origin/main")).unwrap();
     assert!(!a.join("two.txt").exists(), "branched from origin/main, before two.txt");
-    assert!(create_branch(&a, "from-main", None).unwrap_err().contains("อยู่แล้ว"));
+    assert!(create_branch(&a, "from-main", None).unwrap_err().contains("already exists"));
     for bad in ["", "-x", "--force", "a..b", "HEAD", "@{-1}", "a b", "x.lock", "a~1", "a:b", "/x", "bad\n"] {
       assert!(create_branch(&a, bad, None).is_err(), "{bad:?}");
       assert!(check_branch_name(&a, bad).is_err(), "{bad:?}");
@@ -1223,7 +1224,7 @@ mod tests {
     checkout(&a, "main", false).unwrap();
     write(&a, "a.txt", "dirty\n");
     let err = checkout(&a, "other", false).unwrap_err();
-    assert!(err.contains("commit หรือ stash"), "{err}");
+    assert!(err.contains("commit or stash"), "{err}");
     assert_eq!(std::fs::read_to_string(a.join("a.txt")).unwrap(), "dirty\n");
   }
 
@@ -1239,7 +1240,7 @@ mod tests {
     let list = stash_list(&a).unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!((list[0].index, list[0].message.as_str(), list[0].branch.as_deref()), (0, "my work", Some("main")));
-    assert!(stash_push(&a, None, true).unwrap_err().contains("ไม่มีการเปลี่ยนแปลง"));
+    assert!(stash_push(&a, None, true).unwrap_err().contains("No changes"));
 
     stash_apply(&a, 0, true).unwrap();
     assert_eq!(std::fs::read_to_string(a.join("new.txt")).unwrap(), "untracked\n");
@@ -1263,7 +1264,7 @@ mod tests {
     assert_eq!(delete_branch(&a, "merged", false).unwrap(), DeleteResult::Deleted);
     create_branch(&a, "unmerged", None).unwrap();
     commit(&a, "u.txt", "u\n");
-    assert!(delete_branch(&a, "unmerged", false).unwrap_err().contains("ปัจจุบัน"));
+    assert!(delete_branch(&a, "unmerged", false).unwrap_err().contains("current branch"));
     checkout(&a, "main", false).unwrap();
     assert_eq!(delete_branch(&a, "unmerged", false).unwrap(), DeleteResult::NotMerged);
     assert!(branches(&a).unwrap().iter().any(|r| r.name == "unmerged"));
@@ -1283,9 +1284,9 @@ mod tests {
     assert!(main.current && main.worktree.is_none(), "{main:?}");
 
     let err = checkout(&a, "kingu/t1", false).unwrap_err();
-    assert!(err.contains("worktree อื่น") && err.contains(".kingu/worktrees/t1"), "{err}");
+    assert!(err.contains("another worktree") && err.contains(".kingu/worktrees/t1"), "{err}");
     let err = delete_branch(&a, "kingu/t1", true).unwrap_err();
-    assert!(err.contains("worktree อื่น"), "{err}");
+    assert!(err.contains("another worktree"), "{err}");
   }
 
   #[test]
@@ -1383,7 +1384,7 @@ mod tests {
     for s in ["fatal: 'origin' does not appear to be a git repository", "! [rejected] main -> main (fetch first)", ""] {
       assert!(!is_auth_failure(s), "{s}");
     }
-    assert!(net_error("push", "! [rejected] main -> main (fetch first)").contains("pull ก่อน"));
+    assert!(net_error("push", "! [rejected] main -> main (fetch first)").contains("pull first"));
   }
 
   #[test]
@@ -1457,7 +1458,7 @@ mod tests {
 
     let started = Instant::now();
     let err = net(&a, &["fetch", "ssh"], &no(), Duration::from_millis(500)).unwrap_err();
-    assert!(err.contains("เกิน"), "{err}");
+    assert!(err.contains("longer than"), "{err}");
     assert!(started.elapsed() < Duration::from_secs(10), "the sleeping ssh was killed too");
 
     let cancel = Arc::new(AtomicBool::new(false));
@@ -1469,7 +1470,7 @@ mod tests {
     let started = Instant::now();
     let err = net(&a, &["fetch", "ssh"], &cancel, T).unwrap_err();
     t.join().unwrap();
-    assert!(err.contains("ยกเลิก"), "{err}");
+    assert!(err.contains("cancelled"), "{err}");
     assert!(started.elapsed() < Duration::from_secs(10));
   }
   #[test]
@@ -1529,7 +1530,7 @@ mod tests {
     assert!(seen.iter().all(|p| p.percent <= 100));
 
     let err = clone_repo(&url, &dest, &no(), T, &mut |_| {}).unwrap_err();
-    assert!(err.contains("ไม่ว่าง"), "{err}");
+    assert!(err.contains("not empty"), "{err}");
 
     let missing = CloneUrl::local_for_test(&format!("file://{}/missing.git", tmp.display()));
     assert!(clone_repo(&missing, &dest, &no(), T, &mut |_| {}).is_err());
@@ -1554,7 +1555,7 @@ mod tests {
     let url = CloneUrl::local_for_test(&format!("file://{}/origin.git", tmp.display()));
     let dest = tmp.join("out");
     let err = clone_repo(&url, &dest, &AtomicBool::new(true), T, &mut |_| {}).unwrap_err();
-    assert!(err.contains("ยกเลิก"), "{err}");
+    assert!(err.contains("cancelled"), "{err}");
     assert!(!dest.join("origin").exists());
   }
 

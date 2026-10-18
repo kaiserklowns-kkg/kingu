@@ -3,11 +3,15 @@
 
 mod agent;
 mod git;
+mod linear;
 mod lsp;
+mod workspace;
 
 pub use agent::AgentMsg;
 pub use git::GitMsg;
+pub use linear::LinearMsg;
 pub use lsp::LspMsg;
+pub use workspace::WorkspaceMsg;
 
 #[cfg(test)]
 use super::{Locale, Message};
@@ -27,7 +31,9 @@ pub fn all() -> Vec<Entry> {
   let mut out = Vec::new();
   out.extend(AgentMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(GitMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(LinearMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(LspMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(WorkspaceMsg::ALL.iter().map(|&m| entry(m)));
   out
 }
 
