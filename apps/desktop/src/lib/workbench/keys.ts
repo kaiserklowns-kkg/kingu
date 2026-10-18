@@ -26,6 +26,9 @@ export function eventKey(e: Pick<KeyboardEvent, 'key' | 'code'>): string {
 	// Shift changes `e.key` (`-` → `_`), so ⌃⇧- (Go Forward) matches by code.
 	if (e.code === 'Minus') return '-';
 	if (e.code === 'Equal') return '=';
+	// Shift turns `]` into `}` (Orca's ⌘⇧] Next Tab).
+	if (e.code === 'BracketLeft') return '[';
+	if (e.code === 'BracketRight') return ']';
 	if (e.key.startsWith('Arrow')) return e.key.slice(5).toLowerCase();
 	return e.key.toLowerCase();
 }

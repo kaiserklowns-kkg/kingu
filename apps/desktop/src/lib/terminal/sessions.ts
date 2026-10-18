@@ -4,6 +4,8 @@
 // a key. The lists that decide which terminals exist go to localStorage per root, so a reloaded
 // page, and the next launch after a quit, mount the same terminals and re-attach to them.
 
+import { leaf, leaves, parsePaneNode, type PaneNode } from './paneLayout.ts';
+
 /** Short, stable tag of a workspace root (FNV-1a, 8 hex digits); `null` is "no folder open". */
 export function rootTag(root: string | null): string {
 	let h = 0x811c9dc5;
@@ -20,6 +22,8 @@ export const panelKey = (tag: string, id: number) => `panel:${tag}:${id}`;
 export const adeKey = (tag: string, worktree: string, tabId: string) => `ade:${tag}:${worktree}:${tabId}`;
 /** A task's agent CLI; `startedAt` makes a restarted CLI a new session. */
 export const cliKey = (tag: string, slug: string, startedAt: number) => `cli:${tag}:${slug}:${startedAt}`;
+
+const TAB_ID = /^t\d+$/;
 
 const KEY_RE = /^[A-Za-z0-9:_.-]{1,128}$/;
 /** Same rule as Rust's `validate_key`. */
@@ -90,7 +94,22 @@ const optArgv = (v: unknown) => (isArgv(v) ? v : undefined);
 /** Any root tag: key validity only depends on its length. */
 const SAMPLE_TAG = '00000000';
 
-export type PanelTerminalsState = { list: { id: number; title: string; run?: string[] }[]; active: number; seq: number };
+export type PanelTerminalsState = { list: { id: number; title: string; run?: string[] }[]; active: number; seq: number; groups: PaneNode[] };
+
+/** VS Code's terminal groups: each a pane tree of terminal ids; every terminal is in exactly one. */
+export function panelGroups(raw: unknown, ids: number[]): PaneNode[] {
+	const known = new Set(ids.map(String));
+	const seen = new Set<string>();
+	const groups: PaneNode[] = [];
+	for (const g of Array.isArray(raw) ? raw : []) {
+		const tree = parsePaneNode(g, (id) => known.has(id));
+		if (!tree || leaves(tree).some((id) => seen.has(id))) continue;
+		leaves(tree).forEach((id) => seen.add(id));
+		groups.push(tree);
+	}
+	for (const id of ids) if (!seen.has(String(id))) groups.push(leaf(String(id)));
+	return groups;
+}
 
 export function parsePanelTerminals(raw: unknown): PanelTerminalsState | null {
 	if (!isObject(raw) || !Array.isArray(raw.list) || !isInt(raw.active) || !isInt(raw.seq)) return null;
@@ -98,11 +117,11 @@ export function parsePanelTerminals(raw: unknown): PanelTerminalsState | null {
 	if (!list.length) return null;
 	const seq = Math.max(raw.seq, ...list.map((t) => t.id));
 	const active = list.some((t) => t.id === raw.active) ? raw.active : list[0].id;
-	return { list, active, seq };
+	return { list, active, seq, groups: panelGroups(raw.groups, list.map((t) => t.id)) };
 }
 
 export type AdeTerminalsState = {
-	terminals: Record<string, { id: string; n: number; title?: string; run?: string[] }[]>;
+	terminals: Record<string, { id: string; n: number; title?: string; run?: string[]; layout?: PaneNode; pane?: string; expanded?: string }[]>;
 	active: Record<string, string>;
 	seq: number;
 };
@@ -113,10 +132,33 @@ export function parseAdeTerminals(raw: unknown): AdeTerminalsState | null {
 	let seq = raw.seq;
 	for (const [worktree, list] of Object.entries(raw.terminals)) {
 		if (!Array.isArray(list)) continue;
+		const taken = new Set<string>();
 		const tabs = list
-			.filter((t) => isObject(t) && typeof t.id === 'string' && /^t\d+$/.test(t.id) && isInt(t.n))
-			.map((t) => ({ id: t.id as string, n: t.n as number, title: optString(t.title), run: optArgv(t.run) }));
-		for (const t of tabs) seq = Math.max(seq, Number(t.id.slice(1)));
+			.filter((t) => isObject(t) && typeof t.id === 'string' && TAB_ID.test(t.id) && isInt(t.n))
+			.map((t) => {
+				const layout = parsePaneNode(t.layout, (id) => TAB_ID.test(id)) ?? undefined;
+				const panes = layout ? leaves(layout) : [t.id as string];
+				const pane = optString(t.pane);
+				const expanded = optString(t.expanded);
+				return {
+					id: t.id as string,
+					n: t.n as number,
+					title: optString(t.title),
+					run: optArgv(t.run),
+					// One pane left that is not the tab's first keeps its tree: the tree names its PTY.
+					...(layout && (layout.type === 'split' || layout.id !== t.id) ? { layout } : {}),
+					...(layout && pane && panes.includes(pane) ? { pane } : {}),
+					...(layout && expanded && panes.includes(expanded) ? { expanded } : {})
+				};
+			})
+			// A pane id names one PTY: two tabs claiming it keep the first.
+			.filter((t) => {
+				const panes = t.layout ? leaves(t.layout) : [t.id];
+				if (panes.some((p) => taken.has(p))) return false;
+				panes.forEach((p) => taken.add(p));
+				return true;
+			});
+		for (const t of tabs) for (const p of [t.id, ...(t.layout ? leaves(t.layout) : [])]) seq = Math.max(seq, Number(p.slice(1)));
 		if (tabs.length && isValidKey(adeKey(SAMPLE_TAG, worktree, 't0'))) terminals[worktree] = tabs;
 	}
 	const active: Record<string, string> = {};

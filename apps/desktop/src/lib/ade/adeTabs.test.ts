@@ -1,5 +1,25 @@
 import { describe, expect, test } from 'bun:test';
-import { activeAfterClose, adeTabs, fileTabId, keyOfTabId, matchesQuery, openFileTab, pinFileTab } from './adeTabs';
+import { leaf, splitPane } from '#lib/terminal/paneLayout.ts';
+import {
+	activeAfterClose,
+	activePane,
+	adeTabs,
+	cycleTab,
+	fileTabId,
+	keyOfTabId,
+	matchesQuery,
+	mruOrder,
+	openFileTab,
+	paneOrder,
+	pinFileTab,
+	pushClosed,
+	switcherStep,
+	tabAtIndex,
+	tabPanes,
+	touchMru,
+	type ClosedTab,
+	type TerminalTab
+} from './adeTabs';
 
 describe('adeTabs', () => {
 	test('the folder starts with the new-task composer', () => {
@@ -84,5 +104,51 @@ describe('matchesQuery', () => {
 	test('matches any field, ignoring case', () => {
 		expect(matchesQuery('LOGIN', 'แก้บั๊ก', 'kingu/fix-login')).toBe(true);
 		expect(matchesQuery('export', 'แก้บั๊ก', null)).toBe(false);
+	});
+});
+
+describe('tab switching (Orca)', () => {
+	test('MRU: shown tabs move to the front; the switcher lists active, recent, then the rest', () => {
+		let mru: string[] = [];
+		for (const id of ['main', 't1', 'f:a.ts', 't1']) mru = touchMru(mru, id);
+		expect(mru).toEqual(['t1', 'f:a.ts', 'main']);
+		expect(touchMru(['a', 'b', 'c'], 'd', 3)).toEqual(['d', 'a', 'b']);
+		expect(mruOrder(mru, ['main', 't1', 't2', 'f:a.ts'], 't1')).toEqual(['t1', 'f:a.ts', 'main', 't2']);
+		// A closed tab drops out.
+		expect(mruOrder(['gone', 'main'], ['main', 't2'], 't2')).toEqual(['t2', 'main']);
+	});
+
+	test('Ctrl+Tab picks the previous recent tab, Shift reverses, both wrap', () => {
+		expect(switcherStep(0, 1, 3)).toBe(1);
+		expect(switcherStep(2, 1, 3)).toBe(0);
+		expect(switcherStep(0, -1, 3)).toBe(2);
+		expect(switcherStep(0, 1, 0)).toBe(0);
+	});
+
+	test('next / previous wrap; select by number is the n-th tab', () => {
+		expect(cycleTab(['main', 't1', 't2'], 't2', 1)).toBe('main');
+		expect(cycleTab(['main', 't1', 't2'], 'main', -1)).toBe('t2');
+		expect(cycleTab(['t1', 't2'], 'main', 1)).toBe('t1');
+		expect(cycleTab([], 'main', 1)).toBe('main');
+		expect(tabAtIndex(['main', 't1'], 2)).toBe('t1');
+		expect(tabAtIndex(['main', 't1'], 9)).toBeNull();
+	});
+
+	test('closed tabs: the last 10, newest last', () => {
+		let stack: ClosedTab[] = [];
+		for (let i = 0; i < 12; i++) stack = pushClosed(stack, { kind: 'terminal', title: `T${i}`, index: i });
+		expect(stack).toHaveLength(10);
+		expect(stack.at(-1)).toEqual({ kind: 'terminal', title: 'T11', index: 11 });
+		expect(pushClosed([], { kind: 'file', key: 'a.ts' })).toEqual([{ kind: 'file', key: 'a.ts' }]);
+	});
+
+	test('panes of a split tab; focus order is creation order', () => {
+		const tab: TerminalTab = { id: 't3', n: 1, layout: splitPane(splitPane(leaf('t3'), 't3', 't9', 'vertical'), 't3', 't5', 'horizontal') };
+		expect(tabPanes(tab)).toEqual(['t3', 't5', 't9']);
+		expect(paneOrder({ ...tab, layout: splitPane(leaf('t12'), 't12', 't3', 'vertical') })).toEqual(['t3', 't12']);
+		expect(activePane(tab)).toBe('t3');
+		expect(activePane({ ...tab, pane: 't9' })).toBe('t9');
+		expect(activePane({ ...tab, pane: 'gone' })).toBe('t3');
+		expect(tabPanes({ id: 't1', n: 1 })).toEqual(['t1']);
 	});
 });
