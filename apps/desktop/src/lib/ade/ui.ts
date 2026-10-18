@@ -17,6 +17,11 @@ export const STATUS_DOT: Record<TaskStatus, string> = {
 	done: 'bg-[#73C991]'
 };
 
+/** The dot of a task waiting on the answer to its question (Orca's agent-question color). */
+export const QUESTION_DOT = 'bg-(--vscode-charts-purple,#B180D7)';
+export const QUESTION_TEXT = 'text-(--vscode-charts-purple,#B180D7)';
+export const statusDot = (v: { status: TaskStatus; runtime?: { question?: boolean } }) => (v.status === 'waiting' && v.runtime?.question ? QUESTION_DOT : STATUS_DOT[v.status]);
+
 export const BUTTON =
 	'inline-flex h-6 items-center gap-1 rounded-sm bg-(--vscode-button-background) px-2 text-xs text-(--vscode-button-foreground) hover:opacity-90 disabled:opacity-50';
 export const BUTTON_SECONDARY =

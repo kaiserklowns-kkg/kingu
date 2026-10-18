@@ -2,6 +2,7 @@
 // Shapes mirror Rust `agent/tasks.rs` and `agent/review.rs`.
 
 import { firstLine, formatUsage, slugify, toolArg, type AgentEvent, type RunState, type RunStatus } from '#lib/agent/events.ts';
+import { isQuestionTool, questionText } from './agentHooks.ts';
 
 export type TaskStatus = 'running' | 'waiting' | 'review' | 'done' | 'failed';
 
@@ -63,6 +64,8 @@ export type TaskRuntime = {
 	/** One-line summary of the latest event. */
 	lastEvent?: string;
 	pendingPermissions: number;
+	/** The agent asked you a question (AskUserQuestion, elicitation, request_user_input…), apart from a permission prompt. */
+	question?: boolean;
 	model?: string;
 	sessionId: string | null;
 	/** "$0.0123 · 12.3k in · 456 out · 3 turns" of the session so far. */
@@ -103,6 +106,11 @@ export const COLUMNS: { id: Column; label: string; hint: string }[] = [
 	{ id: 'active', label: 'กำลังทำ', hint: 'agent กำลังทำงาน' },
 	{ id: 'done', label: 'เสร็จแล้ว', hint: 'merge หรือปิดงานแล้ว' }
 ];
+
+/** The agent waits on your answer to its question (not a permission prompt). */
+export const isQuestion = (v: { status: TaskStatus; runtime?: Pick<TaskRuntime, 'question'> }) => v.status === 'waiting' && !!v.runtime?.question;
+export const QUESTION_LABEL = 'agent ถามคุณ';
+export const statusLabel = (v: { status: TaskStatus; runtime?: Pick<TaskRuntime, 'question'> }) => (isQuestion(v) ? QUESTION_LABEL : STATUS_LABEL[v.status]);
 
 export const STATUS_LABEL: Record<TaskStatus, string> = {
 	running: 'กำลังทำ',
@@ -202,6 +210,7 @@ export function summarizeEvent(ev: AgentEvent): string | undefined {
 		case 'stderr':
 			return firstLine(ev.line, 80);
 		case 'permission_request':
+			if (isQuestionTool(ev.tool)) return `ถาม: ${firstLine(questionText(ev.input) ?? ev.input_summary, 80)}`;
 			return `ขออนุญาตใช้ ${ev.tool}${ev.input_summary ? `: ${firstLine(ev.input_summary, 60)}` : ''}`;
 		case 'system':
 			return ev.subtype === 'init' ? 'เริ่ม session' : undefined;
@@ -255,6 +264,7 @@ export function toTaskRuntime(run: RunView, updatedAt?: number): TaskRuntime {
 		working: !run.ended && (run.status === 'starting' || run.status === 'running' || run.status === 'waiting'),
 		lastEvent: lastEventOf(run) ?? (run.status === 'starting' ? 'กำลังเริ่ม' : undefined),
 		pendingPermissions: run.pending.length,
+		question: !run.ended && run.pending.some((p) => p.kind === 'permission_request' && isQuestionTool(p.tool)),
 		model: run.model ?? undefined,
 		sessionId: run.sessionId,
 		usage: run.result ? formatUsage(run.result) || undefined : undefined,

@@ -3,6 +3,7 @@ import {
 	ampMcpConfig,
 	codexMcpArgs,
 	codexNotifyArgs,
+	hookEnv,
 	copilotMcpConfig,
 	CUSTOM,
 	CUSTOM_PICK,
@@ -106,10 +107,21 @@ describe('codex', () => {
 		expect(resume.slice(-2)).toEqual(['resume', 'th-1']);
 		expect(codex.launch(['codex'], { resume: null }, none).argv).toEqual(['codex', 'resume', '--last']);
 		expect(codex.skills).toBe(false);
+		// Its hooks.json status hooks find the session's file through the env.
+		expect(start.slice(0, 3)).toEqual(['env', 'KINGU_AGENT_HOOK_FILE=/h.jsonl', 'codex']);
+		expect(profileOf(start).id).toBe('codex');
 	});
 });
 
 describe('other CLIs', () => {
+	test('status hooks: the hook file (and opencode plugin folder) reach the CLI as env', () => {
+		const ctx: LaunchContext = { ...none, hookFile: '/c/agent-hooks/t.jsonl', opencodeDir: '/d/opencode/default' };
+		expect(profile('gemini').launch(['gemini'], { prompt: 'x' }, { ...ctx, opencodeDir: null }).argv).toEqual(['env', 'KINGU_AGENT_HOOK_FILE=/c/agent-hooks/t.jsonl', 'gemini', '--prompt-interactive', 'x']);
+		expect(profile('opencode').launch(['opencode'], { fresh: true }, ctx).argv.slice(0, 3)).toEqual(['env', 'KINGU_AGENT_HOOK_FILE=/c/agent-hooks/t.jsonl', 'OPENCODE_CONFIG_DIR=/d/opencode/default']);
+		expect(hookEnv({ hookFile: null })).toEqual({});
+		for (const id of ['gemini', 'cursor', 'copilot', 'droid', 'opencode']) expect(profile(id).status).toBe('agent-hooks');
+		expect(profile('amp').launch(['amp'], { fresh: true }, ctx).argv).toEqual(['amp']);
+	});
 	test('gemini: --prompt-interactive, resume latest', () => {
 		const g = profile('gemini');
 		expect(g.launch(['gemini'], { prompt: tricky }, withMcp).argv).toEqual(['gemini', '--prompt-interactive', tricky]);

@@ -20,6 +20,8 @@ import {
 	taskStatusOf,
 	timeAgo,
 	toTaskRuntime,
+	statusLabel,
+	isQuestion,
 	toggleAccepted,
 	uniqueSlug,
 	upsertTask,
@@ -128,6 +130,15 @@ describe('agents store → TaskRuntime adapter', () => {
 		expect(lastEventOf(r)).toBe('กำลังแก้ ไฟล์');
 		applyEvent(r, { kind: 'message', role: 'assistant', text: 'แก้เสร็จแล้ว' });
 		expect(lastEventOf(r)).toBe('แก้เสร็จแล้ว');
+	});
+
+	test('AskUserQuestion is a question, not a permission prompt', () => {
+		const q = { ...perm('q1', 'AskUserQuestion'), input: { questions: [{ question: 'ใช้ฐานข้อมูลไหน?', header: 'DB' }] } };
+		const rt = toTaskRuntime(run([init, q]));
+		expect(rt).toMatchObject({ status: 'waiting', question: true, lastEvent: 'ถาม: ใช้ฐานข้อมูลไหน?' });
+		expect(statusLabel({ status: rt.status, runtime: rt })).toBe('agent ถามคุณ');
+		expect(isQuestion({ status: 'waiting', runtime: { question: false } })).toBe(false);
+		expect(toTaskRuntime(run([init, perm('p1')])).question).toBe(false);
 	});
 
 	test('a permission request is รอคุณ (waiting) until answered', () => {

@@ -32,8 +32,8 @@
 	import { cliName, cliOf, type RunMode } from './agentCli';
 	import { profileOf } from '#lib/ade/agentProfiles.ts';
 	import { cliSessions } from './cliSessions.svelte';
-	import { BUTTON, BUTTON_SECONDARY, STATUS_DOT } from './ui';
-	import { STATUS_LABEL, timeAgo } from './model';
+	import { BUTTON, BUTTON_SECONDARY, statusDot } from './ui';
+	import { statusLabel, timeAgo } from './model';
 
 	let body: HTMLDivElement | undefined = $state();
 	const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
@@ -211,7 +211,7 @@
 										{#each recent as v (v.meta.slug)}
 											<button class="min-w-0 rounded-lg border border-(--vscode-widget-border) px-3 py-2.5 text-left hover:bg-(--vscode-list-hoverBackground)" onclick={() => adeLayout.show(v.meta.slug)}>
 												<span class="flex items-center gap-2">
-													<span class={['size-2 shrink-0 rounded-full', STATUS_DOT[v.status]]} title={STATUS_LABEL[v.status]}></span>
+													<span class={['size-2 shrink-0 rounded-full', statusDot(v)]} title={statusLabel(v)}></span>
 													<span class="min-w-0 flex-1 truncate text-[13px]">{v.meta.title}</span>
 												</span>
 												<span class="mt-1 flex gap-2 pl-4 text-xs text-(--vscode-descriptionForeground)">

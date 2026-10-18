@@ -5,12 +5,17 @@ import type { TaskStatus } from './model';
 
 export type Notice = { title: string; body: string; kind: 'attention' | 'finished' };
 
+/** A task's status for notifications: a waiting agent that asks you a question is told apart. */
+export type NoticeState = TaskStatus | 'question';
+export const noticeState = (status: TaskStatus, question?: boolean): NoticeState => (status === 'waiting' && question ? 'question' : status);
+
 /** `kingu.agent.notifications.events`: `attention` leaves out finished turns. */
-export function noticeFor(prev: TaskStatus | undefined, next: TaskStatus, task: { title: string; lastEvent?: string }, events = 'all'): Notice | null {
+export function noticeFor(prev: NoticeState | undefined, next: NoticeState, task: { title: string; lastEvent?: string }, events = 'all'): Notice | null {
 	if (prev === undefined || prev === next) return null;
+	if (next === 'question') return { title: `agent ถามคุณ: ${task.title}`, body: task.lastEvent || 'agent รอคำตอบของคุณ', kind: 'attention' };
 	if (next === 'waiting') return { title: `รอคุณอนุญาต: ${task.title}`, body: task.lastEvent || 'agent ขออนุญาตใช้เครื่องมือ', kind: 'attention' };
 	if (next === 'failed') return { title: `งานล้มเหลว: ${task.title}`, body: task.lastEvent || 'ดูรายละเอียดใน Agents', kind: 'attention' };
-	if (prev === 'running' && next === 'review' && events !== 'attention') return { title: `เสร็จรอบแล้ว: ${task.title}`, body: task.lastEvent || 'รอคุณรีวิว', kind: 'finished' };
+	if ((prev === 'running' || prev === 'question') && next === 'review' && events !== 'attention') return { title: `เสร็จรอบแล้ว: ${task.title}`, body: task.lastEvent || 'รอคุณรีวิว', kind: 'finished' };
 	return null;
 }
 

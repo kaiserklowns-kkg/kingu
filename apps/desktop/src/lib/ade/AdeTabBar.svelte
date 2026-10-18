@@ -11,9 +11,9 @@
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { adeLayout } from './adeLayout.svelte';
 	import { pickSession } from './agentsMode.svelte';
-	import { STATUS_LABEL } from './model';
+	import { statusLabel } from './model';
 	import { adeTasks } from './tasks.svelte';
-	import { STATUS_DOT } from './ui';
+	import { statusDot } from './ui';
 	import { sessionsAttentionLabel } from '#lib/workbench/titlebar.ts';
 
 	const key = $derived(adeLayout.key);
@@ -48,7 +48,7 @@
 					ondblclick={() => (t.kind === 'file' || t.kind === 'diff') && adeLayout.pin(key, t.key)}
 				>
 					{#if t.kind === 'agent' && view}
-						<span class={['size-2 shrink-0 rounded-full', STATUS_DOT[view.status]]} title={STATUS_LABEL[view.status]}></span>
+						<span class={['size-2 shrink-0 rounded-full', statusDot(view)]} title={statusLabel(view)}></span>
 						<span class="truncate" title={view.meta.title}>{view.meta.title}</span>
 					{:else if t.kind === 'file' || t.kind === 'diff'}
 						<FileIcon icon={fileIcon(t.label)} />

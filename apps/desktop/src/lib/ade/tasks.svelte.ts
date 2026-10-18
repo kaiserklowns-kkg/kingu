@@ -48,7 +48,7 @@ import {
 import { runtime } from './runtime.svelte';
 import { adeLayout } from './adeLayout.svelte';
 import { agentCommand, cliAgent, cliOf, type RunMode } from './agentCli';
-import { profileOf } from '#lib/ade/agentProfiles.ts';
+import { profileOf, programOf } from '#lib/ade/agentProfiles.ts';
 import { chooseAgentCli } from '#lib/ade/agentPicker.ts';
 import { cliSessions } from './cliSessions.svelte';
 import { mcpServers, skillPlugins } from './mcp';
@@ -406,14 +406,25 @@ class AdeTasks {
 					})
 				: null;
 		const hookFile =
-			profile.status === 'notify'
+			profile.status === 'notify' || profile.status === 'agent-hooks'
 				? await invoke<string>('agent_hook_file', { token }).catch((e) => {
-						clientLog('error', `agent notify for ${slug}: ${e}`);
+						clientLog('error', `agent status file for ${slug}: ${e}`);
 						return null;
 					})
 				: null;
+		// Orca's managed agent hooks: the CLI's status hooks are in place before it starts.
+		let opencodeDir: string | null = null;
+		if (hookFile && settings.get<boolean>('kingu.agent.statusHooks') !== false) {
+			opencodeDir = await invoke<string | null>('agent_status_hooks_install', { agent: profile.id, program: programOf(cli) }).catch((e) => {
+				status.flash(`ติดตั้ง status hooks ของ ${profile.title} ไม่ได้: ${e}`, 8000);
+				return null;
+			});
+		}
+		// Orca's trust presets: the CLI's first-run "trust this folder?" prompt would swallow the prompt.
+		if (settings.get<boolean>('kingu.agent.trustWorkspace') !== false)
+			await invoke('agent_trust_workspace', { slug, program: programOf(cli) }).catch((e) => clientLog('info', `trust ${slug}: ${e}`));
 		const sessionId = profile.ownsSessionId && !('resume' in how) ? crypto.randomUUID() : undefined;
-		const launch = profile.launch(cli, how, { sessionId, hookSettings, hookFile, servers: mcpServers(root), plugins: profile.skills ? await skillPlugins() : [] });
+		const launch = profile.launch(cli, how, { sessionId, hookSettings, hookFile, opencodeDir, servers: mcpServers(root), plugins: profile.skills ? await skillPlugins() : [] });
 		if (sessionId) await this.#patch(slug, { session_id: sessionId });
 		cliSessions.start(slug, launch.argv, hookSettings || hookFile ? token : undefined, launch.typePrompt);
 	}

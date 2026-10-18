@@ -11,7 +11,9 @@ pub mod host;
 pub mod issues;
 pub mod review;
 pub mod scripts;
+pub mod status_hooks;
 pub mod tasks;
+pub mod trust;
 pub mod worktree;
 
 use std::sync::Arc;

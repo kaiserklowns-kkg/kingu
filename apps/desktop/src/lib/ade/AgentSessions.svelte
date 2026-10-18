@@ -12,10 +12,10 @@
 	import { cliOf } from './agentCli.ts';
 	import { profileOf } from './agentProfiles.ts';
 	import { cliSessions } from './cliSessions.svelte.ts';
-	import { STATUS_LABEL, timeAgo, type TaskView } from './model.ts';
+	import { statusLabel, timeAgo, type TaskView } from './model.ts';
 	import { shellJoin, sortSessions, type SessionSort } from './rightSidebar.ts';
 	import { adeTasks } from './tasks.svelte.ts';
-	import { STATUS_DOT } from './ui.ts';
+	import { statusDot } from './ui.ts';
 
 	let { current }: { current: string } = $props();
 	let sort = $state<SessionSort>('updated');
@@ -94,7 +94,7 @@
 				class={['group flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-(--vscode-list-hoverBackground)', v.meta.slug === current && 'bg-(--vscode-list-inactiveSelectionBackground)']}
 				oncontextmenu={(e) => openMenu(e, v)}
 			>
-				<span class={['mt-1.5 size-2 shrink-0 rounded-full', STATUS_DOT[v.status]]} title={STATUS_LABEL[v.status]}></span>
+				<span class={['mt-1.5 size-2 shrink-0 rounded-full', statusDot(v)]} title={statusLabel(v)}></span>
 				<button class="min-w-0 flex-1 text-left" title="ไปที่ worktree kingu/{v.meta.slug}" onclick={() => adeLayout.show(v.meta.slug)}>
 					<span class="block truncate">{v.meta.title}</span>
 					<span class="flex gap-1.5 text-xs text-(--vscode-descriptionForeground)">

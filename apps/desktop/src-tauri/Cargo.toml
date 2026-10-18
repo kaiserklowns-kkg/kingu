@@ -18,7 +18,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.7.1", features = [] }
 
 [dependencies]
-serde_json = "1.0"
+# preserve_order: a CLI config Kingu edits (agent/trust.rs) keeps its key order.
+serde_json = { version = "1.0", features = ["preserve_order"] }
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.12.1", features = [] }
@@ -40,6 +41,10 @@ sha2 = "0.10.9"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# Agent notifications whose click opens the task (src/notify.rs); the plugin's own macOS backend.
+[target.'cfg(target_os = "macos")'.dependencies]
+mac-notification-sys = "=0.6.15"
 
 [dev-dependencies]
 tempfile = "3"

@@ -11,24 +11,28 @@ import { followUpPlan, toTaskRuntime, type TaskRuntime } from './model';
 import { cliName } from './agentCli';
 import { profileOf } from '#lib/ade/agentProfiles.ts';
 import { cliSessions } from './cliSessions.svelte';
+import { needsInput } from './agentHooks';
 
 /** A task whose agent CLI runs in a terminal: working while it prints, else waiting for you. */
 function cliRuntime(slug: string): TaskRuntime | undefined {
 	const s = cliSessions.sessions[slug];
 	if (!s) return;
-	// claude reports its state through hooks; other CLIs fall back to "printing = working" (codex's
-	// notify adds the session id and the turn's last answer).
+	// claude reports its state through hooks, and so do CLIs with Kingu's status hooks once their
+	// hooks report; before that (or without them) "printing = working" (codex's notify adds the
+	// session id and the turn's last answer).
 	const hook = cliSessions.hooks[slug];
-	if (hook && hook.phase !== 'starting' && profileOf(s.run).status === 'hooks') {
+	if (hook && hook.phase !== 'starting' && (profileOf(s.run).status === 'hooks' || hook.hooks)) {
 		const working = hook.phase === 'working';
+		const attention = needsInput(hook);
 		return {
 			slug,
-			status: hook.permission ? 'waiting' : working ? 'running' : 'review',
-			runStatus: hook.permission ? 'waiting' : working ? 'running' : hook.phase === 'ended' ? 'done' : 'idle',
+			status: attention ? 'waiting' : working ? 'running' : 'review',
+			runStatus: attention ? 'waiting' : working ? 'running' : hook.phase === 'ended' ? 'done' : 'idle',
 			live: hook.phase !== 'ended',
 			working,
 			lastEvent: hook.message,
-			pendingPermissions: hook.permission ? 1 : 0,
+			pendingPermissions: hook.permission && hook.phase === 'waiting' ? 1 : 0,
+			question: hook.question && hook.phase === 'waiting',
 			sessionId: hook.sessionId ?? null,
 			updatedAt: hook.at
 		};
