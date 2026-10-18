@@ -137,8 +137,9 @@ Every `/v1` request needs `Authorization: Bearer kgu_…` (or, in dev mode,
 | GET    | `/v1/tasks`                | Org-wide, newest change first: `?project_id=&status=&limit=` |
 | PATCH  | `/v1/tasks/{id}`           | `{status?, branch?}` (at least one) |
 | PUT    | `/v1/tasks/{client_task_id}/sync` | Desktop upsert, see below |
-| POST   | `/v1/tasks/{id}/runs`      | `{adapter, model?, machine_id?, started_at?, ended_at?, exit_reason?, input_tokens?, output_tokens?}` |
-| GET    | `/v1/runs`                 | Run history with `task_title`, newest first: `?task_id=&limit=` |
+| POST   | `/v1/tasks/{id}/runs`      | `{adapter, model?, machine_id?, started_at?, ended_at?, exit_reason?, input_tokens?, output_tokens?, cost_usd?}` |
+| PUT    | `/v1/tasks/{client_task_id}/runs/{client_run_id}/sync` | Desktop run upsert, see below |
+| GET    | `/v1/runs`                 | Run history with `task_title`, `project_name`, `source`, `external_ref`, `cost_usd`, `created_by`, newest first: `?task_id=&limit=` |
 | GET    | `/v1/snaps`                | Team Snap catalog (any member), see below |
 | PUT    | `/v1/snaps/{snap_id}`      | **owner/lead.** Approve and pin a snap, see below |
 | DELETE | `/v1/snaps/{snap_id}`      | **owner/lead.** Remove it from the catalog |
@@ -158,8 +159,14 @@ Idempotent upsert keyed by `(project_id, client_task_id)`; `client_task_id`
  "branch": "kingu/add-login", "agent": "claude-code", "model": "opus",
  "diff_stats": {"additions": 12, "deletions": 3, "files_changed": 2},
  "started_at": "2026-10-17T09:00:00Z", "finished_at": null,
+ "source": "github", "external_ref": "acme/app#42",
  "updated_at": "2026-10-17T10:00:00Z"}
 ```
+
+`source`/`external_ref` are optional (absent = `manual`, no reference);
+`external_ref` is required iff the source is not `manual`. Several desktop tasks
+may reference the same issue (the import uniqueness applies only to tasks
+created with `POST /v1/projects/{id}/tasks`).
 
 - Returns `{task, created, applied}`: 201 when created, else 200.
   `applied: false` means nothing changed (an exact retry, or a state whose
@@ -170,6 +177,26 @@ Idempotent upsert keyed by `(project_id, client_task_id)`; `client_task_id`
   diff markers (`diff --git`, `@@ -`, `+++ b/`), PEM blocks or well-known token
   formats → 422 `content_not_allowed`. `updated_at` is required and may be at
   most 24h in the future.
+
+### `PUT /v1/tasks/{client_task_id}/runs/{client_run_id}/sync`
+
+Idempotent upsert of one agent run of a synced task, keyed by
+`(task, client_run_id)`; both path ids match `[A-Za-z0-9._:-]{1,128}`.
+
+```json
+{"project_id": "uuid", "adapter": "claude-code", "model": "opus",
+ "exit_reason": "done", "started_at": "2026-10-17T09:00:00Z",
+ "ended_at": "2026-10-17T09:05:00Z", "input_tokens": 1500,
+ "output_tokens": 300, "cost_usd": 0.4213,
+ "updated_at": "2026-10-17T09:05:00Z"}
+```
+
+- Returns `{run, created, applied}` with the same newest-state-wins rules and
+  content screening as task sync. `started_at` and `updated_at` are required;
+  `cost_usd` (0..1000000) may be omitted when unknown. `created_by` is the
+  caller.
+- 409 `task_not_synced` when the task has not been synced yet: the desktop
+  retries it after the task's own sync.
 
 ### Team Snap catalog (`/v1/snaps`)
 

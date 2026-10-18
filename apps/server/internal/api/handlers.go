@@ -80,6 +80,17 @@ type agentRun struct {
 	ExitReason   *string    `json:"exit_reason"`
 	InputTokens  int64      `json:"input_tokens"`
 	OutputTokens int64      `json:"output_tokens"`
+	CostUSD      *float64   `json:"cost_usd"`
+	CreatedBy    *string    `json:"created_by"`
+	ClientRunID  *string    `json:"client_run_id"`
+}
+
+const runCols = `id::text, task_id::text, adapter, model, machine_id, started_at, ended_at,
+	exit_reason, input_tokens, output_tokens, cost_usd::float8, created_by, client_run_id`
+
+func (run *agentRun) scanDest() []any {
+	return []any{&run.ID, &run.TaskID, &run.Adapter, &run.Model, &run.MachineID, &run.StartedAt,
+		&run.EndedAt, &run.ExitReason, &run.InputTokens, &run.OutputTokens, &run.CostUSD, &run.CreatedBy, &run.ClientRunID}
 }
 
 type listResponse[T any] struct {
@@ -201,20 +212,8 @@ func (s *Server) createTask(r *http.Request, oc orgCtx, tx pgx.Tx) (int, any, er
 	if req.Source == "" {
 		req.Source = "manual"
 	}
-	if !taskSources[req.Source] {
-		return 0, nil, errBadRequest("invalid_input", "source must be one of manual, github, linear, jira")
-	}
-	if req.Source == "manual" {
-		if req.ExternalRef != nil {
-			return 0, nil, errBadRequest("invalid_input", "external_ref is not allowed for source manual")
-		}
-	} else {
-		if req.ExternalRef == nil {
-			return 0, nil, errBadRequest("invalid_input", "external_ref is required for source "+req.Source)
-		}
-		if err := checkText("external_ref", *req.ExternalRef, maxExternalRefLen, true); err != nil {
-			return 0, nil, err
-		}
+	if err := checkSource(req.Source, req.ExternalRef); err != nil {
+		return 0, nil, err
 	}
 	if req.Status == "" {
 		req.Status = "backlog"
@@ -340,6 +339,7 @@ type createRunReq struct {
 	ExitReason   *string    `json:"exit_reason"`
 	InputTokens  int64      `json:"input_tokens"`
 	OutputTokens int64      `json:"output_tokens"`
+	CostUSD      *float64   `json:"cost_usd"`
 }
 
 func (s *Server) createRun(r *http.Request, oc orgCtx, tx pgx.Tx) (int, any, error) {
@@ -361,8 +361,8 @@ func (s *Server) createRun(r *http.Request, oc orgCtx, tx pgx.Tx) (int, any, err
 			}
 		}
 	}
-	if req.InputTokens < 0 || req.OutputTokens < 0 {
-		return 0, nil, errBadRequest("invalid_input", "token counts must be >= 0")
+	if err := checkUsage(req.InputTokens, req.OutputTokens, req.CostUSD); err != nil {
+		return 0, nil, err
 	}
 	started := time.Now().UTC()
 	if req.StartedAt != nil {
@@ -382,14 +382,12 @@ func (s *Server) createRun(r *http.Request, oc orgCtx, tx pgx.Tx) (int, any, err
 	var run agentRun
 	err = tx.QueryRow(ctx,
 		`INSERT INTO agent_runs (org_id, task_id, adapter, model, machine_id, started_at, ended_at,
-		                         exit_reason, input_tokens, output_tokens)
-		 VALUES (app_current_org(), $1, $2, $3, $4, $5, $6, $7, $8, $9)
-		 RETURNING id::text, task_id::text, adapter, model, machine_id, started_at, ended_at,
-		           exit_reason, input_tokens, output_tokens`,
+		                         exit_reason, input_tokens, output_tokens, cost_usd, created_by)
+		 VALUES (app_current_org(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		 RETURNING `+runCols,
 		taskID, req.Adapter, req.Model, req.MachineID, started, req.EndedAt,
-		req.ExitReason, req.InputTokens, req.OutputTokens,
-	).Scan(&run.ID, &run.TaskID, &run.Adapter, &run.Model, &run.MachineID, &run.StartedAt,
-		&run.EndedAt, &run.ExitReason, &run.InputTokens, &run.OutputTokens)
+		req.ExitReason, req.InputTokens, req.OutputTokens, req.CostUSD, oc.Actor,
+	).Scan(run.scanDest()...)
 	if err != nil {
 		return 0, nil, err
 	}
