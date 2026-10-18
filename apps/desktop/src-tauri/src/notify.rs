@@ -7,15 +7,19 @@
 
 use tauri::{AppHandle, Emitter, Manager};
 
-/// Sent to the webview when the user clicks a notification: `{ slug, chat_id? }`.
+/// Sent to the webview when the user clicks a notification: `{ slug, chat_id?, root? }`.
 pub const NOTIFICATION_CLICKED: &str = "agent:notification-clicked";
 
 /// What a click opens: an ADE task (`slug`) or an agent chat of the open folder (`chat_id`).
+/// `root`: the added project the task belongs to when it is not the open folder (the click
+/// switches to it first).
 #[derive(Debug, Clone, Default, serde::Serialize, PartialEq)]
 pub struct Clicked {
   pub slug: Option<String>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub chat_id: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub root: Option<String>,
 }
 
 /// Shows and focuses the main window (un-minimizing it).
@@ -80,15 +84,29 @@ fn deliver(app: AppHandle, title: String, body: String, sound: Option<String>, _
 
 /// An agent notification for task `slug` or agent chat `chat_id` (neither: not tied to one,
 /// e.g. the test notification).
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
-pub fn agent_notify(app: AppHandle, title: String, body: String, sound: Option<String>, slug: Option<String>, chat_id: Option<String>) -> Result<(), String> {
+pub fn agent_notify(
+  app: AppHandle,
+  ws: tauri::State<'_, crate::workspace::Workspace>,
+  projects: tauri::State<'_, crate::projects::Projects>,
+  title: String,
+  body: String,
+  sound: Option<String>,
+  slug: Option<String>,
+  chat_id: Option<String>,
+  root: Option<String>,
+) -> Result<(), String> {
   if let Some(s) = slug.as_deref() {
     crate::agent::worktree::validate_slug(s)?;
   }
   if let Some(id) = chat_id.as_deref() {
     crate::agent::chats::check_id(id)?;
   }
-  deliver(app, title, body, sound_of(sound.as_deref()), Clicked { slug, chat_id })
+  if let Some(r) = root.as_deref() {
+    projects.check(r, ws.current().as_deref())?;
+  }
+  deliver(app, title, body, sound_of(sound.as_deref()), Clicked { slug, chat_id, root })
 }
 
 #[cfg(test)]
@@ -105,7 +123,11 @@ mod tests {
 
   #[test]
   fn click_payload_is_the_slug() {
-    assert_eq!(serde_json::to_value(Clicked { slug: Some("fix-bug".into()), chat_id: None }).unwrap(), serde_json::json!({ "slug": "fix-bug" }));
-    assert_eq!(serde_json::to_value(Clicked { slug: None, chat_id: Some("c-1".into()) }).unwrap(), serde_json::json!({ "slug": null, "chat_id": "c-1" }));
+    assert_eq!(serde_json::to_value(Clicked { slug: Some("fix-bug".into()), ..Default::default() }).unwrap(), serde_json::json!({ "slug": "fix-bug" }));
+    assert_eq!(serde_json::to_value(Clicked { chat_id: Some("c-1".into()), ..Default::default() }).unwrap(), serde_json::json!({ "slug": null, "chat_id": "c-1" }));
+    assert_eq!(
+      serde_json::to_value(Clicked { slug: Some("fix-bug".into()), root: Some("/r/b".into()), ..Default::default() }).unwrap(),
+      serde_json::json!({ "slug": "fix-bug", "root": "/r/b" })
+    );
   }
 }
