@@ -44,6 +44,7 @@
 	import { installWorktreeCommands } from '#lib/ade/worktreeMenu.svelte.ts';
 	import { installAgentNotifications } from '#lib/ade/agentNotify.svelte.ts';
 	import { installAutomations } from '#lib/ade/automations.svelte.ts';
+	import { installIssues } from '#lib/ade/issues.svelte.ts';
 	import { installSnaps } from '#lib/snaps/snaps.svelte.ts';
 	import { installDebug } from '#lib/debug/debug.svelte.ts';
 
@@ -196,6 +197,7 @@
 		const uninstallWorktreeCommands = installWorktreeCommands();
 		const uninstallAgentNotifications = installAgentNotifications();
 		const uninstallAutomations = installAutomations();
+		const uninstallIssues = installIssues();
 		const uninstallLayout = installLayoutCommands();
 		const uninstallSnaps = installSnaps();
 		const uninstallTerminalSessions = installTerminalSessions();
@@ -207,6 +209,7 @@
 			uninstallLayout();
 			uninstallAgentsMode();
 			uninstallWorktreeCommands();
+			uninstallIssues();
 			uninstallAutomations();
 			uninstallAgentNotifications();
 			uninstallAde();

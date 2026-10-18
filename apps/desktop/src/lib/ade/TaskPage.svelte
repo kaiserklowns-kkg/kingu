@@ -13,6 +13,7 @@
 	import { adeTasks } from './tasks.svelte';
 	import { prLine, sortChecks, summarizeChecks, type CheckState } from './prChecks';
 	import { prStatuses } from './prStatus.svelte';
+	import { issues } from './issues.svelte.ts';
 	import { cliOf } from './agentCli';
 	import { adeLayout } from './adeLayout.svelte';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
@@ -129,6 +130,10 @@
 				<span>{meta.agent}{(view.runtime?.model ?? meta.model) ? ` · ${view.runtime?.model ?? meta.model}` : ''}</span>
 				<span>สร้าง {timeAgo(meta.created_at, adeTasks.now)}</span>
 				{#if meta.pr_url}<a class="text-(--vscode-textLink-foreground) hover:underline" href={meta.pr_url} target="_blank" rel="noreferrer">{meta.pr_url}</a>{/if}
+				{#if meta.issue}
+					{@const issue = meta.issue}
+					<button class="text-(--vscode-textLink-foreground) hover:underline" title="เปิด issue บน GitHub: {issue.url}" onclick={() => issues.open(issue)}>issue #{issue.number}</button>
+				{/if}
 				<span class="flex-1"></span>
 				{#if running && run?.runId !== undefined}
 					<button class={BUTTON_SECONDARY} title="หยุดรอบนี้ session ยังเปิดอยู่ (Interrupt)" onclick={() => adeTasks.interrupt(slug)}><Icon name="stop" size={12} /> หยุดรอบนี้</button>

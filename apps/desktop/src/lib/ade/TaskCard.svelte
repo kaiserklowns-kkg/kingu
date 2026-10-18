@@ -6,6 +6,7 @@
 	import { adeTasks } from './tasks.svelte';
 	import { ICON_BUTTON, STATUS_DOT, TONE } from './ui';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
+	import { issues } from './issues.svelte.ts';
 
 	let { view }: { view: TaskView } = $props();
 	/** The session shown in the Agents layout. */
@@ -50,7 +51,13 @@
 	<div class="mt-1 flex items-center gap-1 truncate font-mono text-[11px] text-(--vscode-descriptionForeground)" title="kingu/{meta.slug} ← {meta.base}">
 		<Icon name="branch" size={12} /><span class="truncate">kingu/{meta.slug}</span><span class="shrink-0 opacity-70">← {meta.base}</span>
 	</div>
-	<div class="mt-0.5 truncate text-(--vscode-descriptionForeground)">{meta.agent}{model ? ` · ${model}` : ''}</div>
+	<div class="mt-0.5 flex items-center gap-1.5 text-(--vscode-descriptionForeground)">
+		<span class="min-w-0 flex-1 truncate">{meta.agent}{model ? ` · ${model}` : ''}</span>
+		{#if meta.issue}
+			{@const issue = meta.issue}
+			<button class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" title="เปิด issue #{issue.number} บน GitHub: {issue.title}" onclick={(e) => (e.stopPropagation(), issues.open(issue))}>#{issue.number}</button>
+		{/if}
+	</div>
 	{#if busy}
 		<div class="mt-1 truncate text-(--vscode-editorInfo-foreground)">{busy}…</div>
 	{:else if view.status === 'waiting'}

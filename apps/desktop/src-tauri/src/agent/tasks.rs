@@ -19,6 +19,15 @@ const MAX_PROMPT: usize = 64 * 1024;
 pub const RUN_STATUSES: &[&str] = &["starting", "running", "waiting", "idle", "stopped", "failed", "done"];
 const MAX_SESSION_ID: usize = 128;
 const MAX_SUMMARY: usize = 2000;
+const MAX_ISSUE_URL: usize = 2048;
+
+/// The GitHub issue a task was started from (its PR says `Fixes #number`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct IssueLink {
+  pub number: u64,
+  pub url: String,
+  pub title: String,
+}
 
 /// How the latest run (or turn) of a task ended, so the Agents view can show it after a restart.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -69,6 +78,9 @@ pub struct TaskMeta {
   pub session_id: Option<String>,
   #[serde(default)]
   pub last_run: Option<RunSummary>,
+  /// Older tasks.json files have no `issue`.
+  #[serde(default)]
+  pub issue: Option<IssueLink>,
 }
 
 /// Session ids go to the agent host as `resume`: keep them to plain id characters.
@@ -126,6 +138,12 @@ pub fn validate(tasks: &[TaskMeta]) -> Result<(), String> {
     {
       return Err(format!("{}: invalid session id", t.slug));
     }
+    if let Some(i) = &t.issue {
+      let web = i.url.starts_with("https://") || i.url.starts_with("http://");
+      if i.number == 0 || !web || i.url.len() > MAX_ISSUE_URL || i.title.chars().count() > 1000 {
+        return Err(format!("{}: invalid issue link", t.slug));
+      }
+    }
     if let Some(r) = &t.last_run {
       if !RUN_STATUSES.contains(&r.status.as_str()) {
         return Err(format!("{}: unknown run status {}", t.slug, r.status));
@@ -176,6 +194,7 @@ mod tests {
         output_tokens: Some(34),
         num_turns: Some(2),
       }),
+      issue: Some(IssueLink { number: 42, url: "https://github.com/acme/app/issues/42".into(), title: "แก้ login".into() }),
     }
   }
 
@@ -201,7 +220,7 @@ mod tests {
     .unwrap();
     let t = &load(tmp.path()).unwrap()[0];
     assert_eq!((t.agent.as_str(), t.updated_at, t.accepted.len()), ("claude-code", 0, 0));
-    assert_eq!((t.session_id.as_deref(), t.last_run.as_ref()), (None, None));
+    assert_eq!((t.session_id.as_deref(), t.last_run.as_ref(), t.issue.as_ref()), (None, None, None));
   }
 
   #[test]
@@ -221,6 +240,8 @@ mod tests {
     assert!(bad(|t| t.last_run.as_mut().unwrap().status = "weird".into()));
     assert!(bad(|t| t.last_run.as_mut().unwrap().summary = Some("x".repeat(MAX_SUMMARY + 1))));
     assert!(bad(|t| t.last_run.as_mut().unwrap().cost_usd = Some(f64::NAN)));
+    assert!(bad(|t| t.issue.as_mut().unwrap().number = 0));
+    assert!(bad(|t| t.issue.as_mut().unwrap().url = "javascript:alert(1)".into()));
     assert!(save(tmp.path(), &[task("a"), task("a")]).is_err());
     assert!(!tmp.path().join(".kingu/tasks.json").exists());
   }

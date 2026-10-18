@@ -40,6 +40,7 @@ import {
 	uniqueSlug,
 	type DiffStat,
 	type GhStatus,
+	type IssueLink,
 	type MergeResult,
 	type TaskMeta,
 	type TaskView
@@ -50,6 +51,7 @@ import { claudeResume, claudeStart, cliAgent, cliOf, cliResume, cliStart, isClau
 import { cliSessions } from './cliSessions.svelte';
 import { cliWithMcp, mcpServers, skillPlugins } from './mcp';
 import { prStatuses } from './prStatus.svelte';
+import { issueLink, issuePrompt, issueSlug, issueTaskTitle, prBody, prComment, taskForIssue, type Issue, type IssueDetail } from './issues.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 
 class AdeTasks {
@@ -206,12 +208,22 @@ class AdeTasks {
 	 * `timeline` runs it through the agent host. Without one, `kingu.agent.runMode` decides.
 	 * `open: false` (automations) leaves the user's view alone.
 	 */
-	/** `slugHint`: the branch name to start from when the title has no Latin letters (e.g. an automation id). */
-	async create(input: { title: string; prompt: string; base: string; mode?: RunMode; open?: boolean; slugHint?: string }): Promise<string | undefined> {
+	/** `slugHint`: the branch name to start from when the title has no Latin letters (e.g. an automation id).
+	 *  `slug`: the whole branch name base instead (made unique). `issue`: the GitHub issue it comes from. */
+	async create(input: {
+		title: string;
+		prompt: string;
+		base: string;
+		mode?: RunMode;
+		open?: boolean;
+		slugHint?: string;
+		slug?: string;
+		issue?: IssueLink;
+	}): Promise<string | undefined> {
 		const title = input.title.trim();
 		if (!title || !workspace.root) return;
 		const taken = new Set([...this.list.map((t) => t.slug), ...this.worktrees.map((w) => w.slug ?? '')]);
-		const slug = uniqueSlug(input.slugHint ? `${input.slugHint} ${title}` : title, taken);
+		const slug = uniqueSlug(input.slug ?? (input.slugHint ? `${input.slugHint} ${title}` : title), taken);
 		const prompt = input.prompt.trim() || title;
 		// Without a pick, fork from the folder's current branch (so merging back has a branch).
 		const base = input.base || status.branch || 'HEAD';
@@ -227,13 +239,43 @@ class AdeTasks {
 			status.flash(`สร้าง worktree ไม่ได้: ${e}`, 10000);
 			return;
 		}
-		await this.#save([...this.list, newTask({ slug, title, prompt, base, agent: cli ? cliAgent(cli) : undefined }, Date.now())]);
+		await this.#save([...this.list, newTask({ slug, title, prompt, base, agent: cli ? cliAgent(cli) : undefined, issue: input.issue }, Date.now())]);
 		this.worktrees = (await invoke<WorktreeInfo[]>('worktree_list').catch(() => this.worktrees)).filter((w) => w.slug);
 		if (input.open !== false) this.openTask(slug);
 		// After the prompt: claude's --mcp-config takes several values and would swallow it.
 		if (cli) await this.#launchCli(slug, cli, { prompt });
 		else await this.run(slug, prompt);
 		return slug;
+	}
+
+	/**
+	 * A task for a GitHub issue: the prompt carries the issue (with its latest comments when
+	 * `gh issue view` answers) and asks for "Fixes #N"; the branch is `kingu/issue-<n>-<words>`.
+	 * When a task for the issue already exists, offers to open it instead of starting another.
+	 */
+	async createFromIssue(issue: Issue, opts: { base: string; mode?: RunMode }): Promise<string | undefined> {
+		const existing = taskForIssue(this.list, issue.number);
+		if (existing) {
+			const open = await ask(`มีงานของ issue #${issue.number} อยู่แล้ว: "${existing.title}" (kingu/${existing.slug})\n\nเปิดงานนั้นแทน?`, {
+				title: 'งานจาก issue',
+				okLabel: 'เปิดงานเดิม',
+				cancelLabel: 'ยกเลิก'
+			});
+			if (open) this.openTask(existing.slug);
+			return;
+		}
+		const detail = await invoke<IssueDetail>('gh_issue_view', { number: issue.number }).catch((e) => {
+			clientLog('info', `gh_issue_view #${issue.number}: ${e}`);
+			return issue;
+		});
+		return this.create({
+			title: issueTaskTitle(issue),
+			prompt: issuePrompt(detail),
+			base: opts.base,
+			mode: opts.mode,
+			slug: issueSlug(issue),
+			issue: issueLink(issue)
+		});
 	}
 
 	/** After a restart: start the task's CLI again in its worktree, continuing its latest session where the CLI can. */
@@ -444,12 +486,16 @@ class AdeTasks {
 		if (stat?.dirty && !(await ask('มีการแก้ไขที่ยังไม่ commit ซึ่งจะไม่อยู่ใน PR\n\nสร้าง PR ต่อไหม?', { title: 'สร้าง PR', okLabel: 'สร้าง PR', cancelLabel: 'ยกเลิก' })))
 			return;
 		if (!(await ask(`push kingu/${slug} ไปที่ origin แล้วเปิด PR เข้า ${meta.base}?`, { title: 'สร้าง PR', okLabel: 'สร้าง PR', cancelLabel: 'ยกเลิก' }))) return;
-		const body = `${meta.prompt}\n\n---\nสร้างจากงาน Kingu \`${slug}\``;
+		const body = prBody(meta);
 		const url = await this.#step(slug, 'สร้าง PR', () => invoke<string>('worktree_pr_create', { slug, base: meta.base, title: meta.title, body }));
 		if (url !== undefined) {
 			await this.#patch(slug, { pr_url: url || null });
 			status.flash(url ? `เปิด PR แล้ว: ${url}` : 'เปิด PR แล้ว', 10000);
 			void prStatuses.refresh(slug);
+			if (url && meta.issue && settings.get<boolean>('kingu.issues.commentOnPr') === true) {
+				const number = meta.issue.number;
+				invoke('gh_issue_comment', { number, body: prComment(url) }).catch((e) => status.flash(`comment ใน issue #${number} ไม่ได้: ${e}`, 8000));
+			}
 		}
 	}
 

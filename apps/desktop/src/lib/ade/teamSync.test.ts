@@ -18,7 +18,8 @@ const view = (over: Partial<TaskView> = {}): TaskView =>
 			accepted: [],
 			merged_at: null,
 			session_id: 'sess',
-			last_run: null
+			last_run: null,
+			issue: null
 		},
 		status: 'waiting',
 		stat: {
