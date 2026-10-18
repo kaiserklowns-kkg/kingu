@@ -26,6 +26,7 @@ import { isUntitled } from '#lib/workbench/untitled.ts';
 import type { StackFrame } from './protocol.ts';
 import { DebugSession } from './session.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
+import { t } from '#lib/i18n/index.ts';
 
 type DapEvent = { type: 'message'; json: string } | { type: 'stderr'; line: string } | { type: 'exit'; code: number | null };
 type Active = { session: DebugSession; id: number | null; config: LaunchConfig; build?: string[]; noDebug: boolean };
@@ -122,7 +123,7 @@ class Debug {
 		if (!isWorkspaceFile(rel)) return;
 		const has = this.breakpoints[rel]?.some((b) => b.line === line);
 		if (!has && !canSetBreakpoint(language, settings.get<boolean>('debug.allowBreakpointsEverywhere'))) {
-			status.flash(`ตั้ง breakpoint ในไฟล์ ${language} ไม่ได้ — เปิด debug.allowBreakpointsEverywhere เพื่อตั้งได้ทุกไฟล์`);
+			status.flash(t('tools.debug.cantSetBreakpoint', { language }));
 			return;
 		}
 		void this.#ensureRoot().then(() => this.#setBreakpoints(B.toggle(this.breakpoints, rel, line), rel));
@@ -149,8 +150,8 @@ class Debug {
 		await this.#ensureRoot();
 		const current = this.breakpoints[rel]?.find((b) => b.line === line)?.condition ?? '';
 		const cond = await quick.input({
-			placeholder: `เงื่อนไขของ breakpoint บรรทัด ${line}${current ? ` (ตอนนี้: ${current})` : ''} — Enter ว่างเพื่อลบเงื่อนไข`,
-			hint: (v) => (v ? `หยุดเมื่อ ${v}` : 'breakpoint ธรรมดา')
+			placeholder: t('tools.debug.conditionPlaceholder', { line, current: current ? t('tools.debug.current', { value: current }) : '' }),
+			hint: (v) => (v ? t('tools.debug.conditionHint', { condition: v }) : t('tools.debug.plainBreakpoint'))
 		});
 		if (cond !== undefined) this.#setBreakpoints(B.setCondition(this.breakpoints, rel, line, cond), rel);
 	}
@@ -161,8 +162,8 @@ class Debug {
 		await this.#ensureRoot();
 		const current = this.breakpoints[rel]?.find((b) => b.line === line)?.logMessage ?? '';
 		const message = await quick.input({
-			placeholder: `ข้อความ logpoint บรรทัด ${line}${current ? ` (ตอนนี้: ${current})` : ''} — ใส่ {นิพจน์} ได้ Enter ว่างเพื่อลบ`,
-			hint: (v) => (v ? `log ${v}` : 'breakpoint ธรรมดา')
+			placeholder: t('tools.debug.logPlaceholder', { line, current: current ? t('tools.debug.current', { value: current }) : '', example: `{${t('tools.debug.expression')}}` }),
+			hint: (v) => (v ? `log ${v}` : t('tools.debug.plainBreakpoint'))
 		});
 		if (message !== undefined) this.#setBreakpoints(B.setLogMessage(this.breakpoints, rel, line, message), rel);
 	}
@@ -172,8 +173,8 @@ class Debug {
 		if (!isWorkspaceFile(rel)) return;
 		await this.#ensureRoot();
 		const others = Object.entries(this.breakpoints).flatMap(([r, list]) => list.filter((b) => !(r === rel && b.line === line)).map((b) => B.breakpointKey(r, b.line)));
-		if (!others.length) return status.flash('ยังไม่มี breakpoint อื่นให้เป็นตัวเปิด — ตั้ง breakpoint ก่อน');
-		const item = await quick.choose({ placeholder: `breakpoint บรรทัด ${line} จะทำงานหลังหยุดที่…`, items: others.map((k) => ({ id: k, label: k })) });
+		if (!others.length) return status.flash(t('tools.debug.noOtherBreakpoints'));
+		const item = await quick.choose({ placeholder: t('tools.debug.triggerPlaceholder', { line }), items: others.map((k) => ({ id: k, label: k })) });
 		if (item) this.#setBreakpoints(B.setTriggeredBy(this.breakpoints, rel, line, item.id), rel);
 	}
 
@@ -202,9 +203,9 @@ class Debug {
 	/** F5: continue when stopped, else start a session (VS Code: Start Debugging / Continue). */
 	async start({ noDebug = false } = {}) {
 		if (this.stopped) return this.continue();
-		if (this.active) return status.flash('มี debug session ทำงานอยู่แล้ว');
+		if (this.active) return status.flash(t('tools.debug.alreadyRunning'));
 		const root = await this.#ensureRoot();
-		if (!root) return status.flash('เปิดโฟลเดอร์ก่อนเริ่ม debug');
+		if (!root) return status.flash(t('tools.debug.openFolderFirst'));
 		const picked = await this.#pickConfig();
 		if (!picked) return;
 		// debug.saveBeforeStart: the dirty editors of the active group (untitled ones ask where to save).
@@ -221,7 +222,7 @@ class Debug {
 		try {
 			if (generated?.askProgram) {
 				const suggestion = substitute(String(config.program ?? ''), ctx);
-				const program = await quick.input({ placeholder: `พาธของโปรแกรมที่จะ debug (Enter ว่าง = ${suggestion})`, hint: (v) => `debug ${v || suggestion}` });
+				const program = await quick.input({ placeholder: t('tools.debug.programPlaceholder', { suggestion }), hint: (v) => t('tools.debug.programHint', { program: v || suggestion }) });
 				if (program === undefined) return;
 				config = { ...config, program: program ? (program.startsWith('/') ? program : `${root}/${program}`) : suggestion };
 			}
@@ -258,7 +259,7 @@ class Debug {
 		if (configs.length > 1) {
 			const last = load(lastKey);
 			const item = await quick.choose({
-				placeholder: 'เลือก launch configuration',
+				placeholder: t('tools.debug.pickConfig'),
 				items: configs.map((c, i) => ({ id: String(i), label: c.name, description: c.type })),
 				activeId: String(Math.max(0, configs.findIndex((c) => c.name === last)))
 			});
@@ -271,7 +272,7 @@ class Debug {
 		const cargoToml = language === 'rust' ? await invoke<string>('read_workspace_file', { rel: 'Cargo.toml' }).catch(() => null) : null;
 		const gens = generatedConfigs(isWorkspaceFile(editors.active) ? language : '', { cargoToml });
 		if (!gens.length) {
-			status.flash('ไม่มี .vscode/launch.json — เปิดไฟล์ Rust, C/C++, Go หรือ Python แล้วกด F5 หรือใช้ Debug: Open launch.json');
+			status.flash(t('tools.debug.noLaunchJson'));
 			return;
 		}
 		return { config: gens[0].config, generated: gens[0] };
@@ -292,14 +293,14 @@ class Debug {
 		const consoleOption = typeof config.internalConsoleOptions === 'string' ? config.internalConsoleOptions : settings.get<string>('debug.internalConsoleOptions');
 		if (config.console !== 'integratedTerminal' && opensOnStart(consoleOption, first)) layout.showPanel('debugConsole');
 		const out = (category: string, text: string) => (this.model = model = appendOutput(this.model ?? model, category, text));
-		if (config.preLaunchTask) out('console', `ข้าม preLaunchTask "${config.preLaunchTask}" (Kingu ยังไม่รองรับ tasks.json) — build เองก่อนถ้าจำเป็น\n`);
+		if (config.preLaunchTask) out('console', t('tools.debug.skipPreLaunch', { task: String(config.preLaunchTask) }));
 		if (build) {
 			out('console', `> ${build.join(' ')}\n`);
 			const res = await invoke<{ success: boolean; output: string }>('debug_build', { argv: build }).catch((e) => ({ success: false, output: `${e}\n` }));
 			out(res.success ? 'stdout' : 'stderr', res.output);
 			if (!res.success) {
 				this.model = { ...this.model!, state: 'terminated' };
-				return status.flash(`${build.join(' ')} ไม่ผ่าน — ดู Debug Console`);
+				return status.flash(t('tools.debug.buildFailed', { command: build.join(' ') }));
 			}
 		}
 
@@ -372,7 +373,7 @@ class Debug {
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e);
 			this.#sessionOutput(session, 'stderr', `${message}\n`);
-			notifications.error(`เริ่ม debug ไม่ได้: ${message}`);
+			notifications.error(t('tools.debug.startFailed', { error: message }));
 			await this.#kill(active);
 		}
 	}
@@ -453,7 +454,7 @@ class Debug {
 	#reveal(frame: StackFrame | null) {
 		const loc = frameLocation(frame, this.root);
 		if (loc) editors.open(loc.rel, { reveal: { line: loc.line, column: loc.column, focus: settings.get<boolean>('debug.focusEditorOnBreak') } });
-		else if (frame?.source?.path) notifications.warn(`${frame.source.path} อยู่นอก workspace จึงเปิดไม่ได้`);
+		else if (frame?.source?.path) notifications.warn(t('tools.debug.outsideWorkspace', { path: frame.source.path }));
 	}
 
 	// --- Watch and REPL ----------------------------------------------------------------------------
@@ -491,7 +492,7 @@ class Debug {
 	async repl(expr: string) {
 		const session = this.#active?.session;
 		if (!session || !this.active) {
-			if (this.model) this.model = appendOutput(this.model, 'stderr', 'ไม่มี debug session ที่ทำงานอยู่\n');
+			if (this.model) this.model = appendOutput(this.model, 'stderr', t('tools.debug.noSession'));
 			return;
 		}
 		this.#sessionOutput(session, 'input', `> ${expr}\n`);
@@ -520,12 +521,12 @@ class Debug {
 			return notifications.error(e);
 		}
 		quick.pick({
-			placeholder: res.methods.length ? `ไม่ได้ติดตั้ง ${res.server}: ติดตั้งด้วยคำสั่ง (รันใน terminal) แล้วกด F5 อีกครั้ง` : `ไม่ได้ติดตั้ง ${res.server} — ติดตั้ง ${res.binary} เองแล้วกด F5 อีกครั้ง`,
+			placeholder: res.methods.length ? t('tools.debug.installWith', { server: res.server }) : t('tools.debug.installManual', { server: res.server, binary: res.binary }),
 			items: installItems(res),
 			onAccept: (item) => {
 				const method = res.methods[Number(item.id)];
 				if (!method) return;
-				terminals.open({ title: `ติดตั้ง ${res.server}`, run: method.argv });
+				terminals.open({ title: t('tools.debug.installTerminal', { server: res.server }), run: method.argv });
 				layout.showPanel('terminal');
 			}
 		});
@@ -536,7 +537,7 @@ class Debug {
 	/** Debug: Open launch.json — creates `.vscode/launch.json` with a configuration for the active file's language. */
 	async openLaunchJson() {
 		const root = await this.#ensureRoot();
-		if (!root) return status.flash('เปิดโฟลเดอร์ก่อน');
+		if (!root) return status.flash(t('tools.debug.openFolder'));
 		const rel = LAUNCH_FILES[0];
 		const exists = await invoke<string>('read_workspace_file', { rel }).then(
 			() => true,

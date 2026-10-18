@@ -3,6 +3,7 @@
 
 import { parseJsonc } from '#lib/settings/jsonc.ts';
 import type { RunInTerminalArguments } from './protocol.ts';
+import { t } from '#lib/i18n/index.ts';
 
 export type LaunchConfig = { type: string; request: string; name: string; preLaunchTask?: string; [key: string]: unknown };
 
@@ -14,11 +15,11 @@ export function parseLaunchJson(text: string, source: string): { configs: Launch
 	try {
 		raw = text.trim() ? parseJsonc(text) : {};
 	} catch (e) {
-		return { configs: [], error: `${source}: อ่าน JSON ไม่ได้ (${e instanceof Error ? e.message : e})` };
+		return { configs: [], error: t('tools.debug.launch.badJson', { source, error: e instanceof Error ? e.message : String(e) }) };
 	}
 	const list = (raw as { configurations?: unknown })?.configurations;
 	if (list === undefined) return { configs: [] };
-	if (!Array.isArray(list)) return { configs: [], error: `${source}: "configurations" ต้องเป็น array` };
+	if (!Array.isArray(list)) return { configs: [], error: t('tools.debug.launch.notArray', { source }) };
 	const configs = list.filter(
 		(c): c is LaunchConfig => !!c && typeof c === 'object' && typeof c.type === 'string' && typeof c.request === 'string' && typeof c.name === 'string'
 	);
@@ -56,7 +57,7 @@ function variable(name: string, ctx: VarContext): string {
 	}
 	const file = ctx.file;
 	if (['file', 'fileDirname', 'fileBasename', 'fileBasenameNoExtension', 'fileExtname', 'relativeFile', 'relativeFileDirname'].includes(name)) {
-		if (!file) throw new Error(`\${${name}} ต้องมีไฟล์เปิดอยู่ใน editor`);
+		if (!file) throw new Error(t('tools.debug.launch.needsFile', { variable: `\${${name}}` }));
 		const rel = file.startsWith(`${root}/`) ? file.slice(root.length + 1) : file;
 		switch (name) {
 			case 'file':
@@ -75,7 +76,7 @@ function variable(name: string, ctx: VarContext): string {
 				return rel.includes('/') ? dirname(rel) : '.';
 		}
 	}
-	throw new Error(`ไม่รองรับตัวแปร \${${name}} ใน launch.json`);
+	throw new Error(t('tools.debug.launch.unsupportedVar', { variable: `\${${name}}` }));
 }
 
 /** Replaces `${workspaceFolder}`, `${file}`, `${fileDirname}`, `${env:X}`… in every string of

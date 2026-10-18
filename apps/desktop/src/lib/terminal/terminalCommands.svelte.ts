@@ -10,14 +10,15 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { focusedTerminal, lastAdeTerminal, terminalHandle } from './registry.ts';
 import { terminals } from './terminals.svelte.ts';
 import { quickCommandInput, quickCommands } from './adeTerminalOptions.ts';
+import { t } from '#lib/i18n/index.ts';
 
 /** Orca's quick commands (`kingu.terminal.quickCommands`): pick one, typed into the last used ADE terminal. */
 async function runQuickCommand() {
 	const list = quickCommands(settings.get<Record<string, unknown>>('kingu.terminal.quickCommands'));
 	const target = focusedTerminal('ade') ?? lastAdeTerminal();
-	if (!list.length) return status.flash('ยังไม่มีคำสั่งด่วน ตั้งได้ที่ kingu.terminal.quickCommands');
-	if (!target) return status.flash('เปิด terminal ใน Agents ก่อน');
-	const picked = await quick.choose({ placeholder: 'เลือกคำสั่งด่วนที่จะรันใน terminal', items: list.map((q, i) => ({ id: String(i), label: q.label, description: q.command.split('\n')[0] })) });
+	if (!list.length) return status.flash(t('tools.terminal.quick.none'));
+	if (!target) return status.flash(t('tools.terminal.quick.openTerminal'));
+	const picked = await quick.choose({ placeholder: t('tools.terminal.quick.pick'), items: list.map((q, i) => ({ id: String(i), label: q.label, description: q.command.split('\n')[0] })) });
 	if (!picked) return;
 	target.write(quickCommandInput(list[Number(picked.id)].command));
 	target.focus();

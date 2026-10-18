@@ -14,6 +14,7 @@ import { cyclePane, equalize, hasLeaf, leaf, leaves, removePane, setRatio, split
 import { killPty } from './pty.ts';
 import { focusTerminal } from './registry.ts';
 import { hideOnStartup, panelKey, parsePanelTerminals, persist, restore, storeName, withoutRun } from './sessions.ts';
+import { t as tr } from '#lib/i18n/index.ts';
 
 /** `cwdFrom`: a split starts in that terminal's current directory (not kept across reloads). */
 export type PanelTerminal = { id: number; title: string; run?: string[]; cwdFrom?: string };
@@ -148,7 +149,7 @@ class Terminals {
 	async rename(id = this.active) {
 		const t = this.get(id);
 		if (!t) return;
-		const name = await quick.input({ placeholder: `ชื่อ terminal (ตอนนี้: ${t.title})`, hint: (v) => (v.trim() ? `เปลี่ยนชื่อเป็น "${v.trim()}"` : 'พิมพ์ชื่อใหม่ แล้วกด Enter') });
+		const name = await quick.input({ placeholder: tr('tools.terminal.rename.placeholder', { title: t.title }), hint: (v) => (v.trim() ? tr('tools.terminal.rename.hint', { name: v.trim() }) : tr('tools.terminal.rename.empty')) });
 		const title = name?.trim();
 		if (title) this.list = this.list.map((x) => (x.id === id ? { ...x, title } : x));
 	}

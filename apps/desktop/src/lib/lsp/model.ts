@@ -4,6 +4,7 @@
 import type { ServerStatus } from './client';
 import { mergeDiagnostics, relOfUri, uriToPath } from './convert';
 import type { Diagnostic } from './protocol';
+import { t } from '#lib/i18n/index.ts';
 
 export type ServerInfo = {
 	key: string;
@@ -90,7 +91,7 @@ export type InstallInfo = { server: string; binary: string; methods: InstallMeth
 
 /** Quick pick items for installing a server; ids index `info.methods`. */
 export function installItems(info: InstallInfo): { id: string; label: string; description?: string }[] {
-	return info.methods.map((m, i) => ({ id: String(i), label: m.argv.map(shellWord).join(' '), description: i === 0 ? 'แนะนำ' : undefined }));
+	return info.methods.map((m, i) => ({ id: String(i), label: m.argv.map(shellWord).join(' '), description: i === 0 ? t('tools.lsp.recommended') : undefined }));
 }
 
 /** How a word reads on a shell command line (display only; the terminal quotes argv itself). */
@@ -109,17 +110,17 @@ export function statusText(server: ServerInfo, status: ServerStatus | undefined)
 		case undefined:
 			return '';
 		case 'starting':
-			return `${server.name}: starting…`;
+			return t('tools.lsp.status.starting', { name: server.name });
 		case 'indexing':
-			return `${server.name}: ${status.message ? status.message : 'indexing'}…`;
+			return status.message ? t('tools.lsp.status.indexingMessage', { name: server.name, message: status.message }) : t('tools.lsp.status.indexing', { name: server.name });
 		case 'ready':
-			return `${server.name}: ready`;
+			return t('tools.lsp.status.ready', { name: server.name });
 		case 'not-installed':
-			return `ไม่ได้ติดตั้ง ${server.name}`;
+			return t('tools.lsp.status.notInstalled', { name: server.name });
 		case 'stopped':
-			return `${server.name}: stopped`;
+			return t('tools.lsp.status.stopped', { name: server.name });
 		case 'error':
-			return `${server.name}: error`;
+			return t('tools.lsp.status.error', { name: server.name });
 	}
 }
 

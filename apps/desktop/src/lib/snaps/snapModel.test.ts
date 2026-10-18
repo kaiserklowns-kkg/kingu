@@ -1,5 +1,6 @@
 /// <reference types="bun" />
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { setLocale } from '#lib/i18n/index.ts';
 import { validate } from '../settings/registry';
 import {
 	expandCommand,
@@ -27,6 +28,10 @@ import {
 	type SandboxInfo,
 	type SnapInfo
 } from './snapModel';
+
+// These tests check the Thai wording.
+beforeAll(() => setLocale('th'));
+afterAll(() => setLocale('en'));
 
 function snap(over: Partial<SnapInfo> = {}): SnapInfo {
 	return {

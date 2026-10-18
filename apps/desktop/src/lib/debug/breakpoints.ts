@@ -2,6 +2,7 @@
 // localStorage per folder. Pure, so the toggling and the adapter's verification are unit-tested.
 
 import type { Breakpoint, SourceBreakpoint } from './protocol.ts';
+import { t } from '#lib/i18n/index.ts';
 
 /**
  * `logMessage`: a logpoint (DAP: logs the message with `{expression}`s instead of stopping).
@@ -97,13 +98,13 @@ export function glyphs(list: BreakpointSpec[] | undefined, verified: Breakpoint[
 	const sorted = [...(list ?? [])].sort(byLine);
 	let i = 0;
 	return sorted.map((b) => {
-		if (!b.enabled) return { line: b.line, kind: 'disabled', hover: 'Breakpoint (ปิดอยู่)' };
-		if (!isSent(b, triggered)) return { line: b.line, kind: 'triggered', hover: `Triggered breakpoint: ทำงานหลังหยุดที่ ${b.triggeredBy}` };
+		if (!b.enabled) return { line: b.line, kind: 'disabled', hover: t('tools.debug.bp.disabled') };
+		if (!isSent(b, triggered)) return { line: b.line, kind: 'triggered', hover: t('tools.debug.bp.triggered', { at: b.triggeredBy ?? '' }) };
 		const answer = verified?.[i++];
 		const plain: GlyphKind = b.logMessage ? 'log' : b.condition ? 'conditional' : 'breakpoint';
 		const hover = b.logMessage ? `Logpoint: ${b.logMessage}` : b.condition ? `Breakpoint: ${b.condition}` : 'Breakpoint';
 		if (!verified) return { line: b.line, kind: plain, hover };
-		if (!answer || !answer.verified) return { line: b.line, kind: 'unverified', hover: answer?.message ?? 'Breakpoint ยังไม่ถูกยืนยันโดย debugger' };
+		if (!answer || !answer.verified) return { line: b.line, kind: 'unverified', hover: answer?.message ?? t('tools.debug.bp.unverified') };
 		return { line: b.line, kind: b.logMessage ? 'log' : b.condition ? 'conditional' : 'verified', hover };
 	});
 }

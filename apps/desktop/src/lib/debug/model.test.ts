@@ -9,7 +9,7 @@ test('stopped → frames → scopes → variables, cleared on continue', () => {
 	let m = applyEvent(initialModel(), ev('stopped', { reason: 'breakpoint', threadId: 7 }));
 	expect(m.state).toBe('stopped');
 	expect(m.stopped).toEqual({ threadId: 7, reason: 'breakpoint', description: undefined });
-	expect(stateLabel(m)).toBe('หยุด (breakpoint)');
+	expect(stateLabel(m)).toBe('Paused (breakpoint)');
 	// The top frame without source (a libc frame) is skipped when selecting.
 	m = withFrames(m, [
 		{ id: 1, name: '__pthread_kill', line: 0, column: 0, presentationHint: 'subtle' },
@@ -37,7 +37,7 @@ test('output, exit and termination', () => {
 	expect(m.output[0]).toEqual({ category: 'stdout', text: 'สวัสดี\n' });
 	expect(m.output).toHaveLength(2);
 	expect(m.output[1].text).toContain('exit code 3');
-	expect([m.state, m.exitCode, stateLabel(m)]).toEqual(['terminated', 3, 'จบแล้ว']);
+	expect([m.state, m.exitCode, stateLabel(m)]).toEqual(['terminated', 3, 'Ended']);
 	// A late `continued` does not revive a finished session.
 	expect(applyEvent(m, ev('continued', {})).state).toBe('terminated');
 	expect(stateLabel(null)).toBe('');

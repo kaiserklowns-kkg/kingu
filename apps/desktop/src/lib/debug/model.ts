@@ -3,6 +3,7 @@
 // can hold it in `$state.raw`.
 
 import type { Breakpoint, Event, OutputEvent, Scope, StackFrame, StoppedEvent, Thread, Variable } from './protocol.ts';
+import { t } from '#lib/i18n/index.ts';
 
 export type SessionState = 'initializing' | 'running' | 'stopped' | 'terminated';
 export type OutputLine = { category: string; text: string };
@@ -67,7 +68,7 @@ export function applyEvent(m: DebugModel, ev: Event): DebugModel {
 			return appendOutput(m, b.category ?? 'console', b.output ?? '');
 		}
 		case 'exited':
-			return appendOutput({ ...m, exitCode: body.exitCode ?? null }, 'console', `\nโปรแกรมจบการทำงาน (exit code ${body.exitCode ?? '?'})\n`);
+			return appendOutput({ ...m, exitCode: body.exitCode ?? null }, 'console', t('tools.debug.exited', { code: body.exitCode ?? '?' }));
 		case 'terminated':
 			return { ...resumed(m), state: 'terminated' };
 		case 'breakpoint': {
@@ -129,12 +130,12 @@ export function stateLabel(m: DebugModel | null): string {
 	if (!m) return '';
 	switch (m.state) {
 		case 'initializing':
-			return 'กำลังเริ่ม';
+			return t('tools.debug.state.initializing');
 		case 'running':
-			return 'กำลังทำงาน';
+			return t('tools.debug.state.running');
 		case 'stopped':
-			return m.stopped?.reason ? `หยุด (${m.stopped.reason})` : 'หยุด';
+			return m.stopped?.reason ? t('tools.debug.state.stoppedReason', { reason: m.stopped.reason }) : t('tools.debug.state.stopped');
 		case 'terminated':
-			return 'จบแล้ว';
+			return t('tools.debug.state.terminated');
 	}
 }

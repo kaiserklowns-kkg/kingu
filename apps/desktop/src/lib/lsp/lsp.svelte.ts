@@ -56,6 +56,7 @@ import {
 } from './model';
 import type { CodeAction, Command, CompletionItem, Diagnostic, DocumentSymbol, ServerCapabilities, SymbolInformation, WorkspaceEdit } from './protocol';
 import { applyWorkspaceEdit, type ApplyResult } from './workspaceEdit';
+import { t } from '#lib/i18n/index.ts';
 
 type MonacoApi = typeof Monaco;
 type LspEvent = { type: 'message'; json: string } | { type: 'stderr'; line: string } | { type: 'exit'; code: number | null };
@@ -233,9 +234,9 @@ class Lsp {
 		const missing = this.missing();
 		const current = missing.find((s) => s.languages.includes(languageId));
 		if (current || missing.length === 1) return this.install((current ?? missing[0]).languages[0]);
-		if (!missing.length) return statusBar.flash('ไม่มี language server ที่ยังไม่ได้ติดตั้ง');
+		if (!missing.length) return statusBar.flash(t('tools.lsp.noneMissing'));
 		quick.pick({
-			placeholder: 'เลือก language server ที่จะติดตั้ง',
+			placeholder: t('tools.lsp.pickInstall'),
 			items: missing.map((s) => ({ id: s.key, label: s.name, description: s.languages.join(', ') })),
 			onAccept: (item) => void this.install(SERVERS.find((s) => s.key === item.id)!.languages[0])
 		});
@@ -252,11 +253,11 @@ class Lsp {
 		} catch (e) {
 			return notifications.error(e);
 		}
-		const retry = { id: 'retry', label: 'ลองหาอีกครั้ง', description: `ติดตั้ง ${res.binary} เองแล้ว`, separator: res.methods.length ? 'อื่น ๆ' : undefined };
+		const retry = { id: 'retry', label: t('tools.lsp.retry'), description: t('tools.lsp.retryDesc', { binary: res.binary }), separator: res.methods.length ? t('tools.lsp.other') : undefined };
 		quick.pick({
 			placeholder: res.methods.length
-				? `ติดตั้ง ${res.server} ด้วยคำสั่ง (รันใน terminal)`
-				: `ไม่พบ bun, npm, go, rustup, brew, pipx หรือ uv สำหรับติดตั้ง ${res.server} — ติดตั้ง ${res.binary} เองแล้วลองอีกครั้ง`,
+				? t('tools.lsp.installWith', { server: res.server })
+				: t('tools.lsp.noInstaller', { server: res.server, binary: res.binary }),
 			items: [...installItems(res), retry],
 			onAccept: (item) => {
 				if (item.id === 'retry') void this.retry(info.key, { report: true });
@@ -266,9 +267,9 @@ class Lsp {
 	}
 
 	#runInstall(info: ServerInfo, server: string, method: InstallMethod) {
-		terminals.open({ title: `ติดตั้ง ${server}`, run: method.argv });
+		terminals.open({ title: t('tools.lsp.installTerminal', { server }), run: method.argv });
 		layout.showPanel('terminal');
-		statusBar.flash(`กำลังติดตั้ง ${server} ใน terminal — จะเริ่ม language server ให้เมื่อติดตั้งเสร็จ`);
+		statusBar.flash(t('tools.lsp.installing', { server }));
 		this.#watchInstall(info.key);
 	}
 
@@ -302,7 +303,7 @@ class Lsp {
 				(e) => (report && notifications.error(e), false)
 			);
 			if (!found) return false;
-			statusBar.flash(`พบ ${info.name} แล้ว — กำลังเริ่ม`);
+			statusBar.flash(t('tools.lsp.found', { name: info.name }));
 			await this.#restartKey(key);
 			return true;
 		} finally {
@@ -337,7 +338,7 @@ class Lsp {
 			openCodeEditor: (_source, resource, selection) => {
 				const at = selection && 'startLineNumber' in selection ? { line: selection.startLineNumber, column: selection.startColumn } : selection ? { line: selection.lineNumber, column: selection.column } : { line: 1, column: 1 };
 				if (resource.scheme === EXTERNAL_SCHEME) {
-					notifications.warn(`${resource.path} อยู่นอก workspace จึงเปิดไม่ได้`);
+					notifications.warn(t('tools.lsp.outsideWorkspace', { path: resource.path }));
 					return true;
 				}
 				if (resource.scheme !== 'file') return false;
@@ -671,7 +672,7 @@ class Lsp {
 	}
 
 	async #execute(client: LanguageClient, command: Command) {
-		if (!(await client.executeCommand(command))) statusBar.flash(`${command.title || command.command}: not supported by the server`);
+		if (!(await client.executeCommand(command))) statusBar.flash(t('tools.lsp.commandUnsupported', { command: command.title || command.command }));
 	}
 
 	#registerProviders(info: ServerInfo, caps: ServerCapabilities) {
@@ -810,7 +811,7 @@ class Lsp {
 							const d = this.#lookup(model);
 							const fallback = word(model, position);
 							const reject = (rejectReason: string) => ({ range: fallback?.range ?? toMonacoRange({ start: toLspPosition(position), end: toLspPosition(position) }), text: '', rejectReason });
-							if (!d) return reject(`${info.name} is not ready`);
+							if (!d) return reject(t('tools.lsp.notReady', { name: info.name }));
 							let prepared;
 							if (d.client.canPrepareRename) {
 								try {
@@ -819,23 +820,23 @@ class Lsp {
 									return reject(e instanceof Error ? e.message : String(e));
 								}
 							}
-							return toRenameLocation(prepared, fallback, (r) => model.getValueInRange(r)) ?? reject("The element can't be renamed.");
+							return toRenameLocation(prepared, fallback, (r) => model.getValueInRange(r)) ?? reject(t('tools.lsp.cantRename'));
 						},
 						provideRenameEdits: async (model, position, newName, token) => {
 							const d = this.#lookup(model);
-							if (!d) return { edits: [], rejectReason: `${info.name} is not ready` };
+							if (!d) return { edits: [], rejectReason: t('tools.lsp.notReady', { name: info.name }) };
 							let edit: WorkspaceEdit | null;
 							try {
 								edit = await d.client.rename(d.uri, toLspPosition(position), newName, token);
 							} catch (e) {
 								return { edits: [], rejectReason: e instanceof Error ? e.message : String(e) };
 							}
-							if (!edit) return { edits: [], rejectReason: 'No result.' };
+							if (!edit) return { edits: [], rejectReason: t('tools.lsp.noResult') };
 							// Applied here rather than by Monaco, whose standalone bulk edit only reaches
 							// open models; files without a tab are rewritten on disk.
 							const r = await this.applyWorkspaceEdit(edit);
-							if (!r.applied) return { edits: [], rejectReason: `Rename failed: ${r.failureReason}` };
-							statusBar.flash(`Renamed to '${newName}': ${r.edits} edits in ${r.uris.length} ${r.uris.length === 1 ? 'file' : 'files'}`);
+							if (!r.applied) return { edits: [], rejectReason: t('tools.lsp.renameFailed', { reason: r.failureReason ?? '' }) };
+							statusBar.flash(t('tools.lsp.renamed', { name: newName, edits: r.edits, files: r.uris.length }));
 							return { edits: [] };
 						}
 					})
@@ -882,7 +883,7 @@ class Lsp {
 						provideDocumentFormattingEdits: async (model, options, token) => {
 							const d = this.#lookup(model);
 							const fmt = { tabSize: options.tabSize, insertSpaces: options.insertSpaces };
-							return toMonacoTextEdits(d && (await d.client.formatting(d.uri, fmt, token).catch((e) => (notifications.error(`Format: ${e}`), null))));
+							return toMonacoTextEdits(d && (await d.client.formatting(d.uri, fmt, token).catch((e) => (notifications.error(t('tools.lsp.formatFailed', { error: String(e) })), null))));
 						}
 					})
 				);
@@ -894,7 +895,7 @@ class Lsp {
 						provideDocumentRangeFormattingEdits: async (model, range, options, token) => {
 							const d = this.#lookup(model);
 							const fmt = { tabSize: options.tabSize, insertSpaces: options.insertSpaces };
-							return toMonacoTextEdits(d && (await d.client.rangeFormatting(d.uri, toLspRange(range), fmt, token).catch((e) => (notifications.error(`Format: ${e}`), null))));
+							return toMonacoTextEdits(d && (await d.client.rangeFormatting(d.uri, toLspRange(range), fmt, token).catch((e) => (notifications.error(t('tools.lsp.formatFailed', { error: String(e) })), null))));
 						}
 					})
 				);

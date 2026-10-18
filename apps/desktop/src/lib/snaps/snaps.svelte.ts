@@ -50,6 +50,7 @@ import {
 	type SnapInfo
 } from './snapModel.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
+import { t } from '#lib/i18n/index.ts';
 
 class Snaps {
 	list = $state<SnapInfo[]>([]);
@@ -91,9 +92,9 @@ class Snaps {
 		if (!snap) return;
 		try {
 			await invoke('snap_trust', { id, trusted: on, hash: on ? snap.hash : null });
-			status.flash(on ? `เชื่อถือ snap “${snap.name}” แล้ว` : `เลิกเชื่อถือ snap “${snap.name}” แล้ว`);
+			status.flash(on ? t('tools.snaps.trusted', { name: snap.name }) : t('tools.snaps.untrusted', { name: snap.name }));
 		} catch (e) {
-			notifications.error(`เปลี่ยนการเชื่อถือ snap ไม่สำเร็จ: ${e}`);
+			notifications.error(t('tools.snaps.trustFailed', { error: String(e) }));
 		}
 		await this.load();
 	}
@@ -103,7 +104,7 @@ class Snaps {
 
 	async #exclusive<T>(label: string, run: () => Promise<T>): Promise<T | undefined> {
 		if (this.busy) {
-			status.flash(`รอให้ “${this.busy}” เสร็จก่อน`);
+			status.flash(t('tools.snaps.waitBusy', { busy: this.busy }));
 			return undefined;
 		}
 		this.busy = label;
@@ -117,11 +118,11 @@ class Snaps {
 	/** Snap: Install from Git… — clone into staging, confirm natively, then install. */
 	async install() {
 		const url = await quick.input({
-			placeholder: 'URL ของ git repo ที่มี snap.toml (https://…, git@host:repo.git) ต่อท้าย #tag หรือ #branch ได้',
-			hint: (v) => (v.trim() ? `ติดตั้ง Snap จาก ${v.trim()}` : 'พิมพ์ URL แล้วกด Enter')
+			placeholder: t('tools.snaps.gitUrlPlaceholder'),
+			hint: (v) => (v.trim() ? t('tools.snaps.installFrom', { url: v.trim() }) : t('tools.snaps.typeUrl'))
 		});
 		if (!url?.trim()) return;
-		await this.#exclusive('กำลังดึง snap จาก git…', async () => {
+		await this.#exclusive(t('tools.snaps.fetchingGit'), async () => {
 			const prepared = await this.#prepare(() => invoke<PreparedInstall>('snap_install_git', { url: url.trim() }));
 			if (prepared) await this.#confirmAndCommit(prepared);
 		});
@@ -129,9 +130,9 @@ class Snaps {
 
 	/** Snap: Install from Folder… — copies the folder (no symlinks), same checks and confirm. */
 	async installFromFolder() {
-		const path = await open({ directory: true, multiple: false, title: 'เลือกโฟลเดอร์ที่มี snap.toml' });
+		const path = await open({ directory: true, multiple: false, title: t('tools.snaps.pickFolder') });
 		if (typeof path !== 'string') return;
-		await this.#exclusive('กำลังคัดลอก snap…', async () => {
+		await this.#exclusive(t('tools.snaps.copying'), async () => {
 			const prepared = await this.#prepare(() => invoke<PreparedInstall>('snap_install_folder', { path }));
 			if (prepared) await this.#confirmAndCommit(prepared);
 		});
@@ -139,9 +140,9 @@ class Snaps {
 
 	/** Snap: Update — fetches the snap's git origin again and shows what changed before replacing it. */
 	async update(id?: string) {
-		const target = id ?? (await this.#pick(this.list.filter(isUpdatable), 'เลือก Snap ที่จะอัปเดต (ติดตั้งจาก git)'));
+		const target = id ?? (await this.#pick(this.list.filter(isUpdatable), t('tools.snaps.pickUpdate')));
 		if (!target) return;
-		await this.#exclusive(`กำลังอัปเดต ${target}…`, async () => {
+		await this.#exclusive(t('tools.snaps.updating', { id: target }), async () => {
 			const prepared = await this.#prepare(() => invoke<PreparedInstall>('snap_update_prepare', { id: target }));
 			if (prepared) await this.#confirmAndCommit(prepared);
 		});
@@ -149,17 +150,17 @@ class Snaps {
 
 	/** Snap: Uninstall — user snaps only (repo snaps come with the repo); moves the folder to the Trash. */
 	async uninstall(id?: string) {
-		const target = id ?? (await this.#pick(this.list.filter((s) => s.source === 'user'), 'เลือก Snap ที่จะถอนการติดตั้ง'));
+		const target = id ?? (await this.#pick(this.list.filter((s) => s.source === 'user'), t('tools.snaps.pickUninstall')));
 		const snap = this.list.find((s) => s.source === 'user' && s.id === target);
 		if (!target || !snap) return;
-		const sure = await ask(`ย้ายโฟลเดอร์ของ snap “${snap.name}” ไปที่ถังขยะ?\n${snap.dir}`, { title: 'ถอนการติดตั้ง Snap', kind: 'warning', okLabel: 'ถอนการติดตั้ง', cancelLabel: 'ยกเลิก' });
+		const sure = await ask(t('tools.snaps.uninstallAsk', { name: snap.name, dir: snap.dir }), { title: t('tools.snaps.uninstallTitle'), kind: 'warning', okLabel: t('tools.snaps.uninstall'), cancelLabel: t('common.cancel') });
 		if (!sure) return;
-		await this.#exclusive(`กำลังถอน ${snap.name}…`, async () => {
+		await this.#exclusive(t('tools.snaps.uninstalling', { name: snap.name }), async () => {
 			try {
 				await invoke('snap_uninstall', { id: target });
-				status.flash(`ถอนการติดตั้ง snap “${snap.name}” แล้ว (อยู่ในถังขยะ)`);
+				status.flash(t('tools.snaps.uninstalled', { name: snap.name }));
 			} catch (e) {
-				notifications.error(`ถอนการติดตั้ง snap ไม่สำเร็จ: ${e}`);
+				notifications.error(t('tools.snaps.uninstallFailed', { error: String(e) }));
 			}
 			await this.load();
 		});
@@ -168,15 +169,15 @@ class Snaps {
 	/** Snap: New Snap… — writes a commented template and opens it in the editor. */
 	async newSnap() {
 		const id = await quick.input({
-			placeholder: 'id ของ snap ใหม่ (a-z, 0-9, -) เช่น my-tools',
-			hint: (v) => (/^[a-z0-9][a-z0-9-]{0,39}$/.test(v.trim()) ? `สร้าง snap “${v.trim()}”` : 'ใช้ a-z, 0-9, - ขึ้นต้นด้วยตัวอักษรหรือตัวเลข ยาวไม่เกิน 40 ตัว')
+			placeholder: t('tools.snaps.newIdPlaceholder'),
+			hint: (v) => (/^[a-z0-9][a-z0-9-]{0,39}$/.test(v.trim()) ? t('tools.snaps.createNamed', { id: v.trim() }) : t('tools.snaps.idRule'))
 		});
 		if (!id?.trim()) return;
-		const name = await quick.input({ placeholder: 'ชื่อที่แสดงของ snap', hint: (v) => (v.trim() ? `ชื่อ: ${v.trim()}` : `ใช้ “${id.trim()}” เป็นชื่อ`) });
+		const name = await quick.input({ placeholder: t('tools.snaps.namePlaceholder'), hint: (v) => (v.trim() ? t('tools.snaps.nameHint', { name: v.trim() }) : t('tools.snaps.useIdAsName', { id: id.trim() })) });
 		if (name === undefined) return;
-		const items = [{ id: 'user', label: 'Snap ของคุณ', description: 'โฟลเดอร์ snaps ของแอป (ใช้ได้ทุกโฟลเดอร์)' }];
-		if (workspace.root) items.push({ id: 'repo', label: 'Snap ของโฟลเดอร์นี้', description: '.kingu/snaps แชร์ผ่าน git (ต้อง trust)' });
-		const location = items.length === 1 ? items[0] : await quick.choose({ placeholder: 'สร้าง snap ไว้ที่ไหน', items });
+		const items = [{ id: 'user', label: t('tools.snaps.locUser'), description: t('tools.snaps.locUserDesc') }];
+		if (workspace.root) items.push({ id: 'repo', label: t('tools.snaps.locRepo'), description: t('tools.snaps.locRepoDesc') });
+		const location = items.length === 1 ? items[0] : await quick.choose({ placeholder: t('tools.snaps.locPlaceholder'), items });
 		if (!location) return;
 		try {
 			const key = await invoke<string>('snap_new', { id: id.trim(), name: name.trim() || id.trim(), location: location.id });
@@ -185,28 +186,28 @@ class Snaps {
 			appMode.setMode('workbench');
 			editors.open(key, { preview: false });
 		} catch (e) {
-			notifications.error(`สร้าง snap ไม่สำเร็จ: ${e}`);
+			notifications.error(t('tools.snaps.createFailed', { error: String(e) }));
 		}
 	}
 
 	/** Snap: Lock — writes `.kingu/snaps.lock` with the id, version and hash of each repo snap. */
 	async lock() {
 		if (!workspace.root) {
-			status.flash('เปิดโฟลเดอร์ก่อน (Open a folder first)');
+			status.flash(t('tools.snaps.openFolderFirst'));
 			return;
 		}
 		try {
 			const count = await invoke<number>('snap_lock');
-			status.flash(`เขียน .kingu/snaps.lock แล้ว (${count} snap)`);
+			status.flash(t('tools.snaps.lockWritten', { count }));
 		} catch (e) {
-			notifications.error(`เขียน snaps.lock ไม่สำเร็จ: ${e}`);
+			notifications.error(t('tools.snaps.lockFailed', { error: String(e) }));
 		}
 		await this.load();
 	}
 
 	/** Trust from a row of the Snaps view: the same review as the details page, as a native confirm. */
 	async confirmTrust(s: SnapInfo) {
-		const sure = await ask(trustSummary(s, this.sandbox), { title: `เชื่อถือ Snap “${s.name}”?`, kind: 'warning', okLabel: 'เชื่อถือ', cancelLabel: 'ยกเลิก' });
+		const sure = await ask(trustSummary(s, this.sandbox), { title: t('tools.snaps.trustTitle', { name: s.name }), kind: 'warning', okLabel: t('tools.snaps.trust'), cancelLabel: t('common.cancel') });
 		if (sure) await this.trust(s.id, true);
 	}
 
@@ -222,27 +223,27 @@ class Snaps {
 		try {
 			await invoke('snap_reveal', { id: s.id, source: s.source });
 		} catch (e) {
-			notifications.error(`เปิดโฟลเดอร์ไม่สำเร็จ: ${e}`);
+			notifications.error(t('tools.snaps.openFolderFailed', { error: String(e) }));
 		}
 	}
 
 	/** Run a task of the snap, picked from a quick pick when it has several. */
 	async pickTask(s: SnapInfo) {
 		if (!isActive(s)) {
-			notifications.warn(s.source === 'repo' ? 'เชื่อถือ snap นี้ก่อนจึงจะรันงานได้' : 'snap นี้ใช้งานไม่ได้อยู่');
+			notifications.warn(s.source === 'repo' ? t('tools.snaps.trustBeforeRun') : t('tools.snaps.unusable'));
 			return;
 		}
 		if (!s.tasks.length) {
-			status.flash(`snap “${s.name}” ไม่มีงาน`);
+			status.flash(t('tools.snaps.noTasks', { name: s.name }));
 			return;
 		}
-		const task = s.tasks.length === 1 ? s.tasks[0] : await quick.choose({ placeholder: `รันงานของ ${s.name}`, items: s.tasks.map((t) => ({ id: t.id, label: t.title, description: t.command.join(' ') })) });
+		const task = s.tasks.length === 1 ? s.tasks[0] : await quick.choose({ placeholder: t('tools.snaps.runTaskOf', { name: s.name }), items: s.tasks.map((t) => ({ id: t.id, label: t.title, description: t.command.join(' ') })) });
 		if (task) this.runTask(s.id, task.id);
 	}
 
 	async #pick(list: SnapInfo[], placeholder: string): Promise<string | undefined> {
 		if (!list.length) {
-			status.flash('ไม่มี Snap ที่ทำแบบนี้ได้');
+			status.flash(t('tools.snaps.noneApplicable'));
 			return undefined;
 		}
 		return (await quick.choose({ placeholder, items: list.map((s) => ({ id: s.id, label: s.name, description: `${s.id} v${s.version}` })) }))?.id;
@@ -252,7 +253,7 @@ class Snaps {
 		try {
 			return await run();
 		} catch (e) {
-			await message(String(e), { title: 'ติดตั้ง Snap ไม่สำเร็จ', kind: 'error' });
+			await message(String(e), { title: t('tools.snaps.installFailedTitle'), kind: 'error' });
 			return undefined;
 		}
 	}
@@ -263,30 +264,30 @@ class Snaps {
 		let candidate = p.candidates[0];
 		if (p.candidates.length > 1) {
 			const picked = await quick.choose({
-				placeholder: 'repo นี้มีหลาย snap — เลือกตัวที่จะติดตั้ง',
-				items: p.candidates.map((c) => ({ id: c.snap.id, label: c.snap.name, description: c.snap.error ? `ใช้ไม่ได้: ${c.snap.error}` : `${c.snap.id} v${c.snap.version} · ${c.rel}` }))
+				placeholder: t('tools.snaps.pickCandidate'),
+				items: p.candidates.map((c) => ({ id: c.snap.id, label: c.snap.name, description: c.snap.error ? t('tools.snaps.candidateBroken', { error: c.snap.error }) : `${c.snap.id} v${c.snap.version} · ${c.rel}` }))
 			});
 			candidate = p.candidates.find((c) => c.snap.id === picked?.id)!;
 		}
 		if (!candidate) return cancel();
 		const s = candidate.snap;
 		if (s.error) {
-			await message(s.error, { title: `Snap “${s.name}” ใช้ไม่ได้`, kind: 'error' });
+			await message(s.error, { title: t('tools.snaps.brokenTitle', { name: s.name }), kind: 'error' });
 			return cancel();
 		}
 		const existing = p.existing.find((e) => e.id === s.id);
 		const sure = await ask(existing ? updateSummary(existing, s, p.origin, this.sandbox) : installSummary(s, p.origin, this.sandbox), {
-			title: existing ? `อัปเดต Snap “${s.name}”?` : `ติดตั้ง Snap “${s.name}”?`,
+			title: existing ? t('tools.snaps.updateTitle', { name: s.name }) : t('tools.snaps.installTitle', { name: s.name }),
 			kind: 'warning',
-			okLabel: existing ? 'อัปเดต' : 'ติดตั้ง',
-			cancelLabel: 'ยกเลิก'
+			okLabel: existing ? t('tools.snaps.update') : t('tools.snaps.install'),
+			cancelLabel: t('common.cancel')
 		});
 		if (!sure) return cancel();
 		try {
 			await invoke('snap_install_commit', { token: p.token, id: s.id, hash: s.hash, replace: !!existing });
-			status.flash(existing ? `อัปเดต snap “${s.name}” เป็น v${s.version} แล้ว` : `ติดตั้ง snap “${s.name}” แล้ว`);
+			status.flash(existing ? t('tools.snaps.updated', { name: s.name, version: s.version }) : t('tools.snaps.installed', { name: s.name }));
 		} catch (e) {
-			await message(String(e), { title: 'ติดตั้ง Snap ไม่สำเร็จ', kind: 'error' });
+			await message(String(e), { title: t('tools.snaps.installFailedTitle'), kind: 'error' });
 		}
 		await this.load();
 	}
@@ -320,7 +321,7 @@ class Snaps {
 
 	/** Installs a team snap at the commit the team pinned; Rust refuses it unless its hash is the approved one. */
 	async installTeam(id: string) {
-		await this.#exclusive(`กำลังดึง ${id} ตามที่ทีมตรึงไว้…`, async () => {
+		await this.#exclusive(t('tools.snaps.fetchingPinned', { id }), async () => {
 			const prepared = await this.#prepare(() => invoke<PreparedInstall>('snap_install_team', { serverUrl: team.serverUrl, id }));
 			if (prepared) await this.#confirmAndCommit(prepared);
 		});
@@ -329,35 +330,35 @@ class Snaps {
 	/** Snap: Approve for Team… (owner/lead) — pins an installed git snap's commit and hash for everyone. */
 	async approveForTeam(id?: string) {
 		if (!canApprove(this.teamCatalog?.role)) {
-			status.flash('เฉพาะ owner หรือ lead ของทีมที่อนุมัติ snap ได้ (ต้องลงชื่อเข้าใช้ทีมก่อน)');
+			status.flash(t('tools.snaps.approveRole'));
 			return;
 		}
-		const target = id ?? (await this.#pick(this.list.filter(isApprovable), 'เลือก Snap ที่จะอนุมัติให้ทีม (ติดตั้งจาก git)'));
+		const target = id ?? (await this.#pick(this.list.filter(isApprovable), t('tools.snaps.pickApprove')));
 		const snap = this.list.find((s) => s.source === 'user' && s.id === target);
 		if (!target || !snap) return;
 		if (!isApprovable(snap)) {
-			status.flash(`snap “${snap.name}” ต้องติดตั้งจาก git (https:// หรือ ssh) ก่อนจึงอนุมัติให้ทีมได้`);
+			status.flash(t('tools.snaps.approveNeedsGit', { name: snap.name }));
 			return;
 		}
 		const level = await quick.choose({
-			placeholder: `อนุมัติ ${snap.name} v${snap.version} ให้ทีม`,
+			placeholder: t('tools.snaps.approvePlaceholder', { name: snap.name, version: snap.version }),
 			items: [
-				{ id: 'optional', label: 'ไม่บังคับ', description: 'ทุกคนติดตั้งได้เอง' },
-				{ id: 'required', label: 'จำเป็น (required)', description: 'แจ้งคนที่ยังไม่ได้ติดตั้ง' }
+				{ id: 'optional', label: t('tools.snaps.optional'), description: t('tools.snaps.optionalDesc') },
+				{ id: 'required', label: t('tools.snaps.required'), description: t('tools.snaps.requiredDesc') }
 			]
 		});
 		if (!level) return;
 		const required = level.id === 'required';
-		const note = await quick.input({ placeholder: 'หมายเหตุถึงทีม (ไม่ใส่ก็ได้)', hint: (v) => (v.trim() ? `หมายเหตุ: ${v.trim()}` : 'กด Enter เพื่อข้าม') });
+		const note = await quick.input({ placeholder: t('tools.snaps.notePlaceholder'), hint: (v) => (v.trim() ? t('tools.snaps.noteHint', { note: v.trim() }) : t('tools.snaps.enterToSkip')) });
 		if (note === undefined) return;
-		const sure = await ask(approveSummary(snap, required), { title: `อนุมัติ Snap “${snap.name}” ให้ทีม?`, kind: 'warning', okLabel: 'อนุมัติ', cancelLabel: 'ยกเลิก' });
+		const sure = await ask(approveSummary(snap, required), { title: t('tools.snaps.approveTitle', { name: snap.name }), kind: 'warning', okLabel: t('tools.snaps.approve'), cancelLabel: t('common.cancel') });
 		if (!sure) return;
-		await this.#exclusive(`กำลังอนุมัติ ${snap.name}…`, async () => {
+		await this.#exclusive(t('tools.snaps.approving', { name: snap.name }), async () => {
 			try {
 				await invoke('team_snap_approve', { serverUrl: team.serverUrl, id: snap.id, required, note: note.trim() || null });
-				status.flash(`อนุมัติ snap “${snap.name}” v${snap.version} ให้ทีมแล้ว`);
+				status.flash(t('tools.snaps.approved', { name: snap.name, version: snap.version }));
 			} catch (e) {
-				await message(String(e), { title: 'อนุมัติ Snap ไม่สำเร็จ', kind: 'error' });
+				await message(String(e), { title: t('tools.snaps.approveFailedTitle'), kind: 'error' });
 			}
 			await this.loadTeam();
 		});
@@ -368,16 +369,16 @@ class Snaps {
 		const snap = this.list.find((s) => s.id === snapId && isActive(s));
 		const task = snap?.tasks.find((t) => t.id === taskId);
 		if (!snap || !task) {
-			status.flash(`ไม่พบงาน ${snapId}/${taskId} ใน snap ที่เชื่อถือ (Snap task not found)`);
+			status.flash(t('tools.snaps.taskNotFound', { id: `${snapId}/${taskId}` }));
 			return;
 		}
 		if (!workspace.root) {
-			status.flash('เปิดโฟลเดอร์ก่อนรันงานของ snap (Open a folder first)');
+			status.flash(t('tools.snaps.openFolderBeforeTask'));
 			return;
 		}
 		const argv = taskArgv(snap, task, (id) => settings.get(id));
 		if (!argv.length) {
-			status.flash(`งาน ${task.title} ไม่มีโปรแกรมให้รัน (การตั้งค่าที่เป็นชื่อโปรแกรมว่างอยู่)`);
+			status.flash(t('tools.snaps.taskNoProgram', { title: task.title }));
 			return;
 		}
 		// The folder the terminal opens in: the selected task worktree in the ADE, else the folder.
@@ -413,7 +414,7 @@ class Snaps {
 		try {
 			return await invoke<string[]>('snap_skill_plugins', { ids });
 		} catch (e) {
-			notifications.error(`เตรียม skill ของ snap ไม่สำเร็จ agent จะเริ่มโดยไม่มี skill: ${e}`);
+			notifications.error(t('tools.snaps.skillsFailed', { error: String(e) }));
 			return [];
 		}
 	}
@@ -489,8 +490,8 @@ export function installSnaps(): () => void {
 			category: 'Snap',
 			run: async () => {
 				await snaps.load();
-				if (snaps.error) notifications.error(`โหลด Snaps ไม่สำเร็จ: ${snaps.error}`);
-				else status.flash(`โหลด Snaps แล้ว (${snaps.list.length})`);
+				if (snaps.error) notifications.error(t('tools.snaps.loadFailed', { error: snaps.error }));
+				else status.flash(t('tools.snaps.loaded', { count: snaps.list.length }));
 			}
 		}),
 		commands.register({ id: 'snap.manage', title: 'Manage Snaps', category: 'Snap', run: () => systemSettings.showSnaps() }),

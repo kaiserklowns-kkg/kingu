@@ -19,7 +19,7 @@ describe('launch.json', () => {
 		expect(parseLaunchJson('', 'x').configs).toEqual([]);
 		expect(parseLaunchJson('{ "version": "0.2.0" }', 'x').configs).toEqual([]);
 		expect(parseLaunchJson('{ "configurations": {} }', 'x').error).toContain('array');
-		expect(parseLaunchJson('{ nope', '.kingu/launch.json').error).toStartWith('.kingu/launch.json: อ่าน JSON ไม่ได้');
+		expect(parseLaunchJson('{ nope', '.kingu/launch.json').error).toStartWith(".kingu/launch.json: can't read JSON");
 	});
 });
 
@@ -50,8 +50,8 @@ describe('variable substitution', () => {
 	});
 
 	test('file variables need an open file; unknown variables are errors', () => {
-		expect(() => substitute('${file}', { ...ctx, file: undefined })).toThrow('ต้องมีไฟล์เปิดอยู่');
-		expect(() => substitute({ p: '${command:pickProcess}' }, ctx)).toThrow('ไม่รองรับตัวแปร ${command:pickProcess}');
+		expect(() => substitute('${file}', { ...ctx, file: undefined })).toThrow('needs a file open');
+		expect(() => substitute({ p: '${command:pickProcess}' }, ctx)).toThrow('Variable ${command:pickProcess} is not supported');
 		expect(substitute('${workspaceFolder}/a', { ...ctx, file: undefined })).toBe('/Users/me/โปรเจกต์/a');
 	});
 });
