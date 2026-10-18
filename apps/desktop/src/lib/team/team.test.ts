@@ -1,6 +1,7 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
 import { buildRunSync, buildTaskSync, clientTaskId, issueSource, teamStatusLabel, type TeamRunInput, type TeamStatus } from './team';
+import { setLocale } from '#lib/i18n/index.ts';
 
 const now = new Date('2026-10-17T10:00:00.000Z');
 
@@ -35,22 +36,34 @@ describe('teamStatusLabel', () => {
 	const s = (o: Partial<TeamStatus>): TeamStatus => ({ server: 'https://t.example', signed_in: true, online: true, pending: 0, last_error: null, stream: 'connected', ...o });
 
 	test('hidden without a server URL', () => expect(teamStatusLabel('', null)).toBeNull());
-	test('connected', () => expect(teamStatusLabel('https://t.example', s({}))?.text).toBe('ทีม ✓'));
-	test('unknown yet counts as connected', () => expect(teamStatusLabel('https://t.example', s({ online: null }))?.text).toBe('ทีม ✓'));
+	test('connected', () => expect(teamStatusLabel('https://t.example', s({}))?.text).toBe('Team ✓'));
+	test('unknown yet counts as connected', () => expect(teamStatusLabel('https://t.example', s({ online: null }))?.text).toBe('Team ✓'));
 	test('offline shows pending', () => {
 		const l = teamStatusLabel('https://t.example', s({ online: false, pending: 3 }));
-		expect(l?.text).toBe('ทีม: ออฟไลน์');
-		expect(l?.tooltip).toContain('รอส่ง 3');
+		expect(l?.text).toBe('Team: Offline');
+		expect(l?.tooltip).toContain('3 items pending');
 		expect(l?.warn).toBe(true);
+		expect(teamStatusLabel('https://t.example', s({ online: false, pending: 1 }))?.tooltip).toContain('1 item pending');
 	});
 	test('live updates in the tooltip; reconnecting shows ↻', () => {
-		expect(teamStatusLabel('https://t.example', s({}))?.tooltip).toContain('อัปเดตสด: เชื่อมต่อแล้ว');
+		expect(teamStatusLabel('https://t.example', s({}))?.tooltip).toContain('Live updates: Connected');
 		const l = teamStatusLabel('https://t.example', s({ stream: 'reconnecting' }));
-		expect(l?.text).toBe('ทีม ↻');
+		expect(l?.text).toBe('Team ↻');
 		expect(l?.warn).toBe(false);
-		expect(teamStatusLabel('https://t.example', s({ stream: 'off' }))?.tooltip).toContain('อัปเดตสด: ปิด');
+		expect(teamStatusLabel('https://t.example', s({ stream: 'off' }))?.tooltip).toContain('Live updates: Off');
 	});
-	test('signed out', () => expect(teamStatusLabel('https://t.example', s({ signed_in: false }))?.text).toBe('ทีม: ยังไม่ได้ลงชื่อเข้าใช้'));
+	test('signed out', () => expect(teamStatusLabel('https://t.example', s({ signed_in: false }))?.text).toBe('Team: Not Signed In'));
+	test('in Thai', () => {
+		setLocale('th');
+		try {
+			const l = teamStatusLabel('https://t.example', s({ online: false, pending: 3 }));
+			expect(l?.text).toBe('ทีม: ออฟไลน์');
+			expect(l?.tooltip).toContain('รอส่ง 3 รายการ');
+			expect(teamStatusLabel('https://t.example', s({}))?.tooltip).toContain('อัปเดตสด: เชื่อมต่อแล้ว');
+		} finally {
+			setLocale('en');
+		}
+	});
 });
 
 describe('issueSource', () => {

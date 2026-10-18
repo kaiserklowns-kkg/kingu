@@ -20,6 +20,7 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import { clientLog } from '#lib/client-log.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
+import { t } from '#lib/i18n/index.ts';
 import { applyEvent, initialRun, type AgentEvent, type Decision, type RunState } from './events';
 
 export type AgentRun = RunState & {
@@ -51,9 +52,9 @@ class Agents {
 
 	async start(slug: string, prompt: string, opts: { root?: string; resume?: string | null; images?: string[] } = {}): Promise<void> {
 		const prev = this.runs[slug];
-		if (prev && !prev.ended) throw new Error(`${slug}: งานนี้กำลังทำงานอยู่ (already running)`);
+		if (prev && !prev.ended) throw new Error(t('team.agent.alreadyRunning', { slug }));
 		const root = opts.root ?? workspace.root;
-		if (!root) throw new Error('ยังไม่ได้เปิดโฟลเดอร์ (no folder open)');
+		if (!root) throw new Error(t('team.agent.noFolder'));
 		const resume = opts.resume === undefined ? null : opts.resume;
 		// Keep the earlier timeline when continuing the same session.
 		const run: AgentRun = { ...initialRun(), slug, root, runId: undefined, startedAt: Date.now() };
@@ -96,7 +97,7 @@ class Agents {
 		const run = this.runs[slug];
 		if (!run) throw new Error(`${slug}: no run`);
 		if (run.ended) return this.start(slug, text, { root: run.root, resume: run.sessionId, images });
-		if (run.runId === undefined) throw new Error('ยังเริ่มไม่เสร็จ (still starting)');
+		if (run.runId === undefined) throw new Error(t('team.agent.stillStarting'));
 		await invoke('agent_send', { runId: run.runId, text, images: images.length ? images : null });
 	}
 

@@ -1,6 +1,8 @@
 // Plan usage for the footer and its popover (Orca's usage meter). Rust fetches; this file only
 // shapes what it returns. Pure, so `bun test` covers it.
 
+import { t } from '#lib/i18n/index.ts';
+
 export type Provider = 'claude' | 'codex';
 export type Kind = 'subscription' | 'api_key';
 
@@ -108,7 +110,7 @@ export function footerRows(rows: UsageRow[]): UsageRow[] {
 /** `kingu.statusBar.usage.display` (Orca's usagePercentageDisplay): percent used, or what is left. */
 export type UsageDisplay = 'used' | 'remaining';
 export const usageLabel = (usedPercent: number, display: UsageDisplay = 'used') =>
-	display === 'remaining' ? `${pct(100 - usedPercent)}% left` : `${pct(usedPercent)}% used`;
+	display === 'remaining' ? t('team.usage.left', { percent: pct(100 - usedPercent) }) : t('team.usage.used', { percent: pct(usedPercent) });
 
 export function chipText(row: UsageRow, now: number, mode: 'compact' | 'detailed' = 'compact', display: UsageDisplay = 'used'): string {
 	if (row.status === 'api_key') return 'API key';
@@ -125,9 +127,9 @@ export function rowLevel(row: UsageRow): Level {
 }
 
 export function windowTitle(name: string): string {
-	if (name === 'session') return '5 ชั่วโมง';
-	if (name === 'weekly') return '7 วัน';
-	return `7 วัน (${name})`;
+	if (name === 'session') return t('team.usage.session');
+	if (name === 'weekly') return t('team.usage.weekly');
+	return t('team.usage.model', { name });
 }
 
 /** Points for an SVG polyline of percentages on a fixed 0–100 scale. */
@@ -138,12 +140,12 @@ export function percentLine(values: number[], width: number, height: number): st
 	return pts.map((v, i) => `${(i * step).toFixed(1)},${(height - 1 - (pct(v) / 100) * (height - 2)).toFixed(1)}`).join(' ');
 }
 
-/** "อัปเดต 5 นาทีที่แล้ว". */
+/** "Updated 5 minutes ago". */
 export function updatedAgo(at: number | null, now: number): string {
-	if (at == null) return 'ยังไม่เคยอัปเดต';
+	if (at == null) return t('team.usage.neverUpdated');
 	const m = Math.floor((now - at) / 60_000);
-	if (m < 1) return 'อัปเดตเมื่อสักครู่';
-	if (m < 60) return `อัปเดต ${m} นาทีที่แล้ว`;
+	if (m < 1) return t('team.usage.updatedJustNow');
+	if (m < 60) return t('team.usage.updatedMinutes', { count: m });
 	const h = Math.floor(m / 60);
-	return h < 24 ? `อัปเดต ${h} ชั่วโมงที่แล้ว` : `อัปเดต ${Math.floor(h / 24)} วันที่แล้ว`;
+	return h < 24 ? t('team.usage.updatedHours', { count: h }) : t('team.usage.updatedDays', { count: Math.floor(h / 24) });
 }

@@ -14,6 +14,7 @@ import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 import { team } from '#lib/team/team.svelte.ts';
 import { PROVIDER_TITLE, type AccountsView, type AccountView, type Kind, type Provider, type Sample, type UsageRow } from './usage';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
+import { t } from '#lib/i18n/index.ts';
 
 /** Rust decides whether a request is due (15 min, backoff); asking every minute is cheap. */
 const POLL_MS = 60_000;
@@ -39,7 +40,7 @@ class Accounts {
 		try {
 			this.rows = await invoke<UsageRow[]>('ai_usage_refresh', { force });
 		} catch (e) {
-			if (force) notifications.error(`รีเฟรช usage ไม่สำเร็จ: ${message(e)}`);
+			if (force) notifications.error(t('team.accounts.refreshFailed', { error: message(e) }));
 		} finally {
 			this.now = Date.now();
 			if (force) this.refreshing = false;
@@ -50,7 +51,7 @@ class Accounts {
 		try {
 			this.view = await invoke<AccountsView>('ai_accounts_list');
 		} catch (e) {
-			notifications.error(`อ่านรายการบัญชี AI ไม่ได้: ${message(e)}`);
+			notifications.error(t('team.accounts.listFailed', { error: message(e) }));
 		}
 	}
 
@@ -82,16 +83,19 @@ class Accounts {
 		const title = PROVIDER_TITLE[provider];
 		if (!kind) {
 			const picked = await quick.choose({
-				placeholder: `เพิ่มบัญชี ${title}`,
+				placeholder: t('team.accounts.addPlaceholder', { provider: title }),
 				items: [
-					{ id: 'subscription', label: provider === 'claude' ? 'Claude subscription (Pro / Max)' : 'ChatGPT (Plus / Pro)', description: 'login ผ่าน CLI ใน terminal' },
-					{ id: 'api_key', label: 'API key', description: 'เก็บใน macOS Keychain' }
+					{ id: 'subscription', label: provider === 'claude' ? 'Claude subscription (Pro / Max)' : 'ChatGPT (Plus / Pro)', description: t('team.accounts.subscriptionDesc') },
+					{ id: 'api_key', label: 'API key', description: t('team.accounts.apiKeyDesc') }
 				]
 			});
 			if (!picked) return;
 			kind = picked.id as Kind;
 		}
-		const label = await quick.input({ placeholder: `ชื่อบัญชี ${title} (เช่น งาน, ส่วนตัว)`, hint: (v) => (v.trim() ? `เพิ่มบัญชี "${v.trim()}"` : 'พิมพ์ชื่อบัญชีแล้วกด Enter') });
+		const label = await quick.input({
+			placeholder: t('team.accounts.namePlaceholder', { provider: title }),
+			hint: (v) => (v.trim() ? t('team.accounts.nameHintAdd', { name: v.trim() }) : t('team.accounts.nameHintEmpty'))
+		});
 		if (!label?.trim()) return;
 		try {
 			const account = await invoke<AccountView>('ai_account_add', { provider, kind, label });
@@ -102,7 +106,7 @@ class Accounts {
 				systemSettings.showAccounts();
 			}
 		} catch (e) {
-			notifications.error(`เพิ่มบัญชีไม่สำเร็จ: ${message(e)}`);
+			notifications.error(t('team.accounts.addFailed', { error: message(e) }));
 		}
 	}
 
@@ -113,12 +117,12 @@ class Accounts {
 			const run = await invoke<string[]>('ai_account_login_command', { id });
 			systemSettings.close();
 			appMode.setMode('workbench');
-			terminals.open({ title: `Login ${account?.label ?? PROVIDER_TITLE[account?.provider ?? 'claude']}`, run });
+			terminals.open({ title: t('team.accounts.loginTerminal', { name: account?.label ?? PROVIDER_TITLE[account?.provider ?? 'claude'] }), run });
 			layout.showPanel('terminal');
-			status.flash('ทำตามขั้นตอน login ใน terminal (เบราว์เซอร์จะเปิดให้) Kingu จะตรวจให้เองเมื่อเสร็จ', 8000);
+			status.flash(t('team.accounts.loginSteps'), 8000);
 			void this.#watchLogin(id);
 		} catch (e) {
-			notifications.error(`เริ่ม login ไม่ได้: ${message(e)}`);
+			notifications.error(t('team.accounts.loginStartFailed', { error: message(e) }));
 		}
 	}
 
@@ -136,7 +140,8 @@ class Accounts {
 					// A fresh login is what the user wants agents to use (Orca selects it too).
 					await invoke('ai_account_set_active', { provider: a.provider, id });
 					await this.#changed();
-					status.flash(`login ${PROVIDER_TITLE[a.provider]} "${a.label}"${a.email ? ` (${a.email})` : ''} แล้ว agent จะใช้บัญชีนี้`);
+					const provider = PROVIDER_TITLE[a.provider];
+					status.flash(a.email ? t('team.accounts.loggedInEmail', { provider, name: a.label, email: a.email }) : t('team.accounts.loggedIn', { provider, name: a.label }));
 					return;
 				}
 			}
@@ -161,7 +166,8 @@ class Accounts {
 			await invoke('ai_account_set_active', { provider, id });
 			await this.#changed();
 			const a = this.view?.accounts.find((x) => x.id === id);
-			status.flash(id ? `agent ${PROVIDER_TITLE[provider]} จะใช้บัญชี "${a?.label}"` : `agent ${PROVIDER_TITLE[provider]} จะใช้บัญชีของคุณเอง`);
+			const title = PROVIDER_TITLE[provider];
+			status.flash(id ? t('team.accounts.usesAccount', { provider: title, name: a?.label ?? id }) : t('team.accounts.usesOwn', { provider: title }));
 		} catch (e) {
 			status.flash(message(e));
 		}
@@ -172,17 +178,17 @@ class Accounts {
 		if (!a) return;
 		const ok = await ask(
 			a.kind === 'api_key'
-				? `ลบบัญชี "${a.label}" และ API key ของมันจาก Keychain?`
-				: `ลบบัญชี "${a.label}"? login ของบัญชีนี้ใน Kingu จะถูกลบ (ประวัติ session ที่แชร์กับ ~/.${a.provider} ยังอยู่)`,
-			{ title: 'ลบบัญชี AI', kind: 'warning' }
+				? t('team.accounts.removeKeyConfirm', { name: a.label })
+				: t('team.accounts.removeLoginConfirm', { name: a.label, provider: a.provider }),
+			{ title: t('team.accounts.removeTitle'), kind: 'warning' }
 		);
 		if (!ok) return;
 		try {
 			await invoke('ai_account_remove', { id });
 			await this.#changed();
-			status.flash(`ลบบัญชี "${a.label}" แล้ว`);
+			status.flash(t('team.accounts.removed', { name: a.label }));
 		} catch (e) {
-			notifications.error(`ลบบัญชีไม่สำเร็จ: ${message(e)}`);
+			notifications.error(t('team.accounts.removeFailed', { error: message(e) }));
 		}
 	}
 
@@ -191,8 +197,8 @@ class Accounts {
 		const subs = this.view?.accounts.filter((a) => a.kind === 'subscription') ?? [];
 		if (!subs.length) return this.add('claude', 'subscription');
 		const picked = await quick.choose({
-			placeholder: 'login บัญชี AI',
-			items: subs.map((a) => ({ id: a.id, label: `${PROVIDER_TITLE[a.provider]}: ${a.label}`, description: a.signed_in ? (a.email ?? 'login แล้ว') : 'ยังไม่ได้ login' }))
+			placeholder: t('team.accounts.loginPlaceholder'),
+			items: subs.map((a) => ({ id: a.id, label: `${PROVIDER_TITLE[a.provider]}: ${a.label}`, description: a.signed_in ? (a.email ?? t('team.accounts.loggedInDesc')) : t('team.accounts.notLoggedIn') }))
 		});
 		if (picked) await this.login(picked.id);
 	}
@@ -220,10 +226,10 @@ export const accounts = new Accounts();
 export function showAccountsMenu() {
 	const signedIn = !!team.status?.signed_in;
 	quick.pick({
-		placeholder: 'บัญชี',
+		placeholder: t('team.accounts.menuPlaceholder'),
 		items: [
-			{ id: 'ai', label: 'จัดการบัญชี AI…', description: 'Claude, Codex: login / API key / usage' },
-			{ id: 'team', label: signedIn ? 'เซิร์ฟเวอร์ทีม…' : 'ลงชื่อเข้าใช้เซิร์ฟเวอร์ทีม…' }
+			{ id: 'ai', label: t('team.accounts.manageAi'), description: 'Claude, Codex: login / API key / usage' },
+			{ id: 'team', label: signedIn ? t('team.accounts.teamServer') : t('team.accounts.signInTeamServer') }
 		],
 		onAccept: (item) => (item.id === 'ai' ? accounts.manage() : team.showMenu())
 	});

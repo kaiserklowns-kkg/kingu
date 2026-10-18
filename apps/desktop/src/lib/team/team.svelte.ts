@@ -9,9 +9,10 @@ import { quick } from '#lib/workbench/quick.svelte.ts';
 import { status as statusBar } from '#lib/workbench/status.svelte.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
-import { buildRunSync, buildTaskSync, STREAM_LABEL, teamStatusLabel, type TeamRunInput, type TeamStatus, type TeamTaskInput } from './team';
+import { buildRunSync, buildTaskSync, streamLabel, teamStatusLabel, type TeamRunInput, type TeamStatus, type TeamTaskInput } from './team';
 import type { TeamEvent } from './teamEvents.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
+import { t } from '#lib/i18n/index.ts';
 
 type SignedIn = { server: string; org_id: string; org_name: string; user_id: string; role: string };
 
@@ -47,27 +48,27 @@ class Team {
 
 	startSignIn() {
 		if (!this.serverUrl) {
-			statusBar.flash('ตั้งค่า kingu.team.serverUrl ก่อนลงชื่อเข้าใช้ทีม');
+			statusBar.flash(t('team.team.needsServer'));
 			systemSettings.show('Team');
 			return;
 		}
 		this.signingIn = true;
 	}
 
-	/** Verifies the token with the server and stores it in the Keychain. Throws a Thai message on failure. */
+	/** Verifies the token with the server and stores it in the Keychain. Throws the server's message on failure. */
 	async signIn(token: string): Promise<SignedIn> {
 		const me = await invoke<SignedIn>('team_sign_in', { serverUrl: this.serverUrl, token });
 		await this.refresh();
-		statusBar.flash(`ลงชื่อเข้าใช้ทีม ${me.org_name} เป็น ${me.user_id} แล้ว`);
+		statusBar.flash(t('team.team.signedIn', { org: me.org_name, user: me.user_id }));
 		return me;
 	}
 
 	async signOut() {
 		try {
 			await invoke('team_sign_out', { serverUrl: this.serverUrl });
-			statusBar.flash('ออกจากระบบทีมแล้ว (ลบ token จาก Keychain)');
+			statusBar.flash(t('team.team.signedOut'));
 		} catch (e) {
-			notifications.error(`ออกจากระบบทีมไม่สำเร็จ: ${message(e)}`);
+			notifications.error(t('team.team.signOutFailed', { error: message(e) }));
 		}
 		await this.refresh();
 	}
@@ -83,7 +84,7 @@ class Team {
 			const pending = await invoke<number>('team_sync_task', { serverUrl, project, task: buildTaskSync(task) });
 			if (this.status) this.status = { ...this.status, pending };
 		} catch (e) {
-			notifications.error(`ซิงก์งานไปยังทีมไม่ได้: ${message(e)}`);
+			notifications.error(t('team.team.syncTaskFailed', { error: message(e) }));
 		}
 	}
 
@@ -99,7 +100,7 @@ class Team {
 			const pending = await invoke<number>('team_sync_run', { serverUrl, project, run });
 			if (this.status) this.status = { ...this.status, pending };
 		} catch (e) {
-			notifications.error(`ซิงก์การรันไปยังทีมไม่ได้: ${message(e)}`);
+			notifications.error(t('team.team.syncRunFailed', { error: message(e) }));
 		}
 	}
 
@@ -116,7 +117,7 @@ class Team {
 		const done = server ? invoke('team_events_start', { serverUrl: server }) : invoke('team_events_stop');
 		done.catch((e) => {
 			this.#streaming = '';
-			notifications.error(`เชื่อมต่ออัปเดตสดจากทีมไม่ได้: ${message(e)}`);
+			notifications.error(t('team.team.streamFailed', { error: message(e) }));
 		});
 	}
 
@@ -124,12 +125,12 @@ class Team {
 	showMenu() {
 		if (!this.status?.signed_in) return this.startSignIn();
 		quick.pick({
-			placeholder: `ทีม — ${this.status.server}`,
+			placeholder: t('team.team.menuPlaceholder', { server: this.status.server }),
 			items: [
-				{ id: 'sync', label: 'ซิงก์ตอนนี้', description: this.status.pending ? `รอส่ง ${this.status.pending}` : undefined },
-				{ id: 'live', label: 'อัปเดตสด', description: STREAM_LABEL[this.status.stream] ?? STREAM_LABEL.off },
-				{ id: 'signin', label: 'ลงชื่อเข้าใช้ด้วย token ใหม่' },
-				{ id: 'signout', label: 'ออกจากระบบทีม' }
+				{ id: 'sync', label: t('team.team.syncNow'), description: this.status.pending ? t('team.team.pendingShort', { count: this.status.pending }) : undefined },
+				{ id: 'live', label: t('team.team.liveUpdates'), description: streamLabel(this.status.stream) },
+				{ id: 'signin', label: t('team.team.signInNewToken') },
+				{ id: 'signout', label: t('team.team.signOut') }
 			],
 			onAccept: (item) => {
 				if (item.id === 'live') return;
