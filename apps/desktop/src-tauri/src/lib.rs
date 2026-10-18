@@ -13,6 +13,7 @@ mod settings;
 mod shell_env;
 mod snap;
 mod snap_install;
+mod snap_sandbox;
 mod system;
 mod team;
 mod watcher;
@@ -620,6 +621,7 @@ pub fn run() {
       snap::snap_list,
       snap::snap_trust,
       snap::snap_skill_plugins,
+      snap_sandbox::snap_sandbox_info,
       snap_install::snap_install_git,
       snap_install::snap_install_folder,
       snap_install::snap_update_prepare,

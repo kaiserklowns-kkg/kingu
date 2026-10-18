@@ -3,6 +3,7 @@
 //! Unix socket (`protocol`, `server`, `client`), so agent CLIs keep running after the app quits.
 
 pub mod protocol;
+pub mod sandbox;
 pub mod session;
 
 #[cfg(unix)]

@@ -248,6 +248,21 @@ export const SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.snaps.sandbox',
+		group: 'Snap Sandbox',
+		type: 'string',
+		default: 'enforce',
+		enum: ['enforce', 'off'],
+		enumDescriptions: [
+			'บังคับสิทธิ์ที่ snap ประกาศ (sandbox-exec บน macOS, bwrap บน Linux) ถ้าบังคับไม่ได้จะไม่รันงานและ MCP server ของ snap (Enforce declared permissions; refuse when they cannot be enforced.)',
+			'ไม่บังคับ: snap รันได้ทุกอย่างที่คุณทำได้ รวมถึงเห็น token ใน environment — ไม่ปลอดภัย (Run snaps unconfined. Unsafe.)'
+		],
+		description:
+			'การบังคับสิทธิ์ ([permissions]) ของงานและ MCP server ของ Snap: จำกัดการเขียนไฟล์ เครือข่าย และ secret ใน environment (Enforcement of Snap permissions for tasks and MCP servers.)',
+		// User-only: a repository's workspace settings must not turn the sandbox off for its own snaps.
+		scope: 'application'
+	},
+	{
 		id: 'kingu.team.project',
 		group: 'Team',
 		type: 'string',
@@ -438,7 +453,7 @@ export type SettingsSection = { id: string; label: string; groups: string[] };
  * grouped by what they affect. Every group in `SETTINGS` belongs to exactly one section.
  */
 export const SETTINGS_SECTIONS: SettingsSection[] = [
-	{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Status Bar', 'Team'] },
+	{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Status Bar', 'Team', 'Snap Sandbox'] },
 	{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Files', 'Terminal', 'Git'] },
 	{ id: 'ade', label: 'ADE (Agents)', groups: ['Agent'] }
 ];

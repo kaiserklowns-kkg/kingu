@@ -537,7 +537,9 @@ name = {name}
 version = "0.1.0"
 description = ""
 
-# สิทธิ์ที่ประกาศให้ผู้ใช้เห็นก่อนเชื่อถือ
+# สิทธิ์: แสดงให้ผู้ใช้เห็นก่อนเชื่อถือ และบังคับใช้ตอนรันงานและ MCP server (sandbox)
+# network = false ปิดเครือข่าย IP ทั้งหมด (รวม localhost) fs = "worktree" เขียนได้เฉพาะโฟลเดอร์งานและ temp
+# secrets = ตัวแปร environment ที่ส่งให้ได้ ตัวอื่นที่ดูเหมือน token/key/password จะถูกตัดออก
 [permissions]
 network = false
 fs = "worktree"   # "worktree" | "home"
