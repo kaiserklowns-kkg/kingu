@@ -19,6 +19,7 @@ pub mod open_in;
 pub mod pr;
 pub mod review;
 pub mod scripts;
+pub mod slash_commands;
 pub mod status_hooks;
 pub mod tasks;
 pub mod trust;
@@ -33,7 +34,7 @@ use crate::workspace::Workspace;
 pub use events::AgentEvent;
 pub use host::AgentHost;
 
-use chats::PERMISSION_MODES;
+use chats::RUN_PERMISSION_MODES;
 
 /// Where a run goes: the task worktree `slug` (the ADE), or an explicit `cwd` the webview chose
 /// (a chat): the open folder or one of its task worktrees (`chats::resolve_cwd`). `root`, when
@@ -91,7 +92,7 @@ pub async fn agent_start(
     return Err("prompt is empty".into());
   }
   if let Some(m) = permission_mode.as_deref()
-    && !PERMISSION_MODES.contains(&m)
+    && !RUN_PERMISSION_MODES.contains(&m)
   {
     return Err(format!("{m}: unsupported permission mode"));
   }
@@ -178,7 +179,7 @@ pub async fn agent_start(
 #[tauri::command]
 pub async fn agent_set_options(agents: State<'_, Arc<AgentHost>>, run_id: u32, model: Option<String>, permission_mode: Option<String>) -> Result<(), String> {
   if let Some(m) = permission_mode.as_deref()
-    && !PERMISSION_MODES.contains(&m)
+    && !RUN_PERMISSION_MODES.contains(&m)
   {
     return Err(format!("{m}: unsupported permission mode"));
   }
@@ -322,7 +323,8 @@ pub async fn agent_send(agents: State<'_, Arc<AgentHost>>, run_id: u32, text: St
   on_host(&agents, move |a| a.send(run_id, &text, &images)).await
 }
 
-/// Answers a `permission_request`: `allow`, `allow_always` (this session) or `deny` + message.
+/// Answers a `permission_request`: `allow`, `allow_always` (this session), `allow_workspace`,
+/// `allow_user` (saved rules: `host::DECISIONS`) or `deny` + message.
 /// An AskUserQuestion request is answered with `allow` + `answers` (question text → answer).
 #[tauri::command]
 pub async fn agent_answer_permission(

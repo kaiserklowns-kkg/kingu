@@ -26,11 +26,42 @@ fn yes() -> bool {
   true
 }
 
+/// An MCP server of the session and how it is (`connected`, `failed`, `needs-auth`, `pending`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct McpServerState {
+  pub name: String,
+  #[serde(default)]
+  pub status: String,
+}
+
+/// A slash command the session knows (built in, a skill, or `.claude/commands`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SlashCommand {
+  pub name: String,
+  #[serde(default)]
+  pub description: String,
+  #[serde(default)]
+  pub argument_hint: String,
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentEvent {
   /// Session start (`system`/`init`).
   System { subtype: String, session_id: Option<String>, model: Option<String> },
+  /// What the session started with: its slash command names, tools and MCP servers.
+  SessionInfo {
+    #[serde(default)]
+    slash_commands: Vec<String>,
+    #[serde(default)]
+    tools: Vec<String>,
+    #[serde(default)]
+    mcp_servers: Vec<McpServerState>,
+  },
+  /// The session's slash commands with descriptions; replaces the last list.
+  Commands { commands: Vec<SlashCommand> },
+  /// How full the context window is after a turn.
+  ContextUsage { used_tokens: u64, max_tokens: u64 },
   Message { role: String, text: String },
   /// Streaming chunk of assistant text or thinking (`block`); the full `Message`/`Thinking` follows.
   Delta { block: String, text: String },
@@ -72,8 +103,12 @@ pub enum AgentEvent {
     input: Value,
     #[serde(default = "yes")]
     can_always: bool,
+    /// The rules an "always" answer adds (`Bash(npm test:*)`); empty: the whole tool.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    rules: Vec<String>,
   },
-  /// A permission request was answered (`allow`/`allow_always`/`deny`) or `cancelled`.
+  /// A permission request was answered (`allow`, `allow_always`, `allow_workspace`, `allow_user`,
+  /// `deny`) or `cancelled`.
   PermissionResolved { request_id: String, decision: String },
   /// A file's content just before an edit tool changed it (the host's PreToolUse hook). Rust
   /// stores it in the chat's snapshot store (`chat_edits`) and never passes it on.
@@ -130,6 +165,23 @@ mod tests {
       "usage": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 2, "cache_creation_input_tokens": 1}
     });
     assert_eq!(serde_json::to_value(AgentEvent::from_host(result.clone())).unwrap(), result);
+  }
+
+  #[test]
+  fn round_trips_session_commands_and_context() {
+    for v in [
+      json!({"kind": "session_info", "slash_commands": ["compact"], "tools": ["Bash"], "mcp_servers": [{"name": "gh", "status": "connected"}]}),
+      json!({"kind": "commands", "commands": [{"name": "review", "description": "Review a PR", "argument_hint": "<pr>"}]}),
+      json!({"kind": "context_usage", "used_tokens": 1200, "max_tokens": 200000}),
+    ] {
+      assert_eq!(serde_json::to_value(AgentEvent::from_host(v.clone())).unwrap(), v);
+    }
+    let req = json!({
+      "kind": "permission_request", "request_id": "r1", "tool": "Bash", "tool_use_id": null, "title": null,
+      "input_summary": "npm test", "detail": null, "diff": null, "input": {}, "can_always": true, "rules": ["Bash(npm test:*)"]
+    });
+    assert_eq!(serde_json::to_value(AgentEvent::from_host(req.clone())).unwrap(), req);
+    assert!(matches!(AgentEvent::from_host(json!({"kind": "session_info"})), AgentEvent::SessionInfo { .. }));
   }
 
   #[test]
