@@ -148,6 +148,9 @@ pub struct StartRequest {
   /// Image files sent with the first prompt (checked: attachments.rs).
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub images: Vec<String>,
+  /// Snapshot files before the edit tools change them (chats: `chat_edits`); omitted when off.
+  #[serde(skip_serializing_if = "std::ops::Not::not")]
+  pub snapshots: bool,
   /// What else this run owns while it is live besides its session (e.g. `chat:<root>:<id>`);
   /// not sent to the sidecar.
   #[serde(skip)]

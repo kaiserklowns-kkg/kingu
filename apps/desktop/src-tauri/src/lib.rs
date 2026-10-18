@@ -1116,6 +1116,7 @@ pub fn run() {
     .manage(pty::Ptys::default())
     .manage(system::KeepAwake::default())
     .manage(Arc::new(agent::AgentHost::default()))
+    .manage(Arc::new(agent::chat_edits::ChatEdits::default()))
     .manage(Arc::new(search::Searches::default()))
     .manage(WorktreeSearches::default())
     .manage(lsp::Servers::default())
@@ -1301,6 +1302,11 @@ pub fn run() {
       agent::chats_save,
       agent::chat_transcript_load,
       agent::chat_transcript_delete,
+      agent::chat_edits_list,
+      agent::chat_edits_original,
+      agent::chat_edits_keep,
+      agent::chat_edits_undo,
+      agent::chat_edits_restore,
       agent::tasks_load,
       agent::tasks_save,
       agent::tasks_update,

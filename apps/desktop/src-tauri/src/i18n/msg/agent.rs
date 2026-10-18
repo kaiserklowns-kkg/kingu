@@ -325,6 +325,27 @@ crate::i18n::messages! {
       en: "Invalid chat id",
       th: "รหัสแชตไม่ถูกต้อง",
     },
+    /// Chat edits (agent/chat_edits.rs): Undo / Restore checkpoint while a turn still runs.
+    EditsBusy {
+      en: "The agent is still working in this chat: wait for the turn to end or stop it, then undo",
+      th: "agent ยังทำงานอยู่ในแชตนี้: รอให้รอบนี้จบหรือหยุดก่อน แล้วค่อยย้อนกลับ",
+    },
+    EditNotRestorable {
+      en: "{path}: no saved copy from before the agent changed it, so it cannot be undone here",
+      th: "{path}: ไม่มีสำเนาก่อน agent แก้ไว้ จึงย้อนกลับจากที่นี่ไม่ได้",
+    },
+    EditPathOutside {
+      en: "{path}: outside the chat's folder",
+      th: "{path}: อยู่นอกโฟลเดอร์ของแชต",
+    },
+    EditNoRequest {
+      en: "This chat has no request {index}",
+      th: "แชตนี้ไม่มีคำขอที่ {index}",
+    },
+    EditCwdChanged {
+      en: "The chat's edits were made in {path}, not in this folder",
+      th: "การแก้ไขของแชตนี้ทำใน {path} ไม่ใช่โฟลเดอร์นี้",
+    },
     NoAgentCwd {
       en: "No working directory for the agent: pass a chat folder or a task",
       th: "ไม่ได้ระบุโฟลเดอร์ทำงานของ agent: ต้องระบุโฟลเดอร์ของแชตหรืองาน",
