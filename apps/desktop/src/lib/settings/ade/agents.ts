@@ -74,6 +74,53 @@ export const AGENT_SETTINGS: SettingSchema[] = [
 		enumDescriptions: ['cache มาตรฐาน 5 นาที (The standard 5-minute cache.)', 'cache แบบขยาย 1 ชั่วโมง (The extended 1-hour cache.)'],
 		description: 'อายุของ prompt cache ที่ kingu.agent.promptCacheTimer นับถอยหลัง (Orca: promptCacheTtlMs) (Prompt-cache lifetime the timer counts down.)'
 	},
+	// --- Agent Chat (Orca's nativeChatAppearance): the timeline of timeline-mode tasks and the Agent panel.
+	{
+		id: 'kingu.chat.fontSize',
+		group: 'Agent Chat',
+		type: 'number',
+		default: 14,
+		minimum: 12,
+		maximum: 20,
+		integer: true,
+		description: 'ขนาดตัวอักษรของบทสนทนากับ agent เป็นพิกเซล 12–20 (Orca: nativeChatAppearance.fontSize) (Chat text size in pixels, 12–20.)'
+	},
+	{
+		id: 'kingu.chat.codeFontSize',
+		group: 'Agent Chat',
+		type: 'number',
+		default: 12,
+		minimum: 10,
+		maximum: 18,
+		integer: true,
+		description: 'ขนาดตัวอักษรของโค้ดและการเรียกเครื่องมือในบทสนทนา 10–18 (Orca: nativeChatAppearance.codeFontSize) (Code and tool-call text size in the chat, 10–18.)'
+	},
+	{
+		id: 'kingu.chat.width',
+		group: 'Agent Chat',
+		type: 'string',
+		default: 'comfortable',
+		enum: ['comfortable', 'wide', 'full'],
+		enumDescriptions: ['กว้างพออ่านสบาย 46rem (Comfortable, 46rem.)', 'กว้าง 64rem (Wide, 64rem.)', 'เต็มพื้นที่ (Full width.)'],
+		description: 'ความกว้างของบทสนทนา (Orca: nativeChatAppearance.width) (Width of the chat transcript.)'
+	},
+	{
+		id: 'kingu.chat.contrast',
+		group: 'Agent Chat',
+		type: 'number',
+		default: 100,
+		minimum: 50,
+		maximum: 150,
+		integer: true,
+		description: 'ความคมชัด (contrast) ของบทสนทนาเป็นเปอร์เซ็นต์ 50–150 (Orca: nativeChatAppearance.contrast) (Chat contrast in percent, 50–150.)'
+	},
+	{
+		id: 'kingu.chat.matchTerminalFont',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: false,
+		description: 'ใช้ฟอนต์ของ terminal (terminal.integrated.fontFamily) ในบทสนทนา (Orca: nativeChatAppearance.matchTerminalInterface) (Use the terminal font in the chat.)'
+	},
 	{
 		id: 'kingu.automations.confirmDelete',
 		group: G,
