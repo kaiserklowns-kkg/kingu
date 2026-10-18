@@ -11,6 +11,7 @@
 	import { settings } from '../settings.svelte';
 	import { systemSettings } from '../systemSettings.svelte';
 	import SettingChoice from './SettingChoice.svelte';
+	import VaultStats from '#lib/vault/VaultStats.svelte';
 
 	const display = $derived((settings.get<string>('kingu.usage.display') ?? 'used') as UsageDisplay);
 	const spend = $derived(usage.spend);
@@ -115,5 +116,7 @@
 			{/each}
 		</div>
 		<p class="mt-2 text-xs {MUTED}">นับจากรอบล่าสุดของแต่ละงาน (ค่าใช้จ่ายสะสมของ session นั้น) รอบที่เก่ากว่าไม่ได้เก็บไว้ ตัวเลขจริงจึงอาจสูงกว่านี้</p>
+
+		<VaultStats />
 	</div>
 </div>

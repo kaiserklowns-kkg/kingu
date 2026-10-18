@@ -48,6 +48,7 @@ import { status } from '#lib/workbench/status.svelte.ts';
 import {
 	chatCwdPath,
 	chatSendPlan,
+	MAX_TITLE,
 	newChat,
 	newChatId,
 	optionChange,
@@ -211,6 +212,26 @@ class Chats {
 		this.#lastImages.set(runKey(root, meta.id), input.message);
 		await this.#start(root, meta, input.message.text, null, input.message.images, input.message.files);
 		return meta.id;
+	}
+
+	/**
+	 * A chat that continues Claude Code session `sessionId`, run in `cwd` of the open folder (AI
+	 * Vault › Continue here): it opens empty and its first message resumes that session. The chat
+	 * that already continues it is reused.
+	 */
+	async adopt(input: { title: string; sessionId: string; cwd: ChatCwd }): Promise<string | undefined> {
+		const root = workspace.root;
+		if (!root) return;
+		if (root !== this.root) await this.load();
+		const same = (c: ChatCwd) => c.kind === input.cwd.kind && (c.kind === 'folder' || (input.cwd.kind === 'task' && c.slug === input.cwd.slug));
+		const existing = this.list.find((c) => c.session_id === input.sessionId && same(c.cwd));
+		if (existing) return existing.id;
+		const { model, permissionMode } = this.defaults();
+		const title = input.title.trim().slice(0, MAX_TITLE) || 'Chat';
+		const meta: ChatMeta = { ...newChat({ prompt: title, cwd: input.cwd, model, permissionMode }, Date.now()), title, title_auto: false, session_id: input.sessionId };
+		this.#save([...this.list, meta], root);
+		await this.#saving;
+		return this.get(meta.id) ? meta.id : undefined;
 	}
 
 	async #start(root: string, meta: ChatMeta, prompt: string, resume: string | null, images: string[], files: string[] = []) {

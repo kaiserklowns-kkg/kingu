@@ -9,6 +9,7 @@
 	import { snaps } from '#lib/snaps/snaps.svelte.ts';
 	import { pendingTrustCount } from '#lib/snaps/snapModel.ts';
 	import { activityBarMetrics, activityClickHides } from './workbenchOptions';
+	import { t } from '#lib/i18n/index.ts';
 
 	/**
 	 * `vertical`: the activity bar (`workbench.activityBar.location: default`, 36px wide with
@@ -26,7 +27,8 @@
 		{ view: 'scm', label: 'Source Control', icon: 'git', command: 'workbench.view.scm' },
 		{ view: 'debug', label: 'Run and Debug', icon: 'bug', command: 'workbench.view.debug' },
 		{ view: 'snaps', label: 'Snaps', icon: 'snap', command: 'workbench.view.snaps' },
-		{ view: 'agents', label: 'Agents', icon: 'tasks', command: 'kingu.agents.show' }
+		{ view: 'agents', label: 'Agents', icon: 'tasks', command: 'kingu.agents.show' },
+		{ view: 'vault', label: t('vault.title'), icon: 'clock', command: 'kingu.vault.show' }
 	];
 	/** `Explorer (⇧⌘E)`, from the command's live keybinding. */
 	const titled = (label: string, command: string) => {
