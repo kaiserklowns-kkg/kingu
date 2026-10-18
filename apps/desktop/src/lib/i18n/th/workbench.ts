@@ -7,6 +7,8 @@ export const workbench = {
 	'workbench.scm.initialized': 'สร้าง git repository แล้ว',
 	'workbench.scm.busy': 'มีคำสั่ง git อื่นกำลังทำงานอยู่ รอให้เสร็จก่อน',
 	'workbench.scm.openInTerminal': 'เปิดใน Terminal',
+	'workbench.scm.queueWaiting': 'git {op}: รอ {running}',
+	'workbench.scm.queueWaitingTitle': 'git อีกงานใน repository นี้กำลังทำงาน ({running}) มี {count} งานรอให้เสร็จก่อน',
 	'workbench.scm.fetched': 'fetch แล้ว',
 	'workbench.scm.pulled': 'pull แล้ว',
 	'workbench.scm.pushed': 'push แล้ว',

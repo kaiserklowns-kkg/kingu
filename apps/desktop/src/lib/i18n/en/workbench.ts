@@ -6,6 +6,8 @@ export const workbench = {
 	'workbench.scm.initialized': 'Initialized a git repository',
 	'workbench.scm.busy': 'Another git command is running. Wait for it to finish.',
 	'workbench.scm.openInTerminal': 'Open in Terminal',
+	'workbench.scm.queueWaiting': 'git {op}: waiting for {running}',
+	'workbench.scm.queueWaitingTitle': 'Another git operation in this repository is running ({running}); {count|# operation waits|# operations wait} for it to finish',
 	'workbench.scm.fetched': 'Fetched',
 	'workbench.scm.pulled': 'Pulled',
 	'workbench.scm.pushed': 'Pushed',

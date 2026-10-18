@@ -9,6 +9,8 @@ use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::sync::RwLock;
 
+use crate::git_queue::{self, Scope};
+
 /// `git.path` (VS Code: a path, or a list tried in order; `null` finds `git` on PATH). Read by Rust
 /// itself from the user settings file (it picks a program to run, so never from the webview or a
 /// repository's own settings).
@@ -183,6 +185,10 @@ pub(crate) fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     .arg("-C")
     .arg(root)
     .arg("--literal-pathspecs")
+    // Reads (status above all, run on every watcher event) must not take the index lock to
+    // refresh it, or they collide with a commit or stage running beside them; writes are queued
+    // in `git_queue`. Only optional locks are skipped: a write still locks what it writes.
+    .arg("--no-optional-locks")
     .args(args)
     .output()
     .map_err(|e| format!("git: {e}"))?;
@@ -283,6 +289,7 @@ fn operation_in(git_dir: &Path) -> Option<Operation> {
 /// Aborts the operation in progress; returns which one.
 pub fn abort_operation(root: &Path) -> Result<Operation, String> {
   let op = operation(root).ok_or("No merge, rebase, cherry-pick or revert is in progress.")?;
+  let _queue = git_queue::lock(root, Scope::Repository, op.verb())?;
   run(root, &[op.verb(), "--abort"])?;
   Ok(op)
 }
@@ -297,6 +304,7 @@ pub fn continue_operation(root: &Path) -> Result<Operation, String> {
   if unresolved > 0 {
     return Err(format!("{unresolved} file(s) still have conflicts. Resolve and stage them first."));
   }
+  let _queue = git_queue::lock(root, Scope::Repository, op.verb())?;
   run(root, &["-c", "core.editor=true", op.verb(), "--continue"])?;
   Ok(op)
 }
@@ -391,11 +399,12 @@ pub fn parse_status(text: &str, prefix: &str) -> GitStatus {
 
 /// `git add -A`, so deletions are staged too.
 pub fn stage(root: &Path, paths: &[String]) -> Result<(), String> {
-  run_paths(root, &["add", "-A"], paths)
+  git_queue::with(root, Scope::Worktree, "add", || run_paths(root, &["add", "-A"], paths))
 }
 
 /// `git restore --staged`; before the first commit there is no HEAD, so `git rm --cached`.
 pub fn unstage(root: &Path, paths: &[String]) -> Result<(), String> {
+  let _queue = git_queue::lock(root, Scope::Worktree, "restore --staged")?;
   if has_head(root) {
     run_paths(root, &["restore", "--staged"], paths)
   } else {
@@ -409,6 +418,7 @@ pub fn unstage(root: &Path, paths: &[String]) -> Result<(), String> {
 /// `to_trash` (VS Code's `git.discardUntrackedChangesToTrash`) moves untracked files to the trash
 /// instead of deleting them.
 pub fn discard(root: &Path, paths: &[String], delete_untracked: bool, to_trash: bool) -> Result<(), String> {
+  let _queue = git_queue::lock(root, Scope::Worktree, "restore")?;
   let Some(st) = status(root)? else { return Err("not a git repository".into()) };
   let untracked: HashSet<&str> =
     st.entries.iter().filter(|e| e.worktree.as_deref() == Some("?")).map(|e| e.path.as_str()).collect();
@@ -458,6 +468,7 @@ pub fn commit(root: &Path, message: &str, opts: &CommitOptions) -> Result<(), St
   if message.trim().is_empty() {
     return Err("commit message is empty".into());
   }
+  let _queue = git_queue::lock(root, Scope::Repository, "commit")?;
   // `git diff --cached --quiet` fails when something is staged (git's own message is a page of status).
   if !opts.amend && !opts.empty && has_head(root) && run(root, &["diff", "--cached", "--quiet"]).is_ok() {
     return Err("nothing staged to commit".into());
@@ -534,6 +545,7 @@ pub fn numstat(root: &Path) -> Result<NumStat, String> {
 /// Source Control remote actions, each on its own (Orca's dropdown): push (optionally force with
 /// lease), pull (optionally fast-forward only), fetch, and rebase onto a remote base.
 pub fn push(root: &Path, force_with_lease: bool) -> Result<(), String> {
+  let _queue = git_queue::lock(root, Scope::Refs, "push")?;
   let mut args = vec!["push", "-q"];
   if force_with_lease {
     args.push("--force-with-lease");
@@ -542,11 +554,13 @@ pub fn push(root: &Path, force_with_lease: bool) -> Result<(), String> {
 }
 
 pub fn pull(root: &Path, ff_only: bool) -> Result<(), String> {
+  let _queue = git_queue::lock(root, Scope::Repository, "pull")?;
   run_remote(root, &["pull", "-q", "--no-edit", if ff_only { "--ff-only" } else { "--no-rebase" }])
 }
 
 pub fn rebase(root: &Path, base: &str) -> Result<(), String> {
   check_rev(base)?;
+  let _queue = git_queue::lock(root, Scope::Repository, "rebase")?;
   run_remote(root, &["fetch", "-q"])?;
   run(root, &["rebase", "-q", "--end-of-options", base]).map(|_| ())
 }

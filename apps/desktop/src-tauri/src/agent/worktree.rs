@@ -3,6 +3,7 @@
 //! whatever is checked out there, so changing the prefix never loses an existing task.
 //! Drives the `git` CLI directly (no shell), so arguments are never re-parsed.
 
+use crate::git_queue::{self, Scope};
 use crate::i18n::msg::AgentMsg;
 use crate::tr;
 use std::path::{Path, PathBuf};
@@ -110,6 +111,7 @@ pub fn create(repo: &Path, slug: &str, base: Option<&str>, prefix: Option<&str>)
   let branch = format!("{prefix}{slug}");
   git(repo, &["check-ref-format", "--branch", &branch]).map_err(|_| tr!(AgentMsg::BadBranchName, branch))?;
   let path_str = path.to_str().ok_or("worktree path is not valid UTF-8")?;
+  let _queue = git_queue::lock(repo, Scope::Refs, "worktree add")?;
   git(repo, &["worktree", "add", "-b", &branch, "--", path_str, commit])?;
   log::info!("worktree {slug} created at {path_str} from {base} ({commit})");
   list(repo)?
@@ -136,6 +138,7 @@ pub fn refresh_base(repo: &Path, base: &str, timeout: std::time::Duration) -> Re
     return Ok(None);
   }
   let cancel = std::sync::atomic::AtomicBool::new(false);
+  let _queue = git_queue::lock(repo, Scope::Refs, "fetch (refresh base)")?;
   crate::git_remote::net_env(repo, &["fetch", "--quiet", "--no-tags", "--", &remote, &merge], &[], &cancel, timeout)?;
   let fetched = git(repo, &["rev-parse", "--verify", "--quiet", "FETCH_HEAD^{commit}"])?.trim().to_owned();
   let local = git(repo, &["rev-parse", &format!("refs/heads/{base}")])?.trim().to_owned();
@@ -149,6 +152,7 @@ pub fn refresh_base(repo: &Path, base: &str, timeout: std::time::Duration) -> Re
   match list(repo)?.into_iter().find(|w| w.branch.as_deref() == Some(base) && !w.bare) {
     Some(w) => {
       let at = Path::new(&w.path);
+      let _checkout = git_queue::lock(at, Scope::Repository, "merge --ff-only (refresh base)")?;
       if !git(at, &["status", "--porcelain", "--untracked-files=no"])?.trim().is_empty() {
         return Ok(Some(tr!(AgentMsg::BaseDirty, base, path = w.path)));
       }
@@ -190,6 +194,9 @@ pub fn remove(repo: &Path, slug: &str, force: bool, branch: DeleteBranch) -> Res
   let path = worktree_path(repo, slug);
   let path_str = path.to_str().ok_or("worktree path is not valid UTF-8")?;
   let name = if branch == DeleteBranch::Keep { None } else { current_branch(&path).ok().flatten() };
+  let _queue = git_queue::lock(repo, Scope::Refs, "worktree remove")?;
+  // Nothing may be staging or rejecting inside the worktree while it goes away.
+  let _tree = if path.exists() { Some(git_queue::lock(&path, Scope::Worktree, "worktree remove")?) } else { None };
   let mut args = vec!["worktree", "remove"];
   if force {
     args.push("--force");

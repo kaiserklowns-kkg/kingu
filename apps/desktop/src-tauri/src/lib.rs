@@ -8,6 +8,7 @@ mod fileops;
 mod floating;
 mod fs;
 mod git;
+mod git_queue;
 mod i18n;
 mod glob;
 mod git_remote;
@@ -506,7 +507,7 @@ async fn gh_pr_create(ws: State<'_, Workspace>, slug: Option<String>, base: Stri
     return Err("Enter a pull request title.".into());
   }
   blocking(move || {
-    git::run(&root, &["push", "-q", "-u", "origin", "HEAD"]).map_err(|e| format!("Push failed. Resolve the push error, then try again. {e}"))?;
+    git_queue::with(&root, git_queue::Scope::Refs, "push", || git::run(&root, &["push", "-q", "-u", "origin", "HEAD"])).map_err(|e| format!("Push failed. Resolve the push error, then try again. {e}"))?;
     let mut args = vec!["pr", "create", "--base", base.as_str(), "--title", title.trim(), "--body", body.as_str()];
     if draft {
       args.push("--draft");
@@ -1157,6 +1158,11 @@ pub fn run() {
       team::install(app)?;
       accounts::install(app)?;
       git::load_git_path(&app.path().app_config_dir()?);
+      // A git operation waiting for another one in the same repository (status bar).
+      let queue_events = app.handle().clone();
+      git_queue::set_notifier(move |e| {
+        let _ = queue_events.emit("git-queue", e);
+      });
       menu::install(app.handle());
       // The explorer's undo history lives in the webview, so last run's undo copies are orphans.
       if let Ok(stash) = undo_stash(app.handle()) {

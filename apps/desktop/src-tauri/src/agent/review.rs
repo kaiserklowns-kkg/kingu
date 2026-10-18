@@ -11,6 +11,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::git::{self, check_rel, check_rev};
+use crate::git_queue::{self, Scope};
 
 use super::worktree::{task_branch, validate_slug, worktree_path};
 
@@ -261,6 +262,7 @@ pub fn reject(dir: &Path, base: &str, paths: &[String]) -> Result<(), String> {
   for p in paths {
     check_rel(dir, p)?;
   }
+  let _queue = git_queue::lock(dir, Scope::Worktree, "restore (reject)")?;
   for p in paths {
     if git::run(dir, &["cat-file", "-e", &format!("{mb}:./{p}")]).is_ok() {
       git::run(dir, &["restore", &format!("--source={mb}"), "--staged", "--worktree", "--", p])?;
@@ -277,6 +279,8 @@ pub fn reject(dir: &Path, base: &str, paths: &[String]) -> Result<(), String> {
 
 /// Stages everything in the worktree and commits it.
 pub fn commit_all(dir: &Path, message: &str) -> Result<(), String> {
+  // One queued operation: nothing else may stage or commit between the add and the commit.
+  let _queue = git_queue::lock(dir, Scope::Repository, "commit")?;
   git::stage(dir, &[".".into()])?;
   git::commit(dir, message, &git::CommitOptions::default())
 }
@@ -300,6 +304,8 @@ pub fn merge_local(repo: &Path, slug: &str, base: &str, merge_commit: bool) -> R
   if !clean(&dir, true)? {
     return Err(tr!(AgentMsg::MergeDirty, slug));
   }
+  let label = format!("merge {branch}");
+  let _queue = git_queue::lock(repo, Scope::Refs, &label)?;
   let task = resolve_commit(repo, &format!("refs/heads/{branch}"))?;
   let old = resolve_commit(repo, &format!("refs/heads/{base}"))?;
   if count(repo, &[&task, &format!("^{old}")])? == 0 {
@@ -310,6 +316,7 @@ pub fn merge_local(repo: &Path, slug: &str, base: &str, merge_commit: bool) -> R
   match target {
     Some(w) => {
       let at = PathBuf::from(&w.path);
+      let _checkout = git_queue::lock(&at, Scope::Repository, &label)?;
       if !clean(&at, false)? {
         return Err(tr!(AgentMsg::BaseCheckoutDirty, path = w.path, base));
       }
@@ -386,7 +393,7 @@ pub fn pr_create(gh: &Path, dir: &Path, slug: &str, base: &str, title: &str, bod
   }
   git::run(dir, &["remote", "get-url", "origin"]).map_err(|_| tr!(AgentMsg::NoOrigin))?;
   let branch = task_branch(dir, slug)?;
-  git::run(dir, &["push", "-u", "origin", &format!("refs/heads/{branch}:refs/heads/{branch}")])?;
+  git_queue::with(dir, Scope::Refs, "push", || git::run(dir, &["push", "-u", "origin", &format!("refs/heads/{branch}:refs/heads/{branch}")]))?;
   let out = crate::shell_env::command(gh)
     .current_dir(dir)
     .args(pr_create_args(base, &branch, title, body, draft))
