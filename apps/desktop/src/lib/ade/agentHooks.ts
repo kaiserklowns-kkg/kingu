@@ -227,7 +227,15 @@ function opencode(ev: string, p: Payload): Patch | null {
 	}
 }
 
-const PROVIDERS: Partial<Record<string, (ev: string, p: Payload, prev: HookState) => Patch | null>> = { gemini, cursor, copilot, droid, codex, opencode };
+/**
+ * Kingu's own events (not from a CLI): `ProcessExit` when the CLI's process is gone without a
+ * SessionEnd hook (Ctrl-C, a crash, an OOM kill; Orca's ended-process reconciliation).
+ */
+function kingu(ev: string): Patch | null {
+	return ev === 'ProcessExit' ? { phase: 'ended', permission: false, question: false, ask: undefined, message: t('ade.hooks.processExited') } : null;
+}
+
+const PROVIDERS: Partial<Record<string, (ev: string, p: Payload, prev: HookState) => Patch | null>> = { gemini, cursor, copilot, droid, codex, opencode, kingu };
 
 /** Claude Code hook events (Orca claude-events + Kingu's Notification handling). */
 function claude(ev: HookEvent, prev: HookState): Patch | null {

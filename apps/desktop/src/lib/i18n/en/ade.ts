@@ -45,6 +45,7 @@ export const ade = {
 	'ade.hooks.ready': 'Ready for a prompt',
 	'ade.hooks.waiting': 'Waiting for you',
 	'ade.hooks.sessionEnded': 'Session ended',
+	'ade.hooks.processExited': 'The agent exited',
 
 	// prChecks.ts: the PR line and the merge button
 	'ade.prChecks.merged': 'merged',
@@ -189,6 +190,19 @@ export const ade = {
 	'ade.cli.noneRunning': 'No agent CLI is running in this task',
 	'ade.cli.working': '{cli} is working in the terminal',
 	'ade.cli.waiting': '{cli} is waiting for you in the terminal',
+	'ade.cli.needsAnswer': '{cli} needs your answer in the terminal',
+
+	// agentPresence.ts, paneAgents.svelte.ts: agents in a task's other terminal panes
+	'ade.agentRow.working': 'Working',
+	'ade.agentRow.permission': 'Needs permission',
+	'ade.agentRow.question': 'Has a question',
+	'ade.agentRow.idle': 'Waiting for you',
+	'ade.agentRow.unknown': 'Agent',
+
+	// terminalBell.svelte.ts: kingu.agent.notifications.terminalBell
+	'ade.bell.title': 'Terminal bell: {task}',
+	'ade.bell.body': '{tab} needs your attention',
+	'ade.bell.dot': 'Rang the bell',
 
 	// aiText.svelte.ts: AI commit message / PR title
 	'ade.aiText.busy': 'Already generating a message',

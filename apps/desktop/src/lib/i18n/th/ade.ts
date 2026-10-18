@@ -44,6 +44,7 @@ export const ade = {
 	'ade.hooks.ready': 'พร้อมรับคำสั่ง',
 	'ade.hooks.waiting': 'รอคุณ',
 	'ade.hooks.sessionEnded': 'จบ session',
+	'ade.hooks.processExited': 'agent ปิดไปแล้ว',
 
 	'ade.prChecks.merged': 'merged แล้ว',
 	'ade.prChecks.closed': 'ปิดแล้ว',
@@ -178,6 +179,17 @@ export const ade = {
 	'ade.cli.noneRunning': 'ไม่มี agent CLI ที่รันอยู่ในงานนี้',
 	'ade.cli.working': '{cli} กำลังทำงานใน terminal',
 	'ade.cli.waiting': '{cli} รอคุณใน terminal',
+	'ade.cli.needsAnswer': '{cli} รอคำตอบจากคุณใน terminal',
+
+	'ade.agentRow.working': 'กำลังทำงาน',
+	'ade.agentRow.permission': 'รอคุณอนุญาต',
+	'ade.agentRow.question': 'มีคำถามถึงคุณ',
+	'ade.agentRow.idle': 'รอคุณ',
+	'ade.agentRow.unknown': 'Agent',
+
+	'ade.bell.title': 'Terminal ส่งเสียงเตือน: {task}',
+	'ade.bell.body': '{tab} รอให้คุณดู',
+	'ade.bell.dot': 'ส่งเสียงเตือน',
 
 	'ade.aiText.busy': 'กำลังสร้างข้อความอยู่',
 	'ade.aiText.nothingStaged': 'ยังไม่มีไฟล์ที่ stage ไว้ — stage การเปลี่ยนแปลงก่อน',

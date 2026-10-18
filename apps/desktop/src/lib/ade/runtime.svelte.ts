@@ -12,17 +12,24 @@ import { cliName } from './agentCli';
 import { profileOf } from '#lib/ade/agentProfiles.ts';
 import { cliSessions } from './cliSessions.svelte';
 import { needsInput } from './agentHooks';
+import { hookFresh, withPaneAgents } from './agentPresence';
+import { paneAgents } from './paneAgents.svelte';
 import { t } from '#lib/i18n/index.ts';
 
-/** A task whose agent CLI runs in a terminal: working while it prints, else waiting for you. */
+/**
+ * A task whose agent CLI runs in a terminal. Status evidence, best first (Orca's order): hooks
+ * that report (and have not gone silent while "working" for 30 minutes), then the terminal's
+ * title (spinner / idle glyphs), then "printing = working". A CLI whose process is gone has ended.
+ */
 function cliRuntime(slug: string): TaskRuntime | undefined {
 	const s = cliSessions.sessions[slug];
 	if (!s) return;
 	// claude reports its state through hooks, and so do CLIs with Kingu's status hooks once their
-	// hooks report; before that (or without them) "printing = working" (codex's notify adds the
+	// hooks report; before that (or without them) the title, else output (codex's notify adds the
 	// session id and the turn's last answer).
 	const hook = cliSessions.hooks[slug];
-	if (hook && hook.phase !== 'starting' && (profileOf(s.run).status === 'hooks' || hook.hooks)) {
+	const now = cliSessions.now;
+	if (hook && hook.phase !== 'starting' && (profileOf(s.run).status === 'hooks' || hook.hooks) && hookFresh(hook, now)) {
 		const working = hook.phase === 'working';
 		const attention = needsInput(hook);
 		return {
@@ -36,6 +43,22 @@ function cliRuntime(slug: string): TaskRuntime | undefined {
 			question: hook.question && hook.phase === 'waiting',
 			sessionId: hook.sessionId ?? null,
 			updatedAt: hook.at
+		};
+	}
+	const title = cliSessions.titles[slug];
+	if (title?.status) {
+		const working = title.status === 'working';
+		const attention = title.status === 'permission';
+		return {
+			slug,
+			status: attention ? 'waiting' : working ? 'running' : 'review',
+			runStatus: attention ? 'waiting' : working ? 'running' : 'idle',
+			live: true,
+			working,
+			lastEvent: t(attention ? 'ade.cli.needsAnswer' : working ? 'ade.cli.working' : 'ade.cli.waiting', { cli: cliName(s.run) }),
+			pendingPermissions: attention ? 1 : 0,
+			sessionId: hook?.sessionId ?? null,
+			updatedAt: Math.max(title.at, cliSessions.lastOutput(slug) ?? 0)
 		};
 	}
 	const working = cliSessions.working(slug);
@@ -68,10 +91,21 @@ class Runtime {
 		return r && r.root === workspace.root ? r : undefined;
 	}
 
+	/** The task's launched agent (timeline run, else its CLI), with the agents of its other terminal panes. */
 	get(slug: string): TaskRuntime | undefined {
+		return withPaneAgents(slug, this.#own(slug), paneAgents.rows(slug));
+	}
+
+	#own(slug: string): TaskRuntime | undefined {
 		const r = this.run(slug);
 		if (r) return toTaskRuntime(r, this.#touched[slug] ?? r.startedAt);
 		return cliRuntime(slug);
+	}
+
+	/** A turn of the task's timeline run is in progress (it must be stopped before the task goes). */
+	timelineWorking(slug: string): boolean {
+		const r = this.run(slug);
+		return !!r && toTaskRuntime(r, r.startedAt).working;
 	}
 
 	all(): TaskRuntime[] {

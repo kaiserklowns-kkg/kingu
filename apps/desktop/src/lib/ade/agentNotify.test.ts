@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { noticeFor, noticeState } from './agentNotify';
+import { bellAction, BELL_THROTTLE_MS, noticeFor, noticeState } from './agentNotify';
 import { setLocale } from '#lib/i18n/index.ts';
 
 // These tests check the Thai UI text.
@@ -29,5 +29,17 @@ describe('agent notifications', () => {
 		expect(noticeFor('review', 'review', t)).toBeNull();
 		expect(noticeFor('review', 'running', t)).toBeNull();
 		expect(noticeFor('review', 'done', t)).toBeNull();
+	});
+});
+
+describe('terminal bell', () => {
+	test('off, or the terminal is on screen: nothing', () => {
+		expect(bellAction(false, false, undefined, 0)).toEqual({ mark: false, notify: false });
+		expect(bellAction(true, true, undefined, 0)).toEqual({ mark: false, notify: false });
+	});
+	test('a hidden terminal is marked; it notifies at most once per throttle window', () => {
+		expect(bellAction(true, false, undefined, 5)).toEqual({ mark: true, notify: true });
+		expect(bellAction(true, false, 5, 5 + BELL_THROTTLE_MS - 1)).toEqual({ mark: true, notify: false });
+		expect(bellAction(true, false, 5, 5 + BELL_THROTTLE_MS)).toEqual({ mark: true, notify: true });
 	});
 });

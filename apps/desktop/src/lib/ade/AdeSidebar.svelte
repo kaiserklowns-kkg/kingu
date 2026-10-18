@@ -26,6 +26,7 @@
 	import { cleanup } from './cleanup.svelte';
 	import { newSession } from './agentsMode.svelte';
 	import { jumpToWorktree } from './worktreeMenu.svelte';
+	import { rowCardStatus, rowText } from './agentPresence';
 	import { activeFilterCount, cardStatus, CARD_STATUS_LABEL, reorder, shortAgo, SORT_LABEL, sortItems, statusColumn, type CardStatus, type GroupBy, type SortBy } from './sidebarModel';
 	import { sidebarPrefs as prefs } from './sidebarPrefs.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
@@ -438,6 +439,14 @@
 								{#if v.runtime?.model ?? v.meta.model}<span class="max-w-24 shrink-0 truncate font-mono text-[10px] opacity-80">{v.runtime?.model ?? v.meta.model}</span>{/if}
 								{#if props.has('time')}<span class="shrink-0 text-[10px] tabular-nums opacity-60">{shortAgo(r.activity, now)}</span>{/if}
 							</div>
+							<!-- Agents in the worktree's other terminal panes (Orca: one row per agent). -->
+							{#each v.runtime?.agents ?? [] as a (a.id)}
+								<div class="flex h-6 items-center gap-1 rounded-sm px-1 pl-3 text-[11px] leading-none {MUTED}">
+									<span class="grid size-3 shrink-0 place-items-center">{@render statusDot(rowCardStatus(a), 'size-1.5')}</span>
+									<span class="min-w-0 flex-1 truncate text-(--vscode-descriptionForeground)/90">{rowText(a)}</span>
+									{#if props.has('time')}<span class="shrink-0 text-[10px] tabular-nums opacity-60">{shortAgo(a.at, now)}</span>{/if}
+								</div>
+							{/each}
 						{/if}
 					{/if}
 				</div>

@@ -47,6 +47,8 @@
 	import { cliName, cliOf, type RunMode } from './agentCli';
 	import { profileOf } from '#lib/ade/agentProfiles.ts';
 	import { cliSessions } from './cliSessions.svelte';
+	import { paneAgents } from './paneAgents.svelte';
+	import { terminalBells } from './terminalBell.svelte';
 	import { BUTTON, BUTTON_SECONDARY, statusDot } from './ui';
 	import { statusLabel, timeAgo } from './model';
 
@@ -306,6 +308,8 @@
 					flavor="ade"
 					menuState={() => ({ panes: false })}
 					onoutput={() => cliSessions.output(s)}
+					ontitle={(title) => cliSessions.title(s, title)}
+					onbell={() => terminalBells.ring(s, 'main')}
 					onopenfile={(rel, line, column) => openLinkedFile(s, rel, line, column)}
 				/>
 				<!-- Quick reply while the CLI asks a question (top right: the CLI draws its question at the bottom). -->
@@ -326,6 +330,9 @@
 								flavor="ade"
 								keyLabels={PANE_KEYS}
 								menuState={() => ({ split: tabPanes(t).length > 1, expanded: !!t.expanded })}
+								onoutput={() => paneAgents.output(adeLayout.ptyKey(k, p))}
+								ontitle={(title) => paneAgents.title(adeLayout.ptyKey(k, p), title)}
+								onbell={() => terminalBells.ring(k, t.id)}
 								onfocus={() => adeLayout.focusPaneOf(k, t.id, p)}
 								onaction={(a) => paneAction(k, t.id, p, a)}
 								onopenfile={(rel, line, column) => openLinkedFile(k, rel, line, column)}

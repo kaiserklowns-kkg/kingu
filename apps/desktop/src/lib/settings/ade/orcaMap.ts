@@ -61,7 +61,7 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['notifications.enabled', 'kingu.agent.notifications', 'mapped'],
 	['notifications.suppressWhenFocused', 'kingu.agent.notifications.suppressWhenFocused', 'mapped'],
 	['notifications.agentTaskComplete', 'kingu.agent.notifications.events', 'mapped'],
-	['notifications.terminalBell', 'kingu.agent.notifications.events', 'mapped'],
+	['notifications.terminalBell', 'kingu.agent.notifications.terminalBell', 'added'],
 	['notifications.customSoundId', 'kingu.agent.notifications.sound', 'mapped'],
 	['notifications.notifyHiddenWorkspaces', 'kingu.agent.notifications.hiddenWorkspaces', 'added'],
 	['notifications.customSoundPath', null, 'needs-feature', 'custom notification sound files'],

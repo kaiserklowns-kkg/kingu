@@ -7,6 +7,8 @@ import type { PtyInfo } from './sessions.ts';
 
 export function killPty(key: string) {
 	invoke('pty_kill', { key }).catch(() => {});
+	// A task pane's agent status file (paneAgents.svelte.ts) goes with its shell.
+	if (key.startsWith('ade:')) invoke('agent_pane_hook_clear', { key }).catch(() => {});
 }
 
 /** Live sessions; empty when the backend cannot be reached. */

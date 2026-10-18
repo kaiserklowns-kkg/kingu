@@ -46,6 +46,8 @@
 		menuState,
 		keyLabels = {},
 		onoutput,
+		ontitle,
+		onbell,
 		onaction,
 		onopenfile,
 		onfocus
@@ -60,6 +62,10 @@
 		menuState?: () => Omit<MenuState, 'hasSelection'>;
 		keyLabels?: Record<string, string | undefined>;
 		onoutput?: () => void;
+		/** The program set the terminal's title (OSC 0/2): agent status evidence (agentTitle.ts). */
+		ontitle?: (title: string) => void;
+		/** The program rang the bell (BEL), whatever terminal.integrated.enableVisualBell says. */
+		onbell?: () => void;
 		/** A context menu item the terminal does not run itself (split, rename, kill…). */
 		onaction?: (id: string) => void;
 		/** A file link was followed: `rel` is relative to the open folder. */
@@ -205,6 +211,8 @@
 
 		let live = false;
 		let disposed = false;
+		/** The recent output of a re-attached session is being written (its bells rang long ago). */
+		let replaying = false;
 		// terminal.integrated.autoReplies: rebuilt when the setting changes.
 		let replies = new AutoReplies({});
 		const stopReplies = $effect.root(() => {
@@ -231,8 +239,10 @@
 			if (a.replay) {
 				// Replayed output must not re-run an old OSC 52 clipboard write.
 				if (ade) ade.replaying = true;
+				replaying = true;
 				t.write(a.replay, () => {
 					if (ade) ade.replaying = false;
+					replaying = false;
 				});
 			}
 			for (const chunk of early) t.write(chunk);
@@ -287,11 +297,14 @@
 		// terminal.integrated.enableVisualBell / bellDuration.
 		let bellTimer: ReturnType<typeof setTimeout> | undefined;
 		const rang = t.onBell(() => {
+			// Not while replaying old output after a reload: that bell rang long ago.
+			if (live && !replaying) onbell?.();
 			if (!setting<boolean>('terminal.integrated.enableVisualBell')) return;
 			bell = true;
 			clearTimeout(bellTimer);
 			bellTimer = setTimeout(() => (bell = false), setting<number>('terminal.integrated.bellDuration'));
 		});
+		const titled = t.onTitleChange((title) => ontitle?.(title));
 		// terminal.integrated.enableNotifications: OSC 99 desktop notifications from programs in the terminal.
 		const osc99 = new Osc99();
 		const notifier = t.parser.registerOscHandler(99, (data) => {
@@ -436,6 +449,7 @@
 			clearTimeout(dimensionsTimer);
 			clearTimeout(bellTimer);
 			rang.dispose();
+			titled.dispose();
 			notifier.dispose();
 			host.removeEventListener('auxclick', onAuxClick);
 			host.removeEventListener('wheel', onWheel, { capture: true });

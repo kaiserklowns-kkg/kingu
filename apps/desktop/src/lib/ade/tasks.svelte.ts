@@ -10,6 +10,7 @@ import { runKey, syncKey, toTeamRun, toTeamTask } from './teamSync.ts';
 import { untrack } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
 import { ask, message } from '#lib/workbench/messageBox.ts';
+import { removalGate } from './agentPresence';
 import { clientLog } from '#lib/client-log.ts';
 import { agents } from '#lib/agent/agents.svelte.ts';
 import type { Decision, WorktreeInfo } from '#lib/agent/events.ts';
@@ -690,7 +691,8 @@ class AdeTasks {
 	 * again"), or straight away when kingu.worktree.confirmRemove is off.
 	 */
 	async remove(slug: string) {
-		if (runtime.isWorking(slug)) {
+		// A dead agent never blocks this: its status ends with its process (agentPresence.ts).
+		if (removalGate(runtime.timelineWorking(slug), false) === 'block') {
 			status.flash(t('adeTasks.tasks.stopAgentFirst'));
 			return;
 		}
@@ -704,10 +706,13 @@ class AdeTasks {
 	 * still asks. False when nothing was removed.
 	 */
 	async removeConfirmed(slug: string, opts: { deleteBranch: BranchRemoval; force: boolean }): Promise<boolean> {
-		if (runtime.isWorking(slug)) {
+		const gate = removalGate(runtime.timelineWorking(slug), runtime.isWorking(slug));
+		if (gate === 'block') {
 			status.flash(t('adeTasks.tasks.stopAgentFirst'));
 			return false;
 		}
+		// An agent working in one of the task's terminals ends with them: ask first.
+		if (gate === 'confirm' && !(await ask(t('adeTasks.tasks.terminalAgentAsk'), { title: t('adeTasks.tasks.terminalAgentTitle'), kind: 'warning', okLabel: t('adeTasks.tasks.stopAndRemove'), cancelLabel: t('common.cancel') }))) return false;
 		const path = worktreeDir(slug);
 		const hasWorktree = this.hasWorktree(slug);
 		const deleteBranch = opts.deleteBranch;
