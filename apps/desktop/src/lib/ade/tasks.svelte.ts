@@ -716,7 +716,17 @@ export function installAde(): () => void {
 		commands.register({ id: 'kingu.agents.nextAttention', title: 'เปิดงานถัดไปที่รอคุณ (Next Task Needing Attention)', category: 'Agents', when: hasRoot, run: () => adeTasks.openNext() }),
 		commands.register({ id: 'kingu.agents.openTask', title: 'Open Task...', category: 'Agents', when: () => adeTasks.list.length > 0, run: () => adeTasks.pickTask() }),
 		commands.register({ id: 'kingu.agents.refresh', title: 'Refresh Tasks', category: 'Agents', when: hasRoot, run: () => adeTasks.load() }),
-		commands.register({ id: 'kingu.agent.chooseCli', title: 'Choose CLI…', category: 'Agent', run: () => chooseAgentCli() })
+		commands.register({ id: 'kingu.agent.chooseCli', title: 'Choose CLI…', category: 'Agent', run: () => chooseAgentCli() }),
+		commands.register({
+			id: 'kingu.agents.untrustSetupScript',
+			title: 'เลิกเชื่อถือสคริปต์ตั้งค่า worktree (Untrust Worktree Setup Script)',
+			category: 'Agents',
+			when: hasRoot,
+			run: () =>
+				invoke('worktree_setup_trust', { trusted: false, hash: null })
+					.then(() => status.flash('เลิกเชื่อถือ .kingu/setup.sh ของโฟลเดอร์นี้แล้ว งานใหม่จะถามก่อนรัน'))
+					.catch((e) => status.flash(String(e), 8000))
+		})
 	];
 	cliSessions.onSessionId = (slug, id) => adeTasks.learnCliSession(slug, id);
 	return () => {
