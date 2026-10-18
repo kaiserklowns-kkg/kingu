@@ -7,6 +7,7 @@ import { listen } from '@tauri-apps/api/event';
 import { homeDir } from '@tauri-apps/api/path';
 import { ask, open } from '@tauri-apps/plugin-dialog';
 import { clientLog } from '#lib/client-log.ts';
+import { debug } from '#lib/debug/debug.svelte.ts';
 import { lsp } from '#lib/lsp/lsp.svelte.ts';
 import { settings, WORKSPACE_SETTINGS_PATH } from '#lib/settings/settings.svelte.ts';
 import { editors } from './editors.svelte';
@@ -126,6 +127,7 @@ class Workspace {
 		editors.closeAll();
 		navigation.clear();
 		lsp.reset();
+		debug.reset();
 		explorer.reset();
 		search.clear();
 		scm.repo = null;

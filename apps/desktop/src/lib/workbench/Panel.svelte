@@ -1,4 +1,5 @@
 <script lang="ts">
+	import DebugConsole from '#lib/debug/DebugConsole.svelte';
 	import ProblemsView from '#lib/lsp/ProblemsView.svelte';
 	import { lsp } from '#lib/lsp/lsp.svelte.ts';
 	import Terminal from '#lib/terminal/Terminal.svelte';
@@ -22,6 +23,7 @@
 	const tabs: { id: PanelTab; label: string }[] = [
 		{ id: 'problems', label: 'Problems' },
 		{ id: 'output', label: 'Output' },
+		{ id: 'debugConsole', label: 'Debug Console' },
 		{ id: 'terminal', label: 'Terminal' }
 	];
 </script>
@@ -102,6 +104,8 @@
 		</div>
 		{#if layout.panelTab === 'problems'}
 			<div class="absolute inset-0"><ProblemsView /></div>
+		{:else if layout.panelTab === 'debugConsole'}
+			<div class="absolute inset-0"><DebugConsole /></div>
 		{:else if layout.panelTab === 'output'}
 			<!-- Language server output for now; task output joins it later. -->
 			<pre class="absolute inset-0 overflow-auto px-5 py-1 font-mono text-xs whitespace-pre-wrap text-(--vscode-descriptionForeground)">{lsp.log.length ? lsp.log.join('\n') : 'No output yet. Language servers log here once a Rust, TypeScript or Go file is opened.'}</pre>

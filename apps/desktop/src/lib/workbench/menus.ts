@@ -184,6 +184,7 @@ export const MENUS: Menu[] = [
 			SEP,
 			{ command: 'workbench.view.explorer', label: 'Explorer' },
 			{ command: 'workbench.view.scm', label: 'Source Control' },
+			{ command: 'workbench.view.debug', label: 'Run' },
 			{ command: 'workbench.actions.view.problems', label: 'Problems' },
 			SEP,
 			{ command: 'workbench.action.splitEditor', label: 'Split Editor' }
@@ -200,6 +201,27 @@ export const MENUS: Menu[] = [
 			{ command: 'workbench.action.gotoLine', label: 'Go to Line/Column...' },
 			SEP,
 			{ command: 'editor.action.revealDefinition', label: 'Go to Definition', key: 'f12' }
+		]
+	},
+	{
+		id: 'run',
+		label: '&Run',
+		items: [
+			{ command: 'workbench.action.debug.start', label: 'Start Debugging' },
+			{ command: 'workbench.action.debug.run', label: 'Run Without Debugging' },
+			{ command: 'workbench.action.debug.stop', label: 'Stop Debugging' },
+			{ command: 'workbench.action.debug.restart', label: 'Restart Debugging' },
+			SEP,
+			{ command: 'workbench.action.debug.configure', label: 'Open Configurations' },
+			SEP,
+			{ command: 'workbench.action.debug.stepOver', label: 'Step Over' },
+			{ command: 'workbench.action.debug.stepInto', label: 'Step Into' },
+			{ command: 'workbench.action.debug.stepOut', label: 'Step Out' },
+			{ command: 'workbench.action.debug.continue', label: 'Continue' },
+			SEP,
+			{ command: 'editor.debug.action.toggleBreakpoint', label: 'Toggle Breakpoint' },
+			{ command: 'editor.debug.action.conditionalBreakpoint', label: 'New Conditional Breakpoint...' },
+			{ command: 'workbench.debug.viewlet.action.removeAllBreakpoints', label: 'Remove All Breakpoints' }
 		]
 	},
 	{

@@ -12,6 +12,7 @@
 	import { isDiffKey } from './scm';
 	import { isNonTextEditor } from '#lib/settings/resources.ts';
 	import { installEditorSettings } from '#lib/settings/apply.svelte.ts';
+	import { attachDebugEditor, type DebugDecorations } from '#lib/debug/editorDebug.ts';
 
 	let { group }: { group: number } = $props();
 
@@ -22,6 +23,8 @@
 	let shown = $state<string | null>(null);
 	/** True while a model is being switched in: its cursor moves are not navigation. */
 	let switching = false;
+	/** Breakpoint glyphs and the stopped line for the shown file. */
+	let debugDecorations = $state<DebugDecorations | undefined>();
 
 	const path = $derived(editors.group(group)?.active ?? null);
 	const isActiveGroup = $derived(editors.activeGroupId === group);
@@ -52,6 +55,7 @@
 					navigation.record({ path: shown, line: e.position.lineNumber, column: e.position.column });
 			});
 			ed.onDidFocusEditorText(() => editors.activateGroup(group));
+			debugDecorations = attachDebugEditor(m.monaco, ed, () => shown);
 			editor = ed;
 			clientLog('info', `editor ready (group ${group})`);
 		});
@@ -80,6 +84,7 @@
 		return () => {
 			disposed = true;
 			unregister();
+			debugDecorations?.dispose();
 			if (editor && shown) saveViewState(group, shown, editor.saveViewState());
 			// Models are shared and outlive this editor; only detach.
 			editor?.setModel(null);
@@ -109,6 +114,12 @@
 			editors.focusRequest = null;
 			editor.focus();
 		}
+	});
+
+	// Breakpoints and the stopped line follow the breakpoint store, the session and the shown file.
+	$effect(() => {
+		void shown;
+		debugDecorations?.render();
 	});
 
 	// The status bar follows the active group's editor.
@@ -167,3 +178,47 @@
 </script>
 
 <div bind:this={host} class="h-full w-full"></div>
+
+<style>
+	/* Breakpoint glyphs (VS Code debug.contribution.css); theme colors when the theme defines them. */
+	:global(.kg-bp),
+	:global(.kg-debug-arrow) {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+	:global(.kg-bp)::before {
+		content: '';
+		width: 10px;
+		height: 10px;
+		border-radius: 50%;
+		background: var(--vscode-debugIcon-breakpointForeground, #e51400);
+	}
+	:global(.kg-bp-unverified)::before {
+		background: transparent;
+		border: 1.5px solid var(--vscode-debugIcon-breakpointUnverifiedForeground, #848484);
+	}
+	:global(.kg-bp-disabled)::before {
+		background: var(--vscode-debugIcon-breakpointDisabledForeground, #848484);
+	}
+	:global(.kg-bp-conditional)::before {
+		box-shadow: inset 0 0 0 2.5px var(--vscode-debugIcon-breakpointForeground, #e51400), inset 0 0 0 10px var(--vscode-editor-background, #1e1e1e);
+	}
+	:global(.kg-debug-arrow)::after {
+		content: '';
+		width: 0;
+		height: 0;
+		border-top: 5px solid transparent;
+		border-bottom: 5px solid transparent;
+		border-left: 8px solid var(--vscode-debugIcon-breakpointCurrentStackframeForeground, #ffcc00);
+	}
+	:global(.kg-debug-arrow-focused)::after {
+		border-left-color: var(--vscode-debugIcon-breakpointStackframeForeground, #89d185);
+	}
+	:global(.kg-debug-line) {
+		background: var(--vscode-editor-stackFrameHighlightBackground, rgba(255, 255, 0, 0.2));
+	}
+	:global(.kg-debug-line-focused) {
+		background: var(--vscode-editor-focusedStackFrameHighlightBackground, rgba(122, 189, 122, 0.3));
+	}
+</style>

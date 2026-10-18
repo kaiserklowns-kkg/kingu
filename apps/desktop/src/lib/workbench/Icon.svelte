@@ -6,6 +6,9 @@
 		ArrowRightIcon,
 		ArrowSquareOutIcon,
 		ArrowUpIcon,
+		ArrowBendUpRightIcon,
+		ArrowLineDownIcon,
+		ArrowLineUpIcon,
 		ArrowsInLineVerticalIcon,
 		BellIcon,
 		BugIcon,
@@ -13,6 +16,7 @@
 		CaretRightIcon,
 		CaretUpIcon,
 		CheckIcon,
+		CircleIcon,
 		ChecksIcon,
 		CodeIcon,
 		CopyIcon,
@@ -36,6 +40,7 @@
 		MagnifyingGlassIcon,
 		MemoryIcon,
 		MinusIcon,
+		PauseIcon,
 		PlayIcon,
 		PlugIcon,
 		PlusIcon,
@@ -115,7 +120,12 @@
 		openExternal: ArrowSquareOutIcon,
 		stopProcess: StopCircleIcon,
 		commit: GitCommitIcon,
-		replaceAll: ChecksIcon
+		replaceAll: ChecksIcon,
+		pause: PauseIcon,
+		stepOver: ArrowBendUpRightIcon,
+		stepInto: ArrowLineDownIcon,
+		stepOut: ArrowLineUpIcon,
+		breakpoint: CircleIcon
 	} as const;
 	export type IconName = keyof typeof icons;
 
