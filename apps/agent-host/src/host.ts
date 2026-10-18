@@ -8,9 +8,10 @@
 // Never write prompts, tool inputs or credentials to stderr: it ends up in the app log.
 
 import { readFileSync } from 'node:fs';
-import type { CanUseTool, Options, PermissionResult, PermissionUpdate, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, HookCallbackMatcher, Options, PermissionResult, PermissionUpdate, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { normalize, summarizeTool } from './normalize.ts';
 import { snapshotHooks } from './snapshots.ts';
+import { Guards } from './guards/index.ts';
 import { checkAnswers, isAskUserQuestion, QUESTIONS_DISMISSED } from './questions.ts';
 import {
 	PERMISSION_MODES,
@@ -65,6 +66,15 @@ export function imageBlocks(paths: unknown, read: (path: string) => Uint8Array):
 	});
 }
 
+/** Rules appended to the system prompt; Rust keeps them under 128 KB. */
+export const MAX_SYSTEM_APPEND = 256 * 1024;
+
+/** The run's PreToolUse hooks: the safety checks first (a deny wins), then the snapshots. */
+export function runHooks(guard: HookCallbackMatcher | null, snapshots: Partial<Record<'PreToolUse', HookCallbackMatcher[]>> | null): Options['hooks'] | null {
+	const pre = [...(guard ? [guard] : []), ...(snapshots?.PreToolUse ?? [])];
+	return pre.length ? { PreToolUse: pre } : null;
+}
+
 /** The user message the timeline shows: the text, and which images went with it. */
 export function shownText(text: string, images: readonly string[] | undefined): string {
 	if (!images?.length) return text;
@@ -117,6 +127,8 @@ class Run {
 	readonly inbox = new Inbox();
 	readonly abort = new AbortController();
 	readonly pending = new Map<string, Pending>();
+	/** Kingu's safety checks; null when the user turned them off. */
+	guards: Guards | null = null;
 	query: QueryLike | null = null;
 	stopped = false;
 	exited = false;
@@ -249,9 +261,17 @@ export class AgentHost {
 		const accountEnv = Object.keys(extraEnv).length || unset.length ? runEnv(this.deps.options?.env ?? process.env, extraEnv, unset) : null;
 		const images = imageBlocks(p.images, this.read);
 		need(p.snapshots === undefined || p.snapshots === null || typeof p.snapshots === 'boolean', 'snapshots must be a boolean');
+		need(p.safetyChecks === undefined || p.safetyChecks === null || typeof p.safetyChecks === 'boolean', 'safetyChecks must be a boolean');
+		const append = p.systemPromptAppend ?? '';
+		need(typeof append === 'string' && append.length <= MAX_SYSTEM_APPEND, 'systemPromptAppend must be a string of at most 256 KB');
 
 		const run = new Run(p.runId);
+		if (p.safetyChecks !== false) run.guards = new Guards();
 		this.runs.set(run.id, run);
+		const hooks = runHooks(
+			run.guards?.hook((ev) => this.emit(run.id, ev), (line) => this.log(`run ${run.id}: ${line}`)) ?? null,
+			p.snapshots ? snapshotHooks(p.cwd, (ev) => this.emit(run.id, ev), (line) => this.log(`run ${run.id}: ${line}`)) : null
+		);
 		const options: Options = {
 			...this.deps.options,
 			cwd: p.cwd,
@@ -269,10 +289,12 @@ export class AgentHost {
 			forwardSubagentText: true,
 			// User + project settings: CLAUDE.md and the user's own allow/deny rules apply.
 			settingSources: ['user', 'project', 'local'],
+			// Rules files the SDK does not read itself (AGENTS.md, .cursor/rules, …), after Claude Code's own prompt.
+			...(append.trim() ? { systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const, append } } : {}),
 			abortController: run.abort,
 			canUseTool: this.canUseTool(run),
-			// Before an edit tool runs (in every permission mode): the file's prior content.
-			...(p.snapshots ? { hooks: snapshotHooks(p.cwd, (ev) => this.emit(run.id, ev), (line) => this.log(`run ${run.id}: ${line}`)) } : {}),
+			// Before a tool runs (in every permission mode): the safety checks, then an edited file's prior content.
+			...(hooks ? { hooks } : {}),
 			stderr: (data) => {
 				for (const line of data.split('\n')) if (line.trim()) this.emit(run.id, { kind: 'stderr', line });
 			}
@@ -327,6 +349,7 @@ export class AgentHost {
 		const run = this.run(p.runId);
 		need(typeof p.text === 'string' && p.text.trim(), 'message is empty');
 		run.inbox.push(p.text, imageBlocks(p.images, this.read));
+		run.guards?.reset();
 		this.emit(run.id, { kind: 'message', role: 'user', text: shownText(p.text, p.images) });
 		return null;
 	}

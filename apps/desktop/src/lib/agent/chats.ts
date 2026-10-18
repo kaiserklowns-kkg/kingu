@@ -16,8 +16,10 @@ export type ChatCwd = { kind: 'folder' } | { kind: 'task'; slug: string };
 
 export type ChatMeta = {
 	id: string;
-	/** From the first prompt; renameable. */
+	/** From the first prompt, then the AI title (chatTitle.ts); renameable. */
 	title: string;
+	/** Still Kingu's own title (the user never renamed it), so an AI title may replace it. Rust defaults it to false. */
+	title_auto?: boolean;
 	/** The first prompt, cut to `MAX_PROMPT` characters (for "Promote to task"). */
 	prompt: string;
 	cwd: ChatCwd;
@@ -42,11 +44,18 @@ export function newChatId(now: number, rand: () => number = Math.random): string
 
 const cutChars = (s: string, max: number) => ([...s].length > max ? [...s].slice(0, max).join('') : s);
 
+/** The title a chat starts with: its first prompt's first line. */
+export const initialTitle = (prompt: string) => taskTitleFromPrompt(prompt.trim()) || 'Chat';
+
+/** Whether a finished turn should get the chat an AI title: never renamed, and still its first-prompt title. */
+export const wantsAiTitle = (meta: Pick<ChatMeta, 'title' | 'title_auto' | 'prompt'>) => meta.title_auto === true && !!meta.prompt.trim() && meta.title === initialTitle(meta.prompt);
+
 export function newChat(input: { prompt: string; cwd: ChatCwd; model: string | null; permissionMode: PermissionMode | null }, now: number, id = newChatId(now)): ChatMeta {
 	const prompt = input.prompt.trim();
 	return {
 		id,
-		title: taskTitleFromPrompt(prompt) || 'Chat',
+		title: initialTitle(prompt),
+		title_auto: true,
 		prompt: cutChars(prompt, MAX_PROMPT),
 		cwd: input.cwd,
 		session_id: null,
@@ -139,6 +148,30 @@ export function historySections(
 			.sort((a, b) => (b.updated_at || b.created_at) - (a.updated_at || a.created_at))
 			.map((x) => ({ slug: x.slug, title: x.title, at: x.updated_at || x.created_at, terminal: x.terminal, state: liveState(statusOf({ kind: 'task', slug: x.slug })) }))
 	};
+}
+
+/** The history's date groups (VS Code's agent sessions sections). */
+export type DateGroup = 'today' | 'yesterday' | 'week' | 'older';
+
+/**
+ * `rows` (newest first) in Today / Yesterday / Last 7 days / Older by local calendar day of `at`;
+ * empty groups are left out, the order inside each is kept. A time after `now` counts as today.
+ */
+export function groupByDate<T extends { at: number }>(rows: readonly T[], now: number): { group: DateGroup; rows: T[] }[] {
+	const day = new Date(now);
+	day.setHours(0, 0, 0, 0);
+	const today = day.getTime();
+	day.setDate(day.getDate() - 1);
+	const yesterday = day.getTime();
+	day.setDate(day.getDate() - 6);
+	const week = day.getTime();
+	const of = (at: number): DateGroup => (at >= today ? 'today' : at >= yesterday ? 'yesterday' : at >= week ? 'week' : 'older');
+	const out: { group: DateGroup; rows: T[] }[] = [];
+	for (const g of ['today', 'yesterday', 'week', 'older'] as const) {
+		const inGroup = rows.filter((r) => of(r.at) === g);
+		if (inGroup.length) out.push({ group: g, rows: inGroup });
+	}
+	return out;
 }
 
 /** The chat the panel opens on: the most recent one (null: a new chat). ADE tasks are never opened here. */

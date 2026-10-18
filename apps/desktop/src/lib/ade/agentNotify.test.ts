@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { noticeFor, noticeState } from './agentNotify';
+import { chatNoticeFor, noticeFor, noticeState } from './agentNotify';
 import { setLocale } from '#lib/i18n/index.ts';
 
 // These tests check the Thai UI text.
@@ -29,5 +29,16 @@ describe('agent notifications', () => {
 		expect(noticeFor('review', 'review', t)).toBeNull();
 		expect(noticeFor('review', 'running', t)).toBeNull();
 		expect(noticeFor('review', 'done', t)).toBeNull();
+	});
+});
+
+describe('agent chat notifications', () => {
+	test('approval, a question, a finished or failed turn; nothing else', () => {
+		expect(chatNoticeFor({ kind: 'permission_request', tool: 'Bash' }, 'แก้บั๊ก')).toEqual({ title: 'แชตรอการอนุญาต: แก้บั๊ก', body: 'ต้องอนุญาตก่อนจึงจะทำงานต่อได้', kind: 'attention' });
+		expect(chatNoticeFor({ kind: 'permission_request', tool: 'AskUserQuestion' }, 'x')?.title).toBe('แชตมีคำถาม: x');
+		expect(chatNoticeFor({ kind: 'result', is_error: false }, 'x')).toMatchObject({ title: 'แชตเสร็จแล้ว: x', kind: 'finished' });
+		expect(chatNoticeFor({ kind: 'result', is_error: true }, 'x')?.kind).toBe('attention');
+		expect(chatNoticeFor({ kind: 'result', is_error: false }, 'x', 'attention')).toBeNull();
+		expect(chatNoticeFor({ kind: 'tool_use' }, 'x')).toBeNull();
 	});
 });

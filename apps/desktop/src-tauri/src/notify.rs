@@ -3,16 +3,19 @@
 //! desktop, so on macOS Kingu delivers the notification itself through mac-notification-sys
 //! (the library the plugin uses underneath) and waits for the click on a background thread; a
 //! click brings the main window to the front and emits `NOTIFICATION_CLICKED` with the task's
-//! slug. Elsewhere the plugin shows the notification and clicks are not routed.
+//! slug or the agent chat's id. Elsewhere the plugin shows the notification and clicks are not routed.
 
 use tauri::{AppHandle, Emitter, Manager};
 
-/// Sent to the webview when the user clicks a notification: `{ slug }`.
+/// Sent to the webview when the user clicks a notification: `{ slug, chat_id? }`.
 pub const NOTIFICATION_CLICKED: &str = "agent:notification-clicked";
 
-#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+/// What a click opens: an ADE task (`slug`) or an agent chat of the open folder (`chat_id`).
+#[derive(Debug, Clone, Default, serde::Serialize, PartialEq)]
 pub struct Clicked {
   pub slug: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub chat_id: Option<String>,
 }
 
 /// Shows and focuses the main window (un-minimizing it).
@@ -24,9 +27,9 @@ pub fn focus_main(app: &AppHandle) {
   }
 }
 
-fn clicked(app: &AppHandle, slug: Option<String>) {
+fn clicked(app: &AppHandle, target: Clicked) {
   focus_main(app);
-  let _ = app.emit(NOTIFICATION_CLICKED, Clicked { slug });
+  let _ = app.emit(NOTIFICATION_CLICKED, target);
 }
 
 /// The macOS sound for the setting value: none, the system default, or a named system sound.
@@ -38,7 +41,7 @@ pub fn sound_of(sound: Option<&str>) -> Option<String> {
 }
 
 #[cfg(target_os = "macos")]
-fn deliver(app: AppHandle, title: String, body: String, sound: Option<String>, slug: Option<String>) -> Result<(), String> {
+fn deliver(app: AppHandle, title: String, body: String, sound: Option<String>, target: Clicked) -> Result<(), String> {
   use mac_notification_sys::{Notification, NotificationResponse, Sound};
   // The same bundle the plugin picks (Terminal's in dev, where Kingu has no bundle of its own).
   let bundle = if tauri::is_dev() { "com.apple.Terminal".to_owned() } else { app.config().identifier.clone() };
@@ -56,7 +59,7 @@ fn deliver(app: AppHandle, title: String, body: String, sound: Option<String>, s
         }
       }
       match n.send() {
-        Ok(NotificationResponse::Click) | Ok(NotificationResponse::ActionButton(_)) => clicked(&app, slug),
+        Ok(NotificationResponse::Click) | Ok(NotificationResponse::ActionButton(_)) => clicked(&app, target),
         Ok(_) => {}
         Err(e) => log::warn!("notification: {e}"),
       }
@@ -66,7 +69,7 @@ fn deliver(app: AppHandle, title: String, body: String, sound: Option<String>, s
 }
 
 #[cfg(not(target_os = "macos"))]
-fn deliver(app: AppHandle, title: String, body: String, sound: Option<String>, _slug: Option<String>) -> Result<(), String> {
+fn deliver(app: AppHandle, title: String, body: String, sound: Option<String>, _target: Clicked) -> Result<(), String> {
   use tauri_plugin_notification::NotificationExt;
   let mut b = app.notification().builder().title(title).body(body);
   if let Some(s) = sound {
@@ -75,13 +78,17 @@ fn deliver(app: AppHandle, title: String, body: String, sound: Option<String>, _
   b.show().map_err(|e| e.to_string())
 }
 
-/// An agent notification for task `slug` (none: not tied to a task, e.g. the test notification).
+/// An agent notification for task `slug` or agent chat `chat_id` (neither: not tied to one,
+/// e.g. the test notification).
 #[tauri::command]
-pub fn agent_notify(app: AppHandle, title: String, body: String, sound: Option<String>, slug: Option<String>) -> Result<(), String> {
+pub fn agent_notify(app: AppHandle, title: String, body: String, sound: Option<String>, slug: Option<String>, chat_id: Option<String>) -> Result<(), String> {
   if let Some(s) = slug.as_deref() {
     crate::agent::worktree::validate_slug(s)?;
   }
-  deliver(app, title, body, sound_of(sound.as_deref()), slug)
+  if let Some(id) = chat_id.as_deref() {
+    crate::agent::chats::check_id(id)?;
+  }
+  deliver(app, title, body, sound_of(sound.as_deref()), Clicked { slug, chat_id })
 }
 
 #[cfg(test)]
@@ -98,6 +105,7 @@ mod tests {
 
   #[test]
   fn click_payload_is_the_slug() {
-    assert_eq!(serde_json::to_value(Clicked { slug: Some("fix-bug".into()) }).unwrap(), serde_json::json!({ "slug": "fix-bug" }));
+    assert_eq!(serde_json::to_value(Clicked { slug: Some("fix-bug".into()), chat_id: None }).unwrap(), serde_json::json!({ "slug": "fix-bug" }));
+    assert_eq!(serde_json::to_value(Clicked { slug: None, chat_id: Some("c-1".into()) }).unwrap(), serde_json::json!({ "slug": null, "chat_id": "c-1" }));
   }
 }

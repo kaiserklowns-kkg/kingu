@@ -11,5 +11,6 @@ import { chat } from './th/chat';
 import { chatView } from './th/chatView';
 import { chatEdits } from './th/chatEdits';
 import { chatParts } from './th/chatParts';
+import { chatSystem } from './th/chatSystem';
 
-export const th = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts } satisfies Record<keyof typeof en, string>;
+export const th = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatSystem } satisfies Record<keyof typeof en, string>;

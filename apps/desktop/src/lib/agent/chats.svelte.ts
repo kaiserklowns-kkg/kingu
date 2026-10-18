@@ -14,6 +14,7 @@
  *   chats.setModel / setPermissionMode applied to the live session (SDK setModel / setPermissionMode)
  *                                      or saved for the next run; returns which
  *   chats.answer / interrupt / stop / rename / remove / promote
+ *   (after a chat's first answer: an AI title, unless renamed; chatTitle.ts)
  *
  * Runs are keyed by folder + chat id (`runKey`), so they keep streaming while another folder is
  * open; only the open folder's list is loaded and saved. Rust appends each run's events to the
@@ -32,6 +33,7 @@ import { applyEvent, initialRun, type AgentEvent, type Decision, type RunState }
 import { buildTurns, lastRequest } from './chatParts.ts';
 import { withoutImagesLine } from './chatPrompt.ts';
 import { shouldDrain, turnBusy } from './chatInput.ts';
+import { chatTitlePrompt, parseChatTitle } from './chatTitle.ts';
 import {
 	chatCwdPath,
 	chatSendPlan,
@@ -46,7 +48,8 @@ import {
 	sortChats,
 	type ChatCwd,
 	type ChatMeta,
-	type PermissionMode
+	type PermissionMode,
+	wantsAiTitle
 } from './chats.ts';
 
 export type ChatRun = RunState & {
@@ -59,8 +62,11 @@ export type ChatRun = RunState & {
 
 type Listener = (id: string, ev: AgentEvent) => void;
 
-/** What a request sends: the prompt (text and attached-context block) and image files. */
-export type OutgoingMessage = { text: string; images: string[] };
+/**
+ * What a request sends: the prompt (text and attached-context block) and image files. `files`:
+ * the attached files (workspace-relative), for the rules a new run picks (rules.rs globs, AGENTS.md).
+ */
+export type OutgoingMessage = { text: string; images: string[]; files?: string[] };
 /** A request waiting for the running turn to end. `label` is what the user typed. */
 export type QueuedMessage = OutgoingMessage & { n: number; label: string };
 
@@ -82,6 +88,8 @@ class Chats {
 	#queued = 0;
 	/** The images of the last request sent per run key (Retry sends them again). */
 	#lastImages = new Map<string, { text: string; images: string[] }>();
+	/** Chats (run keys) whose AI title was already tried this session: one try each. */
+	#titled = new Set<string>();
 
 	get(id: string): ChatMeta | undefined {
 		return this.list.find((c) => c.id === id);
@@ -160,11 +168,11 @@ class Chats {
 		this.#save([...this.list, meta], root);
 		await this.#saving;
 		this.#lastImages.set(runKey(root, meta.id), input.message);
-		await this.#start(root, meta, input.message.text, null, input.message.images);
+		await this.#start(root, meta, input.message.text, null, input.message.images, input.message.files);
 		return meta.id;
 	}
 
-	async #start(root: string, meta: ChatMeta, prompt: string, resume: string | null, images: string[]) {
+	async #start(root: string, meta: ChatMeta, prompt: string, resume: string | null, images: string[], files: string[] = []) {
 		const key = runKey(root, meta.id);
 		const prev = this.runs[key];
 		if (prev && !prev.ended) throw new Error(t('chat.alreadyRunning'));
@@ -194,6 +202,8 @@ class Chats {
 				this.#patch(root, meta.id, { session_id: ev.session_id });
 			}
 			if (ev.kind === 'result' || ev.kind === 'exit') this.#patch(root, meta.id, { last_run: runSummary({ ...state, slug: meta.id }, Date.now(), state.startedAt) });
+			// The chat's first answer (its timeline keeps earlier runs): time for an AI title.
+			if (ev.kind === 'result' && !ev.is_error && state.items.filter((i) => i.kind === 'result').length === 1) void this.#aiTitle(root, meta.id, ev.result);
 		};
 		try {
 			state.runId = await invoke<number>('agent_start', {
@@ -207,6 +217,10 @@ class Chats {
 				mcpServers: Object.keys(mcp).length ? mcp : null,
 				plugins: plugins.length ? plugins : null,
 				images: images.length ? images : null,
+				// Rust sends it only when off: the host's safety checks are on by default.
+				safetyChecks: settings.get<boolean>('kingu.agent.safetyChecks') !== false,
+				// The rules files (rules.rs) for these attached files; null leaves them out.
+				rules: settings.get<boolean>('kingu.chat.rules.enabled') !== false ? files : null,
 				onEvent
 			});
 			clientLog('info', `agent run ${state.runId} started for chat ${meta.id}`);
@@ -232,7 +246,7 @@ class Chats {
 				if (run?.runId === undefined) throw new Error(t('team.agent.stillStarting'));
 				await invoke('agent_send', { runId: run.runId, text: message.text, images: message.images.length ? message.images : null });
 				this.#patch(root, id, {});
-			} else await this.#start(root, meta, message.text, plan.resume, message.images);
+			} else await this.#start(root, meta, message.text, plan.resume, message.images, message.files);
 			return true;
 		} catch (e) {
 			notifications.error(t('chat.sendFailed', { error: String(e) }));
@@ -269,7 +283,7 @@ class Chats {
 		const head = this.queues[key]?.[0];
 		if (!head || root !== this.root || turnBusy(run)) return;
 		this.queues[key] = this.queues[key].slice(1);
-		const sent = await this.send(id, { text: head.text, images: head.images });
+		const sent = await this.send(id, { text: head.text, images: head.images, files: head.files });
 		if (!sent) this.queues[key] = [head, ...(this.queues[key] ?? [])];
 	}
 
@@ -331,7 +345,30 @@ class Chats {
 	rename(id: string, input: string) {
 		const meta = this.get(id);
 		const title = meta && renamedChatTitle(meta.title, input);
-		if (title && this.root) this.#patch(this.root, id, { title });
+		// A title the user chose: an AI title never replaces it.
+		if (title && this.root) this.#patch(this.root, id, { title, title_auto: false });
+	}
+
+	/**
+	 * After the first answer of a chat that still has its first-prompt title (kingu.chat.aiTitles):
+	 * a 3–6 word title from the source-control AI agent, tried once per chat. Rust runs it only
+	 * when the user set that agent up; any failure leaves the title as it is.
+	 */
+	async #aiTitle(root: string, id: string, answer: string | null) {
+		const key = runKey(root, id);
+		const meta = this.get(id);
+		if (root !== this.root || !meta || !wantsAiTitle(meta) || this.#titled.has(key) || settings.get<boolean>('kingu.chat.aiTitles') === false) return;
+		this.#titled.add(key);
+		try {
+			const answerText = await invoke<string | null>('ai_chat_title', { prompt: chatTitlePrompt(meta.prompt, answer) });
+			const title = answerText && parseChatTitle(answerText);
+			const now = this.get(id);
+			// Renamed (or another folder opened) meanwhile: keep that.
+			if (!title || root !== this.root || !now || !wantsAiTitle(now)) return;
+			this.#patch(root, id, { title, updated_at: now.updated_at });
+		} catch (e) {
+			clientLog('info', `chat ${id}: no AI title: ${String(e).slice(0, 200)}`);
+		}
 	}
 
 	/** Deletes the chat and its transcript; refused (by Rust too) while its agent runs. */

@@ -6,6 +6,7 @@
 
 import { t } from '#lib/i18n/index.ts';
 import { parseRequest, type ParsedRequest } from './chatPrompt';
+import { guardBlockedText } from './guardText';
 import type { AgentEvent, PermissionRequest, ResultEvent, RunState, RunStatus } from './events';
 
 export type ToolPart = {
@@ -130,6 +131,9 @@ export function buildTurns(run: ChatView): Turn[] {
 				break;
 			case 'error':
 				current().parts.push({ kind: 'error', message: ev.message });
+				break;
+			case 'guard_blocked':
+				current().parts.push({ kind: 'error', message: guardBlockedText(ev) });
 				break;
 			case 'exit': {
 				const failed = !ev.stopped && ((ev.code ?? 0) !== 0 || ev.signal != null);

@@ -4,3 +4,7 @@ Copyright 2026 Anthovai
 This product includes third-party software. See
 apps/desktop/src/lib/editor/textmate/NOTICE.md for the bundled VS Code
 color themes (MIT License, Copyright (c) Microsoft Corporation).
+
+apps/agent-host/src/guards (the threat patterns and the repetition check) is ported from
+goose (https://github.com/block/goose), by way of old Kingu's Arkai.
+Apache License 2.0. Copyright (c) Block, Inc. and contributors.

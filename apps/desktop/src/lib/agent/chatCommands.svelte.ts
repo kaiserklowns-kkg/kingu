@@ -13,6 +13,8 @@ class ChatSignals {
 	focus = $state(0);
 	/** Bumped to start a new chat. */
 	newChat = $state(0);
+	/** A chat to show (a clicked notification); `n` tells two requests for the same chat apart. */
+	open = $state<{ id: string; n: number } | null>(null);
 	/** The panel's root element, to tell whether the chat has focus. */
 	el: HTMLElement | null = null;
 
@@ -27,6 +29,12 @@ export const chatSignals = new ChatSignals();
 function show() {
 	if (appMode.isAgents) appMode.setMode('workbench');
 	layout.auxVisible = true;
+}
+
+/** Shows the chat panel with chat `id` of the open folder selected. */
+export function openChat(id: string) {
+	show();
+	chatSignals.open = { id, n: (chatSignals.open?.n ?? 0) + 1 };
 }
 
 export function registerChatCommands(): () => void {

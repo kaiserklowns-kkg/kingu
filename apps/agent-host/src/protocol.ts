@@ -28,6 +28,10 @@ export type StartParams = {
 	images?: string[];
 	/** Snapshot files before the edit tools change them (`file_snapshot` events; chats only). */
 	snapshots?: boolean;
+	/** Kingu's safety checks (guards/): on unless `false` (`kingu.agent.safetyChecks`). */
+	safetyChecks?: boolean | null;
+	/** Project rules (AGENTS.md, .cursor/rules, …; Rust agent/rules.rs) appended to Claude Code's system prompt. */
+	systemPromptAppend?: string | null;
 };
 export type SendParams = { runId: number; text: string; images?: string[] };
 export type RunParams = { runId: number };
@@ -104,6 +108,12 @@ export type AgentEvent =
 			content_b64: string | null;
 			skipped: 'outside' | 'symlink' | 'too_large' | 'unreadable' | null;
 	  }
+	/**
+	 * Kingu's safety check refused a tool call (guards/), in any permission mode. `check`:
+	 * `security` (a catastrophic shell command; `threats` are goose pattern names, `detail` their
+	 * descriptions) or `repetition` (the third identical call in a row).
+	 */
+	| { kind: 'guard_blocked'; tool: string; tool_use_id: string | null; check: 'security' | 'repetition'; threats: string[]; detail: string }
 	| { kind: 'error'; message: string }
 	| { kind: 'raw'; line: string }
 	| { kind: 'stderr'; line: string }
