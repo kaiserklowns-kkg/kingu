@@ -15,6 +15,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
+use crate::i18n::msg::CoreMsg;
+use crate::tr;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Proxy {
@@ -32,15 +34,15 @@ pub fn validate_url(raw: &str) -> Result<String, String> {
   if raw.is_empty() {
     return Ok(String::new());
   }
-  let url = url::Url::parse(raw).map_err(|e| format!("http.proxy ไม่ถูกต้อง: {e}"))?;
+  let url = url::Url::parse(raw).map_err(|e| tr!(CoreMsg::ProxyInvalid, detail = e))?;
   if !matches!(url.scheme(), "http" | "https" | "socks" | "socks4" | "socks4a" | "socks5" | "socks5h") {
-    return Err(format!("http.proxy: ไม่รองรับ scheme {} (ใช้ http, https หรือ socks5)", url.scheme()));
+    return Err(tr!(CoreMsg::ProxyScheme, scheme = url.scheme()));
   }
   if url.host_str().is_none_or(str::is_empty) {
-    return Err("http.proxy ต้องมีชื่อโฮสต์".into());
+    return Err(tr!(CoreMsg::ProxyNoHost));
   }
   if !matches!(url.path(), "" | "/") || url.query().is_some() || url.fragment().is_some() {
-    return Err("http.proxy ต้องเป็น scheme://host:port ไม่มี path".into());
+    return Err(tr!(CoreMsg::ProxyHasPath));
   }
   // reqwest and curl know `socks5`, not VS Code's bare `socks`.
   let text = raw.trim_end_matches('/');
@@ -103,7 +105,7 @@ pub fn apply(builder: reqwest::blocking::ClientBuilder, p: &Proxy) -> Result<req
   let bypass: Vec<&str> = ["localhost", "127.0.0.1", "::1"].into_iter().chain(p.no_proxy.iter().map(String::as_str)).collect();
   proxy = proxy.no_proxy(reqwest::NoProxy::from_string(&bypass.join(",")));
   if let Some(auth) = &p.authorization {
-    let value = reqwest::header::HeaderValue::from_str(auth).map_err(|_| "http.proxyAuthorization มีอักขระที่ใช้ใน header ไม่ได้".to_owned())?;
+    let value = reqwest::header::HeaderValue::from_str(auth).map_err(|_| tr!(CoreMsg::ProxyAuthHeader))?;
     proxy = proxy.custom_http_auth(value);
   }
   Ok(builder.proxy(proxy).danger_accept_invalid_certs(!p.strict_ssl))

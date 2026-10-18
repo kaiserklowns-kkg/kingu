@@ -14,6 +14,8 @@ use std::sync::{Arc, Mutex};
 
 use kingu_ptyd::{Attached, Host, SessionInfo, ShellSpec, Sink};
 use tauri::State;
+use crate::i18n::msg::CoreMsg;
+use crate::tr;
 use tauri::ipc::Channel;
 
 pub use kingu_ptyd::validate_key;
@@ -60,7 +62,7 @@ impl Daemon {
   /// The connection as it is, without reconnecting: keystrokes and resizes run on the main
   /// thread (in order) and must never wait for a daemon to start.
   fn connected(&self) -> Result<Arc<kingu_ptyd::client::Client>, String> {
-    self.client.lock().unwrap().clone().ok_or_else(|| "terminal daemon หลุดการเชื่อมต่อ".to_string())
+    self.client.lock().unwrap().clone().ok_or_else(|| tr!(CoreMsg::DaemonDisconnected))
   }
 }
 
@@ -90,10 +92,10 @@ pub fn daemon_dir(app_data: &Path, runtime_dir: Option<PathBuf>, temp: &Path, ui
 /// Tauri's `externalBin` puts it in `Contents/MacOS`; dev: `cargo build` puts it in `target/debug`).
 pub fn find_daemon(override_var: Option<std::ffi::OsString>, exe_dir: Option<&Path>) -> Result<PathBuf, String> {
   if let Some(p) = override_var.filter(|o| !o.is_empty()).map(PathBuf::from) {
-    return if p.is_file() { Ok(p) } else { Err(format!("KINGU_PTYD={}: ไม่พบไฟล์", p.display())) };
+    return if p.is_file() { Ok(p) } else { Err(tr!(CoreMsg::PtydOverrideMissing, path = p.display())) };
   }
   let name = if cfg!(windows) { "kingu-ptyd.exe" } else { "kingu-ptyd" };
-  exe_dir.map(|d| d.join(name)).filter(|p| p.is_file()).ok_or_else(|| format!("ไม่พบ {name} ข้างตัวแอป (ตั้ง KINGU_PTYD หรือ cargo build -p kingu-ptyd)"))
+  exe_dir.map(|d| d.join(name)).filter(|p| p.is_file()).ok_or_else(|| tr!(CoreMsg::PtydMissing, name))
 }
 
 impl Ptys {
@@ -120,7 +122,7 @@ impl Ptys {
       }
       let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
       let launch = find_daemon(std::env::var_os("KINGU_PTYD"), exe_dir.as_deref()).and_then(|bin| {
-        let dir = self.dir.get().cloned().ok_or("ยังไม่รู้โฟลเดอร์ของ daemon")?;
+        let dir = self.dir.get().cloned().ok_or_else(|| tr!(CoreMsg::DaemonDirUnknown))?;
         Ok(kingu_ptyd::client::Launch { bin, dir, app_version: env!("CARGO_PKG_VERSION").into(), args: Vec::new(), env: Vec::new() })
       });
       let connected = launch.and_then(|launch| {

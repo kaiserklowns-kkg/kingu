@@ -54,44 +54,44 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Request, Str
   let (mut network, mut fs, mut root) = (None, Fs::Worktree, None);
   let (mut secrets, mut keep, mut protect) = (Vec::new(), Vec::new(), Vec::new());
   loop {
-    let Some(flag) = it.next() else { return Err("ไม่มีคำสั่งหลัง --".into()) };
+    let Some(flag) = it.next() else { return Err("no command after --".into()) };
     if flag == "--" {
       break;
     }
-    let value = it.next().ok_or_else(|| format!("{flag}: ต้องมีค่า"))?;
+    let value = it.next().ok_or_else(|| format!("{flag}: needs a value"))?;
     match flag.as_str() {
       "--network" => {
         network = Some(match value.as_str() {
           "on" => true,
           "off" => false,
-          _ => return Err(format!("--network {value}: ใช้ on หรือ off")),
+          _ => return Err(format!("--network {value}: use on or off")),
         })
       }
       "--fs" => {
         fs = match value.as_str() {
           "worktree" => Fs::Worktree,
           "home" => Fs::Home,
-          _ => return Err(format!("--fs {value}: ใช้ worktree หรือ home")),
+          _ => return Err(format!("--fs {value}: use worktree or home")),
         }
       }
       "--root" => root = Some(PathBuf::from(value)),
       "--secret" => secrets.push(value),
       "--keep" => keep.push(value),
       "--protect" => protect.push(PathBuf::from(value)),
-      _ => return Err(format!("{flag}: ไม่รู้จักตัวเลือกนี้")),
+      _ => return Err(format!("{flag}: unknown option")),
     }
   }
   let argv: Vec<String> = it.collect();
   if argv.first().is_none_or(|p| p.is_empty()) {
-    return Err("ไม่มีคำสั่งหลัง --".into());
+    return Err("no command after --".into());
   }
-  let network = network.ok_or("ต้องระบุ --network")?;
-  let root = root.ok_or("ต้องระบุ --root")?;
+  let network = network.ok_or("--network is required")?;
+  let root = root.ok_or("--root is required")?;
   if !root.is_absolute() {
-    return Err(format!("--root {}: ต้องเป็น path เต็ม", root.display()));
+    return Err(format!("--root {}: must be an absolute path", root.display()));
   }
   if protect.iter().any(|p| !p.is_absolute()) {
-    return Err("--protect ต้องเป็น path เต็ม".into());
+    return Err("--protect must be an absolute path".into());
   }
   Ok(Request { network, fs, root, secrets, keep, protect, argv })
 }
@@ -185,16 +185,16 @@ pub fn git_dirs(root: &Path) -> Vec<PathBuf> {
 /// [`policy`] for a request on this machine: canonical root (which must be a folder), home,
 /// temp dirs and worktree git dirs.
 pub fn resolve(req: &Request, home: Option<&OsStr>, tmpdir: Option<&OsStr>) -> Result<Policy, String> {
-  let root = std::fs::canonicalize(&req.root).map_err(|e| format!("โฟลเดอร์งาน {}: {e}", req.root.display()))?;
+  let root = std::fs::canonicalize(&req.root).map_err(|e| format!("task folder {}: {e}", req.root.display()))?;
   if !root.is_dir() {
-    return Err(format!("โฟลเดอร์งาน {} ไม่ใช่โฟลเดอร์", root.display()));
+    return Err(format!("task folder {} is not a folder", root.display()));
   }
   if root == Path::new("/") {
-    return Err("โฟลเดอร์งานเป็น / ไม่ได้".into());
+    return Err("the task folder cannot be /".into());
   }
   let home = home.filter(|h| !h.is_empty()).map(|h| canonical(Path::new(h)));
   if req.fs == Fs::Worktree && home.as_deref() == Some(root.as_path()) {
-    return Err("fs = \"worktree\" ใช้โฮมโฟลเดอร์เป็นโฟลเดอร์งานไม่ได้ (เปิดโฟลเดอร์โปรเจกต์แทน)".into());
+    return Err("fs = \"worktree\" cannot use the home folder as the task folder (open the project folder instead)".into());
   }
   let mut temps: Vec<PathBuf> = tmpdir.filter(|t| !t.is_empty()).map(|t| canonical(Path::new(t))).into_iter().collect();
   if cfg!(target_os = "macos") {
@@ -210,9 +210,9 @@ pub fn resolve(req: &Request, home: Option<&OsStr>, tmpdir: Option<&OsStr>) -> R
 /// A path as an SBPL string literal. Control characters are refused rather than escaped: no
 /// real project path has them and a mistake there would change what the profile allows.
 pub fn sbpl_string(p: &Path) -> Result<String, String> {
-  let s = p.to_str().ok_or_else(|| format!("{}: path ไม่ใช่ UTF-8", p.display()))?;
+  let s = p.to_str().ok_or_else(|| format!("{}: path is not UTF-8", p.display()))?;
   if s.chars().any(char::is_control) {
-    return Err(format!("{}: path มีอักขระควบคุม", s.escape_debug()));
+    return Err(format!("{}: path has control characters", s.escape_debug()));
   }
   let mut out = String::with_capacity(s.len() + 2);
   out.push('"');
@@ -267,7 +267,7 @@ pub fn macos_argv(p: &Policy, argv: &[String]) -> Result<Vec<String>, String> {
 /// read-write, the protected ones bound read-only over them, and no network namespace access
 /// when `network = false`. `-try` binds skip paths that do not exist.
 pub fn bwrap_argv(bwrap: &Path, p: &Policy, argv: &[String]) -> Result<Vec<String>, String> {
-  let text = |p: &Path| p.to_str().map(str::to_owned).ok_or_else(|| format!("{}: path ไม่ใช่ UTF-8", p.display()));
+  let text = |p: &Path| p.to_str().map(str::to_owned).ok_or_else(|| format!("{}: path is not UTF-8", p.display()));
   let mut out = vec![text(bwrap)?, "--die-with-parent".into(), "--ro-bind".into(), "/".into(), "/".into(), "--dev-bind".into(), "/dev".into(), "/dev".into()];
   for w in &p.writable {
     let w = text(w)?;
@@ -346,12 +346,12 @@ impl Enforcer {
 /// What confines snaps on this machine; `path` is the PATH to look for `bwrap` in.
 pub fn enforcer(path: Option<&OsStr>) -> Result<Enforcer, String> {
   if cfg!(target_os = "macos") {
-    return if Path::new(SANDBOX_EXEC).is_file() { Ok(Enforcer::SandboxExec) } else { Err(format!("ไม่พบ {SANDBOX_EXEC} บนเครื่องนี้")) };
+    return if Path::new(SANDBOX_EXEC).is_file() { Ok(Enforcer::SandboxExec) } else { Err(format!("{SANDBOX_EXEC} not found on this machine")) };
   }
   if cfg!(target_os = "linux") {
-    return find_in_path(path, "bwrap").map(Enforcer::Bwrap).ok_or_else(|| "ไม่พบ bwrap (bubblewrap) — ติดตั้งด้วย package manager ของระบบ เช่น apt install bubblewrap".into());
+    return find_in_path(path, "bwrap").map(Enforcer::Bwrap).ok_or_else(|| "bwrap (bubblewrap) not found: install it with the system package manager, e.g. apt install bubblewrap".into());
   }
-  Err("ระบบปฏิบัติการนี้ยังไม่รองรับ sandbox ของ Snap".into())
+  Err("this operating system does not support the Snap sandbox yet".into())
 }
 
 fn find_in_path(path: Option<&OsStr>, name: &str) -> Option<PathBuf> {
@@ -383,7 +383,7 @@ pub fn exec(args: impl IntoIterator<Item = String>) -> String {
     Ok(cmd)
   };
   match run() {
-    Ok(mut cmd) => format!("เริ่มคำสั่งใน sandbox ไม่ได้: {}", cmd.exec()),
+    Ok(mut cmd) => format!("could not start the command in the sandbox: {}", cmd.exec()),
     Err(e) => e,
   }
 }

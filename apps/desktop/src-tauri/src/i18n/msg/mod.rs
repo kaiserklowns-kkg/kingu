@@ -2,12 +2,14 @@
 //! file, `mod` + `pub use` it here and list its enum in `all()`.
 
 mod agent;
+mod core;
 mod git;
 mod linear;
 mod lsp;
 mod workspace;
 
 pub use agent::AgentMsg;
+pub use core::CoreMsg;
 pub use git::GitMsg;
 pub use linear::LinearMsg;
 pub use lsp::LspMsg;
@@ -30,6 +32,7 @@ fn entry<M: Message>(m: M) -> Entry {
 pub fn all() -> Vec<Entry> {
   let mut out = Vec::new();
   out.extend(AgentMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(CoreMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(GitMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(LinearMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(LspMsg::ALL.iter().map(|&m| entry(m)));

@@ -158,7 +158,7 @@ mod tests {
       title: "t".into(),
       message: "m".into(),
       kind: Kind::Warning,
-      buttons: vec!["บันทึก (Save)".into(), "ไม่บันทึก (Don't Save)".into(), "ยกเลิก (Cancel)".into()],
+      buttons: vec!["Save".into(), "Don't Save".into(), "Cancel".into()],
       cancel_id: 2,
       dont_save_id: Some(1),
     }
@@ -187,7 +187,7 @@ mod tests {
   #[test]
   fn plugin_results_map_to_buttons() {
     let b = save_box();
-    assert_eq!(plugin_answer(&R::Custom("ไม่บันทึก (Don't Save)".into()), &b), 1);
+    assert_eq!(plugin_answer(&R::Custom("Don't Save".into()), &b), 1);
     assert_eq!(plugin_answer(&R::Cancel, &b), 2);
     assert_eq!(plugin_answer(&R::Custom("?".into()), &b), 2);
     assert_eq!(plugin_answer(&R::Ok, &b), 0);
@@ -198,7 +198,7 @@ mod tests {
     assert!(save_box().validate().is_ok());
     assert!(MessageBox { cancel_id: 3, ..save_box() }.validate().is_err());
     assert!(MessageBox { buttons: vec![], cancel_id: 0, ..save_box() }.validate().is_err());
-    let parsed: MessageBox = serde_json::from_str(r#"{"title":"a","message":"b","kind":"error","buttons":["OK","ยกเลิก"],"cancelId":1}"#).unwrap();
+    let parsed: MessageBox = serde_json::from_str(r#"{"title":"a","message":"b","kind":"error","buttons":["OK","Cancel"],"cancelId":1}"#).unwrap();
     assert_eq!(parsed.kind, Kind::Error);
     assert_eq!(parsed.dont_save_id, None);
   }

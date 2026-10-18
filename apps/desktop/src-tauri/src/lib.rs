@@ -635,7 +635,7 @@ fn pty_spawn(
       agent::worktree::validate_slug(&slug)?;
       let dir = agent::worktree::worktree_path(&ws.root()?, &slug);
       if !dir.is_dir() {
-        return Err(format!("ไม่พบ worktree ของงาน {slug}"));
+        return Err(crate::tr!(crate::i18n::msg::CoreMsg::NoTaskWorktree, slug));
       }
       dir
     }
@@ -836,7 +836,7 @@ fn lsp_start(
 }
 
 /// Whether the server for `language` can be started now (re-resolved on every call, so a server
-/// installed meanwhile is found): its path, or the "ไม่ได้ติดตั้ง …" error.
+/// installed meanwhile is found): its path, or the "Not installed: …" error.
 #[tauri::command]
 fn lsp_check(ws: State<'_, Workspace>, language: String) -> Result<String, String> {
   lsp::check(&language, &ws.root()?).map(|p| p.to_string_lossy().into_owned())
@@ -864,7 +864,7 @@ fn dap_start(
   dap::start_for(&sessions, &ws.root()?, &debug_type, python.as_deref().map(Path::new), on_event)
 }
 
-/// The adapter program for `debug_type`, or the "ไม่ได้ติดตั้ง …" error (re-resolved every call).
+/// The adapter program for `debug_type`, or the "Not installed: …" error (re-resolved every call).
 #[tauri::command]
 async fn dap_check(ws: State<'_, Workspace>, debug_type: String, python: Option<String>) -> Result<String, String> {
   let root = ws.root()?;

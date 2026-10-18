@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 use tauri::Manager;
+use crate::i18n::msg::CoreMsg;
+use crate::tr;
 
 const DIR: &str = "pasted-images";
 const PREFIX: &str = "kingu-paste-";
@@ -54,12 +56,12 @@ static SEQ: AtomicU64 = AtomicU64::new(0);
 /// Saves a pasted image into `dir`; returns its path.
 pub fn save_image(dir: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
   if bytes.is_empty() {
-    return Err("ไม่มีรูปในคลิปบอร์ด".into());
+    return Err(tr!(CoreMsg::NoClipboardImage));
   }
   if bytes.len() > MAX_PASTE_BYTES {
-    return Err("รูปใหญ่เกินไป (เกิน 18 MB)".into());
+    return Err(tr!(CoreMsg::PasteTooLarge));
   }
-  let ext = sniff(bytes).ok_or("ไม่ใช่รูป png, jpeg, gif หรือ webp")?;
+  let ext = sniff(bytes).ok_or_else(|| tr!(CoreMsg::NotAnImage))?;
   fs::create_dir_all(dir).map_err(|e| e.to_string())?;
   #[cfg(unix)]
   {
@@ -89,35 +91,35 @@ pub fn save_image(dir: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
 /// signature, within the size limits.
 pub fn check_images(paths: &[String]) -> Result<(), String> {
   if paths.len() > MAX_IMAGES {
-    return Err(format!("แนบรูปได้ไม่เกิน {MAX_IMAGES} รูปต่อข้อความ"));
+    return Err(tr!(CoreMsg::TooManyImages, max = MAX_IMAGES));
   }
   let mut total = 0;
   for p in paths {
     let path = Path::new(p);
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     if !path.is_absolute() {
-      return Err(format!("{p}: ต้องเป็น path เต็ม"));
+      return Err(tr!(CoreMsg::NeedsAbsolutePath, path = p));
     }
     let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
     if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp") {
-      return Err(format!("{name}: แนบได้เฉพาะรูป png, jpeg, gif หรือ webp"));
+      return Err(tr!(CoreMsg::ImageTypeOnly, name));
     }
     let meta = fs::metadata(path).map_err(|e| format!("{name}: {e}"))?;
     if !meta.is_file() {
-      return Err(format!("{name}: ไม่ใช่ไฟล์"));
+      return Err(tr!(CoreMsg::NotAFile, name));
     }
     if meta.len() == 0 || meta.len() > MAX_IMAGE_BYTES {
-      return Err(format!("{name}: รูปต้องไม่ว่างและไม่เกิน 5 MB"));
+      return Err(tr!(CoreMsg::ImageSize, name));
     }
     total += meta.len();
     let mut head = [0u8; 12];
     let n = std::io::Read::read(&mut fs::File::open(path).map_err(|e| e.to_string())?, &mut head).map_err(|e| e.to_string())?;
     if sniff(&head[..n]).is_none() {
-      return Err(format!("{name}: เนื้อไฟล์ไม่ใช่รูปที่รองรับ"));
+      return Err(tr!(CoreMsg::ImageContent, name));
     }
   }
   if total > MAX_IMAGES_TOTAL {
-    return Err("รูปที่แนบรวมกันเกิน 20 MB".into());
+    return Err(tr!(CoreMsg::ImagesTotalTooLarge));
   }
   Ok(())
 }
