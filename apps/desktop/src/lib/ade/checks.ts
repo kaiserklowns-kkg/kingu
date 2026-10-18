@@ -88,6 +88,9 @@ export function summarize(checks: Check[]): CheckCounts {
 	return out;
 }
 
+/** What a poll compares to tell "nothing changed" (and back off): the PR's state and every check. */
+export const prSignature = (pr: Pr | null) => (pr ? `${pr.state}|${(pr.statusCheckRollup ?? []).map((c) => `${c.name ?? c.context}:${c.status}:${c.conclusion}:${c.state}`).join('|')}` : '');
+
 export const CHECKS_POLL = { base: 60_000, settled: 120_000, closed: 15 * 60_000, maxError: 15 * 60_000 };
 
 /**

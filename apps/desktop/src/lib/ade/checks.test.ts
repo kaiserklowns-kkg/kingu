@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { checksPollDelay, CHECKS_POLL, checkKind, checkLabel, checkRank, fixPrompt, mergeLabel, reactionPills, summarize, type Check, type Pr } from './checks';
+import { prSignature, checksPollDelay, CHECKS_POLL, checkKind, checkLabel, checkRank, fixPrompt, mergeLabel, reactionPills, summarize, type Check, type Pr } from './checks';
 
 const run = (conclusion: string, status = 'COMPLETED'): Check => ({ __typename: 'CheckRun', name: conclusion, status, conclusion });
 
@@ -47,4 +47,12 @@ test('checks poll delay follows the PR and its checks', () => {
 	expect(checksPollDelay(pr('CLOSED', []), ok)).toBe(15 * 60_000);
 	expect(checksPollDelay(null, { failed: true, unchanged: false, prev: 60_000 })).toBe(120_000);
 	expect(checksPollDelay(null, { failed: true, unchanged: false, prev: 10 * 60_000 })).toBe(15 * 60_000);
+});
+
+test('a PR signature changes with its state and checks only', () => {
+	const pr = { state: 'OPEN', title: 'a', statusCheckRollup: [run('', 'IN_PROGRESS')] } as Pr;
+	expect(prSignature(null)).toBe('');
+	expect(prSignature({ ...pr, title: 'b' })).toBe(prSignature(pr));
+	expect(prSignature({ ...pr, statusCheckRollup: [run('SUCCESS')] })).not.toBe(prSignature(pr));
+	expect(prSignature({ ...pr, state: 'MERGED' })).not.toBe(prSignature(pr));
 });

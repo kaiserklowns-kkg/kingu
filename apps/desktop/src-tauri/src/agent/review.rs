@@ -446,6 +446,8 @@ pub struct PrStatus {
 
 /// `gh pr view --json` fields read by `parse_pr_status`.
 pub const PR_FIELDS: &str = "number,url,title,state,isDraft,reviewDecision,mergeable,mergeStateStatus,headRefName,baseRefName,statusCheckRollup";
+/// What the right side bar's Checks tab shows beyond [`PR_FIELDS`] (read in the same `gh` call).
+pub const PR_VIEW_FIELDS: &str = "additions,deletions,author,createdAt,autoMergeRequest";
 
 fn check_state(status: &str, conclusion: &str) -> &'static str {
   // CheckRun: status QUEUED/IN_PROGRESS/COMPLETED + conclusion; StatusContext: state only.
@@ -464,6 +466,11 @@ fn check_state(status: &str, conclusion: &str) -> &'static str {
 /// `gh pr view --json PR_FIELDS` output → the status Kingu shows.
 pub fn parse_pr_status(json: &str) -> Result<PrStatus, String> {
   let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("gh pr view: {e}"))?;
+  pr_status_of(&v)
+}
+
+/// [`parse_pr_status`] for JSON already read.
+pub fn pr_status_of(v: &serde_json::Value) -> Result<PrStatus, String> {
   let text = |k: &str| v[k].as_str().unwrap_or_default().to_owned();
   let checks = v["statusCheckRollup"]
     .as_array()
@@ -509,14 +516,14 @@ pub fn is_no_pr(stderr: &str) -> bool {
   e.contains("no pull requests found") || e.contains("no open pull requests")
 }
 
-/// The pull request of the task branch, or of the branch checked out in `dir` when `slug` is
-/// `None` (the open folder itself), via `gh pr view`; `None` when the branch has none.
-pub fn pr_status(gh: &Path, dir: &Path, slug: Option<&str>) -> Result<Option<PrStatus>, String> {
+/// The pull request as `gh pr view --json` reports it, with [`PR_FIELDS`] and [`PR_VIEW_FIELDS`]:
+/// of the task branch, or of the branch checked out in `dir` when `slug` is `None`.
+pub fn pr_view(gh: &Path, dir: &Path, slug: Option<&str>) -> Result<Option<serde_json::Value>, String> {
   let mut args = vec!["pr".to_owned(), "view".to_owned()];
   if let Some(slug) = slug {
     args.push(task_branch(dir, slug)?);
   }
-  args.extend(["--json".to_owned(), PR_FIELDS.to_owned()]);
+  args.extend(["--json".to_owned(), format!("{PR_FIELDS},{PR_VIEW_FIELDS}")]);
   let out = crate::shell_env::command(gh)
     .current_dir(dir)
     .env("GH_PROMPT_DISABLED", "1")
@@ -530,7 +537,20 @@ pub fn pr_status(gh: &Path, dir: &Path, slug: Option<&str>) -> Result<Option<PrS
     }
     return Err(format!("gh pr view: {}", err.trim()));
   }
-  parse_pr_status(&String::from_utf8_lossy(&out.stdout)).map(Some)
+  serde_json::from_slice(&out.stdout).map(Some).map_err(|e| format!("gh pr view: {e}"))
+}
+
+/// One worktree's pull request for every view of it: Kingu's parsed status (task page, Review)
+/// and gh's own JSON (the right side bar's Checks and Source Control), from one `gh` call.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WorktreePr {
+  pub status: PrStatus,
+  pub raw: serde_json::Value,
+}
+
+pub fn worktree_pr(gh: &Path, dir: &Path, slug: Option<&str>) -> Result<Option<WorktreePr>, String> {
+  let Some(raw) = pr_view(gh, dir, slug)? else { return Ok(None) };
+  Ok(Some(WorktreePr { status: pr_status_of(&raw)?, raw }))
 }
 
 #[cfg(test)]

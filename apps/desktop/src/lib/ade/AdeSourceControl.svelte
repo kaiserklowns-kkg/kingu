@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	// Orca's Source Control tab for the selected worktree (the folder or a task's worktree): a
 	// header with the PR link, a name filter and more actions, the branch → base line with ahead /
 	// behind and the +/− line total, the commit box (inside the scroll area) with Orca's primary
@@ -16,6 +17,7 @@
 	import { fileIcon } from '#lib/workbench/fileIcons.ts';
 	import { adeLayout, PRIMARY } from './adeLayout.svelte';
 	import { rightSidebar } from './rightSidebar.svelte.ts';
+	import { prStatuses } from './prStatus.svelte.ts';
 	import { adeTasks } from './tasks.svelte';
 	import { worktreeDir } from './keys';
 	import { draftKey, drafts } from './scmDrafts';
@@ -373,18 +375,15 @@
 	}
 
 	// --- PR composer (Orca: replaces the commit box when the branch can open a PR) -----------
+	// The branch's PR from the store the Checks tab and the task page share: `undefined` until
+	// read, `null` when the branch has none (or gh could not tell).
 	type PrInfo = { number: number; url: string } | null;
-	let prInfo = $state<PrInfo | undefined>(undefined);
-	async function checkPr() {
-		try {
-			prInfo = await invoke<PrInfo>('gh_pr_view', { slug: slug || null });
-		} catch {
-			prInfo = null;
-		}
-	}
+	const prEntry = $derived(prStatuses.bySlug[slug]);
+	const prInfo = $derived<PrInfo | undefined>(prEntry && (prEntry.at || !prEntry.loading) ? prEntry.pr && { number: prEntry.pr.number, url: prEntry.pr.url } : undefined);
+	const checkPr = () => prStatuses.refresh(slug);
 	$effect(() => {
-		void slug;
-		void checkPr();
+		const s = slug;
+		untrack(() => void prStatuses.refresh(s));
 	});
 	let prTitle = $state('');
 	let prBody = $state('');

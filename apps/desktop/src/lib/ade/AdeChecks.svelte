@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
+	import { prStatuses } from './prStatus.svelte.ts';
 	// Orca's Checks tab for the selected worktree's branch: its pull request (number, state, an
 	// editable title, merge state and the actions for that state: merge with a method, mark ready,
 	// close, reopen), an action strip (Fix failing checks with the task's agent), the CI checks
@@ -13,81 +15,35 @@
 	import { ask } from '#lib/workbench/messageBox.ts';
 	import { renderMarkdown } from '#lib/workbench/markdown.ts';
 	import { adeTasks } from './tasks.svelte';
-	import { checksPollDelay, checkKind, checkLabel, checkRank, fixPrompt, mergeLabel, reactionPills, REACTIONS, summarize, type Check, type Pr, type PrComment, type ReviewThread } from './checks';
+	import { checkKind, checkLabel, checkRank, fixPrompt, mergeLabel, reactionPills, REACTIONS, summarize, type Check, type Pr, type PrComment, type ReviewThread } from './checks';
 	import { sessionAgo } from './agentsPanel';
 
 	let { slug }: { slug: string } = $props();
 
-	let pr = $state<Pr | null>(null);
-	let loaded = $state(false);
-	let loading = $state(false);
-	let error = $state('');
-	let updatedAt = $state<number | null>(null);
+	// The PR comes from the store every view of this worktree shares (one `gh` read, one poll).
+	const entry = $derived(prStatuses.bySlug[slug]);
+	const pr = $derived(entry?.raw ?? null);
+	const loaded = $derived(!!entry && (entry.at > 0 || !entry.loading));
+	const loading = $derived(!!entry?.loading);
+	const error = $derived(entry?.error ?? '');
+	const updatedAt = $derived(entry?.at || null);
 	let listOpen = $state(true);
 	let busy = $state<string | null>(null);
 	let actionError = $state('');
 
-	let delay = 60_000;
-	let signature = '';
-	/** Bumped when the panel goes away or the worktree changes, so a late answer is dropped. */
-	let generation = 0;
-	/** Looks at the PR again; resolves to whether the look succeeded. */
-	async function refresh(): Promise<boolean> {
-		if (loading) return !error;
-		const gen = generation;
-		loading = true;
-		let ok = true;
-		try {
-			const next = await invoke<Pr | null>('gh_pr_view', { slug: slug || null });
-			if (gen !== generation) return true;
-			const sig = next ? `${next.state}|${(next.statusCheckRollup ?? []).map((c) => `${c.name}:${c.status}:${c.conclusion}`).join('|')}` : '';
-			const unchanged = sig === signature;
-			signature = sig;
-			pr = next;
-			error = '';
-			updatedAt = Date.now();
-			delay = checksPollDelay(next, { failed: false, unchanged, prev: delay }) ?? 0;
-			if (next) void loadComments(), void loadThreads();
-		} catch (e) {
-			if (gen !== generation) return true;
-			ok = false;
-			error = String(e);
-			delay = checksPollDelay(null, { failed: true, unchanged: false, prev: delay }) ?? 0;
-		} finally {
-			if (gen === generation) (loaded = true), (loading = false);
-		}
-		return ok;
-	}
+	const refresh = () => prStatuses.refresh(slug);
 	$effect(() => {
-		void slug;
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		let cancelled = false;
-		const schedule = () => {
-			clearTimeout(timer);
-			// 0 = nothing left to watch (a merged PR with settled checks); focus still looks again.
-			if (!cancelled && delay > 0) timer = setTimeout(tick, delay);
-		};
-		const tick = async () => {
-			if (document.visibilityState === 'visible') await refresh();
-			schedule();
-		};
-		const onFocus = async () => {
-			await refresh();
-			schedule();
-		};
-		void tick();
-		window.addEventListener('focus', onFocus);
-		return () => {
-			cancelled = true;
-			generation++;
-			loading = false;
-			clearTimeout(timer);
-			window.removeEventListener('focus', onFocus);
-		};
+		const s = slug;
+		return untrack(() => prStatuses.watch(s));
+	});
+	// Comments and review threads follow each fresh read of an open PR.
+	$effect(() => {
+		if (!entry?.at || !entry.raw) return;
+		untrack(() => void (loadComments(), loadThreads()));
 	});
 
 	/** The backend's "gh is not installed" error. */
-	const ghMissing = $derived(error.includes('ติดตั้ง GitHub CLI'));
+	const ghMissing = $derived(error.includes('ติดตั้ง GitHub CLI') || error.includes('ไม่พบ gh'));
 	const checks = $derived([...(pr?.statusCheckRollup ?? [])].sort((a, b) => checkRank(a) - checkRank(b)));
 	const counts = $derived(summarize(checks));
 	const failing = $derived(checks.filter((c) => ['failure', 'cancelled'].includes(checkKind(c))));

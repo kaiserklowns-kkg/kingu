@@ -21,8 +21,7 @@
 			if (!adeTasks.gh) void adeTasks.checkGh();
 		});
 		if (!adeTasks.gh?.authenticated) return;
-		untrack(() => void prStatuses.refresh(s));
-		return () => prStatuses.stop(s);
+		return untrack(() => prStatuses.watch(s));
 	});
 
 	const CHECK_DOT: Record<CheckState, string> = {

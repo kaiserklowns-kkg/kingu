@@ -337,30 +337,6 @@ async fn git_log(ws: State<'_, Workspace>, slug: Option<String>, limit: Option<u
   blocking(move || git::log(&root, limit.unwrap_or(50))).await
 }
 
-/// The pull request of the worktree's branch and its checks (`gh pr view --json`), or null when
-/// the branch has none. Errors when `gh` is missing or not signed in.
-#[tauri::command]
-async fn gh_pr_view(ws: State<'_, Workspace>, slug: Option<String>) -> Result<Option<serde_json::Value>, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
-  blocking(move || {
-    let gh = agent::review::gh_bin().ok_or("ยังไม่ได้ติดตั้ง GitHub CLI (gh)")?;
-    let out = shell_env::command(&gh)
-      .current_dir(&root)
-      .args(["pr", "view", "--json", "number,title,state,url,isDraft,headRefName,baseRefName,mergeable,reviewDecision,statusCheckRollup,additions,deletions,author,createdAt,autoMergeRequest"])
-      .output()
-      .map_err(|e| format!("gh: {e}"))?;
-    if !out.status.success() {
-      let err = String::from_utf8_lossy(&out.stderr);
-      if err.contains("no pull requests found") {
-        return Ok(None);
-      }
-      return Err(format!("gh pr view: {}", err.trim()));
-    }
-    serde_json::from_slice(&out.stdout).map(Some).map_err(|e| e.to_string())
-  })
-  .await
-}
-
 #[tauri::command]
 fn open_web_url(url: String) -> Result<(), String> {
   system::open_web_url(&url)
@@ -1225,7 +1201,6 @@ pub fn run() {
       git_pull_ff_only,
       git_rebase,
       git_log,
-      gh_pr_view,
       open_web_url,
       gh_pr_action,
       gh_pr_edit_title,
@@ -1318,7 +1293,7 @@ pub fn run() {
       agent::git_show_ref,
       agent::gh_status,
       agent::worktree_pr_create,
-      agent::worktree_pr_status,
+      agent::worktree_pr,
       agent::worktree_pr_merge,
       agent::gh_merge_settings,
       agent::worktree_pr_check_logs,
