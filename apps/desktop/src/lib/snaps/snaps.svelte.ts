@@ -6,18 +6,37 @@
 
 import { untrack } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
+import { ask, message, open } from '@tauri-apps/plugin-dialog';
 import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 import { settingSchemas } from '#lib/settings/schemas.svelte.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 import { terminals } from '#lib/terminal/terminals.svelte.ts';
 import { commands } from '#lib/workbench/commands.svelte.ts';
+import { editors } from '#lib/workbench/editors.svelte.ts';
+import { quick } from '#lib/workbench/quick.svelte.ts';
 import { layout } from '#lib/workbench/layout.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { setMcpProvider, setSkillPluginProvider } from '#lib/ade/mcp.ts';
-import { isActive, mcpServersOf, runnableTasks, skillSnapIds, snapSettingSchemas, taskArgv, taskCommandId, touchesRepoSnaps, type McpServerSpec, type SnapInfo } from './snapModel.ts';
+import {
+	installSummary,
+	isActive,
+	isUpdatable,
+	mcpServersOf,
+	runnableTasks,
+	skillSnapIds,
+	snapSettingSchemas,
+	taskArgv,
+	taskCommandId,
+	touchesRepoSnaps,
+	trustSummary,
+	updateSummary,
+	type McpServerSpec,
+	type PreparedInstall,
+	type SnapInfo
+} from './snapModel.ts';
 
 class Snaps {
 	list = $state<SnapInfo[]>([]);
@@ -52,6 +71,199 @@ class Snaps {
 			status.flash(on ? `เชื่อถือ snap “${snap.name}” แล้ว` : `เลิกเชื่อถือ snap “${snap.name}” แล้ว`);
 		} catch (e) {
 			status.flash(`เปลี่ยนการเชื่อถือ snap ไม่สำเร็จ: ${e}`);
+		}
+		await this.load();
+	}
+
+	/** What an install, update or uninstall is doing right now (one at a time), for the Snaps view. */
+	busy = $state<string | null>(null);
+
+	async #exclusive<T>(label: string, run: () => Promise<T>): Promise<T | undefined> {
+		if (this.busy) {
+			status.flash(`รอให้ “${this.busy}” เสร็จก่อน`);
+			return undefined;
+		}
+		this.busy = label;
+		try {
+			return await run();
+		} finally {
+			this.busy = null;
+		}
+	}
+
+	/** Snap: Install from Git… — clone into staging, confirm natively, then install. */
+	async install() {
+		const url = await quick.input({
+			placeholder: 'URL ของ git repo ที่มี snap.toml (https://…, git@host:repo.git) ต่อท้าย #tag หรือ #branch ได้',
+			hint: (v) => (v.trim() ? `ติดตั้ง Snap จาก ${v.trim()}` : 'พิมพ์ URL แล้วกด Enter')
+		});
+		if (!url?.trim()) return;
+		await this.#exclusive('กำลังดึง snap จาก git…', async () => {
+			const prepared = await this.#prepare(() => invoke<PreparedInstall>('snap_install_git', { url: url.trim() }));
+			if (prepared) await this.#confirmAndCommit(prepared);
+		});
+	}
+
+	/** Snap: Install from Folder… — copies the folder (no symlinks), same checks and confirm. */
+	async installFromFolder() {
+		const path = await open({ directory: true, multiple: false, title: 'เลือกโฟลเดอร์ที่มี snap.toml' });
+		if (typeof path !== 'string') return;
+		await this.#exclusive('กำลังคัดลอก snap…', async () => {
+			const prepared = await this.#prepare(() => invoke<PreparedInstall>('snap_install_folder', { path }));
+			if (prepared) await this.#confirmAndCommit(prepared);
+		});
+	}
+
+	/** Snap: Update — fetches the snap's git origin again and shows what changed before replacing it. */
+	async update(id?: string) {
+		const target = id ?? (await this.#pick(this.list.filter(isUpdatable), 'เลือก Snap ที่จะอัปเดต (ติดตั้งจาก git)'));
+		if (!target) return;
+		await this.#exclusive(`กำลังอัปเดต ${target}…`, async () => {
+			const prepared = await this.#prepare(() => invoke<PreparedInstall>('snap_update_prepare', { id: target }));
+			if (prepared) await this.#confirmAndCommit(prepared);
+		});
+	}
+
+	/** Snap: Uninstall — user snaps only (repo snaps come with the repo); moves the folder to the Trash. */
+	async uninstall(id?: string) {
+		const target = id ?? (await this.#pick(this.list.filter((s) => s.source === 'user'), 'เลือก Snap ที่จะถอนการติดตั้ง'));
+		const snap = this.list.find((s) => s.source === 'user' && s.id === target);
+		if (!target || !snap) return;
+		const sure = await ask(`ย้ายโฟลเดอร์ของ snap “${snap.name}” ไปที่ถังขยะ?\n${snap.dir}`, { title: 'ถอนการติดตั้ง Snap', kind: 'warning', okLabel: 'ถอนการติดตั้ง', cancelLabel: 'ยกเลิก' });
+		if (!sure) return;
+		await this.#exclusive(`กำลังถอน ${snap.name}…`, async () => {
+			try {
+				await invoke('snap_uninstall', { id: target });
+				status.flash(`ถอนการติดตั้ง snap “${snap.name}” แล้ว (อยู่ในถังขยะ)`);
+			} catch (e) {
+				status.flash(`ถอนการติดตั้ง snap ไม่สำเร็จ: ${e}`, 8000);
+			}
+			await this.load();
+		});
+	}
+
+	/** Snap: New Snap… — writes a commented template and opens it in the editor. */
+	async newSnap() {
+		const id = await quick.input({
+			placeholder: 'id ของ snap ใหม่ (a-z, 0-9, -) เช่น my-tools',
+			hint: (v) => (/^[a-z0-9][a-z0-9-]{0,39}$/.test(v.trim()) ? `สร้าง snap “${v.trim()}”` : 'ใช้ a-z, 0-9, - ขึ้นต้นด้วยตัวอักษรหรือตัวเลข ยาวไม่เกิน 40 ตัว')
+		});
+		if (!id?.trim()) return;
+		const name = await quick.input({ placeholder: 'ชื่อที่แสดงของ snap', hint: (v) => (v.trim() ? `ชื่อ: ${v.trim()}` : `ใช้ “${id.trim()}” เป็นชื่อ`) });
+		if (name === undefined) return;
+		const items = [{ id: 'user', label: 'Snap ของคุณ', description: 'โฟลเดอร์ snaps ของแอป (ใช้ได้ทุกโฟลเดอร์)' }];
+		if (workspace.root) items.push({ id: 'repo', label: 'Snap ของโฟลเดอร์นี้', description: '.kingu/snaps แชร์ผ่าน git (ต้อง trust)' });
+		const location = items.length === 1 ? items[0] : await quick.choose({ placeholder: 'สร้าง snap ไว้ที่ไหน', items });
+		if (!location) return;
+		try {
+			const key = await invoke<string>('snap_new', { id: id.trim(), name: name.trim() || id.trim(), location: location.id });
+			await this.load();
+			systemSettings.close();
+			appMode.setMode('workbench');
+			editors.open(key, { preview: false });
+		} catch (e) {
+			status.flash(`สร้าง snap ไม่สำเร็จ: ${e}`, 8000);
+		}
+	}
+
+	/** Snap: Lock — writes `.kingu/snaps.lock` with the id, version and hash of each repo snap. */
+	async lock() {
+		if (!workspace.root) {
+			status.flash('เปิดโฟลเดอร์ก่อน (Open a folder first)');
+			return;
+		}
+		try {
+			const count = await invoke<number>('snap_lock');
+			status.flash(`เขียน .kingu/snaps.lock แล้ว (${count} snap)`);
+		} catch (e) {
+			status.flash(`เขียน snaps.lock ไม่สำเร็จ: ${e}`, 8000);
+		}
+		await this.load();
+	}
+
+	/** Trust from a row of the Snaps view: the same review as the details page, as a native confirm. */
+	async confirmTrust(s: SnapInfo) {
+		const sure = await ask(trustSummary(s), { title: `เชื่อถือ Snap “${s.name}”?`, kind: 'warning', okLabel: 'เชื่อถือ', cancelLabel: 'ยกเลิก' });
+		if (sure) await this.trust(s.id, true);
+	}
+
+	/** Opens a snap's snap.toml in the editor (a user snap through its `snap://user/` key). */
+	editManifest(s: SnapInfo) {
+		systemSettings.close();
+		appMode.setMode('workbench');
+		if (s.source === 'user') editors.open(`snap://user/${s.id}/snap.toml`, { preview: false });
+		else editors.open(`.kingu/snaps/${s.id}/snap.toml`, { preview: false });
+	}
+
+	async reveal(s: SnapInfo) {
+		try {
+			await invoke('snap_reveal', { id: s.id, source: s.source });
+		} catch (e) {
+			status.flash(`เปิดโฟลเดอร์ไม่สำเร็จ: ${e}`);
+		}
+	}
+
+	/** Run a task of the snap, picked from a quick pick when it has several. */
+	async pickTask(s: SnapInfo) {
+		if (!isActive(s)) {
+			status.flash(s.source === 'repo' ? 'เชื่อถือ snap นี้ก่อนจึงจะรันงานได้' : 'snap นี้ใช้งานไม่ได้อยู่');
+			return;
+		}
+		if (!s.tasks.length) {
+			status.flash(`snap “${s.name}” ไม่มีงาน`);
+			return;
+		}
+		const task = s.tasks.length === 1 ? s.tasks[0] : await quick.choose({ placeholder: `รันงานของ ${s.name}`, items: s.tasks.map((t) => ({ id: t.id, label: t.title, description: t.command.join(' ') })) });
+		if (task) this.runTask(s.id, task.id);
+	}
+
+	async #pick(list: SnapInfo[], placeholder: string): Promise<string | undefined> {
+		if (!list.length) {
+			status.flash('ไม่มี Snap ที่ทำแบบนี้ได้');
+			return undefined;
+		}
+		return (await quick.choose({ placeholder, items: list.map((s) => ({ id: s.id, label: s.name, description: `${s.id} v${s.version}` })) }))?.id;
+	}
+
+	async #prepare(run: () => Promise<PreparedInstall>): Promise<PreparedInstall | undefined> {
+		try {
+			return await run();
+		} catch (e) {
+			await message(String(e), { title: 'ติดตั้ง Snap ไม่สำเร็จ', kind: 'error' });
+			return undefined;
+		}
+	}
+
+	/** Picks the snap of a multi-snap repo, shows the native confirm, then installs (or cleans up). */
+	async #confirmAndCommit(p: PreparedInstall) {
+		const cancel = () => invoke('snap_install_cancel', { token: p.token }).catch(() => {});
+		let candidate = p.candidates[0];
+		if (p.candidates.length > 1) {
+			const picked = await quick.choose({
+				placeholder: 'repo นี้มีหลาย snap — เลือกตัวที่จะติดตั้ง',
+				items: p.candidates.map((c) => ({ id: c.snap.id, label: c.snap.name, description: c.snap.error ? `ใช้ไม่ได้: ${c.snap.error}` : `${c.snap.id} v${c.snap.version} · ${c.rel}` }))
+			});
+			candidate = p.candidates.find((c) => c.snap.id === picked?.id)!;
+		}
+		if (!candidate) return cancel();
+		const s = candidate.snap;
+		if (s.error) {
+			await message(s.error, { title: `Snap “${s.name}” ใช้ไม่ได้`, kind: 'error' });
+			return cancel();
+		}
+		const existing = p.existing.find((e) => e.id === s.id);
+		const sure = await ask(existing ? updateSummary(existing, s, p.origin) : installSummary(s, p.origin), {
+			title: existing ? `อัปเดต Snap “${s.name}”?` : `ติดตั้ง Snap “${s.name}”?`,
+			kind: 'warning',
+			okLabel: existing ? 'อัปเดต' : 'ติดตั้ง',
+			cancelLabel: 'ยกเลิก'
+		});
+		if (!sure) return cancel();
+		try {
+			await invoke('snap_install_commit', { token: p.token, id: s.id, hash: s.hash, replace: !!existing });
+			status.flash(existing ? `อัปเดต snap “${s.name}” เป็น v${s.version} แล้ว` : `ติดตั้ง snap “${s.name}” แล้ว`);
+		} catch (e) {
+			await message(String(e), { title: 'ติดตั้ง Snap ไม่สำเร็จ', kind: 'error' });
 		}
 		await this.load();
 	}
@@ -157,7 +369,15 @@ export function installSnaps(): () => void {
 				status.flash(snaps.error ? `โหลด Snaps ไม่สำเร็จ: ${snaps.error}` : `โหลด Snaps แล้ว (${snaps.list.length})`);
 			}
 		}),
-		commands.register({ id: 'snap.manage', title: 'Manage Snaps', category: 'Snap', run: () => systemSettings.showSnaps() })
+		commands.register({ id: 'snap.manage', title: 'Manage Snaps', category: 'Snap', run: () => systemSettings.showSnaps() }),
+		commands.register({ id: 'snap.install', title: 'Install from Git…', category: 'Snap', run: () => snaps.install() }),
+		commands.register({ id: 'snap.installFromFolder', title: 'Install from Folder…', category: 'Snap', run: () => snaps.installFromFolder() }),
+		commands.register({ id: 'snap.update', title: 'Update Snap…', category: 'Snap', run: () => snaps.update() }),
+		commands.register({ id: 'snap.uninstall', title: 'Uninstall Snap…', category: 'Snap', run: () => snaps.uninstall() }),
+		commands.register({ id: 'snap.new', title: 'New Snap…', category: 'Snap', run: () => snaps.newSnap() }),
+		commands.register({ id: 'snap.lock', title: 'Write snaps.lock', category: 'Snap', when: () => workspace.root !== null, run: () => snaps.lock() }),
+		// VS Code's Extensions view key.
+		commands.register({ id: 'workbench.view.snaps', title: 'Show Snaps', category: 'View', key: 'cmd+shift+x', run: () => ((layout.sideView = 'snaps'), (layout.sidebarVisible = true)) })
 	];
 	return () => {
 		clearTimeout(reloadTimer);

@@ -20,13 +20,14 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, State};
 
 use crate::settings::write_atomic;
+use crate::snap_install::{LockStatus, Origin, read_lock, read_origin};
 use crate::workspace::Workspace;
 
-const MANIFEST: &str = "snap.toml";
-const USER_DIR: &str = "snaps";
-const REPO_DIR: [&str; 2] = [".kingu", "snaps"];
-const TRUST_FILE: &str = "snap-trust.json";
-const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
+pub(crate) const MANIFEST: &str = "snap.toml";
+pub(crate) const USER_DIR: &str = "snaps";
+pub(crate) const REPO_DIR: [&str; 2] = [".kingu", "snaps"];
+pub(crate) const TRUST_FILE: &str = "snap-trust.json";
+pub(crate) const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
 
 // ---------------------------------------------------------------------------------------------
 // Manifest
@@ -492,6 +493,10 @@ pub struct SnapInfo {
   pub settings: Vec<Setting>,
   pub mcp: Vec<McpServer>,
   pub skills: Vec<Skill>,
+  /// User snaps installed through Kingu: where they came from (`.kingu-snap.json`, not hashed).
+  pub origin: Option<Origin>,
+  /// Repo snaps when the folder has `.kingu/snaps.lock`: whether this snap matches its entry.
+  pub lock: Option<LockStatus>,
 }
 
 impl SnapInfo {
@@ -512,6 +517,8 @@ impl SnapInfo {
       settings: Vec::new(),
       mcp: Vec::new(),
       skills: Vec::new(),
+      origin: None,
+      lock: None,
     }
   }
 }
@@ -532,7 +539,7 @@ pub fn repo_snaps_dir(root: &Path) -> Option<PathBuf> {
 }
 
 /// Reads one snap folder. Never follows a symlink: a symlinked folder or manifest is listed as broken.
-fn read_snap(dir: &Path, folder: &str, source: Source, root: Option<&Path>, trust: &TrustData) -> SnapInfo {
+pub(crate) fn read_snap(dir: &Path, folder: &str, source: Source, root: Option<&Path>, trust: &TrustData) -> SnapInfo {
   let broken = |hash: String, e: String| SnapInfo::broken(folder, source, dir, hash, e);
   if !is_snap_id(folder) {
     return broken(String::new(), format!("ชื่อโฟลเดอร์ \"{folder}\" ใช้เป็น id ของ snap ไม่ได้ (ใช้ a-z, 0-9, - ยาวไม่เกิน 40 ตัว)"));
@@ -586,11 +593,13 @@ fn read_snap(dir: &Path, folder: &str, source: Source, root: Option<&Path>, trus
     settings: p.settings,
     mcp: p.mcp,
     skills,
+    origin: None,
+    lock: None,
   }
 }
 
 /// Every snap folder directly in `snaps_dir`, by name. Hidden entries and plain files are skipped.
-fn scan(snaps_dir: &Path, source: Source, root: Option<&Path>, trust: &TrustData) -> Vec<SnapInfo> {
+pub(crate) fn scan(snaps_dir: &Path, source: Source, root: Option<&Path>, trust: &TrustData) -> Vec<SnapInfo> {
   let Ok(read) = std::fs::read_dir(snaps_dir) else { return Vec::new() };
   let mut entries: Vec<_> = read.flatten().collect();
   entries.sort_by_key(|e| e.file_name());
@@ -605,7 +614,11 @@ fn scan(snaps_dir: &Path, source: Source, root: Option<&Path>, trust: &TrustData
     if meta.file_type().is_symlink() {
       out.push(SnapInfo::broken(&name, source, &dir, String::new(), "โฟลเดอร์ snap เป็น symlink — ไม่รองรับ (Kingu ไม่ตามลิงก์ออกนอกโฟลเดอร์ snaps)".into()));
     } else if meta.is_dir() {
-      out.push(read_snap(&dir, &name, source, root, trust));
+      let mut snap = read_snap(&dir, &name, source, root, trust);
+      if source == Source::User {
+        snap.origin = read_origin(&dir);
+      }
+      out.push(snap);
     }
   }
   out
@@ -618,6 +631,12 @@ pub fn discover(user_dir: &Path, root: Option<&Path>, trust: &TrustData) -> Vec<
   let repo = root.and_then(|r| repo_snaps_dir(r).map(|d| scan(&d, Source::Repo, Some(r), trust))).unwrap_or_default();
   for u in &mut user {
     u.overridden = repo.iter().any(|r| r.id == u.id && r.trusted && r.error.is_none());
+  }
+  let mut repo = repo;
+  if let Some(lock) = root.and_then(read_lock) {
+    for r in &mut repo {
+      r.lock = Some(lock.status(r));
+    }
   }
   user.extend(repo);
   user
@@ -821,7 +840,7 @@ pub fn plugins_dir(app: &AppHandle) -> Result<PathBuf, String> {
   Ok(app.path().app_cache_dir().map_err(|e| e.to_string())?.join(PLUGINS_DIR))
 }
 
-fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
   app.path().app_config_dir().map_err(|e| e.to_string())
 }
 

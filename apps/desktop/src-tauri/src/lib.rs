@@ -12,6 +12,7 @@ mod search;
 mod settings;
 mod shell_env;
 mod snap;
+mod snap_install;
 mod system;
 mod team;
 mod watcher;
@@ -615,6 +616,17 @@ pub fn run() {
       snap::snap_list,
       snap::snap_trust,
       snap::snap_skill_plugins,
+      snap_install::snap_install_git,
+      snap_install::snap_install_folder,
+      snap_install::snap_update_prepare,
+      snap_install::snap_install_commit,
+      snap_install::snap_install_cancel,
+      snap_install::snap_uninstall,
+      snap_install::snap_new,
+      snap_install::snap_lock,
+      snap_install::snap_reveal,
+      snap_install::snap_manifest_read,
+      snap_install::snap_manifest_write,
       team::team_sign_in,
       team::team_sign_out,
       team::team_status,

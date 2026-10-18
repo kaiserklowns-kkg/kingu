@@ -1,7 +1,28 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
 import { validate } from '../settings/registry';
-import { expandCommand, expandEnv, isActive, mcpServersOf, runnableTasks, skillSnapIds, snapSettingSchemas, taskArgv, touchesRepoSnaps, type SnapInfo } from './snapModel';
+import {
+	expandCommand,
+	expandEnv,
+	filterSnaps,
+	installSummary,
+	isActive,
+	isUpdatable,
+	lockNote,
+	mcpServersOf,
+	originLabel,
+	pendingTrustCount,
+	permissionDiff,
+	runnableTasks,
+	skillSnapIds,
+	snapSettingSchemas,
+	snapStatus,
+	taskArgv,
+	touchesRepoSnaps,
+	trustSummary,
+	updateSummary,
+	type SnapInfo
+} from './snapModel';
 
 function snap(over: Partial<SnapInfo> = {}): SnapInfo {
 	return {
@@ -24,6 +45,8 @@ function snap(over: Partial<SnapInfo> = {}): SnapInfo {
 		],
 		mcp: [{ name: 'gopls', command: ['gopls', 'mcp'], env: { GOFLAGS: '-mod=mod' } }],
 		skills: [],
+		origin: null,
+		lock: null,
 		...over
 	};
 }
@@ -130,5 +153,63 @@ describe('skills and reloads', () => {
 		expect(touchesRepoSnaps(['.kingu'])).toBe(true);
 		expect(touchesRepoSnaps([''])).toBe(true);
 		expect(touchesRepoSnaps(['.kingu/worktrees/fix/.kingu/snaps/go/snap.toml', '.kingu/settings.json', '.kingu/snapshots', 'src/.kingu/snaps/x'])).toBe(false);
+	});
+});
+
+describe('Snaps view', () => {
+	test('row status: error, overridden, untrusted, active', () => {
+		expect(snapStatus(snap({ error: 'bad' })).label).toBe('error');
+		expect(snapStatus(snap({ overridden: true })).key).toBe('overridden');
+		expect(snapStatus(snap({ source: 'repo', trusted: false })).label).toBe('ต้อง trust');
+		expect(snapStatus(snap()).key).toBe('active');
+	});
+	test('lock notes and the pending trust badge', () => {
+		expect(lockNote(snap({ source: 'repo', lock: 'changed' }))).toBe('เปลี่ยนจาก lock');
+		expect(lockNote(snap({ source: 'repo', lock: 'unlocked' }))).toBe('ไม่อยู่ใน lock');
+		expect(lockNote(snap({ source: 'repo', lock: 'locked' }))).toBeNull();
+		const list = [snap({ source: 'repo', trusted: false }), snap({ source: 'repo', trusted: false, error: 'x' }), snap({ source: 'repo' }), snap({ trusted: true })];
+		expect(pendingTrustCount(list)).toBe(1);
+	});
+	test('search matches every word in name, id, description or task titles', () => {
+		const list = [snap(), snap({ id: 'pg', name: 'Postgres', description: 'query the DB', tasks: [] })];
+		expect(filterSnaps(list, '').length).toBe(2);
+		expect(filterSnaps(list, 'POST').map((s) => s.id)).toEqual(['pg']);
+		expect(filterSnaps(list, 'run tests').map((s) => s.id)).toEqual(['go']);
+		expect(filterSnaps(list, 'go db')).toEqual([]);
+	});
+	test('origin label and updatable', () => {
+		const origin = { url: 'https://x/go.git', ref: 'v1', commit: '0123456789abcdef', path: null, installed_at: 1 };
+		expect(originLabel(origin)).toBe('https://x/go.git#v1 @ 0123456');
+		expect(originLabel({ ...origin, url: null, path: '/src/go' })).toBe('/src/go');
+		expect(isUpdatable(snap({ origin }))).toBe(true);
+		expect(isUpdatable(snap({ origin: { ...origin, url: null, path: '/p' } }))).toBe(false);
+		expect(isUpdatable(snap({ source: 'repo', origin }))).toBe(false);
+	});
+	test('permission diff calls out what an update adds', () => {
+		const before = { network: false, fs: 'worktree' as const, secrets: ['A'] };
+		const after = { network: true, fs: 'home' as const, secrets: ['B'] };
+		expect(permissionDiff(before, after)).toEqual({ added: ['ใช้เครือข่าย (network)', 'เข้าถึงทั้งโฮมโฟลเดอร์ (fs = home)', 'secret B'], removed: ['secret A'] });
+		expect(permissionDiff(after, after)).toEqual({ added: [], removed: [] });
+		const origin = { url: 'https://x/go.git', ref: null, commit: null, path: null, installed_at: 0 };
+		const text = updateSummary(snap({ version: '1', permissions: before }), snap({ version: '2', permissions: after }), origin);
+		expect(text).toContain('v1 → v2');
+		expect(text).toContain('⚠ สิทธิ์ใหม่ที่ขอเพิ่ม:\n• ใช้เครือข่าย (network)');
+		expect(text).toContain('สิทธิ์ที่เลิกใช้:\n• secret A');
+		expect(updateSummary(snap(), snap(), origin)).toContain('สิทธิ์ไม่เปลี่ยน');
+	});
+	test('install summary shows source, permissions and contributions', () => {
+		const text = installSummary(snap(), { url: 'https://x/go.git', ref: null, commit: 'abcdef0123', path: null, installed_at: 0 });
+		expect(text).toContain('จาก: https://x/go.git @ abcdef0');
+		expect(text).toContain('• เครือข่าย (network): ไม่ใช้');
+		expect(text).toContain('• งาน 1: Run tests');
+		expect(text).toContain('• MCP server 1: gopls');
+	});
+	test('trust summary lists the exact commands', () => {
+		const text = trustSummary(snap({ source: 'repo', trusted: false }));
+		expect(text).toContain('• งาน Run tests: go test ${setting:testFlags} ./...');
+		expect(text).toContain('• MCP gopls: gopls mcp');
+	});
+	test('the lock file change reloads repo snaps', () => {
+		expect(touchesRepoSnaps(['.kingu/snaps.lock'])).toBe(true);
 	});
 });

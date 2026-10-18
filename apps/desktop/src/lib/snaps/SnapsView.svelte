@@ -1,14 +1,16 @@
 <script lang="ts">
 	// Snap management in the system settings page: every snap (user and this folder's repo snaps)
 	// with what it declares, so a repo snap can be reviewed before it is trusted. Untrusted or
-	// broken snaps are listed but contribute no tasks and no MCP servers.
+	// broken snaps are listed but contribute no tasks and no MCP servers. With
+	// `systemSettings.snapKey` set it is one snap's details page (a row of the Snaps side view).
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
-	import { isActive, settingId, settingsGroup, type SnapInfo } from './snapModel.ts';
+	import { isActive, isUpdatable, lockNote, originLabel, settingId, settingsGroup, snapKey, type SnapInfo } from './snapModel.ts';
 	import { snaps } from './snaps.svelte.ts';
 
 	let reloading = $state(false);
+	const shown = $derived(systemSettings.snapKey ? snaps.list.filter((s) => snapKey(s) === systemSettings.snapKey) : snaps.list);
 
 	async function reload() {
 		reloading = true;
@@ -39,6 +41,9 @@
 	<div class="mx-auto w-full max-w-[1000px] px-6 pt-3 pb-8">
 		<div class="flex items-center gap-2">
 			<h2 class="text-lg font-semibold text-(--vscode-settings-headerForeground)">Snaps</h2>
+			{#if systemSettings.snapKey}
+				<button class="text-xs text-(--vscode-textLink-foreground) hover:underline" onclick={() => (systemSettings.snapKey = null)}>ดูทั้งหมด (All snaps)</button>
+			{/if}
 			<span class="flex-1"></span>
 			<button class={[SECONDARY, 'flex items-center gap-1.5']} disabled={reloading} onclick={reload}><Icon name="refresh" size={14} /> โหลดใหม่ (Reload)</button>
 		</div>
@@ -50,7 +55,9 @@
 			<p role="alert" class="mt-3 rounded-md border border-(--vscode-editorError-foreground) px-2 py-1 text-xs text-(--vscode-errorForeground)">โหลด Snaps ไม่สำเร็จ: {snaps.error}</p>
 		{/if}
 
-		{#each snaps.list as s (s.source + '/' + s.id)}
+		{#if snaps.busy}<p class="mt-3 text-xs text-(--vscode-descriptionForeground)">{snaps.busy}</p>{/if}
+
+		{#each shown as s (snapKey(s))}
 			{@const st = snapState(s)}
 			{@const active = isActive(s)}
 			<section class="mt-4 rounded-md border border-(--vscode-widget-border,var(--vscode-panel-border)) p-3 text-[13px]" aria-label={`Snap ${s.name}`}>
@@ -59,7 +66,14 @@
 					{#if s.version}<span class="text-(--vscode-descriptionForeground)">v{s.version}</span>{/if}
 					<span class={BADGE} title={s.source === 'user' ? 'Snap ของคุณ (user)' : 'Snap ของโฟลเดอร์นี้ แชร์ผ่าน git (repo)'}>{s.source}</span>
 					<span class={['text-xs', TONE[st.tone]]}>{st.label}</span>
+					{#if lockNote(s)}<span class="text-xs text-(--vscode-editorWarning-foreground)" title=".kingu/snaps.lock">{lockNote(s)}</span>{/if}
 					<span class="flex-1"></span>
+					{#if isUpdatable(s)}<button class={SECONDARY} disabled={!!snaps.busy} onclick={() => snaps.update(s.id)}>อัปเดต (Update)</button>{/if}
+					{#if s.source === 'user'}
+						{#if !s.error}<button class={SECONDARY} onclick={() => snaps.editManifest(s)}>แก้ snap.toml</button>{/if}
+						<button class={SECONDARY} disabled={!!snaps.busy} onclick={() => snaps.uninstall(s.id)}>ถอนการติดตั้ง (Uninstall)</button>
+					{/if}
+					<button class={SECONDARY} onclick={() => snaps.reveal(s)}>เปิดโฟลเดอร์ (Reveal)</button>
 					{#if s.source === 'repo' && !s.error}
 						{#if s.trusted}
 							<button class={SECONDARY} onclick={() => snaps.trust(s.id, false)}>เลิกเชื่อถือ (Untrust)</button>
@@ -69,6 +83,11 @@
 					{/if}
 				</div>
 				<div class="mt-0.5 truncate text-[11px] text-(--vscode-descriptionForeground) opacity-80" title={s.dir}>{s.id} · {s.dir}</div>
+				{#if s.origin}
+					<div class="mt-0.5 truncate text-[11px] text-(--vscode-descriptionForeground) opacity-80" title={originLabel(s.origin)}>
+						ติดตั้งจาก {originLabel(s.origin)}{s.origin.installed_at ? ` · ${new Date(s.origin.installed_at * 1000).toLocaleString()}` : ''}
+					</div>
+				{/if}
 				{#if s.description}<p class="mt-1 text-(--vscode-descriptionForeground)">{s.description}</p>{/if}
 				{#if s.error}
 					<p role="alert" class="mt-2 flex items-start gap-1.5 text-(--vscode-errorForeground)"><Icon name="error" size={14} /> <span>{s.error}</span></p>
@@ -147,7 +166,7 @@
 				{/if}
 			</section>
 		{:else}
-			<p class="mt-6 text-(--vscode-descriptionForeground)">{snaps.loaded ? 'ยังไม่มี Snap — สร้างโฟลเดอร์ที่มี snap.toml ในโฟลเดอร์ snaps ของแอป หรือใน .kingu/snaps ของโฟลเดอร์งาน' : 'กำลังโหลด…'}</p>
+			<p class="mt-6 text-(--vscode-descriptionForeground)">{systemSettings.snapKey && snaps.loaded ? 'ไม่พบ Snap นี้แล้ว' : snaps.loaded ? 'ยังไม่มี Snap — สร้างโฟลเดอร์ที่มี snap.toml ในโฟลเดอร์ snaps ของแอป หรือใน .kingu/snaps ของโฟลเดอร์งาน' : 'กำลังโหลด…'}</p>
 		{/each}
 	</div>
 </div>

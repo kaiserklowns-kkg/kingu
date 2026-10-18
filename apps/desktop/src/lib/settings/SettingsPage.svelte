@@ -50,7 +50,7 @@
 						<button
 							class={[ITEM, showSnaps && SELECTED]}
 							aria-current={showSnaps ? 'true' : undefined}
-							onclick={() => ((systemSettings.snaps = true), (systemSettings.group = null), (query = ''))}
+							onclick={() => (systemSettings.showSnaps(), (query = ''))}
 						>
 							<span class="flex-1 truncate">จัดการ Snaps</span>
 							<span class="text-[11px] text-(--vscode-descriptionForeground)">{snaps.list.length}</span>
