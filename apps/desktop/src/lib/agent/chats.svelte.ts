@@ -6,8 +6,11 @@
  *   chats.list / chats.sorted          ChatMeta[] of the open folder (chats.json), newest first
  *   chats.run(id)                      ChatRun | undefined: the chat's timeline (live, or replayed)
  *   chats.open(id)                     loads the saved transcript once (after a restart)
- *   chats.create({ prompt, cwd, model, permissionMode, attachments })  new chat + first run
- *   chats.send(id, text, attachments)  into the live run, else a new run resuming its session
+ *   chats.create({ prompt, cwd, model, permissionMode, message })  new chat + first run
+ *   chats.send(id, message)            into the live run, else a new run resuming its session
+ *   chats.submit(id, message)          send, or queue it while a turn runs (sent when the turn ends)
+ *   chats.queue(id) / unqueue(id, n)   the chat's queued requests
+ *   chats.retry(id)                    sends the last request again
  *   chats.setModel / setPermissionMode applied to the live session (SDK setModel / setPermissionMode)
  *                                      or saved for the next run; returns which
  *   chats.answer / interrupt / stop / rename / remove / promote
@@ -25,8 +28,10 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
-import { composeMessage, type Attachment } from './attachments.ts';
 import { applyEvent, initialRun, type AgentEvent, type Decision, type RunState } from './events';
+import { buildTurns, lastRequest } from './chatParts.ts';
+import { withoutImagesLine } from './chatPrompt.ts';
+import { shouldDrain, turnBusy } from './chatInput.ts';
 import {
 	chatCwdPath,
 	chatSendPlan,
@@ -54,6 +59,11 @@ export type ChatRun = RunState & {
 
 type Listener = (id: string, ev: AgentEvent) => void;
 
+/** What a request sends: the prompt (text and attached-context block) and image files. */
+export type OutgoingMessage = { text: string; images: string[] };
+/** A request waiting for the running turn to end. `label` is what the user typed. */
+export type QueuedMessage = OutgoingMessage & { n: number; label: string };
+
 class Chats {
 	list = $state<ChatMeta[]>([]);
 	/** The folder `list` belongs to. */
@@ -64,8 +74,14 @@ class Chats {
 	/** Unanswered permission prompts of this folder's chats. */
 	pendingCount = $derived(Object.values(this.runs).reduce((n, r) => n + (r.root === this.root ? r.pending.length : 0), 0));
 
+	/** Requests typed while a turn ran, by run key, oldest first. */
+	queues = $state<Record<string, QueuedMessage[]>>({});
+
 	#listeners = new Set<Listener>();
 	#saving: Promise<unknown> = Promise.resolve();
+	#queued = 0;
+	/** The images of the last request sent per run key (Retry sends them again). */
+	#lastImages = new Map<string, { text: string; images: string[] }>();
 
 	get(id: string): ChatMeta | undefined {
 		return this.list.find((c) => c.id === id);
@@ -136,15 +152,15 @@ class Chats {
 		}
 	}
 
-	async create(input: { prompt: string; cwd: ChatCwd; model: string | null; permissionMode: PermissionMode; attachments?: Attachment[] }): Promise<string | undefined> {
+	async create(input: { prompt: string; cwd: ChatCwd; model: string | null; permissionMode: PermissionMode; message: OutgoingMessage }): Promise<string | undefined> {
 		const root = workspace.root;
 		if (!root || !input.prompt.trim()) return;
 		if (root !== this.root) await this.load();
 		const meta = newChat({ prompt: input.prompt, cwd: input.cwd, model: input.model, permissionMode: input.permissionMode }, Date.now());
 		this.#save([...this.list, meta], root);
 		await this.#saving;
-		const message = composeMessage(input.prompt.trim(), input.attachments ?? []);
-		await this.#start(root, meta, message.text, null, message.images);
+		this.#lastImages.set(runKey(root, meta.id), input.message);
+		await this.#start(root, meta, input.message.text, null, input.message.images);
 		return meta.id;
 	}
 
@@ -170,6 +186,9 @@ class Chats {
 		onEvent.onmessage = (ev) => {
 			applyEvent(state, ev);
 			for (const fn of this.#listeners) fn(meta.id, ev);
+			// Not shown in the chat (session start, stderr, SDK messages it does not know): logged.
+			if (ev.kind === 'raw' || ev.kind === 'stderr') clientLog('info', `chat ${meta.id}: ${ev.kind}: ${ev.line.slice(0, 500)}`);
+			if ((ev.kind === 'result' || ev.kind === 'exit') && shouldDrain(this.queues[key]?.length ?? 0, state)) queueMicrotask(() => void this.#drain(root, meta.id));
 			if ((ev.kind === 'system' || ev.kind === 'result') && ev.session_id && ev.session_id !== savedSession) {
 				savedSession = ev.session_id;
 				this.#patch(root, meta.id, { session_id: ev.session_id });
@@ -200,13 +219,13 @@ class Chats {
 	}
 
 	/** A message: into the live run, else a new run resuming the chat's session. */
-	async send(id: string, text: string, attachments: Attachment[] = []): Promise<boolean> {
+	async send(id: string, message: OutgoingMessage): Promise<boolean> {
 		const root = this.root;
 		const meta = this.get(id);
-		if (!root || !meta || !text.trim()) return false;
+		if (!root || !meta || !message.text.trim()) return false;
 		await this.open(id);
 		const run = this.runs[runKey(root, id)];
-		const message = composeMessage(text.trim(), attachments);
+		this.#lastImages.set(runKey(root, id), message);
 		try {
 			const plan = chatSendPlan(run, meta.session_id);
 			if (plan.kind === 'send') {
@@ -219,6 +238,50 @@ class Chats {
 			notifications.error(t('chat.sendFailed', { error: String(e) }));
 			return false;
 		}
+	}
+
+	/** Sends now, or queues the request while a turn runs (VS Code queues it); 'queued' or whether it was sent. */
+	async submit(id: string, message: OutgoingMessage, label: string): Promise<'queued' | boolean> {
+		const root = this.root;
+		if (!root) return false;
+		const key = runKey(root, id);
+		if (turnBusy(this.runs[key]) || this.queues[key]?.length) {
+			this.queues[key] = [...(this.queues[key] ?? []), { ...message, label, n: ++this.#queued }];
+			return 'queued';
+		}
+		return this.send(id, message);
+	}
+
+	queue(id: string): QueuedMessage[] {
+		return (this.root && this.queues[runKey(this.root, id)]) || [];
+	}
+
+	unqueue(id: string, n: number) {
+		if (!this.root) return;
+		const key = runKey(this.root, id);
+		this.queues[key] = (this.queues[key] ?? []).filter((q) => q.n !== n);
+	}
+
+	/** Sends the queue's head once the turn is over (the rest follow turn by turn). */
+	async #drain(root: string, id: string) {
+		const key = runKey(root, id);
+		const run = this.runs[key];
+		const head = this.queues[key]?.[0];
+		if (!head || root !== this.root || turnBusy(run)) return;
+		this.queues[key] = this.queues[key].slice(1);
+		const sent = await this.send(id, { text: head.text, images: head.images });
+		if (!sent) this.queues[key] = [head, ...(this.queues[key] ?? [])];
+	}
+
+	/** Retry: the last request again, with its images when they are still known. */
+	async retry(id: string): Promise<boolean> {
+		const root = this.root;
+		const run = this.run(id);
+		const last = run && lastRequest(buildTurns(run));
+		if (!root || !last) return false;
+		const text = withoutImagesLine(last.sent);
+		const known = this.#lastImages.get(runKey(root, id));
+		return (await this.submit(id, { text, images: known?.text === text ? known.images : [] }, last.text)) !== false;
 	}
 
 	async answer(id: string, requestId: string, decision: Decision, message?: string, answers?: Record<string, string>) {
@@ -288,6 +351,7 @@ class Chats {
 			return false;
 		}
 		delete this.runs[runKey(root, id)];
+		delete this.queues[runKey(root, id)];
 		this.#save(removeChat(this.list, id), root);
 		return true;
 	}

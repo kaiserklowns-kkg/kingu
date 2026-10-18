@@ -13,11 +13,12 @@ import {
 	renamedChatTitle,
 	replayTranscript,
 	runKey,
-	sessionRows,
+	historySections,
+	initialChat,
 	sortChats,
 	type ChatMeta
 } from './chats';
-import type { AgentEvent, PermissionRequest } from './events';
+import type { AgentEvent, PermissionRequest, RunStatus } from './events';
 
 const chat = (id: string, at: number, extra: Partial<ChatMeta> = {}): ChatMeta => ({
 	...newChat({ prompt: `prompt ${id}`, cwd: { kind: 'folder' }, model: 'opus', permissionMode: 'default' }, at, id),
@@ -74,13 +75,30 @@ describe('list reducers', () => {
 		expect(removeChat(list, 'b').map((c) => c.id)).toEqual(['a', 'c']);
 	});
 
-	test('session rows mix chats and tasks, newest first', () => {
-		const rows = sessionRows([chat('a', 5)], [
-			{ slug: 'old', title: 'Old', created_at: 1, updated_at: 2, terminal: true },
-			{ slug: 'new', title: 'New', created_at: 1, updated_at: 9, terminal: false }
+	test('history: chats newest first with their live state, ADE tasks in their own section', () => {
+		const status: Record<string, RunStatus> = { a: 'waiting', b: 'running', new: 'idle', old: 'running' };
+		const h = historySections(
+			[chat('a', 5), chat('b', 7), chat('c', 6)],
+			[
+				{ slug: 'old', title: 'Old', created_at: 1, updated_at: 2, terminal: true },
+				{ slug: 'new', title: 'New', created_at: 1, updated_at: 9, terminal: false }
+			],
+			(r) => status[r.kind === 'chat' ? r.id : r.slug]
+		);
+		expect(h.chats.map((r) => [r.id, r.state])).toEqual([
+			['b', 'working'],
+			['c', null],
+			['a', 'needsInput']
 		]);
-		expect(rows.map((r) => (r.kind === 'chat' ? r.id : r.slug))).toEqual(['new', 'a', 'old']);
-		expect(rows[2]).toMatchObject({ kind: 'task', terminal: true });
+		expect(h.tasks.map((r) => [r.slug, r.state, r.terminal])).toEqual([
+			['new', null, false],
+			['old', 'working', true]
+		]);
+	});
+
+	test('the panel opens on the most recent chat, never on a task', () => {
+		expect(initialChat([chat('a', 1), chat('b', 3)])).toBe('b');
+		expect(initialChat([])).toBeNull();
 	});
 });
 

@@ -1,6 +1,7 @@
 <script lang="ts">
-	// A pending permission request with allow / always allow / deny (+ optional reason). Shared by
-	// the Agent panel and the ADE task page (through AgentTimeline).
+	// A pending permission request with allow / always allow / deny (+ optional reason), like VS
+	// Code's tool confirmation. Shared by the Agent panel and the ADE task page (through ChatList).
+	import { t } from '#lib/i18n/index.ts';
 	import type { Decision, PermissionRequest } from './events';
 
 	let { request, onanswer }: { request: PermissionRequest; onanswer: (decision: Decision, message?: string) => void } = $props();
@@ -15,31 +16,50 @@
 		// The card goes away on `permission_resolved`; re-enable if that never comes (e.g. the call failed).
 		setTimeout(() => (sent = false), 3000);
 	}
+
+	const BTN = 'rounded-sm px-2 py-0.5 disabled:opacity-50';
 </script>
 
-<div class="space-y-1.5 rounded border border-amber-600/70 bg-amber-950/30 p-2" role="group" aria-label="คำขออนุญาต {request.tool}">
-	<div class="font-medium text-amber-300">ขออนุญาตใช้ {request.tool} <span class="font-normal text-amber-200/70">(Permission request)</span></div>
-	{#if request.title}<div class="text-neutral-300">{request.title}</div>{/if}
+<div
+	class="space-y-1.5 rounded border border-(--vscode-editorWarning-foreground)/60 bg-(--vscode-editorWidget-background) p-2 text-(--vscode-foreground)"
+	role="group"
+	aria-label={t('chatView.permission.title', { tool: request.tool })}
+>
+	<div class="font-medium">{t('chatView.permission.title', { tool: request.tool })}</div>
+	{#if request.title}<div class="text-(--vscode-descriptionForeground)">{request.title}</div>{/if}
 	{#if request.input_summary}
-		<pre class="max-h-32 overflow-auto rounded bg-black/40 px-2 py-1 font-mono break-all whitespace-pre-wrap text-neutral-100">{request.input_summary}</pre>
+		<pre class="max-h-32 overflow-auto rounded border border-(--vscode-widget-border) px-2 py-1 font-mono break-all whitespace-pre-wrap">{request.input_summary}</pre>
 	{/if}
 	{#if request.diff}
-		<div class="font-mono"><span class="text-emerald-400">+{request.diff.added}</span> <span class="text-red-400">−{request.diff.removed}</span> บรรทัด (lines)</div>
+		<div class="font-mono">
+			<span class="text-(--vscode-gitDecoration-addedResourceForeground,#81b88b)">+{request.diff.added}</span>
+			<span class="text-(--vscode-gitDecoration-deletedResourceForeground,#c74e39)">−{request.diff.removed}</span>
+			{t('chatView.permission.lines')}
+		</div>
 	{/if}
-	{#if request.detail}<div class="text-neutral-400">{request.detail}</div>{/if}
+	{#if request.detail}<div class="text-(--vscode-descriptionForeground)">{request.detail}</div>{/if}
 	<input
-		class="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-0.5 outline-none focus:border-sky-600"
-		placeholder="เหตุผลที่ไม่อนุญาต (ไม่บังคับ) — reason if denying"
-		aria-label="เหตุผลที่ไม่อนุญาต"
+		class="w-full rounded-sm border border-(--vscode-input-border,var(--vscode-widget-border)) bg-(--vscode-input-background) px-2 py-0.5 text-(--vscode-input-foreground) outline-none focus:border-(--vscode-focusBorder)"
+		placeholder={t('chatView.permission.reason')}
+		aria-label={t('chatView.permission.reason')}
 		bind:value={reason}
 	/>
 	<div class="flex flex-wrap gap-1.5">
-		<button class="rounded bg-emerald-700 px-2 py-0.5 text-white hover:bg-emerald-600 disabled:opacity-50" title="Allow once" disabled={sent} onclick={() => answer('allow')}>อนุญาต</button>
+		<button class={[BTN, 'bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:bg-(--vscode-button-hoverBackground)']} title={t('chatView.permission.allowHint')} disabled={sent} onclick={() => answer('allow')}
+			>{t('chatView.permission.allow')}</button
+		>
 		{#if request.can_always}
-			<button class="rounded bg-emerald-900 px-2 py-0.5 text-emerald-100 hover:bg-emerald-800 disabled:opacity-50" title="Always allow for this task's session" disabled={sent} onclick={() => answer('allow_always')}
-				>อนุญาตเสมอในงานนี้</button
+			<button
+				class={[BTN, 'bg-(--vscode-button-secondaryBackground) text-(--vscode-button-secondaryForeground) hover:bg-(--vscode-button-secondaryHoverBackground)']}
+				title={t('chatView.permission.alwaysHint')}
+				disabled={sent}
+				onclick={() => answer('allow_always')}>{t('chatView.permission.always')}</button
 			>
 		{/if}
-		<button class="rounded bg-red-800 px-2 py-0.5 text-white hover:bg-red-700 disabled:opacity-50" title="Deny" disabled={sent} onclick={() => answer('deny')}>ไม่อนุญาต</button>
+		<button
+			class={[BTN, 'bg-(--vscode-button-secondaryBackground) text-(--vscode-button-secondaryForeground) hover:bg-(--vscode-button-secondaryHoverBackground)']}
+			disabled={sent}
+			onclick={() => answer('deny')}>{t('chatView.permission.deny')}</button
+		>
 	</div>
 </div>

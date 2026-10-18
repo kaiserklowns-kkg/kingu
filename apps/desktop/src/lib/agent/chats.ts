@@ -6,7 +6,7 @@
 import { worktreeDir } from '#lib/ade/keys.ts';
 import type { RunSummary } from '#lib/ade/model.ts';
 import { taskTitleFromPrompt } from './composerText';
-import { applyEvent, initialRun, type AgentEvent, type RunState } from './events';
+import { applyEvent, initialRun, type AgentEvent, type RunState, type RunStatus } from './events';
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'plan';
 export const PERMISSION_MODES: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan'];
@@ -119,13 +119,27 @@ export function chatSendPlan(run: Pick<RunState, 'ended' | 'sessionId'> | undefi
 /** What a model / permission mode change does: applied to the live session now, or on the next run. */
 export const optionChange = (run: Pick<RunState, 'ended'> | undefined, runId: number | undefined): 'live' | 'next' => (run && !run.ended && runId !== undefined ? 'live' : 'next');
 
-/** Row of the panel's session list: chats of this folder plus ADE tasks, newest first. */
-export type SessionRow = { kind: 'chat'; id: string; title: string; at: number } | { kind: 'task'; slug: string; title: string; at: number; terminal: boolean };
+/** A chat row of the history list (VS Code's agent sessions): title, last activity and live state. */
+export type ChatRow = { id: string; title: string; at: number; state: 'working' | 'needsInput' | null };
+/** An ADE task row: read-only here, opened in the Agents layout. */
+export type TaskRow = { slug: string; title: string; at: number; terminal: boolean; state: 'working' | 'needsInput' | null };
 
-export function sessionRows(chats: readonly ChatMeta[], tasks: readonly { slug: string; title: string; created_at: number; updated_at: number; terminal: boolean }[]): SessionRow[] {
-	const rows: SessionRow[] = [
-		...chats.map((c) => ({ kind: 'chat' as const, id: c.id, title: c.title, at: c.updated_at || c.created_at })),
-		...tasks.map((t) => ({ kind: 'task' as const, slug: t.slug, title: t.title, at: t.updated_at || t.created_at, terminal: t.terminal }))
-	];
-	return rows.sort((a, b) => b.at - a.at);
+const liveState = (status: RunStatus | undefined): ChatRow['state'] =>
+	status === 'waiting' ? 'needsInput' : status === 'running' || status === 'starting' ? 'working' : null;
+
+/** The history list: this folder's chats newest first, and its ADE tasks in their own section. */
+export function historySections(
+	chats: readonly ChatMeta[],
+	tasks: readonly { slug: string; title: string; created_at: number; updated_at: number; terminal: boolean }[],
+	statusOf: (row: { kind: 'chat'; id: string } | { kind: 'task'; slug: string }) => RunStatus | undefined
+): { chats: ChatRow[]; tasks: TaskRow[] } {
+	return {
+		chats: sortChats(chats).map((c) => ({ id: c.id, title: c.title, at: c.updated_at || c.created_at, state: liveState(statusOf({ kind: 'chat', id: c.id })) })),
+		tasks: [...tasks]
+			.sort((a, b) => (b.updated_at || b.created_at) - (a.updated_at || a.created_at))
+			.map((x) => ({ slug: x.slug, title: x.title, at: x.updated_at || x.created_at, terminal: x.terminal, state: liveState(statusOf({ kind: 'task', slug: x.slug })) }))
+	};
 }
+
+/** The chat the panel opens on: the most recent one (null: a new chat). ADE tasks are never opened here. */
+export const initialChat = (chats: readonly ChatMeta[]): string | null => sortChats(chats)[0]?.id ?? null;
