@@ -107,6 +107,16 @@ fn split_patterns(list: &str) -> impl Iterator<Item = String> + '_ {
 }
 
 /// ripgrep arguments for `opts`; the query is passed with `--regexp` so a leading `-` is safe.
+/// Task worktrees, anchored at the open folder: agents write there all the time and the ADE
+/// searches each one on its own (`worktree_search`), so Find in Files of the folder leaves them out.
+pub const TASK_WORKTREES_GLOB: &str = "/.kingu/worktrees/**";
+
+/// `opts` for Find in Files over the open folder (not a task worktree).
+pub fn for_workspace(mut opts: SearchOptions) -> SearchOptions {
+  opts.exclude_globs.push(TASK_WORKTREES_GLOB.into());
+  opts
+}
+
 pub fn build_args(opts: &SearchOptions) -> Vec<OsString> {
   let mut args: Vec<String> = vec![
     "--json".into(),
@@ -617,6 +627,15 @@ mod tests {
     assert_eq!(run(SearchOptions { match_case: true, ..q("Hello") }), [("src/a.rs".to_string(), 1)]);
     assert_eq!(run(SearchOptions { is_regex: true, ..q(r"h.llo\b") }).len(), 2);
     assert_eq!(run(SearchOptions { max_results: Some(1), ..q("hello") }).len(), 1);
+
+    // The folder's Find in Files leaves task worktrees out, but not a nested `.kingu` elsewhere.
+    std::fs::create_dir_all(root.join(".kingu/worktrees/t")).unwrap();
+    std::fs::write(root.join(".kingu/worktrees/t/c.md"), "hello\n").unwrap();
+    std::fs::create_dir_all(root.join("src/.kingu/worktrees")).unwrap();
+    std::fs::write(root.join("src/.kingu/worktrees/d.md"), "hello\n").unwrap();
+    assert!(run(q("hello")).iter().any(|(p, _)| p == ".kingu/worktrees/t/c.md"));
+    let names: Vec<String> = run(for_workspace(q("hello"))).into_iter().map(|(p, _)| p).collect();
+    assert_eq!(names, ["b.md", "src/.kingu/worktrees/d.md", "src/a.rs"]);
 
     // A bad regex surfaces rg's message.
     let searches = Arc::new(Searches::default());

@@ -12,7 +12,7 @@ import { lsp } from '#lib/lsp/lsp.svelte.ts';
 import { settings, WORKSPACE_SETTINGS_PATH } from '#lib/settings/settings.svelte.ts';
 import { editors } from './editors.svelte';
 import { explorer } from './explorer.svelte';
-import { recentLabel, workspaceFiles } from './fileTree';
+import { ideChanges, recentLabel, workspaceFiles } from './fileTree';
 import type { RecentFolder } from './menus';
 import { navigation } from './navigation.svelte';
 import { quick, type PickItem } from './quick.svelte';
@@ -158,11 +158,14 @@ class Workspace {
 		let gone = false;
 		listen<FilesChanged>('workspace:files-changed', (e) => {
 			if (!this.root || e.payload.root !== this.root) return;
-			void scm.refresh();
+			// Agents writing into `.kingu/worktrees/` do not refresh the IDE's Source Control or Explorer.
+			const ide = ideChanges(e.payload.paths);
+			if (ide.length) void scm.refresh();
 			for (const fn of this.#raw) fn(e.payload.paths);
 			const files = workspaceFiles(e.payload.paths);
 			if (!files.length) return;
-			void explorer.refresh(files);
+			const ideFiles = workspaceFiles(ide);
+			if (ideFiles.length) void explorer.refresh(ideFiles);
 			if (files.includes(WORKSPACE_SETTINGS_PATH)) void settings.load();
 			for (const fn of this.#listeners) fn(files);
 		}).then((u) => (gone ? u() : (unlisten = u)));

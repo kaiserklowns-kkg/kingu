@@ -183,6 +183,19 @@ export function conflictMessage(name: string): string {
 	return t('workbench.textFiles.conflict', { name });
 }
 
+/**
+ * The watcher saw an open file change on disk (an agent writing into a task worktree, a git
+ * checkout, another program). A clean editor reloads. A dirty one is never overwritten silently:
+ * when its disk content really differs it goes into conflict mode, which pauses auto save
+ * (`inConflict`), and with auto save on the save conflict prompt shows right away (auto save
+ * would otherwise have hit it on its own). With auto save off the next explicit save shows it.
+ */
+export function diskChangeAction(o: { dirty: boolean; inConflict: boolean; diskDiffers: boolean; autoSave: AutoSaveMode }): 'reload' | 'conflict' | 'pause' | 'none' {
+	if (!o.dirty) return 'reload';
+	if (o.inConflict || !o.diskDiffers) return 'none';
+	return o.autoSave === 'off' ? 'pause' : 'conflict';
+}
+
 // --- Status bar (editorStatus.ts)
 
 /** The indentation item: `Spaces: 4`, `Spaces: 2 (4 wide tabs)` or `Tab Size: 4`. */

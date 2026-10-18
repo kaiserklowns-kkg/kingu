@@ -779,7 +779,7 @@ fn search_text(
     return Err("query is empty".into());
   }
   let rg = search::find_rg(std::env::var_os("KINGU_RG"), shell_env::path())?;
-  searches.start(&rg, &ws.root()?, &options, move |ev| on_event.send(ev).is_ok())
+  searches.start(&rg, &ws.root()?, &search::for_workspace(options), move |ev| on_event.send(ev).is_ok())
 }
 
 /// Search: Replace. Rewrites the matches of the last search (refusing files changed since) and

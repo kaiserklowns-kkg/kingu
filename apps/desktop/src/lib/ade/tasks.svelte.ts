@@ -47,7 +47,7 @@ import {
 	type TaskView
 } from './model';
 import { runtime } from './runtime.svelte';
-import { touchedTasks } from './agentGuard';
+import { tabsOfTask, touchedTasks } from './agentGuard';
 import { confirmAgentIdle } from './agentGuard.svelte';
 import { adeLayout } from './adeLayout.svelte';
 import { agentCommand, cliAgent, cliOf, launchOptions, withLaunchOptions, type RunMode } from './agentCli';
@@ -718,6 +718,22 @@ class AdeTasks {
 		// kingu.worktree.alwaysForceDelete (Orca): uncommitted changes go without asking again.
 		opts = { ...opts, force: opts.force || settings.get<boolean>('kingu.worktree.alwaysForceDelete') === true };
 		let kept: string | null = null;
+		// Unsaved editors of the task (its worktree files, an edited diff) would be lost with it: ask.
+		const tabs = tabsOfTask(
+			editors.allTabs().map((t) => t.path),
+			slug,
+			(p) => parseTaskDiffKey(p)?.slug
+		);
+		const unsaved = tabs.filter((p) => editors.isDirty(p));
+		if (unsaved.length) {
+			const go = await ask(t('adeTasks.tasks.removeUnsavedAsk', { slug, count: unsaved.length }), {
+				title: t('adeTasks.tasks.removeUnsavedTitle'),
+				kind: 'warning',
+				okLabel: t('adeTasks.tasks.removeUnsavedOk'),
+				cancelLabel: t('common.cancel')
+			});
+			if (!go) return false;
+		}
 		if (hasWorktree) {
 			// An idle session still runs in the worktree: end it with the task.
 			if (runtime.isLive(slug)) await this.stop(slug);
@@ -744,9 +760,8 @@ class AdeTasks {
 		runtime.forget(slug);
 		cliSessions.end(slug);
 		diffNotes.forget(slug);
-		for (const t of editors.allTabs().map((t) => t.path)) {
-			if (slugOfTaskKey(t) === slug || parseTaskDiffKey(t)?.slug === slug) editors.closeEverywhere(t);
-		}
+		// The user saw (and accepted) the unsaved ones above; the files are gone with the worktree.
+		for (const p of tabs) editors.closeEverywhere(p);
 		this.worktrees = this.worktrees.filter((w) => w.slug !== slug);
 		this.listed = this.listed.filter((w) => w.slug !== slug);
 		delete this.stats[slug];

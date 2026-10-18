@@ -258,9 +258,17 @@ pub fn status_with(root: &Path, opts: &StatusOptions) -> Result<Option<GitStatus
   let args = status_args(opts);
   let out = run(root, &args.iter().map(String::as_str).collect::<Vec<_>>())?;
   let mut st = parse_status(&String::from_utf8_lossy(&out), &prefix);
+  // Task worktrees inside the folder are their own checkouts (the ADE shows each one); git sees
+  // them as untracked nested repositories of the main one.
+  st.entries.retain(|e| !in_task_worktree(&e.path));
   st.remotes = remotes(root)?;
   st.operation = operation(root);
   Ok(Some(st))
+}
+
+/// A workspace-relative path in `.kingu/worktrees/` (a task's checkout, not the folder's file).
+pub fn in_task_worktree(rel: &str) -> bool {
+  rel == ".kingu/worktrees" || rel.starts_with(".kingu/worktrees/")
 }
 
 /// The operation in progress, read from the markers git leaves in this worktree's git dir
@@ -734,6 +742,21 @@ mod tests {
     let mut entries = crate::fs::list_dir(plain.path(), plain.path()).unwrap();
     mark_ignored(plain.path(), &mut entries);
     assert!(entries.iter().all(|e| !e.ignored));
+  }
+
+  #[test]
+  fn folder_status_leaves_task_worktrees_out() {
+    let (_tmp, repo) = temp_repo();
+    git(&repo, &["worktree", "add", "-q", "-b", "kingu/t", ".kingu/worktrees/t"]);
+    write(&repo, ".kingu/worktrees/t/agent.txt", "x\n");
+    write(&repo, ".kingu/settings.json", "{}\n");
+    write(&repo, "mine.txt", "x\n");
+    let paths: Vec<String> = status(&repo).unwrap().unwrap().entries.into_iter().map(|e| e.path).collect();
+    assert_eq!(paths, [".kingu/settings.json", "mine.txt"]);
+    // The task's own status still sees its change.
+    let task: Vec<String> = status(&repo.join(".kingu/worktrees/t")).unwrap().unwrap().entries.into_iter().map(|e| e.path).collect();
+    assert_eq!(task, ["agent.txt"]);
+    assert!(in_task_worktree(".kingu/worktrees/t/x") && !in_task_worktree(".kingu/worktreesx"));
   }
 
   fn git(dir: &Path, args: &[&str]) {

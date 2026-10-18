@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { affectedBy, baseName, dirsToRefresh, isUnder, joinRel, parentOf, recentLabel, remapPath, stemLength, validateName, workspaceFiles } from './fileTree';
+import { affectedBy, baseName, dirsToRefresh, isUnder, joinRel, parentOf, recentLabel, remapPath, stemLength, validateName, workspaceFiles, ideChanges } from './fileTree';
 
 describe('paths', () => {
 	test('parent, base and join', () => {
@@ -60,6 +60,11 @@ describe('watcher batches', () => {
 
 	test('git internals only matter to Source Control', () => {
 		expect(workspaceFiles(['.git/index', '.git', 'src/a.ts', '.github/ci.yml'])).toEqual(['src/a.ts', '.github/ci.yml']);
+	});
+
+	test('task worktree churn stays out of the IDE views', () => {
+		const batch = ['', 'src/a.ts', '.kingu/worktrees/t/src/a.ts', '.kingu/worktrees', '.git/worktrees/t/index', '.git/index', '.kingu/settings.json', '.kingu/worktrees-notes'];
+		expect(ideChanges(batch)).toEqual(['', 'src/a.ts', '.git/index', '.kingu/settings.json', '.kingu/worktrees-notes']);
 	});
 });
 
