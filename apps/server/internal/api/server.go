@@ -138,6 +138,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /v1/tasks/{id}/sync", s.org(s.syncTask))
 	mux.Handle("POST /v1/tasks/{id}/runs", s.org(s.createRun))
 	mux.Handle("GET /v1/runs", s.org(s.listRuns))
+	mux.Handle("GET /v1/snaps", s.org(s.listSnaps))
+	mux.Handle("PUT /v1/snaps/{id}", s.org(s.putSnap))
+	mux.Handle("DELETE /v1/snaps/{id}", s.org(s.deleteSnap))
 	mux.HandleFunc("GET /v1/events", s.handleEvents)
 	if s.cfg.Dev {
 		mux.HandleFunc("POST /v1/dev/tokens", s.handleDevMintToken)

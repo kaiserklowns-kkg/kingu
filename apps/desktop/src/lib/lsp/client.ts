@@ -37,6 +37,8 @@ export type ClientHooks = {
 	status(status: ServerStatus): void;
 	log(line: string): void;
 	showMessage?(type: number, message: string): void;
+	/** `window/showMessageRequest`: the chosen action's title, or null when dismissed. */
+	showMessageRequest?(type: number, message: string, actions: string[]): Promise<string | null>;
 	/** `workspace/applyEdit` from the server (code action commands, refactorings). */
 	applyEdit?(edit: WorkspaceEdit, label?: string): Promise<{ applied: boolean; failureReason?: string }>;
 	/** `workspace/configuration`: the settings value for `section` (null when unset). */
@@ -52,6 +54,7 @@ export const clientCapabilities = {
 	workspace: {
 		workspaceFolders: true,
 		configuration: true,
+		symbol: { dynamicRegistration: false },
 		applyEdit: true,
 		workspaceEdit: { documentChanges: true, resourceOperations: [], failureHandling: 'abort', normalizesLineEndings: false },
 		executeCommand: { dynamicRegistration: false },
@@ -148,8 +151,13 @@ export class LanguageClient {
 		);
 		rpc.onRequest('client/registerCapability', () => null);
 		rpc.onRequest('client/unregisterCapability', () => null);
-		rpc.onRequest('window/showMessageRequest', (p: { type: number; message: string }) => {
+		rpc.onRequest('window/showMessageRequest', async (p: { type: number; message: string; actions?: { title: string }[] }) => {
 			hooks.log(p.message);
+			const actions = (p.actions ?? []).map((a) => a.title);
+			if (hooks.showMessageRequest) {
+				const title = await hooks.showMessageRequest(p.type, p.message, actions);
+				return title === null ? null : { title };
+			}
 			hooks.showMessage?.(p.type, p.message);
 			return null;
 		});
@@ -337,6 +345,12 @@ export class LanguageClient {
 	documentSymbols(uri: string, token?: Cancellation) {
 		if (!this.capabilities.documentSymbolProvider) return Promise.resolve(null);
 		return this.rpc.request<DocumentSymbol[] | SymbolInformation[] | null>('textDocument/documentSymbol', { textDocument: { uri } }, token);
+	}
+
+	/** `workspace/symbol` (VS Code's `#` quick access). */
+	workspaceSymbols(query: string, token?: Cancellation) {
+		if (!this.capabilities.workspaceSymbolProvider) return Promise.resolve(null);
+		return this.rpc.request<SymbolInformation[] | null>('workspace/symbol', { query }, token);
 	}
 
 	references(uri: string, position: Position, includeDeclaration: boolean, token?: Cancellation) {

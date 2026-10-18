@@ -1,6 +1,8 @@
 // Team sync, pure parts (testable with `bun test`): the payload sent through `team_sync_task`
 // and the status bar label. Metadata only: never code, diffs or secrets.
 
+import type { StreamState } from './teamEvents.ts';
+
 export const TASK_STATUSES = ['backlog', 'running', 'needs_input', 'review', 'done', 'failed'] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
@@ -40,6 +42,7 @@ export type TeamStatus = {
 	online: boolean | null;
 	pending: number;
 	last_error: string | null;
+	stream: StreamState;
 };
 
 const iso = (v: Date | string | number | null | undefined) => (v === null || v === undefined || v === '' ? undefined : new Date(v).toISOString());
@@ -69,7 +72,9 @@ export function buildTaskSync(t: TeamTaskInput, now: Date = new Date()): TaskSyn
 	return out;
 }
 
-export type StatusLabel = { text: string; tooltip: string; warn: boolean };
+export const STREAM_LABEL: Record<string, string> = { connected: 'เชื่อมต่อแล้ว', reconnecting: 'กำลังเชื่อมต่อใหม่', off: 'ปิด' };
+
+export type StatusLabel ={ text: string; tooltip: string; warn: boolean };
 
 /** Status bar item: "ทีม ✓" when connected, "ทีม: ออฟไลน์" when the server is unreachable. */
 export function teamStatusLabel(serverUrl: string, s: TeamStatus | null): StatusLabel | null {
@@ -81,5 +86,5 @@ export function teamStatusLabel(serverUrl: string, s: TeamStatus | null): Status
 	if (s.online === false) {
 		return { text: 'ทีม: ออฟไลน์', tooltip: `${s.server} ติดต่อไม่ได้ จะลองใหม่อัตโนมัติ${pending}${s.last_error ? ` (${s.last_error})` : ''}`, warn: true };
 	}
-	return { text: 'ทีม ✓', tooltip: `เชื่อมต่อ ${s.server} แล้ว${pending}`, warn: false };
+	return { text: s.stream === 'reconnecting' ? 'ทีม ↻' : 'ทีม ✓', tooltip: `เชื่อมต่อ ${s.server} แล้ว • อัปเดตสด: ${STREAM_LABEL[s.stream] ?? STREAM_LABEL.off}${pending}`, warn: false };
 }

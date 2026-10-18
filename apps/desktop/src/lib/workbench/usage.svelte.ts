@@ -8,10 +8,11 @@
 //   usage.detected      agent CLIs installed (null until known)
 
 import { invoke } from '@tauri-apps/api/core';
+import { accounts } from '#lib/accounts/accounts.svelte.ts';
 import { agents } from '#lib/agent/agents.svelte.ts';
 import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 import { clientLog } from '#lib/client-log.ts';
-import { applyStale, backoff, LIVE_FRESH_MS, nextTick, parseLiveLimit, POLL_MS, PROVIDERS, spend, STALE_AFTER_MS, windowsOf, type ProviderId, type ProviderState } from './usage';
+import { applyStale, backoff, fromAccountRow, LIVE_FRESH_MS, nextTick, parseLiveLimit, POLL_MS, PROVIDERS, spend, STALE_AFTER_MS, windowsOf, type ProviderId, type ProviderState } from './usage';
 
 class Usage {
 	now = $state(Date.now());
@@ -32,24 +33,36 @@ class Usage {
 		return this.detected ?? PROVIDERS;
 	}
 
-	async #fetchOne(p: ProviderId) {
+	/** `p`'s reading from the accounts service's last refresh (its active account). */
+	#read(p: ProviderId) {
 		const prev = this.providers[p];
-		if (!prev || prev.status === 'idle') this.providers[p] = { ...(prev ?? empty(p)), status: 'fetching' };
-		try {
-			const next = await invoke<ProviderState>('usage_fetch', { provider: p });
-			const now = Date.now();
-			this.providers[p] = applyStale(prev, { ...next, source: 'api' }, now);
-			if (next.status === 'error') {
-				this.#streak[p]++;
-				this.#retryAt[p] = Math.max(next.retryAtMs ?? 0, now + backoff(this.#streak[p]));
-			} else {
-				this.#streak[p] = 0;
-				this.#retryAt[p] = 0;
-			}
-		} catch (e) {
-			clientLog('error', `usage ${p}: ${e}`);
-			this.providers[p] = prev ?? { ...empty(p), status: 'error', error: String(e) };
+		const row = accounts.rows.find((r) => r.provider === p && r.active) ?? accounts.rows.find((r) => r.provider === p);
+		if (!row) {
+			this.providers[p] = prev ?? { ...empty(p), status: 'unavailable' };
+			return;
 		}
+		const next = fromAccountRow(row);
+		const now = Date.now();
+		this.providers[p] = applyStale(prev, next, now);
+		if (next.status === 'error') {
+			this.#streak[p]++;
+			this.#retryAt[p] = now + backoff(this.#streak[p]);
+		} else {
+			this.#streak[p] = 0;
+			this.#retryAt[p] = 0;
+		}
+	}
+
+	/** One refresh of the accounts service (Rust decides what is due), then each provider's reading. */
+	async #fetchProviders(list: ProviderId[], force: boolean) {
+		if (!list.length) return;
+		for (const p of list) if (!this.providers[p] || this.providers[p].status === 'idle') this.providers[p] = { ...(this.providers[p] ?? empty(p)), status: 'fetching' };
+		try {
+			await accounts.refresh(force);
+		} catch (e) {
+			clientLog('error', `usage: ${e}`);
+		}
+		for (const p of list) this.#read(p);
 	}
 
 	/** Every detected provider; scheduled fetches skip a fresh live Claude reading and active retry waits. */
@@ -62,7 +75,7 @@ class Usage {
 			do {
 				const now = Date.now();
 				const list = (only ?? this.active).filter((p) => force || (!(p === 'claude' && now - this.#liveAt < LIVE_FRESH_MS) && now >= this.#retryAt[p]));
-				await Promise.allSettled(list.map((p) => this.#fetchOne(p)));
+				await this.#fetchProviders(list, force);
 				only = undefined;
 				force = this.#again;
 				this.#again = false;

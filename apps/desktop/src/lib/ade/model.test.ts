@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
+	renamedTitle,
+	MAX_TITLE,
 	adoptOrphans,
 	aggregateStats,
 	columnOf,
@@ -20,6 +22,8 @@ import {
 	taskStatusOf,
 	timeAgo,
 	toTaskRuntime,
+	statusLabel,
+	isQuestion,
 	toggleAccepted,
 	uniqueSlug,
 	upsertTask,
@@ -128,6 +132,15 @@ describe('agents store → TaskRuntime adapter', () => {
 		expect(lastEventOf(r)).toBe('กำลังแก้ ไฟล์');
 		applyEvent(r, { kind: 'message', role: 'assistant', text: 'แก้เสร็จแล้ว' });
 		expect(lastEventOf(r)).toBe('แก้เสร็จแล้ว');
+	});
+
+	test('AskUserQuestion is a question, not a permission prompt', () => {
+		const q = { ...perm('q1', 'AskUserQuestion'), input: { questions: [{ question: 'ใช้ฐานข้อมูลไหน?', header: 'DB' }] } };
+		const rt = toTaskRuntime(run([init, q]));
+		expect(rt).toMatchObject({ status: 'waiting', question: true, lastEvent: 'ถาม: ใช้ฐานข้อมูลไหน?' });
+		expect(statusLabel({ status: rt.status, runtime: rt })).toBe('agent ถามคุณ');
+		expect(isQuestion({ status: 'waiting', runtime: { question: false } })).toBe(false);
+		expect(toTaskRuntime(run([init, perm('p1')])).question).toBe(false);
 	});
 
 	test('a permission request is รอคุณ (waiting) until answered', () => {
@@ -273,5 +286,16 @@ describe('editor keys', () => {
 		expect(remapPath(key, '.kingu', 'x')).toBeNull();
 		expect(parseTaskDiffKey('diff:src/a.ts')).toBeNull();
 		expect(fileOf('diff:src/a.ts')).toBe('src/a.ts');
+	});
+});
+
+describe('rename (Orca getWorktreeTitleRenameCommit)', () => {
+	test('trimmed new name; empty or unchanged cancels', () => {
+		expect(renamedTitle('old', '  แก้ login  ')).toBe('แก้ login');
+		expect(renamedTitle('old', '   ')).toBeNull();
+		expect(renamedTitle('old', ' old ')).toBeNull();
+	});
+	test('capped at the tasks.json limit in characters', () => {
+		expect([...renamedTitle('old', 'ก'.repeat(MAX_TITLE + 20))!]).toHaveLength(MAX_TITLE);
 	});
 });

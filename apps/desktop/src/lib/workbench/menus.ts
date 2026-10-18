@@ -107,6 +107,7 @@ export const MENUS: Menu[] = [
 		id: 'file',
 		label: '&File',
 		items: [
+			{ command: 'workbench.action.files.newUntitledFile', label: 'New Text File' },
 			{ command: 'kingu.agents.newTask', label: 'New Task' },
 			{ command: 'explorer.newFile', label: 'New File...' },
 			SEP,
@@ -114,7 +115,10 @@ export const MENUS: Menu[] = [
 			{ submenu: 'openRecent', label: 'Open Recent', items: [{ recent: true }] },
 			SEP,
 			{ command: 'workbench.action.files.save', label: 'Save' },
+			{ command: 'workbench.action.files.saveAs', label: 'Save As...' },
 			{ command: 'workbench.action.files.saveAll', label: 'Save All' },
+			SEP,
+			{ command: 'workbench.action.files.revert', label: 'Revert File' },
 			SEP,
 			{
 				submenu: 'preferences',
@@ -127,6 +131,7 @@ export const MENUS: Menu[] = [
 			},
 			{ ...SEP, platform: 'other' },
 			{ command: 'workbench.action.closeActiveEditor', label: 'Close Editor' },
+			{ command: 'workbench.action.reopenClosedEditor', label: 'Reopen Closed Editor' },
 			{ command: 'workbench.action.closeFolder', label: 'Close Folder' },
 			{ ...SEP, platform: 'other' },
 			{ command: 'workbench.action.quit', label: 'Exit', platform: 'other' }
@@ -185,6 +190,8 @@ export const MENUS: Menu[] = [
 			SEP,
 			{ command: 'workbench.view.explorer', label: 'Explorer' },
 			{ command: 'workbench.view.scm', label: 'Source Control' },
+			{ command: 'workbench.view.debug', label: 'Run' },
+			{ command: 'workbench.view.snaps', label: 'Snaps' },
 			{ command: 'workbench.actions.view.problems', label: 'Problems' },
 			SEP,
 			{ command: 'workbench.action.splitEditor', label: 'Split Editor' }
@@ -197,10 +204,45 @@ export const MENUS: Menu[] = [
 			{ command: 'workbench.action.navigateBack', label: 'Back' },
 			{ command: 'workbench.action.navigateForward', label: 'Forward' },
 			SEP,
+			{
+				submenu: 'switchEditor',
+				label: 'Switch Editor',
+				items: [
+					{ command: 'workbench.action.nextEditor', label: 'Next Editor' },
+					{ command: 'workbench.action.previousEditor', label: 'Previous Editor' },
+					SEP,
+					{ command: 'workbench.action.nextEditorInGroup', label: 'Next Editor in Group' },
+					{ command: 'workbench.action.previousEditorInGroup', label: 'Previous Editor in Group' }
+				]
+			},
+			SEP,
 			{ command: 'workbench.action.quickOpen', label: 'Go to File...' },
+			{ command: 'workbench.action.showAllSymbols', label: 'Go to Symbol in Workspace...' },
+			{ command: 'workbench.action.gotoSymbol', label: 'Go to Symbol in Editor...' },
 			{ command: 'workbench.action.gotoLine', label: 'Go to Line/Column...' },
 			SEP,
 			{ command: 'editor.action.revealDefinition', label: 'Go to Definition', key: 'f12' }
+		]
+	},
+	{
+		id: 'run',
+		label: '&Run',
+		items: [
+			{ command: 'workbench.action.debug.start', label: 'Start Debugging' },
+			{ command: 'workbench.action.debug.run', label: 'Run Without Debugging' },
+			{ command: 'workbench.action.debug.stop', label: 'Stop Debugging' },
+			{ command: 'workbench.action.debug.restart', label: 'Restart Debugging' },
+			SEP,
+			{ command: 'workbench.action.debug.configure', label: 'Open Configurations' },
+			SEP,
+			{ command: 'workbench.action.debug.stepOver', label: 'Step Over' },
+			{ command: 'workbench.action.debug.stepInto', label: 'Step Into' },
+			{ command: 'workbench.action.debug.stepOut', label: 'Step Out' },
+			{ command: 'workbench.action.debug.continue', label: 'Continue' },
+			SEP,
+			{ command: 'editor.debug.action.toggleBreakpoint', label: 'Toggle Breakpoint' },
+			{ command: 'editor.debug.action.conditionalBreakpoint', label: 'New Conditional Breakpoint...' },
+			{ command: 'workbench.debug.viewlet.action.removeAllBreakpoints', label: 'Remove All Breakpoints' }
 		]
 	},
 	{

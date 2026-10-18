@@ -9,7 +9,9 @@ import { quick } from '#lib/workbench/quick.svelte.ts';
 import { status as statusBar } from '#lib/workbench/status.svelte.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
-import { buildTaskSync, teamStatusLabel, type TeamStatus, type TeamTaskInput } from './team';
+import { buildTaskSync, STREAM_LABEL, teamStatusLabel, type TeamStatus, type TeamTaskInput } from './team';
+import type { TeamEvent } from './teamEvents.ts';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 type SignedIn = { server: string; org_id: string; org_name: string; user_id: string; role: string };
 
@@ -19,6 +21,9 @@ class Team {
 	status = $state<TeamStatus | null>(null);
 	/** The sign-in dialog is open. */
 	signingIn = $state(false);
+	#eventHandlers = new Set<(e: TeamEvent) => void>();
+	/** The server the event stream was last asked for ('' = stopped). */
+	#streaming = '';
 
 	get serverUrl(): string {
 		return (settings.get<string>('kingu.team.serverUrl') ?? '').trim();
@@ -36,7 +41,7 @@ class Team {
 		try {
 			this.status = await invoke<TeamStatus>('team_status', { serverUrl });
 		} catch (e) {
-			this.status = { server: serverUrl, signed_in: false, online: false, pending: 0, last_error: message(e) };
+			this.status = { server: serverUrl, signed_in: false, online: false, pending: 0, last_error: message(e), stream: 'off' };
 		}
 	}
 
@@ -62,7 +67,7 @@ class Team {
 			await invoke('team_sign_out', { serverUrl: this.serverUrl });
 			statusBar.flash('ออกจากระบบทีมแล้ว (ลบ token จาก Keychain)');
 		} catch (e) {
-			statusBar.error(`ออกจากระบบทีมไม่สำเร็จ: ${message(e)}`);
+			notifications.error(`ออกจากระบบทีมไม่สำเร็จ: ${message(e)}`);
 		}
 		await this.refresh();
 	}
@@ -78,8 +83,25 @@ class Team {
 			const pending = await invoke<number>('team_sync_task', { serverUrl, project, task: buildTaskSync(task) });
 			if (this.status) this.status = { ...this.status, pending };
 		} catch (e) {
-			statusBar.error(`ซิงก์งานไปยังทีมไม่ได้: ${message(e)}`);
+			notifications.error(`ซิงก์งานไปยังทีมไม่ได้: ${message(e)}`);
 		}
+	}
+
+	/** Live updates (`team://event`) for the current server. Returns an unsubscribe. */
+	onEvent(fn: (e: TeamEvent) => void): () => void {
+		this.#eventHandlers.add(fn);
+		return () => this.#eventHandlers.delete(fn);
+	}
+
+	/** Runs the Rust event stream for `server` (normalized, from the status), or stops it for ''. */
+	syncStream(server: string) {
+		if (server === this.#streaming) return;
+		this.#streaming = server;
+		const done = server ? invoke('team_events_start', { serverUrl: server }) : invoke('team_events_stop');
+		done.catch((e) => {
+			this.#streaming = '';
+			notifications.error(`เชื่อมต่ออัปเดตสดจากทีมไม่ได้: ${message(e)}`);
+		});
 	}
 
 	/** Status bar click: sign in when signed out, else a small menu. */
@@ -89,10 +111,12 @@ class Team {
 			placeholder: `ทีม — ${this.status.server}`,
 			items: [
 				{ id: 'sync', label: 'ซิงก์ตอนนี้', description: this.status.pending ? `รอส่ง ${this.status.pending}` : undefined },
+				{ id: 'live', label: 'อัปเดตสด', description: STREAM_LABEL[this.status.stream] ?? STREAM_LABEL.off },
 				{ id: 'signin', label: 'ลงชื่อเข้าใช้ด้วย token ใหม่' },
 				{ id: 'signout', label: 'ออกจากระบบทีม' }
 			],
 			onAccept: (item) => {
+				if (item.id === 'live') return;
 				if (item.id === 'sync') void invoke('team_sync_now');
 				else if (item.id === 'signin') this.startSignIn();
 				else void this.signOut();
@@ -108,15 +132,23 @@ class Team {
 			commands.register({ id: 'kingu.team.syncNow', title: 'Sync Tasks to Team Server Now', category: 'Kingu', when: () => !!this.status?.signed_in, run: () => invoke('team_sync_now') })
 		];
 		let disposed = false;
-		let unlisten: (() => void) | undefined;
-		listen<TeamStatus>('team://status', (e) => {
-			if (this.status && e.payload.server === this.status.server) this.status = e.payload;
-		})
-			.then((u) => (disposed ? u() : (unlisten = u)))
-			.catch(() => {});
+		const unlisten: (() => void)[] = [];
+		const keep = (p: Promise<() => void>) => p.then((u) => (disposed ? u() : unlisten.push(u))).catch(() => {});
+		keep(
+			listen<TeamStatus>('team://status', (e) => {
+				if (this.status && e.payload.server === this.status.server) this.status = e.payload;
+			})
+		);
+		keep(
+			listen<TeamEvent>('team://event', (e) => {
+				if (e.payload.server !== this.status?.server) return;
+				for (const fn of this.#eventHandlers) fn(e.payload);
+			})
+		);
 		return () => {
 			disposed = true;
-			unlisten?.();
+			unlisten.forEach((u) => u());
+			this.syncStream('');
 			unregister.forEach((u) => u());
 		};
 	}

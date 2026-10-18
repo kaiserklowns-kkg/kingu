@@ -9,7 +9,7 @@ describe('worktree actions', () => {
 	});
 	test('a task can be closed and removed, but not while its agent works', () => {
 		const rows = worktreeActions({ slug: 'fix', status: 'review', running: true });
-		expect(ids(rows).slice(-5)).toEqual(['copyBranch', '-', 'rename', 'markDone', 'remove']);
+		expect(ids(rows).slice(-5)).toEqual(['copyBranch', 'rename', '-', 'markDone', 'remove']);
 		const blocked = rows.filter((r) => r !== 'separator' && (r.id === 'markDone' || r.id === 'remove'));
 		expect(blocked.map((r) => r !== 'separator' && r.enabled)).toEqual([false, false]);
 	});

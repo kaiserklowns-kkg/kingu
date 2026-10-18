@@ -6,8 +6,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { homeDir } from '@tauri-apps/api/path';
 import { open } from '@tauri-apps/plugin-dialog';
-import { ask } from './dialogService.svelte';
 import { clientLog } from '#lib/client-log.ts';
+import { debug } from '#lib/debug/debug.svelte.ts';
 import { lsp } from '#lib/lsp/lsp.svelte.ts';
 import { settings, WORKSPACE_SETTINGS_PATH } from '#lib/settings/settings.svelte.ts';
 import { editors } from './editors.svelte';
@@ -19,6 +19,7 @@ import { quick, type PickItem } from './quick.svelte';
 import { scm } from './scm.svelte';
 import { search } from './search.svelte';
 import { status } from './status.svelte';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 type FilesChanged = { root: string; paths: string[] };
 type Listener = (paths: string[]) => void;
@@ -32,6 +33,7 @@ class Workspace {
 	name = $derived(this.root ? this.root.split('/').pop() || this.root : '');
 
 	#listeners = new Set<Listener>();
+	#raw = new Set<Listener>();
 	#home = '';
 
 	async init() {
@@ -57,12 +59,12 @@ class Workspace {
 
 	async openFolder(path: string): Promise<boolean> {
 		if (path === this.root) return true;
-		if (!(await confirmDiscard('เปิดโฟลเดอร์อื่น'))) return false;
+		if (!(await confirmDiscard())) return false;
 		let root: string;
 		try {
 			root = await invoke<string>('workspace_open', { path });
 		} catch (e) {
-			status.error(`เปิดโฟลเดอร์ไม่ได้: ${e}`, 8000);
+			notifications.error(`เปิดโฟลเดอร์ไม่ได้: ${e}`);
 			// VS Code drops a recent entry that no longer opens.
 			if (this.recent.includes(path)) await invoke('workspace_recent_remove', { path }).catch(() => {});
 			await this.loadRecent();
@@ -73,11 +75,11 @@ class Workspace {
 	}
 
 	async closeFolder() {
-		if (this.root === null || !(await confirmDiscard('ปิดโฟลเดอร์'))) return;
+		if (this.root === null || !(await confirmDiscard())) return;
 		try {
 			await invoke('workspace_close');
 		} catch (e) {
-			status.error(String(e), 8000);
+			notifications.error(e);
 			return;
 		}
 		this.#switched(null);
@@ -89,7 +91,7 @@ class Workspace {
 	}
 
 	async clearRecent() {
-		await invoke('workspace_recent_clear').catch((e) => status.error(String(e)));
+		await invoke('workspace_recent_clear').catch((e) => notifications.error(e));
 		await this.loadRecent();
 	}
 
@@ -122,11 +124,18 @@ class Workspace {
 		return () => this.#listeners.delete(fn);
 	}
 
+	/** Every watcher batch, git internals included (a task worktree's index lives in `.git/worktrees/`). */
+	onAnyChange(fn: Listener): () => void {
+		this.#raw.add(fn);
+		return () => this.#raw.delete(fn);
+	}
+
 	/** Every view of the old folder goes: editors, language servers, tree, search, source control. */
 	#switched(root: string | null) {
 		editors.closeAll();
 		navigation.clear();
 		lsp.reset();
+		debug.reset();
 		explorer.reset();
 		search.clear();
 		scm.repo = null;
@@ -149,6 +158,7 @@ class Workspace {
 		listen<FilesChanged>('workspace:files-changed', (e) => {
 			if (!this.root || e.payload.root !== this.root) return;
 			void scm.refresh();
+			for (const fn of this.#raw) fn(e.payload.paths);
 			const files = workspaceFiles(e.payload.paths);
 			if (!files.length) return;
 			void explorer.refresh(files);
@@ -162,17 +172,11 @@ class Workspace {
 	}
 }
 
-/** Reuses the editors' dirty state: asks before throwing away unsaved changes. */
-async function confirmDiscard(action: string): Promise<boolean> {
-	const dirty = editors.dirtyPaths();
-	if (!dirty.length) return true;
-	const names = dirty.map((p) => p.split('/').pop()).join(', ');
-	return ask(`มี ${dirty.length} ไฟล์ที่ยังไม่บันทึก: ${names}\n\n${action}จะทิ้งการแก้ไขเหล่านี้`, {
-		title: 'ยังไม่ได้บันทึก',
-		kind: 'warning',
-		okLabel: 'ทิ้งการแก้ไข',
-		cancelLabel: 'ยกเลิก'
-	});
+/** Unsaved editors before the folder changes: backed up (`files.hotExit: onExitAndWindowClose`) or asked about. */
+async function confirmDiscard(): Promise<boolean> {
+	if (!editors.hasDirty()) return true;
+	const { textFiles } = await import('./textFileService.svelte');
+	return textFiles.beforeShutdown('load');
 }
 
 export const workspace = new Workspace();

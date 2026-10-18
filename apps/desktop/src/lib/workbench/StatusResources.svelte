@@ -15,7 +15,8 @@
 	let open = $state<Open>(null);
 	let anchor = $state<HTMLElement | null>(null);
 	/** A terminal or process waiting for the "Kill" confirmation. */
-	let confirming = $state<number | null>(null);
+	/** The row asking to confirm a stop: a terminal's session key, or `pid:<n>` for a process. */
+	let confirming = $state<string | null>(null);
 
 	const showAwake = $derived(settings.get<boolean>('kingu.statusBar.keepAwake.visible') !== false);
 	const showResources = $derived(settings.get<boolean>('kingu.statusBar.resources.visible') !== false);
@@ -39,7 +40,7 @@
 	}
 	const terminals = $derived.by(() => {
 		const rows = s?.processes ?? [];
-		const groups = new Map<string, { id: number; pid: number | null; rss: number; command: string }[]>();
+		const groups = new Map<string, { id: string; pid: number | null; rss: number; command: string }[]>();
 		for (const t of s?.terminals ?? []) {
 			const tree = t.pid === null ? [] : subtree(t.pid, rows);
 			// The busiest program in the terminal names it (`claude`, `bun`), else the shell.
@@ -184,10 +185,13 @@
 						<Icon name="cpu" size={13} />
 						<span class="min-w-0 flex-1 truncate" title="pid {p.pid}">{p.name}</span>
 						<span class="text-xs text-(--vscode-descriptionForeground) tabular-nums">{formatBytes(p.rss_bytes)}</span>
-						{#if confirming === -p.pid}
+						{#if p.stoppable === false}
+							<!-- The terminal daemon holds every terminal (stop them one by one); WebKit's processes are the window. -->
+							<span class="w-6"></span>
+						{:else if confirming === `pid:${p.pid}`}
 							<button class="rounded-md bg-(--vscode-errorForeground) px-2 text-xs leading-5 text-white" onclick={() => (system.kill(p.pid, p.name), (confirming = null))}>ยืนยัน</button>
 						{:else}
-							<button class="{ROW_BTN} opacity-0 group-hover:opacity-100 focus-visible:opacity-100" aria-label="หยุด {p.name}" title="หยุดโปรเซสนี้" onclick={() => (confirming = -p.pid)}><Icon name="stopProcess" size={14} /></button>
+							<button class="{ROW_BTN} opacity-0 group-hover:opacity-100 focus-visible:opacity-100" aria-label="หยุด {p.name}" title="หยุดโปรเซสนี้" onclick={() => (confirming = `pid:${p.pid}`)}><Icon name="stopProcess" size={14} /></button>
 						{/if}
 					</div>
 				{:else}
@@ -216,10 +220,10 @@
 							<button class={ROW_BTN} aria-label="เปิด localhost:{p.port} ในเบราว์เซอร์" title="เปิดในเบราว์เซอร์" onclick={() => system.openPort(p.port)}><Icon name="openExternal" size={14} /></button>
 							<button class={ROW_BTN} aria-label="คัดลอก URL" title="คัดลอก http://localhost:{p.port}" onclick={() => copy(`http://localhost:${p.port}`)}><Icon name="copy" size={14} /></button>
 							{#if p.ours}
-								{#if confirming === p.pid}
+								{#if confirming === `port:${p.pid}:${p.port}`}
 									<button class="rounded-md bg-(--vscode-errorForeground) px-2 text-xs leading-5 text-white" onclick={() => (system.kill(p.pid, `${p.name} :${p.port}`), (confirming = null))}>ยืนยัน</button>
 								{:else}
-									<button class={ROW_BTN} aria-label="หยุด {p.name}" title="หยุดโปรเซส" onclick={() => (confirming = p.pid)}><Icon name="stopProcess" size={14} /></button>
+									<button class={ROW_BTN} aria-label="หยุด {p.name}" title="หยุดโปรเซส" onclick={() => (confirming = `port:${p.pid}:${p.port}`)}><Icon name="stopProcess" size={14} /></button>
 								{/if}
 							{/if}
 						</div>

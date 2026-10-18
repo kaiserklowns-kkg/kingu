@@ -40,3 +40,23 @@ export function rank<T>(query: string, items: T[], text: (t: T) => string, limit
 	out.sort((a, b) => b.match.score - a.match.score);
 	return out.slice(0, limit);
 }
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+/**
+ * `text` as runs of matched / unmatched characters for highlighting. Whole grapheme clusters only:
+ * a Thai vowel or tone mark (or an emoji part) never lands in a different span from its base
+ * letter, which would draw it detached. `positions` are UTF-16 indexes, as `fuzzyMatch` returns.
+ */
+export function highlightRuns(text: string, positions: number[] = []): { text: string; hit: boolean }[] {
+	const set = new Set(positions);
+	const runs: { text: string; hit: boolean }[] = [];
+	for (const { segment, index } of graphemes.segment(text)) {
+		let hit = false;
+		for (let i = index; i < index + segment.length; i++) if (set.has(i)) hit = true;
+		const last = runs.at(-1);
+		if (last && last.hit === hit) last.text += segment;
+		else runs.push({ text: segment, hit });
+	}
+	return runs;
+}

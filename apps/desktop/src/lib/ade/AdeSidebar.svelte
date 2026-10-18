@@ -1,6 +1,6 @@
 <script lang="ts">
 	// The Agents layout side bar, built like Orca's worktree sidebar: Search (the worktree jump
-	// palette) and Tasks (the board) on top, a "Projects" header with the activity view, workspace
+	// palette), Tasks (the board), Automations and Issues on top, a "Projects" header with the activity view, workspace
 	// options, add project and new workspace, then the folder as a project group with a card per
 	// worktree (status slot, title, branch, the agent row with its last message and time). Orca's
 	// footer is left out: Settings, Help and the board already live elsewhere in Kingu (title bar
@@ -18,11 +18,14 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { adeLayout, PRIMARY } from './adeLayout.svelte';
 	import { worktreeDir } from './keys';
-	import { COLUMNS, STATUS_LABEL, type TaskView } from './model';
+	import { COLUMNS, MAX_TITLE, STATUS_LABEL, type TaskView } from './model';
+	import { automations } from './automations.svelte.ts';
+	import { repoDialog } from '#lib/workbench/repoDialog.svelte.ts';
+	import { scm } from '#lib/workbench/scm.svelte.ts';
 	import { adeTasks } from './tasks.svelte';
 	import { cleanup } from './cleanup.svelte';
 	import { newSession } from './agentsMode.svelte';
-	import { jumpToWorktree, renameTask } from './worktreeMenu.svelte';
+	import { jumpToWorktree } from './worktreeMenu.svelte';
 	import { activeFilterCount, cardStatus, CARD_STATUS_LABEL, reorder, shortAgo, SORT_LABEL, sortItems, statusColumn, type CardStatus, type GroupBy, type SortBy } from './sidebarModel';
 	import { sidebarPrefs as prefs } from './sidebarPrefs.svelte';
 
@@ -37,7 +40,7 @@
 	const taskRows = $derived<Row[]>(
 		adeTasks.views
 			.filter((v) => !(prefs.filters.hideSleeping && v.status === 'done'))
-			.map((v) => ({ key: v.meta.slug, title: v.meta.title, branch: `kingu/${v.meta.slug}`, view: v, created: v.meta.created_at, activity: lastActivity(v) }))
+			.map((v) => ({ key: v.meta.slug, title: v.meta.title, branch: adeTasks.branchOf(v.meta.slug), view: v, created: v.meta.created_at, activity: lastActivity(v) }))
 	);
 	const sorted = $derived(
 		sortItems(
@@ -95,24 +98,47 @@
 	let altHeld = $state(false);
 	const onKey = (e: KeyboardEvent) => (altHeld = e.altKey);
 
-	// --- Inline rename --------------------------------------------------------------------------
-	let renaming = $state<string | null>(null);
+	// --- Inline rename (Orca's WorktreeTitleInlineRename) -------------------------------------
+	// adeTasks.renaming says which card edits (the menu, the palette and double-click start it).
+	// Enter or leaving the box saves, Escape cancels; empty or unchanged keeps the old name.
 	let renameValue = $state('');
-	function beginRename(r: Row) {
-		if (!r.view) return;
-		renaming = r.key;
-		renameValue = r.title;
-	}
-	async function commitRename(key: string) {
-		const v = renameValue.trim();
-		const current = adeTasks.find(key)?.meta.title;
-		renaming = null;
-		if (!v || v === current) return;
+	let saving = false;
+	$effect(() => {
+		const slug = adeTasks.renaming;
+		if (slug) renameValue = adeTasks.find(slug)?.meta.title ?? '';
+	});
+	async function commitRename(slug: string) {
+		if (saving || adeTasks.renaming !== slug) return;
+		saving = true;
 		try {
-			await adeTasks.rename(key, v);
-		} catch {
-			status.error('Failed to rename workspace.');
+			await adeTasks.rename(slug, renameValue);
+		} finally {
+			saving = false;
+			if (adeTasks.renaming === slug) adeTasks.renaming = null;
 		}
+	}
+	function onRenameKey(e: KeyboardEvent, slug: string) {
+		if (e.isComposing) return;
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			void commitRename(slug);
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			adeTasks.renaming = null;
+		}
+	}
+
+	// --- Projects: the folder must be a git repository; add a project (open, clone, create) -----
+	/** The open folder is not a git repository: tasks need one (Orca adds only git projects). */
+	const notGit = $derived(!!workspace.root && scm.loaded && scm.repo === null);
+	async function initGit() {
+		if (await scm.init(true)) await adeTasks.load();
+	}
+	let addMenu = $state<{ x: number; y: number } | null>(null);
+	const ADD_ITEMS: MenuNode[] = [menuItem('open', 'เปิดโฟลเดอร์… (Open Folder)'), menuItem('clone', 'Clone repository…'), menuItem('create', 'สร้างโปรเจกต์ใหม่… (New Project)')];
+	function runAdd(id: string) {
+		if (id === 'open') void commands.run('workbench.action.files.openFolder');
+		else void repoDialog.show(id === 'clone' ? 'clone' : 'create');
 	}
 
 	// --- Context menu -------------------------------------------------------------------------
@@ -148,7 +174,7 @@
 	function runMenu(id: string, key: string) {
 		switch (id) {
 			case 'update':
-				return void renameTask(key);
+				return adeTasks.startRename(key);
 			case 'status:done':
 				return void adeTasks.markDone(key);
 			case 'status:reopen':
@@ -158,7 +184,7 @@
 			case 'copyPath':
 				return void copy(pathOf(key));
 			case 'copyName':
-				return void copy(key === PRIMARY ? (status.branch ?? '') : `kingu/${key}`);
+				return void copy(key === PRIMARY ? (status.branch ?? '') : adeTasks.branchOf(key));
 			case 'pin':
 			case 'unpin':
 				return prefs.setPinned(root, key, id === 'pin');
@@ -298,7 +324,7 @@
 		{#if dropBefore === r.key}<div class="absolute inset-x-2 -top-px h-0.5 rounded-full bg-(--vscode-focusBorder)"></div>{/if}
 		<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
 		<div
-			draggable={renaming !== r.key && r.key !== PRIMARY}
+			draggable={adeTasks.renaming !== r.key && r.key !== PRIMARY}
 			class={[
 				'group/worktree-card relative ml-1 flex cursor-pointer flex-col rounded-lg border pr-1.5 pl-1.5 transition-[background-color,border-color,box-shadow] duration-200 select-none',
 				prefs.compact ? 'py-2' : 'pt-1.25 pb-1.5',
@@ -310,7 +336,7 @@
 				revealed === r.key && 'ring-[1.5px] ring-(--vscode-focusBorder)/70'
 			]}
 			onclick={() => activate(r.key)}
-			ondblclick={() => r.view && void renameTask(r.key)}
+			ondblclick={() => r.view && adeTasks.startRename(r.key)}
 			oncontextmenu={(e) => openMenu(r.key, e)}
 			ondragstart={(e) => ((dragging = r.key), e.dataTransfer?.setData('text/plain', r.key))}
 			ondragend={() => (dragging = dropBefore = null)}
@@ -339,21 +365,22 @@
 							{#if groupId === 'pinned' || prefs.groupBy !== 'repo'}
 								<span class="grid size-4 shrink-0 place-items-center rounded-[4px] border border-(--vscode-widget-border) bg-(--vscode-list-inactiveSelectionBackground)/55" title={workspace.name}><Icon name="folder" size={11} /></span>
 							{/if}
-							{#if renaming === r.key}
+							{#if adeTasks.renaming === r.key}
 								<!-- svelte-ignore a11y_autofocus -->
 								<input
 									class="h-5 min-w-0 flex-1 border-0 bg-transparent p-0 text-[13px] leading-5 outline-none"
 									aria-label="Rename workspace"
 									autofocus
+									maxlength={MAX_TITLE}
 									bind:value={renameValue}
 									onclick={(e) => e.stopPropagation()}
-									onkeydown={(e) => (e.key === 'Enter' ? void commitRename(r.key) : e.key === 'Escape' ? (renaming = null) : undefined)}
+									onkeydown={(e) => onRenameKey(e, r.key)}
 									onblur={() => void commitRename(r.key)}
 									onfocus={(e) => e.currentTarget.select()}
 								/>
 							{:else}
 								<!-- svelte-ignore a11y_no_static_element_interactions -->
-								<span class={['truncate text-[13px] leading-5', unread ? 'font-semibold text-(--vscode-foreground)' : 'font-normal text-(--vscode-foreground)']} title={r.title} ondblclick={(e) => (e.stopPropagation(), beginRename(r))}>
+								<span class={['truncate text-[13px] leading-5', unread ? 'font-semibold text-(--vscode-foreground)' : 'font-normal text-(--vscode-foreground)']} title={r.title} ondblclick={(e) => (e.stopPropagation(), r.view && adeTasks.startRename(r.key))}>
 									{#if unread}<span class="sr-only">Unread: </span>{/if}{r.title}
 								</span>
 							{/if}
@@ -400,7 +427,7 @@
 {/snippet}
 
 <div class="flex h-full min-h-0 flex-col bg-(--vscode-sideBar-background) text-(--vscode-sideBar-foreground)">
-	<!-- Top nav: Search (the worktree palette) and Tasks (the board). -->
+	<!-- Top nav: Search (the worktree palette), then the center's pages: Tasks (the board), Automations, Issues. -->
 	<nav class="flex flex-col gap-0.5 px-2 pt-2 pb-1">
 		<button class="{NAV} bg-(--vscode-sideBar-foreground)/5 {NAV_OFF}" aria-label="Search worktrees" onclick={jumpToWorktree}>
 			<span class="text-(--vscode-sideBar-foreground)/30"><Icon name="search" size={16} /></span>
@@ -409,10 +436,18 @@
 				{#each ['⇧', '⌘', 'J'] as k (k)}<kbd class="min-w-4 rounded border border-(--vscode-widget-border) bg-(--vscode-sideBar-foreground)/8 px-1 py-px text-center font-sans text-[9px] text-(--vscode-sideBar-foreground)/55">{k}</kbd>{/each}
 			</span>
 		</button>
-		<button class="{NAV} {adeLayout.board ? NAV_ON : NAV_OFF}" aria-current={adeLayout.board ? 'page' : undefined} onclick={() => (adeLayout.board = true)}>
-			<span class={adeLayout.board ? '' : 'text-(--vscode-sideBar-foreground)/30'}><Icon name="menu" size={16} /></span>
-			<span class="flex-1">Tasks</span>
-		</button>
+		{#each [{ page: 'board', icon: 'menu', label: 'Tasks' }, { page: 'automations', icon: 'clock', label: 'Automations' }, { page: 'issues', icon: 'bug', label: 'Issues' }] as const as n (n.page)}
+			{@const on = adeLayout.page === n.page}
+			<button class="{NAV} {on ? NAV_ON : NAV_OFF}" aria-current={on ? 'page' : undefined} disabled={n.page !== 'board' && !workspace.root} onclick={() => adeLayout.togglePage(n.page)}>
+				<span class={on ? '' : 'text-(--vscode-sideBar-foreground)/30'}><Icon name={n.icon} size={16} /></span>
+				<span class="flex-1">{n.label}</span>
+				{#if n.page === 'board' && adeTasks.counts.needsInput}
+					<span class="rounded-full bg-(--vscode-editorWarning-foreground) px-1.5 text-[10px] leading-4 font-semibold text-black" title="รอคุณ">{adeTasks.counts.needsInput}</span>
+				{:else if n.page === 'automations' && automations.activeCount}
+					<span class="text-[11px] {MUTED}" title={automations.globalEnabled ? 'automation ที่เปิดอยู่' : 'หยุดทั้งหมดอยู่'}>{automations.globalEnabled ? automations.activeCount : 'หยุด'}</span>
+				{/if}
+			</button>
+		{/each}
 	</nav>
 
 	<!-- Section header: "Projects" with the activity view, options, add project, new workspace. -->
@@ -436,8 +471,17 @@
 					{#if filterCount}<span class="absolute -top-0.5 -right-0.5 grid size-3 place-items-center rounded-full bg-(--vscode-focusBorder) text-[8px] font-semibold text-white">{filterCount}</span>{/if}
 				</button>
 			{/if}
-			<button class={HEADER_BTN} aria-label="Add project" title="Add project" onclick={() => commands.run('workbench.action.files.openFolder')}><Icon name="newFolder" size={14} /></button>
-			<button class={HEADER_BTN} aria-label="New workspace" title="New workspace" disabled={!workspace.root} onclick={newWorkspace}><Icon name="plus" size={15} /></button>
+			<button
+				class={HEADER_BTN}
+				aria-label="Add project"
+				title="Add project (open, clone or create)"
+				aria-haspopup="menu"
+				onclick={(e) => {
+					const r = e.currentTarget.getBoundingClientRect();
+					addMenu = { x: r.right - 220, y: r.bottom + 2 };
+				}}><Icon name="newFolder" size={14} /></button
+			>
+			<button class={HEADER_BTN} aria-label="New workspace" title="New workspace" disabled={!workspace.root || notGit} onclick={newWorkspace}><Icon name="plus" size={15} /></button>
 		</div>
 	</div>
 
@@ -454,7 +498,9 @@
 		{#if !workspace.root}
 			<div class="space-y-2 px-4 py-6 text-center text-[11px] {MUTED}">
 				<p>No workspaces found</p>
-				<button class="text-(--vscode-textLink-foreground) hover:underline" onclick={() => commands.run('workbench.action.files.openFolder')}>Add project</button>
+				<button class="block w-full text-(--vscode-textLink-foreground) hover:underline" onclick={() => commands.run('workbench.action.files.openFolder')}>Add project</button>
+				<button class="block w-full text-(--vscode-textLink-foreground) hover:underline" onclick={() => repoDialog.show('clone')}>Clone repository…</button>
+				<button class="block w-full text-(--vscode-textLink-foreground) hover:underline" onclick={() => repoDialog.show('create')}>สร้างโปรเจกต์ใหม่…</button>
 			</div>
 		{:else if prefs.activity}
 			<!-- Activity view: every agent session, the ones that need you first. -->
@@ -469,6 +515,12 @@
 				<p class="px-4 py-6 text-center text-[11px] {MUTED}">No agent activity yet</p>
 			{/each}
 		{:else}
+			{#if notGit}
+				<div class="mx-2 mb-2 space-y-1.5 rounded-lg border border-(--vscode-widget-border) px-2.5 py-2 text-xs">
+					<p class={MUTED}>โฟลเดอร์นี้ยังไม่เป็น git repository งานของ agent ต้องแตก git worktree จึงยังสร้างงานไม่ได้</p>
+					<button class="text-(--vscode-textLink-foreground) hover:underline disabled:opacity-50" disabled={scm.busy} onclick={initGit}>เริ่มใช้ git (git init + commit แรก)</button>
+				</div>
+			{/if}
 			{#each groups as g, gi (g.id)}
 				{@const collapsed = prefs.isCollapsed(g.id)}
 				{#if g.id !== 'all'}
@@ -521,6 +573,9 @@
 {#if menu}
 	{@const key = menu.key}
 	<PopupMenu items={menuItems} label="Workspace" x={menu.x} y={menu.y} onRun={(node) => node.type === 'item' && runMenu(node.id, key)} onClose={() => (menu = null)} />
+{/if}
+{#if addMenu}
+	<PopupMenu items={ADD_ITEMS} label="Add project" x={addMenu.x} y={addMenu.y} onRun={(node) => node.type === 'item' && runAdd(node.id)} onClose={() => (addMenu = null)} />
 {/if}
 {#if repoMenu}
 	<PopupMenu items={repoItems} label="Project actions" x={repoMenu.x} y={repoMenu.y} onRun={(node) => node.type === 'item' && runRepo(node.id)} onClose={() => (repoMenu = null)} />

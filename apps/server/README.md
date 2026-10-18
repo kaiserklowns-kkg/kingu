@@ -108,7 +108,7 @@ limited per client IP. Buckets are per replica.
 ## Tenancy and Row-Level Security
 
 Every org-scoped table (`orgs`, `members`, `projects`, `tasks`, `agent_runs`,
-`audit_log`, `api_tokens`, `org_events`) has RLS **enabled and forced**. The
+`audit_log`, `api_tokens`, `org_events`, `team_snaps`) has RLS **enabled and forced**. The
 policies compare `org_id` with `app_current_org()`, which is
 `NULLIF(current_setting('app.org_id', true), '')::uuid`. Each request runs in a
 transaction that first calls `SELECT set_config('app.org_id', $1, true)` with
@@ -139,6 +139,9 @@ Every `/v1` request needs `Authorization: Bearer kgu_…` (or, in dev mode,
 | PUT    | `/v1/tasks/{client_task_id}/sync` | Desktop upsert, see below |
 | POST   | `/v1/tasks/{id}/runs`      | `{adapter, model?, machine_id?, started_at?, ended_at?, exit_reason?, input_tokens?, output_tokens?}` |
 | GET    | `/v1/runs`                 | Run history with `task_title`, newest first: `?task_id=&limit=` |
+| GET    | `/v1/snaps`                | Team Snap catalog (any member), see below |
+| PUT    | `/v1/snaps/{snap_id}`      | **owner/lead.** Approve and pin a snap, see below |
+| DELETE | `/v1/snaps/{snap_id}`      | **owner/lead.** Remove it from the catalog |
 | GET    | `/v1/events`               | Server-Sent Events, see below |
 | POST   | `/v1/dev/tokens`           | **Dev only.** `{org_id \| org_name, user_id, role?="owner", name?, ttl_hours?}` |
 
@@ -168,10 +171,36 @@ Idempotent upsert keyed by `(project_id, client_task_id)`; `client_task_id`
   formats → 422 `content_not_allowed`. `updated_at` is required and may be at
   most 24h in the future.
 
+### Team Snap catalog (`/v1/snaps`)
+
+Snaps an org approved for its desktops, pinned to a git commit and the snap's
+manifest hash (the desktop's trust hash: SHA-256 of `snap.toml`, plus skill
+files when the snap has skills). Only metadata is stored; the code stays in
+git and each desktop clones `git_url` at `commit_sha` itself and refuses a
+manifest whose hash differs.
+
+```json
+PUT /v1/snaps/go
+{"name": "Go tools", "version": "1.0.0",
+ "git_url": "https://github.com/acme/kingu-go.git", "git_ref": "v1",
+ "commit_sha": "<40 lowercase hex>", "manifest_sha256": "<64 lowercase hex>",
+ "permissions": {"network": false, "fs": "worktree", "secrets": ["GO_TOKEN"]},
+ "required": false, "note": "optional, one line"}
+```
+
+- `snap_id` (path) matches `^[a-z0-9][a-z0-9-]{0,39}$`; `git_url` must be
+  `https://`, `ssh://` or `user@host:path` without credentials (no `file://`,
+  local paths or `http://`); `permissions.secrets` holds names only.
+- 201 when created, 200 when it replaces the org's earlier approval of that id
+  (`approved_by`/`approved_at` are set by the server). `dev` and `viewer`
+  members get 403 `forbidden` on PUT/DELETE.
+- Changes emit `snap.updated` / `snap.removed` on `/v1/events` and are audited
+  (`snap.approve`, `snap.remove`).
+
 ### `GET /v1/events` (SSE)
 
 - One stream per request, scoped to the caller's org by RLS. Messages:
-  `id: <n>` / `event: task.created|task.updated|run.created|run.updated` /
+  `id: <n>` / `event: task.created|task.updated|run.created|run.updated|snap.updated|snap.removed` /
   `data: {"id","kind","project_id","task_id","at","data":{…row metadata…}}`.
 - Triggers on `tasks` and `agent_runs` insert the event row into `org_events`
   and `pg_notify('kingu_events', '<org_id>:<event_id>')`. One dedicated

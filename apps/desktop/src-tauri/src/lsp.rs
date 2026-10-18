@@ -77,26 +77,65 @@ impl FrameDecoder {
 // ---------------------------------------------------------------------------------------------
 // Server table and binary resolution
 
+/// How a server can be installed; [`install_methods`] keeps those whose tool is on this machine.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Package {
+  /// npm packages (space-separated), installed globally with bun or npm.
+  Npm(&'static str),
+  /// A `go install` path.
+  Go(&'static str),
+  /// A rustup component.
+  Rustup(&'static str),
+  Brew(&'static str),
+  /// A Python tool, installed with pipx or uv.
+  PyTool(&'static str),
+  /// `cargo install --locked` arguments (space-separated).
+  Cargo(&'static str),
+  /// A Python module (debugpy), installed into the user's python3 with pip.
+  Pip(&'static str),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServerSpec {
   /// Key shared by languages served by one process (`javascript` uses `typescript`).
   pub key: &'static str,
-  /// Shown to the user, e.g. in "TypeScript language server not installed".
+  /// Shown to the user, e.g. in "ไม่ได้ติดตั้ง TypeScript language server".
   pub display: &'static str,
-  pub binary: &'static str,
+  /// Executable names in order of preference (basedpyright before pyright).
+  pub binaries: &'static [&'static str],
   pub args: &'static [&'static str],
+  pub install: &'static [Package],
 }
 
+const LANGSERVERS_EXTRACTED: Package = Package::Npm("vscode-langservers-extracted");
+
+/// Languages are Monaco language ids (see `src/lib/editor/languages.ts`).
 pub fn spec_for(language: &str) -> Option<ServerSpec> {
+  use Package::*;
+  let spec = |key, display, binaries, args, install| ServerSpec { key, display, binaries, args, install };
   Some(match language {
-    "rust" => ServerSpec { key: "rust", display: "rust-analyzer", binary: "rust-analyzer", args: &[] },
-    "typescript" | "javascript" | "typescriptreact" | "javascriptreact" => ServerSpec {
-      key: "typescript",
-      display: "TypeScript language server",
-      binary: "typescript-language-server",
-      args: &["--stdio"],
-    },
-    "go" => ServerSpec { key: "go", display: "gopls", binary: "gopls", args: &[] },
+    "rust" => spec("rust", "rust-analyzer", &["rust-analyzer"], &[], &[Rustup("rust-analyzer"), Brew("rust-analyzer")]),
+    "typescript" | "javascript" | "typescriptreact" | "javascriptreact" => spec(
+      "typescript",
+      "TypeScript language server",
+      &["typescript-language-server"],
+      &["--stdio"],
+      &[Npm("typescript-language-server typescript")],
+    ),
+    "go" => spec("go", "gopls", &["gopls"], &[], &[Go("golang.org/x/tools/gopls@latest"), Brew("gopls")]),
+    "svelte" => spec("svelte", "Svelte language server", &["svelteserver"], &["--stdio"], &[Npm("svelte-language-server")]),
+    "python" => spec(
+      "python",
+      "basedpyright",
+      &["basedpyright-langserver", "pyright-langserver"],
+      &["--stdio"],
+      &[PyTool("basedpyright"), Npm("basedpyright")],
+    ),
+    "json" | "jsonc" => spec("json", "JSON language server", &["vscode-json-language-server"], &["--stdio"], &[LANGSERVERS_EXTRACTED]),
+    "css" | "scss" | "less" => spec("css", "CSS language server", &["vscode-css-language-server"], &["--stdio"], &[LANGSERVERS_EXTRACTED]),
+    "html" => spec("html", "HTML language server", &["vscode-html-language-server"], &["--stdio"], &[LANGSERVERS_EXTRACTED]),
+    "yaml" => spec("yaml", "YAML language server", &["yaml-language-server"], &["--stdio"], &[Npm("yaml-language-server"), Brew("yaml-language-server")]),
+    "toml" => spec("toml", "Taplo", &["taplo"], &["lsp", "stdio"], &[Brew("taplo"), Cargo("taplo-cli --features lsp")]),
     _ => return None,
   })
 }
@@ -108,6 +147,9 @@ fn extra_dirs(home: Option<&Path>, root: &Path) -> Vec<PathBuf> {
   if let Some(h) = home {
     dirs.push(h.join(".cargo/bin"));
     dirs.push(h.join("go/bin"));
+    dirs.push(h.join(".bun/bin"));
+    // pipx and `uv tool` install here; it is often missing from PATH until `pipx ensurepath`.
+    dirs.push(h.join(".local/bin"));
   }
   dirs.push(root.join("node_modules/.bin"));
   dirs.push("/opt/homebrew/bin".into());
@@ -115,7 +157,7 @@ fn extra_dirs(home: Option<&Path>, root: &Path) -> Vec<PathBuf> {
   dirs
 }
 
-fn is_executable(p: &Path) -> bool {
+pub(crate) fn is_executable(p: &Path) -> bool {
   #[cfg(unix)]
   {
     use std::os::unix::fs::PermissionsExt;
@@ -127,7 +169,20 @@ fn is_executable(p: &Path) -> bool {
   }
 }
 
-/// `KINGU_LSP_<KEY>` (a path to the server binary), else `binary` on `path` + the extra dirs.
+/// `name` on `path`, else in the extra dirs. The bool is whether it came from `path`.
+pub(crate) fn find_executable(name: &str, path: Option<&OsStr>, home: Option<&Path>, root: &Path) -> Option<(PathBuf, bool)> {
+  let on_path = path.map(|p| std::env::split_paths(p).collect::<Vec<_>>()).unwrap_or_default();
+  if let Some(p) = on_path.iter().map(|d| d.join(name)).find(|p| is_executable(p)) {
+    return Some((p, true));
+  }
+  extra_dirs(home, root).into_iter().map(|d| d.join(name)).find(|p| is_executable(p)).map(|p| (p, false))
+}
+
+/// Prefix of every "server not installed" error; the webview keys its Install offer off it.
+pub const NOT_INSTALLED: &str = "ไม่ได้ติดตั้ง";
+
+/// `KINGU_LSP_<KEY>` (a path to the server binary), else the first of `binaries` found on
+/// `path` + the extra dirs.
 pub fn resolve_binary(
   spec: &ServerSpec,
   override_var: Option<OsString>,
@@ -140,20 +195,93 @@ pub fn resolve_binary(
     return if is_executable(&p) {
       Ok(p)
     } else {
-      Err(format!("{} not installed: {} (from {}) is not an executable", spec.display, p.display(), override_name(spec)))
+      Err(format!("{NOT_INSTALLED} {}: {} (จาก {}) ไม่ใช่ไฟล์ที่รันได้", spec.display, p.display(), override_name(spec)))
     };
   }
-  let dirs = path.map(|p| std::env::split_paths(p).collect::<Vec<_>>()).unwrap_or_default();
-  dirs
-    .into_iter()
-    .chain(extra_dirs(home, root))
-    .map(|d| d.join(spec.binary))
-    .find(|p| is_executable(p))
-    .ok_or_else(|| format!("{} not installed ({} not found on PATH; set {} to its path)", spec.display, spec.binary, override_name(spec)))
+  spec.binaries.iter().find_map(|b| find_executable(b, path, home, root)).map(|(p, _)| p).ok_or_else(|| {
+    format!(
+      "{NOT_INSTALLED} {} (ไม่พบ {} ใน PATH; ติดตั้งได้จากแถบสถานะ หรือตั้ง {} เป็นพาธของโปรแกรม)",
+      spec.display,
+      spec.binaries.join(" หรือ "),
+      override_name(spec)
+    )
+  })
 }
 
 pub fn override_name(spec: &ServerSpec) -> String {
   format!("KINGU_LSP_{}", spec.key.to_uppercase())
+}
+
+/// The server binary for `language`, or the "not installed" error (no process is started).
+pub fn check(language: &str, root: &Path) -> Result<PathBuf, String> {
+  let spec = spec_for(language).ok_or_else(|| format!("ไม่มี language server สำหรับ {language}"))?;
+  let home = std::env::var_os("HOME").map(PathBuf::from);
+  resolve_binary(&spec, std::env::var_os(override_name(&spec)), crate::shell_env::path().as_deref(), home.as_deref(), root)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Installing a missing server (VS Code installs an extension; Kingu runs the tool's own installer
+// in a visible terminal, never silently)
+
+/// Package managers Kingu knows how to drive.
+pub const INSTALL_TOOLS: &[&str] = &["bun", "npm", "go", "rustup", "brew", "pipx", "uv", "cargo", "python3"];
+
+#[derive(serde::Serialize, Clone, Debug, PartialEq)]
+pub struct InstallMethod {
+  /// The package manager (`bun`, `brew`, …).
+  pub tool: &'static str,
+  /// Typed into a terminal; `argv[0]` is the tool, by name when the shell finds it on PATH.
+  pub argv: Vec<String>,
+}
+
+/// Install commands for `spec` in its order of preference, for the tools `program` knows
+/// (`program(tool)` is what to put in `argv[0]`, `None` when the tool is absent).
+pub fn install_methods(spec: &ServerSpec, program: impl Fn(&str) -> Option<String>) -> Vec<InstallMethod> {
+  let mut out = Vec::new();
+  let mut add = |tool: &'static str, head: &[&str], words: &str| {
+    debug_assert!(INSTALL_TOOLS.contains(&tool));
+    if let Some(prog) = program(tool) {
+      let argv = std::iter::once(prog).chain(head.iter().map(|s| s.to_string())).chain(words.split_whitespace().map(String::from)).collect();
+      out.push(InstallMethod { tool, argv });
+    }
+  };
+  for pkg in spec.install {
+    match *pkg {
+      Package::Npm(p) => {
+        add("bun", &["add", "-g"], p);
+        add("npm", &["i", "-g"], p);
+      }
+      Package::Go(p) => add("go", &["install"], p),
+      Package::Rustup(c) => add("rustup", &["component", "add"], c),
+      Package::Brew(f) => add("brew", &["install"], f),
+      Package::PyTool(p) => {
+        add("pipx", &["install"], p);
+        add("uv", &["tool", "install"], p);
+      }
+      Package::Cargo(a) => add("cargo", &["install", "--locked"], a),
+      Package::Pip(m) => add("python3", &["-m", "pip", "install", "--user"], m),
+    }
+  }
+  out
+}
+
+#[derive(serde::Serialize, Clone, Debug, PartialEq)]
+pub struct InstallInfo {
+  pub server: &'static str,
+  pub binary: &'static str,
+  pub methods: Vec<InstallMethod>,
+}
+
+/// Install commands for the server of `language` usable on this machine (login-shell PATH).
+pub fn install_info(language: &str, root: &Path) -> Result<InstallInfo, String> {
+  let spec = spec_for(language).ok_or_else(|| format!("ไม่มี language server สำหรับ {language}"))?;
+  let home = std::env::var_os("HOME").map(PathBuf::from);
+  let path = crate::shell_env::path();
+  let methods = install_methods(&spec, |tool| {
+    // By name when the terminal's shell will find it; otherwise its full path.
+    find_executable(tool, path.as_deref(), home.as_deref(), root).map(|(p, on_path)| if on_path { tool.to_string() } else { p.to_string_lossy().into_owned() })
+  });
+  Ok(InstallInfo { server: spec.display, binary: spec.binaries[0], methods })
 }
 
 const ENV_ALLOWLIST: &[&str] = &[
@@ -334,11 +462,11 @@ fn kill(server: &Server) {
 // Commands
 
 /// Starts the server for `language`; its messages stream over `on_event`. Fails with
-/// "<server> not installed (…)" when the binary cannot be found.
+/// "ไม่ได้ติดตั้ง <server> (…)" ([`NOT_INSTALLED`]) when the binary cannot be found.
 pub fn start_for(servers: &Servers, root: &Path, language: &str, on_event: Channel<LspEvent>) -> Result<u32, String> {
-  let spec = spec_for(language).ok_or_else(|| format!("no language server for {language}"))?;
+  let spec = spec_for(language).ok_or_else(|| format!("ไม่มี language server สำหรับ {language}"))?;
   let home = std::env::var_os("HOME").map(PathBuf::from);
-  let program = resolve_binary(&spec, std::env::var_os(override_name(&spec)), crate::shell_env::path().as_deref(), home.as_deref(), root)?;
+  let program = check(language, root)?;
   let env = server_env(crate::shell_env::vars_os(), &program, home.as_deref());
   let launch = Launch { program: program.clone(), args: spec.args.iter().map(|s| s.to_string()).collect(), cwd: root.to_path_buf(), env };
   let id = servers.start(
@@ -425,12 +553,34 @@ mod tests {
 
   #[test]
   fn maps_languages_to_servers() {
-    assert_eq!(spec_for("rust").unwrap().binary, "rust-analyzer");
-    assert_eq!(spec_for("javascript").unwrap().key, "typescript");
-    assert_eq!(spec_for("typescript").unwrap().args, ["--stdio"]);
-    assert_eq!(spec_for("go").unwrap().binary, "gopls");
-    assert!(spec_for("markdown").is_none());
-    assert_eq!(override_name(&spec_for("typescript").unwrap()), "KINGU_LSP_TYPESCRIPT");
+    let s = |l: &str| spec_for(l).unwrap_or_else(|| panic!("no spec for {l}"));
+    // (language, key, binaries, args)
+    let table: &[(&str, &str, &[&str], &[&str])] = &[
+      ("rust", "rust", &["rust-analyzer"], &[]),
+      ("typescript", "typescript", &["typescript-language-server"], &["--stdio"]),
+      ("javascript", "typescript", &["typescript-language-server"], &["--stdio"]),
+      ("go", "go", &["gopls"], &[]),
+      ("svelte", "svelte", &["svelteserver"], &["--stdio"]),
+      ("python", "python", &["basedpyright-langserver", "pyright-langserver"], &["--stdio"]),
+      ("json", "json", &["vscode-json-language-server"], &["--stdio"]),
+      ("jsonc", "json", &["vscode-json-language-server"], &["--stdio"]),
+      ("css", "css", &["vscode-css-language-server"], &["--stdio"]),
+      ("scss", "css", &["vscode-css-language-server"], &["--stdio"]),
+      ("less", "css", &["vscode-css-language-server"], &["--stdio"]),
+      ("html", "html", &["vscode-html-language-server"], &["--stdio"]),
+      ("yaml", "yaml", &["yaml-language-server"], &["--stdio"]),
+      ("toml", "toml", &["taplo"], &["lsp", "stdio"]),
+    ];
+    for &(lang, key, binaries, args) in table {
+      let spec = s(lang);
+      assert_eq!((spec.key, spec.binaries, spec.args), (key, binaries, args), "{lang}");
+      assert!(!spec.install.is_empty(), "{lang} has no install method");
+    }
+    for none in ["markdown", "plaintext", "ini", "sql", "shell"] {
+      assert!(spec_for(none).is_none(), "{none}");
+    }
+    assert_eq!(override_name(&s("typescript")), "KINGU_LSP_TYPESCRIPT");
+    assert_eq!(override_name(&s("scss")), "KINGU_LSP_CSS");
   }
 
   #[cfg(unix)]
@@ -442,6 +592,10 @@ mod tests {
     p
   }
 
+  /// A spec whose binary cannot exist on any machine, so "not found" does not depend on what
+  /// is installed in /opt/homebrew/bin.
+  const MISSING: ServerSpec = ServerSpec { key: "missing", display: "Missing server", binaries: &["kingu-test-no-such-server"], args: &[], install: &[] };
+
   #[cfg(unix)]
   #[test]
   fn resolves_from_path_home_and_override() {
@@ -451,19 +605,107 @@ mod tests {
       std::fs::create_dir_all(d).unwrap();
     }
     let rust = spec_for("rust").unwrap();
-    let ts = spec_for("typescript").unwrap();
     let ra = fake_bin(&home.join(".cargo/bin"), "rust-analyzer", "");
     assert_eq!(resolve_binary(&rust, None, Some(bin.as_os_str()), Some(&home), &root).unwrap(), ra);
     let on_path = fake_bin(&bin, "rust-analyzer", "");
     assert_eq!(resolve_binary(&rust, None, Some(bin.as_os_str()), Some(&home), &root).unwrap(), on_path);
 
-    let err = resolve_binary(&ts, None, Some(bin.as_os_str()), Some(&home), &root).unwrap_err();
-    assert!(err.starts_with("TypeScript language server not installed"), "{err}");
-    assert!(err.contains("KINGU_LSP_TYPESCRIPT"), "{err}");
+    let err = resolve_binary(&MISSING, None, Some(bin.as_os_str()), Some(&home), &root).unwrap_err();
+    assert!(err.starts_with("ไม่ได้ติดตั้ง Missing server"), "{err}");
+    assert!(err.starts_with(NOT_INSTALLED), "{err}");
+    assert!(err.contains("kingu-test-no-such-server") && err.contains("KINGU_LSP_MISSING"), "{err}");
 
-    let custom = fake_bin(tmp.path(), "my-tsls", "");
-    assert_eq!(resolve_binary(&ts, Some(custom.clone().into()), None, None, &root).unwrap(), custom);
-    assert!(resolve_binary(&ts, Some("/nonexistent/tsls".into()), None, None, &root).unwrap_err().contains("not installed"));
+    let custom = fake_bin(tmp.path(), "my-server", "");
+    assert_eq!(resolve_binary(&MISSING, Some(custom.clone().into()), None, None, &root).unwrap(), custom);
+    assert!(resolve_binary(&MISSING, Some("/nonexistent/srv".into()), None, None, &root).unwrap_err().starts_with(NOT_INSTALLED));
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn resolves_every_new_server_from_fake_binaries() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (bin, root) = (tmp.path().join("bin"), tmp.path().join("ws"));
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(root.join("node_modules/.bin")).unwrap();
+    for lang in ["svelte", "python", "json", "css", "html", "yaml", "toml"] {
+      let spec = spec_for(lang).unwrap();
+      let fake = fake_bin(&bin, spec.binaries[0], "");
+      assert_eq!(resolve_binary(&spec, None, Some(bin.as_os_str()), None, &root).unwrap(), fake, "{lang}");
+    }
+    // A project-local install (node_modules/.bin) is found when PATH has none.
+    let local = fake_bin(&root.join("node_modules/.bin"), "svelteserver", "");
+    let empty = tmp.path().join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    assert_eq!(resolve_binary(&spec_for("svelte").unwrap(), None, Some(empty.as_os_str()), None, &root).unwrap(), local);
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn prefers_basedpyright_over_pyright_wherever_they_are() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (bin, home, root) = (tmp.path().join("bin"), tmp.path().join("home"), tmp.path().join("ws"));
+    for d in [&bin, &home.join(".local/bin"), &root] {
+      std::fs::create_dir_all(d).unwrap();
+    }
+    let py = spec_for("python").unwrap();
+    let path = Some(bin.as_os_str());
+    fake_bin(&bin, "pyright-langserver", "");
+    // basedpyright in an extra dir (pipx's ~/.local/bin) beats pyright on PATH.
+    let based = fake_bin(&home.join(".local/bin"), "basedpyright-langserver", "");
+    let got = resolve_binary(&py, None, path, Some(&home), &root).unwrap();
+    assert!(got.ends_with("basedpyright-langserver"), "{got:?}");
+    let based_on_path = fake_bin(&bin, "basedpyright-langserver", "");
+    assert_eq!(resolve_binary(&py, None, path, Some(&home), &root).unwrap(), based_on_path);
+    assert_ne!(based, based_on_path);
+  }
+
+  fn argvs(methods: &[InstallMethod]) -> Vec<String> {
+    methods.iter().map(|m| m.argv.join(" ")).collect()
+  }
+
+  #[test]
+  fn install_methods_follow_the_tools_present() {
+    let only = |tools: &'static [&'static str]| move |t: &str| tools.contains(&t).then(|| t.to_string());
+    let m = |lang: &str, tools: &'static [&'static str]| argvs(&install_methods(&spec_for(lang).unwrap(), only(tools)));
+    let all = INSTALL_TOOLS;
+
+    assert_eq!(m("svelte", all), ["bun add -g svelte-language-server", "npm i -g svelte-language-server"]);
+    assert_eq!(m("svelte", &["npm"]), ["npm i -g svelte-language-server"]);
+    assert_eq!(m("typescript", &["bun"]), ["bun add -g typescript-language-server typescript"]);
+    for lang in ["json", "css", "scss", "less", "html"] {
+      assert_eq!(m(lang, &["npm"]), ["npm i -g vscode-langservers-extracted"], "{lang}");
+    }
+    assert_eq!(m("yaml", all), ["bun add -g yaml-language-server", "npm i -g yaml-language-server", "brew install yaml-language-server"]);
+    assert_eq!(m("go", all), ["go install golang.org/x/tools/gopls@latest", "brew install gopls"]);
+    assert_eq!(m("go", &["brew"]), ["brew install gopls"]);
+    assert_eq!(m("rust", all), ["rustup component add rust-analyzer", "brew install rust-analyzer"]);
+    assert_eq!(m("toml", all), ["brew install taplo", "cargo install --locked taplo-cli --features lsp"]);
+    assert_eq!(m("python", all), ["pipx install basedpyright", "uv tool install basedpyright", "bun add -g basedpyright", "npm i -g basedpyright"]);
+    assert_eq!(m("python", &["uv"]), ["uv tool install basedpyright"]);
+    for lang in ["rust", "typescript", "go", "svelte", "python", "json", "css", "html", "yaml", "toml"] {
+      assert!(m(lang, &[]).is_empty(), "{lang}");
+    }
+
+    // argv stays split (the terminal quotes each word); argv[0] is whatever the probe returned.
+    let full = install_methods(&spec_for("svelte").unwrap(), |t| (t == "bun").then(|| "/Users/me/.bun/bin/bun".to_string()));
+    let argv: Vec<String> = ["/Users/me/.bun/bin/bun", "add", "-g", "svelte-language-server"].map(String::from).into();
+    assert_eq!(full, [InstallMethod { tool: "bun", argv }]);
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn finds_tools_on_path_by_name_and_elsewhere_by_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (bin, home, root) = (tmp.path().join("bin"), tmp.path().join("home"), tmp.path().join("ws"));
+    for d in [&bin, &home.join(".bun/bin"), &root] {
+      std::fs::create_dir_all(d).unwrap();
+    }
+    let bun = fake_bin(&home.join(".bun/bin"), "kingu-test-bun", "");
+    assert_eq!(find_executable("kingu-test-bun", Some(bin.as_os_str()), Some(&home), &root), Some((bun, false)));
+    let on_path = fake_bin(&bin, "kingu-test-bun", "");
+    assert_eq!(find_executable("kingu-test-bun", Some(bin.as_os_str()), Some(&home), &root), Some((on_path, true)));
+    std::fs::write(bin.join("kingu-test-noexec"), "").unwrap();
+    assert_eq!(find_executable("kingu-test-noexec", Some(bin.as_os_str()), Some(&home), &root), None);
   }
 
   #[test]

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { notifications } from '#lib/workbench/notifications.svelte.ts';
 	// Simplified VS Code Settings editor (settingsEditor2): search, User/Workspace scope tabs,
 	// grouped settings with a control per type, and a jump to the settings.json being edited.
 	// `group` narrows it to one group (the system settings page's table of contents); a search
@@ -6,26 +7,32 @@
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { commands } from '#lib/workbench/commands.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
-	import { allowedIn, parseSettingsQuery, settingsInView, settingTitle, validate, type SettingSchema, type SettingScope } from './registry';
+	import { workspace } from '#lib/workbench/workspace.svelte.ts';
+	import { allowedIn, scopeRule, settingsInView, settingTitle, validate, type SettingSchema, type SettingScope } from './registry';
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
 	import { settings } from './settings.svelte';
 	import { settingSchemas } from './schemas.svelte';
+	import ListSetting from './ListSetting.svelte';
 
-	const SCOPES: [SettingScope, string][] = [
-		['user', 'User'],
-		['workspace', 'Workspace']
-	];
+	// Repository: Kingu's per-repository overrides of the open folder (Orca's per-repo settings),
+	// kept in the app config dir, highest precedence.
+	const SCOPES = $derived<[SettingScope, string][]>([['user', 'User'], ['workspace', 'Workspace'], ...(workspace.root ? ([['repo', 'Repository']] as [SettingScope, string][]) : [])]);
+	const SCOPE_LABEL: Record<SettingScope, string> = { user: 'User', workspace: 'Workspace', repo: 'Repository' };
+	/** The layers under each scope, nearest first (what a scope inherits). */
+	const BELOW: Record<SettingScope, SettingScope[]> = { user: [], workspace: ['user'], repo: ['workspace', 'user'] };
 
 	let { group = null, query = $bindable('') }: { group?: string | null; query?: string } = $props();
 	let scope = $state<SettingScope>('user');
+	$effect(() => {
+		if (scope === 'repo' && !workspace.root) scope = 'user';
+	});
 
-	const parsed = $derived(parseSettingsQuery(query));
-	// `@modified` lists what this scope changed, across every group (VS Code's filter).
-	const visible = $derived(
-		parsed.modified
-			? settingsInView(parsed.text, null, settingSchemas.all).filter((s) => settings.inspect(s.id, scope) !== undefined)
-			: settingsInView(query, group, settingSchemas.all)
-	);
+	const isModified = (id: string) => (['user', 'workspace', 'repo'] as const).some((sc) => settings.inspect(id, sc) !== undefined);
+	const visible = $derived(settingsInView(query, group, settingSchemas.all, isModified));
+	const problemsOf = (id: string) => settings.problems.filter((p) => p.id === id && p.scope === scope);
+	const scopeProblems = $derived(settings.problems.filter((p) => p.scope === scope));
+	/** Theme pickers show the theme's label, other enums their value (like VS Code). */
+	const labelled = (s: SettingSchema) => s.id.endsWith('ColorTheme');
 
 	// The gear menu of a setting (VS Code: Reset Setting, Copy Setting ID, Copy Setting as JSON).
 	let gear = $state<{ s: SettingSchema; x: number; y: number } | null>(null);
@@ -45,29 +52,28 @@
 		for (const s of visible) out.set(s.group, [...(out.get(s.group) ?? []), s]);
 		return [...out];
 	});
-	const layer = $derived(scope === 'user' ? settings.user : settings.workspace);
+	const layer = $derived(settings.layer(scope));
 
 	/** What the control shows: the scope's own value, else what that scope inherits. */
 	function shown(s: SettingSchema): unknown {
 		const own = validate(s, settings.inspect(s.id, scope));
-		if (own !== undefined) return own;
-		if (scope === 'workspace') {
-			const user = validate(s, settings.inspect(s.id, 'user'));
-			if (user !== undefined) return user;
-		}
-		return s.default;
+		const below = BELOW[scope].filter((sc) => allowedIn(s, sc)).map((sc) => validate(s, settings.inspect(s.id, sc)));
+		// Object settings merge across layers (files.exclude adds to the defaults).
+		if (s.type === 'object') return Object.assign({}, s.default, ...below.toReversed(), own);
+		return own ?? below.find((v) => v !== undefined) ?? s.default;
 	}
 
 	const modifiedHere = (s: SettingSchema) => settings.inspect(s.id, scope) !== undefined;
-	const otherScope = $derived<SettingScope>(scope === 'user' ? 'workspace' : 'user');
+	/** The other scopes that set this setting (and may). */
+	const alsoIn = (s: SettingSchema) => (['user', 'workspace', 'repo'] as SettingScope[]).filter((sc) => sc !== scope && allowedIn(s, sc) && settings.inspect(s.id, sc) !== undefined);
 
 	async function update(s: SettingSchema, value: unknown) {
 		try {
 			// Writing the default to the user file is the same as removing it, like VS Code.
-			const remove = value === undefined || (scope === 'user' && value === s.default);
+			const remove = value === undefined || (scope === 'user' && JSON.stringify(value) === JSON.stringify(s.default));
 			await settings.set(s.id, remove ? undefined : value, scope);
 		} catch (e) {
-			status.error(`บันทึกการตั้งค่าไม่สำเร็จ: ${e instanceof Error ? e.message : e}`);
+			notifications.error(`บันทึกการตั้งค่าไม่สำเร็จ: ${e instanceof Error ? e.message : e}`);
 		}
 	}
 
@@ -82,6 +88,11 @@
 	}
 
 	function openJson() {
+		// The per-repository file lives in the app config dir: it is edited here only.
+		if (scope === 'repo') {
+			status.flash(`การตั้งค่า Repository เก็บที่ ${layer.path || 'config ของ Kingu'} — แก้ไขในหน้านี้`);
+			return;
+		}
 		void commands.run(scope === 'user' ? 'workbench.action.openSettingsJson' : 'workbench.action.openWorkspaceSettingsFile');
 	}
 </script>
@@ -119,6 +130,11 @@
 			{/each}
 			<span class="ml-auto self-center truncate pb-1.5 text-xs text-(--vscode-descriptionForeground)" title={layer.path}>{layer.path}</span>
 		</div>
+		{#if scopeProblems.length}
+			<p role="alert" class="rounded-sm border border-(--vscode-editorWarning-foreground) px-2 py-1 text-xs text-(--vscode-editorWarning-foreground)">
+				มี {scopeProblems.length} ค่าใน settings.json ที่ใช้ไม่ได้และถูกละไว้: {scopeProblems.map((p) => p.id).join(', ')} (Invalid values fall back to the next layer.)
+			</p>
+		{/if}
 		{#if layer.error}
 			<p role="alert" class="rounded-sm border border-(--vscode-editorError-foreground) px-2 py-1 text-xs text-(--vscode-errorForeground)">
 				อ่าน settings.json ไม่ได้ ({layer.error}) — ใช้ค่าล่าสุดที่อ่านได้ แก้ไฟล์ผ่าน Open Settings (JSON)
@@ -137,8 +153,8 @@
 					<div class={['group/setting relative rounded-md py-2 pr-2 pl-4 hover:bg-(--vscode-list-hoverBackground)/50', modifiedHere(s) && 'rounded-l-none border-l-2 border-(--vscode-settings-modifiedItemIndicator) pl-[14px]']}>
 						<div class="flex items-center gap-2 text-[13px]">
 							<span><span class="text-(--vscode-descriptionForeground)">{title.category}:</span> <span class="font-semibold">{title.label}</span></span>
-							{#if settings.inspect(s.id, otherScope) !== undefined && allowedIn(s, otherScope)}
-								<span class="text-xs text-(--vscode-descriptionForeground) italic">({scope === 'user' ? 'Also modified in: Workspace' : 'Modified in: User'})</span>
+							{#if alsoIn(s).length}
+								<span class="text-xs text-(--vscode-descriptionForeground) italic">(Also modified in: {alsoIn(s).map((sc) => SCOPE_LABEL[sc]).join(', ')})</span>
 							{/if}
 							<span class="ml-auto flex items-center gap-2">
 								{#if modifiedHere(s)}
@@ -181,7 +197,7 @@
 									{disabled}
 									onchange={(e) => onNumber(s, e.currentTarget)}
 								/>
-							{:else if s.enum}
+							{:else if s.type === 'string' && s.enum}
 								<select
 									class="mt-1.5 h-[26px] min-w-[200px] rounded-sm border border-(--vscode-dropdown-border) bg-(--vscode-dropdown-background) px-1 text-[13px] text-(--vscode-dropdown-foreground) outline-none focus:border-(--vscode-focusBorder)"
 									value={value as string}
@@ -189,13 +205,15 @@
 									onchange={(e) => update(s, e.currentTarget.value)}
 								>
 									{#each s.enum as option, i (option)}
-										<option value={option}>{s.enumDescriptions?.[i] && s.id === 'workbench.colorTheme' ? s.enumDescriptions[i] : option}</option>
+										<option value={option}>{s.enumDescriptions?.[i] && labelled(s) ? s.enumDescriptions[i] : option}</option>
 									{/each}
 								</select>
-								{#if s.enumDescriptions && s.id !== 'workbench.colorTheme'}
+								{#if s.enumDescriptions && !labelled(s)}
 									{@const i = s.enum.indexOf(value as string)}
 									{#if i >= 0 && s.enumDescriptions[i]}<p class="mt-1 text-xs text-(--vscode-descriptionForeground)">{s.enumDescriptions[i]}</p>{/if}
 								{/if}
+							{:else if s.type === 'array' || s.type === 'object'}
+								<ListSetting schema={s} {value} {disabled} onchange={(v) => update(s, v)} />
 							{:else}
 								<input
 									type="text"
@@ -206,8 +224,11 @@
 								/>
 							{/if}
 						{/if}
+						{#each problemsOf(s.id) as p (p.message)}
+							<p class="mt-1 text-xs text-(--vscode-editorWarning-foreground)">{p.message}</p>
+						{/each}
 						{#if disabled}
-							<p class="mt-1 text-xs text-(--vscode-editorWarning-foreground)">ตั้งค่านี้ได้เฉพาะใน User (This setting can only be applied in user settings.)</p>
+							<p class="mt-1 text-xs text-(--vscode-editorWarning-foreground)">{scopeRule(s)}</p>
 						{/if}
 					</div>
 				{/each}

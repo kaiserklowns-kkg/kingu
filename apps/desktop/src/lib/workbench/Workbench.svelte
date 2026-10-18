@@ -6,13 +6,10 @@
 	// body and status bar, which stay mounted (hidden) so editors and terminals keep their state.
 	import { onMount, untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
-	import { ask } from './dialogService.svelte';
-	import Dialog from './Dialog.svelte';
-	import { dialogs } from './dialogService.svelte';
+	import { message } from '#lib/workbench/messageBox.ts';
 	import AgentPanel from '#lib/agent/AgentPanel.svelte';
 	import ActivityBar from './ActivityBar.svelte';
 	import Icon from './Icon.svelte';
-	import Toasts from './Toasts.svelte';
 	import CleanupDialog from '#lib/ade/CleanupDialog.svelte';
 	import { cleanup } from '#lib/ade/cleanup.svelte.ts';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
@@ -28,6 +25,8 @@
 	import EditorPart from './EditorPart.svelte';
 	import Panel from './Panel.svelte';
 	import QuickInput from './QuickInput.svelte';
+	import RepoDialog from './RepoDialog.svelte';
+	import { repoDialog } from './repoDialog.svelte.ts';
 	import Sash from './Sash.svelte';
 	import SideBar from './SideBar.svelte';
 	import StatusBar from './StatusBar.svelte';
@@ -52,12 +51,30 @@
 	import { gridTemplateAreas, gridTemplateColumns, gridTemplateRows, workbenchGrid, type PanelAlignment, type PanelLocation, type SideBarLocation } from './workbenchGrid';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import AgentsLayout from '#lib/ade/AgentsLayout.svelte';
+	import AdeDialogs from '#lib/ade/AdeDialogs.svelte';
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
+	import { quickOpenWorktree } from '#lib/ade/quickOpen.svelte.ts';
+	import { installTerminalSessions } from './terminalSessions.svelte';
+	import { installTerminalCommands, panelTerminalFocus } from '#lib/terminal/terminalCommands.svelte.ts';
+	import { adeInFront, installAdeCommands } from '#lib/ade/adeCommands.svelte.ts';
+	import { accounts } from '#lib/accounts/accounts.svelte.ts';
 	import SettingsPage from '#lib/settings/SettingsPage.svelte';
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 	import { installAgentsMode } from '#lib/ade/agentsMode.svelte.ts';
 	import { installWorktreeCommands } from '#lib/ade/worktreeMenu.svelte.ts';
+	import { installAgentNotifications } from '#lib/ade/agentNotify.svelte.ts';
+	import { installAutomations } from '#lib/ade/automations.svelte.ts';
+	import { installIssues } from '#lib/ade/issues.svelte.ts';
 	import { installSnaps } from '#lib/snaps/snaps.svelte.ts';
+	import { installDebug } from '#lib/debug/debug.svelte.ts';
+	import { installCloseGuard, quit } from './closeGuard.svelte';
+	import { installEditorRestore } from './editorRestore.svelte';
+	import { textFiles } from './textFileService.svelte';
+	import { registerEditorStatusCommands } from './editorStatusActions.svelte';
+	import { installEditorCommands } from './editorCommands.svelte';
+	import { installNotificationCommands } from './notificationCommands.svelte';
+	import NotificationToasts from './NotificationToasts.svelte';
+	import { recentFiles } from './recentFiles.svelte';
 
 	// Opening a file or diff (Quick Open, a review file, settings.json) closes the system settings page.
 	// `editors.active` also re-runs on focus changes, so only a different editor closes it.
@@ -101,10 +118,17 @@
 				keyWhen: () => !document.activeElement?.closest('.xterm'),
 				run: () => workspace.showRecent()
 			}),
-			commands.register({ id: 'workbench.action.clearRecentFiles', title: 'Clear Recently Opened', category: 'File', run: () => workspace.clearRecent() }),
+			commands.register({ id: 'kingu.newProject', title: 'New Project...', category: 'File', run: () => repoDialog.show('create') }),
+			commands.register({ id: 'workbench.action.clearRecentFiles', title: 'Clear Recently Opened', category: 'File', run: () => (recentFiles.clear(), workspace.clearRecent()) }),
+			commands.register({ id: 'workbench.action.clearEditorHistory', title: 'Clear Editor History', category: 'View', run: () => recentFiles.clear() }),
+			// Quick access prefixes (VS Code: ⇧⌘O `@`, ⌘T `#`).
+			commands.register({ id: 'workbench.action.gotoSymbol', title: 'Go to Symbol in Editor...', key: 'cmd+shift+o', when: () => !appMode.isAgents && editors.active !== null, run: () => quick.show('@') }),
+			commands.register({ id: 'workbench.action.showAllSymbols', title: 'Go to Symbol in Workspace...', key: 'cmd+t', run: () => quick.show('#') }),
+			commands.register({ id: 'workbench.action.quickOpenView', title: 'Quick Open View', key: 'ctrl+q', palette: false, run: () => quick.show('view ') }),
 			// Go Back / Go Forward (VS Code: ⌃- / ⌃⇧- on macOS, Alt+←/→ elsewhere).
-			commands.register({ id: 'workbench.action.navigateBack', title: 'Go Back', key: 'alt+left', mac: 'ctrl+-', when: () => navigation.canGoBack, run: () => navigation.back() }),
-			commands.register({ id: 'workbench.action.navigateForward', title: 'Go Forward', key: 'alt+right', mac: 'ctrl+shift+-', when: () => navigation.canGoForward, run: () => navigation.forward() }),
+			// Off macOS Alt+←/→ move between split terminals while a panel terminal has focus (VS Code).
+			commands.register({ id: 'workbench.action.navigateBack', title: 'Go Back', key: 'alt+left', mac: 'ctrl+-', when: () => navigation.canGoBack, keyWhen: () => isMac || !panelTerminalFocus(), run: () => navigation.back() }),
+			commands.register({ id: 'workbench.action.navigateForward', title: 'Go Forward', key: 'alt+right', mac: 'ctrl+shift+-', when: () => navigation.canGoForward, keyWhen: () => isMac || !panelTerminalFocus(), run: () => navigation.forward() }),
 			commands.register({ id: 'workbench.action.openView', title: 'Open View...', run: openView }),
 			commands.register({ id: 'workbench.action.openGlobalKeybindings', title: 'Open Keyboard Shortcuts', category: 'Preferences', run: showKeybindings }),
 			commands.register({ id: 'workbench.action.showAboutDialog', title: 'About', category: 'Help', run: showAbout }),
@@ -114,10 +138,7 @@
 				category: 'File',
 				// macOS quits through the app menu's Quit item.
 				when: () => !isMac,
-				run: async () => {
-					if (editors.hasDirty() && !(await ask(`มี ${editors.dirtyCount()} ไฟล์ที่ยังไม่บันทึก ออกจาก Kingu และทิ้งการแก้ไข?`, { title: 'ยังไม่ได้บันทึก', kind: 'warning', okLabel: 'ออก', cancelLabel: 'ยกเลิก' }))) return;
-					await invoke('app_quit');
-				}
+				run: quit
 			}),
 			commands.register({ id: 'workbench.action.closeFolder', title: 'Close Folder', category: 'Workspaces', when: () => workspace.root !== null, run: () => workspace.closeFolder() }),
 			commands.register({
@@ -136,8 +157,10 @@
 			}),
 			commands.register({ id: 'workbench.files.action.refreshFilesExplorer', title: 'Refresh Explorer', category: 'File', when: () => workspace.root !== null, run: () => explorer.refresh(['']) }),
 			commands.register({ id: 'workbench.files.action.collapseExplorerFolders', title: 'Collapse Folders in Explorer', category: 'File', when: () => workspace.root !== null, run: () => explorer.collapseAll() }),
-			commands.register({ id: 'workbench.action.quickOpen', title: 'Go to File...', key: 'cmd+p', run: () => quick.show('') }),
-			commands.register({ id: 'workbench.action.gotoSymbol', title: 'Go to Symbol in Editor...', key: 'cmd+shift+o', when: () => !appMode.isAgents && editors.active !== null, run: () => quick.show('@') }),
+			// In the Agents layout ⌘P lists the selected worktree's files and opens them in its tabs (Orca).
+			commands.register({ id: 'workbench.action.quickOpen', title: 'Go to File...', key: 'cmd+p', run: () => (appMode.isAgents && workspace.root ? quickOpenWorktree(adeLayout.key) : quick.show('')) }),
+			// VS Code's Developer: Reload Window; terminals and agent CLIs re-attach (they live in Rust).
+			commands.register({ id: 'workbench.action.reloadWindow', title: 'Reload Window', category: 'Developer', run: async () => (await textFiles.beforeShutdown('reload')) && location.reload() }),
 			commands.register({ id: 'workbench.action.showCommands', title: 'Show All Commands', key: 'cmd+shift+p', palette: false, run: () => quick.show('>') }),
 			// In Agents mode ⌘B / ⌘J toggle the sessions side bar and the changes panel instead.
 			commands.register({
@@ -221,7 +244,7 @@
 				}
 			}),
 			commands.register({ id: 'workbench.view.explorer', title: 'Show Explorer', category: 'View', key: 'cmd+shift+e', keyWhen: () => !appMode.isAgents, run: () => ((layout.sideView = 'explorer'), (layout.sidebarVisible = true)) }),
-			commands.register({ id: 'workbench.action.findInFiles', title: 'Search: Find in Files', key: 'cmd+shift+f', run: () => ((layout.sideView = 'search'), (layout.sidebarVisible = true), search.reveal(editors.selectionText())) }),
+			commands.register({ id: 'workbench.action.findInFiles', title: 'Search: Find in Files', key: 'cmd+shift+f', keyWhen: () => !appMode.isAgents, run: () => ((layout.sideView = 'search'), (layout.sidebarVisible = true), search.reveal(editors.selectionText())) }),
 			commands.register({ id: 'workbench.view.scm', title: 'Show Source Control', category: 'View', key: 'ctrl+shift+g', run: () => ((layout.sideView = 'scm'), (layout.sidebarVisible = true)) }),
 			commands.register({ id: 'workbench.actions.view.problems', title: 'Focus on Problems View', category: 'View', key: 'cmd+shift+m', run: () => layout.showPanel('problems') }),
 			commands.register({
@@ -230,16 +253,16 @@
 				category: 'View',
 				key: 'cmd+w',
 				// An empty group closes itself when it is not the only one (VS Code closes the group).
-				when: () => editors.active !== null || editors.groups.length > 1 || (appMode.isAgents && adeLayout.activeFile() !== null),
+				// In the Agents layout ⌘W closes the active tab, or the focused pane of a split terminal (Orca).
+				when: () => adeInFront() || editors.active !== null || editors.groups.length > 1,
 				run: () => {
-					const adeFile = appMode.isAgents ? adeLayout.activeFile() : null;
-					if (adeFile) void adeLayout.closeFile(adeLayout.key, adeFile);
+					if (adeInFront()) adeLayout.closeActive();
 					else if (!editors.active) editors.removeGroup();
-					else if (!editors.close(editors.active)) status.flash('มีการแก้ไขที่ยังไม่บันทึก: กด ⌘S ก่อนปิด');
+					else void textFiles.closeEditors([editors.active]);
 				}
 			}),
 			// Editor groups (VS Code editorCommands.ts / editorActions.ts, macOS keys).
-			commands.register({ id: 'workbench.action.splitEditor', title: 'Split Editor', category: 'View', key: 'cmd+\\', run: () => editors.split('right') }),
+			commands.register({ id: 'workbench.action.splitEditor', title: 'Split Editor', category: 'View', key: 'cmd+\\', keyWhen: () => !panelTerminalFocus(), run: () => editors.split('right') }),
 			commands.register({ id: 'workbench.action.splitEditorDown', title: 'Split Editor Down', category: 'View', run: () => editors.split('down') }),
 			commands.register({ id: 'workbench.action.focusFirstEditorGroup', title: 'Focus First Editor Group', category: 'View', key: 'cmd+1', run: () => editors.focusGroupAt(0) }),
 			commands.register({ id: 'workbench.action.focusSecondEditorGroup', title: 'Focus Second Editor Group', category: 'View', key: 'cmd+2', run: () => editors.focusGroupAt(1) }),
@@ -248,9 +271,13 @@
 				id: 'workbench.action.closeEditorsInGroup',
 				title: 'Close All Editors in Group',
 				category: 'View',
+				key: 'cmd+k w',
 				when: () => editors.tabs.length > 0 || editors.groups.length > 1,
-				run: () => {
-					if (editors.closeAllInGroup().length) status.flash('มีการแก้ไขที่ยังไม่บันทึก: บันทึกก่อนปิดแท็บที่เหลือ');
+				// One Save / Don't Save / Cancel for every dirty tab, then the rest close (VS Code's Close All).
+				run: async () => {
+					const group = editors.activeGroupId;
+					await textFiles.closeEditors(editors.tabs.map((t) => t.path), group);
+					if (!editors.group(group)?.tabs.length) editors.closeAllInGroup(group);
 				}
 			}),
 			commands.register({
@@ -260,7 +287,7 @@
 				when: () => editors.active !== null,
 				run: () => editors.moveActiveEditorToNextGroup()
 			}),
-			commands.register({ id: 'workbench.action.keepEditor', title: 'Keep Editor', category: 'View', when: () => editors.active !== null, run: () => editors.active && editors.pin(editors.active) })
+			commands.register({ id: 'workbench.action.keepEditor', title: 'Keep Editor', category: 'View', key: 'cmd+k enter', when: () => editors.active !== null, run: () => editors.active && editors.pin(editors.active) })
 		];
 		const uninstall = installKeybindings();
 		const uninstallMenu = installNativeMenu();
@@ -271,13 +298,43 @@
 		const uninstallAde = installAde();
 		const uninstallAgentsMode = installAgentsMode();
 		const uninstallWorktreeCommands = installWorktreeCommands();
+		const uninstallAgentNotifications = installAgentNotifications();
+		const uninstallAutomations = installAutomations();
+		const uninstallIssues = installIssues();
 		const uninstallLayout = installLayoutCommands();
 		const uninstallSnaps = installSnaps();
+		const uninstallTerminalSessions = installTerminalSessions();
+		const uninstallTerminalCommands = installTerminalCommands();
+		const uninstallAdeCommands = installAdeCommands();
+		const uninstallDebug = installDebug();
+		const uninstallAccounts = accounts.install();
+		const uninstallTextFiles = textFiles.install();
+		const unregisterEditorStatus = registerEditorStatusCommands();
+		const uninstallCloseGuard = installCloseGuard();
+		const uninstallEditorRestore = installEditorRestore();
+		const uninstallEditorCommands = installEditorCommands();
+		const uninstallRecentFiles = recentFiles.install();
+		const uninstallNotificationCommands = installNotificationCommands();
 		return () => {
+			uninstallNotificationCommands();
+			uninstallRecentFiles();
+			uninstallEditorCommands();
+			uninstallEditorRestore();
+			uninstallCloseGuard();
+			unregisterEditorStatus();
+			uninstallTextFiles();
+			uninstallAccounts();
+			uninstallDebug();
+			uninstallAdeCommands();
+			uninstallTerminalCommands();
+			uninstallTerminalSessions();
 			uninstallSnaps();
 			uninstallLayout();
 			uninstallAgentsMode();
 			uninstallWorktreeCommands();
+			uninstallIssues();
+			uninstallAutomations();
+			uninstallAgentNotifications();
 			uninstallAde();
 			uninstallMenu();
 			uninstall();
@@ -295,14 +352,16 @@
 			['explorer', 'Explorer', () => layout.showView('explorer')],
 			['search', 'Search', () => layout.showView('search')],
 			['scm', 'Source Control', () => layout.showView('scm')],
+			['debug', 'Run and Debug', () => layout.showView('debug')],
 			['agents', 'Agents', () => layout.showView('agents')],
 			['problems', 'Problems', () => layout.showPanel('problems')],
 			['output', 'Output', () => layout.showPanel('output')],
+			['debugConsole', 'Debug Console', () => layout.showPanel('debugConsole')],
 			['terminal', 'Terminal', () => layout.showPanel('terminal')]
 		];
 		quick.pick({
 			placeholder: 'เลือกมุมมองที่จะเปิด (Open View)',
-			items: views.map(([id, label], i) => ({ id, label, separator: i === 0 ? 'Side Bar' : i === 4 ? 'Panel' : undefined })),
+			items: views.map(([id, label], i) => ({ id, label, separator: i === 0 ? 'Side Bar' : i === 5 ? 'Panel' : undefined })),
 			onAccept: (item) => {
 				const view = views.find(([id]) => id === item.id);
 				if (!view) return;
@@ -423,12 +482,14 @@
 	<!-- System settings (IDE + ADE) over the content of either mode. -->
 	{#if systemSettings.visible}<SettingsPage />{/if}
 
-	{#if !layout.zen}<StatusBar />{/if}
+	<!-- workbench.statusBar.visible (kept mounted so its items keep their state); zen mode hides it. -->
+	<div class={['contents', (layout.zen || !settings.get<boolean>('workbench.statusBar.visible')) && '[&>*]:hidden']}><StatusBar /></div>
 	<FloatingTerminal />
 	{#if welcome.open}<Welcome />{/if}
-	<Toasts />
 	{#if cleanup.open}<CleanupDialog />{/if}
-	{#if dialogs.current}<Dialog />{/if}
 	<Tooltips />
 	<QuickInput />
+	<AdeDialogs />
+	<RepoDialog />
+	<NotificationToasts />
 </div>

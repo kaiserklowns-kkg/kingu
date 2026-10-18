@@ -29,13 +29,15 @@ pub struct ProcessRow {
   cpu: f32,
   /// The executable's base name (`zsh`, `node`, `claude`).
   name: String,
+  /// False for the terminal daemon (it holds every terminal) and WebKit's processes (the window).
+  stoppable: bool,
 }
 
 #[derive(serde::Serialize)]
 pub struct Stats {
   /// Resident memory of Kingu and every process below it (shells, agent CLIs, language servers),
-  /// summed RSS. WebKit's web-content processes are not our children and are not counted.
-  /// `None` off Unix.
+  /// summed RSS, plus the WebKit processes that render our window (`webkit`; launchd starts them,
+  /// so they are not our children). `None` off Unix.
   memory_bytes: Option<u64>,
   /// Summed CPU of the same tree; above 100 means more than one core.
   cpu_percent: Option<f32>,
@@ -71,6 +73,15 @@ fn parse_ps(text: &str) -> Vec<Proc> {
     .collect()
 }
 
+/// Kingu and every process below it, plus the terminal daemon's tree (it is not our child).
+fn kingu_tree(rows: &[Proc], daemon: Option<u32>) -> HashSet<u32> {
+  let mut ours = tree(rows, std::process::id());
+  if let Some(d) = daemon {
+    ours.extend(tree(rows, d));
+  }
+  ours
+}
+
 /// `root` and every process below it.
 fn tree(rows: &[Proc], root: u32) -> HashSet<u32> {
   let mut seen = HashSet::from([root]);
@@ -91,6 +102,67 @@ fn ps() -> Option<Vec<Proc>> {
   }
   let out = Command::new("ps").args(["-A", "-o", "pid=,ppid=,rss=,%cpu=,comm="]).output().ok()?;
   Some(parse_ps(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// `…/com.apple.WebKit.WebContent` → `WebView (WebContent)`.
+fn webkit_name(command: &str) -> String {
+  let base = base_name(command);
+  format!("WebView ({})", base.strip_prefix("com.apple.WebKit.").unwrap_or(&base))
+}
+
+/// The pids of the WebKit processes behind each window's webview (web content, GPU, networking),
+/// through WKWebView's private `_…ProcessIdentifier` getters (checked with `respondsToSelector:`).
+#[cfg(target_os = "macos")]
+pub fn webkit_pids<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Vec<u32> {
+  use tauri::Manager;
+  let mut pids = Vec::new();
+  for window in app.webview_windows().into_values() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    // Runs on the main thread; never block it from there, so the wait below has a timeout.
+    if window.with_webview(move |w| _ = tx.send(unsafe { objc::webview_pids(w.inner()) })).is_ok() {
+      pids.extend(rx.recv_timeout(std::time::Duration::from_millis(500)).unwrap_or_default());
+    }
+  }
+  pids.sort_unstable();
+  pids.dedup();
+  pids
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn webkit_pids<R: tauri::Runtime>(_app: &tauri::AppHandle<R>) -> Vec<u32> {
+  Vec::new()
+}
+
+#[cfg(target_os = "macos")]
+mod objc {
+  use std::ffi::{c_char, c_void, CStr};
+
+  #[link(name = "objc")]
+  unsafe extern "C" {
+    fn sel_registerName(name: *const c_char) -> *const c_void;
+    fn objc_msgSend();
+  }
+
+  /// # Safety
+  /// `view` must be a live WKWebView, used on the main thread.
+  pub unsafe fn webview_pids(view: *mut c_void) -> Vec<u32> {
+    if view.is_null() {
+      return Vec::new();
+    }
+    unsafe {
+      let responds: unsafe extern "C" fn(*mut c_void, *const c_void, *const c_void) -> i8 = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+      let get_pid: unsafe extern "C" fn(*mut c_void, *const c_void) -> i32 = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+      let responds_sel = sel_registerName(c"respondsToSelector:".as_ptr());
+      let names: [&CStr; 3] = [c"_webProcessIdentifier", c"_gpuProcessIdentifier", c"_networkProcessIdentifier"];
+      names
+        .iter()
+        .filter_map(|name| {
+          let sel = sel_registerName(name.as_ptr());
+          (responds(view, responds_sel, sel) != 0).then(|| get_pid(view, sel)).filter(|pid| *pid > 0).map(|pid| pid as u32)
+        })
+        .collect()
+    }
+  }
 }
 
 fn base_name(command: &str) -> String {
@@ -130,13 +202,15 @@ impl KeepAwake {
   }
 }
 
-pub fn stats(terminals: Vec<PtyInfo>, keep: &KeepAwake) -> Stats {
+/// `daemon`: the terminal daemon's pid, whose shells and agent CLIs count as Kingu's.
+pub fn stats(terminals: Vec<PtyInfo>, daemon: Option<u32>, webkit: &[u32], keep: &KeepAwake) -> Stats {
   let keep_awake = cfg!(target_os = "macos").then(|| keep.is_on());
   let Some(rows) = ps() else {
     return Stats { memory_bytes: None, cpu_percent: None, terminals, processes: Vec::new(), keep_awake };
   };
   let me = std::process::id();
-  let ours = tree(&rows, me);
+  let mut ours = kingu_tree(&rows, daemon);
+  ours.extend(webkit.iter().copied().filter(|pid| rows.iter().any(|p| p.pid == *pid)));
   let mine: Vec<&Proc> = rows.iter().filter(|p| ours.contains(&p.pid)).collect();
   let memory = mine.iter().map(|p| p.rss).sum::<u64>() * 1024;
   let cpu = mine.iter().map(|p| p.cpu).sum::<f32>();
@@ -144,7 +218,11 @@ pub fn stats(terminals: Vec<PtyInfo>, keep: &KeepAwake) -> Stats {
     .iter()
     // Leaves out Kingu itself and the `ps` / `lsof` that are reading it right now.
     .filter(|p| p.pid != me && !(p.ppid == me && matches!(base_name(&p.command).as_str(), "ps" | "lsof")))
-    .map(|p| ProcessRow { pid: p.pid, ppid: p.ppid, rss_bytes: p.rss * 1024, cpu: p.cpu, name: base_name(&p.command) })
+    .map(|p| {
+      let web = webkit.contains(&p.pid);
+      let name = if web { webkit_name(&p.command) } else { base_name(&p.command) };
+      ProcessRow { pid: p.pid, ppid: p.ppid, rss_bytes: p.rss * 1024, cpu: p.cpu, name, stoppable: !web && Some(p.pid) != daemon }
+    })
     .collect();
   processes.sort_by_key(|p| std::cmp::Reverse(p.rss_bytes));
   Stats { memory_bytes: Some(memory), cpu_percent: Some(cpu), terminals, processes, keep_awake }
@@ -173,12 +251,12 @@ fn parse_lsof(text: &str) -> Vec<(u32, String, String, u16)> {
 }
 
 /// TCP ports in LISTEN state, Kingu's own first, then by port. Empty where `lsof` is missing.
-pub fn ports() -> Result<Vec<Port>, String> {
+pub fn ports(daemon: Option<u32>) -> Result<Vec<Port>, String> {
   if !cfg!(unix) {
     return Err("port scan needs macOS or Linux".into());
   }
   let out = Command::new("lsof").args(["-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pcn"]).output().map_err(|e| format!("lsof: {e}"))?;
-  let ours = ps().map(|rows| tree(&rows, std::process::id())).unwrap_or_default();
+  let ours = ps().map(|rows| kingu_tree(&rows, daemon)).unwrap_or_default();
   let mut seen = HashSet::new();
   let mut ports: Vec<Port> = parse_lsof(&String::from_utf8_lossy(&out.stdout))
     .into_iter()
@@ -192,10 +270,10 @@ pub fn ports() -> Result<Vec<Port>, String> {
 
 /// SIGTERM to a process, but only one that runs under Kingu: the webview can never stop
 /// another app's process.
-pub fn kill(pid: u32) -> Result<(), String> {
+pub fn kill(pid: u32, daemon: Option<u32>) -> Result<(), String> {
   let rows = ps().ok_or("not supported here")?;
   let me = std::process::id();
-  if pid == me || !tree(&rows, me).contains(&pid) {
+  if pid == me || Some(pid) == daemon || !kingu_tree(&rows, daemon).contains(&pid) {
     return Err(format!("process {pid} was not started by Kingu"));
   }
   let ok = Command::new("kill").args(["-TERM", &pid.to_string()]).status().map_err(|e| e.to_string())?.success();
@@ -213,12 +291,12 @@ pub fn open_local_url(url: &str) -> Result<(), String> {
   Command::new(program).arg(parsed.as_str()).spawn().map(|_| ()).map_err(|e| format!("{program}: {e}"))
 }
 
-/// A pull request or check page in the default browser: https only, so nothing local or
-/// scriptable can be opened this way.
+/// Opens a web page (`http`/`https` only: a terminal link, pull request or check page must never
+/// launch other handlers) in the default browser.
 pub fn open_web_url(url: &str) -> Result<(), String> {
   let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
-  if parsed.scheme() != "https" || parsed.host_str().is_none() {
-    return Err("only https links open in the browser".into());
+  if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+    return Err(format!("{}: เปิดได้เฉพาะลิงก์ http/https", parsed.scheme()));
   }
   let program = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
   Command::new(program).arg(parsed.as_str()).spawn().map(|_| ()).map_err(|e| format!("{program}: {e}"))
@@ -227,6 +305,13 @@ pub fn open_web_url(url: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn web_links_open_only_http_and_https() {
+    assert!(open_web_url("file:///etc/passwd").is_err());
+    assert!(open_web_url("javascript:alert(1)").is_err());
+    assert!(open_web_url("not a url").is_err());
+  }
 
   #[test]
   fn finds_a_process_tree() {
@@ -255,7 +340,9 @@ mod tests {
 
   #[test]
   fn refuses_to_kill_foreign_processes() {
-    assert!(kill(1).is_err());
-    assert!(kill(std::process::id()).is_err());
+    assert!(kill(1, None).is_err());
+    assert!(kill(std::process::id(), None).is_err());
+    // The terminal daemon itself is never stopped from here (only what runs under it).
+    assert!(kill(4242, Some(4242)).is_err());
   }
 }

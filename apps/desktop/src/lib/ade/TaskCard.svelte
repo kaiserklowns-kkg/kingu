@@ -2,10 +2,11 @@
 	// One task, Orca-style: title, branch, agent + model, last event, +/- vs base, time ago and the
 	// review/PR chip. Enter/click opens the task page; actions show on hover and keyboard focus.
 	import Icon from '#lib/workbench/Icon.svelte';
-	import { aggregateStats, formatSummaryUsage, reviewChip, STATUS_LABEL, timeAgo, type TaskView } from './model';
+	import { aggregateStats, formatSummaryUsage, isQuestion, reviewChip, statusLabel, timeAgo, type TaskView } from './model';
 	import { adeTasks } from './tasks.svelte';
-	import { ICON_BUTTON, STATUS_DOT, TONE } from './ui';
+	import { ICON_BUTTON, QUESTION_TEXT, statusDot, TONE } from './ui';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
+	import { issues } from './issues.svelte.ts';
 
 	let { view }: { view: TaskView } = $props();
 	/** The session shown in the Agents layout. */
@@ -33,7 +34,7 @@
 <div
 	role="button"
 	tabindex="0"
-	aria-label="{meta.title} — {STATUS_LABEL[view.status]}"
+	aria-label="{meta.title} — {statusLabel(view)}"
 	aria-current={selected ? 'true' : undefined}
 	class={[
 		'group relative cursor-pointer rounded-lg border bg-(--vscode-editor-background) p-2.5 text-xs outline-none transition-[border-color,box-shadow] hover:border-(--vscode-focusBorder)/60 hover:shadow-md hover:shadow-black/25 focus-visible:border-(--vscode-focusBorder)',
@@ -43,18 +44,26 @@
 	onkeydown={onKey}
 >
 	<div class="flex items-center gap-1.5">
-		<span class={['size-2 shrink-0 rounded-full', STATUS_DOT[view.status]]} title={STATUS_LABEL[view.status]}></span>
+		<span class={['size-2 shrink-0 rounded-full', statusDot(view)]} title={statusLabel(view)}></span>
 		<span class="min-w-0 flex-1 truncate font-medium text-(--vscode-foreground)" title={meta.title}>{meta.title}</span>
 		<span class="shrink-0 text-(--vscode-descriptionForeground)">{timeAgo(when, adeTasks.now)}</span>
 	</div>
 	<div class="mt-1 flex items-center gap-1 truncate font-mono text-[11px] text-(--vscode-descriptionForeground)" title="kingu/{meta.slug} ← {meta.base}">
 		<Icon name="branch" size={12} /><span class="truncate">kingu/{meta.slug}</span><span class="shrink-0 opacity-70">← {meta.base}</span>
 	</div>
-	<div class="mt-0.5 truncate text-(--vscode-descriptionForeground)">{meta.agent}{model ? ` · ${model}` : ''}</div>
+	<div class="mt-0.5 flex items-center gap-1.5 text-(--vscode-descriptionForeground)">
+		<span class="min-w-0 flex-1 truncate">{meta.agent}{model ? ` · ${model}` : ''}</span>
+		{#if meta.issue}
+			{@const issue = meta.issue}
+			<button class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" title="เปิด issue #{issue.number} บน GitHub: {issue.title}" onclick={(e) => (e.stopPropagation(), issues.open(issue))}>#{issue.number}</button>
+		{/if}
+	</div>
 	{#if busy}
 		<div class="mt-1 truncate text-(--vscode-editorInfo-foreground)">{busy}…</div>
+	{:else if isQuestion(view)}
+		<div class="mt-1 flex items-center gap-1 truncate {QUESTION_TEXT}" title={summary}><Icon name="question" size={12} filled /><span class="truncate">{summary}</span></div>
 	{:else if view.status === 'waiting'}
-		<div class="mt-1 truncate text-(--vscode-editorWarning-foreground)">รออนุญาต {view.runtime?.pendingPermissions ?? ''} รายการ · {summary}</div>
+		<div class="mt-1 truncate text-(--vscode-editorWarning-foreground)">รออนุญาต {view.runtime?.pendingPermissions || ''} รายการ · {summary}</div>
 	{:else if summary}
 		<div class="mt-1 truncate text-(--vscode-foreground)/80" title={summary}>{summary}</div>
 	{/if}

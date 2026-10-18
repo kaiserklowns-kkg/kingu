@@ -18,7 +18,8 @@ function sources(dir: string): string[] {
 	});
 }
 
-type Registered = { id: string; key?: string; mac?: string };
+/** `terminalOnly`: its key acts only while a terminal has focus (`keyWhen`), where Monaco's menu keys do not apply. */
+type Registered = { id: string; key?: string; mac?: string; terminalOnly?: boolean };
 
 /** Every `commands.register({ id: '…', … key: '…', mac: '…', … run` in src/lib. */
 function registeredCommands(): Map<string, Registered> {
@@ -29,7 +30,7 @@ function registeredCommands(): Map<string, Registered> {
 			const body = m[1];
 			const field = (name: string) => body.match(new RegExp(`\\b${name}: '((?:[^'\\\\]|\\\\.)*)'`))?.[1]?.replace(/\\\\/g, '\\');
 			const id = field('id');
-			if (id) out.set(id, { id, key: field('key'), mac: field('mac') });
+			if (id) out.set(id, { id, key: field('key'), mac: field('mac'), ...(/keyWhen: (panelTerminalFocus,|\(\) => focusedTerminal\(\) !== null,)/.test(body) ? { terminalOnly: true } : {}) });
 		}
 	}
 	return out;
@@ -104,7 +105,7 @@ describe('menu model', () => {
 		});
 
 		test(`${platform}: keys the menu owns (Monaco's) collide with no workbench keybinding`, () => {
-			const workbenchKeys = new Map([...registered.values()].flatMap((r) => (keyOf(r, mac) ? [[keyLabel(keyOf(r, mac)!, mac), r.id] as const] : [])));
+			const workbenchKeys = new Map([...registered.values()].flatMap((r) => (keyOf(r, mac) && !r.terminalOnly ? [[keyLabel(keyOf(r, mac)!, mac), r.id] as const] : [])));
 			for (const menu of MENUS)
 				walk(menu.items, (i) => {
 					if (!('command' in i)) return;
@@ -117,7 +118,7 @@ describe('menu model', () => {
 			const items = flattenItems(resolveMenubar(context(mac)));
 			const accelerators = items.flatMap((i) => (i.accelerator ? [i.accelerator] : []));
 			expect(accelerators.length).toBeGreaterThan(15);
-			for (const a of accelerators) expect(a).toMatch(/^((Ctrl|Alt|Shift|Cmd)\+)*([A-Z0-9]|F\d{1,2}|Backquote|Backslash|Comma|Period|Equal|Minus|Slash|Semicolon|Quote|BracketLeft|BracketRight|Arrow(Left|Right|Up|Down))$/);
+			for (const a of accelerators) expect(a).toMatch(/^((Ctrl|Alt|Shift|Cmd)\+)*([A-Z0-9]|F\d{1,2}|Backquote|Backslash|Comma|Period|Equal|Minus|Slash|Semicolon|Quote|BracketLeft|BracketRight|Arrow(Left|Right|Up|Down)|Page(Up|Down))$/);
 			// Every item with a single-chord keybinding gets an accelerator; two-part chords only a label.
 			for (const i of items) if (i.keyLabel && !i.keyLabel.includes(' ')) expect([i.id, i.accelerator]).toEqual([i.id, expect.any(String)]);
 		});
@@ -137,14 +138,14 @@ describe('menu model', () => {
 			const bar = resolveMenubar(context(mac));
 			check(bar);
 			const tops = bar.map((m) => m.text);
-			expect(tops).toEqual(mac ? ['Kingu', 'File', 'Edit', 'Selection', 'View', 'Go', 'Agents', 'Terminal', 'Window', 'Help'] : ['File', 'Edit', 'Selection', 'View', 'Go', 'Agents', 'Terminal', 'Help']);
+			expect(tops).toEqual(mac ? ['Kingu', 'File', 'Edit', 'Selection', 'View', 'Go', 'Run', 'Agents', 'Terminal', 'Window', 'Help'] : ['File', 'Edit', 'Selection', 'View', 'Go', 'Run', 'Agents', 'Terminal', 'Help']);
 		});
 	}
 
 	test('Windows/Linux top-level mnemonics are unique', () => {
 		const letters = resolveMenubar(context(false)).map((m) => m.text[m.mnemonic!].toLowerCase());
 		expect(new Set(letters).size).toBe(letters.length);
-		expect(letters).toEqual(['f', 'e', 's', 'v', 'g', 'a', 't', 'h']);
+		expect(letters).toEqual(['f', 'e', 's', 'v', 'g', 'r', 'a', 't', 'h']);
 	});
 
 	test('macOS keeps About/Settings/Quit in the app menu and Edit uses native roles', () => {

@@ -16,9 +16,18 @@ pub struct GitStatus {
   pub branch: Option<String>,
   /// Short commit id, `None` before the first commit.
   pub head: Option<String>,
+  /// Tracking branch (`origin/main`), `None` when the branch has none (Publish Branch).
   pub upstream: Option<String>,
+  /// Commits on HEAD not on the upstream / on the upstream not on HEAD (git's `branch.ab`, the
+  /// same counts as `git rev-list --left-right --count @{upstream}...HEAD`).
   pub ahead: u32,
   pub behind: u32,
+  /// HEAD is a commit, not a branch.
+  pub detached: bool,
+  /// The upstream is configured but its remote branch no longer exists (deleted, then pruned).
+  pub upstream_gone: bool,
+  /// Configured remotes (`git remote`), for Publish Branch.
+  pub remotes: Vec<String>,
   pub entries: Vec<StatusEntry>,
 }
 
@@ -91,6 +100,24 @@ pub fn mark_ignored(dir: &Path, entries: &mut [crate::fs::DirEntry]) {
   for e in entries.iter_mut() {
     e.ignored = ignored.contains(e.name.as_bytes());
   }
+  mark_untracked_dirs(dir, entries);
+}
+
+/// Sets `untracked` on the folders of `dir` that hold no tracked file: `ls-files --others
+/// --directory` names such a folder as `name/` (a folder with some tracked files lists its new
+/// files one by one instead).
+fn mark_untracked_dirs(dir: &Path, entries: &mut [crate::fs::DirEntry]) {
+  let names: Vec<&str> = entries.iter().filter(|e| e.is_dir && !e.ignored).map(|e| e.name.as_str()).collect();
+  if names.is_empty() {
+    return;
+  }
+  let mut args = vec!["ls-files", "-z", "--others", "--directory", "--exclude-standard", "--"];
+  args.extend(names);
+  let Ok(out) = run(dir, &args) else { return };
+  let untracked: std::collections::HashSet<&[u8]> = out.split(|b| *b == 0).filter_map(|s| s.strip_suffix(b"/")).collect();
+  for e in entries.iter_mut() {
+    e.untracked = e.is_dir && untracked.contains(e.name.as_bytes());
+  }
 }
 
 pub(crate) fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
@@ -133,7 +160,15 @@ fn has_head(root: &Path) -> bool {
 pub fn status(root: &Path) -> Result<Option<GitStatus>, String> {
   let Some(prefix) = prefix(root) else { return Ok(None) };
   let out = run(root, &["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all", "--", "."])?;
-  Ok(Some(parse_status(&String::from_utf8_lossy(&out), &prefix)))
+  let mut st = parse_status(&String::from_utf8_lossy(&out), &prefix);
+  st.remotes = remotes(root)?;
+  Ok(Some(st))
+}
+
+/// `git remote`: configured remote names.
+pub fn remotes(root: &Path) -> Result<Vec<String>, String> {
+  let out = run(root, &["remote"])?;
+  Ok(String::from_utf8_lossy(&out).lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_owned).collect())
 }
 
 fn code(c: char) -> Option<String> {
@@ -143,7 +178,18 @@ fn code(c: char) -> Option<String> {
 /// Parses `git status --porcelain=v2 -z --branch`. Repository-relative paths are made relative
 /// to `prefix` (the workspace's folder in the repository); paths outside it are dropped.
 pub fn parse_status(text: &str, prefix: &str) -> GitStatus {
-  let mut st = GitStatus { branch: None, head: None, upstream: None, ahead: 0, behind: 0, entries: Vec::new() };
+  let mut st = GitStatus {
+    branch: None,
+    head: None,
+    upstream: None,
+    ahead: 0,
+    behind: 0,
+    detached: false,
+    upstream_gone: false,
+    remotes: Vec::new(),
+    entries: Vec::new(),
+  };
+  let mut has_ab = false;
   let strip = |p: &str| p.strip_prefix(prefix).map(str::to_owned);
   let mut records = text.split('\0');
   while let Some(rec) = records.next() {
@@ -156,6 +202,7 @@ pub fn parse_status(text: &str, prefix: &str) -> GitStatus {
           "branch.head" if value != "(detached)" => st.branch = Some(value.to_owned()),
           "branch.upstream" => st.upstream = Some(value.to_owned()),
           "branch.ab" => {
+            has_ab = true;
             for n in value.split(' ') {
               if let Some(a) = n.strip_prefix('+') {
                 st.ahead = a.parse().unwrap_or(0);
@@ -199,6 +246,9 @@ pub fn parse_status(text: &str, prefix: &str) -> GitStatus {
       _ => {}
     }
   }
+  st.detached = st.branch.is_none() && st.head.is_some();
+  // git leaves out `branch.ab` when the upstream ref is missing.
+  st.upstream_gone = st.upstream.is_some() && !has_ab;
   st
 }
 
@@ -319,10 +369,6 @@ pub fn pull(root: &Path, ff_only: bool) -> Result<(), String> {
   run_remote(root, &["pull", "-q", "--no-edit", if ff_only { "--ff-only" } else { "--no-rebase" }])
 }
 
-pub fn fetch(root: &Path) -> Result<(), String> {
-  run_remote(root, &["fetch", "-q", "--prune"])
-}
-
 pub fn rebase(root: &Path, base: &str) -> Result<(), String> {
   check_rev(base)?;
   run_remote(root, &["fetch", "-q"])?;
@@ -371,13 +417,6 @@ pub fn log(root: &Path, limit: u32) -> Result<Vec<Commit>, String> {
   Ok(parse_log(&String::from_utf8_lossy(&out)))
 }
 
-/// Status bar branch picker (VS Code's `git.checkout`): switches to a local branch.
-pub fn checkout(root: &Path, branch: &str) -> Result<(), String> {
-  check_rev(branch)?;
-  // The trailing `--` makes git read `branch` as a revision, never a path.
-  run(root, &["checkout", "-q", branch, "--"]).map(|_| ())
-}
-
 /// Network operations must fail rather than wait for a password nobody can type.
 fn run_remote(root: &Path, args: &[&str]) -> Result<(), String> {
   let out = crate::shell_env::command("git")
@@ -392,19 +431,6 @@ fn run_remote(root: &Path, args: &[&str]) -> Result<(), String> {
   }
   let err = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr });
   Err(format!("git {}: {}", args.first().unwrap_or(&""), err.trim()))
-}
-
-/// Status bar sync (VS Code's `git.sync`): pull, then push. Without an upstream the branch is
-/// published to `origin` instead (`git.publish`).
-pub fn sync(root: &Path) -> Result<(), String> {
-  let Some(st) = status(root)? else { return Err("not a git repository".into()) };
-  let Some(branch) = st.branch else { return Err("HEAD is detached".into()) };
-  if st.upstream.is_none() {
-    check_rev(&branch)?;
-    return run_remote(root, &["push", "-q", "-u", "origin", &branch]);
-  }
-  run_remote(root, &["pull", "-q", "--no-edit"])?;
-  run_remote(root, &["push", "-q"])
 }
 
 /// `rel` as of revision `rev` (for diffs against a task's base); empty when the file is not there.
@@ -458,6 +484,18 @@ mod tests {
     mark_ignored(dir, &mut entries);
     let ignored: Vec<&str> = entries.iter().filter(|e| e.ignored).map(|e| e.name.as_str()).collect();
     assert_eq!(ignored, ["target", "run.log"]);
+
+    // A folder with nothing tracked is untracked; one with a tracked file is not, even with new files.
+    std::fs::create_dir(dir.join("new dir")).unwrap();
+    std::fs::write(dir.join("new dir/x.ts"), "").unwrap();
+    std::fs::write(dir.join("src/old.ts"), "").unwrap();
+    git(dir, &["add", "src/old.ts"]);
+    git(dir, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"]);
+    std::fs::write(dir.join("src/new.ts"), "").unwrap();
+    let mut entries = crate::fs::list_dir(dir, dir).unwrap();
+    mark_ignored(dir, &mut entries);
+    let untracked: Vec<&str> = entries.iter().filter(|e| e.untracked).map(|e| e.name.as_str()).collect();
+    assert_eq!(untracked, ["new dir"]);
 
     // Outside a repository nothing is marked.
     let plain = tempfile::tempdir().unwrap();
@@ -540,6 +578,10 @@ mod tests {
     assert_eq!((st.branch, st.head), (None, None));
     assert_eq!(st.upstream.as_deref(), Some("origin/main"));
     assert_eq!((st.ahead, st.behind), (3, 2));
+    assert!(!st.detached, "no commit yet");
+    assert!(!st.upstream_gone);
+    let gone = parse_status("# branch.oid abc\0# branch.head (detached)\0# branch.upstream origin/x\0", "");
+    assert!(gone.detached && gone.upstream_gone);
     let paths: Vec<_> = st.entries.iter().map(|e| e.path.as_str()).collect();
     assert_eq!(paths, ["conf.txt", "to.txt", "new.txt"]);
     assert!(st.entries[0].conflict);

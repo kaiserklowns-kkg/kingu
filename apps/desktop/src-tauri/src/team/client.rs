@@ -108,6 +108,46 @@ impl HttpTransport {
   }
 }
 
+impl HttpTransport {
+  /// `GET /v1/snaps`: the raw body of the team Snap catalog (parsed by `snaps::parse_list`).
+  pub fn list_snaps(&self, server: &str, token: &str) -> Result<String, SendError> {
+    let res = self
+      .client
+      .get(format!("{server}/v1/snaps"))
+      .bearer_auth(token)
+      .send()
+      .map_err(|e| SendError::Retryable(e.without_url().to_string()))?;
+    let status = res.status().as_u16();
+    let body = res.text().unwrap_or_default();
+    classify(status, &body).map(|()| body)
+  }
+
+  /// `PUT /v1/snaps/{id}` (owner/lead): approves and pins a snap; returns the stored entry's body.
+  /// A rejection carries the server's message, since it says which field is wrong.
+  pub fn put_snap(&self, server: &str, token: &str, id: &str, body: &impl serde::Serialize) -> Result<String, SendError> {
+    // `id` is a snap id (a-z0-9-), which is path-safe.
+    let res = self
+      .client
+      .put(format!("{server}/v1/snaps/{id}"))
+      .bearer_auth(token)
+      .json(body)
+      .send()
+      .map_err(|e| SendError::Retryable(e.without_url().to_string()))?;
+    let status = res.status().as_u16();
+    let text = res.text().unwrap_or_default();
+    classify(status, &text).map_err(|e| match e {
+      SendError::Permanent(m) => SendError::Permanent(server_message(&text).map_or(m.clone(), |msg| format!("{m}: {msg}"))),
+      other => other,
+    })?;
+    Ok(text)
+  }
+}
+
+/// `error.message` of a server error body.
+pub fn server_message(body: &str) -> Option<String> {
+  serde_json::from_str::<serde_json::Value>(body).ok()?["error"]["message"].as_str().map(str::to_owned)
+}
+
 impl Transport for HttpTransport {
   fn put_task(&self, server: &str, token: &str, project: &str, task: &TaskSync) -> Result<(), SendError> {
     // client_task_id matches [A-Za-z0-9._:-], which is path-safe.

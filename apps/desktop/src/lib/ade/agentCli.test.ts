@@ -18,7 +18,7 @@ describe('agent CLI', () => {
 	test('resume the latest session where the CLI can', () => {
 		expect(cliResume(['claude'])).toEqual(['claude', '--continue']);
 		expect(cliResume(['/opt/bin/codex'])).toEqual(['/opt/bin/codex', 'resume', '--last']);
-		expect(cliResume(['aider'])).toBeNull();
+		expect(cliResume(['mycli'])).toBeNull();
 	});
 	test('working while output keeps coming', () => {
 		expect(isWorking(1000, 2000)).toBe(true);

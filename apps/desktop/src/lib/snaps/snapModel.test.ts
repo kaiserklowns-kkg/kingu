@@ -1,7 +1,32 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
 import { validate } from '../settings/registry';
-import { expandCommand, expandEnv, isActive, mcpServersOf, runnableTasks, skillSnapIds, snapSettingSchemas, taskArgv, touchesRepoSnaps, type SnapInfo } from './snapModel';
+import {
+	expandCommand,
+	expandEnv,
+	filterSnaps,
+	installSummary,
+	isActive,
+	isUpdatable,
+	lockNote,
+	enforcementLabel,
+	mcpServersOf,
+	originLabel,
+	pendingTrustCount,
+	permissionDiff,
+	runnableTasks,
+	sandboxPlan,
+	sandboxTask,
+	skillSnapIds,
+	snapSettingSchemas,
+	snapStatus,
+	taskArgv,
+	touchesRepoSnaps,
+	trustSummary,
+	updateSummary,
+	type SandboxInfo,
+	type SnapInfo
+} from './snapModel';
 
 function snap(over: Partial<SnapInfo> = {}): SnapInfo {
 	return {
@@ -24,6 +49,8 @@ function snap(over: Partial<SnapInfo> = {}): SnapInfo {
 		],
 		mcp: [{ name: 'gopls', command: ['gopls', 'mcp'], env: { GOFLAGS: '-mod=mod' } }],
 		skills: [],
+		origin: null,
+		lock: null,
 		...over
 	};
 }
@@ -130,5 +157,113 @@ describe('skills and reloads', () => {
 		expect(touchesRepoSnaps(['.kingu'])).toBe(true);
 		expect(touchesRepoSnaps([''])).toBe(true);
 		expect(touchesRepoSnaps(['.kingu/worktrees/fix/.kingu/snaps/go/snap.toml', '.kingu/settings.json', '.kingu/snapshots', 'src/.kingu/snaps/x'])).toBe(false);
+	});
+});
+
+describe('Snaps view', () => {
+	test('row status: error, overridden, untrusted, active', () => {
+		expect(snapStatus(snap({ error: 'bad' })).label).toBe('error');
+		expect(snapStatus(snap({ overridden: true })).key).toBe('overridden');
+		expect(snapStatus(snap({ source: 'repo', trusted: false })).label).toBe('ต้อง trust');
+		expect(snapStatus(snap()).key).toBe('active');
+	});
+	test('lock notes and the pending trust badge', () => {
+		expect(lockNote(snap({ source: 'repo', lock: 'changed' }))).toBe('เปลี่ยนจาก lock');
+		expect(lockNote(snap({ source: 'repo', lock: 'unlocked' }))).toBe('ไม่อยู่ใน lock');
+		expect(lockNote(snap({ source: 'repo', lock: 'locked' }))).toBeNull();
+		const list = [snap({ source: 'repo', trusted: false }), snap({ source: 'repo', trusted: false, error: 'x' }), snap({ source: 'repo' }), snap({ trusted: true })];
+		expect(pendingTrustCount(list)).toBe(1);
+	});
+	test('search matches every word in name, id, description or task titles', () => {
+		const list = [snap(), snap({ id: 'pg', name: 'Postgres', description: 'query the DB', tasks: [] })];
+		expect(filterSnaps(list, '').length).toBe(2);
+		expect(filterSnaps(list, 'POST').map((s) => s.id)).toEqual(['pg']);
+		expect(filterSnaps(list, 'run tests').map((s) => s.id)).toEqual(['go']);
+		expect(filterSnaps(list, 'go db')).toEqual([]);
+	});
+	test('origin label and updatable', () => {
+		const origin = { url: 'https://x/go.git', ref: 'v1', commit: '0123456789abcdef', path: null, installed_at: 1 };
+		expect(originLabel(origin)).toBe('https://x/go.git#v1 @ 0123456');
+		expect(originLabel({ ...origin, url: null, path: '/src/go' })).toBe('/src/go');
+		expect(isUpdatable(snap({ origin }))).toBe(true);
+		expect(isUpdatable(snap({ origin: { ...origin, url: null, path: '/p' } }))).toBe(false);
+		expect(isUpdatable(snap({ source: 'repo', origin }))).toBe(false);
+	});
+	test('permission diff calls out what an update adds', () => {
+		const before = { network: false, fs: 'worktree' as const, secrets: ['A'] };
+		const after = { network: true, fs: 'home' as const, secrets: ['B'] };
+		expect(permissionDiff(before, after)).toEqual({ added: ['ใช้เครือข่าย (network)', 'เข้าถึงทั้งโฮมโฟลเดอร์ (fs = home)', 'secret B'], removed: ['secret A'] });
+		expect(permissionDiff(after, after)).toEqual({ added: [], removed: [] });
+		const origin = { url: 'https://x/go.git', ref: null, commit: null, path: null, installed_at: 0 };
+		const text = updateSummary(snap({ version: '1', permissions: before }), snap({ version: '2', permissions: after }), origin);
+		expect(text).toContain('v1 → v2');
+		expect(text).toContain('⚠ สิทธิ์ใหม่ที่ขอเพิ่ม:\n• ใช้เครือข่าย (network)');
+		expect(text).toContain('สิทธิ์ที่เลิกใช้:\n• secret A');
+		expect(updateSummary(snap(), snap(), origin)).toContain('สิทธิ์ไม่เปลี่ยน');
+	});
+	test('install summary shows source, permissions and contributions', () => {
+		const text = installSummary(snap(), { url: 'https://x/go.git', ref: null, commit: 'abcdef0123', path: null, installed_at: 0 });
+		expect(text).toContain('จาก: https://x/go.git @ abcdef0');
+		expect(text).toContain('• เครือข่าย (network): ไม่ใช้');
+		expect(text).toContain('• งาน 1: Run tests');
+		expect(text).toContain('• MCP server 1: gopls');
+	});
+	test('trust summary lists the exact commands', () => {
+		const text = trustSummary(snap({ source: 'repo', trusted: false }));
+		expect(text).toContain('• งาน Run tests: go test ${setting:testFlags} ./...');
+		expect(text).toContain('• MCP gopls: gopls mcp');
+	});
+	test('the lock file change reloads repo snaps', () => {
+		expect(touchesRepoSnaps(['.kingu/snaps.lock'])).toBe(true);
+	});
+});
+
+describe('sandbox', () => {
+	const info: SandboxInfo = { enforcer: 'sandbox-exec', launcher: '/App/kingu-ptyd', protect: ['/cfg'], problem: null };
+	const enforce = sandboxPlan(info, 'enforce');
+
+	test('the plan: enforce by default, off only when the user says so, refuse without an enforcer', () => {
+		expect(enforce).toEqual({ kind: 'enforce', launcher: '/App/kingu-ptyd', enforcer: 'sandbox-exec', protect: ['/cfg'] });
+		expect(sandboxPlan(info, undefined).kind).toBe('enforce');
+		expect(sandboxPlan(info, 'off')).toEqual({ kind: 'off' });
+		expect(sandboxPlan(null, 'off')).toEqual({ kind: 'off' });
+		expect(sandboxPlan({ enforcer: null, launcher: '/k', protect: [], problem: 'ไม่พบ bwrap' }, 'enforce')).toEqual({ kind: 'refuse', reason: 'ไม่พบ bwrap' });
+		expect(sandboxPlan(null, 'enforce').kind).toBe('refuse');
+	});
+
+	test('a task runs through the launcher with its permissions; the argv stays separate arguments', () => {
+		const p = { network: false, fs: 'worktree' as const, secrets: ['GITHUB_TOKEN'] };
+		expect(sandboxTask(enforce, p, '/w/my repo', ['go', 'test', '-run', 'A B'])).toEqual({
+			run: ['/App/kingu-ptyd', 'snap-exec', '--network', 'off', '--fs', 'worktree', '--root', '/w/my repo', '--secret', 'GITHUB_TOKEN', '--protect', '/cfg', '--', 'go', 'test', '-run', 'A B']
+		});
+		expect(sandboxTask({ kind: 'off' }, p, '/w', ['make'])).toEqual({ run: ['make'] });
+		const refused = sandboxTask({ kind: 'refuse', reason: 'ไม่พบ bwrap' }, p, '/w', ['make']);
+		expect('error' in refused && refused.error).toContain('ไม่พบ bwrap');
+		expect('error' in refused && refused.error).toContain('kingu.snaps.sandbox');
+	});
+
+	test('MCP servers: the launcher becomes the command, the server argv its arguments, env names kept', () => {
+		const s = snap({ permissions: { network: true, fs: 'home', secrets: [] } });
+		expect(mcpServersOf([s], undefined, { plan: enforce, root: '/w/.kingu/worktrees/t1' })).toEqual({
+			'go-gopls': {
+				command: '/App/kingu-ptyd',
+				args: ['snap-exec', '--network', 'on', '--fs', 'home', '--root', '/w/.kingu/worktrees/t1', '--keep', 'GOFLAGS', '--protect', '/cfg', '--', 'gopls', 'mcp'],
+				env: { GOFLAGS: '-mod=mod' }
+			}
+		});
+		// Refused, or no folder to confine to: the servers are left out, never run unconfined.
+		expect(mcpServersOf([s], undefined, { plan: { kind: 'refuse', reason: 'x' }, root: '/w' })).toEqual({});
+		expect(mcpServersOf([s], undefined, { plan: enforce, root: null })).toEqual({});
+		expect(mcpServersOf([s], undefined, { plan: { kind: 'off' }, root: null })).toEqual({ 'go-gopls': { command: 'gopls', args: ['mcp'], env: { GOFLAGS: '-mod=mod' } } });
+	});
+
+	test('the details label and the confirm note say whether permissions are enforced', () => {
+		const origin = { url: null, ref: null, commit: null, path: '/src', installed_at: 0 };
+		expect(enforcementLabel(enforce)).toEqual({ text: 'บังคับใช้: sandbox-exec', tone: 'ok' });
+		expect(enforcementLabel({ kind: 'off' }).text).toContain('ไม่ได้บังคับ');
+		expect(enforcementLabel({ kind: 'refuse', reason: 'ไม่พบ bwrap' })).toEqual({ text: 'ไม่ได้บังคับ (ไม่พบ bwrap) — งานและ MCP server ของ snap จะไม่รัน', tone: 'error' });
+		expect(trustSummary(snap({ source: 'repo', trusted: false }), enforce)).toContain('Kingu บังคับใช้สิทธิ์เหล่านี้ด้วย sandbox-exec');
+		expect(installSummary(snap(), origin, { kind: 'off' })).toContain('⚠ ไม่ได้บังคับใช้สิทธิ์');
+		expect(updateSummary(snap(), snap(), origin, enforce)).toContain('บังคับใช้สิทธิ์');
 	});
 });

@@ -1,189 +1,327 @@
-//! PTY sessions for the integrated terminal: spawn a login shell, stream its output over a
-//! Tauri channel, and accept input and resizes from the webview.
+//! PTY sessions for the integrated terminal, keyed by a name the webview picks (`panel:<root>:3`,
+//! `cli:<root>:<slug>:…`), streamed to the webview over a Tauri channel.
+//!
+//! Backends (`kingu_ptyd`): on macOS and Linux the sessions live in `kingu-ptyd`, a per-user
+//! daemon the app starts and talks to over a Unix socket, so terminals and agent CLIs keep
+//! running after Kingu quits and the next launch re-attaches to them. On Windows, or when the
+//! daemon cannot start, they live in this process (they then end with the app).
 
-use std::collections::HashMap;
-use std::io::{Read, Write};
-use std::path::Path;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+#[cfg(unix)]
+use std::sync::{Arc, Mutex};
 
-use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
+use kingu_ptyd::{Attached, Host, SessionInfo, ShellSpec, Sink};
 use tauri::State;
 use tauri::ipc::Channel;
 
-struct Session {
-  writer: Box<dyn Write + Send>,
-  master: Box<dyn MasterPty + Send>,
-  child: Box<dyn portable_pty::Child + Send + Sync>,
-  /// Where the shell started, so the Resource Manager can group terminals by workspace.
-  cwd: std::path::PathBuf,
-}
+pub use kingu_ptyd::validate_key;
 
 /// One live terminal for the status bar's Resource Manager.
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct PtyInfo {
-  pub id: u32,
+  /// The session key.
+  pub id: String,
   pub pid: Option<u32>,
   pub cwd: String,
 }
 
+#[cfg(unix)]
+const DAEMON_NAME: &str = "kingu-ptyd";
+
+#[cfg(unix)]
+struct Daemon {
+  launch: kingu_ptyd::client::Launch,
+  /// The current connection; only ever locked briefly.
+  client: Mutex<Option<Arc<kingu_ptyd::client::Client>>>,
+  /// Held while (re)connecting, which can take seconds when the daemon has to start.
+  connecting: Mutex<()>,
+}
+
+#[cfg(unix)]
+impl Daemon {
+  fn new(launch: kingu_ptyd::client::Launch) -> Self {
+    Self { launch, client: Mutex::new(None), connecting: Mutex::new(()) }
+  }
+
+  /// The connection, made again (starting the daemon if it has exited) when it dropped.
+  fn client(&self) -> Result<Arc<kingu_ptyd::client::Client>, String> {
+    let _one = self.connecting.lock().unwrap();
+    if let Some(c) = self.client.lock().unwrap().as_ref().filter(|c| c.is_connected()) {
+      return Ok(c.clone());
+    }
+    let c = Arc::new(kingu_ptyd::client::connect_or_start(&self.launch)?);
+    log::info!("terminal daemon: connected (pid {}, version {})", c.daemon().pid, c.daemon().app_version);
+    *self.client.lock().unwrap() = Some(c.clone());
+    Ok(c)
+  }
+
+  /// The connection as it is, without reconnecting: keystrokes and resizes run on the main
+  /// thread (in order) and must never wait for a daemon to start.
+  fn connected(&self) -> Result<Arc<kingu_ptyd::client::Client>, String> {
+    self.client.lock().unwrap().clone().ok_or_else(|| "terminal daemon หลุดการเชื่อมต่อ".to_string())
+  }
+}
+
+enum Backend {
+  Local(Host),
+  #[cfg(unix)]
+  Daemon(Daemon),
+}
+
 #[derive(Default)]
 pub struct Ptys {
-  next_id: AtomicU32,
-  sessions: Mutex<HashMap<u32, Session>>,
+  /// Private per-user directory for the daemon's socket, lock and log (set at startup).
+  dir: OnceLock<PathBuf>,
+  backend: OnceLock<Backend>,
+}
+
+/// Where the daemon's socket lives: `$XDG_RUNTIME_DIR/kingu` on Linux, else `<app data>/ptyd`,
+/// unless that path is too long for a Unix socket (macOS allows 104 bytes).
+pub fn daemon_dir(app_data: &Path, runtime_dir: Option<PathBuf>, temp: &Path, uid: u32) -> PathBuf {
+  let preferred = runtime_dir.filter(|d| d.is_absolute()).map(|d| d.join("kingu")).unwrap_or_else(|| app_data.join("ptyd"));
+  // Room for the longer fallback name (`kingu-ptyd-1-v<version>.sock`).
+  let socket_len = preferred.join(kingu_ptyd::protocol::socket_name()).as_os_str().len() + 12;
+  if socket_len < 104 { preferred } else { temp.join(format!("kingu-ptyd-{uid}")) }
+}
+
+/// The daemon executable: `KINGU_PTYD`, else `kingu-ptyd` next to the app executable (release:
+/// Tauri's `externalBin` puts it in `Contents/MacOS`; dev: `cargo build` puts it in `target/debug`).
+pub fn find_daemon(override_var: Option<std::ffi::OsString>, exe_dir: Option<&Path>) -> Result<PathBuf, String> {
+  if let Some(p) = override_var.filter(|o| !o.is_empty()).map(PathBuf::from) {
+    return if p.is_file() { Ok(p) } else { Err(format!("KINGU_PTYD={}: ไม่พบไฟล์", p.display())) };
+  }
+  let name = if cfg!(windows) { "kingu-ptyd.exe" } else { "kingu-ptyd" };
+  exe_dir.map(|d| d.join(name)).filter(|p| p.is_file()).ok_or_else(|| format!("ไม่พบ {name} ข้างตัวแอป (ตั้ง KINGU_PTYD หรือ cargo build -p kingu-ptyd)"))
 }
 
 impl Ptys {
-  /// Terminals still open (a session lives until the webview kills it).
-  pub fn list(&self) -> Vec<PtyInfo> {
-    let mut out: Vec<PtyInfo> = self
-      .sessions
-      .lock()
-      .unwrap()
-      .iter()
-      .map(|(id, s)| PtyInfo { id: *id, pid: s.child.process_id(), cwd: s.cwd.display().to_string() })
-      .collect();
-    out.sort_by_key(|p| p.id);
-    out
+  /// Records the daemon directory and connects in the background, so the first terminal rarely waits.
+  pub fn init(app: &tauri::AppHandle, dir: PathBuf) {
+    use tauri::Manager;
+    let _ = app.state::<Ptys>().dir.set(dir);
+    let handle = app.clone();
+    std::thread::spawn(move || {
+      let _ = handle.state::<Ptys>().backend();
+    });
   }
-}
 
-fn size(cols: u16, rows: u16) -> PtySize {
-  PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }
-}
-
-/// Splits `buf` at the end of its last complete UTF-8 sequence, so a multi-byte
-/// character cut by a read boundary is held back for the next chunk.
-fn utf8_prefix_len(buf: &[u8]) -> usize {
-  match std::str::from_utf8(buf) {
-    Ok(_) => buf.len(),
-    Err(e) if e.error_len().is_none() => e.valid_up_to(),
-    // Invalid bytes, not a cut: emit everything and let lossy decoding replace them.
-    Err(_) => buf.len(),
+  fn backend(&self) -> &Backend {
+    self.backend.get_or_init(|| self.choose())
   }
-}
 
-/// POSIX shell quoting for one argument: bare when it only has safe characters, else in single
-/// quotes (`'` becomes `'\''`). Newlines stay inside the quotes, so a multi-line prompt is one argument.
-pub fn shell_quote(arg: &str) -> String {
-  let safe = !arg.is_empty() && arg.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_./=:@%+,".contains(&b));
-  if safe {
-    arg.to_string()
-  } else {
-    format!("'{}'", arg.replace('\'', "'\\''"))
-  }
-}
-
-/// The command line typed into a new terminal for `run` (each argument quoted, so a prompt or a
-/// setting value can never become shell syntax).
-pub fn command_line(argv: &[String]) -> Result<String, String> {
-  if argv.is_empty() || argv[0].is_empty() {
-    return Err("คำสั่งว่าง".into());
-  }
-  if argv.iter().any(|a| a.contains('\0')) {
-    return Err("คำสั่งมีอักขระ NUL".into());
-  }
-  Ok(argv.iter().map(|a| shell_quote(a)).collect::<Vec<_>>().join(" "))
-}
-
-/// A login shell in `cwd`. With `run`, that command is typed into the shell once it starts (like
-/// Orca starting an agent CLI in a worktree terminal): when it exits, the shell stays open.
-pub fn spawn_shell(ptys: &Ptys, cwd: &Path, cols: u16, rows: u16, on_data: Channel<String>, run: Option<&[String]>) -> Result<u32, String> {
-  let line = run.map(command_line).transpose()?;
-  let pair = native_pty_system().openpty(size(cols, rows)).map_err(|e| e.to_string())?;
-  let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-  let mut cmd = CommandBuilder::new(shell);
-  cmd.arg("-l");
-  cmd.cwd(cwd);
-  cmd.env("TERM", "xterm-256color");
-  cmd.env("COLORTERM", "truecolor");
-  let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
-  drop(pair.slave);
-
-  let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-  let mut writer = pair.master.take_writer().map_err(|e| e.to_string())?;
-  if let Some(line) = line {
-    // The tty buffers it until the shell reads its first line.
-    writer.write_all(format!("{line}\r").as_bytes()).map_err(|e| e.to_string())?;
-  }
-  let id = ptys.next_id.fetch_add(1, Ordering::Relaxed) + 1;
-
-  std::thread::spawn(move || {
-    let mut chunk = [0u8; 8192];
-    let mut pending: Vec<u8> = Vec::new();
-    loop {
-      match reader.read(&mut chunk) {
-        Ok(0) | Err(_) => break,
-        Ok(n) => {
-          pending.extend_from_slice(&chunk[..n]);
-          let cut = utf8_prefix_len(&pending);
-          if cut == 0 {
-            continue;
-          }
-          let text = String::from_utf8_lossy(&pending[..cut]).into_owned();
-          pending.drain(..cut);
-          if on_data.send(text).is_err() {
-            break;
-          }
-        }
+  fn choose(&self) -> Backend {
+    #[cfg(unix)]
+    {
+      if std::env::var("KINGU_PTY_BACKEND").is_ok_and(|v| v == "local") {
+        log::info!("terminals: in-process (KINGU_PTY_BACKEND=local)");
+        return Backend::Local(Host::default());
+      }
+      let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
+      let launch = find_daemon(std::env::var_os("KINGU_PTYD"), exe_dir.as_deref()).and_then(|bin| {
+        let dir = self.dir.get().cloned().ok_or("ยังไม่รู้โฟลเดอร์ของ daemon")?;
+        Ok(kingu_ptyd::client::Launch { bin, dir, app_version: env!("CARGO_PKG_VERSION").into(), args: Vec::new(), env: Vec::new() })
+      });
+      let connected = launch.and_then(|launch| {
+        let daemon = Daemon::new(launch);
+        daemon.client().map(|_| daemon)
+      });
+      match connected {
+        Ok(daemon) => return Backend::Daemon(daemon),
+        Err(e) => log::warn!("terminals: {DAEMON_NAME} unavailable ({e}); running in-process, they end when Kingu quits"),
       }
     }
-  });
+    Backend::Local(Host::default())
+  }
 
-  ptys.sessions.lock().unwrap().insert(id, Session { writer, master: pair.master, child, cwd: cwd.to_path_buf() });
-  Ok(id)
+  /// Attaches to `key`, else starts `shell` (default: a login `$SHELL`) for it in `cwd` with `env` (typing `run` once).
+  #[allow(clippy::too_many_arguments)]
+  pub fn open(&self, key: &str, cwd: &Path, cols: u16, rows: u16, run: Option<&[String]>, env: &BTreeMap<String, String>, shell: Option<&str>, args: Option<&[String]>, sink: Sink) -> Result<Attached, String> {
+    let spec = ShellSpec { cwd, cols, rows, run, env, shell, args };
+    match self.backend() {
+      Backend::Local(host) => host.open(key, &spec, sink),
+      #[cfg(unix)]
+      Backend::Daemon(d) => d.client()?.spawn(key, &spec, sink),
+    }
+  }
+
+  pub fn attach(&self, key: &str, size: Option<(u16, u16)>, sink: Sink) -> Result<Option<Attached>, String> {
+    match self.backend() {
+      Backend::Local(host) => Ok(host.attach(key, size, sink)),
+      #[cfg(unix)]
+      Backend::Daemon(d) => d.client()?.attach(key, size, sink),
+    }
+  }
+
+  pub fn write(&self, key: &str, data: &str) -> Result<(), String> {
+    match self.backend() {
+      Backend::Local(host) => host.write(key, data.as_bytes()),
+      #[cfg(unix)]
+      Backend::Daemon(d) => d.connected()?.write(key, data),
+    }
+  }
+
+  pub fn resize(&self, key: &str, cols: u16, rows: u16) -> Result<(), String> {
+    match self.backend() {
+      Backend::Local(host) => host.resize(key, cols, rows),
+      #[cfg(unix)]
+      Backend::Daemon(d) => d.connected()?.resize(key, cols, rows),
+    }
+  }
+
+  pub fn kill(&self, key: &str) -> Result<bool, String> {
+    match self.backend() {
+      Backend::Local(host) => Ok(host.kill(key)),
+      #[cfg(unix)]
+      Backend::Daemon(d) => d.client()?.kill(key),
+    }
+  }
+
+  pub fn list(&self) -> Result<Vec<SessionInfo>, String> {
+    match self.backend() {
+      Backend::Local(host) => Ok(host.list()),
+      #[cfg(unix)]
+      Backend::Daemon(d) => d.client()?.list(),
+    }
+  }
+
+  /// The current directory of `key`'s shell (after its `cd`s), when it can be read.
+  pub fn live_cwd(&self, key: &str) -> Option<PathBuf> {
+    let pid = self.list().ok()?.into_iter().find(|s| s.key == key && s.alive)?.pid?;
+    kingu_ptyd::procinfo::process_cwd(pid).filter(|d| d.is_dir())
+  }
+
+  /// Live terminals for the status bar's Resource Manager (its shells run under the daemon when
+  /// there is one, so their pids are not Kingu's children).
+  pub fn terminals(&self) -> Vec<PtyInfo> {
+    self.list().unwrap_or_default().into_iter().filter(|s| s.alive).map(|s| PtyInfo { id: s.key, pid: s.pid, cwd: s.cwd }).collect()
+  }
+
+  /// The daemon's pid while connected: its process tree counts as Kingu's.
+  pub fn daemon_pid(&self) -> Option<u32> {
+    match self.backend() {
+      Backend::Local(_) => None,
+      #[cfg(unix)]
+      Backend::Daemon(d) => d.client.lock().unwrap().as_ref().filter(|c| c.is_connected()).map(|c| c.daemon().pid),
+    }
+  }
+
+  /// `"daemon"` when sessions outlive the app, else `"local"`.
+  pub fn kind(&self) -> &'static str {
+    match self.backend() {
+      Backend::Local(_) => "local",
+      #[cfg(unix)]
+      Backend::Daemon(_) => "daemon",
+    }
+  }
+}
+
+/// A webview channel as a session viewer; a reloaded page leaves a dead channel, which ends it.
+pub fn channel_sink(on_data: Channel<String>) -> Sink {
+  Box::new(move |text| on_data.send(text).is_ok())
+}
+
+/// Re-attaches to a live session without starting one (a terminal mounted hidden after a reload
+/// or restart, so an agent CLI's output keeps reaching the page). Null when `key` has no live shell.
+#[tauri::command(async)]
+pub fn pty_attach(ptys: State<'_, Ptys>, key: String, cols: Option<u16>, rows: Option<u16>, on_data: Channel<String>) -> Result<Option<Attached>, String> {
+  validate_key(&key)?;
+  ptys.attach(&key, cols.zip(rows), channel_sink(on_data))
+}
+
+/// Sync, so keystrokes reach the shell in the order they were typed (async commands run concurrently).
+#[tauri::command]
+pub fn pty_write(ptys: State<'_, Ptys>, key: String, data: String) -> Result<(), String> {
+  ptys.write(&key, &data)
 }
 
 #[tauri::command]
-pub fn pty_write(ptys: State<'_, Ptys>, id: u32, data: String) -> Result<(), String> {
-  let mut sessions = ptys.sessions.lock().unwrap();
-  let s = sessions.get_mut(&id).ok_or("no such terminal")?;
-  s.writer.write_all(data.as_bytes()).map_err(|e| e.to_string())
+pub fn pty_resize(ptys: State<'_, Ptys>, key: String, cols: u16, rows: u16) -> Result<(), String> {
+  ptys.resize(&key, cols, rows)
 }
 
-#[tauri::command]
-pub fn pty_resize(ptys: State<'_, Ptys>, id: u32, cols: u16, rows: u16) -> Result<(), String> {
-  let sessions = ptys.sessions.lock().unwrap();
-  let s = sessions.get(&id).ok_or("no such terminal")?;
-  s.master.resize(size(cols, rows)).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn pty_kill(ptys: State<'_, Ptys>, id: u32) -> Result<(), String> {
-  if let Some(mut s) = ptys.sessions.lock().unwrap().remove(&id) {
-    s.child.kill().map_err(|e| e.to_string())?;
+#[tauri::command(async)]
+pub fn pty_kill(ptys: State<'_, Ptys>, key: String) -> Result<(), String> {
+  if ptys.kill(&key)? {
+    log::info!("terminal {key} killed");
   }
   Ok(())
 }
 
+/// Live sessions (key, cwd, alive), so the page can re-attach after a restart and kill the ones it
+/// no longer shows.
+#[tauri::command(async)]
+pub fn pty_list(ptys: State<'_, Ptys>) -> Result<Vec<SessionInfo>, String> {
+  ptys.list()
+}
+
+/// The jobs running in front of the shells of `keys` (a close asks first while one runs), by key;
+/// a terminal at its prompt, or one that is gone, is left out.
+#[tauri::command(async)]
+pub fn pty_foreground(ptys: State<'_, Ptys>, keys: Vec<String>) -> Result<BTreeMap<String, kingu_ptyd::Foreground>, String> {
+  let wanted: std::collections::BTreeSet<String> = keys.into_iter().collect();
+  Ok(ptys.list()?.into_iter().filter(|s| s.alive && wanted.contains(&s.key)).filter_map(|s| s.foreground.map(|f| (s.key, f))).collect())
+}
+
+/// Where sessions live: `"daemon"` (they survive quitting Kingu) or `"local"`.
+#[tauri::command(async)]
+pub fn pty_backend(ptys: State<'_, Ptys>) -> Result<&'static str, String> {
+  Ok(ptys.kind())
+}
+
+/// `terminal.integrated.cwd` for a panel terminal: absolute, or relative to the open folder. A
+/// folder that does not exist falls back to the default (the open folder, else home).
+pub fn terminal_cwd(setting: Option<&str>, folder: Option<&Path>, fallback: PathBuf) -> PathBuf {
+  let Some(raw) = setting.map(str::trim).filter(|s| !s.is_empty()) else { return fallback };
+  let path = Path::new(raw);
+  let dir = if path.is_absolute() { path.to_path_buf() } else if let Some(f) = folder { f.join(path) } else { return fallback };
+  if dir.is_dir() {
+    dir
+  } else {
+    log::warn!("terminal.integrated.cwd {}: not a folder, using {}", dir.display(), fallback.display());
+    fallback
+  }
+}
+
 #[cfg(test)]
 mod tests {
-  use super::{command_line, shell_quote, utf8_prefix_len};
+  use std::path::{Path, PathBuf};
+
+  use super::{daemon_dir, find_daemon, terminal_cwd};
 
   #[test]
-  fn holds_back_a_cut_thai_character() {
-    let thai = "ก".as_bytes(); // 3 bytes
-    let mut buf = b"ok ".to_vec();
-    buf.extend_from_slice(&thai[..2]);
-    assert_eq!(utf8_prefix_len(&buf), 3);
-    buf.push(thai[2]);
-    assert_eq!(utf8_prefix_len(&buf), buf.len());
+  fn terminal_cwd_resolves_against_the_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir(root.join("apps")).unwrap();
+    let fallback = root.to_path_buf();
+    assert_eq!(terminal_cwd(None, Some(root), fallback.clone()), fallback);
+    assert_eq!(terminal_cwd(Some("  "), Some(root), fallback.clone()), fallback);
+    assert_eq!(terminal_cwd(Some("apps"), Some(root), fallback.clone()), root.join("apps"));
+    assert_eq!(terminal_cwd(Some(root.join("apps").to_str().unwrap()), None, fallback.clone()), root.join("apps"));
+    assert_eq!(terminal_cwd(Some("missing"), Some(root), fallback.clone()), fallback);
+    assert_eq!(terminal_cwd(Some("apps"), None, fallback.clone()), fallback);
   }
 
   #[test]
-  fn passes_invalid_bytes_through() {
-    assert_eq!(utf8_prefix_len(&[b'a', 0xff, b'b']), 3);
+  fn daemon_dir_prefers_the_runtime_dir_and_stays_short() {
+    let data = Path::new("/Users/u/Library/Application Support/ai.anthov.kingu.studio");
+    assert_eq!(daemon_dir(data, None, Path::new("/tmp"), 501), data.join("ptyd"));
+    assert_eq!(daemon_dir(data, Some("/run/user/501".into()), Path::new("/tmp"), 501), PathBuf::from("/run/user/501/kingu"));
+    assert_eq!(daemon_dir(data, Some("relative".into()), Path::new("/tmp"), 501), data.join("ptyd"));
+    let long = PathBuf::from(format!("/Users/{}/Library/Application Support/ai.anthov.kingu.studio", "x".repeat(60)));
+    assert_eq!(daemon_dir(&long, None, Path::new("/tmp"), 501), PathBuf::from("/tmp/kingu-ptyd-501"));
   }
 
   #[test]
-  fn quotes_arguments_for_the_shell() {
-    assert_eq!(shell_quote("go"), "go");
-    assert_eq!(shell_quote("./..."), "./...");
-    assert_eq!(shell_quote("แก้บั๊ก login"), "'แก้บั๊ก login'");
-    assert_eq!(shell_quote("it's $(rm -rf ~)"), "'it'\\''s $(rm -rf ~)'");
-    assert_eq!(shell_quote(""), "''");
-    assert_eq!(command_line(&["claude".into(), "a\nb".into()]).unwrap(), "claude 'a\nb'");
-    assert!(command_line(&[]).is_err());
-    assert!(command_line(&["x\0".into()]).is_err());
+  fn finds_the_daemon_next_to_the_app_or_from_the_env() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(find_daemon(None, Some(tmp.path())).is_err());
+    let bin = tmp.path().join(if cfg!(windows) { "kingu-ptyd.exe" } else { "kingu-ptyd" });
+    std::fs::write(&bin, "").unwrap();
+    assert_eq!(find_daemon(None, Some(tmp.path())).unwrap(), bin);
+    assert_eq!(find_daemon(Some(bin.clone().into()), None).unwrap(), bin);
+    assert!(find_daemon(Some(tmp.path().join("nope").into()), Some(tmp.path())).is_err());
   }
 }

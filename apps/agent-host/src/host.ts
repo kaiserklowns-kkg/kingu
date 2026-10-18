@@ -7,6 +7,7 @@
 //
 // Never write prompts, tool inputs or credentials to stderr: it ends up in the app log.
 
+import { readFileSync } from 'node:fs';
 import type { CanUseTool, Options, PermissionResult, PermissionUpdate, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { normalize, summarizeTool } from './normalize.ts';
 import {
@@ -29,15 +30,49 @@ const DENIED_BY_USER = 'ผู้ใช้ไม่อนุญาต (The user 
 /** After `stop`, how long to wait for the SDK to wind down before reporting the exit anyway. */
 export const STOP_GRACE_MS = 5000;
 
+/** An image content block (base64), as the Messages API takes it. */
+export type ImageBlock = { type: 'image'; source: { type: 'base64'; media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; data: string } };
+
+const MEDIA_TYPES: Record<string, ImageBlock['source']['media_type']> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
+/** Claude's limits as Orca applies them: 5 MB per image, 20 per message, 20 MB in all. */
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const MAX_IMAGES = 20;
+export const MAX_IMAGES_TOTAL = 20 * 1024 * 1024;
+
+/** Reads attached image files into content blocks; throws on anything outside the limits. */
+export function imageBlocks(paths: unknown, read: (path: string) => Uint8Array): ImageBlock[] {
+	if (paths === undefined || paths === null) return [];
+	if (!Array.isArray(paths) || !paths.every((p) => typeof p === 'string' && p.startsWith('/'))) throw new RpcError(INVALID_PARAMS, 'images must be absolute paths');
+	if (paths.length > MAX_IMAGES) throw new RpcError(INVALID_PARAMS, `at most ${MAX_IMAGES} images per message`);
+	let total = 0;
+	return paths.map((path: string) => {
+		const media = MEDIA_TYPES[path.split('.').pop()?.toLowerCase() ?? ''];
+		if (!media) throw new RpcError(INVALID_PARAMS, `${path}: not a png, jpeg, gif or webp image`);
+		const bytes = read(path);
+		if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) throw new RpcError(INVALID_PARAMS, `${path}: an image must be 1 byte to 5 MB`);
+		total += bytes.length;
+		if (total > MAX_IMAGES_TOTAL) throw new RpcError(INVALID_PARAMS, 'attached images exceed 20 MB');
+		return { type: 'image', source: { type: 'base64', media_type: media, data: Buffer.from(bytes).toString('base64') } };
+	});
+}
+
+/** The user message the timeline shows: the text, and which images went with it. */
+export function shownText(text: string, images: readonly string[] | undefined): string {
+	if (!images?.length) return text;
+	return `${text}\n\n[แนบรูป: ${images.map((p) => p.split('/').pop()).join(', ')}]`;
+}
+
 /** Async queue feeding user messages into a streaming-input query. */
 export class Inbox implements AsyncIterable<SDKUserMessage> {
 	private items: SDKUserMessage[] = [];
 	private waiter: ((r: IteratorResult<SDKUserMessage>) => void) | null = null;
 	closed = false;
 
-	push(text: string) {
+	/** Images go first, then the text (Orca's order: a slash command must still lead the text). */
+	push(text: string, images: ImageBlock[] = []) {
 		if (this.closed) throw new Error('run has ended');
-		const msg: SDKUserMessage = { type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null };
+		const content = images.length ? [...images, { type: 'text' as const, text }] : text;
+		const msg: SDKUserMessage = { type: 'user', message: { role: 'user', content }, parent_tool_use_id: null };
 		if (this.waiter) {
 			const w = this.waiter;
 			this.waiter = null;
@@ -87,6 +122,8 @@ export type HostDeps = {
 	options?: Partial<Options>;
 	newId?: () => string;
 	log?: (line: string) => void;
+	/** Reads an attached image file (tests pass a fake). */
+	readFile?: (path: string) => Uint8Array;
 };
 
 class RpcError extends Error {
@@ -105,12 +142,22 @@ function need<T>(cond: T, message: string): asserts cond {
 	if (!cond) throw new RpcError(INVALID_PARAMS, message);
 }
 
+/** `base` with `set` over it and `unset` removed: one run's env for its AI account. */
+export function runEnv(base: Record<string, string | undefined>, set: Record<string, string>, unset: string[]): Record<string, string | undefined> {
+	const env = { ...base, ...set };
+	for (const k of unset) delete env[k];
+	return env;
+}
+
 export class AgentHost {
 	private runs = new Map<number, Run>();
 	private newId: () => string;
 	private log: (line: string) => void;
 
+	private read: (path: string) => Uint8Array;
+
 	constructor(private deps: HostDeps) {
+		this.read = deps.readFile ?? ((path) => readFileSync(path));
 		this.newId = deps.newId ?? (() => crypto.randomUUID());
 		this.log = deps.log ?? (() => {});
 	}
@@ -182,6 +229,13 @@ export class AgentHost {
 		for (const [name, s] of Object.entries(mcp)) need(typeof s?.command === 'string' && s.command.trim(), `mcp server ${name}: command is empty`);
 		const plugins = p.plugins ?? [];
 		need(Array.isArray(plugins) && plugins.every((d) => typeof d === 'string' && d.startsWith('/')), 'plugins must be absolute paths');
+		const extraEnv = p.env ?? {};
+		const unset = p.unsetEnv ?? [];
+		const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
+		need(typeof extraEnv === 'object' && !Array.isArray(extraEnv) && Object.entries(extraEnv).every(([k, v]) => ENV_NAME.test(k) && typeof v === 'string'), 'env must map variable names to strings');
+		need(Array.isArray(unset) && unset.every((k) => typeof k === 'string' && ENV_NAME.test(k)), 'unsetEnv must be variable names');
+		const accountEnv = Object.keys(extraEnv).length || unset.length ? runEnv(this.deps.options?.env ?? process.env, extraEnv, unset) : null;
+		const images = imageBlocks(p.images, this.read);
 
 		const run = new Run(p.runId);
 		this.runs.set(run.id, run);
@@ -196,6 +250,7 @@ export class AgentHost {
 				: {}),
 			// Skills only: Kingu owns the MCP connections (mcpServers above), so a plugin never adds its own.
 			...(plugins.length ? { plugins: plugins.map((path) => ({ type: 'local' as const, path, skipMcpDiscovery: true })) } : {}),
+			...(accountEnv ? { env: accountEnv } : {}),
 			includePartialMessages: true,
 			// User + project settings: CLAUDE.md and the user's own allow/deny rules apply.
 			settingSources: ['user', 'project', 'local'],
@@ -205,8 +260,8 @@ export class AgentHost {
 				for (const line of data.split('\n')) if (line.trim()) this.emit(run.id, { kind: 'stderr', line });
 			}
 		};
-		run.inbox.push(p.prompt);
-		this.emit(run.id, { kind: 'message', role: 'user', text: p.prompt });
+		run.inbox.push(p.prompt, images);
+		this.emit(run.id, { kind: 'message', role: 'user', text: shownText(p.prompt, p.images) });
 		this.log(`run ${run.id} starting (mode ${mode}${p.resume ? ', resuming' : ''})`);
 		try {
 			run.query = this.deps.query({ prompt: run.inbox, options });
@@ -254,8 +309,8 @@ export class AgentHost {
 	send(p: SendParams) {
 		const run = this.run(p.runId);
 		need(typeof p.text === 'string' && p.text.trim(), 'message is empty');
-		run.inbox.push(p.text);
-		this.emit(run.id, { kind: 'message', role: 'user', text: p.text });
+		run.inbox.push(p.text, imageBlocks(p.images, this.read));
+		this.emit(run.id, { kind: 'message', role: 'user', text: shownText(p.text, p.images) });
 		return null;
 	}
 

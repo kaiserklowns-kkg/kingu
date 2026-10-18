@@ -4,6 +4,7 @@ import {
 	backoff,
 	countdown,
 	errorLabel,
+	fromAccountRow,
 	hasValue,
 	headline,
 	nextTick,
@@ -114,4 +115,17 @@ test('spend buckets the latest run of each task by day', () => {
 	expect(s.week).toBe(2);
 	expect(s.tokens).toBe(450);
 	expect(s.rows.map((r) => r.slug)).toEqual(['a', 'b', 'c']);
+});
+
+describe('fromAccountRow', () => {
+	const row = { key: 'claude', provider: 'claude' as const, account_id: null, label: 'Claude', email: null, active: true, updated_at: 5, error: null };
+	test('windows, plan and status map from the accounts service', () => {
+		const p = fromAccountRow({ ...row, status: 'stale', failure: null, usage: { session: { used_percent: 42, window_minutes: 300, resets_at: 9 }, weekly: null, plan: 'max' } });
+		expect(p).toMatchObject({ provider: 'claude', status: 'ok', session: { usedPercent: 42, windowMinutes: 300, resetsAt: 9 }, weekly: null, planType: 'max', updatedAt: 5 });
+	});
+	test('failures take Orca\'s kebab-case kinds; an API key has no plan limits', () => {
+		expect(fromAccountRow({ ...row, status: 'error', failure: 'stale_token', usage: null }).failureKind).toBe('stale-token');
+		expect(fromAccountRow({ ...row, status: 'error', failure: 'not_signed_in', usage: null }).failureKind).toBe('missing-credentials');
+		expect(fromAccountRow({ ...row, status: 'api_key', failure: null, usage: null }).status).toBe('unavailable');
+	});
 });

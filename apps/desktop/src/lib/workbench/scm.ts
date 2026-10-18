@@ -18,14 +18,32 @@ export type GitStatus = {
 	upstream: string | null;
 	ahead: number;
 	behind: number;
+	detached: boolean;
+	/** The upstream is configured but its remote branch is gone. */
+	upstream_gone: boolean;
+	remotes: string[];
 	entries: StatusEntry[];
 };
 
 /** A row in one of the two groups ("Staged Changes" / "Changes"). */
 export type Resource = { entry: StatusEntry; staged: boolean; letter: string; color: string; deleted: boolean };
 
+/** What the Source Control view drives: the open folder's repository, or one task worktree's. */
+export interface ScmSource {
+	readonly repo: GitStatus | null;
+	readonly loaded: boolean;
+	readonly busy: boolean;
+	message: string;
+	readonly groups: { staged: Resource[]; changes: Resource[] };
+	refresh(): Promise<void>;
+	stage(paths: string[]): Promise<boolean>;
+	unstage(paths: string[]): Promise<boolean>;
+	discard(paths: string[], deleteUntracked: boolean): Promise<boolean>;
+	commit(opts?: { amend?: boolean }): Promise<void>;
+}
+
 // VS Code gitDecoration.* dark colors.
-const COLORS = {
+export const COLORS = {
 	modified: '#E2C08D',
 	added: '#73C991',
 	deleted: '#F48771',
@@ -97,6 +115,11 @@ export function groups(entries: StatusEntry[]): { staged: Resource[]; changes: R
 		if (entry.worktree) changes.push({ entry, staged: false, ...decoration(entry.worktree), deleted: entry.worktree === 'D' });
 	}
 	return { staged: staged.sort(byPath), changes: changes.sort(byPath) };
+}
+
+/** git.enableSmartCommit with nothing staged: what to stage first (`git.smartCommitChanges`). Conflicts are left to the user. */
+export function smartCommitPaths(changes: readonly Resource[], mode: 'all' | 'tracked'): string[] {
+	return changes.filter((r) => !r.entry.conflict && (mode === 'all' || r.entry.worktree !== '?')).map((r) => r.entry.path);
 }
 
 /** `src/lib/a.ts` → `['a.ts', 'src/lib']`. */

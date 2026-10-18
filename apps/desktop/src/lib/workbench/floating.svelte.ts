@@ -9,6 +9,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { status } from './status.svelte';
+import { killPty, listPtys } from '#lib/terminal/pty.ts';
+import { floatingKey } from '#lib/terminal/sessions.ts';
+
+/** Floating tabs are not restored, so each launch's shells get their own keys. */
+const LAUNCH = Date.now().toString(36);
 import { anchorButton, anchorRect, buttonPos, DEFAULT_BOUNDS, DEFAULT_BUTTON, maximizedRect, rectFromAnchor, type Anchor, type AnchoredBounds, type Rect } from './floating';
 
 const VIEW_KEY = 'kingu.floating.view';
@@ -113,6 +118,16 @@ class Floating {
 		void settings.set('kingu.floating.enabled', false, 'user');
 	}
 
+	/** The terminal session of tab `id` (Terminal.svelte's `key`). */
+	terminalKey(id: string) {
+		return floatingKey(LAUNCH, id);
+	}
+
+	/** Shells of an earlier launch's floating tabs (tabs are not restored): ended once at start. */
+	async endStaleShells() {
+		for (const s of await listPtys()) if (s.key.startsWith('floating:') && !s.key.startsWith(`floating:${LAUNCH}:`)) killPty(s.key);
+	}
+
 	select(id: string) {
 		this.active = id;
 		this.unread[id] = false;
@@ -156,6 +171,7 @@ class Floating {
 	closeTab(id: string) {
 		const i = this.tabs.findIndex((t) => t.id === id);
 		if (i < 0) return;
+		if (this.tabs[i].kind === 'terminal') killPty(this.terminalKey(id));
 		this.tabs = this.tabs.filter((t) => t.id !== id);
 		delete this.unread[id];
 		if (this.active === id) this.active = this.tabs[Math.min(i, this.tabs.length - 1)]?.id ?? null;
@@ -167,3 +183,4 @@ class Floating {
 }
 
 export const floating = new Floating();
+if (typeof window !== 'undefined') void floating.endStaleShells();

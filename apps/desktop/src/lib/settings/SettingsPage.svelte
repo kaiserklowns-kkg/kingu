@@ -5,6 +5,7 @@
 	// view. Escape or ✕ closes it.
 	import Icon from '#lib/workbench/Icon.svelte';
 	import SnapsView from '#lib/snaps/SnapsView.svelte';
+	import AccountsView from '#lib/accounts/AccountsView.svelte';
 	import { snaps } from '#lib/snaps/snaps.svelte.ts';
 	import { SNAPS_SECTION_ID } from './registry';
 	import { settingSchemas } from './schemas.svelte';
@@ -26,10 +27,11 @@
 		{ id: 'arkai', label: 'Arkai', icon: 'agent' },
 		{ id: 'terminal', label: 'Terminal', icon: 'terminal' },
 		{ id: 'account', label: 'บัญชีและทีม', icon: 'account' },
+		{ id: 'accounts', label: 'บัญชี AI (Accounts)', icon: 'key' },
 		{ id: 'usage', label: 'Stats & Usage', icon: 'usage' },
 		{ id: 'shortcuts', label: 'Keyboard Shortcuts', icon: 'keyboard' }
 	];
-	const PAGE_LABEL: Record<SettingsPageId, string> = { appearance: 'Appearance', arkai: 'Arkai', terminal: 'Terminal', account: 'บัญชีและทีม', usage: 'Stats & Usage', shortcuts: 'Keyboard Shortcuts', about: 'About Kingu' };
+	const PAGE_LABEL: Record<SettingsPageId, string> = { appearance: 'Appearance', arkai: 'Arkai', terminal: 'Terminal', account: 'บัญชีและทีม', accounts: 'บัญชี AI (Accounts)', usage: 'Stats & Usage', shortcuts: 'Keyboard Shortcuts', about: 'About Kingu' };
 	import { systemSettings } from './systemSettings.svelte';
 
 	let query = $state('');
@@ -86,14 +88,14 @@
 						<button
 							class={[ITEM, showSnaps && SELECTED]}
 							aria-current={showSnaps ? 'true' : undefined}
-							onclick={() => ((systemSettings.snaps = true), (systemSettings.group = null), (query = ''))}
+							onclick={() => (systemSettings.showSnaps(), (query = ''))}
 						>
 							<span class="flex-1 truncate">จัดการ Snaps</span>
 							<span class="text-[11px] text-(--vscode-descriptionForeground)">{snaps.list.length}</span>
 						</button>
 					{/if}
 					{#each sec.groups as g (g)}
-						{@const current = systemSettings.group === g && !showSnaps && !query}
+						{@const current = systemSettings.group === g && !showSnaps && !page && !query}
 						<button class={[ITEM, current && SELECTED]} aria-current={current ? 'true' : undefined} onclick={() => select(g)}>
 							<span class="flex-1 truncate">{g}</span>
 							<span class="text-[11px] text-(--vscode-descriptionForeground)">{count(g)}</span>
@@ -129,6 +131,7 @@
 			{:else if page === 'arkai'}<ArkaiPage />
 			{:else if page === 'terminal'}<TerminalPage />
 			{:else if page === 'account'}<AccountPage />
+			{:else if page === 'accounts'}<AccountsView />
 			{:else if page === 'usage'}<UsagePage />
 			{:else if page === 'about'}<AboutPage />
 			{:else if showSnaps}<SnapsView />{:else}<SettingsEditor group={systemSettings.group} bind:query />{/if}

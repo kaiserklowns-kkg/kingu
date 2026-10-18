@@ -16,7 +16,8 @@ import {
 	uriToPath
 } from './convert';
 import { JsonRpc, ResponseError } from './jsonrpc';
-import { countDiagnostics, DiagnosticsIndex, serverFor, statusText } from './model';
+import { EXTRA_LANGUAGES, languageFor, lspLanguageId } from '#lib/editor/languages.ts';
+import { configurationValue, countDiagnostics, DiagnosticsIndex, installItems, isDisabled, parseDisabled, SERVERS, serverFor, shellWord, statusText } from './model';
 import type { Diagnostic, DocumentSymbol } from './protocol';
 
 const range = (l1: number, c1: number, l2: number, c2: number) => ({ start: { line: l1, character: c1 }, end: { line: l2, character: c2 } });
@@ -300,6 +301,95 @@ describe('server table and status text', () => {
 		const ra = serverFor('rust')!;
 		expect(statusText(ra, { state: 'indexing' })).toBe('rust-analyzer: indexing…');
 		expect(statusText(ra, { state: 'ready' })).toBe('rust-analyzer: ready');
-		expect(statusText(serverFor('typescript')!, { state: 'not-installed', message: 'x' })).toBe('TypeScript language server not installed');
+		expect(statusText(serverFor('typescript')!, { state: 'not-installed', message: 'x' })).toBe('ไม่ได้ติดตั้ง TypeScript language server');
+		expect(statusText(serverFor('python')!, { state: 'not-installed' })).toBe('ไม่ได้ติดตั้ง basedpyright');
+	});
+
+	test('every language a file opens as reaches its server (keys as in Rust spec_for)', () => {
+		const cases: [string, string][] = [
+			['src/App.svelte', 'svelte'],
+			['main.py', 'python'],
+			['stubs/x.pyi', 'python'],
+			['package.json', 'json'],
+			['a.jsonc', 'json'],
+			['style.css', 'css'],
+			['style.scss', 'css'],
+			['theme.less', 'css'],
+			['index.html', 'html'],
+			['page.htm', 'html'],
+			['ci.yml', 'yaml'],
+			['.github/workflows/ci.yaml', 'yaml'],
+			['Cargo.toml', 'toml'],
+			['lib.rs', 'rust'],
+			['a.ts', 'typescript'],
+			['b.mjs', 'typescript'],
+			['main.go', 'go']
+		];
+		for (const [path, key] of cases) expect([path, serverFor(languageFor(path))?.key]).toEqual([path, key]);
+		for (const path of ['README.md', 'Makefile', '.gitignore', 'x.ini', 'q.sql']) expect([path, serverFor(languageFor(path))]).toEqual([path, undefined]);
+		expect(new Set(SERVERS.map((s) => s.key))).toEqual(new Set(['rust', 'typescript', 'go', 'svelte', 'python', 'json', 'css', 'html', 'yaml', 'toml']));
+	});
+
+	test('language ids', () => {
+		expect(languageFor('App.svelte')).toBe('svelte');
+		expect(languageFor('Cargo.TOML')).toBe('toml');
+		expect(languageFor('a.YML')).toBe('yaml');
+		// VS Code matches extensions with endsWith, so a bare `.yml` is YAML too.
+		expect(languageFor('.yml')).toBe('yaml');
+		expect(languageFor('dir.d/file')).toBe('plaintext');
+		expect(EXTRA_LANGUAGES.map((l) => l.id)).toEqual(['svelte', 'toml', 'typescriptreact', 'javascriptreact', 'jsx-tags', 'makefile', 'diff', 'dotenv', 'properties', 'ignore']);
+		// TSX/JSX are their own languages, served by the TypeScript server.
+		expect(serverFor(languageFor('App.tsx'))?.key).toBe('typescript');
+		expect(serverFor(languageFor('App.jsx'))?.key).toBe('typescript');
+		expect(lspLanguageId('typescriptreact', 'App.tsx')).toBe('typescriptreact');
+		expect(lspLanguageId('shell', 'run.sh')).toBe('shellscript');
+		// JSON with comments is `jsonc` for the language server only (Monaco has one JSON language).
+		expect(lspLanguageId('json', 'tsconfig.json')).toBe('jsonc');
+		expect(lspLanguageId('json', 'tsconfig.node.json')).toBe('jsonc');
+		expect(lspLanguageId('json', '.kingu/settings.json')).toBe('jsonc');
+		expect(lspLanguageId('json', 'a/b.jsonc')).toBe('jsonc');
+		expect(lspLanguageId('json', 'package.json')).toBe('json');
+		expect(lspLanguageId('svelte', 'App.svelte')).toBe('svelte');
+	});
+
+	test('kingu.lsp.disabled', () => {
+		const d = parseDisabled(' python,YAML  css ');
+		expect([...d]).toEqual(['python', 'yaml', 'css']);
+		expect(isDisabled(serverFor('python')!, d)).toBe(true);
+		expect(isDisabled(serverFor('scss')!, d)).toBe(true);
+		expect(isDisabled(serverFor('rust')!, d)).toBe(false);
+		expect(isDisabled(serverFor('less')!, parseDisabled('less'))).toBe(true);
+		expect(parseDisabled(undefined).size).toBe(0);
+		expect(parseDisabled('').size).toBe(0);
+	});
+
+	test('install picks show the argv Rust chose', () => {
+		const info = {
+			server: 'Svelte language server',
+			binary: 'svelteserver',
+			methods: [
+				{ tool: 'bun', argv: ['bun', 'add', '-g', 'svelte-language-server'] },
+				{ tool: 'npm', argv: ['/Users/me/My Tools/npm', 'i', '-g', 'svelte-language-server'] }
+			]
+		};
+		expect(installItems(info)).toEqual([
+			{ id: '0', label: 'bun add -g svelte-language-server', description: 'แนะนำ' },
+			{ id: '1', label: "'/Users/me/My Tools/npm' i -g svelte-language-server", description: undefined }
+		]);
+		expect(installItems({ ...info, methods: [] })).toEqual([]);
+		expect(shellWord('golang.org/x/tools/gopls@latest')).toBe('golang.org/x/tools/gopls@latest');
+		expect(shellWord("it's")).toBe(`'it'\\''s'`);
+	});
+
+	test('initialization options and settings the servers need', () => {
+		const svelte = serverFor('svelte')!.initializationOptions as { configuration: Record<string, unknown> };
+		for (const section of ['typescript', 'javascript', 'svelte']) expect(svelte.configuration[section]).toBeDefined();
+		for (const lang of ['json', 'css', 'html']) expect(serverFor(lang)!.initializationOptions).toMatchObject({ provideFormatter: true });
+		expect(configurationValue(serverFor('yaml')!.settings!, 'yaml')).toMatchObject({ validate: true, schemaStore: { enable: true } });
+		expect(configurationValue(serverFor('json')!.settings!, 'json.validate.enable')).toBe(true);
+		// Unknown sections are `{}`, not null: yaml reads `http.proxy`, svelte `typescript.*`.
+		expect(configurationValue({}, 'http')).toEqual({});
+		expect(configurationValue({}, 'basedpyright.analysis')).toEqual({});
+		expect(configurationValue({ a: { b: false } }, 'a.b')).toBe(false);
 	});
 });

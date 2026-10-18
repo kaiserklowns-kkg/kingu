@@ -1,9 +1,63 @@
 // Tabs of one worktree in the Agents layout (pure, so `bun test` can cover it).
 
-import { fileOf, isTaskDiffKey, splitPath } from '#lib/workbench/scm.ts';
+import { leaves, type PaneNode } from '#lib/terminal/paneLayout.ts';
+import { fileOf, isDiffKey, splitPath } from '#lib/workbench/scm.ts';
 
 /** `title`: a task or agent name instead of "Terminal n"; `run`: the command typed into its shell. */
-export type TerminalTab = { id: string; n: number; title?: string; run?: string[] };
+export type TerminalTab = {
+	id: string;
+	n: number;
+	title?: string;
+	run?: string[];
+	/** Split panes (Orca's pane layout); absent while the tab is one pane, whose id is the tab's. */
+	layout?: PaneNode;
+	/** The focused pane of a split tab. */
+	pane?: string;
+	/** The pane expanded over the others (Orca's Expand Pane). */
+	expanded?: string;
+};
+
+/** The panes of a terminal tab, in tree order. */
+export const tabPanes = (t: TerminalTab): string[] => (t.layout ? leaves(t.layout) : [t.id]);
+/** The focused pane of a terminal tab (its first pane when the saved one is gone). */
+export const activePane = (t: TerminalTab): string => {
+	const panes = tabPanes(t);
+	return t.pane && panes.includes(t.pane) ? t.pane : panes[0];
+};
+/** Orca's pane focus order: creation order, which the `t<seq>` ids keep. */
+export const paneOrder = (t: TerminalTab): string[] => [...tabPanes(t)].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+
+/** Most recently used first; a tab moves to the front when shown (Orca's recentTabIds). */
+export function touchMru(mru: string[], id: string, cap = 50): string[] {
+	return [id, ...mru.filter((x) => x !== id)].slice(0, cap);
+}
+
+/** The Ctrl+Tab switcher's rows: the active tab, then by recent use, then the rest in tab order. */
+export function mruOrder(mru: string[], ids: string[], active: string): string[] {
+	const recent = mru.filter((id) => id !== active && ids.includes(id));
+	return [...(ids.includes(active) ? [active] : []), ...recent, ...ids.filter((id) => id !== active && !recent.includes(id))];
+}
+
+/** The switcher's selection after one more Tab (`step` 1) or Shift+Tab (-1), wrapping. */
+export const switcherStep = (index: number, step: 1 | -1, n: number) => (n ? (index + step + n) % n : 0);
+
+/** The tab after (`step` 1) or before (-1) `active` among `ids`, wrapping; `active` itself when it is the only one. */
+export function cycleTab(ids: string[], active: string, step: 1 | -1): string {
+	if (!ids.length) return active;
+	const i = ids.indexOf(active);
+	if (i < 0) return ids[step === 1 ? 0 : ids.length - 1];
+	return ids[(i + step + ids.length) % ids.length];
+}
+
+/** Orca's Select Tab n: the n-th tab (1-based), or null when there are fewer (9 is the 9th, not the last). */
+export const tabAtIndex = (ids: string[], n: number): string | null => ids[n - 1] ?? null;
+
+/** A closed tab, enough to open it again (Orca: a fresh shell keeps only the title). */
+export type ClosedTab = { kind: 'terminal'; title?: string; index: number } | { kind: 'file'; key: string };
+/** Orca keeps the last 10 closes per worktree. */
+export function pushClosed(stack: ClosedTab[], tab: ClosedTab, cap = 10): ClosedTab[] {
+	return [...stack, tab].slice(-cap);
+}
 /**
  * A file or task diff opened in the ADE center (Orca opens files next to the agent). `key` is a
  * workspace-relative path or a `taskdiff://<slug>/<rel>` key; a `preview` tab is replaced by the
@@ -26,7 +80,7 @@ export function adeTabs(key: string, terminals: TerminalTab[], files: FileTab[] 
 		...terminals.map((t) => ({ id: t.id, kind: 'terminal' as const, label: t.title ?? `Terminal ${t.n}` })),
 		...files.map((f) => ({
 			id: fileTabId(f.key),
-			kind: isTaskDiffKey(f.key) ? ('diff' as const) : ('file' as const),
+			kind: isDiffKey(f.key) ? ('diff' as const) : ('file' as const),
 			label: splitPath(fileOf(f.key))[0],
 			key: f.key,
 			preview: f.preview

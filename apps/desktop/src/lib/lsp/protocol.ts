@@ -103,6 +103,7 @@ export type ServerCapabilities = {
 	completionProvider?: { triggerCharacters?: string[]; resolveProvider?: boolean };
 	definitionProvider?: boolean | object;
 	documentSymbolProvider?: boolean | object;
+	workspaceSymbolProvider?: boolean | object;
 	diagnosticProvider?: { interFileDependencies?: boolean; workspaceDiagnostics?: boolean };
 	signatureHelpProvider?: { triggerCharacters?: string[]; retriggerCharacters?: string[] };
 	renameProvider?: boolean | { prepareProvider?: boolean };

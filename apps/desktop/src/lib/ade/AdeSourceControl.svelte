@@ -15,6 +15,7 @@
 	import { commitDiffKey, decoration, diffKey, splitPath, taskDiffKey, type GitStatus, type StatusEntry } from '#lib/workbench/scm.ts';
 	import { fileIcon } from '#lib/workbench/fileIcons.ts';
 	import { adeLayout, PRIMARY } from './adeLayout.svelte';
+	import { rightSidebar } from './rightSidebar.svelte.ts';
 	import { adeTasks } from './tasks.svelte';
 	import { worktreeDir } from './keys';
 	import { drafts } from './scmDrafts';
@@ -178,11 +179,11 @@
 			case 'push':
 				return void run('Push', 'git_push', {});
 			case 'forcePush':
-				return void ask('Force push with lease? Commits on the remote that you do not have locally will be replaced.', { title: 'Force Push', kind: 'warning', okLabel: 'Force Push', cancelLabel: 'Cancel' }).then((ok) => ok && run('Force Push', 'git_push', { force: true }));
+				return void ask('Force push with lease? Commits on the remote that you do not have locally will be replaced.', { title: 'Force Push', kind: 'warning', okLabel: 'Force Push', cancelLabel: 'Cancel' }).then((ok) => ok && run('Force Push', 'git_force_push', {}));
 			case 'pull':
 				return void run('Pull', 'git_pull', {});
 			case 'ff':
-				return void run('Fast-forward', 'git_pull', { ffOnly: true });
+				return void run('Fast-forward', 'git_pull_ff_only', {});
 			case 'sync':
 				return void run('Sync', 'git_sync', {});
 			case 'rebase':
@@ -190,7 +191,7 @@
 			case 'fetch':
 				return void run('Fetch', 'git_fetch', {});
 			case 'publish':
-				return void run('Publish Branch', 'git_sync', {});
+				return void run('Publish Branch', 'git_push', {});
 		}
 	}
 
@@ -287,7 +288,7 @@
 		else if (id === 'copyPath') void navigator.clipboard.writeText(`${workspace.root}/${rel}`);
 		else if (id === 'copyRel') void navigator.clipboard.writeText(r.entry.path);
 		else if (id === 'reveal') void invoke('fs_reveal', { rel }).catch((e) => statusBar.error(String(e)));
-		else if (id === 'explorer') adeLayout.rightTab = 'files';
+		else if (id === 'explorer') rightSidebar.setTab(adeLayout.key, 'files');
 	}
 
 	const prNumber = $derived(task?.meta.pr_url?.match(/\/(\d+)\/?$/)?.[1]);
@@ -320,7 +321,7 @@
 		void loadCompare();
 	});
 	async function changeBase() {
-		const refs = await invoke<string[]>('git_refs', { slug: slug || null }).catch(() => []);
+		const refs = await invoke<string[]>('git_ref_names', { slug: slug || null }).catch(() => []);
 		const current = baseOverride ?? base;
 		quick.pick({
 			placeholder: 'Pick the branch compare target for this repository',
@@ -414,7 +415,7 @@
 			if (slug) await adeTasks.linkPr(slug, url);
 			statusBar.flash(`Pull request created${url ? `: ${url}` : ''}`, 5000);
 			prTitle = prBody = '';
-			adeLayout.rightTab = 'checks';
+			rightSidebar.setTab(adeLayout.key, 'checks');
 		} catch (e) {
 			prError = String(e);
 		}

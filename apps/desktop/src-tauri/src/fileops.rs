@@ -2,7 +2,8 @@
 //! rename/move, delete to the Trash and reveal in Finder. Both ends of every operation stay
 //! inside the workspace: paths are plain relative paths (no `..`, no absolute paths) and the
 //! nearest existing ancestor must resolve inside the root, so a symlinked folder cannot lead out.
-//! Nothing is ever overwritten.
+//! Nothing is ever overwritten: copies and imports that collide get VS Code's `name copy.ts`
+//! naming (`explorer.incrementalNaming: simple`), moves that collide fail.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -119,6 +120,125 @@ fn same_entry(a: &Path, b: &Path) -> bool {
   }
 }
 
+/// VS Code's `incrementFileName` (simple): `a.ts` → `a copy.ts` → `a copy 2.ts`; folders keep
+/// their dots (`v1.2` → `v1.2 copy`).
+pub fn increment_name(name: &str, is_dir: bool) -> String {
+  let (stem, ext) = match name.rfind('.') {
+    Some(i) if !is_dir && i > 0 => name.split_at(i),
+    _ => (name, ""),
+  };
+  if let Some(i) = stem.rfind(" copy") {
+    let (head, tail) = stem.split_at(i + " copy".len());
+    if tail.is_empty() {
+      return format!("{head} 2{ext}");
+    }
+    if let Some(digits) = tail.strip_prefix(' ')
+      && !digits.is_empty()
+      && digits.bytes().all(|b| b.is_ascii_digit())
+      && let Ok(n) = digits.parse::<u64>()
+    {
+      return format!("{head} {}{ext}", n + 1);
+    }
+  }
+  format!("{stem} copy{ext}")
+}
+
+/// An existing folder (or the root, `""`) to put things into, canonical and inside the workspace.
+fn target_dir(root: &Path, dir: &str) -> Result<PathBuf, String> {
+  let path = if dir.is_empty() { root.to_path_buf() } else { root.join(plain(dir)?).canonicalize().map_err(|e| format!("{dir}: {e}"))? };
+  if !path.starts_with(root) {
+    return Err(format!("{dir}: outside the workspace"));
+  }
+  if !path.is_dir() {
+    return Err(format!("{dir}: not a folder"));
+  }
+  Ok(path)
+}
+
+/// `dir/name`, or the first free incremented name when it is taken.
+fn free_name(root: &Path, dir: &str, name: &str, is_dir: bool) -> Result<String, String> {
+  let mut name = name.to_string();
+  for _ in 0..10_000 {
+    let rel = if dir.is_empty() { name.clone() } else { format!("{dir}/{name}") };
+    if root.join(&rel).symlink_metadata().is_err() {
+      return Ok(rel);
+    }
+    name = increment_name(&name, is_dir);
+  }
+  Err(format!("{name}: no free name"))
+}
+
+/// Copies a file, a folder (recursively) or a symlink (as a link) to `dst`, which must not exist.
+fn copy_entry(src: &Path, dst: &Path) -> std::io::Result<()> {
+  let meta = src.symlink_metadata()?;
+  if meta.file_type().is_symlink() {
+    #[cfg(unix)]
+    return std::os::unix::fs::symlink(std::fs::read_link(src)?, dst);
+    #[cfg(not(unix))]
+    return std::fs::copy(src, dst).map(|_| ());
+  }
+  if meta.is_dir() {
+    std::fs::create_dir(dst)?;
+    for entry in std::fs::read_dir(src)? {
+      let entry = entry?;
+      copy_entry(&entry.path(), &dst.join(entry.file_name()))?;
+    }
+    return Ok(());
+  }
+  // `create_new`, then copy the bytes: never clobber something that appeared meanwhile.
+  let mut out = std::fs::OpenOptions::new().write(true).create_new(true).open(dst)?;
+  std::io::copy(&mut std::fs::File::open(src)?, &mut out)?;
+  out.set_permissions(meta.permissions())
+}
+
+fn name_of(rel: &str) -> Result<&str, String> {
+  Path::new(rel).file_name().and_then(|n| n.to_str()).ok_or_else(|| format!("{rel}: no name"))
+}
+
+/// Copies `from` into the folder `to_dir` (paste, ⌥-drag). A name already taken there becomes
+/// `name copy`, so pasting into the same folder duplicates. Returns the new path.
+pub fn copy(root: &Path, from: &str, to_dir: &str) -> Result<String, String> {
+  let src = check_existing(root, from)?;
+  target_dir(root, to_dir)?;
+  if !to_dir.is_empty() && Path::new(to_dir).starts_with(Path::new(from)) {
+    return Err(format!("{from}: cannot copy a folder into itself"));
+  }
+  let rel = free_name(root, to_dir, name_of(from)?, src.is_dir())?;
+  copy_entry(&src, &root.join(&rel)).map_err(|e| format!("{from} → {rel}: {e}"))?;
+  Ok(rel)
+}
+
+/// Moves `from` into the folder `to_dir` (cut/paste, drag and drop). Fails when the name is
+/// taken there; the webview asks and trashes the old one first if the user wants it replaced.
+pub fn move_into(root: &Path, from: &str, to_dir: &str) -> Result<String, String> {
+  target_dir(root, to_dir)?;
+  let name = name_of(from)?;
+  let to = if to_dir.is_empty() { name.to_string() } else { format!("{to_dir}/{name}") };
+  if to == from {
+    return Ok(to);
+  }
+  rename(root, from, &to)?;
+  Ok(to)
+}
+
+/// Copies files dropped from Finder (absolute paths) into `to_dir`, with copy naming on
+/// collisions. Returns the new paths; the first failure stops the rest.
+pub fn import(root: &Path, sources: &[PathBuf], to_dir: &str) -> Result<Vec<String>, String> {
+  let dir_abs = target_dir(root, to_dir)?;
+  let mut out = Vec::new();
+  for src in sources {
+    let name = src.file_name().and_then(|n| n.to_str()).ok_or_else(|| format!("{}: no name", src.display()))?;
+    let real = src.canonicalize().map_err(|e| format!("{}: {e}", src.display()))?;
+    if dir_abs.starts_with(&real) {
+      return Err(format!("{}: cannot copy a folder into itself", src.display()));
+    }
+    let rel = free_name(root, to_dir, name, real.is_dir())?;
+    copy_entry(src, &root.join(&rel)).map_err(|e| format!("{} → {rel}: {e}", src.display()))?;
+    out.push(rel);
+  }
+  Ok(out)
+}
+
 /// Moves `rel` to the Trash (VS Code's default `files.enableTrash`).
 pub fn trash(root: &Path, rel: &str) -> Result<(), String> {
   let path = check_existing(root, rel)?;
@@ -128,11 +248,16 @@ pub fn trash(root: &Path, rel: &str) -> Result<(), String> {
 /// Shows `rel` selected in Finder (Explorer on Windows, the containing folder elsewhere).
 pub fn reveal(root: &Path, rel: &str) -> Result<(), String> {
   let path = if rel.is_empty() { root.to_path_buf() } else { check_existing(root, rel)? };
+  reveal_path(&path).map_err(|e| format!("reveal {rel}: {e}"))
+}
+
+/// `reveal` for a path the caller already checked (e.g. a snap folder outside the workspace).
+pub fn reveal_path(path: &Path) -> Result<(), String> {
   let mut cmd;
   #[cfg(target_os = "macos")]
   {
     cmd = std::process::Command::new("open");
-    cmd.arg("-R").arg(&path);
+    cmd.arg("-R").arg(path);
   }
   #[cfg(target_os = "windows")]
   {
@@ -142,9 +267,9 @@ pub fn reveal(root: &Path, rel: &str) -> Result<(), String> {
   #[cfg(not(any(target_os = "macos", target_os = "windows")))]
   {
     cmd = std::process::Command::new("xdg-open");
-    cmd.arg(path.parent().unwrap_or(root));
+    cmd.arg(path.parent().unwrap_or(path));
   }
-  cmd.spawn().map(|_| ()).map_err(|e| format!("reveal {rel}: {e}"))
+  cmd.spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -228,5 +353,73 @@ mod tests {
     rename(&root, "src/a.txt", "src/A.txt").unwrap();
     let names: Vec<_> = std::fs::read_dir(root.join("src")).unwrap().map(|e| e.unwrap().file_name()).collect();
     assert_eq!(names, ["A.txt"]);
+  }
+
+  #[test]
+  fn increments_names_like_vscode() {
+    assert_eq!(increment_name("a.ts", false), "a copy.ts");
+    assert_eq!(increment_name("a copy.ts", false), "a copy 2.ts");
+    assert_eq!(increment_name("a copy 9.ts", false), "a copy 10.ts");
+    assert_eq!(increment_name("Makefile", false), "Makefile copy");
+    assert_eq!(increment_name(".env", false), ".env copy");
+    assert_eq!(increment_name("v1.2", true), "v1.2 copy");
+    assert_eq!(increment_name("src copy", true), "src copy 2");
+    assert_eq!(increment_name("x.tar.gz", false), "x.tar copy.gz");
+    assert_eq!(increment_name("a copy x.ts", false), "a copy x copy.ts");
+  }
+
+  #[test]
+  fn copy_duplicates_with_copy_names() {
+    let (_tmp, root) = ws();
+    assert_eq!(copy(&root, "src/a.txt", "src").unwrap(), "src/a copy.txt");
+    assert_eq!(copy(&root, "src/a.txt", "src").unwrap(), "src/a copy 2.txt");
+    assert_eq!(copy(&root, "src/a.txt", "").unwrap(), "a.txt");
+    assert_eq!(std::fs::read_to_string(root.join("src/a copy 2.txt")).unwrap(), "a");
+    assert!(copy(&root, "src/a.txt", "src/a.txt").unwrap_err().contains("not a folder"));
+    assert!(copy(&root, "src/a.txt", "..").is_err());
+  }
+
+  #[test]
+  fn copy_folder_recursively() {
+    let (_tmp, root) = ws();
+    std::fs::create_dir_all(root.join("src/deep/er")).unwrap();
+    std::fs::write(root.join("src/deep/er/x.rs"), "x").unwrap();
+    std::fs::create_dir(root.join("dest")).unwrap();
+    assert_eq!(copy(&root, "src", "dest").unwrap(), "dest/src");
+    assert_eq!(std::fs::read_to_string(root.join("dest/src/deep/er/x.rs")).unwrap(), "x");
+    assert_eq!(std::fs::read_to_string(root.join("dest/src/a.txt")).unwrap(), "a");
+    assert_eq!(copy(&root, "src", "").unwrap(), "src copy");
+    assert!(root.join("src copy/deep/er/x.rs").is_file());
+    assert!(copy(&root, "src", "src/deep").unwrap_err().contains("into itself"));
+  }
+
+  #[test]
+  fn move_across_folders_without_overwriting() {
+    let (_tmp, root) = ws();
+    std::fs::create_dir(root.join("other")).unwrap();
+    assert_eq!(move_into(&root, "src/a.txt", "other").unwrap(), "other/a.txt");
+    assert!(!root.join("src/a.txt").exists());
+    std::fs::write(root.join("src/a.txt"), "new").unwrap();
+    assert!(move_into(&root, "src/a.txt", "other").unwrap_err().contains("already exists"));
+    assert_eq!(std::fs::read_to_string(root.join("other/a.txt")).unwrap(), "a");
+    assert_eq!(move_into(&root, "other", "src").unwrap(), "src/other");
+    assert!(root.join("src/other/a.txt").is_file());
+    assert!(move_into(&root, "src", "src/other").unwrap_err().contains("into itself"));
+    assert_eq!(move_into(&root, "src/a.txt", "src").unwrap(), "src/a.txt");
+  }
+
+  #[test]
+  fn import_copies_external_files_in() {
+    let (tmp, root) = ws();
+    let outside = tmp.path().join("drop");
+    std::fs::create_dir_all(outside.join("dir")).unwrap();
+    std::fs::write(outside.join("dir/f.txt"), "f").unwrap();
+    std::fs::write(outside.join("a.txt"), "outside").unwrap();
+    let got = import(&root, &[outside.join("a.txt"), outside.join("dir")], "src").unwrap();
+    assert_eq!(got, ["src/a copy.txt", "src/dir"]);
+    assert_eq!(std::fs::read_to_string(root.join("src/a copy.txt")).unwrap(), "outside");
+    assert_eq!(std::fs::read_to_string(root.join("src/a.txt")).unwrap(), "a");
+    assert!(root.join("src/dir/f.txt").is_file());
+    assert!(import(&root, &[root.join("src")], "src").unwrap_err().contains("into itself"));
   }
 }

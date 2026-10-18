@@ -3,10 +3,19 @@
 //! `tasks` persists task metadata and `review` drives the review / merge / PR flow of the
 //! Agents view.
 
+pub mod automations;
+pub mod cli;
 pub mod events;
+pub mod hooks;
 pub mod host;
+pub mod issues;
+pub mod notes;
+pub mod pr;
 pub mod review;
+pub mod scripts;
+pub mod status_hooks;
 pub mod tasks;
+pub mod trust;
 pub mod worktree;
 
 use std::sync::Arc;
@@ -35,9 +44,12 @@ pub async fn agent_start(
   resume: Option<String>,
   mcp_servers: Option<std::collections::BTreeMap<String, host::McpServer>>,
   plugins: Option<Vec<String>>,
+  images: Option<Vec<String>>,
   on_event: Channel<AgentEvent>,
 ) -> Result<u32, String> {
   worktree::validate_slug(&slug)?;
+  let images = images.unwrap_or_default();
+  crate::attachments::check_images(&images)?;
   if prompt.trim().is_empty() {
     return Err("prompt is empty".into());
   }
@@ -64,7 +76,22 @@ pub async fn agent_start(
   }
   let cwd = cwd.to_str().ok_or("worktree path is not valid UTF-8")?.to_owned();
   let mcp_servers = mcp_servers.filter(|m| !m.is_empty());
-  let req = host::StartRequest { cwd, prompt, model: model.filter(|m| !m.trim().is_empty()), permission_mode, resume, mcp_servers, plugins };
+  let account = {
+    use tauri::Manager;
+    app.state::<crate::accounts::Accounts>().agent_env(crate::accounts::store::Provider::Claude)?
+  };
+  let req = host::StartRequest {
+    cwd,
+    prompt,
+    model: model.filter(|m| !m.trim().is_empty()),
+    permission_mode,
+    resume,
+    mcp_servers,
+    plugins,
+    env: (!account.set.is_empty()).then_some(host::SecretEnv(account.set)),
+    unset_env: account.unset,
+    images,
+  };
   let resuming = req.resume.is_some();
   let agents = agents.inner().clone();
   // Spawning the sidecar and its first answer can take a moment: keep it off the main thread.
@@ -90,13 +117,15 @@ async fn on_host<T: Send + 'static>(
   tauri::async_runtime::spawn_blocking(move || f(&agents)).await.map_err(|e| e.to_string())?
 }
 
-/// Follow-up message to a running session.
+/// Follow-up message to a running session, with attached image files.
 #[tauri::command]
-pub async fn agent_send(agents: State<'_, Arc<AgentHost>>, run_id: u32, text: String) -> Result<(), String> {
+pub async fn agent_send(agents: State<'_, Arc<AgentHost>>, run_id: u32, text: String, images: Option<Vec<String>>) -> Result<(), String> {
   if text.trim().is_empty() {
     return Err("message is empty".into());
   }
-  on_host(&agents, move |a| a.send(run_id, &text)).await
+  let images = images.unwrap_or_default();
+  crate::attachments::check_images(&images)?;
+  on_host(&agents, move |a| a.send(run_id, &text, &images)).await
 }
 
 /// Answers a `permission_request`: `allow`, `allow_always` (this session) or `deny` + message.
@@ -134,9 +163,39 @@ pub fn tasks_load(ws: State<'_, Workspace>) -> Result<Vec<tasks::TaskMeta>, Stri
   ws.current().map_or(Ok(Vec::new()), |root| tasks::load(&root))
 }
 
+/// Automations of the open folder; empty with no folder open.
+#[tauri::command]
+pub fn automations_load(ws: State<'_, Workspace>) -> Result<Vec<automations::Automation>, String> {
+  ws.current().map_or(Ok(Vec::new()), |root| automations::load(&root))
+}
+
+#[tauri::command]
+pub fn automations_save(ws: State<'_, Workspace>, automations: Vec<automations::Automation>) -> Result<(), String> {
+  automations::save(&ws.root()?, &automations)
+}
+
 #[tauri::command]
 pub fn tasks_save(ws: State<'_, Workspace>, tasks: Vec<tasks::TaskMeta>) -> Result<(), String> {
   tasks::save(&ws.root()?, &tasks)
+}
+
+/// Review notes of every worktree of the open folder (`""` = the folder); empty with no folder open.
+#[tauri::command]
+pub fn diff_notes_load(ws: State<'_, Workspace>) -> Result<std::collections::BTreeMap<String, Vec<notes::DiffNote>>, String> {
+  ws.current().map_or(Ok(Default::default()), |root| notes::load(&root))
+}
+
+/// Replaces the review notes of worktree `key` (`""` = the folder, else a task slug).
+#[tauri::command]
+pub fn diff_notes_save(ws: State<'_, Workspace>, key: String, notes: Vec<notes::DiffNote>) -> Result<(), String> {
+  notes::save(&ws.root()?, &key, &notes)
+}
+
+/// Commits on the task branch since it forked from `base`, oldest first (prefills the PR form).
+#[tauri::command]
+pub async fn worktree_commits(ws: State<'_, Workspace>, slug: String, base: String) -> Result<Vec<review::Commit>, String> {
+  let dir = review::task_dir(&ws.root()?, &slug)?;
+  blocking(move || review::commits_since(&dir, &base)).await
 }
 
 /// Local branches of the open folder's repository (base branch picker).
@@ -228,6 +287,19 @@ pub async fn gh_status() -> Result<review::GhStatus, String> {
   blocking(|| Ok(review::gh_status(review::gh_bin()))).await
 }
 
+/// The task branch's pull request and its CI checks (`None` when there is no PR yet). An empty
+/// `slug` is the open folder itself: the PR of its checked-out branch (the ADE's Checks tab).
+#[tauri::command]
+pub async fn worktree_pr_status(ws: State<'_, Workspace>, slug: String) -> Result<Option<review::PrStatus>, String> {
+  let root = ws.root()?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  if slug.is_empty() {
+    return blocking(move || review::pr_status(&gh, &root, None)).await;
+  }
+  let dir = review::task_dir(&root, &slug)?;
+  blocking(move || review::pr_status(&gh, &dir, Some(&slug))).await
+}
+
 /// Pushes the task branch and runs `gh pr create`; returns the PR URL.
 #[tauri::command]
 pub async fn worktree_pr_create(
@@ -236,10 +308,125 @@ pub async fn worktree_pr_create(
   base: String,
   title: String,
   body: String,
+  draft: Option<bool>,
+  open: Option<bool>,
 ) -> Result<String, String> {
   let dir = review::task_dir(&ws.root()?, &slug)?;
-  let gh = review::gh_bin().ok_or("ไม่พบ gh: ติดตั้งด้วย `brew install gh` แล้ว `gh auth login`")?;
-  let url = blocking(move || review::pr_create(&gh, &dir, &slug, &base, &title, &body)).await?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let draft = draft.unwrap_or(false);
+  let url = blocking(move || {
+    let url = review::pr_create(&gh, &dir, &slug, &base, &title, &body, draft)?;
+    // kingu.pr.openAfterCreate: best effort, the PR exists either way.
+    if open.unwrap_or(false) && url.starts_with("https://") {
+      let shown = crate::shell_env::command(&gh).current_dir(&dir).args(["pr", "view", &url, "--web"]).output();
+      if !shown.as_ref().is_ok_and(|o| o.status.success()) {
+        log::warn!("gh pr view --web {url} failed");
+      }
+    }
+    Ok(url)
+  })
+  .await?;
   log::info!("opened PR {url}");
   Ok(url)
+}
+
+/// Issues of the open folder's GitHub repository (`gh issue list`). `assignee`: `@me` or none.
+#[tauri::command]
+pub async fn gh_issues_list(
+  ws: State<'_, Workspace>,
+  state: Option<String>,
+  assignee: Option<String>,
+  label: Option<String>,
+  search: Option<String>,
+  limit: Option<u32>,
+) -> Result<Vec<issues::Issue>, String> {
+  let root = ws.root()?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let q = issues::IssueQuery { state: state.unwrap_or_else(|| "open".into()), assignee, label, search, limit: limit.unwrap_or(50) };
+  blocking(move || issues::list(&gh, &root, &q)).await
+}
+
+/// One issue with its latest comments (`gh issue view`).
+#[tauri::command]
+pub async fn gh_issue_view(ws: State<'_, Workspace>, number: u64) -> Result<issues::IssueDetail, String> {
+  let root = ws.root()?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  blocking(move || issues::view(&gh, &root, number)).await
+}
+
+/// Comments on an issue (only when `kingu.issues.commentOnPr` is on; the webview decides).
+#[tauri::command]
+pub async fn gh_issue_comment(ws: State<'_, Workspace>, number: u64, body: String) -> Result<(), String> {
+  let root = ws.root()?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  blocking(move || issues::comment(&gh, &root, number, &body)).await?;
+  log::info!("commented on issue #{number}");
+  Ok(())
+}
+
+/// Opens the issue on GitHub in the default browser.
+#[tauri::command]
+pub async fn gh_issue_open(ws: State<'_, Workspace>, number: u64) -> Result<(), String> {
+  let root = ws.root()?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  blocking(move || issues::open_web(&gh, &root, number)).await
+}
+
+/// Where a PR command runs: the task worktree `slug`, or the open folder for `''` (the ADE's
+/// Checks tab of the folder itself).
+fn pr_dir(ws: &Workspace, slug: &str) -> Result<std::path::PathBuf, String> {
+  let root = ws.root()?;
+  if slug.is_empty() { Ok(root) } else { review::task_dir(&root, slug) }
+}
+
+/// Merges the PR (`merge`, `squash` or `rebase`) after re-checking it on GitHub (Orca's merge);
+/// `delete_branch` also deletes its head branch on GitHub. The webview confirms first.
+#[tauri::command]
+pub async fn worktree_pr_merge(
+  ws: State<'_, Workspace>,
+  slug: String,
+  url: String,
+  number: u64,
+  method: String,
+  delete_branch: Option<bool>,
+) -> Result<pr::MergeOutcome, String> {
+  let dir = pr_dir(&ws, &slug)?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let method = pr::MergeMethod::parse(&method)?;
+  blocking(move || pr::merge(&gh, &dir, &url, number, method, delete_branch.unwrap_or(false))).await
+}
+
+/// Merge methods the PR's repository allows and the viewer's default (`gh repo view`).
+#[tauri::command]
+pub async fn gh_merge_settings(ws: State<'_, Workspace>, slug: String, url: String) -> Result<pr::RepoMergeSettings, String> {
+  let dir = pr_dir(&ws, &slug)?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let repo = pr::RepoRef::from_pr_url(&url)?;
+  blocking(move || pr::merge_settings(&gh, &dir, &repo)).await
+}
+
+/// Log excerpts of failed checks' GitHub Actions jobs, for the "fix failing checks" prompt.
+#[tauri::command]
+pub async fn worktree_pr_check_logs(ws: State<'_, Workspace>, slug: String, url: String, checks: Vec<pr::CheckRef>) -> Result<Vec<pr::CheckLog>, String> {
+  let dir = pr_dir(&ws, &slug)?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  blocking(move || pr::check_logs(&gh, &dir, &url, &checks)).await
+}
+
+/// Review threads of the PR (resolved ones included; the webview filters).
+#[tauri::command]
+pub async fn worktree_pr_threads(ws: State<'_, Workspace>, slug: String, url: String, number: u64) -> Result<Vec<pr::ReviewThread>, String> {
+  let dir = pr_dir(&ws, &slug)?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  blocking(move || pr::review_threads(&gh, &dir, &url, number)).await
+}
+
+/// Resolves (or, with `resolve: false`, reopens) a review thread; returns its new state.
+#[tauri::command]
+pub async fn gh_resolve_thread(ws: State<'_, Workspace>, slug: String, url: String, thread_id: String, resolve: bool) -> Result<bool, String> {
+  let dir = pr_dir(&ws, &slug)?;
+  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let done = blocking(move || pr::resolve_thread(&gh, &dir, &url, &thread_id, resolve)).await?;
+  log::info!("review thread {}", if done { "resolved" } else { "reopened" });
+  Ok(done)
 }

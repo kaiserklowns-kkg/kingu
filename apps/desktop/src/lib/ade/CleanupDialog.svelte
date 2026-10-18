@@ -20,7 +20,8 @@
 	async function run() {
 		progress = { done: 0, total: chosen.length };
 		for (const slug of chosen) {
-			await adeTasks.remove(slug, { confirmed: true, deleteBranch });
+			// This dialog is the confirmation; the checkbox deletes merged branches (git branch -d), never unmerged work.
+			await adeTasks.removeConfirmed(slug, { deleteBranch: deleteBranch ? 'safe' : 'keep', force: false });
 			progress = { done: progress.done + 1, total: progress.total };
 		}
 		cleanup.open = false;

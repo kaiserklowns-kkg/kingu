@@ -1,41 +1,32 @@
 // Applies settings live, the way VS Code's editor/terminal/window contributions react to
 // configuration changes: Monaco options on every editor and model, xterm options, window zoom,
-// files.autoSave, and the color theme. Hooks are small so the editor/terminal hosts stay as they are.
+// auto save, the color theme (and the OS scheme), tree and list options, the file watcher's
+// excludes and the close guard. The mappings themselves are pure (mappings.ts).
 
 import { untrack } from 'svelte';
+import { invoke } from '@tauri-apps/api/core';
 import type * as Monaco from 'monaco-editor';
 import type { Terminal } from '@xterm/xterm';
-import { commands } from '#lib/workbench/commands.svelte.ts';
 import { editors } from '#lib/workbench/editors.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { theme } from '#lib/theme/theme.svelte.ts';
+import { isDiffKey } from '#lib/workbench/scm.ts';
+import { openModels, refreshLanguages, saveFile } from '#lib/workbench/editorModels.ts';
+import { indentLabel } from '#lib/workbench/textFiles.ts';
+import { keybindings } from '#lib/workbench/keybindings.svelte.ts';
+import { commands } from '#lib/workbench/commands.svelte.ts';
+import { editorOptionsFrom, effectiveTheme, enabledGlobs, indentFrom, terminalOptionsFrom, type Indent, type SaveReason } from './mappings';
 import { jsonSchema } from './registry';
 import { settings } from './settings.svelte';
 import { settingSchemas } from './schemas.svelte';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 const SETTINGS_SCHEMA_URI = 'kingu://schemas/settings';
+const KEYBINDINGS_SCHEMA_URI = 'kingu://schemas/keybindings';
+const get = <T>(id: string) => settings.get<T>(id);
 
 /** Monaco editor options from settings (VS Code: editor.* configuration). */
-export function editorOptions(): Monaco.editor.IEditorOptions {
-	return {
-		fontSize: settings.get<number>('editor.fontSize'),
-		fontFamily: settings.get<string>('editor.fontFamily'),
-		wordWrap: settings.get<'off' | 'on' | 'wordWrapColumn' | 'bounded'>('editor.wordWrap'),
-		minimap: { enabled: settings.get<boolean>('editor.minimap.enabled') },
-		stickyScroll: { enabled: settings.get<boolean>('editor.stickyScroll.enabled') },
-		renderWhitespace: settings.get<'none' | 'boundary' | 'selection' | 'trailing' | 'all'>('editor.renderWhitespace')
-	};
-}
-
-type Indent = { tabSize: number; insertSpaces: boolean; detect: boolean };
-
-function indentSettings(): Indent {
-	return {
-		tabSize: settings.get<number>('editor.tabSize'),
-		insertSpaces: settings.get<boolean>('editor.insertSpaces'),
-		detect: settings.get<boolean>('editor.detectIndentation')
-	};
-}
+export const editorOptions = (): Monaco.editor.IEditorOptions & Monaco.editor.IGlobalEditorOptions => editorOptionsFrom(get);
 
 function applyIndent(model: Monaco.editor.ITextModel, i: Indent) {
 	if (model.isDisposed()) return;
@@ -43,13 +34,15 @@ function applyIndent(model: Monaco.editor.ITextModel, i: Indent) {
 	else model.updateOptions({ tabSize: i.tabSize, insertSpaces: i.insertSpaces });
 }
 
-/** The model shown for the focused file, an IDE tab or the Agents layout's (models live at `file:///<tab key>`). */
-const isActiveModel = (model: Monaco.editor.ITextModel) => editors.focusedFile !== null && model.uri.path === '/' + editors.focusedFile;
+/** The tab key a model shows (a workspace file, or the user settings.json / keybindings.json). */
+const pathOf = (model: Monaco.editor.ITextModel) => openModels().find(([, m]) => m === model)?.[0] ?? model.uri.path.slice(1);
+const isActiveModel = (model: Monaco.editor.ITextModel) => editors.focusedFile !== null && pathOf(model) === editors.focusedFile;
 
-function saveActive(model?: Monaco.editor.ITextModel) {
-	const path = editors.focusedFile;
-	if (!path || !editors.isDirty(path) || (model && !isActiveModel(model))) return;
-	void Promise.resolve(commands.run('workbench.action.files.save')).catch((e) => status.error(`บันทึกอัตโนมัติไม่สำเร็จ: ${e}`));
+async function autoSave(paths: string[], reason: SaveReason) {
+	for (const path of paths) {
+		if (!path || !editors.isDirty(path) || isDiffKey(path)) continue;
+		await saveFile(path, reason).catch((e) => notifications.error(`บันทึกอัตโนมัติไม่สำเร็จ: ${e}`));
+	}
 }
 
 let monacoInstalled = false;
@@ -64,18 +57,20 @@ export function installEditorSettings(monaco: typeof Monaco) {
 
 	const timers = new WeakMap<Monaco.editor.ITextModel, ReturnType<typeof setTimeout>>();
 	monaco.editor.onDidCreateModel((model) => {
-		applyIndent(model, untrack(indentSettings));
+		applyIndent(model, untrack(() => indentFrom(get)));
+		// files.autoSave afterDelay: each model saves itself once typing pauses (VS Code saves every dirty editor, not just the active one).
 		model.onDidChangeContent(() => {
-			if (untrack(() => settings.get('files.autoSave')) !== 'afterDelay') return;
 			clearTimeout(timers.get(model));
-			timers.set(model, setTimeout(() => saveActive(model), untrack(() => settings.get<number>('files.autoSaveDelay'))));
+			if (untrack(() => get('files.autoSave')) !== 'afterDelay') return;
+			timers.set(model, setTimeout(() => void autoSave([pathOf(model)], 'afterDelay'), untrack(() => get<number>('files.autoSaveDelay'))));
 		});
 	});
 	monaco.editor.onDidCreateEditor((editor) => {
 		// After the constructor has applied its own creation options.
 		queueMicrotask(() => editor.updateOptions(untrack(editorOptions)));
 		editor.onDidBlurEditorText(() => {
-			if (untrack(() => settings.get('files.autoSave')) === 'onFocusChange') saveActive(editor.getModel() ?? undefined);
+			const model = editor.getModel();
+			if (model && untrack(() => get('files.autoSave')) === 'onFocusChange') void autoSave([pathOf(model)], 'focusChange');
 		});
 	});
 
@@ -84,14 +79,33 @@ export function installEditorSettings(monaco: typeof Monaco) {
 		// (contributed Snap settings included, so it follows them).
 		$effect(() => {
 			const schema = jsonSchema(settingSchemas.all);
+			const ids = commands.all.map((c) => c.id).sort();
+			// keybindings.json: completion of command ids (and their removal form `-id`).
+			const keys = {
+				type: 'array',
+				items: {
+					type: 'object',
+					required: ['key', 'command'],
+					properties: {
+						key: { type: 'string', description: 'คีย์ เช่น cmd+shift+p หรือ cmd+k cmd+t (The key or key sequence.)' },
+						command: { type: 'string', enum: [...ids, ...ids.map((id) => `-${id}`)] },
+						when: { type: 'string', description: 'ยังไม่ประเมินใน Kingu (Not evaluated yet.)' }
+					}
+				}
+			};
 			untrack(() => {
 				const opts = monaco.json.jsonDefaults.diagnosticsOptions;
+				const ours = new Set([SETTINGS_SCHEMA_URI, KEYBINDINGS_SCHEMA_URI]);
 				monaco.json.jsonDefaults.setDiagnosticsOptions({
 					...opts,
 					validate: true,
 					allowComments: true,
 					trailingCommas: 'ignore',
-					schemas: [...(opts.schemas ?? []).filter((s) => s.uri !== SETTINGS_SCHEMA_URI), { uri: SETTINGS_SCHEMA_URI, fileMatch: ['**/settings.json'], schema }]
+					schemas: [
+						...(opts.schemas ?? []).filter((s) => !ours.has(s.uri)),
+						{ uri: SETTINGS_SCHEMA_URI, fileMatch: ['**/settings.json'], schema },
+						{ uri: KEYBINDINGS_SCHEMA_URI, fileMatch: ['**/keybindings.json'], schema: keys }
+					]
 				});
 			});
 		});
@@ -100,14 +114,21 @@ export function installEditorSettings(monaco: typeof Monaco) {
 			untrack(() => monaco.editor.getEditors().forEach((e) => e.updateOptions(options)));
 		});
 		$effect(() => {
-			const indent = indentSettings();
+			const indent = indentFrom(get);
 			untrack(() => {
 				monaco.editor.getModels().forEach((m) => applyIndent(m, indent));
 				const active = monaco.editor.getModels().find(isActiveModel);
 				if (active) {
 					const o = active.getOptions();
-					editors.indent = o.insertSpaces ? `Spaces: ${o.indentSize}` : `Tab Size: ${o.tabSize}`;
+					editors.indent = indentLabel(o);
 				}
+			});
+		});
+		// files.associations: open files switch language at once (their language server follows on reopen).
+		$effect(() => {
+			void get('files.associations');
+			untrack(() => {
+				void import('#lib/editor/monaco.ts').then(refreshLanguages);
 			});
 		});
 	});
@@ -115,19 +136,26 @@ export function installEditorSettings(monaco: typeof Monaco) {
 
 /** Keeps an xterm instance on the terminal settings and the theme's terminal colors. */
 export function bindTerminalSettings(term: Terminal, refit: () => void): () => void {
-	return $effect.root(() => {
+	// terminal.integrated.copyOnSelection
+	const selection = term.onSelectionChange(() => {
+		const text = term.getSelection();
+		if (text && untrack(() => get<boolean>('terminal.integrated.copyOnSelection'))) void navigator.clipboard?.writeText(text).catch(() => {});
+	});
+	const dispose = $effect.root(() => {
 		$effect(() => {
-			const fontSize = settings.get<number>('terminal.integrated.fontSize');
-			const fontFamily = settings.get<string>('terminal.integrated.fontFamily') || settings.get<string>('editor.fontFamily');
+			const options = terminalOptionsFrom(get);
 			const colors = theme.terminal;
 			untrack(() => {
-				term.options.fontSize = fontSize;
-				term.options.fontFamily = fontFamily;
+				for (const [k, v] of Object.entries(options)) if (v !== undefined) (term.options as Record<string, unknown>)[k] = v;
 				if (colors.background) term.options.theme = colors;
 				refit();
 			});
 		});
 	});
+	return () => {
+		selection.dispose();
+		dispose();
+	};
 }
 
 /** `window.zoomLevel`: each level is 20%, like Electron's zoom in VS Code. */
@@ -143,16 +171,26 @@ async function setZoom(level: number) {
 	}
 }
 
-/** Settings service, theme following, zoom, and window-level auto save. Call once from the workbench. */
+/** Settings service, theme following, zoom, window-level auto save and the Rust-side settings. Call once from the workbench. */
 export function installSettings(): () => void {
 	const uninstallSettings = settings.install();
+	const uninstallKeybindings = keybindings.install();
 	const onBlur = () => {
-		if (settings.get('files.autoSave') === 'onFocusChange') saveActive();
+		const mode = settings.get('files.autoSave');
+		if (mode === 'onFocusChange' && editors.focusedFile) void autoSave([editors.focusedFile], 'focusChange');
+		else if (mode === 'onWindowChange') void autoSave(editors.dirtyPaths(), 'windowChange');
 	};
 	window.addEventListener('blur', onBlur);
+
+	// window.autoDetectColorScheme follows the OS while Kingu runs.
+	const scheme = window.matchMedia?.('(prefers-color-scheme: dark)');
+	let prefersDark = $state(scheme?.matches ?? true);
+	const onScheme = (e: MediaQueryListEvent) => (prefersDark = e.matches);
+	scheme?.addEventListener('change', onScheme);
+
 	const disposeEffects = $effect.root(() => {
 		$effect(() => {
-			const id = settings.get('workbench.colorTheme');
+			const id = effectiveTheme(get, prefersDark);
 			// Wait for the files so the default theme does not flash before the user's.
 			if (settings.loaded) untrack(() => void theme.apply(id));
 		});
@@ -160,10 +198,23 @@ export function installSettings(): () => void {
 			const level = settings.get<number>('window.zoomLevel');
 			untrack(() => void setZoom(level));
 		});
+		// workbench.tree.indent / workbench.list.smoothScrolling: CSS the trees and lists read.
+		$effect(() => {
+			const root = document.documentElement.style;
+			root.setProperty('--kg-tree-indent', `${settings.get<number>('workbench.tree.indent')}px`);
+			root.setProperty('--kg-list-scroll-behavior', settings.get<boolean>('workbench.list.smoothScrolling') ? 'smooth' : 'auto');
+		});
+		// files.watcherExclude: Rust drops matching events before they reach the workbench.
+		$effect(() => {
+			const globs = enabledGlobs(settings.get('files.watcherExclude'));
+			if (settings.loaded) untrack(() => void invoke('watcher_set_exclude', { globs }).catch(() => {}));
+		});
 	});
 	return () => {
 		uninstallSettings();
+		uninstallKeybindings();
 		window.removeEventListener('blur', onBlur);
+		scheme?.removeEventListener('change', onScheme);
 		disposeEffects();
 	};
 }

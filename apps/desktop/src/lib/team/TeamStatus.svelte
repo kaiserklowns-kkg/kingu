@@ -11,6 +11,10 @@
 
 	onMount(() => team.install());
 
+	// Live updates run exactly while signed in to the configured server; Rust stops them on a 401
+	// and reports signed_in = false, which lands here as a stop.
+	$effect(() => team.syncStream(team.serverUrl && team.status?.signed_in ? team.status.server : ''));
+
 	// Re-read status when the server URL setting changes.
 	$effect(() => {
 		void team.serverUrl;

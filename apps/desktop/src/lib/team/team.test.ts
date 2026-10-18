@@ -32,7 +32,7 @@ describe('buildTaskSync', () => {
 });
 
 describe('teamStatusLabel', () => {
-	const s = (o: Partial<TeamStatus>): TeamStatus => ({ server: 'https://t.example', signed_in: true, online: true, pending: 0, last_error: null, ...o });
+	const s = (o: Partial<TeamStatus>): TeamStatus => ({ server: 'https://t.example', signed_in: true, online: true, pending: 0, last_error: null, stream: 'connected', ...o });
 
 	test('hidden without a server URL', () => expect(teamStatusLabel('', null)).toBeNull());
 	test('connected', () => expect(teamStatusLabel('https://t.example', s({}))?.text).toBe('ทีม ✓'));
@@ -42,6 +42,13 @@ describe('teamStatusLabel', () => {
 		expect(l?.text).toBe('ทีม: ออฟไลน์');
 		expect(l?.tooltip).toContain('รอส่ง 3');
 		expect(l?.warn).toBe(true);
+	});
+	test('live updates in the tooltip; reconnecting shows ↻', () => {
+		expect(teamStatusLabel('https://t.example', s({}))?.tooltip).toContain('อัปเดตสด: เชื่อมต่อแล้ว');
+		const l = teamStatusLabel('https://t.example', s({ stream: 'reconnecting' }));
+		expect(l?.text).toBe('ทีม ↻');
+		expect(l?.warn).toBe(false);
+		expect(teamStatusLabel('https://t.example', s({ stream: 'off' }))?.tooltip).toContain('อัปเดตสด: ปิด');
 	});
 	test('signed out', () => expect(teamStatusLabel('https://t.example', s({ signed_in: false }))?.text).toBe('ทีม: ยังไม่ได้ลงชื่อเข้าใช้'));
 });

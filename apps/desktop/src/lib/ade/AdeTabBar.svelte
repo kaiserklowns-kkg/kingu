@@ -11,10 +11,11 @@
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { adeLayout } from './adeLayout.svelte';
 	import { pickSession } from './agentsMode.svelte';
-	import { STATUS_LABEL } from './model';
+	import { statusLabel } from './model';
 	import { adeTasks } from './tasks.svelte';
-	import { STATUS_DOT } from './ui';
+	import { statusDot } from './ui';
 	import { sessionsAttentionLabel } from '#lib/workbench/titlebar.ts';
+	import { keyLabel } from '#lib/workbench/keys.ts';
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { invoke } from '@tauri-apps/api/core';
@@ -78,8 +79,8 @@
 	{#if adeLayout.board}
 		<div class={[TAB, ACTIVE]}>
 			<span class={ACCENT}></span>
-			<Icon name="tasks" size={14} /> Tasks
-			<button class="grid size-5 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="ปิด Tasks" onclick={() => (adeLayout.board = false)}><Icon name="close" size={13} /></button>
+			{#if adeLayout.page === 'automations'}<Icon name="clock" size={14} /> Automations{:else if adeLayout.page === 'issues'}<Icon name="bug" size={14} /> Issues{:else}<Icon name="tasks" size={14} /> Tasks{/if}
+			<button class="grid size-5 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="ปิด {adeLayout.page === 'automations' ? 'Automations' : adeLayout.page === 'issues' ? 'Issues' : 'Tasks'}" onclick={() => (adeLayout.board = false)}><Icon name="close" size={13} /></button>
 		</div>
 	{:else}
 		<div class="flex min-w-0 items-end gap-0.5 overflow-x-auto [scrollbar-width:none]" role="tablist" aria-label="แท็บของ worktree">
@@ -93,12 +94,12 @@
 					onclick={() => adeLayout.select(key, t.id)}
 					onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), adeLayout.select(key, t.id))}
 					onauxclick={(e) => e.button === 1 && t.kind !== 'agent' && t.kind !== 'compose' && adeLayout.close(key, t.id)}
-					ondblclick={() => (t.kind === 'file' || t.kind === 'diff') && adeLayout.pin(key, t.key)}
+					ondblclick={() => (t.kind === 'file' || t.kind === 'diff' ? adeLayout.pin(key, t.key) : t.kind === 'terminal' && adeLayout.rename(key, t.id))}
 					oncontextmenu={(e) => (e.preventDefault(), (menu = { tab: t, x: e.clientX, y: e.clientY }))}
 				>
 					{#if active}<span class={ACCENT}></span>{/if}
 					{#if t.kind === 'agent' && view}
-						<span class={['size-2 shrink-0 rounded-full', STATUS_DOT[view.status]]} title={STATUS_LABEL[view.status]}></span>
+						<span class={['size-2 shrink-0 rounded-full', statusDot(view)]} title={statusLabel(view)}></span>
 						<span class="truncate" title={view.meta.title}>{view.meta.title}</span>
 					{:else if t.kind === 'file' || t.kind === 'diff'}
 						<FileIcon icon={fileIcon(t.label)} />
@@ -132,7 +133,7 @@
 			<button
 				class="grid size-6 place-items-center rounded-md enabled:hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-35"
 				aria-label="Terminal ใหม่ใน worktree นี้"
-				title="Terminal ใหม่ใน worktree นี้"
+				title="Terminal ใหม่ใน worktree นี้ ({keyLabel('cmd+t')})"
 				disabled={!workspace.root}
 				onclick={() => adeLayout.newTerminal(key)}
 			>

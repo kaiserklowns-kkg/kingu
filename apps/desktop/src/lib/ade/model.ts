@@ -2,6 +2,7 @@
 // Shapes mirror Rust `agent/tasks.rs` and `agent/review.rs`.
 
 import { firstLine, formatUsage, slugify, toolArg, type AgentEvent, type RunState, type RunStatus } from '#lib/agent/events.ts';
+import { isQuestionTool, questionText } from './agentHooks.ts';
 
 export type TaskStatus = 'running' | 'waiting' | 'review' | 'done' | 'failed';
 
@@ -26,7 +27,12 @@ export type TaskMeta = {
 	session_id: string | null;
 	/** How the latest run (or turn) ended, saved so the card can show it after a restart. */
 	last_run: RunSummary | null;
+	/** The GitHub issue the task was started from; its PR body says `Fixes #number`. */
+	issue: IssueLink | null;
 };
+
+/** Mirrors Rust `agent::tasks::IssueLink`. */
+export type IssueLink = { number: number; url: string; title: string };
 
 /** Mirrors Rust `agent::tasks::RunSummary`. */
 export type RunSummary = {
@@ -58,6 +64,8 @@ export type TaskRuntime = {
 	/** One-line summary of the latest event. */
 	lastEvent?: string;
 	pendingPermissions: number;
+	/** The agent asked you a question (AskUserQuestion, elicitation, request_user_input…), apart from a permission prompt. */
+	question?: boolean;
 	model?: string;
 	sessionId: string | null;
 	/** "$0.0123 · 12.3k in · 456 out · 3 turns" of the session so far. */
@@ -99,6 +107,11 @@ export const COLUMNS: { id: Column; label: string; hint: string }[] = [
 	{ id: 'done', label: 'เสร็จแล้ว', hint: 'merge หรือปิดงานแล้ว' }
 ];
 
+/** The agent waits on your answer to its question (not a permission prompt). */
+export const isQuestion = (v: { status: TaskStatus; runtime?: Pick<TaskRuntime, 'question'> }) => v.status === 'waiting' && !!v.runtime?.question;
+export const QUESTION_LABEL = 'agent ถามคุณ';
+export const statusLabel = (v: { status: TaskStatus; runtime?: Pick<TaskRuntime, 'question'> }) => (isQuestion(v) ? QUESTION_LABEL : STATUS_LABEL[v.status]);
+
 export const STATUS_LABEL: Record<TaskStatus, string> = {
 	running: 'กำลังทำ',
 	waiting: 'รออนุญาต',
@@ -110,7 +123,7 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
 // ---------------------------------------------------------------------------------------------
 // tasks.json reducers (immutable: each returns a new list)
 
-export function newTask(input: { slug: string; title: string; prompt: string; base: string; agent?: string }, now: number): TaskMeta {
+export function newTask(input: { slug: string; title: string; prompt: string; base: string; agent?: string; issue?: IssueLink | null }, now: number): TaskMeta {
 	return {
 		slug: input.slug,
 		title: input.title.trim(),
@@ -125,8 +138,18 @@ export function newTask(input: { slug: string; title: string; prompt: string; ba
 		accepted: [],
 		merged_at: null,
 		session_id: null,
-		last_run: null
+		last_run: null,
+		issue: input.issue ?? null
 	};
+}
+
+/** Title length cap of tasks.json (Rust `MAX_TITLE`, in characters). */
+export const MAX_TITLE = 200;
+
+/** Orca's getWorktreeTitleRenameCommit: the trimmed new name, or null (cancel) when empty or unchanged. */
+export function renamedTitle(current: string, next: string): string | null {
+	const trimmed = [...next.trim()].slice(0, MAX_TITLE).join('').trim();
+	return !trimmed || trimmed === current ? null : trimmed;
 }
 
 /** Replaces the task with the same slug, else appends. */
@@ -196,6 +219,7 @@ export function summarizeEvent(ev: AgentEvent): string | undefined {
 		case 'stderr':
 			return firstLine(ev.line, 80);
 		case 'permission_request':
+			if (isQuestionTool(ev.tool)) return `ถาม: ${firstLine(questionText(ev.input) ?? ev.input_summary, 80)}`;
 			return `ขออนุญาตใช้ ${ev.tool}${ev.input_summary ? `: ${firstLine(ev.input_summary, 60)}` : ''}`;
 		case 'system':
 			return ev.subtype === 'init' ? 'เริ่ม session' : undefined;
@@ -249,6 +273,7 @@ export function toTaskRuntime(run: RunView, updatedAt?: number): TaskRuntime {
 		working: !run.ended && (run.status === 'starting' || run.status === 'running' || run.status === 'waiting'),
 		lastEvent: lastEventOf(run) ?? (run.status === 'starting' ? 'กำลังเริ่ม' : undefined),
 		pendingPermissions: run.pending.length,
+		question: !run.ended && run.pending.some((p) => p.kind === 'permission_request' && isQuestionTool(p.tool)),
 		model: run.model ?? undefined,
 		sessionId: run.sessionId,
 		usage: run.result ? formatUsage(run.result) || undefined : undefined,

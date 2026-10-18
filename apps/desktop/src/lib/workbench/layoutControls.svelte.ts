@@ -7,9 +7,10 @@ import { layout } from './layout.svelte';
 import { quick, type PickItem } from './quick.svelte';
 import { status } from './status.svelte';
 import { TITLE_BAR_TOGGLES, toggleChecked } from './titlebar';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
 export function setUserSetting(id: string, value: unknown) {
-	settings.set(id, value, 'user').catch((e) => status.error(`บันทึกการตั้งค่า ${id} ไม่ได้: ${e}`, 8000));
+	settings.set(id, value, 'user').catch((e) => notifications.error(`บันทึกการตั้งค่า ${id} ไม่ได้: ${e}`));
 }
 
 function toggleSetting(id: string) {

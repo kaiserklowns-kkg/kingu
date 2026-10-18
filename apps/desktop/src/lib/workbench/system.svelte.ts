@@ -3,9 +3,10 @@
 import { invoke } from '@tauri-apps/api/core';
 import { status } from './status.svelte';
 import { pushSample, type KeepAwakeMode } from './system';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 
-export type PtyInfo = { id: number; pid: number | null; cwd: string };
-export type ProcessRow = { pid: number; ppid: number; rss_bytes: number; cpu: number; name: string };
+export type PtyInfo = { id: string; pid: number | null; cwd: string };
+export type ProcessRow = { pid: number; ppid: number; rss_bytes: number; cpu: number; name: string; stoppable?: boolean };
 type Stats = {
 	memory_bytes: number | null;
 	cpu_percent: number | null;
@@ -67,7 +68,7 @@ class SystemStats {
 		try {
 			await invoke('keep_awake_set', { on: want });
 		} catch (e) {
-			status.error(String(e), 5000);
+			notifications.error(e);
 		}
 		await this.refresh();
 	}
@@ -78,7 +79,7 @@ class SystemStats {
 			await invoke('system_kill', { pid });
 			status.flash(`หยุด ${label} แล้ว`, 3000);
 		} catch (e) {
-			status.error(String(e), 5000);
+			notifications.error(e);
 		}
 		await Promise.all([this.refresh(), this.refreshPorts()]);
 	}
@@ -87,7 +88,7 @@ class SystemStats {
 		try {
 			await invoke('open_local_url', { url: `http://localhost:${port}` });
 		} catch (e) {
-			status.error(`เปิดเบราว์เซอร์ไม่ได้: ${e}`, 5000);
+			notifications.error(`เปิดเบราว์เซอร์ไม่ได้: ${e}`);
 		}
 	}
 }

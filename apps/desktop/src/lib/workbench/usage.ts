@@ -1,9 +1,10 @@
 // Agent usage limits as Orca shows them in its status bar (UsageRosterPanel and ProviderSegment):
 // the formats, the headline window, threshold colours, row states, error labels and the refresh
-// policy. Data comes from the `usage_fetch` command (OAuth usage endpoints) and, while a run is
-// live, from Claude Code's `rate_limit_event` messages.
+// policy. Data comes from the AI accounts service (#lib/accounts: the active account of each
+// provider, OAuth usage endpoints) and, while a run is live, from Claude Code's `rate_limit_event`.
 
 import type { RunSummary } from '#lib/ade/model.ts';
+import type { UsageRow, UsageWindow } from '#lib/accounts/usage.ts';
 
 export type ProviderId = 'claude' | 'codex';
 export const PROVIDERS: ProviderId[] = ['claude', 'codex'];
@@ -27,6 +28,26 @@ export type ProviderState = {
 
 export type UsageDisplay = 'used' | 'remaining';
 export type UsageMode = 'detailed' | 'compact';
+
+/** An accounts-service row (the provider's active account) as this panel's provider state. */
+export function fromAccountRow(row: UsageRow): ProviderState {
+	const win = (w: UsageWindow | null | undefined): Window | null => (w ? { usedPercent: w.used_percent, windowMinutes: w.window_minutes, resetsAt: w.resets_at } : null);
+	// Rust's failures are snake_case; Orca's kinds (used for the labels here) are kebab-case.
+	const failureKind = row.failure === 'not_signed_in' ? 'missing-credentials' : (row.failure?.replaceAll('_', '-') ?? null);
+	const status: ProviderStatus = row.status === 'stale' ? 'ok' : row.status === 'api_key' ? 'unavailable' : row.status;
+	return {
+		provider: row.provider,
+		status,
+		session: win(row.usage?.session),
+		weekly: win(row.usage?.weekly),
+		planType: row.usage?.plan ?? null,
+		error: row.error,
+		failureKind,
+		retryAtMs: null,
+		updatedAt: row.updated_at ?? 0,
+		source: 'api'
+	};
+}
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;

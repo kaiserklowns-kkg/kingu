@@ -8,6 +8,7 @@ import { SvelteSet } from 'svelte/reactivity';
 import { diffKey } from './scm';
 import * as G from './editorGroups';
 import { settings } from '#lib/settings/settings.svelte.ts';
+import { appMode } from './mode.svelte';
 
 export type { EditorTab, EditorGroup, GridNode, SplitDirection } from './editorGroups';
 export type Cursor = { line: number; column: number };
@@ -22,11 +23,13 @@ export type EditorHostHandle = {
 	/** Runs a Monaco editor action (`actions.find`, `undo`…) on the shown file; false when none is shown. */
 	trigger: (actionId: string) => boolean;
 	/** Changes the shown model's line endings (an undoable edit, like VS Code's status bar picker). */
-	setEol: (eol: 'LF' | 'CRLF') => void;
+	setEol?: (eol: 'LF' | 'CRLF') => void;
 	/** Changes the shown model's language mode. */
-	setLanguage: (id: string) => void;
+	setLanguage?: (id: string) => void;
 	/** Every registered language: id, name and its first extension. */
-	languages: () => LanguageInfo[];
+	languages?: () => LanguageInfo[];
+	/** Shows a position without moving focus (Quick Open's symbol preview). */
+	peek?: (line: number, column: number) => void;
 };
 export type LanguageInfo = { id: string; name: string; extensions: string[] };
 /** VS Code's selection status: characters selected and how many selections (cursors). */
@@ -115,25 +118,42 @@ class Editors {
 		};
 	}
 
+	/** The editor of the Agents layout's active file tab, while it is mounted. */
+	#ade: EditorHostHandle | null = null;
+	registerAdeEditor(handle: EditorHostHandle): () => void {
+		this.#ade = handle;
+		return () => {
+			if (this.#ade === handle) this.#ade = null;
+		};
+	}
+	/** Go to Line, menu actions and the selection act on what is in front: the ADE's editor in Agents. */
+	#target(): EditorHostHandle | undefined {
+		return (appMode.isAgents && this.#ade) || this.#hosts.get(this.model.activeGroup);
+	}
+
 	gotoLine(line: number, column = 1) {
-		this.#hosts.get(this.model.activeGroup)?.gotoLine(line, column);
+		this.#target()?.gotoLine(line, column);
+	}
+	/** Scrolls the active editor to a position and selects it, leaving focus where it is. */
+	peek(line: number, column = 1) {
+		this.#target()?.peek?.(line, column);
 	}
 	/** Runs a Monaco action in the active group's editor (menu items such as Find, Go to Definition). */
 	trigger(actionId: string): boolean {
-		return this.#hosts.get(this.model.activeGroup)?.trigger(actionId) ?? false;
+		return this.#target()?.trigger(actionId) ?? false;
 	}
 	setEol(eol: 'LF' | 'CRLF') {
-		this.#hosts.get(this.model.activeGroup)?.setEol(eol);
+		this.#hosts.get(this.model.activeGroup)?.setEol?.(eol);
 	}
 	setLanguage(id: string) {
-		this.#hosts.get(this.model.activeGroup)?.setLanguage(id);
+		this.#hosts.get(this.model.activeGroup)?.setLanguage?.(id);
 	}
 	languages(): LanguageInfo[] {
-		return this.#hosts.get(this.model.activeGroup)?.languages() ?? [];
+		return this.#hosts.get(this.model.activeGroup)?.languages?.() ?? [];
 	}
 	/** The active editor's selected text, '' when none. */
 	selectionText(): string {
-		return this.#hosts.get(this.model.activeGroup)?.selectionText() ?? '';
+		return this.#target()?.selectionText() ?? '';
 	}
 	focusGroup(id: number) {
 		this.activateGroup(id);
@@ -176,6 +196,47 @@ class Editors {
 		return G.closeEditor(this.model, group, path, { force });
 	}
 
+	closeOthers(path: string, group = this.model.activeGroup): string[] {
+		return G.closeOthers(this.model, group, path);
+	}
+	closeToRight(path: string, group = this.model.activeGroup): string[] {
+		return G.closeToRight(this.model, group, path);
+	}
+	closeSaved(group = this.model.activeGroup) {
+		G.closeSaved(this.model, group);
+	}
+	/** Close All Editors in every group; returns the dirty paths it kept. */
+	closeAllEditors(): string[] {
+		return G.closeAllEditors(this.model);
+	}
+	/** Reopen Closed Editor; `exists` skips files deleted since. */
+	reopenClosed(exists?: (path: string) => boolean): string | null {
+		const path = G.reopenClosed(this.model, exists);
+		if (path) this.focusRequest = this.model.activeGroup;
+		return path;
+	}
+	/** Editors of a group by most recent use (⌃Tab). */
+	mru(group = this.model.activeGroup): string[] {
+		return G.mruOf(this.model, group);
+	}
+	/** Next/Previous Editor: opens the neighbouring tab (continuing into the next group unless `inGroup`). */
+	openNeighbour(delta: 1 | -1, inGroup = false) {
+		const hit = G.neighbourEditor(this.model, delta, { inGroup });
+		if (!hit) return;
+		this.activateGroup(hit[0]);
+		G.setActiveEditor(this.model, hit[0], hit[1]);
+		this.focusRequest = hit[0];
+	}
+	stick(path: string, group = this.model.activeGroup) {
+		G.stickEditor(this.model, group, path);
+	}
+	unstick(path: string, group = this.model.activeGroup) {
+		G.unstickEditor(this.model, group, path);
+	}
+	isSticky(path: string, group = this.model.activeGroup): boolean {
+		return this.group(group)?.tabs.find((t) => t.path === path)?.sticky ?? false;
+	}
+
 	/** Closes `path` in every group (e.g. a diff that failed to load). */
 	closeEverywhere(path: string) {
 		for (const g of [...this.model.groups]) G.closeEditor(this.model, g.id, path, { force: true });
@@ -214,6 +275,16 @@ class Editors {
 	focusGroupAt(index: number) {
 		const id = G.focusGroupAt(this.model, index);
 		if (id !== null) this.focusGroup(id);
+	}
+
+	/** VS Code's "Open to the Side" (⌘Enter in Quick Open): the group to the right, created if needed. */
+	openToSide(path: string, reveal?: Reveal) {
+		const order = G.groupOrder(this.model);
+		let target: number | null | undefined = order[order.indexOf(this.model.activeGroup) + 1];
+		if (target === undefined) target = G.addGroup(this.model, this.model.activeGroup, 'right');
+		if (target === null) return this.open(path, { reveal });
+		this.open(path, { preview: false, group: target, reveal });
+		this.focusRequest = target;
 	}
 
 	moveEditor(from: number, path: string, to: number, index?: number) {

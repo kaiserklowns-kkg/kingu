@@ -1,6 +1,9 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { jsonSchema, matchesQuery, parseSettingsQuery, resolveSettings, SCHEMA, SETTINGS, SETTINGS_SECTIONS, settingsInView, settingsSections, settingTitle, validate, type SettingSchema } from './registry';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { IDE_SETTINGS } from './ideSettings';
+import { jsonSchema, matchesQuery, parseQuery, resolveSettings, SCHEMA, SETTINGS, SETTINGS_SECTIONS, settingProblems, settingsInView, settingsSections, settingTitle, validate, type SettingSchema } from './registry';
 
 const value = (m: ReturnType<typeof resolveSettings>, id: string) => m.get(id);
 
@@ -87,7 +90,7 @@ describe('schema', () => {
 		const schema = jsonSchema() as { properties: Record<string, { type: string; enum?: string[] }> };
 		expect(Object.keys(schema.properties)).toHaveLength(SETTINGS.length);
 		expect(schema.properties['editor.tabSize'].type).toBe('integer');
-		expect(schema.properties['files.autoSave'].enum).toEqual(['off', 'afterDelay', 'onFocusChange']);
+		expect(schema.properties['files.autoSave'].enum).toEqual(['off', 'afterDelay', 'onFocusChange', 'onWindowChange']);
 	});
 
 	test('title bar and layout settings, with VS Code defaults and Thai + English descriptions', () => {
@@ -114,6 +117,62 @@ describe('schema', () => {
 		}
 		expect(SCHEMA.get('kingu.agentsControl.enabled')).toMatchObject({ enum: ['hidden', 'badge', 'compact'] });
 		expect(resolveSettings({ 'workbench.layoutControl.type': 'sideways' }, {}).get('workbench.layoutControl.type')?.source).toBe('default');
+	});
+});
+
+describe('ADE settings', () => {
+	test('worktree and agent settings with Orca-like defaults and Thai + English descriptions', () => {
+		const m = resolveSettings({}, {});
+		const expected: Record<string, unknown> = {
+			'kingu.worktree.branchPrefix': 'kingu/',
+			'kingu.worktree.baseBranch': '',
+			'kingu.worktree.setupScript': 'auto',
+			'kingu.worktree.deleteBranchOnRemove': 'deleteMerged',
+			'kingu.worktree.archiveScript': 'auto',
+			'kingu.worktree.confirmRemove': true,
+			'kingu.worktree.refreshBaseOnCreate': false,
+			'kingu.pr.draft': false,
+			'kingu.pr.openAfterCreate': false,
+			'kingu.statusBar.usage.display': 'used',
+			'kingu.agent.notifications': true,
+			'kingu.agent.notifications.suppressWhenFocused': true,
+			'kingu.agent.notifications.events': 'all',
+			'kingu.agent.notifications.sound': 'default',
+			'kingu.agent.args.claude': '',
+			'kingu.agent.args.codex': ''
+		};
+		for (const [id, v] of Object.entries(expected)) {
+			expect([id, m.get(id)?.value]).toEqual([id, v]);
+			const d = SCHEMA.get(id)!.description;
+			expect([id, /[฀-๿]/.test(d), /\([A-Z][^)]*\.\)/.test(d)]).toEqual([id, true, true]);
+		}
+		expect(settingsSections().find((s) => s.id === 'ade')?.groups.slice(0, 2)).toEqual(['Agent', 'Notifications']);
+	});
+
+	test('settings that run commands, loosen prompts or delete branches are user-only', () => {
+		const userOnly = [
+			'kingu.agent.cli',
+			'kingu.agent.permissionMode',
+			'kingu.worktree.setupScript',
+			'kingu.worktree.deleteBranchOnRemove',
+			'kingu.worktree.archiveScript',
+			'kingu.worktree.refreshBaseOnCreate',
+			'kingu.automations.enabled',
+			'kingu.snaps.sandbox',
+			...SETTINGS.filter((s) => s.id.startsWith('kingu.agent.args.')).map((s) => s.id)
+		];
+		expect(userOnly.length).toBeGreaterThan(10);
+		const workspace = Object.fromEntries(userOnly.map((id) => [id, SCHEMA.get(id)!.type === 'string' ? 'x' : true]));
+		workspace['kingu.agent.cli'] = './evil.sh';
+		workspace['kingu.agent.args.claude'] = '--dangerously-skip-permissions';
+		workspace['kingu.worktree.setupScript'] = 'auto';
+		workspace['kingu.worktree.deleteBranchOnRemove'] = 'delete';
+		const m = resolveSettings({}, workspace);
+		for (const id of userOnly) expect([id, m.get(id)?.source]).toEqual([id, 'default']);
+		// A team convention may come from the repository.
+		const ws = resolveSettings({}, { 'kingu.worktree.branchPrefix': 'feature/', 'kingu.worktree.baseBranch': 'develop' });
+		expect(ws.get('kingu.worktree.branchPrefix')).toEqual({ value: 'feature/', source: 'workspace' });
+		expect(ws.get('kingu.worktree.baseBranch')).toEqual({ value: 'develop', source: 'workspace' });
 	});
 });
 
@@ -152,12 +211,71 @@ describe('settings sections', () => {
 	});
 });
 
-describe('parseSettingsQuery', () => {
-	test('@modified is a filter, the rest is the text', () => {
-		expect(parseSettingsQuery('@modified font')).toEqual({ modified: true, text: 'font' });
-		expect(parseSettingsQuery('font @modified')).toEqual({ modified: true, text: 'font' });
-		expect(parseSettingsQuery('fontSize')).toEqual({ modified: false, text: 'fontSize' });
-		expect(parseSettingsQuery('a@modifiedb').modified).toBe(false);
+describe('VS Code IDE settings', () => {
+	test('object settings merge key by key, workspace over user over default', () => {
+		const m = resolveSettings({ 'files.exclude': { '**/tmp': true, '**/.git': false } }, { 'files.exclude': { '**/out': true } });
+		expect(m.get('files.exclude')).toEqual({
+			value: { '**/.git': false, '**/.svn': true, '**/.hg': true, '**/CVS': true, '**/.DS_Store': true, '**/Thumbs.db': true, '**/tmp': true, '**/out': true },
+			source: 'workspace'
+		});
+		expect(resolveSettings({ 'files.exclude': { x: 'yes' } }, {}).get('files.exclude')?.source).toBe('default');
+	});
+
+	test('arrays and maps validate their items', () => {
+		expect(validate(SCHEMA.get('editor.rulers')!, [80, 120])).toEqual([80, 120]);
+		expect(validate(SCHEMA.get('editor.rulers')!, [80, '120'])).toBeUndefined();
+		expect(validate(SCHEMA.get('terminal.integrated.shellArgs.osx')!, ['-l'])).toEqual(['-l']);
+		expect(validate(SCHEMA.get('editor.codeActionsOnSave')!, { 'source.fixAll': 'explicit', 'source.organizeImports': true })).toBeTruthy();
+		expect(validate(SCHEMA.get('editor.codeActionsOnSave')!, { 'source.fixAll': 1 })).toBeUndefined();
+		expect(validate(SCHEMA.get('files.exclude')!, ['**/.git'])).toBeUndefined();
+	});
+
+	test('problems list ignored values with a reason', () => {
+		const problems = settingProblems({ 'editor.fontSize': 'big', 'editor.tabSize': 4, 'nope.unknown': 1, 'terminal.integrated.shell.osx': '/bin/zsh' }, 'workspace');
+		expect(problems.map((p) => p.id)).toEqual(['editor.fontSize', 'terminal.integrated.shell.osx']);
+		expect(problems[0].message).toContain('a number');
+		expect(problems[1].message).toContain('user settings');
+		expect(settingProblems({ 'files.autoSave': 'sometimes' }, 'user')[0].message).toContain('"onWindowChange"');
+	});
+
+	test('@modified and @id: filters', () => {
+		const modified = (id: string) => id === 'editor.fontSize' || id === 'files.autoSave';
+		expect(settingsInView('@modified', null, SETTINGS, modified).map((s) => s.id)).toEqual(['editor.fontSize', 'files.autoSave']);
+		expect(settingsInView('@modified font', 'Agent', SETTINGS, modified).map((s) => s.id)).toEqual(['editor.fontSize']);
+		expect(settingsInView('@id:files.autoSave', null).map((s) => s.id)).toEqual(['files.autoSave', 'files.autoSaveDelay']);
+		expect(parseQuery('@modified  tab size')).toEqual({ filters: { modified: true, id: null }, text: 'tab size' });
+	});
+
+	test('search finds Thai and English descriptions', () => {
+		expect(settingsInView('ช่องว่างท้ายบรรทัด', null).map((s) => s.id)).toContain('files.trimTrailingWhitespace');
+		expect(settingsInView('trailing whitespace', null).map((s) => s.id)).toContain('files.trimTrailingWhitespace');
+	});
+
+	test('every IDE setting: Thai + English description, a valid default, a known section', () => {
+		const sectionGroups = new Set(SETTINGS_SECTIONS.flatMap((s) => s.groups));
+		for (const s of IDE_SETTINGS) {
+			expect([s.id, /[฀-๿]/.test(s.description), /\([A-Z][^)]*\.\)/.test(s.description)]).toEqual([s.id, true, true]);
+			expect([s.id, validate(s, s.default) !== undefined]).toEqual([s.id, true]);
+			expect([s.id, sectionGroups.has(s.group)]).toEqual([s.id, true]);
+		}
+		expect(new Set(SETTINGS.map((s) => s.id)).size).toBe(SETTINGS.length);
+	});
+
+	test('every VS Code-derived setting is read somewhere outside the registry (webview or Rust)', () => {
+		const sources: string[] = [];
+		const walk = (dir: string) => {
+			for (const name of readdirSync(dir)) {
+				const p = join(dir, name);
+				if (statSync(p).isDirectory()) walk(p);
+				else if (/\.(ts|svelte|rs)$/.test(name) && !/\.test\.ts$|registry\.ts$|ideSettings\.ts$/.test(name)) sources.push(readFileSync(p, 'utf8'));
+			}
+		};
+		walk(join(import.meta.dir, '..'));
+		// Some are read by Rust before the webview runs (window.restoreWindows).
+		walk(join(import.meta.dir, '../../../src-tauri/src'));
+		const all = sources.join('\n').replaceAll('"', "'");
+		// Per-platform terminal settings are read as `terminal.integrated.shell.${platform}`.
+		const asRead = (id: string) => id.replace(/\.(osx|linux)$/, '.${platform}');
+		for (const s of SETTINGS.filter((x) => !x.id.startsWith('kingu.'))) expect([s.id, all.includes(`'${s.id}'`) || all.includes(asRead(s.id))]).toEqual([s.id, true]);
 	});
 });
-

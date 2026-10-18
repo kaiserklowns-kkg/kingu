@@ -20,8 +20,14 @@ export type StartParams = {
 	mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>;
 	/** Skill plugin folders of active Snaps (absolute; Rust checks they are ones Kingu generated). */
 	plugins?: string[];
+	/** The active Claude account (`CLAUDE_CONFIG_DIR` or `ANTHROPIC_API_KEY`), over the host's env. Never logged. */
+	env?: Record<string, string>;
+	/** Auth variables removed from this run's env, so they do not override that account. */
+	unsetEnv?: string[];
+	/** Image files sent with the prompt (absolute paths, checked by Rust and again here). */
+	images?: string[];
 };
-export type SendParams = { runId: number; text: string };
+export type SendParams = { runId: number; text: string; images?: string[] };
 export type RunParams = { runId: number };
 /** `allow` once, `allow_always` for the rest of this session, or `deny` with an optional reason. */
 export type Decision = 'allow' | 'allow_always' | 'deny';

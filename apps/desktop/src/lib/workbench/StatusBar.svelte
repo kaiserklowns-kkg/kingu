@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { debug } from '#lib/debug/debug.svelte.ts';
+	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 	import { lsp } from '#lib/lsp/lsp.svelte.ts';
 	import TeamStatus from '#lib/team/TeamStatus.svelte';
 	import Icon from './Icon.svelte';
@@ -10,7 +12,9 @@
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 	import { scm } from './scm.svelte';
 	import { statusEntries } from './statusEntries.svelte';
-	import { pickEncoding, pickEol, pickIndentation, pickLanguage } from './editorStatusPickers';
+	import { commands } from './commands.svelte';
+	import { syncItem } from './scmRemote';
+	import { textFiles } from './textFileService.svelte';
 	import StatusResources from './StatusResources.svelte';
 	import NotificationsBell from './NotificationsBell.svelte';
 	import UsageStatus from './UsageStatus.svelte';
@@ -40,9 +44,10 @@
 	// VS Code's entries on the left (branch, sync, problems) and the editor's on the right; Orca's
 	// usage, resources and ports in between. Branch and changes follow the selected worktree in Agents.
 	const worktree = $derived(appMode.isAgents && adeLayout.key ? adeLayout.key : null);
-	const branch = $derived(worktree ? `kingu/${worktree}` : status.branch);
+	const branch = $derived(worktree ? adeTasks.branchOf(worktree) : status.branch);
 	const repo = $derived(worktree ? null : scm.repo);
 	const dirty = $derived(!!repo && repo.entries.length > 0);
+	const sync = $derived(repo ? syncItem(repo) : null);
 	const editorItems = $derived(!appMode.isAgents && editors.active);
 	const languageName = $derived(editors.languages().find((l) => l.id === editors.language)?.name ?? languageNames[editors.language] ?? editors.language);
 	const counts = $derived(lsp.counts);
@@ -131,18 +136,17 @@
 >
 	{#if branch && show('status.scm')}
 		{#if repo}
-			<button class={ITEM} title="{branch}{dirty ? '*' : ''}, Checkout Branch/Tag..." onclick={() => scm.checkout()}>
+			<!-- VS Code's branch item (Checkout to…) and its sync item; a running git operation can be cancelled. -->
+			<button class={ITEM} title="{branch}{dirty ? '*' : ''}{repo.detached ? ' (detached HEAD)' : ''}, Checkout Branch/Tag..." onclick={() => commands.run('git.checkout')}>
 				<Icon name="branch" size={14} />{branch}{dirty ? '*' : ''}
 			</button>
-			{#if repo.branch}
-				<button
-					class={ITEM}
-					title={repo.upstream ? `${branch}: Synchronize Changes${repo.behind || repo.ahead ? ` (${repo.behind}↓ ${repo.ahead}↑)` : ''}` : `Publish Branch`}
-					disabled={scm.syncing}
-					onclick={() => scm.sync()}
-				>
-					<span class={scm.syncing ? 'animate-spin' : ''}><Icon name={repo.upstream ? 'sync' : 'publish'} size={14} /></span>
-					{#if repo.upstream && (repo.behind || repo.ahead)}<span class="tabular-nums">{repo.behind}↓ {repo.ahead}↑</span>{/if}
+			{#if scm.op}
+				<button class={ITEM} title="คลิกเพื่อยกเลิก (Cancel)" onclick={() => scm.cancel()}>
+					<span class="inline-block size-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent"></span>{scm.op}
+				</button>
+			{:else if sync}
+				<button class={ITEM} title={sync.title} onclick={() => commands.run(sync.command)}>
+					<Icon name={sync.command === 'git.publish' ? 'publish' : 'sync'} size={14} />{#if sync.label}<span class="tabular-nums">{sync.label}</span>{/if}
 				</button>
 			{/if}
 		{:else}
@@ -161,6 +165,12 @@
 			<span class="truncate">{lsp.progress}</span>
 		</button>
 	{/if}
+	{#if debug.active}
+		<!-- VS Code's debug status item: the running configuration; opens Run and Debug. -->
+		<button class={ITEM} title="Run and Debug" onclick={() => (appMode.setMode('workbench'), (layout.sideView = 'debug'), (layout.sidebarVisible = true))}>
+			<Icon name="bug" size={14} />{debug.configName}: {debug.label}
+		</button>
+	{/if}
 	<UsageStatus compact={density >= 1} tightest={density >= 2} />
 	{#if status.message}<span class="truncate px-2">{status.message}</span>{/if}
 	<div class="flex-1"></div>
@@ -175,10 +185,11 @@
 	{/if}
 	{#if editorItems}
 		{#if show('status.editor.selection')}<button class={ITEM} title="Go to Line/Column" onclick={() => quick.show(':')}>{position}</button>{/if}
-		{#if show('status.editor.indentation')}<button class={ITEM} title="Select Indentation" onclick={pickIndentation}>{editors.indent}</button>{/if}
-		{#if show('status.editor.encoding')}<button class={ITEM} title="Select Encoding" onclick={pickEncoding}>UTF-8</button>{/if}
-		{#if show('status.editor.eol')}<button class={ITEM} title="Select End of Line Sequence" onclick={pickEol}>{editors.eol}</button>{/if}
-		{#if show('status.editor.mode')}<button class={ITEM} title="Select Language Mode" onclick={pickLanguage}>{languageName}</button>{/if}
+		<!-- VS Code's editor status items: each opens its picker command (editorStatus.ts). -->
+		{#if show('status.editor.indentation')}<button class={ITEM} title="Select Indentation" onclick={() => commands.run('changeEditorIndentation')}>{editors.indent}</button>{/if}
+		{#if show('status.editor.encoding')}<button class={ITEM} title="Select Encoding" onclick={() => commands.run('workbench.action.editor.changeEncoding')}>{textFiles.encodingOf(editors.focusedFile)}</button>{/if}
+		{#if show('status.editor.eol')}<button class={ITEM} title="Select End of Line Sequence" onclick={() => commands.run('workbench.action.editor.changeEOL')}>{editors.eol}</button>{/if}
+		{#if show('status.editor.mode')}<button class={ITEM} title="Select Language Mode" onclick={() => commands.run('workbench.action.editor.changeLanguageMode')}>{languageName}</button>{/if}
 	{/if}
 	<!-- VS Code keeps the notification bell at the far right. -->
 	{#if floating.enabled && floating.location === 'status-bar'}<FloatingToggle variant="status-bar" />{/if}

@@ -11,6 +11,9 @@
 	import { aggregateStats, formatSummaryUsage, reviewChip, STATUS_LABEL, timeAgo, type FileChange } from './model';
 	import { runtime } from './runtime.svelte';
 	import { adeTasks } from './tasks.svelte';
+	import PrChecks from './PrChecks.svelte';
+	import DiffNotesList from './DiffNotesList.svelte';
+	import { issues } from './issues.svelte.ts';
 	import { cliOf } from './agentCli';
 	import { adeLayout } from './adeLayout.svelte';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
@@ -19,7 +22,8 @@
 	import { BUTTON, BUTTON_SECONDARY, ICON_BUTTON, INPUT, LETTER_COLOR, STATUS_DOT, TONE } from './ui';
 
 	/** `timeline` / `review`: one half, for the Agents layout's main area and changes panel. */
-	let { slug, sections = 'all' }: { slug: string; sections?: 'all' | 'timeline' | 'review' } = $props();
+	/** `embedded`: inside the ADE right side bar's Source Control, which has its own commit box and Checks tab. */
+	let { slug, sections = 'all', embedded = false }: { slug: string; sections?: 'all' | 'timeline' | 'review'; embedded?: boolean } = $props();
 
 	const view = $derived(adeTasks.find(slug));
 	/** The task runs its agent CLI in a terminal (Orca way), not the timeline. */
@@ -113,6 +117,10 @@
 				<span>{meta.agent}{(view.runtime?.model ?? meta.model) ? ` · ${view.runtime?.model ?? meta.model}` : ''}</span>
 				<span>สร้าง {timeAgo(meta.created_at, adeTasks.now)}</span>
 				{#if meta.pr_url}<a class="text-(--vscode-textLink-foreground) hover:underline" href={meta.pr_url} target="_blank" rel="noreferrer">{meta.pr_url}</a>{/if}
+				{#if meta.issue}
+					{@const issue = meta.issue}
+					<button class="text-(--vscode-textLink-foreground) hover:underline" title="เปิด issue บน GitHub: {issue.url}" onclick={() => issues.open(issue)}>issue #{issue.number}</button>
+				{/if}
 				<span class="flex-1"></span>
 				{#if running && run?.runId !== undefined}
 					<button class={BUTTON_SECONDARY} title="หยุดรอบนี้ session ยังเปิดอยู่ (Interrupt)" onclick={() => adeTasks.interrupt(slug)}><Icon name="stop" size={12} /> หยุดรอบนี้</button>
@@ -188,7 +196,7 @@
 			<!-- Review -->
 			<section aria-label="Review" class="flex min-h-0 flex-col overflow-y-auto text-xs">
 				<div class="flex shrink-0 items-center gap-2 px-3 pt-2">
-					<h2 class="text-[11px] font-bold text-(--vscode-descriptionForeground) uppercase">Review</h2>
+					<h2 class="text-[11px] font-bold text-(--vscode-descriptionForeground) uppercase">{embedded ? 'เทียบกับ base (Committed on Branch)' : 'Review'}</h2>
 					{#if totals}
 						<span class="font-mono"><span class="text-[#73C991]">+{totals.added}</span> <span class="text-[#F48771]">−{totals.deleted}</span></span>
 						<span class="text-(--vscode-descriptionForeground)">{totals.files} ไฟล์{totals.binary ? ` (binary ${totals.binary})` : ''}</span>
@@ -232,6 +240,7 @@
 							<li class="px-2 py-1 text-(--vscode-descriptionForeground)">ไม่มีไฟล์ที่เปลี่ยนจาก {meta.base}</li>
 						{/each}
 					</ul>
+					<DiffNotesList worktree={slug} />
 					{#if stat.files.length}
 						<div class="flex gap-1.5 px-3 pt-1">
 							<button class={BUTTON_SECONDARY} disabled={!!busy || running || accepted.size === stat.files.length} onclick={rejectUnaccepted}>
@@ -240,6 +249,7 @@
 						</div>
 					{/if}
 
+					{#if !embedded}
 					<div class="mt-3 space-y-1.5 border-t border-(--vscode-widget-border) px-3 pt-3">
 						<label class="block text-[11px] font-bold text-(--vscode-descriptionForeground) uppercase" for="commit-{slug}">Commit</label>
 						<textarea id="commit-{slug}" class={[INPUT, 'h-16 resize-y font-mono']} bind:value={commitMsg} onkeydown={onCommitKey} aria-label="ข้อความ commit"></textarea>
@@ -247,6 +257,7 @@
 							<Icon name="check" size={12} /> Commit {stat.dirty ? '' : '(ไม่มีอะไรให้ commit)'}
 						</button>
 					</div>
+					{/if}
 
 					<div class="mt-3 space-y-1.5 border-t border-(--vscode-widget-border) px-3 py-3">
 						<div class="text-[11px] font-bold text-(--vscode-descriptionForeground) uppercase">ส่งงาน</div>
@@ -269,6 +280,10 @@
 						{#if stat.ahead === 0}<p class="text-(--vscode-descriptionForeground)">commit งานก่อน แล้วจึงสร้าง PR หรือ merge ได้</p>{/if}
 						{#if busy}<p class="text-(--vscode-editorInfo-foreground)">{busy}…</p>{/if}
 					</div>
+
+					{#if adeTasks.gh?.authenticated && !embedded}
+						<div class="border-t border-(--vscode-widget-border) px-3 py-3"><PrChecks {slug} /></div>
+					{/if}
 				{:else}
 					<p class="px-3 py-2 text-(--vscode-descriptionForeground)">กำลังอ่านการเปลี่ยนแปลง…</p>
 				{/if}

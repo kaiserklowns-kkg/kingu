@@ -312,6 +312,7 @@
 		aria-label="Search results"
 		tabindex="0"
 		class="relative mt-1 min-h-0 flex-1 overflow-y-auto outline-none"
+		style:scroll-behavior="var(--kg-list-scroll-behavior, auto)"
 		onscroll={(e) => (scrollTop = e.currentTarget.scrollTop)}
 		onkeydown={onTreeKey}
 	>

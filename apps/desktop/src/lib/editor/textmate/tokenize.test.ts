@@ -14,7 +14,9 @@ const theme = flattenTheme('dark_modern.json', (p) => readFileSync(join(dir, 'th
 const files: Record<string, string> = {
 	'source.ts': 'TypeScript.tmLanguage.json',
 	'source.rust': 'rust.tmLanguage.json',
-	'source.go': 'go.tmLanguage.json'
+	'source.go': 'go.tmLanguage.json',
+	'source.tsx': 'TypeScriptReact.tmLanguage.json',
+	'source.makefile': 'make.tmLanguage.json'
 };
 let registry: Registry;
 
@@ -65,4 +67,15 @@ test('Rust and Go grammars load and color keywords and functions', async () => {
 	const g = colors(go, 'func main() { return }');
 	expect(g['func']).toBe('#569CD6');
 	expect(g['return']).toBe('#C586C0');
+});
+
+test('TSX tags and Makefile targets are highlighted', async () => {
+	const tsx = (await registry.loadGrammar('source.tsx'))!;
+	const got = colors(tsx, 'const el = <Button disabled>ok</Button>;');
+	expect(got['const']).toBe('#569CD6');
+	expect(got['Button']).toBe('#4EC9B0'); // support.class.component.tsx
+	const make = (await registry.loadGrammar('source.makefile'))!;
+	const m = colors(make, 'build: deps # compile');
+	expect(m['build']).toBe('#DCDCAA'); // entity.name.function.target
+	expect(m['# compile']).toBe('#6A9955');
 });

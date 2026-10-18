@@ -1,6 +1,11 @@
 // Agents run the Orca way: a CLI (`claude`, `codex`, …) in a terminal of the task's worktree,
 // started with the prompt as its last argument. The other way is our timeline (the agent host's
-// SDK session). A CLI task stores `cli:<command>` as its agent. Pure, so `bun test` covers it.
+// SDK session). A CLI task stores `cli:<command>` as its agent. Per-CLI behaviour (resume, MCP,
+// status) lives in agentProfiles.ts. Pure, so `bun test` covers it.
+
+import { profileOf, programOf } from '#lib/ade/agentProfiles.ts';
+
+export { claudeResume, claudeStart, cliResume } from '#lib/ade/agentProfiles.ts';
 
 export type RunMode = 'terminal' | 'timeline';
 export const CLI_PREFIX = 'cli:';
@@ -22,19 +27,27 @@ export const cliOf = (agent: string) => (isCliAgent(agent) ? parseCliCommand(age
 /** Start: the command with the prompt as one last argument (a multi-line prompt stays one argument). */
 export const cliStart = (argv: string[], prompt: string) => [...argv, prompt];
 
-const programOf = (argv: string[]) => argv[0].split('/').pop() ?? argv[0];
-
-/** Continue the latest session in that worktree, for the CLIs that can; null when it cannot. */
-export function cliResume(argv: string[]): string[] | null {
-	const program = programOf(argv);
-	if (program === 'claude') return [...argv, '--continue'];
-	if (program === 'codex') return [...argv, 'resume', '--last'];
-	return null;
-}
-
 /** "claude" / "codex" for labels. */
 export const cliName = (argv: string[]) => programOf(argv);
 
 /** Output in the last 2.5s means the agent is working (Orca's spinner); otherwise it waits for you. */
 export const WORKING_MS = 2500;
 export const isWorking = (lastOutput: number | undefined, now: number) => lastOutput !== undefined && now - lastOutput < WORKING_MS;
+
+/** The setting with a profile's extra arguments, e.g. `kingu.agent.args.codex`. */
+export const agentArgsSetting = (profileId: string) => `kingu.agent.args.${profileId}`;
+
+/**
+ * The command a new terminal task runs: `kingu.agent.cli` (default `claude`), plus the extra
+ * arguments set for that CLI's profile (`kingu.agent.args.<id>`), so switching CLIs with the
+ * picker keeps each one's flags. Null when either is not a plain command.
+ */
+export function agentCommand(get: (id: string) => string | undefined): string[] | null {
+	const base = parseCliCommand(get('kingu.agent.cli') || 'claude');
+	if (!base) return null;
+	const profile = profileOf(base);
+	const extra = profile.id === 'custom' ? '' : (get(agentArgsSetting(profile.id)) ?? '').trim();
+	if (!extra) return base;
+	const args = parseCliCommand(extra);
+	return args ? [...base, ...args] : null;
+}

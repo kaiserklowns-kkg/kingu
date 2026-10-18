@@ -137,6 +137,26 @@ pub struct StartRequest {
   /// Skill plugin folders of active Snaps (`snap::validate_plugin_dirs`); omitted when none.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub plugins: Option<Vec<String>>,
+  /// The active Claude account (`CLAUDE_CONFIG_DIR` or `ANTHROPIC_API_KEY`); omitted when none.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub env: Option<SecretEnv>,
+  /// Auth variables to drop from the run's env so they do not override that account.
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  pub unset_env: Vec<String>,
+  /// Image files sent with the first prompt (checked: attachments.rs).
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  pub images: Vec<String>,
+}
+
+/// Env values that may hold an API key: serialized for the sidecar, never shown by Debug.
+#[derive(Clone, Default, PartialEq, serde::Serialize)]
+#[serde(transparent)]
+pub struct SecretEnv(pub std::collections::BTreeMap<String, String>);
+
+impl std::fmt::Debug for SecretEnv {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_set().entries(self.0.keys()).finish()
+  }
 }
 
 /// A stdio MCP server handed to an agent run (the SDK's `mcpServers` entry without `type`).
@@ -395,9 +415,13 @@ impl AgentHost {
     proc.request(method, params, REQUEST_TIMEOUT).map(|_| ())
   }
 
-  /// A follow-up message in the run's session.
-  pub fn send(&self, run_id: u32, text: &str) -> Result<(), String> {
-    self.run_request(run_id, "send", json!({ "text": text }))
+  /// A follow-up message in the run's session, with image files (checked: attachments.rs).
+  pub fn send(&self, run_id: u32, text: &str, images: &[String]) -> Result<(), String> {
+    let mut params = json!({ "text": text });
+    if !images.is_empty() {
+      params["images"] = json!(images);
+    }
+    self.run_request(run_id, "send", params)
   }
 
   /// `decision`: `allow`, `allow_always` (this session) or `deny` (with an optional message).
@@ -524,7 +548,7 @@ read -r line
     host.stop(run).unwrap();
     assert_eq!(next(&rx), AgentEvent::Exit { code: None, signal: None, stopped: true });
     assert!(!host.is_running(run));
-    assert!(host.send(run, "again").unwrap_err().contains("no such agent run"));
+    assert!(host.send(run, "again", &[]).unwrap_err().contains("no such agent run"));
 
     let requests = std::fs::read_to_string(&log).unwrap();
     let lines: Vec<Value> = requests.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
@@ -577,10 +601,25 @@ exit 3"#
   }
 
   #[test]
+  fn images_are_sent_only_when_attached() {
+    let wire = serde_json::to_value(StartRequest { cwd: "/w".into(), prompt: "x".into(), images: vec!["/c/a.png".into()], ..Default::default() }).unwrap();
+    assert_eq!(wire["images"], json!(["/c/a.png"]));
+    let wire = serde_json::to_value(StartRequest { cwd: "/w".into(), prompt: "x".into(), ..Default::default() }).unwrap();
+    assert!(wire.get("images").is_none());
+  }
+
+  #[test]
   fn plugins_are_sent_only_when_present() {
     let wire = serde_json::to_value(StartRequest { cwd: "/w".into(), prompt: "x".into(), plugins: Some(vec!["/c/snap-plugins/go-0123456789abcdef".into()]), ..Default::default() }).unwrap();
     assert_eq!(wire["plugins"], json!(["/c/snap-plugins/go-0123456789abcdef"]));
     let wire = serde_json::to_value(StartRequest { cwd: "/w".into(), prompt: "x".into(), ..Default::default() }).unwrap();
+    assert!(wire.get("env").is_none() && wire.get("unsetEnv").is_none(), "no account: nothing changes");
+    let env = SecretEnv([("ANTHROPIC_API_KEY".to_owned(), "sk-ant-secret".to_owned())].into());
+    let req = StartRequest { cwd: "/w".into(), prompt: "x".into(), env: Some(env), unset_env: vec!["ANTHROPIC_AUTH_TOKEN".into()], ..Default::default() };
+    assert!(!format!("{req:?}").contains("sk-ant-secret"));
+    let with_env = serde_json::to_value(req).unwrap();
+    assert_eq!(with_env["env"]["ANTHROPIC_API_KEY"], "sk-ant-secret");
+    assert_eq!(with_env["unsetEnv"], json!(["ANTHROPIC_AUTH_TOKEN"]));
     assert!(wire.get("plugins").is_none() && wire.get("mcpServers").is_none());
   }
 

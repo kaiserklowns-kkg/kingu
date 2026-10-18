@@ -6,10 +6,23 @@
 	import { fileIcon } from './fileIcons';
 	import { editors } from './editors.svelte';
 	import { keyLabel } from './keys';
-	import { diffKey, splitPath, type Resource } from './scm';
-	import { scm } from './scm.svelte';
+	import { diffKey as headDiffKey, splitPath, type Resource, type ScmSource } from './scm';
+	import { scm as folderScm } from './scm.svelte';
+	import { repoDialog } from './repoDialog.svelte.ts';
 	import { appMode } from './mode.svelte';
 	import { changesKey } from './viewers';
+	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
+
+	/**
+	 * `source`: another repository than the open folder's (a task worktree in the ADE's right side
+	 * bar); `diffKey` / `fileKey` then name its diff and file tabs.
+	 */
+	let {
+		source,
+		diffKey = headDiffKey,
+		fileKey = (rel: string) => rel
+	}: { source?: ScmSource; diffKey?: (rel: string) => string; fileKey?: (rel: string) => string } = $props();
+	const scm = $derived(source ?? folderScm);
 
 	type Confirm = { key: string; paths: string[]; untracked: boolean; text: string };
 
@@ -61,10 +74,16 @@
 
 	type Action = { icon: IconName; label: string; run: () => unknown; hidden?: boolean };
 
+	// In the Agents layout (the folder's own Changes panel) diffs and files open as ADE tabs.
+	const openDiff = (rel: string, preview: boolean) =>
+		appMode.isAgents ? adeLayout.openFile(adeLayout.key, diffKey(rel), { preview }) : editors.open(diffKey(rel), { preview });
+	const openFile = (rel: string) =>
+		appMode.isAgents ? adeLayout.openFile(adeLayout.key, fileKey(rel), { preview: false }) : editors.open(fileKey(rel), { preview: false });
+
 	function rowActions(r: Resource): Action[] {
 		const path = r.entry.path;
 		return [
-			{ icon: 'goToFile', label: 'Open File', run: () => editors.open(path, { preview: false }), hidden: r.deleted },
+			{ icon: 'goToFile', label: 'Open File', run: () => openFile(path), hidden: r.deleted },
 			{ icon: 'discard', label: 'Discard Changes', run: () => askDiscard(rowKey(r), [r]), hidden: r.staged },
 			r.staged
 				? { icon: 'minus', label: 'Unstage Changes', run: () => scm.unstage([path]) }
@@ -138,9 +157,9 @@
 					title={r.entry.orig_path ? `${r.entry.orig_path} → ${r.entry.path}` : r.entry.path}
 					onclick={() => {
 						selected = key;
-						editors.openDiff(r.entry.path, { preview: true });
+						openDiff(r.entry.path, true);
 					}}
-					ondblclick={() => editors.openDiff(r.entry.path, { preview: false })}
+					ondblclick={() => openDiff(r.entry.path, false)}
 				>
 					<FileIcon icon={fileIcon(name)} />
 					<span class={['shrink-0 truncate', r.deleted && 'line-through']}>{name}</span>
@@ -160,11 +179,19 @@
 			<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>กำลังอ่านสถานะ git…
 		</p>
 	{:else if !scm.repo}
-		<!-- VS Code's "no repository" welcome view. -->
+		<!-- VS Code's welcome view for a folder without a repository. -->
 		<div class="flex flex-col items-center gap-2 px-6 py-8 text-center text-(--vscode-descriptionForeground)">
 			<span class="text-(--vscode-foreground) opacity-70"><Icon name="git" size={32} /></span>
 			<p class="text-(--vscode-foreground)">โฟลเดอร์นี้ยังไม่เป็น git repository</p>
-			<p class="text-xs leading-relaxed">รัน <code class="rounded bg-(--vscode-input-background) px-1 font-mono">git init</code> ใน terminal (⌃`) แล้วกลับมาที่นี่ หรือเปิดโฟลเดอร์ที่เป็น repository อยู่แล้ว (⌘O)</p>
+			<p class="text-xs leading-relaxed">สร้าง repository เพื่อใช้ Source Control (git) ได้ หรือ clone repository จาก URL</p>
+			<button
+				class="mt-1 h-[26px] w-full rounded-md bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:brightness-110 disabled:opacity-50"
+				disabled={folderScm.busy || !!source}
+				onclick={() => folderScm.init()}
+			>
+				Initialize Repository
+			</button>
+			<button class="h-[26px] w-full rounded-md border border-(--vscode-widget-border) text-(--vscode-foreground) hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => repoDialog.show('clone')}>Clone Repository</button>
 		</div>
 	{:else}
 		<div class="flex shrink-0 flex-col gap-1.5 px-2 pt-1 pb-2">
@@ -188,7 +215,7 @@
 			</button>
 		</div>
 
-		<div class="min-h-0 flex-1 overflow-y-auto">
+		<div class="min-h-0 flex-1 overflow-y-auto" style:scroll-behavior="var(--kg-list-scroll-behavior, auto)">
 			{#if scm.groups.staged.length}
 				{@render group('staged', 'Staged Changes', scm.groups.staged, [
 					{ icon: 'minus', label: 'Unstage All Changes', run: () => scm.unstage(scm.groups.staged.map((r) => r.entry.path)) }

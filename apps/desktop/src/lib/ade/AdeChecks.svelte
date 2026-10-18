@@ -220,7 +220,7 @@
 	async function resolveThread(t: ReviewThread) {
 		busy = `thread:${t.id}`;
 		try {
-			await invoke('gh_resolve_thread', { slug: slug || null, thread: t.id, resolve: !t.isResolved });
+			await invoke('gh_thread_resolve', { slug: slug || null, thread: t.id, resolve: !t.isResolved });
 			t.isResolved = !t.isResolved;
 		} catch {
 			actionError = 'Could not update review thread. Check the GitHub API budget.';

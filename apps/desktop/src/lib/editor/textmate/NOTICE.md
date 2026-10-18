@@ -13,6 +13,10 @@ local fork at VS Code 1.143.0). Only one file was renamed:
 | grammars/jsdoc.js.injection.tmLanguage.json | extensions/typescript-basics/syntaxes/jsdoc.js.injection.tmLanguage.json | microsoft/vscode | MIT |
 | grammars/JavaScript.tmLanguage.json | extensions/javascript/syntaxes/JavaScript.tmLanguage.json | microsoft/TypeScript-TmLanguage | MIT |
 | grammars/RegularExpressionsJavaScript.tmLanguage | extensions/javascript/syntaxes/Regular Expressions (JavaScript).tmLanguage | textmate/javascript.tmbundle | TextMate Bundle License |
+| grammars/TypeScriptReact.tmLanguage.json | extensions/typescript-basics/syntaxes/TypeScriptReact.tmLanguage.json | microsoft/TypeScript-TmLanguage | MIT |
+| grammars/JavaScriptReact.tmLanguage.json | extensions/javascript/syntaxes/JavaScriptReact.tmLanguage.json | microsoft/TypeScript-TmLanguage | MIT |
+| grammars/make.tmLanguage.json | extensions/make/syntaxes/make.tmLanguage.json | fadeevab/make.tmbundle | TextMate Bundle License |
+| grammars/diff.tmLanguage.json | extensions/diff/syntaxes/diff.tmLanguage.json | textmate/diff.tmbundle | TextMate Bundle License |
 | grammars/rust.tmLanguage.json | extensions/rust/syntaxes/rust.tmLanguage.json | dustypomerleau/rust-syntax | MIT |
 | grammars/go.tmLanguage.json | extensions/go/syntaxes/go.tmLanguage.json | worlpaker/go-syntax | MIT |
 | grammars/JSON.tmLanguage.json | extensions/json/syntaxes/JSON.tmLanguage.json | microsoft/vscode-JSON.tmLanguage | MIT |
@@ -56,7 +60,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-## TextMate Bundle License (textmate/html.tmbundle, javascript.tmbundle, markdown.tmbundle)
+## TextMate Bundle License (textmate/html.tmbundle, javascript.tmbundle, markdown.tmbundle, diff.tmbundle; fadeevab/make.tmbundle)
 
 Copyright (c) textmate-*.tmbundle project authors
 

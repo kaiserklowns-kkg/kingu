@@ -11,11 +11,8 @@
 	import CsvPreview from './CsvPreview.svelte';
 	import NotebookViewer from './NotebookViewer.svelte';
 	import { isNotebookPath } from './notebook';
-	import { commands } from './commands.svelte';
-	import PopupMenu, { menuItem, menuSeparator } from './PopupMenu.svelte';
-	import type { MenuNode } from './menus';
-	import { tabsToClose, type TabClose } from './tabMenu';
 	import { invoke } from '@tauri-apps/api/core';
+	import { status } from './status.svelte';
 	import { workspace } from './workspace.svelte';
 	import { isNonTextEditor } from '#lib/settings/resources.ts';
 	import FileIcon from './FileIcon.svelte';
@@ -26,13 +23,21 @@
 	import { fileIcon } from './fileIcons';
 	import { keyLabel } from './keys';
 	import { fileOf, isDiffKey } from './scm';
-	import { status } from './status.svelte';
 	import SettingsEditor from '#lib/settings/SettingsEditor.svelte';
-	import { SETTINGS_EDITOR_KEY, USER_SETTINGS_KEY } from '#lib/settings/settings.svelte.ts';
+	import { settings, SETTINGS_EDITOR_KEY, USER_SETTINGS_KEY } from '#lib/settings/settings.svelte.ts';
 	import Board from '#lib/ade/Board.svelte';
 	import TaskPage from '#lib/ade/TaskPage.svelte';
 	import { isAdeEditor, isBoardKey, slugOfTaskKey } from '#lib/ade/keys.ts';
-	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
+	import { USER_KEYBINDINGS_KEY } from './keybindings.svelte';
+	import FilePlaceholder from './FilePlaceholder.svelte';
+	import SaveConflictCompare from './SaveConflictCompare.svelte';
+	import { textFiles } from './textFileService.svelte';
+	import PopupMenu, { menuItem, menuSeparator } from './PopupMenu.svelte';
+	import type { MenuNode } from './menus';
+	import { commands, keyOf } from './commands.svelte';
+	import { isMac } from './keys';
+	import * as cmd from './editorCommands.svelte';
+	import { isUntitled } from './untitled';
 
 	let { group }: { group: number } = $props();
 
@@ -45,7 +50,13 @@
 	const settingsActive = $derived(activePath === SETTINGS_EDITOR_KEY);
 	const adeActive = $derived(activePath !== null && isAdeEditor(activePath));
 	const taskSlug = $derived(activePath ? slugOfTaskKey(activePath) : null);
-	const crumbs = $derived(!activePath || settingsActive || adeActive || isChangesKey(activePath) ? [] : activePath === USER_SETTINGS_KEY ? ['User', 'settings.json'] : fileOf(activePath).split('/'));
+	const crumbs = $derived(!activePath || settingsActive || adeActive || isChangesKey(activePath) ? [] : activePath === USER_SETTINGS_KEY
+					? ['User', 'settings.json']
+					: activePath === USER_KEYBINDINGS_KEY
+						? ['User', 'keybindings.json']
+					: activePath.startsWith('snap://user/')
+						? ['User Snaps', ...activePath.slice('snap://user/'.length).split('/')]
+						: fileOf(activePath).split('/'));
 	const label = editorLabel;
 	const iconOf = (key: string) =>
 		fileIcon(key === SETTINGS_EDITOR_KEY || key === USER_SETTINGS_KEY ? 'settings.json' : isAdeEditor(key) ? 'tasks.md' : fileOf(key));
@@ -60,11 +71,19 @@
 	// The cursor is tracked for the active group only, so other groups show just the path.
 	const symbolCrumbs = $derived(activePath && !diffActive && !settingsActive && !adeActive && focused ? lsp.crumbs(activePath, editors.cursor.line, editors.cursor.column) : []);
 	let dropTarget = $state<number | null>(null);
+	// workbench.editor.showTabs / tabSizing / highlightModifiedTabs
+	const showTabs = $derived(settings.get<'multiple' | 'single' | 'none'>('workbench.editor.showTabs'));
+	const shownTabs = $derived(showTabs === 'single' ? tabs.filter((t) => t.path === activePath) : tabs);
+	const tabSizing = $derived(settings.get<'fit' | 'shrink' | 'fixed'>('workbench.editor.tabSizing'));
+	const highlightModified = $derived(settings.get<boolean>('workbench.editor.highlightModifiedTabs'));
 
-	function close(path: string, force: boolean) {
-		// A file also open in the Agents layout keeps its model (and unsaved edits) there.
-		if (!editors.close(path, { force: force || adeLayout.openFiles().includes(path), group })) status.flash('มีการแก้ไขที่ยังไม่บันทึก: กด ⌘S ก่อน หรือกด ⌥ ค้างแล้วคลิก × เพื่อทิ้งการแก้ไข');
+	// A dirty file asks Save / Don't Save / Cancel (⌥-click discards); one also open in another
+	// group or the Agents layout keeps its model (and unsaved edits) there and closes at once.
+	function close(path: string, discard: boolean) {
+		void textFiles.closeEditors([path], group, { discard });
 	}
+	const placeholder = $derived(textFiles.placeholder(activePath));
+	const comparing = $derived(activePath !== null && textFiles.compare?.path === activePath ? textFiles.compare : null);
 
 	function dragStart(e: DragEvent, path: string) {
 		if (!e.dataTransfer) return;
@@ -90,6 +109,87 @@
 		editors.moveEditor(from.group, from.path, group, index);
 	}
 
+	// --- Tab context menu (VS Code: MenuId.EditorTitleContext, editorTabsControl.ts) -------------
+
+	let tabMenu = $state<{ x: number; y: number; path: string } | null>(null);
+
+	/** The key of a workbench command for the menu's right column. */
+	const keyFor = (id: string) => {
+		const c = commands.get(id);
+		const k = c && keyOf(c);
+		return k ? keyLabel(k) : undefined;
+	};
+
+	function tabMenuItems(path: string): MenuNode[] {
+		const tab = tabs.find((t) => t.path === path);
+		const i = tabs.findIndex((t) => t.path === path);
+		const file = cmd.isFileEditor(path);
+		const item = (id: string, text: string, opts: { enabled?: boolean; key?: string } = {}) => menuItem(id, text, { enabled: opts.enabled, keyLabel: opts.key ?? keyFor(id) });
+		return [
+			item('close', 'Close', { key: keyFor('workbench.action.closeActiveEditor') }),
+			item('closeOthers', 'Close Others', { enabled: tabs.length > 1, key: keyFor('workbench.action.closeOtherEditors') }),
+			item('closeRight', 'Close to the Right', { enabled: i < tabs.length - 1, key: keyFor('workbench.action.closeEditorsToTheRight') }),
+			item('closeSaved', 'Close Saved', { enabled: tabs.some((t) => !t.dirty), key: keyFor('workbench.action.closeUnmodifiedEditors') }),
+			item('closeAll', 'Close All', { key: keyFor('workbench.action.closeEditorsInGroup') }),
+			menuSeparator,
+			item('copyPath', 'Copy Path', { enabled: file, key: keyFor('copyFilePath') }),
+			item('copyRelativePath', 'Copy Relative Path', { enabled: file, key: keyFor('copyRelativeFilePath') }),
+			menuSeparator,
+			item('revealOS', isMac ? 'Reveal in Finder' : 'Reveal in File Explorer', { enabled: file, key: keyFor('revealFileInOS') }),
+			item('revealExplorer', 'Reveal in Explorer View', { enabled: file }),
+			menuSeparator,
+			...(tab?.preview ? [item('keep', 'Keep Open', { key: keyFor('workbench.action.keepEditor') })] : []),
+			item('pin', tab?.sticky ? 'Unpin' : 'Pin', { key: keyFor(tab?.sticky ? 'workbench.action.unpinEditor' : 'workbench.action.pinEditor') }),
+			menuSeparator,
+			menuItem('splitUp', 'Split Up'),
+			menuItem('splitDown', 'Split Down'),
+			menuItem('splitLeft', 'Split Left'),
+			menuItem('splitRight', 'Split Right')
+		];
+	}
+
+	/** Runs a tab menu item on `path` (captured when the menu opened: PopupMenu closes before it runs). */
+	function runTabMenu(id: string, path: string) {
+		switch (id) {
+			case 'close':
+				return close(path, false);
+			case 'closeOthers':
+				return cmd.closeOthers(group, path);
+			case 'closeRight':
+				return cmd.closeToRight(group, path);
+			case 'closeSaved':
+				return cmd.closeSaved(group);
+			case 'closeAll':
+				return cmd.closeAllInGroup(group);
+			case 'copyPath':
+				return cmd.copyPath(path);
+			case 'copyRelativePath':
+				return cmd.copyRelativePath(path);
+			case 'revealOS':
+				return cmd.revealInOS(path);
+			case 'revealExplorer':
+				return cmd.revealInExplorer(path);
+			case 'keep':
+				return editors.pin(path, group);
+			case 'pin':
+				return cmd.togglePinned(group, path);
+			case 'splitUp':
+				return cmd.splitFrom(group, path, 'up');
+			case 'splitDown':
+				return cmd.splitFrom(group, path, 'down');
+			case 'splitLeft':
+				return cmd.splitFrom(group, path, 'left');
+			case 'splitRight':
+				return cmd.splitFrom(group, path, 'right');
+		}
+	}
+
+	function openTabMenu(e: MouseEvent, path: string) {
+		e.preventDefault();
+		editors.activateGroup(group);
+		tabMenu = { x: e.clientX, y: Math.min(e.clientY, window.innerHeight - 20 * 22), path };
+	}
+
 	const watermark = [
 		['Show All Commands', 'cmd+shift+p'],
 		['Go to File', 'cmd+p'],
@@ -98,60 +198,6 @@
 		['Toggle Arkai', 'cmd+alt+b'],
 		['Zen Mode', 'cmd+k z']
 	];
-
-	// Tab context menu (VS Code's editor tab menu).
-	let tabMenu = $state<{ path: string; x: number; y: number } | null>(null);
-	const isFileTab = (path: string) => !isNonTextEditor(path) || isPreviewKey(path) || isImagePath(path);
-	const tabMenuItems = $derived.by((): MenuNode[] => {
-		if (!tabMenu) return [];
-		const path = tabMenu.path;
-		const tab = tabs.find((t) => t.path === path);
-		const file = isFileTab(path);
-		return [
-			menuItem('close', 'Close', { keyLabel: '⌘W' }),
-			menuItem('others', 'Close Others', { enabled: tabs.length > 1 }),
-			menuItem('right', 'Close to the Right', { enabled: tabsToClose('right', tabs, path).length > 0 }),
-			menuItem('saved', 'Close Saved'),
-			menuItem('all', 'Close All'),
-			menuSeparator,
-			menuItem('copyPath', 'Copy Path', { enabled: file }),
-			menuItem('copyRelative', 'Copy Relative Path', { enabled: file }),
-			menuItem('reveal', 'Reveal in Finder', { enabled: file }),
-			menuSeparator,
-			menuItem('keep', 'Keep Open', { enabled: !!tab?.preview }),
-			menuItem('split', 'Split Right')
-		];
-	});
-	async function runTabMenu(id: string, path: string) {
-		const rel = fileOf(path);
-		switch (id) {
-			case 'close':
-				return close(path, false);
-			case 'others':
-			case 'right':
-			case 'saved':
-			case 'all': {
-				const dirtySkipped = tabsToClose(id as TabClose, tabs, path).filter((p) => !editors.close(p, { group })).length;
-				if (dirtySkipped) status.flash(`ข้าม ${dirtySkipped} แท็บที่ยังไม่บันทึก`);
-				return;
-			}
-			case 'copyPath':
-			case 'copyRelative': {
-				const text = id === 'copyPath' && workspace.root ? `${workspace.root}/${rel}` : rel;
-				await navigator.clipboard.writeText(text);
-				return status.flash(`คัดลอก ${text} แล้ว`, 3000);
-			}
-			case 'reveal':
-				return invoke('fs_reveal', { rel }).catch((e) => status.error(String(e)));
-			case 'keep':
-				return editors.pin(path, group);
-			case 'split': {
-				const side = editors.split('right');
-				if (side !== null) editors.open(path, { preview: false, group: side });
-				return;
-			}
-		}
-	}
 
 	// Breadcrumb folders open a list of their entries (VS Code's breadcrumb picker).
 	type Entry = { name: string; rel: string; is_dir: boolean };
@@ -182,7 +228,7 @@
 	class="flex h-full min-w-0 flex-col bg-(--vscode-editor-background)"
 	onpointerdowncapture={() => editors.activateGroup(group)}
 >
-	{#if tabs.length || editors.groups.length > 1}
+	{#if showTabs !== 'none' && (tabs.length || editors.groups.length > 1)}
 		<div
 			role="tablist"
 			tabindex="-1"
@@ -192,8 +238,9 @@
 			ondragleave={() => (dropTarget = null)}
 			ondrop={(e) => drop(e, tabs.length)}
 		>
-			{#each tabs as tab, i (tab.path)}
+			{#each shownTabs as tab (tab.path)}
 				{@const active = tab.path === activePath}
+				{@const i = tabs.indexOf(tab)}
 				<div
 					role="presentation"
 					draggable="true"
@@ -201,9 +248,10 @@
 					ondragover={(e) => dragOver(e, i)}
 					ondrop={(e) => drop(e, i)}
 					ondragend={() => (dropTarget = null)}
-					oncontextmenu={(e) => (e.preventDefault(), (tabMenu = { path: tab.path, x: e.clientX, y: e.clientY }))}
+					oncontextmenu={(e) => openTabMenu(e, tab.path)}
 					class={[
-						'group relative flex h-[calc(100%-5px)] shrink-0 items-center gap-1.5 rounded-t-lg pl-2.5 transition-colors',
+						'group relative flex h-[calc(100%-5px)] items-center gap-1.5 rounded-t-lg pl-2.5 transition-colors',
+						tabSizing === 'fit' ? 'shrink-0' : tabSizing === 'shrink' ? 'min-w-[80px] shrink' : 'w-[160px] min-w-[80px] shrink',
 						active ? 'bg-(--vscode-tab-activeBackground)' : 'hover:bg-(--vscode-tab-hoverBackground)',
 						active
 							? focused
@@ -214,14 +262,16 @@
 								: 'text-[var(--vscode-tab-unfocusedInactiveForeground,#9d9d9d80)]'
 					]}
 				>
-					{#if active && focused}<span class="absolute inset-x-2.5 top-0 h-0.5 rounded-b-full bg-(--vscode-tab-activeBorderTop)"></span>{/if}
+					{#if highlightModified && tab.dirty}<span class="absolute inset-x-2.5 top-0 h-0.5 rounded-b-full bg-(--vscode-tab-activeModifiedBorder,#3399cc)"></span>
+					{:else if active && focused}<span class="absolute inset-x-2.5 top-0 h-0.5 rounded-b-full bg-(--vscode-tab-activeBorderTop)"></span>{/if}
 					{#if dropTarget === i}<span class="absolute inset-y-0 left-0 w-0.5 bg-(--vscode-focusBorder)"></span>{/if}
 					<span class={['flex', !focused && 'opacity-60']}><FileIcon icon={iconOf(tab.path)} /></span>
+					{#if tab.sticky}<span class="flex text-(--vscode-icon-foreground) opacity-80" title="Pinned"><Icon name="pin" size={12} /></span>{/if}
 					<button
 						role="tab"
 						aria-selected={active}
-						title={tab.path}
-						class={['h-full pr-1 whitespace-nowrap', tab.preview && 'italic']}
+						title={isUntitled(tab.path) ? label(tab.path) : tab.path}
+						class={['h-full min-w-0 truncate pr-1 whitespace-nowrap', tabSizing !== 'fit' && 'flex-1 text-left', tab.preview && 'italic']}
 						onclick={() => editors.open(tab.path, { preview: tab.preview, group })}
 						ondblclick={() => editors.pin(tab.path, group)}
 						onauxclick={(e) => e.button === 1 && close(tab.path, false)}
@@ -230,7 +280,7 @@
 					</button>
 					<button
 						aria-label={tab.dirty ? `${label(tab.path)} ยังไม่บันทึก: ปิด` : `ปิด ${label(tab.path)}`}
-						class={['mr-1 grid size-5 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)', !active && !tab.dirty && 'invisible group-hover:visible']}
+						class={['mr-1 grid size-5 shrink-0 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)', !active && !tab.dirty && 'invisible group-hover:visible']}
 						onclick={(e) => close(tab.path, e.altKey)}
 					>
 						{#if tab.dirty}
@@ -281,9 +331,15 @@
 	{/if}
 
 	<div class="relative min-h-0 flex-1">
-		<div class={['absolute inset-0', (!activePath || diffActive || settingsActive || adeActive || viewerActive) && 'invisible']}>
+		<div class={['absolute inset-0', (!activePath || diffActive || settingsActive || adeActive || viewerActive || placeholder) && 'invisible']}>
 			<EditorHost {group} />
 		</div>
+		{#if activePath && placeholder}
+			<div class="absolute inset-0"><FilePlaceholder path={activePath} {placeholder} /></div>
+		{/if}
+		{#if comparing && focused}
+			<div class="absolute inset-0">{#key comparing}<SaveConflictCompare path={comparing.path} disk={comparing.disk} />{/key}</div>
+		{/if}
 		{#if hasDiff}
 			<div class={['absolute inset-0', !diffActive && 'invisible']}>
 				<DiffHost active={activePath} onfail={(key) => editors.close(key, { force: true, group })} reportLanguage={focused} />
@@ -329,10 +385,9 @@
 </section>
 
 {#if tabMenu}
-	{@const target = tabMenu.path}
-	<PopupMenu items={tabMenuItems} label="Editor Tab" x={tabMenu.x} y={tabMenu.y} onRun={(node) => node.type === 'item' && runTabMenu(node.id, target)} onClose={() => (tabMenu = null)} />
+	{@const m = tabMenu}
+	<PopupMenu items={tabMenuItems(m.path)} label="Editor tab" x={m.x} y={m.y} onRun={(node) => node.type === 'item' && runTabMenu(node.id, m.path)} onClose={() => (tabMenu = null)} />
 {/if}
 {#if crumbMenu}
 	<PopupMenu items={crumbItems} label="Breadcrumb" x={crumbMenu.x} y={crumbMenu.y} focusFirst onRun={(node) => node.type === 'item' && runCrumb(node.id)} onClose={() => (crumbMenu = null)} />
 {/if}
-

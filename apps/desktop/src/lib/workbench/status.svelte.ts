@@ -1,5 +1,5 @@
 // Transient status bar message (VS Code: IStatusbarService / window.setStatusBarMessage).
-// `error` / `warning` also go to the notification center (a toast, and the bell's list).
+// `error` / `warning` also go to the notification service (a toast, and the bell's center).
 import { notifications } from './notifications.svelte';
 
 class Status {
@@ -15,12 +15,12 @@ class Status {
 
 	error(message: string, ms = 8000) {
 		this.flash(message, ms);
-		notifications.push(message, 'error');
+		notifications.error(message);
 	}
 
 	warning(message: string, ms = 8000) {
 		this.flash(message, ms);
-		notifications.push(message, 'warning');
+		notifications.warn(message);
 	}
 }
 

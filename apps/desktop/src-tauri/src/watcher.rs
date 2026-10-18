@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, RwLock};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::{Duration, Instant};
 
@@ -62,9 +62,17 @@ pub fn next_batch(rx: &Receiver<String>, quiet: Duration, max_wait: Duration) ->
 #[derive(Default)]
 pub struct FileWatcher {
   current: Mutex<Option<notify::RecommendedWatcher>>,
+  /// `files.watcherExclude`, compiled; read by the running watcher's callback.
+  exclude: Arc<RwLock<Vec<regex::Regex>>>,
 }
 
 impl FileWatcher {
+  /// Replaces the `files.watcherExclude` globs (invalid ones are skipped); applies to the running watcher at once.
+  pub fn set_exclude(&self, globs: &[String]) {
+    let compiled = globs.iter().filter_map(|g| crate::glob::to_regex(g.trim())).collect();
+    *self.exclude.write().unwrap_or_else(|e| e.into_inner()) = compiled;
+  }
+
   /// Replaces the watcher with one on `root` (none when `None`). `emit` gets each batch.
   pub fn watch(&self, root: Option<&Path>, emit: impl Fn(Vec<String>) + Send + 'static) -> Result<(), String> {
     let mut current = self.current.lock().unwrap_or_else(|e| e.into_inner());
@@ -74,6 +82,7 @@ impl FileWatcher {
     let root: PathBuf = root.to_path_buf();
     let (tx, rx) = channel::<String>();
     let event_root = root.clone();
+    let exclude = Arc::clone(&self.exclude);
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
       let Ok(ev) = res else { return };
       if matches!(ev.kind, EventKind::Access(_)) {
@@ -83,7 +92,9 @@ impl FileWatcher {
         let _ = tx.send(String::new());
       }
       for p in &ev.paths {
-        if let Some(rel) = relevant(&event_root, p) {
+        if let Some(rel) = relevant(&event_root, p)
+          && !crate::glob::is_excluded(&rel, &exclude.read().unwrap_or_else(|e| e.into_inner()))
+        {
           let _ = tx.send(rel);
         }
       }
@@ -162,14 +173,18 @@ mod tests {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();
     std::fs::create_dir(root.join("node_modules")).unwrap();
+    std::fs::create_dir(root.join("dist")).unwrap();
     let (tx, rx) = channel();
     let w = FileWatcher::default();
+    // files.watcherExclude, set before or while watching.
+    w.set_exclude(&["**/dist".into(), "[".into()]);
     w.watch(Some(&root), move |b| {
       let _ = tx.send(b);
     })
     .unwrap();
     std::thread::sleep(Duration::from_millis(200));
     std::fs::write(root.join("node_modules/x.js"), "").unwrap();
+    std::fs::write(root.join("dist/bundle.js"), "").unwrap();
     std::fs::write(root.join("hello.txt"), "hi").unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut seen = Vec::new();
@@ -180,6 +195,7 @@ mod tests {
     }
     assert!(seen.iter().any(|p| p == "hello.txt"), "{seen:?}");
     assert!(!seen.iter().any(|p| p.starts_with("node_modules")), "{seen:?}");
+    assert!(!seen.iter().any(|p| p.starts_with("dist")), "{seen:?}");
     w.watch(None, |_| {}).unwrap();
   }
 }

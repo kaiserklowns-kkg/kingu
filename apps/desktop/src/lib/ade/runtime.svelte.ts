@@ -9,12 +9,34 @@ import type { Decision } from '#lib/agent/events.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { followUpPlan, toTaskRuntime, type TaskRuntime } from './model';
 import { cliName } from './agentCli';
+import { profileOf } from '#lib/ade/agentProfiles.ts';
 import { cliSessions } from './cliSessions.svelte';
+import { needsInput } from './agentHooks';
 
 /** A task whose agent CLI runs in a terminal: working while it prints, else waiting for you. */
 function cliRuntime(slug: string): TaskRuntime | undefined {
 	const s = cliSessions.sessions[slug];
 	if (!s) return;
+	// claude reports its state through hooks, and so do CLIs with Kingu's status hooks once their
+	// hooks report; before that (or without them) "printing = working" (codex's notify adds the
+	// session id and the turn's last answer).
+	const hook = cliSessions.hooks[slug];
+	if (hook && hook.phase !== 'starting' && (profileOf(s.run).status === 'hooks' || hook.hooks)) {
+		const working = hook.phase === 'working';
+		const attention = needsInput(hook);
+		return {
+			slug,
+			status: attention ? 'waiting' : working ? 'running' : 'review',
+			runStatus: attention ? 'waiting' : working ? 'running' : hook.phase === 'ended' ? 'done' : 'idle',
+			live: hook.phase !== 'ended',
+			working,
+			lastEvent: hook.message,
+			pendingPermissions: hook.permission && hook.phase === 'waiting' ? 1 : 0,
+			question: hook.question && hook.phase === 'waiting',
+			sessionId: hook.sessionId ?? null,
+			updatedAt: hook.at
+		};
+	}
 	const working = cliSessions.working(slug);
 	return {
 		slug,
@@ -22,9 +44,9 @@ function cliRuntime(slug: string): TaskRuntime | undefined {
 		runStatus: working ? 'running' : 'idle',
 		live: true,
 		working,
-		lastEvent: working ? `${cliName(s.run)} กำลังทำงานใน terminal` : `${cliName(s.run)} รอคุณใน terminal`,
+		lastEvent: working ? `${cliName(s.run)} กำลังทำงานใน terminal` : (hook?.message ?? `${cliName(s.run)} รอคุณใน terminal`),
 		pendingPermissions: 0,
-		sessionId: null,
+		sessionId: hook?.sessionId ?? null,
 		updatedAt: cliSessions.lastOutput(slug)
 	};
 }
@@ -67,20 +89,20 @@ class Runtime {
 	}
 
 	/** Starts the agent in the task worktree (which must exist); model and permission mode come from settings. */
-	start(slug: string, prompt: string, resume: string | null = null): Promise<void> {
+	start(slug: string, prompt: string, resume: string | null = null, images: string[] = []): Promise<void> {
 		this.#touched[slug] = Date.now();
-		return agents.start(slug, prompt, { root: workspace.root ?? undefined, resume });
+		return agents.start(slug, prompt, { root: workspace.root ?? undefined, resume, images });
 	}
 
 	/**
 	 * Follow-up: sent to the open session, else resumes the run's session (or `savedSession` from
 	 * tasks.json after a restart), else starts fresh.
 	 */
-	async followUp(slug: string, text: string, savedSession: string | null): Promise<void> {
+	async followUp(slug: string, text: string, savedSession: string | null, images: string[] = []): Promise<void> {
 		const plan = followUpPlan(this.run(slug), savedSession);
 		this.#touched[slug] = Date.now();
-		if (plan.kind === 'send') await agents.send(slug, text);
-		else await this.start(slug, text, plan.resume);
+		if (plan.kind === 'send') await agents.send(slug, text, images);
+		else await this.start(slug, text, plan.resume, images);
 	}
 
 	answer(slug: string, requestId: string, decision: Decision, message?: string): Promise<void> {

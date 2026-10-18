@@ -1,10 +1,13 @@
 <script lang="ts">
 	import Icon, { type IconName } from './Icon.svelte';
+	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { layout, type SideView } from './layout.svelte';
 	import { keyLabel } from './keys';
 	import { scm } from './scm.svelte';
 	import { commands, keyOf } from './commands.svelte';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
+	import { snaps } from '#lib/snaps/snaps.svelte.ts';
+	import { pendingTrustCount } from '#lib/snaps/snapModel.ts';
 
 	/**
 	 * `vertical`: the activity bar (`workbench.activityBar.location: default`). `horizontal`: the
@@ -14,11 +17,13 @@
 	const vertical = $derived(orientation === 'vertical');
 
 	// Count badges (VS Code activitybar badge: bottom-right, 16px).
-	const badges: Partial<Record<SideView, () => number>> = { scm: () => scm.count, agents: () => adeTasks.attentionCount };
+	const badges: Partial<Record<SideView, () => number>> = { scm: () => (settings.get('scm.countBadge') === 'off' ? 0 : scm.count), snaps: () => pendingTrustCount(snaps.list), agents: () => adeTasks.attentionCount };
 	const views: { view: SideView; label: string; icon: IconName; command: string }[] = [
 		{ view: 'explorer', label: 'Explorer', icon: 'files', command: 'workbench.view.explorer' },
 		{ view: 'search', label: 'Search', icon: 'search', command: 'workbench.action.findInFiles' },
 		{ view: 'scm', label: 'Source Control', icon: 'git', command: 'workbench.view.scm' },
+		{ view: 'debug', label: 'Run and Debug', icon: 'bug', command: 'workbench.view.debug' },
+		{ view: 'snaps', label: 'Snaps', icon: 'snap', command: 'workbench.view.snaps' },
 		{ view: 'agents', label: 'Agents', icon: 'tasks', command: 'kingu.agents.show' }
 	];
 	/** `Explorer (⇧⌘E)`, from the command's live keybinding. */

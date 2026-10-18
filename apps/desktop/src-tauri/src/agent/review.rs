@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use crate::git::{self, check_rel, check_rev};
 
-use super::worktree::{branch_name, validate_slug, worktree_path};
+use super::worktree::{task_branch, validate_slug, worktree_path};
 
 /// Untracked files larger than this are counted as changed but not line-counted.
 const MAX_COUNT_BYTES: u64 = 5 * 1024 * 1024;
@@ -101,6 +101,33 @@ pub fn merge_base(dir: &Path, base: &str) -> Result<String, String> {
   let base = resolve_commit(dir, base)?;
   let head = resolve_commit(dir, "HEAD")?;
   Ok(text(git::run(dir, &["merge-base", &base, &head])?).trim().to_owned())
+}
+
+/// A commit of the task branch (PR form prefill).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Commit {
+  pub subject: String,
+  pub body: String,
+}
+
+const MAX_COMMITS: usize = 200;
+
+/// Commits on HEAD since it forked from `base`, oldest first (at most `MAX_COMMITS`, the newest).
+pub fn commits_since(dir: &Path, base: &str) -> Result<Vec<Commit>, String> {
+  let fork = merge_base(dir, base)?;
+  let range = format!("{fork}..HEAD");
+  let max = format!("--max-count={MAX_COMMITS}");
+  let out = text(git::run(dir, &["log", "--no-merges", &max, "--format=%s%x1f%b%x1e", &range])?);
+  let mut commits: Vec<Commit> = out
+    .split('\x1e')
+    .filter_map(|rec| {
+      let rec = rec.trim_start_matches('\n');
+      let (subject, body) = rec.split_once('\x1f')?;
+      Some(Commit { subject: subject.trim().to_owned(), body: body.trim().to_owned() })
+    })
+    .collect();
+  commits.reverse();
+  Ok(commits)
 }
 
 /// Lines in an untracked file; `None` when binary (a NUL byte) or too large to read.
@@ -257,14 +284,14 @@ fn clean(dir: &Path, untracked: bool) -> Result<bool, String> {
   Ok(git::run(dir, &["status", "--porcelain", "-z", flag])?.is_empty())
 }
 
-/// Merges `kingu/<slug>` into the local branch `base`. Where `base` is checked out (the main
+/// Merges the task branch (`kingu/<slug>` by default) into the local branch `base`. Where `base` is checked out (the main
 /// folder or another worktree) that checkout must have no tracked changes and runs `git merge`
 /// (`--ff-only`, or `--no-ff` for a merge commit; a conflicting merge is aborted). When it is
 /// not checked out anywhere, only a fast-forward is possible and just the ref moves.
 pub fn merge_local(repo: &Path, slug: &str, base: &str, merge_commit: bool) -> Result<MergeResult, String> {
   let dir = task_dir(repo, slug)?;
   check_branch(repo, base)?;
-  let branch = branch_name(slug);
+  let branch = task_branch(&dir, slug)?;
   if base == branch {
     return Err("cannot merge a task into its own branch".into());
   }
@@ -340,18 +367,27 @@ pub fn gh_status(bin: Option<PathBuf>) -> GhStatus {
   }
 }
 
-/// Pushes `kingu/<slug>` to `origin` and opens a pull request against `base`; returns its URL.
-pub fn pr_create(gh: &Path, dir: &Path, slug: &str, base: &str, title: &str, body: &str) -> Result<String, String> {
+/// `gh pr create` arguments; `draft` from `kingu.pr.draft` (Orca's PR creation defaults).
+pub fn pr_create_args(base: &str, branch: &str, title: &str, body: &str, draft: bool) -> Vec<String> {
+  let mut args = vec!["pr".to_owned(), "create".to_owned(), format!("--base={base}"), format!("--head={branch}"), format!("--title={title}"), format!("--body={body}")];
+  if draft {
+    args.push("--draft".to_owned());
+  }
+  args
+}
+
+/// Pushes the task branch to `origin` and opens a pull request against `base`; returns its URL.
+pub fn pr_create(gh: &Path, dir: &Path, slug: &str, base: &str, title: &str, body: &str, draft: bool) -> Result<String, String> {
   check_rev(base)?;
   if title.trim().is_empty() {
     return Err("PR title is empty".into());
   }
   git::run(dir, &["remote", "get-url", "origin"]).map_err(|_| "ไม่มี remote ชื่อ origin".to_owned())?;
-  let branch = branch_name(slug);
+  let branch = task_branch(dir, slug)?;
   git::run(dir, &["push", "-u", "origin", &format!("refs/heads/{branch}:refs/heads/{branch}")])?;
   let out = crate::shell_env::command(gh)
     .current_dir(dir)
-    .args(["pr", "create", &format!("--base={base}"), &format!("--head={branch}"), &format!("--title={title}"), &format!("--body={body}")])
+    .args(pr_create_args(base, &branch, title, body, draft))
     .output()
     .map_err(|e| format!("gh: {e}"))?;
   if !out.status.success() {
@@ -359,6 +395,142 @@ pub fn pr_create(gh: &Path, dir: &Path, slug: &str, base: &str, title: &str, bod
   }
   let url = String::from_utf8_lossy(&out.stdout).lines().rev().find(|l| l.starts_with("http")).unwrap_or_default().trim().to_owned();
   Ok(url)
+}
+
+/// One CI check of a pull request (a GitHub Actions run or a commit status).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct PrCheck {
+  pub name: String,
+  /// `pending`, `success`, `failure`, `neutral`, `skipped` or `cancelled`.
+  pub state: &'static str,
+  pub url: Option<String>,
+  /// GitHub Actions run and job ids from the check's URL (`…/actions/runs/<run>/job/<job>`); a
+  /// job id is also its check-run id. Used to fetch the failed job's log.
+  pub run_id: Option<u64>,
+  pub job_id: Option<u64>,
+}
+
+/// `(run, job)` ids in a GitHub Actions details URL; other check URLs have none.
+pub fn actions_ids(url: Option<&str>) -> (Option<u64>, Option<u64>) {
+  let Some(url) = url else { return (None, None) };
+  let Some((_, rest)) = url.split_once("/actions/runs/") else { return (None, None) };
+  let mut parts = rest.split(['/', '?', '#']);
+  let run = parts.next().and_then(|r| r.parse().ok());
+  let job = match (parts.next(), parts.next()) {
+    (Some("job" | "jobs"), Some(j)) => j.parse().ok(),
+    _ => None,
+  };
+  (run, job)
+}
+
+/// The task branch's pull request as GitHub sees it (Orca's Checks panel).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct PrStatus {
+  pub number: u64,
+  pub url: String,
+  pub title: String,
+  /// `OPEN`, `CLOSED` or `MERGED`.
+  pub state: String,
+  pub draft: bool,
+  /// `APPROVED`, `CHANGES_REQUESTED`, `REVIEW_REQUIRED` or empty.
+  pub review: String,
+  /// `MERGEABLE`, `CONFLICTING` or `UNKNOWN`.
+  pub mergeable: String,
+  /// GitHub's `mergeStateStatus`: `CLEAN`, `BLOCKED`, `BEHIND`, `DIRTY`, `UNSTABLE`, `HAS_HOOKS`,
+  /// `DRAFT` or `UNKNOWN` (empty when gh does not report it).
+  pub merge_state: String,
+  pub head_ref: String,
+  pub base_ref: String,
+  pub checks: Vec<PrCheck>,
+}
+
+/// `gh pr view --json` fields read by `parse_pr_status`.
+pub const PR_FIELDS: &str = "number,url,title,state,isDraft,reviewDecision,mergeable,mergeStateStatus,headRefName,baseRefName,statusCheckRollup";
+
+fn check_state(status: &str, conclusion: &str) -> &'static str {
+  // CheckRun: status QUEUED/IN_PROGRESS/COMPLETED + conclusion; StatusContext: state only.
+  match (status, conclusion) {
+    (s, _) if !s.is_empty() && s != "COMPLETED" => "pending",
+    (_, "SUCCESS") => "success",
+    (_, "FAILURE" | "ERROR" | "TIMED_OUT" | "ACTION_REQUIRED" | "STARTUP_FAILURE") => "failure",
+    (_, "CANCELLED") => "cancelled",
+    (_, "SKIPPED" | "STALE") => "skipped",
+    (_, "NEUTRAL") => "neutral",
+    (_, "PENDING" | "EXPECTED" | "") => "pending",
+    _ => "neutral",
+  }
+}
+
+/// `gh pr view --json PR_FIELDS` output → the status Kingu shows.
+pub fn parse_pr_status(json: &str) -> Result<PrStatus, String> {
+  let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("gh pr view: {e}"))?;
+  let text = |k: &str| v[k].as_str().unwrap_or_default().to_owned();
+  let checks = v["statusCheckRollup"]
+    .as_array()
+    .map(|items| {
+      items
+        .iter()
+        .map(|c| {
+          let s = |k: &str| c[k].as_str().unwrap_or_default();
+          if s("__typename") == "StatusContext" {
+            PrCheck { name: s("context").to_owned(), state: check_state("", s("state")), url: c["targetUrl"].as_str().map(str::to_owned), run_id: None, job_id: None }
+          } else {
+            let name = match (s("workflowName"), s("name")) {
+              ("", n) => n.to_owned(),
+              (w, n) => format!("{w} / {n}"),
+            };
+            let url = c["detailsUrl"].as_str().map(str::to_owned);
+            let (run_id, job_id) = actions_ids(url.as_deref());
+            PrCheck { name, state: check_state(s("status"), s("conclusion")), url, run_id, job_id }
+          }
+        })
+        .collect()
+    })
+    .unwrap_or_default();
+  Ok(PrStatus {
+    number: v["number"].as_u64().ok_or("gh pr view: no PR number")?,
+    url: text("url"),
+    title: text("title"),
+    state: text("state"),
+    draft: v["isDraft"].as_bool().unwrap_or(false),
+    review: text("reviewDecision"),
+    mergeable: text("mergeable"),
+    merge_state: text("mergeStateStatus"),
+    head_ref: text("headRefName"),
+    base_ref: text("baseRefName"),
+    checks,
+  })
+}
+
+/// `gh pr view` saying the branch has no pull request yet ("No pull requests found for branch …";
+/// gh capitalises it differently across versions): not an error.
+pub fn is_no_pr(stderr: &str) -> bool {
+  let e = stderr.to_lowercase();
+  e.contains("no pull requests found") || e.contains("no open pull requests")
+}
+
+/// The pull request of the task branch, or of the branch checked out in `dir` when `slug` is
+/// `None` (the open folder itself), via `gh pr view`; `None` when the branch has none.
+pub fn pr_status(gh: &Path, dir: &Path, slug: Option<&str>) -> Result<Option<PrStatus>, String> {
+  let mut args = vec!["pr".to_owned(), "view".to_owned()];
+  if let Some(slug) = slug {
+    args.push(task_branch(dir, slug)?);
+  }
+  args.extend(["--json".to_owned(), PR_FIELDS.to_owned()]);
+  let out = crate::shell_env::command(gh)
+    .current_dir(dir)
+    .env("GH_PROMPT_DISABLED", "1")
+    .args(&args)
+    .output()
+    .map_err(|e| format!("gh: {e}"))?;
+  if !out.status.success() {
+    let err = String::from_utf8_lossy(&out.stderr);
+    if is_no_pr(&err) {
+      return Ok(None);
+    }
+    return Err(format!("gh pr view: {}", err.trim()));
+  }
+  parse_pr_status(&String::from_utf8_lossy(&out.stdout)).map(Some)
 }
 
 #[cfg(test)]
@@ -395,7 +567,7 @@ mod tests {
     write(&repo, "old.txt", "a\nb\nc\nd\ne\nf\n");
     git_ok(&repo, &["add", "."]);
     git_ok(&repo, &["commit", "-q", "-m", "init"]);
-    worktree::create(&repo, "t", Some("main")).unwrap();
+    worktree::create(&repo, "t", Some("main"), None).unwrap();
     let wt = task_dir(&repo, "t").unwrap();
     (tmp, repo, wt)
   }
@@ -416,6 +588,63 @@ mod tests {
     assert!(d.contains("diff --git a/fresh.txt b/fresh.txt\nnew file mode 100644\n--- /dev/null\n+++ b/fresh.txt\n@@ -0,0 +1,2 @@\n+hello\n+world\n"), "{d}");
     let cut = diff_text(&wt, "HEAD", 40).unwrap();
     assert!(cut.ends_with("\\ kingu: diff truncated\n"), "{cut}");
+  }
+
+  #[test]
+  fn pr_create_arguments_keep_values_attached_and_add_draft() {
+    let args = pr_create_args("main", "kingu/t", "--title", "-b", false);
+    assert_eq!(args, ["pr", "create", "--base=main", "--head=kingu/t", "--title=--title", "--body=-b"]);
+    assert_eq!(pr_create_args("main", "kingu/t", "x", "", true).last().map(String::as_str), Some("--draft"));
+  }
+
+  #[test]
+  fn commits_since_lists_the_branch_commits_oldest_first() {
+    let (_tmp, repo, wt) = setup();
+    assert_eq!(commits_since(&wt, "main").unwrap(), []);
+    write(&wt, "a.txt", "a\n");
+    git_ok(&wt, &["add", "."]);
+    git_ok(&wt, &["commit", "-q", "-m", "เพิ่ม a", "-m", "รายละเอียด\nบรรทัดสอง"]);
+    write(&wt, "b.txt", "b\n");
+    git_ok(&wt, &["add", "."]);
+    git_ok(&wt, &["commit", "-q", "-m", "add b"]);
+    // A commit on main after the fork is not the task's.
+    write(&repo, "m.txt", "m\n");
+    git_ok(&repo, &["add", "m.txt"]);
+    git_ok(&repo, &["commit", "-q", "-m", "on main"]);
+    let commits = commits_since(&wt, "main").unwrap();
+    assert_eq!(
+      commits,
+      [
+        Commit { subject: "เพิ่ม a".into(), body: "รายละเอียด\nบรรทัดสอง".into() },
+        Commit { subject: "add b".into(), body: String::new() }
+      ]
+    );
+    assert!(commits_since(&wt, "-x").is_err());
+  }
+
+  /// `gh pr create` with a fake `gh`: the branch is pushed to origin and gh gets the edited
+  /// title, body, base and --draft as separate attached arguments; its URL comes back.
+  #[cfg(unix)]
+  #[test]
+  fn pr_create_pushes_then_runs_gh_with_the_form_values() {
+    use std::os::unix::fs::PermissionsExt;
+    let (tmp, repo, wt) = setup();
+    let remote = tmp.path().join("remote.git");
+    git_ok(tmp.path(), &["init", "-q", "--bare", remote.to_str().unwrap()]);
+    git_ok(&repo, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    write(&wt, "new.txt", "n\n");
+    git_ok(&wt, &["add", "."]);
+    git_ok(&wt, &["commit", "-q", "-m", "add new"]);
+    let log = tmp.path().join("gh-args");
+    let gh = tmp.path().join("gh");
+    std::fs::write(&gh, format!("#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> '{}'; done\necho https://github.com/acme/app/pull/7\n", log.display())).unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let url = pr_create(&gh, &wt, "t", "main", "แก้ login", "Fixes #3\n\nรายละเอียด", true).unwrap();
+    assert_eq!(url, "https://github.com/acme/app/pull/7");
+    let args = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(args, "pr\ncreate\n--base=main\n--head=kingu/t\n--title=แก้ login\n--body=Fixes #3\n\nรายละเอียด\n--draft\n");
+    assert_eq!(git_ok(&remote, &["log", "-1", "--format=%s", "kingu/t"]).trim(), "add new");
+    assert!(pr_create(&gh, &wt, "t", "main", "  ", "", false).is_err(), "empty title");
   }
 
   #[test]
@@ -549,6 +778,79 @@ mod tests {
     assert!(task_dir(&repo, "../x").is_err());
   }
 
+  /// The ADE's right side bar runs Source Control in the task worktree (`slug` on git_*):
+  /// status, stage, commit and ignore marks there never touch the open folder's repository.
+  #[test]
+  fn source_control_runs_inside_the_task_worktree() {
+    let (_tmp, repo, wt) = setup();
+    write(&wt, "edit.txt", "one\nTWO\nthree\n");
+    write(&wt, "new.txt", "n\n");
+    write(&wt, "run.log", "x\n");
+    let st = crate::git::status(&wt).unwrap().unwrap();
+    assert_eq!(st.branch.as_deref(), Some("kingu/t"));
+    let paths: Vec<&str> = st.entries.iter().map(|e| e.path.as_str()).collect();
+    assert_eq!(paths, ["edit.txt", "new.txt"]);
+    assert!(crate::git::status(&repo).unwrap().unwrap().entries.is_empty());
+
+    crate::git::check_rel(&wt, "new.txt").unwrap();
+    crate::git::stage(&wt, &["edit.txt".into()]).unwrap();
+    crate::git::commit(&wt, "edit", false).unwrap();
+    let st = crate::git::status(&wt).unwrap().unwrap();
+    assert_eq!(st.entries.len(), 1);
+    assert_eq!(st.entries[0].worktree.as_deref(), Some("?"));
+    assert_eq!(git_ok(&repo, &["log", "-1", "--format=%s", "kingu/t"]).trim(), "edit");
+    assert_eq!(git_ok(&repo, &["log", "-1", "--format=%s", "main"]).trim(), "init");
+
+    let mut entries = crate::fs::list_dir(&repo, &wt).unwrap();
+    crate::git::mark_ignored(&wt, &mut entries);
+    let ignored: Vec<&str> = entries.iter().filter(|e| e.ignored).map(|e| e.name.as_str()).collect();
+    assert_eq!(ignored, ["run.log"]);
+  }
+
+  /// Source Control › Push in a task worktree publishes its own branch (to a local bare remote).
+  #[test]
+  fn push_from_the_task_worktree_publishes_its_branch() {
+    let (tmp, repo, wt) = setup();
+    let remote = tmp.path().join("remote.git");
+    git_ok(tmp.path(), &["init", "-q", "--bare", remote.to_str().unwrap()]);
+    git_ok(&repo, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    write(&wt, "new.txt", "n\n");
+    crate::git::stage(&wt, &["new.txt".into()]).unwrap();
+    crate::git::commit(&wt, "add new", false).unwrap();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let upstream = crate::git_remote::push(&wt, None, &cancel, std::time::Duration::from_secs(30)).unwrap();
+    assert_eq!(upstream, "origin/kingu/t");
+    assert_eq!(git_ok(&remote, &["log", "-1", "--format=%s", "kingu/t"]).trim(), "add new");
+    assert!(git_ok(&remote, &["branch", "--list", "main"]).trim().is_empty());
+  }
+
+  /// Files › Contents runs ripgrep in the worktree: paths come back relative to it and the
+  /// worktree's own `.gitignore` applies (its `.git` is a file, not a folder).
+  #[test]
+  fn content_search_in_a_worktree_uses_its_ignore_rules() {
+    use crate::search::{SearchEvent, SearchOptions, Searches, find_rg};
+    let Ok(rg) = find_rg(std::env::var_os("KINGU_RG"), std::env::var_os("PATH")) else {
+      eprintln!("rg not found, skipping");
+      return;
+    };
+    let (_tmp, _repo, wt) = setup();
+    write(&wt, "run.log", "needle\n");
+    write(&wt, "src/ไทย.txt", "needle ไทย\n");
+    let searches = std::sync::Arc::new(Searches::default());
+    let (tx, rx) = std::sync::mpsc::channel();
+    let opts = SearchOptions { query: "needle".into(), ..Default::default() };
+    searches.start(&rg, &wt, &opts, move |ev| tx.send(ev).is_ok()).unwrap();
+    let mut files = Vec::new();
+    for ev in rx {
+      match ev {
+        SearchEvent::File { path, .. } => files.push(path),
+        SearchEvent::Done { .. } => break,
+        SearchEvent::Error { message } => panic!("{message}"),
+      }
+    }
+    assert_eq!(files, ["src/ไทย.txt"]);
+  }
+
   #[test]
   fn parses_numstat_and_name_status() {
     let n = parse_numstat("1\t2\ta.txt\0-\t-\tbin\0\x30\t0\t\0old\0new\0");
@@ -569,4 +871,40 @@ mod tests {
     let st = gh_status(None);
     assert!(!st.installed && !st.authenticated);
   }
+
+  #[test]
+  fn parses_pr_status_with_check_runs_and_statuses() {
+    let json = r#"{"number":12,"url":"https://github.com/o/r/pull/12","title":"แก้บั๊ก","state":"OPEN","isDraft":false,
+      "reviewDecision":"REVIEW_REQUIRED","mergeable":"MERGEABLE","statusCheckRollup":[
+      {"__typename":"CheckRun","name":"test","workflowName":"CI","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":"https://x/1"},
+      {"__typename":"CheckRun","name":"lint","workflowName":"","status":"IN_PROGRESS","conclusion":"","detailsUrl":"https://x/2"},
+      {"__typename":"CheckRun","name":"e2e","workflowName":"CI","status":"COMPLETED","conclusion":"TIMED_OUT","detailsUrl":null},
+      {"__typename":"StatusContext","context":"vercel","state":"PENDING","targetUrl":"https://v"},
+      {"__typename":"StatusContext","context":"ci/legacy","state":"ERROR","targetUrl":null}]}"#;
+    let pr = parse_pr_status(json).unwrap();
+    assert_eq!((pr.number, pr.state.as_str(), pr.draft, pr.review.as_str(), pr.mergeable.as_str()), (12, "OPEN", false, "REVIEW_REQUIRED", "MERGEABLE"));
+    let states: Vec<_> = pr.checks.iter().map(|c| (c.name.as_str(), c.state)).collect();
+    assert_eq!(states, [("CI / test", "success"), ("lint", "pending"), ("CI / e2e", "failure"), ("vercel", "pending"), ("ci/legacy", "failure")]);
+    assert_eq!(pr.checks[0].url.as_deref(), Some("https://x/1"));
+    assert_eq!(actions_ids(Some("https://github.com/o/r/actions/runs/77/job/901")), (Some(77), Some(901)));
+    assert_eq!(actions_ids(Some("https://github.com/o/r/actions/runs/77?pr=3")), (Some(77), None));
+    assert_eq!(actions_ids(Some("https://vercel.com/x")), (None, None));
+    assert_eq!(pr.checks[2].url, None);
+  }
+
+  #[test]
+  fn no_pr_yet_is_not_an_error() {
+    assert!(is_no_pr("No pull requests found for branch \"kingu/x\"\n"));
+    assert!(is_no_pr("no pull requests found for branch \"ui/batch4\""));
+    assert!(!is_no_pr("HTTP 401: Bad credentials"));
+  }
+
+  #[test]
+  fn pr_without_checks_and_bad_json() {
+    let pr = parse_pr_status(r#"{"number":3,"url":"u","title":"t","state":"MERGED","isDraft":true,"reviewDecision":"","mergeable":"UNKNOWN","statusCheckRollup":null}"#).unwrap();
+    assert!(pr.checks.is_empty() && pr.draft && pr.state == "MERGED");
+    assert!(parse_pr_status("not json").is_err());
+    assert!(parse_pr_status("{}").is_err());
+  }
+
 }
