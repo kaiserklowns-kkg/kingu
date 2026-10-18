@@ -89,20 +89,20 @@ class Runtime {
 	}
 
 	/** Starts the agent in the task worktree (which must exist); model and permission mode come from settings. */
-	start(slug: string, prompt: string, resume: string | null = null): Promise<void> {
+	start(slug: string, prompt: string, resume: string | null = null, images: string[] = []): Promise<void> {
 		this.#touched[slug] = Date.now();
-		return agents.start(slug, prompt, { root: workspace.root ?? undefined, resume });
+		return agents.start(slug, prompt, { root: workspace.root ?? undefined, resume, images });
 	}
 
 	/**
 	 * Follow-up: sent to the open session, else resumes the run's session (or `savedSession` from
 	 * tasks.json after a restart), else starts fresh.
 	 */
-	async followUp(slug: string, text: string, savedSession: string | null): Promise<void> {
+	async followUp(slug: string, text: string, savedSession: string | null, images: string[] = []): Promise<void> {
 		const plan = followUpPlan(this.run(slug), savedSession);
 		this.#touched[slug] = Date.now();
-		if (plan.kind === 'send') await agents.send(slug, text);
-		else await this.start(slug, text, plan.resume);
+		if (plan.kind === 'send') await agents.send(slug, text, images);
+		else await this.start(slug, text, plan.resume, images);
 	}
 
 	answer(slug: string, requestId: string, decision: Decision, message?: string): Promise<void> {

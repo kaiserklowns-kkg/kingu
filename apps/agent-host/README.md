@@ -3,7 +3,7 @@
 Sidecar that runs Claude Agent SDK sessions for the desktop app. Rust (`src-tauri/src/agent/host.rs`)
 starts one per app and talks newline-delimited JSON-RPC 2.0 over stdio; see `src/protocol.ts`.
 
-- Requests: `start {runId, cwd, prompt, model?, permissionMode?, resume?}`, `send {runId, text}`,
+- Requests: `start {runId, cwd, prompt, model?, permissionMode?, resume?, images?}`, `send {runId, text, images?}` (`images`: absolute png/jpeg/gif/webp paths, sent as base64 image blocks before the text; 5 MB each, 20 per message, 20 MB in all),
   `answer {runId, requestId, decision: allow|allow_always|deny, message?}`, `interrupt {runId}`,
   `stop {runId}`, `shutdown`.
 - Notifications: `ready {sdkVersion}`, `event {runId, event}` (normalized `AgentEvent`, snake_case).

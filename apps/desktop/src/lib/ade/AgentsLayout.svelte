@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { Attachment } from '#lib/agent/attachments.ts';
 	// Agents layout body, laid out like Orca: side bar (search, Tasks, Projects → worktrees) | the
 	// selected worktree's active tab (the agent session, the new-task composer for the folder
 	// itself, a terminal in that worktree, or a file / task diff opened from the right side bar;
@@ -49,6 +50,7 @@
 
 	// The folder's "new task" composer (Orca: a new worktree with an agent).
 	let draft = $state('');
+	let draftFiles = $state<Attachment[]>([]);
 	let base = $state('');
 	let busy = $state(false);
 	let focusKey = $derived(appMode.composeRequest);
@@ -93,12 +95,13 @@
 		nudge++; // remounts the composer, which autofocuses
 	}
 
-	async function start(text: string) {
+	async function start(text: string, attachments: Attachment[]) {
 		busy = true;
 		try {
-			const created = await adeTasks.create({ title: taskTitleFromPrompt(text), prompt: text, base, mode });
+			const created = await adeTasks.create({ title: taskTitleFromPrompt(text), prompt: text, base, mode, attachments });
 			if (created) {
 				draft = '';
+				draftFiles = [];
 				adeLayout.show(created);
 			}
 		} finally {
@@ -174,7 +177,7 @@
 								<p class="text-[13px] text-(--vscode-descriptionForeground)">แต่ละงานได้ worktree ของตัวเอง ทำหลายงานพร้อมกันได้โดยไม่ชนกัน</p>
 							</div>
 							{#key `${focusKey}:${nudge}`}
-								<Composer bind:value={draft} size="lg" autofocus placeholder="อธิบายงาน เช่น เพิ่มปุ่ม export รายงานเป็น CSV…" {busy} onsubmit={start}>
+								<Composer bind:value={draft} attach bind:attachments={draftFiles} size="lg" autofocus placeholder="อธิบายงาน เช่น เพิ่มปุ่ม export รายงานเป็น CSV…" {busy} onsubmit={start}>
 									{#snippet chips()}
 										<label class="inline-flex shrink-0 items-center gap-1 rounded-sm border border-(--vscode-widget-border) px-1.5 py-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" title="วิธีรัน agent">
 											<Icon name={mode === 'terminal' ? 'terminal' : 'agent'} size={12} />

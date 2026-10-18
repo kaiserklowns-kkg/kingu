@@ -42,9 +42,12 @@ pub async fn agent_start(
   resume: Option<String>,
   mcp_servers: Option<std::collections::BTreeMap<String, host::McpServer>>,
   plugins: Option<Vec<String>>,
+  images: Option<Vec<String>>,
   on_event: Channel<AgentEvent>,
 ) -> Result<u32, String> {
   worktree::validate_slug(&slug)?;
+  let images = images.unwrap_or_default();
+  crate::attachments::check_images(&images)?;
   if prompt.trim().is_empty() {
     return Err("prompt is empty".into());
   }
@@ -85,6 +88,7 @@ pub async fn agent_start(
     plugins,
     env: (!account.set.is_empty()).then_some(host::SecretEnv(account.set)),
     unset_env: account.unset,
+    images,
   };
   let resuming = req.resume.is_some();
   let agents = agents.inner().clone();
@@ -111,13 +115,15 @@ async fn on_host<T: Send + 'static>(
   tauri::async_runtime::spawn_blocking(move || f(&agents)).await.map_err(|e| e.to_string())?
 }
 
-/// Follow-up message to a running session.
+/// Follow-up message to a running session, with attached image files.
 #[tauri::command]
-pub async fn agent_send(agents: State<'_, Arc<AgentHost>>, run_id: u32, text: String) -> Result<(), String> {
+pub async fn agent_send(agents: State<'_, Arc<AgentHost>>, run_id: u32, text: String, images: Option<Vec<String>>) -> Result<(), String> {
   if text.trim().is_empty() {
     return Err("message is empty".into());
   }
-  on_host(&agents, move |a| a.send(run_id, &text)).await
+  let images = images.unwrap_or_default();
+  crate::attachments::check_images(&images)?;
+  on_host(&agents, move |a| a.send(run_id, &text, &images)).await
 }
 
 /// Answers a `permission_request`: `allow`, `allow_always` (this session) or `deny` + message.

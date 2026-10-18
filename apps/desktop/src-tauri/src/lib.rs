@@ -1,5 +1,6 @@
 mod accounts;
 mod agent;
+mod attachments;
 mod dap;
 mod fileops;
 mod fs;
@@ -677,6 +678,7 @@ pub fn run() {
       worktree_remove,
       agent::agent_start,
       notify::agent_notify,
+      attachments::paste_image_save,
       agent::trust::agent_trust_workspace,
       agent::status_hooks::agent_status_hooks_install,
       agent::status_hooks::agent_status_hooks_remove,

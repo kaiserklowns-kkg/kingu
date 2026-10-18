@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { Attachment } from './attachments.ts';
 	// Agent panel (secondary side bar), laid out like VS Code's Chat view: a session switcher on
 	// top, the selected task's timeline, and the composer pinned to the bottom. With no session
 	// selected the composer starts a new task (title = the prompt's first line). Tasks go through
@@ -18,6 +19,8 @@
 
 	let draft = $state('');
 	let followUp = $state('');
+	let followUpFiles = $state<Attachment[]>([]);
+	let draftFiles = $state<Attachment[]>([]);
 	let selected = $state<string | null>(null);
 	let composingNew = $state(false);
 	let busy = $state(false);
@@ -33,25 +36,27 @@
 		if (selected === null && !composingNew) selected = runtime.all()[0]?.slug ?? adeTasks.list.at(-1)?.slug ?? null;
 	});
 
-	async function start(text: string) {
+	async function start(text: string, attachments: Attachment[]) {
 		busy = true;
 		try {
 			// The chat-style panel runs the timeline; terminal (CLI) tasks live in the Agents layout.
-			const created = await adeTasks.create({ title: taskTitleFromPrompt(text), prompt: text, base: '', mode: 'timeline' });
+			const created = await adeTasks.create({ title: taskTitleFromPrompt(text), prompt: text, base: '', mode: 'timeline', attachments });
 			if (created) {
 				selected = created;
 				composingNew = false;
 				draft = '';
+				draftFiles = [];
 			}
 		} finally {
 			busy = false;
 		}
 	}
 
-	async function send(text: string) {
+	async function send(text: string, attachments: Attachment[]) {
 		if (!selected || run?.status === 'starting') return;
 		followUp = '';
-		await adeTasks.followUp(selected, text);
+		followUpFiles = [];
+		await adeTasks.followUp(selected, text, attachments);
 	}
 
 	function newTask() {
@@ -153,6 +158,8 @@
 		{:else if selected && meta}
 			<Composer
 				bind:value={followUp}
+				attach
+				bind:attachments={followUpFiles}
 				placeholder={rt?.live ? 'ส่งข้อความเพิ่มเติม…' : (run?.sessionId ?? meta.session_id) ? 'ทำงานต่อใน session เดิม…' : 'พิมพ์เพื่อเริ่มใหม่…'}
 				disabled={run?.status === 'starting'}
 				onsubmit={send}
@@ -160,7 +167,7 @@
 				{#snippet chips()}<span class="truncate">{run?.model ?? meta.model ?? model}</span>{/snippet}
 			</Composer>
 		{:else}
-			<Composer bind:value={draft} placeholder="อยากให้ agent ทำอะไร เช่น แก้บั๊กหน้า login…" {busy} autofocus={composingNew} onsubmit={start}>
+			<Composer bind:value={draft} attach bind:attachments={draftFiles} placeholder="อยากให้ agent ทำอะไร เช่น แก้บั๊กหน้า login…" {busy} autofocus={composingNew} onsubmit={start}>
 				{#snippet chips()}<span class="truncate">{model}</span><span aria-hidden="true">·</span><span>worktree ใหม่</span>{/snippet}
 			</Composer>
 		{/if}
