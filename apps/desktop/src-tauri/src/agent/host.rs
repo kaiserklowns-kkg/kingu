@@ -148,6 +148,62 @@ pub struct StartRequest {
   /// Image files sent with the first prompt (checked: attachments.rs).
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub images: Vec<String>,
+  /// What else this run owns while it is live besides its session (e.g. `chat:<root>:<id>`);
+  /// not sent to the sidecar.
+  #[serde(skip)]
+  pub owner: Option<String>,
+}
+
+/// Single owner per agent session: while a run is live it holds its session id (the one it
+/// resumes, and the ones the sidecar reports) and its owner key; starting another run that
+/// would hold any of them is refused. Released with the run's `Exit`.
+#[derive(Debug, Default)]
+pub struct Owners {
+  by_key: HashMap<String, u32>,
+}
+
+fn session_key(id: &str) -> String {
+  format!("session:{id}")
+}
+
+impl Owners {
+  /// Claims every key for `run`, or none: a key held by another run is refused.
+  pub fn claim(&mut self, run: u32, session: Option<&str>, owner: Option<&str>) -> Result<(), String> {
+    if let Some(id) = session
+      && self.by_key.get(&session_key(id)).is_some_and(|&r| r != run)
+    {
+      return Err(tr!(AgentMsg::SessionBusy));
+    }
+    if let Some(o) = owner
+      && self.by_key.get(o).is_some_and(|&r| r != run)
+    {
+      return Err(tr!(AgentMsg::ChatBusy));
+    }
+    if let Some(id) = session {
+      self.by_key.insert(session_key(id), run);
+    }
+    if let Some(o) = owner {
+      self.by_key.insert(o.to_owned(), run);
+    }
+    Ok(())
+  }
+
+  /// A session id the run reported (`system` / `result`); kept by the first run that holds it.
+  pub fn observe(&mut self, run: u32, ev: &AgentEvent) {
+    let id = match ev {
+      AgentEvent::System { session_id: Some(id), .. } | AgentEvent::Result { session_id: Some(id), .. } => id,
+      _ => return,
+    };
+    self.by_key.entry(session_key(id)).or_insert(run);
+  }
+
+  pub fn release(&mut self, run: u32) {
+    self.by_key.retain(|_, r| *r != run);
+  }
+
+  pub fn holds_session(&self, id: &str) -> bool {
+    self.by_key.contains_key(&session_key(id))
+  }
 }
 
 /// Env values that may hold an API key: serialized for the sidecar, never shown by Debug.
@@ -327,6 +383,7 @@ pub struct AgentHost {
   launch: Launcher,
   next_run: AtomicU32,
   proc: Arc<Mutex<Option<Arc<Proc>>>>,
+  owners: Arc<Mutex<Owners>>,
 }
 
 impl Default for AgentHost {
@@ -337,7 +394,7 @@ impl Default for AgentHost {
 
 impl AgentHost {
   pub fn new(launch: Launcher) -> Self {
-    Self { launch, next_run: AtomicU32::new(0), proc: Arc::default() }
+    Self { launch, next_run: AtomicU32::new(0), proc: Arc::default(), owners: Arc::default() }
   }
 
   /// The running sidecar, spawning it if needed.
@@ -392,20 +449,56 @@ impl AgentHost {
   }
 
   /// Starts a run; its events go to `sink`, ending with exactly one `Exit`.
+  /// Refused while another live run holds the session it resumes or its `owner` (`Owners`).
   pub fn start(&self, req: StartRequest, sink: Sink) -> Result<u32, String> {
-    let proc = self.ensure()?;
     let id = self.next_run.fetch_add(1, Ordering::Relaxed) + 1;
-    // Registered first: the sidecar may emit events before it answers.
-    proc.runs.lock().unwrap().insert(id, sink);
-    let mut params = serde_json::to_value(&req).map_err(|e| e.to_string())?;
-    params["runId"] = json!(id);
-    match proc.request("start", params, REQUEST_TIMEOUT) {
+    self.owners.lock().unwrap().claim(id, req.resume.as_deref(), req.owner.as_deref())?;
+    let owners = self.owners.clone();
+    let sink: Sink = Arc::new(move |ev: AgentEvent| {
+      {
+        let mut o = owners.lock().unwrap();
+        if matches!(ev, AgentEvent::Exit { .. }) { o.release(id) } else { o.observe(id, &ev) }
+      }
+      sink(ev);
+    });
+    let started = (|| {
+      let proc = self.ensure()?;
+      // Registered first: the sidecar may emit events before it answers.
+      proc.runs.lock().unwrap().insert(id, sink);
+      let mut params = serde_json::to_value(&req).map_err(|e| e.to_string())?;
+      params["runId"] = json!(id);
+      proc.request("start", params, REQUEST_TIMEOUT).inspect_err(|_| {
+        proc.runs.lock().unwrap().remove(&id);
+      })
+    })();
+    match started {
       Ok(_) => Ok(id),
       Err(e) => {
-        proc.runs.lock().unwrap().remove(&id);
+        self.owners.lock().unwrap().release(id);
         Err(e)
       }
     }
+  }
+
+  /// Whether a live run of this app holds the agent session `id`.
+  pub fn session_live(&self, id: &str) -> bool {
+    self.owners.lock().unwrap().holds_session(id)
+  }
+
+  /// Changes the live run's model and/or permission mode from its next response on (the SDK's
+  /// `setModel` / `setPermissionMode`).
+  pub fn set_options(&self, run_id: u32, model: Option<&str>, permission_mode: Option<&str>) -> Result<(), String> {
+    if model.is_none() && permission_mode.is_none() {
+      return Ok(());
+    }
+    let mut params = json!({});
+    if let Some(m) = model {
+      params["model"] = json!(m);
+    }
+    if let Some(m) = permission_mode {
+      params["permissionMode"] = json!(m);
+    }
+    self.run_request(run_id, "set_options", params)
   }
 
   fn run_request(&self, run_id: u32, method: &str, mut params: Value) -> Result<(), String> {
@@ -593,6 +686,69 @@ read -r line
     assert_eq!(lines[0]["params"], json!({"runId": run, "cwd": "/w", "prompt": "แก้บั๊ก", "model": null, "permissionMode": "default", "resume": null}));
     assert_eq!(lines[1]["params"], json!({"runId": run, "requestId": "r1", "decision": "allow_always", "message": null}));
     assert_eq!(lines[2]["method"], "stop");
+    host.shutdown();
+  }
+
+  #[test]
+  fn owners_hold_sessions_and_chats_until_released() {
+    let mut o = Owners::default();
+    o.claim(1, Some("s-1"), Some("chat:/r:c-1")).unwrap();
+    assert!(o.claim(2, Some("s-1"), None).unwrap_err().contains("already running"));
+    assert!(o.claim(2, None, Some("chat:/r:c-1")).unwrap_err().contains("already has a running agent"));
+    // All or nothing: a refused claim takes no key.
+    assert!(o.claim(2, Some("s-2"), Some("chat:/r:c-1")).is_err());
+    assert!(!o.holds_session("s-2"));
+    o.claim(1, Some("s-1"), None).unwrap();
+    o.observe(2, &AgentEvent::System { subtype: "init".into(), session_id: Some("s-9".into()), model: None });
+    o.observe(3, &AgentEvent::System { subtype: "init".into(), session_id: Some("s-9".into()), model: None });
+    assert!(o.claim(3, Some("s-9"), None).is_err(), "s-9 belongs to run 2");
+    o.release(1);
+    assert!(!o.holds_session("s-1"));
+    o.claim(4, Some("s-1"), Some("chat:/r:c-1")).unwrap();
+    o.release(2);
+    o.claim(3, Some("s-9"), None).unwrap();
+  }
+
+  #[test]
+  fn a_live_session_cannot_be_started_twice_and_options_reach_the_sidecar() {
+    let tmp = tempfile::tempdir().unwrap();
+    let log = tmp.path().join("requests.log");
+    let body = format!(
+      r#"{SH_LIB}
+while read -r line; do
+  echo "$line" >> '{log}'
+  id=$(field "$line" id); run=$(field "$line" runId)
+  reply $id
+  case "$line" in
+    *'"method":"start"'*) event $run '{{"kind":"system","subtype":"init","session_id":"s-new","model":"m"}}' ;;
+    *'"method":"stop"'*) event $run '{{"kind":"exit","code":null,"signal":null,"stopped":true}}' ;;
+  esac
+done"#,
+      log = log.display()
+    );
+    let host = host_for(script(tmp.path(), "fake-host", &body), vec![]);
+    let (sink, rx) = collect();
+    let first = host.start(StartRequest { resume: Some("s-old".into()), owner: Some("chat:/r:c-1".into()), ..req("/w") }, sink.clone()).unwrap();
+    assert!(matches!(next(&rx), AgentEvent::System { .. }));
+    assert!(host.session_live("s-old") && host.session_live("s-new"));
+    let err = host.start(StartRequest { resume: Some("s-old".into()), ..req("/w") }, sink.clone()).unwrap_err();
+    assert!(err.contains("already running"), "{err}");
+    assert!(host.start(StartRequest { resume: Some("s-new".into()), ..req("/w") }, sink.clone()).is_err(), "the session it reported is held too");
+    assert!(host.start(StartRequest { owner: Some("chat:/r:c-1".into()), ..req("/w") }, sink.clone()).unwrap_err().contains("already has a running agent"));
+
+    host.set_options(first, Some("claude-sonnet-5"), Some("plan")).unwrap();
+    host.stop(first).unwrap();
+    assert!(matches!(next(&rx), AgentEvent::Exit { stopped: true, .. }));
+    assert!(!host.session_live("s-old") && !host.session_live("s-new"));
+    let second = host.start(StartRequest { resume: Some("s-old".into()), owner: Some("chat:/r:c-1".into()), ..req("/w") }, sink).unwrap();
+    assert_ne!(first, second);
+
+    let requests = std::fs::read_to_string(&log).unwrap();
+    let lines: Vec<Value> = requests.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    let methods: Vec<_> = lines.iter().map(|l| l["method"].as_str().unwrap()).collect();
+    assert_eq!(methods, ["start", "set_options", "stop", "start"], "refused starts never reach the sidecar");
+    assert_eq!(lines[1]["params"], json!({"runId": first, "model": "claude-sonnet-5", "permissionMode": "plan"}));
+    assert!(lines[0]["params"].get("owner").is_none(), "the owner key stays in the app");
     host.shutdown();
   }
 
