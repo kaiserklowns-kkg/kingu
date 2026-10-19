@@ -7,6 +7,7 @@ import { worktreeDir } from '#lib/ade/keys.ts';
 import type { RunSummary } from '#lib/ade/model.ts';
 import { taskTitleFromPrompt } from './composerText';
 import { applyEvent, initialRun, type AgentEvent, type RunState, type RunStatus } from './events';
+import { CLAUDE_RUNTIME } from './runtimes';
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'plan';
 export const PERMISSION_MODES: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan'];
@@ -28,6 +29,8 @@ export type ChatMeta = {
 	resume_at?: string | null;
 	model: string | null;
 	permission_mode: PermissionMode | null;
+	/** Which agent runs it (runtimes.ts); absent: Claude (Rust defaults it). */
+	runtime?: string;
 	/** Unix ms. */
 	created_at: number;
 	updated_at: number;
@@ -54,7 +57,7 @@ export const initialTitle = (prompt: string) => taskTitleFromPrompt(prompt.trim(
 /** Whether a finished turn should get the chat an AI title: never renamed, and still its first-prompt title. */
 export const wantsAiTitle = (meta: Pick<ChatMeta, 'title' | 'title_auto' | 'prompt'>) => meta.title_auto === true && !!meta.prompt.trim() && meta.title === initialTitle(meta.prompt);
 
-export function newChat(input: { prompt: string; cwd: ChatCwd; model: string | null; permissionMode: PermissionMode | null }, now: number, id = newChatId(now)): ChatMeta {
+export function newChat(input: { prompt: string; cwd: ChatCwd; model: string | null; permissionMode: PermissionMode | null; runtime?: string }, now: number, id = newChatId(now)): ChatMeta {
 	const prompt = input.prompt.trim();
 	return {
 		id,
@@ -65,6 +68,7 @@ export function newChat(input: { prompt: string; cwd: ChatCwd; model: string | n
 		session_id: null,
 		model: input.model?.trim() || null,
 		permission_mode: input.permissionMode,
+		runtime: input.runtime || CLAUDE_RUNTIME,
 		created_at: now,
 		updated_at: now,
 		last_run: null

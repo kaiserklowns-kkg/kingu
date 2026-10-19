@@ -1360,6 +1360,7 @@ pub fn run() {
       agent::hooks::agent_hook_settings,
       agent::hooks::agent_hook_file,
       agent::cli::agent_cli_found,
+      agent::runtimes::agent_runtimes,
       agent::hooks::agent_hook_read,
       agent::hooks::agent_hook_clear,
       agent::hooks::agent_pane_hook_read,

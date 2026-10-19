@@ -46,10 +46,12 @@ describe('chat ids and new chats', () => {
 			session_id: null,
 			model: null,
 			permission_mode: 'plan',
+			runtime: 'claude',
 			created_at: 5,
 			updated_at: 5,
 			last_run: null
 		});
+		expect(newChat({ prompt: 'x', cwd: { kind: 'folder' }, model: null, permissionMode: null, runtime: 'gemini' }, 5).runtime).toBe('gemini');
 		const long = newChat({ prompt: 'ก'.repeat(MAX_PROMPT + 50), cwd: { kind: 'folder' }, model: 'opus', permissionMode: null }, 1);
 		expect([...long.prompt].length).toBe(MAX_PROMPT);
 		expect([...long.title].length).toBeLessThanOrEqual(60);
