@@ -5,6 +5,7 @@
 	import { settings } from '../settings.svelte';
 	import { SETTINGS } from '../registry';
 	import SettingChoice from './SettingChoice.svelte';
+	import ArkaiProviders from './ArkaiProviders.svelte';
 
 	const get = (id: string) => settings.get<string>(id) ?? '';
 	const set = (id: string, v: string) => void settings.set(id, v.trim() === SETTINGS.find((s) => s.id === id)?.default ? undefined : v.trim(), 'user');
@@ -39,6 +40,8 @@
 				<input class="{INPUT} mt-1.5" value={get('kingu.agent.model')} onchange={(e) => set('kingu.agent.model', e.currentTarget.value)} spellcheck="false" />
 			</label>
 		{/if}
+
+		<ArkaiProviders />
 
 		<h2 class={SECTION}>การขออนุญาต</h2>
 		<SettingChoice id="kingu.agent.permissionMode" labels={{ default: 'ถามก่อน', acceptEdits: 'แก้ไฟล์ได้เลย', plan: 'วางแผนอย่างเดียว' }} />

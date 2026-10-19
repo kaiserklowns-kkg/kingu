@@ -25,6 +25,7 @@ pub mod pr;
 pub mod review;
 pub mod rules;
 pub mod rewind;
+pub mod arkai;
 pub mod runtimes;
 pub mod safety_asks;
 pub mod scripts;
@@ -127,8 +128,9 @@ pub async fn agent_start(
   if resume_at.is_some() && !runtimes::can_rewind(&runtime) {
     return Err(crate::tr!(crate::i18n::msg::RuntimeMsg::NoRewind));
   }
-  let runtime_spec = match runtime.as_str() {
-    runtimes::CLAUDE => None,
+  let mut runtime_spec = match runtime.as_str() {
+    // Arkai's spec needs the chat's transcript: below, once the folder is known.
+    runtimes::CLAUDE | arkai::RUNTIME => None,
     id => {
       let (id, config) = (id.to_owned(), crate::snap::config_dir(&app)?);
       tauri::async_runtime::spawn_blocking(move || runtimes::resolve(&id, crate::shell_env::path().as_deref(), &runtimes::configured(&config)))
@@ -154,6 +156,15 @@ pub async fn agent_start(
     }
     None => None,
   };
+  if runtime == arkai::RUNTIME {
+    // A continued chat: the agent host gets the conversation back from the transcript.
+    let past = match (chat_id.as_deref(), resume.is_some()) {
+      (Some(id), true) => chats::load_transcript(&open_root, id)?,
+      _ => Vec::new(),
+    };
+    let (config, model) = (crate::snap::config_dir(&app)?, model.clone());
+    runtime_spec = Some(tauri::async_runtime::spawn_blocking(move || arkai::run_spec(&config, model.as_deref(), past)).await.map_err(|e| e.to_string())??);
+  }
   let transcript = match chat_id.as_deref() {
     Some(id) => Some(chats::Transcript::new(&open_root, id)?),
     None => None,
@@ -273,17 +284,23 @@ fn chat_owner(root: &std::path::Path, id: &str) -> String {
 
 /// Changes a live run's model and/or permission mode from its next response on.
 #[tauri::command]
-pub async fn agent_set_options(agents: State<'_, Arc<AgentHost>>, run_id: u32, model: Option<String>, permission_mode: Option<String>) -> Result<(), String> {
+pub async fn agent_set_options(app: tauri::AppHandle, agents: State<'_, Arc<AgentHost>>, run_id: u32, model: Option<String>, permission_mode: Option<String>) -> Result<(), String> {
   if let Some(m) = permission_mode.as_deref()
     && !RUN_PERMISSION_MODES.contains(&m)
   {
     return Err(format!("{m}: unsupported permission mode"));
   }
   let model = model.filter(|m| !m.trim().is_empty());
-  if model.as_deref().is_some_and(|m| m.len() > 128 || !m.chars().all(|c| c.is_ascii_graphic())) {
+  if model.as_deref().is_some_and(|m| m.len() > 256 || !m.chars().all(|c| c.is_ascii_graphic())) {
     return Err("invalid model".into());
   }
-  on_host(&agents, move |a| a.set_options(run_id, model.as_deref(), permission_mode.as_deref())).await
+  // An Arkai model (`provider/model`) goes with its provider, in case it is not the run's own.
+  let config = crate::snap::config_dir(&app)?;
+  on_host(&agents, move |a| {
+    let provider = model.as_deref().and_then(|m| arkai::switch_provider(&config, m));
+    a.set_options(run_id, model.as_deref(), permission_mode.as_deref(), provider.as_ref())
+  })
+  .await
 }
 
 /// Chats of the open folder; empty with no folder open. The first load of a folder also sweeps
