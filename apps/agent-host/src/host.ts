@@ -11,7 +11,8 @@ import { readFileSync } from 'node:fs';
 import type { CanUseTool, HookCallbackMatcher, Options, PermissionResult, PermissionUpdate, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { contextTokensOf, contextWindowOf, isUuid, mcpStatus, modelOptions, normalize, ruleTexts, slashCommands, summarizeTool } from './normalize.ts';
 import { snapshotHooks } from './snapshots.ts';
-import { Guards } from './guards/index.ts';
+import { Guards, type AskUser } from './guards/index.ts';
+import { MAX_PATTERNS } from './guards/asks.ts';
 import { checkAnswers, isAskUserQuestion, QUESTIONS_DISMISSED } from './questions.ts';
 import { Runtimes, runtimeSpec, SessionError, type SpawnFn } from './runtimes/index.ts';
 import {
@@ -176,8 +177,12 @@ class Run {
 	readonly inbox = new Inbox();
 	readonly abort = new AbortController();
 	readonly pending = new Map<string, Pending>();
-	/** Kingu's safety checks; null when the user turned them off. */
+	/** Kingu's safety checks; null when the user turned them all off. */
 	guards: Guards | null = null;
+	/** Tool calls the user allowed at a safety ask: canUseTool does not ask about them again. */
+	readonly guardApproved = new Set<string>();
+	/** The session's permission mode (start, then setOptions). */
+	mode = 'default';
 	query: QueryLike | null = null;
 	stopped = false;
 	exited = false;
@@ -358,6 +363,15 @@ export class AgentHost {
 		const images = imageBlocks(p.images, this.read);
 		need(p.snapshots === undefined || p.snapshots === null || typeof p.snapshots === 'boolean', 'snapshots must be a boolean');
 		need(p.safetyChecks === undefined || p.safetyChecks === null || typeof p.safetyChecks === 'boolean', 'safetyChecks must be a boolean');
+		const asks = p.guardAsks ?? null;
+		need(
+			asks === null ||
+				(typeof asks === 'object' &&
+					!Array.isArray(asks) &&
+					[asks.outsideCwd, asks.deletes, asks.mcpTools].every((v) => v === undefined || typeof v === 'boolean') &&
+					(asks.protectedPaths === undefined || (Array.isArray(asks.protectedPaths) && asks.protectedPaths.length <= MAX_PATTERNS && asks.protectedPaths.every((x) => typeof x === 'string' && x.length <= 500)))),
+			'guardAsks must be flags and up to 500 path patterns'
+		);
 		const append = p.systemPromptAppend ?? '';
 		need(typeof append === 'string' && append.length <= MAX_SYSTEM_APPEND, 'systemPromptAppend must be a string of at most 256 KB');
 		const resumeAt = p.resumeAt || undefined;
@@ -391,10 +405,11 @@ export class AgentHost {
 		}
 
 		const run = new Run(p.runId);
-		if (p.safetyChecks !== false) run.guards = new Guards();
+		run.mode = mode;
+		if (p.safetyChecks !== false || asks) run.guards = new Guards(p.safetyChecks !== false, asks ? { ...asks, cwd: p.cwd } : null);
 		this.runs.set(run.id, run);
 		const hooks = runHooks(
-			run.guards?.hook((ev) => this.emit(run.id, ev), (line) => this.log(`run ${run.id}: ${line}`)) ?? null,
+			run.guards?.hook((ev) => this.emit(run.id, ev), (line) => this.log(`run ${run.id}: ${line}`), this.askGuard(run)) ?? null,
 			p.snapshots ? snapshotHooks(p.cwd, (ev) => this.emit(run.id, ev), (line) => this.log(`run ${run.id}: ${line}`)) : null
 		);
 		const options: Options = {
@@ -584,6 +599,7 @@ export class AgentHost {
 		if (mode !== undefined) {
 			if (!q.setPermissionMode) throw new RpcError(UNSUPPORTED, 'this agent SDK cannot change the permission mode mid-session');
 			await q.setPermissionMode(mode);
+			run.mode = mode;
 		}
 		this.log(`run ${run.id}: options changed${model !== undefined ? ' (model)' : ''}${mode !== undefined ? ` (mode ${mode})` : ''}`);
 		return { model: model ?? null, permissionMode: mode ?? null };
@@ -626,10 +642,54 @@ export class AgentHost {
 		return null;
 	}
 
+	/**
+	 * A safety ask (guards/asks.ts) as an ordinary permission prompt, preceded by a `guard_asked`
+	 * event saying why. Allowed: the call goes on, and canUseTool lets it through without a second prompt.
+	 */
+	private askGuard(run: Run): AskUser {
+		return ({ tool, input, toolUseId, ask, signal }) =>
+			new Promise((resolve) => {
+				if (run.exited || run.stopped) return resolve({ message: 'stopped' });
+				const requestId = this.newId();
+				const done = (r: PermissionResult) => {
+					if (r.behavior === 'allow') {
+						if (toolUseId) run.guardApproved.add(toolUseId);
+						resolve(true);
+					} else resolve({ message: r.message && r.message !== DENIED_BY_USER ? r.message : null });
+				};
+				const fields = input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
+				run.pending.set(requestId, { resolve: done, input: fields, suggestions: [], tool });
+				signal?.addEventListener('abort', () => {
+					if (!run.pending.delete(requestId)) return;
+					done({ behavior: 'deny', message: 'cancelled', interrupt: true });
+					this.emit(run.id, { kind: 'permission_resolved', request_id: requestId, decision: 'cancelled' });
+				});
+				this.emit(run.id, { kind: 'guard_asked', request_id: requestId, tool, tool_use_id: toolUseId, check: ask.check, paths: ask.paths.slice(0, 20) });
+				const { summary, detail, diff } = summarizeTool(tool, input);
+				this.emit(run.id, {
+					kind: 'permission_request',
+					request_id: requestId,
+					tool,
+					tool_use_id: toolUseId,
+					title: null,
+					input_summary: summary,
+					detail,
+					diff,
+					input,
+					// A safety ask is answered each time: never a rule to keep.
+					can_always: false,
+					rules: []
+				});
+			});
+	}
+
 	private canUseTool(run: Run): CanUseTool {
 		return (tool, input, opts) =>
 			new Promise<PermissionResult>((resolve) => {
 				if (run.exited || run.stopped) return resolve({ behavior: 'deny', message: 'stopped', interrupt: true });
+				// Just allowed at Kingu's safety ask: no second prompt for the same call. Never in plan mode,
+				// whose own prompt is what keeps it read-only.
+				if (opts.toolUseID && run.guardApproved.delete(opts.toolUseID) && run.mode !== 'plan') return resolve({ behavior: 'allow', updatedInput: input });
 				const requestId = this.newId();
 				run.pending.set(requestId, { resolve, input, suggestions: opts.suggestions ?? [], tool });
 				opts.signal?.addEventListener('abort', () => {

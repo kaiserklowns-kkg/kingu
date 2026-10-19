@@ -93,6 +93,9 @@
 		TerminalWindowIcon,
 		TrashIcon,
 		UserCircleIcon,
+		ThumbsDownIcon,
+		ThumbsUpIcon,
+		BookmarkSimpleIcon,
 		WarningIcon,
 		XCircleIcon,
 		XIcon
@@ -212,7 +215,11 @@
 		edit: PencilSimpleIcon,
 		/** Diff views: side by side / inline. */
 		columns: ColumnsIcon,
-		rows: RowsIcon
+		rows: RowsIcon,
+		/** Chat answers: helpful / not helpful, and "Remember this". */
+		thumbsUp: ThumbsUpIcon,
+		thumbsDown: ThumbsDownIcon,
+		bookmark: BookmarkSimpleIcon
 	} as const;
 	export type IconName = keyof typeof icons;
 

@@ -34,6 +34,8 @@
 	import Board from '#lib/ade/Board.svelte';
 	import TaskPage from '#lib/ade/TaskPage.svelte';
 	import { isAdeEditor, isBoardKey, slugOfTaskKey } from '#lib/ade/keys.ts';
+	import AgentPanel from '#lib/agent/AgentPanel.svelte';
+	import { chatIdOfEditorKey, isChatEditorKey } from '#lib/agent/chatExtras.ts';
 	import { USER_KEYBINDINGS_KEY } from './keybindings.svelte';
 	import FilePlaceholder from './FilePlaceholder.svelte';
 	import SaveConflictCompare from './SaveConflictCompare.svelte';
@@ -56,7 +58,9 @@
 	const activePath = $derived(g?.active ?? null);
 	const focused = $derived(editors.activeGroupId === group);
 	const settingsActive = $derived(activePath === SETTINGS_EDITOR_KEY);
-	const adeActive = $derived(activePath !== null && isAdeEditor(activePath));
+	/** A chat opened in the editor (Open Chat in Editor), rendered like the ADE editors. */
+	const chatEditorId = $derived(activePath ? chatIdOfEditorKey(activePath) : null);
+	const adeActive = $derived(activePath !== null && (isAdeEditor(activePath) || isChatEditorKey(activePath)));
 	const taskSlug = $derived(activePath ? slugOfTaskKey(activePath) : null);
 	const crumbs = $derived(!activePath || settingsActive || adeActive || isChangesKey(activePath) || isVaultKey(activePath) ? [] : activePath === USER_SETTINGS_KEY
 					? ['User', 'settings.json']
@@ -67,7 +71,7 @@
 						: fileOf(activePath).split('/'));
 	const label = editorLabel;
 	const iconOf = (key: string) =>
-		fileIcon(key === SETTINGS_EDITOR_KEY || key === USER_SETTINGS_KEY ? 'settings.json' : isAdeEditor(key) ? 'tasks.md' : fileOf(key));
+		fileIcon(key === SETTINGS_EDITOR_KEY || key === USER_SETTINGS_KEY ? 'settings.json' : isAdeEditor(key) || isChatEditorKey(key) ? 'tasks.md' : fileOf(key));
 	/** Breadcrumbs of a workspace file are clickable (not the Settings editor's or user settings'). */
 	const crumbsAreFiles = $derived(!!activePath && activePath !== USER_SETTINGS_KEY && !isChangesKey(activePath) && crumbs.length > 0);
 	const diffActive = $derived(activePath !== null && isDiffKey(activePath));
@@ -511,6 +515,8 @@
 			<div class="absolute inset-0">{#key taskSlug}<TaskPage slug={taskSlug} />{/key}</div>
 		{:else if activePath && isBoardKey(activePath)}
 			<div class="absolute inset-0"><Board /></div>
+		{:else if chatEditorId}
+			<div class="absolute inset-0 bg-(--vscode-editor-background)">{#key chatEditorId}<AgentPanel editorChatId={chatEditorId} />{/key}</div>
 		{/if}
 		<!-- workbench.tips.enabled: the shortcut watermark of an empty editor area. -->
 		{#if !activePath && editors.groups.length === 1 && settings.get<boolean>('workbench.tips.enabled')}

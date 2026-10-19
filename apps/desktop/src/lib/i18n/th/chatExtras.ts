@@ -1,0 +1,36 @@
+import type { chatExtras as en } from '../en/chatExtras';
+
+export const chatExtras = {
+	'chatExtras.ask.text': 'Kingu ขอถามก่อน: {reason}',
+	'chatExtras.ask.withPaths': 'Kingu ขอถามก่อน: {reason} ({paths})',
+	'chatExtras.ask.outsideCwd': 'จะเขียนไฟล์นอกโฟลเดอร์ของโปรเจกต์',
+	'chatExtras.ask.delete': 'จะลบไฟล์',
+	'chatExtras.ask.protected': 'จะยุ่งกับไฟล์ที่ป้องกันไว้ (.kinguignore)',
+	'chatExtras.ask.mcp': 'จะเรียกเครื่องมือของ MCP',
+	'chatExtras.feedback.helpful': 'มีประโยชน์',
+	'chatExtras.feedback.unhelpful': 'ไม่มีประโยชน์',
+	'chatExtras.feedback.thanks': 'ขอบคุณสำหรับความเห็น',
+	'chatExtras.feedback.failed': 'บันทึกความเห็นไม่สำเร็จ: {error}',
+	'chatExtras.remember.label': 'จำสิ่งนี้ไว้',
+	'chatExtras.remember.hint': 'จำข้อความนี้ (หรือส่วนที่เลือกไว้) ไว้ใน CLAUDE.local.md หรือ AGENTS.md',
+	'chatExtras.remember.where': 'จำ “{text}” ไว้ที่…',
+	'chatExtras.remember.local': 'เฉพาะคุณ Claude Code อ่าน',
+	'chatExtras.remember.shared': 'ใช้ร่วมกับทั้งโปรเจกต์ agent ทุกตัวอ่าน',
+	'chatExtras.remember.saved': 'จำไว้ใน {file} แล้ว',
+	'chatExtras.remember.failed': 'จำไว้ไม่สำเร็จ: {error}',
+	'chatExtras.followups': 'คำถามต่อที่แนะนำ',
+	'chatExtras.followupHint': 'ส่งคำถามต่อนี้',
+	'chatExtras.openInEditor': 'เปิดแชตใน editor',
+	'chatExtras.moveToSideBar': 'ย้ายแชตไปที่แถบข้าง',
+	'chatExtras.editorMissing': 'แชตนี้ไม่อยู่ในโฟลเดอร์ที่เปิดอยู่',
+	'chatExtras.editorLoading': 'กำลังโหลดแชต…',
+	'chatExtras.memories.title': 'ความจำ',
+	'chatExtras.memories.intro':
+		'สิ่งที่ "จำสิ่งนี้ไว้" บันทึกจากแชตของโฟลเดอร์นี้: รายการใต้หัวข้อ "## Memories" ใน CLAUDE.local.md (เฉพาะคุณ) และ AGENTS.md (ใช้ร่วมกับทั้งโปรเจกต์) agent อ่านทุกครั้งที่เริ่มแชต',
+	'chatExtras.memories.refresh': 'รีเฟรช',
+	'chatExtras.memories.noFolder': 'เปิดโฟลเดอร์ก่อนเพื่อดูความจำของโฟลเดอร์นั้น',
+	'chatExtras.memories.openFile': 'เปิดไฟล์',
+	'chatExtras.memories.edit': 'แก้ความจำ',
+	'chatExtras.memories.none': 'ยังไม่มีความจำ ใช้ "จำสิ่งนี้ไว้" ที่ข้อความในแชต',
+	'chatExtras.memories.deleteConfirm': 'ลบความจำนี้ไหม\n\n{text}'
+} satisfies Record<keyof typeof en, string>;

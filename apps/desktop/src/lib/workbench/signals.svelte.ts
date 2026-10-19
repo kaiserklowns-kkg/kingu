@@ -9,7 +9,11 @@ let audio: AudioContext | null = null;
 
 export function playSignal(signal: Signal) {
 	const mode = (settings.get<string>('kingu.accessibility.signals') ?? 'agents') as SignalsMode;
-	if (!plays(mode, signal)) return;
+	if (plays(mode, signal)) playTone(signal);
+}
+
+/** A signal's tones whatever kingu.accessibility.signals says (the chat's completion chime picked it). */
+export function playTone(signal: Signal) {
 	try {
 		audio ??= new AudioContext();
 		const t0 = audio.currentTime + 0.01;

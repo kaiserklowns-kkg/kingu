@@ -40,6 +40,12 @@ export type PermissionRequest = {
 	rules?: string[];
 };
 
+/** Why Kingu asked before a call, whatever the permission mode (agent-host guards/asks.ts). */
+export type GuardAsked = { kind: 'guard_asked'; request_id: string; tool: string; tool_use_id: string | null; check: 'outside_cwd' | 'delete' | 'protected' | 'mcp'; paths: string[] };
+
+/** A vote on an answer (VS Code's helpful / unhelpful). */
+export type Vote = 'up' | 'down';
+
 export type ResultEvent = {
 	kind: 'result';
 	subtype: string;
@@ -81,6 +87,10 @@ export type AgentEvent =
 	| { kind: 'edits_changed'; request: number | null }
 	/** Kingu's safety check refused a tool call (agent-host guards/), in any permission mode. */
 	| { kind: 'guard_blocked'; tool: string; tool_use_id: string | null; check: 'security' | 'repetition'; threats: string[]; detail: string }
+	/** Kingu's always-ask check stopped a call for the user (any permission mode); its `permission_request` follows. */
+	| GuardAsked
+	/** The user's thumbs up / down on the answer to chat request `request` (null: taken back). Kept in the transcript. */
+	| { kind: 'feedback'; request: number; vote: Vote | null }
 	| { kind: 'error'; message: string }
 	| { kind: 'raw'; line: string }
 	| { kind: 'stderr'; line: string }

@@ -50,8 +50,18 @@
 	import { chatSignals, registerChatCommands } from './chatCommands.svelte.ts';
 	import { agentRuntimes } from './runtimes.svelte.ts';
 	import { runtimeChoices, runtimeOf } from './runtimes.ts';
+	import { chatExtras } from './chatExtras.svelte.ts';
+	import { layout } from '#lib/workbench/layout.svelte.ts';
 
-	let selectedId = $state<string | null>(null);
+	let {
+		editorChatId
+	}: {
+		/** Open Chat in Editor (ChatEditor.svelte): the panel shows only this chat, in an editor tab, and none of the side bar's commands. */
+		editorChatId?: string;
+	} = $props();
+	const inEditor = untrack(() => !!editorChatId);
+
+	let selectedId = $state<string | null>(untrack(() => editorChatId ?? null));
 	let composingNew = $state(false);
 	let showList = $state(false);
 	let busy = $state(false);
@@ -143,6 +153,7 @@
 	const contextChips = $derived([...(implicit && !picked.some((p) => p.path === implicit.path && !p.range) ? [implicit] : []), ...picked]);
 
 	onMount(() => {
+		if (inEditor) return;
 		chatSignals.el = root;
 		void agentRuntimes.load();
 		const off = registerChatCommands();
@@ -159,33 +170,34 @@
 	let seenAdd = chatSignals.addContext;
 	let seenExport = chatSignals.exportChat;
 	let seenImport = chatSignals.importChat;
+	// The side bar's panel takes these; a chat in an editor tab does not.
 	$effect(() => {
 		const n = chatSignals.addContext;
-		if (n === seenAdd) return;
+		if (n === seenAdd || inEditor) return;
 		seenAdd = n;
 		untrack(() => void addContext());
 	});
 	$effect(() => {
 		const n = chatSignals.exportChat;
-		if (n === seenExport) return;
+		if (n === seenExport || inEditor) return;
 		seenExport = n;
 		untrack(() => void exportChat());
 	});
 	$effect(() => {
 		const n = chatSignals.importChat;
-		if (n === seenImport) return;
+		if (n === seenImport || inEditor) return;
 		seenImport = n;
 		untrack(() => void importChat());
 	});
 	$effect(() => {
 		const n = chatSignals.focus;
-		if (n === seenFocus) return;
+		if (n === seenFocus || inEditor) return;
 		seenFocus = n;
 		untrack(() => queueMicrotask(() => composer?.focus()));
 	});
 	$effect(() => {
 		const n = chatSignals.newChat;
-		if (n === seenNew) return;
+		if (n === seenNew || inEditor) return;
 		seenNew = n;
 		untrack(() => newChat());
 	});
@@ -193,7 +205,7 @@
 	let seenOpen = chatSignals.open?.n;
 	$effect(() => {
 		const req = chatSignals.open;
-		if (!req || req.n === seenOpen) return;
+		if (!req || req.n === seenOpen || inEditor) return;
 		seenOpen = req.n;
 		untrack(() => chats.get(req.id) && select(req.id));
 	});
@@ -202,6 +214,7 @@
 	$effect(() => {
 		void workspace.root;
 		untrack(() => {
+			if (inEditor) return void (chats.root !== workspace.root && chats.load());
 			selectedId = null;
 			composingNew = false;
 			showList = false;
@@ -211,6 +224,7 @@
 
 	// Drop a removed chat; with nothing selected, show the most recent one (or a new chat).
 	$effect(() => {
+		if (inEditor) return;
 		if (selectedId && chats.loaded && !chats.get(selectedId)) selectedId = null;
 		if (selectedId === null && !composingNew && chats.loaded) selectedId = initialChat(chats.list);
 	});
@@ -236,6 +250,8 @@
 	}
 
 	function select(id: string) {
+		// A chat editor tab shows one chat: another one (a fork) opens in its own tab.
+		if (inEditor && id !== editorChatId) return chatExtras.openInEditor(id);
 		selectedId = id;
 		composingNew = false;
 		showList = false;
@@ -244,7 +260,9 @@
 		editing = false;
 	}
 
-	function newChat() {
+	function newChat(focus = true) {
+		// From a chat editor tab: the side bar starts it.
+		if (inEditor) return void ((layout.auxVisible = true), chatSignals.newChat++);
 		selectedId = null;
 		composingNew = true;
 		showList = false;
@@ -254,7 +272,7 @@
 		const d = chats.defaults();
 		newModel = d.model ?? '';
 		newMode = modeOf(d.permissionMode);
-		queueMicrotask(() => composer?.focus());
+		if (focus) queueMicrotask(() => composer?.focus());
 	}
 
 	/** The request's prompt: the text and its attached files (read now), plus its images. */
@@ -325,6 +343,25 @@
 		const known = chats.lastSent(id);
 		const images = known && known.text === withoutImagesLine(req.sent) ? known.images : [];
 		await chatRewind.editAndSend(id, checkpoint, { text: assemblePrompt(text, context), images });
+	}
+
+	/** A follow-up chip: sent as the next request (VS Code's followup click), unless the input has a draft. */
+	function pickFollowup(text: string) {
+		if (!chatMeta) return;
+		chatExtras.clearFollowups(chatMeta.id);
+		if (input.trim() || picked.length || files.length) {
+			input = `${input.trimEnd()}${input.trim() ? '\n' : ''}${text}`;
+			queueMicrotask(() => composer?.focus());
+			return;
+		}
+		void submit(text, []);
+	}
+
+	/** Open Chat in Editor (VS Code's chatMoveActions): the chat moves to a tab, the side bar starts a new one. */
+	function openInEditor() {
+		if (!chatMeta) return;
+		chatExtras.openInEditor(chatMeta.id);
+		newChat(false);
 	}
 
 	async function fork(request: number | null) {
@@ -515,6 +552,12 @@
 <div bind:this={root} class="flex h-full flex-col text-[13px]" data-chat-view>
 	<!-- Title actions (VS Code's chat view title): history, the chat's title, new chat, Agents. -->
 	<div class="flex h-[30px] shrink-0 items-center gap-1 px-2">
+		{#if inEditor}
+		<span class="min-w-0 flex-1 truncate px-1" {title}>{title}</span>
+		<button class={ICON_BTN} aria-label={t('chatExtras.moveToSideBar')} title={t('chatExtras.moveToSideBar')} onclick={() => editorChatId && chatExtras.moveToSideBar(editorChatId)}>
+			<Icon name="sidebarRight" size={16} />
+		</button>
+		{:else}
 		<button
 			class={[ICON_BTN, showList && 'bg-(--vscode-toolbar-activeBackground)']}
 			aria-label={t('chatView.history')}
@@ -523,10 +566,14 @@
 			onclick={() => (showList = !showList)}><Icon name="menu" size={16} /></button
 		>
 		<span class="min-w-0 flex-1 truncate" {title}>{showList ? t('chatView.history') : title}</span>
-		<button class={ICON_BTN} aria-label={t('chat.panel.newChat')} title={t('chatView.newChatKey')} disabled={!workspace.root} onclick={newChat}><Icon name="plus" size={16} /></button>
+		<button class={ICON_BTN} aria-label={t('chat.panel.newChat')} title={t('chatView.newChatKey')} disabled={!workspace.root} onclick={() => newChat()}><Icon name="plus" size={16} /></button>
+		{#if chatMeta && !showList}
+			<button class={ICON_BTN} aria-label={t('chatExtras.openInEditor')} title={t('chatExtras.openInEditor')} onclick={openInEditor}><Icon name="openExternal" size={15} /></button>
+		{/if}
 		<button class={ICON_BTN} aria-label={t('chat.panel.openInAgents')} title={t('chat.panel.openInAgents')} onclick={() => appMode.setMode('agents')}>
 			<Icon name="agentsLayout" size={16} />
 		</button>
+		{/if}
 	</div>
 
 	{#if !showList && chatMeta}
@@ -618,7 +665,10 @@
 					retry: features.rewind ? () => chatMeta && void chatRewind.retry(chatMeta.id) : undefined,
 					edit: editRequest,
 					editInline: features.rewind ? editInline : undefined,
-					implement: mode === 'ask' ? implement : undefined
+					implement: mode === 'ask' ? implement : undefined,
+					feedback: (request, vote) => chatMeta && void chatExtras.vote(chatMeta.id, request, vote),
+					remember: (text) => void chatExtras.remember(text),
+					followups: { items: running ? [] : chatExtras.followups(chatMeta.id), pick: pickFollowup }
 				}}
 				reverted={(r) => !!chatMeta && chatEdits.isReverted(chatMeta.id, r)}
 				class="h-full p-3"
@@ -633,6 +683,8 @@
 					<p class="text-(--vscode-descriptionForeground)">{t('chat.panel.noHistory')}</p>
 				{/snippet}
 			</ChatList>
+		{:else if inEditor}
+			<p class="p-6 text-center text-(--vscode-descriptionForeground)">{chats.loaded ? t('chatExtras.editorMissing') : t('chatExtras.editorLoading')}</p>
 		{:else}
 			<div class="grid h-full place-items-center p-6 text-center">
 				<div class="flex max-w-72 flex-col items-center gap-2 text-(--vscode-descriptionForeground)">
@@ -654,7 +706,7 @@
 		{/if}
 	</div>
 
-	{#if !showList}
+	{#if !showList && (chatMeta || !inEditor)}
 		<div class="shrink-0 p-2">
 			<!-- chat edits bar -->
 			{#if chatMeta}<ChatTodoBar {turns} {running} />{/if}
