@@ -79,6 +79,7 @@
 	import TrackerConnect from '#lib/ade/TrackerConnect.svelte';
 	import { installSnaps } from '#lib/snaps/snaps.svelte.ts';
 	import { installMcp } from '#lib/mcp/mcp.svelte.ts';
+	import { installSkills } from '#lib/skills/skills.svelte.ts';
 	import { installVault } from '#lib/vault/vault.svelte.ts';
 	import { installArtifacts } from '#lib/artifacts/artifacts.svelte.ts';
 	import { installDebug } from '#lib/debug/debug.svelte.ts';
@@ -336,6 +337,7 @@
 		const uninstallLayout = installLayoutCommands();
 		const uninstallSnaps = installSnaps();
 		const uninstallMcp = installMcp();
+		const uninstallSkills = installSkills();
 		const uninstallVault = installVault();
 		const uninstallArtifacts = installArtifacts();
 		const uninstallLocalAi = installLocalAi();
@@ -373,6 +375,7 @@
 			uninstallTerminalCommands();
 			uninstallTerminalSessions();
 			uninstallMcp();
+			uninstallSkills();
 			uninstallSnaps();
 			uninstallVault();
 			uninstallArtifacts();

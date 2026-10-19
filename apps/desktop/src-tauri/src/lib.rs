@@ -32,6 +32,7 @@ mod smart_search;
 mod sessions;
 mod settings;
 mod shell_env;
+mod skill_hub;
 mod snap;
 mod snap_install;
 mod snap_sandbox;
@@ -1537,6 +1538,17 @@ pub fn run() {
       snap_install::snap_new,
       snap_install::snap_lock,
       snap_install::snap_reveal,
+      skill_hub::skill_hub_list,
+      skill_hub::skill_hub_set_enabled,
+      skill_hub::skill_hub_prepare,
+      skill_hub::skill_hub_prepare_update,
+      skill_hub::skill_hub_commit,
+      skill_hub::skill_hub_cancel,
+      skill_hub::skill_hub_remove,
+      skill_hub::skill_hub_reveal,
+      skill_hub::skill_hub_read,
+      skill_hub::skill_hub_export,
+      skill_hub::skill_hub_plugins,
       snap_install::snap_manifest_read,
       snap_install::snap_manifest_write,
       accounts::ai_accounts_list,
@@ -1560,6 +1572,10 @@ pub fn run() {
       team::snaps::team_snap_catalog,
       team::snaps::team_snap_approve,
       team::snaps::snap_install_team,
+      team::skills::team_skill_list,
+      team::skills::team_skill_share,
+      team::skills::team_skill_unshare,
+      team::skills::team_skill_install,
       menu::menu_set_model,
       menu::menu_set_checked,
       menu::menu_set_enabled,

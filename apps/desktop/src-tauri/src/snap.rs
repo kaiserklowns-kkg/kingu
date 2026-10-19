@@ -832,13 +832,18 @@ pub fn skill_plugins(plugins_dir: &Path, list: &[SnapInfo], ids: &[String]) -> R
   Ok(out)
 }
 
-/// Plugin folders handed to an agent must be ones `skill_plugins` wrote: directly inside
-/// `plugins_dir`, not hidden, with a plugin manifest. Anything else could load arbitrary hooks.
-pub fn validate_plugin_dirs(plugins_dir: &Path, dirs: &[String]) -> Result<(), String> {
+/// Plugin folders handed to an agent must be ones Kingu wrote: directly inside one of `bases`
+/// (the snap plugins, the Skills view's plugin, the `kingu` command's skill; see
+/// `skill_hub::plugin_bases`), not hidden, with a plugin manifest. Anything else could load
+/// arbitrary hooks.
+pub fn validate_plugin_dirs(bases: &[PathBuf], dirs: &[String]) -> Result<(), String> {
   if dirs.len() > MAX_PLUGINS {
     return Err("too many plugins".into());
   }
-  let base = plugins_dir.canonicalize().map_err(|_| "no snap plugins have been prepared".to_string())?;
+  let bases: Vec<PathBuf> = bases.iter().filter_map(|b| b.canonicalize().ok()).collect();
+  if bases.is_empty() {
+    return Err("no snap plugins have been prepared".to_string());
+  }
   for d in dirs {
     let bad = || format!("{d}: not a Kingu snap plugin folder");
     let path = Path::new(d);
@@ -847,7 +852,7 @@ pub fn validate_plugin_dirs(plugins_dir: &Path, dirs: &[String]) -> Result<(), S
     }
     let real = path.canonicalize().map_err(|_| bad())?;
     let hidden = real.file_name().is_none_or(|n| n.to_string_lossy().starts_with('.'));
-    if real.parent() != Some(base.as_path()) || hidden || !real.join(PLUGIN_MANIFEST[0]).join(PLUGIN_MANIFEST[1]).is_file() {
+    if !real.parent().is_some_and(|p| bases.iter().any(|b| b == p)) || hidden || !real.join(PLUGIN_MANIFEST[0]).join(PLUGIN_MANIFEST[1]).is_file() {
       return Err(bad());
     }
   }
@@ -884,7 +889,8 @@ pub async fn snap_skill_plugins(app: AppHandle, ids: Vec<String>) -> Result<Vec<
     let config = config_dir(&app)?;
     let trust = TrustData::load(&config.join(TRUST_FILE));
     let root = app.state::<Workspace>().current();
-    let list = discover(&config.join(USER_DIR), root.as_deref(), &trust);
+    // Skills turned off in the Skills view stay out.
+    let list = crate::skill_hub::without_disabled(discover(&config.join(USER_DIR), root.as_deref(), &trust), &crate::skill_hub::HubState::load(&config));
     let dirs = skill_plugins(&plugins_dir(&app)?, &list, &ids)?;
     Ok(dirs.into_iter().map(|d| d.display().to_string()).collect())
   })
@@ -1277,13 +1283,13 @@ env = { GOFLAGS = "-mod=mod" }
 
     // Only folders written here pass the agent_start check.
     let as_str = |p: &Path| p.display().to_string();
-    assert!(validate_plugin_dirs(&plugins, &dirs.iter().map(|d| as_str(d)).collect::<Vec<_>>()).is_ok());
-    assert!(validate_plugin_dirs(&plugins, &[as_str(&mine)]).is_err());
-    assert!(validate_plugin_dirs(&plugins, &[as_str(&plugins.join("go-0000000000000000"))]).is_err());
-    assert!(validate_plugin_dirs(&plugins, &[as_str(&dirs[0].join("skills"))]).is_err());
-    assert!(validate_plugin_dirs(&plugins, &[format!("{}/../{}", as_str(&plugins), PLUGINS_DIR)]).is_err());
-    assert!(validate_plugin_dirs(&plugins, &["relative/path".into()]).is_err());
-    assert!(validate_plugin_dirs(&cache.path().join("none"), &[as_str(&dirs[0])]).is_err());
+    assert!(validate_plugin_dirs(std::slice::from_ref(&plugins), &dirs.iter().map(|d| as_str(d)).collect::<Vec<_>>()).is_ok());
+    assert!(validate_plugin_dirs(std::slice::from_ref(&plugins), &[as_str(&mine)]).is_err());
+    assert!(validate_plugin_dirs(std::slice::from_ref(&plugins), &[as_str(&plugins.join("go-0000000000000000"))]).is_err());
+    assert!(validate_plugin_dirs(std::slice::from_ref(&plugins), &[as_str(&dirs[0].join("skills"))]).is_err());
+    assert!(validate_plugin_dirs(std::slice::from_ref(&plugins), &[format!("{}/../{}", as_str(&plugins), PLUGINS_DIR)]).is_err());
+    assert!(validate_plugin_dirs(std::slice::from_ref(&plugins), &["relative/path".into()]).is_err());
+    assert!(validate_plugin_dirs(&[cache.path().join("none")], &[as_str(&dirs[0])]).is_err());
   }
 
   #[test]

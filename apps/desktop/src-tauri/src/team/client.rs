@@ -148,6 +148,25 @@ impl HttpTransport {
   }
 }
 
+impl HttpTransport {
+  /// `method` on `{server}{path}` with an optional JSON body (team skills, `/v1/skills`); returns
+  /// the body. A rejection carries the server's message.
+  pub fn request(&self, method: reqwest::Method, server: &str, token: &str, path: &str, body: Option<&serde_json::Value>) -> Result<String, SendError> {
+    let mut req = self.client.request(method, format!("{server}{path}")).bearer_auth(token);
+    if let Some(b) = body {
+      req = req.json(b);
+    }
+    let res = req.send().map_err(|e| SendError::Retryable(e.without_url().to_string()))?;
+    let status = res.status().as_u16();
+    let text = res.text().unwrap_or_default();
+    classify(status, &text).map_err(|e| match e {
+      SendError::Permanent(m) => SendError::Permanent(server_message(&text).map_or(m.clone(), |msg| format!("{m}: {msg}"))),
+      other => other,
+    })?;
+    Ok(text)
+  }
+}
+
 /// `error.message` of a server error body.
 pub fn server_message(body: &str) -> Option<String> {
   serde_json::from_str::<serde_json::Value>(body).ok()?["error"]["message"].as_str().map(str::to_owned)

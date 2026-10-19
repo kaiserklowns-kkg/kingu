@@ -148,6 +148,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/artifacts/{id}", s.org(s.getArtifact))
 	mux.Handle("PUT /v1/artifacts/{id}", s.orgLimit(s.putArtifact, MaxArtifactBodyBytes))
 	mux.Handle("DELETE /v1/artifacts/{id}", s.org(s.deleteArtifact))
+	mux.Handle("GET /v1/skills", s.org(s.listSkills))
+	mux.Handle("PUT /v1/skills/{name}", s.org(s.putSkill))
+	mux.Handle("DELETE /v1/skills/{name}", s.org(s.deleteSkill))
 	mux.HandleFunc("GET /v1/events", s.handleEvents)
 	if s.cfg.Dev {
 		mux.HandleFunc("POST /v1/dev/tokens", s.handleDevMintToken)

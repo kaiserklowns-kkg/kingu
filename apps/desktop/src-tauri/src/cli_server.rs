@@ -34,7 +34,9 @@ const MAX_MESSAGE: usize = 1000;
 /// The name agents and people type; the bundled binary is `kingu-cli` (see crates/kingu-cli/Cargo.toml).
 pub const COMMAND: &str = "kingu";
 const BUNDLED: &str = if cfg!(windows) { "kingu-cli.exe" } else { "kingu-cli" };
-const SKILL_MD: &str = include_str!("../skills/kingu/SKILL.md");
+pub(crate) const SKILL_MD: &str = include_str!("../skills/kingu/SKILL.md");
+/// `<app cache>/kingu-plugin/<hash>` holds the skill as a Claude plugin.
+pub const PLUGIN_DIR: &str = "kingu-plugin";
 
 /// `<app data>/cli/bin`, holding the `kingu` link, once the server runs.
 static BIN_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -540,7 +542,7 @@ pub fn write_skill_plugin(cache: &Path) -> Result<PathBuf, String> {
   let manifest = serde_json::to_string_pretty(&json!({ "name": COMMAND, "version": env!("CARGO_PKG_VERSION"), "description": "The kingu command: control the Kingu app from an agent" }))
     .map_err(|e| e.to_string())?;
   let hash: String = Sha256::digest(format!("{manifest}\0{SKILL_MD}")).iter().take(8).map(|b| format!("{b:02x}")).collect();
-  let dir = cache.join("kingu-plugin").join(&hash);
+  let dir = cache.join(PLUGIN_DIR).join(&hash);
   let skill = dir.join("skills").join(COMMAND).join("SKILL.md");
   if skill.is_file() {
     return Ok(dir);
@@ -554,10 +556,16 @@ pub fn write_skill_plugin(cache: &Path) -> Result<PathBuf, String> {
   Ok(dir)
 }
 
-/// The `kingu` skill's plugin folder for agent runs; none when the command is not available.
+/// Whether the `kingu` command is set up (its skill is listed as inactive otherwise).
+pub fn available() -> bool {
+  BIN_DIR.get().is_some()
+}
+
+/// The `kingu` skill's plugin folder for agent runs; none when the command is not available or
+/// the skill is turned off in the Skills view.
 #[tauri::command]
 pub fn cli_skill_plugin(app: AppHandle) -> Result<Option<String>, String> {
-  if BIN_DIR.get().is_none() {
+  if BIN_DIR.get().is_none() || crate::skill_hub::builtin_disabled(&app) {
     return Ok(None);
   }
   let cache = app.path().app_cache_dir().map_err(|e| e.to_string())?;

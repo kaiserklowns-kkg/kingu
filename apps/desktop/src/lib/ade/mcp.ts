@@ -25,6 +25,7 @@ let provider: (root: string | null) => McpServers = () => ({});
 let compose: (snapServers: McpServers, root: string | null) => McpServers = (s) => s;
 let pluginProvider: () => Promise<string[]> = async () => [];
 let builtInPlugins: () => Promise<string[]> = async () => [];
+let hubPlugins: () => Promise<string[]> = async () => [];
 
 export function setMcpProvider(fn: (root: string | null) => McpServers) {
 	provider = fn;
@@ -55,6 +56,11 @@ export function setBuiltInPluginProvider(fn: () => Promise<string[]>) {
 	builtInPlugins = fn;
 }
 
+/** The skills installed through the Skills view (skills/skills.svelte.ts): one plugin folder. */
+export function setHubPluginProvider(fn: () => Promise<string[]>) {
+	hubPlugins = fn;
+}
+
 /** Skill plugin folders for a run starting now; never throws (an agent still starts without them). */
 export async function skillPlugins(): Promise<string[]> {
 	const safe = async (fn: () => Promise<string[]>) => {
@@ -64,8 +70,8 @@ export async function skillPlugins(): Promise<string[]> {
 			return [];
 		}
 	};
-	const [own, snaps] = await Promise.all([safe(builtInPlugins), safe(pluginProvider)]);
-	return [...own, ...snaps];
+	const [own, hub, snaps] = await Promise.all([safe(builtInPlugins), safe(hubPlugins), safe(pluginProvider)]);
+	return [...own, ...hub, ...snaps];
 }
 
 /** Claude Code's `--mcp-config` JSON for these servers, or null when there are none. */

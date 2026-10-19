@@ -337,7 +337,7 @@ fn staged(staging: &Path, f: impl FnOnce(&str, &Path) -> Result<Prepared, String
 
 /// `git clone --depth 1` of `spec` into `<dir>/src`; returns the commit. Never prompts, runs no
 /// hooks, fetches no submodules or LFS objects, and only speaks https, ssh and local paths.
-fn clone(dir: &Path, spec: &GitSpec, timeout: Duration) -> Result<String, String> {
+pub(crate) fn clone(dir: &Path, spec: &GitSpec, timeout: Duration) -> Result<String, String> {
   let mut args = vec![
     "-c",
     "core.hooksPath=/dev/null",
@@ -436,7 +436,7 @@ pub fn is_sha256(s: &str) -> bool {
 /// Fetches `commit` of `spec` into `<dir>/src` and checks it out, with the same restrictions as
 /// `clone`. Tries a shallow fetch of the commit itself first (needs the server to allow it, as
 /// GitHub and protocol v2 do), then the ref's (or default branch's) full history.
-fn fetch_commit(dir: &Path, spec: &GitSpec, commit: &str, timeout: Duration) -> Result<(), String> {
+pub(crate) fn fetch_commit(dir: &Path, spec: &GitSpec, commit: &str, timeout: Duration) -> Result<(), String> {
   const SAFE: [&str; 6] = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.ext.allow=never"];
   let env = [("GIT_ALLOW_PROTOCOL", "https:ssh:file"), ("GIT_LFS_SKIP_SMUDGE", "1")];
   let stop = AtomicBool::new(false);

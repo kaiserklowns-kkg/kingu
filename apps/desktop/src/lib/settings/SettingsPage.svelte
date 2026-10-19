@@ -18,6 +18,7 @@
 	import AccountPage from './pages/AccountPage.svelte';
 	import UsagePage from './pages/UsagePage.svelte';
 	import McpPage from '#lib/mcp/McpPage.svelte';
+	import SkillsPage from '#lib/skills/SkillsPage.svelte';
 	import MemoriesPage from '#lib/agent/MemoriesPage.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import { settings } from './settings.svelte';
@@ -40,6 +41,13 @@
 			icon: 'sliders'
 		},
 		{
+			id: 'skills',
+			get label() {
+				return t('skills.title');
+			},
+			icon: 'sparkle'
+		},
+		{
 			id: 'memories',
 			get label() {
 				return t('chatExtras.memories.title');
@@ -56,6 +64,9 @@
 		accounts: 'บัญชี AI (Accounts)',
 		usage: 'Stats & Usage',
 		mcp: 'MCP',
+		get skills() {
+			return t('skills.title');
+		},
 		get memories() {
 			return t('chatExtras.memories.title');
 		},
@@ -181,6 +192,7 @@
 			{:else if page === 'accounts'}<AccountsView />
 			{:else if page === 'usage'}<UsagePage />
 			{:else if page === 'mcp'}<McpPage />
+			{:else if page === 'skills'}<SkillsPage />
 		{:else if page === 'memories'}<MemoriesPage />
 			{:else if page === 'about'}<AboutPage />
 			{:else if showSnaps}<SnapsView />{:else}<SettingsEditor group={systemSettings.group} bind:query />{/if}

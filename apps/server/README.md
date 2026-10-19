@@ -113,7 +113,7 @@ limited per client IP. Buckets are per replica.
 ## Tenancy and Row-Level Security
 
 Every org-scoped table (`orgs`, `members`, `projects`, `tasks`, `agent_runs`,
-`audit_log`, `api_tokens`, `org_events`, `team_snaps`, `team_artifacts`) has RLS **enabled and forced**. The
+`audit_log`, `api_tokens`, `org_events`, `team_snaps`, `team_artifacts`, `team_skills`) has RLS **enabled and forced**. The
 policies compare `org_id` with `app_current_org()`, which is
 `NULLIF(current_setting('app.org_id', true), '')::uuid`. Each request runs in a
 transaction that first calls `SELECT set_config('app.org_id', $1, true)` with
@@ -152,6 +152,9 @@ Every `/v1` request needs `Authorization: Bearer kgu_…` (or, in dev mode,
 | GET    | `/v1/artifacts/{artifact_id}` | One shared artifact with its `html` (any member) |
 | PUT    | `/v1/artifacts/{artifact_id}` | **Not viewers.** Share or replace a page, see below |
 | DELETE | `/v1/artifacts/{artifact_id}` | **Its sharer or owner/lead.** Stop sharing it |
+| GET    | `/v1/skills`               | Team skills (any member), see below |
+| PUT    | `/v1/skills/{skill_name}`  | **Not viewers.** Share a skill pinned to a commit, see below |
+| DELETE | `/v1/skills/{skill_name}`  | **Its sharer, or owner/lead.** Stop sharing it |
 | GET    | `/v1/events`               | Server-Sent Events, see below |
 | POST   | `/v1/dev/tokens`           | **Dev only.** `{org_id \| org_name, user_id, role?="owner", name?, ttl_hours?}` |
 
@@ -257,6 +260,31 @@ PUT /v1/artifacts/0123456789abcdef
 - Responses never echo `html` except `GET /v1/artifacts/{artifact_id}`.
 - Changes emit `artifact.shared` / `artifact.removed` on `/v1/events` (metadata
   only) and are audited (`artifact.share`, `artifact.remove`).
+
+### Team skills (`/v1/skills`)
+
+Agent skills (a folder with `SKILL.md`) that members shared with their org,
+pinned to a git commit and the skill's content hash (the desktop's
+`skill_hub::package::content_hash`: SHA-256 over every file's path, size and
+bytes). Only metadata is stored; each desktop fetches `git_url` at
+`commit_sha`, takes the folder `path` and refuses a skill whose hash differs.
+
+```json
+PUT /v1/skills/pdf
+{"description": "Fill PDF forms when the user asks",
+ "git_url": "https://github.com/acme/skills.git", "git_ref": "main",
+ "path": "skills/pdf", "commit_sha": "<40 lowercase hex>",
+ "content_sha256": "<64 lowercase hex>", "note": "optional, one line"}
+```
+
+- `skill_name` (path) matches `^[a-z0-9]+(-[a-z0-9]+)*$`, at most 64
+  characters; `git_url` follows the Snap catalog's rules; `path` is `""` or
+  plain folder names joined by `/`.
+- 201 when created, 200 when replaced (`shared_by`/`shared_at` are set by the
+  server). Replacing or deleting a skill someone else shared needs an
+  owner or lead; viewers get 403 `forbidden`.
+- Changes are audited (`skill.share`, `skill.unshare`). No events: desktops
+  read the list when the Skills view opens.
 
 ### `GET /v1/events` (SSE)
 
