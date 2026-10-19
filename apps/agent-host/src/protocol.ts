@@ -6,6 +6,8 @@
 // Host → Rust notifications: `ready` once at startup, `event` {runId, event} for every run event.
 // Field names in events are snake_case, mirroring `AgentEvent` in src-tauri/src/agent/events.rs.
 
+import type { ArkaiSpec } from './arkai/spec.ts';
+
 /** `bypassPermissions` is "Allow all": no prompts at all (the app confirms it with the user first). */
 export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions';
 export const PERMISSION_MODES: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan', 'bypassPermissions'];
@@ -60,9 +62,10 @@ export type StartParams = {
 /**
  * A runtime other than the Claude Agent SDK, resolved by Rust (agent/runtimes.rs) to a program it
  * found on the login-shell PATH: an ACP agent (Agent Client Protocol, JSON-RPC over stdio) or
- * `codex app-server`. `command` is absolute.
+ * `codex app-server`. `command` is absolute. Or Arkai (agent/arkai.rs), run in this process on
+ * the user's own provider (arkai/spec.ts).
  */
-export type RuntimeSpec = { kind: 'claude' } | { kind: 'acp' | 'codex'; command: string; args?: string[] };
+export type RuntimeSpec = { kind: 'claude' } | { kind: 'acp' | 'codex'; command: string; args?: string[] } | ArkaiSpec;
 /** An MCP server: a program over stdio (`type` absent or `stdio`), or a remote one over `http` / `sse`. */
 export type McpServerParams = {
 	type?: 'stdio' | 'http' | 'sse';
@@ -76,8 +79,11 @@ export const MCP_TYPES = ['stdio', 'http', 'sse'] as const;
 
 export type SendParams = { runId: number; text: string; images?: string[] };
 export type RunParams = { runId: number };
-/** Mid-session change of the live run's model and/or permission mode (at least one). */
-export type SetOptionsParams = { runId: number; model?: string | null; permissionMode?: PermissionMode | null };
+/**
+ * Mid-session change of the live run's model and/or permission mode (at least one). `provider`:
+ * an Arkai model of another provider comes with that provider (arkai/spec.ts).
+ */
+export type SetOptionsParams = { runId: number; model?: string | null; permissionMode?: PermissionMode | null; provider?: unknown };
 /**
  * `allow` once; `allow_always` for the rest of this session; `allow_workspace` from now on in this
  * folder (the SDK writes the rule to `.claude/settings.local.json`, which is not committed);
