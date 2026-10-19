@@ -11,6 +11,7 @@ import { chat } from './th/chat';
 import { chatView } from './th/chatView';
 import { chatEdits } from './th/chatEdits';
 import { chatRewind } from './th/chatRewind';
+import { chatRuntime } from './th/chatRuntime';
 import { chatInput } from './th/chatInput';
 import { chatContext } from './th/chatContext';
 import { chatParts } from './th/chatParts';
@@ -22,4 +23,4 @@ import { adeWorkflow } from './th/adeWorkflow';
 import { mcp } from './th/mcp';
 import { vault } from './th/vault';
 
-export const th = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault } satisfies Record<keyof typeof en, string>;
+export const th = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatRuntime, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault } satisfies Record<keyof typeof en, string>;

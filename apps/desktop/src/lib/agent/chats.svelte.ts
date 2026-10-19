@@ -6,7 +6,8 @@
  *   chats.list / chats.sorted          ChatMeta[] of the open folder (chats.json), newest first
  *   chats.run(id)                      ChatRun | undefined: the chat's timeline (live, or replayed)
  *   chats.open(id)                     loads the saved transcript once (after a restart)
- *   chats.create({ prompt, cwd, model, permissionMode, message })  new chat + first run
+ *   chats.create({ prompt, cwd, model, permissionMode, message, runtime })  new chat + first run
+ *                                      (`runtime`: which agent runs it, runtimes.ts)
  *   chats.send(id, message)            into the live run, else a new run resuming its session
  *   chats.submit(id, message, label, how)  while a turn runs: queue it (sent when the turn ends),
  *                                      steer (into the running session now) or stop and send
@@ -38,6 +39,7 @@ import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
 import { applyEvent, initialRun, type AgentEvent, type Decision, type RunState } from './events';
 import { buildTurns, lastRequest } from './chatParts.ts';
+import { CLAUDE_RUNTIME, runtimeOf } from './runtimes.ts';
 import { withoutImagesLine } from './chatPrompt.ts';
 import { shouldDrain, turnBusy, type RunPermissionMode } from './chatInput.ts';
 import type { SendHow } from './requestQueuing.ts';
@@ -200,12 +202,12 @@ class Chats {
 		}
 	}
 
-	async create(input: { prompt: string; cwd: ChatCwd; model: string | null; permissionMode: RunPermissionMode; message: OutgoingMessage }): Promise<string | undefined> {
+	async create(input: { prompt: string; cwd: ChatCwd; model: string | null; permissionMode: RunPermissionMode; message: OutgoingMessage; runtime?: string }): Promise<string | undefined> {
 		const root = workspace.root;
 		if (!root || !input.prompt.trim()) return;
 		if (root !== this.root) await this.load();
 		const allowAll = input.permissionMode === 'bypassPermissions';
-		const meta = newChat({ prompt: input.prompt, cwd: input.cwd, model: input.model, permissionMode: allowAll ? 'default' : (input.permissionMode as PermissionMode) }, Date.now());
+		const meta = newChat({ prompt: input.prompt, cwd: input.cwd, model: input.model, permissionMode: allowAll ? 'default' : (input.permissionMode as PermissionMode), runtime: input.runtime }, Date.now());
 		if (allowAll) this.allowAll[runKey(root, meta.id)] = true;
 		this.#save([...this.list, meta], root);
 		await this.#saving;
@@ -277,7 +279,8 @@ class Chats {
 				cwd,
 				chatId: meta.id,
 				prompt,
-				model: meta.model,
+				// Another agent picks its own model (no model picker for it: runtimes.ts).
+				model: runtimeOf(meta) === CLAUDE_RUNTIME ? meta.model : null,
 				permissionMode: this.allowAll[key] ? 'bypassPermissions' : meta.permission_mode,
 				resume,
 				resumeAt,
@@ -288,6 +291,7 @@ class Chats {
 				safetyChecks: settings.get<boolean>('kingu.agent.safetyChecks') !== false,
 				// The rules files (rules.rs) for these attached files; null leaves them out.
 				rules: settings.get<boolean>('kingu.chat.rules.enabled') !== false ? files : null,
+				runtime: runtimeOf(meta),
 				onEvent
 			});
 			clientLog('info', `agent run ${state.runId} started for chat ${meta.id}`);

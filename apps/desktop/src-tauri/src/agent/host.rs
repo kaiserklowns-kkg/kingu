@@ -167,6 +167,9 @@ pub struct StartRequest {
   /// Project rules (`rules::system_append`) after Claude Code's system prompt; omitted when none.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub system_prompt_append: Option<String>,
+  /// The agent behind the run when it is not the Claude SDK (`runtimes::resolve`); omitted for Claude.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub runtime: Option<super::runtimes::Spec>,
   /// What else this run owns while it is live besides its session (e.g. `chat:<root>:<id>`);
   /// not sent to the sidecar.
   #[serde(skip)]
@@ -912,6 +915,14 @@ exit 3"#
     let req = StartRequest { cwd: "/w".into(), prompt: "x".into(), resume: Some("s".into()), resume_at: Some("0b5e9a1c-4c1d-4e2f-9a3b-000000000001".into()), ..Default::default() };
     assert_eq!(serde_json::to_value(req).unwrap()["resumeAt"], "0b5e9a1c-4c1d-4e2f-9a3b-000000000001");
     assert!(serde_json::to_value(StartRequest::default()).unwrap().get("resumeAt").is_none());
+  }
+
+  #[test]
+  fn runtime_is_sent_only_for_another_agent() {
+    assert!(serde_json::to_value(StartRequest::default()).unwrap().get("runtime").is_none(), "the Claude SDK: no runtime");
+    let spec = super::super::runtimes::Spec { kind: "acp", command: "/opt/bin/gemini".into(), args: vec!["--experimental-acp".into()] };
+    let wire = serde_json::to_value(StartRequest { runtime: Some(spec), ..Default::default() }).unwrap();
+    assert_eq!(wire["runtime"], json!({"kind": "acp", "command": "/opt/bin/gemini", "args": ["--experimental-acp"]}));
   }
 
   #[test]

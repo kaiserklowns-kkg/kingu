@@ -22,6 +22,7 @@ pub mod pr;
 pub mod review;
 pub mod rules;
 pub mod rewind;
+pub mod runtimes;
 pub mod scripts;
 pub mod slash_commands;
 pub mod status_hooks;
@@ -90,6 +91,7 @@ pub async fn agent_start(
   images: Option<Vec<String>>,
   safety_checks: Option<bool>,
   rules: Option<Vec<String>>,
+  runtime: Option<String>,
   on_event: Channel<AgentEvent>,
 ) -> Result<u32, String> {
   if let Some(id) = chat_id.as_deref() {
@@ -113,6 +115,23 @@ pub async fn agent_start(
   if resume_at.as_deref().is_some_and(|u| !rewind::valid_uuid(u) || resume.is_none()) {
     return Err("invalid message to resume at".into());
   }
+  // The chat's agent (`runtimes`): the Claude SDK, or a program found on the login-shell PATH.
+  let runtime = runtime.unwrap_or_else(runtimes::default_id);
+  if !runtimes::valid_id(&runtime) {
+    return Err(crate::tr!(crate::i18n::msg::RuntimeMsg::Unknown, id = runtime));
+  }
+  if resume_at.is_some() && !runtimes::can_rewind(&runtime) {
+    return Err(crate::tr!(crate::i18n::msg::RuntimeMsg::NoRewind));
+  }
+  let runtime_spec = match runtime.as_str() {
+    runtimes::CLAUDE => None,
+    id => {
+      let (id, config) = (id.to_owned(), crate::snap::config_dir(&app)?);
+      tauri::async_runtime::spawn_blocking(move || runtimes::resolve(&id, crate::shell_env::path().as_deref(), &runtimes::configured(&config)))
+        .await
+        .map_err(|e| e.to_string())??
+    }
+  };
   if let Some(servers) = &mcp_servers {
     host::validate_mcp_servers(servers)?;
   }
@@ -152,9 +171,18 @@ pub async fn agent_start(
     .await
     .map_err(|e| e.to_string())?
   };
+  // The active account of the runtime's provider; an ACP agent signs in on its own.
   let account = {
     use tauri::Manager;
-    app.state::<crate::accounts::Accounts>().agent_env(crate::accounts::store::Provider::Claude)?
+    let provider = match runtime_spec.as_ref().map(|s| s.kind) {
+      None => Some(crate::accounts::store::Provider::Claude),
+      Some("codex") => Some(crate::accounts::store::Provider::Codex),
+      Some(_) => None,
+    };
+    match provider {
+      Some(p) => app.state::<crate::accounts::Accounts>().agent_env(p)?,
+      None => crate::accounts::store::AgentEnv::default(),
+    }
   };
   let edits = chat_id.as_ref().map(|id| {
     use tauri::Manager;
@@ -177,6 +205,7 @@ pub async fn agent_start(
     snapshots: edits.is_some(),
     safety_checks: safety_checks.filter(|on| !on),
     system_prompt_append,
+    runtime: runtime_spec,
     owner,
   };
   let resuming = req.resume.is_some();
@@ -217,7 +246,7 @@ pub async fn agent_start(
   })
   .await
   .map_err(|e| e.to_string())??;
-  log::info!("agent run {id} started for {what}{}", if resuming { " (resumed)" } else { "" });
+  log::info!("agent run {id} started for {what}{}{}", if resuming { " (resumed)" } else { "" }, if runtime == runtimes::CLAUDE { String::new() } else { format!(" on {runtime}") });
   // A new run makes the chat's last rewind final.
   if let Some(chat) = chat_id.as_deref()
     && let Err(e) = rewind::clear_redo(&open_root, chat)
@@ -470,6 +499,7 @@ pub async fn chat_rewind(
   if agents.owner_live(&chat_owner(&root, &id)) {
     return Err(crate::tr!(crate::i18n::msg::AgentMsg::ChatBusy));
   }
+  check_rewindable(&root, &id)?;
   let edits = edits.inner().clone();
   let r = blocking(move || edits.with(&root, &id, true, |_| rewind::rewind(&root, &id, request, stack, edits_store(&root, &id)?.as_ref()))).await?;
   log::info!("chat rewound to request {request} ({} file(s))", r.report.restored.len() + r.report.deleted.len());
@@ -495,8 +525,18 @@ pub async fn chat_fork(ws: State<'_, Workspace>, edits: State<'_, Arc<chat_edits
   chats::check_id(&id)?;
   chats::check_id(&new_id)?;
   let root = ws.root()?;
+  check_rewindable(&root, &id)?;
   let edits = edits.inner().clone();
   blocking(move || edits.with(&root, &id, false, |_| rewind::fork(&root, &id, &new_id, before, edits_store(&root, &id)?.as_ref()))).await
+}
+
+/// Refuses a rewind or fork of a chat whose agent cannot resume at a message (`runtimes`).
+fn check_rewindable(root: &std::path::Path, id: &str) -> Result<(), String> {
+  let runtime = chats::load(root)?.into_iter().find(|c| c.id == id).map(|c| c.runtime);
+  if runtime.is_some_and(|r| !runtimes::can_rewind(&r)) {
+    return Err(crate::tr!(crate::i18n::msg::RuntimeMsg::NoRewind));
+  }
+  Ok(())
 }
 
 async fn on_host<T: Send + 'static>(

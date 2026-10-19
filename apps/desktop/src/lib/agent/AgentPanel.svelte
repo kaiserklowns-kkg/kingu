@@ -48,6 +48,8 @@
 	import { AGENT_APPROVALS, modeOf, permissionFor, turnBusy, type AgentApproval, type ChatMode } from './chatInput.ts';
 	import { buildTurns, promptHistory, type Turn } from './chatParts.ts';
 	import { chatSignals, registerChatCommands } from './chatCommands.svelte.ts';
+	import { agentRuntimes } from './runtimes.svelte.ts';
+	import { runtimeChoices, runtimeOf } from './runtimes.ts';
 
 	let selectedId = $state<string | null>(null);
 	let composingNew = $state(false);
@@ -69,6 +71,8 @@
 	let newWhere = $state('');
 	let newModel = $state(chats.defaults().model ?? '');
 	let newMode = $state<ChatMode>(modeOf(chats.defaults().permissionMode));
+	/** The new chat's agent (runtimes.ts); kept for the next new chat. */
+	let newRuntime = $state(runtimeOf(null));
 	/** Agent mode's approval, kept while Ask is picked. */
 	let approval = $state<AgentApproval>(chats.defaults().permissionMode === 'acceptEdits' ? 'acceptEdits' : 'default');
 	/** Where the last model / mode change took effect, shown under the input. */
@@ -80,6 +84,9 @@
 	let root: HTMLDivElement;
 
 	const chatMeta = $derived(selectedId ? chats.get(selectedId) : undefined);
+	/** The chat's agent and what it can do: rewind and the model picker are the Claude SDK's. */
+	const runtimeId = $derived(chatMeta ? runtimeOf(chatMeta) : newRuntime);
+	const features = $derived(agentRuntimes.features(runtimeId));
 	const chatRun = $derived(selectedId ? chats.run(selectedId) : undefined);
 	const turns = $derived(chatRun ? buildTurns(chatRun) : []);
 	const history = $derived(promptHistory(turns));
@@ -113,7 +120,7 @@
 			{
 				clear: () => newChat(),
 				model: () => queueMicrotask(() => modelPicker?.focus()),
-				fork: chatMeta ? () => fork(null) : undefined
+				fork: chatMeta && features.rewind ? () => fork(null) : undefined
 			},
 			(name) => (name === 'clear' ? t('chatInput.slash.clear') : name === 'model' ? t('chatInput.slash.model') : t('chatInput.slash.fork'))
 		)
@@ -137,6 +144,7 @@
 
 	onMount(() => {
 		chatSignals.el = root;
+		void agentRuntimes.load();
 		const off = registerChatCommands();
 		return () => {
 			off();
@@ -272,7 +280,7 @@
 			if (!chatMeta) {
 				const where: ChatCwd = newWhere ? { kind: 'task', slug: newWhere } : { kind: 'folder' };
 				const message = await outgoing(text, attachments, where.kind === 'folder');
-				const id = await chats.create({ prompt: text, cwd: where, model: newModel.trim() || chats.defaults().model, permissionMode: permissionFor(newMode, approval), message });
+				const id = await chats.create({ prompt: text, cwd: where, model: newModel.trim() || chats.defaults().model, permissionMode: permissionFor(newMode, approval), message, runtime: newRuntime });
 				if (id) {
 					select(id);
 					resetInput();
@@ -606,12 +614,17 @@
 				chatId={chatMeta.id}
 				root={workspace.root}
 				onanswer={(p, decision, message, answers) => chatMeta && chats.answer(chatMeta.id, p.request_id, decision, message, answers)}
-				actions={{ retry: () => chatMeta && void chatRewind.retry(chatMeta.id), edit: editRequest, editInline, implement: mode === 'ask' ? implement : undefined }}
+				actions={{
+					retry: features.rewind ? () => chatMeta && void chatRewind.retry(chatMeta.id) : undefined,
+					edit: editRequest,
+					editInline: features.rewind ? editInline : undefined,
+					implement: mode === 'ask' ? implement : undefined
+				}}
 				reverted={(r) => !!chatMeta && chatEdits.isReverted(chatMeta.id, r)}
 				class="h-full p-3"
 			>
 				{#snippet checkpoint(request, req, first)}
-					{#if chatMeta}
+					{#if chatMeta && features.rewind}
 						<RestoreCheckpoint chatId={chatMeta.id} {request} {first} onrestored={() => restoreToInput(req)} />
 						<button class={ICON_BTN} aria-label={t('chatRewind.fork')} title={t('chatRewind.forkHint')} onclick={() => fork(request)}><Icon name="branch" size={13} /></button>
 					{/if}
@@ -703,6 +716,14 @@
 					{#if chatRun?.context}<ContextRing usage={chatRun.context} cost={chatRun.result?.total_cost_usd ?? null} oncompact={chatMeta ? compact : undefined} />{/if}
 				{/snippet}
 				{#snippet chips()}
+					{#if !chatMeta && agentRuntimes.list.length > 1}
+						<select class={CHIP_SELECT} aria-label={t('chatRuntime.label')} title={t('chatRuntime.hint')} bind:value={newRuntime}>
+							{#each runtimeChoices(agentRuntimes.list, newRuntime) as r (r.id)}<option value={r.id}>{r.missing ? t('chatRuntime.missing', { name: r.name }) : r.name}</option>{/each}
+						</select>
+					{:else if chatMeta && runtimeId !== runtimeOf(null)}
+						{@const name = runtimeChoices(agentRuntimes.list, runtimeId).find((r) => r.id === runtimeId)?.name ?? runtimeId}
+						<span class="flex items-center gap-1 px-1 text-xs text-(--vscode-descriptionForeground)" title={t('chatRuntime.current', { name })}><Icon name="agent" size={12} />{name}</span>
+					{/if}
 					{#if !chatMeta}
 						<select class={CHIP_SELECT} aria-label={t('chat.panel.cwdLabel')} title={t('chat.panel.cwdLabel')} bind:value={newWhere}>
 							<option value="">{workspace.name || t('chat.panel.cwdFolder')}</option>
@@ -724,7 +745,7 @@
 							{#each AGENT_APPROVALS as m (m)}<option value={m}>{APPROVAL_LABEL[m]()}</option>{/each}
 						</select>
 					{/if}
-					<select
+					{#if features.models}<select
 						bind:this={modelPicker}
 						class={CHIP_SELECT}
 						aria-label={t('chat.panel.model')}
@@ -733,7 +754,7 @@
 						onchange={(e) => changeModel(e.currentTarget.value)}
 					>
 						{#each modelChoices(chatMeta ? chatMeta.model : newModel, chats.defaults().model, modelCatalog.list) as m (m.value)}<option value={m.value} title={m.description || m.value}>{m.label}</option>{/each}
-					</select>
+					</select>{/if}
 				{/snippet}
 			</Composer>
 			{#if optionNote}<p class="px-1 pt-1 text-xs text-(--vscode-descriptionForeground)" role="status">{optionNote}</p>{/if}

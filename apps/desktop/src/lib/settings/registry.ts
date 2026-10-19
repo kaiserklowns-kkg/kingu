@@ -282,6 +282,16 @@ const CORE_SETTINGS: SettingSchema[] = [
 			'บล็อกคำสั่ง shell ที่อันตรายร้ายแรง (เช่น rm -rf /, curl … | sh) และการเรียกเครื่องมือเดิมซ้ำเป็นครั้งที่สามติดกัน ในทุกโหมดการอนุญาต (Block catastrophic shell commands such as rm -rf / or curl … | sh, and the third identical tool call in a row, in every permission mode.)'
 	},
 	{
+		id: 'kingu.agent.acpAgents',
+		group: 'Agent Chat',
+		type: 'object',
+		values: 'string',
+		default: {},
+		description:
+			'เอเจนต์ ACP (Agent Client Protocol) เพิ่มเติมสำหรับแชต: ชื่อ (ตัวพิมพ์เล็ก ตัวเลข -) → คำสั่งที่เริ่มเอเจนต์ผ่าน stdio เช่น `{"my-agent": "my-agent --acp"}` แสดงในตัวเลือกเอเจนต์เมื่อพบโปรแกรมใน PATH (Extra ACP agents for the chat: id → the command that starts the agent over stdio. Listed in the agent picker when the program is found on PATH.)',
+		scope: 'application'
+	},
+	{
 		id: 'kingu.chat.rules.enabled',
 		group: 'Agent Chat',
 		type: 'boolean',

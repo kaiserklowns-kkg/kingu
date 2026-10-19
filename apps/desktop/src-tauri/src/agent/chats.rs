@@ -85,6 +85,9 @@ pub struct ChatMeta {
   pub model: Option<String>,
   #[serde(default)]
   pub permission_mode: Option<String>,
+  /// Which agent runs the chat (`runtimes`): `claude`, the Claude Agent SDK, unless set.
+  #[serde(default = "super::runtimes::default_id")]
+  pub runtime: String,
   /// Unix milliseconds.
   pub created_at: u64,
   #[serde(default)]
@@ -161,6 +164,9 @@ pub fn validate(chats: &[ChatMeta]) -> Result<(), String> {
     }
     if c.permission_mode.as_deref().is_some_and(|m| !PERMISSION_MODES.contains(&m)) {
       return Err(format!("{}: unsupported permission mode", c.id));
+    }
+    if !super::runtimes::valid_id(&c.runtime) {
+      return Err(format!("{}: invalid runtime", c.id));
     }
     if let Some(r) = &c.last_run {
       validate_run_summary(&c.id, r)?;
@@ -415,6 +421,7 @@ mod tests {
       resume_at: None,
       model: Some("claude-opus-5-5[1m]".into()),
       permission_mode: Some("acceptEdits".into()),
+      runtime: "claude".into(),
       created_at: 1,
       updated_at: 2,
       last_run: Some(RunSummary {
@@ -452,6 +459,7 @@ mod tests {
     std::fs::write(tmp.path().join(".kingu/chats.json"), r#"{"version":1,"chats":[{"id":"a","title":"A","cwd":{"kind":"folder"},"created_at":5}]}"#).unwrap();
     let c = &load(tmp.path()).unwrap()[0];
     assert_eq!((c.prompt.as_str(), c.session_id.as_deref(), c.model.as_deref(), c.updated_at, c.title_auto), ("", None, None, 0, false));
+    assert_eq!(c.runtime, "claude", "chats from before runtimes run on the Claude SDK");
     std::fs::write(tmp.path().join(".kingu/chats.json"), r#"{"version":9,"chats":[]}"#).unwrap();
     assert!(load(tmp.path()).unwrap_err().contains("newer Kingu"));
   }
@@ -479,6 +487,9 @@ mod tests {
     assert!(bad(|c| c.model = Some("opus --dangerously".into())));
     assert!(bad(|c| c.model = Some(" ".into())));
     assert!(bad(|c| c.permission_mode = Some("bypassPermissions".into())));
+    assert!(bad(|c| c.runtime = "Gemini CLI".into()));
+    assert!(bad(|c| c.runtime = String::new()));
+    assert!(validate(&[ChatMeta { runtime: "gemini".into(), ..chat("a") }]).is_ok());
     assert!(bad(|c| c.last_run.as_mut().unwrap().status = "weird".into()));
     assert!(bad(|c| c.last_run.as_mut().unwrap().cost_usd = Some(-1.0)));
     assert!(save(tmp.path(), &[chat("a"), chat("a")]).is_err());

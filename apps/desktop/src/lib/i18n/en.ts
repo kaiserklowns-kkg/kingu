@@ -11,6 +11,7 @@ import { chat } from './en/chat';
 import { chatView } from './en/chatView';
 import { chatEdits } from './en/chatEdits';
 import { chatRewind } from './en/chatRewind';
+import { chatRuntime } from './en/chatRuntime';
 import { chatInput } from './en/chatInput';
 import { chatContext } from './en/chatContext';
 import { chatParts } from './en/chatParts';
@@ -22,6 +23,6 @@ import { adeWorkflow } from './en/adeWorkflow';
 import { mcp } from './en/mcp';
 import { vault } from './en/vault';
 
-export const en = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault } as const;
+export const en = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatRuntime, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault } as const;
 
 export type MessageKey = keyof typeof en;
