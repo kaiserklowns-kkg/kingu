@@ -1,25 +1,12 @@
 //! Command-line parsing (no dependencies): `kingu [--json] <command> …`. Pure, so every form is
-//! tested; reading stdin for `--prompt -` and resolving relative paths happen in `main`.
+//! tested; errors come in the current language (`i18n`); reading stdin for `--prompt -` and resolving relative paths happen in `main`.
 
-pub const USAGE: &str = "kingu: control the running Kingu app from a terminal or an agent
+use crate::i18n::{Msg, tr};
 
-Usage:
-  kingu status                       Kingu's version, open folder and task count
-  kingu task list                    tasks of the open folder (slug, status, title)
-  kingu task create <title> [--prompt <text>|-] [--base <branch>] [--mode terminal|timeline] [--background]
-                                     start a task in a new worktree; prints its slug
-  kingu task open <slug>             show a task in Kingu
-  kingu open <path>[:line[:column]]  open a file (in the open folder) or a folder in Kingu
-  kingu notify <message…> [--title <title>]
-                                     post a desktop notification
-
-Options:
-  --json         print the app's answer as JSON
-  -h, --help     this help
-  -V, --version  the command's version
-
-The app must be running. Inside Kingu's terminals `kingu` is on PATH; elsewhere run
-\"Shell Command: Install 'kingu' command in PATH\" from Kingu's command palette.";
+/// The help text in the current language (`i18n`).
+pub fn usage() -> &'static str {
+  crate::i18n::usage()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -76,7 +63,7 @@ pub fn split_position(arg: &str) -> (String, Option<u32>, Option<u32>) {
 
 fn value(args: &[String], i: &mut usize, flag: &str) -> Result<String, String> {
   *i += 1;
-  args.get(*i).cloned().ok_or_else(|| format!("{flag} needs a value"))
+  args.get(*i).cloned().ok_or_else(|| tr(Msg::NeedsValue, &[("flag", &flag)]))
 }
 
 /// Parses everything after the program name.
@@ -120,14 +107,14 @@ fn command(args: &[String]) -> Result<Command, String> {
     "task" | "tasks" => task(&args[1..]),
     "open" => open(&args[1..]),
     "notify" => notify(&args[1..]),
-    other => Err(format!("unknown command `{other}` (try `kingu --help`)")),
+    other => Err(tr(Msg::UnknownCommand, &[("command", &other)])),
   }
 }
 
 fn no_more(args: &[String], c: Command) -> Result<Command, String> {
   match args.first() {
     None => Ok(c),
-    Some(a) => Err(format!("unexpected argument `{a}`")),
+    Some(a) => Err(tr(Msg::UnexpectedArgument, &[("arg", a)])),
   }
 }
 
@@ -154,7 +141,7 @@ fn split<'a>(args: &'a [String], with_value: &[&str], switches: &[&str]) -> Resu
     } else if switches.contains(&a) {
       flags.push((a.to_owned(), String::new()));
     } else if a.starts_with("--") || (a.starts_with('-') && a.len() > 1) {
-      return Err(format!("unknown option `{a}`"));
+      return Err(tr(Msg::UnknownOption, &[("option", &a)]));
     } else {
       pos.push(a);
     }
@@ -168,7 +155,7 @@ fn flag(flags: &[(String, String)], names: &[&str]) -> Option<String> {
 }
 
 fn task(args: &[String]) -> Result<Command, String> {
-  let Some(sub) = args.first() else { return Err("`kingu task` needs list, create or open".into()) };
+  let Some(sub) = args.first() else { return Err(tr(Msg::TaskNeedsSubcommand, &[])) };
   let rest = &args[1..];
   match sub.as_str() {
     "list" | "ls" => no_more(rest, Command::TaskList),
@@ -176,11 +163,11 @@ fn task(args: &[String]) -> Result<Command, String> {
       let (pos, flags) = split(rest, &["--prompt", "-p", "--base", "-b", "--mode", "-m"], &["--background"])?;
       let title = pos.join(" ").trim().to_owned();
       if title.is_empty() {
-        return Err("`kingu task create` needs a title".into());
+        return Err(tr(Msg::TaskCreateNeedsTitle, &[]));
       }
       let mode = flag(&flags, &["--mode", "-m"]);
       if let Some(m) = mode.as_deref().filter(|m| !matches!(*m, "terminal" | "timeline")) {
-        return Err(format!("--mode must be terminal or timeline, not `{m}`"));
+        return Err(tr(Msg::BadMode, &[("mode", &m)]));
       }
       Ok(Command::TaskCreate {
         title,
@@ -194,11 +181,11 @@ fn task(args: &[String]) -> Result<Command, String> {
       let (pos, _) = split(rest, &[], &[])?;
       match pos.as_slice() {
         [slug] => Ok(Command::TaskOpen { slug: slug.to_string() }),
-        [] => Err("`kingu task open` needs a task slug (see `kingu task list`)".into()),
-        _ => Err("`kingu task open` takes one slug".into()),
+        [] => Err(tr(Msg::TaskOpenNeedsSlug, &[])),
+        _ => Err(tr(Msg::TaskOpenOneSlug, &[])),
       }
     }
-    other => Err(format!("unknown task command `{other}` (list, create, open)")),
+    other => Err(tr(Msg::UnknownTaskCommand, &[("command", &other)])),
   }
 }
 
@@ -209,8 +196,8 @@ fn open(args: &[String]) -> Result<Command, String> {
       let (path, line, column) = split_position(p);
       Ok(Command::Open { path, line, column })
     }
-    [] => Err("`kingu open` needs a path".into()),
-    _ => Err("`kingu open` takes one path".into()),
+    [] => Err(tr(Msg::OpenNeedsPath, &[])),
+    _ => Err(tr(Msg::OpenOnePath, &[])),
   }
 }
 
@@ -218,7 +205,7 @@ fn notify(args: &[String]) -> Result<Command, String> {
   let (pos, flags) = split(args, &["--title", "-t"], &[])?;
   let message = pos.join(" ").trim().to_owned();
   if message.is_empty() {
-    return Err("`kingu notify` needs a message".into());
+    return Err(tr(Msg::NotifyNeedsMessage, &[]));
   }
   Ok(Command::Notify { message, title: flag(&flags, &["--title", "-t"]).filter(|t| !t.trim().is_empty()) })
 }

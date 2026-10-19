@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::{Msg, tr};
+
 /// Tauri's app identifier: the data folder's name.
 pub const APP_IDENTIFIER: &str = "ai.anthov.kingu.studio";
 /// The folder inside the app data folder holding the socket and the runtime file.
@@ -57,10 +59,10 @@ pub fn read(path: &Path) -> Result<Runtime, String> {
   let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
   let rt: Runtime = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
   if rt.version != VERSION {
-    return Err(format!("{}: runtime file version {} (this kingu understands {VERSION}); update the kingu command", path.display(), rt.version));
+    return Err(tr(Msg::RuntimeVersion, &[("path", &path.display()), ("found", &rt.version), ("supported", &VERSION)]));
   }
   if !crate::protocol::valid_token(&rt.token) || rt.socket.is_empty() {
-    return Err(format!("{}: incomplete runtime file", path.display()));
+    return Err(tr(Msg::RuntimeIncomplete, &[("path", &path.display())]));
   }
   Ok(rt)
 }
@@ -70,14 +72,14 @@ pub fn check_private(path: &Path) -> Result<(), String> {
   use std::os::unix::fs::MetadataExt;
   let meta = std::fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
   if !meta.file_type().is_file() {
-    return Err(format!("{} is not a regular file", path.display()));
+    return Err(tr(Msg::NotRegularFile, &[("path", &path.display())]));
   }
   let uid = unsafe { libc::getuid() };
   if meta.uid() != uid {
-    return Err(format!("{} belongs to uid {}, not this user; refusing it", path.display(), meta.uid()));
+    return Err(tr(Msg::OtherOwner, &[("path", &path.display()), ("uid", &meta.uid())]));
   }
   if meta.mode() & 0o077 != 0 {
-    return Err(format!("{} is readable or writable by other users (mode {:o}); refusing it", path.display(), meta.mode() & 0o777));
+    return Err(tr(Msg::OtherUsers, &[("path", &path.display()), ("mode", &format!("{:o}", meta.mode() & 0o777))]));
   }
   Ok(())
 }
