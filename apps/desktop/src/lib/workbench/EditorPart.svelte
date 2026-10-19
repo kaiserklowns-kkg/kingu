@@ -12,7 +12,7 @@
 	import { disposeAll, disposeClosed, pruneViewStates, reloadClean, saveFile } from './editorModels';
 	import { EDITOR_ACTIONS } from './menus';
 	import { quick } from './quick.svelte';
-	import { isDiffKey } from './scm';
+	import { fileOf, isDiffKey, isMergeKey } from './scm';
 	import { workspace } from './workspace.svelte';
 	import { textFiles } from './textFileService.svelte';
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
@@ -94,7 +94,9 @@
 
 	// Dispose models of files no group has open (files open in the Agents layout share them too).
 	$effect(() => {
-		const open = new Set([...editors.openPaths(), ...adeLayout.openFiles()]);
+		const paths = editors.openPaths();
+		// A merge editor (`merge://`) edits its file's own model.
+		const open = new Set([...paths, ...[...paths].filter(isMergeKey).map(fileOf), ...adeLayout.openFiles()]);
 		disposeClosed(open, editors.order());
 		const byGroup = new Map(editors.groups.map((g) => [g.id, new Set(g.tabs.map((t) => t.path))]));
 		void settings.get('workbench.editor.restoreViewState');

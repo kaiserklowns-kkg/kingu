@@ -8,6 +8,7 @@
 	import MarkdownPreview from './MarkdownPreview.svelte';
 	import { hasPreview, isChangesKey, isCsvPath, isImagePath, isPreviewKey, previewTarget } from './viewers';
 	import CombinedDiff from './CombinedDiff.svelte';
+	import MergeEditor from '#lib/scm/MergeEditor.svelte';
 	import VaultTranscript from '#lib/vault/VaultTranscript.svelte';
 	import { isVaultKey } from '#lib/vault/vault.ts';
 	import { isArtifactKey } from '#lib/artifacts/artifacts.ts';
@@ -26,7 +27,7 @@
 	import { editorLabel } from './editorLabel';
 	import { fileIcon } from './fileIcons';
 	import { keyLabel } from './keys';
-	import { entryChanges, fileDecorations, fileOf, isDiffKey } from './scm';
+	import { entryChanges, fileDecorations, fileOf, isDiffKey, isMergeKey } from './scm';
 	import { scm } from './scm.svelte';
 	import { tabDescription, type LabelFormat } from './tabLabels';
 	import { emptyUntitled } from './editorModels';
@@ -78,7 +79,7 @@
 	const crumbsAreFiles = $derived(!!activePath && activePath !== USER_SETTINGS_KEY && !isChangesKey(activePath) && crumbs.length > 0);
 	const diffActive = $derived(activePath !== null && isDiffKey(activePath));
 	/** Images and Markdown previews have their own viewers instead of Monaco. */
-	const viewerActive = $derived(activePath !== null && (isImagePath(activePath) || isPreviewKey(activePath) || isNotebookPath(activePath) || isChangesKey(activePath) || isVaultKey(activePath) || isArtifactKey(activePath)));
+	const viewerActive = $derived(activePath !== null && (isMergeKey(activePath) || isImagePath(activePath) || isPreviewKey(activePath) || isNotebookPath(activePath) || isChangesKey(activePath) || isVaultKey(activePath) || isArtifactKey(activePath)));
 	// The diff editor exists only while this group has a diff tab.
 	const hasDiff = $derived(tabs.some((t) => isDiffKey(t.path)));
 	// Enclosing symbols from the language server's document symbols, like VS Code's outline crumbs.
@@ -497,7 +498,9 @@
 				<DiffHost active={activePath} onfail={(key) => editors.close(key, { force: true, group })} reportLanguage={focused} />
 			</div>
 		{/if}
-		{#if activePath && isImagePath(activePath)}
+		{#if activePath && isMergeKey(activePath)}
+			<div class="absolute inset-0">{#key activePath}<MergeEditor mergeKey={activePath} />{/key}</div>
+		{:else if activePath && isImagePath(activePath)}
 			<div class="absolute inset-0">{#key activePath}<ImageViewer path={activePath} />{/key}</div>
 		{:else if activePath && isChangesKey(activePath)}
 			<div class="absolute inset-0">{#key activePath}<CombinedDiff changesKey={activePath} />{/key}</div>

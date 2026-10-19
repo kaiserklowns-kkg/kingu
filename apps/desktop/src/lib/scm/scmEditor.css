@@ -1,0 +1,180 @@
+/* Quick diff gutter (VS Code dirtydiffDecorator.css); width and visibility come from the settings stylesheet. */
+.monaco-editor .kg-qd {
+	margin-left: 5px;
+	z-index: 5;
+	cursor: pointer;
+	transition: opacity 0.5s;
+}
+.monaco-editor .kg-qd:before {
+	position: absolute;
+	content: '';
+	height: 100%;
+	width: 0;
+	left: -2px;
+}
+.monaco-editor .margin:hover .kg-qd {
+	opacity: 1;
+}
+.monaco-editor .kg-qd-added:not(.kg-qd-pattern) {
+	border-left-style: solid;
+	border-left-color: var(--vscode-editorGutter-addedBackground, #2ea043);
+}
+.monaco-editor .kg-qd-modified:not(.kg-qd-pattern) {
+	border-left-style: solid;
+	border-left-color: var(--vscode-editorGutter-modifiedBackground, #0078d4);
+}
+.monaco-editor .kg-qd-pattern {
+	background-repeat: repeat-y;
+}
+.monaco-editor .kg-qd-added.kg-qd-pattern {
+	background-image: linear-gradient(-45deg, var(--vscode-editorGutter-addedBackground, #2ea043) 25%, var(--vscode-editorGutter-background, transparent) 25%, var(--vscode-editorGutter-background, transparent) 50%, var(--vscode-editorGutter-addedBackground, #2ea043) 50%, var(--vscode-editorGutter-addedBackground, #2ea043) 75%, var(--vscode-editorGutter-background, transparent) 75%, var(--vscode-editorGutter-background, transparent));
+}
+.monaco-editor .kg-qd-modified.kg-qd-pattern {
+	background-image: linear-gradient(-45deg, var(--vscode-editorGutter-modifiedBackground, #0078d4) 25%, var(--vscode-editorGutter-background, transparent) 25%, var(--vscode-editorGutter-background, transparent) 50%, var(--vscode-editorGutter-modifiedBackground, #0078d4) 50%, var(--vscode-editorGutter-modifiedBackground, #0078d4) 75%, var(--vscode-editorGutter-background, transparent) 75%, var(--vscode-editorGutter-background, transparent));
+}
+.monaco-editor .kg-qd-deleted:after {
+	content: '';
+	position: absolute;
+	bottom: -4px;
+	box-sizing: border-box;
+	width: 4px;
+	height: 0;
+	z-index: 9;
+	border-top: 4px solid transparent;
+	border-bottom: 4px solid transparent;
+	border-left: 4px solid var(--vscode-editorGutter-deletedBackground, #f85149);
+	pointer-events: none;
+}
+
+/* The quick diff peek (quickDiffWidget / peekView colors). */
+.kg-qd-peek {
+	position: absolute;
+	left: 0;
+	z-index: 20;
+	display: flex;
+	flex-direction: column;
+	box-sizing: border-box;
+	border-top: 2px solid var(--vscode-peekView-border, #3794ff);
+	border-bottom: 2px solid var(--vscode-peekView-border, #3794ff);
+	background: var(--vscode-peekViewEditor-background, var(--vscode-editor-background));
+	color: var(--vscode-foreground);
+}
+.kg-qd-peek-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 26px;
+	flex-shrink: 0;
+	padding: 0 6px 0 10px;
+	font-size: 12px;
+	background: var(--vscode-peekViewTitle-background, var(--vscode-editorWidget-background));
+}
+.kg-qd-peek-title {
+	color: var(--vscode-peekViewTitleLabel-foreground, var(--vscode-foreground));
+}
+.kg-qd-peek-sub {
+	color: var(--vscode-peekViewTitleDescription-foreground, var(--vscode-descriptionForeground));
+}
+.kg-qd-peek-head button {
+	height: 20px;
+	min-width: 22px;
+	padding: 0 6px;
+	border-radius: 3px;
+	cursor: pointer;
+}
+.kg-qd-peek-head button:hover {
+	background: var(--vscode-toolbar-hoverBackground);
+}
+.kg-qd-peek-body {
+	overflow: auto;
+	white-space: pre;
+}
+.kg-qd-peek-row {
+	display: flex;
+}
+.kg-qd-peek-num {
+	flex-shrink: 0;
+	width: 52px;
+	padding-right: 8px;
+	text-align: right;
+	color: var(--vscode-editorLineNumber-foreground, #6e7681);
+}
+.kg-qd-peek-removed {
+	background: var(--vscode-diffEditor-removedLineBackground, rgba(255, 0, 0, 0.2));
+}
+.kg-qd-peek-added {
+	background: var(--vscode-diffEditor-insertedLineBackground, rgba(155, 185, 85, 0.2));
+}
+
+/* Git blame after the current line (VS Code's git.blame.editorDecorationForeground). */
+.kg-blame-after {
+	color: var(--vscode-git-blame-editorDecorationForeground, var(--vscode-editorCodeLens-foreground, rgba(153, 153, 153, 0.8)));
+	font-style: normal;
+}
+
+/* Merge conflicts (VS Code's merge.* colors). */
+.monaco-editor .kg-mc-current-header {
+	background: var(--vscode-merge-currentHeaderBackground, rgba(64, 200, 174, 0.5));
+}
+.monaco-editor .kg-mc-current {
+	background: var(--vscode-merge-currentContentBackground, rgba(64, 200, 174, 0.2));
+}
+.monaco-editor .kg-mc-incoming-header {
+	background: var(--vscode-merge-incomingHeaderBackground, rgba(64, 166, 255, 0.5));
+}
+.monaco-editor .kg-mc-incoming {
+	background: var(--vscode-merge-incomingContentBackground, rgba(64, 166, 255, 0.2));
+}
+.monaco-editor .kg-mc-base-header {
+	background: var(--vscode-merge-commonHeaderBackground, rgba(96, 96, 96, 0.4));
+}
+.monaco-editor .kg-mc-base {
+	background: var(--vscode-merge-commonContentBackground, rgba(96, 96, 96, 0.16));
+}
+.monaco-editor .kg-mc-splitter {
+	background: var(--vscode-merge-border, rgba(128, 128, 128, 0.25));
+}
+.kg-mc-label {
+	color: var(--vscode-descriptionForeground);
+	font-style: italic;
+}
+
+/* The merge editor's ranges. */
+.monaco-editor .kg-me-incoming {
+	background: var(--vscode-mergeEditor-change-background, rgba(64, 166, 255, 0.15));
+}
+.monaco-editor .kg-me-current {
+	background: var(--vscode-mergeEditor-change-background, rgba(64, 200, 174, 0.15));
+}
+.monaco-editor .kg-me-conflict-gutter {
+	border-left: 3px solid var(--vscode-mergeEditor-conflict-unhandledUnfocused-border, #ffa600);
+}
+.monaco-editor .kg-me-handled-gutter {
+	border-left: 3px solid var(--vscode-mergeEditor-conflict-handled-minimapOverViewRuler, #73c991);
+}
+.monaco-editor .kg-me-result-conflict {
+	background: var(--vscode-mergeEditor-conflict-unhandled-background, rgba(255, 166, 0, 0.12));
+}
+.monaco-editor .kg-me-result {
+	background: var(--vscode-mergeEditor-change-base-background, rgba(128, 128, 128, 0.08));
+}
+.kg-me-actions {
+	display: flex;
+	align-items: flex-end;
+	gap: 10px;
+	height: 100%;
+	padding-left: 4px;
+	font-size: 11px;
+	color: var(--vscode-editorCodeLens-foreground, #999);
+	white-space: nowrap;
+}
+.kg-me-actions button {
+	cursor: pointer;
+}
+.kg-me-actions button:hover {
+	color: var(--vscode-textLink-activeForeground, #3794ff);
+	text-decoration: underline;
+}
+.kg-me-actions .kg-me-on {
+	color: var(--vscode-textLink-foreground, #3794ff);
+}

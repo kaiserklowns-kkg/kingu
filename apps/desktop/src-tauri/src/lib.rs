@@ -10,6 +10,7 @@ mod fileops;
 mod floating;
 mod fs;
 mod git;
+mod git_editor;
 mod git_queue;
 mod i18n;
 mod glob;
@@ -1172,6 +1173,12 @@ pub fn run() {
       floating_note_write,
       floating_dir,
       git_show_head,
+      git_editor::scm_show_index,
+      git_editor::scm_show_stage,
+      git_editor::scm_stage_patch,
+      git_editor::scm_blame,
+      git_editor::scm_file_log,
+      git_editor::scm_commit_info,
       git_remote::git_fetch,
       git_remote::git_pull,
       git_remote::git_push,

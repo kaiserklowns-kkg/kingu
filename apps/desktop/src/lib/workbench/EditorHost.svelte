@@ -17,6 +17,7 @@
 	import { editorOptions, installEditorSettings } from '#lib/settings/apply.svelte.ts';
 	import { attachDebugEditor, type DebugDecorations } from '#lib/debug/editorDebug.ts';
 	import { attachChatEditDecorations, type ChatEditDecorations } from '#lib/agent/chatEditDecorations.svelte.ts';
+	import { attachScmEditor, type ScmEditorDecorations } from '#lib/scm/scmEditor.svelte.ts';
 	import { indentLabel } from './textFiles';
 	import { textFiles } from './textFileService.svelte';
 	import { installEditorActions } from './editorActions.svelte';
@@ -34,6 +35,8 @@
 	let debugDecorations = $state<DebugDecorations | undefined>();
 	/** The agent chat's pending changes of the shown file, with Keep / Undo per change. */
 	let chatEditDecorations = $state<ChatEditDecorations | undefined>();
+	/** Quick diff, git blame and merge conflicts of the shown file. */
+	let scmDecorations = $state<ScmEditorDecorations | undefined>();
 
 	const path = $derived(editors.group(group)?.active ?? null);
 	const isActiveGroup = $derived(editors.activeGroupId === group);
@@ -84,6 +87,7 @@
 			ed.onDidFocusEditorText(() => editors.activateGroup(group));
 			debugDecorations = attachDebugEditor(m.monaco, ed, () => shown);
 			chatEditDecorations = attachChatEditDecorations(m.monaco, ed, () => shown);
+			scmDecorations = attachScmEditor(m.monaco, ed, () => shown);
 			editor = ed;
 			clientLog('info', `editor ready (group ${group})`);
 		});
@@ -146,6 +150,7 @@
 			unregister();
 			debugDecorations?.dispose();
 			chatEditDecorations?.dispose();
+			scmDecorations?.dispose();
 			if (editor && shown) saveViewState(group, shown, editor.saveViewState());
 			// Models are shared and outlive this editor; only detach.
 			editor?.setModel(null);
@@ -205,6 +210,12 @@
 	$effect(() => {
 		void shown;
 		chatEditDecorations?.render();
+	});
+
+	// Source Control follows git status, the settings and the shown file.
+	$effect(() => {
+		void shown;
+		scmDecorations?.render();
 	});
 
 	// The status bar follows the active group's editor.

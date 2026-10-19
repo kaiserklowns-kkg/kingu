@@ -1,5 +1,7 @@
 <script lang="ts">
 	import ExplorerView from './ExplorerView.svelte';
+	import TimelineView from '#lib/scm/TimelineView.svelte';
+	import { workspace } from './workspace.svelte';
 	import ScmView from './ScmView.svelte';
 	import SearchView from './SearchView.svelte';
 	import AgentsView from '#lib/ade/AgentsView.svelte';
@@ -34,6 +36,7 @@
 	<div class="flex min-h-0 flex-1 flex-col">
 	{#if layout.sideView === 'explorer'}
 		<ExplorerView {workspaceName} />
+		{#if workspace.root}<TimelineView />{/if}
 	{:else if layout.sideView === 'search'}
 		<SearchView />
 	{:else if layout.sideView === 'scm'}
