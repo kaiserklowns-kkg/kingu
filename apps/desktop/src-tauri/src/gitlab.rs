@@ -64,7 +64,7 @@ pub fn valid_issue_key(key: &str) -> bool {
   key.rsplit_once('#').is_some_and(|(p, n)| valid_project(p) && !n.is_empty() && n.len() <= 12 && n.bytes().all(|b| b.is_ascii_digit()) && !n.starts_with('0'))
 }
 
-fn host_or_err(host: &str) -> Result<String, String> {
+pub(crate) fn host_or_err(host: &str) -> Result<String, String> {
   let h = host.trim().trim_end_matches('/').to_ascii_lowercase();
   let h = h.strip_prefix("https://").unwrap_or(&h).to_owned();
   if valid_host(&h) { Ok(h) } else { Err(tr!(TrackerMsg::GitlabBadHost, host)) }
@@ -249,7 +249,7 @@ fn entry(host: &str) -> Result<keyring::Entry, String> {
   keyring::Entry::new(KEYCHAIN_SERVICE, host).map_err(|e| e.to_string())
 }
 
-fn stored_token(host: &str) -> Option<String> {
+pub(crate) fn stored_token(host: &str) -> Option<String> {
   entry(host).ok()?.get_password().ok()
 }
 
@@ -257,7 +257,8 @@ fn client(host: &str, token: String) -> Result<Http, String> {
   Http::new(SERVICE, &format!("https://{host}/api/v4"), "PRIVATE-TOKEN", token)
 }
 
-fn connected(host: &str) -> Result<Http, String> {
+/// A client with the stored token of `host` (also the merge requests in `agent/mr.rs`).
+pub(crate) fn connected(host: &str) -> Result<Http, String> {
   client(host, stored_token(host).ok_or_else(|| tr!(TrackerMsg::GitlabNotConnected, host))?)
 }
 

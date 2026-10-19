@@ -64,6 +64,7 @@ describe('merge gate (Orca presentGitHubPRMergeState)', () => {
 	});
 	test('repository of a PR URL', () => {
 		expect(repoOf('https://github.com/acme/app/pull/12')).toBe('github.com/acme/app');
+		expect(repoOf('https://gitlab.com/acme/sub/app/-/merge_requests/12')).toBe('gitlab.com/acme/sub/app');
 		expect(repoOf('nope')).toBeNull();
 	});
 });

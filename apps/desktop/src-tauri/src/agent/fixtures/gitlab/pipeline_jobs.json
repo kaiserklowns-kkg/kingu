@@ -1,0 +1,34 @@
+[
+  {
+    "id": 8833102, "status": "failed", "stage": "test", "name": "unit", "ref": "kingu/fix-login", "tag": false, "coverage": null,
+    "allow_failure": false, "created_at": "2026-10-13T02:31:44.300Z", "started_at": "2026-10-13T02:32:01.000Z", "finished_at": "2026-10-13T02:39:57.000Z",
+    "duration": 476.2, "queued_duration": 3.1, "failure_reason": "script_failure",
+    "web_url": "https://gitlab.com/acme/sub/app/-/jobs/8833102",
+    "pipeline": { "id": 1490311, "project_id": 61204, "ref": "kingu/fix-login", "sha": "9f2c1e7a4b0d8c3e5f6a7b8c9d0e1f2a3b4c5d6e", "status": "failed" }
+  },
+  {
+    "id": 8833101, "status": "success", "stage": "build", "name": "compile", "ref": "kingu/fix-login", "tag": false, "coverage": null,
+    "allow_failure": false, "created_at": "2026-10-13T02:31:44.200Z", "started_at": "2026-10-13T02:31:50.000Z", "finished_at": "2026-10-13T02:31:59.000Z",
+    "duration": 9.4, "queued_duration": 1.0, "web_url": "https://gitlab.com/acme/sub/app/-/jobs/8833101",
+    "pipeline": { "id": 1490311, "project_id": 61204, "ref": "kingu/fix-login", "sha": "9f2c1e7a4b0d8c3e5f6a7b8c9d0e1f2a3b4c5d6e", "status": "failed" }
+  },
+  {
+    "id": 8833103, "status": "failed", "stage": "test", "name": "lint", "ref": "kingu/fix-login", "tag": false, "coverage": null,
+    "allow_failure": true, "created_at": "2026-10-13T02:31:44.310Z", "started_at": "2026-10-13T02:32:02.000Z", "finished_at": "2026-10-13T02:33:10.000Z",
+    "duration": 68.0, "queued_duration": 2.2, "failure_reason": "script_failure",
+    "web_url": "https://gitlab.com/acme/sub/app/-/jobs/8833103",
+    "pipeline": { "id": 1490311, "project_id": 61204, "ref": "kingu/fix-login", "sha": "9f2c1e7a4b0d8c3e5f6a7b8c9d0e1f2a3b4c5d6e", "status": "failed" }
+  },
+  {
+    "id": 8833104, "status": "manual", "stage": "deploy", "name": "review-app", "ref": "kingu/fix-login", "tag": false, "coverage": null,
+    "allow_failure": true, "created_at": "2026-10-13T02:31:44.320Z", "started_at": null, "finished_at": null,
+    "duration": null, "queued_duration": null, "web_url": "https://gitlab.com/acme/sub/app/-/jobs/8833104",
+    "pipeline": { "id": 1490311, "project_id": 61204, "ref": "kingu/fix-login", "sha": "9f2c1e7a4b0d8c3e5f6a7b8c9d0e1f2a3b4c5d6e", "status": "failed" }
+  },
+  {
+    "id": 8833105, "status": "running", "stage": "test", "name": "e2e", "ref": "kingu/fix-login", "tag": false, "coverage": null,
+    "allow_failure": false, "created_at": "2026-10-13T02:31:44.330Z", "started_at": "2026-10-13T02:32:05.000Z", "finished_at": null,
+    "duration": null, "queued_duration": 4.0, "web_url": "https://gitlab.com/acme/sub/app/-/jobs/8833105",
+    "pipeline": { "id": 1490311, "project_id": 61204, "ref": "kingu/fix-login", "sha": "9f2c1e7a4b0d8c3e5f6a7b8c9d0e1f2a3b4c5d6e", "status": "failed" }
+  }
+]

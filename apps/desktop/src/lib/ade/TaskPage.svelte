@@ -276,7 +276,9 @@
 								Merge commit
 							</button>
 						</div>
-						{#if adeTasks.gh && !adeTasks.gh.installed}
+						{#if adeTasks.gh?.provider === 'gitlab' && !adeTasks.gh.authenticated}
+							<p class="text-(--vscode-descriptionForeground)">{adeTasks.gh.detail}</p>
+						{:else if adeTasks.gh && !adeTasks.gh.installed}
 							<p class="text-(--vscode-descriptionForeground)">ต้องมี GitHub CLI เพื่อสร้าง PR: <code>brew install gh</code> แล้ว <code>gh auth login</code></p>
 						{:else if adeTasks.gh && !adeTasks.gh.authenticated}
 							<p class="text-(--vscode-descriptionForeground)">gh ยังไม่ได้เข้าสู่ระบบ: รัน <code>gh auth login</code> ในเทอร์มินัล</p>

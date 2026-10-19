@@ -1,0 +1,8 @@
+{
+  "id": 318441207, "iid": 12, "project_id": 61204, "title": "แก้ login ค้างหลัง OAuth", "state": "merged",
+  "merged_at": "2026-10-14T03:00:11.410Z", "merge_user": { "id": 4102, "username": "kawin" },
+  "target_branch": "main", "source_branch": "kingu/fix-login", "source_project_id": 61204, "target_project_id": 61204,
+  "draft": false, "detailed_merge_status": "not_open", "merge_commit_sha": null,
+  "squash_commit_sha": "c0ffee1234567890abcdef1234567890abcdef12", "squash": true,
+  "web_url": "https://gitlab.com/acme/sub/app/-/merge_requests/12"
+}

@@ -1193,6 +1193,10 @@ class AdeTasks {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta) return;
 		const gh = await this.checkGh();
+		if (gh?.provider === 'gitlab' && !gh.authenticated) {
+			await message(gh.detail, { title: t('adeTasks.tasks.createPrTitle'), kind: 'info' });
+			return;
+		}
 		if (!gh?.installed) {
 			await message(t('adeTasks.tasks.ghMissing'), { title: t('adeTasks.tasks.createPrTitle'), kind: 'info' });
 			return;

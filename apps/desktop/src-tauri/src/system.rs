@@ -343,6 +343,11 @@ pub fn set_config_dir(dir: std::path::PathBuf) {
   let _ = CONFIG_DIR.set(dir);
 }
 
+/// The app config dir once startup set it.
+pub fn config_dir() -> Option<&'static std::path::Path> {
+  CONFIG_DIR.get().map(std::path::PathBuf::as_path)
+}
+
 /// `workbench.externalBrowser` from the user's settings.json only: it names a program to run, so
 /// a folder's workspace settings can never set it (VS Code marks it restricted).
 fn external_browser() -> Option<String> {

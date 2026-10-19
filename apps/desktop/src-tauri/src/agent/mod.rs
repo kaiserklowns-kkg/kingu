@@ -19,6 +19,7 @@ pub mod issues;
 pub mod kingu_yaml;
 pub mod mcp;
 pub mod memories;
+pub mod mr;
 pub mod notes;
 pub mod open_in;
 pub mod pr;
@@ -749,23 +750,33 @@ pub async fn git_show_ref(ws: State<'_, Workspace>, slug: Option<String>, rev: S
   blocking(move || crate::git::show_at(&dir, &rev, &rel)).await
 }
 
-/// Whether `gh` is installed and logged in (never creates anything).
+/// Whether `gh` is installed and logged in (never creates anything); for a folder whose origin is
+/// on GitLab, whether a token for that host is stored (`provider: "gitlab"`).
 #[tauri::command]
-pub async fn gh_status() -> Result<review::GhStatus, String> {
-  blocking(|| Ok(review::gh_status(review::gh_bin()))).await
+pub async fn gh_status(ws: State<'_, Workspace>) -> Result<review::GhStatus, String> {
+  let root = ws.root().ok();
+  blocking(move || match root.as_deref().map(mr::forge) {
+    Some(mr::Forge::Gitlab(p)) => Ok(mr::status(&p)),
+    _ => Ok(review::gh_status(review::gh_bin())),
+  })
+  .await
+}
+
+fn gh() -> Result<std::path::PathBuf, String> {
+  review::gh_bin().ok_or_else(issues::gh_missing)
 }
 
 /// The worktree's pull request, parsed and as gh reports it (`None` when there is none yet); an
 /// empty `slug` is the open folder itself. The one PR read every view of a worktree shares.
 #[tauri::command]
 pub async fn worktree_pr(ws: State<'_, Workspace>, slug: String) -> Result<Option<review::WorktreePr>, String> {
-  let root = ws.root()?;
-  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
-  if slug.is_empty() {
-    return blocking(move || review::worktree_pr(&gh, &root, None)).await;
-  }
-  let dir = review::task_dir(&root, &slug)?;
-  blocking(move || review::worktree_pr(&gh, &dir, Some(&slug))).await
+  let dir = pr_dir(&ws, &slug)?;
+  let slug = (!slug.is_empty()).then_some(slug);
+  blocking(move || match mr::forge(&dir) {
+    mr::Forge::Gitlab(p) => mr::worktree_mr(&crate::gitlab::connected(&p.host)?, &p, &dir, slug.as_deref()),
+    mr::Forge::Github => review::worktree_pr(&gh()?, &dir, slug.as_deref()),
+  })
+  .await
 }
 
 /// Pushes the task branch and runs `gh pr create`; returns the PR URL. `stacked`: the base is the
@@ -783,9 +794,19 @@ pub async fn worktree_pr_create(
   stacked: Option<bool>,
 ) -> Result<String, String> {
   let dir = review::task_dir(&ws.root()?, &slug)?;
-  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
   let draft = draft.unwrap_or(false);
   let url = blocking(move || {
+    if let mr::Forge::Gitlab(p) = mr::forge(&dir) {
+      let url = mr::push_and_create(&crate::gitlab::connected(&p.host)?, &p, &dir, &slug, &base, &title, &body, draft, stacked.unwrap_or(false))?;
+      // kingu.pr.openAfterCreate: best effort, the merge request exists either way.
+      if open.unwrap_or(false)
+        && let Err(e) = crate::system::open_web_url(&url)
+      {
+        log::warn!("open {url}: {e}");
+      }
+      return Ok(url);
+    }
+    let gh = gh()?;
     // Stacked worktrees: the base is the parent task's branch, which must be on origin too.
     if stacked.unwrap_or(false) {
       review::push_stack_base(&dir, &base)?;
@@ -866,42 +887,71 @@ pub async fn worktree_pr_merge(
   delete_branch: Option<bool>,
 ) -> Result<pr::MergeOutcome, String> {
   let dir = pr_dir(&ws, &slug)?;
-  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
   let method = pr::MergeMethod::parse(&method)?;
-  blocking(move || pr::merge(&gh, &dir, &url, number, method, delete_branch.unwrap_or(false))).await
+  blocking(move || match mr::forge(&dir) {
+    mr::Forge::Gitlab(p) => {
+      let (p, iid) = mr::parse_url(&url, &p)?;
+      mr::merge(&crate::gitlab::connected(&p.host)?, &p, iid, method, delete_branch.unwrap_or(false))
+    }
+    mr::Forge::Github => pr::merge(&gh()?, &dir, &url, number, method, delete_branch.unwrap_or(false)),
+  })
+  .await
 }
 
 /// Merge methods the PR's repository allows and the viewer's default (`gh repo view`).
 #[tauri::command]
 pub async fn gh_merge_settings(ws: State<'_, Workspace>, slug: String, url: String) -> Result<pr::RepoMergeSettings, String> {
   let dir = pr_dir(&ws, &slug)?;
-  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
-  let repo = pr::RepoRef::from_pr_url(&url)?;
-  blocking(move || pr::merge_settings(&gh, &dir, &repo)).await
+  blocking(move || match mr::forge(&dir) {
+    mr::Forge::Gitlab(p) => {
+      let (p, _) = mr::parse_url(&url, &p)?;
+      mr::merge_settings(&crate::gitlab::connected(&p.host)?, &p)
+    }
+    mr::Forge::Github => pr::merge_settings(&gh()?, &dir, &pr::RepoRef::from_pr_url(&url)?),
+  })
+  .await
 }
 
 /// Log excerpts of failed checks' GitHub Actions jobs, for the "fix failing checks" prompt.
 #[tauri::command]
 pub async fn worktree_pr_check_logs(ws: State<'_, Workspace>, slug: String, url: String, checks: Vec<pr::CheckRef>) -> Result<Vec<pr::CheckLog>, String> {
   let dir = pr_dir(&ws, &slug)?;
-  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
-  blocking(move || pr::check_logs(&gh, &dir, &url, &checks)).await
+  blocking(move || match mr::forge(&dir) {
+    mr::Forge::Gitlab(p) => {
+      let (p, _) = mr::parse_url(&url, &p)?;
+      Ok(mr::check_logs(&crate::gitlab::connected(&p.host)?, &p, &checks))
+    }
+    mr::Forge::Github => pr::check_logs(&gh()?, &dir, &url, &checks),
+  })
+  .await
 }
 
 /// Review threads of the PR (resolved ones included; the webview filters).
 #[tauri::command]
 pub async fn worktree_pr_threads(ws: State<'_, Workspace>, slug: String, url: String, number: u64) -> Result<Vec<pr::ReviewThread>, String> {
   let dir = pr_dir(&ws, &slug)?;
-  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
-  blocking(move || pr::review_threads(&gh, &dir, &url, number)).await
+  blocking(move || match mr::forge(&dir) {
+    mr::Forge::Gitlab(p) => {
+      let (p, iid) = mr::parse_url(&url, &p)?;
+      mr::threads(&crate::gitlab::connected(&p.host)?, &p, iid, &url)
+    }
+    mr::Forge::Github => pr::review_threads(&gh()?, &dir, &url, number),
+  })
+  .await
 }
 
 /// Resolves (or, with `resolve: false`, reopens) a review thread; returns its new state.
 #[tauri::command]
 pub async fn gh_resolve_thread(ws: State<'_, Workspace>, slug: String, url: String, thread_id: String, resolve: bool) -> Result<bool, String> {
   let dir = pr_dir(&ws, &slug)?;
-  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
-  let done = blocking(move || pr::resolve_thread(&gh, &dir, &url, &thread_id, resolve)).await?;
+  let done = blocking(move || match mr::forge(&dir) {
+    mr::Forge::Gitlab(p) => {
+      let (p, iid) = mr::parse_url(&url, &p)?;
+      mr::resolve(&crate::gitlab::connected(&p.host)?, &p, iid, &thread_id, resolve)
+    }
+    mr::Forge::Github => pr::resolve_thread(&gh()?, &dir, &url, &thread_id, resolve),
+  })
+  .await?;
   log::info!("review thread {}", if done { "resolved" } else { "reopened" });
   Ok(done)
 }
