@@ -6,6 +6,7 @@
 pub mod ai_text;
 pub mod automations;
 pub mod chat_edits;
+pub mod chat_extras;
 pub mod chat_io;
 pub mod chats;
 pub mod cli;
@@ -16,12 +17,14 @@ pub mod host;
 pub mod issues;
 pub mod kingu_yaml;
 pub mod mcp;
+pub mod memories;
 pub mod notes;
 pub mod open_in;
 pub mod pr;
 pub mod review;
 pub mod rules;
 pub mod rewind;
+pub mod safety_asks;
 pub mod scripts;
 pub mod slash_commands;
 pub mod status_hooks;
@@ -156,6 +159,11 @@ pub async fn agent_start(
     use tauri::Manager;
     app.state::<crate::accounts::Accounts>().agent_env(crate::accounts::store::Provider::Claude)?
   };
+  // Writes outside the folder, deletes, MCP tools, protected paths: asked about in every mode.
+  let guard_asks = {
+    let (root, dir, config) = (open_root.clone(), dir.clone(), crate::snap::config_dir(&app)?);
+    tauri::async_runtime::spawn_blocking(move || safety_asks::from_settings(&config, &root, &dir)).await.map_err(|e| e.to_string())?
+  };
   let edits = chat_id.as_ref().map(|id| {
     use tauri::Manager;
     (app.state::<Arc<chat_edits::ChatEdits>>().inner().clone(), open_root.clone(), id.clone(), dir.clone())
@@ -176,6 +184,7 @@ pub async fn agent_start(
     images,
     snapshots: edits.is_some(),
     safety_checks: safety_checks.filter(|on| !on),
+    guard_asks: Some(guard_asks),
     system_prompt_append,
     owner,
   };

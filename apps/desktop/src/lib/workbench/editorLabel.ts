@@ -13,6 +13,8 @@ import { workspace } from './workspace.svelte';
 import { t } from '#lib/i18n/index.ts';
 import { parseVaultKey } from '#lib/vault/vault.ts';
 import { vault } from '#lib/vault/vault.svelte.ts';
+import { chatIdOfEditorKey } from '#lib/agent/chatExtras.ts';
+import { chats } from '#lib/agent/chats.svelte.ts';
 
 const compiled = new WeakMap<object, ReturnType<typeof customLabelPatterns>>();
 
@@ -33,6 +35,8 @@ export function editorLabel(key: string): string {
 	if (isChangesKey(key)) return changesSlug(key) ? t('workbench.editorLabel.changes', { title: adeTasks.find(changesSlug(key))?.meta.title ?? changesSlug(key) ?? '' }) : t('workbench.editorLabel.allChanges');
 	const session = parseVaultKey(key);
 	if (session) return vault.byPath(session.path)?.title ?? session.path.split('/').pop() ?? key;
+	const chatId = chatIdOfEditorKey(key);
+	if (chatId) return chats.get(chatId)?.title ?? t('chat.panel.newChat');
 	const slug = slugOfTaskKey(key);
 	if (slug) return t('workbench.editorLabel.task', { title: adeTasks.find(slug)?.meta.title ?? slug });
 	return custom(key) ?? tabLabel(key);

@@ -281,6 +281,45 @@ const CORE_SETTINGS: SettingSchema[] = [
 		description:
 			'บล็อกคำสั่ง shell ที่อันตรายร้ายแรง (เช่น rm -rf /, curl … | sh) และการเรียกเครื่องมือเดิมซ้ำเป็นครั้งที่สามติดกัน ในทุกโหมดการอนุญาต (Block catastrophic shell commands such as rm -rf / or curl … | sh, and the third identical tool call in a row, in every permission mode.)'
 	},
+	// Cursor's yolo protections: asked in every permission mode, Allow all included. Rust reads them
+	// from the user settings only (agent/safety_asks.rs), so a repository cannot turn them off.
+	{
+		id: 'kingu.agent.ask.outsideWorkspace',
+		group: 'Agent',
+		type: 'boolean',
+		default: true,
+		description:
+			'ถามทุกครั้งก่อน agent เขียนหรือแก้ไฟล์นอกโฟลเดอร์ที่มันทำงานอยู่ แม้ในโหมดแก้ไฟล์อัตโนมัติหรืออนุญาตทั้งหมด (Cursor: yoloOutsideWorkspaceDisabled) (Always ask before an agent writes a file outside its folder, even when edits are auto-accepted or everything is allowed.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.agent.ask.fileDeletes',
+		group: 'Agent',
+		type: 'boolean',
+		default: true,
+		description:
+			'ถามทุกครั้งก่อน agent ลบไฟล์ (rm, git rm, git clean, find -delete) แม้ในโหมดอนุญาตทั้งหมด (Cursor: yoloDeleteFileDisabled) (Always ask before an agent deletes files, even when everything is allowed.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.agent.ask.mcpTools',
+		group: 'Agent',
+		type: 'boolean',
+		default: false,
+		description:
+			'ถามทุกครั้งก่อน agent ใช้เครื่องมือของ MCP server แม้จะเคยอนุญาตไว้หรืออยู่ในโหมดอนุญาตทั้งหมด (Cursor: yoloMcpToolsDisabled) (Always ask before an agent calls an MCP tool, even if it was allowed before or everything is allowed.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.agent.protectedPaths',
+		group: 'Agent',
+		type: 'array',
+		items: 'string',
+		default: [],
+		description:
+			'ไฟล์ที่ agent ต้องถามก่อนอ่านหรือแก้ทุกครั้ง เป็น pattern แบบ .gitignore เทียบกับโฟลเดอร์ที่ agent ทำงาน เช่น .env*, secrets/ รวมกับไฟล์ .kinguignore ของโปรเจกต์ (Cursor: .cursorignore) (Files an agent must ask about before reading or changing them, as .gitignore patterns; added to the project\'s .kinguignore.)',
+		scope: 'application'
+	},
 	{
 		id: 'kingu.chat.rules.enabled',
 		group: 'Agent Chat',
@@ -296,6 +335,58 @@ const CORE_SETTINGS: SettingSchema[] = [
 		default: false,
 		description:
 			'แชตที่ agent กำลังทำงานอยู่ตอน Kingu ปิด จะทำต่อเองเมื่อเปิดโฟลเดอร์นั้นอีกครั้ง (Orca: nativeChatResumeWorkOnRestart) (Chats whose agent was working when Kingu quit continue on their own when the folder opens again.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.chat.usage',
+		group: 'Agent Chat',
+		type: 'string',
+		default: 'hover',
+		enum: ['never', 'hover', 'always'],
+		enumDescriptions: [
+			'ไม่แสดง (Never show it.)',
+			'แสดงเมื่อชี้ที่ไอคอน ⓘ ใต้คำตอบ (On hover of the ⓘ under each answer.)',
+			'แสดงใต้คำตอบทุกครั้ง (Always, under each answer.)'
+		],
+		description: 'ค่าใช้จ่ายและจำนวน token ของแต่ละคำตอบในแชต (Cursor: usage summary) (The cost and tokens of each chat answer.)'
+	},
+	{
+		id: 'kingu.chat.completionSound',
+		group: 'Agent Chat',
+		type: 'string',
+		default: 'off',
+		enum: ['off', 'tone', 'Glass', 'Ping', 'Pop', 'Hero', 'Submarine', 'Tink', 'custom'],
+		enumDescriptions: [
+			'ไม่มีเสียง (Silent.)',
+			'เสียงสั้น ๆ ของ Kingu (Kingu\'s own short tone.)',
+			'Glass',
+			'Ping',
+			'Pop',
+			'Hero',
+			'Submarine',
+			'Tink',
+			'ไฟล์เสียงของคุณใน kingu.chat.completionSound.customPath (Your own sound file.)'
+		],
+		description:
+			'เล่นเสียงเมื่อ agent ในแชตตอบเสร็จ (เสียงของ macOS หรือไฟล์ของคุณ) (Cursor: completion chime) (Play a sound when a chat agent finishes an answer.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.chat.completionSound.customPath',
+		group: 'Agent Chat',
+		type: 'string',
+		default: '',
+		description:
+			'path เต็มของไฟล์เสียง (aiff, wav, mp3, m4a หรือ caf ไม่เกิน 10 MB) เมื่อ kingu.chat.completionSound เป็น custom (Full path of the sound file played when kingu.chat.completionSound is custom.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.chat.followups',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: false,
+		description:
+			'เสนอคำถามต่อสั้น ๆ ใต้คำตอบล่าสุด สร้างโดย AI agent ของ Source Control (kingu.git.ai.agent) เฉพาะเมื่อตั้งค่า agent นั้นไว้ ทุกคำตอบจะเรียก agent นั้นหนึ่งครั้ง (VS Code: chat followups) (Suggest short follow-ups under the last answer, written by the source-control AI agent when it is set up; runs it once per answer.)',
 		scope: 'application'
 	},
 	{

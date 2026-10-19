@@ -1,5 +1,6 @@
 <script lang="ts" module>
 	import type { ChatView, Turn } from './chatParts';
+	import type { Vote } from './events';
 
 	export type ChatListActions = {
 		/** Sends the last request again. */
@@ -13,6 +14,12 @@
 		editInline?: (request: NonNullable<Turn['request']>, checkpoint: number, text: string) => Promise<unknown> | void;
 		/** The plan card's Implement (the last turn's ExitPlanMode only): leave plan mode and carry it out. */
 		implement?: () => void;
+		/** Thumbs up / down on the answer to a chat request (null takes the vote back). */
+		feedback?: (request: number, vote: Vote | null) => void;
+		/** "Remember this" on a request or an answer: its text, or the selection in it. */
+		remember?: (text: string) => void;
+		/** Follow-up suggestions under the last answer, and what a click on one does. */
+		followups?: { items: string[]; pick: (text: string) => void };
 	};
 </script>
 
@@ -38,6 +45,7 @@
 	import { buildTurns, responseText, type Part } from './chatParts';
 	import { contextLabel } from './chatPrompt';
 	import { formatUsage, type Decision, type PermissionRequest } from './events';
+	import { usageDisplay } from './chatExtras';
 
 	let {
 		run,
@@ -73,6 +81,13 @@
 	/** Follow new output while the list is scrolled to the bottom (VS Code's scroll lock). */
 	let stick = true;
 	const look = $derived(chatLook((id) => settings.get(id)));
+	const usage = $derived(usageDisplay(settings.get('kingu.chat.usage')));
+	/** "Remember this": the text selected inside this list, else the whole message. */
+	const rememberText = (text: string) => {
+		const sel = getSelection();
+		const picked = sel && !sel.isCollapsed && list?.contains(sel.anchorNode) ? sel.toString().trim() : '';
+		actions.remember?.(picked || text);
+	};
 	const turns = $derived(run ? buildTurns(run) : []);
 	let open = $state<Record<string, boolean>>({});
 	let copied = $state<number | null>(null);
@@ -224,6 +239,9 @@
 							<button type="button" class={ACTION} title={t('chatView.copyRequest')} aria-label={t('chatView.copyRequest')} onclick={() => copy(req.text, -1 - ti)}>
 								<Icon name={copied === -1 - ti ? 'check' : 'copy'} size={13} />
 							</button>
+							{#if actions.remember}
+								<button type="button" class={ACTION} title={t('chatExtras.remember.hint')} aria-label={t('chatExtras.remember.label')} onclick={() => rememberText(req.text)}><Icon name="bookmark" size={13} /></button>
+							{/if}
 							{#if checkpoint && turn.checkpoint != null}{@render checkpoint(turn.checkpoint, req, ti === firstRequest)}{/if}
 						</div>
 					</div>
@@ -250,6 +268,11 @@
 						{:else if part.kind === 'confirmation'}
 							{@const ev = part.request}
 							{@const decided = run?.decisions[ev.request_id]}
+							{#if part.reason}
+								<div class="flex items-start gap-1.5 text-xs text-(--vscode-editorWarning-foreground)" role="note">
+									<span class="mt-px shrink-0"><Icon name="warning" size={12} /></span><span class="min-w-0 break-words">{part.reason}</span>
+								</div>
+							{/if}
 							{#if decided}
 								<div class="flex items-center gap-1.5 text-(--vscode-descriptionForeground)">
 									<Icon name="circleDashed" size={13} />
@@ -301,12 +324,42 @@
 							{#if last && actions.retry}
 								<button type="button" class={ACTION} title={t('chatView.retry')} aria-label={t('chatView.retry')} onclick={() => actions.retry?.()}><Icon name="refresh" size={13} /></button>
 							{/if}
-							{#if turn.result && formatUsage(turn.result)}
+							{#if text && actions.remember}
+								<button type="button" class={ACTION} title={t('chatExtras.remember.hint')} aria-label={t('chatExtras.remember.label')} onclick={() => rememberText(text)}><Icon name="bookmark" size={13} /></button>
+							{/if}
+							{#if actions.feedback && turn.checkpoint != null}
+								{@const cp = turn.checkpoint}
+								{#each [['up', 'thumbsUp', t('chatExtras.feedback.helpful')], ['down', 'thumbsDown', t('chatExtras.feedback.unhelpful')]] as const as [vote, icon, label] (vote)}
+									<button
+										type="button"
+										class={[ACTION, turn.feedback === vote && 'text-(--vscode-foreground)']}
+										title={label}
+										aria-label={label}
+										aria-pressed={turn.feedback === vote}
+										onclick={() => actions.feedback?.(cp, turn.feedback === vote ? null : vote)}><Icon name={icon} size={13} filled={turn.feedback === vote} /></button
+									>
+								{/each}
+							{/if}
+							{#if turn.result && formatUsage(turn.result) && usage === 'hover'}
 								<span class={[ACTION, 'cursor-default']} title={t('chatView.usage', { usage: formatUsage(turn.result) })} aria-label={t('chatView.usage', { usage: formatUsage(turn.result) })}>
 									<Icon name="info" size={13} />
 								</span>
+							{:else if turn.result && formatUsage(turn.result) && usage === 'always'}
+								<span class="ml-1 truncate text-xs text-(--vscode-descriptionForeground)">{formatUsage(turn.result)}</span>
 							{/if}
 						</div>
+						{#if last && actions.followups?.items.length}
+							<div class="flex flex-wrap gap-1.5" aria-label={t('chatExtras.followups')}>
+								{#each actions.followups.items as f (f)}
+									<button
+										type="button"
+										class="flex max-w-full items-center gap-1 rounded-full border border-(--vscode-widget-border) px-2.5 py-0.5 text-left text-xs text-(--vscode-textLink-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
+										title={t('chatExtras.followupHint')}
+										onclick={() => actions.followups?.pick(f)}><Icon name="sparkle" size={12} /><span class="truncate">{f}</span></button
+									>
+								{/each}
+							</div>
+						{/if}
 					{/if}
 				</div>
 				</div>

@@ -3,7 +3,7 @@
 // goose's own English description. Pure, so `bun test` covers it.
 
 import { t } from '#lib/i18n/index.ts';
-import type { AgentEvent } from './events';
+import type { AgentEvent, GuardAsked } from './events';
 
 export type GuardBlocked = Extract<AgentEvent, { kind: 'guard_blocked' }>;
 
@@ -29,3 +29,22 @@ export function guardReason(ev: Pick<GuardBlocked, 'check' | 'threats' | 'detail
 }
 
 export const guardBlockedText = (ev: Pick<GuardBlocked, 'check' | 'threats' | 'detail'>) => t('chat.guard.blocked', { reason: guardReason(ev) });
+
+const ASK_REASON = {
+	outside_cwd: 'chatExtras.ask.outsideCwd',
+	delete: 'chatExtras.ask.delete',
+	protected: 'chatExtras.ask.protected',
+	mcp: 'chatExtras.ask.mcp'
+} as const;
+
+/**
+ * "Kingu asks first: it deletes files (a.txt, b.txt)" for a `guard_asked` event: why an approval
+ * card shows up even in Allow all (agent-host guards/asks.ts). `*` (unknown files) is not listed.
+ */
+export function guardAskedText(ev: Pick<GuardAsked, 'check' | 'paths'>): string {
+	const reason = t(ASK_REASON[ev.check] ?? 'chatExtras.ask.delete');
+	const named = ev.paths.filter((p) => p && p !== '*');
+	if (!named.length) return t('chatExtras.ask.text', { reason });
+	const paths = named.slice(0, 3).join(', ') + (named.length > 3 ? ', …' : '');
+	return t('chatExtras.ask.withPaths', { reason, paths });
+}

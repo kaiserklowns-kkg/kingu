@@ -183,6 +183,25 @@ pub enum AgentEvent {
     #[serde(default)]
     detail: String,
   },
+  /// Kingu's always-ask check stopped a tool call for the user (the host's guards, in every
+  /// permission mode); the `PermissionRequest` with this `request_id` follows. `check`:
+  /// `outside_cwd`, `delete`, `protected` or `mcp`; `paths`: what it is about.
+  GuardAsked {
+    request_id: String,
+    tool: String,
+    #[serde(default)]
+    tool_use_id: Option<String>,
+    check: String,
+    #[serde(default)]
+    paths: Vec<String>,
+  },
+  /// Added by the webview (`chat_feedback`): the user's thumbs up (`up`) or down (`down`) on the
+  /// answer to chat request `request`, or none (`vote` null: taken back). Kept in the transcript.
+  Feedback {
+    request: u32,
+    #[serde(default)]
+    vote: Option<String>,
+  },
   /// The agent session's uuid of the SDK message whose events came just before (the host's
   /// `anchor`). Kept in a chat's transcript (its rewind points: `rewind::Anchors`), never passed
   /// to the webview.
@@ -243,6 +262,17 @@ mod tests {
     let ev = json!({"kind": "guard_blocked", "tool": "Bash", "tool_use_id": "tu1", "check": "security", "threats": ["rm_rf_root_bare"], "detail": "Recursive deletion of root filesystem"});
     assert!(matches!(AgentEvent::from_host(ev.clone()), AgentEvent::GuardBlocked { ref check, .. } if check == "security"));
     assert_eq!(serde_json::to_value(AgentEvent::from_host(ev.clone())).unwrap(), ev);
+  }
+
+  #[test]
+  fn guard_asks_and_feedback_round_trip() {
+    for v in [
+      json!({"kind": "guard_asked", "request_id": "r1", "tool": "Bash", "tool_use_id": "tu1", "check": "delete", "paths": ["a.txt"]}),
+      json!({"kind": "feedback", "request": 2, "vote": "up"}),
+      json!({"kind": "feedback", "request": 2, "vote": null}),
+    ] {
+      assert_eq!(serde_json::to_value(AgentEvent::from_host(v.clone())).unwrap(), v);
+    }
   }
 
   #[test]

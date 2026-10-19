@@ -164,6 +164,9 @@ pub struct StartRequest {
   /// Kingu's safety checks (`kingu.agent.safetyChecks`); omitted (on) unless turned off.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub safety_checks: Option<bool>,
+  /// Kingu's always-ask checks (`safety_asks::from_settings`); omitted when none.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub guard_asks: Option<super::safety_asks::GuardAsks>,
   /// Project rules (`rules::system_append`) after Claude Code's system prompt; omitted when none.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub system_prompt_append: Option<String>,

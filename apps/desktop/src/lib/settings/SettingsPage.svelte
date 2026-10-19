@@ -18,6 +18,7 @@
 	import AccountPage from './pages/AccountPage.svelte';
 	import UsagePage from './pages/UsagePage.svelte';
 	import McpPage from '#lib/mcp/McpPage.svelte';
+	import MemoriesPage from '#lib/agent/MemoriesPage.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import { settings } from './settings.svelte';
 	import type { IconName } from '#lib/workbench/Icon.svelte';
@@ -38,9 +39,29 @@
 			},
 			icon: 'sliders'
 		},
+		{
+			id: 'memories',
+			get label() {
+				return t('chatExtras.memories.title');
+			},
+			icon: 'bookmark'
+		},
 		{ id: 'shortcuts', label: 'Keyboard Shortcuts', icon: 'keyboard' }
 	];
-	const PAGE_LABEL: Record<SettingsPageId, string> = { appearance: 'Appearance', arkai: 'Arkai', terminal: 'Terminal', account: 'บัญชีและทีม', accounts: 'บัญชี AI (Accounts)', usage: 'Stats & Usage', mcp: 'MCP', shortcuts: 'Keyboard Shortcuts', about: 'About Kingu' };
+	const PAGE_LABEL: Record<SettingsPageId, string> = {
+		appearance: 'Appearance',
+		arkai: 'Arkai',
+		terminal: 'Terminal',
+		account: 'บัญชีและทีม',
+		accounts: 'บัญชี AI (Accounts)',
+		usage: 'Stats & Usage',
+		mcp: 'MCP',
+		get memories() {
+			return t('chatExtras.memories.title');
+		},
+		shortcuts: 'Keyboard Shortcuts',
+		about: 'About Kingu'
+	};
 	import { systemSettings } from './systemSettings.svelte';
 
 	let query = $state('');
@@ -160,6 +181,7 @@
 			{:else if page === 'accounts'}<AccountsView />
 			{:else if page === 'usage'}<UsagePage />
 			{:else if page === 'mcp'}<McpPage />
+		{:else if page === 'memories'}<MemoriesPage />
 			{:else if page === 'about'}<AboutPage />
 			{:else if showSnaps}<SnapsView />{:else}<SettingsEditor group={systemSettings.group} bind:query />{/if}
 		</div>

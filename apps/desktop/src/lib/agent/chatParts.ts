@@ -6,8 +6,8 @@
 
 import { t } from '#lib/i18n/index.ts';
 import { parseRequest, type ParsedRequest } from './chatPrompt';
-import { guardBlockedText } from './guardText';
-import type { AgentEvent, PermissionRequest, ResultEvent, RunState, RunStatus } from './events';
+import { guardAskedText, guardBlockedText } from './guardText';
+import type { AgentEvent, PermissionRequest, ResultEvent, RunState, RunStatus, Vote } from './events';
 
 export type ToolPart = {
 	kind: 'tool';
@@ -24,7 +24,8 @@ export type Part =
 	| { kind: 'markdown'; text: string; streaming?: boolean }
 	| { kind: 'thinking'; text: string; streaming?: boolean }
 	| ToolPart
-	| { kind: 'confirmation'; request: PermissionRequest }
+	/** `reason`: why Kingu's safety check asked (a `guard_asked` before it), shown on the card. */
+	| { kind: 'confirmation'; request: PermissionRequest; reason?: string }
 	| { kind: 'error'; message: string }
 	/** The turn was cut short (Stop, or the session ended mid-turn). */
 	| { kind: 'canceled' };
@@ -39,6 +40,8 @@ export type Turn = {
 	done: boolean;
 	/** The chat request (checkpoint) index Rust gave the user message; null outside chats. */
 	checkpoint?: number | null;
+	/** The user's vote on this answer (the last `feedback` event for its checkpoint). */
+	feedback?: Vote | null;
 };
 
 export type ChatView = Pick<RunState, 'items' | 'draft' | 'decisions' | 'ended'> & { status?: RunStatus };
@@ -73,6 +76,10 @@ export function buildTurns(run: ChatView): Turn[] {
 		const call = parent ? tools.get(parent) : undefined;
 		return call ? (call.children ??= []) : current().parts;
 	};
+	/** Why each safety ask was raised, by request id. */
+	const askReasons = new Map<string, string>();
+	/** Votes by checkpoint, the last one winning. */
+	const votes = new Map<number, Vote | null>();
 	const close = (canceled: boolean) => {
 		if (!cur || cur.done) return;
 		cur.done = true;
@@ -110,9 +117,16 @@ export function buildTurns(run: ChatView): Turn[] {
 			case 'permission_request': {
 				const decided = run.decisions[ev.request_id];
 				// Answered ones leave only the tool row, unless the user said no.
-				if (!decided || decided === 'deny' || decided === 'cancelled') current().parts.push({ kind: 'confirmation', request: ev });
+				const reason = askReasons.get(ev.request_id);
+				if (!decided || decided === 'deny' || decided === 'cancelled') current().parts.push({ kind: 'confirmation', request: ev, ...(reason ? { reason } : {}) });
 				break;
 			}
+			case 'guard_asked':
+				askReasons.set(ev.request_id, guardAskedText(ev));
+				break;
+			case 'feedback':
+				votes.set(ev.request, ev.vote);
+				break;
 			case 'result': {
 				const turn = current();
 				turn.result = ev;
@@ -156,6 +170,7 @@ export function buildTurns(run: ChatView): Turn[] {
 		if (run.draft.thinking) turn.parts.push({ kind: 'thinking', text: run.draft.thinking, streaming: true });
 		if (run.draft.text) turn.parts.push({ kind: 'markdown', text: run.draft.text, streaming: true });
 	}
+	for (const turn of turns) if (turn.checkpoint != null && votes.has(turn.checkpoint)) turn.feedback = votes.get(turn.checkpoint);
 	if (!live) for (const turn of turns) turn.done = true;
 	// An idle live session has finished its last turn even when no result came for it.
 	if (live && run.status === 'idle') for (const turn of turns) turn.done = true;

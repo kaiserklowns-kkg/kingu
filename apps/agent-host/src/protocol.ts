@@ -45,6 +45,12 @@ export type StartParams = {
 	snapshots?: boolean;
 	/** Kingu's safety checks (guards/): on unless `false` (`kingu.agent.safetyChecks`). */
 	safetyChecks?: boolean | null;
+	/**
+	 * Kingu's always-ask checks (guards/asks.ts), on in every permission mode: writes outside `cwd`,
+	 * file deletes, MCP tools, and paths matching `protectedPaths` (.kinguignore + the setting,
+	 * gitignore patterns relative to `cwd`). Rust reads them from the user's settings; null: none.
+	 */
+	guardAsks?: { outsideCwd?: boolean; deletes?: boolean; mcpTools?: boolean; protectedPaths?: string[] } | null;
 	/** Project rules (AGENTS.md, .cursor/rules, …; Rust agent/rules.rs) appended to Claude Code's system prompt. */
 	systemPromptAppend?: string | null;
 };
@@ -170,6 +176,12 @@ export type AgentEvent =
 	 * descriptions) or `repetition` (the third identical call in a row).
 	 */
 	| { kind: 'guard_blocked'; tool: string; tool_use_id: string | null; check: 'security' | 'repetition'; threats: string[]; detail: string }
+	/**
+	 * Kingu's always-ask check stopped a tool call for the user's answer (in any permission mode):
+	 * the `permission_request` with this `request_id` follows. `check`: `outside_cwd` (writes
+	 * outside the run's folder), `delete`, `protected` (a .kinguignore path) or `mcp`; `paths`: what it is about.
+	 */
+	| { kind: 'guard_asked'; request_id: string; tool: string; tool_use_id: string | null; check: 'outside_cwd' | 'delete' | 'protected' | 'mcp'; paths: string[] }
 	| { kind: 'error'; message: string }
 	| { kind: 'raw'; line: string }
 	| { kind: 'stderr'; line: string }

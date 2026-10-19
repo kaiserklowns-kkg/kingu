@@ -107,7 +107,8 @@ export function replayTranscript(events: readonly AgentEvent[]): RunState {
 	const s = initialRun();
 	for (const ev of events) {
 		// A transcript holds every run of the chat: an event after an `exit` starts the next one.
-		if (s.ended && ev.kind !== 'exit') {
+		// (A vote is added by the app whenever the user clicks, also after the run's end.)
+		if (s.ended && ev.kind !== 'exit' && ev.kind !== 'feedback') {
 			s.ended = false;
 			s.error = null;
 		}

@@ -8,6 +8,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { message } from '#lib/workbench/messageBox.ts';
 	import AgentPanel from '#lib/agent/AgentPanel.svelte';
+	import { installChatExtras } from '#lib/agent/chatExtras.svelte.ts';
 	import ActivityBar from './ActivityBar.svelte';
 	import Icon from './Icon.svelte';
 	import CleanupDialog from '#lib/ade/CleanupDialog.svelte';
@@ -108,6 +109,7 @@
 		welcome.maybeShow();
 		const unregister = [
 			installSignals(),
+			installChatExtras(),
 			// Shows another OS's chrome (window controls, fonts) on this machine; real users keep macOS's.
 			commands.register({
 				id: 'kingu.dev.previewPlatform',
