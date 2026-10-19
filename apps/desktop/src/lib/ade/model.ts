@@ -124,7 +124,9 @@ export type DiffStat = {
 	files: FileChange[];
 };
 
-export type GhStatus = { installed: boolean; authenticated: boolean; path: string | null; detail: string };
+/** `provider: 'gitlab'`: the folder's origin is on GitLab, so PRs are merge requests over GitLab's API
+ * (always `installed`; `authenticated` = a token for its host is stored, `detail` says how to connect). */
+export type GhStatus = { installed: boolean; authenticated: boolean; path: string | null; detail: string; provider?: 'github' | 'gitlab' };
 export type MergeResult = { commit: string; fast_forward: boolean; checkout: string | null };
 
 export type TaskView = { meta: TaskMeta; runtime?: TaskRuntime; status: TaskStatus; stat?: DiffStat; statError?: string };

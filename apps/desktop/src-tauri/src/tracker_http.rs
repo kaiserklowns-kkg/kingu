@@ -1,8 +1,9 @@
 //! The HTTPS side shared by the REST task sources (GitLab issues in `gitlab.rs`, Jira in
-//! `jira.rs`): one client per call built with `net_proxy::client_builder` (the user's proxy
-//! settings), no redirects (one could carry the credential to another host), a bounded timeout,
-//! and HTTP failures turned into messages the user can act on. The credential is a header the
-//! caller passes in; it never reaches logs or error messages. Tests swap [`Transport`] for a fake.
+//! `jira.rs`) and GitLab merge requests (`agent/mr.rs`): one client per call built with
+//! `net_proxy::client_builder` (the user's proxy settings), no redirects (one could carry the
+//! credential to another host), a bounded timeout, and HTTP failures turned into messages the
+//! user can act on. The credential is a header the caller passes in; it never reaches logs or
+//! error messages. Tests swap [`Transport`] for a fake.
 
 use std::time::Duration;
 
@@ -15,6 +16,7 @@ use crate::tr;
 pub enum Method {
   Get,
   Post,
+  Put,
 }
 
 /// One request: `path` (with its query) is appended to the client's base URL.
@@ -32,6 +34,10 @@ impl Request {
 
   pub fn post(path: impl Into<String>, body: Value) -> Self {
     Self { method: Method::Post, path: path.into(), body: Some(body) }
+  }
+
+  pub fn put(path: impl Into<String>, body: Value) -> Self {
+    Self { method: Method::Put, path: path.into(), body: Some(body) }
   }
 }
 
@@ -69,6 +75,7 @@ impl Transport for Http {
     let builder = match req.method {
       Method::Get => self.client.get(&url),
       Method::Post => self.client.post(&url),
+      Method::Put => self.client.put(&url),
     };
     let mut builder = builder.header(self.auth.0, &self.auth.1).header("Accept", "application/json");
     if let Some(body) = &req.body {

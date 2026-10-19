@@ -69,8 +69,13 @@ pub fn prepend_path(dir: &Path, base: Option<&std::ffi::OsStr>) -> Option<String
   crate::shell_env::merge(Some(dir.as_os_str()), base).and_then(|p| p.into_string().ok())
 }
 
-/// Terminal env: `kingu` on PATH and `KINGU_CLI_RUNTIME`, unless `terminal.integrated.env` unsets them.
+/// Terminal env: `kingu` on PATH, `KINGU_CLI_RUNTIME` and `KINGU_LANG` (the app's UI language, for
+/// the command's help and errors), unless `terminal.integrated.env` sets or unsets them.
 pub fn terminal_env(env: &mut BTreeMap<String, String>, unset: &[String]) {
+  if !unset.iter().any(|k| k == kingu_cli::i18n::ENV_LANG) {
+    let lang = if crate::i18n::current() == crate::i18n::Locale::Th { "th" } else { "en" };
+    env.entry(kingu_cli::i18n::ENV_LANG.into()).or_insert_with(|| lang.into());
+  }
   let (Some(bin), Some(runtime)) = (BIN_DIR.get(), RUNTIME.get()) else { return };
   if !unset.iter().any(|k| k == "PATH") {
     let base = env.get("PATH").map(std::ffi::OsString::from).or_else(crate::shell_env::path);
@@ -540,6 +545,19 @@ mod tests {
     let p = prepend_path(Path::new("/k/bin"), Some(std::ffi::OsStr::new("/usr/bin:/k/bin:/bin"))).unwrap();
     assert_eq!(p, "/k/bin:/usr/bin:/bin");
     assert_eq!(prepend_path(Path::new("/k/bin"), None).unwrap(), "/k/bin");
+  }
+
+  #[test]
+  fn passes_the_ui_language_to_terminals() {
+    let mut env = BTreeMap::new();
+    crate::i18n::with_locale(crate::i18n::Locale::Th, || terminal_env(&mut env, &[]));
+    assert_eq!(env.get("KINGU_LANG").map(String::as_str), Some("th"));
+    let mut set = BTreeMap::from([("KINGU_LANG".to_owned(), "en".to_owned())]);
+    crate::i18n::with_locale(crate::i18n::Locale::Th, || terminal_env(&mut set, &[]));
+    assert_eq!(set["KINGU_LANG"], "en");
+    let mut unset = BTreeMap::new();
+    terminal_env(&mut unset, &["KINGU_LANG".to_owned()]);
+    assert!(!unset.contains_key("KINGU_LANG"));
   }
 
   #[test]

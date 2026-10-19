@@ -60,6 +60,9 @@ pub struct GhStatus {
   pub path: Option<String>,
   /// `gh auth status` output (or why it could not run), for the "how to log in" hint.
   pub detail: String,
+  /// `github` (gh), or `gitlab` when the folder's origin is on GitLab (`agent/mr.rs`): then
+  /// `installed` is always true and `authenticated` means a token for its host is stored.
+  pub provider: &'static str,
 }
 
 fn text(out: Vec<u8>) -> String {
@@ -364,15 +367,15 @@ pub fn gh_bin() -> Option<PathBuf> {
 /// Installed and logged in? Runs `gh auth status` (exit 0 when a host is authenticated).
 pub fn gh_status(bin: Option<PathBuf>) -> GhStatus {
   let Some(bin) = bin else {
-    return GhStatus { installed: false, authenticated: false, path: None, detail: "gh not found".into() };
+    return GhStatus { installed: false, authenticated: false, path: None, detail: "gh not found".into(), provider: "github" };
   };
   let path = Some(bin.display().to_string());
   match crate::shell_env::command(&bin).args(["auth", "status"]).output() {
     Ok(out) => {
       let detail = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)).trim().to_owned();
-      GhStatus { installed: true, authenticated: out.status.success(), path, detail }
+      GhStatus { installed: true, authenticated: out.status.success(), path, detail, provider: "github" }
     }
-    Err(e) => GhStatus { installed: false, authenticated: false, path, detail: e.to_string() },
+    Err(e) => GhStatus { installed: false, authenticated: false, path, detail: e.to_string(), provider: "github" },
   }
 }
 
@@ -385,15 +388,21 @@ pub fn pr_create_args(base: &str, branch: &str, title: &str, body: &str, draft: 
   args
 }
 
+/// Pushes the task branch to `origin` (setting its upstream); returns the branch name.
+pub fn push_task_branch(dir: &Path, slug: &str) -> Result<String, String> {
+  git::run(dir, &["remote", "get-url", "origin"]).map_err(|_| tr!(AgentMsg::NoOrigin))?;
+  let branch = task_branch(dir, slug)?;
+  git_queue::with(dir, Scope::Refs, "push", || git::run(dir, &["push", "-u", "origin", &format!("refs/heads/{branch}:refs/heads/{branch}")]))?;
+  Ok(branch)
+}
+
 /// Pushes the task branch to `origin` and opens a pull request against `base`; returns its URL.
 pub fn pr_create(gh: &Path, dir: &Path, slug: &str, base: &str, title: &str, body: &str, draft: bool) -> Result<String, String> {
   check_rev(base)?;
   if title.trim().is_empty() {
     return Err("PR title is empty".into());
   }
-  git::run(dir, &["remote", "get-url", "origin"]).map_err(|_| tr!(AgentMsg::NoOrigin))?;
-  let branch = task_branch(dir, slug)?;
-  git_queue::with(dir, Scope::Refs, "push", || git::run(dir, &["push", "-u", "origin", &format!("refs/heads/{branch}:refs/heads/{branch}")]))?;
+  let branch = push_task_branch(dir, slug)?;
   let out = crate::shell_env::command(gh)
     .current_dir(dir)
     .args(pr_create_args(base, &branch, title, body, draft))
@@ -433,9 +442,13 @@ pub struct PrCheck {
   pub job_id: Option<u64>,
 }
 
-/// `(run, job)` ids in a GitHub Actions details URL; other check URLs have none.
+/// `(run, job)` ids in a GitHub Actions details URL, or the job id of a GitLab CI job URL
+/// (`…/-/jobs/<job>`); other check URLs have none.
 pub fn actions_ids(url: Option<&str>) -> (Option<u64>, Option<u64>) {
   let Some(url) = url else { return (None, None) };
+  if let Some((_, job)) = url.split_once("/-/jobs/") {
+    return (None, job.split(['/', '?', '#']).next().and_then(|j| j.parse().ok()));
+  }
   let Some((_, rest)) = url.split_once("/actions/runs/") else { return (None, None) };
   let mut parts = rest.split(['/', '?', '#']);
   let run = parts.next().and_then(|r| r.parse().ok());

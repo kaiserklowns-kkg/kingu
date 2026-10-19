@@ -69,6 +69,7 @@ import { diffNotes } from './diffNotes.svelte.ts';
 import { pruneAcceptedHunks, sameMarks } from './hunkReview.ts';
 import { adeDialogs } from './dialogs.svelte.ts';
 import { commentOnLink } from './trackerApi.ts';
+import { issueBranchLeaf } from './issueBranch.ts';
 import { prefillPr, prFormProblem, type Commit, type PrForm } from './prForm.ts';
 import { isFolderGithub, isLinear, issueLink, issuePrompt, issueRef, issueSlug, issueTaskTitle, prBody, prComment, taskForIssue, type Issue, type IssueDetail } from './issues.ts';
 import { linearLink, linearPrompt, linearSlug, linearTaskTitle, taskForLinearIssue, type LinearIssue, type LinearIssueDetail } from './linear.ts';
@@ -391,7 +392,7 @@ class AdeTasks {
 		try {
 			if (source.kind === 'branch') await invoke<WorktreeInfo>('worktree_create_from_branch', { slug, branch: source.branch });
 			else if (source.kind === 'pr') pr = (await invoke<{ worktree: WorktreeInfo; pr: PrHead }>('worktree_create_from_pr', { slug, pr: source.pr })).pr;
-			else await invoke<WorktreeInfo>('worktree_create', { slug, base, prefix });
+			else await invoke<WorktreeInfo>('worktree_create', { slug, base, prefix, branch: issueBranchLeaf(slug, input.issue) });
 		} catch (e) {
 			notifications.error(t('adeTasks.tasks.createWorktreeFailed', { error: String(e) }));
 			return;
@@ -1192,6 +1193,10 @@ class AdeTasks {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta) return;
 		const gh = await this.checkGh();
+		if (gh?.provider === 'gitlab' && !gh.authenticated) {
+			await message(gh.detail, { title: t('adeTasks.tasks.createPrTitle'), kind: 'info' });
+			return;
+		}
 		if (!gh?.installed) {
 			await message(t('adeTasks.tasks.ghMissing'), { title: t('adeTasks.tasks.createPrTitle'), kind: 'info' });
 			return;

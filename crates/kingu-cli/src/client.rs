@@ -6,6 +6,7 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use crate::args::Command;
+use crate::i18n::{Msg, tr};
 use crate::protocol::{self, Request, Response};
 
 /// Exit codes: the app refused or failed; bad usage; the app is not running or unreachable.
@@ -30,7 +31,7 @@ pub fn request_of(cmd: &Command, cwd: &Path, stdin_prompt: Option<String>) -> Re
         None => String::new(),
       };
       if prompt.len() > MAX_PROMPT {
-        return Err(format!("the prompt is larger than {} KB", MAX_PROMPT / 1024));
+        return Err(tr(Msg::PromptTooLarge, &[("kb", &(MAX_PROMPT / 1024))]));
       }
       (protocol::METHOD_TASK_CREATE, json!({ "title": title, "prompt": prompt, "base": base, "mode": mode, "open": !background }))
     }
@@ -50,8 +51,8 @@ pub fn render(method: &str, result: &Value) -> String {
     protocol::METHOD_STATUS => {
       let mut out = format!("Kingu {} (pid {})", result["app_version"].as_str().unwrap_or("?"), result["pid"].as_u64().unwrap_or(0));
       match result["workspace"].as_str() {
-        Some(w) => out.push_str(&format!("\nfolder: {w}\ntasks: {}", result["tasks"].as_u64().unwrap_or(0))),
-        None => out.push_str("\nno folder open"),
+        Some(w) => out.push_str(&format!("\n{}", tr(Msg::StatusFolder, &[("folder", &w), ("tasks", &result["tasks"].as_u64().unwrap_or(0))]))),
+        None => out.push_str(&format!("\n{}", tr(Msg::NoFolder, &[]))),
       }
       out
     }
@@ -63,7 +64,7 @@ pub fn render(method: &str, result: &Value) -> String {
         .iter()
         .map(|t| format!("{}\t{}\t{}", t["slug"].as_str().unwrap_or(""), t["status"].as_str().unwrap_or(""), t["title"].as_str().unwrap_or("")))
         .collect();
-      if rows.is_empty() { "no tasks".into() } else { rows.join("\n") }
+      if rows.is_empty() { tr(Msg::NoTasks, &[]) } else { rows.join("\n") }
     }
     protocol::METHOD_TASK_CREATE => result["slug"].as_str().unwrap_or("").to_owned(),
     _ => String::new(),
@@ -76,23 +77,23 @@ pub fn call(socket: &Path, token: &str, method: &str, params: Value) -> Result<R
   use std::io::{BufRead, BufReader, Read, Write};
   use std::os::unix::net::UnixStream;
   use std::time::Duration;
-  let mut stream = UnixStream::connect(socket).map_err(|e| (EXIT_UNAVAILABLE, format!("Kingu is not running or not reachable ({}: {e})", socket.display())))?;
+  let mut stream = UnixStream::connect(socket).map_err(|e| (EXIT_UNAVAILABLE, tr(Msg::NotReachable, &[("socket", &socket.display()), ("detail", &e)])))?;
   // Starting a task waits for the window (the app gives it 30 s).
   let _ = stream.set_read_timeout(Some(Duration::from_secs(90)));
   let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
   let req = Request { id: 1, auth_token: token.to_owned(), method: method.to_owned(), params };
-  stream.write_all(protocol::encode(&req).as_bytes()).map_err(|e| (EXIT_UNAVAILABLE, format!("could not send to Kingu: {e}")))?;
+  stream.write_all(protocol::encode(&req).as_bytes()).map_err(|e| (EXIT_UNAVAILABLE, tr(Msg::SendFailed, &[("detail", &e)])))?;
   let mut line = String::new();
-  BufReader::new(stream.take(protocol::MAX_LINE as u64 + 1)).read_line(&mut line).map_err(|e| (EXIT_UNAVAILABLE, format!("no answer from Kingu: {e}")))?;
+  BufReader::new(stream.take(protocol::MAX_LINE as u64 + 1)).read_line(&mut line).map_err(|e| (EXIT_UNAVAILABLE, tr(Msg::NoAnswer, &[("detail", &e)])))?;
   if line.is_empty() {
-    return Err((EXIT_UNAVAILABLE, "Kingu closed the connection without answering".into()));
+    return Err((EXIT_UNAVAILABLE, tr(Msg::ClosedWithoutAnswer, &[])));
   }
   protocol::decode_response(&line).map_err(|e| (EXIT_FAILED, e))
 }
 
 #[cfg(not(unix))]
 pub fn call(_socket: &Path, _token: &str, _method: &str, _params: Value) -> Result<Response, (i32, String)> {
-  Err((EXIT_UNAVAILABLE, "the kingu command is not supported on this operating system yet".into()))
+  Err((EXIT_UNAVAILABLE, tr(Msg::Unsupported, &[])))
 }
 
 #[cfg(test)]

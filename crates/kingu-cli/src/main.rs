@@ -1,10 +1,11 @@
-//! `kingu …`: see `kingu_cli::args::USAGE`. Linked as `kingu` by the app (its terminals' PATH and
+//! `kingu …`: see `kingu_cli::args::usage()`. Linked as `kingu` by the app (its terminals' PATH and
 //! "Shell Command: Install 'kingu' command in PATH").
 
 use std::io::Read;
 
 use kingu_cli::args::{self, Command};
 use kingu_cli::client::{self, EXIT_FAILED, EXIT_UNAVAILABLE, EXIT_USAGE};
+use kingu_cli::i18n::{self, Lang, Msg, tr};
 use kingu_cli::runtime;
 
 fn fail(code: i32, msg: impl std::fmt::Display) -> ! {
@@ -13,10 +14,11 @@ fn fail(code: i32, msg: impl std::fmt::Display) -> ! {
 }
 
 fn main() {
-  let inv = args::parse(std::env::args().skip(1)).unwrap_or_else(|e| fail(EXIT_USAGE, format!("{e}\n\n{}", args::USAGE)));
+  i18n::set(Lang::from_env());
+  let inv = args::parse(std::env::args().skip(1)).unwrap_or_else(|e| fail(EXIT_USAGE, format!("{e}\n\n{}", args::usage())));
   match inv.command {
     Command::Help => {
-      println!("{}", args::USAGE);
+      println!("{}", args::usage());
       return;
     }
     Command::Version => {
@@ -28,16 +30,16 @@ fn main() {
   let stdin_prompt = match &inv.command {
     Command::TaskCreate { prompt: Some(p), .. } if p == "-" => {
       let mut s = String::new();
-      std::io::stdin().take(client::MAX_PROMPT as u64 + 1).read_to_string(&mut s).unwrap_or_else(|e| fail(EXIT_USAGE, format!("stdin: {e}")));
+      std::io::stdin().take(client::MAX_PROMPT as u64 + 1).read_to_string(&mut s).unwrap_or_else(|e| fail(EXIT_USAGE, tr(Msg::Stdin, &[("detail", &e)])));
       Some(s)
     }
     _ => None,
   };
-  let cwd = std::env::current_dir().unwrap_or_else(|e| fail(EXIT_USAGE, format!("current folder: {e}")));
+  let cwd = std::env::current_dir().unwrap_or_else(|e| fail(EXIT_USAGE, tr(Msg::CurrentFolder, &[("detail", &e)])));
   let Some((method, params)) = client::request_of(&inv.command, &cwd, stdin_prompt).unwrap_or_else(|e| fail(EXIT_USAGE, e)) else { return };
-  let path = runtime::runtime_path().unwrap_or_else(|| fail(EXIT_UNAVAILABLE, "cannot find Kingu's data folder (HOME is not set)"));
+  let path = runtime::runtime_path().unwrap_or_else(|| fail(EXIT_UNAVAILABLE, tr(Msg::NoDataFolder, &[])));
   if !path.exists() {
-    fail(EXIT_UNAVAILABLE, "Kingu is not running (start the app first)");
+    fail(EXIT_UNAVAILABLE, tr(Msg::NotRunning, &[]));
   }
   let rt = runtime::read(&path).unwrap_or_else(|e| fail(EXIT_UNAVAILABLE, e));
   let res = client::call(std::path::Path::new(&rt.socket), &rt.token, method, params).unwrap_or_else(|(code, e)| fail(code, e));
@@ -50,7 +52,7 @@ fn main() {
     return;
   }
   if !res.ok {
-    fail(EXIT_FAILED, res.error.map_or_else(|| "failed".to_owned(), |e| e.message));
+    fail(EXIT_FAILED, res.error.map_or_else(|| tr(Msg::Failed, &[]), |e| e.message));
   }
   let text = client::render(method, &res.result.unwrap_or_default());
   if !text.is_empty() {

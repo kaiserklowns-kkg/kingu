@@ -42,7 +42,9 @@
 		<span class="flex-1">{title ? 'Checks' : ''}</span>
 		<button class={ICON_BUTTON} aria-label="รีเฟรช checks" title="รีเฟรช" disabled={entry?.loading || !adeTasks.gh?.authenticated} onclick={() => prStatuses.refresh(slug)}><Icon name="refresh" size={14} /></button>
 	</div>
-	{#if adeTasks.gh && !adeTasks.gh.installed}
+	{#if adeTasks.gh?.provider === 'gitlab' && !adeTasks.gh.authenticated}
+		<p class="text-(--vscode-descriptionForeground)">{adeTasks.gh.detail}</p>
+	{:else if adeTasks.gh && !adeTasks.gh.installed}
 		<p class="text-(--vscode-descriptionForeground)">ต้องมี GitHub CLI เพื่อดู PR และ CI: <code>brew install gh</code> แล้ว <code>gh auth login</code></p>
 	{:else if adeTasks.gh && !adeTasks.gh.authenticated}
 		<p class="text-(--vscode-descriptionForeground)">gh ยังไม่ได้เข้าสู่ระบบ: รัน <code>gh auth login</code> ในเทอร์มินัล</p>

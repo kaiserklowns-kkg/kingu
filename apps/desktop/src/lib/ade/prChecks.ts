@@ -105,8 +105,10 @@ export function brokenChecks(checks: PrCheck[]): PrCheck[] {
 	return checks.filter((c) => c.state === 'failure' || c.state === 'cancelled');
 }
 
-/** `host/owner/repo` of a PR URL. */
+/** `host/owner/repo` of a PR URL, or `host/group/…/project` of a GitLab merge request's. */
 export function repoOf(url: string): string | null {
 	const m = /^https:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/\d+/.exec(url);
-	return m ? `${m[1]}/${m[2]}/${m[3]}` : null;
+	if (m) return `${m[1]}/${m[2]}/${m[3]}`;
+	const mr = /^https:\/\/([^/]+)\/(.+?)\/-\/merge_requests\/\d+/.exec(url);
+	return mr ? `${mr[1]}/${mr[2]}` : null;
 }
