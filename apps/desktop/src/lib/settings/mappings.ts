@@ -213,6 +213,8 @@ export type SearchSettings = {
 	use_global_ignore: boolean;
 	use_parent_ignore: boolean;
 	max_threads: number;
+	/** kingu.search.smart: a plain query also finds its words in any case, order and name spelling (Rust smart_search.rs). */
+	smart: boolean;
 };
 
 /** VS Code: search.exclude inherits files.exclude; both apply unless "Use Exclude Settings" is off. */
@@ -227,7 +229,8 @@ export function searchSettingsFrom(get: Get, useExcludes: boolean): SearchSettin
 		max_results: get<number | null>('search.maxResults') ?? Number.MAX_SAFE_INTEGER,
 		use_global_ignore: get<boolean>('search.useGlobalIgnoreFiles'),
 		use_parent_ignore: get<boolean>('search.useParentIgnoreFiles'),
-		max_threads: get<number>('search.ripgrep.maxThreads')
+		max_threads: get<number>('search.ripgrep.maxThreads'),
+		smart: get<boolean>('kingu.search.smart') === true
 	};
 }
 
