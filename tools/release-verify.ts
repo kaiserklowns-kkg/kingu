@@ -23,15 +23,18 @@ export const MIN_MACOS = '13.0';
 export const SIDECAR = 'kingu-agent-host';
 /** Terminal host daemon (crates/kingu-ptyd): owns PTYs so agent CLIs outlive the app. */
 export const PTYD = 'kingu-ptyd';
+/** The `kingu` command (crates/kingu-cli), linked as `kingu` by the app. */
+export const CLI = 'kingu-cli';
 
 /** Exact entitlements per executable (docs/PLAN.md 7.2). */
 export const ENTITLEMENTS: Record<string, Record<string, unknown>> = {
 	main: {},
 	[SIDECAR]: { 'com.apple.security.cs.allow-jit': true },
-	[PTYD]: {}
+	[PTYD]: {},
+	[CLI]: {}
 };
 /** Signing identifiers (codesign -i); ad-hoc signing would otherwise derive one from a hash. */
-export const IDENTIFIERS: Record<string, string> = { main: BUNDLE_ID, [SIDECAR]: `${BUNDLE_ID}.agent-host`, [PTYD]: `${BUNDLE_ID}.ptyd` };
+export const IDENTIFIERS: Record<string, string> = { main: BUNDLE_ID, [SIDECAR]: `${BUNDLE_ID}.agent-host`, [PTYD]: `${BUNDLE_ID}.ptyd`, [CLI]: `${BUNDLE_ID}.cli` };
 export const FORBIDDEN_ENTITLEMENTS = [
 	'com.apple.security.cs.disable-library-validation',
 	'com.apple.security.cs.allow-dyld-environment-variables',
@@ -167,13 +170,15 @@ export function verify(app: string, opts: { frontend?: string; maxAppMb: number;
 	add('bundle.sidecar', existsSync(sidecar), `Contents/MacOS/${SIDECAR}`);
 	const ptyd = join(macos, PTYD);
 	add('bundle.ptyd', existsSync(ptyd), `Contents/MacOS/${PTYD}`);
+	const cli = join(macos, CLI);
+	add('bundle.cli', existsSync(cli), `Contents/MacOS/${CLI}`);
 
 	// --- signatures
 	const verifyDeep = sh(['codesign', '--verify', '--deep', '--strict', '--verbose=2', app]);
 	add('sign.verify-deep-strict', verifyDeep.code === 0, (verifyDeep.err || verifyDeep.out).trim().split('\n').slice(-1)[0] ?? '');
 	const expectTeam = process.env.KINGU_EXPECT_TEAM_ID;
 	const teams = new Set<string>();
-	for (const [role, bin] of [['main', mainExe], [SIDECAR, sidecar], [PTYD, ptyd]] as const) {
+	for (const [role, bin] of [['main', mainExe], [SIDECAR, sidecar], [PTYD, ptyd], [CLI, cli]] as const) {
 		if (!existsSync(bin)) continue;
 		const info = signatureInfo(bin);
 		const runtime = /\bruntime\b/.test(info.flags ?? '');

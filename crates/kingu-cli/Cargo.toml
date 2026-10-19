@@ -1,0 +1,30 @@
+[package]
+name = "kingu-cli"
+version = "0.1.0"
+description = "The `kingu` command: agents and scripts control the running Kingu app"
+license = "MIT"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+# The library holds the wire protocol and the runtime file (shared with the app's server in
+# apps/desktop/src-tauri/src/cli_server.rs) and the argument parser; the binary is the command.
+# The binary is `kingu-cli`, not `kingu`: Tauri puts it next to the app executable `Kingu`, which
+# a case-insensitive file system would take for the same name. The app links it as `kingu`.
+[lib]
+name = "kingu_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kingu-cli"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
