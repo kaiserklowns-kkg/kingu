@@ -16,7 +16,7 @@
 
 use std::path::Path;
 
-use crate::i18n::msg::AgentMsg;
+use crate::i18n::msg::{AgentMsg, FilesMsg};
 use crate::tr;
 
 use super::chat_edits::{self, EditsRedo, Report, Store};
@@ -147,7 +147,7 @@ fn redo_path(root: &Path, id: &str) -> Result<std::path::PathBuf, String> {
 fn load_redo(root: &Path, id: &str) -> Result<Option<Redo>, String> {
   let path = redo_path(root, id)?;
   if std::fs::symlink_metadata(&path).is_ok_and(|m| !m.is_file()) {
-    return Err(format!("{}: not a regular file", path.display()));
+    return Err(tr!(FilesMsg::NotARegularFile, path = path.display()));
   }
   match std::fs::read_to_string(&path) {
     Ok(text) => serde_json::from_str(&text).map(Some).map_err(|e| format!("{REDO}: {e}")),

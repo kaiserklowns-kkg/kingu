@@ -27,6 +27,9 @@ use std::path::Path;
 use yaml_rust2::parser::{Event, Parser};
 use yaml_rust2::scanner::TScalarStyle;
 
+use crate::i18n::msg::{FilesMsg, KinguYamlMsg};
+use crate::tr;
+
 pub const FILE: &str = "kingu.yaml";
 pub const MAX_BYTES: usize = 256 * 1024;
 const MAX_FIELD_BYTES: usize = 64 * 1024;
@@ -85,7 +88,7 @@ enum Frame {
 /// Parses YAML text into a `Yaml` tree (`Null` for an empty document).
 pub fn parse_yaml(text: &str) -> R<Yaml> {
   if text.len() > MAX_BYTES {
-    return Err(format!("larger than {} KB", MAX_BYTES / 1024));
+    return Err(tr!(KinguYamlMsg::TooLarge, kb = MAX_BYTES / 1024));
   }
   let text = text.strip_prefix('\u{feff}').unwrap_or(text);
   let mut parser = Parser::new_from_str(text);
@@ -93,8 +96,8 @@ pub fn parse_yaml(text: &str) -> R<Yaml> {
   let mut root: Option<Yaml> = None;
   let (mut docs, mut nodes) = (0usize, 0usize);
   loop {
-    let (event, mark) = parser.next_token().map_err(|e| format!("line {}: {}", e.marker().line(), e.info()))?;
-    let at = |msg: &str| format!("line {}: {msg}", mark.line());
+    let (event, mark) = parser.next_token().map_err(|e| tr!(KinguYamlMsg::AtLine, line = e.marker().line(), detail = e.info()))?;
+    let at = |detail: String| tr!(KinguYamlMsg::AtLine, line = mark.line(), detail);
     // The value a finished scalar or collection adds to its parent (or the document).
     let mut done: Option<(Yaml, Option<String>)> = None;
     match event {
@@ -103,16 +106,16 @@ pub fn parse_yaml(text: &str) -> R<Yaml> {
       Event::DocumentStart => {
         docs += 1;
         if docs > 1 {
-          return Err(at("only one YAML document is allowed"));
+          return Err(at(tr!(KinguYamlMsg::OneDocument)));
         }
       }
-      Event::Alias(_) => return Err(at("aliases are not supported")),
+      Event::Alias(_) => return Err(at(tr!(KinguYamlMsg::NoAliases))),
       Event::Scalar(value, style, anchor, tag) => {
         if anchor > 0 {
-          return Err(at("anchors are not supported"));
+          return Err(at(tr!(KinguYamlMsg::NoAnchors)));
         }
         if tag.is_some() {
-          return Err(at("tags are not supported"));
+          return Err(at(tr!(KinguYamlMsg::NoTags)));
         }
         let key = style == TScalarStyle::Plain || style == TScalarStyle::SingleQuoted || style == TScalarStyle::DoubleQuoted;
         let raw = key.then(|| value.clone());
@@ -120,16 +123,16 @@ pub fn parse_yaml(text: &str) -> R<Yaml> {
       }
       Event::SequenceStart(anchor, ref tag) | Event::MappingStart(anchor, ref tag) => {
         if anchor > 0 {
-          return Err(at("anchors are not supported"));
+          return Err(at(tr!(KinguYamlMsg::NoAnchors)));
         }
         if tag.is_some() {
-          return Err(at("tags are not supported"));
+          return Err(at(tr!(KinguYamlMsg::NoTags)));
         }
         if stack.len() >= MAX_DEPTH {
-          return Err(at("nested too deeply"));
+          return Err(at(tr!(KinguYamlMsg::TooDeep)));
         }
         if matches!(stack.last(), Some(Frame::Map(_, None))) {
-          return Err(at("keys must be plain strings"));
+          return Err(at(tr!(KinguYamlMsg::PlainKeys)));
         }
         stack.push(if matches!(event, Event::SequenceStart(..)) { Frame::Seq(Vec::new()) } else { Frame::Map(Vec::new(), None) });
       }
@@ -137,14 +140,14 @@ pub fn parse_yaml(text: &str) -> R<Yaml> {
         done = match stack.pop() {
           Some(Frame::Seq(items)) => Some((Yaml::Seq(items), None)),
           Some(Frame::Map(entries, _)) => Some((Yaml::Map(entries), None)),
-          None => return Err(at("unbalanced document")),
+          None => return Err(at(tr!(KinguYamlMsg::Unbalanced))),
         };
       }
     }
     let Some((value, raw)) = done else { continue };
     nodes += 1;
     if nodes > MAX_NODES {
-      return Err(at("too many values"));
+      return Err(at(tr!(KinguYamlMsg::TooManyValues)));
     }
     match stack.last_mut() {
       None => root = Some(value),
@@ -152,9 +155,9 @@ pub fn parse_yaml(text: &str) -> R<Yaml> {
       Some(Frame::Map(entries, pending)) => match pending.take() {
         Some(key) => entries.push((key, value)),
         None => {
-          let key = raw.ok_or_else(|| at("keys must be plain strings"))?;
+          let key = raw.ok_or_else(|| at(tr!(KinguYamlMsg::PlainKeys)))?;
           if entries.iter().any(|(k, _)| *k == key) {
-            return Err(at(&format!("duplicate key `{key}`")));
+            return Err(at(tr!(KinguYamlMsg::DuplicateKey, key)));
           }
           *pending = Some(key);
         }
@@ -200,12 +203,12 @@ fn trimmed(v: Option<&Yaml>, field: &str, warnings: &mut Vec<String>) -> Option<
   match v? {
     Yaml::Null => None,
     Yaml::Str(s) if s.len() > MAX_FIELD_BYTES => {
-      warnings.push(format!("{field}: longer than {} KB, ignored", MAX_FIELD_BYTES / 1024));
+      warnings.push(tr!(KinguYamlMsg::FieldTooLong, field, kb = MAX_FIELD_BYTES / 1024));
       None
     }
     Yaml::Str(s) => Some(s.trim().to_owned()).filter(|t| !t.is_empty()),
     _ => {
-      warnings.push(format!("{field}: expected a string, ignored"));
+      warnings.push(tr!(KinguYamlMsg::ExpectedString, field));
       None
     }
   }
@@ -237,11 +240,11 @@ pub fn from_yaml(root: &Yaml) -> R<KinguYaml> {
   let map = match root {
     Yaml::Null => return Ok(out),
     Yaml::Map(m) => m,
-    _ => return Err("the top level must be a mapping".to_owned()),
+    _ => return Err(tr!(KinguYamlMsg::TopLevelMapping)),
   };
   for (k, _) in map {
     if !KNOWN_KEYS.contains(&k.as_str()) {
-      w.push(format!("unknown key `{k}`, ignored"));
+      w.push(tr!(KinguYamlMsg::UnknownKey, key = k));
     }
   }
   match root.get("scripts") {
@@ -249,28 +252,28 @@ pub fn from_yaml(root: &Yaml) -> R<KinguYaml> {
     Some(s @ Yaml::Map(m)) => {
       for (k, _) in m {
         if k != "setup" && k != "archive" {
-          w.push(format!("unknown key `scripts.{k}`, ignored"));
+          w.push(tr!(KinguYamlMsg::UnknownKey, key = format!("scripts.{k}")));
         }
       }
       out.scripts.setup = trimmed(s.get("setup"), "scripts.setup", w);
       out.scripts.archive = trimmed(s.get("archive"), "scripts.archive", w);
     }
-    Some(_) => w.push("scripts: expected a mapping, ignored".to_owned()),
+    Some(_) => w.push(tr!(KinguYamlMsg::ExpectedMapping, field = "scripts")),
   }
   match root.get("setupAgentStartupPolicy") {
     None | Some(Yaml::Null) => {}
     Some(Yaml::Str(s)) if s == "start-immediately" || s == "wait-for-setup" => out.setup_agent_startup_policy = Some(s.clone()),
-    Some(_) => w.push("setupAgentStartupPolicy: expected start-immediately or wait-for-setup, ignored".to_owned()),
+    Some(_) => w.push(tr!(KinguYamlMsg::BadStartupPolicy)),
   }
   out.issue_command = trimmed(root.get("issueCommand"), "issueCommand", w);
   match root.get("defaultTabs") {
     None | Some(Yaml::Null) => {}
-    Some(Yaml::Seq(tabs)) if tabs.len() > MAX_ENTRIES => w.push(format!("defaultTabs: more than {MAX_ENTRIES} entries, ignored")),
+    Some(Yaml::Seq(tabs)) if tabs.len() > MAX_ENTRIES => w.push(tr!(KinguYamlMsg::TooManyEntries, field = "defaultTabs", max = MAX_ENTRIES)),
     Some(Yaml::Seq(tabs)) => {
       for (i, tab) in tabs.iter().enumerate() {
         let field = format!("defaultTabs[{}]", i + 1);
         if !matches!(tab, Yaml::Map(_)) {
-          w.push(format!("{field}: expected a mapping, ignored"));
+          w.push(tr!(KinguYamlMsg::ExpectedMapping, field));
           continue;
         }
         let title = trimmed(tab.get("title"), &format!("{field}.title"), w);
@@ -278,7 +281,7 @@ pub fn from_yaml(root: &Yaml) -> R<KinguYaml> {
         let color = trimmed(tab.get("color"), &format!("{field}.color"), w).filter(|c| {
           let ok = valid_color(c);
           if !ok {
-            w.push(format!("{field}.color: expected #rgb or #rrggbb, ignored"));
+            w.push(tr!(KinguYamlMsg::BadColor, field = format!("{field}.color")));
           }
           ok
         });
@@ -288,17 +291,17 @@ pub fn from_yaml(root: &Yaml) -> R<KinguYaml> {
         out.default_tabs.push(DefaultTab { title, color, command });
       }
     }
-    Some(_) => w.push("defaultTabs: expected a sequence, ignored".to_owned()),
+    Some(_) => w.push(tr!(KinguYamlMsg::ExpectedSequence, field = "defaultTabs")),
   }
   if root.get("environmentRecipes").is_some_and(|v| *v != Yaml::Null) {
-    w.push("environmentRecipes: needs on-demand environments, which Kingu does not have yet; ignored".to_owned());
+    w.push(tr!(KinguYamlMsg::NoEnvironments));
   }
   match root.get("worktree") {
     None | Some(Yaml::Null) => {}
     Some(wt @ Yaml::Map(m)) => {
       for (k, _) in m {
         if k != "sharedDirectories" {
-          w.push(format!("unknown key `worktree.{k}`, ignored"));
+          w.push(tr!(KinguYamlMsg::UnknownKey, key = format!("worktree.{k}")));
         }
       }
       match wt.get("sharedDirectories") {
@@ -309,17 +312,17 @@ pub fn from_yaml(root: &Yaml) -> R<KinguYaml> {
             match normalize_relative(&raw) {
               Some(p) if !out.shared_directories.contains(&p) => out.shared_directories.push(p),
               Some(_) => {}
-              None => w.push(format!("worktree.sharedDirectories: `{raw}` is not a safe repo-relative path, ignored")),
+              None => w.push(tr!(KinguYamlMsg::UnsafePath, path = raw)),
             }
           }
           if dirs.len() > MAX_SHARED_DIRECTORIES {
-            w.push(format!("worktree.sharedDirectories: only the first {MAX_SHARED_DIRECTORIES} entries are used"));
+            w.push(tr!(KinguYamlMsg::FirstEntriesOnly, field = "worktree.sharedDirectories", max = MAX_SHARED_DIRECTORIES));
           }
         }
-        Some(_) => w.push("worktree.sharedDirectories: expected a sequence, ignored".to_owned()),
+        Some(_) => w.push(tr!(KinguYamlMsg::ExpectedSequence, field = "worktree.sharedDirectories")),
       }
     }
-    Some(_) => w.push("worktree: expected a mapping, ignored".to_owned()),
+    Some(_) => w.push(tr!(KinguYamlMsg::ExpectedMapping, field = "worktree")),
   }
   Ok(out)
 }
@@ -339,13 +342,13 @@ pub fn load(root: &Path) -> R<Option<KinguYaml>> {
     Err(e) => return Err(format!("{FILE}: {e}")),
   };
   if !meta.is_file() {
-    return Err(format!("{FILE}: not a regular file"));
+    return Err(tr!(FilesMsg::NotARegularFile, path = FILE));
   }
   if meta.len() > MAX_BYTES as u64 {
-    return Err(format!("{FILE}: larger than {} KB", MAX_BYTES / 1024));
+    return Err(format!("{FILE}: {}", tr!(KinguYamlMsg::TooLarge, kb = MAX_BYTES / 1024)));
   }
   let bytes = std::fs::read(&file).map_err(|e| format!("{FILE}: {e}"))?;
-  let text = String::from_utf8(bytes).map_err(|_| format!("{FILE}: not UTF-8"))?;
+  let text = String::from_utf8(bytes).map_err(|_| tr!(FilesMsg::NotUtf8, path = FILE))?;
   parse(&text).map(Some).map_err(|e| format!("{FILE}: {e}"))
 }
 

@@ -6,7 +6,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::i18n::msg::{AgentMsg, TasksMsg};
 use crate::settings::{kingu_file, read, write_atomic};
+use crate::tr;
 
 use super::worktree::validate_slug;
 
@@ -172,14 +174,14 @@ pub fn load(root: &Path) -> Result<Vec<TaskMeta>, String> {
   let Some(text) = read(&path)? else { return Ok(Vec::new()) };
   let file: TasksFile = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
   if file.version > VERSION {
-    return Err(format!("{}: written by a newer Kingu (version {})", path.display(), file.version));
+    return Err(tr!(AgentMsg::AutomationsNewer, path = path.display(), version = file.version));
   }
   Ok(file.tasks)
 }
 
 pub fn validate(tasks: &[TaskMeta]) -> Result<(), String> {
   if tasks.len() > MAX_TASKS {
-    return Err(format!("more than {MAX_TASKS} tasks"));
+    return Err(tr!(TasksMsg::TooManyTasks, max = MAX_TASKS));
   }
   let mut seen = HashSet::new();
   for t in tasks {
@@ -188,10 +190,10 @@ pub fn validate(tasks: &[TaskMeta]) -> Result<(), String> {
       return Err(format!("{}: duplicate task", t.slug));
     }
     if t.title.trim().is_empty() || t.title.chars().count() > MAX_TITLE {
-      return Err(format!("{}: title must be 1-{MAX_TITLE} characters", t.slug));
+      return Err(tr!(TasksMsg::TitleLength, name = t.slug, max = MAX_TITLE));
     }
     if t.prompt.len() > MAX_PROMPT {
-      return Err(format!("{}: prompt larger than {MAX_PROMPT} bytes", t.slug));
+      return Err(tr!(TasksMsg::TaskPromptTooLarge, slug = t.slug, max = MAX_PROMPT));
     }
     crate::git::check_rev(&t.base)?;
     if !STATUSES.contains(&t.status.as_str()) {
