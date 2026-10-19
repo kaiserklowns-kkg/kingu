@@ -2,6 +2,7 @@
 	import DebugConsole from '#lib/debug/DebugConsole.svelte';
 	import ProblemsView from '#lib/lsp/ProblemsView.svelte';
 	import { lsp } from '#lib/lsp/lsp.svelte.ts';
+	import { tasks } from '#lib/tasks/tasks.svelte.ts';
 	import Terminal from '#lib/terminal/Terminal.svelte';
 	import { terminals } from '#lib/terminal/terminals.svelte.ts';
 	import PaneSplitView from '#lib/terminal/PaneSplitView.svelte';
@@ -135,6 +136,7 @@
 											<Terminal
 												key={terminals.key(t.id)}
 												run={t.run}
+												task={t.task}
 												cwdFrom={t.cwdFrom}
 												flavor="ide"
 												keyLabels={{ split: splitKey }}
@@ -188,8 +190,8 @@
 		{:else if layout.panelTab === 'debugConsole'}
 			<div class="absolute inset-0"><DebugConsole /></div>
 		{:else if layout.panelTab === 'output'}
-			<!-- Language server output for now; task output joins it later. -->
-			<pre class="absolute inset-0 overflow-auto px-5 py-1 font-mono text-xs whitespace-pre-wrap text-(--vscode-descriptionForeground)">{lsp.log.length ? lsp.log.join('\n') : 'No output yet. Language servers log here once a Rust, TypeScript or Go file is opened.'}</pre>
+			<!-- Language server output, then the Tasks channel (load problems, unknown matchers, cycles). -->
+			<pre class="absolute inset-0 overflow-auto px-5 py-1 font-mono text-xs whitespace-pre-wrap text-(--vscode-descriptionForeground)">{lsp.log.length || tasks.log.length ? [...lsp.log, ...(tasks.log.length ? ['', '— Tasks —', ...tasks.log] : [])].join('\n') : 'No output yet. Language servers log here once a Rust, TypeScript or Go file is opened.'}</pre>
 		{/if}
 	</div>
 </section>

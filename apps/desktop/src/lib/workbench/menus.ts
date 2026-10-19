@@ -261,7 +261,20 @@ export const MENUS: Menu[] = [
 	{
 		id: 'terminal',
 		label: '&Terminal',
-		items: [{ command: 'workbench.action.terminal.toggleTerminal', label: 'Toggle Terminal' }]
+		items: [
+			{ command: 'workbench.action.terminal.new', label: 'New Terminal' },
+			SEP,
+			{ command: 'workbench.action.tasks.runTask', label: 'Run Task...' },
+			{ command: 'workbench.action.tasks.build', label: 'Run Build Task...' },
+			{ command: 'workbench.action.tasks.showTasks', label: 'Show Running Tasks...' },
+			{ command: 'workbench.action.tasks.restartTask', label: 'Restart Running Task...' },
+			{ command: 'workbench.action.tasks.terminate', label: 'Terminate Task...' },
+			SEP,
+			{ command: 'workbench.action.tasks.configureTaskRunner', label: 'Configure Tasks...' },
+			{ command: 'workbench.action.tasks.configureDefaultBuildTask', label: 'Configure Default Build Task...' },
+			SEP,
+			{ command: 'workbench.action.terminal.toggleTerminal', label: 'Toggle Terminal' }
+		]
 	},
 	{
 		id: 'window',

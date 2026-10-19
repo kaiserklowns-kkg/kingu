@@ -200,7 +200,6 @@ export const tools = {
 	'tools.debug.programHint': 'Debug {program}',
 	'tools.debug.pickConfig': 'Select a launch configuration',
 	'tools.debug.noLaunchJson': 'No .vscode/launch.json — open a Rust, C/C++, Go or Python file and press F5, or use Debug: Open launch.json',
-	'tools.debug.skipPreLaunch': 'Skipping preLaunchTask "{task}" (Kingu doesn\'t support tasks.json yet) — build first if needed\n',
 	'tools.debug.buildFailed': '{command} failed — see the Debug Console',
 	'tools.debug.startFailed': 'Couldn\'t start debugging: {error}',
 	'tools.debug.outsideWorkspace': '{path} is outside the workspace, so it can\'t be opened',

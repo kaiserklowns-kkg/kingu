@@ -28,13 +28,21 @@ import type { StackFrame } from './protocol.ts';
 import { DebugSession } from './session.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
+import { lsp } from '#lib/lsp/lsp.svelte.ts';
+import { parseProblemMatchers } from '#lib/tasks/problemMatcher.ts';
+import { tasks } from '#lib/tasks/tasks.svelte.ts';
+import type { TaskRef } from '#lib/tasks/taskConfig.ts';
+import { choose } from '#lib/workbench/messageBox.ts';
 
 type DapEvent = { type: 'message'; json: string } | { type: 'stderr'; line: string } | { type: 'exit'; code: number | null };
-type Active = { session: DebugSession; id: number | null; config: LaunchConfig; build?: string[]; noDebug: boolean };
+type Active = { session: DebugSession; id: number | null; config: LaunchConfig; build?: string[]; noDebug: boolean; postDone?: boolean };
 export type WatchResult = { value: string; error?: boolean };
 
 const LAST_CONFIG = 'kingu.debug.lastConfig';
 const WATCHES = 'kingu.debug.watches';
+
+/** A preLaunchTask / postDebugTask reference as text (a label, or a task identifier). */
+const taskName = (ref: unknown) => (typeof ref === 'string' ? ref : JSON.stringify(ref));
 
 const isWorkspaceFile = (p: string | null): p is string => !!p && !p.includes('://') && !isDiffKey(p);
 
@@ -292,7 +300,14 @@ class Debug {
 		const consoleOption = typeof config.internalConsoleOptions === 'string' ? config.internalConsoleOptions : settings.get<string>('debug.internalConsoleOptions');
 		if (config.console !== 'integratedTerminal' && opensOnStart(consoleOption, first)) layout.showPanel('debugConsole');
 		const out = (category: string, text: string) => (this.model = model = appendOutput(this.model ?? model, category, text));
-		if (config.preLaunchTask) out('console', t('tools.debug.skipPreLaunch', { task: String(config.preLaunchTask) }));
+		// VS Code's DebugTaskRunner: the preLaunchTask runs (a background one until its watcher is idle) before the adapter starts.
+		if (config.preLaunchTask) {
+			out('console', t('ideTasks.debug.running', { task: taskName(config.preLaunchTask) }));
+			if (!(await this.#runPreLaunchTask(config.preLaunchTask as TaskRef))) {
+				this.model = { ...this.model!, state: 'terminated' };
+				return;
+			}
+		}
 		if (build) {
 			out('console', `> ${build.join(' ')}\n`);
 			const res = await invoke<{ success: boolean; output: string }>('debug_build', { argv: build }).catch((e) => ({ success: false, output: `${e}\n` }));
@@ -377,6 +392,57 @@ class Debug {
 		}
 	}
 
+	/** VS Code's runTaskAndCheckErrors: true when debugging may start. */
+	async #runPreLaunchTask(ref: TaskRef): Promise<boolean> {
+		const name = taskName(ref);
+		const debugAnyway = t('ideTasks.debug.debugAnyway');
+		const configure = t('ideTasks.debug.configureTask');
+		const failed = async (message: string, task?: Parameters<typeof tasks.configure>[0]) => {
+			const answer = await choose(message, { kind: 'error', buttons: [debugAnyway, configure, t('common.cancel')], cancelId: 2 });
+			if (answer === configure) await tasks.configure(task ?? 'template');
+			return answer === debugAnyway;
+		};
+		const { task } = await tasks.find(ref);
+		if (!task) return failed(t('ideTasks.debug.notFound', { task: name }));
+		const run = tasks.run(task, { untilInactive: true });
+		let summary;
+		// A background task without a background pattern never goes idle: VS Code gives up after 5 s.
+		if (task.isBackground && !parseProblemMatchers(task.problemMatcher, []).some((m) => m.watching)) {
+			const timeout = new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), 5000));
+			const first = await Promise.race([run, timeout]);
+			if (first === 'timeout') return failed(t('ideTasks.debug.notTracked', { task: name }), task);
+			summary = first;
+		} else summary = await run;
+		if (summary.exitCode === undefined) return false;
+		const errors = lsp.errorCount();
+		const onErrors = settings.get<string>('debug.onTaskErrors');
+		if (summary.exitCode === 0 || onErrors === 'debugAnyway') return true;
+		if (onErrors === 'showErrors') {
+			layout.showPanel('problems');
+			return false;
+		}
+		if (onErrors === 'abort') return false;
+		const message =
+			errors > 1 ? t('ideTasks.debug.errors', { task: name }) : errors === 1 ? t('ideTasks.debug.error', { task: name }) : t('ideTasks.debug.exitCode', { task: name, code: summary.exitCode });
+		const showErrors = t('ideTasks.debug.showErrors');
+		const answer = await choose(message, { kind: 'warning', buttons: [debugAnyway, showErrors, t('ideTasks.debug.abort')], cancelId: 2 });
+		if (answer === debugAnyway) return true;
+		if (answer === showErrors) layout.showPanel('problems');
+		return false;
+	}
+
+	/** postDebugTask: runs once the session ended (not awaited, like VS Code). */
+	#runPostDebugTask(active: Active) {
+		const ref = active.config.postDebugTask;
+		if (!ref || active.postDone) return;
+		active.postDone = true;
+		this.#sessionOutput(active.session, 'console', t('ideTasks.debug.postRunning', { task: taskName(ref) }));
+		void tasks.find(ref as TaskRef).then(({ task }) => {
+			if (task) void tasks.run(task);
+			else notifications.error(t('ideTasks.debug.notFound', { task: taskName(ref) }));
+		});
+	}
+
 	#sessionOutput(session: DebugSession, category: string, text: string) {
 		session.model = appendOutput(session.model, category, text);
 		if (this.#active?.session === session) this.model = session.model;
@@ -387,6 +453,7 @@ class Debug {
 		const active = this.#active;
 		if (!active || active.session !== session) return;
 		await session.disconnect();
+		this.#runPostDebugTask(active);
 		setTimeout(() => active.id !== null && void invoke('dap_stop', { id: active.id }).catch(() => {}), 1000);
 	}
 
@@ -395,6 +462,7 @@ class Debug {
 		if (active.id !== null) await invoke('dap_stop', { id: active.id }).catch(() => {});
 		active.session.exited(null);
 		if (this.#active === active) this.model = active.session.model;
+		this.#runPostDebugTask(active);
 	}
 
 	// --- Running -----------------------------------------------------------------------------------

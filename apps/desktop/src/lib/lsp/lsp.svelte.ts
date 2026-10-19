@@ -21,6 +21,7 @@ import {
 	fromSignatureHelp,
 	hoverContents,
 	markerToDiagnostic,
+	pathToUri,
 	relOfUri,
 	toDocumentHighlights,
 	toLspRange,
@@ -43,6 +44,7 @@ import {
 	countDiagnostics,
 	DiagnosticsIndex,
 	installItems,
+	OwnedDiagnostics,
 	isDisabled,
 	parseDisabled,
 	progressText,
@@ -101,6 +103,8 @@ class Lsp {
 	#sessions = new Map<string, Session>();
 	#docs = new Map<Monaco.editor.ITextModel, Doc>();
 	#index = new DiagnosticsIndex();
+	/** Problems of other owners (task problem matchers), shown with the servers' ones. */
+	#owned = new OwnedDiagnostics();
 	/** Which server published diagnostics for a URI, so a stopped server's problems can be cleared. */
 	#origin = new Map<string, string>();
 	#refreshQueued = false;
@@ -115,6 +119,8 @@ class Lsp {
 
 	/** Called by EditorHost for every model it creates. */
 	attach(monaco: MonacoApi, model: Monaco.editor.ITextModel, rel: string) {
+		this.#markerMonaco = monaco;
+		this.#applyOwnedMarkers(rel);
 		// A language change (Change Language Mode, files.associations) closes the document with the
 		// old server and opens it with the new one, as VS Code does.
 		if (!this.#languageWatched.has(model)) {
@@ -322,6 +328,9 @@ class Lsp {
 		for (const [rel, model] of [...this.#previews]) this.#dropPreview(rel, model);
 		this.status.clear();
 		this.symbols.clear();
+		// Task problems belong to the folder too.
+		this.#owned.clear();
+		this.#queueRefresh();
 	}
 
 	// --- Sessions --------------------------------------------------------------------------------
@@ -528,8 +537,55 @@ class Lsp {
 		this.#refreshQueued = true;
 		queueMicrotask(() => {
 			this.#refreshQueued = false;
-			this.problems = this.#index.files(this.#rootPath);
+			this.problems = this.#index.files(this.#rootPath, this.#owned);
 		});
+	}
+
+	// --- Problems of other owners (tasks) ---------------------------------------------------------
+
+	#markerMonaco: MonacoApi | undefined;
+
+	/** Replaces `owner`'s problems in the file at absolute `path` (VS Code: IMarkerService.changeOne). */
+	setOwnedDiagnostics(owner: string, path: string, items: Diagnostic[]) {
+		const uri = pathToUri(path);
+		this.#owned.set(owner, uri, items);
+		const rel = relOfUri(this.#rootPath, uri);
+		if (rel !== null) this.#applyOwnedMarkers(rel, owner);
+		this.#queueRefresh();
+	}
+
+	/** Absolute paths holding problems of `owner`. */
+	ownedPaths(owner: string): string[] {
+		return this.#owned.uris(owner).flatMap((u) => uriToPath(u) ?? []);
+	}
+
+	/** Error problems of any owner and server (debug.onTaskErrors counts them). */
+	errorCount(): number {
+		return this.counts.errors;
+	}
+
+	/** The file at absolute `path` has an editor model (applyTo openDocuments / closedDocuments). */
+	isOpen(path: string): boolean {
+		const monaco = this.#markerMonaco;
+		const rel = relOfUri(this.#rootPath, pathToUri(path));
+		return !!monaco && rel !== null && !!monaco.editor.getModel(monaco.Uri.file('/' + rel));
+	}
+
+	/** Sets the task folder root when no language server ran yet (problem paths are made relative to it). */
+	setRoot(root: string) {
+		if (!this.#rootPath) {
+			this.#rootPath = root;
+			this.#root = Promise.resolve(root);
+		}
+	}
+
+	#applyOwnedMarkers(rel: string, only?: string) {
+		const monaco = this.#markerMonaco;
+		if (!monaco || !this.#rootPath) return;
+		const model = monaco.editor.getModel(monaco.Uri.file('/' + rel));
+		if (!model) return;
+		const uri = uriOfRel(this.#rootPath, rel);
+		for (const owner of only !== undefined ? [only] : this.#owned.owners()) monaco.editor.setModelMarkers(model, `task:${owner}`, this.#owned.forOwner(owner, uri).map(toMarker));
 	}
 
 	// --- Symbols (breadcrumbs) -------------------------------------------------------------------

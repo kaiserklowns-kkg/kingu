@@ -6,6 +6,7 @@
 // `fileLocation`, `owner`, `severity`, `applyTo`) and the line matchers that turn task output
 // into markers. Pure: resources are resolved through an injected file check.
 
+import { t } from '#lib/i18n/index.ts';
 export type FileLocationKind = 'relative' | 'absolute' | 'autoDetect' | 'search';
 export type ApplyTo = 'allDocuments' | 'openDocuments' | 'closedDocuments';
 export type Severity = 'error' | 'warning' | 'info';
@@ -414,7 +415,7 @@ function regex(value: unknown, errors: string[]): RegExp | null {
 	try {
 		return new RegExp(value);
 	} catch {
-		errors.push(`Error: The string ${value} is not a valid regular expression.`);
+		errors.push(t('ideTasks.matcher.badRegexp', { value }));
 		return null;
 	}
 }
@@ -451,18 +452,18 @@ function validPattern(values: ProblemPattern[], errors: string[]): boolean {
 	let file = false, message = false, location = false, line = false;
 	const kind = values[0].kind ?? 'location';
 	values.forEach((p, i) => {
-		if (i !== 0 && p.kind) errors.push('The problem pattern is invalid. The kind property must be provided only in the first element');
+		if (i !== 0 && p.kind) errors.push(t('ideTasks.matcher.kindNotFirst'));
 		file ||= p.file !== undefined;
 		message ||= p.message !== undefined;
 		location ||= p.location !== undefined;
 		line ||= p.line !== undefined;
 	});
 	if (!(file && message)) {
-		errors.push('The problem pattern is invalid. It must have at least have a file and a message.');
+		errors.push(t('ideTasks.matcher.missingProperty'));
 		return false;
 	}
 	if (kind === 'location' && !(location || line)) {
-		errors.push('The problem pattern is invalid. It must either have kind: "file" or have a line or location match group.');
+		errors.push(t('ideTasks.matcher.missingLocation'));
 		return false;
 	}
 	return true;
@@ -473,10 +474,10 @@ export function parsePattern(value: unknown, errors: string[]): ProblemPattern |
 	if (isString(value)) {
 		if (value.length > 1 && value[0] === '$') {
 			const p = namedPattern(value.slice(1));
-			if (!p) errors.push(`Error: the pattern with the identifier ${value} doesn't exist.`);
+			if (!p) errors.push(t('ideTasks.matcher.noPattern', { name: value }));
 			return p ?? null;
 		}
-		errors.push(value.length ? `Error: the pattern property ${value} is not a valid pattern variable name.` : 'Error: the pattern property refers to an empty identifier.');
+		errors.push(value.length ? t('ideTasks.matcher.notVariable', { name: value }) : t('ideTasks.matcher.emptyIdentifier'));
 		return null;
 	}
 	if (Array.isArray(value)) {
@@ -485,17 +486,17 @@ export function parsePattern(value: unknown, errors: string[]): ProblemPattern |
 			const item = value[i];
 			const p = isObject(item) ? singlePattern(item, false, errors) : undefined;
 			if (!p) {
-				if (isObject(item) && !isString(item.regexp)) errors.push('The problem pattern is missing a regular expression.');
+				if (isObject(item) && !isString(item.regexp)) errors.push(t('ideTasks.matcher.missingRegexp'));
 				return null;
 			}
 			if (i < value.length - 1 && p.loop) {
 				p.loop = false;
-				errors.push('The loop property is only supported on the last line matcher.');
+				errors.push(t('ideTasks.matcher.loopNotLast'));
 			}
 			out.push(p);
 		}
 		if (!out.length) {
-			errors.push('The problem pattern is invalid. It must contain at least one pattern.');
+			errors.push(t('ideTasks.matcher.emptyPattern'));
 			return null;
 		}
 		out[0].kind ??= 'location';
@@ -503,7 +504,7 @@ export function parsePattern(value: unknown, errors: string[]): ProblemPattern |
 	}
 	if (isObject(value)) {
 		if (!isString(value.regexp)) {
-			errors.push('The problem pattern is missing a regular expression.');
+			errors.push(t('ideTasks.matcher.missingRegexp'));
 			return null;
 		}
 		const p = singlePattern(value, true, errors);
@@ -568,7 +569,7 @@ export function parseMatcherObject(description: Record<string, unknown>, errors:
 		const v = description.severity.toLowerCase();
 		severity = v === 'error' || v === 'warning' || v === 'info' ? v : v === 'warn' ? 'warning' : undefined;
 		if (!severity) {
-			errors.push(`Info: unknown severity ${description.severity}. Valid values are error, warning and info.`);
+			errors.push(t('ideTasks.matcher.unknownSeverity', { severity: description.severity }));
 			severity = 'error';
 		}
 	}
@@ -596,7 +597,7 @@ export function parseMatcherObject(description: Record<string, unknown>, errors:
 		if (severity) result.severity = severity;
 	}
 	if (!result) {
-		errors.push(`Error: the description can't be converted into a problem matcher:\n${JSON.stringify(description, null, 4)}`);
+		errors.push(t('ideTasks.matcher.notConvertible', { json: JSON.stringify(description, null, 4) }));
 		return undefined;
 	}
 	// The legacy watchedTaskBeginsRegExp / EndsRegExp, else background (or the older watching).
@@ -609,7 +610,7 @@ export function parseMatcherObject(description: Record<string, unknown>, errors:
 			const begins = watchingPattern(monitor.beginsPattern, errors);
 			const ends = watchingPattern(monitor.endsPattern, errors);
 			if (begins && ends) result.watching = { activeOnStart: monitor.activeOnStart === true, beginsPattern: begins, endsPattern: ends };
-			else if (begins || ends) errors.push('A problem matcher must define both a begin pattern and an end pattern for watching.');
+			else if (begins || ends) errors.push(t('ideTasks.matcher.watchingBoth'));
 		}
 	}
 	return result;
@@ -625,7 +626,7 @@ export function parseProblemMatchers(value: unknown, errors: string[]): ProblemM
 		if (isString(item)) {
 			const m = item.length > 1 && item[0] === '$' ? namedMatcher(item.slice(1)) : undefined;
 			if (m) out.push(m);
-			else errors.push(`Problem matcher ${item} can't be resolved. The matcher will be ignored`);
+			else errors.push(t('ideTasks.matcher.unknown', { name: item }));
 		} else if (isObject(item)) {
 			const m = parseMatcherObject(item, errors);
 			if (m) out.push(m);

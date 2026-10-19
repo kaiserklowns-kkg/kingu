@@ -5,6 +5,7 @@
 // `dependsOrder`, `presentation`, `problemMatcher`, `isBackground`, `runOptions` and `inputs`.
 // Pure: the task system reads the file and the detectors supply the detected tasks.
 
+import { t } from '#lib/i18n/index.ts';
 import { parseJsonc } from '#lib/settings/jsonc.ts';
 
 export type Quoting = 'escape' | 'strong' | 'weak';
@@ -128,7 +129,7 @@ function commandOptions(v: unknown, errors: string[]): CommandOptions | undefine
 	const out: CommandOptions = {};
 	if (v.cwd !== undefined) {
 		if (isString(v.cwd)) out.cwd = v.cwd;
-		else errors.push(`Warning: options.cwd must be of type string. Ignoring value ${JSON.stringify(v.cwd)}`);
+		else errors.push(t('ideTasks.config.cwdType', { value: JSON.stringify(v.cwd) }));
 	}
 	const env = stringMap(v.env);
 	if (env) out.env = env;
@@ -208,7 +209,7 @@ function commandProps(v: Record<string, unknown>, errors: string[]): CommandProp
 		for (const arg of Array.isArray(v.args) ? v.args : [v.args]) {
 			const c = commandString(arg);
 			if (c !== undefined) out.args.push(c);
-			else errors.push(`Error: command argument must either be a string or a quoted string. Provided value is:\n${JSON.stringify(arg, undefined, 4)}`);
+			else errors.push(t('ideTasks.config.badArg', { value: JSON.stringify(arg, undefined, 4) }));
 		}
 	}
 	const options = commandOptions(v.options, errors);
@@ -270,10 +271,10 @@ function inputsOf(v: unknown, errors: string[]): InputDef[] {
 		if (raw.type === 'promptString') out.push({ id: raw.id, type: 'promptString', description, default: isString(raw.default) ? raw.default : undefined, password: raw.password === true });
 		else if (raw.type === 'pickString') {
 			const options = (Array.isArray(raw.options) ? raw.options : []).flatMap((o) => (isString(o) ? [{ value: o }] : isObject(o) && isString(o.value) ? [{ label: isString(o.label) ? o.label : undefined, value: o.value }] : []));
-			if (!options.length) errors.push(`Input '${raw.id}' of type pickString needs options`);
+			if (!options.length) errors.push(t('ideTasks.config.pickOptions', { id: raw.id }));
 			out.push({ id: raw.id, type: 'pickString', description, options, default: isString(raw.default) ? raw.default : undefined });
 		} else if (raw.type === 'command' && isString(raw.command)) out.push({ id: raw.id, type: 'command', command: raw.command, args: raw.args });
-		else errors.push(`Input '${raw.id}' has an unknown type`);
+		else errors.push(t('ideTasks.config.inputType', { id: raw.id }));
 	}
 	return out;
 }
@@ -307,10 +308,10 @@ export function parseTasksJson(text: string, platform: Platform, source = '.vsco
 	try {
 		raw = text.trim() ? parseJsonc(text) : {};
 	} catch (e) {
-		return { tasks: [], customizations: [], inputs: [], errors: [`${source}: ${e instanceof Error ? e.message : String(e)}`] };
+		return { tasks: [], customizations: [], inputs: [], errors: [t('ideTasks.config.badJson', { source, error: e instanceof Error ? e.message : String(e) })] };
 	}
-	if (!isObject(raw)) return { tasks: [], customizations: [], inputs: [], errors: [`${source}: not a JSON object`] };
-	if (raw.version !== undefined && raw.version !== '2.0.0') errors.push(`${source}: version ${JSON.stringify(raw.version)} — only 2.0.0 tasks are supported, read as 2.0.0`);
+	if (!isObject(raw)) return { tasks: [], customizations: [], inputs: [], errors: [t('ideTasks.config.notObject', { source })] };
+	if (raw.version !== undefined && raw.version !== '2.0.0') errors.push(t('ideTasks.config.version', { source, version: JSON.stringify(raw.version) }));
 	// Top-level options / presentation (and their OS override) fill in what a task leaves out.
 	const global = withPlatform({ options: raw.options, presentation: raw.presentation, ...(isObject(raw[platform]) ? { [platform]: { options: (raw[platform] as Record<string, unknown>).options, presentation: (raw[platform] as Record<string, unknown>).presentation } } : {}) }, platform, errors);
 	const tasks: Task[] = [];
@@ -325,14 +326,14 @@ export function parseTasksJson(text: string, platform: Platform, source = '.vsco
 		const type = isString(item.type) ? item.type : 'process';
 		if (type === 'shell' || type === 'process') {
 			if (!label) {
-				errors.push(`Error: a task must provide a label property. The task will be ignored.\n${JSON.stringify(item, null, 4)}`);
+				errors.push(t('ideTasks.config.noLabel', { json: JSON.stringify(item, null, 4) }));
 				continue;
 			}
 			if (props.command === undefined && !props.dependsOn?.length) {
-				errors.push(`Error: the task '${label}' neither specifies a command nor a dependsOn property. The task will be ignored.`);
+				errors.push(t('ideTasks.config.noCommand', { label }));
 				continue;
 			}
-			if (tasks.some((t) => t.label === label)) errors.push(`Warning: there are two tasks labelled '${label}'; the first one is used.`);
+			if (tasks.some((t) => t.label === label)) errors.push(t('ideTasks.config.duplicate', { label }));
 			else tasks.push(customTask(label, type, props));
 		} else {
 			const definition: Record<string, unknown> = { type };
@@ -392,7 +393,7 @@ export function mergeTasks(file: TasksFile, detected: Task[], build: (definition
 		if (detected.some((t) => matchesDefinition(t, c.definition))) continue;
 		const made = build(c.definition);
 		if (made) out.push(customize(made, c));
-		else errors.push(`Error: the ${String(c.definition.type)} task detection didn't contribute a task for the following configuration:\n${JSON.stringify(c.definition, null, 4)}\nThe task will be ignored.`);
+		else errors.push(t('ideTasks.config.notContributed', { type: String(c.definition.type), json: JSON.stringify(c.definition, null, 4) }));
 	}
 	const labels = new Set(out.map((t) => t.label));
 	return { tasks: [...out, ...result.filter((t) => !labels.has(t.label))], errors };

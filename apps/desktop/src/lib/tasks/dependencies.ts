@@ -5,6 +5,7 @@
 // inactive (its first endsPattern), not when it exits. Generic over the task type so the order can
 // be tested without terminals.
 
+import { t } from '#lib/i18n/index.ts';
 /** A task's result: its exit code, undefined when it was terminated or did not run. */
 export type Summary = { exitCode?: number };
 
@@ -51,13 +52,13 @@ async function execute<T, R>(host: GraphHost<T, R>, task: T, live: Set<string>, 
 		for (const ref of deps) {
 			const dep = host.resolve(ref);
 			if (!dep) {
-				host.log(`Couldn't resolve dependent task '${typeof ref === 'string' ? ref : JSON.stringify(ref)}' in workspace folder`);
+				host.log(t('ideTasks.deps.unresolved', { task: typeof ref === 'string' ? ref : JSON.stringify(ref) }));
 				continue;
 			}
 			const key = host.key(dep);
 			let result: Promise<Summary> | undefined;
 			if (nextLive.has(key)) {
-				host.log(`There is a dependency cycle. See task "${key}".`);
+				host.log(t('ideTasks.deps.cycle', { task: key }));
 				result = Promise.resolve({});
 			} else {
 				result = encountered.get(key);

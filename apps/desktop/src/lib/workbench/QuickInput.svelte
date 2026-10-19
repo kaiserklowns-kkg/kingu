@@ -353,6 +353,7 @@
 		<input
 			bind:this={input}
 			bind:value={quick.value}
+			type={quick.picker?.password ? 'password' : 'text'}
 			oninput={() => (index = 0)}
 			onkeydown={onKey}
 			aria-label="ค้นหาไฟล์ พิมพ์ > เพื่อดูคำสั่ง : เพื่อไปบรรทัด @ เพื่อไปที่สัญลักษณ์ หรือ ? เพื่อดูวิธีใช้"

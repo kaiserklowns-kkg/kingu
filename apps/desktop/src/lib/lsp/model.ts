@@ -160,16 +160,53 @@ export class DiagnosticsIndex {
 		return gone;
 	}
 
-	files(root: string): ProblemFile[] {
+	/** The Problems panel's files; `extra` adds problems of other owners (task problem matchers). */
+	files(root: string, extra?: OwnedDiagnostics): ProblemFile[] {
 		const out: ProblemFile[] = [];
-		for (const uri of this.#byUri.keys()) {
-			const items = this.get(uri);
+		for (const uri of new Set([...this.#byUri.keys(), ...(extra?.uris() ?? [])])) {
+			const items = extra ? mergeDiagnostics(this.get(uri), extra.get(uri)) : this.get(uri);
 			if (!items.length) continue;
 			const rel = relOfUri(root, uri);
 			out.push({ uri, rel, label: rel ?? uriToPath(uri) ?? uri, items });
 		}
 		// Workspace files first, then by path (VS Code sorts the Problems tree by resource).
 		return out.sort((a, b) => Number(a.rel === null) - Number(b.rel === null) || a.label.localeCompare(b.label));
+	}
+}
+
+/** Problems from sources other than language servers (VS Code's markers of other owners, e.g. a
+ * task's problem matcher `$tsc` under owner `typescript`), by owner and file URI. */
+export class OwnedDiagnostics {
+	#byOwner = new Map<string, Map<string, Diagnostic[]>>();
+
+	set(owner: string, uri: string, items: Diagnostic[]) {
+		let perOwner = this.#byOwner.get(owner);
+		if (!perOwner) this.#byOwner.set(owner, (perOwner = new Map()));
+		if (items.length) perOwner.set(uri, items);
+		else perOwner.delete(uri);
+		if (!perOwner.size) this.#byOwner.delete(owner);
+	}
+
+	/** URIs with problems of `owner`, or of any owner. */
+	uris(owner?: string): string[] {
+		if (owner !== undefined) return [...(this.#byOwner.get(owner)?.keys() ?? [])];
+		return [...new Set([...this.#byOwner.values()].flatMap((m) => [...m.keys()]))];
+	}
+
+	owners(): string[] {
+		return [...this.#byOwner.keys()];
+	}
+
+	forOwner(owner: string, uri: string): Diagnostic[] {
+		return this.#byOwner.get(owner)?.get(uri) ?? [];
+	}
+
+	get(uri: string): Diagnostic[] {
+		return [...this.#byOwner.values()].flatMap((m) => m.get(uri) ?? []);
+	}
+
+	clear() {
+		this.#byOwner.clear();
 	}
 }
 
