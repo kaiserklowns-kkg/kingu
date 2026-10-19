@@ -380,88 +380,6 @@ fn open_web_url(url: String) -> Result<(), String> {
   system::open_web_url(&url)
 }
 
-/// Runs `gh` in `dir`; its stderr becomes the error.
-fn gh_run(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-  let gh = agent::review::gh_bin().ok_or_else(agent::issues::gh_missing)?;
-  let out = shell_env::command(&gh).current_dir(dir).env("GH_PROMPT_DISABLED", "1").args(args).output().map_err(|e| format!("gh: {e}"))?;
-  if !out.status.success() {
-    return Err(format!("gh {}: {}", args.first().unwrap_or(&""), String::from_utf8_lossy(&out.stderr).trim()));
-  }
-  Ok(out.stdout)
-}
-
-/// Checks tab actions on the branch's PR: `merge` (with `squash` / `merge` / `rebase`), `close`,
-/// `reopen`, `ready` (out of draft).
-#[tauri::command]
-async fn gh_pr_action(ws: State<'_, Workspace>, slug: Option<String>, action: String, method: Option<String>) -> Result<(), String> {
-  let root = git_dir(&ws, slug.as_deref())?;
-  blocking(move || {
-    let flag = match method.as_deref() {
-      Some("merge") => "--merge",
-      Some("rebase") => "--rebase",
-      _ => "--squash",
-    };
-    let args: Vec<&str> = match action.as_str() {
-      "merge" => vec!["pr", "merge", flag],
-      "auto" => vec!["pr", "merge", "--auto", flag],
-      "disableAuto" => vec!["pr", "merge", "--disable-auto"],
-      "close" => vec!["pr", "close"],
-      "reopen" => vec!["pr", "reopen"],
-      "ready" => vec!["pr", "ready"],
-      other => return Err(format!("{other}: unknown PR action")),
-    };
-    gh_run(&root, &args).map(|_| ())
-  })
-  .await
-}
-
-#[tauri::command]
-async fn gh_pr_edit_title(ws: State<'_, Workspace>, slug: Option<String>, title: String) -> Result<(), String> {
-  let root = git_dir(&ws, slug.as_deref())?;
-  if title.trim().is_empty() {
-    return Err("PR title is empty".into());
-  }
-  blocking(move || gh_run(&root, &["pr", "edit", "--title", title.trim()]).map(|_| ())).await
-}
-
-/// The PR's conversation comments and reviews (`gh pr view --json comments,reviews`).
-#[tauri::command]
-async fn gh_pr_comments(ws: State<'_, Workspace>, slug: Option<String>) -> Result<serde_json::Value, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
-  blocking(move || {
-    let out = gh_run(&root, &["pr", "view", "--json", "comments,reviews"])?;
-    serde_json::from_slice(&out).map_err(|e| e.to_string())
-  })
-  .await
-}
-
-#[tauri::command]
-async fn gh_pr_comment(ws: State<'_, Workspace>, slug: Option<String>, body: String) -> Result<(), String> {
-  let root = git_dir(&ws, slug.as_deref())?;
-  if body.trim().is_empty() {
-    return Err("Comment is empty".into());
-  }
-  if body.len() > 60_000 {
-    return Err("Comment is too large to submit safely.".into());
-  }
-  blocking(move || gh_run(&root, &["pr", "comment", "--body", &body]).map(|_| ())).await
-}
-
-/// The failed steps' log of a GitHub Actions check (from its details URL), last 150 lines.
-#[tauri::command]
-async fn gh_check_log(ws: State<'_, Workspace>, slug: Option<String>, url: String) -> Result<String, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
-  let run = url.split("/actions/runs/").nth(1).and_then(|r| r.split(['/', '?']).next()).filter(|r| r.chars().all(|c| c.is_ascii_digit()) && !r.is_empty()).map(str::to_owned);
-  let Some(run) = run else { return Err("No inline details are available for this check.".into()) };
-  blocking(move || {
-    let out = gh_run(&root, &["run", "view", &run, "--log-failed"])?;
-    let text = String::from_utf8_lossy(&out);
-    let lines: Vec<&str> = text.lines().collect();
-    Ok(lines[lines.len().saturating_sub(150)..].join("\n"))
-  })
-  .await
-}
-
 /// Files a commit changed (`git show --name-status`), for the Commits panel.
 #[tauri::command]
 async fn git_show_files(ws: State<'_, Workspace>, slug: Option<String>, hash: String) -> Result<Vec<(String, String)>, String> {
@@ -505,69 +423,6 @@ async fn git_ref_names(ws: State<'_, Workspace>, slug: Option<String>) -> Result
 async fn claude_sessions(ws: State<'_, Workspace>, limit: Option<usize>) -> Result<Vec<sessions::Session>, String> {
   let root = ws.root()?;
   blocking(move || Ok(sessions::list(&root, limit.unwrap_or(250)))).await
-}
-
-/// Source Control's PR composer: pushes the branch (setting its upstream) and opens a PR.
-/// Returns the PR's URL.
-#[tauri::command]
-async fn gh_pr_create(ws: State<'_, Workspace>, slug: Option<String>, base: String, title: String, body: String, draft: bool) -> Result<String, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
-  git::check_rev(&base)?;
-  if title.trim().is_empty() {
-    return Err("Enter a pull request title.".into());
-  }
-  blocking(move || {
-    git_queue::with(&root, git_queue::Scope::Refs, "push", || git::run(&root, &["push", "-q", "-u", "origin", "HEAD"])).map_err(|e| format!("Push failed. Resolve the push error, then try again. {e}"))?;
-    let mut args = vec!["pr", "create", "--base", base.as_str(), "--title", title.trim(), "--body", body.as_str()];
-    if draft {
-      args.push("--draft");
-    }
-    let out = gh_run(&root, &args)?;
-    Ok(String::from_utf8_lossy(&out).lines().rev().find(|l| l.starts_with("http")).unwrap_or_default().trim().to_owned())
-  })
-  .await
-}
-
-/// Review threads of the branch's PR (GitHub GraphQL through `gh api`).
-#[tauri::command]
-async fn gh_review_threads(ws: State<'_, Workspace>, slug: Option<String>, number: u64) -> Result<serde_json::Value, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
-  blocking(move || {
-    let query = "query($owner:String!,$repo:String!,$n:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$n){reviewThreads(first:100){nodes{id isResolved path line comments(first:50){nodes{id databaseId body createdAt author{login} reactionGroups{content viewerHasReacted reactors{totalCount}}}}}}}}}";
-    let out = gh_run(&root, &["api", "graphql", "-F", "owner={owner}", "-F", "repo={repo}", "-F", &format!("n={number}"), "-f", &format!("query={query}")])?;
-    serde_json::from_slice(&out).map_err(|e| e.to_string())
-  })
-  .await
-}
-
-/// Replies inside a review thread.
-#[tauri::command]
-async fn gh_reply_thread(ws: State<'_, Workspace>, slug: Option<String>, thread: String, body: String) -> Result<(), String> {
-  let root = git_dir(&ws, slug.as_deref())?;
-  if body.trim().is_empty() {
-    return Err("Comment is empty".into());
-  }
-  blocking(move || {
-    let query = "mutation($id:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$id,body:$body}){comment{id}}}";
-    gh_run(&root, &["api", "graphql", "-f", &format!("id={thread}"), "-f", &format!("body={body}"), "-f", &format!("query={query}")]).map(|_| ())
-  })
-  .await
-}
-
-/// Adds or removes a reaction (THUMBS_UP, HEART, …) on a comment by its node id.
-#[tauri::command]
-async fn gh_react(ws: State<'_, Workspace>, slug: Option<String>, subject: String, content: String, remove: bool) -> Result<(), String> {
-  let root = git_dir(&ws, slug.as_deref())?;
-  const ALLOWED: [&str; 8] = ["THUMBS_UP", "THUMBS_DOWN", "LAUGH", "CONFUSED", "HEART", "HOORAY", "ROCKET", "EYES"];
-  if !ALLOWED.contains(&content.as_str()) {
-    return Err(format!("{content}: unknown reaction"));
-  }
-  blocking(move || {
-    let m = if remove { "removeReaction" } else { "addReaction" };
-    let query = format!("mutation($id:ID!,$c:ReactionContent!){{{m}(input:{{subjectId:$id,content:$c}}){{reaction{{content}}}}}}");
-    gh_run(&root, &["api", "graphql", "-f", &format!("id={subject}"), "-f", &format!("c={content}"), "-f", &format!("query={query}")]).map(|_| ())
-  })
-  .await
 }
 
 /// Moves a Claude Code session transcript of this folder to the Trash (Agents tab › Delete).
@@ -1290,11 +1145,11 @@ pub fn run() {
       git_rebase,
       git_log,
       open_web_url,
-      gh_pr_action,
-      gh_pr_edit_title,
-      gh_pr_comments,
-      gh_pr_comment,
-      gh_check_log,
+      agent::forge::forge_pr_action,
+      agent::forge::forge_pr_edit_title,
+      agent::forge::forge_pr_comments,
+      agent::forge::forge_pr_comment,
+      agent::forge::forge_check_log,
       git_show_files,
       git_compare,
       git_ref_names,
@@ -1303,10 +1158,10 @@ pub fn run() {
       vault::vault_search,
       vault::vault_transcript,
       vault::vault_stats,
-      gh_pr_create,
-      gh_review_threads,
-      gh_reply_thread,
-      gh_react,
+      agent::forge::forge_pr_create,
+      agent::forge::forge_review_threads,
+      agent::forge::forge_reply_thread,
+      agent::forge::forge_react,
       delete_claude_session,
       git_abort,
       git_continue,

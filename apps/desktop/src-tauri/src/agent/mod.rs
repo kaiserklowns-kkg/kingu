@@ -11,6 +11,7 @@ pub mod chat_io;
 pub mod chats;
 pub mod cli;
 pub mod events;
+pub mod forge;
 pub mod gh_projects;
 pub mod hooks;
 pub mod hunks;
@@ -790,7 +791,10 @@ pub async fn worktree_pr(ws: State<'_, Workspace>, slug: String) -> Result<Optio
   let dir = pr_dir(&ws, &slug)?;
   let slug = (!slug.is_empty()).then_some(slug);
   blocking(move || match mr::forge(&dir) {
-    mr::Forge::Gitlab(p) => mr::worktree_mr(&crate::gitlab::connected(&p.host)?, &p, &dir, slug.as_deref()),
+    mr::Forge::Gitlab(p) => {
+      let (t, r) = forge::gitlab(&p)?;
+      mr::worktree_mr(&t, &r, &dir, slug.as_deref())
+    }
     mr::Forge::Github => review::worktree_pr(&gh()?, &dir, slug.as_deref()),
   })
   .await
@@ -814,7 +818,8 @@ pub async fn worktree_pr_create(
   let draft = draft.unwrap_or(false);
   let url = blocking(move || {
     if let mr::Forge::Gitlab(p) = mr::forge(&dir) {
-      let url = mr::push_and_create(&crate::gitlab::connected(&p.host)?, &p, &dir, &slug, &base, &title, &body, draft, stacked.unwrap_or(false))?;
+      let (t, r) = forge::gitlab(&p)?;
+      let url = mr::push_and_create(&t, &r, &dir, &slug, &base, &title, &body, draft, stacked.unwrap_or(false))?;
       // kingu.pr.openAfterCreate: best effort, the merge request exists either way.
       if open.unwrap_or(false)
         && let Err(e) = crate::system::open_web_url(&url)

@@ -14,7 +14,7 @@ use tauri::State;
 
 use crate::git_queue::{self, Scope};
 use crate::git_remote::{NET_TIMEOUT, check_branch_name, net_env};
-use crate::i18n::msg::{AgentMsg, WorktreeMsg};
+use crate::i18n::msg::{AgentMsg, ForgeMsg, WorktreeMsg};
 use crate::tr;
 use crate::workspace::Workspace;
 
@@ -321,7 +321,12 @@ fn gh_failed(op: &str, e: &str) -> String {
   super::issues::gh_error(op, e.split_once(": ").map_or(e, |(_, rest)| rest))
 }
 
-fn gh_bin() -> Result<std::path::PathBuf, String> {
+/// `gh`, for a folder whose pull requests are on GitHub: starting from a GitLab merge request
+/// (`refs/merge-requests/<iid>/head`) is not built yet, so a GitLab folder is told so.
+fn gh_bin(root: &Path) -> Result<std::path::PathBuf, String> {
+  if let super::mr::Forge::Gitlab(_) = super::mr::forge(root) {
+    return Err(tr!(ForgeMsg::PrStartNotOnGitlab));
+  }
   super::review::gh_bin().ok_or_else(super::issues::gh_missing)
 }
 
@@ -364,7 +369,7 @@ pub struct PrStart {
 #[tauri::command]
 pub async fn worktree_create_from_pr(ws: State<'_, Workspace>, slug: String, pr: String) -> Result<PrStart, String> {
   let root = ws.root()?;
-  let gh = gh_bin()?;
+  let gh = gh_bin(&root)?;
   blocking(move || {
     let pr = pr_lookup(&gh, &root, &pr)?;
     let worktree = create_from_pr(&root, &slug, &pr, NET_TIMEOUT)?;
@@ -376,14 +381,14 @@ pub async fn worktree_create_from_pr(ws: State<'_, Workspace>, slug: String, pr:
 #[tauri::command]
 pub async fn gh_pr_lookup(ws: State<'_, Workspace>, input: String) -> Result<PrHead, String> {
   let root = ws.root()?;
-  let gh = gh_bin()?;
+  let gh = gh_bin(&root)?;
   blocking(move || pr_lookup(&gh, &root, &input)).await
 }
 
 #[tauri::command]
 pub async fn gh_pr_list(ws: State<'_, Workspace>, search: Option<String>, limit: Option<u32>) -> Result<Vec<PrHead>, String> {
   let root = ws.root()?;
-  let gh = gh_bin()?;
+  let gh = gh_bin(&root)?;
   blocking(move || pr_list(&gh, &root, search.as_deref(), limit.unwrap_or(30))).await
 }
 
