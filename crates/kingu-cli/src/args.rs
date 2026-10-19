@@ -12,6 +12,11 @@ Usage:
   kingu open <path>[:line[:column]]  open a file (in the open folder) or a folder in Kingu
   kingu notify <message…> [--title <title>]
                                      post a desktop notification
+  kingu artifact publish <file> [--title <title>] [--description <text>]
+                         [--asset <path>[=<name>]]… [--id <id>]
+                                     publish an HTML or Markdown page as an artifact of
+                                     the project (a new version with --id); prints its id
+  kingu artifact list                the project's artifacts (id, version, format, title)
 
 Options:
   --json         print the app's answer as JSON
@@ -47,6 +52,15 @@ pub enum Command {
     message: String,
     title: Option<String>,
   },
+  ArtifactPublish {
+    file: String,
+    title: Option<String>,
+    description: Option<String>,
+    /// `(path, name)`: a file to include and its name inside the artifact (None: worked out from the path).
+    assets: Vec<(String, Option<String>)>,
+    id: Option<String>,
+  },
+  ArtifactList,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,6 +134,7 @@ fn command(args: &[String]) -> Result<Command, String> {
     "task" | "tasks" => task(&args[1..]),
     "open" => open(&args[1..]),
     "notify" => notify(&args[1..]),
+    "artifact" | "artifacts" => artifact(&args[1..]),
     other => Err(format!("unknown command `{other}` (try `kingu --help`)")),
   }
 }
@@ -223,6 +238,48 @@ fn notify(args: &[String]) -> Result<Command, String> {
   Ok(Command::Notify { message, title: flag(&flags, &["--title", "-t"]).filter(|t| !t.trim().is_empty()) })
 }
 
+/// An artifact id: 16 lowercase hex digits.
+pub fn is_artifact_id(id: &str) -> bool {
+  id.len() == 16 && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn artifact(args: &[String]) -> Result<Command, String> {
+  let Some(sub) = args.first() else { return Err("`kingu artifact` needs publish or list".into()) };
+  let rest = &args[1..];
+  match sub.as_str() {
+    "list" | "ls" => no_more(rest, Command::ArtifactList),
+    "publish" => {
+      let (pos, flags) = split(rest, &["--title", "-t", "--description", "-d", "--asset", "-a", "--id"], &[])?;
+      let file = match pos.as_slice() {
+        [f] => f.to_string(),
+        [] => return Err("`kingu artifact publish` needs an .html or .md file".into()),
+        _ => return Err("`kingu artifact publish` takes one file (add others with --asset)".into()),
+      };
+      let id = flag(&flags, &["--id"]);
+      if let Some(i) = id.as_deref().filter(|i| !is_artifact_id(i)) {
+        return Err(format!("--id must be an artifact id (16 hex digits, see `kingu artifact list`), not `{i}`"));
+      }
+      let mut assets = Vec::new();
+      for (k, v) in &flags {
+        if k != "--asset" && k != "-a" {
+          continue;
+        }
+        let (path, name) = match v.split_once('=') {
+          Some((p, n)) => (p.to_owned(), Some(n.to_owned())),
+          None => (v.clone(), None),
+        };
+        if path.is_empty() || name.as_deref().is_some_and(str::is_empty) {
+          return Err(format!("--asset needs <path> or <path>=<name>, not `{v}`"));
+        }
+        assets.push((path, name));
+      }
+      let text = |names: &[&str]| flag(&flags, names).map(|t| t.trim().to_owned()).filter(|t| !t.is_empty());
+      Ok(Command::ArtifactPublish { file, title: text(&["--title", "-t"]), description: text(&["--description", "-d"]), assets, id })
+    }
+    other => Err(format!("unknown artifact command `{other}` (publish, list)")),
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -277,6 +334,33 @@ mod tests {
     assert_eq!(c(&["notify", "build", "done", "--title", "CI"]), Command::Notify { message: "build done".into(), title: Some("CI".into()) });
     assert_eq!(c(&["notify", "เสร็จแล้ว"]), Command::Notify { message: "เสร็จแล้ว".into(), title: None });
     assert!(p(&["notify"]).is_err() && p(&["notify", "  "]).is_err());
+  }
+
+  #[test]
+  fn parses_artifact_commands() {
+    assert_eq!(c(&["artifact", "list"]), Command::ArtifactList);
+    assert_eq!(c(&["artifacts", "ls"]), Command::ArtifactList);
+    assert!(p(&["artifact", "list", "x"]).is_err());
+    assert_eq!(
+      c(&["artifact", "publish", "report.html", "-t", " Report ", "--asset", "img/a.png", "-a=data.json=d/data.json", "--id", "0123456789abcdef"]),
+      Command::ArtifactPublish {
+        file: "report.html".into(),
+        title: Some("Report".into()),
+        description: None,
+        assets: vec![("img/a.png".into(), None), ("data.json".into(), Some("d/data.json".into()))],
+        id: Some("0123456789abcdef".into()),
+      }
+    );
+    assert_eq!(
+      c(&["artifact", "publish", "notes.md", "--description", "สรุป", "--title", " "]),
+      Command::ArtifactPublish { file: "notes.md".into(), title: None, description: Some("สรุป".into()), assets: vec![], id: None }
+    );
+    assert!(p(&["artifact", "publish"]).unwrap_err().contains("needs"));
+    assert!(p(&["artifact", "publish", "a.html", "b.html"]).is_err());
+    assert!(p(&["artifact", "publish", "a.html", "--id", "ABC"]).unwrap_err().contains("--id"));
+    assert!(p(&["artifact", "publish", "a.html", "--asset", "x="]).is_err());
+    assert!(p(&["artifact"]).is_err() && p(&["artifact", "delete"]).is_err());
+    assert!(is_artifact_id("0123456789abcdef") && !is_artifact_id("0123456789ABCDEF") && !is_artifact_id("0123"));
   }
 
   #[test]

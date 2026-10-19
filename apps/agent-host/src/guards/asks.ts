@@ -13,6 +13,8 @@ export type AskConfig = {
 	deletes?: boolean;
 	mcpTools?: boolean;
 	protectedPaths?: string[];
+	/** Kingu's own MCP tools in this run (the artifact tool): not asked about as MCP tools. */
+	trustedTools?: string[];
 };
 
 export type AskCheck = 'outside_cwd' | 'delete' | 'protected' | 'mcp';
@@ -220,7 +222,7 @@ export function askFor(tool: string, input: unknown, cwd: string, config: AskCon
 		const outside = paths.filter((p) => !where(p).inside);
 		if (outside.length) return { check: 'outside_cwd', paths: outside };
 	}
-	if (config.mcpTools && tool.startsWith('mcp__')) return { check: 'mcp', paths: [] };
+	if (config.mcpTools && tool.startsWith('mcp__') && !config.trustedTools?.includes(tool)) return { check: 'mcp', paths: [] };
 	return null;
 }
 
