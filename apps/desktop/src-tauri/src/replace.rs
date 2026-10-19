@@ -12,6 +12,9 @@ use std::path::{Path, PathBuf};
 
 use regex::{Captures, Regex, RegexBuilder};
 
+use crate::i18n::msg::FilesMsg;
+use crate::tr;
+
 /// The search that produced the matches (only what affects the replacement text).
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(default)]
@@ -302,7 +305,7 @@ pub fn plan(text: &str, matches: &[MatchRef], replacer: &Replacer) -> Result<Vec
   let spans = line_spans(text);
   let mut out = Vec::with_capacity(matches.len());
   for m in matches {
-    let stale = || format!("line {}: \"{}\" is no longer there", m.line, m.text);
+    let stale = || tr!(FilesMsg::MatchGone, line = m.line, text = m.text);
     let &(ls, le) = spans.get((m.line as usize).wrapping_sub(1)).ok_or_else(stale)?;
     let line = &text[ls..le];
     let (Some(s), Some(e)) = (byte_of_column(line, m.column), byte_of_column(line, m.end_column)) else {
@@ -337,10 +340,10 @@ pub fn apply(text: &str, plan: &[(usize, usize, ReplaceEdit)]) -> String {
 fn resolve(root: &Path, rel: &str) -> Result<PathBuf, String> {
   let path = root.join(rel).canonicalize().map_err(|e| format!("{rel}: {e}"))?;
   if !path.starts_with(root) {
-    return Err(format!("{rel}: outside the workspace"));
+    return Err(tr!(FilesMsg::OutsideWorkspace, path = rel));
   }
   if !path.is_file() {
-    return Err(format!("{rel}: not a file"));
+    return Err(tr!(FilesMsg::NotAFile, path = rel));
   }
   Ok(path)
 }
@@ -378,10 +381,10 @@ pub fn replace_file(root: &Path, file: &FileReplace, replacer: &Replacer) -> Fil
     Err(e) => return result(Outcome::Failed, 0, Vec::new(), Some(e.to_string())),
   };
   if file.version.as_ref().is_some_and(|v| !v.is_empty() && *v != version_of(&bytes)) {
-    return result(Outcome::Stale, 0, Vec::new(), Some("changed since the search".into()));
+    return result(Outcome::Stale, 0, Vec::new(), Some(tr!(FilesMsg::ChangedSinceSearch)));
   }
   let Ok(text) = String::from_utf8(bytes) else {
-    return result(Outcome::Failed, 0, Vec::new(), Some("not UTF-8 text".into()));
+    return result(Outcome::Failed, 0, Vec::new(), Some(tr!(FilesMsg::NotUtf8Text)));
   };
   let p = match plan(&text, &file.matches, replacer) {
     Ok(p) => p,

@@ -8,6 +8,7 @@ mod arkai;
 mod chat_extras;
 mod cli;
 mod core;
+mod files;
 mod git;
 mod linear;
 mod local_ai;
@@ -30,6 +31,7 @@ pub use arkai::ArkaiMsg;
 pub use chat_extras::ChatExtrasMsg;
 pub use cli::CliMsg;
 pub use core::CoreMsg;
+pub use files::FilesMsg;
 pub use git::GitMsg;
 pub use linear::LinearMsg;
 pub use local_ai::LocalAiMsg;
@@ -68,6 +70,7 @@ pub fn all() -> Vec<Entry> {
   out.extend(ChatExtrasMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(CliMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(CoreMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(FilesMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(GitMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(LinearMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(LocalAiMsg::ALL.iter().map(|&m| entry(m)));
@@ -97,5 +100,6 @@ pub fn frontend_matched() -> Vec<(&'static str, Vec<Entry>)> {
       [LspMsg::NotExecutable, LspMsg::NotOnPath, LspMsg::NoDebugpy, LspMsg::NoPython, LspMsg::AdapterNotOnPath].into_iter().map(entry).collect(),
     ),
     ("worktreeOrphan", vec![entry(WorktreeMsg::RemoveOrphan)]),
+    ("fileExists", vec![entry(FilesMsg::Exists)]),
   ]
 }

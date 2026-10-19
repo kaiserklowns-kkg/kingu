@@ -7,7 +7,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, RwLock};
 
-pub const NO_FOLDER: &str = "no folder is open";
+use crate::i18n::msg::FilesMsg;
+use crate::tr;
 
 #[derive(Default)]
 pub struct Workspace {
@@ -27,7 +28,7 @@ impl Workspace {
 
   /// The current root, or an error for commands that need a folder.
   pub fn root(&self) -> Result<PathBuf, String> {
-    self.current().ok_or_else(|| NO_FOLDER.to_string())
+    self.current().ok_or_else(|| tr!(FilesMsg::NoFolder))
   }
 
   /// Makes `dir` (canonicalized, must be a directory) the root and returns it.
@@ -51,7 +52,7 @@ impl Workspace {
 pub fn canonical_dir(dir: &Path) -> Result<PathBuf, String> {
   let root = dir.canonicalize().map_err(|e| format!("{}: {e}", dir.display()))?;
   if !root.is_dir() {
-    return Err(format!("{}: not a folder", dir.display()));
+    return Err(tr!(FilesMsg::NotAFolder, path = dir.display()));
   }
   Ok(root)
 }
@@ -61,7 +62,7 @@ pub fn canonical_dir(dir: &Path) -> Result<PathBuf, String> {
 pub fn resolve_in(root: &Path, rel: &str) -> Result<PathBuf, String> {
   let path = root.join(rel).canonicalize().map_err(|e| format!("{rel}: {e}"))?;
   if !path.starts_with(root) {
-    return Err(format!("{rel}: outside the workspace"));
+    return Err(tr!(FilesMsg::OutsideWorkspace, path = rel));
   }
   Ok(path)
 }
@@ -162,7 +163,7 @@ mod tests {
     std::fs::write(a.path().join("only-a.txt"), "").unwrap();
     std::fs::write(b.path().join("only-b.txt"), "").unwrap();
     let ws = Workspace::default();
-    assert_eq!(ws.root().unwrap_err(), NO_FOLDER);
+    assert_eq!(ws.root().unwrap_err(), tr!(FilesMsg::NoFolder));
     assert!(ws.resolve("only-a.txt").is_err());
 
     let root_a = ws.open(a.path()).unwrap();

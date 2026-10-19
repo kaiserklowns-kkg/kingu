@@ -10,6 +10,7 @@ import { notifications } from './notifications.svelte';
 import { compactChain, compactLabel, dropTarget, moveQuestion, planTransfer, rangeSelection, topLevel } from './explorerModel';
 import { nestFiles } from './fileNesting';
 import { t } from '#lib/i18n/index.ts';
+import { isRustError } from '#lib/i18n/rustErrors.ts';
 
 /** macOS file systems ignore case, so file nesting does too (VS Code's PathCaseSensitive check). */
 const CASE_SENSITIVE_FS = !(typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac'));
@@ -330,7 +331,7 @@ class Explorer {
 		try {
 			return await invoke<string>('fs_copy', { from, toDir: dir, naming });
 		} catch (e) {
-			if (!/already exists/.test(String(e))) throw e;
+			if (!isRustError(e, 'fileExists')) throw e;
 		}
 		if (from === to) throw new Error(t('workbench.explorer.exists', { name: baseName(from) }));
 		if (!(await this.#replaceExisting(to))) return null;
@@ -342,7 +343,7 @@ class Explorer {
 		try {
 			return await invoke<string>('fs_move', { from, toDir: dir });
 		} catch (e) {
-			if (!/already exists/.test(String(e))) throw e;
+			if (!isRustError(e, 'fileExists')) throw e;
 		}
 		if (!(await this.#replaceExisting(to))) return null;
 		return invoke<string>('fs_move', { from, toDir: dir });
