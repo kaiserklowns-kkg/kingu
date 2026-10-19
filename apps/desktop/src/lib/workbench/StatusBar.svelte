@@ -22,6 +22,7 @@
 	import StatusResources from './StatusResources.svelte';
 	import NotificationsBell from './NotificationsBell.svelte';
 	import UsageStatus from './UsageStatus.svelte';
+	import LocalAiStatus from '#lib/localAi/LocalAiStatus.svelte';
 	import { usage } from './usage.svelte';
 	import { PROVIDER_NAME } from './usage';
 	import { tick } from 'svelte';
@@ -126,6 +127,7 @@
 		{ id: 'status.editor.encoding', label: 'Editor Encoding' },
 		{ id: 'status.editor.eol', label: 'Editor End of Line' },
 		{ id: 'status.editor.mode', label: 'Editor Language' },
+		{ id: 'status.kingu.localAi', label: 'Local AI' },
 		{ id: 'status.notifications', label: 'Notifications' }
 	];
 	const show = (id: string) => !statusEntries.hidden.has(id);
@@ -237,6 +239,7 @@
 		{#if show('status.editor.eol')}<button class={ITEM} title="Select End of Line Sequence" onclick={() => commands.run('workbench.action.editor.changeEOL')}>{editors.eol}</button>{/if}
 		{#if show('status.editor.mode')}<button class={ITEM} title="Select Language Mode" onclick={() => commands.run('workbench.action.editor.changeLanguageMode')}>{languageName}</button>{/if}
 	{/if}
+	{#if show('status.kingu.localAi')}<LocalAiStatus />{/if}
 	<!-- VS Code keeps the notification bell at the far right. -->
 	{#if floating.enabled && floating.location === 'status-bar'}<FloatingToggle variant="status-bar" />{/if}
 	{#if show('status.notifications')}<NotificationsBell />{/if}

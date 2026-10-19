@@ -6,6 +6,7 @@ import { DEFAULT_THEME, THEMES } from '../theme/themes';
 import { defaultTitleTemplate } from '../workbench/title';
 import { PROFILES } from '../ade/agentProfiles';
 import { IDE_SETTINGS } from './ideSettings';
+import { LOCAL_AI_SETTINGS } from './localAi';
 import { ADE_SECTION_GROUPS, ADE_SETTINGS, SYSTEM_SECTION_GROUPS } from './ade';
 import { describeSchema, matchesSchema, schemaTypes, type JsonSchema } from './jsonSchema';
 import { t } from '../i18n/index';
@@ -755,7 +756,7 @@ const CORE_SETTINGS: SettingSchema[] = [
 ];
 
 /** Every static setting: the core ones above plus the VS Code-derived IDE settings (ideSettings.ts). */
-export const SETTINGS: SettingSchema[] = [...CORE_SETTINGS, ...ADE_SETTINGS, ...IDE_SETTINGS];
+export const SETTINGS: SettingSchema[] = [...CORE_SETTINGS, ...ADE_SETTINGS, ...IDE_SETTINGS, ...LOCAL_AI_SETTINGS];
 
 export type SettingsSection = { id: string; label: string; groups: string[] };
 
@@ -766,7 +767,7 @@ export type SettingsSection = { id: string; label: string; groups: string[] };
 export const SETTINGS_SECTIONS: SettingsSection[] = (
 	[
 		{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Application', ...SYSTEM_SECTION_GROUPS, 'Status Bar', 'Accessibility', 'Team', 'Snap Sandbox'] },
-		{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Source Control', 'Git', 'Terminal', 'Debug', 'Problems'] },
+		{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Source Control', 'Git', 'Terminal', 'Debug', 'Problems', 'Local AI'] },
 		{ id: 'ade', label: 'ADE (Agents)', groups: ADE_SECTION_GROUPS }
 	] satisfies SettingsSection[]
 ).map((sec) => ({ ...sec, groups: sec.groups.filter((g) => SETTINGS.some((s) => s.group === g)) }));

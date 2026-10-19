@@ -49,6 +49,9 @@ pub struct SearchOptions {
   /// The sibling clauses of `files.exclude` / `search.exclude` (`"**/*.js": { "when": "$(basename).ts" }`):
   /// ripgrep cannot express them, so matching files are dropped from the results.
   pub sibling_clauses: Vec<crate::glob::SiblingClause>,
+  /// `kingu.search.smart`: a plain query also finds its words in any case, order and spelling of
+  /// a name (`smart_search.rs`).
+  pub smart: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -118,6 +121,8 @@ pub fn for_workspace(mut opts: SearchOptions) -> SearchOptions {
 }
 
 pub fn build_args(opts: &SearchOptions) -> Vec<OsString> {
+  let smart = crate::smart_search::apply(opts);
+  let opts = smart.as_ref().unwrap_or(opts);
   let mut args: Vec<String> = vec![
     "--json".into(),
     "--no-config".into(),
@@ -458,6 +463,17 @@ mod tests {
     assert!(!args.contains(&"--no-ignore".into()));
     assert!(has_pair(&args, "--regexp", "-foo"));
     assert_eq!(args.last().unwrap(), "./");
+  }
+
+  #[test]
+  fn smart_search_turns_a_plain_query_into_a_case_insensitive_regex() {
+    let args = args_of(&SearchOptions { query: "stock ledger".into(), smart: Some(true), smart_case: Some(true), ..Default::default() });
+    assert!(!args.contains(&"--fixed-strings".into()));
+    assert!(args.contains(&"--ignore-case".into()));
+    assert!(has_pair(&args, "--regexp", &crate::smart_search::pattern("stock ledger").unwrap()));
+    // Off, or a single word: the query as typed.
+    assert!(has_pair(&args_of(&SearchOptions { query: "stock ledger".into(), ..Default::default() }), "--regexp", "stock ledger"));
+    assert!(args_of(&SearchOptions { query: "ledger".into(), smart: Some(true), ..Default::default() }).contains(&"--fixed-strings".into()));
   }
 
   #[test]
