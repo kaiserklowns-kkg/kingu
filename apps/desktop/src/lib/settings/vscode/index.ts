@@ -14,6 +14,11 @@ import { DEBUG_SETTINGS } from './debug';
 import { BREADCRUMBS_SETTINGS } from './breadcrumbs';
 import { PROBLEMS_SETTINGS } from './problems';
 import { APPLICATION_SETTINGS } from './application';
+import { OUTLINE_SETTINGS } from './outline';
+import { TYPESCRIPT_SETTINGS } from './typescript';
+import { CSS_SETTINGS } from './css';
+import { HTML_SETTINGS } from './html';
+import { JSON_SETTINGS } from './json';
 
 export const VSCODE_SETTINGS = [
 	...EDITOR_SETTINGS,
@@ -31,4 +36,10 @@ export const VSCODE_SETTINGS = [
 	...BREADCRUMBS_SETTINGS,
 	...PROBLEMS_SETTINGS,
 	...APPLICATION_SETTINGS,
+	...OUTLINE_SETTINGS,
+	// The settings sections Kingu delivers to the language servers it runs (lsp/serverSettings.ts).
+	...TYPESCRIPT_SETTINGS,
+	...CSS_SETTINGS,
+	...HTML_SETTINGS,
+	...JSON_SETTINGS,
 ];

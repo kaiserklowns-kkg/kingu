@@ -910,7 +910,7 @@ export type SettingsSection = { id: string; label: string; groups: string[] };
 export const SETTINGS_SECTIONS: SettingsSection[] = (
 	[
 		{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Application', ...SYSTEM_SECTION_GROUPS, 'Status Bar', 'Accessibility', 'Team', 'Snap Sandbox'] },
-		{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Source Control', 'Git', 'Terminal', 'Debug', 'Problems', 'Local AI'] },
+		{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Source Control', 'Git', 'Terminal', 'Debug', 'Problems', 'TypeScript', 'CSS', 'HTML', 'JSON', 'Local AI'] },
 		{ id: 'ade', label: 'ADE (Agents)', groups: ADE_SECTION_GROUPS }
 	] satisfies SettingsSection[]
 ).map((sec) => ({ ...sec, groups: sec.groups.filter((g) => SETTINGS.some((s) => s.group === g)) }));
@@ -948,10 +948,22 @@ export const SUBGROUPS: Readonly<Record<string, readonly (readonly [string, read
 			['workbench.activityBar.*', 'workbench.*color*', 'workbench.fontAliasing', 'workbench.iconTheme', 'workbench.sidebar.location', 'workbench.*.visible', 'workbench.tips.enabled', 'workbench.tree.*', 'workbench.view.*']
 		],
 		['Breadcrumbs', ['breadcrumbs.*']],
+		['Outline', ['outline.*']],
 		['Editor Management', ['workbench.editor.*']],
 		['Settings Editor', ['workbench.settings.*']]
 	],
 	Window: [['New Window', ['window.*newwindow*']]],
+	TypeScript: [
+		['Inlay Hints', ['*.inlayHints.*']],
+		['Format', ['*.format.*']],
+		['Preferences', ['*.preferences.*']],
+		['Suggestions', ['*.suggest.*']],
+		['Implicit Project Config', ['js/ts.implicitProjectConfig.*']]
+	],
+	CSS: [
+		['SCSS', ['scss.*']],
+		['LESS', ['less.*']]
+	],
 	Application: [
 		['Keyboard', ['keyboard.*']],
 		['Proxy', ['http.*']],

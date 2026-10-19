@@ -1,0 +1,33 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/json.ts",
+	"export": "JSON_SETTINGS",
+	"what": "json.* (vscode-json-language-server)",
+	"entries": [
+		{
+			"id": "json.validate.enable",
+			"group": "JSON",
+			"th": "ตรวจความถูกต้องของ JSON"
+		},
+		{
+			"id": "json.format.enable",
+			"group": "JSON",
+			"th": "เปิดตัวจัดรูปแบบ JSON"
+		},
+		{
+			"id": "json.format.keepLines",
+			"group": "JSON",
+			"th": "คงการขึ้นบรรทัดเดิมตอนจัดรูปแบบ"
+		},
+		{
+			"id": "json.schemas",
+			"group": "JSON",
+			"th": "จับคู่ schema กับไฟล์ JSON ในโปรเจกต์",
+			"default": []
+		},
+		{
+			"id": "json.maxItemsComputed",
+			"group": "JSON",
+			"th": "จำนวนสูงสุดของ symbol outline และ folding ที่คำนวณ"
+		}
+	]
+}
