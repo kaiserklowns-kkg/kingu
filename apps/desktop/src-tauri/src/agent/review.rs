@@ -406,6 +406,20 @@ pub fn pr_create(gh: &Path, dir: &Path, slug: &str, base: &str, title: &str, bod
   Ok(url)
 }
 
+/// Stacked worktrees: a task's PR targets its parent task's branch, which GitHub only knows once
+/// it is on origin. Pushes `base` there when it is a local branch (no upstream is set: the parent
+/// task's own PR does that); false when `base` is no local branch (e.g. `origin/main`).
+pub fn push_stack_base(dir: &Path, base: &str) -> Result<bool, String> {
+  check_rev(base)?;
+  if git::run(dir, &["rev-parse", "--verify", "--quiet", "--end-of-options", &format!("refs/heads/{base}")]).is_err() {
+    return Ok(false);
+  }
+  git::run(dir, &["remote", "get-url", "origin"]).map_err(|_| tr!(AgentMsg::NoOrigin))?;
+  git_queue::with(dir, Scope::Refs, "push (stack base)", || git::run(dir, &["push", "origin", &format!("refs/heads/{base}:refs/heads/{base}")]))
+    .map_err(|e| tr!(AgentMsg::StackBasePushFailed, base, detail = e))?;
+  Ok(true)
+}
+
 /// One CI check of a pull request (a GitHub Actions run or a commit status).
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct PrCheck {
@@ -676,6 +690,20 @@ mod tests {
     assert_eq!(args, "pr\ncreate\n--base=main\n--head=kingu/t\n--title=แก้ login\n--body=Fixes #3\n\nรายละเอียด\n--draft\n");
     assert_eq!(git_ok(&remote, &["log", "-1", "--format=%s", "kingu/t"]).trim(), "add new");
     assert!(pr_create(&gh, &wt, "t", "main", "  ", "", false).is_err(), "empty title");
+  }
+
+  /// A stacked task's PR base (its parent's branch) is pushed first; a remote-only base is left alone.
+  #[test]
+  fn push_stack_base_pushes_a_local_parent_branch() {
+    let (tmp, repo, wt) = setup();
+    let remote = tmp.path().join("remote.git");
+    git_ok(tmp.path(), &["init", "-q", "--bare", remote.to_str().unwrap()]);
+    git_ok(&repo, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    git_ok(&repo, &["branch", "kingu/parent", "main"]);
+    assert!(push_stack_base(&wt, "kingu/parent").unwrap());
+    assert_eq!(git_ok(&remote, &["rev-parse", "kingu/parent"]), git_ok(&repo, &["rev-parse", "kingu/parent"]));
+    assert!(!push_stack_base(&wt, "origin/main").unwrap(), "not a local branch");
+    assert!(push_stack_base(&wt, "-x").is_err());
   }
 
   #[test]

@@ -52,6 +52,7 @@
 	import { terminalBells } from './terminalBell.svelte';
 	import { BUTTON, BUTTON_SECONDARY, statusDot } from './ui';
 	import { statusLabel, timeAgo } from './model';
+	import { t } from '#lib/i18n/index.ts';
 
 	let body: HTMLDivElement | undefined = $state();
 	const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
@@ -67,6 +68,8 @@
 	const cli = $derived(slug ? cliOf(adeTasks.find(slug)?.meta.agent ?? '') : null);
 	/** Resumes the task's own session when its id is saved, else the CLI's latest one, where the CLI can. */
 	const resume = $derived(cli ? profileOf(cli).canResume : null);
+	/** Agent hibernation (attempts.svelte.ts) closed the task's idle CLI then. */
+	const hibernatedAt = $derived(slug ? adeTasks.find(slug)?.meta.hibernated_at : null);
 
 	// The folder's "new task" composer (Orca: a new worktree with an agent).
 	let draft = $state('');
@@ -225,6 +228,7 @@
 							<div class="flex justify-center text-(--vscode-descriptionForeground)"><Icon name="terminal" size={28} /></div>
 							<p>{cliName(cli)} ของงานนี้ไม่ได้รันอยู่</p>
 							<p class="text-xs text-(--vscode-descriptionForeground)">งานรันใน terminal ของ worktree <span class="font-mono">kingu/{slug}</span></p>
+							{#if hibernatedAt}<p class="text-xs text-(--vscode-descriptionForeground)">{t('adeAttempts.hibernated.text', { ago: timeAgo(hibernatedAt, adeTasks.now) })}</p>{/if}
 							<div class="flex justify-center gap-2">
 								{#if resume}<button class={BUTTON} onclick={() => adeTasks.resumeCli(slug)}>ทำงานต่อใน session เดิม</button>{/if}
 								<button class={resume ? BUTTON_SECONDARY : BUTTON} onclick={() => adeTasks.resumeCli(slug, true)}>เริ่ม {cli.join(' ')} ใหม่</button>

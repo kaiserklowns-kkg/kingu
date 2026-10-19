@@ -65,6 +65,7 @@
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 	import { installAgentsMode } from '#lib/ade/agentsMode.svelte.ts';
 	import { installWorktreeCommands } from '#lib/ade/worktreeMenu.svelte.ts';
+	import { installAttempts } from '#lib/ade/attempts.svelte.ts';
 	import { installAgentNotifications } from '#lib/ade/agentNotify.svelte.ts';
 	import { installAdeAttention } from '#lib/ade/adeAttention.svelte.ts';
 	import { installAutomations } from '#lib/ade/automations.svelte.ts';
@@ -317,6 +318,7 @@
 		const uninstallAde = installAde();
 		const uninstallAgentsMode = installAgentsMode();
 		const uninstallWorktreeCommands = installWorktreeCommands();
+		const uninstallAttempts = installAttempts();
 		const uninstallAgentNotifications = installAgentNotifications();
 		const uninstallAdeAttention = installAdeAttention();
 		const uninstallAutomations = installAutomations();
@@ -365,6 +367,7 @@
 			uninstallLayout();
 			uninstallAgentsMode();
 			uninstallWorktreeCommands();
+			uninstallAttempts();
 			uninstallIssues();
 			uninstallLinear();
 			uninstallAutomations();

@@ -9,6 +9,7 @@
 	import { issues } from './issues.svelte.ts';
 	import { isLinear, issueRef } from './issues.ts';
 	import CacheTimer from './CacheTimer.svelte';
+	import TaskBadges from './TaskBadges.svelte';
 
 	let { view }: { view: TaskView } = $props();
 	/** The session shown in the Agents layout. */
@@ -48,6 +49,7 @@
 	<div class="flex items-center gap-1.5">
 		<span class={['size-2 shrink-0 rounded-full', statusDot(view)]} title={statusLabel(view)}></span>
 		<span class="min-w-0 flex-1 truncate font-medium text-(--vscode-foreground)" title={meta.title}>{meta.title}</span>
+		<TaskBadges {meta} parentTitle={meta.parent ? adeTasks.find(meta.parent)?.meta.title : undefined} />
 		<CacheTimer {view} />
 		<span class="shrink-0 text-(--vscode-descriptionForeground)">{timeAgo(when, adeTasks.now)}</span>
 	</div>

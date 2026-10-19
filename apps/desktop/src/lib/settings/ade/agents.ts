@@ -74,6 +74,25 @@ export const AGENT_SETTINGS: SettingSchema[] = [
 		enumDescriptions: ['cache มาตรฐาน 5 นาที (The standard 5-minute cache.)', 'cache แบบขยาย 1 ชั่วโมง (The extended 1-hour cache.)'],
 		description: 'อายุของ prompt cache ที่ kingu.agent.promptCacheTimer นับถอยหลัง (Orca: promptCacheTtlMs) (Prompt-cache lifetime the timer counts down.)'
 	},
+	// Agent hibernation (ade/hibernation.ts, attempts.svelte.ts): experimental, off by default like Orca's.
+	{
+		id: 'kingu.agent.hibernation',
+		group: G,
+		type: 'boolean',
+		default: false,
+		description:
+			'ทดลอง: ปิด agent CLI ที่ทำรอบเสร็จแล้วและว่างนานเกิน kingu.agent.hibernationIdleMinutes เพื่อคืนหน่วยความจำ เฉพาะ CLI ที่ resume session ได้และไม่ได้แสดงอยู่บนจอ งานจะขึ้นปุ่มให้ทำงานต่อใน session เดิมได้ในคลิกเดียว (Orca: experimentalAgentHibernation) (Experimental: closes idle agent CLIs whose turn finished, to free memory; the task resumes the same session with one click.)'
+	},
+	{
+		id: 'kingu.agent.hibernationIdleMinutes',
+		group: G,
+		type: 'number',
+		default: 30,
+		minimum: 1,
+		maximum: 1440,
+		integer: true,
+		description: 'ว่างนานกี่นาทีหลังทำรอบเสร็จ agent CLI จึงถูกพักไว้ เมื่อเปิด kingu.agent.hibernation (Orca: agentHibernationIdleMs) (Minutes an agent CLI stays idle after its turn before hibernation closes it.)'
+	},
 	// --- Agent Chat (Orca's nativeChatAppearance): the timeline of timeline-mode tasks and the Agent panel.
 	{
 		id: 'kingu.chat.fontSize',

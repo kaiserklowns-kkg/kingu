@@ -21,6 +21,7 @@ import { cliOf, enabledBins, parseCliCommand } from './agentCli';
 import { CUSTOM_PICK, KNOWN_BINS, pickerItems, programOf } from './agentProfiles';
 import { canResumeWith, sessionProgram, sessionsOf, type SessionRef } from './sessionHistory';
 import { workflowOf, workflowStatuses } from './workflow';
+import { attempts } from './attempts.svelte';
 
 const FOLDER_ID = '@folder';
 
@@ -28,7 +29,15 @@ const FOLDER_ID = '@folder';
 export function actionsFor(key: string) {
 	const view = key ? adeTasks.find(key) : undefined;
 	const openIn = openInLabels(settings.get<Record<string, unknown>>('kingu.worktree.openIn'));
-	return worktreeActions({ slug: key || null, status: view?.status, running: !!view?.runtime?.working, hasWorktree: !view?.statError, openIn, sessions: view ? sessionsOf(view.meta).length : 0 });
+	return worktreeActions({
+		slug: key || null,
+		status: view?.status,
+		running: !!view?.runtime?.working,
+		hasWorktree: !view?.statError,
+		openIn,
+		sessions: view ? sessionsOf(view.meta).length : 0,
+		attempts: !!view?.meta.group
+	});
 }
 
 /** Orca's Move to Status: the board's workflow columns, the task's own one marked. */
@@ -155,6 +164,10 @@ export function runWorktreeAction(key: string, id: WorktreeAction) {
 			return slug && continueSession(slug);
 		case 'handOff':
 			return slug && handOff(slug);
+		case 'newFromTask':
+			return slug && attempts.newFromTask(slug);
+		case 'compareAttempts':
+			return slug && attempts.compare(slug);
 		case 'remove':
 			return slug && adeTasks.remove(slug);
 	}

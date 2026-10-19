@@ -408,5 +408,9 @@ crate::i18n::messages! {
       en: "No remote named origin",
       th: "ไม่มี remote ชื่อ origin",
     },
+    StackBasePushFailed {
+      en: "Could not push {base}, the branch this task is stacked on: {detail}",
+      th: "push {base} ซึ่งเป็น branch ที่งานนี้ต่อยอดอยู่ไม่ได้: {detail}",
+    },
   }
 }

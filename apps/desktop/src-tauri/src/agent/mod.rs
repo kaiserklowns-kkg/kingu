@@ -718,8 +718,10 @@ pub async fn worktree_pr(ws: State<'_, Workspace>, slug: String) -> Result<Optio
   blocking(move || review::worktree_pr(&gh, &dir, Some(&slug))).await
 }
 
-/// Pushes the task branch and runs `gh pr create`; returns the PR URL.
+/// Pushes the task branch and runs `gh pr create`; returns the PR URL. `stacked`: the base is the
+/// parent task's branch (stacked worktrees), pushed first so GitHub knows it.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn worktree_pr_create(
   ws: State<'_, Workspace>,
   slug: String,
@@ -728,11 +730,16 @@ pub async fn worktree_pr_create(
   body: String,
   draft: Option<bool>,
   open: Option<bool>,
+  stacked: Option<bool>,
 ) -> Result<String, String> {
   let dir = review::task_dir(&ws.root()?, &slug)?;
   let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
   let draft = draft.unwrap_or(false);
   let url = blocking(move || {
+    // Stacked worktrees: the base is the parent task's branch, which must be on origin too.
+    if stacked.unwrap_or(false) {
+      review::push_stack_base(&dir, &base)?;
+    }
     let url = review::pr_create(&gh, &dir, &slug, &base, &title, &body, draft)?;
     // kingu.pr.openAfterCreate: best effort, the PR exists either way.
     if open.unwrap_or(false) && url.starts_with("https://") {
