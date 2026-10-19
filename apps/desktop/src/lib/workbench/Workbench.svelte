@@ -43,6 +43,7 @@
 	import { installSettings } from '#lib/settings/apply.svelte.ts';
 	import { installWorkbenchAppearance } from './workbenchAppearance.svelte';
 	import { registerSettingsCommands } from '#lib/settings/contributions.ts';
+	import { installLocalAi } from '#lib/localAi/localAi.svelte.ts';
 	import { installAde } from '#lib/ade/tasks.svelte.ts';
 	import { isMac } from './keys';
 	import { installNativeMenu } from './appMenu.svelte';
@@ -326,6 +327,7 @@
 		const uninstallSnaps = installSnaps();
 		const uninstallMcp = installMcp();
 		const uninstallVault = installVault();
+		const uninstallLocalAi = installLocalAi();
 		const uninstallTerminalSessions = installTerminalSessions();
 		const uninstallTerminalCommands = installTerminalCommands();
 		const uninstallAdeCommands = installAdeCommands();
@@ -362,6 +364,7 @@
 			uninstallMcp();
 			uninstallSnaps();
 			uninstallVault();
+			uninstallLocalAi();
 			uninstallLayout();
 			uninstallAgentsMode();
 			uninstallWorktreeCommands();

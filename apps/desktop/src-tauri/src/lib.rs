@@ -13,6 +13,7 @@ mod i18n;
 mod glob;
 mod git_remote;
 mod linear;
+mod local_ai;
 mod logging;
 mod lsp;
 mod menu;
@@ -23,6 +24,7 @@ mod notify;
 mod pty;
 mod replace;
 mod search;
+mod smart_search;
 mod sessions;
 mod settings;
 mod shell_env;
@@ -1163,6 +1165,8 @@ pub fn run() {
     .manage(Arc::new(agent::chat_edits::ChatEdits::default()))
     .manage(Arc::new(vault::Vault::default()))
     .manage(Arc::new(search::Searches::default()))
+    .manage(Arc::new(local_ai::completions::Completions::default()))
+    .manage(Arc::new(local_ai::semantic::Semantic::default()))
     .manage(WorktreeSearches::default())
     .manage(lsp::Servers::default())
     .manage(dap::Sessions::default())
@@ -1442,6 +1446,12 @@ pub fn run() {
       worktree_search,
       worktree_search_cancel,
       search_replace,
+      local_ai::local_ai_complete,
+      local_ai::local_ai_cancel,
+      local_ai::semantic_index,
+      local_ai::semantic_status,
+      local_ai::semantic_search,
+      local_ai::semantic_clear,
       lsp_start,
       lsp_check,
       lsp_install_methods,
