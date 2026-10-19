@@ -2,7 +2,9 @@
 // `skill_hub_list` (Kingu-managed, Snap, built-in, the folder's and the user's .claude/skills),
 // the on/off switch Rust keeps, installing from a link or a .skill file through a review of the
 // staged files, Update / Remove, sharing (a link that installs it, an exported .skill file, or the
-// team's shared skills on the team server) and the plugin folder agent runs get
+// team's shared skills on the team server, kept current by the team event stream or, while that
+// is down and the view is open, by polling), "update available" for skills installed from git
+// (Rust checks at most once a day, or on Check for Updates) and the plugin folder agent runs get
 // (ade/mcp.ts `setHubPluginProvider`). Nothing from a skill runs here.
 
 import { untrack } from 'svelte';
@@ -18,7 +20,8 @@ import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
-import { firstCandidate, looksInstallable, type PreparedSkills, type SkillInfo, type TeamSkill, type TeamSkills } from './skillModel.ts';
+import { createTeamEventRouter, needsFocusReload } from '#lib/team/teamEvents.ts';
+import { firstCandidate, looksInstallable, TEAM_POLL_MS, type PreparedSkills, type SkillInfo, type TeamSkill, type TeamSkills, type UpdateReport } from './skillModel.ts';
 
 /** A staged install the page is showing for review. */
 export type Review = { prepared: PreparedSkills; rel: string; mode: 'install' | 'update' | 'team' };
@@ -35,6 +38,9 @@ class Skills {
 	previewText = $state('');
 	team = $state<TeamSkills | null>(null);
 	teamError = $state<string | null>(null);
+	/** Installed git skills with a newer commit upstream (`skill_hub_check_updates`). */
+	updateReport = $state<UpdateReport | null>(null);
+	checkingUpdates = $state(false);
 	#seq = 0;
 
 	async load() {
@@ -49,6 +55,25 @@ class Skills {
 			if (seq === this.#seq) this.error = String(e);
 		} finally {
 			if (seq === this.#seq) this.loading = false;
+		}
+		// Rust answers from its cache unless a skill's last check is a day old.
+		void this.checkUpdates(false);
+	}
+
+	/** Compares installed git skills with their source; `force` (the button) checks now instead of once a day. */
+	async checkUpdates(force: boolean) {
+		if (this.checkingUpdates) return;
+		this.checkingUpdates = true;
+		try {
+			this.updateReport = await invoke<UpdateReport>('skill_hub_check_updates', { force });
+			if (force) {
+				const count = this.updateReport.updates.length;
+				status.flash(count ? t('skills.updatesFound', { count }) : t('skills.allUpToDate'));
+			}
+		} catch (e) {
+			if (force) notifications.error(String(e));
+		} finally {
+			this.checkingUpdates = false;
 		}
 	}
 
@@ -185,6 +210,30 @@ class Skills {
 	}
 
 	// ---- team -------------------------------------------------------------------
+
+	/**
+	 * While the Skills view is open: the team list follows `skill.*` events, and is re-read every
+	 * minute while the event stream is down. Returns the stop function.
+	 */
+	watchTeam(): () => void {
+		const router = createTeamEventRouter('skill.', () => void this.loadTeam());
+		const stopEvents = team.onEvent((e) => router.event(e));
+		const stopStream = $effect.root(() => {
+			$effect(() => {
+				const state = team.status?.stream;
+				untrack(() => router.stream(state));
+			});
+		});
+		const poll = setInterval(() => {
+			if (team.status?.signed_in && needsFocusReload(team.status.stream)) void this.loadTeam();
+		}, TEAM_POLL_MS);
+		return () => {
+			clearInterval(poll);
+			stopEvents();
+			stopStream();
+			router.dispose();
+		};
+	}
 
 	async loadTeam() {
 		const serverUrl = team.serverUrl;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { setLocale } from '#lib/i18n/index.ts';
-import { canUnshare, firstCandidate, flagText, groupBySource, isLive, isTeamShareable, looksInstallable, originLabel, reviewFlags, teamSkillState, type PreparedSkills, type SkillCandidate, type SkillInfo, type SkillOrigin, type TeamSkill } from './skillModel.ts';
+import { canUnshare, firstCandidate, flagText, groupBySource, isLive, isTeamShareable, looksInstallable, originLabel, reviewFlags, teamSkillState, updateFor, type PreparedSkills, type SkillCandidate, type SkillInfo, type SkillOrigin, type TeamSkill } from './skillModel.ts';
 
 setLocale('en');
 
@@ -87,5 +87,16 @@ describe('skills view', () => {
 		const p = (candidates: SkillCandidate[]): PreparedSkills => ({ token: 't', origin: origin(), candidates, existing: [] });
 		expect(firstCandidate(p([c('a', 'broken'), c('b', null)]))?.rel).toBe('b');
 		expect(firstCandidate(p([c('a', 'broken')]))?.rel).toBe('a');
+	});
+
+	test('an update shows on the managed skill still at the commit it was found for', () => {
+		const R = 'f'.repeat(40);
+		const report = { updates: [{ name: 'pdf', installed: C, remote: R }], checkedAt: 1 };
+		const pdf = info({ id: 'managed:pdf', source: 'managed', origin: origin() });
+		expect(updateFor(pdf, report)?.remote).toBe(R);
+		expect(updateFor(pdf, null)).toBeUndefined();
+		// Updated since (another commit installed), or another source with the same name: nothing.
+		expect(updateFor(info({ id: 'managed:pdf', source: 'managed', origin: origin({ commit: R }) }), report)).toBeUndefined();
+		expect(updateFor(info({ id: 'user:pdf', source: 'user' }), report)).toBeUndefined();
 	});
 });

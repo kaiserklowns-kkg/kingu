@@ -80,6 +80,18 @@ export type TeamSkill = {
 
 export type TeamSkills = { server: string; user_id: string; role: string; items: TeamSkill[] };
 
+/** Mirrors `skill_hub::updates::SkillUpdate`: an installed git skill whose branch moved on. */
+export type SkillUpdate = { name: string; installed: string; remote: string };
+/** Mirrors `skill_hub::updates::UpdateReport` (`checkedAt`: seconds since the epoch, 0: never). */
+export type UpdateReport = { updates: SkillUpdate[]; checkedAt: number };
+
+/** The update waiting for this skill, if any (managed skills only; the report is by name). */
+export const updateFor = (s: SkillInfo, report: UpdateReport | null): SkillUpdate | undefined =>
+	s.source === 'managed' ? report?.updates.find((u) => u.name === s.name && u.installed === s.origin?.commit) : undefined;
+
+/** How often the open Skills view re-reads the team list while live updates are down. */
+export const TEAM_POLL_MS = 60_000;
+
 export const SOURCE_LABEL = {
 	managed: 'skills.source.managed',
 	snap: 'skills.source.snap',

@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { createSnapEventRouter, needsFocusReload, type Timers } from './teamEvents.ts';
+import { createSnapEventRouter, createTeamEventRouter, needsFocusReload, type Timers } from './teamEvents.ts';
 
 /** Manual clock: `advance` runs timers that come due. */
 function fakeTimers() {
@@ -88,4 +88,20 @@ test('focus reload is only a fallback while the stream is down', () => {
 	expect(needsFocusReload('reconnecting')).toBe(true);
 	expect(needsFocusReload('off')).toBe(true);
 	expect(needsFocusReload(undefined)).toBe(true);
+});
+
+describe('createTeamEventRouter', () => {
+	test('only its own kinds (and reset) reload', () => {
+		const clock = fakeTimers();
+		let reloads = 0;
+		const r = createTeamEventRouter('skill.', () => reloads++, 10, clock.timers);
+		for (const kind of ['snap.updated', 'artifact.shared', 'task.created', 'skills']) expect(r.event({ kind })).toBe(false);
+		expect(r.event({ kind: 'skill.shared' })).toBe(true);
+		expect(r.event({ kind: 'skill.removed' })).toBe(true);
+		clock.advance(10);
+		expect(reloads).toBe(1);
+		expect(r.event({ kind: 'reset' })).toBe(true);
+		clock.advance(10);
+		expect(reloads).toBe(2);
+	});
 });
