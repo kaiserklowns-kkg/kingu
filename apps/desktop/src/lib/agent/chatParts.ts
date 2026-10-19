@@ -8,6 +8,7 @@ import { t } from '#lib/i18n/index.ts';
 import { parseRequest, type ParsedRequest } from './chatPrompt';
 import { guardAskedText, guardBlockedText } from './guardText';
 import type { AgentEvent, PermissionRequest, ResultEvent, RunState, RunStatus, Vote } from './events';
+import type { ArtifactEvent } from '#lib/artifacts/artifacts.ts';
 
 export type ToolPart = {
 	kind: 'tool';
@@ -27,6 +28,8 @@ export type Part =
 	/** `reason`: why Kingu's safety check asked (a `guard_asked` before it), shown on the card. */
 	| { kind: 'confirmation'; request: PermissionRequest; reason?: string }
 	| { kind: 'error'; message: string }
+	/** A page the agent published (`artifact` event): a card that opens it. */
+	| { kind: 'artifact'; artifact: ArtifactEvent }
 	/** The turn was cut short (Stop, or the session ended mid-turn). */
 	| { kind: 'canceled' };
 
@@ -145,6 +148,9 @@ export function buildTurns(run: ChatView): Turn[] {
 				break;
 			case 'error':
 				current().parts.push({ kind: 'error', message: ev.message });
+				break;
+			case 'artifact':
+				current().parts.push({ kind: 'artifact', artifact: ev });
 				break;
 			case 'guard_blocked':
 				current().parts.push({ kind: 'error', message: guardBlockedText(ev) });

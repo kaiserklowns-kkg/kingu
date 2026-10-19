@@ -28,7 +28,8 @@
 		{ view: 'debug', label: 'Run and Debug', icon: 'bug', command: 'workbench.view.debug' },
 		{ view: 'snaps', label: 'Snaps', icon: 'snap', command: 'workbench.view.snaps' },
 		{ view: 'agents', label: 'Agents', icon: 'tasks', command: 'kingu.agents.show' },
-		{ view: 'vault', label: t('vault.title'), icon: 'clock', command: 'kingu.vault.show' }
+		{ view: 'vault', label: t('vault.title'), icon: 'clock', command: 'kingu.vault.show' },
+		{ view: 'artifacts', label: t('artifacts.title'), icon: 'layout', command: 'kingu.artifacts.show' }
 	];
 	/** `Explorer (⇧⌘E)`, from the command's live keybinding. */
 	const titled = (label: string, command: string) => {
@@ -61,7 +62,7 @@
 	}
 	style:width={vertical ? `${metrics.width}px` : undefined}
 >
-	{#each views as v (v.view)}
+	{#each views.filter((v) => v.view !== 'artifacts' || settings.get<boolean>('kingu.artifacts.showButton') !== false) as v (v.view)}
 		{@const on = layout.sidebarVisible && layout.sideView === v.view}
 		{@const badge = badges[v.view]?.() ?? 0}
 		{@const label = titled(v.label, v.command)}

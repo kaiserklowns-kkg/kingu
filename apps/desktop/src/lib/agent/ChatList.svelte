@@ -41,6 +41,7 @@
 	import ChatMarkdown from './ChatMarkdown.svelte';
 	import ChatToolRow from './ChatToolRow.svelte';
 	import ChatRequestChanges from './ChatRequestChanges.svelte';
+	import ArtifactCard from '#lib/artifacts/ArtifactCard.svelte';
 	import { answersFor, parseAsk } from './ask';
 	import { buildTurns, responseText, type Part } from './chatParts';
 	import { contextLabel } from './chatPrompt';
@@ -297,6 +298,8 @@
 									<button type="button" class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" onclick={() => actions.retry?.()}>{t('chatView.retry')}</button>
 								{/if}
 							</div>
+						{:else if part.kind === 'artifact'}
+							<ArtifactCard artifact={part.artifact} />
 						{:else if part.kind === 'canceled'}
 							<div class="text-(--vscode-descriptionForeground) italic">{t('chatView.canceled')}</div>
 						{/if}
