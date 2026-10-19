@@ -349,6 +349,14 @@ const CORE_SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.artifacts.showButton',
+		group: 'Workbench',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงปุ่ม Artifacts (หน้าที่ agent เผยแพร่) ใน activity bar (Orca: showArtifactsButton) (Show the Artifacts view, the pages agents publish, in the activity bar.)',
+		scope: 'application'
+	},
+	{
 		id: 'kingu.chat.usage',
 		group: 'Agent Chat',
 		type: 'string',

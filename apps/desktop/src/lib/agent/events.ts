@@ -2,6 +2,7 @@
 // plus the pure reducer that folds a run's events into what the UI shows.
 
 import { t } from '#lib/i18n/index.ts';
+import type { ArtifactEvent } from '#lib/artifacts/artifacts.ts';
 
 export type Usage = {
 	input_tokens: number;
@@ -89,6 +90,8 @@ export type AgentEvent =
 	| { kind: 'guard_blocked'; tool: string; tool_use_id: string | null; check: 'security' | 'repetition'; threats: string[]; detail: string }
 	/** Kingu's always-ask check stopped a call for the user (any permission mode); its `permission_request` follows. */
 	| GuardAsked
+	/** The agent published an artifact (its `artifact_publish` tool): the chat shows a card that opens it. */
+	| ArtifactEvent
 	/** The user's thumbs up / down on the answer to chat request `request` (null: taken back). Kept in the transcript. */
 	| { kind: 'feedback'; request: number; vote: Vote | null }
 	| { kind: 'error'; message: string }

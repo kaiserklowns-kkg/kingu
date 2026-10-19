@@ -14,6 +14,8 @@ pub const METHOD_TASK_CREATE: &str = "task.create";
 pub const METHOD_TASK_OPEN: &str = "task.open";
 pub const METHOD_OPEN: &str = "open";
 pub const METHOD_NOTIFY: &str = "notify";
+pub const METHOD_ARTIFACT_PUBLISH: &str = "artifact.publish";
+pub const METHOD_ARTIFACT_LIST: &str = "artifact.list";
 
 /// Error codes. `unauthorized`: missing or wrong token; `bad_request`: unreadable line or bad
 /// params; `unknown_method`; `unavailable`: the window did not answer; `failed`: the app refused.

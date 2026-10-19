@@ -1,5 +1,6 @@
 mod accounts;
 mod agent;
+mod artifacts;
 mod attachments;
 mod backup;
 mod cli_server;
@@ -1181,6 +1182,9 @@ pub fn run() {
     .manage(git_remote::CloneOps::default())
     .manage(menu::MenuState::default())
     .manage(DroppedPaths::default())
+    .manage(artifacts::preview::Previews::default())
+    // Artifact previews (artifacts/preview.rs): served only to the sandboxed preview iframe.
+    .register_uri_scheme_protocol(artifacts::preview::SCHEME, artifacts::preview::handle)
     .setup(|app| {
       let config_dir = app.path().app_config_dir()?;
       // application.shellEnvironmentResolutionTimeout (user settings only: it is read before any folder opens).
@@ -1449,6 +1453,18 @@ pub fn run() {
       agent::gh_issue_view,
       agent::gh_issue_comment,
       agent::gh_issue_open,
+      artifacts::artifacts_list,
+      artifacts::artifact_get,
+      artifacts::artifact_read_entry,
+      artifacts::artifact_delete,
+      artifacts::artifact_export,
+      artifacts::preview::artifact_preview,
+      artifacts::preview::artifact_preview_html,
+      artifacts::preview::artifact_preview_close,
+      artifacts::team::artifact_share_team,
+      artifacts::team::team_artifacts_list,
+      artifacts::team::team_artifact_get,
+      artifacts::team::team_artifact_delete,
       cli_server::cli_reply,
       cli_server::cli_install,
       cli_server::cli_uninstall,

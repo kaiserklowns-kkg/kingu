@@ -1,6 +1,6 @@
 ---
 name: kingu
-description: Control the Kingu app you are running in with the `kingu` command — list and start Kingu tasks (each in its own git worktree with its own agent), open a file or folder in the editor for the user, post a desktop notification when long work finishes, and check what folder is open. Use it when the user asks to hand work off to a new Kingu task, split work into parallel tasks, show them a file in Kingu, or be notified.
+description: Control the Kingu app you are running in with the `kingu` command — list and start Kingu tasks (each in its own git worktree with its own agent), open a file or folder in the editor for the user, publish an HTML or Markdown page as an artifact the user can open and share, post a desktop notification when long work finishes, and check what folder is open. Use it when the user asks to hand work off to a new Kingu task, split work into parallel tasks, show them a file in Kingu, or be notified.
 ---
 
 # The `kingu` command
@@ -19,6 +19,8 @@ kingu task create "<title>" --prompt "<instructions>" [--base <branch>] [--mode 
 kingu task open <slug>       # show a task to the user
 kingu open <path>[:line[:column]]   # open a file of the open folder (or a folder) in Kingu
 kingu notify "<message>" [--title "<title>"]
+kingu artifact publish <file.html|file.md> [--title "<title>"] [--description "<text>"] [--asset <path>[=<name>]]… [--id <id>]
+kingu artifact list          # the project's artifacts: id  v<version>  format  title
 ```
 
 - Add `--json` to any command for machine-readable output (`kingu --json task list`).
@@ -35,6 +37,22 @@ kingu notify "<message>" [--title "<title>"]
 - `--background` creates the task without switching the user's view to it.
 - Exit codes: 0 done, 1 Kingu refused (the message says why), 2 bad arguments, 3 Kingu is not
   running or not reachable.
+
+## Artifacts
+
+An artifact is a page (HTML, or Markdown) stored with the project (`.kingu/artifacts/`, not in
+git) that the user opens in Kingu, exports as one HTML file or shares with their team. Publish
+one for reports, dashboards, diagrams or summaries worth keeping. In a Claude chat prefer the
+`artifact_publish` tool of the `kingu` MCP server; elsewhere use the command:
+
+- Files the page uses (images, CSS, JS, data) go with `--asset`; the page refers to them by
+  relative path. An asset's name is its path below the page's folder (else its file name);
+  `--asset build/chart.png=img/chart.png` names it.
+- The page runs sandboxed: scripts work, but there is no network except the CDNs
+  cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com, cdn.tailwindcss.com, code.jquery.com and
+  Google Fonts (no fetch/XHR, forms or popups). Put the data in the page.
+- `--id <id>` (from the publish output or `kingu artifact list`) publishes a new version of an
+  existing artifact instead of a new one.
 
 ## Guidelines
 

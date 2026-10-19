@@ -195,6 +195,9 @@ pub enum AgentEvent {
     #[serde(default)]
     paths: Vec<String>,
   },
+  /// The agent published an artifact (the host's `artifact_publish` tool, through artifacts/):
+  /// version `version` of artifact `id` in project `root`. The chat shows a card that opens it.
+  Artifact { id: String, title: String, version: u32, format: String, root: String },
   /// Added by the webview (`chat_feedback`): the user's thumbs up (`up`) or down (`down`) on the
   /// answer to chat request `request`, or none (`vote` null: taken back). Kept in the transcript.
   Feedback {
@@ -255,6 +258,14 @@ mod tests {
       "usage": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 2, "cache_creation_input_tokens": 1}
     });
     assert_eq!(serde_json::to_value(AgentEvent::from_host(result.clone())).unwrap(), result);
+  }
+
+  #[test]
+  fn artifacts_round_trip() {
+    let ev = json!({"kind": "artifact", "id": "0123456789abcdef", "title": "รายงาน", "version": 2, "format": "html", "root": "/repo"});
+    let parsed = AgentEvent::from_host(ev.clone());
+    assert!(matches!(&parsed, AgentEvent::Artifact { id, version: 2, .. } if id == "0123456789abcdef"));
+    assert_eq!(serde_json::to_value(&parsed).unwrap(), ev);
   }
 
   #[test]

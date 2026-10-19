@@ -191,10 +191,19 @@ export type AgentEvent =
 	 * outside the run's folder), `delete`, `protected` (a .kinguignore path) or `mcp`; `paths`: what it is about.
 	 */
 	| { kind: 'guard_asked'; request_id: string; tool: string; tool_use_id: string | null; check: 'outside_cwd' | 'delete' | 'protected' | 'mcp'; paths: string[] }
+	/**
+	 * The agent published an artifact (artifacts.ts, Kingu's `artifact_publish` tool): version
+	 * `version` of artifact `id`, stored by the app under `<root>/.kingu/artifacts/<id>/`. The chat
+	 * shows it as a card that opens the page.
+	 */
+	| { kind: 'artifact'; id: string; title: string; version: number; format: 'html' | 'markdown'; root: string }
 	| { kind: 'error'; message: string }
 	| { kind: 'raw'; line: string }
 	| { kind: 'stderr'; line: string }
 	| { kind: 'exit'; code: number | null; signal: number | null; stopped: boolean };
+
+/** Kingu's own tool for publishing an artifact (artifacts.ts): never asked about as an MCP tool. */
+export const ARTIFACT_TOOL = 'mcp__kingu__artifact_publish';
 
 export type RpcRequest = { jsonrpc?: '2.0'; id: number | string; method: string; params?: unknown };
 export type RpcResponse =

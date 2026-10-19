@@ -15,6 +15,7 @@ import { Guards, type AskUser } from './guards/index.ts';
 import { MAX_PATTERNS } from './guards/asks.ts';
 import { checkAnswers, isAskUserQuestion, QUESTIONS_DISMISSED } from './questions.ts';
 import { Runtimes, runtimeSpec, SessionError, type SpawnFn } from './runtimes/index.ts';
+import { ARTIFACT_SERVER, ARTIFACT_TOOL, artifactServer, socketCaller, type CallApp } from './artifacts.ts';
 import {
 	DECISIONS,
 	MCP_TYPES,
@@ -192,6 +193,8 @@ class Run {
 	mcpReported = false;
 	/** Context tokens of the main agent's latest API call (`contextTokensOf`). */
 	contextTokens: number | null = null;
+	/** Kingu's artifact tool is this run's (its `kingu` MCP server was added). */
+	artifacts = false;
 	constructor(readonly id: number) {}
 }
 
@@ -207,6 +210,8 @@ export type HostDeps = {
 	readFile?: (path: string) => Uint8Array;
 	/** Starts another runtime's agent process (runtimes/; tests may pass their own). */
 	spawn?: SpawnFn;
+	/** Calls the app for the artifact tool (artifacts.ts); default: its socket from `KINGU_CLI_RUNTIME`. */
+	callApp?: CallApp;
 };
 
 class RpcError extends Error {
@@ -406,7 +411,14 @@ export class AgentHost {
 
 		const run = new Run(p.runId);
 		run.mode = mode;
-		if (p.safetyChecks !== false || asks) run.guards = new Guards(p.safetyChecks !== false, asks ? { ...asks, cwd: p.cwd } : null);
+		// Kingu's artifact tool (artifacts.ts), over the app's `kingu` socket; not when a server of the run is named `kingu`.
+		const cliRuntime = extraEnv.KINGU_CLI_RUNTIME || (this.deps.options?.env ?? process.env).KINGU_CLI_RUNTIME;
+		const call = this.deps.callApp ?? (cliRuntime ? socketCaller(cliRuntime) : null);
+		if (call && !(ARTIFACT_SERVER in mcpServers)) {
+			mcpServers[ARTIFACT_SERVER] = artifactServer({ cwd: p.cwd, call, emit: (ev) => this.emit(run.id, ev) });
+			run.artifacts = true;
+		}
+		if (p.safetyChecks !== false || asks) run.guards = new Guards(p.safetyChecks !== false, asks ? { ...asks, cwd: p.cwd, trustedTools: run.artifacts ? [ARTIFACT_TOOL] : [] } : null);
 		this.runs.set(run.id, run);
 		const hooks = runHooks(
 			run.guards?.hook((ev) => this.emit(run.id, ev), (line) => this.log(`run ${run.id}: ${line}`), this.askGuard(run)) ?? null,
@@ -690,6 +702,8 @@ export class AgentHost {
 				// Just allowed at Kingu's safety ask: no second prompt for the same call. Never in plan mode,
 				// whose own prompt is what keeps it read-only.
 				if (opts.toolUseID && run.guardApproved.delete(opts.toolUseID) && run.mode !== 'plan') return resolve({ behavior: 'allow', updatedInput: input });
+				// Publishing an artifact only writes to the project's .kingu/artifacts (plan mode still asks).
+				if (tool === ARTIFACT_TOOL && run.artifacts && run.mode !== 'plan') return resolve({ behavior: 'allow', updatedInput: input });
 				const requestId = this.newId();
 				run.pending.set(requestId, { resolve, input, suggestions: opts.suggestions ?? [], tool });
 				opts.signal?.addEventListener('abort', () => {

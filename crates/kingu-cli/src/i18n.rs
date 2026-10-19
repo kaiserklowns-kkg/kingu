@@ -80,6 +80,14 @@ pub enum Msg {
   NotRegularFile,
   OtherOwner,
   OtherUsers,
+  ArtifactNeedsSubcommand,
+  ArtifactNeedsFile,
+  ArtifactOneFile,
+  ArtifactBadId,
+  ArtifactBadAsset,
+  UnknownArtifactCommand,
+  ArtifactPublished,
+  NoArtifacts,
 }
 
 impl Msg {
@@ -117,6 +125,14 @@ impl Msg {
     Msg::NotRegularFile,
     Msg::OtherOwner,
     Msg::OtherUsers,
+    Msg::ArtifactNeedsSubcommand,
+    Msg::ArtifactNeedsFile,
+    Msg::ArtifactOneFile,
+    Msg::ArtifactBadId,
+    Msg::ArtifactBadAsset,
+    Msg::UnknownArtifactCommand,
+    Msg::ArtifactPublished,
+    Msg::NoArtifacts,
   ];
 
   /// (English, Thai).
@@ -158,6 +174,14 @@ impl Msg {
       Msg::NotRegularFile => ("{path} is not a regular file", "{path} ไม่ใช่ไฟล์ปกติ"),
       Msg::OtherOwner => ("{path} belongs to uid {uid}, not this user; refusing it", "{path} เป็นของ uid {uid} ไม่ใช่ผู้ใช้นี้ จึงไม่ใช้ไฟล์นี้"),
       Msg::OtherUsers => ("{path} is readable or writable by other users (mode {mode}); refusing it", "ผู้ใช้อื่นอ่านหรือเขียน {path} ได้ (mode {mode}) จึงไม่ใช้ไฟล์นี้"),
+      Msg::ArtifactNeedsSubcommand => ("`kingu artifact` needs publish or list", "`kingu artifact` ต้องตามด้วย publish หรือ list"),
+      Msg::ArtifactNeedsFile => ("`kingu artifact publish` needs an .html or .md file", "`kingu artifact publish` ต้องระบุไฟล์ .html หรือ .md"),
+      Msg::ArtifactOneFile => ("`kingu artifact publish` takes one file (add others with --asset)", "`kingu artifact publish` รับได้ไฟล์เดียว (ไฟล์อื่นใส่ด้วย --asset)"),
+      Msg::ArtifactBadId => ("--id must be an artifact id (16 hex digits, see `kingu artifact list`), not `{id}`", "--id ต้องเป็น id ของ artifact (เลขฐานสิบหก 16 หลัก ดูได้จาก `kingu artifact list`) ไม่ใช่ `{id}`"),
+      Msg::ArtifactBadAsset => ("--asset needs <path> or <path>=<name>, not `{value}`", "--asset ต้องเป็น <path> หรือ <path>=<name> ไม่ใช่ `{value}`"),
+      Msg::UnknownArtifactCommand => ("unknown artifact command `{command}` (publish, list)", "ไม่รู้จักคำสั่ง artifact `{command}` (มี publish, list)"),
+      Msg::ArtifactPublished => ("Published {title} (artifact {id}, version {version})", "เผยแพร่ {title} แล้ว (artifact {id} เวอร์ชัน {version})"),
+      Msg::NoArtifacts => ("no artifacts", "ไม่มี artifact"),
     }
   }
 
@@ -197,6 +221,11 @@ Usage:
   kingu open <path>[:line[:column]]  open a file (in the open folder) or a folder in Kingu
   kingu notify <message…> [--title <title>]
                                      post a desktop notification
+  kingu artifact publish <file> [--title <title>] [--description <text>]
+                         [--asset <path>[=<name>]]… [--id <id>]
+                                     publish an HTML or Markdown page as an artifact of
+                                     the project (a new version with --id); prints its id
+  kingu artifact list                the project's artifacts (id, version, format, title)
 
 Options:
   --json         print the app's answer as JSON
@@ -218,6 +247,11 @@ const USAGE_TH: &str = "kingu: สั่งงานแอป Kingu ที่เ
   kingu open <path>[:line[:column]]  เปิดไฟล์ (ในโฟลเดอร์ที่เปิด) หรือโฟลเดอร์ใน Kingu
   kingu notify <message…> [--title <title>]
                                      แสดงการแจ้งเตือนบนเดสก์ท็อป
+  kingu artifact publish <file> [--title <title>] [--description <text>]
+                         [--asset <path>[=<name>]]… [--id <id>]
+                                     เผยแพร่หน้า HTML หรือ Markdown เป็น artifact ของโปรเจกต์
+                                     (ใส่ --id เพื่อเพิ่มเวอร์ชันใหม่) แล้วพิมพ์ id
+  kingu artifact list                artifact ของโปรเจกต์ (id, เวอร์ชัน, รูปแบบ, ชื่อ)
 
 ตัวเลือก:
   --json         พิมพ์คำตอบของแอปเป็น JSON
@@ -253,7 +287,7 @@ mod tests {
   fn usage_lists_the_same_commands_in_both_languages() {
     let commands = |s: &str| s.lines().filter(|l| l.trim_start().starts_with("kingu ")).map(|l| l.trim().split("  ").next().unwrap_or_default().to_owned()).collect::<Vec<_>>();
     assert_eq!(commands(USAGE_EN), commands(USAGE_TH));
-    assert_eq!(commands(USAGE_EN).len(), 6);
+    assert_eq!(commands(USAGE_EN).len(), 8);
   }
 
   #[test]

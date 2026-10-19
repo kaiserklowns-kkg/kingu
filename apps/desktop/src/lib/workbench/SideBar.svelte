@@ -6,6 +6,7 @@
 	import DebugView from '#lib/debug/DebugView.svelte';
 	import SnapsSideView from '#lib/snaps/SnapsSideView.svelte';
 	import VaultView from '#lib/vault/VaultView.svelte';
+	import ArtifactsView from '#lib/artifacts/ArtifactsView.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import ActivityBar from './ActivityBar.svelte';
 	import { layout } from './layout.svelte';
@@ -14,7 +15,7 @@
 	let { workspaceName }: { workspaceName: string } = $props();
 
 	const location = $derived(settings.get<string>('workbench.activityBar.location'));
-	const titles = $derived({ explorer: 'Explorer', search: 'Search', scm: 'Source Control', debug: 'Run and Debug', snaps: 'Snaps', agents: 'Agents', vault: t('vault.title') });
+	const titles = $derived({ explorer: 'Explorer', search: 'Search', scm: 'Source Control', debug: 'Run and Debug', snaps: 'Snaps', agents: 'Agents', vault: t('vault.title'), artifacts: t('artifacts.title') });
 </script>
 
 <aside aria-label={titles[layout.sideView]} class="flex h-full flex-col bg-(--vscode-sideBar-background) text-(--vscode-sideBar-foreground)">
@@ -45,6 +46,8 @@
 		<AgentsView />
 	{:else if layout.sideView === 'vault'}
 		<VaultView />
+	{:else if layout.sideView === 'artifacts'}
+		<ArtifactsView />
 	{/if}
 	</div>
 	{#if location === 'bottom'}
