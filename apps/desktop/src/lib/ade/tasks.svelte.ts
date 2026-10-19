@@ -73,7 +73,8 @@ import { issueBranchLeaf } from './issueBranch.ts';
 import { prefillPr, prFormProblem, type Commit, type PrForm } from './prForm.ts';
 import { isFolderGithub, isLinear, issueLink, issuePrompt, issueRef, issueSlug, issueTaskTitle, prBody, prComment, taskForIssue, type Issue, type IssueDetail } from './issues.ts';
 import { linearLink, linearPrompt, linearSlug, linearTaskTitle, taskForLinearIssue, type LinearIssue, type LinearIssueDetail } from './linear.ts';
-import { brokenChecks, MERGE_LABEL, type MergeMethod } from './prChecks.ts';
+import { brokenChecks, methodLabel, type MergeMethod } from './prChecks.ts';
+import { forgeFor, forgeOf, ft } from './forge.ts';
 import { buildCommentsPrompt, buildFixChecksPrompt, type CheckLog } from './prPrompts.ts';
 import type { ReviewThread } from './prComments.ts';
 
@@ -521,6 +522,7 @@ class AdeTasks {
 
 	/** Palette: the open PRs, or a typed number or link. */
 	async pickPrForTask() {
+		if ((await this.checkGh())?.provider === 'gitlab') return void status.flash(t('forge.prStart.notOnGitlab'), 8000);
 		let prs: PrHead[] = [];
 		try {
 			prs = await invoke<PrHead[]>('gh_pr_list', { limit: 50 });
@@ -1193,16 +1195,17 @@ class AdeTasks {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta) return;
 		const gh = await this.checkGh();
+		const title = ft('forge.create.title', forgeOf(gh));
 		if (gh?.provider === 'gitlab' && !gh.authenticated) {
-			await message(gh.detail, { title: t('adeTasks.tasks.createPrTitle'), kind: 'info' });
+			await message(gh.detail, { title, kind: 'info' });
 			return;
 		}
 		if (!gh?.installed) {
-			await message(t('adeTasks.tasks.ghMissing'), { title: t('adeTasks.tasks.createPrTitle'), kind: 'info' });
+			await message(t('adeTasks.tasks.ghMissing'), { title, kind: 'info' });
 			return;
 		}
 		if (!gh.authenticated) {
-			await message(t('adeTasks.tasks.ghSignedOut', { detail: gh.detail }), { title: t('adeTasks.tasks.createPrTitle'), kind: 'info' });
+			await message(t('adeTasks.tasks.ghSignedOut', { detail: gh.detail }), { title, kind: 'info' });
 			return;
 		}
 		adeDialogs.open({ kind: 'pr', slug });
@@ -1229,9 +1232,10 @@ class AdeTasks {
 	async submitPr(slug: string, form: PrForm): Promise<string | null> {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta) return t('adeTasks.tasks.taskNotFound');
-		const problem = prFormProblem(form, this.branchOf(slug));
+		const forge = forgeOf(this.gh);
+		const problem = prFormProblem(form, this.branchOf(slug), forge);
 		if (problem) return problem;
-		this.busy[slug] = t('adeTasks.tasks.busy.createPr');
+		this.busy[slug] = ft('forge.create.busy', forge);
 		let url: string;
 		try {
 			url = await invoke<string>('worktree_pr_create', {
@@ -1251,7 +1255,7 @@ class AdeTasks {
 			delete this.busy[slug];
 		}
 		await this.#patch(slug, { pr_url: url || null });
-		status.flash(url ? t('adeTasks.tasks.prOpenedUrl', { url }) : t('adeTasks.tasks.prOpened'), 10000);
+		status.flash(url ? ft('forge.create.openedUrl', forgeFor(url, this.gh), { url }) : ft('forge.create.opened', forge), 10000);
 		void prStatuses.refresh(slug);
 		if (url && meta.issue && settings.get<boolean>('kingu.issues.commentOnPr') === true) {
 			const link = meta.issue;
@@ -1309,17 +1313,18 @@ class AdeTasks {
 		return true;
 	}
 
-	/** Merges the PR on GitHub after confirming (Orca's merge button); the task becomes done. */
+	/** Merges the PR on its host after confirming (Orca's merge button); the task becomes done. */
 	async mergePr(slug: string, method: MergeMethod, deleteBranch: boolean) {
 		const pr = prStatuses.bySlug[slug]?.pr;
 		if (!pr) return;
-		const branchNote = deleteBranch && pr.head_ref ? `\n${t('adeTasks.tasks.mergePrDeleteBranch', { branch: pr.head_ref })}` : '';
-		const ok = await ask(`${t('adeTasks.tasks.mergePrAsk', { method: MERGE_LABEL[method], number: pr.number })}${branchNote}`, { title: t('adeTasks.tasks.mergePrTitle'), okLabel: MERGE_LABEL[method], cancelLabel: t('common.cancel') });
+		const forge = forgeFor(pr.url, this.gh);
+		const branchNote = deleteBranch && pr.head_ref ? `\n${ft('forge.merge.askDeleteBranch', forge, { branch: pr.head_ref })}` : '';
+		const ok = await ask(`${ft('forge.merge.ask', forge, { method: methodLabel(method), number: pr.number })}${branchNote}`, { title: ft('forge.merge.title', forge), okLabel: methodLabel(method), cancelLabel: t('common.cancel') });
 		if (!ok) return;
-		const r = await this.#step(slug, t('adeTasks.tasks.step.mergePr'), () => invoke<MergeOutcome>('worktree_pr_merge', { slug, url: pr.url, number: pr.number, method, deleteBranch }));
+		const r = await this.#step(slug, ft('forge.merge.title', forge), () => invoke<MergeOutcome>('worktree_pr_merge', { slug, url: pr.url, number: pr.number, method, deleteBranch }));
 		if (!r) return;
 		if (slug && this.list.some((t) => t.slug === slug)) await this.#patch(slug, { merged_at: Date.now(), status: 'done' });
-		status.flash([t('adeTasks.tasks.mergedPr', { number: pr.number }), r.deleted_branch ? t('adeTasks.tasks.deletedRemoteBranch', { branch: r.deleted_branch }) : '', r.branch_note ?? ''].filter(Boolean).join(' · '), 10000);
+		status.flash([ft('forge.merge.done', forge, { number: pr.number }), r.deleted_branch ? ft('forge.merge.deletedBranch', forge, { branch: r.deleted_branch }) : '', r.branch_note ?? ''].filter(Boolean).join(' · '), 10000);
 		await prStatuses.refresh(slug);
 	}
 
@@ -1340,7 +1345,7 @@ class AdeTasks {
 		await this.sendToAgent(slug, buildCommentsPrompt(pr, threads, path), t('adeTasks.tasks.what.reviewComments', { count: threads.length }));
 	}
 
-	/** Resolves (or reopens) a review thread on GitHub. */
+	/** Resolves (or reopens) a review thread on its host (a discussion on GitLab). */
 	async resolveThread(slug: string, id: string, resolve = true) {
 		const pr = prStatuses.bySlug[slug]?.pr;
 		if (!pr) return;

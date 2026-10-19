@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Create pull request (Orca's New PR composer): title, description, base and draft, seeded
-	// once from the branch's commits and the task, then pushed and created with `gh` (Rust).
-	// Errors stay in the form so nothing typed is lost.
+	// once from the branch's commits and the task, then pushed and created with `gh` (Rust), or as
+	// a merge request when the folder is on GitLab. Errors stay in the form so nothing typed is lost.
 	import AdeDialog from './AdeDialog.svelte';
 	import { adeTasks } from './tasks.svelte.ts';
 	import { prFormProblem, prSubmitLabel, type PrForm } from './prForm.ts';
@@ -9,8 +9,11 @@
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { aiText, aiTextEnabled, generatePrDetails, prTemplate } from './aiText.svelte.ts';
+	import { forgeOf, ft } from './forge.ts';
+	import { t } from '#lib/i18n/index.ts';
 
 	let { slug, onClose }: { slug: string; onClose: () => void } = $props();
+	const forge = $derived(forgeOf(adeTasks.gh));
 
 	const branch = $derived(adeTasks.branchOf(slug));
 	const stat = $derived(adeTasks.stats[slug]);
@@ -40,11 +43,11 @@
 			const d = await generatePrDetails(slug, form.base, template);
 			if (form) form = { ...form, title: d.title, body: adeTasks.prBodyFrom(slug, d.body) };
 		} catch (e) {
-			error = `สร้างรายละเอียด PR ไม่ได้: ${e instanceof Error ? e.message : e}`;
+			error = ft('forge.create.generateFailed', forge, { error: e instanceof Error ? e.message : String(e) });
 		}
 	}
 
-	const problem = $derived(form ? prFormProblem(form, branch) : 'กำลังเตรียม…');
+	const problem = $derived(form ? prFormProblem(form, branch, forge) : t('forge.create.preparing'));
 	const bases = $derived(form && !adeTasks.branches.includes(form.base) ? [form.base, ...adeTasks.branches] : adeTasks.branches);
 
 	async function submit(e?: Event) {
@@ -69,47 +72,47 @@
 	}
 </script>
 
-<AdeDialog title="สร้าง Pull Request" {busy} {onClose} width={560}>
+<AdeDialog title={ft('forge.create.title', forge)} {busy} {onClose} width={560}>
 	{#if !form}
-		<p class="py-6 text-center text-(--vscode-descriptionForeground)">กำลังอ่าน commit ของ {branch}…</p>
+		<p class="py-6 text-center text-(--vscode-descriptionForeground)">{t('forge.create.readingCommits', { branch })}</p>
 	{:else}
 		<form class="space-y-2.5" onsubmit={submit}>
-			<p class="text-xs text-(--vscode-descriptionForeground)">push <span class="font-mono">{branch}</span> ไปที่ origin แล้วเปิด PR</p>
+			<p class="text-xs text-(--vscode-descriptionForeground)">{ft('forge.create.pushHint', forge, { branch })}</p>
 			<label class="block space-y-1">
 				<span class="flex items-center text-xs text-(--vscode-descriptionForeground)">
-					<span class="flex-1">ชื่อ (Title)</span>
+					<span class="flex-1">{t('forge.create.titleField')}</span>
 					{#if aiTextEnabled()}
 						<button
 							type="button"
 							class="flex items-center gap-1 rounded px-1 text-(--vscode-textLink-foreground) hover:underline disabled:opacity-50"
 							disabled={busy || drafting}
-							title="ให้ agent เขียนชื่อและรายละเอียดจาก commit ของ branch (Generate PR details)"
+							title={ft('forge.create.generateTip', forge)}
 							onclick={draft}
 						>
-							<Icon name="sparkle" size={12} />{drafting ? 'agent กำลังเขียน…' : 'ให้ agent เขียน'}
+							<Icon name="sparkle" size={12} />{drafting ? t('forge.create.agentWriting') : t('forge.create.agentWrite')}
 						</button>
 					{/if}
 				</span>
-				<input class={INPUT} bind:value={form.title} placeholder="Title" use:focusTitle disabled={busy || drafting} />
+				<input class={INPUT} bind:value={form.title} placeholder={t('forge.create.titleField')} use:focusTitle disabled={busy || drafting} />
 			</label>
 			<label class="block space-y-1">
-				<span class="text-xs text-(--vscode-descriptionForeground)">รายละเอียด (Description)</span>
-				<textarea class={[INPUT, 'h-40 resize-y font-mono text-xs']} bind:value={form.body} placeholder="Description (optional)" disabled={busy || drafting} onkeydown={onBodyKey}></textarea>
+				<span class="text-xs text-(--vscode-descriptionForeground)">{t('forge.create.descriptionField')}</span>
+				<textarea class={[INPUT, 'h-40 resize-y font-mono text-xs']} bind:value={form.body} placeholder={t('forge.create.descriptionPlaceholder')} disabled={busy || drafting} onkeydown={onBodyKey}></textarea>
 			</label>
 			<div class="flex flex-wrap items-center gap-3">
 				<label class="flex items-center gap-1.5">
-					<span class="text-xs text-(--vscode-descriptionForeground)">เข้า (base)</span>
+					<span class="text-xs text-(--vscode-descriptionForeground)">{t('forge.create.baseField')}</span>
 					<select class={[INPUT, 'w-auto max-w-56']} bind:value={form.base} disabled={busy}>
 						{#each bases as b (b)}<option value={b}>{b}</option>{/each}
 					</select>
 				</label>
 				<label class="flex items-center gap-1.5">
 					<input type="checkbox" bind:checked={form.draft} disabled={busy} />
-					<span>สร้างเป็น draft</span>
+					<span>{t('forge.create.asDraft')}</span>
 				</label>
 			</div>
 			{#if stat?.dirty}
-				<p class="rounded border border-(--vscode-editorWarning-foreground) px-2 py-1 text-xs text-(--vscode-editorWarning-foreground)">มีการแก้ไขที่ยังไม่ commit ซึ่งจะไม่อยู่ใน PR</p>
+				<p class="rounded border border-(--vscode-editorWarning-foreground) px-2 py-1 text-xs text-(--vscode-editorWarning-foreground)">{ft('forge.create.uncommitted', forge)}</p>
 			{/if}
 			{#if error}
 				<p role="alert" class="rounded border border-(--vscode-errorForeground) px-2 py-1 text-xs whitespace-pre-wrap text-(--vscode-errorForeground)">{error}</p>
@@ -118,7 +121,7 @@
 	{/if}
 	{#snippet footer()}
 		{#if form && problem}<span class="mr-auto text-xs text-(--vscode-descriptionForeground)">{problem}</span>{/if}
-		<button class={BUTTON_SECONDARY} disabled={busy} onclick={onClose}>ยกเลิก</button>
-		<button class={BUTTON} disabled={!!problem || busy} title="{prSubmitLabel(form?.draft ?? false, false)} (⌘Enter)" onclick={() => submit()}>{prSubmitLabel(form?.draft ?? false, busy)}</button>
+		<button class={BUTTON_SECONDARY} disabled={busy} onclick={onClose}>{t('common.cancel')}</button>
+		<button class={BUTTON} disabled={!!problem || busy} title="{prSubmitLabel(form?.draft ?? false, false, forge)} (⌘Enter)" onclick={() => submit()}>{prSubmitLabel(form?.draft ?? false, busy, forge)}</button>
 	{/snippet}
 </AdeDialog>
