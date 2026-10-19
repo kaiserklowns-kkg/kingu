@@ -2,6 +2,7 @@
 //! file, `mod` + `pub use` it here and list its enum in `all()`.
 
 mod accounts;
+mod artifacts;
 mod agent;
 mod chat_extras;
 mod cli;
@@ -20,6 +21,7 @@ mod workspace;
 mod worktree;
 
 pub use accounts::AccountsMsg;
+pub use artifacts::ArtifactMsg;
 pub use agent::AgentMsg;
 pub use chat_extras::ChatExtrasMsg;
 pub use cli::CliMsg;
@@ -54,6 +56,7 @@ fn entry<M: Message>(m: M) -> Entry {
 pub fn all() -> Vec<Entry> {
   let mut out = Vec::new();
   out.extend(AccountsMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(ArtifactMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(AgentMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(ChatExtrasMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(CliMsg::ALL.iter().map(|&m| entry(m)));

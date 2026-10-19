@@ -122,7 +122,12 @@ pub fn default_launch() -> Result<HostLaunch, String> {
   let (program, args) = resolve_sidecar(std::env::var_os("KINGU_AGENT_HOST"), exe_dir.as_deref(), dev_script.as_deref(), || {
     find_bun(std::env::var_os("KINGU_BUN"), path.as_deref(), home.as_deref())
   })?;
-  Ok(HostLaunch { program, args, env: agent_env(std::env::vars_os(), path) })
+  let mut env = agent_env(std::env::vars_os(), path);
+  // The `kingu` command's runtime file: the host's `artifact_publish` tool publishes through it.
+  if let Some(rt) = crate::cli_server::runtime_file() {
+    env.push((kingu_cli::runtime::ENV_RUNTIME.into(), rt.as_os_str().to_owned()));
+  }
+  Ok(HostLaunch { program, args, env })
 }
 
 /// Options for a new run (camelCase on the wire, like the sidecar's `StartParams`).

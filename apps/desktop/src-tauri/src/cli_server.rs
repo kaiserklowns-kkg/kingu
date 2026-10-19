@@ -4,7 +4,8 @@
 //! a fresh random token that every request must carry. Requests are JSON lines
 //! (`kingu_cli::protocol`): `status` and `task.list` are answered here; `task.create`,
 //! `task.open` and `open` go to the window as a `kingu-cli:request` event, which answers through
-//! `cli_reply` (cliBridge.svelte.ts); `notify` posts a notification.
+//! `cli_reply` (cliBridge.svelte.ts); `notify` posts a notification; `artifact.publish` and
+//! `artifact.list` are answered here (artifacts/, also the agent host's `artifact_publish` tool).
 //!
 //! The bundled `kingu-cli` binary is linked as `<app data>/cli/bin/kingu`; that folder goes first
 //! on the PATH of Kingu's terminals and the agent host, so agents can run `kingu`. "Shell Command:
@@ -48,6 +49,11 @@ pub struct CliServer {
 
 pub fn bin_dir() -> Option<&'static Path> {
   BIN_DIR.get().map(PathBuf::as_path)
+}
+
+/// `runtime.json`, once the server listens (the agent host gets it as `KINGU_CLI_RUNTIME`).
+pub fn runtime_file() -> Option<&'static Path> {
+  RUNTIME.get().map(PathBuf::as_path)
 }
 
 /// The bundled command: `KINGU_CLI_BIN`, else `kingu-cli` next to the app executable (release:
@@ -145,6 +151,41 @@ pub fn check_notify(params: &Value) -> Result<(String, String), RpcError> {
   Ok((title.to_owned(), message.to_owned()))
 }
 
+fn abs_param(params: &Value, key: &str) -> Result<PathBuf, RpcError> {
+  let raw = str_param(params, key).unwrap_or_default();
+  let path = Path::new(raw);
+  if !path.is_absolute() {
+    return Err(rpc(ERR_BAD_REQUEST, tr!(CliMsg::PathNotAbsolute)));
+  }
+  Ok(path.to_path_buf())
+}
+
+/// `artifact.publish`'s folder and what to publish (the files are checked by `artifacts::publish`).
+pub fn check_publish(params: &Value) -> Result<(PathBuf, crate::artifacts::Publish), RpcError> {
+  let cwd = abs_param(params, "cwd")?;
+  let file = abs_param(params, "file")?;
+  let text = |k: &str| str_param(params, k).map(str::trim).filter(|t| !t.is_empty()).map(str::to_owned);
+  let mut assets = Vec::new();
+  for a in params.get("assets").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default() {
+    let path = abs_param(a, "path")?;
+    let name = str_param(a, "name").unwrap_or_default();
+    crate::artifacts::safe_name(name).map_err(|e| rpc(ERR_BAD_REQUEST, e))?;
+    assets.push((path, name.to_owned()));
+  }
+  let id = text("id");
+  if let Some(id) = id.as_deref().filter(|id| !crate::artifacts::valid_id(id)) {
+    return Err(rpc(ERR_BAD_REQUEST, tr!(crate::i18n::msg::ArtifactMsg::BadId, id)));
+  }
+  let source = if str_param(params, "source") == Some("agent") { "agent" } else { "cli" };
+  Ok((cwd, crate::artifacts::Publish { title: text("title"), description: text("description"), file, assets, id, source: source.into() }))
+}
+
+/// The open project (the open folder or an added one) holding `cwd`.
+fn artifact_project(app: &AppHandle, cwd: &Path) -> Result<PathBuf, RpcError> {
+  let open = crate::artifacts::open_projects(&app.state::<crate::workspace::Workspace>(), &app.state::<crate::projects::Projects>());
+  crate::artifacts::project_for(cwd, &open).ok_or_else(|| rpc(ERR_FAILED, tr!(crate::i18n::msg::ArtifactMsg::NoProject, path = cwd.display())))
+}
+
 /// A task as `kingu task list` shows it.
 pub fn task_row(t: &crate::agent::tasks::TaskMeta) -> Value {
   json!({
@@ -218,6 +259,23 @@ fn dispatch(app: &AppHandle, method: &str, params: &Value) -> Result<Value, RpcE
     protocol::METHOD_OPEN => {
       let checked = check_open(params)?;
       ask_window(app, method, checked, true)
+    }
+    protocol::METHOD_ARTIFACT_PUBLISH => {
+      let (cwd, publish) = check_publish(params)?;
+      let root = artifact_project(app, &cwd)?;
+      let done = crate::artifacts::publish(&root, &publish).map_err(|e| rpc(ERR_FAILED, e))?;
+      crate::artifacts::notify_changed(app, &done.root, &done.id);
+      serde_json::to_value(done).map_err(|e| rpc(ERR_FAILED, e.to_string()))
+    }
+    protocol::METHOD_ARTIFACT_LIST => {
+      let cwd = abs_param(params, "cwd")?;
+      let root = artifact_project(app, &cwd)?;
+      let list = crate::artifacts::list(&root).map_err(|e| rpc(ERR_FAILED, e))?;
+      let rows: Vec<Value> = list
+        .iter()
+        .map(|m| json!({ "id": m.id, "title": m.title, "format": m.latest().format, "version": m.latest().version, "updated_at": m.updated_at }))
+        .collect();
+      Ok(json!({ "root": root.display().to_string(), "artifacts": rows }))
     }
     protocol::METHOD_NOTIFY => {
       let (title, body) = check_notify(params)?;
@@ -533,6 +591,27 @@ mod tests {
     assert_eq!(check_notify(&json!({ "message": "m", "title": "CI" })).unwrap().0, "CI");
     assert!(check_notify(&json!({ "message": "" })).is_err());
     assert!(check_notify(&json!({ "message": "a".repeat(MAX_MESSAGE + 1) })).is_err());
+  }
+
+  #[test]
+  fn checks_artifact_publish_params() {
+    let (cwd, p) = check_publish(&json!({
+      "cwd": "/repo", "file": "/repo/r.html", "title": " Q3 ", "description": "", "id": null, "source": "agent",
+      "assets": [{ "path": "/repo/img/a.png", "name": "img/a.png" }]
+    }))
+    .unwrap();
+    assert_eq!((cwd, p.file, p.title.as_deref(), p.description, p.source.as_str()), (PathBuf::from("/repo"), PathBuf::from("/repo/r.html"), Some("Q3"), None, "agent"));
+    assert_eq!(p.assets, [(PathBuf::from("/repo/img/a.png"), "img/a.png".to_owned())]);
+    assert_eq!(check_publish(&json!({ "cwd": "/r", "file": "/r/a.md", "source": "whatever" })).unwrap().1.source, "cli");
+    for bad in [
+      json!({ "cwd": "rel", "file": "/r/a.md" }),
+      json!({ "cwd": "/r", "file": "a.md" }),
+      json!({ "cwd": "/r", "file": "/r/a.md", "id": "../x" }),
+      json!({ "cwd": "/r", "file": "/r/a.md", "assets": [{ "path": "/r/x", "name": "../x" }] }),
+      json!({ "cwd": "/r", "file": "/r/a.md", "assets": [{ "path": "x", "name": "x" }] }),
+    ] {
+      assert_eq!(check_publish(&bad).unwrap_err().code, ERR_BAD_REQUEST, "{bad}");
+    }
   }
 
   #[test]
