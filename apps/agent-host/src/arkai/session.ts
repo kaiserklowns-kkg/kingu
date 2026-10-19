@@ -13,6 +13,9 @@
 //   `/compact` summarises it at once.
 // - A continued chat gets its conversation back from the transcript (history.ts); the session
 //   id is Arkai's own and stays the same.
+// - MCP servers (mcp.ts): the run's servers connect while it opens (and later ones join when
+//   ready); their tools are offered as `mcp__<server>__<tool>`, gated like the rest, and the
+//   clients are closed when the run ends.
 //
 // Never log prompts, tool inputs, file contents or the API key.
 
@@ -26,18 +29,23 @@ import { AnthropicClient } from './anthropic.ts';
 import { coachInput, hintFor, parseArguments } from './coach.ts';
 import { conversationTokens, estimateTokens, fitContext, summarise } from './context.ts';
 import { historyMessages } from './history.ts';
+import { McpHub } from './mcp.ts';
 import { hasLeftoverToolCall, MAX_NUDGES, NUDGE, recoverToolCalls, stripToolMarkup, STRIPPED_PLACEHOLDER } from './leftover.ts';
 import { ProviderError, type ChatClient, type Completion, type Msg, type TokenUsage, type ToolCall, type ToolDef } from './messages.ts';
 import { callId, OpenAiClient } from './openai.ts';
 import { systemPrompt } from './prompt.ts';
 import { arkaiProvider, modelOf, type ArkaiProvider, type ArkaiSpec } from './spec.ts';
-import { isToolName, KIND, runTool, toolDefs, writtenPaths, type ToolName } from './tools.ts';
+import { cap, isToolName, KIND, runTool, toolDefs, writtenPaths, type ToolName } from './tools.ts';
 
 /** Model requests per user message before the turn is ended. */
 export const MAX_STEPS = 60;
 /** Tries of a request that failed for a passing reason (rate limit, overload) before any text came. */
 const RETRIES = 2;
 const RETRY_DELAY_MS = 1500;
+/** How long the first turn waits for the MCP servers to connect (slower ones join later). */
+export const MCP_WAIT_MS = 10_000;
+/** MCP tool definitions may take at most this share of the context window (else none are offered). */
+const MCP_SHARE = 0.25;
 
 export const DENIED = 'The user did not allow this call.';
 export const PLAN_DENIED = 'Plan mode: this call would change files or run a command, which the user has not allowed yet. Describe what you would do instead.';
@@ -104,6 +112,9 @@ export class ArkaiSession extends RunSession {
 	private grants = new Set<string>();
 	/** The provider's input count over our estimate, from the last request. */
 	private calibration = 1;
+	private mcp: McpHub | null = null;
+	/** The MCP tools were left out for the window: said once in the log. */
+	private mcpTooBig = false;
 
 	constructor(
 		init: SessionInit,
@@ -125,6 +136,18 @@ export class ArkaiSession extends RunSession {
 	protected async open() {
 		this.sessionId = this.init.resume ?? crypto.randomUUID();
 		if (this.init.resume && this.spec.history?.length) this.messages = historyMessages(this.spec.history);
+		if (Object.keys(this.init.mcpServers).length) {
+			const hub = (this.mcp = new McpHub(this.init.mcpServers, {
+				cwd: this.cwd,
+				env: this.init.env,
+				log: (line) => this.log(line),
+				onChange: (servers) => this.emit({ kind: 'mcp_status', servers })
+			}));
+			this.emit({ kind: 'mcp_status', servers: hub.status() });
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			await Promise.race([hub.ready, new Promise<void>((r) => (timer = setTimeout(r, MCP_WAIT_MS)))]);
+			clearTimeout(timer);
+		}
 		this.log(`arkai on ${this.provider.id} (${this.provider.api}${this.settings().light ? ', light' : ''}), ${this.messages.length} earlier messages`);
 	}
 
@@ -137,7 +160,16 @@ export class ArkaiSession extends RunSession {
 	}
 
 	private offered(): ToolDef[] {
-		return toolDefs(this.settings().light);
+		const own = toolDefs(this.settings().light);
+		const mcp = this.mcp?.defs() ?? [];
+		if (!mcp.length) return own;
+		// Many servers' tools would not leave a small window room for the conversation.
+		if (estimateTokens(JSON.stringify(mcp)) > this.settings().contextWindow * MCP_SHARE) {
+			if (!this.mcpTooBig) this.log(`mcp tools left out: ${mcp.length} tools do not fit this model's context window`);
+			this.mcpTooBig = true;
+			return own;
+		}
+		return [...own, ...mcp];
 	}
 
 	private system(): string {
@@ -152,6 +184,10 @@ export class ArkaiSession extends RunSession {
 	protected kill(code: number) {
 		this.abort?.abort();
 		this.finish(code);
+	}
+
+	protected closed() {
+		this.mcp?.close();
 	}
 
 	async stop() {
@@ -319,10 +355,12 @@ export class ArkaiSession extends RunSession {
 
 	private async runCall(call: ToolCall, signal: AbortSignal): Promise<{ content: string; isError: boolean }> {
 		const parsed = parseArguments(call.arguments);
-		const known = isToolName(call.name) && this.offered().some((t) => t.name === call.name);
+		const offered = this.offered().some((t) => t.name === call.name);
+		const own = isToolName(call.name);
+		const known = offered && (own || !!this.mcp?.has(call.name));
 		const input = 'input' in parsed ? coachInput(call.name, parsed.input) : {};
 		const name = call.name as ToolName;
-		const view: ToolView = { name: call.name, input, kind: known ? KIND[name] : 'other', paths: known ? writtenPaths(name, input, this.cwd) : [] };
+		const view: ToolView = { name: call.name, input, kind: known && own ? KIND[name] : 'other', paths: known && own ? writtenPaths(name, input, this.cwd) : [] };
 		const state = this.toolStarted(call.id, view, false);
 		const done = (content: string, isError: boolean) => {
 			this.toolFinished(call.id, truncate(content, MAX_TOOL_RESULT_CHARS), isError);
@@ -333,6 +371,10 @@ export class ArkaiSession extends RunSession {
 		const gate = await this.gate(call.id, view);
 		if (gate !== true) return done(gate, true);
 		this.snapshot(call.id, state);
+		if (!own) {
+			const r = await this.mcp!.call(call.name, input, signal);
+			return done(cap(r.content), r.isError);
+		}
 		const r = await runTool(name, input, { cwd: this.cwd, env: this.init.env, signal });
 		return done(r.content, r.isError);
 	}
