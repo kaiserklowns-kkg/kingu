@@ -8,7 +8,9 @@ mod arkai;
 mod chat_extras;
 mod cli;
 mod core;
+mod files;
 mod git;
+mod kingu_yaml;
 mod linear;
 mod local_ai;
 mod lsp;
@@ -16,8 +18,11 @@ mod merge_requests;
 mod projects;
 mod mcp;
 mod runtime;
+mod scm;
 mod skill;
 mod snap;
+mod system;
+mod tasks;
 mod team;
 mod trackers;
 mod workspace;
@@ -30,7 +35,9 @@ pub use arkai::ArkaiMsg;
 pub use chat_extras::ChatExtrasMsg;
 pub use cli::CliMsg;
 pub use core::CoreMsg;
+pub use files::FilesMsg;
 pub use git::GitMsg;
+pub use kingu_yaml::KinguYamlMsg;
 pub use linear::LinearMsg;
 pub use local_ai::LocalAiMsg;
 pub use lsp::LspMsg;
@@ -38,8 +45,11 @@ pub use merge_requests::MrMsg;
 pub use projects::ProjectsMsg;
 pub use mcp::McpMsg;
 pub use runtime::RuntimeMsg;
+pub use scm::ScmMsg;
 pub use skill::SkillMsg;
 pub use snap::SnapMsg;
+pub use system::SystemMsg;
+pub use tasks::TasksMsg;
 pub use team::TeamMsg;
 pub use trackers::TrackerMsg;
 pub use workspace::WorkspaceMsg;
@@ -68,7 +78,9 @@ pub fn all() -> Vec<Entry> {
   out.extend(ChatExtrasMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(CliMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(CoreMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(FilesMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(GitMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(KinguYamlMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(LinearMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(LocalAiMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(LspMsg::ALL.iter().map(|&m| entry(m)));
@@ -76,8 +88,11 @@ pub fn all() -> Vec<Entry> {
   out.extend(ProjectsMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(McpMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(RuntimeMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(ScmMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(SkillMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(SnapMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(SystemMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(TasksMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(TeamMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(TrackerMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(WorkspaceMsg::ALL.iter().map(|&m| entry(m)));
@@ -97,5 +112,6 @@ pub fn frontend_matched() -> Vec<(&'static str, Vec<Entry>)> {
       [LspMsg::NotExecutable, LspMsg::NotOnPath, LspMsg::NoDebugpy, LspMsg::NoPython, LspMsg::AdapterNotOnPath].into_iter().map(entry).collect(),
     ),
     ("worktreeOrphan", vec![entry(WorktreeMsg::RemoveOrphan)]),
+    ("fileExists", vec![entry(FilesMsg::Exists)]),
   ]
 }

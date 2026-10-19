@@ -64,7 +64,7 @@ fn run_dir(open_root: &std::path::Path, root: Option<&str>, slug: Option<&str>, 
       worktree::validate_slug(slug)?;
       let dir = worktree::worktree_path(open_root, slug);
       if !dir.is_dir() {
-        return Err(format!("{slug}: no worktree, create it first"));
+        return Err(crate::tr!(crate::i18n::msg::TasksMsg::NoWorktreeYet, slug));
       }
       Ok(dir)
     }
@@ -106,7 +106,7 @@ pub async fn agent_start(
   let images = images.unwrap_or_default();
   crate::attachments::check_images(&images)?;
   if prompt.trim().is_empty() {
-    return Err("prompt is empty".into());
+    return Err(crate::tr!(crate::i18n::msg::TasksMsg::PromptEmpty));
   }
   if let Some(m) = permission_mode.as_deref()
     && !RUN_PERMISSION_MODES.contains(&m)
@@ -579,7 +579,7 @@ async fn on_host<T: Send + 'static>(
 #[tauri::command]
 pub async fn agent_send(agents: State<'_, Arc<AgentHost>>, run_id: u32, text: String, images: Option<Vec<String>>) -> Result<(), String> {
   if text.trim().is_empty() {
-    return Err("message is empty".into());
+    return Err(crate::tr!(crate::i18n::msg::TasksMsg::MessageEmpty));
   }
   let images = images.unwrap_or_default();
   crate::attachments::check_images(&images)?;

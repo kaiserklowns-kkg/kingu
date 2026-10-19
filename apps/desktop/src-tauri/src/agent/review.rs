@@ -4,7 +4,7 @@
 //! `--literal-pathspecs`, paths after `--`); revisions are checked with `git::check_rev` and
 //! resolved to commit ids before use.
 
-use crate::i18n::msg::AgentMsg;
+use crate::i18n::msg::{AgentMsg, TasksMsg};
 use crate::tr;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -74,9 +74,9 @@ fn text(out: Vec<u8>) -> String {
 pub fn task_dir(root: &Path, slug: &str) -> Result<PathBuf, String> {
   validate_slug(slug)?;
   let dir = worktree_path(root, slug);
-  let meta = std::fs::symlink_metadata(&dir).map_err(|_| format!("{slug}: no worktree"))?;
+  let meta = std::fs::symlink_metadata(&dir).map_err(|_| tr!(TasksMsg::NoWorktree, slug))?;
   if !meta.is_dir() || !dir.join(".git").is_file() {
-    return Err(format!("{slug}: not a task worktree"));
+    return Err(tr!(TasksMsg::NotTaskWorktree, slug));
   }
   Ok(dir)
 }
@@ -302,7 +302,7 @@ pub fn merge_local(repo: &Path, slug: &str, base: &str, merge_commit: bool) -> R
   check_branch(repo, base)?;
   let branch = task_branch(&dir, slug)?;
   if base == branch {
-    return Err("cannot merge a task into its own branch".into());
+    return Err(tr!(TasksMsg::MergeIntoOwnBranch));
   }
   if !clean(&dir, true)? {
     return Err(tr!(AgentMsg::MergeDirty, slug));
@@ -400,7 +400,7 @@ pub fn push_task_branch(dir: &Path, slug: &str) -> Result<String, String> {
 pub fn pr_create(gh: &Path, dir: &Path, slug: &str, base: &str, title: &str, body: &str, draft: bool) -> Result<String, String> {
   check_rev(base)?;
   if title.trim().is_empty() {
-    return Err("PR title is empty".into());
+    return Err(tr!(TasksMsg::PrTitleEmpty));
   }
   let branch = push_task_branch(dir, slug)?;
   let out = crate::shell_env::command(gh)

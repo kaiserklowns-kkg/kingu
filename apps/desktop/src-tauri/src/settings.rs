@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Manager, State};
 
+use crate::i18n::msg::FilesMsg;
+use crate::tr;
 use crate::workspace::Workspace;
 
 const FILE: &str = "settings.json";
@@ -80,21 +82,21 @@ pub fn kingu_file(root: &Path, name: &str) -> Result<PathBuf, String> {
   if let Ok(meta) = std::fs::symlink_metadata(&dir)
     && (meta.file_type().is_symlink() || !meta.is_dir())
   {
-    return Err(format!("{}: not a directory", dir.display()));
+    return Err(tr!(FilesMsg::NotADirectory, path = dir.display()));
   }
   let file = dir.join(name);
   if let Ok(meta) = std::fs::symlink_metadata(&file)
     && !meta.is_file()
   {
-    return Err(format!("{}: not a regular file", file.display()));
+    return Err(tr!(FilesMsg::NotARegularFile, path = file.display()));
   }
   Ok(file)
 }
 
 pub fn read(path: &Path) -> Result<Option<String>, String> {
   match std::fs::read(path) {
-    Ok(bytes) if bytes.len() > MAX_BYTES => Err(format!("{}: larger than {MAX_BYTES} bytes", path.display())),
-    Ok(bytes) => String::from_utf8(bytes).map(Some).map_err(|_| format!("{}: not UTF-8", path.display())),
+    Ok(bytes) if bytes.len() > MAX_BYTES => Err(tr!(FilesMsg::FileTooLarge, path = path.display(), max = MAX_BYTES)),
+    Ok(bytes) => String::from_utf8(bytes).map(Some).map_err(|_| tr!(FilesMsg::NotUtf8, path = path.display())),
     Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
     Err(e) => Err(format!("{}: {e}", path.display())),
   }
@@ -103,7 +105,7 @@ pub fn read(path: &Path) -> Result<Option<String>, String> {
 /// Writes `content` to a sibling temp file, syncs it, then renames it over `path`.
 pub fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
   if content.len() > MAX_BYTES {
-    return Err(format!("settings larger than {MAX_BYTES} bytes"));
+    return Err(tr!(FilesMsg::SettingsTooLarge, max = MAX_BYTES));
   }
   let dir = path.parent().ok_or("settings path has no parent")?;
   let name = path.file_name().and_then(|n| n.to_str()).unwrap_or(FILE);

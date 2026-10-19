@@ -5,6 +5,9 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::i18n::msg::FilesMsg;
+use crate::tr;
+
 fn home() -> Option<PathBuf> {
   std::env::var_os("HOME").map(PathBuf::from)
 }
@@ -39,7 +42,7 @@ fn is_markdown(p: &Path) -> bool {
 fn checked(path: &str) -> Result<PathBuf, String> {
   let p = PathBuf::from(path);
   if !p.is_absolute() || !is_markdown(&p) {
-    return Err("Selected file is not a markdown document.".into());
+    return Err(tr!(FilesMsg::NotMarkdown));
   }
   Ok(p)
 }
@@ -54,7 +57,7 @@ pub fn new_note(app_data: &Path) -> Result<PathBuf, String> {
       return Ok(p);
     }
   }
-  Err("Failed to create untitled markdown file.".into())
+  Err(tr!(FilesMsg::UntitledFailed))
 }
 
 pub fn read_note(path: &str) -> Result<String, String> {

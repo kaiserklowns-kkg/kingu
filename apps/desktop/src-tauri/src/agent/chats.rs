@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::i18n::msg::AgentMsg;
+use crate::i18n::msg::{AgentMsg, FilesMsg, TasksMsg};
 use crate::settings::{kingu_file, read, write_atomic};
 use crate::tr;
 
@@ -129,14 +129,14 @@ pub fn load(root: &Path) -> Result<Vec<ChatMeta>, String> {
   let Some(text) = read(&path)? else { return Ok(Vec::new()) };
   let file: ChatsFile = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
   if file.version > VERSION {
-    return Err(format!("{}: written by a newer Kingu (version {})", path.display(), file.version));
+    return Err(tr!(AgentMsg::AutomationsNewer, path = path.display(), version = file.version));
   }
   Ok(file.chats)
 }
 
 pub fn validate(chats: &[ChatMeta]) -> Result<(), String> {
   if chats.len() > MAX_CHATS {
-    return Err(format!("more than {MAX_CHATS} chats"));
+    return Err(tr!(TasksMsg::TooManyChats, max = MAX_CHATS));
   }
   let mut seen = HashSet::new();
   for c in chats {
@@ -145,10 +145,10 @@ pub fn validate(chats: &[ChatMeta]) -> Result<(), String> {
       return Err(format!("{}: duplicate chat", c.id));
     }
     if c.title.trim().is_empty() || c.title.chars().count() > MAX_TITLE {
-      return Err(format!("{}: title must be 1-{MAX_TITLE} characters", c.id));
+      return Err(tr!(TasksMsg::TitleLength, name = c.id, max = MAX_TITLE));
     }
     if c.prompt.chars().count() > MAX_PROMPT {
-      return Err(format!("{}: prompt longer than {MAX_PROMPT} characters", c.id));
+      return Err(tr!(TasksMsg::ChatPromptTooLong, id = c.id, max = MAX_PROMPT));
     }
     if let ChatCwd::Task { slug } = &c.cwd {
       validate_slug(slug)?;
@@ -217,14 +217,14 @@ pub fn transcript_path(root: &Path, id: &str) -> Result<PathBuf, String> {
     if let Ok(meta) = std::fs::symlink_metadata(p)
       && (meta.file_type().is_symlink() || !meta.is_dir())
     {
-      return Err(format!("{}: not a directory", p.display()));
+      return Err(tr!(FilesMsg::NotADirectory, path = p.display()));
     }
   }
   let file = dir.join(format!("{id}.jsonl"));
   if let Ok(meta) = std::fs::symlink_metadata(&file)
     && !meta.is_file()
   {
-    return Err(format!("{}: not a regular file", file.display()));
+    return Err(tr!(FilesMsg::NotARegularFile, path = file.display()));
   }
   Ok(file)
 }

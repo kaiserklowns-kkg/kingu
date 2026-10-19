@@ -16,6 +16,8 @@ use sha2::{Digest, Sha256};
 
 use crate::git::{self, check_rel};
 use crate::git_queue::{self, Scope};
+use crate::i18n::msg::TasksMsg;
+use crate::tr;
 
 use super::review::{self, merge_base};
 
@@ -266,7 +268,7 @@ pub fn reject_hunks(dir: &Path, base: &str, rel: &str, ids: &[String]) -> Result
     None => untracked_hunks(dir, rel),
   };
   if let Some(missing) = ids.iter().find(|id| !current.hunks.iter().any(|h| &h.id == *id)) {
-    return Err(format!("{rel}: change {missing} is no longer in the file (refresh the diff)"));
+    return Err(tr!(TasksMsg::HunkGone, path = rel, id = missing));
   }
   match parsed {
     Some(d) if !current.whole_file => {

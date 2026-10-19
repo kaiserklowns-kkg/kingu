@@ -13,6 +13,9 @@ use std::time::UNIX_EPOCH;
 use encoding_rs::Encoding;
 use sha2::{Digest, Sha256};
 
+use crate::i18n::msg::FilesMsg;
+use crate::tr;
+
 /// VS Code's encoding ids (SUPPORTED_ENCODINGS keys) that encoding_rs implements. ISO 8859-1,
 /// 8859-9 and 8859-11 decode as their WHATWG supersets (Windows 1252, 1254 and 874).
 const ENCODINGS: &[(&str, &Encoding)] = &[
@@ -258,7 +261,7 @@ pub fn decode_file(bytes: &[u8], opts: &ReadOptions) -> ReadResult {
 pub fn read(path: &Path, opts: &ReadOptions) -> Result<ReadResult, String> {
   let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
   if meta.is_dir() {
-    return Err("is a directory".into());
+    return Err(tr!(FilesMsg::IsADirectoryBare));
   }
   let size = meta.len();
   let confirm = opts.large_file_limit.unwrap_or(LARGE_FILE_LIMIT).clamp(1, MAX_FILE_SIZE);
@@ -348,14 +351,14 @@ pub fn write(path: &Path, text: &str, encoding: &str, expected: Option<&Expected
 /// with a plain file name.
 pub fn resolve_for_write(root: &Path, rel: &str) -> Result<PathBuf, String> {
   if let Ok(p) = crate::workspace::resolve_in(root, rel) {
-    return if p.is_dir() { Err(format!("{rel}: is a directory")) } else { Ok(p) };
+    return if p.is_dir() { Err(tr!(FilesMsg::IsADirectory, path = rel)) } else { Ok(p) };
   }
   let rel_path = Path::new(rel);
-  let name = rel_path.file_name().filter(|n| *n != ".." && *n != ".").ok_or_else(|| format!("{rel}: invalid path"))?;
+  let name = rel_path.file_name().filter(|n| *n != ".." && *n != ".").ok_or_else(|| tr!(FilesMsg::InvalidPath, path = rel))?;
   let parent = rel_path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
   let dir = if parent.is_empty() { root.to_path_buf() } else { crate::workspace::resolve_in(root, &parent)? };
   if !dir.is_dir() {
-    return Err(format!("{rel}: folder not found"));
+    return Err(tr!(FilesMsg::FolderNotFound, path = rel));
   }
   Ok(dir.join(name))
 }

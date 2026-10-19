@@ -3,6 +3,9 @@
 
 use std::path::Path;
 
+use crate::i18n::msg::FilesMsg;
+use crate::tr;
+
 #[derive(serde::Serialize, Debug, PartialEq)]
 pub struct DirEntry {
   pub name: String,
@@ -78,10 +81,10 @@ pub fn image_mime(path: &Path) -> Option<&'static str> {
 /// An image as a `data:` URL for the image viewer (the CSP allows `img-src data:`).
 pub fn image_data_url(path: &Path, max_bytes: u64) -> Result<String, String> {
   use base64::Engine;
-  let mime = image_mime(path).ok_or("not an image")?;
+  let mime = image_mime(path).ok_or_else(|| tr!(FilesMsg::NotAnImage))?;
   let len = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
   if len > max_bytes {
-    return Err(format!("larger than {} MB", max_bytes / (1024 * 1024)));
+    return Err(tr!(FilesMsg::ImageTooLarge, mb = max_bytes / (1024 * 1024)));
   }
   let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
   Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))

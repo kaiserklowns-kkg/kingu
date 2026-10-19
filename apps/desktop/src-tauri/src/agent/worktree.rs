@@ -4,7 +4,7 @@
 //! Drives the `git` CLI directly (no shell), so arguments are never re-parsed.
 
 use crate::git_queue::{self, Scope};
-use crate::i18n::msg::{AgentMsg, WorktreeMsg};
+use crate::i18n::msg::{AgentMsg, TasksMsg, WorktreeMsg};
 use crate::tr;
 use std::collections::HashSet;
 use std::io::Write;
@@ -35,13 +35,13 @@ pub struct WorktreeInfo {
 /// Lowercase a-z, 0-9 and '-', 1..=48 chars, no leading/trailing or doubled '-'.
 pub fn validate_slug(slug: &str) -> Result<(), String> {
   if slug.is_empty() || slug.len() > MAX_SLUG_LEN {
-    return Err(format!("slug must be 1-{MAX_SLUG_LEN} characters"));
+    return Err(tr!(TasksMsg::SlugLength, max = MAX_SLUG_LEN));
   }
   if !slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
-    return Err(format!("{slug}: slug may only contain a-z, 0-9 and '-'"));
+    return Err(tr!(TasksMsg::SlugChars, slug));
   }
   if slug.starts_with('-') || slug.ends_with('-') || slug.contains("--") {
-    return Err(format!("{slug}: slug must not start/end with '-' or contain '--'"));
+    return Err(tr!(TasksMsg::SlugDashes, slug));
   }
   Ok(())
 }
@@ -123,15 +123,15 @@ pub fn create_named(repo: &Path, slug: &str, base: Option<&str>, prefix: Option<
   validate_prefix(prefix)?;
   let base = base.map(str::trim).filter(|b| !b.is_empty()).unwrap_or("HEAD");
   if base.starts_with('-') {
-    return Err(format!("{base}: invalid base ref"));
+    return Err(tr!(TasksMsg::BadBaseRef, base));
   }
   // Resolve first so a bad ref fails clearly, and the branch starts from a fixed commit.
   let commit = git(repo, &["rev-parse", "--verify", "--quiet", "--end-of-options", &format!("{base}^{{commit}}")])
-    .map_err(|_| format!("{base}: not a commit"))?;
+    .map_err(|_| tr!(TasksMsg::NotACommit, base))?;
   let commit = commit.trim();
   let path = worktree_path(repo, slug);
   if path.exists() {
-    return Err(format!("{}: already exists", path.display()));
+    return Err(tr!(TasksMsg::WorktreeExists, path = path.display()));
   }
   let branch = format!("{prefix}{}", leaf.unwrap_or(slug));
   git(repo, &["check-ref-format", "--branch", &branch]).map_err(|_| tr!(AgentMsg::BadBranchName, branch))?;

@@ -7,11 +7,14 @@
 
 use std::path::{Component, Path, PathBuf};
 
+use crate::i18n::msg::FilesMsg;
+use crate::tr;
+
 /// A workspace-relative path made only of normal components.
 fn plain(rel: &str) -> Result<&Path, String> {
   let path = Path::new(rel);
   if rel.is_empty() || !path.components().all(|c| matches!(c, Component::Normal(_))) {
-    return Err(format!("{rel}: not a valid path inside the workspace"));
+    return Err(tr!(FilesMsg::BadPath, path = rel));
   }
   Ok(path)
 }
@@ -21,7 +24,7 @@ fn parent_inside(root: &Path, rel: &str, path: &Path) -> Result<PathBuf, String>
   let parent = path.parent().ok_or_else(|| format!("{rel}: no parent"))?;
   let real = parent.canonicalize().map_err(|e| format!("{rel}: {e}"))?;
   if !real.starts_with(root) {
-    return Err(format!("{rel}: outside the workspace"));
+    return Err(tr!(FilesMsg::OutsideWorkspace, path = rel));
   }
   Ok(real)
 }
@@ -40,20 +43,20 @@ pub fn check_existing(root: &Path, rel: &str) -> Result<PathBuf, String> {
 pub fn check_new(root: &Path, rel: &str) -> Result<PathBuf, String> {
   let full = root.join(plain(rel)?);
   if full.symlink_metadata().is_ok() {
-    return Err(format!("{rel}: already exists"));
+    return Err(tr!(FilesMsg::Exists, path = rel));
   }
   let mut probe = full.clone();
   loop {
     if !probe.pop() {
-      return Err(format!("{rel}: outside the workspace"));
+      return Err(tr!(FilesMsg::OutsideWorkspace, path = rel));
     }
     if probe.symlink_metadata().is_ok() {
       let real = probe.canonicalize().map_err(|e| format!("{rel}: {e}"))?;
       if !real.starts_with(root) {
-        return Err(format!("{rel}: outside the workspace"));
+        return Err(tr!(FilesMsg::OutsideWorkspace, path = rel));
       }
       if !real.is_dir() {
-        return Err(format!("{rel}: {} is not a folder", probe.display()));
+        return Err(tr!(FilesMsg::ParentNotAFolder, path = rel, parent = probe.display()));
       }
       return Ok(full);
     }
@@ -90,7 +93,7 @@ pub fn rename(root: &Path, from: &str, to: &str) -> Result<(), String> {
   }
   plain(to)?;
   if Path::new(to).starts_with(Path::new(from)) {
-    return Err(format!("{to}: cannot move a folder into itself"));
+    return Err(tr!(FilesMsg::MoveIntoItself, path = to));
   }
   let case_only = from.to_lowercase() == to.to_lowercase() && same_entry(&src, &root.join(to));
   let dst = if case_only {
@@ -218,10 +221,10 @@ pub fn increment_name_smart(name: &str, is_dir: bool) -> String {
 fn target_dir(root: &Path, dir: &str) -> Result<PathBuf, String> {
   let path = if dir.is_empty() { root.to_path_buf() } else { root.join(plain(dir)?).canonicalize().map_err(|e| format!("{dir}: {e}"))? };
   if !path.starts_with(root) {
-    return Err(format!("{dir}: outside the workspace"));
+    return Err(tr!(FilesMsg::OutsideWorkspace, path = dir));
   }
   if !path.is_dir() {
-    return Err(format!("{dir}: not a folder"));
+    return Err(tr!(FilesMsg::NotAFolder, path = dir));
   }
   Ok(path)
 }
@@ -238,10 +241,10 @@ fn free_name(root: &Path, dir: &str, name: &str, is_dir: bool, naming: Naming) -
     name = match naming {
       Naming::Simple => increment_name(&name, is_dir),
       Naming::Smart => increment_name_smart(&name, is_dir),
-      Naming::Disabled => return Err(format!("{rel}: already exists")),
+      Naming::Disabled => return Err(tr!(FilesMsg::Exists, path = rel)),
     };
   }
-  Err(format!("{name}: no free name"))
+  Err(tr!(FilesMsg::NoFreeName, name))
 }
 
 /// Copies a file, a folder (recursively) or a symlink (as a link) to `dst`, which must not exist.
@@ -277,7 +280,7 @@ pub fn copy(root: &Path, from: &str, to_dir: &str, naming: Naming) -> Result<Str
   let src = check_existing(root, from)?;
   target_dir(root, to_dir)?;
   if !to_dir.is_empty() && Path::new(to_dir).starts_with(Path::new(from)) {
-    return Err(format!("{from}: cannot copy a folder into itself"));
+    return Err(tr!(FilesMsg::CopyIntoItself, path = from));
   }
   let rel = free_name(root, to_dir, name_of(from)?, src.is_dir(), naming)?;
   copy_entry(&src, &root.join(&rel)).map_err(|e| format!("{from} → {rel}: {e}"))?;
@@ -306,7 +309,7 @@ pub fn import(root: &Path, sources: &[PathBuf], to_dir: &str, naming: Naming) ->
     let name = src.file_name().and_then(|n| n.to_str()).ok_or_else(|| format!("{}: no name", src.display()))?;
     let real = src.canonicalize().map_err(|e| format!("{}: {e}", src.display()))?;
     if dir_abs.starts_with(&real) {
-      return Err(format!("{}: cannot copy a folder into itself", src.display()));
+      return Err(tr!(FilesMsg::CopyIntoItself, path = src.display()));
     }
     let rel = free_name(root, to_dir, name, real.is_dir(), naming)?;
     copy_entry(src, &root.join(&rel)).map_err(|e| format!("{} → {rel}: {e}", src.display()))?;
@@ -396,7 +399,7 @@ pub fn restore(root: &Path, rel: &str, token: &str, stash: &Path) -> Result<(), 
   let dst = check_new(root, rel)?;
   let dir = stash.join(token);
   let kept = dir.join("entry");
-  kept.symlink_metadata().map_err(|_| format!("{rel}: the undo copy is gone"))?;
+  kept.symlink_metadata().map_err(|_| tr!(FilesMsg::UndoCopyGone, path = rel))?;
   create_parents(rel, &dst)?;
   if std::fs::rename(&kept, &dst).is_err() {
     // Another volume: copy, then drop the stash.
@@ -430,7 +433,7 @@ pub fn delete_for_good(root: &Path, rel: &str) -> Result<(), String> {
 /// Shows `rel` selected in Finder (Explorer on Windows, the containing folder elsewhere).
 pub fn reveal(root: &Path, rel: &str) -> Result<(), String> {
   let path = if rel.is_empty() { root.to_path_buf() } else { check_existing(root, rel)? };
-  reveal_path(&path).map_err(|e| format!("reveal {rel}: {e}"))
+  reveal_path(&path).map_err(|e| tr!(FilesMsg::RevealFailed, path = rel, detail = e))
 }
 
 /// `reveal` for a path the caller already checked (e.g. a snap folder outside the workspace).
@@ -483,7 +486,7 @@ mod tests {
     std::fs::create_dir_all(stash.join("abc1/entry")).unwrap();
     std::fs::write(root.join("x"), "").unwrap();
     assert!(restore(&root, "y", "../etc", &stash).is_err());
-    assert!(restore(&root, "x", "abc1", &stash).unwrap_err().contains("already exists"));
+    assert!(restore(&root, "x", "abc1", &stash).unwrap_err().contains("Already exists"));
     assert!(restore(&root, "../y", "abc1", &stash).is_err());
     restore(&root, "y", "abc1", &stash).unwrap();
     assert!(root.join("y").is_dir());
@@ -534,8 +537,8 @@ mod tests {
   #[test]
   fn new_paths_must_not_exist_and_may_nest() {
     let (_tmp, root) = ws();
-    assert!(check_new(&root, "src/a.txt").unwrap_err().contains("already exists"));
-    assert!(check_new(&root, "src").unwrap_err().contains("already exists"));
+    assert!(check_new(&root, "src/a.txt").unwrap_err().contains("Already exists"));
+    assert!(check_new(&root, "src").unwrap_err().contains("Already exists"));
     assert_eq!(check_new(&root, "src/b.txt").unwrap(), root.join("src/b.txt"));
     assert!(check_new(&root, "x/y/z.txt").is_ok());
     assert!(check_new(&root, "src/a.txt/under-a-file").unwrap_err().contains("not a folder"));
@@ -574,7 +577,7 @@ mod tests {
   fn rename_moves_without_overwriting() {
     let (_tmp, root) = ws();
     std::fs::write(root.join("b.txt"), "b").unwrap();
-    assert!(rename(&root, "src/a.txt", "b.txt").unwrap_err().contains("already exists"));
+    assert!(rename(&root, "src/a.txt", "b.txt").unwrap_err().contains("Already exists"));
     assert_eq!(std::fs::read_to_string(root.join("b.txt")).unwrap(), "b");
     rename(&root, "src/a.txt", "moved/a2.txt").unwrap();
     assert_eq!(std::fs::read_to_string(root.join("moved/a2.txt")).unwrap(), "a");
@@ -625,7 +628,7 @@ mod tests {
     let (_tmp, root) = ws();
     assert_eq!(copy(&root, "src/a.txt", "src", Naming::Smart).unwrap(), "src/a.1.txt");
     assert_eq!(copy(&root, "src/a.txt", "src", Naming::Smart).unwrap(), "src/a.2.txt");
-    assert!(copy(&root, "src/a.txt", "src", Naming::Disabled).unwrap_err().contains("already exists"));
+    assert!(copy(&root, "src/a.txt", "src", Naming::Disabled).unwrap_err().contains("Already exists"));
     assert_eq!(copy(&root, "src/a.txt", "", Naming::Disabled).unwrap(), "a.txt");
   }
 
@@ -674,7 +677,7 @@ mod tests {
     assert_eq!(move_into(&root, "src/a.txt", "other").unwrap(), "other/a.txt");
     assert!(!root.join("src/a.txt").exists());
     std::fs::write(root.join("src/a.txt"), "new").unwrap();
-    assert!(move_into(&root, "src/a.txt", "other").unwrap_err().contains("already exists"));
+    assert!(move_into(&root, "src/a.txt", "other").unwrap_err().contains("Already exists"));
     assert_eq!(std::fs::read_to_string(root.join("other/a.txt")).unwrap(), "a");
     assert_eq!(move_into(&root, "other", "src").unwrap(), "src/other");
     assert!(root.join("src/other/a.txt").is_file());

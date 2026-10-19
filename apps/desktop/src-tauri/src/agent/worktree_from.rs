@@ -14,7 +14,7 @@ use tauri::State;
 
 use crate::git_queue::{self, Scope};
 use crate::git_remote::{NET_TIMEOUT, check_branch_name, net_env};
-use crate::i18n::msg::{AgentMsg, WorktreeMsg};
+use crate::i18n::msg::{AgentMsg, TasksMsg, WorktreeMsg};
 use crate::tr;
 use crate::workspace::Workspace;
 
@@ -52,7 +52,7 @@ fn new_path(repo: &Path, slug: &str) -> Result<String, String> {
   validate_slug(slug)?;
   let path = worktree_path(repo, slug);
   if path.exists() {
-    return Err(format!("{}: already exists", path.display()));
+    return Err(tr!(TasksMsg::WorktreeExists, path = path.display()));
   }
   path.to_str().map(str::to_owned).ok_or_else(|| "worktree path is not valid UTF-8".into())
 }

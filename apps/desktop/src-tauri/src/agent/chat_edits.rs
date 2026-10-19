@@ -30,7 +30,7 @@ use base64::Engine;
 use sha2::{Digest, Sha256};
 
 use crate::git_queue::{self, Scope};
-use crate::i18n::msg::AgentMsg;
+use crate::i18n::msg::{AgentMsg, FilesMsg};
 use crate::tr;
 
 use super::chats::{check_id, transcript_path};
@@ -296,7 +296,7 @@ fn not_symlinked_dir(p: &Path) -> Result<(), String> {
   if let Ok(meta) = std::fs::symlink_metadata(p)
     && (meta.file_type().is_symlink() || !meta.is_dir())
   {
-    return Err(format!("{}: not a directory", p.display()));
+    return Err(tr!(FilesMsg::NotADirectory, path = p.display()));
   }
   Ok(())
 }
@@ -440,7 +440,7 @@ impl Store {
     };
     let file: EditsFile = serde_json::from_str(&text).map_err(|e| format!("{FILE}: {e}"))?;
     if file.version > VERSION {
-      return Err(format!("{FILE}: written by a newer Kingu (version {})", file.version));
+      return Err(tr!(AgentMsg::AutomationsNewer, path = FILE, version = file.version));
     }
     if Path::new(&file.cwd) != self.cwd {
       return Err(tr!(AgentMsg::EditCwdChanged, path = file.cwd));
@@ -548,7 +548,7 @@ impl Store {
 
 fn read_text(path: &Path) -> Result<Option<String>, String> {
   if std::fs::symlink_metadata(path).is_ok_and(|m| !m.is_file()) {
-    return Err(format!("{}: not a regular file", path.display()));
+    return Err(tr!(FilesMsg::NotARegularFile, path = path.display()));
   }
   match std::fs::read(path) {
     Ok(b) => String::from_utf8(b).map(Some).map_err(|_| format!("{}: not UTF-8", path.display())),
