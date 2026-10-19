@@ -50,7 +50,8 @@ class Agents {
 		return () => this.#listeners.delete(fn);
 	}
 
-	async start(slug: string, prompt: string, opts: { root?: string; resume?: string | null; images?: string[] } = {}): Promise<void> {
+	/** `model`: this run's model instead of `kingu.agent.model` (a best-of-N attempt's). */
+	async start(slug: string, prompt: string, opts: { root?: string; resume?: string | null; images?: string[]; model?: string | null } = {}): Promise<void> {
 		const prev = this.runs[slug];
 		if (prev && !prev.ended) throw new Error(t('team.agent.alreadyRunning', { slug }));
 		const root = opts.root ?? workspace.root;
@@ -76,7 +77,7 @@ class Agents {
 			state.runId = await invoke<number>('agent_start', {
 				slug,
 				prompt,
-				model: settings.get<string>('kingu.agent.model'),
+				model: opts.model || settings.get<string>('kingu.agent.model'),
 				permissionMode: settings.get<string>('kingu.agent.permissionMode'),
 				resume,
 				mcpServers: Object.keys(mcp).length ? mcp : null,

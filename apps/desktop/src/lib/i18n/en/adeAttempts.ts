@@ -1,0 +1,55 @@
+// UI strings of best-of-N attempts, stacked worktrees and agent hibernation (attempts.svelte.ts,
+// AttemptsCompare.svelte, CleanupDialog.svelte, NewTaskForm.svelte, the side bar and board badges).
+// Keys: 'adeAttempts.<what>'. Thai in ../th/adeAttempts.ts.
+export const adeAttempts = {
+	'adeAttempts.attempt': 'Attempt {letter}',
+	'adeAttempts.attemptModel': 'Attempt {letter} · {model}',
+	'adeAttempts.defaultModel': 'default model',
+	'adeAttempts.badModel': '"{model}" is not a model name: letters, digits and . _ - / : @ only',
+	'adeAttempts.started': 'Started {count} attempts of "{title}"',
+	'adeAttempts.winner': 'Kept "{title}" as the winner',
+	'adeAttempts.parentDirty': '"{title}" has uncommitted changes: the new task starts from its last commit, without them',
+	// NewTaskForm.svelte
+	'adeAttempts.form.attempts': 'Attempts',
+	'adeAttempts.form.attemptsTitle': 'Run the same prompt as several attempts, each in its own worktree with its own model, then compare them',
+	'adeAttempts.form.model': 'Model',
+	'adeAttempts.form.modelOf': 'Model of attempt {letter}',
+	'adeAttempts.form.modelPlaceholder': "The agent's default model",
+	'adeAttempts.form.stackedOn': 'From task "{title}"',
+	'adeAttempts.form.stackedTitle': "The new branch starts from this task's branch, and its pull request goes into that branch",
+	'adeAttempts.form.unstack': 'Start from a base branch instead',
+	// AttemptsCompare.svelte
+	'adeAttempts.compare.title': 'Compare {count} Attempts',
+	'adeAttempts.compare.empty': 'The attempts of this group are gone.',
+	'adeAttempts.compare.files': '{count} files',
+	'adeAttempts.compare.only': '{count} only here',
+	'adeAttempts.compare.onlyTitle': 'Files no other attempt changed',
+	'adeAttempts.compare.loading': 'Reading changes…',
+	'adeAttempts.compare.turns': '{count} turns',
+	'adeAttempts.compare.changed': 'Changed files',
+	'adeAttempts.compare.noChanges': 'No changes yet',
+	'adeAttempts.compare.more': 'and {count} more',
+	'adeAttempts.compare.open': 'Open',
+	'adeAttempts.compare.pick': 'Pick winner',
+	'adeAttempts.compare.pickTitle': 'Keep this attempt and clean up the others',
+	'adeAttempts.compare.close': 'Close',
+	// CleanupDialog.svelte
+	'adeAttempts.cleanup.title': 'Clean Up Tasks',
+	'adeAttempts.cleanup.titleLosers': 'Clean Up the Other Attempts',
+	'adeAttempts.cleanup.onlyDone': 'Only finished ones',
+	'adeAttempts.cleanup.hint': 'Removes their worktrees and takes them off the list. A task whose agent is working cannot be picked.',
+	'adeAttempts.cleanup.hintLosers': 'The attempts that did not win. Removing them deletes their worktrees; their branches stay unless you tick the box below.',
+	'adeAttempts.cleanup.empty': 'No tasks',
+	'adeAttempts.cleanup.deleteBranches': 'Also delete their merged branches',
+	'adeAttempts.cleanup.deleteBranchesLosers': 'Also delete their branches (their work is lost)',
+	'adeAttempts.cleanup.progress': 'Removing {done}/{total}…',
+	'adeAttempts.cleanup.remove': 'Remove {count}',
+	// worktreeActions.ts, the side bar and the board
+	'adeAttempts.action.newFromTask': 'New Task from This Task',
+	'adeAttempts.action.compare': 'Compare Attempts…',
+	'adeAttempts.badge.stacked': 'Stacked on {parent}: its pull request goes into that branch',
+	'adeAttempts.badge.hibernated': 'Agent hibernated {ago}: resume it to continue its session',
+	'adeAttempts.badge.resume': 'Resume agent',
+	// AgentsLayout.svelte
+	'adeAttempts.hibernated.text': 'The agent was idle, so Kingu closed it {ago} to free memory. Its session is saved.'
+} as const;

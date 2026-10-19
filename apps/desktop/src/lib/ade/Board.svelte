@@ -12,6 +12,7 @@
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { cleanup } from './cleanup.svelte';
 	import { workflowColumns, workflowStatuses } from './workflow.ts';
+	import { nestTasks } from './attempts.ts';
 	import { t } from '#lib/i18n/index.ts';
 
 	// Orca's workspace board look: column width (px) and column opacity.
@@ -86,12 +87,14 @@
 					<span class="rounded-full bg-(--vscode-badge-background) px-1.5 text-[10px] leading-4 font-normal text-(--vscode-badge-foreground)">{lane.tasks.length}</span>
 				</h2>
 				<div class="min-h-0 flex-1 space-y-2 overflow-y-auto px-2.5 pb-2.5">
-					{#each lane.tasks as view (view.meta.slug)}
+					<!-- Attempts of one prompt together, a stacked task under its parent (attempts.ts). -->
+					{#each nestTasks(lane.tasks.map((v) => ({ slug: v.meta.slug, parent: v.meta.parent, group: v.meta.group, view: v }))) as { item: { view }, depth } (view.meta.slug)}
 						{#if lane.drop}
 							<div
 								role="listitem"
 								draggable="true"
 								class={dragging === view.meta.slug ? 'opacity-50' : ''}
+								style:margin-left={depth ? `${Math.min(depth, 3) * 12}px` : undefined}
 								title={t('adeWorkflow.board.cardTitle', { title: view.meta.title })}
 								ondragstart={(e) => ((dragging = view.meta.slug), e.dataTransfer?.setData(DRAG_TYPE, view.meta.slug), e.dataTransfer && (e.dataTransfer.effectAllowed = 'move'))}
 								ondragend={() => (dragging = over = null)}
@@ -99,7 +102,7 @@
 								<TaskCard {view} />
 							</div>
 						{:else}
-							<TaskCard {view} />
+							<div style:margin-left={depth ? `${Math.min(depth, 3) * 12}px` : undefined}><TaskCard {view} /></div>
 						{/if}
 					{:else}
 						<p class="rounded-lg border border-dashed border-(--vscode-widget-border) px-3 py-6 text-center text-xs text-(--vscode-descriptionForeground)">

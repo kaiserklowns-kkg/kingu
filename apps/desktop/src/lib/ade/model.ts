@@ -43,6 +43,14 @@ export type TaskMeta = {
 	workflow_status?: string | null;
 	/** Earlier agent sessions, newest first (sessionHistory.ts); `session_id` is the latest. */
 	sessions?: SessionRef[];
+	/** Best-of-N: the attempts of one prompt share this id; their slugs end `-a`, `-b`… (attempts.ts). */
+	group?: string | null;
+	/** The model the attempt was started with (`--model` of its CLI, or the timeline run's model). */
+	attempt_model?: string | null;
+	/** Stacked worktrees: the task whose branch this one forked from (its base and PR base). */
+	parent?: string | null;
+	/** Unix ms its idle agent CLI was closed by hibernation (hibernation.ts); absent once resumed. */
+	hibernated_at?: number | null;
 };
 
 /** Mirrors Rust `agent::tasks::IssueLink`. No `provider` means GitHub (links saved before Linear came). */
@@ -153,7 +161,22 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
 // tasks.json reducers (immutable: each returns a new list)
 
 export function newTask(
-	input: { slug: string; title: string; prompt: string; base: string; agent?: string; issue?: IssueLink | null; origin?: 'automation'; prUrl?: string; autoName?: boolean; status?: TaskStatus },
+	input: {
+		slug: string;
+		title: string;
+		prompt: string;
+		base: string;
+		agent?: string;
+		issue?: IssueLink | null;
+		origin?: 'automation';
+		prUrl?: string;
+		autoName?: boolean;
+		status?: TaskStatus;
+		/** Best-of-N group, the attempt's model, the stacked task's parent (attempts.ts). */
+		group?: string;
+		model?: string;
+		parent?: string;
+	},
 	now: number
 ): TaskMeta {
 	return {
@@ -173,7 +196,10 @@ export function newTask(
 		last_run: null,
 		issue: input.issue ?? null,
 		...(input.origin ? { origin: input.origin } : {}),
-		...(input.autoName ? { auto_name: true } : {})
+		...(input.autoName ? { auto_name: true } : {}),
+		...(input.group ? { group: input.group } : {}),
+		...(input.model ? { attempt_model: input.model } : {}),
+		...(input.parent ? { parent: input.parent } : {})
 	};
 }
 

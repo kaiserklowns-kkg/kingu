@@ -101,6 +101,7 @@ import { aiTextEnabled } from './aiText.svelte.ts';
 import type { BranchRef } from '#lib/workbench/scmRemote.ts';
 import { branchChoices, branchNamePrompt, branchSlug, branchTitle, looksLikePr, prTitle, type PrHead, type TaskSource } from './worktreeSource.ts';
 import { canResumeWith, handOffPrompt, withSession, type SessionRef } from './sessionHistory.ts';
+import { isStackedBase, withModel } from './attempts.ts';
 import { workflowLabel } from './workflow.ts';
 import { isRustError } from '#lib/i18n/rustErrors.ts';
 
@@ -351,6 +352,11 @@ class AdeTasks {
 		attachments?: Attachment[];
 		/** Where the branch comes from: a new one from `base` (default), an existing branch, or a PR. */
 		source?: TaskSource;
+		/** Best-of-N (attempts.svelte.ts): the attempts' group and this one's model. */
+		group?: string;
+		model?: string;
+		/** Stacked worktrees: the task whose branch `base` is. */
+		parent?: string;
 	}): Promise<string | undefined> {
 		const title = input.title.trim();
 		if (!title || !workspace.root) return;
@@ -362,7 +368,9 @@ class AdeTasks {
 		// Without a pick, fork from kingu.worktree.baseBranch or the folder's current branch (so merging back has a branch).
 		const base = input.base || this.defaultBase() || status.branch || 'HEAD';
 		const mode = input.mode ?? (settings.get<RunMode>('kingu.agent.runMode') === 'timeline' ? 'timeline' : 'terminal');
-		const cli = mode === 'terminal' ? agentCommand((k) => settings.get<string>(k)) : null;
+		const configured = mode === 'terminal' ? agentCommand((k) => settings.get<string>(k)) : null;
+		// An attempt's model goes into its command, so a resume keeps it.
+		const cli = configured && input.model ? withModel(configured, input.model) : configured;
 		if (mode === 'terminal' && !cli) {
 			status.flash(t('adeTasks.tasks.badCli'), 10000);
 			return;
@@ -373,7 +381,7 @@ class AdeTasks {
 			return;
 		}
 		// A base checked out in a task worktree whose agent works is left alone unless the user says so.
-		const refresh = source.kind === 'new' && settings.get<boolean>('kingu.worktree.refreshBaseOnCreate') === true && base !== 'HEAD';
+		const refresh = source.kind === 'new' && !input.parent && settings.get<boolean>('kingu.worktree.refreshBaseOnCreate') === true && base !== 'HEAD';
 		if (refresh && (await this.#agentIdleOrConfirmed(null, base, t('adeTasks.tasks.step.refreshBase', { base })))) {
 			const note = await invoke<string | null>('worktree_refresh_base', { base }).catch((e) => t('adeTasks.tasks.refreshBaseFailed', { base, error: String(e) }));
 			if (note) status.flash(note, 8000);
@@ -388,9 +396,24 @@ class AdeTasks {
 			return;
 		}
 		// Orca's autoRenameBranchFromWork: only a branch Kingu named from the title (not an issue's, a PR's or one you picked).
-		const autoName = source.kind === 'new' && !input.slug && settings.get<boolean>('kingu.worktree.autoRenameBranch') !== false && aiTextEnabled();
+		// Attempts keep their `-a`, `-b` branches, so they read as one group.
+		const autoName = source.kind === 'new' && !input.slug && !input.group && settings.get<boolean>('kingu.worktree.autoRenameBranch') !== false && aiTextEnabled();
 		const task = newTask(
-			{ slug, title, prompt, base, agent: cli ? cliAgent(cli) : undefined, issue: input.issue, origin: input.origin, prUrl: pr?.url || undefined, autoName, status: prompt || cli ? 'running' : 'review' },
+			{
+				slug,
+				title,
+				prompt,
+				base,
+				agent: cli ? cliAgent(cli) : undefined,
+				issue: input.issue,
+				origin: input.origin,
+				prUrl: pr?.url || undefined,
+				autoName,
+				status: prompt || cli ? 'running' : 'review',
+				group: input.group,
+				model: input.model,
+				parent: input.parent
+			},
 			Date.now()
 		);
 		await this.#save([...this.list, task]);
@@ -439,6 +462,8 @@ class AdeTasks {
 			if (leaf && this.find(slug)) {
 				const to = await invoke<string>('worktree_rename_branch', { slug, from, leaf, prefix });
 				if (to !== from) {
+					// Tasks stacked on it fork from (and open their PRs against) the new name.
+					for (const c of this.list.filter((x) => x.parent === slug && x.base === from)) await this.#patch(c.slug, { base: to });
 					status.flash(t('adeWorktrees.renamed', { from, to }), 6000);
 					await this.refreshWorktrees();
 				}
@@ -741,6 +766,21 @@ class AdeTasks {
 		});
 	}
 
+	/**
+	 * Agent hibernation (hibernation.svelte.ts): closes the task's idle agent CLI to free its
+	 * process; the task remembers it, and `resumeCli` continues its session with one click.
+	 */
+	async hibernate(slug: string) {
+		if (!cliSessions.has(slug)) return;
+		cliSessions.end(slug);
+		await this.#patch(slug, { hibernated_at: Date.now() });
+	}
+
+	/** Pick winner (attempts.svelte.ts): the attempt leaves its best-of-N group and stays as a task of its own. */
+	leaveGroup(slug: string) {
+		return this.#patch(slug, { group: null });
+	}
+
 	/** After a restart: start the task's CLI again in its worktree, continuing its latest session where the CLI can. */
 	async resumeCli(slug: string, fresh = false) {
 		const meta = this.list.find((t) => t.slug === slug);
@@ -793,6 +833,8 @@ class AdeTasks {
 		}
 		const launch = profile.launch(cli, how, { sessionId, hookSettings, hookFile, opencodeDir, servers: mcpServers(root), plugins: profile.skills ? await skillPlugins() : [] });
 		if (sessionId) await this.#patch(slug, { session_id: sessionId });
+		// A hibernated CLI (hibernation.svelte.ts) is awake again.
+		if (this.list.find((t) => t.slug === slug)?.hibernated_at) await this.#patch(slug, { hibernated_at: null });
 		cliSessions.start(slug, withLaunchOptions(launch.argv, options), hookSettings || hookFile ? token : undefined, launch.typePrompt);
 	}
 
@@ -858,7 +900,7 @@ class AdeTasks {
 	/** Starts the agent in the task worktree through the agents store. */
 	async run(slug: string, prompt: string, images: string[] = []) {
 		try {
-			await runtime.start(slug, prompt, null, images);
+			await runtime.start(slug, prompt, null, images, this.list.find((t) => t.slug === slug)?.attempt_model ?? null);
 			await this.#patch(slug, { status: 'running' });
 		} catch (e) {
 			notifications.error(t('adeTasks.tasks.startAgentFailed', { error: String(e) }));
@@ -872,7 +914,7 @@ class AdeTasks {
 		if (!meta || !text.trim()) return false;
 		const message = composeMessage(text, attachments);
 		try {
-			await runtime.followUp(slug, message.text, meta.session_id, message.images);
+			await runtime.followUp(slug, message.text, meta.session_id, message.images, meta.attempt_model ?? null);
 			if (meta.status !== 'running') await this.#patch(slug, { status: 'running' });
 			return true;
 		} catch (e) {
@@ -1192,7 +1234,9 @@ class AdeTasks {
 				title: form.title.trim(),
 				body: form.body,
 				draft: form.draft,
-				open: settings.get<boolean>('kingu.pr.openAfterCreate') === true
+				open: settings.get<boolean>('kingu.pr.openAfterCreate') === true,
+				// Stacked worktrees: a PR into the parent task's branch pushes that branch first.
+				stacked: isStackedBase(meta, form.base.trim(), (s) => (this.find(s) ? this.branchOf(s) : null))
 			});
 		} catch (e) {
 			clientLog('error', `${slug} create PR: ${e}`);

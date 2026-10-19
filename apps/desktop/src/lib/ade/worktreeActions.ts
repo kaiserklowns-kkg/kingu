@@ -19,6 +19,8 @@ export type WorktreeAction =
 	| 'moveStatus'
 	| 'continueSession'
 	| 'handOff'
+	| 'newFromTask'
+	| 'compareAttempts'
 	| 'remove'
 	| `openIn:${string}`;
 
@@ -38,8 +40,9 @@ export function openInLabels(setting: Readonly<Record<string, unknown>> | undefi
 /**
  * The folder itself (`slug` null) or a task worktree; `running`: its agent is mid-turn. `openIn`:
  * Open In app labels. `sessions`: how many agent sessions the task has saved (Continue Session…).
+ * `attempts`: the task is one of a best-of-N group (Compare Attempts…).
  */
-export function worktreeActions(w: { slug: string | null; status?: TaskStatus; running?: boolean; hasWorktree?: boolean; openIn?: readonly string[]; sessions?: number }): ActionRow[] {
+export function worktreeActions(w: { slug: string | null; status?: TaskStatus; running?: boolean; hasWorktree?: boolean; openIn?: readonly string[]; sessions?: number; attempts?: boolean }): ActionRow[] {
 	const task = w.slug !== null;
 	const rows: ActionRow[] = [
 		{ id: 'open', label: t('adeTasks.worktree.open') },
@@ -62,6 +65,10 @@ export function worktreeActions(w: { slug: string | null; status?: TaskStatus; r
 		{ id: 'handOff', label: t('adeWorkflow.action.handOff'), enabled: sessions },
 		'separator'
 	);
+	// Stacked worktrees (Orca's lineage) and best-of-N attempts (attempts.svelte.ts).
+	rows.push({ id: 'newFromTask', label: t('adeAttempts.action.newFromTask'), enabled: w.hasWorktree !== false });
+	if (w.attempts) rows.push({ id: 'compareAttempts', label: t('adeAttempts.action.compare') });
+	rows.push('separator');
 	rows.push({ id: 'remove', label: t('adeTasks.worktree.remove'), enabled: !w.running });
 	return rows;
 }

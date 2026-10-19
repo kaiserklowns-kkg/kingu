@@ -43,6 +43,8 @@
 	import { aroundOpen, projectName, projectSidebarTask, type SidebarProject } from './projects';
 	import { defaultWorkflowId, workflowOf, workflowStatuses } from './workflow.ts';
 	import { t } from '#lib/i18n/index.ts';
+	import { nestTasks } from './attempts.ts';
+	import TaskBadges from './TaskBadges.svelte';
 
 	const root = $derived(workspace.root ?? '');
 	const now = $derived(adeTasks.now);
@@ -95,6 +97,10 @@
 			prefs.manual(root)
 		)
 	);
+	// Stacked tasks right under their parent, a best-of-N group's attempts together (attempts.ts).
+	const nested = $derived(nestTasks(sorted.map((r) => ({ ...r, parent: r.view?.meta.parent, group: r.view?.meta.group }))));
+	// Indented under its parent only where the parent is listed with it (not split by status, PR or workflow).
+	const depthOf = $derived(new Map(nested.map((n) => [n.item.key, n.depth])));
 	const showPrimary = $derived(!prefs.filters.hideDefault && !prefs.filters.showActiveOnly && !(prefs.filters.hideSleeping && !prefs.filters.exceptDefault && !(adeLayout.terminals[PRIMARY]?.length ?? 0)));
 	const pinned = $derived(prefs.pinned(root).map((k) => (k === PRIMARY ? primaryRow : sorted.find((r) => r.key === k))).filter((r): r is Row => !!r));
 
@@ -104,7 +110,7 @@
 		// No folder open: only the other added projects show (their own groups).
 		if (!workspace.root) return out;
 		if (pinned.length) out.push({ id: 'pinned', label: 'Pinned', icon: 'pin', rows: pinned });
-		const all = [...(showPrimary ? [primaryRow] : []), ...sorted];
+		const all = [...(showPrimary ? [primaryRow] : []), ...nested.map((n) => n.item)];
 		if (prefs.groupBy === 'repo') out.push({ id: `repo:${root}`, label: repoName, icon: 'folder', rows: all, repo: true });
 		else if (prefs.groupBy === 'pr-status')
 			for (const pg of PR_GROUPS) {
@@ -395,7 +401,8 @@
 	{@const active = selectedKey === r.key}
 	{@const unread = isUnread(r)}
 	{@const secondary = active && groupId !== 'pinned' && prefs.pinned(root).includes(r.key)}
-	<div role="option" aria-selected={active} aria-current={active ? 'page' : undefined} data-worktree-id={r.key} class={['relative px-1 pb-1', dragging === r.key && 'opacity-0']}>
+	{@const depth = groupId === 'all' || groupId.startsWith('repo:') ? (depthOf.get(r.key) ?? 0) : 0}
+	<div role="option" aria-selected={active} aria-current={active ? 'page' : undefined} data-worktree-id={r.key} class={['relative px-1 pb-1', dragging === r.key && 'opacity-0']} style:padding-left={depth ? `${4 + Math.min(depth, 4) * 12}px` : undefined}>
 		{#if dropBefore === r.key}<div class="absolute inset-x-2 -top-px h-0.5 rounded-full bg-(--vscode-focusBorder)"></div>{/if}
 		<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
 		<div
@@ -459,6 +466,7 @@
 									{#if unread}<span class="sr-only">Unread: </span>{/if}{r.title}
 								</span>
 							{/if}
+							{#if r.view}<TaskBadges meta={r.view.meta} parentTitle={depth ? adeTasks.find(r.view.meta.parent ?? '')?.meta.title : undefined} />{/if}
 							{#if r.key === PRIMARY && !prefs.compact}
 								<span class="h-4 shrink-0 rounded border border-(--vscode-foreground)/20 bg-(--vscode-foreground)/[0.06] px-1.5 text-[10px] leading-[14px] font-medium text-(--vscode-foreground)/70" title="Primary worktree (original clone directory)">primary</span>
 							{/if}

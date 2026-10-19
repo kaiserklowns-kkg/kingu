@@ -27,6 +27,7 @@ const MAX_ISSUE_URL: usize = 2048;
 pub const MAX_SESSIONS: usize = 20;
 const MAX_WORKFLOW_STATUS: usize = 40;
 const MAX_AGENT: usize = 256;
+const MAX_MODEL: usize = 128;
 /// What created a task other than you (Orca's automation / CLI workspace badges); the side bar can hide them.
 pub const ORIGINS: &[&str] = &["automation"];
 
@@ -121,6 +122,18 @@ pub struct TaskMeta {
   /// Earlier agent sessions of the task, newest first (Continue Session…); `session_id` is the latest.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub sessions: Vec<SessionRef>,
+  /// Best-of-N: the attempts of one prompt share this id (their slugs end `-a`, `-b`…).
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub group: Option<String>,
+  /// The model this attempt was started with (passed to its CLI as `--model`, or to the timeline run).
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub attempt_model: Option<String>,
+  /// Stacked worktrees: the task whose branch this one forked from (its `base` and PR base).
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub parent: Option<String>,
+  /// Unix ms the idle agent CLI was closed by hibernation (resumable with one click); absent once resumed.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub hibernated_at: Option<u64>,
 }
 
 /// One agent session a task ran, so it can be continued later (or handed to another agent).
@@ -220,8 +233,26 @@ pub fn validate(tasks: &[TaskMeta]) -> Result<(), String> {
     if t.sessions.len() > MAX_SESSIONS || t.sessions.iter().any(|s| !valid_session_id(&s.id) || s.agent.is_empty() || s.agent.len() > MAX_AGENT) {
       return Err(format!("{}: invalid sessions", t.slug));
     }
+    if let Some(g) = &t.group {
+      validate_slug(g).map_err(|_| format!("{}: invalid attempt group", t.slug))?;
+    }
+    if let Some(m) = &t.attempt_model
+      && !valid_model(m)
+    {
+      return Err(format!("{}: invalid attempt model", t.slug));
+    }
+    if let Some(p) = &t.parent
+      && (validate_slug(p).is_err() || p == &t.slug)
+    {
+      return Err(format!("{}: invalid parent task", t.slug));
+    }
   }
   Ok(())
+}
+
+/// A model name as a CLI argument word (`opus`, `gpt-5.1-codex`, `claude-opus-5-5[1m]` is not one).
+pub fn valid_model(m: &str) -> bool {
+  !m.is_empty() && m.len() <= MAX_MODEL && !m.starts_with('-') && m.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b'/' | b':' | b'@'))
 }
 
 /// A board column id: lowercase letters, digits and `-`, 1-40 characters.
@@ -359,6 +390,10 @@ mod tests {
       auto_name: false,
       workflow_status: Some("in-review".into()),
       sessions: vec![SessionRef { id: "0b5e-4c1d_9".into(), agent: "claude-code".into(), at: 1 }],
+      group: Some("fix-login".into()),
+      attempt_model: Some("gpt-5.1-codex".into()),
+      parent: Some("base-task".into()),
+      hibernated_at: Some(4),
     }
   }
 
@@ -404,6 +439,7 @@ mod tests {
     assert_eq!((t.agent.as_str(), t.updated_at, t.accepted.len(), t.accepted_hunks.len()), ("claude-code", 0, 0, 0));
     assert_eq!((t.session_id.as_deref(), t.last_run.as_ref(), t.issue.as_ref(), t.origin.as_deref()), (None, None, None, None));
     assert_eq!((t.workflow_status.as_deref(), t.sessions.len()), (None, 0));
+    assert_eq!((t.group.as_deref(), t.attempt_model.as_deref(), t.parent.as_deref(), t.hibernated_at), (None, None, None, None));
   }
 
   #[test]
@@ -438,6 +474,11 @@ mod tests {
     assert!(bad(|t| t.workflow_status = Some(String::new())));
     assert!(bad(|t| t.sessions[0].id = "--resume; rm".into()));
     assert!(bad(|t| t.sessions = vec![t.sessions[0].clone(); MAX_SESSIONS + 1]));
+    assert!(bad(|t| t.group = Some("Fix Login".into())));
+    assert!(bad(|t| t.attempt_model = Some("--dangerously-skip-permissions".into())));
+    assert!(bad(|t| t.attempt_model = Some("opus; rm -rf".into())));
+    assert!(bad(|t| t.parent = Some("../x".into())));
+    assert!(bad(|t| t.parent = Some(t.slug.clone())));
     assert!(save(tmp.path(), &[task("a"), task("a")]).is_err());
     assert!(!tmp.path().join(".kingu/tasks.json").exists());
   }
