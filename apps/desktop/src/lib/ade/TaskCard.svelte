@@ -7,7 +7,8 @@
 	import { ICON_BUTTON, QUESTION_TEXT, statusDot, TONE } from './ui';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
 	import { issues } from './issues.svelte.ts';
-	import { isLinear, issueRef } from './issues.ts';
+	import { issueRef } from './issues.ts';
+	import { sourceName } from './taskSources.ts';
 	import CacheTimer from './CacheTimer.svelte';
 	import TaskBadges from './TaskBadges.svelte';
 
@@ -60,7 +61,7 @@
 		<span class="min-w-0 flex-1 truncate">{meta.agent}{model ? ` · ${model}` : ''}</span>
 		{#if meta.issue}
 			{@const issue = meta.issue}
-			<button class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" title="เปิด issue {issueRef(issue)} บน {isLinear(issue) ? 'Linear' : 'GitHub'}: {issue.title}" onclick={(e) => (e.stopPropagation(), issues.open(issue))}>{issueRef(issue)}</button>
+			<button class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" title="เปิด issue {issueRef(issue)} บน {sourceName(issue)}: {issue.title}" onclick={(e) => (e.stopPropagation(), issues.open(issue))}>{issueRef(issue)}</button>
 		{/if}
 	</div>
 	{#if busy}

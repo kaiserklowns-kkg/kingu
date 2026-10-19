@@ -4,6 +4,7 @@
 mod accounts;
 mod agent;
 mod chat_extras;
+mod cli;
 mod core;
 mod git;
 mod linear;
@@ -14,12 +15,14 @@ mod mcp;
 mod runtime;
 mod snap;
 mod team;
+mod trackers;
 mod workspace;
 mod worktree;
 
 pub use accounts::AccountsMsg;
 pub use agent::AgentMsg;
 pub use chat_extras::ChatExtrasMsg;
+pub use cli::CliMsg;
 pub use core::CoreMsg;
 pub use git::GitMsg;
 pub use linear::LinearMsg;
@@ -30,6 +33,7 @@ pub use mcp::McpMsg;
 pub use runtime::RuntimeMsg;
 pub use snap::SnapMsg;
 pub use team::TeamMsg;
+pub use trackers::TrackerMsg;
 pub use workspace::WorkspaceMsg;
 pub use worktree::WorktreeMsg;
 
@@ -52,6 +56,7 @@ pub fn all() -> Vec<Entry> {
   out.extend(AccountsMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(AgentMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(ChatExtrasMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(CliMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(CoreMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(GitMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(LinearMsg::ALL.iter().map(|&m| entry(m)));
@@ -62,6 +67,7 @@ pub fn all() -> Vec<Entry> {
   out.extend(RuntimeMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(SnapMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(TeamMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(TrackerMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(WorkspaceMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(WorktreeMsg::ALL.iter().map(|&m| entry(m)));
   out

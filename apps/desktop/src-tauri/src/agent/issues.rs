@@ -24,7 +24,7 @@ pub const MAX_COMMENTS: usize = 20;
 pub const MAX_LIMIT: u32 = 200;
 const MAX_COMMENT_POST: usize = 16 * 1024;
 const LIST_FIELDS: &str = "number,title,url,state,labels,assignees,updatedAt,author,body";
-const VIEW_FIELDS: &str = "number,title,url,state,labels,assignees,updatedAt,author,body,comments";
+pub(crate) const VIEW_FIELDS: &str = "number,title,url,state,labels,assignees,updatedAt,author,body,comments";
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct IssueLabel {
@@ -183,7 +183,7 @@ fn reader(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<S
 }
 
 /// Runs `gh args…` in `dir` without prompts; stdout on success, else a user-facing error.
-fn run_gh(gh: &Path, dir: &Path, op: &str, args: &[String]) -> Result<String, String> {
+pub(crate) fn run_gh(gh: &Path, dir: &Path, op: &str, args: &[String]) -> Result<String, String> {
   let mut cmd = crate::shell_env::command(gh);
   cmd
     .current_dir(dir)
@@ -223,7 +223,7 @@ fn run_gh(gh: &Path, dir: &Path, op: &str, args: &[String]) -> Result<String, St
   if ok { Ok(stdout) } else { Err(gh_error(op, &stderr)) }
 }
 
-fn valid_login(s: &str) -> bool {
+pub(crate) fn valid_login(s: &str) -> bool {
   s == "@me" || (!s.is_empty() && s.len() <= 39 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') && !s.starts_with('-'))
 }
 

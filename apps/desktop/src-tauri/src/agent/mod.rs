@@ -11,6 +11,7 @@ pub mod chat_io;
 pub mod chats;
 pub mod cli;
 pub mod events;
+pub mod gh_projects;
 pub mod hooks;
 pub mod hunks;
 pub mod host;

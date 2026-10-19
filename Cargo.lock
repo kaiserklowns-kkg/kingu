@@ -2219,6 +2219,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kingu-cli"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "kingu-desktop"
 version = "0.1.0"
 dependencies = [
@@ -2227,6 +2237,7 @@ dependencies = [
  "chardetng",
  "encoding_rs",
  "keyring",
+ "kingu-cli",
  "kingu-ptyd",
  "libc",
  "log",

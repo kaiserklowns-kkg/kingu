@@ -2,6 +2,7 @@ mod accounts;
 mod agent;
 mod attachments;
 mod backup;
+mod cli_server;
 mod dap;
 mod dialog;
 mod fileops;
@@ -12,6 +13,8 @@ mod git_queue;
 mod i18n;
 mod glob;
 mod git_remote;
+mod gitlab;
+mod jira;
 mod linear;
 mod local_ai;
 mod logging;
@@ -36,6 +39,7 @@ mod terminal_links;
 mod team;
 mod usage;
 mod textfile;
+mod tracker_http;
 mod vault;
 mod watcher;
 mod window;
@@ -699,6 +703,8 @@ fn pty_spawn(
       Err(e) => log::warn!("terminal {key}: no agent status file ({e})"),
     }
   }
+  // The `kingu` command on PATH (cli_server.rs).
+  cli_server::terminal_env(&mut env, &unset);
   let attached = ptys.open(&key, &cwd, cols, rows, run.as_deref(), &env, shell, terminal.args.as_deref(), &unset, clean_env, pty::channel_sink(on_data))?;
   if attached.spawned && pane_hooks {
     agent::hooks::pane_file_reset(&app, &key);
@@ -1208,6 +1214,7 @@ pub fn run() {
       pty::Ptys::init(app.handle(), pty::daemon_dir(&data, runtime, &std::env::temp_dir(), uid));
       team::install(app)?;
       accounts::install(app)?;
+      cli_server::install(app)?;
       git::load_git_path(&app.path().app_config_dir()?);
       // A git operation waiting for another one in the same repository (status bar).
       let queue_events = app.handle().clone();
@@ -1441,6 +1448,10 @@ pub fn run() {
       agent::gh_issue_view,
       agent::gh_issue_comment,
       agent::gh_issue_open,
+      cli_server::cli_reply,
+      cli_server::cli_install,
+      cli_server::cli_uninstall,
+      cli_server::cli_skill_plugin,
       linear::linear_status,
       linear::linear_connect,
       linear::linear_disconnect,
@@ -1448,6 +1459,25 @@ pub fn run() {
       linear::linear_issue_view,
       linear::linear_issue_comment,
       linear::linear_issue_open,
+      gitlab::gitlab_status,
+      gitlab::gitlab_connect,
+      gitlab::gitlab_disconnect,
+      gitlab::gitlab_issues_list,
+      gitlab::gitlab_issue_view,
+      gitlab::gitlab_issue_comment,
+      gitlab::gitlab_issue_open,
+      jira::jira_status,
+      jira::jira_connect,
+      jira::jira_disconnect,
+      jira::jira_issues_list,
+      jira::jira_issue_view,
+      jira::jira_issue_comment,
+      jira::jira_issue_open,
+      agent::gh_projects::gh_projects_list,
+      agent::gh_projects::gh_project_items,
+      agent::gh_projects::gh_project_issue_view,
+      agent::gh_projects::gh_project_issue_comment,
+      agent::gh_projects::gh_project_issue_open,
       search_text,
       search_cancel,
       worktree_search,

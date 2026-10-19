@@ -37,10 +37,11 @@ pub struct IssueLink {
   pub number: u64,
   pub url: String,
   pub title: String,
-  /// `github` or `linear`; links saved before Linear came are GitHub's.
+  /// `github`, `linear`, `gitlab` or `jira`; links saved before Linear came are GitHub's.
   #[serde(default = "github")]
   pub provider: String,
-  /// Linear's identifier (`ENG-123`); none for GitHub.
+  /// Linear's or Jira's identifier (`ENG-123`), GitLab's `group/app#12`, `acme/app#42` for an
+  /// issue from a GitHub Project; none for an issue of the folder's own GitHub repository.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub key: Option<String>,
 }
@@ -205,7 +206,11 @@ pub fn validate(tasks: &[TaskMeta]) -> Result<(), String> {
       let web = i.url.starts_with("https://") || i.url.starts_with("http://");
       let source = match (i.provider.as_str(), i.key.as_deref()) {
         ("github", None) => true,
+        // An issue reached through a GitHub Project, maybe in another repository: `acme/app#42`.
+        ("github", Some(k)) => super::gh_projects::valid_issue_key(k),
         ("linear", Some(k)) => crate::linear::valid_identifier(k),
+        ("gitlab", Some(k)) => crate::gitlab::valid_issue_key(k),
+        ("jira", Some(k)) => crate::jira::valid_key(k),
         _ => false,
       };
       if i.number == 0 || !web || !source || i.url.len() > MAX_ISSUE_URL || i.title.chars().count() > 1000 {
@@ -467,6 +472,12 @@ mod tests {
     let mut linear = task("b");
     linear.issue = Some(IssueLink { number: 7, url: "https://linear.app/acme/issue/ENG-7/x".into(), title: "t".into(), provider: "linear".into(), key: Some("ENG-7".into()) });
     assert!(validate(&[linear]).is_ok());
+    let link = |provider: &str, key: &str| IssueLink { number: 7, url: "https://example.dev/x/7".into(), title: "t".into(), provider: provider.into(), key: Some(key.into()) };
+    for (provider, key, ok) in [("jira", "ENG-7", true), ("gitlab", "acme/app#7", true), ("github", "acme/app#7", true), ("jira", "eng-7", false), ("gitlab", "#7", false)] {
+      let mut t = task("c");
+      t.issue = Some(link(provider, key));
+      assert_eq!(validate(&[t]).is_ok(), ok, "{provider} {key}");
+    }
     assert!(bad(|t| t.origin = Some("cli; rm".into())));
     assert!(bad(|t| t.accepted_hunks = BTreeMap::from([("b.txt".into(), vec!["../x".into()])])));
     assert!(bad(|t| t.accepted_hunks = BTreeMap::from([(String::new(), vec!["ab".into()])])));

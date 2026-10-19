@@ -36,7 +36,8 @@
 	import { baseName, cardProperties, externalWorktrees, hexColor, hiddenBy, PR_GROUPS, prGroupOf, type Visibility } from './sidebarView';
 	import { sidebarPrefs as sidebarFilters, sidebarTask } from './sidebarState.svelte';
 	import { prStatuses } from './prStatus.svelte';
-	import { isLinear, issueRef } from './issues.ts';
+	import { issueRef } from './issues.ts';
+	import { sourceName } from './taskSources.ts';
 	import { actionsFor, openWorktreeIn, runWorktreeAction } from './worktreeMenu.svelte';
 	import type { WorktreeAction } from './worktreeActions';
 	import { projects } from './projects.svelte';
@@ -495,7 +496,7 @@
 							<div class="flex min-w-0 items-center gap-1.5 text-[11px] leading-none {MUTED}">
 								{#if props.has('branch')}<span class="min-w-0 flex-1 truncate" title={r.branch}>{r.branch}</span>{:else}<span class="flex-1"></span>{/if}
 								{#if auto}<span class="shrink-0 rounded border border-(--vscode-widget-border) px-1 text-[10px] leading-[14px]" title="งานที่ automation สร้าง">auto</span>{/if}
-								{#if issue}<span class="shrink-0 font-mono" title="{isLinear(issue) ? 'Linear' : 'GitHub'}: {issue.title}">{issueRef(issue)}</span>{/if}
+								{#if issue}<span class="shrink-0 font-mono" title="{sourceName(issue)}: {issue.title}">{issueRef(issue)}</span>{/if}
 								{#if pr}<span class="shrink-0 font-mono" title="PR #{pr.number}: {pr.title} ({pr.draft ? 'DRAFT' : pr.state})">PR #{pr.number}</span>{/if}
 								{#if totals && (totals.added || totals.deleted)}<span class="shrink-0 font-mono"><span class="text-[#73C991]">+{totals.added}</span> <span class="text-[#F48771]">−{totals.deleted}</span></span>{/if}
 							</div>

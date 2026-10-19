@@ -16,7 +16,8 @@
 	import CliQuestion from './CliQuestion.svelte';
 	import DiffNotesList from './DiffNotesList.svelte';
 	import { issues } from './issues.svelte.ts';
-	import { isLinear, issueRef } from './issues.ts';
+	import { issueRef } from './issues.ts';
+	import { sourceName } from './taskSources.ts';
 	import { cliOf } from './agentCli';
 	import { adeLayout } from './adeLayout.svelte';
 	import { hunkReview } from './hunkReview.svelte.ts';
@@ -121,7 +122,7 @@
 				{#if meta.pr_url}<a class="text-(--vscode-textLink-foreground) hover:underline" href={meta.pr_url} target="_blank" rel="noreferrer">{meta.pr_url}</a>{/if}
 				{#if meta.issue}
 					{@const issue = meta.issue}
-					<button class="text-(--vscode-textLink-foreground) hover:underline" title="เปิด issue บน {isLinear(issue) ? 'Linear' : 'GitHub'}: {issue.url}" onclick={() => issues.open(issue)}>issue {issueRef(issue)}</button>
+					<button class="text-(--vscode-textLink-foreground) hover:underline" title="เปิด issue บน {sourceName(issue)}: {issue.url}" onclick={() => issues.open(issue)}>issue {issueRef(issue)}</button>
 				{/if}
 				<span class="flex-1"></span>
 				{#if running && run?.runId !== undefined}
