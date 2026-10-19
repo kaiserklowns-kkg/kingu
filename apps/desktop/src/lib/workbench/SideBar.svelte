@@ -1,5 +1,9 @@
 <script lang="ts">
 	import ExplorerView from './ExplorerView.svelte';
+	import OutlineView from './OutlineView.svelte';
+	import HierarchyView from './HierarchyView.svelte';
+	import { hierarchy } from './hierarchy.svelte';
+	import { workspace } from './workspace.svelte';
 	import ScmView from './ScmView.svelte';
 	import SearchView from './SearchView.svelte';
 	import AgentsView from '#lib/ade/AgentsView.svelte';
@@ -34,6 +38,11 @@
 	<div class="flex min-h-0 flex-1 flex-col">
 	{#if layout.sideView === 'explorer'}
 		<ExplorerView {workspaceName} />
+		{#if workspace.root}
+			<!-- VS Code's Explorer sections below the folder: Outline, and the references view's Calls/Types once used. -->
+			<OutlineView />
+			{#if hierarchy.kind}<HierarchyView />{/if}
+		{/if}
 	{:else if layout.sideView === 'search'}
 		<SearchView />
 	{:else if layout.sideView === 'scm'}
