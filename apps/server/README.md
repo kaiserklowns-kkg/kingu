@@ -283,8 +283,9 @@ PUT /v1/skills/pdf
 - 201 when created, 200 when replaced (`shared_by`/`shared_at` are set by the
   server). Replacing or deleting a skill someone else shared needs an
   owner or lead; viewers get 403 `forbidden`.
-- Changes are audited (`skill.share`, `skill.unshare`). No events: desktops
-  read the list when the Skills view opens.
+- Changes emit `skill.shared` / `skill.removed` on `/v1/events` (metadata
+  only: name, commit, hash, who and when), so open Skills views refresh, and
+  are audited (`skill.share`, `skill.unshare`).
 
 ### `GET /v1/events` (SSE)
 
