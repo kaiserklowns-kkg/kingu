@@ -11,6 +11,7 @@ pub mod client;
 pub mod events;
 pub mod outbox;
 pub mod payload;
+pub mod skills;
 pub mod snaps;
 
 use std::collections::HashMap;

@@ -141,7 +141,7 @@ pub async fn agent_start(
   }
   let plugins = plugins.filter(|p| !p.is_empty());
   if let Some(dirs) = &plugins {
-    crate::snap::validate_plugin_dirs(&crate::snap::plugins_dir(&app)?, dirs)?;
+    crate::snap::validate_plugin_dirs(&crate::skill_hub::plugin_bases(&app)?, dirs)?;
   }
   let open_root = ws.root()?;
   let dir = run_dir(&open_root, root.as_deref(), slug.as_deref(), cwd.as_deref())?;
