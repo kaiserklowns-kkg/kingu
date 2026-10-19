@@ -83,8 +83,8 @@ async function uninstallFromPath() {
 /** Workbench wiring: the request listener, the palette commands and the agents' `kingu` skill. */
 export function installCliBridge(): () => void {
 	const unlisten = listen<CliRequest>('kingu-cli:request', (e) => void reply(e.payload));
-	let plugin: Promise<string[]> | null = null;
-	setBuiltInPluginProvider(() => (plugin ??= invoke<string | null>('cli_skill_plugin').then((d) => (d ? [d] : []), () => [])));
+	// Asked per run: the Skills view can turn the skill off (Rust then answers none).
+	setBuiltInPluginProvider(() => invoke<string | null>('cli_skill_plugin').then((d) => (d ? [d] : []), () => []));
 	const unregister = [
 		commands.register({ id: 'kingu.cli.install', title: "Shell Command: Install 'kingu' command in PATH", run: installInPath }),
 		commands.register({ id: 'kingu.cli.uninstall', title: "Shell Command: Uninstall 'kingu' command from PATH", run: uninstallFromPath })
