@@ -40,17 +40,18 @@ export class CodexSession extends ProcessSession {
 	protected async open() {
 		await this.peer.request('initialize', { clientInfo: { name: 'kingu_desktop', title: 'Kingu', version: pkg.version } }, OPEN_TIMEOUT_MS);
 		this.peer.notify('initialized');
-		const policy = codexPolicy(this.mode);
+		// The enabled skills (../skills.ts) as developer instructions: Codex's own config stays untouched.
+		const params = { ...codexPolicy(this.mode), ...(this.init.skillIndex ? { developerInstructions: this.init.skillIndex } : {}) };
 		let r: Obj | null = null;
 		if (this.init.resume) {
 			try {
-				r = await this.peer.request<Obj>('thread/resume', { threadId: this.init.resume, cwd: this.cwd, ...policy }, OPEN_TIMEOUT_MS);
+				r = await this.peer.request<Obj>('thread/resume', { threadId: this.init.resume, cwd: this.cwd, ...params }, OPEN_TIMEOUT_MS);
 			} catch (e) {
 				// A thread Codex never saved (or removed): start over.
 				this.emit({ kind: 'stderr', line: `codex could not continue the earlier thread: ${e instanceof Error ? e.message : 'error'}` });
 			}
 		}
-		r ??= await this.peer.request<Obj>('thread/start', { cwd: this.cwd, ...policy }, OPEN_TIMEOUT_MS);
+		r ??= await this.peer.request<Obj>('thread/start', { cwd: this.cwd, ...params }, OPEN_TIMEOUT_MS);
 		const thread = isObj(r?.thread) ? r.thread : {};
 		this.sessionId = str(thread.id) ?? this.init.resume;
 		if (!this.sessionId) throw new Error('codex opened no thread');

@@ -94,8 +94,10 @@ async function handle(msg: any) {
 		case 'session/set_mode':
 			return send({ id: msg.id, result: null });
 		case 'session/prompt': {
+			// The skill index Kingu puts first (src/skills.ts) is logged, not echoed.
+			if (msg.params.prompt.some((b: any) => b.type === 'text' && b.text.startsWith('# Skills'))) process.stderr.write('got skills\n');
 			const text = msg.params.prompt
-				.filter((b: any) => b.type === 'text')
+				.filter((b: any) => b.type === 'text' && !b.text.startsWith('# Skills'))
 				.map((b: any) => b.text)
 				.join('');
 			return send({ id: msg.id, result: await prompt(msg.params.sessionId, text) });
