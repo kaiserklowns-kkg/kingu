@@ -12,6 +12,8 @@
 	import { runtime } from './runtime.svelte';
 	import { adeTasks } from './tasks.svelte';
 	import PrChecks from './PrChecks.svelte';
+	import { forgeOf, ft } from './forge.ts';
+	import { t as tr } from '#lib/i18n/index.ts';
 	import CacheTimer from './CacheTimer.svelte';
 	import CliQuestion from './CliQuestion.svelte';
 	import DiffNotesList from './DiffNotesList.svelte';
@@ -267,7 +269,7 @@
 						<div class="text-[11px] font-bold text-(--vscode-descriptionForeground) uppercase">ส่งงาน</div>
 						<div class="flex flex-wrap gap-1.5">
 							<button class={BUTTON} disabled={!!busy || running || stat.ahead === 0 || !!meta.pr_url} onclick={() => adeTasks.createPr(slug)}>
-								<Icon name="pullRequest" size={12} /> สร้าง PR
+								<Icon name="pullRequest" size={12} /> {ft('forge.create.button', forgeOf(adeTasks.gh))}
 							</button>
 							<button class={BUTTON_SECONDARY} disabled={!!busy || running || stat.ahead === 0 || stat.dirty} onclick={() => adeTasks.merge(slug, 'ff')} title="fast-forward {meta.base} ไปที่ kingu/{slug}">
 								<Icon name="merge" size={12} /> Merge เข้า {meta.base} (ff)
@@ -279,11 +281,11 @@
 						{#if adeTasks.gh?.provider === 'gitlab' && !adeTasks.gh.authenticated}
 							<p class="text-(--vscode-descriptionForeground)">{adeTasks.gh.detail}</p>
 						{:else if adeTasks.gh && !adeTasks.gh.installed}
-							<p class="text-(--vscode-descriptionForeground)">ต้องมี GitHub CLI เพื่อสร้าง PR: <code>brew install gh</code> แล้ว <code>gh auth login</code></p>
+							<p class="text-(--vscode-descriptionForeground)">{tr('forge.status.ghMissingCreate')}</p>
 						{:else if adeTasks.gh && !adeTasks.gh.authenticated}
-							<p class="text-(--vscode-descriptionForeground)">gh ยังไม่ได้เข้าสู่ระบบ: รัน <code>gh auth login</code> ในเทอร์มินัล</p>
+							<p class="text-(--vscode-descriptionForeground)">{tr('forge.status.ghSignedOut')}</p>
 						{/if}
-						{#if stat.ahead === 0}<p class="text-(--vscode-descriptionForeground)">commit งานก่อน แล้วจึงสร้าง PR หรือ merge ได้</p>{/if}
+						{#if stat.ahead === 0}<p class="text-(--vscode-descriptionForeground)">{ft('forge.create.commitFirst', forgeOf(adeTasks.gh))}</p>{/if}
 						{#if busy}<p class="text-(--vscode-editorInfo-foreground)">{busy}…</p>{/if}
 					</div>
 

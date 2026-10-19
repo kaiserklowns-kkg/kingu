@@ -25,6 +25,8 @@
 	import { quick } from '#lib/workbench/quick.svelte.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { aiTextEnabled, generateCommitMessage, generatePrDetails, prTemplate } from './aiText.svelte';
+	import { forgeFor, forgeOf, ft } from './forge.ts';
+	import { t } from '#lib/i18n/index.ts';
 
 	/** '' for the folder itself, else a task slug. */
 	let { slug }: { slug: string } = $props();
@@ -454,7 +456,14 @@
 
 	// --- PR composer (Orca: replaces the commit box when the branch can open a PR) -----------
 	// The branch's PR from the store the Checks tab and the task page share: `undefined` until
-	// read, `null` when the branch has none (or gh could not tell).
+	// read, `null` when the branch has none (or gh could not tell). On GitLab it opens a merge
+	// request (`forge_pr_create` picks the host from origin), and the text says so.
+	const forge = $derived(forgeOf(adeTasks.gh));
+	$effect(() => {
+		untrack(() => {
+			if (!adeTasks.gh) void adeTasks.checkGh();
+		});
+	});
 	type PrInfo = { number: number; url: string } | null;
 	const prEntry = $derived(prStatuses.bySlug[slug]);
 	const prInfo = $derived<PrInfo | undefined>(prEntry && (prEntry.at || !prEntry.loading) ? prEntry.pr && { number: prEntry.pr.number, url: prEntry.pr.url } : undefined);
@@ -492,14 +501,14 @@
 		prBusy = null;
 	}
 	async function createPr() {
-		if (!prTitle.trim()) return void (prError = 'Enter a pull request title.');
-		if (!prBase.trim() || prBase === repo?.branch) return void (prError = 'Choose a different base branch before creating a pull request.');
+		if (!prTitle.trim()) return void (prError = ft('forge.create.needTitle', forge));
+		if (!prBase.trim() || prBase === repo?.branch) return void (prError = ft('forge.create.baseSame', forge));
 		prBusy = 'create';
 		prError = '';
 		try {
-			const url = await invoke<string>('gh_pr_create', { slug: slug || null, base: prBase.trim(), title: prTitle.trim(), body: prBody, draft: prDraft });
+			const url = await invoke<string>('forge_pr_create', { slug: slug || null, base: prBase.trim(), title: prTitle.trim(), body: prBody, draft: prDraft });
 			if (slug) await adeTasks.linkPr(slug, url);
-			statusBar.flash(`Pull request created${url ? `: ${url}` : ''}`, 5000);
+			statusBar.flash(url ? ft('forge.create.openedUrl', forgeFor(url, adeTasks.gh), { url }) : ft('forge.create.opened', forge), 5000);
 			prTitle = prBody = '';
 			rightSidebar.setTab(adeLayout.key, 'checks');
 		} catch (e) {
@@ -590,7 +599,7 @@
 					{#if prNumber && task?.meta.pr_url}
 						<span class="flex min-w-0 flex-1 items-center gap-1 text-[11.5px] leading-none">
 							<span class="text-emerald-500/80"><Icon name="pullRequest" size={12} /></span>
-							<a class="font-medium underline decoration-(--vscode-widget-border) underline-offset-2 opacity-80 hover:decoration-current" href={task.meta.pr_url} target="_blank" rel="noreferrer">PR #{prNumber}</a>
+							<a class="font-medium underline decoration-(--vscode-widget-border) underline-offset-2 opacity-80 hover:decoration-current" href={task.meta.pr_url} target="_blank" rel="noreferrer">{ft('forge.link', forgeFor(task.meta.pr_url, adeTasks.gh), { number: prNumber })}</a>
 						</span>
 					{:else}
 						<span class="min-w-0 flex-1"></span>
@@ -667,23 +676,23 @@
 				<div class="space-y-3 px-3 pb-2">
 					<div class="flex items-center gap-1.5">
 						<span class={MUTED}><Icon name="pullRequest" size={14} /></span>
-						<span class="text-xs font-medium">New pull request</span>
+						<span class="text-xs font-medium">{ft('forge.create.heading', forge)}</span>
 						<span class="flex-1"></span>
 						{#if aiTextEnabled()}
-						<button class="flex h-6 items-center gap-1 rounded-md border border-(--vscode-widget-border) px-2 text-[11px] hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-50" aria-label="Generate pull request details with AI" disabled={!!prBusy} onclick={generatePr}>
-							<span class={['grid place-items-center', prBusy === 'generate' && 'animate-spin']}><Icon name={prBusy === 'generate' ? 'refresh' : 'sparkle'} size={12} /></span>{prBusy === 'generate' ? 'Generating…' : 'Generate'}
+						<button class="flex h-6 items-center gap-1 rounded-md border border-(--vscode-widget-border) px-2 text-[11px] hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-50" aria-label={ft('forge.create.generateLabel', forge)} disabled={!!prBusy} onclick={generatePr}>
+							<span class={['grid place-items-center', prBusy === 'generate' && 'animate-spin']}><Icon name={prBusy === 'generate' ? 'refresh' : 'sparkle'} size={12} /></span>{prBusy === 'generate' ? t('forge.create.generating') : t('forge.create.generate')}
 						</button>
 						{/if}
 					</div>
-					<input class="h-8 w-full rounded-md border border-(--vscode-widget-border) bg-(--vscode-input-background) px-2 text-xs font-medium outline-none focus:border-(--vscode-focusBorder)" placeholder="Title" aria-label="Pull Request title" bind:value={prTitle} />
-					<textarea class="min-h-[7rem] w-full resize-y rounded-md border border-(--vscode-widget-border) bg-(--vscode-input-background) px-2 py-1.5 text-xs outline-none focus:border-(--vscode-focusBorder)" rows="6" placeholder="Description (optional)" bind:value={prBody}></textarea>
+					<input class="h-8 w-full rounded-md border border-(--vscode-widget-border) bg-(--vscode-input-background) px-2 text-xs font-medium outline-none focus:border-(--vscode-focusBorder)" placeholder={t('forge.create.titleField')} aria-label={ft('forge.create.titleLabel', forge)} bind:value={prTitle} />
+					<textarea class="min-h-[7rem] w-full resize-y rounded-md border border-(--vscode-widget-border) bg-(--vscode-input-background) px-2 py-1.5 text-xs outline-none focus:border-(--vscode-focusBorder)" rows="6" placeholder={t('forge.create.descriptionPlaceholder')} bind:value={prBody}></textarea>
 					<div>
-						<div class="flex justify-between text-[11px] font-medium {MUTED}"><span>Base branch</span><span>from {repo?.branch}</span></div>
-						<input class="mt-1 h-8 w-full rounded-md border border-(--vscode-widget-border) bg-(--vscode-input-background) px-2 text-xs outline-none focus:border-(--vscode-focusBorder)" placeholder="main" aria-label="Base branch" bind:value={prBase} />
+						<div class="flex justify-between text-[11px] font-medium {MUTED}"><span>{t('forge.create.baseBranch')}</span><span>{t('forge.create.fromBranch', { branch: repo?.branch ?? '' })}</span></div>
+						<input class="mt-1 h-8 w-full rounded-md border border-(--vscode-widget-border) bg-(--vscode-input-background) px-2 text-xs outline-none focus:border-(--vscode-focusBorder)" placeholder="main" aria-label={t('forge.create.baseBranch')} bind:value={prBase} />
 					</div>
-					<label class="flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={prDraft} />Create as draft</label>
-					<button class="flex h-8 w-[10.5rem] items-center justify-center gap-1.5 rounded-md bg-(--vscode-button-background) px-3 text-xs text-(--vscode-button-foreground) disabled:opacity-50" disabled={!!prBusy || prTitle.trim() === ''} title={prTitle.trim() ? '' : 'Enter a pull request title.'} onclick={createPr}>
-						{#if prBusy === 'create'}<span class="size-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent"></span>Creating...{:else}<Icon name="pullRequest" size={13} />{repo?.upstream && !repo.ahead ? (prDraft ? 'Create draft PR' : 'Create PR') : 'Push & Create PR'}{/if}
+					<label class="flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={prDraft} />{t('forge.create.asDraft')}</label>
+					<button class="flex h-8 w-[10.5rem] items-center justify-center gap-1.5 rounded-md bg-(--vscode-button-background) px-3 text-xs text-(--vscode-button-foreground) disabled:opacity-50" disabled={!!prBusy || prTitle.trim() === ''} title={prTitle.trim() ? '' : ft('forge.create.needTitle', forge)} onclick={createPr}>
+						{#if prBusy === 'create'}<span class="size-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent"></span>{t('forge.create.creating')}{:else}<Icon name="pullRequest" size={13} />{repo?.upstream && !repo.ahead ? (prDraft ? ft('forge.create.draftButton', forge) : ft('forge.create.button', forge)) : ft('forge.create.pushButton', forge)}{/if}
 					</button>
 					{#if prError}<p class="text-[11px] break-words text-(--vscode-errorForeground)" role="alert">{prError}</p>{/if}
 				</div>

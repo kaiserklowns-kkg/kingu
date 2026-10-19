@@ -4,6 +4,7 @@
 import { prBody } from './issues.ts';
 import type { TaskMeta } from './model.ts';
 import { t } from '#lib/i18n/index.ts';
+import { ft, type Forge } from './forge.ts';
 
 export type Commit = { subject: string; body: string };
 export type PrForm = { title: string; body: string; base: string; draft: boolean };
@@ -35,12 +36,13 @@ export function prefillPr(meta: Pick<TaskMeta, 'slug' | 'title' | 'prompt' | 'ba
 }
 
 /** Why Create is disabled (Orca's reasons), or null when the form can be sent. */
-export function prFormProblem(form: Pick<PrForm, 'title' | 'base'>, branch: string): string | null {
-	if (!form.title.trim()) return t('ade.prForm.needTitle');
-	if (!form.base.trim()) return t('ade.prForm.needBase');
-	if (form.base.trim().toLowerCase() === branch.trim().toLowerCase()) return t('ade.prForm.baseIsBranch');
+export function prFormProblem(form: Pick<PrForm, 'title' | 'base'>, branch: string, forge: Forge = 'github'): string | null {
+	if (!form.title.trim()) return ft('forge.create.needTitle', forge);
+	if (!form.base.trim()) return t('forge.create.needBase');
+	if (form.base.trim().toLowerCase() === branch.trim().toLowerCase()) return t('forge.create.baseIsBranch');
 	return null;
 }
 
-/** The submit button (Orca: "Push & Create PR" / "Create draft PR"). */
-export const prSubmitLabel = (draft: boolean, busy: boolean) => (busy ? t('ade.prForm.creating') : draft ? t('ade.prForm.submitDraft') : t('ade.prForm.submit'));
+/** The submit button (Orca: "Push & Create PR" / "Create draft PR"; "MR" on GitLab). */
+export const prSubmitLabel = (draft: boolean, busy: boolean, forge: Forge = 'github') =>
+	busy ? t('forge.create.creating') : draft ? ft('forge.create.submitDraft', forge) : ft('forge.create.submit', forge);

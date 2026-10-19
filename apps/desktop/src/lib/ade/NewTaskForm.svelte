@@ -44,7 +44,9 @@
 	const slug = $derived(kind === 'new' && title.trim() ? (count > 1 && !parent ? attemptSlugs(title, count, taken).slugs.join(', ') : uniqueSlug(title, taken)) : '');
 	const badModel = $derived(kind === 'new' && !parent ? models.find((m) => m.trim() && !validModel(m.trim())) : undefined);
 	const picked = $derived(prs?.find((p) => String(p.number) === pr.trim().replace(/^#/, '')) ?? null);
-	const ready = $derived(kind === 'new' ? !!title.trim() && !badModel : kind === 'branch' ? !!branch : looksLikePr(pr));
+	/** Starting from a merge request is not built for GitLab yet; the form says so instead. */
+	const prOnGitlab = $derived(adeTasks.gh?.provider === 'gitlab');
+	const ready = $derived(kind === 'new' ? !!title.trim() && !badModel : kind === 'branch' ? !!branch : !prOnGitlab && looksLikePr(pr));
 	const mac = keyLabel('cmd+a').startsWith('⌘');
 
 	onMount(() => {
@@ -63,7 +65,7 @@
 			void invoke<BranchRef[]>('git_refs', {})
 				.then((refs) => (choices = branchChoices(refs)))
 				.catch(() => (choices = []));
-		if (next === 'pr' && !prs)
+		if (next === 'pr' && !prs && !prOnGitlab)
 			void invoke<PrHead[]>('gh_pr_list', { limit: 50 })
 				.then((list) => (prs = list))
 				.catch((e) => {
@@ -138,6 +140,8 @@
 				<option value={b.name} disabled={!!b.busy}>{b.name}{b.busy ? ` ${t('adeWorktrees.form.inUse')}` : ''}</option>
 			{/each}
 		</select>
+	{:else if kind === 'pr' && prOnGitlab}
+		<p class="text-[11px] text-(--vscode-descriptionForeground)">{t('forge.prStart.notOnGitlab')}</p>
 	{:else if kind === 'pr'}
 		<input class={INPUT} list="kingu-new-task-prs" placeholder={t('adeWorktrees.form.prPlaceholder')} aria-label={t('adeWorktrees.form.pullRequest')} bind:value={pr} disabled={busy} />
 		<datalist id="kingu-new-task-prs">

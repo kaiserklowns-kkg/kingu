@@ -1,6 +1,8 @@
 // Pull request checks as Orca's Checks tab presents them: one kind per check (from GitHub's
 // check runs and commit statuses), failures sorted first, the summary counts and the merge state.
 
+import { t, type MessageKey } from '#lib/i18n/index.ts';
+
 /** A `statusCheckRollup` entry of `gh pr view --json`: a check run or a commit status context. */
 export type Check = {
 	__typename?: string;
@@ -65,14 +67,22 @@ export function checkRank(c: Check): number {
 	return { failure: 0, action: 0, cancelled: 1, pending: 2, success: 3, neutral: 4, skipped: 5 }[checkKind(c)];
 }
 
+const CHECK_LABEL: Record<string, MessageKey> = {
+	SUCCESS: 'forge.check.successful',
+	FAILURE: 'forge.check.failed',
+	ERROR: 'forge.check.failed',
+	CANCELLED: 'forge.check.cancelled',
+	TIMED_OUT: 'forge.check.timedOut',
+	ACTION_REQUIRED: 'forge.check.actionRequired',
+	NEUTRAL: 'forge.check.neutral',
+	SKIPPED: 'forge.check.skipped'
+};
+
 export function checkLabel(c: Check): string {
 	const v = (c.conclusion || c.state || '').toUpperCase();
-	if (c.status === 'QUEUED') return 'Queued';
-	if (c.status === 'IN_PROGRESS') return 'In progress';
-	return (
-		{ SUCCESS: 'Successful', FAILURE: 'Failed', ERROR: 'Failed', CANCELLED: 'Cancelled', TIMED_OUT: 'Timed out', ACTION_REQUIRED: 'Action required', NEUTRAL: 'Neutral', SKIPPED: 'Skipped' }[v] ??
-		'Pending'
-	);
+	if (c.status === 'QUEUED') return t('forge.check.queued');
+	if (c.status === 'IN_PROGRESS') return t('forge.check.inProgress');
+	return t((CHECK_LABEL[v] ?? 'forge.check.pending') as 'forge.check.pending');
 }
 
 export type CheckCounts = { passed: number; failed: number; pending: number; neutral: number };
@@ -111,16 +121,16 @@ export function checksPollDelay(pr: Pr | null, o: { failed: boolean; unchanged: 
 
 /** GitHub's merge state as Orca labels it. */
 export function mergeLabel(pr: Pr, counts: CheckCounts): string {
-	if (pr.state === 'MERGED') return 'Merged';
-	if (pr.state === 'CLOSED') return 'Closed';
-	if (pr.isDraft) return 'Draft';
-	if (pr.mergeable === 'CONFLICTING') return 'Conflicts';
-	if (pr.reviewDecision === 'CHANGES_REQUESTED') return 'Changes requested';
-	if (pr.reviewDecision === 'REVIEW_REQUIRED') return 'Approval required';
-	if (counts.failed) return 'Checks failed';
-	if (counts.pending) return 'Checks pending';
-	if (pr.mergeable === 'UNKNOWN') return 'Checking';
-	return counts.passed ? 'Checks passed' : 'Able to merge';
+	if (pr.state === 'MERGED') return t('forge.mergeLine.merged');
+	if (pr.state === 'CLOSED') return t('forge.mergeLine.closed');
+	if (pr.isDraft) return t('forge.mergeLine.draft');
+	if (pr.mergeable === 'CONFLICTING') return t('forge.mergeLine.conflicts');
+	if (pr.reviewDecision === 'CHANGES_REQUESTED') return t('forge.mergeLine.changesRequested');
+	if (pr.reviewDecision === 'REVIEW_REQUIRED') return t('forge.mergeLine.approvalRequired');
+	if (counts.failed) return t('forge.mergeLine.checksFailed');
+	if (counts.pending) return t('forge.mergeLine.checksPending');
+	if (pr.mergeable === 'UNKNOWN') return t('forge.mergeLine.checking');
+	return counts.passed ? t('forge.mergeLine.checksPassed') : t('forge.mergeLine.ableToMerge');
 }
 
 /** A PR conversation comment or a review (`gh pr view --json comments,reviews`). */
