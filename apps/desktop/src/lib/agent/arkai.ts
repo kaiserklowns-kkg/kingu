@@ -3,6 +3,8 @@
 // when it answers. A chat on Arkai keeps its model as `<provider>/<model>`. Pure, so `bun test`
 // covers it.
 
+import { t } from '#lib/i18n/index.ts';
+
 export type ArkaiModel = { id: string; name?: string; contextWindow?: number; maxTokens?: number; light?: boolean };
 export type ArkaiProviderInfo = {
 	id: string;
@@ -17,6 +19,14 @@ export type ArkaiProviderInfo = {
 };
 
 export const ARKAI_RUNTIME = 'arkai';
+/** The agent host's window for a model nobody describes, and light mode's limit (arkai/spec.ts). */
+const DEFAULT_CONTEXT_WINDOW = 32_768;
+const LIGHT_CONTEXT_WINDOW = 16_384;
+
+/** Whether Arkai runs the model in light mode: its setting, else a small context window (as the agent host decides). */
+export function arkaiLight(m: ArkaiModel): boolean {
+	return m.light ?? (m.contextWindow ?? DEFAULT_CONTEXT_WINDOW) <= LIGHT_CONTEXT_WINDOW;
+}
 
 const PROVIDER_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
@@ -70,7 +80,7 @@ export function arkaiGroups(providers: readonly ArkaiProviderInfo[], current: st
 			models: p.models.map((m) => ({
 				value: arkaiModelValue(p.id, m.id),
 				label: m.name || m.id,
-				description: [m.id, m.contextWindow ? `${Math.round(m.contextWindow / 1024)}k` : '', m.light ? 'light' : ''].filter(Boolean).join(' · ')
+				description: [m.id, m.contextWindow ? `${Math.round(m.contextWindow / 1024)}k` : '', arkaiLight(m) ? t('arkai.picker.light') : ''].filter(Boolean).join(' · ')
 			}))
 		}));
 	const split = splitArkaiModel(current);

@@ -361,6 +361,26 @@ mod tests {
   }
 
   #[test]
+  fn an_arkai_chat_rewinds_and_forks_by_its_transcript() {
+    // Arkai sends no anchors: its conversation is the transcript, kept with whole tool inputs.
+    let (_t, root) = tmp();
+    let t = Transcript::new(&root, "a").unwrap().full_inputs(true);
+    let call = AgentEvent::ToolUse { id: "t1".into(), name: "Write".into(), input: serde_json::json!({"file_path": "a.rs", "content": "x".repeat(10_000)}), parent_tool_use_id: None };
+    let done = AgentEvent::ToolResult { tool_use_id: "t1".into(), content: "ok".into(), is_error: false, parent_tool_use_id: None };
+    for ev in [user("a"), checkpoint(0), system(U1), call.clone(), done.clone(), said("b"), exit(), user("c"), checkpoint(1), system(U1), said("d"), exit()] {
+      t.append(&ev).unwrap();
+    }
+    let r = rewind(&root, "a", 1, false, None).unwrap();
+    assert_eq!(r.resume, Resume { session_id: Some(U1.into()), resume_at: None }, "the same session, rebuilt from the cut transcript");
+    let history = crate::agent::arkai::history(crate::agent::chats::load_transcript_full(&root, "a").unwrap());
+    assert_eq!(history, [user("a"), call.clone(), done.clone(), said("b")]);
+    assert_eq!(fork(&root, "a", "f", None, None).unwrap(), Resume { session_id: Some(U1.into()), resume_at: None });
+    assert_eq!(crate::agent::arkai::history(crate::agent::chats::load_transcript_full(&root, "f").unwrap()), history);
+    redo(&root, "a", None).unwrap();
+    assert_eq!(texts(&root, "a"), ["a", "b", "c", "d"]);
+  }
+
+  #[test]
   fn fork_copies_the_conversation_before_a_request() {
     let (_t, root) = tmp();
     chat(&root);

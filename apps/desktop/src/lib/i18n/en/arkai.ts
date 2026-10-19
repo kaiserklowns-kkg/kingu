@@ -7,6 +7,7 @@ export const arkai = {
 	'arkai.picker.loading': 'Looking for models…',
 	'arkai.picker.none': 'No models: set up a provider',
 	'arkai.picker.noKey': '{name} (no API key)',
+	'arkai.picker.light': 'light mode',
 	// Settings › Arkai › Model providers
 	'arkai.settings.title': 'Model providers',
 	'arkai.settings.hint': 'Arkai runs chats on these models. Add a provider in settings.json under kingu.arkai.providers; Ollama on this Mac is found by itself. API keys stay in the macOS Keychain.',

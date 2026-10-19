@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { arkaiDefault, arkaiGroups, needsKey, parseArkaiProviders, splitArkaiModel, type ArkaiProviderInfo } from './arkai';
+import { setLocale } from '#lib/i18n/index.ts';
 
 const provider = (over: Partial<ArkaiProviderInfo>): ArkaiProviderInfo => ({
 	id: 'p',
@@ -35,9 +36,20 @@ describe('Arkai models', () => {
 	});
 
 	test('the picker groups models by provider, and keeps a model no provider lists', () => {
-		const providers = [provider({ id: 'ollama', name: 'Ollama', local: true, models: [{ id: 'qwen3', contextWindow: 16384, light: true }] }), provider({ id: 'empty', models: [] }), provider({ id: 'or', name: 'OpenRouter', models: [{ id: 'a/b', name: 'B' }] })];
+		setLocale('en');
+		const ollama = [{ id: 'qwen3', contextWindow: 16384 }, { id: 'big', contextWindow: 65536 }, { id: 'forced', contextWindow: 65536, light: true }];
+		const providers = [provider({ id: 'ollama', name: 'Ollama', local: true, models: ollama }), provider({ id: 'empty', models: [] }), provider({ id: 'or', name: 'OpenRouter', models: [{ id: 'a/b', name: 'B' }] })];
 		expect(arkaiGroups(providers, 'or/a/b')).toEqual([
-			{ provider: 'ollama', label: 'Ollama', models: [{ value: 'ollama/qwen3', label: 'qwen3', description: 'qwen3 · 16k · light' }] },
+			{
+				provider: 'ollama',
+				label: 'Ollama',
+				models: [
+					// Light mode only for a small window (or when the settings say so), as the agent host decides.
+					{ value: 'ollama/qwen3', label: 'qwen3', description: 'qwen3 · 16k · light mode' },
+					{ value: 'ollama/big', label: 'big', description: 'big · 64k' },
+					{ value: 'ollama/forced', label: 'forced', description: 'forced · 64k · light mode' }
+				]
+			},
 			{ provider: 'or', label: 'OpenRouter', models: [{ value: 'or/a/b', label: 'B', description: 'a/b' }] }
 		]);
 		expect(arkaiGroups(providers, 'gone/m')[0]).toEqual({ provider: 'gone', label: 'gone', models: [{ value: 'gone/m', label: 'm', description: 'gone/m' }] });

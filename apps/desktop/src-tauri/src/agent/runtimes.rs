@@ -6,8 +6,9 @@
 //! program to run). Only runtimes whose program is on the login-shell PATH (`shell_env`) are
 //! offered; Rust resolves the program to its absolute path, and the agent host runs only that.
 //!
-//! What a runtime cannot do is in its `Features`, so the chat hides it: only the Claude SDK can
-//! rewind or fork a session at a message; it and Arkai can switch the model mid-session.
+//! What a runtime cannot do is in its `Features`, so the chat hides it: the Claude SDK rewinds or
+//! forks a session at a message, Arkai by its transcript (its conversation is the chat's
+//! transcript, which a rewind cuts and a fork copies); both can switch the model mid-session.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -43,7 +44,8 @@ pub enum Protocol {
 /// What the chat may offer for a runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct Features {
-  /// Restore checkpoint, Edit request, Retry and Fork (a session resumed at a message).
+  /// Restore checkpoint, Edit request, Retry and Fork (a session resumed at a message, or Arkai's
+  /// conversation rebuilt from the cut transcript).
   pub rewind: bool,
   /// The model picker (a model per chat, switched mid-session).
   pub models: bool,
@@ -92,8 +94,8 @@ const KNOWN: &[Known] = &[
 ];
 
 fn features(p: Protocol) -> Features {
-  let claude = p == Protocol::Claude;
-  Features { rewind: claude, models: claude || p == Protocol::Arkai }
+  let own = matches!(p, Protocol::Claude | Protocol::Arkai);
+  Features { rewind: own, models: own }
 }
 
 /// A user-configured ACP agent.
@@ -201,7 +203,7 @@ pub fn resolve(id: &str, path: Option<&OsStr>, custom: &[Custom]) -> Result<Opti
 
 /// Whether runtime `id` can rewind (`Features::rewind`); unknown ids cannot.
 pub fn can_rewind(id: &str) -> bool {
-  id == CLAUDE
+  id == CLAUDE || id == super::arkai::RUNTIME
 }
 
 /// The configured ACP agents (user settings).
@@ -245,7 +247,7 @@ mod tests {
       ids,
       [
         ("claude".into(), Protocol::Claude, true),
-        ("arkai".into(), Protocol::Arkai, false),
+        ("arkai".into(), Protocol::Arkai, true),
         ("codex".into(), Protocol::Codex, false),
         ("gemini".into(), Protocol::Acp, false),
         ("mine".into(), Protocol::Acp, false)
@@ -280,6 +282,6 @@ mod tests {
     assert_eq!(split_command("a 'b"), None);
     assert!(valid_id("gemini") && valid_id("my-agent-2"));
     assert!(!valid_id("") && !valid_id("-x") && !valid_id("Gemini") && !valid_id(&"a".repeat(41)));
-    assert!(can_rewind("claude") && !can_rewind("gemini"));
+    assert!(can_rewind("claude") && can_rewind("arkai") && !can_rewind("gemini"));
   }
 }
