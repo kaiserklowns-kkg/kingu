@@ -295,6 +295,83 @@ export const IDE_SETTINGS: SettingSchema[] = [
 		description: 'ตำแหน่งที่เปิด Compare Changes ของ conflict (Controls where the diff view should be opened when comparing changes in merge conflicts.)'
 	},
 	// --- Debug
+	{
+		id: 'debug.onTaskErrors',
+		group: 'Debug',
+		type: 'string',
+		default: 'prompt',
+		enum: ['debugAnyway', 'showErrors', 'prompt', 'abort'],
+		enumDescriptions: [
+			'ไม่สนใจ error ของ task แล้วเริ่ม debug (Ignore task errors and start debugging.)',
+			'เปิด Problems แล้วไม่เริ่ม debug (Show the Problems view and do not start debugging.)',
+			'ถาม (Prompt user.)',
+			'ยกเลิกการ debug (Cancel debugging.)'
+		],
+		description: 'ทำอะไรเมื่อ preLaunchTask มี error (Controls what to do when errors are encountered after running a preLaunchTask.)'
+	},
+	// --- Tasks
+	{
+		id: 'task.autoDetect',
+		group: 'Tasks',
+		type: 'string',
+		default: 'on',
+		enum: ['on', 'off'],
+		description: 'หา task จาก package.json, Cargo.toml และ go.mod เอง (Controls enablement of `provideTasks` for all task providers: npm scripts, cargo and go tasks. If the Tasks: Run Task command is slow, disabling auto detect may help.)'
+	},
+	{
+		id: 'task.saveBeforeRun',
+		group: 'Tasks',
+		type: 'string',
+		default: 'always',
+		enum: ['always', 'never', 'prompt'],
+		enumDescriptions: [
+			'บันทึกทุก editor ก่อนรัน (Always saves all editors before running.)',
+			'ไม่บันทึก (Never saves editors before running.)',
+			'ถามก่อนบันทึก (Prompts whether to save editors before running.)'
+		],
+		description: 'บันทึก editor ที่ยังไม่บันทึกก่อนรัน task (Save all dirty editors before running a task.)'
+	},
+	{
+		id: 'task.problemMatchers.neverPrompt',
+		group: 'Tasks',
+		type: 'json',
+		schema: { oneOf: [{ type: 'boolean' }, { type: 'object', additionalProperties: { type: 'boolean' } }] },
+		default: false,
+		description: 'ไม่ถามหา problem matcher ตอนรัน task — true คือไม่ถามเลย หรือระบุชนิด task เช่น { "shell": true } (Configures whether to show the problem matcher prompt when running a task. Set to `true` to never prompt, or use a dictionary of task types to turn off prompting only for specific task types.)'
+	},
+	{
+		id: 'task.quickOpen.history',
+		group: 'Tasks',
+		type: 'number',
+		default: 30,
+		minimum: 0,
+		maximum: 30,
+		description: 'จำนวน task ที่ใช้ล่าสุดที่แสดงใน Run Task (Controls the number of recent items tracked in task quick open dialog.)'
+	},
+	{
+		id: 'task.quickOpen.detail',
+		group: 'Tasks',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงรายละเอียด (detail) ของ task ในรายการเลือก task (Controls whether to show the task detail for tasks that have a detail in task quick picks, such as Run Task.)'
+	},
+	{
+		id: 'task.quickOpen.skip',
+		group: 'Tasks',
+		type: 'boolean',
+		default: false,
+		description: 'ข้ามรายการเลือกเมื่อมี task ให้เลือกแค่อันเดียว (Controls whether the task quick pick is skipped when there is only one task to pick from.)'
+	},
+	{
+		id: 'task.allowAutomaticTasks',
+		group: 'Tasks',
+		type: 'string',
+		default: 'off',
+		enum: ['on', 'off'],
+		enumDescriptions: ['ได้เสมอ (Always)', 'ไม่เลย (Never)'],
+		description: 'ให้ task ที่ตั้ง runOn: folderOpen รันเองเมื่อเปิดโฟลเดอร์ — Kingu ถามก่อนเสมอจนกว่าจะอนุญาต tasks.json นั้น ตั้งเป็น off ใน user settings เพื่อไม่ให้รันและไม่ถาม (Enable automatic tasks. Tasks from a folder\'s tasks.json run only after you allow exactly that file; set to `off` in your user settings to never run or ask.)',
+		scope: 'application'
+	},
 	// The rest of VS Code's settings for features Kingu has, one file per area (vscode/*.ts).
 	...VSCODE_SETTINGS
 ];

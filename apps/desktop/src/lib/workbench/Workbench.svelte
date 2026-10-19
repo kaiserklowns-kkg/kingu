@@ -61,6 +61,7 @@
 	import { quickOpenWorktree } from '#lib/ade/quickOpen.svelte.ts';
 	import { installTerminalSessions } from './terminalSessions.svelte';
 	import { installTerminalCommands, panelTerminalFocus } from '#lib/terminal/terminalCommands.svelte.ts';
+	import { installTaskCommands } from '#lib/tasks/taskCommands.svelte.ts';
 	import { adeInFront, installAdeCommands } from '#lib/ade/adeCommands.svelte.ts';
 	import { installHunkCommands } from '#lib/ade/hunkReview.svelte.ts';
 	import { installChatEditorCommands } from '#lib/agent/chatEditDecorations.svelte.ts';
@@ -347,6 +348,7 @@
 		const uninstallLocalAi = installLocalAi();
 		const uninstallTerminalSessions = installTerminalSessions();
 		const uninstallTerminalCommands = installTerminalCommands();
+		const uninstallTaskCommands = installTaskCommands();
 		const uninstallAdeCommands = installAdeCommands();
 		const uninstallHunkCommands = installHunkCommands();
 		const uninstallChatEditorCommands = installChatEditorCommands();
@@ -376,6 +378,7 @@
 			uninstallAdeCommands();
 			uninstallHunkCommands();
 			uninstallChatEditorCommands();
+			uninstallTaskCommands();
 			uninstallTerminalCommands();
 			uninstallTerminalSessions();
 			uninstallMcp();

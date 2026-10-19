@@ -5,7 +5,7 @@ import { parseJsonc } from '#lib/settings/jsonc.ts';
 import type { RunInTerminalArguments } from './protocol.ts';
 import { t } from '#lib/i18n/index.ts';
 
-export type LaunchConfig = { type: string; request: string; name: string; preLaunchTask?: string; [key: string]: unknown };
+export type LaunchConfig = { type: string; request: string; name: string; preLaunchTask?: string | Record<string, unknown>; postDebugTask?: string | Record<string, unknown>; [key: string]: unknown };
 
 /** Read in this order; `.kingu/launch.json` is Kingu's own place, same format. */
 export const LAUNCH_FILES = ['.vscode/launch.json', '.kingu/launch.json'];

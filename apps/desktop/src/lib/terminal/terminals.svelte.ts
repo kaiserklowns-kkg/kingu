@@ -12,12 +12,18 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { confirmKill } from './confirmKill.ts';
 import { cyclePane, equalize, hasLeaf, leaf, leaves, removePane, setRatio, splitPane, type PaneNode, type PanePath, type SplitDirection } from './paneLayout.ts';
 import { killPty } from './pty.ts';
-import { focusTerminal } from './registry.ts';
+import { focusTerminal, type TaskSpawn } from './registry.ts';
 import { hideOnStartup, panelKey, parsePanelTerminals, persist, restore, storeName, withoutRun } from './sessions.ts';
 import { t as tr } from '#lib/i18n/index.ts';
 
-/** `cwdFrom`: a split starts in that terminal's current directory (not kept across reloads). */
-export type PanelTerminal = { id: number; title: string; run?: string[]; cwdFrom?: string };
+/** `cwdFrom`: a split starts in that terminal's current directory (not kept across reloads).
+ * `task`: a task terminal's launch (tasks.svelte.ts), dropped once the task ended and never kept. */
+export type PanelTerminal = { id: number; title: string; run?: string[]; cwdFrom?: string; task?: TaskSpawn };
+
+function renameLeaf(node: PaneNode, from: string, to: string): PaneNode {
+	if (node.type === 'leaf') return node.id === from ? leaf(to) : node;
+	return { ...node, first: renameLeaf(node.first, from, to), second: renameLeaf(node.second, from, to) };
+}
 
 const STORE = 'kingu.panelTerminals';
 
@@ -39,7 +45,7 @@ class Terminals {
 				if (shown) untrack(() => this.list.length === 0 && this.open());
 			});
 			$effect(() => {
-				const state = { list: $state.snapshot(this.list).map(({ cwdFrom: _, ...t }) => t), active: this.active, seq: this.#seq, groups: $state.snapshot(this.groups) };
+				const state = { list: $state.snapshot(this.list).map(({ cwdFrom: _, task: __, ...t }) => t), active: this.active, seq: this.#seq, groups: $state.snapshot(this.groups) };
 				if (this.tag) persist(storeName(STORE, this.tag), state);
 			});
 		});
@@ -104,6 +110,34 @@ class Terminals {
 		this.groups = [...this.groups, leaf(String(id))];
 		this.active = id;
 		return id;
+	}
+
+	/**
+	 * A task terminal (VS Code's task terminals): in place of terminal `replace` (a reused one, its
+	 * old process killed), split next to `splitWith` (presentation.group), else a new tab.
+	 */
+	openTask(opts: { title: string; task: TaskSpawn; replace?: number; splitWith?: number }): number {
+		const id = ++this.#seq;
+		const entry: PanelTerminal = { id, title: opts.title, task: opts.task };
+		const old = opts.replace !== undefined ? this.get(opts.replace) : undefined;
+		if (old) {
+			killPty(this.key(old.id));
+			this.list = this.list.map((t) => (t.id === old.id ? entry : t));
+			this.groups = this.groups.map((g) => renameLeaf(g, String(old.id), String(id)));
+		} else if (opts.splitWith !== undefined && this.groupOf(opts.splitWith) >= 0) {
+			const g = this.groupOf(opts.splitWith);
+			this.list = [...this.list, entry];
+			this.groups = this.groups.map((tree, i) => (i === g ? equalize(splitPane(tree, String(opts.splitWith), String(id), this.#direction())) : tree));
+		} else {
+			this.list = [...this.list, entry];
+			this.groups = [...this.groups, leaf(String(id))];
+		}
+		return id;
+	}
+
+	/** The task of terminal `id` ended: a remount opens a shell instead of running it again. */
+	endTask(id: number) {
+		if (this.get(id)?.task) this.list = this.list.map((t) => (t.id === id ? { ...t, task: undefined } : t));
 	}
 
 	/** VS Code's panel terminals sit side by side when the panel is at the top or bottom, stacked when it is at a side. */

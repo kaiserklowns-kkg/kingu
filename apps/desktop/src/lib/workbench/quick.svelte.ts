@@ -43,6 +43,8 @@ export type Picker = {
 	id?: string;
 	/** VS Code's quickNavigate: releasing Ctrl/Cmd accepts the focused item (the ⌃Tab switcher). */
 	quickNavigate?: boolean;
+	/** An input box for a secret (a task's promptString input with `password`): typed text is hidden. */
+	password?: boolean;
 };
 
 class Quick {
@@ -94,6 +96,7 @@ class Quick {
 		this.hide();
 		this.picker = picker;
 		this.value = '';
+		this.selectRestored = false;
 		this.visible = true;
 		this.session++;
 	}
@@ -104,10 +107,15 @@ class Quick {
 	}
 
 	/** VS Code's showInputBox: the typed (trimmed) text on Enter, undefined when dismissed.
-	 * `hint` is the row shown under the input for the current text. */
-	async input(opts: { placeholder: string; hint: (value: string) => string }): Promise<string | undefined> {
-		const item = await this.choose({ placeholder: opts.placeholder, items: [], dynamic: (value) => [{ id: value, label: opts.hint(value) }] });
-		return item?.id;
+	 * `hint` is the row shown under the input for the current text; `value` is the starting text
+	 * (selected, so typing replaces it); `password` hides what is typed. */
+	async input(opts: { placeholder: string; hint: (value: string) => string; value?: string; password?: boolean }): Promise<string | undefined> {
+		const item = this.choose({ placeholder: opts.placeholder, items: [], password: opts.password, dynamic: (value) => [{ id: value, label: opts.hint(value) }] });
+		if (opts.value) {
+			this.value = opts.value;
+			this.selectRestored = true;
+		}
+		return (await item)?.id;
 	}
 
 	hide({ accepted = false } = {}) {

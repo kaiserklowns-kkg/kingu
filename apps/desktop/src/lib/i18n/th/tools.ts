@@ -201,7 +201,6 @@ export const tools = {
 	'tools.debug.programHint': 'debug {program}',
 	'tools.debug.pickConfig': 'เลือก launch configuration',
 	'tools.debug.noLaunchJson': 'ไม่มี .vscode/launch.json — เปิดไฟล์ Rust, C/C++, Go หรือ Python แล้วกด F5 หรือใช้ Debug: Open launch.json',
-	'tools.debug.skipPreLaunch': 'ข้าม preLaunchTask "{task}" (Kingu ยังไม่รองรับ tasks.json) — build เองก่อนถ้าจำเป็น\n',
 	'tools.debug.buildFailed': '{command} ไม่ผ่าน — ดู Debug Console',
 	'tools.debug.startFailed': 'เริ่ม debug ไม่ได้: {error}',
 	'tools.debug.outsideWorkspace': '{path} อยู่นอก workspace จึงเปิดไม่ได้',

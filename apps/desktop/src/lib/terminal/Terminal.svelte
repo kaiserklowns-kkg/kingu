@@ -23,7 +23,8 @@
 	import { FIND_TERMINAL_OPTIONS, HIGHLIGHT_LIMIT } from './find.ts';
 	import { cellText, detectLinks, linkHint, linkModifierDown, MAX_LINE, type TerminalLink } from './links.ts';
 	import { linkTarget, openUrl } from './pty.ts';
-	import { registerTerminal, touchTerminal } from './registry.ts';
+	import { emitOutput, markTaskSpawned, registerTerminal, taskSpawned, touchTerminal } from './registry.ts';
+	import type { TaskSpawn } from './registry.ts';
 	import { bindAdeTerminal, copiedSelection, type AdeBinding } from './adeTerminal.svelte.ts';
 	import { quickCommandInput, quickCommands } from './adeTerminalOptions.ts';
 	import { isBuiltin, terminalMenu, type MenuState, type TerminalFlavor } from './terminalMenu.ts';
@@ -35,11 +36,14 @@
 	 * `run`: a command typed into a new shell (an agent CLI, a Snap task); Rust quotes every argument.
 	 * `cwdFrom`: a split pane starts in that terminal's current directory. `flavor`: the IDE panel
 	 * (VS Code behaviour) or an ADE terminal (Orca behaviour) for find and the context menu.
+	 * `task`: a task terminal (tasks.svelte.ts): Rust runs the task instead of a shell, once; it
+	 * starts even while the panel is hidden (presentation.reveal never).
 	 */
 	let {
 		key,
 		slug,
 		run,
+		task,
 		cwdFrom,
 		floatingCwd,
 		flavor = 'ide',
@@ -55,6 +59,7 @@
 		key: string;
 		slug?: string;
 		run?: string[];
+		task?: TaskSpawn;
 		cwdFrom?: string;
 		/** A floating workspace terminal, started in that directory setting (`~` = home). */
 		floatingCwd?: string;
@@ -229,6 +234,7 @@
 				if (disposed) return;
 				if (live) t.write(chunk);
 				else early.push(chunk);
+				emitOutput(key, chunk);
 				if (!replies.empty) for (const reply of replies.feed(chunk, performance.now())) invoke('pty_write', { key, data: reply }).catch(() => {});
 				onoutput?.();
 			};
@@ -267,16 +273,19 @@
 		// layout while the IDE shows) would otherwise type its command into an 11-column shell.
 		let spawning = false;
 		function start() {
-			if (!attachChecked || live || spawning || disposed || !sized()) return;
+			// A task starts hidden too (80×24 until shown), but only once: a remount never runs it again.
+			const launch = task && !taskSpawned(key) ? task : undefined;
+			if (!attachChecked || live || spawning || disposed || (!sized() && !launch)) return;
 			spawning = true;
-			fit.fit();
+			if (sized()) fit.fit();
+			if (launch) markTaskSpawned(key);
 			// terminal.integrated.shell / shellArgs / env / cwd (user settings) for the new shell.
 			const terminal = {
 				...shellFrom((id) => settings.get(id), shellPlatform()),
 				// kingu.terminal.scopeHistoryByWorktree: an ADE shell keeps its own history per worktree.
 				scopeHistory: flavor === 'ade' && settings.get<boolean>('kingu.terminal.scopeHistoryByWorktree') !== false
 			};
-			invoke<Attached>('pty_spawn', { key, cols: t.cols, rows: t.rows, onData: channel(), slug: slug ?? null, run: run ?? null, terminal, cwdFrom: cwdFrom ?? null, floatingCwd: floatingCwd ?? null })
+			invoke<Attached>('pty_spawn', { key, cols: t.cols, rows: t.rows, onData: channel(), slug: slug ?? null, run: run ?? null, terminal, cwdFrom: cwdFrom ?? null, floatingCwd: floatingCwd ?? null, task: launch ?? null })
 				.then((a) => (connected(a), void system.refresh()))
 				.catch(failed);
 		}
@@ -439,6 +448,7 @@
 			find: openFind,
 			clear: () => t.clear(),
 			selectAll: () => t.selectAll(),
+			print: (text) => t.write(text),
 			lines: () => {
 				const buf = t.buffer.active;
 				const out: string[] = [];
