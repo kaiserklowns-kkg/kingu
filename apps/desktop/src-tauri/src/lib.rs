@@ -37,6 +37,7 @@ mod snap;
 mod snap_install;
 mod snap_sandbox;
 mod system;
+mod tasks;
 mod terminal_links;
 mod team;
 mod usage;
@@ -481,8 +482,13 @@ fn pty_spawn(
   terminal: Option<TerminalSettings>,
   cwd_from: Option<String>,
   floating_cwd: Option<String>,
+  task: Option<tasks::TaskLaunch>,
 ) -> Result<kingu_ptyd::Attached, String> {
   pty::validate_key(&key)?;
+  // A task terminal (tasks.rs) is a panel terminal running the task instead of a shell.
+  if task.is_some() && !key.starts_with("panel:") {
+    return Err(format!("terminal {key}: tasks run in panel terminals"));
+  }
   // A split pane starts where its source pane's shell is now (VS Code's splitCwd "inherited",
   // Orca's resolve-split-cwd), else where a new terminal would.
   // terminal.integrated.splitCwd picks which directory (inherited, the source's initial one, or the root).
@@ -536,6 +542,20 @@ fn pty_spawn(
     }
   }
   let shell = terminal.shell.as_deref().filter(|s| !s.trim().is_empty());
+  // A task: its folder and env, and /bin/sh running the task wrapper with the task's argv.
+  let (cwd, task_args) = match &task {
+    Some(t) => {
+      env.extend(t.env.iter().map(|(k, v)| (k.clone(), v.clone())));
+      let default_shell = shell.map(str::to_owned).or_else(|| std::env::var("SHELL").ok().filter(|s| !s.is_empty())).unwrap_or_else(|| "/bin/zsh".into());
+      (tasks::task_cwd(t, cwd)?, Some(tasks::wrapper_args(t, &default_shell)?))
+    }
+    None => (cwd, None),
+  };
+  let (shell, shell_args) = match &task_args {
+    Some(args) => (Some(tasks::POSIX_SHELL), Some(args.as_slice())),
+    None => (shell, terminal.args.as_deref()),
+  };
+  let run = if task.is_some() { None } else { run };
   // kingu.terminal.scopeHistoryByWorktree (ADE terminals): history of their own per worktree.
   if terminal.scope_history && !key.starts_with("cli:") {
     let scope = match slug.as_deref() {
@@ -562,7 +582,7 @@ fn pty_spawn(
   }
   // The `kingu` command on PATH (cli_server.rs).
   cli_server::terminal_env(&mut env, &unset);
-  let attached = ptys.open(&key, &cwd, cols, rows, run.as_deref(), &env, shell, terminal.args.as_deref(), &unset, clean_env, pty::channel_sink(on_data))?;
+  let attached = ptys.open(&key, &cwd, cols, rows, run.as_deref(), &env, shell, shell_args, &unset, clean_env, pty::channel_sink(on_data))?;
   if attached.spawned && pane_hooks {
     agent::hooks::pane_file_reset(&app, &key);
   }
@@ -1302,6 +1322,8 @@ pub fn run() {
       agent::ai_text::ai_pr_template,
       agent::ai_text::git_base_upstream,
       agent::scripts::worktree_script_trust,
+      tasks::tasks_file,
+      tasks::tasks_trust,
       agent::scripts::worktree_script_prepare,
       agent::scripts::worktree_setup_marker,
       agent::scripts::worktree_setup_status,
