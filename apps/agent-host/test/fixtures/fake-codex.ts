@@ -1,6 +1,7 @@
 // A fake `codex app-server` for the tests (runtimes/codex.ts): JSON-RPC lines without the
 // "jsonrpc" member, never calls a model. Each received method is logged to stderr as
-// `got <method>` (thread/start and thread/resume with their approval policy and sandbox).
+// `got <method>` (thread/start and thread/resume with their approval policy and sandbox, and
+// `+skills` with a skill index as developer instructions).
 // Prompts drive it:
 //   "edit <file>"  a fileChange item, its approval, then writes the file itself
 //   "run <cmd>"    a commandExecution item and its approval (nothing runs)
@@ -70,7 +71,7 @@ async function turn(turnId: string, text: string) {
 function handle(msg: any) {
 	if (msg.method) {
 		const p = msg.params ?? {};
-		const policy = msg.method === 'thread/start' || msg.method === 'thread/resume' ? ` ${p.approvalPolicy} ${p.sandbox}` : msg.method === 'turn/start' ? ` ${p.approvalPolicy}` : '';
+		const policy = msg.method === 'thread/start' || msg.method === 'thread/resume' ? ` ${p.approvalPolicy} ${p.sandbox}${typeof p.developerInstructions === 'string' && p.developerInstructions.startsWith('# Skills') ? ' +skills' : ''}` : msg.method === 'turn/start' ? ` ${p.approvalPolicy}` : '';
 		process.stderr.write(`got ${msg.method}${policy}${msg.jsonrpc ? ' (with jsonrpc)' : ''}\n`);
 	}
 	if (msg.id !== undefined && !msg.method) return waiting.get(msg.id)?.(msg.result);

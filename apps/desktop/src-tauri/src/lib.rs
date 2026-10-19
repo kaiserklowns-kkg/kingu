@@ -1552,6 +1552,7 @@ pub fn run() {
       skill_hub::skill_hub_read,
       skill_hub::skill_hub_export,
       skill_hub::skill_hub_plugins,
+      skill_hub::skill_hub_check_updates,
       snap_install::snap_manifest_read,
       snap_install::snap_manifest_write,
       accounts::ai_accounts_list,

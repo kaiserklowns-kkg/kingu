@@ -2,13 +2,14 @@
 	// Settings › Skills: every skill agents can get, by source (Kingu-managed, Snaps, built-in, this
 	// folder's and your own .claude/skills), an on/off switch where Kingu decides, "Install from
 	// Link…" / "Install from File…" with a review of the staged files and SKILL.md before anything
-	// is installed, Update / Remove / Copy Share Link / Export, and the skills the team shared. The
-	// store (skills.svelte.ts) does the work.
+	// is installed, Update / Remove / Copy Share Link / Export, "update available" for skills from
+	// git, and the skills the team shared (live while the page is open). The store
+	// (skills.svelte.ts) does the work.
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { t, type MessageKey } from '#lib/i18n/index.ts';
 	import { team } from '#lib/team/team.svelte.ts';
 	import { skills } from './skills.svelte.ts';
-	import { canUnshare, flagText, formatSize, groupBySource, isLive, isRisky, isTeamShareable, originLabel, reviewFlags, SOURCE_LABEL, teamSkillState, totalSize, type SkillInfo, type TeamSkillState } from './skillModel.ts';
+	import { canUnshare, flagText, formatSize, groupBySource, isLive, isRisky, isTeamShareable, originLabel, reviewFlags, SOURCE_LABEL, teamSkillState, totalSize, updateFor, type SkillInfo, type TeamSkillState } from './skillModel.ts';
 
 	const groups = $derived(groupBySource(skills.list));
 	const review = $derived(skills.review);
@@ -27,6 +28,10 @@
 	const TEAM_STATE = { match: 'skills.team.state.match', different: 'skills.team.state.different', missing: 'skills.team.state.missing' } as const satisfies Record<TeamSkillState, MessageKey>;
 	const sourceNote = (s: SkillInfo) => (s.source === 'snap' && s.snap ? `${t(SOURCE_LABEL.snap)} · ${s.snap}` : t(SOURCE_LABEL[s.source]));
 	const riskyCount = (s: SkillInfo) => s.flags.filter(isRisky).length;
+	const checkedAt = $derived(skills.updateReport?.checkedAt ? t('skills.lastChecked', { time: new Date(skills.updateReport.checkedAt * 1000).toLocaleString() }) : t('skills.checkUpdates'));
+
+	// The team list stays current while the page is open.
+	$effect(() => skills.watchTeam());
 </script>
 
 <div class="h-full overflow-y-auto">
@@ -35,6 +40,9 @@
 			<h1 class="flex flex-1 items-center gap-2 text-lg font-semibold"><Icon name="sparkle" size={20} />{t('skills.title')}</h1>
 			<button class={BUTTON} disabled={skills.loading} onclick={() => skills.load()} aria-label={t('skills.refresh')} title={t('skills.refresh')}>
 				<span class={['grid place-items-center', skills.loading && 'animate-spin']}><Icon name="refresh" size={14} /></span>
+			</button>
+			<button class={BUTTON} disabled={skills.checkingUpdates} onclick={() => skills.checkUpdates(true)} title={checkedAt}>
+				<span class={['grid place-items-center', skills.checkingUpdates && 'animate-spin']}><Icon name="sync" size={14} /></span>{t('skills.checkUpdates')}
 			</button>
 			<button class={BUTTON} disabled={!!skills.busy} onclick={() => skills.installFromFile()}><Icon name="file" size={14} />{t('skills.installFromFile')}</button>
 			<button class={PRIMARY} disabled={!!skills.busy} onclick={() => skills.installFromLink()}><Icon name="plus" size={14} />{t('skills.installFromLink')}</button>
@@ -113,6 +121,10 @@
 								<div class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px]">
 									<span class="font-medium">{s.name}</span>
 									<span class="rounded bg-(--vscode-badge-background) px-1.5 text-[11px] text-(--vscode-badge-foreground)">{sourceNote(s)}</span>
+									{#if updateFor(s, skills.updateReport)}
+										{@const u = updateFor(s, skills.updateReport)!}
+										<span class="rounded bg-(--vscode-button-background) px-1.5 text-[11px] text-(--vscode-button-foreground)" title={t('skills.updateAvailableTitle', { commit: u.remote.slice(0, 7) })}>{t('skills.updateAvailable')}</span>
+									{/if}
 									{#if s.inactive}<span class="text-xs {MUTED}">· {t(s.source === 'builtin' ? 'skills.inactiveBuiltin' : 'skills.inactiveSnap')}</span>{/if}
 									{#if riskyCount(s)}<span class="text-xs text-(--vscode-editorWarning-foreground)" title={s.flags.filter(isRisky).map(flagText).join('\n')}>· {t('skills.risky', { count: riskyCount(s) })}</span>{/if}
 								</div>

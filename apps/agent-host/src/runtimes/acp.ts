@@ -35,6 +35,8 @@ export class AcpSession extends ProcessSession {
 	private planRows = 0;
 	/** Tool call fields merged over `tool_call` and its updates. */
 	private calls = new Map<string, Obj>();
+	/** The skill index (../skills.ts) goes before the run's first message: ACP has no instructions field. */
+	private skillsSent = false;
 
 	protected peerOptions() {
 		return { header: true };
@@ -110,7 +112,9 @@ export class AcpSession extends ProcessSession {
 		const promptCaps = isObj(this.caps.promptCapabilities) ? this.caps.promptCapabilities : {};
 		const images = promptCaps.image === true ? turn.images : [];
 		if (turn.images.length && !images.length) this.emit({ kind: 'stderr', line: 'this agent does not take images: they were left out' });
-		const prompt = [...images.map((i) => ({ type: 'image', mimeType: i.source.media_type, data: i.source.data })), { type: 'text', text: turn.text }];
+		const skills = !this.skillsSent && this.init.skillIndex ? [{ type: 'text', text: this.init.skillIndex }] : [];
+		this.skillsSent = true;
+		const prompt = [...skills, ...images.map((i) => ({ type: 'image', mimeType: i.source.media_type, data: i.source.data })), { type: 'text', text: turn.text }];
 		const r = await this.peer.request<Obj>('session/prompt', { sessionId: this.sessionId, prompt });
 		const stop = str(r?.stopReason) ?? 'end_turn';
 		switch (stop) {

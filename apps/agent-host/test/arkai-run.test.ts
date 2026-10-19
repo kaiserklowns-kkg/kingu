@@ -3,7 +3,7 @@
 // textual tool calls, a continued chat, a model switch and an interrupt. No real model.
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentHost } from '../src/host.ts';
@@ -78,7 +78,11 @@ describe('Arkai runtime', () => {
 			{ text: ['Changing it.'], calls: [{ id: 'c1', name: 'Edit', args: JSON.stringify({ path: 'a.txt', old_str: 'old', new_str: 'new' }) }], usage: { prompt_tokens: 900, completion_tokens: 20 } },
 			{ text: ['Done: ', 'a.txt says new.'], usage: { prompt_tokens: 1000, completion_tokens: 10 } }
 		);
-		expect((await call(1, 'start', { runId: 1, cwd, prompt: 'make it new', runtime: runtime(), snapshots: true, systemPromptAppend: '# Rules\nBe brief.' })).result).toEqual({ runId: 1 });
+		// A skill plugin folder: Arkai gets its index after the rules (skills.ts).
+		const plugin = join(cwd, '.plugin');
+		mkdirSync(join(plugin, 'skills', 'pdf'), { recursive: true });
+		writeFileSync(join(plugin, 'skills', 'pdf', 'SKILL.md'), '---\nname: pdf\ndescription: PDFs\n---\n');
+		expect((await call(1, 'start', { runId: 1, cwd, prompt: 'make it new', runtime: runtime(), snapshots: true, systemPromptAppend: '# Rules\nBe brief.', plugins: [plugin] })).result).toEqual({ runId: 1 });
 		const req = await nth('permission_request');
 		const file = join(cwd, 'a.txt');
 		// The coach put the small model's argument names right before the row went out.
@@ -100,7 +104,8 @@ describe('Arkai runtime', () => {
 		// What the model was sent: the system prompt with the rules, the tools, then the tool result.
 		const [first, second] = llm.requests;
 		expect(first!.body.model).toBe('coder');
-		expect(first!.body.messages[0].content).toContain('# Rules\nBe brief.');
+		expect(first!.body.messages[0].content).toContain('# Rules\nBe brief.\n\n# Skills\n');
+		expect(first!.body.messages[0].content).toContain(`- pdf: PDFs\n  ${join(plugin, 'skills', 'pdf', 'SKILL.md')}`);
 		expect(first!.body.tools.map((t: { function: { name: string } }) => t.function.name)).toEqual(['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'TodoWrite']);
 		expect(second!.body.messages.slice(-2)).toEqual([
 			{ role: 'assistant', content: 'Changing it.', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'Edit', arguments: JSON.stringify({ path: 'a.txt', old_str: 'old', new_str: 'new' }) } }] },

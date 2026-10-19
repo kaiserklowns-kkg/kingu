@@ -14,12 +14,16 @@
 //! [`SkillInfo::id`]). Enabled Kingu-managed skills reach agent runs as one Claude plugin folder
 //! (`<app cache>/skill-plugins/kingu-skills-<hash>`, written from the checked bytes and named by
 //! them, so a running agent's folder never changes), next to the snap plugins: the SDK's
-//! `plugins` option for chats and `--plugin-dir` for Claude Code terminals. Other runtimes (ACP
-//! agents, Codex) have no skills mechanism Kingu can hand a folder to, so they get none.
+//! `plugins` option for chats and `--plugin-dir` for Claude Code terminals. Chats on the other
+//! runtimes (Codex, ACP agents, Arkai) get the same folders, and the agent host turns them into
+//! an index of skills in the agent's instructions (agent-host src/skills.ts).
+//! - Skills installed from a git link show "update available" when their branch moved on
+//!   ([`updates`]); nothing is installed without the review.
 
 pub mod install;
 pub mod package;
 pub mod source;
+pub mod updates;
 
 use std::path::{Path, PathBuf};
 
@@ -540,6 +544,19 @@ pub async fn skill_hub_plugins(app: AppHandle) -> Result<Vec<String>, String> {
     let config = config_dir(&app)?;
     let dir = write_plugin(&plugins_dir(&app)?, &config.join(SKILLS_DIR), &HubState::load(&config))?;
     Ok(dir.map(|d| d.display().to_string()).into_iter().collect())
+  })
+  .await
+}
+
+/// Which installed git skills have a newer commit upstream ([`updates`]): checked at most once a
+/// day per skill, or now with `force` (the view's Check for Updates).
+#[tauri::command]
+pub async fn skill_hub_check_updates(app: AppHandle, force: bool) -> Result<updates::UpdateReport, String> {
+  install_blocking(move || {
+    let config = config_dir(&app)?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or_default();
+    let cwd = config.clone();
+    Ok(updates::check(&config.join(updates::CACHE_FILE), &config.join(SKILLS_DIR), now, force, &|url, r| updates::ls_remote(&cwd, url, r)))
   })
   .await
 }

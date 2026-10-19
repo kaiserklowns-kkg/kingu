@@ -32,6 +32,11 @@ export const SNAP_RELOAD_DEBOUNCE_MS = 250;
  * Task and run events have no team view on the desktop yet, so they are ignored.
  */
 export function createSnapEventRouter(reload: () => void, debounceMs = SNAP_RELOAD_DEBOUNCE_MS, timers: Timers = realTimers) {
+	return createTeamEventRouter('snap.', reload, debounceMs, timers);
+}
+
+/** The same for any team list: a debounced reload on `<prefix>*` events, `reset` and a (re)connect. */
+export function createTeamEventRouter(prefix: string, reload: () => void, debounceMs = SNAP_RELOAD_DEBOUNCE_MS, timers: Timers = realTimers) {
 	let timer: unknown;
 	let pending = false;
 	let state: StreamState = 'off';
@@ -46,7 +51,7 @@ export function createSnapEventRouter(reload: () => void, debounceMs = SNAP_RELO
 	return {
 		/** Returns whether the event triggers a reload. */
 		event(e: Pick<TeamEvent, 'kind'>): boolean {
-			if (e.kind === 'reset' || e.kind.startsWith('snap.')) {
+			if (e.kind === 'reset' || e.kind.startsWith(prefix)) {
 				soon();
 				return true;
 			}

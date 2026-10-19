@@ -16,6 +16,7 @@ import { MAX_PATTERNS } from './guards/asks.ts';
 import { checkAnswers, isAskUserQuestion, QUESTIONS_DISMISSED } from './questions.ts';
 import { Runtimes, runtimeSpec, SessionError, type SpawnFn } from './runtimes/index.ts';
 import { ARTIFACT_SERVER, ARTIFACT_TOOL, artifactServer, socketCaller, type CallApp } from './artifacts.ts';
+import { readSkills, skillIndex } from './skills.ts';
 import {
 	DECISIONS,
 	MCP_TYPES,
@@ -391,16 +392,18 @@ export class AgentHost {
 			throw new RpcError(INVALID_PARAMS, e instanceof Error ? e.message : String(e));
 		}
 		if (other) {
-			// Another runtime: no rewinding into a session (only the SDK can), no Claude plugins.
+			// Another runtime: no rewinding into a session (only the SDK can), no Claude plugins: the
+			// plugins' skills go in as an index the agent reads them from (skills.ts).
 			// Arkai reads the project rules and asks Kingu's always-ask checks itself.
 			need(resumeAt === undefined, 'this runtime cannot resume at a message');
 			const arkai = other.kind === 'arkai' ? other.arkai : undefined;
+			const index = skillIndex(readSkills(plugins));
 			this.others.start(other.kind, {
 				runId: p.runId,
 				cwd: p.cwd,
 				command: other.kind === 'arkai' ? '' : other.command,
 				args: other.kind === 'arkai' ? [] : other.args,
-				...(arkai ? { arkai, systemPromptAppend: append, guardAsks: asks ? { ...asks, cwd: p.cwd } : null } : {}),
+				...(arkai ? { arkai, systemPromptAppend: [append.trim(), index].filter(Boolean).join('\n\n'), guardAsks: asks ? { ...asks, cwd: p.cwd } : null } : { skillIndex: index }),
 				prompt: p.prompt,
 				shownPrompt: shownText(p.prompt, p.images),
 				images,

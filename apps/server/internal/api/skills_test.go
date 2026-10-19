@@ -75,7 +75,27 @@ func TestTeamSkillsSharing(t *testing.T) {
 		if n != 4 {
 			return fmt.Errorf("audit rows = %d, want 4", n)
 		}
-		return nil
+		// Events for open Skills views: 3 shares (create, update, owner's replace) + the removal.
+		rows, err := tx.Query(ctx, `SELECT kind, payload::text FROM org_events WHERE kind LIKE 'skill.%'`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		kinds := map[string]int{}
+		for rows.Next() {
+			var kind, payload string
+			if err := rows.Scan(&kind, &payload); err != nil {
+				return err
+			}
+			kinds[kind]++
+			if !strings.Contains(payload, `"skill_name": "pdf"`) || strings.Contains(payload, "note") || strings.Contains(payload, "git_url") {
+				return fmt.Errorf("event payload = %s", payload)
+			}
+		}
+		if kinds["skill.shared"] != 3 || kinds["skill.removed"] != 1 {
+			return fmt.Errorf("event kinds = %v", kinds)
+		}
+		return rows.Err()
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -69,8 +69,10 @@ export type SessionInit = {
 	onExit: () => void;
 	/** Arkai only (arkai/): the provider, model and earlier conversation. */
 	arkai?: ArkaiSpec;
-	/** Arkai only: project rules after its system prompt. */
+	/** Arkai only: project rules after its system prompt (and the skill index, ../skills.ts). */
 	systemPromptAppend?: string;
+	/** Codex and ACP: the enabled skills (../skills.ts), for the agent's instructions; '' or absent: none. */
+	skillIndex?: string;
 	/** Arkai only: Kingu's always-ask checks (the other runtimes ask through their agent). */
 	guardAsks?: (AskConfig & { cwd: string }) | null;
 };
