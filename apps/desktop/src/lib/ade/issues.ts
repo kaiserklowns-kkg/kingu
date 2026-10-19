@@ -72,9 +72,12 @@ export function issuePrompt(issue: Issue | IssueDetail): string {
 /** A GitHub link (no provider) or a Linear one. */
 export const isLinear = (link: IssueLink): boolean => link.provider === 'linear';
 
-/** How a task names its issue: `#42` on GitHub, `ENG-123` on Linear. */
+/** An issue of the open folder's own GitHub repository (links saved before other trackers have no provider). */
+export const isFolderGithub = (link: IssueLink): boolean => (link.provider ?? 'github') === 'github' && !link.key;
+
+/** How a task names its issue: `#42` on GitHub and GitLab, `ENG-123` on Linear and Jira, `acme/app#42` from a GitHub Project. */
 export function issueRef(link: IssueLink): string {
-	return isLinear(link) && link.key ? link.key : `#${link.number}`;
+	return link.key && link.provider !== 'gitlab' ? link.key : `#${link.number}`;
 }
 
 /** PR body of a task: its prompt, plus `Fixes #N` (or `Fixes ENG-123`) when it came from an issue; GitHub and Linear close it on merge. */
@@ -90,13 +93,13 @@ export function prComment(url: string): string {
 
 /** The task already started from GitHub issue `number`, if any (the newest when there are several). */
 export function taskForIssue<T extends Pick<TaskMeta, 'issue' | 'created_at'>>(list: T[], number: number): T | undefined {
-	return list.filter((t) => t.issue && !isLinear(t.issue) && t.issue.number === number).sort((a, b) => b.created_at - a.created_at)[0];
+	return list.filter((t) => t.issue && isFolderGithub(t.issue) && t.issue.number === number).sort((a, b) => b.created_at - a.created_at)[0];
 }
 
 /** GitHub issue number → its task's slug, for the Issues page's "has a task" links. */
 export function tasksByIssue(list: Pick<TaskMeta, 'issue' | 'slug' | 'created_at'>[]): Map<number, string> {
 	const map = new Map<number, string>();
-	for (const t of [...list].sort((a, b) => a.created_at - b.created_at)) if (t.issue && !isLinear(t.issue)) map.set(t.issue.number, t.slug);
+	for (const t of [...list].sort((a, b) => a.created_at - b.created_at)) if (t.issue && isFolderGithub(t.issue)) map.set(t.issue.number, t.slug);
 	return map;
 }
 

@@ -45,8 +45,11 @@ export type TaskMeta = {
 	sessions?: SessionRef[];
 };
 
-/** Mirrors Rust `agent::tasks::IssueLink`. No `provider` means GitHub (links saved before Linear came). */
-export type IssueLink = { number: number; url: string; title: string; provider?: 'github' | 'linear'; key?: string };
+/**
+ * Mirrors Rust `agent::tasks::IssueLink`. No `provider` means GitHub (links saved before Linear came).
+ * `key`: `ENG-123` (Linear, Jira), `group/app#12` (GitLab), `acme/app#42` (GitHub, from a Project).
+ */
+export type IssueLink = { number: number; url: string; title: string; provider?: 'github' | 'linear' | 'gitlab' | 'jira'; key?: string };
 
 /** Mirrors Rust `agent::tasks::RunSummary`. */
 export type RunSummary = {

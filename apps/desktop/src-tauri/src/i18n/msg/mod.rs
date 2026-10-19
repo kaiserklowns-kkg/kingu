@@ -11,6 +11,7 @@ mod projects;
 mod mcp;
 mod snap;
 mod team;
+mod trackers;
 mod workspace;
 mod worktree;
 
@@ -24,6 +25,7 @@ pub use projects::ProjectsMsg;
 pub use mcp::McpMsg;
 pub use snap::SnapMsg;
 pub use team::TeamMsg;
+pub use trackers::TrackerMsg;
 pub use workspace::WorkspaceMsg;
 pub use worktree::WorktreeMsg;
 
@@ -53,6 +55,7 @@ pub fn all() -> Vec<Entry> {
   out.extend(McpMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(SnapMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(TeamMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(TrackerMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(WorkspaceMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(WorktreeMsg::ALL.iter().map(|&m| entry(m)));
   out

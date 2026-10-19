@@ -68,8 +68,9 @@ import { quickOpenWorktree } from './quickOpen.svelte.ts';
 import { diffNotes } from './diffNotes.svelte.ts';
 import { pruneAcceptedHunks, sameMarks } from './hunkReview.ts';
 import { adeDialogs } from './dialogs.svelte.ts';
+import { commentOnLink } from './trackerApi.ts';
 import { prefillPr, prFormProblem, type Commit, type PrForm } from './prForm.ts';
-import { isLinear, issueLink, issuePrompt, issueRef, issueSlug, issueTaskTitle, prBody, prComment, taskForIssue, type Issue, type IssueDetail } from './issues.ts';
+import { isFolderGithub, isLinear, issueLink, issuePrompt, issueRef, issueSlug, issueTaskTitle, prBody, prComment, taskForIssue, type Issue, type IssueDetail } from './issues.ts';
 import { linearLink, linearPrompt, linearSlug, linearTaskTitle, taskForLinearIssue, type LinearIssue, type LinearIssueDetail } from './linear.ts';
 import { brokenChecks, MERGE_LABEL, type MergeMethod } from './prChecks.ts';
 import { buildCommentsPrompt, buildFixChecksPrompt, type CheckLog } from './prPrompts.ts';
@@ -403,7 +404,7 @@ class AdeTasks {
 		await invoke<string[]>('worktree_link_shared', { slug }).catch((e) => clientLog('info', `link shared ${slug}: ${e}`));
 		const marker = await this.#runSetup(slug, input.open !== false, yaml);
 		await this.#openDefaultTabs(slug, input.open !== false, yaml);
-		if (input.issue && input.issue.provider !== 'linear') await this.#runIssueCommand(slug, input.issue, input.open !== false);
+		if (input.issue && isFolderGithub(input.issue)) await this.#runIssueCommand(slug, input.issue, input.open !== false);
 		if (marker) await this.#waitForSetup(slug, marker);
 		// After the prompt: claude's --mcp-config takes several values and would swallow it.
 		const attachments = input.attachments ?? [];
@@ -1205,7 +1206,7 @@ class AdeTasks {
 		void prStatuses.refresh(slug);
 		if (url && meta.issue && settings.get<boolean>('kingu.issues.commentOnPr') === true) {
 			const link = meta.issue;
-			const posted = isLinear(link) ? invoke('linear_issue_comment', { id: link.key, body: prComment(url) }) : invoke('gh_issue_comment', { number: link.number, body: prComment(url) });
+			const posted = isLinear(link) ? invoke('linear_issue_comment', { id: link.key, body: prComment(url) }) : isFolderGithub(link) ? invoke('gh_issue_comment', { number: link.number, body: prComment(url) }) : commentOnLink(link, prComment(url));
 			posted.catch((e) => status.flash(t('adeTasks.tasks.issueCommentFailed', { ref: issueRef(link), error: String(e) }), 8000));
 		}
 		return null;

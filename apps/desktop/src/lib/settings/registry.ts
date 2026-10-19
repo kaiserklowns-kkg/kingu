@@ -533,6 +533,39 @@ const CORE_SETTINGS: SettingSchema[] = [
 			'team key ของ Linear (เช่น ENG) ที่ Linear: Start Task from Issue… แสดง issue ว่างไว้เพื่อแสดงทุกทีม ตั้งต่อ repository ได้ (Linear team key to list issues from; empty lists every team.)'
 	},
 	{
+		id: 'kingu.github.project',
+		group: 'Agent',
+		type: 'string',
+		default: '',
+		description:
+			'GitHub Project (v2) ที่หน้า Issues แสดง issue ที่เปิดอยู่ ในรูป owner/number (เช่น acme/3 หรือ @me/1) ต้องให้ gh มี scope read:project ว่างไว้เพื่อไม่แสดง (GitHub Project whose open issues the Issues page lists, as owner/number; needs gh\'s read:project scope.)'
+	},
+	{
+		id: 'kingu.gitlab.host',
+		group: 'Agent',
+		type: 'string',
+		default: 'gitlab.com',
+		description: 'host ของ GitLab ที่ใช้กับ GitLab: Connect และหน้า Issues (GitLab host for GitLab: Connect and the Issues page.)',
+		// User-only: a repository's workspace settings must not send the token to another host.
+		scope: 'application'
+	},
+	{
+		id: 'kingu.gitlab.project',
+		group: 'Agent',
+		type: 'string',
+		default: '',
+		description:
+			'path ของโปรเจกต์ GitLab (เช่น group/app) ที่หน้า Issues แสดง issue ว่างไว้เพื่อใช้ remote ของโฟลเดอร์ที่อยู่บน host นั้น ตั้งต่อ repository ได้ (GitLab project path to list issues from; empty uses the folder\'s remote on that host.)'
+	},
+	{
+		id: 'kingu.jira.jql',
+		group: 'Agent',
+		type: 'string',
+		default: '',
+		description:
+			'เงื่อนไข JQL เพิ่มเติมสำหรับ issue ของ Jira ในหน้า Issues (เช่น project = ENG) ไม่ต้องใส่ ORDER BY ตั้งต่อ repository ได้ (Extra JQL ANDed into the Jira issue lists, e.g. project = ENG, without ORDER BY.)'
+	},
+	{
 		id: 'kingu.team.serverUrl',
 		group: 'Team',
 		type: 'string',

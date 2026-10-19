@@ -12,6 +12,8 @@ mod git_queue;
 mod i18n;
 mod glob;
 mod git_remote;
+mod gitlab;
+mod jira;
 mod linear;
 mod logging;
 mod lsp;
@@ -34,6 +36,7 @@ mod terminal_links;
 mod team;
 mod usage;
 mod textfile;
+mod tracker_http;
 mod vault;
 mod watcher;
 mod window;
@@ -1437,6 +1440,25 @@ pub fn run() {
       linear::linear_issue_view,
       linear::linear_issue_comment,
       linear::linear_issue_open,
+      gitlab::gitlab_status,
+      gitlab::gitlab_connect,
+      gitlab::gitlab_disconnect,
+      gitlab::gitlab_issues_list,
+      gitlab::gitlab_issue_view,
+      gitlab::gitlab_issue_comment,
+      gitlab::gitlab_issue_open,
+      jira::jira_status,
+      jira::jira_connect,
+      jira::jira_disconnect,
+      jira::jira_issues_list,
+      jira::jira_issue_view,
+      jira::jira_issue_comment,
+      jira::jira_issue_open,
+      agent::gh_projects::gh_projects_list,
+      agent::gh_projects::gh_project_items,
+      agent::gh_projects::gh_project_issue_view,
+      agent::gh_projects::gh_project_issue_comment,
+      agent::gh_projects::gh_project_issue_open,
       search_text,
       search_cancel,
       worktree_search,

@@ -26,7 +26,7 @@ export type TaskSync = {
 export type TaskSource = 'manual' | 'github' | 'linear' | 'jira';
 
 /** The issue a task came from (shape of the ADE's `IssueLink`). */
-export type TeamIssue = { provider?: 'github' | 'linear'; number: number; url: string; key?: string };
+export type TeamIssue = { provider?: 'github' | 'linear' | 'gitlab' | 'jira'; number: number; url: string; key?: string };
 
 /** Mirrors `team::payload::RunSync` in Rust. */
 export type RunSync = {
@@ -94,11 +94,15 @@ export const clientTaskId = (id: string) => id.replace(/[^A-Za-z0-9._:-]/g, '-')
 
 /**
  * The issue as the team server names it: `owner/repo#42` for GitHub (`#42` when the URL is not a
- * github.com issue), the identifier (`ENG-123`) for Linear. Never carries the URL's query or more.
+ * github.com issue; a GitHub Project issue's key), the identifier (`ENG-123`) for Linear and Jira;
+ * none for GitLab, which the team server does not know. Never carries the URL's query or more.
  */
 export function issueSource(issue: TeamIssue | null | undefined): { source: TaskSource; external_ref: string } | undefined {
 	if (!issue) return undefined;
 	if (issue.provider === 'linear') return issue.key && /^[A-Za-z0-9]+-\d+$/.test(issue.key) ? { source: 'linear', external_ref: issue.key } : undefined;
+	if (issue.provider === 'jira') return issue.key && /^[A-Z][A-Z0-9_]*-\d+$/.test(issue.key) ? { source: 'jira', external_ref: issue.key } : undefined;
+	if (issue.provider === 'gitlab') return undefined;
+	if (issue.key) return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d+$/.test(issue.key) ? { source: 'github', external_ref: issue.key } : undefined;
 	if (!Number.isSafeInteger(issue.number) || issue.number <= 0) return undefined;
 	const m = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/(?:issues|pull)\/\d+(?:[?#].*)?$/.exec(issue.url);
 	return { source: 'github', external_ref: m ? `${m[1]}/${m[2]}#${issue.number}` : `#${issue.number}` };

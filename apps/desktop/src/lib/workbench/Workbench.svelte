@@ -71,6 +71,8 @@
 	import { installIssues } from '#lib/ade/issues.svelte.ts';
 	import { installLinear } from '#lib/ade/linear.svelte.ts';
 	import LinearConnect from '#lib/ade/LinearConnect.svelte';
+	import { installTaskSources } from '#lib/ade/taskSources.svelte.ts';
+	import TrackerConnect from '#lib/ade/TrackerConnect.svelte';
 	import { installSnaps } from '#lib/snaps/snaps.svelte.ts';
 	import { installMcp } from '#lib/mcp/mcp.svelte.ts';
 	import { installVault } from '#lib/vault/vault.svelte.ts';
@@ -322,6 +324,7 @@
 		const uninstallAutomations = installAutomations();
 		const uninstallIssues = installIssues();
 		const uninstallLinear = installLinear();
+		const uninstallTaskSources = installTaskSources();
 		const uninstallLayout = installLayoutCommands();
 		const uninstallSnaps = installSnaps();
 		const uninstallMcp = installMcp();
@@ -367,6 +370,7 @@
 			uninstallWorktreeCommands();
 			uninstallIssues();
 			uninstallLinear();
+			uninstallTaskSources();
 			uninstallAutomations();
 			uninstallAgentNotifications();
 			uninstallAdeAttention();
@@ -527,6 +531,7 @@
 	<Tooltips />
 	<QuickInput />
 	<LinearConnect />
+	<TrackerConnect />
 	<AdeDialogs />
 	<RepoDialog />
 	<NotificationToasts />
