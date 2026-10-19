@@ -13,6 +13,7 @@ import { contextTokensOf, contextWindowOf, isUuid, mcpStatus, modelOptions, norm
 import { snapshotHooks } from './snapshots.ts';
 import { Guards } from './guards/index.ts';
 import { checkAnswers, isAskUserQuestion, QUESTIONS_DISMISSED } from './questions.ts';
+import { Runtimes, runtimeSpec, SessionError, type SpawnFn } from './runtimes/index.ts';
 import {
 	DECISIONS,
 	MCP_TYPES,
@@ -199,6 +200,8 @@ export type HostDeps = {
 	log?: (line: string) => void;
 	/** Reads an attached image file (tests pass a fake). */
 	readFile?: (path: string) => Uint8Array;
+	/** Starts another runtime's agent process (runtimes/; tests may pass their own). */
+	spawn?: SpawnFn;
 };
 
 class RpcError extends Error {
@@ -231,11 +234,14 @@ export class AgentHost {
 	private log: (line: string) => void;
 
 	private read: (path: string) => Uint8Array;
+	/** Runs of the other runtimes (ACP agents, Codex): same requests, same events. */
+	private others: Runtimes;
 
 	constructor(private deps: HostDeps) {
 		this.read = deps.readFile ?? ((path) => readFileSync(path));
 		this.newId = deps.newId ?? (() => crypto.randomUUID());
 		this.log = deps.log ?? (() => {});
+		this.others = new Runtimes({ emit: (id, ev) => this.emit(id, ev), log: (line) => this.log(line), newId: () => this.newId(), spawn: deps.spawn });
 	}
 
 	emit(runId: number, event: AgentEvent) {
@@ -256,13 +262,14 @@ export class AgentHost {
 			const result = await this.dispatch(req.method, req.params);
 			this.deps.write({ jsonrpc: '2.0', id: req.id, result: result ?? null });
 		} catch (e) {
-			const code = e instanceof RpcError ? e.code : -32000;
+			const code = e instanceof RpcError || e instanceof SessionError ? e.code : -32000;
 			this.deps.write({ jsonrpc: '2.0', id: req.id, error: { code, message: e instanceof Error ? e.message : String(e) } });
 		}
 	}
 
 	async dispatch(method: string, params: unknown): Promise<unknown> {
 		const p = (params ?? {}) as Record<string, unknown>;
+		if (this.others.has(p.runId)) return this.dispatchOther(method, p);
 		switch (method) {
 			case 'start':
 				return this.start(p as StartParams);
@@ -278,14 +285,45 @@ export class AgentHost {
 				return this.setOptions(p as SetOptionsParams);
 			case 'shutdown':
 				await Promise.all([...this.runs.values()].map((r) => this.stop(r)));
+				await this.others.shutdown();
 				return null;
 			default:
 				throw new RpcError(METHOD_NOT_FOUND, `unknown method ${method}`);
 		}
 	}
 
+	/** A request for a run of another runtime (runtimes/). */
+	private async dispatchOther(method: string, p: Record<string, unknown>): Promise<unknown> {
+		const run = this.others.get(p.runId);
+		switch (method) {
+			case 'send': {
+				const s = p as SendParams;
+				need(typeof s.text === 'string' && s.text.trim(), 'message is empty');
+				return run.send(s.text, imageBlocks(s.images, this.read), s.images ?? [], shownText(s.text, s.images));
+			}
+			case 'interrupt':
+				return run.interrupt();
+			case 'stop':
+				return run.stop();
+			case 'answer':
+				return run.answer(p as AnswerParams);
+			case 'set_options': {
+				const o = p as SetOptionsParams;
+				const model = o.model ?? undefined;
+				const mode = o.permissionMode ?? undefined;
+				need(mode === undefined || PERMISSION_MODES.includes(mode), `unsupported permission mode ${String(mode)}`);
+				need(model !== undefined || mode !== undefined, 'nothing to change');
+				return run.setOptions(model, mode);
+			}
+			case 'start':
+				throw new RpcError(INVALID_PARAMS, `run ${String(p.runId)} already exists`);
+			default:
+				throw new RpcError(METHOD_NOT_FOUND, `unknown method ${method}`);
+		}
+	}
+
 	get runCount() {
-		return this.runs.size;
+		return this.runs.size + this.others.size;
 	}
 
 	private run(id: unknown): Run {
@@ -296,7 +334,7 @@ export class AgentHost {
 
 	start(p: StartParams) {
 		need(Number.isInteger(p.runId), 'runId must be an integer');
-		need(!this.runs.has(p.runId), `run ${p.runId} already exists`);
+		need(!this.runs.has(p.runId) && !this.others.has(p.runId), `run ${p.runId} already exists`);
 		need(typeof p.cwd === 'string' && p.cwd.startsWith('/'), 'cwd must be an absolute path');
 		need(typeof p.prompt === 'string' && p.prompt.trim(), 'prompt is empty');
 		const mode = p.permissionMode ?? 'default';
@@ -324,6 +362,33 @@ export class AgentHost {
 		need(typeof append === 'string' && append.length <= MAX_SYSTEM_APPEND, 'systemPromptAppend must be a string of at most 256 KB');
 		const resumeAt = p.resumeAt || undefined;
 		need(resumeAt === undefined || (isUuid(resumeAt) && p.resume), 'resumeAt must be a message uuid, with resume');
+		let other: ReturnType<typeof runtimeSpec>;
+		try {
+			other = runtimeSpec(p.runtime);
+		} catch (e) {
+			throw new RpcError(INVALID_PARAMS, e instanceof Error ? e.message : String(e));
+		}
+		if (other) {
+			// Another runtime: no rewinding into a session (only the SDK can), no Claude plugins or system prompt.
+			need(resumeAt === undefined, 'this runtime cannot resume at a message');
+			this.others.start(other.kind, {
+				runId: p.runId,
+				cwd: p.cwd,
+				command: other.command,
+				args: other.args,
+				prompt: p.prompt,
+				shownPrompt: shownText(p.prompt, p.images),
+				images,
+				imagePaths: p.images ?? [],
+				mode,
+				resume: p.resume || null,
+				mcpServers: mcp,
+				env: runEnv(this.deps.options?.env ?? process.env, extraEnv, unset),
+				snapshots: p.snapshots === true,
+				safetyChecks: p.safetyChecks !== false
+			});
+			return { runId: p.runId };
+		}
 
 		const run = new Run(p.runId);
 		if (p.safetyChecks !== false) run.guards = new Guards();

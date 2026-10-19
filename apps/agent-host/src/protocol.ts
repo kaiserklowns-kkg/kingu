@@ -2,6 +2,7 @@
 //
 // Framing: one JSON-RPC 2.0 message per line on stdin/stdout (UTF-8, '\n'-terminated).
 // Rust → host requests:  start, send, interrupt, stop, answer, set_options, shutdown.
+// `start {runtime}` picks the agent behind the run (runtimes/); the other requests are the same for all.
 // Host → Rust notifications: `ready` once at startup, `event` {runId, event} for every run event.
 // Field names in events are snake_case, mirroring `AgentEvent` in src-tauri/src/agent/events.rs.
 
@@ -47,7 +48,15 @@ export type StartParams = {
 	safetyChecks?: boolean | null;
 	/** Project rules (AGENTS.md, .cursor/rules, …; Rust agent/rules.rs) appended to Claude Code's system prompt. */
 	systemPromptAppend?: string | null;
+	/** Which agent runs the session (runtimes/): absent or `claude` is the Claude Agent SDK. */
+	runtime?: RuntimeSpec | null;
 };
+/**
+ * A runtime other than the Claude Agent SDK, resolved by Rust (agent/runtimes.rs) to a program it
+ * found on the login-shell PATH: an ACP agent (Agent Client Protocol, JSON-RPC over stdio) or
+ * `codex app-server`. `command` is absolute.
+ */
+export type RuntimeSpec = { kind: 'claude' } | { kind: 'acp' | 'codex'; command: string; args?: string[] };
 /** An MCP server: a program over stdio (`type` absent or `stdio`), or a remote one over `http` / `sse`. */
 export type McpServerParams = {
 	type?: 'stdio' | 'http' | 'sse';
