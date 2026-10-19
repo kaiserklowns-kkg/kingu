@@ -1,6 +1,8 @@
 <script lang="ts">
-	// Diff for Source Control tabs (`diff:<file>`): HEAD on the left, the working copy on the right
-	// (VS Code's "file (Working Tree)" editor), and for task diff tabs (`taskdiff://`) the task's
+	// Diff for Source Control tabs: `diff:<file>` the index on the left and the working copy on the
+	// right (VS Code's "file (Working Tree)" editor), `indexdiff:<file>` HEAD ↔ index ("file
+	// (Index)"), `histdiff://` a commit of the Timeline, `conflictcompare:` merge-conflict.compare;
+	// and for task diff tabs (`taskdiff://`) the task's
 	// fork point on the left. Read-only: edits go through the file's own tab. Mounted per editor
 	// group only while that group has a diff tab open, and in the Agents layout for its diff tabs.
 	// `active` is the shown tab's key; `onfail` closes it. The header has Orca's diff controls
@@ -13,7 +15,9 @@
 	import { diffEditorOptionsFrom, diffWraps } from '#lib/settings/mappings.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { editors } from './editors.svelte';
-	import { fileOf, isDiffKey, isTaskDiffKey, parseCommitDiffKey, parseTaskDiffKey } from './scm';
+	import { fileOf, isConflictCompareKey, isDiffKey, isIndexDiffKey, isTaskDiffKey, parseCommitDiffKey, parseHistoryDiffKey, parseTaskDiffKey } from './scm';
+	import { compareSides } from '#lib/scm/conflicts.ts';
+	import { addIndexDiffView } from '#lib/scm/quickDiff.svelte.ts';
 	import { scm } from './scm.svelte';
 	import Icon from './Icon.svelte';
 	import PopupMenu, { menuItem, menuSeparator } from './PopupMenu.svelte';
@@ -37,6 +41,7 @@
 	/** Accept / reject per hunk on task diffs (hunkReview). */
 	let hunksUi: HunkToolbars | undefined;
 	let detachHunks: (() => void) | undefined;
+	let detachIndexDiff: (() => void) | undefined;
 	let shown: { original: Monaco.editor.ITextModel; modified: Monaco.editor.ITextModel } | undefined;
 	/** The key whose models are in the editor (the zones belong to it). */
 	let shownKey = $state<string | null>(null);
@@ -84,6 +89,11 @@
 				...diffEditorOptionsFrom((id) => settings.get(id))
 			});
 			notesUi = installDiffNotes(m.monaco, d, () => noteFile(shownKey));
+			// git.unstageSelectedRanges in a Staged Changes tab: the selected index lines.
+			detachIndexDiff = addIndexDiffView({
+				key: () => (shownKey && isIndexDiffKey(shownKey) ? shownKey : null),
+				selections: () => (d.getModifiedEditor().getSelections() ?? []).map((s) => ({ start: s.startLineNumber, end: s.endLineNumber }))
+			});
 			hunksUi = installHunkToolbars(d, () => (shownKey && isTaskDiffKey(shownKey) ? shownKey : null));
 			detachHunks = hunkReview.attach(hunksUi);
 			d.getModifiedEditor().addAction({
@@ -100,6 +110,7 @@
 			disposed = true;
 			notesUi?.dispose();
 			detachHunks?.();
+			detachIndexDiff?.();
 			hunksUi?.dispose();
 			diff?.dispose();
 			shown?.original.dispose();
@@ -132,21 +143,47 @@
 		// A rename diffs against the source's HEAD contents.
 		const entry = scm.repo?.entries.find((e) => e.path === rel);
 		const headPath = entry?.orig_path ?? rel;
-		return { text: await invoke<string>('git_show_head', { rel: headPath }), path: headPath };
+		const head = async () => ({ text: await invoke<string>('git_show_head', { rel: headPath }), path: headPath });
+		// Staged Changes (`indexdiff:`) compare HEAD with the index.
+		if (isIndexDiffKey(key)) return head();
+		// Changes (`diff:`): the index against the working tree (VS Code's "a.ts (Working Tree)");
+		// an untracked file has nothing on the left, a conflicted one (no stage 0) HEAD.
+		if (entry?.worktree === '?') return { text: '', path: rel };
+		const index = await invoke<string | null>('scm_show_index', { rel }).catch(() => null);
+		return index === null ? head() : { text: index, path: `index/${rel}` };
+	}
+
+	/** The two sides of the Source Control diff kinds that are not the working copy on the right. */
+	async function sides(m: typeof import('#lib/editor/monaco.ts'), key: string, rel: string): Promise<[{ text: string; path: string }, string] | null> {
+		const commit = parseCommitDiffKey(key);
+		// A commit diff compares the file before and after that commit (empty when added or deleted).
+		if (commit)
+			return Promise.all([
+				invoke<string>('git_show_ref', { slug: commit.slug || null, rev: `${commit.hash}^`, rel: commit.rel }).catch(() => '').then((text) => ({ text, path: `${commit.hash}^/${commit.rel}` })),
+				invoke<string>('git_show_ref', { slug: commit.slug || null, rev: commit.hash, rel: commit.rel }).catch(() => '')
+			]);
+		// Timeline / file history: the commit's parent under the file's earlier name.
+		const history = parseHistoryDiffKey(key);
+		if (history)
+			return Promise.all([
+				invoke<string>('git_show_ref', { slug: null, rev: `${history.hash}^`, rel: history.before }).catch(() => '').then((text) => ({ text, path: `${history.hash}^/${history.before}` })),
+				invoke<string>('git_show_ref', { slug: null, rev: history.hash, rel: history.rel }).catch(() => '')
+			]);
+		// Staged Changes: the index on the right.
+		if (isIndexDiffKey(key)) return Promise.all([original(key, rel), invoke<string | null>('scm_show_index', { rel }).then((t) => t ?? '')]);
+		// merge-conflict.compare: every conflict as its current side ↔ as its incoming side.
+		if (isConflictCompareKey(key)) {
+			const both = compareSides(await workingCopy(m, rel));
+			return [{ text: both.current, path: `current/${rel}` }, both.incoming];
+		}
+		return null;
 	}
 
 	async function show(m: typeof import('#lib/editor/monaco.ts'), key: string) {
 		const rel = fileOf(key);
 		const my = ++seq;
 		try {
-			const commit = parseCommitDiffKey(key);
-			// A commit diff compares the file before and after that commit (empty when added or deleted).
-			const [orig, work] = commit
-				? await Promise.all([
-						invoke<string>('git_show_ref', { slug: commit.slug || null, rev: `${commit.hash}^`, rel: commit.rel }).catch(() => '').then((text) => ({ text, path: `${commit.hash}^/${commit.rel}` })),
-						invoke<string>('git_show_ref', { slug: commit.slug || null, rev: commit.hash, rel: commit.rel }).catch(() => '')
-					])
-				: await Promise.all([original(key, rel), workingCopy(m, rel)]);
+			const [orig, work] = (await sides(m, key, rel)) ?? (await Promise.all([original(key, rel), workingCopy(m, rel)]));
 			const head = orig.text;
 			const headPath = orig.path;
 			if (my !== seq || !diff || active !== key) return;

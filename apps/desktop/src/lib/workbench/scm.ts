@@ -160,8 +160,40 @@ export function parseCommitDiffKey(key: string): { slug: string; hash: string; r
 	return slug && hash && rest.length ? { slug: slug === '_' ? '' : slug, hash, rel: rest.join('/') } : null;
 }
 
+/** Staged Changes: HEAD ↔ index of a file, `indexdiff:<rel>` (VS Code's "a.ts (Index)"). `diff:` is index ↔ working tree. */
+export const INDEX_DIFF_PREFIX = 'indexdiff:';
+export const indexDiffKey = (rel: string) => INDEX_DIFF_PREFIX + rel;
+export const isIndexDiffKey = (key: string) => key.startsWith(INDEX_DIFF_PREFIX);
+export const parseIndexDiffKey = (key: string) => (isIndexDiffKey(key) ? key.slice(INDEX_DIFF_PREFIX.length) : null);
+
+/**
+ * A file as one commit of its history changed it, with the path it had before (Timeline, View
+ * File History): `histdiff://<hash>/<encoded path before or _>/<rel>`.
+ */
+export const HISTORY_DIFF_PREFIX = 'histdiff://';
+export const historyDiffKey = (hash: string, rel: string, before?: string | null) => `${HISTORY_DIFF_PREFIX}${hash}/${before && before !== rel ? encodeURIComponent(before) : '_'}/${rel}`;
+export const isHistoryDiffKey = (key: string) => key.startsWith(HISTORY_DIFF_PREFIX);
+export function parseHistoryDiffKey(key: string): { hash: string; rel: string; before: string } | null {
+	if (!isHistoryDiffKey(key)) return null;
+	const [hash, before, ...rest] = key.slice(HISTORY_DIFF_PREFIX.length).split('/');
+	if (!hash || !before || !rest.length) return null;
+	const rel = rest.join('/');
+	return { hash, rel, before: before === '_' ? rel : decodeURIComponent(before) };
+}
+
+/** merge-conflict.compare: the file with every conflict as its current side ↔ as its incoming side. */
+export const CONFLICT_COMPARE_PREFIX = 'conflictcompare:';
+export const conflictCompareKey = (rel: string) => CONFLICT_COMPARE_PREFIX + rel;
+export const isConflictCompareKey = (key: string) => key.startsWith(CONFLICT_COMPARE_PREFIX);
+
+/** The 3-way merge editor of a conflicted file: `merge://<rel>`. */
+export const MERGE_PREFIX = 'merge://';
+export const mergeKey = (rel: string) => MERGE_PREFIX + rel;
+export const isMergeKey = (key: string) => key.startsWith(MERGE_PREFIX);
+
 /** A chat's working-set file, its snapshot before the agent's edits vs now: `chatedit://<chat id>/<file>` (agent/chatEdits.ts). */
-export const isDiffKey = (key: string) => key.startsWith(DIFF_PREFIX) || isTaskDiffKey(key) || isCommitDiffKey(key) || isChatEditKey(key);
+export const isDiffKey = (key: string) =>
+	key.startsWith(DIFF_PREFIX) || isIndexDiffKey(key) || isHistoryDiffKey(key) || isConflictCompareKey(key) || isTaskDiffKey(key) || isCommitDiffKey(key) || isChatEditKey(key);
 /** The workspace file behind an editor tab key (itself for plain file tabs; a task diff's file
  * lives in the worktree under `.kingu/worktrees/<slug>/`). */
 export function fileOf(key: string): string {
@@ -172,6 +204,9 @@ export function fileOf(key: string): string {
 	if (task) return `.kingu/worktrees/${task.slug}/${task.rel}`;
 	const commit = parseCommitDiffKey(key);
 	if (commit) return commit.slug ? `.kingu/worktrees/${commit.slug}/${commit.rel}` : commit.rel;
+	const history = parseHistoryDiffKey(key);
+	if (history) return history.rel;
+	for (const prefix of [INDEX_DIFF_PREFIX, CONFLICT_COMPARE_PREFIX, MERGE_PREFIX]) if (key.startsWith(prefix)) return key.slice(prefix.length);
 	return key.startsWith(DIFF_PREFIX) ? key.slice(DIFF_PREFIX.length) : key;
 }
 
@@ -183,6 +218,11 @@ export function tabLabel(key: string): string {
 	const commit = parseCommitDiffKey(key);
 	if (commit) return `${name} (${commit.hash.slice(0, 7)})`;
 	if (isChatEditKey(key)) return t('chatEdits.diffLabel', { name });
+	if (isIndexDiffKey(key)) return `${name} (Index)`;
+	const history = parseHistoryDiffKey(key);
+	if (history) return `${name} (${history.hash.slice(0, 7)})`;
+	if (isConflictCompareKey(key)) return t('scmEditor.compareLabel', { name });
+	if (isMergeKey(key)) return t('scmEditor.merge.tabLabel', { name });
 	if (isPreviewKey(key)) return `Preview ${name}`;
 	return isDiffKey(key) ? `${name} (Working Tree)` : name;
 }

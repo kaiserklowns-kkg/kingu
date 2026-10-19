@@ -28,6 +28,7 @@
 	import { tick } from 'svelte';
 	import PopupMenu, { menuItem, menuSeparator } from './PopupMenu.svelte';
 	import { floating } from './floating.svelte';
+	import { gitBlame, openCommitChanges } from '#lib/scm/blame.svelte.ts';
 	import FloatingToggle from './FloatingToggle.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { gitQueue } from './gitQueue.svelte';
@@ -224,6 +225,12 @@
 	<div class="flex-1"></div>
 	<TeamStatus />
 	<StatusResources />
+	{#if gitBlame.statusEnabled && gitBlame.statusText && editorItems}
+		<!-- git.blame.statusBarItem.enabled: the cursor line's commit (VS Code's git.blame item). -->
+		<button class={[ITEM, 'max-w-80 min-w-0']} title={gitBlame.statusTitle} onclick={() => gitBlame.statusCommit && openCommitChanges(gitBlame.statusCommit.hash, gitBlame.statusCommit.path)}>
+			<Icon name="commit" size={14} /><span class="truncate">{gitBlame.statusText}</span>
+		</button>
+	{/if}
 	{#if editorItems && languageStatus}
 		<button
 			class={['h-full max-w-80 truncate px-2 hover:bg-(--vscode-toolbar-hoverBackground)', languageStatus.state === 'not-installed' || languageStatus.state === 'error' ? 'text-(--vscode-editorWarning-foreground)' : '']}

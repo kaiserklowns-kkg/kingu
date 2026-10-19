@@ -38,6 +38,8 @@
 	import { layout, PANEL_MIN, SIDEBAR_MIN } from './layout.svelte';
 	import { quick } from './quick.svelte';
 	import { installScm } from './scm.svelte';
+	import { installScmEditor } from '#lib/scm/scmEditor.svelte.ts';
+	import { installTimeline } from '#lib/scm/timeline.svelte.ts';
 	import { search } from './search.svelte';
 	import { status } from './status.svelte';
 	import { workspace } from './workspace.svelte';
@@ -319,6 +321,8 @@
 		const uninstall = installKeybindings();
 		const uninstallMenu = installNativeMenu();
 		const uninstallScm = installScm();
+		const uninstallScmEditor = installScmEditor();
+		const uninstallTimeline = installTimeline();
 		const uninstallWatcher = workspace.install();
 		const uninstallSettings = installSettings();
 		const uninstallAppearance = installWorkbenchAppearance();
@@ -395,6 +399,8 @@
 			uninstallMenu();
 			uninstall();
 			uninstallScm();
+			uninstallScmEditor();
+			uninstallTimeline();
 			uninstallWatcher();
 			uninstallAppearance();
 			uninstallSettings();

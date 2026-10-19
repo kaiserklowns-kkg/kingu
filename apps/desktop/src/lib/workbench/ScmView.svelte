@@ -8,7 +8,11 @@
 	import { fileIcon, folderIcon } from './fileIcons';
 	import { editors } from './editors.svelte';
 	import { keyLabel } from './keys';
-	import { diffKey as headDiffKey, splitPath, type Resource, type ScmSource } from './scm';
+	import { diffKey as headDiffKey, indexDiffKey, mergeKey, splitPath, type Resource, type ScmSource } from './scm';
+	import { ask } from './messageBox';
+	import { invoke } from '@tauri-apps/api/core';
+	import { hasConflictMarkers } from '#lib/scm/conflicts.ts';
+	import { t } from '#lib/i18n/index.ts';
 	import { scm as folderScm } from './scm.svelte';
 	import { actionButton, actionButtonFlags, commitMessageWarnings, inputFontFamily, resourceTree, sortResources, type SortKey } from './scmSettings';
 	import { repoDialog } from './repoDialog.svelte.ts';
@@ -29,10 +33,10 @@
 	}: { source?: ScmSource; diffKey?: (rel: string) => string; fileKey?: (rel: string) => string } = $props();
 	const scm = $derived(source ?? folderScm);
 
-	type GroupId = 'staged' | 'changes' | 'untracked';
+	type GroupId = 'merge' | 'staged' | 'changes' | 'untracked';
 	type Confirm = { key: string; paths: string[]; untracked: boolean; text: string };
 
-	let open = $state({ staged: true, changes: true, untracked: true });
+	let open = $state({ merge: true, staged: true, changes: true, untracked: true });
 	let selected = $state<string | null>(null);
 	let confirming = $state<Confirm | null>(null);
 	let collapsed = $state(new Set<string>());
@@ -76,6 +80,9 @@
 	}
 
 	const untrackedList = $derived(scm.groups.untracked ?? []);
+	// VS Code's "Merge Changes" group: conflicted files, apart from the other changes.
+	const mergeList = $derived(scm.groups.changes.filter((r) => r.entry.conflict));
+	const changeList = $derived(scm.groups.changes.filter((r) => !r.entry.conflict));
 	const changeCount = $derived(scm.groups.staged.length + scm.groups.changes.length + untrackedList.length);
 	// scm.showActionButton + git.showActionButton: Commit, else Publish Branch, else Sync Changes.
 	const button = $derived(
@@ -120,25 +127,57 @@
 	type Action = { icon: IconName; label: string; run: () => unknown; hidden?: boolean };
 
 	// In the Agents layout (the folder's own Changes panel) diffs and files open as ADE tabs.
-	const openDiff = (rel: string, preview: boolean) =>
-		appMode.isAgents ? adeLayout.openFile(adeLayout.key, diffKey(rel), { preview }) : editors.open(diffKey(rel), { preview });
+	const openKey = (key: string, preview: boolean) => (appMode.isAgents ? adeLayout.openFile(adeLayout.key, key, { preview }) : editors.open(key, { preview }));
+	/** The diff a row opens: the open folder's staged files HEAD ↔ index, its changes index ↔ working tree (VS Code). */
+	const diffOf = (r: Resource) => (r.staged && !source ? indexDiffKey(r.entry.path) : diffKey(r.entry.path));
+	const openDiff = (r: Resource, preview: boolean) => openKey(diffOf(r), preview);
+	/** The merge editor is a workbench editor (the Agents layout has no merge view). */
+	const openMerge = (rel: string) => (appMode.setMode('workbench'), editors.open(mergeKey(rel), { preview: false }));
 	const openFile = (rel: string, preview = false) =>
 		appMode.isAgents ? adeLayout.openFile(adeLayout.key, fileKey(rel), { preview }) : editors.open(fileKey(rel), { preview });
 	// git.openDiffOnClick: a click opens the diff, else the file (deleted files have only the diff).
+	// A conflicted file opens itself, or the merge editor with `git.mergeEditor` (VS Code).
 	const openResource = (r: Resource, preview: boolean) =>
-		settings.get<boolean>('git.openDiffOnClick') || r.deleted ? openDiff(r.entry.path, preview) : openFile(r.entry.path, preview);
+		r.entry.conflict
+			? !source && settings.get<boolean>('git.mergeEditor')
+				? openMerge(r.entry.path)
+				: openFile(r.entry.path, preview)
+			: settings.get<boolean>('git.openDiffOnClick') || r.deleted
+				? openDiff(r, preview)
+				: openFile(r.entry.path, preview);
+
+	/** Staging a conflicted file marks it resolved; VS Code asks first when it still has markers. */
+	async function stageResolved(paths: string[]) {
+		const marked: string[] = [];
+		for (const p of paths) {
+			const text = editors.textModel(p)?.getValue() ?? (await invoke<string>('read_workspace_file', { rel: p }).catch(() => ''));
+			if (hasConflictMarkers(text)) marked.push(p);
+		}
+		if (marked.length) {
+			const name = marked.length === 1 ? splitPath(marked[0])[0] : t('scmEditor.merge.nFiles', { count: marked.length });
+			const ok = await ask(t('scmEditor.merge.stageWithConflicts', { name }), { title: 'Git', kind: 'warning', okLabel: t('scmEditor.merge.stageAnyway'), cancelLabel: t('common.cancel') });
+			if (!ok) return;
+		}
+		await scm.stage(paths);
+	}
 
 	// scm.autoReveal: the row of the active editor's file is selected.
 	$effect(() => {
 		const active = editors.active;
 		if (!active || !settings.get<boolean>('scm.autoReveal')) return;
 		const all = [...scm.groups.staged, ...scm.groups.changes, ...untrackedList];
-		const hit = all.find((r) => diffKey(r.entry.path) === active) ?? all.find((r) => fileKey(r.entry.path) === active);
+		const hit = all.find((r) => diffOf(r) === active) ?? all.find((r) => fileKey(r.entry.path) === active);
 		if (hit) selected = rowKey(hit);
 	});
 
 	function rowActions(r: Resource): Action[] {
 		const path = r.entry.path;
+		if (r.entry.conflict)
+			return [
+				{ icon: 'goToFile', label: 'Open File', run: () => openFile(path), hidden: !settings.get<boolean>('git.showInlineOpenFileAction') },
+				{ icon: 'merge', label: t('scmEditor.merge.resolveInEditor'), run: () => openMerge(path), hidden: !!source },
+				{ icon: 'plus', label: 'Stage Changes', run: () => stageResolved([path]) }
+			];
 		return [
 			{ icon: 'goToFile', label: 'Open File', run: () => openFile(path), hidden: r.deleted || !settings.get<boolean>('git.showInlineOpenFileAction') },
 			{ icon: 'discard', label: 'Discard Changes', run: () => askDiscard(rowKey(r), [r]), hidden: r.staged },
@@ -239,7 +278,7 @@
 						'group/row mx-1.5 flex h-(--kg-row-height) items-center rounded-md pr-2 leading-(--kg-row-height)',
 						selected === key
 							? 'bg-(--vscode-list-activeSelectionBackground) text-(--vscode-list-activeSelectionForeground)'
-							: editors.active === diffKey(r.entry.path)
+							: editors.active === diffOf(r)
 								? 'bg-(--vscode-list-inactiveSelectionBackground)'
 								: 'hover:bg-(--vscode-list-hoverBackground)'
 					]}
@@ -347,15 +386,18 @@
 		</div>
 
 		<div class="min-h-0 flex-1 overflow-y-auto" style:scroll-behavior="var(--kg-list-scroll-behavior, auto)">
+			{#if mergeList.length}
+				{@render group('merge', 'Merge Changes', mergeList, [{ icon: 'plus', label: 'Stage All Merge Changes', run: () => stageResolved(mergeList.map((r) => r.entry.path)) }])}
+			{/if}
 			{#if scm.groups.staged.length || settings.get<boolean>('git.alwaysShowStagedChangesResourceGroup')}
 				{@render group('staged', 'Staged Changes', scm.groups.staged, [
 					{ icon: 'minus', label: 'Unstage All Changes', run: () => scm.unstage(scm.groups.staged.map((r) => r.entry.path)), hidden: !scm.groups.staged.length }
 				])}
 			{/if}
-			{@render group('changes', 'Changes', scm.groups.changes, [
+			{@render group('changes', 'Changes', changeList, [
 				{ icon: 'files', label: 'ดูการเปลี่ยนแปลงทั้งหมดในหน้าเดียว', run: () => (appMode.setMode('workbench'), editors.open(changesKey(), { preview: false })), hidden: !scm.groups.changes.length && !scm.groups.staged.length },
-				{ icon: 'discard', label: 'Discard All Changes', run: () => askDiscard('group:changes', scm.groups.changes), hidden: !scm.groups.changes.length },
-				{ icon: 'plus', label: 'Stage All Changes', run: () => scm.stage(scm.groups.changes.map((r) => r.entry.path)), hidden: !scm.groups.changes.length }
+				{ icon: 'discard', label: 'Discard All Changes', run: () => askDiscard('group:changes', changeList), hidden: !changeList.length },
+				{ icon: 'plus', label: 'Stage All Changes', run: () => scm.stage(changeList.map((r) => r.entry.path)), hidden: !changeList.length }
 			])}
 			{#if untrackedList.length}
 				{@render group('untracked', 'Untracked Changes', untrackedList, [
