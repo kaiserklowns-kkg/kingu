@@ -114,7 +114,8 @@ fn dev_script() -> Option<PathBuf> {
 
 /// The real launch: resolved per spawn so a fixed PATH or newly built sidecar is picked up.
 pub fn default_launch() -> Result<HostLaunch, String> {
-  let path = crate::shell_env::path();
+  // The `kingu` command first, so timeline agents can run it too (cli_server.rs).
+  let path = crate::shell_env::merge(crate::cli_server::bin_dir().map(Path::as_os_str), crate::shell_env::path().as_deref());
   let home = std::env::var_os("HOME").map(PathBuf::from);
   let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
   let dev_script = dev_script();

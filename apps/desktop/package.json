@@ -13,7 +13,8 @@
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"tauri": "tauri",
 		"build:sidecar": "bun ../agent-host/scripts/build-sidecar.ts",
-		"build:ptyd": "bun ../../tools/build-ptyd.ts"
+		"build:ptyd": "bun ../../tools/build-ptyd.ts",
+		"build:cli": "bun ../../tools/build-cli.ts"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-static": "^4.0.0",

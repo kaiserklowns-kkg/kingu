@@ -82,6 +82,11 @@ fn deliver(app: AppHandle, title: String, body: String, sound: Option<String>, _
   b.show().map_err(|e| e.to_string())
 }
 
+/// A notification not tied to a task (`kingu notify`); a click brings Kingu to the front.
+pub fn show(app: &AppHandle, title: String, body: String) -> Result<(), String> {
+  deliver(app.clone(), title, body, sound_of(Some("default")), Clicked::default())
+}
+
 /// An agent notification for task `slug` or agent chat `chat_id` (neither: not tied to one,
 /// e.g. the test notification).
 #[allow(clippy::too_many_arguments)]

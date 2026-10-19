@@ -3,6 +3,7 @@
 
 mod accounts;
 mod agent;
+mod cli;
 mod core;
 mod git;
 mod linear;
@@ -16,6 +17,7 @@ mod worktree;
 
 pub use accounts::AccountsMsg;
 pub use agent::AgentMsg;
+pub use cli::CliMsg;
 pub use core::CoreMsg;
 pub use git::GitMsg;
 pub use linear::LinearMsg;
@@ -45,6 +47,7 @@ pub fn all() -> Vec<Entry> {
   let mut out = Vec::new();
   out.extend(AccountsMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(AgentMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(CliMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(CoreMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(GitMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(LinearMsg::ALL.iter().map(|&m| entry(m)));

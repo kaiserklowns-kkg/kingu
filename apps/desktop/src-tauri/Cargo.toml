@@ -28,6 +28,8 @@ tauri-plugin-log = "2"
 time = { version = "0.3", features = ["formatting", "macros"] }
 # Terminal sessions: in the kingu-ptyd daemon (macOS, Linux) or in-process.
 kingu-ptyd = { path = "../../../crates/kingu-ptyd" }
+# The `kingu` command's protocol and runtime file (src/cli_server.rs).
+kingu-cli = { path = "../../../crates/kingu-cli" }
 tauri-plugin-dialog = "=2.8.1"
 tauri-plugin-notification = "=2.5.1"
 notify = "=8.2.0"
