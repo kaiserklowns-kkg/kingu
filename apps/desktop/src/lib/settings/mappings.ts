@@ -44,10 +44,10 @@ export function diffWraps(get: Get): boolean {
  * IEditorOptions). Every editor.* setting that is a Monaco option goes through as is; the paths
  * are generated in editorOptionMap.ts.
  */
-export function editorOptionsFrom(get: Get): Monaco.editor.IEditorOptions & Monaco.editor.IGlobalEditorOptions {
+export function editorOptionsFrom(get: Get, themeSemantic = false): Monaco.editor.IEditorOptions & Monaco.editor.IGlobalEditorOptions {
 	const out: Record<string, unknown> = {};
 	for (const [id, path] of Object.entries(EDITOR_OPTION_PATHS)) {
-		const value = get(id);
+		const value = id === SEMANTIC_HIGHLIGHTING ? semanticHighlightingFrom(get(id), themeSemantic) : get(id);
 		if (value !== undefined) setPath(out, path, value);
 	}
 	// problems.visibility: off hides the squiggles in every editor, like VS Code's text editors.
@@ -60,9 +60,22 @@ export function editorOptionsFrom(get: Get): Monaco.editor.IEditorOptions & Mona
  * VS Code the editor contributions read `editor.codeActionWidget.showHeaders`,
  * `editor.stickyScroll.enabled`, … from the configuration, not from the editor's options).
  */
-export function editorConfigurationFrom(get: Get): [string, unknown][] {
+export function editorConfigurationFrom(get: Get, themeSemantic = false): [string, unknown][] {
 	const ids = [...Object.keys(EDITOR_OPTION_PATHS), ...EDITOR_CONFIG_SETTINGS, ...EDITOR_KINGU_SETTINGS, ...Object.keys(DIFF_EDITOR_OPTION_PATHS)];
-	return ids.map((id) => [id, get(id)] as [string, unknown]).filter(([, v]) => v !== undefined);
+	return ids.map((id) => [id, id === SEMANTIC_HIGHLIGHTING ? semanticHighlightingFrom(get(id), themeSemantic) : get(id)] as [string, unknown]).filter(([, v]) => v !== undefined);
+}
+
+const SEMANTIC_HIGHLIGHTING = 'editor.semanticHighlighting.enabled';
+
+/**
+ * `editor.semanticHighlighting.enabled` as Monaco takes it: `configuredByTheme` becomes the color
+ * theme's own `semanticHighlighting` (VS Code's default themes turn it on), because Monaco's
+ * standalone themes never do. Monaco reads it from its configuration service, so the
+ * configuration value is resolved the same way.
+ */
+export function semanticHighlightingFrom(value: unknown, themeSemantic: boolean): boolean | undefined {
+	if (value === undefined) return undefined;
+	return value === 'configuredByTheme' ? themeSemantic : value === true;
 }
 
 /** A model's indentation: `indentSize` is a number or `"tabSize"` (VS Code's editor.indentSize). */

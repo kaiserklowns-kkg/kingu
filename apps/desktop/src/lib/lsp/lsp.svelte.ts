@@ -3,6 +3,7 @@
 // with the Monaco models EditorHost owns, and exposes diagnostics and server status reactively.
 
 import { Channel, invoke } from '@tauri-apps/api/core';
+import { untrack } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import type * as Monaco from 'monaco-editor';
 import { clientLog } from '#lib/client-log.ts';
@@ -16,7 +17,9 @@ import { layout } from '#lib/workbench/layout.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
 import { status as statusBar } from '#lib/workbench/status.svelte.ts';
 import { notifications, type Severity } from '#lib/workbench/notifications.svelte.ts';
-import { LanguageClient, type ServerStatus } from './client';
+import { LanguageClient, type RefreshKind, type ServerStatus } from './client';
+import { registerFeatureProviders } from './featureProviders';
+import { serverSettings, typescriptPreferences, type SettingsReader } from './serverSettings';
 import {
 	fromSignatureHelp,
 	hoverContents,
@@ -27,7 +30,6 @@ import {
 	toMonacoTextEdits,
 	toRenameLocation,
 	toSignatureHelp,
-	symbolPath,
 	toCompletionItem,
 	toLspPosition,
 	toMarker,
@@ -35,8 +37,7 @@ import {
 	toMonacoSymbols,
 	toTargets,
 	uriOfRel,
-	uriToPath,
-	type Crumb
+	uriToPath
 } from './convert';
 import {
 	configurationValue,
@@ -54,14 +55,16 @@ import {
 	type ProblemFile,
 	type ServerInfo
 } from './model';
-import type { CodeAction, Command, CompletionItem, Diagnostic, DocumentSymbol, ServerCapabilities, SymbolInformation, WorkspaceEdit } from './protocol';
+import type { CallHierarchyItem, CodeAction, Command, CompletionItem, Diagnostic, DocumentSymbol, Location, Range, ServerCapabilities, SymbolInformation, WorkspaceEdit } from './protocol';
+import type { HierarchyDirection, HierarchyKind } from '#lib/workbench/hierarchyModel.ts';
 import { applyWorkspaceEdit, type ApplyResult } from './workspaceEdit';
 import { t } from '#lib/i18n/index.ts';
 import { isRustError } from '#lib/i18n/rustErrors.ts';
 
 type MonacoApi = typeof Monaco;
 type LspEvent = { type: 'message'; json: string } | { type: 'stderr'; line: string } | { type: 'exit'; code: number | null };
-type Session = { info: ServerInfo; client: LanguageClient; id: number | null; ready: Promise<boolean> };
+/** `pushed` / `init`: the settings last sent and the initializationOptions it started with (JSON), to spot changes. */
+type Session = { info: ServerInfo; client: LanguageClient; id: number | null; ready: Promise<boolean>; pushed: string; init: string };
 type Doc = { rel: string; uri: string; key: string; model: Monaco.editor.ITextModel; dispose?: () => void };
 
 const MARKER_OWNER = 'lsp';
@@ -112,6 +115,8 @@ class Lsp {
 	#pendingLog: string[] = [];
 	#installWatch = new Map<string, ReturnType<typeof setInterval>>();
 	#retrying = new Set<string>();
+	/** Listeners for the servers' refresh requests, per server key (replaced with the providers). */
+	#refresh = new Map<string, { kind: RefreshKind; run: () => void }[]>();
 
 	/** Called by EditorHost for every model it creates. */
 	attach(monaco: MonacoApi, model: Monaco.editor.ITextModel, rel: string) {
@@ -166,11 +171,6 @@ class Lsp {
 		return { text: statusText(info, s), tooltip: s.message ?? statusText(info, s), state: s.state };
 	}
 
-	crumbs(rel: string, line: number, column: number): Crumb[] {
-		const syms = this.symbols.get(rel);
-		return syms ? symbolPath(syms, toLspPosition({ lineNumber: line, column })) : [];
-	}
-
 	/** `#query` (VS Code's workspace symbol search): every running server that offers it, merged. */
 	async workspaceSymbols(query: string): Promise<{ name: string; kind: number; container?: string; rel: string; line: number; column: number }[]> {
 		const lists = await Promise.all(
@@ -202,6 +202,41 @@ class Lsp {
 		const syms = (await client.documentSymbols(doc.uri).catch(() => null)) ?? [];
 		if (this.#docs.has(doc.model)) this.symbols.set(rel, syms);
 		return syms;
+	}
+
+	// --- Call and type hierarchy (VS Code: references-view's Calls / Types views) ---------------
+
+	/** The hierarchy items at a position of an open file; null when its server has no such provider. */
+	async hierarchyRoots(kind: HierarchyKind, rel: string, line: number, column: number): Promise<{ key: string; items: CallHierarchyItem[] } | null> {
+		const doc = [...this.#docs.values()].find((d) => d.rel === rel);
+		const client = doc?.uri ? this.#sessions.get(doc.key)?.client : undefined;
+		if (!doc || !client?.ready) return null;
+		const cap = kind === 'call' ? client.capabilities.callHierarchyProvider : client.capabilities.typeHierarchyProvider;
+		if (!cap) return null;
+		const at = toLspPosition({ lineNumber: line, column });
+		const items = kind === 'call' ? await client.prepareCallHierarchy(doc.uri, at) : await client.prepareTypeHierarchy(doc.uri, at);
+		return { key: doc.key, items: items ?? [] };
+	}
+
+	/** One level of a hierarchy: each child with the ranges of the calls (empty for types). */
+	async hierarchyChildren(key: string, direction: HierarchyDirection, item: CallHierarchyItem): Promise<{ item: CallHierarchyItem; ranges: Range[] }[]> {
+		const client = this.#sessions.get(key)?.client;
+		if (!client?.ready) return [];
+		switch (direction) {
+			case 'incoming':
+				return ((await client.incomingCalls(item)) ?? []).map((c) => ({ item: c.from, ranges: c.fromRanges ?? [] }));
+			case 'outgoing':
+				return ((await client.outgoingCalls(item)) ?? []).map((c) => ({ item: c.to, ranges: c.fromRanges ?? [] }));
+			case 'supertypes':
+				return ((await client.supertypes(item)) ?? []).map((i) => ({ item: i, ranges: [] }));
+			case 'subtypes':
+				return ((await client.subtypes(item)) ?? []).map((i) => ({ item: i, ranges: [] }));
+		}
+	}
+
+	/** Workspace-relative path of an LSP URI, or null outside the workspace. */
+	relOf(uri: string): string | null {
+		return relOfUri(this.#rootPath, uri);
 	}
 
 	hasServer(languageId: string) {
@@ -331,6 +366,24 @@ class Lsp {
 		this.#monaco = monaco;
 		// Back from installing a server in another app (or a terminal outside Kingu).
 		window.addEventListener('focus', () => this.#retryMissing());
+		// VS Code settings sections follow edits live: pushed again when they change; a server that
+		// reads them only at startup (typescript-language-server's tsserver preferences) restarts.
+		$effect.root(() => {
+			$effect(() => {
+				const next = SERVERS.map((info) => ({ key: info.key, pushed: JSON.stringify(this.#settingsFor(info)), init: JSON.stringify(this.#initOptions(info) ?? null) }));
+				untrack(() => {
+					for (const n of next) {
+						const s = this.#sessions.get(n.key);
+						if (!s?.client.ready) continue;
+						if (n.init !== s.init) void this.#restartKey(n.key);
+						else if (n.pushed !== s.pushed) {
+							s.pushed = n.pushed;
+							s.client.didChangeConfiguration(JSON.parse(n.pushed));
+						}
+					}
+				});
+			});
+		});
 		// Go to Definition into another file: open it as a tab and put the cursor on the target.
 		monaco.editor.registerCommand(CODE_ACTION_COMMAND, (_accessor, key: string, item: Command | CodeAction) => void this.#runCodeAction(key, item));
 		monaco.editor.registerEditorOpener({
@@ -390,7 +443,10 @@ class Lsp {
 			},
 			showMessageRequest: async (type, message, actions) => (await notifications.prompt(MESSAGE_SEVERITY[type] ?? 'info', message, actions, { source: info.name })) ?? null,
 			applyEdit: (edit) => this.applyWorkspaceEdit(edit),
-			configuration: (section) => configurationValue(this.#settingsFor(info), section)
+			configuration: (section) => configurationValue(this.#settingsFor(info), section),
+			refresh: (kind) => {
+				for (const r of this.#refresh.get(key) ?? []) if (r.kind === kind) r.run();
+			}
 		});
 		const channel = new Channel<LspEvent>();
 		channel.onmessage = (ev) => {
@@ -402,16 +458,18 @@ class Lsp {
 				if (this.#sessions.get(key)?.client === client) this.#forget(key);
 			}
 		};
-		const session: Session = { info, client, id: null, ready: Promise.resolve(false) };
+		const init = this.#initOptions(info);
+		const session: Session = { info, client, id: null, ready: Promise.resolve(false), pushed: '', init: JSON.stringify(init ?? null) };
 		this.#sessions.set(key, session);
 		this.#setStatus(info, { state: 'starting' });
 		session.ready = (async () => {
 			try {
 				id = await invoke<number>('lsp_start', { language: info.languages[0], onEvent: channel });
 				session.id = id;
-				const caps = await client.initialize(uriOfRel(root, '').replace(/\/$/, ''), info.initializationOptions);
+				const caps = await client.initialize(uriOfRel(root, '').replace(/\/$/, ''), init);
 				const pushed = this.#settingsFor(info);
-				if (Object.keys(pushed).length) client.rpc.notify('workspace/didChangeConfiguration', { settings: pushed });
+				session.pushed = JSON.stringify(pushed);
+				if (Object.keys(pushed).length) client.didChangeConfiguration(pushed);
 				clientLog('info', `${info.name} initialized`);
 				if (this.#sessions.get(key) === session) this.#registerProviders(info, caps);
 				return true;
@@ -443,6 +501,7 @@ class Lsp {
 		this.#sessions.delete(key);
 		this.#providers.get(key)?.forEach((d) => d.dispose());
 		this.#providers.delete(key);
+		this.#refresh.delete(key);
 		for (const uri of this.#index.clear((uri) => this.#origin.get(uri) === key)) {
 			this.#origin.delete(uri);
 			this.#applyMarkers(uri);
@@ -453,12 +512,13 @@ class Lsp {
 
 	#setStatus(info: ServerInfo, s: ServerStatus) {
 		this.status.set(info.key, s);
-		if (info.yieldsBuiltin && s.state === 'ready') this.#yieldBuiltin(info.key);
+		if (info.yieldsBuiltin && s.state === 'ready') this.#yieldBuiltin(info.key, this.#sessions.get(info.key)?.client.capabilities ?? {});
 	}
 
 	/** Monaco's bundled TypeScript/JSON/CSS/HTML workers would answer hovers, completions and
-	 * diagnostics a second time. Colors, folding and selection ranges stay (no LSP equivalent here). */
-	#yieldBuiltin(key: string) {
+	 * diagnostics a second time. Colors, folding, selection ranges, links and inlay hints give way
+	 * only when the server offers them. */
+	#yieldBuiltin(key: string, caps: ServerCapabilities) {
 		const m = this.#monaco as unknown as Record<string, Record<string, ModeDefaults | undefined> | undefined> | undefined;
 		const defaults: Record<string, (ModeDefaults | undefined)[]> = {
 			typescript: [m?.typescript?.typescriptDefaults, m?.typescript?.javascriptDefaults],
@@ -482,7 +542,12 @@ class Lsp {
 				...(key === 'typescript' ? {} : { documentFormattingEdits: false, links: false }),
 				documentRangeFormattingEdits: false,
 				onTypeFormattingEdits: false,
-				codeActions: false
+				codeActions: false,
+				...(caps.colorProvider ? { colors: false } : {}),
+				...(caps.foldingRangeProvider ? { foldingRanges: false } : {}),
+				...(caps.selectionRangeProvider ? { selectionRanges: false } : {}),
+				...(caps.documentLinkProvider ? { links: false } : {}),
+				...(caps.inlayHintProvider ? { inlayHints: false } : {})
 			});
 		}
 	}
@@ -490,13 +555,26 @@ class Lsp {
 	/** `workspace/configuration` answers and pushed settings: the table's, plus Kingu's
 	 * settings.json schema for the JSON server (Monaco's JSON worker has it too), then `settings`. */
 	#settingsFor(info: ServerInfo): Record<string, unknown> {
-		const base: Record<string, unknown> = { ...info.settings };
+		const base: Record<string, unknown> = { ...info.settings, ...serverSettings(info.key, this.#reader, uriOfRel(this.#rootPath, '').replace(/\/$/, '')) };
 		if (info.key === 'json') {
 			const json = base.json as { schemas: unknown[] };
 			base.json = { ...json, schemas: [...json.schemas, { fileMatch: ['settings.json', '**/settings.json'], schema: jsonSchema(settingSchemas.all) }] };
 		}
 		return { ...base, ...this.settings[info.key] };
 	}
+
+	/** The `initialize` options: the table's, plus tsserver preferences for typescript-language-server. */
+	#initOptions(info: ServerInfo): unknown {
+		if (info.key !== 'typescript') return info.initializationOptions;
+		return { ...(info.initializationOptions as object | undefined), preferences: typescriptPreferences(this.#reader) };
+	}
+
+	/** VS Code settings as serverSettings.ts reads them. */
+	#reader: SettingsReader = {
+		get: (id) => userSettings.get(id),
+		isSet: (id) => (userSettings.resolved.get(id)?.source ?? 'default') !== 'default',
+		layer: (id, scope) => (scope === 'user' ? userSettings.inspect(id, 'user') : (userSettings.inspect(id, 'repo') ?? userSettings.inspect(id, 'workspace')))
+	};
 
 	#append(line: string) {
 		this.#pendingLog.push(line);
@@ -671,6 +749,13 @@ class Lsp {
 	}
 
 	async #execute(client: LanguageClient, command: Command) {
+		// Client-side commands a server may hand out (rust-analyzer's code lenses).
+		const target = command.command === 'rust-analyzer.gotoLocation' ? (command.arguments?.[0] as Location | undefined) : undefined;
+		if (target?.uri && target.range) {
+			const rel = relOfUri(this.#rootPath, target.uri);
+			if (rel === null) return notifications.warn(t('tools.lsp.outsideWorkspace', { path: uriToPath(target.uri) ?? target.uri }));
+			return editors.openFromCodeNavigation(rel, target.range.start.line + 1, target.range.start.character + 1);
+		}
 		if (!(await client.executeCommand(command))) statusBar.flash(t('tools.lsp.commandUnsupported', { command: command.title || command.command }));
 	}
 
@@ -899,6 +984,22 @@ class Lsp {
 					})
 				);
 		}
+
+		const refresh: { kind: RefreshKind; run: () => void }[] = [];
+		this.#refresh.set(info.key, refresh);
+		registerFeatureProviders({
+			monaco,
+			key: info.key,
+			languages: info.languages,
+			caps,
+			lookup: (model) => this.#lookup(model),
+			relOf: (uri) => relOfUri(this.#rootPath, uri),
+			monacoUri: (uri) => this.#monacoUri(uri),
+			ensurePreviews: (rels) => this.#ensurePreviews(rels),
+			commandId: CODE_ACTION_COMMAND,
+			add,
+			onRefresh: (kind, run) => refresh.push({ kind, run })
+		});
 	}
 }
 

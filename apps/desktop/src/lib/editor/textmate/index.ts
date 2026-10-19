@@ -17,6 +17,7 @@ import {
 import { onActiveTheme, type ActiveTheme } from '../../theme/current';
 import { monacoBase } from '../../theme/themes';
 import { editorColors, textMateRules } from './theme';
+import { monacoThemeColors, SemanticStyler, setSemanticStyler } from '../../lsp/semanticStyle';
 import { plainLineTokens, skipsTokenization } from '../tokenizationLimit';
 
 /** One Monaco theme id, redefined on every color theme change (editors pass it at creation). */
@@ -174,11 +175,17 @@ async function init() {
 	// Follows `workbench.colorTheme`, like VS Code's TextMateTokenizationFeature on theme change.
 	onActiveTheme(({ info, flat }: ActiveTheme) => {
 		registry.setTheme({ name: flat.name, settings: textMateRules(flat, info.type) });
-		monaco.editor.defineTheme(THEME_ID, { base: monacoBase(info.type), inherit: true, rules: [], colors: editorColors(flat) });
+		// Semantic token styles (VS Code's theme rules and TextMate scope fallbacks) as synthetic
+		// token types whose ids share the TextMate color map (lsp/semanticStyle.ts).
+		const styler = new SemanticStyler(flat, info.type, registry.getColorMap());
+		const semantic = monacoThemeColors(styler);
+		setSemanticStyler(styler);
+		monaco.editor.defineTheme(THEME_ID, { base: monacoBase(info.type), inherit: true, rules: semantic.rules, colors: editorColors(flat), encodedTokensColors: semantic.seed });
 		monaco.editor.setTheme(THEME_ID);
-		// Token colors come from the TextMate theme's color map, not Monaco's rules. Setting it
-		// also fires a tokenization change for every language, so open models re-tokenize.
-		monaco.languages.setColorMap(registry.getColorMap());
+		// Token colors come from the TextMate theme's color map (plus the semantic rules' own
+		// colors), not Monaco's rules. Setting it also fires a tokenization change for every
+		// language, so open models re-tokenize.
+		monaco.languages.setColorMap(styler.colorMap.map((c) => c || (undefined as unknown as string)));
 	});
 
 	for (const [languageId, def] of Object.entries(languages)) {

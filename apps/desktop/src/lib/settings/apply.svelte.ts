@@ -10,6 +10,7 @@ import type { Terminal } from '@xterm/xterm';
 import { editors } from '#lib/workbench/editors.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { theme } from '#lib/theme/theme.svelte.ts';
+import { activeTheme } from '#lib/theme/current.ts';
 import { isDiffKey } from '#lib/workbench/scm.ts';
 import { getEntry, openModels, refreshLanguages, saveFile } from '#lib/workbench/editorModels.ts';
 import { isWorkspaceTextFile } from './resources';
@@ -32,7 +33,13 @@ const KEYBINDINGS_SCHEMA_URI = 'kingu://schemas/keybindings';
 const get = <T>(id: string) => settings.get<T>(id);
 
 /** Monaco editor options from settings (VS Code: editor.* configuration). */
-export const editorOptions = (): Monaco.editor.IEditorOptions & Monaco.editor.IGlobalEditorOptions => editorOptionsFrom(get);
+export const editorOptions = (): Monaco.editor.IEditorOptions & Monaco.editor.IGlobalEditorOptions => editorOptionsFrom(get, themeSemantic());
+
+/** The color theme's `semanticHighlighting` (for `editor.semanticHighlighting.enabled: configuredByTheme`); reading `theme.current` re-runs effects on a theme change. */
+function themeSemantic(): boolean {
+	void theme.current;
+	return activeTheme()?.flat.semanticHighlighting ?? false;
+}
 
 function applyIndent(model: Monaco.editor.ITextModel, i: Indent) {
 	if (model.isDisposed()) return;
@@ -97,7 +104,7 @@ export function installEditorSettings(monaco: typeof Monaco) {
 	$effect.root(() => {
 		// Monaco's configuration service: what its contributions read instead of editor options.
 		$effect(() => {
-			const values = editorConfigurationFrom(get);
+			const values = editorConfigurationFrom(get, themeSemantic());
 			// Loaded with Monaco (this runs once Monaco is in), so the workbench start does not pull it in.
 			untrack(() => void import('#lib/editor/monacoConfiguration.ts').then(({ updateMonacoConfiguration }) => updateMonacoConfiguration(values)));
 		});
