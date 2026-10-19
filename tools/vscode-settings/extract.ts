@@ -3,7 +3,7 @@
 //
 // It evaluates VS Code's own configuration contributions (the files in sources.json, relative to
 // src/vs) with Bun, so defaults, enums and descriptions are the real computed values (on this
-// platform), then adds the built-in Git extension's contributes.configuration (package.json + nls).
+// platform), then adds the built-in Git and Merge Conflict extensions' contributes.configuration (package.json + nls).
 //
 //   bun add --no-save @happy-dom/global-registrator@15   # once, the DOM the browser files expect
 //   cd tools/vscode-settings && bun --preload ./preload.ts --tsconfig-override ./tsconfig.json \
@@ -88,22 +88,24 @@ for (const [k, s] of Object.entries(registry.getConfigurationProperties())) {
 	full[k] = { ...rest, origin: origin[k] };
 }
 
-// The Git extension: contributes.configuration with %nls% placeholders.
-const gitDir = join(checkout, 'extensions/git');
-const pkg = JSON.parse(await Bun.file(join(gitDir, 'package.json')).text());
-const nls: Record<string, string | { message: string }> = JSON.parse(await Bun.file(join(gitDir, 'package.nls.json')).text());
-const tr = (v: unknown): unknown => {
-	if (typeof v === 'string') {
-		const m = /^%([^%]+)%$/.exec(v);
-		const s = m ? nls[m[1]] : undefined;
-		return s === undefined ? v : typeof s === 'string' ? s : s.message;
-	}
-	if (Array.isArray(v)) return v.map(tr);
-	if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, tr(x)]));
-	return v;
-};
-const conf = pkg.contributes.configuration;
-for (const c of Array.isArray(conf) ? conf : [conf]) for (const [k, s] of Object.entries(c.properties)) full[k] = { ...(tr(s) as Schema), origin: 'extensions/git/package.json' };
+// The Git and Merge Conflict extensions: contributes.configuration with %nls% placeholders.
+for (const ext of ['git', 'merge-conflict']) {
+	const extDir = join(checkout, 'extensions', ext);
+	const pkg = JSON.parse(await Bun.file(join(extDir, 'package.json')).text());
+	const nls: Record<string, string | { message: string }> = JSON.parse(await Bun.file(join(extDir, 'package.nls.json')).text());
+	const tr = (v: unknown): unknown => {
+		if (typeof v === 'string') {
+			const m = /^%([^%]+)%$/.exec(v);
+			const s = m ? nls[m[1]] : undefined;
+			return s === undefined ? v : typeof s === 'string' ? s : s.message;
+		}
+		if (Array.isArray(v)) return v.map(tr);
+		if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, tr(x)]));
+		return v;
+	};
+	const conf = pkg.contributes.configuration;
+	for (const c of Array.isArray(conf) ? conf : [conf]) for (const [k, s] of Object.entries(c.properties)) full[k] = { ...(tr(s) as Schema), origin: `extensions/${ext}/package.json` };
+}
 
 if (PLATFORM !== 'darwin') {
 	await Bun.write(fullOut, JSON.stringify(full));
