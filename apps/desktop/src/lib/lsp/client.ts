@@ -4,6 +4,22 @@
 import { JsonRpc, ResponseError, type Cancellation } from './jsonrpc';
 import {
 	ErrorCodes,
+	type CallHierarchyIncomingCall,
+	type CallHierarchyItem,
+	type CallHierarchyOutgoingCall,
+	type CodeLens,
+	type Color,
+	type ColorInformation,
+	type ColorPresentation,
+	type DocumentLink,
+	type FoldingRange,
+	type InlayHint,
+	type LinkedEditingRanges,
+	type SelectionRange,
+	type SemanticTokens,
+	type SemanticTokensDelta,
+	type SemanticTokensLegend,
+	type TypeHierarchyItem,
 	type CodeAction,
 	type Command,
 	type CompletionItem,
@@ -43,7 +59,19 @@ export type ClientHooks = {
 	applyEdit?(edit: WorkspaceEdit, label?: string): Promise<{ applied: boolean; failureReason?: string }>;
 	/** `workspace/configuration`: the settings value for `section` (null when unset). */
 	configuration?(section: string | undefined, scopeUri: string | undefined): unknown;
+	/** `workspace/semanticTokens/refresh`, `workspace/inlayHint/refresh`, `workspace/codeLens/refresh`. */
+	refresh?(kind: RefreshKind): void;
 };
+
+/** LSP's predefined semantic token types and modifiers (the ones VS Code's theming knows). */
+export const SEMANTIC_TOKEN_TYPES = [
+	'namespace', 'type', 'class', 'enum', 'interface', 'struct', 'typeParameter', 'parameter', 'variable', 'property', 'enumMember', 'event',
+	'function', 'method', 'macro', 'keyword', 'modifier', 'comment', 'string', 'number', 'regexp', 'operator', 'decorator', 'label'
+];
+export const SEMANTIC_TOKEN_MODIFIERS = ['declaration', 'definition', 'readonly', 'static', 'deprecated', 'abstract', 'async', 'modification', 'documentation', 'defaultLibrary'];
+
+/** Server → client refresh requests (LSP 3.16/3.17) that re-ask a feature for every open file. */
+export type RefreshKind = 'semanticTokens' | 'inlayHint' | 'codeLens';
 
 /** Code action kinds Kingu understands (VS Code's list). */
 const CODE_ACTION_KINDS = ['', 'quickfix', 'refactor', 'refactor.extract', 'refactor.inline', 'refactor.rewrite', 'source', 'source.organizeImports', 'source.fixAll'];
@@ -58,7 +86,11 @@ export const clientCapabilities = {
 		applyEdit: true,
 		workspaceEdit: { documentChanges: true, resourceOperations: [], failureHandling: 'abort', normalizesLineEndings: false },
 		executeCommand: { dynamicRegistration: false },
-		diagnostics: { refreshSupport: true }
+		diagnostics: { refreshSupport: true },
+		semanticTokens: { refreshSupport: true },
+		inlayHint: { refreshSupport: true },
+		codeLens: { refreshSupport: true },
+		didChangeConfiguration: { dynamicRegistration: false }
 	},
 	textDocument: {
 		synchronization: { didSave: true, willSave: false, willSaveWaitUntil: false, dynamicRegistration: false },
@@ -97,10 +129,35 @@ export const clientCapabilities = {
 			signatureInformation: { documentationFormat: ['markdown', 'plaintext'], parameterInformation: { labelOffsetSupport: true }, activeParameterSupport: true }
 		},
 		formatting: {},
-		rangeFormatting: {}
+		rangeFormatting: {},
+		onTypeFormatting: {},
+		declaration: { linkSupport: true },
+		typeDefinition: { linkSupport: true },
+		implementation: { linkSupport: true },
+		inlayHint: { resolveSupport: { properties: ['tooltip', 'textEdits', 'label.tooltip', 'label.location', 'label.command'] } },
+		semanticTokens: {
+			requests: { range: true, full: { delta: true } },
+			tokenTypes: SEMANTIC_TOKEN_TYPES,
+			tokenModifiers: SEMANTIC_TOKEN_MODIFIERS,
+			formats: ['relative'],
+			overlappingTokenSupport: false,
+			multilineTokenSupport: false,
+			serverCancelSupport: true,
+			augmentsSyntaxTokens: true
+		},
+		// VS Code: editor.foldingMaximumRegions, line folding only (Monaco folds whole lines).
+		foldingRange: { rangeLimit: 5000, lineFoldingOnly: true, foldingRangeKind: { valueSet: ['comment', 'imports', 'region'] } },
+		codeLens: {},
+		callHierarchy: {},
+		typeHierarchy: {},
+		linkedEditingRange: {},
+		selectionRange: {},
+		documentLink: { tooltipSupport: true },
+		colorProvider: {}
 	},
-	// rust-analyzer: `experimental/serverStatus` tells when indexing is done.
-	experimental: { serverStatusNotification: true }
+	// rust-analyzer: `experimental/serverStatus` tells when indexing is done; its code lenses use
+	// these client commands (references open Monaco's peek, see featureProviders.ts).
+	experimental: { serverStatusNotification: true, commands: { commands: ['rust-analyzer.showReferences', 'rust-analyzer.gotoLocation'] } }
 };
 
 type Doc = { languageId: string; version: number; text: string };
@@ -163,9 +220,13 @@ export class LanguageClient {
 		});
 		rpc.onRequest('workspace/workspaceFolders', () => (this.#rootUri ? [{ uri: this.#rootUri, name: this.#rootUri.split('/').pop() }] : null));
 		rpc.onRequest('workspace/diagnostic/refresh', () => (this.#pullAll(), null));
-		for (const m of ['workspace/semanticTokens/refresh', 'workspace/inlayHint/refresh', 'workspace/codeLens/refresh', 'workspace/inlineValue/refresh']) {
-			rpc.onRequest(m, () => null);
-		}
+		const refreshes: [string, RefreshKind][] = [
+			['workspace/semanticTokens/refresh', 'semanticTokens'],
+			['workspace/inlayHint/refresh', 'inlayHint'],
+			['workspace/codeLens/refresh', 'codeLens']
+		];
+		for (const [m, kind] of refreshes) rpc.onRequest(m, () => (hooks.refresh?.(kind), null));
+		rpc.onRequest('workspace/inlineValue/refresh', () => null);
 		rpc.onRequest('workspace/applyEdit', async (p: { label?: string; edit: WorkspaceEdit }) => {
 			if (!hooks.applyEdit) return { applied: false, failureReason: 'no workspace to edit' };
 			const r = await hooks.applyEdit(p.edit, p.label);
@@ -404,6 +465,166 @@ export class LanguageClient {
 	rangeFormatting(uri: string, range: Range, options: FormattingOptions, token?: Cancellation) {
 		if (!this.capabilities.documentRangeFormattingProvider) return Promise.resolve(null);
 		return this.rpc.request<TextEdit[] | null>('textDocument/rangeFormatting', { textDocument: { uri }, range, options }, token);
+	}
+
+	onTypeFormatting(uri: string, position: Position, ch: string, options: FormattingOptions, token?: Cancellation) {
+		if (!this.capabilities.documentOnTypeFormattingProvider) return Promise.resolve(null);
+		return this.rpc.request<TextEdit[] | null>('textDocument/onTypeFormatting', { textDocument: { uri }, position, ch, options }, token);
+	}
+
+	// --- Go to declaration / type definition / implementation ------------------------------------
+
+	#locations(method: string, cap: unknown, uri: string, position: Position, token?: Cancellation) {
+		if (!cap) return Promise.resolve(null);
+		return this.rpc.request<Location | Location[] | LocationLink[] | null>(method, { textDocument: { uri }, position }, token);
+	}
+
+	declaration(uri: string, position: Position, token?: Cancellation) {
+		return this.#locations('textDocument/declaration', this.capabilities.declarationProvider, uri, position, token);
+	}
+
+	typeDefinition(uri: string, position: Position, token?: Cancellation) {
+		return this.#locations('textDocument/typeDefinition', this.capabilities.typeDefinitionProvider, uri, position, token);
+	}
+
+	implementation(uri: string, position: Position, token?: Cancellation) {
+		return this.#locations('textDocument/implementation', this.capabilities.implementationProvider, uri, position, token);
+	}
+
+	// --- Inlay hints, semantic tokens, folding, code lens ----------------------------------------
+
+	inlayHints(uri: string, range: Range, token?: Cancellation) {
+		if (!this.capabilities.inlayHintProvider) return Promise.resolve(null);
+		return this.rpc.request<InlayHint[] | null>('textDocument/inlayHint', { textDocument: { uri }, range }, token);
+	}
+
+	get canResolveInlayHint() {
+		const c = this.capabilities.inlayHintProvider;
+		return typeof c === 'object' && c !== null && !!c.resolveProvider;
+	}
+
+	resolveInlayHint(hint: InlayHint, token?: Cancellation) {
+		return this.rpc.request<InlayHint>('inlayHint/resolve', hint, token);
+	}
+
+	/** The server's semantic token legend, or null without semantic tokens. */
+	get semanticTokensLegend(): SemanticTokensLegend | null {
+		return this.capabilities.semanticTokensProvider?.legend ?? null;
+	}
+
+	get semanticTokensFull(): boolean {
+		return !!this.capabilities.semanticTokensProvider?.full;
+	}
+
+	get semanticTokensDelta(): boolean {
+		const full = this.capabilities.semanticTokensProvider?.full;
+		return typeof full === 'object' && full !== null && !!full.delta;
+	}
+
+	get semanticTokensRange(): boolean {
+		return !!this.capabilities.semanticTokensProvider?.range;
+	}
+
+	semanticTokens(uri: string, token?: Cancellation) {
+		if (!this.semanticTokensFull) return Promise.resolve(null);
+		return this.rpc.request<SemanticTokens | null>('textDocument/semanticTokens/full', { textDocument: { uri } }, token);
+	}
+
+	/** `full/delta` against `previousResultId`; the answer may be a whole new token set. */
+	semanticTokensEdits(uri: string, previousResultId: string, token?: Cancellation) {
+		if (!this.semanticTokensDelta) return Promise.resolve(null);
+		return this.rpc.request<SemanticTokens | SemanticTokensDelta | null>('textDocument/semanticTokens/full/delta', { textDocument: { uri }, previousResultId }, token);
+	}
+
+	semanticTokensInRange(uri: string, range: Range, token?: Cancellation) {
+		if (!this.semanticTokensRange) return Promise.resolve(null);
+		return this.rpc.request<SemanticTokens | null>('textDocument/semanticTokens/range', { textDocument: { uri }, range }, token);
+	}
+
+	foldingRanges(uri: string, token?: Cancellation) {
+		if (!this.capabilities.foldingRangeProvider) return Promise.resolve(null);
+		return this.rpc.request<FoldingRange[] | null>('textDocument/foldingRange', { textDocument: { uri } }, token);
+	}
+
+	codeLenses(uri: string, token?: Cancellation) {
+		if (!this.capabilities.codeLensProvider) return Promise.resolve(null);
+		return this.rpc.request<CodeLens[] | null>('textDocument/codeLens', { textDocument: { uri } }, token);
+	}
+
+	get canResolveCodeLens() {
+		return !!this.capabilities.codeLensProvider?.resolveProvider;
+	}
+
+	resolveCodeLens(lens: CodeLens, token?: Cancellation) {
+		return this.rpc.request<CodeLens>('codeLens/resolve', lens, token);
+	}
+
+	// --- Call and type hierarchy -----------------------------------------------------------------
+
+	prepareCallHierarchy(uri: string, position: Position, token?: Cancellation) {
+		if (!this.capabilities.callHierarchyProvider) return Promise.resolve(null);
+		return this.rpc.request<CallHierarchyItem[] | null>('textDocument/prepareCallHierarchy', { textDocument: { uri }, position }, token);
+	}
+
+	incomingCalls(item: CallHierarchyItem, token?: Cancellation) {
+		return this.rpc.request<CallHierarchyIncomingCall[] | null>('callHierarchy/incomingCalls', { item }, token);
+	}
+
+	outgoingCalls(item: CallHierarchyItem, token?: Cancellation) {
+		return this.rpc.request<CallHierarchyOutgoingCall[] | null>('callHierarchy/outgoingCalls', { item }, token);
+	}
+
+	prepareTypeHierarchy(uri: string, position: Position, token?: Cancellation) {
+		if (!this.capabilities.typeHierarchyProvider) return Promise.resolve(null);
+		return this.rpc.request<TypeHierarchyItem[] | null>('textDocument/prepareTypeHierarchy', { textDocument: { uri }, position }, token);
+	}
+
+	supertypes(item: TypeHierarchyItem, token?: Cancellation) {
+		return this.rpc.request<TypeHierarchyItem[] | null>('typeHierarchy/supertypes', { item }, token);
+	}
+
+	subtypes(item: TypeHierarchyItem, token?: Cancellation) {
+		return this.rpc.request<TypeHierarchyItem[] | null>('typeHierarchy/subtypes', { item }, token);
+	}
+
+	// --- Linked editing, selection ranges, links, colors -----------------------------------------
+
+	linkedEditingRange(uri: string, position: Position, token?: Cancellation) {
+		if (!this.capabilities.linkedEditingRangeProvider) return Promise.resolve(null);
+		return this.rpc.request<LinkedEditingRanges | null>('textDocument/linkedEditingRange', { textDocument: { uri }, position }, token);
+	}
+
+	selectionRanges(uri: string, positions: Position[], token?: Cancellation) {
+		if (!this.capabilities.selectionRangeProvider) return Promise.resolve(null);
+		return this.rpc.request<SelectionRange[] | null>('textDocument/selectionRange', { textDocument: { uri }, positions }, token);
+	}
+
+	documentLinks(uri: string, token?: Cancellation) {
+		if (!this.capabilities.documentLinkProvider) return Promise.resolve(null);
+		return this.rpc.request<DocumentLink[] | null>('textDocument/documentLink', { textDocument: { uri } }, token);
+	}
+
+	get canResolveDocumentLink() {
+		return !!this.capabilities.documentLinkProvider?.resolveProvider;
+	}
+
+	resolveDocumentLink(link: DocumentLink, token?: Cancellation) {
+		return this.rpc.request<DocumentLink>('documentLink/resolve', link, token);
+	}
+
+	documentColors(uri: string, token?: Cancellation) {
+		if (!this.capabilities.colorProvider) return Promise.resolve(null);
+		return this.rpc.request<ColorInformation[] | null>('textDocument/documentColor', { textDocument: { uri } }, token);
+	}
+
+	colorPresentations(uri: string, color: Color, range: Range, token?: Cancellation) {
+		if (!this.capabilities.colorProvider) return Promise.resolve(null);
+		return this.rpc.request<ColorPresentation[] | null>('textDocument/colorPresentation', { textDocument: { uri }, color, range }, token);
+	}
+
+	/** Pushes settings (VS Code's language clients send their `synchronize.configurationSection`). */
+	didChangeConfiguration(settings: unknown) {
+		if (this.#ready) this.rpc.notify('workspace/didChangeConfiguration', { settings });
 	}
 
 	/** Runs a server command; false when the server does not offer it. */

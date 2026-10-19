@@ -1,7 +1,6 @@
 <script lang="ts">
 	// One editor group (VS Code: EditorGroupView): its tab strip, breadcrumbs, a Monaco editor for
 	// file tabs and a diff editor while it has a diff tab. Inactive groups dim their tabs.
-	import { lsp } from '#lib/lsp/lsp.svelte.ts';
 	import DiffHost from './DiffHost.svelte';
 	import EditorHost from './EditorHost.svelte';
 	import ImageViewer from './ImageViewer.svelte';
@@ -50,7 +49,8 @@
 	import * as cmd from './editorCommands.svelte';
 	import { isUntitled } from './untitled';
 	import { filePathCrumbs, sortSymbols, symbolCodicon, symbolSiblings, visibleSymbols, type PathMode, type SymbolSortOrder } from './breadcrumbs';
-	import type { Crumb } from '#lib/lsp/convert.ts';
+	import { symbolPath, type Crumb } from '#lib/lsp/convert.ts';
+	import { outline } from './outline.svelte';
 
 	let { group }: { group: number } = $props();
 
@@ -84,7 +84,7 @@
 	const hasDiff = $derived(tabs.some((t) => isDiffKey(t.path)));
 	// Enclosing symbols from the language server's document symbols, like VS Code's outline crumbs.
 	// The cursor is tracked for the active group only, so other groups show just the path.
-	const rawSymbolCrumbs = $derived(activePath && !diffActive && !settingsActive && !adeActive && focused ? lsp.crumbs(activePath, editors.cursor.line, editors.cursor.column) : []);
+	const rawSymbolCrumbs = $derived(activePath && !diffActive && !settingsActive && !adeActive && focused ? symbolPath(outline.symbolsOf(activePath), { line: editors.cursor.line - 1, character: editors.cursor.column - 1 }) : []);
 	// breadcrumbs.enabled / filePath / symbolPath / icons / show* / symbolSortOrder (breadcrumbs.ts).
 	const getSetting = <T,>(id: string) => settings.get<T>(id);
 	const breadcrumbsOn = $derived(settings.get<boolean>('breadcrumbs.enabled'));
@@ -96,7 +96,7 @@
 	function openSymbolPicker(e: MouseEvent, crumb: Crumb) {
 		if (!activePath) return;
 		const level = allSymbolCrumbs.indexOf(crumb);
-		const siblings = symbolSiblings(lsp.symbols.get(activePath) ?? [], { line: editors.cursor.line - 1, character: editors.cursor.column - 1 }, getSetting)[level] ?? [crumb];
+		const siblings = symbolSiblings(outline.symbolsOf(activePath), { line: editors.cursor.line - 1, character: editors.cursor.column - 1 }, getSetting)[level] ?? [crumb];
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		crumbMenu = { x: rect.left, y: rect.bottom + 2, items: sortSymbols(siblings, settings.get<SymbolSortOrder>('breadcrumbs.symbolSortOrder')) };
 	}

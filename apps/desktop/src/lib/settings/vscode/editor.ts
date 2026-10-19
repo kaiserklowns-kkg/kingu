@@ -219,6 +219,30 @@ export const EDITOR_SETTINGS: SettingSchema[] = [
 		description: 'แสดงหัวกลุ่มในเมนู Code Action (Enable/disable showing group headers in the Code Action menu.)'
 	},
 	{
+		id: 'editor.codeLens',
+		group: 'Text Editor',
+		type: 'boolean',
+		default: true,
+		description: 'แสดง CodeLens เหนือโค้ด (Controls whether the editor shows CodeLens.)'
+	},
+	{
+		id: 'editor.codeLensFontFamily',
+		group: 'Text Editor',
+		type: 'string',
+		default: '',
+		description: 'ฟอนต์ของ CodeLens เว้นว่าง = ฟอนต์ของ editor (Controls the font family for CodeLens.)'
+	},
+	{
+		id: 'editor.codeLensFontSize',
+		group: 'Text Editor',
+		type: 'number',
+		default: 0,
+		minimum: 0,
+		maximum: 100,
+		integer: true,
+		description: 'ขนาดฟอนต์ของ CodeLens 0 = 90% ของ editor.fontSize (Controls the font size in pixels for CodeLens. When set to 0, 90% of `#editor.fontSize#` is used.)'
+	},
+	{
 		id: 'editor.colorDecorators',
 		group: 'Text Editor',
 		type: 'boolean',
@@ -915,6 +939,48 @@ export const EDITOR_SETTINGS: SettingSchema[] = [
 		description: 'เลื่อนแบบมีแรงเฉื่อย เหมาะกับทัชแพดบน Linux (Make scrolling inertial - mostly useful with touchpad on linux.)'
 	},
 	{
+		id: 'editor.inlayHints.enabled',
+		group: 'Text Editor',
+		type: 'string',
+		default: 'on',
+		enum: ['on', 'onUnlessPressed', 'offUnlessPressed', 'off'],
+		enumDescriptions: [
+			'แสดง (Inlay hints are enabled)',
+			'แสดงยกเว้นตอนกด Ctrl+Option ค้างไว้ (Inlay hints are showing by default and hide when holding Ctrl+Option)',
+			'ซ่อนยกเว้นตอนกด Ctrl+Option ค้างไว้ (Inlay hints are hidden by default and show when holding Ctrl+Option)',
+			'ไม่แสดง (Inlay hints are disabled)'
+		],
+		description: 'แสดง inlay hint ใน editor (Enables the inlay hints in the editor.)'
+	},
+	{
+		id: 'editor.inlayHints.fontFamily',
+		group: 'Text Editor',
+		type: 'string',
+		default: '',
+		description: 'ฟอนต์ของ inlay hint เว้นว่าง = ฟอนต์ของ editor (Controls font family of inlay hints in the editor. When set to empty, the `#editor.fontFamily#` is used.)'
+	},
+	{
+		id: 'editor.inlayHints.fontSize',
+		group: 'Text Editor',
+		type: 'number',
+		default: 0,
+		description: 'ขนาดฟอนต์ของ inlay hint ค่าเริ่มต้น = 90% ของ editor.fontSize (Controls font size of inlay hints in the editor. As default the `#editor.fontSize#` is used when the configured value is less than `5` or greater than the editor font size.)'
+	},
+	{
+		id: 'editor.inlayHints.maximumLength',
+		group: 'Text Editor',
+		type: 'number',
+		default: 43,
+		description: 'ความยาวสูงสุดของ inlay hint ต่อบรรทัด 0 = ไม่ตัด (Maximum overall length of inlay hints, for a single line, before they get truncated by the editor. Set to `0` to never truncate)'
+	},
+	{
+		id: 'editor.inlayHints.padding',
+		group: 'Text Editor',
+		type: 'boolean',
+		default: false,
+		description: 'เว้นระยะรอบ inlay hint (Enables the padding around the inlay hints in the editor.)'
+	},
+	{
 		id: 'editor.largeFileOptimizations',
 		group: 'Text Editor',
 		type: 'boolean',
@@ -1485,6 +1551,14 @@ export const EDITOR_SETTINGS: SettingSchema[] = [
 		type: 'boolean',
 		default: false,
 		description: 'ไฮไลต์ผลที่ตรงกับข้อความที่เลือกแม้คร่อมหลายบรรทัด (Controls whether the editor should highlight selection matches that span multiple lines.)'
+	},
+	{
+		id: 'editor.semanticHighlighting.enabled',
+		group: 'Text Editor',
+		type: 'json',
+		schema: { enum: [true, false, 'configuredByTheme'] },
+		default: 'configuredByTheme',
+		description: 'ใช้สีจาก semantic token ของ language server (Controls whether the semanticHighlighting is shown for the languages that support it.)'
 	},
 	{
 		id: 'editor.showDeprecated',

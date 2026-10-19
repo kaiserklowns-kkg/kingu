@@ -4,6 +4,10 @@ import JsonWorker from 'monaco-editor/language/json/json.worker?worker';
 import TsWorker from 'monaco-editor/language/typescript/ts.worker?worker';
 import { EXTRA_LANGUAGES, registerMonacoLanguages } from './languages.ts';
 import { monacoLoaded } from './monacoConfiguration.ts';
+import { captureSymbolProviders } from './symbolProviders.ts';
+
+// Before any language loads: the Outline view asks Monaco's own symbol providers too.
+captureSymbolProviders(monaco);
 
 self.MonacoEnvironment = {
 	getWorker(_id, label) {

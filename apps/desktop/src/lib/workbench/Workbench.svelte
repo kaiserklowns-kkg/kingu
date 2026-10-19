@@ -88,6 +88,7 @@
 	import { installDebug } from '#lib/debug/debug.svelte.ts';
 	import DebugToolbar from '#lib/debug/DebugToolbar.svelte';
 	import { installBreadcrumbs } from './breadcrumbsCommands.svelte';
+	import { installLanguageCommands } from './languageCommands.svelte';
 	import { installProblemsSettings } from '#lib/lsp/problemsCommands.svelte.ts';
 	import { installCloseGuard, quit } from './closeGuard.svelte';
 	import { installEditorRestore } from './editorRestore.svelte';
@@ -354,6 +355,7 @@
 		const uninstallChatEditorCommands = installChatEditorCommands();
 		const uninstallDebug = installDebug();
 		const uninstallBreadcrumbs = installBreadcrumbs();
+		const uninstallLanguageCommands = installLanguageCommands();
 		const uninstallProblemsSettings = installProblemsSettings();
 		const uninstallAccounts = accounts.install();
 		const uninstallTextFiles = textFiles.install();
@@ -374,6 +376,7 @@
 			uninstallAccounts();
 			uninstallProblemsSettings();
 			uninstallBreadcrumbs();
+			uninstallLanguageCommands();
 			uninstallDebug();
 			uninstallAdeCommands();
 			uninstallHunkCommands();

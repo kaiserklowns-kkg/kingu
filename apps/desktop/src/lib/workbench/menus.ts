@@ -78,6 +78,15 @@ export const EDITOR_ACTIONS: Record<string, string> = {
 	'actions.find': 'Find',
 	'editor.action.startFindReplaceAction': 'Replace',
 	'editor.action.revealDefinition': 'Go to Definition',
+	'editor.action.peekDefinition': 'Peek Definition',
+	'editor.action.revealDeclaration': 'Go to Declaration',
+	'editor.action.peekDeclaration': 'Peek Declaration',
+	'editor.action.goToTypeDefinition': 'Go to Type Definition',
+	'editor.action.peekTypeDefinition': 'Peek Type Definition',
+	'editor.action.goToImplementation': 'Go to Implementations',
+	'editor.action.peekImplementation': 'Peek Implementations',
+	'editor.action.goToReferences': 'Go to References',
+	'editor.action.referenceSearch.trigger': 'Peek References',
 	'editor.action.smartSelect.expand': 'Expand Selection',
 	'editor.action.smartSelect.shrink': 'Shrink Selection'
 };
@@ -221,7 +230,11 @@ export const MENUS: Menu[] = [
 			{ command: 'workbench.action.gotoSymbol', label: 'Go to Symbol in Editor...' },
 			{ command: 'workbench.action.gotoLine', label: 'Go to Line/Column...' },
 			SEP,
-			{ command: 'editor.action.revealDefinition', label: 'Go to Definition', key: 'f12' }
+			{ command: 'editor.action.revealDefinition', label: 'Go to Definition', key: 'f12' },
+			{ command: 'editor.action.revealDeclaration', label: 'Go to Declaration' },
+			{ command: 'editor.action.goToTypeDefinition', label: 'Go to Type Definition' },
+			{ command: 'editor.action.goToImplementation', label: 'Go to Implementations', key: 'cmd+f12' },
+			{ command: 'editor.action.goToReferences', label: 'Go to References', key: 'shift+f12' }
 		]
 	},
 	{

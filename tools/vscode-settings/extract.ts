@@ -3,7 +3,7 @@
 //
 // It evaluates VS Code's own configuration contributions (the files in sources.json, relative to
 // src/vs) with Bun, so defaults, enums and descriptions are the real computed values (on this
-// platform), then adds the built-in Git and Merge Conflict extensions' contributes.configuration (package.json + nls).
+// platform), then adds built-in extensions' contributes.configuration (Git, Merge Conflict, language features; package.json + nls).
 //
 //   bun add --no-save @happy-dom/global-registrator@15   # once, the DOM the browser files expect
 //   cd tools/vscode-settings && bun --preload ./preload.ts --tsconfig-override ./tsconfig.json \
@@ -88,11 +88,13 @@ for (const [k, s] of Object.entries(registry.getConfigurationProperties())) {
 	full[k] = { ...rest, origin: origin[k] };
 }
 
-// The Git and Merge Conflict extensions: contributes.configuration with %nls% placeholders.
-for (const ext of ['git', 'merge-conflict']) {
-	const extDir = join(checkout, 'extensions', ext);
-	const pkg = JSON.parse(await Bun.file(join(extDir, 'package.json')).text());
-	const nls: Record<string, string | { message: string }> = JSON.parse(await Bun.file(join(extDir, 'package.nls.json')).text());
+// Built-in extensions whose settings Kingu has (Git, Merge Conflict, and the settings sections of the language
+// servers Kingu runs): contributes.configuration with %nls% placeholders.
+const EXTENSIONS = ['git', 'merge-conflict', 'typescript-language-features', 'css-language-features', 'html-language-features', 'json-language-features'];
+for (const ext of EXTENSIONS) {
+	const dir = join(checkout, 'extensions', ext);
+	const pkg = JSON.parse(await Bun.file(join(dir, 'package.json')).text());
+	const nls: Record<string, string | { message: string }> = JSON.parse(await Bun.file(join(dir, 'package.nls.json')).text());
 	const tr = (v: unknown): unknown => {
 		if (typeof v === 'string') {
 			const m = /^%([^%]+)%$/.exec(v);
@@ -104,7 +106,7 @@ for (const ext of ['git', 'merge-conflict']) {
 		return v;
 	};
 	const conf = pkg.contributes.configuration;
-	for (const c of Array.isArray(conf) ? conf : [conf]) for (const [k, s] of Object.entries(c.properties)) full[k] = { ...(tr(s) as Schema), origin: `extensions/${ext}/package.json` };
+	for (const c of Array.isArray(conf) ? conf : [conf]) for (const [k, s] of Object.entries(c.properties ?? {})) full[k] = { ...(tr(s) as Schema), origin: `extensions/${ext}/package.json` };
 }
 
 if (PLATFORM !== 'darwin') {

@@ -2,7 +2,8 @@
 // `breadcrumbs.enabled`; Copy Breadcrumbs Path copies the symbol path at the cursor, joined with
 // `breadcrumbs.symbolPathSeparator`.
 
-import { lsp } from '#lib/lsp/lsp.svelte.ts';
+import { symbolPath } from '#lib/lsp/convert.ts';
+import { outline } from './outline.svelte';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { visibleSymbols, symbolPathText } from './breadcrumbs';
 import { commands } from './commands.svelte';
@@ -15,7 +16,7 @@ const get = <T>(id: string) => settings.get<T>(id);
 /** The active editor's symbol crumbs after the `breadcrumbs.show*` filters (whatever `symbolPath` shows). */
 function activeSymbols() {
 	const path = editors.active;
-	return path ? visibleSymbols(lsp.crumbs(path, editors.cursor.line, editors.cursor.column), get, 'on') : [];
+	return path ? visibleSymbols(symbolPath(outline.symbolsOf(path), { line: editors.cursor.line - 1, character: editors.cursor.column - 1 }), get, 'on') : [];
 }
 
 export function installBreadcrumbs(): () => void {

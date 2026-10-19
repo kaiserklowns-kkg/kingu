@@ -138,6 +138,21 @@
 			"th": "แสดงหัวกลุ่มในเมนู Code Action"
 		},
 		{
+			"id": "editor.codeLens",
+			"group": "Text Editor",
+			"th": "แสดง CodeLens เหนือโค้ด"
+		},
+		{
+			"id": "editor.codeLensFontFamily",
+			"group": "Text Editor",
+			"th": "ฟอนต์ของ CodeLens เว้นว่าง = ฟอนต์ของ editor"
+		},
+		{
+			"id": "editor.codeLensFontSize",
+			"group": "Text Editor",
+			"th": "ขนาดฟอนต์ของ CodeLens 0 = 90% ของ editor.fontSize"
+		},
+		{
 			"id": "editor.colorDecorators",
 			"group": "Text Editor",
 			"th": "แสดงตัวอย่างสีหน้าค่าสีและตัวเลือกสี"
@@ -493,6 +508,37 @@
 			"th": "เลื่อนแบบมีแรงเฉื่อย เหมาะกับทัชแพดบน Linux"
 		},
 		{
+			"id": "editor.inlayHints.enabled",
+			"group": "Text Editor",
+			"th": "แสดง inlay hint ใน editor",
+			"enumTh": [
+				"แสดง",
+				"แสดงยกเว้นตอนกด Ctrl+Option ค้างไว้",
+				"ซ่อนยกเว้นตอนกด Ctrl+Option ค้างไว้",
+				"ไม่แสดง"
+			]
+		},
+		{
+			"id": "editor.inlayHints.fontFamily",
+			"group": "Text Editor",
+			"th": "ฟอนต์ของ inlay hint เว้นว่าง = ฟอนต์ของ editor"
+		},
+		{
+			"id": "editor.inlayHints.fontSize",
+			"group": "Text Editor",
+			"th": "ขนาดฟอนต์ของ inlay hint ค่าเริ่มต้น = 90% ของ editor.fontSize"
+		},
+		{
+			"id": "editor.inlayHints.maximumLength",
+			"group": "Text Editor",
+			"th": "ความยาวสูงสุดของ inlay hint ต่อบรรทัด 0 = ไม่ตัด"
+		},
+		{
+			"id": "editor.inlayHints.padding",
+			"group": "Text Editor",
+			"th": "เว้นระยะรอบ inlay hint"
+		},
+		{
 			"id": "editor.largeFileOptimizations",
 			"group": "Text Editor",
 			"th": "จัดการไฟล์ใหญ่เป็นพิเศษ ปิดความสามารถที่ใช้หน่วยความจำมาก"
@@ -816,6 +862,16 @@
 			"id": "editor.selectionHighlightMultiline",
 			"group": "Text Editor",
 			"th": "ไฮไลต์ผลที่ตรงกับข้อความที่เลือกแม้คร่อมหลายบรรทัด"
+		},
+		{
+			"id": "editor.semanticHighlighting.enabled",
+			"group": "Text Editor",
+			"th": "ใช้สีจาก semantic token ของ language server",
+			"enumTh": [
+				"เปิดทุกธีม",
+				"ปิดทุกธีม",
+				"ตามที่ธีมกำหนด semanticHighlighting"
+			]
 		},
 		{
 			"id": "editor.showDeprecated",
