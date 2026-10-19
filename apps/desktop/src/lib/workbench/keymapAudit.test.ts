@@ -76,7 +76,9 @@ function registrations(): Entry[] {
  */
 const EXCLUSIVE: [string, string][] = [
 	// Pin / Unpin Editor: VS Code binds both to ⌘K ⇧↵, one per pinned state.
-	['workbench.action.pinEditor', 'workbench.action.unpinEditor']
+	['workbench.action.pinEditor', 'workbench.action.unpinEditor'],
+	// New Chat takes ⌘N only while the chat has focus (keyWhen + weight), New Untitled File elsewhere.
+	['workbench.action.chat.newChat', 'workbench.action.files.newUntitledFile']
 ];
 
 /** VS Code's `terminalFocus` / `!terminalFocus`: one command's key acts only in a focused panel
