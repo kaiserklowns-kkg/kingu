@@ -10,6 +10,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::RwLock;
 
 use crate::git_queue::{self, Scope};
+use crate::i18n::msg::{FilesMsg, ScmMsg};
+use crate::tr;
 
 /// `git.path` (VS Code: a path, or a list tried in order; `null` finds `git` on PATH). Read by Rust
 /// itself from the user settings file (it picks a program to run, so never from the webview or a
@@ -112,7 +114,7 @@ pub fn check_rel(root: &Path, rel: &str) -> Result<(), String> {
   }
   let path = Path::new(rel);
   if !path.components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir)) {
-    return Err(format!("{rel}: outside the workspace"));
+    return Err(tr!(FilesMsg::OutsideWorkspace, path = rel));
   }
   let full = root.join(path);
   let mut probe = full.clone();
@@ -121,11 +123,11 @@ pub fn check_rel(root: &Path, rel: &str) -> Result<(), String> {
   loop {
     if probe.symlink_metadata().is_ok() {
       let at = if probe == full && probe.is_symlink() { probe.parent().map(Path::to_path_buf) } else { Some(probe.clone()) };
-      let real = at.and_then(|p| p.canonicalize().ok()).ok_or_else(|| format!("{rel}: cannot resolve"))?;
-      return if real.starts_with(root) { Ok(()) } else { Err(format!("{rel}: outside the workspace")) };
+      let real = at.and_then(|p| p.canonicalize().ok()).ok_or_else(|| tr!(ScmMsg::CannotResolve, path = rel))?;
+      return if real.starts_with(root) { Ok(()) } else { Err(tr!(FilesMsg::OutsideWorkspace, path = rel)) };
     }
     if !probe.pop() || !probe.starts_with(root) {
-      return Err(format!("{rel}: outside the workspace"));
+      return Err(tr!(FilesMsg::OutsideWorkspace, path = rel));
     }
   }
 }
@@ -296,7 +298,7 @@ fn operation_in(git_dir: &Path) -> Option<Operation> {
 
 /// Aborts the operation in progress; returns which one.
 pub fn abort_operation(root: &Path) -> Result<Operation, String> {
-  let op = operation(root).ok_or("No merge, rebase, cherry-pick or revert is in progress.")?;
+  let op = operation(root).ok_or_else(|| tr!(ScmMsg::NoOperation))?;
   let _queue = git_queue::lock(root, Scope::Repository, op.verb())?;
   run(root, &[op.verb(), "--abort"])?;
   Ok(op)
@@ -306,11 +308,11 @@ pub fn abort_operation(root: &Path) -> Result<Operation, String> {
 /// prepared message (no editor: `core.editor=true` accepts it as is). Unresolved paths stop it
 /// before git is asked.
 pub fn continue_operation(root: &Path) -> Result<Operation, String> {
-  let op = operation(root).ok_or("No merge, rebase, cherry-pick or revert is in progress.")?;
+  let op = operation(root).ok_or_else(|| tr!(ScmMsg::NoOperation))?;
   let out = run(root, &["diff", "--name-only", "--diff-filter=U", "-z"])?;
   let unresolved = out.split(|b| *b == 0).filter(|s| !s.is_empty()).count();
   if unresolved > 0 {
-    return Err(format!("{unresolved} file(s) still have conflicts. Resolve and stage them first."));
+    return Err(tr!(ScmMsg::StillConflicted, count = unresolved));
   }
   let _queue = git_queue::lock(root, Scope::Repository, op.verb())?;
   run(root, &["-c", "core.editor=true", op.verb(), "--continue"])?;
@@ -427,12 +429,12 @@ pub fn unstage(root: &Path, paths: &[String]) -> Result<(), String> {
 /// instead of deleting them.
 pub fn discard(root: &Path, paths: &[String], delete_untracked: bool, to_trash: bool) -> Result<(), String> {
   let _queue = git_queue::lock(root, Scope::Worktree, "restore")?;
-  let Some(st) = status(root)? else { return Err("not a git repository".into()) };
+  let Some(st) = status(root)? else { return Err(tr!(ScmMsg::NotARepository)) };
   let untracked: HashSet<&str> =
     st.entries.iter().filter(|e| e.worktree.as_deref() == Some("?")).map(|e| e.path.as_str()).collect();
   let (new, tracked): (Vec<String>, Vec<String>) = paths.iter().cloned().partition(|p| untracked.contains(p.as_str()));
   if !new.is_empty() && !delete_untracked {
-    return Err(format!("{}: untracked, deleting needs confirmation", new.join(", ")));
+    return Err(tr!(ScmMsg::UntrackedNeedsConfirm, paths = new.join(", ")));
   }
   run_paths(root, &["restore", "--worktree"], &tracked)?;
   if to_trash {
@@ -474,12 +476,12 @@ pub fn commit_flags(opts: &CommitOptions) -> Vec<&'static str> {
 
 pub fn commit(root: &Path, message: &str, opts: &CommitOptions) -> Result<(), String> {
   if message.trim().is_empty() {
-    return Err("commit message is empty".into());
+    return Err(tr!(ScmMsg::CommitMessageEmpty));
   }
   let _queue = git_queue::lock(root, Scope::Repository, "commit")?;
   // `git diff --cached --quiet` fails when something is staged (git's own message is a page of status).
   if !opts.amend && !opts.empty && has_head(root) && run(root, &["diff", "--cached", "--quiet"]).is_ok() {
-    return Err("nothing staged to commit".into());
+    return Err(tr!(ScmMsg::NothingStaged));
   }
   let mut args = commit_flags(opts);
   args.extend(["-m", message]);
@@ -505,7 +507,7 @@ pub fn check_rev(rev: &str) -> Result<(), String> {
     || rev.starts_with('-')
     || rev.contains("..")
     || rev.chars().any(|c| c.is_whitespace() || c.is_control() || matches!(c, ':' | '\\' | '*' | '?' | '['));
-  if bad { Err(format!("{rev:?}: invalid revision")) } else { Ok(()) }
+  if bad { Err(tr!(ScmMsg::InvalidRevision, rev = format!("{rev:?}"))) } else { Ok(()) }
 }
 
 /// Local branch names (`refs/heads`), sorted by git.
@@ -640,7 +642,7 @@ pub fn show_at(root: &Path, rev: &str, rel: &str) -> Result<String, String> {
   }
   let size = run(root, &["cat-file", "-s", &spec])?;
   if String::from_utf8_lossy(&size).trim().parse::<usize>().unwrap_or(0) > MAX_SHOW_BYTES {
-    return Err(format!("{rel}: larger than {MAX_SHOW_BYTES} bytes"));
+    return Err(tr!(FilesMsg::FileTooLarge, path = rel, max = MAX_SHOW_BYTES));
   }
   Ok(String::from_utf8_lossy(&run(root, &["cat-file", "blob", &spec])?).into_owned())
 }
@@ -700,7 +702,7 @@ mod tests {
     assert!(sh_git(d, &["commit", "-qam", "main"]));
     assert!(!sh_git(d, &["merge", "-q", "other"]));
     assert_eq!(operation(d), Some(Operation::Merge));
-    assert!(continue_operation(d).unwrap_err().contains("1 file(s) still have conflicts"));
+    assert!(continue_operation(d).unwrap_err().contains("1 file still has conflicts"));
     std::fs::write(d.join("a.txt"), "both\n").unwrap();
     assert!(sh_git(d, &["add", "a.txt"]));
     // `continue_operation` commits through `run`, so the repository needs its own identity.
