@@ -6,6 +6,11 @@ source code, diffs, transcripts, credentials or other secrets (repo URLs with
 embedded credentials are rejected, and the desktop sync endpoint rejects
 anything that looks like file contents, a diff or a credential).
 
+The one exception is **team artifacts**: a page an agent made that a member
+explicitly chooses to share with the team (one self-contained HTML file of at
+most 2 MiB per artifact, refused when it looks like it contains a credential).
+Lists and events carry only its metadata.
+
 - Go stdlib `net/http` routing (Go 1.22+ patterns) and `log/slog` (JSON to stderr)
 - `github.com/jackc/pgx/v5` v5.11.0 (`pgxpool`, LISTEN/NOTIFY)
 - `github.com/pressly/goose/v3` v3.28.0, SQL migrations embedded from `migrations/`
@@ -108,7 +113,7 @@ limited per client IP. Buckets are per replica.
 ## Tenancy and Row-Level Security
 
 Every org-scoped table (`orgs`, `members`, `projects`, `tasks`, `agent_runs`,
-`audit_log`, `api_tokens`, `org_events`, `team_snaps`) has RLS **enabled and forced**. The
+`audit_log`, `api_tokens`, `org_events`, `team_snaps`, `team_artifacts`) has RLS **enabled and forced**. The
 policies compare `org_id` with `app_current_org()`, which is
 `NULLIF(current_setting('app.org_id', true), '')::uuid`. Each request runs in a
 transaction that first calls `SELECT set_config('app.org_id', $1, true)` with
@@ -143,6 +148,10 @@ Every `/v1` request needs `Authorization: Bearer kgu_…` (or, in dev mode,
 | GET    | `/v1/snaps`                | Team Snap catalog (any member), see below |
 | PUT    | `/v1/snaps/{snap_id}`      | **owner/lead.** Approve and pin a snap, see below |
 | DELETE | `/v1/snaps/{snap_id}`      | **owner/lead.** Remove it from the catalog |
+| GET    | `/v1/artifacts`            | Shared artifacts, newest first, without their pages (any member) |
+| GET    | `/v1/artifacts/{artifact_id}` | One shared artifact with its `html` (any member) |
+| PUT    | `/v1/artifacts/{artifact_id}` | **Not viewers.** Share or replace a page, see below |
+| DELETE | `/v1/artifacts/{artifact_id}` | **Its sharer or owner/lead.** Stop sharing it |
 | GET    | `/v1/events`               | Server-Sent Events, see below |
 | POST   | `/v1/dev/tokens`           | **Dev only.** `{org_id \| org_name, user_id, role?="owner", name?, ttl_hours?}` |
 
@@ -223,6 +232,31 @@ PUT /v1/snaps/go
   members get 403 `forbidden` on PUT/DELETE.
 - Changes emit `snap.updated` / `snap.removed` on `/v1/events` and are audited
   (`snap.approve`, `snap.remove`).
+
+### Team artifacts (`/v1/artifacts`)
+
+Pages an agent made that a member shared from the desktop (the desktop inlines
+the page's assets first), for teammates to open read-only.
+
+```json
+PUT /v1/artifacts/0123456789abcdef
+{"title": "Benchmark results", "description": null, "format": "html",
+ "version": 3, "html": "<!doctype html>…"}
+```
+
+- `artifact_id` (path) is the desktop's id, 16 lowercase hex characters;
+  `title` 1–200 characters, `description` null or 1–1000, `format` `html` or
+  `markdown` (what the desktop made it from; `html` is always the rendered
+  page), `version` 1–1000000.
+- `html` is 1 byte to 2 MiB of UTF-8 (413 `body_too_large` above; the route
+  accepts bodies up to 3 MiB instead of the usual 64 KB). A page that looks
+  like it holds a credential is rejected with 422 `content_not_allowed`.
+- The server sets `sha256`, `size_bytes`, `shared_by`, `shared_at` and
+  `updated_at`. 201 when shared, 200 when replaced; only the sharer or an
+  owner/lead may replace or delete it (403 `forbidden`), viewers never write.
+- Responses never echo `html` except `GET /v1/artifacts/{artifact_id}`.
+- Changes emit `artifact.shared` / `artifact.removed` on `/v1/events` (metadata
+  only) and are audited (`artifact.share`, `artifact.remove`).
 
 ### `GET /v1/events` (SSE)
 
