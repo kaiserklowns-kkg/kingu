@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { issueRef, prBody, taskForIssue, tasksByIssue, type Issue } from './issues';
 import type { LinearIssue } from './linear';
 import { newTask } from './model';
+import { issueBranchLeaf } from './issueBranch';
 import {
 	filterItems,
 	fromGithub,
@@ -129,6 +130,9 @@ describe('rows from every tracker', () => {
 describe('tasks from rows', () => {
 	test('branch carries the issue key', () => {
 		expect(sourceSlug(fromJira(jira()))).toBe('eng-123-fix-login');
+		// The folder is lowercase; Jira's branch keeps the key as Jira writes it.
+		expect(issueBranchLeaf(sourceSlug(fromJira(jira())), fromJira(jira()).link)).toBe('ENG-123-fix-login');
+		expect(issueBranchLeaf(sourceSlug(fromGitlab(issue(), 'acme/app')), fromGitlab(issue(), 'acme/app').link)).toBeNull();
 		expect(sourceSlug(fromGitlab(issue(), 'acme/app'))).toBe('issue-12-fix-login-on-safari-when-cookies');
 		expect(sourceSlug(fromProject(item({ title: 'แก้ login' })))).toBe('issue-42-login');
 		expect(sourceTaskTitle(fromJira(jira({ title: '  Crash ' })))).toBe('ENG-123 Crash');

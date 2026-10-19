@@ -93,10 +93,32 @@ pub(super) fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
   Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// A branch name's own part when it is not the slug: a task from a Jira issue keeps the key's case
+/// (`ENG-123-fix-login`) so Jira's development panel links the branch. ASCII letters, digits, `-`
+/// and `_`, otherwise like a slug (1..=48, no leading/trailing or doubled `-`).
+pub fn validate_leaf(leaf: &str) -> Result<(), String> {
+  let ok = !leaf.is_empty()
+    && leaf.len() <= MAX_SLUG_LEN
+    && leaf.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+    && !leaf.starts_with(['-', '_'])
+    && !leaf.ends_with('-')
+    && !leaf.contains("--");
+  if ok { Ok(()) } else { Err(tr!(AgentMsg::BadBranchName, branch = leaf)) }
+}
+
 /// Creates the task worktree on a new branch `<prefix><slug>` (default prefix `kingu/`) from
-/// `base` (default `HEAD`).
+/// `base` (default `HEAD`). The app calls [`create_named`]; tests use this short form.
+#[cfg(test)]
 pub fn create(repo: &Path, slug: &str, base: Option<&str>, prefix: Option<&str>) -> Result<WorktreeInfo, String> {
+  create_named(repo, slug, base, prefix, None)
+}
+
+/// [`create`] on the branch `<prefix><leaf>` when `leaf` is given (the folder is still the slug).
+pub fn create_named(repo: &Path, slug: &str, base: Option<&str>, prefix: Option<&str>, leaf: Option<&str>) -> Result<WorktreeInfo, String> {
   validate_slug(slug)?;
+  if let Some(l) = leaf {
+    validate_leaf(l)?;
+  }
   let prefix = prefix.unwrap_or(DEFAULT_BRANCH_PREFIX);
   validate_prefix(prefix)?;
   let base = base.map(str::trim).filter(|b| !b.is_empty()).unwrap_or("HEAD");
@@ -111,7 +133,7 @@ pub fn create(repo: &Path, slug: &str, base: Option<&str>, prefix: Option<&str>)
   if path.exists() {
     return Err(format!("{}: already exists", path.display()));
   }
-  let branch = format!("{prefix}{slug}");
+  let branch = format!("{prefix}{}", leaf.unwrap_or(slug));
   git(repo, &["check-ref-format", "--branch", &branch]).map_err(|_| tr!(AgentMsg::BadBranchName, branch))?;
   let path_str = path.to_str().ok_or("worktree path is not valid UTF-8")?;
   exclude_kingu_logged(repo);
@@ -535,6 +557,17 @@ mod tests {
     }
     for bad in ["", "Fix", "a_b", "a b", "../x", "-a", "a-", "a--b", "งาน", &"a".repeat(49), "a/b"] {
       assert!(validate_slug(bad).is_err(), "{bad}");
+    }
+  }
+
+  #[test]
+  fn a_jira_task_branch_keeps_the_key_uppercase() {
+    let (_tmp, repo) = temp_repo();
+    let w = create_named(&repo, "eng-123-fix-login", None, None, Some("ENG-123-fix-login")).unwrap();
+    assert_eq!((w.slug.as_deref(), w.branch.as_deref()), (Some("eng-123-fix-login"), Some("kingu/ENG-123-fix-login")));
+    assert!(validate_leaf("MY_PROJ-7-x").is_ok());
+    for bad in ["", "a b", "-a", "a-", "a--b", "a/b", "a..b", "_a"] {
+      assert!(validate_leaf(bad).is_err(), "{bad}");
     }
   }
 

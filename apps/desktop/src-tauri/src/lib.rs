@@ -757,8 +757,9 @@ fn worktree_create(
   slug: String,
   base: Option<String>,
   prefix: Option<String>,
+  branch: Option<String>,
 ) -> Result<agent::worktree::WorktreeInfo, String> {
-  agent::worktree::create(&ws.root()?, &slug, base.as_deref(), prefix.as_deref())
+  agent::worktree::create_named(&ws.root()?, &slug, base.as_deref(), prefix.as_deref(), branch.as_deref())
 }
 
 /// Before a task forks from `base`: fast-forward it from its upstream when safe
