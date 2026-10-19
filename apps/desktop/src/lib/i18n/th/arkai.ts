@@ -6,6 +6,7 @@ export const arkai = {
 	'arkai.picker.loading': 'กำลังหาโมเดล…',
 	'arkai.picker.none': 'ยังไม่มีโมเดล: ตั้งค่าผู้ให้บริการก่อน',
 	'arkai.picker.noKey': '{name} (ยังไม่มี API key)',
+	'arkai.picker.light': 'โหมดเบา',
 	'arkai.settings.title': 'ผู้ให้บริการโมเดล',
 	'arkai.settings.hint': 'Arkai ใช้โมเดลเหล่านี้ในแชต เพิ่มผู้ให้บริการได้ใน settings.json ที่ kingu.arkai.providers ส่วน Ollama บนเครื่องนี้จะพบเอง API key เก็บไว้ในพวงกุญแจ (Keychain) ของ macOS',
 	'arkai.settings.empty': 'ยังไม่มีผู้ให้บริการ เปิด Ollama หรือเพิ่มใน kingu.arkai.providers',

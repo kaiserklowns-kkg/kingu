@@ -10,17 +10,21 @@
 //! - API keys: in the macOS Keychain (`dev.kingu.arkai`, one item per provider id), set from
 //!   Settings › Arkai; never in settings.json (an `Authorization` header there is dropped). The
 //!   key goes to the agent host with the run and is never logged (`SecretKey`).
+//! - Context windows: Ollama's are asked of it ([`ollama_windows`]: what a loaded model runs at,
+//!   else its Modelfile's `num_ctx`, else the server's default, never more than the model takes);
+//!   LM Studio's of its `/api/v0/models`. A model gets light mode only when that window is small.
 //! - A chat's model is `<provider>/<model>`. A continued chat sends the conversation so far from
 //!   its transcript (`history`), since the agent host keeps nothing between runs.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use serde_json::Value;
 
 use super::events::AgentEvent;
 use crate::i18n::msg::ArkaiMsg;
-use crate::local_ai::http::Transport;
+use crate::local_ai::http::{HttpRequest, Transport};
 use crate::tr;
 
 pub const RUNTIME: &str = "arkai";
@@ -28,8 +32,11 @@ pub const SETTING: &str = "kingu.arkai.providers";
 pub const KEYCHAIN_SERVICE: &str = "dev.kingu.arkai";
 pub const OLLAMA: &str = "ollama";
 const OLLAMA_BASE: &str = "http://127.0.0.1:11434/v1";
-/// Ollama serves a small context unless told otherwise; old Arkai's Chyle ran at this size, in light mode.
+/// The window Ollama serves a model at when neither the model nor a loaded copy says otherwise
+/// (its OpenAI-compatible API cannot ask for more); old Arkai's Chyle ran at this size, in light mode.
 const OLLAMA_CONTEXT: u64 = 16_384;
+/// The agent host's window for a model nobody describes (`DEFAULT_CONTEXT_WINDOW` in spec.ts).
+const DEFAULT_CONTEXT: u64 = 32_768;
 const MAX_PROVIDERS: usize = 32;
 const MAX_MODELS: usize = 200;
 const MAX_MODEL_ID: usize = 200;
@@ -160,7 +167,6 @@ pub fn discover(transport: &dyn Transport, p: &Provider, key: Option<&str>) -> R
   }
   let timeout = if p.local() { LOCAL_TIMEOUT } else { REMOTE_TIMEOUT };
   let v = transport.get_json(&format!("{}/models", p.base_url), key, timeout)?;
-  let ollama = p.id == OLLAMA;
   let mut models: Vec<Model> = v["data"]
     .as_array()
     .into_iter()
@@ -169,10 +175,112 @@ pub fn discover(transport: &dyn Transport, p: &Provider, key: Option<&str>) -> R
     // Embedding models cannot chat.
     .filter(|id| !id.contains("embed"))
     .take(MAX_MODELS)
-    .map(|id| Model { context_window: ollama.then_some(OLLAMA_CONTEXT), ..Model::bare(id) })
+    .map(Model::bare)
     .collect();
   models.sort_by(|a, b| a.id.cmp(&b.id));
+  let windows = if p.id == OLLAMA {
+    ollama_windows(transport, p, &models)
+  } else if p.local() {
+    lmstudio_windows(transport, p)
+  } else {
+    HashMap::new()
+  };
+  for m in &mut models {
+    m.context_window = windows.get(&m.id).copied();
+  }
   Ok(models)
+}
+
+/// What `/api/show` says of a model: its Modelfile's `num_ctx` and the most it takes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OllamaShow {
+  pub num_ctx: Option<u64>,
+  pub native: Option<u64>,
+}
+
+fn sane(n: u64) -> Option<u64> {
+  (512..=10_000_000).contains(&n).then_some(n)
+}
+
+/// `/api/show`'s answer: `parameters` (Modelfile lines, `num_ctx 32768`) and `model_info`
+/// (`<arch>.context_length`).
+pub fn parse_show(v: &Value) -> OllamaShow {
+  let num_ctx = v["parameters"].as_str().and_then(|params| {
+    params.lines().find_map(|l| {
+      let mut words = l.split_whitespace();
+      if words.next() == Some("num_ctx") { words.next()?.parse::<u64>().ok() } else { None }
+    })
+  });
+  let native = v["model_info"].as_object().and_then(|info| info.iter().find(|(k, _)| k.ends_with(".context_length")).and_then(|(_, n)| n.as_u64()));
+  OllamaShow { num_ctx: num_ctx.and_then(sane), native: native.and_then(sane) }
+}
+
+/// The window Ollama runs a model at: a loaded copy's (`/api/ps`), else the Modelfile's
+/// `num_ctx`, else the server's default; never more than the model takes.
+pub fn ollama_window(loaded: Option<u64>, show: OllamaShow) -> u64 {
+  let served = loaded.or(show.num_ctx).unwrap_or(OLLAMA_CONTEXT);
+  show.native.map_or(served, |n| served.min(n))
+}
+
+/// `/api/show` answers per server and model: they only change when the model is pulled again.
+fn show_cache() -> &'static Mutex<HashMap<String, OllamaShow>> {
+  static CACHE: OnceLock<Mutex<HashMap<String, OllamaShow>>> = OnceLock::new();
+  CACHE.get_or_init(Default::default)
+}
+
+/// Ollama's own API root (`…/v1` is its OpenAI-compatible part).
+fn ollama_root(base_url: &str) -> &str {
+  base_url.strip_suffix("/v1").unwrap_or(base_url)
+}
+
+/// Each model's window at this Ollama (best effort: a model it says nothing of gets the default).
+pub fn ollama_windows(transport: &dyn Transport, p: &Provider, models: &[Model]) -> HashMap<String, u64> {
+  let root = ollama_root(&p.base_url);
+  let loaded: HashMap<String, u64> = transport
+    .get_json(&format!("{root}/api/ps"), None, LOCAL_TIMEOUT)
+    .ok()
+    .and_then(|v| v["models"].as_array().cloned())
+    .into_iter()
+    .flatten()
+    .filter_map(|m| Some((m["model"].as_str().or(m["name"].as_str())?.to_owned(), m["context_length"].as_u64().and_then(sane)?)))
+    .collect();
+  models
+    .iter()
+    .map(|m| {
+      let key = format!("{root}|{}", m.id);
+      let cached = show_cache().lock().unwrap().get(&key).copied();
+      let show = cached.unwrap_or_else(|| {
+        let req = HttpRequest { url: format!("{root}/api/show"), body: serde_json::json!({"model": m.id}), bearer: None, timeout: LOCAL_TIMEOUT };
+        match transport.post_json(&req) {
+          Ok(v) => {
+            let show = parse_show(&v);
+            show_cache().lock().unwrap().insert(key, show);
+            show
+          }
+          Err(_) => OllamaShow::default(),
+        }
+      });
+      (m.id.clone(), ollama_window(loaded.get(&m.id).copied(), show))
+    })
+    .collect()
+}
+
+/// LM Studio's windows (`/api/v0/models`): a loaded model's, else its maximum when that is below
+/// the agent host's default. Other local servers do not answer there; that is fine.
+pub fn lmstudio_windows(transport: &dyn Transport, p: &Provider) -> HashMap<String, u64> {
+  let Ok(u) = url::Url::parse(&p.base_url) else { return HashMap::new() };
+  let Ok(v) = transport.get_json(&format!("{}/api/v0/models", u.origin().ascii_serialization()), None, LOCAL_TIMEOUT) else { return HashMap::new() };
+  v["data"]
+    .as_array()
+    .into_iter()
+    .flatten()
+    .filter_map(|m| {
+      let id = m["id"].as_str()?;
+      let loaded = m["loaded_context_length"].as_u64().and_then(sane);
+      let max = m["max_context_length"].as_u64().and_then(sane).filter(|n| *n < DEFAULT_CONTEXT);
+      Some((id.to_owned(), loaded.or(max)?))
+    })
+    .collect()
 }
 
 /// A provider as the chat's model picker and Settings › Arkai show it.
@@ -406,6 +514,8 @@ mod tests {
   #[derive(Default)]
   struct FakeTransport {
     replies: BTreeMap<String, Value>,
+    /// POST replies by URL and the body's `model`.
+    posts: BTreeMap<(String, String), Value>,
     asked: Mutex<Vec<(String, Option<String>)>>,
   }
 
@@ -414,8 +524,10 @@ mod tests {
       self.asked.lock().unwrap().push((url.to_owned(), bearer.map(str::to_owned)));
       self.replies.get(url).cloned().ok_or_else(|| "unreachable".to_owned())
     }
-    fn post_json(&self, _req: &HttpRequest) -> Result<Value, String> {
-      Err("no".into())
+    fn post_json(&self, req: &HttpRequest) -> Result<Value, String> {
+      self.asked.lock().unwrap().push((req.url.clone(), None));
+      let model = req.body["model"].as_str().unwrap_or_default().to_owned();
+      self.posts.get(&(req.url.clone(), model)).cloned().ok_or_else(|| "no".to_owned())
     }
     fn post_lines(&self, _req: &HttpRequest, _on_line: &mut dyn FnMut(&str) -> bool) -> Result<(), String> {
       Err("no".into())
@@ -474,6 +586,48 @@ mod tests {
     // A provider that does not answer shows why.
     t.replies.remove("http://localhost:1234/v1/models");
     assert_eq!(infos(&ps, &t, &key).iter().find(|p| p.id == "lmstudio").unwrap().error.as_deref(), Some("unreachable"));
+  }
+
+  #[test]
+  fn ollama_windows_come_from_the_server() {
+    let show = |params: &str, native: u64| json!({"parameters": params, "model_info": {"general.architecture": "qwen3", "qwen3.context_length": native}});
+    assert_eq!(parse_show(&show("stop \"<|im_end|>\"\nnum_ctx 32768", 131072)), OllamaShow { num_ctx: Some(32768), native: Some(131072) });
+    assert_eq!(parse_show(&json!({})), OllamaShow::default());
+    // Loaded copy first, then num_ctx, then the default; never past what the model takes.
+    let s = OllamaShow { num_ctx: Some(32768), native: Some(131072) };
+    assert_eq!(ollama_window(Some(65536), s), 65536);
+    assert_eq!(ollama_window(None, s), 32768);
+    assert_eq!(ollama_window(None, OllamaShow { num_ctx: None, native: Some(131072) }), OLLAMA_CONTEXT);
+    assert_eq!(ollama_window(None, OllamaShow { num_ctx: None, native: Some(8192) }), 8192);
+
+    let mut t = FakeTransport::default();
+    t.replies.insert("http://127.0.0.1:11434/v1/models".into(), json!({"data": [{"id": "wt-big"}, {"id": "wt-small"}, {"id": "wt-loaded"}, {"id": "wt-silent"}]}));
+    t.replies.insert("http://127.0.0.1:11434/api/ps".into(), json!({"models": [{"model": "wt-loaded", "context_length": 40960}]}));
+    let api = "http://127.0.0.1:11434/api/show".to_owned();
+    t.posts.insert((api.clone(), "wt-big".into()), show("num_ctx 65536", 262144));
+    t.posts.insert((api.clone(), "wt-small".into()), show("", 4096));
+    t.posts.insert((api.clone(), "wt-loaded".into()), show("", 131072));
+    let ps = parse(None);
+    let list = infos(&ps, &t, &|_| None);
+    let windows: Vec<_> = list[0].models.iter().map(|m| (m.id.as_str(), m.context_window)).collect();
+    assert_eq!(windows, [("wt-big", Some(65536)), ("wt-loaded", Some(40960)), ("wt-silent", Some(OLLAMA_CONTEXT)), ("wt-small", Some(4096))]);
+    // Asked once per model: the next listing is answered from the cache.
+    let shows = || t.asked.lock().unwrap().iter().filter(|(u, _)| *u == api).count();
+    assert_eq!(shows(), 4);
+    infos(&ps, &t, &|_| None);
+    assert_eq!(shows(), 5, "only the model that did not answer is asked again");
+
+    // LM Studio: a loaded model's window, else its maximum when that is small.
+    let mut t = FakeTransport::default();
+    t.replies.insert("http://localhost:1234/v1/models".into(), json!({"data": [{"id": "a"}, {"id": "b"}, {"id": "c"}]}));
+    t.replies.insert(
+      "http://localhost:1234/api/v0/models".into(),
+      json!({"data": [{"id": "a", "max_context_length": 131072, "loaded_context_length": 8192}, {"id": "b", "max_context_length": 4096}, {"id": "c", "max_context_length": 131072}]}),
+    );
+    let ps = parse(Some(&json!({"lmstudio": {"baseUrl": "http://localhost:1234/v1"}})));
+    let list = infos(&ps, &t, &|_| None);
+    let windows: Vec<_> = list[0].models.iter().map(|m| m.context_window).collect();
+    assert_eq!(windows, [Some(8192), Some(4096), None]);
   }
 
   #[test]

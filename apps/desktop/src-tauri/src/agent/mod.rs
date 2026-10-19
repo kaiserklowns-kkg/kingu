@@ -129,6 +129,8 @@ pub async fn agent_start(
   if resume_at.is_some() && !runtimes::can_rewind(&runtime) {
     return Err(crate::tr!(crate::i18n::msg::RuntimeMsg::NoRewind));
   }
+  // Arkai rewinds by its transcript (cut by `chat_rewind`), never at an SDK message.
+  let resume_at = if runtime == arkai::RUNTIME { None } else { resume_at };
   let mut runtime_spec = match runtime.as_str() {
     // Arkai's spec needs the chat's transcript: below, once the folder is known.
     runtimes::CLAUDE | arkai::RUNTIME => None,
@@ -160,23 +162,24 @@ pub async fn agent_start(
   if runtime == arkai::RUNTIME {
     // A continued chat: the agent host gets the conversation back from the transcript.
     let past = match (chat_id.as_deref(), resume.is_some()) {
-      (Some(id), true) => chats::load_transcript(&open_root, id)?,
+      (Some(id), true) => chats::load_transcript_full(&open_root, id)?,
       _ => Vec::new(),
     };
     let (config, model) = (crate::snap::config_dir(&app)?, model.clone());
     runtime_spec = Some(tauri::async_runtime::spawn_blocking(move || arkai::run_spec(&config, model.as_deref(), past)).await.map_err(|e| e.to_string())??);
   }
   let transcript = match chat_id.as_deref() {
-    Some(id) => Some(chats::Transcript::new(&open_root, id)?),
+    // Arkai's tool inputs are kept whole: they are the model's own history on the next run.
+    Some(id) => Some(chats::Transcript::new(&open_root, id)?.full_inputs(runtime == arkai::RUNTIME)),
     None => None,
   };
   let owner = chat_id.as_deref().map(|id| chat_owner(&open_root, id));
   // A chat's rewind points so far: the run stamps its checkpoints from them.
   let anchors = chat_id.as_deref().map(|id| std::sync::Mutex::new(rewind::anchors(&open_root, id)));
-  let mcp_servers = mcp_servers.filter(|m| !m.is_empty());
+  let mut mcp_servers = mcp_servers.filter(|m| !m.is_empty());
   // The project's .mcp.json servers (Claude Code reads them itself): only trusted, enabled ones
   // start; servers the user turned off lose their tools.
-  let mcp_plan = {
+  let mut mcp_plan = {
     let (root, dir) = (open_root.clone(), dir.clone());
     let passed: std::collections::BTreeSet<String> = mcp_servers.iter().flat_map(|m| m.keys().cloned()).collect();
     let config = crate::snap::config_dir(&app)?;
@@ -187,6 +190,26 @@ pub async fn agent_start(
     .await
     .map_err(|e| e.to_string())?
   };
+  // Arkai has no Claude Code to read .mcp.json: the enabled servers are passed like the others.
+  if runtime == arkai::RUNTIME
+    && let Some(project) = mcp_plan.project.take()
+    && !project.enabled.is_empty()
+  {
+    let (root, dir) = (open_root.clone(), dir.clone());
+    let found = tauri::async_runtime::spawn_blocking(move || {
+      let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+      let env = |k: &str| std::env::var(k).ok();
+      mcp::project_servers(&root, &dir, &project.enabled, &mcp::Vars { folder: Some(&root), home: home.as_deref(), env: &env })
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    if !found.is_empty() {
+      let servers = mcp_servers.get_or_insert_with(Default::default);
+      for (name, server) in found {
+        servers.entry(name).or_insert(server);
+      }
+    }
+  }
   // The active account of the runtime's provider; an ACP agent signs in on its own.
   let account = {
     use tauri::Manager;

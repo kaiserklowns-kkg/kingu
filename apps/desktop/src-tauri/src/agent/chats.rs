@@ -52,6 +52,8 @@ const MAX_TOOL_RESULT: usize = 8 * 1024;
 const MAX_ERROR: usize = 4 * 1024;
 const MAX_INPUT_STRING: usize = 2 * 1024;
 const MAX_INPUT: usize = 16 * 1024;
+/// A tool input a transcript keeps whole (`Transcript::full_inputs`: Arkai's history), at most.
+const MAX_FULL_INPUT: usize = 256 * 1024;
 
 /// Where the chat's agent runs: the open folder or a task's worktree.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -267,8 +269,15 @@ fn bounded_input(v: &Value) -> Value {
 /// The event as the transcript keeps it, or `None` for what it leaves out (streaming chunks,
 /// stderr, raw lines).
 pub fn for_transcript(ev: &AgentEvent) -> Option<AgentEvent> {
+  for_transcript_with(ev, false)
+}
+
+/// `full_inputs`: a tool call's input is kept whole up to `MAX_FULL_INPUT` (the chat shows it cut
+/// all the same: [`load_transcript`]).
+fn for_transcript_with(ev: &AgentEvent, full_inputs: bool) -> Option<AgentEvent> {
   let mut ev = ev.clone();
   match &mut ev {
+    AgentEvent::ToolUse { input, .. } if full_inputs && input.to_string().len() <= MAX_FULL_INPUT => {}
     AgentEvent::Delta { .. } | AgentEvent::Stderr { .. } | AgentEvent::Raw { .. } | AgentEvent::FileSnapshot { .. } | AgentEvent::EditsChanged { .. } => {
       return None;
     }
@@ -306,6 +315,7 @@ fn open_append(path: &Path) -> std::io::Result<std::fs::File> {
 pub struct Transcript {
   path: PathBuf,
   max: u64,
+  full_inputs: bool,
 }
 
 impl Transcript {
@@ -313,7 +323,13 @@ impl Transcript {
     let path = transcript_path(root, id)?;
     let dir = path.parent().ok_or("transcript path has no parent")?;
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    Ok(Self { path, max: MAX_TRANSCRIPT_BYTES })
+    Ok(Self { path, max: MAX_TRANSCRIPT_BYTES, full_inputs: false })
+  }
+
+  /// Keeps tool inputs whole (within `MAX_FULL_INPUT`): a runtime whose history is the transcript.
+  pub fn full_inputs(mut self, on: bool) -> Self {
+    self.full_inputs = on;
+    self
   }
 
   #[cfg(test)]
@@ -328,7 +344,7 @@ impl Transcript {
   }
 
   fn append_at(&self, ev: &AgentEvent, t: u64) -> Result<(), String> {
-    let Some(event) = for_transcript(ev) else { return Ok(()) };
+    let Some(event) = for_transcript_with(ev, self.full_inputs) else { return Ok(()) };
     let mut line = serde_json::to_vec(&Line { t, event }).map_err(|e| e.to_string())?;
     line.push(b'\n');
     let size = std::fs::symlink_metadata(&self.path).map_or(0, |m| m.len());
@@ -371,10 +387,22 @@ pub(super) fn write_atomic_big(path: &Path, content: &str) -> Result<(), String>
   Ok(())
 }
 
-/// The newest `MAX_LOADED_EVENTS` events of the chat, oldest first; empty without a transcript.
-/// Lines that do not parse (a torn last line after a crash) are skipped, and so are `Anchor`s
-/// (rewind points, for Rust only).
+/// The newest `MAX_LOADED_EVENTS` events of the chat, oldest first, as the chat shows them (tool
+/// inputs cut); empty without a transcript. Lines that do not parse (a torn last line after a
+/// crash) are skipped, and so are `Anchor`s (rewind points, for Rust only).
 pub fn load_transcript(root: &Path, id: &str) -> Result<Vec<AgentEvent>, String> {
+  let mut events = load_transcript_full(root, id)?;
+  for ev in &mut events {
+    if let AgentEvent::ToolUse { input, .. } = ev {
+      *input = bounded_input(input);
+    }
+  }
+  Ok(events)
+}
+
+/// [`load_transcript`] with tool inputs as kept (whole for Arkai): the conversation a continued
+/// Arkai run gets back.
+pub fn load_transcript_full(root: &Path, id: &str) -> Result<Vec<AgentEvent>, String> {
   let path = transcript_path(root, id)?;
   let bytes = match std::fs::read(&path) {
     Ok(b) => b,
@@ -578,6 +606,27 @@ mod tests {
   }
 
   #[test]
+  fn full_inputs_are_kept_for_the_model_and_cut_for_the_chat() {
+    let tmp = tempfile::tempdir().unwrap();
+    let content = "x".repeat(MAX_INPUT_STRING * 4);
+    let call = AgentEvent::ToolUse { id: "c".into(), name: "Write".into(), input: json!({"file_path": "a.rs", "content": content}), parent_tool_use_id: None };
+    Transcript::new(tmp.path(), "a").unwrap().full_inputs(true).append(&call).unwrap();
+    let AgentEvent::ToolUse { input, .. } = &load_transcript_full(tmp.path(), "a").unwrap()[0] else { panic!() };
+    assert_eq!(input["content"].as_str().unwrap().len(), MAX_INPUT_STRING * 4, "the model gets the whole input back");
+    let AgentEvent::ToolUse { input, .. } = &load_transcript(tmp.path(), "a").unwrap()[0] else { panic!() };
+    assert!(input["content"].as_str().unwrap().len() <= MAX_INPUT_STRING + 3, "the chat shows it cut");
+    // Past its own cap, and without the option, the input is cut when written.
+    let huge = AgentEvent::ToolUse { id: "d".into(), name: "Write".into(), input: json!({"content": "y".repeat(MAX_FULL_INPUT)}), parent_tool_use_id: None };
+    let t = Transcript::new(tmp.path(), "b").unwrap().full_inputs(true);
+    t.append(&huge).unwrap();
+    Transcript::new(tmp.path(), "b").unwrap().append(&call).unwrap();
+    for ev in load_transcript_full(tmp.path(), "b").unwrap() {
+      let AgentEvent::ToolUse { input, .. } = ev else { panic!() };
+      assert!(input["content"].as_str().unwrap().len() <= MAX_INPUT_STRING + 3);
+    }
+  }
+
+  #[test]
   fn transcript_stays_under_its_cap_and_keeps_the_newest_lines() {
     let tmp = tempfile::tempdir().unwrap();
     let max = 4096;
@@ -627,7 +676,7 @@ mod tests {
     std::fs::remove_file(tmp.path().join(".kingu/chats")).unwrap();
     std::fs::create_dir(tmp.path().join(".kingu/chats")).unwrap();
     std::os::unix::fs::symlink(outside.path().join("f"), tmp.path().join(".kingu/chats/c.jsonl")).unwrap();
-    let t = Transcript { path: tmp.path().join(".kingu/chats/c.jsonl"), max: MAX_TRANSCRIPT_BYTES };
+    let t = Transcript { path: tmp.path().join(".kingu/chats/c.jsonl"), max: MAX_TRANSCRIPT_BYTES, full_inputs: false };
     assert!(t.append(&msg("x")).is_err(), "O_NOFOLLOW");
     assert!(!outside.path().join("f").exists());
   }

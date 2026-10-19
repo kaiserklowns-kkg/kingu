@@ -353,6 +353,34 @@ pub fn run_plan(root: &Path, dir: &Path, passed: &BTreeSet<String>, disabled: &B
   RunPlan { project, disallowed_tools }
 }
 
+/// The `enabled` project servers (from [`run_plan`]) as servers to pass to a run, for a runtime
+/// that does not read `.mcp.json` itself (Arkai): each from the nearest file defining it, its
+/// variables filled in. A name the agent host would refuse, or a definition that does not parse,
+/// is left out (and logged).
+pub fn project_servers(root: &Path, dir: &Path, enabled: &[String], vars: &Vars) -> BTreeMap<String, McpServer> {
+  let mut out = BTreeMap::new();
+  for file in project_files(dir) {
+    let Ok(Some(config)) = read_config(&file) else { continue };
+    let Some(servers) = servers_of(&config) else { continue };
+    for (name, def) in servers {
+      if out.contains_key(name) || !enabled.contains(name) {
+        continue;
+      }
+      if !valid_mcp_name(name) {
+        log::warn!("mcp project:{name}: skipped for this runtime (names are letters, digits, - and _)");
+        continue;
+      }
+      match parse_server(name, def, &Vars { folder: Some(root), ..*vars }) {
+        Ok(server) => {
+          out.insert(name.clone(), server);
+        }
+        Err(e) => log::warn!("mcp project:{name}: {e}"),
+      }
+    }
+  }
+  out
+}
+
 /// The user's turned-off servers from their settings.json.
 pub fn disabled_ids(config_dir: &Path) -> BTreeSet<String> {
   crate::settings::user_value(config_dir, DISABLED_SETTING)
@@ -571,6 +599,25 @@ mod tests {
     let in_worktree = run_plan(&root, &wt, &passed, &BTreeSet::new(), &trust);
     assert!(in_worktree.project.unwrap().disabled.contains(&"db".to_string()));
     assert_eq!(run_plan(&root, tmp.path(), &BTreeSet::new(), &BTreeSet::new(), &trust), RunPlan::default());
+  }
+
+  #[test]
+  fn project_servers_for_a_runtime_that_does_not_read_mcp_json() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("repo");
+    let sub = root.join("pkg");
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::write(root.join(PROJECT_FILE), r#"{"mcpServers": {"db": {"command": "db", "args": ["${workspaceFolder}"]}, "web": {"url": "https://w.dev/mcp"}, "bad name": {"command": "x"}, "off": {"command": "off"}}}"#).unwrap();
+    std::fs::write(sub.join(PROJECT_FILE), r#"{"mcpServers": {"db": {"command": "db-near"}}}"#).unwrap();
+    let no_env = |_: &str| None;
+    let vars = Vars { folder: None, home: None, env: &no_env };
+    let enabled: Vec<String> = ["db", "web", "bad name"].iter().map(|s| s.to_string()).collect();
+    let got = project_servers(&root, &root, &enabled, &vars);
+    assert_eq!(got.keys().collect::<Vec<_>>(), ["db", "web"]);
+    assert_eq!(got["db"].args, [root.display().to_string()]);
+    assert_eq!(got["web"].kind.as_deref(), Some("http"));
+    // The nearest file's definition wins.
+    assert_eq!(project_servers(&root, &sub, &enabled, &vars)["db"].command, "db-near");
   }
 
   #[test]
