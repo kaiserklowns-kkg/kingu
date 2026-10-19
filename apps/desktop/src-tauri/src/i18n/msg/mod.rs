@@ -4,6 +4,7 @@
 mod accounts;
 mod artifacts;
 mod agent;
+mod arkai;
 mod chat_extras;
 mod cli;
 mod core;
@@ -25,6 +26,7 @@ mod worktree;
 pub use accounts::AccountsMsg;
 pub use artifacts::ArtifactMsg;
 pub use agent::AgentMsg;
+pub use arkai::ArkaiMsg;
 pub use chat_extras::ChatExtrasMsg;
 pub use cli::CliMsg;
 pub use core::CoreMsg;
@@ -62,6 +64,7 @@ pub fn all() -> Vec<Entry> {
   out.extend(AccountsMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(ArtifactMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(AgentMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(ArkaiMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(ChatExtrasMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(CliMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(CoreMsg::ALL.iter().map(|&m| entry(m)));

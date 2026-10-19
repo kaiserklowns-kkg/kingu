@@ -1,8 +1,9 @@
-// One run of an agent other than the Claude Agent SDK: a child process speaking JSON-RPC on
-// stdio (ACP agents, `codex app-server`). This base keeps what both share: the process and its
-// exit, the turn queue (a message sent mid-turn waits for the turn to end, like the SDK's inbox),
-// streamed text, tool rows, permission prompts, file snapshots and the `result` of each turn.
-// The protocol itself is the subclass's (acp.ts, codex.ts).
+// One run of an agent other than the Claude Agent SDK. `RunSession` keeps what every such run
+// shares: the turn queue (a message sent mid-turn waits for the turn to end, like the SDK's
+// inbox), streamed text, tool rows, permission prompts, file snapshots, the `result` of each turn
+// and the single `exit`. `ProcessSession` adds a child process speaking JSON-RPC on stdio (ACP
+// agents, `codex app-server`; the protocol is the subclass's, acp.ts and codex.ts). Arkai
+// (arkai/session.ts) runs its agent loop in this process instead.
 //
 // Never write prompts, tool inputs or file contents to the log.
 
@@ -13,6 +14,8 @@ import { summarizeTool } from '../normalize.ts';
 import { JsonRpcPeer, linesOf, type PeerOptions } from './rpc.ts';
 import { autoDecision, SESSION_ID, type ToolKind, type ToolView } from './tools.ts';
 import type { ImageBlock } from '../host.ts';
+import type { ArkaiSpec } from '../arkai/spec.ts';
+import type { AskConfig } from '../guards/asks.ts';
 
 /** A spawned agent process (Bun's `Subprocess` fits; tests may pass their own). */
 export type Child = {
@@ -64,31 +67,39 @@ export type SessionInit = {
 	spawn?: SpawnFn;
 	/** Called once, after the `exit` event. */
 	onExit: () => void;
+	/** Arkai only (arkai/): the provider, model and earlier conversation. */
+	arkai?: ArkaiSpec;
+	/** Arkai only: project rules after its system prompt. */
+	systemPromptAppend?: string;
+	/** Arkai only: Kingu's always-ask checks (the other runtimes ask through their agent). */
+	guardAsks?: (AskConfig & { cwd: string }) | null;
 };
 
-type Turn = { text: string; images: ImageBlock[]; imagePaths: string[] };
+export type Turn = { text: string; images: ImageBlock[]; imagePaths: string[] };
 /** How a turn ended, as the subclass reports it. */
 export type TurnEnd = { ok: boolean; cancelled?: boolean; error?: string | null; usage?: Usage | null };
 type Pending = { resolve: (d: Decision | 'cancelled') => void; tool: string };
 /** A tool row as emitted: its view, and whether its result went out. */
 type ToolState = { view: ToolView; done: boolean; snapped: Set<string> };
+/** What a permission prompt offers besides the tool call itself. */
+export type AskOptions = { title: string | null; canAlways: boolean; rules?: string[]; detail?: string | null; onRequest?: (requestId: string) => void };
 
-export abstract class ProcessSession {
+export abstract class RunSession {
 	protected readonly cwd: string;
 	protected mode: PermissionMode;
 	protected sessionId: string | null = null;
-	protected peer!: JsonRpcPeer;
-	private child!: Child;
 	private queue: Turn[] = [];
 	private busy = false;
 	private opened = false;
-	private stopped = false;
-	private exited = false;
+	protected stopped = false;
+	protected exited = false;
 	private turns = 0;
 	private text = '';
 	private thinking = '';
 	private lastText: string | null = null;
 	private pending = new Map<string, Pending>();
+	/** The user's words with a `deny`, by request id (Arkai tells the model). */
+	protected readonly denyNotes = new Map<string, string>();
 	protected tools = new Map<string, ToolState>();
 
 	constructor(protected readonly init: SessionInit) {
@@ -96,16 +107,17 @@ export abstract class ProcessSession {
 		this.mode = init.mode;
 	}
 
-	/** The JSON-RPC framing (`header`); requests and notifications go to the subclass. */
-	protected abstract peerOptions(): Pick<PeerOptions, 'header'>;
 	/** The handshake: open (or resume) the agent session; sets `sessionId`. */
 	protected abstract open(): Promise<void>;
 	/** Sends one user message and resolves when the agent's turn is over. */
 	protected abstract prompt(turn: Turn): Promise<TurnEnd>;
 	/** Asks the agent to end the current turn early. */
 	protected abstract cancel(): Promise<void>;
-	protected abstract onRequest(method: string, params: unknown): Promise<unknown>;
-	protected abstract onNotification(method: string, params: unknown): void;
+	/** Starts the run: its first turn goes once the session is open. */
+	abstract start(): void;
+	/** Ends the run (a failed handshake: `code` 1); the `exit` event goes out by `finish`. */
+	protected abstract kill(code: number): void;
+	abstract stop(): Promise<null>;
 	/** A mid-session change of the permission mode (the policy is Kingu's; the agent may hear of it too). */
 	protected async modeChanged(_mode: PermissionMode): Promise<void> {}
 
@@ -120,31 +132,8 @@ export abstract class ProcessSession {
 		return !this.exited;
 	}
 
-	start() {
-		const { command, args, cwd, env } = this.init;
-		this.child = (this.init.spawn ?? spawnChild)([command, ...args], { cwd, env });
-		this.peer = new JsonRpcPeer(
-			{ write: (line) => void this.child.stdin.write(line), lines: linesOf(this.child.stdout) },
-			{
-				...this.peerOptions(),
-				onRequest: (m, p) => this.onRequest(m, p),
-				onNotification: (m, p) => {
-					try {
-						this.onNotification(m, p);
-					} catch (e) {
-						this.log(`${m} not handled: ${e instanceof Error ? e.message : 'error'}`);
-					}
-				},
-				onJunk: (line) => this.emit({ kind: 'raw', line: line.slice(0, 2000) })
-			}
-		);
-		void (async () => {
-			for await (const line of linesOf(this.child.stderr)) if (line.trim()) this.emit({ kind: 'stderr', line });
-		})().catch(() => {});
-		void this.child.exited.then(
-			(code) => this.finish(code),
-			() => this.finish(1)
-		);
+	/** Queues the first prompt and opens the session; each turn runs once it is open. */
+	protected begin() {
 		this.queue.push({ text: this.init.prompt, images: this.init.images, imagePaths: this.init.imagePaths });
 		this.emit({ kind: 'message', role: 'user', text: this.init.shownPrompt });
 		void this.boot();
@@ -239,6 +228,11 @@ export abstract class ProcessSession {
 		this.text = '';
 	}
 
+	/** Replaces the text streamed since the last flush (its whole `message` goes out with this instead). */
+	protected replaceStreamed(text: string) {
+		this.text = text;
+	}
+
 	/** Whether text was streamed since the last flush (a completed message item then adds nothing). */
 	protected get streaming() {
 		return this.text.length > 0;
@@ -271,7 +265,7 @@ export abstract class ProcessSession {
 	}
 
 	/** The prior content of each file an edit is about to change (the chat's working set and Undo). */
-	private snapshot(id: string, state: ToolState) {
+	protected snapshot(id: string, state: ToolState) {
 		if (!this.init.snapshots) return;
 		if (state.view.kind !== 'edit' && state.view.kind !== 'delete' && state.view.kind !== 'move') return;
 		for (const path of state.view.paths) {
@@ -307,22 +301,29 @@ export abstract class ProcessSession {
 		}
 		const auto = autoDecision(this.mode, view.kind as ToolKind);
 		if (auto) return auto;
+		return this.askUser(toolUseId, view, { title, canAlways });
+	}
+
+	/** The user's answer: a `permission_request` event, answered by `answer` (or cancelled). */
+	protected askUser(toolUseId: string | null, view: ToolView, o: AskOptions): Promise<Decision | 'cancelled'> {
+		if (this.exited || this.stopped) return Promise.resolve('cancelled');
 		const requestId = this.init.newId();
 		const { summary, detail, diff } = summarizeTool(view.name, view.input);
 		return new Promise((resolve) => {
 			this.pending.set(requestId, { resolve, tool: view.name });
+			o.onRequest?.(requestId);
 			this.emit({
 				kind: 'permission_request',
 				request_id: requestId,
 				tool: view.name,
 				tool_use_id: toolUseId,
-				title,
+				title: o.title,
 				input_summary: summary,
-				detail,
+				detail: detail ?? o.detail ?? null,
 				diff,
 				input: view.input,
-				can_always: canAlways,
-				rules: []
+				can_always: o.canAlways,
+				rules: o.rules ?? []
 			});
 		});
 	}
@@ -333,13 +334,14 @@ export abstract class ProcessSession {
 		if (!DECISIONS.includes(p.decision)) throw new SessionError(INVALID_PARAMS, `bad decision ${p.decision}`);
 		if (p.answers != null) throw new SessionError(INVALID_PARAMS, `${pending.tool} takes no answers`);
 		this.pending.delete(p.requestId);
+		if (p.decision === 'deny' && p.message?.trim()) this.denyNotes.set(p.requestId, p.message.trim());
 		pending.resolve(p.decision);
 		this.emit({ kind: 'permission_resolved', request_id: p.requestId, decision: p.decision });
 		this.log(`${pending.tool} ${p.decision}`);
 		return null;
 	}
 
-	private cancelPending() {
+	protected cancelPending() {
 		for (const [requestId, p] of this.pending) {
 			p.resolve('cancelled');
 			this.emit({ kind: 'permission_resolved', request_id: requestId, decision: 'cancelled' });
@@ -364,7 +366,13 @@ export abstract class ProcessSession {
 		return null;
 	}
 
-	async setOptions(model: string | undefined, mode: PermissionMode | undefined) {
+	/** Whether a turn is running. */
+	protected get running() {
+		return this.busy;
+	}
+
+	/** `extra`: what a runtime may need besides the model id (Arkai: the model's provider). */
+	async setOptions(model: string | undefined, mode: PermissionMode | undefined, _extra?: unknown): Promise<{ model: string | null; permissionMode: PermissionMode | null }> {
 		if (model !== undefined) throw new SessionError(UNSUPPORTED, 'this agent cannot change the model mid-session');
 		if (mode !== undefined) {
 			this.mode = mode;
@@ -373,11 +381,67 @@ export abstract class ProcessSession {
 		return { model: null, permissionMode: mode ?? null };
 	}
 
+	/** The run's single `exit` (pending prompts cancelled, streamed text flushed). */
+	protected finish(code: number) {
+		if (this.exited) return;
+		this.cancelPending();
+		this.closed();
+		this.flush();
+		this.log(`exited${this.stopped ? ' (stopped)' : ''}`);
+		this.init.emit({ kind: 'exit', code: this.stopped ? null : code, signal: null, stopped: this.stopped });
+		this.exited = true;
+		this.init.onExit();
+	}
+
+	/** What the subclass lets go of when the run ends. */
+	protected closed() {}
+}
+
+/** A run whose agent is a child process speaking JSON-RPC on stdio (ACP agents, `codex app-server`). */
+export abstract class ProcessSession extends RunSession {
+	protected peer!: JsonRpcPeer;
+	private child!: Child;
+
+	/** The JSON-RPC framing (`header`); requests and notifications go to the subclass. */
+	protected abstract peerOptions(): Pick<PeerOptions, 'header'>;
+	protected abstract onRequest(method: string, params: unknown): Promise<unknown>;
+	protected abstract onNotification(method: string, params: unknown): void;
+
+	start() {
+		const { command, args, cwd, env } = this.init;
+
+		this.child = (this.init.spawn ?? spawnChild)([command, ...args], { cwd, env });
+		this.peer = new JsonRpcPeer(
+			{ write: (line) => void this.child.stdin.write(line), lines: linesOf(this.child.stdout) },
+			{
+				...this.peerOptions(),
+				onRequest: (m, p) => this.onRequest(m, p),
+				onNotification: (m, p) => {
+					try {
+						this.onNotification(m, p);
+					} catch (e) {
+						this.log(`${m} not handled: ${e instanceof Error ? e.message : 'error'}`);
+					}
+				},
+				onJunk: (line) => this.emit({ kind: 'raw', line: line.slice(0, 2000) })
+			}
+		);
+		void (async () => {
+			for await (const line of linesOf(this.child.stderr)) if (line.trim()) this.emit({ kind: 'stderr', line });
+		})().catch(() => {});
+		void this.child.exited.then(
+			(code) => this.finish(code),
+			() => this.finish(1)
+		);
+		this.begin();
+	}
+
+
 	async stop() {
 		if (this.exited) return null;
 		this.stopped = true;
 		this.cancelPending();
-		if (this.busy) await Promise.race([this.cancel().catch(() => {}), new Promise((r) => setTimeout(r, 500))]);
+		if (this.running) await Promise.race([this.cancel().catch(() => {}), new Promise((r) => setTimeout(r, 500))]);
 		try {
 			this.child.stdin.end();
 		} catch {
@@ -388,7 +452,7 @@ export abstract class ProcessSession {
 	}
 
 	/** Ends the process: SIGTERM, SIGKILL after the grace period, and the exit reported by then at the latest. */
-	private kill(code: number) {
+	protected kill(code: number) {
 		try {
 			this.child.kill('SIGTERM');
 		} catch {
@@ -405,14 +469,7 @@ export abstract class ProcessSession {
 		}, KILL_GRACE_MS).unref?.();
 	}
 
-	private finish(code: number) {
-		if (this.exited) return;
-		this.cancelPending();
+	protected closed() {
 		this.peer?.close();
-		this.flush();
-		this.log(`exited${this.stopped ? ' (stopped)' : ''}`);
-		this.init.emit({ kind: 'exit', code: this.stopped ? null : code, signal: null, stopped: this.stopped });
-		this.exited = true;
-		this.init.onExit();
 	}
 }

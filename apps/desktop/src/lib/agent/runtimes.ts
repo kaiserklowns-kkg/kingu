@@ -1,9 +1,9 @@
-// Which agent runs a chat (Rust `agent/runtimes.rs`): `claude` (the Claude Agent SDK), Codex
-// (`codex app-server`) or an ACP agent (Gemini CLI, Qwen Code, OpenCode, …, or one configured in
+// Which agent runs a chat (Rust `agent/runtimes.rs`): `claude` (the Claude Agent SDK), `arkai`
+// (Kingu's own agent on the user's model providers: arkai.ts), Codex (`codex app-server`) or an ACP agent (Gemini CLI, Qwen Code, OpenCode, …, or one configured in
 // `kingu.agent.acpAgents`). Rust lists the ones found on PATH; what a runtime cannot do (rewind,
 // the model picker) the chat hides by its `features`.
 
-export type RuntimeProtocol = 'claude' | 'acp' | 'codex';
+export type RuntimeProtocol = 'claude' | 'acp' | 'codex' | 'arkai';
 export type RuntimeFeatures = { rewind: boolean; models: boolean };
 export type RuntimeInfo = { id: string; name: string; protocol: RuntimeProtocol; features: RuntimeFeatures; custom: boolean };
 
@@ -33,7 +33,7 @@ export function parseRuntimes(v: unknown): RuntimeInfo[] {
 	const list = Array.isArray(v) ? v : [];
 	const ok = list.filter(
 		(r): r is RuntimeInfo =>
-			!!r && typeof r === 'object' && typeof r.id === 'string' && typeof r.name === 'string' && ['claude', 'acp', 'codex'].includes(r.protocol) && !!r.features && typeof r.features === 'object'
+			!!r && typeof r === 'object' && typeof r.id === 'string' && typeof r.name === 'string' && ['claude', 'acp', 'codex', 'arkai'].includes(r.protocol) && !!r.features && typeof r.features === 'object'
 	);
 	return [CLAUDE, ...ok.filter((r) => r.id !== CLAUDE_RUNTIME)];
 }

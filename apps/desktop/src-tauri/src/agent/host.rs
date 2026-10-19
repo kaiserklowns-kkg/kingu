@@ -567,14 +567,17 @@ impl AgentHost {
   }
 
   /// Changes the live run's model and/or permission mode from its next response on (the SDK's
-  /// `setModel` / `setPermissionMode`).
-  pub fn set_options(&self, run_id: u32, model: Option<&str>, permission_mode: Option<&str>) -> Result<(), String> {
+  /// `setModel` / `setPermissionMode`). `provider`: an Arkai model's provider (`arkai.rs`), with its key.
+  pub fn set_options(&self, run_id: u32, model: Option<&str>, permission_mode: Option<&str>, provider: Option<&super::arkai::WireProvider>) -> Result<(), String> {
     if model.is_none() && permission_mode.is_none() {
       return Ok(());
     }
     let mut params = json!({});
     if let Some(m) = model {
       params["model"] = json!(m);
+    }
+    if let Some(p) = provider {
+      params["provider"] = serde_json::to_value(p).map_err(|e| e.to_string())?;
     }
     if let Some(m) = permission_mode {
       params["permissionMode"] = json!(m);
@@ -823,7 +826,7 @@ done"#,
     assert!(host.start(StartRequest { resume: Some("s-new".into()), ..req("/w") }, sink.clone()).is_err(), "the session it reported is held too");
     assert!(host.start(StartRequest { owner: Some("chat:/r:c-1".into()), ..req("/w") }, sink.clone()).unwrap_err().contains("already has a running agent"));
 
-    host.set_options(first, Some("claude-sonnet-5"), Some("plan")).unwrap();
+    host.set_options(first, Some("claude-sonnet-5"), Some("plan"), None).unwrap();
     host.stop(first).unwrap();
     assert!(matches!(next(&rx), AgentEvent::Exit { stopped: true, .. }));
     assert!(!host.session_live("s-old") && !host.session_live("s-new") && !host.owner_live("chat:/r:c-1"));
@@ -929,7 +932,7 @@ exit 3"#
   #[test]
   fn runtime_is_sent_only_for_another_agent() {
     assert!(serde_json::to_value(StartRequest::default()).unwrap().get("runtime").is_none(), "the Claude SDK: no runtime");
-    let spec = super::super::runtimes::Spec { kind: "acp", command: "/opt/bin/gemini".into(), args: vec!["--experimental-acp".into()] };
+    let spec = super::super::runtimes::Spec { kind: "acp", command: "/opt/bin/gemini".into(), args: vec!["--experimental-acp".into()], arkai: None };
     let wire = serde_json::to_value(StartRequest { runtime: Some(spec), ..Default::default() }).unwrap();
     assert_eq!(wire["runtime"], json!({"kind": "acp", "command": "/opt/bin/gemini", "args": ["--experimental-acp"]}));
   }

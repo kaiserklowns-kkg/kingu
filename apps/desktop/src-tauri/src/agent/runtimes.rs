@@ -1,12 +1,13 @@
 //! Which agent runs a chat (`ChatMeta::runtime`), like old Kingu's structured chat: `claude` (the
-//! Claude Agent SDK, built into the agent host), Codex over `codex app-server`, or an ACP agent
+//! Claude Agent SDK, built into the agent host), `arkai` (Kingu's own agent loop in the agent host,
+//! on the user's model providers: `arkai.rs`), Codex over `codex app-server`, or an ACP agent
 //! (Agent Client Protocol over stdio: Gemini CLI, Qwen Code, OpenCode, goose, …). The user can add
 //! ACP agents by command in `kingu.agent.acpAgents` (user settings only: a folder never names a
 //! program to run). Only runtimes whose program is on the login-shell PATH (`shell_env`) are
 //! offered; Rust resolves the program to its absolute path, and the agent host runs only that.
 //!
 //! What a runtime cannot do is in its `Features`, so the chat hides it: only the Claude SDK can
-//! rewind or fork a session at a message and switch the model mid-session.
+//! rewind or fork a session at a message; it and Arkai can switch the model mid-session.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -36,6 +37,7 @@ pub enum Protocol {
   Claude,
   Acp,
   Codex,
+  Arkai,
 }
 
 /// What the chat may offer for a runtime.
@@ -57,12 +59,17 @@ pub struct RuntimeInfo {
   pub custom: bool,
 }
 
-/// What the agent host starts for a runtime other than the Claude SDK (`StartRequest::runtime`).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+/// What the agent host starts for a runtime other than the Claude SDK (`StartRequest::runtime`):
+/// a program (`command`, `args`), or Arkai's provider and model (`arkai`, its fields next to `kind`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Spec {
   pub kind: &'static str,
+  #[serde(skip_serializing_if = "String::is_empty")]
   pub command: String,
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub args: Vec<String>,
+  #[serde(flatten, skip_serializing_if = "Option::is_none")]
+  pub arkai: Option<super::arkai::Wire>,
 }
 
 struct Known {
@@ -86,7 +93,7 @@ const KNOWN: &[Known] = &[
 
 fn features(p: Protocol) -> Features {
   let claude = p == Protocol::Claude;
-  Features { rewind: claude, models: claude }
+  Features { rewind: claude, models: claude || p == Protocol::Arkai }
 }
 
 /// A user-configured ACP agent.
@@ -137,7 +144,7 @@ pub fn custom_agents(value: Option<&serde_json::Value>) -> Vec<Custom> {
   let Some(map) = value.and_then(|v| v.as_object()) else { return Vec::new() };
   let mut out = Vec::new();
   for (id, v) in map.iter().take(MAX_CUSTOM) {
-    let taken = id == CLAUDE || KNOWN.iter().any(|k| k.id == id);
+    let taken = id == CLAUDE || id == super::arkai::RUNTIME || KNOWN.iter().any(|k| k.id == id);
     let Some(line) = v.as_str().filter(|l| l.len() <= MAX_COMMAND && !l.contains('\0')) else { continue };
     match split_command(line) {
       Some(argv) if valid_id(id) && !taken && !argv.is_empty() => out.push(Custom { id: id.clone(), argv }),
@@ -159,10 +166,13 @@ fn locate(program: &str, path: Option<&OsStr>) -> Option<PathBuf> {
   std::env::split_paths(path?).map(|d| d.join(program)).find(|f| super::cli::is_executable(f))
 }
 
-/// The runtimes that can run here: the Claude SDK first (always), then each known agent and
-/// configured ACP agent whose program is on `path`.
+/// The runtimes that can run here: the Claude SDK and Arkai first (always: both live in the agent
+/// host), then each known agent and configured ACP agent whose program is on `path`.
 pub fn available(path: Option<&OsStr>, custom: &[Custom]) -> Vec<RuntimeInfo> {
-  let mut out = vec![RuntimeInfo { id: CLAUDE.into(), name: "Claude Code".into(), protocol: Protocol::Claude, features: features(Protocol::Claude), custom: false }];
+  let mut out = vec![
+    RuntimeInfo { id: CLAUDE.into(), name: "Claude Code".into(), protocol: Protocol::Claude, features: features(Protocol::Claude), custom: false },
+    RuntimeInfo { id: super::arkai::RUNTIME.into(), name: "Arkai".into(), protocol: Protocol::Arkai, features: features(Protocol::Arkai), custom: false },
+  ];
   for k in KNOWN.iter().filter(|k| locate(k.program, path).is_some()) {
     out.push(RuntimeInfo { id: k.id.into(), name: k.name.into(), protocol: k.protocol, features: features(k.protocol), custom: false });
   }
@@ -186,7 +196,7 @@ pub fn resolve(id: &str, path: Option<&OsStr>, custom: &[Custom]) -> Result<Opti
   };
   let found = locate(&program, path).ok_or_else(|| tr!(RuntimeMsg::NotFound, name, program))?;
   let command = found.to_str().ok_or_else(|| tr!(RuntimeMsg::NotFound, name, program))?.to_owned();
-  Ok(Some(Spec { kind, command, args }))
+  Ok(Some(Spec { kind, command, args, arkai: None }))
 }
 
 /// Whether runtime `id` can rewind (`Features::rewind`); unknown ids cannot.
@@ -233,9 +243,16 @@ mod tests {
     let ids: Vec<_> = available(Some(path), &custom).into_iter().map(|r| (r.id, r.protocol, r.features.rewind)).collect();
     assert_eq!(
       ids,
-      [("claude".into(), Protocol::Claude, true), ("codex".into(), Protocol::Codex, false), ("gemini".into(), Protocol::Acp, false), ("mine".into(), Protocol::Acp, false)]
+      [
+        ("claude".into(), Protocol::Claude, true),
+        ("arkai".into(), Protocol::Arkai, false),
+        ("codex".into(), Protocol::Codex, false),
+        ("gemini".into(), Protocol::Acp, false),
+        ("mine".into(), Protocol::Acp, false)
+      ]
     );
-    assert_eq!(available(None, &[]).len(), 1, "Claude Code is built in");
+    assert_eq!(available(None, &[]).len(), 2, "Claude Code and Arkai are built in");
+    assert!(available(None, &[])[1].features.models, "Arkai switches models");
   }
 
   #[test]
@@ -245,7 +262,7 @@ mod tests {
     let codex = exe(bin.path(), "codex");
     let path = Some(bin.path().as_os_str());
     assert_eq!(resolve("claude", path, &[]), Ok(None));
-    assert_eq!(resolve("gemini", path, &[]).unwrap(), Some(Spec { kind: "acp", command: gemini.display().to_string(), args: vec!["--experimental-acp".into()] }));
+    assert_eq!(resolve("gemini", path, &[]).unwrap(), Some(Spec { kind: "acp", command: gemini.display().to_string(), args: vec!["--experimental-acp".into()], arkai: None }));
     assert_eq!(resolve("codex", path, &[]).unwrap().unwrap().args, ["app-server"]);
     assert_eq!(resolve("codex", path, &[]).unwrap().unwrap().command, codex.display().to_string());
     assert!(resolve("qwen", path, &[]).unwrap_err().contains("qwen"));

@@ -212,6 +212,8 @@ export type HostDeps = {
 	spawn?: SpawnFn;
 	/** Calls the app for the artifact tool (artifacts.ts); default: its socket from `KINGU_CLI_RUNTIME`. */
 	callApp?: CallApp;
+	/** Arkai's HTTP requests to the user's model provider (tests pass a fake). */
+	fetch?: typeof fetch;
 };
 
 class RpcError extends Error {
@@ -251,7 +253,7 @@ export class AgentHost {
 		this.read = deps.readFile ?? ((path) => readFileSync(path));
 		this.newId = deps.newId ?? (() => crypto.randomUUID());
 		this.log = deps.log ?? (() => {});
-		this.others = new Runtimes({ emit: (id, ev) => this.emit(id, ev), log: (line) => this.log(line), newId: () => this.newId(), spawn: deps.spawn });
+		this.others = new Runtimes({ emit: (id, ev) => this.emit(id, ev), log: (line) => this.log(line), newId: () => this.newId(), spawn: deps.spawn, fetch: deps.fetch });
 	}
 
 	emit(runId: number, event: AgentEvent) {
@@ -322,8 +324,9 @@ export class AgentHost {
 				const model = o.model ?? undefined;
 				const mode = o.permissionMode ?? undefined;
 				need(mode === undefined || PERMISSION_MODES.includes(mode), `unsupported permission mode ${String(mode)}`);
+				need(model === undefined || (typeof model === 'string' && model.trim() && model.length <= 300), 'model must be a non-empty string');
 				need(model !== undefined || mode !== undefined, 'nothing to change');
-				return run.setOptions(model, mode);
+				return run.setOptions(model, mode, o.provider);
 			}
 			case 'start':
 				throw new RpcError(INVALID_PARAMS, `run ${String(p.runId)} already exists`);
@@ -388,13 +391,16 @@ export class AgentHost {
 			throw new RpcError(INVALID_PARAMS, e instanceof Error ? e.message : String(e));
 		}
 		if (other) {
-			// Another runtime: no rewinding into a session (only the SDK can), no Claude plugins or system prompt.
+			// Another runtime: no rewinding into a session (only the SDK can), no Claude plugins.
+			// Arkai reads the project rules and asks Kingu's always-ask checks itself.
 			need(resumeAt === undefined, 'this runtime cannot resume at a message');
+			const arkai = other.kind === 'arkai' ? other.arkai : undefined;
 			this.others.start(other.kind, {
 				runId: p.runId,
 				cwd: p.cwd,
-				command: other.command,
-				args: other.args,
+				command: other.kind === 'arkai' ? '' : other.command,
+				args: other.kind === 'arkai' ? [] : other.args,
+				...(arkai ? { arkai, systemPromptAppend: append, guardAsks: asks ? { ...asks, cwd: p.cwd } : null } : {}),
 				prompt: p.prompt,
 				shownPrompt: shownText(p.prompt, p.images),
 				images,

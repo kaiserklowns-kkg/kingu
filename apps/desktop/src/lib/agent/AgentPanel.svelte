@@ -50,6 +50,9 @@
 	import { chatSignals, registerChatCommands } from './chatCommands.svelte.ts';
 	import { agentRuntimes } from './runtimes.svelte.ts';
 	import { runtimeChoices, runtimeOf } from './runtimes.ts';
+	import ArkaiModelPicker from './ArkaiModelPicker.svelte';
+	import { arkaiProviders } from './arkai.svelte.ts';
+	import { ARKAI_RUNTIME, arkaiDefault } from './arkai.ts';
 	import { chatExtras } from './chatExtras.svelte.ts';
 	import { layout } from '#lib/workbench/layout.svelte.ts';
 
@@ -298,7 +301,7 @@
 			if (!chatMeta) {
 				const where: ChatCwd = newWhere ? { kind: 'task', slug: newWhere } : { kind: 'folder' };
 				const message = await outgoing(text, attachments, where.kind === 'folder');
-				const id = await chats.create({ prompt: text, cwd: where, model: newModel.trim() || chats.defaults().model, permissionMode: permissionFor(newMode, approval), message, runtime: newRuntime });
+				const id = await chats.create({ prompt: text, cwd: where, model: newRuntime === ARKAI_RUNTIME ? arkaiDefault(arkaiProviders.list, newModel) : newModel.trim() || chats.defaults().model, permissionMode: permissionFor(newMode, approval), message, runtime: newRuntime });
 				if (id) {
 					select(id);
 					resetInput();
@@ -797,7 +800,12 @@
 							{#each AGENT_APPROVALS as m (m)}<option value={m}>{APPROVAL_LABEL[m]()}</option>{/each}
 						</select>
 					{/if}
-					{#if features.models}<select
+					{#if runtimeId === ARKAI_RUNTIME}<ArkaiModelPicker
+							class={CHIP_SELECT}
+							bind:select={modelPicker}
+							value={chatMeta ? (chatMeta.model ?? null) : newModel}
+							onchange={(m) => void changeModel(m)}
+						/>{:else if features.models}<select
 						bind:this={modelPicker}
 						class={CHIP_SELECT}
 						aria-label={t('chat.panel.model')}

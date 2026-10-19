@@ -8,3 +8,7 @@ color themes (MIT License, Copyright (c) Microsoft Corporation).
 apps/agent-host/src/guards (the threat patterns and the repetition check) is ported from
 goose (https://github.com/block/goose), by way of old Kingu's Arkai.
 Apache License 2.0. Copyright (c) Block, Inc. and contributors.
+
+apps/agent-host/src/arkai/leftover.ts (recovering tool calls a model wrote as text) is ported from
+goose (crates/goose-local-inference/src/native_tool_parsing.rs, crates/goose/src/providers/toolshim.rs),
+by way of old Kingu's Arkai. Apache License 2.0. Copyright (c) Block, Inc. and contributors.
