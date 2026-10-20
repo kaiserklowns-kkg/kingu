@@ -1389,6 +1389,8 @@ pub fn run() {
       agent::chat_edits_hunks,
       agent::chat_edits_hunk,
       agent::rules::chat_rules,
+      agent::customizations::chat_customizations,
+      agent::customizations::chat_prompt_file,
       agent::chat_rewind,
       agent::chat_rewind_redo,
       agent::chat_fork,

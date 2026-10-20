@@ -1,0 +1,47 @@
+// UI strings of VS Code's chat customizations in the agent chat: the mode picker's Ask and custom
+// agents, prompt files in the `/` list, instructions files in the rules chip, YOLO mode and the
+// Chat: Configure / New ... commands (agent/AgentPanel.svelte, agent/chatCustomizeCommands.ts).
+// Keys: 'chatCustomize.<what>'. Thai in ../th/chatCustomize.ts.
+export const chatCustomize = {
+	'chatCustomize.modeHint': 'Agent: works with tools (edits, commands). Ask: answers and explains without changing files or running commands. Plan: proposes a plan first. Custom agents come from .github/agents and .claude/agents.',
+	'chatCustomize.mode.ask': 'Ask',
+	'chatCustomize.customAgents': 'Custom agents',
+	'chatCustomize.agentMissing': '{name} (not found)',
+	'chatCustomize.agentNext': 'The agent applies from the next message',
+	'chatCustomize.autoApproveNote': 'chat.tools.global.autoApprove is on: tools run without asking (Kingu’s always-ask checks still ask)',
+	'chatCustomize.source.prompt': 'Prompt file · this folder',
+	'chatCustomize.source.userPrompt': 'Prompt file · yours',
+	'chatCustomize.rules.instructions': 'Instructions file',
+	'chatCustomize.noFolder': 'Open a folder first',
+	'chatCustomize.configure.prompt': 'Pick a prompt file to open, or create one',
+	'chatCustomize.configure.agent': 'Pick a custom agent to open, or create one',
+	'chatCustomize.configure.instructions': 'Pick an instructions file to open, or create one',
+	'chatCustomize.new.prompt': 'New Prompt File...',
+	'chatCustomize.new.agent': 'New Custom Agent...',
+	'chatCustomize.new.instructions': 'New Instructions File...',
+	'chatCustomize.new.prompt.placeholder': 'Name of the prompt file (run it as /name)',
+	'chatCustomize.new.agent.placeholder': 'Name of the custom agent',
+	'chatCustomize.new.instructions.placeholder': 'Name of the instructions file',
+	'chatCustomize.new.hint': 'Type a name, then press Enter',
+	'chatCustomize.new.badName': 'Use letters, digits, - _ and . only',
+	// Inline chat in the editor and the terminal (agent/inlineChat.svelte.ts).
+	'inlineChat.editor.placeholder': 'Ask to edit the selected code (the source-control AI agent answers)',
+	'inlineChat.editor.placeholderGenerate': 'Ask for code to insert at the cursor (the source-control AI agent answers)',
+	'inlineChat.editor.empty': 'Describe the change, then press Enter',
+	'inlineChat.editor.changed': 'The file changed while the answer was coming: nothing was applied',
+	'inlineChat.editor.review': 'Keep the change? (it is applied and selected in the editor)',
+	'inlineChat.terminal.placeholder': 'Ask for a terminal command (the source-control AI agent answers)',
+	'inlineChat.terminal.empty': 'Describe what the command should do, then press Enter',
+	'inlineChat.terminal.insert': 'Insert',
+	'inlineChat.terminal.insertHint': 'Type it into the terminal without running it',
+	'inlineChat.terminal.run': 'Run',
+	'inlineChat.hint': 'Press Enter to ask',
+	'inlineChat.working': 'Inline chat: waiting for the answer…',
+	'inlineChat.done': 'Inline chat: answered',
+	'inlineChat.failed': 'Inline chat failed (set up the source-control AI agent in kingu.git.ai.agent): {error}',
+	'inlineChat.empty': 'Inline chat: the answer had no code',
+	'inlineChat.keep': 'Keep',
+	'inlineChat.keepHint': 'Keep the change (⌘Z still undoes it)',
+	'inlineChat.undo': 'Undo',
+	'inlineChat.undoHint': 'Put the code back as it was'
+} as const;

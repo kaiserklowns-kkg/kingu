@@ -9,6 +9,7 @@ pub mod chat_edits;
 pub mod chat_extras;
 pub mod chat_io;
 pub mod chats;
+pub mod customizations;
 pub mod cli;
 pub mod events;
 pub mod forge;
@@ -99,6 +100,7 @@ pub async fn agent_start(
   safety_checks: Option<bool>,
   rules: Option<Vec<String>>,
   runtime: Option<String>,
+  agent: Option<String>,
   on_event: Channel<AgentEvent>,
 ) -> Result<u32, String> {
   if let Some(id) = chat_id.as_deref() {
@@ -152,13 +154,24 @@ pub async fn agent_start(
   let open_root = ws.root()?;
   let dir = run_dir(&open_root, root.as_deref(), slug.as_deref(), cwd.as_deref())?;
   let cwd = dir.to_str().ok_or("worktree path is not valid UTF-8")?.to_owned();
-  // A chat's rules files (kingu.chat.rules.enabled): `rules` are its attached files.
-  let system_prompt_append = match rules {
-    Some(files) => {
-      let (root, dir) = (open_root.clone(), dir.clone());
-      tauri::async_runtime::spawn_blocking(move || rules::system_append(&rules::discover(&root, &dir, &files))).await.map_err(|e| e.to_string())?
-    }
-    None => None,
+  // A chat's rules files (kingu.chat.rules.enabled): `rules` are its attached files. Then the
+  // chat's agent (Ask, or a custom agent: `customizations`): its text after the rules, and the
+  // tools it leaves out.
+  let config = crate::snap::config_dir(&app)?;
+  let (system_prompt_append, agent_disallowed) = {
+    let (root, dir, config) = (open_root.clone(), dir.clone(), config.clone());
+    let agent = agent.filter(|a| !a.trim().is_empty());
+    tauri::async_runtime::spawn_blocking(move || -> Result<(Option<String>, Vec<String>), String> {
+      let rules_text = rules.and_then(|files| rules::system_append(&rules::discover(&root, &dir, &files, &rules::Options::from_user(&config))));
+      let (agent_text, disallowed) = match agent {
+        Some(name) => customizations::for_run(&dir, customizations::home().as_deref(), &customizations::Settings::from_user(&config), &name)?,
+        None => (String::new(), Vec::new()),
+      };
+      let text = [rules_text.unwrap_or_default(), agent_text].into_iter().filter(|s| !s.trim().is_empty()).collect::<Vec<_>>().join("\n\n");
+      Ok(((!text.is_empty()).then_some(text), disallowed))
+    })
+    .await
+    .map_err(|e| e.to_string())??
   };
   if runtime == arkai::RUNTIME {
     // A continued chat: the agent host gets the conversation back from the transcript.
@@ -242,7 +255,11 @@ pub async fn agent_start(
     resume_at,
     mcp_servers,
     project_mcp: mcp_plan.project,
-    disallowed_tools: mcp_plan.disallowed_tools,
+    disallowed_tools: {
+      let mut tools = mcp_plan.disallowed_tools;
+      tools.extend(agent_disallowed.into_iter().filter(|t| !tools.contains(t)).collect::<Vec<_>>());
+      tools
+    },
     plugins,
     env: (!account.set.is_empty()).then_some(host::SecretEnv(account.set)),
     unset_env: account.unset,

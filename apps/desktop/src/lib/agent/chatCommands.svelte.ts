@@ -9,6 +9,8 @@
 import { commands } from '#lib/workbench/commands.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { layout } from '#lib/workbench/layout.svelte.ts';
+import { registerCustomizeCommands } from './chatCustomizeCommands.ts';
+import { registerInlineChatCommands } from './inlineChat.svelte.ts';
 
 class ChatSignals {
 	/** Bumped to focus the chat input. */
@@ -111,5 +113,9 @@ export function registerChatCommands(): () => void {
 			}
 		})
 	];
+	// Prompt files, custom agents, instructions (chatCustomizeCommands.ts).
+	off.push(registerCustomizeCommands());
+	// ⌘I in the editor and the terminal (inlineChat.svelte.ts).
+	off.push(registerInlineChatCommands());
 	return () => off.forEach((f) => f());
 }

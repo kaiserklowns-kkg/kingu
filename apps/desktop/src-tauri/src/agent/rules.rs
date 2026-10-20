@@ -5,7 +5,13 @@
 //! - `.cursor/rules/**/*.mdc` (and `.md`): frontmatter `alwaysApply`, `globs` (matched against the
 //!   attached files) and `description`. A rule with only a description is not applied but listed
 //!   to the agent, which can read it when it matters (Cursor's "agent requested");
-//! - `.github/copilot-instructions.md`.
+//! - `.github/copilot-instructions.md`;
+//! - VS Code's instructions files (`*.instructions.md` in `chat.instructionsFilesLocations`,
+//!   `customizations.rs`): `applyTo` globs like Cursor's, and a `description` alone lists it.
+//!
+//! VS Code's `chat.useAgentsMdFile` (AGENTS.md) and `chat.includeApplyingInstructions` (`applyTo`
+//! and Cursor's globs) switch parts off; like the locations they are read from the user's own
+//! settings.json only (`Options::from_user`).
 //!
 //! CLAUDE.md is left out: the SDK loads it (`settingSources`). The applied rules' text goes after
 //! Claude Code's system prompt (`system_append`, the host's `systemPromptAppend`), and
@@ -32,6 +38,37 @@ pub enum RuleKind {
   Agents,
   Cursor,
   Copilot,
+  Instructions,
+}
+
+/// What `discover` looks at besides the files (VS Code's chat settings; all on by default).
+#[derive(Debug, Clone)]
+pub struct Options {
+  /// `chat.useAgentsMdFile`.
+  pub agents_md: bool,
+  /// `chat.includeApplyingInstructions`: rules whose globs match an attached file apply.
+  pub applying: bool,
+  /// Where instructions files are (`chat.instructionsFilesLocations`).
+  pub locations: super::customizations::Settings,
+  pub home: Option<PathBuf>,
+}
+
+impl Default for Options {
+  fn default() -> Self {
+    Self { agents_md: true, applying: true, locations: Default::default(), home: None }
+  }
+}
+
+impl Options {
+  pub fn from_user(config: &Path) -> Self {
+    let flag = |key: &str| crate::settings::user_value(config, key).and_then(|v| v.as_bool()).unwrap_or(true);
+    Self {
+      agents_md: flag("chat.useAgentsMdFile"),
+      applying: flag("chat.includeApplyingInstructions"),
+      locations: super::customizations::Settings::from_user(config),
+      home: super::customizations::home(),
+    }
+  }
 }
 
 /// A rules file as the chip lists it.
@@ -183,8 +220,8 @@ fn cursor_rule_files(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
 
 /// The rules files of the run folder `cwd` (inside the open folder `root`) for the attached
 /// `files`, in the order they go to the agent: AGENTS.md (outermost first), Copilot's
-/// instructions, then `.cursor/rules` by name.
-pub fn discover(root: &Path, cwd: &Path, files: &[String]) -> Vec<Loaded> {
+/// instructions, VS Code's instructions files, then `.cursor/rules` by name.
+pub fn discover(root: &Path, cwd: &Path, files: &[String], opts: &Options) -> Vec<Loaded> {
   let Ok(real_cwd) = std::fs::canonicalize(cwd) else { return Vec::new() };
   let rels: Vec<String> = files.iter().take(MAX_FILES).filter_map(|f| file_rel(root, cwd, f)).collect();
   let mut out = Vec::new();
@@ -199,7 +236,7 @@ pub fn discover(root: &Path, cwd: &Path, files: &[String]) -> Vec<Loaded> {
       body.truncate(cut);
       budget -= body.len();
     }
-    let always = front.always || kind != RuleKind::Cursor;
+    let always = front.always || !matches!(kind, RuleKind::Cursor | RuleKind::Instructions);
     out.push(Loaded { rule: Rule { path: rel_to(root, path), rel: rel_to(cwd, path), kind, description: front.description, always, globs: front.globs, applies }, body });
   };
 
@@ -215,7 +252,7 @@ pub fn discover(root: &Path, cwd: &Path, files: &[String]) -> Vec<Loaded> {
     }
   }
   dirs.sort_by_key(|d| (d.matches('/').count() + usize::from(!d.is_empty()), d.clone()));
-  for d in &dirs {
+  for d in dirs.iter().filter(|_| opts.agents_md) {
     let path = if d.is_empty() { cwd.join("AGENTS.md") } else { cwd.join(d).join("AGENTS.md") };
     if let Some(text) = read_inside(&real_cwd, &path, MAX_RULE_BYTES).filter(|t| !t.trim().is_empty()) {
       push(&mut out, &path, RuleKind::Agents, Front::default(), text.trim().to_owned(), true);
@@ -227,6 +264,13 @@ pub fn discover(root: &Path, cwd: &Path, files: &[String]) -> Vec<Loaded> {
     push(&mut out, &copilot, RuleKind::Copilot, Front::default(), text.trim().to_owned(), true);
   }
 
+  for f in super::customizations::instructions_files(cwd, opts.home.as_deref(), &opts.locations) {
+    let always = f.apply_to.iter().any(|g| matches!(g.trim(), "**" | "**/*" | "*"));
+    let applies = opts.applying && (always || f.apply_to.iter().any(|g| rels.iter().any(|r| glob_matches(g, r))));
+    let front = Front { description: f.description, globs: if always { Vec::new() } else { f.apply_to }, always };
+    push(&mut out, &f.path, RuleKind::Instructions, front, f.body, applies);
+  }
+
   let mut cursor = Vec::new();
   cursor_rule_files(&cwd.join(".cursor/rules"), 0, &mut cursor);
   for path in cursor {
@@ -235,7 +279,7 @@ pub fn discover(root: &Path, cwd: &Path, files: &[String]) -> Vec<Loaded> {
     if body.is_empty() {
       continue;
     }
-    let applies = front.always || front.globs.iter().any(|g| rels.iter().any(|r| glob_matches(g, r)));
+    let applies = front.always || (opts.applying && front.globs.iter().any(|g| rels.iter().any(|r| glob_matches(g, r))));
     push(&mut out, &path, RuleKind::Cursor, front, body, applies);
   }
   out
@@ -250,7 +294,7 @@ pub fn system_append(rules: &[Loaded]) -> Option<String> {
     return None;
   }
   let mut s = String::from(
-    "# Project rules\n\nThese come from the project's rules files (AGENTS.md, .cursor/rules, .github/copilot-instructions.md). Follow them as you follow CLAUDE.md; where they disagree, the more specific one (a nearer AGENTS.md, a rule for the files at hand) wins.\n",
+    "# Project rules\n\nThese come from the project's rules files (AGENTS.md, .cursor/rules, .github/copilot-instructions.md, *.instructions.md). Follow them as you follow CLAUDE.md; where they disagree, the more specific one (a nearer AGENTS.md, a rule for the files at hand) wins.\n",
   );
   for r in applied {
     s.push_str(&format!("\n<rule path=\"{}\">\n{}\n</rule>\n", r.rule.rel, r.body));
@@ -267,12 +311,13 @@ pub fn system_append(rules: &[Loaded]) -> Option<String> {
 /// The rules of chat folder `cwd` for the attached `files` (workspace-relative or absolute), for
 /// the composer's chip. Errors only when `cwd` is not the open folder or one of its worktrees.
 #[tauri::command]
-pub async fn chat_rules(ws: State<'_, Workspace>, cwd: String, files: Vec<String>) -> Result<Vec<Rule>, String> {
+pub async fn chat_rules(app: tauri::AppHandle, ws: State<'_, Workspace>, cwd: String, files: Vec<String>) -> Result<Vec<Rule>, String> {
   let root = ws.root()?;
+  let opts = Options::from_user(&crate::snap::config_dir(&app)?);
   tauri::async_runtime::spawn_blocking(move || {
     let dir = super::chats::resolve_cwd(&root, Path::new(&cwd))?;
     let root = std::fs::canonicalize(&root).unwrap_or(root);
-    Ok(discover(&root, &dir, &files).into_iter().map(|l| l.rule).collect())
+    Ok(discover(&root, &dir, &files, &opts).into_iter().map(|l| l.rule).collect())
   })
   .await
   .map_err(|e| e.to_string())?
@@ -336,7 +381,7 @@ mod tests {
     write(&root, ".cursor/rules/db.mdc", "---\ndescription: Database migrations\n---\nUse sqlx.");
     write(&root, ".cursor/rules/empty.mdc", "---\nalwaysApply: true\n---\n");
 
-    let rules = discover(&root, &root, &["apps/web/src/main.ts".into()]);
+    let rules = discover(&root, &root, &["apps/web/src/main.ts".into()], &Options::default());
     let shown: Vec<_> = rules.iter().map(|l| (l.rule.rel.as_str(), l.rule.applies)).collect();
     assert_eq!(
       shown,
@@ -358,9 +403,48 @@ mod tests {
     // The nearer AGENTS.md comes after the outer one.
     assert!(append.find("Run bun test").unwrap() < append.find("Svelte 5").unwrap());
 
-    assert!(system_append(&discover(&root, &root.join("apps/other"), &[])).is_some());
+    assert!(system_append(&discover(&root, &root.join("apps/other"), &[], &Options::default())).is_some());
     let none = tempfile::tempdir().unwrap();
-    assert_eq!(system_append(&discover(none.path(), none.path(), &[])), None);
+    assert_eq!(system_append(&discover(none.path(), none.path(), &[], &Options::default())), None);
+  }
+
+  #[test]
+  fn instructions_files_and_the_vscode_switches() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(tmp.path()).unwrap();
+    write(&root, "AGENTS.md", "Run bun test.");
+    write(&root, ".github/instructions/py.instructions.md", "---\napplyTo: '**/*.py'\n---\nType hints.");
+    write(&root, ".github/instructions/all.instructions.md", "---\napplyTo: '**'\n---\nAnswer briefly.");
+    write(&root, ".github/instructions/db.instructions.md", "---\ndescription: Database work\n---\nUse migrations.");
+    write(&root, ".cursor/rules/ts.mdc", "---\nglobs: *.ts\n---\nStrict TypeScript.");
+    let files = ["src/app.py".to_owned(), "src/a.ts".to_owned()];
+    let shown = |opts: &Options| discover(&root, &root, &files, opts).into_iter().map(|l| (l.rule.rel, l.rule.applies)).collect::<Vec<_>>();
+    assert_eq!(
+      shown(&Options::default()),
+      [
+        ("AGENTS.md".to_owned(), true),
+        (".github/instructions/all.instructions.md".to_owned(), true),
+        (".github/instructions/db.instructions.md".to_owned(), false),
+        (".github/instructions/py.instructions.md".to_owned(), true),
+        (".cursor/rules/ts.mdc".to_owned(), true),
+      ]
+    );
+    let rules = discover(&root, &root, &files, &Options::default());
+    assert_eq!((rules[1].rule.kind.clone(), rules[1].rule.always), (RuleKind::Instructions, true));
+    assert_eq!((rules[3].rule.always, rules[3].rule.globs.clone()), (false, vec!["**/*.py".to_owned()]));
+    let append = system_append(&rules).unwrap();
+    assert!(append.contains("Type hints.") && append.contains("- .github/instructions/db.instructions.md: Database work"), "{append}");
+    // chat.useAgentsMdFile and chat.includeApplyingInstructions off.
+    let off = Options { agents_md: false, applying: false, ..Options::default() };
+    assert_eq!(
+      shown(&off),
+      [
+        (".github/instructions/all.instructions.md".to_owned(), false),
+        (".github/instructions/db.instructions.md".to_owned(), false),
+        (".github/instructions/py.instructions.md".to_owned(), false),
+        (".cursor/rules/ts.mdc".to_owned(), false),
+      ]
+    );
   }
 
   #[test]
@@ -374,7 +458,7 @@ mod tests {
     #[cfg(unix)]
     std::os::unix::fs::symlink(outside.path(), root.join("linked")).unwrap();
     write(&root, ".github/copilot-instructions.md", &"ก".repeat(MAX_RULE_BYTES));
-    let rules = discover(&root, &root, &["linked/x.ts".into()]);
+    let rules = discover(&root, &root, &["linked/x.ts".into()], &Options::default());
     assert_eq!(rules.len(), 1, "symlinked AGENTS.md files are skipped: {rules:?}");
     assert!(rules[0].body.len() <= MAX_RULE_BYTES && rules[0].body.chars().all(|c| c == 'ก'));
   }
