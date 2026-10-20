@@ -1,6 +1,8 @@
 import type { scmEditor as en } from '../en/scmEditor';
 
 export const scmEditor = {
+	'scmEditor.noFolder': 'เปิดโฟลเดอร์ที่เป็น Git repository หรือ clone จาก URL เพื่อใช้ฟีเจอร์ของ Git',
+	'scmEditor.openFolder': 'เปิดโฟลเดอร์ (Open Folder)',
 	'scmEditor.noChanges': 'ไฟล์นี้ไม่มีการเปลี่ยนแปลง',
 	'scmEditor.noChangesInSelection': 'ส่วนที่เลือกไม่มีการเปลี่ยนแปลง',
 	'scmEditor.notInIndex': 'ไฟล์นี้ยังไม่อยู่ใน index ให้ stage ทั้งไฟล์ก่อน',

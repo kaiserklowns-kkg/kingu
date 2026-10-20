@@ -1,5 +1,7 @@
 // Source Control in the editor (src/lib/scm/): quick diff, staged ranges, blame, Timeline, merge conflicts, merge editor.
 export const scmEditor = {
+	'scmEditor.noFolder': 'In order to use Git features, you can open a folder containing a Git repository or clone from a URL.',
+	'scmEditor.openFolder': 'Open Folder',
 	'scmEditor.noChanges': 'No changes in this file',
 	'scmEditor.noChangesInSelection': 'The selection range does not contain any changes.',
 	'scmEditor.notInIndex': 'This file is not in the index; stage the whole file first.',

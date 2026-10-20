@@ -135,8 +135,11 @@
 		<div class="flex items-center gap-2">
 			<label class="relative flex min-w-0 flex-1 items-center">
 			<span class="pointer-events-none absolute left-2.5 text-(--vscode-input-placeholderForeground)"><Icon name="search" size={15} /></span>
+			<!-- VS Code focuses the search box when the Settings editor opens. -->
+			<!-- svelte-ignore a11y_autofocus -->
 			<input
 				bind:value={query}
+				autofocus
 				aria-label="ค้นหาการตั้งค่า"
 				placeholder="ค้นหาการตั้งค่า (Search settings)"
 				class="h-8 min-w-0 flex-1 rounded-md border pl-8 border-(--vscode-input-border) bg-(--vscode-input-background) pr-2 text-sm text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground) focus:border-(--vscode-focusBorder)"

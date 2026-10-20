@@ -21,6 +21,7 @@
 	import { changesKey } from './viewers';
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { workspace } from './workspace.svelte.ts';
 
 	/**
 	 * `source`: another repository than the open folder's (a task worktree in the ADE's right side
@@ -313,6 +314,13 @@
 		</p>
 	{:else if !scm.repo && !source && folderScm.disabled}
 		<p class="px-5 py-1 leading-normal text-(--vscode-descriptionForeground)">Git ถูกปิดอยู่ เปิดได้ที่การตั้งค่า git.enabled (Git is disabled.)</p>
+	{:else if !scm.repo && !source && !workspace.root}
+		<!-- VS Code's welcome view with no folder open. -->
+		<div class="flex flex-col items-center gap-2 px-6 py-8 text-center text-(--vscode-descriptionForeground)">
+			<p class="text-xs leading-relaxed">{t('scmEditor.noFolder')}</p>
+			<button class="mt-1 h-[26px] w-full rounded-md bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:brightness-110" onclick={() => commands.run('workbench.action.files.openFolder')}>{t('scmEditor.openFolder')}</button>
+			<button class="h-[26px] w-full rounded-md border border-(--vscode-widget-border) text-(--vscode-foreground) hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => repoDialog.show('clone')}>Clone Repository</button>
+		</div>
 	{:else if !scm.repo}
 		<!-- VS Code's welcome view for a folder without a repository. -->
 		<div class="flex flex-col items-center gap-2 px-6 py-8 text-center text-(--vscode-descriptionForeground)">
