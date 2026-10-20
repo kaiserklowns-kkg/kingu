@@ -21,6 +21,7 @@ import { runSaveParticipants } from './textFileSave';
 import { defaultLanguage, isUntitled, suggestedName } from './untitled';
 import { notifications } from './notifications.svelte';
 import { t } from '#lib/i18n/index.ts';
+import { isLocalHistoryKey } from '#lib/scm/localHistory.ts';
 
 type MonacoModule = typeof import('#lib/editor/monaco.ts');
 export type ModelEntry = {
@@ -59,7 +60,9 @@ export const textFileHooks = {
 	/** A save could not encode a character. */
 	unencodable: (_path: string, _ch: string) => {},
 	/** The model is saved or reverted: its backup goes. */
-	clean: (_path: string) => {}
+	clean: (_path: string) => {},
+	/** A workspace file was written by a save (Local History adds an entry). */
+	saved: (_path: string, _entry: ModelEntry, _version: number) => {}
 };
 
 const entries = new Map<string, ModelEntry>();
@@ -142,7 +145,8 @@ export function modelEntry(m: MonacoModule, path: string): Promise<ModelEntry> {
 					model.onWillDispose(() => (untitledFirstLines.delete(path), emptyUntitled.delete(path)));
 				}
 				entries.set(path, entry);
-				lsp.attach(m.monaco, model, path);
+				// A local history entry (Show Contents) is not a document of the language servers.
+				if (!isLocalHistoryKey(path)) lsp.attach(m.monaco, model, path);
 				textFileHooks.created(path, entry);
 				return entry;
 			})
@@ -224,6 +228,7 @@ export async function saveFile(path: string, reasonOrOptions: SaveReason | SaveO
 	editors.setDirty(path, dirty);
 	if (!dirty) textFileHooks.clean(path);
 	lsp.didSave(entry.model);
+	textFileHooks.saved(path, entry, version);
 	return true;
 }
 

@@ -340,13 +340,16 @@ class Explorer {
 
 	/** Rust never overwrites: a clash asks "Replace?" (VS Code), then deletes the old one first. */
 	async #moveReplacing(from: string, dir: string, to: string): Promise<string | null> {
+		let moved: string;
 		try {
-			return await invoke<string>('fs_move', { from, toDir: dir });
+			moved = await invoke<string>('fs_move', { from, toDir: dir });
 		} catch (e) {
 			if (!isRustError(e, 'fileExists')) throw e;
+			if (!(await this.#replaceExisting(to))) return null;
+			moved = await invoke<string>('fs_move', { from, toDir: dir });
 		}
-		if (!(await this.#replaceExisting(to))) return null;
-		return invoke<string>('fs_move', { from, toDir: dir });
+		moveLocalHistory(from, moved);
+		return moved;
 	}
 
 	/** Asks to replace `to`, then deletes it (files.enableTrash) and closes its tabs. */
@@ -454,6 +457,7 @@ class Explorer {
 	async #rename(from: string, to: string) {
 		if (editors.allTabs().some((t) => t.dirty && remapPath(t.path, from, to) !== null)) throw new Error(t('workbench.explorer.saveBeforeRename'));
 		await invoke('fs_rename', { from, to });
+		moveLocalHistory(from, to);
 		this.editing = null;
 		// Keep the folder's expansion state under its new name.
 		const wasExpanded = [...this.expanded].filter((k) => isUnder(k, from));
@@ -538,3 +542,8 @@ class Explorer {
 }
 
 export const explorer = new Explorer();
+
+/** A file's local history follows a rename or move (VS Code's tracker moves the entries); a folder has none of its own. */
+function moveLocalHistory(from: string, to: string) {
+	invoke('local_history_move', { from, to }).catch((e) => clientLog('info', `local history move ${from}: ${e}`));
+}

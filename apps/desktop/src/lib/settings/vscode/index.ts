@@ -19,6 +19,7 @@ import { TYPESCRIPT_SETTINGS } from './typescript';
 import { CSS_SETTINGS } from './css';
 import { HTML_SETTINGS } from './html';
 import { JSON_SETTINGS } from './json';
+import { LOCAL_HISTORY_SETTINGS } from './localHistory';
 
 export const VSCODE_SETTINGS = [
 	...EDITOR_SETTINGS,
@@ -37,6 +38,7 @@ export const VSCODE_SETTINGS = [
 	...PROBLEMS_SETTINGS,
 	...APPLICATION_SETTINGS,
 	...OUTLINE_SETTINGS,
+	...LOCAL_HISTORY_SETTINGS,
 	// The settings sections Kingu delivers to the language servers it runs (lsp/serverSettings.ts).
 	...TYPESCRIPT_SETTINGS,
 	...CSS_SETTINGS,

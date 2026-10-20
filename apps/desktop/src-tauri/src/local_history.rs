@@ -202,7 +202,8 @@ impl LocalHistory {
   /// Adds the file as it is on disk now; `None` when it is not tracked (too large, excluded).
   pub fn add(&self, rel: &str, abs: &Path, source: Option<&str>, settings: &HistorySettings, timestamp: Option<u64>) -> Result<Option<Entry>, String> {
     let bytes = std::fs::read(abs).map_err(|e| format!("{rel}: {e}"))?;
-    if !should_track(rel, &abs.to_string_lossy(), bytes.len() as u64, settings) {
+    // maxFileEntries 0 keeps nothing (VS Code adds the entry and trims it away at once).
+    if settings.max_entries == 0 || !should_track(rel, &abs.to_string_lossy(), bytes.len() as u64, settings) {
       return Ok(None);
     }
     let mut seed = self.lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -228,7 +229,7 @@ impl LocalHistory {
         e
       }
     };
-    for gone in trim(&mut file.entries, settings.max_entries.max(1)) {
+    for gone in trim(&mut file.entries, settings.max_entries) {
       let _ = std::fs::remove_file(dir.join(&gone.id));
     }
     Self::write_file(&dir, &file)?;
@@ -314,7 +315,7 @@ impl LocalHistory {
         Some((newest, percent_decode(rel)))
       })
       .collect();
-    out.sort_by(|a, b| b.0.cmp(&a.0));
+    out.sort_by_key(|e| std::cmp::Reverse(e.0));
     out.into_iter().map(|(_, rel)| rel).collect()
   }
 
