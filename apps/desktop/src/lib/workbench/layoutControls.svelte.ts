@@ -107,7 +107,16 @@ export function installLayoutCommands(): () => void {
 			commands.register({ id: t.command, title: `Toggle ${t.label}`, category: 'View', run: () => toggleSetting(t.setting) })
 		),
 		// Zen Mode (workbench.zenMode.contribution.ts): Escape twice leaves it.
-		commands.register({ id: 'workbench.action.exitZenMode', title: 'Exit Zen Mode', category: 'View', key: 'escape escape', when: () => layout.zen, run: () => layout.toggleZen() }),
+		// Not while an input, menu or dialog has focus: their own Escape (close the quick pick) comes first.
+		commands.register({
+			id: 'workbench.action.exitZenMode',
+			title: 'Exit Zen Mode',
+			category: 'View',
+			key: 'escape escape',
+			keyWhen: () => !document.activeElement?.closest('input, select, [role="dialog"], [role="menu"], [role="listbox"]'),
+			when: () => layout.zen,
+			run: () => layout.toggleZen()
+		}),
 		commands.register({ id: 'workbench.action.zenHideEditorTabs', title: 'Hide Editor Tabs in Zen Mode', category: 'View', when: () => layout.zen, run: () => setUserSetting('zenMode.showTabs', 'none') }),
 		commands.register({ id: 'workbench.action.zenShowMultipleEditorTabs', title: 'Show Multiple Editor Tabs in Zen Mode', category: 'View', when: () => layout.zen, run: () => setUserSetting('zenMode.showTabs', 'multiple') }),
 		commands.register({ id: 'workbench.action.zenShowSingleEditorTab', title: 'Show Single Editor Tab in Zen Mode', category: 'View', when: () => layout.zen, run: () => setUserSetting('zenMode.showTabs', 'single') }),
