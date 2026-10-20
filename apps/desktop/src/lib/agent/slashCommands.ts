@@ -1,18 +1,22 @@
 // `/` commands in the chat input (VS Code's chatSlashCommands + chatInputCompletions), pure so
 // `bun test` covers it. The list is Kingu's own commands (handled before anything is sent), then
-// the session's (SDK `supportedCommands()`: built-ins, skills, plugins), then the `.claude/commands`
+// VS Code's prompt files (`*.prompt.md`, customizations.ts: run here, their body sent), then the
+// session's (SDK `supportedCommands()`: built-ins, skills, plugins), then the `.claude/commands`
 // files and skills Rust found (`chat_slash_commands`, for a chat with no session yet). Anything
-// that is not Kingu's goes to the agent as text; the SDK expands it.
+// else goes to the agent as text; the SDK expands it.
 
 import type { SessionCommand } from './events';
 
 /** Where a command comes from (`project`… are `chat_slash_commands`' sources). */
-export type SlashSource = 'kingu' | 'session' | 'project' | 'user' | 'project-skill' | 'user-skill';
+export type SlashSource = 'kingu' | 'prompt' | 'user-prompt' | 'session' | 'project' | 'user' | 'project-skill' | 'user-skill';
 
 export type SlashItem = { name: string; description: string; argumentHint: string; source: SlashSource };
 
 /** A command file or skill from Rust (`slash_commands.rs`). */
-export type FileCommand = { name: string; description: string; argument_hint: string; source: Exclude<SlashSource, 'kingu' | 'session'> };
+export type FileCommand = { name: string; description: string; argument_hint: string; source: Exclude<SlashSource, 'kingu' | 'session' | 'prompt' | 'user-prompt'> };
+
+/** A prompt file as the list needs it (customizations.ts `PromptFile`). */
+export type PromptCommand = { name: string; description: string; argument_hint: string; user: boolean };
 
 /**
  * A Kingu command: runs in the app instead of being sent. `run` gets what followed the name.
@@ -42,8 +46,8 @@ export function slashQuery(text: string, caret: number): string | null {
 	return /\s|\//.test(word) ? null : word;
 }
 
-/** Kingu's commands first, then the session's, then files the session does not already list. */
-export function mergeCommands(local: readonly SlashItem[], session: readonly SessionCommand[], files: readonly FileCommand[]): SlashItem[] {
+/** Kingu's commands first, then prompt files, then the session's, then files the session does not already list. */
+export function mergeCommands(local: readonly SlashItem[], session: readonly SessionCommand[], files: readonly FileCommand[], prompts: readonly PromptCommand[] = []): SlashItem[] {
 	const out: SlashItem[] = [];
 	const seen = new Set<string>();
 	const add = (item: SlashItem) => {
@@ -52,6 +56,7 @@ export function mergeCommands(local: readonly SlashItem[], session: readonly Ses
 		out.push(item);
 	};
 	local.forEach(add);
+	for (const p of prompts) add({ name: p.name, description: p.description, argumentHint: p.argument_hint, source: p.user ? 'user-prompt' : 'prompt' });
 	for (const c of session) add({ name: c.name, description: c.description, argumentHint: c.argument_hint, source: 'session' });
 	for (const f of files) add({ name: f.name, description: f.description, argumentHint: f.argument_hint, source: f.source });
 	return out;

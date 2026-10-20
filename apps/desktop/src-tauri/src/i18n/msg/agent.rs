@@ -412,5 +412,13 @@ crate::i18n::messages! {
       en: "Could not push {base}, the branch this task is stacked on: {detail}",
       th: "push {base} ซึ่งเป็น branch ที่งานนี้ต่อยอดอยู่ไม่ได้: {detail}",
     },
+    CustomAgentMissing {
+      en: "Custom agent {name} was not found: its .agent.md file was moved or deleted. Pick another agent in the chat's mode picker",
+      th: "ไม่พบ custom agent {name}: ไฟล์ .agent.md ถูกย้ายหรือลบไปแล้ว เลือก agent อื่นที่ตัวเลือกโหมดของแชต",
+    },
+    PromptFileMissing {
+      en: "Prompt file /{name} was not found",
+      th: "ไม่พบ prompt file /{name}",
+    },
   }
 }

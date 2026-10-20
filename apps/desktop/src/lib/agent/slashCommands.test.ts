@@ -34,6 +34,19 @@ describe('slash commands', () => {
 			['standup', 'user']
 		]);
 		expect(all.find((c) => c.name === 'compact')?.argumentHint).toBe('<how>');
+		// Prompt files come after Kingu's own and before the session's (they run in the app).
+		const prompts = [
+			{ name: 'review', description: 'prompt file', argument_hint: '<area>', user: false },
+			{ name: 'clear', description: 'shadowed', argument_hint: '', user: false },
+			{ name: 'standup', description: 'mine', argument_hint: '', user: true }
+		];
+		expect(mergeCommands(local, session, files, prompts).map((c) => [c.name, c.source])).toEqual([
+			['clear', 'kingu'],
+			['model', 'kingu'],
+			['review', 'prompt'],
+			['standup', 'user-prompt'],
+			['compact', 'session']
+		]);
 	});
 
 	test('filters by prefix, then substring', () => {

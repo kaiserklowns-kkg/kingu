@@ -21,6 +21,8 @@
 
 	const SOURCE: Record<SlashSource, () => string> = {
 		kingu: () => t('chatInput.slash.source.kingu'),
+		prompt: () => t('chatCustomize.source.prompt'),
+		'user-prompt': () => t('chatCustomize.source.userPrompt'),
 		session: () => t('chatInput.slash.source.session'),
 		project: () => t('chatInput.slash.source.project'),
 		user: () => t('chatInput.slash.source.user'),

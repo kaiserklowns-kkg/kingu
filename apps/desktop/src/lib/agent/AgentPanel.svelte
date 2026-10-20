@@ -15,7 +15,11 @@
 	import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { addAttachments, type Attachment } from './attachments.ts';
 	import type { SuggestItem } from './SlashSuggest.svelte';
-	import { contextFiles, mentionItems, pickContext, resolveMention, type ContextPick } from './chatContextSources.svelte.ts';
+	import { contextFiles, mentionItems, pickContext, resolveMention, resolveSource, type ContextPick } from './chatContextSources.svelte.ts';
+	import { folderContext } from './chatContext.ts';
+	import { claudeModel, CODEBASE_HINT, expandPrompt, fromPick, modePick, pickerAgents, promptAgentPick, promptArgs, promptRequest, typedVariables, type Customizations, type ModePick, type PromptFile } from './customizations.ts';
+	import { linesOf } from './chatPrompt.ts';
+	import { CLAUDE_RUNTIME } from './runtimes.ts';
 	import { modelCatalog } from './modelCatalog.svelte.ts';
 	import { modelChoices } from './modelChoices.ts';
 	import ChatList from './ChatList.svelte';
@@ -94,6 +98,10 @@
 	let modelPicker: HTMLSelectElement | undefined = $state();
 	/** `.claude/commands` and skills of where the chat runs (for a chat with no session list yet). */
 	let fileCommands = $state<FileCommand[]>([]);
+	/** VS Code's prompt files and custom agents of where the chat runs (Rust customizations.rs). */
+	let customs = $state<Customizations>({ prompts: [], agents: [] });
+	/** The new chat's agent: Ask or a custom agent (null: Agent / Plan by `newMode`). */
+	let newAgent = $state<string | null>(null);
 	let root: HTMLDivElement;
 
 	const chatMeta = $derived(selectedId ? chats.get(selectedId) : undefined);
@@ -138,7 +146,11 @@
 			(name) => (name === 'clear' ? t('chatInput.slash.clear') : name === 'model' ? t('chatInput.slash.model') : t('chatInput.slash.fork'))
 		)
 	);
-	const slashCommands = $derived(mergeCommands(localCommands, chatRun?.commands ?? [], fileCommands));
+	const slashCommands = $derived(mergeCommands(localCommands, chatRun?.commands ?? [], fileCommands, customs.prompts));
+	/** The mode picker: Agent / Ask / Plan, then the folder's custom agents. */
+	const chatAgent = $derived(chatMeta ? (chatMeta.agent ?? null) : newAgent);
+	const pick = $derived(modePick(chatMeta ? chatMeta.permission_mode : mode === 'ask' ? 'plan' : 'default', chatAgent));
+	const shownAgents = $derived(pickerAgents(customs.agents, chatAgent));
 
 	$effect(() => {
 		const dir = cwd;
@@ -147,8 +159,15 @@
 		invoke<FileCommand[]>('chat_slash_commands', { cwd: dir })
 			.then((list) => !stale && (fileCommands = list))
 			.catch(() => !stale && (fileCommands = []));
+		void loadCustomizations(dir, () => stale);
 		return () => (stale = true);
 	});
+
+	async function loadCustomizations(dir: string | null = cwd, stale: () => boolean = () => false) {
+		if (!dir) return;
+		const got = await invoke<Customizations>('chat_customizations', { cwd: dir }).catch(() => ({ prompts: [], agents: [] }) as Customizations);
+		if (!stale()) customs = got;
+	}
 
 	// Implicit context (VS Code's "current file"): the active editor's file and selection.
 	const activeFile = $derived(isFileKey(editors.active) ? editors.active : null);
@@ -279,12 +298,64 @@
 	}
 
 	/** The request's prompt: the text and its attached files (read now), plus its images. */
-	async function outgoing(text: string, attachments: Attachment[], runsInRoot: boolean) {
+	/**
+	 * The `#` variables typed in the request (VS Code's chat variables: #selection, #problems,
+	 * #changes, #terminalLastCommand, #file:…, #folder:…, #codebase) → what they attach.
+	 */
+	async function typedContext(text: string): Promise<{ files: { path: string; range?: { startLine: number; endLine: number } }[]; texts: ContextText[] }> {
+		const out: { files: { path: string; range?: { startLine: number; endLine: number } }[]; texts: ContextText[] } = { files: [], texts: [] };
+		const env = contextEnv();
+		for (const v of typedVariables(text)) {
+			let picks: ContextPick[] = [];
+			if (v.kind === 'file') picks = [{ kind: 'file', path: v.path }];
+			else if (v.kind === 'folder') picks = [{ kind: 'text', text: folderContext(v.path, contextFiles.list) }];
+			else if (v.kind === 'codebase') picks = [{ kind: 'text', text: { kind: 'codebase', label: '#codebase', text: CODEBASE_HINT } }];
+			else picks = await resolveSource(v.kind === 'changes' ? 'scm' : v.kind === 'terminalLastCommand' ? 'terminal' : v.kind, env);
+			for (const p of picks) {
+				if (p.kind === 'file') out.files.push({ path: relativeTo(workspace.root, p.path), ...(p.range ? { range: p.range } : {}) });
+				else if (p.kind === 'text') out.texts.push(p.text);
+			}
+		}
+		return out;
+	}
+
+	async function outgoing(text: string, attachments: Attachment[], runsInRoot: boolean, extra: ContextText[] = []) {
 		const rootDir = workspace.root ?? '';
 		const dropped = attachments.filter((a) => !a.image).map((a) => ({ path: relativeTo(workspace.root, a.path) }));
-		const list = [...(implicit && !implicit.disabled ? [implicit] : []), ...picked, ...dropped];
+		if (typedVariables(text).some((v) => v.kind === 'folder')) await contextFiles.refresh(workspace.root);
+		const typed = await typedContext(text);
+		const list = [...(implicit && !implicit.disabled ? [implicit] : []), ...picked, ...dropped, ...typed.files];
 		const context = await resolveContext(list, (rel) => invoke<string>('read_workspace_file', { rel }), (rel) => promptPath(rel, rootDir, runsInRoot));
-		return { text: assemblePrompt(text, context, texts), images: attachments.filter((a) => a.image).map((a) => a.path), files: list.map((f) => f.path) };
+		const allTexts = [...texts, ...typed.texts.filter((x) => !texts.some((y) => y.kind === x.kind && y.label === x.label)), ...extra];
+		return { text: assemblePrompt(text, context, allTexts), images: attachments.filter((a) => a.image).map((a) => a.path), files: list.map((f) => f.path) };
+	}
+
+	/** A prompt file's variables: the active editor's file, its selected text, the chat's folder. */
+	async function promptVars() {
+		const range = editors.selection.range;
+		let selection: string | null = null;
+		if (activeFile && range) selection = await invoke<string>('read_workspace_file', { rel: activeFile }).then((text) => linesOf(text, range)).catch(() => null);
+		return { file: activeFile, selection, workspaceFolder: cwd };
+	}
+
+	/**
+	 * `/name args` of a prompt file (VS Code's prompt files): its agent and model are picked, then
+	 * the filled prompt goes as attached context of a request naming it.
+	 */
+	async function runPromptFile(file: PromptFile, args: string, attachments: Attachment[], how?: SendHow) {
+		let run: { file: PromptFile; body: string };
+		try {
+			run = await invoke<{ body: string } & PromptFile>('chat_prompt_file', { cwd, name: file.name }).then((r) => ({ file: r, body: r.body }));
+		} catch (e) {
+			return void status.flash(String(e), 8000);
+		}
+		const target = promptAgentPick(run.file.agent, customs.agents);
+		if (target && target !== pick) await applyPick(target);
+		const model = runtimeId === CLAUDE_RUNTIME ? claudeModel(run.file.model) : null;
+		if (model) await changeModel(model);
+		const { inputs, rest } = promptArgs(args);
+		const req = promptRequest(run.file, expandPrompt(run.body, inputs, await promptVars()), rest);
+		await send(req.text, attachments, how, [req.context], `/${file.name}${args ? ` ${args}` : ''}`);
 	}
 
 	async function submit(text: string, attachments: Attachment[], how?: SendHow) {
@@ -296,20 +367,28 @@
 			await local.command.run(local.args);
 			return;
 		}
+		const asPrompt = localCommandFor(text, customs.prompts);
+		if (asPrompt) return runPromptFile(asPrompt.command, asPrompt.args, attachments, how);
+		await send(text, attachments, how);
+	}
+
+	/** Sends a request (`extra`: context besides the input's; `title`: the new chat's first prompt). */
+	async function send(text: string, attachments: Attachment[], how?: SendHow, extra: ContextText[] = [], title = text) {
+		if (busy) return;
 		busy = true;
 		try {
 			if (!chatMeta) {
 				const where: ChatCwd = newWhere ? { kind: 'task', slug: newWhere } : { kind: 'folder' };
-				const message = await outgoing(text, attachments, where.kind === 'folder');
-				const id = await chats.create({ prompt: text, cwd: where, model: newRuntime === ARKAI_RUNTIME ? arkaiDefault(arkaiProviders.list, newModel) : newModel.trim() || chats.defaults().model, permissionMode: permissionFor(newMode, approval), message, runtime: newRuntime });
+				const message = await outgoing(text, attachments, where.kind === 'folder', extra);
+				const id = await chats.create({ prompt: title, cwd: where, model: newRuntime === ARKAI_RUNTIME ? arkaiDefault(arkaiProviders.list, newModel) : newModel.trim() || chats.defaults().model, permissionMode: permissionFor(newMode, approval), message, runtime: newRuntime, agent: newAgent });
 				if (id) {
 					select(id);
 					resetInput();
 				}
 				return;
 			}
-			const message = await outgoing(text, attachments, chatMeta.cwd.kind === 'folder');
-			const sent = await chats.submit(chatMeta.id, message, text, how);
+			const message = await outgoing(text, attachments, chatMeta.cwd.kind === 'folder', extra);
+			const sent = await chats.submit(chatMeta.id, message, title, how);
 			if (sent) resetInput();
 		} catch (e) {
 			status.flash(t('chat.sendFailed', { error: String(e) }), 10000);
@@ -475,6 +554,23 @@
 		}
 		const when = await chats.setPermissionMode(chatMeta.id, permissionFor(next, nextApproval));
 		optionNote = when === 'live' ? t('chat.panel.appliedNow') : when === 'next' ? t('chat.panel.appliedNext') : '';
+	}
+
+	/**
+	 * The mode picker (VS Code's agent picker): Agent and Plan set the permission mode; Ask and a
+	 * custom agent set the chat's agent (its instructions and tools) and pick its model when it names one.
+	 */
+	async function applyPick(next: ModePick) {
+		const { mode: nextMode, agent } = fromPick(next);
+		if (nextMode !== mode) await setMode(nextMode);
+		if (!chatMeta) newAgent = agent;
+		else {
+			const when = await chats.setAgent(chatMeta.id, agent);
+			if (when && agent) optionNote = t('chatCustomize.agentNext');
+		}
+		const custom = agent && customs.agents.find((a) => a.name === agent);
+		const model = custom && runtimeId === CLAUDE_RUNTIME ? claudeModel(custom.model) : null;
+		if (model) await changeModel(model);
 	}
 
 	async function changeModel(model: string) {
@@ -785,9 +881,25 @@
 							{#each taskWorktrees as slug (slug)}<option value={slug}>kingu/{slug}</option>{/each}
 						</select>
 					{/if}
-					<select class={CHIP_SELECT} aria-label={t('chatView.mode')} title={t('chatView.modeHint')} value={mode} onchange={(e) => setMode(e.currentTarget.value as ChatMode)}>
-						<option value="ask">{t('chatView.mode.ask')}</option>
+					<select
+						class={CHIP_SELECT}
+						aria-label={t('chatView.mode')}
+						title={t('chatCustomize.modeHint')}
+						value={pick}
+						onfocus={() => void loadCustomizations()}
+						onchange={(e) => applyPick(e.currentTarget.value as ModePick)}
+					>
 						<option value="agent">{t('chatView.mode.agent')}</option>
+						<option value="ask">{t('chatCustomize.mode.ask')}</option>
+						<option value="plan">{t('chatView.mode.ask')}</option>
+						{#if shownAgents.length}
+							<optgroup label={t('chatCustomize.customAgents')}>
+								{#each shownAgents as a (a.path)}<option value={`custom:${a.name}`} title={a.description || a.rel}>{a.name}</option>{/each}
+							</optgroup>
+						{/if}
+						{#if chatAgent && chatAgent !== 'ask' && !shownAgents.some((a) => a.name === chatAgent)}
+							<option value={`custom:${chatAgent}`}>{t('chatCustomize.agentMissing', { name: chatAgent })}</option>
+						{/if}
 					</select>
 					{#if mode === 'agent'}
 						<select
@@ -819,6 +931,7 @@
 			</Composer>
 			{#if optionNote}<p class="px-1 pt-1 text-xs text-(--vscode-descriptionForeground)" role="status">{optionNote}</p>{/if}
 			{#if allowAll && mode === 'agent'}<p class="px-1 pt-1 text-xs text-(--vscode-editorWarning-foreground)" role="status">{t('chatInput.allowAllNote')}</p>{/if}
+			{#if settings.get<boolean>('chat.tools.global.autoApprove') === true}<p class="px-1 pt-1 text-xs text-(--vscode-editorWarning-foreground)" role="status">{t('chatCustomize.autoApproveNote')}</p>{/if}
 		</div>
 	{/if}
 </div>

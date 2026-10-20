@@ -46,6 +46,7 @@ import type { SendHow } from './requestQueuing.ts';
 import { chatTitlePrompt, parseChatTitle } from './chatTitle.ts';
 import { forkTitle, rewoundMeta, type ForkPoint } from './chatRewind.ts';
 import { chatsToResume, RESUME_PROMPT } from './chatResume.ts';
+import { autoApprover } from './toolApproval.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import {
 	chatCwdPath,
@@ -73,6 +74,8 @@ export type ChatRun = RunState & {
 	/** Rust run id; undefined until started (and for a replayed transcript). */
 	runId: number | undefined;
 	startedAt: number;
+	/** The chat's agent this run started with (Ask, a custom agent; null: none): a later pick needs a new run. */
+	agent?: string | null;
 };
 
 type Listener = (id: string, ev: AgentEvent) => void;
@@ -202,12 +205,12 @@ class Chats {
 		}
 	}
 
-	async create(input: { prompt: string; cwd: ChatCwd; model: string | null; permissionMode: RunPermissionMode; message: OutgoingMessage; runtime?: string }): Promise<string | undefined> {
+	async create(input: { prompt: string; cwd: ChatCwd; model: string | null; permissionMode: RunPermissionMode; message: OutgoingMessage; runtime?: string; agent?: string | null }): Promise<string | undefined> {
 		const root = workspace.root;
 		if (!root || !input.prompt.trim()) return;
 		if (root !== this.root) await this.load();
 		const allowAll = input.permissionMode === 'bypassPermissions';
-		const meta = newChat({ prompt: input.prompt, cwd: input.cwd, model: input.model, permissionMode: allowAll ? 'default' : (input.permissionMode as PermissionMode), runtime: input.runtime }, Date.now());
+		const meta = newChat({ prompt: input.prompt, cwd: input.cwd, model: input.model, permissionMode: allowAll ? 'default' : (input.permissionMode as PermissionMode), runtime: input.runtime, agent: input.agent }, Date.now());
 		if (allowAll) this.allowAll[runKey(root, meta.id)] = true;
 		this.#save([...this.list, meta], root);
 		await this.#saving;
@@ -240,7 +243,7 @@ class Chats {
 		const key = runKey(root, meta.id);
 		const prev = this.runs[key];
 		if (prev && !prev.ended) throw new Error(t('chat.alreadyRunning'));
-		const run: ChatRun = { ...initialRun(), id: meta.id, root, runId: undefined, startedAt: Date.now() };
+		const run: ChatRun = { ...initialRun(), id: meta.id, root, runId: undefined, startedAt: Date.now(), agent: meta.agent ?? null };
 		// Same session: keep the timeline so far.
 		if (prev && resume) {
 			run.items = prev.items;
@@ -259,9 +262,16 @@ class Chats {
 		// After a rewind or fork: this run continues the session only up to that message (in a fork of it).
 		const resumeAt = resume && resume === meta.session_id ? (meta.resume_at ?? null) : null;
 		const onEvent = new Channel<AgentEvent>();
+		// chat.tools.global.autoApprove: tool prompts answered here (not questions, not Kingu's always-ask checks).
+		const autoApprove = autoApprover(() => settings.get<boolean>('chat.tools.global.autoApprove') === true);
 		onEvent.onmessage = (ev) => {
 			applyEvent(state, ev);
 			for (const fn of this.#listeners) fn(meta.id, ev);
+			const approve = autoApprove(ev);
+			if (approve && state.runId !== undefined) {
+				const runId = state.runId;
+				queueMicrotask(() => void invoke('agent_answer_permission', { runId, requestId: approve, decision: 'allow', message: null, answers: null }).catch((e) => clientLog('info', `chat ${meta.id}: auto-approve: ${e}`)));
+			}
 			// Not shown in the chat (session start, stderr, SDK messages it does not know): logged.
 			if (ev.kind === 'raw' || ev.kind === 'stderr') clientLog('info', `chat ${meta.id}: ${ev.kind}: ${ev.line.slice(0, 500)}`);
 			if ((ev.kind === 'result' || ev.kind === 'exit') && shouldDrain(this.queues[key]?.length ?? 0, state)) queueMicrotask(() => void this.#drain(root, meta.id));
@@ -292,6 +302,8 @@ class Chats {
 				// The rules files (rules.rs) for these attached files; null leaves them out.
 				rules: settings.get<boolean>('kingu.chat.rules.enabled') !== false ? files : null,
 				runtime: runtimeOf(meta),
+				// Ask or a custom agent (Rust looks the name up among the folder's agent files).
+				agent: meta.agent ?? null,
 				onEvent
 			});
 			clientLog('info', `agent run ${state.runId} started for chat ${meta.id}`);
@@ -309,9 +321,15 @@ class Chats {
 		const meta = this.get(id);
 		if (!root || !meta || !message.text.trim()) return false;
 		await this.open(id);
-		const run = this.runs[runKey(root, id)];
+		let run = this.runs[runKey(root, id)];
 		this.#lastImages.set(runKey(root, id), message);
 		try {
+			// Another agent was picked since this run started: a new run continues the session with it
+			// (its instructions and tools are fixed at the start). A busy turn keeps going: steered in.
+			if (run && !run.ended && (run.agent ?? null) !== (meta.agent ?? null) && !turnBusy(run)) {
+				await this.stopAndWait(id);
+				run = this.runs[runKey(root, id)];
+			}
 			const plan = chatSendPlan(run, meta.session_id);
 			if (plan.kind === 'send') {
 				if (run?.runId === undefined) throw new Error(t('team.agent.stillStarting'));
@@ -516,6 +534,22 @@ class Chats {
 		const when = await this.#setOption(id, { permission_mode: mode }, { permissionMode: mode });
 		if (when) delete this.allowAll[key];
 		return when;
+	}
+
+	/**
+	 * The chat's agent (VS Code's Ask or a custom agent; null: Agent / Plan by the permission mode).
+	 * Its instructions and tools are fixed when a run starts, so a live session that is idle ends
+	 * now and the next message continues it in a new run; a busy one at the next message after it.
+	 */
+	async setAgent(id: string, agent: string | null): Promise<'next' | null> {
+		const root = this.root;
+		const meta = this.get(id);
+		if (!root || !meta) return null;
+		if ((meta.agent ?? null) === agent) return 'next';
+		this.#patch(root, id, { agent });
+		const run = this.run(id);
+		if (run && !run.ended && (run.agent ?? null) !== agent && !turnBusy(run)) await this.stopAndWait(id);
+		return 'next';
 	}
 
 	/** The chat runs with "Allow all". */

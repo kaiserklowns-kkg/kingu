@@ -31,6 +31,8 @@ export type ChatMeta = {
 	permission_mode: PermissionMode | null;
 	/** Which agent runs it (runtimes.ts); absent: Claude (Rust defaults it). */
 	runtime?: string;
+	/** VS Code's Ask or a custom agent's name (customizations.ts); absent: Agent or Plan by `permission_mode`. */
+	agent?: string | null;
 	/** Unix ms. */
 	created_at: number;
 	updated_at: number;
@@ -57,9 +59,10 @@ export const initialTitle = (prompt: string) => taskTitleFromPrompt(prompt.trim(
 /** Whether a finished turn should get the chat an AI title: never renamed, and still its first-prompt title. */
 export const wantsAiTitle = (meta: Pick<ChatMeta, 'title' | 'title_auto' | 'prompt'>) => meta.title_auto === true && !!meta.prompt.trim() && meta.title === initialTitle(meta.prompt);
 
-export function newChat(input: { prompt: string; cwd: ChatCwd; model: string | null; permissionMode: PermissionMode | null; runtime?: string }, now: number, id = newChatId(now)): ChatMeta {
+export function newChat(input: { prompt: string; cwd: ChatCwd; model: string | null; permissionMode: PermissionMode | null; runtime?: string; agent?: string | null }, now: number, id = newChatId(now)): ChatMeta {
 	const prompt = input.prompt.trim();
 	return {
+		...(input.agent ? { agent: input.agent } : {}),
 		id,
 		title: initialTitle(prompt),
 		title_auto: true,

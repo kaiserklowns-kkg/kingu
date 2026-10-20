@@ -90,6 +90,10 @@ pub struct ChatMeta {
   /// Which agent runs the chat (`runtimes`): `claude`, the Claude Agent SDK, unless set.
   #[serde(default = "super::runtimes::default_id")]
   pub runtime: String,
+  /// The chat's agent besides Agent and Plan (the permission mode): `ask`, or a custom agent's
+  /// name (`customizations`; looked up among the files found, never read from this value).
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub agent: Option<String>,
   /// Unix milliseconds.
   pub created_at: u64,
   #[serde(default)]
@@ -169,6 +173,9 @@ pub fn validate(chats: &[ChatMeta]) -> Result<(), String> {
     }
     if !super::runtimes::valid_id(&c.runtime) {
       return Err(format!("{}: invalid runtime", c.id));
+    }
+    if c.agent.as_deref().is_some_and(|a| a.trim().is_empty() || a.chars().count() > 100 || a.chars().any(char::is_control)) {
+      return Err(format!("{}: invalid agent", c.id));
     }
     if let Some(r) = &c.last_run {
       validate_run_summary(&c.id, r)?;
@@ -450,6 +457,7 @@ mod tests {
       model: Some("claude-opus-5-5[1m]".into()),
       permission_mode: Some("acceptEdits".into()),
       runtime: "claude".into(),
+      agent: None,
       created_at: 1,
       updated_at: 2,
       last_run: Some(RunSummary {
@@ -518,6 +526,9 @@ mod tests {
     assert!(bad(|c| c.runtime = "Gemini CLI".into()));
     assert!(bad(|c| c.runtime = String::new()));
     assert!(validate(&[ChatMeta { runtime: "gemini".into(), ..chat("a") }]).is_ok());
+    assert!(validate(&[ChatMeta { agent: Some("Planner".into()), ..chat("a") }]).is_ok());
+    assert!(bad(|c| c.agent = Some(" ".into())));
+    assert!(bad(|c| c.agent = Some("a\nb".into())));
     assert!(bad(|c| c.last_run.as_mut().unwrap().status = "weird".into()));
     assert!(bad(|c| c.last_run.as_mut().unwrap().cost_usd = Some(-1.0)));
     assert!(save(tmp.path(), &[chat("a"), chat("a")]).is_err());

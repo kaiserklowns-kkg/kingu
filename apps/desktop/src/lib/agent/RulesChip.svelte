@@ -10,7 +10,7 @@
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { t } from '#lib/i18n/index.ts';
 
-	type Rule = { path: string; rel: string; kind: 'agents' | 'cursor' | 'copilot'; description: string | null; always: boolean; globs: string[]; applies: boolean };
+	type Rule = { path: string; rel: string; kind: 'agents' | 'cursor' | 'copilot' | 'instructions'; description: string | null; always: boolean; globs: string[]; applies: boolean };
 
 	let { cwd, files = [] }: { cwd: string | null; files?: string[] } = $props();
 
@@ -34,7 +34,12 @@
 		};
 	});
 
-	const KIND = { agents: () => t('chat.rules.kind.agents'), cursor: () => t('chat.rules.kind.cursor'), copilot: () => t('chat.rules.kind.copilot') } as const;
+	const KIND = {
+		agents: () => t('chat.rules.kind.agents'),
+		cursor: () => t('chat.rules.kind.cursor'),
+		copilot: () => t('chat.rules.kind.copilot'),
+		instructions: () => t('chatCustomize.rules.instructions')
+	} as const;
 
 	async function pick() {
 		const item = await quick.choose({
@@ -42,7 +47,7 @@
 			items: active.map((r) => ({
 				id: r.path,
 				label: r.rel,
-				description: [KIND[r.kind](), r.kind === 'cursor' ? (r.always ? t('chat.rules.always') : t('chat.rules.matched')) : '', r.description ?? ''].filter(Boolean).join(' · '),
+				description: [KIND[r.kind](), r.kind === 'cursor' || r.kind === 'instructions' ? (r.always ? t('chat.rules.always') : t('chat.rules.matched')) : '', r.description ?? ''].filter(Boolean).join(' · '),
 				icon: r.rel
 			}))
 		});
