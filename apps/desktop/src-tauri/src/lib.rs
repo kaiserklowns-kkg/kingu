@@ -728,6 +728,32 @@ fn worktree_search_cancel(searches: State<'_, WorktreeSearches>) {
   searches.0.cancel();
 }
 
+/// The Search Editor (`search.action.openNewEditor`): its own ripgrep slot, so it never cancels
+/// the Search view's search. `options.context_lines` is always set, so files carry whole lines.
+#[derive(Default)]
+struct SearchEditorSearches(Arc<search::Searches>);
+
+#[tauri::command]
+fn search_editor_text(
+  ws: State<'_, Workspace>,
+  searches: State<'_, SearchEditorSearches>,
+  mut options: search::SearchOptions,
+  on_event: Channel<search::SearchEvent>,
+) -> Result<u32, String> {
+  if options.query.is_empty() {
+    searches.0.cancel();
+    return Err("query is empty".into());
+  }
+  options.context_lines.get_or_insert(0);
+  let rg = search::find_rg(std::env::var_os("KINGU_RG"), shell_env::path())?;
+  searches.0.start(&rg, &ws.root()?, &search::for_workspace(options), move |ev| on_event.send(ev).is_ok())
+}
+
+#[tauri::command]
+fn search_editor_cancel(searches: State<'_, SearchEditorSearches>) {
+  searches.0.cancel();
+}
+
 #[tauri::command]
 fn search_cancel(searches: State<'_, Arc<search::Searches>>) {
   searches.cancel();
@@ -1053,6 +1079,7 @@ pub fn run() {
     .manage(Arc::new(local_ai::completions::Completions::default()))
     .manage(Arc::new(local_ai::semantic::Semantic::default()))
     .manage(WorktreeSearches::default())
+    .manage(SearchEditorSearches::default())
     .manage(lsp::Servers::default())
     .manage(dap::Sessions::default())
     .manage(git_remote::GitOps::default())
@@ -1385,6 +1412,8 @@ pub fn run() {
       agent::gh_projects::gh_project_issue_open,
       search_text,
       search_cancel,
+      search_editor_text,
+      search_editor_cancel,
       worktree_search,
       worktree_search_cancel,
       search_replace,
