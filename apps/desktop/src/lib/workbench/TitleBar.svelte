@@ -14,6 +14,7 @@
 	import { currentMenubar, runMenuItem, runRole } from './appMenu.svelte';
 	import { commands, keyOf } from './commands.svelte';
 	import { editorLabel } from './editorLabel';
+	import { externalPath, isExternalKey } from './externalFiles';
 	import { editors } from './editors.svelte';
 	import { isMac, keyLabel } from './keys';
 	import WindowControls from './WindowControls.svelte';
@@ -56,7 +57,13 @@
 	const template = $derived(settings.get<string>('window.title'));
 	const title = $derived.by(() => {
 		const isFile = active !== null && !active.includes('://');
-		const editor = active ? { short: editorLabel(active), medium: isFile ? active : editorLabel(active), long: isFile && workspace.root ? `${workspace.root}/${active}` : editorLabel(active) } : null;
+		// A file outside the folder is shown by its own path (VS Code's medium/long labels of an outside file).
+		const outside = active !== null && isExternalKey(active) ? externalPath(active) : null;
+		const editor = active
+			? outside
+				? { short: editorLabel(active), medium: outside, long: outside }
+				: { short: editorLabel(active), medium: isFile ? active : editorLabel(active), long: isFile && workspace.root ? `${workspace.root}/${active}` : editorLabel(active) }
+			: null;
 		return renderWindowTitle(template, {
 			editor,
 			rootName: workspace.root ? workspaceName : null,

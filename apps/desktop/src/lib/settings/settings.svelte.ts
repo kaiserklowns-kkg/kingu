@@ -24,7 +24,10 @@ class Settings {
 	/** Kingu's per-repository overrides of the open folder (Orca's per-repo settings), kept in the app config dir. */
 	repo = $state<Layer>(emptyLayer());
 	loaded = $state(false);
-	readonly resolved: Map<string, Resolved> = $derived(resolveSettings(this.user.values, this.workspace.values, settingSchemas.all, this.repo.values));
+	/** `settings` of the `.code-workspace` file the folder was opened from: workspace settings under
+	 * the folder's own `.kingu/settings.json` (VS Code: workspace file < folder settings). */
+	workspaceFile = $state.raw<Record<string, unknown>>({});
+	readonly resolved: Map<string, Resolved> = $derived(resolveSettings(this.user.values, { ...this.workspaceFile, ...this.workspace.values }, settingSchemas.all, this.repo.values));
 	/** Values the files set but that are ignored (wrong type, out of range, user-only in the workspace file). */
 	readonly problems: SettingProblem[] = $derived([
 		...settingProblems(this.user.values, 'user', settingSchemas.all),

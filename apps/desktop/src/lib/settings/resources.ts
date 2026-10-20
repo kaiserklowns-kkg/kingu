@@ -14,6 +14,7 @@ import { isVaultKey } from '#lib/vault/vault.ts';
 import { isArtifactKey } from '#lib/artifacts/artifacts.ts';
 import { isChatEditorKey } from '#lib/agent/chatExtras.ts';
 import { isMergeKey } from '#lib/workbench/scm.ts';
+import { externalPath, isExternalKey } from '#lib/workbench/externalFiles.ts';
 
 /** Kingu's user mcp.json (the MCP store's `USER_MCP_KEY`): in the app config dir, read and saved by Rust. */
 const USER_MCP_KEY = 'mcp://user/mcp.json';
@@ -26,6 +27,11 @@ export const isNonTextEditor = (key: string) =>
 const userSnapId = (key: string) => /^snap:\/\/user\/([a-z0-9][a-z0-9-]{0,39})\/snap\.toml$/.exec(key)?.[1];
 
 export async function readResource(key: string): Promise<string> {
+	if (isExternalKey(key)) {
+		const file = await readTextResource(key);
+		if (file.kind !== 'text') throw new Error(externalPath(key));
+		return file.content;
+	}
 	// An untitled editor starts empty; it has nothing on disk.
 	if (isUntitled(key)) return '';
 	const snapId = userSnapId(key);
@@ -43,6 +49,10 @@ export async function readResource(key: string): Promise<string> {
 }
 
 export async function writeResource(key: string, content: string): Promise<void> {
+	if (isExternalKey(key)) {
+		await writeTextResource(key, content, 'utf8');
+		return;
+	}
 	if (isUntitled(key)) throw new Error('an untitled editor is saved with Save As');
 	const snapId = userSnapId(key);
 	if (key === USER_SETTINGS_KEY) await invoke('settings_write', { scope: 'user', content });
@@ -58,8 +68,9 @@ export async function writeResource(key: string, content: string): Promise<void>
 }
 
 /** Workspace files are read and saved with their encoding and checked for save conflicts; the
- * settings, keybindings and snap manifests are always UTF-8 and owned by Kingu. */
-export const isWorkspaceTextFile = (key: string) => key !== USER_SETTINGS_KEY && key !== USER_KEYBINDINGS_KEY && key !== USER_MCP_KEY && !userSnapId(key);
+ * settings, keybindings and snap manifests are always UTF-8 and owned by Kingu. Files outside the
+ * folder (`external:`) are text files too, but not workspace files (auto save, associations). */
+export const isWorkspaceTextFile = (key: string) => !isExternalKey(key) && key !== USER_SETTINGS_KEY && key !== USER_KEYBINDINGS_KEY && key !== USER_MCP_KEY && !userSnapId(key);
 
 /** `readonly`: the file's permissions say it cannot be written (files.readonlyFromPermissions). */
 export type FileStat = { mtime: number; size: number; hash: string; readonly?: boolean };
@@ -72,12 +83,15 @@ export type TextWrite = { kind: 'saved'; stat?: FileStat } | { kind: 'conflict';
 
 /** `readResource` with encodings, binary and large file detection (Rust `textfile_read`). */
 export async function readTextResource(key: string, options: ReadOptions = {}): Promise<TextRead> {
+	if (isExternalKey(key)) return invoke<TextRead>('external_textfile_read', { path: externalPath(key), options });
 	if (!isWorkspaceTextFile(key)) return { kind: 'text', content: await readResource(key), encoding: 'utf8', lossy: false };
 	return invoke<TextRead>('textfile_read', { rel: key, options });
 }
 
 /** `writeResource` with the file's encoding; `expected` is the stat it was loaded with (none: overwrite). */
 export async function writeTextResource(key: string, content: string, encoding: string, expected?: FileStat): Promise<TextWrite> {
+	const stamp = expected ? { mtime: expected.mtime, hash: expected.hash } : null;
+	if (isExternalKey(key)) return invoke<TextWrite>('external_textfile_write', { path: externalPath(key), content, encoding, expected: stamp });
 	if (!isWorkspaceTextFile(key)) {
 		await writeResource(key, content);
 		return { kind: 'saved' };

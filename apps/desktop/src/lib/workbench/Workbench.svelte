@@ -137,6 +137,11 @@
 			commands.register({ id: 'kingu.agents.cleanup', title: 'Clean Up Tasks…', category: 'Agents', when: () => adeTasks.views.length > 0, run: () => (cleanup.open = true) }),
 			commands.register({ id: 'kingu.welcome.show', title: 'Welcome: Show Getting Started', category: 'Help', run: () => (welcome.open = true) }),
 			commands.register({ id: 'workbench.action.files.openFolder', title: 'Open Folder...', category: 'File', key: 'cmd+o', run: () => workspace.pickFolder() }),
+			// Files anywhere on disk (an external editor outside the folder) and `.code-workspace` files.
+			commands.register({ id: 'workbench.action.files.openFile', title: 'Open File...', category: 'File', run: () => workspace.openFile() }),
+			commands.register({ id: 'workbench.action.openWorkspace', title: 'Open Workspace from File...', category: 'File', run: () => workspace.pickWorkspaceFile() }),
+			commands.register({ id: 'workbench.action.saveWorkspaceAs', title: 'Save Workspace As...', category: 'Workspaces', when: () => workspace.root !== null, run: () => workspace.saveWorkspaceAs() }),
+			commands.register({ id: 'workbench.action.addRootFolder', title: 'Add Folder to Workspace...', category: 'Workspaces', run: () => workspace.addFolderToWorkspace() }),
 			commands.register({ id: 'workbench.action.openRecent', title: 'Open Recent...', category: 'File', key: 'ctrl+r',
 				// The shell's reverse search keeps ctrl+r inside the terminal (the menu still opens the picker).
 				keyWhen: () => !document.activeElement?.closest('.xterm'),

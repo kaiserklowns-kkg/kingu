@@ -16,6 +16,7 @@ import { readTextResource, writeTextResource, type FileStat, type ReadOptions, t
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { diskChangeAction, type AutoSaveMode } from './textFiles';
 import { editors } from './editors.svelte';
+import { externalKey, isExternalKey } from './externalFiles';
 import { invoke } from '@tauri-apps/api/core';
 import { runSaveParticipants } from './textFileSave';
 import { defaultLanguage, isUntitled, suggestedName } from './untitled';
@@ -142,7 +143,8 @@ export function modelEntry(m: MonacoModule, path: string): Promise<ModelEntry> {
 					model.onWillDispose(() => (untitledFirstLines.delete(path), emptyUntitled.delete(path)));
 				}
 				entries.set(path, entry);
-				lsp.attach(m.monaco, model, path);
+				// Language servers run on the open folder; a file outside it gets no server (like a single file in VS Code without one).
+				if (!isExternalKey(path)) lsp.attach(m.monaco, model, path);
 				textFileHooks.created(path, entry);
 				return entry;
 			})
@@ -280,7 +282,7 @@ type SavedAs = { rel: string | null; path: string };
 /**
  * Save As (⇧⌘S), and the first save of an untitled editor: the native save dialog (run by Rust),
  * then the editor switches to the new file like VS Code. The old file keeps what is on disk.
- * Returns the new workspace path, or null when cancelled or saved outside the folder.
+ * Returns the new editor key (a workspace path, or `external:` outside the folder), or null when cancelled.
  */
 export async function saveAs(path: string): Promise<string | null> {
 	const entry = entries.get(path);
@@ -299,15 +301,8 @@ export async function saveAs(path: string): Promise<string | null> {
 		return null;
 	}
 	if (!saved) return null;
-	if (!saved.rel) {
-		notifications.info(t('workbench.editorModels.savedOutside', { path: saved.path }));
-		if (isUntitled(path)) {
-			editors.setDirty(path, false);
-			editors.closeEverywhere(path);
-		}
-		return null;
-	}
-	const rel = saved.rel;
+	// Saved outside the folder: the editor goes on with the file there (an external editor, as in VS Code).
+	const rel = saved.rel ?? externalKey(saved.path);
 	editors.setDirty(path, false);
 	if (rel !== path) {
 		// The editor now shows the new file; the old model goes once no tab shows it.

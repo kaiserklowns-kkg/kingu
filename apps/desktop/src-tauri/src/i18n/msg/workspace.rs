@@ -46,5 +46,13 @@ crate::i18n::messages! {
       en: "\"{name}\" already exists here and is not empty",
       th: "มี \"{name}\" อยู่ที่นี่แล้วและไม่ว่าง",
     },
+    ExternalNotOpened {
+      en: "{path} is outside the folder and was not opened with Open File",
+      th: "{path} อยู่นอกโฟลเดอร์และไม่ได้เปิดด้วย Open File",
+    },
+    WorkspaceFileTooLarge {
+      en: "{path} is too large for a workspace file",
+      th: "{path} ใหญ่เกินกว่าจะเป็นไฟล์ workspace",
+    },
   }
 }

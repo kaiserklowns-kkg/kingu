@@ -6,6 +6,7 @@ mod backup;
 mod cli_server;
 mod dap;
 mod dialog;
+mod external;
 mod fileops;
 mod floating;
 mod fs;
@@ -228,7 +229,7 @@ fn git_dir(ws: &Workspace, slug: Option<&str>) -> Result<PathBuf, String> {
 }
 
 /// Runs a git operation off the main thread (status can take a while in a large repository).
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+pub(crate) async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
   tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
@@ -1024,7 +1025,8 @@ async fn fs_save_as(app: AppHandle, ws: State<'_, Workspace>, content: String, n
     (Some(r), None) => r.clone(),
     (None, _) => app.path().home_dir().map_err(|e| e.to_string())?,
   };
-  let picked = tauri::async_runtime::spawn_blocking(move || app.dialog().file().set_directory(start).set_file_name(name).blocking_save_file())
+  let handle = app.clone();
+  let picked = tauri::async_runtime::spawn_blocking(move || handle.dialog().file().set_directory(start).set_file_name(name).blocking_save_file())
     .await
     .map_err(|e| e.to_string())?;
   let Some(path) = picked.and_then(|p| p.into_path().ok()) else { return Ok(None) };
@@ -1032,6 +1034,10 @@ async fn fs_save_as(app: AppHandle, ws: State<'_, Workspace>, content: String, n
   log::info!("saved as {}", path.display());
   let real = path.canonicalize().unwrap_or_else(|_| path.clone());
   let rel = root.and_then(|r| real.strip_prefix(&r).ok().map(|p| p.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")));
+  // Saved outside the folder: the editor goes on with it as an external file (external.rs).
+  if rel.is_none() {
+    app.state::<external::ExternalFiles>().allow(&real);
+  }
   Ok(Some(SavedAs { rel, path: path.display().to_string() }))
 }
 
@@ -1085,6 +1091,7 @@ pub fn run() {
       let start = workspace::startup_root(last, std::env::var_os("KINGU_WORKSPACE"));
       app.manage(recent);
       app.manage(projects::Projects::load(app.path().app_data_dir()?.join("projects.json")));
+      app.manage(external::ExternalFiles::load(app.path().app_data_dir()?.join("external-files.json")));
       let data = app.path().app_data_dir()?;
       #[cfg(unix)]
       let (runtime, uid) = (
@@ -1147,6 +1154,13 @@ pub fn run() {
       fs_move,
       fs_import,
       fs_save_as,
+      external::external_pick_files,
+      external::external_recent,
+      external::external_forget,
+      external::external_clear,
+      external::external_textfile_read,
+      external::external_textfile_write,
+      external::workspace_file_read,
       workspace_open,
       workspace_close,
       workspace_recent,

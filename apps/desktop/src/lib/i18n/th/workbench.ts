@@ -237,7 +237,6 @@ export const workbench = {
 	'workbench.commands.noChord': 'ไม่มีคำสั่งสำหรับปุ่ม ({chord})',
 	'workbench.commands.chordPending': '({key}) ถูกกดแล้ว รอปุ่มที่สองของคีย์ลัด...',
 	'workbench.editorModels.saveAsFailed': 'บันทึกเป็นไฟล์ใหม่ไม่สำเร็จ: {error}',
-	'workbench.editorModels.savedOutside': 'บันทึกไว้ที่ {path} ซึ่งอยู่นอกโฟลเดอร์ที่เปิด จึงเปิดเป็นแท็บไม่ได้',
 	'workbench.closeGuard.debugRunning': 'มี debug session ทำงานอยู่ ต้องการหยุดแล้วออกหรือไม่?',
 	'workbench.closeGuard.stopDebugAndQuit': 'หยุด debug แล้วออก',
 	'workbench.closeGuard.quitQuestion': 'ออกจาก Kingu?',

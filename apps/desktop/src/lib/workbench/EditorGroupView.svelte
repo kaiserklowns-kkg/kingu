@@ -24,6 +24,7 @@
 	import Icon from './Icon.svelte';
 	import { editors } from './editors.svelte';
 	import { layout } from './layout.svelte';
+	import { externalCrumbs, externalDescription, isExternalKey } from './externalFiles';
 	import { editorLabel } from './editorLabel';
 	import { fileIcon } from './fileIcons';
 	import { keyLabel } from './keys';
@@ -72,12 +73,14 @@
 						? ['User', 'keybindings.json']
 					: activePath.startsWith('snap://user/')
 						? ['User Snaps', ...activePath.slice('snap://user/'.length).split('/')]
-						: fileOf(activePath).split('/'));
+						: isExternalKey(activePath)
+							? externalCrumbs(activePath)
+							: fileOf(activePath).split('/'));
 	const label = editorLabel;
 	const iconOf = (key: string) =>
 		fileIcon(key === SETTINGS_EDITOR_KEY || key === USER_SETTINGS_KEY ? 'settings.json' : isAdeEditor(key) || isChatEditorKey(key) ? 'tasks.md' : fileOf(key));
 	/** Breadcrumbs of a workspace file are clickable (not the Settings editor's or user settings'). */
-	const crumbsAreFiles = $derived(!!activePath && activePath !== USER_SETTINGS_KEY && !isChangesKey(activePath) && crumbs.length > 0);
+	const crumbsAreFiles = $derived(!!activePath && activePath !== USER_SETTINGS_KEY && !isChangesKey(activePath) && !isExternalKey(activePath) && crumbs.length > 0);
 	const diffActive = $derived(activePath !== null && isDiffKey(activePath));
 	/** Images and Markdown previews have their own viewers instead of Monaco. */
 	const viewerActive = $derived(activePath !== null && (isMergeKey(activePath) || isImagePath(activePath) || isPreviewKey(activePath) || isNotebookPath(activePath) || isChangesKey(activePath) || isVaultKey(activePath) || isArtifactKey(activePath)));
@@ -130,7 +133,7 @@
 	const decorations = $derived(decoColors || decoBadges ? fileDecorations(entryChanges(scm.repo?.entries ?? [])) : null);
 	const tabFiles = $derived(tabs.map((t) => t.path).filter((p) => !p.includes(':')));
 	/** The description after a tab's name (workbench.editor.labelFormat); workspace files only. */
-	const descriptionOf = (path: string) => (path.includes(':') || !workspace.root ? '' : tabDescription(path, tabFiles, labelFormat, workspace.root));
+	const descriptionOf = (path: string) => (isExternalKey(path) ? externalDescription(path, workspace.home) : path.includes(':') || !workspace.root ? '' : tabDescription(path, tabFiles, labelFormat, workspace.root));
 
 	/** Tab width classes and style: workbench.editor.tabSizing (+ fixed widths) and pinnedTabSizing. */
 	function sizing(tab: EditorTab): { cls: string; style: string } {

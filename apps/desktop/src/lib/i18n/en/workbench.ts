@@ -236,7 +236,6 @@ export const workbench = {
 	'workbench.commands.noChord': 'The key combination ({chord}) is not a command.',
 	'workbench.commands.chordPending': '({key}) was pressed. Waiting for second key of chord...',
 	'workbench.editorModels.saveAsFailed': 'Save As failed: {error}',
-	'workbench.editorModels.savedOutside': 'Saved to {path}, outside the open folder, so it cannot open as a tab.',
 	'workbench.closeGuard.debugRunning': 'There is an active debug session, are you sure you want to stop it and quit?',
 	'workbench.closeGuard.stopDebugAndQuit': 'Stop Debugging and Quit',
 	'workbench.closeGuard.quitQuestion': 'Are you sure you want to quit Kingu?',
