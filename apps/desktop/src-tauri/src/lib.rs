@@ -11,6 +11,7 @@ mod floating;
 mod fs;
 mod git;
 mod git_editor;
+mod git_output;
 mod git_queue;
 mod i18n;
 mod glob;
@@ -1454,6 +1455,8 @@ pub fn run() {
       team::team_sync_task,
       team::team_sync_run,
       logging::open_logs_folder,
+      logging::app_log_tail,
+      git_output::git_output_since,
       team::team_sync_now,
       team::team_events_start,
       team::team_events_stop,

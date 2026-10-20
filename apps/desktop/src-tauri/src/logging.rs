@@ -67,6 +67,11 @@ pub fn redact(message: &str) -> Cow<'_, str> {
   out
 }
 
+/// The local time as the log file writes it (the Output panel's Git channel uses it too).
+pub fn now_text() -> String {
+  TimezoneStrategy::UseLocal.get_now().format(TIME_FORMAT).unwrap_or_default()
+}
+
 /// The log plugin: the rotating file always, stdout in debug builds.
 pub fn plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
   let mut targets = vec![Target::new(TargetKind::LogDir { file_name: Some(FILE_NAME.into()) })];
@@ -86,7 +91,7 @@ pub fn plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
     .rotation_strategy(RotationStrategy::KeepSome(KEEP_FILES))
     .timezone_strategy(TimezoneStrategy::UseLocal)
     .format(|out, message, record| {
-      let when = TimezoneStrategy::UseLocal.get_now().format(TIME_FORMAT).unwrap_or_default();
+      let when = now_text();
       let text = message.to_string();
       out.finish(format_args!("{when} [{}] [{}] {}", record.level(), record.target(), redact(&text)))
     })
@@ -114,9 +119,46 @@ pub fn open_logs_folder(app: AppHandle) -> Result<String, String> {
   Ok(dir.display().to_string())
 }
 
+/// The last `max_bytes` of `file` (from its first whole line), `""` when it does not exist yet.
+pub fn tail(file: &Path, max_bytes: u64) -> Result<String, String> {
+  use std::io::{Read, Seek, SeekFrom};
+  let mut f = match std::fs::File::open(file) {
+    Ok(f) => f,
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+    Err(e) => return Err(format!("{}: {e}", file.display())),
+  };
+  let len = f.metadata().map_err(|e| e.to_string())?.len();
+  let start = len.saturating_sub(max_bytes);
+  f.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;
+  let mut buf = Vec::new();
+  f.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+  let text = String::from_utf8_lossy(&buf).into_owned();
+  // A cut start drops the partial first line.
+  Ok(if start > 0 { text.split_once('\n').map_or(String::new(), |(_, rest)| rest.to_string()) } else { text })
+}
+
+/// The Output panel's "Kingu" channel: the end of the current `Kingu.log`.
+#[tauri::command]
+pub async fn app_log_tail(app: AppHandle, max_bytes: Option<u64>) -> Result<String, String> {
+  let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
+  let file = dir.join(format!("{FILE_NAME}.log"));
+  let max = max_bytes.unwrap_or(256 * 1024).min(4 * 1024 * 1024);
+  tauri::async_runtime::spawn_blocking(move || tail(&file, max)).await.map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn tail_keeps_whole_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("Kingu.log");
+    assert_eq!(tail(&file, 100).unwrap(), "");
+    std::fs::write(&file, "first line\nsecond\nthird\n").unwrap();
+    assert_eq!(tail(&file, 1000).unwrap(), "first line\nsecond\nthird\n");
+    assert_eq!(tail(&file, 10).unwrap(), "third\n");
+  }
 
   #[test]
   fn masks_tokens() {

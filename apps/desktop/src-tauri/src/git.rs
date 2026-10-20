@@ -183,6 +183,7 @@ fn mark_untracked_dirs(dir: &Path, entries: &mut [crate::fs::DirEntry]) {
 }
 
 pub(crate) fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+  let started = std::time::Instant::now();
   let out = command()
     .arg("-C")
     .arg(root)
@@ -193,12 +194,17 @@ pub(crate) fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     .arg("--no-optional-locks")
     .args(args)
     .output()
-    .map_err(|e| format!("git: {e}"))?;
+    .map_err(|e| {
+      crate::git_output::record(args, started.elapsed(), Some(&e.to_string()));
+      format!("git: {e}")
+    })?;
   if !out.status.success() {
     // `git commit` reports "nothing to commit" on stdout.
     let err = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr });
+    crate::git_output::record(args, started.elapsed(), Some(&err));
     return Err(format!("git {}: {}", args.first().unwrap_or(&""), err.trim()));
   }
+  crate::git_output::record(args, started.elapsed(), None);
   Ok(out.stdout)
 }
 
@@ -619,17 +625,23 @@ pub fn log(root: &Path, limit: u32) -> Result<Vec<Commit>, String> {
 
 /// Network operations must fail rather than wait for a password nobody can type.
 fn run_remote(root: &Path, args: &[&str]) -> Result<(), String> {
+  let started = std::time::Instant::now();
   let out = crate::shell_env::command("git")
     .env("GIT_TERMINAL_PROMPT", "0")
     .arg("-C")
     .arg(root)
     .args(args)
     .output()
-    .map_err(|e| format!("git: {e}"))?;
+    .map_err(|e| {
+      crate::git_output::record(args, started.elapsed(), Some(&e.to_string()));
+      format!("git: {e}")
+    })?;
   if out.status.success() {
+    crate::git_output::record(args, started.elapsed(), None);
     return Ok(());
   }
   let err = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr });
+  crate::git_output::record(args, started.elapsed(), Some(&err));
   Err(format!("git {}: {}", args.first().unwrap_or(&""), err.trim()))
 }
 
