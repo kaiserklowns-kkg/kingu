@@ -384,6 +384,25 @@ class Editors {
 	toggleMaximizeGroup(group = this.model.activeGroup) {
 		G.toggleMaximizeGroup(this.model, group);
 	}
+
+	/** View > Editor Layout (VS Code's applyLayout). */
+	applyLayout(layout: G.EditorGroupLayout) {
+		G.applyLayout(this.model, layout);
+		this.focusRequest = this.model.activeGroup;
+	}
+
+	flipLayout() {
+		G.flipLayout(this.model);
+	}
+
+	joinAllGroups() {
+		G.joinAllGroups(this.model);
+		this.focusRequest = this.model.activeGroup;
+	}
+
+	evenAll() {
+		G.evenAll(this.model);
+	}
 }
 
 export const editors = new Editors();

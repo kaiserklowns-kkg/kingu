@@ -95,3 +95,9 @@ export function themeSettingFor(opts: { autoDetectHighContrast: boolean; autoDet
 	if (opts.autoDetectColorScheme) return opts.prefersDark ? 'workbench.preferredDarkColorTheme' : 'workbench.preferredLightColorTheme';
 	return 'workbench.colorTheme';
 }
+
+/** View: Toggle Menu Bar (VS Code's layout.ts toggleMenuBar, with no native menu): a shown menu
+ * bar (`classic`, `visible`) becomes `compact`, any other becomes `classic`. */
+export function menuBarToggled(current: string | undefined): MenuBarVisibility {
+	return current === 'visible' || current === 'classic' || typeof current !== 'string' ? 'compact' : 'classic';
+}

@@ -23,6 +23,7 @@
 	import KinguMark from './KinguMark.svelte';
 	import Icon from './Icon.svelte';
 	import { editors } from './editors.svelte';
+	import { layout } from './layout.svelte';
 	import { editorLabel } from './editorLabel';
 	import { fileIcon } from './fileIcons';
 	import { keyLabel } from './keys';
@@ -102,7 +103,8 @@
 	}
 	let dropTarget = $state<number | null>(null);
 	// The tab strip follows VS Code's editor part options (multiEditorTabsControl.ts).
-	const showTabs = $derived(settings.get<'multiple' | 'single' | 'none'>('workbench.editor.showTabs'));
+	// Zen Mode shows the tabs as zenMode.showTabs says (VS Code's enforcePartOptions).
+	const showTabs = $derived(layout.zenParts?.showTabs ?? settings.get<'multiple' | 'single' | 'none'>('workbench.editor.showTabs'));
 	const shownTabs = $derived(showTabs === 'single' ? tabs.filter((t) => t.path === activePath) : tabs);
 	const tabSizing = $derived(settings.get<'fit' | 'shrink' | 'fixed'>('workbench.editor.tabSizing'));
 	const fixedMin = $derived(settings.get<number>('workbench.editor.tabSizingFixedMinWidth'));

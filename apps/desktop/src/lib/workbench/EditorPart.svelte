@@ -15,6 +15,10 @@
 	import { fileOf, isDiffKey, isMergeKey } from './scm';
 	import { workspace } from './workspace.svelte';
 	import { textFiles } from './textFileService.svelte';
+	import Sash from './Sash.svelte';
+	import { hasColumns } from './editorGroups';
+	import { layout } from './layout.svelte';
+	import { CENTERED_DEFAULT, centeredShown, centeredSizes, dragMargin } from './zenMode';
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 	import { settings, USER_SETTINGS_KEY, WORKSPACE_SETTINGS_PATH } from '#lib/settings/settings.svelte.ts';
 
@@ -104,12 +108,40 @@
 		queueMicrotask(() => pruneViewStates(byGroup));
 		untrack(() => textFiles.prune(open));
 	});
+
+	// Centered layout (layout.centered, or Zen Mode's zenMode.centerLayout): off while the grid has
+	// columns or a side-by-side diff shows, with workbench.editor.centeredLayoutAutoResize.
+	let width = $state(0);
+	const centered = $derived(
+		width > 0 &&
+			centeredShown(layout.centeredRequested, settings.get<boolean>('workbench.editor.centeredLayoutAutoResize'), {
+				columns: hasColumns(editors.model),
+				maximized: editors.model.maximized != null,
+				complexEditor: editors.groups.some((g) => g.active !== null && isDiffKey(g.active)) && settings.get<boolean>('diffEditor.renderSideBySide')
+			})
+	);
+	const fixedWidth = $derived(settings.get<boolean>('workbench.editor.centeredLayoutFixedWidth'));
+	const sizes = $derived(centeredSizes(width, layout.centeredState, fixedWidth));
+	const drag = (side: 'left' | 'right', delta: number) => (layout.centeredState = dragMargin(layout.centeredState, width, side, delta, fixedWidth));
+	const resetCentered = () => (layout.centeredState = CENTERED_DEFAULT);
 </script>
 
-<div class="h-full min-w-0 bg-(--vscode-editor-background)">
-	{#if editors.model.maximized != null && editors.group(editors.model.maximized)}
-		<EditorGroupView group={editors.model.maximized} />
-	{:else}
-		<EditorGrid node={editors.model.root} />
+<!-- View: Toggle Centered Layout (VS Code's CenteredViewLayout): empty margins with sashes. The
+     grid stays in the same element either way, so toggling never re-creates the editors. -->
+<div class="flex h-full min-w-0 bg-(--vscode-editor-background)" bind:clientWidth={width}>
+	{#if centered}
+		<div class="h-full shrink-0" style:width="{sizes[0]}px"></div>
+		<Sash orientation="vertical" onDrag={(d) => drag('left', d)} onReset={resetCentered} />
+	{/if}
+	<div class={['h-full min-w-0', centered ? 'shrink-0' : 'flex-1']} style:width={centered ? `${sizes[1]}px` : undefined}>
+		{#if editors.model.maximized != null && editors.group(editors.model.maximized)}
+			<EditorGroupView group={editors.model.maximized} />
+		{:else}
+			<EditorGrid node={editors.model.root} />
+		{/if}
+	</div>
+	{#if centered}
+		<Sash orientation="vertical" onDrag={(d) => drag('right', d)} onReset={resetCentered} />
+		<div class="h-full min-w-0 flex-1"></div>
 	{/if}
 </div>

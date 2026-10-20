@@ -183,10 +183,18 @@ export const MENUS: Menu[] = [
 				submenu: 'appearance',
 				label: 'Appearance',
 				items: [
+					// macOS enters full screen from the Window menu (its native item owns ⌃⌘F).
+					{ command: 'workbench.action.toggleFullScreen', label: 'Full Screen', toggle: true, platform: 'other' },
+					{ command: 'workbench.action.toggleZenMode', label: 'Zen Mode', toggle: true },
+					{ command: 'workbench.action.toggleCenteredLayout', label: 'Centered Layout', toggle: true },
+					SEP,
+					{ command: 'workbench.action.toggleMenuBar', label: 'Menu Bar', toggle: true, platform: 'other' },
 					{ command: 'workbench.action.toggleSidebarVisibility', label: 'Primary Side Bar', toggle: true },
 					{ command: 'workbench.action.toggleAuxiliaryBar', label: 'Secondary Side Bar', toggle: true },
+					{ command: 'workbench.action.toggleStatusbarVisibility', label: 'Status Bar', toggle: true },
 					{ command: 'workbench.action.togglePanel', label: 'Panel', toggle: true },
-					{ command: 'workbench.action.toggleZenMode', label: 'Zen Mode', toggle: true },
+					SEP,
+					{ command: 'workbench.action.toggleSidebarPosition', label: 'Move Primary Side Bar Right', checkedLabel: 'Move Primary Side Bar Left' },
 					{ command: 'workbench.action.customizeLayout', label: 'Customize Layout...' },
 					SEP,
 					{ command: 'workbench.action.zoomIn', label: 'Zoom In' },
@@ -203,6 +211,27 @@ export const MENUS: Menu[] = [
 			{ command: 'workbench.view.snaps', label: 'Snaps' },
 			{ command: 'workbench.actions.view.problems', label: 'Problems' },
 			SEP,
+			{
+				submenu: 'editorLayout',
+				label: 'Editor Layout',
+				items: [
+					{ command: 'workbench.action.splitEditorUp', label: 'Split Up' },
+					{ command: 'workbench.action.splitEditorDown', label: 'Split Down' },
+					{ command: 'workbench.action.splitEditorLeft', label: 'Split Left' },
+					{ command: 'workbench.action.splitEditorRight', label: 'Split Right' },
+					SEP,
+					{ command: 'workbench.action.editorLayoutSingle', label: 'Single' },
+					{ command: 'workbench.action.editorLayoutTwoColumns', label: 'Two Columns' },
+					{ command: 'workbench.action.editorLayoutThreeColumns', label: 'Three Columns' },
+					{ command: 'workbench.action.editorLayoutTwoRows', label: 'Two Rows' },
+					{ command: 'workbench.action.editorLayoutThreeRows', label: 'Three Rows' },
+					{ command: 'workbench.action.editorLayoutTwoByTwoGrid', label: 'Grid (2x2)' },
+					{ command: 'workbench.action.editorLayoutTwoRowsRight', label: 'Two Rows Right' },
+					{ command: 'workbench.action.editorLayoutTwoColumnsBottom', label: 'Two Columns Bottom' },
+					SEP,
+					{ command: 'workbench.action.toggleEditorGroupLayout', label: 'Flip Layout' }
+				]
+			},
 			{ command: 'workbench.action.splitEditor', label: 'Split Editor' }
 		]
 	},

@@ -8,6 +8,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type * as Monaco from 'monaco-editor';
 import type { Terminal } from '@xterm/xterm';
 import { editors } from '#lib/workbench/editors.svelte.ts';
+import { layout } from '#lib/workbench/layout.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { theme } from '#lib/theme/theme.svelte.ts';
 import { activeTheme } from '#lib/theme/current.ts';
@@ -33,7 +34,11 @@ const KEYBINDINGS_SCHEMA_URI = 'kingu://schemas/keybindings';
 const get = <T>(id: string) => settings.get<T>(id);
 
 /** Monaco editor options from settings (VS Code: editor.* configuration). */
-export const editorOptions = (): Monaco.editor.IEditorOptions & Monaco.editor.IGlobalEditorOptions => editorOptionsFrom(get, themeSemantic());
+export const editorOptions = (): Monaco.editor.IEditorOptions & Monaco.editor.IGlobalEditorOptions => {
+	const options = editorOptionsFrom(get, themeSemantic());
+	// Zen Mode with zenMode.hideLineNumbers turns line numbers off; leaving it restores editor.lineNumbers.
+	return layout.zenParts?.lineNumbersOff ? { ...options, lineNumbers: 'off' } : options;
+};
 
 /** The color theme's `semanticHighlighting` (for `editor.semanticHighlighting.enabled: configuredByTheme`); reading `theme.current` re-runs effects on a theme change. */
 function themeSemantic(): boolean {

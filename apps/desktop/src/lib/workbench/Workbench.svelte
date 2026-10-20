@@ -461,7 +461,8 @@
 	const panelAt = $derived(settings.get<PanelLocation>('workbench.panel.defaultLocation'));
 	const grid = $derived(workbenchGrid({ sideBar: sideBarAt, panel: panelAt, alignment: settings.get<PanelAlignment>('workbench.panel.alignment') }));
 	const panelBeside = $derived(panelAt === 'left' || panelAt === 'right');
-	const activityBar = $derived(settings.get<string>('workbench.activityBar.location') === 'default');
+	// Zen Mode hides the activity bar and the status bar unless zenMode.hideActivityBar / hideStatusBar are off.
+	const activityBar = $derived(settings.get<string>('workbench.activityBar.location') === 'default' && (!layout.zen || layout.zenParts?.activityBar === true));
 	/** +1 when dragging a sash rightward/downward grows the part. */
 	const sideSign = $derived(sideBarAt === 'left' ? 1 : -1);
 	const panelSign = $derived(panelAt === 'top' || panelAt === 'left' ? 1 : -1);
@@ -552,8 +553,8 @@
 	<!-- System settings (IDE + ADE) over the content of either mode. -->
 	{#if systemSettings.visible}<SettingsPage />{/if}
 
-	<!-- workbench.statusBar.visible (kept mounted so its items keep their state); zen mode hides it. -->
-	<div class={['contents', (layout.zen || !settings.get<boolean>('workbench.statusBar.visible')) && '[&>*]:hidden']}><StatusBar /></div>
+	<!-- workbench.statusBar.visible (kept mounted so its items keep their state); Zen Mode hides it (zenMode.hideStatusBar). -->
+	<div class={['contents', ((layout.zen && layout.zenParts?.statusBar !== true) || !settings.get<boolean>('workbench.statusBar.visible')) && '[&>*]:hidden']}><StatusBar /></div>
 	<FloatingTerminal />
 	{#if welcome.open}<Welcome />{/if}
 	{#if cleanup.open}<CleanupDialog />{/if}

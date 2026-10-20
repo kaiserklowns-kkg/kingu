@@ -1,5 +1,11 @@
 // Workbench part visibility and sizes (VS Code: IWorkbenchLayoutService, layout.ts).
 // Defaults and minimums follow VS Code: sidebar/aux 300 (min 170), panel min height 77.
+// Zen Mode and the centered editor layout follow layout.ts (the pure parts are in zenMode.ts).
+
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { settings } from '#lib/settings/settings.svelte.ts';
+import { notifications } from './notifications.svelte';
+import { CENTERED_DEFAULT, enterZen, exitZenFullScreen, zenConfig, zenParts, type CenteredState, type ZenExitInfo, type ZenParts } from './zenMode';
 
 export type SideView = 'explorer' | 'search' | 'scm' | 'debug' | 'snaps' | 'agents' | 'vault' | 'artifacts';
 export type PanelTab = 'problems' | 'output' | 'debugConsole' | 'terminal';
@@ -7,7 +13,7 @@ export type PanelTab = 'problems' | 'output' | 'debugConsole' | 'terminal';
 const KEY = 'kingu.workbench.layout';
 export const SIDEBAR_MIN = 170;
 export const PANEL_MIN = 77;
-const PERSISTED = ['sidebarVisible', 'panelVisible', 'auxVisible', 'sidebarWidth', 'panelHeight', 'auxWidth', 'panelWidth', 'sideView', 'panelTab'] as const;
+const PERSISTED = ['sidebarVisible', 'panelVisible', 'auxVisible', 'sidebarWidth', 'panelHeight', 'auxWidth', 'panelWidth', 'sideView', 'panelTab', 'centered', 'centeredState', 'zen', 'zenExit'] as const;
 
 function readSaved(): Record<string, unknown> {
 	try {
@@ -28,22 +34,86 @@ class Layout {
 	panelWidth = $state(400);
 	sideView = $state<SideView>('explorer');
 	panelTab = $state<PanelTab>('terminal');
-	/** Zen Mode (VS Code ⌘K Z): only the editor and the title bar; not persisted. */
+	/** Zen Mode (VS Code ⌘K Z): the editor alone, as the zenMode.* settings say (zenMode.ts). */
 	zen = $state(false);
-	#beforeZen: { sidebar: boolean; panel: boolean; aux: boolean } | null = null;
+	/** What entering Zen Mode changed; persisted with `zen` for zenMode.restore. */
+	zenExit = $state.raw<ZenExitInfo | null>(null);
+	/** View: Toggle Centered Layout (VS Code's MAIN_EDITOR_CENTERED), persisted. */
+	centered = $state(false);
+	/** The centered layout's margins (VS Code's CenteredViewState), persisted. */
+	centeredState = $state.raw<CenteredState>(CENTERED_DEFAULT);
+	/** The window is in (native) full screen; kept current by installLayoutCommands. */
+	fullscreen = $state(false);
 
-	/** Hides the side bars, the panel and the status bar; toggling again restores them as they were. */
+	/** The zenMode.* settings while Zen Mode is on, else null. */
+	get zenParts(): ZenParts | null {
+		return this.zen && this.zenExit ? zenParts(zenConfig((id) => settings.get(id)), this.zenExit) : null;
+	}
+
+	/** Centered as asked for, or by Zen Mode (zenMode.centerLayout). */
+	get centeredRequested(): boolean {
+		const parts = this.zenParts;
+		return parts ? parts.centered || (this.centered && !this.zenExit?.transitionedToCenteredEditorLayout) : this.centered;
+	}
+
+	/**
+	 * VS Code's toggleZenMode: hides the side bars and the panel, the activity bar, status bar and
+	 * line numbers as configured, centers the editor, enters full screen and silences
+	 * notifications; toggling again restores exactly what it changed. Zen Mode and its exit info
+	 * are persisted: restoreZen() keeps or ends them at startup (zenMode.restore).
+	 */
 	toggleZen() {
+		const config = zenConfig((id) => settings.get(id));
 		if (!this.zen) {
-			this.#beforeZen = { sidebar: this.sidebarVisible, panel: this.panelVisible, aux: this.auxVisible };
+			const { exit, toggleFullScreen } = enterZen(
+				{ fullscreen: this.fullscreen, centered: this.centered, doNotDisturb: notifications.doNotDisturb, sideBar: this.sidebarVisible, panel: this.panelVisible, auxiliaryBar: this.auxVisible },
+				config
+			);
+			this.zenExit = exit;
 			this.sidebarVisible = this.panelVisible = this.auxVisible = false;
 			this.zen = true;
+			if (config.silentNotifications && exit.handleNotificationsDoNotDisturbMode) notifications.setDoNotDisturb(true);
+			if (toggleFullScreen) void this.setFullScreen(true);
 			return;
 		}
-		const b = this.#beforeZen;
-		if (b) [this.sidebarVisible, this.panelVisible, this.auxVisible] = [b.sidebar, b.panel, b.aux];
-		this.#beforeZen = null;
+		const exit = this.zenExit;
 		this.zen = false;
+		this.zenExit = null;
+		if (!exit) return;
+		if (exit.wasVisible.panel) this.panelVisible = true;
+		if (exit.wasVisible.auxiliaryBar) this.auxVisible = true;
+		if (exit.wasVisible.sideBar) this.sidebarVisible = true;
+		if (exit.handleNotificationsDoNotDisturbMode) notifications.setDoNotDisturb(false);
+		if (exitZenFullScreen(exit, this.fullscreen)) void this.setFullScreen(false);
+	}
+
+	/** View: Toggle Full Screen (the native full screen, like VS Code's default `window.nativeFullScreen`). */
+	async setFullScreen(on: boolean) {
+		try {
+			await getCurrentWindow().setFullscreen(on);
+			this.fullscreen = on;
+		} catch {
+			// Not in a Tauri window (tests) or refused by the OS.
+		}
+	}
+
+	/** Startup, once the settings are read: a window closed in Zen Mode reopens in it with
+	 * zenMode.restore (full screen again if Zen Mode had entered it), else Zen Mode ends. */
+	restoreZen() {
+		if (!this.zen) return;
+		if (!this.zenExit) {
+			this.zen = false;
+			return;
+		}
+		if (!zenConfig((id) => settings.get(id)).restore) this.toggleZen();
+		else if (this.zenExit.transitionedToFullScreen && !this.fullscreen) void this.setFullScreen(true);
+	}
+
+	/** The window left full screen: Zen Mode that entered it ends too (VS Code). */
+	fullscreenChanged(on: boolean) {
+		if (on === this.fullscreen) return;
+		this.fullscreen = on;
+		if (!on && this.zen && this.zenExit?.transitionedToFullScreen) this.toggleZen();
 	}
 
 	constructor() {

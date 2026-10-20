@@ -10,6 +10,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { clientLog } from '#lib/client-log.ts';
+import { settings } from '#lib/settings/settings.svelte.ts';
 import { commands, keyOf } from './commands.svelte';
 import { editors } from './editors.svelte';
 import { isMac } from './keys';
@@ -23,6 +24,12 @@ const CHECKED: Record<string, () => boolean> = {
 	'workbench.action.toggleAuxiliaryBar': () => layout.auxVisible,
 	'workbench.action.togglePanel': () => layout.panelVisible,
 	'workbench.action.toggleZenMode': () => layout.zen,
+	'workbench.action.toggleCenteredLayout': () => layout.centered,
+	'workbench.action.toggleFullScreen': () => layout.fullscreen,
+	'workbench.action.toggleStatusbarVisibility': () => settings.get<boolean>('workbench.statusBar.visible'),
+	'workbench.action.toggleMenuBar': () => ['classic', 'visible'].includes(settings.get<string>('window.menuBarVisibility')),
+	// Not a check mark: the item reads "Move Primary Side Bar Left" while it is on the right.
+	'workbench.action.toggleSidebarPosition': () => settings.get<string>('workbench.sideBar.location') === 'right',
 	// Not a check mark: the Agents menu item reads "Open in Editor" while in Agents mode.
 	'workbench.action.toggleAgentsMode': () => appMode.isAgents
 };

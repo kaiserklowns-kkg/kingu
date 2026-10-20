@@ -55,6 +55,10 @@ function context(mac: boolean, over: Partial<MenuContext> = {}): MenuContext {
 	};
 }
 
+/** Commands VS Code itself binds to one key, told apart by when they are enabled (F11: Step Into
+ * while the debugger is stopped, else Toggle Full Screen; Kingu gives full screen the lower weight). */
+const SHARED_KEYS = new Set(['workbench.action.debug.stepInto workbench.action.toggleFullScreen']);
+
 function walk(items: MenuItem[], visit: (i: MenuItem) => void) {
 	for (const i of items) {
 		visit(i);
@@ -96,7 +100,7 @@ describe('menu model', () => {
 					const name = n.type === 'item' ? n.id : n.role;
 					const other = seen.get(n.keyLabel);
 					// One command listed in two menus (New Task in File and Agents) shares its key legitimately.
-					if (other && other !== name) dupes.push(`${n.keyLabel}: ${other} / ${name}`);
+					if (other && other !== name && !SHARED_KEYS.has([other, name].sort().join(' '))) dupes.push(`${n.keyLabel}: ${other} / ${name}`);
 					seen.set(n.keyLabel, name);
 				}
 			};

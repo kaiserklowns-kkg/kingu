@@ -1368,5 +1368,13 @@
 	"workbench.view.showQuietly": {"type":"object","default":{}},
 	"workbench.welcomePage.experimentalOnboarding": {"type":"boolean","default":true},
 	"workbench.welcomePage.preferReducedMotion": {"type":"boolean","default":false},
-	"workbench.welcomePage.walkthroughs.openOnInstall": {"type":"boolean","default":true}
+	"workbench.welcomePage.walkthroughs.openOnInstall": {"type":"boolean","default":true},
+	"zenMode.centerLayout": {"type":"boolean","default":true},
+	"zenMode.fullScreen": {"type":"boolean","default":true},
+	"zenMode.hideActivityBar": {"type":"boolean","default":true},
+	"zenMode.hideLineNumbers": {"type":"boolean","default":true},
+	"zenMode.hideStatusBar": {"type":"boolean","default":true},
+	"zenMode.restore": {"type":"boolean","default":true},
+	"zenMode.showTabs": {"type":"string","default":"multiple","enum":["multiple","single","none"]},
+	"zenMode.silentNotifications": {"type":"boolean","default":true}
 }

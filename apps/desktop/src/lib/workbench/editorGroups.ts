@@ -632,3 +632,99 @@ export function toggleMaximizeGroup(m: GroupsModel, id: number) {
 	m.maximized = m.maximized === id ? null : id;
 	if (m.maximized != null) m.activeGroup = id;
 }
+
+// --- Editor layouts (VS Code: View > Editor Layout, IEditorGroupsService.applyLayout) ------------
+
+/** A cell of an editor layout: a group, or (with `groups`) a nested split across the parent. */
+export type LayoutCell = { readonly groups?: readonly LayoutCell[]; readonly size?: number };
+/** VS Code's EditorGroupLayout: `row` = GroupOrientation.HORIZONTAL (side by side). */
+export type EditorGroupLayout = { readonly orientation: 'row' | 'column'; readonly groups: readonly LayoutCell[] };
+
+/** VS Code's layout commands (`workbench.action.editorLayout*`) and their layouts. */
+export const EDITOR_LAYOUTS = {
+	editorLayoutSingle: { orientation: 'row', groups: [{}] },
+	editorLayoutTwoColumns: { orientation: 'row', groups: [{}, {}] },
+	editorLayoutThreeColumns: { orientation: 'row', groups: [{}, {}, {}] },
+	editorLayoutTwoRows: { orientation: 'column', groups: [{}, {}] },
+	editorLayoutThreeRows: { orientation: 'column', groups: [{}, {}, {}] },
+	editorLayoutTwoByTwoGrid: { orientation: 'row', groups: [{ groups: [{}, {}] }, { groups: [{}, {}] }] },
+	editorLayoutTwoColumnsBottom: { orientation: 'column', groups: [{}, { groups: [{}, {}] }] },
+	editorLayoutTwoRowsRight: { orientation: 'row', groups: [{}, { groups: [{}, {}] }] }
+} as const satisfies Record<string, EditorGroupLayout>;
+
+const countCells = (cells: readonly LayoutCell[]): number => cells.reduce((n, c) => n + (c.groups ? countCells(c.groups) : 1), 0);
+
+/** Moves every editor of group `from` into `to` (VS Code's mergeGroup), then removes `from`. */
+export function mergeGroup(m: GroupsModel, from: number, to: number) {
+	const source = getGroup(m, from);
+	const target = getGroup(m, to);
+	if (!source || !target || from === to) return;
+	for (const tab of source.tabs) {
+		if (target.tabs.some((t) => t.path === tab.path)) continue;
+		// A preview tab arriving next to the target's own preview becomes a normal tab.
+		target.tabs.push({ ...tab, preview: tab.preview && !target.tabs.some((t) => t.preview) });
+		target.mru = [...(target.mru ?? []), tab.path];
+	}
+	target.active ??= source.active;
+	source.tabs = [];
+	if (m.activeGroup === from) m.activeGroup = to;
+	removeGroup(m, from);
+}
+
+/**
+ * Lays the editor area out as `layout` (VS Code's applyLayout): groups that do not fit merge into
+ * the last cell, existing groups keep their order (grid appearance) and new cells get empty groups.
+ */
+export function applyLayout(m: GroupsModel, layout: EditorGroupLayout) {
+	const cells = Math.max(1, Math.min(MAX_GROUPS, countCells(layout.groups)));
+	let order = groupOrder(m);
+	if (cells < order.length) {
+		const last = order[cells - 1];
+		for (const id of order.slice(cells)) mergeGroup(m, id, last);
+		order = groupOrder(m);
+	}
+	const ids = [...order];
+	const nextGroup = (): number => {
+		const reuse = ids.shift();
+		if (reuse !== undefined) return reuse;
+		const id = m.nextId++;
+		m.groups.push({ id, tabs: [], active: null, mru: [] });
+		return id;
+	};
+	const build = (list: readonly LayoutCell[], direction: 'row' | 'column'): GridNode => {
+		const children = list.map((c): GridNode => (c.groups?.length ? build(c.groups, direction === 'row' ? 'column' : 'row') : { type: 'group', id: nextGroup() }));
+		if (children.length === 1) return children[0];
+		const given = list.map((c) => (typeof c.size === 'number' && c.size > 0 ? c.size : 0));
+		const total = given.reduce((a, b) => a + b, 0);
+		const sizes = given.every((s) => s > 0) ? given.map((s) => s / total) : children.map(() => 1 / children.length);
+		return { type: 'split', id: m.nextId++, direction, children, sizes };
+	};
+	m.root = build(layout.groups.length ? layout.groups : [{}], layout.orientation);
+	m.maximized = null;
+	m.expanded = null;
+	if (!getGroup(m, m.activeGroup)) m.activeGroup = groupOrder(m)[0];
+}
+
+/** VS Code's Toggle Vertical/Horizontal Editor Layout (⌥⌘0): every split turns the other way. */
+export function flipLayout(m: GroupsModel) {
+	const walk = (n: GridNode) => {
+		if (n.type !== 'split') return;
+		n.direction = n.direction === 'row' ? 'column' : 'row';
+		n.children.forEach(walk);
+	};
+	walk(m.root);
+}
+
+/** VS Code's Join All Editor Groups: every editor in the active group, the only one left. */
+export function joinAllGroups(m: GroupsModel) {
+	const target = m.activeGroup;
+	for (const id of groupOrder(m)) if (id !== target) mergeGroup(m, id, target);
+}
+
+/** More than one column of groups side by side (VS Code's centerMainEditorLayout check). */
+export function hasColumns(m: GroupsModel): boolean {
+	const root = m.root;
+	if (root.type !== 'split') return false;
+	if (root.direction === 'row') return root.children.length > 1;
+	return root.children.some((c) => c.type === 'split' && c.direction === 'row' && c.children.length > 1);
+}
