@@ -1,4 +1,4 @@
-// UI strings of the chat input's run controls (agent/SlashSuggest.svelte, agent/SendMenu.svelte,
+// UI strings of the chat input's run controls (agent/SlashSuggest.svelte, agent/Composer.svelte's send menu,
 // agent/ContextRing.svelte, agent/PermissionCard.svelte's approval scopes, the queue rows and
 // "Allow all" in agent/AgentPanel.svelte). Keys: 'chatInput.<what>'. Thai in ../th/chatInput.ts.
 export const chatInput = {

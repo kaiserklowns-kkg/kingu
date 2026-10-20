@@ -124,6 +124,28 @@ pub fn check_images(paths: &[String]) -> Result<(), String> {
   Ok(())
 }
 
+/// The composer's thumbnail of an attached image: the file as a `data:` URL, after the checks a
+/// message's images get (absolute, a supported type by name and signature, within 5 MB).
+pub fn preview_data_url(path: &str) -> Result<String, String> {
+  use base64::Engine;
+  check_images(&[path.to_owned()])?;
+  let bytes = fs::read(path).map_err(|e| e.to_string())?;
+  let mime = match sniff(&bytes) {
+    Some("png") => "image/png",
+    Some("jpg") => "image/jpeg",
+    Some("gif") => "image/gif",
+    Some("webp") => "image/webp",
+    _ => return Err(tr!(CoreMsg::NotAnImage)),
+  };
+  Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+}
+
+/// An attached image's thumbnail for the chat composer (`preview_data_url`).
+#[tauri::command]
+pub async fn chat_attachment_preview(path: String) -> Result<String, String> {
+  tauri::async_runtime::spawn_blocking(move || preview_data_url(&path)).await.map_err(|e| e.to_string())?
+}
+
 /// A pasted image (the request body is its raw bytes): saved, its path returned.
 #[tauri::command]
 pub async fn paste_image_save(app: tauri::AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, String> {
@@ -172,6 +194,22 @@ mod tests {
     sweep(&d, Duration::ZERO, SystemTime::now() + Duration::from_secs(5));
     assert!(!a.exists() && !b.exists());
     assert!(d.join("keep.txt").exists(), "only Kingu's pastes are swept");
+  }
+
+  #[test]
+  fn previews_attached_images_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let img = dir.path().join("shot.png");
+    fs::write(&img, PNG).unwrap();
+    let url = preview_data_url(img.to_str().unwrap()).unwrap();
+    assert!(url.starts_with("data:image/png;base64,"));
+    let txt = dir.path().join("notes.txt");
+    fs::write(&txt, "x").unwrap();
+    assert!(preview_data_url(txt.to_str().unwrap()).is_err());
+    let fake = dir.path().join("fake.png");
+    fs::write(&fake, "not an image").unwrap();
+    assert!(preview_data_url(fake.to_str().unwrap()).is_err());
+    assert!(preview_data_url("shot.png").is_err(), "relative paths are refused");
   }
 
   #[test]

@@ -2,7 +2,12 @@
 //   workbench.action.chat.open        ⌃⌘I (Ctrl+Alt+I elsewhere): show the chat and focus its input
 //   workbench.action.chat.focusInput  ⌘L in the IDE (Cursor's key; the Agents layout keeps its own ⌘L)
 //   workbench.action.chat.newChat     ⌘N while the chat has focus (over New Untitled File)
-//   workbench.action.chat.attachContext  ⌘/ while the chat has focus: Add Context...
+//   workbench.action.chat.attachContext  ⌥⌘P while the chat has focus: Add Context... (Cursor's key;
+//                                     ⌘/ is the composer's model picker there)
+//   kingu.chat.nextMode               ⌘. while the chat has focus: the next mode (Agent, Ask, Plan,
+//                                     custom agents; ⇧Tab in the input too)
+//   kingu.chat.openModelPicker        ⌘/ while the chat has focus: the composer's model picker
+//   kingu.chat.cancel                 Cancel Chat: stop the running turn (⌘⇧⌫ / ⌃C in the input)
 //   workbench.action.chat.export / .import  Export Chat... (JSON) / Import Chat...
 // The panel listens to `chatSignals` (it is mounted once, hidden with the secondary side bar).
 
@@ -19,6 +24,10 @@ class ChatSignals {
 	newChat = $state(0);
 	/** Bumped to open Add Context. */
 	addContext = $state(0);
+	/** Bumped to switch the composer to its next mode / open its model picker / stop the turn. */
+	nextMode = $state(0);
+	modelPicker = $state(0);
+	cancel = $state(0);
 	/** Bumped to export the shown chat / import one. */
 	exportChat = $state(0);
 	importChat = $state(0);
@@ -86,13 +95,46 @@ export function registerChatCommands(): () => void {
 			id: 'workbench.action.chat.attachContext',
 			title: 'Add Context...',
 			category: 'Chat',
-			key: 'cmd+/',
+			key: 'ctrl+alt+p',
+			mac: 'cmd+alt+p',
 			keyWhen: () => chatSignals.hasFocus(),
 			weight: 100,
 			run: () => {
 				show();
 				chatSignals.addContext++;
 			}
+		}),
+		commands.register({
+			id: 'kingu.chat.nextMode',
+			title: 'Switch to the Next Chat Mode',
+			category: 'Chat',
+			key: 'ctrl+.',
+			mac: 'cmd+.',
+			keyWhen: () => chatSignals.hasFocus(),
+			weight: 100,
+			run: () => {
+				show();
+				chatSignals.nextMode++;
+			}
+		}),
+		commands.register({
+			id: 'kingu.chat.openModelPicker',
+			title: 'Open the Chat Model Picker',
+			category: 'Chat',
+			key: 'ctrl+/',
+			mac: 'cmd+/',
+			keyWhen: () => chatSignals.hasFocus(),
+			weight: 100,
+			run: () => {
+				show();
+				chatSignals.modelPicker++;
+			}
+		}),
+		commands.register({
+			id: 'kingu.chat.cancel',
+			title: 'Cancel Chat',
+			category: 'Chat',
+			run: () => chatSignals.cancel++
 		}),
 		commands.register({
 			id: 'workbench.action.chat.export',

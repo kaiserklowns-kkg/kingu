@@ -258,7 +258,7 @@
 							</div>
 							{#key `${focusKey}:${nudge}`}
 								<Composer bind:value={draft} attach bind:attachments={draftFiles} size="lg" autofocus placeholder="อธิบายงาน เช่น เพิ่มปุ่ม export รายงานเป็น CSV…" {busy} onsubmit={start}>
-									{#snippet chips()}
+									{#snippet left()}
 										<label class="inline-flex shrink-0 items-center gap-1 rounded-sm border border-(--vscode-widget-border) px-1.5 py-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" title="วิธีรัน agent">
 											<Icon name={mode === 'terminal' ? 'terminal' : 'agent'} size={12} />
 											<span class="sr-only">วิธีรัน agent</span>

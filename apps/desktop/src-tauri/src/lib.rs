@@ -1357,6 +1357,7 @@ pub fn run() {
       notify::app_badge,
       dialog::message_box,
       attachments::paste_image_save,
+      attachments::chat_attachment_preview,
       agent::trust::agent_trust_workspace,
       agent::mcp::mcp_list,
       agent::mcp::mcp_trust,

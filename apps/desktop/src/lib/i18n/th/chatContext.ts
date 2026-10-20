@@ -4,7 +4,7 @@ export const chatContext = {
 	'chatContext.list': 'บริบทที่จะแนบ',
 	'chatContext.hint': '↑↓ เลือก · Enter หรือ Tab แนบ · Esc ปิด',
 	'chatContext.add': 'เพิ่มบริบท...',
-	'chatContext.addHint': 'เพิ่มบริบท (⌘/): ไฟล์ ส่วนที่เลือก ปัญหา การเปลี่ยนแปลง ผลใน terminal รูปภาพ หรือแชตก่อนหน้า',
+	'chatContext.addHint': 'เพิ่มบริบท (@ หรือ ⌥⌘P): ไฟล์ ส่วนที่เลือก ปัญหา การเปลี่ยนแปลง ผลใน terminal รูปภาพ หรือแชตก่อนหน้า',
 	'chatContext.pick': 'เพิ่มบริบทให้แชต',
 	'chatContext.pickFile': 'แนบไฟล์หรือโฟลเดอร์',
 	'chatContext.pickChat': 'แนบแชตก่อนหน้า',

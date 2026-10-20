@@ -8,12 +8,12 @@
 import type { SessionCommand } from './events';
 
 /** Where a command comes from (`project`… are `chat_slash_commands`' sources). */
-export type SlashSource = 'kingu' | 'prompt' | 'user-prompt' | 'session' | 'project' | 'user' | 'project-skill' | 'user-skill';
+export type SlashSource = 'kingu' | 'mode' | 'prompt' | 'user-prompt' | 'session' | 'project' | 'user' | 'project-skill' | 'user-skill';
 
 export type SlashItem = { name: string; description: string; argumentHint: string; source: SlashSource };
 
 /** A command file or skill from Rust (`slash_commands.rs`). */
-export type FileCommand = { name: string; description: string; argument_hint: string; source: Exclude<SlashSource, 'kingu' | 'session' | 'prompt' | 'user-prompt'> };
+export type FileCommand = { name: string; description: string; argument_hint: string; source: Exclude<SlashSource, 'kingu' | 'mode' | 'session' | 'prompt' | 'user-prompt'> };
 
 /** A prompt file as the list needs it (customizations.ts `PromptFile`). */
 export type PromptCommand = { name: string; description: string; argument_hint: string; user: boolean };
@@ -22,7 +22,7 @@ export type PromptCommand = { name: string; description: string; argument_hint: 
  * A Kingu command: runs in the app instead of being sent. `run` gets what followed the name.
  * Built by the panel (`kinguCommands`), which knows how to do each.
  */
-export type LocalCommand = SlashItem & { source: 'kingu'; run: (args: string) => void | Promise<void> };
+export type LocalCommand = SlashItem & { source: 'kingu' | 'mode'; run: (args: string) => void | Promise<void> };
 
 /**
  * Kingu's commands from the panel's handlers: `/clear` (a new chat), `/model` (the model picker),
@@ -34,6 +34,14 @@ export function kinguCommands(
 ): LocalCommand[] {
 	const cmd = (name: 'clear' | 'model' | 'fork', run: () => void | Promise<void>): LocalCommand => ({ name, description: label(name), argumentHint: '', source: 'kingu', run: () => run() });
 	return [cmd('clear', h.clear), cmd('model', h.model), ...(h.fork ? [cmd('fork', h.fork)] : [])];
+}
+
+/**
+ * The `/` menu's Modes (Cursor's): `/agent`, `/ask`, `/plan` and the custom agents, each switching
+ * the chat to it when picked (nothing is sent). `modes`: name → label and what picking it does.
+ */
+export function modeCommands(modes: readonly { name: string; label: string; run: () => void | Promise<void> }[]): LocalCommand[] {
+	return modes.map((m) => ({ name: m.name, description: m.label, argumentHint: '', source: 'mode', run: () => m.run() }));
 }
 
 /**

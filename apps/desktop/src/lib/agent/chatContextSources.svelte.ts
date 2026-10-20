@@ -1,4 +1,4 @@
-// Add Context's sources (VS Code's "Add Context..." quick pick, ⌘/ in the chat; `#` and `@` list
+// Add Context's sources (VS Code's "Add Context..." quick pick, ⌥⌘P in the chat; `#` and `@` list
 // them inline too, with the folder's files): each resolves to what the panel attaches — a file
 // chip, a `ContextText` (inlined by assemblePrompt) or an image. chatContext.ts has the pure part.
 //
@@ -25,7 +25,7 @@ import type { SuggestItem } from './SlashSuggest.svelte';
 import { savePastedImage } from './attachInput.ts';
 import { chats } from './chats.svelte.ts';
 import { isFileKey, type ContextText } from './chatPrompt.ts';
-import { CONTEXT_SOURCES, folderContext, foldersOf, isInstructionsFile, lastCommandOutput, matchSources, pastChatContext, problemsContext, type ContextSource } from './chatContext.ts';
+import { CONTEXT_SOURCES, folderContext, foldersOf, isInstructionsFile, lastCommandOutput, MENTION_FILES, pastChatContext, planMentions, problemsContext, type ContextSource } from './chatContext.ts';
 import type { AgentEvent } from './events';
 
 /** What a source attaches. */
@@ -75,13 +75,34 @@ export const contextFiles = new ContextFiles();
 const fileRow = (path: string): SuggestItem => ({ key: `file:${path}`, name: path.split('/').pop() || path, description: path, icon: 'file', tag: t('chatContext.tag.file') });
 const folderRow = (path: string): SuggestItem => ({ key: `folder:${path}`, name: `${path.split('/').pop() || path}/`, description: path, icon: 'folder', tag: t('chatContext.tag.folder') });
 
-/** The `#` / `@` list: the sources whose name matches, then folders and files (recent ones while nothing is typed). */
-export function mentionItems(query: string, limit = 30): SuggestItem[] {
-	const sources: SuggestItem[] = matchSources(query, sourceLabel).map((s) => ({ key: `source:${s}`, name: sourceLabel(s), description: sourceHint(s), icon: SOURCE_ICON[s] }));
-	const files = rankFiles(query, contextFiles.list, recentFiles.list, limit).map((r) => fileRow(r.path));
-	const q = query.toLowerCase();
-	const folders = q ? contextFiles.folders.filter((d) => d.toLowerCase().includes(q)).slice(0, 5).map(folderRow) : [];
-	return [...sources, ...folders, ...files];
+/**
+ * The `#` / `@` list (Cursor's `@` menu, chatContext.ts `planMentions`): recent files and the
+ * sources while nothing is typed, else matching sources, folders and files. Files & Folders opens
+ * in the list itself (`scope: 'files'`). `attached`: files already in the input, left out of recents.
+ */
+export function mentionItems(query: string, scope: 'files' | null = null, attached: readonly string[] = []): SuggestItem[] {
+	const ranked = rankFiles(query, contextFiles.list, recentFiles.list, MENTION_FILES).map((r) => r.path);
+	const plan = planMentions({
+		query,
+		scope,
+		recent: recentFiles.list,
+		ranked: scope === 'files' && !query && !ranked.length ? contextFiles.list.slice(0, MENTION_FILES) : ranked,
+		folders: contextFiles.folders,
+		attached,
+		label: sourceLabel
+	});
+	const sources: SuggestItem[] = plan.sources.map((s, i) => ({
+		key: `source:${s}`,
+		name: sourceLabel(s),
+		description: sourceHint(s),
+		icon: SOURCE_ICON[s],
+		...(s === 'files' ? { drill: 'files' } : {}),
+		...(i === 0 && plan.recent.length ? { section: t('composer.mention.context') } : {})
+	}));
+	const rows = [...plan.folders.map(folderRow), ...plan.files.map(fileRow)];
+	if (rows.length && sources.length) rows[0] = { ...rows[0], section: t('composer.mention.files') };
+	const recent = plan.recent.map((p, i) => ({ ...fileRow(p), ...(i === 0 ? { section: t('composer.mention.recent') } : {}) }));
+	return [...recent, ...sources, ...rows];
 }
 
 /** What a picked `#` / `@` row attaches. */

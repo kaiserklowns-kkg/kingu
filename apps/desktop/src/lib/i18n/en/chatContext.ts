@@ -6,7 +6,7 @@ export const chatContext = {
 	'chatContext.list': 'Context to attach',
 	'chatContext.hint': '↑↓ to choose · Enter or Tab to attach · Esc to close',
 	'chatContext.add': 'Add Context...',
-	'chatContext.addHint': 'Add Context (⌘/): files, the selection, problems, changes, terminal output, an image, a past chat',
+	'chatContext.addHint': 'Add Context (@ or ⌥⌘P): files, the selection, problems, changes, terminal output, an image, a past chat',
 	'chatContext.pick': 'Add context to the chat',
 	'chatContext.pickFile': 'Attach a file or folder',
 	'chatContext.pickChat': 'Attach an earlier chat',

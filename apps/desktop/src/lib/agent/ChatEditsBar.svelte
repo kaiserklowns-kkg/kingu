@@ -1,17 +1,34 @@
 <script lang="ts">
-	// The working set above the chat composer (VS Code's chat editing widget): the files the agent
-	// changed and the user has not kept or undone yet, with +/− lines, a diff on click, Keep and
-	// Undo per file, and Keep All / Undo All. Hidden while there is nothing to show.
+	// The status / review row on top of the chat composer (Cursor's composer toolbar, VS Code's chat
+	// editing widget): what the agent is doing (Generating, Waiting for Approval) with Stop, and the
+	// files it changed that are not kept or undone yet, with +/− lines, a diff on click, Keep and
+	// Undo per file, Review (every diff), Keep All and Undo All (a second click confirms). Hidden
+	// while there is nothing to show. `flat`: drawn as a row of the stacked toolbar (no own frame).
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { splitPath } from '#lib/workbench/scm.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import { chatEdits } from './chatEdits.svelte.ts';
 	import { summary, type WorkingFile } from './chatEdits.ts';
 
-	let { chatId }: { chatId: string } = $props();
+	let {
+		chatId,
+		status = null,
+		onstop,
+		flat = false
+	}: {
+		chatId: string;
+		/** The turn's state: a spinner with its label and a Stop button. */
+		status?: 'running' | 'waiting' | null;
+		onstop?: () => void;
+		flat?: boolean;
+	} = $props();
 
-	let open = $state(true);
+	const MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
+	let open = $state(false);
 	let busy = $state(false);
+	/** Undo All was clicked once: the next click within a few seconds undoes. */
+	let confirmUndo = $state(false);
+	let confirmTimer: ReturnType<typeof setTimeout> | undefined;
 	const view = $derived(chatEdits.view(chatId));
 	const files = $derived(view?.files ?? []);
 	const sum = $derived(summary({ files }));
@@ -24,6 +41,18 @@
 		} finally {
 			busy = false;
 		}
+	}
+
+	function undoAll() {
+		if (!confirmUndo) {
+			confirmUndo = true;
+			clearTimeout(confirmTimer);
+			confirmTimer = setTimeout(() => (confirmUndo = false), 4000);
+			return;
+		}
+		confirmUndo = false;
+		clearTimeout(confirmTimer);
+		void act(() => chatEdits.undo(chatId, null));
 	}
 
 	const REASON: Record<string, () => string> = {
@@ -44,37 +73,62 @@
 		return lines.join('\n');
 	}
 
-	const BTN = 'h-[22px] rounded-sm px-2 text-xs disabled:opacity-50';
+	const BTN = 'h-5 shrink-0 rounded-md px-1.5 text-xs disabled:opacity-50';
 	const ICON = 'grid size-5 shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-40';
 </script>
 
-{#if files.length}
-	<div class="mb-1.5 overflow-hidden rounded border border-(--vscode-widget-border,var(--vscode-input-border)) bg-(--vscode-sideBar-background) text-xs" role="region" aria-label={t('chatEdits.filesChanged', { count: sum.files })}>
-		<div class="flex h-7 items-center gap-1 pr-1 pl-1">
-			<button class="flex min-w-0 flex-1 items-center gap-1 text-left" aria-expanded={open} title={t('chatEdits.toggle')} onclick={() => (open = !open)}>
-				<Icon name={open ? 'chevronDown' : 'chevronRight'} size={14} />
-				<span class="truncate">{t('chatEdits.filesChanged', { count: sum.files })}</span>
-				{#if sum.added || sum.removed}
-					<span class="shrink-0 font-mono text-[11px]"
-						><span class="text-(--vscode-gitDecoration-addedResourceForeground,#73c991)">+{sum.added}</span>
-						<span class="text-(--vscode-gitDecoration-deletedResourceForeground,#f14c4c)">−{sum.removed}</span></span
-					>
+{#if files.length || status}
+	<div
+		class={['overflow-hidden text-xs', !flat && 'mb-1.5 rounded border border-(--vscode-widget-border,var(--vscode-input-border)) bg-(--vscode-sideBar-background)']}
+		role="region"
+		aria-label={files.length ? t('chatEdits.filesChanged', { count: sum.files }) : t('composer.status.label')}
+	>
+		<div class="flex h-[26px] items-center gap-1 pr-1 pl-1.5">
+			<button class="flex min-w-0 flex-1 items-center gap-1 text-left" aria-expanded={files.length ? open : undefined} title={files.length ? t('chatEdits.toggle') : undefined} disabled={!files.length} onclick={() => (open = !open)}>
+				{#if files.length}<span class={['shrink-0 transition-transform', open && 'rotate-90']}><Icon name="chevronRight" size={12} /></span>{/if}
+				{#if status}
+					<span class="size-2.5 shrink-0 animate-spin rounded-full border-[1.5px] border-current border-t-transparent text-(--vscode-descriptionForeground)" aria-hidden="true"></span>
+					<span class="shrink-0 text-(--vscode-descriptionForeground)" role="status">{status === 'waiting' ? t('composer.status.waiting') : t('composer.status.running')}</span>
+					{#if files.length}<span class="shrink-0 text-(--vscode-descriptionForeground)">·</span>{/if}
+				{/if}
+				{#if files.length}
+					<span class="truncate">{t('composer.status.edited', { count: sum.files })}</span>
+					{#if sum.added || sum.removed}
+						<span class="shrink-0 font-mono text-[11px]"
+							><span class="text-(--vscode-gitDecoration-addedResourceForeground,#73c991)">+{sum.added}</span>
+							<span class="text-(--vscode-gitDecoration-deletedResourceForeground,#f14c4c)">−{sum.removed}</span></span
+						>
+					{/if}
 				{/if}
 			</button>
-			<button
-				class={[BTN, 'bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:bg-(--vscode-button-hoverBackground)']}
-				title={t('chatEdits.keepAllHint')}
-				disabled={busy}
-				onclick={() => act(() => chatEdits.keep(chatId, null))}>{t('chatEdits.keepAll')}</button
-			>
-			<button
-				class={[BTN, 'bg-(--vscode-button-secondaryBackground) text-(--vscode-button-secondaryForeground) hover:bg-(--vscode-button-secondaryHoverBackground)']}
-				title={running ? t('chatEdits.running') : t('chatEdits.undoAllHint')}
-				disabled={busy || running || !sum.restorable}
-				onclick={() => act(() => chatEdits.undo(chatId, null))}>{t('chatEdits.undoAll')}</button
-			>
+			{#if status && onstop}
+				<button
+					class={[BTN, 'text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)']}
+					title={`${t('chatView.stop')} (${MAC ? '⌘⇧⌫' : 'Ctrl+Shift+Backspace'})`}
+					onclick={() => onstop?.()}>{t('chatView.stop')}</button
+				>
+			{/if}
+			{#if files.length}
+				<button
+					class={[BTN, confirmUndo ? 'bg-(--vscode-inputValidation-warningBackground,var(--vscode-button-secondaryBackground)) text-(--vscode-foreground)' : 'text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)']}
+					title={running ? t('chatEdits.running') : confirmUndo ? t('composer.review.confirmHint') : t('chatEdits.undoAllHint')}
+					disabled={busy || running || !sum.restorable}
+					onclick={undoAll}>{confirmUndo ? t('composer.review.confirm') : sum.files > 1 ? t('chatEdits.undoAll') : t('chatEdits.undo')}</button
+				>
+				<button
+					class={[BTN, 'bg-(--vscode-button-secondaryBackground) text-(--vscode-button-secondaryForeground) hover:bg-(--vscode-button-secondaryHoverBackground)']}
+					title={t('chatEdits.keepAllHint')}
+					disabled={busy}
+					onclick={() => act(() => chatEdits.keep(chatId, null))}>{sum.files > 1 ? t('chatEdits.keepAll') : t('chatEdits.keep')}</button
+				>
+				<button
+					class={[BTN, 'bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:bg-(--vscode-button-hoverBackground)']}
+					title={t('composer.review.reviewHint')}
+					onclick={() => chatEdits.openAll(chatId, files.map((f) => f.path))}>{t('composer.review.review')}</button
+				>
+			{/if}
 		</div>
-		{#if open}
+		{#if open && files.length}
 			<ul class="max-h-40 overflow-y-auto border-t border-(--vscode-widget-border,transparent) py-0.5">
 				{#each files as f (f.path)}
 					{@const [name, dir] = splitPath(f.path)}
