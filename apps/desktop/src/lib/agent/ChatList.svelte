@@ -56,7 +56,7 @@
 	import ChatRequestChanges from './ChatRequestChanges.svelte';
 	import ArtifactCard from '#lib/artifacts/ArtifactCard.svelte';
 	import { answersFor, parseAsk } from './ask';
-	import { activityEnd, buildTurns, responseText, splitVerb, workedFor, type Part } from './chatParts';
+	import { buildTurns, foldSteps, responseText, splitVerb, workedFor, type Part } from './chatParts';
 	import { timeAgo } from '#lib/ade/model.ts';
 	import { skippedName } from './composer.ts';
 	import { contextLabel } from './chatPrompt';
@@ -163,6 +163,18 @@
 	}
 
 	const toggle = (key: string) => (open[key] = !open[key]);
+
+	// How long each turn watched here took, for "Worked for Ns" when its result has no duration
+	// (runtimes other than Claude Code): from when the turn was first seen running to when it ended.
+	const startedAt: Record<number, number> = {};
+	let endedAt = $state<Record<number, number>>({});
+	$effect(() => {
+		turns.forEach((turn, ti) => {
+			if (!turn.done && startedAt[ti] === undefined) startedAt[ti] = Date.now();
+			else if (turn.done && startedAt[ti] !== undefined && endedAt[ti] === undefined) endedAt = { ...endedAt, [ti]: Date.now() };
+		});
+	});
+	const tookMs = (ti: number, turn: Turn): number | null => (turn.done && startedAt[ti] !== undefined && endedAt[ti] !== undefined ? endedAt[ti] - startedAt[ti] : null);
 	/** The part that shows the turn is busy: no spinner under a streaming text or an open question. */
 	const showsProgress = (parts: Part[]) => {
 		const last = parts[parts.length - 1];
@@ -178,19 +190,20 @@
 <div
 	bind:this={list}
 	{onscroll}
-	class={['kg-selectable kg-chat min-h-0 overflow-y-auto', klass]}
+	class={['kg-selectable kg-chat min-h-0 min-w-0 overflow-x-hidden overflow-y-auto', klass]}
 	aria-live="polite"
 	style:font-size="{look.fontSize}px"
 	style:--kg-chat-code-size="{look.codeFontSize}px"
 	style:font-family={look.fontFamily}
 	style:filter={look.contrast === 100 ? undefined : `contrast(${look.contrast}%)`}
 >
-	<div class="mx-auto flex flex-col gap-3" style:max-width={look.maxWidth}>
+	<div class="mx-auto flex w-full min-w-0 flex-col gap-3" style:max-width={look.maxWidth}>
 		{#if turns.length}
 			{#each turns as turn, ti (ti)}
 				{@const last = ti === turns.length - 1}
 				{@const dim = (turn.checkpoint != null && !!reverted?.(turn.checkpoint)) || (editing !== null && ti > editing)}
-				{@const end = turn.done ? activityEnd(turn.parts) : 0}
+				{@const end = foldSteps(turn)}
+				{@const took = workedFor(turn.result?.duration_ms ?? tookMs(ti, turn))}
 				{@const folded = end > 0 && !open[`w:${ti}`]}
 				<div class={['flex flex-col gap-3', dim && 'opacity-50']}>
 				{#if turn.request}
@@ -281,7 +294,7 @@
 				<div class="flex flex-col gap-1.5">
 					{#if end > 0}
 						<button type="button" class="flex items-center gap-1 self-start text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)" aria-expanded={!folded} onclick={() => toggle(`w:${ti}`)}>
-							{workedFor(turn.result?.duration_ms) ? t('composer.progress.workedFor', { time: workedFor(turn.result?.duration_ms) ?? '' }) : t('composer.progress.worked')}
+							{took ? t('composer.progress.workedFor', { time: took }) : t('composer.progress.worked')}
 							<Icon name={folded ? 'chevronDown' : 'chevronUp'} size={12} />
 						</button>
 					{/if}

@@ -23,7 +23,9 @@ export function modelChoices(current: string | null | undefined, fallbackDefault
 		seen.add(value);
 		out.push({ value, label: label || value, description });
 	};
-	for (const m of [current, fallbackDefault]) if (m && !list.some((o) => o.value === m)) add(m, m, '');
+	// A model id the list does not name (the chat's own, the settings default): its friendly name,
+	// the id under it.
+	for (const m of [current, fallbackDefault]) if (m && !list.some((o) => o.value === m)) add(m, friendlyModel(m), m);
 	for (const o of list) add(o.value, o.display_name, o.description);
 	return out;
 }
@@ -40,4 +42,22 @@ export function parseCachedModels(raw: string | null): ModelOption[] {
 	} catch {
 		return [];
 	}
+}
+
+/**
+ * A Claude model id as people say it: `claude-opus-5-5` → "Opus 5.5", `claude-sonnet-4-5-20250929`
+ * → "Sonnet 4.5", `opus` → "Opus". Anything else stays as it is.
+ */
+export function friendlyModel(id: string): string {
+	const m = /^(?:claude-)?(opus|sonnet|haiku)((?:-\d{1,2})*)(?:-\d{8})?(\[1m\])?$/i.exec(id.trim());
+	if (!m) return id;
+	const family = m[1][0].toUpperCase() + m[1].slice(1).toLowerCase();
+	const version = m[2] ? m[2].slice(1).split('-').join('.') : '';
+	return [family, version, m[3] ? '1M' : ''].filter(Boolean).join(' ');
+}
+
+/** A picker row's second line: the description, else the id, but never one that repeats the label (any case). */
+export function modelSublabel(choice: ModelChoice): string | undefined {
+	const label = choice.label.trim().toLowerCase();
+	return [choice.description, choice.value].find((d) => !!d && d.trim().toLowerCase() !== label) || undefined;
 }

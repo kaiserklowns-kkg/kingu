@@ -403,6 +403,17 @@ export function activityEnd(parts: readonly { kind: string }[]): number {
 	return end;
 }
 
+/**
+ * How many leading parts a finished turn folds into "Worked for Ns" (Cursor's): its steps before
+ * the closing answer. 0 (no "Worked" row) for a turn still running, one without a request (output
+ * before the first request, or after the last), one with no steps, or one with no answer after them.
+ */
+export function foldSteps(turn: { request: unknown; done: boolean; parts: readonly { kind: string }[] }): number {
+	if (!turn.request || !turn.done) return 0;
+	const end = activityEnd(turn.parts);
+	return end > 0 && end < turn.parts.length ? end : 0;
+}
+
 /** "Worked for 2s" / "1m 5s": a finished turn's duration. */
 export function workedFor(ms: number | null | undefined): string | null {
 	if (ms == null || !Number.isFinite(ms) || ms < 0) return null;

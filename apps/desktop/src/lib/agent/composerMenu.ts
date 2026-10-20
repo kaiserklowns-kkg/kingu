@@ -49,3 +49,25 @@ export function initialActive(rows: readonly MenuRow[]): number {
 	const checked = rows.findIndex((r) => r.checked && !r.disabled);
 	return checked >= 0 ? checked : rows.findIndex((r) => !r.disabled);
 }
+
+export type Box = { left: number; top: number; right: number; bottom: number };
+
+/**
+ * Where a dropdown goes (fixed, in viewport px): next to its trigger `anchor`, `width` at most the
+ * room inside `bounds` (the chat panel, within the viewport) less a margin, kept inside it
+ * horizontally, above or below the trigger with the height there is room for. A fixed menu never
+ * widens or scrolls the panel it opens from.
+ */
+export function placeMenu(
+	anchor: Box,
+	bounds: Box,
+	opts: { width: number; align: 'left' | 'right'; below: boolean; margin?: number; gap?: number }
+): { left: number; width: number; top?: number; bottom?: number; maxHeight: number; viewportBottom: number } {
+	const m = opts.margin ?? 4;
+	const gap = opts.gap ?? 6;
+	const width = Math.max(120, Math.min(opts.width, bounds.right - bounds.left - 2 * m));
+	const wanted = opts.align === 'left' ? anchor.left : anchor.right - width;
+	const left = Math.max(bounds.left + m, Math.min(wanted, bounds.right - m - width));
+	if (opts.below) return { left, width, top: anchor.bottom + gap, maxHeight: Math.max(80, bounds.bottom - anchor.bottom - gap - m), viewportBottom: bounds.bottom };
+	return { left, width, bottom: bounds.bottom - anchor.top + gap, maxHeight: Math.max(80, anchor.top - gap - bounds.top - m), viewportBottom: bounds.bottom };
+}

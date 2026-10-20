@@ -27,10 +27,10 @@ import {
 	skippedName,
 	stopKey
 } from './composer.ts';
-import { filterRows, initialActive, nextEnabled, startsSection, type MenuRow } from './composerMenu.ts';
+import { filterRows, initialActive, nextEnabled, placeMenu, startsSection, type MenuRow } from './composerMenu.ts';
 import { DRILL_SOURCES, filterScoped, planMentions } from './chatContext.ts';
 import { modeCommands, type SlashItem } from './slashCommands.ts';
-import { activityEnd, bashDescription, editSnippet, splitVerb, workedFor } from './chatParts.ts';
+import { activityEnd, bashDescription, editSnippet, foldSteps, splitVerb, workedFor } from './chatParts.ts';
 
 setLocale('en');
 
@@ -301,4 +301,28 @@ test('the approval card: shell colours and command names', () => {
 	expect(commandNames('echo hi && cat x; /bin/echo again')).toEqual(['echo', 'cat']);
 	expect(skippedName('Bash', { command: 'rm -f probe2.txt' })).toBe('rm');
 	expect(skippedName('Edit', { file_path: 'a.ts' })).toBe('Edit');
+});
+
+test('"Worked for" folds only a finished request\'s steps before its answer', () => {
+	const steps = [{ kind: 'thinking' }, { kind: 'tool' }, { kind: 'markdown' }];
+	expect(foldSteps({ request: {}, done: true, parts: steps })).toBe(2);
+	expect(foldSteps({ request: {}, done: false, parts: steps })).toBe(0);
+	expect(foldSteps({ request: null, done: true, parts: steps })).toBe(0);
+	expect(foldSteps({ request: {}, done: true, parts: [{ kind: 'markdown' }] })).toBe(0);
+	expect(foldSteps({ request: {}, done: true, parts: [{ kind: 'tool' }] })).toBe(0);
+});
+
+test('composer dropdowns stay inside the chat panel', () => {
+	const panel = { left: 1000, right: 1360, top: 0, bottom: 800 };
+	const pill = { left: 1100, right: 1180, top: 700, bottom: 722 };
+	const p = placeMenu(pill, panel, { width: 300, align: 'left', below: false });
+	expect(p.left + p.width).toBeLessThanOrEqual(1356);
+	expect(p.left).toBeGreaterThanOrEqual(1004);
+	expect(p.bottom).toBe(800 - 700 + 6);
+	const narrow = placeMenu(pill, { ...panel, left: 1100, right: 1300 }, { width: 300, align: 'left', below: true });
+	expect(narrow.width).toBe(192);
+	expect(narrow.left).toBe(1104);
+	expect(narrow.top).toBe(728);
+	const right = placeMenu({ left: 1300, right: 1350, top: 10, bottom: 30 }, panel, { width: 200, align: 'right', below: true });
+	expect(right.left).toBe(1150);
 });

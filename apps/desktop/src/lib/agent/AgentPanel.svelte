@@ -24,7 +24,7 @@
 	import { linesOf } from './chatPrompt.ts';
 	import { CLAUDE_RUNTIME } from './runtimes.ts';
 	import { modelCatalog } from './modelCatalog.svelte.ts';
-	import { modelChoices } from './modelChoices.ts';
+	import { modelChoices, modelSublabel } from './modelChoices.ts';
 	import ChatList from './ChatList.svelte';
 	import Composer from './Composer.svelte';
 	import ChatEditsBar from './ChatEditsBar.svelte';
@@ -768,7 +768,7 @@
 		}
 		// The second line only when it says something the label does not (no "claude-opus-5-5" twice).
 		return modelChoices(chatMeta ? chatMeta.model : newModel, chats.defaults().model, modelCatalog.list).map((m) => {
-			const description = [m.description, m.value].find((d) => d && d !== m.label);
+			const description = modelSublabel(m);
 			return { id: m.value, label: m.label, ...(description ? { description } : {}), checked: m.value === currentModel };
 		});
 	});
@@ -953,7 +953,7 @@
 	}
 </script>
 
-<div bind:this={root} class="flex h-full flex-col text-[13px]" data-chat-view>
+<div bind:this={root} class="flex h-full min-w-0 flex-col overflow-hidden text-[13px]" data-chat-view>
 	<!-- The chat header (Cursor's): the chat as a tab (spinner while it runs, a dot when it finished
 	     unseen, × closes it), then New Chat, History, ⋯ (where and how it runs, the chat's actions)
 	     and the panel toggle. -->
