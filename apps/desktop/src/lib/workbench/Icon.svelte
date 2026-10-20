@@ -101,7 +101,12 @@
 		BookmarkSimpleIcon,
 		WarningIcon,
 		XCircleIcon,
-		XIcon
+		XIcon,
+		InfinityIcon,
+		ChatCircleIcon,
+		RobotIcon,
+		AtIcon,
+		DotsSixVerticalIcon
 	} from 'phosphor-svelte';
 	import ArkaiMark from './ArkaiMark.svelte';
 	import KinguMark from './KinguMark.svelte';
@@ -225,7 +230,13 @@
 		/** Chat answers: helpful / not helpful, and "Remember this". */
 		thumbsUp: ThumbsUpIcon,
 		thumbsDown: ThumbsDownIcon,
-		bookmark: BookmarkSimpleIcon
+		bookmark: BookmarkSimpleIcon,
+		/** The chat composer's modes (Agent, Ask, a custom agent), `@` context and a queue row's drag handle. */
+		infinity: InfinityIcon,
+		chat: ChatCircleIcon,
+		robot: RobotIcon,
+		at: AtIcon,
+		grip: DotsSixVerticalIcon
 	} as const;
 	export type IconName = keyof typeof icons;
 

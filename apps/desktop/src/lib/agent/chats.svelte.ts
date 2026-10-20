@@ -12,7 +12,8 @@
  *   chats.submit(id, message, label, how)  while a turn runs: queue it (sent when the turn ends),
  *                                      steer (into the running session now) or stop and send
  *   chats.queue(id) / unqueue(id, n)   the chat's queued requests; takeQueued / sendQueuedNow
- *                                      (Edit / Send Immediately on a queued row)
+ *                                      (Edit / Send Now on a queued row), moveQueued (reorder),
+ *                                      requeue (an edited row back in its place)
  *   chats.retry(id)                    sends the last request again (chatRewind.retry rewinds first)
  *   chats.fork(id, before)             Fork Conversation: a new chat with the conversation before
  *                                      request `before` (all of it with null); returns its id
@@ -42,6 +43,7 @@ import { buildTurns, lastRequest } from './chatParts.ts';
 import { CLAUDE_RUNTIME, runtimeOf } from './runtimes.ts';
 import { withoutImagesLine } from './chatPrompt.ts';
 import { shouldDrain, turnBusy, type RunPermissionMode } from './chatInput.ts';
+import { moveItem } from './composer.ts';
 import type { SendHow } from './requestQueuing.ts';
 import { chatTitlePrompt, parseChatTitle } from './chatTitle.ts';
 import { forkTitle, rewoundMeta, type ForkPoint } from './chatRewind.ts';
@@ -379,10 +381,41 @@ class Chats {
 		return item;
 	}
 
-	/** Send Immediately on a queued row: out of the queue and into the running session (steer). */
-	async sendQueuedNow(id: string, n: number): Promise<boolean> {
+	/**
+	 * Moves a queued request to `index` in the queue (Cursor's drag to reorder); the queue's
+	 * order is the order they are sent in.
+	 */
+	moveQueued(id: string, n: number, index: number) {
+		if (!this.root) return;
+		const key = runKey(this.root, id);
+		const list = this.queues[key] ?? [];
+		const from = list.findIndex((q) => q.n === n);
+		if (from >= 0) this.queues[key] = moveItem(list, from, index);
+	}
+
+	/**
+	 * Puts a request back in the queue at `index` (an edited queued message, or one whose edit was
+	 * cancelled), keeping its number. When the turn ended meanwhile, the queue's head goes now.
+	 */
+	requeue(id: string, item: QueuedMessage, index: number) {
+		const root = this.root;
+		if (!root) return;
+		const key = runKey(root, id);
+		const list = [...(this.queues[key] ?? []).filter((q) => q.n !== item.n)];
+		list.splice(Math.max(0, Math.min(index, list.length)), 0, item);
+		this.queues[key] = list;
+		if (!turnBusy(this.runs[key])) queueMicrotask(() => void this.#drain(root, id));
+	}
+
+	/**
+	 * Send Now on a queued row: out of the queue and into the running session (`steer`, the
+	 * agent reads it at its next opportunity), or the turn is stopped first (`stop`, for runtimes
+	 * that cannot steer).
+	 */
+	async sendQueuedNow(id: string, n: number, how: 'steer' | 'stop' = 'steer'): Promise<boolean> {
 		const item = this.takeQueued(id, n);
 		if (!item) return false;
+		if (how === 'stop' && turnBusy(this.run(id))) await this.interrupt(id);
 		const sent = await this.send(id, { text: item.text, images: item.images });
 		if (!sent && this.root) {
 			const key = runKey(this.root, id);

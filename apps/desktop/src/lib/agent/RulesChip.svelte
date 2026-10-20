@@ -1,5 +1,5 @@
 <script lang="ts">
-	// "N rules" in the chat input's context row (Cursor's rules pill): the rules files the agent
+	// "N rules" among the chat input's inline context chips (Cursor's rules pill): the rules files the agent
 	// follows in this chat besides CLAUDE.md (Rust agent/rules.rs: AGENTS.md, .cursor/rules,
 	// Copilot's instructions) for the attached files. Clicking lists them; picking one opens it.
 	// Hidden with kingu.chat.rules.enabled off or no rules.
@@ -58,7 +58,7 @@
 {#if active.length}
 	<button
 		type="button"
-		class="flex items-center gap-1 rounded border border-(--vscode-widget-border) px-1.5 py-0.5 text-xs text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)"
+		class="inline-flex h-5 shrink-0 items-center gap-1 rounded-md bg-[color-mix(in_srgb,var(--vscode-foreground)_9%,transparent)] px-1 text-xs text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)"
 		title={t('chat.rules.hint')}
 		onclick={pick}
 	>

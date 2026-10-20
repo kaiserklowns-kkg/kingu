@@ -283,7 +283,7 @@
 								{@const ask = parseAsk(ev.input)!}
 								<QuestionCard prompt={ask} onsubmit={(sels) => onanswer(ev, 'allow', undefined, answersFor(ask, sels))} ondismiss={() => onanswer(ev, 'deny')} />
 							{:else if onanswer && !run?.ended}
-								<PermissionCard request={ev} onanswer={(decision, message) => onanswer(ev, decision, message)} />
+								<PermissionCard request={ev} keys={!!chatId} onanswer={(decision, message) => onanswer(ev, decision, message)} />
 							{:else}
 								<div class="flex items-center gap-1.5 text-(--vscode-editorWarning-foreground)">
 									<Icon name="question" size={13} />

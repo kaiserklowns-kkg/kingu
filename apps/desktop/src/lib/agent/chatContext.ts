@@ -36,6 +36,36 @@ export function matchSources(query: string, label: (s: ContextSource) => string)
 	return CONTEXT_SOURCES.filter((s) => !q || label(s).toLowerCase().includes(q) || s.toLowerCase().includes(q));
 }
 
+/** At most this many files in the `@` menu (Cursor shows 32). */
+export const MENTION_FILES = 32;
+
+/** What the `@` menu lists, in order. */
+export type MentionPlan = { recent: string[]; sources: ContextSource[]; folders: string[]; files: string[] };
+
+/**
+ * The `@` menu (Cursor's): with nothing typed, up to 3 recent files not attached yet, then every
+ * source; typed, the matching sources, then folders and files. `scope: 'files'` is Files & Folders
+ * drilled into: only folders and files. `ranked`: the files for the query, best first.
+ */
+export function planMentions(input: {
+	query: string;
+	scope: 'files' | null;
+	recent: readonly string[];
+	ranked: readonly string[];
+	folders: readonly string[];
+	attached: readonly string[];
+	label: (s: ContextSource) => string;
+}): MentionPlan {
+	const q = input.query.toLowerCase();
+	const folders = (max: number) => (q ? input.folders.filter((d) => d.toLowerCase().includes(q)).slice(0, max) : []);
+	if (input.scope === 'files') return { recent: [], sources: [], folders: folders(10), files: input.ranked.slice(0, MENTION_FILES) };
+	if (!q) {
+		const attached = new Set(input.attached);
+		return { recent: input.recent.filter((p) => !attached.has(p)).slice(0, 3), sources: [...CONTEXT_SOURCES], folders: [], files: [] };
+	}
+	return { recent: [], sources: matchSources(q, input.label), folders: folders(5), files: input.ranked.slice(0, MENTION_FILES) };
+}
+
 // ---- files and folders -----------------------------------------------------------------------
 
 /** The folders of a file list (every ancestor of every file), sorted. */

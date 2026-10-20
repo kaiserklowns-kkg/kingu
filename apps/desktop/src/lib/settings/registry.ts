@@ -261,7 +261,16 @@ const CORE_SETTINGS: SettingSchema[] = [
 		],
 		// VS Code's chat.requestQueuing.defaultAction; no Orca setting, so not in the ADE list.
 		description:
-			'สิ่งที่ Enter ทำเมื่อส่งข้อความขณะ agent กำลังทำงาน ⌥Enter ทำอีกแบบ (VS Code: chat.requestQueuing.defaultAction) (What Enter does while a turn runs; ⌥Enter does the other.)'
+			'สิ่งที่ Enter ทำเมื่อส่งข้อความขณะ agent กำลังทำงาน ⌥Enter ทำอีกแบบ ⌘Enter หยุดรอบนั้นแล้วส่ง (VS Code: chat.requestQueuing.defaultAction) (What Enter does while a turn runs; ⌥Enter does the other, ⌘Enter stops the turn and sends.)'
+	},
+	{
+		id: 'kingu.chat.submitWithCmdEnter',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: false,
+		// Cursor's "Submit with ⌘ + Enter" (chatSubmitOnCmdEnter); no VS Code or Orca setting.
+		description:
+			'ส่งข้อความในแชตด้วย ⌘Enter (Ctrl+Enter) แทน Enter แล้ว Enter จะขึ้นบรรทัดใหม่ (Send chat messages with ⌘Enter / Ctrl+Enter; Enter then adds a new line.)'
 	},
 	{
 		id: 'kingu.agent.runMode',
