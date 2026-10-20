@@ -2,7 +2,9 @@
 //! session, speaking the Debug Adapter Protocol with the same `Content-Length` framing as LSP.
 //! Messages are passed through to the webview untouched over a Channel; the DAP client (session
 //! state, breakpoints, stepping) lives there. Most adapters talk over stdio; `dlv dap` only
-//! listens on TCP, so for it the transport connects to the address it prints.
+//! listens on TCP, so for it the transport connects to the address it prints. js-debug (VS Code's
+//! JavaScript debugger, `node`/`chrome` configurations) is a TCP server too, downloaded on request
+//! (pinned version, SHA-256 checked); its child sessions are more connections to the same server.
 
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
@@ -12,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use tauri::State;
@@ -33,8 +35,141 @@ pub type Sink = Arc<dyn Fn(DapEvent) + Send + Sync>;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Connect {
   Stdio,
-  /// The adapter prints `… listening at: host:port` on stdout, then accepts one connection.
+  /// The adapter prints `… listening at: host:port` (or `listening at host:port`) on stdout, then
+  /// accepts connections.
   Tcp,
+}
+
+// ---------------------------------------------------------------------------------------------
+// js-debug (ms-vscode.js-debug's standalone DAP server)
+
+/// The js-debug release Kingu installs: the version VS Code ships (product.json builtInExtensions),
+/// as the `js-debug-dap` tarball of the GitHub release, checked against this SHA-256.
+pub const JS_DEBUG_VERSION: &str = "1.140.0";
+pub const JS_DEBUG_SHA256: &str = "27dab92937ec1ab35821ae955aac867544fe06a1b6307229049f2d789af10968";
+/// The tarball's size, shown before downloading.
+pub const JS_DEBUG_BYTES: u64 = 1_249_709;
+const JS_DEBUG_MAX_BYTES: u64 = 32 * 1024 * 1024;
+
+pub fn js_debug_url() -> String {
+  format!("https://github.com/microsoft/vscode-js-debug/releases/download/v{JS_DEBUG_VERSION}/js-debug-dap-v{JS_DEBUG_VERSION}.tar.gz")
+}
+
+/// Where downloaded debug adapters live (the app data dir's `debug-adapters`), set at startup.
+static ADAPTERS_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn set_adapters_dir(dir: PathBuf) {
+  let _ = ADAPTERS_DIR.set(dir);
+}
+
+pub fn adapters_dir() -> Option<&'static Path> {
+  ADAPTERS_DIR.get().map(PathBuf::as_path)
+}
+
+pub fn js_debug_dir(base: &Path) -> PathBuf {
+  base.join(format!("js-debug-v{JS_DEBUG_VERSION}"))
+}
+
+/// `dapDebugServer.js` of the installed release (it may not exist).
+pub fn js_debug_server(base: &Path) -> PathBuf {
+  js_debug_dir(base).join("js-debug/src/dapDebugServer.js")
+}
+
+/// Lowercase hex SHA-256 of `bytes`.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+  use sha2::{Digest, Sha256};
+  Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Unpacks a js-debug tarball into `dest` once its SHA-256 is `sha256`: extracted next to it
+/// first, so a failed or tampered download never leaves a half-installed adapter.
+pub fn install_archive(bytes: &[u8], sha256: &str, dest: &Path) -> Result<PathBuf, String> {
+  let actual = sha256_hex(bytes);
+  if !actual.eq_ignore_ascii_case(sha256) {
+    return Err(tr!(LspMsg::ChecksumMismatch, name = "js-debug", expected = sha256, actual));
+  }
+  let parent = dest.parent().ok_or_else(|| tr!(LspMsg::ExtractFailed, detail = dest.display()))?;
+  std::fs::create_dir_all(parent).map_err(|e| tr!(LspMsg::ExtractFailed, detail = e))?;
+  let name = dest.file_name().and_then(|n| n.to_str()).unwrap_or("adapter");
+  let staging = parent.join(format!(".{name}.partial-{}", std::process::id()));
+  let _ = std::fs::remove_dir_all(&staging);
+  std::fs::create_dir_all(&staging).map_err(|e| tr!(LspMsg::ExtractFailed, detail = e))?;
+  let result = (|| {
+    let archive = staging.join("archive.tar.gz");
+    std::fs::write(&archive, bytes).map_err(|e| tr!(LspMsg::ExtractFailed, detail = e))?;
+    // The system tar (bsdtar on macOS, GNU tar on Linux) refuses absolute and `..` member paths.
+    let out = Command::new("tar")
+      .arg("-xzf")
+      .arg(&archive)
+      .arg("-C")
+      .arg(&staging)
+      .stdin(Stdio::null())
+      .output()
+      .map_err(|e| tr!(LspMsg::ExtractFailed, detail = e))?;
+    if !out.status.success() {
+      return Err(tr!(LspMsg::ExtractFailed, detail = String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    std::fs::remove_file(&archive).map_err(|e| tr!(LspMsg::ExtractFailed, detail = e))?;
+    if !staging.join("js-debug/src/dapDebugServer.js").is_file() {
+      return Err(tr!(LspMsg::ExtractFailed, detail = "js-debug/src/dapDebugServer.js"));
+    }
+    let _ = std::fs::remove_dir_all(dest);
+    std::fs::rename(&staging, dest).map_err(|e| tr!(LspMsg::ExtractFailed, detail = e))?;
+    Ok(dest.join("js-debug/src/dapDebugServer.js"))
+  })();
+  if result.is_err() {
+    let _ = std::fs::remove_dir_all(&staging);
+  }
+  result
+}
+
+/// GETs the pinned tarball through Kingu's proxy settings (https only, size-capped).
+pub fn download_js_debug() -> Result<Vec<u8>, String> {
+  let url = js_debug_url();
+  let fail = |detail: String| tr!(LspMsg::DownloadFailed, url = url.as_str(), detail);
+  let client = crate::net_proxy::client_builder()?.timeout(Duration::from_secs(120)).build().map_err(|e| fail(e.to_string()))?;
+  let response = client.get(&url).send().map_err(|e| fail(e.to_string()))?;
+  if !response.status().is_success() {
+    return Err(fail(response.status().to_string()));
+  }
+  if response.url().scheme() != "https" {
+    return Err(fail(response.url().to_string()));
+  }
+  let mut bytes = Vec::new();
+  response.take(JS_DEBUG_MAX_BYTES + 1).read_to_end(&mut bytes).map_err(|e| fail(e.to_string()))?;
+  if bytes.len() as u64 > JS_DEBUG_MAX_BYTES {
+    return Err(fail(format!("more than {JS_DEBUG_MAX_BYTES} bytes")));
+  }
+  Ok(bytes)
+}
+
+/// Downloads, checks and unpacks the pinned js-debug (the user asked for it in Run and Debug).
+pub fn install_js_debug(fetch: impl FnOnce() -> Result<Vec<u8>, String>) -> Result<PathBuf, String> {
+  let base = adapters_dir().ok_or_else(|| tr!(LspMsg::ExtractFailed, detail = "debug-adapters"))?;
+  let bytes = fetch()?;
+  install_archive(&bytes, JS_DEBUG_SHA256, &js_debug_dir(base))
+}
+
+/// What the Run and Debug install flow shows for js-debug.
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct JsDebugStatus {
+  pub version: &'static str,
+  pub url: String,
+  pub bytes: u64,
+  pub sha256: &'static str,
+  /// `dapDebugServer.js`, when installed.
+  pub server: Option<String>,
+  /// Node.js on the login-shell PATH (js-debug runs on it).
+  pub node: Option<String>,
+}
+
+pub fn js_debug_status(root: &Path) -> JsDebugStatus {
+  let home = std::env::var_os("HOME").map(PathBuf::from);
+  let path = crate::shell_env::path();
+  let node = lsp::find_executable("node", path.as_deref(), home.as_deref(), root).map(|(p, _)| p.to_string_lossy().into_owned());
+  let server = adapters_dir().map(js_debug_server).filter(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned());
+  JsDebugStatus { version: JS_DEBUG_VERSION, url: js_debug_url(), bytes: JS_DEBUG_BYTES, sha256: JS_DEBUG_SHA256, server, node }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -64,6 +199,10 @@ pub fn adapter_for(debug_type: &str) -> Option<Adapter> {
       &[Package::Go("github.com/go-delve/delve/cmd/dlv@latest"), Package::Brew("delve")],
     ),
     "debugpy" | "python" => a("debugpy", "debugpy", &["python3", "python"], &["-m", "debugpy.adapter"], Connect::Stdio, &[Package::Pip("debugpy")]),
+    // js-debug: `node dapDebugServer.js 0 127.0.0.1` (port 0: it prints the one it got).
+    "node" | "pwa-node" | "node-terminal" | "chrome" | "pwa-chrome" | "msedge" | "pwa-msedge" => {
+      a("jsdebug", "js-debug", &["node"], &["0", "127.0.0.1"], Connect::Tcp, &[Package::Brew("node")])
+    }
     _ => return None,
   })
 }
@@ -82,6 +221,8 @@ pub struct Probe<'a> {
   pub xcrun: &'a dyn Fn() -> Option<PathBuf>,
   /// Whether this Python can `import debugpy`.
   pub has_debugpy: &'a dyn Fn(&Path) -> bool,
+  /// The installed js-debug `dapDebugServer.js`, if any.
+  pub js_debug: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -98,6 +239,15 @@ const LLVM_DIRS: &[&str] = &["/opt/homebrew/opt/llvm/bin", "/usr/local/opt/llvm/
 /// configuration's interpreter, tried first for debugpy.
 pub fn resolve(adapter: &Adapter, python: Option<&Path>, probe: &Probe) -> Result<Resolved, String> {
   let args = adapter.args.iter().map(|s| s.to_string()).collect();
+  let find = |name: &str| lsp::find_executable(name, probe.path, probe.home, probe.root).map(|(p, _)| p);
+  if adapter.key == "jsdebug" {
+    // The override names the server script; node runs it either way.
+    let server = probe.override_var.clone().filter(|o| !o.is_empty()).map(PathBuf::from).or_else(|| probe.js_debug.clone());
+    let server = server.filter(|p| p.is_file()).ok_or_else(|| tr!(LspMsg::NoJsDebug, var = override_name(adapter)))?;
+    let node = find("node").ok_or_else(|| tr!(LspMsg::NoNode))?;
+    let args = std::iter::once(server.to_string_lossy().into_owned()).chain(adapter.args.iter().map(|s| s.to_string())).collect();
+    return Ok(Resolved { program: node, args, connect: adapter.connect });
+  }
   let found = |program: PathBuf| Ok(Resolved { program, args: Vec::clone(&args), connect: adapter.connect });
   if let Some(o) = probe.override_var.clone().filter(|o| !o.is_empty()) {
     let p = PathBuf::from(o);
@@ -107,7 +257,6 @@ pub fn resolve(adapter: &Adapter, python: Option<&Path>, probe: &Probe) -> Resul
       Err(tr!(LspMsg::NotExecutable, name = adapter.display, path = p.display(), var = override_name(adapter)))
     };
   }
-  let find = |name: &str| lsp::find_executable(name, probe.path, probe.home, probe.root).map(|(p, _)| p);
   match adapter.key {
     "debugpy" => {
       // The configured interpreter, then the project's virtualenv (VS Code's Python extension picks
@@ -174,6 +323,7 @@ pub fn check(debug_type: &str, python: Option<&Path>, root: &Path) -> Result<(Ad
     root,
     xcrun: &xcrun_lldb_dap,
     has_debugpy: &python_has_debugpy,
+    js_debug: adapters_dir().map(js_debug_server),
   };
   let resolved = resolve(&adapter, python, &probe)?;
   Ok((adapter, resolved))
@@ -192,9 +342,11 @@ pub fn install_info(debug_type: &str, root: &Path) -> Result<InstallInfo, String
   Ok(InstallInfo { server: adapter.display, binary, methods })
 }
 
-/// `dlv dap` prints `DAP server listening at: 127.0.0.1:38697` (or `[::]:port`).
+/// `dlv dap` prints `DAP server listening at: 127.0.0.1:38697` (or `[::]:port`); js-debug prints
+/// `Debug server listening at 127.0.0.1:38697`.
 pub fn parse_listen_address(line: &str) -> Option<String> {
-  let rest = line.split_once("listening at:")?.1.trim();
+  let rest = line.split_once("listening at")?.1;
+  let rest = rest.strip_prefix(':').unwrap_or(rest).trim();
   let (host, port) = rest.rsplit_once(':')?;
   port.parse::<u16>().ok()?;
   let host = host.trim_start_matches('[').trim_end_matches(']');
@@ -205,11 +357,20 @@ pub fn parse_listen_address(line: &str) -> Option<String> {
 // ---------------------------------------------------------------------------------------------
 // Sessions
 
-struct Session {
+/// The adapter process a session started (a child connection has none of its own).
+struct Proc {
   child: Mutex<Child>,
   pid: u32,
+}
+
+struct Session {
+  proc: Option<Arc<Proc>>,
   /// Frames queued for the writer thread, so `dap_send` never blocks on a full pipe.
   tx: mpsc::Sender<Vec<u8>>,
+  /// A TCP adapter's address: child sessions (`startDebugging`) connect to it again.
+  addr: Option<String>,
+  /// The connection, so stopping a child session closes it without touching the server.
+  socket: Option<TcpStream>,
 }
 
 #[derive(Default)]
@@ -250,6 +411,8 @@ fn forward_lines(r: impl Read + Send + 'static, sink: Sink) -> std::thread::Join
   })
 }
 
+type Transport = (Box<dyn Read + Send>, Box<dyn Write + Send>);
+
 impl Sessions {
   pub fn start(&self, launch: Launch, sink: Sink) -> Result<u32, String> {
     let mut cmd = Command::new(&launch.program);
@@ -268,10 +431,12 @@ impl Sessions {
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let stderr = child.stderr.take().ok_or("no stderr")?;
     let pid = child.id();
-    let child = Mutex::new(child);
+    let proc = Arc::new(Proc { child: Mutex::new(child), pid });
 
     let mut forwarders = vec![forward_lines(stderr, sink.clone())];
-    let (reader, writer): (Box<dyn Read + Send>, Box<dyn Write + Send>) = match launch.connect {
+    let mut addr = None;
+    let mut socket = None;
+    let (reader, writer): Transport = match launch.connect {
       Connect::Stdio => (Box::new(stdout), Box::new(stdin)),
       Connect::Tcp => {
         let (addr_tx, addr_rx) = mpsc::channel();
@@ -292,27 +457,42 @@ impl Sessions {
         let connected = addr_rx
           .recv_timeout(TCP_WAIT)
           .map_err(|_| tr!(LspMsg::NoDapServer, program = launch.program.display(), secs = TCP_WAIT.as_secs()))
-          .and_then(|addr| TcpStream::connect(&addr).map_err(|e| tr!(LspMsg::ConnectAdapter, addr, detail = e)));
-        let stream = match connected {
+          .and_then(|a| TcpStream::connect(&a).map(|s| (a.clone(), s)).map_err(|e| tr!(LspMsg::ConnectAdapter, addr = a, detail = e)));
+        let (a, stream) = match connected {
           Ok(s) => s,
           Err(e) => {
-            kill_group(pid, &child);
-            let _ = child.lock().unwrap().wait();
+            kill_group(pid, &proc.child);
+            let _ = proc.child.lock().unwrap().wait();
             return Err(e);
           }
         };
         drop(stdin);
+        addr = Some(a);
+        socket = stream.try_clone().ok();
         let read_half = stream.try_clone().map_err(|e| e.to_string())?;
         (Box::new(read_half), Box::new(stream))
       }
     };
+    Ok(self.register(Some(proc), addr, socket, (reader, writer), forwarders, sink))
+  }
 
+  /// A child session of a TCP adapter (js-debug's `startDebugging`): one more connection to the
+  /// server of session `parent`, speaking DAP on its own. Its end leaves the server running.
+  pub fn connect_child(&self, parent: u32, sink: Sink) -> Result<u32, String> {
+    let addr = self.running.lock().unwrap().get(&parent).and_then(|s| s.addr.clone()).ok_or_else(|| tr!(LspMsg::NoSession))?;
+    let stream = TcpStream::connect(&addr).map_err(|e| tr!(LspMsg::ConnectAdapter, addr = addr.as_str(), detail = e))?;
+    let read_half = stream.try_clone().map_err(|e| e.to_string())?;
+    let socket = stream.try_clone().ok();
+    Ok(self.register(None, Some(addr), socket, (Box::new(read_half), Box::new(stream)), Vec::new(), sink))
+  }
+
+  fn register(&self, proc: Option<Arc<Proc>>, addr: Option<String>, socket: Option<TcpStream>, transport: Transport, forwarders: Vec<std::thread::JoinHandle<()>>, sink: Sink) -> u32 {
+    let (mut reader, mut writer) = transport;
     let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
     let (tx, rx) = mpsc::channel::<Vec<u8>>();
-    let session = Arc::new(Session { pid, child, tx });
+    let session = Arc::new(Session { proc, tx, addr, socket });
     self.running.lock().unwrap().insert(id, session.clone());
 
-    let mut writer = writer;
     std::thread::spawn(move || {
       for frame in rx {
         if writer.write_all(&frame).and_then(|_| writer.flush()).is_err() {
@@ -322,7 +502,6 @@ impl Sessions {
     });
 
     let running = self.running.clone();
-    let mut reader = reader;
     std::thread::spawn(move || {
       let mut decoder = FrameDecoder::default();
       let mut chunk = vec![0u8; 64 * 1024];
@@ -340,18 +519,23 @@ impl Sessions {
         }
       }
       // The adapter closed its end (disconnect, crash): give it a moment to exit, then make sure.
-      let deadline = std::time::Instant::now() + Duration::from_secs(3);
-      let code = loop {
-        match session.child.lock().unwrap().try_wait() {
-          Ok(Some(s)) => break s.code(),
-          Ok(None) if std::time::Instant::now() < deadline => {}
-          Ok(None) => {
-            kill_group(session.pid, &session.child);
-            break session.child.lock().unwrap().wait().ok().and_then(|s| s.code());
+      let code = match &session.proc {
+        None => None,
+        Some(proc) => {
+          let deadline = std::time::Instant::now() + Duration::from_secs(3);
+          loop {
+            match proc.child.lock().unwrap().try_wait() {
+              Ok(Some(s)) => break s.code(),
+              Ok(None) if std::time::Instant::now() < deadline => {}
+              Ok(None) => {
+                kill_group(proc.pid, &proc.child);
+                break proc.child.lock().unwrap().wait().ok().and_then(|s| s.code());
+              }
+              Err(_) => break None,
+            }
+            std::thread::sleep(Duration::from_millis(20));
           }
-          Err(_) => break None,
         }
-        std::thread::sleep(Duration::from_millis(20));
       };
       for f in forwarders {
         let _ = f.join();
@@ -360,7 +544,7 @@ impl Sessions {
       log::info!("debug adapter {id} exited (code {code:?})");
       sink(DapEvent::Exit { code });
     });
-    Ok(id)
+    id
   }
 
   pub fn send(&self, id: u32, json: &str) -> Result<(), String> {
@@ -368,10 +552,18 @@ impl Sessions {
     s.tx.send(encode(json)).map_err(|_| "debug adapter input is closed".to_string())
   }
 
-  /// Kills the adapter and its process group (the client sends `disconnect` first when it can).
+  /// Kills the adapter and its process group (the client sends `disconnect` first when it can); a
+  /// child session only closes its connection.
   pub fn stop(&self, id: u32) -> Result<(), String> {
     let s = self.running.lock().unwrap().get(&id).cloned().ok_or_else(|| tr!(LspMsg::NoSession))?;
-    kill_group(s.pid, &s.child);
+    match &s.proc {
+      Some(p) => kill_group(p.pid, &p.child),
+      None => {
+        if let Some(sock) = &s.socket {
+          let _ = sock.shutdown(std::net::Shutdown::Both);
+        }
+      }
+    }
     Ok(())
   }
 
@@ -379,7 +571,14 @@ impl Sessions {
   pub fn stop_all(&self) {
     let all: Vec<_> = self.running.lock().unwrap().drain().map(|(_, s)| s).collect();
     for s in &all {
-      kill_group(s.pid, &s.child);
+      match &s.proc {
+        Some(p) => kill_group(p.pid, &p.child),
+        None => {
+          if let Some(sock) = &s.socket {
+            let _ = sock.shutdown(std::net::Shutdown::Both);
+          }
+        }
+      }
     }
     if !all.is_empty() {
       log::info!("stopped {} debug adapter(s)", all.len());
@@ -414,6 +613,44 @@ pub fn start_for(sessions: &Sessions, root: &Path, debug_type: &str, python: Opt
   )?;
   log::info!("debug adapter {id} ({}) started: {}", adapter.key, resolved.program.display());
   Ok(id)
+}
+
+/// A child session of session `parent` (js-debug's `startDebugging` reverse request).
+pub fn start_child_for(sessions: &Sessions, parent: u32, on_event: Channel<DapEvent>) -> Result<u32, String> {
+  let id = sessions.connect_child(
+    parent,
+    Arc::new(move |ev| {
+      let _ = on_event.send(ev);
+    }),
+  )?;
+  log::info!("debug session {id}: child of {parent}");
+  Ok(id)
+}
+
+/// One process for `${command:pickProcess}` (VS Code's process picker for attach configurations).
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
+pub struct ProcessEntry {
+  pub pid: u32,
+  pub command: String,
+}
+
+/// `ps -axww -o pid=,command=` output: `  123 /usr/bin/thing --flag` per line.
+pub fn parse_ps(text: &str, own_pid: u32) -> Vec<ProcessEntry> {
+  text
+    .lines()
+    .filter_map(|l| {
+      let l = l.trim_start();
+      let (pid, command) = l.split_once(char::is_whitespace)?;
+      let pid = pid.parse::<u32>().ok()?;
+      let command = command.trim();
+      (pid != own_pid && !command.is_empty()).then(|| ProcessEntry { pid, command: command.to_string() })
+    })
+    .collect()
+}
+
+pub fn list_processes() -> Result<Vec<ProcessEntry>, String> {
+  let out = Command::new("ps").args(["-axww", "-o", "pid=,command="]).stdin(Stdio::null()).output().map_err(|e| tr!(LspMsg::RunFailed, program = "ps", detail = e))?;
+  Ok(parse_ps(&String::from_utf8_lossy(&out.stdout), std::process::id()))
 }
 
 #[tauri::command]
@@ -475,9 +712,16 @@ mod tests {
     for (t, k) in [("lldb", "lldb"), ("lldb-dap", "lldb"), ("lldb-vscode", "lldb"), ("go", "go"), ("debugpy", "debugpy"), ("python", "debugpy")] {
       assert_eq!(key(t), Some(k), "{t}");
     }
-    for none in ["node", "pwa-node", "cppdbg", ""] {
+    for none in ["cppdbg", "coreclr", ""] {
       assert_eq!(key(none), None, "{none}");
     }
+    // js-debug serves every JavaScript type over TCP (VS Code: node, pwa-node, chrome, msedge…).
+    for t in ["node", "pwa-node", "node-terminal", "chrome", "pwa-chrome", "msedge", "pwa-msedge"] {
+      assert_eq!(key(t), Some("jsdebug"), "{t}");
+    }
+    let js = adapter_for("node").unwrap();
+    assert_eq!((js.args, js.connect), (&["0", "127.0.0.1"][..], Connect::Tcp));
+    assert_eq!(override_name(&js), "KINGU_DAP_JSDEBUG");
     let go = adapter_for("go").unwrap();
     assert_eq!((go.args, go.connect), (&["dap", "--listen=127.0.0.1:0"][..], Connect::Tcp));
     assert_eq!(override_name(&adapter_for("python").unwrap()), "KINGU_DAP_DEBUGPY");
@@ -490,6 +734,93 @@ mod tests {
     assert_eq!(parse_listen_address("DAP server listening at: [::1]:4000").as_deref(), Some("[::1]:4000"));
     assert_eq!(parse_listen_address("Type 'dlv help' for list of commands."), None);
     assert_eq!(parse_listen_address("listening at: host:notaport"), None);
+    // js-debug's dapDebugServer.js (no colon after "at").
+    assert_eq!(parse_listen_address("Debug server listening at 127.0.0.1:61234\n").as_deref(), Some("127.0.0.1:61234"));
+    assert_eq!(parse_listen_address("Debug server listening at ::1:61234").as_deref(), Some("[::1]:61234"));
+  }
+
+  #[test]
+  fn parses_the_process_list() {
+    let ps = "    1 /sbin/launchd\n  812 /usr/bin/node --inspect=9229 server.js\n 999 kingu\nnot a pid line\n  77 \n";
+    let got = parse_ps(ps, 999);
+    assert_eq!(got, [ProcessEntry { pid: 1, command: "/sbin/launchd".into() }, ProcessEntry { pid: 812, command: "/usr/bin/node --inspect=9229 server.js".into() }]);
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn resolves_js_debug_through_node() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (bin, root) = (tmp.path().join("bin"), tmp.path().join("ws"));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    let js = adapter_for("pwa-node").unwrap();
+    let no_xcrun = || None;
+    let yes = |_: &Path| true;
+    let server = js_debug_server(&tmp.path().join("adapters"));
+    // Not downloaded yet: the "not installed" error the Run and Debug install flow keys off.
+    let mut p = probe(&bin, &root, &no_xcrun, &yes);
+    p.js_debug = Some(server.clone());
+    let err = resolve(&js, None, &p).unwrap_err();
+    assert!(err.starts_with("Not installed: js-debug") && err.contains("KINGU_DAP_JSDEBUG"), "{err}");
+    std::fs::create_dir_all(server.parent().unwrap()).unwrap();
+    std::fs::write(&server, "// server").unwrap();
+    // Downloaded, but node is missing (skipped where a node sits in a fixed extra dir).
+    if !["/opt/homebrew/bin/node", "/usr/local/bin/node"].iter().any(|n| Path::new(n).exists()) {
+      let err = resolve(&js, None, &p).unwrap_err();
+      assert!(err.starts_with("Not installed: Node.js"), "{err}");
+    }
+    let node = fake_bin(&bin, "node");
+    let r = resolve(&js, None, &p).unwrap();
+    assert_eq!((r.program, r.args, r.connect), (node, vec![server.to_string_lossy().into_owned(), "0".into(), "127.0.0.1".into()], Connect::Tcp));
+    // The override names the server script.
+    let other = tmp.path().join("my/dapDebugServer.js");
+    std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+    std::fs::write(&other, "").unwrap();
+    p.override_var = Some(other.clone().into());
+    assert_eq!(resolve(&js, None, &p).unwrap().args[0], other.to_string_lossy());
+  }
+
+  /// A js-debug-shaped tarball made with the system tar (no network).
+  #[cfg(unix)]
+  fn tarball(dir: &Path, with_server: bool) -> Vec<u8> {
+    let src = dir.join("src-tree");
+    let _ = std::fs::remove_dir_all(&src);
+    std::fs::create_dir_all(src.join("js-debug/src")).unwrap();
+    let file = if with_server { "dapDebugServer.js" } else { "other.js" };
+    std::fs::write(src.join("js-debug/src").join(file), "console.log('server')").unwrap();
+    let out = dir.join("pkg.tar.gz");
+    assert!(Command::new("tar").arg("-czf").arg(&out).arg("-C").arg(&src).arg("js-debug").status().unwrap().success());
+    std::fs::read(out).unwrap()
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn installs_js_debug_only_with_the_right_checksum() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dest = js_debug_dir(&tmp.path().join("adapters"));
+    let good = tarball(tmp.path(), true);
+    let sha = sha256_hex(&good);
+    assert_eq!(sha.len(), 64);
+    assert_eq!(sha256_hex(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    // A tampered (or other) archive: refused, nothing left behind.
+    let err = install_archive(&good, &"0".repeat(64), &dest).unwrap_err();
+    assert!(err.contains("SHA-256") && err.contains(&sha), "{err}");
+    assert!(!dest.exists());
+    assert!(std::fs::read_dir(dest.parent().unwrap()).map_or(true, |d| d.count() == 0), "no staging dir left");
+    // The right one: unpacked, server in place.
+    let server = install_archive(&good, &sha.to_uppercase(), &dest).unwrap();
+    assert_eq!(server, js_debug_server(&tmp.path().join("adapters")));
+    assert!(server.is_file());
+    // An archive without the server is refused and keeps the installed one.
+    let bad = tarball(tmp.path(), false);
+    assert!(install_archive(&bad, &sha256_hex(&bad), &dest).is_err());
+    assert!(server.is_file());
+    // Not a gzip at all.
+    assert!(install_archive(b"garbage", &sha256_hex(b"garbage"), &dest).is_err());
+    assert!(server.is_file());
+    // The pinned release is VS Code's js-debug, over https from GitHub.
+    assert!(js_debug_url().starts_with("https://github.com/microsoft/vscode-js-debug/releases/download/v1.140.0/js-debug-dap-v1.140.0.tar.gz"));
+    assert_eq!(JS_DEBUG_SHA256.len(), 64);
   }
 
   #[cfg(unix)]
@@ -503,7 +834,7 @@ mod tests {
   }
 
   fn probe<'a>(path: &'a Path, root: &'a Path, xcrun: &'a dyn Fn() -> Option<PathBuf>, has_debugpy: &'a dyn Fn(&Path) -> bool) -> Probe<'a> {
-    Probe { override_var: None, path: Some(path.as_os_str()), home: None, root, xcrun, has_debugpy }
+    Probe { override_var: None, path: Some(path.as_os_str()), home: None, root, xcrun, has_debugpy, js_debug: None }
   }
 
   #[cfg(unix)]
@@ -644,7 +975,7 @@ mod tests {
           }
           Ok(DapEvent::Stderr { line }) => self.stderr.push(line),
           Ok(DapEvent::Exit { code }) => panic!("adapter exited ({code:?}) waiting for {what}; stderr: {:?}", self.stderr),
-          Err(_) => panic!("timed out waiting for {what}; stderr: {:?}", self.stderr),
+          Err(_) => panic!("timed out waiting for {what}; stderr: {:?}; backlog: {:?}", self.stderr, self.backlog),
         }
       }
     }
@@ -735,6 +1066,58 @@ mod tests {
       return;
     };
     run_core_loop(&mut d);
+  }
+
+  /// js-debug's shape: a TCP server whose parent session asks for a child session
+  /// (`startDebugging`), which is a second connection to the same server.
+  #[test]
+  fn child_sessions_connect_to_the_same_server_like_js_debug() {
+    let Some(python) = python3() else {
+      eprintln!("python3 not found; skipping");
+      return;
+    };
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/fake_jsdebug.py");
+    let sessions: &'static Sessions = Box::leak(Box::default());
+    let (sink, rx) = collect();
+    let launch = Launch { program: python, args: vec![script.to_string_lossy().into_owned()], cwd: std::env::temp_dir(), env: vec![("PATH".into(), "/usr/bin:/bin".into())], connect: Connect::Tcp };
+    let id = sessions.start(launch, sink).unwrap();
+    let mut parent = Driver { sessions, id, rx, seq: 0, stderr: Vec::new(), backlog: Vec::new() };
+    let s = parent.request("initialize", serde_json::json!({ "clientID": "kingu", "adapterID": "pwa-node" }));
+    assert_eq!(parent.response(s)["body"]["exceptionBreakpointFilters"][0]["filter"], "uncaught");
+    let l = parent.request("launch", serde_json::json!({ "type": "pwa-node", "program": "/ws/index.js" }));
+    parent.response(l);
+    let req = parent.wait(30, "startDebugging", |v| v["type"] == "request" && v["command"] == "startDebugging");
+    let config = req["arguments"]["configuration"].clone();
+    assert_eq!(config["__pendingTargetId"], "target-1");
+
+    // The child: its own connection and session id, the same address.
+    let (sink, rx) = collect();
+    let child_id = sessions.connect_child(id, sink).unwrap();
+    assert_ne!(child_id, id);
+    let mut child = Driver { sessions, id: child_id, rx, seq: 0, stderr: Vec::new(), backlog: Vec::new() };
+    let s = child.request("initialize", serde_json::json!({ "clientID": "kingu", "adapterID": "pwa-node" }));
+    child.response(s);
+    let l = child.request("launch", config);
+    child.response(l);
+    child.event("initialized");
+    let s = child.request("setBreakpoints", serde_json::json!({ "source": { "path": "/ws/index.js" }, "breakpoints": [{ "line": 2 }] }));
+    child.response(s);
+    let s = child.request("configurationDone", serde_json::json!({}));
+    child.response(s);
+    assert_eq!(child.event("stopped")["body"]["threadId"], 7);
+    let s = child.request("continue", serde_json::json!({ "threadId": 7 }));
+    child.response(s);
+    child.event("terminated");
+    // Stopping the child closes only its connection; the server (parent) keeps running.
+    sessions.stop(child_id).unwrap();
+    assert_eq!(child.exit(), None);
+    assert!(sessions.is_running(id));
+    // A child of a session that is not a TCP server, or is gone, is refused.
+    assert!(sessions.connect_child(9999, collect().0).is_err());
+    let s = parent.request("disconnect", serde_json::json!({}));
+    parent.response(s);
+    parent.exit();
+    assert!(!sessions.is_running(id));
   }
 
   #[cfg(unix)]
