@@ -6,6 +6,10 @@ crate::i18n::messages! {
       en: "Local history entry {id} not found.",
       th: "ไม่พบรายการ local history {id}",
     },
+    BadPath {
+      en: "Not an absolute file path: {path}",
+      th: "ไม่ใช่พาธเต็มของไฟล์: {path}",
+    },
     NoHistory {
       en: "This file has no local history.",
       th: "ไฟล์นี้ไม่มี local history",

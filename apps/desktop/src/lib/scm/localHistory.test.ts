@@ -76,4 +76,13 @@ describe('local history', () => {
 		v.forget('a.ts');
 		expect(v.isNew('a.ts', 4)).toBe(true);
 	});
+
+	test('a file outside the folder keeps history under its external: key', () => {
+		const key = 'external:/Users/me/notes/todo.md';
+		expect(parseLocalHistoryKey(localHistoryKey('Ab12.md', key))).toEqual({ id: 'Ab12.md', rel: key });
+		const diff = localHistoryDiffKey('Ab12.md', null, key);
+		expect(parseLocalHistoryDiffKey(diff)).toEqual({ left: 'Ab12.md', right: null, rel: key });
+		expect(isDiffKey(diff)).toBe(true);
+		expect(fileOf(diff)).toBe(key);
+	});
 });

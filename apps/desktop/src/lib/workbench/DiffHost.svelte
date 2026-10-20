@@ -31,6 +31,8 @@
 	import { installHunkToolbars, type HunkToolbars } from '#lib/ade/hunkToolbars.ts';
 	import { localHistoryKey, parseLocalHistoryDiffKey } from '#lib/scm/localHistory.ts';
 	import { readTextResource } from '#lib/settings/resources.ts';
+	import { isExternalKey } from './externalFiles';
+	import { getEntry } from './editorModels';
 
 	let { active, onfail, reportLanguage = false }: { active: string | null; onfail: (key: string) => void; reportLanguage?: boolean } = $props();
 	const activeKey = $derived(active);
@@ -121,6 +123,14 @@
 	});
 
 	/** Working copy: the open tab's text (unsaved edits included), else the file on disk, else empty (deleted). */
+	/** A file outside the folder as its editor has it, else as it is on disk (local history of an `external:` editor). */
+	async function externalCopy(key: string): Promise<string> {
+		const open = getEntry(key)?.model;
+		if (open && !open.isDisposed()) return open.getValue();
+		const read = await readTextResource(key, { acceptLarge: true }).catch(() => null);
+		return read?.kind === 'text' ? read.content : '';
+	}
+
 	async function workingCopy(m: typeof import('#lib/editor/monaco.ts'), rel: string): Promise<string> {
 		const open = m.monaco.editor.getModel(m.monaco.Uri.file('/' + rel));
 		if (open) return open.getValue();
@@ -178,7 +188,7 @@
 				readTextResource(localHistoryKey(id, local.rel), { acceptBinary: true, acceptLarge: true }).then((r) => (r.kind === 'text' ? r.content : ''));
 			return Promise.all([
 				entry(local.left).then((text) => ({ text, path: `localhistory/${local.left}/${local.rel}` })),
-				local.right ? entry(local.right) : workingCopy(m, local.rel)
+				local.right ? entry(local.right) : isExternalKey(local.rel) ? externalCopy(local.rel) : workingCopy(m, local.rel)
 			]);
 		}
 		// Staged Changes: the index on the right.

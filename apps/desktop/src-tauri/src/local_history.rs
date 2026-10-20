@@ -302,17 +302,40 @@ impl LocalHistory {
     Self::write_file(&dst, &target)
   }
 
-  /// Every history folder's resource under `root` (Find Entry to Restore), as relative paths.
-  pub fn files_under(&self, root: &Path) -> Vec<String> {
-    let prefix = format!("{}/", file_uri(root));
+  /// Moves the history of every file under the folder `from` to the same path under `to` (a
+  /// folder renamed or moved in the Explorer: VS Code's tracker moves each file's entries).
+  pub fn move_folder(&self, from: &Path, to: &Path) -> Result<usize, String> {
+    let prefix = format!("{}/", file_uri(from));
+    let Ok(dirs) = std::fs::read_dir(&self.home) else { return Ok(0) };
+    let moves: Vec<(PathBuf, PathBuf)> = dirs
+      .flatten()
+      .filter_map(|d| Self::read_file(&d.path()))
+      .filter_map(|f| {
+        let rest = f.resource.strip_prefix(&prefix)?;
+        Some((from.join(percent_decode(rest)), to.join(percent_decode(rest))))
+      })
+      .collect();
+    for (a, b) in &moves {
+      self.move_entries(a, b)?;
+    }
+    Ok(moves.len())
+  }
+
+  /// Every file with history (Find Entry to Restore), newest first: paths under `root` relative
+  /// to it, other files as `external:<absolute path>` (VS Code lists every file it has history of).
+  pub fn files_under(&self, root: Option<&Path>) -> Vec<String> {
+    let prefix = root.map(|r| format!("{}/", file_uri(r)));
     let Ok(dirs) = std::fs::read_dir(&self.home) else { return Vec::new() };
     let mut out: Vec<(u64, String)> = dirs
       .flatten()
       .filter_map(|d| Self::read_file(&d.path()))
       .filter_map(|f| {
-        let rel = f.resource.strip_prefix(&prefix)?;
         let newest = f.entries.iter().map(|e| e.timestamp).max()?;
-        Some((newest, percent_decode(rel)))
+        if let Some(rel) = prefix.as_deref().and_then(|p| f.resource.strip_prefix(p)) {
+          return Some((newest, percent_decode(rel)));
+        }
+        let abs = f.resource.strip_prefix("file://")?;
+        Some((newest, format!("{EXTERNAL_PREFIX}{}", percent_decode(abs))))
       })
       .collect();
     out.sort_by_key(|e| std::cmp::Reverse(e.0));
@@ -351,11 +374,33 @@ fn percent_decode(s: &str) -> String {
 
 // --- Commands ---------------------------------------------------------------------------------
 
-/// `rel` in the open folder (it need not exist: a deleted file keeps its history).
+/// The webview's key of a file outside the open folder (`external:<absolute path>`).
+const EXTERNAL_PREFIX: &str = "external:";
+
+/// An `external:` key's absolute path (no `..`, no relative path).
+fn external_path(rel: &str) -> Option<Result<PathBuf, String>> {
+  let path = rel.strip_prefix(EXTERNAL_PREFIX)?;
+  let p = Path::new(path);
+  if !p.is_absolute() || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+    return Some(Err(tr!(LocalHistoryMsg::BadPath, path)));
+  }
+  Some(Ok(p.to_path_buf()))
+}
+
+/// `rel` in the open folder (it need not exist: a deleted file keeps its history), or the file an
+/// `external:` key names (an editor of a file outside the folder keeps history too, like VS Code).
 fn file_of(ws: &Workspace, rel: &str) -> Result<PathBuf, String> {
+  if let Some(abs) = external_path(rel) {
+    return abs;
+  }
   let root = ws.root()?;
   crate::git::check_rel(&root, rel)?;
   Ok(root.join(rel))
+}
+
+/// What `workbench.localHistory.exclude` matches: the workspace path, or an external file's absolute one.
+fn match_path(rel: &str) -> &str {
+  rel.strip_prefix(EXTERNAL_PREFIX).unwrap_or(rel)
 }
 
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
@@ -373,7 +418,7 @@ pub async fn local_history_add(
 ) -> Result<Option<Entry>, String> {
   let abs = file_of(&ws, &rel)?;
   let history = Arc::clone(&history);
-  blocking(move || history.add(&rel, &abs, source.as_deref(), &settings, None)).await
+  blocking(move || history.add(match_path(&rel), &abs, source.as_deref(), &settings, None)).await
 }
 
 #[tauri::command]
@@ -421,12 +466,16 @@ pub async fn local_history_delete_all(history: State<'_, Arc<LocalHistory>>) -> 
 /// Restore Contents: the entry's bytes replace the file (VS Code's cloneFile onto the resource).
 #[tauri::command]
 pub async fn local_history_restore(ws: State<'_, Workspace>, history: State<'_, Arc<LocalHistory>>, rel: String, id: String) -> Result<(), String> {
-  let root = ws.root()?;
   let abs = file_of(&ws, &rel)?;
+  // A file outside the folder is written where it is; a workspace file through the folder's checks.
+  let root = if rel.starts_with(EXTERNAL_PREFIX) { None } else { Some(ws.root()?) };
   let history = Arc::clone(&history);
   blocking(move || {
     let bytes = history.content(&abs, &id)?;
-    let target = crate::textfile::resolve_for_write(&root, &rel)?;
+    let target = match &root {
+      Some(root) => crate::textfile::resolve_for_write(root, &rel)?,
+      None => abs.clone(),
+    };
     std::fs::write(&target, bytes).map_err(|e| format!("{rel}: {e}"))?;
     log::info!("local history: restored {rel} from {id}");
     Ok(())
@@ -434,20 +483,28 @@ pub async fn local_history_restore(ws: State<'_, Workspace>, history: State<'_, 
   .await
 }
 
-/// A file was renamed or moved in the folder: its history follows it.
+/// A file or folder was renamed or moved in the folder: the history of the file (of every file
+/// under the folder) follows it.
 #[tauri::command]
 pub async fn local_history_move(ws: State<'_, Workspace>, history: State<'_, Arc<LocalHistory>>, from: String, to: String) -> Result<(), String> {
   let (src, dst) = (file_of(&ws, &from)?, file_of(&ws, &to)?);
   let history = Arc::clone(&history);
-  blocking(move || history.move_entries(&src, &dst)).await
+  blocking(move || {
+    if dst.is_dir() {
+      history.move_folder(&src, &dst).map(|_| ())
+    } else {
+      history.move_entries(&src, &dst)
+    }
+  })
+  .await
 }
 
 /// The files of the open folder that have history, most recently changed first.
 #[tauri::command]
 pub async fn local_history_files(ws: State<'_, Workspace>, history: State<'_, Arc<LocalHistory>>) -> Result<Vec<String>, String> {
-  let root = ws.root()?;
+  let root = ws.root().ok();
   let history = Arc::clone(&history);
-  blocking(move || Ok(history.files_under(&root))).await
+  blocking(move || Ok(history.files_under(root.as_deref()))).await
 }
 
 #[cfg(test)]
@@ -554,14 +611,14 @@ mod tests {
     s.max_file_size_kb = 0;
     assert_eq!(h.add("a.txt", &file, None, &s, Some(90_000)).unwrap(), None);
 
-    assert_eq!(h.files_under(&ws), vec!["a.txt".to_string()]);
+    assert_eq!(h.files_under(Some(&ws)), vec!["a.txt".to_string()]);
 
     // Moved with the file; the last removal drops the folder.
     let to = ws.join("b c.txt");
     h.move_entries(&file, &to).unwrap();
     assert!(h.list(&file).is_empty());
     assert_eq!(h.list(&to).len(), 2);
-    assert_eq!(h.files_under(&ws), vec!["b c.txt".to_string()]);
+    assert_eq!(h.files_under(Some(&ws)), vec!["b c.txt".to_string()]);
     for e in h.list(&to) {
       h.remove(&to, &e.id).unwrap();
     }
@@ -573,5 +630,46 @@ mod tests {
     h.clear().unwrap();
     assert!(h.list(&file).is_empty());
     h.clear().unwrap();
+  }
+
+  #[test]
+  fn a_folder_move_takes_every_file_history_under_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = LocalHistory::new(tmp.path().join("History"));
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir_all(ws.join("src/deep")).unwrap();
+    let s = settings();
+    for f in ["src/a.ts", "src/deep/b.ts", "srcx.ts"] {
+      std::fs::write(ws.join(f), f).unwrap();
+      h.add(f, &ws.join(f), None, &s, Some(1_000)).unwrap().unwrap();
+    }
+    std::fs::rename(ws.join("src"), ws.join("lib")).unwrap();
+    assert_eq!(h.move_folder(&ws.join("src"), &ws.join("lib")).unwrap(), 2);
+    assert!(h.list(&ws.join("src/a.ts")).is_empty());
+    assert_eq!(h.list(&ws.join("lib/a.ts")).len(), 1);
+    assert_eq!(h.content(&ws.join("lib/deep/b.ts"), &h.list(&ws.join("lib/deep/b.ts"))[0].id).unwrap(), b"src/deep/b.ts");
+    // A sibling whose name only starts the same stays.
+    assert_eq!(h.list(&ws.join("srcx.ts")).len(), 1);
+  }
+
+  #[test]
+  fn files_outside_the_folder_are_listed_as_external_keys() {
+    let tmp = tempfile::tempdir().unwrap();
+    let h = LocalHistory::new(tmp.path().join("History"));
+    let ws = tmp.path().join("ws");
+    let other = tmp.path().join("notes/todo.md");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+    std::fs::write(ws.join("a.txt"), "a").unwrap();
+    std::fs::write(&other, "b").unwrap();
+    let s = settings();
+    h.add("a.txt", &ws.join("a.txt"), None, &s, Some(1_000)).unwrap().unwrap();
+    h.add(&other.to_string_lossy(), &other, None, &s, Some(2_000)).unwrap().unwrap();
+    assert_eq!(h.files_under(Some(&ws)), vec![format!("external:{}", other.display()), "a.txt".to_string()]);
+    assert_eq!(h.files_under(None).len(), 2);
+    assert_eq!(external_path(&format!("external:{}", other.display())).unwrap().unwrap(), other);
+    assert!(external_path("external:relative/x").unwrap().is_err());
+    assert!(external_path("external:/a/../b").unwrap().is_err());
+    assert!(external_path("src/a.ts").is_none());
   }
 }

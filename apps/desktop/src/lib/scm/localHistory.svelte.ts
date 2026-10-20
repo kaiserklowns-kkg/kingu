@@ -3,7 +3,8 @@
 // entry (a copy kept by Rust local_history.rs) unless `workbench.localHistory.enabled` is off, the
 // file is larger than `maxFileSize` or `exclude` matches it; a save within `mergeWindow` of the
 // last entry replaces it. Entries show in the Timeline next to the git history, with Compare with
-// File / Previous / Selected, Show Contents, Restore, Rename and Delete.
+// File / Previous / Selected, Show Contents, Restore, Rename and Delete. A file outside the folder
+// (an `external:` editor) keeps history too, under its key, like VS Code's for any file resource.
 
 import { invoke } from '@tauri-apps/api/core';
 import { clientLog } from '#lib/client-log.ts';
@@ -17,6 +18,7 @@ import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
 import { fileOf, isDiffKey } from '#lib/workbench/scm.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
+import { externalPath, isExternalKey } from '#lib/workbench/externalFiles.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { fromNow } from './blame';
 import {
@@ -38,11 +40,14 @@ import { isRepoFile } from './scmViews.svelte';
 const enabled = () => settings.get<boolean>('workbench.localHistory.enabled') !== false;
 const baseName = (rel: string) => rel.slice(rel.lastIndexOf('/') + 1);
 
-/** The workspace file an editor key is about: the file, a diff of it, or one of its history entries. */
+/** A file that has local history: a workspace file, or one outside the folder (`external:` key). */
+export const hasHistory = (file: string | null): file is string => isRepoFile(file) || (!!file && isExternalKey(file) && externalPath(file).startsWith('/'));
+
+/** The file an editor key is about: the file, a diff of it, or one of its history entries. */
 export function historyFile(key: string | null): string | null {
 	if (!key) return null;
 	const file = isDiffKey(key) || isLocalHistoryKey(key) ? fileOf(key) : key;
-	return isRepoFile(file) ? file : null;
+	return hasHistory(file) ? file : null;
 }
 
 class LocalHistory {
@@ -77,7 +82,7 @@ class LocalHistory {
 
 	/** Adds an entry of `rel` as it is on disk (`source` null: "File Saved"). */
 	async add(rel: string, source: string | null = null): Promise<HistoryEntry | null> {
-		if (!enabled() || !isRepoFile(rel) || !workspace.root) return null;
+		if (!enabled() || !hasHistory(rel) || (!workspace.root && !isExternalKey(rel))) return null;
 		try {
 			const entry = await invoke<HistoryEntry | null>('local_history_add', { rel, source, settings: historySettingsFrom((id) => settings.get(id)) });
 			if (entry && this.entries[rel]) await this.load(rel);
@@ -90,7 +95,7 @@ class LocalHistory {
 
 	/** The save hook: skips a save whose content already has an entry (VS Code's tracker). */
 	onSaved(rel: string, version: number) {
-		if (!isRepoFile(rel) || !this.#saved.isNew(rel, version)) return;
+		if (!hasHistory(rel) || !this.#saved.isNew(rel, version)) return;
 		void this.add(rel);
 	}
 
@@ -213,7 +218,10 @@ class LocalHistory {
 		if (!files.length) return status.flash(t('localHistory.none'));
 		const file = await quick.choose({
 			placeholder: t('localHistory.pickFile'),
-			items: files.map((rel) => ({ id: rel, label: baseName(rel), description: rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '' }))
+			items: files.map((rel) => {
+				const path = isExternalKey(rel) ? externalPath(rel) : rel;
+				return { id: rel, label: baseName(path), description: path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '' };
+			})
 		});
 		if (!file) return;
 		const list = [...(await this.load(file.id))].reverse();

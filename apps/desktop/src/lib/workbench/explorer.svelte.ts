@@ -543,7 +543,7 @@ class Explorer {
 
 export const explorer = new Explorer();
 
-/** A file's local history follows a rename or move (VS Code's tracker moves the entries); a folder has none of its own. */
+/** A file's local history follows a rename or move (VS Code's tracker moves the entries); for a folder, every file's under it. */
 function moveLocalHistory(from: string, to: string) {
 	invoke('local_history_move', { from, to }).catch((e) => clientLog('info', `local history move ${from}: ${e}`));
 }

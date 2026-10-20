@@ -24,6 +24,7 @@ import { fromNow } from './blame';
 import { isRepoFile } from './scmViews.svelte';
 import { historyFile, installLocalHistory, localHistory } from './localHistory.svelte';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
+import { isExternalKey } from '#lib/workbench/externalFiles.ts';
 import { mergeByTime, type HistoryEntry, type TimelineSource } from './localHistory';
 
 /** One commit of a file (Rust `git_editor::FileCommit`). */
@@ -112,7 +113,8 @@ class Timeline {
 			return;
 		}
 		void localHistory.load(p);
-		if (!scm.repo) {
+		// A file outside the folder has local history only.
+		if (!scm.repo || isExternalKey(p)) {
 			this.commits = [];
 			this.more = false;
 			return;
