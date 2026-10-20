@@ -19,6 +19,7 @@ mod gitlab;
 mod jira;
 mod linear;
 mod local_ai;
+mod local_history;
 mod logging;
 mod lsp;
 mod menu;
@@ -1085,6 +1086,7 @@ pub fn run() {
       let start = workspace::startup_root(last, std::env::var_os("KINGU_WORKSPACE"));
       app.manage(recent);
       app.manage(projects::Projects::load(app.path().app_data_dir()?.join("projects.json")));
+      app.manage(Arc::new(local_history::LocalHistory::new(app.path().app_data_dir()?.join("History"))));
       let data = app.path().app_data_dir()?;
       #[cfg(unix)]
       let (runtime, uid) = (
@@ -1388,6 +1390,15 @@ pub fn run() {
       worktree_search,
       worktree_search_cancel,
       search_replace,
+      local_history::local_history_add,
+      local_history::local_history_list,
+      local_history::local_history_read,
+      local_history::local_history_rename,
+      local_history::local_history_delete,
+      local_history::local_history_delete_all,
+      local_history::local_history_restore,
+      local_history::local_history_move,
+      local_history::local_history_files,
       local_ai::local_ai_complete,
       local_ai::local_ai_cancel,
       local_ai::semantic_index,
