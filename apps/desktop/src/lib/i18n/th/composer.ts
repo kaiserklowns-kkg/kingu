@@ -95,5 +95,7 @@ export const composer = {
 	'composer.approve.allowlist': 'รายการที่อนุญาต',
 	'composer.approve.changeRunMode': 'เปลี่ยนโหมดการรัน',
 	'composer.approve.allowCall': 'อนุญาตการเรียกนี้เสมอ',
-	'composer.approve.skipped': 'ข้าม {name}'
+	'composer.approve.skipped': 'ข้าม {name}',
+	'composer.stop': 'หยุด',
+	'composer.approve.skippedEdit': 'ข้ามการแก้ {file}'
 } satisfies Record<keyof typeof en, string>;

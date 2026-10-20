@@ -53,12 +53,11 @@
 	import QuestionCard from './QuestionCard.svelte';
 	import ChatMarkdown from './ChatMarkdown.svelte';
 	import ChatToolRow from './ChatToolRow.svelte';
-	import ChatRequestChanges from './ChatRequestChanges.svelte';
 	import ArtifactCard from '#lib/artifacts/ArtifactCard.svelte';
 	import { answersFor, parseAsk } from './ask';
-	import { buildTurns, foldSteps, responseText, splitVerb, workedFor, type Part } from './chatParts';
+	import { buildTurns, foldSteps, hiddenTools, responseText, splitVerb, workedFor, type Part } from './chatParts';
 	import { timeAgo } from '#lib/ade/model.ts';
-	import { skippedName } from './composer.ts';
+	import { skippedText } from './composer.ts';
 	import { contextLabel } from './chatPrompt';
 	import { formatUsage, type Decision, type PermissionRequest } from './events';
 	import { usageDisplay } from './chatExtras';
@@ -315,7 +314,9 @@
 								{/if}
 							</div>
 						{:else if part.kind === 'tool'}
-							<ChatToolRow {part} turnDone={turn.done} {cwd} {root} {chatId} pending={pendingTools(turn.parts)} onimplement={last ? actions.implement : undefined} />
+							{#if !(part.id && hiddenTools(turn.parts, run?.decisions ?? {}).has(part.id))}
+								<ChatToolRow {part} turnDone={turn.done} {cwd} {root} {chatId} pending={pendingTools(turn.parts)} onimplement={last ? actions.implement : undefined} />
+							{/if}
 						{:else if part.kind === 'confirmation'}
 							{@const ev = part.request}
 							{@const decided = run?.decisions[ev.request_id]}
@@ -328,13 +329,13 @@
 								<!-- A skipped call is a quiet line ("Skipped rm", Cursor's). -->
 								<div class="flex items-center gap-1.5 text-(--vscode-descriptionForeground)">
 									{#if isAsk(ev)}<Icon name="circleDashed" size={13} />{/if}
-									<span class="truncate">{isAsk(ev) ? t('chatView.questionDismissed') : t('composer.approve.skipped', { name: skippedName(ev.tool, ev.input) })}</span>
+									<span class="truncate">{isAsk(ev) ? t('chatView.questionDismissed') : skippedText(ev.tool, ev.input)}</span>
 								</div>
 							{:else if onanswer && !run?.ended && isAsk(ev) && parseAsk(ev.input)}
 								{@const ask = parseAsk(ev.input)!}
 								<QuestionCard prompt={ask} onsubmit={(sels) => onanswer(ev, 'allow', undefined, answersFor(ask, sels))} ondismiss={() => onanswer(ev, 'deny')} />
 							{:else if onanswer && !run?.ended}
-								<PermissionCard request={ev} keys={!!chatId} runMode={actions.runMode} onanswer={(decision, message) => onanswer(ev, decision, message)} />
+								<PermissionCard request={ev} keys={!!chatId} runMode={actions.runMode} {cwd} onanswer={(decision, message) => onanswer(ev, decision, message)} />
 							{:else}
 								<div class="flex items-center gap-1.5 text-(--vscode-editorWarning-foreground)">
 									<Icon name="question" size={13} />
@@ -360,10 +361,6 @@
 						<div class="flex items-center gap-1.5 text-(--vscode-descriptionForeground)" role="status">
 							<span class="animate-pulse"><span class="font-semibold">{splitVerb(t('composer.progress.planning')).verb}</span> {splitVerb(t('composer.progress.planning')).rest}</span>
 						</div>
-					{/if}
-
-					{#if turn.done && chatId && turn.checkpoint != null && !dim}
-						<ChatRequestChanges {chatId} request={turn.checkpoint} />
 					{/if}
 
 					{#if turn.done && turn.request && turn.parts.length}

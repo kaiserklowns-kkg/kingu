@@ -25,12 +25,13 @@ import {
 	commandNames,
 	shellTokens,
 	skippedName,
+	skippedText,
 	stopKey
 } from './composer.ts';
 import { filterRows, initialActive, nextEnabled, placeMenu, startsSection, type MenuRow } from './composerMenu.ts';
 import { DRILL_SOURCES, filterScoped, planMentions } from './chatContext.ts';
 import { modeCommands, type SlashItem } from './slashCommands.ts';
-import { activityEnd, bashDescription, editSnippet, foldSteps, splitVerb, workedFor } from './chatParts.ts';
+import { activityEnd, bashDescription, editSnippet, foldSteps, hiddenTools, splitVerb, workedFor } from './chatParts.ts';
 
 setLocale('en');
 
@@ -309,7 +310,20 @@ test('"Worked for" folds only a finished request\'s steps before its answer', ()
 	expect(foldSteps({ request: {}, done: false, parts: steps })).toBe(0);
 	expect(foldSteps({ request: null, done: true, parts: steps })).toBe(0);
 	expect(foldSteps({ request: {}, done: true, parts: [{ kind: 'markdown' }] })).toBe(0);
-	expect(foldSteps({ request: {}, done: true, parts: [{ kind: 'tool' }] })).toBe(0);
+	// A turn a steered message closed before any answer folds all its steps.
+	expect(foldSteps({ request: {}, done: true, parts: [{ kind: 'tool' }, { kind: 'tool' }] })).toBe(2);
+	// Text between steps folds too; a skipped call after the answer stays in view.
+	expect(foldSteps({ request: {}, done: true, parts: [{ kind: 'tool' }, { kind: 'markdown' }, { kind: 'tool' }, { kind: 'markdown' }, { kind: 'confirmation' }] })).toBe(3);
+	expect(foldSteps({ request: {}, done: true, parts: [{ kind: 'tool' }, { kind: 'markdown' }, { kind: 'error' }] })).toBe(1);
+});
+
+test('a call waiting for approval or skipped is drawn only as its card or "Skipped" line', () => {
+	const req = (id: string, tool = 'Bash') => ({ kind: 'confirmation' as const, request: { kind: 'permission_request' as const, request_id: id, tool, tool_use_id: `t-${id}`, title: null, input_summary: '', detail: null, diff: null, input: {}, can_always: false } });
+	const parts = [req('a'), req('b'), req('c'), req('q', 'AskUserQuestion')];
+	expect([...hiddenTools(parts, { b: 'deny', c: 'allow' })].sort()).toEqual(['t-a', 't-b']);
+	expect(skippedText('Edit', { file_path: '/tmp/p/src/app.js' })).toBe('Skipped edit to app.js');
+	expect(skippedText('Bash', { command: 'rm x' })).toBe('Skipped rm');
+	expect(skippedText('WebFetch', {})).toBe('Skipped WebFetch');
 });
 
 test('composer dropdowns stay inside the chat panel', () => {

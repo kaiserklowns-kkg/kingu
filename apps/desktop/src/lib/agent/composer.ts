@@ -336,5 +336,13 @@ export function skippedName(tool: string, input: unknown): string {
 	return tool;
 }
 
+/** The quiet line a skipped call leaves: "Skipped rm", "Skipped edit to app.js", "Skipped WebFetch". */
+export function skippedText(tool: string, input: unknown): string {
+	const o = input && typeof input === 'object' ? (input as Record<string, unknown>) : null;
+	const file = typeof o?.file_path === 'string' ? o.file_path : typeof o?.notebook_path === 'string' ? o.notebook_path : null;
+	if (file && ['Edit', 'MultiEdit', 'Write', 'NotebookEdit'].includes(tool)) return t('composer.approve.skippedEdit', { file: file.split('/').pop() || file });
+	return t('composer.approve.skipped', { name: skippedName(tool, input) });
+}
+
 /** Whether a runtime can take a message while a turn runs (steer); the others stop and send. */
 export const canSteer = (protocol: string | null | undefined): boolean => !protocol || protocol === 'claude';

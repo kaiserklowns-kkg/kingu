@@ -2,7 +2,8 @@
 	// A pending permission request, laid out like Cursor's inline command approval: a quiet
 	// "Pending approval" line, then the card. A shell call's header is its description and the
 	// command names it runs ("›_ Write probe2.txt and print it  echo, cat"), over the command with
-	// shell colours; other tools show their title, input and +/− lines. The bottom row: "Allowlist ⌄"
+	// shell colours; an edit is Cursor's edit card (the file's icon, its path in the workspace,
+	// +/− and a few lines of the diff); other tools show their title, input and +/− lines. The bottom row: "Allowlist ⌄"
 	// on the left (the chat's run mode, "Change run mode", and under a separator the ways to always
 	// allow this call: in this folder, this session, every folder), Skip and Run on the right. In the
 	// Agent panel the composer answers it too while its input is empty: ⏎ Run, ⇧⏎ allow in this
@@ -14,7 +15,9 @@
 	import ComposerMenu from './ComposerMenu.svelte';
 	import type { MenuRow } from './composerMenu.ts';
 	import { commandNames, runModeHint, runModeLabel, shellTokens, type ShellToken } from './composer.ts';
-	import { bashDescription } from './chatParts.ts';
+	import { bashDescription, editOf, editSnippet, shortPath } from './chatParts.ts';
+	import FileIcon from '#lib/workbench/FileIcon.svelte';
+	import { fileIcon } from '#lib/workbench/fileIcons.ts';
 
 	/** The chat's run mode, changed from the card's Allowlist menu (the Agent panel's chats). */
 	export type RunModeControl = { current: AgentApproval; options: readonly AgentApproval[]; pick: (a: AgentApproval) => void; locked?: boolean };
@@ -23,8 +26,16 @@
 		request,
 		onanswer,
 		keys = false,
-		runMode
-	}: { request: PermissionRequest; onanswer: (decision: Decision, message?: string) => void; keys?: boolean; runMode?: RunModeControl } = $props();
+		runMode,
+		cwd = null
+	}: {
+		request: PermissionRequest;
+		onanswer: (decision: Decision, message?: string) => void;
+		keys?: boolean;
+		runMode?: RunModeControl;
+		/** Where the agent runs: an edit's path is shown relative to it. */
+		cwd?: string | null;
+	} = $props();
 
 	let sent = $state(false);
 	let menuOpen = $state(false);
@@ -41,6 +52,9 @@
 	const description = $derived(bashDescription(request.input));
 	const names = $derived(command ? commandNames(command).join(', ') : '');
 	const tokens = $derived(command ? shellTokens(command) : []);
+	const edit = $derived(editOf(request.tool, request.input));
+	const editPath = $derived(edit ? shortPath(edit.path, cwd) : '');
+	const snippet = $derived(edit ? editSnippet(request.tool, request.input, 8) : []);
 	const rule = $derived(request.rules?.length ? t('chatInput.perm.rules', { rules: request.rules.join(', ') }) : t('chatInput.perm.wholeTool', { tool: request.tool }));
 	const rows = $derived<MenuRow[]>([
 		...(runMode
@@ -90,6 +104,26 @@
 				{#if names}<span class="min-w-0 shrink-0 truncate text-(--vscode-descriptionForeground)">{names}</span>{/if}
 			</div>
 			<pre class="max-h-40 overflow-auto border-y border-(--vscode-widget-border) bg-(--vscode-textCodeBlock-background,var(--vscode-editor-background)) px-2.5 py-1.5 font-mono break-all whitespace-pre-wrap"><span class="text-(--vscode-descriptionForeground) select-none">$ </span>{#each tokens as tok, i (i)}<span style:color={COLOR[tok.kind]}>{tok.text}</span>{/each}</pre>
+		{:else if edit}
+			<div class="flex min-w-0 items-center gap-1.5 px-2.5 py-1.5" title={editPath}>
+				<FileIcon icon={fileIcon(editPath.split('/').pop() ?? editPath)} size={14} />
+				<span class="min-w-0 truncate">{editPath}</span>
+				<span class="shrink-0 font-mono text-[11px]"
+					><span class="text-(--vscode-gitDecoration-addedResourceForeground,#73c991)">+{edit.added}</span>
+					{#if edit.removed}<span class="text-(--vscode-gitDecoration-deletedResourceForeground,#f14c4c)">−{edit.removed}</span>{/if}</span
+				>
+			</div>
+			{#if snippet.length}
+				<pre class="max-h-40 overflow-auto border-y border-(--vscode-widget-border) py-0.5 font-mono leading-[18px]">{#each snippet as line, li (li)}<div
+							class={[
+								'px-2.5 whitespace-pre',
+								line.sign === '+' && 'bg-(--vscode-diffEditor-insertedLineBackground,rgba(115,201,145,0.15))',
+								line.sign === '-' && 'bg-(--vscode-diffEditor-removedLineBackground,rgba(241,76,76,0.15))',
+								line.sign === ' ' && 'text-(--vscode-descriptionForeground)'
+							]}><span class="mr-2 inline-block w-2 opacity-70 select-none">{line.sign === ' ' ? '' : line.sign}</span>{line.text || ' '}</div>{/each}</pre>
+			{:else}
+				<div class="border-b border-(--vscode-widget-border)"></div>
+			{/if}
 		{:else}
 			<div class="space-y-1.5 border-b border-(--vscode-widget-border) px-2.5 py-1.5">
 				<div class="flex items-center gap-1.5 font-medium">

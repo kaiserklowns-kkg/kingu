@@ -1,5 +1,5 @@
 // UI strings of the chat response parts (agent/ChatTodoBar, ChatToolRow, ChatEditPill,
-// ChatRequestChanges, code block actions in ChatMarkdown). Keys: 'chatParts.<what>'. Thai in
+// code block actions in ChatMarkdown). Keys: 'chatParts.<what>'. Thai in
 // ../th/chatParts.ts.
 export const chatParts = {
 	// Todo list above the input (VS Code's ChatTodoListWidget)

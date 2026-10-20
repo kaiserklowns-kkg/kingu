@@ -116,7 +116,7 @@
 				<button
 					class={[BTN, 'flex items-center gap-1 text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)']}
 					title={t('chatView.stop')}
-					onclick={() => onstop?.()}>{t('chatView.stop')}<span class="text-[10px] opacity-70">{MAC ? '⌃C' : 'Ctrl+Shift+⌫'}</span></button
+					onclick={() => onstop?.()}>{t('composer.stop')}<span class="text-[10px] opacity-70">{MAC ? '⌃C' : 'Ctrl+Shift+⌫'}</span></button
 				>
 			{:else if files.length}
 				<button

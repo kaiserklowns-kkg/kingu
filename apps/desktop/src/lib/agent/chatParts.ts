@@ -403,15 +403,45 @@ export function activityEnd(parts: readonly { kind: string }[]): number {
 	return end;
 }
 
+/** Parts that are the agent's steps (folded into "Worked for"); the rest is what it said or how it ended. */
+const STEP_KINDS = new Set(['thinking', 'tool', 'confirmation']);
+
 /**
- * How many leading parts a finished turn folds into "Worked for Ns" (Cursor's): its steps before
- * the closing answer. 0 (no "Worked" row) for a turn still running, one without a request (output
- * before the first request, or after the last), one with no steps, or one with no answer after them.
+ * How many leading parts a finished turn folds into "Worked for Ns" (Cursor's): the parts before
+ * its final answer (the last run of text), so the answer and whatever follows it (an error,
+ * "canceled", a skipped call) stay in view. A turn with no text, e.g. one a steered message
+ * closed before it answered, folds up to its last step. 0 (no "Worked" row) for a turn still
+ * running, one without a request (output before the first request), or one with no steps to fold.
  */
 export function foldSteps(turn: { request: unknown; done: boolean; parts: readonly { kind: string }[] }): number {
 	if (!turn.request || !turn.done) return 0;
-	const end = activityEnd(turn.parts);
-	return end > 0 && end < turn.parts.length ? end : 0;
+	const parts = turn.parts;
+	let end = -1;
+	for (let i = parts.length - 1; i >= 0; i--) {
+		if (parts[i].kind !== 'markdown') continue;
+		end = i;
+		while (end > 0 && parts[end - 1].kind === 'markdown') end--;
+		break;
+	}
+	if (end < 0) {
+		end = parts.length;
+		while (end > 0 && !STEP_KINDS.has(parts[end - 1].kind)) end--;
+	}
+	return parts.slice(0, end).some((p) => STEP_KINDS.has(p.kind)) ? end : 0;
+}
+
+/**
+ * Tool calls a turn does not draw as tool rows: one waiting for approval (its approval card stands
+ * in for it until Run) and one the user skipped (only "Skipped …" is left). By tool call id.
+ */
+export function hiddenTools(parts: readonly Part[], decisions: Readonly<Record<string, string>>): Set<string> {
+	const out = new Set<string>();
+	for (const p of parts) {
+		if (p.kind !== 'confirmation' || !p.request.tool_use_id || p.request.tool === 'AskUserQuestion') continue;
+		const d = decisions[p.request.request_id];
+		if (!d || d === 'deny' || d === 'cancelled') out.add(p.request.tool_use_id);
+	}
+	return out;
 }
 
 /** "Worked for 2s" / "1m 5s": a finished turn's duration. */

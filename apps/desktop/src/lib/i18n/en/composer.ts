@@ -97,5 +97,7 @@ export const composer = {
 	'composer.approve.allowlist': 'Allowlist',
 	'composer.approve.changeRunMode': 'Change run mode',
 	'composer.approve.allowCall': 'Always allow this call',
-	'composer.approve.skipped': 'Skipped {name}'
+	'composer.approve.skipped': 'Skipped {name}',
+	'composer.stop': 'Stop',
+	'composer.approve.skippedEdit': 'Skipped edit to {file}'
 } as const;
