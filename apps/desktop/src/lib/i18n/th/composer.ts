@@ -1,31 +1,19 @@
 import type { composer as en } from '../en/composer';
 
 export const composer = {
-	'composer.placeholder.agent': 'วางแผน ค้นหา สร้างได้ทุกอย่าง',
 	'composer.placeholder.followUp': 'ถามหรือสั่งต่อ',
-	'composer.placeholder.ask': 'ถาม เรียนรู้ ระดมความคิด',
-	'composer.placeholder.askFollowUp': 'ถามต่อ',
-	'composer.placeholder.plan': 'วางแผนการแก้ไข',
-	'composer.placeholder.planFollowUp': 'ปรับแผนให้ดีขึ้น',
-	'composer.placeholder.custom': 'ส่งข้อความถึง {name}',
-	'composer.placeholder.customFollowUp': 'สั่ง {name} ต่อ',
-	'composer.placeholder.running': 'ต่อคิวข้อความ (ส่งเมื่อรอบนี้จบ)',
 	'composer.placeholder.pending': 'ปฏิเสธ แนะนำ หรือสั่งต่อ?',
 	'composer.placeholder.editingQueued': 'กำลังแก้ข้อความในคิว…',
 
 	'composer.mode.label': 'โหมด: {mode}',
 	'composer.mode.hint': 'เปลี่ยนโหมด ({key} หรือ ⇧Tab)',
 	'composer.mode.footer': '{key} หรือ ⇧Tab เปลี่ยนไปโหมดถัดไป',
-	'composer.mode.agentHint': 'วางแผน ค้นหา แก้ไฟล์ และรันคำสั่ง',
-	'composer.mode.askHint': 'ตอบคำถามโดยไม่แก้ไฟล์',
-	'composer.mode.planHint': 'อ่านโค้ดแล้วเสนอแผนก่อน',
 
 	'composer.model.label': 'โมเดล: {model}',
 	'composer.model.hint': 'โมเดล: {model} ({key})',
 	'composer.model.search': 'ค้นหาโมเดล',
 	'composer.model.default': 'ค่าเริ่มต้น',
 
-	'composer.options.label': 'ตัวเลือกแชต',
 	'composer.options.hint': 'รันด้วย {runtime} ใน {where} · {run}',
 
 	'composer.run.title': 'โหมดการรัน',
@@ -47,9 +35,6 @@ export const composer = {
 	'composer.slash.source.mode': 'โหมด',
 	'composer.slash.modeSwitch': 'เปลี่ยนเป็น {mode}',
 
-	'composer.mention.recent': 'ไฟล์ล่าสุด',
-	'composer.mention.context': 'บริบท',
-	'composer.mention.files': 'ไฟล์และโฟลเดอร์',
 	'composer.mention.back': 'กลับไปที่บริบททั้งหมด',
 
 	'composer.send.queueTitle': '{action} (⏎) · {alt} อีกแบบ · {stop} หยุดแล้วส่ง · คลิกขวาดูเพิ่ม',
@@ -58,14 +43,13 @@ export const composer = {
 	'composer.status.label': 'สถานะ agent',
 	'composer.status.running': 'กำลังสร้างคำตอบ',
 	'composer.status.waiting': 'รอการอนุมัติ',
-	'composer.status.edited': 'แก้ไข {count} ไฟล์',
 
 	'composer.review.review': 'ตรวจดู',
 	'composer.review.reviewHint': 'เปิด diff ของทุกไฟล์ที่เปลี่ยน',
 	'composer.review.confirm': 'ยืนยัน',
 	'composer.review.confirmHint': 'คลิกอีกครั้งเพื่อยืนยันการย้อน',
 
-	'composer.queue.title': 'ในคิว {count} ข้อความ',
+	'composer.queue.title': 'ข้อความในคิว {count} รายการ',
 	'composer.queue.edit': 'แก้ข้อความในคิว',
 	'composer.queue.steer': 'ส่งไปปรับทิศทาง',
 	'composer.queue.steerHint': 'ส่งไปปรับทิศทาง: ส่งเดี๋ยวนี้โดยไม่ขัดจังหวะ agent',
@@ -85,5 +69,30 @@ export const composer = {
 	'composer.approve.reason': 'ข้ามพร้อมเหตุผล…',
 	'composer.approve.reasonHint': 'บอก agent ว่าทำไมจึงข้ามการเรียกนี้',
 	'composer.approve.allowlistTool': 'อนุญาต {tool} เสมอ',
-	'composer.approve.allowlistMany': 'เพิ่ม {count} กฎในรายการที่อนุญาต'
+	'composer.approve.allowlistMany': 'เพิ่ม {count} กฎในรายการที่อนุญาต',
+
+	'composer.placeholder.new': 'วางแผน สร้าง · / สำหรับ skill · @ สำหรับบริบท',
+	'composer.slash.more': 'แสดงอีก {count} รายการ',
+	'composer.mention.source.files': 'ไฟล์และโฟลเดอร์',
+	'composer.mention.source.terminal': 'Terminal',
+	'composer.mention.source.pastChat': 'แชตก่อนหน้า',
+	'composer.mention.source.scm': 'การเปลี่ยนแปลง (diff ที่ยังไม่ commit)',
+	'composer.mention.source.selection': 'ส่วนที่เลือก',
+	'composer.mention.source.problems': 'ปัญหา',
+	'composer.mention.source.clipboardImage': 'รูปภาพจากคลิปบอร์ด',
+	'composer.mention.source.instructions': 'กฎและคำสั่ง',
+	'composer.header.unread': 'เสร็จแล้ว ยังไม่ได้ดู',
+	'composer.header.close': 'ปิดแชต',
+	'composer.header.more': 'การทำงานเพิ่มเติม',
+	'composer.header.hidePanel': 'ซ่อนแผง',
+	'composer.status.files': '{count} ไฟล์',
+	'composer.progress.planning': 'วางแผน ขั้นต่อไป',
+	'composer.progress.thought': 'คิด ครู่หนึ่ง',
+	'composer.progress.worked': 'ทำงานแล้ว',
+	'composer.progress.workedFor': 'ทำงาน {time}',
+	'composer.feedback.title': 'agent ทำได้ดีไหม?',
+	'composer.nudge.title': 'ส่งข้อความใหม่ไปปรับทิศทาง?',
+	'composer.nudge.body': 'การปรับทิศทางส่งข้อความใหม่ถึง agent ขณะที่ยังทำงาน โดยไม่หยุดมัน เปิดใช้เพื่อปรับทิศทางแทนการต่อคิว',
+	'composer.nudge.keep': 'ต่อคิวต่อไป',
+	'composer.nudge.steer': 'ใช้การปรับทิศทาง'
 } satisfies Record<keyof typeof en, string>;

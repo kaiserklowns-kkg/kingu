@@ -71,7 +71,7 @@
 {#if items.length}
 	<div class="text-xs" role="region" aria-label={t('composer.queue.title', { count: items.length })}>
 		<button class="flex h-[26px] w-full items-center gap-1 pr-1 pl-1.5 text-left text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)" aria-expanded={open} onclick={() => (open = !open)}>
-			<span class={['shrink-0 transition-transform', open && 'rotate-90']}><Icon name="chevronRight" size={12} /></span>
+			<Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} />
 			{t('composer.queue.title', { count: items.length })}
 		</button>
 		{#if open}
@@ -99,7 +99,7 @@
 						ondragend={() => ((dragging = null), (dropAt = null))}
 					>
 						<span class="shrink-0 cursor-grab text-(--vscode-descriptionForeground) opacity-0 group-hover/q:opacity-100" title={t('composer.queue.drag')}><Icon name="grip" size={12} /></span>
-						<span class="size-1.5 shrink-0 rounded-full border border-(--vscode-descriptionForeground)" aria-hidden="true"></span>
+						<span class="size-2.5 shrink-0 rounded-full border border-(--vscode-descriptionForeground)" aria-hidden="true"></span>
 						<span class="min-w-0 flex-1 truncate" title={q.label}>{q.label}</span>
 						<span class="flex shrink-0 items-center opacity-0 group-focus-within/q:opacity-100 group-hover/q:opacity-100">
 							<button class={ICON} aria-label={t('composer.queue.edit')} title={t('composer.queue.edit')} onclick={() => onedit(q.n)}><Icon name="edit" size={12} /></button>

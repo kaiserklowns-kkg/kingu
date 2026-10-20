@@ -18,8 +18,20 @@
 		error = false,
 		chatId = null,
 		cwd = null,
-		root = null
-	}: { path: string; added: number; removed: number; done: boolean; error?: boolean; chatId?: string | null; cwd?: string | null; root?: string | null } = $props();
+		root = null,
+		flat = false
+	}: {
+		path: string;
+		added: number;
+		removed: number;
+		done: boolean;
+		error?: boolean;
+		chatId?: string | null;
+		cwd?: string | null;
+		root?: string | null;
+		/** The header of an edit card (no own border, full width). */
+		flat?: boolean;
+	} = $props();
 
 	const rel = $derived(shortPath(path, cwd));
 	const name = $derived(splitPath(rel)[0]);
@@ -27,7 +39,10 @@
 
 <button
 	type="button"
-	class="inline-flex max-w-full min-w-0 items-center gap-1.5 self-start rounded border border-(--vscode-widget-border) px-1.5 py-0.5 text-left hover:bg-(--vscode-list-hoverBackground)"
+	class={[
+		'min-w-0 items-center gap-1.5 text-left hover:bg-(--vscode-list-hoverBackground)',
+		flat ? 'flex w-full px-2 py-1 text-xs' : 'inline-flex max-w-full self-start rounded border border-(--vscode-widget-border) px-1.5 py-0.5'
+	]}
 	title={rel}
 	aria-label={t('chatParts.edit.open', { path: rel })}
 	onclick={() => chatEdits.openEdited(chatId, rel, shortPath(path, root))}

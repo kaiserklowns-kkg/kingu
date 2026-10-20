@@ -3,31 +3,19 @@
 // agent/ChatEditsBar.svelte, agent/PermissionCard.svelte's Skip / Run, the bottom bar of
 // agent/AgentPanel.svelte). Keys: 'composer.<what>'. Thai in ../th/composer.ts.
 export const composer = {
-	'composer.placeholder.agent': 'Plan, search, build anything',
 	'composer.placeholder.followUp': 'Add a follow-up',
-	'composer.placeholder.ask': 'Ask, learn, brainstorm',
-	'composer.placeholder.askFollowUp': 'Ask a follow-up question',
-	'composer.placeholder.plan': 'Plan changes',
-	'composer.placeholder.planFollowUp': 'Refine the plan',
-	'composer.placeholder.custom': 'Message {name}',
-	'composer.placeholder.customFollowUp': 'Add a follow-up for {name}',
-	'composer.placeholder.running': 'Queue a follow-up (sent when this turn ends)',
 	'composer.placeholder.pending': 'Reject, suggest, follow up?',
 	'composer.placeholder.editingQueued': 'Editing queued message…',
 
 	'composer.mode.label': 'Mode: {mode}',
 	'composer.mode.hint': 'Switch mode ({key} or ⇧Tab)',
 	'composer.mode.footer': '{key} or ⇧Tab switches to the next mode',
-	'composer.mode.agentHint': 'Plan, search, make edits, run commands',
-	'composer.mode.askHint': 'Answer questions without making edits',
-	'composer.mode.planHint': 'Read the code and propose a plan first',
 
 	'composer.model.label': 'Model: {model}',
 	'composer.model.hint': 'Model: {model} ({key})',
 	'composer.model.search': 'Search models',
 	'composer.model.default': 'Default',
 
-	'composer.options.label': 'Chat options',
 	'composer.options.hint': 'Runs on {runtime} in {where} · {run}',
 
 	'composer.run.title': 'Run Mode',
@@ -49,9 +37,6 @@ export const composer = {
 	'composer.slash.source.mode': 'Mode',
 	'composer.slash.modeSwitch': 'Switch to {mode}',
 
-	'composer.mention.recent': 'Recent files',
-	'composer.mention.context': 'Context',
-	'composer.mention.files': 'Files & Folders',
 	'composer.mention.back': 'Back to all context',
 
 	'composer.send.queueTitle': '{action} (⏎) · {alt} the other way · {stop} stops and sends · right-click for more',
@@ -60,14 +45,13 @@ export const composer = {
 	'composer.status.label': 'Agent status',
 	'composer.status.running': 'Generating',
 	'composer.status.waiting': 'Waiting for Approval',
-	'composer.status.edited': '{count|# file|# files} edited',
 
 	'composer.review.review': 'Review',
 	'composer.review.reviewHint': 'Open the diff of every changed file',
 	'composer.review.confirm': 'Confirm',
 	'composer.review.confirmHint': 'Click again to confirm undo',
 
-	'composer.queue.title': '{count} Queued',
+	'composer.queue.title': '{count|# Queued Message|# Queued Messages}',
 	'composer.queue.edit': 'Edit queued message',
 	'composer.queue.steer': 'Steer',
 	'composer.queue.steerHint': 'Steer: sends now without interrupting the agent',
@@ -87,5 +71,30 @@ export const composer = {
 	'composer.approve.reason': 'Skip with a reason…',
 	'composer.approve.reasonHint': 'Tell the agent why this call is skipped',
 	'composer.approve.allowlistTool': 'Always allow {tool}',
-	'composer.approve.allowlistMany': 'Allowlist {count|# rule|# rules}'
+	'composer.approve.allowlistMany': 'Allowlist {count|# rule|# rules}',
+
+	'composer.placeholder.new': 'Plan, Build, / for skills, @ for context',
+	'composer.slash.more': 'Show {count} more',
+	'composer.mention.source.files': 'Files & Folders',
+	'composer.mention.source.terminal': 'Terminals',
+	'composer.mention.source.pastChat': 'Past Chats',
+	'composer.mention.source.scm': 'Changes (Uncommitted Diff)',
+	'composer.mention.source.selection': 'Selection',
+	'composer.mention.source.problems': 'Problems',
+	'composer.mention.source.clipboardImage': 'Image from Clipboard',
+	'composer.mention.source.instructions': 'Rules & Instructions',
+	'composer.header.unread': 'Finished: not seen yet',
+	'composer.header.close': 'Close chat',
+	'composer.header.more': 'More actions',
+	'composer.header.hidePanel': 'Hide the panel',
+	'composer.status.files': '{count|# File|# Files}',
+	'composer.progress.planning': 'Planning next moves',
+	'composer.progress.thought': 'Thought briefly',
+	'composer.progress.worked': 'Worked',
+	'composer.progress.workedFor': 'Worked for {time}',
+	'composer.feedback.title': 'How did the agent do?',
+	'composer.nudge.title': 'Steer New Messages?',
+	'composer.nudge.body': 'Steering sends new messages to the agent while it works, without stopping it. Turn it on to steer instead of queuing.',
+	'composer.nudge.keep': 'Keep Queuing',
+	'composer.nudge.steer': 'Use Steering'
 } as const;

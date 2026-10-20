@@ -12,17 +12,21 @@
 <script lang="ts">
 	// The chat input, Cursor's agent composer: one rounded box with the context chips inline before
 	// the text (Backspace at the start removes the last one), a row of image thumbnails above it,
-	// and a bottom bar: the caller's controls on the left (`left`: the mode pill, the model label),
-	// then `right` (the context ring), Add Context (@), the paperclip and one round button that
-	// sends, queues (a turn is running and there is text) or stops (a turn is running, no text).
+	// and a bottom bar: the caller's controls on the left (`left`: the mode pill, the model name),
+	// then `right` (the context ring), the paperclip and one round button that sends, queues (a
+	// turn is running and there is text) or stops (a turn is running, no text); muted while empty.
+	// `top`: the composer sits at the top of an empty chat: taller, its menus open below it.
+	// Esc closes a menu, else `onescape` (focus goes back to the editor). Keys typed while focus
+	// is on the bar's own buttons go to the text (composer.ts `chromeKey`), ⇧Tab still cycles.
 	//   Enter sends, ⇧Enter adds a line; with `cmdEnter` ⌘Enter sends and Enter adds a line.
 	//   While a turn runs Enter runs `queueDefault`, ⌥Enter the other of queue / steer, ⌘Enter
 	//   stops and sends; right-click on the round button lists them.
 	//   ⌥↑ / ⌥↓ browse this chat's earlier prompts (the draft comes back); ↑ / ↓ too from an empty
 	//   input. ⇧Tab and ⌘. call `oncyclemode`. ⌘⇧⌫ (⌃C on macOS) calls `onstop`.
 	//   `approval`: a tool call waits; with the input empty ⏎ runs it, ⇧⏎ allowlists it, Esc skips.
-	//   `/` at the start lists `commands` in sections (Skills, Commands, Modes, Actions); `#` or `@`
-	//   lists `mentions` (recent files, then the context sources; Files & Folders opens in place).
+	//   `/` at the start lists `commands` in sections (Skills, folded to 3 with "Show N more", then
+	//   Commands, Modes, Actions); `#` or `@` lists `mentions` (the current file, then the context
+	//   sources; Files & Folders, Terminals and Past Chats open in place), `preview` beside it.
 	// Images can be pasted, dropped (an overlay shows while dragging) or picked with the paperclip.
 	import type { Snippet } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
@@ -35,7 +39,7 @@
 	import { clipboardImage, onFileDrop, savePastedImage } from './attachInput.ts';
 	import { hashTrigger } from './chatInput.ts';
 	import SlashSuggest, { type SuggestItem } from './SlashSuggest.svelte';
-	import { mentionQuery, removeMention } from './chatContext.ts';
+	import { mentionQuery, removeMention, type MentionScope } from './chatContext.ts';
 	import { completeCommand, filterCommands, moveActive, slashQuery, type SlashItem } from './slashCommands.ts';
 	import { sendHowFor, sendMenu, type QueueDefault, type SendHow } from './requestQueuing.ts';
 	import {
@@ -47,7 +51,8 @@
 		NO_HISTORY,
 		plainArrowBrowses,
 		primaryAction,
-		slashSections,
+		chromeKey,
+		slashMenu,
 		stopKey,
 		type HistoryNav
 	} from './composer.ts';
@@ -81,8 +86,10 @@
 		mentions,
 		onmention,
 		onmentionopen,
-		onaddcontext,
 		oncyclemode,
+		onescape,
+		preview,
+		top = false,
 		approval,
 		stacked = false,
 		tint
@@ -123,12 +130,16 @@
 		/** Submit with ⌘Enter (Enter adds a line). */
 		cmdEnter?: boolean;
 		/** The `#` / `@` list for what follows the trigger; `scope` is a list drilled into. */
-		mentions?: (query: string, scope: 'files' | null) => SuggestItem[];
+		mentions?: (query: string, scope: MentionScope | null) => SuggestItem[];
 		onmention?: (item: SuggestItem) => void;
 		/** The `#` / `@` list just opened (a moment to refresh what it lists). */
 		onmentionopen?: () => void;
-		/** The @ button (Add Context). */
-		onaddcontext?: () => void;
+		/** Esc with no menu open: focus leaves the composer. */
+		onescape?: () => void;
+		/** The highlighted `@` row's file preview. */
+		preview?: (item: SuggestItem) => Promise<string | null>;
+		/** At the top of an empty chat: taller, menus open below. */
+		top?: boolean;
 		/** ⇧Tab / ⌘.: the next mode. */
 		oncyclemode?: () => void;
 		/** A tool call waits: keys answer it while the input is empty. */
@@ -154,16 +165,24 @@
 	/** Esc closed the list for this command word. */
 	let slashClosed = $state<string | null>(null);
 	const slashText = $derived(commands.length ? slashQuery(value, caret) : null);
-	const slashRows = $derived(slashText === null ? [] : slashSections(filterCommands(commands, slashText)));
+	/** "Show N more" unfolded the Skills for this `/` word. */
+	let slashExpanded = $state(false);
+	const slashRows = $derived(slashText === null ? [] : slashMenu(filterCommands(commands, slashText), { query: slashText, expanded: slashExpanded }));
 	const SECTION_LABEL = { skills: () => t('composer.slash.skills'), commands: () => t('composer.slash.commands'), modes: () => t('composer.slash.modes'), actions: () => t('composer.slash.actions') } as const;
-	const slashItems = $derived<(SlashItem & SuggestItem)[]>(slashRows.map((r) => ({ ...r, key: `${r.source}:${r.name}`, section: r.first ? SECTION_LABEL[r.section]() : undefined })));
+	const slashItems = $derived<(SlashItem & SuggestItem)[]>(
+		slashRows.map((r) =>
+			r.kind === 'more'
+				? { name: t('composer.slash.more', { count: r.count }), description: '', argumentHint: '', source: 'project-skill', key: 'more:skills', more: true }
+				: { ...r.item, key: `${r.item.source}:${r.item.name}`, section: r.item.first ? SECTION_LABEL[r.item.section]() : undefined }
+		)
+	);
 	const slashOpen = $derived(slashItems.length > 0 && slashClosed !== value.split(/\s/, 1)[0]);
 	const listId = `slash-${Math.random().toString(36).slice(2, 8)}`;
 	// `#` / `@` (only while the `/` list is closed).
 	const mention = $derived(mentions && !slashOpen ? mentionQuery(value, caret) : null);
 	let mentionActive = $state(0);
 	/** A list drilled into (Files & Folders), for the mention starting at `start`. */
-	let mentionScope = $state<{ start: number; scope: 'files'; title: string } | null>(null);
+	let mentionScope = $state<{ start: number; scope: MentionScope; title: string } | null>(null);
 	const scope = $derived(mention && mentionScope?.start === mention.start ? mentionScope : null);
 	/** Esc closed the list for the mention starting here. */
 	let mentionClosed = $state<number | null>(null);
@@ -191,6 +210,9 @@
 		void slashText;
 		slashActive = 0;
 	});
+	$effect(() => {
+		if (slashText === null) slashExpanded = false;
+	});
 
 	// The bottom bar keeps its labels while there is room (composerLayout).
 	$effect(() => {
@@ -212,9 +234,9 @@
 
 	function pickMention(item: SuggestItem | undefined) {
 		if (!mention || !item) return;
-		if (item.drill === 'files') {
-			mentionScope = { start: mention.start, scope: 'files', title: item.name };
-			// The query typed so far stays; the list now shows only files and folders.
+		if (item.drill) {
+			// The query typed so far stays; the list now shows only that source's rows.
+			mentionScope = { start: mention.start, scope: item.drill as MentionScope, title: item.name };
 			return;
 		}
 		const next = removeMention(value, mention.start, caret);
@@ -223,8 +245,12 @@
 		onmention?.(item);
 	}
 
-	function pickCommand(item: SlashItem | undefined) {
+	function pickCommand(item: (SlashItem & SuggestItem) | undefined) {
 		if (!item) return;
+		if (item.more) {
+			slashExpanded = true;
+			return;
+		}
 		if (onpickcommand?.(item)) {
 			const end = value.search(/\s/);
 			const rest = end < 0 ? '' : value.slice(end).replace(/^[ \t]+/, '');
@@ -375,6 +401,11 @@
 			oncyclemode();
 			return;
 		}
+		if (e.key === 'Escape' && !e.isComposing && onescape) {
+			e.preventDefault();
+			onescape();
+			return;
+		}
 		if (running && onstop && area && stopKey(e, MAC, area.selectionStart !== area.selectionEnd)) {
 			e.preventDefault();
 			onstop();
@@ -412,6 +443,27 @@
 		value = value.slice(0, at) + value.slice(at + 1);
 		queueMicrotask(() => area?.setSelectionRange(at, at));
 		onhash();
+	}
+
+	/**
+	 * A key on the composer's own buttons (the mode pill, the model name, the paperclip): ⇧Tab
+	 * still switches the mode and a typed character goes into the text, so `@` opens the context
+	 * menu instead of acting on whichever button has focus.
+	 */
+	function onchromekey(e: KeyboardEvent) {
+		if (!area || e.target === area || !(e.target instanceof HTMLElement) || e.target.closest('[role="listbox"],input')) return;
+		const k = chromeKey(e);
+		if (k === 'cycle' && oncyclemode) {
+			e.preventDefault();
+			oncyclemode();
+			area.focus();
+		} else if (k === 'type' && !disabled) {
+			e.preventDefault();
+			const at = area.selectionStart ?? value.length;
+			const end = area.selectionEnd ?? at;
+			area.focus();
+			setText(value.slice(0, at) + e.key + value.slice(end), at + e.key.length);
+		}
 	}
 
 	function onboxdown(e: MouseEvent) {
@@ -454,21 +506,24 @@
 		'relative flex cursor-text flex-col gap-1.5 border bg-(--vscode-input-background) px-2.5 pt-2 pb-1.5 transition-[border-color,box-shadow] duration-100 focus-within:border-(--vscode-focusBorder)',
 		stacked ? 'rounded-b-xl' : 'rounded-xl',
 		'border-(--vscode-input-border,var(--vscode-widget-border))',
+		top && 'min-h-[120px]',
 		size === 'lg' && 'shadow-[0_2px_12px_rgba(0,0,0,0.25)]'
 	]}
 	onmousedown={onboxdown}
+	onkeydown={onchromekey}
 >
 	{#if slashOpen}
-		<SlashSuggest items={slashItems} active={slashActive} id={listId} onpick={(item) => pickCommand(item as SlashItem)} />
+		<SlashSuggest items={slashItems} active={slashActive} id={listId} below={top} onpick={(item) => pickCommand(item as SlashItem & SuggestItem)} />
 	{:else if mentionOpen}
 		<SlashSuggest
 			items={mentionItems}
 			active={mentionActive}
 			id={listId}
 			onpick={(item) => pickMention(item)}
-			prefix=""
+			kind="mention"
+			below={top}
+			{preview}
 			label={t('chatContext.list')}
-			hint={t('chatContext.hint')}
 			back={scope ? { title: scope.title, go: () => (mentionScope = null) } : undefined}
 		/>
 	{/if}
@@ -531,7 +586,7 @@
 			bind:value
 			{placeholder}
 			{disabled}
-			rows={size === 'lg' ? 3 : 1}
+			rows={size === 'lg' || top ? 3 : 1}
 			aria-label={placeholder}
 			{onkeydown}
 			{onpaste}
@@ -547,18 +602,16 @@
 			class={[
 				'min-w-32 flex-1 basis-40 resize-none bg-transparent text-(--vscode-input-foreground) outline-none focus-visible:outline-none placeholder:text-(--vscode-input-placeholderForeground)',
 				size === 'lg' ? 'text-[14px] leading-[22px]' : 'text-[13px] leading-5',
-				(chips.length || fileChips.length) && 'min-h-5'
+				(chips.length || fileChips.length) && 'min-h-5',
+				top && 'min-h-[66px]'
 			]}
 		></textarea>
 	</div>
-	<div class="mt-px flex min-h-6 items-center gap-1" onmousedown={onboxdown}>
+	<div class={['mt-px flex min-h-6 items-center gap-1', top && 'mt-auto']} onmousedown={onboxdown}>
 		<div class="flex min-w-0 flex-1 items-center gap-1 text-xs text-(--vscode-descriptionForeground)" onmousedown={onboxdown}>
 			{@render left?.(layout)}
 		</div>
 		{@render right?.(layout)}
-		{#if onaddcontext}
-			<button type="button" class={BAR_BTN} aria-label={t('chatContext.add')} title={t('chatContext.addHint')} {disabled} onclick={() => onaddcontext?.()}><Icon name="at" size={14} /></button>
-		{/if}
 		{#if attach}
 			<button type="button" aria-label={t('chatView.attach')} title={t('chatView.attachHint')} class={BAR_BTN} {disabled} onclick={pick}><Icon name="attach" size={14} /></button>
 		{/if}
@@ -567,8 +620,7 @@
 			aria-label={action === 'stop' ? t('chatView.stop') : action === 'queue' ? SEND_LABEL[queueDefault]() : (sendLabel ?? t('chatView.send'))}
 			title={primaryTitle}
 			class={[
-				'ml-0.5 grid size-6 shrink-0 place-items-center rounded-full transition-opacity disabled:opacity-35',
-				action === 'none' ? 'bg-(--vscode-descriptionForeground) text-(--vscode-input-background)' : 'bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:opacity-90'
+				'ml-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-[color-mix(in_srgb,var(--vscode-foreground)_85%,transparent)] text-(--vscode-sideBar-background,var(--vscode-input-background)) transition-opacity hover:opacity-90 disabled:opacity-30'
 			]}
 			style:background={action !== 'none' && tint ? tint : undefined}
 			disabled={busy || disabled || action === 'none'}

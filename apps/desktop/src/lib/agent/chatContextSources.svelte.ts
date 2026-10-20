@@ -18,14 +18,14 @@ import { status } from '#lib/workbench/status.svelte.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { enabledGlobs, hiddenBySibling, isExcluded, siblingClauses } from '#lib/settings/mappings.ts';
 import { lsp } from '#lib/lsp/lsp.svelte.ts';
-import { lastTerminal, terminalHandle } from '#lib/terminal/registry.ts';
+import { lastTerminal, terminalHandle, type TerminalHandle } from '#lib/terminal/registry.ts';
 import { terminals } from '#lib/terminal/terminals.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
 import type { SuggestItem } from './SlashSuggest.svelte';
 import { savePastedImage } from './attachInput.ts';
 import { chats } from './chats.svelte.ts';
 import { isFileKey, type ContextText } from './chatPrompt.ts';
-import { CONTEXT_SOURCES, folderContext, foldersOf, isInstructionsFile, lastCommandOutput, MENTION_FILES, pastChatContext, planMentions, problemsContext, type ContextSource } from './chatContext.ts';
+import { CONTEXT_SOURCES, DRILL_SOURCES, filterScoped, folderContext, foldersOf, isInstructionsFile, lastCommandOutput, MENTION_FILES, pastChatContext, planMentions, problemsContext, type ContextSource, type MentionScope } from './chatContext.ts';
 import type { AgentEvent } from './events';
 
 /** What a source attaches. */
@@ -72,38 +72,58 @@ class ContextFiles {
 
 export const contextFiles = new ContextFiles();
 
-const fileRow = (path: string): SuggestItem => ({ key: `file:${path}`, name: path.split('/').pop() || path, description: path, icon: 'file', tag: t('chatContext.tag.file') });
-const folderRow = (path: string): SuggestItem => ({ key: `folder:${path}`, name: `${path.split('/').pop() || path}/`, description: path, icon: 'folder', tag: t('chatContext.tag.folder') });
+const dirOf = (path: string) => path.split('/').slice(0, -1).join('/');
+const fileRow = (path: string): SuggestItem => ({ key: `file:${path}`, name: path.split('/').pop() || path, description: dirOf(path), icon: 'file' });
+const folderRow = (path: string): SuggestItem => ({ key: `folder:${path}`, name: `${path.split('/').pop() || path}/`, description: dirOf(path), icon: 'folder' });
+
+/** The `@` menu's names for the sources (Cursor's wording where it has one). */
+export const mentionLabel = (s: ContextSource): string => t(`composer.mention.source.${s}`);
 
 /**
- * The `#` / `@` list (Cursor's `@` menu, chatContext.ts `planMentions`): recent files and the
- * sources while nothing is typed, else matching sources, folders and files. Files & Folders opens
- * in the list itself (`scope: 'files'`). `attached`: files already in the input, left out of recents.
+ * The `#` / `@` list (Cursor's `@` menu, chatContext.ts `planMentions`): the current file (and
+ * recent ones), a separator, then the sources while nothing is typed; else matching sources,
+ * folders and files. Files & Folders, Terminals and Past Chats open in the list itself (`scope`).
+ * `attached`: files already in the input, left out of the first rows.
  */
-export function mentionItems(query: string, scope: 'files' | null = null, attached: readonly string[] = []): SuggestItem[] {
+export function mentionItems(query: string, scope: MentionScope | null = null, attached: readonly string[] = [], env: ContextEnv = { cwd: null, chatId: null }): SuggestItem[] {
+	if (scope === 'terminals') {
+		const rows = terminals.list.map((x) => ({ key: `terminal:${terminals.key(x.id)}`, name: x.title, label: x.title, description: '', icon: 'terminal' as const }));
+		return filterScoped(rows, query);
+	}
+	if (scope === 'chats') {
+		const rows = chats.sorted.filter((c) => c.id !== env.chatId).map((c) => ({ key: `chat:${c.id}`, name: c.title, label: c.title, description: timeLabel(c.updated_at || c.created_at), icon: 'chat' as const }));
+		return filterScoped(rows, query);
+	}
 	const ranked = rankFiles(query, contextFiles.list, recentFiles.list, MENTION_FILES).map((r) => r.path);
+	const active = isFileKey(editors.active) ? editors.active : null;
 	const plan = planMentions({
 		query,
 		scope,
+		active,
 		recent: recentFiles.list,
 		ranked: scope === 'files' && !query && !ranked.length ? contextFiles.list.slice(0, MENTION_FILES) : ranked,
 		folders: contextFiles.folders,
 		attached,
-		label: sourceLabel
+		label: mentionLabel
 	});
 	const sources: SuggestItem[] = plan.sources.map((s, i) => ({
 		key: `source:${s}`,
-		name: sourceLabel(s),
-		description: sourceHint(s),
+		name: mentionLabel(s),
+		description: '',
 		icon: SOURCE_ICON[s],
-		...(s === 'files' ? { drill: 'files' } : {}),
-		...(i === 0 && plan.recent.length ? { section: t('composer.mention.context') } : {})
+		...(DRILL_SOURCES[s] ? { drill: DRILL_SOURCES[s] } : {}),
+		...(i === 0 && plan.current.length ? { section: '' } : {})
 	}));
 	const rows = [...plan.folders.map(folderRow), ...plan.files.map(fileRow)];
-	if (rows.length && sources.length) rows[0] = { ...rows[0], section: t('composer.mention.files') };
-	const recent = plan.recent.map((p, i) => ({ ...fileRow(p), ...(i === 0 ? { section: t('composer.mention.recent') } : {}) }));
-	return [...recent, ...sources, ...rows];
+	if (rows.length && sources.length) rows[0] = { ...rows[0], section: '' };
+	const current = plan.current.map((p) => ({ ...fileRow(p), ...(p === active ? { tag: t('chatView.currentFile') } : {}) }));
+	return [...current, ...sources, ...rows];
 }
+
+const timeLabel = (at: string | number) => {
+	const d = new Date(at);
+	return Number.isNaN(d.getTime()) ? '' : d.toLocaleString();
+};
 
 /** What a picked `#` / `@` row attaches. */
 export async function resolveMention(item: SuggestItem, env: ContextEnv): Promise<ContextPick[]> {
@@ -111,6 +131,8 @@ export async function resolveMention(item: SuggestItem, env: ContextEnv): Promis
 	if (key.startsWith('file:')) return [{ kind: 'file', path: key.slice(5) }];
 	if (key.startsWith('folder:')) return [{ kind: 'text', text: folderContext(key.slice(7), contextFiles.list) }];
 	if (key.startsWith('source:')) return resolveSource(key.slice(7) as ContextSource, env);
+	if (key.startsWith('terminal:')) return terminalContext(terminalHandle(key.slice(9)));
+	if (key.startsWith('chat:')) return pastChat(key.slice(5), item.name);
 	return [];
 }
 
@@ -144,13 +166,8 @@ export async function resolveSource(source: ContextSource, env: ContextEnv): Pro
 			if (diff === null) return [];
 			return diff.trim() ? [{ kind: 'text', text: { kind: 'git-diff', label: t('chatContext.label.scm'), text: diff } }] : none('chatContext.none.scm');
 		}
-		case 'terminal': {
-			const h = lastTerminal() ?? terminalHandle(terminals.key(terminals.active));
-			const out = h?.lines ? lastCommandOutput(h.lines()) : null;
-			if (!out || !out.output.trim()) return none('chatContext.none.terminal');
-			const text = out.command ? `$ ${out.command}\n${out.output}` : out.output;
-			return [{ kind: 'text', text: { kind: 'terminal', label: out.command ? t('chatContext.label.terminalCommand', { command: out.command }) : t('chatContext.label.terminal'), text } }];
-		}
+		case 'terminal':
+			return terminalContext(lastTerminal() ?? terminalHandle(terminals.key(terminals.active)));
 		case 'clipboardImage':
 			return clipboardImage();
 		case 'pastChat':
@@ -158,6 +175,21 @@ export async function resolveSource(source: ContextSource, env: ContextEnv): Pro
 		case 'instructions':
 			return pickInstructions(env.cwd);
 	}
+}
+
+/** A terminal's last command and its output. */
+function terminalContext(h: TerminalHandle | null): ContextPick[] {
+	const out = h?.lines ? lastCommandOutput(h.lines()) : null;
+	if (!out || !out.output.trim()) return (status.flash(t('chatContext.none.terminal'), 5000), []);
+	const text = out.command ? `$ ${out.command}\n${out.output}` : out.output;
+	return [{ kind: 'text', text: { kind: 'terminal', label: out.command ? t('chatContext.label.terminalCommand', { command: out.command }) : t('chatContext.label.terminal'), text } }];
+}
+
+/** What was asked and answered in chat `id`. */
+async function pastChat(id: string, title: string): Promise<ContextPick[]> {
+	const events = await invoke<AgentEvent[]>('chat_transcript_load', { id }).catch(() => [] as AgentEvent[]);
+	const ctx = pastChatContext(title, events);
+	return ctx ? [{ kind: 'text', text: ctx }] : (status.flash(t('chatContext.none.pastChat'), 5000), []);
 }
 
 async function pickFileOrFolder(): Promise<ContextPick[]> {
@@ -198,11 +230,8 @@ async function clipboardImage(): Promise<ContextPick[]> {
 async function pickPastChat(current: string | null): Promise<ContextPick[]> {
 	const others = chats.sorted.filter((c) => c.id !== current);
 	if (!others.length) return (status.flash(t('chatContext.none.pastChat'), 5000), []);
-	const item = await quick.choose({ placeholder: t('chatContext.pickChat'), items: others.map((c) => ({ id: c.id, label: c.title, description: new Date(c.updated_at || c.created_at).toLocaleString() })) });
-	if (!item) return [];
-	const events = await invoke<AgentEvent[]>('chat_transcript_load', { id: item.id }).catch(() => [] as AgentEvent[]);
-	const ctx = pastChatContext(item.label, events);
-	return ctx ? [{ kind: 'text', text: ctx }] : (status.flash(t('chatContext.none.pastChat'), 5000), []);
+	const item = await quick.choose({ placeholder: t('chatContext.pickChat'), items: others.map((c) => ({ id: c.id, label: c.title, description: timeLabel(c.updated_at || c.created_at) })) });
+	return item ? pastChat(item.id, item.label) : [];
 }
 
 type Rule = { path: string; rel: string; description: string | null };

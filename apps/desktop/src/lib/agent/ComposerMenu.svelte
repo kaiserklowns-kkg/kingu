@@ -12,6 +12,7 @@
 		search = false,
 		placeholder,
 		align = 'left',
+		below = false,
 		width = 260,
 		footer,
 		onpick,
@@ -23,6 +24,8 @@
 		search?: boolean;
 		placeholder?: string;
 		align?: 'left' | 'right';
+		/** Opens under its trigger (the composer at the top of an empty chat), else above. */
+		below?: boolean;
 		width?: number;
 		/** A note under the rows. */
 		footer?: string;
@@ -68,7 +71,12 @@
 			e.preventDefault();
 			e.stopPropagation();
 			onclose(true);
-		} else if (e.key === 'Tab') onclose(false);
+		} else if (e.key === 'Tab') {
+			// Back to the input (Cursor keeps the focus in the composer).
+			e.preventDefault();
+			e.stopPropagation();
+			onclose(true);
+		}
 	}
 
 	function onwindowdown(e: PointerEvent) {
@@ -82,8 +90,9 @@
 <div
 	bind:this={wrap}
 	class={[
-		'absolute bottom-full z-40 mb-1.5 overflow-hidden rounded-lg border border-(--vscode-widget-border) bg-(--vscode-editorWidget-background,var(--vscode-menu-background)) text-xs text-(--vscode-foreground) shadow-lg',
-		align === 'left' ? 'left-0' : 'right-0'
+		'absolute z-40 overflow-hidden rounded-lg border border-(--vscode-widget-border) bg-(--vscode-editorWidget-background,var(--vscode-menu-background)) text-xs text-(--vscode-foreground) shadow-lg',
+		align === 'left' ? 'left-0' : 'right-0',
+		below ? 'top-full mt-1.5' : 'bottom-full mb-1.5'
 	]}
 	style:width="{width}px"
 	style:max-width="calc(100vw - 16px)"
@@ -129,7 +138,7 @@
 				{#if row.icon}<span class="shrink-0" style:color={i === active ? undefined : row.color}><Icon name={row.icon} size={13} /></span>{/if}
 				<span class="flex min-w-0 flex-1 flex-col">
 					<span class="truncate">{row.label}</span>
-					{#if row.description}<span class={['truncate text-[11px]', i === active ? 'opacity-80' : 'text-(--vscode-descriptionForeground)']}>{row.description}</span>{/if}
+					{#if row.description && row.description !== row.label}<span class={['truncate text-[11px]', i === active ? 'opacity-80' : 'text-(--vscode-descriptionForeground)']}>{row.description}</span>{/if}
 				</span>
 				{#if row.keyLabel}<span class="shrink-0 text-[11px] opacity-70">{row.keyLabel}</span>{/if}
 				<span class={['shrink-0', !row.checked && 'invisible']}><Icon name="check" size={12} /></span>

@@ -345,6 +345,73 @@ export function editOf(name: string, input: unknown): { path: string; added: num
 	}
 }
 
+/** A line of an edit card's diff snippet: context (' '), removed ('-') or added ('+'). */
+export type SnippetLine = { sign: ' ' | '-' | '+'; text: string };
+
+/**
+ * The few lines an edit card shows (Cursor's file edit card): the last unchanged line before the
+ * change as context, then the removed and the added lines, `max` in all. Write shows its first
+ * lines as added; MultiEdit its first edit.
+ */
+export function editSnippet(name: string, input: unknown, max = 6): SnippetLine[] {
+	const o = isRecord(input) ? input : {};
+	let before = '';
+	let after = '';
+	if (name === 'Edit') [before, after] = [String(o.old_string ?? ''), String(o.new_string ?? '')];
+	else if (name === 'MultiEdit') {
+		const first = Array.isArray(o.edits) ? o.edits.find(isRecord) : undefined;
+		[before, after] = [String(first?.old_string ?? ''), String(first?.new_string ?? '')];
+	} else if (name === 'Write') after = String(o.content ?? '');
+	else if (name === 'NotebookEdit') after = String(o.new_source ?? '');
+	else return [];
+	const a = before ? before.split('\n') : [];
+	const b = after ? after.split('\n') : [];
+	let p = 0;
+	while (p < a.length && p < b.length && a[p] === b[p]) p++;
+	let ea = a.length;
+	let eb = b.length;
+	while (ea > p && eb > p && a[ea - 1] === b[eb - 1]) {
+		ea--;
+		eb--;
+	}
+	const out: SnippetLine[] = [];
+	if (p > 0) out.push({ sign: ' ', text: a[p - 1] });
+	for (const text of a.slice(p, ea)) out.push({ sign: '-', text });
+	for (const text of b.slice(p, eb)) out.push({ sign: '+', text });
+	return out.slice(0, max);
+}
+
+/** A progress line's verb and the rest ("Read src/x.ts" → "Read", "src/x.ts"): the verb is drawn bold (Cursor's). */
+export function splitVerb(label: string): { verb: string; rest: string } {
+	const m = /^(\S+)\s+([\s\S]*)$/.exec(label.trim());
+	return m ? { verb: m[1], rest: m[2] } : { verb: label.trim(), rest: '' };
+}
+
+/** A Bash call's description (Claude Code's `description`), else null. */
+export function bashDescription(input: unknown): string | null {
+	const d = isRecord(input) ? input.description : null;
+	return typeof d === 'string' && d.trim() ? d.trim() : null;
+}
+
+/**
+ * Where a finished turn's steps end: the parts before its closing answer (the markdown after the
+ * last step), which fold into "Worked for 2s". 0 when there are no steps to fold.
+ */
+export function activityEnd(parts: readonly { kind: string }[]): number {
+	let end = parts.length;
+	while (end > 0 && parts[end - 1].kind === 'markdown') end--;
+	return end;
+}
+
+/** "Worked for 2s" / "1m 5s": a finished turn's duration. */
+export function workedFor(ms: number | null | undefined): string | null {
+	if (ms == null || !Number.isFinite(ms) || ms < 0) return null;
+	const sec = Math.max(1, Math.round(ms / 1000));
+	if (sec < 60) return `${sec}s`;
+	const m = Math.floor(sec / 60);
+	return `${m}m ${sec % 60}s`;
+}
+
 export const isSubagentTool = (name: string) => name === 'Task' || name === 'Agent';
 
 /** A subagent call's tool calls (nested ones included), how many still run, and their ids (pending approvals). */

@@ -1,14 +1,15 @@
 <script lang="ts">
-	// The status / review row on top of the chat composer (Cursor's composer toolbar, VS Code's chat
-	// editing widget): what the agent is doing (Generating, Waiting for Approval) with Stop, and the
-	// files it changed that are not kept or undone yet, with +/− lines, a diff on click, Keep and
-	// Undo per file, Review (every diff), Keep All and Undo All (a second click confirms). Hidden
-	// while there is nothing to show. `flat`: drawn as a row of the stacked toolbar (no own frame).
+	// The review row on top of the chat composer (Cursor's: "› 1 File   Undo  Keep  Review"): the
+	// files the agent changed, folding open to the list (+/− lines, a diff on click, Keep and Undo
+	// per file). While the turn runs the row reads "› 1 File   Stop ⌃C   Review" (Generating /
+	// Waiting for Approval when nothing changed yet); once every change is kept or undone it keeps
+	// the last request's files with Review only. Undo turns into Confirm (a second click undoes).
+	// `flat`: drawn as a row of the stacked toolbar (no own frame).
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { splitPath } from '#lib/workbench/scm.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import { chatEdits } from './chatEdits.svelte.ts';
-	import { summary, type WorkingFile } from './chatEdits.ts';
+	import { summary, workspacePath, type WorkingFile } from './chatEdits.ts';
 
 	let {
 		chatId,
@@ -33,6 +34,10 @@
 	const files = $derived(view?.files ?? []);
 	const sum = $derived(summary({ files }));
 	const running = $derived(!!view?.running);
+	/** Nothing waits to be kept: the last request's files, for Review. */
+	const settled = $derived(files.length ? [] : ([...(view?.requests ?? [])].reverse().find((r) => !r.reverted && r.paths.length)?.paths ?? []));
+	const count = $derived(files.length || settled.length);
+	const prefix = $derived(view?.prefix ?? '');
 
 	async function act(fn: () => Promise<unknown>) {
 		busy = true;
@@ -77,57 +82,70 @@
 	const ICON = 'grid size-5 shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-40';
 </script>
 
-{#if files.length || status}
+{#if count || status}
 	<div
 		class={['overflow-hidden text-xs', !flat && 'mb-1.5 rounded border border-(--vscode-widget-border,var(--vscode-input-border)) bg-(--vscode-sideBar-background)']}
 		role="region"
-		aria-label={files.length ? t('chatEdits.filesChanged', { count: sum.files }) : t('composer.status.label')}
+		aria-label={count ? t('chatEdits.filesChanged', { count }) : t('composer.status.label')}
 	>
 		<div class="flex h-[26px] items-center gap-1 pr-1 pl-1.5">
-			<button class="flex min-w-0 flex-1 items-center gap-1 text-left" aria-expanded={files.length ? open : undefined} title={files.length ? t('chatEdits.toggle') : undefined} disabled={!files.length} onclick={() => (open = !open)}>
-				{#if files.length}<span class={['shrink-0 transition-transform', open && 'rotate-90']}><Icon name="chevronRight" size={12} /></span>{/if}
-				{#if status}
-					<span class="size-2.5 shrink-0 animate-spin rounded-full border-[1.5px] border-current border-t-transparent text-(--vscode-descriptionForeground)" aria-hidden="true"></span>
-					<span class="shrink-0 text-(--vscode-descriptionForeground)" role="status">{status === 'waiting' ? t('composer.status.waiting') : t('composer.status.running')}</span>
-					{#if files.length}<span class="shrink-0 text-(--vscode-descriptionForeground)">·</span>{/if}
-				{/if}
-				{#if files.length}
-					<span class="truncate">{t('composer.status.edited', { count: sum.files })}</span>
-					{#if sum.added || sum.removed}
+			<button class="flex min-w-0 flex-1 items-center gap-1 text-left" aria-expanded={count ? open : undefined} title={count ? t('chatEdits.toggle') : undefined} disabled={!count} onclick={() => (open = !open)}>
+				{#if count}
+					<span class={['shrink-0 transition-transform', open && 'rotate-90']}><Icon name="chevronRight" size={12} /></span>
+					<span class="truncate">{t('composer.status.files', { count })}</span>
+					{#if files.length && (sum.added || sum.removed)}
 						<span class="shrink-0 font-mono text-[11px]"
 							><span class="text-(--vscode-gitDecoration-addedResourceForeground,#73c991)">+{sum.added}</span>
 							<span class="text-(--vscode-gitDecoration-deletedResourceForeground,#f14c4c)">−{sum.removed}</span></span
 						>
 					{/if}
+				{:else if status}
+					<span class="size-2.5 shrink-0 animate-spin rounded-full border-[1.5px] border-current border-t-transparent text-(--vscode-descriptionForeground)" aria-hidden="true"></span>
+					<span class="truncate text-(--vscode-descriptionForeground)" role="status">{status === 'waiting' ? t('composer.status.waiting') : t('composer.status.running')}</span>
 				{/if}
 			</button>
 			{#if status && onstop}
 				<button
-					class={[BTN, 'text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)']}
-					title={`${t('chatView.stop')} (${MAC ? '⌘⇧⌫' : 'Ctrl+Shift+Backspace'})`}
-					onclick={() => onstop?.()}>{t('chatView.stop')}</button
+					class={[BTN, 'flex items-center gap-1 text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)']}
+					title={t('chatView.stop')}
+					onclick={() => onstop?.()}>{t('chatView.stop')}<span class="text-[10px] opacity-70">{MAC ? '⌃C' : 'Ctrl+Shift+⌫'}</span></button
 				>
-			{/if}
-			{#if files.length}
+			{:else if files.length}
 				<button
 					class={[BTN, confirmUndo ? 'bg-(--vscode-inputValidation-warningBackground,var(--vscode-button-secondaryBackground)) text-(--vscode-foreground)' : 'text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)']}
 					title={running ? t('chatEdits.running') : confirmUndo ? t('composer.review.confirmHint') : t('chatEdits.undoAllHint')}
 					disabled={busy || running || !sum.restorable}
-					onclick={undoAll}>{confirmUndo ? t('composer.review.confirm') : sum.files > 1 ? t('chatEdits.undoAll') : t('chatEdits.undo')}</button
+					onclick={undoAll}>{confirmUndo ? t('composer.review.confirm') : t('chatEdits.undo')}</button
 				>
 				<button
-					class={[BTN, 'bg-(--vscode-button-secondaryBackground) text-(--vscode-button-secondaryForeground) hover:bg-(--vscode-button-secondaryHoverBackground)']}
+					class={[BTN, 'text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)']}
 					title={t('chatEdits.keepAllHint')}
 					disabled={busy}
-					onclick={() => act(() => chatEdits.keep(chatId, null))}>{sum.files > 1 ? t('chatEdits.keepAll') : t('chatEdits.keep')}</button
+					onclick={() => act(() => chatEdits.keep(chatId, null))}>{t('chatEdits.keep')}</button
 				>
+			{/if}
+			{#if count}
 				<button
-					class={[BTN, 'bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:bg-(--vscode-button-hoverBackground)']}
+					class={[BTN, 'bg-(--vscode-button-secondaryBackground) text-(--vscode-button-secondaryForeground) hover:bg-(--vscode-button-secondaryHoverBackground)']}
 					title={t('composer.review.reviewHint')}
-					onclick={() => chatEdits.openAll(chatId, files.map((f) => f.path))}>{t('composer.review.review')}</button
+					onclick={() => (files.length ? chatEdits.openAll(chatId, files.map((f) => f.path)) : chatEdits.openAll(chatId, settled))}>{t('composer.review.review')}</button
 				>
 			{/if}
 		</div>
+		{#if open && !files.length && settled.length}
+			<ul class="max-h-40 overflow-y-auto border-t border-(--vscode-widget-border,transparent) py-0.5">
+				{#each settled as path (path)}
+					{@const [name, dir] = splitPath(path)}
+					<li class="flex h-[22px] items-center pr-1 pl-2 hover:bg-(--vscode-list-hoverBackground)">
+						<button class="flex min-w-0 flex-1 items-center gap-1.5 text-left" title={path} onclick={() => chatEdits.openEdited(chatId, path, workspacePath(prefix, path))}>
+							<Icon name="file" size={13} />
+							<span class="truncate">{name}</span>
+							{#if dir}<span class="min-w-0 truncate text-(--vscode-descriptionForeground)">{dir}</span>{/if}
+						</button>
+					</li>
+				{/each}
+			</ul>
+		{/if}
 		{#if open && files.length}
 			<ul class="max-h-40 overflow-y-auto border-t border-(--vscode-widget-border,transparent) py-0.5">
 				{#each files as f (f.path)}

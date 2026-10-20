@@ -20,12 +20,15 @@ import {
 	runModeLabel,
 	shortModelLabel,
 	slashSection,
+	slashMenu,
 	slashSections,
+	chromeKey,
 	stopKey
 } from './composer.ts';
 import { filterRows, initialActive, nextEnabled, startsSection, type MenuRow } from './composerMenu.ts';
-import { planMentions } from './chatContext.ts';
+import { DRILL_SOURCES, filterScoped, planMentions } from './chatContext.ts';
 import { modeCommands, type SlashItem } from './slashCommands.ts';
+import { activityEnd, bashDescription, editSnippet, splitVerb, workedFor } from './chatParts.ts';
 
 setLocale('en');
 
@@ -48,11 +51,11 @@ describe('modes', () => {
 		expect(customName('agent')).toBeNull();
 	});
 
-	test('⌘. / ⇧Tab cycle Agent → Ask → Plan → custom agents and wrap', () => {
+	test('⌘. / ⇧Tab cycle in the menu order Agent → Plan → Ask → custom agents and wrap', () => {
 		const order = modeOrder(['reviewer']);
-		expect(order).toEqual(['agent', 'ask', 'plan', 'custom:reviewer']);
-		expect(cycleMode(order, 'agent')).toBe('ask');
-		expect(cycleMode(order, 'plan')).toBe('custom:reviewer');
+		expect(order).toEqual(['agent', 'plan', 'ask', 'custom:reviewer']);
+		expect(cycleMode(order, 'agent')).toBe('plan');
+		expect(cycleMode(order, 'ask')).toBe('custom:reviewer');
 		expect(cycleMode(order, 'custom:reviewer')).toBe('agent');
 		expect(cycleMode(order, 'agent', -1)).toBe('custom:reviewer');
 		expect(cycleMode(order, 'custom:gone')).toBe('agent');
@@ -67,20 +70,13 @@ describe('modes', () => {
 });
 
 describe('placeholder', () => {
-	test('the first rule that applies wins', () => {
-		expect(composerPlaceholder({ folder: false, running: true, mode: 'agent' })).toBe('Open a folder to chat with the agent');
-		expect(composerPlaceholder({ folder: true, editingQueued: true, pendingApproval: true, mode: 'agent' })).toBe('Editing queued message…');
-		expect(composerPlaceholder({ folder: true, pendingApproval: true, running: true, mode: 'agent' })).toBe('Reject, suggest, follow up?');
-		expect(composerPlaceholder({ folder: true, running: true, mode: 'ask' })).toContain('Queue');
-	});
-
-	test('per mode, new chat and follow-up', () => {
-		expect(composerPlaceholder({ folder: true, mode: 'agent' })).toBe('Plan, search, build anything');
-		expect(composerPlaceholder({ folder: true, followUp: true, mode: 'agent' })).toBe('Add a follow-up');
-		expect(composerPlaceholder({ folder: true, mode: 'ask' })).toBe('Ask, learn, brainstorm');
-		expect(composerPlaceholder({ folder: true, mode: 'plan' })).toBe('Plan changes');
-		expect(composerPlaceholder({ folder: true, mode: 'custom:reviewer' })).toBe('Message reviewer');
-		expect(composerPlaceholder({ folder: true, followUp: true, mode: 'custom:reviewer' })).toBe('Add a follow-up for reviewer');
+	test('one line for every mode; state rules first', () => {
+		expect(composerPlaceholder({ folder: false, running: true })).toBe('Open a folder to chat with the agent');
+		expect(composerPlaceholder({ folder: true, editingQueued: true, pendingApproval: true })).toBe('Editing queued message…');
+		expect(composerPlaceholder({ folder: true, pendingApproval: true, running: true })).toBe('Reject, suggest, follow up?');
+		expect(composerPlaceholder({ folder: true, running: true })).toBe('Add a follow-up');
+		expect(composerPlaceholder({ folder: true, followUp: true })).toBe('Add a follow-up');
+		expect(composerPlaceholder({ folder: true })).toBe('Plan, Build, / for skills, @ for context');
 	});
 });
 
@@ -203,20 +199,46 @@ test('the / menu: Skills, Commands, Modes, Actions', () => {
 	expect(modes[0]).toMatchObject({ name: 'plan', source: 'mode', description: 'Switch to Plan' });
 });
 
-test('the @ menu: recents then sources; typed: sources, folders, files; Files & Folders drilled into', () => {
+test('the @ menu: the current file first, then the sources in Cursor\'s order; typed: sources, folders, files; drilled lists', () => {
 	const label = (s: string) => s;
-	const base = { recent: ['a.ts', 'b.ts', 'c.ts', 'd.ts'], ranked: ['src/x.ts'], folders: ['src', 'docs'], attached: ['b.ts'], label };
+	const base = { active: 'app.ts', recent: ['a.ts', 'app.ts', 'b.ts', 'c.ts'], ranked: ['src/x.ts'], folders: ['src', 'docs'], attached: ['b.ts'], label };
 	const empty = planMentions({ ...base, query: '', scope: null });
-	expect(empty.recent).toEqual(['a.ts', 'c.ts', 'd.ts']);
-	expect(empty.sources[0]).toBe('files');
+	expect(empty.current).toEqual(['app.ts', 'a.ts', 'c.ts']);
+	expect(empty.sources.slice(0, 4)).toEqual(['files', 'terminal', 'pastChat', 'scm']);
 	expect(empty.files).toEqual([]);
+	expect(planMentions({ ...base, active: 'b.ts', query: '', scope: null }).current[0]).toBe('a.ts');
+	expect(DRILL_SOURCES).toEqual({ files: 'files', terminal: 'terminals', pastChat: 'chats' });
 	const typed = planMentions({ ...base, query: 'src', scope: null });
-	expect(typed.recent).toEqual([]);
+	expect(typed.current).toEqual([]);
 	expect(typed.folders).toEqual(['src']);
 	expect(typed.files).toEqual(['src/x.ts']);
+	expect(planMentions({ ...base, query: 'term', scope: null }).sources).toEqual(['terminal']);
 	const files = planMentions({ ...base, query: '', scope: 'files' });
 	expect(files.sources).toEqual([]);
 	expect(files.files).toEqual(['src/x.ts']);
+	expect(planMentions({ ...base, query: '', scope: 'chats' })).toEqual({ current: [], sources: [], folders: [], files: [] });
+	expect(filterScoped([{ label: 'zsh' }, { label: 'node dev' }], 'NODE')).toEqual([{ label: 'node dev' }]);
+});
+
+test('the / menu folds Skills to 3 with "Show N more" while nothing is typed', () => {
+	const item = (name: string, source: SlashItem['source']): SlashItem => ({ name, description: '', argumentHint: '', source });
+	const items = [item('s1', 'user-skill'), item('s2', 'user-skill'), item('s3', 'project-skill'), item('s4', 'user-skill'), item('s5', 'user-skill'), item('review', 'session')];
+	const folded = slashMenu(items, { query: '', expanded: false });
+	expect(folded.map((e) => (e.kind === 'more' ? `more:${e.count}` : e.item.name))).toEqual(['s1', 's2', 's3', 'more:2', 'review']);
+	expect(slashMenu(items, { query: '', expanded: true }).length).toBe(6);
+	expect(slashMenu(items, { query: 's', expanded: false }).some((e) => e.kind === 'more')).toBe(false);
+	// One hidden row is not worth a "Show 1 more".
+	expect(slashMenu(items.slice(2), { query: '', expanded: false }).some((e) => e.kind === 'more')).toBe(false);
+});
+
+test('keys on the composer\'s own buttons: ⇧Tab cycles, a typed @ goes to the text (not the focused button)', () => {
+	expect(chromeKey(key('Tab', { shiftKey: true }))).toBe('cycle');
+	expect(chromeKey(key('@', { shiftKey: true }))).toBe('type');
+	expect(chromeKey(key('a'))).toBe('type');
+	expect(chromeKey(key(' '))).toBeNull();
+	expect(chromeKey(key('Enter'))).toBeNull();
+	expect(chromeKey(key('a', { metaKey: true }))).toBeNull();
+	expect(chromeKey(key('@', { isComposing: true }))).toBeNull();
 });
 
 test('queue order', () => {
@@ -244,4 +266,29 @@ test('composer menus', () => {
 	expect(nextEnabled(rows, 1, 1)).toBe(3);
 	expect(nextEnabled(rows, 3, 1)).toBe(0);
 	expect(nextEnabled([{ id: 'a', label: 'a', disabled: true }], 0, 1)).toBe(-1);
+});
+
+test('transcript look: edit snippets, bold verbs, Worked for, folded steps', () => {
+	expect(editSnippet('Edit', { old_string: 'a\nb\nc', new_string: 'a\nb\nX\nc' })).toEqual([
+		{ sign: ' ', text: 'b' },
+		{ sign: '+', text: 'X' }
+	]);
+	expect(editSnippet('Edit', { old_string: 'one', new_string: 'two' })).toEqual([
+		{ sign: '-', text: 'one' },
+		{ sign: '+', text: 'two' }
+	]);
+	expect(editSnippet('Write', { content: '1\n2\n3\n4\n5\n6\n7' }, 3).map((l) => l.text)).toEqual(['1', '2', '3']);
+	expect(editSnippet('MultiEdit', { edits: [{ old_string: 'x', new_string: 'y' }] }).length).toBe(2);
+	expect(editSnippet('Read', {})).toEqual([]);
+	expect(splitVerb('Read src/app.ts')).toEqual({ verb: 'Read', rest: 'src/app.ts' });
+	expect(splitVerb('Thought')).toEqual({ verb: 'Thought', rest: '' });
+	expect(bashDescription({ command: 'git status', description: 'Show git working tree status' })).toBe('Show git working tree status');
+	expect(bashDescription({ command: 'ls' })).toBeNull();
+	expect(workedFor(2000)).toBe('2s');
+	expect(workedFor(200)).toBe('1s');
+	expect(workedFor(65000)).toBe('1m 5s');
+	expect(workedFor(null)).toBeNull();
+	expect(activityEnd([{ kind: 'thinking' }, { kind: 'tool' }, { kind: 'markdown' }])).toBe(2);
+	expect(activityEnd([{ kind: 'markdown' }])).toBe(0);
+	expect(activityEnd([{ kind: 'tool' }])).toBe(1);
 });

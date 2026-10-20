@@ -36,6 +36,8 @@
 	import ComposerQueue from './ComposerQueue.svelte';
 	import type { ComposerChip } from './Composer.svelte';
 	import type { MenuRow } from './composerMenu.ts';
+	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
+	import type { MenuNode } from '#lib/workbench/menus.ts';
 	import { canSteer, composerPlaceholder, customName, cycleMode, MODE_ICON, modeOrder, modeTone, runModeHint, runModeLabel, shortModelLabel, type ModeTone } from './composer.ts';
 	import { arkaiGroups, needsKey } from './arkai.ts';
 	import type { QueuedMessage } from './chats.svelte.ts';
@@ -87,8 +89,6 @@
 	let picked = $state<{ path: string; range?: { startLine: number; endLine: number } }[]>([]);
 	/** Add Context's other context (problems, a diff, terminal output, a folder, a past chat). */
 	let texts = $state<ContextText[]>([]);
-	/** The active file whose implicit chip the user turned off. */
-	let implicitOff = $state<string | null>(null);
 	/** Edit request: the input holds an earlier request, sent as a new message. */
 	let editing = $state(false);
 	let renamingId = $state<string | null>(null);
@@ -197,8 +197,9 @@
 
 	// Implicit context (VS Code's "current file"): the active editor's file and selection.
 	const activeFile = $derived(isFileKey(editors.active) ? editors.active : null);
-	const implicit = $derived(activeFile ? { path: activeFile, range: editors.selection.range, implicit: true, disabled: implicitOff === activeFile } : null);
-	const contextChips = $derived([...(implicit && !picked.some((p) => p.path === implicit.path && !p.range) ? [implicit] : []), ...picked]);
+	// Nothing is attached without asking (Cursor has no current-file chip): `@` offers the active
+	// editor's file first instead.
+	const contextChips = $derived(picked);
 
 	onMount(() => {
 		if (inEditor) return;
@@ -376,7 +377,7 @@
 		const dropped = attachments.filter((a) => !a.image).map((a) => ({ path: relativeTo(workspace.root, a.path) }));
 		if (typedVariables(text).some((v) => v.kind === 'folder')) await contextFiles.refresh(workspace.root);
 		const typed = await typedContext(text);
-		const list = [...(implicit && !implicit.disabled ? [implicit] : []), ...picked, ...dropped, ...typed.files];
+		const list = [...picked, ...dropped, ...typed.files];
 		const context = await resolveContext(list, (rel) => invoke<string>('read_workspace_file', { rel }), (rel) => promptPath(rel, rootDir, runsInRoot));
 		const allTexts = [...texts, ...typed.texts.filter((x) => !texts.some((y) => y.kind === x.kind && y.label === x.label)), ...extra];
 		return { text: assemblePrompt(text, context, allTexts), images: attachments.filter((a) => a.image).map((a) => a.path), files: list.map((f) => f.path) };
@@ -716,13 +717,9 @@
 	const STATE_DOT = { working: 'bg-(--vscode-editorInfo-foreground) animate-pulse', needsInput: 'bg-(--vscode-editorWarning-foreground)' } as const;
 	const STATE_LABEL = { working: () => t('team.agent.status.running'), needsInput: () => t('team.agent.status.waiting') } as const;
 	const ICON_BTN = 'grid size-[22px] shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-40';
-	// Starters fill the prompt (they never send), like the Agents layout's empty composer.
-	const STARTERS = [
-		{ icon: 'bug', label: () => t('chat.panel.starter.bug'), text: () => t('chat.panel.starter.bugText') },
-		{ icon: 'check', label: () => t('chat.panel.starter.test'), text: () => t('chat.panel.starter.testText') },
-		{ icon: 'code', label: () => t('chat.panel.starter.explain'), text: () => t('chat.panel.starter.explainText') }
-	] as const;
 	const title = $derived(chatMeta?.title ?? t('chat.panel.newChat'));
+	/** An empty new chat: the composer sits at the top, under the header (Cursor's). */
+	const composerTop = $derived(!showList && !chatMeta && !inEditor);
 	const pendingApproval = $derived(chatRun?.pending.find((p) => p.tool !== 'AskUserQuestion'));
 	const placeholder = $derived(
 		composerPlaceholder({
@@ -730,8 +727,7 @@
 			editingQueued: !!editingQueued,
 			pendingApproval: !!pendingApproval,
 			running,
-			followUp: turns.length > 0,
-			mode: pick
+			followUp: turns.length > 0
 		})
 	);
 
@@ -740,7 +736,7 @@
 	const TONE_COLOR: Record<ModeTone, string> = {
 		agent: 'var(--vscode-foreground)',
 		ask: 'var(--vscode-charts-green, #89d185)',
-		plan: 'var(--vscode-charts-yellow, #cca700)',
+		plan: 'color-mix(in srgb, var(--vscode-charts-yellow, #cca700) 70%, var(--vscode-charts-orange, #d18616))',
 		custom: 'var(--vscode-charts-purple, #b180d7)'
 	};
 	function modeName(m: ModePick): string {
@@ -748,24 +744,12 @@
 		if (name) return name;
 		return m === 'ask' ? t('chatCustomize.mode.ask') : m === 'plan' ? t('chatView.mode.ask') : t('chatView.mode.agent');
 	}
-	const MODE_HINT: Record<'agent' | 'ask' | 'plan', () => string> = {
-		agent: () => t('composer.mode.agentHint'),
-		ask: () => t('composer.mode.askHint'),
-		plan: () => t('composer.mode.planHint')
-	};
 	const MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
 	const KEY = MAC ? { mode: '⌘.', model: '⌘/' } : { mode: 'Ctrl+.', model: 'Ctrl+/' };
 	const modeRows = $derived<MenuRow[]>([
-		...(['agent', 'ask', 'plan'] as const).map((m) => ({ id: m, label: modeName(m), description: MODE_HINT[m](), icon: MODE_ICON[m], color: TONE_COLOR[m], checked: pick === m })),
-		...shownAgents.map((a) => ({
-			id: `custom:${a.name}`,
-			label: a.name,
-			description: a.description || a.rel,
-			icon: MODE_ICON.custom,
-			color: TONE_COLOR.custom,
-			section: t('chatCustomize.customAgents'),
-			checked: pick === `custom:${a.name}`
-		})),
+		// Cursor's mode menu: icon, label and a check, in ⇧Tab's order (Agent, Plan, Ask), then custom agents.
+		...(['agent', 'plan', 'ask'] as const).map((m) => ({ id: m, label: modeName(m), icon: MODE_ICON[m], checked: pick === m })),
+		...shownAgents.map((a) => ({ id: `custom:${a.name}`, label: a.name, icon: MODE_ICON.custom, section: t('chatCustomize.customAgents'), checked: pick === `custom:${a.name}` })),
 		...(chatAgent && chatAgent !== 'ask' && !shownAgents.some((a) => a.name === chatAgent)
 			? [{ id: `custom:${chatAgent}`, label: t('chatCustomize.agentMissing', { name: chatAgent }), icon: MODE_ICON.custom, section: t('chatCustomize.customAgents'), checked: true }]
 			: [])
@@ -781,7 +765,11 @@
 				return g.models.map((m) => ({ id: m.value, label: m.label, description: m.description, section, checked: m.value === currentModel }));
 			});
 		}
-		return modelChoices(chatMeta ? chatMeta.model : newModel, chats.defaults().model, modelCatalog.list).map((m) => ({ id: m.value, label: m.label, description: m.description || m.value, checked: m.value === currentModel }));
+		// The second line only when it says something the label does not (no "claude-opus-5-5" twice).
+		return modelChoices(chatMeta ? chatMeta.model : newModel, chats.defaults().model, modelCatalog.list).map((m) => {
+			const description = [m.description, m.value].find((d) => d && d !== m.label);
+			return { id: m.value, label: m.label, ...(description ? { description } : {}), checked: m.value === currentModel };
+		});
 	});
 	const modelShort = $derived(shortModelLabel(modelRows.find((r) => r.checked)?.label || currentModel || t('composer.model.default')));
 	const runtimeName = $derived(runtimeChoices(agentRuntimes.list, runtimeId).find((r) => r.id === runtimeId)?.name ?? runtimeId);
@@ -812,7 +800,49 @@
 			: [])
 	]);
 	const steerable = $derived(canSteer(runtimeProtocol));
-	const editsCount = $derived(chatMeta ? (chatEdits.view(chatMeta.id)?.files.length ?? 0) : 0);
+	/** The review row shows: files waiting to be kept, or the last request's settled ones (ChatEditsBar). */
+	const editsCount = $derived.by(() => {
+		const v = chatMeta ? chatEdits.view(chatMeta.id) : undefined;
+		return v ? v.files.length || (v.requests.some((r) => !r.reverted && r.paths.length) ? 1 : 0) : 0;
+	});
+
+	// "Steer New Messages?" (Cursor's): the first time a message is queued, once (kept in this
+	// browser profile); Keep Queuing hides it, Use Steering sets the queue setting to steer.
+	const NUDGE_KEY = 'kingu.chat.steerNudgeDismissed';
+	let nudgeDismissed = $state(readFlag(NUDGE_KEY));
+	function readFlag(key: string): boolean {
+		try {
+			return localStorage.getItem(key) === '1';
+		} catch {
+			return false;
+		}
+	}
+	function dismissNudge(steer: boolean) {
+		nudgeDismissed = true;
+		try {
+			localStorage.setItem(NUDGE_KEY, '1');
+		} catch {
+			// Private storage: shown again next time.
+		}
+		if (steer) void settings.set('kingu.chat.requestQueuing.defaultAction', 'steer', 'user');
+	}
+	const showNudge = $derived(!!chatMeta && queued.length > 0 && queueAction === 'queue' && steerable && !nudgeDismissed);
+
+	// "How did the agent do?" (Cursor's) after a turn ends: 👍 👎 saved in the chat's own transcript
+	// (chatExtras.vote, never sent anywhere), × hides it for that request.
+	let feedbackHidden = $state<Record<string, true>>({});
+	const lastTurn = $derived(turns.at(-1));
+	const feedbackFor = $derived(
+		chatMeta && actionsVisible(lastTurn) && lastTurn?.checkpoint != null && !lastTurn.feedback && !feedbackHidden[`${chatMeta.id}:${lastTurn.checkpoint}`] ? lastTurn.checkpoint : null
+	);
+	function actionsVisible(turn: Turn | undefined): boolean {
+		return !!turn && turn.done && !!turn.request && turn.parts.length > 0 && !running;
+	}
+	function vote(v: 'up' | 'down' | null) {
+		if (!chatMeta || feedbackFor === null) return;
+		if (v) void chatExtras.vote(chatMeta.id, feedbackFor, v);
+		feedbackHidden = { ...feedbackHidden, [`${chatMeta.id}:${feedbackFor}`]: true };
+	}
 	const toolbarStatus = $derived<'running' | 'waiting' | null>(running ? (chatRun?.status === 'waiting' ? 'waiting' : 'running') : null);
 	const stacked = $derived((!!chatMeta && (editsCount > 0 || !!toolbarStatus || queued.length > 0)) || editing || !!editingQueued);
 
@@ -821,6 +851,73 @@
 		menuOpen = null;
 		if (refocus) queueMicrotask(() => composer?.focus());
 	}
+
+	/**
+	 * The header's ⋯ menu: where and how the chat runs (Kingu's runtime and folder for a new chat,
+	 * the run mode in Agent), then the chat's own actions.
+	 */
+	const headerMenu = $derived.by<MenuNode[]>(() => {
+		const rows = (section: string) => optionRows.filter((r) => r.section === section).map((r) => menuItem(r.id, r.label, { checked: !!r.checked, enabled: !r.disabled }));
+		const sub = (id: string, text: string, items: MenuNode[]): MenuNode[] => (items.length ? [{ type: 'submenu', id, text, items }] : []);
+		const out: MenuNode[] = [
+			...sub('runtime', t('chatRuntime.label'), rows(t('chatRuntime.label'))),
+			...sub('where', t('chat.panel.cwdLabel'), rows(t('chat.panel.cwdLabel'))),
+			...sub('run', t('composer.run.title'), rows(t('composer.run.title')))
+		];
+		const chat: MenuNode[] = chatMeta
+			? [
+					menuItem('rename', t('chat.panel.rename')),
+					menuItem('editor', t('chatExtras.openInEditor'), { enabled: !inEditor }),
+					menuItem('promote', t('chat.panel.promote'), { enabled: !busy }),
+					...(chatLive ? [menuItem('end', t('chat.panel.endSession'))] : []),
+					menuItem('delete', t('chat.panel.delete'), { enabled: !chatLive })
+				]
+			: [];
+		const more: MenuNode[] = [menuItem('agents', t('chat.panel.openInAgents')), menuItem('export', t('chatIo.export'), { enabled: !!chatMeta }), menuItem('import', t('chatIo.import'))];
+		return [out, chat, more].filter((g) => g.length).flatMap((g, i) => (i ? [menuSeparator, ...g] : g));
+	});
+	let headerMenuAt = $state<{ x: number; y: number; keyboard: boolean } | null>(null);
+
+	function runHeader(id: string) {
+		if (id.startsWith('runtime:') || id.startsWith('where:') || id.startsWith('run:')) return pickOption(id);
+		if (id === 'rename' && chatMeta) {
+			showList = true;
+			startRename(chatMeta.id, chatMeta.title);
+		} else if (id === 'editor') openInEditor();
+		else if (id === 'promote') void promote();
+		else if (id === 'end' && chatMeta) void chats.stop(chatMeta.id);
+		else if (id === 'delete' && chatMeta) void removeChat(chatMeta.id);
+		else if (id === 'agents') appMode.setMode('agents');
+		else if (id === 'export') void exportChat();
+		else if (id === 'import') void importChat();
+	}
+
+	/** The highlighted `@` file's first lines (Cursor's preview beside the menu). */
+	const previewCache = new Map<string, string | null>();
+	async function previewOf(item: { key?: string }): Promise<string | null> {
+		const rel = item.key?.startsWith('file:') ? item.key.slice(5) : null;
+		if (!rel) return null;
+		if (!previewCache.has(rel)) {
+			const text = await invoke<string>('read_workspace_file', { rel }).catch(() => null);
+			previewCache.set(rel, text === null ? null : text.split('\n').slice(0, 30).join('\n'));
+		}
+		return previewCache.get(rel) ?? null;
+	}
+
+	/** Esc in the composer with no menu open: the focus goes back to the editor (Cursor's). */
+	function leaveComposer() {
+		if (editors.active) editors.focusGroup(editors.activeGroup.id);
+		else (document.activeElement as HTMLElement | null)?.blur();
+	}
+
+	/** A turn ended while the chat was not looked at: a dot on its tab until the panel has focus (Cursor's unread dot). */
+	let unread = $state(false);
+	let wasRunning = false;
+	$effect(() => {
+		const now = running;
+		if (wasRunning && !now && !chatSignals.hasFocus()) unread = true;
+		wasRunning = now;
+	});
 
 	function pickOption(id: string) {
 		closeMenu();
@@ -837,25 +934,10 @@
 
 	/** The context chips: the current file (turned off, not removed), attached files, then other context. */
 	const chipEntries = $derived<{ chip: ComposerChip; act: (action: 'remove' | 'toggle') => void }[]>([
-		...contextChips.map((f) => {
-			const implicitFile = 'implicit' in f && !!f.implicit;
-			const off = 'disabled' in f && !!f.disabled;
-			return {
-				chip: {
-					key: `file:${f.path}:${f.range?.startLine ?? ''}-${f.range?.endLine ?? ''}${implicitFile ? ':implicit' : ''}`,
-					label: contextLabel(f),
-					icon: 'file' as const,
-					title: f.path,
-					note: implicitFile ? (f.range ? t('chatView.currentSelection') : t('chatView.currentFile')) : undefined,
-					off,
-					toggle: implicitFile
-				},
-				act: (action: 'remove' | 'toggle') => {
-					if (action === 'toggle') implicitOff = implicitOff === f.path ? null : f.path;
-					else picked = picked.filter((p) => !(p.path === f.path && p.range?.startLine === f.range?.startLine && p.range?.endLine === f.range?.endLine));
-				}
-			};
-		}),
+		...contextChips.map((f) => ({
+			chip: { key: `file:${f.path}:${f.range?.startLine ?? ''}-${f.range?.endLine ?? ''}`, label: contextLabel(f), icon: 'file' as const, title: f.path },
+			act: () => void (picked = picked.filter((p) => !(p.path === f.path && p.range?.startLine === f.range?.startLine && p.range?.endLine === f.range?.endLine)))
+		})),
 		...texts.map((c, i) => ({
 			chip: { key: `text:${i}:${c.kind}:${c.label}`, label: c.label, icon: TEXT_ICON[c.kind] ?? ('note' as const), title: c.text.slice(0, 500) },
 			act: () => void (texts = texts.filter((x) => x !== c))
@@ -871,51 +953,64 @@
 </script>
 
 <div bind:this={root} class="flex h-full flex-col text-[13px]" data-chat-view>
-	<!-- Title actions (VS Code's chat view title): history, the chat's title, new chat, Agents. -->
-	<div class="flex h-[30px] shrink-0 items-center gap-1 px-2">
-		{#if inEditor}
-		<span class="min-w-0 flex-1 truncate px-1" {title}>{title}</span>
-		<button class={ICON_BTN} aria-label={t('chatExtras.moveToSideBar')} title={t('chatExtras.moveToSideBar')} onclick={() => editorChatId && chatExtras.moveToSideBar(editorChatId)}>
-			<Icon name="sidebarRight" size={16} />
-		</button>
+	<!-- The chat header (Cursor's): the chat as a tab (spinner while it runs, a dot when it finished
+	     unseen, × closes it), then New Chat, History, ⋯ (where and how it runs, the chat's actions)
+	     and the panel toggle. -->
+	<div class="flex h-[35px] shrink-0 items-center gap-0.5 border-b border-(--vscode-sideBar-border) px-1.5" onfocusin={() => (unread = false)}>
+		{#if showList}
+			<span class="min-w-0 flex-1 truncate px-1.5 font-medium">{t('chatView.history')}</span>
 		{:else}
-		<button
-			class={[ICON_BTN, showList && 'bg-(--vscode-toolbar-activeBackground)']}
-			aria-label={t('chatView.history')}
-			title={t('chatView.history')}
-			aria-pressed={showList}
-			onclick={() => (showList = !showList)}><Icon name="menu" size={16} /></button
-		>
-		<span class="min-w-0 flex-1 truncate" {title}>{showList ? t('chatView.history') : title}</span>
-		<button class={ICON_BTN} aria-label={t('chat.panel.newChat')} title={t('chatView.newChatKey')} disabled={!workspace.root} onclick={() => newChat()}><Icon name="plus" size={16} /></button>
-		{#if chatMeta && !showList}
-			<button class={ICON_BTN} aria-label={t('chatExtras.openInEditor')} title={t('chatExtras.openInEditor')} onclick={openInEditor}><Icon name="openExternal" size={15} /></button>
+			<div
+				class="group/tab flex h-[26px] max-w-[70%] min-w-0 items-center gap-1.5 rounded-md bg-(--vscode-toolbar-hoverBackground) pr-0.5 pl-2"
+				title={chatMeta ? `${title} · ${cwdLabel(chatMeta.cwd)}` : title}
+			>
+				{#if running}
+					<span class="size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-current border-t-transparent text-(--vscode-descriptionForeground)" role="status" aria-label={t('composer.status.running')}></span>
+				{:else if unread}
+					<span class="grid size-3 shrink-0 place-items-center" role="status" aria-label={t('composer.header.unread')}><span class="size-2 rounded-full bg-(--vscode-notificationsInfoIcon-foreground,#3794ff)"></span></span>
+				{:else}
+					<span class="shrink-0 text-(--vscode-descriptionForeground)"><Icon name="chat" size={13} /></span>
+				{/if}
+				<span class="min-w-0 truncate">{title}</span>
+				{#if !inEditor && chatMeta}
+					<button class={[ICON_BTN, 'size-[18px] opacity-60 group-hover/tab:opacity-100']} aria-label={t('composer.header.close')} title={t('composer.header.close')} onclick={() => newChat()}><Icon name="close" size={12} /></button>
+				{/if}
+			</div>
 		{/if}
-		<button class={ICON_BTN} aria-label={t('chat.panel.openInAgents')} title={t('chat.panel.openInAgents')} onclick={() => appMode.setMode('agents')}>
-			<Icon name="agentsLayout" size={16} />
-		</button>
+		<span class="flex-1"></span>
+		{#if inEditor}
+			<button class={ICON_BTN} aria-label={t('chatExtras.moveToSideBar')} title={t('chatExtras.moveToSideBar')} onclick={() => editorChatId && chatExtras.moveToSideBar(editorChatId)}>
+				<Icon name="sidebarRight" size={16} />
+			</button>
+		{:else}
+			<button class={ICON_BTN} aria-label={t('chat.panel.newChat')} title={t('chatView.newChatKey')} disabled={!workspace.root} onclick={() => newChat()}><Icon name="plus" size={16} /></button>
+			<button
+				class={[ICON_BTN, showList && 'bg-(--vscode-toolbar-activeBackground)']}
+				aria-label={t('chatView.history')}
+				title={t('chatView.history')}
+				aria-pressed={showList}
+				onclick={() => (showList = !showList)}><Icon name="clock" size={15} /></button
+			>
+			<button
+				class={[ICON_BTN, ((allowAll && mode === 'agent') || globalAutoApprove) && 'text-(--vscode-editorWarning-foreground)']}
+				aria-label={t('composer.header.more')}
+				title={t('composer.options.hint', { runtime: runtimeName, where: chatMeta ? cwdLabel(chatMeta.cwd) : newWhere ? `kingu/${newWhere}` : workspace.name || t('chat.panel.cwdFolder'), run: globalAutoApprove ? t('composer.run.global') : mode === 'agent' ? runModeLabel(currentApproval) : modeName(pick) })}
+				aria-haspopup="menu"
+				aria-expanded={headerMenuAt !== null}
+				onclick={(e) => {
+					const r = e.currentTarget.getBoundingClientRect();
+					headerMenuAt = { x: r.right - 248, y: r.bottom + 2, keyboard: e.detail === 0 };
+				}}><Icon name="more" size={16} /></button
+			>
+			<button class={ICON_BTN} aria-label={t('composer.header.hidePanel')} title={t('composer.header.hidePanel')} onclick={() => (layout.auxVisible = false)}><Icon name="sidebarRight" size={15} /></button>
 		{/if}
 	</div>
-
-	{#if !showList && chatMeta}
-		<div class="flex shrink-0 items-center gap-2 px-3 pb-1.5 text-xs text-(--vscode-descriptionForeground)">
-			{#if chatRun && !chatRun.ended}<span class={['size-2 shrink-0 rounded-full', running ? STATE_DOT.working : 'bg-[#73C991]']} title={STATUS_LABEL[chatRun.status]}></span>{/if}
-			<span class="flex min-w-0 flex-1 items-center gap-1 truncate" title={t('chat.panel.cwdLabel')}>
-				<Icon name={chatMeta.cwd.kind === 'folder' ? 'folder' : 'branch'} size={12} />
-				<span class="truncate font-mono">{cwdLabel(chatMeta.cwd)}</span>
-			</span>
-			{#if chatLive}
-				<button class="hover:text-(--vscode-errorForeground)" title={t('chat.panel.endSession')} onclick={() => chatMeta && chats.stop(chatMeta.id)}>{t('chat.panel.endSessionLabel')}</button>
-			{/if}
-			<button class={ICON_BTN} aria-label={t('chat.panel.rename')} title={t('chat.panel.rename')} onclick={() => chatMeta && ((showList = true), startRename(chatMeta.id, chatMeta.title))}>
-				<Icon name="edit" size={13} />
-			</button>
-			<button class={ICON_BTN} aria-label={t('chat.panel.promote')} title={t('chat.panel.promoteHint')} disabled={busy} onclick={promote}><Icon name="tasks" size={13} /></button>
-			<button class={ICON_BTN} aria-label={t('chat.panel.delete')} title={t('chat.panel.delete')} disabled={chatLive} onclick={() => chatMeta && removeChat(chatMeta.id)}><Icon name="trash" size={13} /></button>
-		</div>
+	{#if headerMenuAt}
+		<PopupMenu items={headerMenu} label={t('composer.header.more')} x={headerMenuAt.x} y={headerMenuAt.y} focusFirst={headerMenuAt.keyboard} onRun={(n) => n.type === 'item' && runHeader(n.id)} onClose={() => (headerMenuAt = null)} />
 	{/if}
 
-	<div class="min-h-0 flex-1 overflow-hidden border-t border-(--vscode-sideBar-border)">
+	{#if composerTop}{@render composerBlock()}{/if}
+	<div class="min-h-0 flex-1 overflow-hidden">
 		{#if showList}
 			<!-- History (VS Code's agent sessions): chats, then the folder's ADE tasks (read-only here). -->
 			<div class="h-full overflow-y-auto py-1">
@@ -987,7 +1082,9 @@
 					edit: editRequest,
 					editInline: features.rewind ? editInline : undefined,
 					implement: mode === 'ask' ? implement : undefined,
-					feedback: (request, vote) => chatMeta && void chatExtras.vote(chatMeta.id, request, vote),
+					stop: () => chatMeta && void chats.interrupt(chatMeta.id),
+					fork: features.rewind ? (request) => void fork(request) : undefined,
+					sentAt: (request) => (chatMeta ? (chatEdits.view(chatMeta.id)?.requests.find((r) => r.index === request)?.at ?? null) : null),
 					remember: (text) => void chatExtras.remember(text),
 					followups: { items: running ? [] : chatExtras.followups(chatMeta.id), pick: pickFollowup }
 				}}
@@ -996,8 +1093,7 @@
 			>
 				{#snippet checkpoint(request, req, first)}
 					{#if chatMeta && features.rewind}
-						<RestoreCheckpoint chatId={chatMeta.id} {request} {first} onrestored={() => restoreToInput(req)} />
-						<button class={ICON_BTN} aria-label={t('chatRewind.fork')} title={t('chatRewind.forkHint')} onclick={() => fork(request)}><Icon name="branch" size={13} /></button>
+						<RestoreCheckpoint chatId={chatMeta.id} {request} {first} compact onrestored={() => restoreToInput(req)} />
 					{/if}
 				{/snippet}
 				{#snippet empty()}
@@ -1006,35 +1102,42 @@
 			</ChatList>
 		{:else if inEditor}
 			<p class="p-6 text-center text-(--vscode-descriptionForeground)">{chats.loaded ? t('chatExtras.editorMissing') : t('chatExtras.editorLoading')}</p>
-		{:else}
-			<div class="grid h-full place-items-center p-6 text-center">
-				<div class="flex max-w-72 flex-col items-center gap-2 text-(--vscode-descriptionForeground)">
-					<span class="text-(--vscode-foreground)"><Icon name="agent" size={40} /></span>
-					<p class="text-sm font-semibold text-(--vscode-foreground)">{t('chat.panel.emptyTitle')}</p>
-					<p class="text-xs leading-5">{workspace.root ? t('chat.panel.emptyBody') : t('chat.panel.noFolder')}</p>
-					<div class="mt-2 flex flex-wrap justify-center gap-1.5">
-						{#each STARTERS as s (s.icon)}
-							<button
-								class="flex h-7 items-center gap-1.5 rounded-full border border-(--vscode-widget-border) px-3 text-xs hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)"
-								onclick={() => (input = input.trim() ? `${s.text()}${input}` : s.text())}
-							>
-								<Icon name={s.icon} size={13} />{s.label()}
-							</button>
-						{/each}
-					</div>
-				</div>
-			</div>
 		{/if}
 	</div>
 
-	{#if !showList && (chatMeta || !inEditor)}
-		<div class="shrink-0 px-2 pt-1 pb-2">
+	{#if !showList && chatMeta}{@render composerBlock()}{/if}
+</div>
+
+<!-- The composer: at the top of an empty chat (Cursor's), at the bottom once the chat has started. -->
+{#snippet composerBlock()}
+		<div class={['shrink-0 px-2', composerTop ? 'pt-2 pb-1' : 'pt-1 pb-2']}>
 			{#if chatMeta}<ChatTodoBar {turns} {running} />{/if}
 			{#if chatMeta && chatRewind.canRedo(chatMeta.id)}
 				<div class="mb-1.5 flex items-center gap-1.5 rounded border border-(--vscode-widget-border) px-2 py-1 text-xs text-(--vscode-descriptionForeground)" role="status">
 					<Icon name="discard" size={12} />
 					<span class="min-w-0 flex-1">{t('chatRewind.restored')}</span>
 					<button class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" title={t('chatRewind.redoHint')} onclick={() => chatMeta && chatRewind.redo(chatMeta.id)}>{t('chatRewind.redo')}</button>
+				</div>
+			{/if}
+			{#if feedbackFor !== null}
+				<div class="mb-1.5 flex items-center gap-1 rounded-lg border border-(--vscode-widget-border) py-1 pr-1 pl-2.5 text-xs" role="group" aria-label={t('composer.feedback.title')}>
+					<span class="min-w-0 flex-1 truncate text-(--vscode-descriptionForeground)">{t('composer.feedback.title')}</span>
+					<button class={ICON_BTN} aria-label={t('chatExtras.feedback.helpful')} title={t('chatExtras.feedback.helpful')} onclick={() => vote('up')}><Icon name="thumbsUp" size={13} /></button>
+					<button class={ICON_BTN} aria-label={t('chatExtras.feedback.unhelpful')} title={t('chatExtras.feedback.unhelpful')} onclick={() => vote('down')}><Icon name="thumbsDown" size={13} /></button>
+					<button class={ICON_BTN} aria-label={t('common.close')} title={t('common.close')} onclick={() => vote(null)}><Icon name="close" size={13} /></button>
+				</div>
+			{/if}
+			{#if showNudge}
+				<div class="mb-1.5 space-y-1.5 rounded-lg border border-(--vscode-widget-border) bg-(--vscode-editorWidget-background) p-2.5 text-xs" role="dialog" aria-label={t('composer.nudge.title')}>
+					<div class="font-semibold">{t('composer.nudge.title')}</div>
+					<p class="text-(--vscode-descriptionForeground)">{t('composer.nudge.body')}</p>
+					<div class="flex justify-end gap-1.5">
+						<button class="h-[22px] rounded-md px-2 hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => dismissNudge(false)}>{t('composer.nudge.keep')}</button>
+						<button
+							class="h-[22px] rounded-md bg-[color-mix(in_srgb,var(--vscode-foreground)_85%,transparent)] px-2 text-(--vscode-sideBar-background,var(--vscode-input-background)) hover:opacity-90"
+							onclick={() => dismissNudge(true)}>{t('composer.nudge.steer')}</button
+						>
+					</div>
 				</div>
 			{/if}
 			{#if stacked}
@@ -1073,12 +1176,14 @@
 				{history}
 				{running}
 				{stacked}
+				top={composerTop}
+				onescape={leaveComposer}
+				preview={previewOf}
 				tint={tone === 'agent' ? undefined : TONE_COLOR[tone]}
 				onstop={() => chatMeta && chats.interrupt(chatMeta.id)}
-				mentions={(q, scope) => mentionItems(q, scope, picked.map((p) => p.path))}
+				mentions={(q, scope) => mentionItems(q, scope, picked.map((p) => p.path), contextEnv())}
 				{onmention}
 				onmentionopen={() => void contextFiles.refresh(workspace.root)}
-				onaddcontext={addContext}
 				chips={chipEntries.map((e) => e.chip)}
 				onchip={(c, action) => chipEntries.find((e) => e.chip.key === c.key)?.act(action)}
 				chipsExtra={rulesChip}
@@ -1116,6 +1221,8 @@
 						{#if menuOpen === 'mode'}
 							<ComposerMenu
 								rows={modeRows}
+								below={composerTop}
+								width={200}
 								label={t('chatView.mode')}
 								search={modeRows.length > 6}
 								footer={t('composer.mode.footer', { key: KEY.mode })}
@@ -1137,11 +1244,11 @@
 								onclick={() => (menuOpen = menuOpen === 'model' ? null : 'model')}
 							>
 								{#if l.modelLabel}<span class="truncate">{modelShort}</span>{:else}<Icon name="cpu" size={12} />{/if}
-								<Icon name="chevronDown" size={10} />
 							</button>
 							{#if menuOpen === 'model'}
 								<ComposerMenu
 									rows={modelRows}
+									below={composerTop}
 									label={t('chat.panel.model')}
 									search
 									placeholder={t('composer.model.search')}
@@ -1153,49 +1260,21 @@
 							{/if}
 						</div>
 					{/if}
-					{#if optionRows.length || chatMeta}
-						<!-- Where and how the chat runs: the runtime and folder (a new chat), the run mode (Agent). -->
-						<div class="relative flex min-w-0">
-							<button
-								type="button"
-								class={[
-									'flex h-[22px] min-w-0 items-center gap-1 rounded-md px-1.5 text-xs hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)',
-									(allowAll && mode === 'agent') || globalAutoApprove ? 'text-(--vscode-editorWarning-foreground)' : 'text-(--vscode-descriptionForeground)'
-								]}
-								aria-label={t('composer.options.label')}
-								title={t('composer.options.hint', { runtime: runtimeName, where: chatMeta ? cwdLabel(chatMeta.cwd) : newWhere ? `kingu/${newWhere}` : workspace.name || t('chat.panel.cwdFolder'), run: globalAutoApprove ? t('composer.run.global') : mode === 'agent' ? runModeLabel(currentApproval) : modeName(pick) })}
-								aria-haspopup="listbox"
-								aria-expanded={menuOpen === 'options'}
-								disabled={!optionRows.length}
-								onclick={() => (menuOpen = menuOpen === 'options' ? null : 'options')}
-							>
-								<Icon name={(allowAll && mode === 'agent') || globalAutoApprove ? 'warning' : 'sliders'} size={12} />
-								{#if l.optionsLabel && runtimeId !== runtimeOf(null)}<span class="max-w-24 truncate">{runtimeName}</span>{/if}
-							</button>
-							{#if menuOpen === 'options'}
-								<ComposerMenu
-									rows={optionRows}
-									label={t('composer.options.label')}
-									width={280}
-									footer={globalAutoApprove ? t('chatCustomize.autoApproveNote') : undefined}
-									onpick={pickOption}
-									onclose={closeMenu}
-								/>
-							{/if}
-						</div>
-					{/if}
 				{/snippet}
 				{#snippet right(l)}
-					{#if chatRun?.context && l.ring}<ContextRing usage={chatRun.context} cost={chatRun.result?.total_cost_usd ?? null} oncompact={chatMeta ? compact : undefined} />{/if}
+					{#if chatRun?.context && l.ring}<ContextRing usage={chatRun.context} cost={chatRun.result?.total_cost_usd ?? null} oncompact={chatMeta ? compact : undefined} />{:else if running && l.ring}<span
+							class="grid size-6 shrink-0 place-items-center"
+							role="status"
+							aria-label={t('composer.status.running')}><span class="size-3 animate-spin rounded-full border-[1.5px] border-(--vscode-widget-border) border-t-(--vscode-descriptionForeground)"></span></span
+						>{/if}
 				{/snippet}
 			</Composer>
 			{#if optionNote}<p class="px-1 pt-1 text-xs text-(--vscode-descriptionForeground)" role="status">{optionNote}</p>{/if}
 			{#if allowAll && mode === 'agent'}<p class="px-1 pt-1 text-xs text-(--vscode-editorWarning-foreground)" role="status">{t('chatInput.allowAllNote')}</p>{/if}
 			{#if globalAutoApprove}<p class="px-1 pt-1 text-xs text-(--vscode-editorWarning-foreground)" role="status">{t('chatCustomize.autoApproveNote')}</p>{/if}
 		</div>
-	{/if}
-</div>
+{/snippet}
 
 {#snippet rulesChip()}
-	<RulesChip {cwd} files={contextChips.filter((f) => !('disabled' in f && f.disabled)).map((f) => f.path)} />
+	<RulesChip {cwd} files={contextChips.map((f) => f.path)} />
 {/snippet}

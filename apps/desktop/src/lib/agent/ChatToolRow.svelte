@@ -6,12 +6,15 @@
 	// collapsed, with their count and pending approvals (VS Code's chatSubagentContentPart).
 	// A plan card offers Implement (`onimplement`, VS Code's plan review handoff). Bash shows its
 	// command in a terminal-styled block with the output under it (chatTerminalToolProgressPart).
+	// Cursor's look: most calls are quiet one-liners with the verb in bold ("**Read** app.js"); a
+	// shell call is a bordered card ("›_ Show git status  git" over its output); an edit is a
+	// bordered card with the file, +N and a few lines of its diff.
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import ChatMarkdown from './ChatMarkdown.svelte';
 	import ChatEditPill from './ChatEditPill.svelte';
 	import ChatToolRow from './ChatToolRow.svelte';
-	import { editOf, isSubagentTool, planOf, subagentStats, toolLabel, type ToolPart } from './chatParts';
+	import { bashDescription, editOf, editSnippet, isSubagentTool, planOf, splitVerb, subagentStats, toolLabel, type ToolPart } from './chatParts';
 
 	let {
 		part,
@@ -59,9 +62,12 @@
 		<span class="size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-current border-t-transparent"></span>
 	{:else if part.result?.isError}
 		<span class="shrink-0 text-(--vscode-errorForeground)"><Icon name="error" size={13} /></span>
-	{:else}
-		<span class="shrink-0 text-(--vscode-charts-green,#73C991)"><Icon name="check" size={13} /></span>
 	{/if}
+{/snippet}
+
+{#snippet label(text: string)}
+	{@const parts = splitVerb(text)}
+	<span class="min-w-0 flex-1 truncate"><span class="font-semibold text-(--vscode-foreground)/85">{parts.verb}</span>{parts.rest ? ` ${parts.rest}` : ''}</span>
 {/snippet}
 
 {#snippet details()}
@@ -78,7 +84,7 @@
 {#if part.name === 'TodoWrite' && !part.result?.isError}
 	<div class="flex min-w-0 items-center gap-1.5 text-(--vscode-descriptionForeground)">
 		{@render statusIcon()}
-		<span class="min-w-0 flex-1 truncate">{done ? t('chatParts.todos.updated') : t('chatParts.todos.updating')}</span>
+		{@render label(done ? t('chatParts.todos.updated') : t('chatParts.todos.updating'))}
 	</div>
 {:else if plan}
 	<div class="overflow-hidden rounded border border-(--vscode-widget-border)">
@@ -99,10 +105,20 @@
 		</div>
 	</div>
 {:else if edit}
-	<div class="flex flex-col gap-1">
-		<ChatEditPill path={edit.path} added={edit.added} removed={edit.removed} {done} error={!!part.result?.isError} {chatId} {cwd} {root} />
+	{@const snippet = editSnippet(part.name, part.input)}
+	<div class="overflow-hidden rounded-lg border border-(--vscode-widget-border)">
+		<ChatEditPill path={edit.path} added={edit.added} removed={edit.removed} {done} error={!!part.result?.isError} {chatId} {cwd} {root} flat />
+		{#if snippet.length && !part.result?.isError}
+			<pre class="overflow-hidden border-t border-(--vscode-widget-border) py-0.5 font-mono text-xs leading-[18px]">{#each snippet as line, li (li)}<div
+						class={[
+							'truncate px-2',
+							line.sign === '+' && 'bg-(--vscode-diffEditor-insertedLineBackground,rgba(115,201,145,0.15)) text-(--vscode-foreground)',
+							line.sign === '-' && 'bg-(--vscode-diffEditor-removedLineBackground,rgba(241,76,76,0.15)) text-(--vscode-foreground)',
+							line.sign === ' ' && 'text-(--vscode-descriptionForeground)'
+						]}><span class="mr-2 inline-block w-2 opacity-70 select-none">{line.sign === ' ' ? '' : line.sign}</span>{line.text || ' '}</div>{/each}</pre>
+		{/if}
 		{#if part.result?.isError}
-			<pre class={[PRE, 'font-mono text-(--vscode-errorForeground)']}>{part.result.content}</pre>
+			<pre class="border-t border-(--vscode-widget-border) px-2 py-1 font-mono text-xs break-all whitespace-pre-wrap text-(--vscode-errorForeground)">{part.result.content}</pre>
 		{/if}
 	</div>
 {:else if subagent && stats}
@@ -114,7 +130,7 @@
 			onclick={() => (open = !open)}
 		>
 			{@render statusIcon()}
-			<span class="min-w-0 flex-1 truncate">{toolLabel(part.name, part.input, done, cwd)}</span>
+			{@render label(toolLabel(part.name, part.input, done, cwd))}
 			{#if waiting}
 				<span class="shrink-0 text-(--vscode-editorWarning-foreground)">{t('chatParts.subagent.pending', { count: waiting })}</span>
 			{:else if stats.tools}
@@ -153,38 +169,34 @@
 		{/if}
 	</div>
 {:else if bash !== null}
-	<div class="flex flex-col gap-1">
-		<div class="flex min-w-0 items-center gap-1.5 text-(--vscode-descriptionForeground)">
-			{@render statusIcon()}
-			<span class="min-w-0 flex-1 truncate">{toolLabel(part.name, part.input, done, cwd)}</span>
-		</div>
-		<div class="overflow-hidden rounded border border-(--vscode-widget-border) bg-(--vscode-terminal-background,var(--vscode-editor-background)) font-mono text-xs text-(--vscode-terminal-foreground,var(--vscode-foreground))">
-			<div class="flex items-start gap-1.5 px-2 py-1">
-				<span class="shrink-0 text-(--vscode-terminal-ansiGreen,#73C991)" aria-hidden="true">$</span>
-				<pre class="min-w-0 flex-1 break-all whitespace-pre-wrap">{bash}</pre>
-				{#if part.result?.content}
-					<button
-						type="button"
-						class="grid size-4 shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)"
-						aria-expanded={open}
-						aria-label={open ? t('chatIo.terminalHide') : t('chatIo.terminalShow')}
-						title={open ? t('chatIo.terminalHide') : t('chatIo.terminalShow')}
-						onclick={() => (open = !open)}><Icon name={open ? 'chevronUp' : 'chevronDown'} size={12} /></button
-					>
-				{/if}
-			</div>
+	{@const desc = bashDescription(part.input)}
+	<div class="overflow-hidden rounded-lg border border-(--vscode-widget-border) text-xs">
+		<button
+			type="button"
+			class="flex w-full min-w-0 items-center gap-1.5 px-2 py-1 text-left hover:bg-(--vscode-list-hoverBackground)"
+			aria-expanded={open}
+			title={bash}
+			onclick={() => (open = !open)}
+		>
+			{#if !done || part.result?.isError}{@render statusIcon()}{:else}<span class="shrink-0 font-mono text-(--vscode-descriptionForeground)" aria-hidden="true">›_</span>{/if}
+			<span class="min-w-0 truncate text-(--vscode-foreground)">{desc ?? bash}</span>
+			{#if desc}<span class="min-w-0 shrink-0 truncate font-mono text-(--vscode-descriptionForeground)">{bash.trim().split(/\s+/, 1)[0]}</span>{/if}
+			<span class="flex-1"></span>
+			{#if part.result?.content}<Icon name={open ? 'chevronUp' : 'chevronDown'} size={12} />{/if}
+		</button>
+		<div class="border-t border-(--vscode-widget-border) bg-(--vscode-terminal-background,var(--vscode-editor-background)) font-mono text-(--vscode-terminal-foreground,var(--vscode-foreground))">
+			{#if desc || open}<pre class="px-2 pt-1 break-all whitespace-pre-wrap text-(--vscode-descriptionForeground)">$ {bash}</pre>{/if}
 			{#if part.result}
 				<pre
-					class={[
-						'overflow-auto border-t border-(--vscode-widget-border) px-2 py-1 break-all whitespace-pre-wrap',
-						open ? 'max-h-96' : 'max-h-24',
-						part.result.isError && 'text-(--vscode-errorForeground)'
-					]}>{part.result.content || t('chatView.toolNoOutput')}</pre>
+					class={['overflow-auto px-2 py-1 break-all whitespace-pre-wrap', open ? 'max-h-96' : 'max-h-24', part.result.isError && 'text-(--vscode-errorForeground)']}
+					aria-label={open ? t('chatIo.terminalHide') : t('chatIo.terminalShow')}>{part.result.content || t('chatView.toolNoOutput')}</pre>
+			{:else if !desc && !open}
+				<pre class="px-2 py-1 break-all whitespace-pre-wrap text-(--vscode-descriptionForeground)">$ {bash}</pre>
 			{/if}
 		</div>
 	</div>
 {:else}
-	<div>
+	<div class="group/tool">
 		<button
 			type="button"
 			class="flex w-full min-w-0 items-center gap-1.5 text-left text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)"
@@ -192,8 +204,8 @@
 			onclick={() => (open = !open)}
 		>
 			{@render statusIcon()}
-			<span class="min-w-0 flex-1 truncate">{toolLabel(part.name, part.input, done, cwd)}</span>
-			<Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} />
+			{@render label(toolLabel(part.name, part.input, done, cwd))}
+			<span class="opacity-0 group-hover/tool:opacity-100"><Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} /></span>
 		</button>
 		{#if open}{@render details()}{/if}
 	</div>

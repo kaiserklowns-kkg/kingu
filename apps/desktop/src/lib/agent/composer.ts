@@ -3,13 +3,14 @@
 // send / stop button), pure so `bun test` covers it. Composer.svelte and AgentPanel.svelte draw it.
 //
 //   modeTone / MODE_ICON / cycleMode   the mode pill: its colour and icon, ⌘. / ⇧Tab to the next mode
-//   composerPlaceholder                the input's placeholder for the chat's state (first rule wins)
+//   composerPlaceholder                the input's placeholder for the chat's state (one for every mode)
 //   enterAction                        what Enter does with its modifiers (⌘Enter-to-send setting)
 //   approvalKey                        ⏎ Run / ⇧⏎ Allowlist / Esc Skip while a tool waits
 //   primaryAction                      the round button: send, queue, stop or nothing to send
 //   browseHistory                      ⌥↑ / ⌥↓ through earlier prompts, the draft kept
 //   composerLayout                     which labels the bottom bar keeps at the box's width
-//   slashSections / mentionSections    the `/` and `@` menus' grouping
+//   slashMenu                          the `/` menu's sections, Skills folded to 3 rows
+//   chromeKey                          keys typed while focus is on the composer's own buttons
 //   shortModelLabel / allowlistLabel   compact labels for the model trigger and the Allow button
 //   moveItem                           reordering a queued message
 
@@ -31,9 +32,9 @@ export const MODE_ICON: Record<ModeTone, IconName> = { agent: 'infinity', ask: '
 /** A custom agent's name (`custom:<name>`), else null. */
 export const customName = (pick: ModePick): string | null => (pick.startsWith('custom:') ? pick.slice(7) : null);
 
-/** The modes ⌘. / ⇧Tab walk through: Agent, Ask, Plan, then the custom agents. */
+/** The mode menu's order, which ⌘. / ⇧Tab walk through (Cursor's: Agent, Plan, …, Ask), then the custom agents. */
 export function modeOrder(customAgents: readonly string[]): ModePick[] {
-	return ['agent', 'ask', 'plan', ...customAgents.map((n) => `custom:${n}` as const)];
+	return ['agent', 'plan', 'ask', ...customAgents.map((n) => `custom:${n}` as const)];
 }
 
 /** The next (or previous) mode after `current`, wrapping; an unknown current starts from the first. */
@@ -68,25 +69,18 @@ export type PlaceholderState = {
 	running?: boolean;
 	/** The chat already has messages. */
 	followUp?: boolean;
-	mode: ModePick;
 };
 
-/** The input's placeholder: the first rule that applies (Cursor's order), then by mode. */
+/**
+ * The input's placeholder: the first rule that applies, else Cursor's one line for every mode
+ * ("Plan, Build, / for skills, @ for context"; it does not change with the mode).
+ */
 export function composerPlaceholder(s: PlaceholderState): string {
 	if (!s.folder) return t('chat.panel.noFolder');
 	if (s.editingQueued) return t('composer.placeholder.editingQueued');
 	if (s.pendingApproval) return t('composer.placeholder.pending');
-	if (s.running) return t('composer.placeholder.running');
-	const name = customName(s.mode);
-	if (name) return s.followUp ? t('composer.placeholder.customFollowUp', { name }) : t('composer.placeholder.custom', { name });
-	switch (s.mode) {
-		case 'ask':
-			return s.followUp ? t('composer.placeholder.askFollowUp') : t('composer.placeholder.ask');
-		case 'plan':
-			return s.followUp ? t('composer.placeholder.planFollowUp') : t('composer.placeholder.plan');
-		default:
-			return s.followUp ? t('composer.placeholder.followUp') : t('composer.placeholder.agent');
-	}
+	// While the agent works, and after: "Add a follow-up"; an empty chat gets Cursor's one line.
+	return s.running || s.followUp ? t('composer.placeholder.followUp') : t('composer.placeholder.new');
 }
 
 // ---- keys ------------------------------------------------------------------------------------
@@ -238,6 +232,33 @@ export function slashSections<T extends SlashItem>(items: readonly T[]): (T & { 
 	return out;
 }
 
+/** Skills the `/` menu shows before "Show N more" (Cursor's). */
+export const SKILLS_SHOWN = 3;
+
+export type SlashEntry<T> = { kind: 'item'; item: T & { section: SlashSection; first: boolean } } | { kind: 'more'; count: number };
+
+/**
+ * The `/` menu's rows: the sections, with Skills folded to `SKILLS_SHOWN` rows and a "Show N
+ * more" row while nothing is typed and the list was not unfolded (`expanded`).
+ */
+export function slashMenu<T extends SlashItem>(items: readonly T[], opts: { query: string; expanded: boolean }): SlashEntry<T>[] {
+	const rows = slashSections(items);
+	const skills = rows.filter((r) => r.section === 'skills');
+	const fold = !opts.query && !opts.expanded && skills.length > SKILLS_SHOWN + 1;
+	const out: SlashEntry<T>[] = [];
+	let shown = 0;
+	for (const r of rows) {
+		if (fold && r.section === 'skills') {
+			if (shown < SKILLS_SHOWN) out.push({ kind: 'item', item: r });
+			else if (shown === SKILLS_SHOWN) out.push({ kind: 'more', count: skills.length - SKILLS_SHOWN });
+			shown++;
+			continue;
+		}
+		out.push({ kind: 'item', item: r });
+	}
+	return out;
+}
+
 /** Moves the item at `from` to `to` (both clamped); the same list when nothing moves. */
 export function moveItem<T>(list: readonly T[], from: number, to: number): T[] {
 	if (from < 0 || from >= list.length) return [...list];
@@ -247,6 +268,18 @@ export function moveItem<T>(list: readonly T[], from: number, to: number): T[] {
 	const [item] = out.splice(from, 1);
 	out.splice(target, 0, item);
 	return out;
+}
+
+/**
+ * A key pressed while focus is on one of the composer's own controls (the mode pill, the model
+ * label, the paperclip), not its text: ⇧Tab still switches the mode, and a character goes into
+ * the input (so `@` opens the context menu there instead of acting on the focused button).
+ */
+export function chromeKey(e: KeyLike): 'cycle' | 'type' | null {
+	if (e.isComposing) return null;
+	if (e.key === 'Tab' && e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) return 'cycle';
+	if (e.key.length === 1 && e.key !== ' ' && !e.metaKey && !e.ctrlKey) return 'type';
+	return null;
 }
 
 /** Whether a runtime can take a message while a turn runs (steer); the others stop and send. */

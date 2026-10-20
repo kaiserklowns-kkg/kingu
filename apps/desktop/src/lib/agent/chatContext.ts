@@ -39,17 +39,31 @@ export function matchSources(query: string, label: (s: ContextSource) => string)
 /** At most this many files in the `@` menu (Cursor shows 32). */
 export const MENTION_FILES = 32;
 
-/** What the `@` menu lists, in order. */
-export type MentionPlan = { recent: string[]; sources: ContextSource[]; folders: string[]; files: string[] };
+/**
+ * The `@` menu's sources, in Cursor's order (Files & Folders, Terminals, Past Chats, the branch's
+ * changes), then the ones only Kingu has.
+ */
+export const MENTION_SOURCES: readonly ContextSource[] = ['files', 'terminal', 'pastChat', 'scm', 'selection', 'problems', 'clipboardImage', 'instructions'];
+
+/** Sources that open a list in the menu itself (›): files and folders, the terminals, past chats. */
+export const DRILL_SOURCES: Partial<Record<ContextSource, MentionScope>> = { files: 'files', terminal: 'terminals', pastChat: 'chats' };
+
+/** A list drilled into from the `@` menu. */
+export type MentionScope = 'files' | 'terminals' | 'chats';
+
+/** What the `@` menu lists, in order. `current`: the editor's file (and recent ones) offered first. */
+export type MentionPlan = { current: string[]; sources: ContextSource[]; folders: string[]; files: string[] };
 
 /**
- * The `@` menu (Cursor's): with nothing typed, up to 3 recent files not attached yet, then every
- * source; typed, the matching sources, then folders and files. `scope: 'files'` is Files & Folders
- * drilled into: only folders and files. `ranked`: the files for the query, best first.
+ * The `@` menu (Cursor's): with nothing typed, the current file first (then recent files, 3 in
+ * all, none already attached), a separator, then every source; typed, the matching sources,
+ * then folders and files. `scope: 'files'` is Files & Folders drilled into: only folders and
+ * files. `ranked`: the files for the query, best first.
  */
 export function planMentions(input: {
 	query: string;
-	scope: 'files' | null;
+	scope: MentionScope | null;
+	active: string | null;
 	recent: readonly string[];
 	ranked: readonly string[];
 	folders: readonly string[];
@@ -58,12 +72,21 @@ export function planMentions(input: {
 }): MentionPlan {
 	const q = input.query.toLowerCase();
 	const folders = (max: number) => (q ? input.folders.filter((d) => d.toLowerCase().includes(q)).slice(0, max) : []);
-	if (input.scope === 'files') return { recent: [], sources: [], folders: folders(10), files: input.ranked.slice(0, MENTION_FILES) };
+	if (input.scope === 'files') return { current: [], sources: [], folders: folders(10), files: input.ranked.slice(0, MENTION_FILES) };
+	if (input.scope) return { current: [], sources: [], folders: [], files: [] };
 	if (!q) {
 		const attached = new Set(input.attached);
-		return { recent: input.recent.filter((p) => !attached.has(p)).slice(0, 3), sources: [...CONTEXT_SOURCES], folders: [], files: [] };
+		const current = [...new Set([...(input.active ? [input.active] : []), ...input.recent])].filter((p) => !attached.has(p)).slice(0, 3);
+		return { current, sources: [...MENTION_SOURCES], folders: [], files: [] };
 	}
-	return { recent: [], sources: matchSources(q, input.label), folders: folders(5), files: input.ranked.slice(0, MENTION_FILES) };
+	const sources = MENTION_SOURCES.filter((s) => input.label(s).toLowerCase().includes(q) || s.toLowerCase().includes(q));
+	return { current: [], sources, folders: folders(5), files: input.ranked.slice(0, MENTION_FILES) };
+}
+
+/** A drilled-in list's rows matching `query` (by label). */
+export function filterScoped<T extends { label: string }>(rows: readonly T[], query: string, max = MENTION_FILES): T[] {
+	const q = query.toLowerCase();
+	return rows.filter((r) => !q || r.label.toLowerCase().includes(q)).slice(0, max);
 }
 
 // ---- files and folders -----------------------------------------------------------------------

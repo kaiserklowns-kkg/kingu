@@ -20,12 +20,21 @@
 		remember?: (text: string) => void;
 		/** Follow-up suggestions under the last answer, and what a click on one does. */
 		followups?: { items: string[]; pick: (text: string) => void };
+		/** Stop the running turn (the ■ in the running request's box, Cursor's). */
+		stop?: () => void;
+		/** Fork the chat at a request (the answer footer's branch icon). */
+		fork?: (request: number) => void;
+		/** When a request was sent (ms), for the answer footer's "Just now". */
+		sentAt?: (request: number) => number | null;
 	};
 </script>
 
 <script lang="ts">
 	// A run as VS Code's chat list (chatListRenderer): each request, then its response made of
-	// parts: markdown with code block actions, thinking (collapsed), tool calls (ChatToolRow:
+	// parts (Cursor's look: each request in a rounded box like the composer, the first one pinned
+	// to the top while its answer scrolls, with ■ Stop inside while it runs and the checkpoint's ↶
+	// after; a finished earlier turn folds its steps into "Worked for 2s"; quiet progress lines):
+	// markdown with code block actions, thinking (collapsed), tool calls (ChatToolRow:
 	// one-line rows that expand to their input and output, edited-file pills, plan cards, subagents
 	// with their own calls nested), approval and question cards, errors with Retry, a "Working…" row
 	// while the turn runs, and "N files changed" under a finished chat request. Internal events are not shown (chatParts.ts). Shared by
@@ -43,7 +52,8 @@
 	import ChatRequestChanges from './ChatRequestChanges.svelte';
 	import ArtifactCard from '#lib/artifacts/ArtifactCard.svelte';
 	import { answersFor, parseAsk } from './ask';
-	import { buildTurns, responseText, type Part } from './chatParts';
+	import { activityEnd, buildTurns, responseText, splitVerb, workedFor, type Part } from './chatParts';
+	import { timeAgo } from '#lib/ade/model.ts';
 	import { contextLabel } from './chatPrompt';
 	import { formatUsage, type Decision, type PermissionRequest } from './events';
 	import { usageDisplay } from './chatExtras';
@@ -175,12 +185,14 @@
 			{#each turns as turn, ti (ti)}
 				{@const last = ti === turns.length - 1}
 				{@const dim = (turn.checkpoint != null && !!reverted?.(turn.checkpoint)) || (editing !== null && ti > editing)}
+				{@const end = turn.done && !last ? activityEnd(turn.parts) : 0}
+				{@const folded = end > 0 && !open[`w:${ti}`]}
 				<div class={['flex flex-col gap-3', dim && 'opacity-50']}>
 				{#if turn.request}
 					{@const req = turn.request}
 					{@const inline = !!actions.editInline && turn.checkpoint != null}
-					<!-- Request -->
-					<div class="group/req flex flex-col items-end gap-1">
+					<!-- Request: a box like the composer; the first one stays pinned while its answer scrolls. -->
+					<div class={['group/req flex flex-col items-end gap-1', ti === firstRequest && 'sticky -top-3 z-10 -mx-1 bg-(--vscode-sideBar-background) px-1 pt-3 pb-1']}>
 						{#if editing === ti && turn.checkpoint != null}
 							{@const cp = turn.checkpoint}
 							<div class="flex w-full flex-col gap-1 rounded-lg border border-(--vscode-focusBorder) bg-(--vscode-input-background) px-2 py-1.5">
@@ -207,9 +219,10 @@
 								</div>
 							</div>
 						{:else}
+						<div class="flex w-full items-start gap-2 rounded-xl border border-(--vscode-input-border,var(--vscode-widget-border)) bg-(--vscode-input-background) py-2 pr-2 pl-3">
 						<!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_tabindex -->
 						<div
-							class={['max-w-[90%] rounded-lg bg-(--vscode-chat-requestBackground,var(--vscode-input-background)) px-2.5 py-1.5 break-words whitespace-pre-wrap', inline && 'cursor-text']}
+							class={['min-w-0 flex-1 break-words whitespace-pre-wrap', inline && 'cursor-text']}
 							role={inline ? 'button' : undefined}
 							tabindex={inline ? 0 : undefined}
 							title={inline ? t('chatRewind.editHint') : undefined}
@@ -230,6 +243,18 @@
 								</div>
 							{/if}
 						</div>
+							<div class="flex shrink-0 items-center">
+								{#if !turn.done && last && actions.stop}
+									<button
+										type="button"
+										class="grid size-6 place-items-center rounded-full bg-[color-mix(in_srgb,var(--vscode-foreground)_85%,transparent)] text-(--vscode-sideBar-background,var(--vscode-input-background)) hover:opacity-90"
+										aria-label={t('chatView.stop')}
+										title={t('chatView.stop')}
+										onclick={() => actions.stop?.()}><span class="size-2.5 rounded-[2px] bg-current"></span></button
+									>
+								{:else if checkpoint && turn.checkpoint != null}{@render checkpoint(turn.checkpoint, req, ti === firstRequest)}{/if}
+							</div>
+						</div>
 						{/if}
 						<div class="flex gap-0.5 opacity-0 transition-opacity group-hover/req:opacity-100 focus-within:opacity-100">
 							{#if inline}
@@ -243,22 +268,29 @@
 							{#if actions.remember}
 								<button type="button" class={ACTION} title={t('chatExtras.remember.hint')} aria-label={t('chatExtras.remember.label')} onclick={() => rememberText(req.text)}><Icon name="bookmark" size={13} /></button>
 							{/if}
-							{#if checkpoint && turn.checkpoint != null}{@render checkpoint(turn.checkpoint, req, ti === firstRequest)}{/if}
 						</div>
 					</div>
 				{/if}
 
-				<!-- Response -->
+				<!-- Response: an earlier finished turn folds its steps into "Worked for 2s" (Cursor's). -->
 				<div class="flex flex-col gap-1.5">
+					{#if end > 0}
+						<button type="button" class="flex items-center gap-1 self-start text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)" aria-expanded={!folded} onclick={() => toggle(`w:${ti}`)}>
+							{workedFor(turn.result?.duration_ms) ? t('composer.progress.workedFor', { time: workedFor(turn.result?.duration_ms) ?? '' }) : t('composer.progress.worked')}
+							<Icon name={folded ? 'chevronDown' : 'chevronUp'} size={12} />
+						</button>
+					{/if}
 					{#each turn.parts as part, pi (pi)}
 						{@const key = `${ti}:${pi}`}
-						{#if part.kind === 'markdown'}
+						{#if folded && pi < end}
+							<!-- folded into "Worked for" -->
+						{:else if part.kind === 'markdown'}
 							<ChatMarkdown text={part.text} streaming={part.streaming} {root} />
 						{:else if part.kind === 'thinking'}
 							<div>
 								<button type="button" class="flex items-center gap-1 text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)" aria-expanded={!!open[key]} onclick={() => toggle(key)}>
 									<Icon name={open[key] ? 'chevronDown' : 'chevronRight'} size={12} />
-									{#if part.streaming}<span class="animate-pulse">{t('chatView.thinking')}</span>{:else}{t('chatView.thought')}{/if}
+									{#if part.streaming}<span class="animate-pulse font-semibold">{t('chatView.thinking')}</span>{:else}<span><span class="font-semibold">{splitVerb(t('composer.progress.thought')).verb}</span> {splitVerb(t('composer.progress.thought')).rest}</span>{/if}
 								</button>
 								{#if open[key]}
 									<p class="mt-1 border-l-2 border-(--vscode-widget-border) pl-2 whitespace-pre-wrap text-(--vscode-descriptionForeground) italic">{part.text}</p>
@@ -307,8 +339,7 @@
 
 					{#if !turn.done && showsProgress(turn.parts)}
 						<div class="flex items-center gap-1.5 text-(--vscode-descriptionForeground)" role="status">
-							<span class="size-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent"></span>
-							{t('chatView.working')}
+							<span class="animate-pulse"><span class="font-semibold">{splitVerb(t('composer.progress.planning')).verb}</span> {splitVerb(t('composer.progress.planning')).rest}</span>
 						</div>
 					{/if}
 
@@ -323,6 +354,10 @@
 								<button type="button" class={ACTION} title={t('chatView.copyResponse')} aria-label={t('chatView.copyResponse')} onclick={() => copy(text, ti)}>
 									<Icon name={copied === ti ? 'check' : 'copy'} size={13} />
 								</button>
+							{/if}
+							{#if actions.fork && turn.checkpoint != null}
+								{@const cp = turn.checkpoint}
+								<button type="button" class={ACTION} title={t('chatRewind.forkHint')} aria-label={t('chatRewind.fork')} onclick={() => actions.fork?.(cp)}><Icon name="branch" size={13} /></button>
 							{/if}
 							{#if last && actions.retry}
 								<button type="button" class={ACTION} title={t('chatView.retry')} aria-label={t('chatView.retry')} onclick={() => actions.retry?.()}><Icon name="refresh" size={13} /></button>
@@ -349,6 +384,9 @@
 								</span>
 							{:else if turn.result && formatUsage(turn.result) && usage === 'always'}
 								<span class="ml-1 truncate text-xs text-(--vscode-descriptionForeground)">{formatUsage(turn.result)}</span>
+							{/if}
+							{#if turn.checkpoint != null && actions.sentAt?.(turn.checkpoint)}
+								<span class="ml-1 text-xs text-(--vscode-descriptionForeground)">{timeAgo(actions.sentAt(turn.checkpoint)!, Date.now())}</span>
 							{/if}
 						</div>
 						{#if last && actions.followups?.items.length}

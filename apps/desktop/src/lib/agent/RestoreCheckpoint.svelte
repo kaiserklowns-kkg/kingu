@@ -13,12 +13,15 @@
 		chatId,
 		request,
 		first = false,
+		compact = false,
 		onrestored
 	}: {
 		chatId: string;
 		request: number;
 		/** The chat's first request: Start Over. */
 		first?: boolean;
+		/** Only the ↶ icon (inside the request's box, Cursor's). */
+		compact?: boolean;
 		/** After the rewind (e.g. put the request back in the input). */
 		onrestored?: () => void;
 	} = $props();
@@ -41,6 +44,14 @@
 	<div class="flex items-center gap-1 text-xs text-(--vscode-descriptionForeground) italic">
 		<Icon name="discard" size={12} />{t('chatEdits.reverted')}
 	</div>
+{:else if compact}
+	<button
+		class="grid size-6 place-items-center rounded-md text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground) disabled:opacity-50"
+		aria-label={first ? t('chatRewind.startOver') : t('chatRewind.restore')}
+		title={first ? t('chatRewind.startOverHint') : t('chatRewind.restoreHint')}
+		disabled={busy}
+		onclick={restore}><Icon name="discard" size={13} /></button
+	>
 {:else}
 	<div class="flex items-center gap-2 text-xs text-(--vscode-descriptionForeground)">
 		<button
