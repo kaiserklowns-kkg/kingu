@@ -27,8 +27,8 @@ export function editorsToSave(setting: string, groupTabs: readonly string[], isD
 	return groupTabs.filter((p) => isDirty(p) && !(setting === 'nonUntitledEditorsInActiveGroup' && isUntitled(p)));
 }
 
-/** Languages Kingu's debuggers (lldb-dap, Delve, debugpy) set breakpoints in, like VS Code's debugger `breakpoints` contributions. */
-export const BREAKPOINT_LANGUAGES = new Set(['rust', 'c', 'cpp', 'objective-c', 'objective-cpp', 'swift', 'zig', 'go', 'python']);
+/** Languages Kingu's debuggers (lldb-dap, Delve, debugpy, js-debug) set breakpoints in, like VS Code's debugger `breakpoints` contributions. */
+export const BREAKPOINT_LANGUAGES = new Set(['rust', 'c', 'cpp', 'objective-c', 'objective-cpp', 'swift', 'zig', 'go', 'python', 'javascript', 'typescript', 'javascriptreact', 'typescriptreact', 'html', 'fsharp', 'wat']);
 
 /** `debug.allowBreakpointsEverywhere`: a breakpoint goes only in a debuggable language unless this is on. */
 export const canSetBreakpoint = (language: string, everywhere: boolean) => everywhere || BREAKPOINT_LANGUAGES.has(language);

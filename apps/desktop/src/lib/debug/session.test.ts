@@ -25,6 +25,11 @@ class FakeAdapter {
 	line = 0;
 	client!: DapClient;
 	pendingLaunch: Request | null = null;
+	/** js-debug: a `breakpoint` event (verified once the script loads) can arrive before the setBreakpoints answer. */
+	verifyEarly = false;
+	/** js-debug answers a repeated setBreakpoints with no entries. */
+	repeatEmpty = false;
+	#sets = 0;
 
 	send(msg: Omit<ProtocolMessage, 'seq'>) {
 		const json = JSON.stringify({ ...msg, seq: this.seq++ });
@@ -68,6 +73,8 @@ class FakeAdapter {
 				return;
 			case 'setBreakpoints':
 				this.lines = (args.breakpoints as SourceBreakpoint[]).map((b) => b.line);
+				if (this.verifyEarly) this.event('breakpoint', { reason: 'changed', breakpoint: { id: 2, verified: true, line: 99 } });
+				if (this.repeatEmpty && this.#sets++ > 0) return this.respond(msg, { breakpoints: [] });
 				return this.respond(msg, { breakpoints: this.lines.map((l, i) => ({ id: i + 1, verified: l !== 99, line: l, message: l === 99 ? 'no code' : undefined })) });
 			case 'setExceptionBreakpoints':
 				return this.respond(msg);
@@ -191,6 +198,25 @@ describe('DebugSession', () => {
 		expect(adapter.received.length).toBe(n);
 		await session.disconnect();
 		expect(adapter.received.at(-1)).toMatchObject({ command: 'disconnect', arguments: { terminateDebuggee: true } });
+	});
+
+	test('a breakpoint event that arrives before the setBreakpoints answer still counts', async () => {
+		const { adapter, session } = setup();
+		adapter.verifyEarly = true;
+		await session.start();
+		await until(() => session.model.verified['/ws/main.py']?.length === 2, 'breakpoints answered');
+		expect(session.model.verified['/ws/main.py'].map((b) => b.verified)).toEqual([true, true]);
+	});
+
+	test('an empty answer to the same breakpoints again keeps the earlier one, which later events verify', async () => {
+		const { adapter, session } = setup();
+		adapter.repeatEmpty = true;
+		await session.start();
+		await until(() => session.model.verified['/ws/main.py']?.length === 2, 'breakpoints answered');
+		await session.setBreakpoints('/ws/main.py', [{ line: 12 }, { line: 99 }]);
+		expect(session.model.verified['/ws/main.py'].map((b) => b.id)).toEqual([1, 2]);
+		adapter.event('breakpoint', { reason: 'changed', breakpoint: { id: 2, verified: true, line: 99 } });
+		await until(() => session.model.verified['/ws/main.py'][1].verified, 'the event verifies it');
 	});
 
 	test('runInTerminal reverse request opens a terminal and answers the adapter', async () => {

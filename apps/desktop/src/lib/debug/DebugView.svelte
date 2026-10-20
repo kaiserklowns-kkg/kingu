@@ -60,8 +60,9 @@
 		if (expanded[key]) void debug.expand(ref);
 	}
 
-	// Scopes start expanded unless the adapter says they are expensive (VS Code: Registers).
-	const scopeOpen = (key: string, expensive: boolean) => expanded[key] ?? !expensive;
+	// Only the first cheap scope starts expanded (VS Code's variablesView; the session loads its variables).
+	const firstCheap = $derived(model?.scopes.find((s) => !s.expensive && s.variablesReference > 0)?.name);
+	const scopeOpen = (key: string, name: string) => expanded[key] ?? name === firstCheap;
 
 	function addWatch() {
 		debug.addWatch(watchInput);
@@ -208,7 +209,7 @@
 		{#if open.variables && model?.state === 'stopped'}
 			{#each model.scopes as s (s.name)}
 				{@const key = `scope:${s.name}`}
-				{@const isOpen = scopeOpen(key, s.expensive)}
+				{@const isOpen = scopeOpen(key, s.name)}
 				<button class={[ROW, 'w-full pl-1 text-left font-semibold']} onclick={() => ((expanded[key] = !isOpen), !isOpen && void debug.expand(s.variablesReference))}>
 					<Icon name={isOpen ? 'chevronDown' : 'chevronRight'} size={14} />{s.name}
 				</button>
@@ -273,8 +274,9 @@
 								onclick={() => debug.selectFrame(f.id, s.key)}
 								oncontextmenu={(e) => frameMenu(e, f, s.key)}
 							>
-								<span class="min-w-0 flex-1 truncate">{f.name}</span>
-								{#if f.source?.name || f.source?.path}<span class="shrink-0 text-xs text-(--vscode-descriptionForeground)">{f.source.name ?? fileName(f.source.path ?? '')}:{f.line}</span>{/if}
+								<span class="max-w-[70%] shrink-0 truncate">{f.name}</span>
+								<!-- Adapters like js-debug name a source by its whole path: the row shows the file name (full path in the title), the function name first, like VS Code. -->
+								{#if f.source?.name || f.source?.path}<span class="ml-auto min-w-0 truncate text-xs text-(--vscode-descriptionForeground)">{fileName(f.source.name ?? f.source.path ?? '')}:{f.line}</span>{/if}
 							</button>
 						{/each}
 					{/if}
