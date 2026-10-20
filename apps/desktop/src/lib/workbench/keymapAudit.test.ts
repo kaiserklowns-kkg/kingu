@@ -80,7 +80,14 @@ const EXCLUSIVE: [string, string][] = [
 	// New Chat takes ⌘N only while the chat has focus (keyWhen + weight), New Untitled File elsewhere.
 	['workbench.action.chat.newChat', 'workbench.action.files.newUntitledFile'],
 	// F11 off macOS (VS Code's keys): Step Into while the debugger is stopped, Toggle Full Screen (lower weight) otherwise.
-	['workbench.action.debug.stepInto', 'workbench.action.toggleFullScreen']
+	['workbench.action.debug.stepInto', 'workbench.action.toggleFullScreen'],
+	// Search Again needs an active Search Editor with focus in it, Rerun Task a focused task terminal (Windows/Linux keys).
+	['rerunSearchEditorSearch', 'workbench.action.tasks.rerunForActiveTerminal'],
+	// Delete File Results acts in the IDE's Search Editor, Delete Workspace only in the Agents layout.
+	['search.searchEditor.action.deleteFileResults', 'kingu.agents.deleteWorkspace'],
+	// The Search Editor's Match Case / Regex (⌥⌘C / ⌥⌘R) act with focus in it, where Copy Path / Reveal in Finder do not.
+	['toggleSearchEditorCaseSensitive', 'copyFilePath'],
+	['toggleSearchEditorRegex', 'revealFileInOS']
 ];
 
 /** VS Code's `terminalFocus` / `!terminalFocus`: one command's key acts only in a focused panel

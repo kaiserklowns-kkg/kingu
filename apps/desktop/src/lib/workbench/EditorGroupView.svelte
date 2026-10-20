@@ -53,6 +53,8 @@
 	import { filePathCrumbs, sortSymbols, symbolCodicon, symbolSiblings, visibleSymbols, type PathMode, type SymbolSortOrder } from './breadcrumbs';
 	import { symbolPath, type Crumb } from '#lib/lsp/convert.ts';
 	import { outline } from './outline.svelte';
+	import SearchEditorView from './SearchEditorView.svelte';
+	import { isSearchEditorKey, isUntitledSearchEditor } from './searchEditor';
 
 	let { group }: { group: number } = $props();
 
@@ -67,7 +69,7 @@
 	const chatEditorId = $derived(activePath ? chatIdOfEditorKey(activePath) : null);
 	const adeActive = $derived(activePath !== null && (isAdeEditor(activePath) || isChatEditorKey(activePath)));
 	const taskSlug = $derived(activePath ? slugOfTaskKey(activePath) : null);
-	const crumbs = $derived(!activePath || settingsActive || adeActive || isChangesKey(activePath) || isVaultKey(activePath) || isArtifactKey(activePath) ? [] : activePath === USER_SETTINGS_KEY
+	const crumbs = $derived(!activePath || settingsActive || adeActive || isChangesKey(activePath) || isVaultKey(activePath) || isArtifactKey(activePath) || isUntitledSearchEditor(activePath) ? [] : activePath === USER_SETTINGS_KEY
 					? ['User', 'settings.json']
 					: activePath === USER_KEYBINDINGS_KEY
 						? ['User', 'keybindings.json']
@@ -83,7 +85,7 @@
 	const crumbsAreFiles = $derived(!!activePath && activePath !== USER_SETTINGS_KEY && !isChangesKey(activePath) && !isExternalKey(activePath) && crumbs.length > 0);
 	const diffActive = $derived(activePath !== null && isDiffKey(activePath));
 	/** Images and Markdown previews have their own viewers instead of Monaco. */
-	const viewerActive = $derived(activePath !== null && (isMergeKey(activePath) || isImagePath(activePath) || isPreviewKey(activePath) || isNotebookPath(activePath) || isChangesKey(activePath) || isVaultKey(activePath) || isArtifactKey(activePath)));
+	const viewerActive = $derived(activePath !== null && (isMergeKey(activePath) || isImagePath(activePath) || isPreviewKey(activePath) || isNotebookPath(activePath) || isChangesKey(activePath) || isVaultKey(activePath) || isArtifactKey(activePath) || isSearchEditorKey(activePath)));
 	// The diff editor exists only while this group has a diff tab.
 	const hasDiff = $derived(tabs.some((t) => isDiffKey(t.path)));
 	// Enclosing symbols from the language server's document symbols, like VS Code's outline crumbs.
@@ -513,6 +515,8 @@
 			<div class="absolute inset-0">{#key activePath}<VaultTranscript vaultKey={activePath} />{/key}</div>
 		{:else if activePath && isArtifactKey(activePath)}
 			<div class="absolute inset-0">{#key activePath}<ArtifactViewer artifactKey={activePath} />{/key}</div>
+		{:else if activePath && isSearchEditorKey(activePath)}
+			<div class="absolute inset-0">{#key activePath}<SearchEditorView editorKey={activePath} {group} />{/key}</div>
 		{:else if activePath && isNotebookPath(activePath)}
 			<div class="absolute inset-0">{#key activePath}<NotebookViewer path={activePath} />{/key}</div>
 		{:else if activePath && isPreviewKey(activePath)}

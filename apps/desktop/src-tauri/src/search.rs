@@ -52,6 +52,9 @@ pub struct SearchOptions {
   /// `kingu.search.smart`: a plain query also finds its words in any case, order and spelling of
   /// a name (`smart_search.rs`).
   pub smart: Option<bool>,
+  /// The Search Editor's context lines (`--context N`). Set (even to 0), each file also carries
+  /// its result and context lines in full ([`FileLine`]), which the editor shows.
+  pub context_lines: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -71,6 +74,34 @@ pub struct TextMatch {
   pub text: String,
 }
 
+/// A whole line of a file in a Search Editor result: a line with matches, or a context line.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct FileLine {
+  /// 1-based line number.
+  pub line: u32,
+  /// The line without its line break, cut at [`MAX_LINE_CHARS`] like VS Code's preview
+  /// (`⟪ N characters skipped ⟫`).
+  pub text: String,
+  /// False for a context line.
+  pub is_match: bool,
+}
+
+/// Characters of a Search Editor line kept before the rest is elided (VS Code's charsPerLine).
+pub const MAX_LINE_CHARS: usize = 1000;
+
+/// `line` for the Search Editor: no line break, long lines elided like VS Code's search results.
+pub fn file_line(line_number: u32, raw: &str, is_match: bool) -> FileLine {
+  let text = raw.trim_end_matches(['\n', '\r']);
+  let count = text.chars().count();
+  let text = if count > MAX_LINE_CHARS {
+    let cut = text.char_indices().nth(MAX_LINE_CHARS).map_or(text.len(), |(i, _)| i);
+    format!("{} \u{27ea} {} characters skipped \u{27eb}", &text[..cut], count - MAX_LINE_CHARS)
+  } else {
+    text.to_string()
+  };
+  FileLine { line: line_number, text, is_match }
+}
+
 /// Sent to the webview over a channel, tagged by `kind`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -79,7 +110,15 @@ pub enum SearchEvent {
   /// `version` fingerprints the file's content when its matches were sent (see
   /// `replace::file_version`), so Replace can refuse a file that changed since.
   /// `modified`: the file's mtime in ms since the epoch (`search.sortOrder: modified`).
-  File { path: String, matches: Vec<TextMatch>, version: String, modified: u64 },
+  File {
+    path: String,
+    matches: Vec<TextMatch>,
+    version: String,
+    modified: u64,
+    /// Result and context lines in line order, only for the Search Editor (`context_lines` set).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    lines: Vec<FileLine>,
+  },
   Done { files: usize, matches: usize, limit_hit: bool, elapsed_ms: u64 },
   Error { message: String },
 }
@@ -158,6 +197,10 @@ pub fn build_args(opts: &SearchOptions) -> Vec<OsString> {
   }
   if opts.follow_symlinks == Some(true) {
     args.push("--follow".into());
+  }
+  if let Some(n) = opts.context_lines.filter(|n| *n > 0) {
+    args.push("--context".into());
+    args.push(n.to_string());
   }
   if let Some(n) = opts.max_threads.filter(|n| *n > 0) {
     args.push("--threads".into());
@@ -266,7 +309,9 @@ fn rel_path(raw: &str) -> String {
 /// Folds rg's JSON lines into per-file results.
 #[derive(Default)]
 pub struct RgParser {
-  current: Option<(String, Vec<TextMatch>)>,
+  current: Option<(String, Vec<TextMatch>, Vec<FileLine>)>,
+  /// Keep whole result and context lines (the Search Editor).
+  pub full_lines: bool,
   pub files: usize,
   pub matches: usize,
 }
@@ -280,13 +325,26 @@ impl RgParser {
     match v.get("type")?.as_str()? {
       "begin" => {
         let path = data.get("path").and_then(text_of).map(rel_path);
-        self.current = path.map(|p| (p, Vec::new()));
+        self.current = path.map(|p| (p, Vec::new(), Vec::new()));
+        None
+      }
+      "context" => {
+        let full = self.full_lines;
+        let (_, _, lines) = self.current.as_mut()?;
+        let text = data.get("lines").and_then(text_of)?;
+        let line_number = data.get("line_number").and_then(Value::as_u64).unwrap_or(0) as u32;
+        if full {
+          // A context line spanning several lines is not possible without --multiline; keep the first.
+          lines.push(file_line(line_number, text.split('\n').next().unwrap_or(""), false));
+        }
         None
       }
       "match" => {
-        let (_, matches) = self.current.as_mut()?;
+        let full = self.full_lines;
+        let (_, matches, lines) = self.current.as_mut()?;
         let text = data.get("lines").and_then(text_of)?;
         let line_number = data.get("line_number").and_then(Value::as_u64).unwrap_or(0) as u32;
+        let before = matches.len();
         for sub in data.get("submatches").and_then(Value::as_array).into_iter().flatten() {
           if self.matches >= budget {
             break;
@@ -295,6 +353,9 @@ impl RgParser {
           let end = sub.get("end").and_then(Value::as_u64).unwrap_or(0) as usize;
           matches.push(make_match(line_number, text, start, end));
           self.matches += 1;
+        }
+        if full && matches.len() > before {
+          lines.push(file_line(line_number, text, true));
         }
         None
       }
@@ -305,12 +366,14 @@ impl RgParser {
 
   /// Emits the file in progress (also used when the search stops early).
   pub fn finish(&mut self) -> Option<SearchEvent> {
-    let (path, matches) = self.current.take()?;
+    let (path, matches, mut lines) = self.current.take()?;
     if matches.is_empty() {
       return None;
     }
     self.files += 1;
-    Some(SearchEvent::File { path, matches, version: String::new(), modified: 0 })
+    lines.sort_by_key(|l| l.line);
+    lines.dedup_by_key(|l| l.line);
+    Some(SearchEvent::File { path, matches, version: String::new(), modified: 0, lines })
   }
 }
 
@@ -369,6 +432,7 @@ impl Searches {
     let searches = Arc::clone(self);
     let root = root.to_path_buf();
     let siblings = crate::glob::SiblingClauses::new(&opts.sibling_clauses);
+    let full_lines = opts.context_lines.is_some();
     let sink = move |mut ev: SearchEvent| {
       if let SearchEvent::File { path, version, modified, .. } = &mut ev {
         if !siblings.is_empty() && siblings.hides(path, |rel| root.join(rel).exists()) {
@@ -386,7 +450,7 @@ impl Searches {
     };
     std::thread::spawn(move || {
       let started = Instant::now();
-      let mut parser = RgParser::default();
+      let mut parser = RgParser { full_lines, ..RgParser::default() };
       let mut limit_hit = false;
       for line in BufReader::new(stdout).lines() {
         let Ok(line) = line else { break };
@@ -589,6 +653,40 @@ mod tests {
   }
 
   #[test]
+  fn keeps_context_and_result_lines_for_the_search_editor() {
+    let lines = [
+      r#"{"type":"begin","data":{"path":{"text":"./a.txt"}}}"#,
+      r#"{"type":"context","data":{"path":{"text":"./a.txt"},"lines":{"text":"before\n"},"line_number":1,"submatches":[]}}"#,
+      r#"{"type":"match","data":{"path":{"text":"./a.txt"},"lines":{"text":"  foo here\r\n"},"line_number":2,"submatches":[{"start":2,"end":5}]}}"#,
+      r#"{"type":"context","data":{"path":{"text":"./a.txt"},"lines":{"text":"after\n"},"line_number":3,"submatches":[]}}"#,
+      r#"{"type":"end","data":{"path":{"text":"./a.txt"}}}"#,
+    ];
+    let mut full = RgParser { full_lines: true, ..RgParser::default() };
+    let events: Vec<_> = lines.iter().filter_map(|l| full.feed(l, 100)).collect();
+    let SearchEvent::File { lines: got, matches, .. } = &events[0] else { panic!("expected a file") };
+    assert_eq!(matches[0].column, 3);
+    assert_eq!(
+      got.iter().map(|l| (l.line, l.text.as_str(), l.is_match)).collect::<Vec<_>>(),
+      [(1, "before", false), (2, "  foo here", true), (3, "after", false)]
+    );
+    // The Search view never asks for lines, so its events stay as they were.
+    let mut plain = RgParser::default();
+    let events: Vec<_> = lines.iter().filter_map(|l| plain.feed(l, 100)).collect();
+    let SearchEvent::File { lines: got, .. } = &events[0] else { panic!("expected a file") };
+    assert!(got.is_empty());
+    assert!(!serde_json::to_string(&events[0]).unwrap().contains("\"lines\""));
+  }
+
+  #[test]
+  fn elides_long_search_editor_lines_and_passes_context() {
+    let long = "x".repeat(MAX_LINE_CHARS + 5);
+    assert_eq!(file_line(1, &long, true).text, format!("{} \u{27ea} 5 characters skipped \u{27eb}", "x".repeat(MAX_LINE_CHARS)));
+    let args = args_of(&SearchOptions { query: "x".into(), context_lines: Some(2), ..Default::default() });
+    assert!(has_pair(&args, "--context", "2"));
+    assert!(!args_of(&SearchOptions { query: "x".into(), context_lines: Some(0), ..Default::default() }).contains(&"--context".into()));
+  }
+
+  #[test]
   fn reports_a_clear_error_when_rg_is_missing() {
     let tmp = tempfile::tempdir().unwrap();
     let err = find_rg(Some(tmp.path().join("nope").into()), None).unwrap_err();
@@ -622,7 +720,7 @@ mod tests {
       let mut files = Vec::new();
       for ev in rx {
         match ev {
-          SearchEvent::File { path, matches, version, modified } => {
+          SearchEvent::File { path, matches, version, modified, .. } => {
             assert!(!version.is_empty());
             assert!(modified > 0);
             files.push((path, matches.len()))

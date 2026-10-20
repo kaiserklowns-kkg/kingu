@@ -176,5 +176,53 @@ export const SEARCH_SETTINGS: SettingSchema[] = [
 			'ตามที่เปิดล่าสุด (History entries are sorted by recency. More recently opened entries appear first.)'
 		],
 		description: 'ลำดับไฟล์ที่เพิ่งเปิดใน Quick Open ขณะพิมพ์ค้นหา (Controls sorting order of editor history in quick open when filtering.)'
+	},
+	// --- Search Editor (workbench/searchEditor.ts, SearchEditor.svelte)
+	{
+		id: 'search.searchEditor.doubleClickBehaviour',
+		group: 'Search',
+		type: 'string',
+		default: 'goToLocation',
+		enum: ['selectWord', 'goToLocation', 'openLocationToSide'],
+		enumDescriptions: [
+			'ดับเบิลคลิกเลือกคำใต้ cursor (Double-clicking selects the word under the cursor.)',
+			'ดับเบิลคลิกเปิดผลลัพธ์ใน editor group ที่ใช้อยู่ (Double-clicking opens the result in the active editor group.)',
+			'ดับเบิลคลิกเปิดผลลัพธ์ใน editor group ด้านข้าง สร้างใหม่ถ้ายังไม่มี (Double-clicking opens the result in the editor group to the side, creating one if it does not yet exist.)'
+		],
+		description: 'ผลของการดับเบิลคลิกผลลัพธ์ใน Search Editor (Configure effect of double-clicking a result in a search editor.)'
+	},
+	{
+		id: 'search.searchEditor.singleClickBehaviour',
+		group: 'Search',
+		type: 'string',
+		default: 'default',
+		enum: ['default', 'peekDefinition'],
+		enumDescriptions: [
+			'คลิกครั้งเดียวไม่ทำอะไรเพิ่ม (Single-clicking does nothing.)',
+			'คลิกครั้งเดียวเปิดตำแหน่งนั้นแบบ preview (Single-clicking opens a Peek Definition window.)'
+		],
+		description: 'ผลของการคลิกผลลัพธ์ครั้งเดียวใน Search Editor (Configure effect of single-clicking a result in a search editor.)'
+	},
+	{
+		id: 'search.searchEditor.reusePriorSearchConfiguration',
+		group: 'Search',
+		type: 'boolean',
+		default: false,
+		description: 'Search Editor ใหม่ใช้ include, exclude และตัวเลือกของ Search Editor ก่อนหน้า (When enabled, new Search Editors will reuse the includes, excludes, and flags of the previously opened Search Editor.)'
+	},
+	{
+		id: 'search.searchEditor.defaultNumberOfContextLines',
+		group: 'Search',
+		type: 'json',
+		schema: { type: ['number', 'null'] },
+		default: 1,
+		description: 'จำนวนบรรทัดรอบผลลัพธ์ตั้งต้นของ Search Editor ใหม่ ถ้าเปิด reusePriorSearchConfiguration ตั้งเป็น null เพื่อใช้ค่าของ Search Editor ก่อนหน้า (The default number of surrounding context lines to use when creating new Search Editors. If using `#search.searchEditor.reusePriorSearchConfiguration#`, this can be set to `null` (empty) to use the prior Search Editor\'s configuration.)'
+	},
+	{
+		id: 'search.searchEditor.focusResultsOnSearch',
+		group: 'Search',
+		type: 'boolean',
+		default: false,
+		description: 'เมื่อค้นหาใน Search Editor ให้โฟกัสที่ผลลัพธ์แทนช่องค้นหา (When a search is triggered, focus the Search Editor results instead of the Search Editor input.)'
 	}
 ];

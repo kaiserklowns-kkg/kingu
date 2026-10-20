@@ -96,6 +96,7 @@
 	import { registerEditorStatusCommands } from './editorStatusActions.svelte';
 	import { installEditorCommands } from './editorCommands.svelte';
 	import { installNotificationCommands } from './notificationCommands.svelte';
+	import { installSearchEditorCommands } from './searchEditorCommands.svelte.ts';
 	import NotificationToasts from './NotificationToasts.svelte';
 	import { recentFiles } from './recentFiles.svelte';
 
@@ -370,8 +371,10 @@
 		const uninstallEditorCommands = installEditorCommands();
 		const uninstallRecentFiles = recentFiles.install();
 		const uninstallNotificationCommands = installNotificationCommands();
+		const uninstallSearchEditorCommands = installSearchEditorCommands();
 		return () => {
 			uninstallNotificationCommands();
+			uninstallSearchEditorCommands();
 			uninstallRecentFiles();
 			uninstallEditorCommands();
 			uninstallEditorRestore();

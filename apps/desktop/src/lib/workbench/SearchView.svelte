@@ -25,6 +25,9 @@
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { scm } from './scm.svelte';
 	import { entryChanges, fileDecorations } from './scm';
+	import { openSearchViewInEditor } from './searchEditorCommands.svelte.ts';
+	import { searchEditors } from './searchEditor.svelte.ts';
+	import { t } from '#lib/i18n/index.ts';
 
 	const ROW = 22;
 	const OVERSCAN = 10;
@@ -308,6 +311,8 @@
 				{search.done.matches === 0 ? 'ไม่พบผลลัพธ์ ลองปรับตัวเลือกหรือไฟล์ที่ exclude' : summarize(search.done.matches, search.done.files)}
 				{#if search.done.limitHit}· ผลลัพธ์ถูกตัดที่ {search.done.matches.toLocaleString()} รายการ{/if}
 			</span>
+			<!-- VS Code's "Open in editor" link under the results (Search: Open Results in Editor). -->
+			<button class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" onclick={openSearchViewInEditor}>{t('searchEditor.openInEditor')}</button>
 		{:else if search.running}
 			<span>กำลังค้นหา… {shownMatches ? summarize(shownMatches, search.files.length) : ''}</span>
 		{:else if !search.query}
@@ -317,6 +322,7 @@
 			<div class="ml-auto flex shrink-0 items-center">
 				{#each [
 					{ label: 'Refresh', icon: 'refresh', run: () => void search.run(), show: true },
+					{ label: t('searchEditor.newSearchEditor'), icon: 'newFile', run: () => void searchEditors.openNew({}), show: true },
 					{ label: 'Clear Search Results', icon: 'close', run: () => search.clear(), show: true },
 					{ label: 'Collapse All', icon: 'collapseAll', run: () => search.collapseAll(), show: search.files.length > 0 },
 					{

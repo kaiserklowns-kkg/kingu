@@ -19,6 +19,8 @@
 	import { hasColumns } from './editorGroups';
 	import { layout } from './layout.svelte';
 	import { CENTERED_DEFAULT, centeredShown, centeredSizes, dragMargin } from './zenMode';
+	import { isSearchEditorKey } from './searchEditor';
+	import { searchEditors } from './searchEditor.svelte.ts';
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 	import { settings, USER_SETTINGS_KEY, WORKSPACE_SETTINGS_PATH } from '#lib/settings/settings.svelte.ts';
 
@@ -32,6 +34,8 @@
 				when: () => editors.focusedFile !== null,
 				run: () => {
 					const path = editors.focusedFile;
+					// A Search Editor writes its `.code-search` file (Save As when untitled).
+					if (path && isSearchEditorKey(path)) return searchEditors.save(path);
 					if (path && !isDiffKey(path)) return saveFile(path);
 				}
 			}),
@@ -107,6 +111,7 @@
 		// After the editor hosts have saved the view state of the tab they stopped showing.
 		queueMicrotask(() => pruneViewStates(byGroup));
 		untrack(() => textFiles.prune(open));
+		untrack(() => searchEditors.prune(open));
 	});
 
 	// Centered layout (layout.centered, or Zen Mode's zenMode.centerLayout): off while the grid has
