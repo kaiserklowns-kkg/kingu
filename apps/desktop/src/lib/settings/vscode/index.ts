@@ -13,6 +13,7 @@ import { SCM_SETTINGS } from './scm';
 import { DEBUG_SETTINGS } from './debug';
 import { BREADCRUMBS_SETTINGS } from './breadcrumbs';
 import { PROBLEMS_SETTINGS } from './problems';
+import { OUTPUT_SETTINGS } from './output';
 import { APPLICATION_SETTINGS } from './application';
 import { OUTLINE_SETTINGS } from './outline';
 import { TYPESCRIPT_SETTINGS } from './typescript';
@@ -35,6 +36,7 @@ export const VSCODE_SETTINGS = [
 	...DEBUG_SETTINGS,
 	...BREADCRUMBS_SETTINGS,
 	...PROBLEMS_SETTINGS,
+	...OUTPUT_SETTINGS,
 	...APPLICATION_SETTINGS,
 	...OUTLINE_SETTINGS,
 	// The settings sections Kingu delivers to the language servers it runs (lsp/serverSettings.ts).

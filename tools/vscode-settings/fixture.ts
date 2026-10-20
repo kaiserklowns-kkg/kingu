@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { schemaTypes, type JsonSchema } from '../../apps/desktop/src/lib/settings/jsonSchema.ts';
 
 /** Setting prefixes of the areas Kingu has (the fixture keeps only these). */
-export const PREFIXES = ['editor.', 'diffEditor.', 'workbench.', 'window.', 'files.', 'explorer.', 'search.', 'scm.', 'git.', 'terminal.', 'debug.', 'breadcrumbs.', 'problems.', 'keyboard.', 'application.', 'http.', 'timeline.', 'merge-conflict.', 'task.', 'outline.', 'typescript.', 'javascript.', 'js/ts.', 'css.', 'scss.', 'less.', 'html.', 'json.'];
+export const PREFIXES = ['editor.', 'diffEditor.', 'workbench.', 'window.', 'files.', 'explorer.', 'search.', 'scm.', 'git.', 'terminal.', 'debug.', 'breadcrumbs.', 'problems.', 'keyboard.', 'application.', 'http.', 'timeline.', 'merge-conflict.', 'task.', 'outline.', 'output.', 'typescript.', 'javascript.', 'js/ts.', 'css.', 'scss.', 'less.', 'html.', 'json.'];
 
 type Schema = Record<string, unknown> & { default?: unknown; enum?: unknown[] };
 

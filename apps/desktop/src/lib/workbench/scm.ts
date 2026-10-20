@@ -3,6 +3,7 @@
 import { isPreviewKey, previewTarget } from './viewers';
 import { t } from '#lib/i18n/index.ts';
 import { isChatEditKey, parseChatEditKey } from '#lib/agent/chatEdits.ts';
+import { isOutputKey, outputChannelOf } from '#lib/output/output.ts';
 
 export type StatusEntry = {
 	path: string;
@@ -212,6 +213,7 @@ export function fileOf(key: string): string {
 
 /** Tab label: `a.ts`, or `a.ts (Working Tree)` for a diff, like VS Code; `a.ts (task slug)` for a task diff. */
 export function tabLabel(key: string): string {
+	if (isOutputKey(key)) return outputChannelOf(key);
 	const [name] = splitPath(fileOf(key));
 	const task = parseTaskDiffKey(key);
 	if (task) return t('workbench.scm.taskDiffLabel', { name, slug: task.slug });

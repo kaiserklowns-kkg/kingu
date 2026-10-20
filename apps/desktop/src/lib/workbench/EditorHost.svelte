@@ -9,6 +9,7 @@
 	import { editors } from './editors.svelte';
 	import { getEntry, modelEntry, saveViewState, viewState } from './editorModels';
 	import { isReadonly } from './readonly';
+	import { isOutputKey } from '#lib/output/output.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { workspace } from './workspace.svelte';
 	import { navigation } from './navigation.svelte';
@@ -197,7 +198,8 @@
 			},
 			getEntry(file)?.stat?.readonly ?? false
 		);
-		editor.updateOptions({ readOnly });
+		// An Output channel in an editor is never edited.
+		editor.updateOptions({ readOnly: readOnly || isOutputKey(file) });
 	});
 
 	// Breakpoints and the stopped line follow the breakpoint store, the session and the shown file.

@@ -14,6 +14,7 @@ import { isVaultKey } from '#lib/vault/vault.ts';
 import { isArtifactKey } from '#lib/artifacts/artifacts.ts';
 import { isChatEditorKey } from '#lib/agent/chatExtras.ts';
 import { isMergeKey } from '#lib/workbench/scm.ts';
+import { isOutputKey } from '#lib/output/output.ts';
 
 /** Kingu's user mcp.json (the MCP store's `USER_MCP_KEY`): in the app config dir, read and saved by Rust. */
 const USER_MCP_KEY = 'mcp://user/mcp.json';
@@ -28,6 +29,8 @@ const userSnapId = (key: string) => /^snap:\/\/user\/([a-z0-9][a-z0-9-]{0,39})\/
 export async function readResource(key: string): Promise<string> {
 	// An untitled editor starts empty; it has nothing on disk.
 	if (isUntitled(key)) return '';
+	// An Output channel opened in an editor (read-only; output.svelte.ts keeps it current).
+	if (isOutputKey(key)) return import('#lib/output/output.svelte.ts').then((m) => m.output.text(key));
 	const snapId = userSnapId(key);
 	if (snapId) return invoke<string>('snap_manifest_read', { id: snapId });
 	if (key === USER_MCP_KEY) return invoke<string>('mcp_user_read');
@@ -44,6 +47,7 @@ export async function readResource(key: string): Promise<string> {
 
 export async function writeResource(key: string, content: string): Promise<void> {
 	if (isUntitled(key)) throw new Error('an untitled editor is saved with Save As');
+	if (isOutputKey(key)) throw new Error('an Output channel is read-only');
 	const snapId = userSnapId(key);
 	if (key === USER_SETTINGS_KEY) await invoke('settings_write', { scope: 'user', content });
 	else if (key === USER_KEYBINDINGS_KEY) await invoke('settings_write', { scope: 'keybindings', content });
@@ -59,7 +63,7 @@ export async function writeResource(key: string, content: string): Promise<void>
 
 /** Workspace files are read and saved with their encoding and checked for save conflicts; the
  * settings, keybindings and snap manifests are always UTF-8 and owned by Kingu. */
-export const isWorkspaceTextFile = (key: string) => key !== USER_SETTINGS_KEY && key !== USER_KEYBINDINGS_KEY && key !== USER_MCP_KEY && !userSnapId(key);
+export const isWorkspaceTextFile = (key: string) => !isOutputKey(key) && key !== USER_SETTINGS_KEY && key !== USER_KEYBINDINGS_KEY && key !== USER_MCP_KEY && !userSnapId(key);
 
 /** `readonly`: the file's permissions say it cannot be written (files.readonlyFromPermissions). */
 export type FileStat = { mtime: number; size: number; hash: string; readonly?: boolean };
