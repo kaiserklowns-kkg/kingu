@@ -15,6 +15,7 @@ import { isArtifactKey } from '#lib/artifacts/artifacts.ts';
 import { isChatEditorKey } from '#lib/agent/chatExtras.ts';
 import { isMergeKey } from '#lib/workbench/scm.ts';
 import { externalPath, isExternalKey } from '#lib/workbench/externalFiles.ts';
+import { isLocalHistoryKey, parseLocalHistoryKey } from '#lib/scm/localHistory.ts';
 
 /** Kingu's user mcp.json (the MCP store's `USER_MCP_KEY`): in the app config dir, read and saved by Rust. */
 const USER_MCP_KEY = 'mcp://user/mcp.json';
@@ -34,6 +35,10 @@ export async function readResource(key: string): Promise<string> {
 	}
 	// An untitled editor starts empty; it has nothing on disk.
 	if (isUntitled(key)) return '';
+	if (isLocalHistoryKey(key)) {
+		const read = await readTextResource(key);
+		return read.kind === 'text' ? read.content : '';
+	}
 	const snapId = userSnapId(key);
 	if (snapId) return invoke<string>('snap_manifest_read', { id: snapId });
 	if (key === USER_MCP_KEY) return invoke<string>('mcp_user_read');
@@ -54,6 +59,7 @@ export async function writeResource(key: string, content: string): Promise<void>
 		return;
 	}
 	if (isUntitled(key)) throw new Error('an untitled editor is saved with Save As');
+	if (isLocalHistoryKey(key)) throw new Error('a local history entry is read-only');
 	const snapId = userSnapId(key);
 	if (key === USER_SETTINGS_KEY) await invoke('settings_write', { scope: 'user', content });
 	else if (key === USER_KEYBINDINGS_KEY) await invoke('settings_write', { scope: 'keybindings', content });
@@ -70,7 +76,7 @@ export async function writeResource(key: string, content: string): Promise<void>
 /** Workspace files are read and saved with their encoding and checked for save conflicts; the
  * settings, keybindings and snap manifests are always UTF-8 and owned by Kingu. Files outside the
  * folder (`external:`) are text files too, but not workspace files (auto save, associations). */
-export const isWorkspaceTextFile = (key: string) => !isExternalKey(key) && key !== USER_SETTINGS_KEY && key !== USER_KEYBINDINGS_KEY && key !== USER_MCP_KEY && !userSnapId(key);
+export const isWorkspaceTextFile = (key: string) => !isExternalKey(key) && key !== USER_SETTINGS_KEY && key !== USER_KEYBINDINGS_KEY && key !== USER_MCP_KEY && !userSnapId(key) && !isLocalHistoryKey(key);
 
 /** `readonly`: the file's permissions say it cannot be written (files.readonlyFromPermissions). */
 export type FileStat = { mtime: number; size: number; hash: string; readonly?: boolean };
@@ -84,6 +90,9 @@ export type TextWrite = { kind: 'saved'; stat?: FileStat } | { kind: 'conflict';
 /** `readResource` with encodings, binary and large file detection (Rust `textfile_read`). */
 export async function readTextResource(key: string, options: ReadOptions = {}): Promise<TextRead> {
 	if (isExternalKey(key)) return invoke<TextRead>('external_textfile_read', { path: externalPath(key), options });
+	// A local history entry (Show Contents) decodes like the file it is a copy of.
+	const entry = parseLocalHistoryKey(key);
+	if (entry) return invoke<TextRead>('local_history_read', { rel: entry.rel, id: entry.id, options: { ...options, acceptBinary: true, acceptLarge: true } });
 	if (!isWorkspaceTextFile(key)) return { kind: 'text', content: await readResource(key), encoding: 'utf8', lossy: false };
 	return invoke<TextRead>('textfile_read', { rel: key, options });
 }

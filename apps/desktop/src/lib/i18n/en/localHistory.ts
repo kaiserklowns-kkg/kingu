@@ -1,0 +1,37 @@
+// Local History (src/lib/scm/localHistory*.ts) and its rows in the Timeline. Texts follow VS Code's localHistoryCommands.ts.
+export const localHistory = {
+	'localHistory.title': 'Local History',
+	'localHistory.gitTitle': 'Git History',
+	'localHistory.filter': 'Filter Timeline',
+	'localHistory.source.saved': 'File Saved',
+	'localHistory.source.restored': 'File Restored',
+	'localHistory.source.undoRedo': 'Undo / Redo',
+
+	'localHistory.compareWithFile': 'Compare with File',
+	'localHistory.compareWithPrevious': 'Compare with Previous',
+	'localHistory.selectForCompare': 'Select for Compare',
+	'localHistory.compareWithSelected': 'Compare with Selected',
+	'localHistory.showContents': 'Show Contents',
+	'localHistory.restore': 'Restore Contents',
+	'localHistory.rename': 'Rename',
+	'localHistory.delete': 'Delete',
+	'localHistory.findEntry': 'Local History: Find Entry to Restore...',
+
+	'localHistory.restoreButton': 'Restore',
+	'localHistory.confirmRestore': "Do you want to restore the contents of '{name}'?",
+	'localHistory.confirmRestoreDetail': 'Restoring will discard any unsaved changes.',
+	'localHistory.restoreFailed': "Unable to restore '{name}': {error}",
+	'localHistory.deleteButton': 'Delete',
+	'localHistory.confirmDelete': "Do you want to delete the local history entry of '{name}' from {date}?",
+	'localHistory.confirmDeleteAll': 'Do you want to delete all entries of all files in local history?',
+	'localHistory.irreversible': 'This action is irreversible!',
+	'localHistory.renamePlaceholder': 'Enter the new name of the local history entry',
+	'localHistory.renameHint': "Rename the entry to '{name}'",
+	'localHistory.createPlaceholder': "Enter the new name of the local history entry for '{name}'",
+	'localHistory.createHint': "Create the entry '{name}'",
+	'localHistory.notTracked': "'{name}' is not kept in local history (too large, excluded or local history is off).",
+	'localHistory.noFile': 'Open a file of the folder first.',
+	'localHistory.none': 'There is no local history yet.',
+	'localHistory.pickFile': 'Select the file to show local history for',
+	'localHistory.pickEntry': 'Select the local history entry to open'
+} as const;

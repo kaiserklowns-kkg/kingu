@@ -3,6 +3,7 @@
 import { isPreviewKey, previewTarget } from './viewers';
 import { t } from '#lib/i18n/index.ts';
 import { isChatEditKey, parseChatEditKey } from '#lib/agent/chatEdits.ts';
+import { isLocalHistoryDiffKey, localHistoryTabLabel, parseLocalHistoryDiffKey, parseLocalHistoryKey } from '#lib/scm/localHistory.ts';
 
 export type StatusEntry = {
 	path: string;
@@ -193,7 +194,7 @@ export const isMergeKey = (key: string) => key.startsWith(MERGE_PREFIX);
 
 /** A chat's working-set file, its snapshot before the agent's edits vs now: `chatedit://<chat id>/<file>` (agent/chatEdits.ts). */
 export const isDiffKey = (key: string) =>
-	key.startsWith(DIFF_PREFIX) || isIndexDiffKey(key) || isHistoryDiffKey(key) || isConflictCompareKey(key) || isTaskDiffKey(key) || isCommitDiffKey(key) || isChatEditKey(key);
+	key.startsWith(DIFF_PREFIX) || isIndexDiffKey(key) || isHistoryDiffKey(key) || isConflictCompareKey(key) || isTaskDiffKey(key) || isCommitDiffKey(key) || isChatEditKey(key) || isLocalHistoryDiffKey(key);
 /** The workspace file behind an editor tab key (itself for plain file tabs; a task diff's file
  * lives in the worktree under `.kingu/worktrees/<slug>/`). */
 export function fileOf(key: string): string {
@@ -206,6 +207,8 @@ export function fileOf(key: string): string {
 	if (commit) return commit.slug ? `.kingu/worktrees/${commit.slug}/${commit.rel}` : commit.rel;
 	const history = parseHistoryDiffKey(key);
 	if (history) return history.rel;
+	const local = parseLocalHistoryDiffKey(key) ?? parseLocalHistoryKey(key);
+	if (local) return local.rel;
 	for (const prefix of [INDEX_DIFF_PREFIX, CONFLICT_COMPARE_PREFIX, MERGE_PREFIX]) if (key.startsWith(prefix)) return key.slice(prefix.length);
 	return key.startsWith(DIFF_PREFIX) ? key.slice(DIFF_PREFIX.length) : key;
 }
@@ -213,6 +216,8 @@ export function fileOf(key: string): string {
 /** Tab label: `a.ts`, or `a.ts (Working Tree)` for a diff, like VS Code; `a.ts (task slug)` for a task diff. */
 export function tabLabel(key: string): string {
 	const [name] = splitPath(fileOf(key));
+	const local = localHistoryTabLabel(key);
+	if (local) return local;
 	const task = parseTaskDiffKey(key);
 	if (task) return t('workbench.scm.taskDiffLabel', { name, slug: task.slug });
 	const commit = parseCommitDiffKey(key);

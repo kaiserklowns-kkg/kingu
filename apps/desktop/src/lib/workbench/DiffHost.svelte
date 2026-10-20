@@ -29,6 +29,8 @@
 	import { chatEdits } from '#lib/agent/chatEdits.svelte.ts';
 	import { isChatEditKey, parseChatEditKey } from '#lib/agent/chatEdits.ts';
 	import { installHunkToolbars, type HunkToolbars } from '#lib/ade/hunkToolbars.ts';
+	import { localHistoryKey, parseLocalHistoryDiffKey } from '#lib/scm/localHistory.ts';
+	import { readTextResource } from '#lib/settings/resources.ts';
 
 	let { active, onfail, reportLanguage = false }: { active: string | null; onfail: (key: string) => void; reportLanguage?: boolean } = $props();
 	const activeKey = $derived(active);
@@ -169,6 +171,16 @@
 				invoke<string>('git_show_ref', { slug: null, rev: `${history.hash}^`, rel: history.before }).catch(() => '').then((text) => ({ text, path: `${history.hash}^/${history.before}` })),
 				invoke<string>('git_show_ref', { slug: null, rev: history.hash, rel: history.rel }).catch(() => '')
 			]);
+		// Local history: an entry ↔ the file now (Compare with File) or ↔ another entry.
+		const local = parseLocalHistoryDiffKey(key);
+		if (local) {
+			const entry = (id: string) =>
+				readTextResource(localHistoryKey(id, local.rel), { acceptBinary: true, acceptLarge: true }).then((r) => (r.kind === 'text' ? r.content : ''));
+			return Promise.all([
+				entry(local.left).then((text) => ({ text, path: `localhistory/${local.left}/${local.rel}` })),
+				local.right ? entry(local.right) : workingCopy(m, local.rel)
+			]);
+		}
 		// Staged Changes: the index on the right.
 		if (isIndexDiffKey(key)) return Promise.all([original(key, rel), invoke<string | null>('scm_show_index', { rel }).then((t) => t ?? '')]);
 		// merge-conflict.compare: every conflict as its current side ↔ as its incoming side.

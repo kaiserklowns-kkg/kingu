@@ -3,8 +3,11 @@
 // following renames (`git log --follow`), `timeline.pageSize` at a time; with
 // `git.timeline.showUncommitted` the file's staged and unstaged changes on top. An item opens the
 // file as that commit changed it. "Git: View File History" lists the same commits in a picker.
+// Local History (localHistory.svelte.ts) is the second source, merged in by time; the view's
+// filter hides either source (VS Code's timeline.excludeSources).
 
 import { invoke } from '@tauri-apps/api/core';
+import { untrack } from 'svelte';
 import { clientLog } from '#lib/client-log.ts';
 import { locale, t } from '#lib/i18n/index.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
@@ -19,6 +22,9 @@ import { diffKey, fileOf, historyDiffKey, indexDiffKey, isDiffKey } from '#lib/w
 import { status } from '#lib/workbench/status.svelte.ts';
 import { fromNow } from './blame';
 import { isRepoFile } from './scmViews.svelte';
+import { historyFile, installLocalHistory, localHistory } from './localHistory.svelte';
+import { workspace } from '#lib/workbench/workspace.svelte.ts';
+import { mergeByTime, type HistoryEntry, type TimelineSource } from './localHistory';
 
 /** One commit of a file (Rust `git_editor::FileCommit`). */
 export type FileCommit = {
@@ -37,7 +43,17 @@ export type FileCommit = {
 };
 
 /** A Timeline row: a commit, or the uncommitted changes (`git.timeline.showUncommitted`). */
-export type TimelineItem = { kind: 'commit'; commit: FileCommit } | { kind: 'staged' } | { kind: 'working' };
+export type TimelineItem = { kind: 'commit'; commit: FileCommit } | { kind: 'staged' } | { kind: 'working' } | { kind: 'local'; entry: HistoryEntry };
+
+const EXCLUDED_KEY = 'kingu.timeline.excludeSources';
+function readExcluded(): TimelineSource[] {
+	try {
+		const v = JSON.parse(localStorage.getItem(EXCLUDED_KEY) ?? '[]');
+		return Array.isArray(v) ? v.filter((x): x is TimelineSource => x === 'git' || x === 'local') : [];
+	} catch {
+		return [];
+	}
+}
 
 /** The file a Timeline follows: the active editor's file (or the file of the active diff). */
 export function timelineFile(active: string | null): string | null {
@@ -56,7 +72,9 @@ const pageSize = () => {
 
 class Timeline {
 	/** The file shown (null: no file, or not in a repository). */
-	path = $derived(scm.repo ? timelineFile(editors.active) : null);
+	path = $derived(historyFile(editors.active));
+	/** The Timeline's filter: sources not shown (VS Code's timeline.excludeSources). */
+	excluded = $state<TimelineSource[]>(readExcluded());
 	commits = $state<FileCommit[]>([]);
 	loading = $state(false);
 	/** More commits may follow the loaded ones. */
@@ -68,12 +86,17 @@ class Timeline {
 	items = $derived.by((): TimelineItem[] => {
 		const out: TimelineItem[] = [];
 		const p = this.path;
-		const e = p ? scm.repo?.entries.find((x) => x.path === p) : undefined;
+		const git = !this.excluded.includes('git') && scm.repo !== null;
+		const e = p && git ? scm.repo?.entries.find((x) => x.path === p) : undefined;
 		if (e && settings.get<boolean>('git.timeline.showUncommitted')) {
 			if (e.index && !e.conflict) out.push({ kind: 'staged' });
 			if (e.worktree && e.worktree !== '?') out.push({ kind: 'working' });
 		}
-		return [...out, ...this.commits.map((commit) => ({ kind: 'commit' as const, commit }))];
+		const commits = git ? this.commits : [];
+		const local = p && !this.excluded.includes('local') ? [...(localHistory.entries[p] ?? [])].reverse() : [];
+		const date = settings.get<string>('git.timeline.date');
+		const merged = mergeByTime(commits, (c) => itemTime(c, date) * 1000, local, (x) => x.timestamp);
+		return [...out, ...merged.map((m): TimelineItem => (m.from === 'a' ? { kind: 'commit', commit: m.item } : { kind: 'local', entry: m.item }))];
 	});
 
 	/** Reads the first page again when the file or HEAD changed (or `force`). */
@@ -84,6 +107,12 @@ class Timeline {
 		this.#for = key;
 		const my = ++this.#seq;
 		if (!p) {
+			this.commits = [];
+			this.more = false;
+			return;
+		}
+		void localHistory.load(p);
+		if (!scm.repo) {
 			this.commits = [];
 			this.more = false;
 			return;
@@ -120,10 +149,22 @@ class Timeline {
 		}
 	}
 
-	/** git.timeline.openDiff: the commit's parent ↔ the commit (under the file's earlier name). */
+	/** Shows or hides a source (the view's filter menu). */
+	toggleSource(source: TimelineSource) {
+		this.excluded = this.excluded.includes(source) ? this.excluded.filter((s) => s !== source) : [...this.excluded, source];
+		try {
+			localStorage.setItem(EXCLUDED_KEY, JSON.stringify(this.excluded));
+		} catch {
+			// Storage unavailable: the filter lasts until the window reloads.
+		}
+	}
+
+	/** git.timeline.openDiff: the commit's parent ↔ the commit (under the file's earlier name).
+	 * A local history entry opens Compare with File (VS Code's default timeline command). */
 	open(item: TimelineItem, preview = true) {
 		const p = this.path;
 		if (!p) return;
+		if (item.kind === 'local') return localHistory.compareWithFile(p, item.entry, preview);
 		if (item.kind === 'staged') return editors.open(indexDiffKey(p), { preview });
 		if (item.kind === 'working') return editors.open(diffKey(p), { preview });
 		const c = item.commit;
@@ -133,6 +174,7 @@ class Timeline {
 	label(item: TimelineItem): string {
 		if (item.kind === 'staged') return t('scmEditor.timeline.staged');
 		if (item.kind === 'working') return t('scmEditor.timeline.uncommitted');
+		if (item.kind === 'local') return localHistory.label(item.entry);
 		return item.commit.subject;
 	}
 
@@ -142,11 +184,13 @@ class Timeline {
 	}
 
 	ago(item: TimelineItem): string {
+		if (item.kind === 'local') return localHistory.ago(item.entry);
 		if (item.kind !== 'commit') return '';
 		return fromNow(itemTime(item.commit, settings.get<string>('git.timeline.date')), Date.now(), locale());
 	}
 
 	tooltip(item: TimelineItem): string {
+		if (item.kind === 'local') return localHistory.tooltip(this.path ?? '', item.entry);
 		if (item.kind !== 'commit') return this.label(item);
 		const c = item.commit;
 		const when = new Date(itemTime(c, settings.get<string>('git.timeline.date')) * 1000).toLocaleString(locale());
@@ -198,7 +242,16 @@ export function installTimeline(): () => void {
 	} catch {
 		// Storage unavailable: the section starts closed.
 	}
+	const uninstallLocalHistory = installLocalHistory();
 	const stop = $effect.root(() => {
+		// Entries are cached by workspace-relative path: another folder starts empty.
+		$effect(() => {
+			void workspace.root;
+			untrack(() => {
+				localHistory.entries = {};
+				localHistory.selected = null;
+			});
+		});
 		$effect(() => {
 			void timeline.path;
 			void scm.repo?.head;
@@ -228,6 +281,7 @@ export function installTimeline(): () => void {
 		})
 	];
 	return () => {
+		uninstallLocalHistory();
 		stop();
 		off.forEach((u) => u());
 	};

@@ -9,6 +9,7 @@
 	import { editors } from './editors.svelte';
 	import { getEntry, modelEntry, saveViewState, viewState } from './editorModels';
 	import { isReadonly } from './readonly';
+	import { isLocalHistoryKey } from '#lib/scm/localHistory.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { workspace } from './workspace.svelte';
 	import { navigation } from './navigation.svelte';
@@ -187,7 +188,8 @@
 	$effect(() => {
 		const file = shown;
 		if (!editor || !file) return;
-		const readOnly = isReadonly(
+		// A local history entry (Show Contents) is always read-only, like VS Code's history file system.
+		const readOnly = isLocalHistoryKey(file) || isReadonly(
 			file,
 			`${workspace.root ?? ''}/${file}`,
 			{
