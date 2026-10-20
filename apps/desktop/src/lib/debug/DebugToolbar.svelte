@@ -28,6 +28,9 @@
 		{ icon: 'stepOver', label: 'Step Over', command: 'workbench.action.debug.stepOver', show: true },
 		{ icon: 'stepInto', label: 'Step Into', command: 'workbench.action.debug.stepInto', show: true },
 		{ icon: 'stepOut', label: 'Step Out', command: 'workbench.action.debug.stepOut', show: true },
+		// Shown for adapters with supportsStepBack (VS Code's toolbar does the same).
+		{ icon: 'arrowLeft', label: 'Step Back', command: 'workbench.action.debug.stepBack', show: !!debug.capabilities.supportsStepBack },
+		{ icon: 'discard', label: 'Reverse', command: 'workbench.action.debug.reverseContinue', show: !!debug.capabilities.supportsStepBack },
 		{ icon: 'refresh', label: 'Restart', command: 'workbench.action.debug.restart', show: true },
 		{ icon: 'stop', label: 'Stop', command: 'workbench.action.debug.stop', show: true }
 	]);

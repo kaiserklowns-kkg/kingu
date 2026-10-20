@@ -3,11 +3,14 @@
 	// the selected stack frame. ↑/↓ walk the input history; earlier inputs that start with what is
 	// typed are suggested (debug.console.historySuggestions: Tab accepts, and Enter too with
 	// debug.console.acceptSuggestionOnEnter on). Font, line height, wrapping and collapsing of
-	// identical lines follow the debug.console.* settings.
+	// identical lines follow the debug.console.* settings. While debugging, the adapter's completions
+	// (DAP `completions`) come first, as you type and on ⌃Space (VS Code's REPL suggest widget).
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { debug } from './debug.svelte.ts';
 	import { collapseLines, consoleFont, historyMatches } from './debugSettings.ts';
+	import type { CompletionItem } from './protocol.ts';
+	import { applyCompletion, rankCompletions, wordBefore } from './replCompletion.ts';
 
 	let input = $state('');
 	let history = $state<string[]>([]);
@@ -19,7 +22,37 @@
 	const output = $derived(collapseLines(debug.model?.output ?? [], settings.get<boolean>('debug.console.collapseIdenticalLines')));
 	const font = $derived(consoleFont(settings.get<string>('debug.console.fontFamily'), settings.get<number>('debug.console.fontSize'), settings.get<number>('debug.console.lineHeight')));
 	const wrap = $derived(settings.get<boolean>('debug.console.wordWrap'));
-	const suggestions = $derived(browsing ? [] : historyMatches(history, input, settings.get<boolean>('debug.console.historySuggestions')));
+	let completions = $state<CompletionItem[]>([]);
+	let inputEl: HTMLInputElement | undefined = $state();
+	let caret = $state(0);
+	type Suggestion = { label: string; detail?: string; item?: CompletionItem };
+	const suggestions = $derived<Suggestion[]>(
+		browsing
+			? []
+			: [
+					...rankCompletions(completions, wordBefore(input, caret).word).map((item) => ({ label: item.label, detail: item.type, item })),
+					...historyMatches(history, input, settings.get<boolean>('debug.console.historySuggestions')).map((h) => ({ label: h }))
+				].slice(0, 30)
+	);
+
+	let completionTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Asks the adapter for completions at the caret (debounced while typing). */
+	function requestCompletions(now = false) {
+		clearTimeout(completionTimer);
+		const text = input;
+		const at = inputEl?.selectionStart ?? text.length;
+		caret = at;
+		if (!debug.capabilities.supportsCompletionsRequest || !debug.active) {
+			completions = [];
+			return;
+		}
+		const run = async () => {
+			const items = await debug.completions(text, at + 1);
+			if (input === text) completions = items;
+		};
+		if (now) void run();
+		else completionTimer = setTimeout(run, 120);
+	}
 
 	// Follow the output while scrolled to the bottom.
 	$effect(() => {
@@ -32,13 +65,23 @@
 
 	function accept(i = suggestionAt) {
 		const s = suggestions[i];
-		if (s !== undefined) input = s;
+		if (s?.item) {
+			const next = applyCompletion(input, caret, s.item);
+			input = next.text;
+			caret = next.cursor;
+			queueMicrotask(() => inputEl?.setSelectionRange(next.cursor, next.cursor));
+		} else if (s !== undefined) input = s.label;
+		completions = [];
 		suggestionAt = 0;
 	}
 
 	function onKey(e: KeyboardEvent) {
 		const suggesting = suggestions.length > 0;
-		if (suggesting && e.key === 'Tab') {
+		if (e.key === ' ' && e.ctrlKey) {
+			e.preventDefault();
+			browsing = false;
+			requestCompletions(true);
+		} else if (suggesting && e.key === 'Tab') {
 			e.preventDefault();
 			accept();
 		} else if (suggesting && e.key === 'Enter' && settings.get<string>('debug.console.acceptSuggestionOnEnter') === 'on') {
@@ -50,6 +93,7 @@
 			historyAt = -1;
 			input = '';
 			browsing = false;
+			completions = [];
 			void debug.repl(expr);
 		} else if (suggesting && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
 			e.preventDefault();
@@ -101,11 +145,12 @@
 	<div class="relative flex shrink-0 items-center gap-1 border-t border-(--vscode-panel-border) px-2">
 		{#if suggestions.length}
 			<ul role="listbox" aria-label="History suggestions" class="absolute bottom-full left-6 z-10 max-w-[60%] min-w-48 rounded-sm border border-(--vscode-editorSuggestWidget-border,var(--vscode-widget-border)) bg-(--vscode-editorSuggestWidget-background,var(--vscode-editorWidget-background)) py-0.5 font-mono text-xs shadow-lg">
-				{#each suggestions as s, i (s)}
+				{#each suggestions as s, i (`${s.item ? 'c' : 'h'}:${s.label}`)}
 					<li role="option" aria-selected={i === suggestionAt}>
 						<button
-							class={['block w-full truncate px-2 py-0.5 text-left', i === suggestionAt && 'bg-(--vscode-editorSuggestWidget-selectedBackground,var(--vscode-list-activeSelectionBackground))']}
-							onmousedown={(e) => (e.preventDefault(), accept(i))}>{s}</button
+							class={['flex w-full items-center gap-2 px-2 py-0.5 text-left', i === suggestionAt && 'bg-(--vscode-editorSuggestWidget-selectedBackground,var(--vscode-list-activeSelectionBackground))']}
+							onmousedown={(e) => (e.preventDefault(), accept(i))}
+							><span class="min-w-0 flex-1 truncate">{s.label}</span>{#if s.detail}<span class="shrink-0 text-(--vscode-descriptionForeground)">{s.detail}</span>{/if}</button
 						>
 					</li>
 				{/each}
@@ -116,7 +161,9 @@
 			aria-label="Debug Console input"
 			placeholder={debug.stopped ? 'ประเมินนิพจน์ใน frame ที่เลือก' : 'Debug Console'}
 			bind:value={input}
-			oninput={() => ((browsing = false), (suggestionAt = 0))}
+			bind:this={inputEl}
+			oninput={() => ((browsing = false), (suggestionAt = 0), requestCompletions())}
+			onclick={() => (caret = inputEl?.selectionStart ?? input.length)}
 			onkeydown={onKey}
 			spellcheck="false"
 			class="h-[26px] min-w-0 flex-1 bg-transparent font-mono text-xs text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground)"

@@ -27,6 +27,7 @@ import { settingSchemas } from './schemas.svelte';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { installUiLanguage } from '#lib/i18n/locale.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
+import { LAUNCH_FILE_MATCH, LAUNCH_SCHEMA_URI, launchSchema } from '#lib/debug/launchSchema.ts';
 
 const SETTINGS_SCHEMA_URI = 'kingu://schemas/settings';
 const KEYBINDINGS_SCHEMA_URI = 'kingu://schemas/keybindings';
@@ -135,7 +136,7 @@ export function installEditorSettings(monaco: typeof Monaco) {
 			};
 			untrack(() => {
 				const opts = monaco.json.jsonDefaults.diagnosticsOptions;
-				const ours = new Set([SETTINGS_SCHEMA_URI, KEYBINDINGS_SCHEMA_URI]);
+				const ours = new Set([SETTINGS_SCHEMA_URI, KEYBINDINGS_SCHEMA_URI, LAUNCH_SCHEMA_URI]);
 				monaco.json.jsonDefaults.setDiagnosticsOptions({
 					...opts,
 					validate: true,
@@ -144,7 +145,9 @@ export function installEditorSettings(monaco: typeof Monaco) {
 					schemas: [
 						...(opts.schemas ?? []).filter((s) => !ours.has(s.uri)),
 						{ uri: SETTINGS_SCHEMA_URI, fileMatch: ['**/settings.json'], schema },
-						{ uri: KEYBINDINGS_SCHEMA_URI, fileMatch: ['**/keybindings.json'], schema: keys }
+						{ uri: KEYBINDINGS_SCHEMA_URI, fileMatch: ['**/keybindings.json'], schema: keys },
+						// launch.json: configuration attributes and Add Configuration's snippets (VS Code: launchSchema).
+						{ uri: LAUNCH_SCHEMA_URI, fileMatch: LAUNCH_FILE_MATCH, schema: launchSchema() }
 					]
 				});
 			});
