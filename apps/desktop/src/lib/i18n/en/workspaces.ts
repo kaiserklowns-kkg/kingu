@@ -12,6 +12,7 @@ export const workspaces = {
 	'workspaces.addFailed': 'Could not add the folder: {error}',
 	'workspaces.removeFailed': 'Could not remove the folder from the workspace: {error}',
 	'workspaces.newWindowFailed': 'Could not open a new window: {error}',
+	'workspaces.removeFolderPick': 'Select the workspace folder to remove',
 	'workspaces.untitled': 'Untitled (Workspace)',
 	'workspaces.saveFailed': 'Could not save the workspace file: {error}',
 	'workspaces.saved': 'Saved {name}. Open it with Open Workspace from File.',

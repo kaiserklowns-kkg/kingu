@@ -967,7 +967,7 @@ fn fs_rename(ws: Workspace, from: String, to: String) -> Result<(), String> {
     let dir = b.rsplit_once('/').map_or("", |(d, _)| d).to_string();
     let name = b.rsplit_once('/').map_or(b.as_str(), |(_, n)| n).to_string();
     let source = resolve_in(&root, &a)?;
-    let moved = fileops::import(&to_root, std::slice::from_ref(&source), &dir, fileops::Naming::default())?;
+    let moved = fileops::import(&to_root, std::slice::from_ref(&source), &dir, fileops::Naming::Disabled)?;
     let moved_to = moved.first().cloned().unwrap_or_default();
     if moved_to.rsplit('/').next() != Some(name.as_str()) {
       fileops::rename(&to_root, &moved_to, &b)?;
@@ -1049,7 +1049,7 @@ fn fs_move(ws: Workspace, from: String, to_dir: String) -> Result<String, String
     fileops::move_into(&root, &a, &dir)?
   } else {
     let source = resolve_in(&root, &a)?;
-    let moved = fileops::import(&to_root, &[source], &dir, fileops::Naming::default())?.into_iter().next().unwrap_or_default();
+    let moved = fileops::import(&to_root, &[source], &dir, fileops::Naming::Disabled)?.into_iter().next().unwrap_or_default();
     fileops::delete_for_good(&root, &a)?;
     moved
   };
@@ -1094,7 +1094,7 @@ struct SavedAs {
 /// Save As (and the first save of an untitled editor): the native save dialog, then the write.
 /// The dialog runs here so the webview never names a path outside the workspace itself.
 #[tauri::command]
-async fn fs_save_as(app: AppHandle, ws: Workspace, content: String, name: String, dir: Option<String>) -> Result<Option<SavedAs>, String> {
+async fn fs_save_as(app: AppHandle, window: tauri::WebviewWindow, ws: Workspace, content: String, name: String, dir: Option<String>) -> Result<Option<SavedAs>, String> {
   use tauri_plugin_dialog::DialogExt;
   let root = ws.current();
   let start = match (&root, dir) {
@@ -1103,7 +1103,7 @@ async fn fs_save_as(app: AppHandle, ws: Workspace, content: String, name: String
     (None, _) => app.path().home_dir().map_err(|e| e.to_string())?,
   };
   let handle = app.clone();
-  let picked = tauri::async_runtime::spawn_blocking(move || handle.dialog().file().set_directory(start).set_file_name(name).blocking_save_file())
+  let picked = tauri::async_runtime::spawn_blocking(move || handle.dialog().file().set_parent(&window).set_directory(start).set_file_name(name).blocking_save_file())
     .await
     .map_err(|e| e.to_string())?;
   let Some(path) = picked.and_then(|p| p.into_path().ok()) else { return Ok(None) };

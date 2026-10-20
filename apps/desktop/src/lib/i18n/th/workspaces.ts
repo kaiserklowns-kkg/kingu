@@ -12,6 +12,7 @@ export const workspaces = {
 	'workspaces.addFailed': 'เพิ่มโฟลเดอร์ไม่ได้: {error}',
 	'workspaces.removeFailed': 'เอาโฟลเดอร์ออกจาก workspace ไม่ได้: {error}',
 	'workspaces.newWindowFailed': 'เปิดหน้าต่างใหม่ไม่ได้: {error}',
+	'workspaces.removeFolderPick': 'เลือกโฟลเดอร์ที่จะเอาออกจาก workspace',
 	'workspaces.untitled': 'ไม่มีชื่อ (Workspace)',
 	'workspaces.saveFailed': 'บันทึกไฟล์ workspace ไม่ได้: {error}',
 	'workspaces.saved': 'บันทึก {name} แล้ว เปิดได้ด้วย Open Workspace from File',

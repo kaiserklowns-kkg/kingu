@@ -36,6 +36,7 @@
 	import { editors } from './editors.svelte';
 	import { explorer } from './explorer.svelte';
 	import { layout, PANEL_MIN, SIDEBAR_MIN } from './layout.svelte';
+	import { t } from '#lib/i18n/index.ts';
 	import { quick } from './quick.svelte';
 	import { installScm } from './scm.svelte';
 	import { installScmEditor } from '#lib/scm/scmEditor.svelte.ts';
@@ -153,7 +154,7 @@
 				when: () => workspace.folders.length > 1,
 				run: () =>
 					quick.pick({
-						placeholder: 'Select workspace folder to remove',
+						placeholder: t('workspaces.removeFolderPick'),
 						items: workspace.folders.map((f) => ({ id: f.path, label: f.name, description: f.path })),
 						onAccept: (item) => void workspace.removeFolder(item.id)
 					})

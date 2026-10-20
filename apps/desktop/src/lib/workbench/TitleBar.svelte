@@ -63,7 +63,7 @@
 		const editor = active
 			? outside
 				? { short: editorLabel(active), medium: outside, long: outside }
-				: { short: editorLabel(active), medium: isFile ? active : editorLabel(active), long: isFile && workspace.root ? `${workspace.root}/${active}` : editorLabel(active) }
+				: { short: editorLabel(active), medium: isFile ? active : editorLabel(active), long: isFile && active.startsWith('/') ? active : isFile && workspace.root ? `${workspace.root}/${active}` : editorLabel(active) }
 			: null;
 		return renderWindowTitle(template, {
 			editor,

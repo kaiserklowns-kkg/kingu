@@ -168,8 +168,9 @@ class Debug {
 		void this.#ensureRoot();
 	}
 
+	/** A breakpoint's file on disk; another root folder's file (multi-root) is absolute already. */
 	#abs(rel: string) {
-		return `${this.root}/${rel}`;
+		return rel.startsWith('/') ? rel : `${this.root}/${rel}`;
 	}
 
 	#live(): Active[] {

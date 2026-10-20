@@ -486,7 +486,7 @@ class Explorer {
 		if (invalid) return invalid;
 		try {
 			if (edit.kind === 'rename') await this.#rename(edit.rel, joinRel(parentOf(edit.rel), name));
-			else await this.#create(edit.kind, joinRel(edit.parent, name));
+			else await this.#create(edit.kind, edit.parent, name);
 		} catch (e) {
 			return e instanceof Error ? e.message : String(e);
 		}
@@ -497,13 +497,15 @@ class Explorer {
 		this.editing = null;
 	}
 
-	async #create(kind: 'file' | 'folder', rel: string) {
+	async #create(kind: 'file' | 'folder', parent: string, name: string) {
+		const rel = joinRel(parent, name);
 		await invoke(kind === 'file' ? 'fs_create_file' : 'fs_create_dir', { rel });
 		this.editing = null;
 		// Nested names (`a/b/c.ts`) create folders on the way: show the whole chain.
-		const dirs = rel.split('/').slice(0, -1);
-		for (let i = 0; i < dirs.length; i++) this.expanded.add(dirs.slice(0, i + 1).join('/'));
-		await this.refresh([rel, ...dirs.map((_, i) => dirs.slice(0, i + 1).join('/'))]);
+		const parts = name.split('/').slice(0, -1);
+		const dirs = parts.map((_, i) => joinRel(parent, parts.slice(0, i + 1).join('/')));
+		for (const d of dirs) this.expanded.add(d);
+		await this.refresh([rel, ...dirs]);
 		for (const d of [...this.expanded]) if (!this.children.has(d)) await this.load(d);
 		this.select(rel);
 		if (kind === 'file') editors.open(rel, { preview: false });

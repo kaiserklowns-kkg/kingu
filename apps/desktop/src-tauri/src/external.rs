@@ -104,6 +104,7 @@ fn save(inner: &Inner) {
 #[tauri::command]
 pub async fn external_pick_files(
   app: AppHandle,
+  window: tauri::WebviewWindow,
   ws: crate::workspace::Workspace,
   workspace: Option<bool>,
   title: Option<String>,
@@ -116,7 +117,8 @@ pub async fn external_pick_files(
   let workspace = workspace.unwrap_or(false);
   let handle = app.clone();
   let picked = tauri::async_runtime::spawn_blocking(move || {
-    let mut dialog = handle.dialog().file().set_directory(start);
+    // A sheet of the window that asked (each window has its own workspace).
+    let mut dialog = handle.dialog().file().set_parent(&window).set_directory(start);
     if let Some(title) = title {
       dialog = dialog.set_title(title);
     }

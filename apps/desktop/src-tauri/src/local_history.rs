@@ -351,11 +351,11 @@ fn percent_decode(s: &str) -> String {
 
 // --- Commands ---------------------------------------------------------------------------------
 
-/// `rel` in the open folder (it need not exist: a deleted file keeps its history).
+/// `rel` in its root folder (it need not exist: a deleted file keeps its history).
 fn file_of(ws: &Workspace, rel: &str) -> Result<PathBuf, String> {
-  let root = ws.root()?;
-  crate::git::check_rel(&root, rel)?;
-  Ok(root.join(rel))
+  let (root, inner) = ws.locate(rel)?;
+  crate::git::check_rel(&root, &inner)?;
+  Ok(root.join(inner))
 }
 
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
@@ -421,12 +421,12 @@ pub async fn local_history_delete_all(history: State<'_, Arc<LocalHistory>>) -> 
 /// Restore Contents: the entry's bytes replace the file (VS Code's cloneFile onto the resource).
 #[tauri::command]
 pub async fn local_history_restore(ws: Workspace, history: State<'_, Arc<LocalHistory>>, rel: String, id: String) -> Result<(), String> {
-  let root = ws.root()?;
+  let (root, inner) = ws.locate(&rel)?;
   let abs = file_of(&ws, &rel)?;
   let history = Arc::clone(&history);
   blocking(move || {
     let bytes = history.content(&abs, &id)?;
-    let target = crate::textfile::resolve_for_write(&root, &rel)?;
+    let target = crate::textfile::resolve_for_write(&root, &inner)?;
     std::fs::write(&target, bytes).map_err(|e| format!("{rel}: {e}"))?;
     log::info!("local history: restored {rel} from {id}");
     Ok(())

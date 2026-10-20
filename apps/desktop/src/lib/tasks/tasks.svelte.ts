@@ -59,7 +59,8 @@ const LOG_LIMIT = 2000;
 const DELIVERY_MS = 3000;
 
 const taskKey = (task: Task) => task.id;
-const absolute = (root: string, rel: string) => `${root}/${rel}`;
+/** Another root folder's file (multi-root) is absolute already. */
+const absolute = (root: string, rel: string) => (rel.startsWith('/') ? rel : `${root}/${rel}`);
 
 /** A marker of task output as an LSP diagnostic for the Problems panel (0-based). */
 export function markerToDiagnostic(m: Marker): Diagnostic {
