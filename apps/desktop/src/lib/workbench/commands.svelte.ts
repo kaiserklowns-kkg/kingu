@@ -56,8 +56,14 @@ export type Command = {
 	/** A default key of a higher weight wins over one of a lower weight on the same key while both
 	 * are enabled (VS Code's KeybindingWeight), e.g. a review key over New File. Defaults to 0. */
 	weight?: number;
-	run: () => unknown;
+	/** `args`: a keybindings.json entry's arguments (VS Code's command `args`), unchecked JSON, else
+	 * undefined. Typed `never` so a command whose own optional parameter means something else
+	 * still registers; a command that reads `args` validates it. */
+	run: (args?: never) => unknown;
 };
+
+/** Runs a command with keybindings.json arguments (see `Command.run`). */
+const runWith = (cmd: Command, args: unknown) => (cmd.run as (args?: unknown) => unknown)(args);
 
 class Commands {
 	all = $state<Command[]>([]);
@@ -89,9 +95,9 @@ class Commands {
 		return () => (this.all = this.all.filter((c) => c !== cmd));
 	}
 
-	async run(id: string) {
+	async run(id: string, args?: unknown) {
 		const cmd = this.all.find((c) => c.id === id);
-		if (cmd && (!cmd.when || cmd.when())) await cmd.run();
+		if (cmd && (!cmd.when || cmd.when())) await runWith(cmd, args);
 	}
 
 	paletteItems() {
@@ -108,25 +114,25 @@ export const commands = new Commands();
  */
 export function installKeybindings(): () => void {
 	let pending: KeyboardEvent | null = null;
-	type Binding = { cmd: Command; parts: string[]; user: boolean; when?: string };
+	type Binding = { cmd: Command; parts: string[]; user: boolean; when?: string; args?: unknown };
 	let ctx: ReturnType<typeof currentContext> | null = null;
 	/** keybindings.json's `when` on top of the command's own conditions; the context is read once per keypress. */
 	const enabled = (b: Binding) => (!b.cmd.when || b.cmd.when()) && (!b.cmd.keyWhen || b.cmd.keyWhen()) && (!b.when || evaluateWhen(b.when, (ctx ??= currentContext())));
 	/** Every (command, chord parts) pair; user keybindings first, so they win over a default on the same key. */
 	const bindings = (): Binding[] => {
-		const { added, when } = keybindings.user;
+		const { added, when, args } = keybindings.user;
 		const all = commands.all.flatMap((cmd) =>
 			liveKeysOf(cmd).map((key) => {
 				const user = added.get(cmd.id)?.includes(key) ?? false;
-				return { cmd, parts: splitKeybinding(key), user, when: user ? when.get(whenKey(cmd.id, key)) : undefined };
+				return { cmd, parts: splitKeybinding(key), user, when: user ? when.get(whenKey(cmd.id, key)) : undefined, args: user ? args.get(whenKey(cmd.id, key)) : undefined };
 			})
 		);
 		const byWeight = (list: Binding[]) => list.sort((a, b) => (b.cmd.weight ?? 0) - (a.cmd.weight ?? 0));
 		return [...byWeight(all.filter((b) => b.user)), ...byWeight(all.filter((b) => !b.user))];
 	};
-	const runByKey = (cmd: Command) => {
-		commands.lastKeyRun = { id: cmd.id, at: performance.now() };
-		void cmd.run();
+	const runByKey = (b: Binding) => {
+		commands.lastKeyRun = { id: b.cmd.id, at: performance.now() };
+		void runWith(b.cmd, b.args);
 	};
 	const consume = (e: KeyboardEvent, inEditor: boolean) => {
 		if (inEditor) return;
@@ -150,7 +156,7 @@ export function installKeybindings(): () => void {
 				if (p.length === 2 && matches(parseChord(p[0]), first) && matches(parseChord(p[1]), e) && enabled(b)) {
 					consume(e, inEditor);
 					status.flash('', 0);
-					runByKey(b.cmd);
+					runByKey(b);
 					return;
 				}
 			}
@@ -163,7 +169,7 @@ export function installKeybindings(): () => void {
 			if (b.parts.length !== 1 || !matches(parseChord(b.parts[0]), e) || !enabled(b) || !takes(b.cmd)) continue;
 			e.preventDefault();
 			e.stopPropagation();
-			runByKey(b.cmd);
+			runByKey(b);
 			return;
 		}
 		// terminal.integrated.allowChords: off, a chord's first key goes to the shell instead.

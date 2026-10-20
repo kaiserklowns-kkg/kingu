@@ -88,7 +88,20 @@ export const EDITOR_ACTIONS: Record<string, string> = {
 	'editor.action.goToReferences': 'Go to References',
 	'editor.action.referenceSearch.trigger': 'Peek References',
 	'editor.action.smartSelect.expand': 'Expand Selection',
-	'editor.action.smartSelect.shrink': 'Shrink Selection'
+	'editor.action.smartSelect.shrink': 'Shrink Selection',
+	'editor.action.commentLine': 'Toggle Line Comment',
+	'editor.action.blockComment': 'Toggle Block Comment',
+	'editor.action.copyLinesUpAction': 'Copy Line Up',
+	'editor.action.copyLinesDownAction': 'Copy Line Down',
+	'editor.action.moveLinesUpAction': 'Move Line Up',
+	'editor.action.moveLinesDownAction': 'Move Line Down',
+	'editor.action.duplicateSelection': 'Duplicate Selection',
+	'editor.action.insertCursorAbove': 'Add Cursor Above',
+	'editor.action.insertCursorBelow': 'Add Cursor Below',
+	'editor.action.insertCursorAtEndOfEachLineSelected': 'Add Cursors to Line Ends',
+	'editor.action.addSelectionToNextFindMatch': 'Add Selection To Next Find Match',
+	'editor.action.addSelectionToPreviousFindMatch': 'Add Selection To Previous Find Match',
+	'editor.action.selectHighlights': 'Select All Occurrences of Find Match'
 };
 
 const SEP = { separator: true } as const;
@@ -140,6 +153,7 @@ export const MENUS: Menu[] = [
 				platform: 'other',
 				items: [
 					{ command: 'workbench.action.openSettings', label: 'Settings' },
+					{ command: 'workbench.action.openSnippets', label: 'Configure Snippets' },
 					{ command: 'workbench.action.selectTheme', label: 'Color Theme' }
 				]
 			},
@@ -165,7 +179,12 @@ export const MENUS: Menu[] = [
 			{ command: 'actions.find', label: 'Find', key: 'cmd+f' },
 			{ command: 'editor.action.startFindReplaceAction', label: 'Replace', key: 'ctrl+h', mac: 'cmd+alt+f' },
 			SEP,
-			{ command: 'workbench.action.findInFiles', label: 'Find in Files' }
+			{ command: 'workbench.action.findInFiles', label: 'Find in Files' },
+			SEP,
+			// Monaco's ⌘/ is shown from its keybinding (the chat's Attach Context has ⌘/ while the chat has focus).
+			{ command: 'editor.action.commentLine', label: 'Toggle Line Comment' },
+			{ command: 'editor.action.blockComment', label: 'Toggle Block Comment', key: 'shift+alt+a' },
+			{ command: 'editor.emmet.action.expandAbbreviation', label: 'Emmet: Expand Abbreviation' }
 		]
 	},
 	{
@@ -174,7 +193,25 @@ export const MENUS: Menu[] = [
 		items: [
 			{ role: 'selectAll' },
 			{ command: 'editor.action.smartSelect.expand', label: 'Expand Selection', key: 'shift+alt+right', mac: 'ctrl+shift+cmd+right' },
-			{ command: 'editor.action.smartSelect.shrink', label: 'Shrink Selection', key: 'shift+alt+left', mac: 'ctrl+shift+cmd+left' }
+			{ command: 'editor.action.smartSelect.shrink', label: 'Shrink Selection', key: 'shift+alt+left', mac: 'ctrl+shift+cmd+left' },
+			SEP,
+			{ command: 'editor.action.copyLinesUpAction', label: 'Copy Line Up', key: 'shift+alt+up' },
+			{ command: 'editor.action.copyLinesDownAction', label: 'Copy Line Down', key: 'shift+alt+down' },
+			{ command: 'editor.action.moveLinesUpAction', label: 'Move Line Up', key: 'alt+up' },
+			{ command: 'editor.action.moveLinesDownAction', label: 'Move Line Down', key: 'alt+down' },
+			{ command: 'editor.action.duplicateSelection', label: 'Duplicate Selection' },
+			SEP,
+			{ command: 'editor.action.insertCursorAbove', label: 'Add Cursor Above', key: 'ctrl+alt+up', mac: 'cmd+alt+up' },
+			{ command: 'editor.action.insertCursorBelow', label: 'Add Cursor Below', key: 'ctrl+alt+down', mac: 'cmd+alt+down' },
+			{ command: 'editor.action.insertCursorAtEndOfEachLineSelected', label: 'Add Cursors to Line Ends', key: 'shift+alt+i' },
+			{ command: 'editor.action.addSelectionToNextFindMatch', label: 'Add Next Occurrence', key: 'cmd+d' },
+			{ command: 'editor.action.addSelectionToPreviousFindMatch', label: 'Add Previous Occurrence' },
+			// ⇧⌘L from Monaco's keybinding (the Search Editor's Select All Matches has it while it has focus).
+			{ command: 'editor.action.selectHighlights', label: 'Select All Occurrences' },
+			SEP,
+			{ command: 'workbench.action.toggleMultiCursorModifier', label: 'Switch to Cmd+Click for Multi-Cursor', checkedLabel: 'Switch to Alt+Click for Multi-Cursor', platform: 'mac' },
+			{ command: 'workbench.action.toggleMultiCursorModifier', label: 'Switch to Ctrl+Click for Multi-Cursor', checkedLabel: 'Switch to Alt+Click for Multi-Cursor', platform: 'other' },
+			{ command: 'editor.action.toggleColumnSelection', label: 'Column Selection Mode', toggle: true }
 		]
 	},
 	{
@@ -198,6 +235,11 @@ export const MENUS: Menu[] = [
 					{ command: 'workbench.action.toggleAuxiliaryBar', label: 'Secondary Side Bar', toggle: true },
 					{ command: 'workbench.action.toggleStatusbarVisibility', label: 'Status Bar', toggle: true },
 					{ command: 'workbench.action.togglePanel', label: 'Panel', toggle: true },
+					SEP,
+					{ command: 'editor.action.toggleMinimap', label: 'Minimap', toggle: true },
+					{ command: 'editor.action.toggleStickyScroll', label: 'Sticky Scroll', toggle: true },
+					{ command: 'editor.action.toggleRenderWhitespace', label: 'Render Whitespace', toggle: true },
+					{ command: 'editor.action.toggleRenderControlCharacter', label: 'Render Control Characters', toggle: true },
 					SEP,
 					{ command: 'workbench.action.toggleSidebarPosition', label: 'Move Primary Side Bar Right', checkedLabel: 'Move Primary Side Bar Left' },
 					{ command: 'workbench.action.customizeLayout', label: 'Customize Layout...' },
@@ -237,7 +279,9 @@ export const MENUS: Menu[] = [
 					{ command: 'workbench.action.toggleEditorGroupLayout', label: 'Flip Layout' }
 				]
 			},
-			{ command: 'workbench.action.splitEditor', label: 'Split Editor' }
+			{ command: 'workbench.action.splitEditor', label: 'Split Editor' },
+			SEP,
+			{ command: 'editor.action.toggleWordWrap', label: 'Word Wrap', toggle: true }
 		]
 	},
 	{

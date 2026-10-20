@@ -34,6 +34,7 @@
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { gitQueue } from './gitQueue.svelte';
 	import { t } from '#lib/i18n/index.ts';
+	import { editorModes } from '#lib/editor/editingCommands.svelte.ts';
 
 	$effect(() => gitQueue.install());
 
@@ -240,6 +241,9 @@
 		>
 	{/if}
 	{#if editorItems}
+		<!-- VS Code's editor modes: overtype (OVR) and Column Selection, each a click away from off. -->
+		{#if editorModes.overtype}<button class={ITEM} title={t('editing.status.overtypeTooltip')} onclick={() => commands.run('editor.action.toggleOvertypeInsertMode')}>{t('editing.status.overtype')}</button>{/if}
+		{#if settings.get<boolean>('editor.columnSelection')}<button class={ITEM} title={t('editing.status.columnSelectionTooltip')} onclick={() => commands.run('editor.action.toggleColumnSelection')}>{t('editing.status.columnSelection')}</button>{/if}
 		{#if show('status.editor.selection')}<button class={ITEM} title="Go to Line/Column" onclick={() => quick.show(':')}>{position}</button>{/if}
 		<!-- VS Code's editor status items: each opens its picker command (editorStatus.ts). -->
 		{#if show('status.editor.indentation')}<button class={ITEM} title="Select Indentation" onclick={() => commands.run('changeEditorIndentation')}>{editors.indent}</button>{/if}

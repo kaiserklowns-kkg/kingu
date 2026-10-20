@@ -96,6 +96,7 @@
 	import { textFiles } from './textFileService.svelte';
 	import { registerEditorStatusCommands } from './editorStatusActions.svelte';
 	import { installEditorCommands } from './editorCommands.svelte';
+	import { installEditorFeatures } from '#lib/editor/editorFeatures.svelte.ts';
 	import { installNotificationCommands } from './notificationCommands.svelte';
 	import { installSearchEditorCommands } from './searchEditorCommands.svelte.ts';
 	import NotificationToasts from './NotificationToasts.svelte';
@@ -372,6 +373,7 @@
 		const uninstallCloseGuard = installCloseGuard();
 		const uninstallEditorRestore = installEditorRestore();
 		const uninstallEditorCommands = installEditorCommands();
+		const uninstallEditorFeatures = installEditorFeatures();
 		const uninstallRecentFiles = recentFiles.install();
 		const uninstallNotificationCommands = installNotificationCommands();
 		const uninstallProfiles = profiles.install();
@@ -382,6 +384,7 @@
 			uninstallSearchEditorCommands();
 			uninstallRecentFiles();
 			uninstallEditorCommands();
+			uninstallEditorFeatures();
 			uninstallEditorRestore();
 			uninstallCloseGuard();
 			unregisterEditorStatus();

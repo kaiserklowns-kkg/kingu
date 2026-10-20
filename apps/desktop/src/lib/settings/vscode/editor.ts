@@ -981,6 +981,59 @@ export const EDITOR_SETTINGS: SettingSchema[] = [
 		description: 'เว้นระยะรอบ inlay hint (Enables the padding around the inlay hints in the editor.)'
 	},
 	{
+		id: 'editor.inlineSuggest.enabled',
+		group: 'Text Editor',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงคำแนะนำแบบ inline ใน editor เช่นของ Local AI และ Emmet (Controls whether to automatically show inline suggestions in the editor.)'
+	},
+	{
+		id: 'editor.inlineSuggest.fontFamily',
+		group: 'Text Editor',
+		type: 'string',
+		default: 'default',
+		description: 'ฟอนต์ของคำแนะนำแบบ inline (Controls the font family of the inline suggestions.)'
+	},
+	{
+		id: 'editor.inlineSuggest.minShowDelay',
+		group: 'Text Editor',
+		type: 'number',
+		default: 0,
+		minimum: 0,
+		maximum: 10000,
+		description: 'หน่วงเวลาขั้นต่ำก่อนแสดงคำแนะนำแบบ inline เป็นมิลลิวินาที (Controls the minimal delay in milliseconds after which inline suggestions are shown after typing.)'
+	},
+	{
+		id: 'editor.inlineSuggest.showToolbar',
+		group: 'Text Editor',
+		type: 'string',
+		default: 'onHover',
+		enum: ['always', 'onHover', 'never'],
+		enumDescriptions: ['Show the inline suggestion toolbar whenever an inline suggestion is shown.', 'Show the inline suggestion toolbar when hovering over an inline suggestion.', 'Never show the inline suggestion toolbar.'],
+		description: 'เมื่อไรจะแสดงแถบเครื่องมือของคำแนะนำแบบ inline (Controls when to show the inline suggestion toolbar.)'
+	},
+	{
+		id: 'editor.inlineSuggest.suppressInSnippetMode',
+		group: 'Text Editor',
+		type: 'boolean',
+		default: true,
+		description: 'ไม่แสดงคำแนะนำแบบ inline ขณะอยู่ใน snippet (Controls whether inline suggestions are suppressed when in snippet mode.)'
+	},
+	{
+		id: 'editor.inlineSuggest.suppressSuggestions',
+		group: 'Text Editor',
+		type: 'boolean',
+		default: false,
+		description: 'ซ่อนรายการคำแนะนำเมื่อมีคำแนะนำแบบ inline (Controls how inline suggestions interact with the suggest widget. If enabled, the suggest widget is not shown automatically when inline suggestions are available.)'
+	},
+	{
+		id: 'editor.inlineSuggest.syntaxHighlightingEnabled',
+		group: 'Text Editor',
+		type: 'boolean',
+		default: true,
+		description: 'ไฮไลต์ไวยากรณ์ในคำแนะนำแบบ inline (Controls whether to show syntax highlighting for inline suggestions in the editor.)'
+	},
+	{
 		id: 'editor.largeFileOptimizations',
 		group: 'Text Editor',
 		type: 'boolean',
@@ -1621,6 +1674,13 @@ export const EDITOR_SETTINGS: SettingSchema[] = [
 			'Do not show snippet suggestions.'
 		],
 		description: 'ตำแหน่งของ snippet ในรายการคำแนะนำ (Controls whether snippets are shown with other suggestions and how they are sorted.)'
+	},
+	{
+		id: 'editor.snippets.codeActions.enabled',
+		group: 'Text Editor',
+		type: 'boolean',
+		default: true,
+		description: 'เสนอ snippet เป็น code action: Surround With เมื่อเลือกข้อความ และ Start with ในไฟล์ว่าง (Controls if surround-with-snippets or file template snippets show as Code Actions.)'
 	},
 	{
 		id: 'editor.stablePeek',

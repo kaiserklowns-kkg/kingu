@@ -135,7 +135,8 @@ export function installEditorSettings(monaco: typeof Monaco) {
 					properties: {
 						key: { type: 'string', description: 'คีย์ เช่น cmd+shift+p หรือ cmd+k cmd+t (The key or key sequence.)' },
 						command: { type: 'string', enum: [...ids, ...ids.map((id) => `-${id}`)] },
-						when: { type: 'string', description: 'ยังไม่ประเมินใน Kingu (Not evaluated yet.)' }
+						when: { type: 'string', description: 'ยังไม่ประเมินใน Kingu (Not evaluated yet.)' },
+						args: { description: 'อาร์กิวเมนต์ที่ส่งให้คำสั่ง เช่น { "snippet": "console.log($1)" } ของ editor.action.insertSnippet (Arguments passed to the command.)' }
 					}
 				}
 			};

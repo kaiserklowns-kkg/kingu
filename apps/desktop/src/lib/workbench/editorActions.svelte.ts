@@ -52,6 +52,9 @@ export function installEditorActions(monaco: MonacoApi, editor: Monaco.editor.IS
 	const all = (editor as unknown as { getActions?: () => Monaco.editor.IEditorAction[] }).getActions?.() ?? editor.getSupportedActions();
 	for (const action of all) {
 		actionIds.add(action.id);
+		// A command the workbench registered for a menu (menus.ts EDITOR_ACTIONS) shows Monaco's key too.
+		const own = existing.has(action.id) ? commands.get(action.id) : undefined;
+		if (own && !own.key && !own.mac && !own.ownerKey && !own.scope) own.ownerKey = () => monacoKey(monaco.editor.getEditors()[0] ?? editor, action.id);
 		if (SKIP.has(action.id) || existing.has(action.id) || !action.label) continue;
 		commands.register({
 			id: action.id,

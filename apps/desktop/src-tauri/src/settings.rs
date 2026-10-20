@@ -252,6 +252,8 @@ pub fn changed_in(config_dir: &Path, profile: &Path, path: &Path) -> Option<&'st
     Some("settings")
   } else if path == profile.join(KEYBINDINGS_FILE) {
     Some("keybindings")
+  } else if path.parent() == Some(crate::snippets::dir_in(profile).as_path()) && path.file_name().and_then(|n| n.to_str()).is_some_and(crate::snippets::valid_name) {
+    Some("snippets")
   } else if path == config_dir.join(crate::user_profiles::PROFILES_DIR).join("profiles.json") {
     Some("profiles")
   } else if path.parent() == Some(config_dir.join(REPOS_DIR).as_path()) && path.extension().is_some_and(|e| e == "json") {
@@ -289,6 +291,10 @@ pub fn watch_config(app: &AppHandle, config_dir: &Path) -> Result<(), String> {
   .map_err(|e| e.to_string())?;
   watcher.watch(config_dir, RecursiveMode::NonRecursive).map_err(|e| e.to_string())?;
   watcher.watch(&config_dir.join(REPOS_DIR), RecursiveMode::NonRecursive).map_err(|e| e.to_string())?;
+  // The Default profile's user snippets (a profile's own are under `profiles/`, watched below).
+  let snippets = crate::snippets::dir_in(config_dir);
+  std::fs::create_dir_all(&snippets).map_err(|e| e.to_string())?;
+  watcher.watch(&snippets, RecursiveMode::NonRecursive).map_err(|e| e.to_string())?;
   // Profiles: each one's settings.json / keybindings.json, and the list naming the active one.
   let profiles = config_dir.join(crate::user_profiles::PROFILES_DIR);
   std::fs::create_dir_all(&profiles).map_err(|e| e.to_string())?;
@@ -338,6 +344,9 @@ mod tests {
     assert_eq!(changed_in(dir, profile, Path::new("/cfg/keybindings.json")), None);
     assert_eq!(changed_in(dir, profile, Path::new("/cfg/profiles/ffffffff/settings.json")), None);
     assert_eq!(changed_in(dir, profile, Path::new("/cfg/profiles/profiles.json")), Some("profiles"));
+    assert_eq!(changed_in(dir, profile, Path::new("/cfg/profiles/0a1b2c3d/snippets/rust.json")), Some("snippets"));
+    assert_eq!(changed_in(dir, profile, Path::new("/cfg/profiles/0a1b2c3d/snippets/.rust.json.1.tmp")), None);
+    assert_eq!(changed_in(dir, Path::new("/cfg"), Path::new("/cfg/snippets/all.code-snippets")), Some("snippets"));
     assert_eq!(Scope::parse("defaultUser").unwrap(), Scope::DefaultUser);
   }
 

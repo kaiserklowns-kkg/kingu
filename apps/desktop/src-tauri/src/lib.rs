@@ -40,6 +40,7 @@ mod skill_hub;
 mod snap;
 mod snap_install;
 mod snap_sandbox;
+mod snippets;
 mod system;
 mod tasks;
 mod testing;
@@ -1252,6 +1253,9 @@ pub fn run() {
       user_profiles::profile_switch,
       user_profiles::profile_rename,
       user_profiles::profile_delete,
+      snippets::snippets_user_list,
+      snippets::snippets_user_read,
+      snippets::snippets_user_write,
       workspace_open,
       workspace_close,
       workspace_recent,

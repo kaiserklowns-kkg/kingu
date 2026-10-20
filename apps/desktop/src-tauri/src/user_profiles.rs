@@ -115,6 +115,10 @@ pub fn create(config: &Path, name: &str, copy_from: Option<Option<&str>>) -> Res
         crate::settings::write_atomic(&dir.join(file), &text)?;
       }
     }
+    // The user snippets go with the copy too (VS Code's profile resources).
+    for snippets in crate::snippets::list(&crate::snippets::dir_in(&source)) {
+      crate::snippets::write(&crate::snippets::dir_in(&dir), &snippets.name, &snippets.content)?;
+    }
   }
   list.profiles.push(profile.clone());
   save(config, &list)?;
@@ -219,7 +223,9 @@ mod tests {
     let config = tmp.path();
     assert_eq!(active_dir(config), config);
     std::fs::write(config.join("settings.json"), "{\"editor.fontSize\": 20}").unwrap();
+    crate::snippets::write(&config.join("snippets"), "rust.json", "{}").unwrap();
     let work = create(config, " Work ", Some(None)).unwrap();
+    assert_eq!(std::fs::read_to_string(config.join("profiles").join(&work.id).join("snippets").join("rust.json")).unwrap(), "{}");
     assert_eq!(work.name, "Work");
     // A copy of the Default profile's settings; nothing becomes active yet.
     assert_eq!(std::fs::read_to_string(config.join("profiles").join(&work.id).join("settings.json")).unwrap(), "{\"editor.fontSize\": 20}");
