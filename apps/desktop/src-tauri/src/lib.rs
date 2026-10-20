@@ -45,6 +45,7 @@ mod tasks;
 mod terminal_links;
 mod team;
 mod usage;
+mod user_profiles;
 mod textfile;
 mod tracker_http;
 mod vault;
@@ -1191,6 +1192,11 @@ pub fn run() {
       external::external_textfile_read,
       external::external_textfile_write,
       external::workspace_file_read,
+      user_profiles::profiles_list,
+      user_profiles::profile_create,
+      user_profiles::profile_switch,
+      user_profiles::profile_rename,
+      user_profiles::profile_delete,
       workspace_open,
       workspace_close,
       workspace_recent,

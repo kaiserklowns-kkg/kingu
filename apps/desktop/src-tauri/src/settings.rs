@@ -34,6 +34,9 @@ pub enum Scope {
   /// Kingu's own per-repository overrides (Orca's per-repo settings) for the open folder:
   /// `<config_dir>/repos/<id>.json`, never inside the repository.
   Repo,
+  /// The Default profile's `settings.json` while another profile is active: application-scoped
+  /// settings always live there (VS Code). `User` is the active profile's (user_profiles.rs).
+  DefaultUser,
 }
 
 impl Scope {
@@ -43,6 +46,7 @@ impl Scope {
       "workspace" => Ok(Self::Workspace),
       "keybindings" => Ok(Self::Keybindings),
       "repo" => Ok(Self::Repo),
+      "defaultUser" => Ok(Self::DefaultUser),
       _ => Err(format!("unknown settings scope: {s}")),
     }
   }
@@ -206,9 +210,10 @@ pub fn user_value(config_dir: &Path, key: &str) -> Option<serde_json::Value> {
 
 fn path_for(app: &AppHandle, ws: &Workspace, scope: Scope) -> Result<PathBuf, String> {
   match scope {
-    Scope::User => Ok(user_path(&app.path().app_config_dir().map_err(|e| e.to_string())?)),
+    Scope::User => Ok(user_path(&crate::user_profiles::active_dir(&app.path().app_config_dir().map_err(|e| e.to_string())?))),
+    Scope::DefaultUser => Ok(user_path(&app.path().app_config_dir().map_err(|e| e.to_string())?)),
     Scope::Workspace => workspace_path(&ws.root()?),
-    Scope::Keybindings => Ok(app.path().app_config_dir().map_err(|e| e.to_string())?.join(KEYBINDINGS_FILE)),
+    Scope::Keybindings => Ok(crate::user_profiles::active_dir(&app.path().app_config_dir().map_err(|e| e.to_string())?).join(KEYBINDINGS_FILE)),
     Scope::Repo => Ok(repo_path(&app.path().app_config_dir().map_err(|e| e.to_string())?, &ws.root()?)),
   }
 }
@@ -234,12 +239,21 @@ pub fn settings_write(app: AppHandle, ws: State<'_, Workspace>, scope: String, c
 }
 
 /// Which settings file a change in the app config dir touched (for `settings://changed`): the
-/// user `settings.json`, `keybindings.json`, or a per-repository file under `repos/`.
+/// user `settings.json`, `keybindings.json` (of the active profile), a per-repository file under
+/// `repos/`, or the profiles list.
 pub fn changed_file(config_dir: &Path, path: &Path) -> Option<&'static str> {
-  if path == user_path(config_dir) {
+  changed_in(config_dir, &crate::user_profiles::active_dir(config_dir), path)
+}
+
+/// [`changed_file`] with the active profile's folder (`profile`, the config dir for Default): the
+/// Default `settings.json` counts too, for its application-scoped settings.
+pub fn changed_in(config_dir: &Path, profile: &Path, path: &Path) -> Option<&'static str> {
+  if path == user_path(config_dir) || path == user_path(profile) {
     Some("settings")
-  } else if path == config_dir.join(KEYBINDINGS_FILE) {
+  } else if path == profile.join(KEYBINDINGS_FILE) {
     Some("keybindings")
+  } else if path == config_dir.join(crate::user_profiles::PROFILES_DIR).join("profiles.json") {
+    Some("profiles")
   } else if path.parent() == Some(config_dir.join(REPOS_DIR).as_path()) && path.extension().is_some_and(|e| e == "json") {
     Some("repo")
   } else {
@@ -275,6 +289,10 @@ pub fn watch_config(app: &AppHandle, config_dir: &Path) -> Result<(), String> {
   .map_err(|e| e.to_string())?;
   watcher.watch(config_dir, RecursiveMode::NonRecursive).map_err(|e| e.to_string())?;
   watcher.watch(&config_dir.join(REPOS_DIR), RecursiveMode::NonRecursive).map_err(|e| e.to_string())?;
+  // Profiles: each one's settings.json / keybindings.json, and the list naming the active one.
+  let profiles = config_dir.join(crate::user_profiles::PROFILES_DIR);
+  std::fs::create_dir_all(&profiles).map_err(|e| e.to_string())?;
+  watcher.watch(&profiles, RecursiveMode::Recursive).map_err(|e| e.to_string())?;
   let handle = app.clone();
   std::thread::spawn(move || {
     // Editors save in several steps (temp file, rename): one event per burst.
@@ -306,6 +324,21 @@ mod tests {
     assert_eq!(changed_file(dir, &dir.join(REPOS_DIR).join("0123456789abcdef.json")), Some("repo"));
     assert_eq!(changed_file(dir, Path::new("/cfg/settings.json.tmp")), None);
     assert_eq!(changed_file(dir, Path::new("/cfg/other/settings.json")), None);
+  }
+
+  #[test]
+  fn a_profile_has_its_own_files_beside_the_default_settings() {
+    let dir = Path::new("/cfg");
+    let profile = Path::new("/cfg/profiles/0a1b2c3d");
+    assert_eq!(changed_in(dir, profile, Path::new("/cfg/profiles/0a1b2c3d/settings.json")), Some("settings"));
+    assert_eq!(changed_in(dir, profile, Path::new("/cfg/profiles/0a1b2c3d/keybindings.json")), Some("keybindings"));
+    // The Default profile's settings.json still holds the application-scoped settings.
+    assert_eq!(changed_in(dir, profile, Path::new("/cfg/settings.json")), Some("settings"));
+    // Its keybindings are not the active ones.
+    assert_eq!(changed_in(dir, profile, Path::new("/cfg/keybindings.json")), None);
+    assert_eq!(changed_in(dir, profile, Path::new("/cfg/profiles/ffffffff/settings.json")), None);
+    assert_eq!(changed_in(dir, profile, Path::new("/cfg/profiles/profiles.json")), Some("profiles"));
+    assert_eq!(Scope::parse("defaultUser").unwrap(), Scope::DefaultUser);
   }
 
   #[test]

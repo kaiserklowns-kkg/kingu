@@ -99,6 +99,7 @@
 	import { installSearchEditorCommands } from './searchEditorCommands.svelte.ts';
 	import NotificationToasts from './NotificationToasts.svelte';
 	import { recentFiles } from './recentFiles.svelte';
+	import { profiles } from '#lib/settings/profiles.svelte.ts';
 
 	// Opening a file or diff (Quick Open, a review file, settings.json) closes the system settings page.
 	// `editors.active` also re-runs on focus changes, so only a different editor closes it.
@@ -371,8 +372,10 @@
 		const uninstallEditorCommands = installEditorCommands();
 		const uninstallRecentFiles = recentFiles.install();
 		const uninstallNotificationCommands = installNotificationCommands();
+		const uninstallProfiles = profiles.install();
 		const uninstallSearchEditorCommands = installSearchEditorCommands();
 		return () => {
+			uninstallProfiles();
 			uninstallNotificationCommands();
 			uninstallSearchEditorCommands();
 			uninstallRecentFiles();

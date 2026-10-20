@@ -7,8 +7,11 @@ import { listen } from '@tauri-apps/api/event';
 import { parseSettingsText, setProperty } from './jsonc';
 import { resolveSettings, settingProblems, type Resolved, type SettingProblem, type SettingScope } from './registry';
 import { settingSchemas } from './schemas.svelte';
+import { isApplicationScoped, profileUserValues } from './profiles';
 
 type SettingsFile = { path: string; content: string | null };
+/** The files behind the layers: `defaultUser` is the Default profile's settings.json (profiles.ts). */
+type FileScope = SettingScope | 'defaultUser';
 type Layer = { path: string; text: string | null; values: Record<string, unknown>; error: string | null };
 
 const emptyLayer = (): Layer => ({ path: '', text: null, values: {}, error: null });
@@ -23,11 +26,17 @@ class Settings {
 	workspace = $state<Layer>(emptyLayer());
 	/** Kingu's per-repository overrides of the open folder (Orca's per-repo settings), kept in the app config dir. */
 	repo = $state<Layer>(emptyLayer());
+	/** The Default profile's settings.json: the same file as `user` unless another profile is
+	 * active, when it still holds the application-scoped settings (VS Code). */
+	defaultUser = $state<Layer>(emptyLayer());
+	/** Another profile than Default is active (its settings.json is not the Default one). */
+	readonly inProfile: boolean = $derived(this.user.path !== '' && this.defaultUser.path !== '' && this.user.path !== this.defaultUser.path);
+	readonly #userValues: Record<string, unknown> = $derived(this.inProfile ? profileUserValues(this.user.values, this.defaultUser.values, settingSchemas.all) : this.user.values);
 	loaded = $state(false);
 	/** `settings` of the `.code-workspace` file the folder was opened from: workspace settings under
 	 * the folder's own `.kingu/settings.json` (VS Code: workspace file < folder settings). */
 	workspaceFile = $state.raw<Record<string, unknown>>({});
-	readonly resolved: Map<string, Resolved> = $derived(resolveSettings(this.user.values, { ...this.workspaceFile, ...this.workspace.values }, settingSchemas.all, this.repo.values));
+	readonly resolved: Map<string, Resolved> = $derived(resolveSettings(this.#userValues, { ...this.workspaceFile, ...this.workspace.values }, settingSchemas.all, this.repo.values));
 	/** Values the files set but that are ignored (wrong type, out of range, user-only in the workspace file). */
 	readonly problems: SettingProblem[] = $derived([
 		...settingProblems(this.user.values, 'user', settingSchemas.all),
@@ -62,13 +71,18 @@ class Settings {
 		return scope === 'user' ? this.user : scope === 'workspace' ? this.workspace : this.repo;
 	}
 
+	#layerOf(scope: FileScope): Layer {
+		return scope === 'defaultUser' ? this.defaultUser : this.layer(scope);
+	}
+
 	async load() {
-		const [user, workspace, repo] = await Promise.all([this.read('user'), this.read('workspace'), this.read('repo')]);
+		const [user, workspace, repo, defaultUser] = await Promise.all([this.read('user'), this.read('workspace'), this.read('repo'), this.read('defaultUser')]);
 		// Unchanged files keep their layer object, so re-reading on focus re-applies nothing.
 		const same = (a: Layer, b: Layer) => a.path === b.path && a.text === b.text && a.error === b.error;
 		if (!same(user, this.user)) this.user = user;
 		if (!same(workspace, this.workspace)) this.workspace = workspace;
 		if (!same(repo, this.repo)) this.repo = repo;
+		if (!same(defaultUser, this.defaultUser)) this.defaultUser = defaultUser;
 		this.loaded = true;
 	}
 
@@ -79,8 +93,8 @@ class Settings {
 		await this.load();
 	}
 
-	private async read(scope: SettingScope): Promise<Layer> {
-		const prev = this.layer(scope);
+	private async read(scope: FileScope): Promise<Layer> {
+		const prev = this.#layerOf(scope);
 		try {
 			const file = await invoke<SettingsFile>('settings_read', { scope });
 			return parseLayer(file, prev);
@@ -91,14 +105,17 @@ class Settings {
 
 	/** Sets (or with `undefined`, resets) a setting in `scope`'s file. Writes are serialized. */
 	set(id: string, value: unknown, scope: SettingScope): Promise<void> {
+		// With a profile active, application-scoped settings are written to the Default profile's file.
+		const file: FileScope = scope === 'user' && this.inProfile && isApplicationScoped(settingSchemas.byId.get(id)) ? 'defaultUser' : scope;
 		const run = async () => {
-			const layer = await this.read(scope);
+			const layer = await this.read(file);
 			// Editing text that does not parse could lose what the user wrote; they fix it first.
 			if (layer.error) throw new Error(`${layer.path}: ${layer.error}`);
 			const text = setProperty(layer.text ?? '', id, value);
-			await invoke('settings_write', { scope, content: text });
+			await invoke('settings_write', { scope: file, content: text });
 			const next = parseLayer({ path: layer.path, content: text }, layer);
-			if (scope === 'user') this.user = next;
+			if (file === 'defaultUser') this.defaultUser = next;
+			else if (scope === 'user') this.user = next;
 			else if (scope === 'workspace') this.workspace = next;
 			else this.repo = next;
 			for (const fn of this.#written) fn(scope);

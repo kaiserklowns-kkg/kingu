@@ -15,6 +15,7 @@
 	import { commands, keyOf } from './commands.svelte';
 	import { editorLabel } from './editorLabel';
 	import { externalPath, isExternalKey } from './externalFiles';
+	import { profiles } from '#lib/settings/profiles.svelte.ts';
 	import { editors } from './editors.svelte';
 	import { isMac, keyLabel } from './keys';
 	import WindowControls from './WindowControls.svelte';
@@ -71,7 +72,8 @@
 			dirty,
 			branch: status.branch,
 			languageId: editors.language,
-			separator: settings.get<string>('window.titleSeparator')
+			separator: settings.get<string>('window.titleSeparator'),
+			profileName: profiles.name
 		});
 	});
 

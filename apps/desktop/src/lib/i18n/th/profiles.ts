@@ -1,0 +1,20 @@
+import type { profiles as en } from '../en/profiles';
+
+export const profiles = {
+	'profiles.default': 'Default',
+	'profiles.current': 'ใช้อยู่',
+	'profiles.switchPlaceholder': 'เลือก profile ที่จะใช้',
+	'profiles.newPlaceholder': 'ชื่อ profile',
+	'profiles.newHint': 'สร้าง profile ชื่อ "{name}"',
+	'profiles.nameHint': 'พิมพ์ชื่อ profile',
+	'profiles.copyFromPlaceholder': 'คัดลอก settings และคีย์ลัดจาก',
+	'profiles.empty': 'ไม่คัดลอก (profile ว่าง)',
+	'profiles.renamePlaceholder': 'ชื่อใหม่ของ {name}',
+	'profiles.renameHint': 'เปลี่ยนชื่อเป็น "{name}"',
+	'profiles.deletePlaceholder': 'เลือก profile ที่จะลบ',
+	'profiles.deleteConfirm': 'ลบ profile {name} ไหม settings และคีย์ลัดของ profile นี้จะถูกลบด้วย',
+	'profiles.delete': 'ลบ',
+	'profiles.switched': 'Profile: {name}',
+	'profiles.failed': 'Profile: {error}',
+	'profiles.noOthers': 'ยังไม่มี profile อื่นนอกจาก Default'
+} satisfies Record<keyof typeof en, string>;

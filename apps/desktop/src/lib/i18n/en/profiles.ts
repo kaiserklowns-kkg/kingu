@@ -1,0 +1,19 @@
+// UI strings of Profiles (settings/profiles.svelte.ts). Keys: 'profiles.<what>'. Thai in ../th/profiles.ts.
+export const profiles = {
+	'profiles.default': 'Default',
+	'profiles.current': 'current',
+	'profiles.switchPlaceholder': 'Select a profile to switch to',
+	'profiles.newPlaceholder': 'Profile name',
+	'profiles.newHint': 'Create a profile named "{name}"',
+	'profiles.nameHint': 'Type a name for the profile',
+	'profiles.copyFromPlaceholder': 'Copy settings and keybindings from',
+	'profiles.empty': 'None (empty profile)',
+	'profiles.renamePlaceholder': 'New name for {name}',
+	'profiles.renameHint': 'Rename to "{name}"',
+	'profiles.deletePlaceholder': 'Select a profile to delete',
+	'profiles.deleteConfirm': 'Delete the profile {name}? Its settings and keybindings are deleted.',
+	'profiles.delete': 'Delete',
+	'profiles.switched': 'Profile: {name}',
+	'profiles.failed': 'Profile: {error}',
+	'profiles.noOthers': 'There is no profile other than Default.'
+} as const;

@@ -40,7 +40,7 @@ class Keybindings {
 		const onFocus = () => void this.load();
 		window.addEventListener('focus', onFocus);
 		// keybindings.json edited while Kingu has focus (Rust watches the config dir).
-		const unlisten = listen<string>('settings://changed', (e) => e.payload === 'keybindings' && void this.load());
+		const unlisten = listen<string>('settings://changed', (e) => (e.payload === 'keybindings' || e.payload === 'profiles') && void this.load());
 		return () => {
 			window.removeEventListener('focus', onFocus);
 			void unlisten.then((u) => u());
