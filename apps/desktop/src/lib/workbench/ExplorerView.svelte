@@ -15,6 +15,9 @@
 	import { repoDialog } from './repoDialog.svelte.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { testing } from '#lib/testing/testing.svelte.ts';
+	import { lsp } from '#lib/lsp/lsp.svelte.ts';
+	import { t } from '#lib/i18n/index.ts';
+	import { problemBadge, problemDecorations } from '#lib/lsp/problemsSettings.ts';
 	import { coverageColor, displayedPercent, displayPercent, explorerCoverage, type Thresholds } from '#lib/testing/coverage.ts';
 	import { isNonTextEditor } from '#lib/settings/resources.ts';
 	import { isDiffKey } from './scm';
@@ -31,6 +34,14 @@
 	/** explorer.decorations.colors / explorer.decorations.badges. */
 	const decoColors = $derived(settings.get<boolean>('explorer.decorations.colors'));
 	const decoBadges = $derived(settings.get<boolean>('explorer.decorations.badges'));
+	// problems.decorations.enabled (off with problems.visibility): errors and warnings on files, their color on folders.
+	const problems = $derived(settings.get<boolean>('problems.visibility') !== false && settings.get<boolean>('problems.decorations.enabled') !== false ? problemDecorations(lsp.problems) : null);
+	const PROBLEM_COLORS = { error: 'var(--vscode-list-errorForeground,#f88070)', warning: 'var(--vscode-list-warningForeground,#cca700)' };
+	/** The name's color: a problem's over git's (VS Code weighs problems higher). */
+	const nameColor = (rel: string) => {
+		const p = problems?.get(rel);
+		return p ? PROBLEM_COLORS[p.severity] : decorations.get(rel)?.color;
+	};
 	// testing.showCoverageInExplorer: each covered file's (and folder's) percentage while coverage is open.
 	const coverage = $derived(testing.coverage && settings.get<boolean>('testing.showCoverageInExplorer') !== false ? explorerCoverage([...testing.coverage.values()]) : null);
 	const COVERAGE_COLORS = { red: 'var(--vscode-charts-red,#f14c4c)', yellow: 'var(--vscode-charts-yellow,#cca700)', green: 'var(--vscode-charts-green,#89d185)' };
@@ -518,7 +529,8 @@
 								{#if row.is_dir || row.nests}<Icon name={row.expanded ? 'chevronDown' : 'chevronRight'} size={16} />{/if}
 							</span>
 							<FileIcon icon={row.is_dir ? folderIcon(row.rel, row.expanded) : fileIcon(row.name)} />
-							<span class={['min-w-0 flex-1 truncate', row.ignored && 'italic opacity-55']} style:color={decoColors ? decorations.get(row.rel)?.color : undefined}>{row.name}</span>
+							<span class={['min-w-0 flex-1 truncate', row.ignored && 'italic opacity-55']} style:color={decoColors ? nameColor(row.rel) : undefined}>{row.name}</span>
+							{#if decoBadges && problems?.get(row.rel)?.count}{@const p = problems.get(row.rel)!}<span class="shrink-0 pl-2 text-[11px] font-semibold" style:color={decoColors ? PROBLEM_COLORS[p.severity] : undefined} title={p.count === 1 ? t('problems.decoration.one') : t('problems.decoration.many', { count: p.count! })}>{problemBadge(p.count!)}</span>{/if}
 							{#if coverage}{@const cov = coverageBadge(row.rel)}{#if cov}<span class="shrink-0 pl-2 text-[11px] tabular-nums" style:color={cov.color}>{cov.text}</span>{/if}{/if}
 							{#if row.ignored}<span class="shrink-0 pr-3 pl-2 opacity-55" title="ถูก .gitignore"><Icon name="ignored" size={12} /></span>
 							{:else if decoBadges && decorations.has(row.rel)}{@const deco = decorations.get(row.rel)!}<span class="shrink-0 pr-3 pl-2 text-[11px] font-semibold" style:color={decoColors ? deco.color : undefined}>{deco.letter || '•'}</span>{/if}

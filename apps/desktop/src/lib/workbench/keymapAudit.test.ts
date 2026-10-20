@@ -89,7 +89,11 @@ const EXCLUSIVE: [string, string][] = [
 	['search.searchEditor.action.deleteFileResults', 'kingu.agents.deleteWorkspace'],
 	// The Search Editor's Match Case / Regex (⌥⌘C / ⌥⌘R) act with focus in it, where Copy Path / Reveal in Finder do not.
 	['toggleSearchEditorCaseSensitive', 'copyFilePath'],
-	['toggleSearchEditorRegex', 'revealFileInOS']
+	['toggleSearchEditorRegex', 'revealFileInOS'],
+	// ⌘F finds in a focused terminal, or focuses the Problems filter while the Problems view has focus.
+	['workbench.action.terminal.focusFind', 'problems.action.focusFilter'],
+	// Escape in the Problems filter box clears it; the toasts' Escape never acts from a text input.
+	['notifications.hideToasts', 'problems.action.clearFilterText']
 ];
 
 /** VS Code's `terminalFocus` / `!terminalFocus`: one command's key acts only in a focused panel

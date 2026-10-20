@@ -32,6 +32,8 @@ export const output = {
 	'problems.file': 'File',
 	'problems.source': 'Source',
 	'problems.position': 'Position',
+	'problems.decoration.one': '1 problem in this file',
+	'problems.decoration.many': '{count} problems in this file',
 	'panel.maximize': 'Maximize Panel Size',
 	'panel.restore': 'Restore Panel Size',
 	'panel.hide': 'Hide Panel',

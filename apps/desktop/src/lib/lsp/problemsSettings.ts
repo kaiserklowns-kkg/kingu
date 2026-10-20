@@ -33,3 +33,31 @@ export type ProblemRow = { file: ProblemFile; item: Diagnostic };
 export function problemTable(files: readonly ProblemFile[], order: ProblemsSortOrder): ProblemRow[] {
 	return files.flatMap((file) => sortProblems(file.items, order).map((item) => ({ file, item })));
 }
+
+/** A file's (or, bubbled up, a folder's) Problems decoration in the Explorer. */
+export type ProblemDecoration = { severity: 'error' | 'warning'; /** Errors and warnings in the file; none on a folder. */ count?: number };
+
+/**
+ * `problems.decorations.enabled` (VS Code: MarkersDecorationsProvider): each workspace file with
+ * errors or warnings gets their count and the worst one's color; its folders take the color.
+ */
+export function problemDecorations(files: readonly ProblemFile[]): Map<string, ProblemDecoration> {
+	const out = new Map<string, ProblemDecoration>();
+	for (const f of files) {
+		if (f.rel === null) continue;
+		const marked = f.items.filter((d) => sev(d) <= 2);
+		if (!marked.length) continue;
+		const severity = marked.some((d) => sev(d) === 1) ? 'error' : 'warning';
+		out.set(f.rel, { severity, count: marked.length });
+		const parts = f.rel.split('/');
+		for (let i = 1; i < parts.length; i++) {
+			const dir = parts.slice(0, i).join('/');
+			const prev = out.get(dir);
+			if (!prev || (prev.severity === 'warning' && severity === 'error')) out.set(dir, { severity });
+		}
+	}
+	return out;
+}
+
+/** The badge VS Code shows: the count, `9+` from ten. */
+export const problemBadge = (count: number) => (count < 10 ? String(count) : '9+');

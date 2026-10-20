@@ -18,7 +18,7 @@ function sources(dir: string): string[] {
 	});
 }
 
-/** `terminalOnly`: its key acts only while a terminal has focus (`keyWhen`), where Monaco's menu keys do not apply. */
+/** `terminalOnly`: its key acts only while a terminal (or the Problems view) has focus (`keyWhen`), where Monaco's menu keys do not apply. */
 type Registered = { id: string; key?: string; mac?: string; terminalOnly?: boolean };
 
 /** Every `commands.register({ id: '…', … key: '…', mac: '…', … run` in src/lib. */
@@ -30,7 +30,7 @@ function registeredCommands(): Map<string, Registered> {
 			const body = m[1];
 			const field = (name: string) => body.match(new RegExp(`\\b${name}: '((?:[^'\\\\]|\\\\.)*)'`))?.[1]?.replace(/\\\\/g, '\\');
 			const id = field('id');
-			if (id) out.set(id, { id, key: field('key'), mac: field('mac'), ...(/keyWhen: (panelTerminalFocus,|\(\) => focusedTerminal\(\) !== null,)/.test(body) ? { terminalOnly: true } : {}) });
+			if (id) out.set(id, { id, key: field('key'), mac: field('mac'), ...(/keyWhen: (panelTerminalFocus,|viewFocused,|\(\) => focusedTerminal\(\) !== null,)/.test(body) ? { terminalOnly: true } : {}) });
 		}
 	}
 	return out;

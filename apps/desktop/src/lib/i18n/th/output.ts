@@ -32,6 +32,8 @@ export const output = {
 	'problems.file': 'ไฟล์',
 	'problems.source': 'ที่มา',
 	'problems.position': 'ตำแหน่ง',
+	'problems.decoration.one': 'ไฟล์นี้มีปัญหา 1 รายการ',
+	'problems.decoration.many': 'ไฟล์นี้มีปัญหา {count} รายการ',
 	'panel.maximize': 'ขยายแผงให้สุด',
 	'panel.restore': 'คืนขนาดแผง',
 	'panel.hide': 'ซ่อนแผง',

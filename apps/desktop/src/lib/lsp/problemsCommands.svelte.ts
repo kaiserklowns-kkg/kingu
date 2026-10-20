@@ -16,6 +16,9 @@ import { problemsView } from './problemsViewState.svelte';
 const problemsShown = () => layout.panelVisible && layout.panelTab === 'problems';
 /** Focus is in the Problems list (not its filter box): ⌘C, Enter and ⌘Enter act on the selection. */
 const listFocused = () => !!document.activeElement?.closest('[data-problems-view]');
+/** Focus is in the Problems view: its list or its filter box (VS Code's `focusedView == workbench.panel.markers.view`). */
+const viewFocused = () => !!document.activeElement?.closest('[data-problems-view], [data-problems-filter]');
+const filterFocused = () => !!document.activeElement?.closest('[data-problems-filter]');
 
 async function copy(text: string) {
 	try {
@@ -64,6 +67,8 @@ export function installProblemsSettings(): () => void {
 			id: 'problems.action.focusFilter',
 			title: 'Focus problems filter',
 			category: 'Problems',
+			key: 'cmd+f',
+			keyWhen: viewFocused,
 			when: problemsShown,
 			run: () => (view.focusFilterRequested = true)
 		}),
@@ -71,10 +76,12 @@ export function installProblemsSettings(): () => void {
 			id: 'problems.action.focusProblemsFromFilter',
 			title: 'Focus problems view',
 			category: 'Problems',
+			key: 'cmd+down',
+			keyWhen: filterFocused,
 			palette: false,
 			run: () => view.focusList()
 		}),
-		commands.register({ id: 'problems.action.clearFilterText', title: 'Clear filters text', category: 'Problems', palette: false, run: () => view.clearFilter() }),
+		commands.register({ id: 'problems.action.clearFilterText', title: 'Clear filters text', category: 'Problems', key: 'escape', keyWhen: filterFocused, palette: false, run: () => view.clearFilter() }),
 		commands.register({ id: 'problems.action.showMultilineMessage', title: 'Show message in multiple lines', category: 'Problems', when: () => !view.multiline, run: () => (view.multiline = true) }),
 		commands.register({ id: 'problems.action.showSinglelineMessage', title: 'Show message in single line', category: 'Problems', when: () => view.multiline, run: () => (view.multiline = false) })
 	];
