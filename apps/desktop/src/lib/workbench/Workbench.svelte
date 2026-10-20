@@ -114,7 +114,8 @@
 
 
 	let middle: HTMLDivElement | undefined = $state();
-	const workspaceName = $derived(workspace.name);
+	// The folder's name, or the workspace's (`name (Workspace)`, Untitled (Workspace)) for several folders.
+	const workspaceName = $derived(workspace.title || workspace.name);
 
 	// VS Code's default macOS keybindings (docs/IDE-DESIGN.md §2). onMount, not $effect:
 	// register() reads and writes the registry, which an effect would re-run on forever.
@@ -145,6 +146,22 @@
 			commands.register({ id: 'workbench.action.openWorkspace', title: 'Open Workspace from File...', category: 'File', run: () => workspace.pickWorkspaceFile() }),
 			commands.register({ id: 'workbench.action.saveWorkspaceAs', title: 'Save Workspace As...', category: 'Workspaces', when: () => workspace.root !== null, run: () => workspace.saveWorkspaceAs() }),
 			commands.register({ id: 'workbench.action.addRootFolder', title: 'Add Folder to Workspace...', category: 'Workspaces', run: () => workspace.addFolderToWorkspace() }),
+			commands.register({
+				id: 'workbench.action.removeRootFolder',
+				title: 'Remove Folder from Workspace...',
+				category: 'Workspaces',
+				when: () => workspace.folders.length > 1,
+				run: () =>
+					quick.pick({
+						placeholder: 'Select workspace folder to remove',
+						items: workspace.folders.map((f) => ({ id: f.path, label: f.name, description: f.path })),
+						onAccept: (item) => void workspace.removeFolder(item.id)
+					})
+			}),
+			// Windows (VS Code: each window has its own workspace).
+			commands.register({ id: 'workbench.action.newWindow', title: 'New Window', category: 'File', key: 'cmd+shift+n', run: () => workspace.newWindow() }),
+			commands.register({ id: 'workbench.action.closeWindow', title: 'Close Window', category: 'View', key: 'cmd+shift+w', run: () => workspace.closeWindow() }),
+			commands.register({ id: 'workbench.action.duplicateWorkspaceInNewWindow', title: 'Duplicate As Workspace in New Window', category: 'Workspaces', when: () => workspace.root !== null, run: () => workspace.duplicateInNewWindow() }),
 			commands.register({ id: 'workbench.action.openRecent', title: 'Open Recent...', category: 'File', key: 'ctrl+r',
 				// The shell's reverse search keeps ctrl+r inside the terminal (the menu still opens the picker).
 				keyWhen: () => !document.activeElement?.closest('.xterm'),

@@ -37,8 +37,11 @@ export function keyTag(key: string): string | null {
 	return m ? m[1] : null;
 }
 
-/** What `pty_list` returns per live session. */
-export type PtyInfo = { key: string; cwd: string; alive: boolean };
+/** What `pty_list` returns per live session. `elsewhere`: another open window shows it (not this window's to kill). */
+export type PtyInfo = { key: string; cwd: string; alive: boolean; elsewhere?: boolean };
+
+/** Sessions this window may treat as its own: not shown by another open window. */
+export const ownSessions = (live: PtyInfo[]) => live.filter((s) => !s.elsewhere);
 
 /** Live PTYs of root `tag` that the restored page does not show: left over, so safe to kill.
  *  Other roots' sessions keep running until their folder is opened again. */

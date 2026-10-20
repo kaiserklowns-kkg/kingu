@@ -468,19 +468,19 @@ fn root_of(ws: &Workspace, projects: &Projects, root: Option<String>) -> Result<
 
 /// The project's artifacts (`root`: an added project; default the open folder).
 #[tauri::command]
-pub async fn artifacts_list(ws: State<'_, Workspace>, projects: State<'_, Projects>, root: Option<String>) -> Result<Vec<Meta>, String> {
+pub async fn artifacts_list(ws: Workspace, projects: State<'_, Projects>, root: Option<String>) -> Result<Vec<Meta>, String> {
   let root = root_of(&ws, &projects, root)?;
   crate::snap_install::blocking(move || list(&root)).await
 }
 
 #[tauri::command]
-pub fn artifact_get(ws: State<'_, Workspace>, projects: State<'_, Projects>, root: Option<String>, id: String) -> Result<Meta, String> {
+pub fn artifact_get(ws: Workspace, projects: State<'_, Projects>, root: Option<String>, id: String) -> Result<Meta, String> {
   load(&root_of(&ws, &projects, root)?, &id)
 }
 
 /// A version's page as text (Markdown is rendered by the webview before it is previewed).
 #[tauri::command]
-pub fn artifact_read_entry(ws: State<'_, Workspace>, projects: State<'_, Projects>, root: Option<String>, id: String, version: u32) -> Result<String, String> {
+pub fn artifact_read_entry(ws: Workspace, projects: State<'_, Projects>, root: Option<String>, id: String, version: u32) -> Result<String, String> {
   let root = root_of(&ws, &projects, root)?;
   let meta = load(&root, &id)?;
   let v = meta.version(version).ok_or_else(|| tr!(ArtifactMsg::VersionNotFound, id, version))?;
@@ -489,7 +489,7 @@ pub fn artifact_read_entry(ws: State<'_, Workspace>, projects: State<'_, Project
 }
 
 #[tauri::command]
-pub fn artifact_delete(app: AppHandle, ws: State<'_, Workspace>, projects: State<'_, Projects>, root: Option<String>, id: String) -> Result<(), String> {
+pub fn artifact_delete(app: AppHandle, ws: Workspace, projects: State<'_, Projects>, root: Option<String>, id: String) -> Result<(), String> {
   let root = root_of(&ws, &projects, root)?;
   delete(&root, &id)?;
   notify_changed(&app, &root.display().to_string(), &id);
@@ -514,7 +514,7 @@ pub fn bundle_version(root: &Path, id: &str, version: u32, html: Option<String>)
 /// Export: the native save dialog, then the bundled page. The dialog runs here so the webview
 /// never names the path. The path written, or None when the user cancelled.
 #[tauri::command]
-pub async fn artifact_export(app: AppHandle, ws: State<'_, Workspace>, projects: State<'_, Projects>, root: Option<String>, id: String, version: u32, html: Option<String>) -> Result<Option<String>, String> {
+pub async fn artifact_export(app: AppHandle, ws: Workspace, projects: State<'_, Projects>, root: Option<String>, id: String, version: u32, html: Option<String>) -> Result<Option<String>, String> {
   use tauri_plugin_dialog::DialogExt;
   let root = root_of(&ws, &projects, root)?;
   let (meta, page) = crate::snap_install::blocking({

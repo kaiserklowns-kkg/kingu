@@ -52,6 +52,7 @@ mod tracker_http;
 mod vault;
 mod watcher;
 mod window;
+mod windows;
 mod workspace;
 
 use std::collections::BTreeMap;
@@ -61,7 +62,7 @@ use std::sync::Arc;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use workspace::{Recent, Workspace, resolve_in};
+use workspace::{Recent, Workspace, Workspaces, resolve_in};
 
 #[derive(serde::Serialize)]
 struct AppInfo {
@@ -74,7 +75,7 @@ struct AppInfo {
 }
 
 #[tauri::command]
-fn app_info(ws: State<'_, Workspace>) -> AppInfo {
+fn app_info(ws: Workspace) -> AppInfo {
   log::info!("app_info requested by webview");
   AppInfo {
     name: "Kingu",
@@ -131,8 +132,8 @@ fn client_log(level: String, message: String) {
 const MAX_OPEN_BYTES: u64 = 5 * 1024 * 1024;
 
 #[tauri::command]
-fn read_workspace_file(ws: State<'_, Workspace>, rel: String) -> Result<String, String> {
-  let path = resolve_in(&ws.root()?, &rel)?;
+fn read_workspace_file(ws: Workspace, rel: String) -> Result<String, String> {
+  let path = ws.resolve(&rel)?;
   let len = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
   if len > MAX_OPEN_BYTES {
     return Err(format!("{rel}: larger than {MAX_OPEN_BYTES} bytes"));
@@ -142,16 +143,16 @@ fn read_workspace_file(ws: State<'_, Workspace>, rel: String) -> Result<String, 
 
 /// An image of the workspace as a `data:` URL, for the editor's image viewer.
 #[tauri::command]
-async fn fs_read_data_url(ws: State<'_, Workspace>, rel: String) -> Result<String, String> {
-  let path = resolve_in(&ws.root()?, &rel)?;
+async fn fs_read_data_url(ws: Workspace, rel: String) -> Result<String, String> {
+  let path = ws.resolve(&rel)?;
   blocking(move || fs::image_data_url(&path, 4 * MAX_OPEN_BYTES).map_err(|e| format!("{rel}: {e}"))).await
 }
 
 /// Opens a file for a text editor: decoded with its encoding, or a binary / too-large answer the
 /// editor shows as a placeholder (VS Code's text file service read).
 #[tauri::command]
-async fn textfile_read(ws: State<'_, Workspace>, rel: String, options: textfile::ReadOptions) -> Result<textfile::ReadResult, String> {
-  let path = resolve_in(&ws.root()?, &rel)?;
+async fn textfile_read(ws: Workspace, rel: String, options: textfile::ReadOptions) -> Result<textfile::ReadResult, String> {
+  let path = ws.resolve(&rel)?;
   blocking(move || textfile::read(&path, &options).map_err(|e| format!("{rel}: {e}"))).await
 }
 
@@ -159,13 +160,14 @@ async fn textfile_read(ws: State<'_, Workspace>, rel: String, options: textfile:
 /// a file that changed on disk since is not overwritten: the result is a conflict.
 #[tauri::command]
 async fn textfile_write(
-  ws: State<'_, Workspace>,
+  ws: Workspace,
   rel: String,
   content: String,
   encoding: String,
   expected: Option<textfile::Expected>,
 ) -> Result<textfile::WriteResult, String> {
-  let path = textfile::resolve_for_write(&ws.root()?, &rel)?;
+  let (root, inner) = ws.locate(&rel)?;
+  let path = textfile::resolve_for_write(&root, &inner)?;
   blocking(move || {
     let result = textfile::write(&path, &content, &encoding, expected.as_ref()).map_err(|e| format!("{rel}: {e}"))?;
     if matches!(result, textfile::WriteResult::Saved { .. }) {
@@ -177,28 +179,42 @@ async fn textfile_write(
 }
 
 #[tauri::command]
-fn fs_list_dir(ws: State<'_, Workspace>, rel: String) -> Result<Vec<fs::DirEntry>, String> {
-  let root = ws.root()?;
-  let dir = if rel.is_empty() { root.clone() } else { resolve_in(&root, &rel)? };
+fn fs_list_dir(ws: Workspace, rel: String) -> Result<Vec<fs::DirEntry>, String> {
+  let (root, inner) = ws.locate(&rel)?;
+  let dir = if inner.is_empty() { root.clone() } else { resolve_in(&root, &inner)? };
   let mut entries = fs::list_dir(&root, &dir)?;
   git::mark_ignored(&dir, &mut entries);
+  // Another root folder's entries carry absolute paths (see workspace.rs).
+  for e in &mut entries {
+    e.rel = ws.qualify(&root, &e.rel);
+  }
   Ok(entries)
 }
 
 const QUICK_OPEN_LIMIT: usize = 20_000;
 
 #[tauri::command]
-async fn fs_list_files(ws: State<'_, Workspace>) -> Result<Vec<String>, String> {
-  let Some(root) = ws.current() else { return Ok(Vec::new()) };
-  tauri::async_runtime::spawn_blocking(move || fs::list_files(&root, QUICK_OPEN_LIMIT))
-    .await
-    .map_err(|e| e.to_string())
+async fn fs_list_files(ws: Workspace) -> Result<Vec<String>, String> {
+  let roots = ws.roots();
+  tauri::async_runtime::spawn_blocking(move || {
+    let mut out = Vec::new();
+    for root in &roots {
+      let left = QUICK_OPEN_LIMIT.saturating_sub(out.len());
+      if left == 0 {
+        break;
+      }
+      out.extend(fs::list_files(root, left).into_iter().map(|rel| workspace::qualify_in(&roots, root, &rel)));
+    }
+    out
+  })
+  .await
+  .map_err(|e| e.to_string())
 }
 
 /// Saves over an existing workspace file (the prototype has no "new file" yet).
 #[tauri::command]
-fn fs_write_file(ws: State<'_, Workspace>, rel: String, content: String) -> Result<(), String> {
-  let path = resolve_in(&ws.root()?, &rel)?;
+fn fs_write_file(ws: Workspace, rel: String, content: String) -> Result<(), String> {
+  let path = ws.resolve(&rel)?;
   if !path.is_file() {
     return Err(format!("{rel}: not a file"));
   }
@@ -209,7 +225,7 @@ fn fs_write_file(ws: State<'_, Workspace>, rel: String, content: String) -> Resu
 
 /// Current branch for the status bar; `None` outside a git repository.
 #[tauri::command]
-fn git_branch(ws: State<'_, Workspace>) -> Option<String> {
+fn git_branch(ws: Workspace) -> Option<String> {
   let out = std::process::Command::new("git")
     .args(["rev-parse", "--abbrev-ref", "HEAD"])
     .current_dir(ws.current()?)
@@ -249,7 +265,7 @@ fn repo_dir(ws: &Workspace, slug: Option<&str>) -> Result<PathBuf, String> {
 
 /// Source Control view: branch, ahead/behind and changed files; `None` outside a repository.
 #[tauri::command]
-async fn git_status(ws: State<'_, Workspace>, slug: Option<String>, options: Option<git::StatusOptions>) -> Result<Option<git::GitStatus>, String> {
+async fn git_status(ws: Workspace, slug: Option<String>, options: Option<git::StatusOptions>) -> Result<Option<git::GitStatus>, String> {
   if slug.is_none() && ws.current().is_none() {
     return Ok(None);
   }
@@ -258,14 +274,14 @@ async fn git_status(ws: State<'_, Workspace>, slug: Option<String>, options: Opt
 }
 
 #[tauri::command]
-async fn git_stage(ws: State<'_, Workspace>, paths: Vec<String>, slug: Option<String>) -> Result<(), String> {
+async fn git_stage(ws: Workspace, paths: Vec<String>, slug: Option<String>) -> Result<(), String> {
   let dir = repo_dir(&ws, slug.as_deref())?;
   let paths = checked(&dir, paths)?;
   blocking(move || git::stage(&dir, &paths)).await
 }
 
 #[tauri::command]
-async fn git_unstage(ws: State<'_, Workspace>, paths: Vec<String>, slug: Option<String>) -> Result<(), String> {
+async fn git_unstage(ws: Workspace, paths: Vec<String>, slug: Option<String>) -> Result<(), String> {
   let dir = repo_dir(&ws, slug.as_deref())?;
   let paths = checked(&dir, paths)?;
   blocking(move || git::unstage(&dir, &paths)).await
@@ -274,7 +290,7 @@ async fn git_unstage(ws: State<'_, Workspace>, paths: Vec<String>, slug: Option<
 /// Deleting untracked files needs `delete_untracked`, set only after the user confirmed;
 /// `to_trash` (git.discardUntrackedChangesToTrash) moves them to the trash instead.
 #[tauri::command]
-async fn git_discard(ws: State<'_, Workspace>, paths: Vec<String>, delete_untracked: Option<bool>, to_trash: Option<bool>, slug: Option<String>) -> Result<(), String> {
+async fn git_discard(ws: Workspace, paths: Vec<String>, delete_untracked: Option<bool>, to_trash: Option<bool>, slug: Option<String>) -> Result<(), String> {
   let dir = repo_dir(&ws, slug.as_deref())?;
   let paths = checked(&dir, paths)?;
   blocking(move || git::discard(&dir, &paths, delete_untracked.unwrap_or(false), to_trash.unwrap_or(false))).await
@@ -283,7 +299,7 @@ async fn git_discard(ws: State<'_, Workspace>, paths: Vec<String>, delete_untrac
 /// `options` carries the commit flags of VS Code's git settings (sign-off, signing) and commands
 /// (Commit (No Verify), Commit Empty); `amend` is kept for older callers.
 #[tauri::command]
-async fn git_commit(ws: State<'_, Workspace>, message: String, amend: Option<bool>, options: Option<git::CommitOptions>, slug: Option<String>) -> Result<(), String> {
+async fn git_commit(ws: Workspace, message: String, amend: Option<bool>, options: Option<git::CommitOptions>, slug: Option<String>) -> Result<(), String> {
   let dir = repo_dir(&ws, slug.as_deref())?;
   let mut opts = options.unwrap_or_default();
   opts.amend |= amend.unwrap_or(false);
@@ -302,7 +318,7 @@ fn git_reload_path(app: AppHandle) -> Result<(), String> {
 
 /// `git.requireGitUserConfig`: whether `user.name` and `user.email` are configured.
 #[tauri::command]
-async fn git_user_configured(ws: State<'_, Workspace>, slug: Option<String>) -> Result<bool, String> {
+async fn git_user_configured(ws: Workspace, slug: Option<String>) -> Result<bool, String> {
   let dir = repo_dir(&ws, slug.as_deref())?;
   blocking(move || Ok(git::user_configured(&dir))).await
 }
@@ -350,34 +366,34 @@ fn floating_dir(app: AppHandle) -> Result<String, String> {
 
 /// Lines added and deleted per changed file (`git diff --numstat`), unstaged and staged.
 #[tauri::command]
-async fn git_numstat(ws: State<'_, Workspace>, slug: Option<String>) -> Result<git::NumStat, String> {
+async fn git_numstat(ws: Workspace, slug: Option<String>) -> Result<git::NumStat, String> {
   let root = git_dir(&ws, slug.as_deref())?;
   blocking(move || git::numstat(&root)).await
 }
 
 #[tauri::command]
 /// Force push with lease (the ADE's Source Control menu); a plain push is `git_remote::git_push`.
-async fn git_force_push(ws: State<'_, Workspace>, slug: Option<String>) -> Result<(), String> {
+async fn git_force_push(ws: Workspace, slug: Option<String>) -> Result<(), String> {
   let root = git_dir(&ws, slug.as_deref())?;
   blocking(move || git::push(&root, true)).await
 }
 
 #[tauri::command]
 /// Fast-forward only (the ADE's Source Control menu); a plain pull is `git_remote::git_pull`.
-async fn git_pull_ff_only(ws: State<'_, Workspace>, slug: Option<String>) -> Result<(), String> {
+async fn git_pull_ff_only(ws: Workspace, slug: Option<String>) -> Result<(), String> {
   let root = git_dir(&ws, slug.as_deref())?;
   blocking(move || git::pull(&root, true)).await
 }
 
 #[tauri::command]
-async fn git_rebase(ws: State<'_, Workspace>, slug: Option<String>, base: String) -> Result<(), String> {
+async fn git_rebase(ws: Workspace, slug: Option<String>, base: String) -> Result<(), String> {
   let root = git_dir(&ws, slug.as_deref())?;
   blocking(move || git::rebase(&root, &base)).await
 }
 
 /// The Commits panel of Source Control.
 #[tauri::command]
-async fn git_log(ws: State<'_, Workspace>, slug: Option<String>, limit: Option<u32>) -> Result<Vec<git::Commit>, String> {
+async fn git_log(ws: Workspace, slug: Option<String>, limit: Option<u32>) -> Result<Vec<git::Commit>, String> {
   let root = git_dir(&ws, slug.as_deref())?;
   blocking(move || git::log(&root, limit.unwrap_or(50))).await
 }
@@ -389,7 +405,7 @@ fn open_web_url(url: String) -> Result<(), String> {
 
 /// Files a commit changed (`git show --name-status`), for the Commits panel.
 #[tauri::command]
-async fn git_show_files(ws: State<'_, Workspace>, slug: Option<String>, hash: String) -> Result<Vec<(String, String)>, String> {
+async fn git_show_files(ws: Workspace, slug: Option<String>, hash: String) -> Result<Vec<(String, String)>, String> {
   let root = git_dir(&ws, slug.as_deref())?;
   git::check_rev(&hash)?;
   blocking(move || {
@@ -401,7 +417,7 @@ async fn git_show_files(ws: State<'_, Workspace>, slug: Option<String>, hash: St
 
 /// Commits ahead of and behind `base` (Change Base Ref's compare).
 #[tauri::command]
-async fn git_compare(ws: State<'_, Workspace>, slug: Option<String>, base: String) -> Result<(u32, u32), String> {
+async fn git_compare(ws: Workspace, slug: Option<String>, base: String) -> Result<(u32, u32), String> {
   let root = git_dir(&ws, slug.as_deref())?;
   git::check_rev(&base)?;
   blocking(move || {
@@ -416,7 +432,7 @@ async fn git_compare(ws: State<'_, Workspace>, slug: Option<String>, base: Strin
 
 /// Local and remote branch names, for the base ref picker.
 #[tauri::command]
-async fn git_ref_names(ws: State<'_, Workspace>, slug: Option<String>) -> Result<Vec<String>, String> {
+async fn git_ref_names(ws: Workspace, slug: Option<String>) -> Result<Vec<String>, String> {
   let root = git_dir(&ws, slug.as_deref())?;
   blocking(move || {
     let out = git::run(&root, &["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"])?;
@@ -427,14 +443,14 @@ async fn git_ref_names(ws: State<'_, Workspace>, slug: Option<String>) -> Result
 
 /// Claude Code sessions run in the open folder or its worktrees (Agents tab).
 #[tauri::command]
-async fn claude_sessions(ws: State<'_, Workspace>, limit: Option<usize>) -> Result<Vec<sessions::Session>, String> {
+async fn claude_sessions(ws: Workspace, limit: Option<usize>) -> Result<Vec<sessions::Session>, String> {
   let root = ws.root()?;
   blocking(move || Ok(sessions::list(&root, limit.unwrap_or(250)))).await
 }
 
 /// Moves a Claude Code session transcript of this folder to the Trash (Agents tab › Delete).
 #[tauri::command]
-async fn delete_claude_session(ws: State<'_, Workspace>, path: String) -> Result<(), String> {
+async fn delete_claude_session(ws: Workspace, path: String) -> Result<(), String> {
   let root = ws.root()?;
   let p = std::path::PathBuf::from(&path);
   let home = std::env::var_os("HOME").map(std::path::PathBuf::from).ok_or("no home folder")?;
@@ -451,21 +467,21 @@ async fn delete_claude_session(ws: State<'_, Workspace>, path: String) -> Result
 
 /// Aborts the merge, rebase, cherry-pick or revert in progress (Source Control's conflict card).
 #[tauri::command]
-async fn git_abort(ws: State<'_, Workspace>, slug: Option<String>) -> Result<git::Operation, String> {
+async fn git_abort(ws: Workspace, slug: Option<String>) -> Result<git::Operation, String> {
   let root = git_dir(&ws, slug.as_deref())?;
   blocking(move || git::abort_operation(&root)).await
 }
 
 /// Continues the merge, rebase, cherry-pick or revert once its conflicts are resolved and staged.
 #[tauri::command]
-async fn git_continue(ws: State<'_, Workspace>, slug: Option<String>) -> Result<git::Operation, String> {
+async fn git_continue(ws: Workspace, slug: Option<String>) -> Result<git::Operation, String> {
   let root = git_dir(&ws, slug.as_deref())?;
   blocking(move || git::continue_operation(&root)).await
 }
 
 /// HEAD version of a file for the diff editor; empty when the file is not in HEAD.
 #[tauri::command]
-async fn git_show_head(ws: State<'_, Workspace>, rel: String) -> Result<String, String> {
+async fn git_show_head(ws: Workspace, rel: String) -> Result<String, String> {
   let root = ws.root()?;
   git::check_rel(&root, &rel)?;
   blocking(move || git::show_head(&root, &rel)).await
@@ -476,7 +492,7 @@ async fn git_show_head(ws: State<'_, Workspace>, rel: String) -> Result<String, 
 #[allow(clippy::too_many_arguments)]
 fn pty_spawn(
   app: AppHandle,
-  ws: State<'_, Workspace>,
+  ws: Workspace,
   ptys: State<'_, pty::Ptys>,
   accounts: State<'_, accounts::Accounts>,
   key: String,
@@ -589,6 +605,7 @@ fn pty_spawn(
   // The `kingu` command on PATH (cli_server.rs).
   cli_server::terminal_env(&mut env, &unset);
   let attached = ptys.open(&key, &cwd, cols, rows, run.as_deref(), &env, shell, shell_args, &unset, clean_env, pty::channel_sink(on_data))?;
+  ptys.own(&key, ws.label());
   if attached.spawned && pane_hooks {
     agent::hooks::pane_file_reset(&app, &key);
   }
@@ -624,19 +641,19 @@ struct TerminalSettings {
 
 /// `files.watcherExclude`.
 #[tauri::command]
-fn watcher_set_exclude(watcher: State<'_, watcher::FileWatcher>, globs: Vec<String>) {
-  watcher.set_exclude(&globs);
+fn watcher_set_exclude(ws: Workspace, globs: Vec<String>) {
+  ws.set_watch_exclude(&globs);
 }
 
 /// `files.watcherInclude`.
 #[tauri::command]
-fn watcher_set_include(watcher: State<'_, watcher::FileWatcher>, paths: Vec<String>) {
-  watcher.set_include(&paths);
+fn watcher_set_include(ws: Workspace, paths: Vec<String>) {
+  ws.set_watch_include(&paths);
 }
 
 #[tauri::command]
 fn worktree_create(
-  ws: State<'_, Workspace>,
+  ws: Workspace,
   slug: String,
   base: Option<String>,
   prefix: Option<String>,
@@ -648,7 +665,7 @@ fn worktree_create(
 /// Before a task forks from `base`: fast-forward it from its upstream when safe
 /// (`kingu.worktree.refreshBaseOnCreate`); returns what happened, for the status bar.
 #[tauri::command]
-async fn worktree_refresh_base(ws: State<'_, Workspace>, base: String) -> Result<Option<String>, String> {
+async fn worktree_refresh_base(ws: Workspace, base: String) -> Result<Option<String>, String> {
   let root = ws.root()?;
   tauri::async_runtime::spawn_blocking(move || agent::worktree::refresh_base(&root, &base, std::time::Duration::from_secs(30)))
     .await
@@ -656,7 +673,7 @@ async fn worktree_refresh_base(ws: State<'_, Workspace>, base: String) -> Result
 }
 
 #[tauri::command]
-fn worktree_list(ws: State<'_, Workspace>, projects: State<'_, projects::Projects>, root: Option<String>) -> Result<Vec<agent::worktree::WorktreeInfo>, String> {
+fn worktree_list(ws: Workspace, projects: State<'_, projects::Projects>, root: Option<String>) -> Result<Vec<agent::worktree::WorktreeInfo>, String> {
   // No folder open: no tasks to list (not an error in the Agent panel). `root`: another added
   // project's worktrees, for the side bar.
   projects::root_arg(&ws, &projects, root)?.map_or(Ok(Vec::new()), |root| agent::worktree::list(&root))
@@ -667,7 +684,7 @@ fn worktree_list(ws: State<'_, Workspace>, projects: State<'_, projects::Project
 /// (node_modules) takes a while, and the window must keep working meanwhile.
 #[tauri::command]
 async fn worktree_remove(
-  ws: State<'_, Workspace>,
+  ws: Workspace,
   slug: String,
   force: Option<bool>,
   delete_branch: Option<String>,
@@ -681,110 +698,122 @@ async fn worktree_remove(
 
 /// Find in Files: streams ripgrep matches per file; a new search cancels the previous one.
 #[tauri::command]
-fn search_text(
-  ws: State<'_, Workspace>,
-  searches: State<'_, Arc<search::Searches>>,
-  options: search::SearchOptions,
-  on_event: Channel<search::SearchEvent>,
-) -> Result<u32, String> {
+fn search_text(ws: Workspace, options: search::SearchOptions, on_event: Channel<search::SearchEvent>) -> Result<u32, String> {
+  let searches = &ws.state().searches;
   if options.query.is_empty() {
     searches.cancel();
     return Err("query is empty".into());
   }
   let rg = search::find_rg(std::env::var_os("KINGU_RG"), shell_env::path())?;
-  searches.start(&rg, &ws.root()?, &search::for_workspace(options), move |ev| on_event.send(ev).is_ok())
+  searches.start_roots(&rg, search_roots(&ws, search::for_workspace(options))?, move |ev| on_event.send(ev).is_ok())
+}
+
+/// Every root folder to search, with the options for it: a multi-root `./name/` pattern in
+/// "files to include" searches only that folder (VS Code's multi-root search). Results from a
+/// root other than the first come back with absolute paths.
+fn search_roots(ws: &Workspace, options: search::SearchOptions) -> Result<Vec<search::Root>, String> {
+  ws.root()?;
+  let folders = ws.folders();
+  let names: Vec<String> = folders.iter().map(workspace::Folder::label).collect();
+  let includes = if folders.len() > 1 { search::split_include(&options.include, &names) } else { vec![Some(options.include.clone())] };
+  let roots: Vec<PathBuf> = folders.iter().map(|f| f.path.clone()).collect();
+  Ok(
+    folders
+      .iter()
+      .zip(includes)
+      .filter_map(|(f, include)| {
+        let include = include?;
+        let prefix = workspace::qualify_in(&roots, &f.path, "");
+        let prefix = if prefix.is_empty() { prefix } else { format!("{prefix}/") };
+        Some(search::Root { dir: f.path.clone(), prefix, options: search::SearchOptions { include, ..options.clone() } })
+      })
+      .collect(),
+  )
 }
 
 /// Search: Replace. Rewrites the matches of the last search (refusing files changed since) and
 /// returns edits for files the webview has open, which it applies to their editor models.
 #[tauri::command]
-async fn search_replace(ws: State<'_, Workspace>, request: replace::ReplaceRequest) -> Result<Vec<replace::FileResult>, String> {
-  let root = ws.root()?;
-  let results = blocking(move || replace::replace_all(&root, &request)).await?;
+async fn search_replace(ws: Workspace, request: replace::ReplaceRequest) -> Result<Vec<replace::FileResult>, String> {
+  ws.root()?;
+  let results = blocking(move || replace::replace_all_in(|path| ws.locate(path).map(|(root, _)| root), &request)).await?;
   let written: usize = results.iter().filter(|r| r.outcome == replace::Outcome::Written).map(|r| r.replaced).sum();
   log::info!("search_replace: {written} replacements written in {} files", results.len());
   Ok(results)
 }
 
-/// The ADE's right side bar (Files › Contents): its own ripgrep slot, so it never cancels the
-/// IDE's Find in Files, run in the selected worktree so that worktree's ignore files apply.
-#[derive(Default)]
-struct WorktreeSearches(Arc<search::Searches>);
-
+/// The ADE's right side bar (Files › Contents): its own ripgrep slot (per window), so it never
+/// cancels the IDE's Find in Files, run in the selected worktree so that worktree's ignore files apply.
 #[tauri::command]
 fn worktree_search(
-  ws: State<'_, Workspace>,
-  searches: State<'_, WorktreeSearches>,
+  ws: Workspace,
   slug: Option<String>,
   options: search::SearchOptions,
   on_event: Channel<search::SearchEvent>,
 ) -> Result<u32, String> {
+  let searches = &ws.state().worktree_searches;
   if options.query.is_empty() {
-    searches.0.cancel();
+    searches.cancel();
     return Err("query is empty".into());
   }
   let dir = repo_dir(&ws, slug.as_deref())?;
   let rg = search::find_rg(std::env::var_os("KINGU_RG"), shell_env::path())?;
-  searches.0.start(&rg, &dir, &options, move |ev| on_event.send(ev).is_ok())
+  searches.start(&rg, &dir, &options, move |ev| on_event.send(ev).is_ok())
 }
 
 #[tauri::command]
-fn worktree_search_cancel(searches: State<'_, WorktreeSearches>) {
-  searches.0.cancel();
+fn worktree_search_cancel(ws: Workspace) {
+  ws.state().worktree_searches.cancel();
 }
 
-/// The Search Editor (`search.action.openNewEditor`): its own ripgrep slot, so it never cancels
-/// the Search view's search. `options.context_lines` is always set, so files carry whole lines.
-#[derive(Default)]
-struct SearchEditorSearches(Arc<search::Searches>);
-
+/// The Search Editor (`search.action.openNewEditor`): its own ripgrep slot (per window), so it
+/// never cancels the Search view's search. `options.context_lines` is always set, so files carry
+/// whole lines.
 #[tauri::command]
-fn search_editor_text(
-  ws: State<'_, Workspace>,
-  searches: State<'_, SearchEditorSearches>,
-  mut options: search::SearchOptions,
-  on_event: Channel<search::SearchEvent>,
-) -> Result<u32, String> {
+fn search_editor_text(ws: Workspace, mut options: search::SearchOptions, on_event: Channel<search::SearchEvent>) -> Result<u32, String> {
+  let searches = &ws.state().editor_searches;
   if options.query.is_empty() {
-    searches.0.cancel();
+    searches.cancel();
     return Err("query is empty".into());
   }
   options.context_lines.get_or_insert(0);
   let rg = search::find_rg(std::env::var_os("KINGU_RG"), shell_env::path())?;
-  searches.0.start(&rg, &ws.root()?, &search::for_workspace(options), move |ev| on_event.send(ev).is_ok())
+  searches.start_roots(&rg, search_roots(&ws, search::for_workspace(options))?, move |ev| on_event.send(ev).is_ok())
 }
 
 #[tauri::command]
-fn search_editor_cancel(searches: State<'_, SearchEditorSearches>) {
-  searches.0.cancel();
+fn search_editor_cancel(ws: Workspace) {
+  ws.state().editor_searches.cancel();
 }
 
 #[tauri::command]
-fn search_cancel(searches: State<'_, Arc<search::Searches>>) {
-  searches.cancel();
+fn search_cancel(ws: Workspace) {
+  ws.state().searches.cancel();
 }
 
 /// Starts the language server for `language` in the workspace; server messages stream over `on_event`.
 #[tauri::command]
 fn lsp_start(
-  ws: State<'_, Workspace>,
+  ws: Workspace,
   servers: State<'_, lsp::Servers>,
   language: String,
   on_event: Channel<lsp::LspEvent>,
 ) -> Result<u32, String> {
-  lsp::start_for(&servers, &ws.root()?, &language, on_event)
+  let id = lsp::start_for(&servers, &ws.root()?, &language, on_event)?;
+  servers.own(id, ws.label());
+  Ok(id)
 }
 
 /// Whether the server for `language` can be started now (re-resolved on every call, so a server
 /// installed meanwhile is found): its path, or the "Not installed: …" error.
 #[tauri::command]
-fn lsp_check(ws: State<'_, Workspace>, language: String) -> Result<String, String> {
+fn lsp_check(ws: Workspace, language: String) -> Result<String, String> {
   lsp::check(&language, &ws.root()?).map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Install commands for the server of `language` that this machine's tools can run.
 #[tauri::command]
-fn lsp_install_methods(ws: State<'_, Workspace>, language: String) -> Result<lsp::InstallInfo, String> {
+fn lsp_install_methods(ws: Workspace, language: String) -> Result<lsp::InstallInfo, String> {
   lsp::install_info(&language, &ws.root()?)
 }
 
@@ -795,24 +824,26 @@ fn lsp_install_methods(ws: State<'_, Workspace>, language: String) -> Result<lsp
 /// `python` is the configuration's interpreter, preferred for debugpy.
 #[tauri::command]
 fn dap_start(
-  ws: State<'_, Workspace>,
+  ws: Workspace,
   sessions: State<'_, dap::Sessions>,
   debug_type: String,
   python: Option<String>,
   on_event: Channel<dap::DapEvent>,
 ) -> Result<u32, String> {
-  dap::start_for(&sessions, &ws.root()?, &debug_type, python.as_deref().map(Path::new), on_event)
+  let id = dap::start_for(&sessions, &ws.root()?, &debug_type, python.as_deref().map(Path::new), on_event)?;
+  sessions.own(id, ws.label());
+  Ok(id)
 }
 
 /// The adapter program for `debug_type`, or the "Not installed: …" error (re-resolved every call).
 #[tauri::command]
-async fn dap_check(ws: State<'_, Workspace>, debug_type: String, python: Option<String>) -> Result<String, String> {
+async fn dap_check(ws: Workspace, debug_type: String, python: Option<String>) -> Result<String, String> {
   let root = ws.root()?;
   blocking(move || dap::check(&debug_type, python.as_deref().map(Path::new), &root).map(|(_, r)| r.program.to_string_lossy().into_owned())).await
 }
 
 #[tauri::command]
-fn dap_install_methods(ws: State<'_, Workspace>, debug_type: String) -> Result<lsp::InstallInfo, String> {
+fn dap_install_methods(ws: Workspace, debug_type: String) -> Result<lsp::InstallInfo, String> {
   dap::install_info(&debug_type, &ws.root()?)
 }
 
@@ -828,7 +859,7 @@ fn debug_env(names: Vec<String>) -> std::collections::HashMap<String, String> {
 
 /// A build step before a launch (e.g. `cargo build`), run in the workspace root and awaited.
 #[tauri::command]
-async fn debug_build(ws: State<'_, Workspace>, argv: Vec<String>) -> Result<dap::BuildResult, String> {
+async fn debug_build(ws: Workspace, argv: Vec<String>) -> Result<dap::BuildResult, String> {
   let root = ws.root()?;
   blocking(move || dap::run_build(&argv, &root)).await
 }
@@ -837,12 +868,16 @@ async fn debug_build(ws: State<'_, Workspace>, argv: Vec<String>) -> Result<dap:
 /// the same adapter server.
 #[tauri::command]
 fn dap_start_child(sessions: State<'_, dap::Sessions>, parent: u32, on_event: Channel<dap::DapEvent>) -> Result<u32, String> {
-  dap::start_child_for(&sessions, parent, on_event)
+  let id = dap::start_child_for(&sessions, parent, on_event)?;
+  if let Some(owner) = sessions.owner(parent) {
+    sessions.own(id, &owner);
+  }
+  Ok(id)
 }
 
 /// js-debug's pinned release and whether it (and node) are installed.
 #[tauri::command]
-fn dap_js_debug_status(ws: State<'_, Workspace>) -> dap::JsDebugStatus {
+fn dap_js_debug_status(ws: Workspace) -> dap::JsDebugStatus {
   dap::js_debug_status(&ws.root().unwrap_or_default())
 }
 
@@ -865,7 +900,7 @@ async fn debug_processes() -> Result<Vec<dap::ProcessEntry>, String> {
 /// A test listing command (`cargo test -- --list`, `go test -list .`, `pytest --collect-only -q`)
 /// in the workspace (or `cwd`, relative to it), awaited.
 #[tauri::command]
-async fn testing_collect(ws: State<'_, Workspace>, argv: Vec<String>, cwd: Option<String>) -> Result<dap::BuildResult, String> {
+async fn testing_collect(ws: Workspace, argv: Vec<String>, cwd: Option<String>) -> Result<dap::BuildResult, String> {
   let root = ws.root()?;
   let dir = match cwd.filter(|c| !c.is_empty() && c != ".") {
     Some(rel) => resolve_in(&root, &rel)?,
@@ -887,85 +922,7 @@ fn testing_report_take(path: String) -> Result<Option<String>, String> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Open Folder (VS Code: workbench.action.files.openFolder, File: Open Recent)
-
-/// Emitted with a debounced batch of changed paths under the open folder.
-const FILES_CHANGED: &str = "workspace:files-changed";
-
-#[derive(Clone, serde::Serialize)]
-struct FilesChanged {
-  root: String,
-  /// Workspace-relative; `""` means "anything may have changed" (watcher rescan).
-  paths: Vec<String>,
-}
-
-/// Emitted when the open folder's repository changed a branch ref, HEAD or its worktrees.
-const WORKTREES_CHANGED: &str = "ade:worktrees-changed";
-
-#[derive(Clone, serde::Serialize)]
-struct WorktreesChanged {
-  root: String,
-}
-
-/// Makes `dir` the open folder (none for `None`). The old folder's language servers and running
-/// search are stopped first and the watcher moves to the new root. Returns the canonical root.
-fn switch_root(app: &AppHandle, dir: Option<&Path>) -> Result<Option<PathBuf>, String> {
-  let root = dir.map(workspace::canonical_dir).transpose()?;
-  app.state::<lsp::Servers>().stop_all();
-  app.state::<dap::Sessions>().stop_all();
-  app.state::<Arc<search::Searches>>().cancel();
-  let ws = app.state::<Workspace>();
-  match &root {
-    Some(r) => {
-      ws.open(r)?;
-    }
-    None => ws.close(),
-  }
-  let handle = app.clone();
-  let label = root.as_ref().map(|r| r.display().to_string()).unwrap_or_default();
-  let emit = move |paths| {
-    let _ = handle.emit(FILES_CHANGED, FilesChanged { root: label.clone(), paths });
-  };
-  // A folder that cannot be watched (e.g. out of inotify handles) still opens.
-  if let Err(e) = app.state::<watcher::FileWatcher>().watch(root.as_deref(), emit) {
-    log::error!("{e}");
-  }
-  // The ADE follows branch switches and worktrees added or removed outside Kingu.
-  let common = root.as_deref().map(|r| git_queue::repo_keys(r).0).filter(|c| c.join("HEAD").is_file());
-  let handle = app.clone();
-  let label = root.as_ref().map(|r| r.display().to_string()).unwrap_or_default();
-  let emit_git = move || {
-    let _ = handle.emit(WORKTREES_CHANGED, WorktreesChanged { root: label.clone() });
-  };
-  if let Err(e) = app.state::<watcher::GitWatcher>().watch(common.as_deref(), emit_git) {
-    log::warn!("{e}");
-  }
-  // A folder Kingu wrote into before: its .kingu/ stays out of git status from now on.
-  if let Some(r) = root.as_deref().filter(|r| r.join(".kingu").is_dir()) {
-    agent::worktree::exclude_kingu_soon(r);
-  }
-  let recent = app.state::<Recent>();
-  let saved = match &root {
-    Some(r) => recent.opened(r),
-    None => recent.closed(),
-  };
-  if let Err(e) = saved {
-    log::error!("recent folders: {e}");
-  }
-  log::info!("workspace: {}", root.as_ref().map(|r| r.display().to_string()).unwrap_or_else(|| "(none)".into()));
-  Ok(root)
-}
-
-#[tauri::command]
-fn workspace_open(app: AppHandle, path: String) -> Result<String, String> {
-  let root = switch_root(&app, Some(Path::new(&path)))?;
-  Ok(root.map(|r| r.display().to_string()).unwrap_or_default())
-}
-
-#[tauri::command]
-fn workspace_close(app: AppHandle) -> Result<(), String> {
-  switch_root(&app, None).map(|_| ())
-}
+// Open Recent (VS Code: File: Open Recent); opening folders and windows is in windows.rs
 
 /// Recently opened folders, most recent first.
 #[tauri::command]
@@ -987,22 +944,39 @@ fn workspace_recent_clear(recent: State<'_, Recent>) -> Result<(), String> {
 // Explorer file operations
 
 #[tauri::command]
-fn fs_create_file(ws: State<'_, Workspace>, rel: String) -> Result<(), String> {
-  fileops::create_file(&ws.root()?, &rel)?;
+fn fs_create_file(ws: Workspace, rel: String) -> Result<(), String> {
+  let (root, inner) = ws.locate(&rel)?;
+  fileops::create_file(&root, &inner)?;
   log::info!("created {rel}");
   Ok(())
 }
 
 #[tauri::command]
-fn fs_create_dir(ws: State<'_, Workspace>, rel: String) -> Result<(), String> {
-  fileops::create_dir(&ws.root()?, &rel)?;
+fn fs_create_dir(ws: Workspace, rel: String) -> Result<(), String> {
+  let (root, inner) = ws.locate(&rel)?;
+  fileops::create_dir(&root, &inner)?;
   log::info!("created folder {rel}");
   Ok(())
 }
 
 #[tauri::command]
-fn fs_rename(ws: State<'_, Workspace>, from: String, to: String) -> Result<(), String> {
-  fileops::rename(&ws.root()?, &from, &to)?;
+fn fs_rename(ws: Workspace, from: String, to: String) -> Result<(), String> {
+  let ((root, a), (to_root, b)) = (ws.locate(&from)?, ws.locate(&to)?);
+  if root != to_root {
+    // Across root folders: a move into the destination's folder under the new name.
+    let dir = b.rsplit_once('/').map_or("", |(d, _)| d).to_string();
+    let name = b.rsplit_once('/').map_or(b.as_str(), |(_, n)| n).to_string();
+    let source = resolve_in(&root, &a)?;
+    let moved = fileops::import(&to_root, std::slice::from_ref(&source), &dir, fileops::Naming::default())?;
+    let moved_to = moved.first().cloned().unwrap_or_default();
+    if moved_to.rsplit('/').next() != Some(name.as_str()) {
+      fileops::rename(&to_root, &moved_to, &b)?;
+    }
+    fileops::delete_for_good(&root, &a)?;
+    log::info!("moved {from} to {to}");
+    return Ok(());
+  }
+  fileops::rename(&root, &a, &b)?;
   log::info!("renamed {from} to {to}");
   Ok(())
 }
@@ -1016,9 +990,8 @@ fn undo_stash(app: &AppHandle) -> Result<PathBuf, String> {
 /// webview confirms first. A trashed entry returns the token that undoes it with `fs_restore`
 /// (`None` when it was too large to keep a copy of); a delete for good keeps no copy.
 #[tauri::command]
-async fn fs_delete(ws: State<'_, Workspace>, app: AppHandle, rel: String, use_trash: Option<bool>) -> Result<Option<String>, String> {
-  let root = ws.root()?;
-  let r = rel.clone();
+async fn fs_delete(ws: Workspace, app: AppHandle, rel: String, use_trash: Option<bool>) -> Result<Option<String>, String> {
+  let (root, r) = ws.locate(&rel)?;
   let token = if use_trash.unwrap_or(true) {
     let stash = undo_stash(&app)?;
     let token = blocking(move || fileops::trash_with_undo(&root, &r, &stash)).await?;
@@ -1034,33 +1007,53 @@ async fn fs_delete(ws: State<'_, Workspace>, app: AppHandle, rel: String, use_tr
 
 /// Undoes `fs_delete`: puts the kept copy back at `rel`.
 #[tauri::command]
-async fn fs_restore(ws: State<'_, Workspace>, app: AppHandle, rel: String, token: String) -> Result<(), String> {
-  let root = ws.root()?;
+async fn fs_restore(ws: Workspace, app: AppHandle, rel: String, token: String) -> Result<(), String> {
+  let (root, r) = ws.locate(&rel)?;
   let stash = undo_stash(&app)?;
-  let r = rel.clone();
   blocking(move || fileops::restore(&root, &r, &token, &stash)).await?;
   log::info!("restored {rel}");
   Ok(())
 }
 
 #[tauri::command]
-fn fs_reveal(ws: State<'_, Workspace>, rel: String) -> Result<(), String> {
-  fileops::reveal(&ws.root()?, &rel)
+fn fs_reveal(ws: Workspace, rel: String) -> Result<(), String> {
+  let (root, inner) = ws.locate(&rel)?;
+  fileops::reveal(&root, &inner)
 }
 
 /// Paste / ⌥-drag: copies `from` into the folder `to_dir`; returns the new path (`a copy.ts` on a clash).
 #[tauri::command]
-async fn fs_copy(ws: State<'_, Workspace>, from: String, to_dir: String, naming: Option<fileops::Naming>) -> Result<String, String> {
-  let root = ws.root()?;
-  let rel = blocking(move || fileops::copy(&root, &from, &to_dir, naming.unwrap_or_default())).await?;
+async fn fs_copy(ws: Workspace, from: String, to_dir: String, naming: Option<fileops::Naming>) -> Result<String, String> {
+  let ((root, a), (to_root, dir)) = (ws.locate(&from)?, ws.locate(&to_dir)?);
+  let naming = naming.unwrap_or_default();
+  let target = to_root.clone();
+  let rel = blocking(move || {
+    if root == to_root {
+      fileops::copy(&root, &a, &dir, naming)
+    } else {
+      // Into another root folder: a copy from outside it, like a drop from Finder.
+      let source = resolve_in(&root, &a)?;
+      fileops::import(&to_root, &[source], &dir, naming).map(|r| r.into_iter().next().unwrap_or_default())
+    }
+  })
+  .await?;
   log::info!("copied to {rel}");
-  Ok(rel)
+  Ok(ws.qualify(&target, &rel))
 }
 
 /// Cut/paste and drag and drop: moves `from` into the folder `to_dir`; returns the new path.
 #[tauri::command]
-fn fs_move(ws: State<'_, Workspace>, from: String, to_dir: String) -> Result<String, String> {
-  let rel = fileops::move_into(&ws.root()?, &from, &to_dir)?;
+fn fs_move(ws: Workspace, from: String, to_dir: String) -> Result<String, String> {
+  let ((root, a), (to_root, dir)) = (ws.locate(&from)?, ws.locate(&to_dir)?);
+  let rel = if root == to_root {
+    fileops::move_into(&root, &a, &dir)?
+  } else {
+    let source = resolve_in(&root, &a)?;
+    let moved = fileops::import(&to_root, &[source], &dir, fileops::Naming::default())?.into_iter().next().unwrap_or_default();
+    fileops::delete_for_good(&root, &a)?;
+    moved
+  };
+  let rel = ws.qualify(&to_root, &rel);
   log::info!("moved {from} to {rel}");
   Ok(rel)
 }
@@ -1073,21 +1066,22 @@ struct DroppedPaths(std::sync::Mutex<Vec<PathBuf>>);
 /// External drop (Finder → Explorer): copies the dropped `paths` into the folder `to_dir`.
 #[tauri::command]
 async fn fs_import(
-  ws: State<'_, Workspace>,
+  ws: Workspace,
   dropped: State<'_, DroppedPaths>,
   paths: Vec<String>,
   to_dir: String,
   naming: Option<fileops::Naming>,
 ) -> Result<Vec<String>, String> {
-  let root = ws.root()?;
+  let (root, to_dir) = ws.locate(&to_dir)?;
   let allowed = dropped.0.lock().map_err(|e| e.to_string())?.clone();
   let sources: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
   if let Some(bad) = sources.iter().find(|p| !allowed.contains(p)) {
     return Err(format!("{}: not a dropped file", bad.display()));
   }
+  let target = root.clone();
   let rels = blocking(move || fileops::import(&root, &sources, &to_dir, naming.unwrap_or_default())).await?;
   log::info!("imported {} dropped item(s)", rels.len());
-  Ok(rels)
+  Ok(rels.iter().map(|r| ws.qualify(&target, r)).collect())
 }
 
 #[derive(serde::Serialize)]
@@ -1100,11 +1094,11 @@ struct SavedAs {
 /// Save As (and the first save of an untitled editor): the native save dialog, then the write.
 /// The dialog runs here so the webview never names a path outside the workspace itself.
 #[tauri::command]
-async fn fs_save_as(app: AppHandle, ws: State<'_, Workspace>, content: String, name: String, dir: Option<String>) -> Result<Option<SavedAs>, String> {
+async fn fs_save_as(app: AppHandle, ws: Workspace, content: String, name: String, dir: Option<String>) -> Result<Option<SavedAs>, String> {
   use tauri_plugin_dialog::DialogExt;
   let root = ws.current();
   let start = match (&root, dir) {
-    (Some(r), Some(d)) => resolve_in(r, &d).unwrap_or_else(|_| r.clone()),
+    (Some(r), Some(d)) => ws.resolve(&d).unwrap_or_else(|_| r.clone()),
     (Some(r), None) => r.clone(),
     (None, _) => app.path().home_dir().map_err(|e| e.to_string())?,
   };
@@ -1116,7 +1110,7 @@ async fn fs_save_as(app: AppHandle, ws: State<'_, Workspace>, content: String, n
   std::fs::write(&path, content).map_err(|e| format!("{}: {e}", path.display()))?;
   log::info!("saved as {}", path.display());
   let real = path.canonicalize().unwrap_or_else(|_| path.clone());
-  let rel = root.and_then(|r| real.strip_prefix(&r).ok().map(|p| p.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")));
+  let rel = root.and(ws.locate(&real.display().to_string()).ok()).map(|(r, inner)| ws.qualify(&r, &inner));
   // Saved outside the folder: the editor goes on with it as an external file (external.rs).
   if rel.is_none() {
     app.state::<external::ExternalFiles>().allow(&real);
@@ -1129,20 +1123,15 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_notification::init())
-    .manage(Workspace::default())
-    .manage(watcher::FileWatcher::default())
-    .manage(watcher::GitWatcher::default())
+    .manage(Workspaces::default())
     .manage(window::CloseGuard::default())
     .manage(pty::Ptys::default())
     .manage(system::KeepAwake::default())
     .manage(Arc::new(agent::AgentHost::default()))
     .manage(Arc::new(agent::chat_edits::ChatEdits::default()))
     .manage(Arc::new(vault::Vault::default()))
-    .manage(Arc::new(search::Searches::default()))
     .manage(Arc::new(local_ai::completions::Completions::default()))
     .manage(Arc::new(local_ai::semantic::Semantic::default()))
-    .manage(WorktreeSearches::default())
-    .manage(SearchEditorSearches::default())
     .manage(lsp::Servers::default())
     .manage(dap::Sessions::default())
     .manage(git_remote::GitOps::default())
@@ -1166,13 +1155,10 @@ pub fn run() {
       system::set_config_dir(config_dir);
       // Release builds too: a rotating, size-limited Kingu.log in the app log dir (logging.rs).
       app.handle().plugin(logging::plugin())?;
-      // Reopen the last folder if it still exists, else KINGU_WORKSPACE, else the welcome view.
+      // The last session's windows (window.restoreWindows), else KINGU_WORKSPACE, else the welcome view.
       let recent = Recent::load(app.path().app_data_dir()?.join("recent.json"));
-      // window.restoreWindows: "none" starts empty (KINGU_WORKSPACE still opens).
       let restore = settings::user_value(&app.path().app_config_dir()?, "window.restoreWindows");
-      let data = recent.data();
-      let last = if restore.as_ref().and_then(|v| v.as_str()) == Some("none") { None } else { data.last.as_deref() };
-      let start = workspace::startup_root(last, std::env::var_os("KINGU_WORKSPACE"));
+      let last_session = recent.data();
       app.manage(recent);
       app.manage(projects::Projects::load(app.path().app_data_dir()?.join("projects.json")));
       app.manage(external::ExternalFiles::load(app.path().app_data_dir()?.join("external-files.json")));
@@ -1203,11 +1189,7 @@ pub fn run() {
           let _ = std::fs::remove_dir_all(stash);
         });
       }
-      if let Some(root) = start
-        && let Err(e) = switch_root(app.handle(), Some(&root))
-      {
-        log::error!("reopen {}: {e}", root.display());
-      }
+      windows::restore(app.handle(), restore.as_ref().and_then(|v| v.as_str()), &last_session);
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
@@ -1252,8 +1234,19 @@ pub fn run() {
       user_profiles::profile_switch,
       user_profiles::profile_rename,
       user_profiles::profile_delete,
-      workspace_open,
-      workspace_close,
+      windows::workspace_state,
+      windows::workspace_folders,
+      windows::workspace_open,
+      windows::workspace_open_folders,
+      windows::workspace_close,
+      windows::workspace_add_folders,
+      windows::workspace_remove_folder,
+      windows::workspace_set_file,
+      windows::window_new,
+      windows::window_focus_folder,
+      windows::window_count,
+      window::window_close,
+      window::window_close_cancelled,
       workspace_recent,
       workspace_recent_remove,
       workspace_recent_clear,
@@ -1603,16 +1596,26 @@ pub fn run() {
       {
         *dropped = paths.clone();
       }
-      // Closing the window or a user quit (⌘Q) waits for the webview while it has something to ask.
-      if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::CloseRequested { api, .. }, .. } = &event
-        && window::on_close_requested(app, "close")
+      // Closing a window or a user quit (⌘Q) waits for the page while it has something to ask.
+      if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } = &event
+        && window::on_close_requested(app, label)
       {
         api.prevent_close();
       }
-      if let tauri::RunEvent::ExitRequested { code: None, api, .. } = &event
-        && window::on_close_requested(app, "quit")
-      {
-        api.prevent_exit();
+      if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Focused(true), .. } = &event {
+        app.state::<Workspaces>().focused(label);
+        menu::window_focused(app, label);
+        windows::save_windows(app);
+      }
+      if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } = &event {
+        windows::on_destroyed(app, label);
+      }
+      if let tauri::RunEvent::ExitRequested { code, api, .. } = &event {
+        if code.is_none() && window::on_exit_requested(app) {
+          api.prevent_exit();
+        } else {
+          app.state::<window::CloseGuard>().start_quit();
+        }
       }
       if let tauri::RunEvent::Exit = event {
         app.state::<lsp::Servers>().stop_all();

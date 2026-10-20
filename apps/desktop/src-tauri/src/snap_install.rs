@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 
 use crate::i18n::msg::SnapMsg;
 use crate::settings::write_atomic;
@@ -817,7 +817,7 @@ const USER_MANIFEST_KEY: &str = "snap://user/";
 
 /// Creates a snap from the template; returns the editor key of its `snap.toml`.
 #[tauri::command]
-pub fn snap_new(app: AppHandle, ws: State<'_, Workspace>, id: String, name: String, location: String) -> Result<String, String> {
+pub fn snap_new(app: AppHandle, ws: Workspace, id: String, name: String, location: String) -> Result<String, String> {
   match location.as_str() {
     "user" => {
       create(&user_dir(&app)?, &id, &name)?;
@@ -833,7 +833,7 @@ pub fn snap_new(app: AppHandle, ws: State<'_, Workspace>, id: String, name: Stri
 }
 
 #[tauri::command]
-pub fn snap_lock(app: AppHandle, ws: State<'_, Workspace>) -> Result<usize, String> {
+pub fn snap_lock(app: AppHandle, ws: Workspace) -> Result<usize, String> {
   let root = ws.root().map_err(|_| tr!(SnapMsg::NoFolderOpen))?;
   let config = config_dir(&app)?;
   let trust = TrustData::load(&config.join(crate::snap::TRUST_FILE));
@@ -842,7 +842,7 @@ pub fn snap_lock(app: AppHandle, ws: State<'_, Workspace>) -> Result<usize, Stri
 }
 
 #[tauri::command]
-pub fn snap_reveal(app: AppHandle, ws: State<'_, Workspace>, id: String, source: String) -> Result<(), String> {
+pub fn snap_reveal(app: AppHandle, ws: Workspace, id: String, source: String) -> Result<(), String> {
   // A broken snap's folder name need not be a valid id, but it is one plain name in the snaps dir.
   if id.is_empty() || id.starts_with('.') || id.contains(['/', '\\']) {
     return Err(tr!(SnapMsg::InvalidId, id));

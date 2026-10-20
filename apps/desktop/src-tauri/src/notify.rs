@@ -15,6 +15,9 @@ pub const NOTIFICATION_CLICKED: &str = "agent:notification-clicked";
 /// switches to it first).
 #[derive(Debug, Clone, Default, serde::Serialize, PartialEq)]
 pub struct Clicked {
+  /// The window that asked for the notification: the click goes back to it.
+  #[serde(skip)]
+  pub window: Option<String>,
   pub slug: Option<String>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub chat_id: Option<String>,
@@ -32,8 +35,15 @@ pub fn focus_main(app: &AppHandle) {
 }
 
 fn clicked(app: &AppHandle, target: Clicked) {
-  focus_main(app);
-  let _ = app.emit(NOTIFICATION_CLICKED, target);
+  match target.window.clone().filter(|w| crate::windows::focus(app, w)) {
+    Some(w) => {
+      let _ = app.emit_to(w.as_str(), NOTIFICATION_CLICKED, target);
+    }
+    None => {
+      focus_main(app);
+      let _ = app.emit(NOTIFICATION_CLICKED, target);
+    }
+  }
 }
 
 /// The macOS sound for the setting value: none, the system default, or a named system sound.
@@ -93,7 +103,7 @@ pub fn show(app: &AppHandle, title: String, body: String) -> Result<(), String> 
 #[tauri::command]
 pub fn agent_notify(
   app: AppHandle,
-  ws: tauri::State<'_, crate::workspace::Workspace>,
+  ws: crate::workspace::Workspace,
   projects: tauri::State<'_, crate::projects::Projects>,
   title: String,
   body: String,
@@ -111,7 +121,7 @@ pub fn agent_notify(
   if let Some(r) = root.as_deref() {
     projects.check(r, ws.current().as_deref())?;
   }
-  deliver(app, title, body, sound_of(sound.as_deref()), Clicked { slug, chat_id, root })
+  deliver(app, title, body, sound_of(sound.as_deref()), Clicked { window: Some(ws.label().to_string()), slug, chat_id, root })
 }
 
 /// The dock badge text for `count` agents/tasks waiting on you (Orca's unread dock badge): none

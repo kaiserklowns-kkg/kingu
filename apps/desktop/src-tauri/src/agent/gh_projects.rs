@@ -300,7 +300,7 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
 
 /// The open projects of the gh user and their organisations, for picking `kingu.github.project`.
 #[tauri::command]
-pub async fn gh_projects_list(ws: tauri::State<'_, crate::workspace::Workspace>) -> Result<Vec<ProjectSummary>, String> {
+pub async fn gh_projects_list(ws: crate::workspace::Workspace) -> Result<Vec<ProjectSummary>, String> {
   let dir = gh_dir(&ws);
   let gh = super::review::gh_bin().ok_or_else(issues::gh_missing)?;
   blocking(move || projects(&gh, &dir)).await
@@ -309,7 +309,7 @@ pub async fn gh_projects_list(ws: tauri::State<'_, crate::workspace::Workspace>)
 /// The open issue items of `project` (`acme/3`).
 #[tauri::command]
 pub async fn gh_project_items(
-  ws: tauri::State<'_, crate::workspace::Workspace>,
+  ws: crate::workspace::Workspace,
   project: String,
   mine: Option<bool>,
   label: Option<String>,
@@ -325,7 +325,7 @@ pub async fn gh_project_items(
 
 /// An item's issue with its latest comments, by URL (any repository).
 #[tauri::command]
-pub async fn gh_project_issue_view(ws: tauri::State<'_, crate::workspace::Workspace>, url: String) -> Result<IssueDetail, String> {
+pub async fn gh_project_issue_view(ws: crate::workspace::Workspace, url: String) -> Result<IssueDetail, String> {
   url_or_err(&url)?;
   let dir = gh_dir(&ws);
   let gh = super::review::gh_bin().ok_or_else(issues::gh_missing)?;
@@ -333,7 +333,7 @@ pub async fn gh_project_issue_view(ws: tauri::State<'_, crate::workspace::Worksp
 }
 
 #[tauri::command]
-pub async fn gh_project_issue_comment(ws: tauri::State<'_, crate::workspace::Workspace>, url: String, body: String) -> Result<(), String> {
+pub async fn gh_project_issue_comment(ws: crate::workspace::Workspace, url: String, body: String) -> Result<(), String> {
   url_or_err(&url)?;
   if body.trim().is_empty() || body.len() > 16 * 1024 {
     return Err(tr!(TrackerMsg::CommentLength, max = 16 * 1024));
@@ -344,7 +344,7 @@ pub async fn gh_project_issue_comment(ws: tauri::State<'_, crate::workspace::Wor
 }
 
 #[tauri::command]
-pub async fn gh_project_issue_open(ws: tauri::State<'_, crate::workspace::Workspace>, url: String) -> Result<(), String> {
+pub async fn gh_project_issue_open(ws: crate::workspace::Workspace, url: String) -> Result<(), String> {
   url_or_err(&url)?;
   let dir = gh_dir(&ws);
   let gh = super::review::gh_bin().ok_or_else(issues::gh_missing)?;

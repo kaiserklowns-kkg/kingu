@@ -104,7 +104,7 @@ fn save(inner: &Inner) {
 #[tauri::command]
 pub async fn external_pick_files(
   app: AppHandle,
-  ws: State<'_, crate::workspace::Workspace>,
+  ws: crate::workspace::Workspace,
   workspace: Option<bool>,
   title: Option<String>,
 ) -> Result<Vec<String>, String> {

@@ -72,6 +72,7 @@ export const ideTasks = {
 	'ideTasks.var.undefinedInput': "ไม่มี input ชื่อ '{id}' ให้ลบหรือเพิ่ม input นี้ก่อน",
 	'ideTasks.var.command': 'แทนค่าตัวแปร {variable} ไม่ได้: Kingu ไม่รันคำสั่งของ extension',
 	'ideTasks.var.unknown': 'แทนค่าตัวแปร {variable} ไม่ได้',
+	'ideTasks.var.noFolderNamed': 'แทนค่าตัวแปร {variable} ไม่ได้ ไม่มีโฟลเดอร์ใน workspace ชื่อ {name}',
 	'ideTasks.var.userHome': 'แทนค่าตัวแปร {variable} ไม่ได้ ไม่รู้ path ของ home',
 	'ideTasks.var.noBuildTask': 'แทนค่าตัวแปร {variable} ไม่ได้: ไม่มี build task เริ่มต้น',
 	'ideTasks.var.noLine': 'แทนค่าตัวแปร {variable} ไม่ได้ ต้องมีบรรทัดที่เลือกใน editor',

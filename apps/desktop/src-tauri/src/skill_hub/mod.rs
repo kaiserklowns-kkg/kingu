@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 
 use crate::i18n::msg::SkillMsg;
 use crate::snap::SnapInfo;
@@ -437,7 +437,7 @@ fn locate(app: &AppHandle, root: Option<&Path>, id: &str) -> Result<PathBuf, Str
 }
 
 #[tauri::command]
-pub async fn skill_hub_list(app: AppHandle, ws: State<'_, Workspace>) -> Result<Vec<SkillInfo>, String> {
+pub async fn skill_hub_list(app: AppHandle, ws: Workspace) -> Result<Vec<SkillInfo>, String> {
   let root = ws.current();
   install_blocking(move || {
     let config = config_dir(&app)?;
@@ -499,14 +499,14 @@ pub async fn skill_hub_remove(app: AppHandle, name: String) -> Result<(), String
 }
 
 #[tauri::command]
-pub fn skill_hub_reveal(app: AppHandle, ws: State<'_, Workspace>, id: String) -> Result<(), String> {
+pub fn skill_hub_reveal(app: AppHandle, ws: Workspace, id: String) -> Result<(), String> {
   let dir = locate(&app, ws.current().as_deref(), &id)?;
   crate::fileops::reveal_path(&dir.join(SKILL_FILE))
 }
 
 /// SKILL.md of listed skill `id`, to show it.
 #[tauri::command]
-pub fn skill_hub_read(app: AppHandle, ws: State<'_, Workspace>, id: String) -> Result<String, String> {
+pub fn skill_hub_read(app: AppHandle, ws: Workspace, id: String) -> Result<String, String> {
   if id == BUILTIN_ID {
     return Ok(crate::cli_server::SKILL_MD.to_string());
   }
@@ -520,7 +520,7 @@ pub fn skill_hub_read(app: AppHandle, ws: State<'_, Workspace>, id: String) -> R
 
 /// Writes listed skill `id` as a `.skill` archive to `dest` (from the native save dialog).
 #[tauri::command]
-pub async fn skill_hub_export(app: AppHandle, ws: State<'_, Workspace>, id: String, dest: String) -> Result<(), String> {
+pub async fn skill_hub_export(app: AppHandle, ws: Workspace, id: String, dest: String) -> Result<(), String> {
   let root = ws.current();
   install_blocking(move || {
     let dest = PathBuf::from(&dest);

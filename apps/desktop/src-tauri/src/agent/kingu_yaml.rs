@@ -370,7 +370,7 @@ pub fn status(root: &Path) -> KinguYamlStatus {
 
 /// The open folder's `kingu.yaml`, parsed (for the Repository settings and worktree creation).
 #[tauri::command]
-pub fn kingu_yaml(ws: tauri::State<'_, crate::workspace::Workspace>) -> Result<KinguYamlStatus, String> {
+pub fn kingu_yaml(ws: crate::workspace::Workspace) -> Result<KinguYamlStatus, String> {
   let Some(root) = ws.current() else {
     return Ok(KinguYamlStatus { found: false, config: None, error: None });
   };

@@ -233,7 +233,7 @@ mod tests {
     let ws = Workspace::new(Some(open_root.clone()));
     assert_eq!(root_arg(&ws, &p, None).unwrap(), Some(open_root));
     assert!(root_arg(&ws, &p, Some(b.path().display().to_string())).is_err());
-    assert_eq!(root_arg(&Workspace::default(), &p, None).unwrap(), None);
+    assert_eq!(root_arg(&Workspace::new(None), &p, None).unwrap(), None);
   }
 
   #[test]

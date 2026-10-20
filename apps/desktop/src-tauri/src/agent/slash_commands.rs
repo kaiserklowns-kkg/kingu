@@ -8,7 +8,6 @@
 
 use std::path::{Path, PathBuf};
 
-use tauri::State;
 
 use crate::workspace::Workspace;
 
@@ -166,7 +165,7 @@ pub fn list(project: Option<&Path>, user: Option<&Path>) -> Vec<FileCommand> {
 /// The `/` list for a chat that has no live session. `cwd`: where the chat runs (the open folder
 /// or one of its task worktrees, checked like `agent_start`); the open folder when omitted.
 #[tauri::command]
-pub async fn chat_slash_commands(ws: State<'_, Workspace>, cwd: Option<String>) -> Result<Vec<FileCommand>, String> {
+pub async fn chat_slash_commands(ws: Workspace, cwd: Option<String>) -> Result<Vec<FileCommand>, String> {
   let project = match ws.current() {
     Some(root) => Some(match cwd.as_deref() {
       Some(dir) => super::chats::resolve_cwd(&root, Path::new(dir))?,

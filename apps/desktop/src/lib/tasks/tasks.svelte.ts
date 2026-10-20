@@ -25,6 +25,7 @@ import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
 import { isDiffKey } from '#lib/workbench/scm.ts';
 import { isUntitled } from '#lib/workbench/untitled.ts';
+import type { WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 import { taskLaunch } from './commandLine.ts';
 import { runTask, type Execution, type GraphHost, type Summary } from './dependencies.ts';
 import { detectTasks, packageManagerFor, taskFromDefinition } from './detect.ts';
@@ -325,6 +326,7 @@ class Tasks {
 		const build = groupTasks(tasks, 'build', active ?? undefined).defaults[0];
 		return {
 			workspaceFolder: root,
+			folders: await workspaceFolders(),
 			file,
 			lineNumber: file ? editors.cursor.line : undefined,
 			columnNumber: file ? editors.cursor.column : undefined,
@@ -718,3 +720,8 @@ class Tasks {
 }
 
 export const tasks = new Tasks();
+
+/** The window's root folders, for `${workspaceFolder:name}`. */
+function workspaceFolders(): Promise<WorkspaceFolder[]> {
+	return invoke<WorkspaceFolder[]>('workspace_folders').catch(() => []);
+}

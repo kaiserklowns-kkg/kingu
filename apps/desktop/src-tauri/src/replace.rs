@@ -397,9 +397,25 @@ pub fn replace_file(root: &Path, file: &FileReplace, replacer: &Replacer) -> Fil
   FileResult { version: Some(version_of(new_text.as_bytes())), ..result(Outcome::Written, p.len(), p.into_iter().map(|(_, _, e)| e).collect(), None) }
 }
 
+#[cfg(test)]
 pub fn replace_all(root: &Path, req: &ReplaceRequest) -> Result<Vec<FileResult>, String> {
+  replace_all_in(|_| Ok(root.to_path_buf()), req)
+}
+
+/// [`replace_all`] in a multi-root workspace: `root_of` names each file's root folder (a file of
+/// another root folder has an absolute path, which resolves inside that folder unchanged).
+pub fn replace_all_in(root_of: impl Fn(&str) -> Result<PathBuf, String>, req: &ReplaceRequest) -> Result<Vec<FileResult>, String> {
   let replacer = Replacer::new(&req.pattern, &req.replace, req.preserve_case)?;
-  Ok(req.files.iter().map(|f| replace_file(root, f, &replacer)).collect())
+  Ok(
+    req
+      .files
+      .iter()
+      .map(|f| match root_of(&f.path) {
+        Ok(root) => replace_file(&root, f, &replacer),
+        Err(e) => FileResult { path: f.path.clone(), outcome: Outcome::Stale, replaced: 0, edits: Vec::new(), version: None, message: Some(e) },
+      })
+      .collect(),
+  )
 }
 
 #[cfg(test)]

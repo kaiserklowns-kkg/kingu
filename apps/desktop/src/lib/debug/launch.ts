@@ -4,6 +4,7 @@
 import { parseJsonc } from '#lib/settings/jsonc.ts';
 import type { RunInTerminalArguments } from './protocol.ts';
 import { t } from '#lib/i18n/index.ts';
+import { folderNamed, type WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 
 export type LaunchConfig = { type: string; request: string; name: string; preLaunchTask?: string | Record<string, unknown>; postDebugTask?: string | Record<string, unknown>; [key: string]: unknown };
 
@@ -55,6 +56,8 @@ export function compoundConfigs(compound: LaunchCompound, configs: readonly Laun
 
 export type VarContext = {
 	workspaceFolder: string;
+	/** Every root folder of a multi-root workspace, for `${workspaceFolder:name}`. */
+	folders?: readonly WorkspaceFolder[];
 	/** Absolute path of the active editor's file. */
 	file?: string;
 	env: Record<string, string | undefined>;
@@ -77,6 +80,13 @@ const extname = (p: string) => {
 
 function variable(name: string, ctx: VarContext): string {
 	if (name.startsWith('env:')) return ctx.env[name.slice(4)] ?? '';
+	const named = /^(workspaceFolder|workspaceFolderBasename):(.+)$/.exec(name);
+	if (named) {
+		// `${workspaceFolder:name}`: the root folder of that name (VS Code's multi-root launch configurations).
+		const folder = ctx.folders?.length ? folderNamed(named[2], ctx.folders)?.path : ctx.workspaceFolder;
+		if (folder === undefined) throw new Error(t('tools.debug.launch.noFolderNamed', { variable: `\${${name}}`, name: named[2] }));
+		return named[1] === 'workspaceFolder' ? folder : basename(folder);
+	}
 	if (name.startsWith('command:') && ctx.commands?.[name.slice(8)] !== undefined) return ctx.commands[name.slice(8)];
 	const root = ctx.workspaceFolder;
 	switch (name) {

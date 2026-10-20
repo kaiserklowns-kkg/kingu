@@ -377,6 +377,8 @@ struct Session {
 pub struct Sessions {
   next_id: AtomicU32,
   running: Arc<Mutex<HashMap<u32, Arc<Session>>>>,
+  /// The window that started each session (a window's folder switch or close stops only its own).
+  owners: Mutex<HashMap<u32, String>>,
 }
 
 pub struct Launch {
@@ -567,10 +569,39 @@ impl Sessions {
     Ok(())
   }
 
-  /// Folder switch and app exit: no debuggee may outlive its window.
+  /// Records the window that started session `id`.
+  pub fn own(&self, id: u32, window: &str) {
+    self.owners.lock().unwrap().insert(id, window.to_string());
+  }
+
+  /// The window that started session `id`.
+  pub fn owner(&self, id: u32) -> Option<String> {
+    self.owners.lock().unwrap().get(&id).cloned()
+  }
+
+  /// A window's folder switch or close: its debug sessions go (other windows' keep running).
+  pub fn stop_window(&self, window: &str) {
+    let ids: Vec<u32> = {
+      let mut owners = self.owners.lock().unwrap();
+      let ids = owners.iter().filter(|(_, w)| *w == window).map(|(id, _)| *id).collect::<Vec<_>>();
+      owners.retain(|_, w| w != window);
+      ids
+    };
+    let gone: Vec<_> = {
+      let mut running = self.running.lock().unwrap();
+      ids.iter().filter_map(|id| running.remove(id)).collect()
+    };
+    Self::stop_sessions(&gone);
+  }
+
+  /// App exit: no debuggee may outlive its window.
   pub fn stop_all(&self) {
     let all: Vec<_> = self.running.lock().unwrap().drain().map(|(_, s)| s).collect();
-    for s in &all {
+    Self::stop_sessions(&all);
+  }
+
+  fn stop_sessions(all: &[Arc<Session>]) {
+    for s in all {
       match &s.proc {
         Some(p) => kill_group(p.pid, &p.child),
         None => {

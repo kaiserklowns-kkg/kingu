@@ -5,6 +5,7 @@ import { ask } from '#lib/workbench/messageBox.ts';
 import { KNOWN_BINS } from '#lib/ade/agentProfiles.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { asksOnKill, closePrompt, confirmsOnExit, runningJobs, type TerminalLocation } from './closeGuard.ts';
+import { ownSessions } from './sessions.ts';
 import { foregroundJobs, listPtys } from './pty.ts';
 import { t } from '#lib/i18n/index.ts';
 
@@ -27,7 +28,7 @@ export async function confirmKill(keys: string[], location: TerminalLocation, la
 export async function confirmTerminalExit(): Promise<boolean> {
 	const setting = settings.get<string>('terminal.integrated.confirmOnExit');
 	if (setting === 'never') return true;
-	const keys = (await listPtys()).filter((s) => s.alive).map((s) => s.key);
+	const keys = ownSessions(await listPtys()).filter((s) => s.alive).map((s) => s.key);
 	const running = setting === 'hasChildProcesses' && keys.length ? runningJobs(await foregroundJobs(keys), ignored()).length : 0;
 	if (!confirmsOnExit(setting, keys.length, running)) return true;
 	const n = setting === 'always' ? keys.length : running;

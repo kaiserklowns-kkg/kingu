@@ -50,6 +50,10 @@ crate::i18n::messages! {
       en: "{path} is outside the folder and was not opened with Open File",
       th: "{path} อยู่นอกโฟลเดอร์และไม่ได้เปิดด้วย Open File",
     },
+    NotARootFolder {
+      en: "{path} is not a folder of this workspace",
+      th: "{path} ไม่ใช่โฟลเดอร์ของ workspace นี้",
+    },
     WorkspaceFileTooLarge {
       en: "{path} is too large for a workspace file",
       th: "{path} ใหญ่เกินกว่าจะเป็นไฟล์ workspace",

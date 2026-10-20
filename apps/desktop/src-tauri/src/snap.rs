@@ -17,7 +17,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 
 use crate::i18n::msg::SnapMsg;
 use crate::settings::write_atomic;
@@ -868,7 +868,7 @@ pub(crate) fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-pub fn snap_list(app: AppHandle, ws: State<'_, Workspace>) -> Result<Vec<SnapInfo>, String> {
+pub fn snap_list(app: AppHandle, ws: Workspace) -> Result<Vec<SnapInfo>, String> {
   let config = config_dir(&app)?;
   let trust = TrustData::load(&config.join(TRUST_FILE));
   Ok(discover(&config.join(USER_DIR), ws.current().as_deref(), &trust))
@@ -878,7 +878,7 @@ pub fn snap_list(app: AppHandle, ws: State<'_, Workspace>) -> Result<Vec<SnapInf
 /// Snaps are listed again here, so only ones that are active right now (valid, trusted, not
 /// overridden) contribute, with exactly the bytes that were hashed for trust.
 #[tauri::command]
-pub async fn snap_skill_plugins(app: AppHandle, ids: Vec<String>) -> Result<Vec<String>, String> {
+pub async fn snap_skill_plugins(app: AppHandle, ws: Workspace, ids: Vec<String>) -> Result<Vec<String>, String> {
   if ids.is_empty() {
     return Ok(Vec::new());
   }
@@ -888,7 +888,7 @@ pub async fn snap_skill_plugins(app: AppHandle, ids: Vec<String>) -> Result<Vec<
   tauri::async_runtime::spawn_blocking(move || {
     let config = config_dir(&app)?;
     let trust = TrustData::load(&config.join(TRUST_FILE));
-    let root = app.state::<Workspace>().current();
+    let root = ws.current();
     // Skills turned off in the Skills view stay out.
     let list = crate::skill_hub::without_disabled(discover(&config.join(USER_DIR), root.as_deref(), &trust), &crate::skill_hub::HubState::load(&config));
     let dirs = skill_plugins(&plugins_dir(&app)?, &list, &ids)?;
@@ -899,7 +899,7 @@ pub async fn snap_skill_plugins(app: AppHandle, ids: Vec<String>) -> Result<Vec<
 }
 
 #[tauri::command]
-pub fn snap_trust(app: AppHandle, ws: State<'_, Workspace>, id: String, trusted: bool, hash: Option<String>) -> Result<(), String> {
+pub fn snap_trust(app: AppHandle, ws: Workspace, id: String, trusted: bool, hash: Option<String>) -> Result<(), String> {
   let root = ws.root().map_err(|_| tr!(SnapMsg::NoFolderOpen))?;
   set_trust(&config_dir(&app)?, &root, &id, trusted, hash.as_deref())?;
   log::info!("snap {id}: trusted = {trusted} in {}", root.display());

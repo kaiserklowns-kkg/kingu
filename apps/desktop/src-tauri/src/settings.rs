@@ -7,7 +7,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 
 use crate::i18n::msg::FilesMsg;
 use crate::tr;
@@ -219,7 +219,7 @@ fn path_for(app: &AppHandle, ws: &Workspace, scope: Scope) -> Result<PathBuf, St
 }
 
 #[tauri::command]
-pub fn settings_read(app: AppHandle, ws: State<'_, Workspace>, scope: String) -> Result<SettingsFile, String> {
+pub fn settings_read(app: AppHandle, ws: Workspace, scope: String) -> Result<SettingsFile, String> {
   let scope = Scope::parse(&scope)?;
   // No folder open: there are no workspace settings (not an error, which would keep the last
   // folder's values).
@@ -231,7 +231,7 @@ pub fn settings_read(app: AppHandle, ws: State<'_, Workspace>, scope: String) ->
 }
 
 #[tauri::command]
-pub fn settings_write(app: AppHandle, ws: State<'_, Workspace>, scope: String, content: String) -> Result<(), String> {
+pub fn settings_write(app: AppHandle, ws: Workspace, scope: String, content: String) -> Result<(), String> {
   let path = path_for(&app, &ws, Scope::parse(&scope)?)?;
   write_atomic(&path, &content)?;
   log::info!("saved {scope} settings");
