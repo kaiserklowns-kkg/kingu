@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { BRANCH_CHOICES, branchPrefix, branchRemoval, defaultBaseBranch, dirtyLabel, dirtyPreview, scriptPreview, scriptRunSummary, setupCommand, setupPolicy, validBranchPrefix } from './worktreeSettings';
-import { agentCommand } from './agentCli';
+import { agentCommand, YOLO_ARGS } from './agentCli';
+import { PROFILES } from './agentProfiles';
 import { notificationSound, noticeFor, shouldNotify } from './agentNotify';
 
 describe('worktree settings', () => {
@@ -66,6 +67,22 @@ describe('agent command', () => {
 		expect(agentCommand(from({ 'kingu.agent.args.claude': '--model opus' }))).toEqual(['claude', '--model', 'opus']);
 		expect(agentCommand(from({ 'kingu.agent.cli': 'codex', 'kingu.agent.args.claude': '--model opus', 'kingu.agent.args.codex': '--full-auto' }))).toEqual(['codex', '--full-auto']);
 		expect(agentCommand(from({ 'kingu.agent.cli': '/opt/bin/cursor-agent', 'kingu.agent.args.cursor': '-f' }))).toEqual(['/opt/bin/cursor-agent', '-f']);
+	});
+
+	test('Agent Permissions yolo: the profile’s bypass flag, unless its arguments are set or the command has it', () => {
+		const yolo = { 'kingu.agent.cliPermissions': 'yolo' };
+		expect(agentCommand(from(yolo))).toEqual(['claude', '--dangerously-skip-permissions']);
+		expect(agentCommand(from({ ...yolo, 'kingu.agent.cli': 'codex' }))).toEqual(['codex', '--dangerously-bypass-approvals-and-sandbox']);
+		expect(agentCommand(from({ ...yolo, 'kingu.agent.cli': 'qwen' }))).toEqual(['qwen', '--approval-mode', 'yolo']);
+		expect(agentCommand(from({ ...yolo, 'kingu.agent.cli': '/opt/bin/cursor-agent' }))).toEqual(['/opt/bin/cursor-agent', '--yolo']);
+		// Your own arguments win (Orca: not for agents with overridden launch arguments).
+		expect(agentCommand(from({ ...yolo, 'kingu.agent.args.claude': '--model opus' }))).toEqual(['claude', '--model', 'opus']);
+		expect(agentCommand(from({ ...yolo, 'kingu.agent.cli': 'claude --dangerously-skip-permissions' }))).toEqual(['claude', '--dangerously-skip-permissions']);
+		// No flag: opencode has none, custom commands get none, manual adds none.
+		expect(agentCommand(from({ ...yolo, 'kingu.agent.cli': 'opencode' }))).toEqual(['opencode']);
+		expect(agentCommand(from({ ...yolo, 'kingu.agent.cli': 'mycli' }))).toEqual(['mycli']);
+		expect(agentCommand(from({ 'kingu.agent.cliPermissions': 'manual' }))).toEqual(['claude']);
+		for (const [id, flags] of Object.entries(YOLO_ARGS)) expect([id, PROFILES.some((p) => p.id === id), flags.length > 0]).toEqual([id, true, true]);
 	});
 
 	test('a custom command gets no profile arguments; shell syntax is refused', () => {

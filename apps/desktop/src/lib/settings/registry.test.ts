@@ -147,7 +147,7 @@ describe('ADE settings', () => {
 			const d = SCHEMA.get(id)!.description;
 			expect([id, /[฀-๿]/.test(d), /\([A-Z][^)]*\.\)/.test(d)]).toEqual([id, true, true]);
 		}
-		expect(settingsSections().find((s) => s.id === 'ade')?.groups.slice(0, 3)).toEqual(['Agent', 'Agent Chat', 'Notifications']);
+		expect(settingsSections().find((s) => s.id === 'ade')?.groups.slice(0, 2)).toEqual(['Agent Chat', 'Notifications']);
 	});
 
 	test('settings that run commands, loosen prompts or delete branches are user-only', () => {

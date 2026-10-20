@@ -9,5 +9,6 @@ export const settings = {
 	'settings.contributions.highContrastThemes': 'ธีมคอนทราสต์สูง',
 	'settings.registry.invalidValue': 'ค่า {value} ไม่ถูกต้อง จึงใช้ค่าจากชั้นถัดไปแทน (ต้องเป็น {expected})',
 	'settings.registry.userOrRepoOnly': 'ตั้งได้เฉพาะใน User หรือ Repository (ที่ Kingu เก็บไว้เอง) ไม่ใช่ไฟล์ของ repository',
-	'settings.registry.userOnly': 'ตั้งได้เฉพาะใน User จึงถูกละไว้'
+	'settings.registry.userOnly': 'ตั้งได้เฉพาะใน User จึงถูกละไว้',
+	'settings.sections.aiCapabilities': 'ความสามารถ AI'
 } satisfies Record<keyof typeof en, string>;
