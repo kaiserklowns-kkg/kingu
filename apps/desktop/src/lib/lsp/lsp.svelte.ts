@@ -63,11 +63,12 @@ import type { HierarchyDirection, HierarchyKind } from '#lib/workbench/hierarchy
 import { applyWorkspaceEdit, type ApplyResult } from './workspaceEdit';
 import { t } from '#lib/i18n/index.ts';
 import { isRustError } from '#lib/i18n/rustErrors.ts';
+import { formatTrace, TRACE_SETTINGS, traceValue, type TraceValue } from './trace.ts';
 
 type MonacoApi = typeof Monaco;
 type LspEvent = { type: 'message'; json: string } | { type: 'stderr'; line: string } | { type: 'exit'; code: number | null };
 /** `pushed` / `init`: the settings last sent and the initializationOptions it started with (JSON), to spot changes. */
-type Session = { info: ServerInfo; client: LanguageClient; id: number | null; ready: Promise<boolean>; pushed: string; init: string };
+type Session = { info: ServerInfo; client: LanguageClient; id: number | null; ready: Promise<boolean>; pushed: string; init: string; trace: TraceValue };
 type Doc = { rel: string; uri: string; key: string; model: Monaco.editor.ITextModel; dispose?: () => void };
 
 const MARKER_OWNER = 'lsp';
@@ -381,6 +382,19 @@ class Lsp {
 		// VS Code settings sections follow edits live: pushed again when they change; a server that
 		// reads them only at startup (typescript-language-server's tsserver preferences) restarts.
 		$effect.root(() => {
+			// `<language>.trace.server`: the tracer follows the setting, and the server is told ($/setTrace).
+			$effect(() => {
+				const next = SERVERS.map((info) => ({ key: info.key, trace: this.#trace(info) }));
+				untrack(() => {
+					for (const n of next) {
+						const s = this.#sessions.get(n.key);
+						if (!s || s.trace === n.trace) continue;
+						s.trace = n.trace;
+						this.#setTracer(s);
+						if (s.client.ready) s.client.rpc.notify('$/setTrace', { value: n.trace });
+					}
+				});
+			});
 			$effect(() => {
 				const next = SERVERS.map((info) => ({ key: info.key, pushed: JSON.stringify(this.#settingsFor(info)), init: JSON.stringify(this.#initOptions(info) ?? null) }));
 				untrack(() => {
@@ -471,14 +485,15 @@ class Lsp {
 			}
 		};
 		const init = this.#initOptions(info);
-		const session: Session = { info, client, id: null, ready: Promise.resolve(false), pushed: '', init: JSON.stringify(init ?? null) };
+		const session: Session = { info, client, id: null, ready: Promise.resolve(false), pushed: '', init: JSON.stringify(init ?? null), trace: this.#trace(info) };
+		this.#setTracer(session);
 		this.#sessions.set(key, session);
 		this.#setStatus(info, { state: 'starting' });
 		session.ready = (async () => {
 			try {
 				id = await invoke<number>('lsp_start', { language: info.languages[0], onEvent: channel });
 				session.id = id;
-				const caps = await client.initialize(uriOfRel(root, '').replace(/\/$/, ''), init);
+				const caps = await client.initialize(uriOfRel(root, '').replace(/\/$/, ''), init, session.trace);
 				const pushed = this.#settingsFor(info);
 				session.pushed = JSON.stringify(pushed);
 				if (Object.keys(pushed).length) client.didChangeConfiguration(pushed);
@@ -587,6 +602,20 @@ class Lsp {
 		isSet: (id) => (userSettings.resolved.get(id)?.source ?? 'default') !== 'default',
 		layer: (id, scope) => (scope === 'user' ? userSettings.inspect(id, 'user') : (userSettings.inspect(id, 'repo') ?? userSettings.inspect(id, 'workspace')))
 	};
+
+	/** The server's `<language>.trace.server` (off for a server whose extension has none). An
+	 * extension's own key Kingu does not register (rust-analyzer.trace.server) is read as written. */
+	#trace(info: ServerInfo): TraceValue {
+		const id = TRACE_SETTINGS[info.key];
+		if (!id) return 'off';
+		return traceValue(userSettings.get(id) ?? userSettings.inspect(id, 'repo') ?? userSettings.inspect(id, 'workspace') ?? userSettings.inspect(id, 'user'));
+	}
+
+	/** Traced messages go to the server's Output channel (vscode-languageclient's default channel). */
+	#setTracer(s: Session) {
+		const verbose = s.trace === 'verbose';
+		s.client.rpc.tracer = s.trace === 'off' ? null : (ev) => this.#append(formatTrace(ev, verbose, new Date()).join('\n'), s.info.name);
+	}
 
 	/** A line for the Output panel: the server's own channel (by its name), else "Language Servers". */
 	#append(line: string, channel = LANGUAGE_SERVERS_CHANNEL) {

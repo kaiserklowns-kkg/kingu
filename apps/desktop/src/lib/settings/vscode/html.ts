@@ -179,5 +179,13 @@ export const HTML_SETTINGS: SettingSchema[] = [
 			'ไม่ใส่ค่า (Attribute value is not set.)'
 		],
 		description: 'ค่าเริ่มต้นเมื่อเติม attribute (Controls the default value for attributes when completion is accepted.)'
+	},
+	{
+		id: 'html.trace.server',
+		group: 'HTML',
+		type: 'string',
+		default: 'off',
+		enum: ['off', 'messages', 'verbose'],
+		description: 'บันทึกข้อความระหว่าง Kingu กับ HTML language server ลงช่อง Output ของ server (Traces the communication between VS Code and the HTML language server.)'
 	}
 ];

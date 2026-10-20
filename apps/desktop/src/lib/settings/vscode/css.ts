@@ -800,5 +800,13 @@ export const CSS_SETTINGS: SettingSchema[] = [
 		enum: ['ignore', 'warning', 'error'],
 		enumDescriptions: ['ไม่ตรวจ', 'เตือน', 'ข้อผิดพลาด'],
 		description: 'at-rule ที่ไม่รู้จัก ของ LESS (Unknown at-rule.)'
+	},
+	{
+		id: 'css.trace.server',
+		group: 'CSS',
+		type: 'string',
+		default: 'off',
+		enum: ['off', 'messages', 'verbose'],
+		description: 'บันทึกข้อความระหว่าง Kingu กับ CSS language server ลงช่อง Output ของ server (Traces the communication between VS Code and the CSS language server.)'
 	}
 ];

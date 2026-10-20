@@ -48,5 +48,13 @@ export const JSON_SETTINGS: SettingSchema[] = [
 		type: 'number',
 		default: 5000,
 		description: 'จำนวนสูงสุดของ symbol outline และ folding ที่คำนวณ (The maximum number of outline symbols and folding regions computed (limited for performance reasons).)'
+	},
+	{
+		id: 'json.trace.server',
+		group: 'JSON',
+		type: 'string',
+		default: 'off',
+		enum: ['off', 'messages', 'verbose'],
+		description: 'บันทึกข้อความระหว่าง Kingu กับ JSON language server ลงช่อง Output ของ server (Traces the communication between VS Code and the JSON language server.)'
 	}
 ];

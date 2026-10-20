@@ -71,3 +71,35 @@ export const sortChannels = <T extends { label: string }>(channels: readonly T[]
 export function smartScrollLock(locked: boolean, enabled: boolean, atEnd: boolean): boolean {
 	return enabled ? !atEnd : locked;
 }
+
+// --- Log levels (VS Code: Developer: Set Log Level…, the Output view's level filter) -------------
+
+/** VS Code's log levels, most verbose first (`off` logs nothing). */
+export const LOG_LEVELS = ['trace', 'debug', 'info', 'warning', 'error', 'off'] as const;
+export type LogLevel = (typeof LOG_LEVELS)[number];
+/** The levels a log line can have (the Output view's filter checkboxes). */
+export type LineLevel = Exclude<LogLevel, 'off'>;
+export const LINE_LEVELS: readonly LineLevel[] = ['trace', 'debug', 'info', 'warning', 'error'];
+export const DEFAULT_LOG_LEVEL: LogLevel = 'info';
+
+export const isLogLevel = (v: unknown): v is LogLevel => typeof v === 'string' && (LOG_LEVELS as readonly string[]).includes(v);
+
+const LEVEL_TAG = /\[(TRACE|DEBUG|INFO|WARN|WARNING|ERROR|trace|debug|info|warn|warning|error)\]/;
+
+/** A Kingu.log line's level (`2026-… [INFO] [target] message`); null for a continuation line. */
+export function levelOf(line: string): LineLevel | null {
+	const m = LEVEL_TAG.exec(line.slice(0, 64));
+	if (!m) return null;
+	const l = m[1].toLowerCase();
+	return l === 'warn' ? 'warning' : (l as LineLevel);
+}
+
+/** The lines of a log channel whose level is shown; a continuation line goes with the line above. */
+export function filterLogLevels(lines: readonly string[], hidden: ReadonlySet<LineLevel>): readonly string[] {
+	if (!hidden.size) return lines;
+	let current: LineLevel | null = null;
+	return lines.filter((line) => {
+		current = levelOf(line) ?? current;
+		return current === null || !hidden.has(current);
+	});
+}

@@ -8,18 +8,28 @@ import { SvelteMap } from 'svelte/reactivity';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { editors } from '#lib/workbench/editors.svelte.ts';
 import { layout } from '#lib/workbench/layout.svelte.ts';
-import { afterClear, appendLines, isOutputKey, outputChannelOf, outputKey, sortChannels, textLines } from './output.ts';
+import { afterClear, appendLines, DEFAULT_LOG_LEVEL, isLogLevel, isOutputKey, outputChannelOf, outputKey, sortChannels, textLines, type LineLevel, type LogLevel } from './output.ts';
 
 export const TASKS_CHANNEL = 'Tasks';
 export const GIT_CHANNEL = 'Git';
 export const KINGU_CHANNEL = 'Kingu';
 
 const ACTIVE_KEY = 'kingu.output.channel';
+const LOG_LEVEL_KEY = 'kingu.logLevel';
 const POLL_MS = 1000;
 /** How much of Kingu.log the Kingu channel shows. */
 const LOG_TAIL_BYTES = 256 * 1024;
 
 type GitLines = { next: number; truncated: boolean; lines: string[] };
+
+function savedLogLevel(): LogLevel {
+	try {
+		const v = localStorage.getItem(LOG_LEVEL_KEY);
+		return isLogLevel(v) ? v : DEFAULT_LOG_LEVEL;
+	} catch {
+		return DEFAULT_LOG_LEVEL;
+	}
+}
 
 function savedActive(): string {
 	try {
@@ -42,6 +52,10 @@ class Output {
 	locked = $state(false);
 	/** The view's filter box (output.ts filterLines). */
 	filter = $state('');
+	/** The log levels the view hides in a log channel (VS Code's Output filter checkboxes). */
+	hiddenLevels = $state<LineLevel[]>([]);
+	/** Developer: Set Log Level… (Kingu.log and the webview's log). */
+	logLevel = $state<LogLevel>(savedLogLevel());
 
 	#gitNext = 0;
 	/** The Kingu channel after Clear: the last line it showed then. */
@@ -60,6 +74,23 @@ class Output {
 			// Storage unavailable: the choice lasts until reload.
 		}
 		this.refresh(id);
+	}
+
+	/** A channel of log lines with levels (the Kingu log). */
+	isLog(id: string) {
+		return id === KINGU_CHANNEL;
+	}
+
+	/** Sets the app's log level (Rust's and the webview's), kept for the next start. */
+	async setLogLevel(level: LogLevel) {
+		await invoke('app_set_log_level', { level });
+		this.logLevel = level;
+		try {
+			if (level === DEFAULT_LOG_LEVEL) localStorage.removeItem(LOG_LEVEL_KEY);
+			else localStorage.setItem(LOG_LEVEL_KEY, level);
+		} catch {
+			// Storage unavailable: the level lasts until restart.
+		}
 	}
 
 	lines(id: string): readonly string[] {
@@ -155,6 +186,8 @@ class Output {
 
 	/** Polls Git and Kingu only while one of them is on screen. */
 	install(): () => void {
+		// The level set last time (VS Code keeps it too).
+		if (this.logLevel !== DEFAULT_LOG_LEVEL) invoke('app_set_log_level', { level: this.logLevel }).catch(() => {});
 		return $effect.root(() => {
 			$effect(() => {
 				const shown = [...this.#visible()].filter((id) => id === GIT_CHANNEL || id === KINGU_CHANNEL);

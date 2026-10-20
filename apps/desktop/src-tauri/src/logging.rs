@@ -1,5 +1,6 @@
 //! The app log: a size-limited, rotating `Kingu.log` in the app log dir (macOS:
-//! `~/Library/Logs/<identifier>/`) in every build, plus stdout in debug builds. Info level.
+//! `~/Library/Logs/<identifier>/`) in every build, plus stdout in debug builds. Info level unless
+//! Developer: Set Log Level… changes it (the logger takes every level; `log`'s max level gates).
 //!
 //! Call sites log ids, paths and outcomes, never credentials. As a safety net for messages that
 //! carry text from elsewhere (webview errors, agent host stderr, git and network errors), every
@@ -81,7 +82,8 @@ pub fn plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
   tauri_plugin_log::Builder::new()
     .clear_targets()
     .targets(targets)
-    .level(log::LevelFilter::Info)
+    // Every level reaches the file; `log::set_max_level` (DEFAULT_LEVEL, `app_set_log_level`) decides.
+    .level(log::LevelFilter::Trace)
     // Dependencies log request details at info/debug; only their warnings are worth keeping.
     .level_for("reqwest", log::LevelFilter::Warn)
     .level_for("hyper", log::LevelFilter::Warn)
@@ -96,6 +98,31 @@ pub fn plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
       out.finish(format_args!("{when} [{}] [{}] {}", record.level(), record.target(), redact(&text)))
     })
     .build()
+}
+
+/// The log level until Developer: Set Log Level… changes it (VS Code's default, Info).
+pub const DEFAULT_LEVEL: log::LevelFilter = log::LevelFilter::Info;
+
+/// VS Code's log level names (`trace` … `off`) as a `log` filter.
+pub fn level_filter(level: &str) -> Option<log::LevelFilter> {
+  Some(match level {
+    "trace" => log::LevelFilter::Trace,
+    "debug" => log::LevelFilter::Debug,
+    "info" => log::LevelFilter::Info,
+    "warning" | "warn" => log::LevelFilter::Warn,
+    "error" => log::LevelFilter::Error,
+    "off" => log::LevelFilter::Off,
+    _ => return None,
+  })
+}
+
+/// Developer: Set Log Level… — what Kingu.log (and the webview's log lines) keep from now on.
+#[tauri::command]
+pub fn app_set_log_level(level: String) -> Result<(), String> {
+  let filter = level_filter(&level).ok_or_else(|| format!("unknown log level: {level}"))?;
+  log::set_max_level(filter);
+  log::info!("log level: {level}");
+  Ok(())
 }
 
 /// Opens `dir` in Finder (Explorer / the file manager elsewhere).
@@ -149,6 +176,14 @@ pub async fn app_log_tail(app: AppHandle, max_bytes: Option<u64>) -> Result<Stri
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn log_levels_are_vscode_names() {
+    assert_eq!(level_filter("trace"), Some(log::LevelFilter::Trace));
+    assert_eq!(level_filter("warning"), Some(log::LevelFilter::Warn));
+    assert_eq!(level_filter("off"), Some(log::LevelFilter::Off));
+    assert_eq!(level_filter("verbose"), None);
+  }
 
   #[test]
   fn tail_keeps_whole_lines() {

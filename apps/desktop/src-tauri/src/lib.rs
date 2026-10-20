@@ -124,6 +124,9 @@ fn client_log(level: String, message: String) {
   let message = if message.chars().count() > MAX { format!("{}… (cut)", message.chars().take(MAX).collect::<String>()) } else { message };
   match level.as_str() {
     "error" => log::error!("[webview] {message}"),
+    "warning" | "warn" => log::warn!("[webview] {message}"),
+    "debug" => log::debug!("[webview] {message}"),
+    "trace" => log::trace!("[webview] {message}"),
     _ => log::info!("[webview] {message}"),
   }
 }
@@ -1178,6 +1181,7 @@ pub fn run() {
       system::set_config_dir(config_dir);
       // Release builds too: a rotating, size-limited Kingu.log in the app log dir (logging.rs).
       app.handle().plugin(logging::plugin())?;
+      log::set_max_level(logging::DEFAULT_LEVEL);
       // Reopen the last folder if it still exists, else KINGU_WORKSPACE, else the welcome view.
       let recent = Recent::load(app.path().app_data_dir()?.join("recent.json"));
       // window.restoreWindows: "none" starts empty (KINGU_WORKSPACE still opens).
@@ -1592,6 +1596,7 @@ pub fn run() {
       team::team_sync_run,
       logging::open_logs_folder,
       logging::app_log_tail,
+      logging::app_set_log_level,
       git_output::git_output_since,
       team::team_sync_now,
       team::team_events_start,

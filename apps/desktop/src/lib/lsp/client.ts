@@ -238,7 +238,7 @@ export class LanguageClient {
 		return this.#ready;
 	}
 
-	async initialize(rootUri: string, initializationOptions?: unknown): Promise<ServerCapabilities> {
+	async initialize(rootUri: string, initializationOptions?: unknown, trace: 'off' | 'messages' | 'verbose' = 'off'): Promise<ServerCapabilities> {
 		this.#rootUri = rootUri;
 		this.#hooks.status({ state: 'starting' });
 		const name = rootUri.split('/').pop() ?? 'workspace';
@@ -250,7 +250,8 @@ export class LanguageClient {
 			rootPath: decodeURIComponent(rootUri.replace(/^file:\/\//, '')),
 			workspaceFolders: [{ uri: rootUri, name }],
 			capabilities: clientCapabilities,
-			initializationOptions
+			initializationOptions,
+			trace
 		});
 		this.capabilities = result?.capabilities ?? {};
 		this.rpc.notify('initialized', {});

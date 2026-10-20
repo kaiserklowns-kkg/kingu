@@ -17,6 +17,7 @@
 	import { t } from '#lib/i18n/index.ts';
 	import OutputView from '#lib/output/OutputView.svelte';
 	import { output } from '#lib/output/output.svelte.ts';
+	import { LINE_LEVELS, type LineLevel } from '#lib/output/output.ts';
 	import { installOutputCommands } from '#lib/output/outputCommands.svelte.ts';
 	import { problemsView } from '#lib/lsp/problemsViewState.svelte.ts';
 	import PopupMenu, { menuItem, menuSeparator } from './PopupMenu.svelte';
@@ -47,6 +48,14 @@
 
 	// The Problems view's filter toggles (VS Code's More Filters… menu).
 	let filterMenu = $state<{ x: number; y: number } | null>(null);
+	// The Output view's level filter for a log channel (VS Code: the Output filter's level checkboxes).
+	let levelMenu = $state<{ x: number; y: number } | null>(null);
+	const levelItems = $derived(LINE_LEVELS.map((l) => menuItem(l, t(`output.logLevel.${l}`), { checked: !output.hiddenLevels.includes(l) })));
+	function runLevel(node: MenuNode) {
+		if (node.type !== 'item') return;
+		const l = node.id as LineLevel;
+		output.hiddenLevels = output.hiddenLevels.includes(l) ? output.hiddenLevels.filter((x) => x !== l) : [...output.hiddenLevels, l];
+	}
 	const filterItems = $derived([
 		menuItem('errors', t('problems.showErrors'), { checked: problemsView.showErrors }),
 		menuItem('warnings', t('problems.showWarnings'), { checked: problemsView.showWarnings }),
@@ -131,6 +140,17 @@
 				bind:value={output.filter}
 				class="h-[22px] w-44 min-w-0 rounded-sm border border-(--vscode-input-border,transparent) bg-(--vscode-input-background) px-1.5 text-xs text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground) focus:border-(--vscode-focusBorder)"
 			/>
+			{#if output.isLog(output.active)}
+				<button
+					aria-label={t('output.logLevel.filter')}
+					title={t('output.logLevel.filter')}
+					class={['grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)', output.hiddenLevels.length && 'bg-(--vscode-inputOption-activeBackground)']}
+					onclick={(e) => {
+						const r = e.currentTarget.getBoundingClientRect();
+						levelMenu = { x: r.left, y: r.bottom + 2 };
+					}}><Icon name="filter" size={15} /></button
+				>
+			{/if}
 			<select
 				aria-label={t('output.channel')}
 				title={t('output.channel')}
@@ -295,6 +315,9 @@
 		{/if}
 	</div>
 </section>
+{#if levelMenu}
+	<PopupMenu items={levelItems} label={t('output.logLevel.filter')} x={levelMenu.x} y={levelMenu.y} onRun={runLevel} onClose={() => (levelMenu = null)} />
+{/if}
 {#if filterMenu}
 	<PopupMenu items={filterItems} label={t('problems.moreFilters')} x={filterMenu.x} y={filterMenu.y} onRun={runFilter} onClose={() => (filterMenu = null)} />
 {/if}

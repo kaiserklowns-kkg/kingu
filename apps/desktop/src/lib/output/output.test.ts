@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { afterClear, appendLines, filterLines, isOutputKey, outputChannelOf, outputKey, parseLineFilter, smartScrollLock, sortChannels, textLines } from './output.ts';
+import { afterClear, appendLines, filterLines, filterLogLevels, levelOf, isOutputKey, outputChannelOf, outputKey, parseLineFilter, smartScrollLock, sortChannels, textLines } from './output.ts';
 
 describe('output channels', () => {
 	test('appendLines splits text, drops a trailing newline and keeps the limit', () => {
@@ -38,4 +38,15 @@ describe('output channels', () => {
 		expect(smartScrollLock(true, true, true)).toBe(false);
 		expect(smartScrollLock(true, false, true)).toBe(true);
 	});
+});
+
+test('log levels: a line\'s level and the Output view\'s level filter', () => {
+	const lines = ['2026-10-21 10:00:00.000 +07:00 [INFO] [kingu] started', 'continued', '2026-10-21 10:00:01.000 +07:00 [WARN] [lsp] slow', '2026-10-21 10:00:02.000 +07:00 [DEBUG] [x] detail', 'plain'];
+	expect(levelOf(lines[0])).toBe('info');
+	expect(levelOf(lines[2])).toBe('warning');
+	expect(levelOf('continued')).toBeNull();
+	expect(filterLogLevels(lines, new Set())).toBe(lines);
+	// A continuation line goes with the line above it.
+	expect(filterLogLevels(lines, new Set(['debug']))).toEqual(lines.slice(0, 3));
+	expect(filterLogLevels(lines, new Set(['info']))).toEqual([lines[2], lines[3], 'plain']);
 });

@@ -5,11 +5,13 @@
 	import { tick } from 'svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import { output } from './output.svelte';
-	import { filterLines, smartScrollLock } from './output.ts';
+	import { filterLines, filterLogLevels, smartScrollLock } from './output.ts';
 
 	let scroller: HTMLPreElement | undefined = $state();
 	const all = $derived(output.lines(output.active));
-	const lines = $derived(filterLines(all, output.filter));
+	// A log channel also hides the levels unchecked in the view's filter menu.
+	const leveled = $derived(output.isLog(output.active) ? filterLogLevels(all, new Set(output.hiddenLevels)) : all);
+	const lines = $derived(filterLines(leveled, output.filter));
 	const placeholder = $derived(all.length ? t('output.noMatch') : t('output.empty'));
 
 	$effect(() => {

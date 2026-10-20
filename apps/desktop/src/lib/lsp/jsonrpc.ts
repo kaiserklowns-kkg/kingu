@@ -1,6 +1,7 @@
 // JSON-RPC 2.0 over an already-framed message stream (Rust does the Content-Length framing).
 
 import { ErrorCodes } from './protocol';
+import type { TraceEvent } from './trace.ts';
 
 export class ResponseError extends Error {
 	readonly code: number;
@@ -12,7 +13,7 @@ export class ResponseError extends Error {
 	}
 }
 
-type Pending = { resolve: (v: unknown) => void; reject: (e: unknown) => void; method: string };
+type Pending = { resolve: (v: unknown) => void; reject: (e: unknown) => void; method: string; at: number };
 type RequestHandler = (params: any) => unknown | Promise<unknown>;
 type NotificationHandler = (params: any) => void;
 
@@ -27,6 +28,8 @@ export class JsonRpc {
 	#closed: Error | null = null;
 
 	readonly #write: (json: string) => void;
+	/** `<language>.trace.server`: every message in and out, when set (lsp/trace.ts formats them). */
+	tracer: ((ev: TraceEvent) => void) | null = null;
 
 	constructor(write: (json: string) => void) {
 		this.#write = write;
@@ -36,7 +39,8 @@ export class JsonRpc {
 		if (this.#closed) return Promise.reject(this.#closed);
 		const id = this.#nextId++;
 		return new Promise<T>((resolve, reject) => {
-			this.#pending.set(id, { resolve: resolve as (v: unknown) => void, reject, method });
+			this.#pending.set(id, { resolve: resolve as (v: unknown) => void, reject, method, at: Date.now() });
+			this.tracer?.({ kind: 'sendRequest', method, id, params });
 			this.#send({ jsonrpc: '2.0', id, method, params });
 			token?.onCancellationRequested(() => {
 				if (this.#pending.has(id)) this.notify('$/cancelRequest', { id });
@@ -45,7 +49,9 @@ export class JsonRpc {
 	}
 
 	notify(method: string, params?: unknown) {
-		if (!this.#closed) this.#send({ jsonrpc: '2.0', method, params });
+		if (this.#closed) return;
+		this.tracer?.({ kind: 'sendNotification', method, params });
+		this.#send({ jsonrpc: '2.0', method, params });
 	}
 
 	onRequest(method: string, handler: RequestHandler) {
@@ -70,11 +76,14 @@ export class JsonRpc {
 		}
 		if (msg === null || typeof msg !== 'object') return;
 		if ('method' in msg && 'id' in msg) void this.#answer(msg);
-		else if ('method' in msg) this.#notifications.get(msg.method)?.(msg.params);
-		else if ('id' in msg) {
+		else if ('method' in msg) {
+			this.tracer?.({ kind: 'receiveNotification', method: msg.method, params: msg.params });
+			this.#notifications.get(msg.method)?.(msg.params);
+		} else if ('id' in msg) {
 			const p = this.#pending.get(msg.id);
 			if (!p) return;
 			this.#pending.delete(msg.id);
+			this.tracer?.({ kind: 'receiveResponse', method: p.method, id: msg.id, ms: Date.now() - p.at, result: msg.result, error: msg.error });
 			if (msg.error) p.reject(new ResponseError(msg.error.code, msg.error.message, msg.error.data));
 			else p.resolve(msg.result ?? null);
 		}
@@ -88,16 +97,20 @@ export class JsonRpc {
 	}
 
 	async #answer(msg: { id: number | string; method: string; params?: unknown }) {
+		const at = Date.now();
+		this.tracer?.({ kind: 'receiveRequest', method: msg.method, id: msg.id, params: msg.params });
+		const fail = (error: { code: number; message: string }) => {
+			this.tracer?.({ kind: 'sendResponse', method: msg.method, id: msg.id, ms: Date.now() - at, error });
+			this.#send({ jsonrpc: '2.0', id: msg.id, error });
+		};
 		const handler = this.#requests.get(msg.method);
-		if (!handler) {
-			this.#send({ jsonrpc: '2.0', id: msg.id, error: { code: ErrorCodes.MethodNotFound, message: `Unhandled method ${msg.method}` } });
-			return;
-		}
+		if (!handler) return fail({ code: ErrorCodes.MethodNotFound, message: `Unhandled method ${msg.method}` });
 		try {
-			const result = await handler(msg.params);
-			this.#send({ jsonrpc: '2.0', id: msg.id, result: result ?? null });
+			const result = (await handler(msg.params)) ?? null;
+			this.tracer?.({ kind: 'sendResponse', method: msg.method, id: msg.id, ms: Date.now() - at, result });
+			this.#send({ jsonrpc: '2.0', id: msg.id, result });
 		} catch (e) {
-			this.#send({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: String(e) } });
+			fail({ code: -32603, message: String(e) });
 		}
 	}
 

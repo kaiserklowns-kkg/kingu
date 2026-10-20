@@ -34,5 +34,14 @@ export const output = {
 	'problems.position': 'ตำแหน่ง',
 	'panel.maximize': 'ขยายแผงให้สุด',
 	'panel.restore': 'คืนขนาดแผง',
-	'panel.hide': 'ซ่อนแผง'
+	'panel.hide': 'ซ่อนแผง',
+	'output.logLevel.pick': 'ตั้งระดับ log',
+	'output.logLevel.current': 'ปัจจุบัน',
+	'output.logLevel.filter': 'กรองตามระดับ log',
+	'output.logLevel.trace': 'Trace (ละเอียดที่สุด)',
+	'output.logLevel.debug': 'Debug',
+	'output.logLevel.info': 'ข้อมูล',
+	'output.logLevel.warning': 'คำเตือน',
+	'output.logLevel.error': 'ข้อผิดพลาด',
+	'output.logLevel.off': 'ปิด',
 } satisfies Record<keyof typeof en, string>;

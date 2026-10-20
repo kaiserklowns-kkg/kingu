@@ -34,5 +34,14 @@ export const output = {
 	'problems.position': 'Position',
 	'panel.maximize': 'Maximize Panel Size',
 	'panel.restore': 'Restore Panel Size',
-	'panel.hide': 'Hide Panel'
+	'panel.hide': 'Hide Panel',
+	'output.logLevel.pick': 'Set Log Level',
+	'output.logLevel.current': 'Current',
+	'output.logLevel.filter': 'Filter by Log Level',
+	'output.logLevel.trace': 'Trace',
+	'output.logLevel.debug': 'Debug',
+	'output.logLevel.info': 'Info',
+	'output.logLevel.warning': 'Warning',
+	'output.logLevel.error': 'Error',
+	'output.logLevel.off': 'Off',
 } as const;
