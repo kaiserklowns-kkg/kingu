@@ -423,10 +423,11 @@
 			return;
 		}
 		// A tool call waits: what is typed answers it (Cursor's "Reject, suggest, follow up?"): the
-		// call is skipped and the text goes back to the agent as the reason.
+		// call is skipped ("Skipped rm") and the text goes as a new message the agent continues with
+		// (steered into the running turn where the runtime can, else after it).
 		if (chatMeta && pendingApproval && !editingQueued) {
-			chats.answer(chatMeta.id, pendingApproval.request_id, 'deny', text);
-			resetInput();
+			chats.answer(chatMeta.id, pendingApproval.request_id, 'deny');
+			await send(text, attachments, steerable ? 'steer' : 'queue');
 			return;
 		}
 		if (chatMeta && editingQueued) return saveQueuedEdit(text, attachments);
@@ -964,7 +965,9 @@
 				class="group/tab flex h-[26px] max-w-[70%] min-w-0 items-center gap-1.5 rounded-md bg-(--vscode-toolbar-hoverBackground) pr-0.5 pl-2"
 				title={chatMeta ? `${title} · ${cwdLabel(chatMeta.cwd)}` : title}
 			>
-				{#if running}
+				{#if pendingApproval}
+					<span class="shrink-0 text-(--vscode-editorWarning-foreground)" role="status" aria-label={t('composer.status.waiting')}><Icon name="help" size={13} /></span>
+				{:else if running}
 					<span class="size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-current border-t-transparent text-(--vscode-descriptionForeground)" role="status" aria-label={t('composer.status.running')}></span>
 				{:else if unread}
 					<span class="grid size-3 shrink-0 place-items-center" role="status" aria-label={t('composer.header.unread')}><span class="size-2 rounded-full bg-(--vscode-notificationsInfoIcon-foreground,#3794ff)"></span></span>
@@ -1084,6 +1087,7 @@
 					implement: mode === 'ask' ? implement : undefined,
 					stop: () => chatMeta && void chats.interrupt(chatMeta.id),
 					fork: features.rewind ? (request) => void fork(request) : undefined,
+					runMode: mode === 'agent' ? { current: currentApproval, options: AGENT_APPROVALS, pick: (a) => void pickApproval(a), locked: globalAutoApprove } : undefined,
 					sentAt: (request) => (chatMeta ? (chatEdits.view(chatMeta.id)?.requests.find((r) => r.index === request)?.at ?? null) : null),
 					remember: (text) => void chatExtras.remember(text),
 					followups: { items: running ? [] : chatExtras.followups(chatMeta.id), pick: pickFollowup }

@@ -11,7 +11,8 @@
 //   composerLayout                     which labels the bottom bar keeps at the box's width
 //   slashMenu                          the `/` menu's sections, Skills folded to 3 rows
 //   chromeKey                          keys typed while focus is on the composer's own buttons
-//   shortModelLabel / allowlistLabel   compact labels for the model trigger and the Allow button
+//   shortModelLabel                    the model's compact label
+//   shellTokens / commandNames         the approval card's coloured command and its names
 //   moveItem                           reordering a queued message
 
 import type { IconName } from '#lib/workbench/Icon.svelte';
@@ -195,20 +196,6 @@ export function shortModelLabel(label: string): string {
 	return s || label;
 }
 
-/**
- * The Allow button's label: the command prefix an "always" answer saves (`Bash(npm test:*)` →
- * `npm test *`), the tool for a single whole-tool rule, else "Always Allow".
- */
-export function allowlistLabel(rules: readonly string[] | undefined, tool: string): string {
-	if (rules?.length === 1) {
-		const m = /^([\w.-]+)\((.*)\)$/.exec(rules[0]);
-		if (m) return m[2].replace(/:\*$/, ' *');
-		return rules[0];
-	}
-	if (rules && rules.length > 1) return t('composer.approve.allowlistMany', { count: rules.length });
-	return t('composer.approve.allowlistTool', { tool });
-}
-
 // ---- menus -----------------------------------------------------------------------------------
 
 /** The `/` menu's sections, in Cursor's order: Skills, Commands, Modes, Actions. */
@@ -280,6 +267,73 @@ export function chromeKey(e: KeyLike): 'cycle' | 'type' | null {
 	if (e.key === 'Tab' && e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) return 'cycle';
 	if (e.key.length === 1 && e.key !== ' ' && !e.metaKey && !e.ctrlKey) return 'type';
 	return null;
+}
+
+// ---- shell commands in the approval card ----------------------------------------------------
+
+/** A piece of a shell command for the approval card's colours: a command name, an operator, a quoted string or anything else. */
+export type ShellToken = { text: string; kind: 'cmd' | 'op' | 'str' | 'arg' | 'space' };
+
+const OPS = ['&&', '||', '|&', ';;', '>>', '<<', '2>', '&>', '|', ';', '&', '>', '<', '(', ')'];
+
+/**
+ * A command line split for colouring (Cursor's approval card): the first word after the start or
+ * an operator (`&&`, `|`, `;`, …) is a command name; quotes are kept whole. Not a shell parser,
+ * only for display; the pieces always join back to the input.
+ */
+export function shellTokens(cmd: string): ShellToken[] {
+	const out: ShellToken[] = [];
+	let expectCmd = true;
+	let i = 0;
+	while (i < cmd.length) {
+		const c = cmd[i];
+		if (/\s/.test(c)) {
+			let j = i;
+			while (j < cmd.length && /\s/.test(cmd[j])) j++;
+			out.push({ text: cmd.slice(i, j), kind: 'space' });
+			if (cmd.slice(i, j).includes('\n')) expectCmd = true;
+			i = j;
+			continue;
+		}
+		const op = OPS.find((o) => cmd.startsWith(o, i));
+		if (op) {
+			out.push({ text: op, kind: 'op' });
+			// After a redirection the next word is a file, not a command.
+			expectCmd = !['>', '>>', '<', '<<', '2>', '&>'].includes(op);
+			i += op.length;
+			continue;
+		}
+		if (c === '"' || c === "'") {
+			let j = i + 1;
+			while (j < cmd.length && cmd[j] !== c) j += cmd[j] === '\\' && c === '"' ? 2 : 1;
+			j = Math.min(cmd.length, j + 1);
+			out.push({ text: cmd.slice(i, j), kind: 'str' });
+			expectCmd = false;
+			i = j;
+			continue;
+		}
+		let j = i;
+		while (j < cmd.length && !/\s/.test(cmd[j]) && !OPS.some((o) => cmd.startsWith(o, j)) && cmd[j] !== '"' && cmd[j] !== "'") j++;
+		const word = cmd.slice(i, j);
+		// `FOO=bar cmd`: an assignment before the command keeps waiting for it.
+		const assignment = expectCmd && /^[A-Za-z_][A-Za-z0-9_]*=/.test(word);
+		out.push({ text: word, kind: expectCmd && !assignment ? 'cmd' : 'arg' });
+		if (!assignment) expectCmd = false;
+		i = j;
+	}
+	return out;
+}
+
+/** The command names a shell line runs, once each in order (`echo, cat`): the card's header and "Skipped …". */
+export function commandNames(cmd: string): string[] {
+	return [...new Set(shellTokens(cmd).filter((x) => x.kind === 'cmd').map((x) => x.text.split('/').pop() || x.text))];
+}
+
+/** What a skipped call says: "Skipped rm" for a shell call, else "Skipped <tool>". */
+export function skippedName(tool: string, input: unknown): string {
+	const o = input && typeof input === 'object' ? (input as Record<string, unknown>) : null;
+	if (tool === 'Bash' && typeof o?.command === 'string') return commandNames(o.command).join(', ') || tool;
+	return tool;
 }
 
 /** Whether a runtime can take a message while a turn runs (steer); the others stop and send. */

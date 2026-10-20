@@ -68,10 +68,6 @@ export const composer = {
 	'composer.approve.run': 'Run',
 	'composer.approve.skip': 'Skip',
 	'composer.approve.skipHint': 'Skip this call (deny it); the agent is told',
-	'composer.approve.reason': 'Skip with a reason…',
-	'composer.approve.reasonHint': 'Tell the agent why this call is skipped',
-	'composer.approve.allowlistTool': 'Always allow {tool}',
-	'composer.approve.allowlistMany': 'Allowlist {count|# rule|# rules}',
 
 	'composer.placeholder.new': 'Plan, Build, / for skills, @ for context',
 	'composer.slash.more': 'Show {count} more',
@@ -96,5 +92,10 @@ export const composer = {
 	'composer.nudge.title': 'Steer New Messages?',
 	'composer.nudge.body': 'Steering sends new messages to the agent while it works, without stopping it. Turn it on to steer instead of queuing.',
 	'composer.nudge.keep': 'Keep Queuing',
-	'composer.nudge.steer': 'Use Steering'
+	'composer.nudge.steer': 'Use Steering',
+	'composer.approve.pending': 'Pending approval',
+	'composer.approve.allowlist': 'Allowlist',
+	'composer.approve.changeRunMode': 'Change run mode',
+	'composer.approve.allowCall': 'Always allow this call',
+	'composer.approve.skipped': 'Skipped {name}'
 } as const;

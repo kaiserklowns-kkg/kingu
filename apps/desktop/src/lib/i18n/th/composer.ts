@@ -66,10 +66,6 @@ export const composer = {
 	'composer.approve.run': 'รัน',
 	'composer.approve.skip': 'ข้าม',
 	'composer.approve.skipHint': 'ข้ามการเรียกนี้ (ปฏิเสธ) และแจ้ง agent',
-	'composer.approve.reason': 'ข้ามพร้อมเหตุผล…',
-	'composer.approve.reasonHint': 'บอก agent ว่าทำไมจึงข้ามการเรียกนี้',
-	'composer.approve.allowlistTool': 'อนุญาต {tool} เสมอ',
-	'composer.approve.allowlistMany': 'เพิ่ม {count} กฎในรายการที่อนุญาต',
 
 	'composer.placeholder.new': 'วางแผน สร้าง · / สำหรับ skill · @ สำหรับบริบท',
 	'composer.slash.more': 'แสดงอีก {count} รายการ',
@@ -94,5 +90,10 @@ export const composer = {
 	'composer.nudge.title': 'ส่งข้อความใหม่ไปปรับทิศทาง?',
 	'composer.nudge.body': 'การปรับทิศทางส่งข้อความใหม่ถึง agent ขณะที่ยังทำงาน โดยไม่หยุดมัน เปิดใช้เพื่อปรับทิศทางแทนการต่อคิว',
 	'composer.nudge.keep': 'ต่อคิวต่อไป',
-	'composer.nudge.steer': 'ใช้การปรับทิศทาง'
+	'composer.nudge.steer': 'ใช้การปรับทิศทาง',
+	'composer.approve.pending': 'รอการอนุมัติ',
+	'composer.approve.allowlist': 'รายการที่อนุญาต',
+	'composer.approve.changeRunMode': 'เปลี่ยนโหมดการรัน',
+	'composer.approve.allowCall': 'อนุญาตการเรียกนี้เสมอ',
+	'composer.approve.skipped': 'ข้าม {name}'
 } satisfies Record<keyof typeof en, string>;

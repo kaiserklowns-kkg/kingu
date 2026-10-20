@@ -1,6 +1,7 @@
 <script lang="ts" module>
 	import type { ChatView, Turn } from './chatParts';
 	import type { Vote } from './events';
+	import type { RunModeControl } from './PermissionCard.svelte';
 
 	export type ChatListActions = {
 		/** Sends the last request again. */
@@ -26,6 +27,8 @@
 		fork?: (request: number) => void;
 		/** When a request was sent (ms), for the answer footer's "Just now". */
 		sentAt?: (request: number) => number | null;
+		/** The chat's run mode, offered by the approval card's Allowlist menu. */
+		runMode?: RunModeControl;
 	};
 </script>
 
@@ -33,7 +36,8 @@
 	// A run as VS Code's chat list (chatListRenderer): each request, then its response made of
 	// parts (Cursor's look: each request in a rounded box like the composer, the first one pinned
 	// to the top while its answer scrolls, with ■ Stop inside while it runs and the checkpoint's ↶
-	// after; a finished earlier turn folds its steps into "Worked for 2s"; quiet progress lines):
+	// after; a finished turn folds its steps into "Worked for 2s"; quiet progress lines; a skipped
+	// call is "Skipped rm"):
 	// markdown with code block actions, thinking (collapsed), tool calls (ChatToolRow:
 	// one-line rows that expand to their input and output, edited-file pills, plan cards, subagents
 	// with their own calls nested), approval and question cards, errors with Retry, a "Working…" row
@@ -54,6 +58,7 @@
 	import { answersFor, parseAsk } from './ask';
 	import { activityEnd, buildTurns, responseText, splitVerb, workedFor, type Part } from './chatParts';
 	import { timeAgo } from '#lib/ade/model.ts';
+	import { skippedName } from './composer.ts';
 	import { contextLabel } from './chatPrompt';
 	import { formatUsage, type Decision, type PermissionRequest } from './events';
 	import { usageDisplay } from './chatExtras';
@@ -185,7 +190,7 @@
 			{#each turns as turn, ti (ti)}
 				{@const last = ti === turns.length - 1}
 				{@const dim = (turn.checkpoint != null && !!reverted?.(turn.checkpoint)) || (editing !== null && ti > editing)}
-				{@const end = turn.done && !last ? activityEnd(turn.parts) : 0}
+				{@const end = turn.done ? activityEnd(turn.parts) : 0}
 				{@const folded = end > 0 && !open[`w:${ti}`]}
 				<div class={['flex flex-col gap-3', dim && 'opacity-50']}>
 				{#if turn.request}
@@ -307,15 +312,16 @@
 								</div>
 							{/if}
 							{#if decided}
+								<!-- A skipped call is a quiet line ("Skipped rm", Cursor's). -->
 								<div class="flex items-center gap-1.5 text-(--vscode-descriptionForeground)">
-									<Icon name="circleDashed" size={13} />
-									<span class="truncate">{isAsk(ev) ? t('chatView.questionDismissed') : t('chatView.permissionDenied', { tool: ev.tool })}</span>
+									{#if isAsk(ev)}<Icon name="circleDashed" size={13} />{/if}
+									<span class="truncate">{isAsk(ev) ? t('chatView.questionDismissed') : t('composer.approve.skipped', { name: skippedName(ev.tool, ev.input) })}</span>
 								</div>
 							{:else if onanswer && !run?.ended && isAsk(ev) && parseAsk(ev.input)}
 								{@const ask = parseAsk(ev.input)!}
 								<QuestionCard prompt={ask} onsubmit={(sels) => onanswer(ev, 'allow', undefined, answersFor(ask, sels))} ondismiss={() => onanswer(ev, 'deny')} />
 							{:else if onanswer && !run?.ended}
-								<PermissionCard request={ev} keys={!!chatId} onanswer={(decision, message) => onanswer(ev, decision, message)} />
+								<PermissionCard request={ev} keys={!!chatId} runMode={actions.runMode} onanswer={(decision, message) => onanswer(ev, decision, message)} />
 							{:else}
 								<div class="flex items-center gap-1.5 text-(--vscode-editorWarning-foreground)">
 									<Icon name="question" size={13} />

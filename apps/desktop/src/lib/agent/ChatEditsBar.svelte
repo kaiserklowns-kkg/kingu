@@ -89,8 +89,16 @@
 		aria-label={count ? t('chatEdits.filesChanged', { count }) : t('composer.status.label')}
 	>
 		<div class="flex h-[26px] items-center gap-1 pr-1 pl-1.5">
-			<button class="flex min-w-0 flex-1 items-center gap-1 text-left" aria-expanded={count ? open : undefined} title={count ? t('chatEdits.toggle') : undefined} disabled={!count} onclick={() => (open = !open)}>
-				{#if count}
+			<button
+				class="flex min-w-0 flex-1 items-center gap-1 text-left"
+				aria-expanded={count && status !== 'waiting' ? open : undefined}
+				title={count && status !== 'waiting' ? t('chatEdits.toggle') : undefined}
+				disabled={!count || status === 'waiting'}
+				onclick={() => (open = !open)}
+			>
+				{#if status === 'waiting'}
+					<span class="truncate text-(--vscode-descriptionForeground)" role="status">{t('composer.status.waiting')}</span>
+				{:else if count}
 					<span class={['shrink-0 transition-transform', open && 'rotate-90']}><Icon name="chevronRight" size={12} /></span>
 					<span class="truncate">{t('composer.status.files', { count })}</span>
 					{#if files.length && (sum.added || sum.removed)}
@@ -101,7 +109,7 @@
 					{/if}
 				{:else if status}
 					<span class="size-2.5 shrink-0 animate-spin rounded-full border-[1.5px] border-current border-t-transparent text-(--vscode-descriptionForeground)" aria-hidden="true"></span>
-					<span class="truncate text-(--vscode-descriptionForeground)" role="status">{status === 'waiting' ? t('composer.status.waiting') : t('composer.status.running')}</span>
+					<span class="truncate text-(--vscode-descriptionForeground)" role="status">{t('composer.status.running')}</span>
 				{/if}
 			</button>
 			{#if status && onstop}
@@ -124,7 +132,7 @@
 					onclick={() => act(() => chatEdits.keep(chatId, null))}>{t('chatEdits.keep')}</button
 				>
 			{/if}
-			{#if count}
+			{#if count && status !== 'waiting'}
 				<button
 					class={[BTN, 'bg-(--vscode-button-secondaryBackground) text-(--vscode-button-secondaryForeground) hover:bg-(--vscode-button-secondaryHoverBackground)']}
 					title={t('composer.review.reviewHint')}

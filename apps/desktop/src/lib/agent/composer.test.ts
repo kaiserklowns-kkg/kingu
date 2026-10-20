@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { setLocale } from '#lib/i18n/index.ts';
 import {
-	allowlistLabel,
 	approvalKey,
 	browseHistory,
 	canSteer,
@@ -23,6 +22,9 @@ import {
 	slashMenu,
 	slashSections,
 	chromeKey,
+	commandNames,
+	shellTokens,
+	skippedName,
 	stopKey
 } from './composer.ts';
 import { filterRows, initialActive, nextEnabled, startsSection, type MenuRow } from './composerMenu.ts';
@@ -174,11 +176,6 @@ test('short labels', () => {
 	expect(shortModelLabel('Default (recommended)')).toBe('Default');
 	expect(shortModelLabel('Sonnet 4.5 thinking')).toBe('Sonnet 4.5');
 	expect(shortModelLabel('')).toBe('');
-	expect(allowlistLabel(['Bash(npm test:*)'], 'Bash')).toBe('npm test *');
-	expect(allowlistLabel(['Bash(git status)'], 'Bash')).toBe('git status');
-	expect(allowlistLabel(['WebFetch'], 'WebFetch')).toBe('WebFetch');
-	expect(allowlistLabel([], 'Edit')).toBe('Always allow Edit');
-	expect(allowlistLabel(['Bash(a:*)', 'Bash(b:*)'], 'Bash')).toBe('Allowlist 2 rules');
 });
 
 test('the / menu: Skills, Commands, Modes, Actions', () => {
@@ -291,4 +288,17 @@ test('transcript look: edit snippets, bold verbs, Worked for, folded steps', () 
 	expect(activityEnd([{ kind: 'thinking' }, { kind: 'tool' }, { kind: 'markdown' }])).toBe(2);
 	expect(activityEnd([{ kind: 'markdown' }])).toBe(0);
 	expect(activityEnd([{ kind: 'tool' }])).toBe(1);
+});
+
+test('the approval card: shell colours and command names', () => {
+	const cmd = 'echo approval-test > probe2.txt && cat probe2.txt | FOO=1 wc -l "a b"';
+	const toks = shellTokens(cmd);
+	expect(toks.map((x) => x.text).join('')).toBe(cmd);
+	expect(toks.filter((x) => x.kind === 'cmd').map((x) => x.text)).toEqual(['echo', 'cat', 'wc']);
+	expect(toks.filter((x) => x.kind === 'op').map((x) => x.text)).toEqual(['>', '&&', '|']);
+	expect(toks.find((x) => x.kind === 'str')?.text).toBe('"a b"');
+	expect(toks.find((x) => x.text === 'probe2.txt')?.kind).toBe('arg');
+	expect(commandNames('echo hi && cat x; /bin/echo again')).toEqual(['echo', 'cat']);
+	expect(skippedName('Bash', { command: 'rm -f probe2.txt' })).toBe('rm');
+	expect(skippedName('Edit', { file_path: 'a.ts' })).toBe('Edit');
 });
