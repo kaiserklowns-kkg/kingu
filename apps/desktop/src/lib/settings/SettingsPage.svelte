@@ -74,6 +74,13 @@
 		about: 'About Kingu'
 	};
 	import { systemSettings } from './systemSettings.svelte';
+	import type { SettingsSection } from './registry';
+
+	/** Pages a section lists (the AI Capabilities section's AI pages) leave the list at the top. */
+	const sectionPages = $derived(new Set(settingSchemas.sections.flatMap((s) => s.pages ?? [])));
+	const topPages = $derived(PAGES.filter((p) => !sectionPages.has(p.id)));
+	const pagesOf = (sec: SettingsSection) => (sec.pages ?? []).flatMap((id) => PAGES.filter((p) => p.id === id));
+	const sectionLabel = (sec: SettingsSection | undefined) => (sec ? (sec.labelKey ? t(sec.labelKey) : sec.label) : '');
 
 	let query = $state('');
 	const count = (group: string) => settingSchemas.all.filter((s) => s.group === group).length;
@@ -82,7 +89,7 @@
 	const subOf = (selection: string | null) => (selection?.includes('/') ? selection.slice(selection.indexOf('/') + 1) : null);
 	const sectionOf = (selection: string | null) => {
 		const group = groupOf(selection);
-		return group && !query ? (settingSchemas.sections.find((s) => s.groups.includes(group))?.label ?? '') : query ? 'ผลการค้นหา' : 'การตั้งค่าทั้งหมด (IDE + ADE)';
+		return group && !query ? sectionLabel(settingSchemas.sections.find((s) => s.groups.includes(group))) : query ? 'ผลการค้นหา' : 'การตั้งค่าทั้งหมด (IDE + ADE)';
 	};
 	const showSnaps = $derived(systemSettings.snaps && !query);
 	const modifiedCount = $derived(settingSchemas.all.filter((s) => settings.inspect(s.id, 'user') !== undefined || settings.inspect(s.id, 'workspace') !== undefined).length);
@@ -115,7 +122,7 @@
 		</div>
 		<div class="min-h-0 flex-1 space-y-3 overflow-y-auto px-2 pb-3">
 			<div class="space-y-0.5">
-				{#each PAGES as p (p.id)}
+				{#each topPages as p (p.id)}
 					<button class={[ITEM, page === p.id && SELECTED]} aria-current={page === p.id ? 'true' : undefined} onclick={() => ((query = ''), systemSettings.showPage(p.id))}>
 						<Icon name={p.icon} size={14} /><span class="flex-1 truncate">{p.label}</span>
 					</button>
@@ -129,7 +136,12 @@
 			</button>
 			{#each settingSchemas.sections as sec (sec.id)}
 				<div>
-					<div class="px-2.5 pb-1 text-[11px] font-semibold tracking-wide text-(--vscode-descriptionForeground) uppercase">{sec.label}</div>
+					<div class="px-2.5 pb-1 text-[11px] font-semibold tracking-wide text-(--vscode-descriptionForeground) uppercase">{sectionLabel(sec)}</div>
+					{#each pagesOf(sec) as p (p.id)}
+						<button class={[ITEM, page === p.id && SELECTED]} aria-current={page === p.id ? 'true' : undefined} onclick={() => ((query = ''), systemSettings.showPage(p.id))}>
+							<Icon name={p.icon} size={14} /><span class="flex-1 truncate">{p.label}</span>
+						</button>
+					{/each}
 					{#if sec.id === SNAPS_SECTION_ID}
 						<button
 							class={[ITEM, showSnaps && SELECTED]}

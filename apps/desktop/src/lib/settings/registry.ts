@@ -8,7 +8,7 @@ import { PROFILES } from '../ade/agentProfiles';
 import { IDE_SETTINGS } from './ideSettings';
 import { LOCAL_AI_SETTINGS } from './localAi';
 import { ARKAI_SETTINGS } from './arkai';
-import { ADE_SECTION_GROUPS, ADE_SETTINGS, SYSTEM_SECTION_GROUPS } from './ade';
+import { ADE_SECTION_GROUPS, ADE_SETTINGS, AI_SECTION_GROUPS, SYSTEM_SECTION_GROUPS } from './ade';
 import { describeSchema, matchesSchema, schemaTypes, type JsonSchema } from './jsonSchema';
 import { t } from '../i18n/index';
 
@@ -754,10 +754,10 @@ const CORE_SETTINGS: SettingSchema[] = [
 		description: 'เสียงแจ้งเหตุการณ์ (accessibility signals) (Plays a sound for agent and error events.)',
 		scope: 'application'
 	},
-	// --- Status bar resources (Orca's footer)
+	// Orca's Agents pane keep-awake (AI Capabilities); its status bar item is below.
 	{
 		id: 'kingu.keepAwake',
-		group: 'Status Bar',
+		group: 'Agent',
 		type: 'string',
 		default: 'off',
 		enum: ['off', 'auto', 'on'],
@@ -910,16 +910,24 @@ const CORE_SETTINGS: SettingSchema[] = [
 /** Every static setting: the core ones above plus the VS Code-derived IDE settings (ideSettings.ts). */
 export const SETTINGS: SettingSchema[] = [...CORE_SETTINGS, ...ADE_SETTINGS, ...IDE_SETTINGS, ...LOCAL_AI_SETTINGS, ...ARKAI_SETTINGS];
 
-export type SettingsSection = { id: string; label: string; groups: string[] };
+/**
+ * A table-of-contents section. `labelKey`: the label through t() (shown instead of `label`);
+ * `pages`: dedicated settings pages (systemSettings.svelte.ts SettingsPageId) listed in the
+ * section above its groups.
+ */
+export type SettingsSection = { id: string; label: string; labelKey?: 'settings.sections.aiCapabilities'; pages?: string[]; groups: string[] };
 
 /**
  * The system settings page's table of contents: one settings system for the IDE and the ADE,
- * grouped by what they affect. Every group in `SETTINGS` belongs to exactly one section.
+ * grouped by what they affect. Every group in `SETTINGS` belongs to exactly one section. First,
+ * Orca's AI Capabilities group: its Agents pane (the Agent group), the AI accounts page, and
+ * Kingu's own AI pages and Local AI settings (ade/orcaMap.ts ORCA_AI_CAPABILITIES).
  */
 export const SETTINGS_SECTIONS: SettingsSection[] = (
 	[
+		{ id: 'ai', label: 'AI Capabilities', labelKey: 'settings.sections.aiCapabilities', pages: ['accounts', 'mcp', 'skills', 'memories'], groups: AI_SECTION_GROUPS },
 		{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Zen Mode', 'Application', ...SYSTEM_SECTION_GROUPS, 'Status Bar', 'Accessibility', 'Team', 'Snap Sandbox'] },
-		{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Source Control', 'Git', 'Merge Conflict', 'Timeline', 'Terminal', 'Tasks', 'Debug', 'Testing', 'Problems', 'Output', 'TypeScript', 'CSS', 'HTML', 'JSON', 'Emmet', 'Local AI'] },
+		{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Source Control', 'Git', 'Merge Conflict', 'Timeline', 'Terminal', 'Tasks', 'Debug', 'Testing', 'Problems', 'Output', 'TypeScript', 'CSS', 'HTML', 'JSON', 'Emmet'] },
 		{ id: 'ade', label: 'ADE (Agents)', groups: ADE_SECTION_GROUPS }
 	] satisfies SettingsSection[]
 ).map((sec) => ({ ...sec, groups: sec.groups.filter((g) => SETTINGS.some((s) => s.group === g)) }));

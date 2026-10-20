@@ -16,6 +16,7 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['agentCmdOverrides', 'kingu.agent.cmdOverrides', 'added'],
 	['agentDefaultArgs', 'kingu.agent.args.<profile>', 'mapped'],
 	['agentDefaultEnv', 'kingu.agent.env.<profile>', 'added'],
+	['Agent Permissions', 'kingu.agent.cliPermissions', 'added', "Orca's toggle writes each CLI's bypass flag into agentDefaultArgs; Kingu adds it at launch when the profile's args are empty. Default manual (Orca ships yolo)"],
 	['defaultTuiAgent', 'kingu.agent.cli', 'mapped'],
 	['disabledTuiAgents', 'kingu.agent.disabled', 'added'],
 	['claudeAgentTeamsMode', 'kingu.agent.claudeAgentTeams', 'added', 'off / in-process; native-panes needs a tmux-compatible pane shim'],
@@ -30,6 +31,7 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['agentStateRulesPath', null, 'needs-feature', 'downloadable agent-state rules'],
 	['codexSharedServerWarning', null, 'needs-feature', "Codex's shared app-server integration"],
 	['codexTerminalServerIsolation', null, 'needs-feature', "Codex's shared app-server integration"],
+	['claudeManagedAccounts / codexManagedAccounts', 'Settings › AI Accounts page', 'mapped', 'accounts/store.rs: the account each agent terminal signs in with'],
 	['skipCodexRateLimitResetConfirm', null, 'needs-feature', 'Codex account rate-limit reset'],
 	['agentHibernationIdleMs', 'kingu.agent.hibernationIdleMinutes', 'added'],
 	['experimentalAgentHibernation', 'kingu.agent.hibernation', 'added'],
@@ -84,7 +86,7 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['showMenuBarIcon', null, 'needs-feature', 'menu bar / tray icon'],
 	['uiLanguage', 'kingu.uiLanguage', 'added', 'auto / th / en; Rust error text stays Thai for now'],
 	['windowBackgroundBlur', null, 'needs-feature', 'window vibrancy'],
-	['tabAutoGenerateTitle', null, 'needs-feature', 'AI-generated tab titles'],
+	['tabAutoGenerateTitle', null, 'not-applicable', 'Kingu always names a task, and so its agent tab, from the first prompt (taskTitleFromPrompt)'],
 	['confirmClosePinnedTab', null, 'needs-feature', 'pinned ADE tabs'],
 	['httpProxyUrl', 'http.proxy', 'mapped', 'VS Code key (Application › Proxy)'],
 	['httpProxyBypassRules', 'http.noProxy', 'mapped', 'VS Code key (Application › Proxy)'],
@@ -101,7 +103,7 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['showSkillsButton', null, 'needs-feature', 'skill publishing'],
 	['artifactSharingEnabled', null, 'needs-feature', 'artifacts'],
 	['skipDeleteArtifactConfirm', null, 'needs-feature', 'artifacts'],
-	['nestedWorkerMaxDepth', null, 'needs-feature', 'dispatched workers'],
+	['nestedWorkerMaxDepth', null, 'needs-feature', 'orchestration: agents dispatching worker agents through Kingu'],
 	['floatingTerminalEnabled', 'kingu.floating.enabled', 'added'],
 	['floatingTerminalCwd', 'kingu.floating.cwd', 'added'],
 	['floatingTerminalTriggerLocation', 'kingu.floating.triggerLocation', 'added'],
@@ -293,10 +295,64 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['mobile*', null, 'needs-feature', 'mobile pairing / emulator (8 settings)'],
 	['androidSdkPath', null, 'needs-feature', 'mobile emulator'],
 	['machineName', null, 'needs-feature', 'mobile pairing'],
-	['voice.*', null, 'needs-feature', 'voice dictation (9 settings)'],
+	['voice.enabled', null, 'needs-feature', 'voice dictation (on-device speech-to-text)'],
+	['voice.sttModel', null, 'needs-feature', 'voice dictation (on-device speech-to-text)'],
+	['voice.modelsDir', null, 'needs-feature', 'voice dictation (on-device speech-to-text)'],
+	['voice.userModels', null, 'needs-feature', 'voice dictation (on-device speech-to-text)'],
+	['voice.language', null, 'needs-feature', 'voice dictation (on-device speech-to-text)'],
+	['voice.dictationMode', null, 'needs-feature', 'voice dictation (on-device speech-to-text)'],
+	['voice.terminalConfirmBeforeInsert', null, 'needs-feature', 'voice dictation (on-device speech-to-text)'],
+	['voice.microphoneDeviceId', null, 'needs-feature', 'voice dictation (on-device speech-to-text)'],
+	['voice.openAiApiKeyConfigured', null, 'needs-feature', 'voice dictation (cloud speech-to-text key)'],
 	['geminiCliOAuthEnabled', null, 'needs-feature', 'more usage providers in the status bar'],
 	['minimaxEndpoint / minimaxGroupId / minimaxUsageModels', null, 'needs-feature', 'more usage providers in the status bar'],
 	['opencodeSessionCookie / opencodeWorkspaceId', null, 'needs-feature', 'more usage providers in the status bar'],
 	['zcodePlanSite', null, 'needs-feature', 'more usage providers in the status bar'],
 	['localAccountRuntime / localWindowsRuntimeDefault', null, 'not-applicable', 'Windows / WSL']
+];
+
+/**
+ * Orca's AI Capabilities settings group (settings-navigation-capability-sections.ts), pane by
+ * pane, with the Orca settings each pane edits. Every one has a row in ORCA_MAP; the `kingu.*`
+ * keys they map to sit in the AI Capabilities section (registry.ts). Panes without settings of
+ * their own (Linear's agent-skill guide, Computer Use's permissions and skill setup) list none.
+ */
+export const ORCA_AI_CAPABILITIES: readonly { pane: string; settings: readonly string[] }[] = [
+	{
+		pane: 'Agents',
+		settings: [
+			'defaultTuiAgent',
+			'disabledTuiAgents',
+			'agentCmdOverrides',
+			'agentDefaultArgs',
+			'agentDefaultEnv',
+			'Agent Permissions',
+			'agentStatusHooksEnabled',
+			'agentWorkspaceTrustEnabled',
+			'codexTerminalServerIsolation',
+			'codexSharedServerWarning',
+			'tabAutoGenerateTitle',
+			'computerAwakeMode',
+			'keepComputerAwakeWhileAgentsRun',
+			'promptCacheTimerEnabled',
+			'promptCacheTtlMs',
+			'localAgentRuntime',
+			'localAgentWslDistro'
+		]
+	},
+	{
+		pane: 'AI Provider Accounts',
+		settings: [
+			'claudeManagedAccounts / codexManagedAccounts',
+			'geminiCliOAuthEnabled',
+			'opencodeSessionCookie / opencodeWorkspaceId',
+			'minimaxEndpoint / minimaxGroupId / minimaxUsageModels',
+			'zcodePlanSite',
+			'localAccountRuntime / localWindowsRuntimeDefault'
+		]
+	},
+	{ pane: 'Orchestration', settings: ['nestedWorkerMaxDepth'] },
+	{ pane: 'Linear', settings: [] },
+	{ pane: 'Computer Use', settings: [] },
+	{ pane: 'Voice', settings: ORCA_MAP.filter(([orca]) => orca.startsWith('voice.')).map(([orca]) => orca) }
 ];

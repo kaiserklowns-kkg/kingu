@@ -34,6 +34,22 @@ export const AGENT_SETTINGS: SettingSchema[] = [
 	},
 	...agentEnvSettings(),
 	{
+		id: 'kingu.agent.cliPermissions',
+		group: G,
+		type: 'string',
+		// Orca starts agents in yolo; Kingu keeps asking unless you choose otherwise.
+		default: 'manual',
+		enum: ['manual', 'yolo'],
+		enumDescriptions: [
+			'agent CLI ถามคุณก่อนใช้เครื่องมือตามปกติของมัน (The CLI asks before tools, as it normally does.)',
+			'เพิ่ม flag ข้ามการขออนุญาตของ CLI นั้น เช่น claude --dangerously-skip-permissions, codex --dangerously-bypass-approvals-and-sandbox, gemini --yolo (Add that CLI\'s skip-permissions flag.)'
+		],
+		description:
+			'การขออนุญาตของ agent CLI ในโหมด terminal ใช้กับงานใหม่ ไม่ใช้กับ CLI ที่ตั้ง kingu.agent.args.<profile> ไว้เอง และ opencode ไม่มี flag นี้ ส่วนโหมด timeline ใช้ kingu.agent.permissionMode (Orca: Agent Permissions) (Permissions of terminal-mode agent CLIs for new tasks; a CLI whose kingu.agent.args.<profile> you set keeps your arguments.)',
+		// User-only: it turns off the CLI's permission prompts.
+		scope: 'application'
+	},
+	{
 		id: 'kingu.agent.disabled',
 		group: G,
 		type: 'array',
