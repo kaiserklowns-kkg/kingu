@@ -2,6 +2,7 @@
 	import { debug } from '#lib/debug/debug.svelte.ts';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 	import { lsp } from '#lib/lsp/lsp.svelte.ts';
+	import { output } from '#lib/output/output.svelte.ts';
 	import TeamStatus from '#lib/team/TeamStatus.svelte';
 	import Icon from './Icon.svelte';
 	import { editors } from './editors.svelte';
@@ -235,7 +236,7 @@
 		<button
 			class={['h-full max-w-80 truncate px-2 hover:bg-(--vscode-toolbar-hoverBackground)', languageStatus.state === 'not-installed' || languageStatus.state === 'error' ? 'text-(--vscode-editorWarning-foreground)' : '']}
 			title={languageStatus.tooltip}
-			onclick={() => layout.showPanel('output')}>{languageStatus.text}</button
+			onclick={() => output.show(output.has(languageStatus.channel) ? languageStatus.channel : undefined)}>{languageStatus.text}</button
 		>
 	{/if}
 	{#if editorItems}

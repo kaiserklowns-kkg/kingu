@@ -17,6 +17,7 @@ import { layout } from '#lib/workbench/layout.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
 import { status as statusBar } from '#lib/workbench/status.svelte.ts';
 import { notifications, type Severity } from '#lib/workbench/notifications.svelte.ts';
+import { output } from '#lib/output/output.svelte.ts';
 import { LanguageClient, type RefreshKind, type ServerStatus } from './client';
 import { registerFeatureProviders } from './featureProviders';
 import { serverSettings, typescriptPreferences, type SettingsReader } from './serverSettings';
@@ -74,6 +75,8 @@ const MARKER_OWNER = 'lsp';
 const MESSAGE_SEVERITY: Record<number, Severity> = { 1: 'error', 2: 'warning', 3: 'info', 4: 'info' };
 const EXTERNAL_SCHEME = 'kingu-external';
 const LOG_LIMIT = 1000;
+/** Output channel of language feature lines that belong to no one server. */
+const LANGUAGE_SERVERS_CHANNEL = 'Language Servers';
 const SYMBOLS_DELAY_MS = 400;
 const CODE_ACTION_COMMAND = 'kingu.lsp.codeAction';
 const INSTALL_POLL_MS = 3000;
@@ -170,11 +173,11 @@ class Lsp {
 	}
 
 	/** Status bar entry for a Monaco language id, or null when it has no server. */
-	statusFor(languageId: string): { text: string; tooltip: string; state: ServerStatus['state'] } | null {
+	statusFor(languageId: string): { text: string; tooltip: string; state: ServerStatus['state']; /** Its Output channel. */ channel: string } | null {
 		const info = serverFor(languageId);
 		const s = info && this.status.get(info.key);
 		if (!info || !s) return null;
-		return { text: statusText(info, s), tooltip: s.message ?? statusText(info, s), state: s.state };
+		return { text: statusText(info, s), tooltip: s.message ?? statusText(info, s), state: s.state, channel: info.name };
 	}
 
 	/** `#query` (VS Code's workspace symbol search): every running server that offers it, merged. */
@@ -437,7 +440,7 @@ class Lsp {
 		let chain: Promise<unknown> = Promise.resolve();
 		// Sends are chained so the server sees them in order (separate IPC calls may not be).
 		const write = (json: string) => {
-			chain = chain.then(() => (id === null ? undefined : invoke('lsp_send', { id, message: json }))).catch((e) => this.#append(`${info.name}: send failed: ${e}`));
+			chain = chain.then(() => (id === null ? undefined : invoke('lsp_send', { id, message: json }))).catch((e) => this.#append(`${info.name}: send failed: ${e}`, info.name));
 		};
 		const client = new LanguageClient(info.name, write, {
 			diagnostics: (uri, kind, items) => {
@@ -445,7 +448,7 @@ class Lsp {
 				this.#setDiagnostics(uri, kind, items);
 			},
 			status: (s) => this.#setStatus(info, s),
-			log: (line) => this.#append(line),
+			log: (line) => this.#append(line, info.name),
 			// MessageType Error 1, Warning 2, Info 3 are notifications (VS Code); Log 4 only goes to the Output log.
 			showMessage: (type, message) => {
 				if (type <= 3) notifications.notify({ severity: MESSAGE_SEVERITY[type], message, source: info.name });
@@ -460,9 +463,9 @@ class Lsp {
 		const channel = new Channel<LspEvent>();
 		channel.onmessage = (ev) => {
 			if (ev.type === 'message') client.rpc.handle(ev.json);
-			else if (ev.type === 'stderr') this.#append(ev.line);
+			else if (ev.type === 'stderr') this.#append(ev.line, info.name);
 			else {
-				this.#append(`${info.name} exited (code ${ev.code})`);
+				this.#append(`${info.name} exited (code ${ev.code})`, info.name);
 				client.exited(ev.code);
 				if (this.#sessions.get(key)?.client === client) this.#forget(key);
 			}
@@ -485,7 +488,7 @@ class Lsp {
 			} catch (e) {
 				const message = String(e);
 				this.#setStatus(info, { state: isRustError(message, 'notInstalled') ? 'not-installed' : 'error', message });
-				this.#append(message);
+				this.#append(message, info.name);
 				clientLog('error', `language server ${key}: ${message}`);
 				return false;
 			}
@@ -585,7 +588,9 @@ class Lsp {
 		layer: (id, scope) => (scope === 'user' ? userSettings.inspect(id, 'user') : (userSettings.inspect(id, 'repo') ?? userSettings.inspect(id, 'workspace')))
 	};
 
-	#append(line: string) {
+	/** A line for the Output panel: the server's own channel (by its name), else "Language Servers". */
+	#append(line: string, channel = LANGUAGE_SERVERS_CHANNEL) {
+		output.append(channel, line);
 		this.#pendingLog.push(line);
 		if (this.#pendingLog.length > 1) return;
 		queueMicrotask(() => {

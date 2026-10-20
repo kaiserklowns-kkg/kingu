@@ -19,6 +19,7 @@ import { killPty } from '#lib/terminal/pty.ts';
 import { terminals } from '#lib/terminal/terminals.svelte.ts';
 import { editors } from '#lib/workbench/editors.svelte.ts';
 import { layout } from '#lib/workbench/layout.svelte.ts';
+import { output, TASKS_CHANNEL } from '#lib/output/output.svelte.ts';
 import { choose } from '#lib/workbench/messageBox.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
@@ -142,10 +143,11 @@ class Tasks {
 
 	#append(line: string) {
 		this.log = [...this.log, ...line.split('\n')].slice(-LOG_LIMIT);
+		output.append(TASKS_CHANNEL, line);
 	}
 
 	showLog() {
-		layout.showPanel('output');
+		output.show(TASKS_CHANNEL);
 	}
 
 	/** Workspace-relative paths of the folder's files (detection, autoDetect file locations). */

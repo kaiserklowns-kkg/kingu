@@ -5,6 +5,7 @@
 	import EditorHost from './EditorHost.svelte';
 	import ImageViewer from './ImageViewer.svelte';
 	import MarkdownPreview from './MarkdownPreview.svelte';
+	import { isOutputKey, outputChannelOf } from '#lib/output/output.ts';
 	import { hasPreview, isChangesKey, isCsvPath, isImagePath, isPreviewKey, previewTarget } from './viewers';
 	import CombinedDiff from './CombinedDiff.svelte';
 	import MergeEditor from '#lib/scm/MergeEditor.svelte';
@@ -69,7 +70,7 @@
 	const chatEditorId = $derived(activePath ? chatIdOfEditorKey(activePath) : null);
 	const adeActive = $derived(activePath !== null && (isAdeEditor(activePath) || isChatEditorKey(activePath)));
 	const taskSlug = $derived(activePath ? slugOfTaskKey(activePath) : null);
-	const crumbs = $derived(!activePath || settingsActive || adeActive || isChangesKey(activePath) || isVaultKey(activePath) || isArtifactKey(activePath) || isUntitledSearchEditor(activePath) ? [] : activePath === USER_SETTINGS_KEY
+	const crumbs = $derived(!activePath || settingsActive || adeActive || isChangesKey(activePath) || isVaultKey(activePath) || isArtifactKey(activePath) || isUntitledSearchEditor(activePath) ? [] : isOutputKey(activePath) ? ['Output', outputChannelOf(activePath)] : activePath === USER_SETTINGS_KEY
 					? ['User', 'settings.json']
 					: activePath === USER_KEYBINDINGS_KEY
 						? ['User', 'keybindings.json']
@@ -82,7 +83,7 @@
 	const iconOf = (key: string) =>
 		fileIcon(key === SETTINGS_EDITOR_KEY || key === USER_SETTINGS_KEY ? 'settings.json' : isAdeEditor(key) || isChatEditorKey(key) ? 'tasks.md' : fileOf(key));
 	/** Breadcrumbs of a workspace file are clickable (not the Settings editor's or user settings'). */
-	const crumbsAreFiles = $derived(!!activePath && activePath !== USER_SETTINGS_KEY && !isChangesKey(activePath) && !isExternalKey(activePath) && crumbs.length > 0);
+	const crumbsAreFiles = $derived(!!activePath && activePath !== USER_SETTINGS_KEY && !isChangesKey(activePath) && !isExternalKey(activePath) && !isOutputKey(activePath) && crumbs.length > 0);
 	const diffActive = $derived(activePath !== null && isDiffKey(activePath));
 	/** Images and Markdown previews have their own viewers instead of Monaco. */
 	const viewerActive = $derived(activePath !== null && (isMergeKey(activePath) || isImagePath(activePath) || isPreviewKey(activePath) || isNotebookPath(activePath) || isChangesKey(activePath) || isVaultKey(activePath) || isArtifactKey(activePath) || isSearchEditorKey(activePath)));

@@ -839,6 +839,7 @@
 	"outline.showStructs": {"type":"boolean","default":true},
 	"outline.showTypeParameters": {"type":"boolean","default":true},
 	"outline.showVariables": {"type":"boolean","default":true},
+	"output.smartScroll.enabled": {"type":"boolean","default":true},
 	"problems.autoReveal": {"type":"boolean","default":true},
 	"problems.decorations.enabled": {"type":"boolean","default":true},
 	"problems.defaultViewMode": {"type":"string","default":"tree","enum":["table","tree"]},

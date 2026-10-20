@@ -81,6 +81,8 @@ const EXCLUSIVE: [string, string][] = [
 	['workbench.action.chat.newChat', 'workbench.action.files.newUntitledFile'],
 	// F11 off macOS (VS Code's keys): Step Into while the debugger is stopped, Toggle Full Screen (lower weight) otherwise.
 	['workbench.action.debug.stepInto', 'workbench.action.toggleFullScreen'],
+	// ⌘↵ opens the focused list's item: in the Search view (Open in Editor) or the Problems list (Open to the Side).
+	['search.action.openInEditor', 'problems.action.openToSide'],
 	// Search Again needs an active Search Editor with focus in it, Rerun Task a focused task terminal (Windows/Linux keys).
 	['rerunSearchEditorSearch', 'workbench.action.tasks.rerunForActiveTerminal'],
 	// Delete File Results acts in the IDE's Search Editor, Delete Workspace only in the Agents layout.
