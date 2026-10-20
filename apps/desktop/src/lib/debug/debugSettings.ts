@@ -102,3 +102,43 @@ export function inlineValues(lines: readonly string[], first: number, variables:
 
 /** The scope inline values read: the first non-expensive one (Locals), like VS Code. */
 export const localsScope = (scopes: readonly Scope[]) => scopes.find((s) => !s.expensive) ?? null;
+
+/** A session in the session tree (a js-debug child names its parent). */
+export type SessionNode = { key: number; parentKey: number | null };
+
+/** The top-level session of `key` (itself when it has no parent). */
+export function rootSession(sessions: readonly SessionNode[], key: number): number {
+	let s = sessions.find((x) => x.key === key);
+	while (s && s.parentKey !== null) {
+		const parent = sessions.find((x) => x.key === s!.parentKey);
+		if (!parent) break;
+		s = parent;
+	}
+	return s?.key ?? key;
+}
+
+/** `debug.showSubSessionsInToolBar`: the sessions the toolbar's session picker lists (only the
+ * top-level ones unless the setting is on, VS Code: SelectSessionActionViewItem.getSessions). */
+export function toolbarSessions<T extends SessionNode>(sessions: readonly T[], showSubSessions: boolean): T[] {
+	return showSubSessions ? [...sessions] : sessions.filter((s) => s.parentKey === null);
+}
+
+/** The session the toolbar shows and Stop / Restart act on: the focused one, or (setting off) its
+ * top-level session (VS Code walks up `parentSession` when sub-sessions are hidden). */
+export function toolbarTarget(sessions: readonly SessionNode[], focusedKey: number | null, showSubSessions: boolean): number | null {
+	if (focusedKey === null) return null;
+	return showSubSessions ? focusedKey : rootSession(sessions, focusedKey);
+}
+
+/** `debug.autoExpandLazyVariables`: `on`, or `auto` with a screen reader (`editor.accessibilitySupport: on`). */
+export const autoExpandsLazy = (setting: string, screenReader: boolean) => setting === 'on' || (setting === 'auto' && screenReader);
+
+/** A lazy variable (presentationHint.lazy) shows its one child's value once fetched (VS Code: Variable's lazy button). */
+export function lazyValue(v: Pick<Variable, 'variablesReference' | 'presentationHint'> & Partial<Variable>, children: readonly Variable[] | undefined): Variable | null | undefined {
+	if (!v.presentationHint?.lazy || v.variablesReference <= 0) return undefined;
+	return children && children.length === 1 ? children[0] : null;
+}
+
+/** `debug.hideLauncherWhileDebugging`: the Run and Debug view keeps its Start Debugging button while
+ * a session runs, unless hidden or replaced by the docked toolbar (VS Code: debugViewlet). */
+export const launcherWhileDebugging = (hide: boolean, location: ToolBarLocation) => !hide && location !== 'docked';

@@ -92,6 +92,7 @@ export const ideTasks = {
 	'ideTasks.debug.debugAnyway': 'Debug Anyway',
 	'ideTasks.debug.showErrors': 'Show Errors',
 	'ideTasks.debug.abort': 'Abort',
+	'ideTasks.debug.waiting': "Waiting for preLaunchTask '{task}'...",
 	'ideTasks.debug.notFound': "Could not find the task '{task}'.",
 	'ideTasks.debug.notTracked': "The task '{task}' has not exited and doesn't have a 'problemMatcher' defined. Make sure to define a problem matcher for watch tasks.",
 	'ideTasks.debug.configureTask': 'Configure Task',

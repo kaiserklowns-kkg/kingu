@@ -765,14 +765,38 @@ class Debug {
 		const { task } = await tasks.find(ref);
 		if (!task) return failed(t('ideTasks.debug.notFound', { task: name }));
 		const run = tasks.run(task, { untilInactive: true });
+		// debug.hideSlowPreLaunchWarning: after a while (5 s for a background task, else 10 s) a
+		// notification offers Debug Anyway / Configure Task / Abort (VS Code: debugTaskRunner).
+		let slow: ReturnType<typeof notifications.notify> | undefined;
+		const answered = new Promise<'debug' | 'abort'>((resolve) => {
+			if (settings.get<boolean>('debug.hideSlowPreLaunchWarning')) return;
+			const timer = setTimeout(() => {
+				slow = notifications.info(t('ideTasks.debug.waiting', { task: name }), {
+					sticky: true,
+					progress: { infinite: true },
+					actions: [
+						{ label: t('ideTasks.debug.debugAnyway'), run: () => resolve('debug') },
+						...(task.configured ? [{ label: t('ideTasks.debug.configureTask'), run: () => (void tasks.configure(task), resolve('abort')) }] : []),
+						{ label: t('ideTasks.debug.abort'), run: () => resolve('abort') }
+					]
+				});
+			}, task.isBackground ? 5000 : 10000);
+			void run.finally(() => clearTimeout(timer));
+		});
+		const waited = Promise.race([run, answered]).finally(() => slow?.close());
 		let summary;
 		// A background task without a background pattern never goes idle: VS Code gives up after 5 s.
 		if (task.isBackground && !parseProblemMatchers(task.problemMatcher, []).some((m) => m.watching)) {
 			const timeout = new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), 5000));
-			const first = await Promise.race([run, timeout]);
+			const first = await Promise.race([waited, timeout]);
 			if (first === 'timeout') return failed(t('ideTasks.debug.notTracked', { task: name }), task);
 			summary = first;
-		} else summary = await run;
+		} else summary = await waited;
+		if (summary === 'debug') return true;
+		if (summary === 'abort') {
+			tasks.terminate(task);
+			return false;
+		}
 		if (summary.exitCode === undefined) return false;
 		const errors = lsp.errorCount();
 		const onErrors = settings.get<string>('debug.onTaskErrors');
@@ -860,16 +884,24 @@ class Debug {
 
 	// --- Running -----------------------------------------------------------------------------------
 
-	/** Stop: the focused session's whole tree (a js-debug child stops with its parent). */
+	/** Stop: the focused session's whole tree (a js-debug child stops with its parent), or only the
+	 * focused child with debug.showSubSessionsInToolBar. */
 	async stop() {
 		const a = this.#focused() ?? this.#live()[0];
 		if (!a || !this.active) return;
-		await this.#kill(this.#root(a));
+		// debug.showSubSessionsInToolBar: a child session the toolbar shows stops by itself.
+		await this.#kill(this.#showSubSessions() ? a : this.#root(a));
+	}
+
+	#showSubSessions() {
+		return settings.get<boolean>('debug.showSubSessionsInToolBar') === true;
 	}
 
 	async restart() {
 		const focused = this.#focused() ?? this.#all.at(-1);
 		if (!focused) return;
+		// A child session restarts by itself only when the toolbar shows sub-sessions and the adapter can.
+		if (focused.parent && this.#showSubSessions() && focused.session.model.state !== 'terminated' && (await focused.session.restart().catch(() => false))) return;
 		const a = this.#root(focused);
 		if (a.session.model.state !== 'terminated' && (await a.session.restart().catch(() => false))) return;
 		if (a.session.model.state !== 'terminated') await this.#kill(a);

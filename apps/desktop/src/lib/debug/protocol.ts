@@ -41,7 +41,7 @@ export type Breakpoint = { id?: number; verified: boolean; message?: string; lin
 export type Thread = { id: number; name: string };
 export type StackFrame = { id: number; name: string; source?: Source; line: number; column: number; presentationHint?: string; canRestart?: boolean };
 export type Scope = { name: string; variablesReference: number; expensive: boolean };
-export type Variable = { name: string; value: string; type?: string; variablesReference: number; evaluateName?: string };
+export type Variable = { name: string; value: string; type?: string; variablesReference: number; evaluateName?: string; presentationHint?: { kind?: string; attributes?: string[]; visibility?: string; lazy?: boolean } };
 export type CompletionItem = { label: string; text?: string; sortText?: string; type?: string; start?: number; length?: number };
 export type GotoTarget = { id: number; label: string; line: number; column?: number };
 

@@ -88,6 +88,7 @@ export const ideTasks = {
 	'ideTasks.debug.debugAnyway': 'Debug ต่อ',
 	'ideTasks.debug.showErrors': 'ดู Error',
 	'ideTasks.debug.abort': 'ยกเลิก',
+	'ideTasks.debug.waiting': "กำลังรอ preLaunchTask '{task}'...",
 	'ideTasks.debug.notFound': "ไม่พบ task '{task}'",
 	'ideTasks.debug.notTracked': "task '{task}' ยังไม่จบและไม่มี 'problemMatcher' — task ที่เฝ้าดูไฟล์ต้องมี problem matcher",
 	'ideTasks.debug.configureTask': 'ตั้งค่า Task',

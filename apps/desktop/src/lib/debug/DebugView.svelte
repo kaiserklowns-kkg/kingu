@@ -13,7 +13,7 @@
 	import { t } from '#lib/i18n/index.ts';
 	import { debug } from './debug.svelte.ts';
 	import { breakpointMessage, exceptionRows } from './breakpoints.ts';
-	import { breakpointRows, variableLabel } from './debugSettings.ts';
+	import { autoExpandsLazy, breakpointRows, launcherWhileDebugging, lazyValue, variableLabel, type ToolBarLocation } from './debugSettings.ts';
 	import DebugToolbar from './DebugToolbar.svelte';
 	import type { StackFrame, Variable } from './protocol.ts';
 
@@ -54,6 +54,22 @@
 		const key = cmd && keyOf(cmd);
 		return key ? `${label} (${keyLabel(key)})` : label;
 	};
+
+	// debug.autoExpandLazyVariables: lazy variables fetch their value as soon as they show.
+	const autoLazy = $derived(autoExpandsLazy(settings.get<string>('debug.autoExpandLazyVariables'), settings.get<string>('editor.accessibilitySupport') === 'on'));
+	const lazyAsked = new Set<string>();
+	$effect(() => {
+		const m = model;
+		if (!autoLazy || !m) return;
+		for (const list of Object.values(m.variables))
+			for (const v of list) {
+				const id = `${debug.focusedKey}:${m.frameId}:${v.variablesReference}`;
+				if (v.presentationHint?.lazy && v.variablesReference > 0 && !m.variables[v.variablesReference] && !lazyAsked.has(id)) {
+					lazyAsked.add(id);
+					void debug.expand(v.variablesReference);
+				}
+			}
+	});
 
 	function toggleVar(key: string, ref: number) {
 		expanded[key] = !expanded[key];
@@ -157,11 +173,14 @@
 {/snippet}
 
 {#snippet variables(list: Variable[], depth: number, path: string, parentRef: number)}
-	{#each list as v (v.name)}
-		{@const key = `${path}/${v.name}`}
+	{#each list as raw (raw.name)}
+		{@const key = `${path}/${raw.name}`}
+		<!-- A lazy variable (a getter) shows its value once fetched: a button, or at once with debug.autoExpandLazyVariables. -->
+		{@const lazy = lazyValue(raw, model?.variables[raw.variablesReference])}
+		{@const v = lazy ? { ...lazy, name: raw.name, evaluateName: raw.evaluateName } : raw}
 		{@const children = v.variablesReference > 0 && expanded[key] ? model?.variables[v.variablesReference] : undefined}
 		<div class={ROW} style:padding-left="{depth * 8 + 4}px" title={v.type ? `${v.name}: ${v.type}` : v.name} role="treeitem" aria-selected="false" tabindex="-1" oncontextmenu={(e) => variableMenu(e, v, parentRef)}>
-			{#if v.variablesReference > 0}
+			{#if v.variablesReference > 0 && lazy !== null}
 				<button aria-label={expanded[key] ? 'Collapse' : 'Expand'} class="grid size-4 shrink-0 place-items-center" onclick={() => toggleVar(key, v.variablesReference)}>
 					<Icon name={expanded[key] ? 'chevronDown' : 'chevronRight'} size={14} />
 				</button>
@@ -170,12 +189,21 @@
 			{/if}
 			<span class="shrink-0 text-(--vscode-debugTokenExpression-name,var(--vscode-foreground))">{variableLabel(v, showTypes)}</span>
 			<span class="shrink-0 pr-1">:</span>
-			<span
-				class="truncate font-mono text-xs text-(--vscode-descriptionForeground)"
-				role="button"
-				tabindex="-1"
-				ondblclick={() => caps.supportsSetVariable && void debug.setVariable(parentRef, v.name, v.value)}>{v.value}</span
-			>
+			{#if lazy === null}
+				<button
+					class="rounded px-1 font-mono text-xs text-(--vscode-textLink-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
+					title={t('debugger.lazyExpand')}
+					aria-label={t('debugger.lazyExpand')}
+					onclick={() => void debug.expand(raw.variablesReference)}>…</button
+				>
+			{:else}
+				<span
+					class="truncate font-mono text-xs text-(--vscode-descriptionForeground)"
+					role="button"
+					tabindex="-1"
+					ondblclick={() => caps.supportsSetVariable && void debug.setVariable(parentRef, v.name, v.value)}>{v.value}</span
+				>
+			{/if}
 		</div>
 		{#if children}{@render variables(children, depth + 1, key, v.variablesReference)}{/if}
 	{/each}
@@ -184,7 +212,18 @@
 <section class="flex min-h-0 flex-1 flex-col">
 	<div class="flex shrink-0 flex-col gap-1.5 px-2 pt-1 pb-2">
 		{#if debug.active}
-			<DebugToolbar placement="docked" />
+			<div class="flex min-w-0 items-center gap-1">
+				<!-- The launcher stays to start another session unless debug.hideLauncherWhileDebugging (the docked toolbar replaces it). -->
+				{#if launcherWhileDebugging(settings.get<boolean>('debug.hideLauncherWhileDebugging'), settings.get<ToolBarLocation>('debug.toolBarLocation'))}
+					<button
+						class="grid size-6 shrink-0 place-items-center rounded text-(--vscode-debugIcon-startForeground,#89d185) hover:bg-(--vscode-toolbar-hoverBackground)"
+						aria-label={t('debugger.startAnotherSession')}
+						title={titled(t('debugger.startAnotherSession'), 'workbench.action.debug.selectandstart')}
+						onclick={() => commands.run('workbench.action.debug.selectandstart')}><Icon name="play" size={16} /></button
+					>
+				{/if}
+				<DebugToolbar placement="docked" />
+			</div>
 		{:else}
 			<button
 				class="flex h-[26px] items-center justify-center gap-1 rounded-sm bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:brightness-110"
