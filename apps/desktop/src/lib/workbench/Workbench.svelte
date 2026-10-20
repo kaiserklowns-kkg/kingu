@@ -86,6 +86,7 @@
 	import { installVault } from '#lib/vault/vault.svelte.ts';
 	import { installArtifacts } from '#lib/artifacts/artifacts.svelte.ts';
 	import { installDebug } from '#lib/debug/debug.svelte.ts';
+	import { installTesting } from '#lib/testing/testing.svelte.ts';
 	import DebugToolbar from '#lib/debug/DebugToolbar.svelte';
 	import { installBreadcrumbs } from './breadcrumbsCommands.svelte';
 	import { installLanguageCommands } from './languageCommands.svelte';
@@ -354,6 +355,7 @@
 		const uninstallHunkCommands = installHunkCommands();
 		const uninstallChatEditorCommands = installChatEditorCommands();
 		const uninstallDebug = installDebug();
+		const uninstallTesting = installTesting();
 		const uninstallBreadcrumbs = installBreadcrumbs();
 		const uninstallLanguageCommands = installLanguageCommands();
 		const uninstallProblemsSettings = installProblemsSettings();
@@ -378,6 +380,7 @@
 			uninstallBreadcrumbs();
 			uninstallLanguageCommands();
 			uninstallDebug();
+			uninstallTesting();
 			uninstallAdeCommands();
 			uninstallHunkCommands();
 			uninstallChatEditorCommands();

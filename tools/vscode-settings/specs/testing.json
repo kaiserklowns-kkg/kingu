@@ -1,0 +1,52 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/testing.ts",
+	"export": "TESTING_SETTINGS",
+	"what": "testing.*",
+	"entries": [
+		{
+			"id": "testing.automaticallyOpenPeekView",
+			"group": "Testing",
+			"th": "เปิด peek ของข้อผิดพลาดเองเมื่อใด",
+			"enumTh": ["เปิดเองไม่ว่าการทดสอบที่ล้มเหลวจะอยู่ที่ใด", "เปิดเองเมื่อการทดสอบที่ล้มเหลวอยู่ในเอกสารที่มองเห็น", "ไม่เปิดเอง"]
+		},
+		{
+			"id": "testing.countBadge",
+			"group": "Testing",
+			"th": "ตัวเลขบนไอคอน Testing ในแถบกิจกรรม",
+			"enumTh": ["แสดงจำนวนการทดสอบที่ล้มเหลว", "ไม่แสดงตัวเลข", "แสดงจำนวนการทดสอบที่ผ่าน", "แสดงจำนวนการทดสอบที่ข้าม"]
+		},
+		{
+			"id": "testing.followRunningTest",
+			"group": "Testing",
+			"th": "เลื่อนมุมมอง Test Explorer ตามการทดสอบที่กำลังรัน"
+		},
+		{
+			"id": "testing.defaultGutterClickAction",
+			"group": "Testing",
+			"th": "สิ่งที่ทำเมื่อคลิกซ้ายที่ไอคอนการทดสอบที่ขอบ editor",
+			"enumOnly": ["run", "debug", "contextMenu"],
+			"enumTh": ["รันการทดสอบ", "debug การทดสอบ", "เปิดเมนูตัวเลือกเพิ่มเติม"]
+		},
+		{
+			"id": "testing.gutterEnabled",
+			"group": "Testing",
+			"th": "แสดงไอคอนการทดสอบที่ขอบ editor"
+		},
+		{
+			"id": "testing.saveBeforeTest",
+			"group": "Testing",
+			"th": "บันทึก editor ที่ยังไม่บันทึกทั้งหมดก่อนรันการทดสอบ"
+		},
+		{
+			"id": "testing.automaticallyOpenTestResults",
+			"group": "Testing",
+			"th": "เปิดผลการทดสอบเมื่อใด",
+			"enumTh": ["ไม่เปิดเอง", "เปิดผลการทดสอบเมื่อเริ่มรัน", "เปิดผลการทดสอบเมื่อมีการทดสอบล้มเหลว", "เปิด Test Explorer เมื่อเริ่มรัน"]
+		},
+		{
+			"id": "testing.alwaysRevealTestOnStateChange",
+			"group": "Testing",
+			"th": "เลื่อนไปที่การทดสอบทุกครั้งที่สถานะเปลี่ยนเมื่อเปิด testing.followRunningTest ถ้าปิดจะเลื่อนไปเฉพาะการทดสอบที่ล้มเหลว"
+		}
+	]
+}

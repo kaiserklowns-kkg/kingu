@@ -16,6 +16,7 @@
 	import { isNonTextEditor } from '#lib/settings/resources.ts';
 	import { editorOptions, installEditorSettings } from '#lib/settings/apply.svelte.ts';
 	import { attachDebugEditor, type DebugDecorations } from '#lib/debug/editorDebug.ts';
+	import { attachTestingEditor, type TestingDecorations } from '#lib/testing/editorTesting.ts';
 	import { attachChatEditDecorations, type ChatEditDecorations } from '#lib/agent/chatEditDecorations.svelte.ts';
 	import { attachScmEditor, type ScmEditorDecorations } from '#lib/scm/scmEditor.svelte.ts';
 	import { indentLabel } from './textFiles';
@@ -33,6 +34,8 @@
 	let switching = false;
 	/** Breakpoint glyphs and the stopped line for the shown file. */
 	let debugDecorations = $state<DebugDecorations | undefined>();
+	/** Test run icons, failure messages and the failure peek for the shown file. */
+	let testingDecorations = $state<TestingDecorations | undefined>();
 	/** The agent chat's pending changes of the shown file, with Keep / Undo per change. */
 	let chatEditDecorations = $state<ChatEditDecorations | undefined>();
 	/** Quick diff, git blame and merge conflicts of the shown file. */
@@ -86,6 +89,7 @@
 			ed.onDidChangeModelContent((e) => e.eol && reportModel());
 			ed.onDidFocusEditorText(() => editors.activateGroup(group));
 			debugDecorations = attachDebugEditor(m.monaco, ed, () => shown);
+			testingDecorations = attachTestingEditor(m.monaco, ed, () => shown);
 			chatEditDecorations = attachChatEditDecorations(m.monaco, ed, () => shown);
 			scmDecorations = attachScmEditor(m.monaco, ed, () => shown);
 			editor = ed;
@@ -149,6 +153,7 @@
 			disposed = true;
 			unregister();
 			debugDecorations?.dispose();
+			testingDecorations?.dispose();
 			chatEditDecorations?.dispose();
 			scmDecorations?.dispose();
 			if (editor && shown) saveViewState(group, shown, editor.saveViewState());
@@ -204,6 +209,12 @@
 	$effect(() => {
 		void shown;
 		debugDecorations?.render();
+	});
+
+	// Test decorations follow the discovered tests, the results and the shown file.
+	$effect(() => {
+		void shown;
+		testingDecorations?.render();
 	});
 
 	// Chat edits follow the working sets, the file on disk and the shown file.
@@ -315,6 +326,69 @@
 	:global(.kg-bp-triggered)::before {
 		background: transparent;
 		border: 1.5px dashed var(--vscode-debugIcon-breakpointForeground, #e51400);
+	}
+	/* A breakpoint using a feature the debugger lacks (VS Code's debug-breakpoint-unsupported). */
+	:global(.kg-bp-unsupported)::before {
+		background: linear-gradient(135deg, transparent 43%, var(--vscode-debugIcon-breakpointUnverifiedForeground, #848484) 43%, var(--vscode-debugIcon-breakpointUnverifiedForeground, #848484) 57%, transparent 57%);
+		border: 1.5px solid var(--vscode-debugIcon-breakpointUnverifiedForeground, #848484);
+	}
+	/* Test gutter icons (VS Code testing decorations): run, then the last result. */
+	:global(.kg-test) {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+	}
+	:global(.kg-test)::before {
+		content: '';
+		width: 0;
+		height: 0;
+		border-top: 5px solid transparent;
+		border-bottom: 5px solid transparent;
+		border-left: 8px solid var(--vscode-testing-runAction, #89d185);
+	}
+	:global(.kg-test-passed)::before {
+		width: 9px;
+		height: 5px;
+		border: solid var(--vscode-testing-iconPassed, #73c991);
+		border-width: 0 0 2px 2px;
+		transform: rotate(-45deg) translate(1px, -1px);
+	}
+	:global(.kg-test-failed)::before,
+	:global(.kg-test-errored)::before {
+		width: 10px;
+		height: 10px;
+		border: none;
+		border-radius: 50%;
+		background: radial-gradient(circle, var(--vscode-testing-iconFailed, #f14c4c) 60%, transparent 62%);
+	}
+	:global(.kg-test-skipped)::before {
+		width: 9px;
+		height: 2px;
+		border: none;
+		background: var(--vscode-testing-iconSkipped, #848484);
+	}
+	:global(.kg-test-running)::before {
+		width: 9px;
+		height: 9px;
+		border: 2px solid var(--vscode-testing-iconQueued, #cca700);
+		border-right-color: transparent;
+		border-radius: 50%;
+		animation: kg-test-spin 1s linear infinite;
+	}
+	@keyframes -global-kg-test-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+	/* The failure peek (VS Code testing peek) and the message after a failing line. */
+	:global(.kg-test-message) {
+		color: var(--vscode-testing-message-error-decorationForeground, var(--vscode-errorForeground, #f14c4c));
+		margin-left: 12px;
+		font-style: italic;
+	}
+	:global(.kg-test-message-line) {
+		background: var(--vscode-testing-message-error-lineBackground, rgba(255, 0, 0, 0.1));
 	}
 	/* debug.inlineValues */
 	:global(.kg-debug-inline-value) {

@@ -1,7 +1,7 @@
 // Workbench part visibility and sizes (VS Code: IWorkbenchLayoutService, layout.ts).
 // Defaults and minimums follow VS Code: sidebar/aux 300 (min 170), panel min height 77.
 
-export type SideView = 'explorer' | 'search' | 'scm' | 'debug' | 'snaps' | 'agents' | 'vault' | 'artifacts';
+export type SideView = 'explorer' | 'search' | 'scm' | 'debug' | 'testing' | 'snaps' | 'agents' | 'vault' | 'artifacts';
 export type PanelTab = 'problems' | 'output' | 'debugConsole' | 'terminal';
 
 const KEY = 'kingu.workbench.layout';

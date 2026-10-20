@@ -683,8 +683,8 @@ class Debug {
 					layout.showPanel('terminal');
 					return {};
 				},
-				// Answered at once; the child session starts on its own connection (js-debug waits for neither).
-				startDebugging: async (args) => void this.#startChild(active, args),
+				// Answered once the child session has started (VS Code's rawDebugSession does the same).
+				startDebugging: (args) => this.#startChild(active, args),
 				changed: () => this.#publish(active),
 				stopped: (frame) => {
 					this.focusSession(active.key);
@@ -745,11 +745,12 @@ class Debug {
 	async #startChild(parent: Active, args: StartDebuggingArguments) {
 		if (parent.id === null) return;
 		const configuration = args.configuration ?? {};
+		// VS Code: the parent's debugger type, the request from the arguments, the parent's name unless given.
 		const config: LaunchConfig = {
 			...configuration,
-			type: typeof configuration.type === 'string' ? configuration.type : parent.config.type,
+			type: parent.config.type,
 			request: args.request === 'attach' ? 'attach' : 'launch',
-			name: typeof configuration.name === 'string' ? configuration.name : parent.config.name
+			name: typeof configuration.name === 'string' && configuration.name ? configuration.name : parent.config.name
 		};
 		await this.#launch(config, parent.noDebug, undefined, { parent });
 	}
@@ -823,6 +824,14 @@ class Debug {
 	#ended(active: Active) {
 		for (const child of this.#all.filter((a) => a.parent === active && a.session.model.state !== 'terminated')) void this.#kill(child);
 		if (active.group !== undefined && !active.parent) for (const other of this.#live().filter((a) => a.group === active.group && a !== active && !a.parent)) void this.#kill(other);
+		// A child's output stays readable in its parent's console after focus goes back to it.
+		const parent = active.parent;
+		if (parent && parent.session.model.state !== 'terminated' && active.session.model.output.length) {
+			const output = [...parent.session.model.output, ...active.session.model.output];
+			parent.session.model = { ...parent.session.model, output: output.slice(-Math.max(1, outputLimit.max)) };
+			active.session.model = { ...active.session.model, output: [] };
+			this.#publish(parent);
+		}
 		// Persistent data breakpoints stay; the rest belonged to this session (VS Code).
 		if (!this.#live().length) this.dataBreakpoints = B.persistentData(this.dataBreakpoints);
 		this.sessions = this.sessions.filter((s) => s.key !== active.key);

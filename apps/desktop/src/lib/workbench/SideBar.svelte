@@ -9,6 +9,7 @@
 	import SearchView from './SearchView.svelte';
 	import AgentsView from '#lib/ade/AgentsView.svelte';
 	import DebugView from '#lib/debug/DebugView.svelte';
+	import TestingView from '#lib/testing/TestingView.svelte';
 	import SnapsSideView from '#lib/snaps/SnapsSideView.svelte';
 	import VaultView from '#lib/vault/VaultView.svelte';
 	import ArtifactsView from '#lib/artifacts/ArtifactsView.svelte';
@@ -20,7 +21,7 @@
 	let { workspaceName }: { workspaceName: string } = $props();
 
 	const location = $derived(settings.get<string>('workbench.activityBar.location'));
-	const titles = $derived({ explorer: 'Explorer', search: 'Search', scm: 'Source Control', debug: 'Run and Debug', snaps: 'Snaps', agents: 'Agents', vault: t('vault.title'), artifacts: t('artifacts.title') });
+	const titles = $derived({ explorer: 'Explorer', search: 'Search', scm: 'Source Control', debug: 'Run and Debug', testing: 'Testing', snaps: 'Snaps', agents: 'Agents', vault: t('vault.title'), artifacts: t('artifacts.title') });
 </script>
 
 <aside aria-label={titles[layout.sideView]} class="flex h-full flex-col bg-(--vscode-sideBar-background) text-(--vscode-sideBar-foreground)">
@@ -51,6 +52,8 @@
 		<ScmView />
 	{:else if layout.sideView === 'debug'}
 		<DebugView />
+	{:else if layout.sideView === 'testing'}
+		<TestingView />
 	{:else if layout.sideView === 'snaps'}
 		<SnapsSideView />
 	{:else if layout.sideView === 'agents'}

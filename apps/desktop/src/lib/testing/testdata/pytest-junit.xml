@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="1" failures="2" skipped="1" tests="6" time="0.050" timestamp="2026-10-20T10:00:00.000000" hostname="host"><testcase classname="tests.test_math" name="test_add" file="tests/test_math.py" line="3" time="0.001" /><testcase classname="tests.test_math" name="test_sub" file="tests/test_math.py" line="6" time="0.002"><failure message="assert 1 == 2">def test_sub():
+&gt;       assert 3 - 2 == 2
+E       assert 1 == 2
+
+tests/test_math.py:8: AssertionError</failure></testcase><testcase classname="tests.test_math.TestDiv" name="test_zero" file="tests/test_math.py" line="12" time="0.001"><failure message="ZeroDivisionError: division by zero">self = &lt;tests.test_math.TestDiv object at 0x10&gt;
+
+    def test_zero(self):
+&gt;       1 / 0
+E       ZeroDivisionError: division by zero
+
+tests/test_math.py:14: ZeroDivisionError</failure></testcase><testcase classname="tests.test_math" name="test_param[2-3]" file="tests/test_math.py" line="16" time="0.001" /><testcase classname="tests.test_math" name="test_later" file="tests/test_math.py" line="20" time="0.000"><skipped type="pytest.skip" message="not yet">tests/test_math.py:21: not yet</skipped></testcase><testcase classname="tests.test_fixture" name="test_db" file="tests/test_fixture.py" line="2" time="0.000"><error message="failed on setup with &quot;fixture 'db' not found&quot;">file /ws/tests/test_fixture.py, line 3
+  def test_db(db):
+E       fixture 'db' not found</error></testcase></testsuite></testsuites>
