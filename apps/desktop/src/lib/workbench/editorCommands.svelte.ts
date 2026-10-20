@@ -22,6 +22,8 @@ import { isNonTextEditor } from '#lib/settings/resources.ts';
 import { t } from '#lib/i18n/index.ts';
 import { panelTerminalFocus } from '#lib/terminal/terminalCommands.svelte.ts';
 import { isMac } from './keys';
+import { isSearchEditorKey } from './searchEditor';
+import { searchEditors } from './searchEditor.svelte.ts';
 
 
 /** A tab that is a workspace file (or a diff of one), so it has a path to copy or reveal. */
@@ -124,7 +126,7 @@ export function installEditorCommands(): () => void {
 	const active = () => editors.active;
 	const group = () => editors.activeGroupId;
 	// ⌥⌘C / ⌥⌘R act on the Explorer's selection there (its own keys) and are Monaco's elsewhere in the editor.
-	const notInExplorerOrEditor = () => !document.activeElement?.closest('[data-context="explorer"], .monaco-editor');
+	const notInExplorerOrEditor = () => !document.activeElement?.closest('[data-context="explorer"], .monaco-editor, [data-search-editor]');
 	const unregister = [
 		commands.register({ id: 'workbench.action.closeOtherEditors', title: 'Close Other Editors in Group', category: 'View', mac: 'cmd+alt+t', when: hasEditor, run: () => closeOthers(group(), active()!) }),
 		commands.register({ id: 'workbench.action.closeEditorsToTheRight', title: 'Close Editors to the Right in Group', category: 'View', when: hasEditor, run: () => closeToRight(group(), active()!) }),
@@ -189,8 +191,8 @@ export function installEditorCommands(): () => void {
 			title: 'Save As...',
 			category: 'File',
 			key: 'cmd+shift+s',
-			when: () => editors.focusedFile !== null && !isDiffKey(editors.focusedFile) && !isNonTextEditor(editors.focusedFile),
-			run: () => saveAs(editors.focusedFile!)
+			when: () => editors.focusedFile !== null && !isDiffKey(editors.focusedFile) && (!isNonTextEditor(editors.focusedFile) || isSearchEditorKey(editors.focusedFile)),
+			run: () => (isSearchEditorKey(editors.focusedFile!) ? searchEditors.saveAs(editors.focusedFile!) : saveAs(editors.focusedFile!))
 		}),
 		commands.register({
 			id: 'workbench.action.files.revert',

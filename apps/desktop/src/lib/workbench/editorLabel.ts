@@ -17,6 +17,8 @@ import { chatIdOfEditorKey } from '#lib/agent/chatExtras.ts';
 import { chats } from '#lib/agent/chats.svelte.ts';
 import { parseArtifactKey } from '#lib/artifacts/artifacts.ts';
 import { artifacts } from '#lib/artifacts/artifacts.svelte.ts';
+import { isSearchEditorKey, searchEditorName } from './searchEditor';
+import { searchEditors } from './searchEditor.svelte.ts';
 
 const compiled = new WeakMap<object, ReturnType<typeof customLabelPatterns>>();
 
@@ -33,6 +35,7 @@ function custom(key: string): string | undefined {
 export function editorLabel(key: string): string {
 	if (key === SETTINGS_EDITOR_KEY) return 'Settings';
 	if (isUntitled(key)) return untitledLabel(untitledName(key), untitledFirstLines.get(key) ?? '', settings.get<'content' | 'name'>('workbench.editor.untitled.labelFormat'));
+	if (isSearchEditorKey(key)) return searchEditorName(key, searchEditors.peek(key)?.config.query ?? '');
 	if (isBoardKey(key)) return t('workbench.editorLabel.board');
 	if (isChangesKey(key)) return changesSlug(key) ? t('workbench.editorLabel.changes', { title: adeTasks.find(changesSlug(key))?.meta.title ?? changesSlug(key) ?? '' }) : t('workbench.editorLabel.allChanges');
 	const session = parseVaultKey(key);

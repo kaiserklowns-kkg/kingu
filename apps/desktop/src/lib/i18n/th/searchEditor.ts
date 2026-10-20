@@ -1,0 +1,30 @@
+import type { searchEditor as en } from '../en/searchEditor';
+
+export const searchEditor = {
+	'searchEditor.query': 'ค้นหา',
+	'searchEditor.include': 'ไฟล์ที่จะค้นหา',
+	'searchEditor.exclude': 'ไฟล์ที่ไม่ค้นหา',
+	'searchEditor.includePlaceholder': 'เช่น *.ts, src/**/include',
+	'searchEditor.excludePlaceholder': 'เช่น *.ts, src/**/exclude',
+	'searchEditor.matchCase': 'ตรงตามตัวพิมพ์เล็ก-ใหญ่',
+	'searchEditor.wholeWord': 'ตรงทั้งคำ',
+	'searchEditor.regex': 'ใช้ Regular Expression',
+	'searchEditor.contextLines': 'แสดง/ซ่อนบรรทัดรอบผลลัพธ์',
+	'searchEditor.contextLinesInput': 'จำนวนบรรทัดรอบผลลัพธ์',
+	'searchEditor.useIgnore': 'ใช้การตั้งค่า exclude และไฟล์ ignore',
+	'searchEditor.details': 'แสดง/ซ่อนรายละเอียดการค้นหา',
+	'searchEditor.searchAgain': 'ค้นหาอีกครั้ง',
+	'searchEditor.searching': 'กำลังค้นหา…',
+	'searchEditor.results': '{count} ผลลัพธ์',
+	'searchEditor.files': '{count} ไฟล์',
+	'searchEditor.noResults': 'ไม่พบผลลัพธ์',
+	'searchEditor.limitHit': 'แสดงผลลัพธ์เพียงบางส่วน ลองระบุคำค้นให้แคบลง',
+	'searchEditor.invalidQuery': 'backslash ทุกตัวในคำค้นต้อง escape เป็น (\\\\)',
+	'searchEditor.noFolder': 'เปิดโฟลเดอร์ก่อนเพื่อค้นหาในไฟล์',
+	'searchEditor.openFailed': 'เปิดผลการค้นหาไม่ได้: {error}',
+	'searchEditor.saveFailed': 'บันทึกผลการค้นหาไม่ได้: {error}',
+	'searchEditor.savedOutside': 'บันทึกไว้ที่ {path} นอกโฟลเดอร์ที่เปิดอยู่',
+	'searchEditor.openInEditor': 'เปิดใน editor',
+	'searchEditor.newSearchEditor': 'Search Editor ใหม่',
+	'searchEditor.resultsLabel': 'ผลการค้นหา'
+} satisfies Record<keyof typeof en, string>;
