@@ -4,6 +4,8 @@
 import { parseJsonc } from '#lib/settings/jsonc.ts';
 import type { RunInTerminalArguments } from './protocol.ts';
 import { t } from '#lib/i18n/index.ts';
+import { parseInputs, type InputDef } from '#lib/tasks/taskConfig.ts';
+import { substitute as substituteVariables, type VariableContext } from '#lib/tasks/variables.ts';
 
 export type LaunchConfig = { type: string; request: string; name: string; preLaunchTask?: string | Record<string, unknown>; postDebugTask?: string | Record<string, unknown>; [key: string]: unknown };
 
@@ -13,21 +15,27 @@ export const LAUNCH_FILES = ['.vscode/launch.json', '.kingu/launch.json'];
 /** A launch.json compound (VS Code): several configurations started together. */
 export type LaunchCompound = { name: string; configurations: string[]; preLaunchTask?: string | Record<string, unknown>; stopAll?: boolean };
 
-export function parseLaunchJson(text: string, source: string): { configs: LaunchConfig[]; compounds: LaunchCompound[]; error?: string } {
+export type LaunchFile = { configs: LaunchConfig[]; compounds: LaunchCompound[]; inputs: InputDef[]; error?: string };
+
+/** A launch.json: its configurations, compounds and `inputs` (the same `${input:id}` definitions as tasks.json). */
+export function parseLaunchJson(text: string, source: string): LaunchFile {
 	let raw: unknown;
 	try {
 		raw = text.trim() ? parseJsonc(text) : {};
 	} catch (e) {
-		return { configs: [], compounds: [], error: t('tools.debug.launch.badJson', { source, error: e instanceof Error ? e.message : String(e) }) };
+		return { configs: [], compounds: [], inputs: [], error: t('tools.debug.launch.badJson', { source, error: e instanceof Error ? e.message : String(e) }) };
 	}
 	const compounds = parseCompounds((raw as { compounds?: unknown })?.compounds);
+	const inputErrors: string[] = [];
+	const inputs = parseInputs((raw as { inputs?: unknown })?.inputs, inputErrors);
+	const inputError = inputErrors.length ? { error: inputErrors.join('\n') } : {};
 	const list = (raw as { configurations?: unknown })?.configurations;
-	if (list === undefined) return { configs: [], compounds };
-	if (!Array.isArray(list)) return { configs: [], compounds, error: t('tools.debug.launch.notArray', { source }) };
+	if (list === undefined) return { configs: [], compounds, inputs, ...inputError };
+	if (!Array.isArray(list)) return { configs: [], compounds, inputs, error: t('tools.debug.launch.notArray', { source }) };
 	const configs = list.filter(
 		(c): c is LaunchConfig => !!c && typeof c === 'object' && typeof c.type === 'string' && typeof c.request === 'string' && typeof c.name === 'string'
 	);
-	return { configs, compounds };
+	return { configs, compounds, inputs, ...inputError };
 }
 
 function parseCompounds(raw: unknown): LaunchCompound[] {
@@ -53,13 +61,14 @@ export function compoundConfigs(compound: LaunchCompound, configs: readonly Laun
 	return { configs: found, missing };
 }
 
-export type VarContext = {
-	workspaceFolder: string;
-	/** Absolute path of the active editor's file. */
-	file?: string;
-	env: Record<string, string | undefined>;
+/** What launch.json's variables resolve against: tasks.json's context (the active editor, `${config:…}`,
+ * `${userHome}`…) plus the answers already asked for. */
+export type VarContext = Omit<VariableContext, 'config'> & {
+	config?: VariableContext['config'];
 	/** Values of ${command:…} variables already asked for (${command:pickProcess}). */
 	commands?: Record<string, string>;
+	/** Answers to `${input:id}` (keyed by id). */
+	inputs?: Record<string, string>;
 };
 
 /** The ${command:…} variables a configuration uses (resolved by asking before substitution). */
@@ -67,60 +76,14 @@ export function commandVariables(value: unknown): string[] {
 	return [...new Set([...JSON.stringify(value ?? null).matchAll(/\$\{command:([^}]+)\}/g)].map((m) => m[1]))];
 }
 
-const dirname = (p: string) => p.slice(0, Math.max(0, p.lastIndexOf('/'))) || '/';
-const basename = (p: string) => p.slice(p.lastIndexOf('/') + 1);
-const extname = (p: string) => {
-	const b = basename(p);
-	const i = b.lastIndexOf('.');
-	return i > 0 ? b.slice(i) : '';
-};
-
-function variable(name: string, ctx: VarContext): string {
-	if (name.startsWith('env:')) return ctx.env[name.slice(4)] ?? '';
-	if (name.startsWith('command:') && ctx.commands?.[name.slice(8)] !== undefined) return ctx.commands[name.slice(8)];
-	const root = ctx.workspaceFolder;
-	switch (name) {
-		case 'workspaceFolder':
-		case 'workspaceRoot':
-		case 'cwd':
-			return root;
-		case 'workspaceFolderBasename':
-			return basename(root);
-		case 'pathSeparator':
-		case '/':
-			return '/';
-	}
-	const file = ctx.file;
-	if (['file', 'fileDirname', 'fileBasename', 'fileBasenameNoExtension', 'fileExtname', 'relativeFile', 'relativeFileDirname'].includes(name)) {
-		if (!file) throw new Error(t('tools.debug.launch.needsFile', { variable: `\${${name}}` }));
-		const rel = file.startsWith(`${root}/`) ? file.slice(root.length + 1) : file;
-		switch (name) {
-			case 'file':
-				return file;
-			case 'fileDirname':
-				return dirname(file);
-			case 'fileBasename':
-				return basename(file);
-			case 'fileBasenameNoExtension':
-				return basename(file).slice(0, basename(file).length - extname(file).length);
-			case 'fileExtname':
-				return extname(file);
-			case 'relativeFile':
-				return rel;
-			case 'relativeFileDirname':
-				return rel.includes('/') ? dirname(rel) : '.';
-		}
-	}
-	throw new Error(t('tools.debug.launch.unsupportedVar', { variable: `\${${name}}` }));
-}
-
-/** Replaces `${workspaceFolder}`, `${file}`, `${fileDirname}`, `${env:X}`… in every string of
- * `value` (keys untouched). Throws on a variable Kingu does not know (`${command:…}`, `${input:…}`). */
+/** Replaces every `${…}` in the strings of `value` (keys untouched) with the resolver tasks.json
+ * uses (VS Code shares one configurationResolver). Throws on a variable that cannot be resolved. */
 export function substitute<T>(value: T, ctx: VarContext): T {
-	if (typeof value === 'string') return value.replace(/\$\{([^}]+)\}/g, (_, name: string) => variable(name, ctx)) as T;
-	if (Array.isArray(value)) return value.map((v) => substitute(v, ctx)) as T;
-	if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, substitute(v, ctx)])) as T;
-	return value;
+	const resolved = new Map<string, string>([
+		...Object.entries(ctx.commands ?? {}).map(([k, v]) => [`command:${k}`, v] as [string, string]),
+		...Object.entries(ctx.inputs ?? {}).map(([k, v]) => [`input:${k}`, v] as [string, string])
+	]);
+	return substituteVariables(value, { ...ctx, config: ctx.config ?? (() => undefined) }, resolved);
 }
 
 /** A configuration offered when there is no launch.json, with what to do before launching it. */

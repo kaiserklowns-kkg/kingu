@@ -22,7 +22,6 @@ import * as B from './breakpoints.ts';
 import { DapClient } from './client.ts';
 import {
 	addConfigurationText,
-	commandVariables,
 	compoundConfigs,
 	generatedConfigs,
 	isJsDebugType,
@@ -31,7 +30,6 @@ import {
 	resolveJsDebug,
 	runInTerminalArgv,
 	snippetsFor,
-	substitute,
 	type Generated,
 	type LaunchCompound,
 	type LaunchConfig
@@ -46,7 +44,9 @@ import { t } from '#lib/i18n/index.ts';
 import { lsp } from '#lib/lsp/lsp.svelte.ts';
 import { parseProblemMatchers } from '#lib/tasks/problemMatcher.ts';
 import { tasks } from '#lib/tasks/tasks.svelte.ts';
-import type { TaskRef } from '#lib/tasks/taskConfig.ts';
+import type { InputDef, TaskRef } from '#lib/tasks/taskConfig.ts';
+import { inputPrompter } from '#lib/tasks/inputPrompter.svelte.ts';
+import { collectVariables, resolveInputs, substitute as substituteVariables } from '#lib/tasks/variables.ts';
 import { choose } from '#lib/workbench/messageBox.ts';
 
 type DapEvent = { type: 'message'; json: string } | { type: 'stderr'; line: string } | { type: 'exit'; code: number | null };
@@ -507,41 +507,35 @@ class Debug {
 		if (prepared) await this.#launch(prepared, false);
 	}
 
-	/** Variables, `${command:pickProcess}`, js-debug's defaults; undefined when cancelled or invalid. */
+	/** launch.json's `inputs`, from the last read of the launch files. */
+	#launchInputs: InputDef[] = [];
+
+	/**
+	 * Variables (tasks.json's resolver: `${input:…}` from launch.json's inputs, `${command:pickProcess}`,
+	 * `${config:…}`…), js-debug's defaults; undefined when cancelled or invalid. Inputs are asked once
+	 * per launch, in order (VS Code: configurationResolver.resolveWithInteractionReplace).
+	 */
 	async #prepare(raw: LaunchConfig, generated?: Generated): Promise<LaunchConfig | undefined> {
 		const root = this.root;
 		let config = raw;
-		const active = editors.active;
-		const file = isWorkspaceFile(active) ? this.#abs(active) : undefined;
-		const asked = await this.#commands(config);
-		if (!asked) return undefined;
-		const ctx = { workspaceFolder: root, file, env: await this.#env(config), commands: asked };
 		try {
+			const used = collectVariables(config);
+			const ctx = await tasks.variableContext(root, used.has('defaultBuildTask'));
+			ctx.env = await this.#env(config);
+			const answers = await resolveInputs(used, this.#launchInputs, ctx, inputPrompter());
+			if (!answers) return undefined;
 			if (generated?.askProgram) {
-				const suggestion = substitute(String(config.program ?? ''), ctx);
+				const suggestion = substituteVariables(String(config.program ?? ''), ctx, answers);
 				const program = await quick.input({ placeholder: t('tools.debug.programPlaceholder', { suggestion }), hint: (v) => t('tools.debug.programHint', { program: v || suggestion }) });
 				if (program === undefined) return undefined;
 				config = { ...config, program: program ? (program.startsWith('/') ? program : `${root}/${program}`) : suggestion };
 			}
-			config = substitute(config, ctx);
+			config = substituteVariables(config, ctx, answers);
 		} catch (e) {
 			notifications.error(e instanceof Error ? e.message : String(e));
 			return undefined;
 		}
 		return resolveJsDebug(config, root);
-	}
-
-	/** `${command:pickProcess}` (lldb, Delve, debugpy) and `${command:PickProcess}` (js-debug): a process picker. Null when cancelled. */
-	async #commands(config: LaunchConfig): Promise<Record<string, string> | null> {
-		const out: Record<string, string> = {};
-		for (const name of commandVariables(config)) {
-			if (name.toLowerCase() !== 'pickprocess') continue;
-			const list = await invoke<{ pid: number; command: string }[]>('debug_processes').catch(() => []);
-			const item = await quick.choose({ placeholder: t('debugger.pickProcess'), items: list.map((p) => ({ id: String(p.pid), label: p.command.split('/').pop()?.split(' ')[0] ?? p.command, description: `${p.pid} ${p.command}` })) });
-			if (!item) return null;
-			out[name] = item.id;
-		}
-		return out;
 	}
 
 	/** A compound: its preLaunchTask once, then each configuration (VS Code: debugService.startDebugging for a compound). */
@@ -564,6 +558,7 @@ class Debug {
 	async #readLaunchFiles(): Promise<{ configs: LaunchConfig[]; compounds: LaunchCompound[] }> {
 		const configs: LaunchConfig[] = [];
 		const compounds: LaunchCompound[] = [];
+		const inputs: InputDef[] = [];
 		for (const rel of LAUNCH_FILES) {
 			const text = await invoke<string>('read_workspace_file', { rel }).catch(() => null);
 			if (text === null) continue;
@@ -571,7 +566,9 @@ class Debug {
 			if (parsed.error) status.flash(parsed.error);
 			configs.push(...parsed.configs);
 			compounds.push(...parsed.compounds);
+			inputs.push(...parsed.inputs.filter((i) => !inputs.some((x) => x.id === i.id)));
 		}
+		this.#launchInputs = inputs;
 		return { configs, compounds };
 	}
 

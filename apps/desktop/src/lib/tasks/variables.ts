@@ -141,8 +141,9 @@ export function substitute<T>(value: T, ctx: VariableContext, resolved: Readonly
 export type InputPrompter = {
 	promptString(input: Extract<InputDef, { type: 'promptString' }>): Promise<string | undefined>;
 	pickString(input: Extract<InputDef, { type: 'pickString' }>): Promise<string | undefined>;
-	/** `${command:…}` and `type: command` inputs Kingu can answer; undefined when it cannot. */
-	command?(command: string, args: unknown): Promise<string | undefined>;
+	/** `${command:…}` and `type: command` inputs Kingu can answer: undefined when it cannot, null
+	 * when the user cancelled (a process picker closed with Escape). */
+	command?(command: string, args: unknown): Promise<string | null | undefined>;
 };
 
 /**
@@ -155,6 +156,7 @@ export async function resolveInputs(variables: Iterable<string>, inputs: InputDe
 		if (out.has(name)) continue;
 		if (name.startsWith('command:')) {
 			const v = await prompt.command?.(name.slice('command:'.length), undefined);
+			if (v === null) return undefined;
 			if (v === undefined) throw new VariableError(t('ideTasks.var.command', { variable: `\${${name}}` }));
 			out.set(name, v);
 			continue;
@@ -167,7 +169,9 @@ export async function resolveInputs(variables: Iterable<string>, inputs: InputDe
 		if (input.type === 'promptString') value = await prompt.promptString({ ...input, default: input.default === undefined ? undefined : substitute(input.default, ctx, out) });
 		else if (input.type === 'pickString') value = await prompt.pickString(input);
 		else {
-			value = await prompt.command?.(input.command, input.args);
+			const v = await prompt.command?.(input.command, input.args);
+			if (v === null) return undefined;
+			value = v;
 			if (value === undefined) throw new VariableError(t('ideTasks.var.commandInput', { id, command: input.command }));
 		}
 		if (value === undefined) return undefined;

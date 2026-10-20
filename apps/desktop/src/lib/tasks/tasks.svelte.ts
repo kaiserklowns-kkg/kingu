@@ -33,7 +33,8 @@ import { StartStopCollector, WatchingCollector, type MarkerStore } from './probl
 import { findTask, groupTasks, mergeTasks, parseTasksJson, platformOf, type InputDef, type Task, type TaskRef } from './taskConfig.ts';
 import { formatMessageForTerminal, TaskOutput } from './taskOutput.ts';
 import { configureText, customizeText, setDefaultGroupText, TASKS_PATH, TEMPLATE } from './tasksFile.ts';
-import { collectVariables, resolveInputs, substitute, VariableError, type InputPrompter, type VariableContext } from './variables.ts';
+import { inputPrompter } from './inputPrompter.svelte.ts';
+import { collectVariables, resolveInputs, substitute, VariableError, type VariableContext } from './variables.ts';
 
 type TasksFileInfo = { text: string | null; hash: string | null; trusted: boolean };
 
@@ -319,6 +320,13 @@ class Tasks {
 		return { ...task, problemMatcher: [picked.id], isBackground: matcher?.watching ? true : task.isBackground };
 	}
 
+	/** The variables of the active editor and workspace, for launch.json (shares tasks.json's resolver).
+	 * The task list (detection reads files) is loaded only for `${defaultBuildTask}`. */
+	async variableContext(root: string, withTasks: boolean): Promise<VariableContext> {
+		const { tasks } = withTasks ? await this.getTasks({ quiet: true }).catch(() => ({ tasks: [] as Task[] })) : { tasks: [] as Task[] };
+		return this.#variableContext(root, tasks);
+	}
+
 	async #variableContext(root: string, tasks: Task[]): Promise<VariableContext> {
 		const active = editors.active;
 		const file = active && !isDiffKey(active) && !active.includes('://') && !isUntitled(active) ? absolute(root, active) : undefined;
@@ -342,22 +350,6 @@ class Tasks {
 	async #env(names: string[]): Promise<Record<string, string>> {
 		if (!names.length) return {};
 		return invoke<Record<string, string>>('debug_env', { names }).catch(() => ({}));
-	}
-
-	#prompter(): InputPrompter {
-		return {
-			promptString: (input) => quick.input({ placeholder: input.description ?? input.id, value: input.default, password: input.password, hint: (v) => (v ? t('ideTasks.input.hint', { value: input.password ? '•'.repeat(v.length) : v }) : (input.description ?? input.id)) }),
-			pickString: async (input) => {
-				const picked = await quick.choose({
-					placeholder: input.description ?? input.id,
-					items: input.options.map((o) => ({ id: o.value, label: o.label ?? o.value, description: o.label ? o.value : undefined })),
-					activeId: input.default
-				});
-				return picked?.id;
-			},
-			// Kingu runs no extension commands (`${command:…}`, `type: command` inputs).
-			command: async () => undefined
-		};
 	}
 
 	/** Starts `task`'s own command in a terminal (its dependencies are done). */
@@ -386,7 +378,7 @@ class Tasks {
 			[...used].filter((v) => !resolved.has(v)),
 			inputs,
 			ctx,
-			this.#prompter()
+			inputPrompter()
 		);
 		if (!answers) return finish({});
 		answers.forEach((v, k) => resolved.set(k, v));

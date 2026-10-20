@@ -62,6 +62,31 @@ const PROPERTIES: Record<string, Prop> = {
 	command: str('Command to run in the terminal (node-terminal). (คำสั่งที่รันในเทอร์มินัล)', { default: 'npm start' })
 };
 
+/** `inputs` of launch.json and tasks.json (VS Code: configurationResolverSchema). */
+export const INPUTS_SCHEMA: Prop = {
+	type: 'array',
+	description: 'User inputs. Used for defining user input prompts, such as free string input or a choice from several options. (input ที่ถามผู้ใช้ ใช้กับ ${input:id})',
+	items: {
+		type: 'object',
+		required: ['id', 'type'],
+		properties: {
+			id: str("The input's id is used to associate an input with a variable of the form ${input:id}. (id ที่ใช้ใน ${input:id})"),
+			type: { type: 'string', enum: ['promptString', 'pickString', 'command'], description: 'The type of user input prompt to use. (ชนิดของการถาม)' },
+			description: str('The description is shown when the user is prompted for input. (ข้อความที่แสดงตอนถาม)'),
+			default: str('The default value for the input. (ค่าเริ่มต้น)'),
+			password: bool('Set to true to input with a password prompt that will not show the typed value. (ซ่อนข้อความที่พิมพ์)', false),
+			options: { type: 'array', items: { anyOf: [{ type: 'string' }, { type: 'object', required: ['value'], properties: { label: { type: 'string' }, value: { type: 'string' } } }] }, description: 'An array of options for the user to pick from. (ตัวเลือกให้เลือก)' },
+			command: str('The command to execute for this input variable. (คำสั่งที่รันเพื่อเอาค่า)'),
+			args: { description: 'Optional arguments passed to the command. (อาร์กิวเมนต์ของคำสั่ง)' }
+		},
+		defaultSnippets: [
+			{ label: 'promptString', body: { id: '$1', type: 'promptString', description: '$2' } },
+			{ label: 'pickString', body: { id: '$1', type: 'pickString', description: '$2', options: ['$3'] } },
+			{ label: 'command', body: { id: '$1', type: 'command', command: '$2' } }
+		]
+	}
+};
+
 export function launchSchema(): Record<string, unknown> {
 	return {
 		type: 'object',
@@ -93,7 +118,8 @@ export function launchSchema(): Record<string, unknown> {
 					defaultSnippets: [{ label: 'Compound', body: { name: 'Compound', configurations: [] } }]
 				},
 				default: []
-			}
+			},
+			inputs: INPUTS_SCHEMA
 		}
 	};
 }

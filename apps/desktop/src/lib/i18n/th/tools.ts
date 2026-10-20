@@ -182,8 +182,6 @@ export const tools = {
 	'tools.debug.state.terminated': 'จบแล้ว',
 	'tools.debug.launch.badJson': '{source}: อ่าน JSON ไม่ได้ ({error})',
 	'tools.debug.launch.notArray': '{source}: "configurations" ต้องเป็น array',
-	'tools.debug.launch.needsFile': '{variable} ต้องมีไฟล์เปิดอยู่ใน editor',
-	'tools.debug.launch.unsupportedVar': 'ไม่รองรับตัวแปร {variable} ใน launch.json',
 	'tools.debug.childUnsupported': 'Kingu ยังไม่รองรับ child debug session (startDebugging)\n',
 	'tools.debug.adapterExited': 'debug adapter จบการทำงาน (code {code})\n',
 	'tools.debug.cantSetBreakpoint': 'ตั้ง breakpoint ในไฟล์ {language} ไม่ได้ — เปิด debug.allowBreakpointsEverywhere เพื่อตั้งได้ทุกไฟล์',

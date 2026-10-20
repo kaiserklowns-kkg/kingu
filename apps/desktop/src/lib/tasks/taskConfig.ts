@@ -262,7 +262,8 @@ export function platformOf(os: string): Platform {
 	return os === 'windows' || os === 'win32' ? 'windows' : os === 'linux' ? 'linux' : 'osx';
 }
 
-function inputsOf(v: unknown, errors: string[]): InputDef[] {
+/** The `inputs` of tasks.json or launch.json (VS Code: inputs schema of the configuration resolver). */
+export function parseInputs(v: unknown, errors: string[]): InputDef[] {
 	if (!Array.isArray(v)) return [];
 	const out: InputDef[] = [];
 	for (const raw of v) {
@@ -341,7 +342,7 @@ export function parseTasksJson(text: string, platform: Platform, source = '.vsco
 			customizations.push({ definition, props, label });
 		}
 	}
-	return { tasks, customizations, inputs: inputsOf(raw.inputs, errors), errors };
+	return { tasks, customizations, inputs: parseInputs(raw.inputs, errors), errors };
 }
 
 /** A task's own presentation properties (without defaults), so the global ones fill only the rest. */

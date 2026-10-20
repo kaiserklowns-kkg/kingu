@@ -181,8 +181,6 @@ export const tools = {
 	'tools.debug.state.terminated': 'Ended',
 	'tools.debug.launch.badJson': '{source}: can\'t read JSON ({error})',
 	'tools.debug.launch.notArray': '{source}: "configurations" must be an array',
-	'tools.debug.launch.needsFile': '{variable} needs a file open in the editor',
-	'tools.debug.launch.unsupportedVar': 'Variable {variable} is not supported in launch.json',
 	'tools.debug.childUnsupported': 'Kingu doesn\'t support child debug sessions yet (startDebugging)\n',
 	'tools.debug.adapterExited': 'Debug adapter exited (code {code})\n',
 	'tools.debug.cantSetBreakpoint': 'Can\'t set a breakpoint in a {language} file — turn on debug.allowBreakpointsEverywhere to allow it in every file',
