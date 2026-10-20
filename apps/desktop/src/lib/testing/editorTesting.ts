@@ -93,10 +93,21 @@ export function attachTestingEditor(monaco: MonacoApi, editor: Monaco.editor.ISt
 		const line = e.target.position?.lineNumber;
 		const item = p && line ? itemAtLine(p, line) : undefined;
 		if (!item) return;
+		if (!e.event.leftButton) return;
 		e.event.preventDefault();
 		const action = settings.get<string>('testing.defaultGutterClickAction');
-		if (e.event.rightButton || (e.event.leftButton && action === 'contextMenu')) testMenu(e.event.posx, e.event.posy, item);
-		else if (e.event.leftButton) void testing.run([item], { debug: action === 'debug' });
+		if (action === 'contextMenu') setTimeout(() => testMenu(e.event.posx, e.event.posy, item));
+		else void testing.run([item], { debug: action === 'debug' });
+	});
+	const context = editor.onContextMenu((e) => {
+		if (e.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return;
+		if (!(e.target.element as HTMLElement | null)?.closest?.('.kg-test')) return;
+		const p = path();
+		const line = e.target.position?.lineNumber;
+		const item = p && line ? itemAtLine(p, line) : undefined;
+		if (!item) return;
+		e.event.preventDefault();
+		testMenu(e.event.posx, e.event.posy, item);
 	});
 
 	function renderPeek(p: string) {
@@ -163,6 +174,7 @@ export function attachTestingEditor(monaco: MonacoApi, editor: Monaco.editor.ISt
 		render,
 		dispose: () => {
 			mouse.dispose();
+			context.dispose();
 			gutter.clear();
 			messages.clear();
 			if (zone) editor.changeViewZones((acc) => zone && acc.removeZone(zone));

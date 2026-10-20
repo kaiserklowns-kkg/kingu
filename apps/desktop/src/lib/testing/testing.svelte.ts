@@ -108,6 +108,7 @@ class Testing {
 		try {
 			const files = await invoke<string[]>('fs_list_files').catch(() => [] as string[]);
 			this.#fileSet = new Set(files);
+			this.#dirCache.clear();
 			this.#files.clear();
 			const candidates = files.filter((f) => !SKIP_DIR.test(f) && this.#isCandidate(f));
 			for (let i = 0; i < candidates.length; i += 24) await Promise.all(candidates.slice(i, i + 24).map((f) => this.#scan(f)));
@@ -123,9 +124,15 @@ class Testing {
 		return isJsTestFile(rel) || (rel.endsWith('.rs') && this.#cargoDirs().size > 0) || rel.endsWith('_test.go') || isPythonTestFile(rel);
 	}
 
+	/** Directories holding a file called `name` (Cargo.toml, go.mod, package.json…), cached until the file list changes. */
+	#dirCache = new Map<string, Set<string>>();
 	#dirsWith(name: string): Set<string> {
-		const out = new Set<string>();
-		for (const f of this.#fileSet) if (f === name || f.endsWith(`/${name}`)) out.add(dirOf(f));
+		let out = this.#dirCache.get(name);
+		if (!out) {
+			out = new Set<string>();
+			for (const f of this.#fileSet) if (f === name || f.endsWith(`/${name}`)) out.add(dirOf(f));
+			this.#dirCache.set(name, out);
+		}
 		return out;
 	}
 	#cargoDirs = () => this.#dirsWith('Cargo.toml');
@@ -294,7 +301,10 @@ class Testing {
 		let changed = false;
 		for (const rel of rels) {
 			if (SKIP_DIR.test(rel)) continue;
-			if (!this.#fileSet.has(rel)) this.#fileSet.add(rel);
+			if (!this.#fileSet.has(rel)) {
+				this.#fileSet.add(rel);
+				this.#dirCache.clear();
+			}
 			if (!this.#isCandidate(rel) && !this.#files.has(rel)) continue;
 			await this.#scan(rel);
 			changed = true;

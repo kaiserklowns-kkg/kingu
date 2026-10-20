@@ -134,16 +134,24 @@ export function attachDebugEditor(monaco: MonacoApi, editor: Monaco.editor.IStan
 		const p = path();
 		const line = e.target.position?.lineNumber;
 		if (!p || !line) return;
-		if (e.event.rightButton) {
-			e.event.preventDefault();
-			gutterMenu(e, p, line);
-		} else if (e.event.leftButton) debug.toggleBreakpoint(p, line, editor.getModel()?.getLanguageId() ?? '');
+		if (e.event.leftButton) debug.toggleBreakpoint(p, line, editor.getModel()?.getLanguageId() ?? '');
 		else if (e.event.middleButton) {
 			const action = settings.get<string>('debug.gutterMiddleClickAction');
 			if (action === 'logpoint') void debug.editLogMessage(p, line);
 			else if (action === 'conditionalBreakpoint') void debug.editCondition(p, line);
 			else if (action === 'triggeredBreakpoint') void debug.editTrigger(p, line);
 		}
+	});
+
+	// The right click's contextmenu event (not mousedown), so the menu's backdrop does not get it.
+	const context = editor.onContextMenu((e) => {
+		if (e.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return;
+		if ((e.target.element as HTMLElement | null)?.closest?.('.kg-test')) return;
+		const p = path();
+		const line = e.target.position?.lineNumber;
+		if (!p || !line) return;
+		e.event.preventDefault();
+		gutterMenu(e, p, line);
 	});
 
 	const edits = editor.onDidChangeModelContent((e) => {
@@ -228,6 +236,7 @@ export function attachDebugEditor(monaco: MonacoApi, editor: Monaco.editor.IStan
 		render,
 		dispose: () => {
 			mouse.dispose();
+			context.dispose();
 			edits.dispose();
 			actions.forEach((a) => a.dispose());
 			breakpoints.clear();
