@@ -11,6 +11,7 @@ import { TERMINAL_SETTINGS } from './terminal';
 import { GIT_SETTINGS } from './scmGit';
 import { SCM_SETTINGS } from './scm';
 import { DEBUG_SETTINGS } from './debug';
+import { TESTING_SETTINGS } from './testing';
 import { BREADCRUMBS_SETTINGS } from './breadcrumbs';
 import { PROBLEMS_SETTINGS } from './problems';
 import { OUTPUT_SETTINGS } from './output';
@@ -36,6 +37,7 @@ export const VSCODE_SETTINGS = [
 	...GIT_SETTINGS,
 	...SCM_SETTINGS,
 	...DEBUG_SETTINGS,
+	...TESTING_SETTINGS,
 	...BREADCRUMBS_SETTINGS,
 	...PROBLEMS_SETTINGS,
 	...OUTPUT_SETTINGS,

@@ -281,6 +281,7 @@ export const MENUS: Menu[] = [
 			{ command: 'workbench.action.debug.restart', label: 'Restart Debugging' },
 			SEP,
 			{ command: 'workbench.action.debug.configure', label: 'Open Configurations' },
+			{ command: 'debug.addConfiguration', label: 'Add Configuration...' },
 			SEP,
 			{ command: 'workbench.action.debug.stepOver', label: 'Step Over' },
 			{ command: 'workbench.action.debug.stepInto', label: 'Step Into' },
@@ -288,8 +289,23 @@ export const MENUS: Menu[] = [
 			{ command: 'workbench.action.debug.continue', label: 'Continue' },
 			SEP,
 			{ command: 'editor.debug.action.toggleBreakpoint', label: 'Toggle Breakpoint' },
-			{ command: 'editor.debug.action.conditionalBreakpoint', label: 'New Conditional Breakpoint...' },
-			{ command: 'workbench.debug.viewlet.action.removeAllBreakpoints', label: 'Remove All Breakpoints' }
+			{
+				submenu: 'newBreakpoint',
+				label: 'New Breakpoint',
+				items: [
+					{ command: 'editor.debug.action.conditionalBreakpoint', label: 'Conditional Breakpoint...' },
+					{ command: 'editor.debug.action.editBreakpoint', label: 'Edit Breakpoint' },
+					{ command: 'workbench.debug.viewlet.action.addFunctionBreakpointAction', label: 'Function Breakpoint...' },
+					{ command: 'editor.debug.action.addLogPoint', label: 'Logpoint...' },
+					{ command: 'editor.debug.action.triggerByBreakpoint', label: 'Triggered Breakpoint...' }
+				]
+			},
+			SEP,
+			{ command: 'workbench.debug.viewlet.action.enableAllBreakpoints', label: 'Enable All Breakpoints' },
+			{ command: 'workbench.debug.viewlet.action.disableAllBreakpoints', label: 'Disable All Breakpoints' },
+			{ command: 'workbench.debug.viewlet.action.removeAllBreakpoints', label: 'Remove All Breakpoints' },
+			SEP,
+			{ command: 'debug.installAdditionalDebuggers', label: 'Install Additional Debuggers...' }
 		]
 	},
 	{

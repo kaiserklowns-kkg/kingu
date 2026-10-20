@@ -39,7 +39,7 @@ test('glyphs: plain without a session, verified/unverified with the adapter answ
 	const answered = glyphs(list, [{ verified: true, line: 4 }, { verified: false, message: 'No code at line 9' }]);
 	expect(answered.map((g) => [g.line, g.kind, g.hover])).toEqual([
 		[2, 'disabled', 'Breakpoint (disabled)'],
-		[4, 'conditional', 'Breakpoint: n == 0'],
+		[4, 'conditional', 'Condition: n == 0'],
 		[9, 'unverified', 'No code at line 9']
 	]);
 	expect(glyphs(list, [])[2].kind).toBe('unverified');

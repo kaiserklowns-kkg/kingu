@@ -1,0 +1,15 @@
+=== RUN   TestAdd
+--- PASS: TestAdd (0.00s)
+=== RUN   TestSub
+    demo_test.go:12: got 1, want 2
+--- FAIL: TestSub (0.00s)
+=== RUN   TestSkip
+    demo_test.go:16: later
+--- SKIP: TestSkip (0.00s)
+=== RUN   TestTable
+=== RUN   TestTable/one_case
+--- PASS: TestTable (0.00s)
+    --- PASS: TestTable/one_case (0.00s)
+FAIL
+FAIL	example.com/demo	1.161s
+FAIL

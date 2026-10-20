@@ -7,7 +7,7 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { notifications } from './notifications.svelte';
 import { CENTERED_DEFAULT, enterZen, exitZenFullScreen, zenConfig, zenParts, type CenteredState, type ZenExitInfo, type ZenParts } from './zenMode';
 
-export type SideView = 'explorer' | 'search' | 'scm' | 'debug' | 'snaps' | 'agents' | 'vault' | 'artifacts';
+export type SideView = 'explorer' | 'search' | 'scm' | 'debug' | 'testing' | 'snaps' | 'agents' | 'vault' | 'artifacts';
 export type PanelTab = 'problems' | 'output' | 'debugConsole' | 'terminal';
 
 const KEY = 'kingu.workbench.layout';

@@ -124,7 +124,7 @@ pub fn frontend_matched() -> Vec<(&'static str, Vec<Entry>)> {
     ("remoteAuthFailed", vec![entry(GitMsg::AuthFailed)]),
     (
       "notInstalled",
-      [LspMsg::NotExecutable, LspMsg::NotOnPath, LspMsg::NoDebugpy, LspMsg::NoPython, LspMsg::AdapterNotOnPath].into_iter().map(entry).collect(),
+      [LspMsg::NotExecutable, LspMsg::NotOnPath, LspMsg::NoDebugpy, LspMsg::NoPython, LspMsg::AdapterNotOnPath, LspMsg::NoJsDebug, LspMsg::NoNode].into_iter().map(entry).collect(),
     ),
     ("worktreeOrphan", vec![entry(WorktreeMsg::RemoveOrphan)]),
     ("fileExists", vec![entry(FilesMsg::Exists)]),

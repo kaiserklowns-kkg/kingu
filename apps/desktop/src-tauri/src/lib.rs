@@ -42,6 +42,7 @@ mod snap_install;
 mod snap_sandbox;
 mod system;
 mod tasks;
+mod testing;
 mod terminal_links;
 mod team;
 mod usage;
@@ -832,6 +833,59 @@ async fn debug_build(ws: State<'_, Workspace>, argv: Vec<String>) -> Result<dap:
   blocking(move || dap::run_build(&argv, &root)).await
 }
 
+/// A child session of debug session `parent` (js-debug's `startDebugging`): another connection to
+/// the same adapter server.
+#[tauri::command]
+fn dap_start_child(sessions: State<'_, dap::Sessions>, parent: u32, on_event: Channel<dap::DapEvent>) -> Result<u32, String> {
+  dap::start_child_for(&sessions, parent, on_event)
+}
+
+/// js-debug's pinned release and whether it (and node) are installed.
+#[tauri::command]
+fn dap_js_debug_status(ws: State<'_, Workspace>) -> dap::JsDebugStatus {
+  dap::js_debug_status(&ws.root().unwrap_or_default())
+}
+
+/// Downloads the pinned js-debug, checks its SHA-256 and unpacks it (only when the user asked in
+/// Run and Debug). Returns the path of `dapDebugServer.js`.
+#[tauri::command]
+async fn dap_js_debug_install() -> Result<String, String> {
+  blocking(|| dap::install_js_debug(dap::download_js_debug).map(|p| p.to_string_lossy().into_owned())).await
+}
+
+/// Processes for `${command:pickProcess}`.
+#[tauri::command]
+async fn debug_processes() -> Result<Vec<dap::ProcessEntry>, String> {
+  blocking(dap::list_processes).await
+}
+
+// ---------------------------------------------------------------------------------------------
+// Testing (VS Code: the Test Explorer; Kingu drives cargo, bun, vitest, jest, go and pytest)
+
+/// A test listing command (`cargo test -- --list`, `go test -list .`, `pytest --collect-only -q`)
+/// in the workspace (or `cwd`, relative to it), awaited.
+#[tauri::command]
+async fn testing_collect(ws: State<'_, Workspace>, argv: Vec<String>, cwd: Option<String>) -> Result<dap::BuildResult, String> {
+  let root = ws.root()?;
+  let dir = match cwd.filter(|c| !c.is_empty() && c != ".") {
+    Some(rel) => resolve_in(&root, &rel)?,
+    None => root,
+  };
+  blocking(move || testing::collect(&argv, &dir)).await
+}
+
+/// A fresh path for a jest/vitest JSON report.
+#[tauri::command]
+fn testing_report_new() -> Result<String, String> {
+  testing::new_report(&testing::report_dir())
+}
+
+/// The report written to a path from `testing_report_new` (read once), or null.
+#[tauri::command]
+fn testing_report_take(path: String) -> Result<Option<String>, String> {
+  testing::take_report(&testing::report_dir(), &path)
+}
+
 // ---------------------------------------------------------------------------------------------
 // Open Folder (VS Code: workbench.action.files.openFolder, File: Open Recent)
 
@@ -1124,6 +1178,7 @@ pub fn run() {
       app.manage(external::ExternalFiles::load(app.path().app_data_dir()?.join("external-files.json")));
       app.manage(Arc::new(local_history::LocalHistory::new(app.path().app_data_dir()?.join("History"))));
       let data = app.path().app_data_dir()?;
+      dap::set_adapters_dir(data.join("debug-adapters"));
       #[cfg(unix)]
       let (runtime, uid) = (
         std::env::var_os("XDG_RUNTIME_DIR").filter(|_| cfg!(target_os = "linux")).map(PathBuf::from),
@@ -1466,6 +1521,13 @@ pub fn run() {
       debug_build,
       debug_env,
       dap::dap_send,
+      dap_start_child,
+      dap_js_debug_status,
+      dap_js_debug_install,
+      debug_processes,
+      testing_collect,
+      testing_report_new,
+      testing_report_take,
       dap::dap_stop,
       settings::settings_read,
       settings::settings_write,

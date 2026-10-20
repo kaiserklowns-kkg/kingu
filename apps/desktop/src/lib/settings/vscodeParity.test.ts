@@ -37,6 +37,7 @@ export const DEFAULT_DEVIATIONS: Readonly<Record<string, string>> = {
 export const ENUM_SUBSETS: Readonly<Record<string, string>> = {
 	'workbench.startupEditor': 'no Welcome page or agent sessions page (welcomePage, welcomePageInEmptyWorkbench, agentSessionsWelcomePage)',
 	'files.encoding': "the DOS code pages (cp437, cp850, cp852, cp857, cp865, cp1125) and KOI8-T, which the Rust decoder (encoding_rs) does not implement",
+	'testing.defaultGutterClickAction': 'runWithCoverage: Kingu runs no coverage tool',
 	'window.confirmBeforeClose': 'keyboardOnly needs to tell ⌘Q/⌘W from a menu click, and Tauri reports both as the same native menu event'
 };
 

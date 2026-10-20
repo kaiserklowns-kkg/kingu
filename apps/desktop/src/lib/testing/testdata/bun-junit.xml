@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="6" assertions="3" failures="3" skipped="2" time="0.002269">
+  <testsuite name="math.test.ts" file="math.test.ts" tests="6" assertions="3" failures="3" skipped="2" time="0.000758" hostname="host">
+    <testsuite name="math" file="math.test.ts" line="2" tests="4" assertions="2" failures="1" skipped="2" time="0" hostname="host">
+      <testcase name="adds" classname="math" time="0.000009" file="math.test.ts" line="3" assertions="1" />
+      <testcase name="subtracts" classname="math" time="0.000096" file="math.test.ts" line="4" assertions="1">
+        <failure type="AssertionError" message="expect(received).toBe(expected)&#10;&#10;Expected: 1&#10;Received: 2&#10;">AssertionError: expect(received).toBe(expected)&#10;&#10;Expected: 1&#10;Received: 2&#10;&#10;      at math.test.ts:5:19&#10;</failure>
+      </testcase>
+      <testcase name="later" classname="math" time="0" file="math.test.ts" line="7" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="someday" classname="math" time="0" file="math.test.ts" line="8" assertions="0">
+        <skipped message="TODO" />
+      </testcase>
+    </testsuite>
+    <testcase name="equal objects" classname="" time="0.000093" file="math.test.ts" line="10" assertions="1">
+      <failure type="AssertionError" message="expect(received).toEqual(expected)&#10;&#10;@@ -4,3 +4,3 @@&#10;      1,&#10;-     3,&#10;+     2,&#10;    ],&#10;&#10;- Expected  - 1&#10;+ Received  + 1&#10;">AssertionError: expect(received).toEqual(expected)&#10;&#10;@@ -4,3 +4,3 @@&#10;      1,&#10;-     3,&#10;+     2,&#10;    ],&#10;&#10;- Expected  - 1&#10;+ Received  + 1&#10;&#10;      at math.test.ts:10:59&#10;</failure>
+    </testcase>
+    <testcase name="throws" classname="" time="0.000026" file="math.test.ts" line="11" assertions="0">
+      <failure type="Error" message="boom">Error: boom&#10;      at math.test.ts:11:46&#10;</failure>
+    </testcase>
+  </testsuite>
+</testsuites>
