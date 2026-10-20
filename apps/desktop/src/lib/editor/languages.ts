@@ -20,7 +20,9 @@ export const EXTRA_LANGUAGES: { id: string; aliases: string[]; extensions?: stri
 	{ id: 'diff', aliases: ['Diff', 'diff'] },
 	{ id: 'dotenv', aliases: ['Dotenv', 'dotenv'] },
 	{ id: 'properties', aliases: ['Properties', 'properties'] },
-	{ id: 'ignore', aliases: ['Ignore', 'ignore'] }
+	{ id: 'ignore', aliases: ['Ignore', 'ignore'] },
+	// The Search Editor's results (VS Code's search-result extension).
+	{ id: 'search-result', aliases: ['Search Result', 'search-result'], extensions: ['.code-search'] }
 ];
 
 /** Associations for Kingu's own languages (VS Code gets these from marketplace extensions). */

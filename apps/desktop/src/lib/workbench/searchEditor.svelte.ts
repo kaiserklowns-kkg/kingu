@@ -12,6 +12,7 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
 import { editors } from './editors.svelte';
+import { registerSaver } from './editorModels';
 import {
 	initialConfig,
 	InvalidQueryError,
@@ -19,6 +20,7 @@ import {
 	isSearchFilePath,
 	isUntitledSearchEditor,
 	parseSerializedSearchEditor,
+	searchEditorDirty,
 	serializeForDisk,
 	serializeSearchResults,
 	suggestedSearchFileName,
@@ -82,9 +84,16 @@ export class SearchEditorState {
 	loaded = $state(true);
 	generation = 0;
 	/** The editor key; Save As moves an untitled editor to its file. */
-	key: string;
+	key = $state('');
+	/** What the editor last saved or opened with (`.code-search` text); dirty when it differs. */
+	saved = $state('');
+	dirty = $derived(searchEditorDirty(this.saved, this.config, this.text));
 	constructor(key: string) {
 		this.key = key;
+	}
+	/** The current query, options and results become the saved state (after Save, open, a new editor). */
+	markSaved() {
+		this.saved = serializeForDisk($state.snapshot(this.config) as SearchConfig, this.text);
 	}
 }
 
@@ -93,6 +102,38 @@ class SearchEditors {
 	#next = 1;
 	/** The editor whose search runs in the Rust slot now (a new search there cancels it). */
 	#running: SearchEditorState | null = null;
+
+	#watchers = new Map<SearchEditorState, () => void>();
+
+	/** The tab's dirty dot (and Save / Don't Save on close) follows the state's dirty flag. */
+	#track(s: SearchEditorState) {
+		let shown: string | null = null;
+		this.#watchers.set(
+			s,
+			$effect.root(() => {
+				$effect(() => {
+					const key = s.key;
+					const dirty = s.dirty;
+					if (shown && shown !== key) editors.setDirty(shown, false);
+					shown = key;
+					editors.setDirty(key, dirty);
+				});
+				return () => {
+					if (shown) editors.setDirty(shown, false);
+				};
+			})
+		);
+	}
+
+	#add(key: string, s: SearchEditorState) {
+		this.#states.set(key, s);
+		this.#track(s);
+	}
+
+	/** Whether `key` has unsaved changes (Save All, hot exit). */
+	isDirty(key: string): boolean {
+		return this.#states.get(key)?.dirty ?? false;
+	}
 
 	/** The state of `key` if it exists (for labels: reading never creates one). */
 	peek(key: string): SearchEditorState | undefined {
@@ -104,9 +145,12 @@ class SearchEditors {
 		let s = this.#states.get(key);
 		if (s) return s;
 		s = new SearchEditorState(key);
-		this.#states.set(key, s);
 		if (isSearchFilePath(key)) void this.#load(s);
-		else s.config = initialConfig({}, readPrior(), settings.get<boolean>('search.searchEditor.reusePriorSearchConfiguration'), settings.get<number | null>('search.searchEditor.defaultNumberOfContextLines'));
+		else {
+			s.config = initialConfig({}, readPrior(), settings.get<boolean>('search.searchEditor.reusePriorSearchConfiguration'), settings.get<number | null>('search.searchEditor.defaultNumberOfContextLines'));
+			s.markSaved();
+		}
+		this.#add(key, s);
 		return s;
 	}
 
@@ -117,6 +161,7 @@ class SearchEditors {
 			const { config, text } = parseSerializedSearchEditor(content);
 			s.config = config;
 			s.text = text;
+			s.saved = content;
 			s.lastContextLines = config.contextLines || 1;
 			// VS Code re-runs a saved search when it opens, so the results are current.
 			if (config.query) void this.run(s.key);
@@ -129,7 +174,12 @@ class SearchEditors {
 
 	/** Drops the state of editors no tab shows any more. */
 	prune(open: ReadonlySet<string>) {
-		for (const key of [...this.#states.keys()]) if (!open.has(key)) this.#states.delete(key);
+		for (const [key, s] of [...this.#states]) {
+			if (open.has(key)) continue;
+			this.#states.delete(key);
+			this.#watchers.get(s)?.();
+			this.#watchers.delete(s);
+		}
 	}
 
 	/**
@@ -146,7 +196,8 @@ class SearchEditors {
 		const s = new SearchEditorState(key);
 		s.config = initialConfig(given, readPrior(), settings.get<boolean>('search.searchEditor.reusePriorSearchConfiguration'), settings.get<number | null>('search.searchEditor.defaultNumberOfContextLines'));
 		s.lastContextLines = s.config.contextLines || 1;
-		this.#states.set(key, s);
+		s.markSaved();
+		this.#add(key, s);
 		if (toSide) editors.openToSide(key);
 		else editors.open(key, { preview: false });
 		const search = triggerSearch === true || (triggerSearch !== false && settings.get<boolean>('search.searchOnType') && !!s.config.query);
@@ -227,7 +278,7 @@ class SearchEditors {
 		}
 	}
 
-	/** Results text after an edit of the view (Delete File Results). */
+	/** Results text after an edit of the view (typing in it, Delete File Results). */
 	setText(key: string, text: string, ranges: MatchRange[]) {
 		const s = this.get(key);
 		s.text = text;
@@ -248,8 +299,10 @@ class SearchEditors {
 	async save(key: string): Promise<boolean> {
 		if (!isSearchFilePath(key)) return (await this.saveAs(key)) !== null;
 		const s = this.get(key);
+		const content = serializeForDisk($state.snapshot(s.config) as SearchConfig, s.text);
 		try {
-			await invoke('fs_write_file', { rel: key, content: serializeForDisk($state.snapshot(s.config) as SearchConfig, s.text) });
+			await invoke('fs_write_file', { rel: key, content });
+			s.saved = content;
 			return true;
 		} catch (e) {
 			notifications.error(t('searchEditor.saveFailed', { error: String(e) }));
@@ -262,9 +315,10 @@ class SearchEditors {
 		const s = this.get(key);
 		const slash = key.lastIndexOf('/');
 		let saved: { rel: string | null; path: string } | null;
+		const content = serializeForDisk($state.snapshot(s.config) as SearchConfig, s.text);
 		try {
 			saved = await invoke<{ rel: string | null; path: string } | null>('fs_save_as', {
-				content: serializeForDisk($state.snapshot(s.config) as SearchConfig, s.text),
+				content,
 				name: suggestedSearchFileName(s.config.query),
 				dir: isSearchFilePath(key) && slash > 0 ? key.slice(0, slash) : null
 			});
@@ -274,6 +328,8 @@ class SearchEditors {
 		}
 		if (!saved) return null;
 		const rel = saved.rel;
+		// Written (in the folder or outside it): what the editor holds is saved.
+		s.saved = content;
 		if (!rel) {
 			notifications.info(t('searchEditor.savedOutside', { path: saved.path }));
 			return null;
@@ -283,6 +339,7 @@ class SearchEditors {
 			if (isSearchEditorKey(rel)) {
 				this.#states.set(rel, s);
 				this.#states.delete(key);
+				editors.setDirty(key, false);
 				s.key = rel;
 				editors.remap((p) => (p === key ? rel : null));
 			} else editors.open(rel, { preview: false });
@@ -292,3 +349,7 @@ class SearchEditors {
 }
 
 export const searchEditors = new SearchEditors();
+
+// Save All, Save on close and shutdown save a dirty Search Editor through saveFile. Auto save only
+// writes `.code-search` files (an untitled one would open the Save As dialog).
+registerSaver(isSearchEditorKey, (key, reason) => (reason === 'explicit' || isSearchFilePath(key) ? searchEditors.save(key) : Promise.resolve(false)));

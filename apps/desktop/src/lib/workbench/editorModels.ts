@@ -192,6 +192,12 @@ export function refreshLanguages(m: MonacoModule) {
 
 export type SaveOptions = { reason?: SaveReason; overwrite?: boolean; encoding?: string };
 
+/** Editors that save without a Monaco model entry here (the Search Editor's `.code-search`). */
+const customSavers: { owns: (path: string) => boolean; save: (path: string, reason: SaveReason) => Promise<boolean> }[] = [];
+export function registerSaver(owns: (path: string) => boolean, save: (path: string, reason: SaveReason) => Promise<boolean>) {
+	customSavers.push({ owns, save });
+}
+
 /**
  * Runs the save participants (format, trim…), then writes with the file's encoding. Resolves to
  * whether the file was saved: a newer file on disk (unless `overwrite`) or a character the
@@ -199,6 +205,8 @@ export type SaveOptions = { reason?: SaveReason; overwrite?: boolean; encoding?:
  */
 export async function saveFile(path: string, reasonOrOptions: SaveReason | SaveOptions = 'explicit'): Promise<boolean> {
 	const opts = typeof reasonOrOptions === 'string' ? { reason: reasonOrOptions } : reasonOrOptions;
+	const custom = customSavers.find((c) => c.owns(path));
+	if (custom) return custom.save(path, opts.reason ?? 'explicit');
 	const entry = entries.get(path);
 	if (!entry) return false;
 	// An untitled editor has no file yet: an explicit save asks where (auto save leaves it alone).

@@ -2,7 +2,8 @@
 	// VS Code's Search Editor (searchEditor.ts): the query widget (query, Match Case / Whole Word /
 	// Regex, context lines, files to include / exclude behind "…") above a read-only Monaco editor
 	// holding the results in the `.code-search` text format. Result and file lines open their
-	// location per search.searchEditor.singleClickBehaviour / doubleClickBehaviour.
+	// location per search.searchEditor.singleClickBehaviour / doubleClickBehaviour. The results are
+	// editable like VS Code's (typing makes the editor dirty; Save writes the `.code-search` file).
 	import { onMount, untrack } from 'svelte';
 	import type * as Monaco from 'monaco-editor';
 	import Icon from './Icon.svelte';
@@ -22,8 +23,10 @@
 	let host: HTMLDivElement;
 	let editor = $state<Monaco.editor.IStandaloneCodeEditor | undefined>();
 	let decorations: Monaco.editor.IEditorDecorationsCollection | undefined;
+	/** The matches, apart: Monaco moves them with the user's edits, and they become the state's ranges. */
+	let matchDecorations: Monaco.editor.IEditorDecorationsCollection | undefined;
 
-	/** The results text's line decorations: `path:` lines, line number gutters and the matches. */
+	/** The results text's line decorations: `path:` lines and line number gutters. */
 	function decorate(m: typeof Monaco, text: string) {
 		const lines = text.split('\n');
 		const out: Monaco.editor.IModelDeltaDecoration[] = [];
@@ -32,8 +35,27 @@
 			const num = /^(\s+\d+)(: |  )/.exec(line);
 			if (num) out.push({ range: new m.Range(i + 1, 1, i + 1, num[1].length + 2), options: { inlineClassName: 'kg-search-editor-lineno' } });
 		});
-		for (const r of s.matchRanges) out.push({ range: r, options: { inlineClassName: 'kg-search-editor-match', overviewRuler: { color: 'rgba(234, 92, 0, 0.6)', position: m.editor.OverviewRulerLane.Center } } });
 		return out;
+	}
+
+	const matchOptions = (m: typeof Monaco): Monaco.editor.IModelDecorationOptions => ({
+		inlineClassName: 'kg-search-editor-match',
+		stickiness: m.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+		overviewRuler: { color: 'rgba(234, 92, 0, 0.6)', position: m.editor.OverviewRulerLane.Center }
+	});
+
+	/** The status bar's Ln/Col and language follow this editor while it is the active one. */
+	function reportStatus(ed: Monaco.editor.IStandaloneCodeEditor) {
+		if (editors.active !== s.key) return;
+		const pos = ed.getPosition();
+		const model = ed.getModel();
+		if (pos) editors.cursor = { line: pos.lineNumber, column: pos.column };
+		if (!model) return;
+		const opts = model.getOptions();
+		editors.language = model.getLanguageId();
+		editors.indent = opts.insertSpaces ? `Spaces: ${opts.indentSize}` : `Tab Size: ${opts.tabSize}`;
+		editors.eol = model.getEOL() === '\n' ? 'LF' : 'CRLF';
+		editors.selection = { chars: 0, count: 1 };
 	}
 
 	onMount(() => {
@@ -43,13 +65,15 @@
 			await mod.setupTextMate();
 			if (gone) return;
 			const m = mod.monaco;
-			model = m.editor.createModel(s.text, 'plaintext', m.Uri.from({ scheme: 'search-editor', path: '/' + editorKey }));
+			model = m.editor.createModel(s.text, 'search-result', m.Uri.from({ scheme: 'search-editor', path: '/' + editorKey }));
 			const ed = m.editor.create(host, {
 				model,
 				theme: mod.THEME_ID,
 				automaticLayout: true,
-				readOnly: true,
-				domReadOnly: false,
+				// No bracket pair colors, guides or matching: result lines are fragments of other files.
+				bracketPairColorization: { enabled: false },
+				guides: { bracketPairs: false, indentation: false },
+				matchBrackets: 'never',
 				lineNumbers: 'off',
 				glyphMargin: false,
 				folding: false,
@@ -62,6 +86,19 @@
 				ariaLabel: t('searchEditor.resultsLabel')
 			});
 			decorations = ed.createDecorationsCollection(decorate(m, s.text));
+			matchDecorations = ed.createDecorationsCollection(s.matchRanges.map((range) => ({ range, options: matchOptions(m) })));
+			// Typing in the results: the state takes the text (dirty) and the moved match ranges.
+			ed.onDidChangeModelContent(() => {
+				const current = ed.getModel();
+				if (!current || current.getValue() === s.text) return;
+				const ranges = (matchDecorations?.getRanges() ?? []).filter((r) => !r.isEmpty()).map((r) => ({ startLineNumber: r.startLineNumber, startColumn: r.startColumn, endLineNumber: r.endLineNumber, endColumn: r.endColumn }));
+				searchEditors.setText(s.key, current.getValue(), ranges);
+			});
+			ed.onDidChangeCursorPosition(() => reportStatus(ed));
+			ed.onDidFocusEditorText(() => {
+				editors.activateGroup(group);
+				reportStatus(ed);
+			});
 			ed.onMouseUp((e) => {
 				const pos = e.target.position;
 				if (!pos) return;
@@ -98,9 +135,21 @@
 		if (!ed) return;
 		untrack(() => {
 			const model = ed.getModel();
-			if (model && model.getValue() !== text) model.setValue(text);
-			void import('#lib/editor/monaco.ts').then((mod) => decorations?.set(decorate(mod.monaco, text)));
+			// A new search replaces the text (and the matches); the user's own edits are already in the model.
+			const replaced = !!model && model.getValue() !== text;
+			if (replaced) model.setValue(text);
+			const ranges = s.matchRanges;
+			void import('#lib/editor/monaco.ts').then((mod) => {
+				decorations?.set(decorate(mod.monaco, text));
+				if (replaced || !matchDecorations?.length) matchDecorations?.set(ranges.map((range) => ({ range, options: matchOptions(mod.monaco) })));
+			});
 		});
+	});
+
+	// The status bar items follow this editor when its tab becomes the active one.
+	$effect(() => {
+		const ed = editor;
+		if (ed && editors.active === s.key) untrack(() => reportStatus(ed));
 	});
 
 	// A saved search with includes or excludes opens with its details shown (VS Code's showIncludesExcludes).

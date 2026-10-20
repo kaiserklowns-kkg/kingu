@@ -72,6 +72,9 @@ monaco.languages.setLanguageConfiguration('jsx-tags', {
 	autoClosingPairs: [{ open: '{', close: '}' }, { open: '[', close: ']' }, { open: '(', close: ')' }, { open: "'", close: "'" }, { open: '"', close: '"' }]
 });
 monaco.languages.setLanguageConfiguration('ignore', { comments: { lineComment: '#' } });
+// Search results quote lines of any language: no brackets, so no bracket pair colors or unmatched
+// bracket highlight (VS Code's search-result language configuration has none).
+monaco.languages.setLanguageConfiguration('search-result', { comments: { lineComment: '#' }, brackets: [], colorizedBracketPairs: [], autoClosingPairs: [] });
 monaco.languages.setMonarchTokensProvider('ignore', {
 	tokenizer: {
 		root: [

@@ -130,6 +130,12 @@ export function parseSerializedSearchEditor(text: string): { config: SearchConfi
 /** What a `.code-search` file holds (VS Code's serializeForDisk). */
 export const serializeForDisk = (config: Partial<SearchConfig>, results: string) => serializeSearchConfiguration(config) + '\n' + results;
 
+/**
+ * A Search Editor is dirty when what it would save (query, options and the results text, which the
+ * user can edit) differs from what it last saved or opened with (VS Code: SearchEditorInput.isDirty).
+ */
+export const searchEditorDirty = (saved: string, config: Partial<SearchConfig>, results: string) => serializeForDisk(config, results) !== saved;
+
 export type ResultLabels = {
 	results: (count: number) => string;
 	files: (count: number) => string;

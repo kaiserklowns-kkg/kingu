@@ -9,11 +9,13 @@
 	import Icon from './Icon.svelte';
 	import { editors } from './editors.svelte';
 	import { outline } from './outline.svelte';
+	import { providesOutline } from './editorKind.ts';
 	import { symbolCodicon } from './breadcrumbs';
 	import { applyMarkers, enclosingPath, filterKinds, filterText, outlineRows, outlineTree, parentIds, sortOutline, type OutlineRow } from './outlineModel';
 
 	const get = <T,>(id: string) => settings.get<T>(id);
-	const rel = $derived(editors.active);
+	// Editors without a symbol provider (the Search Editor, Output, Settings…) show "cannot provide".
+	const rel = $derived(providesOutline(editors.active) ? editors.active : null);
 	const name = $derived(rel?.split('/').pop() ?? '');
 	const icons = $derived(settings.get<boolean>('outline.icons'));
 	const expandByDefault = $derived(settings.get<string>('outline.collapseItems') !== 'alwaysCollapse');

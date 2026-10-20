@@ -43,6 +43,7 @@ import {
 	type ShutdownReason
 } from './textFiles';
 import { workspace } from './workspace.svelte';
+import { isSearchEditorKey } from './searchEditor.ts';
 import { t } from '#lib/i18n/index.ts';
 
 export type Placeholder = { kind: 'binary' | 'tooLarge' | 'error'; size?: number; limit?: number; message?: string };
@@ -312,12 +313,15 @@ class TextFileService {
 			for (const p of dirty()) await saveFile(p, 'windowChange').catch((e) => clientLog('error', `save ${p}: ${e}`));
 			if (!dirty().length) return true;
 		}
-		const remaining = dirty();
+		let remaining = dirty();
 		const hotExit = settings.get<HotExit>('files.hotExit');
 		if (backsUpOnShutdown({ reason, hotExit, hasFolder: workspace.root !== null, isMac })) {
+			// Editors with no text-model backup (a dirty Search Editor) still ask Save / Don't Save.
+			const unbacked = remaining.filter(isSearchEditorKey);
 			try {
-				await this.backupNow(remaining);
-				return true;
+				await this.backupNow(remaining.filter((p) => !isSearchEditorKey(p)));
+				if (!unbacked.length) return true;
+				remaining = unbacked;
 			} catch (e) {
 				clientLog('error', `backup before shutdown: ${e}`);
 				const force = reason === 'quit' ? t('workbench.textFileService.quitAnyway') : t('workbench.textFileService.closeAnyway');
@@ -334,7 +338,7 @@ class TextFileService {
 		if (choice === 'cancel') return false;
 		if (choice === 'save') {
 			for (const p of remaining) await saveFile(p).catch((e) => status.flash(t('workbench.textFileService.saveFileFailed', { name: editorLabel(p), error: String(e) }), 8000));
-			return dirty().length === 0;
+			return remaining.every((p) => !editors.isDirty(p));
 		}
 		for (const p of remaining) this.#discardBackup(p);
 		return true;

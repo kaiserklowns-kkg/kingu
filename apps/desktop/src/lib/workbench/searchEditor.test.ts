@@ -10,6 +10,7 @@ import {
 	locationAt,
 	modifyContextLines,
 	parseSerializedSearchEditor,
+	searchEditorDirty,
 	searchEditorName,
 	serializeForDisk,
 	serializeSearchConfiguration,
@@ -141,4 +142,16 @@ test('a new editor: defaults, the prior editor (reusePriorSearchConfiguration), 
 	// null keeps the prior editor's count.
 	expect(initialConfig({}, prior, true, null)).toMatchObject({ query: '', contextLines: 4 });
 	expect(initialConfig({ contextLines: 0 }, null, false, 2).contextLines).toBe(0);
+});
+
+test('a Search Editor is dirty when its query or edited results differ from what it saved', () => {
+	const config = { ...defaultSearchConfig(), query: 'foo' };
+	const saved = serializeForDisk(config, 'a.ts:\n  1: foo {');
+	expect(searchEditorDirty(saved, config, 'a.ts:\n  1: foo {')).toBe(false);
+	// Typing in the results.
+	expect(searchEditorDirty(saved, config, 'a.ts:\n  1: foo { bar')).toBe(true);
+	// Changing the query.
+	expect(searchEditorDirty(saved, { ...config, query: 'bar' }, 'a.ts:\n  1: foo {')).toBe(true);
+	// A file read back from disk is clean.
+	expect(searchEditorDirty(saved, parseSerializedSearchEditor(saved).config, parseSerializedSearchEditor(saved).text)).toBe(false);
 });

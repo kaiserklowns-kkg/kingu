@@ -30,6 +30,9 @@
 	import PopupMenu, { menuItem, menuSeparator } from './PopupMenu.svelte';
 	import { floating } from './floating.svelte';
 	import { gitBlame, openCommitChanges } from '#lib/scm/blame.svelte.ts';
+	import { isRepoFile } from '#lib/scm/scmViews.svelte.ts';
+	import { editorKind, showsEditorStatus } from './editorKind.ts';
+	import { fileOf } from './scm.ts';
 	import FloatingToggle from './FloatingToggle.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { gitQueue } from './gitQueue.svelte';
@@ -69,7 +72,10 @@
 	const repo = $derived(worktree ? null : scm.repo);
 	const dirty = $derived(!!repo && repo.entries.length > 0);
 	const sync = $derived(repo ? syncItem(repo) : null);
-	const editorItems = $derived(!appMode.isAgents && editors.active);
+	// The editor items follow the active editor: none for editors without a text model, and the
+	// blame only for a workspace file (VS Code hides both when the editor cannot provide them).
+	const editorItems = $derived(!appMode.isAgents && showsEditorStatus(editors.active));
+	const blameItem = $derived(editorItems && editorKind(editors.active) === 'file' && isRepoFile(editors.active ? fileOf(editors.active) : null));
 	const languageName = $derived(editors.languages().find((l) => l.id === editors.language)?.name ?? languageNames[editors.language] ?? editors.language);
 	const counts = $derived(lsp.counts);
 	const problemsTitle = $derived(
@@ -226,7 +232,7 @@
 	<div class="flex-1"></div>
 	<TeamStatus />
 	<StatusResources />
-	{#if gitBlame.statusEnabled && gitBlame.statusText && editorItems}
+	{#if gitBlame.statusEnabled && gitBlame.statusText && blameItem}
 		<!-- git.blame.statusBarItem.enabled: the cursor line's commit (VS Code's git.blame item). -->
 		<button class={[ITEM, 'max-w-80 min-w-0']} title={gitBlame.statusTitle} onclick={() => gitBlame.statusCommit && openCommitChanges(gitBlame.statusCommit.hash, gitBlame.statusCommit.path)}>
 			<Icon name="commit" size={14} /><span class="truncate">{gitBlame.statusText}</span>
