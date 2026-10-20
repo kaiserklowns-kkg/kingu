@@ -112,3 +112,34 @@ describe('the model', () => {
 		expect(leaves(at('cargo:project:crates/demo')).map((t: TestItem) => t.label)).toEqual(['adds', 'subs']);
 	});
 });
+
+describe('Run with Coverage', () => {
+	let k = 0;
+	const cov = { ...opts, coverage: { file: () => `/tmp/c${++k}.json`, dir: () => `/tmp/cov-${++k}`, supports: () => true } };
+	test('each runner writes lcov (or a Go cover profile) to a fresh path', () => {
+		const [c] = runPlans([at('cargo:crates/demo/src/net/http.rs::tests > adds')], cov);
+		expect(c.argv.slice(0, 7)).toEqual(['cargo', 'llvm-cov', '-p', 'demo-crate', '--lib', '--lcov', '--output-path']);
+		expect(c.argv.slice(-3)).toEqual(['--', '--exact', 'net::http::tests::adds']);
+		expect(c.coverage).toMatchObject({ format: 'lcov', dir: false });
+		const [g] = runPlans([at(go.id)], cov);
+		expect(g.argv[3]).toStartWith('-coverprofile=/tmp/c');
+		expect(g.coverage?.format).toBe('go');
+		const [b] = runPlans([at(bun.id)], cov);
+		expect(b.argv).toContain('--coverage-reporter=lcov');
+		expect(b.coverage).toMatchObject({ format: 'lcov', dir: true });
+		const [v] = runPlans([at(vitest.id)], cov);
+		expect(v.argv).toContain('--coverage.reporter=lcov');
+		const [p] = runPlans([at(py.id)], cov);
+		expect(p.argv).toContain('--cov');
+		expect(p.argv.find((a) => a.startsWith('--cov-report=lcov:'))).toBeDefined();
+	});
+	test("without the project's coverage tool the plan runs plain", () => {
+		const none = { ...opts, coverage: { file: () => '/tmp/x.json', dir: () => '/tmp/cov-x', supports: () => false } };
+		const [c] = runPlans([at(rust.id)], none);
+		expect(c.argv[1]).toBe('test');
+		expect(c.coverage).toBeUndefined();
+		expect(runPlans([at(vitest.id)], none)[0].coverage).toBeUndefined();
+		// Go's cover profile needs no extra tool.
+		expect(runPlans([at(go.id)], none)[0].coverage?.format).toBe('go');
+	});
+});

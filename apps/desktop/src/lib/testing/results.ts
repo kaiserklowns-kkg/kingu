@@ -277,7 +277,7 @@ export function parseJestJson(json: string): TestEvent[] {
 				const at = own ? { rel: own[1], line: Number(own[2]), column: Number(own[3]) } : a.location ? { rel: file.name, line: a.location.line, column: a.location.column } : undefined;
 				return { message: message.split('\n    at ')[0].trim(), ...expectedActual(message), ...(at ? { location: at } : {}) };
 			});
-			out.push({ file: file.name, path: [...(a.ancestorTitles ?? []), a.title], state, ...(a.duration != null ? { duration: a.duration } : {}), ...(messages.length ? { messages } : {}) });
+			out.push({ file: file.name, path: [...(a.ancestorTitles ?? []), a.title], state, ...(a.location?.line ? { line: a.location.line } : {}), ...(a.duration != null ? { duration: a.duration } : {}), ...(messages.length ? { messages } : {}) });
 		}
 		// A file that failed to load (syntax error, import failure) has no assertions.
 		if (!results.length && file.status === 'failed' && file.message) out.push({ file: file.name, path: [], state: 'errored', messages: [{ message: stripAnsi(file.message).trim() }] });

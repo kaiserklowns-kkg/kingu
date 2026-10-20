@@ -1,7 +1,9 @@
 <script lang="ts">
 	// The Testing view (VS Code's Test Explorer): the tests of every project as a tree (runner and
 	// project, file, suite, test) with each one's last result, Run and Debug on every row, the
-	// failure messages under a failed test, a filter, and the run toolbar.
+	// failure messages under a failed test, a filter, and the run toolbar. After a run with coverage,
+	// the Test Coverage view below: the covered files by folder with their percentage
+	// (`testing.displayedCoveragePercent`, colored by `testing.coverageBarThresholds`).
 	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
 	import PopupMenu, { menuItem } from '#lib/workbench/PopupMenu.svelte';
 	import type { MenuNode } from '#lib/workbench/menus.ts';
@@ -11,6 +13,8 @@
 	import { t } from '#lib/i18n/index.ts';
 	import { testing } from './testing.svelte.ts';
 	import type { TestItem, TestState } from './model.ts';
+	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { coverageColor, coverageTotals, coverageTree, displayedPercent, displayPercent, percent, type CoverageNode, type CoverageSource, type Thresholds } from './coverage.ts';
 
 	$effect(() => void testing.ensureLoaded());
 
@@ -71,11 +75,34 @@
 		const items = [
 			menuItem('run', t('testing.menu.run')),
 			menuItem('debug', t('testing.menu.debug'), { enabled: item.runner !== 'bun' && item.kind !== 'project' }),
+			menuItem('coverage', t('testing.menu.coverage')),
 			menuItem('goto', t('testing.menu.goto'), { enabled: !!item.rel }),
 			...(state === 'failed' || state === 'errored' ? [menuItem('peek', t('testing.menu.peek'))] : [])
 		];
 		menu = { x: e.clientX, y: e.clientY, items, item };
 	}
+
+	// --- Test Coverage
+	const coverageNodes = $derived(testing.coverage ? coverageTree([...testing.coverage.values()]) : []);
+	const coverageTotal = $derived(testing.coverage ? coverageTotals([...testing.coverage.values()]) : null);
+	let coverageCollapsed = $state<Record<string, boolean>>({});
+	const coverageRows = $derived.by(() => {
+		const out: { node: CoverageNode; depth: number; open: boolean }[] = [];
+		const visit = (nodes: CoverageNode[], depth: number) => {
+			for (const node of nodes) {
+				const open = !(coverageCollapsed[node.id] ?? false);
+				out.push({ node, depth, open });
+				if (node.kind === 'folder' && open) visit(node.children, depth + 1);
+			}
+		};
+		visit(coverageNodes, 0);
+		return out;
+	});
+	const COLORS = { red: 'var(--vscode-charts-red,#f14c4c)', yellow: 'var(--vscode-charts-yellow,#cca700)', green: 'var(--vscode-charts-green,#89d185)' };
+	const shown = (c: CoverageSource) => displayedPercent(c, settings.get<string>('testing.displayedCoveragePercent'));
+	const colorOf = (c: CoverageSource) => COLORS[coverageColor(shown(c), settings.get<Thresholds>('testing.coverageBarThresholds'))];
+	const countText = (c: CoverageSource['branch']) => (c ? `${c.covered}/${c.total} (${displayPercent(percent(c), 0)})` : t('testing.coverage.na'));
+	const coverageTitle = (c: CoverageSource) => t('testing.coverage.detail', { statements: countText(c.statement), branches: countText(c.branch), functions: countText(c.declaration) });
 
 	const duration = (ms?: number) => (ms === undefined ? '' : ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`);
 	const ROW = 'group/row flex h-(--kg-row-height) items-center gap-1 pr-2 leading-(--kg-row-height) hover:bg-(--vscode-list-hoverBackground)';
@@ -85,6 +112,7 @@
 <section class="flex min-h-0 flex-1 flex-col">
 	<div class="flex shrink-0 items-center gap-0.5 px-2 pb-1">
 		<button aria-label="Run All Tests" title={titled('Run All Tests', 'testing.runAll')} class={ICON_BUTTON} disabled={testing.running || !testing.items.length} onclick={() => testing.runAll()}><Icon name="play" size={15} /></button>
+		<button aria-label={t('testing.runAllCoverage')} title={titled(t('testing.runAllCoverage'), 'testing.coverageAll')} class={ICON_BUTTON} disabled={testing.running || !testing.items.length} onclick={() => testing.runAll(false, true)}><Icon name="shield" size={14} /></button>
 		<button aria-label="Rerun Failed Tests" title={titled('Rerun Failed Tests', 'testing.reRunFailTests')} class={ICON_BUTTON} disabled={testing.running || !testing.totals.failed} onclick={() => testing.reRunFailed()}><Icon name="refresh" size={14} /></button>
 		{#if testing.running}
 			<button aria-label="Cancel Test Run" title={titled('Cancel Test Run', 'testing.cancelRun')} class={ICON_BUTTON} onclick={() => testing.cancel()}><Icon name="stop" size={14} /></button>
@@ -142,6 +170,7 @@
 					{#if item.runner !== 'bun' && item.kind !== 'project'}
 						<button aria-label={t('testing.menu.debug')} title={t('testing.menu.debug')} class={ICON_BUTTON} disabled={testing.running} onclick={() => testing.run([item], { debug: true })}><Icon name="bug" size={13} /></button>
 					{/if}
+					<button aria-label={t('testing.menu.coverage')} title={t('testing.menu.coverage')} class={ICON_BUTTON} disabled={testing.running} onclick={() => testing.run([item], { coverage: true })}><Icon name="shield" size={13} /></button>
 					{#if item.rel}
 						<button aria-label={t('testing.menu.goto')} title={t('testing.menu.goto')} class={ICON_BUTTON} onclick={() => open(item)}><Icon name="goToFile" size={13} /></button>
 					{/if}
@@ -162,6 +191,35 @@
 			{/if}
 		{/each}
 	</div>
+	{#if testing.coverage && coverageTotal}
+		<!-- VS Code's Test Coverage view (workbench.view.testCoverage). -->
+		<div class="flex max-h-[45%] min-h-0 shrink-0 flex-col border-t border-(--vscode-sideBarSectionHeader-border,transparent)">
+			<div class="flex h-[22px] shrink-0 items-center gap-1 pr-2 pl-3 text-[11px] font-bold uppercase">
+				<span class="min-w-0 flex-1 truncate" title={coverageTitle(coverageTotal)}>{t('testing.coverage.title')}</span>
+				<span class="shrink-0 font-normal normal-case tabular-nums" style:color={colorOf(coverageTotal)}>{displayPercent(shown(coverageTotal))}</span>
+				<button aria-label={t('testing.coverage.toggleInline')} title={titled(t('testing.coverage.toggleInline'), 'testing.toggleInlineCoverage')} aria-pressed={testing.coverageInline} class={[ICON_BUTTON, testing.coverageInline && 'bg-(--vscode-inputOption-activeBackground)']} onclick={() => (testing.coverageInline = !testing.coverageInline)}><Icon name="eye" size={13} /></button>
+				<button aria-label={t('testing.coverage.close')} title={t('testing.coverage.close')} class={ICON_BUTTON} onclick={() => testing.closeCoverage()}><Icon name="close" size={13} /></button>
+			</div>
+			<div class="min-h-0 flex-1 overflow-y-auto" role="tree" aria-label={t('testing.coverage.title')}>
+				{#each coverageRows as row (row.node.id)}
+					{@const node = row.node}
+					{@const pct = shown(node)}
+					<div class={ROW} style:padding-left="{row.depth * 12 + 4}px" role="treeitem" aria-selected="false" aria-expanded={node.kind === 'folder' ? row.open : undefined} tabindex="-1" title={`${node.rel}\n${coverageTitle(node)}`}>
+						{#if node.kind === 'folder'}
+							<button aria-label={row.open ? 'Collapse' : 'Expand'} class="grid size-4 shrink-0 place-items-center" onclick={() => (coverageCollapsed[node.id] = row.open)}>
+								<Icon name={row.open ? 'chevronDown' : 'chevronRight'} size={14} />
+							</button>
+						{:else}
+							<span class="w-4 shrink-0"></span>
+						{/if}
+						<button class="min-w-0 flex-1 truncate text-left" onclick={() => (node.kind === 'file' ? editors.open(node.rel, { preview: true }) : (coverageCollapsed[node.id] = row.open))}>{node.label}</button>
+						<span class="h-1.5 w-10 shrink-0 overflow-hidden rounded-sm bg-(--vscode-input-background)" aria-hidden="true"><span class="block h-full" style:width="{pct * 100}%" style:background={colorOf(node)}></span></span>
+						<span class="w-14 shrink-0 text-right text-xs tabular-nums" style:color={colorOf(node)}>{displayPercent(pct, 0)}</span>
+					</div>
+				{/each}
+			</div>
+		</div>
+	{/if}
 </section>
 
 {#if menu}
@@ -175,6 +233,7 @@
 			if (node.type !== 'item') return;
 			if (node.id === 'run') void testing.run([current.item]);
 			else if (node.id === 'debug') void testing.run([current.item], { debug: true });
+			else if (node.id === 'coverage') void testing.run([current.item], { coverage: true });
 			else if (node.id === 'goto') open(current.item);
 			else if (node.id === 'peek') testing.openPeek(current.item.id);
 		}}

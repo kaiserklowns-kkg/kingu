@@ -1,7 +1,10 @@
 // Tests in a Monaco editor (VS Code: testingDecorations.ts and the testing output peek): a run
 // icon in the glyph margin of each test and suite showing its last result (`testing.gutterEnabled`;
 // a click does `testing.defaultGutterClickAction`, a right click opens the test menu), the failure
-// message after the failing line, and the failure peek with expected and actual values.
+// message after the failing line, the failure peek with expected and actual values, and the open
+// coverage (VS Code: codeCoverageDecorations.ts): covered / uncovered / partly covered lines marked
+// by the line numbers and in the minimap (`testing.coverageMinimapEnabled`), shaded with Toggle
+// Inline Coverage.
 
 import type * as Monaco from 'monaco-editor';
 import { t } from '#lib/i18n/index.ts';
@@ -11,6 +14,7 @@ import { popupMenuAt } from '#lib/workbench/popupMenuAt.ts';
 import { layout } from '#lib/workbench/layout.svelte.ts';
 import { isJsTestFile, isPythonTestFile } from './discover.ts';
 import type { TestItem, TestMessage } from './model.ts';
+import { lineDecorations } from './coverage.ts';
 import { testing } from './testing.svelte.ts';
 
 type MonacoApi = typeof Monaco;
@@ -64,6 +68,7 @@ function peekNode(item: TestItem, m: TestMessage, onClose: () => void): HTMLElem
 export function attachTestingEditor(monaco: MonacoApi, editor: Monaco.editor.IStandaloneCodeEditor, path: () => string | null): TestingDecorations {
 	const gutter = editor.createDecorationsCollection();
 	const messages = editor.createDecorationsCollection();
+	const coverage = editor.createDecorationsCollection();
 	const lane = { position: monaco.editor.GlyphMarginLane.Center };
 	let zone: string | null = null;
 	let zoneKey = '';
@@ -72,11 +77,17 @@ export function attachTestingEditor(monaco: MonacoApi, editor: Monaco.editor.ISt
 
 	function testMenu(x: number, y: number, item: TestItem) {
 		const state = testing.stateOf(item);
-		const items = [menuItem('run', t('testing.menu.run')), menuItem('debug', t('testing.menu.debug'), { enabled: item.runner !== 'bun' }), menuItem('reveal', t('testing.menu.reveal'))];
+		const items = [
+			menuItem('run', t('testing.menu.run')),
+			menuItem('debug', t('testing.menu.debug'), { enabled: item.runner !== 'bun' }),
+			menuItem('coverage', t('testing.menu.coverage')),
+			menuItem('reveal', t('testing.menu.reveal'))
+		];
 		if (state === 'failed' || state === 'errored') items.push(menuItem('peek', t('testing.menu.peek')));
 		popupMenuAt(x, y, 'Test', items, (id) => {
 			if (id === 'run') void testing.run([item]);
 			else if (id === 'debug') void testing.run([item], { debug: true });
+			else if (id === 'coverage') void testing.run([item], { coverage: true });
 			else if (id === 'peek') testing.openPeek(item.id);
 			else if (id === 'reveal') {
 				layout.sideView = 'testing';
@@ -97,7 +108,7 @@ export function attachTestingEditor(monaco: MonacoApi, editor: Monaco.editor.ISt
 		e.event.preventDefault();
 		const action = settings.get<string>('testing.defaultGutterClickAction');
 		if (action === 'contextMenu') setTimeout(() => testMenu(e.event.posx, e.event.posy, item));
-		else void testing.run([item], { debug: action === 'debug' });
+		else void testing.run([item], { debug: action === 'debug', coverage: action === 'runWithCoverage' });
 	});
 	const context = editor.onContextMenu((e) => {
 		if (e.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return;
@@ -128,6 +139,7 @@ export function attachTestingEditor(monaco: MonacoApi, editor: Monaco.editor.ISt
 
 	function render() {
 		const p = path();
+		renderCoverage(p);
 		if (!p) {
 			gutter.clear();
 			messages.clear();
@@ -170,6 +182,31 @@ export function attachTestingEditor(monaco: MonacoApi, editor: Monaco.editor.ISt
 		renderPeek(p);
 	}
 
+	const MINIMAP: Record<string, string> = { covered: 'rgba(115, 201, 145, 0.6)', uncovered: 'rgba(241, 76, 76, 0.7)', partial: 'rgba(204, 167, 0, 0.7)' };
+
+	function renderCoverage(p: string | null) {
+		const file = p ? testing.coverage?.get(p) : undefined;
+		const model = editor.getModel();
+		if (!file || !model) return coverage.clear();
+		const inline = testing.coverageInline;
+		const minimap = settings.get<boolean>('testing.coverageMinimapEnabled') !== false;
+		coverage.set(
+			lineDecorations(file, model.getLineCount()).map(({ line, kind }) => {
+				const hits = file.lines.get(line) ?? 0;
+				const hover = kind === 'covered' ? t('testing.coverage.line.covered', { hits }) : t(`testing.coverage.line.${kind}`);
+				return {
+					range: new monaco.Range(line, 1, line, 1),
+					options: {
+						isWholeLine: true,
+						lineNumberClassName: `kg-cov-gutter kg-cov-${kind}`,
+						...(inline ? { className: `kg-cov-line kg-cov-line-${kind}`, hoverMessage: { value: hover } } : {}),
+						...(minimap ? { minimap: { color: MINIMAP[kind], position: monaco.editor.MinimapPosition.Gutter } } : {})
+					}
+				};
+			})
+		);
+	}
+
 	return {
 		render,
 		dispose: () => {
@@ -177,6 +214,7 @@ export function attachTestingEditor(monaco: MonacoApi, editor: Monaco.editor.ISt
 			context.dispose();
 			gutter.clear();
 			messages.clear();
+			coverage.clear();
 			if (zone) editor.changeViewZones((acc) => zone && acc.removeZone(zone));
 		}
 	};

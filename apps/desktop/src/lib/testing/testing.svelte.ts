@@ -36,7 +36,8 @@ import {
 	rustTarget,
 	rustTests
 } from './discover.ts';
-import { ancestors, countBadge, fileItem, findItem, leaves, projectItems, stateOf, summary, testAt, testsInFile, walk, type Declared, type Runner, type TestItem, type TestMessage, type TestResult, type TestState } from './model.ts';
+import { addDynamic, ancestors, countBadge, fileItem, findItem, keepDynamic, leaves, projectItems, RUNNER_LABELS, stateOf, summary, testAt, testsInFile, walk, type Declared, type Runner, type TestItem, type TestMessage, type TestResult, type TestState } from './model.ts';
+import { mergeCoverage, parseGoCoverProfile, parseLcov, type FileCoverage } from './coverage.ts';
 import { CargoParser, GoParser, parseJestJson, parseJunit, type TestEvent } from './results.ts';
 import { cargoBinaryName, cargoName, cargoTestExecutable, debugConfig, joinRel, relTo, runPlans, shellLine, type RunPlan } from './runners.ts';
 
@@ -66,6 +67,10 @@ class Testing {
 	peek = $state.raw<Peek | null>(null);
 	/** Rows to reveal in the view (testing.followRunningTest). */
 	revealId = $state<string | null>(null);
+	/** The open coverage (VS Code: the Test Coverage view and editor decorations), by file. */
+	coverage = $state.raw<ReadonlyMap<string, FileCoverage> | null>(null);
+	/** Toggle Inline Coverage: covered and uncovered lines are shaded, not only marked in the gutter. */
+	coverageInline = $state(false);
 	root = '';
 
 	badge = $derived(countBadge(this.results, settings.get<string>('testing.countBadge')));
@@ -73,7 +78,9 @@ class Testing {
 
 	#files = new Map<string, TestItem>();
 	#fileSet = new Set<string>();
-	#lastRun: { ids: string[]; debug: boolean } | null = null;
+	#lastRun: { ids: string[]; debug: boolean; coverage?: boolean } | null = null;
+	/** Whether a project has its runner's coverage tool, asked once per folder. */
+	#coverageTools = new Map<string, Promise<boolean>>();
 	#cancel: (() => void) | null = null;
 	#pendingResults: Map<string, TestResult> | null = null;
 	#loaded: Promise<void> | null = null;
@@ -84,6 +91,8 @@ class Testing {
 		this.items = [];
 		this.results = new Map();
 		this.peek = null;
+		this.coverage = null;
+		this.#coverageTools.clear();
 		this.#lastRun = null;
 		this.#loaded = null;
 		this.#terminalFor.clear();
@@ -149,7 +158,9 @@ class Testing {
 			return;
 		}
 		const item = await this.#itemFor(rel, text);
-		if (item && item.children.length) this.#files.set(rel, item);
+		// Tests found by earlier runs (test.each cases, subtests) stay under the rescanned file.
+		const kept = item ? keepDynamic(item, this.#files.get(rel)) : null;
+		if (kept && kept.children.length) this.#files.set(rel, kept);
 		else this.#files.delete(rel);
 	}
 
@@ -360,11 +371,11 @@ class Testing {
 		this.#pendingResults = null;
 	}
 
-	/** Runs (or with `debug`, debugs) tests: any mix of projects, files, suites and tests. */
-	async run(selected: readonly TestItem[], { debug: asDebug = false } = {}) {
+	/** Runs (or with `debug`, debugs; with `coverage`, runs with coverage) tests: any mix of projects, files, suites and tests. */
+	async run(selected: readonly TestItem[], { debug: asDebug = false, coverage = false } = {}) {
 		if (!selected.length) return status.flash(t('testing.noTests'));
 		if (this.running) return status.flash(t('testing.alreadyRunning'));
-		this.#lastRun = { ids: selected.map((s) => s.id), debug: asDebug };
+		this.#lastRun = { ids: selected.map((s) => s.id), debug: asDebug, coverage };
 		// testing.saveBeforeTest
 		if (settings.get<boolean>('testing.saveBeforeTest')) {
 			const { saveFile } = await import('#lib/workbench/editorModels.ts');
@@ -376,9 +387,20 @@ class Testing {
 			layout.sideView = 'testing';
 			layout.sidebarVisible = true;
 		}
-		const reports = await Promise.all(Array.from({ length: selected.length + 4 }, () => invoke<string>('testing_report_new').catch(() => '')));
+		const reports = await Promise.all(Array.from({ length: (selected.length + 4) * (coverage ? 2 : 1) }, () => invoke<string>('testing_report_new').catch(() => '')));
 		let r = 0;
-		const plans = runPlans(selected, { report: () => reports[r++] ?? '', python: (p) => this.#python(p) });
+		const covered = coverage ? await this.#coverageSupport(selected) : null;
+		const covDirs = coverage ? await Promise.all(Array.from({ length: selected.length + 4 }, () => invoke<string>('testing_coverage_new').catch(() => ''))) : [];
+		let d = 0;
+		const plans = runPlans(selected, {
+			report: () => reports[r++] ?? '',
+			python: (p) => this.#python(p),
+			...(covered ? { coverage: { file: () => reports[r++] ?? '', dir: () => covDirs[d++] ?? '', supports: (runner: Runner, project: string) => covered.has(`${runner}|${project}`) } } : {})
+		});
+		// Directories no plan took are removed.
+		for (const dir of covDirs.slice(d)) if (dir) void invoke('testing_coverage_take', { path: dir }).catch(() => {});
+		if (covered) this.#warnNoCoverageTool(selected, covered);
+		const runCoverage: FileCoverage[] = [];
 		for (const p of plans) for (const tst of p.tests) this.#set(tst.id, { state: 'queued', messages: [] });
 		this.#flushResults();
 		this.running = true;
@@ -388,7 +410,7 @@ class Testing {
 		try {
 			for (const plan of plans) {
 				if (cancelled) break;
-				failures += await this.#runPlan(plan, open, () => cancelled);
+				failures += await this.#runPlan(plan, open, () => cancelled, runCoverage);
 			}
 		} finally {
 			this.running = false;
@@ -399,11 +421,97 @@ class Testing {
 		}
 		const s = this.totals;
 		status.flash(t('testing.done', { passed: s.passed, failed: s.failed, skipped: s.skipped }));
+		if (coverage) {
+			if (runCoverage.length) {
+				this.coverage = new Map(mergeCoverage(runCoverage).map((f) => [f.rel, f]));
+				layout.sideView = 'testing';
+				layout.sidebarVisible = true;
+			} else if (!cancelled) notifications.info(t('testing.coverage.none'));
+		}
 		if (failures) this.#afterFailures();
 	}
 
-	/** One command in a test terminal; resolves with its failures. */
-	#runPlan(plan: RunPlan, open: string, cancelled: () => boolean): Promise<number> {
+	/** The runners and projects of `selected` that can run with coverage (`runner|project`). */
+	async #coverageSupport(selected: readonly TestItem[]): Promise<Set<string>> {
+		const keys = new Set(selected.map((i) => `${i.runner}|${i.project}`));
+		const out = new Set<string>();
+		await Promise.all(
+			[...keys].map(async (key) => {
+				const [runner, project] = key.split('|') as [Runner, string];
+				let probe = this.#coverageTools.get(key);
+				if (!probe) this.#coverageTools.set(key, (probe = this.#probeCoverage(runner, project)));
+				if (await probe) out.add(key);
+			})
+		);
+		return out;
+	}
+
+	/** Whether the project has the coverage tool its runner needs; nothing is ever installed. */
+	async #probeCoverage(runner: Runner, project: string): Promise<boolean> {
+		const ok = (argv: string[]) => this.#run(argv, project).then((r) => r.success).catch(() => false);
+		switch (runner) {
+			case 'cargo':
+				return ok(['cargo', 'llvm-cov', '--version']);
+			case 'pytest':
+				return ok([this.#python(project), '-c', 'import pytest_cov']);
+			case 'vitest': {
+				// Without a provider vitest offers to install one: only offer coverage when one is there.
+				for (let dir: string | null = project; dir !== null; dir = dir ? dirOf(dir) : null)
+					for (const provider of ['@vitest/coverage-v8', '@vitest/coverage-istanbul'])
+						if ((await this.#read(joinRel(dir, `node_modules/${provider}/package.json`))) !== null) return true;
+				return false;
+			}
+			default:
+				// bun and jest have coverage built in; go's cover profile is part of `go test`.
+				return true;
+		}
+	}
+
+	#warnNoCoverageTool(selected: readonly TestItem[], covered: ReadonlySet<string>) {
+		const tools: Partial<Record<Runner, string>> = { cargo: 'cargo-llvm-cov', pytest: 'pytest-cov', vitest: '@vitest/coverage-v8' };
+		const missing = [...new Set(selected.filter((i) => !covered.has(`${i.runner}|${i.project}`) && tools[i.runner]).map((i) => i.runner))];
+		for (const runner of missing) notifications.info(t('testing.coverage.needsTool', { runner: RUNNER_LABELS[runner], tool: tools[runner]! }));
+	}
+
+	/** A plan's coverage output, read once, as workspace files. */
+	async #readCoverage(plan: RunPlan): Promise<FileCoverage[]> {
+		const out = plan.coverage;
+		if (!out?.path) return [];
+		const text = await invoke<string | null>(out.dir ? 'testing_coverage_take' : 'testing_report_take', { path: out.path }).catch((e) => {
+			clientLog('info', `coverage ${plan.runner} ${plan.project || '.'}: ${e}`);
+			return null;
+		});
+		if (!text) return [];
+		if (out.format === 'go') return parseGoCoverProfile(text, (p) => this.#goCoverFile(plan.project, p));
+		return parseLcov(text, (p) => this.#coverFile(plan.project, p));
+	}
+
+	/** An lcov `SF:` path (absolute, or relative to the project) as a workspace file. */
+	#coverFile(project: string, path: string): string | null {
+		if (path.startsWith('/')) return path.startsWith(`${this.root}/`) ? path.slice(this.root.length + 1) : null;
+		const inProject = joinRel(project, path.replace(/^\.\//, ''));
+		if (this.#fileSet.has(inProject) || !this.#fileSet.has(path)) return inProject;
+		return path;
+	}
+
+	/** A cover profile's `<import path>/<file>.go` as a workspace file, through the packages' test files. */
+	#goCoverFile(project: string, path: string): string | null {
+		const slash = path.lastIndexOf('/');
+		const pkg = path.slice(0, slash);
+		const base = path.slice(slash + 1);
+		for (const f of this.#files.values()) if (f.runner === 'go' && f.project === project && f.meta?.importPath === pkg) return joinRel(dirOf(f.rel ?? ''), base);
+		// A package without tests: under the module's root, from any package's import path and directory.
+		for (const f of this.#files.values()) {
+			if (f.runner !== 'go' || f.project !== project || !f.meta?.importPath) continue;
+			const dir = f.meta.dir ?? '.';
+			const mod = dir === '.' ? f.meta.importPath : f.meta.importPath.slice(0, -(dir.length + 1));
+			if (path.startsWith(`${mod}/`)) return joinRel(project, path.slice(mod.length + 1));
+		}
+		return null;
+	}
+
+	/** One command in a test terminal; resolves with its failures (its coverage goes to `coverage`). */
+	#runPlan(plan: RunPlan, open: string, cancelled: () => boolean, coverage: FileCoverage[] = []): Promise<number> {
 		return new Promise((resolve) => {
 			const cwd = plan.project ? `${this.root}/${plan.project}` : this.root;
 			const line = shellLine(plan.argv);
@@ -449,6 +557,11 @@ class Testing {
 				if (plan.report) {
 					const text = await invoke<string | null>('testing_report_take', { path: plan.report }).catch(() => null);
 					if (text) apply(plan.parser === 'junit' ? parseJunit(text) : parseJestJson(text));
+				}
+				if (plan.coverage) coverage.push(...(await this.#readCoverage(plan)));
+				if (this.#dynamicAdded) {
+					this.#dynamicAdded = false;
+					this.#publish();
 				}
 				// A test that got no result: errored when the command failed, else left unrun.
 				for (const tst of plan.tests) {
@@ -508,7 +621,12 @@ class Testing {
 				return plan.tests.filter((x) => cargoBinaryName(x.meta?.crate ?? '', x.meta?.target ?? 'lib') === ev.scope && cargoName(x) === ev.name).map((x) => x.id);
 			case 'go': {
 				if (!ev.name) return plan.tests.filter((x) => x.meta?.importPath === ev.scope).map((x) => x.id);
-				if (ev.name.includes('/')) return [];
+				if (ev.name.includes('/')) {
+					// A subtest (`t.Run`): added under its test, in the file that declares it.
+					const parts = ev.name.split('/');
+					const top = plan.tests.find((x) => x.path[0] === parts[0] && x.path.length === 1 && (!ev.scope || x.meta?.importPath === ev.scope));
+					return top?.rel ? this.#dynamic(top.rel, parts) : [];
+				}
 				return plan.tests.filter((x) => x.label === ev.name && (!ev.scope || x.meta?.importPath === ev.scope)).map((x) => x.id);
 			}
 			case 'pytest': {
@@ -519,14 +637,31 @@ class Testing {
 				const param = name.match(/^([^[]+)\[/);
 				const path = [...cls, ...(param ? [param[1], name] : [name])];
 				const id = `pytest:${file}::${path.join(' > ')}`;
-				return this.#known(plan, id);
+				const known = this.#known(plan, id);
+				return known.length ? known : this.#dynamic(file, path, ev.line);
 			}
 			default: {
 				const file = ev.file?.startsWith('/') ? (ev.file.startsWith(`${this.root}/`) ? ev.file.slice(this.root.length + 1) : ev.file) : joinRel(plan.project, ev.file ?? '');
 				if (!ev.path?.length) return ev.state === 'errored' ? plan.tests.filter((x) => x.rel === file).map((x) => x.id) : [];
-				return this.#known(plan, `${plan.runner}:${file}::${ev.path.join(' > ')}`);
+				const known = this.#known(plan, `${plan.runner}:${file}::${ev.path.join(' > ')}`);
+				// `test.each` cases and other names the file scan could not see join the tree.
+				return known.length ? known : this.#dynamic(file, ev.path, ev.line);
 			}
 		}
+	}
+
+	#dynamicAdded = false;
+
+	/** Adds a reported test under its (known) file; [] when the file has no tests in the tree. */
+	#dynamic(rel: string, path: readonly string[], line?: number): string[] {
+		const file = this.#files.get(rel);
+		if (!file || !path.length) return [];
+		const added = addDynamic(file, path, line);
+		if (added.file !== file) {
+			this.#files.set(rel, added.file);
+			this.#dynamicAdded = true;
+		}
+		return [added.id];
 	}
 
 	#known(plan: RunPlan, id: string): string[] {
@@ -598,34 +733,51 @@ class Testing {
 
 	// --- Commands ------------------------------------------------------------------------------
 
-	async runAll(asDebug = false) {
+	async runAll(asDebug = false, coverage = false) {
 		await this.ensureLoaded();
 		if (asDebug) return status.flash(t('testing.debugOne'));
-		await this.run(this.items);
+		await this.run(this.items, { coverage });
 	}
 
-	async runAtCursor(asDebug = false) {
+	async runAtCursor(asDebug = false, coverage = false) {
 		await this.ensureLoaded();
 		const rel = editors.active;
 		const item = rel ? testAt(this.items, rel, editors.cursor.line) : undefined;
 		if (!item) return status.flash(t('testing.noTestAtCursor'));
-		await this.run([item], { debug: asDebug });
+		await this.run([item], { debug: asDebug, coverage });
 	}
 
-	async runCurrentFile(asDebug = false) {
+	async runCurrentFile(asDebug = false, coverage = false) {
 		await this.ensureLoaded();
 		const rel = editors.active;
 		const file = rel ? this.#files.get(rel) : undefined;
 		const item = file ? this.find(file.id) : undefined;
 		if (!item) return status.flash(t('testing.noTestsInFile'));
-		await this.run([item], { debug: asDebug });
+		await this.run([item], { debug: asDebug, coverage });
 	}
 
-	async reRunLast(asDebug?: boolean) {
+	async reRunLast(asDebug?: boolean, coverage?: boolean) {
 		const last = this.#lastRun;
 		if (!last) return status.flash(t('testing.noLastRun'));
 		const items = last.ids.map((id) => this.find(id)).filter((x): x is TestItem => !!x);
-		await this.run(items, { debug: asDebug ?? last.debug });
+		await this.run(items, { debug: asDebug ?? last.debug, coverage: coverage ?? (asDebug === undefined && !!last.coverage) });
+	}
+
+	/** Clear Coverage (testing.coverage.close). */
+	closeCoverage() {
+		this.coverage = null;
+	}
+
+	/** Go to Next / Previous Uncovered Line in the active editor (wrapping). */
+	gotoMissedLine(next: boolean) {
+		const rel = editors.active;
+		const f = rel ? this.coverage?.get(rel) : undefined;
+		if (!rel || !f) return status.flash(t('testing.coverage.noneInFile'));
+		const missed = [...f.lines].filter(([, h]) => h === 0).map(([l]) => l).sort((a, b) => a - b);
+		if (!missed.length) return status.flash(t('testing.coverage.allCovered'));
+		const line = editors.cursor.line;
+		const target = next ? (missed.find((l) => l > line) ?? missed[0]) : ([...missed].reverse().find((l) => l < line) ?? missed[missed.length - 1]);
+		editors.openAt(rel, target);
 	}
 
 	async reRunFailed() {
@@ -678,7 +830,16 @@ export function installTesting(): () => void {
 		commands.register({ id: 'testing.cancelRun', title: 'Cancel Test Run', category: 'Test', key: 'cmd+; cmd+x', ...ide, when: () => testing.running, run: () => testing.cancel() }),
 		commands.register({ id: 'testing.showMostRecentOutput', title: 'Show Output', category: 'Test', key: 'cmd+; cmd+o', ...ide, run: () => testing.showOutput() }),
 		commands.register({ id: 'testing.refreshTests', title: 'Refresh Tests', category: 'Test', key: 'cmd+; cmd+r', ...ide, run: () => testing.refresh(true) }),
-		commands.register({ id: 'testing.clearTestResults', title: 'Clear All Results', category: 'Test', ...ide, run: () => testing.clearResults() })
+		commands.register({ id: 'testing.clearTestResults', title: 'Clear All Results', category: 'Test', ...ide, run: () => testing.clearResults() }),
+		// Coverage (VS Code's coverage run profile commands and keys).
+		commands.register({ id: 'testing.coverageAll', title: 'Run All Tests with Coverage', category: 'Test', key: 'cmd+; cmd+shift+a', ...ide, run: () => testing.runAll(false, true) }),
+		commands.register({ id: 'testing.coverageAtCursor', title: 'Run Test at Cursor with Coverage', category: 'Test', key: 'cmd+; cmd+shift+c', ...ide, run: () => testing.runAtCursor(false, true) }),
+		commands.register({ id: 'testing.coverageCurrentFile', title: 'Run Tests with Coverage in Current File', category: 'Test', key: 'cmd+; cmd+shift+f', ...ide, run: () => testing.runCurrentFile(false, true) }),
+		commands.register({ id: 'testing.coverageLastRun', title: 'Rerun Last Run with Coverage', category: 'Test', key: 'cmd+; cmd+shift+l', ...ide, run: () => testing.reRunLast(false, true) }),
+		commands.register({ id: 'testing.coverage.close', title: 'Clear Coverage', category: 'Test', ...ide, when: () => testing.coverage !== null, run: () => testing.closeCoverage() }),
+		commands.register({ id: 'testing.toggleInlineCoverage', title: 'Toggle Inline Coverage', category: 'Test', key: 'cmd+; cmd+shift+i', ...ide, when: () => testing.coverage !== null, run: () => (testing.coverageInline = !testing.coverageInline) }),
+		commands.register({ id: 'testing.coverage.goToNextMissedLine', title: 'Go to Next Uncovered Line', category: 'Test', key: 'alt+f9', ...ide, when: () => testing.coverage !== null, run: () => testing.gotoMissedLine(true) }),
+		commands.register({ id: 'testing.coverage.goToPreviousMissedLine', title: 'Go to Previous Uncovered Line', category: 'Test', key: 'alt+shift+f9', ...ide, when: () => testing.coverage !== null, run: () => testing.gotoMissedLine(false) })
 	];
 	return () => {
 		unFiles();

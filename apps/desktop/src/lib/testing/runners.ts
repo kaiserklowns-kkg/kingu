@@ -7,8 +7,11 @@ import { leaves, type Runner, type TestItem } from './model.ts';
 
 export type Parser = 'cargo' | 'go' | 'junit' | 'jest';
 
+/** Where a run with coverage writes it: an lcov file, a directory holding `lcov.info`, or Go's cover profile. */
+export type CoverageOutput = { format: 'lcov' | 'go'; path: string; dir: boolean };
+
 /** One command of a run: in `cwd` (workspace-relative project dir), reading results with `parser`. */
-export type RunPlan = { runner: Runner; project: string; argv: string[]; parser: Parser; report?: string; tests: TestItem[] };
+export type RunPlan = { runner: Runner; project: string; argv: string[]; parser: Parser; report?: string; coverage?: CoverageOutput; tests: TestItem[] };
 
 /** Joins workspace-relative parts ('' is the root). */
 export const joinRel = (...parts: string[]) => parts.filter(Boolean).join('/');
@@ -56,6 +59,9 @@ type PlanOptions = {
 	report: () => string;
 	/** The Python to run pytest with (the project's .venv, else python3). */
 	python?: (project: string) => string;
+	/** Run with Coverage: fresh output paths, and whether the project has the runner's coverage tool
+	 * (cargo-llvm-cov, pytest-cov, a vitest coverage provider); without one the plan runs plain. */
+	coverage?: { file: () => string; dir: () => string; supports: (runner: Runner, project: string) => boolean };
 };
 
 /**
@@ -84,22 +90,32 @@ export function runPlans(selected: readonly TestItem[], opts: PlanOptions): RunP
 			case 'cargo': {
 				const pkg = items[0].meta?.crate;
 				const p = pkg ? ['-p', pkg] : [];
-				const argv = whole || part === '*' ? ['cargo', 'test', ...p, '--no-fail-fast'] : ['cargo', 'test', ...p, ...cargoTargetArgs(part ?? 'lib'), '--', '--exact', ...tests.map(cargoName)];
-				plans.push({ runner, project, argv, parser: 'cargo', tests });
+				// cargo-llvm-cov takes `cargo test`'s arguments after `llvm-cov`.
+				const cov = opts.coverage?.supports(runner, project) ? { format: 'lcov' as const, path: opts.coverage.file(), dir: false } : undefined;
+				const test = cov ? ['cargo', 'llvm-cov'] : ['cargo', 'test'];
+				const out = cov ? ['--lcov', '--output-path', cov.path] : [];
+				const argv = whole || part === '*' ? [...test, ...p, '--no-fail-fast', ...out] : [...test, ...p, ...cargoTargetArgs(part ?? 'lib'), ...out, '--', '--exact', ...tests.map(cargoName)];
+				plans.push({ runner, project, argv, parser: 'cargo', tests, ...(cov ? { coverage: cov } : {}) });
 				break;
 			}
 			case 'go': {
-				if (whole || part === '*') plans.push({ runner, project, argv: ['go', 'test', '-v', './...'], parser: 'go', tests });
+				const cov = opts.coverage ? { format: 'go' as const, path: opts.coverage.file(), dir: false } : undefined;
+				const profile = cov ? [`-coverprofile=${cov.path}`] : [];
+				const withCov = cov ? { coverage: cov } : {};
+				if (whole || part === '*') plans.push({ runner, project, argv: ['go', 'test', '-v', ...profile, './...'], parser: 'go', tests, ...withCov });
 				else {
-					const names = [...new Set(tests.map((t) => escapeRegex(t.label)))];
-					plans.push({ runner, project, argv: ['go', 'test', '-v', '-run', `^(${names.join('|')})$`, part === '.' ? '.' : `./${part}`], parser: 'go', tests });
+					// A subtest (`TestA/case`, found from a run) runs with its top-level test.
+					const names = [...new Set(tests.map((t) => escapeRegex(t.path[0] ?? t.label)))];
+					plans.push({ runner, project, argv: ['go', 'test', '-v', ...profile, '-run', `^(${names.join('|')})$`, part === '.' ? '.' : `./${part}`], parser: 'go', tests, ...withCov });
 				}
 				break;
 			}
 			case 'pytest': {
 				const report = opts.report();
 				const ids = whole ? [] : [...new Set(items.filter((i) => i.kind !== 'project').map((i) => (i.kind === 'file' ? relTo(project, i.rel ?? '') : pytestNodeId(i))))];
-				plans.push({ runner, project, argv: [opts.python?.(project) ?? 'python3', '-m', 'pytest', '-v', '--tb=short', '-o', 'junit_family=xunit1', `--junitxml=${report}`, ...ids], parser: 'junit', report, tests });
+				const cov = opts.coverage?.supports(runner, project) ? { format: 'lcov' as const, path: opts.coverage.file(), dir: false } : undefined;
+				const covArgs = cov ? ['--cov', `--cov-report=lcov:${cov.path}`] : [];
+				plans.push({ runner, project, argv: [opts.python?.(project) ?? 'python3', '-m', 'pytest', '-v', '--tb=short', '-o', 'junit_family=xunit1', `--junitxml=${report}`, ...covArgs, ...ids], parser: 'junit', report, tests, ...(cov ? { coverage: cov } : {}) });
 				break;
 			}
 			default: {
@@ -109,13 +125,23 @@ export function runPlans(selected: readonly TestItem[], opts: PlanOptions): RunP
 				const named = items.filter((i) => i.kind === 'suite' || i.kind === 'test');
 				const pattern = !whole && named.length === items.length ? namePattern(named) : null;
 				const t = pattern ? ['-t', pattern] : [];
+				// Coverage as lcov into a fresh directory (`<dir>/lcov.info`): bun and jest have it built in,
+				// vitest only with a coverage provider installed in the project (it would offer to install one).
+				const cov = opts.coverage?.supports(runner, project) ? { format: 'lcov' as const, path: opts.coverage.dir(), dir: true } : undefined;
+				const covArgs = !cov
+					? []
+					: runner === 'bun'
+						? ['--coverage', '--coverage-reporter=lcov', `--coverage-dir=${cov.path}`]
+						: runner === 'vitest'
+							? ['--coverage.enabled=true', '--coverage.reporter=lcov', `--coverage.reportsDirectory=${cov.path}`]
+							: ['--coverage', '--coverageReporters=lcov', `--coverageDirectory=${cov.path}`];
 				const argv =
 					runner === 'bun'
-						? ['bun', 'test', '--reporter=junit', `--reporter-outfile=${report}`, ...files.map((f) => `./${f}`), ...t]
+						? ['bun', 'test', '--reporter=junit', `--reporter-outfile=${report}`, ...covArgs, ...files.map((f) => `./${f}`), ...t]
 						: runner === 'vitest'
-							? ['npx', 'vitest', 'run', ...files, ...t, '--reporter=default', '--reporter=json', `--outputFile.json=${report}`]
-							: ['npx', 'jest', ...files, ...t, '--json', `--outputFile=${report}`, '--testLocationInResults'];
-				plans.push({ runner, project, argv, parser: runner === 'bun' ? 'junit' : 'jest', report, tests });
+							? ['npx', 'vitest', 'run', ...files, ...t, '--reporter=default', '--reporter=json', `--outputFile.json=${report}`, ...covArgs]
+							: ['npx', 'jest', ...files, ...t, '--json', `--outputFile=${report}`, '--testLocationInResults', ...covArgs];
+				plans.push({ runner, project, argv, parser: runner === 'bun' ? 'junit' : 'jest', report, tests, ...(cov ? { coverage: cov } : {}) });
 			}
 		}
 	}

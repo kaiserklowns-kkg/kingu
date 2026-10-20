@@ -145,3 +145,49 @@ export function projectItems(files: readonly TestItem[]): TestItem[] {
 	for (const g of groups.values()) g.children.sort((a, b) => (a.rel ?? a.label).localeCompare(b.rel ?? b.label));
 	return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label));
 }
+
+// --- Dynamic tests ------------------------------------------------------------------------------
+
+/** Whether an item came from a runner's report rather than the file (test.each cases, Go subtests…). */
+export const isDynamic = (item: TestItem) => item.meta?.dynamic === '1';
+
+/**
+ * Adds a test a runner reported that the file scan could not see (`test.each` with interpolated
+ * names, a parametrized case, a Go subtest) under `file` at `path`; missing parents become suites.
+ * Returns the file with it and the test's id (the file itself when the test is already there).
+ */
+export function addDynamic(file: TestItem, path: readonly string[], line?: number): { file: TestItem; id: string } {
+	const fileId = file.id;
+	const id = `${fileId}::${path.join(' > ')}`;
+	if (!path.length) return { file, id: fileId };
+	const insert = (children: TestItem[], depth: number): TestItem[] => {
+		const name = path[depth];
+		const p = path.slice(0, depth + 1);
+		const at = children.findIndex((c) => c.label === name && c.path.length === p.length);
+		const last = depth === path.length - 1;
+		if (at >= 0) {
+			if (last) return children;
+			const c = children[at];
+			const inner = insert(c.children, depth + 1);
+			return inner === c.children ? children : children.map((x, i) => (i === at ? { ...c, children: inner } : x));
+		}
+		const meta = { ...(file.meta ?? {}), dynamic: '1' };
+		const node: TestItem = { id: `${fileId}::${p.join(' > ')}`, runner: file.runner, kind: last ? 'test' : 'suite', label: name, project: file.project, rel: file.rel, ...(line ? { line } : {}), path: p, meta, children: [] };
+		return [...children, last ? node : { ...node, children: insert([], depth + 1) }];
+	};
+	const children = insert(file.children, 0);
+	return { file: children === file.children ? file : { ...file, children }, id };
+}
+
+/** A rescanned file keeps the tests earlier runs added, where their parents still exist. */
+export function keepDynamic(next: TestItem, previous: TestItem | undefined): TestItem {
+	if (!previous) return next;
+	let out = next;
+	walk([previous], (i, parents) => {
+		if (!isDynamic(i) || i.kind !== 'test') return;
+		const staticParent = [...parents].reverse().find((p) => !isDynamic(p) && p.kind !== 'file');
+		if (staticParent && !findItem([out], staticParent.id)) return;
+		out = addDynamic(out, i.path, i.line).file;
+	});
+	return out;
+}

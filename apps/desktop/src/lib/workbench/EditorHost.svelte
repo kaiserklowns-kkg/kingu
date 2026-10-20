@@ -394,6 +394,28 @@
 	:global(.kg-test-message-line) {
 		background: var(--vscode-testing-message-error-lineBackground, rgba(255, 0, 0, 0.1));
 	}
+	/* Test coverage (VS Code: coverage-deco-gutter / coverage-deco-inline). */
+	:global(.kg-cov-gutter) {
+		box-shadow: inset -3px 0 0 var(--kg-cov-color);
+	}
+	:global(.kg-cov-covered) {
+		--kg-cov-color: var(--vscode-testing-coveredGutterBackground, rgba(115, 201, 145, 0.6));
+	}
+	:global(.kg-cov-uncovered) {
+		--kg-cov-color: var(--vscode-testing-uncoveredGutterBackground, rgba(241, 76, 76, 0.7));
+	}
+	:global(.kg-cov-partial) {
+		--kg-cov-color: var(--vscode-testing-uncoveredBranchBackground, rgba(204, 167, 0, 0.7));
+	}
+	:global(.kg-cov-line-covered) {
+		background: var(--vscode-testing-coveredBackground, rgba(115, 201, 145, 0.1));
+	}
+	:global(.kg-cov-line-uncovered) {
+		background: var(--vscode-testing-uncoveredBackground, rgba(241, 76, 76, 0.12));
+	}
+	:global(.kg-cov-line-partial) {
+		background: var(--vscode-testing-uncoveredBranchBackground, rgba(204, 167, 0, 0.1));
+	}
 	/* debug.inlineValues */
 	:global(.kg-debug-inline-value) {
 		color: var(--vscode-editor-inlineValuesForeground, rgba(255, 255, 255, 0.5));

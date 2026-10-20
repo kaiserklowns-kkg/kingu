@@ -65,6 +65,45 @@ pub fn take_report(dir: &Path, path: &str) -> Result<Option<String>, String> {
   text.map(Some)
 }
 
+fn coverage_name(name: &str) -> bool {
+  name.starts_with("cov-") && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+/// A fresh, empty directory in `dir` for a runner that writes its coverage as `<dir>/lcov.info`
+/// (bun, jest, vitest).
+pub fn new_coverage_dir(dir: &Path) -> Result<String, String> {
+  let report = new_report(dir)?;
+  let name = Path::new(&report).file_stem().and_then(|n| n.to_str()).unwrap_or_default().to_string();
+  let path = dir.join(format!("cov-{name}"));
+  std::fs::create_dir(&path).map_err(|e| e.to_string())?;
+  Ok(path.to_string_lossy().into_owned())
+}
+
+/// Reads `lcov.info` from a directory made by [`new_coverage_dir`] and removes the directory;
+/// `None` when the runner wrote no coverage. Any other path is refused.
+pub fn take_coverage(dir: &Path, path: &str) -> Result<Option<String>, String> {
+  let p = Path::new(path);
+  let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+  if p.parent() != Some(dir) || !coverage_name(name) {
+    return Err(format!("not a coverage directory: {path}"));
+  }
+  match std::fs::symlink_metadata(p) {
+    Ok(m) if m.is_dir() => {}
+    Ok(_) => return Err(format!("not a coverage directory: {path}")),
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+    Err(e) => return Err(e.to_string()),
+  }
+  let file = p.join("lcov.info");
+  let text = match std::fs::symlink_metadata(&file) {
+    Ok(m) if m.is_file() && m.len() <= MAX_REPORT => std::fs::read_to_string(&file).map(Some).map_err(|e| e.to_string()),
+    Ok(_) => Err(format!("not a coverage report: {}", file.display())),
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+    Err(e) => Err(e.to_string()),
+  };
+  let _ = std::fs::remove_dir_all(p);
+  text
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -89,6 +128,28 @@ mod tests {
     assert!(outside.exists(), "a refused path is left alone");
     // Two reports never share a name.
     assert_ne!(new_report(&dir).unwrap(), new_report(&dir).unwrap());
+  }
+
+  #[test]
+  fn coverage_directories_are_read_once_and_only_from_the_report_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("reports");
+    let cov = new_coverage_dir(&dir).unwrap();
+    assert!(Path::new(&cov).is_dir());
+    // The runner wrote nothing.
+    assert_eq!(take_coverage(&dir, &cov).unwrap(), None);
+    assert!(!Path::new(&cov).exists(), "removed after reading");
+    let cov = new_coverage_dir(&dir).unwrap();
+    std::fs::write(Path::new(&cov).join("lcov.info"), "SF:a.ts\nDA:1,1\nend_of_record\n").unwrap();
+    assert_eq!(take_coverage(&dir, &cov).unwrap().as_deref(), Some("SF:a.ts\nDA:1,1\nend_of_record\n"));
+    assert!(!Path::new(&cov).exists());
+    // Not one of ours: refused and left alone.
+    let other = dir.join("keep");
+    std::fs::create_dir(&other).unwrap();
+    assert!(take_coverage(&dir, &other.to_string_lossy()).is_err());
+    assert!(take_coverage(&dir, &tmp.path().join("cov-x").to_string_lossy()).is_err());
+    assert!(take_coverage(&dir, &format!("{}/../cov-x", dir.display())).is_err());
+    assert!(other.exists());
   }
 
   #[test]

@@ -886,6 +886,18 @@ fn testing_report_take(path: String) -> Result<Option<String>, String> {
   testing::take_report(&testing::report_dir(), &path)
 }
 
+/// A fresh directory for a run with coverage that writes `lcov.info` (bun, jest, vitest).
+#[tauri::command]
+fn testing_coverage_new() -> Result<String, String> {
+  testing::new_coverage_dir(&testing::report_dir())
+}
+
+/// The `lcov.info` written into a directory from `testing_coverage_new` (read once), or null.
+#[tauri::command]
+fn testing_coverage_take(path: String) -> Result<Option<String>, String> {
+  testing::take_coverage(&testing::report_dir(), &path)
+}
+
 // ---------------------------------------------------------------------------------------------
 // Open Folder (VS Code: workbench.action.files.openFolder, File: Open Recent)
 
@@ -1528,6 +1540,8 @@ pub fn run() {
       testing_collect,
       testing_report_new,
       testing_report_take,
+      testing_coverage_new,
+      testing_coverage_take,
       dap::dap_stop,
       settings::settings_read,
       settings::settings_write,

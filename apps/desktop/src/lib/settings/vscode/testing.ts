@@ -42,10 +42,11 @@ export const TESTING_SETTINGS: SettingSchema[] = [
 		group: 'Testing',
 		type: 'string',
 		default: 'run',
-		enum: ['run', 'debug', 'contextMenu'],
+		enum: ['run', 'debug', 'runWithCoverage', 'contextMenu'],
 		enumDescriptions: [
 			'รันการทดสอบ (Run the test.)',
 			'debug การทดสอบ (Debug the test.)',
+			'รันการทดสอบพร้อม coverage (Run the test with coverage.)',
 			'เปิดเมนูตัวเลือกเพิ่มเติม (Open the context menu for more options.)'
 		],
 		description: 'สิ่งที่ทำเมื่อคลิกซ้ายที่ไอคอนการทดสอบที่ขอบ editor (Controls the action to take when left-clicking on a test decoration in the gutter.)'
@@ -84,5 +85,46 @@ export const TESTING_SETTINGS: SettingSchema[] = [
 		type: 'boolean',
 		default: false,
 		description: 'เลื่อนไปที่การทดสอบทุกครั้งที่สถานะเปลี่ยนเมื่อเปิด testing.followRunningTest ถ้าปิดจะเลื่อนไปเฉพาะการทดสอบที่ล้มเหลว (Always reveal the executed test when `#testing.followRunningTest#` is on. If this setting is turned off, only failed tests will be revealed.)'
+	},
+	{
+		id: 'testing.showCoverageInExplorer',
+		group: 'Testing',
+		type: 'boolean',
+		default: true,
+		description: 'แสดง coverage ของการทดสอบในมุมมอง Explorer (Whether test coverage should be down in the File Explorer view.)'
+	},
+	{
+		id: 'testing.displayedCoveragePercent',
+		group: 'Testing',
+		type: 'string',
+		default: 'totalCoverage',
+		enum: ['totalCoverage', 'statement', 'minimum'],
+		enumDescriptions: [
+			'รวม coverage ของคำสั่ง ฟังก์ชัน และ branch (A calculation of the combined statement, function, and branch coverage.)',
+			'coverage ของคำสั่ง (The statement coverage.)',
+			'ค่าต่ำสุดของ coverage คำสั่ง ฟังก์ชัน และ branch (The minimum of statement, function, and branch coverage.)'
+		],
+		description: 'เปอร์เซ็นต์ coverage ที่แสดง (Configures what percentage is displayed by default for test coverage.)'
+	},
+	{
+		id: 'testing.coverageBarThresholds',
+		group: 'Testing',
+		type: 'json',
+		schema: {
+			properties: {
+				red: { type: 'number', minimum: 0, maximum: 100 },
+				yellow: { type: 'number', minimum: 0, maximum: 100 },
+				green: { type: 'number', minimum: 0, maximum: 100 }
+			}
+		},
+		default: { red: 0, yellow: 60, green: 90 },
+		description: 'เกณฑ์สีของเปอร์เซ็นต์ในแถบ coverage (Configures the colors used for percentages in test coverage bars.)'
+	},
+	{
+		id: 'testing.coverageMinimapEnabled',
+		group: 'Testing',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงสถานะ coverage ใน minimap (Controls whether coverage indicators are shown in the minimap.)'
 	}
 ];

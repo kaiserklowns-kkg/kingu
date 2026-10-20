@@ -14,6 +14,8 @@
 	import { workspace } from './workspace.svelte';
 	import { repoDialog } from './repoDialog.svelte.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { testing } from '#lib/testing/testing.svelte.ts';
+	import { coverageColor, displayedPercent, displayPercent, explorerCoverage, type Thresholds } from '#lib/testing/coverage.ts';
 	import { isNonTextEditor } from '#lib/settings/resources.ts';
 	import { isDiffKey } from './scm';
 	import { isUntitled } from './untitled';
@@ -29,6 +31,15 @@
 	/** explorer.decorations.colors / explorer.decorations.badges. */
 	const decoColors = $derived(settings.get<boolean>('explorer.decorations.colors'));
 	const decoBadges = $derived(settings.get<boolean>('explorer.decorations.badges'));
+	// testing.showCoverageInExplorer: each covered file's (and folder's) percentage while coverage is open.
+	const coverage = $derived(testing.coverage && settings.get<boolean>('testing.showCoverageInExplorer') !== false ? explorerCoverage([...testing.coverage.values()]) : null);
+	const COVERAGE_COLORS = { red: 'var(--vscode-charts-red,#f14c4c)', yellow: 'var(--vscode-charts-yellow,#cca700)', green: 'var(--vscode-charts-green,#89d185)' };
+	function coverageBadge(rel: string): { text: string; color: string } | null {
+		const c = coverage?.get(rel);
+		if (!c) return null;
+		const pct = displayedPercent(c, settings.get<string>('testing.displayedCoveragePercent'));
+		return { text: displayPercent(pct, 0), color: COVERAGE_COLORS[coverageColor(pct, settings.get<Thresholds>('testing.coverageBarThresholds'))] };
+	}
 
 	let open = $state(true);
 	let inputError = $state('');
@@ -508,6 +519,7 @@
 							</span>
 							<FileIcon icon={row.is_dir ? folderIcon(row.rel, row.expanded) : fileIcon(row.name)} />
 							<span class={['min-w-0 flex-1 truncate', row.ignored && 'italic opacity-55']} style:color={decoColors ? decorations.get(row.rel)?.color : undefined}>{row.name}</span>
+							{#if coverage}{@const cov = coverageBadge(row.rel)}{#if cov}<span class="shrink-0 pl-2 text-[11px] tabular-nums" style:color={cov.color}>{cov.text}</span>{/if}{/if}
 							{#if row.ignored}<span class="shrink-0 pr-3 pl-2 opacity-55" title="ถูก .gitignore"><Icon name="ignored" size={12} /></span>
 							{:else if decoBadges && decorations.has(row.rel)}{@const deco = decorations.get(row.rel)!}<span class="shrink-0 pr-3 pl-2 text-[11px] font-semibold" style:color={decoColors ? deco.color : undefined}>{deco.letter || '•'}</span>{/if}
 						</button>
