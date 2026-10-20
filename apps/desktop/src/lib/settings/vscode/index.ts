@@ -24,6 +24,7 @@ import { JSON_SETTINGS } from './json';
 import { LAYOUT_SETTINGS } from './layout';
 import { LOCAL_HISTORY_SETTINGS } from './localHistory';
 import { CHAT_SETTINGS } from './chat';
+import { EMMET_SETTINGS } from './emmet';
 
 export const VSCODE_SETTINGS = [
 	...EDITOR_SETTINGS,
@@ -47,6 +48,7 @@ export const VSCODE_SETTINGS = [
 	...LAYOUT_SETTINGS,
 	...LOCAL_HISTORY_SETTINGS,
 	...CHAT_SETTINGS,
+	...EMMET_SETTINGS,
 	// The settings sections Kingu delivers to the language servers it runs (lsp/serverSettings.ts).
 	...TYPESCRIPT_SETTINGS,
 	...CSS_SETTINGS,

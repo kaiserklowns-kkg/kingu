@@ -40,6 +40,7 @@ mod skill_hub;
 mod snap;
 mod snap_install;
 mod snap_sandbox;
+mod snippets;
 mod system;
 mod tasks;
 mod testing;
@@ -1263,6 +1264,9 @@ pub fn run() {
       windows::window_count,
       window::window_close,
       window::window_close_cancelled,
+      snippets::snippets_user_list,
+      snippets::snippets_user_read,
+      snippets::snippets_user_write,
       workspace_recent,
       workspace_recent_remove,
       workspace_recent_clear,

@@ -48,7 +48,7 @@
 
 	onMount(() => {
 		let disposed = false;
-		import('#lib/editor/monaco.ts').then(async (m) => {
+		Promise.all([import('#lib/editor/monaco.ts'), import('#lib/editor/editorAttach.ts')]).then(async ([m, { attachEditorFeatures }]) => {
 			await m.setupTextMate();
 			if (disposed) return;
 			api = m;
@@ -56,6 +56,7 @@
 			// The editor settings from the first paint; installEditorSettings keeps them live.
 			const ed = m.monaco.editor.create(host, { ...editorOptions(), theme: m.THEME_ID, automaticLayout: true });
 			installEditorActions(m.monaco, ed);
+			attachEditorFeatures(m.monaco, ed);
 			const { CursorChangeReason } = m.monaco.editor;
 			ed.onDidChangeCursorPosition((e) => {
 				if (editors.activeGroupId !== group) return;

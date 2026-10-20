@@ -5,17 +5,19 @@
 
 import { parseJsonc } from '#lib/settings/jsonc.ts';
 
-export type KeybindingEntry = { key?: string; command: string; when?: string };
+export type KeybindingEntry = { key?: string; command: string; when?: string; args?: unknown };
 export type UserKeybindings = {
 	added: ReadonlyMap<string, string[]>;
 	removed: ReadonlyMap<string, ReadonlySet<string> | 'all'>;
 	/** `when` of a user key, by `whenKey(command, key)`. */
 	when: ReadonlyMap<string, string>;
+	/** `args` of a user key, by `whenKey(command, key)`: handed to the command (Insert Snippet's `snippet`). */
+	args: ReadonlyMap<string, unknown>;
 };
 
 export const whenKey = (command: string, key: string) => `${command}\u0000${normalizeKey(key)}`;
 
-export const NO_USER_KEYBINDINGS: UserKeybindings = { added: new Map(), removed: new Map(), when: new Map() };
+export const NO_USER_KEYBINDINGS: UserKeybindings = { added: new Map(), removed: new Map(), when: new Map(), args: new Map() };
 
 /** `cmd+shift+P  cmd+k` → `cmd+shift+p cmd+k`. */
 export const normalizeKey = (key: string) =>
@@ -38,6 +40,7 @@ export function userKeybindings(entries: readonly KeybindingEntry[]): UserKeybin
 	const added = new Map<string, string[]>();
 	const removed = new Map<string, Set<string> | 'all'>();
 	const when = new Map<string, string>();
+	const args = new Map<string, unknown>();
 	for (const e of entries) {
 		const key = typeof e.key === 'string' ? normalizeKey(e.key) : '';
 		if (e.command.startsWith('-')) {
@@ -51,9 +54,11 @@ export function userKeybindings(entries: readonly KeybindingEntry[]): UserKeybin
 			added.set(e.command, [key, ...(added.get(e.command) ?? []).filter((k) => k !== key)]);
 			if (typeof e.when === 'string' && e.when.trim()) when.set(whenKey(e.command, key), e.when);
 			else when.delete(whenKey(e.command, key));
+			if (e.args !== undefined) args.set(whenKey(e.command, key), e.args);
+			else args.delete(whenKey(e.command, key));
 		}
 	}
-	return { added, removed, when };
+	return { added, removed, when, args };
 }
 
 /** The keys that run `id`: the user's own first, then the default unless it was removed. */

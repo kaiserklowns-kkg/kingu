@@ -18,6 +18,7 @@ import { layout } from './layout.svelte';
 import { appMode } from './mode.svelte';
 import { itemStates, RECENT_PREFIX, resolveMenubar, structureKey, type MenuNode, type Role } from './menus';
 import { workspace } from './workspace.svelte';
+import { wordWrapChecked } from '#lib/editor/editingCommands.svelte.ts';
 
 const CHECKED: Record<string, () => boolean> = {
 	'workbench.action.toggleSidebarVisibility': () => layout.sidebarVisible,
@@ -31,7 +32,16 @@ const CHECKED: Record<string, () => boolean> = {
 	// Not a check mark: the item reads "Move Primary Side Bar Left" while it is on the right.
 	'workbench.action.toggleSidebarPosition': () => settings.get<string>('workbench.sideBar.location') === 'right',
 	// Not a check mark: the Agents menu item reads "Open in Editor" while in Agents mode.
-	'workbench.action.toggleAgentsMode': () => appMode.isAgents
+	'workbench.action.toggleAgentsMode': () => appMode.isAgents,
+	// The editor toggles (editingCommands.svelte.ts).
+	'editor.action.toggleMinimap': () => settings.get<boolean>('editor.minimap.enabled'),
+	'editor.action.toggleStickyScroll': () => settings.get<boolean>('editor.stickyScroll.enabled'),
+	'editor.action.toggleRenderWhitespace': () => settings.get<string>('editor.renderWhitespace') !== 'none',
+	'editor.action.toggleRenderControlCharacter': () => settings.get<boolean>('editor.renderControlCharacters'),
+	'editor.action.toggleColumnSelection': () => settings.get<boolean>('editor.columnSelection'),
+	'editor.action.toggleWordWrap': () => wordWrapChecked(),
+	// Not a check mark: the item reads "Switch to Alt+Click" while ⌘/Ctrl+Click adds cursors.
+	'workbench.action.toggleMultiCursorModifier': () => settings.get<string>('editor.multiCursorModifier') === 'ctrlCmd'
 };
 
 /** The menu bar as it should look now (reactive: reads commands, `when` state and layout). */

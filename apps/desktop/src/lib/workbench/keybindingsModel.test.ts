@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { KEYBINDINGS_TEMPLATE, keysFor, normalizeKey, parseKeybindings, userKeybindings } from './keybindingsModel';
+import { KEYBINDINGS_TEMPLATE, keysFor, normalizeKey, parseKeybindings, userKeybindings, whenKey } from './keybindingsModel';
 
 describe('keybindings.json', () => {
 	test('parses JSONC arrays and skips malformed entries', () => {
@@ -43,5 +43,18 @@ describe('keybindings.json', () => {
 		]);
 		expect(keysFor('a', undefined, user)).toEqual(['cmd+2']);
 		expect(normalizeKey('  Ctrl+Shift+P   Ctrl+K ')).toBe('ctrl+shift+p ctrl+k');
+	});
+
+	test('args go with their key (Insert Snippet with an inline snippet)', () => {
+		const user = userKeybindings(
+			parseKeybindings(`[
+				{ "key": "cmd+k 1", "command": "editor.action.insertSnippet", "args": { "snippet": "console.log($1)$0" } },
+				{ "key": "cmd+k 2", "command": "editor.action.insertSnippet", "args": { "langId": "csharp", "name": "myFavSnippet" } },
+				{ "key": "cmd+k 3", "command": "editor.action.insertSnippet" }
+			]`)
+		);
+		expect(user.args.get(whenKey('editor.action.insertSnippet', 'cmd+k 1'))).toEqual({ snippet: 'console.log($1)$0' });
+		expect(user.args.get(whenKey('editor.action.insertSnippet', 'CMD+K  2'))).toEqual({ langId: 'csharp', name: 'myFavSnippet' });
+		expect(user.args.has(whenKey('editor.action.insertSnippet', 'cmd+k 3'))).toBe(false);
 	});
 });

@@ -27,3 +27,8 @@ declare module 'monaco-editor/platform/registry/common/platform.js' {
 declare module 'monaco-editor/platform/configuration/common/configurationRegistry.js' {
 	export const Extensions: { Configuration: string };
 }
+
+// The editor's insert/overtype mode (editingCommands.svelte.ts toggles it; Monaco's build has no setter).
+declare module 'monaco-editor/editor/common/inputMode.js' {
+	export const InputMode: { getInputMode(): 'insert' | 'overtype' };
+}

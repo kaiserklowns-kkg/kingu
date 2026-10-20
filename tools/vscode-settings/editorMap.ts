@@ -14,7 +14,7 @@ import { SETTINGS } from '../../apps/desktop/src/lib/settings/registry.ts';
 const OUT = join(import.meta.dir, '../../apps/desktop/src/lib/settings/editorOptionMap.ts');
 
 /** Applied by Kingu itself rather than as editor options (see apply.svelte.ts, textFileSave.ts). */
-const KINGU = ['editor.tabSize', 'editor.indentSize', 'editor.insertSpaces', 'editor.detectIndentation', 'editor.trimAutoWhitespace', 'editor.formatOnSave', 'editor.codeActionsOnSave', 'editor.codeActions.triggerOnFocusChange'];
+const KINGU = ['editor.tabSize', 'editor.indentSize', 'editor.insertSpaces', 'editor.detectIndentation', 'editor.trimAutoWhitespace', 'editor.formatOnSave', 'editor.codeActionsOnSave', 'editor.codeActions.triggerOnFocusChange', 'editor.snippets.codeActions.enabled'];
 /** IGlobalEditorOptions fields (updateOptions forwards them to Monaco's configuration service). */
 const GLOBAL = ['largeFileOptimizations', 'wordBasedSuggestions', 'stablePeek', 'maxTokenizationLineLength'];
 /** diffEditor.* keys whose IDiffEditorOptions field has another name. */
@@ -68,7 +68,7 @@ ${options.filter(([id]) => UNTYPED.includes(id)).map(([id, p]) => `\t'${id}': '$
 /** editor.* settings Monaco reads only from its configuration service (no IEditorOptions field). */
 export const EDITOR_CONFIG_SETTINGS = [${config.map((id) => `'${id}'`).join(', ')}] as const;
 
-/** editor.* settings Kingu applies itself: model indentation (apply.svelte.ts) and save participants (textFileSave.ts). */
+/** editor.* settings Kingu applies itself: model indentation (apply.svelte.ts), save participants (textFileSave.ts) and the snippet code actions (editor/snippets). */
 export const EDITOR_KINGU_SETTINGS = [${KINGU.map((id) => `'${id}'`).join(', ')}] as const;
 
 const TYPED_DIFF_EDITOR_OPTION_PATHS = {

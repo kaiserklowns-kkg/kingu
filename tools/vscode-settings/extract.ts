@@ -90,7 +90,7 @@ for (const [k, s] of Object.entries(registry.getConfigurationProperties())) {
 
 // Built-in extensions whose settings Kingu has (Git, Merge Conflict, and the settings sections of the language
 // servers Kingu runs): contributes.configuration with %nls% placeholders.
-const EXTENSIONS = ['git', 'merge-conflict', 'typescript-language-features', 'css-language-features', 'html-language-features', 'json-language-features'];
+const EXTENSIONS = ['git', 'merge-conflict', 'typescript-language-features', 'css-language-features', 'html-language-features', 'json-language-features', 'emmet'];
 for (const ext of EXTENSIONS) {
 	const dir = join(checkout, 'extensions', ext);
 	const pkg = JSON.parse(await Bun.file(join(dir, 'package.json')).text());
