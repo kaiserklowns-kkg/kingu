@@ -407,73 +407,133 @@ impl Searches {
     opts: &SearchOptions,
     sink: impl Fn(SearchEvent) -> bool + Send + 'static,
   ) -> Result<u32, String> {
+    self.start_roots(rg, vec![Root { dir: root.to_path_buf(), prefix: String::new(), options: opts.clone() }], sink)
+  }
+
+  /// Searches each root folder in turn (a multi-root workspace) as one search: file paths get
+  /// the root's `prefix`, `search.maxResults` counts across all of them, and one `Done` ends it.
+  pub fn start_roots(
+    self: &Arc<Self>,
+    rg: &Path,
+    roots: Vec<Root>,
+    sink: impl Fn(SearchEvent) -> bool + Send + 'static,
+  ) -> Result<u32, String> {
     self.cancel();
-    let max = opts.max_results.unwrap_or(DEFAULT_MAX_RESULTS).max(1);
-    let mut child = Command::new(rg)
-      .args(build_args(opts))
-      .current_dir(root)
-      .stdin(Stdio::null())
-      .stdout(Stdio::piped())
-      .stderr(Stdio::piped())
-      .spawn()
-      .map_err(|e| format!("{}: {e}", rg.display()))?;
-    let stdout = child.stdout.take().ok_or("rg: no stdout")?;
-    let mut stderr = child.stderr.take().ok_or("rg: no stderr")?;
+    let Some(first) = roots.first() else {
+      sink(SearchEvent::Done { files: 0, matches: 0, limit_hit: false, elapsed_ms: 0 });
+      return Ok(self.next_id.fetch_add(1, Ordering::Relaxed) + 1);
+    };
+    let max = first.options.max_results.unwrap_or(DEFAULT_MAX_RESULTS).max(1);
+    let full_lines = first.options.context_lines.is_some();
+    // The first rg starts here, so a missing or broken ripgrep is an error of this call.
+    let spawn = |r: &Root| {
+      Command::new(rg)
+        .args(build_args(&r.options))
+        .current_dir(&r.dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("{}: {e}", rg.display()))
+    };
+    let first_child = spawn(first)?;
     let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
-    let child = Arc::new(Mutex::new(child));
+    let child = Arc::new(Mutex::new(first_child));
     let cancelled = Arc::new(AtomicBool::new(false));
     *self.current.lock().unwrap() = Some(Running { id, child: child.clone(), cancelled: cancelled.clone() });
 
-    let err_reader = std::thread::spawn(move || {
-      let mut s = String::new();
-      let _ = stderr.read_to_string(&mut s);
-      s
-    });
     let searches = Arc::clone(self);
-    let root = root.to_path_buf();
-    let siblings = crate::glob::SiblingClauses::new(&opts.sibling_clauses);
-    let full_lines = opts.context_lines.is_some();
-    let sink = move |mut ev: SearchEvent| {
-      if let SearchEvent::File { path, version, modified, .. } = &mut ev {
-        if !siblings.is_empty() && siblings.hides(path, |rel| root.join(rel).exists()) {
-          return true;
-        }
-        let file = root.join(path.as_str());
-        *version = crate::replace::file_version(&file).unwrap_or_default();
-        *modified = std::fs::metadata(&file)
-          .and_then(|m| m.modified())
-          .ok()
-          .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-          .map_or(0, |d| d.as_millis() as u64);
-      }
-      sink(ev)
-    };
+    let rg = rg.to_path_buf();
     std::thread::spawn(move || {
       let started = Instant::now();
       let mut parser = RgParser { full_lines, ..RgParser::default() };
       let mut limit_hit = false;
-      for line in BufReader::new(stdout).lines() {
-        let Ok(line) = line else { break };
+      for (i, root) in roots.iter().enumerate() {
+        if i > 0 {
+          let next = Command::new(&rg)
+            .args(build_args(&root.options))
+            .current_dir(&root.dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn();
+          let Ok(next) = next else { continue };
+          *child.lock().unwrap() = next;
+          // Cancelled while it started: it must not run on.
+          if cancelled.load(Ordering::SeqCst) {
+            let _ = child.lock().unwrap().kill();
+          }
+        }
+        let (stdout, stderr) = {
+          let mut c = child.lock().unwrap();
+          (c.stdout.take(), c.stderr.take())
+        };
+        let (Some(stdout), Some(mut stderr)) = (stdout, stderr) else { continue };
+        let err_reader = std::thread::spawn(move || {
+          let mut s = String::new();
+          let _ = stderr.read_to_string(&mut s);
+          s
+        });
+        let siblings = crate::glob::SiblingClauses::new(&root.options.sibling_clauses);
+        let dir = root.dir.clone();
+        let prefix = root.prefix.clone();
+        let emit = |mut ev: SearchEvent| -> bool {
+          if let SearchEvent::File { path, version, modified, .. } = &mut ev {
+            if !siblings.is_empty() && siblings.hides(path, |rel| dir.join(rel).exists()) {
+              return true;
+            }
+            let file = dir.join(path.as_str());
+            *version = crate::replace::file_version(&file).unwrap_or_default();
+            *modified = std::fs::metadata(&file)
+              .and_then(|m| m.modified())
+              .ok()
+              .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+              .map_or(0, |d| d.as_millis() as u64);
+            if !prefix.is_empty() {
+              *path = format!("{prefix}{path}");
+            }
+          }
+          sink(ev)
+        };
+        let matches_before = parser.matches;
+        for line in BufReader::new(stdout).lines() {
+          let Ok(line) = line else { break };
+          if cancelled.load(Ordering::SeqCst) {
+            break;
+          }
+          if let Some(ev) = parser.feed(&line, max)
+            && !emit(ev)
+          {
+            cancelled.store(true, Ordering::SeqCst);
+            break;
+          }
+          if parser.matches >= max {
+            limit_hit = true;
+            if let Some(ev) = parser.finish() {
+              emit(ev);
+            }
+            break;
+          }
+        }
+        let _ = child.lock().unwrap().kill();
+        let status = child.lock().unwrap().wait();
+        let stderr = err_reader.join().unwrap_or_default();
         if cancelled.load(Ordering::SeqCst) {
           break;
         }
-        if let Some(ev) = parser.feed(&line, max)
-          && !sink(ev)
-        {
+        // Exit 2 is an error (bad regex, …) unless we killed rg ourselves at the limit.
+        let failed = !limit_hit && status.is_ok_and(|s| s.code() == Some(2)) && parser.matches == matches_before;
+        if failed {
+          let message = stderr.lines().find(|l| !l.trim().is_empty()).unwrap_or("ripgrep failed").to_string();
+          let message = if stderr.contains("regex parse error") { stderr.trim().to_string() } else { message };
+          sink(SearchEvent::Error { message });
           cancelled.store(true, Ordering::SeqCst);
           break;
         }
-        if parser.matches >= max {
-          limit_hit = true;
-          if let Some(ev) = parser.finish() {
-            sink(ev);
-          }
+        if limit_hit {
           break;
         }
       }
-      let _ = child.lock().unwrap().kill();
-      let status = child.lock().unwrap().wait();
-      let stderr = err_reader.join().unwrap_or_default();
       {
         let mut current = searches.current.lock().unwrap();
         if current.as_ref().is_some_and(|r| r.id == id) {
@@ -483,20 +543,55 @@ impl Searches {
       if cancelled.load(Ordering::SeqCst) {
         return;
       }
-      // Exit 2 is an error (bad regex, …) unless we killed rg ourselves at the limit.
-      let failed = !limit_hit && status.is_ok_and(|s| s.code() == Some(2)) && parser.matches == 0;
-      if failed {
-        let message = stderr.lines().find(|l| !l.trim().is_empty()).unwrap_or("ripgrep failed").to_string();
-        let message = if stderr.contains("regex parse error") { stderr.trim().to_string() } else { message };
-        sink(SearchEvent::Error { message });
-        return;
-      }
       let elapsed_ms = started.elapsed().as_millis() as u64;
       log::info!("search {id}: {} matches in {} files ({elapsed_ms} ms{})", parser.matches, parser.files, if limit_hit { ", limit hit" } else { "" });
       sink(SearchEvent::Done { files: parser.files, matches: parser.matches, limit_hit, elapsed_ms });
     });
     Ok(id)
   }
+}
+
+/// One root folder of a search: where rg runs, what its result paths get in front (`""` for the
+/// first root folder, `/abs/root/` for another), and its options (its own "files to include").
+#[derive(Debug, Clone)]
+pub struct Root {
+  pub dir: PathBuf,
+  pub prefix: String,
+  pub options: SearchOptions,
+}
+
+/// Multi-root "files to include" (VS Code: `./name/` picks a root folder by its name). For each
+/// of `names` (the root folders, in order): the include patterns to search it with, or `None`
+/// to leave it out. Patterns without a folder prefix apply to every folder; a pattern naming a
+/// folder applies to that folder only (as `./rest`); when every pattern names a folder, the
+/// folders not named are left out.
+pub fn split_include(include: &str, names: &[String]) -> Vec<Option<String>> {
+  let mut common: Vec<String> = Vec::new();
+  let mut scoped: Vec<Vec<String>> = vec![Vec::new(); names.len()];
+  let mut any_scoped = false;
+  for raw in include.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+    let target = raw.strip_prefix("./").and_then(|rest| {
+      names.iter().enumerate().filter(|(_, n)| rest == n.as_str() || rest.strip_prefix(n.as_str()).is_some_and(|r| r.starts_with('/'))).max_by_key(|(_, n)| n.len()).map(|(i, n)| (i, rest[n.len()..].trim_start_matches('/').to_string()))
+    });
+    match target {
+      Some((i, rest)) => {
+        any_scoped = true;
+        scoped[i].push(if rest.is_empty() { "./**".to_string() } else { format!("./{rest}") });
+      }
+      None => common.push(raw.to_string()),
+    }
+  }
+  scoped
+    .into_iter()
+    .map(|own| {
+      if any_scoped && common.is_empty() && own.is_empty() {
+        return None;
+      }
+      // Folder-scoped patterns narrow that folder; the shared ones still apply to it too.
+      let all: Vec<String> = if own.is_empty() { common.clone() } else { own.into_iter().chain(common.iter().cloned()).collect() };
+      Some(all.join(", "))
+    })
+    .collect()
 }
 
 #[cfg(test)]
@@ -756,5 +851,57 @@ mod tests {
     let (tx, rx) = std::sync::mpsc::channel();
     searches.start(&rg, root, &SearchOptions { is_regex: true, ..q("(") }, move |ev| tx.send(ev).is_ok()).unwrap();
     assert!(matches!(rx.recv().unwrap(), SearchEvent::Error { message } if message.contains("regex")));
+  }
+
+  #[test]
+  fn multi_root_includes_pick_folders_by_name() {
+    let names = vec!["app".to_string(), "lib".to_string(), "lib-extra".to_string()];
+    let all = |s: &str| vec![Some(s.to_string()); 3];
+    assert_eq!(split_include("", &names), all(""));
+    assert_eq!(split_include("src, *.ts", &names), all("src, *.ts"));
+    // ./name/ narrows to that folder; the others are left out.
+    assert_eq!(split_include("./lib/**/*.txt", &names), [None, Some("./**/*.txt".into()), None]);
+    assert_eq!(split_include("./lib-extra", &names), [None, None, Some("./**".into())]);
+    // Shared patterns still apply everywhere, on top of a folder's own.
+    assert_eq!(split_include("./app/src, *.md", &names), [Some("./src, *.md".into()), Some("*.md".into()), Some("*.md".into())]);
+    // Not a folder name: an ordinary anchored pattern for every folder.
+    assert_eq!(split_include("./src", &names), all("./src"));
+  }
+
+  #[test]
+  fn searches_several_roots_as_one() {
+    let Ok(rg) = find_rg(std::env::var_os("KINGU_RG"), std::env::var_os("PATH")) else {
+      eprintln!("rg not found, skipping");
+      return;
+    };
+    let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    std::fs::write(a.path().join("a.md"), "hello
+").unwrap();
+    std::fs::write(b.path().join("b.md"), "hello hello
+").unwrap();
+    let q = SearchOptions { query: "hello".into(), ..Default::default() };
+    let prefix = format!("{}/", b.path().display());
+    let roots = vec![
+      Root { dir: a.path().to_path_buf(), prefix: String::new(), options: q.clone() },
+      Root { dir: b.path().to_path_buf(), prefix: prefix.clone(), options: q.clone() },
+    ];
+    let searches = Arc::new(Searches::default());
+    let (tx, rx) = std::sync::mpsc::channel();
+    searches.start_roots(&rg, roots, move |ev| tx.send(ev).is_ok()).unwrap();
+    let mut files = Vec::new();
+    let mut done = None;
+    for ev in rx {
+      match ev {
+        SearchEvent::File { path, matches, .. } => files.push((path, matches.len())),
+        SearchEvent::Done { files, matches, .. } => {
+          done = Some((files, matches));
+          break;
+        }
+        SearchEvent::Error { message } => panic!("{message}"),
+      }
+    }
+    files.sort();
+    assert_eq!(files, [(format!("{prefix}b.md"), 2), ("a.md".to_string(), 1)]);
+    assert_eq!(done, Some((2, 3)));
   }
 }

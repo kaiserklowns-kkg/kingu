@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 
 use super::kingu_yaml::{self, KinguYaml};
 use crate::settings::kingu_file;
@@ -419,7 +419,7 @@ fn cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
 
 /// What runs for `kind` in the open folder (`None`: nothing).
 #[tauri::command]
-pub fn worktree_script(app: AppHandle, ws: State<'_, Workspace>, kind: String) -> Result<Option<ScriptPlan>, String> {
+pub fn worktree_script(app: AppHandle, ws: Workspace, kind: String) -> Result<Option<ScriptPlan>, String> {
   let kind = Kind::parse(&kind)?;
   let Some(root) = ws.current() else {
     return Ok(None);
@@ -429,7 +429,7 @@ pub fn worktree_script(app: AppHandle, ws: State<'_, Workspace>, kind: String) -
 
 /// `trusted`: trust the shared text with hash `hash` (what the user was shown), or revoke trust.
 #[tauri::command]
-pub fn worktree_script_trust(app: AppHandle, ws: State<'_, Workspace>, kind: String, trusted: bool, hash: Option<String>) -> Result<(), String> {
+pub fn worktree_script_trust(app: AppHandle, ws: Workspace, kind: String, trusted: bool, hash: Option<String>) -> Result<(), String> {
   let kind = Kind::parse(&kind)?;
   let root = ws.root()?;
   let config = crate::snap::config_dir(&app)?;
@@ -444,7 +444,7 @@ pub fn worktree_script_trust(app: AppHandle, ws: State<'_, Workspace>, kind: Str
 
 /// The runnable setup / archive file (absolute path), for the setup terminal.
 #[tauri::command]
-pub fn worktree_script_prepare(app: AppHandle, ws: State<'_, Workspace>, kind: String) -> Result<Option<String>, String> {
+pub fn worktree_script_prepare(app: AppHandle, ws: Workspace, kind: String) -> Result<Option<String>, String> {
   let kind = Kind::parse(&kind)?;
   let file = prepare(&crate::snap::config_dir(&app)?, &trust_data(&app)?, &cache_dir(&app)?, &ws.root()?, kind)?;
   Ok(file.map(|f| f.display().to_string()))
@@ -452,7 +452,7 @@ pub fn worktree_script_prepare(app: AppHandle, ws: State<'_, Workspace>, kind: S
 
 /// Runs the archive plan in the task worktree before it is removed; `None` when nothing runs.
 #[tauri::command]
-pub async fn worktree_archive_run(app: AppHandle, ws: State<'_, Workspace>, slug: String) -> Result<Option<ScriptRun>, String> {
+pub async fn worktree_archive_run(app: AppHandle, ws: Workspace, slug: String) -> Result<Option<ScriptRun>, String> {
   let root = ws.root()?;
   let dir = super::review::task_dir(&root, &slug)?;
   let Some(file) = prepare(&crate::snap::config_dir(&app)?, &trust_data(&app)?, &cache_dir(&app)?, &root, Kind::Archive)? else {
@@ -489,7 +489,7 @@ pub fn worktree_setup_status(app: AppHandle, marker: String) -> Result<Option<i3
 /// Links kingu.yaml `worktree.sharedDirectories` and `kingu.repo.symlinkPaths` into the new task
 /// worktree; returns the linked paths.
 #[tauri::command]
-pub fn worktree_link_shared(app: AppHandle, ws: State<'_, Workspace>, slug: String) -> Result<Vec<String>, String> {
+pub fn worktree_link_shared(app: AppHandle, ws: Workspace, slug: String) -> Result<Vec<String>, String> {
   let root = ws.root()?;
   let dir = super::review::task_dir(&root, &slug)?;
   let config = crate::snap::config_dir(&app)?;

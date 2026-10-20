@@ -26,6 +26,12 @@ describe('launch.json', () => {
 describe('variable substitution', () => {
 	const ctx: VarContext = { workspaceFolder: '/Users/me/โปรเจกต์', file: '/Users/me/โปรเจกต์/cmd/server/main.go', env: { HOME: '/Users/me', EMPTY: '' } };
 
+	test('${workspaceFolder:name} in a multi-root workspace (VS Code docs: launch configurations per folder)', () => {
+		const folders = [{ path: '/w/Program', name: 'Program' }, { path: '/w/lib', name: 'Library' }];
+		expect(substitute({ program: '${workspaceFolder:Program}/test.js', outFiles: ['${workspaceFolder:Library}/out/**/*.js'] }, { ...ctx, folders })).toEqual({ program: '/w/Program/test.js', outFiles: ['/w/lib/out/**/*.js'] });
+		expect(() => substitute('${workspaceFolder:Nope}', { ...ctx, folders })).toThrow(/No workspace folder named Nope/);
+	});
+
 	test('workspace, file and env variables, deep in arrays and objects', () => {
 		const config = {
 			type: 'go',

@@ -25,6 +25,7 @@ import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
 import { isDiffKey } from '#lib/workbench/scm.ts';
 import { isUntitled } from '#lib/workbench/untitled.ts';
+import type { WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 import { taskLaunch } from './commandLine.ts';
 import { runTask, type Execution, type GraphHost, type Summary } from './dependencies.ts';
 import { detectTasks, packageManagerFor, taskFromDefinition } from './detect.ts';
@@ -58,7 +59,8 @@ const LOG_LIMIT = 2000;
 const DELIVERY_MS = 3000;
 
 const taskKey = (task: Task) => task.id;
-const absolute = (root: string, rel: string) => `${root}/${rel}`;
+/** Another root folder's file (multi-root) is absolute already. */
+const absolute = (root: string, rel: string) => (rel.startsWith('/') ? rel : `${root}/${rel}`);
 
 /** A marker of task output as an LSP diagnostic for the Problems panel (0-based). */
 export function markerToDiagnostic(m: Marker): Diagnostic {
@@ -325,6 +327,7 @@ class Tasks {
 		const build = groupTasks(tasks, 'build', active ?? undefined).defaults[0];
 		return {
 			workspaceFolder: root,
+			folders: await workspaceFolders(),
 			file,
 			lineNumber: file ? editors.cursor.line : undefined,
 			columnNumber: file ? editors.cursor.column : undefined,
@@ -718,3 +721,8 @@ class Tasks {
 }
 
 export const tasks = new Tasks();
+
+/** The window's root folders, for `${workspaceFolder:name}`. */
+function workspaceFolders(): Promise<WorkspaceFolder[]> {
+	return invoke<WorkspaceFolder[]>('workspace_folders').catch(() => []);
+}

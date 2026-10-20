@@ -14,7 +14,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use tauri::{AppHandle, State};
+use tauri::AppHandle;
 
 use crate::i18n::msg::IdeTasksMsg;
 use crate::snap::{TRUST_FILE, TrustData, set_script_trust, sha256_hex};
@@ -140,7 +140,7 @@ pub fn set_trust(config_dir: &Path, root: &Path, expected: Option<&str>) -> Resu
 
 /// `.vscode/tasks.json` of the open folder, with its trust (no folder: no file).
 #[tauri::command]
-pub fn tasks_file(app: AppHandle, ws: State<'_, Workspace>) -> Result<TasksFile, String> {
+pub fn tasks_file(app: AppHandle, ws: Workspace) -> Result<TasksFile, String> {
   let Some(root) = ws.current() else {
     return Ok(TasksFile { text: None, hash: None, trusted: false });
   };
@@ -149,7 +149,7 @@ pub fn tasks_file(app: AppHandle, ws: State<'_, Workspace>) -> Result<TasksFile,
 
 /// Allows (with the hash that was shown) or disallows the folder's automatic tasks.
 #[tauri::command]
-pub fn tasks_trust(app: AppHandle, ws: State<'_, Workspace>, hash: Option<String>) -> Result<(), String> {
+pub fn tasks_trust(app: AppHandle, ws: Workspace, hash: Option<String>) -> Result<(), String> {
   let root = ws.root()?;
   set_trust(&crate::snap::config_dir(&app)?, &root, hash.as_deref())?;
   log::info!("tasks.json automatic tasks: trusted = {} in {}", hash.is_some(), root.display());

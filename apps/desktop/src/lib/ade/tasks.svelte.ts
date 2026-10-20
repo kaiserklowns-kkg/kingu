@@ -9,7 +9,7 @@ import { team } from '#lib/team/team.svelte.ts';
 import { runKey, syncKey, toTeamRun, toTeamTask } from './teamSync.ts';
 import { untrack } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { listenWindow } from '#lib/workbench/windowEvents.ts';
 import { ask, message } from '#lib/workbench/messageBox.ts';
 import { removalGate } from './agentPresence';
 import { clientLog } from '#lib/client-log.ts';
@@ -1555,7 +1555,7 @@ export function installAde(): () => void {
 	// Rust's git watcher (watcher.rs GitWatcher): branches and worktrees changed in the open folder's repository.
 	let stopGitWatch: (() => void) | null = null;
 	let disposed = false;
-	void listen<{ root: string }>('ade:worktrees-changed', (e) => {
+	void listenWindow<{ root: string }>('ade:worktrees-changed', (e) => {
 		if (e.payload.root === workspace.root && adeTasks.loaded) void adeTasks.refreshWorktrees();
 	})
 		.then((un) => (disposed ? un() : (stopGitWatch = un)))

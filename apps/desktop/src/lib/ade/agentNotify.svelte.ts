@@ -8,7 +8,7 @@
 
 import { untrack } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { listenWindow } from '#lib/workbench/windowEvents.ts';
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
@@ -67,7 +67,7 @@ export function agentNotifyAllowed(slug?: string): boolean {
 
 export function installAgentNotifications(): () => void {
 	const seen = new Map<string, NoticeState>();
-	const unlisten = listen<{ slug: string | null; chat_id?: string | null; root?: string | null }>('agent:notification-clicked', (e) => {
+	const unlisten = listenWindow<{ slug: string | null; chat_id?: string | null; root?: string | null }>('agent:notification-clicked', (e) => {
 		const { slug, chat_id, root } = e.payload;
 		if (chat_id) return openNotifiedChat(chat_id);
 		if (root && root !== workspace.root && projects.added.has(root)) {

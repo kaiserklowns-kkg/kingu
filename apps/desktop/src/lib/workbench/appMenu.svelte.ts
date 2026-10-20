@@ -8,7 +8,7 @@
 // ever fire, `commands.runFromMenu` drops the menu event as an echo of the key (MENU_ECHO_MS).
 
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { listenWindow } from '#lib/workbench/windowEvents.ts';
 import { clientLog } from '#lib/client-log.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { commands, keyOf } from './commands.svelte';
@@ -83,15 +83,25 @@ export function installNativeMenu(): () => void {
 	if (!isMac) return () => {};
 	let unlisten: (() => void) | undefined;
 	let gone = false;
-	listen<string>('menu://command', (e) => runMenuItem(e.payload))
+	listenWindow<string>('menu://command', (e) => runMenuItem(e.payload))
 		.then((u) => (gone ? u() : (unlisten = u)))
 		.catch(() => {});
 
 	let lastKey = '';
 	let lastStates = new Map<string, { enabled: boolean; checked?: boolean }>();
+	// The menu bar is one for every window: the one that comes to the front puts its own model back.
+	let refresh = $state(0);
+	let unlistenRefresh: (() => void) | undefined;
+	listenWindow('menu://refresh', () => {
+		lastKey = '';
+		refresh++;
+	})
+		.then((u) => (gone ? u() : (unlistenRefresh = u)))
+		.catch(() => {});
 	const report = (what: string) => (e: unknown) => clientLog('error', `${what}: ${e}`);
 	const stopEffect = $effect.root(() => {
 		$effect(() => {
+			void refresh;
 			const nodes: MenuNode[] = currentMenubar(true);
 			const key = structureKey(nodes);
 			const states = itemStates(nodes);
@@ -112,6 +122,7 @@ export function installNativeMenu(): () => void {
 	return () => {
 		gone = true;
 		unlisten?.();
+		unlistenRefresh?.();
 		stopEffect();
 	};
 }

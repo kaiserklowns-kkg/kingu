@@ -43,7 +43,8 @@ export function installEditorRestore(): () => void {
 	const stop = $effect.root(() => {
 		$effect(() => {
 			if (!workspace.ready || !settings.loaded) return;
-			const root = workspace.root;
+			// Per workspace (its state key is the folder itself for a single folder).
+			const root = workspace.root ? workspace.stateKey : null;
 			if (root === shownRoot) return;
 			shownRoot = root;
 			untrack(() => {
@@ -54,7 +55,7 @@ export function installEditorRestore(): () => void {
 		$effect(() => {
 			const state = openEditorsState(editors.allTabs(), editors.active);
 			// Closing the old folder's editors happens with the switch: never save that under the old folder.
-			const current = workspace.root && rootTag(workspace.root);
+			const current = workspace.root && workspace.stateKey && rootTag(workspace.stateKey);
 			untrack(() => {
 				if (tag && tag === current) persist(storeName(STORE, tag), state);
 			});

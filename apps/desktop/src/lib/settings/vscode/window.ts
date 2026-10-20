@@ -95,7 +95,35 @@ export const WINDOW_SETTINGS: SettingSchema[] = [
 			'เปิดโฟลเดอร์ล่าสุดคืน (Reopen the last active window unless a folder, workspace or file is opened (e.g. from the command line). If a file is opened, it will replace any of the editors that were previously opened in a window.)',
 			'เริ่มด้วยหน้าต่างว่าง (Never reopen a window. Unless a folder or workspace is opened (e.g. from the command line), an empty window will appear.)'
 		],
-		description: 'สิ่งที่เปิดคืนเมื่อเริ่ม Kingu ซึ่งมีหน้าต่างเดียว ทุกค่ายกเว้น none จะเปิดโฟลเดอร์ล่าสุดคืน (Controls how windows and editors within are being restored when opening.)',
+		description: 'หน้าต่างที่เปิดคืนเมื่อเริ่ม Kingu แต่ละหน้าต่างกลับมาพร้อมโฟลเดอร์หรือ workspace ของตัวเอง (Controls how windows and editors within are being restored when opening.)',
+		scope: 'application'
+	},
+	{
+		id: 'window.openFoldersInNewWindow',
+		group: 'Window',
+		type: 'string',
+		default: 'default',
+		enum: ['on', 'off', 'default'],
+		enumDescriptions: [
+			'เปิดโฟลเดอร์ในหน้าต่างใหม่ (Folders will open in a new window.)',
+			'เปิดโฟลเดอร์แทนที่หน้าต่างที่ใช้อยู่ล่าสุด (Folders will replace the last active window.)',
+			'เปิดในหน้าต่างใหม่ ยกเว้นเลือกโฟลเดอร์จากในแอป เช่นเมนู File (Folders will open in a new window unless a folder is picked from within the application (e.g. via the File menu).)'
+		],
+		description: 'เปิดโฟลเดอร์ในหน้าต่างใหม่หรือแทนที่หน้าต่างที่ใช้อยู่ล่าสุด (Controls whether folders should open in a new window or replace the last active window.\nNote that there can still be cases where this setting is ignored (e.g. when using the `--new-window` or `--reuse-window` command line option).)',
+		scope: 'application'
+	},
+	{
+		id: 'window.openFilesInNewWindow',
+		group: 'Window',
+		type: 'string',
+		default: 'off',
+		enum: ['on', 'off', 'default'],
+		enumDescriptions: [
+			'เปิดไฟล์ในหน้าต่างใหม่ (Files will open in a new window.)',
+			'เปิดไฟล์ในหน้าต่างที่มีโฟลเดอร์ของไฟล์นั้น หรือหน้าต่างที่ใช้อยู่ล่าสุด (Files will open in the window with the files\' folder open or the last active window.)',
+			'เปิดในหน้าต่างใหม่ ยกเว้นเลือกไฟล์จากในแอป เช่นเมนู File (Files will open in a new window unless picked from within the application (e.g. via the File menu).)'
+		],
+		description: 'เปิดไฟล์ในหน้าต่างใหม่หรือไม่ เมื่อเปิดจาก command line หรือกล่องเลือกไฟล์ (Controls whether files should open in a new window when using a command line or file dialog.\nNote that there can still be cases where this setting is ignored (e.g. when using the `--new-window` or `--reuse-window` command line option).)',
 		scope: 'application'
 	},
 	{

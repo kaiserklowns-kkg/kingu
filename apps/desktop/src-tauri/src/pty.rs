@@ -77,6 +77,35 @@ pub struct Ptys {
   /// Private per-user directory for the daemon's socket, lock and log (set at startup).
   dir: OnceLock<PathBuf>,
   backend: OnceLock<Backend>,
+  /// The window showing each session (the last one to start or attach to it), so one window's
+  /// "Kill All Background Sessions" and orphan cleanup leave another window's terminals alone.
+  owners: std::sync::Mutex<BTreeMap<String, String>>,
+}
+
+impl Ptys {
+  /// Records that window `window` shows session `key`.
+  pub fn own(&self, key: &str, window: &str) {
+    self.owners.lock().unwrap_or_else(|e| e.into_inner()).insert(key.into(), window.into());
+  }
+
+  /// The window showing `key`, if it still is.
+  pub fn owner(&self, key: &str) -> Option<String> {
+    self.owners.lock().unwrap_or_else(|e| e.into_inner()).get(key).cloned()
+  }
+
+  /// A window closed: its sessions keep running (the daemon re-attaches them later) but nobody shows them.
+  pub fn forget_window(&self, window: &str) {
+    self.owners.lock().unwrap_or_else(|e| e.into_inner()).retain(|_, w| w != window);
+  }
+}
+
+/// A live session as `pty_list` reports it to a window.
+#[derive(serde::Serialize)]
+pub struct ListedSession {
+  #[serde(flatten)]
+  pub info: SessionInfo,
+  /// Another open window shows it: not this window's to kill or adopt.
+  pub elsewhere: bool,
 }
 
 /// Where the daemon's socket lives: `$XDG_RUNTIME_DIR/kingu` on Linux, else `<app data>/ptyd`,
@@ -233,9 +262,13 @@ pub fn channel_sink(on_data: Channel<String>) -> Sink {
 /// Re-attaches to a live session without starting one (a terminal mounted hidden after a reload
 /// or restart, so an agent CLI's output keeps reaching the page). Null when `key` has no live shell.
 #[tauri::command(async)]
-pub fn pty_attach(ptys: State<'_, Ptys>, key: String, cols: Option<u16>, rows: Option<u16>, on_data: Channel<String>) -> Result<Option<Attached>, String> {
+pub fn pty_attach(window: tauri::WebviewWindow, ptys: State<'_, Ptys>, key: String, cols: Option<u16>, rows: Option<u16>, on_data: Channel<String>) -> Result<Option<Attached>, String> {
   validate_key(&key)?;
-  ptys.attach(&key, cols.zip(rows), channel_sink(on_data))
+  let attached = ptys.attach(&key, cols.zip(rows), channel_sink(on_data))?;
+  if attached.is_some() {
+    ptys.own(&key, window.label());
+  }
+  Ok(attached)
 }
 
 /// Sync, so keystrokes reach the shell in the order they were typed (async commands run concurrently).
@@ -260,8 +293,19 @@ pub fn pty_kill(ptys: State<'_, Ptys>, key: String) -> Result<(), String> {
 /// Live sessions (key, cwd, alive), so the page can re-attach after a restart and kill the ones it
 /// no longer shows.
 #[tauri::command(async)]
-pub fn pty_list(ptys: State<'_, Ptys>) -> Result<Vec<SessionInfo>, String> {
-  ptys.list()
+pub fn pty_list(window: tauri::WebviewWindow, ptys: State<'_, Ptys>) -> Result<Vec<ListedSession>, String> {
+  use tauri::Manager;
+  let open = window.app_handle().state::<crate::workspace::Workspaces>().labels();
+  Ok(
+    ptys
+      .list()?
+      .into_iter()
+      .map(|info| {
+        let elsewhere = ptys.owner(&info.key).is_some_and(|w| w != window.label() && open.contains(&w));
+        ListedSession { info, elsewhere }
+      })
+      .collect(),
+  )
 }
 
 /// The jobs running in front of the shells of `keys` (a close asks first while one runs), by key;

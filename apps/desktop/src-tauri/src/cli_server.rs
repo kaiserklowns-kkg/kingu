@@ -189,7 +189,11 @@ pub fn check_publish(params: &Value) -> Result<(PathBuf, crate::artifacts::Publi
 
 /// The open project (the open folder or an added one) holding `cwd`.
 fn artifact_project(app: &AppHandle, cwd: &Path) -> Result<PathBuf, RpcError> {
-  let open = crate::artifacts::open_projects(&app.state::<crate::workspace::Workspace>(), &app.state::<crate::projects::Projects>());
+  let projects = app.state::<crate::projects::Projects>();
+  let open: Vec<PathBuf> = match window(app, Some(cwd)) {
+    Some(ws) => crate::artifacts::open_projects(&ws, &projects),
+    None => projects.list().into_iter().map(|p| p.path).collect(),
+  };
   crate::artifacts::project_for(cwd, &open).ok_or_else(|| rpc(ERR_FAILED, tr!(crate::i18n::msg::ArtifactMsg::NoProject, path = cwd.display())))
 }
 
@@ -208,24 +212,44 @@ pub fn task_row(t: &crate::agent::tasks::TaskMeta) -> Value {
   })
 }
 
-fn folder(app: &AppHandle) -> Result<PathBuf, RpcError> {
-  app.state::<crate::workspace::Workspace>().current().ok_or_else(|| rpc(ERR_FAILED, tr!(CliMsg::NoFolder)))
+/// The window a request is for: the last active one whose folders hold the caller's `cwd`, else
+/// the last active one (VS Code's CLI talks to the last active window).
+fn window(app: &AppHandle, cwd: Option<&Path>) -> Option<crate::workspace::Workspace> {
+  app.state::<crate::workspace::Workspaces>().for_path(cwd)
+}
+
+fn cwd_of(params: &Value) -> Option<PathBuf> {
+  str_param(params, "cwd").map(PathBuf::from).filter(|p| p.is_absolute())
+}
+
+fn folder(app: &AppHandle, params: &Value) -> Result<PathBuf, RpcError> {
+  window(app, cwd_of(params).as_deref()).and_then(|w| w.current()).ok_or_else(|| rpc(ERR_FAILED, tr!(CliMsg::NoFolder)))
 }
 
 fn tasks(root: &Path) -> Result<Vec<crate::agent::tasks::TaskMeta>, RpcError> {
   crate::agent::tasks::load(root).map_err(|e| rpc(ERR_FAILED, e))
 }
 
-/// Hands a request to the window (brought to the front with `focus`) and waits for its `cli_reply`.
-fn ask_window(app: &AppHandle, method: &str, params: Value, focus: bool) -> Result<Value, RpcError> {
+/// Hands a request to the window for `cwd` (brought to the front with `focus`) and waits for its `cli_reply`.
+fn ask_window(app: &AppHandle, cwd: Option<&Path>, method: &str, params: Value, focus: bool) -> Result<Value, RpcError> {
   let server = app.state::<CliServer>();
   let id = server.next.fetch_add(1, Ordering::Relaxed) + 1;
   let (tx, rx) = mpsc::channel();
   server.pending.lock().unwrap_or_else(|e| e.into_inner()).insert(id, tx);
+  let label = window(app, cwd).map(|w| w.label().to_string());
   if focus {
-    crate::notify::focus_main(app);
+    match &label {
+      Some(l) => {
+        crate::windows::focus(app, l);
+      }
+      None => crate::notify::focus_main(app),
+    }
   }
-  let sent = app.emit(REQUEST_EVENT, json!({ "id": id, "method": method, "params": params }));
+  let request = json!({ "id": id, "method": method, "params": params });
+  let sent = match &label {
+    Some(l) => app.emit_to(l.as_str(), REQUEST_EVENT, request),
+    None => app.emit(REQUEST_EVENT, request),
+  };
   let answer = match sent {
     Ok(()) => rx.recv_timeout(WINDOW_TIMEOUT).ok(),
     Err(e) => Some(Err(e.to_string())),
@@ -241,31 +265,31 @@ fn ask_window(app: &AppHandle, method: &str, params: Value, focus: bool) -> Resu
 fn dispatch(app: &AppHandle, method: &str, params: &Value) -> Result<Value, RpcError> {
   match method {
     protocol::METHOD_STATUS => {
-      let root = app.state::<crate::workspace::Workspace>().current();
+      let root = window(app, cwd_of(params).as_deref()).and_then(|w| w.current());
       let count = root.as_deref().and_then(|r| crate::agent::tasks::load(r).ok()).map(|t| t.len());
       Ok(json!({ "app_version": env!("CARGO_PKG_VERSION"), "pid": std::process::id(), "workspace": root.map(|r| r.display().to_string()), "tasks": count }))
     }
     protocol::METHOD_TASK_LIST => {
-      let list = tasks(&folder(app)?)?;
+      let list = tasks(&folder(app, params)?)?;
       Ok(json!({ "tasks": list.iter().map(task_row).collect::<Vec<_>>() }))
     }
     protocol::METHOD_TASK_CREATE => {
-      folder(app)?;
+      folder(app, params)?;
       let checked = check_create(params)?;
       let focus = checked["open"] == json!(true);
-      ask_window(app, method, checked, focus)
+      ask_window(app, cwd_of(params).as_deref(), method, checked, focus)
     }
     protocol::METHOD_TASK_OPEN => {
       let slug = str_param(params, "slug").unwrap_or_default();
       crate::agent::worktree::validate_slug(slug).map_err(|e| rpc(ERR_BAD_REQUEST, e))?;
-      if !tasks(&folder(app)?)?.iter().any(|t| t.slug == slug) {
+      if !tasks(&folder(app, params)?)?.iter().any(|t| t.slug == slug) {
         return Err(rpc(ERR_FAILED, tr!(CliMsg::UnknownTask, slug)));
       }
-      ask_window(app, method, json!({ "slug": slug }), true)
+      ask_window(app, cwd_of(params).as_deref(), method, json!({ "slug": slug }), true)
     }
     protocol::METHOD_OPEN => {
       let checked = check_open(params)?;
-      ask_window(app, method, checked, true)
+      ask_window(app, cwd_of(params).as_deref(), method, checked, true)
     }
     protocol::METHOD_ARTIFACT_PUBLISH => {
       let (cwd, publish) = check_publish(params)?;

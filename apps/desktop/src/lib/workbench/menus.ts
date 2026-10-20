@@ -119,6 +119,7 @@ export const MENUS: Menu[] = [
 			{ command: 'workbench.action.files.newUntitledFile', label: 'New Text File' },
 			{ command: 'kingu.agents.newTask', label: 'New Task' },
 			{ command: 'explorer.newFile', label: 'New File...' },
+			{ command: 'workbench.action.newWindow', label: 'New Window' },
 			SEP,
 			{ command: 'workbench.action.files.openFile', label: 'Open File...' },
 			{ command: 'workbench.action.files.openFolder', label: 'Open Folder...' },
@@ -127,6 +128,7 @@ export const MENUS: Menu[] = [
 			SEP,
 			{ command: 'workbench.action.addRootFolder', label: 'Add Folder to Workspace...' },
 			{ command: 'workbench.action.saveWorkspaceAs', label: 'Save Workspace As...' },
+			{ command: 'workbench.action.duplicateWorkspaceInNewWindow', label: 'Duplicate Workspace' },
 			SEP,
 			{ command: 'workbench.action.files.save', label: 'Save' },
 			{ command: 'workbench.action.files.saveAs', label: 'Save As...' },
@@ -147,6 +149,7 @@ export const MENUS: Menu[] = [
 			{ command: 'workbench.action.closeActiveEditor', label: 'Close Editor' },
 			{ command: 'workbench.action.reopenClosedEditor', label: 'Reopen Closed Editor' },
 			{ command: 'workbench.action.closeFolder', label: 'Close Folder' },
+			{ command: 'workbench.action.closeWindow', label: 'Close Window' },
 			{ ...SEP, platform: 'other' },
 			{ command: 'workbench.action.quit', label: 'Exit', platform: 'other' }
 		]

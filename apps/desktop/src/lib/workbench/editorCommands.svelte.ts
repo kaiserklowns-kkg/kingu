@@ -29,7 +29,8 @@ import { searchEditors } from './searchEditor.svelte.ts';
 /** A tab that is a workspace file (or a diff of one), so it has a path to copy or reveal. */
 export const isFileEditor = (key: string) => !isUntitled(key) && !isNonTextEditor(key) && !key.includes('://');
 
-const absPath = (rel: string) => `${workspace.root}/${rel}`;
+/** Another root folder's file (multi-root) is absolute already. */
+const absPath = (rel: string) => (rel.startsWith('/') ? rel : `${workspace.root}/${rel}`);
 
 async function copyText(text: string) {
 	try {

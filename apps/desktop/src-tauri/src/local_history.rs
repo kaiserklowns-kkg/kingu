@@ -351,11 +351,11 @@ fn percent_decode(s: &str) -> String {
 
 // --- Commands ---------------------------------------------------------------------------------
 
-/// `rel` in the open folder (it need not exist: a deleted file keeps its history).
+/// `rel` in its root folder (it need not exist: a deleted file keeps its history).
 fn file_of(ws: &Workspace, rel: &str) -> Result<PathBuf, String> {
-  let root = ws.root()?;
-  crate::git::check_rel(&root, rel)?;
-  Ok(root.join(rel))
+  let (root, inner) = ws.locate(rel)?;
+  crate::git::check_rel(&root, &inner)?;
+  Ok(root.join(inner))
 }
 
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
@@ -365,7 +365,7 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
 /// Adds an entry for `rel` as it is on disk (after a save, Create Entry, Restore).
 #[tauri::command]
 pub async fn local_history_add(
-  ws: State<'_, Workspace>,
+  ws: Workspace,
   history: State<'_, Arc<LocalHistory>>,
   rel: String,
   source: Option<String>,
@@ -377,7 +377,7 @@ pub async fn local_history_add(
 }
 
 #[tauri::command]
-pub async fn local_history_list(ws: State<'_, Workspace>, history: State<'_, Arc<LocalHistory>>, rel: String) -> Result<Vec<Entry>, String> {
+pub async fn local_history_list(ws: Workspace, history: State<'_, Arc<LocalHistory>>, rel: String) -> Result<Vec<Entry>, String> {
   let abs = file_of(&ws, &rel)?;
   let history = Arc::clone(&history);
   blocking(move || Ok(history.list(&abs))).await
@@ -386,7 +386,7 @@ pub async fn local_history_list(ws: State<'_, Workspace>, history: State<'_, Arc
 /// An entry decoded like a text file (its encoding detected, as the file's editor would).
 #[tauri::command]
 pub async fn local_history_read(
-  ws: State<'_, Workspace>,
+  ws: Workspace,
   history: State<'_, Arc<LocalHistory>>,
   rel: String,
   id: String,
@@ -398,14 +398,14 @@ pub async fn local_history_read(
 }
 
 #[tauri::command]
-pub async fn local_history_rename(ws: State<'_, Workspace>, history: State<'_, Arc<LocalHistory>>, rel: String, id: String, name: String) -> Result<(), String> {
+pub async fn local_history_rename(ws: Workspace, history: State<'_, Arc<LocalHistory>>, rel: String, id: String, name: String) -> Result<(), String> {
   let abs = file_of(&ws, &rel)?;
   let history = Arc::clone(&history);
   blocking(move || history.rename(&abs, &id, name.trim())).await
 }
 
 #[tauri::command]
-pub async fn local_history_delete(ws: State<'_, Workspace>, history: State<'_, Arc<LocalHistory>>, rel: String, id: String) -> Result<(), String> {
+pub async fn local_history_delete(ws: Workspace, history: State<'_, Arc<LocalHistory>>, rel: String, id: String) -> Result<(), String> {
   let abs = file_of(&ws, &rel)?;
   let history = Arc::clone(&history);
   blocking(move || history.remove(&abs, &id)).await
@@ -420,13 +420,13 @@ pub async fn local_history_delete_all(history: State<'_, Arc<LocalHistory>>) -> 
 
 /// Restore Contents: the entry's bytes replace the file (VS Code's cloneFile onto the resource).
 #[tauri::command]
-pub async fn local_history_restore(ws: State<'_, Workspace>, history: State<'_, Arc<LocalHistory>>, rel: String, id: String) -> Result<(), String> {
-  let root = ws.root()?;
+pub async fn local_history_restore(ws: Workspace, history: State<'_, Arc<LocalHistory>>, rel: String, id: String) -> Result<(), String> {
+  let (root, inner) = ws.locate(&rel)?;
   let abs = file_of(&ws, &rel)?;
   let history = Arc::clone(&history);
   blocking(move || {
     let bytes = history.content(&abs, &id)?;
-    let target = crate::textfile::resolve_for_write(&root, &rel)?;
+    let target = crate::textfile::resolve_for_write(&root, &inner)?;
     std::fs::write(&target, bytes).map_err(|e| format!("{rel}: {e}"))?;
     log::info!("local history: restored {rel} from {id}");
     Ok(())
@@ -436,7 +436,7 @@ pub async fn local_history_restore(ws: State<'_, Workspace>, history: State<'_, 
 
 /// A file was renamed or moved in the folder: its history follows it.
 #[tauri::command]
-pub async fn local_history_move(ws: State<'_, Workspace>, history: State<'_, Arc<LocalHistory>>, from: String, to: String) -> Result<(), String> {
+pub async fn local_history_move(ws: Workspace, history: State<'_, Arc<LocalHistory>>, from: String, to: String) -> Result<(), String> {
   let (src, dst) = (file_of(&ws, &from)?, file_of(&ws, &to)?);
   let history = Arc::clone(&history);
   blocking(move || history.move_entries(&src, &dst)).await
@@ -444,7 +444,7 @@ pub async fn local_history_move(ws: State<'_, Workspace>, history: State<'_, Arc
 
 /// The files of the open folder that have history, most recently changed first.
 #[tauri::command]
-pub async fn local_history_files(ws: State<'_, Workspace>, history: State<'_, Arc<LocalHistory>>) -> Result<Vec<String>, String> {
+pub async fn local_history_files(ws: Workspace, history: State<'_, Arc<LocalHistory>>) -> Result<Vec<String>, String> {
   let root = ws.root()?;
   let history = Arc::clone(&history);
   blocking(move || Ok(history.files_under(&root))).await

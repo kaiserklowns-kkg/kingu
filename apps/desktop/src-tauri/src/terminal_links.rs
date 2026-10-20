@@ -52,7 +52,7 @@ fn inside(path: &Path, root: &Path) -> Option<LinkTarget> {
 /// The file a terminal link names, or null when there is none (no link is drawn then).
 /// `key`: the terminal's session, whose shell's current and starting directories are the bases.
 #[tauri::command(async)]
-pub fn terminal_link_target(ws: State<'_, Workspace>, ptys: State<'_, Ptys>, key: String, text: String) -> Result<Option<LinkTarget>, String> {
+pub fn terminal_link_target(ws: Workspace, ptys: State<'_, Ptys>, key: String, text: String) -> Result<Option<LinkTarget>, String> {
   let Some(root) = ws.current() else { return Ok(None) };
   let session = ptys.list().unwrap_or_default().into_iter().find(|s| s.key == key);
   let mut bases = Vec::new();

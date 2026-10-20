@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 
 use super::events::AgentEvent;
 use super::{ai_text, chats, memories};
@@ -35,7 +35,7 @@ pub fn feedback_event(request: u32, vote: Option<&str>) -> Result<AgentEvent, St
 
 /// The user's vote on the answer to request `request` of chat `id`, appended to its transcript.
 #[tauri::command]
-pub async fn chat_feedback(ws: State<'_, Workspace>, id: String, request: u32, vote: Option<String>) -> Result<(), String> {
+pub async fn chat_feedback(ws: Workspace, id: String, request: u32, vote: Option<String>) -> Result<(), String> {
   chats::check_id(&id)?;
   let ev = feedback_event(request, vote.as_deref())?;
   let root = ws.root()?;
@@ -43,20 +43,20 @@ pub async fn chat_feedback(ws: State<'_, Workspace>, id: String, request: u32, v
 }
 
 #[tauri::command]
-pub async fn memories_list(ws: State<'_, Workspace>) -> Result<Vec<memories::Memory>, String> {
+pub async fn memories_list(ws: Workspace) -> Result<Vec<memories::Memory>, String> {
   let root = ws.root()?;
   blocking(move || Ok(memories::list(&root))).await
 }
 
 #[tauri::command]
-pub async fn memory_add(ws: State<'_, Workspace>, file: String, text: String) -> Result<memories::Memory, String> {
+pub async fn memory_add(ws: Workspace, file: String, text: String) -> Result<memories::Memory, String> {
   let root = ws.root()?;
   blocking(move || memories::add(&root, &file, &text)).await
 }
 
 /// Edits memory `index` of `file`, read as `expected`, to `text`; `text` null deletes it.
 #[tauri::command]
-pub async fn memory_change(ws: State<'_, Workspace>, file: String, index: usize, expected: String, text: Option<String>) -> Result<(), String> {
+pub async fn memory_change(ws: Workspace, file: String, index: usize, expected: String, text: Option<String>) -> Result<(), String> {
   let root = ws.root()?;
   blocking(move || memories::change(&root, &file, index, &expected, text.as_deref())).await
 }
@@ -69,7 +69,7 @@ pub fn followups_configured(on: Option<&serde_json::Value>, enabled: Option<&ser
 /// Follow-up suggestions for a finished chat turn, from the source-control AI agent; `None` when
 /// they are off or the agent is not set up.
 #[tauri::command]
-pub async fn ai_chat_followups(app: AppHandle, ws: State<'_, Workspace>, prompt: String) -> Result<Option<String>, String> {
+pub async fn ai_chat_followups(app: AppHandle, ws: Workspace, prompt: String) -> Result<Option<String>, String> {
   if prompt.trim().is_empty() || prompt.len() > ai_text::MAX_TITLE_PROMPT {
     return Err(tr!(AgentMsg::PromptTooLong));
   }

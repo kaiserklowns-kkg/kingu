@@ -207,8 +207,8 @@ impl<R: Runtime> MenuSink for TauriSink<'_, R> {
 /// Replaces the app menu with `model` (top-level submenus). Only macOS has a native menu bar;
 /// elsewhere the webview draws the menu inside its title bar and this is a no-op.
 #[tauri::command]
-pub fn menu_set_model(app: AppHandle, state: State<'_, MenuState>, model: Vec<MenuNode>) -> Result<(), String> {
-  if !cfg!(target_os = "macos") {
+pub fn menu_set_model(app: AppHandle, window: tauri::WebviewWindow, state: State<'_, MenuState>, model: Vec<MenuNode>) -> Result<(), String> {
+  if !cfg!(target_os = "macos") || !is_active(&app, window.label()) {
     return Ok(());
   }
   let mut sink = TauriSink { app: &app, items: HashMap::new() };
@@ -222,7 +222,10 @@ pub fn menu_set_model(app: AppHandle, state: State<'_, MenuState>, model: Vec<Me
 
 /// Toggle state of a check item (View > Appearance > Primary Side Bar…), from webview state.
 #[tauri::command]
-pub fn menu_set_checked(state: State<'_, MenuState>, id: String, checked: bool) -> Result<(), String> {
+pub fn menu_set_checked(app: AppHandle, window: tauri::WebviewWindow, state: State<'_, MenuState>, id: String, checked: bool) -> Result<(), String> {
+  if !is_active(&app, window.label()) {
+    return Ok(());
+  }
   let items = state.items.lock().map_err(|e| e.to_string())?;
   for item in items.get(&id).into_iter().flatten() {
     if let MenuItemKind::Check(c) = item {
@@ -234,7 +237,10 @@ pub fn menu_set_checked(state: State<'_, MenuState>, id: String, checked: bool) 
 
 /// Enablement follows the command's `when` in the webview.
 #[tauri::command]
-pub fn menu_set_enabled(state: State<'_, MenuState>, id: String, enabled: bool) -> Result<(), String> {
+pub fn menu_set_enabled(app: AppHandle, window: tauri::WebviewWindow, state: State<'_, MenuState>, id: String, enabled: bool) -> Result<(), String> {
+  if !is_active(&app, window.label()) {
+    return Ok(());
+  }
   let items = state.items.lock().map_err(|e| e.to_string())?;
   for item in items.get(&id).into_iter().flatten() {
     match item {
@@ -246,12 +252,36 @@ pub fn menu_set_enabled(state: State<'_, MenuState>, id: String, enabled: bool) 
   Ok(())
 }
 
-/// Forwards clicks on the webview's own items; predefined items never get here.
+/// The app menu bar is one for all windows (macOS): it shows the active window's model, and its
+/// clicks go to that window.
+fn is_active<R: Runtime>(app: &AppHandle<R>, label: &str) -> bool {
+  app.try_state::<crate::workspace::Workspaces>().and_then(|w| w.last_active()).is_none_or(|w| w.label() == label)
+}
+
+/// Sent to a window that became active, so it puts its own menu model back.
+pub const MENU_REFRESH_EVENT: &str = "menu://refresh";
+
+/// A window came to the front: the menu bar is rebuilt from its model.
+pub fn window_focused<R: Runtime>(app: &AppHandle<R>, label: &str) {
+  if cfg!(target_os = "macos") && app.webview_windows().len() > 1 {
+    let _ = app.emit_to(label, MENU_REFRESH_EVENT, ());
+  }
+}
+
+/// Forwards clicks on the webview's own items to the active window; predefined items never get here.
 pub fn install<R: Runtime>(app: &AppHandle<R>) {
   app.on_menu_event(|app, event| {
     let id = event.id().0.clone();
     let known = app.try_state::<MenuState>().is_some_and(|s| s.items.lock().is_ok_and(|items| items.contains_key(&id)));
-    if known && let Err(e) = app.emit(MENU_COMMAND_EVENT, id) {
+    if !known {
+      return;
+    }
+    let target = app.try_state::<crate::workspace::Workspaces>().and_then(|w| w.last_active()).map(|w| w.label().to_string());
+    let sent = match target {
+      Some(label) => app.emit_to(label.as_str(), MENU_COMMAND_EVENT, id),
+      None => app.emit(MENU_COMMAND_EVENT, id),
+    };
+    if let Err(e) = sent {
       log::error!("menu event: {e}");
     }
   });

@@ -27,7 +27,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
-use tauri::{AppHandle, State};
+use tauri::AppHandle;
 
 use super::host::{McpServer, valid_mcp_name, validate_mcp_server};
 use crate::i18n::msg::McpMsg;
@@ -431,7 +431,7 @@ fn load_trust(config: &Path) -> TrustData {
 }
 
 #[tauri::command]
-pub async fn mcp_list(app: AppHandle, ws: State<'_, Workspace>) -> Result<Vec<McpEntry>, String> {
+pub async fn mcp_list(app: AppHandle, ws: Workspace) -> Result<Vec<McpEntry>, String> {
   let root = ws.current();
   tauri::async_runtime::spawn_blocking(move || {
     let config = config_dir(&app)?;
@@ -444,7 +444,7 @@ pub async fn mcp_list(app: AppHandle, ws: State<'_, Workspace>) -> Result<Vec<Mc
 
 /// Trusts (with the `hash` the user was shown) or untrusts a server of the open folder's config.
 #[tauri::command]
-pub fn mcp_trust(app: AppHandle, ws: State<'_, Workspace>, source: String, name: String, hash: Option<String>) -> Result<(), String> {
+pub fn mcp_trust(app: AppHandle, ws: Workspace, source: String, name: String, hash: Option<String>) -> Result<(), String> {
   let source = Source::parse(&source)?;
   if !source.shared() {
     return Err(tr!(McpMsg::SourceInvalid, source = source.as_str()));

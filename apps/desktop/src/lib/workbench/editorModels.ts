@@ -123,7 +123,7 @@ export function modelEntry(m: MonacoModule, path: string): Promise<ModelEntry> {
 				// A references peek may already have made a preview model for this file.
 				const preview = lsp.adoptPreview(path);
 				if (preview && preview.getValue() !== text) preview.setValue(text);
-				const model = preview ?? m.monaco.editor.createModel(text, languageOf(m, path, text), m.monaco.Uri.file('/' + path));
+				const model = preview ?? m.monaco.editor.createModel(text, languageOf(m, path, text), m.monaco.Uri.file(modelPath(path)));
 				if (preview) setLanguage(m, model, languageOf(m, path, text));
 				// files.eol: a file with no line break yet takes the configured one (not counted as an edit).
 				if (!/\r?\n/.test(text)) model.setEOL(eolFor(settings.get('files.eol')) === '\n' ? m.monaco.editor.EndOfLineSequence.LF : m.monaco.editor.EndOfLineSequence.CRLF);
@@ -433,3 +433,6 @@ export function disposeAll() {
 	views.clear();
 	sharedViews.clear();
 }
+
+/** The model URI's path of an editor key: another root folder's file is absolute already (multi-root). */
+export const modelPath = (key: string) => (key.startsWith('/') ? key : '/' + key);

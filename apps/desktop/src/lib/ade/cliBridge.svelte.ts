@@ -5,7 +5,7 @@
 // the Snap skills (mcp.ts).
 
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { listenWindow } from '#lib/workbench/windowEvents.ts';
 import { commands } from '#lib/workbench/commands.svelte.ts';
 import { editors } from '#lib/workbench/editors.svelte.ts';
 import { ask } from '#lib/workbench/messageBox.ts';
@@ -82,7 +82,7 @@ async function uninstallFromPath() {
 
 /** Workbench wiring: the request listener, the palette commands and the agents' `kingu` skill. */
 export function installCliBridge(): () => void {
-	const unlisten = listen<CliRequest>('kingu-cli:request', (e) => void reply(e.payload));
+	const unlisten = listenWindow<CliRequest>('kingu-cli:request', (e) => void reply(e.payload));
 	// Asked per run: the Skills view can turn the skill off (Rust then answers none).
 	setBuiltInPluginProvider(() => invoke<string | null>('cli_skill_plugin').then((d) => (d ? [d] : []), () => []));
 	const unregister = [

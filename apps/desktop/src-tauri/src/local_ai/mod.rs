@@ -55,7 +55,7 @@ fn start_index(app: &AppHandle, semantic: &Semantic, root: &std::path::Path, con
 
 /// Brings the open folder's semantic index up to date in the background.
 #[tauri::command]
-pub fn semantic_index(app: AppHandle, ws: State<'_, Workspace>, state: State<'_, Arc<Semantic>>, config: SemanticConfig) -> Result<Status, String> {
+pub fn semantic_index(app: AppHandle, ws: Workspace, state: State<'_, Arc<Semantic>>, config: SemanticConfig) -> Result<Status, String> {
   start_index(&app, &state, &ws.root()?, &config)
 }
 
@@ -69,7 +69,7 @@ pub fn semantic_status(state: State<'_, Arc<Semantic>>) -> Status {
 #[tauri::command]
 pub async fn semantic_search(
   app: AppHandle,
-  ws: State<'_, Workspace>,
+  ws: Workspace,
   state: State<'_, Arc<Semantic>>,
   config: SemanticConfig,
   query: String,
@@ -84,7 +84,7 @@ pub async fn semantic_search(
 /// Stops indexing and deletes the open folder's index (Semantic Search: Rebuild Index, or the
 /// setting turned off).
 #[tauri::command]
-pub fn semantic_clear(app: AppHandle, ws: State<'_, Workspace>, state: State<'_, Arc<Semantic>>) -> Result<(), String> {
+pub fn semantic_clear(app: AppHandle, ws: Workspace, state: State<'_, Arc<Semantic>>) -> Result<(), String> {
   let path = ws.current().map(|root| cache_dir(&app).map(|dir| semantic::index_path(&dir, &root))).transpose()?;
   state.reset(path.as_deref());
   let _ = app.emit(SEMANTIC_EVENT, state.status());

@@ -39,6 +39,7 @@ import {
 import { appendOutput, currentFrame, frameLocation, initialModel, outputLimit, stateLabel, type DebugModel } from './model.ts';
 import { canSetBreakpoint, editorsToSave, opensOnBreak } from './debugSettings.ts';
 import { isUntitled } from '#lib/workbench/untitled.ts';
+import type { WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 import type { Capabilities, CompletionItem, StackFrame, StartDebuggingArguments } from './protocol.ts';
 import { DebugSession, type EvaluateResult } from './session.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
@@ -167,8 +168,9 @@ class Debug {
 		void this.#ensureRoot();
 	}
 
+	/** A breakpoint's file on disk; another root folder's file (multi-root) is absolute already. */
 	#abs(rel: string) {
-		return `${this.root}/${rel}`;
+		return rel.startsWith('/') ? rel : `${this.root}/${rel}`;
 	}
 
 	#live(): Active[] {
@@ -515,7 +517,7 @@ class Debug {
 		const file = isWorkspaceFile(active) ? this.#abs(active) : undefined;
 		const asked = await this.#commands(config);
 		if (!asked) return undefined;
-		const ctx = { workspaceFolder: root, file, env: await this.#env(config), commands: asked };
+		const ctx = { workspaceFolder: root, folders: await invoke<WorkspaceFolder[]>('workspace_folders').catch(() => []), file, env: await this.#env(config), commands: asked };
 		try {
 			if (generated?.askProgram) {
 				const suggestion = substitute(String(config.program ?? ''), ctx);
