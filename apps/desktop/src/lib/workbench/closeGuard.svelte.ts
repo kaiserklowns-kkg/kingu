@@ -5,7 +5,7 @@
 
 import { untrack } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { listenWindow } from '#lib/workbench/windowEvents.ts';
 import { ask } from '#lib/workbench/messageBox.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { confirmTerminalExit } from '#lib/terminal/confirmKill.ts';
@@ -29,9 +29,14 @@ export async function confirmClose(reason: ShutdownReason = 'quit'): Promise<boo
 	return true;
 }
 
-/** Quits after `confirmClose` (File > Exit, and every close Rust held back). */
+/**
+ * After `confirmClose`: `close` closes this window, `quit` (File > Exit, ⌘Q) quits once every
+ * other window with something to ask has agreed too (Rust asks them in turn). A refusal stops
+ * a quit under way.
+ */
 export async function quit(reason: ShutdownReason = 'quit') {
-	if (await confirmClose(reason)) await invoke('window_close_confirmed');
+	if (await confirmClose(reason)) await invoke('window_close_confirmed', { reason: reason === 'close' ? 'close' : 'quit' });
+	else await invoke('window_close_cancelled').catch(() => {});
 }
 
 export function installCloseGuard(): () => void {
@@ -39,7 +44,7 @@ export function installCloseGuard(): () => void {
 	let gone = false;
 	let unlisten: (() => void) | undefined;
 	// Rust says whether the window was closed or the app was quit (⌘Q).
-	listen<string | null>('window:close-requested', async (e) => {
+	listenWindow<string | null>('window:close-requested', async (e) => {
 		if (asking) return;
 		asking = true;
 		try {

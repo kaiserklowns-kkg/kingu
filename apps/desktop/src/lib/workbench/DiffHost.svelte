@@ -11,6 +11,7 @@
 	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import type * as Monaco from 'monaco-editor';
+	import { modelPath } from '#lib/workbench/editorModels.ts';
 	import { clientLog } from '#lib/client-log.ts';
 	import { diffEditorOptionsFrom, diffWraps } from '#lib/settings/mappings.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
@@ -132,7 +133,7 @@
 	}
 
 	async function workingCopy(m: typeof import('#lib/editor/monaco.ts'), rel: string): Promise<string> {
-		const open = m.monaco.editor.getModel(m.monaco.Uri.file('/' + rel));
+		const open = m.monaco.editor.getModel(m.monaco.Uri.file(modelPath(rel)));
 		if (open) return open.getValue();
 		return invoke<string>('read_workspace_file', { rel }).catch(() => '');
 	}

@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 
 use crate::git;
 use crate::workspace::Workspace;
@@ -330,20 +330,20 @@ pub fn invocation_from_settings(config: &Path, prompt: &str) -> Result<Invocatio
 }
 
 #[tauri::command]
-pub async fn ai_commit_context(ws: State<'_, Workspace>, slug: Option<String>) -> Result<CommitContext, String> {
+pub async fn ai_commit_context(ws: Workspace, slug: Option<String>) -> Result<CommitContext, String> {
   let dir = repo_dir(&ws, slug.as_deref())?;
   tauri::async_runtime::spawn_blocking(move || commit_context(&dir)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn ai_pr_context(ws: State<'_, Workspace>, slug: String, base: String) -> Result<PrContext, String> {
+pub async fn ai_pr_context(ws: Workspace, slug: String, base: String) -> Result<PrContext, String> {
   let dir = repo_dir(&ws, Some(&slug))?;
   tauri::async_runtime::spawn_blocking(move || pr_context(&dir, &base)).await.map_err(|e| e.to_string())?
 }
 
 /// Runs the source-control AI agent of the user's settings on `prompt` in the repository.
 #[tauri::command]
-pub async fn ai_generate(app: AppHandle, ws: State<'_, Workspace>, slug: Option<String>, prompt: String) -> Result<String, String> {
+pub async fn ai_generate(app: AppHandle, ws: Workspace, slug: Option<String>, prompt: String) -> Result<String, String> {
   if prompt.len() > MAX_PROMPT {
     return Err(tr!(AgentMsg::PromptTooLong));
   }
@@ -369,7 +369,7 @@ pub fn titles_configured(enabled: Option<&serde_json::Value>, agent: &str) -> bo
 /// run once on `prompt` (built by the webview, chatTitle.ts) in the open folder. `None` when the
 /// user has not set that agent up; the webview drops errors, the title then stays as it was.
 #[tauri::command]
-pub async fn ai_chat_title(app: AppHandle, ws: State<'_, Workspace>, prompt: String) -> Result<Option<String>, String> {
+pub async fn ai_chat_title(app: AppHandle, ws: Workspace, prompt: String) -> Result<Option<String>, String> {
   if prompt.trim().is_empty() || prompt.len() > MAX_TITLE_PROMPT {
     return Err(tr!(AgentMsg::PromptTooLong));
   }
@@ -385,14 +385,14 @@ pub async fn ai_chat_title(app: AppHandle, ws: State<'_, Workspace>, prompt: Str
 
 /// The task worktree's pull request template (`kingu.pr.useTemplate`), or `None`.
 #[tauri::command]
-pub async fn ai_pr_template(ws: State<'_, Workspace>, slug: String) -> Result<Option<String>, String> {
+pub async fn ai_pr_template(ws: Workspace, slug: String) -> Result<Option<String>, String> {
   let dir = repo_dir(&ws, Some(&slug))?;
   tauri::async_runtime::spawn_blocking(move || pr_template(&dir)).await.map_err(|e| e.to_string())
 }
 
 /// `base`'s upstream (`origin/main`) in the open folder, or `None`.
 #[tauri::command]
-pub async fn git_base_upstream(ws: State<'_, Workspace>, base: String) -> Result<Option<String>, String> {
+pub async fn git_base_upstream(ws: Workspace, base: String) -> Result<Option<String>, String> {
   let root = ws.root()?;
   tauri::async_runtime::spawn_blocking(move || upstream_of(&root, &base)).await.map_err(|e| e.to_string())
 }

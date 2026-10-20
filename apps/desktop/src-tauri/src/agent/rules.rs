@@ -14,7 +14,6 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use tauri::State;
 
 use crate::workspace::Workspace;
 
@@ -267,7 +266,7 @@ pub fn system_append(rules: &[Loaded]) -> Option<String> {
 /// The rules of chat folder `cwd` for the attached `files` (workspace-relative or absolute), for
 /// the composer's chip. Errors only when `cwd` is not the open folder or one of its worktrees.
 #[tauri::command]
-pub async fn chat_rules(ws: State<'_, Workspace>, cwd: String, files: Vec<String>) -> Result<Vec<Rule>, String> {
+pub async fn chat_rules(ws: Workspace, cwd: String, files: Vec<String>) -> Result<Vec<Rule>, String> {
   let root = ws.root()?;
   tauri::async_runtime::spawn_blocking(move || {
     let dir = super::chats::resolve_cwd(&root, Path::new(&cwd))?;

@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use serde_json::Value;
-use tauri::State;
 
 use crate::git_queue;
 use crate::i18n::msg::{ForgeMsg, MrMsg};
@@ -112,7 +111,7 @@ fn tail_lines(text: &str, n: usize) -> String {
 /// Source Control's PR composer: pushes the checked-out branch (setting its upstream) and opens a
 /// pull request, or on GitLab a merge request (into a fork's parent); returns its URL.
 #[tauri::command]
-pub async fn forge_pr_create(ws: State<'_, Workspace>, slug: Option<String>, base: String, title: String, body: String, draft: bool) -> Result<String, String> {
+pub async fn forge_pr_create(ws: Workspace, slug: Option<String>, base: String, title: String, body: String, draft: bool) -> Result<String, String> {
   let dir = repo_dir(&ws, slug.as_deref())?;
   crate::git::check_rev(&base)?;
   blocking(move || match mr::forge(&dir) {
@@ -144,7 +143,7 @@ pub async fn forge_pr_create(ws: State<'_, Workspace>, slug: Option<String>, bas
 /// Checks tab actions on the branch's PR: `merge` (with `squash` / `merge` / `rebase`), `auto` /
 /// `disableAuto` (merge when checks pass), `close`, `reopen`, `ready` (out of draft).
 #[tauri::command]
-pub async fn forge_pr_action(ws: State<'_, Workspace>, slug: Option<String>, number: Option<u64>, action: String, method: Option<String>) -> Result<(), String> {
+pub async fn forge_pr_action(ws: Workspace, slug: Option<String>, number: Option<u64>, action: String, method: Option<String>) -> Result<(), String> {
   let dir = repo_dir(&ws, slug.as_deref())?;
   let method = MergeMethod::parse(method.as_deref().unwrap_or("squash")).unwrap_or(MergeMethod::Squash);
   blocking(move || match mr::forge(&dir) {
@@ -183,7 +182,7 @@ pub async fn forge_pr_action(ws: State<'_, Workspace>, slug: Option<String>, num
 }
 
 #[tauri::command]
-pub async fn forge_pr_edit_title(ws: State<'_, Workspace>, slug: Option<String>, number: Option<u64>, title: String) -> Result<(), String> {
+pub async fn forge_pr_edit_title(ws: Workspace, slug: Option<String>, number: Option<u64>, title: String) -> Result<(), String> {
   let dir = repo_dir(&ws, slug.as_deref())?;
   blocking(move || match mr::forge(&dir) {
     Forge::Gitlab(p) => {
@@ -200,7 +199,7 @@ pub async fn forge_pr_edit_title(ws: State<'_, Workspace>, slug: Option<String>,
 /// The PR's conversation comments and reviews (`gh pr view --json comments,reviews`; a merge
 /// request's comments outside review threads, in that shape).
 #[tauri::command]
-pub async fn forge_pr_comments(ws: State<'_, Workspace>, slug: Option<String>, number: Option<u64>) -> Result<Value, String> {
+pub async fn forge_pr_comments(ws: Workspace, slug: Option<String>, number: Option<u64>) -> Result<Value, String> {
   let dir = repo_dir(&ws, slug.as_deref())?;
   blocking(move || match mr::forge(&dir) {
     Forge::Gitlab(p) => {
@@ -214,7 +213,7 @@ pub async fn forge_pr_comments(ws: State<'_, Workspace>, slug: Option<String>, n
 }
 
 #[tauri::command]
-pub async fn forge_pr_comment(ws: State<'_, Workspace>, slug: Option<String>, number: Option<u64>, body: String) -> Result<(), String> {
+pub async fn forge_pr_comment(ws: Workspace, slug: Option<String>, number: Option<u64>, body: String) -> Result<(), String> {
   let dir = repo_dir(&ws, slug.as_deref())?;
   check_comment(&body)?;
   blocking(move || match mr::forge(&dir) {
@@ -231,7 +230,7 @@ pub async fn forge_pr_comment(ws: State<'_, Workspace>, slug: Option<String>, nu
 /// The failed log of a check from its details URL: a GitHub Actions run's failed steps (last
 /// lines), or a GitLab job's log tail.
 #[tauri::command]
-pub async fn forge_check_log(ws: State<'_, Workspace>, slug: Option<String>, url: String) -> Result<String, String> {
+pub async fn forge_check_log(ws: Workspace, slug: Option<String>, url: String) -> Result<String, String> {
   let dir = repo_dir(&ws, slug.as_deref())?;
   blocking(move || match mr::forge(&dir) {
     Forge::Gitlab(p) => mr::job_log(&crate::gitlab::connected(&p.host)?, &p, &url),
@@ -247,7 +246,7 @@ pub async fn forge_check_log(ws: State<'_, Workspace>, slug: Option<String>, url
 /// Review threads of the branch's PR as GitHub's GraphQL `reviewThreads` nodes (a merge
 /// request's resolvable discussions, in that shape).
 #[tauri::command]
-pub async fn forge_review_threads(ws: State<'_, Workspace>, slug: Option<String>, number: u64) -> Result<Value, String> {
+pub async fn forge_review_threads(ws: Workspace, slug: Option<String>, number: u64) -> Result<Value, String> {
   let dir = repo_dir(&ws, slug.as_deref())?;
   blocking(move || match mr::forge(&dir) {
     Forge::Gitlab(p) => {
@@ -266,7 +265,7 @@ pub async fn forge_review_threads(ws: State<'_, Workspace>, slug: Option<String>
 
 /// Replies inside a review thread (a GitLab discussion).
 #[tauri::command]
-pub async fn forge_reply_thread(ws: State<'_, Workspace>, slug: Option<String>, number: Option<u64>, thread: String, body: String) -> Result<(), String> {
+pub async fn forge_reply_thread(ws: Workspace, slug: Option<String>, number: Option<u64>, thread: String, body: String) -> Result<(), String> {
   let dir = repo_dir(&ws, slug.as_deref())?;
   check_comment(&body)?;
   blocking(move || match mr::forge(&dir) {
@@ -285,7 +284,7 @@ pub async fn forge_reply_thread(ws: State<'_, Workspace>, slug: Option<String>, 
 
 /// Adds or removes a reaction (THUMBS_UP, HEART, …) on a comment by its node id; GitHub only.
 #[tauri::command]
-pub async fn forge_react(ws: State<'_, Workspace>, slug: Option<String>, subject: String, content: String, remove: bool) -> Result<(), String> {
+pub async fn forge_react(ws: Workspace, slug: Option<String>, subject: String, content: String, remove: bool) -> Result<(), String> {
   let dir = repo_dir(&ws, slug.as_deref())?;
   if !REACTIONS.contains(&content.as_str()) {
     return Err(tr!(ForgeMsg::UnknownReaction, content));

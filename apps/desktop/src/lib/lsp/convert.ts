@@ -129,7 +129,9 @@ export function relOfUri(root: string, uri: string): string | null {
 	return path.startsWith(base) ? path.slice(base.length) : null;
 }
 
+/** A file of another root folder of a multi-root workspace has an absolute path already. */
 export function uriOfRel(root: string, rel: string): string {
+	if (rel.startsWith('/')) return pathToUri(rel);
 	return pathToUri(`${root.replace(/\/$/, '')}/${rel}`);
 }
 

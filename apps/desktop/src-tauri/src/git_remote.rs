@@ -1001,14 +1001,14 @@ async fn exclusive_in<T: Send + 'static>(
 }
 
 #[tauri::command]
-pub async fn git_fetch(ws: State<'_, Workspace>, ops: State<'_, GitOps>, options: Option<FetchOptions>, slug: Option<String>) -> Result<(), String> {
+pub async fn git_fetch(ws: Workspace, ops: State<'_, GitOps>, options: Option<FetchOptions>, slug: Option<String>) -> Result<(), String> {
   let opts = options.unwrap_or_default();
   exclusive_in(&ws, &ops, slug.as_deref(), move |root, c| fetch(root, &opts, c, NET_TIMEOUT)).await
 }
 
 /// `rebase` is kept for older callers; `options` carries VS Code's pull settings.
 #[tauri::command]
-pub async fn git_pull(ws: State<'_, Workspace>, ops: State<'_, GitOps>, rebase: Option<bool>, options: Option<PullOptions>, slug: Option<String>) -> Result<(), String> {
+pub async fn git_pull(ws: Workspace, ops: State<'_, GitOps>, rebase: Option<bool>, options: Option<PullOptions>, slug: Option<String>) -> Result<(), String> {
   let mut opts = options.unwrap_or_default();
   opts.rebase |= rebase.unwrap_or(false);
   exclusive_in(&ws, &ops, slug.as_deref(), move |root, c| pull(root, &opts, c, NET_TIMEOUT)).await
@@ -1016,14 +1016,14 @@ pub async fn git_pull(ws: State<'_, Workspace>, ops: State<'_, GitOps>, rebase: 
 
 /// Pushes, or publishes to `remote` when the branch has no upstream. Returns the upstream.
 #[tauri::command]
-pub async fn git_push(ws: State<'_, Workspace>, ops: State<'_, GitOps>, remote: Option<String>, options: Option<PushOptions>, slug: Option<String>) -> Result<String, String> {
+pub async fn git_push(ws: Workspace, ops: State<'_, GitOps>, remote: Option<String>, options: Option<PushOptions>, slug: Option<String>) -> Result<String, String> {
   let opts = options.unwrap_or_default();
   exclusive_in(&ws, &ops, slug.as_deref(), move |root, c| push(root, remote.as_deref(), &opts, c, NET_TIMEOUT)).await
 }
 
 #[tauri::command]
 pub async fn git_sync(
-  ws: State<'_, Workspace>,
+  ws: Workspace,
   ops: State<'_, GitOps>,
   rebase: Option<bool>,
   options: Option<PullOptions>,
@@ -1043,30 +1043,30 @@ pub fn git_cancel(ops: State<'_, GitOps>) -> bool {
 }
 
 #[tauri::command]
-pub async fn git_refs(ws: State<'_, Workspace>, hash_length: Option<u8>, tags: Option<bool>) -> Result<Vec<BranchRef>, String> {
+pub async fn git_refs(ws: Workspace, hash_length: Option<u8>, tags: Option<bool>) -> Result<Vec<BranchRef>, String> {
   let root = ws.root()?;
   tauri::async_runtime::spawn_blocking(move || refs(&root, hash_length.unwrap_or(7), tags.unwrap_or(false))).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn git_checkout(ws: State<'_, Workspace>, ops: State<'_, GitOps>, name: String, remote: bool, options: Option<CheckoutOptions>) -> Result<String, String> {
+pub async fn git_checkout(ws: Workspace, ops: State<'_, GitOps>, name: String, remote: bool, options: Option<CheckoutOptions>) -> Result<String, String> {
   let opts = options.unwrap_or_default();
   exclusive(&ws, &ops, move |root, c| checkout_with(root, &name, remote, &opts, c)).await
 }
 
 #[tauri::command]
-pub async fn git_create_branch(ws: State<'_, Workspace>, ops: State<'_, GitOps>, name: String, from: Option<String>) -> Result<(), String> {
+pub async fn git_create_branch(ws: Workspace, ops: State<'_, GitOps>, name: String, from: Option<String>) -> Result<(), String> {
   exclusive(&ws, &ops, move |root, _| create_branch(root, &name, from.as_deref())).await
 }
 
 #[tauri::command]
-pub async fn git_delete_branch(ws: State<'_, Workspace>, ops: State<'_, GitOps>, name: String, force: bool) -> Result<DeleteResult, String> {
+pub async fn git_delete_branch(ws: Workspace, ops: State<'_, GitOps>, name: String, force: bool) -> Result<DeleteResult, String> {
   exclusive(&ws, &ops, move |root, _| delete_branch(root, &name, force)).await
 }
 
 #[tauri::command]
 pub async fn git_stash_push(
-  ws: State<'_, Workspace>,
+  ws: Workspace,
   ops: State<'_, GitOps>,
   message: Option<String>,
   include_untracked: bool,
@@ -1075,18 +1075,18 @@ pub async fn git_stash_push(
 }
 
 #[tauri::command]
-pub async fn git_stash_list(ws: State<'_, Workspace>) -> Result<Vec<Stash>, String> {
+pub async fn git_stash_list(ws: Workspace) -> Result<Vec<Stash>, String> {
   let root = ws.root()?;
   tauri::async_runtime::spawn_blocking(move || stash_list(&root)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn git_stash_apply(ws: State<'_, Workspace>, ops: State<'_, GitOps>, index: u32, pop: bool) -> Result<(), String> {
+pub async fn git_stash_apply(ws: Workspace, ops: State<'_, GitOps>, index: u32, pop: bool) -> Result<(), String> {
   exclusive(&ws, &ops, move |root, _| stash_apply(root, index, pop)).await
 }
 
 #[tauri::command]
-pub async fn git_stash_drop(ws: State<'_, Workspace>, ops: State<'_, GitOps>, index: u32) -> Result<(), String> {
+pub async fn git_stash_drop(ws: Workspace, ops: State<'_, GitOps>, index: u32) -> Result<(), String> {
   exclusive(&ws, &ops, move |root, _| stash_drop(root, index)).await
 }
 

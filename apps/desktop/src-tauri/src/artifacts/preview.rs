@@ -155,7 +155,7 @@ fn check_supported() -> Result<(), String> {
 /// webview's rendering of a Markdown page); assets still come from the version's folder.
 #[tauri::command]
 pub fn artifact_preview(
-  ws: State<'_, Workspace>,
+  ws: Workspace,
   projects: State<'_, Projects>,
   previews: State<'_, Previews>,
   root: Option<String>,

@@ -59,6 +59,8 @@ describe('debug settings', () => {
 
 	test('debug.allowBreakpointsEverywhere', () => {
 		expect(canSetBreakpoint('rust', false)).toBe(true);
+		// js-debug's languages, whether or not it is installed yet (VS Code ships it built in).
+		for (const language of ['javascript', 'typescript', 'typescriptreact']) expect(canSetBreakpoint(language, false)).toBe(true);
 		expect(canSetBreakpoint('markdown', false)).toBe(false);
 		expect(canSetBreakpoint('markdown', true)).toBe(true);
 	});

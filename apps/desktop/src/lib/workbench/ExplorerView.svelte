@@ -25,6 +25,7 @@
 	import { notifications } from './notifications.svelte';
 	import { autoRevealOf, dropTarget, withPathSeparator } from './explorerModel';
 	import { enabledGlobs, hiddenBySibling, isExcluded, siblingClauses } from '#lib/settings/mappings.ts';
+	import { relativeInFolder } from '#lib/workbench/workspaceFolders.ts';
 
 	let { workspaceName }: { workspaceName: string } = $props();
 
@@ -57,8 +58,12 @@
 	let menu = $state<{ x: number; y: number; target: string | null } | null>(null);
 	let tree: HTMLDivElement | undefined = $state();
 
+	// Multi-root: every root folder is a row of the tree (the first one's files keep relative paths).
+	explorer.setRoots(() => (workspace.isMultiRoot ? workspace.folders.map((f, i) => ({ key: i === 0 ? '' : f.path, name: f.name, path: f.path })) : []));
+
 	$effect(() => {
 		if (workspace.root && !explorer.children.has('')) explorer.load('');
+		for (const r of explorer.roots()) if (r.key && !explorer.children.has(r.key)) void explorer.load(r.key);
 	});
 
 	explorer.setRootName(() => workspaceName);
@@ -84,7 +89,8 @@
 	const dndEnabled = $derived(settings.get<boolean>('explorer.enableDragAndDrop') !== false);
 
 	function onDragStart(e: DragEvent, row: Row) {
-		if (!e.dataTransfer || !dndEnabled) return;
+		// A root folder stays where it is (reordering root folders is not supported).
+		if (!e.dataTransfer || !dndEnabled || row.root) return;
 		if (!explorer.isSelected(row.rel)) explorer.select(row.rel);
 		const paths = explorer.targets(row.rel);
 		e.dataTransfer.setData(DRAG_MIME, JSON.stringify(paths));
@@ -256,10 +262,10 @@
 
 	// --- Commands on the selection (VS Code explorer keybindings) -------------------------------
 
-	const absPath = (rel: string) => (rel ? `${workspace.root}/${rel}` : (workspace.root ?? ''));
+	const absPath = (rel: string) => (rel.startsWith('/') ? rel : rel ? `${workspace.root}/${rel}` : (workspace.root ?? ''));
 	/** Copy Path / Copy Relative Path with explorer.copyPathSeparator / explorer.copyRelativePathSeparator. */
 	const copyAbs = (rels: string[]) => copy(rels.map((r) => withPathSeparator(absPath(r), settings.get<string>('explorer.copyPathSeparator'))).join('\n'));
-	const copyRel = (rels: string[]) => copy(rels.map((r) => withPathSeparator(r || '.', settings.get<string>('explorer.copyRelativePathSeparator'))).join('\n'));
+	const copyRel = (rels: string[]) => copy(rels.map((r) => withPathSeparator(relativeInFolder(r, workspace.folders) || '.', settings.get<string>('explorer.copyRelativePathSeparator'))).join('\n'));
 
 	async function copy(text: string) {
 		try {
@@ -291,6 +297,13 @@
 			{ label: 'Copy Path', key: keyLabel('alt+cmd+c'), run: () => copyAbs(target ? explorer.targets(target) : ['']) },
 			{ label: 'Copy Relative Path', key: keyLabel('alt+shift+cmd+c'), run: () => copyRel(target ? explorer.targets(target) : ['']) }
 		);
+		if (target !== null && explorer.isRoot(target)) {
+			// A root folder of a multi-root workspace (VS Code's root folder context menu).
+			const folder = explorer.roots().find((r) => r.key === target);
+			items.push('sep', { label: 'Add Folder to Workspace...', run: () => workspace.addFolderToWorkspace() });
+			if (folder) items.push({ label: 'Remove Folder from Workspace', run: () => workspace.removeFolder(folder.path) });
+			return items;
+		}
 		if (target) {
 			items.push('sep');
 			if (!many) items.push({ label: 'Rename...', key: isMac ? '↵' : 'F2', run: () => explorer.startRename(target) });
@@ -325,10 +338,10 @@
 			explorer.clipboard = null;
 			if (sel) select(sel);
 		} else if (e.key === 'F2' || (isMac && e.key === 'Enter' && !mod && !e.altKey && !e.shiftKey)) {
-			if (!sel) return;
+			if (!sel || explorer.isRoot(sel)) return;
 			explorer.startRename(sel);
 		} else if ((isMac && mod && e.key === 'Backspace') || (!isMac && e.key === 'Delete')) {
-			if (!sel) return;
+			if (!sel || explorer.isRoot(sel)) return;
 			void explorer.delete(sel);
 		} else if (mod && e.altKey && e.code === 'KeyC') {
 			void (e.shiftKey ? copyRel([sel ?? '']) : copyAbs([sel ?? '']));
@@ -514,7 +527,7 @@
 								explorer.isCut(row.rel) && 'opacity-50'
 							]}
 							style:padding-left="{8 + row.depth * indent}px"
-							title={row.rel}
+							title={row.root ? explorer.roots().find((r) => r.key === row.rel)?.path : row.rel}
 							onclick={(e) => onRowClick(e, row)}
 							ondblclick={(e) => {
 								if (!row.is_dir && !e.shiftKey && !(isMac ? e.metaKey : e.ctrlKey)) editors.open(row.rel, { preview: false });
@@ -529,7 +542,7 @@
 								{#if row.is_dir || row.nests}<Icon name={row.expanded ? 'chevronDown' : 'chevronRight'} size={16} />{/if}
 							</span>
 							<FileIcon icon={row.is_dir ? folderIcon(row.rel, row.expanded) : fileIcon(row.name)} />
-							<span class={['min-w-0 flex-1 truncate', row.ignored && 'italic opacity-55']} style:color={decoColors ? nameColor(row.rel) : undefined}>{row.name}</span>
+							<span class={['min-w-0 flex-1 truncate', row.ignored && 'italic opacity-55', row.root && 'font-semibold']} style:color={decoColors ? nameColor(row.rel) : undefined}>{row.name}</span>
 							{#if decoBadges && problems?.get(row.rel)?.count}{@const p = problems.get(row.rel)!}<span class="shrink-0 pl-2 text-[11px] font-semibold" style:color={decoColors ? PROBLEM_COLORS[p.severity] : undefined} title={p.count === 1 ? t('problems.decoration.one') : t('problems.decoration.many', { count: p.count! })}>{problemBadge(p.count!)}</span>{/if}
 							{#if coverage}{@const cov = coverageBadge(row.rel)}{#if cov}<span class="shrink-0 pl-2 text-[11px] tabular-nums" style:color={cov.color}>{cov.text}</span>{/if}{/if}
 							{#if row.ignored}<span class="shrink-0 pr-3 pl-2 opacity-55" title="ถูก .gitignore"><Icon name="ignored" size={12} /></span>

@@ -4,7 +4,6 @@
 
 use std::path::{Path, PathBuf};
 
-use tauri::State;
 
 use crate::i18n::msg::WorkspaceMsg;
 use crate::tr;
@@ -111,7 +110,7 @@ pub fn create(parent: &Path, name: &str) -> Result<PathBuf, String> {
 /// `git init` in the open folder (`initial_commit` from the ADE, which needs a branch to fork
 /// worktrees from).
 #[tauri::command]
-pub async fn git_init(ws: State<'_, Workspace>, initial_commit: Option<bool>, default_branch: Option<String>) -> Result<(), String> {
+pub async fn git_init(ws: Workspace, initial_commit: Option<bool>, default_branch: Option<String>) -> Result<(), String> {
   let root = ws.root()?;
   tauri::async_runtime::spawn_blocking(move || init_with(&root, initial_commit.unwrap_or(false), default_branch.as_deref())).await.map_err(|e| e.to_string())??;
   log::info!("git init in the open folder");

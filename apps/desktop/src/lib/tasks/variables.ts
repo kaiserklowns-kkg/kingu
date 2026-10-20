@@ -6,9 +6,12 @@
 
 import { t } from '#lib/i18n/index.ts';
 import type { InputDef } from './taskConfig.ts';
+import { folderNamed, type WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 
 export type VariableContext = {
 	workspaceFolder: string;
+	/** Every root folder of a multi-root workspace, for `${workspaceFolder:name}`. */
+	folders?: readonly WorkspaceFolder[];
 	/** The active editor's file (absolute). */
 	file?: string;
 	lineNumber?: number;
@@ -62,7 +65,12 @@ export function variableValue(name: string, ctx: VariableContext, resolved: Read
 		}
 		if (kind === 'input') throw new VariableError(t('ideTasks.var.undefinedInput', { id: arg }));
 		if (kind === 'command') throw new VariableError(t('ideTasks.var.command', { variable: `\${${name}}` }));
-		if (kind === 'workspaceFolder' || kind === 'workspaceFolderBasename') return kind === 'workspaceFolder' ? ctx.workspaceFolder : basename(ctx.workspaceFolder);
+		if (kind === 'workspaceFolder' || kind === 'workspaceFolderBasename') {
+			// `${workspaceFolder:name}`: the root folder of that name (VS Code's multi-root form).
+			const folder = ctx.folders?.length ? folderNamed(arg, ctx.folders)?.path : ctx.workspaceFolder;
+			if (folder === undefined) throw new VariableError(t('ideTasks.var.noFolderNamed', { variable: `\${${name}}`, name: arg }));
+			return kind === 'workspaceFolder' ? folder : basename(folder);
+		}
 		throw new VariableError(t('ideTasks.var.unknown', { variable: `\${${name}}` }));
 	}
 	const root = ctx.workspaceFolder;

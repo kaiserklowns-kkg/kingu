@@ -324,6 +324,8 @@ struct Server {
 pub struct Servers {
   next_id: AtomicU32,
   running: Arc<Mutex<HashMap<u32, Arc<Server>>>>,
+  /// The window that started each server (a window's folder switch or close stops only its own).
+  owners: Mutex<HashMap<u32, String>>,
 }
 
 pub struct Launch {
@@ -425,6 +427,31 @@ impl Servers {
     let server = self.running.lock().unwrap().get(&id).cloned().ok_or("no such language server")?;
     kill(&server);
     Ok(())
+  }
+
+  /// Records the window that started server `id`.
+  pub fn own(&self, id: u32, window: &str) {
+    self.owners.lock().unwrap().insert(id, window.to_string());
+  }
+
+  /// A window switched folders or closed: its servers go (the other windows' keep running).
+  pub fn stop_window(&self, window: &str) {
+    let ids: Vec<u32> = {
+      let mut owners = self.owners.lock().unwrap();
+      let ids = owners.iter().filter(|(_, w)| *w == window).map(|(id, _)| *id).collect::<Vec<_>>();
+      owners.retain(|_, w| w != window);
+      ids
+    };
+    let gone: Vec<_> = {
+      let mut running = self.running.lock().unwrap();
+      ids.iter().filter_map(|id| running.remove(id)).collect()
+    };
+    for s in &gone {
+      kill(s);
+    }
+    if !gone.is_empty() {
+      log::info!("stopped {} language server(s) of window {window}", gone.len());
+    }
   }
 
   /// On app exit: nothing may outlive the window.

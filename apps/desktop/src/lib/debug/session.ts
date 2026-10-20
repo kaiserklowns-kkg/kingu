@@ -63,6 +63,8 @@ export class DebugSession {
 	#epoch = 0;
 	/** What was last sent per file, so a temporary Run to Cursor breakpoint can be added and taken away. */
 	#sent = new Map<string, SourceBreakpoint[]>();
+	/** `breakpoint` events by id: js-debug can report a breakpoint verified before its setBreakpoints answer arrives. */
+	#bpEvents = new Map<number, Breakpoint>();
 	#runTo: { path: string; line: number } | null = null;
 
 	constructor(client: DapClient, config: LaunchConfig, host: SessionHost, { noDebug = false } = {}) {
@@ -123,6 +125,8 @@ export class DebugSession {
 	}
 
 	async #onEvent(ev: Event) {
+		const bp = ev.event === 'breakpoint' ? (ev.body?.breakpoint as Breakpoint | undefined) : undefined;
+		if (bp?.id !== undefined) this.#bpEvents.set(bp.id, { ...this.#bpEvents.get(bp.id), ...bp });
 		this.#set(applyEvent(this.model, ev));
 		switch (ev.event) {
 			case 'initialized':
@@ -169,7 +173,13 @@ export class DebugSession {
 		try {
 			const body = await this.client.request<{ breakpoints: Breakpoint[] }>('setBreakpoints', { source: { name, path }, breakpoints: send, lines: send.map((b) => b.line) });
 			// The temporary one is the user's business only while it exists: the glyphs read the rest.
-			this.#set(withBreakpoints(this.model, path, (body.breakpoints ?? []).slice(0, bps.length)));
+			// js-debug answers a repeated set of the same breakpoints (its child sends `initialized` twice) with none: the
+			// earlier answer, whose ids its later `breakpoint` events update, still holds.
+			const before = this.model.verified[path];
+			const got = (body.breakpoints ?? []).slice(0, bps.length);
+			const kept = !got.length && bps.length && before?.length === bps.length ? before : got;
+			const answer = kept.map((b) => (b.id !== undefined && this.#bpEvents.has(b.id) ? { ...b, ...this.#bpEvents.get(b.id) } : b));
+			this.#set(withBreakpoints(this.model, path, answer));
 		} catch (e) {
 			this.#output('stderr', `setBreakpoints ${name}: ${e instanceof Error ? e.message : e}\n`);
 		}

@@ -170,6 +170,14 @@ describe('variables', () => {
 		expect(substitute({ cwd: '${workspaceFolder}/x', n: 1 }, ctx)).toEqual({ cwd: '/w/app/x', n: 1 });
 	});
 
+	test('${workspaceFolder:name} picks a root folder of a multi-root workspace', () => {
+		const folders = [{ path: '/w/app', name: 'app' }, { path: '/w/lib', name: 'Library' }];
+		expect(substitute(['${workspaceFolder:Library}/out', '${workspaceFolder:lib}', '${workspaceFolderBasename:Library}', '${workspaceFolder}'], { ...ctx, folders })).toEqual(['/w/lib/out', '/w/lib', 'lib', '/w/app']);
+		expect(() => substitute('${workspaceFolder:nope}', { ...ctx, folders })).toThrow(/No workspace folder named nope/);
+		// A single-folder window (no folder list): any name is the folder, as before.
+		expect(substitute('${workspaceFolder:whatever}', ctx)).toBe('/w/app');
+	});
+
 	test('inputs are asked once each; cancel stops; defaults use variables', async () => {
 		const file = parseTasksJson(TASKS, 'osx');
 		const vars = collectVariables(['${input:name} ${input:pick}', '${input:name}', '${file}']);

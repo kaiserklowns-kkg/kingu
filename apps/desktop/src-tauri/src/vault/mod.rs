@@ -610,14 +610,14 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
 
 /// Every agent's sessions on this machine, newest first.
 #[tauri::command]
-pub async fn vault_list(ws: State<'_, Workspace>, vault: State<'_, Arc<Vault>>, agents: Option<Vec<Agent>>) -> Result<Vec<VaultSession>, String> {
+pub async fn vault_list(ws: Workspace, vault: State<'_, Arc<Vault>>, agents: Option<Vec<Agent>>) -> Result<Vec<VaultSession>, String> {
   let (vault, open) = (vault.inner().clone(), ws.current());
   blocking(move || Ok(vault.list(&Roots::from_env()?, agents.as_deref(), open.as_deref()))).await
 }
 
 /// Sessions whose conversation contains `query` (case-insensitive), newest first.
 #[tauri::command]
-pub async fn vault_search(ws: State<'_, Workspace>, vault: State<'_, Arc<Vault>>, query: String, agents: Option<Vec<Agent>>, limit: Option<usize>) -> Result<SearchOutcome, String> {
+pub async fn vault_search(ws: Workspace, vault: State<'_, Arc<Vault>>, query: String, agents: Option<Vec<Agent>>, limit: Option<usize>) -> Result<SearchOutcome, String> {
   let (vault, open) = (vault.inner().clone(), ws.current());
   blocking(move || {
     let rows = vault.list(&Roots::from_env()?, agents.as_deref(), open.as_deref());
@@ -640,7 +640,7 @@ pub async fn vault_transcript(agent: Agent, path: String) -> Result<Transcript, 
 /// `tz_offset_min`: the webview's `-Date.getTimezoneOffset()`, so days are local days; `days`:
 /// only the last that many (all with none).
 #[tauri::command]
-pub async fn vault_stats(ws: State<'_, Workspace>, vault: State<'_, Arc<Vault>>, tz_offset_min: i32, days: Option<u32>) -> Result<Stats, String> {
+pub async fn vault_stats(ws: Workspace, vault: State<'_, Arc<Vault>>, tz_offset_min: i32, days: Option<u32>) -> Result<Stats, String> {
   let (vault, open) = (vault.inner().clone(), ws.current());
   blocking(move || {
     let rows = vault.list(&Roots::from_env()?, None, open.as_deref());

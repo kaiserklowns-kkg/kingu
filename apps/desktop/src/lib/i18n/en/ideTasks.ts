@@ -74,6 +74,7 @@ export const ideTasks = {
 	'ideTasks.var.undefinedInput': "Undefined input variable '{id}' encountered. Remove or define it to continue.",
 	'ideTasks.var.command': 'Variable {variable} can not be resolved: Kingu runs no extension commands.',
 	'ideTasks.var.unknown': 'Variable {variable} can not be resolved.',
+	'ideTasks.var.noFolderNamed': 'Variable {variable} can not be resolved. No workspace folder named {name}.',
 	'ideTasks.var.userHome': 'Variable {variable} can not be resolved. UserHome path is not defined',
 	'ideTasks.var.noBuildTask': 'Variable {variable} can not be resolved: there is no default build task.',
 	'ideTasks.var.noLine': 'Variable {variable} can not be resolved. Make sure to have a line selected in the active editor.',

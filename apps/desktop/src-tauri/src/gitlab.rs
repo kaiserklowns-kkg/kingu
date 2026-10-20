@@ -324,7 +324,7 @@ pub fn gitlab_disconnect(host: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn gitlab_issues_list(
-  ws: tauri::State<'_, crate::workspace::Workspace>,
+  ws: crate::workspace::Workspace,
   host: String,
   project: Option<String>,
   mine: Option<bool>,

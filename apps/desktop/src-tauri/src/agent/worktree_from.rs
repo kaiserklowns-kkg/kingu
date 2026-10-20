@@ -10,7 +10,6 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use tauri::State;
 
 use crate::git_queue::{self, Scope};
 use crate::git_remote::{NET_TIMEOUT, check_branch_name, net_env};
@@ -354,7 +353,7 @@ pub fn pr_list(gh: &Path, repo: &Path, search: Option<&str>, limit: u32) -> Resu
 
 /// New task worktree `slug` on the existing branch `branch` (local, `origin/x`, or only on origin).
 #[tauri::command]
-pub async fn worktree_create_from_branch(ws: State<'_, Workspace>, slug: String, branch: String) -> Result<WorktreeInfo, String> {
+pub async fn worktree_create_from_branch(ws: Workspace, slug: String, branch: String) -> Result<WorktreeInfo, String> {
   let root = ws.root()?;
   blocking(move || create_from_branch(&root, &slug, &branch, NET_TIMEOUT)).await
 }
@@ -367,7 +366,7 @@ pub struct PrStart {
 
 /// New task worktree `slug` on pull request `pr` (number or link) of the open folder's repository.
 #[tauri::command]
-pub async fn worktree_create_from_pr(ws: State<'_, Workspace>, slug: String, pr: String) -> Result<PrStart, String> {
+pub async fn worktree_create_from_pr(ws: Workspace, slug: String, pr: String) -> Result<PrStart, String> {
   let root = ws.root()?;
   let gh = gh_bin(&root)?;
   blocking(move || {
@@ -379,14 +378,14 @@ pub async fn worktree_create_from_pr(ws: State<'_, Workspace>, slug: String, pr:
 }
 
 #[tauri::command]
-pub async fn gh_pr_lookup(ws: State<'_, Workspace>, input: String) -> Result<PrHead, String> {
+pub async fn gh_pr_lookup(ws: Workspace, input: String) -> Result<PrHead, String> {
   let root = ws.root()?;
   let gh = gh_bin(&root)?;
   blocking(move || pr_lookup(&gh, &root, &input)).await
 }
 
 #[tauri::command]
-pub async fn gh_pr_list(ws: State<'_, Workspace>, search: Option<String>, limit: Option<u32>) -> Result<Vec<PrHead>, String> {
+pub async fn gh_pr_list(ws: Workspace, search: Option<String>, limit: Option<u32>) -> Result<Vec<PrHead>, String> {
   let root = ws.root()?;
   let gh = gh_bin(&root)?;
   blocking(move || pr_list(&gh, &root, search.as_deref(), limit.unwrap_or(30))).await
@@ -394,7 +393,7 @@ pub async fn gh_pr_list(ws: State<'_, Workspace>, search: Option<String>, limit:
 
 /// The first-work rename of task `slug`'s branch `from` to `<prefix><leaf>` (`worktree::rename_branch`).
 #[tauri::command]
-pub async fn worktree_rename_branch(ws: State<'_, Workspace>, slug: String, from: String, leaf: String, prefix: String) -> Result<String, String> {
+pub async fn worktree_rename_branch(ws: Workspace, slug: String, from: String, leaf: String, prefix: String) -> Result<String, String> {
   let root = ws.root()?;
   blocking(move || super::worktree::rename_branch(&root, &slug, &from, &leaf, &prefix)).await
 }

@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 
 use crate::textfile::hash;
 use crate::workspace::Workspace;
@@ -87,27 +87,29 @@ pub fn discard(dir: &Path, key: Option<&str>) -> Result<(), String> {
 
 fn dir_of(app: &AppHandle, ws: &Workspace) -> Result<PathBuf, String> {
   let base = app.path().app_data_dir().map_err(|e| e.to_string())?.join("Backups");
-  Ok(folder_dir(&base, ws.current().as_deref()))
+  // Per workspace (its identity is the folder itself for a single folder, as before).
+  let identity = ws.identity().map(PathBuf::from);
+  Ok(folder_dir(&base, identity.as_deref()))
 }
 
 #[tauri::command]
-pub fn backup_write(app: AppHandle, ws: State<'_, Workspace>, key: String, meta: serde_json::Value, content: String) -> Result<(), String> {
+pub fn backup_write(app: AppHandle, ws: Workspace, key: String, meta: serde_json::Value, content: String) -> Result<(), String> {
   write(&dir_of(&app, &ws)?, &key, meta, &content)
 }
 
 #[tauri::command]
-pub fn backup_list(app: AppHandle, ws: State<'_, Workspace>) -> Result<Vec<Header>, String> {
+pub fn backup_list(app: AppHandle, ws: Workspace) -> Result<Vec<Header>, String> {
   Ok(list(&dir_of(&app, &ws)?))
 }
 
 #[tauri::command]
-pub fn backup_read(app: AppHandle, ws: State<'_, Workspace>, key: String) -> Result<Option<Backup>, String> {
+pub fn backup_read(app: AppHandle, ws: Workspace, key: String) -> Result<Option<Backup>, String> {
   Ok(read(&dir_of(&app, &ws)?, &key))
 }
 
 /// Removes one backup, or with no key every backup of the open folder.
 #[tauri::command]
-pub fn backup_discard(app: AppHandle, ws: State<'_, Workspace>, key: Option<String>) -> Result<(), String> {
+pub fn backup_discard(app: AppHandle, ws: Workspace, key: Option<String>) -> Result<(), String> {
   discard(&dir_of(&app, &ws)?, key.as_deref())
 }
 

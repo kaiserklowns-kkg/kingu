@@ -22,7 +22,9 @@ export type DirEntry = { name: string; rel: string; is_dir: boolean; ignored?: b
  * `nests`: how many files are nested under this file (explorer.fileNesting); `expanded` is then
  * whether they show.
  */
-export type Row = DirEntry & { depth: number; expanded: boolean; chain?: string[]; nests?: number };
+export type Row = DirEntry & { depth: number; expanded: boolean; chain?: string[]; nests?: number; root?: boolean };
+/** A root folder row of a multi-root workspace: `key` is `''` for the first folder, its absolute path for another. */
+export type ExplorerRoot = { key: string; name: string; path: string };
 /** Files cut or copied in the Explorer (VS Code keeps its own file clipboard). */
 export type FileClipboard = { paths: string[]; cut: boolean };
 /** The inline input row (VS Code's explorer edit box): a new entry in `parent`, or a rename of `rel`. */
@@ -45,6 +47,23 @@ class Explorer {
 	focusRequest = $state<string | null>(null);
 	/** Nested files' parents whose expansion differs from explorer.fileNesting.expand. */
 	nestToggled = new SvelteSet<string>();
+	/** Root folders collapsed in a multi-root workspace (VS Code shows each root as a tree node). */
+	collapsedRoots = new SvelteSet<string>();
+
+	#roots = (): ExplorerRoot[] => [];
+	/** Set by the view: the root folders to show as rows (none for a single folder). */
+	setRoots(fn: () => ExplorerRoot[]) {
+		this.#roots = fn;
+	}
+
+	/** The root folder rows (empty unless the workspace has several folders). */
+	roots(): ExplorerRoot[] {
+		return this.#roots();
+	}
+
+	isRoot(rel: string): boolean {
+		return this.#roots().some((r) => r.key === rel);
+	}
 
 	async load(rel: string) {
 		try {
@@ -66,6 +85,11 @@ class Explorer {
 	}
 
 	async expand(rel: string) {
+		if (this.isRoot(rel)) {
+			this.collapsedRoots.delete(rel);
+			if (!this.children.has(rel)) await this.load(rel);
+			return;
+		}
 		if (rel) this.expanded.add(rel);
 		if (!this.children.has(rel)) await this.load(rel);
 		// explorer.compactFolders: a folder whose only child is a folder opens that one too, so the
@@ -78,7 +102,19 @@ class Explorer {
 
 	/** Collapsing a compacted row collapses its whole chain. */
 	collapse(row: Pick<Row, 'rel' | 'chain'>) {
+		if (this.isRoot(row.rel)) {
+			this.collapsedRoots.add(row.rel);
+			return;
+		}
 		for (const rel of row.chain ?? [row.rel]) this.expanded.delete(rel);
+	}
+
+	/** A root folder left the workspace: its rows go. */
+	forgetRoot(path: string) {
+		for (const k of [...this.children.keys()]) if (k === path || k.startsWith(path + '/')) this.children.delete(k);
+		for (const k of [...this.expanded]) if (k === path || k.startsWith(path + '/')) this.expanded.delete(k);
+		this.collapsedRoots.delete(path);
+		if (this.selected && (this.selected === path || this.selected.startsWith(path + '/'))) this.select(null);
 	}
 
 	/** Open Folder / Close Folder: drop the whole tree. */
@@ -91,6 +127,7 @@ class Explorer {
 		this.anchor = null;
 		this.editing = null;
 		this.clipboard = null;
+		this.collapsedRoots.clear();
 	}
 
 	/** File watcher batch: re-list the loaded folders the changes touch. */
@@ -193,14 +230,32 @@ class Explorer {
 				if (expanded) walk(last, depth + 1);
 			}
 		};
-		walk('', 0);
+		const roots = this.#roots();
+		if (roots.length < 2) {
+			walk('', 0);
+			return out;
+		}
+		// Multi-root: each root folder is a row, its files below it (VS Code's Explorer).
+		for (const r of roots) {
+			const expanded = !this.collapsedRoots.has(r.key);
+			out.push({ name: r.name, rel: r.key, is_dir: true, ignored: false, depth: 0, expanded, root: true });
+			if (expanded) walk(r.key, 1);
+		}
 		return out;
 	}
 
 	/** explorer.autoReveal: expands the folders above `rel` and selects it. */
 	async reveal(rel: string) {
-		const parts = rel.split('/');
-		for (let i = 0; i < parts.length; i++) await this.expand(parts.slice(0, i).join('/'));
+		// In another root folder (an absolute path): expand from that root down.
+		const root = rel.startsWith('/') ? this.#roots().filter((r) => r.key && (rel === r.key || rel.startsWith(r.key + '/'))).sort((a, b) => b.key.length - a.key.length)[0] : undefined;
+		if (root) {
+			await this.expand(root.key);
+			const inner = rel.slice(root.key.length + 1).split('/');
+			for (let i = 1; i < inner.length; i++) await this.expand(`${root.key}/${inner.slice(0, i).join('/')}`);
+		} else {
+			const parts = rel.split('/');
+			for (let i = 0; i < parts.length; i++) await this.expand(parts.slice(0, i).join('/'));
+		}
 		// A file nested under another one (explorer.fileNesting): open its nest.
 		for (const [parent, nested] of this.nestsOf(parentOf(rel))) if (nested.some((e) => e.rel === rel)) this.toggleNest(parent, true);
 		this.select(rel);
@@ -400,7 +455,7 @@ class Explorer {
 	}
 
 	isDir(rel: string): boolean {
-		return rel === '' || (this.children.get(parentOf(rel))?.find((e) => e.rel === rel)?.is_dir ?? false);
+		return rel === '' || this.isRoot(rel) || (this.children.get(parentOf(rel))?.find((e) => e.rel === rel)?.is_dir ?? false);
 	}
 
 	// --- File operations (VS Code fileActions.ts) ------------------------------------------------
@@ -431,7 +486,7 @@ class Explorer {
 		if (invalid) return invalid;
 		try {
 			if (edit.kind === 'rename') await this.#rename(edit.rel, joinRel(parentOf(edit.rel), name));
-			else await this.#create(edit.kind, joinRel(edit.parent, name));
+			else await this.#create(edit.kind, edit.parent, name);
 		} catch (e) {
 			return e instanceof Error ? e.message : String(e);
 		}
@@ -442,13 +497,15 @@ class Explorer {
 		this.editing = null;
 	}
 
-	async #create(kind: 'file' | 'folder', rel: string) {
+	async #create(kind: 'file' | 'folder', parent: string, name: string) {
+		const rel = joinRel(parent, name);
 		await invoke(kind === 'file' ? 'fs_create_file' : 'fs_create_dir', { rel });
 		this.editing = null;
 		// Nested names (`a/b/c.ts`) create folders on the way: show the whole chain.
-		const dirs = rel.split('/').slice(0, -1);
-		for (let i = 0; i < dirs.length; i++) this.expanded.add(dirs.slice(0, i + 1).join('/'));
-		await this.refresh([rel, ...dirs.map((_, i) => dirs.slice(0, i + 1).join('/'))]);
+		const parts = name.split('/').slice(0, -1);
+		const dirs = parts.map((_, i) => joinRel(parent, parts.slice(0, i + 1).join('/')));
+		for (const d of dirs) this.expanded.add(d);
+		await this.refresh([rel, ...dirs]);
 		for (const d of [...this.expanded]) if (!this.children.has(d)) await this.load(d);
 		this.select(rel);
 		if (kind === 'file') editors.open(rel, { preview: false });

@@ -8,7 +8,7 @@ use crate::tr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 
 use crate::workspace::Workspace;
 
@@ -67,7 +67,7 @@ pub fn checked_folder(root: &Path, path: &str) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-pub fn worktree_open_in(app: AppHandle, ws: State<'_, Workspace>, label: String, path: String) -> Result<(), String> {
+pub fn worktree_open_in(app: AppHandle, ws: Workspace, label: String, path: String) -> Result<(), String> {
   let root = ws.root()?;
   let folder = checked_folder(&root, &path)?;
   let config = app.path().app_config_dir().map_err(|e| e.to_string())?;

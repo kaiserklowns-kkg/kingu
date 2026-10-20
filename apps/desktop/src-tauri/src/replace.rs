@@ -397,9 +397,25 @@ pub fn replace_file(root: &Path, file: &FileReplace, replacer: &Replacer) -> Fil
   FileResult { version: Some(version_of(new_text.as_bytes())), ..result(Outcome::Written, p.len(), p.into_iter().map(|(_, _, e)| e).collect(), None) }
 }
 
+#[cfg(test)]
 pub fn replace_all(root: &Path, req: &ReplaceRequest) -> Result<Vec<FileResult>, String> {
+  replace_all_in(|_| Ok(root.to_path_buf()), req)
+}
+
+/// [`replace_all`] in a multi-root workspace: `root_of` names each file's root folder (a file of
+/// another root folder has an absolute path, which resolves inside that folder unchanged).
+pub fn replace_all_in(root_of: impl Fn(&str) -> Result<PathBuf, String>, req: &ReplaceRequest) -> Result<Vec<FileResult>, String> {
   let replacer = Replacer::new(&req.pattern, &req.replace, req.preserve_case)?;
-  Ok(req.files.iter().map(|f| replace_file(root, f, &replacer)).collect())
+  Ok(
+    req
+      .files
+      .iter()
+      .map(|f| match root_of(&f.path) {
+        Ok(root) => replace_file(&root, f, &replacer),
+        Err(e) => FileResult { path: f.path.clone(), outcome: Outcome::Stale, replaced: 0, edits: Vec::new(), version: None, message: Some(e) },
+      })
+      .collect(),
+  )
 }
 
 #[cfg(test)]
@@ -536,5 +552,30 @@ mod tests {
     let r = replace_file(&root, &open, &Replacer::new(&literal("foo"), "bar", false).unwrap());
     assert_eq!(r.outcome, Outcome::Edits);
     assert_eq!(r.edits, [ReplaceEdit { line: 1, column: 3, end_column: 6, text: "bar".into() }]);
+  }
+
+  #[test]
+  fn replaces_in_every_root_folder() {
+    let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (ra, rb) = (a.path().canonicalize().unwrap(), b.path().canonicalize().unwrap());
+    std::fs::write(ra.join("a.txt"), "foo").unwrap();
+    std::fs::write(rb.join("b.txt"), "foo foo").unwrap();
+    let roots = [ra.clone(), rb.clone()];
+    let b_file = rb.join("b.txt").display().to_string();
+    let req = ReplaceRequest {
+      pattern: literal("foo"),
+      replace: "bar".into(),
+      preserve_case: false,
+      files: vec![
+        FileReplace { path: "a.txt".into(), version: None, matches: find("foo", "foo"), content: None },
+        FileReplace { path: b_file.clone(), version: None, matches: find("foo foo", "foo"), content: None },
+        FileReplace { path: "/elsewhere/c.txt".into(), version: None, matches: Vec::new(), content: None },
+      ],
+    };
+    let results = replace_all_in(|p| crate::workspace::locate_in(&roots, p).map(|(r, _)| r), &req).unwrap();
+    assert_eq!(results.iter().map(|r| r.outcome).collect::<Vec<_>>(), [Outcome::Written, Outcome::Written, Outcome::Stale]);
+    assert_eq!(results[1].path, b_file);
+    assert_eq!(std::fs::read_to_string(ra.join("a.txt")).unwrap(), "bar");
+    assert_eq!(std::fs::read_to_string(rb.join("b.txt")).unwrap(), "bar bar");
   }
 }

@@ -117,7 +117,7 @@ pub fn share(root: &Path, server: &str, token: &str, id: &str, version: u32, htm
 #[allow(clippy::too_many_arguments)]
 pub async fn artifact_share_team(
   app: AppHandle,
-  ws: State<'_, Workspace>,
+  ws: Workspace,
   projects: State<'_, Projects>,
   server_url: String,
   root: Option<String>,
