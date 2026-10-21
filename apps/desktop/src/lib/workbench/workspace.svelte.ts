@@ -130,6 +130,8 @@ class Workspace {
 		this.empty = info.empty ?? null;
 		// Language servers know every root folder (didChangeWorkspaceFolders when one is added or removed).
 		lsp.setFolders(this.folders);
+		// Each other root folder's own settings, for its files (language servers ask by resource).
+		settings.setFolders(this.folders.map((f) => f.path));
 	}
 
 	async loadRecent() {

@@ -833,9 +833,18 @@ fn lsp_start(
   ws: Workspace,
   servers: State<'_, lsp::Servers>,
   language: String,
+  folder: Option<String>,
   on_event: Channel<lsp::LspEvent>,
 ) -> Result<u32, String> {
-  let id = lsp::start_for(&servers, &ws.root()?, &language, on_event)?;
+  // `folder`: the root folder a server is started for on its own (one that cannot be told about
+  // several folders); absent, the first. It runs there, and a project-local binary is looked for
+  // in that folder's node_modules first, then in every other folder's.
+  let roots = ws.roots();
+  let cwd = match folder.as_deref() {
+    Some(f) => roots.iter().find(|r| r.as_path() == Path::new(f)).cloned().ok_or_else(|| crate::tr!(crate::i18n::msg::FilesMsg::OutsideWorkspace, path = f))?,
+    None => ws.root()?,
+  };
+  let id = lsp::start_for(&servers, &cwd, &lsp::roots_from(&cwd, &roots), &language, on_event)?;
   servers.own(id, ws.label());
   Ok(id)
 }
@@ -844,13 +853,15 @@ fn lsp_start(
 /// installed meanwhile is found): its path, or the "Not installed: …" error.
 #[tauri::command]
 fn lsp_check(ws: Workspace, language: String) -> Result<String, String> {
-  lsp::check(&language, &ws.root()?).map(|p| p.to_string_lossy().into_owned())
+  ws.root()?;
+  lsp::check(&language, &ws.roots()).map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Install commands for the server of `language` that this machine's tools can run.
 #[tauri::command]
 fn lsp_install_methods(ws: Workspace, language: String) -> Result<lsp::InstallInfo, String> {
-  lsp::install_info(&language, &ws.root()?)
+  ws.root()?;
+  lsp::install_info(&language, &ws.roots())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1595,6 +1606,7 @@ pub fn run() {
       testing_coverage_take,
       dap::dap_stop,
       settings::settings_read,
+      settings::settings_read_folder,
       settings::settings_write,
       watcher_set_exclude,
       watcher_set_include,

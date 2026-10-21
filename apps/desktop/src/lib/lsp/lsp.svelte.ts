@@ -64,6 +64,7 @@ import {
 import type { CallHierarchyItem, CodeAction, Command, CompletionItem, Diagnostic, DocumentSymbol, Location, Range, ServerCapabilities, SymbolInformation, WorkspaceEdit } from './protocol';
 import type { HierarchyDirection, HierarchyKind } from '#lib/workbench/hierarchyModel.ts';
 import { applyWorkspaceEdit, type ApplyResult } from './workspaceEdit';
+import { folderOfUri, folderPathOf, parseSessionId, sessionFolder, sessionId } from './folders';
 import type { WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 import { t } from '#lib/i18n/index.ts';
 import { isRustError } from '#lib/i18n/rustErrors.ts';
@@ -71,9 +72,12 @@ import { formatTrace, TRACE_SETTINGS, traceValue, type TraceValue } from './trac
 
 type MonacoApi = typeof Monaco;
 type LspEvent = { type: 'message'; json: string } | { type: 'stderr'; line: string } | { type: 'exit'; code: number | null };
-/** `pushed` / `init`: the settings last sent and the initializationOptions it started with (JSON), to spot changes. */
-type Session = { info: ServerInfo; client: LanguageClient; id: number | null; ready: Promise<boolean>; pushed: string; init: string; trace: TraceValue };
-type Doc = { rel: string; uri: string; key: string; model: Monaco.editor.ITextModel; dispose?: () => void };
+/** `sid`: the server key, or the key and folder of a server started for one root folder
+ * (`folder`; null: every folder, folders.ts). `pushed` / `init`: the settings last sent and the
+ * initializationOptions it started with (JSON), to spot changes. */
+type Session = { sid: string; folder: string | null; info: ServerInfo; client: LanguageClient; id: number | null; ready: Promise<boolean>; pushed: string; init: string; trace: TraceValue };
+/** `sid`: the session it is open in ('' until opened). */
+type Doc = { rel: string; uri: string; key: string; sid: string; model: Monaco.editor.ITextModel; dispose?: () => void };
 
 const MARKER_OWNER = 'lsp';
 /** LSP MessageType → notification severity. */
@@ -147,11 +151,11 @@ class Lsp {
 		const info = serverFor(model.getLanguageId());
 		if (!info || this.#docs.has(model)) return;
 		this.#init(monaco);
-		const doc: Doc = { rel, uri: '', key: info.key, model };
+		const doc: Doc = { rel, uri: '', key: info.key, sid: '', model };
 		this.#docs.set(model, doc);
 		const changed = model.onDidChangeContent(() => {
 			if (!doc.uri) return;
-			this.#sessions.get(info.key)?.client.didChange(doc.uri, model.getValue());
+			this.#sessions.get(doc.sid)?.client.didChange(doc.uri, model.getValue());
 			this.#scheduleSymbols(doc);
 		});
 		const disposing = model.onWillDispose(() => this.#detach(model));
@@ -170,12 +174,12 @@ class Lsp {
 		doc.dispose?.();
 		this.#docs.delete(model);
 		this.symbols.delete(doc.rel);
-		if (doc.uri) this.#sessions.get(doc.key)?.client.didClose(doc.uri);
+		if (doc.uri) this.#sessions.get(doc.sid)?.client.didClose(doc.uri);
 	}
 
 	didSave(model: Monaco.editor.ITextModel) {
 		const doc = this.#docs.get(model);
-		if (doc?.uri) this.#sessions.get(doc.key)?.client.didSave(doc.uri);
+		if (doc?.uri) this.#sessions.get(doc.sid)?.client.didSave(doc.uri);
 	}
 
 	/** Status bar entry for a Monaco language id, or null when it has no server. */
@@ -212,7 +216,7 @@ class Lsp {
 		const cached = this.symbols.get(rel);
 		if (cached?.length) return cached;
 		const doc = [...this.#docs.values()].find((d) => d.rel === rel);
-		const client = doc?.uri ? this.#sessions.get(doc.key)?.client : undefined;
+		const client = doc?.uri ? this.#sessions.get(doc.sid)?.client : undefined;
 		if (!doc || !client?.ready) return cached ?? [];
 		const syms = (await client.documentSymbols(doc.uri).catch(() => null)) ?? [];
 		if (this.#docs.has(doc.model)) this.symbols.set(rel, syms);
@@ -224,16 +228,16 @@ class Lsp {
 	/** The hierarchy items at a position of an open file; null when its server has no such provider. */
 	async hierarchyRoots(kind: HierarchyKind, rel: string, line: number, column: number): Promise<{ key: string; items: CallHierarchyItem[] } | null> {
 		const doc = [...this.#docs.values()].find((d) => d.rel === rel);
-		const client = doc?.uri ? this.#sessions.get(doc.key)?.client : undefined;
+		const client = doc?.uri ? this.#sessions.get(doc.sid)?.client : undefined;
 		if (!doc || !client?.ready) return null;
 		const cap = kind === 'call' ? client.capabilities.callHierarchyProvider : client.capabilities.typeHierarchyProvider;
 		if (!cap) return null;
 		const at = toLspPosition({ lineNumber: line, column });
 		const items = kind === 'call' ? await client.prepareCallHierarchy(doc.uri, at) : await client.prepareTypeHierarchy(doc.uri, at);
-		return { key: doc.key, items: items ?? [] };
+		return { key: doc.sid, items: items ?? [] };
 	}
 
-	/** One level of a hierarchy: each child with the ranges of the calls (empty for types). */
+	/** One level of a hierarchy (`key`: the session hierarchyRoots named): each child with the ranges of the calls (empty for types). */
 	async hierarchyChildren(key: string, direction: HierarchyDirection, item: CallHierarchyItem): Promise<{ item: CallHierarchyItem; ranges: Range[] }[]> {
 		const client = this.#sessions.get(key)?.client;
 		if (!client?.ready) return [];
@@ -266,8 +270,9 @@ class Lsp {
 	/**
 	 * The window's root folders changed (workspace.svelte.ts). A new first folder is a new workspace
 	 * (Rust has stopped the servers, `reset` follows). Otherwise each running server is told with
-	 * `workspace/didChangeWorkspaceFolders`, or restarts when it cannot take the notification;
-	 * problems are keyed again, since a file of an added folder is now a workspace file.
+	 * `workspace/didChangeWorkspaceFolders`, or restarts when it cannot take the notification; a
+	 * server started for one folder stops with its folder. Problems are keyed again, since a file
+	 * of an added folder is now a workspace file.
 	 */
 	setFolders(folders: readonly WorkspaceFolder[]) {
 		const before = this.#folders;
@@ -275,11 +280,17 @@ class Lsp {
 		this.#root = this.#folders.length ? Promise.resolve(this.#rootPath) : undefined;
 		if (before[0]?.path !== this.#folders[0]?.path) return;
 		const next = lspFolders(this.#folders);
-		for (const [key, s] of [...this.#sessions]) {
+		const restart = new Set<string>();
+		for (const [sid, s] of [...this.#sessions]) {
+			if (s.folder !== null) {
+				if (!this.#folders.some((f) => f.path === s.folder)) void this.#stop(sid);
+				continue;
+			}
 			if (!s.client.ready) continue;
 			if (s.client.takesFolderChanges) s.client.changeWorkspaceFolders(next);
-			else if (folderListChanged(lspFolders(before), next)) void this.#restartKey(key);
+			else if (s.client.takesFolders && folderListChanged(lspFolders(before), next)) restart.add(s.info.key);
 		}
+		for (const key of restart) void this.#restartKey(key);
 		for (const uri of this.#origin.keys()) this.#applyMarkers(uri);
 		this.#queueRefresh();
 	}
@@ -294,8 +305,9 @@ class Lsp {
 		if (info) await this.#restartKey(info.key);
 	}
 
+	/** Restarts every session of server `key` (the shared one and the per-folder ones). */
 	async #restartKey(key: string) {
-		await this.#stop(key);
+		await Promise.all([...this.#sessions.values()].filter((s) => s.info.key === key).map((s) => this.#stop(s.sid)));
 		this.status.delete(key);
 		// Providers are registered again once the new session reports its capabilities.
 		for (const doc of this.#docs.values()) if (doc.key === key) void this.#open(doc);
@@ -396,7 +408,7 @@ class Lsp {
 
 	/** Open Folder: Rust has already killed the old root's servers; forget them and the cached root. */
 	reset() {
-		for (const key of [...this.#sessions.keys()]) this.#forget(key);
+		for (const sid of [...this.#sessions.keys()]) this.#forget(sid);
 		this.#root = undefined;
 		this.#folders = [];
 		for (const [rel, model] of [...this.#previews]) this.#dropPreview(rel, model);
@@ -421,32 +433,38 @@ class Lsp {
 			$effect(() => {
 				const next = SERVERS.map((info) => ({ key: info.key, trace: this.#trace(info) }));
 				untrack(() => {
-					for (const n of next) {
-						const s = this.#sessions.get(n.key);
-						if (!s || s.trace === n.trace) continue;
-						s.trace = n.trace;
-						this.#setTracer(s);
-						if (s.client.ready) s.client.rpc.notify('$/setTrace', { value: n.trace });
-					}
+					for (const n of next)
+						for (const s of this.#sessions.values()) {
+							if (s.info.key !== n.key || s.trace === n.trace) continue;
+							s.trace = n.trace;
+							this.#setTracer(s);
+							if (s.client.ready) s.client.rpc.notify('$/setTrace', { value: n.trace });
+						}
 				});
 			});
 			$effect(() => {
-				const next = SERVERS.map((info) => ({ key: info.key, pushed: JSON.stringify(this.#settingsFor(info)), init: JSON.stringify(this.#initOptions(info) ?? null) }));
+				// For the shared servers and for each other root folder's settings (a per-folder server).
+				const folders = [null, ...Object.keys(userSettings.folders)];
+				const next = new Map(
+					SERVERS.flatMap((info) => folders.map((folder) => [sessionId(info.key, folder), { pushed: JSON.stringify(this.#settingsFor(info, folder)), init: JSON.stringify(this.#initOptions(info, folder) ?? null) }] as const))
+				);
 				untrack(() => {
-					for (const n of next) {
-						const s = this.#sessions.get(n.key);
-						if (!s?.client.ready) continue;
-						if (n.init !== s.init) void this.#restartKey(n.key);
+					const restart = new Set<string>();
+					for (const s of this.#sessions.values()) {
+						const n = next.get(s.sid) ?? next.get(s.info.key);
+						if (!n || !s.client.ready) continue;
+						if (n.init !== s.init) restart.add(s.info.key);
 						else if (n.pushed !== s.pushed) {
 							s.pushed = n.pushed;
 							s.client.didChangeConfiguration(JSON.parse(n.pushed));
 						}
 					}
+					for (const key of restart) void this.#restartKey(key);
 				});
 			});
 		});
 		// Go to Definition into another file: open it as a tab and put the cursor on the target.
-		monaco.editor.registerCommand(CODE_ACTION_COMMAND, (_accessor, key: string, item: Command | CodeAction) => void this.#runCodeAction(key, item));
+		monaco.editor.registerCommand(CODE_ACTION_COMMAND, (_accessor, sid: string, item: Command | CodeAction) => void this.#runCodeAction(sid, item));
 		monaco.editor.registerEditorOpener({
 			openCodeEditor: (_source, resource, selection) => {
 				const at = selection && 'startLineNumber' in selection ? { line: selection.startLineNumber, column: selection.startColumn } : selection ? { line: selection.lineNumber, column: selection.column } : { line: 1, column: 1 };
@@ -473,21 +491,34 @@ class Lsp {
 	async #open(doc: Doc) {
 		const info = SERVERS.find((s) => s.key === doc.key);
 		if (!info || isDisabled(info, parseDisabled(userSettings.get('kingu.lsp.disabled')))) return;
-		const session = await this.#session(doc.key);
-		if (!session || !(await session.ready) || !this.#docs.has(doc.model)) return;
+		const session = await this.#sessionFor(info, doc.rel);
+		if (!(await session.ready) || !this.#docs.has(doc.model)) return;
+		doc.sid = session.sid;
 		doc.uri = uriOfRel(this.#rootPath, doc.rel);
 		session.client.didOpen(doc.uri, lspLanguageId(doc.model.getLanguageId(), doc.rel), doc.model.getValue());
 		this.#applyMarkers(doc.uri);
 		this.#scheduleSymbols(doc, 0);
 	}
 
-	async #session(key: string): Promise<Session | null> {
-		const existing = this.#sessions.get(key);
+	/** The session for a file: the shared server, or (when it cannot take several folders) the
+	 * server of the file's root folder, started on first use (folders.ts `sessionFolder`). */
+	async #sessionFor(info: ServerInfo, rel: string): Promise<Session> {
+		await this.#rootDir();
+		const shared = await this.#session(info, null);
+		if (!(await shared.ready)) return shared;
+		const folder = sessionFolder(folderPathOf(rel, this.#folders), this.#folders, shared.client.takesFolders, info.oneServer);
+		return folder ? this.#session(info, folder) : shared;
+	}
+
+	async #session(info: ServerInfo, folder: string | null): Promise<Session> {
+		const key = info.key;
+		const sid = sessionId(key, folder);
+		const existing = this.#sessions.get(sid);
 		if (existing) return existing;
-		const info = SERVERS.find((s) => s.key === key)!;
-		const root = await this.#rootDir();
-		const again = this.#sessions.get(key);
+		const root = folder ?? (await this.#rootDir());
+		const again = this.#sessions.get(sid);
 		if (again) return again;
+		const own = folder ? this.#folders.filter((f) => f.path === folder) : this.#folders;
 
 		let id: number | null = null;
 		let chain: Promise<unknown> = Promise.resolve();
@@ -497,7 +528,7 @@ class Lsp {
 		};
 		const client = new LanguageClient(info.name, write, {
 			diagnostics: (uri, kind, items) => {
-				this.#origin.set(uri, key);
+				this.#origin.set(uri, sid);
 				this.#setDiagnostics(uri, kind, items);
 			},
 			status: (s) => this.#setStatus(info, s),
@@ -508,7 +539,9 @@ class Lsp {
 			},
 			showMessageRequest: async (type, message, actions) => (await notifications.prompt(MESSAGE_SEVERITY[type] ?? 'info', message, actions, { source: info.name })) ?? null,
 			applyEdit: (edit) => this.applyWorkspaceEdit(edit),
-			configuration: (section) => configurationValue(this.#settingsFor(info), section),
+			// Per resource, as VS Code's getConfiguration(section, scopeUri): a file of another root
+			// folder gets that folder's settings.
+			configuration: (section, scopeUri) => configurationValue(this.#settingsFor(info, folderOfUri(scopeUri, this.#folders)?.path ?? folder), section),
 			refresh: (kind) => {
 				for (const r of this.#refresh.get(key) ?? []) if (r.kind === kind) r.run();
 			}
@@ -520,24 +553,25 @@ class Lsp {
 			else {
 				this.#append(`${info.name} exited (code ${ev.code})`, info.name);
 				client.exited(ev.code);
-				if (this.#sessions.get(key)?.client === client) this.#forget(key);
+				if (this.#sessions.get(sid)?.client === client) this.#forget(sid);
 			}
 		};
-		const init = this.#initOptions(info);
-		const session: Session = { info, client, id: null, ready: Promise.resolve(false), pushed: '', init: JSON.stringify(init ?? null), trace: this.#trace(info) };
+		const init = this.#initOptions(info, folder);
+		const session: Session = { sid, folder, info, client, id: null, ready: Promise.resolve(false), pushed: '', init: JSON.stringify(init ?? null), trace: this.#trace(info) };
 		this.#setTracer(session);
-		this.#sessions.set(key, session);
+		this.#sessions.set(sid, session);
 		this.#setStatus(info, { state: 'starting' });
 		session.ready = (async () => {
 			try {
-				id = await invoke<number>('lsp_start', { language: info.languages[0], onEvent: channel });
+				id = await invoke<number>('lsp_start', { language: info.languages[0], folder: folder ?? undefined, onEvent: channel });
 				session.id = id;
-				const caps = await client.initialize(uriOfRel(root, '').replace(/\/$/, ''), init, session.trace, lspFolders(this.#folders));
-				const pushed = this.#settingsFor(info);
+				const caps = await client.initialize(uriOfRel(root, '').replace(/\/$/, ''), init, session.trace, lspFolders(own));
+				const pushed = this.#settingsFor(info, folder);
 				session.pushed = JSON.stringify(pushed);
 				if (Object.keys(pushed).length) client.didChangeConfiguration(pushed);
-				clientLog('info', `${info.name} initialized`);
-				if (this.#sessions.get(key) === session) this.#registerProviders(info, caps);
+				clientLog('info', `${info.name} initialized${folder ? ` for ${folder}` : ''}`);
+				// Monaco's providers come from the shared server; they find each model's own session.
+				if (this.#sessions.get(sid) === session && !folder) this.#registerProviders(info, caps);
 				return true;
 			} catch (e) {
 				const message = String(e);
@@ -550,10 +584,10 @@ class Lsp {
 		return session;
 	}
 
-	async #stop(key: string) {
-		const s = this.#sessions.get(key);
+	async #stop(sid: string) {
+		const s = this.#sessions.get(sid);
 		if (!s) return;
-		this.#forget(key);
+		this.#forget(sid);
 		try {
 			await Promise.race([s.client.shutdown(), new Promise((r) => setTimeout(r, 2000))]);
 		} catch {
@@ -563,16 +597,23 @@ class Lsp {
 	}
 
 	/** Drops a session and everything it published (VS Code clears a stopped server's problems). */
-	#forget(key: string) {
-		this.#sessions.delete(key);
-		this.#providers.get(key)?.forEach((d) => d.dispose());
-		this.#providers.delete(key);
-		this.#refresh.delete(key);
-		for (const uri of this.#index.clear((uri) => this.#origin.get(uri) === key)) {
+	#forget(sid: string) {
+		const { key, folder } = parseSessionId(sid);
+		this.#sessions.delete(sid);
+		if (folder === null) {
+			this.#providers.get(key)?.forEach((d) => d.dispose());
+			this.#providers.delete(key);
+			this.#refresh.delete(key);
+		}
+		for (const uri of this.#index.clear((uri) => this.#origin.get(uri) === sid)) {
 			this.#origin.delete(uri);
 			this.#applyMarkers(uri);
 		}
-		for (const d of this.#docs.values()) if (d.key === key) d.uri = '';
+		for (const d of this.#docs.values())
+			if (d.sid === sid) {
+				d.uri = '';
+				d.sid = '';
+			}
 		this.#queueRefresh();
 	}
 
@@ -619,9 +660,10 @@ class Lsp {
 	}
 
 	/** `workspace/configuration` answers and pushed settings: the table's, plus Kingu's
-	 * settings.json schema for the JSON server (Monaco's JSON worker has it too), then `settings`. */
-	#settingsFor(info: ServerInfo): Record<string, unknown> {
-		const base: Record<string, unknown> = { ...info.settings, ...serverSettings(info.key, this.#reader, uriOfRel(this.#rootPath, '').replace(/\/$/, '')) };
+	 * settings.json schema for the JSON server (Monaco's JSON worker has it too), then `settings`.
+	 * `folder`: a root folder whose own settings apply (a file of it, or its own server). */
+	#settingsFor(info: ServerInfo, folder: string | null = null): Record<string, unknown> {
+		const base: Record<string, unknown> = { ...info.settings, ...serverSettings(info.key, this.#readerFor(folder), uriOfRel(folder ?? this.#rootPath, '').replace(/\/$/, '')) };
 		if (info.key === 'json') {
 			const json = base.json as { schemas: unknown[] };
 			base.json = { ...json, schemas: [...json.schemas, { fileMatch: ['settings.json', '**/settings.json'], schema: jsonSchema(settingSchemas.all) }] };
@@ -630,9 +672,9 @@ class Lsp {
 	}
 
 	/** The `initialize` options: the table's, plus tsserver preferences for typescript-language-server. */
-	#initOptions(info: ServerInfo): unknown {
+	#initOptions(info: ServerInfo, folder: string | null = null): unknown {
 		if (info.key !== 'typescript') return info.initializationOptions;
-		return { ...(info.initializationOptions as object | undefined), preferences: typescriptPreferences(this.#reader) };
+		return { ...(info.initializationOptions as object | undefined), preferences: typescriptPreferences(this.#readerFor(folder)) };
 	}
 
 	/** VS Code settings as serverSettings.ts reads them. */
@@ -641,6 +683,17 @@ class Lsp {
 		isSet: (id) => (userSettings.resolved.get(id)?.source ?? 'default') !== 'default',
 		layer: (id, scope) => (scope === 'user' ? userSettings.inspect(id, 'user') : (userSettings.inspect(id, 'repo') ?? userSettings.inspect(id, 'workspace')))
 	};
+
+	/** The settings in effect for files of root folder `folder` (the first one, or none: `#reader`). */
+	#readerFor(folder: string | null): SettingsReader {
+		if (!folder || !(folder in userSettings.folders)) return this.#reader;
+		const resolved = userSettings.resolvedIn(folder);
+		return {
+			get: <T>(id: string) => (resolved.get(id)?.value ?? settingSchemas.byId.get(id)?.default) as T,
+			isSet: (id) => (resolved.get(id)?.source ?? 'default') !== 'default',
+			layer: (id, scope) => (scope === 'user' ? userSettings.inspect(id, 'user') : (userSettings.inspectFolder(id, folder) ?? userSettings.workspaceFile[id]))
+		};
+	}
 
 	/** The server's `<language>.trace.server` (off for a server whose extension has none). An
 	 * extension's own key Kingu does not register (rust-analyzer.trace.server) is read as written. */
@@ -746,7 +799,7 @@ class Lsp {
 		this.#symbolTimers.set(
 			doc.rel,
 			setTimeout(async () => {
-				const client = this.#sessions.get(doc.key)?.client;
+				const client = this.#sessions.get(doc.sid)?.client;
 				if (!doc.uri || !client?.ready) return;
 				try {
 					const syms = await client.documentSymbols(doc.uri);
@@ -760,10 +813,10 @@ class Lsp {
 
 	// --- Monaco providers ------------------------------------------------------------------------
 
-	#lookup(model: Monaco.editor.ITextModel): { client: LanguageClient; uri: string } | null {
+	#lookup(model: Monaco.editor.ITextModel): { client: LanguageClient; uri: string; sid: string } | null {
 		const doc = this.#docs.get(model);
-		const client = doc?.uri ? this.#sessions.get(doc.key)?.client : undefined;
-		return doc && client?.ready ? { client, uri: doc.uri } : null;
+		const client = doc?.uri ? this.#sessions.get(doc.sid)?.client : undefined;
+		return doc && client?.ready ? { client, uri: doc.uri, sid: doc.sid } : null;
 	}
 
 	/** Monaco location of an LSP URI: a workspace file, or an external one Monaco cannot open. */
@@ -820,7 +873,7 @@ class Lsp {
 				openEdited.push(rel);
 				const doc = this.#docs.get(model);
 				return {
-					version: doc?.uri === uri ? this.#sessions.get(doc.key)?.client.versionOf(uri) : undefined,
+					version: doc?.uri === uri ? this.#sessions.get(doc.sid)?.client.versionOf(uri) : undefined,
 					read: () => model.getValue(),
 					commit: (text, edits) => {
 						const ops = edits ? toMonacoTextEdits(edits) : [{ range: model.getFullModelRange(), text }];
@@ -864,13 +917,14 @@ class Lsp {
 				const k = typeof item.command === 'string' ? undefined : (item as CodeAction).kind;
 				if (k && k !== kind && !k.startsWith(`${kind}.`)) continue;
 				if ((item as CodeAction).disabled) continue;
-				await this.#runCodeAction(doc.key, item);
+				await this.#runCodeAction(d.sid, item);
 			}
 		}
 	}
 
-	async #runCodeAction(key: string, item: Command | CodeAction) {
-		const client = this.#sessions.get(key)?.client;
+	/** `sid`: the session that offered `item`. */
+	async #runCodeAction(sid: string, item: Command | CodeAction) {
+		const client = this.#sessions.get(sid)?.client;
 		if (!client?.ready) return;
 		try {
 			if (typeof item.command === 'string') return void (await this.#execute(client, item as Command));
@@ -1078,7 +1132,7 @@ class Lsp {
 								const items = await d.client.codeActions(d.uri, toLspRange(range), lspContext, token).catch(() => null);
 								if (!items?.length) return none;
 								const actions = items.map((item): Monaco.languages.CodeAction => {
-									const run = { id: CODE_ACTION_COMMAND, title: item.title, arguments: [info.key, item] };
+									const run = { id: CODE_ACTION_COMMAND, title: item.title, arguments: [d.sid, item] };
 									if (typeof item.command === 'string') return { title: item.title, command: run };
 									const a = item as CodeAction;
 									return {
