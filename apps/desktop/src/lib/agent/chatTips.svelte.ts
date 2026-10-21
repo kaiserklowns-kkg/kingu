@@ -12,6 +12,7 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { layout } from '#lib/workbench/layout.svelte.ts';
+import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
 import { shownTip, stepTip, type TipContext, type TipDef } from './chatTips.ts';
 
@@ -84,8 +85,16 @@ class ChatTips {
 		this.shownId = next && next.id !== id ? next.id : null;
 	}
 
-	disable() {
+	/** The tip card's ✓ (VS Code's dismissTipForSession): this tip never again, and no tips for the rest of the session. */
+	dismissForSession(ctx: TipContext) {
+		this.dismiss(ctx);
+		this.hiddenForSession = true;
+	}
+
+	/** Disable tips: chat.tips.enabled off; from the card, the settings open too (VS Code opens them at the setting). */
+	disable(openSettings = false) {
 		void settings.set('chat.tips.enabled', false, 'user');
+		if (openSettings) systemSettings.show();
 	}
 
 	reset() {

@@ -1,0 +1,1026 @@
+/* The Chat view as kingu-old draws it (VS Code 1.143's chat with kingu-old's look). Class names
+ * and values are VS Code's, from kingu-old's stylesheets:
+ *   auxiliaryBarPart.css, modernUI tabs.css (the view switcher and title row)
+ *   chatViewTitleControl.css (the chat's own title row)
+ *   chatViewWelcome.css (the empty chat)
+ *   chatInputNotice.css, chatTipContent.css (the tip card)
+ *   chat.css (the input, its toolbars and pickers, the transcript)
+ *   codeBlockPart.css (code blocks)
+ * Sizes come from the captured window (ref old-dom.json) where it shows them. */
+
+.monaco-workbench,
+:root {
+	--chat-input-control-height: 22px;
+}
+
+/* ---- the secondary side bar's header: the view switcher (one view, Chat) -------------------- */
+
+.kg-chat-part > .composite.header {
+	display: flex;
+	flex-shrink: 0;
+	height: 32px;
+	padding: 0 4px 0 2px;
+}
+
+.kg-chat-part > .composite.header .composite-bar {
+	display: flex;
+}
+
+.kg-chat-part > .composite.header .action-item {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 32px;
+	padding: 0 var(--vscode-spacing-size60);
+	color: var(--vscode-modernTab-activeForeground);
+	cursor: pointer;
+	outline: none;
+}
+
+.kg-chat-part > .composite.header .action-item > .active-item-indicator {
+	position: absolute;
+	top: 50%;
+	right: var(--vscode-spacing-size20);
+	left: var(--vscode-spacing-size20);
+	z-index: 0;
+	height: var(--vscode-spacing-size240);
+	border-radius: var(--vscode-cornerRadius-small);
+	transform: translateY(-50%);
+}
+
+.kg-chat-part > .composite.header .action-item.checked > .active-item-indicator {
+	background-color: var(--vscode-modernTab-activeBackground);
+}
+
+.kg-chat-part > .composite.header .action-item:focus-visible > .active-item-indicator {
+	outline: var(--vscode-strokeThickness) solid var(--vscode-focusBorder);
+	outline-offset: calc(-1 * var(--vscode-strokeThickness));
+}
+
+.kg-chat-part > .composite.header .action-item > .codicon {
+	position: relative;
+	z-index: 1;
+}
+
+/* ---- the title row: "Chat" and the view's actions ---------------------------------------- */
+
+.kg-chat-part > .composite.title {
+	display: flex;
+	flex-shrink: 0;
+	height: 32px;
+	padding: 0 4px 0 2px;
+	background-color: var(--vscode-sideBarTitle-background);
+}
+
+.kg-chat-part > .composite.title > .title-label {
+	flex: 0 0 auto;
+	max-width: 40%;
+	padding-left: 8px;
+	line-height: 32px;
+}
+
+.kg-chat-part > .composite.title > .title-label h2 {
+	margin: 0;
+	overflow: hidden;
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 32px;
+	color: var(--vscode-sideBarTitle-foreground);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.kg-chat-part > .composite.title > .title-actions {
+	display: flex;
+	flex: 1;
+	align-items: center;
+	justify-content: flex-end;
+	min-width: 0;
+	padding-left: 4px;
+}
+
+.kg-chat-part > .composite.title > .global-actions {
+	display: flex;
+	align-items: center;
+}
+
+.kg-chat-part .title-actions > .action-item {
+	margin-right: 4px;
+}
+
+/* A toolbar button: VS Code's `.monaco-action-bar .action-label` (22px, 3px padding, 6px corners). */
+.kg-chat-part .action-label,
+.interactive-session .chat-view-title-container .action-label {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	width: 22px;
+	height: 22px;
+	padding: 3px;
+	border-radius: var(--vscode-cornerRadius-small);
+	color: var(--vscode-icon-foreground);
+	cursor: pointer;
+	outline: none;
+}
+
+.kg-chat-part .action-label:hover,
+.kg-chat-part .action-label[aria-expanded='true'],
+.interactive-session .chat-view-title-container .action-label:hover {
+	background-color: var(--vscode-toolbar-hoverBackground);
+}
+
+.kg-chat-part .action-label:focus-visible,
+.interactive-session .chat-view-title-container .action-label:focus-visible {
+	outline: var(--vscode-strokeThickness) solid var(--vscode-focusBorder);
+	outline-offset: calc(-1 * var(--vscode-strokeThickness));
+}
+
+.kg-chat-part .action-label:disabled {
+	opacity: 0.4;
+	cursor: default;
+	background: none;
+}
+
+.kg-chat-part .action-label.checked {
+	background-color: var(--vscode-toolbar-activeBackground);
+}
+
+/* New Chat with its ⌄ (VS Code's DropdownWithPrimaryActionViewItem): one 36px hover target. */
+.kg-chat-part .title-actions > .monaco-dropdown-with-default {
+	display: flex;
+	align-items: center;
+	height: 22px;
+	border-radius: 5px;
+}
+
+.kg-chat-part .title-actions > .monaco-dropdown-with-default:hover {
+	background-color: var(--vscode-toolbar-hoverBackground);
+}
+
+.kg-chat-part .monaco-dropdown-with-default > .action-label:hover,
+.kg-chat-part .monaco-dropdown-with-default > .action-label[aria-expanded='true'] {
+	background-color: transparent;
+}
+
+.kg-chat-part .monaco-dropdown-with-default > .action-label.dropdown {
+	width: 16px;
+	margin-left: -3px;
+	padding: 3px 0;
+}
+
+.kg-chat-part .title-actions > .action-separator {
+	box-sizing: content-box;
+	width: 1px;
+	height: 16px;
+	margin: 5px 4px;
+	background-color: var(--vscode-disabledForeground);
+}
+
+/* ---- the chat's own title row (chatViewTitleControl): back, the chat's title, the sessions --- */
+
+.interactive-session .chat-view-title-container {
+	flex-shrink: 0;
+	cursor: pointer;
+}
+
+.interactive-session .chat-view-title-inner {
+	display: flex;
+	align-items: center;
+	box-sizing: border-box;
+	width: 100%;
+	max-width: 950px;
+	margin: 0 auto;
+	padding: 0 8px 0 16px;
+}
+
+.interactive-session .chat-view-title-navigation-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	overflow: hidden;
+}
+
+.interactive-session .chat-view-title-action-item {
+	display: flex;
+	flex: 1 1 auto;
+	align-items: center;
+	gap: var(--vscode-spacing-size40);
+	min-width: 0;
+	height: 22px;
+	padding: 0 4px;
+	border-radius: var(--vscode-cornerRadius-small);
+	color: var(--vscode-foreground);
+}
+
+.interactive-session .chat-view-title-action-item:hover {
+	background-color: var(--vscode-toolbar-hoverBackground);
+}
+
+.interactive-session .chat-view-title-harness {
+	flex: 0 0 auto;
+	font-size: var(--vscode-fontSize-label2);
+	font-weight: var(--vscode-fontWeight-regular);
+	color: var(--vscode-descriptionForeground);
+	white-space: nowrap;
+}
+
+.interactive-session .chat-view-title-separator {
+	flex-shrink: 0;
+	color: var(--vscode-descriptionForeground);
+}
+
+.interactive-session .chat-view-title-label {
+	display: block;
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	font-size: var(--vscode-fontSize-label2);
+	font-weight: var(--vscode-fontWeight-semiBold);
+	line-height: 16px;
+	text-overflow: ellipsis;
+	text-transform: uppercase;
+	white-space: nowrap;
+}
+
+.interactive-session .chat-view-title-actions-toolbar {
+	display: flex;
+	flex-shrink: 0;
+	margin-left: auto;
+	padding-left: 4px;
+}
+
+/* ---- the empty chat (chatViewWelcome.css) -------------------------------------------------- */
+
+.interactive-session .chat-welcome-view-container {
+	position: relative;
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	overflow: hidden;
+}
+
+div.chat-welcome-view {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding: 12px;
+
+	& > .chat-welcome-view-icon {
+		min-height: 40px;
+	}
+
+	& > .chat-welcome-view-icon .codicon {
+		margin-bottom: 24px;
+		font-size: 40px;
+		color: var(--vscode-descriptionForeground);
+	}
+
+	& > .chat-welcome-view-title {
+		margin-top: 5px;
+		padding: 0 8px;
+		font-size: 13px;
+		font-weight: 600;
+		line-height: normal;
+		color: var(--vscode-foreground);
+		text-align: center;
+	}
+
+	& > .chat-welcome-view-message {
+		position: relative;
+		max-width: 280px;
+		margin: 8px auto 0;
+		padding: 0 20px;
+		font-size: 12px;
+		color: var(--vscode-descriptionForeground);
+		text-align: center;
+	}
+
+	& > .chat-welcome-view-disclaimer {
+		max-width: 256px;
+		margin: 0;
+		padding: 0 12px;
+		font-size: 12px;
+		color: var(--vscode-descriptionForeground);
+		text-align: center;
+	}
+
+	p {
+		margin: 0;
+	}
+
+	a {
+		color: var(--vscode-textLink-foreground);
+		cursor: pointer;
+	}
+
+	a:hover,
+	a:focus {
+		text-decoration: underline;
+		outline: 1px solid var(--vscode-focusBorder);
+	}
+}
+
+/* ---- the input part: the stack (tip card, toolbars) on the input, the pickers under it ------- */
+
+.interactive-session .interactive-input-part {
+	--chat-input-radius: var(--vscode-cornerRadius-large);
+	display: flex;
+	flex-direction: column;
+	flex-shrink: 0;
+	gap: 4px;
+	margin: 0 12px;
+	padding: 4px 0 5px;
+}
+
+.interactive-session .chat-input-stack {
+	display: flex;
+	flex-direction: column;
+}
+
+/* A notice docked on the input (chatInputNotice.css): the input squares its top corners. */
+.chat-input-notice {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	gap: var(--vscode-spacing-size80);
+	box-sizing: border-box;
+	width: 100%;
+	max-width: 100%;
+	padding: var(--vscode-spacing-size120);
+	border: var(--vscode-strokeThickness) solid var(--vscode-input-border, var(--vscode-widget-border, transparent));
+	border-bottom: none;
+	border-radius: var(--vscode-cornerRadius-large) var(--vscode-cornerRadius-large) 0 0;
+	background-color: var(--vscode-agentsChatInput-background, var(--vscode-input-background));
+	color: var(--vscode-foreground);
+}
+
+.chat-input-notice.chat-input-notice-tip {
+	flex-direction: row;
+	align-items: center;
+	gap: var(--vscode-spacing-size60);
+	padding: var(--vscode-spacing-size60) var(--vscode-spacing-size80);
+	font-size: var(--vscode-chat-font-size-body-s);
+	line-height: 1.4;
+	color: var(--vscode-descriptionForeground);
+}
+
+.chat-input-notice:focus-visible {
+	outline: var(--vscode-strokeThickness) solid var(--vscode-focusBorder);
+	outline-offset: calc(-1 * var(--vscode-strokeThickness));
+}
+
+.chat-input-notice a {
+	color: var(--vscode-textLink-foreground);
+	cursor: pointer;
+	border-radius: var(--vscode-cornerRadius-xSmall);
+}
+
+.chat-input-notice a:hover,
+.chat-input-notice a:active {
+	color: var(--vscode-textLink-activeForeground);
+	text-decoration: underline;
+}
+
+.chat-input-notice a:focus-visible {
+	outline: var(--vscode-strokeThickness) solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+}
+
+.chat-input-notice .rendered-markdown p {
+	margin: 0;
+}
+
+.chat-input-notice code {
+	padding: 1px 3px;
+	border-radius: var(--vscode-cornerRadius-xSmall);
+	background-color: var(--vscode-textPreformat-background);
+	color: var(--vscode-textPreformat-foreground);
+	font-size: 0.9em;
+}
+
+/* The tip's toolbar on its top edge, on hover or focus (chatTipContent.css). */
+.chat-tip-widget .chat-tip-toolbar {
+	opacity: 0;
+	pointer-events: none;
+}
+
+.chat-tip-widget .chat-tip-toolbar > .monaco-toolbar {
+	position: absolute;
+	top: -20px;
+	right: 10px;
+	display: flex;
+	height: 26px;
+	line-height: 26px;
+	box-sizing: border-box;
+	background-color: var(--vscode-editorWidget-background);
+	border: 1px solid var(--vscode-chat-requestBorder);
+	border-radius: var(--vscode-cornerRadius-medium);
+	transition: opacity 0.1s ease-in-out;
+}
+
+.chat-tip-widget:hover .chat-tip-toolbar,
+.chat-tip-widget:focus-within .chat-tip-toolbar {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.chat-tip-widget .chat-tip-toolbar .action-label {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	width: 24px;
+	height: 24px;
+	margin: 0 2px;
+	padding: var(--vscode-spacing-size40);
+	border-radius: var(--vscode-cornerRadius-small);
+	color: var(--vscode-descriptionForeground);
+}
+
+.chat-tip-widget .chat-tip-toolbar .action-label:first-of-type {
+	margin-left: 1px;
+}
+
+.chat-tip-widget .chat-tip-toolbar .action-label:last-of-type {
+	margin-right: 1px;
+}
+
+.chat-tip-widget .chat-tip-toolbar .action-label:hover:not(:disabled) {
+	background-color: var(--vscode-toolbar-hoverBackground);
+	color: var(--vscode-foreground);
+}
+
+.chat-tip-widget .chat-tip-toolbar .action-label:disabled {
+	opacity: 0.4;
+}
+
+/* A toolbar docked on the input (status, the queue, the edit banner): one surface with it. */
+.interactive-session .chat-input-stack-toolbar {
+	overflow: hidden;
+	border: var(--vscode-strokeThickness) solid var(--vscode-input-border, var(--vscode-widget-border, transparent));
+	border-bottom: none;
+	border-radius: var(--vscode-cornerRadius-large) var(--vscode-cornerRadius-large) 0 0;
+	background-color: var(--vscode-agentsChatInput-background, var(--vscode-input-background));
+}
+
+.interactive-session .chat-input-stack-toolbar.chat-input-stack-continues {
+	border-radius: 0;
+}
+
+/* The input (chat.css `.chat-input-container`). */
+.interactive-session .chat-input-container {
+	position: relative;
+	box-sizing: border-box;
+	width: 100%;
+	padding: 0 6px 6px 6px;
+	overflow: hidden;
+	cursor: text;
+	background-color: var(--vscode-input-background);
+	border: var(--vscode-strokeThickness) solid var(--vscode-input-border, transparent);
+	border-radius: var(--chat-input-radius);
+	transition: box-shadow 350ms ease;
+	--chat-input-anim-duration: 4s;
+	--chat-input-working-border-color1: var(--vscode-chat-inputWorkingBorderColor1);
+}
+
+.interactive-session .chat-input-container.stacked {
+	border-top-left-radius: 0;
+	border-top-right-radius: 0;
+}
+
+.interactive-session .chat-input-container.focused {
+	border-color: var(--vscode-focusBorder);
+}
+
+.interactive-session .chat-input-container.editing {
+	background-color: var(--vscode-chat-requestBubbleBackground);
+}
+
+@keyframes chat-input-working-border-spin {
+	from {
+		transform: translate(-50%, -50%) rotate(0deg);
+	}
+
+	to {
+		transform: translate(-50%, -50%) rotate(360deg);
+	}
+}
+
+/* The comet that runs round the input while a turn runs. */
+.interactive-session .chat-input-container > .chat-input-working-border {
+	--chat-input-working-border-width: var(--vscode-strokeThickness);
+	position: absolute;
+	inset: -1px;
+	z-index: 2;
+	padding: var(--chat-input-working-border-width);
+	overflow: clip;
+	border-radius: inherit;
+	container-type: size;
+	-webkit-mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	mask:
+		linear-gradient(#000 0 0) content-box,
+		linear-gradient(#000 0 0);
+	-webkit-mask-composite: xor;
+	mask-composite: exclude;
+	opacity: 0;
+	transition: opacity 350ms ease;
+	pointer-events: none;
+}
+
+.interactive-session .chat-input-container > .chat-input-working-border::before {
+	content: '';
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: hypot(calc(100cqw + 2 * var(--chat-input-working-border-width)), calc(100cqh + 2 * var(--chat-input-working-border-width)));
+	aspect-ratio: 1;
+	transform: translate(-50%, -50%);
+	background: conic-gradient(from 135deg,
+			transparent 0deg,
+			color-mix(in srgb, var(--chat-input-working-border-color1) 90%, transparent) 20deg,
+			var(--chat-input-working-border-color1) 30deg,
+			color-mix(in srgb, var(--chat-input-working-border-color1) 60%, transparent) 50deg,
+			transparent 90deg,
+			transparent 360deg);
+}
+
+.interactive-session .chat-input-container > .chat-input-working-border-glow {
+	--chat-input-working-border-width: 2px;
+	z-index: 1;
+	filter: blur(1.5px);
+}
+
+.interactive-session .chat-input-container > .chat-input-working-border-glow::before {
+	background: conic-gradient(from 135deg,
+			transparent 0deg,
+			color-mix(in srgb, var(--chat-input-working-border-color1) 60%, transparent) 25deg,
+			color-mix(in srgb, var(--chat-input-working-border-color1) 35%, transparent) 50deg,
+			transparent 90deg,
+			transparent 360deg);
+}
+
+.interactive-session .chat-input-container.working {
+	overflow: visible;
+	border-color: var(--vscode-input-border, transparent);
+
+	> .chat-editor-container {
+		overflow: hidden;
+	}
+}
+
+.interactive-session .chat-input-container.working.focused {
+	border-color: color-mix(in srgb, var(--vscode-focusBorder) 40%, transparent);
+}
+
+.interactive-session .chat-input-container.working > .chat-input-working-border {
+	opacity: 1;
+}
+
+.interactive-session .chat-input-container.working > .chat-input-working-border::before {
+	animation: chat-input-working-border-spin var(--chat-input-anim-duration) linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.interactive-session .chat-input-container.working > .chat-input-working-border::before {
+		animation: none;
+	}
+}
+
+/* The text: VS Code's input editor (13px on a 20px line, 12px above and below, the text 4px in). */
+.interactive-session .chat-editor-container {
+	padding: 0 0 0 4px;
+}
+
+.interactive-session .chat-editor-container .interactive-input-editor {
+	display: block;
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 44px;
+	margin: 0;
+	padding: 12px 0 12px 4px;
+	resize: none;
+	border: none;
+	outline: none;
+	background: transparent;
+	font-size: 13px;
+	line-height: 20px;
+	color: var(--vscode-input-foreground);
+}
+
+.interactive-session .chat-editor-container .interactive-input-editor::placeholder {
+	color: var(--vscode-input-placeholderForeground);
+	text-overflow: ellipsis;
+}
+
+/* The toolbars under the text: the pickers on the left, mic and send on the right. */
+.interactive-session .chat-input-toolbars {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	margin-top: 4px;
+}
+
+.interactive-session .chat-input-toolbars > .chat-input-toolbar {
+	display: flex;
+	flex: 1 1 0;
+	align-items: center;
+	gap: var(--vscode-spacing-size40);
+	min-width: 0;
+	overflow: hidden;
+	color: var(--vscode-icon-foreground);
+}
+
+.interactive-session .chat-input-toolbars > .chat-execute-toolbar {
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	gap: var(--vscode-spacing-size40);
+	order: 2;
+}
+
+/* A picker or icon button in the toolbars (chat.css `.chat-input-picker-item .action-label`). */
+.interactive-session :is(.chat-input-toolbars, .chat-secondary-toolbar) .action-label {
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	box-sizing: border-box;
+	min-width: 0;
+	height: var(--chat-input-control-height);
+	padding: 0 var(--vscode-spacing-size60);
+	border-radius: var(--vscode-cornerRadius-small);
+	font-size: var(--vscode-fontSize-label1);
+	color: var(--vscode-icon-foreground);
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.interactive-session :is(.chat-input-toolbars, .chat-secondary-toolbar) .action-label.icon-only {
+	justify-content: center;
+	width: var(--chat-input-control-height);
+	min-width: var(--chat-input-control-height);
+	padding: 0;
+}
+
+.interactive-session :is(.chat-input-toolbars, .chat-secondary-toolbar) .action-label:hover:not(:disabled),
+.interactive-session :is(.chat-input-toolbars, .chat-secondary-toolbar) .action-label[aria-expanded='true'] {
+	background-color: var(--vscode-toolbar-hoverBackground);
+}
+
+.interactive-session :is(.chat-input-toolbars, .chat-secondary-toolbar) .action-label:focus-visible {
+	outline: var(--vscode-strokeThickness) solid var(--vscode-focusBorder);
+	outline-offset: calc(-1 * var(--vscode-strokeThickness));
+}
+
+.interactive-session :is(.chat-input-toolbars, .chat-secondary-toolbar) .action-label:disabled {
+	cursor: default;
+}
+
+.interactive-session :is(.chat-input-toolbars, .chat-secondary-toolbar) .action-label .codicon {
+	flex-shrink: 0;
+	width: var(--vscode-codiconFontSize-compact);
+	height: var(--vscode-codiconFontSize-compact);
+	font-size: var(--vscode-codiconFontSize-compact);
+	line-height: var(--vscode-codiconFontSize-compact);
+	color: var(--vscode-icon-foreground);
+}
+
+.interactive-session :is(.chat-input-toolbars, .chat-secondary-toolbar) .action-label:disabled .codicon {
+	color: var(--vscode-disabledForeground);
+}
+
+.interactive-session :is(.chat-input-toolbars, .chat-secondary-toolbar) .action-label .codicon + .chat-input-picker-label {
+	margin-left: var(--vscode-spacing-size60);
+}
+
+.interactive-session :is(.chat-input-toolbars, .chat-secondary-toolbar) .chat-input-picker-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.interactive-session .chat-secondary-toolbar .action-label.warning,
+.interactive-session .chat-secondary-toolbar .action-label.warning .codicon {
+	color: var(--vscode-problemsWarningIcon-foreground);
+}
+
+/* Send: a round button, filled while there is something to send (chat.css `.chat-submit-button`). */
+.interactive-session .chat-execute-toolbar .chat-submit-button {
+	justify-content: center;
+	width: var(--chat-input-control-height);
+	padding: 0;
+	border-radius: var(--vscode-cornerRadius-circle);
+	transition: background-color 250ms ease, color 250ms ease;
+}
+
+.interactive-session .chat-execute-toolbar .chat-submit-button .codicon-arrow-up-compact::before {
+	display: inline-block;
+	transform: translateY(0.5px);
+}
+
+.interactive-session .chat-execute-toolbar .chat-submit-button:not(:disabled) {
+	background: var(--vscode-button-background);
+	transition: background-color 120ms ease;
+}
+
+.interactive-session .chat-execute-toolbar .chat-submit-button:not(:disabled) .codicon {
+	color: var(--vscode-button-foreground);
+}
+
+.interactive-session .chat-execute-toolbar .chat-submit-button:not(:disabled):hover,
+.interactive-session .chat-execute-toolbar .chat-submit-button:not(:disabled):focus-visible {
+	background: var(--vscode-button-hoverBackground);
+}
+
+.interactive-session .chat-execute-toolbar .chat-submit-button:focus-visible {
+	outline: var(--vscode-strokeThickness) solid var(--vscode-focusBorder);
+	outline-offset: 1px;
+}
+
+/* The microphone glows while it listens (chat.css `chat-voice-icon-glow`). */
+@keyframes chat-voice-icon-glow {
+	0%,
+	100% {
+		text-shadow: 0 0 2px color-mix(in srgb, var(--vscode-chat-dictationActiveMicGlow) 60%, transparent);
+	}
+
+	50% {
+		text-shadow: 0 0 6px var(--vscode-chat-dictationActiveMicGlow);
+	}
+}
+
+.interactive-session .chat-execute-toolbar .action-label.listening .codicon {
+	color: var(--vscode-foreground);
+	animation: chat-voice-icon-glow 1.5s ease-in-out infinite;
+}
+
+/* The pickers under the input (chat.css `.chat-secondary-toolbar`). */
+.interactive-session .chat-secondary-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	min-height: var(--chat-input-control-height);
+	padding: 0 4px;
+}
+
+.interactive-session .chat-secondary-toolbar .chat-responsive-picker-container {
+	display: flex;
+	flex: 1 1 0;
+	align-items: center;
+	gap: 2px;
+	min-width: 0;
+}
+
+/* ---- the transcript (chat.css `.interactive-item-container`) ------------------------------- */
+
+.interactive-session {
+	/* chat.css: 11 / 12 / 13 / 14 / 16 / 20px at a 13px base. */
+	--vscode-chat-font-size-body-xs: 0.846em;
+	--vscode-chat-font-size-body-s: 0.923em;
+	--vscode-chat-font-size-body-m: 1em;
+	--vscode-chat-font-size-body-l: 1.077em;
+	--vscode-chat-font-size-body-xl: 1.231em;
+	--vscode-chat-font-size-body-xxl: 1.538em;
+	--vscode-chat-list-background: var(--vscode-sideBar-background);
+	--vscode-interactive-result-editor-background-color: var(--vscode-editor-background);
+	--vscode-interactive-session-foreground: var(--vscode-sideBar-foreground, var(--vscode-foreground));
+}
+
+.interactive-item-container {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	padding: var(--vscode-spacing-size60) var(--vscode-spacing-size160);
+	color: var(--vscode-interactive-session-foreground);
+	cursor: default;
+	user-select: text;
+	-webkit-user-select: text;
+}
+
+/* A request: a bubble on the right. */
+.interactive-item-container.interactive-request {
+	align-items: flex-end;
+}
+
+.interactive-item-container.interactive-request .value {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	width: 100%;
+}
+
+.interactive-item-container.interactive-request .value .rendered-markdown {
+	position: relative;
+	box-sizing: border-box;
+	width: fit-content;
+	max-width: 90%;
+	margin-left: auto;
+	margin-bottom: var(--vscode-spacing-size60);
+	padding: 8px 12px;
+	border-radius: var(--vscode-cornerRadius-medium);
+	background-color: var(--vscode-chat-requestBubbleBackground);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.interactive-item-container.interactive-request .value .rendered-markdown.editable:hover {
+	background-color: var(--vscode-chat-requestBubbleHoverBackground);
+}
+
+/* The request's actions on its top edge, on hover (chat.css `.request-hover`). */
+.interactive-item-container .request-hover {
+	position: absolute;
+	top: -13px;
+	right: 20px;
+	z-index: 100;
+	display: flex;
+	align-items: center;
+	box-sizing: border-box;
+	height: 26px;
+	padding: 0 2px;
+	overflow: hidden;
+	border: var(--vscode-strokeThickness) solid var(--vscode-chat-requestBorder);
+	border-radius: var(--vscode-cornerRadius-large);
+	background-color: var(--vscode-interactive-result-editor-background-color, var(--vscode-editor-background));
+	opacity: 0;
+}
+
+.interactive-item-container.interactive-request:not(.editing):hover .request-hover,
+.interactive-item-container .request-hover:focus-within {
+	opacity: 1;
+}
+
+.interactive-item-container :is(.request-hover, .chat-footer-toolbar) .action-label {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+	width: 22px;
+	height: 22px;
+	margin: 0 2px;
+	padding: 0;
+	border: var(--vscode-strokeThickness) solid transparent;
+	border-radius: var(--vscode-cornerRadius-small);
+	color: var(--vscode-icon-foreground);
+	cursor: pointer;
+}
+
+.interactive-item-container :is(.request-hover, .chat-footer-toolbar) .action-label:hover {
+	background-color: var(--vscode-toolbar-hoverBackground);
+}
+
+.interactive-item-container .chat-footer-toolbar .action-label.checked {
+	border-color: var(--vscode-inputOption-activeBorder);
+	background-color: var(--vscode-inputOption-activeBackground);
+	color: var(--vscode-inputOption-activeForeground);
+}
+
+/* The checkpoint between requests (chat.css `.checkpoint-container`). */
+.interactive-item-container .checkpoint-container {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	width: 100%;
+	margin: 0 0 8px;
+	opacity: 0;
+}
+
+.interactive-item-container:hover .checkpoint-container,
+.interactive-item-container .checkpoint-container:focus-within {
+	opacity: 1;
+}
+
+.interactive-item-container .checkpoint-container .checkpoint-line-left,
+.interactive-item-container .checkpoint-container .checkpoint-line-right {
+	flex: 1;
+	height: var(--vscode-strokeThickness);
+	background-color: var(--vscode-chat-requestBorder, var(--vscode-input-background));
+}
+
+.interactive-item-container .checkpoint-container .checkpoint-line-left {
+	mask-image: linear-gradient(to right, transparent, black);
+}
+
+.interactive-item-container .checkpoint-container .checkpoint-line-right {
+	mask-image: linear-gradient(to left, transparent, black);
+}
+
+/* A response's actions under it: the latest answer's always, the others' on hover. */
+.interactive-item-container.interactive-response .chat-footer-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	height: 22px;
+	padding-top: 6px;
+	opacity: 0;
+	transition: opacity 0.1s ease-in-out;
+}
+
+.interactive-item-container.interactive-response.chat-most-recent-response .chat-footer-toolbar,
+.interactive-item-container.interactive-response:hover .chat-footer-toolbar,
+.interactive-item-container.interactive-response:focus-within .chat-footer-toolbar {
+	opacity: 1;
+}
+
+.interactive-item-container .chat-footer-details {
+	display: flex;
+	align-items: center;
+	gap: var(--vscode-spacing-size40);
+	min-width: 0;
+	margin-left: auto;
+	overflow: hidden;
+	font-size: var(--vscode-chat-font-size-body-xs);
+	line-height: 16px;
+	color: var(--vscode-descriptionForeground);
+	opacity: 0.7;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* A step line (thinking, a tool call, progress): chat.css `.chat-used-context-label`. */
+.interactive-session .chat-used-context-label {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	width: fit-content;
+	max-width: 100%;
+	min-width: 0;
+	margin-left: -2px;
+	padding: 2px 6px 2px 2px;
+	border-radius: var(--vscode-cornerRadius-small);
+	font-size: var(--vscode-chat-font-size-body-s);
+	color: var(--vscode-descriptionForeground);
+	user-select: none;
+	overflow-wrap: anywhere;
+}
+
+.interactive-session .chat-used-context-label:hover,
+.interactive-session .chat-used-context-label[aria-expanded='true'] {
+	color: var(--vscode-foreground);
+}
+
+.interactive-session .chat-used-context-label .codicon {
+	font-size: var(--vscode-codiconFontSize-compact);
+	color: var(--vscode-icon-foreground);
+}
+
+.interactive-session .chat-used-context-label:focus-visible {
+	outline: var(--vscode-strokeThickness) solid var(--vscode-focusBorder);
+}
+
+/* The body of an opened step: a rule on its left (chat.css `.completed-response-disclosure`). */
+.interactive-session .chat-used-context-list {
+	margin-inline-start: var(--vscode-spacing-size60);
+	padding-inline-start: var(--vscode-spacing-size120);
+	border-inline-start: var(--vscode-strokeThickness) solid var(--vscode-chat-requestBorder);
+	color: var(--vscode-descriptionForeground);
+	font-size: var(--vscode-chat-font-size-body-s);
+	white-space: pre-wrap;
+}
+
+@keyframes chat-thinking-shimmer {
+	0% {
+		background-position: 120% 0;
+	}
+
+	100% {
+		background-position: -120% 0;
+	}
+}
+
+/* "Working", "Thinking": the text shimmers while the agent is on it. */
+.interactive-session .chat-progress-shimmer {
+	background: linear-gradient(90deg,
+			var(--vscode-descriptionForeground) 0%,
+			var(--vscode-descriptionForeground) 30%,
+			var(--vscode-chat-thinkingShimmer) 50%,
+			var(--vscode-descriptionForeground) 70%,
+			var(--vscode-descriptionForeground) 100%);
+	background-size: 400% 100%;
+	background-clip: text;
+	-webkit-background-clip: text;
+	-webkit-text-fill-color: transparent;
+	animation: chat-thinking-shimmer 2s steps(60, end) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.interactive-session .chat-progress-shimmer {
+		animation: none;
+	}
+}
+
+.interactive-session .progress-step {
+	font-size: var(--vscode-chat-font-size-body-s);
+	color: var(--vscode-descriptionForeground);
+	font-variant-numeric: tabular-nums;
+}

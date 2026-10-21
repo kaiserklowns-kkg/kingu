@@ -4,6 +4,8 @@
 
 import type { IconName } from '#lib/workbench/Icon.svelte';
 import { isIconId, MASK_ICONS } from '#lib/workbench/codicons.ts';
+import type { AgentApproval } from './chatInput.ts';
+import type { ModeTone } from './composer.ts';
 
 /** Each Kingu icon name as the codicon / registered icon VS Code draws for the same thing. */
 export const ICON_CODICON: Record<IconName, string> = {
@@ -140,3 +142,15 @@ export function compactCodicon(id: string): string {
 
 /** Whether `id` draws (a codicon, a registered icon, or one of Kingu's masked marks). */
 export const drawsIcon = (id: string) => isIconId(id) || id in MASK_ICONS;
+
+/**
+ * The mode picker's icon, compact as VS Code draws it (modePickerActionItem): Agent's `agent`, Ask's
+ * `question`, Plan's `tasklist`; a custom agent has none (its name alone).
+ */
+export const MODE_CODICON: Record<ModeTone, string | null> = { agent: compactCodicon('agent'), ask: compactCodicon('question'), plan: compactCodicon('tasklist'), custom: null };
+
+/**
+ * The permission picker's icon per run mode (kingu-old's agent host picker, getConfigIcon): Manual
+ * permissions a key, editing automatically Claude's `edit`, Allow all a warning.
+ */
+export const PERMISSION_CODICON: Record<AgentApproval, string> = { default: 'key', acceptEdits: 'edit', bypassPermissions: 'warning' };

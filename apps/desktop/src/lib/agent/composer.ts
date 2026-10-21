@@ -46,7 +46,7 @@ export function cycleMode(order: readonly ModePick[], current: ModePick, dir: 1 
 	return order[(i + dir + order.length) % order.length];
 }
 
-// ---- run modes (Cursor's Ask Every Time / Allowlist / Run Everything) -------------------------
+// ---- run modes (kingu-old's permission picker: Manual permissions / Edit Automatically / Allow all) --
 
 /** How each of Kingu's Agent approvals is named in the composer, Cursor's run modes where they match. */
 export function runModeLabel(a: AgentApproval): string {

@@ -142,6 +142,11 @@ export const COLOR_DEFAULTS: Record<string, Defaults> = {
 	'list.highlightForeground': ['#2AAAFF', '#0066BF', 'focusBorder', 'focusBorder'],
 	'sash.hoverBorder': 'focusBorder',
 	'sideBarTitle.background': 'sideBar.background',
+	// kingu-old's modern tabs (the view switcher's active tile; theme.ts MODERN_TAB_*).
+	'modernTab.activeBackground': 'list.inactiveSelectionBackground',
+	'modernTab.activeForeground': 'list.inactiveSelectionForeground',
+	'modernTab.hoverBackground': 'list.hoverBackground',
+	'modernTab.hoverForeground': 'list.hoverForeground',
 	'peekView.border': ['#3794FF', '#1A85FF', 'contrastBorder', 'contrastBorder'],
 
 	// The chat view (VS Code's chatColors.ts and interactive.contribution.ts).

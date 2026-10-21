@@ -160,7 +160,7 @@
 				onpointermove={(e) => !row.disabled && (e.movementX || e.movementY) && (active = i)}
 				onmousedown={(e) => (e.preventDefault(), pick(row))}
 			>
-				{#if row.icon}<span class="shrink-0" style:color={i === active ? undefined : row.color}><Codicon id={codiconOf(row.icon)} size={13} /></span>{/if}
+				{#if row.codicon || row.icon}<span class="shrink-0" style:color={i === active ? undefined : row.color}><Codicon id={row.codicon ?? codiconOf(row.icon!)} size={13} /></span>{/if}
 				<span class="flex min-w-0 flex-1 flex-col">
 					<span class="truncate">{row.label}</span>
 					{#if row.description && row.description.toLowerCase() !== row.label.toLowerCase()}<span class={['truncate text-[11px]', i === active ? 'opacity-80' : 'text-(--vscode-descriptionForeground)']}>{row.description}</span>{/if}

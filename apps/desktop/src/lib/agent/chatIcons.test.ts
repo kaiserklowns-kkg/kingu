@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { compactCodicon, drawsIcon, ICON_CODICON } from './chatIcons.ts';
+import { compactCodicon, drawsIcon, ICON_CODICON, MODE_CODICON, PERMISSION_CODICON } from './chatIcons.ts';
 
 describe('chat icons', () => {
 	test('every Kingu icon maps to an icon that draws', () => {
@@ -13,5 +13,11 @@ describe('chat icons', () => {
 		expect(compactCodicon('mic')).toBe('mic-compact');
 		// No question-compact: the icon itself.
 		expect(compactCodicon('question')).toBe('question');
+	});
+
+	test("the pickers' icons as kingu-old draws them", () => {
+		expect(MODE_CODICON).toEqual({ agent: 'agent-compact', ask: 'question', plan: 'tasklist', custom: null });
+		expect(PERMISSION_CODICON).toEqual({ default: 'key', acceptEdits: 'edit', bypassPermissions: 'warning' });
+		for (const id of [...Object.values(MODE_CODICON), ...Object.values(PERMISSION_CODICON)]) if (id) expect(drawsIcon(id)).toBe(true);
 	});
 });

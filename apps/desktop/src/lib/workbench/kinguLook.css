@@ -33,4 +33,22 @@
 	--vscode-cornerRadius-large: 10px;
 	--vscode-cornerRadius-xLarge: 14px;
 	--vscode-cornerRadius-circle: 9999px;
+	/* VS Code's stroke, icon-size and spacing tokens (kingu-old's window: `vars`). */
+	--vscode-strokeThickness: 1px;
+	--vscode-codiconFontSize: 16px;
+	--vscode-codiconFontSize-compact: 12px;
+	--vscode-spacing-sizeNone: 0px;
+	--vscode-spacing-size20: 2px;
+	--vscode-spacing-size40: 4px;
+	--vscode-spacing-size60: 6px;
+	--vscode-spacing-size80: 8px;
+	--vscode-spacing-size100: 10px;
+	--vscode-spacing-size120: 12px;
+	--vscode-spacing-size160: 16px;
+	--vscode-spacing-size200: 20px;
+	--vscode-spacing-size240: 24px;
+	--vscode-spacing-size280: 28px;
+	--vscode-spacing-size320: 32px;
+	--vscode-spacing-size360: 36px;
+	--vscode-spacing-size400: 40px;
 }

@@ -101,7 +101,8 @@
 		stacked = false,
 		tint,
 		onpastetext,
-		vscode = false
+		vscode = false,
+		editing = false
 	}: {
 		value?: string;
 		placeholder: string;
@@ -161,6 +162,8 @@
 		onpastetext?: (text: string) => boolean;
 		/** VS Code's chat input look (see the top). */
 		vscode?: boolean;
+		/** An earlier request edited here: the request bubble's colour (VS Code's `.editing`). */
+		editing?: boolean;
 	} = $props();
 
 	const MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
@@ -335,8 +338,11 @@
 			return;
 		}
 		area.style.height = 'auto';
-		const line = parseFloat(getComputedStyle(area).lineHeight) || 22;
-		area.style.height = `${Math.min(area.scrollHeight, line * maxRows + 4)}px`;
+		const style = getComputedStyle(area);
+		const line = parseFloat(style.lineHeight) || 22;
+		// The VS Code look pads the text 12px above and below; the rows limit is for the text.
+		const pad = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+		area.style.height = `${Math.min(area.scrollHeight, line * maxRows + pad + 4)}px`;
 	});
 
 	$effect(() => {
@@ -544,13 +550,15 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
 	bind:this={box}
-	class={[
-		'relative flex cursor-text flex-col gap-1.5 border bg-(--vscode-input-background) px-2.5 pt-2 pb-1.5 transition-[border-color,box-shadow] duration-100 focus-within:border-(--vscode-focusBorder)',
-		vscode ? (stacked ? 'rounded-b-[8px]' : 'rounded-[8px]') : stacked ? 'rounded-b-xl' : 'rounded-xl',
-		'border-(--vscode-input-border,var(--vscode-widget-border))',
-		top && 'min-h-[120px]',
-		size === 'lg' && 'shadow-[0_2px_12px_rgba(0,0,0,0.25)]'
-	]}
+	class={vscode
+		? ['chat-input-container', stacked && 'stacked', textFocused && 'focused', running && 'working', editing && 'editing']
+		: [
+				'relative flex cursor-text flex-col gap-1.5 border bg-(--vscode-input-background) px-2.5 pt-2 pb-1.5 transition-[border-color,box-shadow] duration-100 focus-within:border-(--vscode-focusBorder)',
+				stacked ? 'rounded-b-xl' : 'rounded-xl',
+				'border-(--vscode-input-border,var(--vscode-widget-border))',
+				top && 'min-h-[120px]',
+				size === 'lg' && 'shadow-[0_2px_12px_rgba(0,0,0,0.25)]'
+			]}
 	onmousedown={onboxdown}
 	onkeydown={onchromekey}
 >
@@ -570,7 +578,7 @@
 		/>
 	{/if}
 	{#if images.length}
-		<ul class="flex flex-wrap gap-1" aria-label={t('chatView.attachments')}>
+		<ul class={['flex flex-wrap gap-1', vscode && 'pt-1.5 pl-1']} aria-label={t('chatView.attachments')}>
 			{#each images as a (a.path)}
 				<li class="group/thumb relative size-8 shrink-0 overflow-hidden rounded-md border border-(--vscode-widget-border)" title={a.path}>
 					{#if previews[a.path]}
@@ -589,7 +597,7 @@
 			{/each}
 		</ul>
 	{/if}
-	<div class="flex flex-wrap items-start gap-1" onmousedown={onboxdown}>
+	<div class={vscode ? 'chat-editor-container flex flex-wrap items-center gap-1' : 'flex flex-wrap items-start gap-1'} onmousedown={onboxdown}>
 		{#each chips as c (c.key)}
 			<span class={[CHIP, c.off && 'opacity-50']} title={c.title ?? c.label}>
 				<button
@@ -643,51 +651,92 @@
 			aria-autocomplete={commands.length || mentions ? 'list' : undefined}
 			aria-activedescendant={slashOpen ? `${listId}-${slashActive}` : mentionOpen ? `${listId}-${mentionActive}` : undefined}
 			style="outline: none; box-shadow: none"
-			class={[
-				'min-w-32 flex-1 basis-40 resize-none bg-transparent text-(--vscode-input-foreground) outline-none focus-visible:outline-none placeholder:text-(--vscode-input-placeholderForeground)',
-				size === 'lg' ? 'text-[14px] leading-[22px]' : 'text-[13px] leading-5',
-				(chips.length || fileChips.length) && 'min-h-5',
-				top && 'min-h-[66px]'
-			]}
+			class={vscode
+				? 'interactive-input-editor min-w-32 flex-1 basis-40'
+				: [
+						'min-w-32 flex-1 basis-40 resize-none bg-transparent text-(--vscode-input-foreground) outline-none focus-visible:outline-none placeholder:text-(--vscode-input-placeholderForeground)',
+						size === 'lg' ? 'text-[14px] leading-[22px]' : 'text-[13px] leading-5',
+						(chips.length || fileChips.length) && 'min-h-5',
+						top && 'min-h-[66px]'
+					]}
 		></textarea>
 	</div>
-	<div class={['mt-px flex min-h-6 items-center gap-1', top && 'mt-auto']} onmousedown={onboxdown}>
-		<div class="flex min-w-0 flex-1 items-center gap-1 text-xs text-(--vscode-descriptionForeground)" onmousedown={onboxdown}>
-			{@render left?.(layout)}
+	{#if vscode}
+		<!-- VS Code's toolbars under the text: the pickers, then the microphone and Send in the execute toolbar. -->
+		<div class="chat-input-toolbars" onmousedown={onboxdown}>
+			<div class="chat-input-toolbar" onmousedown={onboxdown}>
+				{@render left?.(layout)}
+			</div>
+			{@render right?.(layout)}
+			<div class="chat-execute-toolbar">
+				{#if chatDictationShown()}
+					<button
+						type="button"
+						class={['action-label icon-only', micActive && dictation.state === 'listening' && 'listening']}
+						aria-label={micActive && dictation.state === 'listening' ? t('chatRender.voice.stop') : t('chatRender.voice.start')}
+						aria-pressed={micActive}
+						title={micActive ? (dictation.state === 'transcribing' ? t('chatRender.voice.transcribing') : t('chatRender.voice.listening', { time: dictation.elapsed })) : t('chatRender.voice.start')}
+						disabled={disabled || (dictation.state !== 'idle' && !micActive) || dictation.state === 'starting' || dictation.state === 'transcribing'}
+						onmousedown={(e) => e.preventDefault()}
+						onclick={onmic}
+					>
+						<Codicon id={micActive && dictation.state === 'transcribing' ? 'loading-compact~spin' : micActive ? 'mic-filled' : 'mic-compact'} />
+					</button>
+				{/if}
+				<button
+					type="button"
+					class={['action-label icon-only', action !== 'stop' && 'chat-submit-button']}
+					aria-label={action === 'stop' ? t('chatView.stop') : action === 'queue' ? SEND_LABEL[queueDefault]() : (sendLabel ?? t('chatView.send'))}
+					title={primaryTitle}
+					disabled={busy || disabled || action === 'none'}
+					onclick={onprimary}
+					oncontextmenu={onprimarymenu}
+				>
+					<Codicon id={busy ? 'loading-compact~spin' : action === 'stop' ? 'stop-circle' : 'arrow-up-compact'} />
+				</button>
+			</div>
 		</div>
-		{@render right?.(layout)}
-		{#if chatDictationShown()}
+		<div class="chat-input-working-border" aria-hidden="true"></div>
+		<div class="chat-input-working-border chat-input-working-border-glow" aria-hidden="true"></div>
+	{:else}
+		<div class={['mt-px flex min-h-6 items-center gap-1', top && 'mt-auto']} onmousedown={onboxdown}>
+			<div class="flex min-w-0 flex-1 items-center gap-1 text-xs text-(--vscode-descriptionForeground)" onmousedown={onboxdown}>
+				{@render left?.(layout)}
+			</div>
+			{@render right?.(layout)}
+			{#if chatDictationShown()}
+				<button
+					type="button"
+					aria-label={micActive && dictation.state === 'listening' ? t('chatRender.voice.stop') : t('chatRender.voice.start')}
+					aria-pressed={micActive}
+					title={micActive ? (dictation.state === 'transcribing' ? t('chatRender.voice.transcribing') : t('chatRender.voice.listening', { time: dictation.elapsed })) : t('chatRender.voice.start')}
+					class={[BAR_BTN, micActive && 'text-(--vscode-errorForeground) hover:text-(--vscode-errorForeground)']}
+					disabled={disabled || (dictation.state !== 'idle' && !micActive) || dictation.state === 'starting' || dictation.state === 'transcribing'}
+					onmousedown={(e) => e.preventDefault()}
+					onclick={onmic}
+				>
+					{#if micActive && dictation.state === 'transcribing'}<span class="size-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent"></span>{:else}<span class={micActive ? 'animate-pulse' : undefined}><Codicon id="mic" size={14} /></span>{/if}
+				</button>
+			{/if}
+			{#if attach && !vscode}
+				<button type="button" aria-label={t('chatView.attach')} title={t('chatView.attachHint')} class={BAR_BTN} {disabled} onclick={pick}><Codicon id="attach" size={14} /></button>
+			{/if}
 			<button
 				type="button"
-				aria-label={micActive && dictation.state === 'listening' ? t('chatRender.voice.stop') : t('chatRender.voice.start')}
-				aria-pressed={micActive}
-				title={micActive ? (dictation.state === 'transcribing' ? t('chatRender.voice.transcribing') : t('chatRender.voice.listening', { time: dictation.elapsed })) : t('chatRender.voice.start')}
-				class={[BAR_BTN, micActive && 'text-(--vscode-errorForeground) hover:text-(--vscode-errorForeground)']}
-				disabled={disabled || (dictation.state !== 'idle' && !micActive) || dictation.state === 'starting' || dictation.state === 'transcribing'}
-				onmousedown={(e) => e.preventDefault()}
-				onclick={onmic}
+				aria-label={action === 'stop' ? t('chatView.stop') : action === 'queue' ? SEND_LABEL[queueDefault]() : (sendLabel ?? t('chatView.send'))}
+				title={primaryTitle}
+				class={vscode
+					? 'grid size-6 shrink-0 place-items-center rounded-md text-(--vscode-foreground) hover:bg-(--vscode-toolbar-hoverBackground) disabled:text-(--vscode-descriptionForeground) disabled:opacity-60 disabled:hover:bg-transparent'
+					: 'ml-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-[color-mix(in_srgb,var(--vscode-foreground)_85%,transparent)] text-(--vscode-sideBar-background,var(--vscode-input-background)) transition-opacity hover:opacity-90 disabled:opacity-30'}
+				style:background={!vscode && action !== 'none' && tint ? tint : undefined}
+				disabled={busy || disabled || action === 'none'}
+				onclick={onprimary}
+				oncontextmenu={onprimarymenu}
 			>
-				{#if micActive && dictation.state === 'transcribing'}<span class="size-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent"></span>{:else}<span class={micActive ? 'animate-pulse' : undefined}><Codicon id="mic" size={14} /></span>{/if}
+				{#if busy}<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>{:else if action === 'stop'}<span class={vscode ? 'size-2.5 rounded-[2px] border-[1.5px] border-current' : 'size-2.5 rounded-[2px] bg-current'}></span>{:else}<Codicon id="arrow-up-compact" size={vscode ? 15 : 14} />{/if}
 			</button>
-		{/if}
-		{#if attach && !vscode}
-			<button type="button" aria-label={t('chatView.attach')} title={t('chatView.attachHint')} class={BAR_BTN} {disabled} onclick={pick}><Codicon id="attach" size={14} /></button>
-		{/if}
-		<button
-			type="button"
-			aria-label={action === 'stop' ? t('chatView.stop') : action === 'queue' ? SEND_LABEL[queueDefault]() : (sendLabel ?? t('chatView.send'))}
-			title={primaryTitle}
-			class={vscode
-				? 'grid size-6 shrink-0 place-items-center rounded-md text-(--vscode-foreground) hover:bg-(--vscode-toolbar-hoverBackground) disabled:text-(--vscode-descriptionForeground) disabled:opacity-60 disabled:hover:bg-transparent'
-				: 'ml-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-[color-mix(in_srgb,var(--vscode-foreground)_85%,transparent)] text-(--vscode-sideBar-background,var(--vscode-input-background)) transition-opacity hover:opacity-90 disabled:opacity-30'}
-			style:background={!vscode && action !== 'none' && tint ? tint : undefined}
-			disabled={busy || disabled || action === 'none'}
-			onclick={onprimary}
-			oncontextmenu={onprimarymenu}
-		>
-			{#if busy}<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>{:else if action === 'stop'}<span class={vscode ? 'size-2.5 rounded-[2px] border-[1.5px] border-current' : 'size-2.5 rounded-[2px] bg-current'}></span>{:else}<Codicon id="arrow-up-compact" size={vscode ? 15 : 14} />{/if}
-		</button>
-	</div>
+		</div>
+	{/if}
 	{#if dragOver}
 		<div class="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-[inherit] border border-dashed border-(--vscode-focusBorder) bg-[color-mix(in_srgb,var(--vscode-editor-background)_50%,transparent)] text-xs text-(--vscode-foreground)">
 			<span class="flex items-center gap-1.5"><Codicon id="attach" size={14} />{t('composer.drop')}</span>
