@@ -1,10 +1,12 @@
 <script lang="ts">
 	// Markdown: Open Preview (VS Code ⇧⌘V, Orca's MarkdownPreview). Follows the open editor's
-	// unsaved text live; otherwise reads the file. Links to workspace files open them; localhost
-	// links open in the browser; other links are copied, since the preview never navigates.
+	// unsaved text live; otherwise reads the file. Links to workspace files open them; web links
+	// open in the browser (asking first for an untrusted domain); other links are copied, since
+	// the preview never navigates.
 	import { invoke } from '@tauri-apps/api/core';
 	import { editors } from './editors.svelte';
 	import { status } from './status.svelte';
+	import { trustedDomains } from './trustedDomains.svelte';
 	import { previewTarget } from './viewers';
 	import { renderMarkdown } from './markdown';
 	import { watchSource } from './viewerSource';
@@ -31,6 +33,9 @@
 		if (href.startsWith('#')) return;
 		if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(href)) {
 			void invoke('open_local_url', { url: href }).catch((err) => status.error(String(err)));
+		} else if (/^https?:\/\//i.test(href)) {
+			// Outgoing link protection: an untrusted domain asks first (trustedDomains.svelte.ts).
+			void trustedDomains.openLink(href, { fromWorkspace: true });
 		} else if (/^[a-z][a-z0-9+.-]*:/i.test(href)) {
 			void navigator.clipboard.writeText(href).then(() => status.flash(`คัดลอกลิงก์แล้ว: ${href}`, 4000));
 		} else {

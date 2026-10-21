@@ -8,6 +8,7 @@
 	import { untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import Icon from '#lib/workbench/Icon.svelte';
+	import { trustedDomains } from '#lib/workbench/trustedDomains.svelte.ts';
 	import { theme } from '#lib/theme/theme.svelte.ts';
 	import { team } from '#lib/team/team.svelte.ts';
 	import { locale, t } from '#lib/i18n/index.ts';
@@ -101,7 +102,8 @@
 	function onMessage(e: MessageEvent) {
 		if (!frame || e.source !== frame.contentWindow) return;
 		const href = linkToOpen(e.data);
-		if (href) void invoke('terminal_open_url', { url: href, allowed: null });
+		// Outgoing link protection: an agent-made page's link to an untrusted domain asks first.
+		if (href) void trustedDomains.openLink(href, { fromWorkspace: false });
 	}
 
 	async function act(f: () => Promise<unknown>) {

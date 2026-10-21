@@ -29,6 +29,7 @@ import { isUntitled } from '#lib/workbench/untitled.ts';
 import { externalKey } from '#lib/workbench/externalFiles.ts';
 import { keyForPath, type WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 import { workspaceName } from '#lib/workbench/workspaceFile.ts';
+import { workspaceTrust } from '#lib/workbench/workspaceTrust.svelte.ts';
 import { taskLaunch } from './commandLine.ts';
 import { runTask, type Execution, type GraphHost, type Summary } from './dependencies.ts';
 import { detectTasks, packageManagerFor, taskFromDefinition } from './detect.ts';
@@ -317,6 +318,8 @@ class Tasks {
 			notifications.warn(t('ideTasks.openFolder'));
 			return {};
 		}
+		// Restricted Mode runs no task (VS Code asks to trust the workspace first).
+		if (!(await workspaceTrust.request(t('trust.feature.tasks')))) return {};
 		const running = this.active.get(taskKey(task));
 		if (running && task.runOptions.instanceLimit <= 1) {
 			const policy = task.runOptions.instancePolicy;
@@ -827,6 +830,10 @@ class Tasks {
 		if (settings.get<string>('task.allowAutomaticTasks') === 'off' && settings.inspect('task.allowAutomaticTasks', 'user') !== undefined) return;
 		const root = await this.root();
 		if (!root) return;
+		// Restricted Mode: no automatic task, and no question about them; they run once the
+		// workspace is trusted (workspaceTrust.svelte.ts calls this again).
+		if (!workspaceTrust.loaded) await workspaceTrust.load();
+		if (!workspaceTrust.trusted) return;
 		const all = await this.folders();
 		const folders = all.filter((f) => !this.#autoRan.has(f.path));
 		const workspaceFile = this.#workspaceFile && !this.#autoRan.has(WORKSPACE_AUTO + this.#workspaceFile) ? this.#workspaceFile : null;

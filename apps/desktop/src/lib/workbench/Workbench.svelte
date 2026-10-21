@@ -81,6 +81,9 @@
 	import { installIssues } from '#lib/ade/issues.svelte.ts';
 	import { installLinear } from '#lib/ade/linear.svelte.ts';
 	import { installCliBridge } from '#lib/ade/cliBridge.svelte.ts';
+	import WorkspaceTrustBanner from './WorkspaceTrustBanner.svelte';
+	import { workspaceTrust } from './workspaceTrust.svelte';
+	import { trustedDomains } from './trustedDomains.svelte';
 	import { installVoice } from '#lib/voice/dictation.svelte.ts';
 	import DictationIndicator from '#lib/voice/DictationIndicator.svelte';
 	import LinearConnect from '#lib/ade/LinearConnect.svelte';
@@ -377,6 +380,8 @@
 		const uninstallLinear = installLinear();
 		const uninstallTaskSources = installTaskSources();
 		const uninstallCliBridge = installCliBridge();
+		const uninstallWorkspaceTrust = workspaceTrust.install();
+		const uninstallTrustedDomains = trustedDomains.install();
 		const uninstallVoice = installVoice();
 		const uninstallLayout = installLayoutCommands();
 		const uninstallSnaps = installSnaps();
@@ -446,6 +451,8 @@
 			uninstallLinear();
 			uninstallTaskSources();
 			uninstallCliBridge();
+			uninstallWorkspaceTrust();
+			uninstallTrustedDomains();
 			uninstallVoice();
 			uninstallAutomations();
 			uninstallAgentNotifications();
@@ -527,6 +534,7 @@
 	<!-- One title bar and one status bar for the IDE and the Agents layout. -->
 	<TitleBar workspaceName={workspaceName || 'Kingu'} {focused} />
 	<DebugToolbar placement="floating" />
+	<WorkspaceTrustBanner />
 
 	<div bind:this={middle} class={['workbench-body grid min-h-0 flex-1 bg-(--vscode-titleBar-activeBackground) px-[4px] pb-[4px]', (appMode.isAgents || systemSettings.visible) && 'hidden']}
 		style:grid-template-areas={gridTemplateAreas(grid)}

@@ -4,6 +4,7 @@ import JsonWorker from 'monaco-editor/language/json/json.worker?worker';
 import TsWorker from 'monaco-editor/language/typescript/ts.worker?worker';
 import { EXTRA_LANGUAGES, registerMonacoLanguages } from './languages.ts';
 import { monacoLoaded } from './monacoConfiguration.ts';
+import { openEditorLink } from './linkOpener.ts';
 import { captureSymbolProviders } from './symbolProviders.ts';
 
 // Before any language loads: the Outline view asks Monaco's own symbol providers too.
@@ -99,6 +100,9 @@ for (const [id, load, tokens] of borrowed) {
 		});
 	});
 }
+
+// Web links clicked in an editor go through outgoing link protection (linkOpener.ts).
+monaco.editor.registerLinkOpener({ open: (uri) => /^https?$/.test(uri.scheme) && openEditorLink(uri.toString(true)) });
 
 // Every contribution is registered now: settings may reach Monaco's configuration service.
 monacoLoaded();

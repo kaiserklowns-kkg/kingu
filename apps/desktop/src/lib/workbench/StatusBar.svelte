@@ -13,6 +13,7 @@
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 	import { scm } from './scm.svelte';
 	import { statusEntries } from './statusEntries.svelte';
+	import { workspaceTrust } from './workspaceTrust.svelte';
 	import { commands } from './commands.svelte';
 	import { syncItem } from './scmRemote';
 	import { textFiles } from './textFileService.svelte';
@@ -175,6 +176,12 @@
 			: 'bg-(--vscode-statusBar-background) text-(--vscode-statusBar-foreground)'
 	]}
 >
+	<!-- VS Code's Restricted Mode item: the window is not trusted; opens the Workspace Trust editor. -->
+	{#if workspaceTrust.restricted}
+		<button class={[ITEM, 'bg-(--vscode-statusBarItem-prominentBackground,rgba(0,0,0,0.5)) text-(--vscode-statusBarItem-prominentForeground,inherit)']} title={t('trust.status.tooltip')} onclick={() => workspaceTrust.manage()}>
+			<Icon name="shield" size={14} />{t('trust.status.restricted')}
+		</button>
+	{/if}
 	<!-- workbench.notifications.position bottom-left: the bell is the left-most item. -->
 	{#if bell === 'statusLeft' && show('status.notifications')}<NotificationsBell />{/if}
 	{#if branch && show('status.scm')}

@@ -16,6 +16,7 @@ import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
+import { workspaceTrust } from '#lib/workbench/workspaceTrust.svelte.ts';
 import { profiles } from '#lib/settings/profiles.svelte.ts';
 import { DEFAULT_PROFILE_NAME } from '#lib/settings/profiles.ts';
 import { t } from '#lib/i18n/index.ts';
@@ -72,6 +73,11 @@ async function openEditors(p: EditorParams) {
 		if (!opened) throw new Error(t('cli.folderNotOpened', { path: p.folders.join(', ') }));
 	} else if (p.folderMode === 'add') await workspace.addFolderToWorkspace(p.folders);
 	else if (p.folderMode === 'remove') for (const f of p.folders) await workspace.removeFolder(f);
+	// security.workspace.trust.untrustedFiles: files from outside the trusted folders.
+	const files = p.files.map((f) => f.path);
+	const decision = await workspaceTrust.confirmFiles(files);
+	if (decision === 'cancel') return;
+	if (decision === 'newWindow') return void (await workspace.newWindow({ files }));
 	const opens = editorOpens(p, (abs) => workspace.keyFor(abs));
 	if (opens.length && appMode.isAgents) appMode.setMode('workbench');
 	const keys: string[] = [];
