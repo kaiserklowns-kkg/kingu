@@ -1623,6 +1623,44 @@ export const EDITOR_SETTINGS: SettingSchema[] = [
 		description: 'ใช้สีจาก semantic token ของ language server (Controls whether the semanticHighlighting is shown for the languages that support it.)'
 	},
 	{
+		id: 'editor.tokenColorCustomizations',
+		group: 'Text Editor',
+		type: 'json',
+		// No top-level type, like VS Code's (an object of groups, textMateRules and `[Theme]` blocks).
+		schema: {
+			properties: {
+				comments: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				strings: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				keywords: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				numbers: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				types: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				functions: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				variables: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				textMateRules: { type: 'array', items: { type: 'object' } },
+				semanticHighlighting: { type: 'boolean' }
+			},
+			patternProperties: { '^\\[': { type: 'object' } }
+		},
+		default: {},
+		description:
+			'แทนที่สีและรูปแบบตัวอักษรของ token จากธีม เช่น {"comments": "#6a9955"}, {"textMateRules": [{"scope": "keyword", "settings": {"fontStyle": "bold"}}]} หรือเฉพาะธีม {"[Dark Modern]": {...}} (Overrides editor syntax colors and font style from the currently selected color theme.)'
+	},
+	{
+		id: 'editor.semanticTokenColorCustomizations',
+		group: 'Text Editor',
+		type: 'json',
+		schema: {
+			properties: {
+				enabled: { type: 'boolean' },
+				rules: { type: 'object' }
+			},
+			patternProperties: { '^\\[': { type: 'object' } }
+		},
+		default: {},
+		description:
+			'แทนที่สีและรูปแบบของ semantic token จากธีม เช่น {"rules": {"variable.readonly": "#4fc1ff"}} หรือเฉพาะธีม {"[Dark Modern]": {"enabled": true}} (Overrides editor semantic token color and styles from the currently selected color theme.)'
+	},
+	{
 		id: 'editor.showDeprecated',
 		group: 'Text Editor',
 		type: 'boolean',

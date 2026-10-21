@@ -43,6 +43,7 @@ export const editorOptions = (language?: string): Monaco.editor.IEditorOptions &
 /** The color theme's `semanticHighlighting` (for `editor.semanticHighlighting.enabled: configuredByTheme`); reading `theme.current` re-runs effects on a theme change. */
 function themeSemantic(): boolean {
 	void theme.current;
+	void theme.revision;
 	return activeTheme()?.flat.semanticHighlighting ?? false;
 }
 
@@ -269,6 +270,12 @@ export function installSettings(): () => void {
 		$effect(() => {
 			const custom = settings.get('workbench.colorCustomizations');
 			untrack(() => theme.setCustomizations(custom));
+		});
+		// editor.tokenColorCustomizations / editor.semanticTokenColorCustomizations: token colors over the theme.
+		$effect(() => {
+			const token = settings.get('editor.tokenColorCustomizations');
+			const semantic = settings.get('editor.semanticTokenColorCustomizations');
+			untrack(() => theme.setTokenCustomizations(token, semantic));
 		});
 		$effect(() => {
 			const level = settings.get<number>('window.zoomLevel');
