@@ -112,6 +112,14 @@ export const SIDEBAR_SETTINGS: SettingSchema[] = [
 		description: 'แสดงทางลัด Issues (GitHub) ในแถบข้าง (Orca: showTasksButton) (Show the Issues shortcut in the side bar.)'
 	},
 	{
+		id: 'kingu.sidebar.showChildAgents',
+		group: G,
+		type: 'boolean',
+		default: false,
+		description:
+			'แสดงงานย่อยที่ agent ส่งต่อด้วย kingu task create ซ้อนอยู่ใต้งานที่ส่ง พับเก็บได้ ปิดไว้: ซ่อนงานย่อยจากรายการ (ยกเว้นงานที่เลือกอยู่) และงานต้นทางบอกจำนวนแทน (Orca: agentsShowChildAgents) (Show sub-tasks an agent dispatched with kingu task create nested and collapsible under the task that dispatched them; off hides them, except the selected one, and the dispatching card shows their count.)'
+	},
+	{
 		id: 'kingu.board.columnWidth',
 		group: G,
 		type: 'number',

@@ -222,7 +222,7 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['ui.uiZoomLevel', 'window.zoomLevel', 'mapped'],
 	['ui.editorFontZoomLevel', null, 'needs-feature', 'editor-only zoom'],
 	['ui.hideCliCreatedWorkspaces', null, 'needs-feature', 'a Kingu CLI that creates workspaces'],
-	['ui.agentsShowChildAgents', null, 'needs-feature', 'sub-agent rows'],
+	['ui.agentsShowChildAgents', 'kingu.sidebar.showChildAgents', 'added', 'tasks dispatched with kingu task create (dispatched_by), nested under the dispatching card'],
 	['ui.workspaceStatuses', 'kingu.board.statuses', 'added', 'column names only; colors and icons are fixed'],
 	['ui.workspaceStatuses', 'kingu.board.view', 'added', 'the board shows these columns, or the agent-status ones'],
 	['ui.workspaceStatuses', 'kingu.board.autoStatus', 'added', 'Kingu also moves a card when its PR opens or merges'],
