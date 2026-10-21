@@ -106,7 +106,7 @@ describe('Arkai runtime', () => {
 		expect(first!.body.model).toBe('coder');
 		expect(first!.body.messages[0].content).toContain('# Rules\nBe brief.\n\n# Skills\n');
 		expect(first!.body.messages[0].content).toContain(`- pdf: PDFs\n  ${join(plugin, 'skills', 'pdf', 'SKILL.md')}`);
-		expect(first!.body.tools.map((t: { function: { name: string } }) => t.function.name)).toEqual(['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'TodoWrite']);
+		expect(first!.body.tools.map((t: { function: { name: string } }) => t.function.name)).toEqual(['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'TodoWrite', 'WebFetch']);
 		expect(second!.body.messages.slice(-2)).toEqual([
 			{ role: 'assistant', content: 'Changing it.', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'Edit', arguments: JSON.stringify({ path: 'a.txt', old_str: 'old', new_str: 'new' }) } }] },
 			{ role: 'tool', tool_call_id: 'c1', content: 'Edited a.txt' }

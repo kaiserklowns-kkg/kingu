@@ -37,6 +37,7 @@ pub mod scripts;
 pub mod slash_commands;
 pub mod status_hooks;
 pub mod tasks;
+pub mod tool_rules;
 pub mod trust;
 pub mod worktree;
 pub mod worktree_from;
@@ -280,11 +281,21 @@ pub async fn agent_start(
     (None, Some(slug)) => format!("task {slug}"),
     (None, None) => "folder".into(),
   };
+  // chat.tools.terminal/urls.autoApprove: prompts the rules approve are answered here (the rules
+  // re-read for each prompt, so an "Always allow" just saved applies to the next one).
+  let approver = std::sync::Mutex::new(tool_rules::AutoApprover::default());
+  let run_id: Arc<std::sync::OnceLock<u32>> = Arc::default();
+  let (answer_host, answer_run) = (Arc::downgrade(&agents), run_id.clone());
+  let set_run = run_id.clone();
   // Spawning the sidecar and its first answer can take a moment: keep it off the main thread.
   let id = tauri::async_runtime::spawn_blocking(move || {
-    agents.start(
+    let id = agents.start(
       req,
       Arc::new(move |ev| {
+        let (ev, allow) = approver.lock().unwrap().on_event(ev, || tool_rules::ToolRules::load(&config));
+        if let Some(request) = allow {
+          auto_answer(answer_host.clone(), answer_run.clone(), request);
+        }
         // A chat's edits first: snapshots are stored (not passed on), checkpoints added.
         let events = match &edits {
           Some((edits, root, id, cwd)) => edits.on_event(root, id, cwd, ev),
@@ -307,7 +318,9 @@ pub async fn agent_start(
           }
         }
       }),
-    )
+    )?;
+    let _ = set_run.set(id);
+    Ok::<u32, String>(id)
   })
   .await
   .map_err(|e| e.to_string())??;
@@ -319,6 +332,28 @@ pub async fn agent_start(
     log::warn!("chat {chat}: redo: {e}");
   }
   Ok(id)
+}
+
+/// Answers `allow` to a prompt `tool_rules` approved, off the sidecar's reader thread (the answer
+/// waits for the sidecar's reply, which that thread reads). The run id is known once `start`
+/// returned; a prompt can only come after that in practice, but it is waited for.
+fn auto_answer(host: std::sync::Weak<AgentHost>, run: Arc<std::sync::OnceLock<u32>>, request: String) {
+  std::thread::spawn(move || {
+    let started = std::time::Instant::now();
+    let id = loop {
+      if let Some(id) = run.get() {
+        break *id;
+      }
+      if started.elapsed() > std::time::Duration::from_secs(30) {
+        return log::warn!("auto-approve: the run never started");
+      }
+      std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    let Some(host) = host.upgrade() else { return };
+    if let Err(e) = host.answer_permission(id, &request, "allow", None, None) {
+      log::warn!("agent run {id}: auto-approve: {e}");
+    }
+  });
 }
 
 /// The owner key of a chat's live run (`host::Owners`).

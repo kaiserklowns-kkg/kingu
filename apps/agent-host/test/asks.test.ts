@@ -178,9 +178,26 @@ describe('the safety ask in a run', () => {
 	});
 
 	test('bad guardAsks are refused', async () => {
-		const out: string[] = [];
-		const host = new AgentHost({ query: askQuery([], { denied: [], asked: 0, ran: [] }), write: (m) => out.push(JSON.stringify(m)) });
-		await host.handleLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'start', params: { runId: 1, cwd: '/w', prompt: 'x', guardAsks: { deletes: 'yes' } } }));
-		expect(out[0]).toContain('guardAsks must be');
+		for (const guardAsks of [{ deletes: 'yes' }, { editRules: [['**/*', 'yes']] }, { editRules: [['**/*']] }, { editRules: 'x' }]) {
+			const out: string[] = [];
+			const host = new AgentHost({ query: askQuery([], { denied: [], asked: 0, ran: [] }), write: (m) => out.push(JSON.stringify(m)) });
+			await host.handleLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'start', params: { runId: 1, cwd: '/w', prompt: 'x', guardAsks } }));
+			expect(out[0]).toContain('guardAsks must be');
+		}
+	});
+
+	test('chat.tools.edits.autoApprove: Accept edits still asks before a protected edit, Allow all does not', async () => {
+		const editRules = [
+			['**/*', true],
+			['**/package.json', false]
+		];
+		const asked = await askRun([{ tool: 'Edit', input: { file_path: 'package.json', old_string: 'a', new_string: 'b' } }], { permissionMode: 'acceptEdits', guardAsks: { editRules } }, () => 'allow');
+		expect(asked.events.find((e) => e.kind === 'guard_asked')).toMatchObject({ check: 'edit_rule', paths: ['package.json'] });
+		expect(asked.seen.ran).toEqual(['tu1']);
+		const other = await askRun([{ tool: 'Edit', input: { file_path: 'src/a.ts', old_string: 'a', new_string: 'b' } }], { permissionMode: 'acceptEdits', guardAsks: { editRules } }, () => 'deny');
+		expect(other.events.some((e) => e.kind === 'guard_asked')).toBe(false);
+		const all = await askRun([{ tool: 'Edit', input: { file_path: 'package.json', old_string: 'a', new_string: 'b' } }], { permissionMode: 'bypassPermissions', guardAsks: { editRules } }, () => 'deny');
+		expect(all.events.some((e) => e.kind === 'guard_asked')).toBe(false);
+		expect(all.seen.ran).toEqual(['tu1']);
 	});
 });

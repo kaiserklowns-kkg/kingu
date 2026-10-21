@@ -1,7 +1,7 @@
-// Arkai's built-in tools, run in this process: Read, Write, Edit, Bash, Glob, Grep and TodoWrite,
-// with Claude Code's names and input fields, so the chat's tool rows, permission cards, working
-// set and todo bar show them as they show Claude's. Permission, the safety checks and the file
-// snapshot happen before `runTool` (session.ts); these only do the work.
+// Arkai's built-in tools, run in this process: Read, Write, Edit, Bash, Glob, Grep, TodoWrite and
+// WebFetch (webFetch.ts), with Claude Code's names and input fields, so the chat's tool rows,
+// permission cards, working set and todo bar show them as they show Claude's. Permission, the
+// safety checks and the file snapshot happen before `runTool` (session.ts); these only do the work.
 //
 // Paths may be relative (to the run's folder) or absolute. Output for the model is capped; the
 // chat gets a shorter excerpt.
@@ -10,18 +10,20 @@ import { lstatSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSyn
 import { dirname, isAbsolute, join, normalize, relative, sep } from 'node:path';
 import type { ToolDef } from './messages.ts';
 import type { ToolKind } from '../runtimes/tools.ts';
+import { webFetch } from './webFetch.ts';
 
 type Obj = Record<string, unknown>;
 
 export type ToolResult = { content: string; isError: boolean };
-export type ToolContext = { cwd: string; env: Record<string, string | undefined>; signal: AbortSignal; todos?: (todos: unknown) => void; grep?: 'rg' | 'js' };
+/** `fetch`: WebFetch's network (tests pass a fake; the global one otherwise). */
+export type ToolContext = { cwd: string; env: Record<string, string | undefined>; signal: AbortSignal; todos?: (todos: unknown) => void; grep?: 'rg' | 'js'; fetch?: typeof fetch };
 
-export const TOOL_NAMES = ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'TodoWrite'] as const;
+export const TOOL_NAMES = ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'TodoWrite', 'WebFetch'] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 /** Light mode's tools (old Arkai's LIGHT_TOOLS): enough to read, change and run a project. */
 export const LIGHT_TOOL_NAMES: readonly ToolName[] = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'];
 
-export const KIND: Readonly<Record<ToolName, ToolKind>> = { Read: 'read', Write: 'edit', Edit: 'edit', Bash: 'execute', Glob: 'search', Grep: 'search', TodoWrite: 'think' };
+export const KIND: Readonly<Record<ToolName, ToolKind>> = { Read: 'read', Write: 'edit', Edit: 'edit', Bash: 'execute', Glob: 'search', Grep: 'search', TodoWrite: 'think', WebFetch: 'fetch' };
 
 /** Read: lines per call unless `limit` says otherwise, and the longest line kept whole. */
 export const READ_LINES = 2000;
@@ -125,6 +127,15 @@ export const TOOL_DEFS: Readonly<Record<ToolName, ToolDef>> = {
 			},
 			required: ['todos']
 		}
+	},
+	WebFetch: {
+		name: 'WebFetch',
+		description: 'Fetch a web page (http or https) and get its readable text. The user approves each site first. A redirect to another site is reported, not followed.',
+		parameters: {
+			type: 'object',
+			properties: { url: { ...str, description: 'The full URL' }, prompt: { ...str, description: 'What you are looking for on the page' } },
+			required: ['url']
+		}
 	}
 };
 
@@ -170,6 +181,8 @@ export async function runTool(name: ToolName, input: Obj, ctx: ToolContext): Pro
 				return await grep(input, ctx);
 			case 'TodoWrite':
 				return todoWrite(input, ctx);
+			case 'WebFetch':
+				return await webFetch(input, ctx.signal, ctx.fetch);
 		}
 	} catch (e) {
 		const code = (e as { code?: unknown }).code;

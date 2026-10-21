@@ -23,6 +23,10 @@ pub struct GuardAsks {
   pub mcp_tools: bool,
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub protected_paths: Vec<String>,
+  /// `chat.tools.edits.autoApprove` in order (`tool_rules::edit_rules`): an edit whose last
+  /// matching pattern is `false` asks, in every mode but Allow all.
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  pub edit_rules: Vec<(String, bool)>,
 }
 
 fn flag(value: Option<serde_json::Value>, default: bool) -> bool {
@@ -66,6 +70,7 @@ pub fn from_settings(config: &Path, root: &Path, dir: &Path) -> GuardAsks {
     deletes: flag(user("kingu.agent.ask.fileDeletes"), true),
     mcp_tools: flag(user("kingu.agent.ask.mcpTools"), false),
     protected_paths: protected,
+    edit_rules: super::tool_rules::edit_rules_from_settings(config),
   }
 }
 
@@ -79,8 +84,10 @@ mod tests {
     let config = tempfile::tempdir().unwrap();
     let root = tempfile::tempdir().unwrap();
     let asks = from_settings(config.path(), root.path(), root.path());
-    assert_eq!(asks, GuardAsks { outside_cwd: true, deletes: true, mcp_tools: false, protected_paths: vec![] });
-    assert_eq!(serde_json::to_value(&asks).unwrap(), json!({"outsideCwd": true, "deletes": true, "mcpTools": false}));
+    assert_eq!(asks, GuardAsks { outside_cwd: true, deletes: true, mcp_tools: false, protected_paths: vec![], edit_rules: super::super::tool_rules::edit_rules(None) });
+    let wire = serde_json::to_value(&asks).unwrap();
+    assert_eq!(wire["editRules"][0], json!(["**/*", true]));
+    assert_eq!((wire["outsideCwd"].clone(), wire["deletes"].clone(), wire["mcpTools"].clone(), wire.get("protectedPaths")), (json!(true), json!(true), json!(false), None));
 
     std::fs::write(
       crate::settings::user_path(config.path()),

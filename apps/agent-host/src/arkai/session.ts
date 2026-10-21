@@ -77,11 +77,27 @@ export function ruleFor(view: ToolView): { text: string; key: string } {
 		const prefix = words.length > 1 && /^[a-z][\w:.-]*$/i.test(words[1]!) ? `${words[0]} ${words[1]}` : words[0]!;
 		return { text: `Bash(${prefix}:*)`, key: `Bash:${prefix}` };
 	}
+	const host = fetchHost(view);
+	if (host) return { text: `WebFetch(domain:${host})`, key: `WebFetch:${host}` };
 	return { text: view.name, key: view.name };
+}
+
+/** The host a WebFetch call asks for (an "always" answer covers that site only). */
+function fetchHost(view: ToolView): string | null {
+	if (view.name !== 'WebFetch' || typeof view.input.url !== 'string') return null;
+	try {
+		return new URL(view.input.url).host.toLowerCase() || null;
+	} catch {
+		return null;
+	}
 }
 
 /** Whether an "always" grant covers the call. */
 export function granted(grants: ReadonlySet<string>, view: ToolView): boolean {
+	if (view.name === 'WebFetch') {
+		const host = fetchHost(view);
+		return host !== null && grants.has(`WebFetch:${host}`);
+	}
 	if (view.name !== 'Bash') return grants.has(view.name);
 	const command = typeof view.input.command === 'string' ? view.input.command.trim() : '';
 	if (grants.has(`Bash=${command}`)) return true;
@@ -126,7 +142,7 @@ export class ArkaiSession extends RunSession {
 		this.provider = init.arkai.provider;
 		this.modelId = init.arkai.model;
 		this.client = clientFor(this.provider, fetchFn);
-		this.guards = init.safetyChecks || init.guardAsks ? new Guards(init.safetyChecks, init.guardAsks ?? null) : null;
+		this.guards = init.safetyChecks || init.guardAsks ? new Guards(init.safetyChecks, init.guardAsks ?? null, () => this.mode) : null;
 	}
 
 	start() {

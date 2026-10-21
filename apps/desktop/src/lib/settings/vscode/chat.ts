@@ -5,7 +5,13 @@
 // `chat.tools.global.autoApprove` is VS Code's APPLICATION_MACHINE setting. The look, rendering,
 // input and notification ones are read by the chat UI: chatLook.ts (fonts), ChatMarkdown.svelte
 // (math, mermaid), chatSettings.ts (the rest; AgentPanel, ChatList, chatRewind, agentNotify).
+// The tool approval rules (`chat.tools.terminal/edits/urls.*`) are read by Rust (agent/tool_rules)
+// from the user's settings.json only too, merged over VS Code's defaults in chatToolRules.json
+// (Rust reads the same file), so they are user settings here.
 import type { SettingSchema } from '../registry';
+import TOOL_RULES from './chatToolRules.json';
+
+const bool = { type: 'boolean' } as const;
 
 export const CHAT_SETTINGS: SettingSchema[] = [
 	{
@@ -190,6 +196,23 @@ export const CHAT_SETTINGS: SettingSchema[] = [
 		description: 'บันทึกไฟล์ที่แก้ค้างไว้ทุกไฟล์ (ยกเว้นไฟล์ที่ยังไม่มีชื่อ) ก่อนส่งข้อความแชต เพื่อให้ agent อ่านเนื้อหาล่าสุด (Controls whether all dirty editors except untitled editors are saved before sending a chat message.)'
 	},
 	{
+		id: 'chat.tools.autoExpandFailures',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: true,
+		description: 'เปิดแถวของ tool ที่ล้มเหลวให้เองในแชต เพื่อให้เห็นรายละเอียดของข้อผิดพลาด (When enabled, terminal tool failures are automatically expanded in the chat UI to show error details.)'
+	},
+	{
+		id: 'chat.tools.edits.autoApprove',
+		group: 'Agent Chat',
+		type: 'object',
+		values: 'boolean',
+		default: TOOL_RULES.edits,
+		description:
+			'ไฟล์ที่ agent แก้ได้โดยไม่ถาม (glob → true) และไฟล์ที่ต้องถามก่อนแก้ทุกครั้ง (glob → false) pattern ที่ตรงตัวสุดท้ายเป็นตัวตัดสิน ไฟล์ที่ถามก่อนจะถามในทุกโหมดยกเว้น Allow all ส่วนไฟล์อื่นถามหรือไม่ตามโหมดของแชต (Controls whether edits made by the agent are automatically approved. The default is to approve all edits except those made to certain files which have the potential to cause immediate unintended side-effects, such as `**/.vscode/*.json`. Set to `true` to automatically approve edits to matching files, `false` to always require explicit approval. The last pattern matching a given file will determine whether the edit is automatically approved.)',
+		scope: 'application'
+	},
+	{
 		id: 'chat.tools.global.autoApprove',
 		group: 'Agent Chat',
 		type: 'boolean',
@@ -211,6 +234,50 @@ export const CHAT_SETTINGS: SettingSchema[] = [
 		type: 'boolean',
 		default: true,
 		description: 'เมื่อกลับไปจุด checkpoint ใส่ข้อความของคำขอนั้นกลับในช่องแชต (Controls whether the input of the chat should be restored when an undo request is made. The input will be filled with the text of the request that was restored.)'
+	},
+	{
+		id: 'chat.tools.terminal.autoApprove',
+		group: 'Agent Chat',
+		type: 'json',
+		schema: {
+			type: 'object',
+			additionalProperties: { anyOf: [bool, { type: 'object', properties: { approve: bool, matchCommandLine: bool } }, { type: 'null' }] }
+		},
+		default: TOOL_RULES.terminal,
+		description:
+			'คำสั่ง shell ที่ agent รันได้โดยไม่ถาม (true) หรือต้องถามก่อนเสมอ (false) จับคู่กับต้นคำสั่ง หรือใช้ regex ใน /…/ ทุกคำสั่งย่อยของ `a && b`, `a | b`, `$(…)` ต้องได้ true และไม่มีอันไหนได้ false ใช้ { approve, matchCommandLine: true } เพื่อจับทั้งบรรทัด และ null เพื่อปิดกฎเริ่มต้น regex ที่ใช้ look-around หรือ back-reference ไม่ทำงาน (กฎ false แบบนั้นจะถามทุกคำสั่งที่ขึ้นต้นเหมือนกัน) (A list of commands or regular expressions that control whether the run in terminal tool commands require explicit approval. These will be matched against the start of a command. A regular expression can be provided by wrapping the string in `/` characters followed by optional flags such as `i` for case-insensitivity. Set to `true` to automatically approve commands, `false` to always require explicit approval or `null` to unset the value.)',
+		scope: 'application'
+	},
+	{
+		id: 'chat.tools.terminal.enableAutoApprove',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: true,
+		description: 'ใช้กฎของ chat.tools.terminal.autoApprove อนุมัติคำสั่ง shell ให้เอง ปิดแล้วทุกคำสั่งจะถามก่อน (Controls whether to allow auto approval in the run in terminal tool.)',
+		scope: 'application'
+	},
+	{
+		id: 'chat.tools.terminal.ignoreDefaultAutoApproveRules',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: false,
+		description:
+			'ไม่ใช้กฎเริ่มต้นของ chat.tools.terminal.autoApprove ใช้เฉพาะกฎที่ตั้งเอง กฎ false เริ่มต้นมีไว้กันคำสั่งอันตราย ใช้ด้วยความระวัง (Whether to ignore the built-in default auto-approve rules used by the run in terminal tool as defined in `#chat.tools.terminal.autoApprove#`. Use this setting at your own risk; the default auto-approve rules are designed to protect you against running dangerous commands.)',
+		scope: 'application',
+		tags: ['experimental']
+	},
+	{
+		id: 'chat.tools.urls.autoApprove',
+		group: 'Agent Chat',
+		type: 'json',
+		schema: {
+			type: 'object',
+			additionalProperties: { oneOf: [bool, { type: 'object', properties: { approveRequest: bool, approveResponse: bool } }] }
+		},
+		default: TOOL_RULES.urls,
+		description:
+			'URL ที่ tool อย่าง WebFetch ดึงได้โดยไม่ถาม key เป็น pattern ของ URL (https://*.example.com/*) ค่า true อนุมัติ false ถามก่อน Kingu ยังไม่มีขั้นตรวจผลลัพธ์แยก จึงใช้แค่ approveRequest (Controls which URLs are automatically approved when requested by chat tools. Keys are URL patterns and values can be `true` to approve both requests and responses, `false` to deny, or an object with `approveRequest` and `approveResponse` properties for granular control.)',
+		scope: 'application'
 	},
 	{
 		id: 'chat.useAgentsMdFile',

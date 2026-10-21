@@ -11,7 +11,7 @@ import { realpathSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type { HookCallbackMatcher, HookInput, SyncHookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
 import type { AgentEvent } from '../protocol.ts';
-import { askDeniedReason, askFor, parsePatterns, type Ask, type AskConfig, type Rule } from './asks.ts';
+import { askDeniedReason, askFor, parseEditRules, parsePatterns, type Ask, type AskConfig, type EditRule, type Rule } from './asks.ts';
 import { RepetitionTracker, REPETITION_REASON } from './repetition.ts';
 import { blockingThreats, blockReason, threatSummary } from './security.ts';
 
@@ -52,13 +52,19 @@ export function realpathExisting(path: string): string {
 export class Guards {
 	readonly repetition = new RepetitionTracker();
 	readonly #rules: Rule[];
+	readonly #editRules: EditRule[];
 
-	/** `blocks`: the security and repetition checks (`safetyChecks`); `asks`: the always-ask checks of a run in `cwd`. */
+	/**
+	 * `blocks`: the security and repetition checks (`safetyChecks`); `asks`: the always-ask checks
+	 * of a run in `cwd`; `mode`: the run's permission mode now (Allow all skips the edit rules).
+	 */
 	constructor(
 		readonly blocks = true,
-		readonly asks: (AskConfig & { cwd: string }) | null = null
+		readonly asks: (AskConfig & { cwd: string }) | null = null,
+		readonly mode: () => string = () => 'default'
 	) {
 		this.#rules = parsePatterns(asks?.protectedPaths ?? []);
+		this.#editRules = parseEditRules(asks?.editRules ?? []);
 	}
 
 	/** Whether the call may run; when not, what the model and the app are told. */
@@ -81,7 +87,7 @@ export class Guards {
 	/** Why the user must be asked before the call runs, or null. */
 	askFor(tool: string, input: unknown, realpath: (p: string) => string = realpathExisting): Ask | null {
 		if (!this.asks) return null;
-		return askFor(tool, input, this.asks.cwd, this.asks, this.#rules, realpath);
+		return askFor(tool, input, this.asks.cwd, this.asks, this.#rules, realpath, { rules: this.#editRules, allowAll: this.mode() === 'bypassPermissions' });
 	}
 
 	/** A new user message: the repetition count starts over. */

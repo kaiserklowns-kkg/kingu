@@ -34,7 +34,8 @@ const ASK_REASON = {
 	outside_cwd: 'chatExtras.ask.outsideCwd',
 	delete: 'chatExtras.ask.delete',
 	protected: 'chatExtras.ask.protected',
-	mcp: 'chatExtras.ask.mcp'
+	mcp: 'chatExtras.ask.mcp',
+	edit_rule: 'chatToolRules.ask.editRule'
 } as const;
 
 /**

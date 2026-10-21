@@ -378,7 +378,11 @@ export class AgentHost {
 				(typeof asks === 'object' &&
 					!Array.isArray(asks) &&
 					[asks.outsideCwd, asks.deletes, asks.mcpTools].every((v) => v === undefined || typeof v === 'boolean') &&
-					(asks.protectedPaths === undefined || (Array.isArray(asks.protectedPaths) && asks.protectedPaths.length <= MAX_PATTERNS && asks.protectedPaths.every((x) => typeof x === 'string' && x.length <= 500)))),
+					(asks.protectedPaths === undefined || (Array.isArray(asks.protectedPaths) && asks.protectedPaths.length <= MAX_PATTERNS && asks.protectedPaths.every((x) => typeof x === 'string' && x.length <= 500))) &&
+					(asks.editRules === undefined ||
+						(Array.isArray(asks.editRules) &&
+							asks.editRules.length <= MAX_PATTERNS &&
+							asks.editRules.every((r) => Array.isArray(r) && r.length === 2 && typeof r[0] === 'string' && r[0].length <= 500 && typeof r[1] === 'boolean')))),
 			'guardAsks must be flags and up to 500 path patterns'
 		);
 		const append = p.systemPromptAppend ?? '';
@@ -427,7 +431,7 @@ export class AgentHost {
 			mcpServers[ARTIFACT_SERVER] = artifactServer({ cwd: p.cwd, call, emit: (ev) => this.emit(run.id, ev) });
 			run.artifacts = true;
 		}
-		if (p.safetyChecks !== false || asks) run.guards = new Guards(p.safetyChecks !== false, asks ? { ...asks, cwd: p.cwd, trustedTools: run.artifacts ? [ARTIFACT_TOOL] : [] } : null);
+		if (p.safetyChecks !== false || asks) run.guards = new Guards(p.safetyChecks !== false, asks ? { ...asks, cwd: p.cwd, trustedTools: run.artifacts ? [ARTIFACT_TOOL] : [] } : null, () => run.mode);
 		this.runs.set(run.id, run);
 		const hooks = runHooks(
 			run.guards?.hook((ev) => this.emit(run.id, ev), (line) => this.log(`run ${run.id}: ${line}`), this.askGuard(run)) ?? null,

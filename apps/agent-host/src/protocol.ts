@@ -51,9 +51,11 @@ export type StartParams = {
 	/**
 	 * Kingu's always-ask checks (guards/asks.ts), on in every permission mode: writes outside `cwd`,
 	 * file deletes, MCP tools, and paths matching `protectedPaths` (.kinguignore + the setting,
-	 * gitignore patterns relative to `cwd`). Rust reads them from the user's settings; null: none.
+	 * gitignore patterns relative to `cwd`), and edits whose last matching `editRules` glob is
+	 * `false` (`chat.tools.edits.autoApprove`; not in Allow all). Rust reads them from the user's
+	 * settings; null: none.
 	 */
-	guardAsks?: { outsideCwd?: boolean; deletes?: boolean; mcpTools?: boolean; protectedPaths?: string[] } | null;
+	guardAsks?: { outsideCwd?: boolean; deletes?: boolean; mcpTools?: boolean; protectedPaths?: string[]; editRules?: [string, boolean][] } | null;
 	/** Project rules (AGENTS.md, .cursor/rules, …; Rust agent/rules.rs) appended to Claude Code's system prompt. */
 	systemPromptAppend?: string | null;
 	/** Which agent runs the session (runtimes/): absent or `claude` is the Claude Agent SDK. */
@@ -196,7 +198,7 @@ export type AgentEvent =
 	 * the `permission_request` with this `request_id` follows. `check`: `outside_cwd` (writes
 	 * outside the run's folder), `delete`, `protected` (a .kinguignore path) or `mcp`; `paths`: what it is about.
 	 */
-	| { kind: 'guard_asked'; request_id: string; tool: string; tool_use_id: string | null; check: 'outside_cwd' | 'delete' | 'protected' | 'mcp'; paths: string[] }
+	| { kind: 'guard_asked'; request_id: string; tool: string; tool_use_id: string | null; check: 'outside_cwd' | 'delete' | 'protected' | 'mcp' | 'edit_rule'; paths: string[] }
 	/**
 	 * The agent published an artifact (artifacts.ts, Kingu's `artifact_publish` tool): version
 	 * `version` of artifact `id`, stored by the app under `<root>/.kingu/artifacts/<id>/`. The chat
