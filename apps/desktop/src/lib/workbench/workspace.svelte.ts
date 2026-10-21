@@ -120,6 +120,8 @@ class Workspace {
 		this.workspaceFile = info.file;
 		this.untitled = info.untitled;
 		this.identity = info.identity;
+		// Language servers know every root folder (didChangeWorkspaceFolders when one is added or removed).
+		lsp.setFolders(this.folders);
 	}
 
 	async loadRecent() {

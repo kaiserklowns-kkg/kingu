@@ -25,8 +25,11 @@ import {
 	fromSignatureHelp,
 	hoverContents,
 	markerToDiagnostic,
+	keyOfModelPath,
+	keyOfUri,
+	lspFolders,
+	modelPathOf,
 	pathToUri,
-	relOfUri,
 	toDocumentHighlights,
 	toLspRange,
 	toMonacoTextEdits,
@@ -61,6 +64,7 @@ import {
 import type { CallHierarchyItem, CodeAction, Command, CompletionItem, Diagnostic, DocumentSymbol, Location, Range, ServerCapabilities, SymbolInformation, WorkspaceEdit } from './protocol';
 import type { HierarchyDirection, HierarchyKind } from '#lib/workbench/hierarchyModel.ts';
 import { applyWorkspaceEdit, type ApplyResult } from './workspaceEdit';
+import type { WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 import { t } from '#lib/i18n/index.ts';
 import { isRustError } from '#lib/i18n/rustErrors.ts';
 import { formatTrace, TRACE_SETTINGS, traceValue, type TraceValue } from './trace.ts';
@@ -106,7 +110,8 @@ class Lsp {
 
 	#monaco: MonacoApi | undefined;
 	#root: Promise<string> | undefined;
-	#rootPath = '';
+	/** The window's root folders (workspace.svelte.ts sets them); every server is told all of them. */
+	#folders: WorkspaceFolder[] = [];
 	#sessions = new Map<string, Session>();
 	#docs = new Map<Monaco.editor.ITextModel, Doc>();
 	#index = new DiagnosticsIndex();
@@ -189,7 +194,7 @@ class Lsp {
 		const out: { name: string; kind: number; container?: string; rel: string; line: number; column: number }[] = [];
 		for (const list of lists)
 			for (const sym of list ?? []) {
-				const rel = sym.location?.uri ? relOfUri(this.#rootPath, sym.location.uri) : null;
+				const rel = sym.location?.uri ? this.#keyOf(sym.location.uri) : null;
 				if (rel === null) continue;
 				const start = sym.location.range?.start ?? { line: 0, character: 0 };
 				out.push({ name: sym.name, kind: sym.kind, container: sym.containerName, rel, line: start.line + 1, column: start.character + 1 });
@@ -244,9 +249,39 @@ class Lsp {
 		}
 	}
 
-	/** Workspace-relative path of an LSP URI, or null outside the workspace. */
+	/** Workbench key of an LSP URI (relative in the first folder, absolute in another), or null outside the workspace. */
 	relOf(uri: string): string | null {
-		return relOfUri(this.#rootPath, uri);
+		return this.#keyOf(uri);
+	}
+
+	#keyOf(uri: string): string | null {
+		return keyOfUri(this.#folders, uri);
+	}
+
+	/** The first root folder's path ('' before one is known). */
+	get #rootPath(): string {
+		return this.#folders[0]?.path ?? '';
+	}
+
+	/**
+	 * The window's root folders changed (workspace.svelte.ts). A new first folder is a new workspace
+	 * (Rust has stopped the servers, `reset` follows). Otherwise each running server is told with
+	 * `workspace/didChangeWorkspaceFolders`, or restarts when it cannot take the notification;
+	 * problems are keyed again, since a file of an added folder is now a workspace file.
+	 */
+	setFolders(folders: readonly WorkspaceFolder[]) {
+		const before = this.#folders;
+		this.#folders = [...folders];
+		this.#root = this.#folders.length ? Promise.resolve(this.#rootPath) : undefined;
+		if (before[0]?.path !== this.#folders[0]?.path) return;
+		const next = lspFolders(this.#folders);
+		for (const [key, s] of [...this.#sessions]) {
+			if (!s.client.ready) continue;
+			if (s.client.takesFolderChanges) s.client.changeWorkspaceFolders(next);
+			else if (folderListChanged(lspFolders(before), next)) void this.#restartKey(key);
+		}
+		for (const uri of this.#origin.keys()) this.#applyMarkers(uri);
+		this.#queueRefresh();
 	}
 
 	hasServer(languageId: string) {
@@ -363,7 +398,7 @@ class Lsp {
 	reset() {
 		for (const key of [...this.#sessions.keys()]) this.#forget(key);
 		this.#root = undefined;
-		this.#rootPath = '';
+		this.#folders = [];
 		for (const [rel, model] of [...this.#previews]) this.#dropPreview(rel, model);
 		this.status.clear();
 		this.symbols.clear();
@@ -420,14 +455,18 @@ class Lsp {
 					return true;
 				}
 				if (resource.scheme !== 'file') return false;
-				editors.openFromCodeNavigation(resource.path.replace(/^\//, ''), at.line, at.column);
+				editors.openFromCodeNavigation(keyOfModelPath(resource.path, this.#folders), at.line, at.column);
 				return true;
 			}
 		});
 	}
 
 	async #rootDir(): Promise<string> {
-		this.#root ??= invoke<{ workspace: string }>('app_info').then((i) => (this.#rootPath = i.workspace));
+		// Before workspace.svelte.ts has set the folders (or with an older Rust side): the first folder only.
+		this.#root ??= invoke<{ workspace: string }>('app_info').then((i) => {
+			if (!this.#folders.length && i.workspace) this.#folders = [{ path: i.workspace, name: i.workspace.split('/').pop() ?? i.workspace }];
+			return this.#rootPath;
+		});
 		return this.#root;
 	}
 
@@ -493,7 +532,7 @@ class Lsp {
 			try {
 				id = await invoke<number>('lsp_start', { language: info.languages[0], onEvent: channel });
 				session.id = id;
-				const caps = await client.initialize(uriOfRel(root, '').replace(/\/$/, ''), init, session.trace);
+				const caps = await client.initialize(uriOfRel(root, '').replace(/\/$/, ''), init, session.trace, lspFolders(this.#folders));
 				const pushed = this.#settingsFor(info);
 				session.pushed = JSON.stringify(pushed);
 				if (Object.keys(pushed).length) client.didChangeConfiguration(pushed);
@@ -638,9 +677,9 @@ class Lsp {
 
 	#applyMarkers(uri: string) {
 		const monaco = this.#monaco;
-		const rel = relOfUri(this.#rootPath, uri);
+		const rel = this.#keyOf(uri);
 		if (!monaco || rel === null) return;
-		const model = monaco.editor.getModel(monaco.Uri.file('/' + rel));
+		const model = monaco.editor.getModel(monaco.Uri.file(modelPathOf(rel)));
 		if (model) monaco.editor.setModelMarkers(model, MARKER_OWNER, this.#index.get(uri).map(toMarker));
 	}
 
@@ -649,7 +688,7 @@ class Lsp {
 		this.#refreshQueued = true;
 		queueMicrotask(() => {
 			this.#refreshQueued = false;
-			this.problems = this.#index.files(this.#rootPath, this.#owned);
+			this.problems = this.#index.files(this.#folders, this.#owned);
 		});
 	}
 
@@ -661,7 +700,7 @@ class Lsp {
 	setOwnedDiagnostics(owner: string, path: string, items: Diagnostic[]) {
 		const uri = pathToUri(path);
 		this.#owned.set(owner, uri, items);
-		const rel = relOfUri(this.#rootPath, uri);
+		const rel = this.#keyOf(uri);
 		if (rel !== null) this.#applyOwnedMarkers(rel, owner);
 		this.#queueRefresh();
 	}
@@ -679,14 +718,14 @@ class Lsp {
 	/** The file at absolute `path` has an editor model (applyTo openDocuments / closedDocuments). */
 	isOpen(path: string): boolean {
 		const monaco = this.#markerMonaco;
-		const rel = relOfUri(this.#rootPath, pathToUri(path));
-		return !!monaco && rel !== null && !!monaco.editor.getModel(monaco.Uri.file('/' + rel));
+		const rel = this.#keyOf(pathToUri(path));
+		return !!monaco && rel !== null && !!monaco.editor.getModel(monaco.Uri.file(modelPathOf(rel)));
 	}
 
 	/** Sets the task folder root when no language server ran yet (problem paths are made relative to it). */
 	setRoot(root: string) {
 		if (!this.#rootPath) {
-			this.#rootPath = root;
+			this.#folders = [{ path: root, name: root.split('/').pop() ?? root }];
 			this.#root = Promise.resolve(root);
 		}
 	}
@@ -694,7 +733,7 @@ class Lsp {
 	#applyOwnedMarkers(rel: string, only?: string) {
 		const monaco = this.#markerMonaco;
 		if (!monaco || !this.#rootPath) return;
-		const model = monaco.editor.getModel(monaco.Uri.file('/' + rel));
+		const model = monaco.editor.getModel(monaco.Uri.file(modelPathOf(rel)));
 		if (!model) return;
 		const uri = uriOfRel(this.#rootPath, rel);
 		for (const owner of only !== undefined ? [only] : this.#owned.owners()) monaco.editor.setModelMarkers(model, `task:${owner}`, this.#owned.forOwner(owner, uri).map(toMarker));
@@ -730,8 +769,8 @@ class Lsp {
 	/** Monaco location of an LSP URI: a workspace file, or an external one Monaco cannot open. */
 	#monacoUri(uri: string): Monaco.Uri {
 		const monaco = this.#monaco!;
-		const rel = relOfUri(this.#rootPath, uri);
-		return rel !== null ? monaco.Uri.file('/' + rel) : monaco.Uri.from({ scheme: EXTERNAL_SCHEME, path: uriToPath(uri) ?? uri });
+		const rel = this.#keyOf(uri);
+		return rel !== null ? monaco.Uri.file(modelPathOf(rel)) : monaco.Uri.from({ scheme: EXTERNAL_SCHEME, path: uriToPath(uri) ?? uri });
 	}
 
 	/** Peek widgets need a model for every file they show; create read-only previews for files
@@ -740,13 +779,13 @@ class Lsp {
 		const monaco = this.#monaco!;
 		const want = new Set(rels);
 		if (dropOthers) for (const [rel, model] of this.#previews) if (!want.has(rel)) this.#dropPreview(rel, model);
-		const missing = [...want].filter((rel) => !monaco.editor.getModel(monaco.Uri.file('/' + rel)));
+		const missing = [...want].filter((rel) => !monaco.editor.getModel(monaco.Uri.file(modelPathOf(rel))));
 		if (!missing.length) return;
 		const { languageFor } = await import('#lib/editor/monaco.ts');
 		await Promise.all(
 			missing.map(async (rel) => {
 				const text = await invoke<string>('read_workspace_file', { rel }).catch(() => null);
-				const uri = monaco.Uri.file('/' + rel);
+				const uri = monaco.Uri.file(modelPathOf(rel));
 				if (text === null || monaco.editor.getModel(uri)) return;
 				this.#previews.set(rel, monaco.editor.createModel(text, languageFor(rel), uri));
 			})
@@ -771,7 +810,7 @@ class Lsp {
 	async applyWorkspaceEdit(edit: WorkspaceEdit): Promise<ApplyResult> {
 		const written: string[] = [];
 		const result = await applyWorkspaceEdit(edit, (uri) => {
-			const rel = relOfUri(this.#rootPath, uri);
+			const rel = this.#keyOf(uri);
 			if (rel === null) return `${uriToPath(uri) ?? uri} is outside the workspace`;
 			const model = editors.textModel(rel);
 			if (model) {
@@ -842,7 +881,7 @@ class Lsp {
 		// Client-side commands a server may hand out (rust-analyzer's code lenses).
 		const target = command.command === 'rust-analyzer.gotoLocation' ? (command.arguments?.[0] as Location | undefined) : undefined;
 		if (target?.uri && target.range) {
-			const rel = relOfUri(this.#rootPath, target.uri);
+			const rel = this.#keyOf(target.uri);
 			if (rel === null) return notifications.warn(t('tools.lsp.outsideWorkspace', { path: uriToPath(target.uri) ?? target.uri }));
 			return editors.openFromCodeNavigation(rel, target.range.start.line + 1, target.range.start.character + 1);
 		}
@@ -913,7 +952,7 @@ class Lsp {
 							const d = this.#lookup(model);
 							const result = d && (await d.client.definition(d.uri, toLspPosition(position), token).catch(() => null));
 							const targets = toTargets(result);
-							await this.#ensurePreviews(targets.map((t) => relOfUri(this.#rootPath, t.uri)).filter((r) => r !== null));
+							await this.#ensurePreviews(targets.map((t) => this.#keyOf(t.uri)).filter((r) => r !== null));
 							return targets.map((t) => ({ uri: this.#monacoUri(t.uri), range: toMonacoRange(t.range) }));
 						}
 					})
@@ -926,9 +965,9 @@ class Lsp {
 							const d = this.#lookup(model);
 							const result = d && (await d.client.references(d.uri, toLspPosition(position), context.includeDeclaration, token).catch(() => null));
 							// The peek can only show workspace files (it needs a model for each).
-							const inside = (result ?? []).filter((l) => relOfUri(this.#rootPath, l.uri) !== null);
+							const inside = (result ?? []).filter((l) => this.#keyOf(l.uri) !== null);
 							await this.#ensurePreviews(
-								inside.map((l) => relOfUri(this.#rootPath, l.uri)!),
+								inside.map((l) => this.#keyOf(l.uri)!),
 								{ dropOthers: true }
 							);
 							return inside.map((l) => ({ uri: this.#monacoUri(l.uri), range: toMonacoRange(l.range) }));
@@ -1083,7 +1122,7 @@ class Lsp {
 			languages: info.languages,
 			caps,
 			lookup: (model) => this.#lookup(model),
-			relOf: (uri) => relOfUri(this.#rootPath, uri),
+			relOf: (uri) => this.#keyOf(uri),
 			monacoUri: (uri) => this.#monacoUri(uri),
 			ensurePreviews: (rels) => this.#ensurePreviews(rels),
 			commandId: CODE_ACTION_COMMAND,
@@ -1091,6 +1130,11 @@ class Lsp {
 			onRefresh: (kind, run) => refresh.push({ kind, run })
 		});
 	}
+}
+
+/** Whether two folder lists differ (a server that cannot be told restarts on a change). */
+function folderListChanged(a: { uri: string; name: string }[], b: { uri: string; name: string }[]): boolean {
+	return a.length !== b.length || a.some((f, i) => f.uri !== b[i].uri || f.name !== b[i].name);
 }
 
 type ModeDefaults = { modeConfiguration: object; setModeConfiguration(c: object): void };

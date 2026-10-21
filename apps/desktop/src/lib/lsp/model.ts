@@ -2,7 +2,8 @@
 // kept out of the Svelte store so `bun test` can cover them.
 
 import type { ServerStatus } from './client';
-import { mergeDiagnostics, relOfUri, uriToPath } from './convert';
+import { keyOfUri, mergeDiagnostics, uriToPath } from './convert';
+import type { WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 import type { Diagnostic } from './protocol';
 import { t } from '#lib/i18n/index.ts';
 
@@ -160,13 +161,15 @@ export class DiagnosticsIndex {
 		return gone;
 	}
 
-	/** The Problems panel's files; `extra` adds problems of other owners (task problem matchers). */
-	files(root: string, extra?: OwnedDiagnostics): ProblemFile[] {
+	/** The Problems panel's files; `extra` adds problems of other owners (task problem matchers).
+	 * `rel` is the workbench key in `root` (one folder) or in the workspace's root folders. */
+	files(root: string | readonly WorkspaceFolder[], extra?: OwnedDiagnostics): ProblemFile[] {
+		const folders = typeof root === 'string' ? (root ? [{ path: root, name: '' }] : []) : root;
 		const out: ProblemFile[] = [];
 		for (const uri of new Set([...this.#byUri.keys(), ...(extra?.uris() ?? [])])) {
 			const items = extra ? mergeDiagnostics(this.get(uri), extra.get(uri)) : this.get(uri);
 			if (!items.length) continue;
-			const rel = relOfUri(root, uri);
+			const rel = keyOfUri(folders, uri);
 			out.push({ uri, rel, label: rel ?? uriToPath(uri) ?? uri, items });
 		}
 		// Workspace files first, then by path (VS Code sorts the Problems tree by resource).
