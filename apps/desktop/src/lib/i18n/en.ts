@@ -65,7 +65,8 @@ import { accessibility } from './en/accessibility';
 import { chatRender } from './en/chatRender';
 import { chatObserve } from './en/chatObserve';
 import { chatMcp } from './en/chatMcp';
-import { titleBar, chatWelcome } from './en/titleBar';
+import { titleBar } from './en/titleBar';
+import { chatWelcome } from './en/chatWelcome';
 
 import { editing } from './en/editing';
 import { terminal } from './en/terminal';
