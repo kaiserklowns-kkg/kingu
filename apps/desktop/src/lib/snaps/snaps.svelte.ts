@@ -21,7 +21,7 @@ import { layout } from '#lib/workbench/layout.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
-import { setMcpProvider, setSkillPluginProvider } from '#lib/ade/mcp.ts';
+import { setMcpPrepare, setMcpProvider, setSkillPluginProvider } from '#lib/ade/mcp.ts';
 import { team } from '#lib/team/team.svelte.ts';
 import { createSnapEventRouter, needsFocusReload } from '#lib/team/teamEvents.ts';
 import { approveSummary, canApprove, isApprovable, type TeamCatalog } from './teamSnaps.ts';
@@ -37,7 +37,9 @@ import {
 	sandboxPlan,
 	sandboxRefusal,
 	sandboxTask,
+	secretRows,
 	skillSnapIds,
+	snapsNeedingMcpSecrets,
 	snapSettingSchemas,
 	taskArgv,
 	taskCommandId,
@@ -49,6 +51,7 @@ import {
 	type PreparedInstall,
 	type SandboxInfo,
 	type SandboxPlan,
+	type SecretState,
 	type SnapInfo
 } from './snapModel.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
@@ -392,8 +395,98 @@ class Snaps {
 		});
 	}
 
+	/** Snaps whose missing secrets the user chose not to enter this session (asked once). */
+	#secretsDeclined = new Set<string>();
+
+	/** Snap: Set Secrets… — values for a snap's declared secrets, kept in the Keychain. */
+	async setSecrets(id?: string) {
+		const target = id ?? (await this.#pick(this.list.filter((s) => !s.error && s.permissions.secrets.length > 0), t('snapPlatform.secrets.pickSnap')));
+		const snap = this.list.find((s) => s.id === target && !s.error);
+		if (!target || !snap) return;
+		let states: SecretState[];
+		try {
+			states = await invoke<SecretState[]>('snap_secrets_list', { id: target });
+		} catch (e) {
+			notifications.error(t('snapPlatform.secrets.failed', { error: String(e) }));
+			return;
+		}
+		const row = await quick.choose({ placeholder: t('snapPlatform.secrets.pickName', { name: snap.name }), items: secretRows(states) });
+		if (!row) return;
+		const stored = states.find((s) => s.name === row.id)?.stored;
+		if (stored) {
+			const action = await quick.choose({
+				placeholder: row.id,
+				items: [
+					{ id: 'replace', label: t('snapPlatform.secrets.replace'), description: '' },
+					{ id: 'remove', label: t('snapPlatform.secrets.remove'), description: t('snapPlatform.secrets.removeDesc') }
+				]
+			});
+			if (!action) return;
+			if (action.id === 'remove') {
+				try {
+					await invoke('snap_secret_delete', { id: target, name: row.id });
+					status.flash(t('snapPlatform.secrets.removed', { name: row.id }));
+				} catch (e) {
+					notifications.error(t('snapPlatform.secrets.failed', { error: String(e) }));
+				}
+				return;
+			}
+		}
+		// Typed hidden; the hint never shows the value.
+		const value = await quick.input({ placeholder: t('snapPlatform.secrets.enter', { name: row.id, snap: snap.name }), password: true, hint: (v) => (v ? t('snapPlatform.secrets.saveHint') : t('snapPlatform.secrets.typeValue')) });
+		if (!value) return;
+		try {
+			await invoke('snap_secret_set', { id: target, name: row.id, value });
+			this.#secretsDeclined.delete(target);
+			status.flash(t('snapPlatform.secrets.saved', { name: row.id }));
+		} catch (e) {
+			notifications.error(t('snapPlatform.secrets.failed', { error: String(e) }));
+		}
+	}
+
+	/**
+	 * Before a task of a snap with secrets: offers once per session to enter missing values, then
+	 * writes the secrets file for this launch (null when none is stored or the sandbox is off,
+	 * which has no launcher to hand it to).
+	 */
+	async #taskSecrets(snap: SnapInfo): Promise<string | null> {
+		if (!snap.permissions.secrets.length || this.sandbox.kind !== 'enforce') return null;
+		const missing = await invoke<SecretState[]>('snap_secrets_list', { id: snap.id })
+			.then((list) => list.filter((s) => !s.stored).map((s) => s.name))
+			.catch(() => []);
+		if (missing.length && !this.#secretsDeclined.has(snap.id)) {
+			const enter = await ask(t('snapPlatform.secrets.missingAsk', { name: snap.name, list: missing.join(', ') }), {
+				title: t('snapPlatform.secrets.missingTitle'),
+				okLabel: t('snapPlatform.secrets.enterNow'),
+				cancelLabel: t('snapPlatform.secrets.notNow')
+			});
+			if (enter) await this.setSecrets(snap.id);
+			else this.#secretsDeclined.add(snap.id);
+		}
+		return invoke<string | null>('snap_secrets_file', { id: snap.id }).catch((e) => {
+			notifications.error(t('snapPlatform.secrets.failed', { error: String(e) }));
+			return null;
+		});
+	}
+
+	/** MCP secrets files of the active snaps, written before an agent starts (`prepareMcp`). */
+	#mcpSecrets = new Map<string, string>();
+
+	async prepareMcpSecrets() {
+		if (this.sandbox.kind !== 'enforce') return;
+		const ids = snapsNeedingMcpSecrets(this.list);
+		for (const id of [...this.#mcpSecrets.keys()]) if (!ids.includes(id)) this.#mcpSecrets.delete(id);
+		await Promise.all(
+			ids.map(async (id) => {
+				const path = await invoke<string | null>('snap_secrets_file', { id }).catch(() => null);
+				if (path) this.#mcpSecrets.set(id, path);
+				else this.#mcpSecrets.delete(id);
+			})
+		);
+	}
+
 	/** Runs a task of an active snap in a new terminal of the mode that is showing. */
-	runTask(snapId: string, taskId: string) {
+	async runTask(snapId: string, taskId: string) {
 		const snap = this.list.find((s) => s.id === snapId && isActive(s));
 		const task = snap?.tasks.find((t) => t.id === taskId);
 		if (!snap || !task) {
@@ -412,7 +505,8 @@ class Snaps {
 		// The folder the terminal opens in: the selected task worktree in the ADE, else the folder.
 		const slug = appMode.isAgents ? adeLayout.key : '';
 		const root = slug ? `${workspace.root}/${worktreeDir(slug)}` : workspace.root;
-		const confined = sandboxTask(this.sandbox, snap.permissions, root, argv);
+		const secrets = await this.#taskSecrets(snap);
+		const confined = sandboxTask(this.sandbox, snap.permissions, root, argv, secrets);
 		if ('error' in confined) {
 			status.flash(confined.error, 10000);
 			return;
@@ -432,7 +526,7 @@ class Snaps {
 		const plan = this.sandbox;
 		const refused = sandboxRefusal(plan);
 		if (refused && this.list.some((s) => isActive(s) && s.mcp.length)) status.flash(refused, 10000);
-		return mcpServersOf(this.list, (id) => settings.get(id), { plan, root });
+		return mcpServersOf(this.list, (id) => settings.get(id), { plan, root, secretsFile: (id) => this.#mcpSecrets.get(id) ?? null });
 	}
 
 	/** Skill plugin folders of active snaps for an agent run (Rust lists the snaps again and writes them into the app cache). */
@@ -456,6 +550,7 @@ const RELOAD_DEBOUNCE_MS = 300;
 export function installSnaps(): () => void {
 	// Agents (timeline and CLI) get the MCP servers of active snaps when a run starts.
 	setMcpProvider((root) => snaps.mcpServers(root));
+	setMcpPrepare(() => snaps.prepareMcpSecrets());
 	setSkillPluginProvider(() => snaps.skillPlugins());
 	// Editing a repo snap reloads the list (the watcher reports `.kingu/snaps/**`); the user snaps
 	// dir is not watched, so they are re-listed when the window gets focus (listing is cheap).
@@ -530,6 +625,7 @@ export function installSnaps(): () => void {
 		commands.register({ id: 'snap.new', title: 'New Snap…', category: 'Snap', run: () => snaps.newSnap() }),
 		commands.register({ id: 'snap.approveForTeam', title: 'Approve Snap for Team…', category: 'Snap', when: () => canApprove(snaps.teamCatalog?.role), run: () => snaps.approveForTeam() }),
 		commands.register({ id: 'snap.lock', title: 'Write snaps.lock', category: 'Snap', when: () => workspace.root !== null, run: () => snaps.lock() }),
+		commands.register({ id: 'snap.setSecrets', title: 'Set Secrets…', category: 'Snap', run: () => snaps.setSecrets() }),
 		commands.register({ id: 'snap.verifyLock', title: 'Verify snaps.lock', category: 'Snap', when: () => workspace.root !== null, run: () => snaps.verifyLock() }),
 		// VS Code's Extensions view key.
 		commands.register({ id: 'workbench.view.snaps', title: 'Show Snaps', category: 'View', key: 'cmd+shift+x', run: () => ((layout.sideView = 'snaps'), (layout.sidebarVisible = true)) })
@@ -545,6 +641,7 @@ export function installSnaps(): () => void {
 		unregister.forEach((u) => u());
 		settingSchemas.contribute('snaps', []);
 		setMcpProvider(() => ({}));
+		setMcpPrepare(async () => {});
 		setSkillPluginProvider(async () => []);
 	};
 }

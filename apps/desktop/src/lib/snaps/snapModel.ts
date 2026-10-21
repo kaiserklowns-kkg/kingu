@@ -188,7 +188,11 @@ export function expandArgv(command: readonly string[], values: Record<string, Se
  * With `sandbox`, each server runs through the launcher confined to its snap's permissions in
  * `root` (the agent's worktree); when the sandbox refuses (or there is no root) servers are left out.
  */
-export function mcpServersOf(list: readonly SnapInfo[], get: (id: string) => unknown = () => undefined, sandbox?: { plan: SandboxPlan; root: string | null }): Record<string, McpServerSpec> {
+export function mcpServersOf(
+	list: readonly SnapInfo[],
+	get: (id: string) => unknown = () => undefined,
+	sandbox?: { plan: SandboxPlan; root: string | null; secretsFile?: (snapId: string) => string | null }
+): Record<string, McpServerSpec> {
 	const out: Record<string, McpServerSpec> = {};
 	for (const s of list) {
 		if (!isActive(s)) continue;
@@ -200,7 +204,8 @@ export function mcpServersOf(list: readonly SnapInfo[], get: (id: string) => unk
 			let run = argv;
 			if (sandbox && sandbox.plan.kind !== 'off') {
 				if (sandbox.plan.kind === 'refuse' || !sandbox.root) continue;
-				run = sandboxedArgv(sandbox.plan, s.permissions, sandbox.root, argv, Object.keys(env));
+				const secrets = sandbox.secretsFile?.(s.id);
+				run = sandboxedArgv(sandbox.plan, s.permissions, sandbox.root, argv, Object.keys(env), secrets ? { path: secrets, once: false } : null);
 			}
 			const [command, ...args] = run;
 			out[`${s.id}-${m.name}`] = { command, args, env };
@@ -216,22 +221,28 @@ export function mcpServersOf(list: readonly SnapInfo[], get: (id: string) => unk
 export const SANDBOX_SETTING = 'kingu.snaps.sandbox';
 export type SandboxMode = 'enforce' | 'off';
 /** `snap_sandbox_info` (src-tauri/src/snap_sandbox.rs). */
-export type SandboxInfo = { enforcer: string | null; launcher: string | null; protect: string[]; problem: string | null };
-export type SandboxPlan = { kind: 'enforce'; launcher: string; enforcer: string; protect: string[] } | { kind: 'off' } | { kind: 'refuse'; reason: string };
+export type SandboxInfo = { enforcer: string | null; launcher: string | null; protect: string[]; hide?: string[]; problem: string | null };
+/** `hide`: folders no snap may read (the snap secrets files), when there are any. */
+export type SandboxPlan = { kind: 'enforce'; launcher: string; enforcer: string; protect: string[]; hide?: string[] } | { kind: 'off' } | { kind: 'refuse'; reason: string };
+/** A secrets file for one launch (`snap_secrets_file`): a task's is deleted once read. */
+export type SecretsFile = { path: string; once: boolean };
 
 /** How snaps run here: confined, unconfined because the user turned it off, or not at all. */
 export function sandboxPlan(info: SandboxInfo | null, mode: unknown): SandboxPlan {
 	if (mode === 'off') return { kind: 'off' };
 	if (!info) return { kind: 'refuse', reason: t('tools.snaps.sandboxNotChecked') };
-	if (info.enforcer && info.launcher) return { kind: 'enforce', launcher: info.launcher, enforcer: info.enforcer, protect: info.protect };
+	if (info.enforcer && info.launcher) return { kind: 'enforce', launcher: info.launcher, enforcer: info.enforcer, protect: info.protect, ...(info.hide?.length ? { hide: info.hide } : {}) };
 	return { kind: 'refuse', reason: info.problem ?? t('tools.snaps.noEnforcer') };
 }
 
 /**
- * `launcher snap-exec … -- argv` for a snap's permissions. `keep` names variables the snap sets
- * itself (an MCP server's env) so the launcher does not strip them as credentials.
+ * `launcher snap-exec … -- argv` for a snap's permissions (every declared scope; the launcher
+ * enforces them, see kingu-ptyd's sandbox.rs). `keep` names variables the snap sets itself (an
+ * MCP server's env) so the launcher does not strip them as credentials; `secrets` is the file
+ * holding the values the user entered (the values themselves never go into the argv).
  */
-export function sandboxedArgv(plan: Extract<SandboxPlan, { kind: 'enforce' }>, p: SnapPermissions, root: string, argv: readonly string[], keep: readonly string[] = []): string[] {
+export function sandboxedArgv(plan: Extract<SandboxPlan, { kind: 'enforce' }>, p: SnapPermissions, root: string, argv: readonly string[], keep: readonly string[] = [], secrets: SecretsFile | null = null): string[] {
+	const each = (flag: string, xs: readonly string[] | undefined) => (xs ?? []).flatMap((x) => [flag, x]);
 	return [
 		plan.launcher,
 		'snap-exec',
@@ -241,19 +252,26 @@ export function sandboxedArgv(plan: Extract<SandboxPlan, { kind: 'enforce' }>, p
 		p.fs,
 		'--root',
 		root,
-		...p.secrets.flatMap((s) => ['--secret', s]),
-		...keep.flatMap((k) => ['--keep', k]),
-		...plan.protect.flatMap((d) => ['--protect', d]),
+		...each('--secret', p.secrets),
+		...each('--keep', keep),
+		...each('--protect', plan.protect),
+		...(p.network ? each('--host', p.hosts) : []),
+		...each('--read', p.read),
+		...each('--write', p.write),
+		...each('--exec', p.processes),
+		...each('--env', p.env),
+		...each('--hide', plan.hide),
+		...(secrets ? [secrets.once ? '--secrets-file-once' : '--secrets-file', secrets.path] : []),
 		'--',
 		...argv
 	];
 }
 
 /** The terminal command of a task under `plan`, or why it may not run. */
-export function sandboxTask(plan: SandboxPlan, p: SnapPermissions, root: string, argv: string[]): { run: string[] } | { error: string } {
+export function sandboxTask(plan: SandboxPlan, p: SnapPermissions, root: string, argv: string[], secretsPath: string | null = null): { run: string[] } | { error: string } {
 	if (plan.kind === 'off') return { run: argv };
 	if (plan.kind === 'refuse') return { error: refusal(plan.reason) };
-	return { run: sandboxedArgv(plan, p, root, argv) };
+	return { run: sandboxedArgv(plan, p, root, argv, [], secretsPath ? { path: secretsPath, once: true } : null) };
 }
 
 const refusal = (reason: string) => t('tools.snaps.refusal', { reason, setting: SANDBOX_SETTING });
@@ -453,4 +471,18 @@ export function updateSummary(before: SnapInfo, after: SnapInfo, origin: SnapOri
 	if (plan) lines.push(enforcementNote(plan), '');
 	lines.push(t('tools.snaps.afterUpdate'), ...contributionLines(after).map((l) => `• ${l}`));
 	return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------------------------
+// Secrets the user enters (Keychain, `snap_secrets.rs`)
+
+/** `snap_secrets_list`: a declared name and whether a value is stored (never the value). */
+export type SecretState = { name: string; stored: boolean };
+
+/** Active snaps whose MCP servers need a secrets file before an agent starts. */
+export const snapsNeedingMcpSecrets = (list: readonly SnapInfo[]) => list.filter((s) => isActive(s) && s.mcp.length > 0 && s.permissions.secrets.length > 0).map((s) => s.id);
+
+/** The quick pick rows of Snap: Set Secrets…: one per declared name, saying whether it is set. */
+export function secretRows(states: readonly SecretState[]): { id: string; label: string; description: string }[] {
+	return states.map((s) => ({ id: s.name, label: s.name, description: s.stored ? t('snapPlatform.secrets.stored') : t('snapPlatform.secrets.missing') }));
 }

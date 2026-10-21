@@ -30,5 +30,23 @@ export const snapPlatform = {
 	'snapPlatform.verify.script': 'ไฟล์ใน repo {path}',
 	'snapPlatform.verify.failed': 'ตรวจ snaps.lock ไม่ได้: {error}',
 	'snapPlatform.approveFailed': 'อนุมัติ {name} ไม่ได้: {error}',
-	'snapPlatform.approved': 'อนุมัติ {name} และตรึงไว้ใน snaps.lock แล้ว'
+	'snapPlatform.approved': 'อนุมัติ {name} และตรึงไว้ใน snaps.lock แล้ว',
+	'snapPlatform.secrets.stored': 'ตั้งค่าแล้ว (อยู่ใน Keychain)',
+	'snapPlatform.secrets.missing': 'ยังไม่ได้ตั้งค่า',
+	'snapPlatform.secrets.pickSnap': 'ตั้งค่า secret ของ snap ไหน',
+	'snapPlatform.secrets.pickName': 'Secret ของ {name}',
+	'snapPlatform.secrets.replace': 'แทนที่ค่าเดิม',
+	'snapPlatform.secrets.remove': 'ลบค่า',
+	'snapPlatform.secrets.removeDesc': 'ลบออกจาก Keychain',
+	'snapPlatform.secrets.removed': 'ลบ {name} ออกจาก Keychain แล้ว',
+	'snapPlatform.secrets.enter': 'ค่าของ {name} สำหรับ {snap} (เก็บใน Keychain และส่งให้ snap นี้เท่านั้น)',
+	'snapPlatform.secrets.saveHint': 'กด Enter เพื่อบันทึกลง Keychain',
+	'snapPlatform.secrets.typeValue': 'พิมพ์ค่า',
+	'snapPlatform.secrets.saved': 'บันทึก {name} ลง Keychain แล้ว',
+	'snapPlatform.secrets.failed': 'Secret ของ Snap: {error}',
+	'snapPlatform.secrets.missingTitle': 'ยังไม่ได้ตั้งค่า secret',
+	'snapPlatform.secrets.missingAsk':
+		'{name} ประกาศ secret ที่ยังไม่มีค่า: {list}\n\nใส่ค่าตอนนี้เลยไหม ค่าจะเก็บใน Keychain และส่งให้เฉพาะโปรเซสของ snap นี้ ถ้าไม่ใส่ snap จะได้ตัวแปรเหล่านี้จาก environment ของคุณ (ถ้ามี)',
+	'snapPlatform.secrets.enterNow': 'ใส่ค่าตอนนี้',
+	'snapPlatform.secrets.notNow': 'ไว้ทีหลัง'
 } satisfies Record<keyof typeof en, string>;

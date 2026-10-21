@@ -63,7 +63,7 @@ import { composeMessage, promptWithAttachments, type Attachment } from '#lib/age
 import { cliSessions } from './cliSessions.svelte';
 import { projects } from './projects.svelte';
 import { projectBadge, strayRuns } from './projects';
-import { mcpServers, skillPlugins } from './mcp';
+import { mcpServers, prepareMcp, skillPlugins } from './mcp';
 import { prStatuses } from './prStatus.svelte';
 import { quickOpenWorktree } from './quickOpen.svelte.ts';
 import { diffNotes } from './diffNotes.svelte.ts';
@@ -841,6 +841,7 @@ class AdeTasks {
 		}
 		// A folder of this run (outside the worktree) for files a launch needs, e.g. gemini's MCP settings.
 		const runDir = profile.id === 'gemini' ? await invoke<string>('agent_run_dir', { token }).catch(() => null) : null;
+		await prepareMcp();
 		const launch = profile.launch(cli, how, { sessionId, hookSettings, hookFile, opencodeDir, runDir, servers: mcpServers(root), plugins: profile.skills ? await skillPlugins() : [] });
 		if (launch.files?.length) {
 			try {

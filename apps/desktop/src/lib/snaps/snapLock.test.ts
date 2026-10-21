@@ -1,7 +1,7 @@
 /// <reference types="bun" />
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { setLocale } from '#lib/i18n/index.ts';
-import { lockNote, lockReportText, permissionDiff, permissionLines, permissionsGrew, trustSummary, type LockReport, type SnapInfo, type SnapPermissions } from './snapModel';
+import { lockNote, lockReportText, mcpServersOf, permissionDiff, permissionLines, permissionsGrew, sandboxedArgv, sandboxTask, secretRows, snapsNeedingMcpSecrets, trustSummary, type LockReport, type SnapInfo, type SnapPermissions } from './snapModel';
 
 beforeAll(() => setLocale('en'));
 afterAll(() => setLocale('en'));
@@ -53,6 +53,31 @@ describe('permission scopes', () => {
 		expect(permissionsGrew(narrow, { ...narrow, env: [] })).toBe(false);
 		expect(permissionsGrew(null, { ...base, network: true })).toBe(false);
 		expect(permissionsGrew(base, { ...base, network: true })).toBe(true);
+	});
+});
+
+describe('launcher arguments', () => {
+	const plan = { kind: 'enforce' as const, launcher: '/A/kingu-ptyd', enforcer: 'sandbox-exec', protect: ['/cfg'], hide: ['/cache/snap-secrets'] };
+	test('every declared scope and the secrets file become launcher flags, never the values', () => {
+		const p: SnapPermissions = { network: true, fs: 'worktree', secrets: ['API_KEY'], hosts: ['api.github.com'], read: ['~/.cargo'], write: ['~/.cache/x'], processes: ['go'], env: ['GOPATH'] };
+		const argv = sandboxedArgv(plan, p, '/w', ['go', 'test'], ['MODE'], { path: '/cache/snap-secrets/a.json', once: true });
+		expect(argv).toEqual([
+			'/A/kingu-ptyd', 'snap-exec', '--network', 'on', '--fs', 'worktree', '--root', '/w',
+			'--secret', 'API_KEY', '--keep', 'MODE', '--protect', '/cfg', '--host', 'api.github.com', '--read', '~/.cargo', '--write', '~/.cache/x',
+			'--exec', 'go', '--env', 'GOPATH', '--hide', '/cache/snap-secrets', '--secrets-file-once', '/cache/snap-secrets/a.json', '--', 'go', 'test'
+		]);
+		expect(sandboxTask(plan, p, '/w', ['go'], '/s.json')).toEqual({ run: expect.arrayContaining(['--secrets-file-once', '/s.json']) });
+		// A host list without network is dropped (the manifest check refuses it anyway).
+		expect(sandboxedArgv(plan, { ...p, network: false }, '/w', ['x'])).not.toContain('--host');
+	});
+
+	test('MCP servers get a secrets file that stays (an agent may restart them)', () => {
+		const s = snap({ trusted: true, mcp: [{ name: 'db', command: ['pg-mcp'], env: {} }], permissions: { ...base, secrets: ['PGPASSWORD'] } });
+		const out = mcpServersOf([s], () => undefined, { plan, root: '/w', secretsFile: (id) => (id === 'ci' ? '/cache/snap-secrets/ci.json' : null) });
+		expect(out['ci-db'].args).toContain('--secrets-file');
+		expect(out['ci-db'].args).not.toContain('--secrets-file-once');
+		expect(snapsNeedingMcpSecrets([s, snap({ trusted: false, mcp: s.mcp, permissions: s.permissions })])).toEqual(['ci']);
+		expect(secretRows([{ name: 'PGPASSWORD', stored: true }])).toEqual([{ id: 'PGPASSWORD', label: 'PGPASSWORD', description: 'set (in the Keychain)' }]);
 	});
 });
 

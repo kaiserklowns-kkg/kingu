@@ -31,5 +31,23 @@ export const snapPlatform = {
 	'snapPlatform.verify.script': 'repo file {path}',
 	'snapPlatform.verify.failed': 'Couldn\'t verify snaps.lock: {error}',
 	'snapPlatform.approveFailed': 'Couldn\'t approve {name}: {error}',
-	'snapPlatform.approved': 'Approved {name} and pinned it in snaps.lock'
+	'snapPlatform.approved': 'Approved {name} and pinned it in snaps.lock',
+	'snapPlatform.secrets.stored': 'set (in the Keychain)',
+	'snapPlatform.secrets.missing': 'not set',
+	'snapPlatform.secrets.pickSnap': 'Set secrets of which snap?',
+	'snapPlatform.secrets.pickName': 'Secrets of {name}',
+	'snapPlatform.secrets.replace': 'Replace the value',
+	'snapPlatform.secrets.remove': 'Remove the value',
+	'snapPlatform.secrets.removeDesc': 'Deletes it from the Keychain',
+	'snapPlatform.secrets.removed': 'Removed {name} from the Keychain',
+	'snapPlatform.secrets.enter': 'Value of {name} for {snap} (kept in the Keychain, given only to this snap)',
+	'snapPlatform.secrets.saveHint': 'Press Enter to save it in the Keychain',
+	'snapPlatform.secrets.typeValue': 'Type the value',
+	'snapPlatform.secrets.saved': 'Saved {name} in the Keychain',
+	'snapPlatform.secrets.failed': 'Snap secrets: {error}',
+	'snapPlatform.secrets.missingTitle': 'Secrets not set',
+	'snapPlatform.secrets.missingAsk':
+		'{name} declares secrets that have no value yet: {list}\n\nEnter them now? They are kept in the Keychain and given only to this snap\'s processes. Without them it gets these variables from your environment, if they are set there.',
+	'snapPlatform.secrets.enterNow': 'Enter now',
+	'snapPlatform.secrets.notNow': 'Not now'
 } as const;

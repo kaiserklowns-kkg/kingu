@@ -44,6 +44,7 @@ mod skill_hub;
 mod snap;
 mod snap_install;
 mod snap_sandbox;
+mod snap_secrets;
 mod snippets;
 mod startup;
 mod system;
@@ -1727,6 +1728,10 @@ pub fn run() {
       snap::snap_trust,
       snap::snap_skill_plugins,
       snap_sandbox::snap_sandbox_info,
+      snap_secrets::snap_secrets_list,
+      snap_secrets::snap_secret_set,
+      snap_secrets::snap_secret_delete,
+      snap_secrets::snap_secrets_file,
       snap_install::snap_install_git,
       snap_install::snap_install_folder,
       snap_install::snap_update_prepare,
