@@ -42,7 +42,7 @@ function parseCompounds(raw: unknown): LaunchCompound[] {
 	if (!Array.isArray(raw)) return [];
 	return raw.flatMap((c) => {
 		if (!c || typeof c !== 'object' || typeof c.name !== 'string' || !Array.isArray(c.configurations)) return [];
-		// A configuration is named directly or as { name, folder } (one folder here).
+		// A configuration is named directly or as { name, folder } (matched by name only, in any folder).
 		const names = c.configurations.map((x: unknown) => (typeof x === 'string' ? x : x && typeof x === 'object' && typeof (x as { name?: unknown }).name === 'string' ? (x as { name: string }).name : null)).filter((x: string | null): x is string => !!x);
 		if (!names.length) return [];
 		return [{ name: c.name, configurations: names, ...(c.preLaunchTask ? { preLaunchTask: c.preLaunchTask } : {}), ...(c.stopAll === true ? { stopAll: true } : {}) }];

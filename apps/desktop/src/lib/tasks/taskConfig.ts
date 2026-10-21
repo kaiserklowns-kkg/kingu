@@ -34,7 +34,8 @@ export type RunOptions = { runOn: 'default' | 'folderOpen'; reevaluateOnRerun: b
 export type Platform = 'osx' | 'linux' | 'windows';
 
 export type Task = {
-	/** Unique in the folder: the label for custom tasks, `type:` + identifier for detected ones. */
+	/** Unique in the folder: the label for custom tasks, `type:` + identifier for detected ones
+	 * (another root folder's and the workspace file's carry a prefix, folders.ts scopeTasks). */
 	id: string;
 	label: string;
 	/** `shell`, `process`, or the detector's type (`npm`, `cargo`, `go`). */
@@ -60,6 +61,8 @@ export type Task = {
 	hide: boolean;
 	/** Defined or customized in tasks.json. */
 	configured: boolean;
+	/** The root folder (absolute) whose tasks.json or detection it comes from; none for a `.code-workspace` file's task (folders.ts). */
+	folder?: string;
 };
 
 export type InputDef =

@@ -14,6 +14,7 @@ import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { quick, type PickItem } from '#lib/workbench/quick.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
+import { taskFolderLabel } from './folders.ts';
 import { groupTasks, type Task } from './taskConfig.ts';
 import { tasks } from './tasks.svelte.ts';
 
@@ -21,12 +22,19 @@ const CONFIGURE = '\0configure';
 const TEMPLATE = '\0template';
 const ALL = '\0all';
 
+/** A picker row's description: the task's folder in a multi-root workspace (VS Code), then its detail. */
+function describe(x: Task, showDetail: boolean): string | undefined {
+	const parts = [taskFolderLabel(x, workspace.folders, t('ideTasks.pick.workspace')), showDetail ? x.detail : undefined].filter((p): p is string => !!p);
+	return parts.length ? parts.join(' · ') : undefined;
+}
+
 /** The Run Task list (VS Code's quick pick with task.quickOpen.showAll): recently used, configured, then each provider's tasks. */
 export function taskPickItems(list: Task[], recent: string[], showDetail: boolean): PickItem[] {
 	const visible = list.filter((x) => !x.hide);
-	const item = (x: Task, separator?: string): PickItem => ({ id: x.id, label: x.label, description: showDetail ? x.detail : undefined, separator });
+	const item = (x: Task, separator?: string): PickItem => ({ id: x.id, label: x.label, description: describe(x, showDetail), separator });
 	const out: PickItem[] = [];
-	const recentTasks = recent.flatMap((l) => visible.filter((x) => x.label === l).slice(0, 1));
+	// Recent entries are ids (an older one is a label).
+	const recentTasks = recent.flatMap((l) => (visible.find((x) => x.id === l) ? visible.filter((x) => x.id === l) : visible.filter((x) => x.label === l).slice(0, 1)));
 	recentTasks.forEach((x, i) => out.push(item(x, i === 0 ? t('ideTasks.pick.recent') : undefined)));
 	const shown = new Set(recentTasks);
 	const configured = visible.filter((x) => x.configured && !shown.has(x));
@@ -38,7 +46,7 @@ export function taskPickItems(list: Task[], recent: string[], showDetail: boolea
 }
 
 async function pickTask(placeholder: string, list: Task[], opts: { recent?: boolean; configure?: string } = {}): Promise<Task | 'configure' | undefined> {
-	const items: PickItem[] = opts.recent ? taskPickItems(list, tasks.recent, settings.get<boolean>('task.quickOpen.detail')) : list.filter((x) => !x.hide).map((x) => ({ id: x.id, label: x.label, description: x.detail }));
+	const items: PickItem[] = opts.recent ? taskPickItems(list, tasks.recent, settings.get<boolean>('task.quickOpen.detail')) : list.filter((x) => !x.hide).map((x) => ({ id: x.id, label: x.label, description: describe(x, true) }));
 	if (!items.length) {
 		if (!opts.configure) return undefined;
 		items.push({ id: CONFIGURE, label: opts.configure });
@@ -76,7 +84,7 @@ async function pickRunning(placeholder: string, all = false): Promise<Task | 'al
 		return undefined;
 	}
 	if (running.length === 1) return running[0];
-	const items: PickItem[] = running.map((x) => ({ id: x.id, label: x.label, description: x.detail }));
+	const items: PickItem[] = running.map((x) => ({ id: x.id, label: x.label, description: describe(x, true) }));
 	if (all) items.push({ id: ALL, label: t('ideTasks.pick.allRunning') });
 	const picked = await quick.choose({ placeholder, items });
 	if (!picked) return undefined;
@@ -84,9 +92,10 @@ async function pickRunning(placeholder: string, all = false): Promise<Task | 'al
 }
 
 async function configureTask() {
-	const { tasks: list, file } = await tasks.getTasks();
-	const items: PickItem[] = list.filter((x) => !x.hide).map((x) => ({ id: x.id, label: x.label, description: x.detail }));
-	if (file.text === null) items.unshift({ id: TEMPLATE, label: t('ideTasks.pick.template') });
+	const { tasks: list, files } = await tasks.getTasks();
+	const items: PickItem[] = list.filter((x) => !x.hide).map((x) => ({ id: x.id, label: x.label, description: describe(x, true) }));
+	// A folder without tasks.json (multi-root: any of them) can get one from the template.
+	if ([...files.values()].some((f) => f.text === null)) items.unshift({ id: TEMPLATE, label: t('ideTasks.pick.template') });
 	if (!items.length) return tasks.configure('template');
 	const picked = await quick.choose({ placeholder: t('ideTasks.pick.configure'), items });
 	if (!picked) return;
@@ -181,6 +190,17 @@ export function installTaskCommands(): () => void {
 			untrack(() => {
 				tasks.reset(root);
 				if (root) void tasks.runAutomatic();
+			});
+		});
+		// Multi-root: every folder's tasks.json and the workspace file's tasks; a folder added later
+		// runs its automatic tasks then.
+		$effect(() => {
+			if (!workspace.ready) return;
+			const folders = workspace.folders;
+			const file = workspace.workspaceFile;
+			untrack(() => {
+				tasks.setScope(folders, file);
+				if (folders.length) void tasks.runAutomatic();
 			});
 		});
 	});
