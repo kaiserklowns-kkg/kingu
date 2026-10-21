@@ -4,17 +4,14 @@
 	// active one is what agents use; sign in again / API key / remove; usage and its history.
 	// API keys are typed into a password field and go straight to Rust (Keychain); never kept here.
 	import { locale, t } from '#lib/i18n/index.ts';
-	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
+	import Icon from '#lib/workbench/Icon.svelte';
+	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import { accounts } from './accounts.svelte';
 	import ProviderSections from './ProviderSections.svelte';
 	import { addCommand, DATA_PROVIDERS, DATA_TITLE, managedAccounts, type DataProvider } from './managed.svelte';
 	import PopupMenu, { menuItem } from '#lib/workbench/PopupMenu.svelte';
 	import type { MenuNode } from '#lib/workbench/menus.ts';
 	import { pct, percentLine, PROVIDER_TITLE, PROVIDERS, resetLabel, updatedAgo, windows, windowTitle, type AccountView, type Provider, type Sample } from './usage';
-
-	const ICON: Record<Provider, IconName> = { claude: 'claude', codex: 'openai' };
-	/** Orca draws Claude's mark in Claude's orange. */
-	const ICON_COLOR: Partial<Record<Provider, string>> = { claude: '#D97757' };
 
 	// The chevron menus beside Add Account and Sign in again (Orca's ButtonGroup + menu).
 	let menu = $state<{ items: MenuNode[]; x: number; y: number; run: (id: string) => void } | null>(null);
@@ -147,7 +144,7 @@
 					{@const state = managedAccounts.state[dp]}
 					<section aria-label={DATA_TITLE[dp]} class="space-y-3">
 						<div class="space-y-1">
-							<h3 class="text-sm font-semibold">{DATA_TITLE[dp]}</h3>
+							<h3 class="flex items-center gap-2 text-sm font-semibold"><AgentIcon agent={dp} size={16} />{DATA_TITLE[dp]}</h3>
 							<p class="text-xs text-(--vscode-descriptionForeground)">{t('settings.managed.hint')}</p>
 						</div>
 						<code class="block font-mono text-[13px]">{addCommand(dp)}</code>
@@ -193,7 +190,7 @@
 				{#if i}<hr class="my-8 border-(--vscode-widget-border)/60" />{/if}
 				<section aria-label={title} class="space-y-4">
 					<div class="space-y-1">
-						<h3 class="flex items-center gap-2 text-sm font-semibold"><span class="grid place-items-center" style:color={ICON_COLOR[p]}><Icon name={ICON[p]} size={16} /></span>{title}</h3>
+						<h3 class="flex items-center gap-2 text-sm font-semibold"><AgentIcon agent={p} size={16} />{title}</h3>
 						<p class="text-xs text-(--vscode-descriptionForeground)">{t('settings.accounts.providerIntro', { provider: title })}</p>
 					</div>
 					<div class="space-y-3 py-2">

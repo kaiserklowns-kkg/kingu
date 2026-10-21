@@ -36,6 +36,8 @@ export type PickItem = {
 	positions?: number[];
 	/** A file path: the row shows that file's icon. */
 	icon?: string;
+	/** An agent: the row shows its mark (agent/agentIcons.ts), over `icon`. */
+	agent?: string;
 };
 
 export type Picker = {

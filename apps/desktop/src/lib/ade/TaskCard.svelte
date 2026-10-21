@@ -2,6 +2,7 @@
 	// One task, Orca-style: title, branch, agent + model, last event, +/- vs base, time ago and the
 	// review/PR chip. Enter/click opens the task page; actions show on hover and keyboard focus.
 	import Icon from '#lib/workbench/Icon.svelte';
+	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import { aggregateStats, formatSummaryUsage, isQuestion, reviewChip, statusLabel, timeAgo, type TaskView } from './model';
 	import { adeTasks } from './tasks.svelte';
 	import { ICON_BUTTON, QUESTION_TEXT, statusDot, TONE } from './ui';
@@ -58,6 +59,7 @@
 		<Icon name="branch" size={12} /><span class="truncate">kingu/{meta.slug}</span><span class="shrink-0 opacity-70">← {meta.base}</span>
 	</div>
 	<div class="mt-0.5 flex items-center gap-1.5 text-(--vscode-descriptionForeground)">
+		<AgentIcon agent={meta.agent || 'claude'} size={12} />
 		<span class="min-w-0 flex-1 truncate">{meta.agent}{model ? ` · ${model}` : ''}</span>
 		{#if meta.issue}
 			{@const issue = meta.issue}

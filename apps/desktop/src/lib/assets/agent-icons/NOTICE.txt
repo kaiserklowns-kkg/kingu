@@ -1,0 +1,6 @@
+Agent marks, copied from Kingu Orca (kingu-old/kingu-orca: shared/agent-icons/*.png,
+resources/openclaude-logo.png, resources/minimax-icon.svg, and the SVG glyphs of
+renderer/src/components/status-bar/icons.tsx and renderer/src/lib/agent-icon-glyphs.tsx).
+
+Each mark is the logo or favicon of the product it names and belongs to its owner. Kingu shows
+them, as Orca does, only to identify which agent or provider a chat, task or usage row belongs to.

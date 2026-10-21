@@ -11,6 +11,8 @@ export type MenuRow = {
 	icon?: IconName;
 	/** A product icon id, over `icon` (the chat's pickers name VS Code's icons). */
 	codicon?: string;
+	/** An agent whose mark is drawn, over `codicon` (agentIcons.ts). */
+	agent?: string;
 	/** The row is the current choice. */
 	checked?: boolean;
 	/** The section the row belongs to; a header is drawn where it changes. */

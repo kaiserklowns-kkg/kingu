@@ -5,6 +5,7 @@
 	// jumps to the next item starting with it.
 	import { onMount } from 'svelte';
 	import Icon from './Icon.svelte';
+	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import MenuList from './MenuList.svelte';
 	import type { MenuNode } from './menus';
 
@@ -144,7 +145,7 @@
 					onclick={() => activate(node, index, false)}
 				>
 					<span class="grid w-4 shrink-0 place-items-center">
-						{#if node.type === 'item' && node.checked}<Icon name="check" size={14} />{/if}
+						{#if node.type === 'item' && node.checked}<Icon name="check" size={14} />{:else if node.type === 'item' && node.agent}<AgentIcon agent={node.agent} size={14} />{/if}
 					</span>
 					<span class="flex-1 truncate">{node.text}</span>
 					{#if key}<span class="ml-6 shrink-0 text-xs opacity-80">{key}</span>{/if}

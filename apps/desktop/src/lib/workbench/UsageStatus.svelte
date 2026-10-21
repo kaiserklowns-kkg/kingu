@@ -4,7 +4,8 @@
 	// (UsageRosterPanel) with Detailed / Compact, a row per provider opening its details and
 	// account submenu, then Usage details & history and Manage Accounts.
 	import Icon from './Icon.svelte';
-	import ProviderIcon from './ProviderIcon.svelte';
+	import AgentIcon from '#lib/agent/AgentIcon.svelte';
+	import { providerIconKey } from '#lib/agent/agentIcons.ts';
 	import StatusPopover from './StatusPopover.svelte';
 	import { usage } from './usage.svelte';
 	import {
@@ -110,18 +111,18 @@
 {#snippet chip(p: ProviderState | null, id: ProviderId)}
 	{@const top = headline(p)}
 	{#if !p || p.status === 'idle' || (p.status === 'fetching' && !top)}
-		<span class="inline-flex items-center gap-1 {MUTED}"><ProviderIcon provider={id} /><span class="animate-pulse">···</span></span>
+		<span class="inline-flex items-center gap-1 {MUTED}"><AgentIcon agent={providerIconKey(id)} size={13} /><span class="animate-pulse">···</span></span>
 	{:else if p.status === 'unavailable'}
-		<span class="inline-flex items-center gap-1 opacity-50 {MUTED}"><ProviderIcon provider={id} /> --</span>
+		<span class="inline-flex items-center gap-1 opacity-50 {MUTED}"><AgentIcon agent={providerIconKey(id)} size={13} /> --</span>
 	{:else if !top}
 		<span class="inline-flex items-center gap-1 {MUTED}">
-			<ProviderIcon provider={id} />
+			<AgentIcon agent={providerIconKey(id)} size={13} />
 			{#if !isWaiting(p)}<span class="opacity-80"><Icon name="warning" size={11} /></span>{/if}
 			{#if !compact}<span class="text-[11px] font-medium">{errorLabel(p)}</span>{/if}
 		</span>
 	{:else}
 		<span class="inline-flex items-center gap-1.5">
-			<ProviderIcon provider={id} />
+			<AgentIcon agent={providerIconKey(id)} size={13} />
 			{#if chipMode === 'detailed'}
 				{#if !compact}
 					<span class="h-[6px] w-[48px] shrink-0 overflow-hidden rounded-full bg-(--vscode-widget-border)">
@@ -176,7 +177,7 @@
 				<button class="grid size-5 place-items-center rounded {MUTED} hover:bg-(--vscode-toolbar-hoverBackground)" title="Hide from status bar" aria-label="Hide from status bar" onclick={dismissEmpty}><Icon name="eyeOff" size={13} /></button>
 			</div>
 			<p class={MUTED}>Connect your AI provider accounts to see their usage in real time and easily switch between accounts.</p>
-			<div class="flex items-center gap-1.5 {MUTED}">Supports: <ProviderIcon provider="claude" /><ProviderIcon provider="codex" /></div>
+			<div class="flex items-center gap-1.5 {MUTED}">Supports: <AgentIcon agent="claude" size={13} /><AgentIcon agent="codex" size={13} /></div>
 			<button class="mt-0.5 h-7 w-full rounded-md bg-(--vscode-button-background) text-xs text-(--vscode-button-foreground) hover:opacity-90" onclick={() => go('account')}>Connect an account</button>
 		</div>
 	{/if}
@@ -245,7 +246,7 @@
 					onkeydown={(e) => e.key === 'ArrowRight' && state.kind !== 'sign-in' && openSub(id, e.currentTarget)}
 				>
 					<span class="flex w-full items-center gap-2.5">
-						<span class="flex size-5 shrink-0 items-center justify-center rounded-md border border-(--vscode-widget-border) bg-(--vscode-editor-background)"><ProviderIcon provider={id} /></span>
+						<span class="flex size-5 shrink-0 items-center justify-center rounded-md border border-(--vscode-widget-border) bg-(--vscode-editor-background)"><AgentIcon agent={providerIconKey(id)} size={13} /></span>
 						<span class="min-w-0 shrink truncate text-[13px] font-medium">{PROVIDER_NAME[id]}{#if p?.planType}<span class="font-normal {MUTED}">&nbsp;· {planName(p.planType)}</span>{/if}</span>
 						{#if state.kind === 'usage' && top}
 							{#if mode === 'compact'}
@@ -289,10 +290,10 @@
 				{#if !p}
 					<p class={MUTED}>No data available</p>
 				{:else if p.status === 'unavailable'}
-					<div class="flex items-center gap-1.5 font-medium"><ProviderIcon provider={id} />{PROVIDER_NAME[id]}</div>
+					<div class="flex items-center gap-1.5 font-medium"><AgentIcon agent={providerIconKey(id)} size={13} />{PROVIDER_NAME[id]}</div>
 					<p class="mt-1 {MUTED}">{p.error || 'Unavailable'}</p>
 				{:else if p.status === 'error' && !windowsOf(p).length}
-					<div class="flex items-center gap-1.5 font-medium"><ProviderIcon provider={id} />{PROVIDER_NAME[id]}</div>
+					<div class="flex items-center gap-1.5 font-medium"><AgentIcon agent={providerIconKey(id)} size={13} />{PROVIDER_NAME[id]}</div>
 					<div class="mt-2">
 						<div class="text-[11px] font-medium opacity-85">{errorLabel(p)}</div>
 						<div class={MUTED}>{errorMessage(p)}</div>
@@ -300,7 +301,7 @@
 				{:else}
 					<div class="w-full space-y-3">
 						<div>
-							<div class="flex items-center gap-1.5 text-[13px] font-medium"><ProviderIcon provider={id} />{PROVIDER_NAME[id]}</div>
+							<div class="flex items-center gap-1.5 text-[13px] font-medium"><AgentIcon agent={providerIconKey(id)} size={13} />{PROVIDER_NAME[id]}</div>
 							<div class="opacity-80 {MUTED}">{windowsOf(p).length ? updatedLabel(p.updatedAt, usage.now) : 'Not yet updated'}</div>
 						</div>
 						<div class={DIVIDER}></div>

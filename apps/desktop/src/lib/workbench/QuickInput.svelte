@@ -10,6 +10,7 @@
 	import { commands, keyOf } from './commands.svelte';
 	import { editors } from './editors.svelte';
 	import FileIcon from './FileIcon.svelte';
+	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import { fileIcon, type FileIconSpec } from './fileIcons';
 	import { quick, type PickItem, type Picker } from './quick.svelte';
 	import { untrack } from 'svelte';
@@ -376,7 +377,7 @@
 						onmousemove={() => (index = i)}
 						onclick={(e) => accept(i, isMac ? e.metaKey : e.ctrlKey)}
 					>
-						{#if item.icon}<FileIcon icon={item.icon} />{/if}
+						{#if item.pick?.agent}<AgentIcon agent={item.pick.agent} size={16} />{:else if item.icon}<FileIcon icon={item.icon} />{/if}
 						<span class="truncate">
 							{#each parts(item.label, item.match?.positions) as p, k (k)}<span class={p.hit ? 'font-bold text-(--vscode-list-highlightForeground)' : undefined}>{p.text}</span>{/each}
 						</span>

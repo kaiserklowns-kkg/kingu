@@ -104,8 +104,6 @@ export const ICON_CODICON: Record<IconName, string> = {
 	stepOut: 'debug-step-out',
 	breakpoint: 'circle-filled',
 	snap: 'extensions',
-	claude: 'chat-model-provider-claude',
-	openai: 'chat-model-provider-openai',
 	key: 'key',
 	lock: 'lock',
 	signIn: 'sign-in',

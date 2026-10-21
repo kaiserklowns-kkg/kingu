@@ -6,7 +6,8 @@
 	// (kingu.agent.cmdOverrides), arguments (kingu.agent.args.<id>) and env (kingu.agent.env.<id>).
 	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
-	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
+	import Icon from '#lib/workbench/Icon.svelte';
+	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import { notifications } from '#lib/workbench/notifications.svelte.ts';
 	import { openUrl } from '#lib/terminal/pty.ts';
 	import { KNOWN_BINS, PROFILES, profileOf, type AgentProfile } from '#lib/ade/agentProfiles.ts';
@@ -17,7 +18,6 @@
 	import ListSetting from '../ListSetting.svelte';
 	import Segmented from '../Segmented.svelte';
 
-	const ICON: Readonly<Record<string, IconName>> = { claude: 'claude', codex: 'openai' };
 	const DOCS: Readonly<Record<string, string>> = {
 		claude: 'https://docs.anthropic.com/en/docs/claude-code/overview',
 		codex: 'https://github.com/openai/codex',
@@ -107,7 +107,7 @@
 
 {#snippet agentIcon(p: AgentProfile)}
 	<div class="grid size-7 shrink-0 place-items-center rounded-md border border-(--vscode-widget-border)/50 bg-(--vscode-editor-background)/50">
-		<Icon name={ICON[p.id] ?? 'robot'} size={16} />
+		<AgentIcon agent={p.id} size={16} />
 	</div>
 {/snippet}
 
@@ -187,7 +187,7 @@
 			<p class="text-xs text-(--vscode-descriptionForeground)">{t('settings.agents.defaultAgentHint')}</p>
 		</div>
 		<div class="flex flex-wrap gap-2" role="radiogroup" aria-label={t('settings.agents.defaultAgent')}>
-			{#snippet chip(on: boolean, label: string, title: string | undefined, icon: IconName | null, pick: () => void)}
+			{#snippet chip(on: boolean, label: string, title: string | undefined, agent: string | null, pick: () => void)}
 				<button
 					type="button"
 					role="radio"
@@ -199,12 +199,12 @@
 					]}
 					onclick={pick}
 				>
-					{#if on}<Icon name="check" size={14} />{:else if icon}<Icon name={icon} size={14} />{/if}{label}
+					{#if on}<Icon name="check" size={14} />{:else if agent}<AgentIcon {agent} size={14} />{/if}{label}
 				</button>
 			{/snippet}
 			{@render chip(!userDefault, t('settings.agents.auto'), t('settings.agents.autoHint'), null, () => setDefault(null))}
 			{#each chips as p (p.id)}
-				{@render chip(isDefault(p), p.title, found && !detected(p) ? t('settings.agents.notDetected') : undefined, ICON[p.id] ?? 'robot', () => !isDefault(p) && setDefault(p))}
+				{@render chip(isDefault(p), p.title, found && !detected(p) ? t('settings.agents.notDetected') : undefined, p.id, () => !isDefault(p) && setDefault(p))}
 			{/each}
 		</div>
 	</section>

@@ -436,6 +436,8 @@ export type MenuNode =
 			enabled: boolean;
 			/** Present for toggles (a check item). */
 			checked?: boolean;
+			/** An agent whose mark the in-window menus draw in the icon column (agent/agentIcons.ts); native menus have none. */
+			agent?: string;
 	  }
 	| { type: 'role'; role: Role; text: string; keyLabel?: string }
 	| { type: 'separator' }

@@ -6,6 +6,7 @@
 	import { untrack } from 'svelte';
 	import AgentTimeline from '#lib/agent/AgentTimeline.svelte';
 	import Icon from '#lib/workbench/Icon.svelte';
+	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import { splitPath, taskDiffKey } from '#lib/workbench/scm.ts';
 	import { keyLabel } from '#lib/workbench/keys.ts';
 	import { aggregateStats, formatSummaryUsage, reviewChip, STATUS_LABEL, timeAgo, type FileChange } from './model';
@@ -119,7 +120,7 @@
 			</div>
 			<div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-(--vscode-descriptionForeground)">
 				<span class="flex items-center gap-1 font-mono"><Icon name="branch" size={12} />kingu/{meta.slug} ← {meta.base}</span>
-				<span>{meta.agent}{(view.runtime?.model ?? meta.model) ? ` · ${view.runtime?.model ?? meta.model}` : ''}</span>
+				<span class="flex items-center gap-1"><AgentIcon agent={meta.agent || 'claude'} size={12} />{meta.agent}{(view.runtime?.model ?? meta.model) ? ` · ${view.runtime?.model ?? meta.model}` : ''}</span>
 				<span>สร้าง {timeAgo(meta.created_at, adeTasks.now)}</span>
 				{#if meta.pr_url}<a class="text-(--vscode-textLink-foreground) hover:underline" href={meta.pr_url} target="_blank" rel="noreferrer">{meta.pr_url}</a>{/if}
 				{#if meta.issue}
