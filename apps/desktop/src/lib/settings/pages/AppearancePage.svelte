@@ -10,7 +10,12 @@
 
 	let swatches = $state<Record<string, Awaited<ReturnType<typeof themeSwatch>>>>({});
 	onMount(() => {
-		for (const t of THEMES) void themeSwatch(t).then((s) => (swatches[t.id] = s)).catch(() => {});
+		for (const t of THEMES)
+			void themeSwatch(t)
+				.then((s) => {
+					swatches[t.id] = s;
+				})
+				.catch(() => {});
 	});
 
 	const current = $derived(settings.get<string>('workbench.colorTheme'));

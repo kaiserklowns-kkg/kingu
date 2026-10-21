@@ -142,7 +142,7 @@ export type ColorPresentation = { label: string; textEdit?: TextEdit; additional
 export type ServerCapabilities = {
 	positionEncoding?: string;
 	/** `changeNotifications`: the server takes `workspace/didChangeWorkspaceFolders` (true, or a registration id). */
-	workspace?: { workspaceFolders?: { supported?: boolean; changeNotifications?: boolean | string } };
+	workspace?: { workspaceFolders?: { supported?: boolean; changeNotifications?: boolean | string }; fileOperations?: { willRename?: object; didRename?: object } };
 	textDocumentSync?: number | { openClose?: boolean; change?: number; save?: boolean | { includeText?: boolean } };
 	hoverProvider?: boolean | object;
 	completionProvider?: { triggerCharacters?: string[]; resolveProvider?: boolean };

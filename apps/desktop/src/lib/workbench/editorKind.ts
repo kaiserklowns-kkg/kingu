@@ -7,6 +7,7 @@ import { isDiffKey, isMergeKey } from './scm.ts';
 import { isSearchEditorKey } from './searchEditor.ts';
 import { isExternalKey } from './externalFiles.ts';
 import { isUntitled } from './untitled.ts';
+import { isImagePath, isPreviewKey } from './viewers.ts';
 
 /** A key with no scheme: a workspace file. */
 const isPlainFile = (key: string) => !/^[a-zA-Z][\w+.-]*:/.test(key);
@@ -31,3 +32,25 @@ export const showsEditorStatus = (key: string | null | undefined) => editorKind(
 
 /** Outline: only documents with a symbol provider ("The active editor cannot provide outline information."). */
 export const providesOutline = (key: string | null | undefined) => editorKind(key) === 'file';
+
+/** Split Editor in Group (VS Code's CanSplitInGroup capability): a text document Monaco shows, not a diff or a viewer. */
+export const canSplitInGroup = (key: string | null | undefined) =>
+	!!key && editorKind(key) === 'file' && !isDiffKey(key) && !isMergeKey(key) && !isImagePath(key) && !/\.ipynb$/i.test(key);
+
+/**
+ * The VS Code editor type id of an editor key, as `workbench.editor.autoLockGroups` names them:
+ * the Search Editor, the Markdown preview, the image preview, else the text editor (`default`).
+ * Null for Kingu's own editors, which VS Code has no id for.
+ */
+export function editorTypeId(key: string): string | null {
+	if (isSearchEditorKey(key)) return 'workbench.editorinputs.searchEditorInput';
+	if (isPreviewKey(key)) return 'mainThreadWebview-markdown.preview';
+	if (isImagePath(key)) return 'imagePreview.previewEditor';
+	return editorKind(key) === 'other' ? null : 'default';
+}
+
+/** `workbench.editor.autoLockGroups`: whether opening `key` first in a group locks the group. */
+export function autoLocks(key: string, setting: unknown): boolean {
+	const id = editorTypeId(key);
+	return id !== null && !!setting && typeof setting === 'object' && (setting as Record<string, unknown>)[id] === true;
+}

@@ -269,8 +269,8 @@ export const EDITOR_OPTION_PATHS: Readonly<Record<string, string>> = {
 /** editor.* settings Monaco reads only from its configuration service (no IEditorOptions field). */
 export const EDITOR_CONFIG_SETTINGS = ['editor.codeActionWidget.includeNearbyQuickFixes', 'editor.codeActionWidget.showHeaders', 'editor.semanticHighlighting.enabled'] as const;
 
-/** editor.* settings Kingu applies itself: model indentation (apply.svelte.ts), save participants (textFileSave.ts), the snippet code actions (editor/snippets), the default formatter (editor/formatterSelector.ts) and rename with preview (lsp/refactorPreview.svelte.ts). */
-export const EDITOR_KINGU_SETTINGS = ['editor.tabSize', 'editor.indentSize', 'editor.insertSpaces', 'editor.detectIndentation', 'editor.trimAutoWhitespace', 'editor.formatOnSave', 'editor.codeActionsOnSave', 'editor.codeActions.triggerOnFocusChange', 'editor.snippets.codeActions.enabled', 'editor.defaultFormatter', 'editor.rename.enablePreview'] as const;
+/** editor.* settings Kingu applies itself: model indentation (apply.svelte.ts), save participants (textFileSave.ts), the snippet code actions (editor/snippets), the default formatter (editor/formatterSelector.ts) rename with preview (lsp/refactorPreview.svelte.ts) and token colour customizations. */
+export const EDITOR_KINGU_SETTINGS = ['editor.tabSize', 'editor.indentSize', 'editor.insertSpaces', 'editor.detectIndentation', 'editor.trimAutoWhitespace', 'editor.formatOnSave', 'editor.codeActionsOnSave', 'editor.codeActions.triggerOnFocusChange', 'editor.snippets.codeActions.enabled', 'editor.defaultFormatter', 'editor.rename.enablePreview', 'editor.tokenColorCustomizations', 'editor.semanticTokenColorCustomizations'] as const;
 
 const TYPED_DIFF_EDITOR_OPTION_PATHS = {
 	'diffEditor.diffAlgorithm': 'diffAlgorithm',

@@ -73,6 +73,26 @@ import type { WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 import { t } from '#lib/i18n/index.ts';
 import { isRustError } from '#lib/i18n/rustErrors.ts';
 import { formatTrace, TRACE_SETTINGS, traceValue, type TraceValue } from './trace.ts';
+import { AUTO_INSERT_DELAY_MS, AUTO_INSERT_REQUEST, autoInsertAt, CUSTOM_DATA_CONTENT_REQUEST, CUSTOM_DATA_NOTIFICATION, customDataUris } from './htmlExtras.ts';
+import {
+	chosenTsserver,
+	fileReferenceLocations,
+	isEmptyEdit,
+	mayHaveImports,
+	remapEditUris,
+	renameSubject,
+	SOURCE_DEFINITION_COMMAND,
+	TSSERVER_REQUEST_COMMAND,
+	updateImportsMode,
+	UPDATE_IMPORTS_KEYS,
+	type FileRenameUris,
+	type TsVersionChoice
+} from './typescriptExtras.ts';
+
+/** How long a move waits for the TypeScript server's import updates (VS Code's participants have a timeout too). */
+const WILL_RENAME_TIMEOUT_MS = 5000;
+/** A move whose import updates were asked for: applied (or offered) once the files are in place. */
+export type PendingRename = { files: FileRenameUris[]; rels: string[]; edit: Promise<WorkspaceEdit | null>; client: LanguageClient };
 
 type MonacoApi = typeof Monaco;
 /** One `#` quick access result; line and column 1-based. */
@@ -81,7 +101,7 @@ type LspEvent = { type: 'message'; json: string } | { type: 'stderr'; line: stri
 /** `sid`: the server key, or the key and folder of a server started for one root folder
  * (`folder`; null: every folder, folders.ts). `pushed` / `init`: the settings last sent and the
  * initializationOptions it started with (JSON), to spot changes. */
-type Session = { sid: string; folder: string | null; info: ServerInfo; client: LanguageClient; id: number | null; ready: Promise<boolean>; pushed: string; init: string; trace: TraceValue };
+type Session = { sid: string; folder: string | null; info: ServerInfo; client: LanguageClient; id: number | null; ready: Promise<boolean>; pushed: string; init: string; trace: TraceValue; /** The custom data URIs last sent (HTML, CSS; JSON). */ customData?: string };
 /** `sid`: the session it is open in ('' until opened). */
 type Doc = { rel: string; uri: string; key: string; sid: string; model: Monaco.editor.ITextModel; dispose?: () => void };
 
@@ -115,6 +135,8 @@ class Lsp {
 		}
 		return null;
 	});
+	/** Select TypeScript Version: the server's own TypeScript, or the workspace's (restarts the server). */
+	tsVersion = $state<TsVersionChoice>('bundled');
 	/** Overrides of the server table's settings, per server key (e.g. `{ 'rust-analyzer': { … } }`). */
 	settings: Record<string, Record<string, unknown>> = {};
 
@@ -159,10 +181,17 @@ class Lsp {
 		this.#init(monaco);
 		const doc: Doc = { rel, uri: '', key: info.key, sid: '', model };
 		this.#docs.set(model, doc);
-		const changed = model.onDidChangeContent(() => {
+		let autoInsert: ReturnType<typeof setTimeout> | undefined;
+		const changed = model.onDidChangeContent((e) => {
 			if (!doc.uri) return;
 			this.#sessions.get(doc.sid)?.client.didChange(doc.uri, model.getValue());
 			this.#scheduleSymbols(doc);
+			// html.autoClosingTags / html.autoCreateQuotes (VS Code's autoInsertion.ts).
+			if (doc.key !== 'html') return;
+			clearTimeout(autoInsert);
+			const enabled = { autoClose: userSettings.get<boolean>('html.autoClosingTags'), autoQuote: userSettings.get<boolean>('html.autoCreateQuotes') };
+			const at = autoInsertAt(e.changes, enabled, e.isUndoing || e.isRedoing);
+			if (at) autoInsert = setTimeout(() => void this.#autoInsert(doc, at, model.getVersionId()), AUTO_INSERT_DELAY_MS);
 		});
 		const disposing = model.onWillDispose(() => this.#detach(model));
 		doc.dispose = () => {
@@ -173,6 +202,43 @@ class Lsp {
 	}
 
 	#languageWatched = new WeakSet<Monaco.editor.ITextModel>();
+
+	/** Asks the HTML server what to insert after a typed `>`, `/` or `=`, and inserts it as a
+	 * snippet in the focused editor, unless the document changed or the cursor moved meanwhile. */
+	async #autoInsert(doc: Doc, at: { kind: 'autoClose' | 'autoQuote'; line: number; column: number }, version: number) {
+		const client = this.#sessions.get(doc.sid)?.client;
+		if (!client?.ready || !this.#monaco) return;
+		const position = { line: at.line - 1, character: at.column - 1 };
+		const text = await client.rpc.request<string | null>(AUTO_INSERT_REQUEST, { kind: at.kind, textDocument: { uri: doc.uri }, position }).catch(() => null);
+		if (!text || doc.model.isDisposed() || doc.model.getVersionId() !== version) return;
+		const editor = this.#monaco.editor.getEditors().find((ed) => ed.getModel() === doc.model && ed.hasTextFocus());
+		const cursor = editor?.getPosition();
+		if (!editor || !cursor || cursor.lineNumber !== at.line || cursor.column !== at.column) return;
+		editor.getContribution<Monaco.editor.IEditorContribution & { insert(template: string): void }>('snippetController2')?.insert(text);
+	}
+
+	/** `html.customData` / `css.customData` as the servers want them (customData.ts). */
+	#customData(key: string): string[] {
+		const id = `${key}.customData`;
+		const folders = this.#folders.map((f, i) => ({ path: f.path, value: i === 0 ? (userSettings.inspect(id, 'workspace') ?? userSettings.inspect(id, 'repo')) : userSettings.inspectFolder(id, f.path) }));
+		return customDataUris(folders, userSettings.workspaceFile[id], userSettings.inspect(id, 'user'));
+	}
+
+	/** A started HTML or CSS server hears of its custom data; the HTML server reads the files through the client. */
+	#sendCustomData(session: Session) {
+		const { info, client } = session;
+		const method = CUSTOM_DATA_NOTIFICATION[info.key];
+		if (!method) return;
+		if (info.key === 'html')
+			client.rpc.onRequest(CUSTOM_DATA_CONTENT_REQUEST, async (uri: string) => {
+				const rel = typeof uri === 'string' ? this.#keyOf(uri) : null;
+				if (rel === null) throw new Error(`${uri} is outside the workspace`);
+				return invoke<string>('read_workspace_file', { rel });
+			});
+		const uris = this.#customData(info.key);
+		session.customData = JSON.stringify(uris);
+		client.rpc.notify(method, uris);
+	}
 
 	#detach(model: Monaco.editor.ITextModel) {
 		const doc = this.#docs.get(model);
@@ -186,6 +252,98 @@ class Lsp {
 	didSave(model: Monaco.editor.ITextModel) {
 		const doc = this.#docs.get(model);
 		if (doc?.uri) this.#sessions.get(doc.sid)?.client.didSave(doc.uri);
+	}
+
+	// --- TypeScript extras (typescriptExtras.ts) -------------------------------------------------
+
+	/** The running TypeScript server, once it has started. */
+	async #typescript(): Promise<LanguageClient | null> {
+		const s = this.#sessions.get(sessionId('typescript', null));
+		return s && (await s.ready) && s.client.ready ? s.client : null;
+	}
+
+	/**
+	 * Files about to be renamed or moved (`isDir`: a folder): asks the TypeScript server for the
+	 * import updates they need while they are still in place (`workspace/willRenameFiles`). Null
+	 * when nothing can import them, `js/ts.updateImportsOnFileMove.enabled` is `never`, or no
+	 * TypeScript server runs (VS Code's extension is not active then either).
+	 */
+	async willRenameFiles(renames: { from: string; to: string; isDir: boolean }[]): Promise<PendingRename | null> {
+		const relevant = renames.filter((r) => mayHaveImports(r.from, r.isDir));
+		if (!relevant.length || relevant.every((r) => updateImportsMode(this.#reader, r.from) === 'never')) return null;
+		const client = await this.#typescript();
+		if (!client?.takesWillRename) return null;
+		const root = this.#rootPath;
+		const files = relevant.map((r) => ({ oldUri: uriOfRel(root, r.from), newUri: uriOfRel(root, r.to) }));
+		const edit = Promise.race([client.willRenameFiles(files).catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), WILL_RENAME_TIMEOUT_MS))]);
+		await edit;
+		return { files, rels: relevant.map((r) => r.from), edit, client };
+	}
+
+	/**
+	 * The files of `pending` were moved: the server hears of it, and their import updates are
+	 * applied, after asking with `js/ts.updateImportsOnFileMove.enabled` `prompt` (VS Code's
+	 * "Update imports for 'a.ts'?" with Yes / No / Always / Never).
+	 */
+	async filesRenamed(pending: PendingRename | null, moved?: Set<string>) {
+		if (!pending) return;
+		const files = moved ? pending.files.filter((_, i) => moved.has(pending.rels[i])) : pending.files;
+		pending.client.didRenameFiles(files);
+		const edit = await pending.edit;
+		if (!files.length || !edit || isEmptyEdit(edit)) return;
+		const mode = updateImportsMode(this.#reader, pending.rels[0]);
+		if (mode === 'never') return;
+		if (mode === 'prompt') {
+			const yes = t('tools.lsp.updateImportsYes');
+			const always = t('tools.lsp.updateImportsAlways');
+			const never = t('tools.lsp.updateImportsNever');
+			const subject = renameSubject(files);
+			const message = files.length === 1 ? t('tools.lsp.updateImportsOne', { name: subject }) : t('tools.lsp.updateImportsMany', { count: subject });
+			const choice = await notifications.prompt('info', message, [yes, t('tools.lsp.updateImportsNo'), always, never], { source: 'TypeScript' });
+			if (choice === always || choice === never) await userSettings.set(UPDATE_IMPORTS_KEYS[0], choice === always ? 'always' : 'never', 'user').catch(() => {});
+			if (choice !== yes && choice !== always) return;
+		}
+		const r = await this.applyWorkspaceEdit(remapEditUris(edit, files), { refactoring: true });
+		if (!r.applied) statusBar.error(t('tools.lsp.updateImportsFailed', { error: r.failureReason ?? '' }));
+	}
+
+	/** The open document of `rel` and its server, when it is a TypeScript server's. */
+	#typescriptDoc(rel: string): { client: LanguageClient; uri: string } | null {
+		for (const doc of this.#docs.values()) {
+			if (doc.rel !== rel || !doc.uri) continue;
+			const s = this.#sessions.get(doc.sid);
+			return s?.info.key === 'typescript' && s.client.ready ? { client: s.client, uri: doc.uri } : null;
+		}
+		return null;
+	}
+
+	/** Whether `rel` is open in the TypeScript server (Go to Source Definition, Find File References). */
+	isTypeScriptDoc(rel: string | null): boolean {
+		return !!rel && this.#typescriptDoc(rel) !== null;
+	}
+
+	/** TypeScript: Go to Source Definition (TS 4.7+): the .js/.ts source behind a declaration file. */
+	async sourceDefinition(rel: string, line: number, column: number): Promise<{ rel: string; line: number; column: number }[] | null> {
+		const d = this.#typescriptDoc(rel);
+		if (!d) return null;
+		const result = await d.client.executeCommandResult<Location[] | Location>(SOURCE_DEFINITION_COMMAND, [d.uri, { line: line - 1, character: column - 1 }]);
+		return this.#workbenchLocations(result ? [result].flat() : []);
+	}
+
+	/** TypeScript: Find File References (TS 4.2+): every file that imports `rel`. */
+	async fileReferences(rel: string): Promise<{ rel: string; line: number; column: number }[] | null> {
+		const d = this.#typescriptDoc(rel);
+		const path = uriToPath(d?.uri ?? '');
+		if (!d || !path) return null;
+		const response = await d.client.executeCommandResult(TSSERVER_REQUEST_COMMAND, ['fileReferences', { file: path }]);
+		return this.#workbenchLocations(fileReferenceLocations(response, pathToUri));
+	}
+
+	#workbenchLocations(locations: Location[]): { rel: string; line: number; column: number }[] {
+		return locations.flatMap((l) => {
+			const rel = this.#keyOf(l.uri);
+			return rel === null ? [] : [{ rel, line: l.range.start.line + 1, column: l.range.start.character + 1 }];
+		});
 	}
 
 	/** Status bar entry for a Monaco language id, or null when it has no server. */
@@ -457,6 +615,19 @@ class Lsp {
 						}
 				});
 			});
+			// html.customData / css.customData: the servers are told again when the lists change.
+			$effect(() => {
+				const next = Object.keys(CUSTOM_DATA_NOTIFICATION).map((key) => [key, JSON.stringify(this.#customData(key))] as const);
+				untrack(() => {
+					for (const [key, uris] of next)
+						for (const s of this.#sessions.values()) {
+							// A session not told yet hears it once it has started (#sendCustomData).
+							if (s.info.key !== key || s.customData === undefined || s.customData === uris) continue;
+							s.customData = uris;
+							s.client.rpc.notify(CUSTOM_DATA_NOTIFICATION[key], JSON.parse(uris));
+						}
+				});
+			});
 			$effect(() => {
 				// For the shared servers and for each other root folder's settings (a per-folder server).
 				const folders = [null, ...Object.keys(userSettings.folders)];
@@ -587,6 +758,7 @@ class Lsp {
 				clientLog('info', `${info.name} initialized${folder ? ` for ${folder}` : ''}`);
 				// Monaco's providers come from the shared server; they find each model's own session.
 				if (this.#sessions.get(sid) === session && !folder) this.#registerProviders(info, caps);
+				this.#sendCustomData(session);
 				return true;
 			} catch (e) {
 				const message = String(e);
@@ -688,7 +860,10 @@ class Lsp {
 	/** The `initialize` options: the table's, plus tsserver preferences for typescript-language-server. */
 	#initOptions(info: ServerInfo, folder: string | null = null): unknown {
 		if (info.key !== 'typescript') return info.initializationOptions;
-		return { ...(info.initializationOptions as object | undefined), preferences: typescriptPreferences(this.#readerFor(folder)) };
+		const reader = this.#readerFor(folder);
+		// Select TypeScript Version: the workspace's tsserver instead of the server's own.
+		const tsserver = chosenTsserver(reader, this.tsVersion, folder ?? this.#rootPath);
+		return { ...(info.initializationOptions as object | undefined), preferences: typescriptPreferences(reader), ...(tsserver ? { tsserver: { path: tsserver } } : {}) };
 	}
 
 	/** VS Code settings as serverSettings.ts reads them. */

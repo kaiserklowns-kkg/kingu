@@ -71,6 +71,9 @@ function choices(): Choice[] {
 			['bottom', 'Bottom'],
 			['hidden', 'Hidden']
 		]),
+		// VS Code's Customize Layout "Quick Input Position" section.
+		{ id: 'quickInputTop', label: 'Top', section: 'Quick Input Position', checked: () => quick.alignment === 'top', run: () => quick.setAlignment('top') },
+		{ id: 'quickInputCenter', label: 'Center', section: 'Quick Input Position', checked: () => quick.alignment === 'center', run: () => quick.setAlignment('center') },
 		// VS Code's Customize Layout "Modes" section.
 		{ id: 'centered', label: 'Centered Layout', section: 'Modes', checked: () => layout.centered, run: () => (layout.centered = !layout.centered) },
 		{ id: 'fullscreen', label: 'Full Screen', section: 'Modes', checked: () => layout.fullscreen, run: () => void layout.setFullScreen(!layout.fullscreen) },
@@ -120,6 +123,8 @@ export function installLayoutCommands(): () => void {
 		commands.register({ id: 'workbench.action.zenHideEditorTabs', title: 'Hide Editor Tabs in Zen Mode', category: 'View', when: () => layout.zen, run: () => setUserSetting('zenMode.showTabs', 'none') }),
 		commands.register({ id: 'workbench.action.zenShowMultipleEditorTabs', title: 'Show Multiple Editor Tabs in Zen Mode', category: 'View', when: () => layout.zen, run: () => setUserSetting('zenMode.showTabs', 'multiple') }),
 		commands.register({ id: 'workbench.action.zenShowSingleEditorTab', title: 'Show Single Editor Tab in Zen Mode', category: 'View', when: () => layout.zen, run: () => setUserSetting('zenMode.showTabs', 'single') }),
+		commands.register({ id: 'workbench.action.alignQuickInputTop', title: 'Align Quick Input Top', palette: false, run: () => quick.setAlignment('top') }),
+		commands.register({ id: 'workbench.action.alignQuickInputCenter', title: 'Align Quick Input Center', palette: false, run: () => quick.setAlignment('center') }),
 		commands.register({ id: 'workbench.action.toggleCenteredLayout', title: 'Toggle Centered Layout', category: 'View', when: ide, run: () => (layout.centered = !layout.centered) }),
 		// F11 off macOS, like VS Code; Step Into shares it and wins while the debugger is stopped (weight).
 		commands.register({ id: 'workbench.action.toggleFullScreen', title: 'Toggle Full Screen', category: 'View', key: 'f11', mac: 'ctrl+cmd+f', weight: -1, run: () => layout.setFullScreen(!layout.fullscreen) }),

@@ -8,6 +8,7 @@ import { chromeVariables, resolveColor, terminalTheme } from './colors';
 import { findTheme, isDarkType, loadTheme, type ThemeInfo } from './themes';
 import type { FlatTheme } from '../editor/textmate/theme';
 import { colorCustomizationsFor } from '../workbench/workbenchOptions';
+import { withTokenCustomizations } from './tokenCustomizations';
 
 // Lazy chunks: only the selected theme's include chain is fetched.
 const sources = import.meta.glob<string>('../editor/textmate/themes/*.json', { query: '?raw', import: 'default' });
@@ -58,6 +59,12 @@ class ThemeService {
 	/** `workbench.colorCustomizations`, on top of whichever theme is applied. */
 	private custom: unknown = {};
 	private customKey = '{}';
+	/** `editor.tokenColorCustomizations` and `editor.semanticTokenColorCustomizations`. */
+	private tokenCustom: unknown = {};
+	private semanticCustom: unknown = {};
+	private tokenKey = '[{},{}]';
+	/** Bumped on every applied theme or customization, for effects that read the theme's data (`activeTheme()`). */
+	revision = $state(0);
 
 	/** Sets `workbench.colorCustomizations`; the current theme is applied again when they changed. */
 	setCustomizations(custom: unknown) {
@@ -65,6 +72,20 @@ class ThemeService {
 		if (key === this.customKey) return;
 		this.custom = custom;
 		this.customKey = key;
+		this.reapply();
+	}
+
+	/** Sets the token color customizations; the current theme is applied again when they changed. */
+	setTokenCustomizations(token: unknown, semantic: unknown) {
+		const key = JSON.stringify([token ?? {}, semantic ?? {}]);
+		if (key === this.tokenKey) return;
+		this.tokenCustom = token;
+		this.semanticCustom = semantic;
+		this.tokenKey = key;
+		this.reapply();
+	}
+
+	private reapply() {
 		const id = this.applied;
 		this.applied = '';
 		if (id) void this.apply(id);
@@ -88,7 +109,8 @@ class ThemeService {
 		const base = await flatTheme(info);
 		if (seq !== this.seq) return;
 		const custom = colorCustomizationsFor(this.custom, info.id);
-		const flat = Object.keys(custom).length ? { ...base, colors: { ...base.colors, ...custom } } : base;
+		const colored = Object.keys(custom).length ? { ...base, colors: { ...base.colors, ...custom } } : base;
+		const flat = withTokenCustomizations(colored, this.tokenCustom, this.semanticCustom, [info.id, info.label]);
 		const applied: Applied = { vars: chromeVariables(flat.colors, info.type), dark: isDarkType(info.type) };
 		writeVariables(applied);
 		this.applied = info.id;
@@ -96,6 +118,7 @@ class ThemeService {
 		this.current = info;
 		this.terminal = terminalTheme(flat.colors, info.type);
 		setActiveTheme({ info, flat });
+		this.revision++;
 		try {
 			localStorage.setItem(CACHE_KEY, JSON.stringify(applied));
 		} catch {

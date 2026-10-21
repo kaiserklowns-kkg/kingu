@@ -270,4 +270,7 @@ export const workbench = {
 	'workbench.signals.screenReaderOn': 'เปิดโหมดสำหรับโปรแกรมอ่านหน้าจอแล้ว',
 	'workbench.signals.screenReaderOff': 'ปิดโหมดสำหรับโปรแกรมอ่านหน้าจอแล้ว',
 	'workbench.signals.cursorPosition': 'บรรทัด {line} คอลัมน์ {column}',
+	'workbench.imageZoom.whole': 'ทั้งภาพ',
+	'workbench.imageZoom.select': 'เลือกระดับการซูม',
+	'workbench.imageZoom.clickHint': 'คลิกเพื่อซูมเข้า, Option-คลิก (Ctrl-คลิก) เพื่อซูมออก',
 } satisfies Record<keyof typeof en, string>;

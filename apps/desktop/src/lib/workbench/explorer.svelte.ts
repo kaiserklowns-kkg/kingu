@@ -5,6 +5,7 @@ import { clientLog } from '#lib/client-log.ts';
 import { enabledGlobs, hiddenBySibling, isExcluded, siblingClauses, sortEntries, type LexicographicOrder, type SortOrder } from '#lib/settings/mappings.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { editors } from './editors.svelte';
+import { lsp } from '#lib/lsp/lsp.svelte.ts';
 import { affectedBy, baseName, dirsToRefresh, isUnder, joinRel, parentOf, remapPath, validateName } from './fileTree';
 import { notifications } from './notifications.svelte';
 import { compactChain, compactLabel, dropTarget, moveQuestion, planTransfer, rangeSelection, topLevel } from './explorerModel';
@@ -377,6 +378,9 @@ class Explorer {
 			else if (r !== yes) return false;
 		}
 		const created: string[] = [];
+		// js/ts.updateImportsOnFileMove: the TypeScript server's import updates, asked before the files move.
+		const imports = copy ? null : await lsp.willRenameFiles(ops.map((o) => ({ from: o.from, to: o.to, isDir: this.isDir(o.from) })));
+		const moved = new Set<string>();
 		for (const op of ops) {
 			try {
 				if (copy) {
@@ -388,6 +392,7 @@ class Explorer {
 					const to = await this.#moveReplacing(op.from, dir, op.to);
 					if (to === null) continue;
 					created.push(to);
+					if (to === op.to) moved.add(op.from);
 					this.#afterMove(op.from, to);
 				}
 			} catch (e) {
@@ -395,6 +400,7 @@ class Explorer {
 				break;
 			}
 		}
+		if (imports) void lsp.filesRenamed(imports, moved);
 		if (dir) this.expanded.add(dir);
 		await this.refresh([...ops.map((o) => o.from), ...created, dir]);
 		for (const d of [...this.expanded]) if (!this.children.has(d)) await this.load(d);
@@ -543,6 +549,7 @@ class Explorer {
 
 	async #rename(from: string, to: string) {
 		if (editors.allTabs().some((t) => t.dirty && remapPath(t.path, from, to) !== null)) throw new Error(t('workbench.explorer.saveBeforeRename'));
+		const imports = await lsp.willRenameFiles([{ from, to, isDir: this.isDir(from) }]);
 		await invoke('fs_rename', { from, to });
 		moveLocalHistory(from, to);
 		this.editing = null;
@@ -554,6 +561,7 @@ class Explorer {
 		for (const k of wasExpanded) await this.load(to + k.slice(from.length));
 		this.select(to);
 		this.#moveTabs(from, to);
+		if (imports) void lsp.filesRenamed(imports);
 	}
 
 	/** Points the renamed path's tabs (in every group) at the new name; they are clean, so nothing is lost. */

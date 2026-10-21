@@ -1004,5 +1004,46 @@ export const TYPESCRIPT_SETTINGS: SettingSchema[] = [
 		type: 'boolean',
 		default: false,
 		description: 'แสดง CodeLens การอ้างอิงบนทุกฟังก์ชัน ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.referencesCodeLens.showOnAllFunctions (Enable/disable the [references CodeLens](#js/ts.referencesCodeLens.enabled) on all functions in JavaScript and TypeScript files.)'
+	},
+	{
+		id: 'js/ts.updateImportsOnFileMove.enabled',
+		group: 'TypeScript',
+		type: 'string',
+		default: 'prompt',
+		enum: ['prompt', 'always', 'never'],
+		enumDescriptions: ['ถามทุกครั้งที่เปลี่ยนชื่อ (Prompt on each rename.)', 'อัปเดตอัตโนมัติเสมอ (Always update paths automatically.)', 'ไม่อัปเดตและไม่ถาม (Never rename paths and don\'t prompt.)'],
+		description: 'อัปเดต path ของ import อัตโนมัติเมื่อเปลี่ยนชื่อหรือย้ายไฟล์ (Enable/disable automatic updating of import paths when you rename or move a file in Kingu.)'
+	},
+	{
+		id: 'typescript.updateImportsOnFileMove.enabled',
+		group: 'TypeScript',
+		type: 'string',
+		default: 'prompt',
+		enum: ['prompt', 'always', 'never'],
+		enumDescriptions: ['ถามทุกครั้งที่เปลี่ยนชื่อ (Prompt on each rename.)', 'อัปเดตอัตโนมัติเสมอ (Always update paths automatically.)', 'ไม่อัปเดตและไม่ถาม (Never rename paths and don\'t prompt.)'],
+		description: 'อัปเดต path ของ import อัตโนมัติเมื่อเปลี่ยนชื่อหรือย้ายไฟล์ — เลิกใช้แล้ว ให้ใช้ js/ts.updateImportsOnFileMove.enabled (Enable/disable automatic updating of import paths when you rename or move a file in Kingu.)'
+	},
+	{
+		id: 'javascript.updateImportsOnFileMove.enabled',
+		group: 'TypeScript',
+		type: 'string',
+		default: 'prompt',
+		enum: ['prompt', 'always', 'never'],
+		enumDescriptions: ['ถามทุกครั้งที่เปลี่ยนชื่อ (Prompt on each rename.)', 'อัปเดตอัตโนมัติเสมอ (Always update paths automatically.)', 'ไม่อัปเดตและไม่ถาม (Never rename paths and don\'t prompt.)'],
+		description: 'อัปเดต path ของ import อัตโนมัติเมื่อเปลี่ยนชื่อหรือย้ายไฟล์ — เลิกใช้แล้ว ให้ใช้ js/ts.updateImportsOnFileMove.enabled (Enable/disable automatic updating of import paths when you rename or move a file in Kingu.)'
+	},
+	{
+		id: 'js/ts.tsdk.path',
+		group: 'TypeScript',
+		type: 'string',
+		default: '',
+		description: 'โฟลเดอร์ lib ของ TypeScript ที่มี tsserver (เช่น ./node_modules/typescript/lib) สำหรับ TypeScript: Select TypeScript Version (Specifies the folder path to the tsserver and `lib*.d.ts` files under a TypeScript install to use for IntelliSense, for example: `./node_modules/typescript/lib`.)'
+	},
+	{
+		id: 'typescript.tsdk',
+		group: 'TypeScript',
+		type: 'string',
+		default: '',
+		description: 'โฟลเดอร์ lib ของ TypeScript ที่มี tsserver (เช่น ./node_modules/typescript/lib) สำหรับ TypeScript: Select TypeScript Version — เลิกใช้แล้ว ให้ใช้ js/ts.tsdk.path (Specifies the folder path to the tsserver and `lib*.d.ts` files under a TypeScript install to use for IntelliSense, for example: `./node_modules/typescript/lib`.)'
 	}
 ];

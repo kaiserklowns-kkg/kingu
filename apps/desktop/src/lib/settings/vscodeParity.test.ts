@@ -21,10 +21,13 @@ export const DEFAULT_DEVIATIONS: Readonly<Record<string, string>> = {
 	'workbench.preferredLightColorTheme': "Kingu's theme ids (the reference checkout ships its own theme names)",
 	'window.title': "VS Code's default is per platform; the fixture holds the macOS one and Kingu's tests run as Linux, which gets VS Code's Windows/Linux default",
 	'workbench.startupEditor': 'Kingu has no Welcome page, so nothing opens by default',
+	'workbench.editor.autoLockGroups': "VS Code builds the default from the editors registered at runtime (terminal, browser and process explorer editors lock); Kingu lists its own editor types, none of which locks",
 	'js/ts.preferences.autoImportFileExcludePatterns': 'VS Code registers no default (unset reads as an empty list); every Kingu setting needs one',
 	'js/ts.preferences.autoImportSpecifierExcludeRegexes': 'VS Code registers no default (unset reads as an empty list); every Kingu setting needs one',
 	'typescript.preferences.autoImportFileExcludePatterns': 'VS Code registers no default (unset reads as an empty list); every Kingu setting needs one',
 	'typescript.preferences.autoImportSpecifierExcludeRegexes': 'VS Code registers no default (unset reads as an empty list); every Kingu setting needs one',
+	'js/ts.tsdk.path': 'VS Code registers no default (unset reads as no path); every Kingu setting needs one',
+	'typescript.tsdk': 'VS Code registers no default (unset reads as no path); every Kingu setting needs one',
 	'json.schemas': 'VS Code registers no default (unset reads as an empty list); every Kingu setting needs one',
 	'markdown.validate.ignoredLinks': 'VS Code registers no default (unset reads as an empty list); every Kingu setting needs one',
 	'workbench.editorLargeFileConfirmation':"VS Code's 10 MB for remote and web windows (every byte crosses the webview IPC here); the local 1024 MB would load huge files into the webview without asking"

@@ -161,6 +161,21 @@ export const HTML_SETTINGS: SettingSchema[] = [
 		description: 'แสดงลิงก์อ้างอิง MDN ใน hover (Show references to MDN in hover.)'
 	},
 	{
+		id: 'html.autoClosingTags',
+		group: 'HTML',
+		type: 'boolean',
+		default: true,
+		description: 'ปิดแท็ก HTML อัตโนมัติเมื่อพิมพ์ > หรือ / (Enable/disable autoclosing of HTML tags.)'
+	},
+	{
+		id: 'html.customData',
+		group: 'HTML',
+		type: 'json',
+		schema: { type: 'array', items: { type: 'string' } },
+		default: [],
+		description: 'ไฟล์ JSON custom data (แท็ก attribute และค่าที่กำหนดเอง) ตาม path ที่สัมพันธ์กับ workspace (A list of relative file paths pointing to JSON files following the [custom data format](https://github.com/microsoft/vscode-html-languageservice/blob/master/docs/customData.md).\n\nKingu loads custom data on startup to enhance its HTML support for the custom HTML tags, attributes and attribute values you specify in the JSON files.\n\nThe file paths are relative to workspace and only workspace folder settings are considered.)'
+	},
+	{
 		id: 'html.autoCreateQuotes',
 		group: 'HTML',
 		type: 'boolean',

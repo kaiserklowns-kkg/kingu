@@ -15,7 +15,7 @@
 	import { untrack } from 'svelte';
 	import { highlightRuns, rank, type Match } from './fuzzy';
 	import { isMac, keyLabel } from './keys';
-	import { flattenSymbols, parseQuickInput, pickSymbols, QUICK_ACCESS_HELP, rankFiles, SYMBOL_KIND_NAMES, type FlatSymbol } from './quickAccess';
+	import { flattenSymbols, parseQuickInput, pickSymbols, QUICK_ACCESS_HELP, quickInputTop, rankFiles, SYMBOL_KIND_NAMES, type FlatSymbol } from './quickAccess';
 	import { recentFiles } from './recentFiles.svelte';
 	import { fileDetail } from '#lib/workbench/workspaceFolders.ts';
 	import { workspace } from './workspace.svelte.ts';
@@ -347,7 +347,8 @@
 		role="dialog"
 		aria-label="Quick open"
 		tabindex="-1"
-		class="fixed top-[calc(var(--kg-titlebar-height)+2px)] left-1/2 z-50 w-[min(600px,62vw)] -translate-x-1/2 rounded-xl border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) p-2 text-(--vscode-quickInput-foreground) shadow-2xl shadow-black/50"
+		style:top={quickInputTop(quick.alignment)}
+		class="fixed left-1/2 z-50 w-[min(600px,62vw)] -translate-x-1/2 rounded-xl border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) p-2 text-(--vscode-quickInput-foreground) shadow-2xl shadow-black/50"
 		onfocusout={(e) => {
 			// workbench.quickOpen.closeOnFocusLost
 			if (!e.currentTarget.contains(e.relatedTarget as Node | null) && settings.get<boolean>('workbench.quickOpen.closeOnFocusLost')) cancel();
