@@ -3,6 +3,7 @@
 // descriptions, the @modified / @id: filters, and validation of every schema kind (enums, arrays,
 // glob maps and VS Code's json schemas such as unions and nullable values).
 import { describe, expect, test } from 'bun:test';
+import { describeParts, isWebLink } from './description';
 import { describeSchema, matchesSchema, schemaChoices, schemaTypes } from './jsonSchema';
 import { hiddenBySibling, searchSettingsFrom, siblingClauses } from './mappings';
 import { mergesByKey, resolveSettings, SCHEMA, SETTINGS, settingProblems, settingsInView, settingSubgroup, subgroupsOf, tocKey, validate } from './registry';
@@ -113,5 +114,22 @@ describe('json settings (VS Code schemas the simple types cannot hold)', () => {
 		expect(validate(s, { 'source.fixAll': 'explicit', 'source.organizeImports': true })).toBeTruthy();
 		expect(validate(s, ['source.organizeImports'])).toEqual(['source.organizeImports']);
 		expect(validate(s, { 'source.fixAll': 'sometimes' })).toBeUndefined();
+	});
+});
+
+describe('descriptions', () => {
+	test('setting links, inline code and links', () => {
+		expect(describeParts('Overridden when `#editor.detectIndentation#` is on; see `x` or [docs](https://a.b).')).toEqual([
+			{ kind: 'text', text: 'Overridden when ' },
+			{ kind: 'setting', id: 'editor.detectIndentation' },
+			{ kind: 'text', text: ' is on; see ' },
+			{ kind: 'code', text: 'x' },
+			{ kind: 'text', text: ' or ' },
+			{ kind: 'link', text: 'docs', href: 'https://a.b' },
+			{ kind: 'text', text: '.' }
+		]);
+		expect(describeParts('plain')).toEqual([{ kind: 'text', text: 'plain' }]);
+		expect(isWebLink('https://code.visualstudio.com/docs')).toBe(true);
+		expect(isWebLink('command:workbench.action.openSettings')).toBe(false);
 	});
 });

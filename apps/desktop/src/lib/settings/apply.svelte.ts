@@ -114,6 +114,12 @@ export function installEditorSettings(monaco: typeof Monaco) {
 			// Loaded with Monaco (this runs once Monaco is in), so the workbench start does not pull it in.
 			untrack(() => void import('#lib/editor/monacoConfiguration.ts').then(({ updateMonacoConfiguration }) => updateMonacoConfiguration(values)));
 		});
+		// files.restoreUndoStack: Monaco's model service reads it when a closed file's model is
+		// disposed (keep its undo stack for when the file opens again, as VS Code's does).
+		$effect(() => {
+			const restore = get<boolean>('files.restoreUndoStack');
+			untrack(() => void import('#lib/editor/monacoConfiguration.ts').then(({ updateMonacoConfiguration }) => updateMonacoConfiguration([['files.restoreUndoStack', restore]])));
+		});
 		// Kingu's TextMate tokenizer skips long lines like Monaco's Monarch one.
 		$effect(() => setMaxTokenizationLineLength(get<number>('editor.maxTokenizationLineLength')));
 		// editor.codeActions.triggerOnFocusChange: the newly active editor's model.
@@ -259,6 +265,11 @@ export function installSettings(): () => void {
 			const id = effectiveTheme(get, prefersDark, highContrast);
 			// Wait for the files so the default theme does not flash before the user's.
 			if (settings.loaded) untrack(() => void theme.apply(id));
+		});
+		// workbench.colorCustomizations: colors over the applied theme (chrome, editor and terminal).
+		$effect(() => {
+			const custom = settings.get('workbench.colorCustomizations');
+			untrack(() => theme.setCustomizations(custom));
 		});
 		$effect(() => {
 			const level = settings.get<number>('window.zoomLevel');

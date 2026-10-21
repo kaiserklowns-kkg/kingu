@@ -6,7 +6,7 @@
 	import PaneSplitView from '#lib/terminal/PaneSplitView.svelte';
 	import { leaves } from '#lib/terminal/paneLayout.ts';
 	import { focusTerminal } from '#lib/terminal/registry.ts';
-	import { showTabsList } from '#lib/terminal/behaviour.ts';
+	import { panelTitleShows, showTabsList } from '#lib/terminal/behaviour.ts';
 	import { createTerminal } from '#lib/terminal/newTerminal.ts';
 	import { terminalFolderName } from '#lib/terminal/folders.ts';
 	import { workspace } from './workspace.svelte.ts';
@@ -93,6 +93,10 @@
 		showTabsList(settings.get<boolean>('terminal.integrated.tabs.enabled'), settings.get<string>('terminal.integrated.tabs.hideCondition'), terminals.list.length, terminals.groups.length)
 	);
 	const tabsLeft = $derived(settings.get<string>('terminal.integrated.tabs.location') === 'left');
+	// terminal.integrated.tabs.showActions / showActiveTerminal: what the title shows next to New Terminal.
+	const showTerminalActions = $derived(panelTitleShows(settings.get<string>('terminal.integrated.tabs.showActions'), terminals.list.length, tabsShown));
+	const showActiveTerminal = $derived(panelTitleShows(settings.get<string>('terminal.integrated.tabs.showActiveTerminal'), terminals.list.length, tabsShown));
+	const activeTerminal = $derived(terminals.get(terminals.active));
 	const focusOnDoubleClick = $derived(settings.get<string>('terminal.integrated.tabs.focusMode') === 'doubleClick');
 	const splitKey = keyLabel(isMac ? 'cmd+\\' : 'ctrl+shift+5');
 
@@ -220,15 +224,23 @@
 				</button>
 			{/if}
 		{:else if layout.panelTab === 'terminal'}
+			{#if showActiveTerminal && activeTerminal}
+				<span class="flex max-w-48 min-w-0 items-center gap-1 px-1 text-xs text-(--vscode-panelTitle-activeForeground)" title={activeTerminal.run?.join(' ') ?? activeTerminal.title}>
+					<Icon name="terminal" size={14} />
+					<span class="truncate">{activeTerminal.title}</span>
+				</span>
+			{/if}
 			<button aria-label="New Terminal" title="New Terminal" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => void createTerminal()}>
 				<Icon name="plus" size={16} />
 			</button>
-			<button aria-label="Split Terminal" title="Split Terminal ({splitKey})" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => terminals.split()}>
-				<Icon name="layout" size={15} />
-			</button>
-			<button aria-label="Kill Terminal" title="Kill Terminal" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => terminals.kill(terminals.active)}>
-				<Icon name="trash" size={15} />
-			</button>
+			{#if showTerminalActions}
+				<button aria-label="Split Terminal" title="Split Terminal ({splitKey})" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => terminals.split()}>
+					<Icon name="layout" size={15} />
+				</button>
+				<button aria-label="Kill Terminal" title="Kill Terminal" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => terminals.kill(terminals.active)}>
+					<Icon name="trash" size={15} />
+				</button>
+			{/if}
 		{/if}
 		<button
 			aria-label={maximized ? t('panel.restore') : t('panel.maximize')}

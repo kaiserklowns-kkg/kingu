@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { listWheel } from '#lib/workbench/listWheel.ts';
 	// Problems panel (VS Code: MarkersView): diagnostics grouped by file (tree) or one row per
 	// problem (table; `problems.defaultViewMode` until View as Tree / View as Table), ordered by
 	// `problems.sortOrder`, narrowed by the filter box and toggles (problemsView.svelte.ts). With
@@ -105,7 +106,7 @@
 			{/each}
 		</div>
 	{:else}
-		<div bind:this={scroller} role="tree" aria-label="Problems" class="h-full overflow-y-auto py-0.5">
+		<div bind:this={scroller} role="tree" aria-label="Problems" class="h-full overflow-y-auto py-0.5" use:listWheel>
 			{#each files as file (file.uri)}
 				{@const isOpen = !view.collapsed.has(file.uri)}
 				<button

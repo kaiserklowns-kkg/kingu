@@ -14,6 +14,7 @@
 	import { settings } from './settings.svelte';
 	import { settingSchemas } from './schemas.svelte';
 	import ListSetting from './ListSetting.svelte';
+	import SettingDescription from './SettingDescription.svelte';
 
 	// Repository: Kingu's per-repository overrides of the open folder (Orca's per-repo settings),
 	// kept in the app config dir, highest precedence.
@@ -22,14 +23,15 @@
 	/** The layers under each scope, nearest first (what a scope inherits). */
 	const BELOW: Record<SettingScope, SettingScope[]> = { user: [], workspace: ['user'], repo: ['workspace', 'user'] };
 
-	let { group = null, query = $bindable('') }: { group?: string | null; query?: string } = $props();
+	/** `searchGroup`: while searching, only that group's results (the TOC's filter, settingsSearchTocBehavior). */
+	let { group = null, query = $bindable(''), searchGroup = null }: { group?: string | null; query?: string; searchGroup?: string | null } = $props();
 	let scope = $state<SettingScope>('user');
 	$effect(() => {
 		if (scope === 'repo' && !workspace.root) scope = 'user';
 	});
 
 	const isModified = (id: string) => (['user', 'workspace', 'repo'] as const).some((sc) => settings.inspect(id, sc) !== undefined);
-	const visible = $derived(settingsInView(query, group, settingSchemas.all, isModified));
+	const visible = $derived(settingsInView(query, group, settingSchemas.all, isModified).filter((s) => !searchGroup || !query.trim() || s.group === searchGroup));
 	const problemsOf = (id: string) => settings.problems.filter((p) => p.id === id && p.scope === scope);
 	const scopeProblems = $derived(settings.problems.filter((p) => p.scope === scope));
 	/** Theme pickers show the theme's label, other enums their value (like VS Code). */
@@ -220,10 +222,10 @@
 									{disabled}
 									onchange={(e) => update(s, e.currentTarget.checked)}
 								/>
-								<span>{s.description}</span>
+								<span><SettingDescription text={s.description} onsetting={(id) => (query = `@id:${id}`)} /></span>
 							</label>
 						{:else}
-							<p class="mt-1 text-[13px] text-(--vscode-descriptionForeground)">{s.description}</p>
+							<p class="mt-1 text-[13px] text-(--vscode-descriptionForeground)"><SettingDescription text={s.description} onsetting={(id) => (query = `@id:${id}`)} /></p>
 							{#if s.type === 'number'}
 								<input
 									type="number"
@@ -248,7 +250,7 @@
 								</select>
 								{#if s.enumDescriptions && !labelled(s)}
 									{@const i = s.enum.indexOf(value as string)}
-									{#if i >= 0 && s.enumDescriptions[i]}<p class="mt-1 text-xs text-(--vscode-descriptionForeground)">{s.enumDescriptions[i]}</p>{/if}
+									{#if i >= 0 && s.enumDescriptions[i]}<p class="mt-1 text-xs text-(--vscode-descriptionForeground)"><SettingDescription text={s.enumDescriptions[i]} onsetting={(id) => (query = `@id:${id}`)} /></p>{/if}
 								{/if}
 							{:else if s.type === 'array' || s.type === 'object'}
 								<ListSetting schema={s} {value} {disabled} onchange={(v) => update(s, v)} />

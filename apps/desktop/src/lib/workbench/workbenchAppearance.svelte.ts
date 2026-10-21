@@ -1,13 +1,16 @@
 // Workbench-wide appearance and input settings that act on the whole page or the native window
 // (VS Code: the workbench's classes and CSS variables, the window's native theme, the keybinding
-// dispatcher). The rules are pure (workbenchOptions.ts); this applies them live.
+// dispatcher, window.closeWhenEmpty). The rules are pure (workbenchOptions.ts); this applies them live.
 
 import { untrack } from 'svelte';
+import { invoke } from '@tauri-apps/api/core';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { theme } from '#lib/theme/theme.svelte.ts';
 import { isDarkType } from '#lib/theme/themes.ts';
+import { editors } from './editors.svelte';
 import { setKeyboardDispatch, type KeyboardDispatch } from './keys';
-import { editorTabHeight, fontSmoothing, nativeWindowTheme, reducedMotion } from './workbenchOptions';
+import { workspace } from './workspace.svelte';
+import { closesWhenEmpty, editorTabHeight, fontSmoothing, nativeWindowTheme, reducedMotion } from './workbenchOptions';
 
 export function installWorkbenchAppearance(): () => void {
 	const motion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
@@ -19,6 +22,8 @@ export function installWorkbenchAppearance(): () => void {
 	const onResize = () => (dpr = window.devicePixelRatio || 1);
 	window.addEventListener('resize', onResize);
 
+	let hadEditors = false;
+	let hadFolder = false;
 	const dispose = $effect.root(() => {
 		$effect(() => {
 			const root = document.documentElement;
@@ -32,6 +37,9 @@ export function installWorkbenchAppearance(): () => void {
 			// workbench.reduceMotion / workbench.shadows
 			root.classList.toggle('kg-reduce-motion', reducedMotion(settings.get<string>('workbench.reduceMotion'), osReduced));
 			root.classList.toggle('kg-no-shadows', !settings.get<boolean>('workbench.shadows'));
+			// workbench.view.alwaysShowHeaderActions / workbench.tree.renderIndentGuides (layout.css).
+			root.classList.toggle('kg-always-show-header-actions', settings.get<boolean>('workbench.view.alwaysShowHeaderActions'));
+			root.dataset.indentGuides = settings.get<string>('workbench.tree.renderIndentGuides');
 		});
 		// keyboard.dispatch
 		$effect(() => setKeyboardDispatch(settings.get<KeyboardDispatch>('keyboard.dispatch')));
@@ -45,6 +53,17 @@ export function installWorkbenchAppearance(): () => void {
 					.catch(() => {});
 			});
 		});
+		// window.closeWhenEmpty: closing the last editor of a window that shows no folder closes the
+		// window (closing a folder closes its editors too, which does not count).
+		$effect(() => {
+			const count = editors.allTabs().length;
+			const folder = workspace.root !== null;
+			const close = closesWhenEmpty(settings.get<boolean>('window.closeWhenEmpty'), { hadEditors, editors: count, folderOpen: folder || hadFolder });
+			hadEditors = count > 0;
+			hadFolder = folder;
+			// Through the close guard, like Close Window.
+			if (close) untrack(() => void invoke('window_close').catch(() => {}));
+		});
 	});
 	return () => {
 		motion?.removeEventListener('change', onMotion);
@@ -52,3 +71,4 @@ export function installWorkbenchAppearance(): () => void {
 		dispose();
 	};
 }
+

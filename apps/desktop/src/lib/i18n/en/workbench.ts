@@ -1,6 +1,12 @@
 // UI strings of the workbench area. Keys: 'workbench.<file>.<what>'. Thai in ../th/workbench.ts.
 export const workbench = {
 	'workbench.scm.tooManyChanges': 'Too many changes were detected. Only the first {limit} changes will be shown below.',
+	'workbench.scm.parentRepository': 'A git repository was found in the parent folders of the workspace. Would you like to open the repository?',
+	'workbench.scm.parentYes': 'Yes',
+	'workbench.scm.parentAlways': 'Always',
+	'workbench.scm.parentNever': 'Never',
+	'workbench.scm.gitNotFound': 'Git not found. Install it or configure it using the "git.path" setting.',
+	'workbench.scm.downloadGit': 'Download Git',
 	'workbench.scm.dontShowAgain': 'Don\'t Show Again',
 	'workbench.scm.initializedWithCommit': 'Initialized a git repository with a first commit',
 	'workbench.scm.initialized': 'Initialized a git repository',

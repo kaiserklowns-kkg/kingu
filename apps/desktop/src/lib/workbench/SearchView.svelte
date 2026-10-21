@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { listWheel } from '#lib/workbench/listWheel.ts';
 	// VS Code's Search view (searchView.ts / searchWidget.ts): query box with Match Case,
 	// Whole Word and Regex toggles, the Replace box behind the chevron (Preserve Case, Replace
 	// All, per-file and per-match replace on hover), include/exclude globs behind "…", and a
@@ -43,6 +44,10 @@
 	const rows = $derived(flattenResults(sortResults(search.files, settings.get<ResultSortOrder>('search.sortOrder')), search.collapsed, search.viewMode));
 	/** search.showLineNumbers, search.decorations.colors / search.decorations.badges. */
 	const lineNumbers = $derived(settings.get<boolean>('search.showLineNumbers'));
+	/** search.actionsPosition: `auto` puts a row's actions right after its text once the view is
+	 * wider than 640px (VS Code's wide view pane); `right` keeps them at the right edge. */
+	let viewWidth = $state(0);
+	const actionsRight = $derived(settings.get<string>('search.actionsPosition') !== 'auto' || viewWidth <= 640);
 	const decoColors = $derived(settings.get<boolean>('search.decorations.colors'));
 	const decoBadges = $derived(settings.get<boolean>('search.decorations.badges'));
 	const decorations = $derived(decoColors || decoBadges ? fileDecorations(entryChanges(scm.entries)) : new Map());
@@ -161,7 +166,7 @@
 	const inputField = 'h-full min-w-0 flex-1 bg-transparent px-1.5 outline-none placeholder:text-(--vscode-input-placeholderForeground)';
 </script>
 
-<section aria-label="Search" class="flex min-h-0 flex-1 flex-col">
+<section aria-label="Search" class="flex min-h-0 flex-1 flex-col" bind:clientWidth={viewWidth}>
 	<div class="flex shrink-0 flex-col gap-1 pr-3 pl-0.5">
 		<div class="flex gap-0.5">
 			<button
@@ -349,6 +354,7 @@
 		bind:this={tree}
 		bind:clientHeight={viewHeight}
 		role="tree"
+		use:listWheel
 		aria-label="Search results"
 		tabindex="0"
 		class="relative mt-1 min-h-0 flex-1 overflow-y-auto outline-none"
@@ -395,7 +401,7 @@
 						{#if decoBadges && deco}<span class="shrink-0 text-[11px] font-semibold" style:color={decoColors ? deco.color : undefined}>{deco.letter || '•'}</span>{/if}
 						{#if canReplace}
 							<button
-								class="ml-auto hidden size-5 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) group-hover/row:grid hover:bg-(--vscode-toolbar-hoverBackground)"
+								class={['hidden size-5 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) group-hover/row:grid hover:bg-(--vscode-toolbar-hoverBackground)', actionsRight ? 'ml-auto' : 'ml-2.5']}
 								title="Replace All in File"
 								aria-label="Replace All in {basename(row.file.path)}"
 								onclick={(e) => replaceRow(row, e)}><Icon name="replaceAll" size={14} /></button
@@ -404,7 +410,7 @@
 						<span
 							class={[
 								'flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-[11px] bg-(--vscode-badge-background) px-1.5 text-[11px] text-(--vscode-badge-foreground)',
-								canReplace ? 'ml-auto group-hover/row:ml-0' : 'ml-auto'
+								!actionsRight ? 'ml-2.5 group-hover/row:ml-0' : canReplace ? 'ml-auto group-hover/row:ml-0' : 'ml-auto'
 							]}>{row.file.matches.length}</span
 						>
 					{:else}
@@ -418,7 +424,7 @@
 							>
 							{#if canReplace}
 								<button
-									class="ml-auto hidden size-5 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) group-hover/row:grid hover:bg-(--vscode-toolbar-hoverBackground)"
+									class={['hidden size-5 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) group-hover/row:grid hover:bg-(--vscode-toolbar-hoverBackground)', actionsRight ? 'ml-auto' : 'ml-1']}
 									title="Replace"
 									aria-label="Replace"
 									onclick={(e) => replaceRow(row, e)}><Icon name="replace" size={14} /></button

@@ -590,16 +590,24 @@ export const GIT_SETTINGS: SettingSchema[] = [
 		description: 'repository ที่ไม่ต้องเปิด (path เต็ม หรือนับจากโฟลเดอร์ใน workspace) (List of Git repositories to ignore.)'
 	},
 	{
+		id: 'git.ignoreMissingGitWarning',
+		group: 'Git',
+		type: 'boolean',
+		default: false,
+		description: 'ไม่เตือนเมื่อหาโปรแกรม git ไม่พบ (Ignores the warning when Git is missing.)'
+	},
+	{
 		id: 'git.openRepositoryInParentFolders',
 		group: 'Git',
 		type: 'string',
 		default: 'prompt',
 		enum: ['always', 'never', 'prompt'],
 		enumDescriptions: [
-			'เปิดทุกครั้ง (Always open a repository in parent folders of workspaces or open files.)',
+			'เปิดเสมอ (Always open a repository in parent folders of workspaces or open files.)',
 			'ไม่เปิด (Never open a repository in parent folders of workspaces or open files.)',
-			'ถามก่อนเปิด (Prompt before opening a repository the parent folders of workspaces or open files.)'
+			'ถามก่อน (Prompt before opening a repository the parent folders of workspaces or open files.)'
 		],
-		description: 'เปิด repository ที่อยู่ในโฟลเดอร์เหนือโฟลเดอร์ที่เปิดหรือไม่ (Control whether a repository in parent folders of workspaces or open files should be opened.)'
+		description: 'ใช้ git repository ที่อยู่ในโฟลเดอร์แม่ของโฟลเดอร์ที่เปิดหรือไม่ (Control whether a repository in parent folders of workspaces or open files should be opened.)',
+		scope: 'resource'
 	}
 ];

@@ -155,7 +155,7 @@ class Workspace {
 	async openFile() {
 		let picked: string[];
 		try {
-			picked = await invoke<string[]>('external_pick_files', { title: t('workspaces.openFileTitle') });
+			picked = await invoke<string[]>('external_pick_files', { title: t('workspaces.openFileTitle'), defaultPath: dialogDefaultPath() });
 		} catch (e) {
 			notifications.error(t('workspaces.openFileFailed', { error: String(e) }));
 			return;
@@ -176,7 +176,7 @@ class Workspace {
 
 	/** File: Open Workspace from File… */
 	async pickWorkspaceFile() {
-		const [file] = await invoke<string[]>('external_pick_files', { workspace: true, title: t('workspaces.openWorkspaceTitle') }).catch((e) => {
+		const [file] = await invoke<string[]>('external_pick_files', { workspace: true, title: t('workspaces.openWorkspaceTitle'), defaultPath: dialogDefaultPath() }).catch((e) => {
 			notifications.error(t('workspaces.openFileFailed', { error: String(e) }));
 			return [];
 		});
@@ -268,7 +268,7 @@ class Workspace {
 	async addFolderToWorkspace(paths?: string[]) {
 		let dirs = paths;
 		if (!dirs) {
-			const picked = await open({ directory: true, multiple: true, title: t('workspaces.addFolderTitle'), defaultPath: this.root ?? (this.home || undefined) });
+			const picked = await open({ directory: true, multiple: true, title: t('workspaces.addFolderTitle'), defaultPath: this.root ?? (dialogDefaultPath() ?? (this.home || undefined)) });
 			dirs = Array.isArray(picked) ? picked : typeof picked === 'string' ? [picked] : [];
 		}
 		dirs = dirs.filter((d) => !this.folders.some((f) => f.path === d));
@@ -333,7 +333,7 @@ class Workspace {
 
 	/** `workbench.action.files.openFolder`: the native folder picker. Several folders picked open as one multi-root workspace. */
 	async pickFolder(opts: { newWindow?: boolean } = {}) {
-		const picked = await open({ directory: true, multiple: true, title: t('workspaces.openFolderTitle'), defaultPath: this.root ?? (this.home || undefined) });
+		const picked = await open({ directory: true, multiple: true, title: t('workspaces.openFolderTitle'), defaultPath: this.root ?? (dialogDefaultPath() ?? (this.home || undefined)) });
 		const dirs = Array.isArray(picked) ? picked : typeof picked === 'string' ? [picked] : [];
 		if (dirs.length === 1) await this.openFolder(dirs[0], opts);
 		else if (dirs.length > 1) await this.openFolders(dirs, opts);
@@ -531,6 +531,12 @@ async function confirmDiscard(): Promise<boolean> {
 const WORKSPACE_FILE_KEY = 'kingu.workspace.file';
 
 /** Where a build before multiple windows kept the folder's `.code-workspace` file (read once, to move it to Rust). */
+/** `files.dialog.defaultPath`: where a file dialog starts instead of the home folder when no folder gives it one. */
+export function dialogDefaultPath(): string | undefined {
+	const p = settings.get<string>('files.dialog.defaultPath')?.trim();
+	return p && p.startsWith('/') ? p : undefined;
+}
+
 function savedWorkspaceFile(): { root: string; file: string } | null {
 	try {
 		const v = JSON.parse(localStorage.getItem(WORKSPACE_FILE_KEY) ?? 'null');

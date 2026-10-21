@@ -177,18 +177,36 @@ describe('terminal', () => {
 	test('shell settings are user-only and per platform', () => {
 		const user = { 'terminal.integrated.shell.osx': '/bin/bash', 'terminal.integrated.shellArgs.osx': ['--login'], 'terminal.integrated.env.osx': { A: '1', B: null }, 'terminal.integrated.cwd': 'apps' };
 		const rest = { inheritEnv: true, detectLocale: 'auto', locale: 'th-TH', splitCwd: 'inherited' };
-		expect(shellFrom(getter(user), 'osx', 'th-TH')).toEqual({ shell: '/bin/bash', args: ['--login'], env: { A: '1', B: null }, cwd: 'apps', ...rest });
-		expect(shellFrom(getter(user), 'linux', 'th-TH')).toEqual({ shell: null, args: ['-l'], env: {}, cwd: 'apps', ...rest });
+		expect(shellFrom(getter(user), 'osx', 'th-TH')).toEqual({ shell: '/bin/bash', paths: [], args: ['--login'], env: { A: '1', B: null }, cwd: 'apps', ...rest });
+		expect(shellFrom(getter(user), 'linux', 'th-TH')).toEqual({ shell: null, paths: [], args: ['-l'], env: {}, cwd: 'apps', ...rest });
 		// A repository's workspace settings cannot choose the program a terminal runs, its environment or whether it inherits Kingu's.
 		expect(
 			shellFrom(getter({}, { 'terminal.integrated.shell.osx': '/tmp/evil', 'terminal.integrated.env.osx': { X: '1' }, 'terminal.integrated.inheritEnv': false }), 'osx', 'th-TH')
-		).toEqual({ shell: null, args: ['-l'], env: {}, cwd: null, ...rest });
+		).toEqual({ shell: null, paths: [], args: ['-l'], env: {}, cwd: null, ...rest });
 		expect(shellFrom(getter({ 'terminal.integrated.inheritEnv': false, 'terminal.integrated.detectLocale': 'off', 'terminal.integrated.splitCwd': 'initial' }), 'osx', null)).toMatchObject({
 			inheritEnv: false,
 			detectLocale: 'off',
 			locale: null,
 			splitCwd: 'initial'
 		});
+	});
+
+	test('terminal profiles (defaultProfile / profiles) like VS Code', () => {
+		// A workspace cannot pick the profile (user-only, like the shell).
+		expect(shellFrom(getter({}, { 'terminal.integrated.defaultProfile.osx': 'evil', 'terminal.integrated.profiles.osx': { evil: { path: '/tmp/evil' } } }), 'osx')).toMatchObject({ paths: [], args: ['-l'] });
+		const user = {
+			'terminal.integrated.shell.osx': '/bin/bash',
+			'terminal.integrated.env.osx': { A: '1', B: '2' },
+			'terminal.integrated.defaultProfile.osx': 'fish',
+			'terminal.integrated.profiles.osx': { mine: { path: ['/opt/x/bin/zsh', 'zsh'], args: ['-i'], env: { B: null, C: '3' } } }
+		};
+		// VS Code's default profiles stay available next to the user's.
+		expect(shellFrom(getter(user), 'osx')).toMatchObject({ shell: '/bin/bash', paths: ['fish'], args: ['-l'], env: { A: '1', B: '2' } });
+		expect(shellFrom(getter({ ...user, 'terminal.integrated.defaultProfile.osx': 'mine' }), 'osx')).toMatchObject({ paths: ['/opt/x/bin/zsh', 'zsh'], args: ['-i'], env: { A: '1', B: null, C: '3' } });
+		expect(shellFrom(getter({ ...user, 'terminal.integrated.defaultProfile.osx': 'tmux' }), 'osx')).toMatchObject({ paths: ['tmux'], args: [] });
+		// `null` removes a default profile; an unknown name falls back to the legacy shell settings.
+		expect(shellFrom(getter({ ...user, 'terminal.integrated.defaultProfile.osx': 'bash', 'terminal.integrated.profiles.osx': { bash: null } }), 'osx')).toMatchObject({ paths: [], args: ['-l'] });
+		expect(shellFrom(getter({ 'terminal.integrated.defaultProfile.linux': 'nope' }), 'linux')).toMatchObject({ paths: [], args: ['-l'] });
 	});
 });
 

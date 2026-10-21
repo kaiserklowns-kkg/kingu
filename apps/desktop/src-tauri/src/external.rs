@@ -98,6 +98,15 @@ fn save(inner: &Inner) {
 }
 
 
+/// Where a file dialog starts without a folder to start in: `files.dialog.defaultPath` when it
+/// names an existing folder (VS Code: it replaces the home folder), else the home folder.
+pub fn dialog_home(app: &AppHandle, default_path: Option<&str>) -> Result<PathBuf, String> {
+  match default_path.map(str::trim).map(PathBuf::from).filter(|p| p.is_absolute() && p.is_dir()) {
+    Some(dir) => Ok(dir),
+    None => app.path().home_dir().map_err(|e| e.to_string()),
+  }
+}
+
 /// File: Open File… — the native picker, starting in `dir` (else the open folder or home).
 /// `workspace`: only `.code-workspace` files (File: Open Workspace from File…). Returns the picked
 /// paths, now allowed for the other commands here.
@@ -108,11 +117,12 @@ pub async fn external_pick_files(
   ws: crate::workspace::Workspace,
   workspace: Option<bool>,
   title: Option<String>,
+  default_path: Option<String>,
 ) -> Result<Vec<String>, String> {
   use tauri_plugin_dialog::DialogExt;
   let start = match ws.current() {
     Some(root) => root,
-    None => app.path().home_dir().map_err(|e| e.to_string())?,
+    None => dialog_home(&app, default_path.as_deref())?,
   };
   let workspace = workspace.unwrap_or(false);
   let handle = app.clone();

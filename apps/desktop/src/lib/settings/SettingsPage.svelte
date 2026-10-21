@@ -7,7 +7,7 @@
 	import SnapsView from '#lib/snaps/SnapsView.svelte';
 	import AccountsView from '#lib/accounts/AccountsView.svelte';
 	import { snaps } from '#lib/snaps/snaps.svelte.ts';
-	import { SNAPS_SECTION_ID, subgroupsOf, tocKey } from './registry';
+	import { settingsInView, SNAPS_SECTION_ID, subgroupsOf, tocKey } from './registry';
 	import { settingSchemas } from './schemas.svelte';
 	import SettingsEditor from './SettingsEditor.svelte';
 	import AppearancePage from './pages/AppearancePage.svelte';
@@ -106,6 +106,23 @@
 	const modifiedCount = $derived(settingSchemas.all.filter((s) => settings.inspect(s.id, 'user') !== undefined || settings.inspect(s.id, 'workspace') !== undefined).length);
 	const page = $derived(query ? null : systemSettings.page);
 
+	// workbench.settings.settingsSearchTocBehavior: while searching, the table of contents is hidden
+	// (`hide`) or shows only the groups with results, a click narrowing the results to one (`filter`).
+	const searching = $derived(query.trim() !== '');
+	const tocHidden = $derived(searching && settings.get<string>('workbench.settings.settingsSearchTocBehavior') === 'hide');
+	let searchScope = $state<string | null>(null);
+	$effect(() => {
+		if (!searching) searchScope = null;
+	});
+	const isModified = (id: string) => (['user', 'workspace', 'repo'] as const).some((sc) => settings.inspect(id, sc) !== undefined);
+	const matchCounts = $derived.by(() => {
+		if (!searching) return null;
+		const counts = new Map<string, number>();
+		for (const s of settingsInView(query, null, settingSchemas.all, isModified)) counts.set(s.group, (counts.get(s.group) ?? 0) + 1);
+		return counts;
+	});
+	const tocGroups = (sec: SettingsSection) => (matchCounts ? sec.groups.filter((g) => matchCounts.has(g)) : sec.groups);
+
 	function select(group: string | null) {
 		systemSettings.group = group;
 		systemSettings.snaps = false;
@@ -145,8 +162,8 @@
 				<span class="flex-1 truncate">แก้ไขแล้ว</span>
 				<span class="text-[11px] text-(--vscode-descriptionForeground)">{modifiedCount}</span>
 			</button>
-			{#each settingSchemas.sections as sec (sec.id)}
-				<div>
+			{#each tocHidden ? [] : settingSchemas.sections as sec (sec.id)}
+				<div class={[matchCounts && !tocGroups(sec).length && !pagesOf(sec).length && 'hidden']}>
 					<div class="px-2.5 pb-1 text-[11px] font-semibold tracking-wide text-(--vscode-descriptionForeground) uppercase">{sectionLabel(sec)}</div>
 					{#each pagesOf(sec) as p (p.id)}
 						<button class={[ITEM, page === p.id && SELECTED]} aria-current={page === p.id ? 'true' : undefined} onclick={() => ((query = ''), systemSettings.showPage(p.id))}>
@@ -163,11 +180,11 @@
 							<span class="text-[11px] text-(--vscode-descriptionForeground)">{snaps.list.length}</span>
 						</button>
 					{/if}
-					{#each sec.groups as g (g)}
-						{@const current = systemSettings.group === g && !showSnaps && !page && !query}
-						<button class={[ITEM, current && SELECTED]} aria-current={current ? 'true' : undefined} onclick={() => select(g)}>
+					{#each tocGroups(sec) as g (g)}
+						{@const current = searching ? searchScope === g : systemSettings.group === g && !showSnaps && !page}
+						<button class={[ITEM, current && SELECTED]} aria-current={current ? 'true' : undefined} onclick={() => (searching ? (searchScope = searchScope === g ? null : g) : select(g))}>
 							<span class="flex-1 truncate">{g}</span>
-							<span class="text-[11px] text-(--vscode-descriptionForeground)">{count(g)}</span>
+							<span class="text-[11px] text-(--vscode-descriptionForeground)">{matchCounts?.get(g) ?? count(g)}</span>
 						</button>
 						{#if groupOf(systemSettings.group) === g && !showSnaps && !page && !query}
 							{#each subgroupsOf(g, settingSchemas.all) as sub (sub)}
@@ -219,7 +236,7 @@
 		{:else if page === 'memories'}<MemoriesPage />
 			{:else if page === 'voice'}<VoicePage />
 			{:else if page === 'about'}<AboutPage />
-			{:else if showSnaps}<SnapsView />{:else}<SettingsEditor group={systemSettings.group} bind:query />{/if}
+			{:else if showSnaps}<SnapsView />{:else}<SettingsEditor group={systemSettings.group} bind:query searchGroup={searchScope} />{/if}
 		</div>
 	</div>
 </section>

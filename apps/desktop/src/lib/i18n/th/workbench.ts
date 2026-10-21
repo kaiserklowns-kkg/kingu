@@ -2,6 +2,12 @@ import type { workbench as en } from '../en/workbench';
 
 export const workbench = {
 	'workbench.scm.tooManyChanges': 'repository นี้มีการเปลี่ยนแปลงมากเกินไป จึงแสดงเพียง {limit} รายการแรก',
+	'workbench.scm.parentRepository': 'พบ git repository ในโฟลเดอร์แม่ของโฟลเดอร์ที่เปิดอยู่ ต้องการเปิด repository นั้นไหม',
+	'workbench.scm.parentYes': 'เปิด',
+	'workbench.scm.parentAlways': 'เปิดเสมอ',
+	'workbench.scm.parentNever': 'ไม่เปิดเลย',
+	'workbench.scm.gitNotFound': 'ไม่พบ git ติดตั้ง git หรือตั้งค่า git.path ให้ชี้ไปที่ git',
+	'workbench.scm.downloadGit': 'ดาวน์โหลด Git',
 	'workbench.scm.dontShowAgain': 'ไม่ต้องแสดงอีก',
 	'workbench.scm.initializedWithCommit': 'สร้าง git repository พร้อม commit แรกแล้ว',
 	'workbench.scm.initialized': 'สร้าง git repository แล้ว',

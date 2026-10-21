@@ -301,6 +301,11 @@
 			"group": "Workbench",
 			"th": "ขนาดไฟล์เป็น MB ที่ต้องยืนยันก่อนเปิดใน editor",
 			"default": 10
+		},
+		{
+			"id": "workbench.editor.splitOnDragAndDrop",
+			"group": "Workbench",
+			"th": "ลากแท็บไปวางที่ขอบของ editor เพื่อแยกเป็นกลุ่มใหม่ด้านนั้น"
 		}
 	]
 }

@@ -96,6 +96,28 @@
 			"id": "window.customMenuBarAltFocus",
 			"group": "Window",
 			"th": "กด Alt แล้วปล่อยเพื่อโฟกัสเมนูบาร์ บน Linux และ Windows"
+		},
+		{
+			"id": "window.closeWhenEmpty",
+			"group": "Window",
+			"th": "ปิดหน้าต่างเมื่อปิด editor ตัวสุดท้าย (เฉพาะหน้าต่างที่ไม่ได้เปิดโฟลเดอร์)"
+		},
+		{
+			"id": "window.customTitleBarVisibility",
+			"group": "Window",
+			"th": "เมื่อใดที่แสดงแถบชื่อเรื่องของ Kingu",
+			"enumTh": [
+				"แสดงตามปกติ",
+				"ซ่อนเมื่อเต็มจอ",
+				"ซ่อนเมื่อเต็มจอ (แถบชื่อเรื่องของ Kingu แสดงเสมอนอกโหมดเต็มจอ)"
+			],
+			"scope": "application"
+		},
+		{
+			"id": "window.doubleClickIconToClose",
+			"group": "Window",
+			"th": "ดับเบิลคลิกไอคอนแอปในแถบชื่อเรื่องเพื่อปิดหน้าต่าง และลากหน้าต่างจากไอคอนไม่ได้ (Windows/Linux)",
+			"scope": "application"
 		}
 	]
 }

@@ -322,6 +322,21 @@ fn git_reload_path(app: AppHandle) -> Result<(), String> {
   Ok(())
 }
 
+/// Whether git runs (`git.ignoreMissingGitWarning`): its version, `None` when it cannot run, and
+/// whether a folder of the window has a `.git` (VS Code warns only then).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitProbe {
+  version: Option<String>,
+  has_repository: bool,
+}
+
+#[tauri::command]
+async fn git_probe(ws: Workspace) -> Result<GitProbe, String> {
+  let roots = ws.roots();
+  blocking(move || Ok(GitProbe { version: git::version(), has_repository: roots.iter().any(|f| f.join(".git").exists()) })).await
+}
+
 /// `git.requireGitUserConfig`: whether `user.name` and `user.email` are configured.
 #[tauri::command]
 async fn git_user_configured(ws: Workspace, slug: Option<String>, repo: Option<String>) -> Result<bool, String> {
@@ -573,7 +588,16 @@ fn pty_spawn(
       }
     }
   }
-  let shell = terminal.shell.as_deref().filter(|s| !s.trim().is_empty());
+  // terminal.integrated.defaultProfile.*: the profile's path (a name looked up on PATH, or a list
+  // tried in turn, like VS Code), else the legacy terminal.integrated.shell.* (an absolute path).
+  let profile_shell = if terminal.paths.is_empty() {
+    None
+  } else {
+    let found = pty::resolve_shell(&terminal.paths, shell_env::path().as_deref())
+      .ok_or_else(|| crate::tr!(crate::i18n::msg::CoreMsg::ProfileShellMissing, paths = terminal.paths.join(", ")))?;
+    Some(found.to_string_lossy().into_owned())
+  };
+  let shell = profile_shell.as_deref().or(terminal.shell.as_deref()).filter(|s| !s.trim().is_empty());
   // A task: its folder and env, and /bin/sh running the task wrapper with the task's argv.
   let (cwd, task_args) = match &task {
     Some(t) => {
@@ -633,6 +657,8 @@ fn pty_spawn(
 #[serde(default, rename_all = "camelCase")]
 struct TerminalSettings {
   shell: Option<String>,
+  /// The default profile's `path` candidates (terminal.integrated.profiles.*); they win over `shell`.
+  paths: Vec<String>,
   args: Option<Vec<String>>,
   /// `terminal.integrated.env.*`: `null` removes a variable.
   env: BTreeMap<String, Option<String>>,
@@ -1116,13 +1142,21 @@ struct SavedAs {
 /// Save As (and the first save of an untitled editor): the native save dialog, then the write.
 /// The dialog runs here so the webview never names a path outside the workspace itself.
 #[tauri::command]
-async fn fs_save_as(app: AppHandle, window: tauri::WebviewWindow, ws: Workspace, content: String, name: String, dir: Option<String>) -> Result<Option<SavedAs>, String> {
+async fn fs_save_as(
+  app: AppHandle,
+  window: tauri::WebviewWindow,
+  ws: Workspace,
+  content: String,
+  name: String,
+  dir: Option<String>,
+  default_path: Option<String>,
+) -> Result<Option<SavedAs>, String> {
   use tauri_plugin_dialog::DialogExt;
   let root = ws.current();
   let start = match (&root, dir) {
     (Some(r), Some(d)) => ws.resolve(&d).unwrap_or_else(|_| r.clone()),
     (Some(r), None) => r.clone(),
-    (None, _) => app.path().home_dir().map_err(|e| e.to_string())?,
+    (None, _) => external::dialog_home(&app, default_path.as_deref())?,
   };
   let handle = app.clone();
   let picked = tauri::async_runtime::spawn_blocking(move || handle.dialog().file().set_parent(&window).set_directory(start).set_file_name(name).blocking_save_file())
@@ -1285,6 +1319,7 @@ pub fn run() {
       git_discard,
       git_commit,
       git_reload_path,
+      git_probe,
       git_user_configured,
       git_numstat,
       git_force_push,

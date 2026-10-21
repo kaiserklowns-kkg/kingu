@@ -341,6 +341,12 @@ class Editors {
 		this.focusRequest = to;
 	}
 
+	/** A tab dropped on an edge of a group's editor: a new group on that side shows it (workbench.editor.splitOnDragAndDrop). */
+	moveToNewGroup(from: number, path: string, beside: number, direction: G.SplitDirection) {
+		const id = G.addGroup(this.model, beside, direction);
+		if (id !== null) this.moveEditor(from, path, id);
+	}
+
 	moveActiveEditorToNextGroup() {
 		if (G.moveActiveEditorToNextGroup(this.model)) this.focusRequest = this.model.activeGroup;
 	}

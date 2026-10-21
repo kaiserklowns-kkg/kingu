@@ -65,6 +65,20 @@ import { t } from '#lib/i18n/index.ts';
 
 const get = <T>(id: string) => settings.get<T>(id);
 
+let missingGitWarned = false;
+/** VS Code's "Git not found" warning, once a session, unless `git.ignoreMissingGitWarning`. */
+async function warnMissingGit() {
+	if (missingGitWarned || get<boolean>('git.ignoreMissingGitWarning') || get<boolean>('git.enabled') === false) return;
+	const probe = await invoke<{ version: string | null; hasRepository: boolean }>('git_probe').catch(() => null);
+	if (!probe || probe.version !== null || !probe.hasRepository) return;
+	missingGitWarned = true;
+	const [download, never] = [t('workbench.scm.downloadGit'), t('workbench.scm.dontShowAgain')];
+	const pick = await notifications.prompt('warning', t('workbench.scm.gitNotFound'), [download, never], { source: 'Git' });
+	if (pick === download) void invoke('open_web_url', { url: 'https://git-scm.com/downloads' }).catch(() => {});
+	else if (pick === never) void settings.set('git.ignoreMissingGitWarning', true, 'user');
+}
+
+
 /** A workspace path git may know (not untitled, a diff tab or one of Kingu's own resources). */
 const isWorkspaceFile = (p: string) => !isUntitled(p) && !isDiffKey(p) && !p.includes(':');
 
@@ -955,7 +969,7 @@ export function installScm(): () => void {
 		// git.path: Rust re-reads it from the user settings file.
 		$effect(() => {
 			void get('git.path');
-			if (settings.loaded) void invoke('git_reload_path').then(() => scm.rescan()).catch(() => {});
+			if (settings.loaded) void invoke('git_reload_path').then(() => (void scm.rescan(), warnMissingGit())).catch(() => {});
 		});
 		// git.autofetch every git.autofetchPeriod seconds, each repository with a remote.
 		$effect(() => {

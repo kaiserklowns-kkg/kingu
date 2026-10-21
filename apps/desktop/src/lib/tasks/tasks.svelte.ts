@@ -477,8 +477,9 @@ class Tasks {
 			this.showLog();
 		}
 
+		// The default profile's shell is resolved on PATH by pty_spawn (executable null: Rust's default shell).
 		const shell = shellFrom((id) => settings.get(id), shellPlatform());
-		const launch = taskLaunch({ runtime: task.runtime, command, args, options }, task.command, { executable: shell.shell, args: shell.args });
+		const launch = taskLaunch({ runtime: task.runtime, command, args, options }, task.command, { executable: shell.paths.length ? null : shell.shell, args: shell.args });
 		const p = task.presentation;
 		// VS Code's getWaitOnExitValue: the message the terminal waits on after the task, if any.
 		let wait = '';
