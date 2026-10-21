@@ -175,3 +175,13 @@ export function pickSymbols(symbols: readonly FlatSymbol[], query: string, byKin
 			return sorted;
 		});
 }
+
+// --- Quick input position (VS Code: Align Quick Input Top / Center, Customize Layout) ------------
+
+export type QuickAlignment = 'top' | 'center';
+
+/** A stored alignment read back ('top' unless it says 'center'). */
+export const parseAlignment = (raw: unknown): QuickAlignment => (raw === 'center' ? 'center' : 'top');
+
+/** The quick input's CSS `top`: just below the title bar, or a quarter down the window (VS Code's center snap line). */
+export const quickInputTop = (alignment: QuickAlignment) => (alignment === 'center' ? '25vh' : 'calc(var(--kg-titlebar-height) + 2px)');

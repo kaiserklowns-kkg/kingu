@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { flattenSymbols, parseQuickInput, pickSymbols, pushHistory, rankFiles, splitFileAndPosition } from './quickAccess';
+import { flattenSymbols, parseAlignment, parseQuickInput, pickSymbols, pushHistory, quickInputTop, rankFiles, splitFileAndPosition } from './quickAccess';
 
 describe('quick access prefixes', () => {
 	test('each prefix picks its provider', () => {
@@ -94,5 +94,16 @@ describe('symbols', () => {
 			['MAX', 'constants (1)']
 		]);
 		expect(pickSymbols(flat, 'clo', false).map((p) => p.symbol.name)).toEqual(['close']);
+	});
+});
+
+describe('quick input position', () => {
+	test('top unless stored as center', () => {
+		expect(parseAlignment('center')).toBe('center');
+		expect(parseAlignment('top')).toBe('top');
+		expect(parseAlignment(null)).toBe('top');
+		expect(parseAlignment('left')).toBe('top');
+		expect(quickInputTop('top')).toContain('--kg-titlebar-height');
+		expect(quickInputTop('center')).toBe('25vh');
 	});
 });
