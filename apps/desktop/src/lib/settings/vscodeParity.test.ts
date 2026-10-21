@@ -16,9 +16,6 @@ const VSCODE = fixture as Record<string, Entry>;
  */
 export const DEFAULT_DEVIATIONS: Readonly<Record<string, string>> = {
 	'editor.fontFamily': 'adds IBM Plex Sans Thai so Thai text renders in the editor',
-	'workbench.colorTheme': "Kingu's theme ids (the reference checkout ships its own theme names)",
-	'workbench.preferredDarkColorTheme': "Kingu's theme ids (the reference checkout ships its own theme names)",
-	'workbench.preferredLightColorTheme': "Kingu's theme ids (the reference checkout ships its own theme names)",
 	'window.title': "VS Code's default is per platform; the fixture holds the macOS one and Kingu's tests run as Linux, which gets VS Code's Windows/Linux default",
 	'workbench.startupEditor': 'Kingu has no Welcome page, so nothing opens by default',
 	'workbench.editor.autoLockGroups': "VS Code builds the default from the editors registered at runtime (terminal, browser and process explorer editors lock); Kingu lists its own editor types, none of which locks",
@@ -103,8 +100,8 @@ describe('VS Code settings parity', () => {
 		for (const s of vscodeKeyed) {
 			const ours = enumOf(s);
 			const theirs = VSCODE[s.id]?.enum;
-			// Theme pickers list the installed themes (VS Code's icon theme enum is only `null` without them).
-			if (!theirs || !ours || /ColorTheme$/.test(s.id) || s.id === 'workbench.iconTheme') continue;
+			// Theme pickers list the installed themes (VS Code's icon theme enums are only `null` or `Default` without them).
+			if (!theirs || !ours || /ColorTheme$/.test(s.id) || s.id === 'workbench.iconTheme' || s.id === 'workbench.productIconTheme') continue;
 			if (ENUM_SUBSETS[s.id]) {
 				if (!ours.every((v) => theirs.includes(v))) problems.push(`${s.id}: ${JSON.stringify(ours)} is not a subset of ${JSON.stringify(theirs)}`);
 			} else if (JSON.stringify(ours) !== JSON.stringify(theirs)) problems.push(`${s.id}: ${JSON.stringify(ours)} vs VS Code ${JSON.stringify(theirs)}`);

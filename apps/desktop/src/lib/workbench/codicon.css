@@ -1,0 +1,89 @@
+/* Product icons as kingu-old draws them: VS Code's codicon.css and codicon-modifiers.css, the
+ * Kingu (Lucide) product icon theme's font, and kingu-old's masked Arkai marks (kinguLook.css).
+ * Each icon's glyph comes from the stylesheet codicons.ts writes for `workbench.productIconTheme`.
+ * Fonts: codicon.ttf (@vscode/codicons, CC BY 4.0, assets/icons/codicon-LICENSE.txt),
+ * kingu-marks.ttf and kingu-lucide.ttf (Kingu's own; lucide is ISC, assets/icons/lucide-LICENSE.txt). */
+
+/* VS Code's `codicon`, named apart from the `codicon` face Monaco declares (codicons.ts CODICON_FONT). */
+@font-face {
+	font-family: 'kg-codicon';
+	font-display: block;
+	src: url('../assets/icons/codicon.ttf') format('truetype');
+}
+
+/* kingu-old: the Copilot glyphs drawn as the Arkai mark, the VS Code glyphs as the Kingu IDE mark and
+ * the extensions glyphs as Snap's zap bolt. A later face of the same family wins for the code points
+ * in its range, so every icon that uses them changes without touching codicon.ttf. */
+@font-face {
+	font-family: 'kg-codicon';
+	font-display: block;
+	src: url('../assets/icons/kingu-marks.ttf') format('truetype');
+	unicode-range: U+EAE6, U+EC1E, U+EC29, U+EC2A, U+EC38, U+EC3A, U+EC3B, U+EC3D, U+EC3E, U+EC42, U+EC48, U+EC4C, U+EC4D, U+EC4E, U+EC52, U+EC8A, U+ECC9, U+ECF2, U+ECF3;
+}
+
+/* The Kingu (Lucide) product icon theme's font (VS Code names a theme font `pi-<id>`). */
+@font-face {
+	font-family: 'pi-kingu-lucide';
+	font-display: block;
+	font-weight: normal;
+	font-style: normal;
+	src: url('../assets/icons/kingu-lucide.ttf') format('truetype');
+}
+
+.codicon[class*='codicon-'] {
+	font: normal normal normal 16px/1 kg-codicon;
+	display: inline-block;
+	text-decoration: none;
+	text-rendering: auto;
+	text-align: center;
+	text-transform: none;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.codicon-wrench-subaction {
+	opacity: 0.5;
+}
+
+@keyframes codicon-spin {
+	100% {
+		transform: rotate(360deg);
+	}
+}
+
+.codicon-sync.codicon-modifier-spin,
+.codicon-loading.codicon-modifier-spin,
+.codicon-gear.codicon-modifier-spin,
+.codicon-notebook-state-executing.codicon-modifier-spin,
+.codicon-loading,
+.codicon-tree-item-loading::before {
+	/* Use steps to throttle FPS to reduce CPU usage */
+	animation: codicon-spin 1.5s steps(30) infinite;
+	/* Ensure rotation happens around exact center to prevent wobble */
+	transform-origin: center center;
+}
+
+.codicon-modifier-disabled {
+	opacity: 0.4;
+}
+
+/* Arkai's marks: a mask over the text colour, so they follow the theme like a codicon. */
+.kingu-arkai-chat-icon,
+.kingu-arkai-mark-icon {
+	display: inline-block;
+	width: 16px;
+	height: 16px;
+	background-color: currentColor;
+}
+
+.kingu-arkai-chat-icon {
+	-webkit-mask: url('../assets/icons/arkai-chat.svg') center / contain no-repeat;
+	mask: url('../assets/icons/arkai-chat.svg') center / contain no-repeat;
+}
+
+.kingu-arkai-mark-icon {
+	-webkit-mask: url('../assets/icons/arkai-mark.svg') center / contain no-repeat;
+	mask: url('../assets/icons/arkai-mark.svg') center / contain no-repeat;
+}

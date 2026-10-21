@@ -27,8 +27,8 @@ describe('themes', () => {
 		expect(findTheme('Light+').file).toBe('themes/light_plus.json');
 		expect(findTheme('Default Dark Modern').id).toBe('Dark Modern');
 		expect(findTheme('Light High Contrast').id).toBe('Default High Contrast Light');
-		expect(findTheme('Solarized').id).toBe('Dark Modern');
-		expect(findTheme(undefined).id).toBe('Dark Modern');
+		expect(findTheme('Solarized').id).toBe('Kingu Dark');
+		expect(findTheme(undefined).id).toBe('Kingu Dark');
 	});
 
 	test('Light Modern overrides Light+ which includes Light (Visual Studio)', () => {
@@ -41,8 +41,8 @@ describe('themes', () => {
 });
 
 describe('chromeVariables', () => {
-	test('Dark Modern reproduces the static theme.css values', () => {
-		const { info, flat } = load('Dark Modern');
+	test('Kingu Dark (the default) reproduces the static theme.css values', () => {
+		const { info, flat } = load('Kingu Dark');
 		const vars = chromeVariables(flat.colors, info.type);
 		const css = readFileSync(join(import.meta.dir, '../workbench/theme.css'), 'utf8');
 		let checked = 0;
@@ -86,6 +86,19 @@ describe('chromeVariables', () => {
 
 	test('reference cycles resolve to nothing instead of looping', () => {
 		expect(resolveColor('sideBar.foreground', {}, 'dark')).toBeNull();
+	});
+});
+
+describe('theme colors outside COLOR_DEFAULTS', () => {
+	test('a color the theme sets is a variable too; one it leaves out is not', () => {
+		const { info, flat } = load('Kingu Dark');
+		const vars = chromeVariables(flat.colors, info.type);
+		// kingu-old's window (ref old-dom.json vars) has these values.
+		expect(vars['--vscode-agentsChatInput-background']).toBe('#212121');
+		expect(vars['--vscode-titleBar-activeBackground']).toBe('#171717');
+		expect(vars['--vscode-commandCenter-background']).toBe('#1A1A1A');
+		expect(vars['--vscode-commandCenter-border']).toBe('#303030');
+		expect(chromeVariables({}, 'dark')['--vscode-agentsChatInput-background']).toBeUndefined();
 	});
 });
 

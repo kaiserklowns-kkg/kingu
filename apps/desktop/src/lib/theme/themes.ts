@@ -40,7 +40,8 @@ export function themesOfSnaps(snaps: readonly ThemeSnap[]): ThemeInfo[] {
 /** The built-in themes: what the settings registry lists and what is there before snaps load. */
 export const THEMES: ThemeInfo[] = themesOfSnaps(BUILTIN_SNAPS);
 
-export const DEFAULT_THEME = 'Dark Modern';
+/** kingu-old's default (`workbench.colorTheme: 'Kingu Dark'`, kinguProductDefaults.ts). */
+export const DEFAULT_THEME = 'Kingu Dark';
 
 let contributed: ThemeInfo[] = [];
 
@@ -63,7 +64,7 @@ const ALIASES: Record<string, string> = {
 	'Light High Contrast': 'Default High Contrast Light'
 };
 
-/** The theme for a setting value, falling back to Dark Modern like VS Code does for unknown ids. */
+/** The theme for a setting value, falling back to the default (Kingu Dark) like VS Code does for unknown ids. */
 export function findTheme(id: unknown): ThemeInfo {
 	const key = typeof id === 'string' ? (ALIASES[id] ?? id) : '';
 	return allThemes().find((t) => t.id === key) ?? THEMES.find((t) => t.id === DEFAULT_THEME)!;

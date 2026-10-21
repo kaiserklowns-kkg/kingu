@@ -12,15 +12,17 @@
 }
 
 /* UI font per OS (`data-platform`, set from workbench/platform.ts). macOS is live; Windows and
-   Oceans are prepared. Thai falls back to each OS's Thai UI font. */
+   Oceans are prepared. Geist first on macOS, Windows and Linux, as kingu-old's kinguLook.css sets it
+   on the whole workbench (workbench/kinguLook.css loads the face); Thai and the other scripts Geist
+   lacks fall back to each OS's UI font. */
 :root {
-	--kg-ui-font: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', 'IBM Plex Sans Thai', 'Thonburi', sans-serif;
+	--kg-ui-font: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', 'IBM Plex Sans Thai', 'Thonburi', sans-serif;
 }
 :root[data-platform='windows'] {
-	--kg-ui-font: 'Segoe UI Variable Text', 'Segoe UI', 'Leelawadee UI', 'Tahoma', sans-serif;
+	--kg-ui-font: 'Geist', 'Segoe UI Variable Text', 'Segoe UI', 'Leelawadee UI', 'Tahoma', sans-serif;
 }
 :root[data-platform='linux'] {
-	--kg-ui-font: system-ui, 'Ubuntu', 'Cantarell', 'Noto Sans', 'Noto Sans Thai', sans-serif;
+	--kg-ui-font: 'Geist', system-ui, 'Ubuntu', 'Cantarell', 'Noto Sans', 'Noto Sans Thai', sans-serif;
 }
 /* Oceans: placeholder until its type guidelines arrive. */
 :root[data-platform='oceans'] {

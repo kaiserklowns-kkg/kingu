@@ -60,9 +60,14 @@ async function flatTheme(info: ThemeInfo): Promise<FlatTheme> {
 
 type Applied = { vars: Record<string, string>; dark: boolean };
 
+/** The variables last written, so a theme's own colors do not outlive it. */
+let written = new Set<string>();
+
 function writeVariables({ vars, dark }: Applied) {
 	const root = document.documentElement;
+	for (const name of written) if (!(name in vars)) root.style.removeProperty(name);
 	for (const [name, value] of Object.entries(vars)) root.style.setProperty(name, value);
+	written = new Set(Object.keys(vars));
 	root.style.colorScheme = dark ? 'dark' : 'light';
 	root.dataset.themeType = dark ? 'dark' : 'light';
 }

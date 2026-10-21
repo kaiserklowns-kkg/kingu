@@ -9,7 +9,7 @@
     "trusted": true,
     "error": null,
     "overridden": false,
-    "hash": "3683d086bda9f5370de549041b23147f06d1f6f56bee4f25639bfc7e23243a2f",
+    "hash": "88d8a270f9f0245c5289fe5dbb7a0273b7da1a4a5721afcb25cbaaa92fa327eb",
     "permissions": {
       "network": false,
       "fs": "worktree",
@@ -120,11 +120,11 @@
         },
         {
           "path": "themes/kingu-dark.json",
-          "sha256": "5fa6bcb3a5fe95d417efcaa1fb4deff66b5c47bd8e7d1e892ff6a0eda7930aa6"
+          "sha256": "38251e85dc6eae42efeb5747fc3c6a19a57bb89d0322eac084b2db3fc2aa8932"
         },
         {
           "path": "themes/kingu-light.json",
-          "sha256": "61fb3a3e8777690220f6a309c462cfb5c25f314adcf5d02c907976ac98c4acd6"
+          "sha256": "0114b76fc05f3654b7a8b94ea40811d6c32f015fae4a3371dd577474ce455439"
         },
         {
           "path": "themes/light_modern.json",

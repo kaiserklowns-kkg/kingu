@@ -87,7 +87,7 @@ export const COLOR_DEFAULTS: Record<string, Defaults> = {
 	'editorWidget.foreground': 'foreground',
 	'editorWarning.foreground': ['#CCA700', '#BF8803', '#FFD370', '#895503'],
 	'editorError.foreground': ['#F14C4C', '#E51400', '#F48771', '#B5200D'],
-	'editorInfo.foreground': ['#3794FF', '#0063D3', '#59A4F9', '#0063D3'],
+	'editorInfo.foreground': ['#59A4F9', '#0063D3', '#59A4F9', '#0063D3'],
 	'breadcrumb.foreground': t('foreground', 0.8),
 
 	'tab.activeBackground': 'editor.background',
@@ -209,14 +209,22 @@ export function resolveColor(id: string, colors: Record<string, string>, type: T
 export const cssVariable = (id: string) => '--vscode-' + id.replace(/\./g, '-');
 
 /**
- * All chrome CSS variables for a theme. A color with no value becomes `transparent`,
- * except foregrounds, which inherit the base `foreground` (what an unset CSS color does in VS Code).
+ * All chrome CSS variables for a theme: every color in COLOR_DEFAULTS, then every other color the
+ * theme sets itself (VS Code writes a variable for each color it knows; a part ported from it, say
+ * `--vscode-agentsChatInput-background`, finds its theme's value). A color with no value becomes
+ * `transparent`, except foregrounds, which inherit the base `foreground` (what an unset CSS color
+ * does in VS Code).
  */
 export function chromeVariables(colors: Record<string, string>, type: ThemeType): Record<string, string> {
 	const out: Record<string, string> = {};
 	for (const id of Object.keys(COLOR_DEFAULTS)) {
 		const value = resolveColor(id, colors, type) ?? (/foreground$/i.test(id) ? resolveColor('foreground', colors, type) : null);
 		out[cssVariable(id)] = value ?? 'transparent';
+	}
+	for (const id of Object.keys(colors)) {
+		if (id in COLOR_DEFAULTS || !/^[\w.-]+$/.test(id)) continue;
+		const value = normalizeColor(colors[id]);
+		if (value) out[cssVariable(id)] = value;
 	}
 	return out;
 }

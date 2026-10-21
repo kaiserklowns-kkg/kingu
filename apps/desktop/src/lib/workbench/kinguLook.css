@@ -1,0 +1,36 @@
+/* kingu-old's look that a color theme cannot set (its kinguLook.css): the UI face and the
+ * workbench's size, weight and corner-radius tokens, with the values its window has
+ * (ref old-dom.json `vars`). The UI font stack itself is `--kg-ui-font` (routes/layout.css). */
+
+/* The ADE's UI face (OFL, see assets/fonts/Geist-OFL.txt). Scripts it lacks, Thai among them, fall
+ * back to the faces after it in `--kg-ui-font`. */
+@font-face {
+	font-family: 'Geist';
+	src: url('../assets/fonts/Geist-Variable.woff2') format('woff2');
+	font-weight: 100 900;
+	font-display: block;
+}
+
+/* VS Code's typography tokens (its `--vscode-fontSize-*` and friends) and kingu-old's radius scale
+ * (`--radius: 0.625rem`, sm 0.6x, md 0.8x, lg 1x, xl 1.4x) on the corner-radius tokens. */
+:root {
+	--vscode-bodyFontSize: 13px;
+	--vscode-bodyFontSize-small: 12px;
+	--vscode-bodyFontSize-xSmall: 11px;
+	--vscode-fontSize-heading1: 26px;
+	--vscode-fontSize-heading2: 18px;
+	--vscode-fontSize-heading3: 13px;
+	--vscode-fontSize-body1: 13px;
+	--vscode-fontSize-body2: 11px;
+	--vscode-fontSize-label1: 12px;
+	--vscode-fontSize-label2: 11px;
+	--vscode-fontSize-label3: 10px;
+	--vscode-fontWeight-regular: 400;
+	--vscode-fontWeight-semiBold: 600;
+	--vscode-cornerRadius-xSmall: 4px;
+	--vscode-cornerRadius-small: 6px;
+	--vscode-cornerRadius-medium: 8px;
+	--vscode-cornerRadius-large: 10px;
+	--vscode-cornerRadius-xLarge: 14px;
+	--vscode-cornerRadius-circle: 9999px;
+}

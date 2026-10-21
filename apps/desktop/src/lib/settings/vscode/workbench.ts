@@ -1,6 +1,7 @@
 // VS Code settings: workbench.* other than editor management. Key, type, enum, default and English description are VS Code's
 // (generated from its schema by tools/vscode-settings/gen.ts); the Thai text is Kingu's.
 import type { SettingSchema } from '../registry';
+import { KINGU_PRODUCT_ICON_THEME_ID, PRODUCT_ICON_THEMES } from '../../workbench/codicons';
 
 export const WORKBENCH_SETTINGS: SettingSchema[] = [
 	{
@@ -355,6 +356,16 @@ export const WORKBENCH_SETTINGS: SettingSchema[] = [
 		schema: { type: ['null', 'string'], enum: [null, 'vs-seti'] },
 		default: 'vs-seti',
 		description: 'ชุดไอคอนไฟล์ของ workbench (null = ไม่แสดงไอคอนไฟล์) (Specifies the file icon theme used in the workbench or \'null\' to not show any file icons.)'
+	},
+	{
+		id: 'workbench.productIconTheme',
+		group: 'Workbench',
+		type: 'json',
+		// VS Code lists `Default` (the codicons) and the installed product icon themes; Kingu ships
+		// kingu-old's Kingu (Lucide), its default.
+		schema: { type: ['null', 'string'], enum: PRODUCT_ICON_THEMES.map((t) => t.id) },
+		default: KINGU_PRODUCT_ICON_THEME_ID,
+		description: 'ชุดไอคอนของ workbench: Default คือ codicon ของ VS Code, kingu-lucide คือชุด Lucide ของ Kingu (Specifies the product icon theme used.)'
 	},
 	{
 		id: 'workbench.settings.settingsSearchTocBehavior',
