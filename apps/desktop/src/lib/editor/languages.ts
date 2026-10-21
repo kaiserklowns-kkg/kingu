@@ -82,10 +82,25 @@ function patternItem(id: string, pattern: string): Item {
 }
 
 let registered: Item[] = itemsOf([...VSCODE_ASSOCIATIONS, ...KINGU_ASSOCIATIONS]);
+/** Snaps' associations (setContributedAssociations), after every other: a snap's win among equals,
+ * as extensions' do over VS Code's built-in ones. */
+let contributed: Item[] = [];
 const names = new Map<string, string>();
 for (const l of EXTRA_LANGUAGES) if (l.aliases[0]) names.set(l.id, l.aliases[0]);
+/** Names that came from snaps (a reload may rename them; others are never replaced). */
+const snapNames = new Set<string>();
 
-const knownIds = () => new Set(registered.map((i) => i.id));
+const knownIds = () => new Set([...registered, ...contributed].map((i) => i.id));
+
+/** The languages snaps contribute (replaces the previous set); `aliases` gives their names. */
+export function setContributedAssociations(list: LanguageAssociation[], aliases: Record<string, string> = {}) {
+	contributed = itemsOf(list);
+	for (const [id, name] of Object.entries(aliases)) {
+		if (names.has(id) && !snapNames.has(id)) continue;
+		names.set(id, name);
+		snapNames.add(id);
+	}
+}
 
 /**
  * Adds the languages Monaco registers itself (Kotlin, GraphQL, HCL…) that VS Code has no built-in
@@ -147,13 +162,14 @@ export function languageFor(path: string, { associations, firstLine, known }: La
 		const hit = byPath(lowerPath, filename, user);
 		if (hit) return hit.id;
 	}
-	const hit = byPath(lowerPath, filename, registered);
+	const all = contributed.length ? [...registered, ...contributed] : registered;
+	const hit = byPath(lowerPath, filename, all);
 	if (hit) return hit.id;
 	const line = firstLine?.replace(/^﻿/, '');
 	if (line) {
-		for (let i = registered.length - 1; i >= 0; i--) {
-			const re = registered[i].firstLine;
-			if (re?.test(line)) return registered[i].id;
+		for (let i = all.length - 1; i >= 0; i--) {
+			const re = all[i].firstLine;
+			if (re?.test(line)) return all[i].id;
 		}
 	}
 	return 'plaintext';

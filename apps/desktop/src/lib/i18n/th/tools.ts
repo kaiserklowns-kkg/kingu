@@ -339,7 +339,7 @@ export const tools = {
 	'tools.snaps.secretRemoveTitle': 'ลบ secret',
 	'tools.snaps.secretRemove': 'ลบ',
 	'tools.snaps.secretRemoved': 'ลบ {name} จาก Keychain แล้ว',
-	'tools.snapsUi.secretsExplain': 'ค่าเก็บใน Keychain ของ macOS โดย kingu-ptyd (ตัวที่รันคำสั่งของ snap) และส่งให้เฉพาะงาน service MCP server และ hook ของ snap นี้ตอนเริ่มรัน ตัว Kingu ไม่อ่านค่ากลับมาเลย ถ้าไม่ได้เก็บค่าไว้ snap จะได้ค่าจาก environment ของคุณแทน',
+	'tools.snapsUi.secretsExplain': 'ค่าเก็บใน Keychain (แยกตาม snap) และส่งให้เฉพาะงาน service MCP server และ hook ของ snap นี้ตอนเริ่มรัน ผ่านไฟล์ส่วนตัวที่ตัวรัน sandbox อ่าน และ sandbox ของทุก snap มองไม่เห็น ค่าไม่ปรากฏใน command line เทอร์มินัล หรือ log ถ้าไม่ได้เก็บค่าไว้ snap จะได้ค่าจาก environment ของคุณแทน',
 	'tools.snapsUi.secretStored': 'เก็บใน Keychain แล้ว',
 	'tools.snapsUi.secretNotStored': 'ยังไม่ได้เก็บ (ใช้จาก environment)',
 	'tools.snapsUi.secretAfterInstall': 'ตั้งค่าได้หลังติดตั้ง',

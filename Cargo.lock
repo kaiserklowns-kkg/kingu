@@ -2375,7 +2375,6 @@ dependencies = [
 name = "kingu-ptyd"
 version = "0.1.0"
 dependencies = [
- "keyring",
  "libc",
  "portable-pty",
  "serde",

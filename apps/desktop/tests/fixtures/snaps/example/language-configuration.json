@@ -1,0 +1,11 @@
+{
+	// VS Code's language configuration format.
+	"comments": { "lineComment": "#", "blockComment": ["<!--", "-->"] },
+	"brackets": [["[", "]"], ["(", ")"]],
+	"autoClosingPairs": [["[", "]"], { "open": "\"", "close": "\"", "notIn": ["string"] }],
+	"surroundingPairs": [["*", "*"]],
+	"wordPattern": "[\\w-]+",
+	"indentationRules": { "increaseIndentPattern": "^\\s*- .*:$", "decreaseIndentPattern": "^\\s*$" },
+	"folding": { "markers": { "start": "^## ", "end": "^##end" } },
+	"onEnterRules": [{ "beforeText": "^\\s*- ", "action": { "indent": "none", "appendText": "- " } }]
+}

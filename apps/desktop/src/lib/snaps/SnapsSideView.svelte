@@ -1,21 +1,23 @@
 <script lang="ts">
 	// The Snaps side view (VS Code's Extensions view): search, the user's snaps, this folder's repo
-	// snaps, the snaps Kingu ships (Recommended) and the team's. Each row says what the snap adds
-	// for you and for agents and shows the one action it needs now (Install, Trust, Set up,
-	// Enable); the rest are on hover. A row opens the snap's details page (SnapsView).
+	// snaps, the built-in ones (collapsed), the snaps Kingu ships (Recommended) and the team's
+	// (approved snaps and the Team Library). Each row says what the snap adds for you and for
+	// agents and shows the one action it needs now (Install, Trust, Set up, Enable); the rest are
+	// on hover. A row opens the snap's details page (SnapsView).
 	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { team } from '#lib/team/team.svelte.ts';
-	import { t } from '#lib/i18n/index.ts';
+	import { t, t as tr } from '#lib/i18n/index.ts';
 	import { catalogKey, filterSnaps, isActive, isUpdatable, lockNote, missingRequirements, requirementStates, snapKey, snapStatus, type CatalogEntry, type SnapInfo } from './snapModel.ts';
 	import { approvalNote, canApprove, isApprovable, missingRequired, teamSnapStatus, type TeamSnap } from './teamSnaps.ts';
 	import { snaps } from './snaps.svelte.ts';
+	import { isPublishable, libraryStatus, librarySnaps, type LibrarySnap } from './teamLibrary.ts';
 	import SnapAvatar from './SnapAvatar.svelte';
 
 	let query = $state('');
-	let open = $state({ user: true, repo: true, recommended: true, team: true });
+	let open = $state({ user: true, repo: true, builtin: false, recommended: true, team: true });
 	const get = (id: string) => settings.get(id);
 	const teamItems = $derived(snaps.teamCatalog?.items ?? []);
 	const teamFiltered = $derived.by(() => {
@@ -24,7 +26,12 @@
 	});
 	const teamMissing = $derived(missingRequired(teamItems, snaps.list));
 	const isTeamAdmin = $derived(canApprove(snaps.teamCatalog?.role));
-	const filtered = $derived(filterSnaps(snaps.list, query));
+	const library = $derived(librarySnaps(snaps.library?.items ?? []));
+	const libraryFiltered = $derived.by(() => {
+		const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+		return library.filter((l) => words.every((w) => `${l.latest?.name ?? ''}\n${l.id}\n${l.latest?.description ?? ''}`.toLowerCase().includes(w)));
+	});
+	const filtered = $derived(filterSnaps(snaps.all, query));
 	/** Shipped snaps not installed yet, or installed with a newer shipped version. */
 	const recommended = $derived.by(() => {
 		const ids = new Set(filterSnaps(snaps.catalog, query).map((s) => s.id));
@@ -32,7 +39,9 @@
 	});
 	const sections = $derived([
 		{ id: 'user' as const, title: t('tools.snapsUi.installed'), list: filtered.filter((s) => s.source === 'user') },
-		{ id: 'repo' as const, title: t('tools.snapsUi.thisFolder'), list: filtered.filter((s) => s.source === 'repo') }
+		{ id: 'repo' as const, title: t('tools.snapsUi.thisFolder'), list: filtered.filter((s) => s.source === 'repo') },
+		// VS Code's "Built-in" extensions: shipped with the app, collapsed at first.
+		{ id: 'builtin' as const, title: t('snapContrib.section.builtin'), list: filtered.filter((s) => s.source === 'builtin') }
 	]);
 	const selectedKey = $derived(systemSettings.visible && systemSettings.snaps ? systemSettings.snapKey : null);
 
@@ -64,11 +73,13 @@
 	function rowActions(s: SnapInfo): Action[] {
 		const out: Action[] = [];
 		if (s.source === 'repo' && !s.error && s.trusted) out.push({ icon: 'close', label: 'Untrust', run: () => snaps.trust(s.id, false) });
-		if (!s.error && (s.source === 'user' || s.trusted)) out.push(s.disabled ? { icon: 'power', label: t('tools.snapsUi.enable'), run: () => snaps.setEnabled(s.id, true) } : { icon: 'power', label: t('tools.snapsUi.disable'), run: () => snaps.setEnabled(s.id, false) });
+		if (!s.error && s.source !== 'builtin' && (s.source === 'user' || s.trusted)) out.push(s.disabled ? { icon: 'power', label: t('tools.snapsUi.enable'), run: () => snaps.setEnabled(s.id, true) } : { icon: 'power', label: t('tools.snapsUi.disable'), run: () => snaps.setEnabled(s.id, false) });
 		if (isActive(s) && s.tasks.length) out.push({ icon: 'play', label: 'Run Task…', run: () => snaps.pickTask(s) });
 		if (isUpdatable(s)) out.push({ icon: 'refresh', label: 'Update', run: () => snaps.update(s.id) });
 		if (isTeamAdmin && isApprovable(s)) out.push({ icon: 'account', label: 'Approve for Team…', run: () => snaps.approveForTeam(s.id) });
+		if (isTeamAdmin && snaps.library && s.source !== 'builtin' && isPublishable(s, snaps.library.items)) { const source = s.source; out.push({ icon: 'publish', label: 'Publish to Team Library…', run: () => snaps.publishToLibrary(s.id, source) }); }
 		if (s.source === 'user') out.push({ icon: 'trash', label: 'Uninstall', run: () => snaps.uninstall(s.id) });
+		if (s.source !== 'builtin') out.push({ icon: 'folder', label: 'Reveal Folder', run: () => snaps.reveal(s) });
 		return out;
 	}
 
@@ -79,8 +90,20 @@
 		return [];
 	}
 
+	function libraryActions(l: LibrarySnap): Action[] {
+		const st = libraryStatus(l, snaps.list, snaps.library?.server ?? '');
+		const out: Action[] = [];
+		if (l.latest && (st.key === 'missing' || st.key === 'update' || st.key === 'yanked')) out.push({ icon: st.key === 'missing' ? 'plus' : 'refresh', label: st.key === 'missing' ? 'Install' : 'Update', run: () => snaps.installFromLibrary(l.id) });
+		if (isTeamAdmin) out.push({ icon: 'close', label: 'Yank Version…', run: () => snaps.yankVersion(l.id) });
+		return out;
+	}
+
 	const forAgents = (s: SnapInfo) => s.mcp.length + s.skills.length + s.hooks.length;
-	const forYou = (s: SnapInfo) => s.tasks.length + s.services.length + s.themes.length;
+	const forYou = (s: SnapInfo) => {
+		const c = s.contributes;
+		const contributed = c ? c.languages.length + c.lsp.length + c.themes.length + c.iconThemes.length + c.views.length : 0;
+		return s.tasks.length + s.services.length + contributed;
+	};
 
 	const TONE = {
 		ok: 'text-(--vscode-testing-iconPassed,var(--vscode-charts-green))',
@@ -157,7 +180,7 @@
 
 	<div class="min-h-0 flex-1 overflow-y-auto">
 		{#each sections as sec (sec.id)}
-			{#if sec.id === 'user' || workspace.root}
+			{#if sec.id !== 'repo' || workspace.root}
 				{@render sectionHeader(sec.id, sec.title, sec.list.length)}
 				{#if open[sec.id]}
 					{#each sec.list as s (snapKey(s))}
@@ -194,7 +217,7 @@
 						</div>
 					{:else}
 						<p class="py-1 pr-2 pl-5 text-(--vscode-descriptionForeground)">
-							{query ? t('tools.snapsUi.noMatch') : sec.id === 'user' ? t('tools.snapsUi.noneInstalled') : t('tools.snapsUi.noRepoSnaps')}
+							{query ? t('tools.snapsUi.noMatch') : sec.id === 'user' ? t('tools.snapsUi.noneInstalled') : sec.id === 'builtin' ? '—' : t('tools.snapsUi.noRepoSnaps')}
 						</p>
 					{/each}
 				{/if}
@@ -254,6 +277,27 @@
 					<p class="py-1 pl-5 text-(--vscode-descriptionForeground)">
 						{query ? 'ไม่พบ Snap ที่ตรงกับคำค้น' : isTeamAdmin ? 'ทีมยังไม่ได้อนุมัติ Snap — วางเมาส์บน Snap ที่ติดตั้งจาก git แล้วกด Approve for Team' : 'ทีมยังไม่ได้อนุมัติ Snap'}
 					</p>
+				{/each}
+				<p class="pt-1 pl-5 text-[11px] font-bold text-(--vscode-sideBarTitle-foreground) uppercase">{tr('snapPlatform.library.title')}</p>
+				{#if snaps.libraryError}
+					<p role="alert" class="py-1 pr-2 pl-5 text-(--vscode-errorForeground)">{tr('snapPlatform.library.failed', { error: snaps.libraryError })}</p>
+				{/if}
+				{#each libraryFiltered as l (l.id)}
+					{@const st = libraryStatus(l, snaps.list, snaps.library?.server ?? '')}
+					{@const shown = l.latest ?? l.versions[0]}
+					<div class="group/row flex items-center gap-1 py-1 pr-2 hover:bg-(--vscode-list-hoverBackground)">
+						<div class="flex min-w-0 flex-1 flex-col pl-5" title={`${shown.snap_id} v${shown.version}\n${shown.published_by} · ${shown.published_at.slice(0, 10)}\nSHA-256 ${shown.sha256}`}>
+							<span class="flex min-w-0 items-center gap-1.5">
+								<span class="truncate font-semibold">{shown.name}</span>
+								<span class="shrink-0 text-[0.9em] text-(--vscode-descriptionForeground)">v{shown.version}</span>
+								<span class={['shrink-0 text-[0.9em]', TONE[st.tone]]}>{st.label}</span>
+							</span>
+							<span class="truncate text-[0.9em] text-(--vscode-descriptionForeground)">{l.latest ? shown.description || shown.snap_id : tr('snapPlatform.library.allYanked')}</span>
+						</div>
+						<span class="hidden shrink-0 items-center gap-0.5 group-hover/row:flex group-focus-within/row:flex">{@render actionButtons(libraryActions(l))}</span>
+					</div>
+				{:else}
+					{#if !snaps.libraryError}<p class="py-1 pl-5 text-(--vscode-descriptionForeground)">{tr('snapPlatform.library.empty')}</p>{/if}
 				{/each}
 			{/if}
 		{/if}

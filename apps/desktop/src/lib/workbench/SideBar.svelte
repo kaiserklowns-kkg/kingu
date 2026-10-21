@@ -13,6 +13,9 @@
 	import DebugView from '#lib/debug/DebugView.svelte';
 	import TestingView from '#lib/testing/TestingView.svelte';
 	import SnapsSideView from '#lib/snaps/SnapsSideView.svelte';
+	import SnapViewFrame from '#lib/snaps/SnapViewFrame.svelte';
+	import { snaps } from '#lib/snaps/snaps.svelte.ts';
+	import { viewsOf } from '#lib/snaps/contributions.ts';
 	import VaultView from '#lib/vault/VaultView.svelte';
 	import ArtifactsView from '#lib/artifacts/ArtifactsView.svelte';
 	import { t } from '#lib/i18n/index.ts';
@@ -23,7 +26,8 @@
 	let { workspaceName }: { workspaceName: string } = $props();
 
 	const location = $derived(settings.get<string>('workbench.activityBar.location'));
-	const titles = $derived({ explorer: 'Explorer', search: 'Search', scm: 'Source Control', debug: 'Run and Debug', testing: 'Testing', snaps: 'Snaps', agents: 'Agents', vault: t('vault.title'), artifacts: t('artifacts.title') });
+	const snapView = $derived(layout.sideView.startsWith('snap:') ? viewsOf(snaps.all, 'sidebar').find((v) => `snap:${v.key}` === layout.sideView) : undefined);
+	const titles = $derived<Record<string, string>>({ explorer: 'Explorer', search: 'Search', scm: 'Source Control', debug: 'Run and Debug', testing: 'Testing', snaps: 'Snaps', agents: 'Agents', vault: t('vault.title'), artifacts: t('artifacts.title'), [layout.sideView]: snapView?.view.name ?? '' });
 </script>
 
 <aside aria-label={titles[layout.sideView]} class="flex h-full flex-col bg-(--vscode-sideBar-background) text-(--vscode-sideBar-foreground)">
@@ -71,6 +75,8 @@
 		<VaultView />
 	{:else if layout.sideView === 'artifacts'}
 		<ArtifactsView />
+	{:else if snapView}
+		{#key snapView.key}<SnapViewFrame entry={snapView} />{/key}
 	{/if}
 	</div>
 	{#if location === 'bottom'}

@@ -1,0 +1,66 @@
+# Built-in snap: the color themes Kingu ships (its own two and VS Code's defaults, see
+# src/lib/editor/textmate/NOTICE.md), in the order the theme pickers list them.
+id = "kingu-themes"
+name = "Kingu Themes"
+version = "1.0.0"
+description = "Kingu Dark and Light, and VS Code's default color themes"
+
+[[themes]]
+id = "Kingu Dark"
+label = "Kingu Dark"
+ui_theme = "vs-dark"
+path = "themes/kingu-dark.json"
+
+[[themes]]
+id = "Kingu Light"
+label = "Kingu Light"
+ui_theme = "vs"
+path = "themes/kingu-light.json"
+
+[[themes]]
+id = "Light 2026"
+label = "2026 Light"
+ui_theme = "vs"
+path = "themes/2026-light.json"
+
+[[themes]]
+id = "Dark 2026"
+label = "2026 Dark"
+ui_theme = "vs-dark"
+path = "themes/2026-dark.json"
+
+[[themes]]
+id = "Light Modern"
+label = "Light Modern"
+ui_theme = "vs"
+path = "themes/light_modern.json"
+
+[[themes]]
+id = "Light+"
+label = "Light+"
+ui_theme = "vs"
+path = "themes/light_plus.json"
+
+[[themes]]
+id = "Dark Modern"
+label = "Dark Modern"
+ui_theme = "vs-dark"
+path = "themes/dark_modern.json"
+
+[[themes]]
+id = "Dark+"
+label = "Dark+"
+ui_theme = "vs-dark"
+path = "themes/dark_plus.json"
+
+[[themes]]
+id = "Default High Contrast"
+label = "Dark High Contrast"
+ui_theme = "hc-black"
+path = "themes/hc_black.json"
+
+[[themes]]
+id = "Default High Contrast Light"
+label = "Light High Contrast"
+ui_theme = "hc-light"
+path = "themes/hc_light.json"

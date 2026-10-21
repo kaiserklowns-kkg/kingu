@@ -2,7 +2,7 @@
 // search, terminal, workbench, window, git and debug. Every one here has a consumer (mappings.ts
 // for the pure ones); ids, values and defaults follow VS Code so a VS Code settings.json carries over.
 
-import { allThemes } from '../theme/themes';
+import { THEMES } from '../theme/themes';
 import { ENCODINGS } from '../workbench/textFiles';
 import type { SettingSchema } from './registry';
 import { VSCODE_SETTINGS } from './vscode';
@@ -69,13 +69,8 @@ export const IDE_SETTINGS: SettingSchema[] = [
 		group: 'Workbench',
 		type: 'string',
 		default: 'Dark Modern',
-		// Snaps add themes at runtime (setSnapThemes), so the values are read when validated.
-		get enum() {
-			return allThemes().map((t) => t.id);
-		},
-		get enumDescriptions() {
-			return allThemes().map((t) => t.label);
-		},
+		enum: THEMES.map((t) => t.id),
+		enumDescriptions: THEMES.map((t) => t.label),
 		description: 'ธีมเมื่อระบบอยู่ในโหมดมืด ใช้เมื่อเปิด window.autoDetectColorScheme (Specifies the color theme when system color mode is dark and `#window.autoDetectColorScheme#` is enabled.)',
 		scope: 'application'
 	},
@@ -84,13 +79,8 @@ export const IDE_SETTINGS: SettingSchema[] = [
 		group: 'Workbench',
 		type: 'string',
 		default: 'Light Modern',
-		// Snaps add themes at runtime (setSnapThemes), so the values are read when validated.
-		get enum() {
-			return allThemes().map((t) => t.id);
-		},
-		get enumDescriptions() {
-			return allThemes().map((t) => t.label);
-		},
+		enum: THEMES.map((t) => t.id),
+		enumDescriptions: THEMES.map((t) => t.label),
 		description: 'ธีมเมื่อระบบอยู่ในโหมดสว่าง ใช้เมื่อเปิด window.autoDetectColorScheme (Specifies the color theme when system color mode is light and `#window.autoDetectColorScheme#` is enabled.)',
 		scope: 'application'
 	},
@@ -99,13 +89,8 @@ export const IDE_SETTINGS: SettingSchema[] = [
 		group: 'Workbench',
 		type: 'string',
 		default: 'Default High Contrast',
-		// Snaps add themes at runtime (setSnapThemes), so the values are read when validated.
-		get enum() {
-			return allThemes().map((t) => t.id);
-		},
-		get enumDescriptions() {
-			return allThemes().map((t) => t.label);
-		},
+		enum: THEMES.map((t) => t.id),
+		enumDescriptions: THEMES.map((t) => t.label),
 		description: 'ธีมเมื่อระบบเปิดโหมดเพิ่มคอนทราสต์และอยู่ในโหมดมืด ใช้เมื่อเปิด window.autoDetectHighContrast (Specifies the color theme when in high contrast dark mode and `#window.autoDetectHighContrast#` is enabled.)',
 		scope: 'application'
 	},
@@ -114,13 +99,8 @@ export const IDE_SETTINGS: SettingSchema[] = [
 		group: 'Workbench',
 		type: 'string',
 		default: 'Default High Contrast Light',
-		// Snaps add themes at runtime (setSnapThemes), so the values are read when validated.
-		get enum() {
-			return allThemes().map((t) => t.id);
-		},
-		get enumDescriptions() {
-			return allThemes().map((t) => t.label);
-		},
+		enum: THEMES.map((t) => t.id),
+		enumDescriptions: THEMES.map((t) => t.label),
 		description: 'ธีมเมื่อระบบเปิดโหมดเพิ่มคอนทราสต์และอยู่ในโหมดสว่าง ใช้เมื่อเปิด window.autoDetectHighContrast (Specifies the color theme when in high contrast light mode and `#window.autoDetectHighContrast#` is enabled.)',
 		scope: 'application'
 	},

@@ -2,7 +2,7 @@
 // Pure, so `bun test` can exercise it: defaults < user < workspace, each value checked against
 // its schema so a bad value in a file falls back instead of breaking the workbench.
 
-import { allThemes, DEFAULT_THEME } from '../theme/themes';
+import { DEFAULT_THEME, THEMES } from '../theme/themes';
 import { defaultTitleTemplate } from '../workbench/title';
 import { PROFILES } from '../ade/agentProfiles';
 import { IDE_SETTINGS } from './ideSettings';
@@ -35,6 +35,8 @@ type Base = {
 	 * that run programs (local setup scripts) or pick what repository code may do.
 	 */
 	scope?: 'application' | 'local' | 'window' | 'resource';
+	/** VS Code's setting tags (`@tag:` in the search): more are derived from the id (settingTags). */
+	tags?: readonly string[];
 };
 
 export type SettingSchema =
@@ -97,13 +99,8 @@ const CORE_SETTINGS: SettingSchema[] = [
 		group: 'Workbench',
 		type: 'string',
 		default: DEFAULT_THEME,
-		// Snaps add themes at runtime (setSnapThemes), so the values are read when validated.
-		get enum() {
-			return allThemes().map((t) => t.id);
-		},
-		get enumDescriptions() {
-			return allThemes().map((t) => t.label);
-		},
+		enum: THEMES.map((t) => t.id),
+		enumDescriptions: THEMES.map((t) => t.label),
 		description: 'ธีมสีของ workbench และ editor (Specifies the color theme used in the workbench when `#window.autoDetectColorScheme#` is not enabled.)',
 		scope: 'application'
 	},
@@ -1072,25 +1069,56 @@ export function inTocSelection(s: SettingSchema, selection: string): boolean {
  * which), like VS Code's filter. */
 export function settingsInView(query: string, group: string | null, schemas: SettingSchema[] = SETTINGS, modified: (id: string) => boolean = () => false): SettingSchema[] {
 	const { filters, text } = parseQuery(query);
+	const filtered = filters.modified || filters.id || filters.tags || filters.lang;
 	return schemas.filter((s) => {
 		if (filters.modified && !modified(s.id)) return false;
 		if (filters.id && !filters.id.some((id) => s.id.toLowerCase().includes(id))) return false;
+		// @lang: the settings a `[language]` block may hold (VS Code's language filter).
+		if (filters.lang && !isLanguageOverridable(s)) return false;
+		if (filters.tags) {
+			const tags = settingTags(s);
+			if (!filters.tags.every((tag) => tags.includes(tag))) return false;
+		}
 		if (text) return matchesQuery(s, text);
-		return filters.modified || filters.id ? true : group === null || inTocSelection(s, group);
+		return filtered ? true : group === null || inTocSelection(s, group);
 	});
 }
 
-/** Splits `@modified @id:editor.font size` into filters and the words left to match. */
-export function parseQuery(query: string): { filters: { modified: boolean; id: string[] | null }; text: string } {
+export type QueryFilters = { modified: boolean; id: string[] | null; tags: string[] | null; lang: string | null };
+
+/** Splits `@modified @id:editor.font @tag:accessibility @lang:python size` into filters and the words left to match. */
+export function parseQuery(query: string): { filters: QueryFilters; text: string } {
 	let modified = false;
+	let lang: string | null = null;
 	const ids: string[] = [];
+	const tags: string[] = [];
 	const words: string[] = [];
 	for (const w of query.trim().split(/\s+/).filter(Boolean)) {
-		if (w.toLowerCase() === '@modified') modified = true;
-		else if (w.toLowerCase().startsWith('@id:')) ids.push(...w.slice(4).toLowerCase().split(',').filter(Boolean));
+		const lower = w.toLowerCase();
+		if (lower === '@modified') modified = true;
+		else if (lower.startsWith('@id:')) ids.push(...lower.slice(4).split(',').filter(Boolean));
+		else if (lower.startsWith('@tag:')) tags.push(...lower.slice(5).split(',').filter(Boolean));
+		// Language ids keep their case (`@lang:typescriptreact`); `[python]` is accepted too.
+		else if (lower.startsWith('@lang:')) lang = w.slice(6).replace(/^\[|\]$/g, '') || null;
 		else words.push(w);
 	}
-	return { filters: { modified, id: ids.length ? ids : null }, text: words.join(' ') };
+	return { filters: { modified, id: ids.length ? ids : null, tags: tags.length ? tags : null, lang }, text: words.join(' ') };
+}
+
+/**
+ * A setting's tags for `@tag:` (lowercase): its own, plus VS Code's tags Kingu can tell from the
+ * id or description — accessibility, experimental, preview, usesonlineservices, workspacetrust.
+ */
+export function settingTags(s: Pick<SettingSchema, 'id' | 'description' | 'tags'>): string[] {
+	const tags = new Set((s.tags ?? []).map((t) => t.toLowerCase()));
+	const id = s.id.toLowerCase();
+	const d = s.description.toLowerCase();
+	if (id.startsWith('accessibility.') || id.includes('accessibilitysupport') || id.includes('screenreader') || id.endsWith('.accessibilitypagesize')) tags.add('accessibility');
+	if (/\bexperimental\b/.test(d) || id.includes('.experimental.')) tags.add('experimental');
+	if (/\bpreview feature\b|\(preview\)/.test(d)) tags.add('preview');
+	if (/^(http\.|update\.|git\.autofetch|chat\.|kingu\.(ai|chat|team)|team\.)/.test(id)) tags.add('usesonlineservices');
+	if (id.startsWith('security.workspace.trust')) tags.add('workspacetrust');
+	return [...tags];
 }
 
 export const SCHEMA = new Map(SETTINGS.map((s) => [s.id, s]));

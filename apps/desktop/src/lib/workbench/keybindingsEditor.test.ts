@@ -1,11 +1,14 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
 import { parseKeybindings, userKeybindings } from './keybindingsModel';
+import { eventKey, setKeyboardDispatch } from './keys';
 import {
 	addKeybinding,
 	appendChord,
 	canonicalKey,
 	changeKeybinding,
+	chordLabels,
+	chordPrefixRows,
 	conflictCounts,
 	filterKeybindingRows,
 	keybindingRows,
@@ -14,6 +17,7 @@ import {
 	removeKeybinding,
 	resetKeybinding,
 	sameKeyRows,
+	sortByPrecedence,
 	type KeybindingCommand
 } from './keybindingsEditor';
 
@@ -132,5 +136,66 @@ describe('keybindings.json edits', () => {
 	test('a file that does not parse is not edited', () => {
 		expect(() => addKeybinding('[{ "key": ', 'x', 'cmd+i')).toThrow();
 		expect(() => resetKeybinding('{}', 'x')).toThrow();
+	});
+});
+
+describe('precedence, conflicts, recording edge cases, chords', () => {
+	const cmds: KeybindingCommand[] = [
+		{ id: 'a', title: 'A', defaultKey: 'cmd+k' },
+		{ id: 'b', title: 'B', defaultKey: 'cmd+k cmd+t', weight: 5 },
+		{ id: 'c', title: 'C', defaultKey: 'cmd+j', weight: 1 },
+		{ id: 'd', title: 'D', defaultKey: 'cmd+j' },
+		{ id: 'e', title: 'E' }
+	];
+	const rows = keybindingRows(cmds, userKeybindings(parseKeybindings('[{ "key": "cmd+i", "command": "e" }]')));
+
+	test('sort by precedence: user entries, then defaults by weight, then unbound', () => {
+		expect(sortByPrecedence(rows).map((r) => r.command)).toEqual(['e', 'b', 'c', 'a', 'd']);
+	});
+
+	test('@conflicts shows only keys shared by two commands', () => {
+		const q = parseKeybindingQuery('@conflicts');
+		expect(q.conflicts).toBe(true);
+		expect(filterKeybindingRows(rows, q, true).map((r) => r.command)).toEqual(['c', 'd']);
+		expect(filterKeybindingRows(rows, parseKeybindingQuery('@conflicts @command:c'), true).map((r) => r.command)).toEqual(['c']);
+	});
+
+	test('a chord and a binding of its first key shadow each other', () => {
+		expect(chordPrefixRows(rows, 'cmd+k cmd+t', undefined, 'b', true).map((r) => r.command)).toEqual(['a']);
+		expect(chordPrefixRows(rows, 'cmd+k', undefined, 'a', true).map((r) => r.command)).toEqual(['b']);
+		expect(chordPrefixRows(rows, 'cmd+j', undefined, 'c', true)).toEqual([]);
+	});
+
+	const ev = (key: string, code: string, mods: Partial<Record<'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey', boolean>> = {}) => ({ key, code, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, ...mods });
+
+	test('recording: punctuation with Shift, the keypad, dead and lone modifier keys', () => {
+		expect(recordedChord(ev('<', 'Comma', { shiftKey: true, metaKey: true }), true, 'code')).toBe('shift+cmd+,');
+		expect(recordedChord(ev('?', 'Slash', { shiftKey: true }), true, 'code')).toBe('shift+/');
+		expect(recordedChord(ev('1', 'Numpad1'), true, 'code')).toBe('numpad1');
+		expect(recordedChord(ev('+', 'NumpadAdd', { ctrlKey: true }), true, 'code')).toBe('ctrl+numpad_add');
+		expect(recordedChord(ev('Dead', 'Unknown', { altKey: true }), true, 'code')).toBe('');
+		expect(recordedChord(ev('Unidentified', ''), true, 'code')).toBe('');
+		// The Windows key is no keybinding modifier off macOS.
+		expect(recordedChord(ev('p', 'KeyP', { metaKey: true, ctrlKey: true }), false, 'code')).toBe('ctrl+p');
+		// An unrecordable key keeps what was recorded.
+		expect(appendChord('cmd+k', '')).toBe('cmd+k');
+	});
+
+	test("keyboard.dispatch: by physical key, or by the layout's character", () => {
+		// AZERTY: the key labelled A sits where QWERTY has Q.
+		expect(recordedChord(ev('a', 'KeyQ', { metaKey: true }), true, 'code')).toBe('cmd+q');
+		expect(recordedChord(ev('a', 'KeyQ', { metaKey: true }), true, 'keyCode')).toBe('cmd+a');
+		setKeyboardDispatch('keyCode');
+		expect(recordedChord(ev('a', 'KeyQ', { metaKey: true }), true)).toBe('cmd+a');
+		expect(eventKey(ev('a', 'KeyQ'))).toBe('a');
+		setKeyboardDispatch('code');
+		expect(eventKey(ev('a', 'KeyQ'))).toBe('q');
+		expect(eventKey(ev(' ', 'Space'))).toBe('space');
+	});
+
+	test('chords display as one label per part', () => {
+		expect(chordLabels('cmd+k cmd+t', true)).toEqual(['⌘K', '⌘T']);
+		expect(chordLabels('ctrl+k ctrl+shift+s', false)).toEqual(['Ctrl+K', 'Ctrl+Shift+S']);
+		expect(chordLabels('', true)).toEqual([]);
 	});
 });

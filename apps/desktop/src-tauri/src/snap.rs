@@ -6,8 +6,10 @@
 //!
 //! Trust: opening or cloning a repo must never run anything from `.kingu/snaps`, so a repo snap
 //! is untrusted until the user trusts it. Trust lives outside the repo in
-//! `<config dir>/snap-trust.json`, keyed by folder + snap id + SHA-256 of the manifest (and of
-//! its skill files, see `snap_hash`), so any change to them (a pull, a branch switch) revokes it.
+//! `<config dir>/snap-trust.json`, keyed by folder + snap id + SHA-256 of the manifest, every
+//! other file of the snap and the repo scripts its commands name (see `full_hash`), so any change
+//! to them (a pull, a branch switch) revokes it. A repo snap that differs from its entry in
+//! `.kingu/snaps.lock` is untrusted too until the user approves it again (which updates the lock).
 //! User snaps are trusted (the user put them there). The webview only lists untrusted snaps; it
 //! contributes their tasks, MCP servers and skills only when `trusted` is true and `error` is none.
 
@@ -21,6 +23,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::i18n::msg::SnapMsg;
 use crate::settings::write_atomic;
+use crate::snap_contrib::Contributions;
 use crate::snap_install::{LockStatus, Origin, read_lock, read_origin};
 use crate::tr;
 use crate::workspace::Workspace;
@@ -60,25 +63,126 @@ struct Manifest {
   requires: Vec<Require>,
   #[serde(default)]
   services: Vec<RawService>,
+  // Contributions (snap_contrib.rs).
   #[serde(default)]
-  themes: Vec<RawTheme>,
+  languages: Vec<crate::snap_contrib::RawLanguage>,
+  #[serde(default)]
+  grammars: Vec<crate::snap_contrib::RawGrammar>,
+  #[serde(default)]
+  snippets: Vec<crate::snap_contrib::RawSnippets>,
+  #[serde(default)]
+  lsp: BTreeMap<String, crate::snap_contrib::RawLsp>,
+  /// `[[themes]]`: color themes (VS Code `contributes.themes`), validated in snap_contrib.rs.
+  #[serde(default)]
+  themes: Vec<crate::snap_contrib::RawTheme>,
+  #[serde(default)]
+  icon_themes: Vec<crate::snap_contrib::RawIconTheme>,
+  #[serde(default)]
+  views: Vec<crate::snap_contrib::RawView>,
 }
 
 /// Shown to the user before trust and enforced when a task or MCP server runs (`kingu-ptyd
 /// snap-exec`, see `kingu_ptyd::sandbox`). A snap without the table gets the default: no
-/// network, writes only in the folder or task worktree, no secrets.
+/// network, writes only in the folder or task worktree, no secrets. The lists are optional
+/// narrowing (an empty list leaves that part as the defaults describe).
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Permissions {
   #[serde(default)]
   pub network: bool,
+  /// With `network = true`: the only hosts it may reach (`example.com`, `*.example.com`,
+  /// optionally `:port`), through a filtering proxy the launcher runs. Empty: any host.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub hosts: Vec<String>,
   #[serde(default)]
   pub fs: FsAccess,
-  /// Names of environment variables passed through to the snap (others that look like
-  /// credentials are removed), or set from the keychain when the user stored a value for this
-  /// snap (`kingu-ptyd snap-secret`, snap_service.rs).
+  /// Folders it may read under the home folder besides the task folder (`~/.cargo`). When set,
+  /// the rest of the home folder is unreadable; when empty, reads are not confined.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub read: Vec<String>,
+  /// Extra folders it may write (`~/.cache/go-build`), absolute or under `~/`.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub write: Vec<String>,
+  /// Programs it may start (names looked up on PATH, or absolute paths). When set, nothing
+  /// else can be executed; the task's or server's own program is always allowed.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub processes: Vec<String>,
+  /// Environment variables it gets. When set, the environment is cut down to a small base
+  /// (PATH, HOME, locale, terminal) plus these; when empty, only credential-looking ones go.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub env: Vec<String>,
+  /// Secrets it needs, by environment variable name. Values the user entered are kept in the
+  /// Keychain (service `dev.kingu.snap.<id>`) and injected into its processes only; a name
+  /// without a stored value passes through from the environment as before.
   #[serde(default)]
   pub secrets: Vec<String>,
+}
+
+const MAX_PERMISSION_ENTRIES: usize = 64;
+
+/// `example.com`, `*.example.com`, optionally with `:port`: lowercase DNS names only (no IPs
+/// spelled oddly, no schemes or paths).
+pub fn is_host_pattern(s: &str) -> bool {
+  let (host, port) = match s.rsplit_once(':') {
+    Some((h, p)) => (h, Some(p)),
+    None => (s, None),
+  };
+  if port.is_some_and(|p| p.is_empty() || p.len() > 5 || !p.bytes().all(|c| c.is_ascii_digit()) || p.parse::<u32>().map_or(true, |n| n == 0 || n > 65535)) {
+    return false;
+  }
+  let name = host.strip_prefix("*.").unwrap_or(host);
+  let labels: Vec<&str> = name.split('.').collect();
+  !name.is_empty()
+    && name.len() <= 253
+    && labels.len() >= 2
+    && labels.iter().all(|l| !l.is_empty() && l.len() <= 63 && !l.starts_with('-') && !l.ends_with('-') && l.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-'))
+}
+
+/// A `read` / `write` entry: absolute or `~/…`, plain parts (no `.`, `..`, empty), never the
+/// whole disk or home folder (that is what `fs = "home"` says).
+pub fn is_scope_path(s: &str) -> bool {
+  let rest = if let Some(r) = s.strip_prefix("~/") { r } else if let Some(r) = s.strip_prefix('/') { r } else { return false };
+  let rest = rest.strip_suffix('/').unwrap_or(rest);
+  !rest.is_empty() && s.len() <= 1024 && !s.chars().any(char::is_control) && rest.split('/').all(|p| !p.is_empty() && p != "." && p != "..")
+}
+
+/// A `processes` entry: a program name (`go`) or an absolute path (`/usr/bin/make`).
+fn is_process(s: &str) -> bool {
+  if let Some(rest) = s.strip_prefix('/') {
+    return is_scope_path(s) && !rest.is_empty();
+  }
+  !s.is_empty() && s.len() <= 255 && !s.starts_with('-') && s.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-' | b'+'))
+}
+
+/// Checks the lists of `[permissions]`; the first problem, in the UI language.
+fn check_permissions(p: &Permissions) -> Result<(), String> {
+  for (field, list) in [("hosts", &p.hosts), ("read", &p.read), ("write", &p.write), ("processes", &p.processes), ("env", &p.env), ("secrets", &p.secrets)] {
+    if list.len() > MAX_PERMISSION_ENTRIES {
+      return Err(tr!(SnapMsg::PermissionTooMany, field, max = MAX_PERMISSION_ENTRIES));
+    }
+  }
+  if !p.hosts.is_empty() && !p.network {
+    return Err(tr!(SnapMsg::HostsNeedNetwork));
+  }
+  let bad = |field: &str, value: &str| Err(tr!(SnapMsg::PermissionInvalid, field, value));
+  if let Some(h) = p.hosts.iter().find(|h| !is_host_pattern(h)) {
+    return bad("hosts", h);
+  }
+  if let Some(x) = p.read.iter().chain(&p.write).find(|x| !is_scope_path(x)) {
+    return bad(if p.read.contains(x) { "read" } else { "write" }, x);
+  }
+  if let Some(x) = p.processes.iter().find(|x| !is_process(x)) {
+    return bad("processes", x);
+  }
+  if let Some(x) = p.env.iter().find(|x| !is_env_name(x)) {
+    return bad("env", x);
+  }
+  for s in &p.secrets {
+    if !is_env_name(s) {
+      return Err(tr!(SnapMsg::SecretNameInvalid, name = s));
+    }
+  }
+  Ok(())
 }
 
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Default)]
@@ -210,37 +314,6 @@ pub struct Service {
 
 const MAX_SERVICES: usize = 4;
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawTheme {
-  path: String,
-  label: String,
-  #[serde(default)]
-  id: Option<String>,
-  ui_theme: String,
-}
-
-/// A color theme of the snap (`[[themes]]`, VS Code's `contributes.themes`): its file and the
-/// files it `include`s from the snap folder, read when listing (data for the theme service, also
-/// covered by the trust hash). An include the snap does not have resolves to a built-in theme.
-#[derive(Serialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct Theme {
-  /// The `workbench.colorTheme` value.
-  pub id: String,
-  pub label: String,
-  /// `vs-dark`, `vs`, `hc-black` or `hc-light`.
-  pub ui_theme: String,
-  /// The theme file's name as the theme service reads it (`<snap>/<path>`), first in `files`.
-  pub file: String,
-  /// File name → text, for the theme and the includes found in the snap.
-  pub files: BTreeMap<String, String>,
-}
-
-const MAX_THEMES: usize = 16;
-const UI_THEMES: [&str; 4] = ["vs-dark", "vs", "hc-black", "hc-light"];
-const MAX_THEME_FILE: u64 = 1024 * 1024;
-
 /// The Claude Code hook events a snap may hook.
 pub const HOOK_EVENTS: &[&str] = &["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "PreCompact", "Stop", "SubagentStart", "SubagentStop", "SessionEnd"];
 const MAX_HOOKS: usize = 16;
@@ -268,12 +341,12 @@ pub struct Parsed {
   pub hooks: Vec<Hook>,
   pub requires: Vec<Require>,
   pub services: Vec<Service>,
-  /// `(path, label, id, ui_theme)` as declared; read from disk by `read_themes`.
-  pub themes: Vec<(String, String, String, String)>,
+  /// Languages, grammars, snippets, language servers, themes and views (snap_contrib.rs).
+  pub contributes: Contributions,
 }
 
 /// `^[a-z0-9][a-z0-9-]{0,max-1}$` (task ids pass `usize::MAX`).
-fn is_slug(s: &str, max: usize) -> bool {
+pub(crate) fn is_slug(s: &str, max: usize) -> bool {
   let b = s.as_bytes();
   !b.is_empty() && b.len() <= max && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit()) && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
 }
@@ -295,7 +368,7 @@ fn is_name(s: &str) -> bool {
 }
 
 /// `^[A-Za-z_][A-Za-z0-9_]*$` (env and secret names).
-fn is_env_name(s: &str) -> bool {
+pub(crate) fn is_env_name(s: &str) -> bool {
   let b = s.as_bytes();
   !b.is_empty() && (b[0].is_ascii_alphabetic() || b[0] == b'_') && b.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'_')
 }
@@ -315,7 +388,7 @@ pub fn placeholders(arg: &str) -> Result<Vec<&str>, String> {
 }
 
 /// Every `${setting:<key>}` in `arg` must name a declared setting.
-fn check_placeholders(arg: &str, keys: &BTreeSet<String>, owner: &str) -> Result<(), String> {
+pub(crate) fn check_placeholders(arg: &str, keys: &BTreeSet<String>, owner: &str) -> Result<(), String> {
   for key in placeholders(arg).map_err(|e| format!("{owner}: {e}"))? {
     if !keys.contains(key) {
       return Err(tr!(SnapMsg::UndeclaredSetting, owner, key));
@@ -372,11 +445,7 @@ pub fn parse_manifest(text: &str, folder: &str) -> Result<Parsed, String> {
   if m.version.trim().is_empty() {
     return Err(tr!(SnapMsg::VersionRequired));
   }
-  for s in &m.permissions.secrets {
-    if !is_env_name(s) {
-      return Err(tr!(SnapMsg::SecretNameInvalid, name = s));
-    }
-  }
+  check_permissions(&m.permissions)?;
 
   let mut settings = Vec::new();
   let mut keys = BTreeSet::new();
@@ -446,18 +515,18 @@ pub fn parse_manifest(text: &str, folder: &str) -> Result<Parsed, String> {
   }
 
   if m.hooks.len() > MAX_HOOKS {
-    return Err(format!("มี hook ได้ไม่เกิน {MAX_HOOKS} ตัว"));
+    return Err(tr!(SnapMsg::TooManyHooks, max = MAX_HOOKS));
   }
   let mut hooks = Vec::new();
   for h in m.hooks {
     if !HOOK_EVENTS.contains(&h.event.as_str()) {
-      return Err(format!("hook event \"{}\" ไม่รู้จัก (ใช้ได้: {})", h.event, HOOK_EVENTS.join(", ")));
+      return Err(tr!(SnapMsg::HookEventUnknown, event = h.event, events = HOOK_EVENTS.join(", ")));
     }
     if h.command.first().is_none_or(|c| c.trim().is_empty()) {
-      return Err(format!("hook {} ต้องมี command", h.event));
+      return Err(tr!(SnapMsg::HookNoCommand, event = h.event));
     }
     if let Some(k) = h.env.keys().find(|k| !is_env_name(k)) {
-      return Err(format!("hook {}: ชื่อตัวแปร env \"{k}\" ไม่ถูกต้อง", h.event));
+      return Err(tr!(SnapMsg::HookEnvInvalid, event = h.event, var = k));
     }
     let owner = format!("hook {}", h.event);
     for arg in h.command.iter().chain(h.env.values()) {
@@ -468,40 +537,40 @@ pub fn parse_manifest(text: &str, folder: &str) -> Result<Parsed, String> {
 
   for r in &m.requires {
     if r.program.trim().is_empty() || r.program.contains('/') && !r.program.starts_with('/') {
-      return Err(format!("requires: program \"{}\" ต้องเป็นชื่อโปรแกรมหรือ path เต็ม", r.program));
+      return Err(tr!(SnapMsg::RequireProgramInvalid, program = r.program));
     }
     if let Some(k) = &r.setting
       && !keys.contains(k)
     {
-      return Err(format!("requires {}: setting \"{k}\" ไม่ได้ประกาศใน [[settings]]", r.program));
+      return Err(tr!(SnapMsg::RequireSettingUndeclared, program = r.program, key = k));
     }
     if let Some(t) = &r.install_task
       && !ids.contains(t.as_str())
     {
-      return Err(format!("requires {}: install_task \"{t}\" ไม่มีใน [[tasks]]", r.program));
+      return Err(tr!(SnapMsg::RequireTaskUndeclared, program = r.program, task = t));
     }
     if r.url.as_deref().is_some_and(|u| !u.starts_with("https://")) {
-      return Err(format!("requires {}: url ต้องขึ้นต้นด้วย https://", r.program));
+      return Err(tr!(SnapMsg::RequireUrlNotHttps, program = r.program));
     }
   }
 
   if m.services.len() > MAX_SERVICES {
-    return Err(format!("มี service ได้ไม่เกิน {MAX_SERVICES} ตัว"));
+    return Err(tr!(SnapMsg::TooManyServices, max = MAX_SERVICES));
   }
   let mut services = Vec::new();
   let mut service_ids = BTreeSet::new();
   for sv in m.services {
     if !is_slug(&sv.id, 40) || !service_ids.insert(sv.id.clone()) {
-      return Err(format!("id ของ service \"{}\" ไม่ถูกต้องหรือซ้ำ (ใช้ a-z, 0-9, -)", sv.id));
+      return Err(tr!(SnapMsg::ServiceIdInvalid, id = sv.id));
     }
     if sv.title.trim().is_empty() {
-      return Err(format!("service \"{}\" ต้องมี title", sv.id));
+      return Err(tr!(SnapMsg::ServiceNoTitle, id = sv.id));
     }
     if sv.command.first().is_none_or(|c| c.trim().is_empty()) {
-      return Err(format!("service \"{}\" ต้องมี command", sv.id));
+      return Err(tr!(SnapMsg::ServiceNoCommand, id = sv.id));
     }
     if let Some(k) = sv.env.keys().find(|k| !is_env_name(k)) {
-      return Err(format!("service \"{}\": ชื่อตัวแปร env \"{k}\" ไม่ถูกต้อง", sv.id));
+      return Err(tr!(SnapMsg::ServiceEnvInvalid, id = sv.id, var = k));
     }
     let owner = format!("service \"{}\"", sv.id);
     for arg in sv.command.iter().chain(sv.env.values()) {
@@ -510,34 +579,16 @@ pub fn parse_manifest(text: &str, folder: &str) -> Result<Parsed, String> {
     if let Some(w) = &sv.when
       && !settings.iter().any(|st| &st.key == w && st.kind == SettingType::Boolean)
     {
-      return Err(format!("service \"{}\": when = \"{w}\" ต้องเป็นการตั้งค่าแบบ boolean ใน [[settings]]", sv.id));
+      return Err(tr!(SnapMsg::ServiceWhenNotBoolean, id = sv.id, key = w));
     }
     services.push(Service { id: sv.id, title: sv.title, command: sv.command, env: sv.env, autostart: sv.autostart, when: sv.when });
   }
 
-  if m.themes.len() > MAX_THEMES {
-    return Err(format!("มีธีมได้ไม่เกิน {MAX_THEMES} ตัว"));
-  }
-  let mut themes = Vec::new();
-  let mut theme_ids = BTreeSet::new();
-  for th in m.themes {
-    if plain_rel(&th.path).is_none() || !th.path.ends_with(".json") {
-      return Err(format!("path ของธีม \"{}\" ต้องเป็นไฟล์ .json ในโฟลเดอร์ snap", th.path));
-    }
-    if th.label.trim().is_empty() {
-      return Err(format!("ธีม {} ต้องมี label", th.path));
-    }
-    if !UI_THEMES.contains(&th.ui_theme.as_str()) {
-      return Err(format!("ธีม \"{}\": ui_theme ต้องเป็น {}", th.label, UI_THEMES.join(", ")));
-    }
-    let id = th.id.unwrap_or_else(|| th.label.clone());
-    if !theme_ids.insert(id.clone()) {
-      return Err(format!("ธีม \"{id}\" ซ้ำ"));
-    }
-    themes.push((th.path, th.label, id, th.ui_theme));
-  }
+  let task_ids = m.tasks.iter().map(|t| t.id.clone()).collect();
+  let raw = crate::snap_contrib::Raw { languages: m.languages, grammars: m.grammars, snippets: m.snippets, lsp: m.lsp, themes: m.themes, icon_themes: m.icon_themes, views: m.views };
+  let contributes = crate::snap_contrib::validate(raw, &keys, &task_ids)?;
 
-  Ok(Parsed { id: m.id, name: m.name, version: m.version, description: m.description, permissions: m.permissions, tasks: m.tasks, settings, mcp, skills, hooks, requires: m.requires, services, themes })
+  Ok(Parsed { id: m.id, name: m.name, version: m.version, description: m.description, permissions: m.permissions, tasks: m.tasks, settings, mcp, skills, hooks, requires: m.requires, services, contributes })
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -661,15 +712,6 @@ pub fn read_skills(snap_dir: &Path, paths: &[String]) -> Result<Vec<Skill>, Stri
 /// the webview replaces it with the folder when it builds the argv.
 pub const SNAP_DIR: &str = "${snap:dir}";
 const MAX_RUN_FILES: usize = 64;
-const MAX_RUN_BYTES: u64 = 8 * 1024 * 1024;
-
-/// A file a command of the snap runs or reads (a script it calls), hashed for trust like skills:
-/// `label` is `${snap:dir}/<rel>` or the path relative to the folder root, as written.
-#[derive(Debug, Clone, PartialEq)]
-pub struct RunFile {
-  pub label: String,
-  pub bytes: Vec<u8>,
-}
 
 /// Plain `/`-separated parts (no empty, `.`, `..` or backslash), after an optional leading `./`.
 fn plain_rel(path: &str) -> Option<&str> {
@@ -678,111 +720,57 @@ fn plain_rel(path: &str) -> Option<&str> {
   ok.then_some(rel)
 }
 
-/// Every argv of the snap's tasks, MCP servers, hooks and services.
-fn command_args(p: &Parsed) -> impl Iterator<Item = &String> {
-  p.tasks.iter().flat_map(|t| &t.command).chain(p.mcp.iter().flat_map(|m| &m.command)).chain(p.hooks.iter().flat_map(|h| &h.command)).chain(p.services.iter().flat_map(|s| &s.command))
+/// The argv of every task, MCP server, hook and service of the snap.
+fn command_lists(p: &Parsed) -> impl Iterator<Item = &[String]> {
+  p.tasks.iter().map(|t| t.command.as_slice()).chain(p.mcp.iter().map(|m| m.command.as_slice())).chain(p.hooks.iter().map(|h| h.command.as_slice())).chain(p.services.iter().map(|s| s.command.as_slice()))
 }
 
-/// The files the snap's commands name: `${snap:dir}/…` (must exist in the snap folder) and, for a
-/// repo snap, arguments that are paths of existing files in the open folder (`./scripts/test.sh`,
-/// `tools/lint.py`). Their bytes join the trust hash, so a pull that changes a script a trusted
-/// task runs revokes trust just like a changed snap.toml. A symlink is followed only when it stays
-/// inside the folder it belongs to.
-pub fn run_files(p: &Parsed, snap_dir: &Path, root: Option<&Path>) -> Result<Vec<RunFile>, String> {
+/// The files the snap's commands name, as written: `${snap:dir}/…` (must exist in the snap
+/// folder) and, for a repo snap, arguments that are paths of existing files in the open folder
+/// (`./scripts/test.sh`, `tools/lint.py`). A symlink is accepted only when it stays inside the
+/// folder it belongs to, so nothing a command runs is outside what the trust hash covers
+/// (`snap_files` for the snap folder, `referenced_files` for the repo).
+pub fn run_files(p: &Parsed, snap_dir: &Path, root: Option<&Path>) -> Result<Vec<String>, String> {
   let mut seen = BTreeSet::new();
-  let mut out = Vec::new();
-  let mut total = 0u64;
-  let mut add = |label: String, base: &Path, rel: &str, required: bool| -> Result<(), String> {
-    if !seen.insert(label.clone()) {
+  let mut check = |label: &str, base: &Path, rel: &str, required: bool| -> Result<(), String> {
+    if seen.contains(label) {
       return Ok(());
     }
-    let path = base.join(rel);
-    let real = match (path.canonicalize(), base.canonicalize()) {
-      (Ok(real), Ok(b)) if real.starts_with(&b) && real.is_file() => real,
-      (Ok(real), Ok(b)) if !real.starts_with(&b) => return Err(format!("{label} ชี้ออกนอกโฟลเดอร์ (symlink) — ไม่รองรับ")),
-      _ if required => return Err(format!("ไม่พบไฟล์ {label} ที่คำสั่งเรียกใช้")),
+    match (base.join(rel).canonicalize(), base.canonicalize()) {
+      (Ok(real), Ok(b)) if real.starts_with(&b) && real.is_file() => {}
+      (Ok(real), Ok(b)) if !real.starts_with(&b) => return Err(tr!(SnapMsg::RunFileOutside, label)),
+      _ if required => return Err(tr!(SnapMsg::RunFileMissing, label)),
       _ => return Ok(()),
-    };
-    let len = std::fs::metadata(&real).map(|m| m.len()).unwrap_or_default();
-    total += len;
-    if out.len() >= MAX_RUN_FILES || total > MAX_RUN_BYTES {
-      return Err(format!("ไฟล์ที่คำสั่งเรียกใช้มากเกินไป (ไม่เกิน {MAX_RUN_FILES} ไฟล์ และ {} MB)", MAX_RUN_BYTES / 1024 / 1024));
     }
-    let bytes = std::fs::read(&real).map_err(|e| format!("อ่าน {label} ไม่ได้: {e}"))?;
-    out.push(RunFile { label, bytes });
+    if seen.len() >= MAX_RUN_FILES {
+      return Err(tr!(SnapMsg::RunFilesTooMany, max = MAX_RUN_FILES));
+    }
+    seen.insert(label.to_string());
     Ok(())
   };
-  for arg in command_args(p) {
+  for arg in command_lists(p).flatten() {
     if let Some(rest) = arg.strip_prefix(SNAP_DIR) {
-      let rel = rest.strip_prefix('/').and_then(plain_rel).ok_or_else(|| format!("\"{arg}\": {SNAP_DIR} ต้องตามด้วย /<path ในโฟลเดอร์ snap>"))?;
-      add(arg.clone(), snap_dir, rel, true)?;
+      let rel = rest.strip_prefix('/').and_then(plain_rel).ok_or_else(|| tr!(SnapMsg::SnapDirPath, arg, prefix = SNAP_DIR))?;
+      check(arg, snap_dir, rel, true)?;
     } else if arg.contains("${snap:") {
-      return Err(format!("\"{arg}\": ใช้ {SNAP_DIR} ได้เฉพาะที่ต้นอาร์กิวเมนต์ ({SNAP_DIR}/…)"));
+      return Err(tr!(SnapMsg::SnapDirPrefix, arg, prefix = SNAP_DIR));
     } else if let Some(root) = root
       && !arg.contains("${")
       && (arg.starts_with("./") || arg.contains('/'))
       && let Some(rel) = plain_rel(arg)
     {
-      add(arg.clone(), root, rel, false)?;
+      check(arg, root, rel, false)?;
     }
   }
-  out.sort_by(|a, b| a.label.cmp(&b.label));
-  Ok(out)
+  Ok(seen.into_iter().collect())
 }
 
-/// `"include": "<file>"` of a theme's JSON(C) text, without parsing the rest.
-fn theme_include(text: &str) -> Option<String> {
-  let at = text.find("\"include\"")?;
-  let rest = text[at + 9..].trim_start().strip_prefix(':')?.trim_start().strip_prefix('"')?;
-  Some(rest[..rest.find('"')?].to_string())
-}
-
-/// Reads each declared theme and the include chain it has in the snap folder (no symlinks out,
-/// at most 8 files per theme and 1 MB each), keyed `<snap>/<path>` so names never clash with the
-/// built-in themes; the files go into the trust hash as well.
-pub fn read_themes(snap_dir: &Path, snap_id: &str, declared: &[(String, String, String, String)]) -> Result<(Vec<Theme>, Vec<RunFile>), String> {
-  let base = snap_dir.canonicalize().map_err(|e| e.to_string())?;
-  let read = |rel: &str| -> Result<String, String> {
-    let real = snap_dir.join(rel).canonicalize().map_err(|_| format!("ไม่พบไฟล์ธีม {rel}"))?;
-    if !real.starts_with(&base) || !real.is_file() {
-      return Err(format!("ไฟล์ธีม {rel} อยู่นอกโฟลเดอร์ snap"));
-    }
-    if std::fs::metadata(&real).map(|m| m.len()).unwrap_or_default() > MAX_THEME_FILE {
-      return Err(format!("ไฟล์ธีม {rel} ใหญ่เกิน 1 MB"));
-    }
-    std::fs::read_to_string(&real).map_err(|e| format!("อ่านไฟล์ธีม {rel} ไม่ได้: {e}"))
-  };
-  let (mut themes, mut hashed) = (Vec::new(), Vec::new());
-  for (path, label, id, ui_theme) in declared {
-    let mut files = BTreeMap::new();
-    let mut next = Some(plain_rel(path).unwrap_or(path).to_string());
-    while let Some(rel) = next.take() {
-      let key = format!("{snap_id}/{rel}");
-      if files.contains_key(&key) || files.len() >= 8 {
-        break;
-      }
-      let text = read(&rel)?;
-      // An include in the snap folder is read too; one that is not there is a built-in theme.
-      next = theme_include(&text).and_then(|inc| {
-        let dir = rel.rsplit_once('/').map(|(d, _)| format!("{d}/")).unwrap_or_default();
-        let inc_rel = format!("{dir}{}", inc.strip_prefix("./").unwrap_or(&inc));
-        plain_rel(&inc_rel).map(str::to_string).filter(|r| snap_dir.join(r).is_file())
-      });
-      hashed.push(RunFile { label: format!("theme:{rel}"), bytes: text.as_bytes().to_vec() });
-      files.insert(key, text);
-    }
-    themes.push(Theme { id: id.clone(), label: label.clone(), ui_theme: ui_theme.clone(), file: format!("{snap_id}/{}", plain_rel(path).unwrap_or(path)), files });
-  }
-  hashed.sort_by(|a, b| a.label.cmp(&b.label));
-  hashed.dedup_by(|a, b| a.label == b.label);
-  Ok((themes, hashed))
-}
-
-/// The trust hash: SHA-256 of `snap.toml` alone for a snap without skills or run files (unchanged
-/// from phase 1), otherwise also over every skill file and every file its commands run, so editing
-/// a repo snap's SKILL.md or a script its task calls revokes trust too: they decide what runs and
-/// what the agent is told, and must not change behind the user's back.
-pub fn snap_hash(manifest: &[u8], skills: &[Skill], files: &[RunFile]) -> String {
+/// The trust hash: SHA-256 of `snap.toml` alone for a snap without skills or contributed files
+/// (unchanged from phase 1), otherwise also over every skill file and every file its contributions
+/// name (grammars, themes, views…), so editing a repo snap's SKILL.md or view revokes trust too:
+/// a skill is instructions to the agent, a view runs in the app, and neither may change behind
+/// the user's back. `full_hash` extends it to every file of the snap and the repo scripts.
+pub fn snap_hash(manifest: &[u8], skills: &[Skill], files: &[(String, Vec<u8>)]) -> String {
   if skills.is_empty() && files.is_empty() {
     return sha256_hex(manifest);
   }
@@ -799,12 +787,136 @@ pub fn snap_hash(manifest: &[u8], skills: &[Skill], files: &[RunFile]) -> String
       h.update(bytes);
     }
   }
-  for f in files {
-    h.update(b"\0kingu-file\0");
-    h.update(f.label.as_bytes());
+  for (path, bytes) in files {
+    h.update(b"\0kingu-contrib\0");
+    h.update(path.as_bytes());
     h.update(b"\0");
-    h.update((f.bytes.len() as u64).to_le_bytes());
-    h.update(&f.bytes);
+    h.update((bytes.len() as u64).to_le_bytes());
+    h.update(bytes);
+  }
+  h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+// ---------------------------------------------------------------------------------------------
+// Every file a snap ships and runs
+//
+// The trust hash must change whenever anything a trusted snap runs changes. `snap_hash` covers
+// the manifest and skills; a snap folder can also hold scripts its tasks run, and a repo snap's
+// task can run a script elsewhere in the repo (`["bash", "scripts/ci.sh"]`). `full_hash` adds
+// both: every other file in the snap folder, and every repo file a task or MCP command names
+// by relative path. A snap with nothing beyond its manifest and skills keeps `snap_hash`, so
+// trust and team pins made before this stay valid.
+
+/// A file covered by the trust hash, with its own SHA-256 (the lock file keeps these, so a
+/// mismatch can name the files that changed).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FileHash {
+  pub path: String,
+  pub sha256: String,
+}
+
+/// Repo files named by commands: at most this many, each at most this big.
+const MAX_SCRIPTS: usize = 64;
+const MAX_SCRIPT_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Every file of the snap folder except `snap.toml` (hashed on its own), `.git`, `.DS_Store`
+/// and the install record, by relative path. A symlink or special file is an error, and the
+/// install limits apply.
+pub fn snap_files(dir: &Path) -> Result<Vec<FileHash>, String> {
+  fn walk(dir: &Path, prefix: &str, depth: usize, budget: &mut Budget, out: &mut Vec<FileHash>) -> Result<(), String> {
+    if depth > 32 {
+      return Err(tr!(SnapMsg::TooDeep, max = 32));
+    }
+    let mut entries: Vec<_> = std::fs::read_dir(dir).map_err(|e| tr!(SnapMsg::ReadFailed, path = dir.display(), detail = e))?.flatten().collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+      let name = entry.file_name().to_string_lossy().into_owned();
+      if name == ".git" || name == ".DS_Store" || (prefix.is_empty() && (name == MANIFEST || name == crate::snap_install::ORIGIN_FILE)) {
+        continue;
+      }
+      let rel = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
+      let meta = std::fs::symlink_metadata(entry.path()).map_err(|e| tr!(SnapMsg::ReadFailed, path = rel, detail = e))?;
+      if meta.file_type().is_symlink() {
+        return Err(tr!(SnapMsg::SourceSymlink, path = rel));
+      }
+      if meta.is_dir() {
+        walk(&entry.path(), &rel, depth + 1, budget, out)?;
+      } else if meta.is_file() {
+        budget.files += 1;
+        budget.bytes += meta.len();
+        if budget.files > crate::snap_install::MAX_FILES || budget.bytes > crate::snap_install::MAX_BYTES {
+          return Err(tr!(SnapMsg::SourceTooBig, files = crate::snap_install::MAX_FILES, mb = crate::snap_install::MAX_BYTES / 1024 / 1024));
+        }
+        let bytes = std::fs::read(entry.path()).map_err(|e| tr!(SnapMsg::ReadFailed, path = rel, detail = e))?;
+        out.push(FileHash { path: rel, sha256: sha256_hex(&bytes) });
+      } else {
+        return Err(tr!(SnapMsg::NotPlain, path = rel));
+      }
+    }
+    Ok(())
+  }
+  let mut out = Vec::new();
+  walk(dir, "", 0, &mut Budget { files: 0, bytes: 0 }, &mut out)?;
+  Ok(out)
+}
+
+/// An argument that may name a file relative to the folder a command runs in: no option,
+/// placeholder, absolute or home path, URL, backslash or `..` part.
+fn relative_file_arg(arg: &str) -> Option<String> {
+  let rel = arg.strip_prefix("./").unwrap_or(arg);
+  if rel.is_empty() || rel.len() > 1024 || arg.starts_with(['-', '/', '~']) || arg.contains("${") || arg.contains("://") || arg.contains('\\') || arg.chars().any(char::is_control) {
+    return None;
+  }
+  let rel = rel.trim_end_matches('/');
+  (!rel.is_empty() && rel.split('/').all(|p| !p.is_empty() && p != "." && p != "..")).then(|| rel.to_string())
+}
+
+/// Repo files the commands of a repo snap name by relative path (they run in the folder root),
+/// hashed: `scripts/ci.sh` in `["bash", "scripts/ci.sh"]`, `./tools/lint` as a program. Files
+/// inside the snap folder are covered by `snap_files` already; a name that is not a regular file
+/// in the repo (`./...`, `test`) is not a script. A symlink counts only if it stays in the repo.
+pub fn referenced_files<'a>(root: &Path, snap_dir: &Path, commands: impl IntoIterator<Item = &'a [String]>) -> Vec<FileHash> {
+  let Ok(real_root) = root.canonicalize() else { return Vec::new() };
+  let real_snap = snap_dir.canonicalize().ok();
+  let mut out = BTreeMap::new();
+  for arg in commands.into_iter().flatten() {
+    let Some(rel) = relative_file_arg(arg) else { continue };
+    if out.contains_key(&rel) || out.len() >= MAX_SCRIPTS {
+      continue;
+    }
+    let Ok(real) = root.join(&rel).canonicalize() else { continue };
+    if !real.starts_with(&real_root) || real_snap.as_ref().is_some_and(|s| real.starts_with(s)) {
+      continue;
+    }
+    match std::fs::metadata(&real) {
+      Ok(m) if m.is_file() && m.len() <= MAX_SCRIPT_BYTES => {}
+      _ => continue,
+    }
+    if let Ok(bytes) = std::fs::read(&real) {
+      out.insert(rel, sha256_hex(&bytes));
+    }
+  }
+  out.into_iter().map(|(path, sha256)| FileHash { path, sha256 }).collect()
+}
+
+/// The trust hash over everything: `snap_hash` when `files` holds nothing but skill files and
+/// there are no `scripts`, otherwise a v2 hash of the manifest, every file and every script.
+pub fn full_hash(manifest: &[u8], skills: &[Skill], files: &[FileHash], scripts: &[FileHash]) -> String {
+  let skill_files: BTreeSet<String> = skills.iter().flat_map(|s| s.files.iter().map(move |(rel, _)| format!("{}/{rel}", s.path))).collect();
+  if scripts.is_empty() && files.iter().all(|f| skill_files.contains(&f.path)) {
+    return snap_hash(manifest, skills, &[]);
+  }
+  let mut h = Sha256::new();
+  h.update(b"kingu-snap-v2\0");
+  h.update((manifest.len() as u64).to_le_bytes());
+  h.update(manifest);
+  for (tag, list) in [(b"\0file\0", files), (b"\0exec\0", scripts)] {
+    for f in list {
+      h.update(tag);
+      h.update(f.path.as_bytes());
+      h.update(b"\0");
+      h.update(f.sha256.as_bytes());
+    }
   }
   h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -812,11 +924,13 @@ pub fn snap_hash(manifest: &[u8], skills: &[Skill], files: &[RunFile]) -> String
 // ---------------------------------------------------------------------------------------------
 // Discovery
 
-#[derive(Serialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Source {
   User,
   Repo,
+  /// Shipped with the app (snap_builtin.rs); never listed by `snap_list` (the webview has them).
+  Builtin,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -844,15 +958,30 @@ pub struct SnapInfo {
   pub hooks: Vec<Hook>,
   pub requires: Vec<Require>,
   pub services: Vec<Service>,
-  /// `README.md` of the snap folder, shown on its details page (display only, not hashed).
+  /// `README.md` of the snap folder, shown on its details page (covered by the trust hash like
+  /// every other file of the folder).
   pub readme: Option<String>,
-  /// The files its commands run (`run_files`), covered by the trust hash.
-  pub files: Vec<String>,
-  pub themes: Vec<Theme>,
+  /// The files its commands run as written (`${snap:dir}/bin/tool`, `./scripts/test.sh`; see
+  /// `run_files`), shown before trust; covered by the trust hash.
+  pub run_files: Vec<String>,
+  /// Languages, grammars, snippets, language servers, themes and views, with their files' hashes.
+  pub contributes: Contributions,
+  /// SHA-256 of `snap.toml` alone and of every other file of the snap folder (both in `hash`;
+  /// kept for the lock file).
+  #[serde(skip)]
+  pub manifest_sha256: String,
+  #[serde(skip)]
+  pub files: Vec<FileHash>,
+  /// Repo snaps: repo files their commands run (`scripts/ci.sh`), in the hash too.
+  pub scripts: Vec<FileHash>,
   /// User snaps installed through Kingu: where they came from (`.kingu-snap.json`, not hashed).
   pub origin: Option<Origin>,
   /// Repo snaps when the folder has `.kingu/snaps.lock`: whether this snap matches its entry.
+  /// User snaps when the lock pins a team snap with this id.
   pub lock: Option<LockStatus>,
+  /// Repo snaps: the permissions approved last time (trust store, else the lock entry), so a
+  /// new approval can call out what grew. None when never approved.
+  pub approved_permissions: Option<Permissions>,
 }
 
 impl SnapInfo {
@@ -877,10 +1006,14 @@ impl SnapInfo {
       requires: Vec::new(),
       services: Vec::new(),
       readme: None,
+      run_files: Vec::new(),
+      contributes: Contributions::default(),
+      manifest_sha256: String::new(),
       files: Vec::new(),
-      themes: Vec::new(),
+      scripts: Vec::new(),
       origin: None,
       lock: None,
+      approved_permissions: None,
     }
   }
 }
@@ -947,19 +1080,33 @@ pub(crate) fn read_snap(dir: &Path, folder: &str, source: Source, root: Option<&
     Ok(s) => s,
     Err(e) => return broken(hash, e),
   };
-  let files = match run_files(&p, dir, if source == Source::Repo { root } else { None }) {
+  // `${snap:dir}/…` files must exist and repo paths must not lead out of the repo (the hash below
+  // covers them).
+  let run_files = match run_files(&p, dir, if source == Source::Repo { root } else { None }) {
     Ok(f) => f,
     Err(e) => return broken(hash, e),
   };
-  let (themes, theme_files) = match read_themes(dir, &p.id, &p.themes) {
-    Ok(t) => t,
+  // Contributed files (grammars, themes, views…) are read and checked here; the trust hash
+  // below covers them with every other file of the snap folder.
+  let contrib_files = match crate::snap_contrib::read_files(dir, &p.contributes) {
+    Ok(f) => f,
     Err(e) => return broken(hash, e),
   };
-  let hashed: Vec<RunFile> = files.iter().cloned().chain(theme_files).collect();
-  let hash = snap_hash(&bytes, &skills, &hashed);
+  let files = match snap_files(dir) {
+    Ok(f) => f,
+    Err(e) => return broken(snap_hash(&bytes, &skills, &[]), e),
+  };
+  let scripts = match (source, root) {
+    (Source::Repo, Some(root)) => referenced_files(root, dir, command_lists(&p)),
+    _ => Vec::new(),
+  };
+  let mut contributes = p.contributes;
+  contributes.files = crate::snap_contrib::file_hashes(&contrib_files);
+  let hash = full_hash(&bytes, &skills, &files, &scripts);
+  let approved_permissions = root.filter(|_| source == Source::Repo).and_then(|r| trust.approved_permissions(r, &p.id).cloned());
   SnapInfo {
     trusted: match (source, root) {
-      (Source::User, _) => true,
+      (Source::User | Source::Builtin, _) => true,
       (Source::Repo, Some(root)) => trust.is_trusted(root, &p.id, &hash),
       (Source::Repo, None) => false,
     },
@@ -981,10 +1128,14 @@ pub(crate) fn read_snap(dir: &Path, folder: &str, source: Source, root: Option<&
     requires: p.requires,
     services: p.services,
     readme: read_readme(dir),
-    files: files.into_iter().map(|f| f.label).collect(),
-    themes,
+    run_files,
+    contributes,
+    manifest_sha256: sha256_hex(&bytes),
+    files,
+    scripts,
     origin: None,
     lock: None,
+    approved_permissions,
   }
 }
 
@@ -1019,14 +1170,25 @@ pub(crate) fn scan(snaps_dir: &Path, source: Source, root: Option<&Path>, trust:
 pub fn discover(user_dir: &Path, root: Option<&Path>, trust: &TrustData) -> Vec<SnapInfo> {
   let mut user = scan(user_dir, Source::User, None, trust);
   let repo = root.and_then(|r| repo_snaps_dir(r).map(|d| scan(&d, Source::Repo, Some(r), trust))).unwrap_or_default();
-  for u in &mut user {
-    u.overridden = repo.iter().any(|r| r.id == u.id && r.trusted && r.error.is_none());
-  }
   let mut repo = repo;
   if let Some(lock) = root.and_then(read_lock) {
     for r in &mut repo {
       r.lock = Some(lock.status(r));
+      if r.approved_permissions.is_none() {
+        r.approved_permissions = lock.entry(&r.id).and_then(|e| e.permissions.clone());
+      }
+      // The repo pins another version of this snap: nothing it runs is trusted until re-approved.
+      if r.lock == Some(LockStatus::Changed) {
+        r.trusted = false;
+      }
     }
+    // Team snaps the folder pins: shown against the installed user snap, never switched off.
+    for u in &mut user {
+      u.lock = lock.team_status(u);
+    }
+  }
+  for u in &mut user {
+    u.overridden = repo.iter().any(|r| r.id == u.id && r.trusted && r.error.is_none());
   }
   user.extend(repo);
   user
@@ -1040,6 +1202,9 @@ pub struct TrustEntry {
   pub root: PathBuf,
   pub id: String,
   pub sha256: String,
+  /// The permissions the user approved with this hash, so a later approval can show what grew.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub permissions: Option<Permissions>,
 }
 
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq)]
@@ -1065,10 +1230,20 @@ impl TrustData {
 
   /// Trusts exactly this manifest (`Some(hash)`), or revokes trust (`None`).
   pub fn set(&mut self, root: &Path, id: &str, sha256: Option<&str>) {
+    self.set_with(root, id, sha256, None);
+  }
+
+  /// `set`, remembering the permissions that were approved with the hash.
+  pub fn set_with(&mut self, root: &Path, id: &str, sha256: Option<&str>, permissions: Option<Permissions>) {
     self.trusted.retain(|t| !(t.root == root && t.id == id));
     if let Some(sha256) = sha256 {
-      self.trusted.push(TrustEntry { root: root.to_path_buf(), id: id.to_string(), sha256: sha256.to_string() });
+      self.trusted.push(TrustEntry { root: root.to_path_buf(), id: id.to_string(), sha256: sha256.to_string(), permissions });
     }
+  }
+
+  /// What the user last approved for this repo snap, whatever its hash was then.
+  pub fn approved_permissions(&self, root: &Path, id: &str) -> Option<&Permissions> {
+    self.trusted.iter().find(|t| t.root == root && t.id == id).and_then(|t| t.permissions.as_ref())
   }
 }
 
@@ -1093,7 +1268,7 @@ pub fn set_trust(config_dir: &Path, root: &Path, id: &str, trusted: bool, expect
     if expected.is_some_and(|h| h != snap.hash) {
       return Err(tr!(SnapMsg::TrustChanged, manifest = MANIFEST, id));
     }
-    data.set(root, id, Some(&snap.hash));
+    data.set_with(root, id, Some(&snap.hash), Some(snap.permissions.clone()));
   } else {
     data.set(root, id, None);
   }
@@ -1402,7 +1577,7 @@ env = { GOFLAGS = "-mod=mod" }
   fn parses_a_full_manifest() {
     let p = parse_manifest(FULL, "go").unwrap();
     assert_eq!((p.id.as_str(), p.name.as_str(), p.version.as_str()), ("go", "Go", "0.1.0"));
-    assert_eq!(p.permissions, Permissions { network: false, fs: FsAccess::Worktree, secrets: vec!["GITHUB_TOKEN".into()] });
+    assert_eq!(p.permissions, Permissions { network: false, fs: FsAccess::Worktree, secrets: vec!["GITHUB_TOKEN".into()], ..Permissions::default() });
     assert_eq!(p.tasks.len(), 2);
     assert_eq!(p.tasks[0].command, ["go", "test", "${setting:testFlags}", "./..."]);
     assert_eq!(p.settings[0].default, serde_json::json!("-race"));
@@ -1412,6 +1587,35 @@ env = { GOFLAGS = "-mod=mod" }
     // Serialized for the webview the way snapModel.ts reads it.
     let json = serde_json::to_value(&p.settings[0]).unwrap();
     assert_eq!(json, serde_json::json!({ "key": "testFlags", "type": "string", "default": "-race", "description": "flags for go test" }));
+  }
+
+  #[test]
+  fn validates_the_permission_scopes() {
+    let with = |p: &str| parse_manifest(&format!("id = \"x\"\nname = \"X\"\nversion = \"0\"\n[permissions]\n{p}\n"), "x");
+    let p = with("network = true\nhosts = [\"api.github.com\", \"*.npmjs.org:443\"]\nread = [\"~/.cargo\"]\nwrite = [\"/opt/cache/\"]\nprocesses = [\"go\", \"/usr/bin/make\"]\nenv = [\"GOPATH\"]\nsecrets = [\"API_KEY\"]").unwrap().permissions;
+    assert_eq!(p.hosts, ["api.github.com", "*.npmjs.org:443"]);
+    assert_eq!((p.read.len(), p.write.len(), p.processes.len(), p.env.len()), (1, 1, 2, 1));
+    // Empty lists are left out of the JSON (and of what the team server stores).
+    assert_eq!(serde_json::to_value(Permissions::default()).unwrap(), serde_json::json!({ "network": false, "fs": "worktree", "secrets": [] }));
+    assert!(with("hosts = [\"a.com\"]").unwrap_err().contains("network = true"));
+    for bad in [
+      "network = true\nhosts = [\"https://a.com\"]",
+      "network = true\nhosts = [\"localhost\"]",
+      "network = true\nhosts = [\"a.com:99999\"]",
+      "network = true\nhosts = [\"A.com\"]",
+      "read = [\"~\"]",
+      "read = [\"relative/x\"]",
+      "write = [\"/\"]",
+      "write = [\"~/../etc\"]",
+      "processes = [\"-rf\"]",
+      "processes = [\"a b\"]",
+      "env = [\"1X\"]",
+      "secrets = [\"A-B\"]",
+    ] {
+      assert!(with(bad).is_err(), "{bad}");
+    }
+    let many = (0..65).map(|i| format!("\"V{i}\"")).collect::<Vec<_>>().join(",");
+    assert!(with(&format!("env = [{many}]")).unwrap_err().contains("more than 64"));
   }
 
   #[test]
@@ -1805,9 +2009,9 @@ env = { GOFLAGS = "-mod=mod" }
     std::fs::write(d.join(README), "# Go\n").unwrap();
     let s = read_snap(&d, "go", Source::User, None, &TrustData::default());
     assert_eq!(s.readme.as_deref(), Some("# Go\n"));
-    // Not part of the trust hash.
+    // Like every shipped file, it is part of the trust hash (it is shown before trust).
     std::fs::write(d.join(README), "# Changed\n").unwrap();
-    assert_eq!(read_snap(&d, "go", Source::User, None, &TrustData::default()).hash, s.hash);
+    assert_ne!(read_snap(&d, "go", Source::User, None, &TrustData::default()).hash, s.hash);
   }
 
   #[test]
@@ -1856,7 +2060,7 @@ env = { GOFLAGS = "-mod=mod" }
     let list = || discover(&root.path().join("none"), Some(root.path()), &TrustData::default());
     let s = list().remove(0);
     assert_eq!(s.error, None);
-    assert_eq!(s.files, vec!["${snap:dir}/bin/tool".to_string(), "./scripts/test.sh".to_string()].into_iter().collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>());
+    assert_eq!(s.run_files, vec!["${snap:dir}/bin/tool".to_string(), "./scripts/test.sh".to_string()].into_iter().collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>());
     assert_ne!(s.hash, sha256_hex(manifest.as_bytes()));
 
     // Editing either file changes the hash (and so revokes trust); an unrelated file does not.
@@ -1903,11 +2107,11 @@ env = { GOFLAGS = "-mod=mod" }
     };
     assert!(read("bin/out.sh").error.unwrap().contains("bin/out.sh"));
     let inside = read("bin/in.sh");
-    assert_eq!((inside.error, inside.files), (None, vec!["bin/in.sh".to_string()]));
+    assert_eq!((inside.error, inside.run_files), (None, vec!["bin/in.sh".to_string()]));
   }
 
   #[test]
-  fn reads_themes_with_their_includes() {
+  fn reads_themes_and_covers_their_includes() {
     let dir = tempfile::tempdir().unwrap();
     let snap = write_snap(dir.path(), "ocean", "id = \"ocean\"\nname = \"Ocean\"\nversion = \"1\"\n[[themes]]\npath = \"themes/ocean.json\"\nlabel = \"Ocean Dark\"\nui_theme = \"vs-dark\"\n");
     std::fs::create_dir_all(snap.join("themes")).unwrap();
@@ -1915,19 +2119,16 @@ env = { GOFLAGS = "-mod=mod" }
     std::fs::write(snap.join("themes/base.json"), "{ \"include\": \"./dark_modern.json\", \"colors\": {} }").unwrap();
     let s = discover(dir.path(), None, &TrustData::default()).remove(0);
     assert_eq!(s.error, None);
-    let th = &s.themes[0];
-    assert_eq!((th.id.as_str(), th.ui_theme.as_str(), th.file.as_str()), ("Ocean Dark", "vs-dark", "ocean/themes/ocean.json"));
-    // The chain stops at the built-in theme the snap does not have.
-    assert_eq!(th.files.keys().collect::<Vec<_>>(), vec!["ocean/themes/base.json", "ocean/themes/ocean.json"]);
-    // Theme files are in the trust hash.
+    let th = &s.contributes.themes[0];
+    assert_eq!((th.id.as_str(), th.ui_theme, th.path.as_str()), ("Ocean Dark", crate::snap_contrib::UiTheme::Dark, "themes/ocean.json"));
+    // The included file is not declared, but it ships in the snap and so is in the trust hash.
     let before = s.hash.clone();
     std::fs::write(snap.join("themes/base.json"), "{ \"colors\": { \"x\": \"#fff\" } }").unwrap();
     assert_ne!(discover(dir.path(), None, &TrustData::default()).remove(0).hash, before);
 
     let bad = |extra: &str| parse_manifest(&format!("id = \"o\"\nname = \"O\"\nversion = \"1\"\n[[themes]]\n{extra}"), "o").unwrap_err();
     assert!(bad("path = \"../x.json\"\nlabel = \"X\"\nui_theme = \"vs\"\n").contains("../x.json"));
-    assert!(bad("path = \"x.json\"\nlabel = \"X\"\nui_theme = \"dark\"\n").contains("ui_theme"));
-    assert!(bad("path = \"x.toml\"\nlabel = \"X\"\nui_theme = \"vs\"\n").contains("x.toml"));
+    assert!(bad("path = \"x.json\"\nlabel = \"X\"\nui_theme = \"dark\"\n").contains("dark"));
     std::fs::remove_file(snap.join("themes/ocean.json")).unwrap();
     assert!(discover(dir.path(), None, &TrustData::default()).remove(0).error.unwrap().contains("ocean.json"));
   }

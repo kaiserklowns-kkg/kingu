@@ -1,16 +1,18 @@
 // Breakpoints, the stopped line and the debug hover in a Monaco editor (VS Code:
 // breakpointEditorContribution, callStackEditorContribution, debugEditorContribution). A glyph
 // margin click toggles a breakpoint and a right click opens the breakpoint menu; breakpoint
-// decorations follow edits, and their new lines are written back to the breakpoint store. While
-// stopped, hovering an expression shows its value and the editor menu offers Run to Cursor and
-// Jump to Cursor.
+// decorations follow edits, and their new lines are written back to the breakpoint store. Inline
+// (column) breakpoints show in the text, with the line's other possible columns as candidates while
+// debugging (`debug.showInlineBreakpointCandidates`). While stopped, hovering an expression shows
+// its value and the editor menu offers Run to Cursor and Jump to Cursor; while debugging it offers
+// Evaluate in Debug Console and Add Inline Breakpoint.
 
 import type * as Monaco from 'monaco-editor';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
 import { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
 import { popupMenuAt } from '#lib/workbench/popupMenuAt.ts';
-import { glyphs } from './breakpoints.ts';
+import { glyphs, type Glyph } from './breakpoints.ts';
 import { debug } from './debug.svelte.ts';
 import { inlineValues, localsScope } from './debugSettings.ts';
 import { expressionAt } from './hover.ts';
@@ -77,8 +79,31 @@ export function attachDebugEditor(monaco: MonacoApi, editor: Monaco.editor.IStan
 	// Editor context menu (VS Code's debug group): only while stopped.
 	const stoppedKey = editor.createContextKey<boolean>('kgDebugStopped', false);
 	const jumpKey = editor.createContextKey<boolean>('kgDebugCanJump', false);
+	const activeKey = editor.createContextKey<boolean>('kgDebugActive', false);
+	const disassembleKey = editor.createContextKey<boolean>('kgDebugCanDisassemble', false);
 	const lineOf = () => editor.getPosition()?.lineNumber ?? 1;
+	/** The selection, else the expression under the cursor. */
+	const selectionOrExpression = () => {
+		const model = editor.getModel();
+		const sel = editor.getSelection();
+		const pos = editor.getPosition();
+		if (!model || !pos) return '';
+		return (sel && !sel.isEmpty() ? model.getValueInRange(sel) : expressionAt(model.getLineContent(pos.lineNumber), pos.column)?.expression) ?? '';
+	};
 	const actions = [
+		editor.addAction({
+			id: 'kingu.debug.inlineBreakpoint',
+			label: t('debugExtras.menu.addInlineBreakpoint'),
+			contextMenuGroupId: 'debug',
+			contextMenuOrder: 0,
+			precondition: 'kgDebugActive',
+			run: () => {
+				const pos = editor.getPosition();
+				if (pos) debug.toggleInlineBreakpoint(path(), pos.lineNumber, pos.column, editor.getModel()?.getLanguageId() ?? '');
+			}
+		}),
+		editor.addAction({ id: 'kingu.debug.evaluateInConsole', label: t('debugExtras.menu.evaluateInConsole'), contextMenuGroupId: 'debug', contextMenuOrder: 4, precondition: 'kgDebugActive', run: () => void debug.evaluateInConsole(selectionOrExpression()) }),
+		editor.addAction({ id: 'kingu.debug.openDisassembly', label: t('debugExtras.menu.openDisassembly'), contextMenuGroupId: 'debug', contextMenuOrder: 5, precondition: 'kgDebugCanDisassemble', run: () => debug.openDisassembly() }),
 		editor.addAction({ id: 'kingu.debug.runToCursor', label: 'Run to Cursor', contextMenuGroupId: 'debug', contextMenuOrder: 1, precondition: 'kgDebugStopped', run: () => void debug.runToCursor(path(), lineOf()) }),
 		editor.addAction({ id: 'kingu.debug.jumpToCursor', label: 'Jump to Cursor', contextMenuGroupId: 'debug', contextMenuOrder: 2, precondition: 'kgDebugCanJump', run: () => void debug.jumpToCursor(path(), lineOf()) }),
 		editor.addAction({
@@ -88,11 +113,7 @@ export function attachDebugEditor(monaco: MonacoApi, editor: Monaco.editor.IStan
 			contextMenuOrder: 3,
 			precondition: 'kgDebugStopped',
 			run: () => {
-				const model = editor.getModel();
-				const sel = editor.getSelection();
-				const pos = editor.getPosition();
-				if (!model || !pos) return;
-				const text = sel && !sel.isEmpty() ? model.getValueInRange(sel) : expressionAt(model.getLineContent(pos.lineNumber), pos.column)?.expression;
+				const text = selectionOrExpression();
 				if (text) debug.addWatch(text);
 			}
 		})
@@ -129,6 +150,17 @@ export function attachDebugEditor(monaco: MonacoApi, editor: Monaco.editor.IStan
 	// A glyph margin click toggles a breakpoint; a middle click does `debug.gutterMiddleClickAction`;
 	// a click on a test's run icon is the Testing view's (editorTesting.ts).
 	const mouse = editor.onMouseDown((e) => {
+		// An inline breakpoint or candidate in the text: a click removes / adds it (VS Code).
+		const el = e.target.element as HTMLElement | null;
+		const inline = el?.closest?.('.kg-bp-inline, .kg-bp-candidate');
+		if (inline && e.event.leftButton && e.target.position) {
+			const p = path();
+			if (!p) return;
+			e.event.preventDefault();
+			const column = Number((inline as HTMLElement).className.match(/kg-col-(\d+)/)?.[1] ?? e.target.position.column);
+			debug.toggleInlineBreakpoint(p, e.target.position.lineNumber, column, editor.getModel()?.getLanguageId() ?? '');
+			return;
+		}
 		if (e.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return;
 		if ((e.target.element as HTMLElement | null)?.closest?.('.kg-test')) return;
 		const p = path();
@@ -154,7 +186,12 @@ export function attachDebugEditor(monaco: MonacoApi, editor: Monaco.editor.IStan
 		gutterMenu(e, p, line);
 	});
 
+	/** debug.showInlineBreakpointCandidates: the adapter's breakpoint locations per line, asked once per session and text version. */
+	const candidates = editor.createDecorationsCollection();
+	const locations = new Map<string, number[] | 'pending'>();
+
 	const edits = editor.onDidChangeModelContent((e) => {
+		locations.clear();
 		const p = path();
 		const model = editor.getModel();
 		if (!p || !model || !breakpoints.length) return;
@@ -168,8 +205,11 @@ export function attachDebugEditor(monaco: MonacoApi, editor: Monaco.editor.IStan
 		const p = path();
 		stoppedKey.set(debug.stopped && !!p);
 		jumpKey.set(debug.stopped && !!p && !!debug.capabilities.supportsGotoTargetsRequest);
+		activeKey.set(debug.active && !!p);
+		disassembleKey.set(debug.stopped && !!debug.capabilities.supportsDisassembleRequest);
 		if (!p) {
 			breakpoints.clear();
+			candidates.clear();
 			frame.clear();
 			inline.clear();
 			return;
@@ -179,12 +219,21 @@ export function attachDebugEditor(monaco: MonacoApi, editor: Monaco.editor.IStan
 			? { color: 'rgb(124, 40, 49)', darkColor: 'rgb(124, 40, 49)', position: monaco.editor.OverviewRulerLane.Left }
 			: undefined;
 		const caps = debug.active ? debug.capabilities : undefined;
+		// One decoration per breakpoint (edits move them); a line's glyph is on its first one, an inline breakpoint also shows in the text.
+		const seenLines = new Set<number>();
+		const all = glyphs(debug.breakpoints[p], debug.verifiedFor(p), debug.triggered, caps, debug.breakpointsActivated);
 		breakpoints.set(
-			glyphs(debug.breakpoints[p], debug.verifiedFor(p), debug.triggered, caps, debug.breakpointsActivated).map((g) => ({
-				range: new monaco.Range(g.line, 1, g.line, 1),
-				options: { glyphMarginClassName: `kg-bp kg-bp-${g.kind}`, glyphMargin: lane, glyphMarginHoverMessage: { value: g.hover }, stickiness: sticky, ...(ruler && { overviewRuler: ruler }) }
-			}))
+			all.map((g: Glyph) => {
+				const glyph = !seenLines.has(g.line) && (seenLines.add(g.line), true);
+				const glyphOptions = glyph ? { glyphMarginClassName: `kg-bp kg-bp-${g.kind}`, glyphMargin: lane, glyphMarginHoverMessage: { value: g.hover }, ...(ruler && { overviewRuler: ruler }) } : {};
+				if (!g.column) return { range: new monaco.Range(g.line, 1, g.line, 1), options: { ...glyphOptions, stickiness: sticky } };
+				return {
+					range: new monaco.Range(g.line, g.column, g.line, g.column),
+					options: { ...glyphOptions, stickiness: sticky, before: { content: '\u00a0', inlineClassName: `kg-bp-inline kg-bp-inline-${g.kind} kg-col-${g.column}`, cursorStops: monaco.editor.InjectedTextCursorStops.None }, hoverMessage: { value: g.hover } }
+				};
+			})
 		);
+		renderCandidates(p, all);
 		const loc = debug.stoppedLocation;
 		const top = debug.model?.frames[0]?.id === debug.model?.frameId;
 		if (loc && loc.rel === p) {
@@ -205,6 +254,33 @@ export function attachDebugEditor(monaco: MonacoApi, editor: Monaco.editor.IStan
 			frame.clear();
 			inline.clear();
 		}
+	}
+
+	/** Faded markers where else a breakpoint could go on lines that have breakpoints (more than one place). */
+	function renderCandidates(p: string, all: Glyph[]) {
+		const model = editor.getModel();
+		if (!model || !debug.active || !debug.capabilities.supportsBreakpointLocationsRequest || !settings.get<boolean>('debug.showInlineBreakpointCandidates')) return candidates.clear();
+		const out: Monaco.editor.IModelDeltaDecoration[] = [];
+		for (const line of new Set(all.map((g) => g.line))) {
+			if (line > model.getLineCount()) continue;
+			const key = `${debug.focusedKey}:${p}:${line}`;
+			const cols = locations.get(key);
+			if (cols === undefined) {
+				locations.set(key, 'pending');
+				void debug.breakpointLocations(p, line).then((locs) => {
+					locations.set(key, locs.filter((l) => l.line === line && l.column).map((l) => l.column!));
+					render();
+				});
+				continue;
+			}
+			if (cols === 'pending' || cols.length < 2) continue;
+			const taken = new Set(all.filter((g) => g.line === line).map((g) => g.column ?? model.getLineFirstNonWhitespaceColumn(line)));
+			for (const column of cols) {
+				if (taken.has(column) || column > model.getLineMaxColumn(line)) continue;
+				out.push({ range: new monaco.Range(line, column, line, column), options: { before: { content: '\u00a0', inlineClassName: `kg-bp-candidate kg-col-${column}`, cursorStops: monaco.editor.InjectedTextCursorStops.None }, hoverMessage: { value: t('debugExtras.inline.candidate') } } });
+			}
+		}
+		candidates.set(out);
 	}
 
 	/**
@@ -240,6 +316,7 @@ export function attachDebugEditor(monaco: MonacoApi, editor: Monaco.editor.IStan
 			edits.dispose();
 			actions.forEach((a) => a.dispose());
 			breakpoints.clear();
+			candidates.clear();
 			frame.clear();
 			inline.clear();
 		}

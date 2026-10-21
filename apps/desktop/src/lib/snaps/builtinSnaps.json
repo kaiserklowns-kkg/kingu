@@ -1,0 +1,208 @@
+[
+  {
+    "id": "kingu-themes",
+    "name": "Kingu Themes",
+    "version": "1.0.0",
+    "description": "Kingu Dark and Light, and VS Code's default color themes",
+    "source": "builtin",
+    "dir": "",
+    "trusted": true,
+    "error": null,
+    "overridden": false,
+    "hash": "3683d086bda9f5370de549041b23147f06d1f6f56bee4f25639bfc7e23243a2f",
+    "permissions": {
+      "network": false,
+      "fs": "worktree",
+      "secrets": []
+    },
+    "tasks": [],
+    "settings": [],
+    "mcp": [],
+    "skills": [],
+    "hooks": [],
+    "requires": [],
+    "services": [],
+    "readme": null,
+    "runFiles": [],
+    "contributes": {
+      "languages": [],
+      "grammars": [],
+      "snippets": [],
+      "lsp": [],
+      "themes": [
+        {
+          "id": "Kingu Dark",
+          "label": "Kingu Dark",
+          "uiTheme": "vs-dark",
+          "path": "themes/kingu-dark.json"
+        },
+        {
+          "id": "Kingu Light",
+          "label": "Kingu Light",
+          "uiTheme": "vs",
+          "path": "themes/kingu-light.json"
+        },
+        {
+          "id": "Light 2026",
+          "label": "2026 Light",
+          "uiTheme": "vs",
+          "path": "themes/2026-light.json"
+        },
+        {
+          "id": "Dark 2026",
+          "label": "2026 Dark",
+          "uiTheme": "vs-dark",
+          "path": "themes/2026-dark.json"
+        },
+        {
+          "id": "Light Modern",
+          "label": "Light Modern",
+          "uiTheme": "vs",
+          "path": "themes/light_modern.json"
+        },
+        {
+          "id": "Light+",
+          "label": "Light+",
+          "uiTheme": "vs",
+          "path": "themes/light_plus.json"
+        },
+        {
+          "id": "Dark Modern",
+          "label": "Dark Modern",
+          "uiTheme": "vs-dark",
+          "path": "themes/dark_modern.json"
+        },
+        {
+          "id": "Dark+",
+          "label": "Dark+",
+          "uiTheme": "vs-dark",
+          "path": "themes/dark_plus.json"
+        },
+        {
+          "id": "Default High Contrast",
+          "label": "Dark High Contrast",
+          "uiTheme": "hc-black",
+          "path": "themes/hc_black.json"
+        },
+        {
+          "id": "Default High Contrast Light",
+          "label": "Light High Contrast",
+          "uiTheme": "hc-light",
+          "path": "themes/hc_light.json"
+        }
+      ],
+      "iconThemes": [],
+      "views": [],
+      "files": [
+        {
+          "path": "themes/2026-dark.json",
+          "sha256": "54aa033434ff9d073ef32ae19f40023e2c3bf921b40d00557511dbf2f2971299"
+        },
+        {
+          "path": "themes/2026-light.json",
+          "sha256": "33c2eeb1813ec9f90cb083d111020b42050a3403e41cfbe0059ad86c5aa05fea"
+        },
+        {
+          "path": "themes/dark_modern.json",
+          "sha256": "58d4ea55a2a36f65c0d5caf033dfddc4ec7d4b3a5d8b731a84bc36001d26a339"
+        },
+        {
+          "path": "themes/dark_plus.json",
+          "sha256": "409f33088a5cfd6589384900ef80627787c568d367c25b12f31bc7940936e573"
+        },
+        {
+          "path": "themes/hc_black.json",
+          "sha256": "07f6250833d40ca9ed7399f328816d4e0c59ddc21c64c8af754a6b260725b0ad"
+        },
+        {
+          "path": "themes/hc_light.json",
+          "sha256": "1cc2ccb7d2fb7990d22baa1dd2bb7174817ac45ddc8b46c4d29c3ddb864b4ce2"
+        },
+        {
+          "path": "themes/kingu-dark.json",
+          "sha256": "5fa6bcb3a5fe95d417efcaa1fb4deff66b5c47bd8e7d1e892ff6a0eda7930aa6"
+        },
+        {
+          "path": "themes/kingu-light.json",
+          "sha256": "61fb3a3e8777690220f6a309c462cfb5c25f314adcf5d02c907976ac98c4acd6"
+        },
+        {
+          "path": "themes/light_modern.json",
+          "sha256": "831b47d624e9acd6f09da58a699889415be7e45fccffb01177bc718b20e7e25c"
+        },
+        {
+          "path": "themes/light_plus.json",
+          "sha256": "26fbb053bec8ce2b65706d5fcb993da8c19174cfdbf35a49b465236b5ed26203"
+        }
+      ]
+    },
+    "scripts": [],
+    "origin": null,
+    "lock": null,
+    "approvedPermissions": null
+  },
+  {
+    "id": "rust-analyzer",
+    "name": "Rust (rust-analyzer)",
+    "version": "1.0.0",
+    "description": "rust-analyzer for Rust files: diagnostics, completions, navigation and formatting",
+    "source": "builtin",
+    "dir": "",
+    "trusted": true,
+    "error": null,
+    "overridden": false,
+    "hash": "7093c747a2185a1868fed3d9525ab8aaa0b7b140fa999d10032cba42fa9b3353",
+    "permissions": {
+      "network": false,
+      "fs": "worktree",
+      "secrets": []
+    },
+    "tasks": [],
+    "settings": [],
+    "mcp": [],
+    "skills": [],
+    "hooks": [],
+    "requires": [],
+    "services": [],
+    "readme": null,
+    "runFiles": [],
+    "contributes": {
+      "languages": [],
+      "grammars": [],
+      "snippets": [],
+      "lsp": [
+        {
+          "key": "rust",
+          "name": "rust-analyzer",
+          "languages": [
+            "rust"
+          ],
+          "command": [
+            "rust-analyzer"
+          ],
+          "env": {},
+          "initializationOptions": null,
+          "settingsSection": null,
+          "install": [
+            {
+              "tool": "rustup",
+              "package": "rust-analyzer"
+            },
+            {
+              "tool": "brew",
+              "package": "rust-analyzer"
+            }
+          ]
+        }
+      ],
+      "themes": [],
+      "iconThemes": [],
+      "views": [],
+      "files": []
+    },
+    "scripts": [],
+    "origin": null,
+    "lock": null,
+    "approvedPermissions": null
+  }
+]

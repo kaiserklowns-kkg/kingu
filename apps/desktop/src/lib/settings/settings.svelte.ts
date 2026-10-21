@@ -7,8 +7,8 @@ import { listen } from '@tauri-apps/api/event';
 import { parseSettingsText, setProperty } from './jsonc';
 import { resolveSettings, settingProblems, type Resolved, type SettingProblem, type SettingScope } from './registry';
 import { settingSchemas } from './schemas.svelte';
-import { isApplicationScoped, profileUserValues } from './profiles';
-import { isLanguageOverridable, languageSchemas, languageValues } from './languageOverrides';
+import { profileUserValues, sharedByAllProfiles } from './profiles';
+import { isLanguageOverridable, languageBlockValue, languageSchemas, languageValues, withLanguageValue } from './languageOverrides';
 import { withoutRestricted } from './restricted';
 
 type SettingsFile = { path: string; content: string | null };
@@ -128,6 +128,17 @@ class Settings {
 		return this.layer(scope).values[id];
 	}
 
+	/** The value one scope's `[language]` block sets (the Settings editor's `@lang:`), or undefined. */
+	inspectLanguage(id: string, language: string, scope: SettingScope): unknown {
+		return languageBlockValue(this.layer(scope).values, language, id);
+	}
+
+	/** Sets (or with `undefined`, removes) `id` in `scope`'s `[language]` block; an emptied block goes. */
+	setLanguage(id: string, language: string, value: unknown, scope: SettingScope): Promise<void> {
+		const { key, block } = withLanguageValue(this.layer(scope).values, language, id, value);
+		return this.set(key, block, scope);
+	}
+
 	/** The settings in effect for a file of root folder `folder` (its path): that folder's file over
 	 * the workspace file's settings over the user's. The first folder (or none) is `resolved`. */
 	resolvedIn(folder: string | null | undefined): Map<string, Resolved> {
@@ -208,8 +219,9 @@ class Settings {
 
 	/** Sets (or with `undefined`, resets) a setting in `scope`'s file. Writes are serialized. */
 	set(id: string, value: unknown, scope: SettingScope): Promise<void> {
-		// With a profile active, application-scoped settings are written to the Default profile's file.
-		const file: FileScope = scope === 'user' && this.inProfile && isApplicationScoped(settingSchemas.byId.get(id)) ? 'defaultUser' : scope;
+		// With a profile active, settings shared by all profiles (application-scoped ones and
+		// workbench.settings.applyToAllProfiles) are written to the Default profile's file.
+		const file: FileScope = scope === 'user' && this.inProfile && sharedByAllProfiles(id, settingSchemas.byId.get(id), this.defaultUser.values) ? 'defaultUser' : scope;
 		const run = async () => {
 			const layer = await this.read(file);
 			// Editing text that does not parse could lose what the user wrote; they fix it first.

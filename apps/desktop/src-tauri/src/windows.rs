@@ -234,6 +234,11 @@ pub fn on_destroyed(app: &AppHandle, label: &str) {
   app.state::<crate::pty::Ptys>().forget_window(label);
   crate::cli_server::window_closed(app, label);
   let workspaces = app.state::<Workspaces>();
+  // A temporary profile goes with its last window.
+  if let Ok(config) = app.path().app_config_dir() {
+    let in_use: Vec<String> = workspaces.all().iter().filter(|w| w.label() != label).filter_map(|w| w.session().profile).collect();
+    crate::user_profiles::remove_unused_transient(&config, &in_use);
+  }
   // The last window closing ends the app: it stays in the session to restore.
   if workspaces.labels().len() <= 1 {
     app.state::<crate::window::CloseGuard>().start_quit();
@@ -551,6 +556,8 @@ pub struct NewWindow {
   pub files: Vec<String>,
   /// Duplicate Workspace in New Window: a new untitled workspace even for the same folders.
   pub duplicate: bool,
+  /// New Window with Profile: the profile it opens with (`""`: Default).
+  pub profile: Option<String>,
 }
 
 /// New Window (⇧⌘N), Open Folder in a new window, Duplicate Workspace in New Window. A window that
@@ -563,6 +570,7 @@ pub async fn window_new(app: AppHandle, options: Option<NewWindow>) -> Result<St
   // A duplicate is a new untitled workspace with the same folders.
   let file = o.file.filter(|_| !o.duplicate).map(PathBuf::from);
   if !o.duplicate
+    && o.profile.is_none()
     && (file.is_some() || !folders.is_empty())
     && let Some(label) = app.state::<Workspaces>().window_with(&folders.iter().map(|f| f.path.clone()).collect::<Vec<_>>(), file.as_deref())
   {
@@ -570,7 +578,7 @@ pub async fn window_new(app: AppHandle, options: Option<NewWindow>) -> Result<St
     return Ok(label);
   }
   let untitled = (file.is_none() && (folders.len() > 1 || (o.duplicate && !folders.is_empty()))).then(untitled_id);
-  let mut session = WindowSession { folders, file, untitled, ..Default::default() };
+  let mut session = WindowSession { folders, file, untitled, profile: o.profile, ..Default::default() };
   session.bounds = new_bounds(&app, &session);
   open_window(&app, session, o.files)
 }

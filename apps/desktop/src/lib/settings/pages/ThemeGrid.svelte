@@ -1,18 +1,23 @@
 <script lang="ts">
-	// Appearance › Interface: Kingu's color themes and the active Snaps' as preview cards (a miniature workbench each).
+	// Appearance › Interface: the color themes (built-in, then snaps') as preview cards (a miniature workbench each).
 	import Icon from '#lib/workbench/Icon.svelte';
-	import { allThemes, type ThemeInfo } from '#lib/theme/themes.ts';
+	import type { ThemeInfo } from '#lib/theme/themes.ts';
+	import { snapContrib } from '#lib/snaps/contrib.svelte.ts';
 	import { themeSwatch } from '#lib/theme/theme.svelte.ts';
-	import { snaps } from '#lib/snaps/snaps.svelte.ts';
 	import { settings } from '../settings.svelte';
 	import { SETTINGS } from '../registry';
 	import { t } from '#lib/i18n/index.ts';
 
 	let swatches = $state<Record<string, Awaited<ReturnType<typeof themeSwatch>>>>({});
-	// Re-read when the snaps change.
-	const themes = $derived((void snaps.list, allThemes()));
+	const themes = $derived(snapContrib.themes);
+	// Card colors for every theme, and for a snap's theme once it is listed.
+	const asked = new Set<string>();
 	$effect(() => {
-		for (const th of themes) if (!swatches[th.id]) void themeSwatch(th).then((s) => (swatches[th.id] = s)).catch(() => {});
+		for (const th of themes) {
+			if (asked.has(th.id)) continue;
+			asked.add(th.id);
+			void themeSwatch(th).then((s) => (swatches[th.id] = s)).catch(() => {});
+		}
 	});
 
 	const current = $derived(settings.get<string>('workbench.colorTheme'));
@@ -55,7 +60,7 @@
 					</div>
 					<div class="flex items-center gap-2 px-3 py-2 text-[13px]">
 						<span class="flex-1 truncate">{th.label}</span>
-						{#if th.snap}<span class="shrink-0 rounded-full bg-(--vscode-badge-background) px-1.5 text-[10px] leading-4 text-(--vscode-badge-foreground)" title={`Snap: ${th.snap}`}>Snap</span>{/if}
+						{#if th.snap.source !== 'builtin'}<span class="shrink-0 rounded-full bg-(--vscode-badge-background) px-1.5 text-[10px] leading-4 text-(--vscode-badge-foreground)" title={`Snap: ${th.snap.id}`}>Snap</span>{/if}
 						{#if on}<span class="text-(--vscode-focusBorder)"><Icon name="check" size={14} /></span>{/if}
 					</div>
 				</button>

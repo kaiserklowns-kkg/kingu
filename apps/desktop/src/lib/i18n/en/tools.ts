@@ -338,7 +338,7 @@ export const tools = {
 	'tools.snaps.secretRemoveTitle': 'Remove secret',
 	'tools.snaps.secretRemove': 'Remove',
 	'tools.snaps.secretRemoved': 'Removed {name} from the keychain',
-	'tools.snapsUi.secretsExplain': 'Values are kept in the macOS Keychain by kingu-ptyd, the launcher that runs the snap\'s commands, and handed only to this snap\'s tasks, services, MCP servers and hooks when they start. Kingu itself never reads them back. Without a stored value, the snap gets the variable from your environment.',
+	'tools.snapsUi.secretsExplain': 'Values are kept in the Keychain (one entry per snap) and handed only to this snap\'s tasks, services, MCP servers and hooks when they start, through a private file the sandbox launcher reads and every snap sandbox hides. They never appear in a command line, a terminal or a log. Without a stored value, the snap gets the variable from your environment.',
 	'tools.snapsUi.secretStored': 'stored in the keychain',
 	'tools.snapsUi.secretNotStored': 'not stored (from the environment)',
 	'tools.snapsUi.secretAfterInstall': 'Set after installing',

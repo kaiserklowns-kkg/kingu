@@ -14,7 +14,7 @@
 	import { isArtifactKey } from '#lib/artifacts/artifacts.ts';
 	import ArtifactViewer from '#lib/artifacts/ArtifactViewer.svelte';
 	import CsvPreview from './CsvPreview.svelte';
-	import NotebookViewer from './NotebookViewer.svelte';
+	import NotebookEditor from './NotebookEditor.svelte';
 	import { isNotebookPath } from './notebook';
 	import { invoke } from '@tauri-apps/api/core';
 	import { status } from './status.svelte';
@@ -61,6 +61,9 @@
 	import { isSearchEditorKey, isUntitledSearchEditor } from './searchEditor';
 	import TerminalEditor from '#lib/terminal/TerminalEditor.svelte';
 	import { isTerminalEditorKey } from '#lib/terminal/terminalEditor.svelte.ts';
+	import DisassemblyView from '#lib/debug/DisassemblyView.svelte';
+	import MemoryView from '#lib/debug/MemoryView.svelte';
+	import { isDebugEditorKey, isDisassemblyKey, isMemoryKey } from '#lib/debug/memory.ts';
 
 	let { group }: { group: number } = $props();
 
@@ -75,7 +78,7 @@
 	const chatEditorId = $derived(activePath ? chatIdOfEditorKey(activePath) : null);
 	const adeActive = $derived(activePath !== null && (isAdeEditor(activePath) || isChatEditorKey(activePath)));
 	const taskSlug = $derived(activePath ? slugOfTaskKey(activePath) : null);
-	const crumbs = $derived(!activePath || settingsActive || adeActive || isChangesKey(activePath) || isVaultKey(activePath) || isArtifactKey(activePath) || isUntitledSearchEditor(activePath) ? [] : isOutputKey(activePath) ? ['Output', outputChannelOf(activePath)] : activePath === USER_SETTINGS_KEY
+	const crumbs = $derived(!activePath || settingsActive || adeActive || isChangesKey(activePath) || isVaultKey(activePath) || isArtifactKey(activePath) || isDebugEditorKey(activePath) || isUntitledSearchEditor(activePath) ? [] : isOutputKey(activePath) ? ['Output', outputChannelOf(activePath)] : activePath === USER_SETTINGS_KEY
 					? ['User', 'settings.json']
 					: activePath === USER_KEYBINDINGS_KEY
 						? ['User', 'keybindings.json']
@@ -91,7 +94,7 @@
 	const crumbsAreFiles = $derived(!!activePath && activePath !== USER_SETTINGS_KEY && !isChangesKey(activePath) && !isExternalKey(activePath) && !isOutputKey(activePath) && crumbs.length > 0);
 	const diffActive = $derived(activePath !== null && isDiffKey(activePath));
 	/** Images and Markdown previews have their own viewers instead of Monaco. */
-	const viewerActive = $derived(activePath !== null && (isTerminalEditorKey(activePath) || isMergeKey(activePath) || isImagePath(activePath) || isPreviewKey(activePath) || isNotebookPath(activePath) || isChangesKey(activePath) || isVaultKey(activePath) || isArtifactKey(activePath) || isSearchEditorKey(activePath)));
+	const viewerActive = $derived(activePath !== null && (isTerminalEditorKey(activePath) || isMergeKey(activePath) || isImagePath(activePath) || isPreviewKey(activePath) || isNotebookPath(activePath) || isChangesKey(activePath) || isVaultKey(activePath) || isArtifactKey(activePath) || isSearchEditorKey(activePath) || isDebugEditorKey(activePath)));
 	// The diff editor exists only while this group has a diff tab.
 	const hasDiff = $derived(tabs.some((t) => isDiffKey(t.path)));
 	// Enclosing symbols from the language server's document symbols, like VS Code's outline crumbs.
@@ -659,10 +662,14 @@
 			<div class="absolute inset-0">{#key activePath}<ArtifactViewer artifactKey={activePath} />{/key}</div>
 		{:else if activePath && isTerminalEditorKey(activePath)}
 			<div class="absolute inset-0">{#key activePath}<TerminalEditor editorKey={activePath} />{/key}</div>
+		{:else if activePath && isDisassemblyKey(activePath)}
+			<div class="absolute inset-0"><DisassemblyView /></div>
+		{:else if activePath && isMemoryKey(activePath)}
+			<div class="absolute inset-0">{#key activePath}<MemoryView memoryKey={activePath} />{/key}</div>
 		{:else if activePath && isSearchEditorKey(activePath)}
 			<div class="absolute inset-0">{#key activePath}<SearchEditorView editorKey={activePath} {group} />{/key}</div>
 		{:else if activePath && isNotebookPath(activePath)}
-			<div class="absolute inset-0">{#key activePath}<NotebookViewer path={activePath} />{/key}</div>
+			<div class="absolute inset-0">{#key activePath}<NotebookEditor path={activePath} {group} />{/key}</div>
 		{:else if activePath && isPreviewKey(activePath)}
 			<div class="absolute inset-0">
 				{#key activePath}{#if isCsvPath(previewTarget(activePath))}<CsvPreview previewKey={activePath} />{:else}<MarkdownPreview previewKey={activePath} {group} />{/if}{/key}

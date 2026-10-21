@@ -12,8 +12,10 @@ import { workspaceStorage } from './workspaceStorage.svelte';
 import { withSaved } from './workspaceState';
 import { CENTERED_DEFAULT, enterZen, exitZenFullScreen, zenConfig, zenParts, type CenteredState, type ZenExitInfo, type ZenParts } from './zenMode';
 
-export type SideView = 'explorer' | 'search' | 'scm' | 'debug' | 'testing' | 'snaps' | 'agents' | 'vault' | 'artifacts';
-export type PanelTab = 'problems' | 'output' | 'debugConsole' | 'terminal' | 'refactorPreview';
+/** `snap:<key>`: a snap's side bar view (snaps/contributions.ts viewKey). */
+export type SideView = 'explorer' | 'search' | 'scm' | 'debug' | 'testing' | 'snaps' | 'agents' | 'vault' | 'artifacts' | `snap:${string}`;
+/** `snap:<key>`: a snap's panel view. */
+export type PanelTab = 'problems' | 'output' | 'debugConsole' | 'terminal' | 'refactorPreview' | `snap:${string}`;
 
 const KEY = 'kingu.workbench.layout';
 export const SIDEBAR_MIN = 170;

@@ -33,7 +33,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { clientLog } from '#lib/client-log.ts';
 import { runSummary } from '#lib/ade/model.ts';
-import { mcpServers, skillPlugins } from '#lib/ade/mcp.ts';
+import { mcpServers, prepareMcp, skillPlugins } from '#lib/ade/mcp.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
@@ -258,6 +258,7 @@ class Chats {
 		this.runs[key] = run;
 		const state = this.runs[key];
 		const cwd = chatCwdPath(root, meta.cwd);
+		await prepareMcp();
 		const mcp = mcpServers(cwd);
 		const plugins = await skillPlugins(cwd);
 		let savedSession = meta.session_id;

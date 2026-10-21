@@ -2,7 +2,8 @@
 // responses (VS Code: debugModel.ts). Every function returns a new model, so the runes wrapper
 // can hold it in `$state.raw`.
 
-import type { Breakpoint, Event, OutputEvent, Scope, StackFrame, StoppedEvent, Thread, Variable } from './protocol.ts';
+import type { Breakpoint, Event, OutputEvent, Scope, Source, StackFrame, StoppedEvent, Thread, Variable } from './protocol.ts';
+import { applyLoadedSource } from './loadedScripts.ts';
 import { t } from '#lib/i18n/index.ts';
 
 export type SessionState = 'initializing' | 'running' | 'stopped' | 'terminated';
@@ -25,6 +26,8 @@ export type DebugModel = {
 	/** The adapter's answer to setFunctionBreakpoints, in request order. */
 	functionVerified: Breakpoint[];
 	exitCode: number | null;
+	/** Loaded Scripts: undefined until asked for (loadedSources), then kept by `loadedSource` events. */
+	loadedSources?: Source[];
 };
 
 /** VS Code's `debug.console.maximumLines` default. */
@@ -81,6 +84,9 @@ export function applyEvent(m: DebugModel, ev: Event): DebugModel {
 			const functionVerified = m.functionVerified.map((b) => (b.id === bp.id ? { ...b, ...bp } : b));
 			return { ...m, verified, functionVerified };
 		}
+		case 'loadedSource':
+			// Only once the view has asked: before that the whole list comes from the request.
+			return m.loadedSources && body.source ? { ...m, loadedSources: applyLoadedSource(m.loadedSources, body.reason, body.source) } : m;
 		case 'thread':
 			if (body.reason === 'exited') return { ...m, threads: m.threads.filter((t) => t.id !== body.threadId) };
 			return m;
@@ -109,6 +115,10 @@ export function withScopes(m: DebugModel, frameId: number, scopes: Scope[]): Deb
 
 export function withVariables(m: DebugModel, ref: number, vars: Variable[]): DebugModel {
 	return { ...m, variables: { ...m.variables, [ref]: vars } };
+}
+
+export function withLoadedSources(m: DebugModel, sources: Source[]): DebugModel {
+	return { ...m, loadedSources: sources };
 }
 
 export function withBreakpoints(m: DebugModel, path: string, bps: Breakpoint[]): DebugModel {

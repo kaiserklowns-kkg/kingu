@@ -15,11 +15,13 @@ pub struct SandboxInfo {
   enforcer: Option<String>,
   launcher: Option<String>,
   protect: Vec<String>,
+  /// Folders no snap may read or write (the snap secrets files, `snap_secrets`).
+  hide: Vec<String>,
   /// Why snaps cannot be confined here (in the UI language, shown to the user).
   problem: Option<String>,
 }
 
-fn info(enforcer: Result<&str, String>, launcher: Result<PathBuf, String>, protect: Vec<PathBuf>) -> SandboxInfo {
+fn info(enforcer: Result<&str, String>, launcher: Result<PathBuf, String>, protect: Vec<PathBuf>, hide: Vec<PathBuf>) -> SandboxInfo {
   let launcher = launcher.and_then(|p| p.to_str().map(str::to_owned).ok_or_else(|| tr!(SnapMsg::LauncherNotUtf8)));
   let problem = match (&enforcer, &launcher) {
     (Err(e), _) | (_, Err(e)) => Some(e.clone()),
@@ -29,6 +31,7 @@ fn info(enforcer: Result<&str, String>, launcher: Result<PathBuf, String>, prote
     enforcer: enforcer.ok().map(str::to_owned),
     launcher: launcher.ok(),
     protect: protect.into_iter().filter_map(|p| p.to_str().map(str::to_owned)).collect(),
+    hide: hide.into_iter().filter_map(|p| p.to_str().map(str::to_owned)).collect(),
     problem,
   }
 }
@@ -42,7 +45,8 @@ pub fn snap_sandbox_info(app: AppHandle) -> SandboxInfo {
   // On macOS the config and data dirs are the same folder.
   let mut protect: Vec<PathBuf> = [paths.app_config_dir(), paths.app_data_dir(), paths.app_cache_dir()].into_iter().flatten().collect();
   protect.dedup();
-  info(enforcer.as_ref().map(|e| e.name()).map_err(Clone::clone), launcher, protect)
+  let hide: Vec<PathBuf> = crate::snap_secrets::secrets_dir(&app).into_iter().collect();
+  info(enforcer.as_ref().map(|e| e.name()).map_err(Clone::clone), launcher, protect, hide)
 }
 
 #[cfg(test)]
@@ -51,11 +55,11 @@ mod tests {
 
   #[test]
   fn info_reports_the_first_problem() {
-    let ok = info(Ok("sandbox-exec"), Ok("/A/kingu-ptyd".into()), vec!["/cfg".into()]);
-    assert_eq!(ok, SandboxInfo { enforcer: Some("sandbox-exec".into()), launcher: Some("/A/kingu-ptyd".into()), protect: vec!["/cfg".into()], problem: None });
-    let no_bwrap = info(Err("bwrap not found".into()), Ok("/A/kingu-ptyd".into()), vec![]);
+    let ok = info(Ok("sandbox-exec"), Ok("/A/kingu-ptyd".into()), vec!["/cfg".into()], vec!["/cache/snap-secrets".into()]);
+    assert_eq!(ok, SandboxInfo { enforcer: Some("sandbox-exec".into()), launcher: Some("/A/kingu-ptyd".into()), protect: vec!["/cfg".into()], hide: vec!["/cache/snap-secrets".into()], problem: None });
+    let no_bwrap = info(Err("bwrap not found".into()), Ok("/A/kingu-ptyd".into()), vec![], vec![]);
     assert_eq!((no_bwrap.enforcer, no_bwrap.problem.as_deref()), (None, Some("bwrap not found")));
-    let no_launcher = info(Ok("bwrap"), Err("kingu-ptyd not found".into()), vec![]);
+    let no_launcher = info(Ok("bwrap"), Err("kingu-ptyd not found".into()), vec![], vec![]);
     assert_eq!((no_launcher.launcher, no_launcher.problem.as_deref()), (None, Some("kingu-ptyd not found")));
   }
 }

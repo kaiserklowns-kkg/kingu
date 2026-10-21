@@ -36,11 +36,13 @@ const snippetId = (s: Snippet) => `${s.source}\u0000${s.file}\u0000${s.name}\u00
 class SnippetStore {
 	user = $state.raw<Snippet[]>([]);
 	workspace = $state.raw<Snippet[]>([]);
+	/** Snaps' snippets (snaps/contrib.svelte.ts loads them). */
+	snap = $state.raw<Snippet[]>([]);
 	/** User snippet file names (`typescript.json`, `mine.code-snippets`). */
 	userFiles = $state.raw<string[]>([]);
 	/** Workspace snippet files (`.vscode/x.code-snippets`). */
 	workspaceFiles = $state.raw<string[]>([]);
-	readonly all: Snippet[] = $derived([...this.user, ...this.workspace]);
+	readonly all: Snippet[] = $derived([...this.user, ...this.workspace, ...this.snap]);
 	#errors = new Map<string, string>();
 
 	#report(file: string, error: string | undefined) {
@@ -80,6 +82,15 @@ class SnippetStore {
 		this.workspace = loaded.flatMap(([rel, text]) => {
 			const { snippets, error } = parseSnippetFile(text, rel, 'workspace');
 			this.#report(rel, error);
+			return snippets;
+		});
+	}
+
+	/** Snaps' snippet files: `file` names the file as shown (`<snap>: <path>`), `language` the language they are for. */
+	setSnapFiles(files: { file: string; language: string; text: string }[]) {
+		this.snap = files.flatMap((f) => {
+			const { snippets, error } = parseSnippetFile(f.text, f.file, 'snap', f.language);
+			this.#report(f.file, error);
 			return snippets;
 		});
 	}
@@ -135,7 +146,8 @@ function snippetsFor(model: Monaco.editor.ITextModel, opts: { includeNoPrefix?: 
 	return selectSnippets(snippetStore.all, model.getLanguageId(), fileVariables(model).abs, opts);
 }
 
-const sourceLabel = (s: Snippet) => (s.source === 'workspace' ? t('editing.snippets.source.workspace') : s.language ? t('editing.snippets.source.user') : t('editing.snippets.source.globalUser'));
+const sourceLabel = (s: Snippet) =>
+	s.source === 'snap' ? t('snapContrib.snippetSource', { file: s.file }) : s.source === 'workspace' ? t('editing.snippets.source.workspace') : s.language ? t('editing.snippets.source.user') : t('editing.snippets.source.globalUser');
 
 /** Inserts a snippet body at the editor's selections (Monaco's snippet controller). */
 export function insertSnippetText(editor: Monaco.editor.ICodeEditor, body: string, opts?: { overwriteBefore?: number }) {
@@ -152,12 +164,13 @@ async function pickSnippet(snippets: Snippet[]): Promise<Snippet | undefined> {
 		status.flash(t('editing.snippets.none'));
 		return undefined;
 	}
-	const ordered = [...snippets.filter((s) => s.source === 'user'), ...snippets.filter((s) => s.source === 'workspace')];
+	const ordered = [...snippets.filter((s) => s.source === 'user'), ...snippets.filter((s) => s.source === 'workspace'), ...snippets.filter((s) => s.source === 'snap')];
+	const group = (s: Snippet) => (s.source === 'user' ? t('editing.snippets.userGroup') : s.source === 'workspace' ? t('editing.snippets.workspaceGroup') : t('snapContrib.snippetGroup'));
 	const items: PickItem[] = ordered.map((s, i) => ({
 		id: snippetId(s),
 		label: s.prefix || s.name,
 		description: [s.prefix ? s.name : '', s.description].filter(Boolean).join(' · ') || undefined,
-		separator: i === 0 || ordered[i - 1].source !== s.source ? (s.source === 'user' ? t('editing.snippets.userGroup') : t('editing.snippets.workspaceGroup')) : undefined
+		separator: i === 0 || ordered[i - 1].source !== s.source ? group(s) : undefined
 	}));
 	const item = await quick.choose({ placeholder: t('editing.snippets.select'), items });
 	return item ? snippetStore.find(item.id) : undefined;

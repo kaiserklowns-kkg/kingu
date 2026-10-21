@@ -3,16 +3,32 @@
 
 import type { SettingSchema } from '../settings/registry';
 import { t } from '#lib/i18n/index.ts';
-import { themeType, type ThemeInfo } from '#lib/theme/themes.ts';
+import type { SnapContributions } from './contributions.ts';
 
-export type SnapSource = 'user' | 'repo';
+/** `builtin`: shipped with the app (builtinSnaps.ts), never from `snap_list`. */
+export type SnapSource = 'user' | 'repo' | 'builtin';
 export type SnapSettingType = 'string' | 'boolean' | 'number';
 export type SettingValue = string | boolean | number;
 
 export type SnapTask = { id: string; title: string; command: string[] };
 export type SnapSetting = { key: string; type: SnapSettingType; default: SettingValue; description: string };
 export type SnapMcp = { name: string; command: string[]; env: Record<string, string> };
-export type SnapPermissions = { network: boolean; fs: 'worktree' | 'home'; secrets: string[] };
+/**
+ * `[permissions]` of snap.toml. The lists are optional narrowing (Rust leaves empty ones out):
+ * `hosts` (with network), `read` / `write` scopes, `processes` it may start, `env` it gets.
+ */
+export type SnapPermissions = {
+	network: boolean;
+	fs: 'worktree' | 'home';
+	secrets: string[];
+	hosts?: string[];
+	read?: string[];
+	write?: string[];
+	processes?: string[];
+	env?: string[];
+};
+/** A file covered by a snap's trust hash. */
+export type FileHash = { path: string; sha256: string };
 /** A skill folder (SKILL.md) of a snap; its files stay in Rust, which copies them into an agent plugin. */
 export type SnapSkill = { name: string; path: string; description: string };
 /** A command run on a Claude Code lifecycle event of an agent session (Rust `snap::Hook`). */
@@ -25,12 +41,10 @@ export type SnapRequire = { program: string; setting: string | null; url: string
 export type SnapService = { id: string; title: string; command: string[]; env: Record<string, string>; autostart: boolean; when: string | null };
 /** `snap_service_list` / the `snap-service` event (Rust `snap_service::ServiceStatus`). */
 export type ServiceStatus = { snapId: string; serviceId: string; running: boolean; pid: number | null; startedAt: number; endedAt: number | null; exitCode: number | null; stopped: boolean; log: string };
-/** A color theme of the snap (`[[themes]]`, Rust `snap::Theme`). */
-export type SnapTheme = { id: string; label: string; uiTheme: string; file: string; files: Record<string, string> };
 /** `snap_find_programs` (Rust `snap_service::Found`). */
 export type FoundProgram = { path: string | null; onPath: boolean };
-/** Where an installed user snap came from (`.kingu-snap.json`): git (`url`, `ref`, `commit`) or a folder (`path`). */
-export type SnapOrigin = { url: string | null; ref: string | null; commit: string | null; path: string | null; installed_at: number };
+/** Where an installed user snap came from (`.kingu-snap.json`): git (`url`, `ref`, `commit`), a folder (`path`) or the team library (`team`). */
+export type SnapOrigin = { url: string | null; ref: string | null; commit: string | null; path: string | null; team?: { server: string; version: string } | null; installed_at: number };
 /** A repo snap against `.kingu/snaps.lock` (null when the folder has no lock file). */
 export type LockStatus = 'locked' | 'changed' | 'unlocked';
 
@@ -56,15 +70,34 @@ export type SnapInfo = {
 	hooks: SnapHook[];
 	requires: SnapRequire[];
 	services: SnapService[];
-	/** README.md of the snap folder (display only). */
+	/** README.md of the snap folder (shown on its details page; covered by the trust hash). */
 	readme: string | null;
-	/** Files its commands run (`${snap:dir}/…` and repo paths), covered by the trust hash. */
-	files: string[];
-	themes: SnapTheme[];
+	/** Files its commands run as written (`${snap:dir}/…` and repo paths), covered by the trust hash. */
+	runFiles: string[];
+	/** Languages, grammars, snippets, language servers, themes and views (contributions.ts). */
+	contributes?: SnapContributions;
+	/** Repo snaps: repo files their commands run (`scripts/ci.sh`); they are in `hash` too. */
+	scripts: FileHash[];
 	/** Turned off by the user (`kingu.snaps.disabled`, set by the store): contributes nothing. */
 	disabled?: boolean;
 	origin: SnapOrigin | null;
+	/** Repo snaps against `.kingu/snaps.lock`; user snaps when the lock pins a team snap with their id. */
 	lock: LockStatus | null;
+	/** Repo snaps: the permissions approved last time (trust or lock), to show what grew. */
+	approvedPermissions: SnapPermissions | null;
+};
+
+/** `snap_lock_verify` (snap_install.rs LockReport). */
+export type LockReport = {
+	id: string;
+	source: 'repo' | 'team';
+	status: 'locked' | 'changed' | 'unlocked' | 'missing';
+	lockedVersion: string | null;
+	version: string | null;
+	files: string[];
+	scripts: string[];
+	lockedPermissions: SnapPermissions | null;
+	permissions: SnapPermissions | null;
 };
 
 /** A snap found in a staged install source: `rel` is '' (manifest at the root) or `snaps/<id>`. */
@@ -201,7 +234,11 @@ export function expandArgv(command: readonly string[], values: Record<string, Se
  * With `sandbox`, each server runs through the launcher confined to its snap's permissions in
  * `root` (the agent's worktree); when the sandbox refuses (or there is no root) servers are left out.
  */
-export function mcpServersOf(list: readonly SnapInfo[], get: (id: string) => unknown = () => undefined, sandbox?: { plan: SandboxPlan; root: string | null }): Record<string, McpServerSpec> {
+export function mcpServersOf(
+	list: readonly SnapInfo[],
+	get: (id: string) => unknown = () => undefined,
+	sandbox?: { plan: SandboxPlan; root: string | null; secretsFile?: (snapId: string) => string | null }
+): Record<string, McpServerSpec> {
 	const out: Record<string, McpServerSpec> = {};
 	for (const s of list) {
 		if (!isActive(s)) continue;
@@ -213,7 +250,8 @@ export function mcpServersOf(list: readonly SnapInfo[], get: (id: string) => unk
 			let run = argv;
 			if (sandbox && sandbox.plan.kind !== 'off') {
 				if (sandbox.plan.kind === 'refuse' || !sandbox.root) continue;
-				run = sandboxedArgv(sandbox.plan, s.permissions, sandbox.root, argv, Object.keys(env), s.id);
+				const secrets = sandbox.secretsFile?.(s.id);
+				run = sandboxedArgv(sandbox.plan, s.permissions, sandbox.root, argv, Object.keys(env), secrets ? { path: secrets, once: false } : null);
 			}
 			const [command, ...args] = run;
 			out[`${s.id}-${m.name}`] = { command, args, env };
@@ -229,23 +267,28 @@ export function mcpServersOf(list: readonly SnapInfo[], get: (id: string) => unk
 export const SANDBOX_SETTING = 'kingu.snaps.sandbox';
 export type SandboxMode = 'enforce' | 'off';
 /** `snap_sandbox_info` (src-tauri/src/snap_sandbox.rs). */
-export type SandboxInfo = { enforcer: string | null; launcher: string | null; protect: string[]; problem: string | null };
-export type SandboxPlan = { kind: 'enforce'; launcher: string; enforcer: string; protect: string[] } | { kind: 'off' } | { kind: 'refuse'; reason: string };
+export type SandboxInfo = { enforcer: string | null; launcher: string | null; protect: string[]; hide?: string[]; problem: string | null };
+/** `hide`: folders no snap may read (the snap secrets files), when there are any. */
+export type SandboxPlan = { kind: 'enforce'; launcher: string; enforcer: string; protect: string[]; hide?: string[] } | { kind: 'off' } | { kind: 'refuse'; reason: string };
+/** A secrets file for one launch (`snap_secrets_file`): a task's is deleted once read. */
+export type SecretsFile = { path: string; once: boolean };
 
 /** How snaps run here: confined, unconfined because the user turned it off, or not at all. */
 export function sandboxPlan(info: SandboxInfo | null, mode: unknown): SandboxPlan {
 	if (mode === 'off') return { kind: 'off' };
 	if (!info) return { kind: 'refuse', reason: t('tools.snaps.sandboxNotChecked') };
-	if (info.enforcer && info.launcher) return { kind: 'enforce', launcher: info.launcher, enforcer: info.enforcer, protect: info.protect };
+	if (info.enforcer && info.launcher) return { kind: 'enforce', launcher: info.launcher, enforcer: info.enforcer, protect: info.protect, ...(info.hide?.length ? { hide: info.hide } : {}) };
 	return { kind: 'refuse', reason: info.problem ?? t('tools.snaps.noEnforcer') };
 }
 
 /**
- * `launcher snap-exec … -- argv` for a snap's permissions. `keep` names variables the snap sets
- * itself (an MCP server's env) so the launcher does not strip them as credentials. `snap`: whose
- * keychain secrets the launcher reads (kingu_ptyd::secrets), when it declares any.
+ * `launcher snap-exec … -- argv` for a snap's permissions (every declared scope; the launcher
+ * enforces them, see kingu-ptyd's sandbox.rs). `keep` names variables the snap sets itself (an
+ * MCP server's env) so the launcher does not strip them as credentials; `secrets` is the file
+ * holding the values the user entered (the values themselves never go into the argv).
  */
-export function sandboxedArgv(plan: Extract<SandboxPlan, { kind: 'enforce' }>, p: SnapPermissions, root: string, argv: readonly string[], keep: readonly string[] = [], snap?: string): string[] {
+export function sandboxedArgv(plan: Extract<SandboxPlan, { kind: 'enforce' }>, p: SnapPermissions, root: string, argv: readonly string[], keep: readonly string[] = [], secrets: SecretsFile | null = null): string[] {
+	const each = (flag: string, xs: readonly string[] | undefined) => (xs ?? []).flatMap((x) => [flag, x]);
 	return [
 		plan.launcher,
 		'snap-exec',
@@ -255,20 +298,26 @@ export function sandboxedArgv(plan: Extract<SandboxPlan, { kind: 'enforce' }>, p
 		p.fs,
 		'--root',
 		root,
-		...(snap && p.secrets.length ? ['--snap', snap] : []),
-		...p.secrets.flatMap((s) => ['--secret', s]),
-		...keep.flatMap((k) => ['--keep', k]),
-		...plan.protect.flatMap((d) => ['--protect', d]),
+		...each('--secret', p.secrets),
+		...each('--keep', keep),
+		...each('--protect', plan.protect),
+		...(p.network ? each('--host', p.hosts) : []),
+		...each('--read', p.read),
+		...each('--write', p.write),
+		...each('--exec', p.processes),
+		...each('--env', p.env),
+		...each('--hide', plan.hide),
+		...(secrets ? [secrets.once ? '--secrets-file-once' : '--secrets-file', secrets.path] : []),
 		'--',
 		...argv
 	];
 }
 
 /** The terminal command of a task under `plan`, or why it may not run. */
-export function sandboxTask(plan: SandboxPlan, p: SnapPermissions, root: string, argv: string[], snap?: string): { run: string[] } | { error: string } {
+export function sandboxTask(plan: SandboxPlan, p: SnapPermissions, root: string, argv: string[], secretsPath: string | null = null): { run: string[] } | { error: string } {
 	if (plan.kind === 'off') return { run: argv };
 	if (plan.kind === 'refuse') return { error: refusal(plan.reason) };
-	return { run: sandboxedArgv(plan, p, root, argv, [], snap) };
+	return { run: sandboxedArgv(plan, p, root, argv, [], secretsPath ? { path: secretsPath, once: true } : null) };
 }
 
 const refusal = (reason: string) => t('tools.snaps.refusal', { reason, setting: SANDBOX_SETTING });
@@ -317,7 +366,8 @@ export function requiredPrograms(list: readonly SnapInfo[], get: (id: string) =>
 	return [...new Set(list.filter((s) => !s.error).flatMap((s) => s.requires.map((r) => requiredProgram(s, r, get))))];
 }
 
-export type ServiceRun = { snap: string; service: string; title: string; argv: string[]; env: [string, string][] };
+/** `secrets`: the snap has secrets to hand over, so `argv` gets a secrets file (`withSecretsFile`) when it starts. */
+export type ServiceRun = { snap: string; service: string; title: string; argv: string[]; env: [string, string][]; secrets: boolean };
 
 /**
  * The services that should run now: autostart services of active snaps whose `when` setting is on
@@ -336,11 +386,21 @@ export function wantedServices(list: readonly SnapInfo[], get: (id: string) => u
 			const argv = expandArgv(inSnapDir(s, sv.command), values);
 			if (!argv.length) continue;
 			const env = Object.entries(expandEnv(sv.env, values));
-			const run = plan.kind === 'enforce' ? sandboxedArgv(plan, s.permissions, root!, argv, env.map(([k]) => k), s.id) : argv;
-			out.push({ snap: s.id, service: sv.id, title: sv.title, argv: run, env });
+			const run = plan.kind === 'enforce' ? sandboxedArgv(plan, s.permissions, root!, argv, env.map(([k]) => k)) : argv;
+			out.push({ snap: s.id, service: sv.id, title: sv.title, argv: run, env, secrets: plan.kind === 'enforce' && s.permissions.secrets.length > 0 });
 		}
 	}
 	return out;
+}
+
+/**
+ * A sandboxed argv (`sandboxedArgv`) with the secrets file of one launch added before its `--`
+ * (a service gets its file when it starts, not each time the wanted list is worked out).
+ */
+export function withSecretsFile(run: readonly string[], file: SecretsFile): string[] {
+	const end = run.indexOf('--', 2);
+	if (run[1] !== 'snap-exec' || end < 0) return [...run];
+	return [...run.slice(0, end), file.once ? '--secrets-file-once' : '--secrets-file', file.path, ...run.slice(end)];
 }
 
 /** What to start (wanted, not running) and stop (running, no longer wanted). */
@@ -373,13 +433,25 @@ export function catalogEntries(catalog: readonly SnapInfo[], list: readonly Snap
 /** The key of a shipped snap's details page (never a listed snap's `source/id`). */
 export const catalogKey = (id: string) => `catalog/${id}`;
 
+/** The languages, language servers, themes and views a snap contributes, one line each. */
+function contributedLines(s: SnapInfo, names: (xs: string[]) => string): string[] {
+	const c = s.contributes;
+	const more: ['snapContrib.summary.languages' | 'snapContrib.summary.lsp' | 'snapContrib.summary.themes' | 'snapContrib.summary.views', string[]][] = [
+		['snapContrib.summary.languages', c?.languages.map((l) => l.aliases[0] ?? l.id) ?? []],
+		['snapContrib.summary.lsp', c?.lsp.map((l) => l.name) ?? []],
+		['snapContrib.summary.themes', [...(c?.themes.map((x) => x.label) ?? []), ...(c?.iconThemes.map((x) => x.label) ?? [])]],
+		['snapContrib.summary.views', c?.views.map((v) => v.name) ?? []]
+	];
+	return more.filter(([, xs]) => xs.length).map(([key, xs]) => t(key, { count: xs.length, names: names(xs) }));
+}
+
 /** What the snap adds for the person in the IDE and for agents in the ADE (Kingu's two sides). */
 export function audiences(s: SnapInfo): { you: string[]; agents: string[] } {
 	const names = (xs: string[]) => (xs.length ? `: ${xs.join(', ')}` : '');
 	const you = [
 		...(s.tasks.length ? [t('tools.snaps.contrib.tasks', { count: s.tasks.length, names: names(s.tasks.map((x) => x.title)) })] : []),
 		...(s.services.length ? [t('tools.snaps.contrib.services', { count: s.services.length, names: names(s.services.map((x) => x.title)) })] : []),
-		...(s.themes.length ? [t('tools.snaps.contrib.themes', { count: s.themes.length, names: names(s.themes.map((x) => x.label)) })] : []),
+		...contributedLines(s, names),
 		...(s.settings.length ? [t('tools.snaps.contrib.settings', { count: s.settings.length })] : [])
 	];
 	const agents = [
@@ -410,11 +482,6 @@ export function snapAvatar(s: Pick<SnapInfo, 'id' | 'name'>): { hue: number; let
 	return { hue: h, letters };
 }
 
-/** The color themes of active snaps, for the theme service (themes.ts setSnapThemes). */
-export function snapThemesOf(list: readonly SnapInfo[]): ThemeInfo[] {
-	return list.filter(isActive).flatMap((s) => s.themes.map((th) => ({ id: th.id, label: th.label, file: th.file, type: themeType(th.uiTheme), snap: s.name, files: th.files })));
-}
-
 /** Active snaps whose skills or hooks agents get (as plugins Rust writes into the app cache). */
 export const skillSnapIds = (list: readonly SnapInfo[]) => list.filter((s) => isActive(s) && (s.skills.length > 0 || s.hooks.length > 0)).map((s) => s.id);
 
@@ -424,7 +491,7 @@ export const skillSnapIds = (list: readonly SnapInfo[]) => list.filter((s) => is
  * A hook whose program expands to nothing is left out, and so is every hook when the sandbox
  * refuses or there is no root.
  */
-export function hookRunsOf(list: readonly SnapInfo[], get: (id: string) => unknown, sandbox: { plan: SandboxPlan; root: string | null }): Record<string, HookRun[]> {
+export function hookRunsOf(list: readonly SnapInfo[], get: (id: string) => unknown, sandbox: { plan: SandboxPlan; root: string | null; secretsFile?: (snapId: string) => string | null }): Record<string, HookRun[]> {
 	const out: Record<string, HookRun[]> = {};
 	if (sandbox.plan.kind === 'refuse' || (sandbox.plan.kind === 'enforce' && !sandbox.root)) return out;
 	for (const s of list) {
@@ -435,7 +502,9 @@ export function hookRunsOf(list: readonly SnapInfo[], get: (id: string) => unkno
 			const argv = expandArgv(inSnapDir(s, h.command), values);
 			if (!argv.length) continue;
 			const env = Object.entries(expandEnv(h.env, values));
-			const run = sandbox.plan.kind === 'enforce' ? sandboxedArgv(sandbox.plan, s.permissions, sandbox.root!, argv, env.map(([k]) => k), s.id) : argv;
+			// Every event runs the hook again, so its secrets file stays (like an MCP server's).
+			const secrets = sandbox.secretsFile?.(s.id);
+			const run = sandbox.plan.kind === 'enforce' ? sandboxedArgv(sandbox.plan, s.permissions, sandbox.root!, argv, env.map(([k]) => k), secrets ? { path: secrets, once: false } : null) : argv;
 			runs.push({ event: h.event, argv: env.length ? ['env', ...env.map(([k, v]) => `${k}=${v}`), ...run] : run });
 		}
 		if (runs.length) out[s.id] = runs;
@@ -467,9 +536,24 @@ export function snapStatus(s: SnapInfo): SnapStatus {
 
 /** The lock note of a repo snap, or null when there is nothing to say. */
 export function lockNote(s: SnapInfo): string | null {
-	if (s.lock === 'changed') return t('tools.snaps.lockChanged');
+	if (s.lock === 'changed') return s.source === 'user' ? t('snapPlatform.lockTeamChanged') : t('snapPlatform.lockChangedUntrusted');
 	if (s.lock === 'unlocked') return t('tools.snaps.lockMissing');
 	return null;
+}
+
+/** `Snap: Verify snaps.lock` as text for a message box: one line per entry, then what changed. */
+export function lockReportText(rows: readonly LockReport[]): string {
+	if (!rows.length) return t('snapPlatform.verify.empty');
+	const lines: string[] = [];
+	for (const r of rows) {
+		const from = r.source === 'team' ? ` (${t('snapPlatform.verify.team')})` : '';
+		const versions = r.lockedVersion && r.version && r.lockedVersion !== r.version ? ` v${r.lockedVersion} → v${r.version}` : r.version ? ` v${r.version}` : r.lockedVersion ? ` v${r.lockedVersion}` : '';
+		lines.push(`${r.status === 'locked' ? '✓' : '✗'} ${r.id}${from}${versions}: ${t(`snapPlatform.verify.${r.status}`)}`);
+		for (const f of r.files) lines.push(`    ${f}`);
+		for (const f of r.scripts) lines.push(`    ${t('snapPlatform.verify.script', { path: f })}`);
+		if (r.lockedPermissions && r.permissions) for (const a of permissionDiff(r.lockedPermissions, r.permissions).added) lines.push(`    + ${a}`);
+	}
+	return lines.join('\n');
 }
 
 /** Repo snaps waiting for the user to trust them (the activity bar badge). */
@@ -496,14 +580,24 @@ export function originLabel(o: SnapOrigin | null): string {
 }
 
 export function permissionLines(p: SnapPermissions): string[] {
+	const join = (xs: readonly string[] | undefined) => (xs?.length ? xs.join(', ') : null);
+	const [read, write, processes, env] = [join(p.read), join(p.write), join(p.processes), join(p.env)];
 	return [
-		p.network ? t('tools.snaps.perm.networkOn') : t('tools.snaps.perm.networkOff'),
+		p.network ? (p.hosts?.length ? t('snapPlatform.perm.hosts', { list: p.hosts.join(', ') }) : t('tools.snaps.perm.networkOn')) : t('tools.snaps.perm.networkOff'),
 		p.fs === 'home' ? t('tools.snaps.perm.fsHome') : t('tools.snaps.perm.fsWorktree'),
+		...(read ? [t('snapPlatform.perm.read', { list: read })] : []),
+		...(write ? [t('snapPlatform.perm.write', { list: write })] : []),
+		...(processes ? [t('snapPlatform.perm.processes', { list: processes })] : []),
+		...(env ? [t('snapPlatform.perm.env', { list: env })] : []),
 		`Secrets: ${p.secrets.length ? p.secrets.join(', ') : '—'}`
 	];
 }
 
-/** What an update adds (`added`, to call out) and drops, permission by permission. */
+/**
+ * What an update adds (`added`, to call out) and drops, permission by permission. Narrowing
+ * lists count the other way round: dropping `hosts`, `read`, `processes` or `env` restrictions
+ * widens what the snap may do, adding entries to `write` widens it too.
+ */
 export function permissionDiff(before: SnapPermissions, after: SnapPermissions): { added: string[]; removed: string[] } {
 	const added: string[] = [];
 	const removed: string[] = [];
@@ -513,10 +607,31 @@ export function permissionDiff(before: SnapPermissions, after: SnapPermissions):
 	if (after.fs !== 'home' && before.fs === 'home') removed.push(t('tools.snaps.perm.homeAccess'));
 	for (const s of after.secrets) if (!before.secrets.includes(s)) added.push(`secret ${s}`);
 	for (const s of before.secrets) if (!after.secrets.includes(s)) removed.push(`secret ${s}`);
+	for (const w of after.write ?? []) if (!(before.write ?? []).includes(w)) added.push(t('snapPlatform.diff.write', { path: w }));
+	for (const w of before.write ?? []) if (!(after.write ?? []).includes(w)) removed.push(t('snapPlatform.diff.write', { path: w }));
+	// An allow-list: an entry more widens; the list going away lifts the restriction entirely.
+	const allowList = (key: 'hosts' | 'read' | 'processes' | 'env', item: (value: string) => string, any: string) => {
+		const b = before[key] ?? [];
+		const a = after[key] ?? [];
+		if (key === 'hosts' && !after.network) return;
+		if (b.length && !a.length) added.push(any);
+		else if (a.length) {
+			for (const x of a) if (b.length && !b.includes(x)) added.push(item(x));
+			for (const x of b) if (!a.includes(x)) removed.push(item(x));
+			if (!b.length) removed.push(any);
+		}
+	};
+	allowList('hosts', (value) => t('snapPlatform.diff.host', { value }), t('snapPlatform.diff.anyHost'));
+	allowList('read', (value) => t('snapPlatform.diff.read', { value }), t('snapPlatform.diff.anyRead'));
+	allowList('processes', (value) => t('snapPlatform.diff.process', { value }), t('snapPlatform.diff.anyProcess'));
+	allowList('env', (value) => t('snapPlatform.diff.env', { value }), t('snapPlatform.diff.anyEnv'));
 	return { added, removed };
 }
 
-/** Counts and names of the tasks, MCP servers and skills a snap adds. */
+/** Whether going from `before` to `after` lets the snap do more (the review prompt must say so). */
+export const permissionsGrew = (before: SnapPermissions | null | undefined, after: SnapPermissions) => !!before && permissionDiff(before, after).added.length > 0;
+
+/** Counts and names of the tasks, MCP servers and skills a snap adds, then what else it contributes. */
 function contributionLines(s: SnapInfo): string[] {
 	const names = (xs: string[]) => (xs.length ? `: ${xs.join(', ')}` : '');
 	return [
@@ -525,7 +640,7 @@ function contributionLines(s: SnapInfo): string[] {
 		t('tools.snaps.contrib.skills', { count: s.skills.length, names: names(s.skills.map((k) => k.name)) }),
 		...(s.hooks.length ? [t('tools.snaps.contrib.hooks', { count: s.hooks.length, names: names([...new Set(s.hooks.map((h) => h.event))]) })] : []),
 		...(s.services.length ? [t('tools.snaps.contrib.services', { count: s.services.length, names: names(s.services.map((x) => x.title)) })] : []),
-		...(s.themes.length ? [t('tools.snaps.contrib.themes', { count: s.themes.length, names: names(s.themes.map((x) => x.label)) })] : [])
+		...contributedLines(s, names)
 	];
 }
 
@@ -552,10 +667,16 @@ export function trustSummary(s: SnapInfo, plan?: SandboxPlan): string {
 		...s.tasks.map((x) => t('tools.snaps.taskCommand', { title: x.title, command: x.command.join(' ') })),
 		...s.mcp.map((m) => `• MCP ${m.name}: ${m.command.join(' ')}`),
 		...s.hooks.map((h) => `• hook ${h.event}: ${h.command.join(' ')}`),
-		...s.services.map((sv) => `• service ${sv.title}: ${sv.command.join(' ')}`)
+		...s.services.map((sv) => `• service ${sv.title}: ${sv.command.join(' ')}`),
+		// Language servers run as soon as a file of their language opens.
+		...(s.contributes?.lsp ?? []).map((l) => t('snapContrib.trust.server', { name: l.name, command: l.command.join(' ') }))
 	];
+	const views = s.contributes?.views ?? [];
+	const grown = s.approvedPermissions ? permissionDiff(s.approvedPermissions, s.permissions).added : [];
 	return [
 		t('tools.snaps.fromRepo', { name: s.name, id: s.id, version: s.version }),
+		...(s.lock === 'changed' ? ['', t('snapPlatform.lockReapprove')] : []),
+		...(grown.length ? ['', t('snapPlatform.permissionsGrew'), ...grown.map((a) => `• ${a}`)] : []),
 		'',
 		t('tools.snaps.declaredPermissions'),
 		...permissionLines(s.permissions).map((l) => `• ${l}`),
@@ -563,7 +684,9 @@ export function trustSummary(s: SnapInfo, plan?: SandboxPlan): string {
 		...(commands.length ? ['', t('tools.snaps.commandsToRun'), ...commands] : []),
 		...(s.skills.length ? ['', t('tools.snaps.skillsForAgents', { names: s.skills.map((k) => k.name).join(', ') })] : []),
 		...(s.hooks.length ? ['', t('tools.snaps.hooksForAgents')] : []),
-		...(s.files.length ? ['', t('tools.snaps.filesCovered', { files: s.files.join(', ') })] : []),
+		...(views.length ? ['', t('snapContrib.trust.views', { names: views.map((v) => v.name).join(', ') })] : []),
+		...(s.runFiles?.length ? ['', t('tools.snaps.filesCovered', { files: s.runFiles.join(', ') })] : []),
+		...(s.scripts?.length ? ['', t('snapPlatform.scriptsPinned', { list: s.scripts.map((f) => f.path).join(', ') })] : []),
 		'',
 		t('tools.snaps.repoTrustWarning')
 	].join('\n');
@@ -579,4 +702,18 @@ export function updateSummary(before: SnapInfo, after: SnapInfo, origin: SnapOri
 	if (plan) lines.push(enforcementNote(plan), '');
 	lines.push(t('tools.snaps.afterUpdate'), ...contributionLines(after).map((l) => `• ${l}`));
 	return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------------------------
+// Secrets the user enters (Keychain, `snap_secrets.rs`)
+
+/** `snap_secrets_list`: a declared name and whether a value is stored (never the value). */
+export type SecretState = { name: string; stored: boolean };
+
+/** Active snaps whose MCP servers or hooks need a secrets file before an agent starts. */
+export const snapsNeedingMcpSecrets = (list: readonly SnapInfo[]) => list.filter((s) => isActive(s) && (s.mcp.length > 0 || s.hooks.length > 0) && s.permissions.secrets.length > 0).map((s) => s.id);
+
+/** The quick pick rows of Snap: Set Secrets…: one per declared name, saying whether it is set. */
+export function secretRows(states: readonly SecretState[]): { id: string; label: string; description: string }[] {
+	return states.map((s) => ({ id: s.name, label: s.name, description: s.stored ? t('snapPlatform.secrets.stored') : t('snapPlatform.secrets.missing') }));
 }

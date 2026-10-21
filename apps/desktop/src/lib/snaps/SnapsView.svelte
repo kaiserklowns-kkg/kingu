@@ -4,7 +4,8 @@
 	// is missing (a required program, a service that stopped), then Details (README), Features
 	// (what it adds for you and for agents), Permissions (what the sandbox lets it do) and Settings.
 	// Without a key it is an overview of every snap. A shipped snap that is not installed has a
-	// details page too (`catalog/<id>`), so it can be read before Install.
+	// details page too (`catalog/<id>`), so it can be read before Install; so does a built-in snap
+	// (`builtin/<id>`, shipped inside the app: always on, nothing to install or remove).
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
@@ -24,6 +25,7 @@
 		lockNote,
 		missingRequirements,
 		originLabel,
+		permissionDiff,
 		permissionLines,
 		requirementStates,
 		SANDBOX_SETTING,
@@ -35,6 +37,7 @@
 	} from './snapModel.ts';
 	import { snaps } from './snaps.svelte.ts';
 	import SnapAvatar from './SnapAvatar.svelte';
+	import { contributionGroups, contributionsOf, type ContributionKind } from './contributions.ts';
 
 	type Tab = 'details' | 'features' | 'permissions' | 'settings';
 	let tab = $state<Tab>('details');
@@ -45,9 +48,27 @@
 
 	const get = (id: string) => settings.get(id);
 	const catalogSnap = $derived(snaps.catalogSnap(systemSettings.snapKey));
-	const snap = $derived(systemSettings.snapKey ? (snaps.list.find((s) => snapKey(s) === systemSettings.snapKey) ?? catalogSnap) : undefined);
+	const snap = $derived(systemSettings.snapKey ? (snaps.all.find((s) => snapKey(s) === systemSettings.snapKey) ?? catalogSnap) : undefined);
 	const installed = $derived(!!snap && !catalogSnap);
 	const enforcement = $derived(enforcementLabel(snaps.sandbox));
+	/** The contribution kinds the Features tab names; the IDE ones also get a list of their items. */
+	const KIND_KEYS: Record<ContributionKind, `snapContrib.kind.${ContributionKind}`> = {
+		languages: 'snapContrib.kind.languages',
+		grammars: 'snapContrib.kind.grammars',
+		snippets: 'snapContrib.kind.snippets',
+		lsp: 'snapContrib.kind.lsp',
+		themes: 'snapContrib.kind.themes',
+		iconThemes: 'snapContrib.kind.iconThemes',
+		views: 'snapContrib.kind.views',
+		commands: 'snapContrib.kind.commands',
+		settings: 'snapContrib.kind.settings',
+		mcp: 'snapContrib.kind.mcp',
+		skills: 'snapContrib.kind.skills'
+	};
+	const DETAILED: ContributionKind[] = ['languages', 'grammars', 'snippets', 'lsp', 'iconThemes', 'views'];
+	/** What the person gets besides tasks and services: color themes and the IDE contributions. */
+	const themesOf = (s: SnapInfo) => contributionsOf(s).themes;
+	const forYouCount = (s: SnapInfo) => s.tasks.length + s.services.length + contributionGroups(s).filter((g) => g.kind === 'themes' || DETAILED.includes(g.kind)).length;
 
 	// A new snap opens on its Details tab.
 	$effect(() => {
@@ -173,7 +194,8 @@
 	{@const groups = [
 		{ title: t('tools.snapsUi.installed'), list: snaps.list.filter((s) => s.source === 'user') },
 		{ title: t('tools.snapsUi.thisFolder'), list: snaps.list.filter((s) => s.source === 'repo') },
-		{ title: t('tools.snapsUi.recommended'), list: snaps.recommended.filter((e) => e.state === 'available').map((e) => e.snap) }
+		{ title: t('tools.snapsUi.recommended'), list: snaps.recommended.filter((e) => e.state === 'available').map((e) => e.snap) },
+		{ title: t('snapContrib.section.builtin'), list: snaps.all.filter((s) => s.source === 'builtin') }
 	]}
 	{#each groups as g (g.title)}
 		{#if g.list.length}
@@ -181,13 +203,14 @@
 			<div class="mt-2 grid gap-2 sm:grid-cols-2">
 				{#each g.list as s (s.source + s.id + g.title)}
 					{@const st = snapStatus(s)}
-					{@const key = snaps.list.includes(s) ? snapKey(s) : catalogKey(s.id)}
+					{@const listed = snaps.all.includes(s)}
+					{@const key = listed ? snapKey(s) : catalogKey(s.id)}
 					<button class={[CARD, 'flex items-start gap-3 p-3 text-left hover:bg-(--vscode-list-hoverBackground)']} onclick={() => systemSettings.showSnaps(key)}>
 						<SnapAvatar snap={s} size={40} muted={!!s.disabled || !!s.error} />
 						<span class="flex min-w-0 flex-1 flex-col gap-0.5">
 							<span class="flex items-center gap-1.5"><span class="truncate font-semibold">{s.name}</span><span class="text-xs text-(--vscode-descriptionForeground)">v{s.version}</span></span>
 							<span class="line-clamp-2 text-xs text-(--vscode-descriptionForeground)">{s.error ?? s.description}</span>
-							{#if snaps.list.includes(s)}<span class={['text-xs', TONE[st.tone]]}>{st.label}</span>{/if}
+							{#if listed}<span class={['text-xs', TONE[st.tone]]}>{s.overridden && s.source === 'builtin' ? t('snapContrib.builtinOverridden') : st.label}</span>{/if}
 						</span>
 					</button>
 				{/each}
@@ -207,6 +230,8 @@
 	{@const svc = s.services.map((sv) => ({ sv, status: snaps.services.find((x) => x.snapId === s.id && x.serviceId === sv.id) }))}
 	{@const who = audiences(s)}
 	{@const entry = snaps.recommended.find((e) => e.snap.id === s.id)}
+	{@const builtin = s.source === 'builtin'}
+	{@const grown = s.approvedPermissions ? permissionDiff(s.approvedPermissions, s.permissions).added : []}
 
 	<button class="mb-3 flex items-center gap-1 text-xs text-(--vscode-textLink-foreground) hover:underline" onclick={() => (systemSettings.snapKey = null)}><Icon name="arrowLeft" size={12} /> {t('tools.snapsUi.allSnaps')}</button>
 
@@ -217,8 +242,8 @@
 			<div class="flex flex-wrap items-baseline gap-2">
 				<h2 class="text-xl font-semibold text-(--vscode-settings-headerForeground)">{s.name}</h2>
 				{#if s.version}<span class="text-(--vscode-descriptionForeground)">v{s.version}</span>{/if}
-				<span class={BADGE}>{catalogSnap ? 'Kingu' : s.source === 'user' ? t('tools.snapsUi.sourceUser') : t('tools.snapsUi.sourceRepo')}</span>
-				{#if installed && st.key !== 'active'}<span class={['text-xs', TONE[st.tone]]}>{st.label}</span>{/if}
+				<span class={BADGE} title={builtin ? t('snapContrib.builtinTitle') : undefined}>{catalogSnap ? 'Kingu' : builtin ? t('snapContrib.section.builtin') : s.source === 'user' ? t('tools.snapsUi.sourceUser') : t('tools.snapsUi.sourceRepo')}</span>
+				{#if installed && st.key !== 'active'}<span class={['text-xs', TONE[st.tone]]}>{builtin && st.key === 'overridden' ? t('snapContrib.builtinOverridden') : st.label}</span>{/if}
 				{#if installed && lockNote(s)}<span class="text-xs text-(--vscode-editorWarning-foreground)">{lockNote(s)}</span>{/if}
 			</div>
 			<p class="mt-1 text-(--vscode-descriptionForeground)">{s.description || s.id}</p>
@@ -230,7 +255,7 @@
 			<div class="mt-3 flex flex-wrap items-center gap-2">
 				{#if catalogSnap}
 					<button class={[BUTTON, 'flex items-center gap-1.5']} disabled={!!snaps.busy} onclick={() => snaps.installBuiltin(s.id)}><Icon name="download" size={14} /> {t('tools.snapsUi.install')}</button>
-				{:else}
+				{:else if !builtin}
 					{#if s.source === 'repo' && !s.error && !s.trusted}
 						<button class={BUTTON} onclick={() => snaps.confirmTrust(s)}>{t('tools.snapsUi.trust')}</button>
 					{/if}
@@ -259,6 +284,17 @@
 			<Icon name="warning" size={14} />
 			<span>{t('tools.snapsUi.repoWarning')}</span>
 		</p>
+	{/if}
+	{#if installed && s.source === 'repo' && !s.error && (s.lock === 'changed' || (!s.trusted && grown.length))}
+		<div role="status" class="mt-2 rounded-md border border-(--vscode-editorWarning-foreground) px-2 py-1.5 text-(--vscode-editorWarning-foreground)">
+			{#if s.lock === 'changed'}<p>{t('snapPlatform.lockReapprove')}</p>{/if}
+			{#if !s.trusted && grown.length}
+				<p class={s.lock === 'changed' ? 'mt-1' : ''}>{t('snapPlatform.permissionsGrew')}</p>
+				<ul class="mt-0.5">
+					{#each grown as g (g)}<li>• {g}</li>{/each}
+				</ul>
+			{/if}
+		</div>
 	{/if}
 
 	<!-- Setup: what it needs that Kingu does not ship, and its services. -->
@@ -341,13 +377,13 @@
 			{/if}
 			<div class="mt-6 grid gap-x-6 gap-y-1 text-xs text-(--vscode-descriptionForeground) sm:grid-cols-[max-content_1fr]">
 				<span>{t('tools.snapsUi.identifier')}</span><code>{s.id}</code>
-				{#if installed}<span>{t('tools.snapsUi.location')}</span><span class="truncate" title={s.dir}>{s.dir}</span>{/if}
+				{#if installed}<span>{t('tools.snapsUi.location')}</span><span class="truncate" title={builtin ? undefined : s.dir}>{builtin ? t('snapContrib.builtinTitle') : s.dir}</span>{/if}
 				{#if s.origin}<span>{t('tools.snapsUi.installedFrom')}</span><span class="truncate" title={originLabel(s.origin)}>{originLabel(s.origin)}{s.origin.installed_at ? ` · ${new Date(s.origin.installed_at * 1000).toLocaleString()}` : ''}</span>{/if}
 			</div>
 		{:else if tab === 'features'}
 			<!-- Only the sides the snap adds to; one side takes the full width. -->
-			<div class={['grid gap-3', (s.tasks.length || s.services.length || s.themes.length) && (s.mcp.length || s.skills.length || s.hooks.length) && 'sm:grid-cols-2']}>
-				{#if s.tasks.length || s.services.length || s.themes.length || !(s.mcp.length || s.skills.length || s.hooks.length)}
+			<div class={['grid gap-3', forYouCount(s) && (s.mcp.length || s.skills.length || s.hooks.length) && 'sm:grid-cols-2']}>
+				{#if forYouCount(s) || !(s.mcp.length || s.skills.length || s.hooks.length)}
 					<div class={[CARD, 'p-3']}>
 						<div class="flex items-center gap-1.5 font-semibold"><Icon name="desktop" size={15} /> {t('tools.snapsUi.forYou')}</div>
 						<p class="mt-0.5 text-xs text-(--vscode-descriptionForeground)">{t('tools.snapsUi.forYouDesc')}</p>
@@ -365,7 +401,7 @@
 						{#each s.services as sv (sv.id)}
 							<div class="mt-2 flex items-center gap-1.5"><Icon name="activity" size={13} /> <span>{sv.title}</span> <span class="text-xs text-(--vscode-descriptionForeground)">— {t('tools.snapsUi.serviceDesc')}</span></div>
 						{/each}
-						{#each s.themes as th (th.id)}
+						{#each themesOf(s) as th (th.id)}
 							{@const using = settings.get('workbench.colorTheme') === th.id}
 							<div class="mt-2 flex items-center gap-1.5">
 								<Icon name="sparkle" size={13} /> <span class="min-w-0 flex-1">{th.label} <span class="text-xs text-(--vscode-descriptionForeground)">— {t('tools.snapsUi.colorTheme')}</span></span>
@@ -373,7 +409,16 @@
 								{:else}<button class={SMALL} disabled={!active} title={!active ? t('tools.snapsUi.activateFirst') : undefined} onclick={() => settings.set('workbench.colorTheme', th.id, 'user')}>{t('tools.snapsUi.useTheme')}</button>{/if}
 							</div>
 						{/each}
-						{#if !s.tasks.length && !s.services.length && !s.themes.length}<p class="mt-2 text-(--vscode-descriptionForeground)">—</p>{/if}
+						{#each contributionGroups(s).filter((g) => DETAILED.includes(g.kind)) as g (g.kind)}
+							<div class={['mt-3', LABEL]}>{t(KIND_KEYS[g.kind])}</div>
+							{#each g.items as item, i (i)}
+								<div class="mt-1"><span class="font-semibold">{item.label}</span> {#if item.detail}<code class="block truncate text-[11px] text-(--vscode-descriptionForeground)" title={item.detail}>{item.detail}</code>{/if}</div>
+							{/each}
+							{#if g.kind === 'views' && !active}<p class="mt-1 text-[11px] text-(--vscode-descriptionForeground)">{t('snapContrib.details.viewsInactive')}</p>{/if}
+							{#if g.kind === 'views'}<p class="mt-1 text-[11px] text-(--vscode-descriptionForeground)">{t('snapContrib.details.viewsSandbox')}</p>{/if}
+							{#if g.kind === 'lsp' && s.source === 'repo'}<p class="mt-1 text-[11px] text-(--vscode-descriptionForeground)">{t('snapContrib.details.lspRepo')}</p>{/if}
+						{/each}
+						{#if !forYouCount(s)}<p class="mt-2 text-(--vscode-descriptionForeground)">—</p>{/if}
 					</div>
 				{/if}
 				{#if s.mcp.length || s.skills.length || s.hooks.length}
@@ -402,6 +447,15 @@
 						{/if}
 					</div>
 				{/if}
+			</div>
+			<!-- Every kind it adds, counted (VS Code's extension page "Feature Contributions"). -->
+			<div class={['mt-4', LABEL]}>{t('snapContrib.details.title')}</div>
+			<div class="mt-1 flex flex-wrap gap-1.5" aria-label={t('snapContrib.details.title')}>
+				{#each contributionGroups(s) as g (g.kind)}
+					<span class="rounded-md border border-(--vscode-widget-border) px-1.5 py-0.5 text-[12px]">{t(KIND_KEYS[g.kind])} <span class="text-(--vscode-descriptionForeground)">{g.items.length}</span></span>
+				{:else}
+					<span class="text-(--vscode-descriptionForeground)">—</span>
+				{/each}
 			</div>
 		{:else if tab === 'permissions'}
 			<div class={[CARD, 'p-3']}>
@@ -452,16 +506,17 @@
 			{/if}
 			<div class={['mt-4', LABEL]}>{t('tools.snapsUi.commands')}</div>
 			<ul class="mt-1 space-y-1 text-xs">
-				{#each [...s.tasks.map((x) => ['task', x.title, x.command]), ...s.services.map((x) => ['service', x.title, x.command]), ...s.mcp.map((x) => ['MCP', x.name, x.command]), ...s.hooks.map((x) => ['hook', x.event, x.command])] as [kind, name, cmd], i (i)}
+				{#each [...s.tasks.map((x) => ['task', x.title, x.command]), ...s.services.map((x) => ['service', x.title, x.command]), ...s.mcp.map((x) => ['MCP', x.name, x.command]), ...s.hooks.map((x) => ['hook', x.event, x.command]), ...contributionsOf(s).lsp.map((x) => ['LSP', x.name, x.command])] as [kind, name, cmd], i (i)}
 					<li><span class={BADGE}>{kind}</span> {name}: <code class="text-(--vscode-descriptionForeground)">{(cmd as string[]).join(' ')}</code></li>
 				{:else}
 					<li class="text-(--vscode-descriptionForeground)">—</li>
 				{/each}
 			</ul>
-			{#if s.files.length}
+			{#if s.runFiles.length || s.scripts.length}
 				<div class={['mt-4', LABEL]}>{t('tools.snapsUi.filesRun')}</div>
 				<ul class="mt-1 space-y-0.5 text-xs">
-					{#each s.files as f (f)}<li><code>{f}</code></li>{/each}
+					{#each s.runFiles as f (f)}<li><code>{f}</code></li>{/each}
+					{#each s.scripts.filter((f) => !s.runFiles.some((r) => r.replace(/^\.\//, '') === f.path)) as f (f.path)}<li><code>{f.path}</code></li>{/each}
 				</ul>
 				<p class="mt-1 text-xs text-(--vscode-descriptionForeground)">{t('tools.snapsUi.filesRunHint')}</p>
 			{/if}

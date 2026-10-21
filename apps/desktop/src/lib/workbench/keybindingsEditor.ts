@@ -4,7 +4,7 @@
 // keybindings.json edits behind Change / Add / Remove / Reset / Change When Expression.
 
 import { appendArrayElement, arrayElements, removeArrayElements } from '#lib/settings/jsonc.ts';
-import { eventKey, isMac, keyLabel, parseChord, splitKeybinding, type KeyboardDispatch } from './keys';
+import { eventKey, isMac, keyboardDispatch, keyLabel, parseChord, splitKeybinding, type KeyboardDispatch } from './keys';
 import { keysFor, normalizeKey, parseKeybindings, whenKey, type KeyScope, type UserKeybindings } from './keybindingsModel';
 
 export type KeybindingSource = 'user' | 'default' | '';
@@ -18,9 +18,11 @@ export type KeybindingRow = {
 	when: string;
 	source: KeybindingSource;
 	scope?: KeyScope;
+	/** The command's KeybindingWeight (a higher one wins a shared key among defaults). */
+	weight?: number;
 };
 
-export type KeybindingCommand = { id: string; title: string; category?: string; palette?: boolean; scope?: KeyScope; defaultKey?: string };
+export type KeybindingCommand = { id: string; title: string; category?: string; palette?: boolean; scope?: KeyScope; defaultKey?: string; weight?: number };
 
 /** `ctrl+shift+alt+cmd+k`: modifiers in VS Code's order, so `shift+cmd+p` and `cmd+shift+p` compare
  * equal. Off macOS `cmd` is Ctrl (keys.parseChord), so it becomes `ctrl`. */
@@ -46,7 +48,7 @@ export function keybindingRows(cmds: readonly KeybindingCommand[], user: UserKey
 		const title = c.category ? `${c.category}: ${c.title}` : c.title;
 		for (const key of keys) {
 			const fromUser = userKeys.includes(key);
-			rows.push({ command: c.id, title, key, when: fromUser ? (user.when.get(whenKey(c.id, key)) ?? '') : '', source: fromUser ? 'user' : 'default', scope: c.scope });
+			rows.push({ command: c.id, title, key, when: fromUser ? (user.when.get(whenKey(c.id, key)) ?? '') : '', source: fromUser ? 'user' : 'default', scope: c.scope, weight: c.weight });
 		}
 		if (!keys.length && c.palette !== false) rows.push({ command: c.id, title, key: '', when: '', source: '', scope: c.scope });
 	}
@@ -55,9 +57,9 @@ export function keybindingRows(cmds: readonly KeybindingCommand[], user: UserKey
 	return rows;
 }
 
-export type KeybindingQuery = { source?: 'user' | 'default'; command?: string; key?: string; text: string };
+export type KeybindingQuery = { source?: 'user' | 'default'; command?: string; key?: string; conflicts?: boolean; text: string };
 
-/** `@source:user`, `@source:default` (also `system`), `@command:id`, a quoted keybinding, and words. */
+/** `@source:user`, `@source:default` (also `system`), `@command:id`, `@conflicts` (Show Conflicts), a quoted keybinding, and words. */
 export function parseKeybindingQuery(query: string): KeybindingQuery {
 	const out: KeybindingQuery = { text: '' };
 	const rest = query
@@ -68,6 +70,7 @@ export function parseKeybindingQuery(query: string): KeybindingQuery {
 			return '';
 		})
 		.replace(/@command:\s*(\S+)/gi, (_, id: string) => ((out.command = id), ''))
+		.replace(/@conflicts\b/gi, () => ((out.conflicts = true), ''))
 		.replace(/"([^"]*)"?/, (_, k: string) => ((out.key = k.trim()), ''));
 	out.text = rest.trim().toLowerCase();
 	return out;
@@ -77,7 +80,9 @@ export function parseKeybindingQuery(query: string): KeybindingQuery {
 export function filterKeybindingRows(rows: readonly KeybindingRow[], query: KeybindingQuery, mac = isMac): KeybindingRow[] {
 	const exact = query.key ? canonicalKey(query.key, mac) : '';
 	const words = query.text.split(/\s+/).filter(Boolean);
+	const counts = query.conflicts ? new Map(conflictCounts(rows, mac).map((n, i) => [rows[i], n])) : null;
 	return rows.filter((r) => {
+		if (counts && !counts.get(r)) return false;
 		if (query.source && r.source !== query.source) return false;
 		if (query.command && r.command !== query.command) return false;
 		if (query.key !== undefined && (!r.key || canonicalKey(r.key, mac) !== exact)) return false;
@@ -103,19 +108,57 @@ export function conflictCounts(rows: readonly KeybindingRow[], mac = isMac): num
 	return rows.map((r, i) => (r.key ? (byKey.get(canonicalKey(r.key, mac)) ?? []).filter((j) => j !== i && rows[j].command !== r.command && overlaps(rows[j].scope, r.scope)).length : 0));
 }
 
+/**
+ * Sort by Precedence (VS Code's toggle): the order the dispatcher tries bindings in — keybindings.json
+ * before the defaults, a higher weight first within each — then the unbound commands.
+ */
+export function sortByPrecedence(rows: readonly KeybindingRow[]): KeybindingRow[] {
+	const rank = (r: KeybindingRow) => (r.source === 'user' ? 0 : r.source === 'default' ? 1 : 2);
+	return rows
+		.map((r, i) => ({ r, i }))
+		.sort((a, b) => rank(a.r) - rank(b.r) || (b.r.weight ?? 0) - (a.r.weight ?? 0) || a.i - b.i)
+		.map((x) => x.r);
+}
+
+/**
+ * Bindings that make `key` unreachable or that it makes unreachable: for a two-part chord, a binding
+ * of its first part alone (it runs before the second key is pressed); for one key, the chords that
+ * start with it.
+ */
+export function chordPrefixRows(rows: readonly KeybindingRow[], key: string, scope?: KeyScope, except?: string, mac = isMac): KeybindingRow[] {
+	const parts = splitKeybinding(canonicalKey(key, mac));
+	if (!key.trim()) return [];
+	return rows.filter((r) => {
+		if (!r.key || r.command === except || !overlaps(r.scope, scope)) return false;
+		const other = splitKeybinding(canonicalKey(r.key, mac));
+		return parts.length === 2 ? other.length === 1 && other[0] === parts[0] : other.length === 2 && other[0] === parts[0];
+	});
+}
+
 // --- Recording (the define-keybinding widget and the search's Record Keys mode)
 
 type KeyEventLike = Pick<KeyboardEvent, 'key' | 'code' | 'metaKey' | 'ctrlKey' | 'shiftKey' | 'altKey'>;
 
-/** A pressed chord as keybindings.json writes it: `cmd+shift+p` on macOS, `ctrl+shift+p` elsewhere. */
-export function recordedChord(e: KeyEventLike, mac = isMac, mode: KeyboardDispatch = 'code'): string {
+/** Keys a keybinding cannot name: dead keys, IME composition, unknown keys, modifiers alone. */
+const UNRECORDABLE = new Set(['', 'dead', 'unidentified', 'process', 'meta', 'control', 'shift', 'alt', 'altgraph', 'capslock', 'fn', 'fnlock', 'os']);
+
+/**
+ * A pressed chord as keybindings.json writes it: `cmd+shift+p` on macOS, `ctrl+shift+p` elsewhere
+ * (the Windows key off macOS is not a keybinding modifier). '' for a key that cannot be bound.
+ * Letters and digits follow `keyboard.dispatch` like the dispatcher does.
+ */
+export function recordedChord(e: KeyEventLike, mac = isMac, mode: KeyboardDispatch = keyboardDispatch()): string {
 	const key = eventKey(e, mode);
 	const named = key === ' ' ? 'space' : key === 'esc' ? 'escape' : key;
+	if (UNRECORDABLE.has(named)) return '';
 	return [e.ctrlKey && 'ctrl', e.shiftKey && 'shift', e.altKey && 'alt', mac && e.metaKey && 'cmd', named].filter(Boolean).join('+');
 }
 
 /** The next recorded keybinding: a second chord makes a two-part chord, a third starts over. */
-export const appendChord = (current: string, chord: string) => (current && splitKeybinding(current).length === 1 ? `${current} ${chord}` : chord);
+export const appendChord = (current: string, chord: string) => (!chord ? current : current && splitKeybinding(current).length === 1 ? `${current} ${chord}` : chord);
+
+/** The chords of a keybinding for display, each as its own label (`⌘K`, `⌘T`). */
+export const chordLabels = (key: string, mac = isMac): string[] => splitKeybinding(key).filter(Boolean).map((part) => keyLabel(part, mac));
 
 // --- keybindings.json edits (each takes and returns the file's text)
 

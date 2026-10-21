@@ -22,6 +22,7 @@ import { isSearchEditorKey, searchEditorName } from './searchEditor';
 import { searchEditors } from './searchEditor.svelte.ts';
 import { terminalIdOfEditor } from '#lib/terminal/terminalEditor.svelte.ts';
 import { terminals } from '#lib/terminal/terminals.svelte.ts';
+import { isDisassemblyKey, parseMemoryKey } from '#lib/debug/memory.ts';
 
 const compiled = new WeakMap<object, ReturnType<typeof customLabelPatterns>>();
 
@@ -51,6 +52,9 @@ export function editorLabel(key: string): string {
 	if (chatId) return chats.get(chatId)?.title ?? t('chat.panel.newChat');
 	const terminal = terminalIdOfEditor(key);
 	if (terminal !== null) return terminals.get(terminal)?.title ?? 'Terminal';
+	if (isDisassemblyKey(key)) return t('debugExtras.disassembly.title');
+	const memory = parseMemoryKey(key);
+	if (memory) return t('debugExtras.memory.tab', { reference: memory.memoryReference });
 	const slug = slugOfTaskKey(key);
 	if (slug) return t('workbench.editorLabel.task', { title: adeTasks.find(slug)?.meta.title ?? slug });
 	return custom(key) ?? tabLabel(key);

@@ -210,10 +210,10 @@ pub fn user_value(config_dir: &Path, key: &str) -> Option<serde_json::Value> {
 
 fn path_for(app: &AppHandle, ws: &Workspace, scope: Scope) -> Result<PathBuf, String> {
   match scope {
-    Scope::User => Ok(user_path(&crate::user_profiles::active_dir(&app.path().app_config_dir().map_err(|e| e.to_string())?))),
+    Scope::User => Ok(user_path(&crate::user_profiles::window_dir(&app.path().app_config_dir().map_err(|e| e.to_string())?, ws))),
     Scope::DefaultUser => Ok(user_path(&app.path().app_config_dir().map_err(|e| e.to_string())?)),
     Scope::Workspace => workspace_path(&ws.root()?),
-    Scope::Keybindings => Ok(crate::user_profiles::active_dir(&app.path().app_config_dir().map_err(|e| e.to_string())?).join(KEYBINDINGS_FILE)),
+    Scope::Keybindings => Ok(crate::user_profiles::window_dir(&app.path().app_config_dir().map_err(|e| e.to_string())?, ws).join(KEYBINDINGS_FILE)),
     Scope::Repo => Ok(repo_path(&app.path().app_config_dir().map_err(|e| e.to_string())?, &ws.root()?)),
   }
 }
@@ -249,10 +249,10 @@ pub fn settings_write(app: AppHandle, ws: Workspace, scope: String, content: Str
 }
 
 /// Which settings file a change in the app config dir touched (for `settings://changed`): the
-/// user `settings.json`, `keybindings.json` (of the active profile), a per-repository file under
-/// `repos/`, or the profiles list.
+/// user `settings.json`, `keybindings.json` (of any profile: each window reloads what is its own),
+/// a per-repository file under `repos/`, or the profiles list.
 pub fn changed_file(config_dir: &Path, path: &Path) -> Option<&'static str> {
-  changed_in(config_dir, &crate::user_profiles::active_dir(config_dir), path)
+  changed_in(config_dir, &crate::user_profiles::profile_dir_of(config_dir, path), path)
 }
 
 /// [`changed_file`] with the active profile's folder (`profile`, the config dir for Default): the

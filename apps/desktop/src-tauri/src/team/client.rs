@@ -88,8 +88,13 @@ pub struct HttpTransport {
 
 impl HttpTransport {
   pub fn new() -> Result<Self, String> {
+    Self::with_timeout(15)
+  }
+
+  /// A transport whose requests may take `secs` (package uploads and downloads).
+  pub fn with_timeout(secs: u64) -> Result<Self, String> {
     let client = crate::net_proxy::client_builder()?
-      .timeout(Duration::from_secs(15))
+      .timeout(Duration::from_secs(secs))
       .connect_timeout(Duration::from_secs(5))
       .redirect(reqwest::redirect::Policy::none())
       .user_agent(concat!("kingu-desktop/", env!("CARGO_PKG_VERSION")))
@@ -164,6 +169,26 @@ impl HttpTransport {
       other => other,
     })?;
     Ok(text)
+  }
+}
+
+impl HttpTransport {
+  /// `GET {server}{path}` as bytes, at most `max` of them (the team Snap library's packages).
+  pub fn get_bytes(&self, server: &str, token: &str, path: &str, max: usize) -> Result<Vec<u8>, SendError> {
+    use std::io::Read;
+    let res = self.client.get(format!("{server}{path}")).bearer_auth(token).send().map_err(|e| SendError::Retryable(e.without_url().to_string()))?;
+    let status = res.status().as_u16();
+    if !(200..300).contains(&status) {
+      let text = res.text().unwrap_or_default();
+      classify(status, &text)?;
+      return Err(SendError::Permanent(format!("HTTP {status}")));
+    }
+    let mut out = Vec::new();
+    res.take(max as u64 + 1).read_to_end(&mut out).map_err(|e| SendError::Retryable(e.to_string()))?;
+    if out.len() > max {
+      return Err(SendError::Permanent(format!("larger than {max} bytes")));
+    }
+    Ok(out)
   }
 }
 

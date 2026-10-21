@@ -24,6 +24,7 @@ export function stdioOnly(servers: McpServers): StdioServers {
 let provider: (root: string | null) => McpServers = () => ({});
 let compose: (snapServers: McpServers, root: string | null) => McpServers = (s) => s;
 let pluginProvider: (root: string | null) => Promise<string[]> = async () => [];
+let prepare: () => Promise<void> = async () => {};
 let builtInPlugins: () => Promise<string[]> = async () => [];
 let hubPlugins: () => Promise<string[]> = async () => [];
 
@@ -34,6 +35,20 @@ export function setMcpProvider(fn: (root: string | null) => McpServers) {
 /** The MCP store's step over the Snap servers: adds config servers, drops turned-off ones. */
 export function setMcpComposer(fn: (snapServers: McpServers, root: string | null) => McpServers) {
 	compose = fn;
+}
+
+/** What must happen before `mcpServers` for a run (the Snap store writes its secrets files). */
+export function setMcpPrepare(fn: () => Promise<void>) {
+	prepare = fn;
+}
+
+/** Awaited by every agent start before `mcpServers`; never throws (a run still starts). */
+export async function prepareMcp(): Promise<void> {
+	try {
+		await prepare();
+	} catch {
+		// The servers start without their stored secrets.
+	}
 }
 
 /** The Snap servers alone (the MCP Servers view lists them with their on/off state). */

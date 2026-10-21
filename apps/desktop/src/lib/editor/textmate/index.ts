@@ -19,6 +19,7 @@ import { monacoBase } from '../../theme/themes';
 import { editorColors, textMateRules } from './theme';
 import { monacoThemeColors, SemanticStyler, setSemanticStyler } from '../../lsp/semanticStyle';
 import { plainLineTokens, skipsTokenization } from '../tokenizationLimit';
+import { bindContributedLanguages, type ContributedGrammarSource } from '../contributedLanguages';
 
 /** One Monaco theme id, redefined on every color theme change (editors pass it at creation). */
 export const THEME_ID = 'kingu-color-theme';
@@ -145,6 +146,11 @@ function encodedLanguageMap(map: Record<string, string> | undefined) {
 	return out;
 }
 
+/** Grammars of snaps (contributedLanguages.ts): scope → its file loader and definition. */
+const snapGrammars = new Map<string, ContributedGrammarSource>();
+/** Tokenizer registrations of snap languages, by language id. */
+const snapProviders = new Map<string, monaco.IDisposable>();
+
 let setup: Promise<void> | undefined;
 
 /** Installs the VS Code theme and TextMate tokenizers. Call before creating models. */
@@ -163,10 +169,17 @@ async function init() {
 		loadGrammar: async (scopeName) => {
 			const file = scopeFiles[scopeName];
 			const load = file && grammarFiles[`./grammars/${file}`];
-			if (!load) return null; // e.g. a fenced code block in a language we do not ship
-			return parseRawGrammar(await load(), file);
+			if (load) return parseRawGrammar(await load(), file);
+			// A snap's grammar (read when first used; its file was hashed when the snap was listed).
+			const contributed = snapGrammars.get(scopeName);
+			if (contributed) return parseRawGrammar(await contributed.load(), contributed.path);
+			return null; // e.g. a fenced code block in a language we do not ship
 		},
-		getInjections: (scopeName) => injections[scopeName]
+		getInjections: (scopeName) => {
+			const own = injections[scopeName] ?? [];
+			const fromSnaps = [...snapGrammars.values()].filter((g) => g.injectTo.includes(scopeName)).map((g) => g.scopeName);
+			return fromSnaps.length ? [...own, ...fromSnaps] : injections[scopeName];
+		}
 	});
 
 	// Until the workbench theme service has loaded the selected theme (normally already done).
@@ -188,7 +201,7 @@ async function init() {
 		monaco.languages.setColorMap(styler.colorMap.map((c) => c || (undefined as unknown as string)));
 	});
 
-	for (const [languageId, def] of Object.entries(languages)) {
+	const register = (languageId: string, def: LanguageGrammar) =>
 		// Replaces the Monarch tokenizer factory that monaco-editor registers per language.
 		monaco.languages.registerTokensProviderFactory(languageId, {
 			create: async () => {
@@ -217,7 +230,27 @@ async function init() {
 				return provider;
 			}
 		});
-	}
+	for (const [languageId, def] of Object.entries(languages)) register(languageId, def);
+
+	// Snaps' grammars: a language Kingu has no grammar for gets the snap's tokenizer (the built-in
+	// grammars win, as VS Code's own extensions are not replaced by another's grammar).
+	bindContributedLanguages(monaco, (grammars) => {
+		snapGrammars.clear();
+		for (const g of grammars) if (!scopeFiles[g.scopeName]) snapGrammars.set(g.scopeName, g);
+		const wanted = new Map(grammars.filter((g) => g.language && !languages[g.language] && snapGrammars.get(g.scopeName) === g).map((g) => [g.language!, g]));
+		for (const [id, d] of [...snapProviders]) {
+			if (wanted.has(id)) continue;
+			d.dispose();
+			snapProviders.delete(id);
+		}
+		for (const [id, g] of wanted) {
+			snapProviders.get(id)?.dispose();
+			snapProviders.set(
+				id,
+				register(id, { scopeName: g.scopeName, embedded: g.embeddedLanguages, tokenTypes: g.tokenTypes, unbalancedBracketSelectors: g.unbalancedBracketSelectors })
+			);
+		}
+	});
 
 	await onigLib;
 }

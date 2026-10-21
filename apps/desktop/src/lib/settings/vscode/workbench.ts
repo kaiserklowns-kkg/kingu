@@ -252,6 +252,15 @@ export const WORKBENCH_SETTINGS: SettingSchema[] = [
 		description: 'หน้าการตั้งค่าที่เปิดด้วยคำสั่ง Open Settings (Determines which Settings editor to use by default.)'
 	},
 	{
+		id: 'workbench.settings.applyToAllProfiles',
+		group: 'Workbench',
+		type: 'array',
+		items: 'string',
+		default: [],
+		description: 'การตั้งค่าที่ใช้ค่าเดียวกันในทุก profile เมื่อเปลี่ยนใน profile ใดก็เปลี่ยนทุก profile (Configure settings to be applied for all profiles.)',
+		scope: 'application'
+	},
+	{
 		id: 'workbench.externalBrowser',
 		group: 'Workbench',
 		type: 'string',

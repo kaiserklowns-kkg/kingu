@@ -18,6 +18,7 @@
 	import { syncItem } from './scmRemote';
 	import { textFiles } from './textFileService.svelte';
 	import { statusItemShown } from '#lib/debug/debugSettings.ts';
+	import { autoAttachLabel } from '#lib/debug/autoAttach.ts';
 	import { problemAt } from '#lib/lsp/problemsSettings.ts';
 	import { severityName } from '#lib/lsp/convert.ts';
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
@@ -243,6 +244,12 @@
 			onclick={() => (debug.active ? (appMode.setMode('workbench'), (layout.sideView = 'debug'), (layout.sidebarVisible = true)) : void commands.run('workbench.action.debug.start'))}
 		>
 			<Icon name="bug" size={14} />{debug.active ? `${debug.configName}: ${debug.label}` : debug.configName || 'Run and Debug'}
+		</button>
+	{/if}
+	{#if debug.autoAttach.filter !== 'disabled'}
+		<!-- js-debug's auto attach item (VS Code: "Auto Attach: Smart"); picks debug.javascript.autoAttachFilter. -->
+		<button class={ITEM} title={t('debugExtras.autoAttach.statusTitle')} onclick={() => void commands.run('extension.node-debug.toggleAutoAttach')}>
+			{t('debugExtras.autoAttach.status', { mode: autoAttachLabel(debug.autoAttach.filter) })}
 		</button>
 	{/if}
 	<UsageStatus compact={density >= 1} tightest={density >= 2} />

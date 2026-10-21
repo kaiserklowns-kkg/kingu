@@ -16,10 +16,11 @@ import {
 	requirementStates,
 	serviceChanges,
 	snapAvatar,
-	snapThemesOf,
 	toggleDisabled,
 	wantedServices,
 	withDisabled,
+	withSecretsFile,
+	snapsNeedingMcpSecrets,
 	installSummary,
 	isActive,
 	isUpdatable,
@@ -72,10 +73,11 @@ function snap(over: Partial<SnapInfo> = {}): SnapInfo {
 		requires: [],
 		services: [],
 		readme: null,
-		files: [],
-		themes: [],
+		runFiles: [],
+		scripts: [],
 		origin: null,
 		lock: null,
+		approvedPermissions: null,
 		...over
 	};
 }
@@ -198,7 +200,7 @@ describe('Snaps view', () => {
 		expect(snapStatus(snap()).key).toBe('active');
 	});
 	test('lock notes and the pending trust badge', () => {
-		expect(lockNote(snap({ source: 'repo', lock: 'changed' }))).toBe('เปลี่ยนจาก lock');
+		expect(lockNote(snap({ source: 'repo', lock: 'changed' }))).toBe('ไม่ตรงกับ snaps.lock — ต้องอนุมัติใหม่');
 		expect(lockNote(snap({ source: 'repo', lock: 'unlocked' }))).toBe('ไม่อยู่ใน lock');
 		expect(lockNote(snap({ source: 'repo', lock: 'locked' }))).toBeNull();
 		const list = [snap({ source: 'repo', trusted: false }), snap({ source: 'repo', trusted: false, error: 'x' }), snap({ source: 'repo' }), snap({ trusted: true })];
@@ -267,9 +269,9 @@ describe('sandbox', () => {
 			run: ['/App/kingu-ptyd', 'snap-exec', '--network', 'off', '--fs', 'worktree', '--root', '/w/my repo', '--secret', 'GITHUB_TOKEN', '--protect', '/cfg', '--', 'go', 'test', '-run', 'A B']
 		});
 		expect(sandboxTask({ kind: 'off' }, p, '/w', ['make'])).toEqual({ run: ['make'] });
-		// With the snap named, the launcher also reads its keychain secrets (only when it declares some).
-		expect(sandboxTask(enforce, p, '/w', ['x'], 'go')).toEqual({ run: ['/App/kingu-ptyd', 'snap-exec', '--network', 'off', '--fs', 'worktree', '--root', '/w', '--snap', 'go', '--secret', 'GITHUB_TOKEN', '--protect', '/cfg', '--', 'x'] });
-		expect(sandboxTask(enforce, { ...p, secrets: [] }, '/w', ['x'], 'go')).toEqual({ run: ['/App/kingu-ptyd', 'snap-exec', '--network', 'off', '--fs', 'worktree', '--root', '/w', '--protect', '/cfg', '--', 'x'] });
+		// Stored secrets come in through a secrets file the launcher reads once; values never go into the argv.
+		expect(sandboxTask(enforce, p, '/w', ['x'], '/c/snap-secrets/go-1.json')).toEqual({ run: ['/App/kingu-ptyd', 'snap-exec', '--network', 'off', '--fs', 'worktree', '--root', '/w', '--secret', 'GITHUB_TOKEN', '--protect', '/cfg', '--secrets-file-once', '/c/snap-secrets/go-1.json', '--', 'x'] });
+		expect(sandboxTask(enforce, { ...p, secrets: [] }, '/w', ['x'])).toEqual({ run: ['/App/kingu-ptyd', 'snap-exec', '--network', 'off', '--fs', 'worktree', '--root', '/w', '--protect', '/cfg', '--', 'x'] });
 		const refused = sandboxTask({ kind: 'refuse', reason: 'ไม่พบ bwrap' }, p, '/w', ['make']);
 		expect('error' in refused && refused.error).toContain('ไม่พบ bwrap');
 		expect('error' in refused && refused.error).toContain('kingu.snaps.sandbox');
@@ -313,6 +315,11 @@ describe('sandbox', () => {
 		expect(hookRunsOf([s], () => '', { plan: { kind: 'off' }, root: null })).toEqual({});
 		expect(hookRunsOf([{ ...s, trusted: false, source: 'repo' }], () => undefined, { plan: { kind: 'off' }, root: null })).toEqual({});
 		expect(trustSummary({ ...s, source: 'repo', trusted: false })).toContain('hook SessionStart: ${setting:bin} hook --event session-start');
+		// Declared secrets come in through a secrets file that stays (each event runs the hook again).
+		const withSecrets = { ...s, permissions: { ...s.permissions, secrets: ['API_KEY'] } };
+		const stop = hookRunsOf([withSecrets], () => undefined, { plan: enforce, root: '/w/t1', secretsFile: () => '/c/snap-secrets/mem-2.json' }).mem[1].argv;
+		expect(stop.slice(stop.indexOf('--') - 2, stop.indexOf('--'))).toEqual(['--secrets-file', '/c/snap-secrets/mem-2.json']);
+		expect(snapsNeedingMcpSecrets([withSecrets])).toEqual(['mem']);
 	});
 
 	test('the details label and the confirm note say whether permissions are enforced', () => {
@@ -367,13 +374,24 @@ describe('requirements and services', () => {
 
 	test('wanted services: active, setting on, requirements installed, confined', () => {
 		expect(wantedServices([mem], () => undefined, enforce, '/Users/me', found)).toEqual([
-			{ snap: 'mem', service: 'server', title: 'Server', argv: ['/App/kingu-ptyd', 'snap-exec', '--network', 'on', '--fs', 'home', '--root', '/Users/me', '--keep', 'ORIGIN', '--', 'ai-memory', 'serve'], env: [['ORIGIN', 'k']] }
+			{ snap: 'mem', service: 'server', title: 'Server', argv: ['/App/kingu-ptyd', 'snap-exec', '--network', 'on', '--fs', 'home', '--root', '/Users/me', '--keep', 'ORIGIN', '--', 'ai-memory', 'serve'], env: [['ORIGIN', 'k']], secrets: false }
 		]);
 		expect(wantedServices([mem], (id) => (id === 'snap.mem.run' ? false : undefined), enforce, '/Users/me', found)).toEqual([]);
 		expect(wantedServices([{ ...mem, disabled: true }], () => undefined, enforce, '/Users/me', found)).toEqual([]);
 		expect(wantedServices([mem], () => undefined, enforce, '/Users/me', { 'ai-memory': { path: null, onPath: false } })).toEqual([]);
 		expect(wantedServices([mem], () => undefined, { kind: 'refuse', reason: 'x' }, '/Users/me', found)).toEqual([]);
 		expect(wantedServices([mem], () => undefined, { kind: 'off' }, null, found)[0].argv).toEqual(['ai-memory', 'serve']);
+	});
+
+	test('a service with secrets gets a one-launch secrets file when it starts', () => {
+		const [w] = wantedServices([{ ...mem, permissions: { ...mem.permissions, secrets: ['API_KEY'] } }], () => undefined, enforce, '/Users/me', found);
+		expect(w.secrets).toBe(true);
+		const run = withSecretsFile(w.argv, { path: '/c/snap-secrets/mem-1.json', once: true });
+		expect(run.slice(run.indexOf('--') - 3)).toEqual(['ORIGIN', '--secrets-file-once', '/c/snap-secrets/mem-1.json', '--', 'ai-memory', 'serve']);
+		expect(run.join(' ')).not.toContain('hunter2');
+		// Not a launcher command (sandbox off): nothing to add.
+		expect(withSecretsFile(['ai-memory', 'serve'], { path: '/x', once: true })).toEqual(['ai-memory', 'serve']);
+		expect(wantedServices([{ ...mem, permissions: { ...mem.permissions, secrets: ['API_KEY'] } }], () => undefined, { kind: 'off' }, null, found)[0].secrets).toBe(false);
 	});
 
 	test('start what is wanted and not running; stop what runs and is not wanted', () => {
@@ -421,14 +439,14 @@ describe('files a snap runs', () => {
 		const s = snap({ dir: '/u/snaps/go', settings: [{ key: 'x', type: 'string', default: '${snap:dir}/evil', description: '' }], tasks: [{ id: 't', title: 'T', command: ['${snap:dir}/bin/tool', '${setting:x}', '--a=${snap:dir}/b'] }] });
 		expect(inSnapDir(s, ['${snap:dir}/bin/tool', '${snap:dir}x', 'a'])).toEqual(['/u/snaps/go/bin/tool', '${snap:dir}x', 'a']);
 		expect(taskArgv(s, s.tasks[0], () => undefined)).toEqual(['/u/snaps/go/bin/tool', '${snap:dir}/evil', '--a=${snap:dir}/b']);
-		expect(trustSummary({ ...s, source: 'repo', trusted: false, files: ['./scripts/test.sh'] })).toContain('./scripts/test.sh');
+		expect(trustSummary({ ...s, source: 'repo', trusted: false, runFiles: ['./scripts/test.sh'] })).toContain('./scripts/test.sh');
 	});
 });
 
 describe('themes of snaps', () => {
-	test('active snaps only, typed from uiTheme and labelled with the snap', () => {
-		const th = { id: 'Ocean Dark', label: 'Ocean Dark', uiTheme: 'vs', file: 'go/t.json', files: { 'go/t.json': '{}' } };
-		expect(snapThemesOf([snap({ themes: [th] }), snap({ id: 'off', disabled: true, themes: [{ ...th, id: 'Other' }] })])).toEqual([{ id: 'Ocean Dark', label: 'Ocean Dark', file: 'go/t.json', type: 'light', snap: 'Go', files: { 'go/t.json': '{}' } }]);
-		expect(audiences(snap({ themes: [th] })).you.some((l) => l.includes('Ocean Dark'))).toBe(true);
+	test('the [[themes]] of a snap are listed as what it adds for you', () => {
+		const th = { id: 'Ocean Dark', label: 'Ocean Dark', uiTheme: 'vs' as const, path: 'themes/ocean.json' };
+		const contributes = { languages: [], grammars: [], snippets: [], lsp: [], themes: [th], iconThemes: [], views: [], files: [] };
+		expect(audiences(snap({ contributes })).you.some((l) => l.includes('Ocean Dark'))).toBe(true);
 	});
 });

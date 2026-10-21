@@ -34,5 +34,9 @@ export const keybindings = {
 	'keybindings.whenOk': 'ตั้งเงื่อนไข when เป็น “{when}”',
 	'keybindings.whenAlways': 'ลบเงื่อนไข when',
 	'keybindings.whenInvalid': 'เงื่อนไข when ไม่ถูกต้อง: {error}',
+	'keybindings.sortPrecedence': 'เรียงตามลำดับความสำคัญ (สูงสุดก่อน)',
+	'keybindings.showConflicts': 'แสดงปุ่มลัดที่ชนกัน',
+	'keybindings.chordHint': 'กดปุ่มที่สองเพื่อทำ chord หรือกด Enter เพื่อยืนยัน',
+	'keybindings.prefixConflicts': 'มี {count} ปุ่มลัดที่ใช้ปุ่มแรกของ chord นี้ร่วมกัน จึงมีอันหนึ่งที่ไม่ทำงาน',
 	'keybindings.editFailed': 'อัปเดต keybindings.json ไม่ได้: {error}'
 } satisfies Record<keyof typeof en, string>;

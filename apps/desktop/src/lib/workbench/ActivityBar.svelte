@@ -9,6 +9,7 @@
 	import { snaps } from '#lib/snaps/snaps.svelte.ts';
 	import { testing } from '#lib/testing/testing.svelte.ts';
 	import { pendingTrustCount } from '#lib/snaps/snapModel.ts';
+	import { viewsOf } from '#lib/snaps/contributions.ts';
 	import { activityBarMetrics, activityClickHides } from './workbenchOptions';
 	import { t } from '#lib/i18n/index.ts';
 
@@ -22,7 +23,7 @@
 
 	// Count badges (VS Code activitybar badge: bottom-right, 16px).
 	const badges: Partial<Record<SideView, () => number>> = { scm: () => scm.count, snaps: () => pendingTrustCount(snaps.list), agents: () => adeTasks.attentionCount, testing: () => testing.badge };
-	const views: { view: SideView; label: string; icon: IconName; command: string }[] = [
+	const builtinViews: { view: SideView; label: string; icon: IconName; command: string }[] = [
 		{ view: 'explorer', label: 'Explorer', icon: 'files', command: 'workbench.view.explorer' },
 		{ view: 'search', label: 'Search', icon: 'search', command: 'workbench.action.findInFiles' },
 		{ view: 'scm', label: 'Source Control', icon: 'git', command: 'workbench.view.scm' },
@@ -33,6 +34,8 @@
 		{ view: 'vault', label: t('vault.title'), icon: 'clock', command: 'kingu.vault.show' },
 		{ view: 'artifacts', label: t('artifacts.title'), icon: 'layout', command: 'kingu.artifacts.show' }
 	];
+	// Snaps' side bar views after Kingu's own (VS Code: an extension's view container).
+	const views = $derived([...builtinViews, ...viewsOf(snaps.all, 'sidebar').map((v) => ({ view: `snap:${v.key}` as SideView, label: `${v.view.name} (${v.snap.name})`, icon: 'snap' as IconName, command: '' }))]);
 	/** `Explorer (⇧⌘E)`, from the command's live keybinding. */
 	const titled = (label: string, command: string) => {
 		const cmd = commands.get(command);

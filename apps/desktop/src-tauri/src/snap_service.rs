@@ -9,9 +9,8 @@
 //! next start (`stop_orphans`).
 //!
 //! Also here: `snap_find_programs`, the `[[requires]]` check (is the program a snap runs
-//! installed), and the commands that store a snap's declared secrets in the keychain through
-//! `kingu-ptyd snap-secret` (kingu_ptyd::secrets), which also reads them when the snap runs: the
-//! app passes values through but never reads one back.
+//! installed). A service's secrets come in like a task's: a secrets file for that launch
+//! (snap_secrets.rs) on its `kingu-ptyd snap-exec` command line.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -434,95 +433,6 @@ pub async fn snap_open_link(app: AppHandle, id: String, url: String) -> Result<(
   .await
 }
 
-// ---------------------------------------------------------------------------------------------
-// Secrets
-
-/// Whether each declared secret of a snap has a value stored for it.
-#[derive(Serialize, Debug, PartialEq)]
-pub struct SecretState {
-  pub name: String,
-  pub stored: bool,
-}
-
-/// The listed snap `id` (valid) and that it declares `name`.
-fn declared_secret(list: &[SnapInfo], id: &str, name: &str) -> Result<(), String> {
-  let s = list.iter().find(|s| s.id == id && s.error.is_none()).ok_or_else(|| format!("ไม่พบ snap \"{id}\""))?;
-  if s.permissions.secrets.iter().any(|n| n == name) { Ok(()) } else { Err(format!("snap \"{id}\" ไม่ได้ประกาศ secret \"{name}\"")) }
-}
-
-fn listed(app: &AppHandle) -> Result<Vec<SnapInfo>, String> {
-  let config = config_dir(app)?;
-  let root = app.state::<Workspace>().current();
-  Ok(discover(&config.join(USER_DIR), root.as_deref(), &TrustData::load(&config.join(TRUST_FILE))))
-}
-
-fn launcher() -> Result<PathBuf, String> {
-  let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from));
-  crate::pty::find_daemon(std::env::var_os("KINGU_PTYD"), exe_dir.as_deref())
-}
-
-/// Runs `kingu-ptyd snap-secret <args>` with `input` on stdin; its stdout, or its error line.
-fn secret_tool(launcher: &Path, args: &[&str], input: Option<&str>) -> Result<String, String> {
-  use std::io::Write;
-  let mut child = Command::new(launcher)
-    .arg(kingu_ptyd::secrets::SUBCOMMAND)
-    .args(args)
-    .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped())
-    .spawn()
-    .map_err(|e| format!("{}: {e}", launcher.display()))?;
-  if let (Some(value), Some(mut stdin)) = (input, child.stdin.take()) {
-    stdin.write_all(value.as_bytes()).map_err(|e| e.to_string())?;
-  }
-  let out = child.wait_with_output().map_err(|e| e.to_string())?;
-  if out.status.success() {
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-  } else {
-    let err = String::from_utf8_lossy(&out.stderr);
-    Err(err.trim().trim_start_matches("kingu: ").to_string())
-  }
-}
-
-#[tauri::command]
-pub async fn snap_secret_status(app: AppHandle, id: String) -> Result<Vec<SecretState>, String> {
-  crate::snap_install::blocking(move || {
-    let list = listed(&app)?;
-    let snap = list.iter().find(|s| s.id == id && s.error.is_none()).ok_or_else(|| format!("ไม่พบ snap \"{id}\""))?;
-    let names = snap.permissions.secrets.clone();
-    if names.is_empty() {
-      return Ok(Vec::new());
-    }
-    let mut args = vec!["has", id.as_str()];
-    args.extend(names.iter().map(String::as_str));
-    let has: Vec<bool> = serde_json::from_str(&secret_tool(&launcher()?, &args, None)?).map_err(|e| e.to_string())?;
-    Ok(names.into_iter().zip(has).map(|(name, stored)| SecretState { name, stored }).collect())
-  })
-  .await
-}
-
-#[tauri::command]
-pub async fn snap_secret_set(app: AppHandle, id: String, name: String, value: String) -> Result<(), String> {
-  crate::snap_install::blocking(move || {
-    declared_secret(&listed(&app)?, &id, &name)?;
-    secret_tool(&launcher()?, &["set", &id, &name], Some(&value))?;
-    log::info!("snap {id}: stored secret {name}");
-    Ok(())
-  })
-  .await
-}
-
-#[tauri::command]
-pub async fn snap_secret_delete(app: AppHandle, id: String, name: String) -> Result<(), String> {
-  crate::snap_install::blocking(move || {
-    declared_secret(&listed(&app)?, &id, &name)?;
-    secret_tool(&launcher()?, &["delete", &id, &name], None)?;
-    log::info!("snap {id}: removed secret {name}");
-    Ok(())
-  })
-  .await
-}
-
 #[cfg(all(test, unix))]
 mod tests {
   use super::*;
@@ -626,30 +536,6 @@ mod tests {
     assert_eq!(find_program("mem", None, Some(&dir.path().join("home"))), Some(local.join("mem")));
     assert_eq!(find_program(&bin.join("tool").display().to_string(), None, None), Some(bin.join("tool")));
     assert_eq!(find_program("../bin/tool", Some(&path), None), None);
-  }
-
-  #[test]
-  fn secrets_only_for_names_the_snap_declares() {
-    let dir = tempfile::tempdir().unwrap();
-    let snap = dir.path().join("pg");
-    std::fs::create_dir_all(&snap).unwrap();
-    std::fs::write(snap.join(crate::snap::MANIFEST), "id = \"pg\"\nname = \"P\"\nversion = \"1\"\n[permissions]\nsecrets = [\"PGPASSWORD\"]\n").unwrap();
-    let list = discover(dir.path(), None, &TrustData::default());
-    assert!(declared_secret(&list, "pg", "PGPASSWORD").is_ok());
-    assert!(declared_secret(&list, "pg", "AWS_SECRET_ACCESS_KEY").is_err());
-    assert!(declared_secret(&list, "nope", "PGPASSWORD").is_err());
-  }
-
-  #[test]
-  fn the_secret_tool_gets_the_value_on_stdin_and_reports_errors() {
-    // A stand-in for kingu-ptyd: echoes its arguments and stdin, fails on "bad".
-    let dir = tempfile::tempdir().unwrap();
-    let tool = dir.path().join("tool");
-    std::fs::write(&tool, "#!/bin/sh\nif [ \"$2\" = bad ]; then echo 'kingu: nope' >&2; exit 1; fi\nprintf '%s ' \"$@\"; cat\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
-    assert_eq!(secret_tool(&tool, &["set", "pg", "PGPASSWORD"], Some("pw")).unwrap(), "snap-secret set pg PGPASSWORD pw");
-    assert_eq!(secret_tool(&tool, &["bad"], None).unwrap_err(), "nope");
   }
 
   #[test]

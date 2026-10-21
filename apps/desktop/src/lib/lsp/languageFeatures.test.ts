@@ -204,7 +204,7 @@ describe('semantic tokens', () => {
 });
 
 describe('semantic styling like VS Code', () => {
-	const read = (p: string) => readFileSync(join(import.meta.dir, '../editor/textmate/themes', p), 'utf8');
+	const read = (p: string) => readFileSync(join(import.meta.dir, '../../../snaps/kingu-themes/themes', p), 'utf8');
 	const dark = flattenTheme('dark_plus.json', read);
 
 	test('the theme chain carries semanticHighlighting and semanticTokenColors', () => {

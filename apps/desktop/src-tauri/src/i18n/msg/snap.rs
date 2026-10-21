@@ -56,6 +56,14 @@ crate::i18n::messages! {
       en: "Invalid snap id",
       th: "id ของ snap ไม่ถูกต้อง",
     },
+    NoRecommended {
+      en: "This build of Kingu has no recommended Snaps",
+      th: "Kingu รุ่นนี้ไม่มี Snap ที่แนะนำ",
+    },
+    SnapPathNotUtf8 {
+      en: "The Snap's path is not UTF-8",
+      th: "path ของ Snap ไม่ใช่ UTF-8",
+    },
     InvalidIdShort {
       en: "Invalid id",
       th: "id ไม่ถูกต้อง",
@@ -166,6 +174,86 @@ crate::i18n::messages! {
     SkillDuplicate {
       en: "Skill \"{name}\" is declared twice (a skill's name is the last folder of its path)",
       th: "skill ชื่อ \"{name}\" ซ้ำ (ชื่อ skill คือชื่อโฟลเดอร์สุดท้ายของ path)",
+    },
+
+    // Hooks, requirements and services (snap.rs parse_manifest).
+    TooManyHooks {
+      en: "A snap can have at most {max} hooks",
+      th: "มี hook ได้ไม่เกิน {max} ตัว",
+    },
+    HookEventUnknown {
+      en: "Unknown hook event \"{event}\" (use one of: {events})",
+      th: "hook event \"{event}\" ไม่รู้จัก (ใช้ได้: {events})",
+    },
+    HookNoCommand {
+      en: "Hook {event} needs a command",
+      th: "hook {event} ต้องมี command",
+    },
+    HookEnvInvalid {
+      en: "Hook {event}: \"{var}\" is not a valid environment variable name",
+      th: "hook {event}: ชื่อตัวแปร env \"{var}\" ไม่ถูกต้อง",
+    },
+    RequireProgramInvalid {
+      en: "requires: program \"{program}\" must be a program name or a full path",
+      th: "requires: program \"{program}\" ต้องเป็นชื่อโปรแกรมหรือ path เต็ม",
+    },
+    RequireSettingUndeclared {
+      en: "requires {program}: setting \"{key}\" is not declared in [[settings]]",
+      th: "requires {program}: setting \"{key}\" ไม่ได้ประกาศใน [[settings]]",
+    },
+    RequireTaskUndeclared {
+      en: "requires {program}: install_task \"{task}\" is not in [[tasks]]",
+      th: "requires {program}: install_task \"{task}\" ไม่มีใน [[tasks]]",
+    },
+    RequireUrlNotHttps {
+      en: "requires {program}: url must start with https://",
+      th: "requires {program}: url ต้องขึ้นต้นด้วย https://",
+    },
+    TooManyServices {
+      en: "A snap can have at most {max} services",
+      th: "มี service ได้ไม่เกิน {max} ตัว",
+    },
+    ServiceIdInvalid {
+      en: "Service id \"{id}\" is invalid or declared twice (use a-z, 0-9, -)",
+      th: "id ของ service \"{id}\" ไม่ถูกต้องหรือซ้ำ (ใช้ a-z, 0-9, -)",
+    },
+    ServiceNoTitle {
+      en: "Service \"{id}\" needs a title",
+      th: "service \"{id}\" ต้องมี title",
+    },
+    ServiceNoCommand {
+      en: "Service \"{id}\" needs a command",
+      th: "service \"{id}\" ต้องมี command",
+    },
+    ServiceEnvInvalid {
+      en: "Service \"{id}\": \"{var}\" is not a valid environment variable name",
+      th: "service \"{id}\": ชื่อตัวแปร env \"{var}\" ไม่ถูกต้อง",
+    },
+    ServiceWhenNotBoolean {
+      en: "Service \"{id}\": when = \"{key}\" must be a boolean setting in [[settings]]",
+      th: "service \"{id}\": when = \"{key}\" ต้องเป็นการตั้งค่าแบบ boolean ใน [[settings]]",
+    },
+
+    // Files the commands run (snap.rs run_files).
+    RunFileOutside {
+      en: "{label} points outside its folder (symlink); not supported",
+      th: "{label} ชี้ออกนอกโฟลเดอร์ (symlink) — ไม่รองรับ",
+    },
+    RunFileMissing {
+      en: "File {label} that a command runs was not found",
+      th: "ไม่พบไฟล์ {label} ที่คำสั่งเรียกใช้",
+    },
+    RunFilesTooMany {
+      en: "Commands name too many files (at most {max})",
+      th: "ไฟล์ที่คำสั่งเรียกใช้มากเกินไป (ไม่เกิน {max} ไฟล์)",
+    },
+    SnapDirPath {
+      en: "\"{arg}\": {prefix} must be followed by /<path in the snap folder>",
+      th: "\"{arg}\": {prefix} ต้องตามด้วย /<path ในโฟลเดอร์ snap>",
+    },
+    SnapDirPrefix {
+      en: "\"{arg}\": {prefix} can only start an argument ({prefix}/…)",
+      th: "\"{arg}\": ใช้ {prefix} ได้เฉพาะที่ต้นอาร์กิวเมนต์ ({prefix}/…)",
     },
 
     // Skills on disk.
@@ -474,6 +562,52 @@ crate::i18n::messages! {
     SandboxUnsupported {
       en: "Snap sandboxing is not supported on this operating system yet",
       th: "ระบบปฏิบัติการนี้ยังไม่รองรับ sandbox ของ Snap",
+    },
+
+    // Permissions, lock file, secrets and team library (snap.rs, snap_install.rs, snap_secrets.rs).
+    PermissionTooMany {
+      en: "permissions.{field} has more than {max} entries",
+      th: "permissions.{field} มีเกิน {max} รายการ",
+    },
+    PermissionInvalid {
+      en: "permissions.{field}: \"{value}\" is not valid",
+      th: "permissions.{field}: \"{value}\" ไม่ถูกต้อง",
+    },
+    HostsNeedNetwork {
+      en: "permissions.hosts needs network = true",
+      th: "permissions.hosts ต้องใช้คู่กับ network = true",
+    },
+    NoLockFile {
+      en: "This folder has no .kingu/snaps.lock",
+      th: "โฟลเดอร์นี้ไม่มี .kingu/snaps.lock",
+    },
+    NotFromTeamLibrary {
+      en: "Snap \"{id}\" was not installed from the team library",
+      th: "Snap \"{id}\" ไม่ได้ติดตั้งจากคลังของทีม",
+    },
+    SecretNotDeclared {
+      en: "Snap \"{id}\" does not declare the secret {name}",
+      th: "Snap \"{id}\" ไม่ได้ประกาศ secret ชื่อ {name}",
+    },
+    SecretValueInvalid {
+      en: "The value of {name} is empty or too long",
+      th: "ค่าของ {name} ว่างหรือยาวเกินไป",
+    },
+    KeychainFailed {
+      en: "Keychain: {detail}",
+      th: "Keychain: {detail}",
+    },
+    PackageInvalid {
+      en: "The snap package is not valid: {detail}",
+      th: "แพ็กเกจ snap ไม่ถูกต้อง: {detail}",
+    },
+    PackageHashMismatch {
+      en: "The downloaded package of {id} {version} does not match its published SHA-256",
+      th: "แพ็กเกจ {id} {version} ที่ดาวน์โหลดมาไม่ตรงกับ SHA-256 ที่เผยแพร่ไว้",
+    },
+    PackageSnapMismatch {
+      en: "Snap {id} {version} in the package hashes to {got}, not the published {published}",
+      th: "Snap {id} {version} ในแพ็กเกจมี hash {got} ไม่ตรงกับที่เผยแพร่ไว้ ({published})",
     },
   }
 }

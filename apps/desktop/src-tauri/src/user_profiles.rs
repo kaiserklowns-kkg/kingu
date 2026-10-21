@@ -4,13 +4,20 @@
 //! names the active one. Application-scoped settings stay in the Default profile's file for every
 //! profile, as in VS Code (the webview reads that file as the `defaultUser` scope), so the Rust
 //! side's own settings reads (`settings::user_value`) keep using it.
+//!
+//! Each window has its profile (VS Code): the one it was opened with (New Window with Profile, a
+//! temporary profile), else the one its folder or workspace is associated with (Switch Profile in
+//! a window with a folder associates them), else the profile used last (`active`), which new and
+//! empty windows start with. Temporary profiles are deleted once no window uses them.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Manager};
 
 use crate::i18n::msg::ProfilesMsg;
 use crate::tr;
+use crate::workspace::Workspace;
 
 pub const PROFILES_DIR: &str = "profiles";
 const LIST_FILE: &str = "profiles.json";
@@ -21,6 +28,9 @@ const PROFILE_FILES: [&str; 2] = ["settings.json", "keybindings.json"];
 pub struct Profile {
   pub id: String,
   pub name: String,
+  /// A temporary profile (VS Code's transient profile): gone when its last window closes.
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub transient: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -30,6 +40,9 @@ pub struct ProfileList {
   pub active: Option<String>,
   #[serde(default)]
   pub profiles: Vec<Profile>,
+  /// Workspace identity (folder, workspace file) → the profile it opens with (`""`: Default).
+  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+  pub associations: BTreeMap<String, String>,
 }
 
 /// A profile id names a folder: short lowercase hex, never a path.
@@ -48,7 +61,59 @@ pub fn load(config: &Path) -> ProfileList {
   if list.active.as_ref().is_some_and(|a| !list.profiles.iter().any(|p| &p.id == a)) {
     list.active = None;
   }
+  let ids: Vec<String> = list.profiles.iter().map(|p| p.id.clone()).collect();
+  list.associations.retain(|_, id| id.is_empty() || ids.contains(id));
   list
+}
+
+/// The profile a window uses (see the module doc): `own` is the window's (`Some("")`: Default),
+/// `identity` its workspace's. `None`: Default.
+pub fn window_profile(list: &ProfileList, own: Option<&str>, identity: Option<&str>) -> Option<String> {
+  let known = |id: &str| list.profiles.iter().any(|p| p.id == id);
+  let pick = |id: &str| if id.is_empty() { Some(None) } else if known(id) { Some(Some(id.to_string())) } else { None };
+  if let Some(p) = own.and_then(pick) {
+    return p;
+  }
+  if let Some(p) = identity.and_then(|i| list.associations.get(i)).and_then(|id| pick(id)) {
+    return p;
+  }
+  list.active.clone()
+}
+
+/// The list as window `ws` sees it: `active` is its own profile.
+pub fn for_window(config: &Path, ws: &Workspace) -> ProfileList {
+  let mut list = load(config);
+  let session = ws.session();
+  list.active = window_profile(&list, session.profile.as_deref(), session.identity().as_deref());
+  list
+}
+
+/// The folder of window `ws`'s settings.json / keybindings.json / snippets.
+pub fn window_dir(config: &Path, ws: &Workspace) -> PathBuf {
+  dir_of(config, for_window(config, ws).active.as_deref())
+}
+
+/// The profile folder a path in the config dir belongs to (the config dir itself for Default).
+pub fn profile_dir_of(config: &Path, path: &Path) -> PathBuf {
+  let base = config.join(PROFILES_DIR);
+  path
+    .strip_prefix(&base)
+    .ok()
+    .and_then(|rest| rest.components().next())
+    .and_then(|c| c.as_os_str().to_str())
+    .filter(|id| valid_id(id))
+    .map_or_else(|| config.to_path_buf(), |id| base.join(id))
+}
+
+/// Deletes the temporary profiles no window in `in_use` uses any more.
+pub fn remove_unused_transient(config: &Path, in_use: &[String]) {
+  let list = load(config);
+  for p in list.profiles.iter().filter(|p| p.transient && !in_use.contains(&p.id)) {
+    match delete(config, &p.id) {
+      Ok(_) => log::info!("temporary profile {} removed", p.id),
+      Err(e) => log::warn!("temporary profile {}: {e}", p.id),
+    }
+  }
 }
 
 fn save(config: &Path, list: &ProfileList) -> Result<(), String> {
@@ -56,7 +121,8 @@ fn save(config: &Path, list: &ProfileList) -> Result<(), String> {
   crate::settings::write_atomic(&list_path(config), &text)
 }
 
-/// The folder of the active profile's settings.json / keybindings.json.
+/// The folder of the profile new windows start with.
+#[cfg(test)]
 pub fn active_dir(config: &Path) -> PathBuf {
   match load(config).active {
     Some(id) => config.join(PROFILES_DIR).join(id),
@@ -100,12 +166,17 @@ fn known(list: &ProfileList, id: &str) -> Result<(), String> {
 /// New Profile: an empty one, or a copy of `copy_from`'s settings and keybindings (`Some(None)`:
 /// the Default profile's). It does not become active.
 pub fn create(config: &Path, name: &str, copy_from: Option<Option<&str>>) -> Result<Profile, String> {
+  create_with(config, name, copy_from, None, false)
+}
+
+/// [`create`], with a template's `settings` (settings.json text) and as a temporary profile.
+pub fn create_with(config: &Path, name: &str, copy_from: Option<Option<&str>>, settings: Option<&str>, transient: bool) -> Result<Profile, String> {
   let mut list = load(config);
   let name = clean_name(name, &list, None)?;
   if let Some(Some(from)) = copy_from {
     known(&list, from)?;
   }
-  let profile = Profile { id: new_id(&list, &name), name };
+  let profile = Profile { id: new_id(&list, &name), name, transient };
   let dir = dir_of(config, Some(&profile.id));
   std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
   if let Some(from) = copy_from {
@@ -120,18 +191,35 @@ pub fn create(config: &Path, name: &str, copy_from: Option<Option<&str>>) -> Res
       crate::snippets::write(&crate::snippets::dir_in(&dir), &snippets.name, &snippets.content)?;
     }
   }
+  if let Some(text) = settings {
+    crate::settings::write_atomic(&dir.join("settings.json"), text)?;
+  }
   list.profiles.push(profile.clone());
   save(config, &list)?;
   Ok(profile)
 }
 
-/// Switch Profile (`None`: Default).
+/// Switch Profile (`None`: Default): it becomes the profile new windows start with.
+#[cfg(test)]
 pub fn switch(config: &Path, id: Option<&str>) -> Result<ProfileList, String> {
+  switch_for(config, id, None)
+}
+
+/// Switch Profile in a window whose workspace is `identity`: the workspace is associated with the
+/// profile too (VS Code), so it opens with it from now on.
+pub fn switch_for(config: &Path, id: Option<&str>, identity: Option<&str>) -> Result<ProfileList, String> {
   let mut list = load(config);
   if let Some(id) = id {
     known(&list, id)?;
   }
-  list.active = id.map(str::to_string);
+  // A temporary profile stays its window's own; it is never remembered.
+  let transient = id.is_some_and(|id| list.profiles.iter().any(|p| p.id == id && p.transient));
+  if !transient {
+    list.active = id.map(str::to_string);
+    if let Some(identity) = identity {
+      list.associations.insert(identity.to_string(), id.unwrap_or("").to_string());
+    }
+  }
   save(config, &list)?;
   Ok(list)
 }
@@ -155,6 +243,7 @@ pub fn delete(config: &Path, id: &str) -> Result<ProfileList, String> {
   if list.active.as_deref() == Some(id) {
     list.active = None;
   }
+  list.associations.retain(|_, p| p != id);
   save(config, &list)?;
   let dir = dir_of(config, Some(id));
   if dir.is_dir() {
@@ -300,23 +389,33 @@ fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
   app.path().app_config_dir().map_err(|e| e.to_string())
 }
 
+/// The profiles, with `active` the calling window's.
 #[tauri::command]
-pub fn profiles_list(app: AppHandle) -> Result<ProfileList, String> {
-  Ok(load(&config_dir(&app)?))
+pub fn profiles_list(app: AppHandle, ws: Workspace) -> Result<ProfileList, String> {
+  Ok(for_window(&config_dir(&app)?, &ws))
 }
 
 /// `copy_from`: absent for an empty profile, `""` for the Default profile, else a profile id.
+/// `settings`: a template's settings.json. `transient`: a temporary profile.
 #[tauri::command]
-pub fn profile_create(app: AppHandle, name: String, copy_from: Option<String>) -> Result<Profile, String> {
+pub fn profile_create(app: AppHandle, name: String, copy_from: Option<String>, settings: Option<String>, transient: Option<bool>) -> Result<Profile, String> {
   let from = copy_from.as_deref().map(|f| if f.is_empty() { None } else { Some(f) });
-  let profile = create(&config_dir(&app)?, &name, from)?;
-  log::info!("profile created: {}", profile.id);
+  let profile = create_with(&config_dir(&app)?, &name, from, settings.as_deref(), transient.unwrap_or(false))?;
+  log::info!("profile created: {}{}", profile.id, if profile.transient { " (temporary)" } else { "" });
   Ok(profile)
 }
 
+/// Switch Profile in the calling window (its workspace remembers it).
 #[tauri::command]
-pub fn profile_switch(app: AppHandle, id: Option<String>) -> Result<ProfileList, String> {
-  let list = switch(&config_dir(&app)?, id.as_deref())?;
+pub fn profile_switch(app: AppHandle, ws: Workspace, id: Option<String>) -> Result<ProfileList, String> {
+  let config = config_dir(&app)?;
+  let mut session = ws.session();
+  switch_for(&config, id.as_deref(), session.identity().as_deref())?;
+  // The window takes the profile as its own (a temporary one is only ever its own).
+  session.profile = Some(id.clone().unwrap_or_default());
+  ws.set_session(session);
+  crate::windows::save_windows(&app);
+  let list = for_window(&config, &ws);
   log::info!("profile: {}", list.active.as_deref().unwrap_or("default"));
   Ok(list)
 }
@@ -330,11 +429,13 @@ pub fn profile_rename(app: AppHandle, id: String, name: String) -> Result<Profil
 }
 
 #[tauri::command]
-pub fn profile_delete(app: AppHandle, id: String) -> Result<ProfileList, String> {
+pub fn profile_delete(app: AppHandle, ws: Workspace, id: String) -> Result<ProfileList, String> {
   if id.is_empty() {
     return Err(tr!(ProfilesMsg::DefaultIsFixed));
   }
-  delete(&config_dir(&app)?, &id)
+  let config = config_dir(&app)?;
+  delete(&config, &id)?;
+  Ok(for_window(&config, &ws))
 }
 
 /// Export Profile…: writes the `.code-profile` of `id` (absent: Default) to `path`, a file the user
@@ -450,6 +551,57 @@ mod tests {
     assert_eq!(list.active, None);
     assert!(!config.join("profiles").join(&work.id).exists());
     assert_eq!(load(config).profiles, vec![empty]);
+  }
+
+  #[test]
+  fn windows_folders_and_temporary_profiles() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path();
+    let work = create(config, "Work", None).unwrap();
+    let docs = create_with(config, "Docs", None, Some("{\"editor.wordWrap\": \"on\"}"), false).unwrap();
+    assert_eq!(std::fs::read_to_string(config.join("profiles").join(&docs.id).join("settings.json")).unwrap(), "{\"editor.wordWrap\": \"on\"}");
+
+    // Switching in a folder's window associates the folder; new windows start with it too.
+    switch_for(config, Some(&work.id), Some("/a")).unwrap();
+    let list = load(config);
+    assert_eq!(window_profile(&list, None, Some("/a")).as_deref(), Some(work.id.as_str()));
+    assert_eq!(window_profile(&list, None, None).as_deref(), Some(work.id.as_str()));
+    // Another folder switched back to Default keeps Default, whatever new windows use.
+    switch_for(config, None, Some("/b")).unwrap();
+    switch_for(config, Some(&docs.id), None).unwrap();
+    let list = load(config);
+    assert_eq!(window_profile(&list, None, Some("/b")), None);
+    assert_eq!(window_profile(&list, None, Some("/a")).as_deref(), Some(work.id.as_str()));
+    assert_eq!(window_profile(&list, None, Some("/c")).as_deref(), Some(docs.id.as_str()));
+    // A window's own profile (New Window with Profile) wins; an unknown one is ignored.
+    assert_eq!(window_profile(&list, Some(""), Some("/a")), None);
+    assert_eq!(window_profile(&list, Some(&work.id), Some("/b")).as_deref(), Some(work.id.as_str()));
+    assert_eq!(window_profile(&list, Some("ffffffff"), Some("/b")), None);
+
+    // A temporary profile is never remembered and goes when no window uses it.
+    let temp = create_with(config, "Temp 1", None, None, true).unwrap();
+    assert!(temp.transient);
+    switch_for(config, Some(&temp.id), Some("/a")).unwrap();
+    let list = load(config);
+    assert_eq!(list.associations.get("/a"), Some(&work.id));
+    assert_eq!(list.active.as_deref(), Some(docs.id.as_str()));
+    remove_unused_transient(config, std::slice::from_ref(&temp.id));
+    assert!(load(config).profiles.iter().any(|p| p.id == temp.id));
+    remove_unused_transient(config, &[]);
+    assert!(!load(config).profiles.iter().any(|p| p.id == temp.id));
+
+    // Deleting a profile drops its associations.
+    delete(config, &work.id).unwrap();
+    assert!(!load(config).associations.contains_key("/a"));
+    assert_eq!(load(config).associations.get("/b").map(String::as_str), Some(""));
+  }
+
+  #[test]
+  fn changed_paths_belong_to_their_profile() {
+    let config = Path::new("/c");
+    assert_eq!(profile_dir_of(config, Path::new("/c/profiles/0a1b/settings.json")), Path::new("/c/profiles/0a1b"));
+    assert_eq!(profile_dir_of(config, Path::new("/c/settings.json")), config);
+    assert_eq!(profile_dir_of(config, Path::new("/c/profiles/profiles.json")), config);
   }
 
   #[test]

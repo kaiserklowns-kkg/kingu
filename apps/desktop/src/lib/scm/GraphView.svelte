@@ -16,6 +16,7 @@
 	import { scm } from '#lib/workbench/scm.svelte.ts';
 	import { graphWidth, type GraphRow } from './graph';
 	import { copyCommitId, copyCommitMessage, graph, isVirtual, type ChangedFile } from './graph.svelte';
+	import { listKeys } from '#lib/workbench/listKeys.ts';
 
 	const ROW = 22;
 	const LANE = 11;
@@ -170,7 +171,7 @@
 		{/if}
 	</div>
 	{#if graph.open}
-		<div class="min-h-0 flex-1 overflow-y-auto" role="tree" aria-label={t('scmGraph.title')} onscroll={onScroll}>
+		<div class="min-h-0 flex-1 overflow-y-auto" role="tree" aria-label={t('scmGraph.title')} onscroll={onScroll} use:listKeys>
 			{#if !graph.repository?.repo}
 				<p class="px-5 py-1 text-(--vscode-descriptionForeground)">{t('scmGraph.noRepository')}</p>
 			{:else if graph.error}

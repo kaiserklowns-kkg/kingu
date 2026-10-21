@@ -57,6 +57,7 @@ export function flattenTheme(entry: string, read: (path: string) => string): Fla
 	return result;
 }
 
+/** `relative` against the folder of `from` (a theme's `include`). */
 export function joinPath(from: string, relative: string): string {
 	const parts = from.split('/').slice(0, -1);
 	for (const seg of relative.split('/')) {

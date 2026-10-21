@@ -82,6 +82,10 @@ pub struct WindowSession {
   /// The window's place on screen (restored with it; `window.newWindowDimensions` for a new one).
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub bounds: Option<WindowBounds>,
+  /// The window's own profile (New Window with Profile, Switch Profile, a temporary profile; `""`:
+  /// Default), over its folder's association (user_profiles.rs).
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub profile: Option<String>,
 }
 
 impl WindowSession {

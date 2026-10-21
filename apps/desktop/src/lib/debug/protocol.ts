@@ -29,6 +29,13 @@ export type Capabilities = {
 	supportsLogPoints?: boolean;
 	supportsBreakpointLocationsRequest?: boolean;
 	supportsClipboardContext?: boolean;
+	supportsDisassembleRequest?: boolean;
+	supportsReadMemoryRequest?: boolean;
+	supportsWriteMemoryRequest?: boolean;
+	supportsLoadedSourcesRequest?: boolean;
+	supportsInstructionBreakpoints?: boolean;
+	supportsSteppingGranularity?: boolean;
+	supportsStepInTargetsRequest?: boolean;
 };
 
 export type Source = { name?: string; path?: string; sourceReference?: number; presentationHint?: string };
@@ -39,9 +46,9 @@ export type DataAccessType = 'read' | 'write' | 'readWrite';
 export type DataBreakpointInfo = { dataId: string | null; description: string; accessTypes?: DataAccessType[]; canPersist?: boolean };
 export type Breakpoint = { id?: number; verified: boolean; message?: string; line?: number; source?: Source };
 export type Thread = { id: number; name: string };
-export type StackFrame = { id: number; name: string; source?: Source; line: number; column: number; presentationHint?: string; canRestart?: boolean };
+export type StackFrame = { id: number; name: string; source?: Source; line: number; column: number; presentationHint?: string; canRestart?: boolean; instructionPointerReference?: string };
 export type Scope = { name: string; variablesReference: number; expensive: boolean };
-export type Variable = { name: string; value: string; type?: string; variablesReference: number; evaluateName?: string; presentationHint?: { kind?: string; attributes?: string[]; visibility?: string; lazy?: boolean } };
+export type Variable = { name: string; value: string; type?: string; variablesReference: number; evaluateName?: string; memoryReference?: string; presentationHint?: { kind?: string; attributes?: string[]; visibility?: string; lazy?: boolean } };
 export type CompletionItem = { label: string; text?: string; sortText?: string; type?: string; start?: number; length?: number };
 export type GotoTarget = { id: number; label: string; line: number; column?: number };
 
@@ -51,3 +58,22 @@ export type OutputEvent = { category?: string; output: string };
 export type RunInTerminalArguments = { kind?: 'integrated' | 'external'; title?: string; cwd: string; args: string[]; env?: Record<string, string | null> };
 /** The `startDebugging` reverse request (js-debug's child sessions). */
 export type StartDebuggingArguments = { request: 'launch' | 'attach'; configuration: Record<string, unknown> };
+
+/** DAP DisassembledInstruction (the Disassembly view). */
+export type DisassembledInstruction = {
+	address: string;
+	instructionBytes?: string;
+	instruction: string;
+	symbol?: string;
+	location?: Source;
+	line?: number;
+	column?: number;
+	endLine?: number;
+	endColumn?: number;
+	presentationHint?: 'normal' | 'invalid';
+};
+export type InstructionBreakpoint = { instructionReference: string; offset?: number; condition?: string; hitCondition?: string };
+export type SteppingGranularity = 'statement' | 'line' | 'instruction';
+/** DAP BreakpointLocation (column breakpoints' candidates). */
+export type BreakpointLocation = { line: number; column?: number; endLine?: number; endColumn?: number };
+export type StepInTarget = { id: number; label: string; line?: number; column?: number; endLine?: number; endColumn?: number };

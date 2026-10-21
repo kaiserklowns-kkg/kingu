@@ -60,12 +60,16 @@
 	});
 	const scope = $derived(pane?.scope ?? picked);
 
-	const isModified = (id: string) => (['user', 'workspace', 'repo'] as const).some((sc) => settings.inspect(id, sc) !== undefined);
+	/** `@lang:python`: the settings show and edit the `[python]` blocks (VS Code's language filter). */
+	const lang = $derived(parseQuery(query).filters.lang);
+	/** The value one scope sets: its `[language]` block's with `@lang:`. */
+	const inspect = (id: string, sc: SettingScope) => (lang ? settings.inspectLanguage(id, lang, sc) : settings.inspect(id, sc));
+	const isModified = (id: string) => (['user', 'workspace', 'repo'] as const).some((sc) => inspect(id, sc) !== undefined);
 	const visible = $derived.by(() => {
 		if (pane) {
 			const { groups, scope } = pane;
-			const { filters, text } = parseQuery(query);
-			return settingSchemas.all.filter((s) => groups.includes(s.group) && !excluded(s.id) && allowedIn(s, scope) && (!filters.modified || isModified(s.id)) && (!text || matchesQuery(s, text)));
+			const inGroups = settingSchemas.all.filter((s) => groups.includes(s.group) && !excluded(s.id) && allowedIn(s, scope));
+			return settingsInView(query, null, inGroups, isModified);
 		}
 		if (ids) {
 			const found = settingsInView(query, null, settingSchemas.all, isModified);
@@ -85,7 +89,7 @@
 	let gear = $state<{ s: SettingSchema; x: number; y: number } | null>(null);
 	const gearItems = $derived(
 		gear
-			? [menuItem('reset', 'Reset Setting', { enabled: settings.inspect(gear.s.id, scope) !== undefined }), menuSeparator, menuItem('copyId', 'Copy Setting ID'), menuItem('copyJson', 'Copy Setting as JSON')]
+			? [menuItem('reset', 'Reset Setting', { enabled: inspect(gear.s.id, scope) !== undefined }), menuSeparator, menuItem('copyId', 'Copy Setting ID'), menuItem('copyJson', 'Copy Setting as JSON')]
 			: []
 	);
 	async function runGear(id: string, s: SettingSchema) {
@@ -116,8 +120,10 @@
 
 	/** What the control shows: the scope's own value, else what that scope inherits. */
 	function shown(s: SettingSchema): unknown {
-		const own = validate(s, settings.inspect(s.id, scope));
-		const below = BELOW[scope].filter((sc) => allowedIn(s, sc)).map((sc) => validate(s, settings.inspect(s.id, sc)));
+		const own = validate(s, inspect(s.id, scope));
+		const below = BELOW[scope].filter((sc) => allowedIn(s, sc)).map((sc) => validate(s, inspect(s.id, sc)));
+		// A language's block falls back to what the language gets anyway (its built-in defaults included).
+		if (lang && own === undefined && below.every((v) => v === undefined)) return settings.getFor(s.id, lang);
 		// Object settings merge across layers (files.exclude adds to the defaults).
 		if (mergesByKey(s)) return Object.assign({}, s.default, ...below.toReversed(), own);
 		// `null` is a real value for some VS Code settings (search.maxResults: no limit).
@@ -125,12 +131,13 @@
 		return own !== undefined ? own : inherited !== undefined ? inherited : s.default;
 	}
 
-	const modifiedHere = (s: SettingSchema) => settings.inspect(s.id, scope) !== undefined;
+	const modifiedHere = (s: SettingSchema) => inspect(s.id, scope) !== undefined;
 	/** The other scopes that set this setting (and may). */
-	const alsoIn = (s: SettingSchema) => (['user', 'workspace', 'repo'] as SettingScope[]).filter((sc) => sc !== scope && allowedIn(s, sc) && settings.inspect(s.id, sc) !== undefined);
+	const alsoIn = (s: SettingSchema) => (['user', 'workspace', 'repo'] as SettingScope[]).filter((sc) => sc !== scope && allowedIn(s, sc) && inspect(s.id, sc) !== undefined);
 
 	async function update(s: SettingSchema, value: unknown) {
 		try {
+			if (lang) return await settings.setLanguage(s.id, lang, value, scope);
 			// Writing the default to the user file is the same as removing it, like VS Code.
 			const remove = value === undefined || (scope === 'user' && JSON.stringify(value) === JSON.stringify(s.default));
 			await settings.set(s.id, remove ? undefined : value, scope);
@@ -160,7 +167,8 @@
 	async function editInJson(s: SettingSchema) {
 		if (!modifiedHere(s) && scope !== 'repo') {
 			try {
-				await settings.set(s.id, shown(s), scope);
+				if (lang) await settings.setLanguage(s.id, lang, shown(s), scope);
+				else await settings.set(s.id, shown(s), scope);
 			} catch (e) {
 				notifications.error(`บันทึกการตั้งค่าไม่สำเร็จ: ${e instanceof Error ? e.message : e}`);
 			}

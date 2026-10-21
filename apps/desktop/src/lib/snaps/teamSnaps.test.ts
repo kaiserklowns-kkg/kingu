@@ -34,8 +34,9 @@ function snap(over: Partial<SnapInfo> = {}): SnapInfo {
 		requires: [],
 		services: [],
 		readme: null,
-		files: [],
-		themes: [],
+		runFiles: [],
+		scripts: [],
+		approvedPermissions: null,
 		origin: { url: 'https://github.com/acme/go.git', ref: 'main', commit: C1, path: null, installed_at: 1 },
 		lock: null,
 		...over

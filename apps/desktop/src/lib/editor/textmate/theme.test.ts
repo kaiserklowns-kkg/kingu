@@ -58,7 +58,7 @@ test('normalizeColor matches VS Code normalization', () => {
 });
 
 describe('vendored Dark Modern theme', () => {
-	const dir = join(import.meta.dir, 'themes');
+	const dir = join(import.meta.dir, '../../../../snaps/kingu-themes/themes');
 	const theme = flattenTheme('dark_modern.json', (p) => readFileSync(join(dir, p), 'utf8'));
 
 	test('resolves dark_modern -> dark_plus -> dark_vs', () => {

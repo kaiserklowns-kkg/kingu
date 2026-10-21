@@ -249,5 +249,49 @@ export const DEBUG_SETTINGS: SettingSchema[] = [
 		type: 'boolean',
 		default: false,
 		description: 'ซ่อนคำเตือนเมื่อ preLaunchTask รันนาน (Hide the warning shown when a `preLaunchTask` has been running for a while.)'
+	},
+	{
+		id: 'debug.disassemblyView.showSourceCode',
+		group: 'Debug',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงซอร์สโค้ดในมุมมอง Disassembly (Show Source Code in Disassembly View.)'
+	},
+	{
+		id: 'debug.showInlineBreakpointCandidates',
+		group: 'Debug',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงตำแหน่งที่ตั้ง inline breakpoint ได้ในบรรทัดที่มี breakpoint ระหว่าง debug (Show whether to show inline breakpoint candidate decorations in the editor while debugging.)'
+	},
+	{
+		id: 'debug.javascript.autoAttachFilter',
+		group: 'Debug',
+		type: 'string',
+		default: 'disabled',
+		enum: ['always', 'smart', 'onlyWithFlag', 'disabled'],
+		enumDescriptions: [
+			'attach ทุกโปรเซส Node.js ที่เริ่มในเทอร์มินัล (Auto attach to every Node.js process launched in the terminal.)',
+			'attach เมื่อรันสคริปต์ที่ไม่อยู่ใน node_modules (Auto attach when running scripts that aren\'t in a node_modules folder.)',
+			'attach เฉพาะเมื่อรันด้วยแฟล็ก --inspect (Only auto attach when the `--inspect` flag is given.)',
+			'ปิด auto attach (Auto attach is disabled and not shown in status bar.)'
+		],
+		description: 'ให้ debugger เกาะโปรเซส Node.js ที่เริ่มในเทอร์มินัลของ Kingu โดยอัตโนมัติ ผ่าน js-debug (Configures which processes to automatically attach and debug when `#debug.node.autoAttach#` is on. A Node process launched with the `--inspect` flag will always be attached to, regardless of this setting.)'
+	},
+	{
+		id: 'debug.javascript.autoAttachSmartPattern',
+		group: 'Debug',
+		type: 'array',
+		items: 'string',
+		default: ['${workspaceFolder}/**', '!**/node_modules/**', '**/$KNOWN_TOOLS$/**'],
+		description: 'glob ของสคริปต์ที่โหมด smart จะ attach (Configures glob patterns for determining when to attach in "smart" `#debug.javascript.autoAttachFilter#` mode. `$KNOWN_TOOLS$` is replaced with a list of names of common test and code runners.)'
+	},
+	{
+		id: 'debug.javascript.terminalOptions',
+		group: 'Debug',
+		type: 'json',
+		schema: { type: 'object' },
+		default: {},
+		description: 'ค่าเพิ่มเติมแบบ launch.json สำหรับ JavaScript Debug Terminal และ auto attach (Default launch options for the JavaScript debug terminal and npm scripts.)'
 	}
 ];

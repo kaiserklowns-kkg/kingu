@@ -1,48 +1,57 @@
-// The built-in color themes (VS Code extensions/theme-defaults package.json `contributes.themes`)
-// and the ones active Snaps contribute (`[[themes]]`, set by the Snap store).
-// Pure: the vendored files are read through `read`, so tests can pass the file system.
+// The color themes (VS Code: `contributes.themes` of the installed extensions). Kingu's come from
+// snaps: the built-in snap `kingu-themes` (its own two and VS Code's theme-defaults, in the order
+// they always had) and any active snap's `[[themes]]`. Pure: files are read through `read`, so
+// tests can pass the file system.
 
 import { flattenTheme, type FlatTheme, type ThemeType } from '../editor/textmate/theme';
+import { BUILTIN_SNAPS } from '../snaps/builtinSnaps';
+import type { SnapRef, UiTheme } from '../snaps/contributions';
 
 export type ThemeInfo = {
 	/** The `workbench.colorTheme` value (VS Code's theme `id`). */
 	id: string;
 	label: string;
+	/** The theme file, a path in its snap (`themes/dark_modern.json`). */
 	file: string;
 	type: ThemeType;
-	/** A Snap's theme: the snap's id and its files (`<snap>/<path>` → text); includes it does not have are built-in themes. */
-	snap?: string;
-	files?: Record<string, string>;
+	/** The snap it comes from (the built-in `kingu-themes` for Kingu's own). */
+	snap: SnapRef;
+	/** SHA-256 it was listed with (user and repo snaps). */
+	sha256?: string;
 };
 
-export const THEMES: ThemeInfo[] = [
-	// Kingu's own: VS Code 2026 with neutral, translucent chrome (selection and borders as white/black alpha) and monochrome buttons.
-	{ id: 'Kingu Dark', label: 'Kingu Dark', file: 'kingu-dark.json', type: 'dark' },
-	{ id: 'Kingu Light', label: 'Kingu Light', file: 'kingu-light.json', type: 'light' },
-	{ id: 'Light 2026', label: '2026 Light', file: '2026-light.json', type: 'light' },
-	{ id: 'Dark 2026', label: '2026 Dark', file: '2026-dark.json', type: 'dark' },
-	{ id: 'Light Modern', label: 'Light Modern', file: 'light_modern.json', type: 'light' },
-	{ id: 'Light+', label: 'Light+', file: 'light_plus.json', type: 'light' },
-	{ id: 'Dark Modern', label: 'Dark Modern', file: 'dark_modern.json', type: 'dark' },
-	{ id: 'Dark+', label: 'Dark+', file: 'dark_plus.json', type: 'dark' },
-	{ id: 'Default High Contrast', label: 'Dark High Contrast', file: 'hc_black.json', type: 'hcDark' },
-	{ id: 'Default High Contrast Light', label: 'Light High Contrast', file: 'hc_light.json', type: 'hcLight' }
-];
+const TYPE_OF: Record<UiTheme, ThemeType> = { vs: 'light', 'vs-dark': 'dark', 'hc-black': 'hcDark', 'hc-light': 'hcLight' };
+
+/** VS Code's `uiTheme` as a theme type (an unknown one reads as dark, VS Code's default). */
+export const themeTypeOf = (ui: string): ThemeType => TYPE_OF[ui as UiTheme] ?? 'dark';
+
+type ThemeSnap = { source: SnapRef['source']; id: string; contributes?: { themes: { id: string; label: string; uiTheme: string; path: string }[]; files?: { path: string; sha256: string }[] } };
+
+/** The themes of `snaps`, in their manifests' order. */
+export function themesOfSnaps(snaps: readonly ThemeSnap[]): ThemeInfo[] {
+	return snaps.flatMap((s) =>
+		(s.contributes?.themes ?? []).map((t) => {
+			const sha256 = s.contributes?.files?.find((f) => f.path === t.path)?.sha256;
+			return { id: t.id, label: t.label, file: t.path, type: themeTypeOf(t.uiTheme), snap: { source: s.source, id: s.id }, ...(s.source !== 'builtin' && sha256 ? { sha256 } : {}) };
+		})
+	);
+}
+
+/** The built-in themes: what the settings registry lists and what is there before snaps load. */
+export const THEMES: ThemeInfo[] = themesOfSnaps(BUILTIN_SNAPS);
 
 export const DEFAULT_THEME = 'Dark Modern';
 
-let snapThemes: ThemeInfo[] = [];
+let contributed: ThemeInfo[] = [];
 
-/** Replaces the themes of active Snaps (a built-in id is never shadowed). */
-export function setSnapThemes(list: readonly ThemeInfo[]) {
-	snapThemes = list.filter((t) => !THEMES.some((b) => b.id === t.id));
+/** Themes of active user and repo snaps (contrib.svelte.ts). A built-in theme's id stays the built-in's. */
+export function setContributedThemes(list: readonly ThemeInfo[]) {
+	const seen = new Set(THEMES.map((t) => t.id));
+	contributed = list.filter((t) => !seen.has(t.id) && (seen.add(t.id), true));
 }
 
-/** Built-in themes, then the Snaps' (what the Color Theme picker and the theme settings offer). */
-export const allThemes = (): ThemeInfo[] => [...THEMES, ...snapThemes];
-
-/** VS Code's `uiTheme` of a contributed theme. */
-export const themeType = (uiTheme: string): ThemeType => ({ 'vs-dark': 'dark', vs: 'light', 'hc-black': 'hcDark', 'hc-light': 'hcLight' })[uiTheme] as ThemeType ?? 'dark';
+/** Every theme: the built-in ones, then those of snaps. */
+export const allThemes = (): ThemeInfo[] => [...THEMES, ...contributed];
 
 /** VS Code's older `Default …` ids and the display labels also select a theme. */
 const ALIASES: Record<string, string> = {
@@ -65,6 +74,21 @@ export const monacoBase = (type: ThemeType) => ({ dark: 'vs-dark', light: 'vs', 
 
 export const isDarkType = (type: ThemeType) => type === 'dark' || type === 'hcDark';
 
+/** The built-in snap with Kingu's theme files. */
+export const BUILTIN_THEMES_SNAP: SnapRef = { source: 'builtin', id: 'kingu-themes' };
+
+/**
+ * Where an include that a user's or repo snap does not ship is read from instead: the built-in
+ * theme file of the same name (VS Code themes build on `./dark_modern.json` and the like), so a
+ * snap can extend Kingu's themes without copying them. None for a built-in snap's own files.
+ */
+export function builtinThemeFile(snap: SnapRef, path: string): { snap: SnapRef; path: string } | undefined {
+	const name = path.split('/').pop() ?? '';
+	if (snap.source === 'builtin' || !/^[\w.-]+\.json$/.test(name)) return undefined;
+	return { snap: BUILTIN_THEMES_SNAP, path: `themes/${name}` };
+}
+
+/** `read` takes a path in the theme's snap (the theme file, then the files it includes). */
 export function loadTheme(theme: ThemeInfo, read: (file: string) => string): FlatTheme {
 	return flattenTheme(theme.file, read);
 }

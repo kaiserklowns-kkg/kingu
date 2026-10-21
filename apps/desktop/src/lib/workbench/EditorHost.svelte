@@ -343,6 +343,29 @@
 		background: linear-gradient(135deg, transparent 43%, var(--vscode-debugIcon-breakpointUnverifiedForeground, #848484) 43%, var(--vscode-debugIcon-breakpointUnverifiedForeground, #848484) 57%, transparent 57%);
 		border: 1.5px solid var(--vscode-debugIcon-breakpointUnverifiedForeground, #848484);
 	}
+	/* Inline (column) breakpoints and the candidates beside them (VS Code: debug-breakpoint inline decorations). */
+	:global(.kg-bp-inline),
+	:global(.kg-bp-candidate) {
+		display: inline-block;
+		width: 9px;
+		height: 9px;
+		margin: 0 2px;
+		border-radius: 50%;
+		vertical-align: middle;
+		cursor: pointer;
+		background: var(--vscode-debugIcon-breakpointForeground, #e51400);
+	}
+	:global(.kg-bp-inline-unverified),
+	:global(.kg-bp-candidate) {
+		background: transparent;
+		border: 1.5px solid var(--vscode-debugIcon-breakpointUnverifiedForeground, #848484);
+	}
+	:global(.kg-bp-candidate) {
+		opacity: 0.5;
+	}
+	:global(.kg-bp-inline-disabled) {
+		background: var(--vscode-debugIcon-breakpointDisabledForeground, #848484);
+	}
 	/* Test gutter icons (VS Code testing decorations): run, then the last result. */
 	:global(.kg-test) {
 		display: flex;
