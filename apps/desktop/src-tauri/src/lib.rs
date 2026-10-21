@@ -14,6 +14,7 @@ mod git;
 mod git_editor;
 mod git_output;
 mod git_queue;
+mod git_repos;
 mod i18n;
 mod glob;
 mod git_remote;
@@ -229,10 +230,10 @@ fn fs_write_file(ws: Workspace, rel: String, content: String) -> Result<(), Stri
 
 /// Current branch for the status bar; `None` outside a git repository.
 #[tauri::command]
-fn git_branch(ws: Workspace) -> Option<String> {
+fn git_branch(ws: Workspace, repo: Option<String>) -> Option<String> {
   let out = std::process::Command::new("git")
     .args(["rev-parse", "--abbrev-ref", "HEAD"])
-    .current_dir(ws.current()?)
+    .current_dir(git_repos::repo_or_root(&ws, repo.as_deref()).ok()?)
     .output()
     .ok()?;
   out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
@@ -248,8 +249,8 @@ fn checked(root: &Path, paths: Vec<String>) -> Result<Vec<String>, String> {
 
 /// The repository a Source Control command acts on: the open folder, or a task's worktree
 /// (`slug`), so the Agents layout's right side bar works for whichever worktree is selected.
-fn git_dir(ws: &Workspace, slug: Option<&str>) -> Result<PathBuf, String> {
-  repo_dir(ws, slug.filter(|s| !s.is_empty()))
+fn git_dir(ws: &Workspace, slug: Option<&str>, repo: Option<&str>) -> Result<PathBuf, String> {
+  repo_dir(ws, slug.filter(|s| !s.is_empty()), repo)
 }
 
 /// Runs a git operation off the main thread (status can take a while in a large repository).
@@ -257,36 +258,36 @@ pub(crate) async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, St
   tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
-/// The repository a Source Control command acts on: the open folder, or the task worktree
-/// `slug` (the ADE's right side bar works on the selected worktree).
-fn repo_dir(ws: &Workspace, slug: Option<&str>) -> Result<PathBuf, String> {
-  let root = ws.root()?;
+/// The repository a Source Control command acts on: `repo` (one of a multi-root workspace's
+/// repositories, git_repos.rs), else the first folder, or the task worktree `slug` (the ADE's
+/// right side bar works on the selected worktree).
+fn repo_dir(ws: &Workspace, slug: Option<&str>, repo: Option<&str>) -> Result<PathBuf, String> {
   match slug {
-    Some(s) => agent::review::task_dir(&root, s),
-    None => Ok(root),
+    Some(s) => agent::review::task_dir(&ws.root()?, s),
+    None => git_repos::repo_or_root(ws, repo),
   }
 }
 
 /// Source Control view: branch, ahead/behind and changed files; `None` outside a repository.
 #[tauri::command]
-async fn git_status(ws: Workspace, slug: Option<String>, options: Option<git::StatusOptions>) -> Result<Option<git::GitStatus>, String> {
+async fn git_status(ws: Workspace, slug: Option<String>, options: Option<git::StatusOptions>, repo: Option<String>) -> Result<Option<git::GitStatus>, String> {
   if slug.is_none() && ws.current().is_none() {
     return Ok(None);
   }
-  let dir = repo_dir(&ws, slug.as_deref())?;
+  let dir = repo_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || git::status_with(&dir, &options.unwrap_or_default())).await
 }
 
 #[tauri::command]
-async fn git_stage(ws: Workspace, paths: Vec<String>, slug: Option<String>) -> Result<(), String> {
-  let dir = repo_dir(&ws, slug.as_deref())?;
+async fn git_stage(ws: Workspace, paths: Vec<String>, slug: Option<String>, repo: Option<String>) -> Result<(), String> {
+  let dir = repo_dir(&ws, slug.as_deref(), repo.as_deref())?;
   let paths = checked(&dir, paths)?;
   blocking(move || git::stage(&dir, &paths)).await
 }
 
 #[tauri::command]
-async fn git_unstage(ws: Workspace, paths: Vec<String>, slug: Option<String>) -> Result<(), String> {
-  let dir = repo_dir(&ws, slug.as_deref())?;
+async fn git_unstage(ws: Workspace, paths: Vec<String>, slug: Option<String>, repo: Option<String>) -> Result<(), String> {
+  let dir = repo_dir(&ws, slug.as_deref(), repo.as_deref())?;
   let paths = checked(&dir, paths)?;
   blocking(move || git::unstage(&dir, &paths)).await
 }
@@ -294,8 +295,8 @@ async fn git_unstage(ws: Workspace, paths: Vec<String>, slug: Option<String>) ->
 /// Deleting untracked files needs `delete_untracked`, set only after the user confirmed;
 /// `to_trash` (git.discardUntrackedChangesToTrash) moves them to the trash instead.
 #[tauri::command]
-async fn git_discard(ws: Workspace, paths: Vec<String>, delete_untracked: Option<bool>, to_trash: Option<bool>, slug: Option<String>) -> Result<(), String> {
-  let dir = repo_dir(&ws, slug.as_deref())?;
+async fn git_discard(ws: Workspace, paths: Vec<String>, delete_untracked: Option<bool>, to_trash: Option<bool>, slug: Option<String>, repo: Option<String>) -> Result<(), String> {
+  let dir = repo_dir(&ws, slug.as_deref(), repo.as_deref())?;
   let paths = checked(&dir, paths)?;
   blocking(move || git::discard(&dir, &paths, delete_untracked.unwrap_or(false), to_trash.unwrap_or(false))).await
 }
@@ -303,8 +304,8 @@ async fn git_discard(ws: Workspace, paths: Vec<String>, delete_untracked: Option
 /// `options` carries the commit flags of VS Code's git settings (sign-off, signing) and commands
 /// (Commit (No Verify), Commit Empty); `amend` is kept for older callers.
 #[tauri::command]
-async fn git_commit(ws: Workspace, message: String, amend: Option<bool>, options: Option<git::CommitOptions>, slug: Option<String>) -> Result<(), String> {
-  let dir = repo_dir(&ws, slug.as_deref())?;
+async fn git_commit(ws: Workspace, message: String, amend: Option<bool>, options: Option<git::CommitOptions>, slug: Option<String>, repo: Option<String>) -> Result<(), String> {
+  let dir = repo_dir(&ws, slug.as_deref(), repo.as_deref())?;
   let mut opts = options.unwrap_or_default();
   opts.amend |= amend.unwrap_or(false);
   blocking(move || git::commit(&dir, &message, &opts)).await?;
@@ -322,8 +323,8 @@ fn git_reload_path(app: AppHandle) -> Result<(), String> {
 
 /// `git.requireGitUserConfig`: whether `user.name` and `user.email` are configured.
 #[tauri::command]
-async fn git_user_configured(ws: Workspace, slug: Option<String>) -> Result<bool, String> {
-  let dir = repo_dir(&ws, slug.as_deref())?;
+async fn git_user_configured(ws: Workspace, slug: Option<String>, repo: Option<String>) -> Result<bool, String> {
+  let dir = repo_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || Ok(git::user_configured(&dir))).await
 }
 
@@ -370,35 +371,35 @@ fn floating_dir(app: AppHandle) -> Result<String, String> {
 
 /// Lines added and deleted per changed file (`git diff --numstat`), unstaged and staged.
 #[tauri::command]
-async fn git_numstat(ws: Workspace, slug: Option<String>) -> Result<git::NumStat, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_numstat(ws: Workspace, slug: Option<String>, repo: Option<String>) -> Result<git::NumStat, String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || git::numstat(&root)).await
 }
 
 #[tauri::command]
 /// Force push with lease (the ADE's Source Control menu); a plain push is `git_remote::git_push`.
-async fn git_force_push(ws: Workspace, slug: Option<String>) -> Result<(), String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_force_push(ws: Workspace, slug: Option<String>, repo: Option<String>) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || git::push(&root, true)).await
 }
 
 #[tauri::command]
 /// Fast-forward only (the ADE's Source Control menu); a plain pull is `git_remote::git_pull`.
-async fn git_pull_ff_only(ws: Workspace, slug: Option<String>) -> Result<(), String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_pull_ff_only(ws: Workspace, slug: Option<String>, repo: Option<String>) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || git::pull(&root, true)).await
 }
 
 #[tauri::command]
-async fn git_rebase(ws: Workspace, slug: Option<String>, base: String) -> Result<(), String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_rebase(ws: Workspace, slug: Option<String>, base: String, repo: Option<String>) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || git::rebase(&root, &base)).await
 }
 
 /// The Commits panel of Source Control.
 #[tauri::command]
-async fn git_log(ws: Workspace, slug: Option<String>, limit: Option<u32>) -> Result<Vec<git::Commit>, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_log(ws: Workspace, slug: Option<String>, limit: Option<u32>, repo: Option<String>) -> Result<Vec<git::Commit>, String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || git::log(&root, limit.unwrap_or(50))).await
 }
 
@@ -409,8 +410,8 @@ fn open_web_url(url: String) -> Result<(), String> {
 
 /// Files a commit changed (`git show --name-status`), for the Commits panel.
 #[tauri::command]
-async fn git_show_files(ws: Workspace, slug: Option<String>, hash: String) -> Result<Vec<(String, String)>, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_show_files(ws: Workspace, slug: Option<String>, hash: String, repo: Option<String>) -> Result<Vec<(String, String)>, String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   git::check_rev(&hash)?;
   blocking(move || {
     let out = git::run(&root, &["show", "--name-status", "--format=", "--end-of-options", &hash])?;
@@ -421,8 +422,8 @@ async fn git_show_files(ws: Workspace, slug: Option<String>, hash: String) -> Re
 
 /// Commits ahead of and behind `base` (Change Base Ref's compare).
 #[tauri::command]
-async fn git_compare(ws: Workspace, slug: Option<String>, base: String) -> Result<(u32, u32), String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_compare(ws: Workspace, slug: Option<String>, base: String, repo: Option<String>) -> Result<(u32, u32), String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   git::check_rev(&base)?;
   blocking(move || {
     let out = git::run(&root, &["rev-list", "--left-right", "--count", &format!("{base}...HEAD")])?;
@@ -436,8 +437,8 @@ async fn git_compare(ws: Workspace, slug: Option<String>, base: String) -> Resul
 
 /// Local and remote branch names, for the base ref picker.
 #[tauri::command]
-async fn git_ref_names(ws: Workspace, slug: Option<String>) -> Result<Vec<String>, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_ref_names(ws: Workspace, slug: Option<String>, repo: Option<String>) -> Result<Vec<String>, String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || {
     let out = git::run(&root, &["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"])?;
     Ok(String::from_utf8_lossy(&out).lines().filter(|l| !l.is_empty() && !l.ends_with("/HEAD")).map(str::to_owned).collect())
@@ -471,23 +472,22 @@ async fn delete_claude_session(ws: Workspace, path: String) -> Result<(), String
 
 /// Aborts the merge, rebase, cherry-pick or revert in progress (Source Control's conflict card).
 #[tauri::command]
-async fn git_abort(ws: Workspace, slug: Option<String>) -> Result<git::Operation, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_abort(ws: Workspace, slug: Option<String>, repo: Option<String>) -> Result<git::Operation, String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || git::abort_operation(&root)).await
 }
 
 /// Continues the merge, rebase, cherry-pick or revert once its conflicts are resolved and staged.
 #[tauri::command]
-async fn git_continue(ws: Workspace, slug: Option<String>) -> Result<git::Operation, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_continue(ws: Workspace, slug: Option<String>, repo: Option<String>) -> Result<git::Operation, String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || git::continue_operation(&root)).await
 }
 
 /// HEAD version of a file for the diff editor; empty when the file is not in HEAD.
 #[tauri::command]
 async fn git_show_head(ws: Workspace, rel: String) -> Result<String, String> {
-  let root = ws.root()?;
-  git::check_rel(&root, &rel)?;
+  let (root, rel) = git_repos::locate_file(&ws, &rel)?;
   blocking(move || git::show_head(&root, &rel)).await
 }
 
@@ -509,8 +509,12 @@ fn pty_spawn(
   cwd_from: Option<String>,
   floating_cwd: Option<String>,
   task: Option<tasks::TaskLaunch>,
+  folder: Option<String>,
 ) -> Result<kingu_ptyd::Attached, String> {
   pty::validate_key(&key)?;
+  // `folder`: the root folder of a multi-root window the terminal belongs to (the user's pick, or
+  // a split's source); absent, the first folder. It must be inside one of the window's roots.
+  let folder = pty::terminal_folder(&ws.roots(), folder.as_deref())?;
   // A task terminal (tasks.rs) is a panel terminal running the task instead of a shell.
   if task.is_some() && !key.starts_with("panel:") {
     return Err(format!("terminal {key}: tasks run in panel terminals"));
@@ -519,7 +523,7 @@ fn pty_spawn(
   // Orca's resolve-split-cwd), else where a new terminal would.
   // terminal.integrated.splitCwd picks which directory (inherited, the source's initial one, or the root).
   let split_mode = terminal.as_ref().and_then(|t| t.split_cwd.clone()).unwrap_or_else(|| "inherited".into());
-  let inherited = cwd_from.as_deref().and_then(|from| pty::split_cwd(&split_mode, || ptys.live_cwd(from), || ptys.initial_cwd(from), ws.current()));
+  let inherited = cwd_from.as_deref().and_then(|from| pty::split_cwd(&split_mode, || ptys.live_cwd(from), || ptys.initial_cwd(from), folder.clone()));
   // A task terminal starts in the task's worktree (the ADE's per-worktree terminals); a floating
   // workspace terminal in its own directory setting. No folder open: the terminal starts in the
   // home folder, like VS Code's empty window.
@@ -538,7 +542,7 @@ fn pty_spawn(
       dir
     }
     (None, None) => {
-      let folder = ws.current();
+      let folder = folder.clone();
       let fallback = folder.clone().or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("/"));
       pty::terminal_cwd(terminal.as_ref().and_then(|t| t.cwd.as_deref()), folder.as_deref(), fallback)
     }
@@ -586,7 +590,7 @@ fn pty_spawn(
   if terminal.scope_history && !key.starts_with("cli:") {
     let scope = match slug.as_deref() {
       Some(s) => agent::worktree::worktree_path(&ws.root()?, s),
-      None => ws.current().unwrap_or_else(|| cwd.clone()),
+      None => folder.clone().unwrap_or_else(|| cwd.clone()),
     };
     let program = shell.map(str::to_owned).or_else(|| std::env::var("SHELL").ok()).unwrap_or_default();
     let history = app.path().app_data_dir().map_err(|e| e.to_string())?.join("terminal-history");
@@ -760,7 +764,7 @@ fn worktree_search(
     searches.cancel();
     return Err("query is empty".into());
   }
-  let dir = repo_dir(&ws, slug.as_deref())?;
+  let dir = repo_dir(&ws, slug.as_deref(), None)?;
   let rg = search::find_rg(std::env::var_os("KINGU_RG"), shell_env::path())?;
   searches.start(&rg, &dir, &options, move |ev| on_event.send(ev).is_ok())
 }
@@ -1271,6 +1275,7 @@ pub fn run() {
       workspace_recent_remove,
       workspace_recent_clear,
       git_branch,
+      git_repos::git_repositories,
       git_status,
       git_stage,
       git_unstage,

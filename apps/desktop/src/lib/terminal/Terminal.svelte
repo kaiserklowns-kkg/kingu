@@ -34,7 +34,8 @@
 	 * replayed, so the shell outlives a webview reload, a folder switch and (with the kingu-ptyd
 	 * daemon) an app restart; unmounting never kills it, closing the tab does (the terminal stores). `slug`: start in that task's worktree instead of the folder root.
 	 * `run`: a command typed into a new shell (an agent CLI, a Snap task); Rust quotes every argument.
-	 * `cwdFrom`: a split pane starts in that terminal's current directory. `flavor`: the IDE panel
+	 * `cwdFrom`: a split pane starts in that terminal's current directory. `folder`: the root folder
+	 * of a multi-root window it starts in (Rust checks it is one). `flavor`: the IDE panel
 	 * (VS Code behaviour) or an ADE terminal (Orca behaviour) for find and the context menu.
 	 * `task`: a task terminal (tasks.svelte.ts): Rust runs the task instead of a shell, once; it
 	 * starts even while the panel is hidden (presentation.reveal never).
@@ -45,6 +46,7 @@
 		run,
 		task,
 		cwdFrom,
+		folder,
 		floatingCwd,
 		flavor = 'ide',
 		menuState,
@@ -61,6 +63,7 @@
 		run?: string[];
 		task?: TaskSpawn;
 		cwdFrom?: string;
+		folder?: string;
 		/** A floating workspace terminal, started in that directory setting (`~` = home). */
 		floatingCwd?: string;
 		flavor?: TerminalFlavor;
@@ -285,7 +288,7 @@
 				// kingu.terminal.scopeHistoryByWorktree: an ADE shell keeps its own history per worktree.
 				scopeHistory: flavor === 'ade' && settings.get<boolean>('kingu.terminal.scopeHistoryByWorktree') !== false
 			};
-			invoke<Attached>('pty_spawn', { key, cols: t.cols, rows: t.rows, onData: channel(), slug: slug ?? null, run: run ?? null, terminal, cwdFrom: cwdFrom ?? null, floatingCwd: floatingCwd ?? null, task: launch ?? null })
+			invoke<Attached>('pty_spawn', { key, cols: t.cols, rows: t.rows, onData: channel(), slug: slug ?? null, run: run ?? null, terminal, cwdFrom: cwdFrom ?? null, folder: folder ?? null, floatingCwd: floatingCwd ?? null, task: launch ?? null })
 				.then((a) => (connected(a), void system.refresh()))
 				.catch(failed);
 		}

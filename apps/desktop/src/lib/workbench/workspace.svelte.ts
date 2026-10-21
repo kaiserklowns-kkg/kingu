@@ -4,9 +4,10 @@
 // every view that showed the old folder.
 //
 // A workspace has no folder, one folder, or several root folders (multi-root, VS Code's
-// `.code-workspace` `folders`). `root` is the first folder: everything that works on "the
-// folder" (Source Control, tasks, the ADE, language servers) uses it, and its files have
-// relative paths. Files of the other root folders have absolute paths (workspaceFolders.ts).
+// `.code-workspace` `folders`). `root` is the first folder: its files have relative paths, files
+// of the other root folders absolute ones (workspaceFolders.ts). Source Control, language
+// servers, tasks and terminals cover every folder; the ADE and workspace settings work on the
+// first one.
 
 import { invoke } from '@tauri-apps/api/core';
 import { homeDir } from '@tauri-apps/api/path';
@@ -28,7 +29,6 @@ import { navigation } from './navigation.svelte';
 import { quick, type PickItem } from './quick.svelte';
 import { scm } from './scm.svelte';
 import { search } from './search.svelte';
-import { status } from './status.svelte';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
 
@@ -120,6 +120,8 @@ class Workspace {
 		this.workspaceFile = info.file;
 		this.untitled = info.untitled;
 		this.identity = info.identity;
+		// Language servers know every root folder (didChangeWorkspaceFolders when one is added or removed).
+		lsp.setFolders(this.folders);
 	}
 
 	async loadRecent() {
@@ -310,6 +312,8 @@ class Workspace {
 			return;
 		}
 		search.clear();
+		// Each root folder has its own repositories.
+		void scm.rescan();
 		clientLog('info', `workspace folders: ${this.folders.map((f) => f.path).join(', ')}`);
 		void this.loadRecent();
 	}
@@ -464,10 +468,7 @@ class Workspace {
 		debug.reset();
 		explorer.reset();
 		search.clear();
-		scm.repo = null;
-		scm.loaded = false;
-		scm.message = '';
-		status.branch = null;
+		scm.reset();
 		this.#apply(info);
 		// The workspace file's settings come back with the file (openWorkspaceFile sets them right after).
 		settings.workspaceFile = {};
@@ -492,10 +493,9 @@ class Workspace {
 			const qualify = (paths: string[]) => watcherPaths(e.payload.root, paths, this.folders) ?? [];
 			// Agents writing into `.kingu/worktrees/` do not refresh the IDE's Source Control or Explorer.
 			const ide = ideChanges(e.payload.paths);
-			if (primary) {
-				if (ide.length) void scm.refresh();
-				for (const fn of this.#raw) fn(e.payload.paths);
-			}
+			// Every root folder's changes re-read Source Control (each folder has its repositories).
+			if (ide.length) void scm.refresh();
+			if (primary) for (const fn of this.#raw) fn(e.payload.paths);
 			const files = workspaceFiles(e.payload.paths);
 			if (!files.length) return;
 			const ideFiles = workspaceFiles(ide);

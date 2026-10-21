@@ -2,14 +2,16 @@
 // system uses it): `${workspaceFolder}`, the active file's `${file}` family, `${cwd}`,
 // `${lineNumber}`, `${selectedText}`, `${pathSeparator}`, `${userHome}`, `${defaultBuildTask}`,
 // `${env:X}`, `${config:x}`, `${input:x}` and the few `${command:…}` Kingu can answer. Inputs are
-// asked once per run (VS Code collects every variable first, then prompts). Pure.
+// asked once per run (VS Code collects every variable first, then prompts). Multi-root: the folder
+// variables are the task's own folder, or the one a `:name` argument picks (`${workspaceFolder:lib}`). Pure.
 
 import { t } from '#lib/i18n/index.ts';
 import type { InputDef } from './taskConfig.ts';
-import { folderNamed, type WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
+import { folderNamed, folderOf, type WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 
 export type VariableContext = {
-	workspaceFolder: string;
+	/** The folder of the task or launch configuration; absent for a `.code-workspace` file's own. */
+	workspaceFolder?: string;
 	/** Every root folder of a multi-root workspace, for `${workspaceFolder:name}`. */
 	folders?: readonly WorkspaceFolder[];
 	/** The active editor's file (absolute). */
@@ -50,78 +52,98 @@ function stringify(v: unknown): string {
 	return typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : JSON.stringify(v);
 }
 
+/** Variables that take a workspace folder name (`${workspaceFolder:name}`, VS Code's getFolderUri). */
+const FOLDER_SCOPED = new Set(['workspaceFolder', 'workspaceRoot', 'workspaceFolderBasename', 'workspaceRootFolderName', 'cwd', 'relativeFile', 'relativeFileDirname']);
+const FILE_VARS = new Set(['file', 'fileWorkspaceFolder', 'fileWorkspaceFolderBasename', 'relativeFile', 'relativeFileDirname', 'fileBasename', 'fileBasenameNoExtension', 'fileDirname', 'fileExtname', 'fileDirnameBasename']);
+
 /** One variable's value; `resolved` holds what inputs (and commands) answered. */
 export function variableValue(name: string, ctx: VariableContext, resolved: ReadonlyMap<string, string> = new Map()): string {
 	if (resolved.has(name)) return resolved.get(name)!;
+	const variable = `\${${name}}`;
 	const colon = name.indexOf(':');
-	if (colon > 0) {
-		const kind = name.slice(0, colon);
-		const arg = name.slice(colon + 1);
+	const kind = colon > 0 ? name.slice(0, colon) : name;
+	const arg = colon > 0 ? name.slice(colon + 1) : undefined;
+	if (arg !== undefined) {
 		if (kind === 'env') return ctx.env[arg] ?? '';
 		if (kind === 'config') {
 			const v = ctx.config(arg);
-			if (v !== null && typeof v === 'object') throw new VariableError(t('ideTasks.var.structured', { variable: `\${${name}}`, key: arg }));
+			if (v !== null && typeof v === 'object') throw new VariableError(t('ideTasks.var.structured', { variable, key: arg }));
 			return stringify(v);
 		}
 		if (kind === 'input') throw new VariableError(t('ideTasks.var.undefinedInput', { id: arg }));
-		if (kind === 'command') throw new VariableError(t('ideTasks.var.command', { variable: `\${${name}}` }));
-		if (kind === 'workspaceFolder' || kind === 'workspaceFolderBasename') {
-			// `${workspaceFolder:name}`: the root folder of that name (VS Code's multi-root form).
-			const folder = ctx.folders?.length ? folderNamed(arg, ctx.folders)?.path : ctx.workspaceFolder;
-			if (folder === undefined) throw new VariableError(t('ideTasks.var.noFolderNamed', { variable: `\${${name}}`, name: arg }));
-			return kind === 'workspaceFolder' ? folder : basename(folder);
-		}
-		throw new VariableError(t('ideTasks.var.unknown', { variable: `\${${name}}` }));
+		if (kind === 'command') throw new VariableError(t('ideTasks.var.command', { variable }));
+		if (!FOLDER_SCOPED.has(kind)) throw new VariableError(t('ideTasks.var.unknown', { variable }));
 	}
-	const root = ctx.workspaceFolder;
-	switch (name) {
+	// The folder the variable means (VS Code's getFolderUri): the named one, else the task's or
+	// launch configuration's own folder. A workspace file's task in a multi-root workspace has none.
+	const folderPath = (): string => {
+		if (arg !== undefined) {
+			const folder = ctx.folders?.length ? folderNamed(arg, ctx.folders)?.path : ctx.workspaceFolder;
+			if (folder === undefined) throw new VariableError(t('ideTasks.var.noFolderNamed', { variable, name: arg }));
+			return folder;
+		}
+		if (ctx.workspaceFolder) return ctx.workspaceFolder;
+		if ((ctx.folders?.length ?? 0) > 1) throw new VariableError(t('ideTasks.var.multiRoot', { variable }));
+		throw new VariableError(t('ideTasks.var.noFolder', { variable }));
+	};
+	switch (kind) {
 		case 'workspaceFolder':
 		case 'workspaceRoot':
+			return folderPath();
 		case 'cwd':
-			return root;
+			// Unscoped and without a folder (VS Code: the process's cwd): the first folder, where such a task starts.
+			return arg === undefined && !ctx.workspaceFolder ? (ctx.folders?.[0]?.path ?? '') : folderPath();
 		case 'workspaceFolderBasename':
 		case 'workspaceRootFolderName':
-			return basename(root);
+			return basename(folderPath());
 		case 'pathSeparator':
 		case '/':
 			return '/';
 		case 'userHome':
-			if (!ctx.userHome) throw new VariableError(t('ideTasks.var.userHome', { variable: '${userHome}' }));
+			if (!ctx.userHome) throw new VariableError(t('ideTasks.var.userHome', { variable }));
 			return ctx.userHome;
 		case 'execPath':
 			return ctx.execPath ?? '';
 		case 'defaultBuildTask':
-			if (!ctx.defaultBuildTask) throw new VariableError(t('ideTasks.var.noBuildTask', { variable: '${defaultBuildTask}' }));
+			if (!ctx.defaultBuildTask) throw new VariableError(t('ideTasks.var.noBuildTask', { variable }));
 			return ctx.defaultBuildTask;
 		case 'lineNumber':
 		case 'columnNumber': {
-			const n = name === 'lineNumber' ? ctx.lineNumber : ctx.columnNumber;
-			if (n === undefined) throw new VariableError(t('ideTasks.var.noLine', { variable: `\${${name}}` }));
+			const n = kind === 'lineNumber' ? ctx.lineNumber : ctx.columnNumber;
+			if (n === undefined) throw new VariableError(t('ideTasks.var.noLine', { variable }));
 			return String(n);
 		}
 		case 'selectedText':
-			if (ctx.selectedText === undefined) throw new VariableError(t('ideTasks.var.noSelection', { variable: '${selectedText}' }));
+			if (ctx.selectedText === undefined) throw new VariableError(t('ideTasks.var.noSelection', { variable }));
 			return ctx.selectedText;
 	}
-	const fileVars = ['file', 'fileWorkspaceFolder', 'fileWorkspaceFolderBasename', 'relativeFile', 'relativeFileDirname', 'fileBasename', 'fileBasenameNoExtension', 'fileDirname', 'fileExtname', 'fileDirnameBasename'];
-	if (fileVars.includes(name)) {
+	if (FILE_VARS.has(kind)) {
 		const file = ctx.file;
-		if (!file) throw new VariableError(t('ideTasks.var.noEditor', { variable: `\${${name}}` }));
-		const inside = file.startsWith(`${root}/`);
-		const rel = inside ? file.slice(root.length + 1) : file;
-		switch (name) {
+		if (!file) throw new VariableError(t('ideTasks.var.noEditor', { variable }));
+		// Relative to the variable's folder; unscoped in a workspace file's task, the file itself (VS Code).
+		const relative = () => {
+			const root = arg === undefined && !ctx.workspaceFolder ? null : folderPath();
+			return root !== null && file.startsWith(`${root}/`) ? file.slice(root.length + 1) : file;
+		};
+		// The root folder holding the file, whichever it is.
+		const fileFolder = () => {
+			const folder = ctx.folders?.length ? folderOf(file, ctx.folders)?.path : ctx.workspaceFolder && file.startsWith(`${ctx.workspaceFolder}/`) ? ctx.workspaceFolder : undefined;
+			if (!folder) throw new VariableError(t('ideTasks.var.notInFolder', { variable }));
+			return folder;
+		};
+		switch (kind) {
 			case 'file':
 				return file;
 			case 'fileWorkspaceFolder':
-				if (!inside) throw new VariableError(t('ideTasks.var.notInFolder', { variable: `\${${name}}` }));
-				return root;
+				return fileFolder();
 			case 'fileWorkspaceFolderBasename':
-				if (!inside) throw new VariableError(t('ideTasks.var.notInFolder', { variable: `\${${name}}` }));
-				return basename(root);
+				return basename(fileFolder());
 			case 'relativeFile':
-				return rel;
-			case 'relativeFileDirname':
+				return relative();
+			case 'relativeFileDirname': {
+				const rel = relative();
 				return rel.includes('/') ? dirname(rel) : '.';
+			}
 			case 'fileBasename':
 				return basename(file);
 			case 'fileBasenameNoExtension':
@@ -134,7 +156,7 @@ export function variableValue(name: string, ctx: VariableContext, resolved: Read
 				return basename(dirname(file));
 		}
 	}
-	throw new VariableError(t('ideTasks.var.unknown', { variable: `\${${name}}` }));
+	throw new VariableError(t('ideTasks.var.unknown', { variable }));
 }
 
 /** Replaces every `${…}` in the strings of `value` (keys untouched). */

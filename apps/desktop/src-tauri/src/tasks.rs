@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use tauri::AppHandle;
 
-use crate::i18n::msg::IdeTasksMsg;
+use crate::i18n::msg::{FilesMsg, IdeTasksMsg, WorkspaceMsg};
 use crate::snap::{TRUST_FILE, TrustData, set_script_trust, sha256_hex};
 use crate::tr;
 use crate::workspace::Workspace;
@@ -138,19 +138,28 @@ pub fn set_trust(config_dir: &Path, root: &Path, expected: Option<&str>) -> Resu
   set_script_trust(config_dir, root, TRUST_KEY, Some(expected))
 }
 
-/// `.vscode/tasks.json` of the open folder, with its trust (no folder: no file).
+/// The root folder a tasks command names: `folder` (one of the window's root folders, as the
+/// webview has it from `workspace_folders`), else the first one.
+pub fn pick_root(roots: &[PathBuf], folder: Option<&str>) -> Result<Option<PathBuf>, String> {
+  match folder.filter(|f| !f.is_empty()) {
+    None => Ok(roots.first().cloned()),
+    Some(f) => roots.iter().find(|r| r.as_path() == Path::new(f)).cloned().map(Some).ok_or_else(|| tr!(WorkspaceMsg::NotARootFolder, path = f)),
+  }
+}
+
+/// `.vscode/tasks.json` of a root folder (`folder`, else the first), with its trust (no folder: no file).
 #[tauri::command]
-pub fn tasks_file(app: AppHandle, ws: Workspace) -> Result<TasksFile, String> {
-  let Some(root) = ws.current() else {
+pub fn tasks_file(app: AppHandle, ws: Workspace, folder: Option<String>) -> Result<TasksFile, String> {
+  let Some(root) = pick_root(&ws.roots(), folder.as_deref())? else {
     return Ok(TasksFile { text: None, hash: None, trusted: false });
   };
   status(&root, &TrustData::load(&crate::snap::config_dir(&app)?.join(TRUST_FILE)))
 }
 
-/// Allows (with the hash that was shown) or disallows the folder's automatic tasks.
+/// Allows (with the hash that was shown) or disallows a root folder's automatic tasks.
 #[tauri::command]
-pub fn tasks_trust(app: AppHandle, ws: Workspace, hash: Option<String>) -> Result<(), String> {
-  let root = ws.root()?;
+pub fn tasks_trust(app: AppHandle, ws: Workspace, hash: Option<String>, folder: Option<String>) -> Result<(), String> {
+  let root = pick_root(&ws.roots(), folder.as_deref())?.ok_or_else(|| tr!(FilesMsg::NoFolder))?;
   set_trust(&crate::snap::config_dir(&app)?, &root, hash.as_deref())?;
   log::info!("tasks.json automatic tasks: trusted = {} in {}", hash.is_some(), root.display());
   Ok(())
@@ -219,6 +228,19 @@ mod tests {
     assert!(task_cwd(&l, PathBuf::from("/")).is_err());
     l.cwd = Some(tmp.path().join("missing").display().to_string());
     assert!(task_cwd(&l, PathBuf::from("/")).is_err());
+  }
+
+  #[test]
+  fn a_tasks_command_picks_one_of_the_root_folders() {
+    let roots = [PathBuf::from("/w/app"), PathBuf::from("/w/lib")];
+    assert_eq!(pick_root(&roots, None).unwrap(), Some(PathBuf::from("/w/app")));
+    assert_eq!(pick_root(&roots, Some("")).unwrap(), Some(PathBuf::from("/w/app")));
+    assert_eq!(pick_root(&roots, Some("/w/lib")).unwrap(), Some(PathBuf::from("/w/lib")));
+    // Only a root folder itself: not a folder inside one, not one elsewhere.
+    assert!(pick_root(&roots, Some("/w/lib/src")).is_err());
+    assert!(pick_root(&roots, Some("/etc")).is_err());
+    assert_eq!(pick_root(&[], None).unwrap(), None);
+    assert!(pick_root(&[], Some("/w/app")).is_err());
   }
 
   #[test]

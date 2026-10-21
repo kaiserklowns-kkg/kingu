@@ -7,7 +7,7 @@
 
 import type * as Monaco from 'monaco-editor';
 import type { LanguageClient, RefreshKind } from './client';
-import { toLspPosition, toLspRange, toMonacoRange, toMonacoTextEdits, toTargets } from './convert';
+import { modelPathOf, toLspPosition, toLspRange, toMonacoRange, toMonacoTextEdits, toTargets } from './convert';
 import {
 	applySemanticTokensEdits,
 	restyleSemanticTokens,
@@ -316,11 +316,11 @@ export function registerFeatureProviders(ctx: FeatureContext) {
 
 		if (caps.documentLinkProvider) {
 			const origin = new WeakMap<Monaco.languages.ILink, { client: LanguageClient; link: DocumentLink }>();
-			// Workspace files open as tabs (the editor opener takes `/rel` paths); other targets stay URLs.
+			// Workspace files open as tabs (the editor opener takes model paths: `/rel`, or absolute in another root folder); other targets stay URLs.
 			const target = (url: string | undefined) => {
 				if (!url) return undefined;
 				const rel = url.startsWith('file:') ? ctx.relOf(url.replace(/#.*$/, '')) : null;
-				return rel !== null ? monaco.Uri.file('/' + rel).with({ fragment: /#(.*)$/.exec(url)?.[1] ?? '' }) : url;
+				return rel !== null ? monaco.Uri.file(modelPathOf(rel)).with({ fragment: /#(.*)$/.exec(url)?.[1] ?? '' }) : url;
 			};
 			add(
 				monaco.languages.registerLinkProvider(language, {

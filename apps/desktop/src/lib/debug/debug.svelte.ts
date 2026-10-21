@@ -517,11 +517,13 @@ class Debug {
 	 * per launch, in order (VS Code: configurationResolver.resolveWithInteractionReplace).
 	 */
 	async #prepare(raw: LaunchConfig, generated?: Generated): Promise<LaunchConfig | undefined> {
-		const root = this.root;
+		// Multi-root: the configuration's own folder (a workspace file's has none: ${workspaceFolder} must name one).
+		const folder = this.#folderOfConfig(raw);
+		const root = folder ?? this.root;
 		let config = raw;
 		try {
 			const used = collectVariables(config);
-			const ctx = await tasks.variableContext(root, used.has('defaultBuildTask'));
+			const ctx = await tasks.variableContext(folder, used.has('defaultBuildTask'));
 			ctx.env = await this.#env(config);
 			const answers = await resolveInputs(used, this.#launchInputs, ctx, inputPrompter());
 			if (!answers) return undefined;
@@ -536,12 +538,15 @@ class Debug {
 			notifications.error(e instanceof Error ? e.message : String(e));
 			return undefined;
 		}
-		return resolveJsDebug(config, root);
+		const prepared = resolveJsDebug(config, root);
+		// Its preLaunchTask / postDebugTask resolve in the same folder.
+		this.#configFolder.set(prepared, folder);
+		return prepared;
 	}
 
 	/** A compound: its preLaunchTask once, then each configuration (VS Code: debugService.startDebugging for a compound). */
 	async #startCompound(compound: LaunchCompound, configs: LaunchConfig[], noDebug: boolean) {
-		if (compound.preLaunchTask && !(await this.#runPreLaunchTask(compound.preLaunchTask as TaskRef))) return;
+		if (compound.preLaunchTask && !(await this.#runPreLaunchTask(compound.preLaunchTask as TaskRef, this.#folderOfConfig(compound)))) return;
 		const group = compound.stopAll ? this.#nextGroup++ : undefined;
 		for (const c of configs) {
 			const config = await this.#prepare(c);
@@ -556,21 +561,52 @@ class Debug {
 		return invoke<Record<string, string>>('debug_env', { names }).catch(() => ({}));
 	}
 
+	/** The root folder (absolute) a configuration came from; a `.code-workspace` file's has none. */
+	#configFolder = new WeakMap<object, string | undefined>();
+	/** Every root folder's name by path, for the picker (multi-root only). */
+	#folderNames = new Map<string, string>();
+
+	/** The folder a configuration's variables, defaults and preLaunchTask use (its launch.json's; the first folder for one made here). */
+	#folderOfConfig(config: object): string | undefined {
+		return this.#configFolder.has(config) ? this.#configFolder.get(config) : this.root || undefined;
+	}
+
+	/** Every root folder's launch files, then the `.code-workspace` file's `launch` (VS Code multi-root). */
 	async #readLaunchFiles(): Promise<{ configs: LaunchConfig[]; compounds: LaunchCompound[] }> {
 		const configs: LaunchConfig[] = [];
 		const compounds: LaunchCompound[] = [];
 		const inputs: InputDef[] = [];
-		for (const rel of LAUNCH_FILES) {
-			const text = await invoke<string>('read_workspace_file', { rel }).catch(() => null);
-			if (text === null) continue;
-			const parsed = parseLaunchJson(text, rel);
+		const folders = await tasks.folders();
+		const multi = folders.length > 1;
+		this.#folderNames = new Map(multi ? folders.map((f) => [f.path, f.name]) : []);
+		const add = (text: string, source: string, folder: string | undefined) => {
+			const parsed = parseLaunchJson(text, source);
 			if (parsed.error) status.flash(parsed.error);
+			for (const c of parsed.configs) this.#configFolder.set(c, folder);
+			for (const c of parsed.compounds) this.#configFolder.set(c, folder);
 			configs.push(...parsed.configs);
 			compounds.push(...parsed.compounds);
 			inputs.push(...parsed.inputs.filter((i) => !inputs.some((x) => x.id === i.id)));
+		};
+		for (const [i, folder] of folders.entries()) {
+			for (const rel of LAUNCH_FILES) {
+				// The first folder's files are relative; another root folder's absolute (workspaceFolders.ts).
+				const key = i === 0 ? rel : `${folder.path}/${rel}`;
+				const text = await invoke<string>('read_workspace_file', { rel: key }).catch(() => null);
+				if (text !== null) add(text, multi ? `${folder.name}/${rel}` : rel, folder.path);
+			}
 		}
+		const section = await tasks.workspaceSection('launch');
+		if (section) add(section.text, section.name, undefined);
 		this.#launchInputs = inputs;
 		return { configs, compounds };
+	}
+
+	/** A picker row's description: the configuration's folder in a multi-root workspace (VS Code), then `what`. */
+	#describe(config: object, what: string): string {
+		if (!this.#folderNames.size) return what;
+		const folder = this.#configFolder.get(config);
+		return `${folder === undefined ? t('ideTasks.pick.workspace') : (this.#folderNames.get(folder) ?? folder)} · ${what}`;
 	}
 
 	async #pickConfig(always = false): Promise<Picked | undefined> {
@@ -581,8 +617,8 @@ class Debug {
 		if (total > 0) {
 			const last = load(lastKey);
 			const items = [
-				...configs.map((c, i) => ({ id: `c${i}`, label: c.name, description: c.type })),
-				...compounds.map((c, i) => ({ id: `k${i}`, label: c.name, description: t('debugger.compound') }))
+				...configs.map((c, i) => ({ id: `c${i}`, label: c.name, description: this.#describe(c, c.type) })),
+				...compounds.map((c, i) => ({ id: `k${i}`, label: c.name, description: this.#describe(c, t('debugger.compound')) }))
 			];
 			const item = await quick.choose({ placeholder: t('tools.debug.pickConfig'), items, activeId: items.find((i) => i.label === last)?.id ?? items[0].id });
 			if (!item) return;
@@ -639,7 +675,7 @@ class Debug {
 		// VS Code's DebugTaskRunner: the preLaunchTask runs (a background one until its watcher is idle) before the adapter starts.
 		if (config.preLaunchTask && !parent) {
 			out('console', t('ideTasks.debug.running', { task: taskName(config.preLaunchTask) }));
-			if (!(await this.#runPreLaunchTask(config.preLaunchTask as TaskRef))) {
+			if (!(await this.#runPreLaunchTask(config.preLaunchTask as TaskRef, this.#folderOfConfig(config)))) {
 				if (this.focusedKey === null) this.model = { ...model, state: 'terminated' };
 				return;
 			}
@@ -754,7 +790,7 @@ class Debug {
 	}
 
 	/** VS Code's runTaskAndCheckErrors: true when debugging may start. */
-	async #runPreLaunchTask(ref: TaskRef): Promise<boolean> {
+	async #runPreLaunchTask(ref: TaskRef, folder: string | undefined): Promise<boolean> {
 		const name = taskName(ref);
 		const debugAnyway = t('ideTasks.debug.debugAnyway');
 		const configure = t('ideTasks.debug.configureTask');
@@ -763,7 +799,7 @@ class Debug {
 			if (answer === configure) await tasks.configure(task ?? 'template');
 			return answer === debugAnyway;
 		};
-		const { task } = await tasks.find(ref);
+		const { task } = await tasks.find(ref, { folder });
 		if (!task) return failed(t('ideTasks.debug.notFound', { task: name }));
 		const run = tasks.run(task, { untilInactive: true });
 		// debug.hideSlowPreLaunchWarning: after a while (5 s for a background task, else 10 s) a
@@ -822,7 +858,7 @@ class Debug {
 		if (!ref || active.postDone || active.parent) return;
 		active.postDone = true;
 		this.#sessionOutput(active, 'console', t('ideTasks.debug.postRunning', { task: taskName(ref) }));
-		void tasks.find(ref as TaskRef).then(({ task }) => {
+		void tasks.find(ref as TaskRef, { folder: this.#folderOfConfig(active.config) }).then(({ task }) => {
 			if (task) void tasks.run(task);
 			else notifications.error(t('ideTasks.debug.notFound', { task: taskName(ref) }));
 		});

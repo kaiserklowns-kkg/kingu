@@ -4,7 +4,8 @@
 // dedicated, new, presentation.group splits), feeds the output to its problem matchers (the
 // Problems panel, by matcher owner, replaced per run) and reports when it ends or, for a
 // background task, when its watcher goes idle. Automatic tasks (runOn folderOpen) run only when
-// the tasks.json they come from is trusted (tasks.rs).
+// the tasks.json they come from is trusted (tasks.rs). A multi-root workspace has every root
+// folder's tasks (and the `.code-workspace` file's), each resolved in its own folder (folders.ts).
 
 import { invoke } from '@tauri-apps/api/core';
 import { SvelteMap } from 'svelte/reactivity';
@@ -25,19 +26,24 @@ import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
 import { isDiffKey } from '#lib/workbench/scm.ts';
 import { isUntitled } from '#lib/workbench/untitled.ts';
-import type { WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
+import { externalKey } from '#lib/workbench/externalFiles.ts';
+import { keyForPath, type WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
+import { workspaceName } from '#lib/workbench/workspaceFile.ts';
 import { taskLaunch } from './commandLine.ts';
 import { runTask, type Execution, type GraphHost, type Summary } from './dependencies.ts';
 import { detectTasks, packageManagerFor, taskFromDefinition } from './detect.ts';
+import { filesInFolder, findTaskFrom, folderKey, scopeTasks, taskCwd, taskFolder, workspaceFileSection } from './folders.ts';
 import { namedMatcher, parseProblemMatchers, resolveMatcher, type FileHost, type Marker } from './problemMatcher.ts';
 import { StartStopCollector, WatchingCollector, type MarkerStore } from './problemCollector.ts';
-import { findTask, groupTasks, mergeTasks, parseTasksJson, platformOf, type InputDef, type Task, type TaskRef } from './taskConfig.ts';
+import { groupTasks, mergeTasks, parseTasksJson, platformOf, type InputDef, type Task, type TaskRef } from './taskConfig.ts';
 import { formatMessageForTerminal, TaskOutput } from './taskOutput.ts';
 import { configureText, customizeText, setDefaultGroupText, TASKS_PATH, TEMPLATE } from './tasksFile.ts';
 import { inputPrompter } from './inputPrompter.svelte.ts';
 import { collectVariables, resolveInputs, substitute, VariableError, type VariableContext } from './variables.ts';
 
 type TasksFileInfo = { text: string | null; hash: string | null; trusted: boolean };
+/** Every root folder's tasks.json, by the folder's path. */
+export type TasksFiles = Map<string, TasksFileInfo>;
 
 /** A task that runs now. */
 export type ActiveTask = {
@@ -60,8 +66,9 @@ const LOG_LIMIT = 2000;
 const DELIVERY_MS = 3000;
 
 const taskKey = (task: Task) => task.id;
-/** Another root folder's file (multi-root) is absolute already. */
+/** A workbench path on disk: relative ones are in the first folder, another root folder's are absolute already. */
 const absolute = (root: string, rel: string) => (rel.startsWith('/') ? rel : `${root}/${rel}`);
+const NO_FILE: TasksFileInfo = { text: null, hash: null, trusted: false };
 
 /** A marker of task output as an LSP diagnostic for the Problems panel (0-based). */
 export function markerToDiagnostic(m: Marker): Diagnostic {
@@ -100,13 +107,32 @@ class Tasks {
 	#idleTerminals = new Map<string, number>();
 	#files: Promise<Set<string>> | null = null;
 	#autoRan = new Set<string>();
+	/** The window's root folders and `.code-workspace` file (taskCommands keeps them current); null until set. */
+	#folders: WorkspaceFolder[] | null = null;
+	#workspaceFile: string | null = null;
 
 	// --- Folder ------------------------------------------------------------------------------------
 
+	/** The first root folder (what a single-folder window has; relative workbench paths are in it). */
 	async root(): Promise<string> {
 		if (!this.#root) this.#root = await invoke<{ workspace: string }>('app_info').then((i) => i.workspace ?? '').catch(() => '');
 		if (this.#root) lsp.setRoot(this.#root);
 		return this.#root;
+	}
+
+	/** The workspace's folders changed (Add Folder, Remove Folder) or its `.code-workspace` file. */
+	setScope(folders: readonly WorkspaceFolder[], workspaceFile: string | null) {
+		this.#folders = [...folders];
+		this.#workspaceFile = workspaceFile;
+		this.#files = null;
+	}
+
+	/** Every root folder, the first one first. */
+	async folders(): Promise<WorkspaceFolder[]> {
+		if (this.#folders) return this.#folders;
+		const root = await this.root();
+		const listed = await workspaceFolders();
+		return listed.length ? listed : root ? [{ path: root, name: root.slice(root.lastIndexOf('/') + 1) }] : [];
 	}
 
 	/** Another folder opened: running tasks keep their terminals, but this folder's state starts over. */
@@ -134,9 +160,10 @@ class Tasks {
 		}
 	}
 
+	/** By id (another folder's task of the same label is another task); older entries are labels. */
 	#remember(task: Task) {
 		const limit = Math.max(0, settings.get<number>('task.quickOpen.history'));
-		this.recent = [task.label, ...this.recent.filter((l) => l !== task.label)].slice(0, limit);
+		this.recent = [task.id, ...this.recent.filter((l) => l !== task.id)].slice(0, limit);
 		try {
 			localStorage.setItem(this.#recentKey(), JSON.stringify(this.recent));
 		} catch {
@@ -153,7 +180,7 @@ class Tasks {
 		output.show(TASKS_CHANNEL);
 	}
 
-	/** Workspace-relative paths of the folder's files (detection, autoDetect file locations). */
+	/** Workbench paths of every root folder's files (detection, autoDetect file locations). */
 	#fileSet(): Promise<Set<string>> {
 		this.#files ??= invoke<string[]>('fs_list_files')
 			.then((l) => new Set(l))
@@ -168,38 +195,85 @@ class Tasks {
 
 	// --- Reading tasks -----------------------------------------------------------------------------
 
-	async #tasksFile(): Promise<TasksFileInfo> {
-		return invoke<TasksFileInfo>('tasks_file').catch((e) => {
+	async #tasksFile(folder: string): Promise<TasksFileInfo> {
+		return invoke<TasksFileInfo>('tasks_file', { folder }).catch((e) => {
 			this.#append(String(e));
-			return { text: null, hash: null, trusted: false };
+			return NO_FILE;
 		});
 	}
 
-	/** Every task of the folder: tasks.json's, then the detected ones (task.autoDetect). */
-	async getTasks(opts: { quiet?: boolean } = {}): Promise<{ tasks: Task[]; inputs: InputDef[]; file: TasksFileInfo }> {
+	/** The `.code-workspace` file's text, or null (none, or unreadable). */
+	async #workspaceFileText(): Promise<string | null> {
+		const file = this.#workspaceFile;
+		if (!file) return null;
+		return invoke<string>('workspace_file_read', { path: file }).catch((e) => {
+			this.#append(String(e));
+			return null;
+		});
+	}
+
+	/** The `.code-workspace` file's `launch` (or `tasks`) as launch.json (tasks.json) text, and the file's name; null without one. */
+	async workspaceSection(key: 'tasks' | 'launch'): Promise<{ text: string; name: string } | null> {
+		const text = await this.#workspaceFileText();
+		const section = text === null ? null : workspaceFileSection(text, key);
+		return section === null ? null : { text: section, name: workspaceName(this.#workspaceFile ?? '') };
+	}
+
+	/**
+	 * Every task of the workspace: each root folder's tasks.json and detected tasks (task.autoDetect),
+	 * then the `.code-workspace` file's `tasks` (VS Code's workspace-scoped tasks). `file` is the
+	 * first folder's tasks.json, `files` every folder's.
+	 */
+	async getTasks(opts: { quiet?: boolean } = {}): Promise<{ tasks: Task[]; inputs: InputDef[]; file: TasksFileInfo; files: TasksFiles }> {
 		const root = await this.root();
-		const file = await this.#tasksFile();
-		const parsed = parseTasksJson(file.text ?? '', platformOf(shellPlatform()));
-		const files = root ? await this.#fileSet() : new Set<string>();
-		const rootFiles = new Set([...files].filter((f) => !f.includes('/')));
-		const detected =
-			root && settings.get<string>('task.autoDetect') !== 'off'
-				? await detectTasks({ files, read: (rel) => invoke<string>('read_workspace_file', { rel }).catch(() => null) }).catch((e) => {
-						this.#append(String(e));
-						return [];
-					})
-				: [];
-		const { tasks, errors } = mergeTasks(parsed, detected, (d) => taskFromDefinition(d, packageManagerFor(rootFiles)));
+		const folders = await this.folders();
+		const platform = platformOf(shellPlatform());
+		const all = root ? await this.#fileSet() : new Set<string>();
+		const multi = folders.length > 1;
+		const out: Task[] = [];
+		const inputs: InputDef[] = [];
+		const files: TasksFiles = new Map();
+		const errors: string[] = [];
+		const addInputs = (list: InputDef[]) => inputs.push(...list.filter((i) => !inputs.some((x) => x.id === i.id)));
+		for (const [i, folder] of folders.entries()) {
+			const file = await this.#tasksFile(folder.path);
+			files.set(folder.path, file);
+			const parsed = parseTasksJson(file.text ?? '', platform, multi ? `${folder.name}/${TASKS_PATH}` : TASKS_PATH);
+			const own = filesInFolder(all, folder, folders);
+			const rootFiles = new Set([...own].filter((f) => !f.includes('/')));
+			const detected =
+				settings.get<string>('task.autoDetect') !== 'off'
+					? await detectTasks({ files: own, read: (rel) => invoke<string>('read_workspace_file', { rel: folderKey(rel, folder, folders) }).catch(() => null) }).catch((e) => {
+							this.#append(String(e));
+							return [];
+						})
+					: [];
+			const merged = mergeTasks(parsed, detected, (d) => taskFromDefinition(d, packageManagerFor(rootFiles)));
+			errors.push(...merged.errors);
+			out.push(...scopeTasks(merged.tasks, folder, i === 0));
+			addInputs(parsed.inputs);
+		}
+		const text = await this.#workspaceFileText();
+		const section = text === null ? null : workspaceFileSection(text, 'tasks');
+		if (section !== null) {
+			const parsed = parseTasksJson(section, platform, workspaceName(this.#workspaceFile ?? ''));
+			const merged = mergeTasks(parsed, [], () => null);
+			errors.push(...merged.errors);
+			out.push(...scopeTasks(merged.tasks, null, false));
+			addInputs(parsed.inputs);
+		}
 		if (errors.length && !opts.quiet) {
 			errors.forEach((e) => this.#append(e));
 			notifications.warn(t('ideTasks.loadErrors'), { actions: [{ label: t('ideTasks.showOutput'), run: () => this.showLog() }] });
 		}
-		return { tasks: tasks.filter((x) => x.command !== undefined || x.dependsOn.length), inputs: parsed.inputs, file };
+		const first = folders[0] ? (files.get(folders[0].path) ?? NO_FILE) : NO_FILE;
+		return { tasks: out.filter((x) => x.command !== undefined || x.dependsOn.length), inputs, file: first, files };
 	}
 
-	async find(ref: TaskRef): Promise<{ task: Task | undefined; tasks: Task[]; inputs: InputDef[] }> {
+	/** A task by reference; `from` (a task or a launch configuration's folder) prefers its own folder's. */
+	async find(ref: TaskRef, from?: { folder?: string }): Promise<{ task: Task | undefined; tasks: Task[]; inputs: InputDef[] }> {
 		const { tasks, inputs } = await this.getTasks({ quiet: true });
-		return { task: findTask(tasks, ref), tasks, inputs };
+		return { task: findTaskFrom(tasks, ref, from), tasks, inputs };
 	}
 
 	// --- Running -----------------------------------------------------------------------------------
@@ -271,7 +345,7 @@ class Tasks {
 			sequence: (x) => x.dependsOrder === 'sequence',
 			isBackground: (x) => x.isBackground,
 			hasCommand: (x) => x.command !== undefined,
-			resolve: (ref) => findTask(tasks, ref),
+			resolve: (ref, from) => findTaskFrom(tasks, ref, from),
 			running: (x) => this.active.get(taskKey(x))?.execution,
 			log: (m) => {
 				this.#append(m);
@@ -322,20 +396,22 @@ class Tasks {
 		return { ...task, problemMatcher: [picked.id], isBackground: matcher?.watching ? true : task.isBackground };
 	}
 
-	/** The variables of the active editor and workspace, for launch.json (shares tasks.json's resolver).
-	 * The task list (detection reads files) is loaded only for `${defaultBuildTask}`. */
-	async variableContext(root: string, withTasks: boolean): Promise<VariableContext> {
+	/** The variables of the active editor and workspace, for launch.json (shares tasks.json's resolver);
+	 * `folder` is the launch configuration's (undefined for a workspace file's). The task list
+	 * (detection reads files) is loaded only for `${defaultBuildTask}`. */
+	async variableContext(folder: string | undefined, withTasks: boolean): Promise<VariableContext> {
 		const { tasks } = withTasks ? await this.getTasks({ quiet: true }).catch(() => ({ tasks: [] as Task[] })) : { tasks: [] as Task[] };
-		return this.#variableContext(root, tasks);
+		return this.#variableContext(folder, tasks);
 	}
 
-	async #variableContext(root: string, tasks: Task[]): Promise<VariableContext> {
+	async #variableContext(folder: string | undefined, tasks: Task[]): Promise<VariableContext> {
 		const active = editors.active;
-		const file = active && !isDiffKey(active) && !active.includes('://') && !isUntitled(active) ? absolute(root, active) : undefined;
+		const first = await this.root();
+		const file = active && !isDiffKey(active) && !active.includes('://') && !isUntitled(active) ? absolute(first, active) : undefined;
 		const build = groupTasks(tasks, 'build', active ?? undefined).defaults[0];
 		return {
-			workspaceFolder: root,
-			folders: await workspaceFolders(),
+			workspaceFolder: folder,
+			folders: await this.folders(),
 			file,
 			lineNumber: file ? editors.cursor.line : undefined,
 			columnNumber: file ? editors.cursor.column : undefined,
@@ -373,8 +449,11 @@ class Tasks {
 
 	async #start(task: Task, root: string, tasks: Task[], inputs: InputDef[], resolved: Map<string, string>, execution: Execution, finish: (s: Summary) => void, idle: (s: Summary) => void) {
 		await this.#terminalsReady();
-		// Variables: inputs are asked once per run (shared with the task's dependencies).
-		const ctx = await this.#variableContext(root, tasks);
+		// Variables: inputs are asked once per run (shared with the task's dependencies). They
+		// resolve in the task's own folder (multi-root: each folder's tasks.json).
+		const folders = await this.folders();
+		const folder = taskFolder(task, folders)?.path;
+		const ctx = await this.#variableContext(folder, tasks);
 		const used = collectVariables([task.command, task.args, task.options, task.problemMatcher]);
 		ctx.env = await this.#env([...used].filter((v) => v.startsWith('env:')).map((v) => v.slice(4)));
 		const answers = await resolveInputs(
@@ -388,9 +467,10 @@ class Tasks {
 		const command = substitute(task.command!, ctx, resolved);
 		const args = substitute(task.args, ctx, resolved);
 		const options = substitute(task.options, ctx, resolved);
-		const cwd = options.cwd ? (options.cwd.startsWith('/') ? options.cwd : `${root}/${options.cwd}`) : root;
+		const cwd = taskCwd(options.cwd, folder, folders);
 		const matcherErrors: string[] = [];
-		const vars = (s: string) => substitute(s, { ...ctx, workspaceFolder: root }, resolved);
+		// A matcher's `${workspaceFolder}` file prefix: a workspace file's task reports against the first folder.
+		const vars = (s: string) => substitute(s, { ...ctx, workspaceFolder: folder ?? root }, resolved);
 		const matchers = parseProblemMatchers(task.problemMatcher, matcherErrors).map((m) => resolveMatcher(m, vars));
 		if (matcherErrors.length) {
 			matcherErrors.forEach((e) => this.#append(e));
@@ -450,8 +530,8 @@ class Tasks {
 		// Problem matching on the output.
 		const host: FileHost = {
 			exists: async (path) => {
-				if (!path.startsWith(`${root}/`)) return false;
-				return (await this.#fileSet()).has(path.slice(root.length + 1));
+				const key = keyForPath(path, folders);
+				return !!key && (await this.#fileSet()).has(key);
 			}
 		};
 		const watching = task.isBackground ? new WatchingCollector(matchers, markerStore, host) : null;
@@ -603,9 +683,10 @@ class Tasks {
 
 	/** Rerun Last Task. */
 	async rerun(): Promise<boolean> {
-		if (!this.#lastTask) return false;
-		const { task } = await this.find(this.#lastTask.label);
-		await this.run(task ?? this.#lastTask, { rerun: true });
+		const last = this.#lastTask;
+		if (!last) return false;
+		const { tasks } = await this.getTasks({ quiet: true });
+		await this.run(tasks.find((x) => x.id === last.id) ?? last, { rerun: true });
 		return true;
 	}
 
@@ -626,36 +707,77 @@ class Tasks {
 
 	// --- tasks.json ----------------------------------------------------------------------------------
 
-	async #writeTasksFile(text: string, open = true) {
-		await invoke('fs_create_dir', { rel: '.vscode' }).catch(() => {});
-		await invoke('fs_write_file', { rel: TASKS_PATH, content: text });
-		if (open) editors.open(TASKS_PATH, { preview: false });
+	/** The folder a task's tasks.json is in; a workspace file's task, or `template`, asks when there are several (VS Code). */
+	async #folderFor(task: Task | 'template'): Promise<WorkspaceFolder | undefined> {
+		const folders = await this.folders();
+		if (task !== 'template' && task.folder !== undefined) return taskFolder(task, folders);
+		if (folders.length < 2) return folders[0];
+		const picked = await quick.choose({ placeholder: t('ideTasks.pick.folder'), items: folders.map((f) => ({ id: f.path, label: f.name, description: f.path })) });
+		return picked ? folders.find((f) => f.path === picked.id) : undefined;
+	}
+
+	/** The workbench path of `folder`'s tasks.json. */
+	async #tasksPath(folder: WorkspaceFolder): Promise<string> {
+		return folderKey(TASKS_PATH, folder, await this.folders());
+	}
+
+	async #writeTasksFile(folder: WorkspaceFolder, text: string, open = true) {
+		const folders = await this.folders();
+		await invoke('fs_create_dir', { rel: folderKey('.vscode', folder, folders) }).catch(() => {});
+		const path = folderKey(TASKS_PATH, folder, folders);
+		// fs_write_file saves over an existing file only.
+		await invoke('fs_create_file', { rel: path }).catch(() => {});
+		await invoke('fs_write_file', { rel: path, content: text });
+		if (open) editors.open(path, { preview: false });
+	}
+
+	/** A `.code-workspace` file's task is edited in the workspace file itself. */
+	#openWorkspaceFile(): boolean {
+		if (!this.#workspaceFile) return false;
+		editors.open(externalKey(this.#workspaceFile), { preview: false });
+		return true;
+	}
+
+	async #fileOf(folder: WorkspaceFolder): Promise<TasksFileInfo> {
+		const { files } = await this.getTasks({ quiet: true });
+		return files.get(folder.path) ?? NO_FILE;
 	}
 
 	async #customize(task: Task, props: Record<string, unknown>) {
-		const { file } = await this.getTasks({ quiet: true });
-		await this.#writeTasksFile(customizeText(file.text, task, props), false).catch((e) => notifications.error(e));
+		if (task.folder === undefined) return;
+		const folder = await this.#folderFor(task);
+		if (!folder) return;
+		const file = await this.#fileOf(folder);
+		await this.#writeTasksFile(folder, customizeText(file.text, task, props), false).catch((e) => notifications.error(e));
 	}
 
 	/** Configure Task: tasks.json with the task's entry (from the template when there is none). */
 	async configure(task: Task | 'template') {
-		const { file } = await this.getTasks({ quiet: true });
+		if (task !== 'template' && task.folder === undefined && this.#openWorkspaceFile()) return;
+		const folder = await this.#folderFor(task);
+		if (!folder) return;
+		const file = await this.#fileOf(folder);
 		const text = task === 'template' ? (file.text ?? TEMPLATE) : configureText(file.text, task);
-		if (text !== file.text) await this.#writeTasksFile(text).catch((e) => notifications.error(e));
-		else editors.open(TASKS_PATH, { preview: false });
+		if (text !== file.text) await this.#writeTasksFile(folder, text).catch((e) => notifications.error(e));
+		else editors.open(await this.#tasksPath(folder), { preview: false });
 	}
 
 	/** Configure Default Build / Test Task. */
 	async setDefault(task: Task, kind: 'build' | 'test') {
-		const { file } = await this.getTasks({ quiet: true });
-		await this.#writeTasksFile(setDefaultGroupText(file.text, task, kind)).catch((e) => notifications.error(e));
+		if (task.folder === undefined && this.#openWorkspaceFile()) return;
+		const folder = await this.#folderFor(task);
+		if (!folder) return;
+		const file = await this.#fileOf(folder);
+		await this.#writeTasksFile(folder, setDefaultGroupText(file.text, task, kind)).catch((e) => notifications.error(e));
 	}
 
-	/** Open Workspace Tasks: tasks.json (VS Code creates it from a template when it is missing). */
+	/** Open Workspace Tasks: tasks.json (VS Code creates it from a template when it is missing); a folder is asked for when there are several. */
 	async openTasksFile() {
-		const { file } = await this.getTasks({ quiet: true });
-		if (file.text === null) await this.configure('template');
-		else editors.open(TASKS_PATH, { preview: false });
+		const folder = await this.#folderFor('template');
+		if (!folder) return;
+		const file = await this.#fileOf(folder);
+		if (file.text === null) await this.#writeTasksFile(folder, TEMPLATE).catch((e) => notifications.error(e));
+		else editors.open(await this.#tasksPath(folder), { preview: false });
 	}
 
 	// --- Automatic tasks (runOptions.runOn: folderOpen) ---------------------------------------------
@@ -663,52 +785,64 @@ class Tasks {
 	/**
 	 * VS Code's RunAutomaticTasks: tasks with `runOn: folderOpen` run when the folder opens, unless
 	 * task.allowAutomaticTasks is off. They come with the repository, so the exact tasks.json must
-	 * be trusted first (asked once per content; Disallow is remembered for that content).
+	 * be trusted first (asked once per content; Disallow is remembered for that content). Each
+	 * root folder's tasks.json is trusted on its own; a folder added later runs its tasks then.
+	 * A `.code-workspace` file's tasks have no trust record, so they never run automatically.
 	 */
 	async runAutomatic() {
 		// VS Code: an explicit `off` in the user settings neither runs nor asks.
 		if (settings.get<string>('task.allowAutomaticTasks') === 'off' && settings.inspect('task.allowAutomaticTasks', 'user') !== undefined) return;
 		const root = await this.root();
-		if (!root || this.#autoRan.has(root)) return;
-		this.#autoRan.add(root);
-		const { tasks, file } = await this.getTasks({ quiet: true });
-		const auto = tasks.filter((x) => x.configured && x.runOptions.runOn === 'folderOpen');
-		if (!auto.length || !file.hash) return;
-		if (!file.trusted) {
-			const declinedKey = `kingu.tasks.autoDeclined:${root}`;
-			let declined: string | null = null;
-			try {
-				declined = localStorage.getItem(declinedKey);
-			} catch {
-				// No storage: ask every time.
-			}
-			if (declined === file.hash) return;
-			const allow = t('ideTasks.auto.allow');
-			const answer = await choose(t('ideTasks.auto.prompt', { tasks: auto.map((x) => x.label).join(', '), file: TASKS_PATH }), {
-				kind: 'warning',
-				buttons: [allow, t('ideTasks.auto.disallow')],
-				cancelId: 1
-			});
-			if (answer !== allow) {
-				try {
-					localStorage.setItem(declinedKey, file.hash);
-				} catch {
-					// Asked again next time.
-				}
-				return;
-			}
-			try {
-				await invoke('tasks_trust', { hash: file.hash });
-			} catch (e) {
-				return notifications.error(e);
-			}
+		if (!root) return;
+		const folders = (await this.folders()).filter((f) => !this.#autoRan.has(f.path));
+		if (!folders.length) return;
+		folders.forEach((f) => this.#autoRan.add(f.path));
+		const { tasks, files } = await this.getTasks({ quiet: true });
+		for (const folder of folders) {
+			const file = files.get(folder.path) ?? NO_FILE;
+			const auto = tasks.filter((x) => x.folder === folder.path && x.configured && x.runOptions.runOn === 'folderOpen');
+			if (!auto.length || !file.hash) continue;
+			if (!file.trusted && !(await this.#allowAutomatic(folder, auto, file.hash, folders.length > 1 || (await this.folders()).length > 1))) continue;
+			for (const task of auto) void this.run(task);
 		}
-		for (const task of auto) void this.run(task);
 	}
 
-	/** Disallow Automatic Tasks (VS Code's Manage Automatic Tasks): forgets the trust. */
+	/** Asks to trust a folder's tasks.json for its automatic tasks; true once trusted. */
+	async #allowAutomatic(folder: WorkspaceFolder, auto: Task[], hash: string, multi: boolean): Promise<boolean> {
+		const declinedKey = `kingu.tasks.autoDeclined:${folder.path}`;
+		let declined: string | null = null;
+		try {
+			declined = localStorage.getItem(declinedKey);
+		} catch {
+			// No storage: ask every time.
+		}
+		if (declined === hash) return false;
+		const allow = t('ideTasks.auto.allow');
+		const answer = await choose(t('ideTasks.auto.prompt', { tasks: auto.map((x) => x.label).join(', '), file: multi ? `${folder.name}/${TASKS_PATH}` : TASKS_PATH }), {
+			kind: 'warning',
+			buttons: [allow, t('ideTasks.auto.disallow')],
+			cancelId: 1
+		});
+		if (answer !== allow) {
+			try {
+				localStorage.setItem(declinedKey, hash);
+			} catch {
+				// Asked again next time.
+			}
+			return false;
+		}
+		try {
+			await invoke('tasks_trust', { hash, folder: folder.path });
+			return true;
+		} catch (e) {
+			notifications.error(e);
+			return false;
+		}
+	}
+
+	/** Disallow Automatic Tasks (VS Code's Manage Automatic Tasks): forgets the trust of every root folder's tasks.json. */
 	async disallowAutomatic() {
-		await invoke('tasks_trust', { hash: null }).catch((e) => notifications.error(e));
+		for (const folder of await this.folders()) await invoke('tasks_trust', { hash: null, folder: folder.path }).catch((e) => notifications.error(e));
 	}
 }
 

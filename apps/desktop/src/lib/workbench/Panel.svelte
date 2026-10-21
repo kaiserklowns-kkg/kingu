@@ -7,6 +7,9 @@
 	import { leaves } from '#lib/terminal/paneLayout.ts';
 	import { focusTerminal } from '#lib/terminal/registry.ts';
 	import { showTabsList } from '#lib/terminal/behaviour.ts';
+	import { createTerminal } from '#lib/terminal/newTerminal.ts';
+	import { terminalFolderName } from '#lib/terminal/folders.ts';
+	import { workspace } from './workspace.svelte.ts';
 	import Icon, { type IconName } from './Icon.svelte';
 	import { editors } from './editors.svelte';
 	import { isMac, keyLabel } from './keys';
@@ -217,7 +220,7 @@
 				</button>
 			{/if}
 		{:else if layout.panelTab === 'terminal'}
-			<button aria-label="New Terminal" title="New Terminal" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => terminals.open()}>
+			<button aria-label="New Terminal" title="New Terminal" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => void createTerminal()}>
 				<Icon name="plus" size={16} />
 			</button>
 			<button aria-label="Split Terminal" title="Split Terminal ({splitKey})" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => terminals.split()}>
@@ -258,6 +261,7 @@
 												run={t.run}
 												task={t.task}
 												cwdFrom={t.cwdFrom}
+												folder={t.folder}
 												flavor="ide"
 												keyLabels={{ split: splitKey }}
 												onfocus={() => (terminals.active = t.id)}
@@ -280,6 +284,8 @@
 						{#each ids as id, i (id)}
 							{@const t = terminals.get(id)}
 							{#if t}
+								<!-- A multi-root window shows each terminal's folder (VS Code's tab description). -->
+								{@const folderName = terminalFolderName(t.folder, workspace.folders)}
 								<li>
 									<button
 										class={['group flex h-[22px] w-full items-center gap-1.5 px-2 text-left', t.id === terminals.active ? 'bg-(--vscode-list-inactiveSelectionBackground)' : 'hover:bg-(--vscode-list-hoverBackground)']}
@@ -288,7 +294,9 @@
 									>
 										{#if ids.length > 1}<span class="w-2 shrink-0 font-mono text-(--vscode-descriptionForeground)" aria-hidden="true">{i === 0 ? '┌' : i === ids.length - 1 ? '└' : '├'}</span>{/if}
 										<Icon name="terminal" size={14} />
-										<span class="min-w-0 flex-1 truncate" title={t.run?.join(' ') ?? t.title}>{t.title}</span>
+										<span class="min-w-0 flex-1 truncate" title={[t.run?.join(' ') ?? t.title, folderName].filter(Boolean).join('\n')}
+											>{t.title}{#if folderName}<span class="ml-1.5 text-xs text-(--vscode-descriptionForeground)">{folderName}</span>{/if}</span
+										>
 										<span
 											role="button"
 											tabindex="-1"

@@ -548,5 +548,58 @@ export const GIT_SETTINGS: SettingSchema[] = [
 		type: 'boolean',
 		default: true,
 		description: 'แสดง commit ล่าสุดของแต่ละ ref ในตัวเลือก branch (Controls whether to show the details of the last commit for Git refs in the checkout, branch, and tag pickers.)'
+	},
+	{
+		id: 'git.autoRepositoryDetection',
+		group: 'Git',
+		type: 'json',
+		schema: { type: ['boolean', 'string'], enum: [true, false, 'subFolders', 'openEditors'] },
+		default: true,
+		description: 'หา repository อัตโนมัติ: true หาทั้งในโฟลเดอร์ย่อยและจากไฟล์ที่เปิด, subFolders เฉพาะโฟลเดอร์ย่อย, openEditors เฉพาะไฟล์ที่เปิด, false ไม่หา (Configures when repositories should be automatically detected.)'
+	},
+	{
+		id: 'git.repositoryScanMaxDepth',
+		group: 'Git',
+		type: 'number',
+		default: 1,
+		minimum: -1,
+		description: 'จำนวนชั้นของโฟลเดอร์ย่อยที่หา repository -1 คือไม่จำกัด (Controls the depth used when scanning workspace folders for Git repositories when `#git.autoRepositoryDetection#` is set to `true` or `subFolders`. Can be set to `-1` for no limit.)'
+	},
+	{
+		id: 'git.repositoryScanIgnoredFolders',
+		group: 'Git',
+		type: 'array',
+		items: 'string',
+		default: ['node_modules'],
+		description: 'ชื่อโฟลเดอร์ที่ไม่เข้าไปหา repository (List of folders that are ignored while scanning for Git repositories when `#git.autoRepositoryDetection#` is set to `true` or `subFolders`.)'
+	},
+	{
+		id: 'git.scanRepositories',
+		group: 'Git',
+		type: 'array',
+		items: 'string',
+		default: [],
+		description: 'โฟลเดอร์เพิ่มเติมที่ให้หา repository (path เต็ม หรือนับจากโฟลเดอร์ใน workspace) (List of paths to search for Git repositories in.)'
+	},
+	{
+		id: 'git.ignoredRepositories',
+		group: 'Git',
+		type: 'array',
+		items: 'string',
+		default: [],
+		description: 'repository ที่ไม่ต้องเปิด (path เต็ม หรือนับจากโฟลเดอร์ใน workspace) (List of Git repositories to ignore.)'
+	},
+	{
+		id: 'git.openRepositoryInParentFolders',
+		group: 'Git',
+		type: 'string',
+		default: 'prompt',
+		enum: ['always', 'never', 'prompt'],
+		enumDescriptions: [
+			'เปิดทุกครั้ง (Always open a repository in parent folders of workspaces or open files.)',
+			'ไม่เปิด (Never open a repository in parent folders of workspaces or open files.)',
+			'ถามก่อนเปิด (Prompt before opening a repository the parent folders of workspaces or open files.)'
+		],
+		description: 'เปิด repository ที่อยู่ในโฟลเดอร์เหนือโฟลเดอร์ที่เปิดหรือไม่ (Control whether a repository in parent folders of workspaces or open files should be opened.)'
 	}
 ];

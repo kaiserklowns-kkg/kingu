@@ -335,7 +335,7 @@ export function attachQuickDiff(view: ScmView): QuickDiffHandle {
 			state.peek?.close();
 			lastPath = path;
 		}
-		if (!model || !isRepoFile(path) || mode === 'none' || !scm.repo) return clear();
+		if (!model || !isRepoFile(path) || mode === 'none' || !scm.repositoryOf(path)?.repo) return clear();
 		const original = versions.index(path);
 		if (original === undefined) return;
 		if (original === null) return clear();
@@ -494,17 +494,19 @@ function openChange() {
 export function installQuickDiffCommands(): () => void {
 	const K = QUICK_DIFF_KEYS;
 	const inFile = () => withState() !== null;
+	/** The active file is in one of the workspace's repositories. */
+	const inRepo = () => !!scm.repositoryOf(editors.active)?.repo;
 	// Below the chat edit and review keys on ⌥F5 (they are enabled only in their own files).
 	return [
 		commands.register({ ...K.next, when: inFile, weight: -1, run: () => showChange(1) }),
 		commands.register({ ...K.previous, when: inFile, weight: -1, run: () => showChange(-1) }),
 		commands.register({ ...K.nextChange, when: inFile, run: () => goToChange(1) }),
 		commands.register({ ...K.previousChange, when: inFile, run: () => goToChange(-1) }),
-		commands.register({ ...K.stageSelected, when: () => inFile() && scm.repo !== null, run: () => stageSelected() }),
-		commands.register({ ...K.revertSelected, when: () => inFile() && scm.repo !== null, run: () => revertSelected() }),
-		commands.register({ ...K.unstageSelected, when: () => scm.repo !== null && (inFile() || [...indexDiffViews].some((v) => v.key() === editors.active)), run: () => unstageSelected() }),
+		commands.register({ ...K.stageSelected, when: () => inFile() && inRepo(), run: () => stageSelected() }),
+		commands.register({ ...K.revertSelected, when: () => inFile() && inRepo(), run: () => revertSelected() }),
+		commands.register({ ...K.unstageSelected, when: () => scm.repositories.length > 0 && (inFile() || [...indexDiffViews].some((v) => v.key() === editors.active)), run: () => unstageSelected() }),
 		commands.register({ id: 'git.stageChange', title: 'Git: Stage Change', palette: false, run: () => { const at = withState(); if (at?.state.peek) stagePeek(at.view); } }),
 		commands.register({ id: 'git.revertChange', title: 'Git: Revert Change', palette: false, run: () => { const at = withState(); if (at?.state.peek) revertPeek(at.view); } }),
-		commands.register({ id: 'git.openChange', title: 'Git: Open Changes', when: () => scm.repo !== null && isRepoFile(editors.active), run: openChange })
+		commands.register({ id: 'git.openChange', title: 'Git: Open Changes', when: () => isRepoFile(editors.active) && inRepo(), run: openChange })
 	].reduce((all, u) => () => (all(), u()), () => {});
 }

@@ -87,8 +87,8 @@ class Timeline {
 	items = $derived.by((): TimelineItem[] => {
 		const out: TimelineItem[] = [];
 		const p = this.path;
-		const git = !this.excluded.includes('git') && scm.repo !== null;
-		const e = p && git ? scm.repo?.entries.find((x) => x.path === p) : undefined;
+		const git = !this.excluded.includes('git') && !!p && !!scm.repositoryOf(p)?.repo;
+		const e = p && git ? scm.entry(p) : undefined;
 		if (e && settings.get<boolean>('git.timeline.showUncommitted')) {
 			if (e.index && !e.conflict) out.push({ kind: 'staged' });
 			if (e.worktree && e.worktree !== '?') out.push({ kind: 'working' });
@@ -103,7 +103,8 @@ class Timeline {
 	/** Reads the first page again when the file or HEAD changed (or `force`). */
 	async refresh(force = false) {
 		const p = this.path;
-		const key = `${p}|${scm.repo?.head ?? ''}`;
+		const repo = scm.repositoryOf(p)?.repo ?? null;
+		const key = `${p}|${repo?.head ?? ''}`;
 		if (!force && key === this.#for) return;
 		this.#for = key;
 		const my = ++this.#seq;
@@ -114,7 +115,7 @@ class Timeline {
 		}
 		void localHistory.load(p);
 		// A file outside the folder has local history only.
-		if (!scm.repo || isExternalKey(p)) {
+		if (!repo || isExternalKey(p)) {
 			this.commits = [];
 			this.more = false;
 			return;
@@ -255,8 +256,7 @@ export function installTimeline(): () => void {
 			});
 		});
 		$effect(() => {
-			void timeline.path;
-			void scm.repo?.head;
+			void scm.repositoryOf(timeline.path)?.repo?.head;
 			if (timelineView.open) void timeline.refresh();
 		});
 		$effect(() => {
@@ -269,7 +269,7 @@ export function installTimeline(): () => void {
 		});
 	});
 	const off = [
-		commands.register({ id: 'git.viewFileHistory', title: 'Git: View File History', when: () => scm.repo !== null && timelineFile(editors.active) !== null, run: viewFileHistory }),
+		commands.register({ id: 'git.viewFileHistory', title: 'Git: View File History', when: () => !!scm.repositoryOf(timelineFile(editors.active))?.repo, run: viewFileHistory }),
 		commands.register({ id: 'timeline.refresh', title: 'Timeline: Refresh', run: () => timeline.refresh(true) }),
 		commands.register({
 			id: 'timeline.focus',

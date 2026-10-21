@@ -97,3 +97,16 @@ export function workspaceLabel(folders: readonly WorkspaceFolder[], file: string
 	if (untitled || folders.length > 1) return untitledLabel;
 	return folders[0]?.name ?? '';
 }
+
+/**
+ * The folder part a file row shows beside its name (Quick Open, VS Code's label service): its
+ * directory, led by the root folder's name in a multi-root workspace (`Library • src`).
+ */
+export function fileDetail(key: string, folders: readonly WorkspaceFolder[]): string {
+	const f = folderOf(key, folders);
+	const parent = (p: string) => (p.includes('/') ? p.slice(0, Math.max(1, p.lastIndexOf('/'))) : '');
+	if (!f) return parent(key);
+	const dir = parent(relativeInFolder(key, folders));
+	if (folders.length < 2) return dir;
+	return dir ? `${f.name} • ${dir}` : f.name;
+}

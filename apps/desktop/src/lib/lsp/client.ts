@@ -1,6 +1,7 @@
 // One language server session: lifecycle, document sync, progress/status and diagnostics.
 // Transport-agnostic (the Tauri bridge lives in lsp.svelte.ts) so it can be tested with a fake.
 
+import { folderChanges, type LspFolder } from './convert';
 import { JsonRpc, ResponseError, type Cancellation } from './jsonrpc';
 import {
 	ErrorCodes,
@@ -176,7 +177,8 @@ export class LanguageClient {
 	#quiescent = true;
 	#pullTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	#lastState: ServerState | null = null;
-	#rootUri = '';
+	/** The workspace folders the server knows (`initialize`, then `didChangeWorkspaceFolders`). */
+	#folders: LspFolder[] = [];
 
 	constructor(name: string, write: (json: string) => void, hooks: ClientHooks) {
 		this.#name = name;
@@ -218,7 +220,7 @@ export class LanguageClient {
 			hooks.showMessage?.(p.type, p.message);
 			return null;
 		});
-		rpc.onRequest('workspace/workspaceFolders', () => (this.#rootUri ? [{ uri: this.#rootUri, name: this.#rootUri.split('/').pop() }] : null));
+		rpc.onRequest('workspace/workspaceFolders', () => (this.#folders.length ? this.#folders : null));
 		rpc.onRequest('workspace/diagnostic/refresh', () => (this.#pullAll(), null));
 		const refreshes: [string, RefreshKind][] = [
 			['workspace/semanticTokens/refresh', 'semanticTokens'],
@@ -238,17 +240,17 @@ export class LanguageClient {
 		return this.#ready;
 	}
 
-	async initialize(rootUri: string, initializationOptions?: unknown, trace: 'off' | 'messages' | 'verbose' = 'off'): Promise<ServerCapabilities> {
-		this.#rootUri = rootUri;
+	/** `folders`: every root folder of the workspace (the first is `rootUri`); just `rootUri` when omitted. */
+	async initialize(rootUri: string, initializationOptions?: unknown, trace: 'off' | 'messages' | 'verbose' = 'off', folders?: LspFolder[]): Promise<ServerCapabilities> {
+		this.#folders = folders?.length ? folders : [{ uri: rootUri, name: rootUri.split('/').pop() ?? 'workspace' }];
 		this.#hooks.status({ state: 'starting' });
-		const name = rootUri.split('/').pop() ?? 'workspace';
 		const result = await this.rpc.request<{ capabilities: ServerCapabilities }>('initialize', {
 			processId: null,
 			clientInfo: { name: 'Kingu' },
 			locale: 'en',
 			rootUri,
 			rootPath: decodeURIComponent(rootUri.replace(/^file:\/\//, '')),
-			workspaceFolders: [{ uri: rootUri, name }],
+			workspaceFolders: this.#folders,
 			capabilities: clientCapabilities,
 			initializationOptions,
 			trace
@@ -258,6 +260,20 @@ export class LanguageClient {
 		this.#ready = true;
 		this.#emitStatus();
 		return this.capabilities;
+	}
+
+	/** Whether the server takes `workspace/didChangeWorkspaceFolders` (else it must restart to see new folders). */
+	get takesFolderChanges(): boolean {
+		return !!this.capabilities.workspace?.workspaceFolders?.changeNotifications;
+	}
+
+	/** Tells the server the workspace folders are now `next`; false when nothing changed. */
+	changeWorkspaceFolders(next: LspFolder[]): boolean {
+		const event = folderChanges(this.#folders, next);
+		this.#folders = next;
+		if (!event.added.length && !event.removed.length) return false;
+		if (this.#ready) this.rpc.notify('workspace/didChangeWorkspaceFolders', { event });
+		return true;
 	}
 
 	/** The server process ended (crash, kill, or after `exit`). */
