@@ -23,6 +23,7 @@
  *   chats.stopAndWait(id) / reload(id, resume)   for rewinds (chatRewind.svelte.ts)
  *   chats.importFile(path)             Import Chat: a chat file as a new chat (no session yet)
  *   chats.setModel / setPermissionMode applied to the live session (SDK setModel / setPermissionMode)
+ *   chats.setEffort  the chat's reasoning effort: the live session from its next response / turn
  *                                      or saved for the next run; returns which. "Allow all"
  *                                      (`bypassPermissions`) is kept in memory only (`allowAll`)
  *   chats.answer / interrupt / stop / rename / remove / promote
@@ -52,6 +53,7 @@ import { chatTitlePrompt, parseChatTitle } from './chatTitle.ts';
 import { forkTitle, rewoundMeta, type ForkPoint } from './chatRewind.ts';
 import { chatsToResume, RESUME_PROMPT } from './chatResume.ts';
 import { autoApprover } from './toolApproval.ts';
+import type { Effort } from './effort.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import {
 	chatCwdPath,
@@ -123,6 +125,11 @@ class Chats {
 	#lastImages = new Map<string, { text: string; images: string[] }>();
 	/** Chats (run keys) whose AI title was already tried this session: one try each. */
 	#titled = new Set<string>();
+	/**
+	 * The reasoning effort a run of `meta` starts with (effortChoice.svelte.ts sets it: the chat's
+	 * pick or the runtime's default, when the model takes it); null: the model's default.
+	 */
+	effortFor: (meta: ChatMeta) => Effort | null = (meta) => meta.effort ?? null;
 
 	get(id: string): ChatMeta | undefined {
 		return this.list.find((c) => c.id === id);
@@ -220,12 +227,24 @@ class Chats {
 		}
 	}
 
-	async create(input: { prompt: string; cwd: ChatCwd; model: string | null; permissionMode: RunPermissionMode; message: OutgoingMessage; runtime?: string; agent?: string | null }): Promise<string | undefined> {
+	async create(input: {
+		prompt: string;
+		cwd: ChatCwd;
+		model: string | null;
+		permissionMode: RunPermissionMode;
+		message: OutgoingMessage;
+		runtime?: string;
+		agent?: string | null;
+		effort?: Effort | null;
+	}): Promise<string | undefined> {
 		const root = workspace.root;
 		if (!root || !input.prompt.trim()) return;
 		if (root !== this.root) await this.load();
 		const allowAll = input.permissionMode === 'bypassPermissions';
-		const meta = newChat({ prompt: input.prompt, cwd: input.cwd, model: input.model, permissionMode: allowAll ? 'default' : (input.permissionMode as PermissionMode), runtime: input.runtime, agent: input.agent }, Date.now());
+		const meta = newChat(
+			{ prompt: input.prompt, cwd: input.cwd, model: input.model, permissionMode: allowAll ? 'default' : (input.permissionMode as PermissionMode), runtime: input.runtime, agent: input.agent, effort: input.effort },
+			Date.now()
+		);
 		if (allowAll) this.allowAll[runKey(root, meta.id)] = true;
 		this.#save([...this.list, meta], root);
 		await this.#saving;
@@ -322,6 +341,8 @@ class Chats {
 				agent: meta.agent ?? null,
 				// Configure Tools: what the chat runs without (chatTools.ts).
 				disabledTools: meta.disabled_tools?.length ? meta.disabled_tools : null,
+				// The reasoning effort (effort.ts); null: the model's default.
+				effort: this.effortFor(meta),
 				onEvent
 			});
 			clientLog('info', `agent run ${state.runId} started for chat ${meta.id}`);
@@ -577,6 +598,11 @@ class Chats {
 		return this.#setOption(id, { model: model.trim() || null }, { model: model.trim() || null });
 	}
 
+	/** The chat's reasoning effort: the live session from its next response (or turn) on, else its next run. */
+	async setEffort(id: string, effort: Effort): Promise<'live' | 'next' | null> {
+		return this.#setOption(id, { effort }, { effort });
+	}
+
 	/** "Allow all" stays in memory (`allowAll`); the chat keeps an Agent mode it can save. */
 	async setPermissionMode(id: string, mode: RunPermissionMode): Promise<'live' | 'next' | null> {
 		const meta = this.get(id);
@@ -630,14 +656,14 @@ class Chats {
 		return !!this.root && !!this.allowAll[runKey(this.root, id)];
 	}
 
-	async #setOption(id: string, patch: Partial<ChatMeta>, wire: { model?: string | null; permissionMode?: RunPermissionMode }): Promise<'live' | 'next' | null> {
+	async #setOption(id: string, patch: Partial<ChatMeta>, wire: { model?: string | null; permissionMode?: RunPermissionMode; effort?: Effort }): Promise<'live' | 'next' | null> {
 		const root = this.root;
 		if (!root || !this.get(id)) return null;
 		const run = this.run(id);
 		const when = optionChange(run, run?.runId);
-		if (when === 'live' && (wire.model || wire.permissionMode)) {
+		if (when === 'live' && (wire.model || wire.permissionMode || wire.effort)) {
 			try {
-				await invoke('agent_set_options', { runId: run!.runId, model: wire.model ?? null, permissionMode: wire.permissionMode ?? null });
+				await invoke('agent_set_options', { runId: run!.runId, model: wire.model ?? null, permissionMode: wire.permissionMode ?? null, effort: wire.effort ?? null });
 			} catch (e) {
 				notifications.error(t('chat.optionFailed', { error: String(e) }));
 				return null;

@@ -48,6 +48,12 @@ function fakeQuery(log: { options?: Options; prompts: string[]; interrupted: num
 			},
 			setPermissionMode: async (mode: string) => {
 				(log.changes ??= []).push(`mode:${mode}`);
+			},
+			applyFlagSettings: async (settings: { effortLevel?: string | null }) => {
+				(log.changes ??= []).push(`effortLevel:${settings.effortLevel}`);
+			},
+			setMaxThinkingTokens: async (tokens: number | null) => {
+				(log.changes ??= []).push(`maxThinkingTokens:${tokens}`);
 			}
 		});
 	};
@@ -207,6 +213,29 @@ describe('agent host protocol', () => {
 		expect((await call(5, 'set_options', { runId: 1 })).error?.message).toContain('nothing to change');
 		expect((await call(6, 'set_options', { runId: 9, model: 'm' })).error?.code).toBe(1);
 		expect(log.changes).toHaveLength(3);
+	});
+
+	test('reasoning effort: the SDK options a run starts with, and a live change', async () => {
+		const { log, event, call } = setup();
+		await call(1, 'start', { runId: 1, cwd: '/w', prompt: 'x', effort: 'max' });
+		expect(log.options).toMatchObject({ effort: 'max' });
+		expect(log.options?.maxThinkingTokens).toBeUndefined();
+		await event('permission_request');
+		expect((await call(2, 'set_options', { runId: 1, effort: 'off' })).result).toEqual({ model: null, permissionMode: null, effort: 'off' });
+		expect((await call(3, 'set_options', { runId: 1, effort: 'minimal' })).result).toMatchObject({ effort: 'minimal' });
+		expect(log.changes).toEqual(['maxThinkingTokens:0', 'maxThinkingTokens:null', 'effortLevel:low']);
+		expect((await call(4, 'set_options', { runId: 1, effort: 'ultra' })).error?.message).toContain('unsupported reasoning effort');
+
+		const off = setup();
+		await off.call(1, 'start', { runId: 1, cwd: '/w', prompt: 'x', effort: 'off' });
+		expect(off.log.options).toMatchObject({ maxThinkingTokens: 0 });
+		expect(off.log.options?.effort).toBeUndefined();
+
+		const none = setup();
+		await none.call(1, 'start', { runId: 1, cwd: '/w', prompt: 'x' });
+		expect(none.log.options?.effort).toBeUndefined();
+		expect(none.log.options?.maxThinkingTokens).toBeUndefined();
+		expect((await none.call(2, 'start', { runId: 2, cwd: '/w', prompt: 'x', effort: 'turbo' })).error?.message).toContain('unsupported reasoning effort');
 	});
 
 	test('set_options says so when the SDK cannot change options', async () => {

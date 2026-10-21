@@ -20,8 +20,8 @@ export type Decision = 'allow' | 'allow_always' | 'allow_workspace' | 'allow_use
 /** A slash command the session knows (SDK `supportedCommands()`). */
 export type SessionCommand = { name: string; description: string; argument_hint: string };
 
-/** A model the session can use (SDK `supportedModels()`). */
-export type ModelOption = { value: string; display_name: string; description: string };
+/** A model the session can use (SDK `supportedModels()`); `efforts`: its reasoning levels (effort.ts), `off` first. */
+export type ModelOption = { value: string; display_name: string; description: string; efforts?: string[] };
 
 /** How full the context window was after the last turn. */
 export type ContextUsage = { used: number; max: number };
@@ -101,6 +101,8 @@ export type AgentEvent =
 	| { kind: 'commands'; commands: SessionCommand[] }
 	/** The models the session can switch to; replaces the last list (modelCatalog). Not a timeline entry. */
 	| { kind: 'models'; models: ModelOption[] }
+	/** The reasoning levels the agent offers (Codex, an ACP agent) and the one in effect (effortOptions). Not a timeline entry. */
+	| { kind: 'effort_options'; levels: string[]; current: string | null }
 	/** How full the context window is after a turn. Not a timeline entry. */
 	| { kind: 'context_usage'; used_tokens: number; max_tokens: number }
 	| ({ kind: 'message'; role: string; text: string } & Parent)
@@ -180,7 +182,7 @@ export const STATUS_LABEL: Readonly<Record<RunStatus, string>> = {
 /** Timeline entries: every event except streaming deltas and permission bookkeeping. */
 export type TimelineEvent = Exclude<
 	AgentEvent,
-	{ kind: 'delta' } | { kind: 'permission_resolved' } | { kind: 'mcp_request_resolved' } | { kind: 'edits_changed' } | { kind: 'session_info' } | { kind: 'commands' } | { kind: 'models' } | { kind: 'mcp_status' } | { kind: 'context_usage' }
+	{ kind: 'delta' } | { kind: 'permission_resolved' } | { kind: 'mcp_request_resolved' } | { kind: 'edits_changed' } | { kind: 'session_info' } | { kind: 'commands' } | { kind: 'models' } | { kind: 'effort_options' } | { kind: 'mcp_status' } | { kind: 'context_usage' }
 >;
 
 export type RunState = {
@@ -258,6 +260,7 @@ export function applyEvent(s: RunState, ev: AgentEvent): void {
 			s.commands = ev.commands;
 			return;
 		case 'models':
+		case 'effort_options':
 		case 'mcp_status':
 			// Kept by the MCP store (mcp/mcp.svelte.ts), not by the run.
 			return;

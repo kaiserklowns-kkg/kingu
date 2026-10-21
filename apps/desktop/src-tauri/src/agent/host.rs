@@ -182,6 +182,10 @@ pub struct StartRequest {
   /// `chat.mcp.serverSampling` (`mcp_chat::sampling_policy`): server → may make model calls; omitted when none.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub mcp_sampling: Option<std::collections::BTreeMap<String, bool>>,
+  /// The chat's reasoning effort (`events::EFFORTS`; agent-host `effort.ts` maps it per runtime);
+  /// omitted: the model's default.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub effort: Option<String>,
   /// What else this run owns while it is live besides its session (e.g. `chat:<root>:<id>`);
   /// not sent to the sidecar.
   #[serde(skip)]
@@ -571,8 +575,8 @@ impl AgentHost {
 
   /// Changes the live run's model and/or permission mode from its next response on (the SDK's
   /// `setModel` / `setPermissionMode`). `provider`: an Arkai model's provider (`arkai.rs`), with its key.
-  pub fn set_options(&self, run_id: u32, model: Option<&str>, permission_mode: Option<&str>, provider: Option<&super::arkai::WireProvider>) -> Result<(), String> {
-    if model.is_none() && permission_mode.is_none() {
+  pub fn set_options(&self, run_id: u32, model: Option<&str>, permission_mode: Option<&str>, effort: Option<&str>, provider: Option<&super::arkai::WireProvider>) -> Result<(), String> {
+    if model.is_none() && permission_mode.is_none() && effort.is_none() {
       return Ok(());
     }
     let mut params = json!({});
@@ -584,6 +588,9 @@ impl AgentHost {
     }
     if let Some(m) = permission_mode {
       params["permissionMode"] = json!(m);
+    }
+    if let Some(e) = effort {
+      params["effort"] = json!(e);
     }
     self.run_request(run_id, "set_options", params)
   }
@@ -912,18 +919,22 @@ done"#,
     assert!(host.start(StartRequest { resume: Some("s-new".into()), ..req("/w") }, sink.clone()).is_err(), "the session it reported is held too");
     assert!(host.start(StartRequest { owner: Some("chat:/r:c-1".into()), ..req("/w") }, sink.clone()).unwrap_err().contains("already has a running agent"));
 
-    host.set_options(first, Some("claude-sonnet-5"), Some("plan"), None).unwrap();
+    host.set_options(first, Some("claude-sonnet-5"), Some("plan"), None, None).unwrap();
+    host.set_options(first, None, None, Some("high"), None).unwrap();
     host.stop(first).unwrap();
     assert!(matches!(next(&rx), AgentEvent::Exit { stopped: true, .. }));
     assert!(!host.session_live("s-old") && !host.session_live("s-new") && !host.owner_live("chat:/r:c-1"));
-    let second = host.start(StartRequest { resume: Some("s-old".into()), owner: Some("chat:/r:c-1".into()), ..req("/w") }, sink).unwrap();
+    let second = host.start(StartRequest { resume: Some("s-old".into()), owner: Some("chat:/r:c-1".into()), effort: Some("off".into()), ..req("/w") }, sink).unwrap();
     assert_ne!(first, second);
 
     let requests = std::fs::read_to_string(&log).unwrap();
     let lines: Vec<Value> = requests.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
     let methods: Vec<_> = lines.iter().map(|l| l["method"].as_str().unwrap()).collect();
-    assert_eq!(methods, ["start", "set_options", "stop", "start"], "refused starts never reach the sidecar");
+    assert_eq!(methods, ["start", "set_options", "set_options", "stop", "start"], "refused starts never reach the sidecar");
     assert_eq!(lines[1]["params"], json!({"runId": first, "model": "claude-sonnet-5", "permissionMode": "plan"}));
+    assert_eq!(lines[2]["params"], json!({"runId": first, "effort": "high"}));
+    assert!(lines[0]["params"].get("effort").is_none(), "no effort: the model's default");
+    assert_eq!(lines[4]["params"]["effort"], "off");
     assert!(lines[0]["params"].get("owner").is_none(), "the owner key stays in the app");
     host.shutdown();
   }

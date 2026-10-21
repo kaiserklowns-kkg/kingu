@@ -360,6 +360,16 @@ const CORE_SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		// No VS Code setting: old Kingu kept the model picker's Effort Level per model in storage.
+		id: 'kingu.chat.reasoningEffort',
+		group: 'Agent Chat',
+		type: 'object',
+		values: 'string',
+		default: {},
+		description:
+			'ระดับการคิดเริ่มต้นของแชตตามเอเจนต์: id ของเอเจนต์ (`claude`, `codex`, `arkai`, … หรือ `*` สำหรับทุกตัว) → `off`, `minimal`, `low`, `medium`, `high`, `xhigh` หรือ `max` ใช้เมื่อแชตยังไม่ได้เลือกเองและโมเดลรองรับระดับนั้น (The chat\'s default reasoning effort per agent: runtime id, or `*` for all → `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. Used while a chat has not picked one and its model takes that level.)'
+	},
+	{
 		id: 'kingu.chat.rules.enabled',
 		group: 'Agent Chat',
 		type: 'boolean',

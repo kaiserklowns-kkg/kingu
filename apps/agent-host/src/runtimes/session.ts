@@ -18,6 +18,7 @@ import { autoDecision, SESSION_ID, type ToolKind, type ToolView } from './tools.
 import type { ImageBlock } from '../host.ts';
 import type { ArkaiSpec } from '../arkai/spec.ts';
 import type { AskConfig } from '../guards/asks.ts';
+import type { Effort } from '../effort.ts';
 
 /** A spawned agent process (Bun's `Subprocess` fits; tests may pass their own). */
 export type Child = {
@@ -81,6 +82,8 @@ export type SessionInit = {
 	guardAsks?: (AskConfig & { cwd: string }) | null;
 	/** `chat.mcp.serverSampling`: server → may make model calls (absent: asked). */
 	mcpSampling?: Record<string, boolean> | null;
+	/** The chat's reasoning effort (../effort.ts); null: the model's default. */
+	effort?: Effort | null;
 };
 
 export type Turn = { text: string; images: ImageBlock[]; imagePaths: string[] };
@@ -95,6 +98,8 @@ export type AskOptions = { title: string | null; canAlways: boolean; rules?: str
 export abstract class RunSession {
 	protected readonly cwd: string;
 	protected mode: PermissionMode;
+	/** The reasoning effort the next turn runs with (../effort.ts); null: the model's default. */
+	protected effort: Effort | null;
 	protected sessionId: string | null = null;
 	private queue: Turn[] = [];
 	private busy = false;
@@ -115,6 +120,7 @@ export abstract class RunSession {
 	constructor(protected readonly init: SessionInit) {
 		this.cwd = init.cwd;
 		this.mode = init.mode;
+		this.effort = init.effort ?? null;
 		this.asks = new McpAsks({ emit: (ev) => this.emit(ev), newId: init.newId, log: (line) => this.log(line), sampling: init.mcpSampling ?? null });
 	}
 
@@ -398,14 +404,24 @@ export abstract class RunSession {
 	}
 
 	/** `extra`: what a runtime may need besides the model id (Arkai: the model's provider). */
-	async setOptions(model: string | undefined, mode: PermissionMode | undefined, _extra?: unknown): Promise<{ model: string | null; permissionMode: PermissionMode | null }> {
+	async setOptions(model: string | undefined, mode: PermissionMode | undefined, _extra?: unknown, effort?: Effort): Promise<{ model: string | null; permissionMode: PermissionMode | null; effort?: Effort }> {
 		if (model !== undefined) throw new SessionError(UNSUPPORTED, 'this agent cannot change the model mid-session');
 		if (mode !== undefined) {
 			this.mode = mode;
 			await this.modeChanged(mode).catch((e) => this.log(`mode not passed on: ${e instanceof Error ? e.message : 'error'}`));
 		}
-		return { model: null, permissionMode: mode ?? null };
+		if (effort !== undefined) await this.setEffort(effort);
+		return { model: null, permissionMode: mode ?? null, ...(effort !== undefined ? { effort } : {}) };
 	}
+
+	/** A new reasoning effort, from the next turn on (an agent that takes it live overrides this). */
+	protected async setEffort(effort: Effort) {
+		this.effort = effort;
+		await this.effortChanged(effort);
+	}
+
+	/** Tells the agent of a new effort; most take it with the next turn. */
+	protected async effortChanged(_effort: Effort): Promise<void> {}
 
 	/** The run's single `exit` (pending prompts cancelled, streamed text flushed). */
 	protected finish(code: number) {

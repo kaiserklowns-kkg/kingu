@@ -3,6 +3,7 @@
 // anything unrecognized becomes a `raw` event instead of being dropped.
 
 import type { AgentEvent, DiffStats, McpServerLive, ModelOption, SlashCommandInfo, Usage } from './protocol.ts';
+import { EFFORTS, isEffort, type Effort } from './effort.ts';
 
 /** Tool results can be whole files; the timeline only needs a preview. */
 export const MAX_TOOL_RESULT_CHARS = 4000;
@@ -127,6 +128,16 @@ export function slashCommands(list: unknown): SlashCommandInfo[] {
 }
 
 /** The SDK's `supportedModels()` rows as `ModelOption`s: one per value, at most `MAX_MODELS`. */
+/**
+ * The effort levels of an SDK `ModelInfo` (`supportedEffortLevels`, when `supportsEffort` is not
+ * false), with `off` first (`thinking: disabled`). None for a model without effort levels.
+ */
+export function modelEfforts(m: Record<string, unknown>): Effort[] {
+	const listed = m.supportsEffort === false || !Array.isArray(m.supportedEffortLevels) ? [] : m.supportedEffortLevels.filter((e): e is Effort => isEffort(e) && e !== 'off');
+	if (!listed.length) return [];
+	return EFFORTS.filter((e) => e === 'off' || listed.includes(e));
+}
+
 export function modelOptions(list: unknown): ModelOption[] {
 	if (!Array.isArray(list)) return [];
 	const seen = new Set<string>();
@@ -135,7 +146,8 @@ export function modelOptions(list: unknown): ModelOption[] {
 		const value = isObj(m) ? str(m.value)?.trim() : null;
 		if (!isObj(m) || !value || value.length > 128 || seen.has(value)) continue;
 		seen.add(value);
-		out.push({ value, display_name: truncate(str(m.displayName)?.trim() || value, 200), description: truncate(str(m.description)?.trim() ?? '', MAX_SUMMARY_CHARS) });
+		const efforts = modelEfforts(m);
+		out.push({ value, display_name: truncate(str(m.displayName)?.trim() || value, 200), description: truncate(str(m.description)?.trim() ?? '', MAX_SUMMARY_CHARS), ...(efforts.length ? { efforts } : {}) });
 		if (out.length >= MAX_MODELS) break;
 	}
 	return out;

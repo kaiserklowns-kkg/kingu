@@ -13,11 +13,15 @@
 //   then to the user; the answer is the agent's own allow / reject option.
 // - Before an edit tool call runs, the files it names are snapshotted (the working set); files it
 //   changes without naming them are found by Rust's end-of-turn git check.
+// - Reasoning effort (../effort.ts): only an agent whose session advertises a `thought_level`
+//   config option; its levels go out as `effort_options`, the chat's pick via
+//   `session/set_config_option`. Without one the chat shows no effort picker.
 
 import pkg from '../../package.json' with { type: 'json' };
 import { RpcCallError } from './rpc.ts';
 import { ProcessSession, OPEN_TIMEOUT_MS, type TurnEnd } from './session.ts';
 import { acpMcpServers, acpOptionFor, acpOptions, acpToolOutput, acpToolView, agentModeFor, isObj, num, planTodos, str } from './tools.ts';
+import { acpThoughtLevels, type Effort } from '../effort.ts';
 import type { PermissionMode } from '../protocol.ts';
 
 export const ACP_PROTOCOL_VERSION = 1;
@@ -32,6 +36,8 @@ export class AcpSession extends ProcessSession {
 	private loading = false;
 	private models: Obj | null = null;
 	private modes: Obj | null = null;
+	/** The agent's thought level setting (session config options), when it has one. */
+	private thought: ReturnType<typeof acpThoughtLevels> = null;
 	private planRows = 0;
 	/** Tool call fields merged over `tool_call` and its updates. */
 	private calls = new Map<string, Obj>();
@@ -81,6 +87,23 @@ export class AcpSession extends ProcessSession {
 		}
 		const modeId = agentModeFor(this.mode, this.modes?.availableModes);
 		if (modeId && modeId !== this.modes?.currentModeId) await this.setAgentMode(modeId);
+		if (this.thought) {
+			if (this.effort && this.effort !== this.thought.current) await this.effortChanged(this.effort).catch((e) => this.log(`effort not passed on: ${e instanceof Error ? e.message : 'error'}`));
+			this.reportEffort();
+		}
+	}
+
+	/** The levels the agent offers (none: the chat hides its effort picker). */
+	private reportEffort() {
+		this.emit({ kind: 'effort_options', levels: this.thought ? [...this.thought.values.keys()] : [], current: this.thought?.current ?? null });
+	}
+
+	protected async effortChanged(effort: Effort) {
+		const t = this.thought;
+		const value = t?.values.get(effort);
+		if (!t || !value) throw new Error(`this agent has no ${effort} reasoning level`);
+		const r = await this.peer.request<Obj>('session/set_config_option', { sessionId: this.sessionId, configId: t.configId, value }, OPEN_TIMEOUT_MS);
+		this.thought = acpThoughtLevels(r?.configOptions) ?? { ...t, current: effort };
 	}
 
 	private program() {
@@ -92,6 +115,7 @@ export class AcpSession extends ProcessSession {
 		if (!isObj(r)) return;
 		if (isObj(r.modes)) this.modes = r.modes;
 		if (isObj(r.models)) this.models = r.models;
+		if (Array.isArray(r.configOptions)) this.thought = acpThoughtLevels(r.configOptions);
 	}
 
 	protected model() {
@@ -143,6 +167,13 @@ export class AcpSession extends ProcessSession {
 		const u = params.update;
 		const kind = str(u.sessionUpdate);
 		if (kind === 'available_commands_update') return this.commands(u.availableCommands);
+		if (kind === 'config_option_update') {
+			if (Array.isArray(u.configOptions)) {
+				this.thought = acpThoughtLevels(u.configOptions);
+				this.reportEffort();
+			}
+			return;
+		}
 		if (kind === 'current_mode_update') {
 			if (this.modes && str(u.currentModeId)) this.modes = { ...this.modes, currentModeId: u.currentModeId };
 			return;

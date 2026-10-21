@@ -25,6 +25,7 @@ import { askDeniedReason } from '../guards/asks.ts';
 import { Guards } from '../guards/index.ts';
 import { MAX_TOOL_RESULT_CHARS, truncate } from '../normalize.ts';
 import type { PermissionMode } from '../protocol.ts';
+import { arkaiEffortKind, arkaiReasoning, type Effort } from '../effort.ts';
 import { RunSession, SessionError, UNSUPPORTED, type SessionInit, type Turn, type TurnEnd } from '../runtimes/session.ts';
 import type { ToolKind, ToolView } from '../runtimes/tools.ts';
 import { AnthropicClient } from './anthropic.ts';
@@ -285,7 +286,7 @@ export class ArkaiSession extends RunSession {
 	}
 
 	/** A model of this provider switches now; another provider's comes with its config (`extra`). */
-	async setOptions(model: string | undefined, mode: PermissionMode | undefined, extra?: unknown) {
+	async setOptions(model: string | undefined, mode: PermissionMode | undefined, extra?: unknown, effort?: Effort) {
 		if (model !== undefined) {
 			const slash = model.indexOf('/');
 			const providerId = slash > 0 ? model.slice(0, slash) : this.provider.id;
@@ -307,7 +308,9 @@ export class ArkaiSession extends RunSession {
 			this.log(`model changed (${this.provider.id})`);
 		}
 		if (mode !== undefined) this.mode = mode;
-		return { model: model ?? null, permissionMode: mode ?? null };
+		// The next request carries it (../effort.ts).
+		if (effort !== undefined) this.effort = effort;
+		return { model: model ?? null, permissionMode: mode ?? null, ...(effort !== undefined ? { effort } : {}) };
 	}
 
 	// -------------------------------------------------------------------------------------------
@@ -326,8 +329,11 @@ export class ArkaiSession extends RunSession {
 			const tools = this.offered();
 			const system = this.system();
 			const settings = this.settings();
+			// The chat's reasoning effort as this provider takes it (../effort.ts); null: nothing sent.
+			const reasoning = arkaiReasoning(arkaiEffortKind(this.provider.api, this.provider.baseUrl, this.modelId), this.effort, settings.maxTokens);
+			const maxTokens = reasoning?.maxTokens ?? settings.maxTokens;
 			const fixed = estimateTokens(system) + estimateTokens(JSON.stringify(tools));
-			const fitted = fitContext(this.messages, { window: settings.contextWindow, maxTokens: settings.maxTokens, fixed, calibration: this.calibration });
+			const fitted = fitContext(this.messages, { window: settings.contextWindow, maxTokens, fixed, calibration: this.calibration });
 			if (fitted.compacted) {
 				this.messages = fitted.messages;
 				this.log(`context compacted (${fitted.droppedTurns} turns summarised)`);
@@ -336,7 +342,15 @@ export class ArkaiSession extends RunSession {
 			const estimate = fixed + conversationTokens(this.messages);
 			let res: Completion;
 			try {
-				res = await this.request({ model: this.modelId, system, messages: this.messages, tools, maxTokens: settings.maxTokens, signal: abort.signal });
+				res = await this.request({
+					model: this.modelId,
+					system,
+					messages: this.messages,
+					tools,
+					maxTokens,
+					...(reasoning ? { extra: reasoning.body, keepThinking: reasoning.thinking } : {}),
+					signal: abort.signal
+				});
 			} catch (e) {
 				if (abort.signal.aborted || this.stopped) return { ok: false, cancelled: true, usage: toUsage(usage) };
 				if (e instanceof ProviderError && e.contextOverflow && !overflowRetried) {
@@ -378,7 +392,7 @@ export class ArkaiSession extends RunSession {
 			}
 			const clean = stripToolMarkup(text);
 			if (clean !== text) this.replaceStreamed(clean);
-			this.messages.push({ role: 'assistant', text: clean, calls });
+			this.messages.push({ role: 'assistant', text: clean, calls, ...(res.thinking?.length ? { thinking: res.thinking } : {}) });
 			if (!calls.length) {
 				if (res.stop === 'length' && !clean.trim()) return { ok: false, error: 'the model stopped at its answer length limit', usage: toUsage(usage) };
 				return { ok: true, usage: toUsage(usage) };

@@ -28,6 +28,8 @@
 	import { linesOf } from './chatPrompt.ts';
 	import { CLAUDE_RUNTIME } from './runtimes.ts';
 	import { modelCatalog } from './modelCatalog.svelte.ts';
+	import { effortState } from './effortChoice.svelte.ts';
+	import { effortLabel, effortRows, type Effort } from './effort.ts';
 	import { modelChoices, modelSublabel } from './modelChoices.ts';
 	import ChatList from './ChatList.svelte';
 	import Composer from './Composer.svelte';
@@ -125,6 +127,8 @@
 	/** New chat picks: where it runs ('' = this folder, else a task slug), model, mode. */
 	let newWhere = $state('');
 	let newModel = $state(chats.defaults().model ?? '');
+	/** The new chat's reasoning effort (null: the runtime's default, else the model's). */
+	let newEffort = $state<Effort | null>(null);
 	let newMode = $state<ChatMode>(modeOf(chats.defaults().permissionMode));
 	/** The new chat's agent (runtimes.ts); kept for the next new chat. */
 	let newRuntime = $state(runtimeOf(null));
@@ -133,8 +137,8 @@
 	/** Where the last model / mode change took effect, shown under the input. */
 	let optionNote = $state('');
 	let composer: ReturnType<typeof Composer> | undefined = $state();
-	/** The composer's open dropdown: the mode pill's, the model picker or the options menu. */
-	let menuOpen = $state<'mode' | 'model' | 'options' | null>(null);
+	/** The composer's open dropdown: the mode pill's, the model picker, its effort level or the options menu. */
+	let menuOpen = $state<'mode' | 'model' | 'effort' | 'options' | null>(null);
 	/** A queued message being edited in the input: it goes back to `index` when sent or cancelled. */
 	let editingQueued = $state<{ item: QueuedMessage; index: number } | null>(null);
 	/** `.claude/commands` and skills of where the chat runs (for a chat with no session list yet). */
@@ -411,6 +415,7 @@
 		resetInput();
 		const d = chats.defaults();
 		newModel = d.model ?? '';
+		newEffort = null;
 		newMode = modeOf(d.permissionMode);
 		const preset = settings.get<string>('chat.newSession.defaultMode');
 		if (typeof preset === 'string' && preset.trim()) void startMode(preset);
@@ -546,7 +551,7 @@
 			if (!chatMeta) {
 				const where: ChatCwd = newWhere ? { kind: 'task', slug: newWhere } : { kind: 'folder' };
 				const message = await outgoing(text, attachments, where.kind === 'folder', extra);
-				const id = await chats.create({ prompt: title, cwd: where, model: newRuntime === ARKAI_RUNTIME ? arkaiDefault(arkaiProviders.list, newModel) : newModel.trim() || chats.defaults().model, permissionMode: permissionFor(newMode, approval), message, runtime: newRuntime, agent: newAgent });
+				const id = await chats.create({ prompt: title, cwd: where, model: newRuntime === ARKAI_RUNTIME ? arkaiDefault(arkaiProviders.list, newModel) : newModel.trim() || chats.defaults().model, permissionMode: permissionFor(newMode, approval), message, runtime: newRuntime, agent: newAgent, effort: newEffort });
 				if (id) {
 					select(id);
 					resetInput();
@@ -787,6 +792,16 @@
 		optionNote = when === 'live' ? t('chat.panel.appliedNow') : when === 'next' ? t('chat.panel.appliedNext') : '';
 	}
 
+	/** The model picker's Effort Level (old's modelPickerModelConfig): the live session from its next response or turn. */
+	async function changeEffort(next: Effort) {
+		if (!chatMeta) {
+			newEffort = next;
+			return;
+		}
+		const when = await chats.setEffort(chatMeta.id, next);
+		optionNote = when === 'live' ? t('chat.panel.appliedNow') : when === 'next' ? t('chat.panel.appliedNext') : '';
+	}
+
 	function startRename(id: string, title: string) {
 		renameText = title;
 		renamingId = id;
@@ -884,6 +899,17 @@
 		runtimeId === ARKAI_RUNTIME && !modelRows.length && !arkaiProviders.loading ? t('chatWelcome.noModels') : shortModelLabel(modelRows.find((r) => r.checked)?.label || currentModel || t('composer.model.default'))
 	);
 	const runtimeProtocol = $derived(agentRuntimes.list.find((r) => r.id === runtimeId)?.protocol ?? null);
+	/**
+	 * The Effort Level beside the model (old's model picker config readout): the levels the
+	 * chat's model takes on its runtime and the one in effect; hidden when there are none.
+	 */
+	const effort = $derived(
+		effortState(
+			runtimeId,
+			chatMeta ? chatMeta.model : runtimeId === ARKAI_RUNTIME ? arkaiDefault(arkaiProviders.list, newModel) : newModel.trim() || chats.defaults().model,
+			chatMeta ? chatMeta.effort : newEffort
+		)
+	);
 	const currentApproval = $derived<AgentApproval>(allowAll ? 'bypassPermissions' : chatMeta ? ((chatMeta.permission_mode === 'plan' ? approval : chatMeta.permission_mode) ?? 'default') : approval);
 	const globalAutoApprove = $derived(settings.get<boolean>('chat.tools.global.autoApprove') === true);
 	/** Where a new chat runs (the header's ⋯): this folder or a task's worktree. */
@@ -1625,6 +1651,32 @@
 										width={300}
 										footer={runtimeId === ARKAI_RUNTIME && !modelRows.length ? (arkaiProviders.loading ? t('arkai.picker.loading') : t('arkai.picker.none')) : undefined}
 										onpick={(id) => (closeMenu(), void changeModel(id))}
+										onclose={closeMenu}
+									/>
+								{/if}
+							</div>
+						{/if}
+						{#if effort.current && l.modelLabel}
+							{@const label = effortLabel(effort.current)}
+							<!-- The model's Effort Level (old's split model picker: the config readout after the name opens its levels). -->
+							<div class={['chat-input-picker-item model-picker-config relative flex shrink-0', (features.models || runtimeId === ARKAI_RUNTIME) && 'model-picker-config-split']}>
+								<button
+									type="button"
+									class="action-label"
+									aria-label={t('composer.effort.label', { effort: label })}
+									title={t('composer.effort.label', { effort: label })}
+									aria-haspopup="listbox"
+									aria-expanded={menuOpen === 'effort'}
+									onclick={() => (menuOpen = menuOpen === 'effort' ? null : 'effort')}
+								>
+									<span class="chat-input-picker-label">{label}</span>
+								</button>
+								{#if menuOpen === 'effort'}
+									<ComposerMenu
+										rows={effortRows(effort.levels, effort.current)}
+										label={t('composer.effort.title')}
+										width={260}
+										onpick={(id) => (closeMenu(), void changeEffort(id as Effort))}
 										onclose={closeMenu}
 									/>
 								{/if}

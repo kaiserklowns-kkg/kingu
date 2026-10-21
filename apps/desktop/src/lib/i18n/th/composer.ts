@@ -14,6 +14,23 @@ export const composer = {
 	'composer.model.search': 'ค้นหาโมเดล',
 	'composer.model.default': 'ค่าเริ่มต้น',
 
+	'composer.effort.title': 'ระดับการคิด',
+	'composer.effort.label': 'ระดับการคิด: {effort}',
+	'composer.effort.off': 'ไม่คิด',
+	'composer.effort.minimal': 'น้อยที่สุด',
+	'composer.effort.low': 'ต่ำ',
+	'composer.effort.medium': 'กลาง',
+	'composer.effort.high': 'สูง',
+	'composer.effort.xhigh': 'สูงมาก',
+	'composer.effort.max': 'สูงสุด',
+	'composer.effort.offHint': 'ไม่ใช้การคิดก่อนตอบ',
+	'composer.effort.minimalHint': 'คิดน้อยที่สุด ตอบเร็วที่สุด',
+	'composer.effort.lowHint': 'ตอบเร็วขึ้น คิดน้อยลง',
+	'composer.effort.mediumHint': 'สมดุลระหว่างการคิดกับความเร็ว',
+	'composer.effort.highHint': 'คิดลึกขึ้นแต่ช้าลง',
+	'composer.effort.xhighHint': 'คิดลึกที่สุดแต่ช้าที่สุด',
+	'composer.effort.maxHint': 'เต็มความสามารถโดยไม่จำกัด',
+
 	'composer.options.hint': 'รันด้วย {runtime} ใน {where} · {run}',
 
 	'composer.run.title': 'โหมดการรัน',
