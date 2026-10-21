@@ -176,6 +176,63 @@ export const AGENT_SETTINGS: SettingSchema[] = [
 		// User-only: it reads another program's sign-in.
 		scope: 'application'
 	},
+	// Orca's other usage providers (Rust usage/*.rs); pasted keys and cookies live in the Keychain.
+	{
+		id: 'kingu.usage.antigravity',
+		group: G,
+		type: 'boolean',
+		default: false,
+		description:
+			'แสดงโควตาของ Antigravity ใน status bar โดยรัน agy -p /usage (agy 1.1.11 ขึ้นไป เป็นคำสั่งที่ไม่เริ่มบทสนทนาและไม่ใช้โควตา) ทุก 15 นาทีเมื่อติดตั้ง agy ไว้ ถ้า agy ตอบเป็นข้อความถึงโมเดล Kingu จะหยุดถามทันที (Orca: Antigravity usage item) (Show Antigravity quota by running agy -p /usage, a command that starts no conversation, every 15 minutes when agy is installed; Kingu stops at once if agy ever answers it as a prompt.)',
+		// User-only: it runs a program.
+		scope: 'application'
+	},
+	{
+		id: 'kingu.usage.opencode.workspaceId',
+		group: G,
+		type: 'string',
+		default: '',
+		pattern: '^((org|wrk|wk)_[A-Za-z0-9]+)?$',
+		description:
+			'workspace id ของ OpenCode (org_… wrk_… หรือ wk_…) สำหรับดึง usage ของ OpenCode Go ด้วย session cookie ว่างไว้ให้ Kingu หา workspace เอง ใช้เฉพาะเมื่อไม่มี API key ของ OpenCode Go (Orca: opencodeWorkspaceId) (The OpenCode workspace whose OpenCode Go usage the session cookie reads; empty looks it up.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.usage.minimax.endpoint',
+		group: G,
+		type: 'string',
+		default: 'overseas',
+		enum: ['overseas', 'cn'],
+		enumDescriptions: ['platform.minimax.io (International.)', 'www.minimaxi.com (Mainland China.)'],
+		description: 'ภูมิภาคของบัญชี MiniMax ที่ดึง usage ของ Coding Plan (Orca: minimaxEndpoint) (The MiniMax region whose Coding Plan usage is read.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.usage.minimax.groupId',
+		group: G,
+		type: 'string',
+		default: '',
+		description: 'group id ของ MiniMax ว่างไว้ให้ใช้ minimax_group_id_v2 จาก cookie (Orca: minimaxGroupId) (The MiniMax group id; empty takes minimax_group_id_v2 from the cookie.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.usage.minimax.models',
+		group: G,
+		type: 'string',
+		default: 'general',
+		description: 'ชื่อโมเดลของ MiniMax ที่แสดง usage คั่นด้วยจุลภาค ใช้ตัวแรกที่พบ (Orca: minimaxUsageModels) (Comma-separated MiniMax models whose usage shows; the first found wins.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.usage.zcode.site',
+		group: G,
+		type: 'string',
+		default: 'zai',
+		enum: ['zai', 'bigmodel'],
+		enumDescriptions: ['Z.AI (api.z.ai).', 'BigModel (open.bigmodel.cn).'],
+		description: 'เว็บของ GLM Coding Plan ที่ API key ที่บันทึกใน Kingu เป็นของ (Orca: zcodePlanSite) (The GLM Coding Plan site the API key saved in Kingu belongs to.)',
+		scope: 'application'
+	},
 	// --- Orchestration (Orca's Orchestration pane): agents dispatching sub-tasks with `kingu task create`.
 	{
 		id: 'kingu.orchestration.maxDepth',

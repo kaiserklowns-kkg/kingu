@@ -307,9 +307,16 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['voice.microphoneDeviceId', 'kingu.voice.microphone', 'added'],
 	['voice.openAiApiKeyConfigured', 'Settings › Voice page', 'mapped', 'the OpenAI key lives only in the Keychain (voice.rs)'],
 	['geminiCliOAuthEnabled', 'kingu.usage.gemini', 'added', "Gemini CLI quota from its own sign-in; Kingu does not refresh the token with the CLI's bundled OAuth client as Orca can"],
-	['minimaxEndpoint / minimaxGroupId / minimaxUsageModels', null, 'needs-feature', 'more usage providers in the status bar'],
-	['opencodeSessionCookie / opencodeWorkspaceId', null, 'needs-feature', 'more usage providers in the status bar'],
-	['zcodePlanSite', null, 'needs-feature', 'more usage providers in the status bar'],
+	['minimaxEndpoint', 'kingu.usage.minimax.endpoint', 'added'],
+	['minimaxGroupId', 'kingu.usage.minimax.groupId', 'added'],
+	['minimaxUsageModels', 'kingu.usage.minimax.models', 'added'],
+	['MiniMax API key / session cookie', 'Settings › Stats & Usage page', 'mapped', 'only in the Keychain (usage/secrets.rs), sent only to MiniMax'],
+	['opencodeSessionCookie', 'Settings › Stats & Usage page', 'mapped', 'only in the Keychain (usage/secrets.rs); only its auth cookies are sent, only to opencode.ai'],
+	['opencodeWorkspaceId', 'kingu.usage.opencode.workspaceId', 'added'],
+	['OpenCode Go API key', 'Settings › Stats & Usage page', 'mapped', "only in the Keychain; else OpenCode's auth.json or OPENCODE_API_KEY. OpenCode 2's SQLite credential table is not read"],
+	['zcodePlanSite', 'kingu.usage.zcode.site', 'added'],
+	['GLM Coding Plan API key', 'Settings › Stats & Usage page', 'mapped', "only in the Keychain; else ZCode CLI's config.json. ZCode 2's encrypted ~/.zcode/v2 store is not read"],
+	['Antigravity usage item', 'kingu.usage.antigravity', 'added', 'runs agy -p /usage as Orca does; off by default in Kingu since it starts a program every 15 minutes'],
 	['localAccountRuntime / localWindowsRuntimeDefault', null, 'not-applicable', 'Windows / WSL']
 ];
 
@@ -347,9 +354,16 @@ export const ORCA_AI_CAPABILITIES: readonly { pane: string; settings: readonly s
 		settings: [
 			'claudeManagedAccounts / codexManagedAccounts',
 			'geminiCliOAuthEnabled',
-			'opencodeSessionCookie / opencodeWorkspaceId',
-			'minimaxEndpoint / minimaxGroupId / minimaxUsageModels',
+			'opencodeSessionCookie',
+			'opencodeWorkspaceId',
+			'OpenCode Go API key',
+			'minimaxEndpoint',
+			'minimaxGroupId',
+			'minimaxUsageModels',
+			'MiniMax API key / session cookie',
 			'zcodePlanSite',
+			'GLM Coding Plan API key',
+			'Antigravity usage item',
 			'localAccountRuntime / localWindowsRuntimeDefault'
 		]
 	},
