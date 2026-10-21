@@ -139,7 +139,8 @@ const MAX_OPEN_BYTES: u64 = 5 * 1024 * 1024;
 
 #[tauri::command]
 fn read_workspace_file(ws: Workspace, rel: String) -> Result<String, String> {
-  let path = ws.resolve(&rel)?;
+  // A file of an open repository above a root folder too (Source Control's diff of it).
+  let path = ws.resolve_with_repos(&rel)?;
   let len = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
   if len > MAX_OPEN_BYTES {
     return Err(format!("{rel}: larger than {MAX_OPEN_BYTES} bytes"));
@@ -158,7 +159,7 @@ async fn fs_read_data_url(ws: Workspace, rel: String) -> Result<String, String> 
 /// editor shows as a placeholder (VS Code's text file service read).
 #[tauri::command]
 async fn textfile_read(ws: Workspace, rel: String, options: textfile::ReadOptions) -> Result<textfile::ReadResult, String> {
-  let path = ws.resolve(&rel)?;
+  let path = ws.resolve_with_repos(&rel)?;
   blocking(move || textfile::read(&path, &options).map_err(|e| format!("{rel}: {e}"))).await
 }
 
@@ -172,7 +173,7 @@ async fn textfile_write(
   encoding: String,
   expected: Option<textfile::Expected>,
 ) -> Result<textfile::WriteResult, String> {
-  let (root, inner) = ws.locate(&rel)?;
+  let (root, inner) = ws.locate_with_repos(&rel)?;
   let path = textfile::resolve_for_write(&root, &inner)?;
   blocking(move || {
     let result = textfile::write(&path, &content, &encoding, expected.as_ref()).map_err(|e| format!("{rel}: {e}"))?;

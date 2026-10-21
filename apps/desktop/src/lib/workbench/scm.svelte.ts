@@ -9,6 +9,7 @@
 // its own relative paths for git.
 
 import { invoke } from '@tauri-apps/api/core';
+import { listenWindow } from '#lib/workbench/windowEvents.ts';
 import { ask, messageBox, message as showMessage } from '#lib/workbench/messageBox.ts';
 import { clientLog } from '#lib/client-log.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
@@ -116,7 +117,8 @@ export class Repository {
 
 	/** The first folder's own repository (the ADE, the window title and the old single-folder callers use it). */
 	get primary() {
-		return this.info.dir === workspace.root;
+		// A first folder inside a repository above it: that repository (git runs at its top level).
+		return this.info.dir === workspace.root || (this.info.kind === 'parent' && this.info.folder === workspace.root);
 	}
 
 	/** Every command names this repository; its paths are relative to it. */
@@ -932,6 +934,9 @@ export function installScm(): () => void {
 		if (get<boolean>('git.autorefresh')) void scm.rescan();
 	};
 	window.addEventListener('focus', onFocus);
+	// A git dir no folder watch sees changed (a repository above a folder, a nested worktree's):
+	// a commit or checkout made in a terminal (git_repos.rs watches it).
+	const unlistenRepo = listenWindow('scm:repository-changed', () => void scm.refresh());
 
 	// A save turns a dirty tab clean; re-read status then (a fall in the dirty count).
 	let dirty = 0;
@@ -1025,6 +1030,7 @@ export function installScm(): () => void {
 
 	return () => {
 		window.removeEventListener('focus', onFocus);
+		void unlistenRepo.then((u) => u());
 		stopEffect();
 		unregister.forEach((u) => u());
 	};

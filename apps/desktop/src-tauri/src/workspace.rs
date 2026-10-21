@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use crate::i18n::msg::{FilesMsg, WorkspaceMsg};
 use crate::search::Searches;
 use crate::tr;
-use crate::watcher::{FileWatcher, GitWatcher};
+use crate::watcher::{FileWatcher, GitWatcher, RepoWatcher};
 
 /// The label of the window Tauri creates from `tauri.conf.json`.
 pub const MAIN_WINDOW: &str = "main";
@@ -115,6 +115,12 @@ pub struct WindowState {
   watch_include: Mutex<Vec<String>>,
   /// Files to open once the window's page has loaded (Open File with `window.openFilesInNewWindow`).
   pending_files: Mutex<Vec<String>>,
+  /// Top levels of the repositories above a root folder that Source Control opened
+  /// (`git.openRepositoryInParentFolders`): their files can be read and their git commands run,
+  /// as VS Code shows such a repository's every change.
+  parent_repos: Mutex<Vec<PathBuf>>,
+  /// The git dirs of Source Control's repositories that no root folder's watcher sees.
+  pub repo_watcher: RepoWatcher,
 }
 
 /// The calling window's workspace, as a command argument (`ws: Workspace`).
@@ -209,6 +215,43 @@ impl Workspace {
       return Ok(root);
     }
     resolve_in(&root, &rel)
+  }
+
+  /// The repositories above a root folder Source Control has open (git_repos.rs sets them).
+  pub fn set_parent_repos(&self, tops: Vec<PathBuf>) {
+    *self.state.parent_repos.lock().unwrap_or_else(|e| e.into_inner()) = tops;
+  }
+
+  pub fn parent_repos(&self) -> Vec<PathBuf> {
+    self.state.parent_repos.lock().unwrap_or_else(|e| e.into_inner()).clone()
+  }
+
+  /// An absolute path outside every root folder but inside an open parent repository: that
+  /// repository's top level and the path relative to it (checked to stay inside).
+  pub fn locate_in_parent_repo(&self, path: &str) -> Option<(PathBuf, String)> {
+    let p = Path::new(path);
+    if !p.is_absolute() {
+      return None;
+    }
+    let top = self.parent_repos().into_iter().filter(|t| p.starts_with(t)).max_by_key(|t| t.as_os_str().len())?;
+    let rel = p.strip_prefix(&top).ok()?.to_string_lossy().into_owned();
+    // No `..`, and a symlink may not lead out (a deleted file is judged by its folder).
+    if !rel.is_empty() && crate::git::check_rel(&top, &rel).is_err() {
+      return None;
+    }
+    Some((top, rel))
+  }
+
+  /// [`Self::locate`], or a file of an open parent repository outside every root folder (Source
+  /// Control lists and opens them, as VS Code does).
+  pub fn locate_with_repos(&self, path: &str) -> Result<(PathBuf, String), String> {
+    self.locate(path).or_else(|e| self.locate_in_parent_repo(path).ok_or(e))
+  }
+
+  /// [`Self::resolve`] the same way.
+  pub fn resolve_with_repos(&self, path: &str) -> Result<PathBuf, String> {
+    let (root, rel) = self.locate_with_repos(path)?;
+    if rel.is_empty() { Ok(root) } else { resolve_in(&root, &rel) }
   }
 
   /// Files this window should open once its page is up (each handed out once).

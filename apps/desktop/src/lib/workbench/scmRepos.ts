@@ -57,10 +57,9 @@ export function repositoryOf<R extends { dir: string }>(key: string, repos: read
  */
 export function repoLabel(info: RepoInfo, folders: readonly WorkspaceFolder[]): { name: string; description: string } {
 	const folder = folders.find((f) => trim(f.path) === trim(info.folder));
-	if (info.kind === 'folder' || info.kind === 'parent') {
-		const name = folder?.name || base(info.dir);
-		return { name, description: info.kind === 'parent' ? base(info.toplevel) : '' };
-	}
+	if (info.kind === 'folder') return { name: folder?.name || base(info.dir), description: '' };
+	// The whole repository above the folder: its own name, and the folder it was found from.
+	if (info.kind === 'parent') return { name: base(info.toplevel), description: folders.length > 1 ? (folder?.name ?? base(info.folder)) : '' };
 	const inFolder = trim(info.dir).slice(trim(info.folder).length + 1);
 	const parent = inFolder.includes('/') ? inFolder.slice(0, inFolder.lastIndexOf('/')) : '';
 	const where = [folders.length > 1 ? (folder?.name ?? base(info.folder)) : '', parent].filter(Boolean).join('/');

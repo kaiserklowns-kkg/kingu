@@ -56,7 +56,8 @@ describe('Repositories view', () => {
 		expect(repoLabel(info('/w/lib', '/w/lib'), folders)).toEqual({ name: 'Library', description: '' });
 		expect(repoLabel(info('/w/app/packages/ui', '/w/app', 'nested'), folders)).toEqual({ name: 'ui', description: 'app/packages' });
 		expect(repoLabel(info('/w/app/ui', '/w/app', 'nested'), [folders[0]])).toEqual({ name: 'ui', description: '' });
-		expect(repoLabel(info('/w/app', '/w/app', 'parent', '/w'), folders)).toEqual({ name: 'app', description: 'w' });
+		expect(repoLabel(info('/w', '/w/app', 'parent', '/w'), folders)).toEqual({ name: 'w', description: 'app' });
+		expect(repoLabel(info('/w', '/w/app', 'parent', '/w'), [folders[0]])).toEqual({ name: 'w', description: '' });
 	});
 
 	test('scm.repositories.sortOrder', () => {
