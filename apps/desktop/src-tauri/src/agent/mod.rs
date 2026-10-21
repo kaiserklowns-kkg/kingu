@@ -9,6 +9,7 @@ pub mod chat_edits;
 pub mod chat_extras;
 pub mod chat_io;
 pub mod chats;
+pub mod codex_server;
 pub mod customizations;
 pub mod cli;
 pub mod events;

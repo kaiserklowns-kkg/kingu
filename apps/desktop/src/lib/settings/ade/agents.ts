@@ -233,6 +233,26 @@ export const AGENT_SETTINGS: SettingSchema[] = [
 		description: 'เว็บของ GLM Coding Plan ที่ API key ที่บันทึกใน Kingu เป็นของ (Orca: zcodePlanSite) (The GLM Coding Plan site the API key saved in Kingu belongs to.)',
 		scope: 'application'
 	},
+	// --- Codex's shared app-server (Orca's Agents pane): ade/codexServer.ts, agent/codex_server.rs.
+	{
+		id: 'kingu.codex.terminalServerIsolation',
+		group: G,
+		type: 'boolean',
+		default: true,
+		description:
+			'ให้ codex ของแต่ละงานใช้ app-server ของตัวเอง (เริ่มด้วย --no-daemon เมื่อ codex รุ่นนั้นรองรับ) เพราะเซิร์ฟเวอร์ร่วมของ Codex รัน hook ของทุกแท็บด้วย environment ของแท็บแรก สถานะของ agent จึงผิด และทุก session จบพร้อมเซิร์ฟเวอร์ ปิดเพื่อใช้เซิร์ฟเวอร์ร่วมและ agents overview ของ Codex มีผลกับงานที่เริ่มใหม่ (Orca: codexTerminalServerIsolation) (Run each Codex task on its own server with --no-daemon when the codex binary supports it, so status and closing tabs stay correct; turn off to use Codex\'s shared server and its agents overview. Applies to new launches.)',
+		// User-only: it changes how a CLI starts.
+		scope: 'application'
+	},
+	{
+		id: 'kingu.codex.sharedServerWarning',
+		group: G,
+		type: 'boolean',
+		default: true,
+		description:
+			'เตือนหนึ่งครั้งเมื่อ codex ที่คุณพิมพ์เองใน terminal ไปใช้เซิร์ฟเวอร์ร่วมกับแท็บอื่น เพราะสถานะของ agent อาจผิด ทำงานเฉพาะเมื่อเปิด kingu.codex.terminalServerIsolation (Orca: codexSharedServerWarning) (Warn once when a codex you started yourself shares a server with other tabs, since its agent status may be wrong; only while kingu.codex.terminalServerIsolation is on.)',
+		scope: 'application'
+	},
 	// --- Orchestration (Orca's Orchestration pane): agents dispatching sub-tasks with `kingu task create`.
 	{
 		id: 'kingu.orchestration.maxDepth',

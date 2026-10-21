@@ -1434,6 +1434,8 @@ pub fn run() {
       attachments::paste_image_save,
       attachments::chat_attachment_preview,
       agent::trust::agent_trust_workspace,
+      agent::codex_server::codex_supports_no_daemon,
+      agent::codex_server::codex_shared_server_joined,
       agent::mcp::mcp_list,
       agent::mcp::mcp_trust,
       agent::mcp::mcp_user_read,

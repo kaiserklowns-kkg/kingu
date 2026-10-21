@@ -120,6 +120,10 @@ export const ade = {
 	'ade.agentProfiles.typeCommand': 'พิมพ์คำสั่งเอง',
 	'ade.agentCli.badOverride': '{setting} ต้องเป็นคำสั่งหรือ path ธรรมดา (ไม่มีอักขระของ shell)',
 	'ade.agentCli.badEnv': '{setting} ต้องเป็นชื่อตัวแปรธรรมดา (A-Z 0-9 _) และค่าที่ไม่มีอักขระควบคุม',
+	// codexSharedServer.ts: codex ที่พิมพ์เองแล้วไปใช้ app-server ร่วมของ Codex (Orca: codexSharedServerWarning)
+	'ade.codexServer.sharedTitle': 'Codex นี้ใช้เซิร์ฟเวอร์ร่วมกับแท็บ Codex อื่นของคุณ',
+	'ade.codexServer.sharedBody': 'session อาจจบเองโดยไม่คาดคิด และสถานะของ agent อาจไม่ถูกต้อง\n\nเริ่ม codex ด้วย --no-daemon เพื่อให้มีเซิร์ฟเวอร์ของตัวเอง หรือหยุดเซิร์ฟเวอร์ร่วม: codex features disable daemon_auto_start แล้ว codex app-server daemon stop',
+	'ade.codexServer.dontShowAgain': 'ไม่ต้องแสดงอีก',
 
 	'ade.openFolderFirst': 'เปิดโฟลเดอร์ก่อน',
 	'ade.quickOpen.tooMany': 'worktree มีไฟล์มากกว่า {count} ไฟล์ อาจไม่แสดงครบ พิมพ์ชื่อให้เจาะจงขึ้น',
