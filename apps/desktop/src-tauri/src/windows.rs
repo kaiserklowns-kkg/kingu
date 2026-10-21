@@ -232,6 +232,7 @@ pub fn on_destroyed(app: &AppHandle, label: &str) {
   app.state::<crate::lsp::Servers>().stop_window(label);
   app.state::<crate::dap::Sessions>().stop_window(label);
   app.state::<crate::pty::Ptys>().forget_window(label);
+  crate::cli_server::window_closed(app, label);
   let workspaces = app.state::<Workspaces>();
   // The last window closing ends the app: it stays in the session to restore.
   if workspaces.labels().len() <= 1 {
@@ -401,7 +402,7 @@ fn apply_bounds(w: &tauri::WebviewWindow, b: WindowBounds) {
 }
 
 /// A user setting about windows, read from the user's settings file (before any page runs).
-fn window_setting(app: &AppHandle, key: &str) -> Option<serde_json::Value> {
+pub(crate) fn window_setting(app: &AppHandle, key: &str) -> Option<serde_json::Value> {
   crate::settings::user_value(&app.path().app_config_dir().ok()?, key)
 }
 
@@ -607,6 +608,25 @@ pub fn open_folder_from_cli(app: &AppHandle, path: &Path) -> Result<bool, String
   session.bounds = new_bounds(app, &session);
   open_window(app, session, Vec::new())?;
   Ok(true)
+}
+
+/// `kingu -n [folders…]` and folders the CLI opens in a new window: a window with `folders` (one
+/// untitled workspace for several, an empty window for none). A window that has exactly these
+/// folders comes to the front instead. Returns its label and whether it is new (its page is
+/// still loading).
+pub fn open_for_cli(app: &AppHandle, folders: &[PathBuf]) -> Result<(String, bool), String> {
+  let folders = workspace::existing_folders(&folders.iter().cloned().map(Folder::new).collect::<Vec<_>>());
+  let paths: Vec<PathBuf> = folders.iter().map(|f| f.path.clone()).collect();
+  if !paths.is_empty()
+    && let Some(label) = app.state::<Workspaces>().window_with(&paths, None)
+  {
+    focus(app, &label);
+    return Ok((label, false));
+  }
+  let untitled = (folders.len() > 1).then(untitled_id);
+  let mut session = WindowSession { folders, untitled, ..Default::default() };
+  session.bounds = new_bounds(app, &session);
+  Ok((open_window(app, session, Vec::new())?, true))
 }
 
 /// Before opening `path` in this window: when another window already has exactly that folder,

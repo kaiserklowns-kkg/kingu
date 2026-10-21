@@ -1570,6 +1570,8 @@ pub fn run() {
       artifacts::team::team_artifact_get,
       artifacts::team::team_artifact_delete,
       cli_server::cli_reply,
+      cli_server::cli_queued,
+      cli_server::cli_wait_done,
       cli_server::cli_install,
       cli_server::cli_uninstall,
       cli_server::cli_skill_plugin,

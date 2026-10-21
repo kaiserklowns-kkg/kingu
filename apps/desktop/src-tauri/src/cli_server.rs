@@ -49,6 +49,69 @@ static RUNTIME: OnceLock<PathBuf> = OnceLock::new();
 pub struct CliServer {
   pending: Mutex<HashMap<u64, mpsc::Sender<Result<Value, String>>>>,
   next: AtomicU64,
+  /// Requests for windows whose page is still loading (a new window): fetched with `cli_queued`.
+  queued: Mutex<HashMap<String, Vec<Value>>>,
+  waits: Waits,
+}
+
+/// `kingu --wait`: each wait has the window it opened in; it ends when the window reports its
+/// editors closed (`cli_wait_done`) or the window goes.
+#[derive(Default)]
+pub struct Waits {
+  map: Mutex<HashMap<u64, WaitState>>,
+  next: AtomicU64,
+}
+
+#[derive(Default)]
+struct WaitState {
+  owner: String,
+  done: bool,
+  waiter: Option<mpsc::Sender<()>>,
+}
+
+impl Waits {
+  pub fn register(&self, owner: &str) -> u64 {
+    let id = self.next.fetch_add(1, Ordering::Relaxed) + 1;
+    self.map.lock().unwrap_or_else(|e| e.into_inner()).insert(id, WaitState { owner: owner.into(), ..Default::default() });
+    id
+  }
+
+  /// The wait is over (a later `wait` returns at once).
+  pub fn finish(&self, id: u64) {
+    if let Some(w) = self.map.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&id) {
+      w.done = true;
+      if let Some(tx) = w.waiter.take() {
+        let _ = tx.send(());
+      }
+    }
+  }
+
+  /// Every wait of a window that closed.
+  pub fn finish_window(&self, label: &str) {
+    let ids: Vec<u64> = self.map.lock().unwrap_or_else(|e| e.into_inner()).iter().filter(|(_, w)| w.owner == label).map(|(id, _)| *id).collect();
+    ids.into_iter().for_each(|id| self.finish(id));
+  }
+
+  /// Blocks until wait `id` is over (an unknown id is over already).
+  pub fn wait(&self, id: u64) {
+    let rx = {
+      let mut map = self.map.lock().unwrap_or_else(|e| e.into_inner());
+      match map.get_mut(&id) {
+        None => return,
+        Some(w) if w.done => {
+          map.remove(&id);
+          return;
+        }
+        Some(w) => {
+          let (tx, rx) = mpsc::channel();
+          w.waiter = Some(tx);
+          rx
+        }
+      }
+    };
+    let _ = rx.recv();
+    self.map.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+  }
 }
 
 pub fn bin_dir() -> Option<&'static Path> {
@@ -147,6 +210,147 @@ pub fn check_open(params: &Value) -> Result<Value, RpcError> {
   Ok(json!({ "path": real.display().to_string(), "kind": kind, "line": pos("line"), "column": pos("column") }))
 }
 
+/// What `kingu [options] [paths…]` asks for (VS Code's `code`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorMode {
+  Open,
+  Diff,
+  Merge,
+  Add,
+  Remove,
+}
+
+/// A file to open and where.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct FileArg {
+  pub path: PathBuf,
+  pub line: Option<u32>,
+  pub column: Option<u32>,
+}
+
+/// `editor.open`'s params, checked: real paths, folders apart from files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorRequest {
+  pub mode: EditorMode,
+  pub folders: Vec<PathBuf>,
+  pub files: Vec<FileArg>,
+  pub new_window: bool,
+  pub reuse_window: bool,
+  pub wait: bool,
+  pub profile: Option<String>,
+}
+
+pub fn check_editor(params: &Value) -> Result<EditorRequest, RpcError> {
+  let flag = |k: &str| params.get(k).and_then(Value::as_bool).unwrap_or(false);
+  let mode = match (flag("diff"), flag("merge"), flag("add"), flag("remove")) {
+    (false, false, false, false) => EditorMode::Open,
+    (true, false, false, false) => EditorMode::Diff,
+    (false, true, false, false) => EditorMode::Merge,
+    (false, false, true, false) => EditorMode::Add,
+    (false, false, false, true) => EditorMode::Remove,
+    _ => return Err(rpc(ERR_BAD_REQUEST, tr!(CliMsg::BadEditorRequest))),
+  };
+  let mut folders = Vec::new();
+  let mut files = Vec::new();
+  for p in params.get("paths").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default() {
+    let raw = abs_param(p, "path")?;
+    let real = std::fs::canonicalize(&raw).map_err(|_| rpc(ERR_FAILED, tr!(CliMsg::PathNotFound, path = raw.display())))?;
+    let pos = |k: &str| p.get(k).and_then(Value::as_u64).filter(|n| (1..=u32::MAX as u64).contains(n)).map(|n| n as u32);
+    match (real.is_dir(), mode) {
+      (true, EditorMode::Diff | EditorMode::Merge) => return Err(rpc(ERR_BAD_REQUEST, tr!(CliMsg::NotAFile, path = raw.display()))),
+      (false, EditorMode::Add | EditorMode::Remove) => return Err(rpc(ERR_BAD_REQUEST, tr!(CliMsg::NotAFolder, path = raw.display()))),
+      (true, _) => {
+        if !folders.contains(&real) {
+          folders.push(real);
+        }
+      }
+      (false, _) => files.push(FileArg { path: real, line: pos("line"), column: pos("column") }),
+    }
+  }
+  let wanted = match mode {
+    EditorMode::Diff => Some(2),
+    EditorMode::Merge => Some(4),
+    _ => None,
+  };
+  if wanted.is_some_and(|n| n != files.len()) || (matches!(mode, EditorMode::Add | EditorMode::Remove) && folders.is_empty()) {
+    return Err(rpc(ERR_BAD_REQUEST, tr!(CliMsg::BadEditorRequest)));
+  }
+  let profile = str_param(params, "profile").map(str::trim).filter(|p| !p.is_empty()).map(str::to_owned);
+  Ok(EditorRequest { mode, folders, files, new_window: flag("newWindow"), reuse_window: flag("reuseWindow"), wait: flag("wait"), profile })
+}
+
+/// Where an editor request goes: a new window (with the request's folders), or an open window
+/// that opens, adds or removes the folders itself (`None`: it has them already).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Placement {
+  NewWindow,
+  Window(String, Option<EditorMode>),
+}
+
+/// The windows a placement can pick from.
+#[derive(Debug, Default)]
+pub struct WindowsNow {
+  /// The window that has exactly the request's folders.
+  pub with_folders: Option<String>,
+  /// The last active window and whether it has no folder.
+  pub last_active: Option<(String, bool)>,
+  /// The window for the request's files (whose folders hold them, else the last active).
+  pub for_files: Option<String>,
+}
+
+/// VS Code's rules for `code`: `-n` a new window (the one that has the folders comes to the
+/// front instead); `-a`/`--remove` the last active window; folders the window that has them,
+/// else the last active window when it is empty or with `-r` or `window.openFoldersInNewWindow:
+/// off`, else a new window (several folders: always, as one untitled workspace); files the
+/// window whose folder has them.
+pub fn place(req: &EditorRequest, now: &WindowsNow, folders_setting: Option<&str>) -> Placement {
+  let last = |mode: Option<EditorMode>| now.last_active.as_ref().map_or(Placement::NewWindow, |(l, _)| Placement::Window(l.clone(), mode));
+  match req.mode {
+    EditorMode::Add | EditorMode::Remove if !req.new_window => return last(Some(req.mode)),
+    _ => {}
+  }
+  if !req.folders.is_empty() {
+    if let Some(l) = &now.with_folders {
+      return Placement::Window(l.clone(), None);
+    }
+    if req.new_window || req.folders.len() > 1 {
+      return Placement::NewWindow;
+    }
+    let empty_last = now.last_active.as_ref().is_some_and(|(_, empty)| *empty);
+    if req.reuse_window || empty_last || folders_setting == Some("off") {
+      return last(Some(EditorMode::Open));
+    }
+    return Placement::NewWindow;
+  }
+  if req.new_window {
+    return Placement::NewWindow;
+  }
+  match (&now.for_files, req.reuse_window || req.files.is_empty()) {
+    (Some(l), false) => Placement::Window(l.clone(), None),
+    _ => last(None),
+  }
+}
+
+/// What the window gets for an editor request: the folders to open, add or remove
+/// (`folderMode`), the files (or the two of a diff, the four of a merge) and the wait to report.
+pub fn window_payload(req: &EditorRequest, folder_mode: Option<EditorMode>, wait_id: Option<u64>) -> Value {
+  let mode = |m: EditorMode| match m {
+    EditorMode::Open => "open",
+    EditorMode::Diff => "diff",
+    EditorMode::Merge => "merge",
+    EditorMode::Add => "add",
+    EditorMode::Remove => "remove",
+  };
+  json!({
+    "folders": req.folders.iter().map(|f| f.display().to_string()).collect::<Vec<_>>(),
+    "folderMode": folder_mode.map(mode),
+    "mode": mode(req.mode),
+    "files": req.files,
+    "waitId": wait_id,
+    "profile": req.profile,
+  })
+}
+
 /// `notify`'s title and message.
 pub fn check_notify(params: &Value) -> Result<(String, String), RpcError> {
   let message = str_param(params, "message").unwrap_or_default().trim();
@@ -235,11 +439,17 @@ fn tasks(root: &Path) -> Result<Vec<crate::agent::tasks::TaskMeta>, RpcError> {
 
 /// Hands a request to the window for `cwd` (brought to the front with `focus`) and waits for its `cli_reply`.
 fn ask_window(app: &AppHandle, cwd: Option<&Path>, method: &str, params: Value, focus: bool) -> Result<Value, RpcError> {
+  let label = window(app, cwd).map(|w| w.label().to_string());
+  ask_label(app, label, false, method, params, focus)
+}
+
+/// Hands a request to window `label` (none: every window) and waits for its `cli_reply`.
+/// `queued`: the window was just opened, so its page fetches the request once it is up.
+fn ask_label(app: &AppHandle, label: Option<String>, queued: bool, method: &str, params: Value, focus: bool) -> Result<Value, RpcError> {
   let server = app.state::<CliServer>();
   let id = server.next.fetch_add(1, Ordering::Relaxed) + 1;
   let (tx, rx) = mpsc::channel();
   server.pending.lock().unwrap_or_else(|e| e.into_inner()).insert(id, tx);
-  let label = window(app, cwd).map(|w| w.label().to_string());
   if focus {
     match &label {
       Some(l) => {
@@ -249,19 +459,75 @@ fn ask_window(app: &AppHandle, cwd: Option<&Path>, method: &str, params: Value, 
     }
   }
   let request = json!({ "id": id, "method": method, "params": params });
-  let sent = match &label {
-    Some(l) => app.emit_to(l.as_str(), REQUEST_EVENT, request),
-    None => app.emit(REQUEST_EVENT, request),
+  let sent = match (&label, queued) {
+    (Some(l), true) => {
+      server.queued.lock().unwrap_or_else(|e| e.into_inner()).entry(l.clone()).or_default().push(request);
+      Ok(())
+    }
+    (Some(l), false) => app.emit_to(l.as_str(), REQUEST_EVENT, request),
+    (None, _) => app.emit(REQUEST_EVENT, request),
   };
+  // A new window's page has to load first.
+  let timeout = if queued { WINDOW_TIMEOUT * 2 } else { WINDOW_TIMEOUT };
   let answer = match sent {
-    Ok(()) => rx.recv_timeout(WINDOW_TIMEOUT).ok(),
+    Ok(()) => rx.recv_timeout(timeout).ok(),
     Err(e) => Some(Err(e.to_string())),
   };
+  if let Some(l) = label.filter(|_| queued) {
+    // Not fetched in time: dropped, so a late page does not act on it.
+    let mut q = server.queued.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(list) = q.get_mut(&l) {
+      list.retain(|r| r["id"] != json!(id));
+    }
+  }
   server.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
   match answer {
     Some(Ok(v)) => Ok(v),
     Some(Err(e)) => Err(rpc(ERR_FAILED, e)),
     None => Err(rpc(ERR_UNAVAILABLE, tr!(CliMsg::WindowNoAnswer))),
+  }
+}
+
+/// `kingu [options] [paths…]`: picks the window (`place`), opens a new one if needed, lets it
+/// read files outside its folders, and hands it the request. With `--wait` the answer holds the
+/// `waitId` the command then waits on (`editor.wait`).
+fn open_editors(app: &AppHandle, params: &Value) -> Result<Value, RpcError> {
+  let req = check_editor(params)?;
+  let workspaces = app.state::<crate::workspace::Workspaces>();
+  let now = WindowsNow {
+    with_folders: (!req.folders.is_empty()).then(|| workspaces.window_with(&req.folders, None)).flatten(),
+    last_active: workspaces.last_active().map(|w| (w.label().to_string(), w.roots().is_empty())),
+    for_files: req.files.first().and_then(|f| window(app, Some(&f.path))).map(|w| w.label().to_string()),
+  };
+  let setting = crate::windows::window_setting(app, "window.openFoldersInNewWindow");
+  let (label, queued, folder_mode) = match place(&req, &now, setting.as_ref().and_then(Value::as_str)) {
+    Placement::NewWindow => {
+      let (label, created) = crate::windows::open_for_cli(app, &req.folders).map_err(|e| rpc(ERR_FAILED, e))?;
+      (label, created, None)
+    }
+    Placement::Window(label, mode) => (label, false, mode),
+  };
+  // Files outside the window's folders open as external editors, which Rust only reads once allowed.
+  let roots = workspaces.get(&label).roots();
+  let external = app.state::<crate::external::ExternalFiles>();
+  for f in req.files.iter().filter(|f| !roots.iter().any(|r| f.path.starts_with(r))) {
+    external.allow(&f.path);
+  }
+  let server = app.state::<CliServer>();
+  let wait_id = req.wait.then(|| server.waits.register(&label));
+  let answer = ask_label(app, Some(label), queued, protocol::METHOD_EDITOR_OPEN, window_payload(&req, folder_mode, wait_id), true);
+  if let (Err(_), Some(id)) = (&answer, wait_id) {
+    server.waits.finish(id);
+  }
+  answer?;
+  Ok(json!({ "waitId": wait_id }))
+}
+
+/// A window closed: the waits on it end and its queued requests go.
+pub fn window_closed(app: &AppHandle, label: &str) {
+  if let Some(server) = app.try_state::<CliServer>() {
+    server.waits.finish_window(label);
+    server.queued.lock().unwrap_or_else(|e| e.into_inner()).remove(label);
   }
 }
 
@@ -329,6 +595,12 @@ fn dispatch(app: &AppHandle, method: &str, params: &Value) -> Result<Value, RpcE
     protocol::METHOD_NOTIFY => {
       let (title, body) = check_notify(params)?;
       crate::notify::show(app, title, body).map_err(|e| rpc(ERR_FAILED, e))?;
+      Ok(Value::Null)
+    }
+    protocol::METHOD_EDITOR_OPEN => open_editors(app, params),
+    protocol::METHOD_EDITOR_WAIT => {
+      let id = params.get("id").and_then(Value::as_u64).ok_or_else(|| rpc(ERR_BAD_REQUEST, tr!(CliMsg::BadEditorRequest)))?;
+      app.state::<CliServer>().waits.wait(id);
       Ok(Value::Null)
     }
     other => Err(rpc(ERR_UNKNOWN_METHOD, tr!(CliMsg::UnknownMethod, method = other))),
@@ -514,6 +786,18 @@ pub fn cli_reply(server: tauri::State<'_, CliServer>, id: u64, result: Option<Va
   }
 }
 
+/// Requests waiting for this window's page (it just opened): handled like `kingu-cli:request`s.
+#[tauri::command]
+pub fn cli_queued(server: tauri::State<'_, CliServer>, ws: crate::workspace::Workspace) -> Vec<Value> {
+  server.queued.lock().unwrap_or_else(|e| e.into_inner()).remove(ws.label()).unwrap_or_default()
+}
+
+/// The editors a `kingu --wait` opened are all closed.
+#[tauri::command]
+pub fn cli_wait_done(server: tauri::State<'_, CliServer>, id: u64) {
+  server.waits.finish(id);
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct Installed {
   pub path: String,
@@ -528,6 +812,41 @@ pub fn install_dirs(home: Option<&Path>) -> Vec<PathBuf> {
   dirs
 }
 
+/// Links `exe` as `kingu` into the first of `dirs` that takes it (the first one is never created;
+/// later ones, such as ~/.local/bin, are). Someone else's `kingu` in any of them is never
+/// replaced, and not shadowed by ours either. `path`: the login shell's PATH, for `on_path`.
+pub fn install_to(dirs: &[PathBuf], exe: &Path, path: Option<&std::ffi::OsStr>) -> Result<Installed, String> {
+  let mut last = tr!(CliMsg::NoInstallFolder);
+  for (i, dir) in dirs.iter().enumerate() {
+    let link = dir.join(COMMAND);
+    if std::fs::symlink_metadata(&link).is_ok() && !std::fs::read_link(&link).is_ok_and(|t| is_kingu_link(&t)) {
+      return Err(tr!(CliMsg::LinkTaken, path = link.display()));
+    }
+    if i > 0 {
+      let _ = std::fs::create_dir_all(dir);
+    }
+    match link_into(dir, exe) {
+      Ok(link) => {
+        let on_path = path.is_some_and(|p| std::env::split_paths(p).any(|d| d == *dir));
+        return Ok(Installed { path: link.display().to_string(), on_path });
+      }
+      Err(e) => last = e,
+    }
+  }
+  Err(last)
+}
+
+/// Removes the links [`install_to`] made in `dirs`; the paths removed.
+pub fn uninstall_from(dirs: &[PathBuf]) -> Result<Vec<String>, String> {
+  let mut removed = Vec::new();
+  for dir in dirs {
+    if unlink_from(dir)? {
+      removed.push(dir.join(COMMAND).display().to_string());
+    }
+  }
+  Ok(removed)
+}
+
 #[tauri::command]
 pub async fn cli_install() -> Result<Installed, String> {
   tauri::async_runtime::spawn_blocking(|| {
@@ -536,28 +855,9 @@ pub async fn cli_install() -> Result<Installed, String> {
     }
     let exe = bundled().ok_or_else(|| tr!(CliMsg::NotBundled))?;
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    let dirs = install_dirs(home.as_deref());
-    let mut last = String::new();
-    for (i, dir) in dirs.iter().enumerate() {
-      // Someone else's `kingu`: never replaced, and not shadowed by ours either.
-      let link = dir.join(COMMAND);
-      if std::fs::symlink_metadata(&link).is_ok() && !std::fs::read_link(&link).is_ok_and(|t| is_kingu_link(&t)) {
-        return Err(tr!(CliMsg::LinkTaken, path = link.display()));
-      }
-      // ~/.local/bin may not exist yet; /usr/local/bin is never created here.
-      if i > 0 {
-        let _ = std::fs::create_dir_all(dir);
-      }
-      match link_into(dir, &exe) {
-        Ok(link) => {
-          let on_path = crate::shell_env::path().is_some_and(|p| std::env::split_paths(&p).any(|d| d == *dir));
-          log::info!("installed the kingu command at {}", link.display());
-          return Ok(Installed { path: link.display().to_string(), on_path });
-        }
-        Err(e) => last = e,
-      }
-    }
-    Err(last)
+    let installed = install_to(&install_dirs(home.as_deref()), &exe, crate::shell_env::path().as_deref())?;
+    log::info!("installed the kingu command at {}", installed.path);
+    Ok(installed)
   })
   .await
   .map_err(|e| e.to_string())?
@@ -567,12 +867,7 @@ pub async fn cli_install() -> Result<Installed, String> {
 #[tauri::command]
 pub fn cli_uninstall() -> Result<Vec<String>, String> {
   let home = std::env::var_os("HOME").map(PathBuf::from);
-  let mut removed = Vec::new();
-  for dir in install_dirs(home.as_deref()) {
-    if unlink_from(&dir)? {
-      removed.push(dir.join(COMMAND).display().to_string());
-    }
-  }
+  let removed = uninstall_from(&install_dirs(home.as_deref()))?;
   log::info!("uninstalled the kingu command ({} links)", removed.len());
   Ok(removed)
 }
@@ -725,6 +1020,141 @@ mod tests {
     std::fs::remove_file(&link).unwrap();
     symlink(Path::new("/usr/bin/true"), &link).unwrap();
     assert!(link_into(&bin, &exe).is_err() && !unlink_from(&bin).unwrap());
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn installs_into_the_first_folder_that_takes_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let exe = tmp.path().join("app/kingu-cli");
+    std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+    std::fs::write(&exe, "").unwrap();
+    // The first folder is never created; the second one is.
+    let (system, local) = (tmp.path().join("usr-local-bin"), tmp.path().join("home/.local/bin"));
+    let dirs = [system.clone(), local.clone()];
+    let path = std::env::join_paths([&local]).unwrap();
+    let got = install_to(&dirs, &exe, Some(&path)).unwrap();
+    assert_eq!((got.path, got.on_path), (local.join(COMMAND).display().to_string(), true));
+    assert!(!system.exists());
+    // With the first folder there it goes there (and is not on this PATH).
+    std::fs::create_dir_all(&system).unwrap();
+    std::fs::remove_file(local.join(COMMAND)).unwrap();
+    let got = install_to(&dirs, &exe, Some(&path)).unwrap();
+    assert_eq!((got.path, got.on_path), (system.join(COMMAND).display().to_string(), false));
+    assert_eq!(uninstall_from(&dirs).unwrap(), [system.join(COMMAND).display().to_string()]);
+    // Someone else's `kingu` in a folder before ours stops it.
+    std::fs::write(system.join(COMMAND), "#!/bin/sh").unwrap();
+    assert!(install_to(&dirs, &exe, None).is_err());
+    assert!(!local.join(COMMAND).exists());
+    assert!(uninstall_from(&dirs).unwrap().is_empty() && system.join(COMMAND).is_file());
+    assert!(install_to(&[], &exe, None).is_err());
+  }
+
+  fn editor_req(params: Value) -> Result<EditorRequest, RpcError> {
+    check_editor(&params)
+  }
+
+  #[test]
+  fn checks_editor_requests() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    std::fs::create_dir(root.join("app")).unwrap();
+    for f in ["a.ts", "b.ts", "base.ts", "out.ts"] {
+      std::fs::write(root.join(f), "").unwrap();
+    }
+    let p = |n: &str| json!({ "path": root.join(n).display().to_string() });
+    let r = editor_req(json!({ "paths": [p("app"), { "path": root.join("a.ts").display().to_string(), "line": 4, "column": 0 }, p("app")], "wait": true, "profile": " Work " })).unwrap();
+    assert_eq!(r.mode, EditorMode::Open);
+    assert_eq!(r.folders, [root.join("app")]);
+    assert_eq!(r.files, [FileArg { path: root.join("a.ts"), line: Some(4), column: None }]);
+    assert!(r.wait && !r.new_window);
+    assert_eq!(r.profile.as_deref(), Some("Work"));
+    let d = editor_req(json!({ "diff": true, "paths": [p("a.ts"), p("b.ts")] })).unwrap();
+    assert_eq!((d.mode, d.files.len()), (EditorMode::Diff, 2));
+    assert_eq!(editor_req(json!({ "merge": true, "paths": [p("a.ts"), p("b.ts"), p("base.ts"), p("out.ts")] })).unwrap().mode, EditorMode::Merge);
+    assert_eq!(editor_req(json!({ "add": true, "paths": [p("app")] })).unwrap().mode, EditorMode::Add);
+    for bad in [
+      json!({ "diff": true, "paths": [p("a.ts")] }),
+      json!({ "diff": true, "paths": [p("a.ts"), p("app")] }),
+      json!({ "merge": true, "paths": [p("a.ts"), p("b.ts")] }),
+      json!({ "add": true, "paths": [p("a.ts")] }),
+      json!({ "remove": true, "paths": [] }),
+      json!({ "diff": true, "merge": true, "paths": [] }),
+      json!({ "paths": [{ "path": "relative.ts" }] }),
+    ] {
+      assert_eq!(editor_req(bad.clone()).unwrap_err().code, ERR_BAD_REQUEST, "{bad}");
+    }
+    assert_eq!(editor_req(json!({ "paths": [p("missing.ts")] })).unwrap_err().code, ERR_FAILED);
+  }
+
+  fn req(folders: &[&str], files: &[&str]) -> EditorRequest {
+    EditorRequest {
+      mode: EditorMode::Open,
+      folders: folders.iter().map(PathBuf::from).collect(),
+      files: files.iter().map(|f| FileArg { path: f.into(), line: None, column: None }).collect(),
+      new_window: false,
+      reuse_window: false,
+      wait: false,
+      profile: None,
+    }
+  }
+
+  #[test]
+  fn places_requests_like_vs_code() {
+    let w = |l: &str| Placement::Window(l.into(), None);
+    let open = |l: &str| Placement::Window(l.into(), Some(EditorMode::Open));
+    let busy = WindowsNow { with_folders: None, last_active: Some(("main".into(), false)), for_files: Some("window-2".into()) };
+    // A folder: the window that has it, else a new window (or in place when the last one is empty, with -r or `off`).
+    assert_eq!(place(&req(&["/a"], &[]), &busy, None), Placement::NewWindow);
+    assert_eq!(place(&req(&["/a"], &[]), &WindowsNow { with_folders: Some("window-3".into()), ..Default::default() }, None), w("window-3"));
+    assert_eq!(place(&req(&["/a"], &[]), &WindowsNow { last_active: Some(("main".into(), true)), ..Default::default() }, None), open("main"));
+    assert_eq!(place(&req(&["/a"], &[]), &busy, Some("off")), open("main"));
+    assert_eq!(place(&EditorRequest { reuse_window: true, ..req(&["/a"], &[]) }, &busy, None), open("main"));
+    // Several folders: one new untitled workspace.
+    assert_eq!(place(&req(&["/a", "/b"], &[]), &WindowsNow { last_active: Some(("main".into(), true)), ..Default::default() }, None), Placement::NewWindow);
+    // -n: a new window even for files, unless a window has the folders.
+    assert_eq!(place(&EditorRequest { new_window: true, ..req(&[], &["/x.ts"]) }, &busy, None), Placement::NewWindow);
+    assert_eq!(place(&EditorRequest { new_window: true, ..req(&[], &[]) }, &busy, None), Placement::NewWindow);
+    // Files: the window whose folder has them; -r the last active one.
+    assert_eq!(place(&req(&[], &["/x.ts"]), &busy, None), w("window-2"));
+    assert_eq!(place(&EditorRequest { reuse_window: true, ..req(&[], &["/x.ts"]) }, &busy, None), w("main"));
+    assert_eq!(place(&req(&[], &[]), &busy, None), w("main"));
+    assert_eq!(place(&req(&[], &["/x.ts"]), &WindowsNow::default(), None), Placement::NewWindow);
+    // -a / --remove: the last active window.
+    let add = EditorRequest { mode: EditorMode::Add, ..req(&["/lib"], &[]) };
+    assert_eq!(place(&add, &busy, None), Placement::Window("main".into(), Some(EditorMode::Add)));
+    let remove = EditorRequest { mode: EditorMode::Remove, ..req(&["/lib"], &[]) };
+    assert_eq!(place(&remove, &busy, None), Placement::Window("main".into(), Some(EditorMode::Remove)));
+    assert_eq!(place(&add, &WindowsNow::default(), None), Placement::NewWindow);
+  }
+
+  #[test]
+  fn hands_the_window_what_to_open() {
+    let mut r = req(&["/a"], &["/a/x.ts"]);
+    r.files[0].line = Some(3);
+    r.mode = EditorMode::Diff;
+    let v = window_payload(&r, Some(EditorMode::Open), Some(7));
+    assert_eq!(v, json!({ "folders": ["/a"], "folderMode": "open", "mode": "diff", "files": [{ "path": "/a/x.ts", "line": 3, "column": null }], "waitId": 7, "profile": null }));
+  }
+
+  #[test]
+  fn waits_end_when_finished_or_their_window_closes() {
+    let waits = std::sync::Arc::new(Waits::default());
+    // Finished before anyone waits: the wait returns at once.
+    let a = waits.register("main");
+    waits.finish(a);
+    waits.wait(a);
+    // An unknown id is over.
+    waits.wait(999);
+    // A blocked wait ends when its window closes, not when another one does.
+    let b = waits.register("window-2");
+    let w = waits.clone();
+    let t = std::thread::spawn(move || w.wait(b));
+    std::thread::sleep(Duration::from_millis(50));
+    waits.finish_window("main");
+    assert!(!t.is_finished());
+    waits.finish_window("window-2");
+    t.join().unwrap();
   }
 
   #[cfg(unix)]
