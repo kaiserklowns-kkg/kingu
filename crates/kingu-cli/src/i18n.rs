@@ -404,7 +404,7 @@ mod tests {
   fn usage_lists_the_same_commands_in_both_languages() {
     let commands = |s: &str| s.lines().filter(|l| l.trim_start().starts_with("kingu ")).map(|l| l.trim().split("  ").next().unwrap_or_default().to_owned()).collect::<Vec<_>>();
     assert_eq!(commands(USAGE_EN), commands(USAGE_TH));
-    assert_eq!(commands(USAGE_EN).len(), 9);
+    assert_eq!(commands(USAGE_EN).len(), 13);
     let flags = |s: &str| s.lines().filter(|l| l.trim_start().starts_with('-')).map(|l| l.trim().split("  ").next().unwrap_or_default().to_owned()).collect::<Vec<_>>();
     assert_eq!(flags(USAGE_EN), flags(USAGE_TH));
     assert!(flags(USAGE_EN).len() > 12);
