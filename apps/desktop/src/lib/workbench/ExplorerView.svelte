@@ -9,6 +9,7 @@
 	import { fileIcon, folderIcon } from './fileIcons';
 	import { explorer, type Row } from './explorer.svelte';
 	import { editors } from './editors.svelte';
+	import { compareStore } from './compare.svelte';
 	import { baseName, recentLabel, stemLength } from './fileTree';
 	import { keyLabel } from './keys';
 	import { workspace } from './workspace.svelte';
@@ -317,6 +318,12 @@
 			return items;
 		}
 		if (target) {
+			// Select for Compare / Compare with Selected; two selected files: Compare Selected (VS Code).
+			const files = explorer.targets(target).filter((r) => !explorer.isDir(r));
+			if (!many && files.length === 1) {
+				items.push('sep', { label: 'Select for Compare', run: () => compareStore.select(target) });
+				if (compareStore.selected && compareStore.selected !== target) items.push({ label: 'Compare with Selected', run: () => compareStore.withSelected(target) });
+			} else if (files.length === 2) items.push('sep', { label: 'Compare Selected', run: () => compareStore.open(files[0], files[1]) });
 			items.push('sep');
 			if (!many) items.push({ label: 'Rename...', key: isMac ? '↵' : 'F2', run: () => explorer.startRename(target) });
 			items.push({ label: 'Delete', key: isMac ? '⌘⌫' : 'Delete', run: () => explorer.delete(target) });

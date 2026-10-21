@@ -255,4 +255,8 @@ export const workbench = {
 	'workbench.floating.openNoteFailed': 'เปิดไฟล์ markdown ไม่ได้: {error}',
 	'workbench.search.replaceFailed': 'แทนที่ไม่สำเร็จ: {error}',
 	'workbench.editorStatus.configureAssociation': 'ตั้งค่าภาษาของไฟล์ \'{pattern}\'...',
+	'workbench.compare.saved': 'ที่บันทึกไว้',
+	'workbench.compare.clipboard': 'คลิปบอร์ด',
+	'workbench.compare.selected': 'เลือก {name} ไว้เปรียบเทียบแล้ว',
+	'workbench.compare.pickPlaceholder': 'เลือกไฟล์ที่จะเปรียบเทียบกับไฟล์ที่เปิดอยู่',
 } satisfies Record<keyof typeof en, string>;

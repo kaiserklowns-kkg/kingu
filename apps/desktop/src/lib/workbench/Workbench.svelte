@@ -47,6 +47,7 @@
 	import { installSettings } from '#lib/settings/apply.svelte.ts';
 	import { installWorkbenchAppearance } from './workbenchAppearance.svelte';
 	import { registerSettingsCommands } from '#lib/settings/contributions.ts';
+	import { registerCompareCommands } from './compare.svelte';
 	import { installLocalAi } from '#lib/localAi/localAi.svelte.ts';
 	import { installAde } from '#lib/ade/tasks.svelte.ts';
 	import { isMac } from './keys';
@@ -361,6 +362,7 @@
 		const uninstallSettings = installSettings();
 		const uninstallAppearance = installWorkbenchAppearance();
 		const unregisterSettings = registerSettingsCommands();
+		const unregisterCompare = registerCompareCommands();
 		const uninstallAde = installAde();
 		const uninstallAgentsMode = installAgentsMode();
 		const uninstallWorktreeCommands = installWorktreeCommands();
@@ -454,6 +456,7 @@
 			uninstallAppearance();
 			uninstallSettings();
 			unregisterSettings();
+			unregisterCompare();
 			unregister.forEach((u) => u());
 		};
 	});

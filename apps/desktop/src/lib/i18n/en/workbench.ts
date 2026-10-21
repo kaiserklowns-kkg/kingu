@@ -254,4 +254,8 @@ export const workbench = {
 	'workbench.floating.openNoteFailed': 'Failed to open markdown file. {error}',
 	'workbench.search.replaceFailed': 'Replace failed: {error}',
 	'workbench.editorStatus.configureAssociation': 'Configure File Association for \'{pattern}\'...',
+	'workbench.compare.saved': 'Saved',
+	'workbench.compare.clipboard': 'Clipboard',
+	'workbench.compare.selected': 'Selected {name} for compare',
+	'workbench.compare.pickPlaceholder': 'Select a file to compare the active file with',
 } as const;
