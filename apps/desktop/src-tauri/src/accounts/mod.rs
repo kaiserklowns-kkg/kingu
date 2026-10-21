@@ -9,6 +9,8 @@
 //! labels and states only.
 
 pub mod creds;
+pub mod managed;
+pub mod providers;
 pub mod secrets;
 pub mod store;
 pub mod usage;
@@ -30,6 +32,8 @@ use store::{Account, AgentEnv, Kind, Provider, Store};
 use usage::{Api, Endpoints, Failure, Fetched, History, Http, Poll, Sample, Usage};
 
 pub const HISTORY_FILE: &str = "ai-usage-history.json";
+/// Event when `kingu account` changed the OpenCode / Devin managed accounts (payload: provider).
+pub const MANAGED_CHANGED: &str = "accounts://managed-changed";
 const PROVIDERS: [Provider; 2] = [Provider::Claude, Provider::Codex];
 
 fn now_ms() -> u64 {
@@ -73,6 +77,8 @@ pub struct Accounts {
   creds: Box<dyn CredentialSource>,
   http: Box<dyn Http>,
   endpoints: Endpoints,
+  /// OpenCode and Devin managed data accounts (next to the account folders).
+  pub managed: managed::Managed,
 }
 
 /// One usage subject: a provider's login that agents use or may use.
@@ -128,7 +134,8 @@ impl Accounts {
   pub fn new(paths: Paths, secrets: Box<dyn SecretStore>, creds: Box<dyn CredentialSource>, http: Box<dyn Http>, endpoints: Endpoints) -> Self {
     let store = Store::load(paths.store_file.clone());
     let history = History::load(&paths.history_file);
-    Self { paths, inner: Mutex::new(Inner { store, polls: BTreeMap::new(), history }), refreshing: Mutex::new(()), secrets, creds, http, endpoints }
+    let managed = managed::Managed::new(paths.root.parent().unwrap_or(&paths.root).join(managed::DIR));
+    Self { paths, inner: Mutex::new(Inner { store, polls: BTreeMap::new(), history }), refreshing: Mutex::new(()), secrets, creds, http, endpoints, managed }
   }
 
   fn account_dir(&self, a: &Account) -> PathBuf {
@@ -408,15 +415,18 @@ pub fn install(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     codex_env_home: env_dir("CODEX_HOME"),
   };
   let http = usage::ReqwestHttp::new()?;
+  let provider_home = paths.home.clone();
   app.manage(Accounts::new(paths, Box::new(secrets::Keychain), Box::new(creds::SystemCredentials), Box::new(http), Endpoints::default()));
+  app.manage(providers::Providers::new(Box::new(providers::ReqwestWeb::new()?), Box::new(providers::SystemRunner), Box::new(secrets::Keychain), provider_home));
   Ok(())
 }
 
-/// The env an agent CLI started in a terminal gets: by program name (`claude`, `codex`).
+/// The env an agent CLI started in a terminal gets: by program name (`claude`, `codex`; the
+/// managed accounts' `opencode`, `devin`).
 pub fn env_for_program(accounts: &Accounts, program: &str) -> Result<BTreeMap<String, String>, String> {
   match Provider::of_program(program) {
     Some(p) => Ok(accounts.agent_env(p)?.for_shell()),
-    None => Ok(BTreeMap::new()),
+    None => Ok(accounts.managed.env_for_program(program)),
   }
 }
 
@@ -617,3 +627,112 @@ mod tests {
     assert!(tmp.path().join("home/.claude/projects").is_dir(), "the user's own folder is untouched");
   }
 }
+
+// ---- OpenCode / Devin managed data accounts --------------------------------------------------
+
+#[tauri::command]
+pub async fn managed_accounts_list(app: tauri::AppHandle) -> Result<BTreeMap<String, managed::State>, String> {
+  blocking(move || app.state::<Accounts>().managed.list()).await
+}
+
+#[tauri::command]
+pub async fn managed_account_select(app: tauri::AppHandle, provider: String, id: Option<String>) -> Result<managed::State, String> {
+  let p = managed::DataProvider::parse(&provider)?;
+  blocking(move || app.state::<Accounts>().managed.select(p, id.as_deref())).await?
+}
+
+#[tauri::command]
+pub async fn managed_account_remove(app: tauri::AppHandle, provider: String, id: String) -> Result<managed::State, String> {
+  let p = managed::DataProvider::parse(&provider)?;
+  blocking(move || app.state::<Accounts>().managed.remove(p, &id)).await?
+}
+
+// ---- the other providers' usage (accounts/providers) -----------------------------------------
+
+#[tauri::command]
+pub fn provider_usage_get(providers: State<'_, providers::Providers>) -> Vec<providers::Usage> {
+  providers.current()
+}
+
+/// Fetches the providers that are due (all of them with `force`, or just `only`).
+#[tauri::command]
+pub async fn provider_usage_refresh(app: tauri::AppHandle, config: providers::Config, force: Option<bool>, only: Option<String>) -> Result<Vec<providers::Usage>, String> {
+  blocking(move || app.state::<providers::Providers>().refresh(&config, force.unwrap_or(false), only.as_deref(), now_ms())).await
+}
+
+/// Which of the credentials Kingu keeps for these providers are saved (never their values).
+#[tauri::command]
+pub async fn provider_credentials_status(app: tauri::AppHandle) -> Result<BTreeMap<String, bool>, String> {
+  blocking(move || {
+    let p = app.state::<providers::Providers>();
+    providers::CREDENTIALS.iter().map(|n| (n.to_string(), p.secrets().get(&providers::secret_id(n)).is_some_and(|v| !v.is_empty()))).collect()
+  })
+  .await
+}
+
+/// Saves (or with no value, forgets) a provider credential in the Keychain.
+#[tauri::command]
+pub async fn provider_credential_set(app: tauri::AppHandle, name: String, value: Option<String>) -> Result<BTreeMap<String, bool>, String> {
+  use crate::i18n::msg::ProvidersMsg;
+  if !providers::CREDENTIALS.contains(&name.as_str()) {
+    return Err(tr!(ProvidersMsg::UnknownCredential));
+  }
+  let app2 = app.clone();
+  blocking(move || -> Result<(), String> {
+    let p = app2.state::<providers::Providers>();
+    let id = providers::secret_id(&name);
+    match value.map(|v| v.trim().to_owned()) {
+      Some(v) if v.is_empty() || v.contains('\n') => return Err(tr!(ProvidersMsg::CredentialEmpty)),
+      Some(v) => p.secrets().set(&id, &v)?,
+      None => p.secrets().delete(&id)?,
+    }
+    p.invalidate(providers::credential_provider(&name));
+    Ok(())
+  })
+  .await??;
+  provider_credentials_status(app).await
+}
+
+#[tauri::command]
+pub async fn grok_status(app: tauri::AppHandle) -> Result<providers::grok::GrokStatus, String> {
+  blocking(move || providers::grok::status(app.state::<providers::Providers>().home(), now_ms())).await
+}
+
+#[tauri::command]
+pub async fn cursor_status(app: tauri::AppHandle) -> Result<providers::cursor::CursorStatus, String> {
+  blocking(move || {
+    let p = app.state::<providers::Providers>();
+    let config = providers::Config::default();
+    providers::cursor::status(&p.ctx(&config, now_ms()))
+  })
+  .await
+}
+
+#[tauri::command]
+pub async fn zcode_status(app: tauri::AppHandle) -> Result<providers::zcode::ZcodeStatus, String> {
+  blocking(move || {
+    let p = app.state::<providers::Providers>();
+    let config = providers::Config::default();
+    providers::zcode::status(&p.ctx(&config, now_ms()))
+  })
+  .await
+}
+
+/// Antigravity's saved accounts: `list`, `add-current`, `select` or `remove` (with `id`).
+#[tauri::command]
+pub async fn antigravity_accounts(app: tauri::AppHandle, action: String, id: Option<String>) -> Result<providers::antigravity::AccountState, String> {
+  use providers::antigravity as agy;
+  blocking(move || {
+    let p = app.state::<providers::Providers>();
+    let (run, secrets, home) = (p.runner(), p.secrets(), p.home());
+    let id = id.unwrap_or_default();
+    match action.as_str() {
+      "add-current" => agy::add_current(run, secrets, home, now_ms()),
+      "select" => agy::select(run, secrets, home, &id),
+      "remove" => agy::remove(run, secrets, home, &id),
+      _ => agy::list(run, secrets, home, now_ms()),
+    }
+  })
+  .await?
+}
+

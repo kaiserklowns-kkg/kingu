@@ -67,6 +67,11 @@ pub fn request_of(cmd: &Command, cwd: &Path, stdin_prompt: Option<String>) -> Re
       )
     }
     Command::ArtifactList => (protocol::METHOD_ARTIFACT_LIST, json!({ "cwd": cwd.display().to_string() })),
+    // The login runs first (`main`), then `account_add_request` registers it.
+    Command::AccountAdd { .. } => return Ok(None),
+    Command::AccountList { agent } => (protocol::METHOD_ACCOUNT_LIST_DATA, json!({ "provider": agent })),
+    Command::AccountSelect { agent, account } => (protocol::METHOD_ACCOUNT_SELECT_DATA, json!({ "provider": agent, "accountId": account })),
+    Command::AccountRemove { agent, account } => (protocol::METHOD_ACCOUNT_REMOVE_DATA, json!({ "provider": agent, "accountId": account })),
   }))
 }
 
@@ -82,6 +87,31 @@ pub fn asset_name(folder: &Path, asset: &Path) -> String {
     Ok(rel) if !rel.as_os_str().is_empty() => rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/"),
     _ => asset.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
   }
+}
+
+/// Registers a login `kingu account add` saved under `source_data_home` (an XDG data home).
+pub fn account_add_request(agent: &str, label: Option<&str>, source_data_home: &Path) -> (&'static str, Value) {
+  let label = label.map(str::to_owned).unwrap_or_else(|| if agent == "devin" { "Devin".into() } else { "OpenCode".into() });
+  (protocol::METHOD_ACCOUNT_ADD_DATA, json!({ "provider": agent, "sourceDataHome": source_data_home.display().to_string(), "label": label }))
+}
+
+/// A managed-accounts answer (`{opencode: State, devin: State}`, either may be missing) as text.
+fn render_data_accounts(result: &Value) -> String {
+  let mut blocks = Vec::new();
+  for (key, title) in [("opencode", "OpenCode"), ("devin", "Devin")] {
+    let Some(state) = result.get(key).filter(|v| v.is_object()) else { continue };
+    let accounts = state["accounts"].as_array().map(Vec::as_slice).unwrap_or_default();
+    let active = state["activeAccountId"].as_str();
+    let mark = |on: bool| if on { format!(" {}", tr(Msg::ActiveMark, &[])) } else { String::new() };
+    let mut lines = vec![if accounts.is_empty() { tr(Msg::NoManaged, &[("provider", &title)]) } else { tr(Msg::ManagedHeader, &[("provider", &title), ("count", &accounts.len())]) }];
+    lines.push(format!("  system  {}{}", tr(Msg::SystemDefault, &[]), mark(active.is_none())));
+    for a in accounts {
+      let id = a["id"].as_str().unwrap_or("");
+      lines.push(format!("  {id}  {}{}", a["label"].as_str().unwrap_or(""), mark(active == Some(id))));
+    }
+    blocks.push(lines.join("\n"));
+  }
+  blocks.join("\n\n")
 }
 
 /// What a person sees for a successful answer.
@@ -121,6 +151,7 @@ pub fn render(method: &str, result: &Value) -> String {
         .collect();
       if rows.is_empty() { tr(Msg::NoArtifacts, &[]) } else { rows.join("\n") }
     }
+    protocol::METHOD_ACCOUNT_LIST_DATA | protocol::METHOD_ACCOUNT_ADD_DATA | protocol::METHOD_ACCOUNT_SELECT_DATA | protocol::METHOD_ACCOUNT_REMOVE_DATA => render_data_accounts(result),
     _ => String::new(),
   }
 }

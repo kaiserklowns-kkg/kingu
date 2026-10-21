@@ -6,5 +6,6 @@
 pub mod args;
 pub mod client;
 pub mod i18n;
+pub mod login;
 pub mod protocol;
 pub mod runtime;

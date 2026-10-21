@@ -304,10 +304,10 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['voice.terminalConfirmBeforeInsert', null, 'needs-feature', 'voice dictation (on-device speech-to-text)'],
 	['voice.microphoneDeviceId', null, 'needs-feature', 'voice dictation (on-device speech-to-text)'],
 	['voice.openAiApiKeyConfigured', null, 'needs-feature', 'voice dictation (cloud speech-to-text key)'],
-	['geminiCliOAuthEnabled', null, 'needs-feature', 'more usage providers in the status bar'],
-	['minimaxEndpoint / minimaxGroupId / minimaxUsageModels', null, 'needs-feature', 'more usage providers in the status bar'],
-	['opencodeSessionCookie / opencodeWorkspaceId', null, 'needs-feature', 'more usage providers in the status bar'],
-	['zcodePlanSite', null, 'needs-feature', 'more usage providers in the status bar'],
+	['geminiCliOAuthEnabled', 'kingu.usage.gemini.cliOAuth', 'added'],
+	['minimaxEndpoint / minimaxGroupId / minimaxUsageModels', 'kingu.usage.minimax.endpoint', 'added', 'with kingu.usage.minimax.groupId and kingu.usage.minimax.models'],
+	['opencodeSessionCookie / opencodeWorkspaceId', 'kingu.usage.opencodeGo.workspaceId', 'added', 'the session cookie is a Keychain item (accounts/providers), not a setting'],
+	['zcodePlanSite', 'kingu.usage.zcode.site', 'added'],
 	['localAccountRuntime / localWindowsRuntimeDefault', null, 'not-applicable', 'Windows / WSL']
 ];
 

@@ -25,9 +25,9 @@
 </script>
 
 <div class="h-full overflow-y-auto">
-	<div class="mx-auto max-w-[880px] px-8 py-6">
-		<h1 class="flex items-center gap-2 text-lg font-semibold"><Icon name="account" size={20} />บัญชีและทีม</h1>
-		<p class="mt-1 text-[13px] text-(--vscode-descriptionForeground)">ซิงก์เฉพาะ metadata ของงานไปที่เซิร์ฟเวอร์ทีม ไม่ส่งโค้ดหรือความลับ token เก็บใน Keychain เท่านั้น</p>
+	<div class="mx-auto max-w-4xl px-8 pt-10 pb-24">
+		<h1 class="flex items-center gap-2 text-2xl leading-tight font-semibold"><Icon name="account" size={20} />บัญชีและทีม</h1>
+		<p class="mt-2 max-w-3xl text-sm leading-6 text-(--vscode-descriptionForeground)">ซิงก์เฉพาะ metadata ของงานไปที่เซิร์ฟเวอร์ทีม ไม่ส่งโค้ดหรือความลับ token เก็บใน Keychain เท่านั้น</p>
 
 		<h2 class={SECTION}>สถานะ</h2>
 		<div class="flex items-center gap-4 rounded-xl border border-(--vscode-widget-border) px-4 py-3.5">

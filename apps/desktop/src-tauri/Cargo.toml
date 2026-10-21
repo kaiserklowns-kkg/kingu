@@ -25,7 +25,7 @@ log = "0.4"
 tauri = { version = "2.12.1", features = [] }
 tauri-plugin-log = "2"
 # Log line timestamps (src/logging.rs); already in the tree through tauri-plugin-log.
-time = { version = "0.3", features = ["formatting", "macros"] }
+time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 # Terminal sessions: in the kingu-ptyd daemon (macOS, Linux) or in-process.
 kingu-ptyd = { path = "../../../crates/kingu-ptyd" }
 # The `kingu` command's protocol and runtime file (src/cli_server.rs).
@@ -44,6 +44,8 @@ url = "2.5.8"
 # Snaps (src/snap.rs): snap.toml manifests, trust keyed by the manifest's SHA-256.
 toml = "1.1.8"
 sha2 = "0.10.9"
+# ZCode v2 keeps its Coding Plan key AES-256-GCM sealed (accounts/providers/zcode.rs).
+aes-gcm = "=0.10.3"
 encoding_rs = "=0.8.42"
 chardetng = "=1.0.0"
 # The repository config file kingu.yaml (src/agent/kingu_yaml.rs): the event parser only, no encoding_rs.

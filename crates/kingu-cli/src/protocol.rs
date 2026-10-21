@@ -16,6 +16,11 @@ pub const METHOD_OPEN: &str = "open";
 pub const METHOD_NOTIFY: &str = "notify";
 pub const METHOD_ARTIFACT_PUBLISH: &str = "artifact.publish";
 pub const METHOD_ARTIFACT_LIST: &str = "artifact.list";
+/// OpenCode / Devin managed data accounts (Orca's `accounts.*Data` methods).
+pub const METHOD_ACCOUNT_LIST_DATA: &str = "accounts.listData";
+pub const METHOD_ACCOUNT_ADD_DATA: &str = "accounts.addDataFromHome";
+pub const METHOD_ACCOUNT_SELECT_DATA: &str = "accounts.selectData";
+pub const METHOD_ACCOUNT_REMOVE_DATA: &str = "accounts.removeData";
 
 /// Error codes. `unauthorized`: missing or wrong token; `bad_request`: unreadable line or bad
 /// params; `unknown_method`; `unavailable`: the window did not answer; `failed`: the app refused.

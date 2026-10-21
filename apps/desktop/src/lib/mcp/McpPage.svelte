@@ -31,9 +31,9 @@
 </script>
 
 <div class="h-full overflow-y-auto">
-	<div class="mx-auto max-w-[880px] px-8 py-6">
+	<div class="mx-auto max-w-4xl px-8 pt-10 pb-24">
 		<div class="flex items-center gap-2">
-			<h1 class="flex flex-1 items-center gap-2 text-lg font-semibold"><Icon name="sliders" size={20} />{t('mcp.title')}</h1>
+			<h1 class="flex flex-1 items-center gap-2 text-2xl leading-tight font-semibold"><Icon name="sliders" size={20} />{t('mcp.title')}</h1>
 			<button class={BUTTON} disabled={mcp.loading} onclick={() => mcp.load()} aria-label={t('mcp.refresh')} title={t('mcp.refresh')}>
 				<span class={['grid place-items-center', mcp.loading && 'animate-spin']}><Icon name="refresh" size={14} /></span>
 			</button>

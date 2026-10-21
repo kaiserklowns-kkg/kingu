@@ -864,6 +864,67 @@ const CORE_SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.statusBar.antigravity.visible',
+		group: 'Status Bar',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงโควตาของ Antigravity ใน status bar เมื่อพบ agy (Kingu ถาม agy ด้วย /usage) (Antigravity Usage: show the agy quota when the CLI is found.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.usage.gemini.cliOAuth',
+		group: 'AI Accounts',
+		type: 'boolean',
+		default: false,
+		description: 'ใช้ credential OAuth ของ Gemini CLI ในเครื่องเพื่อดึงโควตา (ทดลอง) เป็น credential ที่ออกให้ Gemini CLI ไม่ใช่ Kingu อาจใช้ไม่ได้ถ้า Google เปลี่ยน CLI (Use Gemini CLI credentials (experimental) for rate-limit fetching. These are credentials issued to the Gemini CLI app, not Kingu; may break if Google updates the CLI.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.usage.opencodeGo.workspaceId',
+		group: 'AI Accounts',
+		type: 'string',
+		default: '',
+		pattern: '^((org|wrk|wk)_[A-Za-z0-9]+)?$',
+		description: 'Workspace ID ของ OpenCode Go กำหนดเองถ้าหาอัตโนมัติไม่เจอ เช่น wrk_… (OpenCode Go Workspace ID override if the automatic lookup fails.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.usage.minimax.endpoint',
+		group: 'AI Accounts',
+		type: 'string',
+		default: 'overseas',
+		enum: ['overseas', 'cn'],
+		enumDescriptions: ['platform.minimax.io (Overseas.)', 'platform.minimaxi.com (China.)'],
+		description: 'host ของ MiniMax ที่ตรงกับบัญชี (The MiniMax endpoint that matches your account.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.usage.minimax.groupId',
+		group: 'AI Accounts',
+		type: 'string',
+		default: '',
+		description: 'Group ID ของ MiniMax กำหนดเอง เว้นว่างเพื่อใช้ minimax_group_id_v2 จาก cookie (Optional MiniMax group ID override.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.usage.minimax.models',
+		group: 'AI Accounts',
+		type: 'string',
+		default: 'general',
+		description: 'ชื่อโมเดลของ MiniMax คั่นด้วยจุลภาค ใช้ general ไว้ เว้นแต่ MiniMax แจ้ง error เฉพาะโมเดล (Comma-separated MiniMax usage model names.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.usage.zcode.site',
+		group: 'AI Accounts',
+		type: 'string',
+		default: 'zai',
+		enum: ['zai', 'bigmodel'],
+		enumDescriptions: ['Z.AI (z.ai)', 'Zhipu · BigModel (open.bigmodel.cn)'],
+		description: 'เว็บของ GLM Coding Plan ที่ใช้ (The console your GLM Coding Plan belongs to.)',
+		scope: 'application'
+	},
+	{
 		id: 'kingu.usage.display',
 		group: 'Status Bar',
 		type: 'string',
@@ -1011,7 +1072,8 @@ export function subgroupsOf(group: string, schemas: SettingSchema[] = SETTINGS):
 /** A table of contents selection: a group, or `Group/Sub-group`. */
 export const tocKey = (group: string, subgroup?: string | null) => (subgroup ? `${group}/${subgroup}` : group);
 
-function inSelection(s: SettingSchema, selection: string): boolean {
+/** Whether a setting is in a TOC selection (a group, or `Group/Sub-group`). */
+export function inTocSelection(s: SettingSchema, selection: string): boolean {
 	const slash = selection.indexOf('/');
 	if (slash < 0) return s.group === selection;
 	return s.group === selection.slice(0, slash) && settingSubgroup(s) === selection.slice(slash + 1);
@@ -1026,7 +1088,7 @@ export function settingsInView(query: string, group: string | null, schemas: Set
 		if (filters.modified && !modified(s.id)) return false;
 		if (filters.id && !filters.id.some((id) => s.id.toLowerCase().includes(id))) return false;
 		if (text) return matchesQuery(s, text);
-		return filters.modified || filters.id ? true : group === null || inSelection(s, group);
+		return filters.modified || filters.id ? true : group === null || inTocSelection(s, group);
 	});
 }
 

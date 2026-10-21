@@ -36,7 +36,18 @@ fn main() {
     _ => None,
   };
   let cwd = std::env::current_dir().unwrap_or_else(|e| fail(EXIT_USAGE, tr(Msg::CurrentFolder, &[("detail", &e)])));
-  let Some((method, params)) = client::request_of(&inv.command, &cwd, stdin_prompt).unwrap_or_else(|e| fail(EXIT_USAGE, e)) else { return };
+  // `kingu account add`: the CLI's own login first, into a temporary home the app then keeps.
+  let mut _login_home = None;
+  let request = match &inv.command {
+    Command::AccountAdd { agent, label, integration } => {
+      let home = kingu_cli::login::run_login(agent, integration.as_deref()).unwrap_or_else(|e| fail(EXIT_FAILED, e));
+      let req = client::account_add_request(agent, label.as_deref(), &home.data());
+      _login_home = Some(home);
+      Some(req)
+    }
+    _ => client::request_of(&inv.command, &cwd, stdin_prompt).unwrap_or_else(|e| fail(EXIT_USAGE, e)),
+  };
+  let Some((method, params)) = request else { return };
   let path = runtime::runtime_path().unwrap_or_else(|| fail(EXIT_UNAVAILABLE, tr(Msg::NoDataFolder, &[])));
   if !path.exists() {
     fail(EXIT_UNAVAILABLE, tr(Msg::NotRunning, &[]));

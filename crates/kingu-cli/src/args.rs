@@ -43,6 +43,24 @@ pub enum Command {
     id: Option<String>,
   },
   ArtifactList,
+  /// `kingu account add`: the CLI's own login in a temporary XDG home, then registered by the app.
+  AccountAdd {
+    agent: String,
+    label: Option<String>,
+    integration: Option<String>,
+  },
+  AccountList {
+    agent: Option<String>,
+  },
+  AccountSelect {
+    agent: String,
+    /// None: System default.
+    account: Option<String>,
+  },
+  AccountRemove {
+    agent: String,
+    account: String,
+  },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +135,7 @@ fn command(args: &[String]) -> Result<Command, String> {
     "open" => open(&args[1..]),
     "notify" => notify(&args[1..]),
     "artifact" | "artifacts" => artifact(&args[1..]),
+    "account" | "accounts" => account(&args[1..]),
     other => Err(tr(Msg::UnknownCommand, &[("command", &other)])),
   }
 }
@@ -259,6 +278,49 @@ fn artifact(args: &[String]) -> Result<Command, String> {
       Ok(Command::ArtifactPublish { file, title: text(&["--title", "-t"]), description: text(&["--description", "-d"]), assets, id })
     }
     other => Err(tr(Msg::UnknownArtifactCommand, &[("command", &other)])),
+  }
+}
+
+
+fn data_agent(flags: &[(String, String)]) -> Result<String, String> {
+  match flag(flags, &["--agent"]).as_deref() {
+    Some(a @ ("opencode" | "devin")) => Ok(a.to_owned()),
+    _ => Err(tr(Msg::AccountNeedsAgent, &[])),
+  }
+}
+
+fn account(args: &[String]) -> Result<Command, String> {
+  let Some(sub) = args.first() else { return Err(tr(Msg::AccountNeedsSubcommand, &[])) };
+  let (pos, flags) = split(&args[1..], &["--agent", "--label", "--integration", "--account"], &[])?;
+  if let Some(extra) = pos.first() {
+    return Err(tr(Msg::UnexpectedArgument, &[("arg", extra)]));
+  }
+  match sub.as_str() {
+    "add" => {
+      let agent = data_agent(&flags)?;
+      let integration = flag(&flags, &["--integration"]);
+      if integration.is_some() && agent != "opencode" || integration.as_deref().is_some_and(|i| i.trim().is_empty()) {
+        return Err(tr(Msg::IntegrationOnlyOpencode, &[]));
+      }
+      Ok(Command::AccountAdd { agent, label: flag(&flags, &["--label"]), integration })
+    }
+    "list" | "ls" => {
+      let agent = if flag(&flags, &["--agent"]).is_some() { Some(data_agent(&flags)?) } else { None };
+      Ok(Command::AccountList { agent })
+    }
+    "select" | "rm" | "remove" => {
+      let (Ok(agent), Some(account)) = (data_agent(&flags), flag(&flags, &["--account"]).filter(|a| !a.trim().is_empty())) else {
+        return Err(tr(Msg::AccountNeedsId, &[]));
+      };
+      if sub == "select" {
+        Ok(Command::AccountSelect { agent, account: Some(account).filter(|a| a != "system") })
+      } else if account == "system" {
+        Err(tr(Msg::AccountNeedsId, &[]))
+      } else {
+        Ok(Command::AccountRemove { agent, account })
+      }
+    }
+    other => Err(tr(Msg::UnknownAccountCommand, &[("command", &other)])),
   }
 }
 

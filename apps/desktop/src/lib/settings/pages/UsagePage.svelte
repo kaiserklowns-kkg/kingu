@@ -30,9 +30,9 @@
 </script>
 
 <div class="h-full overflow-y-auto">
-	<div class="mx-auto max-w-[880px] px-8 py-6">
+	<div class="mx-auto max-w-4xl px-8 pt-10 pb-24">
 		<div class="flex items-center gap-2">
-			<h1 class="flex flex-1 items-center gap-2 text-lg font-semibold"><Icon name="usage" size={20} />Stats & Usage</h1>
+			<h1 class="flex flex-1 items-center gap-2 text-2xl leading-tight font-semibold"><Icon name="usage" size={20} />Stats & Usage</h1>
 			<button class="flex h-8 items-center gap-1.5 rounded-md border border-(--vscode-widget-border) px-3 text-[13px] hover:bg-(--vscode-list-hoverBackground) disabled:opacity-50" disabled={usage.refreshing} onclick={() => usage.refresh()}>
 				<span class={['grid place-items-center', usage.refreshing && 'animate-spin']}><Icon name="refresh" size={14} /></span>Refresh
 			</button>

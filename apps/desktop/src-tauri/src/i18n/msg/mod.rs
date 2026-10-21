@@ -17,6 +17,7 @@ mod linear;
 mod local_ai;
 mod local_history;
 mod profiles;
+mod providers;
 mod lsp;
 mod merge_requests;
 mod projects;
@@ -35,6 +36,7 @@ mod workspace;
 mod worktree;
 
 pub use accounts::AccountsMsg;
+pub use providers::ProvidersMsg;
 pub use artifacts::ArtifactMsg;
 pub use agent::AgentMsg;
 pub use arkai::ArkaiMsg;
@@ -84,6 +86,7 @@ fn entry<M: Message>(m: M) -> Entry {
 pub fn all() -> Vec<Entry> {
   let mut out = Vec::new();
   out.extend(AccountsMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(ProvidersMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(ArtifactMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(AgentMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(ArkaiMsg::ALL.iter().map(|&m| entry(m)));

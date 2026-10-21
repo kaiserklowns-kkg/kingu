@@ -16,12 +16,12 @@
 </script>
 
 <div class="h-full overflow-y-auto">
-	<div class="mx-auto max-w-[880px] px-8 py-6">
+	<div class="mx-auto max-w-4xl px-8 pt-10 pb-24">
 		<div class="flex items-center gap-3">
 			<span class="text-(--vscode-foreground)"><ArkaiMark size={40} /></span>
 			<div>
-				<h1 class="text-lg font-semibold">Arkai</h1>
-				<p class="text-[13px] text-(--vscode-descriptionForeground)">ผู้ช่วย AI ของ Kingu: แต่ละงานได้ git worktree ของตัวเอง</p>
+				<h1 class="text-2xl leading-tight font-semibold">Arkai</h1>
+				<p class="mt-2 max-w-3xl text-sm leading-6 text-(--vscode-descriptionForeground)">ผู้ช่วย AI ของ Kingu: แต่ละงานได้ git worktree ของตัวเอง</p>
 			</div>
 		</div>
 
