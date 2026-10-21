@@ -10,6 +10,8 @@ export const chatView = {
 	// Requests and responses
 	'chatView.editRequest': 'Edit and send again',
 	'chatView.copyRequest': 'Copy',
+	'chatView.requestActions': 'Request actions',
+	'chatView.responseActions': 'Response actions',
 	'chatView.copyResponse': 'Copy response',
 	'chatView.copyFailed': 'Could not copy: {error}',
 	'chatView.retry': 'Retry',

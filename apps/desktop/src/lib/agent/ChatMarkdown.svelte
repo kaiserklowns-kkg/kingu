@@ -102,17 +102,18 @@
 			{@html seg.html}
 		{:else if seg.kind === 'mermaid'}
 			{@const d = streaming ? undefined : diagrams[seg.code]}
-			<div class="kg-code">
-				<div class="kg-code-head">
-					<span class="min-w-0 flex-1 truncate">mermaid</span>
+			<div class="kg-code interactive-result-code-block" data-code>
+				<div class="interactive-result-code-block-toolbar">
+					<div class="monaco-toolbar" role="toolbar" aria-label={t('chatRender.mermaid.label')}>
 					{#if d?.url}
-						<button type="button" class="kg-code-btn" title={source[i] ? t('chatRender.mermaid.diagram') : t('chatRender.mermaid.source')} aria-label={source[i] ? t('chatRender.mermaid.diagram') : t('chatRender.mermaid.source')} aria-pressed={!!source[i]} onclick={() => (source[i] = !source[i])}>
+						<button type="button" class="kg-code-btn action-label" title={source[i] ? t('chatRender.mermaid.diagram') : t('chatRender.mermaid.source')} aria-label={source[i] ? t('chatRender.mermaid.diagram') : t('chatRender.mermaid.source')} aria-pressed={!!source[i]} onclick={() => (source[i] = !source[i])}>
 							<Codicon id={codiconOf(source[i] ? 'image' : 'code')} size={13} />
 						</button>
 					{/if}
-					<button type="button" class="kg-code-btn" title={t('chatView.copyCode')} aria-label={t('chatView.copyCode')} onclick={() => copy(seg.code, i)}>
+					<button type="button" class="kg-code-btn action-label" title={t('chatView.copyCode')} aria-label={t('chatView.copyCode')} onclick={() => copy(seg.code, i)}>
 						<Codicon id={copied === i ? 'check' : 'copy'} size={13} />
 					</button>
+					</div>
 				</div>
 				{#if d?.url && !source[i]}
 					<div class="kg-diagram"><img src={d.url} alt={t('chatRender.mermaid.label')} /></div>
@@ -123,21 +124,23 @@
 			</div>
 		{:else}
 			{@const html = streaming ? undefined : colored[blockKey(seg)]}
-			<div class="kg-code group/code">
-				<div class="kg-code-head">
-					<span class="min-w-0 flex-1 truncate">{seg.lang}</span>
-					<button type="button" class="kg-code-btn" title={t('chatView.insertAtCursor')} aria-label={t('chatView.insertAtCursor')} onclick={() => insert(seg.code)}>
+			<div class="kg-code interactive-result-code-block" data-code data-lang={seg.lang || undefined}>
+				<!-- VS Code's code block toolbar: on the block's top edge while it is hovered or focused. -->
+				<div class="interactive-result-code-block-toolbar">
+					<div class="monaco-toolbar" role="toolbar" aria-label={seg.lang || t('chatView.copyCode')}>
+					<button type="button" class="kg-code-btn action-label" title={t('chatView.insertAtCursor')} aria-label={t('chatView.insertAtCursor')} onclick={() => insert(seg.code)}>
 						<Codicon id="code" size={13} />
 					</button>
-					<button type="button" class="kg-code-btn" title={t('chatParts.code.newFile')} aria-label={t('chatParts.code.newFile')} onclick={() => void insertIntoNewFile(seg.code, seg.lang)}>
+					<button type="button" class="kg-code-btn action-label" title={t('chatParts.code.newFile')} aria-label={t('chatParts.code.newFile')} onclick={() => void insertIntoNewFile(seg.code, seg.lang)}>
 						<Codicon id="new-file" size={13} />
 					</button>
-					<button type="button" class="kg-code-btn" title={t('chatParts.code.terminal')} aria-label={t('chatParts.code.terminal')} onclick={() => insertIntoTerminal(seg.code)}>
+					<button type="button" class="kg-code-btn action-label" title={t('chatParts.code.terminal')} aria-label={t('chatParts.code.terminal')} onclick={() => insertIntoTerminal(seg.code)}>
 						<Codicon id="terminal" size={13} />
 					</button>
-					<button type="button" class="kg-code-btn" title={t('chatView.copyCode')} aria-label={t('chatView.copyCode')} onclick={() => copy(seg.code, i)}>
+					<button type="button" class="kg-code-btn action-label" title={t('chatView.copyCode')} aria-label={t('chatView.copyCode')} onclick={() => copy(seg.code, i)}>
 						<Codicon id={copied === i ? 'check' : 'copy'} size={13} />
 					</button>
+					</div>
 				</div>
 				<!-- Safe: Monaco's colorizer escapes the text and only adds token spans. -->
 				{#if html}<pre><code>{@html html}</code></pre>{:else}<pre><code>{seg.code}</code></pre>{/if}
@@ -148,73 +151,109 @@
 </div>
 
 <style>
+	/* Markdown as kingu-old's chat draws it (chat.css `.interactive-item-container .value .rendered-markdown`). */
 	.kg-md {
-		line-height: 1.55;
+		line-height: 1.5em;
 		color: var(--vscode-foreground);
-		overflow-wrap: break-word;
+		overflow-wrap: anywhere;
 	}
 	.kg-md :global(> :first-child) {
 		margin-top: 0;
 	}
-	.kg-md :global(p),
+	.kg-md :global(p) {
+		margin: 0 0 16px 0;
+	}
 	.kg-md :global(ul),
 	.kg-md :global(ol),
 	.kg-md :global(blockquote),
 	.kg-md :global(table) {
-		margin: 0 0 0.6em;
+		margin: 0 0 16px;
+	}
+	.kg-md :global(> :last-child),
+	.kg-md :global(> :last-child > :last-child) {
+		margin-bottom: 0;
 	}
 	.kg-md :global(h1),
 	.kg-md :global(h2),
 	.kg-md :global(h3),
 	.kg-md :global(h4) {
-		font-weight: 600;
-		margin: 0.9em 0 0.4em;
+		font-weight: var(--vscode-fontWeight-semiBold, 600);
+		margin: 1.5em 0 0.875em 0;
 	}
 	.kg-md :global(h1) {
-		font-size: 1.3em;
+		font-size: var(--vscode-chat-font-size-body-xxl, 1.538em);
 	}
 	.kg-md :global(h2) {
-		font-size: 1.15em;
+		font-size: var(--vscode-chat-font-size-body-xl, 1.231em);
 	}
 	.kg-md :global(h3) {
-		font-size: 1.05em;
+		font-size: var(--vscode-chat-font-size-body-l, 1.077em);
+	}
+	.kg-md :global(strong) {
+		font-weight: var(--vscode-fontWeight-semiBold, 600);
 	}
 	.kg-md :global(ul) {
 		list-style: disc;
-		padding-left: 1.4em;
+		padding-inline-start: 24px;
 	}
 	.kg-md :global(ol) {
 		list-style: decimal;
-		padding-left: 1.4em;
+		padding-inline-start: 28px;
+	}
+	.kg-md :global(li) {
+		margin: 4px 0;
 	}
 	.kg-md :global(a) {
 		color: var(--vscode-textLink-foreground);
 		cursor: pointer;
 	}
-	.kg-md :global(a:hover) {
-		text-decoration: underline;
+	.kg-md :global(a:hover),
+	.kg-md :global(a:active) {
+		color: var(--vscode-textLink-activeForeground);
 	}
+	/* Inline code (chat.css `.interactive-item-container code`). */
 	.kg-md :global(code) {
 		font-family: var(--vscode-editor-font-family, Menlo, monospace);
-		font-size: var(--kg-chat-code-size, 0.9em);
-		padding: 0.1em 0.3em;
-		border-radius: 4px;
-		background: var(--vscode-textCodeBlock-background, rgb(128 128 128 / 0.16));
+		font-size: var(--kg-chat-code-size, var(--vscode-chat-font-size-body-xs, 0.846em));
+		color: var(--vscode-textPreformat-foreground);
+		padding: var(--vscode-spacing-size20, 2px) var(--vscode-spacing-size40, 4px);
+		border-radius: var(--vscode-cornerRadius-small, 6px);
+		border: var(--vscode-strokeThickness, 1px) solid var(--vscode-textPreformat-border, transparent);
+		background-color: var(--vscode-textPreformat-background);
+		white-space: pre-wrap;
+	}
+	.kg-md :global(a code) {
+		color: var(--vscode-textLink-foreground);
 	}
 	.kg-md :global(blockquote) {
-		padding: 0 0.8em;
-		color: var(--vscode-descriptionForeground);
-		border-left: 3px solid var(--vscode-widget-border);
+		margin: 0 0 16px;
+		padding: 0 16px 0 10px;
+		border-left: 5px solid var(--vscode-textBlockQuote-border);
+		border-radius: var(--vscode-cornerRadius-xSmall, 4px);
+		background: var(--vscode-textBlockQuote-background);
 	}
 	.kg-md :global(table) {
-		border-collapse: collapse;
 		display: block;
 		overflow-x: auto;
+		text-align: left;
+		border-collapse: separate;
+		border-spacing: 0;
+		border: var(--vscode-strokeThickness, 1px) solid var(--vscode-chat-requestBorder);
+		border-radius: var(--vscode-cornerRadius-medium, 8px);
 	}
 	.kg-md :global(th),
 	.kg-md :global(td) {
-		padding: 3px 8px;
-		border: 1px solid var(--vscode-widget-border);
+		padding: 4px 6px;
+		border: var(--vscode-strokeThickness, 1px) solid var(--vscode-chat-requestBorder);
+		border-top: none;
+		border-left: none;
+	}
+	.kg-md :global(th:last-child),
+	.kg-md :global(td:last-child) {
+		border-right: none;
+	}
+	.kg-md :global(tbody tr:last-child td) {
+		border-bottom: none;
 	}
 	.kg-md :global(th) {
 		font-weight: 600;
@@ -222,40 +261,66 @@
 	.kg-md :global(hr) {
 		margin: 1em 0;
 		border: 0;
-		border-top: 1px solid var(--vscode-widget-border);
+		border-top: 1px solid color-mix(in srgb, var(--vscode-textSeparator-foreground, var(--vscode-widget-border)) 33%, transparent);
 	}
+	/* A code block (codeBlockPart.css): a framed editor, its toolbar on its top edge on hover. */
 	.kg-code {
-		margin: 0 0 0.6em;
-		border: 1px solid var(--vscode-widget-border);
-		border-radius: 6px;
-		background: var(--vscode-editor-background);
-		overflow: hidden;
+		position: relative;
+		margin: 0 0 16px;
+		border: 1px solid var(--vscode-input-border, transparent);
+		border-radius: var(--vscode-cornerRadius-medium, 8px);
+		background: var(--vscode-interactive-result-editor-background-color, var(--vscode-editor-background));
 	}
-	.kg-code-head {
+	.kg-code:last-child {
+		margin-bottom: 0;
+	}
+	.kg-code:focus-within {
+		border-color: var(--vscode-focusBorder, transparent);
+	}
+	.interactive-result-code-block-toolbar {
+		opacity: 0;
+		pointer-events: none;
+	}
+	.kg-code:hover .interactive-result-code-block-toolbar,
+	.interactive-result-code-block-toolbar:focus-within {
+		opacity: 1;
+		pointer-events: auto;
+	}
+	.interactive-result-code-block-toolbar > .monaco-toolbar {
+		position: absolute;
+		top: -15px;
+		right: 10px;
+		z-index: 100;
 		display: flex;
 		align-items: center;
-		gap: 2px;
-		height: 24px;
-		padding: 0 4px 0 8px;
-		font-size: 11px;
-		color: var(--vscode-descriptionForeground);
-		border-bottom: 1px solid var(--vscode-widget-border);
+		max-width: 70%;
+		height: 26px;
+		box-sizing: border-box;
+		overflow: hidden;
+		background-color: var(--vscode-interactive-result-editor-background-color, var(--vscode-editor-background));
+		border: 1px solid var(--vscode-chat-requestBorder);
+		border-radius: var(--vscode-cornerRadius-medium, 8px);
 	}
 	.kg-code-btn {
 		display: grid;
 		place-items: center;
-		width: 20px;
-		height: 20px;
-		border-radius: 4px;
+		width: 24px;
+		height: 24px;
+		margin: 1px 2px;
+		border-radius: var(--vscode-cornerRadius-small, 6px);
+		color: var(--vscode-icon-foreground);
 	}
 	.kg-code-btn:hover {
 		background: var(--vscode-toolbar-hoverBackground);
 		color: var(--vscode-foreground);
 	}
+	.kg-code-btn :global(.codicon) {
+		font-size: 16px !important;
+	}
 	/* chat.editor.*: the code blocks' font, weight, line height and wrapping (ChatList sets them). */
 	.kg-code pre {
 		margin: 0;
-		padding: 8px 10px;
+		padding: 8px 12px;
 		overflow-x: auto;
 		line-height: var(--kg-chat-code-line, normal);
 	}

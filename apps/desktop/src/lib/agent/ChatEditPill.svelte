@@ -40,8 +40,11 @@
 <button
 	type="button"
 	class={[
-		'min-w-0 items-center gap-1.5 text-left hover:bg-(--vscode-list-hoverBackground)',
-		flat ? 'flex w-full px-2 py-1 text-xs' : 'inline-flex max-w-full self-start rounded border border-(--vscode-widget-border) px-1.5 py-0.5'
+		'min-w-0 items-center gap-1.5 text-left',
+		// kingu-old's edited-file pill (chatCodeBlockPill.css): a quiet 12px line that turns link-coloured on hover.
+		flat
+			? 'flex w-full px-2 py-1 text-xs hover:bg-(--vscode-list-hoverBackground)'
+			: 'inline-flex max-w-full self-start rounded-[6px] text-[12px] leading-[1.5em] text-(--vscode-descriptionForeground) hover:text-(--vscode-textLink-foreground) focus-visible:outline focus-visible:outline-(--vscode-focusBorder)'
 	]}
 	title={rel}
 	aria-label={t('chatParts.edit.open', { path: rel })}
@@ -57,8 +60,8 @@
 	<span class={['min-w-0 truncate', error && 'line-through']}>{name}</span>
 	{#if added || removed}
 		<span class="shrink-0 font-mono text-[11px]"
-			><span class="text-(--vscode-gitDecoration-addedResourceForeground,#73c991)">+{added}</span>
-			<span class="text-(--vscode-gitDecoration-deletedResourceForeground,#f14c4c)">−{removed}</span></span
+			><span class="text-(--vscode-chat-linesAddedForeground)">+{added}</span>
+			<span class="text-(--vscode-chat-linesRemovedForeground)">−{removed}</span></span
 		>
 	{/if}
 </button>

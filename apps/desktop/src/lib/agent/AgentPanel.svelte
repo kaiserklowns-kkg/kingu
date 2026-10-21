@@ -1429,11 +1429,11 @@
 					followups: { items: running ? [] : chatExtras.followups(chatMeta.id), pick: pickFollowup }
 				}}
 				reverted={(r) => !!chatMeta && chatEdits.isReverted(chatMeta.id, r)}
-				class="h-full p-3"
+				class="h-full py-1.5"
 			>
 				{#snippet checkpoint(request, req, first)}
 					{#if chatMeta && features.rewind}
-						<RestoreCheckpoint chatId={chatMeta.id} {request} {first} compact onrestored={() => (chatTips.record('restore'), restoreToInput(req))} />
+						<RestoreCheckpoint chatId={chatMeta.id} {request} {first} onrestored={() => (chatTips.record('restore'), restoreToInput(req))} />
 					{/if}
 				{/snippet}
 				{#snippet empty()}

@@ -117,7 +117,7 @@
 
 <div class="flex flex-col gap-1">
 	<div class="text-(--vscode-descriptionForeground)" role="status">{t('composer.approve.pending')}</div>
-	<div class="rounded-lg border border-(--vscode-widget-border) bg-(--vscode-editorWidget-background) text-xs text-(--vscode-foreground)" role="group" aria-label={t('chatView.permission.title', { tool: request.tool })}>
+	<div class="rounded-[8px] border border-(--vscode-chat-requestBorder) bg-(--vscode-editorWidget-background) text-xs text-(--vscode-foreground)" role="group" aria-label={t('chatView.permission.title', { tool: request.tool })}>
 		{#if command !== null}
 			<div class="flex min-w-0 items-center gap-1.5 px-2.5 py-1.5" title={command}>
 				<span class="shrink-0 font-mono text-(--vscode-descriptionForeground)" aria-hidden="true">›_</span>

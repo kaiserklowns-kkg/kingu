@@ -114,7 +114,7 @@
 	</div>
 {:else if edit}
 	{@const snippet = editSnippet(part.name, part.input)}
-	<div class="overflow-hidden rounded-lg border border-(--vscode-widget-border)">
+	<div class="overflow-hidden rounded-[8px] border border-(--vscode-chat-requestBorder)">
 		<ChatEditPill path={edit.path} added={edit.added} removed={edit.removed} {done} error={!!part.result?.isError} {chatId} {cwd} {root} flat />
 		{#if snippet.length && !part.result?.isError}
 			<pre class="overflow-hidden border-t border-(--vscode-widget-border) py-0.5 font-mono text-xs leading-[18px]">{#each snippet as line, li (li)}<div
@@ -133,7 +133,7 @@
 	<div>
 		<button
 			type="button"
-			class="flex w-full min-w-0 items-center gap-1.5 text-left text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)"
+			class="chat-used-context-label w-full! text-left"
 			aria-expanded={open}
 			onclick={toggle}
 		>
@@ -147,7 +147,7 @@
 			<Codicon id={open ? 'chevron-down' : 'chevron-right'} size={12} />
 		</button>
 		{#if open}
-			<div class="mt-1 ml-[5px] flex flex-col gap-1.5 border-l-2 border-(--vscode-widget-border) pl-3">
+			<div class="chat-used-context-list mt-1 flex flex-col gap-1.5 whitespace-normal">
 				{#if typeof prompt === 'string' && prompt.trim()}
 					<div class="text-xs text-(--vscode-descriptionForeground)">{t('chatParts.subagent.prompt')}</div>
 					<p class="max-h-32 overflow-auto whitespace-pre-wrap text-(--vscode-descriptionForeground)">{prompt}</p>
@@ -157,12 +157,12 @@
 						<ChatMarkdown text={child.text} {root} />
 					{:else if child.kind === 'thinking'}
 						<div>
-							<button type="button" class="flex items-center gap-1 text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)" aria-expanded={!!openThoughts[ci]} onclick={() => (openThoughts[ci] = !openThoughts[ci])}>
+							<button type="button" class="chat-used-context-label" aria-expanded={!!openThoughts[ci]} onclick={() => (openThoughts[ci] = !openThoughts[ci])}>
 								<Codicon id={codiconOf(openThoughts[ci] ? 'chevronDown' : 'chevronRight')} size={12} />
 								{t('chatView.thought')}
 							</button>
 							{#if openThoughts[ci]}
-								<p class="mt-1 border-l-2 border-(--vscode-widget-border) pl-2 whitespace-pre-wrap text-(--vscode-descriptionForeground) italic">{child.text}</p>
+								<p class="chat-used-context-list mt-1">{child.text}</p>
 							{/if}
 						</div>
 					{:else if child.kind === 'tool'}
@@ -178,7 +178,7 @@
 	</div>
 {:else if bash !== null}
 	{@const desc = bashDescription(part.input)}
-	<div class="overflow-hidden rounded-lg border border-(--vscode-widget-border) text-xs">
+	<div class="overflow-hidden rounded-[8px] border border-(--vscode-chat-requestBorder) text-xs">
 		<button
 			type="button"
 			class="flex w-full min-w-0 items-center gap-1.5 px-2 py-1 text-left hover:bg-(--vscode-list-hoverBackground)"
@@ -208,7 +208,7 @@
 	<div class="group/tool">
 		<button
 			type="button"
-			class="flex w-full min-w-0 items-center gap-1.5 text-left text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)"
+			class="chat-used-context-label w-full! text-left"
 			aria-expanded={open}
 			onclick={toggle}
 		>

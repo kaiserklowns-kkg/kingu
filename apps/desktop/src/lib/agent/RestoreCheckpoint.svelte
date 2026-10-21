@@ -53,12 +53,13 @@
 		onclick={restore}><Codicon id="discard" size={13} /></button
 	>
 {:else}
-	<div class="flex items-center gap-2 text-xs text-(--vscode-descriptionForeground)">
+	<!-- VS Code's checkpoint toolbar between the lines: a quiet 12px text button, framed on hover. -->
+	<div class="flex shrink-0 items-center gap-1 text-(--vscode-descriptionForeground)">
 		<button
-			class="inline-flex items-center gap-1 rounded-sm px-1 hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground) disabled:opacity-50"
+			class="h-[22px] rounded-[6px] border border-transparent px-1.5 text-[12px] leading-[18px] text-(--vscode-descriptionForeground) hover:border-(--vscode-chat-requestBorder) hover:bg-(--vscode-sideBar-background) hover:text-(--vscode-foreground) disabled:opacity-50"
 			title={first ? t('chatRewind.startOverHint') : t('chatRewind.restoreHint')}
 			disabled={busy}
-			onclick={restore}><Codicon id="discard" size={12} />{first ? t('chatRewind.startOver') : t('chatRewind.restore')}</button
+			onclick={restore}>{first ? t('chatRewind.startOver') : t('chatRewind.restore')}</button
 		>
 		{#if req?.head_moved}<span title={t('chatEdits.headMoved')}><Codicon id="warning" size={12} /></span>{/if}
 	</div>

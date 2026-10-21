@@ -106,12 +106,12 @@
 	align-items: center;
 }
 
-.kg-chat-part .title-actions > .action-item {
+.kg-chat-part > .composite .title-actions > .action-item {
 	margin-right: 4px;
 }
 
 /* A toolbar button: VS Code's `.monaco-action-bar .action-label` (22px, 3px padding, 6px corners). */
-.kg-chat-part .action-label,
+.kg-chat-part > .composite .action-label,
 .interactive-session .chat-view-title-container .action-label {
 	display: flex;
 	align-items: center;
@@ -126,52 +126,52 @@
 	outline: none;
 }
 
-.kg-chat-part .action-label:hover,
-.kg-chat-part .action-label[aria-expanded='true'],
+.kg-chat-part > .composite .action-label:hover,
+.kg-chat-part > .composite .action-label[aria-expanded='true'],
 .interactive-session .chat-view-title-container .action-label:hover {
 	background-color: var(--vscode-toolbar-hoverBackground);
 }
 
-.kg-chat-part .action-label:focus-visible,
+.kg-chat-part > .composite .action-label:focus-visible,
 .interactive-session .chat-view-title-container .action-label:focus-visible {
 	outline: var(--vscode-strokeThickness) solid var(--vscode-focusBorder);
 	outline-offset: calc(-1 * var(--vscode-strokeThickness));
 }
 
-.kg-chat-part .action-label:disabled {
+.kg-chat-part > .composite .action-label:disabled {
 	opacity: 0.4;
 	cursor: default;
 	background: none;
 }
 
-.kg-chat-part .action-label.checked {
+.kg-chat-part > .composite .action-label.checked {
 	background-color: var(--vscode-toolbar-activeBackground);
 }
 
 /* New Chat with its ⌄ (VS Code's DropdownWithPrimaryActionViewItem): one 36px hover target. */
-.kg-chat-part .title-actions > .monaco-dropdown-with-default {
+.kg-chat-part > .composite .title-actions > .monaco-dropdown-with-default {
 	display: flex;
 	align-items: center;
 	height: 22px;
 	border-radius: 5px;
 }
 
-.kg-chat-part .title-actions > .monaco-dropdown-with-default:hover {
+.kg-chat-part > .composite .title-actions > .monaco-dropdown-with-default:hover {
 	background-color: var(--vscode-toolbar-hoverBackground);
 }
 
-.kg-chat-part .monaco-dropdown-with-default > .action-label:hover,
-.kg-chat-part .monaco-dropdown-with-default > .action-label[aria-expanded='true'] {
+.kg-chat-part > .composite .monaco-dropdown-with-default > .action-label:hover,
+.kg-chat-part > .composite .monaco-dropdown-with-default > .action-label[aria-expanded='true'] {
 	background-color: transparent;
 }
 
-.kg-chat-part .monaco-dropdown-with-default > .action-label.dropdown {
+.kg-chat-part > .composite .monaco-dropdown-with-default > .action-label.dropdown {
 	width: 16px;
 	margin-left: -3px;
 	padding: 3px 0;
 }
 
-.kg-chat-part .title-actions > .action-separator {
+.kg-chat-part > .composite .title-actions > .action-separator {
 	box-sizing: content-box;
 	width: 1px;
 	height: 16px;
