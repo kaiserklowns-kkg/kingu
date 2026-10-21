@@ -154,6 +154,95 @@ pub fn agent_hook_clear(app: AppHandle, token: String) -> Result<(), String> {
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Per-run files: what a CLI launch needs on disk for one session (gemini's system-defaults
+// settings with the Snap MCP servers, agentProfiles.ts `Launch.files`), in
+// `<app cache>/agent-runs/<token>/`, never in the repo, the worktree or the user's config.
+
+const RUNS_DIR: &str = "agent-runs";
+const RUN_TTL: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+const MAX_RUN_FILE: usize = 4 * 1024 * 1024;
+
+/// Creates (empty) the run folder of `token` under `base` and removes run folders older than a week.
+pub fn run_dir_in(base: &Path, token: &str) -> Result<PathBuf, String> {
+  if !valid_token(token) {
+    return Err("invalid run token".into());
+  }
+  if let Ok(read) = std::fs::read_dir(base) {
+    for entry in read.flatten() {
+      let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > RUN_TTL);
+      if old {
+        let _ = std::fs::remove_dir_all(entry.path());
+      }
+    }
+  }
+  let dir = base.join(token);
+  let _ = std::fs::remove_dir_all(&dir);
+  std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+  }
+  Ok(dir)
+}
+
+/// Writes `files` (absolute paths the profile built from the run folder) into exactly that
+/// folder: each must be a plain file name directly inside it. Mode 0600 (they can hold env).
+pub fn write_run_files(dir: &Path, files: &[(String, String)]) -> Result<(), String> {
+  for (path, content) in files {
+    let p = Path::new(path);
+    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    if p.parent() != Some(dir) || name.is_empty() || name.starts_with('.') || content.len() > MAX_RUN_FILE {
+      return Err(format!("{path}: not a file of this run"));
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::OpenOptionsExt;
+      options.mode(0o600);
+    }
+    use std::io::Write;
+    options.open(p).and_then(|mut f| f.write_all(content.as_bytes())).map_err(|e| format!("{path}: {e}"))?;
+  }
+  Ok(())
+}
+
+fn runs_base(app: &AppHandle) -> Result<PathBuf, String> {
+  Ok(app.path().app_cache_dir().map_err(|e| e.to_string())?.join(RUNS_DIR))
+}
+
+/// A new session's run folder (agentProfiles `runDir`).
+#[tauri::command]
+pub fn agent_run_dir(app: AppHandle, token: String) -> Result<String, String> {
+  let dir = run_dir_in(&runs_base(&app)?, &token)?;
+  quotable_path(&dir).map(str::to_owned)
+}
+
+#[derive(serde::Deserialize)]
+pub struct RunFile {
+  path: String,
+  content: String,
+}
+
+/// Writes a launch's files into its run folder before the CLI starts.
+#[tauri::command]
+pub fn agent_run_files_write(app: AppHandle, token: String, files: Vec<RunFile>) -> Result<(), String> {
+  if !valid_token(&token) {
+    return Err("invalid run token".into());
+  }
+  let dir = runs_base(&app)?.join(&token);
+  let dir = dir.canonicalize().map_err(|e| e.to_string())?;
+  let files: Vec<(String, String)> = files.into_iter().map(|f| {
+    // The profile built the path from the (non-canonical) folder `agent_run_dir` returned.
+    let name = Path::new(&f.path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let real = Path::new(&f.path).parent().and_then(|p| p.canonicalize().ok());
+    (if real.as_deref() == Some(dir.as_path()) { dir.join(name).display().to_string() } else { f.path }, f.content)
+  }).collect();
+  write_run_files(&dir, &files)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -204,5 +293,26 @@ mod tests {
     assert!(read_from(&file, first.offset).unwrap().events.is_empty());
     std::fs::write(&file, "{\"c\":3}\n").unwrap();
     assert_eq!(read_from(&file, first.offset).unwrap().events, vec![serde_json::json!({"c":3})]);
+  }
+
+  #[test]
+  fn run_files_stay_in_their_run_folder() {
+    let base = tempfile::tempdir().unwrap();
+    let dir = run_dir_in(base.path(), "abcd-1234").unwrap();
+    assert!(run_dir_in(base.path(), "../x").is_err());
+    let ok = dir.join("gemini-system-defaults.json").display().to_string();
+    write_run_files(&dir, &[(ok.clone(), "{}".into())]).unwrap();
+    assert_eq!(std::fs::read_to_string(&ok).unwrap(), "{}");
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      assert_eq!(std::fs::metadata(&ok).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+    for bad in [base.path().join("x.json"), dir.join("sub/x.json"), dir.join(".hidden"), dir.join("../abcd-1234x/y")] {
+      assert!(write_run_files(&dir, &[(bad.display().to_string(), "x".into())]).is_err(), "{}", bad.display());
+    }
+    // A new run with the same token starts empty.
+    let again = run_dir_in(base.path(), "abcd-1234").unwrap();
+    assert!(std::fs::read_dir(again).unwrap().next().is_none());
   }
 }

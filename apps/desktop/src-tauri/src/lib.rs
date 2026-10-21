@@ -1525,6 +1525,8 @@ pub fn run() {
       agent::status_hooks::agent_status_hooks_remove,
       agent::hooks::agent_hook_settings,
       agent::hooks::agent_hook_file,
+      agent::hooks::agent_run_dir,
+      agent::hooks::agent_run_files_write,
       agent::cli::agent_cli_found,
       agent::runtimes::agent_runtimes,
       agent::arkai::arkai_providers,

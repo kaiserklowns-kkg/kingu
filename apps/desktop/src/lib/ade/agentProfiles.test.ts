@@ -5,6 +5,8 @@ import {
 	codexNotifyArgs,
 	hookEnv,
 	copilotMcpConfig,
+	geminiLiteral,
+	geminiSystemDefaults,
 	CUSTOM,
 	CUSTOM_PICK,
 	cliResume,
@@ -134,7 +136,8 @@ describe('other CLIs', () => {
 		expect(argv[0]).toBe('env');
 		expect(argv[1].startsWith('OPENCODE_CONFIG_CONTENT=')).toBe(true);
 		expect(JSON.parse(argv[1].slice('OPENCODE_CONFIG_CONTENT='.length))).toEqual({
-			mcp: { 'go-gopls': { type: 'local', command: ['gopls', 'mcp', '--flag=a b'], environment: { GOFLAGS: '-mod=mod' }, enabled: true } }
+			mcp: { 'go-gopls': { type: 'local', command: ['gopls', 'mcp', '--flag=a b'], environment: { GOFLAGS: '-mod=mod' }, enabled: true } },
+			skills: { paths: ['/c/snap-plugins/go-1/skills'] }
 		});
 		expect(argv.slice(2)).toEqual(['opencode', '--prompt', tricky]);
 		expect(o.launch(['opencode'], { resume: 'ses_1' }, none).argv).toEqual(['opencode', '--session', 'ses_1']);
@@ -151,7 +154,7 @@ describe('other CLIs', () => {
 		const argv = profile('copilot').launch(['copilot'], { prompt: tricky }, withMcp).argv;
 		expect(argv.slice(0, 2)).toEqual(['copilot', '--additional-mcp-config']);
 		expect(JSON.parse(argv[2]).mcpServers['go-gopls']).toEqual({ type: 'local', command: 'gopls', args: ['mcp', '--flag=a b'], env: { GOFLAGS: '-mod=mod' }, tools: ['*'] });
-		expect(argv.slice(3)).toEqual(['--interactive', tricky]);
+		expect(argv.slice(3)).toEqual(['--plugin-dir=/c/snap-plugins/go-1', '--interactive', tricky]);
 		expect(profile('copilot').launch(['copilot'], { resume: 's1' }, none).argv).toEqual(['copilot', '--resume=s1']);
 		expect(copilotMcpConfig({})).toBeNull();
 	});
@@ -173,9 +176,58 @@ describe('other CLIs', () => {
 		expect(cliResume(['mycli'])).toBeNull();
 		expect(CUSTOM.launch(['mycli'], { resume: 'x' }, none).argv).toEqual(['mycli']);
 	});
-	test('only claude takes skill plugins', () => {
-		expect(PROFILES.filter((p) => p.skills).map((p) => p.id)).toEqual(['claude']);
-		for (const p of PROFILES.filter((p) => !p.skills)) expect(p.launch(['x'], { fresh: true }, { servers: {}, plugins: ['/p'] }).argv.join(' ')).not.toContain('/p');
+	test('skill plugins reach claude, opencode and copilot only', () => {
+		expect(PROFILES.filter((p) => p.skills).map((p) => p.id)).toEqual(['claude', 'opencode', 'copilot']);
+		for (const p of PROFILES.filter((p) => !p.skills)) expect(p.launch(['x'], { fresh: true }, { servers: {}, plugins: ['/p'], runDir: '/r' }).argv.join(' ')).not.toContain('/p');
+		expect(PROFILES.filter((p) => p.mcp).map((p) => p.id)).toEqual(['claude', 'codex', 'gemini', 'opencode', 'copilot', 'amp']);
+	});
+});
+
+/** Gemini CLI's settings-string expansion (envVarResolver.ts), to check what its loader makes of ours. */
+const geminiResolve = (s: string, env: Record<string, string>) =>
+	s.replace(/\$(?:(\w+)|{([^}]+?)(?::-([^}]*))?})/g, (m, a?: string, b?: string, d?: string) => env[a || b || ''] ?? d ?? m);
+
+describe('gemini MCP', () => {
+	const g = profile('gemini');
+	test('a settings file in the run folder, named by GEMINI_CLI_SYSTEM_DEFAULTS_PATH', () => {
+		const { argv, files } = g.launch(['gemini'], { prompt: 'x' }, { ...withMcp, runDir: '/c/runs/t1/', hookFile: '/h.jsonl' });
+		expect(argv).toEqual(['env', 'KINGU_AGENT_HOOK_FILE=/h.jsonl', 'GEMINI_CLI_SYSTEM_DEFAULTS_PATH=/c/runs/t1/gemini-system-defaults.json', 'gemini', '--prompt-interactive', 'x']);
+		expect(files).toHaveLength(1);
+		expect(files![0].path).toBe('/c/runs/t1/gemini-system-defaults.json');
+		// The server's env goes in through `env`, which gemini does not expand.
+		expect(JSON.parse(files![0].content)).toEqual({ mcpServers: { 'go-gopls': { command: 'env', args: ['GOFLAGS=-mod=mod', 'gopls', 'mcp', '--flag=a b'] } } });
+		expect(g.launch(['gemini'], { resume: null }, { ...withMcp, runDir: '/r' }).files).toHaveLength(1);
+	});
+	test('without a run folder or servers: nothing', () => {
+		expect(g.launch(['gemini'], { fresh: true }, withMcp)).toEqual({ argv: ['gemini'] });
+		expect(g.launch(['gemini'], { fresh: true }, { ...none, runDir: '/r' })).toEqual({ argv: ['gemini'] });
+		expect(geminiSystemDefaults({ r: { type: 'http', url: 'https://x' } })).toBeNull();
+	});
+	test('dollars stay literal through gemini settings expansion', () => {
+		const env = { HOME: '/home/u', KINGU: 'k' };
+		for (const s of ['$HOME', '${HOME}', '${X:-d}', 'a$', '$ 1', '$$HOME', 'x${', tricky]) expect(geminiResolve(geminiLiteral(s), env)).toBe(s);
+		const parsed = JSON.parse(geminiSystemDefaults({ s: { command: '/bin/$KINGU', args: ['${HOME}'], env: {} } })!);
+		expect(parsed.mcpServers.s.args.map((a: string) => geminiResolve(a, env))).toEqual(['${HOME}']);
+		expect(geminiResolve(parsed.mcpServers.s.command, env)).toBe('/bin/$KINGU');
+		expect(parsed.mcpServers.s.env).toBeUndefined();
+	});
+	test('a program named with `=` keeps env in the env field', () => {
+		expect(JSON.parse(geminiSystemDefaults({ s: { command: '/a=b/srv', args: [], env: { K: 'v$X' } } })!).mcpServers.s).toEqual({ command: '/a=b/srv', args: [], env: { K: 'v${KINGU_LITERAL_DOLLAR:-$}X' } });
+	});
+});
+
+describe('skills for opencode and copilot', () => {
+	const plugins = ['/c/snap-plugins/go-1', '/c/hub/'];
+	test('opencode: skills.paths in OPENCODE_CONFIG_CONTENT, with or without servers', () => {
+		const argv = profile('opencode').launch(['opencode'], { fresh: true }, { servers: {}, plugins }).argv;
+		expect(JSON.parse(argv[1].slice('OPENCODE_CONFIG_CONTENT='.length))).toEqual({ skills: { paths: ['/c/snap-plugins/go-1/skills', '/c/hub/skills'] } });
+		const both = JSON.parse(opencodeConfig(servers, plugins)!);
+		expect(Object.keys(both)).toEqual(['mcp', 'skills']);
+	});
+	test('copilot: one --plugin-dir per plugin after the MCP config, also on resume', () => {
+		const argv = profile('copilot').launch(['copilot'], { prompt: 'x' }, { servers, plugins }).argv;
+		expect(argv.slice(3)).toEqual(['--plugin-dir=/c/snap-plugins/go-1', '--plugin-dir=/c/hub/', '--interactive', 'x']);
+		expect(profile('copilot').launch(['copilot'], { resume: 's1' }, { servers: {}, plugins: ['-p'] }).argv).toEqual(['copilot', '--plugin-dir=-p', '--resume=s1']);
 	});
 });
 

@@ -839,7 +839,16 @@ class AdeTasks {
 			notifications.error(options);
 			return;
 		}
-		const launch = profile.launch(cli, how, { sessionId, hookSettings, hookFile, opencodeDir, servers: mcpServers(root), plugins: profile.skills ? await skillPlugins() : [] });
+		// A folder of this run (outside the worktree) for files a launch needs, e.g. gemini's MCP settings.
+		const runDir = profile.id === 'gemini' ? await invoke<string>('agent_run_dir', { token }).catch(() => null) : null;
+		const launch = profile.launch(cli, how, { sessionId, hookSettings, hookFile, opencodeDir, runDir, servers: mcpServers(root), plugins: profile.skills ? await skillPlugins() : [] });
+		if (launch.files?.length) {
+			try {
+				await invoke('agent_run_files_write', { token, files: launch.files });
+			} catch (e) {
+				clientLog('error', `run files for ${slug}: ${e}`);
+			}
+		}
 		if (sessionId) await this.#patch(slug, { session_id: sessionId });
 		// A hibernated CLI (hibernation.svelte.ts) is awake again.
 		if (this.list.find((t) => t.slug === slug)?.hibernated_at) await this.#patch(slug, { hibernated_at: null });
