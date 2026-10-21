@@ -21,8 +21,27 @@ export function parseChord(chord: string, mac = isMac): Chord {
 export type KeyboardDispatch = 'code' | 'keyCode';
 let dispatch: KeyboardDispatch = 'code';
 export function setKeyboardDispatch(value: KeyboardDispatch) {
-	dispatch = value;
+	dispatch = value === 'keyCode' ? 'keyCode' : 'code';
 }
+export const keyboardDispatch = (): KeyboardDispatch => dispatch;
+
+/** Punctuation by physical key: Shift changes `e.key` (`,` → `<`), so they match by code. */
+const CODE_KEYS: Record<string, string> = {
+	Backquote: '`',
+	Backslash: '\\',
+	IntlBackslash: '\\',
+	Minus: '-',
+	Equal: '=',
+	BracketLeft: '[',
+	BracketRight: ']',
+	Comma: ',',
+	Period: '.',
+	Slash: '/',
+	Semicolon: ';',
+	Quote: "'"
+};
+/** The numeric keypad as VS Code names it (`numpad1`, `numpad_add`…). */
+const NUMPAD: Record<string, string> = { NumpadAdd: 'numpad_add', NumpadSubtract: 'numpad_subtract', NumpadMultiply: 'numpad_multiply', NumpadDivide: 'numpad_divide', NumpadDecimal: 'numpad_decimal', NumpadEnter: 'enter' };
 
 /**
  * With `keyboard.dispatch: code` (VS Code's default) letters and digits match by `e.code`, so ⌥
@@ -34,15 +53,14 @@ export function eventKey(e: Pick<KeyboardEvent, 'key' | 'code'>, mode: KeyboardD
 	if (mode === 'keyCode' && /^[a-z0-9]$/i.test(e.key)) return e.key.toLowerCase();
 	if (/^Key[A-Z]$/.test(e.code)) return e.code.slice(3).toLowerCase();
 	if (/^Digit\d$/.test(e.code)) return e.code.slice(5);
-	if (e.code === 'Backquote') return '`';
-	if (e.code === 'Backslash') return '\\';
-	// Shift changes `e.key` (`-` → `_`), so ⌃⇧- (Go Forward) matches by code.
-	if (e.code === 'Minus') return '-';
-	if (e.code === 'Equal') return '=';
-	// Shift turns `]` into `}` (Orca's ⌘⇧] Next Tab).
-	if (e.code === 'BracketLeft') return '[';
-	if (e.code === 'BracketRight') return ']';
+	if (/^Numpad\d$/.test(e.code)) return `numpad${e.code.slice(6)}`;
+	if (NUMPAD[e.code]) return NUMPAD[e.code];
+	// Shift changes `e.key` (`-` → `_`, `]` → `}`), so ⌃⇧- (Go Forward) and Orca's ⌘⇧] match by
+	// code. With keyCode the character the layout types wins for these too, unless Shift changed it.
+	if (CODE_KEYS[e.code]) return mode === 'keyCode' && e.key.length === 1 && Object.values(CODE_KEYS).includes(e.key) ? e.key : CODE_KEYS[e.code];
 	if (e.key.startsWith('Arrow')) return e.key.slice(5).toLowerCase();
+	if (e.key === ' ') return 'space';
+	if (e.key === 'Esc') return 'escape';
 	return e.key.toLowerCase();
 }
 

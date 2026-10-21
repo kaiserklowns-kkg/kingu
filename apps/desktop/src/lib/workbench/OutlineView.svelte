@@ -66,6 +66,7 @@
 	function reveal(row: OutlineRow, focus: boolean) {
 		selected = row.item.id;
 		const at = row.item.selectionRange.start;
+		if (rel && outline.reveal(rel, at.line, focus)) return;
 		if (focus) editors.gotoLine(at.line + 1, at.character + 1);
 		else editors.peek(at.line + 1, at.character + 1);
 	}

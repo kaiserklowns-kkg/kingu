@@ -11,6 +11,8 @@
 		addKeybinding,
 		appendChord,
 		changeKeybinding,
+		chordLabels,
+		chordPrefixRows,
 		conflictCounts,
 		filterKeybindingRows,
 		keybindingRows,
@@ -19,6 +21,7 @@
 		removeKeybinding,
 		resetKeybinding,
 		sameKeyRows,
+		sortByPrecedence,
 		type KeybindingRow
 	} from '#lib/workbench/keybindingsEditor.ts';
 	import { parseWhen } from '#lib/workbench/contextKey.ts';
@@ -35,6 +38,8 @@
 
 	let query = $state('');
 	let recording = $state(false);
+	/** VS Code's Sort by Precedence toggle. */
+	let byPrecedence = $state(false);
 	let selected = $state(-1);
 	let searchEl = $state<HTMLInputElement>();
 	let listEl = $state<HTMLDivElement>();
@@ -44,14 +49,18 @@
 
 	const all = $derived(
 		keybindingRows(
-			commands.all.map((c) => ({ id: c.id, title: c.title, category: c.category, palette: c.palette, scope: c.scope, defaultKey: defaultKeyOf(c) ?? c.ownerKey?.() })),
+			commands.all.map((c) => ({ id: c.id, title: c.title, category: c.category, palette: c.palette, scope: c.scope, defaultKey: defaultKeyOf(c) ?? c.ownerKey?.(), weight: c.weight })),
 			keybindings.user
 		).sort((a, b) => a.title.localeCompare(b.title) || a.command.localeCompare(b.command) || a.source.localeCompare(b.source))
 	);
 	const conflicts = $derived(new Map(conflictCounts(all).map((n, i) => [all[i], n])));
-	const rows = $derived(filterKeybindingRows(all, parseKeybindingQuery(query)));
+	const rows = $derived.by(() => {
+		const found = filterKeybindingRows(all, parseKeybindingQuery(query));
+		return byPrecedence ? sortByPrecedence(found) : found;
+	});
 	const selectedRow = $derived(rows[selected] as KeybindingRow | undefined);
 	const defineConflicts = $derived(define?.key ? sameKeyRows(all, define.key, define.row.scope).filter((r) => r.command !== define!.row.command) : []);
+	const definePrefix = $derived(define?.key ? chordPrefixRows(all, define.key, define.row.scope, define.row.command) : []);
 
 	$effect(() => {
 		void query;
@@ -221,6 +230,8 @@
 			<p class="mt-1 text-[13px] text-(--vscode-descriptionForeground)">{t('keybindings.summary', { count: rows.length })}</p>
 		</div>
 		<button class="rounded-md px-2 py-1 text-[13px] hover:bg-(--vscode-toolbar-hoverBackground)" class:bg-(--vscode-toolbar-activeBackground)={query.includes('@source:user')} onclick={() => (query = query.includes('@source:user') ? query.replace(/@source:user\s*/, '') : `@source:user ${query}`.trim())}>{t('keybindings.showUser')}</button>
+		<button class="rounded-md px-2 py-1 text-[13px] hover:bg-(--vscode-toolbar-hoverBackground)" class:bg-(--vscode-toolbar-activeBackground)={/@conflicts\b/.test(query)} onclick={() => (query = /@conflicts\b/.test(query) ? query.replace(/@conflicts\s*/, '') : `@conflicts ${query}`.trim())}>{t('keybindings.showConflicts')}</button>
+		<button class="rounded-md p-1 hover:bg-(--vscode-toolbar-hoverBackground)" class:bg-(--vscode-toolbar-activeBackground)={byPrecedence} title={t('keybindings.sortPrecedence')} aria-label={t('keybindings.sortPrecedence')} aria-pressed={byPrecedence} onclick={() => (byPrecedence = !byPrecedence)}><Icon name="sliders" size={16} /></button>
 		<button class="rounded-md p-1 hover:bg-(--vscode-toolbar-hoverBackground)" title={t('keybindings.openJson')} aria-label={t('keybindings.openJson')} onclick={openJson}><Icon name="code" size={16} /></button>
 	</div>
 	<div class="mx-auto w-full max-w-[1100px] shrink-0 px-8 pb-3">
@@ -277,7 +288,7 @@
 						<td class="py-1.5">
 							{#if r.key}
 								<span class="flex items-center gap-1">
-									{#each keyLabel(r.key).split(' ') as chord, j (j)}
+									{#each chordLabels(r.key) as chord, j (j)}
 										<kbd class="rounded-md border border-(--vscode-widget-border) bg-(--vscode-editorGroupHeader-tabsBackground) px-1.5 py-0.5 font-sans text-xs">{chord}</kbd>
 									{/each}
 									{#if count}
@@ -313,6 +324,12 @@
 				aria-label={t('keybindings.define')}
 				class="mt-3 h-8 w-full rounded-md border border-(--vscode-focusBorder) bg-(--vscode-input-background) px-2 text-center text-[13px] outline-none"
 			/>
+			{#if define.key && chordLabels(define.key).length === 1}
+				<p class="mt-1.5 text-center text-xs text-(--vscode-descriptionForeground)">{t('keybindings.chordHint')}</p>
+			{/if}
+			{#if definePrefix.length}
+				<p class="mt-2 text-xs text-(--vscode-editorWarning-foreground)">{t('keybindings.prefixConflicts', { count: definePrefix.length })}</p>
+			{/if}
 			{#if defineConflicts.length}
 				<button class="mt-2 text-xs text-(--vscode-textLink-foreground) hover:underline" onclick={() => { const key = define!.key; closeDefine(); query = `"${key}"`; }}>
 					{t('keybindings.defineConflicts', { count: defineConflicts.length })}

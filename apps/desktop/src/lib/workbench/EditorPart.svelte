@@ -21,6 +21,7 @@
 	import { CENTERED_DEFAULT, centeredShown, centeredSizes, dragMargin } from './zenMode';
 	import { isSearchEditorKey } from './searchEditor';
 	import { searchEditors } from './searchEditor.svelte.ts';
+	import { notebooks } from './notebookEditors.svelte';
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 	import { settings, USER_SETTINGS_KEY, WORKSPACE_SETTINGS_PATH } from '#lib/settings/settings.svelte.ts';
 
@@ -112,6 +113,7 @@
 		queueMicrotask(() => pruneViewStates(byGroup));
 		untrack(() => textFiles.prune(open));
 		untrack(() => searchEditors.prune(open));
+		untrack(() => notebooks.prune(open));
 	});
 
 	// Centered layout (layout.centered, or Zen Mode's zenMode.centerLayout): off while the grid has

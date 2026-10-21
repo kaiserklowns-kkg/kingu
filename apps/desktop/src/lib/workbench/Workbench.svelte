@@ -27,6 +27,8 @@
 	import EditorPart from './EditorPart.svelte';
 	import Panel from './Panel.svelte';
 	import QuickInput from './QuickInput.svelte';
+	import AccessibleViewWidget from './AccessibleViewWidget.svelte';
+	import { installAccessibleViewCommands } from './accessibleView.svelte.ts';
 	import RepoDialog from './RepoDialog.svelte';
 	import { repoDialog } from './repoDialog.svelte.ts';
 	import Sash from './Sash.svelte';
@@ -112,6 +114,7 @@
 	import { installEditorFeatures } from '#lib/editor/editorFeatures.svelte.ts';
 	import { installNotificationCommands } from './notificationCommands.svelte';
 	import { installSearchEditorCommands } from './searchEditorCommands.svelte.ts';
+	import { installNotebookCommands } from './notebookCommands.svelte.ts';
 	import NotificationToasts from './NotificationToasts.svelte';
 	import { recentFiles } from './recentFiles.svelte';
 	import { profiles } from '#lib/settings/profiles.svelte.ts';
@@ -396,10 +399,14 @@
 		const uninstallNotificationCommands = installNotificationCommands();
 		const uninstallProfiles = profiles.install();
 		const uninstallSearchEditorCommands = installSearchEditorCommands();
+		const uninstallNotebookCommands = installNotebookCommands();
+		const uninstallAccessibleView = installAccessibleViewCommands();
 		return () => {
 			uninstallProfiles();
 			uninstallNotificationCommands();
 			uninstallSearchEditorCommands();
+			uninstallNotebookCommands();
+			uninstallAccessibleView();
 			uninstallRecentFiles();
 			uninstallEditorCommands();
 			uninstallEditorFeatures();
@@ -607,6 +614,7 @@
 	{#if cleanup.open}<CleanupDialog />{/if}
 	<Tooltips />
 	<QuickInput />
+	<AccessibleViewWidget />
 	<LinearConnect />
 	<TrackerConnect />
 	<AdeDialogs />

@@ -14,6 +14,7 @@
 	import { commands } from '#lib/workbench/commands.svelte.ts';
 	import { menuSeparator } from '#lib/workbench/PopupMenu.svelte';
 	import type { MenuNode } from '#lib/workbench/menus.ts';
+	import { listKeys } from '#lib/workbench/listKeys.ts';
 
 	let selected = $state<string | null>(null);
 	let menu = $state<{ x: number; y: number; item: TimelineItem } | null>(null);
@@ -88,7 +89,7 @@
 		{/if}
 	</div>
 	{#if timelineView.open}
-		<div class="min-h-0 flex-1 overflow-y-auto" role="list" onscroll={onScroll}>
+		<div class="min-h-0 flex-1 overflow-y-auto" role="list" onscroll={onScroll} use:listKeys>
 			{#if !timeline.path}
 				<p class="px-5 py-1 text-(--vscode-descriptionForeground)">{t('scmEditor.timeline.noFile')}</p>
 			{:else if !timeline.items.length}

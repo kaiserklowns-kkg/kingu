@@ -31,6 +31,7 @@ mod menu;
 mod net_proxy;
 mod project;
 mod projects;
+mod notebook;
 mod notify;
 mod pty;
 mod replace;
@@ -1297,6 +1298,8 @@ pub fn run() {
         settings::user_value(&config_dir, "application.shellEnvironmentResolutionTimeout").as_ref(),
       ));
       net_proxy::init(&config_dir);
+      // Temporary profiles do not outlive the app (VS Code's transient profiles).
+      user_profiles::remove_unused_transient(&config_dir, &[]);
       app.manage(settings::ConfigWatcher::default());
       if let Err(e) = settings::watch_config(app.handle(), &config_dir) {
         log::warn!("settings watcher: {e}");
@@ -1347,6 +1350,10 @@ pub fn run() {
     })
     .invoke_handler(tauri::generate_handler![
       app_info,
+      notebook::kernel::notebook_kernels,
+      notebook::kernel::notebook_kernel_start,
+      notebook::kernel::notebook_kernel_send,
+      notebook::kernel::notebook_kernel_stop,
       i18n::app_set_locale,
       system_stats,
       fs_read_data_url,

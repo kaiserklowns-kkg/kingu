@@ -34,5 +34,9 @@ export const keybindings = {
 	'keybindings.whenOk': 'Set the when expression to “{when}”',
 	'keybindings.whenAlways': 'Remove the when expression',
 	'keybindings.whenInvalid': 'Invalid when expression: {error}',
-	'keybindings.editFailed': 'Could not update keybindings.json: {error}'
+	'keybindings.editFailed': 'Could not update keybindings.json: {error}',
+	'keybindings.sortPrecedence': 'Sort by Precedence (Highest first)',
+	'keybindings.showConflicts': 'Show Conflicts',
+	'keybindings.chordHint': 'Press a second key for a chord, Enter to accept',
+	'keybindings.prefixConflicts': '{count|# keybinding shares|# keybindings share} the first key of this chord, so one of them never runs'
 } as const;

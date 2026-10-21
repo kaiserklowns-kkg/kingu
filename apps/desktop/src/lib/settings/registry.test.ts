@@ -2,8 +2,9 @@
 import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { languageBlockValue, withLanguageValue } from './languageOverrides';
 import { IDE_SETTINGS } from './ideSettings';
-import { jsonSchema, matchesQuery, parseQuery, resolveSettings, SCHEMA, SETTINGS, SETTINGS_SECTIONS, settingProblems, settingsInView, settingsSections, settingTitle, validate, type SettingSchema } from './registry';
+import { jsonSchema, matchesQuery, parseQuery, resolveSettings, SCHEMA, SETTINGS, SETTINGS_SECTIONS, settingProblems, settingsInView, settingsSections, settingTags, settingTitle, validate, type SettingSchema } from './registry';
 
 const value = (m: ReturnType<typeof resolveSettings>, id: string) => m.get(id);
 
@@ -248,7 +249,33 @@ describe('VS Code IDE settings', () => {
 		expect(settingsInView('@modified', null, SETTINGS, modified).map((s) => s.id)).toEqual(['editor.fontSize', 'files.autoSave']);
 		expect(settingsInView('@modified font', 'Agent', SETTINGS, modified).map((s) => s.id)).toEqual(['editor.fontSize']);
 		expect(settingsInView('@id:files.autoSave', null).map((s) => s.id)).toEqual(['files.autoSave', 'files.autoSaveDelay', 'files.autoSaveWorkspaceFilesOnly', 'files.autoSaveWhenNoErrors']);
-		expect(parseQuery('@modified  tab size')).toEqual({ filters: { modified: true, id: null }, text: 'tab size' });
+		expect(parseQuery('@modified  tab size')).toEqual({ filters: { modified: true, id: null, tags: null, lang: null }, text: 'tab size' });
+	});
+
+	test('@lang: and @tag: filters', () => {
+		expect(parseQuery('@lang:typescriptreact @tag:Accessibility,preview tab')).toEqual({ filters: { modified: false, id: null, tags: ['accessibility', 'preview'], lang: 'typescriptreact' }, text: 'tab' });
+		expect(parseQuery('@lang:[python]').filters.lang).toBe('python');
+		const forLang = settingsInView('@lang:python', null).map((s) => s.id);
+		expect(forLang).toContain('editor.tabSize');
+		expect(forLang).toContain('files.trimTrailingWhitespace');
+		expect(forLang).not.toContain('workbench.colorTheme');
+		expect(settingsInView('@lang:python tab size', null).map((s) => s.id)).toContain('editor.tabSize');
+		const a11y = settingsInView('@tag:accessibility', null).map((s) => s.id);
+		expect(a11y).toContain('editor.accessibilitySupport');
+		expect(a11y).toContain('accessibility.signals.save');
+		expect(a11y).not.toContain('editor.tabSize');
+		expect(settingTags({ id: 'x.y', description: 'An experimental option', tags: ['Notebook'] }).sort()).toEqual(['experimental', 'notebook']);
+		expect(settingTags({ id: 'security.workspace.trust.enabled', description: '' })).toEqual(['workspacetrust']);
+	});
+
+	test('a language block is edited key by key', () => {
+		const values = { 'editor.tabSize': 4, '[python]': { 'editor.tabSize': 2 }, '[javascript][typescript]': { 'editor.insertSpaces': false } };
+		expect(languageBlockValue(values, 'python', 'editor.tabSize')).toBe(2);
+		expect(languageBlockValue(values, 'typescript', 'editor.insertSpaces')).toBe(false);
+		expect(languageBlockValue(values, 'go', 'editor.tabSize')).toBeUndefined();
+		expect(withLanguageValue(values, 'python', 'editor.wordWrap', 'on')).toEqual({ key: '[python]', block: { 'editor.tabSize': 2, 'editor.wordWrap': 'on' } });
+		expect(withLanguageValue(values, 'python', 'editor.tabSize', undefined)).toEqual({ key: '[python]', block: undefined });
+		expect(withLanguageValue({}, 'go', 'editor.tabSize', 8)).toEqual({ key: '[go]', block: { 'editor.tabSize': 8 } });
 	});
 
 	test('search finds Thai and English descriptions', () => {

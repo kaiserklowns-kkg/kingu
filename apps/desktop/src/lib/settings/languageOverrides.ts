@@ -97,6 +97,27 @@ export function languageSchemas(schemas: readonly SettingSchema[], language: str
 	});
 }
 
+/** What a layer's `[language]` block sets for `id` (the block named for `language` alone first, then one it shares). */
+export function languageBlockValue(values: Record<string, unknown>, language: string, id: string): unknown {
+	const own = values[`[${language}]`];
+	if (isPlainObject(own) && id in own) return own[id];
+	for (const [key, block] of Object.entries(values)) if (isPlainObject(block) && overrideLanguages(key).includes(language) && id in block) return block[id];
+	return undefined;
+}
+
+/**
+ * The edit that sets (or with `undefined`, removes) `id` in a layer's `[language]` block: the key
+ * to write and the block's new value (`undefined` when it ends up empty, so the key goes).
+ */
+export function withLanguageValue(values: Record<string, unknown>, language: string, id: string, value: unknown): { key: string; block: Record<string, unknown> | undefined } {
+	const key = `[${language}]`;
+	const current = values[key];
+	const block: Record<string, unknown> = isPlainObject(current) ? { ...current } : {};
+	if (value === undefined) delete block[id];
+	else block[id] = value;
+	return { key, block: Object.keys(block).length ? block : undefined };
+}
+
 /** The values a layer sets in its `[language]` blocks, for problems and the settings JSON schema. */
 export function overrideBlocks(values: Record<string, unknown>): [key: string, block: Record<string, unknown>][] {
 	return Object.entries(values).filter((e): e is [string, Record<string, unknown>] => isOverrideKey(e[0]) && isPlainObject(e[1]));
