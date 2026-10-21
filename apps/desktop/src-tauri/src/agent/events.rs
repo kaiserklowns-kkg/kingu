@@ -198,6 +198,29 @@ pub enum AgentEvent {
   /// The agent published an artifact (the host's `artifact_publish` tool, through artifacts/):
   /// version `version` of artifact `id` in project `root`. The chat shows a card that opens it.
   Artifact { id: String, title: String, version: u32, format: String, root: String },
+  /// An MCP server asks the user (the host's mcpAsks.ts): `type` `elicitation` (a form from
+  /// `schema`, or in `url` mode a page to open) or `sampling` (leave to make a model call;
+  /// `sampling` is what it would send). Answer with `agent_answer_mcp`; cancelled after `timeout_ms`.
+  McpRequest {
+    request_id: String,
+    #[serde(rename = "type")]
+    ask: String,
+    server: String,
+    #[serde(default)]
+    message: String,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    schema: Option<Value>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    sampling: Option<Value>,
+    #[serde(default)]
+    timeout_ms: u64,
+  },
+  /// An `McpRequest` was answered or cancelled (`accept`, `decline`, `cancel`).
+  McpRequestResolved { request_id: String, action: String },
   /// Added by the webview (`chat_feedback`): the user's thumbs up (`up`) or down (`down`) on the
   /// answer to chat request `request`, or none (`vote` null: taken back). Kept in the transcript.
   Feedback {
@@ -266,6 +289,20 @@ mod tests {
     let parsed = AgentEvent::from_host(ev.clone());
     assert!(matches!(&parsed, AgentEvent::Artifact { id, version: 2, .. } if id == "0123456789abcdef"));
     assert_eq!(serde_json::to_value(&parsed).unwrap(), ev);
+  }
+
+  #[test]
+  fn mcp_requests_round_trip() {
+    for v in [
+      json!({"kind": "mcp_request", "request_id": "r1", "type": "elicitation", "server": "tickets", "message": "New ticket", "mode": "form",
+        "schema": {"type": "object", "properties": {"title": {"type": "string"}}}, "url": null, "sampling": null, "timeout_ms": 600000}),
+      json!({"kind": "mcp_request", "request_id": "r2", "type": "sampling", "server": "web", "message": "", "mode": null, "schema": null, "url": null,
+        "sampling": {"messages": [{"role": "user", "text": "hi"}], "system_prompt": null, "max_tokens": 50}, "timeout_ms": 600000}),
+      json!({"kind": "mcp_request_resolved", "request_id": "r1", "action": "accept"}),
+    ] {
+      assert_eq!(serde_json::to_value(AgentEvent::from_host(v.clone())).unwrap(), v);
+    }
+    assert!(matches!(AgentEvent::from_host(json!({"kind": "mcp_request", "request_id": "r", "type": "elicitation", "server": "s"})), AgentEvent::McpRequest { timeout_ms: 0, .. }));
   }
 
   #[test]
