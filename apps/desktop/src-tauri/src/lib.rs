@@ -61,6 +61,7 @@ mod watcher;
 mod window;
 mod windows;
 mod workspace;
+mod workspace_trust;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -898,7 +899,9 @@ fn lsp_start(
     Some(f) => roots.iter().find(|r| r.as_path() == Path::new(f)).cloned().ok_or_else(|| crate::tr!(crate::i18n::msg::FilesMsg::OutsideWorkspace, path = f))?,
     None => ws.root()?,
   };
-  let id = lsp::start_for(&servers, &cwd, &lsp::roots_from(&cwd, &roots), &language, on_event)?;
+  // Restricted Mode: no server from the folders' node_modules (workspace_trust.rs).
+  let local = workspace_trust::local_tool_roots(&ws, lsp::roots_from(&cwd, &roots));
+  let id = lsp::start_for(&servers, &cwd, &local, &language, on_event)?;
   servers.own(id, ws.label());
   Ok(id)
 }
@@ -908,14 +911,14 @@ fn lsp_start(
 #[tauri::command]
 fn lsp_check(ws: Workspace, language: String) -> Result<String, String> {
   ws.root()?;
-  lsp::check(&language, &ws.roots()).map(|p| p.to_string_lossy().into_owned())
+  lsp::check(&language, &workspace_trust::local_tool_roots(&ws, ws.roots())).map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Install commands for the server of `language` that this machine's tools can run.
 #[tauri::command]
 fn lsp_install_methods(ws: Workspace, language: String) -> Result<lsp::InstallInfo, String> {
   ws.root()?;
-  lsp::install_info(&language, &ws.roots())
+  lsp::install_info(&language, &workspace_trust::local_tool_roots(&ws, ws.roots()))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1626,9 +1629,17 @@ pub fn run() {
       artifacts::team::team_artifact_get,
       artifacts::team::team_artifact_delete,
       cli_server::cli_reply,
+      cli_server::cli_queued,
+      cli_server::cli_wait_done,
       cli_server::cli_install,
       cli_server::cli_uninstall,
       cli_server::cli_skill_plugin,
+      workspace_trust::workspace_trust_read,
+      workspace_trust::workspace_trust_set,
+      workspace_trust::workspace_trust_prompted,
+      workspace_trust::trusted_domains_read,
+      workspace_trust::trusted_domains_write,
+      workspace_trust::trusted_domains_open,
       linear::linear_status,
       linear::linear_connect,
       linear::linear_disconnect,

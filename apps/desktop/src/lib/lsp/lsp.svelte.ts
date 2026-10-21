@@ -478,6 +478,14 @@ class Lsp {
 		if (info) await this.#restartKey(info.key);
 	}
 
+	/** Workspace Trust changed: every server (and every missing one) looks for its binary again,
+	 * since a folder's node_modules counts only in a trusted window (Rust workspace_trust.rs). */
+	async restartAll() {
+		const keys = new Set([...this.#sessions.values()].map((s) => s.info.key));
+		for (const s of this.missing()) keys.add(s.key);
+		await Promise.all([...keys].map((k) => this.#restartKey(k)));
+	}
+
 	/** Restarts every session of server `key` (the shared one and the per-folder ones). */
 	async #restartKey(key: string) {
 		await Promise.all([...this.#sessions.values()].filter((s) => s.info.key === key).map((s) => this.#stop(s.sid)));

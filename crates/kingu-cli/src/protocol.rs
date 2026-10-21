@@ -16,6 +16,10 @@ pub const METHOD_OPEN: &str = "open";
 pub const METHOD_NOTIFY: &str = "notify";
 pub const METHOD_ARTIFACT_PUBLISH: &str = "artifact.publish";
 pub const METHOD_ARTIFACT_LIST: &str = "artifact.list";
+/// `kingu [options] [paths…]`: opens files, folders, a diff or a merge; with `wait` the answer
+/// holds a `waitId` that `editor.wait` blocks on until the editors (or their window) close.
+pub const METHOD_EDITOR_OPEN: &str = "editor.open";
+pub const METHOD_EDITOR_WAIT: &str = "editor.wait";
 
 /// Error codes. `unauthorized`: missing or wrong token; `bad_request`: unreadable line or bad
 /// params; `unknown_method`; `unavailable`: the window did not answer; `failed`: the app refused.

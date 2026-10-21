@@ -9,6 +9,7 @@ import { resolveSettings, settingProblems, type Resolved, type SettingProblem, t
 import { settingSchemas } from './schemas.svelte';
 import { isApplicationScoped, profileUserValues } from './profiles';
 import { isLanguageOverridable, languageSchemas, languageValues } from './languageOverrides';
+import { withoutRestricted } from './restricted';
 
 type SettingsFile = { path: string; content: string | null };
 /** The files behind the layers: `defaultUser` is the Default profile's settings.json (profiles.ts). */
@@ -37,14 +38,21 @@ class Settings {
 	/** `settings` of the `.code-workspace` file the folder was opened from: workspace settings under
 	 * the folder's own `.kingu/settings.json` (VS Code: workspace file < folder settings). */
 	workspaceFile = $state.raw<Record<string, unknown>>({});
-	readonly resolved: Map<string, Resolved> = $derived(resolveSettings(this.#userValues, { ...this.workspaceFile, ...this.workspace.values }, settingSchemas.all, this.repo.values));
+	/** Workspace Trust (workspaceTrust.svelte.ts keeps it current): in Restricted Mode the folders'
+	 * own settings files do not set restricted settings (restricted.ts). */
+	trusted = $state(true);
+	/** The folders' settings as this window may use them. */
+	#folderValues(values: Record<string, unknown>): Record<string, unknown> {
+		return this.trusted ? values : withoutRestricted(values);
+	}
+	readonly resolved: Map<string, Resolved> = $derived(resolveSettings(this.#userValues, this.#folderValues({ ...this.workspaceFile, ...this.workspace.values }), settingSchemas.all, this.repo.values));
 	/** Folder settings of the other root folders of a multi-root window (each one's
 	 * `.kingu/settings.json`), by folder path. Like VS Code's folder settings they apply to that
 	 * folder's files only (what a language server asks for a resource of it); the first folder's
 	 * file is `workspace`. */
 	folders = $state.raw<Record<string, Layer>>({});
 	readonly #folderResolved: Map<string, Map<string, Resolved>> = $derived(
-		new Map(Object.entries(this.folders).map(([path, layer]) => [path, resolveSettings(this.#userValues, { ...this.workspaceFile, ...layer.values }, settingSchemas.all)]))
+		new Map(Object.entries(this.folders).map(([path, layer]) => [path, resolveSettings(this.#userValues, this.#folderValues({ ...this.workspaceFile, ...layer.values }), settingSchemas.all)]))
 	);
 	#folderPaths: string[] = [];
 	/** Values the files set but that are ignored (wrong type, out of range, user-only in the workspace file). */
@@ -84,7 +92,7 @@ class Settings {
 			};
 			resolved = resolveSettings(
 				languageValues(this.#userValues, language, overridable),
-				languageValues({ ...this.workspaceFile, ...this.workspace.values }, language, overridable),
+				languageValues(this.#folderValues({ ...this.workspaceFile, ...this.workspace.values }), language, overridable),
 				languageSchemas(settingSchemas.all, language),
 				languageValues(this.repo.values, language, overridable)
 			);
@@ -107,6 +115,12 @@ class Settings {
 	/** `getFor` bound to one language, for the mappings that take a `get`. */
 	getterFor(language: string | undefined): <T = unknown>(id: string) => T {
 		return <T>(id: string) => this.getFor<T>(id, language);
+	}
+
+	/** What the user's settings set (application-scoped ones from the Default profile), unvalidated,
+	 * or undefined: for settings that decide how the folders' layers apply (Workspace Trust). */
+	userValue(id: string): unknown {
+		return this.#userValues[id];
 	}
 
 	/** The value set in one scope's file, or undefined. */

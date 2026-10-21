@@ -29,7 +29,12 @@ export function linkTarget(key: string, text: string, cwd?: string): Promise<str
 		.catch(() => null);
 }
 
-/** Opens a terminal link; `allowed` is terminal.integrated.allowedLinkSchemes (Rust checks it again). */
-export function openUrl(url: string, allowed?: string[]): Promise<void> {
+/**
+ * Opens a terminal link; `allowed` is terminal.integrated.allowedLinkSchemes (Rust checks it
+ * again). A web link to an untrusted domain asks first (outgoing link protection).
+ */
+export async function openUrl(url: string, allowed?: string[]): Promise<void> {
+	const { trustedDomains } = await import('#lib/workbench/trustedDomains.svelte.ts');
+	if (!(await trustedDomains.confirm(url, { fromWorkspace: false }))) return;
 	return invoke('terminal_open_url', { url, allowed: allowed ?? null });
 }

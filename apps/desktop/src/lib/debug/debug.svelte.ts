@@ -49,6 +49,7 @@ import type { InputDef, TaskRef } from '#lib/tasks/taskConfig.ts';
 import { inputPrompter } from '#lib/tasks/inputPrompter.svelte.ts';
 import { collectVariables, resolveInputs, substitute as substituteVariables } from '#lib/tasks/variables.ts';
 import { choose } from '#lib/workbench/messageBox.ts';
+import { workspaceTrust } from '#lib/workbench/workspaceTrust.svelte.ts';
 
 type DapEvent = { type: 'message'; json: string } | { type: 'stderr'; line: string } | { type: 'exit'; code: number | null };
 type Active = {
@@ -484,6 +485,8 @@ class Debug {
 		if (this.stopped && !pick) return this.continue();
 		const root = await this.#ensureRoot();
 		if (!root) return status.flash(t('tools.debug.openFolderFirst'));
+		// Restricted Mode does not debug (VS Code asks to trust the workspace first).
+		if (!(await workspaceTrust.request(t('trust.feature.debug')))) return;
 		const picked = await this.#pickConfig(pick);
 		if (!picked) return;
 		// debug.saveBeforeStart: the dirty editors of the active group (untitled ones ask where to save).
@@ -505,6 +508,7 @@ class Debug {
 	/** Debugs a configuration made elsewhere (the Testing view's Debug Test). */
 	async startConfig(config: LaunchConfig) {
 		if (!(await this.#ensureRoot())) return status.flash(t('tools.debug.openFolderFirst'));
+		if (!(await workspaceTrust.request(t('trust.feature.debug')))) return;
 		const prepared = await this.#prepare(config);
 		if (prepared) await this.#launch(prepared, false);
 	}

@@ -90,6 +90,15 @@ pub enum Msg {
   NoArtifacts,
   Starting,
   StartFailed,
+  NewAndReuse,
+  ConflictingModes,
+  DiffNeedsTwo,
+  MergeNeedsFour,
+  AddNeedsFolders,
+  StdinFile,
+  StdinTooLarge,
+  StartingApp,
+  StartTimeout,
 }
 
 impl Msg {
@@ -137,6 +146,15 @@ impl Msg {
     Msg::NoArtifacts,
     Msg::Starting,
     Msg::StartFailed,
+    Msg::NewAndReuse,
+    Msg::ConflictingModes,
+    Msg::DiffNeedsTwo,
+    Msg::MergeNeedsFour,
+    Msg::AddNeedsFolders,
+    Msg::StdinFile,
+    Msg::StdinTooLarge,
+    Msg::StartingApp,
+    Msg::StartTimeout,
   ];
 
   /// (English, Thai).
@@ -188,6 +206,15 @@ impl Msg {
       Msg::NoArtifacts => ("no artifacts", "ไม่มี artifact"),
       Msg::Starting => ("Kingu is not running: starting it with {path}", "Kingu ไม่ได้เปิดอยู่ กำลังเปิดพร้อม {path}"),
       Msg::StartFailed => ("Kingu is not running and could not be started ({detail})", "Kingu ไม่ได้เปิดอยู่และเปิดไม่สำเร็จ ({detail})"),
+      Msg::NewAndReuse => ("--new-window and --reuse-window cannot be used together", "ใช้ --new-window กับ --reuse-window พร้อมกันไม่ได้"),
+      Msg::ConflictingModes => ("use only one of --diff, --merge, --add and --remove", "ใช้ได้เพียงอย่างเดียวจาก --diff, --merge, --add และ --remove"),
+      Msg::DiffNeedsTwo => ("--diff needs two files: kingu -d <file> <file>", "--diff ต้องมีสองไฟล์: kingu -d <file> <file>"),
+      Msg::MergeNeedsFour => ("--merge needs four files: kingu -m <path1> <path2> <base> <result>", "--merge ต้องมีสี่ไฟล์: kingu -m <path1> <path2> <base> <result>"),
+      Msg::AddNeedsFolders => ("{flag} needs one or more folders", "{flag} ต้องระบุโฟลเดอร์อย่างน้อยหนึ่งโฟลเดอร์"),
+      Msg::StdinFile => ("Reading from stdin via: {path}", "กำลังอ่าน stdin ลงไฟล์: {path}"),
+      Msg::StdinTooLarge => ("stdin is larger than {mb} MB", "ข้อมูลจาก stdin ใหญ่เกิน {mb} MB"),
+      Msg::StartingApp => ("Kingu is not running: starting it", "Kingu ไม่ได้เปิดอยู่ กำลังเปิด"),
+      Msg::StartTimeout => ("Kingu did not start within {seconds} seconds", "Kingu ไม่เปิดขึ้นมาภายใน {seconds} วินาที"),
     }
   }
 
@@ -216,9 +243,10 @@ pub fn usage() -> &'static str {
   Msg::Usage.text(current())
 }
 
-const USAGE_EN: &str = "kingu: control the running Kingu app from a terminal or an agent
+const USAGE_EN: &str = "kingu: open files and folders in Kingu, and control it from a terminal or an agent
 
 Usage:
+  kingu [options] [paths…]           open files and folders, like VS Code's `code` (`kingu .`)
   kingu status                       Kingu's version, open folder and task count
   kingu task list                    tasks of the open folder (slug, status, title)
   kingu task create <title> [--prompt <text>|-] [--base <branch>] [--mode terminal|timeline] [--background]
@@ -234,18 +262,32 @@ Usage:
                                      the project (a new version with --id); prints its id
   kingu artifact list                the project's artifacts (id, version, format, title)
 
+Opening files and folders:
+  -g, --goto <file:line[:column]>…   open each file at a line and column
+  -d, --diff <file> <file>           compare two files in a diff editor
+  -m, --merge <path1> <path2> <base> <result>
+                                     merge two versions into <result> (3-way merge editor)
+  -a, --add <folder>…                add folders to the last active window
+  --remove <folder>…                 remove folders from the last active window
+  -n, --new-window                   open in a new window
+  -r, --reuse-window                 open in the last active window, even a folder
+  -w, --wait                         return only after the files are closed (e.g. GIT_EDITOR=\"kingu -w\")
+  --profile <name>                   use this profile (Profiles: Switch Profile)
+  -                                  read stdin into a temporary file and open it
+
 Options:
-  --json         print the app's answer as JSON
-  -h, --help     this help
-  -V, --version  the command's version
+  --json             print the app's answer as JSON
+  -h, --help         this help
+  -v, --version      the command's version
 
-The app must be running. Inside Kingu's terminals `kingu` is on PATH; elsewhere run
-\"Shell Command: Install 'kingu' command in PATH\" from Kingu's command palette.
-Language: KINGU_LANG=th|en (else LANG).";
+Kingu starts when it is not running. Inside Kingu's terminals `kingu` is on PATH; elsewhere
+run \"Shell Command: Install 'kingu' command in PATH\" from Kingu's command palette. A path
+named like a command opens as `kingu ./status`. Language: KINGU_LANG=th|en (else LANG).";
 
-const USAGE_TH: &str = "kingu: สั่งงานแอป Kingu ที่เปิดอยู่จากเทอร์มินัลหรือจาก agent
+const USAGE_TH: &str = "kingu: เปิดไฟล์และโฟลเดอร์ใน Kingu และสั่งงานแอปจากเทอร์มินัลหรือจาก agent
 
 วิธีใช้:
+  kingu [options] [paths…]           เปิดไฟล์และโฟลเดอร์ แบบคำสั่ง `code` ของ VS Code (`kingu .`)
   kingu status                       เวอร์ชันของ Kingu โฟลเดอร์ที่เปิด และจำนวนงาน
   kingu task list                    งานของโฟลเดอร์ที่เปิด (slug, สถานะ, ชื่อ)
   kingu task create <title> [--prompt <text>|-] [--base <branch>] [--mode terminal|timeline] [--background]
@@ -261,14 +303,27 @@ const USAGE_TH: &str = "kingu: สั่งงานแอป Kingu ที่เ
                                      (ใส่ --id เพื่อเพิ่มเวอร์ชันใหม่) แล้วพิมพ์ id
   kingu artifact list                artifact ของโปรเจกต์ (id, เวอร์ชัน, รูปแบบ, ชื่อ)
 
-ตัวเลือก:
-  --json         พิมพ์คำตอบของแอปเป็น JSON
-  -h, --help     แสดงวิธีใช้นี้
-  -V, --version  เวอร์ชันของคำสั่ง
+การเปิดไฟล์และโฟลเดอร์:
+  -g, --goto <file:line[:column]>…   เปิดแต่ละไฟล์ที่บรรทัดและคอลัมน์ที่ระบุ
+  -d, --diff <file> <file>           เปรียบเทียบสองไฟล์ใน diff editor
+  -m, --merge <path1> <path2> <base> <result>
+                                     รวมสองเวอร์ชันลงใน <result> (merge editor แบบ 3 ทาง)
+  -a, --add <folder>…                เพิ่มโฟลเดอร์เข้าหน้าต่างที่ใช้งานล่าสุด
+  --remove <folder>…                 เอาโฟลเดอร์ออกจากหน้าต่างที่ใช้งานล่าสุด
+  -n, --new-window                   เปิดในหน้าต่างใหม่
+  -r, --reuse-window                 เปิดในหน้าต่างที่ใช้งานล่าสุด แม้จะเป็นโฟลเดอร์
+  -w, --wait                         รอจนปิดไฟล์ที่เปิดก่อนจึงจบ (เช่น GIT_EDITOR=\"kingu -w\")
+  --profile <name>                   ใช้โปรไฟล์นี้ (Profiles: Switch Profile)
+  -                                  อ่าน stdin ลงไฟล์ชั่วคราวแล้วเปิดไฟล์นั้น
 
-ต้องเปิดแอปไว้ก่อน ในเทอร์มินัลของ Kingu มี `kingu` อยู่ใน PATH แล้ว ที่อื่นให้รัน
-\"Shell Command: Install 'kingu' command in PATH\" จาก command palette ของ Kingu
-ภาษา: KINGU_LANG=th|en (ถ้าไม่ได้ตั้งจะดูจาก LANG)";
+ตัวเลือก:
+  --json             พิมพ์คำตอบของแอปเป็น JSON
+  -h, --help         แสดงวิธีใช้นี้
+  -v, --version      เวอร์ชันของคำสั่ง
+
+ถ้า Kingu ยังไม่ได้เปิด คำสั่งจะเปิดแอปให้ ในเทอร์มินัลของ Kingu มี `kingu` อยู่ใน PATH แล้ว
+ที่อื่นให้รัน \"Shell Command: Install 'kingu' command in PATH\" จาก command palette ของ Kingu
+path ที่ชื่อซ้ำกับคำสั่งให้พิมพ์แบบ `kingu ./status` ภาษา: KINGU_LANG=th|en (ถ้าไม่ได้ตั้งจะดูจาก LANG)";
 
 #[cfg(test)]
 mod tests {
@@ -295,7 +350,10 @@ mod tests {
   fn usage_lists_the_same_commands_in_both_languages() {
     let commands = |s: &str| s.lines().filter(|l| l.trim_start().starts_with("kingu ")).map(|l| l.trim().split("  ").next().unwrap_or_default().to_owned()).collect::<Vec<_>>();
     assert_eq!(commands(USAGE_EN), commands(USAGE_TH));
-    assert_eq!(commands(USAGE_EN).len(), 8);
+    assert_eq!(commands(USAGE_EN).len(), 9);
+    let flags = |s: &str| s.lines().filter(|l| l.trim_start().starts_with('-')).map(|l| l.trim().split("  ").next().unwrap_or_default().to_owned()).collect::<Vec<_>>();
+    assert_eq!(flags(USAGE_EN), flags(USAGE_TH));
+    assert!(flags(USAGE_EN).len() > 12);
   }
 
   #[test]

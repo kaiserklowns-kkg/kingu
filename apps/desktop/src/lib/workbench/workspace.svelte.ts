@@ -164,7 +164,11 @@ class Workspace {
 			return;
 		}
 		const files = picked.filter((p) => !isWorkspaceFile(p));
-		if (files.length && settings.get('window.openFilesInNewWindow') === 'on') {
+		// security.workspace.trust.untrustedFiles: files from outside the trusted folders.
+		const { workspaceTrust } = await import('./workspaceTrust.svelte');
+		const decision = await workspaceTrust.confirmFiles(files);
+		if (decision === 'cancel') return;
+		if (decision === 'newWindow' || (files.length && settings.get('window.openFilesInNewWindow') === 'on')) {
 			await this.newWindow({ files });
 			for (const path of picked.filter(isWorkspaceFile)) void this.openWorkspaceFile(path);
 		} else for (const path of picked) this.openPath(path);

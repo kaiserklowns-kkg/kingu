@@ -3,7 +3,7 @@
 	// unsaved text live; otherwise reads the file. Scrolls with the editor and back
 	// (markdown.preview.scroll*), marks the editor's line (markEditorSelection), double-click goes
 	// to the source line. An unlocked preview in another group follows the active Markdown editor.
-	// Links to workspace files open them; http(s) links open in the browser (Rust checks the
+	// Links to workspace files open them; http(s) links open in the browser after the trusted-domains check (Rust checks the
 	// scheme); other schemes are never followed. Workspace images load through the guarded
 	// `fs_read_data_url`; remote images are not loaded.
 	import { invoke } from '@tauri-apps/api/core';
@@ -11,6 +11,7 @@
 	import { editors } from './editors.svelte';
 	import { status } from './status.svelte';
 	import { isMarkdownPath, PREVIEW_PREFIX, previewKey, previewTarget } from './viewers';
+	import { trustedDomains } from './trustedDomains.svelte';
 	import { watchSource } from './viewerSource';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { t } from '#lib/i18n/index.ts';
@@ -175,9 +176,12 @@
 		switch (target.kind) {
 			case 'fragment':
 				return scrollToFragment(target.fragment);
-			case 'local':
 			case 'external':
-				return void openUrl(target.url, ['http', 'https', 'mailto']).catch((err) => status.error(t('markdownPreview.linkFailed', { error: String(err) })));
+				// Outgoing link protection: an untrusted web domain asks first (trustedDomains.svelte.ts).
+				if (/^https?:/i.test(target.url)) return void trustedDomains.openLink(target.url, { fromWorkspace: true });
+				return void openUrl(target.url, ['mailto']).catch((err) => status.error(t('markdownPreview.linkFailed', { error: String(err) })));
+			case 'local':
+				return void openUrl(target.url, ['http', 'https']).catch((err) => status.error(t('markdownPreview.linkFailed', { error: String(err) })));
 			case 'blocked':
 				return void navigator.clipboard.writeText(target.url).then(() => status.flash(t('markdownPreview.linkCopied', { url: target.url }), 4000));
 			case 'file':

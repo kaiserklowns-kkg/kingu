@@ -1,4 +1,5 @@
-//! Command-line parsing (no dependencies): `kingu [--json] <command> …`. Pure, so every form is
+//! Command-line parsing (no dependencies): `kingu [--json] <command> …`, and anything that is not
+//! a command is VS Code's `code [options] [paths…]` (`Command::Editor`). Pure, so every form is
 //! tested; errors come in the current language (`i18n`); reading stdin for `--prompt -` and resolving relative paths happen in `main`.
 
 use crate::i18n::{Msg, tr};
@@ -43,6 +44,53 @@ pub enum Command {
     id: Option<String>,
   },
   ArtifactList,
+  /// `kingu [options] [paths…]`: VS Code's `code` command line.
+  Editor(Editor),
+}
+
+/// A file or folder named on the command line, with a position (`-g file:line:column`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Target {
+  pub path: String,
+  pub line: Option<u32>,
+  pub column: Option<u32>,
+}
+
+impl Target {
+  pub fn plain(path: impl Into<String>) -> Self {
+    Self { path: path.into(), line: None, column: None }
+  }
+}
+
+/// The editor form of the command line (VS Code's `code [options] [paths…]`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Editor {
+  /// Files and folders as typed (relative ones are made absolute by `client`).
+  pub paths: Vec<Target>,
+  /// `-g`: paths carry `:line[:column]`.
+  pub goto: bool,
+  /// `-d a b`: a diff editor of two files.
+  pub diff: bool,
+  /// `-m a b base result`: a three-way merge of two versions into `result`.
+  pub merge: bool,
+  /// `-a`: the folders are added to the last active window.
+  pub add: bool,
+  /// `--remove`: the folders are removed from the last active window.
+  pub remove: bool,
+  pub new_window: bool,
+  pub reuse_window: bool,
+  /// `-w`: return only once the opened editors (or the window) are closed.
+  pub wait: bool,
+  pub profile: Option<String>,
+  /// `-`: stdin goes into a temporary file that opens like any other, at this place among `paths`.
+  pub stdin: Option<usize>,
+}
+
+impl Editor {
+  /// Anything a freshly started app cannot do from its launch arguments alone.
+  pub fn needs_running_app(&self) -> bool {
+    self.goto || self.diff || self.merge || self.add || self.remove || self.wait || self.profile.is_some() || self.stdin.is_some()
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,7 +141,7 @@ pub fn parse(argv: impl IntoIterator<Item = String>) -> Result<Invocation, Strin
       }
       "--json" => json = true,
       "-h" | "--help" => help = true,
-      "-V" | "--version" => version = true,
+      "-v" | "-V" | "--version" => version = true,
       _ => rest.push(a),
     }
   }
@@ -117,8 +165,89 @@ fn command(args: &[String]) -> Result<Command, String> {
     "open" => open(&args[1..]),
     "notify" => notify(&args[1..]),
     "artifact" | "artifacts" => artifact(&args[1..]),
-    other => Err(tr(Msg::UnknownCommand, &[("command", &other)])),
+    // Anything else is VS Code's `code [options] [paths…]` (`kingu ./status` for a path named like a command).
+    _ => editor(args),
   }
+}
+
+/// `kingu [options] [paths…]`. Single-letter switches may be grouped (`-nw`).
+fn editor(args: &[String]) -> Result<Command, String> {
+  let mut e = Editor::default();
+  let mut raw: Vec<String> = Vec::new();
+  let mut literal = false;
+  let mut i = 0;
+  while i < args.len() {
+    let a = args[i].as_str();
+    if literal {
+      raw.push(a.to_owned());
+      i += 1;
+      continue;
+    }
+    match a {
+      "--" => literal = true,
+      "-" if e.stdin.is_some() => return Err(tr(Msg::UnexpectedArgument, &[("arg", &a)])),
+      "-" => e.stdin = Some(raw.len()),
+      "--goto" => e.goto = true,
+      "--diff" => e.diff = true,
+      "--merge" => e.merge = true,
+      "--add" => e.add = true,
+      "--remove" => e.remove = true,
+      "--new-window" => e.new_window = true,
+      "--reuse-window" => e.reuse_window = true,
+      "--wait" => e.wait = true,
+      "--profile" => e.profile = Some(value(args, &mut i, a)?),
+      _ if a.starts_with("--profile=") => e.profile = Some(a["--profile=".len()..].to_owned()),
+      _ if a.starts_with("--") => return Err(tr(Msg::UnknownOption, &[("option", &a)])),
+      _ if a.len() > 1 && a.starts_with('-') => {
+        for c in a[1..].chars() {
+          match c {
+            'g' => e.goto = true,
+            'd' => e.diff = true,
+            'm' => e.merge = true,
+            'a' => e.add = true,
+            'n' => e.new_window = true,
+            'r' => e.reuse_window = true,
+            'w' => e.wait = true,
+            _ => return Err(tr(Msg::UnknownOption, &[("option", &a)])),
+          }
+        }
+      }
+      _ => raw.push(a.to_owned()),
+    }
+    i += 1;
+  }
+  if e.profile.as_deref().is_some_and(|p| p.trim().is_empty()) {
+    return Err(tr(Msg::NeedsValue, &[("flag", &"--profile")]));
+  }
+  let goto = e.goto;
+  e.paths = raw
+    .into_iter()
+    .map(|p| {
+      if goto {
+        let (path, line, column) = split_position(&p);
+        Target { path, line, column }
+      } else {
+        Target::plain(p)
+      }
+    })
+    .collect();
+  let count = e.paths.len() + usize::from(e.stdin.is_some());
+  if e.new_window && e.reuse_window {
+    return Err(tr(Msg::NewAndReuse, &[]));
+  }
+  if [e.diff, e.merge, e.add, e.remove].iter().filter(|b| **b).count() > 1 {
+    return Err(tr(Msg::ConflictingModes, &[]));
+  }
+  if e.diff && count != 2 {
+    return Err(tr(Msg::DiffNeedsTwo, &[]));
+  }
+  if e.merge && count != 4 {
+    return Err(tr(Msg::MergeNeedsFour, &[]));
+  }
+  if (e.add || e.remove) && (e.paths.is_empty() || e.stdin.is_some()) {
+    return Err(tr(Msg::AddNeedsFolders, &[("flag", &if e.add { "--add" } else { "--remove" })]));
+  }
+  Ok(Command::Editor(e))
 }
 
 fn no_more(args: &[String], c: Command) -> Result<Command, String> {
@@ -280,10 +409,76 @@ mod tests {
     assert_eq!(c(&["--help"]), Command::Help);
     assert_eq!(c(&["task", "create", "x", "-h"]), Command::Help);
     assert_eq!(c(&["-V"]), Command::Version);
+    assert_eq!(c(&["-v"]), Command::Version);
+    assert_eq!(c(&[".", "--version"]), Command::Version);
     assert_eq!(p(&["status", "--json"]).unwrap(), Invocation { command: Command::Status, json: true });
     assert_eq!(p(&["--json", "task", "list"]).unwrap(), Invocation { command: Command::TaskList, json: true });
     assert!(p(&["status", "now"]).is_err());
-    assert!(p(&["frobnicate"]).unwrap_err().contains("unknown command"));
+    // Anything that is not a command is a path to open (VS Code's `code <path>`).
+    assert_eq!(c(&["frobnicate"]), Command::Editor(Editor { paths: vec![Target::plain("frobnicate")], ..Default::default() }));
+  }
+
+  fn ed(args: &[&str]) -> Editor {
+    match c(args) {
+      Command::Editor(e) => e,
+      other => panic!("{args:?}: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parses_the_editor_form_like_vs_code() {
+    assert_eq!(ed(&["."]).paths, [Target::plain(".")]);
+    assert_eq!(ed(&["src", "README.md"]).paths, [Target::plain("src"), Target::plain("README.md")]);
+    // Without -g a `:12` stays part of the name; with it, it is the position.
+    assert_eq!(ed(&["a.rs:12"]).paths, [Target::plain("a.rs:12")]);
+    let g = ed(&["-g", "src/a.rs:12:3", "b.ts:4"]);
+    assert!(g.goto);
+    assert_eq!(g.paths, [Target { path: "src/a.rs".into(), line: Some(12), column: Some(3) }, Target { path: "b.ts".into(), line: Some(4), column: None }]);
+    assert_eq!(ed(&["--goto", "x.md:2"]).paths[0].line, Some(2));
+    let d = ed(&["-d", "a.txt", "b.txt"]);
+    assert!(d.diff && d.paths.len() == 2);
+    assert!(p(&["--diff", "a.txt"]).unwrap_err().contains("two"));
+    let m = ed(&["--merge", "ours", "theirs", "base", "out"]);
+    assert!(m.merge && m.paths.len() == 4);
+    assert!(p(&["-m", "a", "b", "c"]).unwrap_err().contains("four"));
+    assert!(p(&["-d", "-m", "a", "b"]).is_err());
+    let a = ed(&["-a", "../lib"]);
+    assert!(a.add && a.paths == [Target::plain("../lib")]);
+    assert!(ed(&["--remove", "x"]).remove);
+    assert!(p(&["--add"]).unwrap_err().contains("--add"));
+    assert!(p(&["--add", "--remove", "x"]).is_err());
+    let n = ed(&["-n", "-w", "f.txt"]);
+    assert!(n.new_window && n.wait && !n.reuse_window);
+    // Grouped single-letter switches, as git's `core.editor = kingu -nw` would pass them.
+    let grouped = ed(&["-nw", "COMMIT_EDITMSG"]);
+    assert!(grouped.new_window && grouped.wait);
+    assert!(ed(&["--reuse-window", "."]).reuse_window);
+    assert!(p(&["-n", "-r"]).unwrap_err().contains("--new-window"));
+    assert!(p(&["-x"]).unwrap_err().contains("unknown option"));
+    assert!(p(&["-wx"]).unwrap_err().contains("unknown option"));
+    assert!(p(&["--frobnicate"]).unwrap_err().contains("unknown option"));
+    assert_eq!(ed(&["--profile", "Work", "."]).profile.as_deref(), Some("Work"));
+    assert_eq!(ed(&["--profile=Thai Docs"]).profile.as_deref(), Some("Thai Docs"));
+    assert!(p(&["--profile"]).unwrap_err().contains("needs a value"));
+    assert!(p(&["--profile", " "]).is_err());
+    // `-` reads stdin, in its place among the paths; only once.
+    let s = ed(&["-d", "old.txt", "-"]);
+    assert_eq!((s.stdin, s.paths.len()), (Some(1), 1));
+    assert_eq!(ed(&["-"]).stdin, Some(0));
+    assert!(p(&["-", "-"]).is_err());
+    // `--` ends the options: a file may start with a dash.
+    assert_eq!(ed(&["-w", "--", "-notes.md", "-n"]).paths, [Target::plain("-notes.md"), Target::plain("-n")]);
+    // A window with no paths (focus, or a new empty one).
+    assert_eq!(ed(&["-n"]), Editor { new_window: true, ..Default::default() });
+  }
+
+  #[test]
+  fn only_plain_paths_can_wait_for_a_fresh_app() {
+    assert!(!ed(&["."]).needs_running_app());
+    assert!(!ed(&["-n", "a", "b"]).needs_running_app());
+    for args in [&["-g", "a:1"][..], &["-d", "a", "b"], &["-w", "a"], &["-a", "x"], &["--profile", "P"], &["-"]] {
+      assert!(ed(args).needs_running_app(), "{args:?}");
+    }
   }
 
   #[test]
