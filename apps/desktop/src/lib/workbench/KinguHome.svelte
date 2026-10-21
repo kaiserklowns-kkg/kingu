@@ -18,6 +18,7 @@
 	import { chatHistory, STATUS_KEY } from '#lib/agent/chatHistory.svelte.ts';
 	import { openChat } from '#lib/agent/chatCommands.svelte.ts';
 	import { runtimeOf } from '#lib/agent/runtimes.ts';
+	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import { homeChats, MAX_HOME_PROJECTS, OTHER_ENTRIES, shuffled, watermarkEntries, type HomeChatRow, type SavedHomeChat } from './home.ts';
 
 	/** False in a group too short for them (VS Code: under 478px). */
@@ -51,7 +52,7 @@
 		// then, as saved like the others.
 		const live = chats.root === workspace.root && chats.loaded;
 		const liveRows = live
-			? chats.visible.map((c) => ({ id: c.id, title: c.title, agentName: c.agent ?? chatHistory.runtimeName(runtimeOf(c)), at: c.updated_at || c.created_at, status: chatHistory.statusOf(c.id) }))
+			? chats.visible.map((c) => ({ id: c.id, title: c.title, runtime: runtimeOf(c), agentName: c.agent ?? chatHistory.runtimeName(runtimeOf(c)), at: c.updated_at || c.created_at, status: chatHistory.statusOf(c.id) }))
 			: [];
 		return homeChats(live ? workspace.root : null, liveRows, saved, (id) => chatHistory.runtimeName(id));
 	});
@@ -109,7 +110,7 @@
 					<button class="row" title={`${row.title} — ${detail}`} onclick={() => continueChat(row)}>
 						<span class={[ICON, 'flex', STATUS_COLOR[row.status]]} role={row.status === 'working' ? 'status' : undefined} title={t(STATUS_KEY[row.status])}><Codicon id={STATUS_ICON[row.status]} size={16} /></span>
 						<span class="label">{row.title}</span>
-						<span class="detail">{detail}</span>
+						<span class="detail agent"><AgentIcon agent={row.runtime} size={12} /><span class="detail-text">{detail}</span></span>
 					</button>
 				{:else}
 					<button class="row" onclick={() => commands.run('workbench.action.chat.open')}>
@@ -200,6 +201,17 @@
 		white-space: nowrap;
 		font-size: 12px;
 		color: var(--vscode-descriptionForeground);
+	}
+	/* A chat's detail starts with the mark of the agent that runs it (agentIcons.ts). */
+	.detail.agent {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+	.detail-text {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	/* VS Code's KeybindingLabel keys (defaultKeybindingLabelStyles). */
 	.keycap {

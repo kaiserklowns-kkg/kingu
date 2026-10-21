@@ -3,7 +3,8 @@
 	// windows in full, how the status bar shows them, and what Kingu's agents spent in this folder
 	// by day and by task.
 	import Icon from '#lib/workbench/Icon.svelte';
-	import ProviderIcon from '#lib/workbench/ProviderIcon.svelte';
+	import AgentIcon from '#lib/agent/AgentIcon.svelte';
+	import { providerIconKey } from '#lib/agent/agentIcons.ts';
 	import { usage } from '#lib/workbench/usage.svelte.ts';
 	import { barTone, clampPct, errorMessage, listed, percentLabel, poolsOf, PROVIDER_NAME, resetsIn, rowState, shownPct, updatedLabel, windowsOf, type UsageDisplay } from '#lib/workbench/usage.ts';
 	import { t } from '#lib/i18n/index.ts';
@@ -51,7 +52,7 @@
 				{@const state = rowState(p)}
 				<div class="{CARD} px-4 py-3.5">
 					<div class="flex items-center gap-2 text-[13px] font-medium">
-						<ProviderIcon provider={id} size={15} />{PROVIDER_NAME[id]}
+						<AgentIcon agent={providerIconKey(id)} size={15} />{PROVIDER_NAME[id]}
 						<span class="ml-auto text-xs font-normal {MUTED}">{state.kind === 'usage' && p ? updatedLabel(p.updatedAt, usage.now) : state.label}</span>
 					</div>
 					{#if state.kind === 'usage' && p}
@@ -94,7 +95,7 @@
 			<div class="mt-2 space-y-1">
 				<div class="text-xs {MUTED}">{t('usage.notSetUp')}</div>
 				{#each notSetUp as id (id)}
-					<div class="flex items-start gap-2 text-xs {MUTED}"><span class="mt-px"><ProviderIcon provider={id} size={13} /></span><span class="w-24 shrink-0">{PROVIDER_NAME[id]}</span><span class="min-w-0 flex-1">{usage.providers[id]?.error ?? ''}</span></div>
+					<div class="flex items-start gap-2 text-xs {MUTED}"><span class="mt-px"><AgentIcon agent={providerIconKey(id)} size={13} /></span><span class="w-24 shrink-0">{PROVIDER_NAME[id]}</span><span class="min-w-0 flex-1">{usage.providers[id]?.error ?? ''}</span></div>
 				{/each}
 			</div>
 		{/if}

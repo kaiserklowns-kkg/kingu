@@ -11,6 +11,7 @@
 	// - hidden (or Zen Mode): no status; the Arkai chat button still stands after the search (not in Zen).
 	// A status section opens the Agents layout filtered to that group; clicking it again clears the filter.
 	// The Arkai button toggles the chat (the secondary side bar); right-click or ↓ opens its menu.
+	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import Codicon from './Codicon.svelte';
 	import PopupMenu, { menuItem, menuSeparator } from './PopupMenu.svelte';
 	import { commands, keyOf } from './commands.svelte';
@@ -65,6 +66,14 @@
 		return map;
 	});
 	const agents = $derived(statusAgents(adeTasks.sessionStates.map((s) => ({ ...s, agent: agentOf.get(s.slug) }))));
+	// The agent itself (its task's `agent`), for its mark beside "Claude working" when one session is in a status.
+	const agentIds = $derived.by(() => {
+		const map = new Map<string, string>();
+		for (const v of adeTasks.views) map.set(v.meta.slug, v.meta.agent || 'claude');
+		for (const p of projects.all) map.set(p.view.meta.slug, p.view.meta.agent || 'claude');
+		return statusAgents(adeTasks.sessionStates.map((s) => ({ ...s, agent: map.get(s.slug) })));
+	});
+	const soleAgent = (s: StatusSection) => (s.id !== 'unread' && s.count === 1 && agentIds[s.id].length === 1 ? agentIds[s.id][0] : undefined);
 	const view = $derived(agentStatusView(adeTasks.counts, agentsMode, { agents, zen: layout.zen }));
 	const sections = $derived(view.sections.filter((s) => hasFolder || s.id !== 'unread'));
 	const quickOpenKey = $derived(key('workbench.action.quickOpen'));
@@ -198,6 +207,7 @@
 		{:else}
 			<Codicon id="circle-filled" size={8} />
 		{/if}
+		{#if soleAgent(s)}<AgentIcon agent={soleAgent(s)} size={14} />{/if}
 		<span class="whitespace-nowrap tabular-nums">{s.text}</span>
 	</button>
 {/snippet}

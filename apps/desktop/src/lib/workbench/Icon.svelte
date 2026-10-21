@@ -1,7 +1,6 @@
 <script lang="ts" module>
 	import {
 		ArrowClockwiseIcon,
-		AsteriskIcon,
 		ArrowCounterClockwiseIcon,
 		ArrowLeftIcon,
 		ArrowRightIcon,
@@ -79,7 +78,6 @@
 		MagnifyingGlassIcon,
 		MemoryIcon,
 		MinusIcon,
-		OpenAiLogoIcon,
 		PaperclipIcon,
 		PauseIcon,
 		PlayIcon,
@@ -222,8 +220,6 @@
 		/** Snaps (Kingu's packs; VS Code's Extensions view). */
 		snap: PuzzlePieceIcon,
 		/** AI providers in the usage meter and accounts (Claude's mark is a starburst). */
-		claude: AsteriskIcon,
-		openai: OpenAiLogoIcon,
 		key: KeyIcon,
 		lock: LockIcon,
 		signIn: SignInIcon,

@@ -23,11 +23,11 @@ export type SavedHomeChat = {
 	working: boolean;
 };
 
-/** A chat of the open folder, with its live status. */
-export type LiveHomeChat = { id: string; title: string; agentName: string; at: number; status: HistoryStatus };
+/** A chat of the open folder, with its live status; `runtime` is the agent that runs it (its icon). */
+export type LiveHomeChat = { id: string; title: string; runtime: string; agentName: string; at: number; status: HistoryStatus };
 
 /** One row under Continue. */
-export type HomeChatRow = { root: string; id: string; title: string; agentName: string; at: number; status: HistoryStatus };
+export type HomeChatRow = { root: string; id: string; title: string; runtime: string; agentName: string; at: number; status: HistoryStatus };
 
 const ACTIVE: ReadonlySet<HistoryStatus> = new Set(['working', 'needsInput']);
 
@@ -46,7 +46,7 @@ export function homeChats(root: string | null, live: readonly LiveHomeChat[], sa
 		...(root ? live.map((c) => ({ root, ...c })) : []),
 		...saved
 			.filter((c) => c.root !== root)
-			.map((c) => ({ root: c.root, id: c.id, title: c.title, agentName: c.agent ?? runtimeName(c.runtime), at: c.updated_at || c.created_at, status: savedStatus(c) }))
+			.map((c) => ({ root: c.root, id: c.id, title: c.title, runtime: c.runtime || 'claude', agentName: c.agent ?? runtimeName(c.runtime), at: c.updated_at || c.created_at, status: savedStatus(c) }))
 	];
 	return rows.sort((a, b) => Number(ACTIVE.has(b.status)) - Number(ACTIVE.has(a.status)) || b.at - a.at).slice(0, max);
 }

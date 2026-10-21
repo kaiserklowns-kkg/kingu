@@ -22,7 +22,7 @@
 	const menu = $derived.by<MenuNode[]>(() => [
 		...HISTORY_STATUSES.map((s) => menuItem(`status:${s}`, t(STATUS_KEY[s]), { checked: f.status === s })),
 		menuSeparator,
-		...runtimes.map((r) => menuItem(`runtime:${r}`, chatHistory.runtimeName(r), { checked: f.runtime === r })),
+		...runtimes.map((r) => menuItem(`runtime:${r}`, chatHistory.runtimeName(r), { checked: f.runtime === r, agent: r })),
 		...(runtimes.length ? [menuSeparator] : []),
 		menuItem('edits', t('chatHistory.filter.edits'), { checked: f.edits }),
 		menuSeparator,

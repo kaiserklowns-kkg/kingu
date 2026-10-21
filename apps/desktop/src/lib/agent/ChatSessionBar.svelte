@@ -5,12 +5,13 @@
 	// Agent mode, "Manual permissions"). Each opens a ComposerMenu above it. kingu-old also shows
 	// Allow Remote Connections (radio-tower) here; Kingu has no remote tunnel to share yet.
 	import Codicon from '#lib/workbench/Codicon.svelte';
+	import AgentIcon from './AgentIcon.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import ComposerMenu from './ComposerMenu.svelte';
 	import type { MenuRow } from './composerMenu.ts';
 
-	/** `icon`: a product icon id. */
-	type Picker = { label: string; icon: string; title: string; rows: MenuRow[]; onpick: (id: string) => void; disabled?: boolean; warn?: boolean };
+	/** `icon`: a product icon id; `agent`: an agent whose mark is drawn instead (agentIcons.ts). */
+	type Picker = { label: string; icon: string; agent?: string; title: string; rows: MenuRow[]; onpick: (id: string) => void; disabled?: boolean; warn?: boolean };
 
 	let { target, permission, onclose }: { target: Picker | null; permission: Picker | null; /** A menu closed (`refocus`: from the keyboard). */ onclose: (refocus: boolean) => void } = $props();
 
@@ -34,7 +35,7 @@
 			disabled={p.disabled}
 			onclick={() => (open = open === which ? null : which)}
 		>
-			<Codicon id={p.icon} />
+			{#if p.agent}<AgentIcon agent={p.agent} size={12} />{:else}<Codicon id={p.icon} />{/if}
 			<span class="chat-input-picker-label">{p.label}</span>
 		</button>
 		{#if open === which}

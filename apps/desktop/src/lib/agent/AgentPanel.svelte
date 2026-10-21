@@ -919,19 +919,14 @@
 			void pickApproval(id as AgentApproval);
 		}
 	});
-	/** The agent's icon (kingu-old's getAgentSessionProviderIcon: Arkai's mark is the `copilot` glyph in Kingu's font). */
-	function runtimeIcon(id: string): string {
-		if (id === ARKAI_RUNTIME) return 'copilot';
-		if (id === CLAUDE_RUNTIME) return 'claude';
-		return agentRuntimes.list.find((r) => r.id === id)?.protocol === 'codex' ? 'openai' : 'extensions';
-	}
 	/** The session target picker under the input (VS Code's sessionTargetPickerActionItem): the agent the chat runs on. */
 	const targetPicker = $derived({
 		label: runtimeName,
-		icon: runtimeIcon(runtimeId),
+		icon: 'extensions',
+		agent: runtimeId,
 		title: t('chatWelcome.target.hint'),
 		disabled: !workspace.root,
-		rows: runtimeChoices(agentRuntimes.list, runtimeId).map<MenuRow>((r) => ({ id: r.id, label: r.missing ? t('chatRuntime.missing', { name: r.name }) : r.name, codicon: runtimeIcon(r.id), checked: r.id === runtimeId, disabled: r.missing })),
+		rows: runtimeChoices(agentRuntimes.list, runtimeId).map<MenuRow>((r) => ({ id: r.id, label: r.missing ? t('chatRuntime.missing', { name: r.name }) : r.name, agent: r.id, checked: r.id === runtimeId, disabled: r.missing })),
 		onpick: (id: string) => {
 			if (id === runtimeId) return;
 			// A started chat keeps its agent: another one starts a new chat (VS Code's new session of that type).
@@ -1018,7 +1013,7 @@
 		const others = runtimeChoices(agentRuntimes.list, runtimeId).filter((r) => !r.missing);
 		return [
 			menuItem('new', t('chatWelcome.newChat'), { keyLabel: KEY.newChat, enabled: !!workspace.root }),
-			...(others.length > 1 ? [menuSeparator, ...others.map((r) => menuItem(`runtime:${r.id}`, t('chatWelcome.newChatWith', { name: r.name }), { enabled: !!workspace.root }))] : []),
+			...(others.length > 1 ? [menuSeparator, ...others.map((r) => menuItem(`runtime:${r.id}`, t('chatWelcome.newChatWith', { name: r.name }), { enabled: !!workspace.root, agent: r.id }))] : []),
 			menuSeparator,
 			menuItem('history', t('chatWelcome.showHistory'))
 		];

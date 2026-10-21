@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { homeChats, OTHER_ENTRIES, savedStatus, shuffled, watermarkEntries, type LiveHomeChat, type SavedHomeChat } from './home';
 
 const saved = (root: string, id: string, at: number, extra: Partial<SavedHomeChat> = {}): SavedHomeChat => ({ root, id, title: id, runtime: 'claude', agent: null, created_at: 1, updated_at: at, status: 'done', working: false, ...extra });
-const live = (id: string, at: number, status: LiveHomeChat['status'] = 'idle'): LiveHomeChat => ({ id, title: id, agentName: 'Claude', at, status });
+const live = (id: string, at: number, status: LiveHomeChat['status'] = 'idle'): LiveHomeChat => ({ id, title: id, runtime: 'claude', agentName: 'Claude', at, status });
 const names = (id: string) => ({ claude: 'Claude', arkai: 'Arkai' })[id] ?? id;
 
 describe('Continue', () => {
@@ -11,6 +11,7 @@ describe('Continue', () => {
 		const rows = homeChats('/a', [live('a1', 50)], [saved('/a', 'a1', 10), saved('/a', 'stale', 99), saved('/b', 'b1', 70, { runtime: 'arkai' }), saved('/c', 'c1', 20)], names);
 		expect(rows.map((r) => `${r.root}:${r.id}`)).toEqual(['/b:b1', '/a:a1', '/c:c1']);
 		expect(rows[0].agentName).toBe('Arkai');
+		expect(rows[0].runtime).toBe('arkai');
 	});
 
 	test('chats an agent works on or waits in come first, then at most `max`', () => {
@@ -19,7 +20,7 @@ describe('Continue', () => {
 	});
 
 	test('with no live list (no folder, or not loaded yet) every folder reads as saved', () => {
-		expect(homeChats(null, [], [saved('/a', 'a1', 3, { agent: 'ask' })], names)).toEqual([{ root: '/a', id: 'a1', title: 'a1', agentName: 'ask', at: 3, status: 'idle' }]);
+		expect(homeChats(null, [], [saved('/a', 'a1', 3, { agent: 'ask' })], names)).toEqual([{ root: '/a', id: 'a1', title: 'a1', runtime: 'claude', agentName: 'ask', at: 3, status: 'idle' }]);
 	});
 
 	test('a saved chat with no update time sorts by when it was made', () => {

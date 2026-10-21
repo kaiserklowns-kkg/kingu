@@ -12,7 +12,7 @@ const GEMINI_IDLE = '◇'; // ◇
 const GEMINI_PERMISSION = '✋'; // ✋
 
 /** Agent names Orca matches in titles (short ones like `amp` would match ordinary words). */
-const AGENT_NAMES = ['claude', 'openclaude', 'codex', 'copilot', 'cursor', 'gemini', 'antigravity', 'opencode', 'mimo', 'openclaw', 'aider', 'grok', 'devin', 'droid', 'hermes', 'agy', 'qwen'];
+export const AGENT_NAMES = ['claude', 'openclaude', 'codex', 'copilot', 'cursor', 'gemini', 'antigravity', 'opencode', 'mimo', 'openclaw', 'aider', 'grok', 'devin', 'droid', 'hermes', 'agy', 'qwen'];
 
 // Whole tokens only: `~/codex/ready`, `opencode-blinker` and `android` are not agents.
 const token = (name: string) => `(?<![\\w./\\\\-])${name}(?:\\.(?:exe|cmd|bat|ps1))?(?![\\w./\\\\-])`;

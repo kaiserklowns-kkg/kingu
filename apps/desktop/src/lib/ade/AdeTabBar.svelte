@@ -3,6 +3,7 @@
 	// session (or the new-task composer for the folder itself), its terminals, files and task diffs
 	// opened from the right side bar (italic while a preview, a dot while unsaved), and "+" for a
 	// new terminal in that worktree; "N รอคุณ" at the end. Tasks (the board) shows as its own tab.
+	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import FileIcon from '#lib/workbench/FileIcon.svelte';
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { editors } from '#lib/workbench/editors.svelte.ts';
@@ -102,6 +103,7 @@
 					{#if active}<span class={ACCENT}></span>{/if}
 					{#if t.kind === 'agent' && view}
 						<span class={['size-2 shrink-0 rounded-full', statusDot(view)]} title={statusLabel(view)}></span>
+						<AgentIcon agent={view.meta.agent || 'claude'} size={14} />
 						<span class="truncate" title={view.meta.title}>{view.meta.title}</span>
 					{:else if t.kind === 'file' || t.kind === 'diff'}
 						<FileIcon icon={fileIcon(t.label)} />
