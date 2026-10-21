@@ -54,6 +54,27 @@ export type SettingSchema =
 	 */
 	| (Base & { type: 'json'; schema: JsonSchema; default: unknown });
 
+/** `kingu.statusBar.<provider>Usage.visible` for Orca's other usage providers (Orca's statusBarItems). */
+function usageItemSettings(): SettingSchema[] {
+	const items: [id: string, name: string, th: string, en: string][] = [
+		['opencode', 'OpenCode Go', 'เมื่อตั้ง API key หรือ cookie ไว้', 'when a key or cookie is set up'],
+		['minimax', 'MiniMax', 'เมื่อตั้ง API key หรือ cookie ไว้', 'when a key or cookie is set up'],
+		['zcode', 'ZCode', 'เมื่อติดตั้ง ZCode CLI', 'when ZCode CLI is installed'],
+		['cursor', 'Cursor', 'เมื่อลงชื่อเข้าใช้ Cursor ไว้', 'when Cursor is signed in'],
+		['grok', 'Grok', 'เมื่อติดตั้ง Grok CLI', 'when Grok CLI is installed'],
+		['kimi', 'Kimi', 'เมื่อติดตั้ง Kimi Code', 'when Kimi Code is installed'],
+		['antigravity', 'Antigravity', 'เมื่อติดตั้ง agy และเปิด kingu.usage.antigravity', 'when agy is installed and kingu.usage.antigravity is on']
+	];
+	return items.map(([id, name, th, en]) => ({
+		id: `kingu.statusBar.${id}Usage.visible`,
+		group: 'Status Bar',
+		type: 'boolean' as const,
+		default: true,
+		description: `แสดงโควตาของ ${name} ใน status bar ${th} (${name} Usage: show ${name} quota ${en}.)`,
+		scope: 'application' as const
+	}));
+}
+
 /** `kingu.agent.args.<profile>`: extra arguments per known agent CLI (agentCli.ts agentCommand). */
 function agentArgsSettings(): SettingSchema[] {
 	return PROFILES.map((p) => ({
@@ -871,6 +892,7 @@ const CORE_SETTINGS: SettingSchema[] = [
 		description: 'แสดงโควตาของ Gemini ใน status bar เมื่อติดตั้ง Gemini CLI และเปิด kingu.usage.gemini (Gemini Usage: show Gemini CLI quota when kingu.usage.gemini is on.)',
 		scope: 'application'
 	},
+	...usageItemSettings(),
 	{
 		id: 'kingu.usage.display',
 		group: 'Status Bar',

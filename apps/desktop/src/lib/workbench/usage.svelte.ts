@@ -14,25 +14,25 @@ import { chats } from '#lib/agent/chats.svelte.ts';
 import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 import { clientLog } from '#lib/client-log.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
-import { ACCOUNT_PROVIDERS, activeProviders, applyStale, backoff, fromAccountRow, LIVE_FRESH_MS, nextTick, parseLiveLimit, POLL_MS, PROVIDERS, spend, STALE_AFTER_MS, windowsOf, type ProviderId, type ProviderState } from './usage';
+import { ACCOUNT_PROVIDERS, activeProviders, applyStale, backoff, fromAccountRow, LIVE_FRESH_MS, nextTick, parseLiveLimit, POLL_MS, PROVIDERS, spend, STALE_AFTER_MS, usageOptions, windowsOf, type ProviderId, type ProviderState } from './usage';
 
 class Usage {
 	now = $state(Date.now());
-	providers = $state<Record<ProviderId, ProviderState | null>>({ claude: null, codex: null, gemini: null });
+	providers = $state<Record<ProviderId, ProviderState | null>>(perProvider(null));
 	detected = $state<ProviderId[] | null>(null);
 	refreshing = $state(false);
 	anyFetching = $derived(PROVIDERS.some((p) => this.providers[p]?.status === 'fetching'));
 	spend = $derived(spend(adeTasks.list.map((t) => ({ slug: t.slug, title: t.title, last_run: t.last_run })), this.now));
 
-	#streak: Record<ProviderId, number> = { claude: 0, codex: 0, gemini: 0 };
-	#retryAt: Record<ProviderId, number> = { claude: 0, codex: 0, gemini: 0 };
+	#streak: Record<ProviderId, number> = perProvider(0);
+	#retryAt: Record<ProviderId, number> = perProvider(0);
 	#liveAt = 0;
 	#running: Promise<void> | null = null;
 	#again = false;
 
-	/** Detected providers, or all while detection has not answered (Orca's "unknown" gate); Gemini when kingu.usage.gemini is on. */
+	/** Detected providers, or all while detection has not answered (Orca's "unknown" gate); Gemini and Antigravity when their setting is on. */
 	get active(): ProviderId[] {
-		return activeProviders(this.detected, settings.get<boolean>('kingu.usage.gemini') === true);
+		return activeProviders(this.detected, { gemini: settings.get<boolean>('kingu.usage.gemini') === true, antigravity: settings.get<boolean>('kingu.usage.antigravity') === true });
 	}
 
 	/** `p`'s reading from the accounts service's last refresh (its active account). */
@@ -53,7 +53,8 @@ class Usage {
 		this.providers[p] = applyStale(prev, next, now);
 		if (next.status === 'error') {
 			this.#streak[p]++;
-			this.#retryAt[p] = now + backoff(this.#streak[p]);
+			// A provider's Retry-After (Cursor's 429) wins over a shorter backoff.
+			this.#retryAt[p] = Math.max(now + backoff(this.#streak[p]), next.retryAtMs ?? 0);
 		} else {
 			this.#streak[p] = 0;
 			this.#retryAt[p] = 0;
@@ -65,7 +66,11 @@ class Usage {
 		if (!list.length) return;
 		for (const p of list) if (!this.providers[p] || this.providers[p].status === 'idle') this.providers[p] = { ...(this.providers[p] ?? empty(p)), status: 'fetching' };
 		const viaAccounts = list.filter((p) => ACCOUNT_PROVIDERS.includes(p));
-		const gemini = list.includes('gemini') ? invoke<ProviderState>('usage_fetch', { provider: 'gemini' }).then((u) => this.#apply('gemini', { ...u, source: 'api' }), (e) => clientLog('error', `usage gemini: ${e}`)) : null;
+		// The others from Rust usage/ (Gemini, and Orca's other providers with their settings).
+		const options = usageOptions((id) => settings.get(id));
+		const others = list
+			.filter((p) => !ACCOUNT_PROVIDERS.includes(p))
+			.map((p) => invoke<ProviderState>('usage_fetch', { provider: p, options }).then((u) => this.#apply(p, { ...u, source: 'api' }), (e) => clientLog('error', `usage ${p}: ${e}`)));
 		if (viaAccounts.length) {
 			try {
 				await accounts.refresh(force);
@@ -74,7 +79,7 @@ class Usage {
 			}
 			for (const p of viaAccounts) this.#read(p);
 		}
-		await gemini;
+		await Promise.all(others);
 	}
 
 	/** Every detected provider; scheduled fetches skip a fresh live Claude reading and active retry waits. */
@@ -162,6 +167,10 @@ class Usage {
 			offEvents();
 		};
 	}
+}
+
+function perProvider<T>(value: T): Record<ProviderId, T> {
+	return Object.fromEntries(PROVIDERS.map((p) => [p, value])) as Record<ProviderId, T>;
 }
 
 function empty(p: ProviderId): ProviderState {

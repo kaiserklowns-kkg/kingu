@@ -5,6 +5,20 @@
 //! Assist endpoints with `~/.gemini/oauth_creds.json` when `kingu.usage.gemini` is on. Tokens are
 //! only ever sent to the service that issued them, never logged, and never refreshed here (the
 //! CLI refreshes its own; Orca can also refresh Gemini's with the CLI's bundled OAuth client).
+//!
+//! Orca's other providers each live in a file of their own (opencode, minimax, zcode, cursor,
+//! grok, kimi, antigravity), through the [`io`] seams; the credentials a user pastes for them
+//! (cookies, API keys) are in the Keychain ([`secrets`]).
+
+pub mod antigravity;
+pub mod cursor;
+pub mod grok;
+pub mod io;
+pub mod kimi;
+pub mod minimax;
+pub mod opencode;
+pub mod secrets;
+pub mod zcode;
 
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -36,6 +50,11 @@ pub struct ProviderUsage {
   pub status: String,
   pub session: Option<Window>,
   pub weekly: Option<Window>,
+  /// A 30-day (or billing-cycle) window: OpenCode Go, Grok, Cursor and ZCode report one.
+  pub monthly: Option<Window>,
+  /// Named pools (Cursor's model pools, Antigravity's model groups).
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  pub buckets: Vec<Bucket>,
   pub plan_type: Option<String>,
   pub error: Option<String>,
   /// Orca's failure kinds: `missing-credentials`, `stale-token`, `rate-limited`, `network`, …
@@ -45,17 +64,32 @@ pub struct ProviderUsage {
   pub updated_at: i64,
 }
 
-fn now_ms() -> i64 {
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Bucket {
+  pub name: String,
+  pub used_percent: f64,
+  pub window_minutes: u32,
+  pub resets_at: Option<i64>,
+}
+
+pub const SESSION_MINUTES: u32 = 300;
+pub const WEEK_MINUTES: u32 = 10_080;
+pub const MONTH_MINUTES: u32 = 43_200;
+
+pub(crate) fn now_ms() -> i64 {
   std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
 impl ProviderUsage {
-  fn new(provider: &str) -> Self {
+  pub(crate) fn new(provider: &str) -> Self {
     Self {
       provider: provider.into(),
       status: "ok".into(),
       session: None,
       weekly: None,
+      monthly: None,
+      buckets: Vec::new(),
       plan_type: None,
       error: None,
       failure_kind: None,
@@ -63,13 +97,13 @@ impl ProviderUsage {
       updated_at: now_ms(),
     }
   }
-  fn failed(provider: &str, status: &str, kind: &str, message: &str) -> Self {
+  pub(crate) fn failed(provider: &str, status: &str, kind: &str, message: &str) -> Self {
     Self { status: status.into(), error: Some(message.into()), failure_kind: Some(kind.into()), ..Self::new(provider) }
   }
 }
 
 /// Seconds, milliseconds, a numeric string or an ISO date, as Unix ms.
-fn parse_time(v: &Value) -> Option<i64> {
+pub(crate) fn parse_time(v: &Value) -> Option<i64> {
   let n = match v {
     Value::Number(n) => n.as_f64(),
     Value::String(s) => s.parse::<f64>().ok().or_else(|| chrono_like(s)),
@@ -393,11 +427,54 @@ pub fn detect() -> Vec<String> {
   let home = dirs_home();
   let extra = home.iter().flat_map(|h| [h.join(".local/bin"), h.join(".claude/local")]);
   let all: Vec<PathBuf> = dirs.into_iter().chain(extra).collect();
-  ["claude", "codex", "gemini"].into_iter().filter(|bin| all.iter().any(|d| is_file(&d.join(bin)))).map(str::to_owned).collect()
+  // (provider, program): Orca gates these providers' items on their CLI being installed.
+  let cli = [("claude", "claude"), ("codex", "codex"), ("gemini", "gemini"), ("kimi", "kimi"), ("antigravity", "agy"), ("grok", "grok"), ("zcode", "zcode")];
+  cli.into_iter().filter(|(_, bin)| all.iter().any(|d| is_file(&d.join(bin)))).map(|(p, _)| p.to_owned()).collect()
 }
 
 fn is_file(p: &Path) -> bool {
   p.is_file()
+}
+
+/// `Retry-After` in seconds as an absolute Unix ms (capped at a day); HTTP dates are not parsed.
+pub(crate) fn retry_at(header: Option<&str>, now: i64) -> Option<i64> {
+  let secs = header?.trim().parse::<i64>().ok()?;
+  Some(now + secs.clamp(0, 86_400) * 1000)
+}
+
+/// The non-secret settings Orca's extra providers read, as the webview sends them.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Options {
+  /// `kingu.usage.opencode.workspaceId`.
+  pub opencode_workspace_id: String,
+  /// `kingu.usage.minimax.endpoint`: `overseas` or `cn`.
+  pub minimax_endpoint: String,
+  /// `kingu.usage.minimax.groupId`.
+  pub minimax_group_id: String,
+  /// `kingu.usage.minimax.models`.
+  pub minimax_models: String,
+  /// `kingu.usage.zcode.site`: `zai` or `bigmodel`.
+  pub zcode_site: String,
+}
+
+/// One of Orca's other providers, with the live network, host and Keychain.
+pub fn fetch_more(provider: &str, o: &Options) -> Option<ProviderUsage> {
+  let (http, host, secrets) = (io::LiveHttp, io::LiveHost, secrets::UsageKeychain);
+  fetch_more_with(provider, o, &http, &host, &secrets, now_ms())
+}
+
+pub fn fetch_more_with(provider: &str, o: &Options, http: &dyn io::Http, host: &dyn io::Host, secrets: &dyn crate::accounts::secrets::SecretStore, now: i64) -> Option<ProviderUsage> {
+  Some(match provider {
+    "opencode" => opencode::fetch(http, host, secrets, Some(o.opencode_workspace_id.as_str()), now),
+    "minimax" => minimax::fetch(http, secrets, &minimax::Options { site: &o.minimax_endpoint, group_id: &o.minimax_group_id, models: &o.minimax_models }, now),
+    "zcode" => zcode::fetch(http, host, secrets, &o.zcode_site, now),
+    "cursor" => cursor::fetch(http, host, now),
+    "grok" => grok::fetch(http, host, now),
+    "kimi" => kimi::fetch(http, host, now),
+    "antigravity" => antigravity::fetch(host),
+    _ => return None,
+  })
 }
 
 #[cfg(test)]

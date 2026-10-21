@@ -61,6 +61,7 @@
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 	import { quickOpenWorktree } from '#lib/ade/quickOpen.svelte.ts';
 	import { installTerminalSessions } from './terminalSessions.svelte';
+	import { installCodexSharedServerWarning } from '#lib/ade/codexSharedServer.ts';
 	import { installTerminalCommands, panelTerminalFocus } from '#lib/terminal/terminalCommands.svelte.ts';
 	import { installTaskCommands } from '#lib/tasks/taskCommands.svelte.ts';
 	import { adeInFront, installAdeCommands } from '#lib/ade/adeCommands.svelte.ts';
@@ -381,6 +382,7 @@
 		const uninstallArtifacts = installArtifacts();
 		const uninstallLocalAi = installLocalAi();
 		const uninstallTerminalSessions = installTerminalSessions();
+		const uninstallCodexWarning = installCodexSharedServerWarning();
 		const uninstallTerminalCommands = installTerminalCommands();
 		const uninstallTaskCommands = installTaskCommands();
 		const uninstallAdeCommands = installAdeCommands();
@@ -425,6 +427,7 @@
 			uninstallTaskCommands();
 			uninstallTerminalCommands();
 			uninstallTerminalSessions();
+			uninstallCodexWarning();
 			uninstallMcp();
 			uninstallSkills();
 			uninstallSnaps();

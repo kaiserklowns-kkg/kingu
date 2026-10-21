@@ -56,6 +56,7 @@ import { tabsOfTask, touchedTasks } from './agentGuard';
 import { confirmAgentIdle } from './agentGuard.svelte';
 import { adeLayout } from './adeLayout.svelte';
 import { agentCommand, cliAgent, cliOf, launchOptions, withLaunchOptions, type RunMode } from './agentCli';
+import { noDaemonProgram, withNoDaemon } from '#lib/ade/codexServer.ts';
 import { profileOf, programOf } from '#lib/ade/agentProfiles.ts';
 import { chooseAgentCli } from '#lib/ade/agentPicker.ts';
 import { composeMessage, promptWithAttachments, type Attachment } from '#lib/agent/attachments.ts';
@@ -842,7 +843,11 @@ class AdeTasks {
 		if (sessionId) await this.#patch(slug, { session_id: sessionId });
 		// A hibernated CLI (hibernation.svelte.ts) is awake again.
 		if (this.list.find((t) => t.slug === slug)?.hibernated_at) await this.#patch(slug, { hibernated_at: null });
-		cliSessions.start(slug, withLaunchOptions(launch.argv, options), hookSettings || hookFile ? token : undefined, launch.typePrompt);
+		let argv = withLaunchOptions(launch.argv, options);
+		// Orca's codexTerminalServerIsolation: this codex gets its own app-server, not the shared one.
+		const noDaemon = profile.id === 'codex' ? noDaemonProgram(argv, (k) => settings.get(k)) : null;
+		if (noDaemon && (await invoke<boolean>('codex_supports_no_daemon', { program: noDaemon }).catch(() => false))) argv = withNoDaemon(argv);
+		cliSessions.start(slug, argv, hookSettings || hookFile ? token : undefined, launch.typePrompt);
 	}
 
 	/** A CLI reported its session id (codex notify): saved so a restart resumes exactly it. */

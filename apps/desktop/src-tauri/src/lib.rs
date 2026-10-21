@@ -345,14 +345,36 @@ async fn git_user_configured(ws: Workspace, slug: Option<String>, repo: Option<S
   blocking(move || Ok(git::user_configured(&dir))).await
 }
 
-/// Usage limits of one agent provider (`claude`, `codex` or `gemini`) for the status bar.
+/// Usage limits of one agent provider for the status bar: `claude`, `codex`, `gemini`, or one of
+/// Orca's others (`usage::fetch_more`), which read `options` (their non-secret settings).
 #[tauri::command]
-async fn usage_fetch(provider: String) -> Result<usage::ProviderUsage, String> {
+async fn usage_fetch(provider: String, options: Option<usage::Options>) -> Result<usage::ProviderUsage, String> {
   blocking(move || match provider.as_str() {
     "claude" => Ok(usage::fetch_claude()),
     "codex" => Ok(usage::fetch_codex()),
     "gemini" => Ok(usage::fetch_gemini()),
-    other => Err(format!("{other}: unknown provider")),
+    other => usage::fetch_more(other, &options.unwrap_or_default()).ok_or_else(|| crate::tr!(crate::i18n::msg::UsageMsg::UnknownProvider, provider = other)),
+  })
+  .await
+}
+
+/// Which usage-provider credentials (`usage::secrets::IDS`) are saved; never their values.
+#[tauri::command]
+async fn usage_secret_status() -> Result<BTreeMap<String, bool>, String> {
+  use accounts::secrets::SecretStore;
+  blocking(|| Ok(usage::secrets::IDS.iter().map(|(id, _)| ((*id).to_owned(), usage::secrets::UsageKeychain.get(id).is_some())).collect())).await
+}
+
+/// Saves a pasted usage-provider credential in the Keychain; an empty value removes it.
+#[tauri::command]
+async fn usage_secret_set(id: String, value: String) -> Result<(), String> {
+  use accounts::secrets::SecretStore;
+  if !usage::secrets::known(&id) {
+    return Err(crate::tr!(crate::i18n::msg::UsageMsg::UnknownSecret, id = id));
+  }
+  blocking(move || match usage::secrets::clean(&value) {
+    Some(v) => usage::secrets::UsageKeychain.set(&id, &v),
+    None => usage::secrets::UsageKeychain.delete(&id),
   })
   .await
 }
@@ -1354,6 +1376,8 @@ pub fn run() {
       git_continue,
       usage_fetch,
       usage_detect,
+      usage_secret_status,
+      usage_secret_set,
       voice::voice_status,
       voice::voice_set_openai_key,
       voice::voice_clear_openai_key,
@@ -1415,6 +1439,8 @@ pub fn run() {
       attachments::paste_image_save,
       attachments::chat_attachment_preview,
       agent::trust::agent_trust_workspace,
+      agent::codex_server::codex_supports_no_daemon,
+      agent::codex_server::codex_shared_server_joined,
       agent::mcp::mcp_list,
       agent::mcp::mcp_trust,
       agent::mcp::mcp_user_read,
