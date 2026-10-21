@@ -911,11 +911,13 @@ const CORE_SETTINGS: SettingSchema[] = [
 export const SETTINGS: SettingSchema[] = [...CORE_SETTINGS, ...ADE_SETTINGS, ...IDE_SETTINGS, ...LOCAL_AI_SETTINGS, ...ARKAI_SETTINGS];
 
 /**
- * A table-of-contents section. `labelKey`: the label through t() (shown instead of `label`);
+ * A table-of-contents section. `labelKey`: the label through t() (shown instead of `label`, the
+ * English fallback), so every section header follows the UI language the same way;
  * `pages`: dedicated settings pages (systemSettings.svelte.ts SettingsPageId) listed in the
  * section above its groups.
  */
-export type SettingsSection = { id: string; label: string; labelKey?: 'settings.sections.aiCapabilities'; pages?: string[]; groups: string[] };
+export type SettingsSection = { id: string; label: string; labelKey?: SectionLabelKey; pages?: string[]; groups: string[] };
+type SectionLabelKey = 'settings.sections.aiCapabilities' | 'settings.sections.system' | 'settings.sections.ide' | 'settings.sections.ade' | 'settings.sections.snaps';
 
 /**
  * The system settings page's table of contents: one settings system for the IDE and the ADE,
@@ -926,9 +928,9 @@ export type SettingsSection = { id: string; label: string; labelKey?: 'settings.
 export const SETTINGS_SECTIONS: SettingsSection[] = (
 	[
 		{ id: 'ai', label: 'AI Capabilities', labelKey: 'settings.sections.aiCapabilities', pages: ['accounts', 'mcp', 'skills', 'memories'], groups: AI_SECTION_GROUPS },
-		{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Zen Mode', 'Application', ...SYSTEM_SECTION_GROUPS, 'Status Bar', 'Accessibility', 'Team', 'Snap Sandbox'] },
-		{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Source Control', 'Git', 'Merge Conflict', 'Timeline', 'Terminal', 'Tasks', 'Debug', 'Testing', 'Problems', 'Output', 'TypeScript', 'CSS', 'HTML', 'JSON', 'Emmet'] },
-		{ id: 'ade', label: 'ADE (Agents)', groups: ADE_SECTION_GROUPS }
+		{ id: 'system', label: 'System', labelKey: 'settings.sections.system', groups: ['Workbench', 'Window', 'Zen Mode', 'Application', ...SYSTEM_SECTION_GROUPS, 'Status Bar', 'Accessibility', 'Team', 'Snap Sandbox'] },
+		{ id: 'ide', label: 'IDE', labelKey: 'settings.sections.ide', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Source Control', 'Git', 'Merge Conflict', 'Timeline', 'Terminal', 'Tasks', 'Debug', 'Testing', 'Problems', 'Output', 'TypeScript', 'CSS', 'HTML', 'JSON', 'Emmet'] },
+		{ id: 'ade', label: 'ADE (Agents)', labelKey: 'settings.sections.ade', groups: ADE_SECTION_GROUPS }
 	] satisfies SettingsSection[]
 ).map((sec) => ({ ...sec, groups: sec.groups.filter((g) => SETTINGS.some((s) => s.group === g)) }));
 
@@ -942,7 +944,7 @@ export const SNAPS_SECTION_ID = 'snaps';
 export function settingsSections(schemas: SettingSchema[] = SETTINGS): SettingsSection[] {
 	const known = new Set(SETTINGS_SECTIONS.flatMap((s) => s.groups));
 	const contributed = [...new Set(schemas.map((s) => s.group).filter((g) => !known.has(g)))];
-	return [...SETTINGS_SECTIONS, { id: SNAPS_SECTION_ID, label: 'Snaps', groups: contributed }];
+	return [...SETTINGS_SECTIONS, { id: SNAPS_SECTION_ID, label: 'Snaps', labelKey: 'settings.sections.snaps', groups: contributed }];
 }
 
 /**

@@ -89,7 +89,7 @@
 	const subOf = (selection: string | null) => (selection?.includes('/') ? selection.slice(selection.indexOf('/') + 1) : null);
 	const sectionOf = (selection: string | null) => {
 		const group = groupOf(selection);
-		return group && !query ? sectionLabel(settingSchemas.sections.find((s) => s.groups.includes(group))) : query ? 'ผลการค้นหา' : 'การตั้งค่าทั้งหมด (IDE + ADE)';
+		return group && !query ? sectionLabel(settingSchemas.sections.find((s) => s.groups.includes(group))) : query ? t('settings.page.searchResults') : t('settings.page.allSettings');
 	};
 	const showSnaps = $derived(systemSettings.snaps && !query);
 	const modifiedCount = $derived(settingSchemas.all.filter((s) => settings.inspect(s.id, 'user') !== undefined || settings.inspect(s.id, 'workspace') !== undefined).length);

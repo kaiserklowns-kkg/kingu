@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { resolveSettings, SCHEMA, SETTINGS, settingProblems, settingsSections, validate } from '../registry';
 import { ADE_SECTION_GROUPS, ADE_SETTINGS, AI_SECTION_GROUPS, SYSTEM_SECTION_GROUPS } from './index';
 import { ORCA_AI_CAPABILITIES, ORCA_MAP } from './orcaMap';
-import { t } from '../../i18n/index';
+import { t, tIn } from '../../i18n/index';
 
 /** A row's Kingu key as a matcher: `<profile>` and `.*` stand for any segment(s). */
 const matcher = (key: string) => new RegExp(`^${key.replace(/\./g, '\\.').replace('<profile>', '[a-z-]+').replace('\\.*', '\\..+')}$`);
@@ -73,6 +73,16 @@ describe("Orca's AI Capabilities group", () => {
 		expect(ai().pages).toEqual(['accounts', 'mcp', 'skills', 'memories']);
 		expect(ai().groups).toEqual(AI_SECTION_GROUPS);
 		for (const g of AI_SECTION_GROUPS) expect([g, sections.filter((s) => s.groups.includes(g)).map((s) => s.id)]).toEqual([g, ['ai']]);
+	});
+
+	test('every section header goes through t(), so the AI one follows the UI language like the rest', () => {
+		for (const sec of settingsSections()) {
+			expect([sec.id, !!sec.labelKey]).toEqual([sec.id, true]);
+			expect(tIn('th', sec.labelKey!)).toBeTruthy();
+			expect(tIn('en', sec.labelKey!)).toBeTruthy();
+		}
+		expect(tIn('th', 'settings.sections.aiCapabilities')).toBe('ความสามารถ AI (AI Capabilities)');
+		expect(tIn('th', 'settings.sections.system')).toBe('ระบบ (System)');
 	});
 
 	test('every Orca capability setting has a map row, and its kingu.* key lives in the AI section', () => {
