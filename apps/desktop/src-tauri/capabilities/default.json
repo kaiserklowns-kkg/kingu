@@ -16,6 +16,7 @@
     "core:window:allow-set-theme",
     "core:window:allow-is-fullscreen",
     "core:window:allow-set-fullscreen",
+    "core:window:allow-request-user-attention",
     "core:webview:allow-set-webview-zoom",
     "dialog:allow-open",
     "dialog:allow-message",

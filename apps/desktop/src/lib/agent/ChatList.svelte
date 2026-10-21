@@ -62,6 +62,9 @@
 	import { formatUsage, type Decision, type PermissionRequest } from './events';
 	import { usageDisplay } from './chatExtras';
 	import { accessibleView, chatProvider } from '#lib/workbench/accessibleView.svelte.ts';
+	import ChatReferences from './ChatReferences.svelte';
+	import { turnReferences } from './chatReferences';
+	import { THINKING_SCROLL_PX, thinkingStyle, thinkingView } from './chatSettings';
 
 	let {
 		run,
@@ -165,6 +168,16 @@
 	}
 
 	const toggle = (key: string) => (open[key] = !open[key]);
+	// chat.agent.thinkingStyle: a thinking part is collapsed, open while the agent is on it, or in
+	// a fixed-height panel that follows the text; a click on its header wins (chatSettings.ts).
+	const thinking = $derived(thinkingStyle(settings.get('chat.agent.thinkingStyle')));
+	/** The fixed-height thinking panels follow their text to the bottom. */
+	const follow = (el: HTMLElement) => {
+		const mo = new MutationObserver(() => (el.scrollTop = el.scrollHeight));
+		mo.observe(el, { childList: true, characterData: true, subtree: true });
+		el.scrollTop = el.scrollHeight;
+		return () => mo.disconnect();
+	};
 
 	// How long each turn watched here took, for "Worked for Ns" when its result has no duration
 	// (runtimes other than Claude Code): from when the turn was first seen running to when it ended.
@@ -197,6 +210,10 @@
 	style:font-size="{look.fontSize}px"
 	style:--kg-chat-code-size="{look.codeFontSize}px"
 	style:font-family={look.fontFamily}
+	style:--kg-chat-code-font={look.codeFontFamily}
+	style:--kg-chat-code-weight={look.codeFontWeight}
+	style:--kg-chat-code-line={look.codeLineHeight ? `${look.codeLineHeight}px` : undefined}
+	style:--kg-chat-code-wrap={look.codeWrap ? 'pre-wrap' : undefined}
 	style:filter={look.contrast === 100 ? undefined : `contrast(${look.contrast}%)`}
 >
 	<div class="mx-auto flex w-full min-w-0 flex-col gap-3" style:max-width={look.maxWidth}>
@@ -207,6 +224,7 @@
 				{@const end = foldSteps(turn)}
 				{@const took = workedFor(turn.result?.duration_ms ?? tookMs(ti, turn))}
 				{@const folded = end > 0 && !open[`w:${ti}`]}
+				{@const refs = turnReferences(turn.parts)}
 				<div class={['flex flex-col gap-3', dim && 'opacity-50']}>
 				{#if turn.request}
 					{@const req = turn.request}
@@ -294,6 +312,7 @@
 
 				<!-- Response: an earlier finished turn folds its steps into "Worked for 2s" (Cursor's). -->
 				<div class="flex flex-col gap-1.5">
+					{#if refs.length}<ChatReferences {refs} {cwd} {root} />{/if}
 					{#if end > 0}
 						<button type="button" class="flex items-center gap-1 self-start text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)" aria-expanded={!folded} onclick={() => toggle(`w:${ti}`)}>
 							{took ? t('composer.progress.workedFor', { time: took }) : t('composer.progress.worked')}
@@ -307,12 +326,21 @@
 						{:else if part.kind === 'markdown'}
 							<ChatMarkdown text={part.text} streaming={part.streaming} {root} />
 						{:else if part.kind === 'thinking'}
+							{@const view = thinkingView(thinking, !!part.streaming || (!turn.done && pi === turn.parts.length - 1), open[key])}
 							<div>
-								<button type="button" class="flex items-center gap-1 text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)" aria-expanded={!!open[key]} onclick={() => toggle(key)}>
-									<Icon name={open[key] ? 'chevronDown' : 'chevronRight'} size={12} />
+								<button
+									type="button"
+									class="flex items-center gap-1 text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)"
+									aria-expanded={view === 'open'}
+									title={view === 'scroll' ? t('chatRender.thinking.expand') : undefined}
+									onclick={() => (open[key] = view !== 'open')}
+								>
+									<Icon name={view === 'closed' ? 'chevronRight' : 'chevronDown'} size={12} />
 									{#if part.streaming}<span class="animate-pulse font-semibold">{t('chatView.thinking')}</span>{:else}<span><span class="font-semibold">{splitVerb(t('composer.progress.thought')).verb}</span> {splitVerb(t('composer.progress.thought')).rest}</span>{/if}
 								</button>
-								{#if open[key]}
+								{#if view === 'scroll'}
+									<p class="mt-1 overflow-y-auto border-l-2 border-(--vscode-widget-border) pl-2 whitespace-pre-wrap text-(--vscode-descriptionForeground) italic" style:max-height="{THINKING_SCROLL_PX}px" {@attach follow}>{part.text}</p>
+								{:else if view === 'open'}
 									<p class="mt-1 border-l-2 border-(--vscode-widget-border) pl-2 whitespace-pre-wrap text-(--vscode-descriptionForeground) italic">{part.text}</p>
 								{/if}
 							</div>

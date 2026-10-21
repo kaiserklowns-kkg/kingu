@@ -3,18 +3,43 @@
 	// shown as text), code blocks in their own box, syntax coloured once the text stopped streaming,
 	// with Insert at Cursor (into the active editor), Insert into New File, Insert into Terminal and
 	// Copy. Links: web links open in the browser, workspace paths open in the editor.
+	// chat.math.enabled: `$…$` / `$$…$$` with KaTeX and ```mermaid blocks as diagrams (an image,
+	// with Show Source), both loaded on first use (chatRich.svelte.ts).
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { editors } from '#lib/workbench/editors.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { trustedDomains } from '#lib/workbench/trustedDomains.svelte.ts';
+	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { t } from '#lib/i18n/index.ts';
-	import { splitMarkdown } from './chatMarkdown';
+	import { mayHaveMath, splitMarkdown } from './chatMarkdown';
 	import { shortPath } from './chatParts';
 	import { colorize, insertIntoNewFile, insertIntoTerminal } from './chatCodeActions';
+	import { chatMath, renderMermaid } from './chatRich.svelte.ts';
 
 	let { text, streaming = false, root = null }: { text: string; streaming?: boolean; root?: string | null } = $props();
 
-	const segments = $derived(splitMarkdown(text));
+	const mathOn = $derived(settings.get<boolean>('chat.math.enabled') !== false);
+	$effect(() => {
+		if (mathOn && mayHaveMath(text)) chatMath.load();
+	});
+	const segments = $derived(splitMarkdown(text, { math: mathOn, renderMath: chatMath.renderer }));
+	/** Mermaid diagrams by source: the image, or why it could not be drawn. */
+	let diagrams = $state<Record<string, { url?: string; error?: string }>>({});
+	/** Diagrams shown as their source instead (by segment index). */
+	let source = $state<Record<number, boolean>>({});
+	$effect(() => {
+		if (streaming) return;
+		const dark = document.documentElement.dataset.themeType === 'dark';
+		for (const seg of segments) {
+			if (seg.kind !== 'mermaid' || diagrams[seg.code]) continue;
+			const code = seg.code;
+			diagrams[code] = {};
+			renderMermaid(code, dark).then(
+				(url) => (diagrams[code] = { url }),
+				(e) => (diagrams[code] = { error: String(e?.message ?? e) })
+			);
+		}
+	});
 	let copied = $state(-1);
 	/** Coloured code blocks by `lang\0code` (Monaco's colorizer), once the text stopped streaming. */
 	let colored = $state<Record<string, string>>({});
@@ -74,6 +99,27 @@
 		{#if seg.kind === 'markdown'}
 			<!-- Safe: renderMarkdown escapes raw HTML and drops images (workbench/markdown.ts). -->
 			{@html seg.html}
+		{:else if seg.kind === 'mermaid'}
+			{@const d = streaming ? undefined : diagrams[seg.code]}
+			<div class="kg-code">
+				<div class="kg-code-head">
+					<span class="min-w-0 flex-1 truncate">mermaid</span>
+					{#if d?.url}
+						<button type="button" class="kg-code-btn" title={source[i] ? t('chatRender.mermaid.diagram') : t('chatRender.mermaid.source')} aria-label={source[i] ? t('chatRender.mermaid.diagram') : t('chatRender.mermaid.source')} aria-pressed={!!source[i]} onclick={() => (source[i] = !source[i])}>
+							<Icon name={source[i] ? 'image' : 'code'} size={13} />
+						</button>
+					{/if}
+					<button type="button" class="kg-code-btn" title={t('chatView.copyCode')} aria-label={t('chatView.copyCode')} onclick={() => copy(seg.code, i)}>
+						<Icon name={copied === i ? 'check' : 'copy'} size={13} />
+					</button>
+				</div>
+				{#if d?.url && !source[i]}
+					<div class="kg-diagram"><img src={d.url} alt={t('chatRender.mermaid.label')} /></div>
+				{:else}
+					{#if d?.error}<p class="kg-diagram-note" role="note">{t('chatRender.mermaid.failed', { error: d.error })}</p>{:else if d && !d.url}<p class="kg-diagram-note" role="status">{t('chatRender.mermaid.drawing')}</p>{/if}
+					<pre><code>{seg.code}</code></pre>
+				{/if}
+			</div>
 		{:else}
 			{@const html = streaming ? undefined : colored[blockKey(seg)]}
 			<div class="kg-code group/code">
@@ -205,15 +251,40 @@
 		background: var(--vscode-toolbar-hoverBackground);
 		color: var(--vscode-foreground);
 	}
+	/* chat.editor.*: the code blocks' font, weight, line height and wrapping (ChatList sets them). */
 	.kg-code pre {
 		margin: 0;
 		padding: 8px 10px;
 		overflow-x: auto;
+		line-height: var(--kg-chat-code-line, normal);
 	}
 	.kg-code pre code {
 		padding: 0;
 		background: none;
-		white-space: pre;
+		white-space: var(--kg-chat-code-wrap, pre);
+		overflow-wrap: anywhere;
+		font-family: var(--kg-chat-code-font, var(--vscode-editor-font-family, Menlo, monospace));
+		font-weight: var(--kg-chat-code-weight, normal);
+	}
+	.kg-diagram {
+		padding: 8px;
+		overflow-x: auto;
+		text-align: center;
+	}
+	.kg-diagram img {
+		display: inline-block;
+		max-width: 100%;
+		height: auto;
+	}
+	.kg-diagram-note {
+		margin: 0;
+		padding: 4px 10px 0;
+		font-size: 11px;
+		color: var(--vscode-descriptionForeground);
+	}
+	.kg-md :global(.md-math-block) {
+		margin: 0 0 0.6em;
+		overflow-x: auto;
 	}
 	.kg-caret {
 		display: inline-block;

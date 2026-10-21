@@ -32,8 +32,8 @@ type Lined = { line?: number };
 
 // --- Math ----------------------------------------------------------------------------------------
 
-/** `$$…$$` blocks and `$…$` inline math (the markdown-math extension's syntax). */
-function mathExtension(render: () => MathRenderer | null): MarkedExtension {
+/** `$$…$$` blocks and `$…$` inline math (the markdown-math extension's syntax); the chat uses it too (agent/chatMarkdown.ts). */
+export function mathExtension(render: () => MathRenderer | null): MarkedExtension {
 	const out = (text: string, display: boolean) => {
 		const r = render();
 		if (r) return r(text, display);

@@ -43,6 +43,8 @@
 	import { showAccountsMenu } from '#lib/accounts/accounts.svelte.ts';
 	import { toggleAgentsMode } from '#lib/ade/agentsMode.svelte.ts';
 	import { appMode } from './mode.svelte';
+	import { chatProgress } from '#lib/agent/chatSettings.svelte.ts';
+	import { t as translate } from '#lib/i18n/index.ts';
 
 	let { workspaceName, focused }: { workspaceName: string; focused: boolean } = $props();
 
@@ -307,14 +309,17 @@
 					</button>
 				{:else}
 					{@const t = TOGGLES[id]}
+					<!-- chat.viewProgressBadge.enabled: the chat panel's toggle shows a dot while a chat works. -->
+					{@const chatBusy = id === 'toggleAuxiliaryBar' && !appMode.isAgents && chatProgress.badge}
 					<button
-						aria-label={t.label}
+						aria-label={chatBusy ? `${t.label} · ${translate('chatRender.badge')}` : t.label}
 						aria-pressed={t.on()}
-						title="{t.label}{hint(t.command)}"
-						class={[ACTION, t.on() ? 'opacity-100' : 'opacity-50']}
+						title="{t.label}{hint(t.command)}{chatBusy ? `\n${translate('chatRender.badge')}` : ''}"
+						class={[ACTION, 'relative', t.on() || chatBusy ? 'opacity-100' : 'opacity-50']}
 						onclick={() => commands.run(t.command)}
 					>
 						<Icon name={toggleIcon(id)} size={16} filled={t.on()} />
+						{#if chatBusy}<span class="absolute right-0.5 bottom-0.5 size-1.5 animate-pulse rounded-full bg-(--vscode-activityBarBadge-background)"></span>{/if}
 					</button>
 				{/if}
 			{/if}
