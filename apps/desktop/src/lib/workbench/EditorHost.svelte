@@ -55,6 +55,7 @@
 			api = m;
 			installEditorSettings(m.monaco);
 			installEditorSignals(m.monaco);
+			void import('#lib/editor/formatterSelector.ts').then((f) => f.installFormatterSelector(m.monaco));
 			// The editor settings from the first paint; installEditorSettings keeps them live.
 			const ed = m.monaco.editor.create(host, { ...editorOptions(), theme: m.THEME_ID, automaticLayout: true });
 			installEditorActions(m.monaco, ed);
