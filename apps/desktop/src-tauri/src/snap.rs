@@ -6,8 +6,10 @@
 //!
 //! Trust: opening or cloning a repo must never run anything from `.kingu/snaps`, so a repo snap
 //! is untrusted until the user trusts it. Trust lives outside the repo in
-//! `<config dir>/snap-trust.json`, keyed by folder + snap id + SHA-256 of the manifest (and of
-//! its skill files, see `snap_hash`), so any change to them (a pull, a branch switch) revokes it.
+//! `<config dir>/snap-trust.json`, keyed by folder + snap id + SHA-256 of the manifest, every
+//! other file of the snap and the repo scripts its commands name (see `full_hash`), so any change
+//! to them (a pull, a branch switch) revokes it. A repo snap that differs from its entry in
+//! `.kingu/snaps.lock` is untrusted too until the user approves it again (which updates the lock).
 //! User snaps are trusted (the user put them there). The webview only lists untrusted snaps; it
 //! contributes their tasks, MCP servers and skills only when `trusted` is true and `error` is none.
 
@@ -58,18 +60,106 @@ struct Manifest {
 
 /// Shown to the user before trust and enforced when a task or MCP server runs (`kingu-ptyd
 /// snap-exec`, see `kingu_ptyd::sandbox`). A snap without the table gets the default: no
-/// network, writes only in the folder or task worktree, no secrets.
+/// network, writes only in the folder or task worktree, no secrets. The lists are optional
+/// narrowing (an empty list leaves that part as the defaults describe).
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Permissions {
   #[serde(default)]
   pub network: bool,
+  /// With `network = true`: the only hosts it may reach (`example.com`, `*.example.com`,
+  /// optionally `:port`), through a filtering proxy the launcher runs. Empty: any host.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub hosts: Vec<String>,
   #[serde(default)]
   pub fs: FsAccess,
-  /// Names of environment variables passed through to the snap (others that look like
-  /// credentials are removed). Keychain-backed values are not supported yet.
+  /// Folders it may read under the home folder besides the task folder (`~/.cargo`). When set,
+  /// the rest of the home folder is unreadable; when empty, reads are not confined.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub read: Vec<String>,
+  /// Extra folders it may write (`~/.cache/go-build`), absolute or under `~/`.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub write: Vec<String>,
+  /// Programs it may start (names looked up on PATH, or absolute paths). When set, nothing
+  /// else can be executed; the task's or server's own program is always allowed.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub processes: Vec<String>,
+  /// Environment variables it gets. When set, the environment is cut down to a small base
+  /// (PATH, HOME, locale, terminal) plus these; when empty, only credential-looking ones go.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub env: Vec<String>,
+  /// Secrets it needs, by environment variable name. Values the user entered are kept in the
+  /// Keychain (service `dev.kingu.snap.<id>`) and injected into its processes only; a name
+  /// without a stored value passes through from the environment as before.
   #[serde(default)]
   pub secrets: Vec<String>,
+}
+
+const MAX_PERMISSION_ENTRIES: usize = 64;
+
+/// `example.com`, `*.example.com`, optionally with `:port`: lowercase DNS names only (no IPs
+/// spelled oddly, no schemes or paths).
+pub fn is_host_pattern(s: &str) -> bool {
+  let (host, port) = match s.rsplit_once(':') {
+    Some((h, p)) => (h, Some(p)),
+    None => (s, None),
+  };
+  if port.is_some_and(|p| p.is_empty() || p.len() > 5 || !p.bytes().all(|c| c.is_ascii_digit()) || p.parse::<u32>().map_or(true, |n| n == 0 || n > 65535)) {
+    return false;
+  }
+  let name = host.strip_prefix("*.").unwrap_or(host);
+  let labels: Vec<&str> = name.split('.').collect();
+  !name.is_empty()
+    && name.len() <= 253
+    && labels.len() >= 2
+    && labels.iter().all(|l| !l.is_empty() && l.len() <= 63 && !l.starts_with('-') && !l.ends_with('-') && l.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-'))
+}
+
+/// A `read` / `write` entry: absolute or `~/…`, plain parts (no `.`, `..`, empty), never the
+/// whole disk or home folder (that is what `fs = "home"` says).
+pub fn is_scope_path(s: &str) -> bool {
+  let rest = if let Some(r) = s.strip_prefix("~/") { r } else if let Some(r) = s.strip_prefix('/') { r } else { return false };
+  let rest = rest.strip_suffix('/').unwrap_or(rest);
+  !rest.is_empty() && s.len() <= 1024 && !s.chars().any(char::is_control) && rest.split('/').all(|p| !p.is_empty() && p != "." && p != "..")
+}
+
+/// A `processes` entry: a program name (`go`) or an absolute path (`/usr/bin/make`).
+fn is_process(s: &str) -> bool {
+  if let Some(rest) = s.strip_prefix('/') {
+    return is_scope_path(s) && !rest.is_empty();
+  }
+  !s.is_empty() && s.len() <= 255 && !s.starts_with('-') && s.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-' | b'+'))
+}
+
+/// Checks the lists of `[permissions]`; the first problem, in the UI language.
+fn check_permissions(p: &Permissions) -> Result<(), String> {
+  for (field, list) in [("hosts", &p.hosts), ("read", &p.read), ("write", &p.write), ("processes", &p.processes), ("env", &p.env), ("secrets", &p.secrets)] {
+    if list.len() > MAX_PERMISSION_ENTRIES {
+      return Err(tr!(SnapMsg::PermissionTooMany, field, max = MAX_PERMISSION_ENTRIES));
+    }
+  }
+  if !p.hosts.is_empty() && !p.network {
+    return Err(tr!(SnapMsg::HostsNeedNetwork));
+  }
+  let bad = |field: &str, value: &str| Err(tr!(SnapMsg::PermissionInvalid, field, value));
+  if let Some(h) = p.hosts.iter().find(|h| !is_host_pattern(h)) {
+    return bad("hosts", h);
+  }
+  if let Some(x) = p.read.iter().chain(&p.write).find(|x| !is_scope_path(x)) {
+    return bad(if p.read.contains(x) { "read" } else { "write" }, x);
+  }
+  if let Some(x) = p.processes.iter().find(|x| !is_process(x)) {
+    return bad("processes", x);
+  }
+  if let Some(x) = p.env.iter().find(|x| !is_env_name(x)) {
+    return bad("env", x);
+  }
+  for s in &p.secrets {
+    if !is_env_name(s) {
+      return Err(tr!(SnapMsg::SecretNameInvalid, name = s));
+    }
+  }
+  Ok(())
 }
 
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Default)]
@@ -253,11 +343,7 @@ pub fn parse_manifest(text: &str, folder: &str) -> Result<Parsed, String> {
   if m.version.trim().is_empty() {
     return Err(tr!(SnapMsg::VersionRequired));
   }
-  for s in &m.permissions.secrets {
-    if !is_env_name(s) {
-      return Err(tr!(SnapMsg::SecretNameInvalid, name = s));
-    }
-  }
+  check_permissions(&m.permissions)?;
 
   let mut settings = Vec::new();
   let mut keys = BTreeSet::new();
@@ -467,6 +553,130 @@ pub fn snap_hash(manifest: &[u8], skills: &[Skill]) -> String {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Every file a snap ships and runs
+//
+// The trust hash must change whenever anything a trusted snap runs changes. `snap_hash` covers
+// the manifest and skills; a snap folder can also hold scripts its tasks run, and a repo snap's
+// task can run a script elsewhere in the repo (`["bash", "scripts/ci.sh"]`). `full_hash` adds
+// both: every other file in the snap folder, and every repo file a task or MCP command names
+// by relative path. A snap with nothing beyond its manifest and skills keeps `snap_hash`, so
+// trust and team pins made before this stay valid.
+
+/// A file covered by the trust hash, with its own SHA-256 (the lock file keeps these, so a
+/// mismatch can name the files that changed).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FileHash {
+  pub path: String,
+  pub sha256: String,
+}
+
+/// Repo files named by commands: at most this many, each at most this big.
+const MAX_SCRIPTS: usize = 64;
+const MAX_SCRIPT_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Every file of the snap folder except `snap.toml` (hashed on its own), `.git`, `.DS_Store`
+/// and the install record, by relative path. A symlink or special file is an error, and the
+/// install limits apply.
+pub fn snap_files(dir: &Path) -> Result<Vec<FileHash>, String> {
+  fn walk(dir: &Path, prefix: &str, depth: usize, budget: &mut Budget, out: &mut Vec<FileHash>) -> Result<(), String> {
+    if depth > 32 {
+      return Err(tr!(SnapMsg::TooDeep, max = 32));
+    }
+    let mut entries: Vec<_> = std::fs::read_dir(dir).map_err(|e| tr!(SnapMsg::ReadFailed, path = dir.display(), detail = e))?.flatten().collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+      let name = entry.file_name().to_string_lossy().into_owned();
+      if name == ".git" || name == ".DS_Store" || (prefix.is_empty() && (name == MANIFEST || name == crate::snap_install::ORIGIN_FILE)) {
+        continue;
+      }
+      let rel = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
+      let meta = std::fs::symlink_metadata(entry.path()).map_err(|e| tr!(SnapMsg::ReadFailed, path = rel, detail = e))?;
+      if meta.file_type().is_symlink() {
+        return Err(tr!(SnapMsg::SourceSymlink, path = rel));
+      }
+      if meta.is_dir() {
+        walk(&entry.path(), &rel, depth + 1, budget, out)?;
+      } else if meta.is_file() {
+        budget.files += 1;
+        budget.bytes += meta.len();
+        if budget.files > crate::snap_install::MAX_FILES || budget.bytes > crate::snap_install::MAX_BYTES {
+          return Err(tr!(SnapMsg::SourceTooBig, files = crate::snap_install::MAX_FILES, mb = crate::snap_install::MAX_BYTES / 1024 / 1024));
+        }
+        let bytes = std::fs::read(entry.path()).map_err(|e| tr!(SnapMsg::ReadFailed, path = rel, detail = e))?;
+        out.push(FileHash { path: rel, sha256: sha256_hex(&bytes) });
+      } else {
+        return Err(tr!(SnapMsg::NotPlain, path = rel));
+      }
+    }
+    Ok(())
+  }
+  let mut out = Vec::new();
+  walk(dir, "", 0, &mut Budget { files: 0, bytes: 0 }, &mut out)?;
+  Ok(out)
+}
+
+/// An argument that may name a file relative to the folder a command runs in: no option,
+/// placeholder, absolute or home path, URL, backslash or `..` part.
+fn relative_file_arg(arg: &str) -> Option<String> {
+  let rel = arg.strip_prefix("./").unwrap_or(arg);
+  if rel.is_empty() || rel.len() > 1024 || arg.starts_with(['-', '/', '~']) || arg.contains("${") || arg.contains("://") || arg.contains('\\') || arg.chars().any(char::is_control) {
+    return None;
+  }
+  let rel = rel.trim_end_matches('/');
+  (!rel.is_empty() && rel.split('/').all(|p| !p.is_empty() && p != "." && p != "..")).then(|| rel.to_string())
+}
+
+/// Repo files the commands of a repo snap name by relative path (they run in the folder root),
+/// hashed: `scripts/ci.sh` in `["bash", "scripts/ci.sh"]`, `./tools/lint` as a program. Files
+/// inside the snap folder are covered by `snap_files` already; a name that is not a regular file
+/// in the repo (`./...`, `test`) is not a script. A symlink counts only if it stays in the repo.
+pub fn referenced_files<'a>(root: &Path, snap_dir: &Path, commands: impl IntoIterator<Item = &'a [String]>) -> Vec<FileHash> {
+  let Ok(real_root) = root.canonicalize() else { return Vec::new() };
+  let real_snap = snap_dir.canonicalize().ok();
+  let mut out = BTreeMap::new();
+  for arg in commands.into_iter().flatten() {
+    let Some(rel) = relative_file_arg(arg) else { continue };
+    if out.contains_key(&rel) || out.len() >= MAX_SCRIPTS {
+      continue;
+    }
+    let Ok(real) = root.join(&rel).canonicalize() else { continue };
+    if !real.starts_with(&real_root) || real_snap.as_ref().is_some_and(|s| real.starts_with(s)) {
+      continue;
+    }
+    match std::fs::metadata(&real) {
+      Ok(m) if m.is_file() && m.len() <= MAX_SCRIPT_BYTES => {}
+      _ => continue,
+    }
+    if let Ok(bytes) = std::fs::read(&real) {
+      out.insert(rel, sha256_hex(&bytes));
+    }
+  }
+  out.into_iter().map(|(path, sha256)| FileHash { path, sha256 }).collect()
+}
+
+/// The trust hash over everything: `snap_hash` when `files` holds nothing but skill files and
+/// there are no `scripts`, otherwise a v2 hash of the manifest, every file and every script.
+pub fn full_hash(manifest: &[u8], skills: &[Skill], files: &[FileHash], scripts: &[FileHash]) -> String {
+  let skill_files: BTreeSet<String> = skills.iter().flat_map(|s| s.files.iter().map(move |(rel, _)| format!("{}/{rel}", s.path))).collect();
+  if scripts.is_empty() && files.iter().all(|f| skill_files.contains(&f.path)) {
+    return snap_hash(manifest, skills);
+  }
+  let mut h = Sha256::new();
+  h.update(b"kingu-snap-v2\0");
+  h.update((manifest.len() as u64).to_le_bytes());
+  h.update(manifest);
+  for (tag, list) in [(b"\0file\0", files), (b"\0exec\0", scripts)] {
+    for f in list {
+      h.update(tag);
+      h.update(f.path.as_bytes());
+      h.update(b"\0");
+      h.update(f.sha256.as_bytes());
+    }
+  }
+  h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+// ---------------------------------------------------------------------------------------------
 // Discovery
 
 #[derive(Serialize, Clone, Copy, Debug, PartialEq)]
@@ -498,10 +708,22 @@ pub struct SnapInfo {
   pub settings: Vec<Setting>,
   pub mcp: Vec<McpServer>,
   pub skills: Vec<Skill>,
+  /// SHA-256 of `snap.toml` alone and of every other file of the snap folder (both in `hash`;
+  /// kept for the lock file).
+  #[serde(skip)]
+  pub manifest_sha256: String,
+  #[serde(skip)]
+  pub files: Vec<FileHash>,
+  /// Repo snaps: repo files their commands run (`scripts/ci.sh`), in the hash too.
+  pub scripts: Vec<FileHash>,
   /// User snaps installed through Kingu: where they came from (`.kingu-snap.json`, not hashed).
   pub origin: Option<Origin>,
   /// Repo snaps when the folder has `.kingu/snaps.lock`: whether this snap matches its entry.
+  /// User snaps when the lock pins a team snap with this id.
   pub lock: Option<LockStatus>,
+  /// Repo snaps: the permissions approved last time (trust store, else the lock entry), so a
+  /// new approval can call out what grew. None when never approved.
+  pub approved_permissions: Option<Permissions>,
 }
 
 impl SnapInfo {
@@ -522,8 +744,12 @@ impl SnapInfo {
       settings: Vec::new(),
       mcp: Vec::new(),
       skills: Vec::new(),
+      manifest_sha256: String::new(),
+      files: Vec::new(),
+      scripts: Vec::new(),
       origin: None,
       lock: None,
+      approved_permissions: None,
     }
   }
 }
@@ -577,7 +803,16 @@ pub(crate) fn read_snap(dir: &Path, folder: &str, source: Source, root: Option<&
     Ok(s) => s,
     Err(e) => return broken(hash, e),
   };
-  let hash = snap_hash(&bytes, &skills);
+  let files = match snap_files(dir) {
+    Ok(f) => f,
+    Err(e) => return broken(snap_hash(&bytes, &skills), e),
+  };
+  let scripts = match (source, root) {
+    (Source::Repo, Some(root)) => referenced_files(root, dir, p.tasks.iter().map(|t| t.command.as_slice()).chain(p.mcp.iter().map(|m| m.command.as_slice()))),
+    _ => Vec::new(),
+  };
+  let hash = full_hash(&bytes, &skills, &files, &scripts);
+  let approved_permissions = root.filter(|_| source == Source::Repo).and_then(|r| trust.approved_permissions(r, &p.id).cloned());
   SnapInfo {
     trusted: match (source, root) {
       (Source::User, _) => true,
@@ -598,8 +833,12 @@ pub(crate) fn read_snap(dir: &Path, folder: &str, source: Source, root: Option<&
     settings: p.settings,
     mcp: p.mcp,
     skills,
+    manifest_sha256: sha256_hex(&bytes),
+    files,
+    scripts,
     origin: None,
     lock: None,
+    approved_permissions,
   }
 }
 
@@ -634,14 +873,25 @@ pub(crate) fn scan(snaps_dir: &Path, source: Source, root: Option<&Path>, trust:
 pub fn discover(user_dir: &Path, root: Option<&Path>, trust: &TrustData) -> Vec<SnapInfo> {
   let mut user = scan(user_dir, Source::User, None, trust);
   let repo = root.and_then(|r| repo_snaps_dir(r).map(|d| scan(&d, Source::Repo, Some(r), trust))).unwrap_or_default();
-  for u in &mut user {
-    u.overridden = repo.iter().any(|r| r.id == u.id && r.trusted && r.error.is_none());
-  }
   let mut repo = repo;
   if let Some(lock) = root.and_then(read_lock) {
     for r in &mut repo {
       r.lock = Some(lock.status(r));
+      if r.approved_permissions.is_none() {
+        r.approved_permissions = lock.entry(&r.id).and_then(|e| e.permissions.clone());
+      }
+      // The repo pins another version of this snap: nothing it runs is trusted until re-approved.
+      if r.lock == Some(LockStatus::Changed) {
+        r.trusted = false;
+      }
     }
+    // Team snaps the folder pins: shown against the installed user snap, never switched off.
+    for u in &mut user {
+      u.lock = lock.team_status(u);
+    }
+  }
+  for u in &mut user {
+    u.overridden = repo.iter().any(|r| r.id == u.id && r.trusted && r.error.is_none());
   }
   user.extend(repo);
   user
@@ -655,6 +905,9 @@ pub struct TrustEntry {
   pub root: PathBuf,
   pub id: String,
   pub sha256: String,
+  /// The permissions the user approved with this hash, so a later approval can show what grew.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub permissions: Option<Permissions>,
 }
 
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq)]
@@ -680,10 +933,20 @@ impl TrustData {
 
   /// Trusts exactly this manifest (`Some(hash)`), or revokes trust (`None`).
   pub fn set(&mut self, root: &Path, id: &str, sha256: Option<&str>) {
+    self.set_with(root, id, sha256, None);
+  }
+
+  /// `set`, remembering the permissions that were approved with the hash.
+  pub fn set_with(&mut self, root: &Path, id: &str, sha256: Option<&str>, permissions: Option<Permissions>) {
     self.trusted.retain(|t| !(t.root == root && t.id == id));
     if let Some(sha256) = sha256 {
-      self.trusted.push(TrustEntry { root: root.to_path_buf(), id: id.to_string(), sha256: sha256.to_string() });
+      self.trusted.push(TrustEntry { root: root.to_path_buf(), id: id.to_string(), sha256: sha256.to_string(), permissions });
     }
+  }
+
+  /// What the user last approved for this repo snap, whatever its hash was then.
+  pub fn approved_permissions(&self, root: &Path, id: &str) -> Option<&Permissions> {
+    self.trusted.iter().find(|t| t.root == root && t.id == id).and_then(|t| t.permissions.as_ref())
   }
 }
 
@@ -708,7 +971,7 @@ pub fn set_trust(config_dir: &Path, root: &Path, id: &str, trusted: bool, expect
     if expected.is_some_and(|h| h != snap.hash) {
       return Err(tr!(SnapMsg::TrustChanged, manifest = MANIFEST, id));
     }
-    data.set(root, id, Some(&snap.hash));
+    data.set_with(root, id, Some(&snap.hash), Some(snap.permissions.clone()));
   } else {
     data.set(root, id, None);
   }
@@ -966,7 +1229,7 @@ env = { GOFLAGS = "-mod=mod" }
   fn parses_a_full_manifest() {
     let p = parse_manifest(FULL, "go").unwrap();
     assert_eq!((p.id.as_str(), p.name.as_str(), p.version.as_str()), ("go", "Go", "0.1.0"));
-    assert_eq!(p.permissions, Permissions { network: false, fs: FsAccess::Worktree, secrets: vec!["GITHUB_TOKEN".into()] });
+    assert_eq!(p.permissions, Permissions { network: false, fs: FsAccess::Worktree, secrets: vec!["GITHUB_TOKEN".into()], ..Permissions::default() });
     assert_eq!(p.tasks.len(), 2);
     assert_eq!(p.tasks[0].command, ["go", "test", "${setting:testFlags}", "./..."]);
     assert_eq!(p.settings[0].default, serde_json::json!("-race"));
@@ -976,6 +1239,35 @@ env = { GOFLAGS = "-mod=mod" }
     // Serialized for the webview the way snapModel.ts reads it.
     let json = serde_json::to_value(&p.settings[0]).unwrap();
     assert_eq!(json, serde_json::json!({ "key": "testFlags", "type": "string", "default": "-race", "description": "flags for go test" }));
+  }
+
+  #[test]
+  fn validates_the_permission_scopes() {
+    let with = |p: &str| parse_manifest(&format!("id = \"x\"\nname = \"X\"\nversion = \"0\"\n[permissions]\n{p}\n"), "x");
+    let p = with("network = true\nhosts = [\"api.github.com\", \"*.npmjs.org:443\"]\nread = [\"~/.cargo\"]\nwrite = [\"/opt/cache/\"]\nprocesses = [\"go\", \"/usr/bin/make\"]\nenv = [\"GOPATH\"]\nsecrets = [\"API_KEY\"]").unwrap().permissions;
+    assert_eq!(p.hosts, ["api.github.com", "*.npmjs.org:443"]);
+    assert_eq!((p.read.len(), p.write.len(), p.processes.len(), p.env.len()), (1, 1, 2, 1));
+    // Empty lists are left out of the JSON (and of what the team server stores).
+    assert_eq!(serde_json::to_value(Permissions::default()).unwrap(), serde_json::json!({ "network": false, "fs": "worktree", "secrets": [] }));
+    assert!(with("hosts = [\"a.com\"]").unwrap_err().contains("network = true"));
+    for bad in [
+      "network = true\nhosts = [\"https://a.com\"]",
+      "network = true\nhosts = [\"localhost\"]",
+      "network = true\nhosts = [\"a.com:99999\"]",
+      "network = true\nhosts = [\"A.com\"]",
+      "read = [\"~\"]",
+      "read = [\"relative/x\"]",
+      "write = [\"/\"]",
+      "write = [\"~/../etc\"]",
+      "processes = [\"-rf\"]",
+      "processes = [\"a b\"]",
+      "env = [\"1X\"]",
+      "secrets = [\"A-B\"]",
+    ] {
+      assert!(with(bad).is_err(), "{bad}");
+    }
+    let many = (0..65).map(|i| format!("\"V{i}\"")).collect::<Vec<_>>().join(",");
+    assert!(with(&format!("env = [{many}]")).unwrap_err().contains("more than 64"));
   }
 
   #[test]

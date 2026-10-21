@@ -30,6 +30,7 @@ import {
 	installSummary,
 	isActive,
 	isUpdatable,
+	lockReportText,
 	mcpServersOf,
 	runnableTasks,
 	SANDBOX_SETTING,
@@ -43,6 +44,7 @@ import {
 	touchesRepoSnaps,
 	trustSummary,
 	updateSummary,
+	type LockReport,
 	type McpServerSpec,
 	type PreparedInstall,
 	type SandboxInfo,
@@ -90,6 +92,17 @@ class Snaps {
 	async trust(id: string, on: boolean) {
 		const snap = this.list.find((s) => s.id === id && s.source === 'repo');
 		if (!snap) return;
+		// Differs from snaps.lock: trusting it means approving this version into the lock.
+		if (on && snap.lock === 'changed') {
+			try {
+				await invoke('snap_lock_approve', { id, hash: snap.hash });
+				status.flash(t('snapPlatform.approved', { name: snap.name }));
+			} catch (e) {
+				notifications.error(t('snapPlatform.approveFailed', { name: snap.name, error: String(e) }));
+			}
+			await this.load();
+			return;
+		}
 		try {
 			await invoke('snap_trust', { id, trusted: on, hash: on ? snap.hash : null });
 			status.flash(on ? t('tools.snaps.trusted', { name: snap.name }) : t('tools.snaps.untrusted', { name: snap.name }));
@@ -203,6 +216,21 @@ class Snaps {
 			notifications.error(t('tools.snaps.lockFailed', { error: String(e) }));
 		}
 		await this.load();
+	}
+
+	/** Snap: Verify snaps.lock — every pinned snap against what is here, with the files that changed. */
+	async verifyLock() {
+		if (!workspace.root) {
+			status.flash(t('tools.snaps.openFolderFirst'));
+			return;
+		}
+		try {
+			const rows = await invoke<LockReport[]>('snap_lock_verify');
+			const bad = rows.some((r) => r.status !== 'locked');
+			await message(lockReportText(rows), { title: t('snapPlatform.verify.title'), kind: bad ? 'warning' : 'info' });
+		} catch (e) {
+			notifications.error(t('snapPlatform.verify.failed', { error: String(e) }));
+		}
 	}
 
 	/** Trust from a row of the Snaps view: the same review as the details page, as a native confirm. */
@@ -502,6 +530,7 @@ export function installSnaps(): () => void {
 		commands.register({ id: 'snap.new', title: 'New Snap…', category: 'Snap', run: () => snaps.newSnap() }),
 		commands.register({ id: 'snap.approveForTeam', title: 'Approve Snap for Team…', category: 'Snap', when: () => canApprove(snaps.teamCatalog?.role), run: () => snaps.approveForTeam() }),
 		commands.register({ id: 'snap.lock', title: 'Write snaps.lock', category: 'Snap', when: () => workspace.root !== null, run: () => snaps.lock() }),
+		commands.register({ id: 'snap.verifyLock', title: 'Verify snaps.lock', category: 'Snap', when: () => workspace.root !== null, run: () => snaps.verifyLock() }),
 		// VS Code's Extensions view key.
 		commands.register({ id: 'workbench.view.snaps', title: 'Show Snaps', category: 'View', key: 'cmd+shift+x', run: () => ((layout.sideView = 'snaps'), (layout.sidebarVisible = true)) })
 	];

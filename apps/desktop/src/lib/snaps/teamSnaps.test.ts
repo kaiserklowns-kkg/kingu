@@ -30,6 +30,8 @@ function snap(over: Partial<SnapInfo> = {}): SnapInfo {
 		settings: [],
 		mcp: [],
 		skills: [],
+		scripts: [],
+		approved_permissions: null,
 		origin: { url: 'https://github.com/acme/go.git', ref: 'main', commit: C1, path: null, installed_at: 1 },
 		lock: null,
 		...over
