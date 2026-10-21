@@ -91,7 +91,16 @@ export const isWorkspaceTextFile = (key: string) => !isExternalKey(key) && !isOu
 
 /** `readonly`: the file's permissions say it cannot be written (files.readonlyFromPermissions). */
 export type FileStat = { mtime: number; size: number; hash: string; readonly?: boolean };
-export type ReadOptions = { encoding?: string; defaultEncoding?: string; autoGuess?: boolean; acceptBinary?: boolean; acceptLarge?: boolean; largeFileLimit?: number };
+export type ReadOptions = {
+	encoding?: string;
+	defaultEncoding?: string;
+	autoGuess?: boolean;
+	/** `files.candidateGuessEncodings`: the encodings a guess may give (empty: any). */
+	candidateGuessEncodings?: string[];
+	acceptBinary?: boolean;
+	acceptLarge?: boolean;
+	largeFileLimit?: number;
+};
 export type TextRead =
 	| { kind: 'text'; content: string; encoding: string; lossy: boolean; stat?: FileStat }
 	| { kind: 'binary'; size: number }

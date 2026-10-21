@@ -258,5 +258,105 @@ export const WORKBENCH_SETTINGS: SettingSchema[] = [
 		default: '',
 		description: 'เบราว์เซอร์ที่ใช้เปิดลิงก์ http/https เช่น chrome, edge, firefox หรือ path เต็มของโปรแกรม เว้นว่างใช้เบราว์เซอร์เริ่มต้นของระบบ (Configure the browser to use for opening http or https links externally. This can either be the name of the browser (`edge`, `chrome`, `firefox`) or an absolute path to the browser\'s executable. Will use the system default if not set.)',
 		scope: 'application'
+	},
+	{
+		id: 'workbench.notifications.showInTitleBar',
+		group: 'Workbench',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงปุ่มการแจ้งเตือนในแถบชื่อเรื่อง เมื่อการแจ้งเตือนอยู่มุมขวาบน (Controls the visibility of the Notifications button in the title bar. Only applies when notifications are positioned at the top right.)'
+	},
+	{
+		id: 'workbench.list.multiSelectModifier',
+		group: 'Workbench',
+		type: 'string',
+		default: 'ctrlCmd',
+		enum: ['ctrlCmd', 'alt'],
+		enumDescriptions: [
+			'Command บน macOS, Control บน Windows/Linux (Maps to `Control` on Windows and Linux and to `Command` on macOS.)',
+			'Option บน macOS, Alt บน Windows/Linux (Maps to `Alt` on Windows and Linux and to `Option` on macOS.)'
+		],
+		description: 'ปุ่มที่กดค้างขณะคลิกเพื่อเลือกหลายรายการใน list และ tree ส่วนปุ่มอีกตัวใช้เปิดไฟล์ด้านข้าง (The modifier to be used to add an item in trees and lists to a multi-selection with the mouse (for example in the explorer, open editors and scm view). The \'Open to Side\' mouse gestures - if supported - will adapt such that they do not conflict with the multiselect modifier.)'
+	},
+	{
+		id: 'workbench.list.openMode',
+		group: 'Workbench',
+		type: 'string',
+		default: 'singleClick',
+		enum: ['singleClick', 'doubleClick'],
+		description: 'เปิดรายการใน list และ tree ด้วยคลิกเดียวหรือดับเบิลคลิก (Controls how to open items in trees and lists using the mouse (if supported). Note that some trees and lists might choose to ignore this setting if it is not applicable.)'
+	},
+	{
+		id: 'workbench.list.horizontalScrolling',
+		group: 'Workbench',
+		type: 'boolean',
+		default: false,
+		description: 'ให้ list และ tree เลื่อนแนวนอนได้ แทนการตัดชื่อที่ยาว (Controls whether lists and trees support horizontal scrolling in the workbench. Warning: turning on this setting has a performance implication.)'
+	},
+	{
+		id: 'workbench.list.mouseWheelScrollSensitivity',
+		group: 'Workbench',
+		type: 'number',
+		default: 1,
+		description: 'ตัวคูณระยะเลื่อนของล้อเมาส์ใน list และ tree (A multiplier to be used on the `deltaX` and `deltaY` of mouse wheel scroll events.)'
+	},
+	{
+		id: 'workbench.list.fastScrollSensitivity',
+		group: 'Workbench',
+		type: 'number',
+		default: 5,
+		description: 'ตัวคูณความเร็วเลื่อนเมื่อกด Alt ค้างใน list และ tree (Scrolling speed multiplier when pressing `Alt`.)'
+	},
+	{
+		id: 'workbench.tree.expandMode',
+		group: 'Workbench',
+		type: 'string',
+		default: 'singleClick',
+		enum: ['singleClick', 'doubleClick'],
+		description: 'ขยายโฟลเดอร์ใน tree ด้วยคลิกเดียวหรือดับเบิลคลิก (คลิกที่ลูกศรขยายได้เสมอ) (Controls how tree folders are expanded when clicking the folder names. Note that some trees and lists might choose to ignore this setting if it is not applicable.)'
+	},
+	{
+		id: 'workbench.tree.renderIndentGuides',
+		group: 'Workbench',
+		type: 'string',
+		default: 'onHover',
+		enum: ['none', 'onHover', 'always'],
+		description: 'แสดงเส้นนำระดับย่อหน้าใน tree: ไม่แสดง เมื่อชี้เมาส์ หรือตลอดเวลา (Controls whether the tree should render indent guides.)'
+	},
+	{
+		id: 'workbench.view.alwaysShowHeaderActions',
+		group: 'Workbench',
+		type: 'boolean',
+		default: false,
+		description: 'แสดงปุ่มบนหัวของมุมมองตลอดเวลา แทนที่จะแสดงเมื่อชี้เมาส์หรือโฟกัส (Controls the visibility of view header actions. View header actions may either be always visible, or only visible when that view is focused or hovered over.)'
+	},
+	{
+		id: 'workbench.colorCustomizations',
+		group: 'Workbench',
+		type: 'json',
+		schema: { type: 'object' },
+		default: {},
+		description: 'แทนที่สีของธีมที่ใช้อยู่ เช่น {"editor.background": "#1e1e1e"} หรือเฉพาะธีม {"[Kingu Dark]": {...}} (Overrides colors from the currently selected color theme.)'
+	},
+	{
+		id: 'workbench.iconTheme',
+		group: 'Workbench',
+		type: 'json',
+		// VS Code lists the installed icon themes; Kingu has its own one (`vs-seti`) or none.
+		schema: { type: ['null', 'string'], enum: [null, 'vs-seti'] },
+		default: 'vs-seti',
+		description: 'ชุดไอคอนไฟล์ของ workbench (null = ไม่แสดงไอคอนไฟล์) (Specifies the file icon theme used in the workbench or \'null\' to not show any file icons.)'
+	},
+	{
+		id: 'workbench.settings.settingsSearchTocBehavior',
+		group: 'Workbench',
+		type: 'string',
+		default: 'filter',
+		enum: ['hide', 'filter'],
+		enumDescriptions: [
+			'ซ่อนสารบัญขณะค้นหา (Hide the Table of Contents while searching.)',
+			'แสดงเฉพาะหมวดที่มีผลลัพธ์ คลิกหมวดเพื่อดูเฉพาะผลในหมวดนั้น (Filter the Table of Contents to just categories that have matching settings. Clicking on a category will filter the results to that category.)'
+		],
+		description: 'สารบัญของหน้าการตั้งค่าขณะค้นหา (Controls the behavior of the Settings editor Table of Contents while searching. If this setting is being changed in the Settings editor, the setting will take effect after the search query is modified.)'
 	}
 ];

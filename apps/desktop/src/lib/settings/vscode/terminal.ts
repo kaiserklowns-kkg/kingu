@@ -480,5 +480,131 @@ export const TERMINAL_SETTINGS: SettingSchema[] = [
 			'ดับเบิลคลิก (Focus the terminal when double-clicking a terminal tab)'
 		],
 		description: 'คลิกครั้งเดียวหรือดับเบิลคลิกที่รายการเพื่อโฟกัส terminal (Controls whether focusing the terminal of a tab happens on double or single click.)'
+	},
+	{
+		id: 'terminal.integrated.rescaleOverlappingGlyphs',
+		group: 'Terminal',
+		type: 'boolean',
+		default: true,
+		description: 'ย่อตัวอักษรกว้างหนึ่งช่องที่ล้นไปทับช่องถัดไปให้พอดี (Whether to rescale glyphs horizontally that are a single cell wide but have glyphs that would overlap following cell(s). This typically happens for ambiguous width characters (eg. the roman numeral characters U+2160+) which aren\'t featured in monospace fonts. Emoji glyphs are never rescaled.)'
+	},
+	{
+		id: 'terminal.integrated.customGlyphs',
+		group: 'Terminal',
+		type: 'boolean',
+		default: true,
+		description: 'วาดตัวอักษรเส้นกรอบ block และ Powerline เองแทนการใช้ฟอนต์ ให้เส้นต่อกันสนิท (Whether to draw custom glyphs instead of using the font for box drawing, block elements, braille patterns, Powerline symbols and the other ranges xterm.js draws itself. This will typically result in better rendering with continuous lines, even when line height and letter spacing is used.)'
+	},
+	{
+		id: 'terminal.integrated.defaultProfile.osx',
+		group: 'Terminal',
+		type: 'json',
+		schema: { type: ['null', 'string'] },
+		default: null,
+		description: 'ชื่อโปรไฟล์ terminal ที่ใช้เริ่มต้นบน macOS (จาก terminal.integrated.profiles.osx) null = $SHELL (The default terminal profile on macOS.)',
+		scope: 'application'
+	},
+	{
+		id: 'terminal.integrated.defaultProfile.linux',
+		group: 'Terminal',
+		type: 'json',
+		schema: { type: ['null', 'string'] },
+		default: null,
+		description: 'ชื่อโปรไฟล์ terminal ที่ใช้เริ่มต้นบน Linux (จาก terminal.integrated.profiles.linux) null = $SHELL (The default terminal profile on Linux.)',
+		scope: 'application'
+	},
+	{
+		id: 'terminal.integrated.profiles.osx',
+		group: 'Terminal',
+		type: 'json',
+		schema: {
+			type: 'object',
+			additionalProperties: {
+				anyOf: [
+					{ type: 'null' },
+					{
+						type: 'object',
+						properties: {
+							path: { type: ['string', 'array'], items: { type: 'string' } },
+							args: { type: 'array', items: { type: 'string' } },
+							env: { type: 'object', additionalProperties: { type: ['string', 'null'] } },
+							overrideName: { type: 'boolean' },
+							icon: { type: 'string' },
+							color: { type: 'string' }
+						}
+					}
+				]
+			}
+		},
+		default: {
+			bash: { path: 'bash', args: ['-l'], icon: 'terminal-bash' },
+			zsh: { path: 'zsh', args: ['-l'] },
+			fish: { path: 'fish', args: ['-l'] },
+			tmux: { path: 'tmux', icon: 'terminal-tmux' },
+			pwsh: { path: 'pwsh', icon: 'terminal-powershell' }
+		},
+		description: 'โปรไฟล์ terminal บน macOS: path (ชื่อที่หาใน PATH หรือ path เต็ม หรือรายการที่ลองตามลำดับ) args และ env (A set of terminal profile customizations for Mac which allows adding, removing or changing how terminals are launched. Profiles are made up of a mandatory path, optional arguments and other presentation options.\n\nTo override an existing profile use its profile name as the key, for example:\n\n```json\n"terminal.integrated.profile.osx": {\n  "bash": null\n}\n```\n\n[Read more about configuring profiles](https://code.visualstudio.com/docs/terminal/profiles).)',
+		scope: 'application'
+	},
+	{
+		id: 'terminal.integrated.profiles.linux',
+		group: 'Terminal',
+		type: 'json',
+		schema: {
+			type: 'object',
+			additionalProperties: {
+				anyOf: [
+					{ type: 'null' },
+					{
+						type: 'object',
+						properties: {
+							path: { type: ['string', 'array'], items: { type: 'string' } },
+							args: { type: 'array', items: { type: 'string' } },
+							env: { type: 'object', additionalProperties: { type: ['string', 'null'] } },
+							overrideName: { type: 'boolean' },
+							icon: { type: 'string' },
+							color: { type: 'string' }
+						}
+					}
+				]
+			}
+		},
+		default: {
+			bash: { path: 'bash', icon: 'terminal-bash' },
+			zsh: { path: 'zsh' },
+			fish: { path: 'fish' },
+			tmux: { path: 'tmux', icon: 'terminal-tmux' },
+			pwsh: { path: 'pwsh', icon: 'terminal-powershell' }
+		},
+		description: 'โปรไฟล์ terminal บน Linux: path (ชื่อที่หาใน PATH หรือ path เต็ม หรือรายการที่ลองตามลำดับ) args และ env (A set of terminal profile customizations for Linux which allows adding, removing or changing how terminals are launched. Profiles are made up of a mandatory path, optional arguments and other presentation options.\n\nTo override an existing profile use its profile name as the key, for example:\n\n```json\n"terminal.integrated.profile.linux": {\n  "bash": null\n}\n```\n\n[Read more about configuring profiles](https://code.visualstudio.com/docs/terminal/profiles).)',
+		scope: 'application'
+	},
+	{
+		id: 'terminal.integrated.tabs.showActiveTerminal',
+		group: 'Terminal',
+		type: 'string',
+		default: 'singleTerminalOrNarrow',
+		enum: ['always', 'singleTerminal', 'singleTerminalOrNarrow', 'never'],
+		enumDescriptions: [
+			'เสมอ (Always show the active terminal)',
+			'เมื่อมี terminal เดียว (Show the active terminal when it is the only terminal opened)',
+			'เมื่อมี terminal เดียวหรือไม่มีรายการ terminal (Show the active terminal when it is the only terminal opened or when the tabs view is in its narrow textless state)',
+			'ไม่แสดง (Never show the active terminal)'
+		],
+		description: 'แสดงชื่อ terminal ที่ใช้อยู่บนแถบหัว panel (Shows the active terminal information in the view. This is particularly useful when the title within the tabs aren\'t visible.)'
+	},
+	{
+		id: 'terminal.integrated.tabs.showActions',
+		group: 'Terminal',
+		type: 'string',
+		default: 'singleTerminalOrNarrow',
+		enum: ['always', 'singleTerminal', 'singleTerminalOrNarrow', 'never'],
+		enumDescriptions: [
+			'เสมอ (Always show the actions)',
+			'เมื่อมี terminal เดียว (Show the actions when it is the only terminal opened)',
+			'เมื่อมี terminal เดียวหรือไม่มีรายการ terminal (Show the actions when it is the only terminal opened or when the tabs view is in its narrow textless state)',
+			'ไม่แสดง (Never show the actions)'
+		],
+		description: 'แสดงปุ่ม Split และ Kill ข้างปุ่ม terminal ใหม่บนแถบหัว panel (Controls whether terminal split and kill buttons are displays next to the new terminal button.)'
 	}
 ];

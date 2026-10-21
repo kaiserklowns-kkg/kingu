@@ -369,6 +369,32 @@ pub fn split_env(env: BTreeMap<String, Option<String>>) -> (BTreeMap<String, Str
   (set, unset)
 }
 
+/// A terminal profile's `path` candidates (`terminal.integrated.profiles.*`; VS Code tries each in
+/// turn): an absolute path is used as is, a bare name is looked up on `search_path` (the login-shell
+/// PATH). `None` when none is an executable file.
+pub fn resolve_shell(candidates: &[String], search_path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+  candidates.iter().map(|c| c.trim()).filter(|c| !c.is_empty()).find_map(|c| {
+    let path = Path::new(c);
+    if path.is_absolute() {
+      return is_executable(path).then(|| path.to_path_buf());
+    }
+    if c.contains('/') {
+      return None;
+    }
+    search_path.into_iter().flat_map(std::env::split_paths).map(|d| d.join(c)).find(|p| is_executable(p))
+  })
+}
+
+fn is_executable(path: &Path) -> bool {
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    path.metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+  }
+  #[cfg(not(unix))]
+  path.is_file()
+}
+
 /// `terminal.integrated.splitCwd`: where a split terminal starts — the workspace root, the
 /// directory its source terminal started in, or the one that terminal is in now (the default).
 pub fn split_cwd(mode: &str, live: impl FnOnce() -> Option<PathBuf>, initial: impl FnOnce() -> Option<PathBuf>, root: Option<PathBuf>) -> Option<PathBuf> {
@@ -414,7 +440,28 @@ pub fn lang_env(mode: &str, current: Option<&str>, locale: Option<&str>) -> Opti
 mod tests {
   use std::path::{Path, PathBuf};
 
-  use super::{daemon_dir, find_daemon, lang_env, scoped_history_env, split_cwd, terminal_cwd};
+  use super::{daemon_dir, find_daemon, lang_env, resolve_shell, scoped_history_env, split_cwd, terminal_cwd};
+
+  #[cfg(unix)]
+  #[test]
+  fn resolves_profile_paths_absolute_or_on_path() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let sh = bin.join("myshell");
+    std::fs::write(&sh, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&sh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(bin.join("plain"), "x").unwrap();
+    let path = std::env::join_paths([tmp.path().join("none"), bin.clone()]).unwrap();
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    assert_eq!(resolve_shell(&s(&["myshell"]), Some(&path)), Some(sh.clone()));
+    assert_eq!(resolve_shell(&s(&["/nope/zsh", sh.to_str().unwrap()]), None), Some(sh.clone()));
+    assert_eq!(resolve_shell(&s(&["missing", "myshell"]), Some(&path)), Some(sh));
+    assert_eq!(resolve_shell(&s(&["plain"]), Some(&path)), None);
+    assert_eq!(resolve_shell(&s(&["bin/myshell"]), Some(&path)), None);
+    assert_eq!(resolve_shell(&[], Some(&path)), None);
+  }
 
   #[test]
   fn scoped_history_is_per_worktree_and_per_shell() {

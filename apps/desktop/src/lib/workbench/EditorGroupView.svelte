@@ -33,7 +33,7 @@
 	import { scm } from './scm.svelte';
 	import { tabDescription, type LabelFormat } from './tabLabels';
 	import { emptyUntitled } from './editorModels';
-	import type { EditorTab } from './editorGroups';
+	import type { EditorTab, SplitDirection } from './editorGroups';
 	import SettingsEditor from '#lib/settings/SettingsEditor.svelte';
 	import { settings, SETTINGS_EDITOR_KEY, USER_SETTINGS_KEY } from '#lib/settings/settings.svelte.ts';
 	import Board from '#lib/ade/Board.svelte';
@@ -201,6 +201,52 @@
 		editors.moveEditor(from.group, from.path, group, index);
 	}
 
+	// --- A tab dropped on the editor: into this group, or a new group on that edge ---------------
+	// (VS Code's editorDropTarget; the edges only with workbench.editor.splitOnDragAndDrop).
+
+	let splitZone = $state<SplitDirection | 'center' | null>(null);
+
+	/** The edge a drag is over (the outer third on each side), else the center. */
+	function zoneOf(e: DragEvent, el: HTMLElement): SplitDirection | 'center' {
+		if (!settings.get<boolean>('workbench.editor.splitOnDragAndDrop')) return 'center';
+		const r = el.getBoundingClientRect();
+		const x = (e.clientX - r.left) / r.width;
+		const y = (e.clientY - r.top) / r.height;
+		const edges: [SplitDirection, number][] = [
+			['left', x],
+			['right', 1 - x],
+			['up', y],
+			['down', 1 - y]
+		];
+		const [dir, d] = edges.reduce((a, b) => (b[1] < a[1] ? b : a));
+		return d < 1 / 3 ? dir : 'center';
+	}
+
+	function editorDragOver(e: DragEvent) {
+		if (!e.dataTransfer?.types.includes(TAB_MIME)) return;
+		e.preventDefault();
+		e.stopPropagation();
+		e.dataTransfer.dropEffect = 'move';
+		splitZone = zoneOf(e, e.currentTarget as HTMLElement);
+	}
+
+	function editorDragLeave(e: DragEvent) {
+		if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) splitZone = null;
+	}
+
+	function editorDrop(e: DragEvent) {
+		const raw = e.dataTransfer?.getData(TAB_MIME);
+		const zone = splitZone;
+		splitZone = null;
+		if (!raw || !zone) return;
+		e.preventDefault();
+		e.stopPropagation();
+		const from = JSON.parse(raw) as { group: number; path: string };
+		if (zone === 'center') {
+			if (from.group !== group) editors.moveEditor(from.group, from.path, group);
+		} else editors.moveToNewGroup(from.group, from.path, group, zone);
+	}
+
 	// --- Tab context menu (VS Code: MenuId.EditorTitleContext, editorTabsControl.ts) -------------
 
 	let tabMenu = $state<{ x: number; y: number; path: string } | null>(null);
@@ -355,7 +401,7 @@
 							ondragstart={(e) => dragStart(e, tab.path)}
 							ondragover={(e) => dragOver(e, i)}
 							ondrop={(e) => drop(e, i)}
-							ondragend={() => (dropTarget = null)}
+							ondragend={() => ((dropTarget = null), (splitZone = null))}
 							oncontextmenu={(e) => openTabMenu(e, tab.path)}
 							style={size.style}
 							class={[
@@ -484,10 +530,23 @@
 		</nav>
 	{/if}
 
-	<div class="relative min-h-0 flex-1">
+	<div role="presentation" class="relative min-h-0 flex-1" ondragovercapture={editorDragOver} ondragleave={editorDragLeave} ondropcapture={editorDrop}>
 		<div class={['absolute inset-0', (!activePath || diffActive || settingsActive || adeActive || viewerActive || placeholder) && 'invisible']}>
 			<EditorHost {group} />
 		</div>
+		{#if splitZone}
+			<!-- Where a dragged tab lands (VS Code: editorGroup.dropBackground). -->
+			<div
+				class={[
+					'pointer-events-none absolute z-20 bg-[var(--vscode-editorGroup-dropBackground,rgba(83,89,93,0.5))] transition-all duration-100',
+					splitZone === 'center' && 'inset-0',
+					splitZone === 'left' && 'inset-y-0 left-0 w-1/2',
+					splitZone === 'right' && 'inset-y-0 right-0 w-1/2',
+					splitZone === 'up' && 'inset-x-0 top-0 h-1/2',
+					splitZone === 'down' && 'inset-x-0 bottom-0 h-1/2'
+				]}
+			></div>
+		{/if}
 		{#if activePath && emptyUntitled.has(activePath) && settings.get('workbench.editor.empty.hint') === 'text'}
 			<!-- workbench.editor.empty.hint (VS Code's EmptyTextEditorHintContribution) -->
 			<div class="pointer-events-none absolute top-0 left-[64px] z-10 text-[13px] leading-[19px] text-(--vscode-editorGhostText-foreground,var(--vscode-descriptionForeground)) italic">

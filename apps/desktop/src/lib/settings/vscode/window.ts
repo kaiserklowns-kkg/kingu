@@ -151,5 +151,34 @@ export const WINDOW_SETTINGS: SettingSchema[] = [
 		default: true,
 		description: 'กด Alt แล้วปล่อยเพื่อโฟกัสเมนูบาร์ บน Linux และ Windows (Controls whether the menu bar will be focused by pressing the Alt-key. This setting has no effect on toggling the menu bar with the Alt-key.)',
 		scope: 'application'
+	},
+	{
+		id: 'window.closeWhenEmpty',
+		group: 'Window',
+		type: 'boolean',
+		default: false,
+		description: 'ปิดหน้าต่างเมื่อปิด editor ตัวสุดท้าย (เฉพาะหน้าต่างที่ไม่ได้เปิดโฟลเดอร์) (Controls whether closing the last editor should also close the window. This setting only applies for windows that do not show folders.)'
+	},
+	{
+		id: 'window.doubleClickIconToClose',
+		group: 'Window',
+		type: 'boolean',
+		default: false,
+		description: 'ดับเบิลคลิกไอคอนแอปในแถบชื่อเรื่องเพื่อปิดหน้าต่าง และลากหน้าต่างจากไอคอนไม่ได้ (Windows/Linux) (If enabled, this setting will close the window when the application icon in the title bar is double-clicked. The window will not be able to be dragged by the icon. This setting is effective only if `#window.titleBarStyle#` is set to `custom`.)',
+		scope: 'application'
+	},
+	{
+		id: 'window.customTitleBarVisibility',
+		group: 'Window',
+		type: 'string',
+		default: 'auto',
+		enum: ['auto', 'windowed', 'never'],
+		enumDescriptions: [
+			'แสดงตามปกติ (Automatically changes custom title bar visibility.)',
+			'ซ่อนเมื่อเต็มจอ (Hide custom titlebar in full screen. When not in full screen, automatically change custom title bar visibility.)',
+			'ซ่อนเมื่อเต็มจอ (แถบชื่อเรื่องของ Kingu แสดงเสมอนอกโหมดเต็มจอ) (Hide custom titlebar when `#window.titleBarStyle#` is set to `native`.)'
+		],
+		description: 'เมื่อใดที่แสดงแถบชื่อเรื่องของ Kingu (Adjust when the custom title bar should be shown. The custom title bar can be hidden when in full screen mode with `windowed`. The custom title bar can only be hidden in non full screen mode with `never` when `#window.titleBarStyle#` is set to `native`.)',
+		scope: 'application'
 	}
 ];

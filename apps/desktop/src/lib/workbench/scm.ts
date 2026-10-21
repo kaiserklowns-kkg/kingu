@@ -29,6 +29,8 @@ export type GitStatus = {
 	/** A merge, rebase, cherry-pick or revert stopped half-way (usually on conflicts). */
 	operation?: GitOperation | null;
 	entries: StatusEntry[];
+	/** The repository is in a parent folder of the open folder (`git.openRepositoryInParentFolders`). */
+	in_parent?: boolean;
 };
 
 export type GitOperation = 'merge' | 'rebase' | 'cherry-pick' | 'revert';

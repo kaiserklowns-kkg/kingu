@@ -4,8 +4,15 @@ import { renderWindowTitle, DEFAULT_TITLE_MAC, DEFAULT_TITLE_OTHER } from './tit
 import {
 	activityBarMetrics,
 	activityClickHides,
+	bellPlacement,
+	closesWhenEmpty,
+	colorCustomizationsFor,
+	customTitleBarShown,
 	editorTabHeight,
 	fontSmoothing,
+	indentGuideOffsets,
+	isMultiSelect,
+	isOpenToSide,
 	menuBarShown,
 	nativeWindowTheme,
 	notificationsCorner,
@@ -14,7 +21,9 @@ import {
 	recordCommand,
 	reducedMotion,
 	restoredInput,
+	rowClick,
 	themeSettingFor,
+	wheelDelta,
 	withRecentFirst
 } from './workbenchOptions';
 
@@ -141,5 +150,60 @@ describe('window.title variables', () => {
 		expect(renderWindowTitle(DEFAULT_TITLE_MAC, ctx)).toBe('main.ts — kingu');
 		expect(renderWindowTitle(DEFAULT_TITLE_OTHER, ctx)).toBe('● main.ts — kingu — Kingu');
 		expect(renderWindowTitle('${activeEditorLanguageId}${separator}${activeEditorState}', ctx)).toBe('typescript — Modified');
+	});
+});
+
+describe('lists, trees and the window', () => {
+	test('workbench.list.multiSelectModifier and open to side', () => {
+		const e = (m: Partial<Record<'metaKey' | 'ctrlKey' | 'altKey', boolean>>) => ({ metaKey: false, ctrlKey: false, altKey: false, ...m });
+		expect(isMultiSelect(e({ metaKey: true }), 'ctrlCmd', true)).toBe(true);
+		expect(isMultiSelect(e({ ctrlKey: true }), 'ctrlCmd', false)).toBe(true);
+		expect(isMultiSelect(e({ altKey: true }), 'ctrlCmd', true)).toBe(false);
+		expect(isOpenToSide(e({ altKey: true }), 'ctrlCmd', true)).toBe(true);
+		expect(isMultiSelect(e({ altKey: true }), 'alt', true)).toBe(true);
+		expect(isOpenToSide(e({ metaKey: true }), 'alt', true)).toBe(true);
+		expect(isOpenToSide(e({ ctrlKey: true }), 'alt', false)).toBe(true);
+	});
+
+	test('workbench.list.openMode / workbench.tree.expandMode', () => {
+		const click = (isDir: boolean, detail: number, mode: 'singleClick' | 'doubleClick') => rowClick({ isDir, detail, openMode: mode, expandMode: mode });
+		expect(click(false, 1, 'singleClick')).toBe('open');
+		expect(click(true, 1, 'singleClick')).toBe('toggle');
+		// The second click of a double click does not toggle a folder back in singleClick mode.
+		expect(click(true, 2, 'singleClick')).toBe('select');
+		expect(click(false, 1, 'doubleClick')).toBe('select');
+		expect(click(true, 1, 'doubleClick')).toBe('select');
+		expect(click(true, 2, 'doubleClick')).toBe('toggle');
+	});
+
+	test('indent guides and wheel sensitivity', () => {
+		expect(indentGuideOffsets(0, 8)).toEqual([]);
+		expect(indentGuideOffsets(2, 8)).toEqual([16, 24]);
+		expect(wheelDelta({ x: 0, y: 10 }, false, 1, 5)).toBeNull();
+		expect(wheelDelta({ x: 0, y: 10 }, true, 1, 5)).toEqual({ x: 0, y: 50 });
+		expect(wheelDelta({ x: 2, y: 10 }, false, 2, 5)).toEqual({ x: 4, y: 20 });
+	});
+
+	test('notifications bell, custom title bar and closeWhenEmpty', () => {
+		expect(bellPlacement('bottom-right', true)).toBe('statusRight');
+		expect(bellPlacement('bottom-left', false)).toBe('statusLeft');
+		expect(bellPlacement('top-right', true)).toBe('titleBar');
+		expect(bellPlacement('top-right', false)).toBe('none');
+		expect(customTitleBarShown('auto', true)).toBe(true);
+		expect(customTitleBarShown('windowed', true)).toBe(false);
+		expect(customTitleBarShown('windowed', false)).toBe(true);
+		expect(customTitleBarShown('never', false)).toBe(true);
+		expect(closesWhenEmpty(true, { hadEditors: true, editors: 0, folderOpen: false })).toBe(true);
+		expect(closesWhenEmpty(true, { hadEditors: true, editors: 0, folderOpen: true })).toBe(false);
+		expect(closesWhenEmpty(true, { hadEditors: false, editors: 0, folderOpen: false })).toBe(false);
+		expect(closesWhenEmpty(false, { hadEditors: true, editors: 0, folderOpen: false })).toBe(false);
+	});
+
+	test('workbench.colorCustomizations: top level, then the blocks naming the theme', () => {
+		const custom = { 'editor.background': '#111111', '[Kingu Dark]': { 'editor.background': '#222222' }, '[*Light*][Other]': { 'sideBar.background': '#ffffff' }, bad: 3 };
+		expect(colorCustomizationsFor(custom, 'Kingu Dark')).toEqual({ 'editor.background': '#222222' });
+		expect(colorCustomizationsFor(custom, 'Kingu Light')).toEqual({ 'editor.background': '#111111', 'sideBar.background': '#ffffff' });
+		expect(colorCustomizationsFor(null, 'Kingu Dark')).toEqual({});
+		expect(colorCustomizationsFor([], 'Kingu Dark')).toEqual({});
 	});
 });

@@ -7,6 +7,7 @@ import { setActiveTheme } from './current';
 import { chromeVariables, resolveColor, terminalTheme } from './colors';
 import { findTheme, isDarkType, loadTheme, type ThemeInfo } from './themes';
 import type { FlatTheme } from '../editor/textmate/theme';
+import { colorCustomizationsFor } from '../workbench/workbenchOptions';
 
 // Lazy chunks: only the selected theme's include chain is fetched.
 const sources = import.meta.glob<string>('../editor/textmate/themes/*.json', { query: '?raw', import: 'default' });
@@ -54,6 +55,20 @@ class ThemeService {
 	/** Last fully applied theme id and its load sequence (skips re-applying the same theme). */
 	private applied = '';
 	private appliedSeq = -1;
+	/** `workbench.colorCustomizations`, on top of whichever theme is applied. */
+	private custom: unknown = {};
+	private customKey = '{}';
+
+	/** Sets `workbench.colorCustomizations`; the current theme is applied again when they changed. */
+	setCustomizations(custom: unknown) {
+		const key = JSON.stringify(custom ?? {});
+		if (key === this.customKey) return;
+		this.custom = custom;
+		this.customKey = key;
+		const id = this.applied;
+		this.applied = '';
+		if (id) void this.apply(id);
+	}
 
 	constructor() {
 		// Last session's variables, so a light theme does not flash dark while settings load.
@@ -70,8 +85,10 @@ class ThemeService {
 		const info = findTheme(id);
 		if (info.id === this.applied && this.seq === this.appliedSeq) return;
 		const seq = ++this.seq;
-		const flat = await flatTheme(info);
+		const base = await flatTheme(info);
 		if (seq !== this.seq) return;
+		const custom = colorCustomizationsFor(this.custom, info.id);
+		const flat = Object.keys(custom).length ? { ...base, colors: { ...base.colors, ...custom } } : base;
 		const applied: Applied = { vars: chromeVariables(flat.colors, info.type), dark: isDarkType(info.type) };
 		writeVariables(applied);
 		this.applied = info.id;

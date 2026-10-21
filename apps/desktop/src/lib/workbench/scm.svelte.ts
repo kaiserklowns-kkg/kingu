@@ -58,6 +58,19 @@ import { t } from '#lib/i18n/index.ts';
 
 const get = <T>(id: string) => settings.get<T>(id);
 
+let missingGitWarned = false;
+/** VS Code's "Git not found" warning, once a session, unless `git.ignoreMissingGitWarning`. */
+async function warnMissingGit() {
+	if (missingGitWarned || get<boolean>('git.ignoreMissingGitWarning') || get<boolean>('git.enabled') === false) return;
+	const probe = await invoke<{ version: string | null; hasRepository: boolean }>('git_probe').catch(() => null);
+	if (!probe || probe.version !== null || !probe.hasRepository) return;
+	missingGitWarned = true;
+	const [download, never] = [t('workbench.scm.downloadGit'), t('workbench.scm.dontShowAgain')];
+	const pick = await notifications.prompt('warning', t('workbench.scm.gitNotFound'), [download, never], { source: 'Git' });
+	if (pick === download) void invoke('open_web_url', { url: 'https://git-scm.com/downloads' }).catch(() => {});
+	else if (pick === never) void settings.set('git.ignoreMissingGitWarning', true, 'user');
+}
+
 /** Unsaved editors that are files of the open folder (not untitled, diffs or Kingu's own files). */
 const dirtyRepoFiles = () => editors.dirtyPaths().filter((p) => !isUntitled(p) && !isDiffKey(p) && !p.includes(':') && !p.startsWith('/'));
 
@@ -78,6 +91,8 @@ class Scm {
 	#inflight: Promise<void> | null = null;
 	#again = false;
 	#limitWarned = false;
+	/** `git.openRepositoryInParentFolders: prompt`: the answer for each folder this session. */
+	#parentAnswer = new Map<string, 'open' | 'asked'>();
 
 	/** Coalesces overlapping calls: at most one read in flight plus one queued. */
 	refresh(): Promise<void> {
@@ -91,7 +106,7 @@ class Scm {
 				try {
 					this.disabled = get<boolean>('git.enabled') === false;
 					const read = this.disabled ? null : await invoke<GitStatus | null>('git_status', { options: statusOptions(get) });
-					this.repo = read && this.#limit(read);
+					this.repo = read && this.#openParent(read) ? this.#limit(read) : null;
 					status.branch = this.repo ? (this.repo.branch ?? this.repo.head) : null;
 				} catch (e) {
 					clientLog('error', `git status: ${e}`);
@@ -101,6 +116,33 @@ class Scm {
 			this.#inflight = null;
 		})();
 		return this.#inflight;
+	}
+
+	/**
+	 * `git.openRepositoryInParentFolders`: whether a repository found above the open folder is
+	 * used. `prompt` asks once per folder (VS Code's Yes / Always / Never notification); until the
+	 * answer is Yes the folder has no repository.
+	 */
+	#openParent(read: GitStatus): boolean {
+		if (!read.in_parent) return true;
+		const mode = get<string>('git.openRepositoryInParentFolders');
+		if (mode === 'always') return true;
+		if (mode === 'never') return false;
+		const root = workspace.root ?? '';
+		const answer = this.#parentAnswer.get(root);
+		if (answer === 'open') return true;
+		if (!answer) {
+			this.#parentAnswer.set(root, 'asked');
+			const [yes, always, never] = [t('workbench.scm.parentYes'), t('workbench.scm.parentAlways'), t('workbench.scm.parentNever')];
+			void notifications.prompt('info', t('workbench.scm.parentRepository'), [yes, always, never], { source: 'Git' }).then((pick) => {
+				if (pick === yes || pick === always) {
+					this.#parentAnswer.set(root, 'open');
+					void this.refresh();
+				}
+				if (pick === always || pick === never) void settings.set('git.openRepositoryInParentFolders', pick === always ? 'always' : 'never', 'user');
+			});
+		}
+		return false;
 	}
 
 	/** `git.statusLimit`, warning once unless `git.ignoreLimitWarning`. */
@@ -594,15 +636,16 @@ export function installScm(): () => void {
 			if (now < dirty && get<boolean>('git.autorefresh')) void scm.refresh();
 			dirty = now;
 		});
-		// git.enabled, git.similarityThreshold, git.ignoreSubmodules, git.statusLimit: re-read.
+		// git.enabled, git.similarityThreshold, git.ignoreSubmodules, git.statusLimit, git.openRepositoryInParentFolders: re-read.
 		$effect(() => {
-			for (const id of ['git.enabled', 'git.similarityThreshold', 'git.ignoreSubmodules', 'git.statusLimit']) void get(id);
+			for (const id of ['git.enabled', 'git.similarityThreshold', 'git.ignoreSubmodules', 'git.statusLimit', 'git.openRepositoryInParentFolders']) void get(id);
 			void scm.refresh();
 		});
-		// git.path: Rust re-reads it from the user settings file.
+		// git.path: Rust re-reads it from the user settings file; then VS Code's warning when git
+		// cannot run in a folder with a repository (unless git.ignoreMissingGitWarning).
 		$effect(() => {
 			void get('git.path');
-			if (settings.loaded) void invoke('git_reload_path').then(() => scm.refresh()).catch(() => {});
+			if (settings.loaded) void invoke('git_reload_path').then(() => (void scm.refresh(), warnMissingGit())).catch(() => {});
 		});
 		// git.autofetch every git.autofetchPeriod seconds while a repository with a remote is open.
 		$effect(() => {

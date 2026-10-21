@@ -92,6 +92,7 @@ export function readOptions(path: string, extra: ReadOptions = {}): ReadOptions 
 	return {
 		defaultEncoding: settings.get<string>('files.encoding'),
 		autoGuess: settings.get<boolean>('files.autoGuessEncoding'),
+		candidateGuessEncodings: settings.get<string[]>('files.candidateGuessEncodings').filter((e) => typeof e === 'string'),
 		// workbench.editorLargeFileConfirmation is in MB.
 		largeFileLimit: Math.round(settings.get<number>('workbench.editorLargeFileConfirmation') * 1024 * 1024),
 		...textFileHooks.readOptions(path),
@@ -307,7 +308,9 @@ export async function saveAs(path: string): Promise<string | null> {
 		saved = await invoke<SavedAs | null>('fs_save_as', {
 			content: text,
 			name: suggestedName(path, text),
-			dir: !isUntitled(path) && slash > 0 ? path.slice(0, slash) : null
+			dir: !isUntitled(path) && slash > 0 ? path.slice(0, slash) : null,
+			// files.dialog.defaultPath: where the dialog starts when no folder is open.
+			defaultPath: settings.get<string>('files.dialog.defaultPath').trim() || null
 		});
 	} catch (e) {
 		notifications.error(t('workbench.editorModels.saveAsFailed', { error: String(e) }));

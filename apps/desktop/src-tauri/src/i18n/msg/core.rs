@@ -69,6 +69,10 @@ crate::i18n::messages! {
       en: "The daemon's folder is not known yet",
       th: "ยังไม่รู้โฟลเดอร์ของ daemon",
     },
+    ProfileShellMissing {
+      en: "The terminal profile's shell was not found: {paths}",
+      th: "ไม่พบ shell ของโปรไฟล์ terminal: {paths}",
+    },
     // terminal_links.rs, system.rs
     SchemeNotAllowed {
       en: "{scheme}: not in terminal.integrated.allowedLinkSchemes",

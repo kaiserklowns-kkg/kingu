@@ -333,6 +333,158 @@
 				"คลิกครั้งเดียว",
 				"ดับเบิลคลิก"
 			]
+		},
+		{
+			"id": "terminal.integrated.customGlyphs",
+			"group": "Terminal",
+			"th": "วาดตัวอักษรเส้นกรอบ block และ Powerline เองแทนการใช้ฟอนต์ ให้เส้นต่อกันสนิท"
+		},
+		{
+			"id": "terminal.integrated.defaultProfile.linux",
+			"group": "Terminal",
+			"th": "ชื่อโปรไฟล์ terminal ที่ใช้เริ่มต้นบน Linux (จาก terminal.integrated.profiles.linux) null = $SHELL",
+			"scope": "application"
+		},
+		{
+			"id": "terminal.integrated.defaultProfile.osx",
+			"group": "Terminal",
+			"th": "ชื่อโปรไฟล์ terminal ที่ใช้เริ่มต้นบน macOS (จาก terminal.integrated.profiles.osx) null = $SHELL",
+			"scope": "application"
+		},
+		{
+			"id": "terminal.integrated.profiles.linux",
+			"group": "Terminal",
+			"th": "โปรไฟล์ terminal บน Linux: path (ชื่อที่หาใน PATH หรือ path เต็ม หรือรายการที่ลองตามลำดับ) args และ env",
+			"schema": {
+				"type": "object",
+				"additionalProperties": {
+					"anyOf": [
+						{
+							"type": "null"
+						},
+						{
+							"type": "object",
+							"properties": {
+								"path": {
+									"type": [
+										"string",
+										"array"
+									],
+									"items": {
+										"type": "string"
+									}
+								},
+								"args": {
+									"type": "array",
+									"items": {
+										"type": "string"
+									}
+								},
+								"env": {
+									"type": "object",
+									"additionalProperties": {
+										"type": [
+											"string",
+											"null"
+										]
+									}
+								},
+								"overrideName": {
+									"type": "boolean"
+								},
+								"icon": {
+									"type": "string"
+								},
+								"color": {
+									"type": "string"
+								}
+							}
+						}
+					]
+				}
+			},
+			"scope": "application"
+		},
+		{
+			"id": "terminal.integrated.profiles.osx",
+			"group": "Terminal",
+			"th": "โปรไฟล์ terminal บน macOS: path (ชื่อที่หาใน PATH หรือ path เต็ม หรือรายการที่ลองตามลำดับ) args และ env",
+			"schema": {
+				"type": "object",
+				"additionalProperties": {
+					"anyOf": [
+						{
+							"type": "null"
+						},
+						{
+							"type": "object",
+							"properties": {
+								"path": {
+									"type": [
+										"string",
+										"array"
+									],
+									"items": {
+										"type": "string"
+									}
+								},
+								"args": {
+									"type": "array",
+									"items": {
+										"type": "string"
+									}
+								},
+								"env": {
+									"type": "object",
+									"additionalProperties": {
+										"type": [
+											"string",
+											"null"
+										]
+									}
+								},
+								"overrideName": {
+									"type": "boolean"
+								},
+								"icon": {
+									"type": "string"
+								},
+								"color": {
+									"type": "string"
+								}
+							}
+						}
+					]
+				}
+			},
+			"scope": "application"
+		},
+		{
+			"id": "terminal.integrated.rescaleOverlappingGlyphs",
+			"group": "Terminal",
+			"th": "ย่อตัวอักษรกว้างหนึ่งช่องที่ล้นไปทับช่องถัดไปให้พอดี"
+		},
+		{
+			"id": "terminal.integrated.tabs.showActions",
+			"group": "Terminal",
+			"th": "แสดงปุ่ม Split และ Kill ข้างปุ่ม terminal ใหม่บนแถบหัว panel",
+			"enumTh": [
+				"เสมอ",
+				"เมื่อมี terminal เดียว",
+				"เมื่อมี terminal เดียวหรือไม่มีรายการ terminal",
+				"ไม่แสดง"
+			]
+		},
+		{
+			"id": "terminal.integrated.tabs.showActiveTerminal",
+			"group": "Terminal",
+			"th": "แสดงชื่อ terminal ที่ใช้อยู่บนแถบหัว panel",
+			"enumTh": [
+				"เสมอ",
+				"เมื่อมี terminal เดียว",
+				"เมื่อมี terminal เดียวหรือไม่มีรายการ terminal",
+				"ไม่แสดง"
+			]
 		}
 	]
 }

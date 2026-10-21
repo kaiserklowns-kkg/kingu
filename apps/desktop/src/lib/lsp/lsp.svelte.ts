@@ -767,14 +767,18 @@ class Lsp {
 
 	/** Applies a WorkspaceEdit (rename, code actions, `workspace/applyEdit`): files open in an editor
 	 * are edited in their model (undoable, left dirty), others are rewritten on disk through the
-	 * workspace-guarded Rust commands. Nothing outside the workspace is touched. */
-	async applyWorkspaceEdit(edit: WorkspaceEdit): Promise<ApplyResult> {
+	 * workspace-guarded Rust commands. Nothing outside the workspace is touched.
+	 * `refactoring` (rename, a chosen code action): with `files.refactoring.autoSave` on, an edit
+	 * across several files also saves the open editors it changed (VS Code's respectAutoSaveConfig). */
+	async applyWorkspaceEdit(edit: WorkspaceEdit, opts: { refactoring?: boolean } = {}): Promise<ApplyResult> {
 		const written: string[] = [];
+		const openEdited: string[] = [];
 		const result = await applyWorkspaceEdit(edit, (uri) => {
 			const rel = relOfUri(this.#rootPath, uri);
 			if (rel === null) return `${uriToPath(uri) ?? uri} is outside the workspace`;
 			const model = editors.textModel(rel);
 			if (model) {
+				openEdited.push(rel);
 				const doc = this.#docs.get(model);
 				return {
 					version: doc?.uri === uri ? this.#sessions.get(doc.key)?.client.versionOf(uri) : undefined,
@@ -798,6 +802,11 @@ class Lsp {
 		});
 		if (written.length) for (const s of this.#sessions.values()) s.client.didChangeWatchedFiles(written);
 		if (!result.applied) this.#append(`workspace edit not applied: ${result.failureReason}`);
+		else if (opts.refactoring && result.uris.length > 1 && userSettings.get<boolean>('files.refactoring.autoSave') && openEdited.length) {
+			// Imported here: editorModels imports this module.
+			const { saveFile } = await import('#lib/workbench/editorModels.ts');
+			for (const rel of new Set(openEdited)) if (editors.isDirty(rel)) await saveFile(rel, 'explicit').catch((e) => this.#append(`save ${rel}: ${e}`));
+		}
 		return result;
 	}
 
@@ -829,7 +838,7 @@ class Lsp {
 			let action = item as CodeAction;
 			if (!action.edit && client.canResolveCodeAction) action = (await client.resolveCodeAction(action)) ?? action;
 			if (action.edit) {
-				const r = await this.applyWorkspaceEdit(action.edit);
+				const r = await this.applyWorkspaceEdit(action.edit, { refactoring: true });
 				if (!r.applied) return statusBar.error(`${action.title}: ${r.failureReason}`);
 			}
 			if (action.command) await this.#execute(client, action.command);
@@ -1008,7 +1017,7 @@ class Lsp {
 							if (!edit) return { edits: [], rejectReason: t('tools.lsp.noResult') };
 							// Applied here rather than by Monaco, whose standalone bulk edit only reaches
 							// open models; files without a tab are rewritten on disk.
-							const r = await this.applyWorkspaceEdit(edit);
+							const r = await this.applyWorkspaceEdit(edit, { refactoring: true });
 							if (!r.applied) return { edits: [], rejectReason: t('tools.lsp.renameFailed', { reason: r.failureReason ?? '' }) };
 							statusBar.flash(t('tools.lsp.renamed', { name: newName, edits: r.edits, files: r.uris.length }));
 							return { edits: [] };

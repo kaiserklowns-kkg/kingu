@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { listWheel } from '#lib/workbench/listWheel.ts';
 	// The Testing view (VS Code's Test Explorer): the tests of every project as a tree (runner and
 	// project, file, suite, test) with each one's last result, Run and Debug on every row, the
 	// failure messages under a failed test, a filter, and the run toolbar. After a run with coverage,
@@ -135,7 +136,7 @@
 			{t('testing.summary', { passed: testing.totals.passed, failed: testing.totals.failed, skipped: testing.totals.skipped })}
 		</p>
 	{/if}
-	<div bind:this={scroller} class="min-h-0 flex-1 overflow-y-auto" role="tree" aria-label="Test Explorer">
+	<div bind:this={scroller} class="min-h-0 flex-1 overflow-y-auto" role="tree" aria-label="Test Explorer" use:listWheel>
 		{#if !testing.items.length}
 			<p class="px-4 py-2 text-(--vscode-descriptionForeground)">{testing.discovering ? t('testing.discovering') : t('testing.none')}</p>
 		{/if}

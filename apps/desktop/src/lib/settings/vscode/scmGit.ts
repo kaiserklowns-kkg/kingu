@@ -548,5 +548,26 @@ export const GIT_SETTINGS: SettingSchema[] = [
 		type: 'boolean',
 		default: true,
 		description: 'แสดง commit ล่าสุดของแต่ละ ref ในตัวเลือก branch (Controls whether to show the details of the last commit for Git refs in the checkout, branch, and tag pickers.)'
+	},
+	{
+		id: 'git.ignoreMissingGitWarning',
+		group: 'Git',
+		type: 'boolean',
+		default: false,
+		description: 'ไม่เตือนเมื่อหาโปรแกรม git ไม่พบ (Ignores the warning when Git is missing.)'
+	},
+	{
+		id: 'git.openRepositoryInParentFolders',
+		group: 'Git',
+		type: 'string',
+		default: 'prompt',
+		enum: ['always', 'never', 'prompt'],
+		enumDescriptions: [
+			'เปิดเสมอ (Always open a repository in parent folders of workspaces or open files.)',
+			'ไม่เปิด (Never open a repository in parent folders of workspaces or open files.)',
+			'ถามก่อน (Prompt before opening a repository the parent folders of workspaces or open files.)'
+		],
+		description: 'ใช้ git repository ที่อยู่ในโฟลเดอร์แม่ของโฟลเดอร์ที่เปิดหรือไม่ (Control whether a repository in parent folders of workspaces or open files should be opened.)',
+		scope: 'resource'
 	}
 ];

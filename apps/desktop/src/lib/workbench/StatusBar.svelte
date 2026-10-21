@@ -22,6 +22,7 @@
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 	import StatusResources from './StatusResources.svelte';
 	import NotificationsBell from './NotificationsBell.svelte';
+	import { bellPlacement } from './workbenchOptions';
 	import UsageStatus from './UsageStatus.svelte';
 	import LocalAiStatus from '#lib/localAi/LocalAiStatus.svelte';
 	import { usage } from './usage.svelte';
@@ -155,6 +156,9 @@
 		const shown = settings.get<boolean>(id) !== false;
 		void settings.set(id, shown ? false : undefined, 'user');
 	}
+
+	// workbench.notifications.position / showInTitleBar: which side of the bar has the bell (top-right: the title bar).
+	const bell = $derived(bellPlacement(settings.get<string>('workbench.notifications.position'), settings.get<boolean>('workbench.notifications.showInTitleBar')));
 </script>
 
 <!-- 22px, items 22px line-height (VS Code statusbarPart). -->
@@ -169,6 +173,8 @@
 			: 'bg-(--vscode-statusBar-background) text-(--vscode-statusBar-foreground)'
 	]}
 >
+	<!-- workbench.notifications.position bottom-left: the bell is the left-most item. -->
+	{#if bell === 'statusLeft' && show('status.notifications')}<NotificationsBell />{/if}
 	{#if branch && show('status.scm')}
 		{#if repo}
 			<!-- VS Code's branch item (Checkout to…) and its sync item; a running git operation can be cancelled. -->
@@ -260,7 +266,7 @@
 	{#if show('status.kingu.localAi')}<LocalAiStatus />{/if}
 	<!-- VS Code keeps the notification bell at the far right. -->
 	{#if floating.enabled && floating.location === 'status-bar'}<FloatingToggle variant="status-bar" />{/if}
-	{#if show('status.notifications')}<NotificationsBell />{/if}
+	{#if bell === 'statusRight' && show('status.notifications')}<NotificationsBell />{/if}
 </footer>
 
 {#if menu}
