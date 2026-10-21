@@ -48,6 +48,7 @@ describe('agent chat notifications', () => {
 	test('approval, a question, a finished or failed turn; nothing else', () => {
 		expect(chatNoticeFor({ kind: 'permission_request', tool: 'Bash' }, 'แก้บั๊ก')).toEqual({ title: 'แชตรอการอนุญาต: แก้บั๊ก', body: 'ต้องอนุญาตก่อนจึงจะทำงานต่อได้', kind: 'attention' });
 		expect(chatNoticeFor({ kind: 'permission_request', tool: 'AskUserQuestion' }, 'x')?.title).toBe('แชตมีคำถาม: x');
+		expect(chatNoticeFor({ kind: 'mcp_request' }, 'x')).toMatchObject({ title: 'แชตมีคำถาม: x', kind: 'attention' });
 		expect(chatNoticeFor({ kind: 'result', is_error: false }, 'x')).toMatchObject({ title: 'แชตเสร็จแล้ว: x', kind: 'finished' });
 		expect(chatNoticeFor({ kind: 'result', is_error: true }, 'x')?.kind).toBe('attention');
 		expect(chatNoticeFor({ kind: 'result', is_error: false }, 'x', 'attention')).toBeNull();

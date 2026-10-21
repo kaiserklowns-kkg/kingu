@@ -44,6 +44,27 @@ export type PermissionRequest = {
 /** Why Kingu asked before a call, whatever the permission mode (agent-host guards/asks.ts). */
 export type GuardAsked = { kind: 'guard_asked'; request_id: string; tool: string; tool_use_id: string | null; check: 'outside_cwd' | 'delete' | 'protected' | 'mcp'; paths: string[] };
 
+/** How an MCP server's ask was answered (or `cancel`: unanswered, interrupted, timed out). */
+export type McpAction = 'accept' | 'decline' | 'cancel';
+
+/**
+ * An MCP server asks the user (agent-host mcpAsks.ts): `elicitation`, a form built from `schema`
+ * (or in `url` mode a page to open), or `sampling`, leave to make a model call on the chat's
+ * model (`sampling`: what it would send). Answered with `agent_answer_mcp`.
+ */
+export type McpRequestEvent = {
+	kind: 'mcp_request';
+	request_id: string;
+	type: 'elicitation' | 'sampling';
+	server: string;
+	message: string;
+	mode: 'form' | 'url' | null;
+	schema: Record<string, unknown> | null;
+	url: string | null;
+	sampling: { messages: { role: string; text: string }[]; system_prompt: string | null; max_tokens: number | null } | null;
+	timeout_ms: number;
+};
+
 /** A vote on an answer (VS Code's helpful / unhelpful). */
 export type Vote = 'up' | 'down';
 
@@ -82,6 +103,8 @@ export type AgentEvent =
 	| ResultEvent
 	| PermissionRequest
 	| { kind: 'permission_resolved'; request_id: string; decision: Decision | 'cancelled' }
+	| McpRequestEvent
+	| { kind: 'mcp_request_resolved'; request_id: string; action: McpAction }
 	/** Added by Rust after a chat's user message: that message is request `request` (its checkpoint). */
 	| { kind: 'checkpoint'; request: number }
 	/** Added by Rust: the chat's working set changed (chatEdits reloads it). Not a timeline entry. */
@@ -147,7 +170,7 @@ export const STATUS_LABEL: Readonly<Record<RunStatus, string>> = {
 /** Timeline entries: every event except streaming deltas and permission bookkeeping. */
 export type TimelineEvent = Exclude<
 	AgentEvent,
-	{ kind: 'delta' } | { kind: 'permission_resolved' } | { kind: 'edits_changed' } | { kind: 'session_info' } | { kind: 'commands' } | { kind: 'models' } | { kind: 'mcp_status' } | { kind: 'context_usage' }
+	{ kind: 'delta' } | { kind: 'permission_resolved' } | { kind: 'mcp_request_resolved' } | { kind: 'edits_changed' } | { kind: 'session_info' } | { kind: 'commands' } | { kind: 'models' } | { kind: 'mcp_status' } | { kind: 'context_usage' }
 >;
 
 export type RunState = {
@@ -169,6 +192,10 @@ export type RunState = {
 	commands: SessionCommand[];
 	/** After the last turn; null until one has finished. */
 	context: ContextUsage | null;
+	/** MCP servers' asks waiting for the user (forms, sampling), oldest first. */
+	mcpPending?: McpRequestEvent[];
+	/** How each MCP ask was answered, by request id. */
+	mcpActions?: Record<string, McpAction>;
 };
 
 /** Oldest timeline entries are dropped past this, so a long session stays responsive. */
@@ -191,7 +218,7 @@ export function initialRun(): RunState {
 	};
 }
 
-const live = (s: RunState): RunStatus => (s.pending.length ? 'waiting' : 'running');
+const live = (s: RunState): RunStatus => (s.pending.length || s.mcpPending?.length ? 'waiting' : 'running');
 
 /** Folds one event into the run (mutates `s`, so it works on Svelte `$state` proxies too). */
 export function applyEvent(s: RunState, ev: AgentEvent): void {
@@ -204,6 +231,11 @@ export function applyEvent(s: RunState, ev: AgentEvent): void {
 		case 'permission_resolved':
 			s.pending = s.pending.filter((p) => p.request_id !== ev.request_id);
 			s.decisions[ev.request_id] = ev.decision;
+			if (!s.ended) s.status = live(s);
+			return;
+		case 'mcp_request_resolved':
+			s.mcpPending = (s.mcpPending ?? []).filter((p) => p.request_id !== ev.request_id);
+			(s.mcpActions ??= {})[ev.request_id] = ev.action;
 			if (!s.ended) s.status = live(s);
 			return;
 		case 'edits_changed':
@@ -228,6 +260,12 @@ export function applyEvent(s: RunState, ev: AgentEvent): void {
 				s.status = 'waiting';
 			}
 			break;
+		case 'mcp_request':
+			if (!s.ended) {
+				(s.mcpPending ??= []).push(ev);
+				s.status = 'waiting';
+			}
+			break;
 		case 'message':
 			// A subagent's message does not end the main agent's streaming text (deltas are the main agent's).
 			if (ev.parent_tool_use_id) break;
@@ -246,7 +284,7 @@ export function applyEvent(s: RunState, ev: AgentEvent): void {
 			s.result = ev;
 			s.sessionId = ev.session_id ?? s.sessionId;
 			s.draft = { text: '', thinking: '' };
-			if (!s.ended) s.status = s.pending.length ? 'waiting' : 'idle';
+			if (!s.ended) s.status = s.pending.length || s.mcpPending?.length ? 'waiting' : 'idle';
 			break;
 		case 'error':
 			s.error = ev.message;
@@ -255,6 +293,8 @@ export function applyEvent(s: RunState, ev: AgentEvent): void {
 			s.ended = true;
 			for (const p of s.pending) s.decisions[p.request_id] = 'cancelled';
 			s.pending = [];
+			if (s.mcpPending?.length) for (const p of s.mcpPending) (s.mcpActions ??= {})[p.request_id] = 'cancel';
+			s.mcpPending = [];
 			s.draft = { text: '', thinking: '' };
 			s.status = ev.stopped ? 'stopped' : s.error || (ev.code ?? 0) !== 0 || ev.signal != null ? 'failed' : 'done';
 			break;

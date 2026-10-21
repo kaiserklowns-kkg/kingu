@@ -60,6 +60,9 @@
 	import { chatRewind } from './chatRewind.svelte.ts';
 	import { chatCwdPath, groupByDate, historySections, initialChat, type ChatCwd, type DateGroup } from './chats.ts';
 	import RulesChip from './RulesChip.svelte';
+	import McpStatusNote from './McpStatusNote.svelte';
+	import { mcpChat } from './mcpChat.svelte.ts';
+	import { findPromptCommand } from './mcpChat.ts';
 	import { assemblePrompt, contextLabel, isFileKey, promptPath, relativeTo, resolveContext, withoutImagesLine, type ContextText } from './chatPrompt.ts';
 	import { AGENT_APPROVALS, modeOf, permissionFor, turnBusy, type AgentApproval, type ChatMode } from './chatInput.ts';
 	import { buildTurns, feedbackTarget, promptHistory, type Turn } from './chatParts.ts';
@@ -176,7 +179,11 @@
 		)
 	);
 	const ownCommands = $derived([...localCommands, ...modeSlash]);
-	const slashCommands = $derived(mergeCommands(ownCommands, chatRun?.commands ?? [], fileCommands, customs.prompts));
+	const slashCommands = $derived(mergeCommands(ownCommands, chatRun?.commands ?? [], fileCommands, customs.prompts, mcpChat.promptItems(cwd)));
+	// The MCP servers' prompts (`/mcp.<server>.<prompt>`) are asked for once a `/` is typed.
+	$effect(() => {
+		if (input.startsWith('/') && cwd) untrack(() => void mcpChat.load(contextEnv()));
+	});
 
 	$effect(() => {
 		const dir = cwd;
@@ -433,7 +440,19 @@
 		if (chatMeta && editingQueued) return saveQueuedEdit(text, attachments);
 		const asPrompt = localCommandFor(text, customs.prompts);
 		if (asPrompt) return runPromptFile(asPrompt.command, asPrompt.args, attachments, how);
+		const asMcp = text.startsWith('/mcp.') ? findPromptCommand(text, mcpChat.prompts(cwd)) : null;
+		if (asMcp) return fillMcpPrompt(asMcp.item, asMcp.args);
 		await send(text, attachments, how);
+	}
+
+	/** `/mcp.<server>.<prompt>` (VS Code's): its arguments asked, the rendered prompt put in the input to review and send. */
+	async function fillMcpPrompt(cmd: Parameters<typeof mcpChat.runPrompt>[0], args: string) {
+		const r = await mcpChat.runPrompt(cmd, args, contextEnv());
+		if (!r) return;
+		input = r.text;
+		texts = [...texts.filter((x) => !r.context.some((y) => y.kind === x.kind && y.label === x.label)), ...r.context];
+		status.flash(t('chatMcp.prompt.filled'), 5000);
+		queueMicrotask(() => composer?.focus());
 	}
 
 	/** Sends a request (`extra`: context besides the input's; `title`: the new chat's first prompt). */
@@ -1111,6 +1130,7 @@
 {#snippet composerBlock()}
 		<div class={['shrink-0 px-2', composerTop ? 'pt-2 pb-1' : 'pt-1 pb-2']}>
 			{#if chatMeta}<ChatTodoBar {turns} {running} />{/if}
+			{#if chatMeta}<McpStatusNote chatId={chatMeta.id} />{/if}
 			{#if chatMeta && chatRewind.canRedo(chatMeta.id)}
 				<div class="mb-1.5 flex items-center gap-1.5 rounded border border-(--vscode-widget-border) px-2 py-1 text-xs text-(--vscode-descriptionForeground)" role="status">
 					<Icon name="discard" size={12} />

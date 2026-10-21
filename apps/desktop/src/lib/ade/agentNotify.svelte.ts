@@ -78,7 +78,7 @@ export function installAgentNotifications(): () => void {
 	});
 	// Agent chats of the open folder: only while the window is unfocused (with Suppress While Focused on, the default).
 	const offChats = chats.onEvent((id, ev) => {
-		if (ev.kind !== 'permission_request' && ev.kind !== 'result') return;
+		if (ev.kind !== 'permission_request' && ev.kind !== 'mcp_request' && ev.kind !== 'result') return;
 		const meta = chats.get(id);
 		if (!meta) return;
 		const enabled = settings.get<boolean>('kingu.agent.notifications') !== false;

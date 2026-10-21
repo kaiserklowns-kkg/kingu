@@ -51,6 +51,8 @@
 	import { t } from '#lib/i18n/index.ts';
 	import PermissionCard from './PermissionCard.svelte';
 	import QuestionCard from './QuestionCard.svelte';
+	import McpRequestCard from './McpRequestCard.svelte';
+	import { mcpChat } from './mcpChat.svelte.ts';
 	import ChatMarkdown from './ChatMarkdown.svelte';
 	import ChatToolRow from './ChatToolRow.svelte';
 	import ArtifactCard from '#lib/artifacts/ArtifactCard.svelte';
@@ -355,6 +357,9 @@
 							</div>
 						{:else if part.kind === 'artifact'}
 							<ArtifactCard artifact={part.artifact} />
+						{:else if part.kind === 'mcpRequest'}
+							{@const req = part.request}
+							<McpRequestCard request={req} action={part.action} onanswer={chatId && !run?.ended ? (a, content, remember) => mcpChat.answer(chatId, req, a, content, remember) : undefined} />
 						{:else if part.kind === 'canceled'}
 							<div class="text-(--vscode-descriptionForeground) italic">{t('chatView.canceled')}</div>
 						{/if}

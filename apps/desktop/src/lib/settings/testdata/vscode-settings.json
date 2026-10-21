@@ -47,6 +47,7 @@
 	"chat.agentFilesLocations": {"type":"object","default":{".github/agents":true,".claude/agents":true,"~/.copilot/agents":true}},
 	"chat.includeApplyingInstructions": {"type":"boolean","default":true},
 	"chat.instructionsFilesLocations": {"type":"object","default":{".github/instructions":true,".claude/rules":true,"~/.copilot/instructions":true,"~/.claude/rules":true}},
+	"chat.mcp.serverSampling": {"type":"object","default":{}},
 	"chat.promptFilesLocations": {"type":"object","default":{".github/prompts":true}},
 	"chat.tools.global.autoApprove": {"type":"boolean","default":false},
 	"chat.useAgentsMdFile": {"type":"boolean","default":true},

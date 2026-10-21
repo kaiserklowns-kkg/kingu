@@ -18,8 +18,8 @@ describe('mentions', () => {
 
 	test('sources match their label or id', () => {
 		const label = (s: string) => ({ problems: 'Problems', scm: 'Source Control' })[s] ?? s;
-		expect(matchSources('', label)).toHaveLength(8);
-		expect(matchSources('sour', label)).toEqual(['scm']);
+		expect(matchSources('', label)).toHaveLength(9);
+		expect(matchSources('sour', label)).toEqual(['scm', 'mcpResources']);
 		expect(matchSources('PROB', label)).toEqual(['problems']);
 	});
 });

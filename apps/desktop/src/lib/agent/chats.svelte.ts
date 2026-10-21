@@ -38,7 +38,7 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
-import { applyEvent, initialRun, type AgentEvent, type Decision, type RunState } from './events';
+import { applyEvent, initialRun, type AgentEvent, type Decision, type McpAction, type RunState } from './events';
 import { buildTurns, lastRequest } from './chatParts.ts';
 import { CLAUDE_RUNTIME, runtimeOf } from './runtimes.ts';
 import { withoutImagesLine } from './chatPrompt.ts';
@@ -538,6 +538,13 @@ class Chats {
 		await invoke('agent_answer_permission', { runId: run.runId, requestId, decision, message: message?.trim() || null, answers: answers ?? null }).catch((e) =>
 			notifications.error(t('chat.answerFailed', { error: String(e) }))
 		);
+	}
+
+	/** Answers an MCP server's form or sampling request (`mcp_request`; mcpChat.svelte.ts). */
+	async answerMcp(id: string, requestId: string, action: McpAction, content?: Record<string, string | number | boolean>, remember?: 'session' | 'always' | 'never') {
+		const run = this.run(id);
+		if (run?.runId === undefined) return;
+		await invoke('agent_answer_mcp', { runId: run.runId, requestId, action, content: content ?? null, remember: remember ?? null }).catch((e) => notifications.error(t('chat.answerFailed', { error: String(e) })));
 	}
 
 	async interrupt(id: string) {

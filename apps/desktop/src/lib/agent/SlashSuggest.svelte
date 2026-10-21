@@ -63,7 +63,8 @@
 		project: () => t('chatInput.slash.source.project'),
 		user: () => t('chatInput.slash.source.user'),
 		'project-skill': () => t('chatInput.slash.source.projectSkill'),
-		'user-skill': () => t('chatInput.slash.source.userSkill')
+		'user-skill': () => t('chatInput.slash.source.userSkill'),
+		mcp: () => t('chatMcp.slash.source')
 	};
 
 	let box: HTMLDivElement | undefined = $state();

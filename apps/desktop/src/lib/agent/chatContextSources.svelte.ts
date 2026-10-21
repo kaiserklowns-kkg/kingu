@@ -23,6 +23,7 @@ import { terminals } from '#lib/terminal/terminals.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
 import type { SuggestItem } from './SlashSuggest.svelte';
 import { savePastedImage } from './attachInput.ts';
+import { pickMcpResource } from './mcpChat.svelte.ts';
 import { chats } from './chats.svelte.ts';
 import { isFileKey, type ContextText } from './chatPrompt.ts';
 import { CONTEXT_SOURCES, DRILL_SOURCES, filterScoped, folderContext, foldersOf, isInstructionsFile, lastCommandOutput, MENTION_FILES, pastChatContext, planMentions, problemsContext, type ContextSource, type MentionScope } from './chatContext.ts';
@@ -42,7 +43,8 @@ export const SOURCE_ICON: Record<ContextSource, IconName> = {
 	terminal: 'terminal',
 	clipboardImage: 'image',
 	pastChat: 'agent',
-	instructions: 'listChecks'
+	instructions: 'listChecks',
+	mcpResources: 'ports'
 };
 
 export const sourceLabel = (s: ContextSource): string => t(`chatContext.source.${s}`);
@@ -174,6 +176,8 @@ export async function resolveSource(source: ContextSource, env: ContextEnv): Pro
 			return pickPastChat(env.chatId);
 		case 'instructions':
 			return pickInstructions(env.cwd);
+		case 'mcpResources':
+			return pickMcpResource(env);
 	}
 }
 
