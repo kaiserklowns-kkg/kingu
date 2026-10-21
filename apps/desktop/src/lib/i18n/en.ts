@@ -61,7 +61,9 @@ import { trust } from './en/trust';
 import { snapContrib } from './en/snapContrib';
 import { notebook } from './en/notebook';
 import { accessibility } from './en/accessibility';
-import { chatRender, chatObserve, chatMcp } from './en/chatRender';
+import { chatRender } from './en/chatRender';
+import { chatObserve } from './en/chatObserve';
+import { chatMcp } from './en/chatMcp';
 
 import { editing } from './en/editing';
 import { terminal } from './en/terminal';

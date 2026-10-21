@@ -192,6 +192,23 @@ pub fn debug_events(lines: &[(u64, AgentEvent)]) -> (Vec<DebugEvent>, Totals) {
         }
         None
       }
+      AgentEvent::ToolAutoApproved { tool, rules, .. } => {
+        Some(row("permission", format!("Auto approved: {tool}"), one_line(&rules.join(", "), MAX_DETAIL), None))
+      }
+      AgentEvent::McpRequest { request_id, ask, server, message, .. } => {
+        asks.insert(request_id.clone(), out.len());
+        Some(row("mcp", format!("MCP {ask}: {server}"), one_line(message, MAX_DETAIL), None))
+      }
+      AgentEvent::McpRequestResolved { request_id, action } => {
+        if let Some(r) = asks.remove(request_id).and_then(|i| out.get_mut(i)) {
+          r.duration_ms = Some(t.saturating_sub(r.t));
+          r.detail = one_line(&format!("{} → {action}", r.detail), MAX_DETAIL);
+          if let Value::Object(map) = &mut r.data {
+            map.insert("action".into(), json!(action));
+          }
+        }
+        None
+      }
       AgentEvent::GuardBlocked { tool, check, detail, .. } => {
         let mut r = row("guard", format!("Safety check: {check}"), one_line(&format!("{tool}: {detail}"), MAX_DETAIL), None);
         r.is_error = true;
