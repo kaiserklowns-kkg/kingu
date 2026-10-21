@@ -16,7 +16,7 @@
 	import { diffEditorOptionsFrom, diffWraps } from '#lib/settings/mappings.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { editors } from './editors.svelte';
-	import { fileOf, isConflictCompareKey, isDiffKey, isIndexDiffKey, isTaskDiffKey, parseCommitDiffKey, parseHistoryDiffKey, parseTaskDiffKey } from './scm';
+	import { fileOf, isConflictCompareKey, isDiffKey, isIndexDiffKey, isTaskDiffKey, parseCommitDiffKey, parseHistoryDiffKey, parseRefDiffKey, parseTaskDiffKey } from './scm';
 	import { compareSides } from '#lib/scm/conflicts.ts';
 	import { addIndexDiffView } from '#lib/scm/quickDiff.svelte.ts';
 	import { scm } from './scm.svelte';
@@ -191,6 +191,13 @@
 			return Promise.all([
 				invoke<string>('git_show_ref', { slug: null, rev: `${history.hash}^`, rel: history.before }).catch(() => '').then((text) => ({ text, path: `${history.hash}^/${history.before}` })),
 				invoke<string>('git_show_ref', { slug: null, rev: history.hash, rel: history.rel }).catch(() => '')
+			]);
+		// Two revisions of a file, or one ↔ the working copy (Source Control Graph, stashes, Compare with…).
+		const ref = parseRefDiffKey(key);
+		if (ref)
+			return Promise.all([
+				invoke<string>('git_show_ref', { slug: null, rev: ref.left, rel: ref.before }).catch(() => '').then((text) => ({ text, path: `${ref.left}/${ref.before}` })),
+				ref.right === null ? workingCopy(m, rel) : invoke<string>('git_show_ref', { slug: null, rev: ref.right, rel: ref.rel }).catch(() => '')
 			]);
 		// Local history: an entry ↔ the file now (Compare with File) or ↔ another entry.
 		const local = parseLocalHistoryDiffKey(key);

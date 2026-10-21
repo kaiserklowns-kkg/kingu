@@ -63,6 +63,9 @@ import { workspace } from './workspace.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { isUntitled } from './untitled';
 import { t } from '#lib/i18n/index.ts';
+import { commitHistory } from '#lib/scm/commitInput.svelte.ts';
+import { commitInEditor, installGitCommands } from '#lib/scm/gitCommands.svelte.ts';
+import { installGraph } from '#lib/scm/graph.svelte.ts';
 
 const get = <T>(id: string) => settings.get<T>(id);
 
@@ -175,6 +178,24 @@ export class Repository {
 
 	closeDiffs(paths?: string[]) {
 		this.#owner.closeDiffs(paths);
+	}
+
+	// For the git commands outside this file (scm/gitCommands.svelte.ts, the graph).
+	/** Runs `fn` as the window's one git operation, showing its error; re-reads status after. */
+	exclusive<T>(label: string, fn: () => Promise<T>, terminal?: string[]): Promise<T | undefined> {
+		return this.#exclusive(label, fn, terminal);
+	}
+	/** Command arguments naming this repository. */
+	args(args: Record<string, unknown> = {}) {
+		return this.#args(args);
+	}
+	/** Workspace paths as paths relative to this repository. */
+	rels(paths: string[]) {
+		return this.#rels(paths);
+	}
+	/** Branches, and tags with `tags` (null after showing the error). */
+	refs(opts: { tags?: boolean } = {}) {
+		return this.#refs(opts);
 	}
 
 	async stage(paths: string[]) {
@@ -532,9 +553,12 @@ export class Repository {
 	 * Commit, Commit (Amend), Commit (No Verify) and Commit Empty, with VS Code's checks: user
 	 * config, unsaved files, protected branches, diagnostics, smart commit and its suggestion.
 	 */
-	async commit({ amend = false, noVerify = false, empty = false } = {}) {
-		const message = this.message.trim();
+	async commit({ amend = false, noVerify = false, empty = false, message: typed = undefined as string | undefined } = {}) {
+		const message = (typed ?? this.message).trim();
 		if (!message) {
+			// git.useEditorAsCommitInput: an empty input writes the message in COMMIT_EDITMSG instead
+			// (an IDE editor tab, so not from the Agents layout).
+			if (typed === undefined && get<boolean>('git.useEditorAsCommitInput') && !appMode.isAgents) return void (await commitInEditor(this, { amend, noVerify, empty }));
 			status.flash(t('workbench.scm.enterMessage'));
 			return;
 		}
@@ -574,7 +598,8 @@ export class Repository {
 		if (!target) return;
 		if (target === 'newBranch' && !(await this.createBranch())) return;
 		if (await this.#run('git_commit', { message, options: commitOptions(get, { amend, noVerify, empty }) })) {
-			this.message = '';
+			commitHistory.add(this.dir, message);
+			if (typed === undefined) this.message = '';
 			status.flash(amend ? t('workbench.scm.amended') : t('workbench.scm.committed'));
 			this.closeDiffs(committed);
 			// git.postCommitCommand
@@ -1025,7 +1050,9 @@ export function installScm(): () => void {
 				if (r) await r.unstage(r.groups.staged.map((x) => x.entry.path));
 			}
 		}),
-		...remoteCommands()
+		...remoteCommands(),
+		installGitCommands(),
+		installGraph()
 	];
 
 	return () => {
