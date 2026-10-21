@@ -31,6 +31,7 @@ mod menu;
 mod net_proxy;
 mod project;
 mod projects;
+mod notebook;
 mod notify;
 mod pty;
 mod replace;
@@ -1323,6 +1324,10 @@ pub fn run() {
     })
     .invoke_handler(tauri::generate_handler![
       app_info,
+      notebook::kernel::notebook_kernels,
+      notebook::kernel::notebook_kernel_start,
+      notebook::kernel::notebook_kernel_send,
+      notebook::kernel::notebook_kernel_stop,
       i18n::app_set_locale,
       system_stats,
       fs_read_data_url,

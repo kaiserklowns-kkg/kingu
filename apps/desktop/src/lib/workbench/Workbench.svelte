@@ -112,6 +112,7 @@
 	import { installEditorFeatures } from '#lib/editor/editorFeatures.svelte.ts';
 	import { installNotificationCommands } from './notificationCommands.svelte';
 	import { installSearchEditorCommands } from './searchEditorCommands.svelte.ts';
+	import { installNotebookCommands } from './notebookCommands.svelte.ts';
 	import NotificationToasts from './NotificationToasts.svelte';
 	import { recentFiles } from './recentFiles.svelte';
 	import { profiles } from '#lib/settings/profiles.svelte.ts';
@@ -396,10 +397,12 @@
 		const uninstallNotificationCommands = installNotificationCommands();
 		const uninstallProfiles = profiles.install();
 		const uninstallSearchEditorCommands = installSearchEditorCommands();
+		const uninstallNotebookCommands = installNotebookCommands();
 		return () => {
 			uninstallProfiles();
 			uninstallNotificationCommands();
 			uninstallSearchEditorCommands();
+			uninstallNotebookCommands();
 			uninstallRecentFiles();
 			uninstallEditorCommands();
 			uninstallEditorFeatures();

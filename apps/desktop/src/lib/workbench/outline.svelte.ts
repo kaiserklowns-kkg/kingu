@@ -16,6 +16,14 @@ import { withSaved } from './workspaceState';
 const STATE_KEY = 'kingu.outline.state';
 const FALLBACK_DELAY_MS = 400;
 
+/** The outline of an editor without a text model (a notebook's Markdown headers): its symbols, and
+ * how to show one (`line` is the symbol's start line in the provider's own terms). */
+export type OutlineProvider = {
+	owns: (rel: string) => boolean;
+	symbols: (rel: string) => DocumentSymbol[];
+	reveal: (rel: string, line: number, focus: boolean) => void;
+};
+
 /** What a workspace opened for the first time shows (VS Code: sorted by position, the section collapsed). */
 const DEFAULTS = { sortBy: 'position' as OutlineSortOrder, followCursor: true, filterOnType: true, open: false };
 
@@ -41,6 +49,19 @@ class Outline {
 	#watched: { rel: string; dispose: () => void } | null = null;
 	#timer: ReturnType<typeof setTimeout> | undefined;
 	#installed = false;
+	#providers: OutlineProvider[] = [];
+
+	registerProvider(p: OutlineProvider): () => void {
+		this.#providers.push(p);
+		return () => (this.#providers = this.#providers.filter((x) => x !== p));
+	}
+
+	/** Shows a symbol of a provider's editor; false when `rel` is a text editor (the caller goes to the line). */
+	reveal(rel: string, line: number, focus: boolean): boolean {
+		const p = this.#providers.find((x) => x.owns(rel));
+		p?.reveal(rel, line, focus);
+		return !!p;
+	}
 
 	constructor() {
 		workspaceStorage.register(STATE_KEY, Object.keys(DEFAULTS), (saved) => {
@@ -77,6 +98,8 @@ class Outline {
 	/** The symbols of an open file, in LSP shapes (the server's, else Monaco's). */
 	symbolsOf(rel: string | null): (DocumentSymbol | SymbolInformation)[] {
 		if (!rel) return [];
+		const provider = this.#providers.find((p) => p.owns(rel));
+		if (provider) return provider.symbols(rel);
 		const fromServer = lsp.symbols.get(rel);
 		return fromServer?.length ? fromServer : (this.#fallback.get(rel) ?? fromServer ?? []);
 	}

@@ -14,7 +14,7 @@
 	import { isArtifactKey } from '#lib/artifacts/artifacts.ts';
 	import ArtifactViewer from '#lib/artifacts/ArtifactViewer.svelte';
 	import CsvPreview from './CsvPreview.svelte';
-	import NotebookViewer from './NotebookViewer.svelte';
+	import NotebookEditor from './NotebookEditor.svelte';
 	import { isNotebookPath } from './notebook';
 	import { invoke } from '@tauri-apps/api/core';
 	import { status } from './status.svelte';
@@ -662,7 +662,7 @@
 		{:else if activePath && isSearchEditorKey(activePath)}
 			<div class="absolute inset-0">{#key activePath}<SearchEditorView editorKey={activePath} {group} />{/key}</div>
 		{:else if activePath && isNotebookPath(activePath)}
-			<div class="absolute inset-0">{#key activePath}<NotebookViewer path={activePath} />{/key}</div>
+			<div class="absolute inset-0">{#key activePath}<NotebookEditor path={activePath} {group} />{/key}</div>
 		{:else if activePath && isPreviewKey(activePath)}
 			<div class="absolute inset-0">
 				{#key activePath}{#if isCsvPath(previewTarget(activePath))}<CsvPreview previewKey={activePath} />{:else}<MarkdownPreview previewKey={activePath} {group} />{/if}{/key}
