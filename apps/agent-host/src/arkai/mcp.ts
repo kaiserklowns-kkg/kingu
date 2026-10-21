@@ -7,6 +7,11 @@
 // - http: Streamable HTTP, each message POSTed, the answer as JSON or as an event stream;
 // - sse: the older HTTP+SSE transport, an event stream that names where to POST.
 //
+// What a server asks of Arkai: `ping`, `roots/list` (the run's folder), and with the run's
+// handlers `elicitation/create` (a form for the user, ../mcpAsks.ts) and `sampling/createMessage`
+// (a model call on the run's provider, once the user allowed it); both are advertised at
+// `initialize` only then. Resources and prompts are read for the chat (../mcpQuery.ts).
+//
 // Each server is initialized and asked for its tools, which the model gets as
 // `mcp__<server>__<tool>` (Claude Code's names, so permission rules, the always-ask MCP check and
 // the chat's tool rows treat them alike). A call goes through the same gate as Kingu's own tools
@@ -45,11 +50,24 @@ export interface McpConnection {
 	close(): void;
 }
 
-/** What a server may ask of Arkai: `ping`, and `roots/list` (the run's folder). */
-function serverRequest(cwd: string) {
-	return async (method: string): Promise<unknown> => {
+/** What the run answers for a server besides ping and roots (absent: not offered). */
+export type ServerHandlers = {
+	elicit?: (params: unknown) => Promise<unknown>;
+	sample?: (params: unknown) => Promise<unknown>;
+};
+
+/** The client capabilities `initialize` announces for these handlers. */
+export function clientCapabilities(h: ServerHandlers = {}): Obj {
+	return { roots: { listChanged: false }, ...(h.elicit ? { elicitation: {} } : {}), ...(h.sample ? { sampling: {} } : {}) };
+}
+
+/** What a server may ask of Arkai: `ping`, `roots/list` (the run's folder), and what `h` handles. */
+function serverRequest(cwd: string, h: ServerHandlers = {}) {
+	return async (method: string, params?: unknown): Promise<unknown> => {
 		if (method === 'ping') return {};
 		if (method === 'roots/list') return { roots: [{ uri: pathToFileURL(cwd).href, name: 'project' }] };
+		if (method === 'elicitation/create' && h.elicit) return h.elicit(params);
+		if (method === 'sampling/createMessage' && h.sample) return h.sample(params);
 		throw new RpcCallError(-32601, `method not found: ${method}`);
 	};
 }
@@ -77,8 +95,8 @@ function bounded<T>(p: Promise<T>, what: string, signal?: AbortSignal, ms = 0): 
 }
 
 /** A connection over line pipes (a child's stdio, or a fake server in the tests). */
-export function pipeConnection(pipes: Pipes, cwd: string, onClose: () => void = () => {}): McpConnection {
-	const peer = new JsonRpcPeer(pipes, { onRequest: serverRequest(cwd) });
+export function pipeConnection(pipes: Pipes, cwd: string, onClose: () => void = () => {}, handlers: ServerHandlers = {}): McpConnection {
+	const peer = new JsonRpcPeer(pipes, { onRequest: serverRequest(cwd, handlers) });
 	return {
 		request: (method, params, o = {}) => bounded(peer.request(method, params), method, o.signal, o.timeoutMs ?? 0),
 		notify: (method, params) => peer.notify(method, params),
@@ -90,7 +108,7 @@ export function pipeConnection(pipes: Pipes, cwd: string, onClose: () => void = 
 }
 
 /** A stdio server: its program started in the run's folder, with the server's env over the run's. */
-export function stdioConnection(s: McpServerParams, cwd: string, env: Record<string, string | undefined>, spawn: SpawnFn = spawnChild): McpConnection {
+export function stdioConnection(s: McpServerParams, cwd: string, env: Record<string, string | undefined>, spawn: SpawnFn = spawnChild, handlers: ServerHandlers = {}): McpConnection {
 	const child = spawn([s.command!, ...(s.args ?? [])], { cwd, env: { ...env, ...(s.env ?? {}) } });
 	// Its stderr is read and dropped (a full pipe would stall it); never logged.
 	void (async () => {
@@ -98,14 +116,19 @@ export function stdioConnection(s: McpServerParams, cwd: string, env: Record<str
 			for await (const _ of child.stderr);
 		} catch {}
 	})();
-	return pipeConnection({ write: (line) => void child.stdin.write(line), lines: linesOf(child.stdout) }, cwd, () => {
-		try {
-			child.stdin.end();
-		} catch {}
-		try {
-			child.kill();
-		} catch {}
-	});
+	return pipeConnection(
+		{ write: (line) => void child.stdin.write(line), lines: linesOf(child.stdout) },
+		cwd,
+		() => {
+			try {
+				child.stdin.end();
+			} catch {}
+			try {
+				child.kill();
+			} catch {}
+		},
+		handlers
+	);
 }
 
 type SseEvent = { event: string; data: string };
@@ -151,7 +174,8 @@ abstract class HttpBase implements McpConnection {
 		protected url: string,
 		protected headers: Record<string, string>,
 		protected cwd: string,
-		protected fetchFn: typeof fetch = fetch
+		protected fetchFn: typeof fetch = fetch,
+		protected handlers: ServerHandlers = {}
 	) {}
 
 	abstract request(method: string, params: unknown, o?: { signal?: AbortSignal; timeoutMs?: number }): Promise<unknown>;
@@ -182,7 +206,7 @@ abstract class HttpBase implements McpConnection {
 		if (typeof msg.method !== 'string' || msg.id === undefined || msg.id === null) return;
 		let reply: Obj;
 		try {
-			reply = { id: msg.id, result: (await serverRequest(this.cwd)(msg.method)) ?? null };
+			reply = { id: msg.id, result: (await serverRequest(this.cwd, this.handlers)(msg.method, msg.params)) ?? null };
 		} catch (e) {
 			reply = { id: msg.id, error: { code: e instanceof RpcCallError ? e.code : -32603, message: e instanceof Error ? e.message : String(e) } };
 		}
@@ -269,8 +293,8 @@ export class SseConnection extends HttpBase {
 	private waiting = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 	private ready: Promise<void>;
 
-	constructor(url: string, headers: Record<string, string>, cwd: string, fetchFn: typeof fetch = fetch) {
-		super(url, headers, cwd, fetchFn);
+	constructor(url: string, headers: Record<string, string>, cwd: string, fetchFn: typeof fetch = fetch, handlers: ServerHandlers = {}) {
+		super(url, headers, cwd, fetchFn, handlers);
 		this.ready = this.listen();
 		this.ready.catch(() => {});
 	}
@@ -362,18 +386,30 @@ export function resultText(r: unknown): { content: string; isError: boolean } {
 	return { content: parts.join('\n'), isError: r.isError === true };
 }
 
+/** At most this many resources, templates or prompts are listed per server. */
+export const MAX_LISTED = 500;
+
 /** One server: initialized, its tools listed. */
 export class McpClient {
 	tools: McpToolInfo[] = [];
+	/** The server's capabilities from `initialize` (`resources`, `prompts`, …). */
+	serverCaps: Obj = {};
 
 	constructor(
 		readonly name: string,
-		private conn: McpConnection
+		private conn: McpConnection,
+		private capabilities: Obj = clientCapabilities()
 	) {}
 
-	async connect(timeoutMs = CONNECT_TIMEOUT_MS) {
-		await this.conn.request('initialize', { protocolVersion: PROTOCOL_VERSION, capabilities: { roots: { listChanged: false } }, clientInfo: { name: 'kingu-arkai', version: '1.0.0' } }, { timeoutMs });
+	/** `initialize`, then its tools unless `tools` is false (a connection for one query). */
+	async connect(timeoutMs = CONNECT_TIMEOUT_MS, tools = true) {
+		const init = await this.conn.request('initialize', { protocolVersion: PROTOCOL_VERSION, capabilities: this.capabilities, clientInfo: { name: 'kingu-arkai', version: '1.0.0' } }, { timeoutMs });
+		this.serverCaps = isObj(init) && isObj(init.capabilities) ? init.capabilities : {};
 		this.conn.notify('notifications/initialized');
+		if (tools) await this.listTools();
+	}
+
+	private async listTools() {
 		const tools: McpToolInfo[] = [];
 		let cursor: string | undefined;
 		do {
@@ -390,6 +426,24 @@ export class McpClient {
 
 	async call(tool: string, args: Obj, signal: AbortSignal): Promise<{ content: string; isError: boolean }> {
 		return resultText(await this.conn.request('tools/call', { name: tool, arguments: args }, { signal, timeoutMs: CALL_TIMEOUT_MS }));
+	}
+
+	/** Every page of a list method's `key` entries (objects), up to MAX_LISTED; [] when the server lacks `cap`. */
+	async list(method: string, key: string, cap: string): Promise<Obj[]> {
+		if (!isObj(this.serverCaps[cap])) return [];
+		const out: Obj[] = [];
+		let cursor: string | undefined;
+		do {
+			const page = await this.conn.request(method, cursor ? { cursor } : {}, { timeoutMs: REQUEST_TIMEOUT_MS });
+			out.push(...(isObj(page) && Array.isArray(page[key]) ? page[key].filter(isObj) : []));
+			cursor = isObj(page) && typeof page.nextCursor === 'string' && page.nextCursor ? page.nextCursor : undefined;
+		} while (cursor && out.length < MAX_LISTED);
+		return out.slice(0, MAX_LISTED);
+	}
+
+	/** Any other request of the server (`resources/read`, `prompts/get`). */
+	request(method: string, params: Obj): Promise<unknown> {
+		return this.conn.request(method, params, { timeoutMs: REQUEST_TIMEOUT_MS });
 	}
 
 	close() {
@@ -412,7 +466,9 @@ export type HubOptions = {
 	/** The servers' state changed (an `mcp_status` goes out). */
 	onChange: (servers: McpServerLive[]) => void;
 	/** How a server is reached; tests pass their own. */
-	connect?: (name: string, s: McpServerParams) => McpConnection;
+	connect?: (name: string, s: McpServerParams, handlers: ServerHandlers) => McpConnection;
+	/** What the run answers for each server (elicitation, sampling); absent: neither is offered. */
+	handlers?: (server: string) => ServerHandlers;
 };
 
 type Entry = { status: 'pending' | 'connected' | 'failed' | 'needs-auth'; error: string | null; client: McpClient | null };
@@ -429,7 +485,7 @@ export class McpHub {
 		servers: Record<string, McpServerParams>,
 		private o: HubOptions
 	) {
-		const connect = o.connect ?? ((_name, s) => defaultConnection(s, o.cwd, o.env));
+		const connect = o.connect ?? ((_name, s, h) => defaultConnection(s, o.cwd, o.env, h));
 		this.ready = Promise.all(Object.entries(servers).map(([name, s]) => this.start(name, s, connect))).then(() => {});
 	}
 
@@ -438,7 +494,8 @@ export class McpHub {
 		this.entries.set(name, entry);
 		let client: McpClient | null = null;
 		try {
-			client = new McpClient(name, connect(name, s));
+			const handlers = this.o.handlers?.(name) ?? {};
+			client = new McpClient(name, connect(name, s, handlers), clientCapabilities(handlers));
 			await client.connect();
 			if (this.closed) return client.close();
 			entry.client = client;
@@ -483,6 +540,11 @@ export class McpHub {
 		return this.tools.has(name);
 	}
 
+	/** Server `name`'s client, once connected. */
+	client(name: string): McpClient | null {
+		return this.entries.get(name)?.client ?? null;
+	}
+
 	async call(name: string, args: Obj, signal: AbortSignal): Promise<{ content: string; isError: boolean }> {
 		const t = this.tools.get(name);
 		const client = t && this.entries.get(t.server)?.client;
@@ -502,9 +564,9 @@ export class McpHub {
 	}
 }
 
-function defaultConnection(s: McpServerParams, cwd: string, env: Record<string, string | undefined>): McpConnection {
+export function defaultConnection(s: McpServerParams, cwd: string, env: Record<string, string | undefined>, handlers: ServerHandlers = {}): McpConnection {
 	const type = s.type ?? 'stdio';
-	if (type === 'stdio') return stdioConnection(s, cwd, env);
+	if (type === 'stdio') return stdioConnection(s, cwd, env, spawnChild, handlers);
 	if (!s.url) throw new Error('no url');
-	return type === 'sse' ? new SseConnection(s.url, s.headers ?? {}, cwd) : new HttpConnection(s.url, s.headers ?? {}, cwd);
+	return type === 'sse' ? new SseConnection(s.url, s.headers ?? {}, cwd, fetch, handlers) : new HttpConnection(s.url, s.headers ?? {}, cwd, fetch, handlers);
 }

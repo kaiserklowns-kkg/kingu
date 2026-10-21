@@ -3,7 +3,9 @@
 // Each run is a streaming-input `query()`: the first prompt and every follow-up (`send`) go into
 // one live session, so the conversation, tools and "allow always" grants carry over. A run ends
 // on `stop` (or when the SDK fails); the app can continue it later with `start {resume}`.
-// Permission prompts go out as `permission_request` events and wait for an `answer` request.
+// Permission prompts go out as `permission_request` events and wait for an `answer` request; an
+// MCP server's form (the SDK's `onElicitation`) as an `mcp_request`, answered by `mcp_answer`
+// (mcpAsks.ts). `mcp_query` reads an MCP server's resources and prompts for the chat (mcpQuery.ts).
 //
 // Never write prompts, tool inputs or credentials to stderr: it ends up in the app log.
 
@@ -17,6 +19,9 @@ import { checkAnswers, isAskUserQuestion, QUESTIONS_DISMISSED } from './question
 import { Runtimes, runtimeSpec, SessionError, type SpawnFn } from './runtimes/index.ts';
 import { ARTIFACT_SERVER, ARTIFACT_TOOL, artifactServer, socketCaller, type CallApp } from './artifacts.ts';
 import { readSkills, skillIndex } from './skills.ts';
+import { elicitAsk, McpAsks } from './mcpAsks.ts';
+import { checkQuery, runQuery } from './mcpQuery.ts';
+import type { McpConnection } from './arkai/mcp.ts';
 import {
 	DECISIONS,
 	MCP_TYPES,
@@ -24,6 +29,8 @@ import {
 	type AgentEvent,
 	type AnswerParams,
 	type Decision,
+	type McpAnswerParams,
+	type McpQueryParams,
 	type McpServerParams,
 	type PermissionMode,
 	type SetOptionsParams,
@@ -196,6 +203,8 @@ class Run {
 	contextTokens: number | null = null;
 	/** Kingu's artifact tool is this run's (its `kingu` MCP server was added). */
 	artifacts = false;
+	/** MCP servers' forms waiting for the user. */
+	asks: McpAsks | null = null;
 	constructor(readonly id: number) {}
 }
 
@@ -215,6 +224,8 @@ export type HostDeps = {
 	callApp?: CallApp;
 	/** Arkai's HTTP requests to the user's model provider (tests pass a fake). */
 	fetch?: typeof fetch;
+	/** How `mcp_query` reaches a server (tests pass a fake). */
+	mcpConnect?: (s: McpServerParams, cwd: string) => McpConnection;
 };
 
 class RpcError extends Error {
@@ -282,6 +293,7 @@ export class AgentHost {
 
 	async dispatch(method: string, params: unknown): Promise<unknown> {
 		const p = (params ?? {}) as Record<string, unknown>;
+		if (method === 'mcp_query') return this.mcpQuery(p as McpQueryParams);
 		if (this.others.has(p.runId)) return this.dispatchOther(method, p);
 		switch (method) {
 			case 'start':
@@ -294,6 +306,8 @@ export class AgentHost {
 				return this.stop(this.run(p.runId));
 			case 'answer':
 				return this.answer(p as AnswerParams);
+			case 'mcp_answer':
+				return this.answerMcp(p as McpAnswerParams);
 			case 'set_options':
 				return this.setOptions(p as SetOptionsParams);
 			case 'shutdown':
@@ -320,6 +334,8 @@ export class AgentHost {
 				return run.stop();
 			case 'answer':
 				return run.answer(p as AnswerParams);
+			case 'mcp_answer':
+				return run.answerMcp(p as McpAnswerParams);
 			case 'set_options': {
 				const o = p as SetOptionsParams;
 				const model = o.model ?? undefined;
@@ -383,6 +399,8 @@ export class AgentHost {
 		);
 		const append = p.systemPromptAppend ?? '';
 		need(typeof append === 'string' && append.length <= MAX_SYSTEM_APPEND, 'systemPromptAppend must be a string of at most 256 KB');
+		const sampling = p.mcpSampling ?? null;
+		need(sampling === null || (typeof sampling === 'object' && !Array.isArray(sampling) && Object.values(sampling).every((v) => typeof v === 'boolean')), 'mcpSampling must map server names to booleans');
 		const resumeAt = p.resumeAt || undefined;
 		need(resumeAt === undefined || (isUuid(resumeAt) && p.resume), 'resumeAt must be a message uuid, with resume');
 		let other: ReturnType<typeof runtimeSpec>;
@@ -413,13 +431,15 @@ export class AgentHost {
 				mcpServers: mcp,
 				env: runEnv(this.deps.options?.env ?? process.env, extraEnv, unset),
 				snapshots: p.snapshots === true,
-				safetyChecks: p.safetyChecks !== false
+				safetyChecks: p.safetyChecks !== false,
+				mcpSampling: sampling
 			});
 			return { runId: p.runId };
 		}
 
 		const run = new Run(p.runId);
 		run.mode = mode;
+		const mcpAsks = (run.asks = new McpAsks({ emit: (ev) => this.emit(run.id, ev), newId: () => this.newId(), log: (line) => this.log(`run ${run.id}: ${line}`), sampling }));
 		// Kingu's artifact tool (artifacts.ts), over the app's `kingu` socket; not when a server of the run is named `kingu`.
 		const cliRuntime = extraEnv.KINGU_CLI_RUNTIME || (this.deps.options?.env ?? process.env).KINGU_CLI_RUNTIME;
 		const call = this.deps.callApp ?? (cliRuntime ? socketCaller(cliRuntime) : null);
@@ -464,6 +484,11 @@ export class AgentHost {
 			...(append.trim() ? { systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const, append } } : {}),
 			abortController: run.abort,
 			canUseTool: this.canUseTool(run),
+			// An MCP server's form (or page to open) as a card in the chat; declined when it cannot be shown.
+			onElicitation: async (req, { signal }) => {
+				const ask = elicitAsk(req.serverName, req);
+				return ask ? mcpAsks.elicit(ask, signal) : { action: 'decline' };
+			},
 			// Before a tool runs (in every permission mode): the safety checks, then an edited file's prior content.
 			...(hooks ? { hooks } : {}),
 			stderr: (data) => {
@@ -584,6 +609,8 @@ export class AgentHost {
 	}
 
 	private cancelPending(run: Run, message = 'cancelled') {
+		if (run.exited) run.asks?.close();
+		else run.asks?.cancelAll();
 		for (const [requestId, p] of run.pending) {
 			p.resolve({ behavior: 'deny', message, interrupt: true });
 			this.emit(run.id, { kind: 'permission_resolved', request_id: requestId, decision: 'cancelled' });
@@ -641,6 +668,28 @@ export class AgentHost {
 		// The pump normally ends right away; don't let a wedged SDK keep the run alive.
 		setTimeout(() => this.finish(run, 0), STOP_GRACE_MS).unref?.();
 		return null;
+	}
+
+	answerMcp(p: McpAnswerParams) {
+		const run = this.run(p.runId);
+		if (!run.asks) throw new RpcError(RUN_NOT_FOUND, `no pending MCP request ${p.requestId}`);
+		try {
+			return run.asks.answer(p);
+		} catch (e) {
+			throw new RpcError(INVALID_PARAMS, e instanceof Error ? e.message : String(e));
+		}
+	}
+
+	/** `mcp_query`: a server's resources and prompts, over a live Arkai run's connection or one of its own. */
+	async mcpQuery(p: McpQueryParams) {
+		try {
+			checkQuery(p);
+			mcpConfig(p.name, p.server);
+		} catch (e) {
+			throw new RpcError(INVALID_PARAMS, e instanceof Error ? e.message : String(e));
+		}
+		const live = this.others.has(p.runId) ? this.others.get(p.runId).mcpClient(p.name) : null;
+		return runQuery(p, { env: this.deps.options?.env ?? process.env, live, connect: this.deps.mcpConnect });
 	}
 
 	answer(p: AnswerParams) {

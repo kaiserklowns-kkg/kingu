@@ -1,7 +1,9 @@
 // A fake MCP server for Arkai's tests, in this process: the same handler behind line pipes (as a
 // stdio server would speak), Streamable HTTP and the older HTTP+SSE transport (Bun.serve on a
 // free port). Tools: `echo` (its text back), `fail` (an error result), `slow` (answers after
-// `release()`), and `ask_root` (asks the client for its roots first, stdio only).
+// `release()`), and `ask_root` (asks the client for its roots first, stdio only). Over pipes,
+// `elicit` and `sample` ask the client for a form / a model call and return its answer as JSON.
+// Resources (two, one binary, and a template) and a prompt with an argument, when `extras`.
 
 import type { Pipes } from '../../src/runtimes/rpc.ts';
 
@@ -13,6 +15,8 @@ export const TOOLS = [
 	{ name: 'slow', description: 'Answers when released', inputSchema: { type: 'object', properties: {} } },
 	{ name: 'ask.root', inputSchema: { type: 'object', properties: {} } }
 ];
+
+export const FORM = { type: 'object', properties: { title: { type: 'string', minLength: 1 }, priority: { type: 'string', enum: ['low', 'high'] }, count: { type: 'integer', minimum: 1 }, urgent: { type: 'boolean' } }, required: ['title'] };
 
 export class FakeMcp {
 	/** Methods asked, in order. */
@@ -28,21 +32,53 @@ export class FakeMcp {
 	/** Streams of the legacy SSE transport, by session. */
 	private streams = new Map<string, ReadableStreamDefaultController<Uint8Array>>();
 	deleted = 0;
+	/** Resources and prompts are offered (and the `elicit` / `sample` tools listed). */
+	extras = false;
+	/** The client's `initialize` params. */
+	init: any = null;
 
 	release() {
 		for (const r of this.slow.splice(0)) r();
 	}
 
 	/** The answer to one message (null for a notification); `ask` sends the server's own request. */
-	async handle(m: Msg, ask?: (method: string) => Promise<any>): Promise<Msg | null> {
+	async handle(m: Msg, ask?: (method: string, params?: unknown) => Promise<any>): Promise<Msg | null> {
 		if (!m.method) return null;
 		this.asked.push(m.method);
 		if (m.id === undefined) return null;
 		const ok = (result: unknown): Msg => ({ jsonrpc: '2.0', id: m.id, result });
 		switch (m.method) {
 			case 'initialize':
-				return ok({ protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'fake', version: '1' } });
+				this.init = m.params;
+				return ok({ protocolVersion: '2025-03-26', capabilities: { tools: {}, ...(this.extras ? { resources: {}, prompts: {} } : {}) }, serverInfo: { name: 'fake', version: '1' } });
+			case 'resources/list':
+				return m.params?.cursor === 'r2'
+					? ok({ resources: [{ uri: 'file:///logo.png', name: 'logo', mimeType: 'image/png' }] })
+					: ok({ resources: [{ uri: 'memo://readme', name: 'readme', title: 'Read me', description: 'The notes', mimeType: 'text/plain' }], nextCursor: 'r2' });
+			case 'resources/templates/list':
+				return ok({ resourceTemplates: [{ uriTemplate: 'memo://notes/{topic}', name: 'notes', description: 'Notes on a topic' }] });
+			case 'resources/read': {
+				const uri = m.params?.uri;
+				if (uri === 'file:///logo.png') return ok({ contents: [{ uri, mimeType: 'image/png', blob: 'AAAAAAAA' }] });
+				if (typeof uri === 'string' && uri.startsWith('memo://')) return ok({ contents: [{ uri, mimeType: 'text/plain', text: `content of ${uri}` }] });
+				return { jsonrpc: '2.0', id: m.id, error: { code: -32002, message: 'resource not found' } };
+			}
+			case 'prompts/list':
+				return ok({ prompts: [{ name: 'review', title: 'Review code', description: 'Reviews a file', arguments: [{ name: 'file', description: 'Which file', required: true }, { name: 'tone' }] }] });
+			case 'prompts/get': {
+				const args = m.params?.arguments ?? {};
+				if (m.params?.name !== 'review') return { jsonrpc: '2.0', id: m.id, error: { code: -32602, message: 'no prompt' } };
+				return ok({
+					description: 'Review',
+					messages: [
+						{ role: 'user', content: { type: 'text', text: `Review ${args.file}${args.tone ? ` (${args.tone})` : ''}` } },
+						{ role: 'user', content: { type: 'resource', resource: { uri: 'memo://style', mimeType: 'text/plain', text: 'style guide' } } },
+						{ role: 'assistant', content: { type: 'image', data: 'AAAA', mimeType: 'image/png' } }
+					]
+				});
+			}
 			case 'tools/list':
+				if (this.extras) return ok({ tools: [...TOOLS, { name: 'elicit', inputSchema: { type: 'object' } }, { name: 'sample', inputSchema: { type: 'object' } }] });
 				if (!this.paged) return ok({ tools: TOOLS });
 				return m.params?.cursor === 'p2' ? ok({ tools: TOOLS.slice(2) }) : ok({ tools: TOOLS.slice(0, 2), nextCursor: 'p2' });
 			case 'tools/call': {
@@ -56,6 +92,14 @@ export class FakeMcp {
 				if (name === 'ask.root') {
 					const roots = ask ? await ask('roots/list') : null;
 					return ok({ content: [{ type: 'text', text: JSON.stringify(roots) }] });
+				}
+				if (name === 'elicit') {
+					const r = ask ? await ask('elicitation/create', { message: 'New ticket', requestedSchema: FORM }) : null;
+					return ok({ content: [{ type: 'text', text: JSON.stringify(r) }] });
+				}
+				if (name === 'sample') {
+					const r = ask ? await ask('sampling/createMessage', { messages: [{ role: 'user', content: { type: 'text', text: 'Summarise: hello' } }], systemPrompt: 'Be short', maxTokens: 50 }) : null;
+					return ok({ content: [{ type: 'text', text: JSON.stringify(r) }] });
 				}
 				return { jsonrpc: '2.0', id: m.id, error: { code: -32602, message: `no tool ${name}` } };
 			}
@@ -74,11 +118,11 @@ export class FakeMcp {
 			queue.push(JSON.stringify(m));
 			wake?.();
 		};
-		const ask = (method: string) =>
+		const ask = (method: string, params?: unknown) =>
 			new Promise<any>((resolve) => {
 				const id = ++next;
 				waiting.set(id, resolve);
-				push({ jsonrpc: '2.0', id, method });
+				push({ jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) });
 			});
 		const self = this;
 		const state = { closed: false };
@@ -92,7 +136,7 @@ export class FakeMcp {
 			write(line: string) {
 				const m = JSON.parse(line) as Msg;
 				if (!m.method && typeof m.id === 'number' && waiting.has(m.id)) {
-					waiting.get(m.id)!(m.result);
+					waiting.get(m.id)!(m.error ? { error: m.error } : m.result);
 					waiting.delete(m.id);
 					return;
 				}

@@ -15,7 +15,9 @@
 //   id is Arkai's own and stays the same.
 // - MCP servers (mcp.ts): the run's servers connect while it opens (and later ones join when
 //   ready); their tools are offered as `mcp__<server>__<tool>`, gated like the rest, and the
-//   clients are closed when the run ends.
+//   clients are closed when the run ends. A server's form (`elicitation/create`) goes to the user
+//   as a card (../mcpAsks.ts); its model call (`sampling/createMessage`) runs on this run's
+//   provider and model once the user allowed it (`chat.mcp.serverSampling`, or the card).
 //
 // Never log prompts, tool inputs, file contents or the API key.
 
@@ -29,7 +31,9 @@ import { AnthropicClient } from './anthropic.ts';
 import { coachInput, hintFor, parseArguments } from './coach.ts';
 import { conversationTokens, estimateTokens, fitContext, summarise } from './context.ts';
 import { historyMessages } from './history.ts';
-import { McpHub } from './mcp.ts';
+import { McpHub, type McpClient } from './mcp.ts';
+import { elicitAsk, sampleAsk } from '../mcpAsks.ts';
+import { RpcCallError } from '../runtimes/rpc.ts';
 import { hasLeftoverToolCall, MAX_NUDGES, NUDGE, recoverToolCalls, stripToolMarkup, STRIPPED_PLACEHOLDER } from './leftover.ts';
 import { ProviderError, type ChatClient, type Completion, type Msg, type TokenUsage, type ToolCall, type ToolDef } from './messages.ts';
 import { callId, OpenAiClient } from './openai.ts';
@@ -115,6 +119,8 @@ export class ArkaiSession extends RunSession {
 	private mcp: McpHub | null = null;
 	/** The MCP tools were left out for the window: said once in the log. */
 	private mcpTooBig = false;
+	/** Sampling requests in flight (aborted when the run ends). */
+	private sampling = new Set<AbortController>();
 
 	constructor(
 		init: SessionInit,
@@ -141,7 +147,8 @@ export class ArkaiSession extends RunSession {
 				cwd: this.cwd,
 				env: this.init.env,
 				log: (line) => this.log(line),
-				onChange: (servers) => this.emit({ kind: 'mcp_status', servers })
+				onChange: (servers) => this.emit({ kind: 'mcp_status', servers }),
+				handlers: (server) => ({ elicit: (params) => this.elicit(server, params), sample: (params) => this.sample(server, params) })
 			}));
 			this.emit({ kind: 'mcp_status', servers: hub.status() });
 			let timer: ReturnType<typeof setTimeout> | undefined;
@@ -187,7 +194,53 @@ export class ArkaiSession extends RunSession {
 	}
 
 	protected closed() {
+		for (const a of this.sampling) a.abort();
+		this.sampling.clear();
 		this.mcp?.close();
+	}
+
+	mcpClient(name: string): McpClient | null {
+		return this.mcp?.client(name) ?? null;
+	}
+
+	/** A server's `elicitation/create`: the user's answer to its form (declined when it cannot be shown). */
+	private async elicit(server: string, params: unknown): Promise<unknown> {
+		const ask = elicitAsk(server, params);
+		if (!ask) return { action: 'decline' };
+		return this.asks.elicit(ask);
+	}
+
+	/**
+	 * A server's `sampling/createMessage`, once allowed: one request to this run's model, without
+	 * tools, its text as the answer (MCP has no multi-part sampling result). Refused: error -1,
+	 * the spec's "user rejected".
+	 */
+	private async sample(server: string, params: unknown): Promise<unknown> {
+		const ask = sampleAsk(server, params);
+		if (!ask.messages.length) throw new RpcCallError(-32602, 'sampling/createMessage has no messages');
+		if (!(await this.asks.allowSampling(ask))) throw new RpcCallError(-1, 'The user did not allow this model request.');
+		if (this.exited || this.stopped) throw new RpcCallError(-1, 'The chat has ended.');
+		const settings = this.settings();
+		const abort = new AbortController();
+		this.sampling.add(abort);
+		try {
+			const res = await this.client.complete({
+				model: this.modelId,
+				system: ask.systemPrompt ?? '',
+				messages: ask.messages.map((m): Msg => (m.role === 'assistant' ? { role: 'assistant', text: m.text, calls: [] } : { role: 'user', text: m.text })),
+				tools: [],
+				maxTokens: Math.min(ask.maxTokens ?? settings.maxTokens, settings.maxTokens),
+				signal: abort.signal,
+				onText: () => {},
+				onThinking: () => {}
+			});
+			this.log(`mcp ${server}: sampling answered`);
+			return { role: 'assistant', content: { type: 'text', text: res.text }, model: this.model(), stopReason: res.stop === 'length' ? 'maxTokens' : 'endTurn' };
+		} catch (e) {
+			throw new RpcCallError(-32603, e instanceof Error ? e.message : String(e));
+		} finally {
+			this.sampling.delete(abort);
+		}
 	}
 
 	async stop() {

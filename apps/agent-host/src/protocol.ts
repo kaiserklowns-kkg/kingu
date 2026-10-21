@@ -1,7 +1,8 @@
 // Wire protocol between the Kingu desktop app (Rust) and this sidecar.
 //
 // Framing: one JSON-RPC 2.0 message per line on stdin/stdout (UTF-8, '\n'-terminated).
-// Rust → host requests:  start, send, interrupt, stop, answer, set_options, shutdown.
+// Rust → host requests:  start, send, interrupt, stop, answer, set_options, shutdown, and for MCP
+// (mcpAsks.ts, mcpQuery.ts) mcp_answer, mcp_query.
 // `start {runtime}` picks the agent behind the run (runtimes/); the other requests are the same for all.
 // Host → Rust notifications: `ready` once at startup, `event` {runId, event} for every run event.
 // Field names in events are snake_case, mirroring `AgentEvent` in src-tauri/src/agent/events.rs.
@@ -58,6 +59,11 @@ export type StartParams = {
 	systemPromptAppend?: string | null;
 	/** Which agent runs the session (runtimes/): absent or `claude` is the Claude Agent SDK. */
 	runtime?: RuntimeSpec | null;
+	/**
+	 * `chat.mcp.serverSampling` (user settings, read by Rust): server name → whether it may make
+	 * model calls during the chat (`allowedDuringChat`); a server not listed is asked about.
+	 */
+	mcpSampling?: Record<string, boolean> | null;
 };
 /**
  * A runtime other than the Claude Agent SDK, resolved by Rust (agent/runtimes.rs) to a program it
@@ -96,6 +102,35 @@ export const DECISIONS: readonly Decision[] = ['allow', 'allow_always', 'allow_w
  * (an option label, labels joined by ", " for a multi-select, or their own words).
  */
 export type AnswerParams = { runId: number; requestId: string; decision: Decision; message?: string | null; answers?: Record<string, string> | null };
+
+/**
+ * The answer to an `mcp_request`: `accept` (a form's `content`, checked against its schema),
+ * `decline` or `cancel`. `remember` (sampling only): the answer holds for this run (`session`), or
+ * the app saved it in `chat.mcp.serverSampling` (`always` / `never`).
+ */
+export type McpAnswerParams = {
+	runId: number;
+	requestId: string;
+	action: 'accept' | 'decline' | 'cancel';
+	content?: Record<string, unknown> | null;
+	remember?: 'session' | 'always' | 'never' | null;
+};
+/**
+ * What the chat asks of an MCP server (Add Context's resources, `/mcp.<server>.<prompt>`):
+ * `list` (its resources, templates and prompts), `read` a resource `uri`, or `prompt` (`name`
+ * with `arguments`, rendered). Over a live Arkai run's connection when `runId` has one, else a
+ * connection opened for the request in `cwd` and closed after it.
+ */
+export type McpQueryParams = {
+	runId?: number | null;
+	cwd: string;
+	name: string;
+	server: McpServerParams;
+	op: 'list' | 'read' | 'prompt';
+	uri?: string;
+	prompt?: string;
+	arguments?: Record<string, string>;
+};
 
 export type Usage = {
 	input_tokens: number;
@@ -203,6 +238,24 @@ export type AgentEvent =
 	 * shows it as a card that opens the page.
 	 */
 	| { kind: 'artifact'; id: string; title: string; version: number; format: 'html' | 'markdown'; root: string }
+	/**
+	 * An MCP server asks the user (mcpAsks.ts): `elicitation` (a form from `schema`, or in `url`
+	 * mode a page to open) or `sampling` (leave to make a model call; `sampling` holds what it
+	 * would send). Answered by `mcp_answer`; cancelled after `timeout_ms`.
+	 */
+	| {
+			kind: 'mcp_request';
+			request_id: string;
+			type: 'elicitation' | 'sampling';
+			server: string;
+			message: string;
+			mode: 'form' | 'url' | null;
+			schema: Record<string, unknown> | null;
+			url: string | null;
+			sampling: { messages: { role: string; text: string }[]; system_prompt: string | null; max_tokens: number | null } | null;
+			timeout_ms: number;
+	  }
+	| { kind: 'mcp_request_resolved'; request_id: string; action: 'accept' | 'decline' | 'cancel' }
 	| { kind: 'error'; message: string }
 	| { kind: 'raw'; line: string }
 	| { kind: 'stderr'; line: string }

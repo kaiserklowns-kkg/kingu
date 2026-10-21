@@ -9,7 +9,9 @@
 
 import { blockingThreats, threatSummary } from '../guards/security.ts';
 import { snapshotOf } from '../snapshots.ts';
-import { DECISIONS, type AgentEvent, type AnswerParams, type Decision, type McpServerParams, type PermissionMode, type Usage } from '../protocol.ts';
+import { DECISIONS, type AgentEvent, type AnswerParams, type Decision, type McpAnswerParams, type McpServerParams, type PermissionMode, type Usage } from '../protocol.ts';
+import { McpAsks } from '../mcpAsks.ts';
+import type { McpClient } from '../arkai/mcp.ts';
 import { summarizeTool } from '../normalize.ts';
 import { JsonRpcPeer, linesOf, type PeerOptions } from './rpc.ts';
 import { autoDecision, SESSION_ID, type ToolKind, type ToolView } from './tools.ts';
@@ -75,6 +77,8 @@ export type SessionInit = {
 	skillIndex?: string;
 	/** Arkai only: Kingu's always-ask checks (the other runtimes ask through their agent). */
 	guardAsks?: (AskConfig & { cwd: string }) | null;
+	/** `chat.mcp.serverSampling`: server → may make model calls (absent: asked). */
+	mcpSampling?: Record<string, boolean> | null;
 };
 
 export type Turn = { text: string; images: ImageBlock[]; imagePaths: string[] };
@@ -103,10 +107,27 @@ export abstract class RunSession {
 	/** The user's words with a `deny`, by request id (Arkai tells the model). */
 	protected readonly denyNotes = new Map<string, string>();
 	protected tools = new Map<string, ToolState>();
+	/** What MCP servers ask the user (../mcpAsks.ts): forms and sampling approvals. */
+	protected readonly asks: McpAsks;
 
 	constructor(protected readonly init: SessionInit) {
 		this.cwd = init.cwd;
 		this.mode = init.mode;
+		this.asks = new McpAsks({ emit: (ev) => this.emit(ev), newId: init.newId, log: (line) => this.log(line), sampling: init.mcpSampling ?? null });
+	}
+
+	/** The answer to an `mcp_request`. */
+	answerMcp(p: McpAnswerParams) {
+		try {
+			return this.asks.answer(p);
+		} catch (e) {
+			throw new SessionError(INVALID_PARAMS, e instanceof Error ? e.message : String(e));
+		}
+	}
+
+	/** The run's live connection to MCP server `name` (Arkai's own client); null for agents that keep theirs. */
+	mcpClient(_name: string): McpClient | null {
+		return null;
 	}
 
 	/** The handshake: open (or resume) the agent session; sets `sessionId`. */
@@ -364,6 +385,7 @@ export abstract class RunSession {
 
 	async interrupt() {
 		this.cancelPending();
+		this.asks.cancelAll();
 		if (this.busy) await this.cancel().catch(() => {});
 		return null;
 	}
@@ -387,6 +409,7 @@ export abstract class RunSession {
 	protected finish(code: number) {
 		if (this.exited) return;
 		this.cancelPending();
+		this.asks.close();
 		this.closed();
 		this.flush();
 		this.log(`exited${this.stopped ? ' (stopped)' : ''}`);

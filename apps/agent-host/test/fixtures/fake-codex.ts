@@ -6,6 +6,7 @@
 //   "edit <file>"  a fileChange item, its approval, then writes the file itself
 //   "run <cmd>"    a commandExecution item and its approval (nothing runs)
 //   "wait"         waits for `turn/interrupt`
+//   "elicit"       an MCP server's form (`mcpServer/elicitation/request`); answers with what came back
 //   anything else  "echo: <text>"
 
 import { writeFileSync } from 'node:fs';
@@ -50,6 +51,14 @@ async function turn(turnId: string, text: string) {
 		process.stderr.write(`decision ${r.decision}\n`);
 		const ok = r.decision === 'accept' || r.decision === 'acceptForSession';
 		notify('item/completed', { threadId: THREAD, turnId, item: { ...item, status: ok ? 'completed' : 'declined', aggregatedOutput: ok ? 'ran' : '', exitCode: ok ? 0 : null } });
+	} else if (text === 'elicit') {
+		const r = await request('mcpServer/elicitation/request', {
+			threadId: THREAD,
+			turnId,
+			serverName: 'tickets',
+			request: { mode: 'form', message: 'Which project?', requestedSchema: { type: 'object', properties: { project: { type: 'string', enum: ['web', 'api'] } }, required: ['project'] } }
+		});
+		process.stderr.write(`elicited ${JSON.stringify(r)}\n`);
 	} else if (text === 'wait') {
 		await new Promise<void>((resolve) => (interrupt = resolve));
 		status = 'interrupted';
