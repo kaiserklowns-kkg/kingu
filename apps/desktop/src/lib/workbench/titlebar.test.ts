@@ -1,8 +1,11 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
 import {
+	agentShortName,
+	agentStatusText,
 	agentStatusView,
 	commandCenterLabel,
+	compactSearchLabel,
 	commandCenterTooltip,
 	countSessions,
 	inFilter,
@@ -10,6 +13,7 @@ import {
 	overflowHidden,
 	SessionHistory,
 	sessionsAttentionLabel,
+	statusAgents,
 	switchMode,
 	TITLE_BAR_TOGGLES,
 	titleBarHeight,
@@ -35,6 +39,12 @@ describe('title bar sizes and command center', () => {
 		expect(commandCenterTooltip({ folderName: 'kingu', quickOpenKey: '⌘P', commandsKey: '⇧⌘P' })).toBe('Search kingu (⌘P) — Show and Run Commands (⇧⌘P)');
 		expect(commandCenterTooltip({ folderName: null })).toBe('Search');
 	});
+
+	test('compact pill placeholder: the project and branch name the folder, so it says what it searches', () => {
+		expect(compactSearchLabel({ folderName: 'kingu', title: 'main.ts — kingu', customTitle: false })).toBe('Search files and commands');
+		expect(compactSearchLabel({ folderName: 'kingu', title: 'main.ts — kingu', customTitle: true })).toBe('main.ts — kingu');
+		expect(compactSearchLabel({ folderName: null, title: 'Kingu', customTitle: false })).toBe('Search');
+	});
 });
 
 describe('agents status', () => {
@@ -59,17 +69,53 @@ describe('agents status', () => {
 	test('hidden shows nothing, badge a separate pill, compact the unified pill; zero sections are hidden', () => {
 		const counts = { needsInput: 1, inProgress: 0, unread: 3 };
 		expect(agentStatusView(counts, 'hidden')).toEqual({ visible: false, unified: false, sections: [] });
+		// Badge: its own pill after the chat button, unread first (kingu-old's original order).
 		const badge = agentStatusView(counts, 'badge');
 		expect([badge.visible, badge.unified]).toEqual([true, false]);
-		expect(badge.sections.map((x) => [x.id, x.count])).toEqual([
-			['needsInput', 1],
-			['unread', 3]
+		expect(badge.sections.map((x) => [x.id, x.count, x.text])).toEqual([
+			['unread', 3, '3'],
+			['needsInput', 1, '1 waiting for you']
 		]);
-		const compact = agentStatusView(counts, 'compact');
+		// Compact: inside the search pill, populating inward from needs input.
+		const compact = agentStatusView({ needsInput: 1, inProgress: 2, unread: 3 }, 'compact');
 		expect([compact.visible, compact.unified]).toEqual([true, true]);
-		expect(compact.sections.map((x) => x.id)).toEqual(['needsInput', 'unread']);
-		// Nothing to report: the widget stays (split button), with no sections.
+		expect(compact.sections.map((x) => x.id)).toEqual(['needsInput', 'inProgress', 'unread']);
+		// Nothing to report: the widget stays (the chat button), with no sections.
 		expect(agentStatusView({ needsInput: 0, inProgress: 0, unread: 0 }, 'compact')).toEqual({ visible: true, unified: true, sections: [] });
+		// Zen Mode hides it whatever the setting.
+		expect(agentStatusView(counts, 'compact', { zen: true }).visible).toBe(false);
+	});
+
+	test('status in words: the agent by name when it is the only one, else the count', () => {
+		expect([
+			agentStatusText('working', ['Claude']),
+			agentStatusText('working', ['Claude', 'Claude', 'Codex']),
+			agentStatusText('waiting', ['Codex']),
+			agentStatusText('waiting', ['Claude', undefined]),
+			agentStatusText('working', [undefined])
+		]).toEqual(['Claude working', '3 working', 'Codex waiting for you', '2 waiting for you', '1 working']);
+		const agents = statusAgents([
+			{ status: 'running', pending: 0, agent: 'Claude' },
+			{ status: 'waiting', pending: 0, agent: 'Codex' },
+			{ status: 'running', pending: 1, agent: 'Gemini' },
+			{ status: 'review', pending: 0, finishedAt: 2, agent: 'Amp' },
+			{ status: 'done', pending: 0, agent: 'Aider' }
+		]);
+		expect(agents).toEqual({ needsInput: ['Codex', 'Gemini'], inProgress: ['Claude'], unread: ['Amp'] });
+		const view = agentStatusView({ needsInput: 2, inProgress: 1, unread: 1 }, 'compact', { agents });
+		expect(view.sections.map((x) => x.text)).toEqual(['2 waiting for you', 'Claude working', '1']);
+	});
+
+	test('agent short names', () => {
+		expect([
+			agentShortName('claude-code'),
+			agentShortName('cli:claude --model opus'),
+			agentShortName('cli:codex --full-auto'),
+			agentShortName('cli:copilot'),
+			agentShortName('cli:my-agent'),
+			agentShortName(''),
+			agentShortName(undefined)
+		]).toEqual(['Claude', 'Claude', 'Codex', 'Copilot', 'my-agent', undefined, undefined]);
 	});
 
 	test('session pill attention label', () => {
@@ -83,7 +129,7 @@ describe('layout controls and toolbar', () => {
 	test('items per workbench.layoutControl.type', () => {
 		expect(layoutControlItems(true, 'toggles')).toEqual(['toggleSidebar', 'togglePanel', 'toggleAuxiliaryBar']);
 		expect(layoutControlItems(true, 'menu')).toEqual(['layoutMenu']);
-		expect(layoutControlItems(true, 'both')).toEqual(['toggleSidebar', 'togglePanel', 'toggleAuxiliaryBar', 'layoutMenu']);
+		expect(layoutControlItems(true, 'both')).toEqual(['customizeLayout', 'toggleSidebar', 'togglePanel', 'toggleAuxiliaryBar']);
 		expect(layoutControlItems(false, 'both')).toEqual([]);
 	});
 
@@ -107,7 +153,7 @@ describe('layout controls and toolbar', () => {
 		// 7 items × 24px + 6 gaps × 4px = 192px.
 		expect(overflowHidden(items, 192).size).toBe(0);
 		expect([...overflowHidden(items, 191)]).toEqual(['openInAgents']);
-		expect([...overflowHidden(items, 24 * 3 + 8)]).toEqual(['openInAgents', 'toggleSidebar', 'togglePanel', 'toggleAuxiliaryBar']);
+		expect([...overflowHidden(items, 24 * 3 + 8)]).toEqual(['openInAgents', 'customizeLayout', 'toggleSidebar', 'togglePanel']);
 		expect([...overflowHidden(items, 0)].length).toBe(items.length);
 	});
 

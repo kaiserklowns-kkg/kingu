@@ -3,6 +3,8 @@
 // TitleBar.svelte and AgentsTitleBar.svelte render it.
 
 import type { TaskStatus } from '#lib/ade/model.ts';
+import { cliOf } from '#lib/ade/agentCli.ts';
+import { profileOf, programOf } from '#lib/ade/agentProfiles.ts';
 import { t } from '#lib/i18n/index.ts';
 
 // --- Sizes -------------------------------------------------------------------------------------
@@ -24,6 +26,16 @@ export function titleBarHeight(mode: AppMode, opts: { commandCenter: boolean; co
 export function commandCenterLabel(opts: { folderName: string | null | undefined; title: string; customTitle: boolean }): string {
 	if (opts.customTitle) return opts.title;
 	return opts.folderName || 'Search';
+}
+
+/**
+ * The compact (unified) pill's placeholder (kingu-old agentTitleBarStatusWidget + kinguTitleBarContext):
+ * with a folder open the project and branch buttons name it, so the search reads "Search files and
+ * commands"; a customised `window.title` still wins; "Search" with no folder.
+ */
+export function compactSearchLabel(opts: { folderName: string | null | undefined; title: string; customTitle: boolean }): string {
+	if (opts.customTitle) return opts.title;
+	return opts.folderName ? t('titleBar.searchFilesAndCommands') : t('titleBar.search');
 }
 
 /** `Search kingu (⌘P) — Show and Run Commands (⇧⌘P)`. */
@@ -74,7 +86,14 @@ export function inFilter(s: SessionState, filter: AgentsFilter): boolean {
 	return c[filter] > 0;
 }
 
-export type StatusSection = { id: Exclude<AgentsFilter, 'all'>; count: number; label: string; title: string };
+export type StatusSection = {
+	id: Exclude<AgentsFilter, 'all'>;
+	count: number;
+	label: string;
+	title: string;
+	/** What the section shows after its icon: "Claude working", "2 waiting for you", or the unread count. */
+	text: string;
+};
 
 const SECTION_TEXT: Record<StatusSection['id'], [label: () => string, title: (n: number) => string]> = {
 	needsInput: [() => t('workbench.titlebar.needsInput'), (count) => t('workbench.titlebar.needsInputTitle', { count })],
@@ -82,19 +101,72 @@ const SECTION_TEXT: Record<StatusSection['id'], [label: () => string, title: (n:
 	unread: [() => t('workbench.titlebar.unread'), (count) => t('workbench.titlebar.unreadTitle', { count })]
 };
 
+/**
+ * A status in words (kingu-old's title bar): the agent's name when one session is in it
+ * ("Claude working", "Codex waiting for you"), the count when several are or the name is unknown.
+ */
+export function agentStatusText(kind: 'working' | 'waiting', names: readonly (string | undefined)[]): string {
+	const name = names.length === 1 ? names[0] : undefined;
+	if (name) return t(kind === 'working' ? 'titleBar.working.one' : 'titleBar.waiting.one', { name });
+	return t(kind === 'working' ? 'titleBar.working.many' : 'titleBar.waiting.many', { count: names.length });
+}
+
+/** "Claude" / "Codex" / "Gemini" for a task's `agent` (`cli:<command>`, or a timeline agent id like `claude-code`). */
+export function agentShortName(agent: string | null | undefined): string | undefined {
+	if (!agent) return undefined;
+	if (agent.startsWith('cli:')) {
+		const argv = cliOf(agent);
+		if (!argv) return undefined;
+		const profile = profileOf(argv);
+		if (profile.id === 'custom') return programOf(argv) || undefined;
+		return profile.title.replace(/^GitHub /, '').replace(/ (CLI|Code|Agent)$/, '');
+	}
+	const word = agent.split(/[-_:\s]/)[0];
+	return word ? word[0].toUpperCase() + word.slice(1) : undefined;
+}
+
+/** A session with the short name of its agent, for the status words. */
+export type NamedSession = SessionState & { agent?: string };
+
+/** The agents' names in each status group, in session order (an unknown agent is `undefined`). */
+export function statusAgents(sessions: readonly NamedSession[]): Record<StatusSection['id'], (string | undefined)[]> {
+	const out: Record<StatusSection['id'], (string | undefined)[]> = { needsInput: [], inProgress: [], unread: [] };
+	for (const s of sessions) {
+		const c = countSessions([s]);
+		const id = c.needsInput ? 'needsInput' : c.inProgress ? 'inProgress' : c.unread ? 'unread' : null;
+		if (id) out[id].push(s.agent);
+	}
+	return out;
+}
+
 export type AgentStatusView = {
 	visible: boolean;
-	/** `compact`: the search box is merged into the agent pill (VS Code's unified look). */
+	/** `compact`: the status sits inside the search pill and the Arkai chat button stands beside it. */
 	unified: boolean;
-	/** Sections with a non-zero count, in VS Code's order. */
+	/**
+	 * Sections with a non-zero count. Compact (inside the pill, populating inward): needs input, in
+	 * progress, unread. Badge (its own pill, after the chat button): unread, in progress, needs input.
+	 */
 	sections: StatusSection[];
 };
 
-export function agentStatusView(counts: AgentCounts, mode: AgentsControlMode): AgentStatusView {
-	if (mode === 'hidden') return { visible: false, unified: false, sections: [] };
-	const sections = (['needsInput', 'inProgress', 'unread'] as const)
+export function agentStatusView(
+	counts: AgentCounts,
+	mode: AgentsControlMode,
+	opts: { agents?: Record<StatusSection['id'], (string | undefined)[]>; zen?: boolean } = {}
+): AgentStatusView {
+	// Zen Mode hides every agent distraction, like kingu-old.
+	if (mode === 'hidden' || opts.zen) return { visible: false, unified: false, sections: [] };
+	const order = mode === 'compact' ? (['needsInput', 'inProgress', 'unread'] as const) : (['unread', 'inProgress', 'needsInput'] as const);
+	const words = (id: StatusSection['id'], count: number): string => {
+		if (id === 'unread') return String(count);
+		const names = opts.agents?.[id];
+		const known = names && names.length === count ? names : Array.from({ length: count }, () => undefined);
+		return agentStatusText(id === 'inProgress' ? 'working' : 'waiting', known);
+	};
+	const sections = order
 		.filter((id) => counts[id] > 0)
-		.map((id) => ({ id, count: counts[id], label: SECTION_TEXT[id][0](), title: SECTION_TEXT[id][1](counts[id]) }));
+		.map((id) => ({ id, count: counts[id], label: SECTION_TEXT[id][0](), title: SECTION_TEXT[id][1](counts[id]), text: words(id, counts[id]) }));
 	return { visible: true, unified: mode === 'compact', sections };
 }
 
@@ -107,15 +179,20 @@ export function sessionsAttentionLabel(needsInput: number): string | null {
 // --- Layout controls ---------------------------------------------------------------------------
 
 export type LayoutControlType = 'toggles' | 'menu' | 'both';
-export type LayoutControlItem = 'toggleSidebar' | 'togglePanel' | 'toggleAuxiliaryBar' | 'layoutMenu';
+/** `layoutMenu`: the Configure Layout menu button; `customizeLayout`: the Customize Layout... button. */
+export type LayoutControlItem = 'customizeLayout' | 'toggleSidebar' | 'togglePanel' | 'toggleAuxiliaryBar' | 'layoutMenu';
 
-/** `workbench.layoutControl.type`: the three toggles, one menu button, or both (VS Code layoutActions). */
+/**
+ * `workbench.layoutControl.type` (VS Code layoutActions): the three toggles; one Configure Layout
+ * menu button; or both, which is Customize Layout... (it opens the layout picker straight away)
+ * followed by the three toggles.
+ */
 export function layoutControlItems(enabled: boolean, type: LayoutControlType): LayoutControlItem[] {
 	if (!enabled) return [];
 	const toggles: LayoutControlItem[] = ['toggleSidebar', 'togglePanel', 'toggleAuxiliaryBar'];
 	if (type === 'toggles') return toggles;
 	if (type === 'menu') return ['layoutMenu'];
-	return [...toggles, 'layoutMenu'];
+	return ['customizeLayout', ...toggles];
 }
 
 // --- Right toolbar and overflow ----------------------------------------------------------------
