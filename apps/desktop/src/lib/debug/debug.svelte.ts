@@ -37,8 +37,17 @@ import {
 import { appendOutput, currentFrame, frameLocation, initialModel, outputLimit, stateLabel, type DebugModel } from './model.ts';
 import { canSetBreakpoint, editorsToSave, opensOnBreak } from './debugSettings.ts';
 import { isUntitled } from '#lib/workbench/untitled.ts';
-import type { Capabilities, CompletionItem, StackFrame, StartDebuggingArguments } from './protocol.ts';
-import { DebugSession, type EvaluateResult } from './session.ts';
+import type { BreakpointLocation, Capabilities, CompletionItem, DisassembledInstruction, Source, StackFrame, StartDebuggingArguments, SteppingGranularity } from './protocol.ts';
+import { DebugSession, type EvaluateResult, type MemoryRead } from './session.ts';
+import { instructionBreakpoints, setInstructionBreakpointEnabled, toggleInstructionBreakpoint, type InstructionBreakpointSpec } from './disassembly.ts';
+import { DISASSEMBLY_KEY, memoryKey } from './memory.ts';
+import { browserConfig, parseServerReadyAction, ServerReadyDetector, type ServerReadyAction, type ServerReadyMatch } from './serverReady.ts';
+import { AUTO_ATTACH_FILTERS, autoAttachConfig, autoAttachEnv, debugTerminalConfig, type AutoAttachFilter } from './autoAttach.ts';
+import { contributeTerminalEnv } from '#lib/terminal/contributedEnv.ts';
+import { tapOutput } from '#lib/terminal/registry.ts';
+import { openUrl } from '#lib/terminal/pty.ts';
+import { shellFrom, shellPlatform } from '#lib/settings/mappings.ts';
+import { editorKeyFor } from '#lib/workbench/externalFiles.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
 import { lsp } from '#lib/lsp/lsp.svelte.ts';
@@ -65,6 +74,14 @@ type Active = {
 	parent: Active | null;
 	/** A compound with `stopAll`: stopping one stops these. */
 	group?: number;
+	/** Auto attach's listener: not shown, never focused; its terminal is never opened. */
+	hidden?: boolean;
+	/** serverReadyAction with killOnServerStop: this session stops with that one. */
+	stopWith?: Active;
+	/** serverReadyAction's watcher (a child session shares its parent's, like VS Code's trigger). */
+	detector?: ServerReadyDetector;
+	/** Stops watching the session's integrated terminal. */
+	untap?: () => void;
 };
 export type WatchResult = { value: string; error?: boolean };
 /** One session in the Call Stack view. */
@@ -120,12 +137,20 @@ class Debug {
 	focusedKey = $state<number | null>(null);
 	/** The focused session's capabilities (toolbar and context menus show what it can do). */
 	capabilities = $state.raw<Capabilities>({});
+	/** The Disassembly view's breakpoints, by address (for the sessions of this window). */
+	instructionBreakpoints = $state.raw<InstructionBreakpointSpec[]>([]);
+	/** The Disassembly view has focus: stepping goes by instruction (VS Code). */
+	disassemblyFocused = $state(false);
+	/** Auto attach's environment for new terminals while it is on (`debug.javascript.autoAttachFilter`). */
+	autoAttach = $state.raw<{ filter: AutoAttachFilter; env: Record<string, string> | null }>({ filter: 'disabled', env: null });
 
 	/** A session exists and has not terminated. */
 	active = $derived(this.sessions.some((s) => s.model.state !== 'terminated'));
 	stopped = $derived(this.model?.state === 'stopped');
 	running = $derived(this.model?.state === 'running' || this.model?.state === 'initializing');
 	stoppedLocation = $derived(this.model ? frameLocation(currentFrame(this.model), this.root) : null);
+	/** The selected frame's instruction pointer (the Disassembly view centers on it). */
+	instructionPointer = $derived(this.model?.state === 'stopped' ? (currentFrame(this.model)?.instructionPointerReference ?? null) : null);
 	label = $derived(stateLabel(this.model));
 
 	#all: Active[] = [];
@@ -178,6 +203,11 @@ class Debug {
 		return this.#all.filter((a) => a.session.model.state !== 'terminated');
 	}
 
+	/** The live sessions the user sees (not auto attach's listener). */
+	#shown(): Active[] {
+		return this.#live().filter((a) => !a.hidden);
+	}
+
 	#focused(): Active | undefined {
 		return this.#all.find((a) => a.key === this.focusedKey);
 	}
@@ -193,6 +223,7 @@ class Debug {
 	}
 
 	#publish(a: Active) {
+		if (a.hidden) return;
 		const view: SessionView = { key: a.key, name: a.config.name, parentKey: a.parent?.key ?? null, model: a.session.model };
 		const at = this.sessions.findIndex((s) => s.key === a.key);
 		this.sessions = at < 0 ? [...this.sessions, view] : this.sessions.map((s, i) => (i === at ? view : s));
@@ -219,6 +250,7 @@ class Debug {
 		for (const rel of files) for (const a of this.#live()) void a.session.setBreakpoints(this.#abs(rel), this.#sourceFor(rel));
 		this.#sendFunctionBreakpoints();
 		this.#sendDataBreakpoints();
+		this.#sendInstructionBreakpoints();
 	}
 
 	/** F9 / glyph margin click; defaults to the active editor's cursor line. Outside a debuggable
@@ -231,6 +263,24 @@ class Debug {
 			return;
 		}
 		void this.#ensureRoot().then(() => this.#setBreakpoints(B.toggle(this.breakpoints, rel, line), rel));
+	}
+
+	/** Shift+F9 (VS Code: Toggle Inline Breakpoint): a breakpoint at the cursor's column. */
+	toggleInlineBreakpoint(rel = editors.active, line = editors.cursor.line, column = editors.cursor.column, language = editors.language) {
+		if (!isWorkspaceFile(rel)) return;
+		const has = this.breakpoints[rel]?.some((b) => b.line === line && (b.column ?? 1) === Math.max(1, column));
+		if (!has && !canSetBreakpoint(language, settings.get<boolean>('debug.allowBreakpointsEverywhere'))) {
+			status.flash(t('tools.debug.cantSetBreakpoint', { language }));
+			return;
+		}
+		void this.#ensureRoot().then(() => this.#setBreakpoints(B.toggleInline(this.breakpoints, rel, line, column), rel));
+	}
+
+	/** Where on a line the focused session can break (inline breakpoint candidates); [] without one. */
+	breakpointLocations(rel: string, line: number): Promise<BreakpointLocation[]> {
+		const session = this.#session();
+		if (!session || !isWorkspaceFile(rel)) return Promise.resolve([]);
+		return session.breakpointLocations(this.#abs(rel), line);
 	}
 
 	removeBreakpoint(rel: string, line: number) {
@@ -246,6 +296,8 @@ class Debug {
 		this.breakpoints = {};
 		this.functionBreakpoints = [];
 		this.dataBreakpoints = [];
+		this.instructionBreakpoints = [];
+		this.#sendInstructionBreakpoints();
 		if (this.root) {
 			save(B.storageKey(this.root), '{}');
 			save(`${FUNCTION_BPS}:${this.root}`, '[]');
@@ -260,6 +312,7 @@ class Debug {
 		this.breakpoints = B.setAllEnabled(this.breakpoints, enabled);
 		this.functionBreakpoints = this.functionBreakpoints.map((f) => ({ ...f, enabled }));
 		this.dataBreakpoints = this.dataBreakpoints.map((d) => ({ ...d, enabled }));
+		this.instructionBreakpoints = this.instructionBreakpoints.map((b) => ({ ...b, enabled }));
 		this.#saveAll();
 		this.#resendAll();
 	}
@@ -478,6 +531,91 @@ class Debug {
 		this.#sendDataBreakpoints();
 	}
 
+	// Instruction breakpoints (the Disassembly view)
+
+	#sendInstructionBreakpoints() {
+		const bps = instructionBreakpoints(this.instructionBreakpoints, this.breakpointsActivated);
+		for (const a of this.#live()) void a.session.setInstructionBreakpoints(bps);
+	}
+
+	toggleInstructionBreakpoint(address: string) {
+		this.instructionBreakpoints = toggleInstructionBreakpoint(this.instructionBreakpoints, address);
+		this.#sendInstructionBreakpoints();
+	}
+
+	setInstructionBreakpointEnabled(address: string, enabled: boolean) {
+		this.instructionBreakpoints = setInstructionBreakpointEnabled(this.instructionBreakpoints, address, enabled);
+		this.#sendInstructionBreakpoints();
+	}
+
+	removeInstructionBreakpoint(address: string) {
+		this.instructionBreakpoints = this.instructionBreakpoints.filter((b) => b.address !== address);
+		this.#sendInstructionBreakpoints();
+	}
+
+	// --- Disassembly, memory and loaded scripts ----------------------------------------------------
+
+	/** Instructions around a reference in the focused session ([] when it cannot disassemble). */
+	disassemble(memoryReference: string, instructionOffset: number, count: number): Promise<DisassembledInstruction[]> {
+		return this.#session()?.disassemble(memoryReference, instructionOffset, count).catch(() => []) ?? Promise.resolve([]);
+	}
+
+	/** Debug: Open Disassembly View (needs a stop with an instruction pointer and an adapter that disassembles). */
+	openDisassembly() {
+		if (!this.capabilities.supportsDisassembleRequest) return status.flash(t('debugExtras.disassembly.unsupported'));
+		editors.open(DISASSEMBLY_KEY, { preview: false });
+	}
+
+	/** Variables view: View Binary Data (VS Code: workbench.debug.viewlet.action.viewMemory). */
+	viewMemory(memoryReference: string) {
+		if (this.focusedKey === null || !this.capabilities.supportsReadMemoryRequest) return status.flash(t('debugExtras.memory.unsupported'));
+		editors.open(memoryKey(this.focusedKey, memoryReference), { preview: false });
+	}
+
+	#byKey(key: number) {
+		return this.#all.find((a) => a.key === key && a.session.model.state !== 'terminated')?.session;
+	}
+
+	/** Whether a session (by key) is live, and what it can do with memory. */
+	memorySupport(key: number): { live: boolean; write: boolean } {
+		const s = this.#byKey(key);
+		return { live: !!s, write: !!s?.capabilities.supportsWriteMemoryRequest };
+	}
+
+	readMemory(key: number, memoryReference: string, offset: number, count: number): Promise<MemoryRead | null> {
+		return this.#byKey(key)?.readMemory(memoryReference, offset, count) ?? Promise.resolve(null);
+	}
+
+	async writeMemory(key: number, memoryReference: string, offset: number, bytes: Uint8Array): Promise<number> {
+		const s = this.#byKey(key);
+		if (!s) return 0;
+		const n = await s.writeMemory(memoryReference, offset, bytes);
+		void this.#evaluateWatches();
+		return n;
+	}
+
+	#memoryListeners = new Set<(key: number, memoryReference: string, offset: number, count: number) => void>();
+	/** The adapter's `memory` events (the Memory view reads the bytes again). Returns the unsubscriber. */
+	onMemory(fn: (key: number, memoryReference: string, offset: number, count: number) => void): () => void {
+		this.#memoryListeners.add(fn);
+		return () => this.#memoryListeners.delete(fn);
+	}
+
+	/** Loaded Scripts of the focused session (fetched once, then kept by its events). */
+	async loadedSources(): Promise<Source[]> {
+		return this.#session()?.loadedSources() ?? [];
+	}
+
+	/** A loaded script clicked: the file (in the folder or outside it), else the adapter's text in an untitled editor. */
+	async openSource(source: Source) {
+		if (source.path?.startsWith('/')) return editors.open(editorKeyFor(source.path, this.root || null), { preview: true });
+		const session = this.#session();
+		const content = session ? await session.source(source) : null;
+		if (!content) return status.flash(t('debugExtras.loadedScripts.noContent', { name: source.name ?? source.path ?? '?' }));
+		const { openUntitledWith } = await import('./debugUntitled.ts');
+		await openUntitledWith(content.content, source.name ?? 'source');
+	}
+
 	// --- Starting ----------------------------------------------------------------------------------
 
 	/** F5: continue when stopped, else start a session (VS Code: Start Debugging / Continue). */
@@ -505,12 +643,16 @@ class Debug {
 		if (config) await this.#launch(config, noDebug, picked.generated?.build);
 	}
 
-	/** Debugs a configuration made elsewhere (the Testing view's Debug Test). */
-	async startConfig(config: LaunchConfig) {
+	/** Debugs a configuration made elsewhere (the Testing view's Debug Test, serverReadyAction, the JavaScript Debug Terminal). */
+	startConfig(config: LaunchConfig) {
+		return this.#startConfig(config);
+	}
+
+	async #startConfig(config: LaunchConfig, opts: { stopWith?: Active; hidden?: boolean } = {}) {
 		if (!(await this.#ensureRoot())) return status.flash(t('tools.debug.openFolderFirst'));
 		if (!(await workspaceTrust.request(t('trust.feature.debug')))) return;
 		const prepared = await this.#prepare(config);
-		if (prepared) await this.#launch(prepared, false);
+		if (prepared) await this.#launch(prepared, false, undefined, opts);
 	}
 
 	/** launch.json's `inputs`, from the last read of the launch files. */
@@ -656,10 +798,11 @@ class Debug {
 	}
 
 	/** Starts a session (with `parent`: a child connection to the parent's adapter server). */
-	async #launch(config: LaunchConfig, noDebug: boolean, build?: string[], opts: { parent?: Active; group?: number } = {}) {
+	async #launch(config: LaunchConfig, noDebug: boolean, build?: string[], opts: { parent?: Active; group?: number; stopWith?: Active; hidden?: boolean } = {}) {
 		const parent = opts.parent ?? null;
+		const hidden = !!opts.hidden;
 		const pendingModel = initialModel();
-		if (!parent) {
+		if (!parent && !hidden) {
 			this.triggered = this.#live().length ? this.triggered : new Set();
 			this.watchResults = {};
 			// The console shows the starting session's output from its first line.
@@ -669,7 +812,7 @@ class Debug {
 		}
 		let model = pendingModel;
 		// debug.openDebug / debug.internalConsoleOptions (a launch config's own internalConsoleOptions wins).
-		if (!parent) {
+		if (!parent && !hidden) {
 			const first = this.sessionsStarted++ === 0;
 			if (opensOnStart(settings.get('debug.openDebug'), first)) {
 				layout.sideView = 'debug';
@@ -722,12 +865,27 @@ class Debug {
 				functionBreakpoints: () => B.functionBreakpoints(this.functionBreakpoints, this.breakpointsActivated),
 				exceptionArgs: (caps) => this.#exceptionArgs(caps),
 				dataBreakpoints: () => B.dataBreakpoints(this.dataBreakpoints.filter((d) => d.canPersist), this.breakpointsActivated),
+				instructionBreakpoints: () => instructionBreakpoints(this.instructionBreakpoints, this.breakpointsActivated),
 				runInTerminal: async (args) => {
+					// Auto attach: no terminal, its environment goes to the terminals started from now on.
+					if (hidden) {
+						this.#autoAttachRaw = args.env ?? {};
+						this.#applyAutoAttach();
+						return {};
+					}
 					// In the configuration's folder (multi-root), where its program runs.
-					terminals.open({ title: args.title ?? `Debug: ${config.name}`, run: runInTerminalArgv(args), folder: this.#folderOfConfig(config) });
+					const id = terminals.open({ title: args.title ?? `Debug: ${config.name}`, run: runInTerminalArgv(args), folder: this.#folderOfConfig(config) });
 					layout.showPanel('terminal');
+					// serverReadyAction reads the integrated terminal too.
+					const detector = active.detector;
+					if (detector && !detector.fired) {
+						active.untap?.();
+						active.untap = tapOutput(terminals.key(id), (chunk) => detector.feed(chunk));
+					}
 					return {};
 				},
+				output: (text) => active.detector?.feed(text),
+				memory: (ref, offset, count) => this.#memoryListeners.forEach((fn) => fn(active.key, ref, offset, count)),
 				// Answered once the child session has started (VS Code's rawDebugSession does the same).
 				startDebugging: (args) => this.#startChild(active, args),
 				changed: () => this.#publish(active),
@@ -745,10 +903,12 @@ class Debug {
 		);
 		// Output already shown (preLaunchTask notice, build) stays at the top of the console.
 		session.model = { ...session.model, output: model.output };
-		const active: Active = { key: this.#nextKey++, session, id: null, config, build, noDebug, parent, group: opts.group ?? parent?.group };
+		const active: Active = { key: this.#nextKey++, session, id: null, config, build, noDebug, parent, group: opts.group ?? parent?.group, hidden, stopWith: opts.stopWith };
+		const serverReady = parseServerReadyAction(config.serverReadyAction);
+		active.detector = parent?.detector ?? (serverReady ? new ServerReadyDetector(serverReady, (m) => void this.#serverReady(active, serverReady, m)) : undefined);
 		this.#all = [...this.#all, active];
 		// A child takes focus from its parent (js-debug's parent session shows no program state).
-		if (!parent || this.focusedKey === parent.key || this.focusedKey === null) this.focusSession(active.key);
+		if (!hidden && (!parent || this.focusedKey === parent.key || this.focusedKey === null)) this.focusSession(active.key);
 		this.#publish(active);
 
 		const channel = new Channel<DapEvent>();
@@ -766,6 +926,7 @@ class Debug {
 				? await invoke<number>('dap_start_child', { parent: parent.id, onEvent: channel })
 				: await invoke<number>('dap_start', { debugType: config.type, python: typeof config.python === 'string' ? config.python : null, onEvent: channel });
 			active.id = id;
+			if (hidden) this.#autoAttachSession = active;
 			clientLog('info', `debug session started: ${config.name} (${config.type})${parent ? ' (child)' : ''}`);
 		} catch (e) {
 			const message = String(e);
@@ -773,6 +934,7 @@ class Debug {
 			session.model = { ...session.model, state: 'terminated' };
 			this.#publish(active);
 			this.#ended(active);
+			if (hidden) return;
 			if (isRustError(message, 'notInstalled')) void this.install(config.type);
 			else status.flash(message);
 			return;
@@ -784,6 +946,27 @@ class Debug {
 			this.#sessionOutput(active, 'stderr', `${message}\n`);
 			notifications.error(t('tools.debug.startFailed', { error: message }));
 			await this.#kill(active);
+		}
+	}
+
+	/** serverReadyAction matched (VS Code's debug-server-ready): open the URI, debug it in a browser, or start a configuration. */
+	async #serverReady(active: Active, action: ServerReadyAction, m: ServerReadyMatch) {
+		if (!m.ok) return notifications.error(t(m.error === 'noCapture' ? 'debugExtras.serverReady.noCapture' : 'debugExtras.serverReady.placeholders', { format: m.format }));
+		const stopWith = action.killOnServerStop ? this.#root(active) : undefined;
+		switch (action.action) {
+			case 'openExternally':
+				return openUrl(m.uri, ['http', 'https']).catch((e) => notifications.error(String(e)));
+			case 'debugWithChrome':
+			case 'debugWithEdge':
+				return this.#startConfig(browserConfig(action, m.uri), { stopWith });
+			case 'startDebugging': {
+				if (action.config) return this.#startConfig({ name: action.name ?? 'serverReadyAction', type: '', request: 'launch', ...action.config } as LaunchConfig, { stopWith });
+				const name = action.name ?? 'unspecified';
+				const { configs } = await this.#readLaunchFiles();
+				const config = configs.find((c) => c.name === name);
+				if (!config) return notifications.error(t('debugExtras.serverReady.noConfig', { name }));
+				return this.#startConfig(config, { stopWith });
+			}
 		}
 	}
 
@@ -893,6 +1076,15 @@ class Debug {
 	/** A session is over: its children go too, a stopAll compound stops, and focus moves on. */
 	#ended(active: Active) {
 		for (const child of this.#all.filter((a) => a.parent === active && a.session.model.state !== 'terminated')) void this.#kill(child);
+		// serverReadyAction's killOnServerStop: what the server started stops with it.
+		for (const other of this.#live().filter((a) => a.stopWith === active && a !== active)) void this.#kill(other);
+		active.untap?.();
+		active.untap = undefined;
+		if (active === this.#autoAttachSession) {
+			this.#autoAttachSession = null;
+			this.#autoAttachRaw = null;
+			this.#applyAutoAttach();
+		}
 		if (active.group !== undefined && !active.parent) for (const other of this.#live().filter((a) => a.group === active.group && a !== active && !a.parent)) void this.#kill(other);
 		// A child's output stays readable in its parent's console after focus goes back to it.
 		const parent = active.parent;
@@ -905,7 +1097,7 @@ class Debug {
 		// Persistent data breakpoints stay; the rest belonged to this session (VS Code).
 		if (!this.#live().length) this.dataBreakpoints = B.persistentData(this.dataBreakpoints);
 		this.sessions = this.sessions.filter((s) => s.key !== active.key);
-		const remaining = this.#live().filter((a) => a !== active);
+		const remaining = this.#shown().filter((a) => a !== active);
 		if (this.focusedKey === active.key) {
 			const next = (active.parent && remaining.includes(active.parent) ? active.parent : null) ?? remaining.find((a) => a.session.model.state === 'stopped') ?? remaining[0];
 			// Without another session the ended one stays shown (its output, Restart) until the next start.
@@ -924,10 +1116,11 @@ class Debug {
 		this.#ended(active);
 	}
 
-	/** The top of a session's tree (a js-debug child's parent session). */
+	/** The top of a session's tree (a js-debug child's parent session); auto attach's hidden
+	 * listener is never the top: Stop and Restart of an attached process leave it running. */
 	#root(a: Active): Active {
 		let r = a;
-		while (r.parent) r = r.parent;
+		while (r.parent && !r.parent.hidden) r = r.parent;
 		return r;
 	}
 
@@ -936,7 +1129,7 @@ class Debug {
 	/** Stop: the focused session's whole tree (a js-debug child stops with its parent), or only the
 	 * focused child with debug.showSubSessionsInToolBar. */
 	async stop() {
-		const a = this.#focused() ?? this.#live()[0];
+		const a = this.#focused() ?? this.#shown()[0];
 		if (!a || !this.active) return;
 		// debug.showSubSessionsInToolBar: a child session the toolbar shows stops by itself.
 		await this.#kill(this.#showSubSessions() ? a : this.#root(a));
@@ -947,13 +1140,15 @@ class Debug {
 	}
 
 	async restart() {
-		const focused = this.#focused() ?? this.#all.at(-1);
+		const focused = this.#focused() ?? this.#all.filter((a) => !a.hidden).at(-1);
 		if (!focused) return;
 		// A child session restarts by itself only when the toolbar shows sub-sessions and the adapter can.
 		if (focused.parent && this.#showSubSessions() && focused.session.model.state !== 'terminated' && (await focused.session.restart().catch(() => false))) return;
 		const a = this.#root(focused);
 		if (a.session.model.state !== 'terminated' && (await a.session.restart().catch(() => false))) return;
 		if (a.session.model.state !== 'terminated') await this.#kill(a);
+		// An auto-attached process cannot be launched again (its terminal started it).
+		if (a.parent?.hidden) return;
 		await this.#launch(a.config, a.noDebug, a.build, { group: a.group });
 	}
 
@@ -961,17 +1156,32 @@ class Debug {
 		return this.#focused()?.session;
 	}
 
+	/** Stepping by instruction while the Disassembly view has focus (VS Code). */
+	#granularity(): SteppingGranularity | undefined {
+		return this.disassemblyFocused ? 'instruction' : undefined;
+	}
+
 	continue() {
 		return this.#session()?.continue();
 	}
 	stepOver() {
-		return this.#session()?.next();
+		return this.#session()?.next(this.#granularity());
 	}
 	stepInto() {
-		return this.#session()?.stepIn();
+		return this.#session()?.stepIn(this.#granularity());
 	}
 	stepOut() {
-		return this.#session()?.stepOut();
+		return this.#session()?.stepOut(this.#granularity());
+	}
+
+	/** Step Into Target (VS Code: workbench.action.debug.stepIntoTarget): pick which call of the line to step into. */
+	async stepIntoTarget() {
+		const session = this.#session();
+		if (!session || !this.stopped) return;
+		const targets = await session.stepInTargets();
+		if (!targets.length) return status.flash(t('debugExtras.stepIntoTarget.none'));
+		const pick = await quick.choose({ placeholder: t('debugExtras.stepIntoTarget.pick'), items: targets.map((x) => ({ id: String(x.id), label: x.label, description: x.line ? `:${x.line}${x.column ? `:${x.column}` : ''}` : undefined })) });
+		if (pick) await session.stepIn(this.#granularity(), Number(pick.id));
 	}
 	stepBack() {
 		return this.#session()?.stepBack();
@@ -1109,6 +1319,14 @@ class Debug {
 		void this.#evaluateWatches();
 	}
 
+	/** Evaluate in Debug Console (VS Code: editor.debug.action.selectionToRepl). */
+	async evaluateInConsole(text: string) {
+		const expr = text.trim();
+		if (!expr) return;
+		layout.showPanel('debugConsole');
+		await this.repl(expr);
+	}
+
 	clearConsole() {
 		if (this.model) this.model = { ...this.model, output: [] };
 		const a = this.#focused();
@@ -1116,6 +1334,72 @@ class Debug {
 			a.session.model = { ...a.session.model, output: [] };
 			this.#publish(a);
 		}
+	}
+
+	// --- JavaScript Debug Terminal and auto attach -----------------------------------------------------
+
+	#autoAttachSession: Active | null = null;
+	/** The listener launch's runInTerminal environment (NODE_OPTIONS, VSCODE_INSPECTOR_OPTIONS). */
+	#autoAttachRaw: Record<string, string | null> | null = null;
+	#autoAttachStarting = false;
+
+	#shell(): string {
+		const s = shellFrom((id) => settings.get(id), shellPlatform());
+		return s.shell ?? s.paths[0] ?? '/bin/zsh';
+	}
+
+	/** debug.javascript.terminalOptions: launch.json fields added to the debug terminal and auto attach. */
+	#terminalOptions(): Record<string, unknown> {
+		const o = settings.get<unknown>('debug.javascript.terminalOptions');
+		return o && typeof o === 'object' && !Array.isArray(o) ? (o as Record<string, unknown>) : {};
+	}
+
+	/** Debug: JavaScript Debug Terminal (VS Code: extension.js-debug.createDebuggerTerminal): a shell whose Node.js processes are debugged. */
+	async createDebuggerTerminal() {
+		const root = await this.#ensureRoot();
+		if (!root) return status.flash(t('tools.debug.openFolderFirst'));
+		await this.#startConfig(debugTerminalConfig(this.#shell(), root, this.#terminalOptions()));
+	}
+
+	/** Debug: Toggle Auto Attach (VS Code: extension.node-debug.toggleAutoAttach): picks debug.javascript.autoAttachFilter. */
+	async toggleAutoAttach() {
+		const current = settings.get<string>('debug.javascript.autoAttachFilter');
+		const item = await quick.choose({
+			placeholder: t('debugExtras.autoAttach.pick'),
+			items: AUTO_ATTACH_FILTERS.map((f) => ({ id: f, label: t(`debugExtras.autoAttach.${f}`), description: f === current ? t('debugExtras.autoAttach.current') : undefined })),
+			activeId: current
+		});
+		if (item) await settings.set('debug.javascript.autoAttachFilter', item.id, 'user');
+	}
+
+	/** Follows debug.javascript.autoAttachFilter: a hidden js-debug launch listens while it is on (trusted folders only). */
+	async syncAutoAttach(filter: AutoAttachFilter) {
+		const on = filter !== 'disabled' && !!this.root && workspaceTrust.trusted;
+		this.autoAttach = { filter, env: this.autoAttach.env };
+		if (!on) {
+			const a = this.#autoAttachSession;
+			if (a) await this.#kill(a);
+			this.#autoAttachRaw = null;
+			return this.#applyAutoAttach();
+		}
+		if (this.#autoAttachSession || this.#autoAttachStarting) return this.#applyAutoAttach();
+		this.#autoAttachStarting = true;
+		try {
+			// Never offers the download: auto attach waits until js-debug is installed.
+			const st = await invoke<JsDebugStatus>('dap_js_debug_status').catch(() => null);
+			if (!st?.server) return;
+			const config = await this.#prepare(autoAttachConfig(this.#shell(), this.root, this.#terminalOptions()));
+			if (config) await this.#launch(config, false, undefined, { hidden: true });
+		} finally {
+			this.#autoAttachStarting = false;
+		}
+	}
+
+	#applyAutoAttach() {
+		const filter = this.autoAttach.filter;
+		const env = this.#autoAttachRaw ? autoAttachEnv(this.#autoAttachRaw, filter, settings.get<string[]>('debug.javascript.autoAttachSmartPattern'), this.root) : null;
+		this.autoAttach = { filter, env };
+		contributeTerminalEnv('js-debug.autoAttach', env);
 	}
 
 	// --- Missing adapters --------------------------------------------------------------------------
@@ -1281,6 +1565,13 @@ export function installDebug(): () => void {
 		$effect(() => {
 			outputLimit.max = settings.get<number>('debug.console.maximumLines');
 		});
+		// debug.javascript.autoAttachFilter (and the folder, its trust): auto attach's listener follows.
+		$effect(() => {
+			const filter = settings.get<string>('debug.javascript.autoAttachFilter') as AutoAttachFilter;
+			void debug.root;
+			void workspaceTrust.trusted;
+			untrack(() => void debug.syncAutoAttach(AUTO_ATTACH_FILTERS.includes(filter) ? filter : 'disabled'));
+		});
 	});
 	const fileOpen = () => isWorkspaceFile(editors.active);
 	const unregister = [
@@ -1300,6 +1591,13 @@ export function installDebug(): () => void {
 		commands.register({ id: 'editor.debug.action.runToCursor', title: 'Run to Cursor', category: 'Debug', when: () => debug.stopped && fileOpen(), run: () => debug.runToCursor() }),
 		commands.register({ id: 'editor.debug.action.jumpToCursor', title: 'Jump to Cursor', category: 'Debug', when: () => debug.stopped && fileOpen() && !!debug.capabilities.supportsGotoTargetsRequest, run: () => debug.jumpToCursor() }),
 		commands.register({ id: 'editor.debug.action.toggleBreakpoint', title: 'Toggle Breakpoint', category: 'Debug', key: 'f9', when: fileOpen, run: () => debug.toggleBreakpoint() }),
+		commands.register({ id: 'editor.debug.action.toggleInlineBreakpoint', title: 'Inline Breakpoint', category: 'Debug', key: 'shift+f9', when: fileOpen, run: () => debug.toggleInlineBreakpoint() }),
+		commands.register({ id: 'workbench.action.debug.stepIntoTarget', title: 'Step Into Target', category: 'Debug', key: 'cmd+f11', when: () => debug.stopped && !!debug.capabilities.supportsStepInTargetsRequest, run: () => debug.stepIntoTarget() }),
+		commands.register({ id: 'editor.debug.action.selectionToRepl', title: 'Evaluate in Debug Console', category: 'Debug', when: () => debug.active && fileOpen(), run: () => debug.evaluateInConsole(editors.selectionText(true)) }),
+		commands.register({ id: 'editor.debug.action.selectionToWatch', title: 'Add to Watch', category: 'Debug', when: fileOpen, run: () => debug.addWatch(editors.selectionText(true)) }),
+		commands.register({ id: 'debug.action.openDisassemblyView', title: 'Open Disassembly View', category: 'Debug', when: () => debug.stopped && !!debug.capabilities.supportsDisassembleRequest, run: () => debug.openDisassembly() }),
+		commands.register({ id: 'extension.js-debug.createDebuggerTerminal', title: 'JavaScript Debug Terminal', category: 'Debug', run: () => debug.createDebuggerTerminal() }),
+		commands.register({ id: 'extension.node-debug.toggleAutoAttach', title: 'Toggle Auto Attach', category: 'Debug', run: () => debug.toggleAutoAttach() }),
 		commands.register({ id: 'editor.debug.action.conditionalBreakpoint', title: 'Add Conditional Breakpoint...', category: 'Debug', when: fileOpen, run: () => debug.editCondition() }),
 		commands.register({ id: 'editor.debug.action.editBreakpoint', title: 'Edit Breakpoint...', category: 'Debug', when: fileOpen, run: () => debug.editBreakpoint() }),
 		commands.register({ id: 'editor.debug.action.triggerByBreakpoint', title: 'Add Triggered Breakpoint...', category: 'Debug', when: fileOpen, run: () => debug.editTrigger() }),

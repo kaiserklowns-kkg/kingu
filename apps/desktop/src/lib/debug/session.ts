@@ -7,20 +7,26 @@
 import { DapClient } from './client.ts';
 import { hoverFromVariables } from './hover.ts';
 import { adapterType, type LaunchConfig } from './launch.ts';
-import { appendOutput, applyEvent, currentFrame, initialModel, selectFrame, withBreakpoints, withFrames, withScopes, withThreads, withVariables, type DebugModel } from './model.ts';
+import { appendOutput, applyEvent, currentFrame, initialModel, selectFrame, withBreakpoints, withFrames, withLoadedSources, withScopes, withThreads, withVariables, type DebugModel } from './model.ts';
 import type {
 	Breakpoint,
+	BreakpointLocation,
 	Capabilities,
 	CompletionItem,
 	DataBreakpoint,
 	DataBreakpointInfo,
+	DisassembledInstruction,
 	Event,
 	FunctionBreakpoint,
 	GotoTarget,
+	InstructionBreakpoint,
 	RunInTerminalArguments,
+	Source,
 	SourceBreakpoint,
 	StackFrame,
 	StartDebuggingArguments,
+	SteppingGranularity,
+	StepInTarget,
 	Thread,
 	Variable
 } from './protocol.ts';
@@ -36,6 +42,8 @@ export type SessionHost = {
 	/** Exception filters the adapter offers: the arguments for setExceptionBreakpoints. */
 	exceptionArgs?: (caps: Capabilities) => ExceptionArgs;
 	dataBreakpoints?: () => DataBreakpoint[];
+	/** Instruction breakpoints (the Disassembly view's), sent once configured. */
+	instructionBreakpoints?: () => InstructionBreakpoint[];
 	runInTerminal: (args: RunInTerminalArguments) => Promise<{ processId?: number; shellProcessId?: number }>;
 	/** The adapter asks for a child session (js-debug: one per debugged process). */
 	startDebugging?: (args: StartDebuggingArguments) => Promise<void>;
@@ -44,9 +52,15 @@ export type SessionHost = {
 	stopped?: (frame: StackFrame | null) => void;
 	/** The adapter sent `terminated`. */
 	terminated?: () => void;
+	/** Program output the adapter sent (serverReadyAction watches it). */
+	output?: (text: string) => void;
+	/** The adapter's `memory` event: bytes changed (the Memory view reads them again). */
+	memory?: (memoryReference: string, offset: number, count: number) => void;
 };
 
-export type EvaluateResult = { result: string; type?: string; variablesReference: number };
+export type EvaluateResult = { result: string; type?: string; variablesReference: number; memoryReference?: string };
+/** readMemory's answer with the bytes decoded; `unreadable` bytes follow the readable ones. */
+export type MemoryRead = { address: string; bytes: Uint8Array; unreadable: number };
 
 const STACK_LEVELS = 50;
 
@@ -113,8 +127,9 @@ export class DebugSession {
 			supportsRunInTerminalRequest: true,
 			supportsStartDebuggingRequest: true,
 			supportsProgressReporting: false,
-			supportsInvalidatedEvent: false,
-			supportsMemoryReferences: false,
+			supportsInvalidatedEvent: true,
+			supportsMemoryReferences: true,
+			supportsMemoryEvent: true,
 			supportsArgsCanBeInterpretedByShell: false
 		});
 		const request = this.config.request === 'attach' ? 'attach' : 'launch';
@@ -144,6 +159,16 @@ export class DebugSession {
 				this.#runTo = null;
 				this.#host.terminated?.();
 				break;
+			case 'output':
+				if (ev.body?.category !== 'telemetry') this.#host.output?.(String(ev.body?.output ?? ''));
+				break;
+			case 'memory':
+				this.#host.memory?.(String(ev.body?.memoryReference ?? ''), Number(ev.body?.offset ?? 0), Number(ev.body?.count ?? 0));
+				break;
+			case 'invalidated':
+				// Stacks or variables changed while stopped (a memory write, the adapter's own reasons): fetched again.
+				if (this.model.state === 'stopped') await this.#fetchStack(this.model.stopped?.threadId ?? ev.body?.threadId ?? undefined, false);
+				break;
 		}
 	}
 
@@ -155,6 +180,8 @@ export class DebugSession {
 		if (this.capabilities.supportsFunctionBreakpoints && fns.length) await this.setFunctionBreakpoints(fns);
 		const data = this.#host.dataBreakpoints?.() ?? [];
 		if (this.capabilities.supportsDataBreakpoints && data.length) await this.setDataBreakpoints(data);
+		const instructions = this.#host.instructionBreakpoints?.() ?? [];
+		if (this.capabilities.supportsInstructionBreakpoints && instructions.length) await this.setInstructionBreakpoints(instructions);
 		if (this.capabilities.exceptionBreakpointFilters) await this.setExceptionBreakpoints(this.#host.exceptionArgs?.(this.capabilities) ?? { filters: this.capabilities.exceptionBreakpointFilters.filter((f) => f.default).map((f) => f.filter) });
 		if (this.capabilities.supportsConfigurationDoneRequest) await this.client.request('configurationDone', {});
 	}
@@ -214,7 +241,8 @@ export class DebugSession {
 		await this.client.request('setDataBreakpoints', { breakpoints: bps }).catch((e) => this.#output('stderr', `setDataBreakpoints: ${e instanceof Error ? e.message : e}\n`));
 	}
 
-	async #fetchStack(threadId: number | undefined) {
+	/** `reveal`: the host hears of the stop (an `invalidated` refresh is not a new stop). */
+	async #fetchStack(threadId: number | undefined, reveal = true) {
 		const epoch = ++this.#epoch;
 		try {
 			const { threads } = await this.client.request<{ threads: Thread[] }>('threads');
@@ -227,7 +255,7 @@ export class DebugSession {
 			if (epoch !== this.#epoch) return;
 			this.#set(withFrames(this.model, stackFrames ?? []));
 			await this.#loadScopes(epoch);
-			if (epoch === this.#epoch) this.#host.stopped?.(currentFrame(this.model));
+			if (epoch === this.#epoch && reveal) this.#host.stopped?.(currentFrame(this.model));
 		} catch (e) {
 			if (epoch === this.#epoch) this.#output('stderr', `${e instanceof Error ? e.message : e}\n`);
 		}
@@ -290,17 +318,92 @@ export class DebugSession {
 		}
 	}
 
+	/** `granularity` (VS Code: `instruction` while the Disassembly view has focus) goes only to an
+	 * adapter with supportsSteppingGranularity. */
+	#step(granularity?: SteppingGranularity): Record<string, unknown> {
+		return granularity && this.capabilities.supportsSteppingGranularity ? { granularity } : {};
+	}
+
 	continue() {
 		return this.#resume('continue');
 	}
-	next() {
-		return this.#resume('next');
+	next(granularity?: SteppingGranularity) {
+		return this.#resume('next', this.#step(granularity));
 	}
-	stepIn() {
-		return this.#resume('stepIn');
+	/** Step Into; with `targetId`, into that target of the line (Step Into Target). */
+	stepIn(granularity?: SteppingGranularity, targetId?: number) {
+		return this.#resume('stepIn', { ...this.#step(granularity), ...(targetId !== undefined ? { targetId } : {}) });
 	}
-	stepOut() {
-		return this.#resume('stepOut');
+	stepOut(granularity?: SteppingGranularity) {
+		return this.#resume('stepOut', this.#step(granularity));
+	}
+
+	/** Step Into Target's choices in a frame (supportsStepInTargetsRequest). */
+	async stepInTargets(frameId = this.model.frameId): Promise<StepInTarget[]> {
+		if (!this.capabilities.supportsStepInTargetsRequest || this.model.state !== 'stopped' || frameId === null) return [];
+		const body = await this.client.request<{ targets: StepInTarget[] }>('stepInTargets', { frameId }).catch(() => ({ targets: [] as StepInTarget[] }));
+		return body.targets ?? [];
+	}
+
+	// --- Disassembly, memory, loaded sources, column breakpoints ----------------------------------
+
+	/** Instructions around a memory reference (supportsDisassembleRequest); `instructionOffset` may be negative. */
+	async disassemble(memoryReference: string, instructionOffset: number, instructionCount: number, offset = 0): Promise<DisassembledInstruction[]> {
+		if (!this.capabilities.supportsDisassembleRequest || this.model.state === 'terminated') return [];
+		const body = await this.client.request<{ instructions: DisassembledInstruction[] }>('disassemble', { memoryReference, offset, instructionOffset, instructionCount, resolveSymbols: true });
+		return body?.instructions ?? [];
+	}
+
+	/** The Disassembly view's breakpoints (supportsInstructionBreakpoints); the adapter's answer in order. */
+	async setInstructionBreakpoints(bps: InstructionBreakpoint[]): Promise<Breakpoint[] | undefined> {
+		if (!this.#live() || !this.capabilities.supportsInstructionBreakpoints) return undefined;
+		try {
+			const body = await this.client.request<{ breakpoints: Breakpoint[] }>('setInstructionBreakpoints', { breakpoints: bps });
+			return body.breakpoints ?? [];
+		} catch (e) {
+			this.#output('stderr', `setInstructionBreakpoints: ${e instanceof Error ? e.message : e}\n`);
+			return undefined;
+		}
+	}
+
+	/** Bytes at a memory reference (supportsReadMemoryRequest), the base64 `data` decoded. */
+	async readMemory(memoryReference: string, offset: number, count: number): Promise<MemoryRead | null> {
+		if (!this.capabilities.supportsReadMemoryRequest || this.model.state === 'terminated') return null;
+		const body = await this.client.request<{ address: string; unreadableBytes?: number; data?: string }>('readMemory', { memoryReference, offset, count });
+		const bin = atob(body?.data ?? '');
+		const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+		return { address: body?.address ?? memoryReference, bytes, unreadable: body?.unreadableBytes ?? 0 };
+	}
+
+	/** Writes bytes (supportsWriteMemoryRequest); the number written. */
+	async writeMemory(memoryReference: string, offset: number, bytes: Uint8Array): Promise<number> {
+		if (!this.capabilities.supportsWriteMemoryRequest || this.model.state === 'terminated') return 0;
+		const data = btoa(String.fromCharCode(...bytes));
+		const body = await this.client.request<{ bytesWritten?: number }>('writeMemory', { memoryReference, offset, data });
+		return body?.bytesWritten ?? bytes.length;
+	}
+
+	/** Loaded Scripts: every source the debuggee has loaded (supportsLoadedSourcesRequest); later
+	 * `loadedSource` events keep `model.loadedSources` current. */
+	async loadedSources(): Promise<Source[]> {
+		if (!this.capabilities.supportsLoadedSourcesRequest || this.model.state === 'terminated') return [];
+		const body = await this.client.request<{ sources: Source[] }>('loadedSources', {}).catch(() => ({ sources: [] as Source[] }));
+		this.#set(withLoadedSources(this.model, body.sources ?? []));
+		return this.model.loadedSources ?? [];
+	}
+
+	/** The text of a source only the adapter has (sourceReference > 0, no file on disk). */
+	async source(source: Source): Promise<{ content: string; mimeType?: string } | null> {
+		if (!source.sourceReference) return null;
+		return this.client.request<{ content: string; mimeType?: string }>('source', { source, sourceReference: source.sourceReference }).catch(() => null);
+	}
+
+	/** Where on a line breakpoints can go (supportsBreakpointLocationsRequest): the inline breakpoint candidates. */
+	async breakpointLocations(path: string, line: number): Promise<BreakpointLocation[]> {
+		if (!this.capabilities.supportsBreakpointLocationsRequest || !this.#live()) return [];
+		const name = path.slice(path.lastIndexOf('/') + 1);
+		const body = await this.client.request<{ breakpoints: BreakpointLocation[] }>('breakpointLocations', { source: { name, path }, line }).catch(() => ({ breakpoints: [] as BreakpointLocation[] }));
+		return body.breakpoints ?? [];
 	}
 	/** Step Back / Reverse Continue (supportsStepBack). */
 	stepBack() {

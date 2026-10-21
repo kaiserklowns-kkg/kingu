@@ -7,6 +7,7 @@
 	import '@xterm/xterm/css/xterm.css';
 	import { bindTerminalSettings } from '#lib/settings/apply.svelte.ts';
 	import { shellFrom, shellPlatform, terminalOptionsFrom } from '#lib/settings/mappings.ts';
+	import { withContributedEnv } from './contributedEnv.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { system } from '#lib/workbench/system.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
@@ -418,7 +419,7 @@
 			if (launch) markTaskSpawned(key);
 			// terminal.integrated.shell / shellArgs / env / cwd (user settings) for the new shell.
 			const terminal = {
-				...shellFrom((id) => settings.get(id), shellPlatform(), undefined, profile),
+				...withContributedEnv(shellFrom((id) => settings.get(id), shellPlatform(), undefined, profile)),
 				// terminal.integrated.shellIntegration.enabled: Rust injects Kingu's scripts (shell_integration.rs).
 				shellIntegration: settings.get<boolean>('terminal.integrated.shellIntegration.enabled'),
 				// kingu.terminal.scopeHistoryByWorktree: an ADE shell keeps its own history per worktree.

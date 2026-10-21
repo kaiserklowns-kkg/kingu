@@ -1,8 +1,9 @@
 <script lang="ts">
 	// Run and Debug view (VS Code debugViewlet): the debug toolbar when `debug.toolBarLocation` is
 	// `docked`, then the Variables, Watch, Call Stack and Breakpoints sections. The Call Stack shows
-	// one node per session when several run (compounds, js-debug's child sessions); Breakpoints has
-	// the exception filters, function and data breakpoints above the source ones.
+	// one node per session when several run (compounds, js-debug's child sessions); Loaded Scripts
+	// lists the sources the session loaded; Breakpoints has the exception filters, function, data
+	// and instruction breakpoints above the source ones.
 	import Icon from '#lib/workbench/Icon.svelte';
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
 	import type { MenuNode } from '#lib/workbench/menus.ts';
@@ -16,9 +17,11 @@
 	import { autoExpandsLazy, breakpointRows, launcherWhileDebugging, lazyValue, variableLabel, type ToolBarLocation } from './debugSettings.ts';
 	import DebugToolbar from './DebugToolbar.svelte';
 	import type { StackFrame, Variable } from './protocol.ts';
+	import { countSources, scriptTree, type ScriptNode } from './loadedScripts.ts';
 
-	type Section = 'variables' | 'watch' | 'stack' | 'breakpoints';
-	let open = $state<Record<Section, boolean>>({ variables: true, watch: true, stack: true, breakpoints: true });
+	type Section = 'variables' | 'watch' | 'stack' | 'scripts' | 'breakpoints';
+	// Loaded Scripts starts collapsed (VS Code hides it until asked for).
+	let open = $state<Record<Section, boolean>>({ variables: true, watch: true, stack: true, scripts: false, breakpoints: true });
 	/** Expanded variables, keyed by their path of names from the scope. */
 	let expanded = $state<Record<string, boolean>>({});
 	let watchInput = $state('');
@@ -31,13 +34,32 @@
 	// debug.breakpointsView.presentation: a flat list or a tree by file.
 	const breakpointList = $derived(breakpointRows(breakpointFiles, settings.get<string>('debug.breakpointsView.presentation')));
 	const exceptions = $derived(exceptionRows(debug.exceptions.filters, debug.exceptions.state));
-	const anyBreakpoints = $derived(breakpointFiles.length > 0 || debug.functionBreakpoints.length > 0 || debug.dataBreakpoints.length > 0);
+	const anyBreakpoints = $derived(breakpointFiles.length > 0 || debug.functionBreakpoints.length > 0 || debug.dataBreakpoints.length > 0 || debug.instructionBreakpoints.length > 0);
 	let collapsedFiles = $state<Record<string, boolean>>({});
 	// debug.showVariableTypes
 	const showTypes = $derived(settings.get<boolean>('debug.showVariableTypes'));
 	/** Sessions as a tree: VS Code shows session nodes once more than one runs. */
 	const sessionRows = $derived(debug.sessions.map((s) => ({ ...s, depth: depthOf(s.key) })));
 	const multi = $derived(debug.sessions.length > 1);
+
+	// --- Loaded Scripts: asked for once the section opens in a session that has them.
+	let scriptFilter = $state('');
+	let scriptsCollapsed = $state<Record<string, boolean>>({});
+	$effect(() => {
+		if (open.scripts && model && model.state !== 'terminated' && !model.loadedSources && caps.supportsLoadedSourcesRequest) void debug.loadedSources();
+	});
+	const scriptNodes = $derived(model?.loadedSources ? scriptTree(model.loadedSources, debug.root, scriptFilter) : []);
+	const scriptRows = $derived.by(() => {
+		const out: { node: ScriptNode; depth: number }[] = [];
+		const visit = (nodes: ScriptNode[], depth: number) => {
+			for (const node of nodes) {
+				out.push({ node, depth });
+				if (node.kind === 'folder' && !scriptsCollapsed[node.id]) visit(node.children, depth + 1);
+			}
+		};
+		visit(scriptNodes, 0);
+		return out;
+	});
 
 	function depthOf(key: number): number {
 		let d = 0;
@@ -99,7 +121,8 @@
 			menuItem('copyExpr', t('debugger.menu.copyExpression'), { enabled: !!v.evaluateName }),
 			menuSeparator,
 			menuItem('watch', t('debugger.menu.addToWatch'), { enabled: !!(v.evaluateName ?? v.name) }),
-			menuItem('data', t('debugger.menu.breakOnChange'), { enabled: debug.dataBreakpointsSupported })
+			menuItem('data', t('debugger.menu.breakOnChange'), { enabled: debug.dataBreakpointsSupported }),
+			...(v.memoryReference && caps.supportsReadMemoryRequest ? [menuSeparator, menuItem('memory', t('debugExtras.menu.viewBinaryData'))] : [])
 		];
 		showMenu(e, items, (id) => {
 			if (id === 'set') void debug.setVariable(parentRef, v.name, v.value);
@@ -107,13 +130,19 @@
 			else if (id === 'copyExpr' && v.evaluateName) void navigator.clipboard.writeText(v.evaluateName);
 			else if (id === 'watch') debug.addWatch(v.evaluateName ?? v.name);
 			else if (id === 'data') void debug.addDataBreakpoint(parentRef, v.name);
+			else if (id === 'memory' && v.memoryReference) debug.viewMemory(v.memoryReference);
 		});
 	}
 
 	function frameMenu(e: MouseEvent, f: StackFrame, sessionKey: number) {
-		const items = [menuItem('restart', t('debugger.menu.restartFrame'), { enabled: !!caps.supportsRestartFrame && f.canRestart !== false && debug.focusedKey === sessionKey }), menuItem('copy', t('debugger.menu.copyStack'))];
+		const items = [
+			menuItem('restart', t('debugger.menu.restartFrame'), { enabled: !!caps.supportsRestartFrame && f.canRestart !== false && debug.focusedKey === sessionKey }),
+			menuItem('copy', t('debugger.menu.copyStack')),
+			...(caps.supportsDisassembleRequest && f.instructionPointerReference ? [menuSeparator, menuItem('disassembly', t('debugExtras.menu.openDisassembly'))] : [])
+		];
 		showMenu(e, items, (id) => {
 			if (id === 'restart') void debug.restartFrame(f.id);
+			else if (id === 'disassembly') void debug.selectFrame(f.id, sessionKey).then(() => debug.openDisassembly());
 			else if (id === 'copy') void navigator.clipboard.writeText((debug.sessions.find((s) => s.key === sessionKey)?.model.frames ?? []).map((x) => `${x.name} (${x.source?.path ?? x.source?.name ?? '?'}:${x.line})`).join('\n'));
 		});
 	}
@@ -323,6 +352,37 @@
 			{/each}
 		{/if}
 
+		{@render header('scripts', 'Loaded Scripts')}
+		{#if open.scripts}
+			{#if !model || model.state === 'terminated'}
+				<p class="px-5 py-1 text-(--vscode-descriptionForeground)">{t('debugExtras.loadedScripts.noSession')}</p>
+			{:else if !caps.supportsLoadedSourcesRequest}
+				<p class="px-5 py-1 text-(--vscode-descriptionForeground)">{t('debugExtras.loadedScripts.unsupported')}</p>
+			{:else}
+				<input
+					aria-label={t('debugExtras.loadedScripts.filter')}
+					placeholder={t('debugExtras.loadedScripts.filter')}
+					bind:value={scriptFilter}
+					class="mx-2 my-0.5 block h-[22px] w-[calc(100%-1rem)] rounded-sm border border-(--vscode-input-border,transparent) bg-(--vscode-input-background) px-1.5 text-(--vscode-input-foreground) outline-none focus:border-(--vscode-focusBorder)"
+				/>
+				{#each scriptRows as row (row.node.id)}
+					{@const node = row.node}
+					{#if node.kind === 'folder'}
+						<button class={[ROW, 'w-full gap-1 pr-2 text-left']} style:padding-left="{row.depth * 8 + 4}px" aria-expanded={!scriptsCollapsed[node.id]} title={node.label} onclick={() => (scriptsCollapsed[node.id] = !scriptsCollapsed[node.id])}>
+							<Icon name={scriptsCollapsed[node.id] ? 'chevronRight' : 'chevronDown'} size={14} />
+							<span class="truncate">{node.label}</span>
+							<span class={['ml-auto', BADGE]}>{countSources(node.children)}</span>
+						</button>
+					{:else}
+						<button class={[ROW, 'w-full gap-1.5 pr-2 text-left']} style:padding-left="{row.depth * 8 + 22}px" title={node.source.path ?? node.source.name} onclick={() => void debug.openSource(node.source)}>
+							<span class="truncate">{node.label}</span>
+							{#if node.description}<span class={DIM}>{node.description}</span>{/if}
+						</button>
+					{/if}
+				{/each}
+			{/if}
+		{/if}
+
 		{@render header('breakpoints', 'Breakpoints')}
 		{#if open.breakpoints}
 			<!-- Exception filters (VS Code shows the last session's filters before a session starts). -->
@@ -361,7 +421,15 @@
 					<button aria-label="Remove Breakpoint" title="Remove Breakpoint" class={[ICON_BUTTON, 'invisible group-hover/row:visible']} onclick={() => debug.removeDataBreakpoint(d.dataId)}><Icon name="close" size={12} /></button>
 				</div>
 			{/each}
-			{#each breakpointList as row (row.kind === 'file' ? `f:${row.rel}` : `b:${row.rel}:${row.item.line}`)}
+			{#each debug.instructionBreakpoints as b (b.address)}
+				<div class={['group/row', ROW, 'gap-1.5 pr-2 pl-4']} title={t('debugExtras.bp.instruction')}>
+					<input type="checkbox" aria-label={t('debugExtras.bp.instruction')} checked={b.enabled} onchange={(e) => debug.setInstructionBreakpointEnabled(b.address, e.currentTarget.checked)} />
+					<Icon name="code" size={12} />
+					<button class="min-w-0 flex-1 truncate text-left font-mono text-xs" onclick={() => debug.openDisassembly()}>{b.address}</button>
+					<button aria-label="Remove Breakpoint" title="Remove Breakpoint" class={[ICON_BUTTON, 'invisible group-hover/row:visible']} onclick={() => debug.removeInstructionBreakpoint(b.address)}><Icon name="close" size={12} /></button>
+				</div>
+			{/each}
+			{#each breakpointList as row (row.kind === 'file' ? `f:${row.rel}` : `b:${row.rel}:${row.item.line}:${row.item.column ?? 0}`)}
 				{#if row.kind === 'file'}
 					{@const isOpen = !collapsedFiles[row.rel]}
 					<button class={[ROW, 'w-full gap-1 pr-2 pl-1 text-left']} aria-expanded={isOpen} title={row.rel} onclick={() => (collapsedFiles[row.rel] = isOpen)}>
@@ -382,13 +450,13 @@
 								<span class="truncate">{fileName(rel)}</span>
 								<span class={DIM}>{rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : ''}</span>
 							{:else}
-								<span class="truncate">Line {b.line}</span>
+								<span class="truncate">Line {b.line}{b.column ? `:${b.column}` : ''}</span>
 							{/if}
 							{#if b.logMessage}<span class="truncate font-mono text-xs text-(--vscode-descriptionForeground)">log {b.logMessage}</span>
 							{:else if b.condition}<span class="truncate font-mono text-xs text-(--vscode-descriptionForeground)">{b.condition}</span>{/if}
 							{#if b.hitCondition}<span class="truncate font-mono text-xs text-(--vscode-descriptionForeground)">#{b.hitCondition}</span>{/if}
 						</button>
-						{#if !tree}<span class={BADGE}>{b.line}</span>{/if}
+						{#if !tree}<span class={BADGE}>{b.column ? `${b.line}:${b.column}` : b.line}</span>{/if}
 						<button aria-label="Edit Breakpoint" title="Edit Breakpoint" class={[ICON_BUTTON, 'invisible group-hover/row:visible']} onclick={() => debug.editBreakpoint(rel, b.line)}><Icon name="edit" size={12} /></button>
 						<button aria-label="Remove Breakpoint" title="Remove Breakpoint" class={[ICON_BUTTON, 'invisible group-hover/row:visible']} onclick={() => debug.removeBreakpoint(rel, b.line)}><Icon name="close" size={12} /></button>
 					</div>

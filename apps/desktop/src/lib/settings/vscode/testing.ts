@@ -126,5 +126,12 @@ export const TESTING_SETTINGS: SettingSchema[] = [
 		type: 'boolean',
 		default: true,
 		description: 'แสดงสถานะ coverage ใน minimap (Controls whether coverage indicators are shown in the minimap.)'
+	},
+	{
+		id: 'testing.automaticallyOpenPeekViewDuringAutoRun',
+		group: 'Testing',
+		type: 'boolean',
+		default: false,
+		description: 'เปิด peek ของข้อผิดพลาดเองระหว่างรันต่อเนื่องด้วย (Controls whether to automatically open the Peek view during continuous run mode.)'
 	}
 ];
