@@ -12,6 +12,8 @@ mod floating;
 mod fs;
 mod git;
 mod git_editor;
+mod git_graph;
+mod git_ops;
 mod git_output;
 mod git_queue;
 mod git_repos;
@@ -1423,6 +1425,31 @@ pub fn run() {
       git_remote::git_stash_drop,
       git_remote::git_clone,
       git_remote::git_clone_cancel,
+      git_graph::scm_graph_log,
+      git_graph::scm_changed_files,
+      git_graph::scm_diff_range,
+      git_graph::scm_merge_base,
+      git_ops::git_merge_branch,
+      git_ops::git_rebase_branch,
+      git_ops::git_cherry_pick,
+      git_ops::git_checkout_detached,
+      git_ops::git_tag_create,
+      git_ops::git_tag_delete,
+      git_ops::git_tags_push,
+      git_ops::git_undo_commit,
+      git_ops::git_ignore_paths,
+      git_ops::git_remote_list,
+      git_ops::git_remote_add,
+      git_ops::git_remote_remove,
+      git_ops::git_remote_rename,
+      git_ops::git_stash_show,
+      git_ops::git_stash_diff,
+      git_ops::git_stash_clear,
+      git_ops::git_commit_editmsg_prepare,
+      git_ops::git_commit_editmsg_read,
+      git_ops::scm_worktree_list,
+      git_ops::scm_worktree_add,
+      git_ops::scm_worktree_remove,
       project::git_init,
       project::project_create,
       projects::projects_list,

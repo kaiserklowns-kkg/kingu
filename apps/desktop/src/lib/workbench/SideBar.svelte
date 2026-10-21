@@ -6,6 +6,8 @@
 	import { hierarchy } from './hierarchy.svelte';
 	import { workspace } from './workspace.svelte';
 	import ScmView from './ScmView.svelte';
+	import GraphView from '#lib/scm/GraphView.svelte';
+	import ScmMoreActions from '#lib/scm/ScmMoreActions.svelte';
 	import SearchView from './SearchView.svelte';
 	import AgentsView from '#lib/ade/AgentsView.svelte';
 	import DebugView from '#lib/debug/DebugView.svelte';
@@ -30,10 +32,15 @@
 		<div class="flex h-(--kg-part-title-height) shrink-0 items-center px-1.5 text-(--vscode-sideBarTitle-foreground)">
 			<ActivityBar orientation="horizontal" />
 		</div>
-		<div class="flex h-6 shrink-0 items-center pl-5 text-[11px] text-(--vscode-sideBarTitle-foreground) uppercase">{titles[layout.sideView]}</div>
+		<div class="flex h-6 shrink-0 items-center pr-1.5 pl-5 text-[11px] text-(--vscode-sideBarTitle-foreground) uppercase">
+			<span class="min-w-0 flex-1 truncate">{titles[layout.sideView]}</span>
+			{#if layout.sideView === 'scm' && workspace.root}<ScmMoreActions />{/if}
+		</div>
 	{:else}
-		<div class="flex h-(--kg-part-title-height) shrink-0 items-center pl-5 text-[11px] text-(--vscode-sideBarTitle-foreground) uppercase">
-			{titles[layout.sideView]}
+		<div class="flex h-(--kg-part-title-height) shrink-0 items-center pr-1.5 pl-5 text-[11px] text-(--vscode-sideBarTitle-foreground) uppercase">
+			<span class="min-w-0 flex-1 truncate">{titles[layout.sideView]}</span>
+			<!-- VS Code's Source Control title actions: the More Actions (…) menu. -->
+			{#if layout.sideView === 'scm' && workspace.root}<ScmMoreActions />{/if}
 		</div>
 	{/if}
 
@@ -50,6 +57,8 @@
 		<SearchView />
 	{:else if layout.sideView === 'scm'}
 		<ScmView />
+		<!-- VS Code's Source Control Graph view below the changes. -->
+		{#if workspace.root}<GraphView />{/if}
 	{:else if layout.sideView === 'debug'}
 		<DebugView />
 	{:else if layout.sideView === 'testing'}
