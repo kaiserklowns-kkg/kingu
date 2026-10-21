@@ -111,12 +111,15 @@ pub struct ServerSpec {
 
 const LANGSERVERS_EXTRACTED: Package = Package::Npm("vscode-langservers-extracted");
 
-/// Languages are Monaco language ids (see `src/lib/editor/languages.ts`).
+/// Languages are Monaco language ids (see `src/lib/editor/languages.ts`). Built-in snaps' servers
+/// (rust-analyzer, snap_builtin.rs) come first, then the table.
 pub fn spec_for(language: &str) -> Option<ServerSpec> {
   use Package::*;
+  if let Some(spec) = crate::snap_builtin::spec_for(language) {
+    return Some(spec);
+  }
   let spec = |key, display, binaries, args, install| ServerSpec { key, display, binaries, args, install };
   Some(match language {
-    "rust" => spec("rust", "rust-analyzer", &["rust-analyzer"], &[], &[Rustup("rust-analyzer"), Brew("rust-analyzer")]),
     "typescript" | "javascript" | "typescriptreact" | "javascriptreact" => spec(
       "typescript",
       "TypeScript language server",
@@ -196,21 +199,29 @@ pub fn resolve_binary(
   home: Option<&Path>,
   roots: &[PathBuf],
 ) -> Result<PathBuf, String> {
+  resolve_named(spec.display, spec.binaries, &override_name(spec), override_var, path, home, roots)
+}
+
+/// [`resolve_binary`] for a server described by its parts (a snap's language server, snap_lsp.rs).
+pub fn resolve_named(display: &str, binaries: &[&str], var: &str, override_var: Option<OsString>, path: Option<&OsStr>, home: Option<&Path>, roots: &[PathBuf]) -> Result<PathBuf, String> {
   if let Some(o) = override_var.filter(|o| !o.is_empty()) {
     let p = PathBuf::from(o);
-    return if is_executable(&p) {
-      Ok(p)
-    } else {
-      Err(tr!(LspMsg::NotExecutable, name = spec.display, path = p.display(), var = override_name(spec)))
-    };
+    return if is_executable(&p) { Ok(p) } else { Err(tr!(LspMsg::NotExecutable, name = display, path = p.display(), var)) };
   }
-  spec.binaries.iter().find_map(|b| find_executable_in(b, path, home, roots)).map(|(p, _)| p).ok_or_else(|| {
-    tr!(LspMsg::NotOnPath, name = spec.display, binaries = spec.binaries.join(&tr!(LspMsg::Or)), var = override_name(spec))
-  })
+  binaries
+    .iter()
+    .find_map(|b| find_executable_in(b, path, home, roots))
+    .map(|(p, _)| p)
+    .ok_or_else(|| tr!(LspMsg::NotOnPath, name = display, binaries = binaries.join(&tr!(LspMsg::Or)), var))
 }
 
 pub fn override_name(spec: &ServerSpec) -> String {
-  format!("KINGU_LSP_{}", spec.key.to_uppercase())
+  override_var_of(spec.key)
+}
+
+/// `KINGU_LSP_<KEY>`, anything but letters and digits as `_` (`zig/zls` → `KINGU_LSP_ZIG_ZLS`).
+pub fn override_var_of(key: &str) -> String {
+  format!("KINGU_LSP_{}", key.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' }).collect::<String>())
 }
 
 /// The server binary for `language` (a project-local one from the `node_modules/.bin` of
@@ -241,32 +252,46 @@ pub struct InstallMethod {
   pub argv: Vec<String>,
 }
 
+/// The tools a kind of package installs with, in order of preference, and the words each puts
+/// before the package's own.
+pub type Installers = &'static [(&'static str, &'static [&'static str])];
+pub const NPM: Installers = &[("bun", &["add", "-g"]), ("npm", &["i", "-g"])];
+pub const GO: Installers = &[("go", &["install"])];
+pub const RUSTUP: Installers = &[("rustup", &["component", "add"])];
+pub const BREW: Installers = &[("brew", &["install"])];
+pub const PYTOOL: Installers = &[("pipx", &["install"]), ("uv", &["tool", "install"])];
+pub const CARGO: Installers = &[("cargo", &["install", "--locked"])];
+pub const PIP: Installers = &[("python3", &["-m", "pip", "install", "--user"])];
+
+fn installers(pkg: Package) -> (Installers, &'static str) {
+  match pkg {
+    Package::Npm(p) => (NPM, p),
+    Package::Go(p) => (GO, p),
+    Package::Rustup(c) => (RUSTUP, c),
+    Package::Brew(f) => (BREW, f),
+    Package::PyTool(p) => (PYTOOL, p),
+    Package::Cargo(a) => (CARGO, a),
+    Package::Pip(m) => (PIP, m),
+  }
+}
+
 /// Install commands for `spec` in its order of preference, for the tools `program` knows
 /// (`program(tool)` is what to put in `argv[0]`, `None` when the tool is absent).
 pub fn install_methods(spec: &ServerSpec, program: impl Fn(&str) -> Option<String>) -> Vec<InstallMethod> {
+  let packages: Vec<_> = spec.install.iter().map(|p| installers(*p)).collect();
+  install_commands(packages.iter().map(|(i, w)| (*i, *w)), program)
+}
+
+/// [`install_methods`] for packages given as (installers, package words).
+pub fn install_commands<'a>(packages: impl IntoIterator<Item = (Installers, &'a str)>, program: impl Fn(&str) -> Option<String>) -> Vec<InstallMethod> {
   let mut out = Vec::new();
-  let mut add = |tool: &'static str, head: &[&str], words: &str| {
-    debug_assert!(INSTALL_TOOLS.contains(&tool));
-    if let Some(prog) = program(tool) {
-      let argv = std::iter::once(prog).chain(head.iter().map(|s| s.to_string())).chain(words.split_whitespace().map(String::from)).collect();
-      out.push(InstallMethod { tool, argv });
-    }
-  };
-  for pkg in spec.install {
-    match *pkg {
-      Package::Npm(p) => {
-        add("bun", &["add", "-g"], p);
-        add("npm", &["i", "-g"], p);
+  for (installers, words) in packages {
+    for &(tool, head) in installers {
+      debug_assert!(INSTALL_TOOLS.contains(&tool));
+      if let Some(prog) = program(tool) {
+        let argv = std::iter::once(prog).chain(head.iter().map(|s| s.to_string())).chain(words.split_whitespace().map(String::from)).collect();
+        out.push(InstallMethod { tool, argv });
       }
-      Package::Go(p) => add("go", &["install"], p),
-      Package::Rustup(c) => add("rustup", &["component", "add"], c),
-      Package::Brew(f) => add("brew", &["install"], f),
-      Package::PyTool(p) => {
-        add("pipx", &["install"], p);
-        add("uv", &["tool", "install"], p);
-      }
-      Package::Cargo(a) => add("cargo", &["install", "--locked"], a),
-      Package::Pip(m) => add("python3", &["-m", "pip", "install", "--user"], m),
     }
   }
   out
@@ -282,13 +307,17 @@ pub struct InstallInfo {
 /// Install commands for the server of `language` usable on this machine (login-shell PATH).
 pub fn install_info(language: &str, roots: &[PathBuf]) -> Result<InstallInfo, String> {
   let spec = spec_for(language).ok_or_else(|| tr!(LspMsg::NoServer, language))?;
+  let methods = install_methods(&spec, tool_program(roots));
+  Ok(InstallInfo { server: spec.display, binary: spec.binaries[0], methods })
+}
+
+/// What `argv[0]` of an install command is: the tool by name when the terminal's shell will find
+/// it on the login-shell PATH, otherwise its full path; `None` when this machine lacks it.
+pub fn tool_program(roots: &[PathBuf]) -> impl Fn(&str) -> Option<String> {
   let home = std::env::var_os("HOME").map(PathBuf::from);
   let path = crate::shell_env::path();
-  let methods = install_methods(&spec, |tool| {
-    // By name when the terminal's shell will find it; otherwise its full path.
-    find_executable_in(tool, path.as_deref(), home.as_deref(), roots).map(|(p, on_path)| if on_path { tool.to_string() } else { p.to_string_lossy().into_owned() })
-  });
-  Ok(InstallInfo { server: spec.display, binary: spec.binaries[0], methods })
+  let roots = roots.to_vec();
+  move |tool| find_executable_in(tool, path.as_deref(), home.as_deref(), &roots).map(|(p, on_path)| if on_path { tool.to_string() } else { p.to_string_lossy().into_owned() })
 }
 
 const ENV_ALLOWLIST: &[&str] = &[
@@ -505,14 +534,19 @@ pub fn start_for(servers: &Servers, cwd: &Path, roots: &[PathBuf], language: &st
   let program = check(language, roots)?;
   let env = server_env(crate::shell_env::vars_os(), &program, home.as_deref());
   let launch = Launch { program: program.clone(), args: spec.args.iter().map(|s| s.to_string()).collect(), cwd, env };
-  let id = servers.start(
+  let id = start_launch(servers, launch, on_event)?;
+  log::info!("language server {id} started for {language}: {}", program.display());
+  Ok(id)
+}
+
+/// Starts `launch` with its messages going to `on_event`.
+pub fn start_launch(servers: &Servers, launch: Launch, on_event: Channel<LspEvent>) -> Result<u32, String> {
+  servers.start(
     launch,
     Arc::new(move |ev| {
       let _ = on_event.send(ev);
     }),
-  )?;
-  log::info!("language server {id} started for {language}: {}", program.display());
-  Ok(id)
+  )
 }
 
 #[tauri::command]

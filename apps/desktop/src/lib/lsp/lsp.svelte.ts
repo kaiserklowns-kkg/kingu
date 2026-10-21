@@ -57,6 +57,7 @@ import {
 	progressText,
 	SERVERS,
 	serverFor,
+	TABLE_SERVERS,
 	statusText,
 	type InstallInfo,
 	type InstallMethod,
@@ -97,6 +98,11 @@ export type PendingRename = { files: FileRenameUris[]; rels: string[]; edit: Pro
 type MonacoApi = typeof Monaco;
 /** One `#` quick access result; line and column 1-based. */
 export type WorkspaceSymbolItem = { name: string; kind: number; container?: string; rel: string; line: number; column: number };
+/** How a snap's server starts now (snaps/contrib.svelte.ts): its argv and env with settings
+ * expanded and whether it runs sandboxed, or why it may not run (the sandbox refuses). */
+export type SnapLaunch = { argv: string[]; env: Record<string, string>; sandbox: boolean } | { error: string };
+type SnapHooks = { launch: (info: ServerInfo) => SnapLaunch; settings: (info: ServerInfo) => Record<string, unknown> };
+
 type LspEvent = { type: 'message'; json: string } | { type: 'stderr'; line: string } | { type: 'exit'; code: number | null };
 /** `sid`: the server key, or the key and folder of a server started for one root folder
  * (`folder`; null: every folder, folders.ts). `pushed` / `init`: the settings last sent and the
@@ -129,7 +135,7 @@ class Lsp {
 	symbols = new SvelteMap<string, (DocumentSymbol | SymbolInformation)[]>();
 	/** A busy server's progress for the status bar ("rust-analyzer: Indexing (40%)…"). */
 	progress = $derived.by(() => {
-		for (const info of SERVERS) {
+		for (const info of this.servers) {
 			const text = progressText(info, this.status.get(info.key));
 			if (text) return text;
 		}
@@ -139,6 +145,37 @@ class Lsp {
 	tsVersion = $state<TsVersionChoice>('bundled');
 	/** Overrides of the server table's settings, per server key (e.g. `{ 'rust-analyzer': { … } }`). */
 	settings: Record<string, Record<string, unknown>> = {};
+	/** The servers in effect: active snaps' (built-in ones included), then the table's. */
+	servers = $state.raw<ServerInfo[]>(SERVERS);
+	#snapHooks: SnapHooks | null = null;
+	/** Every model attached, so a server a snap adds later reaches files already open. */
+	#attached = new Map<Monaco.editor.ITextModel, { monaco: MonacoApi; rel: string }>();
+
+	/**
+	 * Snaps' servers changed (installed, trusted, updated, removed): the table becomes `rows` then
+	 * the built-in table. Sessions of a server that changed or went away stop; open files then
+	 * attach to whatever serves their language now.
+	 */
+	setSnapServers(rows: ServerInfo[], hooks: SnapHooks) {
+		this.#snapHooks = hooks;
+		const next = [...rows, ...TABLE_SERVERS];
+		const sig = (i: ServerInfo) => JSON.stringify(i);
+		const before = new Map(this.servers.map((i) => [i.key, sig(i)]));
+		const after = new Map(next.map((i) => [i.key, sig(i)]));
+		if (next.length === this.servers.length && next.every((i) => before.get(i.key) === after.get(i.key))) return;
+		// Servers that went away or start differently now (a server that is only new changes nothing running).
+		const changed = new Set([...before.keys()].filter((k) => before.get(k) !== after.get(k)));
+		this.servers = next;
+		for (const [sid, sess] of [...this.#sessions]) if (changed.has(sess.info.key)) void this.#stop(sid);
+		for (const key of changed) this.status.delete(key);
+		for (const [model, at] of [...this.#attached]) {
+			const doc = this.#docs.get(model);
+			const want = serverFor(model.getLanguageId(), this.servers)?.key;
+			if (doc && doc.key === want && !changed.has(doc.key)) continue;
+			if (doc) this.#detach(model);
+			this.attach(at.monaco, model, at.rel);
+		}
+	}
 
 	#monaco: MonacoApi | undefined;
 	#root: Promise<string> | undefined;
@@ -176,7 +213,11 @@ class Lsp {
 				this.attach(monaco, model, rel);
 			});
 		}
-		const info = serverFor(model.getLanguageId());
+		if (!this.#attached.has(model)) {
+			this.#attached.set(model, { monaco, rel });
+			model.onWillDispose(() => this.#attached.delete(model));
+		}
+		const info = serverFor(model.getLanguageId(), this.servers);
 		if (!info || this.#docs.has(model)) return;
 		this.#init(monaco);
 		const doc: Doc = { rel, uri: '', key: info.key, sid: '', model };
@@ -348,7 +389,7 @@ class Lsp {
 
 	/** Status bar entry for a Monaco language id, or null when it has no server. */
 	statusFor(languageId: string): { text: string; tooltip: string; state: ServerStatus['state']; /** Its Output channel. */ channel: string } | null {
-		const info = serverFor(languageId);
+		const info = serverFor(languageId, this.servers);
 		const s = info && this.status.get(info.key);
 		if (!info || !s) return null;
 		return { text: statusText(info, s), tooltip: s.message ?? statusText(info, s), state: s.state, channel: info.name };
@@ -469,12 +510,12 @@ class Lsp {
 	}
 
 	hasServer(languageId: string) {
-		return serverFor(languageId) !== undefined;
+		return serverFor(languageId, this.servers) !== undefined;
 	}
 
 	/** Stops the server for `languageId` and starts it again with every open document. */
 	async restart(languageId: string) {
-		const info = serverFor(languageId);
+		const info = serverFor(languageId, this.servers);
 		if (info) await this.#restartKey(info.key);
 	}
 
@@ -498,7 +539,7 @@ class Lsp {
 
 	/** Servers that failed to start because their binary was not found. */
 	missing(): ServerInfo[] {
-		return SERVERS.filter((s) => this.status.get(s.key)?.state === 'not-installed');
+		return this.servers.filter((s) => this.status.get(s.key)?.state === 'not-installed');
 	}
 
 	/** Palette "Install Missing…": the current language's server, else a pick among the missing. */
@@ -510,18 +551,18 @@ class Lsp {
 		quick.pick({
 			placeholder: t('tools.lsp.pickInstall'),
 			items: missing.map((s) => ({ id: s.key, label: s.name, description: s.languages.join(', ') })),
-			onAccept: (item) => void this.install(SERVERS.find((s) => s.key === item.id)!.languages[0])
+			onAccept: (item) => void this.install(this.servers.find((s) => s.key === item.id)!.languages[0])
 		});
 	}
 
 	/** Offers the install commands this machine can run for `languageId`'s server; the chosen one
 	 * runs in a panel terminal where the user sees it (never silently). */
 	async install(languageId: string) {
-		const info = serverFor(languageId);
+		const info = serverFor(languageId, this.servers);
 		if (!info) return;
 		let res: InstallInfo;
 		try {
-			res = await invoke<InstallInfo>('lsp_install_methods', { language: info.languages[0] });
+			res = await invoke<InstallInfo>('lsp_install_methods', { language: info.languages[0], snap: this.#snapRef(info) });
 		} catch (e) {
 			return notifications.error(e);
 		}
@@ -565,12 +606,12 @@ class Lsp {
 
 	/** Re-resolves a missing server's binary; when it is there now, starts it for the open files. */
 	async retry(key: string, { report = false } = {}): Promise<boolean> {
-		const info = SERVERS.find((s) => s.key === key);
+		const info = this.servers.find((s) => s.key === key);
 		// The install poll, window focus and Retry can overlap; one restart is enough.
 		if (!info || this.#retrying.has(key)) return false;
 		this.#retrying.add(key);
 		try {
-			const found = await invoke<string>('lsp_check', { language: info.languages[0] }).then(
+			const found = await invoke<string>('lsp_check', { language: info.languages[0], snap: this.#snapRef(info) }).then(
 				() => true,
 				(e) => (report && notifications.error(e), false)
 			);
@@ -612,7 +653,7 @@ class Lsp {
 		$effect.root(() => {
 			// `<language>.trace.server`: the tracer follows the setting, and the server is told ($/setTrace).
 			$effect(() => {
-				const next = SERVERS.map((info) => ({ key: info.key, trace: this.#trace(info) }));
+				const next = this.servers.map((info) => ({ key: info.key, trace: this.#trace(info) }));
 				untrack(() => {
 					for (const n of next)
 						for (const s of this.#sessions.values()) {
@@ -640,7 +681,7 @@ class Lsp {
 				// For the shared servers and for each other root folder's settings (a per-folder server).
 				const folders = [null, ...Object.keys(userSettings.folders)];
 				const next = new Map(
-					SERVERS.flatMap((info) => folders.map((folder) => [sessionId(info.key, folder), { pushed: JSON.stringify(this.#settingsFor(info, folder)), init: JSON.stringify(this.#initOptions(info, folder) ?? null) }] as const))
+					this.servers.flatMap((info) => folders.map((folder) => [sessionId(info.key, folder), { pushed: JSON.stringify(this.#settingsFor(info, folder)), init: JSON.stringify(this.#initOptions(info, folder) ?? null) }] as const))
 				);
 				untrack(() => {
 					const restart = new Set<string>();
@@ -683,7 +724,7 @@ class Lsp {
 	}
 
 	async #open(doc: Doc) {
-		const info = SERVERS.find((s) => s.key === doc.key);
+		const info = this.servers.find((s) => s.key === doc.key);
 		if (!info || isDisabled(info, parseDisabled(userSettings.get('kingu.lsp.disabled')))) return;
 		const session = await this.#sessionFor(info, doc.rel);
 		if (!(await session.ready) || !this.#docs.has(doc.model)) return;
@@ -757,7 +798,11 @@ class Lsp {
 		this.#setStatus(info, { state: 'starting' });
 		session.ready = (async () => {
 			try {
-				id = await invoke<number>('lsp_start', { language: info.languages[0], folder: folder ?? undefined, onEvent: channel });
+				// A snap's server: what to run with its settings expanded (refused when the sandbox
+				// cannot confine it, like the snap's tasks).
+				const snap = info.snap ? this.#snapRef(info) : null;
+				if (info.snap && !snap) throw new Error(this.#snapRefusal(info));
+				id = await invoke<number>('lsp_start', { language: info.languages[0], folder: folder ?? undefined, snap, onEvent: channel });
 				session.id = id;
 				const caps = await client.initialize(uriOfRel(root, '').replace(/\/$/, ''), init, session.trace, lspFolders(own));
 				const pushed = this.#settingsFor(info, folder);
@@ -860,7 +905,7 @@ class Lsp {
 	 * `folder`: a root folder whose own settings apply (a file of it, or its own server; its
 	 * `json.schemas` come with them). */
 	#settingsFor(info: ServerInfo, folder: string | null = null): Record<string, unknown> {
-		const base: Record<string, unknown> = { ...info.settings, ...serverSettings(info.key, this.#readerFor(folder), uriOfRel(folder ?? this.#rootPath, '').replace(/\/$/, '')) };
+		const base: Record<string, unknown> = { ...info.settings, ...(info.snap ? this.#snapHooks?.settings(info) : undefined), ...serverSettings(info.key, this.#readerFor(folder), uriOfRel(folder ?? this.#rootPath, '').replace(/\/$/, '')) };
 		if (info.key === 'json') base.json = withKinguSchemas(base.json, kinguJsonSchemas(jsonSchema(settingSchemas.all), commands.all.map((c) => c.id)));
 		return { ...base, ...this.settings[info.key] };
 	}
@@ -872,6 +917,19 @@ class Lsp {
 		// Select TypeScript Version: the workspace's tsserver instead of the server's own.
 		const tsserver = chosenTsserver(reader, this.tsVersion, folder ?? this.#rootPath);
 		return { ...(info.initializationOptions as object | undefined), preferences: typescriptPreferences(reader), ...(tsserver ? { tsserver: { path: tsserver } } : {}) };
+	}
+
+	/** `lsp_start`'s `snap` argument for a snap's server (null for the table's, or when it may not run). */
+	#snapRef(info: ServerInfo) {
+		if (!info.snap) return null;
+		const launch = this.#snapHooks?.launch(info) ?? { argv: info.snap.command, env: info.snap.env, sandbox: false };
+		if ('error' in launch) return null;
+		return { source: info.snap.source, id: info.snap.id, server: info.snap.server, argv: launch.argv, env: launch.env, sandbox: launch.sandbox };
+	}
+
+	#snapRefusal(info: ServerInfo): string {
+		const launch = this.#snapHooks?.launch(info);
+		return launch && 'error' in launch ? launch.error : `${info.name}: no command`;
 	}
 
 	/** VS Code settings as serverSettings.ts reads them. */

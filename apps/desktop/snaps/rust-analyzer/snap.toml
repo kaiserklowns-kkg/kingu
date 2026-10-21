@@ -1,0 +1,12 @@
+# Built-in snap: Rust's language server. Shipped with Kingu (snap_builtin.rs embeds this file), so
+# it starts exactly like a user's language server snap, through the same path.
+id = "rust-analyzer"
+name = "Rust (rust-analyzer)"
+version = "1.0.0"
+description = "rust-analyzer for Rust files: diagnostics, completions, navigation and formatting"
+
+[lsp.rust]
+name = "rust-analyzer"
+languages = ["rust"]
+command = ["rust-analyzer"]
+install = [{ tool = "rustup", package = "rust-analyzer" }, { tool = "brew", package = "rust-analyzer" }]

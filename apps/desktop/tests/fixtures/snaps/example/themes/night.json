@@ -1,0 +1,8 @@
+{
+	"name": "Example Night",
+	"include": "./base.json",
+	"colors": { "editor.background": "#101820", "editor.foreground": "#D0D8E0" },
+	"tokenColors": [{ "scope": "keyword.other.todo", "settings": { "foreground": "#FFB000", "fontStyle": "bold" } }],
+	"semanticHighlighting": true,
+	"semanticTokenColors": { "variable.readonly": "#80C0FF" }
+}

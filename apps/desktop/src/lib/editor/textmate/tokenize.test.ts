@@ -10,7 +10,7 @@ import { INITIAL, Registry, parseRawGrammar, type IGrammar } from 'vscode-textma
 import { flattenTheme, textMateRules } from './theme';
 
 const dir = import.meta.dir;
-const theme = flattenTheme('dark_modern.json', (p) => readFileSync(join(dir, 'themes', p), 'utf8'));
+const theme = flattenTheme('dark_modern.json', (p) => readFileSync(join(dir, '../../../../snaps/kingu-themes/themes', p), 'utf8'));
 const files: Record<string, string> = {
 	'source.ts': 'TypeScript.tmLanguage.json',
 	'source.rust': 'rust.tmLanguage.json',

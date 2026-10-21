@@ -1,9 +1,17 @@
 // Kingu's own file icon theme: a file or folder name → a glyph (drawn by FileIcon.svelte) and a
 // color. Pure so it is unit-testable. Not derived from VS Code's Seti or codicon artwork.
 
-export type FileGlyph = 'badge' | 'braces' | 'doc' | 'book' | 'image' | 'lock' | 'gear' | 'package' | 'git' | 'terminal' | 'file' | 'folder' | 'folderOpen';
-/** `label` is the short text drawn on a `badge` glyph. */
-export type FileIconSpec = { glyph: FileGlyph; color: string; label?: string };
+export type FileGlyph = 'badge' | 'braces' | 'doc' | 'book' | 'image' | 'lock' | 'gear' | 'package' | 'git' | 'terminal' | 'file' | 'folder' | 'folderOpen' | 'url';
+/** `label` is the short text drawn on a `badge` glyph; `src` the image of a `url` glyph (a snap's icon theme). */
+export type FileIconSpec = { glyph: FileGlyph; color: string; label?: string; src?: string };
+
+/** A snap's file icon theme when `workbench.iconTheme` names one (snaps/contrib.svelte.ts):
+ * the icon for a name, or null to keep Kingu's own. Reads reactive state, so icons follow it. */
+type IconOverride = (name: string, kind: 'file' | 'folder' | 'folderOpen') => FileIconSpec | null;
+let override: IconOverride | null = null;
+export function setIconOverride(fn: IconOverride | null) {
+	override = fn;
+}
 
 const C = {
 	ts: '#3d8fd6',
@@ -122,6 +130,8 @@ const basename = (path: string) => path.slice(path.replace(/\/+$/, '').lastIndex
 
 /** Icon for a file name or workspace-relative path. */
 export function fileIcon(path: string): FileIconSpec {
+	const themed = override?.(basename(path), 'file');
+	if (themed) return themed;
 	const name = basename(path).toLowerCase();
 	const named = BY_NAME[name];
 	if (named) return named;
@@ -142,6 +152,8 @@ export function fileIcon(path: string): FileIconSpec {
 
 /** Icon for a folder, closed or expanded. */
 export function folderIcon(path: string, open: boolean): FileIconSpec {
+	const themed = override?.(basename(path), open ? 'folderOpen' : 'folder');
+	if (themed) return themed;
 	const name = basename(path).toLowerCase();
 	return glyph(open ? 'folderOpen' : 'folder', FOLDER_COLORS[name] ?? C.folder);
 }

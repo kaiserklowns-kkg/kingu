@@ -21,6 +21,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::i18n::msg::SnapMsg;
 use crate::settings::write_atomic;
+use crate::snap_contrib::Contributions;
 use crate::snap_install::{LockStatus, Origin, read_lock, read_origin};
 use crate::tr;
 use crate::workspace::Workspace;
@@ -54,6 +55,21 @@ struct Manifest {
   mcp: BTreeMap<String, RawMcp>,
   #[serde(default)]
   skills: Vec<RawSkill>,
+  // Contributions (snap_contrib.rs).
+  #[serde(default)]
+  languages: Vec<crate::snap_contrib::RawLanguage>,
+  #[serde(default)]
+  grammars: Vec<crate::snap_contrib::RawGrammar>,
+  #[serde(default)]
+  snippets: Vec<crate::snap_contrib::RawSnippets>,
+  #[serde(default)]
+  lsp: BTreeMap<String, crate::snap_contrib::RawLsp>,
+  #[serde(default)]
+  themes: Vec<crate::snap_contrib::RawTheme>,
+  #[serde(default)]
+  icon_themes: Vec<crate::snap_contrib::RawIconTheme>,
+  #[serde(default)]
+  views: Vec<crate::snap_contrib::RawView>,
 }
 
 /// Shown to the user before trust and enforced when a task or MCP server runs (`kingu-ptyd
@@ -151,10 +167,12 @@ pub struct Parsed {
   pub mcp: Vec<McpServer>,
   /// Skill folders relative to the snap folder (`skills/go-style`), checked on disk by `read_skills`.
   pub skills: Vec<String>,
+  /// Languages, grammars, snippets, language servers, themes and views (snap_contrib.rs).
+  pub contributes: Contributions,
 }
 
 /// `^[a-z0-9][a-z0-9-]{0,max-1}$` (task ids pass `usize::MAX`).
-fn is_slug(s: &str, max: usize) -> bool {
+pub(crate) fn is_slug(s: &str, max: usize) -> bool {
   let b = s.as_bytes();
   !b.is_empty() && b.len() <= max && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit()) && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
 }
@@ -176,7 +194,7 @@ fn is_name(s: &str) -> bool {
 }
 
 /// `^[A-Za-z_][A-Za-z0-9_]*$` (env and secret names).
-fn is_env_name(s: &str) -> bool {
+pub(crate) fn is_env_name(s: &str) -> bool {
   let b = s.as_bytes();
   !b.is_empty() && (b[0].is_ascii_alphabetic() || b[0] == b'_') && b.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'_')
 }
@@ -196,7 +214,7 @@ pub fn placeholders(arg: &str) -> Result<Vec<&str>, String> {
 }
 
 /// Every `${setting:<key>}` in `arg` must name a declared setting.
-fn check_placeholders(arg: &str, keys: &BTreeSet<String>, owner: &str) -> Result<(), String> {
+pub(crate) fn check_placeholders(arg: &str, keys: &BTreeSet<String>, owner: &str) -> Result<(), String> {
   for key in placeholders(arg).map_err(|e| format!("{owner}: {e}"))? {
     if !keys.contains(key) {
       return Err(tr!(SnapMsg::UndeclaredSetting, owner, key));
@@ -326,7 +344,11 @@ pub fn parse_manifest(text: &str, folder: &str) -> Result<Parsed, String> {
     skills.push(s.path);
   }
 
-  Ok(Parsed { id: m.id, name: m.name, version: m.version, description: m.description, permissions: m.permissions, tasks: m.tasks, settings, mcp, skills })
+  let task_ids = m.tasks.iter().map(|t| t.id.clone()).collect();
+  let raw = crate::snap_contrib::Raw { languages: m.languages, grammars: m.grammars, snippets: m.snippets, lsp: m.lsp, themes: m.themes, icon_themes: m.icon_themes, views: m.views };
+  let contributes = crate::snap_contrib::validate(raw, &keys, &task_ids)?;
+
+  Ok(Parsed { id: m.id, name: m.name, version: m.version, description: m.description, permissions: m.permissions, tasks: m.tasks, settings, mcp, skills, contributes })
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -443,11 +465,13 @@ pub fn read_skills(snap_dir: &Path, paths: &[String]) -> Result<Vec<Skill>, Stri
   Ok(out)
 }
 
-/// The trust hash: SHA-256 of `snap.toml` alone for a snap without skills (unchanged from phase
-/// 1), otherwise also over every skill file, so editing a repo snap's SKILL.md revokes trust too:
-/// a skill is instructions to the agent and must not change behind the user's back.
-pub fn snap_hash(manifest: &[u8], skills: &[Skill]) -> String {
-  if skills.is_empty() {
+/// The trust hash: SHA-256 of `snap.toml` alone for a snap without skills or contributed files
+/// (unchanged from phase 1), otherwise also over every skill file and every file its contributions
+/// name (grammars, themes, views…), so editing a repo snap's SKILL.md or view revokes trust too:
+/// a skill is instructions to the agent, a view runs in the app, and neither may change behind
+/// the user's back.
+pub fn snap_hash(manifest: &[u8], skills: &[Skill], files: &[(String, Vec<u8>)]) -> String {
+  if skills.is_empty() && files.is_empty() {
     return sha256_hex(manifest);
   }
   let mut h = Sha256::new();
@@ -463,17 +487,26 @@ pub fn snap_hash(manifest: &[u8], skills: &[Skill]) -> String {
       h.update(bytes);
     }
   }
+  for (path, bytes) in files {
+    h.update(b"\0kingu-contrib\0");
+    h.update(path.as_bytes());
+    h.update(b"\0");
+    h.update((bytes.len() as u64).to_le_bytes());
+    h.update(bytes);
+  }
   h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 // ---------------------------------------------------------------------------------------------
 // Discovery
 
-#[derive(Serialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Source {
   User,
   Repo,
+  /// Shipped with the app (snap_builtin.rs); never listed by `snap_list` (the webview has them).
+  Builtin,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -498,6 +531,8 @@ pub struct SnapInfo {
   pub settings: Vec<Setting>,
   pub mcp: Vec<McpServer>,
   pub skills: Vec<Skill>,
+  /// Languages, grammars, snippets, language servers, themes and views, with their files' hashes.
+  pub contributes: Contributions,
   /// User snaps installed through Kingu: where they came from (`.kingu-snap.json`, not hashed).
   pub origin: Option<Origin>,
   /// Repo snaps when the folder has `.kingu/snaps.lock`: whether this snap matches its entry.
@@ -522,6 +557,7 @@ impl SnapInfo {
       settings: Vec::new(),
       mcp: Vec::new(),
       skills: Vec::new(),
+      contributes: Contributions::default(),
       origin: None,
       lock: None,
     }
@@ -577,10 +613,16 @@ pub(crate) fn read_snap(dir: &Path, folder: &str, source: Source, root: Option<&
     Ok(s) => s,
     Err(e) => return broken(hash, e),
   };
-  let hash = snap_hash(&bytes, &skills);
+  let files = match crate::snap_contrib::read_files(dir, &p.contributes) {
+    Ok(f) => f,
+    Err(e) => return broken(hash, e),
+  };
+  let hash = snap_hash(&bytes, &skills, &files);
+  let mut contributes = p.contributes;
+  contributes.files = crate::snap_contrib::file_hashes(&files);
   SnapInfo {
     trusted: match (source, root) {
-      (Source::User, _) => true,
+      (Source::User | Source::Builtin, _) => true,
       (Source::Repo, Some(root)) => trust.is_trusted(root, &p.id, &hash),
       (Source::Repo, None) => false,
     },
@@ -598,6 +640,7 @@ pub(crate) fn read_snap(dir: &Path, folder: &str, source: Source, root: Option<&
     settings: p.settings,
     mcp: p.mcp,
     skills,
+    contributes,
     origin: None,
     lock: None,
   }

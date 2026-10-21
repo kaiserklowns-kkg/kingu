@@ -16,7 +16,7 @@
 	import type { FileGlyph } from './fileIcons';
 
 	// Glyphs of Kingu's file icon theme (see fileIcons.ts for the name → glyph mapping); `badge` is drawn below.
-	const glyphs: Record<Exclude<FileGlyph, 'badge'>, typeof FileIcon> = {
+	const glyphs: Record<Exclude<FileGlyph, 'badge' | 'url'>, typeof FileIcon> = {
 		braces: BracketsCurlyIcon,
 		doc: FileTextIcon,
 		book: BookOpenIcon,
@@ -41,12 +41,15 @@
 	/** `workbench.iconTheme: null`: no file icons anywhere (VS Code's "None" icon theme). */
 	const enabled = $derived(settings.get('workbench.iconTheme') !== null);
 
-	const Glyph = $derived(icon.glyph === 'badge' ? null : (glyphs[icon.glyph] ?? FileIcon));
+	const Glyph = $derived(icon.glyph === 'badge' || icon.glyph === 'url' ? null : (glyphs[icon.glyph] ?? FileIcon));
 	const folder = $derived(icon.glyph === 'folder' || icon.glyph === 'folderOpen');
 </script>
 
 {#if !enabled}
 	<!-- No file icon theme. -->
+{:else if icon.glyph === 'url' && icon.src}
+	<!-- A snap's file icon theme (a data: URL). -->
+	<img class="shrink-0" src={icon.src} width={size} height={size} alt="" aria-hidden="true" />
 {:else if Glyph}
 	<Glyph {size} weight={folder ? 'fill' : 'duotone'} color={icon.color} class="shrink-0" aria-hidden="true" />
 {:else}

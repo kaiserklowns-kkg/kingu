@@ -51,9 +51,14 @@ import {
 } from './snapModel.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
+import { BUILTIN_SNAPS } from './builtinSnaps.ts';
+import { withBuiltins } from './contributions.ts';
+import { installContributions } from './contrib.svelte.ts';
 
 class Snaps {
 	list = $state<SnapInfo[]>([]);
+	/** The built-in snaps (shipped with the app), then `list`: what contributes. */
+	readonly all: SnapInfo[] = $derived(withBuiltins(BUILTIN_SNAPS, this.list));
 	loaded = $state(false);
 	/** `snap_list` itself failed (a broken snap is listed with its own error instead). */
 	error = $state<string | null>(null);
@@ -443,6 +448,11 @@ export function installSnaps(): () => void {
 		reloadSoon();
 		if (needsFocusReload(team.status?.stream)) void snaps.loadTeam();
 	};
+	// Languages, grammars, snippets, language servers, themes and views of active snaps (contrib.svelte.ts).
+	const stopContributions = installContributions(
+		() => snaps.all,
+		() => snaps.sandbox
+	);
 	const stopWatching = workspace.onFilesChanged((paths) => {
 		if (touchesRepoSnaps(paths)) reloadSoon();
 	});
@@ -507,6 +517,7 @@ export function installSnaps(): () => void {
 	];
 	return () => {
 		clearTimeout(reloadTimer);
+		stopContributions();
 		stopWatching();
 		window.removeEventListener('focus', reloadAll);
 		stopTeamEvents();

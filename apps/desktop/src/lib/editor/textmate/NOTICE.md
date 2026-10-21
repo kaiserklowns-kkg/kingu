@@ -1,7 +1,8 @@
 # Third-party notice: TextMate grammars and VS Code themes
 
-`themes/kingu-dark.json` and `themes/kingu-light.json` are Kingu's own themes (they `include` the
-VS Code 2026 themes below). The other files in `grammars/` and `themes/` are copied unmodified from the
+The color themes ship as the built-in snap `kingu-themes`, in `apps/desktop/snaps/kingu-themes/themes/`
+(`themes/…` below). `themes/kingu-dark.json` and `themes/kingu-light.json` are Kingu's own themes (they
+`include` the VS Code 2026 themes below). The other files in `grammars/` and `themes/` are copied unmodified from the
 [microsoft/vscode](https://github.com/microsoft/vscode) repository (taken from a
 local fork at VS Code 1.143.0). Only one file was renamed:
 `Regular Expressions (JavaScript).tmLanguage` → `RegularExpressionsJavaScript.tmLanguage`.

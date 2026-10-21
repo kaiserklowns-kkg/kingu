@@ -42,8 +42,12 @@ mod shell_env;
 mod shell_integration;
 mod skill_hub;
 mod snap;
+mod snap_builtin;
+mod snap_contrib;
 mod snap_install;
+mod snap_lsp;
 mod snap_sandbox;
+mod snap_view;
 mod snippets;
 mod startup;
 mod system;
@@ -885,10 +889,12 @@ fn search_cancel(ws: Workspace) {
 /// Starts the language server for `language` in the workspace; server messages stream over `on_event`.
 #[tauri::command]
 fn lsp_start(
+  app: AppHandle,
   ws: Workspace,
   servers: State<'_, lsp::Servers>,
   language: String,
   folder: Option<String>,
+  snap: Option<snap_lsp::SnapServerRef>,
   on_event: Channel<lsp::LspEvent>,
 ) -> Result<u32, String> {
   // `folder`: the root folder a server is started for on its own (one that cannot be told about
@@ -901,7 +907,11 @@ fn lsp_start(
   };
   // Restricted Mode: no server from the folders' node_modules (workspace_trust.rs).
   let local = workspace_trust::local_tool_roots(&ws, lsp::roots_from(&cwd, &roots));
-  let id = lsp::start_for(&servers, &cwd, &local, &language, on_event)?;
+  // `snap`: a snap's server (snap_lsp.rs), built-in ones included; else the server table's.
+  let id = match &snap {
+    Some(r) => snap_lsp::start(&app, &ws, &servers, &cwd, &local, r, on_event)?,
+    None => lsp::start_for(&servers, &cwd, &local, &language, on_event)?,
+  };
   servers.own(id, ws.label());
   Ok(id)
 }
@@ -909,16 +919,26 @@ fn lsp_start(
 /// Whether the server for `language` can be started now (re-resolved on every call, so a server
 /// installed meanwhile is found): its path, or the "Not installed: …" error.
 #[tauri::command]
-fn lsp_check(ws: Workspace, language: String) -> Result<String, String> {
+fn lsp_check(app: AppHandle, ws: Workspace, language: String, snap: Option<snap_lsp::SnapServerRef>) -> Result<String, String> {
   ws.root()?;
-  lsp::check(&language, &workspace_trust::local_tool_roots(&ws, ws.roots())).map(|p| p.to_string_lossy().into_owned())
+  let roots = workspace_trust::local_tool_roots(&ws, ws.roots());
+  match &snap {
+    Some(r) => snap_lsp::check(&app, &ws, &roots, r),
+    None => lsp::check(&language, &roots),
+  }
+  .map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Install commands for the server of `language` that this machine's tools can run.
 #[tauri::command]
-fn lsp_install_methods(ws: Workspace, language: String) -> Result<lsp::InstallInfo, String> {
+fn lsp_install_methods(app: AppHandle, ws: Workspace, language: String, snap: Option<snap_lsp::SnapServerRef>) -> Result<serde_json::Value, String> {
   ws.root()?;
-  lsp::install_info(&language, &workspace_trust::local_tool_roots(&ws, ws.roots()))
+  let roots = workspace_trust::local_tool_roots(&ws, ws.roots());
+  let info = match &snap {
+    Some(r) => serde_json::to_value(snap_lsp::install_info(&app, &ws, &roots, r)?),
+    None => serde_json::to_value(lsp::install_info(&language, &roots)?),
+  };
+  info.map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1263,9 +1283,11 @@ pub fn run() {
     .manage(menu::MenuState::default())
     .manage(DroppedPaths::default())
     .manage(artifacts::preview::Previews::default())
+    .manage(snap_view::SnapViews::default())
     .manage(voice::Voice::default())
     // Artifact previews (artifacts/preview.rs): served only to the sandboxed preview iframe.
     .register_uri_scheme_protocol(artifacts::preview::SCHEME, artifacts::preview::handle)
+    .register_uri_scheme_protocol(snap_view::SCHEME, snap_view::handle)
     .setup(|app| {
       let config_dir = app.path().app_config_dir()?;
       // application.shellEnvironmentResolutionTimeout (user settings only: it is read before any folder opens).
@@ -1724,6 +1746,10 @@ pub fn run() {
       snap::snap_list,
       snap::snap_trust,
       snap::snap_skill_plugins,
+      snap_contrib::snap_file_read,
+      snap_contrib::snap_file_data_url,
+      snap_view::snap_view_open,
+      snap_view::snap_view_close,
       snap_sandbox::snap_sandbox_info,
       snap_install::snap_install_git,
       snap_install::snap_install_folder,

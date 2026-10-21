@@ -1,0 +1,32 @@
+import type { snapContrib as en } from '../en/snapContrib';
+
+export const snapContrib = {
+	'snapContrib.summary.languages': '{count|# ภาษา|# ภาษา}{names}',
+	'snapContrib.summary.lsp': '{count|# language server|# language server}{names}',
+	'snapContrib.summary.themes': '{count|# ธีม|# ธีม}{names}',
+	'snapContrib.summary.views': '{count|# view|# view}{names}',
+	'snapContrib.trust.server': '• Language server {name}: {command}',
+	'snapContrib.trust.views': 'View (หน้าที่แสดงในกรอบที่ถูกกั้น): {names}',
+	'snapContrib.snippetSource': 'snap {file}',
+	'snapContrib.snippetGroup': 'snippet ของ snap',
+	'snapContrib.view.loading': 'กำลังโหลด view…',
+	'snapContrib.view.failed': 'เปิด view นี้ไม่ได้: {error}',
+	'snapContrib.section.builtin': 'มากับแอป (Built-in)',
+	'snapContrib.builtinTitle': 'มากับ Kingu (built-in)',
+	'snapContrib.builtinOverridden': 'ถูกแทนด้วย snap ที่มี id เดียวกัน (Overridden)',
+	'snapContrib.details.title': 'สิ่งที่ snap เพิ่ม (Contributions)',
+	'snapContrib.details.viewsInactive': 'view จะแสดงเมื่อ snap นี้ใช้งานอยู่',
+	'snapContrib.details.viewsSandbox': 'view รันในกรอบที่ถูกกั้น เข้าถึงแอปไม่ได้ ทำได้เพียงอ่านการตั้งค่า รันงาน และแสดงการแจ้งเตือนที่ประกาศไว้',
+	'snapContrib.details.lspRepo': 'language server ของโฟลเดอร์ไม่ทำงานในโหมดจำกัด',
+	'snapContrib.kind.languages': 'ภาษา (Languages)',
+	'snapContrib.kind.grammars': 'Grammar',
+	'snapContrib.kind.snippets': 'Snippet',
+	'snapContrib.kind.lsp': 'Language server',
+	'snapContrib.kind.themes': 'ธีมสี',
+	'snapContrib.kind.iconThemes': 'ชุดไอคอนไฟล์',
+	'snapContrib.kind.views': 'View',
+	'snapContrib.kind.commands': 'คำสั่ง (Commands)',
+	'snapContrib.kind.settings': 'การตั้งค่า (Settings)',
+	'snapContrib.kind.mcp': 'MCP server',
+	'snapContrib.kind.skills': 'Skill'
+} satisfies Record<keyof typeof en, string>;
