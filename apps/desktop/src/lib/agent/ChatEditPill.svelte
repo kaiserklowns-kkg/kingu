@@ -2,7 +2,7 @@
 	// An edit tool's call in a response (VS Code's chatEditPillElement): the file's icon and name,
 	// `+added −removed` and, while it runs, a spinner. A click opens the chat edit's diff
 	// (chatEdits), or the file itself once it left the working set.
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
 	import FileIcon from '#lib/workbench/FileIcon.svelte';
 	import { fileIcon } from '#lib/workbench/fileIcons.ts';
 	import { splitPath } from '#lib/workbench/scm.ts';
@@ -50,7 +50,7 @@
 	{#if !done}
 		<span class="size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-current border-t-transparent"></span>
 	{:else if error}
-		<span class="shrink-0 text-(--vscode-errorForeground)"><Icon name="error" size={13} /></span>
+		<span class="shrink-0 text-(--vscode-errorForeground)"><Codicon id="error" size={13} /></span>
 	{:else}
 		<FileIcon icon={fileIcon(name)} size={14} />
 	{/if}

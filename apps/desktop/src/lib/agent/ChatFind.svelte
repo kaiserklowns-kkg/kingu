@@ -5,7 +5,7 @@
 	// (⌥⌘C / ⌥⌘W / ⌥⌘R), Escape closes. New output is searched again as it streams in. Text
 	// folded away ("Worked for", a closed thinking block) is not in the page and is not found.
 	import { onMount, untrack } from 'svelte';
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
 	import { isMac } from '#lib/workbench/keys.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import { findMatches, keepMatch, stepMatch, type FindOptions, type Match } from './chatTranscript.ts';
@@ -166,9 +166,9 @@
 		</div>
 	</div>
 	<span class={['min-w-14 shrink-0 px-1 text-xs whitespace-nowrap', (invalid || (query && !count)) ? 'text-(--vscode-errorForeground)' : 'text-(--vscode-descriptionForeground)']} aria-live="polite">{statusText}</span>
-	<button type="button" class={ICON} title={t('chatTranscript.find.previous')} aria-label={t('chatTranscript.find.previous')} disabled={!count} onclick={() => step(-1)}><Icon name="chevronUp" size={16} /></button>
-	<button type="button" class={ICON} title={t('chatTranscript.find.next')} aria-label={t('chatTranscript.find.next')} disabled={!count} onclick={() => step(1)}><Icon name="chevronDown" size={16} /></button>
-	<button type="button" class={ICON} title={t('chatTranscript.find.close')} aria-label={t('chatTranscript.find.close')} onclick={onclose}><Icon name="close" size={14} /></button>
+	<button type="button" class={ICON} title={t('chatTranscript.find.previous')} aria-label={t('chatTranscript.find.previous')} disabled={!count} onclick={() => step(-1)}><Codicon id="chevron-up" size={16} /></button>
+	<button type="button" class={ICON} title={t('chatTranscript.find.next')} aria-label={t('chatTranscript.find.next')} disabled={!count} onclick={() => step(1)}><Codicon id="chevron-down" size={16} /></button>
+	<button type="button" class={ICON} title={t('chatTranscript.find.close')} aria-label={t('chatTranscript.find.close')} onclick={onclose}><Codicon id="close" size={14} /></button>
 </div>
 
 <style>

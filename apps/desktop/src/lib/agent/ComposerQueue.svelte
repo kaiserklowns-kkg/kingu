@@ -4,7 +4,7 @@
 	// the input, then into its place again), Send Now (steers the running turn, or stops it first
 	// where the runtime cannot steer), Remove, and ⋯ with the other way to send and Move Up / Down.
 	// Rows can also be dragged into another order.
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import type { QueuedMessage } from './chats.svelte.ts';
@@ -71,7 +71,7 @@
 {#if items.length}
 	<div class="text-xs" role="region" aria-label={t('composer.queue.title', { count: items.length })}>
 		<button class="flex h-[26px] w-full items-center gap-1 pr-1 pl-1.5 text-left text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)" aria-expanded={open} onclick={() => (open = !open)}>
-			<Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} />
+			<Codicon id={open ? 'chevron-down' : 'chevron-right'} size={12} />
 			{t('composer.queue.title', { count: items.length })}
 		</button>
 		{#if open}
@@ -98,16 +98,16 @@
 						ondrop={(e) => ondrop(e, dropAt ?? i)}
 						ondragend={() => ((dragging = null), (dropAt = null))}
 					>
-						<span class="shrink-0 cursor-grab text-(--vscode-descriptionForeground) opacity-0 group-hover/q:opacity-100" title={t('composer.queue.drag')}><Icon name="grip" size={12} /></span>
+						<span class="shrink-0 cursor-grab text-(--vscode-descriptionForeground) opacity-0 group-hover/q:opacity-100" title={t('composer.queue.drag')}><Codicon id="gripper" size={12} /></span>
 						<span class="size-2.5 shrink-0 rounded-full border border-(--vscode-descriptionForeground)" aria-hidden="true"></span>
 						<span class="min-w-0 flex-1 truncate" title={q.label}>{q.label}</span>
 						<span class="flex shrink-0 items-center opacity-0 group-focus-within/q:opacity-100 group-hover/q:opacity-100">
-							<button class={ICON} aria-label={t('composer.queue.edit')} title={t('composer.queue.edit')} onclick={() => onedit(q.n)}><Icon name="edit" size={12} /></button>
+							<button class={ICON} aria-label={t('composer.queue.edit')} title={t('composer.queue.edit')} onclick={() => onedit(q.n)}><Codicon id="edit" size={12} /></button>
 							<button class={ICON} aria-label={steer ? t('composer.queue.steer') : t('composer.queue.sendNow')} title={steer ? t('composer.queue.steerHint') : t('composer.queue.sendNowHint')} onclick={() => onsend(q.n, primary)}
-								><Icon name="send" size={12} /></button
+								><Codicon id="arrow-up-compact" size={12} /></button
 							>
-							<button class={ICON} aria-label={t('composer.queue.remove')} title={t('composer.queue.remove')} onclick={() => onremove(q.n)}><Icon name="trash" size={12} /></button>
-							<button class={ICON} aria-label={t('composer.queue.more')} title={t('composer.queue.more')} aria-haspopup="menu" onclick={(e) => openMenu(e, q.n)}><Icon name="more" size={12} /></button>
+							<button class={ICON} aria-label={t('composer.queue.remove')} title={t('composer.queue.remove')} onclick={() => onremove(q.n)}><Codicon id="trash" size={12} /></button>
+							<button class={ICON} aria-label={t('composer.queue.more')} title={t('composer.queue.more')} aria-haspopup="menu" onclick={(e) => openMenu(e, q.n)}><Codicon id="ellipsis" size={12} /></button>
 						</span>
 					</li>
 				{/each}

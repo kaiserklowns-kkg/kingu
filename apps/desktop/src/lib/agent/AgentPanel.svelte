@@ -51,7 +51,9 @@
 	import { queueDefault, type SendHow } from './requestQueuing.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { chatEdits } from './chatEdits.svelte.ts';
-	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
+	import type { IconName } from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
+	import { codiconOf } from './chatIcons.ts';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 	import { runtime } from '#lib/ade/runtime.svelte.ts';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
@@ -1214,7 +1216,7 @@
 	<div class="flex h-[35px] shrink-0 items-center gap-0.5 pr-2 pl-3" onfocusin={() => (unread = false)}>
 		{#snippet titleText()}
 			{#if pendingApproval}
-				<span class="shrink-0 text-(--vscode-editorWarning-foreground)" role="status" aria-label={t('composer.status.waiting')}><Icon name="help" size={13} /></span>
+				<span class="shrink-0 text-(--vscode-editorWarning-foreground)" role="status" aria-label={t('composer.status.waiting')}><Codicon id="question" size={13} /></span>
 			{:else if running}
 				<span class="size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-current border-t-transparent text-(--vscode-descriptionForeground)" role="status" aria-label={t('composer.status.running')}></span>
 			{:else if unread}
@@ -1235,18 +1237,18 @@
 		<span class="flex-1"></span>
 		{#if inEditor}
 			<button class={ICON_BTN} aria-label={t('chatExtras.moveToSideBar')} title={t('chatExtras.moveToSideBar')} onclick={() => editorChatId && chatExtras.moveToSideBar(editorChatId)}>
-				<Icon name="sidebarRight" size={16} />
+				<Codicon id="layout-sidebar-right" size={16} />
 			</button>
 		{:else}
 			<span class="flex shrink-0 items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)">
-				<button class="grid size-[22px] shrink-0 place-items-center rounded disabled:opacity-40" aria-label={t('chatWelcome.newChat')} title={t('chatView.newChatKey')} disabled={!workspace.root} onclick={() => newChat()}><Icon name="plus" size={16} /></button>
+				<button class="grid size-[22px] shrink-0 place-items-center rounded disabled:opacity-40" aria-label={t('chatWelcome.newChat')} title={t('chatView.newChatKey')} disabled={!workspace.root} onclick={() => newChat()}><Codicon id="plus" size={16} /></button>
 				<button
 					class="grid h-[22px] w-3.5 shrink-0 place-items-center rounded text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)"
 					aria-label={t('chatWelcome.newChatMenu')}
 					title={t('chatWelcome.newChatMenu')}
 					aria-haspopup="menu"
 					aria-expanded={headerMenuAt?.kind === 'new'}
-					onclick={(e) => openHeaderMenu('new', e)}><Icon name="chevronDown" size={10} /></button
+					onclick={(e) => openHeaderMenu('new', e)}><Codicon id="chevron-down" size={10} /></button
 				>
 			</span>
 			<button
@@ -1255,7 +1257,7 @@
 				title={t('chatWelcome.customize')}
 				aria-haspopup="menu"
 				aria-expanded={headerMenuAt?.kind === 'customize'}
-				onclick={(e) => openHeaderMenu('customize', e)}><Icon name="lightning" size={15} /></button
+				onclick={(e) => openHeaderMenu('customize', e)}><Codicon id="zap" size={15} /></button
 			>
 			<button
 				class={[ICON_BTN, ((allowAll && mode === 'agent') || globalAutoApprove) && 'text-(--vscode-editorWarning-foreground)']}
@@ -1263,10 +1265,10 @@
 				title={t('composer.options.hint', { runtime: runtimeName, where: chatMeta ? cwdLabel(chatMeta.cwd) : newWhere ? `kingu/${newWhere}` : workspace.name || t('chat.panel.cwdFolder'), run: globalAutoApprove ? t('composer.run.global') : mode === 'agent' ? runModeLabel(currentApproval) : modeName(pick) })}
 				aria-haspopup="menu"
 				aria-expanded={headerMenuAt?.kind === 'more'}
-				onclick={(e) => openHeaderMenu('more', e)}><Icon name="more" size={16} /></button
+				onclick={(e) => openHeaderMenu('more', e)}><Codicon id="ellipsis" size={16} /></button
 			>
 			<span class="mx-1 h-4 w-px shrink-0 bg-(--vscode-widget-border)" aria-hidden="true"></span>
-			<button class={ICON_BTN} aria-label={t('chatWelcome.maximize')} title={t('chatWelcome.maximize')} disabled={!chatMeta} onclick={openInEditor}><Icon name="maximize" size={15} /></button>
+			<button class={ICON_BTN} aria-label={t('chatWelcome.maximize')} title={t('chatWelcome.maximize')} disabled={!chatMeta} onclick={openInEditor}><Codicon id="screen-full" size={15} /></button>
 		{/if}
 	</div>
 	{#if headerMenuAt}
@@ -1311,7 +1313,7 @@
 								/>
 							{:else}
 								<button class="flex min-w-0 flex-1 items-center gap-2 text-left" onclick={() => select(r.id)}>
-									<span class="shrink-0 text-(--vscode-descriptionForeground)"><Icon name="agent" size={14} /></span>
+									<span class="shrink-0 text-(--vscode-descriptionForeground)"><Codicon id="arkai-mark" size={14} /></span>
 									<span class="flex min-w-0 flex-1 flex-col">
 										<span class="truncate">{r.title}</span>
 										{#if historyHits.get(r.id)}
@@ -1324,8 +1326,8 @@
 									{#if r.state}<span class={['size-2 shrink-0 rounded-full', STATE_DOT[r.state]]} title={STATE_LABEL[r.state]()}></span>{/if}
 								</button>
 								<span class="flex shrink-0 opacity-0 group-hover/row:opacity-100 focus-within:opacity-100">
-									<button class={ICON_BTN} aria-label={t('chat.panel.rename')} title={t('chat.panel.rename')} onclick={() => startRename(r.id, r.title)}><Icon name="edit" size={13} /></button>
-									<button class={ICON_BTN} aria-label={t('chat.panel.delete')} title={t('chat.panel.delete')} disabled={!!r.state} onclick={() => removeChat(r.id)}><Icon name="trash" size={13} /></button>
+									<button class={ICON_BTN} aria-label={t('chat.panel.rename')} title={t('chat.panel.rename')} onclick={() => startRename(r.id, r.title)}><Codicon id="edit" size={13} /></button>
+									<button class={ICON_BTN} aria-label={t('chat.panel.delete')} title={t('chat.panel.delete')} disabled={!!r.state} onclick={() => removeChat(r.id)}><Codicon id="trash" size={13} /></button>
 								</span>
 							{/if}
 						</li>
@@ -1339,7 +1341,7 @@
 					<ul aria-label={t('chatView.adeSection')}>
 						{#each sections.tasks as r (r.slug)}
 							<li class="flex h-[26px] items-center gap-1.5 px-3 text-(--vscode-descriptionForeground)" title={t('chatView.adeReadOnly')}>
-								<Icon name={r.terminal ? 'terminal' : 'branch'} size={14} />
+								<Codicon id={r.terminal ? 'terminal' : 'git-branch'} size={14} />
 								<span class="min-w-0 flex-1 truncate">{r.title}</span>
 								{#if r.state}<span class={['size-2 shrink-0 rounded-full', STATE_DOT[r.state]]} title={STATE_LABEL[r.state]()}></span>{/if}
 								<button class="shrink-0 text-xs text-(--vscode-textLink-foreground) hover:underline" onclick={() => openTaskInAgents(r.slug)}>{t('chat.panel.openInAgentsShort')}</button>
@@ -1415,7 +1417,7 @@
 			{#if chatMeta}<McpStatusNote chatId={chatMeta.id} />{/if}
 			{#if chatMeta && chatRewind.canRedo(chatMeta.id)}
 				<div class="mb-1.5 flex items-center gap-1.5 rounded border border-(--vscode-widget-border) px-2 py-1 text-xs text-(--vscode-descriptionForeground)" role="status">
-					<Icon name="discard" size={12} />
+					<Codicon id="discard" size={12} />
 					<span class="min-w-0 flex-1">{t('chatRewind.restored')}</span>
 					<button class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" title={t('chatRewind.redoHint')} onclick={() => chatMeta && chatRewind.redo(chatMeta.id)}>{t('chatRewind.redo')}</button>
 				</div>
@@ -1423,9 +1425,9 @@
 			{#if feedbackFor !== null}
 				<div class="mb-1.5 flex items-center gap-1 rounded-lg border border-(--vscode-widget-border) py-1 pr-1 pl-2.5 text-xs" role="group" aria-label={t('composer.feedback.title')}>
 					<span class="min-w-0 flex-1 truncate text-(--vscode-descriptionForeground)">{t('composer.feedback.title')}</span>
-					<button class={ICON_BTN} aria-label={t('chatExtras.feedback.helpful')} title={t('chatExtras.feedback.helpful')} onclick={() => vote('up')}><Icon name="thumbsUp" size={13} /></button>
-					<button class={ICON_BTN} aria-label={t('chatExtras.feedback.unhelpful')} title={t('chatExtras.feedback.unhelpful')} onclick={() => vote('down')}><Icon name="thumbsDown" size={13} /></button>
-					<button class={ICON_BTN} aria-label={t('common.close')} title={t('common.close')} onclick={() => vote(null)}><Icon name="close" size={13} /></button>
+					<button class={ICON_BTN} aria-label={t('chatExtras.feedback.helpful')} title={t('chatExtras.feedback.helpful')} onclick={() => vote('up')}><Codicon id="thumbsup" size={13} /></button>
+					<button class={ICON_BTN} aria-label={t('chatExtras.feedback.unhelpful')} title={t('chatExtras.feedback.unhelpful')} onclick={() => vote('down')}><Codicon id="thumbsdown" size={13} /></button>
+					<button class={ICON_BTN} aria-label={t('common.close')} title={t('common.close')} onclick={() => vote(null)}><Codicon id="close" size={13} /></button>
 				</div>
 			{/if}
 			{#if showNudge}
@@ -1473,7 +1475,7 @@
 					{/if}
 					{#if editing || editingQueued}
 						<div class="flex items-center gap-1.5 bg-[color-mix(in_srgb,var(--vscode-input-background)_80%,var(--vscode-focusBorder))] px-2.5 py-1 text-xs" role="note">
-							<Icon name={editingQueued ? 'clock' : 'edit'} size={12} />
+							<Codicon id={editingQueued ? 'clock' : 'edit'} size={12} />
 							<span class="min-w-0 flex-1 truncate">{editingQueued ? t('composer.editingQueued') : t('chatView.editNotice')}</span>
 							<button class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" onclick={() => (editingQueued ? cancelQueuedEdit() : resetInput())}>{t('common.cancel')}</button>
 						</div>
@@ -1519,7 +1521,7 @@
 						aria-label={t('chatWelcome.addContext', { key: KEY.context })}
 						title={t('chatWelcome.addContext', { key: KEY.context })}
 						disabled={!workspace.root}
-						onclick={() => void addContext()}><Icon name="plus" size={15} /></button
+						onclick={() => void addContext()}><Codicon id="plus" size={15} /></button
 					>
 					<!-- The mode picker (VS Code's modePickerActionItem): icon and name, ⌘. / ⇧Tab cycles. -->
 					<div class="relative flex min-w-0 shrink-0">
@@ -1536,7 +1538,7 @@
 								menuOpen = menuOpen === 'mode' ? null : 'mode';
 							}}
 						>
-							<Icon name={MODE_ICON[tone]} size={13} />
+							<Codicon id={codiconOf(MODE_ICON[tone])} size={13} />
 							{#if l.modeLabel}<span class="max-w-28 truncate">{modeName(pick)}</span>{/if}
 						</button>
 						{#if menuOpen === 'mode'}
@@ -1563,7 +1565,7 @@
 								aria-expanded={menuOpen === 'model'}
 								onclick={() => (menuOpen === 'model' ? (menuOpen = null) : openModelPicker())}
 							>
-								{#if l.modelLabel}<span class="truncate">{modelShort}</span>{:else}<Icon name="cpu" size={12} />{/if}
+								{#if l.modelLabel}<span class="truncate">{modelShort}</span>{:else}<Codicon id="chip" size={12} />{/if}
 							</button>
 							{#if menuOpen === 'model'}
 								<ComposerMenu

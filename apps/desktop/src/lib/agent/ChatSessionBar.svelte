@@ -2,7 +2,9 @@
 	// The row under the chat input (VS Code's secondary chat toolbar): the session target picker (the
 	// agent that runs the chat: Arkai, Claude Code, Codex, ACP agents) and the permission picker (how
 	// tools are approved in Agent mode). Each opens a ComposerMenu above it.
-	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
+	import type { IconName } from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
+	import { codiconOf } from './chatIcons.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import ComposerMenu from './ComposerMenu.svelte';
 	import type { MenuRow } from './composerMenu.ts';
@@ -33,7 +35,7 @@
 			disabled={p.disabled}
 			onclick={() => (open = open === which ? null : which)}
 		>
-			<Icon name={p.icon} size={13} />
+			<Codicon id={codiconOf(p.icon)} size={13} />
 			<span class="truncate">{p.label}</span>
 		</button>
 		{#if open === which}

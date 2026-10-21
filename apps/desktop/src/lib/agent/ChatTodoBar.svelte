@@ -4,7 +4,7 @@
 	// number, "Fixing the bug (2/5)"; expanded, "Todos (2/5)" and every item as completed, in
 	// progress or not started. Hidden when there is no list, or every item is done and the turn ended,
 	// and with chat.tools.todos.showWidget off.
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import { latestTodos, todoProgress, type Todo, type Turn } from './chatParts';
@@ -32,7 +32,7 @@
 			title={open ? t('chatParts.todos.collapse') : t('chatParts.todos.expand')}
 			onclick={() => (open = !open)}
 		>
-			<Icon name={open ? 'chevronDown' : 'chevronRight'} size={14} />
+			<Codicon id={open ? 'chevron-down' : 'chevron-right'} size={14} />
 			{#if open || !p.current}
 				<span class="truncate font-semibold">{t('chatParts.todos.titleCount', { n: p.current ? p.n : p.total, total: p.total })}</span>
 			{:else}
@@ -50,7 +50,7 @@
 					<li class="flex min-h-[22px] items-start gap-1.5 py-0.5 pr-2 pl-2" aria-label={t('chatParts.todos.item', { title: todo.content, status: STATUS[todo.status]() })}>
 						<span class="mt-px grid size-3.5 shrink-0 place-items-center">
 							{#if todo.status === 'completed'}
-								<span class="text-(--vscode-charts-green,#73C991)"><Icon name="checkCircle" size={14} /></span>
+								<span class="text-(--vscode-charts-green,#73C991)"><Codicon id="pass" size={14} /></span>
 							{:else if todo.status === 'in_progress'}
 								<span class="size-2.5 rounded-full bg-(--vscode-charts-blue,#3794ff)"></span>
 							{:else}

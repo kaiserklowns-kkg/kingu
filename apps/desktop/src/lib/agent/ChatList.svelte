@@ -46,7 +46,8 @@
 	// while the turn runs, and "N files changed" under a finished chat request. Internal events are not shown (chatParts.ts). Shared by
 	// the Agent panel and the ADE task page.
 	import type { Snippet } from 'svelte';
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
+	import { codiconOf } from './chatIcons.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { chatLook } from '#lib/ade/chatLook.ts';
@@ -302,11 +303,11 @@
 								<div class="mt-1 flex flex-wrap gap-1">
 									{#each req.files as f (f.path + (f.range?.startLine ?? ''))}
 										<span class="flex max-w-48 items-center gap-1 rounded border border-(--vscode-widget-border) px-1 text-xs" title={f.path}>
-											<Icon name="file" size={11} /><span class="truncate">{contextLabel(f)}</span>
+											<Codicon id="file" size={11} /><span class="truncate">{contextLabel(f)}</span>
 										</span>
 									{/each}
 									{#each req.images as name (name)}
-										<span class="flex max-w-48 items-center gap-1 rounded border border-(--vscode-widget-border) px-1 text-xs"><Icon name="image" size={11} /><span class="truncate">{name}</span></span>
+										<span class="flex max-w-48 items-center gap-1 rounded border border-(--vscode-widget-border) px-1 text-xs"><Codicon id="file-media" size={11} /><span class="truncate">{name}</span></span>
 									{/each}
 								</div>
 							{/if}
@@ -326,15 +327,15 @@
 						{/if}
 						<div class="flex gap-0.5 opacity-0 transition-opacity group-hover/req:opacity-100 focus-within:opacity-100">
 							{#if inline}
-								<button type="button" class={ACTION} title={t('chatRewind.editHint')} aria-label={t('chatRewind.editLabel')} onclick={() => startEdit(ti, req.text)}><Icon name="edit" size={13} /></button>
+								<button type="button" class={ACTION} title={t('chatRewind.editHint')} aria-label={t('chatRewind.editLabel')} onclick={() => startEdit(ti, req.text)}><Codicon id="edit" size={13} /></button>
 							{:else if actions.edit}
-								<button type="button" class={ACTION} title={t('chatView.editRequest')} aria-label={t('chatView.editRequest')} onclick={() => actions.edit?.(req)}><Icon name="edit" size={13} /></button>
+								<button type="button" class={ACTION} title={t('chatView.editRequest')} aria-label={t('chatView.editRequest')} onclick={() => actions.edit?.(req)}><Codicon id="edit" size={13} /></button>
 							{/if}
 							<button type="button" class={ACTION} title={t('chatView.copyRequest')} aria-label={t('chatView.copyRequest')} onclick={() => copy(req.text, -1 - ti)}>
-								<Icon name={copied === -1 - ti ? 'check' : 'copy'} size={13} />
+								<Codicon id={copied === -1 - ti ? 'check' : 'copy'} size={13} />
 							</button>
 							{#if actions.remember}
-								<button type="button" class={ACTION} title={t('chatExtras.remember.hint')} aria-label={t('chatExtras.remember.label')} onclick={() => rememberText(req.text)}><Icon name="bookmark" size={13} /></button>
+								<button type="button" class={ACTION} title={t('chatExtras.remember.hint')} aria-label={t('chatExtras.remember.label')} onclick={() => rememberText(req.text)}><Codicon id="bookmark" size={13} /></button>
 							{/if}
 						</div>
 					</div>
@@ -346,7 +347,7 @@
 					{#if end > 0}
 						<button type="button" class="flex items-center gap-1 self-start text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)" aria-expanded={!folded} onclick={() => toggle(`w:${ti}`)}>
 							{took ? t('composer.progress.workedFor', { time: took }) : t('composer.progress.worked')}
-							<Icon name={folded ? 'chevronDown' : 'chevronUp'} size={12} />
+							<Codicon id={folded ? 'chevron-down' : 'chevron-up'} size={12} />
 						</button>
 					{/if}
 					{#each turn.parts as part, pi (pi)}
@@ -365,7 +366,7 @@
 									title={view === 'scroll' ? t('chatRender.thinking.expand') : undefined}
 									onclick={() => (open[key] = view !== 'open')}
 								>
-									<Icon name={view === 'closed' ? 'chevronRight' : 'chevronDown'} size={12} />
+									<Codicon id={codiconOf(view === 'closed' ? 'chevronRight' : 'chevronDown')} size={12} />
 									{#if part.streaming}<span class="animate-pulse font-semibold">{t('chatView.thinking')}</span>{:else}<span><span class="font-semibold">{splitVerb(t('composer.progress.thought')).verb}</span> {splitVerb(t('composer.progress.thought')).rest}</span>{/if}
 								</button>
 								{#if view === 'scroll'}
@@ -383,13 +384,13 @@
 							{@const decided = run?.decisions[ev.request_id]}
 							{#if part.reason}
 								<div class="flex items-start gap-1.5 text-xs text-(--vscode-editorWarning-foreground)" role="note">
-									<span class="mt-px shrink-0"><Icon name="warning" size={12} /></span><span class="min-w-0 break-words">{part.reason}</span>
+									<span class="mt-px shrink-0"><Codicon id="warning" size={12} /></span><span class="min-w-0 break-words">{part.reason}</span>
 								</div>
 							{/if}
 							{#if decided}
 								<!-- A skipped call is a quiet line ("Skipped rm", Cursor's). -->
 								<div class="flex items-center gap-1.5 text-(--vscode-descriptionForeground)">
-									{#if isAsk(ev)}<Icon name="circleDashed" size={13} />{/if}
+									{#if isAsk(ev)}<Codicon id="circle-large-outline" size={13} />{/if}
 									<span class="truncate">{isAsk(ev) ? t('chatView.questionDismissed') : skippedText(ev.tool, ev.input)}</span>
 								</div>
 							{:else if onanswer && !run?.ended && isAsk(ev) && parseAsk(ev.input)}
@@ -399,13 +400,13 @@
 								<PermissionCard request={ev} keys={!!chatId} runMode={actions.runMode} {cwd} onanswer={(decision, message) => onanswer(ev, decision, message)} />
 							{:else}
 								<div class="flex items-center gap-1.5 text-(--vscode-editorWarning-foreground)">
-									<Icon name="question" size={13} />
+									<Codicon id="comment-discussion" size={13} />
 									<span class="truncate">{isAsk(ev) ? t('chatView.questionWaiting') : t('chatView.permissionWaiting', { tool: ev.tool })}</span>
 								</div>
 							{/if}
 						{:else if part.kind === 'error'}
 							<div class="flex items-start gap-1.5 rounded border border-(--vscode-inputValidation-errorBorder,var(--vscode-errorForeground)) px-2 py-1.5" role="alert">
-								<span class="mt-0.5 shrink-0 text-(--vscode-errorForeground)"><Icon name="error" size={14} /></span>
+								<span class="mt-0.5 shrink-0 text-(--vscode-errorForeground)"><Codicon id="error" size={14} /></span>
 								<span class="min-w-0 flex-1 break-words whitespace-pre-wrap">{part.message}</span>
 								{#if last && turn.done && actions.retry}
 									<button type="button" class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" onclick={() => actions.retry?.()}>{t('chatView.retry')}</button>
@@ -424,7 +425,7 @@
 										type="button"
 										class="flex items-center gap-1 rounded-md border border-(--vscode-widget-border) px-1.5 py-0.5 text-xs hover:bg-(--vscode-toolbar-hoverBackground)"
 										title={t('chatTranscript.continueHint')}
-										onclick={() => actions.continue?.()}><Icon name="play" size={11} />{t('chatTranscript.continue')}</button
+										onclick={() => actions.continue?.()}><Codicon id="play" size={11} />{t('chatTranscript.continue')}</button
 									>
 								{/if}
 							</div>
@@ -442,35 +443,35 @@
 						<div class="flex items-center gap-0.5">
 							{#if text}
 								<button type="button" class={ACTION} title={t('chatView.copyResponse')} aria-label={t('chatView.copyResponse')} onclick={() => copy(text, ti)}>
-									<Icon name={copied === ti ? 'check' : 'copy'} size={13} />
+									<Codicon id={copied === ti ? 'check' : 'copy'} size={13} />
 								</button>
 							{/if}
 							{#if actions.fork && turn.checkpoint != null}
 								{@const cp = turn.checkpoint}
-								<button type="button" class={ACTION} title={t('chatRewind.forkHint')} aria-label={t('chatRewind.fork')} onclick={() => actions.fork?.(cp)}><Icon name="branch" size={13} /></button>
+								<button type="button" class={ACTION} title={t('chatRewind.forkHint')} aria-label={t('chatRewind.fork')} onclick={() => actions.fork?.(cp)}><Codicon id="git-branch" size={13} /></button>
 							{/if}
 							{#if last && actions.retry}
-								<button type="button" class={ACTION} title={t('chatView.retry')} aria-label={t('chatView.retry')} onclick={() => actions.retry?.()}><Icon name="refresh" size={13} /></button>
+								<button type="button" class={ACTION} title={t('chatView.retry')} aria-label={t('chatView.retry')} onclick={() => actions.retry?.()}><Codicon id="refresh" size={13} /></button>
 							{/if}
 							{#if text && actions.remember}
-								<button type="button" class={ACTION} title={t('chatExtras.remember.hint')} aria-label={t('chatExtras.remember.label')} onclick={() => rememberText(text)}><Icon name="bookmark" size={13} /></button>
+								<button type="button" class={ACTION} title={t('chatExtras.remember.hint')} aria-label={t('chatExtras.remember.label')} onclick={() => rememberText(text)}><Codicon id="bookmark" size={13} /></button>
 							{/if}
 							{#if actions.feedback && turn.checkpoint != null}
 								{@const cp = turn.checkpoint}
-								{#each [['up', 'thumbsUp', t('chatExtras.feedback.helpful')], ['down', 'thumbsDown', t('chatExtras.feedback.unhelpful')]] as const as [vote, icon, label] (vote)}
+								{#each [['up', 'thumbsup', t('chatExtras.feedback.helpful')], ['down', 'thumbsdown', t('chatExtras.feedback.unhelpful')]] as const as [vote, icon, label] (vote)}
 									<button
 										type="button"
 										class={[ACTION, turn.feedback === vote && 'text-(--vscode-foreground)']}
 										title={label}
 										aria-label={label}
 										aria-pressed={turn.feedback === vote}
-										onclick={() => actions.feedback?.(cp, turn.feedback === vote ? null : vote)}><Icon name={icon} size={13} filled={turn.feedback === vote} /></button
+										onclick={() => actions.feedback?.(cp, turn.feedback === vote ? null : vote)}><Codicon id={turn.feedback === vote ? `${icon}-filled` : icon} size={13} /></button
 									>
 								{/each}
 							{/if}
 							{#if turn.result && formatUsage(turn.result) && usage === 'hover'}
 								<span class={[ACTION, 'cursor-default']} title={t('chatView.usage', { usage: formatUsage(turn.result) })} aria-label={t('chatView.usage', { usage: formatUsage(turn.result) })}>
-									<Icon name="info" size={13} />
+									<Codicon id="info" size={13} />
 								</span>
 							{:else if turn.result && formatUsage(turn.result) && usage === 'always'}
 								<span class="ml-1 truncate text-xs text-(--vscode-descriptionForeground)">{formatUsage(turn.result)}</span>
@@ -486,7 +487,7 @@
 										type="button"
 										class="flex max-w-full items-center gap-1 rounded-full border border-(--vscode-widget-border) px-2.5 py-0.5 text-left text-xs text-(--vscode-textLink-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
 										title={t('chatExtras.followupHint')}
-										onclick={() => actions.followups?.pick(f)}><Icon name="sparkle" size={12} /><span class="truncate">{f}</span></button
+										onclick={() => actions.followups?.pick(f)}><Codicon id="sparkle" size={12} /><span class="truncate">{f}</span></button
 									>
 								{/each}
 							</div>

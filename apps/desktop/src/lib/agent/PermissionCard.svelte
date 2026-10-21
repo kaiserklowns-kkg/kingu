@@ -9,7 +9,7 @@
 	// `npm test …`" / "Always allow docs.rs" when Rust offers a rule, Skip and Run on the right. In the
 	// Agent panel the composer answers it too while its input is empty: ⏎ Run, ⇧⏎ allow in this
 	// folder, Esc Skip (`keys` shows them). Shared by the Agent panel and the ADE task page (through ChatList).
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import type { Decision, PermissionRequest } from './events';
 	import type { AgentApproval } from './chatInput.ts';
@@ -148,7 +148,7 @@
 		{:else}
 			<div class="space-y-1.5 border-b border-(--vscode-widget-border) px-2.5 py-1.5">
 				<div class="flex items-center gap-1.5 font-medium">
-					<Icon name="shield" size={13} />
+					<Codicon id="shield" size={13} />
 					<span class="min-w-0 truncate">{t('chatView.permission.title', { tool: request.tool })}</span>
 				</div>
 				{#if request.title}<div class="text-(--vscode-descriptionForeground)">{request.title}</div>{/if}
@@ -175,7 +175,7 @@
 						aria-expanded={menuOpen}
 						disabled={sent}
 						onclick={() => (menuOpen = !menuOpen)}
-						><span class="truncate">{runMode ? runModeLabel(runMode.current) : t('composer.approve.allowlist')}</span><Icon name="chevronDown" size={10} />{#if keys && request.can_always}<span class={KEY}>⇧⏎</span>{/if}</button
+						><span class="truncate">{runMode ? runModeLabel(runMode.current) : t('composer.approve.allowlist')}</span><Codicon id="chevron-down" size={10} />{#if keys && request.can_always}<span class={KEY}>⇧⏎</span>{/if}</button
 					>
 					{#if menuOpen}
 						<ComposerMenu {rows} label={t('composer.approve.changeRunMode')} width={300} onpick={pick} onclose={() => (menuOpen = false)} />

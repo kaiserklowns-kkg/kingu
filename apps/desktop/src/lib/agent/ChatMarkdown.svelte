@@ -5,7 +5,8 @@
 	// Copy. Links: web links open in the browser, workspace paths open in the editor.
 	// chat.math.enabled: `$…$` / `$$…$$` with KaTeX and ```mermaid blocks as diagrams (an image,
 	// with Show Source), both loaded on first use (chatRich.svelte.ts).
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
+	import { codiconOf } from './chatIcons.ts';
 	import { editors } from '#lib/workbench/editors.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { trustedDomains } from '#lib/workbench/trustedDomains.svelte.ts';
@@ -106,11 +107,11 @@
 					<span class="min-w-0 flex-1 truncate">mermaid</span>
 					{#if d?.url}
 						<button type="button" class="kg-code-btn" title={source[i] ? t('chatRender.mermaid.diagram') : t('chatRender.mermaid.source')} aria-label={source[i] ? t('chatRender.mermaid.diagram') : t('chatRender.mermaid.source')} aria-pressed={!!source[i]} onclick={() => (source[i] = !source[i])}>
-							<Icon name={source[i] ? 'image' : 'code'} size={13} />
+							<Codicon id={codiconOf(source[i] ? 'image' : 'code')} size={13} />
 						</button>
 					{/if}
 					<button type="button" class="kg-code-btn" title={t('chatView.copyCode')} aria-label={t('chatView.copyCode')} onclick={() => copy(seg.code, i)}>
-						<Icon name={copied === i ? 'check' : 'copy'} size={13} />
+						<Codicon id={copied === i ? 'check' : 'copy'} size={13} />
 					</button>
 				</div>
 				{#if d?.url && !source[i]}
@@ -126,16 +127,16 @@
 				<div class="kg-code-head">
 					<span class="min-w-0 flex-1 truncate">{seg.lang}</span>
 					<button type="button" class="kg-code-btn" title={t('chatView.insertAtCursor')} aria-label={t('chatView.insertAtCursor')} onclick={() => insert(seg.code)}>
-						<Icon name="code" size={13} />
+						<Codicon id="code" size={13} />
 					</button>
 					<button type="button" class="kg-code-btn" title={t('chatParts.code.newFile')} aria-label={t('chatParts.code.newFile')} onclick={() => void insertIntoNewFile(seg.code, seg.lang)}>
-						<Icon name="newFile" size={13} />
+						<Codicon id="new-file" size={13} />
 					</button>
 					<button type="button" class="kg-code-btn" title={t('chatParts.code.terminal')} aria-label={t('chatParts.code.terminal')} onclick={() => insertIntoTerminal(seg.code)}>
-						<Icon name="terminal" size={13} />
+						<Codicon id="terminal" size={13} />
 					</button>
 					<button type="button" class="kg-code-btn" title={t('chatView.copyCode')} aria-label={t('chatView.copyCode')} onclick={() => copy(seg.code, i)}>
-						<Icon name={copied === i ? 'check' : 'copy'} size={13} />
+						<Codicon id={copied === i ? 'check' : 'copy'} size={13} />
 					</button>
 				</div>
 				<!-- Safe: Monaco's colorizer escapes the text and only adds token spans. -->

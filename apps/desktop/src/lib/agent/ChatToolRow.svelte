@@ -10,7 +10,8 @@
 	// shell call is a bordered card ("›_ Show git status  git" over its output); an edit is a
 	// bordered card with the file, +N and a few lines of its diff. A failed call opens by itself
 	// (chat.tools.autoExpandFailures); one the auto-approve rules let run says by which rule.
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
+	import { codiconOf } from './chatIcons.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import ChatMarkdown from './ChatMarkdown.svelte';
 	import ChatEditPill from './ChatEditPill.svelte';
@@ -68,7 +69,7 @@
 	{#if !done}
 		<span class="size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-current border-t-transparent"></span>
 	{:else if part.result?.isError}
-		<span class="shrink-0 text-(--vscode-errorForeground)"><Icon name="error" size={13} /></span>
+		<span class="shrink-0 text-(--vscode-errorForeground)"><Codicon id="error" size={13} /></span>
 	{/if}
 {/snippet}
 
@@ -96,7 +97,7 @@
 {:else if plan}
 	<div class="overflow-hidden rounded border border-(--vscode-widget-border)">
 		<div class="flex h-7 items-center gap-1.5 border-b border-(--vscode-widget-border) bg-(--vscode-sideBar-background) px-2 font-semibold">
-			<Icon name="listChecks" size={14} />
+			<Codicon id="checklist" size={14} />
 			<span class="min-w-0 flex-1 truncate">{t('chatParts.plan.title')}</span>
 			{#if onimplement}
 				<button
@@ -143,7 +144,7 @@
 			{:else if stats.tools}
 				<span class="shrink-0 text-xs">{t('chatParts.subagent.tools', { count: stats.tools })}</span>
 			{/if}
-			<Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} />
+			<Codicon id={open ? 'chevron-down' : 'chevron-right'} size={12} />
 		</button>
 		{#if open}
 			<div class="mt-1 ml-[5px] flex flex-col gap-1.5 border-l-2 border-(--vscode-widget-border) pl-3">
@@ -157,7 +158,7 @@
 					{:else if child.kind === 'thinking'}
 						<div>
 							<button type="button" class="flex items-center gap-1 text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)" aria-expanded={!!openThoughts[ci]} onclick={() => (openThoughts[ci] = !openThoughts[ci])}>
-								<Icon name={openThoughts[ci] ? 'chevronDown' : 'chevronRight'} size={12} />
+								<Codicon id={codiconOf(openThoughts[ci] ? 'chevronDown' : 'chevronRight')} size={12} />
 								{t('chatView.thought')}
 							</button>
 							{#if openThoughts[ci]}
@@ -189,7 +190,7 @@
 			<span class="min-w-0 truncate text-(--vscode-foreground)">{desc ?? bash}</span>
 			{#if desc}<span class="min-w-0 shrink-0 truncate font-mono text-(--vscode-descriptionForeground)">{bash.trim().split(/\s+/, 1)[0]}</span>{/if}
 			<span class="flex-1"></span>
-			{#if part.result?.content}<Icon name={open ? 'chevronUp' : 'chevronDown'} size={12} />{/if}
+			{#if part.result?.content}<Codicon id={open ? 'chevron-up' : 'chevron-down'} size={12} />{/if}
 		</button>
 		<div class="border-t border-(--vscode-widget-border) bg-(--vscode-terminal-background,var(--vscode-editor-background)) font-mono text-(--vscode-terminal-foreground,var(--vscode-foreground))">
 			{#if desc || open}<pre class="px-2 pt-1 break-all whitespace-pre-wrap text-(--vscode-descriptionForeground)">$ {bash}</pre>{/if}
@@ -213,7 +214,7 @@
 		>
 			{@render statusIcon()}
 			{@render label(toolLabel(part.name, part.input, done, cwd))}
-			<span class="opacity-0 group-hover/tool:opacity-100"><Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} /></span>
+			<span class="opacity-0 group-hover/tool:opacity-100"><Codicon id={open ? 'chevron-down' : 'chevron-right'} size={12} /></span>
 		</button>
 		{#if approvedBy}<div class="ml-[18px] truncate text-[11px] text-(--vscode-descriptionForeground)" title={approvedBy}>{approvedBy}</div>{/if}
 		{#if open}{@render details()}{/if}

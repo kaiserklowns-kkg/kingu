@@ -3,7 +3,7 @@
 	// `## Memories` bullets of CLAUDE.local.md (personal, read by Claude Code) and AGENTS.md
 	// (shared, read by the chat rules). Each one can be edited or deleted; Rust (memories.rs)
 	// refuses a change when the file changed since this list was read.
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
 	import { ask } from '#lib/workbench/messageBox.ts';
 	import { editors } from '#lib/workbench/editors.svelte.ts';
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
@@ -75,9 +75,9 @@
 <div class="h-full overflow-y-auto">
 	<div class="mx-auto max-w-4xl px-8 pt-10 pb-24">
 		<div class="flex items-center gap-2">
-			<h1 class="flex flex-1 items-center gap-2 text-2xl leading-tight font-semibold"><Icon name="bookmark" size={20} />{t('chatExtras.memories.title')}</h1>
+			<h1 class="flex flex-1 items-center gap-2 text-2xl leading-tight font-semibold"><Codicon id="bookmark" size={20} />{t('chatExtras.memories.title')}</h1>
 			<button class={BUTTON} disabled={loading || !workspace.root} onclick={load} aria-label={t('chatExtras.memories.refresh')} title={t('chatExtras.memories.refresh')}>
-				<span class={['grid place-items-center', loading && 'animate-spin']}><Icon name="refresh" size={14} /></span>
+				<span class={['grid place-items-center', loading && 'animate-spin']}><Codicon id="refresh" size={14} /></span>
 			</button>
 		</div>
 		<p class={['mt-2 text-[13px] leading-5', MUTED]}>{t('chatExtras.memories.intro')}</p>
@@ -108,8 +108,8 @@
 							{:else}
 								<span class="min-w-0 flex-1 text-[13px] leading-5 break-words">{m.text}</span>
 								<span class="flex shrink-0 opacity-0 group-hover/row:opacity-100 focus-within:opacity-100">
-									<button class={ICON} aria-label={t('chatExtras.memories.edit')} title={t('chatExtras.memories.edit')} onclick={() => ((editText = m.text), (editing = keyOf(m)))}><Icon name="edit" size={13} /></button>
-									<button class={ICON} aria-label={t('common.delete')} title={t('common.delete')} onclick={() => remove(m)}><Icon name="trash" size={13} /></button>
+									<button class={ICON} aria-label={t('chatExtras.memories.edit')} title={t('chatExtras.memories.edit')} onclick={() => ((editText = m.text), (editing = keyOf(m)))}><Codicon id="edit" size={13} /></button>
+									<button class={ICON} aria-label={t('common.delete')} title={t('common.delete')} onclick={() => remove(m)}><Codicon id="trash" size={13} /></button>
 								</span>
 							{/if}
 						</li>

@@ -37,7 +37,8 @@
 	import { chatDictationShown, toggleChatDictation } from './chatVoice.svelte.ts';
 	import { invoke } from '@tauri-apps/api/core';
 	import { open } from '@tauri-apps/plugin-dialog';
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
+	import { codiconOf } from './chatIcons.ts';
 	import PopupMenu, { menuItem } from '#lib/workbench/PopupMenu.svelte';
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { t } from '#lib/i18n/index.ts';
@@ -575,14 +576,14 @@
 					{#if previews[a.path]}
 						<img src={previews[a.path]} alt={a.name} class="size-full object-cover" />
 					{:else}
-						<span class="grid size-full place-items-center text-(--vscode-descriptionForeground)"><Icon name="image" size={14} /></span>
+						<span class="grid size-full place-items-center text-(--vscode-descriptionForeground)"><Codicon id="file-media" size={14} /></span>
 					{/if}
 					<button
 						type="button"
 						class="absolute inset-0 grid place-items-center bg-black/55 text-white opacity-0 group-hover/thumb:opacity-100 focus-visible:opacity-100"
 						aria-label={t('chatView.removeAttachment', { name: a.name })}
 						title={t('chatView.removeAttachment', { name: a.name })}
-						onclick={() => (attachments = attachments.filter((x) => x.path !== a.path))}><Icon name="close" size={12} /></button
+						onclick={() => (attachments = attachments.filter((x) => x.path !== a.path))}><Codicon id="close" size={12} /></button
 					>
 				</li>
 			{/each}
@@ -599,8 +600,8 @@
 					{disabled}
 					onclick={() => removeChip(c)}
 				>
-					<span class="grid place-items-center group-hover/chip:opacity-0 group-focus-within/chip:opacity-0"><Icon name={c.icon} size={12} /></span>
-					<span class="absolute inset-0 grid place-items-center opacity-0 group-hover/chip:opacity-100 group-focus-within/chip:opacity-100"><Icon name={c.off ? 'plus' : 'close'} size={11} /></span>
+					<span class="grid place-items-center group-hover/chip:opacity-0 group-focus-within/chip:opacity-0"><Codicon id={codiconOf(c.icon)} size={12} /></span>
+					<span class="absolute inset-0 grid place-items-center opacity-0 group-hover/chip:opacity-100 group-focus-within/chip:opacity-100"><Codicon id={c.off ? 'plus' : 'close'} size={11} /></span>
 				</button>
 				<span class={['truncate', c.off && 'line-through']}>{c.label}</span>
 				{#if c.note}<span class="shrink-0 text-(--vscode-descriptionForeground)">{c.note}</span>{/if}
@@ -615,8 +616,8 @@
 					title={t('chatView.removeAttachment', { name: a.name })}
 					onclick={() => (attachments = attachments.filter((x) => x.path !== a.path))}
 				>
-					<span class="grid place-items-center group-hover/chip:opacity-0 group-focus-within/chip:opacity-0"><Icon name="file" size={12} /></span>
-					<span class="absolute inset-0 grid place-items-center opacity-0 group-hover/chip:opacity-100 group-focus-within/chip:opacity-100"><Icon name="close" size={11} /></span>
+					<span class="grid place-items-center group-hover/chip:opacity-0 group-focus-within/chip:opacity-0"><Codicon id="file" size={12} /></span>
+					<span class="absolute inset-0 grid place-items-center opacity-0 group-hover/chip:opacity-100 group-focus-within/chip:opacity-100"><Codicon id="close" size={11} /></span>
 				</button>
 				<span class="truncate">{a.name}</span>
 			</span>
@@ -666,11 +667,11 @@
 				onmousedown={(e) => e.preventDefault()}
 				onclick={onmic}
 			>
-				{#if micActive && dictation.state === 'transcribing'}<span class="size-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent"></span>{:else}<span class={micActive ? 'animate-pulse' : undefined}><Icon name="mic" size={14} /></span>{/if}
+				{#if micActive && dictation.state === 'transcribing'}<span class="size-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent"></span>{:else}<span class={micActive ? 'animate-pulse' : undefined}><Codicon id="mic" size={14} /></span>{/if}
 			</button>
 		{/if}
 		{#if attach && !vscode}
-			<button type="button" aria-label={t('chatView.attach')} title={t('chatView.attachHint')} class={BAR_BTN} {disabled} onclick={pick}><Icon name="attach" size={14} /></button>
+			<button type="button" aria-label={t('chatView.attach')} title={t('chatView.attachHint')} class={BAR_BTN} {disabled} onclick={pick}><Codicon id="attach" size={14} /></button>
 		{/if}
 		<button
 			type="button"
@@ -684,12 +685,12 @@
 			onclick={onprimary}
 			oncontextmenu={onprimarymenu}
 		>
-			{#if busy}<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>{:else if action === 'stop'}<span class={vscode ? 'size-2.5 rounded-[2px] border-[1.5px] border-current' : 'size-2.5 rounded-[2px] bg-current'}></span>{:else}<Icon name="send" size={vscode ? 15 : 14} />{/if}
+			{#if busy}<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>{:else if action === 'stop'}<span class={vscode ? 'size-2.5 rounded-[2px] border-[1.5px] border-current' : 'size-2.5 rounded-[2px] bg-current'}></span>{:else}<Codicon id="arrow-up-compact" size={vscode ? 15 : 14} />{/if}
 		</button>
 	</div>
 	{#if dragOver}
 		<div class="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-[inherit] border border-dashed border-(--vscode-focusBorder) bg-[color-mix(in_srgb,var(--vscode-editor-background)_50%,transparent)] text-xs text-(--vscode-foreground)">
-			<span class="flex items-center gap-1.5"><Icon name="attach" size={14} />{t('composer.drop')}</span>
+			<span class="flex items-center gap-1.5"><Codicon id="attach" size={14} />{t('composer.drop')}</span>
 		</div>
 	{/if}
 </div>

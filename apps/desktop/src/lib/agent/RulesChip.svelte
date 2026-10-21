@@ -4,7 +4,7 @@
 	// Copilot's instructions) for the attached files. Clicking lists them; picking one opens it.
 	// Hidden with kingu.chat.rules.enabled off or no rules.
 	import { invoke } from '@tauri-apps/api/core';
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
 	import { quick } from '#lib/workbench/quick.svelte.ts';
 	import { editors } from '#lib/workbench/editors.svelte.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
@@ -62,6 +62,6 @@
 		title={t('chat.rules.hint')}
 		onclick={pick}
 	>
-		<Icon name="listChecks" size={12} />{t('chat.rules.chip', { count: active.length })}
+		<Codicon id="checklist" size={12} />{t('chat.rules.chip', { count: active.length })}
 	</button>
 {/if}

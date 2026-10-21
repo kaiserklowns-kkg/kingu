@@ -3,7 +3,7 @@
 	// joined to the top of the chat input (no bottom border; the input squares its top corners).
 	// Hovering or focusing it shows a small toolbar on its top edge: Previous, Next, Dismiss (✓,
 	// never again) and Disable tips (chat.tips.enabled). Links run the tip's own actions.
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
 	import { t, type MessageKey } from '#lib/i18n/index.ts';
 	import { tipParts, type TipAction, type TipDef } from './chatTips.ts';
 
@@ -53,10 +53,10 @@
 		aria-label={t('chatTips.label')}
 	>
 		{#if several}
-			<button type="button" class={BTN} aria-label={t('chatTips.previous')} title={t('chatTips.previous')} onclick={() => onstep(-1)}><Icon name="chevronLeft" size={14} /></button>
-			<button type="button" class={BTN} aria-label={t('chatTips.next')} title={t('chatTips.next')} onclick={() => onstep(1)}><Icon name="chevronRight" size={14} /></button>
+			<button type="button" class={BTN} aria-label={t('chatTips.previous')} title={t('chatTips.previous')} onclick={() => onstep(-1)}><Codicon id="chevron-left" size={14} /></button>
+			<button type="button" class={BTN} aria-label={t('chatTips.next')} title={t('chatTips.next')} onclick={() => onstep(1)}><Codicon id="chevron-right" size={14} /></button>
 		{/if}
-		<button type="button" class={BTN} aria-label={t('chatTips.dismiss')} title={t('chatTips.dismiss')} onclick={ondismiss}><Icon name="check" size={14} /></button>
-		<button type="button" class={BTN} aria-label={t('chatTips.disable')} title={t('chatTips.disable')} onclick={ondisable}><Icon name="bellSlash" size={14} /></button>
+		<button type="button" class={BTN} aria-label={t('chatTips.dismiss')} title={t('chatTips.dismiss')} onclick={ondismiss}><Codicon id="check" size={14} /></button>
+		<button type="button" class={BTN} aria-label={t('chatTips.disable')} title={t('chatTips.disable')} onclick={ondisable}><Codicon id="bell-slash" size={14} /></button>
 	</div>
 </div>
