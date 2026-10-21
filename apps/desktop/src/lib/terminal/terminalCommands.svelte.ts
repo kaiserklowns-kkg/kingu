@@ -12,6 +12,7 @@ import { terminals } from './terminals.svelte.ts';
 import { codeTerminalFolder, createTerminal, createTerminalInActiveFolder } from './newTerminal.ts';
 import { quickCommandInput, quickCommands } from './adeTerminalOptions.ts';
 import { t } from '#lib/i18n/index.ts';
+import { installShellIntegrationCommands } from './shellIntegrationCommands.svelte.ts';
 
 /** Orca's quick commands (`kingu.terminal.quickCommands`): pick one, typed into the last used ADE terminal. */
 async function runQuickCommand() {
@@ -99,7 +100,8 @@ export function installTerminalCommands(): () => void {
 		}),
 		commands.register({ id: 'workbench.action.terminal.rename', title: 'Rename...', category: 'Terminal', when: panelShown, run: () => terminals.rename() }),
 		commands.register({ id: 'workbench.action.terminal.kill', title: 'Kill the Active Terminal Instance', category: 'Terminal', when: panelShown, run: () => terminals.kill(terminals.active) }),
-		commands.register({ id: 'kingu.terminal.runQuickCommand', title: 'Run Quick Command…', category: 'Terminal', run: () => void runQuickCommand() })
+		commands.register({ id: 'kingu.terminal.runQuickCommand', title: 'Run Quick Command…', category: 'Terminal', run: () => void runQuickCommand() }),
+		installShellIntegrationCommands()
 	];
 	return () => unregister.forEach((u) => u());
 }

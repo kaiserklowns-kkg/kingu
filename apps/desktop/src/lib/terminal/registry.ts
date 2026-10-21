@@ -2,6 +2,7 @@
 // like VS Code's `terminalFocus` context key.
 
 import type { TerminalFlavor } from './terminalMenu.ts';
+import type { ShellIntegration } from './shellIntegrationAddon.ts';
 
 export type TerminalHandle = {
 	key: string;
@@ -17,6 +18,14 @@ export type TerminalHandle = {
 	print?(text: string): void;
 	/** The buffer's lines, oldest first (the chat's Terminal context). */
 	lines?(): string[];
+	/** Shell integration: its commands, cwd, navigation (shellIntegrationAddon.ts). */
+	integration?: ShellIntegration;
+	/** The shell it runs (its history is kept per shell type). */
+	shell?(): string;
+	/** The program asked for bracketed paste (a multi-line command goes as one paste). */
+	bracketedPaste?(): boolean;
+	/** Scrolls a page up (-1) or down (1). */
+	scrollPage?(direction: -1 | 1): void;
 };
 
 const handles = new Map<string, TerminalHandle>();
