@@ -96,6 +96,7 @@
 	import DebugToolbar from '#lib/debug/DebugToolbar.svelte';
 	import { installBreadcrumbs } from './breadcrumbsCommands.svelte';
 	import { installLanguageCommands } from './languageCommands.svelte';
+	import { installTypeScriptCommands } from '#lib/lsp/typescriptCommands.svelte.ts';
 	import { installProblemsSettings } from '#lib/lsp/problemsCommands.svelte.ts';
 	import { installCloseGuard, quit } from './closeGuard.svelte';
 	import { installEditorRestore } from './editorRestore.svelte';
@@ -396,6 +397,7 @@
 		const uninstallTesting = installTesting();
 		const uninstallBreadcrumbs = installBreadcrumbs();
 		const uninstallLanguageCommands = installLanguageCommands();
+		const uninstallTypeScriptCommands = installTypeScriptCommands();
 		const uninstallProblemsSettings = installProblemsSettings();
 		const uninstallAccounts = accounts.install();
 		const uninstallTextFiles = textFiles.install();
@@ -423,6 +425,7 @@
 			uninstallProblemsSettings();
 			uninstallBreadcrumbs();
 			uninstallLanguageCommands();
+			uninstallTypeScriptCommands();
 			uninstallDebug();
 			uninstallTesting();
 			uninstallAdeCommands();

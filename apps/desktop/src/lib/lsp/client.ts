@@ -91,7 +91,9 @@ export const clientCapabilities = {
 		semanticTokens: { refreshSupport: true },
 		inlayHint: { refreshSupport: true },
 		codeLens: { refreshSupport: true },
-		didChangeConfiguration: { dynamicRegistration: false }
+		didChangeConfiguration: { dynamicRegistration: false },
+		// Update imports on file move (typescript-language-server's willRenameFiles).
+		fileOperations: { dynamicRegistration: false, willRename: true, didRename: true }
 	},
 	textDocument: {
 		synchronization: { didSave: true, willSave: false, willSaveWaitUntil: false, dynamicRegistration: false },
@@ -654,6 +656,24 @@ export class LanguageClient {
 		if (!this.capabilities.executeCommandProvider?.commands?.includes(command.command)) return false;
 		await this.rpc.request('workspace/executeCommand', { command: command.command, arguments: command.arguments });
 		return true;
+	}
+
+	/** A server command's result (`workspace/executeCommand`), e.g. typescript-language-server's
+	 * Go to Source Definition; rejects when the server does not know it. */
+	executeCommandResult<T = unknown>(command: string, args: unknown[]): Promise<T | null> {
+		return this.rpc.request<T | null>('workspace/executeCommand', { command, arguments: args });
+	}
+
+	/** Whether the server wants `workspace/willRenameFiles` (edits to make before files move). */
+	get takesWillRename(): boolean {
+		return !!this.capabilities.workspace?.fileOperations?.willRename;
+	}
+	willRenameFiles(files: { oldUri: string; newUri: string }[]): Promise<WorkspaceEdit | null> {
+		return this.rpc.request<WorkspaceEdit | null>('workspace/willRenameFiles', { files });
+	}
+	/** Files were renamed or moved (`workspace/didRenameFiles`), when the server asks for it. */
+	didRenameFiles(files: { oldUri: string; newUri: string }[]) {
+		if (this.capabilities.workspace?.fileOperations?.didRename && files.length) this.rpc.notify('workspace/didRenameFiles', { files });
 	}
 
 	/** Files changed on disk behind the server's back (Search: Replace, rename into unopened files). */

@@ -71,6 +71,25 @@ import type { WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 import { t } from '#lib/i18n/index.ts';
 import { isRustError } from '#lib/i18n/rustErrors.ts';
 import { formatTrace, TRACE_SETTINGS, traceValue, type TraceValue } from './trace.ts';
+import {
+	chosenTsserver,
+	fileReferenceLocations,
+	isEmptyEdit,
+	mayHaveImports,
+	remapEditUris,
+	renameSubject,
+	SOURCE_DEFINITION_COMMAND,
+	TSSERVER_REQUEST_COMMAND,
+	updateImportsMode,
+	UPDATE_IMPORTS_KEYS,
+	type FileRenameUris,
+	type TsVersionChoice
+} from './typescriptExtras.ts';
+
+/** How long a move waits for the TypeScript server's import updates (VS Code's participants have a timeout too). */
+const WILL_RENAME_TIMEOUT_MS = 5000;
+/** A move whose import updates were asked for: applied (or offered) once the files are in place. */
+export type PendingRename = { files: FileRenameUris[]; rels: string[]; edit: Promise<WorkspaceEdit | null>; client: LanguageClient };
 
 type MonacoApi = typeof Monaco;
 type LspEvent = { type: 'message'; json: string } | { type: 'stderr'; line: string } | { type: 'exit'; code: number | null };
@@ -111,6 +130,8 @@ class Lsp {
 		}
 		return null;
 	});
+	/** Select TypeScript Version: the server's own TypeScript, or the workspace's (restarts the server). */
+	tsVersion = $state<TsVersionChoice>('bundled');
 	/** Overrides of the server table's settings, per server key (e.g. `{ 'rust-analyzer': { … } }`). */
 	settings: Record<string, Record<string, unknown>> = {};
 
@@ -182,6 +203,98 @@ class Lsp {
 	didSave(model: Monaco.editor.ITextModel) {
 		const doc = this.#docs.get(model);
 		if (doc?.uri) this.#sessions.get(doc.sid)?.client.didSave(doc.uri);
+	}
+
+	// --- TypeScript extras (typescriptExtras.ts) -------------------------------------------------
+
+	/** The running TypeScript server, once it has started. */
+	async #typescript(): Promise<LanguageClient | null> {
+		const s = this.#sessions.get(sessionId('typescript', null));
+		return s && (await s.ready) && s.client.ready ? s.client : null;
+	}
+
+	/**
+	 * Files about to be renamed or moved (`isDir`: a folder): asks the TypeScript server for the
+	 * import updates they need while they are still in place (`workspace/willRenameFiles`). Null
+	 * when nothing can import them, `js/ts.updateImportsOnFileMove.enabled` is `never`, or no
+	 * TypeScript server runs (VS Code's extension is not active then either).
+	 */
+	async willRenameFiles(renames: { from: string; to: string; isDir: boolean }[]): Promise<PendingRename | null> {
+		const relevant = renames.filter((r) => mayHaveImports(r.from, r.isDir));
+		if (!relevant.length || relevant.every((r) => updateImportsMode(this.#reader, r.from) === 'never')) return null;
+		const client = await this.#typescript();
+		if (!client?.takesWillRename) return null;
+		const root = this.#rootPath;
+		const files = relevant.map((r) => ({ oldUri: uriOfRel(root, r.from), newUri: uriOfRel(root, r.to) }));
+		const edit = Promise.race([client.willRenameFiles(files).catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), WILL_RENAME_TIMEOUT_MS))]);
+		await edit;
+		return { files, rels: relevant.map((r) => r.from), edit, client };
+	}
+
+	/**
+	 * The files of `pending` were moved: the server hears of it, and their import updates are
+	 * applied, after asking with `js/ts.updateImportsOnFileMove.enabled` `prompt` (VS Code's
+	 * "Update imports for 'a.ts'?" with Yes / No / Always / Never).
+	 */
+	async filesRenamed(pending: PendingRename | null, moved?: Set<string>) {
+		if (!pending) return;
+		const files = moved ? pending.files.filter((_, i) => moved.has(pending.rels[i])) : pending.files;
+		pending.client.didRenameFiles(files);
+		const edit = await pending.edit;
+		if (!files.length || !edit || isEmptyEdit(edit)) return;
+		const mode = updateImportsMode(this.#reader, pending.rels[0]);
+		if (mode === 'never') return;
+		if (mode === 'prompt') {
+			const yes = t('tools.lsp.updateImportsYes');
+			const always = t('tools.lsp.updateImportsAlways');
+			const never = t('tools.lsp.updateImportsNever');
+			const subject = renameSubject(files);
+			const message = files.length === 1 ? t('tools.lsp.updateImportsOne', { name: subject }) : t('tools.lsp.updateImportsMany', { count: subject });
+			const choice = await notifications.prompt('info', message, [yes, t('tools.lsp.updateImportsNo'), always, never], { source: 'TypeScript' });
+			if (choice === always || choice === never) await userSettings.set(UPDATE_IMPORTS_KEYS[0], choice === always ? 'always' : 'never', 'user').catch(() => {});
+			if (choice !== yes && choice !== always) return;
+		}
+		const r = await this.applyWorkspaceEdit(remapEditUris(edit, files), { refactoring: true });
+		if (!r.applied) statusBar.error(t('tools.lsp.updateImportsFailed', { error: r.failureReason ?? '' }));
+	}
+
+	/** The open document of `rel` and its server, when it is a TypeScript server's. */
+	#typescriptDoc(rel: string): { client: LanguageClient; uri: string } | null {
+		for (const doc of this.#docs.values()) {
+			if (doc.rel !== rel || !doc.uri) continue;
+			const s = this.#sessions.get(doc.sid);
+			return s?.info.key === 'typescript' && s.client.ready ? { client: s.client, uri: doc.uri } : null;
+		}
+		return null;
+	}
+
+	/** Whether `rel` is open in the TypeScript server (Go to Source Definition, Find File References). */
+	isTypeScriptDoc(rel: string | null): boolean {
+		return !!rel && this.#typescriptDoc(rel) !== null;
+	}
+
+	/** TypeScript: Go to Source Definition (TS 4.7+): the .js/.ts source behind a declaration file. */
+	async sourceDefinition(rel: string, line: number, column: number): Promise<{ rel: string; line: number; column: number }[] | null> {
+		const d = this.#typescriptDoc(rel);
+		if (!d) return null;
+		const result = await d.client.executeCommandResult<Location[] | Location>(SOURCE_DEFINITION_COMMAND, [d.uri, { line: line - 1, character: column - 1 }]);
+		return this.#workbenchLocations(result ? [result].flat() : []);
+	}
+
+	/** TypeScript: Find File References (TS 4.2+): every file that imports `rel`. */
+	async fileReferences(rel: string): Promise<{ rel: string; line: number; column: number }[] | null> {
+		const d = this.#typescriptDoc(rel);
+		const path = uriToPath(d?.uri ?? '');
+		if (!d || !path) return null;
+		const response = await d.client.executeCommandResult(TSSERVER_REQUEST_COMMAND, ['fileReferences', { file: path }]);
+		return this.#workbenchLocations(fileReferenceLocations(response, pathToUri));
+	}
+
+	#workbenchLocations(locations: Location[]): { rel: string; line: number; column: number }[] {
+		return locations.flatMap((l) => {
+			const rel = this.#keyOf(l.uri);
+			return rel === null ? [] : [{ rel, line: l.range.start.line + 1, column: l.range.start.character + 1 }];
+		});
 	}
 
 	/** Status bar entry for a Monaco language id, or null when it has no server. */
@@ -675,7 +788,10 @@ class Lsp {
 	/** The `initialize` options: the table's, plus tsserver preferences for typescript-language-server. */
 	#initOptions(info: ServerInfo, folder: string | null = null): unknown {
 		if (info.key !== 'typescript') return info.initializationOptions;
-		return { ...(info.initializationOptions as object | undefined), preferences: typescriptPreferences(this.#readerFor(folder)) };
+		const reader = this.#readerFor(folder);
+		// Select TypeScript Version: the workspace's tsserver instead of the server's own.
+		const tsserver = chosenTsserver(reader, this.tsVersion, folder ?? this.#rootPath);
+		return { ...(info.initializationOptions as object | undefined), preferences: typescriptPreferences(reader), ...(tsserver ? { tsserver: { path: tsserver } } : {}) };
 	}
 
 	/** VS Code settings as serverSettings.ts reads them. */
