@@ -45,13 +45,15 @@
 	import type { MenuRow } from './composerMenu.ts';
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
 	import type { MenuNode } from '#lib/workbench/menus.ts';
-	import { canSteer, composerPlaceholder, customName, cycleMode, MODE_ICON, modeOrder, modeTone, runModeHint, runModeLabel, shortModelLabel } from './composer.ts';
+	import { canSteer, composerPlaceholder, customName, cycleMode, modeOrder, modeTone, runModeHint, runModeLabel, shortModelLabel } from './composer.ts';
 	import { arkaiGroups, needsKey } from './arkai.ts';
 	import type { QueuedMessage } from './chats.svelte.ts';
 	import { queueDefault, type SendHow } from './requestQueuing.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { chatEdits } from './chatEdits.svelte.ts';
-	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
+	import type { IconName } from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
+	import { MODE_CODICON, MODE_MENU_CODICON, PERMISSION_CODICON } from './chatIcons.ts';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 	import { runtime } from '#lib/ade/runtime.svelte.ts';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
@@ -92,7 +94,9 @@
 	import ChatSessionBar from './ChatSessionBar.svelte';
 	import { chatTips, registerTipCommands, tipSignals } from './chatTips.svelte.ts';
 	import { generateRequest, hasAgentInstructions, orderedTips, showTips, type TipAction, type TipContext } from './chatTips.ts';
-	import { commands } from '#lib/workbench/commands.svelte.ts';
+	import { commands, keyOf } from '#lib/workbench/commands.svelte.ts';
+	import { keyLabel } from '#lib/workbench/keys.ts';
+	import './chatView.css';
 
 	let {
 		editorChatId
@@ -691,7 +695,7 @@
 		return ok;
 	}
 
-	/** The run mode (Cursor's Ask Every Time / Run Everything over Kingu's approvals); Run Everything asks first. */
+	/** The run mode (kingu-old's permission picker over Kingu's approvals); Allow all asks first. */
 	async function pickApproval(next: AgentApproval) {
 		if (next === 'bypassPermissions' && !(await confirmAllowAll())) return;
 		await setMode('agent', next);
@@ -821,6 +825,12 @@
 	const TEXT_ICON: Record<string, IconName> = { problems: 'warning', 'git-diff': 'git', terminal: 'terminal', folder: 'folder', chat: 'agent' };
 	const STATE_DOT = { working: 'bg-(--vscode-editorInfo-foreground) animate-pulse', needsInput: 'bg-(--vscode-editorWarning-foreground)' } as const;
 	const STATE_LABEL = { working: () => t('team.agent.status.running'), needsInput: () => t('team.agent.status.waiting') } as const;
+	/** The view switcher's tab: "Chat (⌃⌘I)", Open Chat's key as VS Code shows it. */
+	const viewTabLabel = $derived.by(() => {
+		const cmd = commands.get('workbench.action.chat.open');
+		const k = cmd && keyOf(cmd);
+		return k ? t('chatWelcome.viewTab', { key: keyLabel(k) }) : t('chatWelcome.viewTitle');
+	});
 	const ICON_BTN = 'grid size-[22px] shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-40';
 	const title = $derived(chatMeta?.title ?? t('chatWelcome.viewTitle'));
 	const pendingApproval = $derived(chatRun?.pending.find((p) => p.tool !== 'AskUserQuestion'));
@@ -846,10 +856,10 @@
 	const KEY = MAC ? { mode: '⌘.', model: '⌘/', find: '⌘F', context: '⌥⌘P', newChat: '⌘N' } : { mode: 'Ctrl+.', model: 'Ctrl+/', find: 'Ctrl+F', context: 'Ctrl+Alt+P', newChat: 'Ctrl+N' };
 	const modeRows = $derived<MenuRow[]>([
 		// Cursor's mode menu: icon, label and a check, in ⇧Tab's order (Agent, Plan, Ask), then custom agents.
-		...(['agent', 'plan', 'ask'] as const).map((m) => ({ id: m, label: modeName(m), icon: MODE_ICON[m], checked: pick === m })),
-		...shownAgents.map((a) => ({ id: `custom:${a.name}`, label: a.name, icon: MODE_ICON.custom, section: t('chatCustomize.customAgents'), checked: pick === `custom:${a.name}` })),
+		...(['agent', 'plan', 'ask'] as const).map((m) => ({ id: m, label: modeName(m), codicon: MODE_MENU_CODICON[m], checked: pick === m })),
+		...shownAgents.map((a) => ({ id: `custom:${a.name}`, label: a.name, section: t('chatCustomize.customAgents'), checked: pick === `custom:${a.name}` })),
 		...(chatAgent && chatAgent !== 'ask' && !shownAgents.some((a) => a.name === chatAgent)
-			? [{ id: `custom:${chatAgent}`, label: t('chatCustomize.agentMissing', { name: chatAgent }), icon: MODE_ICON.custom, section: t('chatCustomize.customAgents'), checked: true }]
+			? [{ id: `custom:${chatAgent}`, label: t('chatCustomize.agentMissing', { name: chatAgent }), section: t('chatCustomize.customAgents'), checked: true }]
 			: [])
 	]);
 	/** The chat's model (a new chat's pick), for the trigger and the picker's check. */
@@ -869,7 +879,10 @@
 			return { id: m.value, label: m.label, ...(description ? { description } : {}), checked: m.value === currentModel };
 		});
 	});
-	const modelShort = $derived(shortModelLabel(modelRows.find((r) => r.checked)?.label || currentModel || t('composer.model.default')));
+	// VS Code's model picker says "No models available" while there is none to pick (Arkai with no provider set up).
+	const modelShort = $derived(
+		runtimeId === ARKAI_RUNTIME && !modelRows.length && !arkaiProviders.loading ? t('chatWelcome.noModels') : shortModelLabel(modelRows.find((r) => r.checked)?.label || currentModel || t('composer.model.default'))
+	);
 	const runtimeProtocol = $derived(agentRuntimes.list.find((r) => r.id === runtimeId)?.protocol ?? null);
 	const currentApproval = $derived<AgentApproval>(allowAll ? 'bypassPermissions' : chatMeta ? ((chatMeta.permission_mode === 'plan' ? approval : chatMeta.permission_mode) ?? 'default') : approval);
 	const globalAutoApprove = $derived(settings.get<boolean>('chat.tools.global.autoApprove') === true);
@@ -888,7 +901,7 @@
 			id: a,
 			label: runModeLabel(a),
 			description: runModeHint(a),
-			icon: a === 'bypassPermissions' ? ('warning' as const) : ('shield' as const),
+			codicon: PERMISSION_CODICON[a],
 			checked: !globalAutoApprove && a === currentApproval,
 			warn: a === 'bypassPermissions',
 			disabled: globalAutoApprove
@@ -896,7 +909,7 @@
 	);
 	const permissionPicker = $derived({
 		label: globalAutoApprove ? t('composer.run.global') : runModeLabel(currentApproval),
-		icon: globalAutoApprove || currentApproval === 'bypassPermissions' ? ('warning' as const) : ('shield' as const),
+		icon: globalAutoApprove ? 'warning' : PERMISSION_CODICON[currentApproval],
 		warn: globalAutoApprove || (allowAll && mode === 'agent'),
 		disabled: globalAutoApprove || mode !== 'agent' || !workspace.root,
 		title: globalAutoApprove ? t('chatCustomize.autoApproveNote') : mode !== 'agent' ? t('chatWelcome.permissions.agentOnly') : runModeHint(currentApproval),
@@ -906,10 +919,11 @@
 			void pickApproval(id as AgentApproval);
 		}
 	});
-	function runtimeIcon(id: string): IconName {
-		if (id === ARKAI_RUNTIME) return 'agent';
+	/** The agent's icon (kingu-old's getAgentSessionProviderIcon: Arkai's mark is the `copilot` glyph in Kingu's font). */
+	function runtimeIcon(id: string): string {
+		if (id === ARKAI_RUNTIME) return 'copilot';
 		if (id === CLAUDE_RUNTIME) return 'claude';
-		return agentRuntimes.list.find((r) => r.id === id)?.protocol === 'codex' ? 'openai' : 'robot';
+		return agentRuntimes.list.find((r) => r.id === id)?.protocol === 'codex' ? 'openai' : 'extensions';
 	}
 	/** The session target picker under the input (VS Code's sessionTargetPickerActionItem): the agent the chat runs on. */
 	const targetPicker = $derived({
@@ -917,7 +931,7 @@
 		icon: runtimeIcon(runtimeId),
 		title: t('chatWelcome.target.hint'),
 		disabled: !workspace.root,
-		rows: runtimeChoices(agentRuntimes.list, runtimeId).map<MenuRow>((r) => ({ id: r.id, label: r.missing ? t('chatRuntime.missing', { name: r.name }) : r.name, icon: runtimeIcon(r.id), checked: r.id === runtimeId, disabled: r.missing })),
+		rows: runtimeChoices(agentRuntimes.list, runtimeId).map<MenuRow>((r) => ({ id: r.id, label: r.missing ? t('chatRuntime.missing', { name: r.name }) : r.name, codicon: runtimeIcon(r.id), checked: r.id === runtimeId, disabled: r.missing })),
 		onpick: (id: string) => {
 			if (id === runtimeId) return;
 			// A started chat keeps its agent: another one starts a new chat (VS Code's new session of that type).
@@ -1207,68 +1221,114 @@
 	}
 </script>
 
-<div bind:this={root} class="flex h-full min-w-0 flex-col overflow-hidden text-[13px]" data-chat-view onfocusin={() => selectedId && (chatTools.current = selectedId)}>
-	<!-- The view header (VS Code's chat view title): the chat's title (a spinner while it runs, a dot
-	     when it finished unseen; a click shows the history), then New Chat + with its ⌄ menu,
-	     ⚡ Customize Chat, ⋯ (where a new chat runs, the chat's actions, the panel) and Open Chat in Editor. -->
-	<div class="flex h-[35px] shrink-0 items-center gap-0.5 pr-2 pl-3" onfocusin={() => (unread = false)}>
-		{#snippet titleText()}
-			{#if pendingApproval}
-				<span class="shrink-0 text-(--vscode-editorWarning-foreground)" role="status" aria-label={t('composer.status.waiting')}><Icon name="help" size={13} /></span>
-			{:else if running}
-				<span class="size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-current border-t-transparent text-(--vscode-descriptionForeground)" role="status" aria-label={t('composer.status.running')}></span>
-			{:else if unread}
-				<span class="grid size-3 shrink-0 place-items-center" role="status" aria-label={t('composer.header.unread')}><span class="size-2 rounded-full bg-(--vscode-notificationsInfoIcon-foreground,#3794ff)"></span></span>
-			{/if}
-			<span class="min-w-0 truncate">{showList ? t('chatView.history') : title}</span>
-		{/snippet}
-		{#if inEditor}
-			<span class="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] font-semibold" title={title}>{@render titleText()}</span>
-		{:else}
-			<button
-				class="-ml-1 flex h-[22px] max-w-[70%] min-w-0 items-center gap-1.5 rounded-[4px] px-1 text-[13px] font-semibold text-(--vscode-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
-				title={showList ? t('chatView.history') : t('chatWelcome.viewTitleHint', { title: chatMeta ? `${title} · ${cwdLabel(chatMeta.cwd)}` : title })}
-				aria-pressed={showList}
-				onclick={() => toggleHistory()}>{@render titleText()}</button
-			>
+<div bind:this={root} class={['interactive-session flex h-full min-w-0 flex-col overflow-hidden text-[13px]', !inEditor && 'kg-chat-part']} data-chat-view onfocusin={() => selectedId && (chatTools.current = selectedId)}>
+	{#snippet titleState()}
+		{#if pendingApproval}
+			<span class="shrink-0 text-(--vscode-editorWarning-foreground)" role="status" aria-label={t('composer.status.waiting')}><Codicon id="question" size={12} /></span>
+		{:else if running}
+			<span class="shrink-0" role="status" aria-label={t('composer.status.running')}><Codicon id="loading" modifier="spin" size={12} /></span>
+		{:else if unread}
+			<span class="grid size-3 shrink-0 place-items-center" role="status" aria-label={t('composer.header.unread')}><span class="size-2 rounded-full bg-(--vscode-notificationsInfoIcon-foreground,#3794ff)"></span></span>
 		{/if}
-		<span class="flex-1"></span>
-		{#if inEditor}
+	{/snippet}
+	{#if inEditor}
+		<!-- A chat in an editor tab: its title and Move Chat to the Side Bar. -->
+		<div class="flex h-[35px] shrink-0 items-center gap-0.5 pr-2 pl-3">
+			<span class="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] font-semibold" title={title}>{@render titleState()}<span class="min-w-0 truncate">{title}</span></span>
 			<button class={ICON_BTN} aria-label={t('chatExtras.moveToSideBar')} title={t('chatExtras.moveToSideBar')} onclick={() => editorChatId && chatExtras.moveToSideBar(editorChatId)}>
-				<Icon name="sidebarRight" size={16} />
+				<Codicon id="layout-sidebar-right" size={16} />
 			</button>
-		{:else}
-			<span class="flex shrink-0 items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)">
-				<button class="grid size-[22px] shrink-0 place-items-center rounded disabled:opacity-40" aria-label={t('chatWelcome.newChat')} title={t('chatView.newChatKey')} disabled={!workspace.root} onclick={() => newChat()}><Icon name="plus" size={16} /></button>
+		</div>
+	{:else}
+		<!-- The secondary side bar's view switcher (VS Code's composite bar in the part's header): its one view, Chat. -->
+		<div class="composite header-or-footer header">
+			<div class="composite-bar" role="tablist" aria-label={t('chatWelcome.viewSwitcher')}>
+				<button type="button" class="action-item icon checked" role="tab" aria-selected="true" aria-label={viewTabLabel} title={viewTabLabel} onclick={() => composer?.focus()}>
+					<span class="active-item-indicator"></span>
+					<Codicon id="chat-view-icon" />
+				</button>
+			</div>
+		</div>
+		<!-- The title row (VS Code's pane-composite title): "Chat", then New Chat + with its ⌄, Open
+		     Customizations, Views and More Actions, and Maximize Secondary Side Bar after a separator. -->
+		<div class="composite title has-actions" onfocusin={() => (unread = false)}>
+			<div class="title-label"><h2>{t('chatWelcome.viewTitle')}</h2></div>
+			<div class="title-actions" role="toolbar" aria-label={t('chatWelcome.actions')}>
+				<span class="action-item monaco-dropdown-with-default">
+					<button type="button" class="action-label" aria-label={t('chatWelcome.newChatKey', { key: KEY.newChat })} title={t('chatWelcome.newChatKey', { key: KEY.newChat })} disabled={!workspace.root} onclick={() => newChat()}><Codicon id="plus" /></button>
+					<button
+						type="button"
+						class="action-label dropdown"
+						aria-label={t('chatWelcome.newChat')}
+						title={t('chatWelcome.newChat')}
+						aria-haspopup="menu"
+						aria-expanded={headerMenuAt?.kind === 'new'}
+						onclick={(e) => openHeaderMenu('new', e)}><Codicon id="chevron-down" size={12} /></button
+					>
+				</span>
 				<button
-					class="grid h-[22px] w-3.5 shrink-0 place-items-center rounded text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)"
-					aria-label={t('chatWelcome.newChatMenu')}
-					title={t('chatWelcome.newChatMenu')}
+					type="button"
+					class="action-item action-label"
+					aria-label={t('chatWelcome.customize')}
+					title={t('chatWelcome.customize')}
 					aria-haspopup="menu"
-					aria-expanded={headerMenuAt?.kind === 'new'}
-					onclick={(e) => openHeaderMenu('new', e)}><Icon name="chevronDown" size={10} /></button
+					aria-expanded={headerMenuAt?.kind === 'customize'}
+					onclick={(e) => openHeaderMenu('customize', e)}><Codicon id="extensions" /></button
 				>
-			</span>
-			<button
-				class={ICON_BTN}
-				aria-label={t('chatWelcome.customize')}
-				title={t('chatWelcome.customize')}
-				aria-haspopup="menu"
-				aria-expanded={headerMenuAt?.kind === 'customize'}
-				onclick={(e) => openHeaderMenu('customize', e)}><Icon name="lightning" size={15} /></button
-			>
-			<button
-				class={[ICON_BTN, ((allowAll && mode === 'agent') || globalAutoApprove) && 'text-(--vscode-editorWarning-foreground)']}
-				aria-label={t('composer.header.more')}
-				title={t('composer.options.hint', { runtime: runtimeName, where: chatMeta ? cwdLabel(chatMeta.cwd) : newWhere ? `kingu/${newWhere}` : workspace.name || t('chat.panel.cwdFolder'), run: globalAutoApprove ? t('composer.run.global') : mode === 'agent' ? runModeLabel(currentApproval) : modeName(pick) })}
-				aria-haspopup="menu"
-				aria-expanded={headerMenuAt?.kind === 'more'}
-				onclick={(e) => openHeaderMenu('more', e)}><Icon name="more" size={16} /></button
-			>
-			<span class="mx-1 h-4 w-px shrink-0 bg-(--vscode-widget-border)" aria-hidden="true"></span>
-			<button class={ICON_BTN} aria-label={t('chatWelcome.maximize')} title={t('chatWelcome.maximize')} disabled={!chatMeta} onclick={openInEditor}><Icon name="maximize" size={15} /></button>
+				<button
+					type="button"
+					class={['action-item action-label', ((allowAll && mode === 'agent') || globalAutoApprove) && 'text-(--vscode-editorWarning-foreground)!']}
+					aria-label={t('chatWelcome.more')}
+					title={t('composer.options.hint', { runtime: runtimeName, where: chatMeta ? cwdLabel(chatMeta.cwd) : newWhere ? `kingu/${newWhere}` : workspace.name || t('chat.panel.cwdFolder'), run: globalAutoApprove ? t('composer.run.global') : mode === 'agent' ? runModeLabel(currentApproval) : modeName(pick) })}
+					aria-haspopup="menu"
+					aria-expanded={headerMenuAt?.kind === 'more'}
+					onclick={(e) => openHeaderMenu('more', e)}><Codicon id="toolbar-more" /></button
+				>
+				<span class="action-separator" role="separator"></span>
+			</div>
+			<div class="global-actions">
+				<button
+					type="button"
+					class={['action-label', layout.auxMaximized && 'checked']}
+					aria-label={layout.auxMaximized ? t('chatWelcome.restore') : t('chatWelcome.maximize')}
+					title={layout.auxMaximized ? t('chatWelcome.restore') : t('chatWelcome.maximize')}
+					aria-pressed={layout.auxMaximized}
+					onclick={() => void commands.run('workbench.action.toggleMaximizedAuxiliaryBar')}><Codicon id="auxiliarybar-maximize" /></button
+				>
+			</div>
+		</div>
+		{#if chatMeta || showList}
+			<!-- The chat's own title row (VS Code's chatViewTitleControl): Go Back (a new chat), the
+			     chat's agent and title (a click picks another chat: the history), Show Agent Sessions. -->
+			<div class="chat-view-title-container">
+				<div class="chat-view-title-inner">
+					<div class="chat-view-title-navigation-toolbar">
+						<button type="button" class="action-label" aria-label={t('chatWelcome.goBack')} title={t('chatWelcome.goBack')} onclick={() => (showList ? toggleHistory(false) : newChat())}><Codicon id="arrow-left" /></button>
+						<button
+							type="button"
+							class="chat-view-title-action-item"
+							title={showList ? t('chatView.history') : t('chatWelcome.viewTitleHint', { title: chatMeta ? `${title} · ${cwdLabel(chatMeta.cwd)}` : title })}
+							aria-label={t('chatWelcome.pickSession')}
+							aria-pressed={showList}
+							onclick={() => toggleHistory()}
+						>
+							{@render titleState()}
+							{#if showList}
+								<span class="chat-view-title-label">{t('chatView.history')}</span>
+							{:else}
+								<span class="chat-view-title-harness">{runtimeName}</span>
+								<span class="chat-view-title-separator" aria-hidden="true">·</span>
+								<span class="chat-view-title-label">{title}</span>
+							{/if}
+						</button>
+					</div>
+					<div class="chat-view-title-actions-toolbar">
+						<button type="button" class={['action-label', showList && 'checked']} aria-label={t('chatWelcome.showSessions')} title={t('chatWelcome.showSessions')} aria-pressed={showList} onclick={() => toggleHistory()}><Codicon id="layout-sidebar-right-off" /></button>
+					</div>
+				</div>
+			</div>
 		{/if}
-	</div>
+	{/if}
 	{#if headerMenuAt}
 		{@const kind = headerMenuAt.kind}
 		<PopupMenu
@@ -1311,7 +1371,7 @@
 								/>
 							{:else}
 								<button class="flex min-w-0 flex-1 items-center gap-2 text-left" onclick={() => select(r.id)}>
-									<span class="shrink-0 text-(--vscode-descriptionForeground)"><Icon name="agent" size={14} /></span>
+									<span class="shrink-0 text-(--vscode-descriptionForeground)"><Codicon id="arkai-mark" size={14} /></span>
 									<span class="flex min-w-0 flex-1 flex-col">
 										<span class="truncate">{r.title}</span>
 										{#if historyHits.get(r.id)}
@@ -1324,8 +1384,8 @@
 									{#if r.state}<span class={['size-2 shrink-0 rounded-full', STATE_DOT[r.state]]} title={STATE_LABEL[r.state]()}></span>{/if}
 								</button>
 								<span class="flex shrink-0 opacity-0 group-hover/row:opacity-100 focus-within:opacity-100">
-									<button class={ICON_BTN} aria-label={t('chat.panel.rename')} title={t('chat.panel.rename')} onclick={() => startRename(r.id, r.title)}><Icon name="edit" size={13} /></button>
-									<button class={ICON_BTN} aria-label={t('chat.panel.delete')} title={t('chat.panel.delete')} disabled={!!r.state} onclick={() => removeChat(r.id)}><Icon name="trash" size={13} /></button>
+									<button class={ICON_BTN} aria-label={t('chat.panel.rename')} title={t('chat.panel.rename')} onclick={() => startRename(r.id, r.title)}><Codicon id="edit" size={13} /></button>
+									<button class={ICON_BTN} aria-label={t('chat.panel.delete')} title={t('chat.panel.delete')} disabled={!!r.state} onclick={() => removeChat(r.id)}><Codicon id="trash" size={13} /></button>
 								</span>
 							{/if}
 						</li>
@@ -1339,7 +1399,7 @@
 					<ul aria-label={t('chatView.adeSection')}>
 						{#each sections.tasks as r (r.slug)}
 							<li class="flex h-[26px] items-center gap-1.5 px-3 text-(--vscode-descriptionForeground)" title={t('chatView.adeReadOnly')}>
-								<Icon name={r.terminal ? 'terminal' : 'branch'} size={14} />
+								<Codicon id={r.terminal ? 'terminal' : 'git-branch'} size={14} />
 								<span class="min-w-0 flex-1 truncate">{r.title}</span>
 								{#if r.state}<span class={['size-2 shrink-0 rounded-full', STATE_DOT[r.state]]} title={STATE_LABEL[r.state]()}></span>{/if}
 								<button class="shrink-0 text-xs text-(--vscode-textLink-foreground) hover:underline" onclick={() => openTaskInAgents(r.slug)}>{t('chat.panel.openInAgentsShort')}</button>
@@ -1369,11 +1429,11 @@
 					followups: { items: running ? [] : chatExtras.followups(chatMeta.id), pick: pickFollowup }
 				}}
 				reverted={(r) => !!chatMeta && chatEdits.isReverted(chatMeta.id, r)}
-				class="h-full p-3"
+				class="h-full py-1.5"
 			>
 				{#snippet checkpoint(request, req, first)}
 					{#if chatMeta && features.rewind}
-						<RestoreCheckpoint chatId={chatMeta.id} {request} {first} compact onrestored={() => (chatTips.record('restore'), restoreToInput(req))} />
+						<RestoreCheckpoint chatId={chatMeta.id} {request} {first} onrestored={() => (chatTips.record('restore'), restoreToInput(req))} />
 					{/if}
 				{/snippet}
 				{#snippet empty()}
@@ -1410,188 +1470,181 @@
 
 <!-- The chat input, at the bottom (VS Code's): the tip card or the toolbar joined to its top, the pickers under it. -->
 {#snippet composerBlock()}
-		<div class="shrink-0 px-3 pt-1 pb-2">
+		<div class="interactive-input-part">
 			{#if chatMeta}<ChatTodoBar {turns} {running} />{/if}
 			{#if chatMeta}<McpStatusNote chatId={chatMeta.id} />{/if}
 			{#if chatMeta && chatRewind.canRedo(chatMeta.id)}
-				<div class="mb-1.5 flex items-center gap-1.5 rounded border border-(--vscode-widget-border) px-2 py-1 text-xs text-(--vscode-descriptionForeground)" role="status">
-					<Icon name="discard" size={12} />
+				<div class="flex items-center gap-1.5 rounded-[6px] border border-(--vscode-widget-border) px-2 py-1 text-xs text-(--vscode-descriptionForeground)" role="status">
+					<Codicon id="discard" size={12} />
 					<span class="min-w-0 flex-1">{t('chatRewind.restored')}</span>
 					<button class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" title={t('chatRewind.redoHint')} onclick={() => chatMeta && chatRewind.redo(chatMeta.id)}>{t('chatRewind.redo')}</button>
 				</div>
 			{/if}
 			{#if feedbackFor !== null}
-				<div class="mb-1.5 flex items-center gap-1 rounded-lg border border-(--vscode-widget-border) py-1 pr-1 pl-2.5 text-xs" role="group" aria-label={t('composer.feedback.title')}>
+				<div class="flex items-center gap-1 rounded-[8px] border border-(--vscode-widget-border) py-1 pr-1 pl-2.5 text-xs" role="group" aria-label={t('composer.feedback.title')}>
 					<span class="min-w-0 flex-1 truncate text-(--vscode-descriptionForeground)">{t('composer.feedback.title')}</span>
-					<button class={ICON_BTN} aria-label={t('chatExtras.feedback.helpful')} title={t('chatExtras.feedback.helpful')} onclick={() => vote('up')}><Icon name="thumbsUp" size={13} /></button>
-					<button class={ICON_BTN} aria-label={t('chatExtras.feedback.unhelpful')} title={t('chatExtras.feedback.unhelpful')} onclick={() => vote('down')}><Icon name="thumbsDown" size={13} /></button>
-					<button class={ICON_BTN} aria-label={t('common.close')} title={t('common.close')} onclick={() => vote(null)}><Icon name="close" size={13} /></button>
+					<button class={ICON_BTN} aria-label={t('chatExtras.feedback.helpful')} title={t('chatExtras.feedback.helpful')} onclick={() => vote('up')}><Codicon id="thumbsup" /></button>
+					<button class={ICON_BTN} aria-label={t('chatExtras.feedback.unhelpful')} title={t('chatExtras.feedback.unhelpful')} onclick={() => vote('down')}><Codicon id="thumbsdown" /></button>
+					<button class={ICON_BTN} aria-label={t('common.close')} title={t('common.close')} onclick={() => vote(null)}><Codicon id="close" /></button>
 				</div>
 			{/if}
 			{#if showNudge}
-				<div class="mb-1.5 space-y-1.5 rounded-lg border border-(--vscode-widget-border) bg-(--vscode-editorWidget-background) p-2.5 text-xs" role="dialog" aria-label={t('composer.nudge.title')}>
+				<div class="space-y-1.5 rounded-[8px] border border-(--vscode-widget-border) bg-(--vscode-editorWidget-background) p-2.5 text-xs" role="dialog" aria-label={t('composer.nudge.title')}>
 					<div class="font-semibold">{t('composer.nudge.title')}</div>
 					<p class="text-(--vscode-descriptionForeground)">{t('composer.nudge.body')}</p>
 					<div class="flex justify-end gap-1.5">
 						<button class="h-[22px] rounded-md px-2 hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => dismissNudge(false)}>{t('composer.nudge.keep')}</button>
-						<button
-							class="h-[22px] rounded-md bg-[color-mix(in_srgb,var(--vscode-foreground)_85%,transparent)] px-2 text-(--vscode-sideBar-background,var(--vscode-input-background)) hover:opacity-90"
-							onclick={() => dismissNudge(true)}>{t('composer.nudge.steer')}</button
-						>
+						<button class="h-[22px] rounded-md bg-(--vscode-button-background) px-2 text-(--vscode-button-foreground) hover:bg-(--vscode-button-hoverBackground)" onclick={() => dismissNudge(true)}>{t('composer.nudge.steer')}</button>
 					</div>
 				</div>
 			{/if}
-			{#if tip}
-				<ChatTipCard
-					{tip}
-					keys={{ model: KEY.model, mode: KEY.mode, find: KEY.find }}
-					several={severalTips}
-					onaction={runTip}
-					onstep={(dir) => chatTips.step(dir, tipCtx)}
-					ondismiss={() => chatTips.dismiss(tipCtx)}
-					ondisable={() => chatTips.disable()}
-				/>
-			{/if}
-			{#if stacked}
-				<!-- The composer toolbar (Cursor's): status and review, the queue, the edit banner, stacked on the input. -->
-				<div
-					class={[
-						'divide-y divide-(--vscode-widget-border) overflow-hidden border border-b-0 border-(--vscode-input-border,var(--vscode-widget-border)) bg-[color-mix(in_srgb,var(--vscode-input-background)_55%,var(--vscode-sideBar-background))]',
-						!tip && 'rounded-t-[8px]'
-					]}
-				>
-					{#if chatMeta}<ChatEditsBar chatId={chatMeta.id} status={toolbarStatus} onstop={() => chatMeta && chats.interrupt(chatMeta.id)} flat />{/if}
-					{#if chatMeta}
-						<ComposerQueue
-							items={queued}
-							steer={steerable}
-							onedit={editQueued}
-							onsend={(n, how) => chatMeta && void chats.sendQueuedNow(chatMeta.id, n, how)}
-							onremove={(n) => chatMeta && chats.unqueue(chatMeta.id, n)}
-							onmove={(n, index) => chatMeta && chats.moveQueued(chatMeta.id, n, index)}
-						/>
-					{/if}
-					{#if editing || editingQueued}
-						<div class="flex items-center gap-1.5 bg-[color-mix(in_srgb,var(--vscode-input-background)_80%,var(--vscode-focusBorder))] px-2.5 py-1 text-xs" role="note">
-							<Icon name={editingQueued ? 'clock' : 'edit'} size={12} />
-							<span class="min-w-0 flex-1 truncate">{editingQueued ? t('composer.editingQueued') : t('chatView.editNotice')}</span>
-							<button class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" onclick={() => (editingQueued ? cancelQueuedEdit() : resetInput())}>{t('common.cancel')}</button>
-						</div>
-					{/if}
-				</div>
-			{/if}
-			<Composer
-				bind:this={composer}
-				bind:value={input}
-				attach
-				bind:attachments={files}
-				{placeholder}
-				disabled={!workspace.root}
-				{busy}
-				{history}
-				{running}
-				stacked={stacked || !!tip}
-				vscode
-				onescape={leaveComposer}
-				preview={previewOf}
-				onstop={() => chatMeta && chats.interrupt(chatMeta.id)}
-				mentions={(q, scope) => mentionItems(q, scope, picked.map((p) => p.path), contextEnv())}
-				{onmention}
-				onmentionopen={() => void contextFiles.refresh(workspace.root)}
-				chips={chipEntries.map((e) => e.chip)}
-				onchip={(c, action) => chipEntries.find((e) => e.chip.key === c.key)?.act(action)}
-				chipsExtra={rulesChip}
-				sendLabel={running ? t('chatView.queue') : undefined}
-				commands={slashCommands}
-				onpickcommand={pickCommand}
-				queueDefault={queueAction}
-				cmdEnter={settings.get<boolean>('kingu.chat.submitWithCmdEnter') === true}
-				oncyclemode={() => void nextMode()}
-				approval={pendingApproval ? { answer: answerApproval } : undefined}
-				onsubmit={submit}
-				onpastetext={attachPaste}
-			>
-				{#snippet left(l)}
-					<!-- + Add Context (VS Code's attach button; ⌥⌘P): the context sources and files from disk. -->
-					<button
-						type="button"
-						class="grid size-[22px] shrink-0 place-items-center rounded-[4px] text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground) disabled:opacity-50"
-						aria-label={t('chatWelcome.addContext', { key: KEY.context })}
-						title={t('chatWelcome.addContext', { key: KEY.context })}
-						disabled={!workspace.root}
-						onclick={() => void addContext()}><Icon name="plus" size={15} /></button
-					>
-					<!-- The mode picker (VS Code's modePickerActionItem): icon and name, ⌘. / ⇧Tab cycles. -->
-					<div class="relative flex min-w-0 shrink-0">
-						<button
-							type="button"
-							class="flex h-[22px] min-w-0 items-center gap-1 rounded-[4px] px-1.5 text-xs text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground) disabled:opacity-50"
-							aria-label={t('composer.mode.label', { mode: modeName(pick) })}
-							title={t('composer.mode.hint', { key: KEY.mode })}
-							aria-haspopup="listbox"
-							aria-expanded={menuOpen === 'mode'}
-							disabled={!workspace.root}
-							onclick={() => {
-								void loadCustomizations();
-								menuOpen = menuOpen === 'mode' ? null : 'mode';
-							}}
-						>
-							<Icon name={MODE_ICON[tone]} size={13} />
-							{#if l.modeLabel}<span class="max-w-28 truncate">{modeName(pick)}</span>{/if}
-						</button>
-						{#if menuOpen === 'mode'}
-							<ComposerMenu
-								rows={modeRows}
-								width={200}
-								label={t('chatView.mode')}
-								search={modeRows.length > 6}
-								footer={t('composer.mode.footer', { key: KEY.mode })}
-								onpick={(id) => (closeMenu(), void applyPick(id as ModePick))}
-								onclose={closeMenu}
+			<!-- VS Code's input stack: the tip card and the toolbars docked on the input, one surface. -->
+			<div class="chat-input-stack">
+				{#if tip}
+					<ChatTipCard
+						{tip}
+						keys={{ model: KEY.model, mode: KEY.mode, find: KEY.find }}
+						several={severalTips}
+						onaction={runTip}
+						onstep={(dir) => chatTips.step(dir, tipCtx)}
+						ondismiss={() => chatTips.dismissForSession(tipCtx)}
+						ondismissthis={() => chatTips.dismiss(tipCtx)}
+						ondisable={() => chatTips.disable(true)}
+					/>
+				{/if}
+				{#if stacked}
+					<!-- Status and review, the queue, the edit banner, docked on the input. -->
+					<div class={['chat-input-stack-toolbar divide-y divide-(--vscode-widget-border)', tip && 'chat-input-stack-continues']}>
+						{#if chatMeta}<ChatEditsBar chatId={chatMeta.id} status={toolbarStatus} onstop={() => chatMeta && chats.interrupt(chatMeta.id)} flat />{/if}
+						{#if chatMeta}
+							<ComposerQueue
+								items={queued}
+								steer={steerable}
+								onedit={editQueued}
+								onsend={(n, how) => chatMeta && void chats.sendQueuedNow(chatMeta.id, n, how)}
+								onremove={(n) => chatMeta && chats.unqueue(chatMeta.id, n)}
+								onmove={(n, index) => chatMeta && chats.moveQueued(chatMeta.id, n, index)}
 							/>
 						{/if}
+						{#if editing || editingQueued}
+							<div class="flex items-center gap-1.5 px-2.5 py-1 text-xs" role="note">
+								<Codicon id={editingQueued ? 'clock' : 'edit'} size={12} />
+								<span class="min-w-0 flex-1 truncate">{editingQueued ? t('composer.editingQueued') : t('chatView.editNotice')}</span>
+								<button class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" onclick={() => (editingQueued ? cancelQueuedEdit() : resetInput())}>{t('common.cancel')}</button>
+							</div>
+						{/if}
 					</div>
-					{#if features.models || runtimeId === ARKAI_RUNTIME}
-						<!-- The model label (Cursor's compact trigger), ⌘/ opens it. -->
-						<div class="relative flex min-w-0">
+				{/if}
+				<Composer
+					bind:this={composer}
+					bind:value={input}
+					attach
+					bind:attachments={files}
+					{placeholder}
+					disabled={!workspace.root}
+					{busy}
+					{history}
+					{running}
+					stacked={stacked || !!tip}
+					vscode
+					editing={!!editing}
+					onescape={leaveComposer}
+					preview={previewOf}
+					onstop={() => chatMeta && chats.interrupt(chatMeta.id)}
+					mentions={(q, scope) => mentionItems(q, scope, picked.map((p) => p.path), contextEnv())}
+					{onmention}
+					onmentionopen={() => void contextFiles.refresh(workspace.root)}
+					chips={chipEntries.map((e) => e.chip)}
+					onchip={(c, action) => chipEntries.find((e) => e.chip.key === c.key)?.act(action)}
+					chipsExtra={rulesChip}
+					sendLabel={running ? t('chatView.queue') : undefined}
+					commands={slashCommands}
+					onpickcommand={pickCommand}
+					queueDefault={queueAction}
+					cmdEnter={settings.get<boolean>('kingu.chat.submitWithCmdEnter') === true}
+					oncyclemode={() => void nextMode()}
+					approval={pendingApproval ? { answer: answerApproval } : undefined}
+					onsubmit={submit}
+					onpastetext={attachPaste}
+				>
+					{#snippet left(l)}
+						<!-- Add Context... (VS Code's AttachContextAction, add-compact): the context sources and files from disk. -->
+						<button
+							type="button"
+							class="action-label icon-only"
+							aria-label={t('chatWelcome.addContext', { key: KEY.context })}
+							title={t('chatWelcome.addContext', { key: KEY.context })}
+							disabled={!workspace.root}
+							onclick={() => void addContext()}><Codicon id="add-compact" /></button
+						>
+						<!-- The mode picker (VS Code's modePickerActionItem): the mode's compact icon and name; ⌘. / ⇧Tab cycles. -->
+						<div class="chat-input-picker-item relative flex min-w-0 shrink-0">
 							<button
 								type="button"
-								class="flex h-[22px] min-w-0 items-center gap-0.5 rounded-[4px] px-1.5 text-xs text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)"
-								aria-label={t('composer.model.label', { model: modelShort })}
-								title={t('composer.model.hint', { model: modelShort, key: KEY.model })}
+								class={['action-label', !l.modeLabel && MODE_CODICON[tone] && 'icon-only']}
+								aria-label={t('composer.mode.label', { mode: modeName(pick) })}
+								title={t('composer.mode.hint', { key: KEY.mode })}
 								aria-haspopup="listbox"
-								aria-expanded={menuOpen === 'model'}
-								onclick={() => (menuOpen === 'model' ? (menuOpen = null) : openModelPicker())}
+								aria-expanded={menuOpen === 'mode'}
+								disabled={!workspace.root}
+								onclick={() => {
+									void loadCustomizations();
+									menuOpen = menuOpen === 'mode' ? null : 'mode';
+								}}
 							>
-								{#if l.modelLabel}<span class="truncate">{modelShort}</span>{:else}<Icon name="cpu" size={12} />{/if}
+								{#if MODE_CODICON[tone]}<Codicon id={MODE_CODICON[tone]!} />{/if}
+								{#if l.modeLabel || !MODE_CODICON[tone]}<span class="chat-input-picker-label max-w-28">{modeName(pick)}</span>{/if}
 							</button>
-							{#if menuOpen === 'model'}
+							{#if menuOpen === 'mode'}
 								<ComposerMenu
-									rows={modelRows}
-									label={t('chat.panel.model')}
-									search
-									placeholder={t('composer.model.search')}
-									width={300}
-									footer={runtimeId === ARKAI_RUNTIME && !modelRows.length ? (arkaiProviders.loading ? t('arkai.picker.loading') : t('arkai.picker.none')) : undefined}
-									onpick={(id) => (closeMenu(), void changeModel(id))}
+									rows={modeRows}
+									width={200}
+									label={t('chatView.mode')}
+									search={modeRows.length > 6}
+									footer={t('composer.mode.footer', { key: KEY.mode })}
+									onpick={(id) => (closeMenu(), void applyPick(id as ModePick))}
 									onclose={closeMenu}
 								/>
 							{/if}
 						</div>
-					{/if}
-				{/snippet}
-				{#snippet right(l)}
-					{#if chatRun?.context && l.ring && settings.get<boolean>('chat.contextUsage.enabled') !== false}<ContextRing usage={chatRun.context} cost={chatRun.result?.total_cost_usd ?? null} oncompact={chatMeta ? compact : undefined} />{:else if running && l.ring}<span
-							class="grid size-6 shrink-0 place-items-center"
-							role="status"
-							aria-label={t('composer.status.running')}><span class="size-3 animate-spin rounded-full border-[1.5px] border-(--vscode-widget-border) border-t-(--vscode-descriptionForeground)"></span></span
-						>{/if}
-				{/snippet}
-			</Composer>
+						{#if features.models || runtimeId === ARKAI_RUNTIME}
+							<!-- The model picker (VS Code's modelPickerWidget): the model's name, "No models available" without one; ⌘/ opens it. -->
+							<div class="chat-input-picker-item relative flex min-w-0">
+								<button
+									type="button"
+									class="action-label min-w-0"
+									aria-label={t('composer.model.label', { model: modelShort })}
+									title={t('composer.model.hint', { model: modelShort, key: KEY.model })}
+									aria-haspopup="listbox"
+									aria-expanded={menuOpen === 'model'}
+									onclick={() => (menuOpen === 'model' ? (menuOpen = null) : openModelPicker())}
+								>
+									<span class="chat-input-picker-label">{modelShort}</span>
+								</button>
+								{#if menuOpen === 'model'}
+									<ComposerMenu
+										rows={modelRows}
+										label={t('chat.panel.model')}
+										search
+										placeholder={t('composer.model.search')}
+										width={300}
+										footer={runtimeId === ARKAI_RUNTIME && !modelRows.length ? (arkaiProviders.loading ? t('arkai.picker.loading') : t('arkai.picker.none')) : undefined}
+										onpick={(id) => (closeMenu(), void changeModel(id))}
+										onclose={closeMenu}
+									/>
+								{/if}
+							</div>
+						{/if}
+					{/snippet}
+					{#snippet right(l)}
+						{#if chatRun?.context && l.ring && settings.get<boolean>('chat.contextUsage.enabled') !== false}<ContextRing usage={chatRun.context} cost={chatRun.result?.total_cost_usd ?? null} oncompact={chatMeta ? compact : undefined} />{/if}
+					{/snippet}
+				</Composer>
+			</div>
 			<ChatSessionBar target={targetPicker} permission={permissionPicker} onclose={(refocus) => refocus && queueMicrotask(() => composer?.focus())} />
-			{#if optionNote}<p class="px-1 pt-1 text-xs text-(--vscode-descriptionForeground)" role="status">{optionNote}</p>{/if}
-			{#if allowAll && mode === 'agent'}<p class="px-1 pt-1 text-xs text-(--vscode-editorWarning-foreground)" role="status">{t('chatInput.allowAllNote')}</p>{/if}
-			{#if globalAutoApprove}<p class="px-1 pt-1 text-xs text-(--vscode-editorWarning-foreground)" role="status">{t('chatCustomize.autoApproveNote')}</p>{/if}
+			{#if optionNote}<p class="px-1 text-xs text-(--vscode-descriptionForeground)" role="status">{optionNote}</p>{/if}
+			{#if allowAll && mode === 'agent'}<p class="px-1 text-xs text-(--vscode-editorWarning-foreground)" role="status">{t('chatInput.allowAllNote')}</p>{/if}
+			{#if globalAutoApprove}<p class="px-1 text-xs text-(--vscode-editorWarning-foreground)" role="status">{t('chatCustomize.autoApproveNote')}</p>{/if}
 		</div>
 {/snippet}
 

@@ -8,7 +8,9 @@
 	//   row that opens its own list (`drill`); a `section: ''` row draws a separator above itself.
 	//   `preview` shows the highlighted file's first lines beside the menu.
 	// `below`: the menu opens under the input (the composer at the top of an empty chat).
-	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
+	import type { IconName } from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
+	import { codiconOf } from './chatIcons.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import type { SlashSource } from './slashCommands.ts';
 
@@ -111,7 +113,7 @@
 			type="button"
 			class="flex w-full items-center gap-1.5 border-b border-(--vscode-widget-border) px-2 py-1 text-left text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)"
 			title={t('composer.mention.back')}
-			onmousedown={(e) => (e.preventDefault(), back.go())}><Icon name="arrowLeft" size={12} />{back.title}</button
+			onmousedown={(e) => (e.preventDefault(), back.go())}><Codicon id="arrow-left" size={12} />{back.title}</button
 		>
 	{/if}
 	<ul bind:this={list} {id} role="listbox" aria-label={label ?? t('chatInput.slash.list')} class="max-h-72 overflow-y-auto py-1">
@@ -142,11 +144,11 @@
 					</span>
 					{#if item.description}<span class="truncate text-[11px] opacity-70">{item.description}</span>{/if}
 				{:else}
-					{#if item.icon}<span class="shrink-0 opacity-80"><Icon name={item.icon} size={13} /></span>{/if}
+					{#if item.icon}<span class="shrink-0 opacity-80"><Codicon id={codiconOf(item.icon)} size={13} /></span>{/if}
 					<span class="shrink-0 truncate">{item.name}</span>
 					{#if item.description}<span class="min-w-0 flex-1 truncate opacity-60">{item.description}</span>{:else}<span class="flex-1"></span>{/if}
 					{#if item.tag}<span class="shrink-0 text-[11px] opacity-60">{item.tag}</span>{/if}
-					{#if item.drill}<span class="shrink-0 opacity-70"><Icon name="chevronRight" size={12} /></span>{/if}
+					{#if item.drill}<span class="shrink-0 opacity-70"><Codicon id="chevron-right" size={12} /></span>{/if}
 				{/if}
 			</li>
 		{:else}

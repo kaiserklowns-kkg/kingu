@@ -6,7 +6,8 @@
 	// with what it would send and VS Code's Allow in this Session / Always / Not Now / Never (Always
 	// and Never are saved in chat.mcp.serverSampling). Once answered: one quiet line. The form
 	// model is mcpChat.ts.
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
+	import { codiconOf } from './chatIcons.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import type { McpAction, McpRequestEvent } from './events';
 	import { formContent, formFields, initialValues, type FieldError, type FormField } from './mcpChat.ts';
@@ -87,22 +88,22 @@
 
 {#if action}
 	<div class="flex items-center gap-1.5 text-(--vscode-descriptionForeground)">
-		<Icon name={action === 'accept' ? 'check' : 'circleDashed'} size={13} />
+		<Codicon id={codiconOf(action === 'accept' ? 'check' : 'circleDashed')} size={13} />
 		<span class="truncate">{resolvedText}</span>
 	</div>
 {:else if !onanswer}
 	<div class="flex items-center gap-1.5 text-(--vscode-editorWarning-foreground)">
-		<Icon name="question" size={13} />
+		<Codicon id="comment-discussion" size={13} />
 		<span class="truncate">{t('chatMcp.waiting', { server: request.server })}</span>
 	</div>
 {:else if request.type === 'sampling'}
 	{@const s = request.sampling}
 	<div class="space-y-2 rounded border border-(--vscode-editorWarning-foreground)/60 bg-(--vscode-editorWidget-background) p-2 text-(--vscode-foreground)" role="group" aria-label={t('chatMcp.sampling.title', { server: request.server })}>
-		<div class="flex items-center gap-1.5 font-medium"><Icon name="sparkle" size={13} />{t('chatMcp.sampling.title', { server: request.server })}</div>
+		<div class="flex items-center gap-1.5 font-medium"><Codicon id="sparkle" size={13} />{t('chatMcp.sampling.title', { server: request.server })}</div>
 		<p class="text-(--vscode-descriptionForeground)">{t('chatMcp.sampling.desc')}</p>
 		{#if s}
 			<button type="button" class="flex items-center gap-1 text-(--vscode-textLink-foreground) hover:underline" aria-expanded={showRequest} onclick={() => (showRequest = !showRequest)}>
-				<Icon name={showRequest ? 'chevronDown' : 'chevronRight'} size={12} />{s.messages.length} · {s.max_tokens ? t('chatMcp.sampling.maxTokens', { count: s.max_tokens }) : ''}
+				<Codicon id={showRequest ? 'chevron-down' : 'chevron-right'} size={12} />{s.messages.length} · {s.max_tokens ? t('chatMcp.sampling.maxTokens', { count: s.max_tokens }) : ''}
 			</button>
 			{#if showRequest}
 				<div class="max-h-60 space-y-1 overflow-auto rounded border border-(--vscode-widget-border) p-1.5 text-xs">
@@ -124,7 +125,7 @@
 	</div>
 {:else}
 	<div class="space-y-2 rounded border border-(--vscode-charts-purple,#B180D7)/70 bg-(--vscode-editorWidget-background) p-2 text-(--vscode-foreground)" role="group" aria-label={t('chatMcp.elicit.title', { server: request.server })}>
-		<div class="flex items-center gap-1.5 font-medium text-(--vscode-charts-purple,#B180D7)"><Icon name="ports" size={13} />{request.mode === 'url' ? t('chatMcp.url.title', { server: request.server }) : t('chatMcp.elicit.title', { server: request.server })}</div>
+		<div class="flex items-center gap-1.5 font-medium text-(--vscode-charts-purple,#B180D7)"><Codicon id="plug" size={13} />{request.mode === 'url' ? t('chatMcp.url.title', { server: request.server }) : t('chatMcp.elicit.title', { server: request.server })}</div>
 		{#if request.message}<p class="whitespace-pre-wrap">{request.message}</p>{/if}
 		{#if request.mode === 'url'}
 			<p class="truncate font-mono text-xs text-(--vscode-descriptionForeground)" title={request.url ?? ''}>{request.url}</p>

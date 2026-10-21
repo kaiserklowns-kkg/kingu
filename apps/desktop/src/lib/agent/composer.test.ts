@@ -66,9 +66,9 @@ describe('modes', () => {
 	});
 
 	test('run modes are named the Cursor way', () => {
-		expect(runModeLabel('default')).toBe('Ask Every Time');
-		expect(runModeLabel('acceptEdits')).toBe('Auto-Accept Edits');
-		expect(runModeLabel('bypassPermissions')).toBe('Run Everything');
+		expect(runModeLabel('default')).toBe('Manual permissions');
+		expect(runModeLabel('acceptEdits')).toBe('Edit Automatically');
+		expect(runModeLabel('bypassPermissions')).toBe('Allow all');
 	});
 });
 

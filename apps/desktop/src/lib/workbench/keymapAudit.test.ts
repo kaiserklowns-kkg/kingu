@@ -108,7 +108,9 @@ const EXCLUSIVE: [string, string][] = [
 	// ⌘F / ⌘G with focus in the chat view (Find in Chat, Find Next) where no terminal or Problems view has focus.
 	['workbench.action.chat.find', 'workbench.action.terminal.focusFind'],
 	['workbench.action.chat.find', 'problems.action.focusFilter'],
-	['workbench.action.chat.findNext', 'workbench.action.terminal.goToRecentDirectory']
+	['workbench.action.chat.findNext', 'workbench.action.terminal.goToRecentDirectory'],
+	// ⌘W restores a maximized secondary side bar (VS Code's Restore Secondary Side Bar), closes the editor otherwise.
+	['workbench.action.restoreAuxiliaryBar', 'workbench.action.closeActiveEditor']
 ];
 
 /** VS Code's `terminalFocus` / `!terminalFocus`: one command's key acts only in a focused panel

@@ -61,6 +61,7 @@ export function currentContext(): Context {
 		sideBarVisible: layout.sidebarVisible,
 		panelVisible: layout.panelVisible,
 		auxiliaryBarVisible: layout.auxVisible,
+		auxiliaryBarMaximized: layout.auxMaximized,
 		activeViewlet: `workbench.view.${layout.sideView}`,
 		activePanel: `workbench.panel.${layout.panelTab}`,
 		activeEditor: active ? (isDiffKey(active) ? 'workbench.editors.textDiffEditor' : 'workbench.editors.files.textFileEditor') : null,

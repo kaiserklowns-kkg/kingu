@@ -5,7 +5,7 @@
 	// without those tools. An agent that picks its own tools (ACP, Codex) only gets a note.
 	import { untrack } from 'svelte';
 	import AdeDialog from '#lib/ade/AdeDialog.svelte';
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import { chats } from './chats.svelte.ts';
 	import { chatTools } from './chatTools.svelte.ts';
@@ -73,7 +73,7 @@
 							aria-label={expanded ? t('chatTools.collapse') : t('chatTools.expand')}
 							aria-expanded={expanded}
 							disabled={!g.rows.length}
-							onclick={() => (open = { ...open, [g.id]: !expanded })}><Icon name={expanded ? 'chevronDown' : 'chevronRight'} size={12} /></button
+							onclick={() => (open = { ...open, [g.id]: !expanded })}><Codicon id={expanded ? 'chevron-down' : 'chevron-right'} size={12} /></button
 						>
 						<label class="flex min-w-0 flex-1 items-center gap-2">
 							<input type="checkbox" {@attach box(gc)} onchange={() => toggle(g.tools, gc)} />

@@ -19,12 +19,12 @@ export const composer = {
 	'composer.options.hint': 'Runs on {runtime} in {where} · {run}',
 
 	'composer.run.title': 'Run Mode',
-	'composer.run.ask': 'Ask Every Time',
-	'composer.run.askHint': 'Asks before tools that are not on your allowlist',
-	'composer.run.edits': 'Auto-Accept Edits',
-	'composer.run.editsHint': 'File edits go ahead; commands still ask',
-	'composer.run.all': 'Run Everything',
-	'composer.run.allHint': 'Every tool runs without asking, commands included',
+	'composer.run.ask': 'Manual permissions',
+	'composer.run.askHint': "Asks when approval settings don't apply",
+	'composer.run.edits': 'Edit Automatically',
+	'composer.run.editsHint': 'Edits files without asking, and asks before using other tools',
+	'composer.run.all': 'Allow all',
+	'composer.run.allHint': 'Runs tool calls without asking',
 	'composer.run.global': 'Global auto-approve is on',
 
 	'composer.menu.search': 'Search',

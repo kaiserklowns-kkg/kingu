@@ -17,12 +17,12 @@ export const composer = {
 	'composer.options.hint': 'รันด้วย {runtime} ใน {where} · {run}',
 
 	'composer.run.title': 'โหมดการรัน',
-	'composer.run.ask': 'ถามทุกครั้ง',
-	'composer.run.askHint': 'ถามก่อนใช้เครื่องมือที่ไม่อยู่ในรายการที่อนุญาต',
-	'composer.run.edits': 'ยอมรับการแก้ไฟล์อัตโนมัติ',
-	'composer.run.editsHint': 'แก้ไฟล์ได้เลย ส่วนคำสั่งยังถามก่อน',
-	'composer.run.all': 'รันทุกอย่าง',
-	'composer.run.allHint': 'ทุกเครื่องมือรันโดยไม่ถาม รวมถึงคำสั่ง',
+	'composer.run.ask': 'อนุมัติเอง',
+	'composer.run.askHint': 'ถามเมื่อการตั้งค่าการอนุมัติไม่ครอบคลุม',
+	'composer.run.edits': 'แก้ไขอัตโนมัติ',
+	'composer.run.editsHint': 'แก้ไฟล์โดยไม่ถาม และถามก่อนใช้เครื่องมืออื่น',
+	'composer.run.all': 'อนุญาตทั้งหมด',
+	'composer.run.allHint': 'รันเครื่องมือทุกครั้งโดยไม่ถาม',
 	'composer.run.global': 'เปิดอนุมัติอัตโนมัติทั้งหมดอยู่',
 
 	'composer.menu.search': 'ค้นหา',

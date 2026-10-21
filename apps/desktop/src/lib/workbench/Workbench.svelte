@@ -10,7 +10,6 @@
 	import AgentPanel from '#lib/agent/AgentPanel.svelte';
 	import { installChatExtras } from '#lib/agent/chatExtras.svelte.ts';
 	import ActivityBar from './ActivityBar.svelte';
-	import Icon from './Icon.svelte';
 	import CleanupDialog from '#lib/ade/CleanupDialog.svelte';
 	import { cleanup } from '#lib/ade/cleanup.svelte.ts';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
@@ -129,6 +128,9 @@
 		if (active === lastActive) return;
 		lastActive = active;
 		untrack(() => systemSettings.close());
+		// An editor opened while the secondary side bar is maximized shows the editor area again
+		// (VS Code's showEditorIfHidden ends maximized mode).
+		if (active !== null) untrack(() => layout.setAuxMaximized(false));
 	});
 
 
@@ -278,6 +280,31 @@
 				key: 'cmd+alt+b',
 				run: () => (appMode.isAgents ? (appMode.panelVisible = !appMode.panelVisible) : (layout.auxVisible = !layout.auxVisible))
 			}),
+			// Maximize Secondary Side Bar (VS Code's auxiliaryBarActions.ts): the chat in the editor's place.
+			commands.register({
+				id: 'workbench.action.toggleMaximizedAuxiliaryBar',
+				title: 'Toggle Maximized Secondary Side Bar',
+				category: 'View',
+				scope: 'ide',
+				run: () => layout.toggleAuxMaximized()
+			}),
+			commands.register({
+				id: 'workbench.action.maximizeAuxiliaryBar',
+				title: 'Maximize Secondary Side Bar',
+				category: 'View',
+				scope: 'ide',
+				when: () => !appMode.isAgents && !layout.auxMaximized,
+				run: () => layout.setAuxMaximized(true)
+			}),
+			commands.register({
+				id: 'workbench.action.restoreAuxiliaryBar',
+				title: 'Restore Secondary Side Bar',
+				category: 'View',
+				scope: 'ide',
+				key: 'cmd+w',
+				when: () => !appMode.isAgents && layout.auxMaximized,
+				run: () => layout.setAuxMaximized(false)
+			}),
 			commands.register({
 				id: 'workbench.action.togglePanel',
 				title: 'Toggle Panel Visibility',
@@ -306,7 +333,8 @@
 				key: 'cmd+w',
 				// An empty group closes itself when it is not the only one (VS Code closes the group).
 				// In the Agents layout ⌘W closes the active tab, or the focused pane of a split terminal (Orca).
-				when: () => adeInFront() || editors.active !== null || editors.groups.length > 1,
+				// With the secondary side bar maximized ⌘W restores it instead (the editors are hidden).
+				when: () => adeInFront() || (!layout.auxMaximized && (editors.active !== null || editors.groups.length > 1)),
 				run: () => {
 					if (adeInFront()) adeLayout.closeActive();
 					else if (!editors.active) editors.removeGroup();
@@ -534,7 +562,7 @@
 
 	<div bind:this={middle} class={['workbench-body grid min-h-0 flex-1 bg-(--vscode-titleBar-activeBackground) px-[4px] pb-[4px]', (appMode.isAgents || systemSettings.visible) && 'hidden']}
 		style:grid-template-areas={gridTemplateAreas(grid)}
-		style:grid-template-columns={gridTemplateColumns(grid)}
+		style:grid-template-columns={gridTemplateColumns(grid, layout.auxMaximized ? 'aux' : 'edit')}
 		style:grid-template-rows={gridTemplateRows(grid)}
 	>
 		<div style:grid-area="act" class={['flex min-h-0', !activityBar && 'hidden']}><ActivityBar /></div>
@@ -555,7 +583,7 @@
 			/>
 		</div>
 
-		<div style:grid-area="edit" class={[FRAME, 'min-w-0']}><EditorPart /></div>
+		<div style:grid-area="edit" class={[FRAME, 'min-w-0', layout.auxMaximized && 'hidden']}><EditorPart /></div>
 
 		<div style:grid-area="sashP" class={['flex', panelBeside ? 'flex-row' : 'flex-col', !layout.panelVisible && 'hidden']}>
 			<Sash
@@ -577,7 +605,7 @@
 			<Panel />
 		</div>
 
-		<div style:grid-area="sashX" class={['flex', !layout.auxVisible && 'hidden']}>
+		<div style:grid-area="sashX" class={['flex', (!layout.auxVisible || layout.auxMaximized) && 'hidden']}>
 			<Sash
 				gap
 				orientation="vertical"
@@ -585,17 +613,18 @@
 				onReset={() => (layout.auxWidth = 360)}
 			/>
 		</div>
+		<!-- The secondary side bar (VS Code's auxiliarybar part): the Chat view; its view switcher and
+		     title row are AgentPanel's own (they hold the chat's actions). -->
 		<aside
-			aria-label="Agent"
+			aria-label={t('chatWelcome.viewTitle')}
 			style:grid-area="aux"
-			style:width="{layout.auxWidth}px"
+			style:width={layout.auxMaximized ? undefined : `${layout.auxWidth}px`}
 			class={[
 				FRAME,
-				'flex flex-col bg-(--vscode-sideBar-background)',
+				'part auxiliarybar flex min-w-0 flex-col bg-(--vscode-sideBar-background)',
 				!layout.auxVisible && 'hidden'
 			]}
 		>
-			<div class="flex h-(--kg-part-title-height) shrink-0 items-center gap-2 pl-3 text-[11px] font-medium text-(--vscode-sideBarTitle-foreground) uppercase"><Icon name="agent" size={15} />Arkai</div>
 			<!-- Tasks are worktrees of the open folder: a new folder gets a fresh panel. -->
 			<div class="min-h-0 flex-1">
 				{#key workspace.root}<AgentPanel />{/key}

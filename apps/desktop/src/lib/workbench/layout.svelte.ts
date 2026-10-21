@@ -10,6 +10,8 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { notifications } from './notifications.svelte';
 import { workspaceStorage } from './workspaceStorage.svelte';
 import { withSaved } from './workspaceState';
+import { untrack } from 'svelte';
+import { maximizeAux, restoreAux, type AuxRestore } from './auxMaximize';
 import { CENTERED_DEFAULT, enterZen, exitZenFullScreen, zenConfig, zenParts, type CenteredState, type ZenExitInfo, type ZenParts } from './zenMode';
 
 /** `snap:<key>`: a snap's side bar view (snaps/contributions.ts viewKey). */
@@ -66,6 +68,41 @@ class Layout {
 	centeredState = $state.raw<CenteredState>(CENTERED_DEFAULT);
 	/** The window is in (native) full screen; kept current by installLayoutCommands. */
 	fullscreen = $state(false);
+	/**
+	 * Maximize Secondary Side Bar (VS Code's `auxiliaryBarMaximized`): the secondary side bar takes
+	 * the editor's place, the side bar and panel hidden until restored. Not kept across restarts.
+	 */
+	auxMaximized = $state(false);
+	/** What showed before maximizing, for restoring. */
+	#auxRestore: AuxRestore | null = null;
+
+	/** VS Code's setAuxiliaryBarMaximized; false when it was so already. */
+	setAuxMaximized(on: boolean): boolean {
+		if (on === this.auxMaximized) return false;
+		const now = { sideBar: this.sidebarVisible, panel: this.panelVisible, auxiliaryBar: this.auxVisible };
+		if (on) {
+			const { parts, restore } = maximizeAux(now);
+			this.#auxRestore = restore;
+			this.auxMaximized = true;
+			this.#apply(parts);
+		} else {
+			const parts = restoreAux(now, this.#auxRestore);
+			this.#auxRestore = null;
+			this.auxMaximized = false;
+			this.#apply(parts);
+		}
+		return true;
+	}
+
+	toggleAuxMaximized() {
+		this.setAuxMaximized(!this.auxMaximized);
+	}
+
+	#apply(parts: { sideBar: boolean; panel: boolean; auxiliaryBar: boolean }) {
+		this.sidebarVisible = parts.sideBar;
+		this.panelVisible = parts.panel;
+		this.auxVisible = parts.auxiliaryBar;
+	}
 
 	/** The zenMode.* settings while Zen Mode is on, else null. */
 	get zenParts(): ZenParts | null {
@@ -87,6 +124,7 @@ class Layout {
 	toggleZen() {
 		const config = zenConfig((id) => settings.get(id));
 		if (!this.zen) {
+			this.setAuxMaximized(false);
 			const { exit, toggleFullScreen } = enterZen(
 				{ fullscreen: this.fullscreen, centered: this.centered, doNotDisturb: notifications.doNotDisturb, sideBar: this.sidebarVisible, panel: this.panelVisible, auxiliaryBar: this.auxVisible },
 				config
@@ -155,6 +193,18 @@ class Layout {
 					// Storage can be unavailable; layout then resets on the next launch.
 				}
 			});
+			// Hiding the secondary side bar ends maximized mode, restoring the other parts (VS Code's
+			// setAuxiliaryBarHidden); so does showing the panel, which sits under the hidden editor.
+			$effect(() => {
+				if (!this.auxMaximized) return;
+				const hidden = !this.auxVisible;
+				const panel = this.panelVisible;
+				if (!hidden && !panel) return;
+				untrack(() => {
+					this.setAuxMaximized(false);
+					if (panel && !hidden) this.panelVisible = true;
+				});
+			});
 			$effect(() => {
 				const snapshot = Object.fromEntries(WORKSPACE_KEYS.map((k) => [k, this[k]]));
 				if (workspaceStorage.scope !== undefined) workspaceStorage.save(KEY, snapshot);
@@ -165,6 +215,8 @@ class Layout {
 	/** Another workspace in this window (or the first one): its parts, views and modes. */
 	#show(saved: Record<string, unknown> | null) {
 		const next = withSaved(WORKSPACE_DEFAULTS, saved);
+		this.auxMaximized = false;
+		this.#auxRestore = null;
 		for (const k of WORKSPACE_KEYS) (this as Record<string, unknown>)[k] = next[k];
 		// The new workspace's Zen Mode is kept or ended like at startup (zenMode.restore).
 		if (settings.loaded) this.restoreZen();

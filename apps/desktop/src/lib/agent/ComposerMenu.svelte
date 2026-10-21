@@ -2,7 +2,8 @@
 	// A dropdown that opens above a composer control (the mode pill, the model label, the options
 	// button): sections of rows with a check on the current one, an optional search field, and
 	// ↑/↓ Enter Esc. The parent wraps its trigger and this in a `relative` element and shows it while open.
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
+	import { codiconOf } from './chatIcons.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import { filterRows, initialActive, nextEnabled, placeMenu, startsSection, type MenuRow } from './composerMenu.ts';
 
@@ -124,7 +125,7 @@
 >
 	{#if search}
 		<div class="flex items-center gap-1.5 border-b border-(--vscode-widget-border) px-2">
-			<Icon name="search" size={12} />
+			<Codicon id="search" size={12} />
 			<input
 				bind:this={input}
 				bind:value={query}
@@ -159,13 +160,13 @@
 				onpointermove={(e) => !row.disabled && (e.movementX || e.movementY) && (active = i)}
 				onmousedown={(e) => (e.preventDefault(), pick(row))}
 			>
-				{#if row.icon}<span class="shrink-0" style:color={i === active ? undefined : row.color}><Icon name={row.icon} size={13} /></span>{/if}
+				{#if row.codicon || row.icon}<span class="shrink-0" style:color={i === active ? undefined : row.color}><Codicon id={row.codicon ?? codiconOf(row.icon!)} size={13} /></span>{/if}
 				<span class="flex min-w-0 flex-1 flex-col">
 					<span class="truncate">{row.label}</span>
 					{#if row.description && row.description.toLowerCase() !== row.label.toLowerCase()}<span class={['truncate text-[11px]', i === active ? 'opacity-80' : 'text-(--vscode-descriptionForeground)']}>{row.description}</span>{/if}
 				</span>
 				{#if row.keyLabel}<span class="shrink-0 text-[11px] opacity-70">{row.keyLabel}</span>{/if}
-				<span class={['shrink-0', !row.checked && 'invisible']}><Icon name="check" size={12} /></span>
+				<span class={['shrink-0', !row.checked && 'invisible']}><Codicon id="check" size={12} /></span>
 			</li>
 		{:else}
 			<li class="px-2.5 py-1.5 text-(--vscode-descriptionForeground)">{t('composer.menu.none')}</li>
