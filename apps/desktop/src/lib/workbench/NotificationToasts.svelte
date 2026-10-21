@@ -24,6 +24,7 @@
 	{@const pct = progressPercent(n.progress)}
 	<div
 		role={n.severity === 'error' ? 'alert' : 'status'}
+		data-notification-id={n.id}
 		class="group relative flex flex-col gap-1.5 px-3 py-2.5"
 		onmouseenter={() => inToast && notifications.hold(n.id, true)}
 		onmouseleave={() => inToast && notifications.hold(n.id, false)}

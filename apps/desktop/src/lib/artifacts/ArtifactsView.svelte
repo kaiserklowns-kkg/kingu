@@ -10,6 +10,7 @@
 	import { timeAgo } from '#lib/ade/model.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import { artifacts } from './artifacts.svelte';
+	import { listKeys } from '#lib/workbench/listKeys.ts';
 	import { artifactKey, filterArtifacts, latest, teamArtifactKey, type ArtifactMeta } from './artifacts';
 
 	let query = $state('');
@@ -54,7 +55,7 @@
 		</button>
 	</div>
 
-	<div class="min-h-0 flex-1 overflow-y-auto" role="list">
+	<div class="min-h-0 flex-1 overflow-y-auto" role="list" use:listKeys>
 		{#if !root}
 			<p class="px-5 py-2 {MUTED}">{t('artifacts.noFolder')}</p>
 		{:else}

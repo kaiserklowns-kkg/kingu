@@ -5,6 +5,7 @@
 	import { t } from '#lib/i18n/index.ts';
 	import Icon from './Icon.svelte';
 	import { symbolCodicon } from './breadcrumbs';
+	import { listKeys } from '#lib/workbench/listKeys.ts';
 	import { hierarchy } from './hierarchy.svelte';
 
 	const root = $derived(hierarchy.roots[0]?.item.name ?? '');
@@ -48,7 +49,7 @@
 		</div>
 	</div>
 	<p class="truncate px-5 pb-1 text-xs text-(--vscode-descriptionForeground)">{message}</p>
-	<div role="tree" aria-label={hierarchy.title} class="min-h-0 flex-1 overflow-y-auto" use:listWheel>
+	<div role="tree" aria-label={hierarchy.title} class="min-h-0 flex-1 overflow-y-auto" use:listWheel use:listKeys>
 		{#each hierarchy.rows as row (row.node.id)}
 			{@const n = row.node}
 			<button

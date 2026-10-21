@@ -61,6 +61,7 @@
 	import { contextLabel } from './chatPrompt';
 	import { formatUsage, type Decision, type PermissionRequest } from './events';
 	import { usageDisplay } from './chatExtras';
+	import { accessibleView, chatProvider } from '#lib/workbench/accessibleView.svelte.ts';
 
 	let {
 		run,
@@ -104,6 +105,8 @@
 		actions.remember?.(picked || text);
 	};
 	const turns = $derived(run ? buildTurns(run) : []);
+	// ⌥F2 in the chat: its requests and responses in the Accessible View.
+	$effect(() => accessibleView.registerProvider(chatProvider(() => list, () => turns.map((x) => ({ request: x.request?.text, response: responseText(x), done: x.done })))));
 	let open = $state<Record<string, boolean>>({});
 	let copied = $state<number | null>(null);
 	/** The turn whose request is edited in place, and its text. */

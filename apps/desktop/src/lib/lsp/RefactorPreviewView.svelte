@@ -10,6 +10,7 @@
 	import { uriToPath } from './convert';
 	import { checkState, editLine, type PreviewEdit, type PreviewFile } from './refactorPreview.ts';
 	import { refactorPreview as view } from './refactorPreview.svelte.ts';
+	import { listKeys } from '#lib/workbench/listKeys.ts';
 
 	const collapsed = new SvelteSet<string>();
 	const total = $derived(view.tree.reduce((n, c) => n + c.files.reduce((m, f) => m + f.edits.length, 0), 0));
@@ -75,7 +76,7 @@
 		<p class="truncate px-4 py-1 text-(--vscode-descriptionForeground)">
 			{view.pending.label ? `${view.pending.label} · ` : ''}{t('refactorPreview.summary', { edits: total, files: new Set(view.tree.flatMap((c) => c.files.map((f) => f.uri))).size })}
 		</p>
-		<div role="tree" aria-label={t('refactorPreview.title')} class="min-h-0 flex-1 overflow-y-auto py-0.5" use:listWheel>
+		<div role="tree" aria-label={t('refactorPreview.title')} class="min-h-0 flex-1 overflow-y-auto py-0.5" use:listWheel use:listKeys>
 			{#each view.tree as cat (cat.label)}
 				{#if cat.label}
 					{@const key = `cat:${cat.label}`}
