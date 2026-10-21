@@ -672,6 +672,13 @@ description = "ข้อความที่งาน hello พิมพ์"
 # title = "My server"
 # command = ["my-tool", "serve"]
 
+# ธีมสี (ไฟล์ธีมของ VS Code): ขึ้นใน Settings › Appearance และ Preferences: Color Theme
+# ui_theme: vs-dark, vs, hc-black, hc-light — include ธีมในตัวได้ เช่น "include": "./dark_modern.json"
+# [[themes]]
+# path = "themes/my-theme.json"
+# label = "My Theme"
+# ui_theme = "vs-dark"
+
 # ไฟล์ที่มากับ snap: อ้างด้วย ${{snap:dir}}/<path> เช่น command = ["${{snap:dir}}/bin/run.sh"]
 # ไฟล์ที่คำสั่งเรียกใช้ (ใน snap หรือใน repo เช่น ./scripts/test.sh) อยู่ในการเชื่อถือด้วย
 # README.md ในโฟลเดอร์นี้แสดงในหน้ารายละเอียดของ snap

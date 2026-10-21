@@ -46,7 +46,7 @@ export function flattenTheme(entry: string, read: (path: string) => string): Fla
 	return result;
 }
 
-function joinPath(from: string, relative: string): string {
+export function joinPath(from: string, relative: string): string {
 	const parts = from.split('/').slice(0, -1);
 	for (const seg of relative.split('/')) {
 		if (seg === '..') parts.pop();

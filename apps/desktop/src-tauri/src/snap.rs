@@ -58,6 +58,8 @@ struct Manifest {
   requires: Vec<Require>,
   #[serde(default)]
   services: Vec<RawService>,
+  #[serde(default)]
+  themes: Vec<RawTheme>,
 }
 
 /// Shown to the user before trust and enforced when a task or MCP server runs (`kingu-ptyd
@@ -206,6 +208,37 @@ pub struct Service {
 
 const MAX_SERVICES: usize = 4;
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawTheme {
+  path: String,
+  label: String,
+  #[serde(default)]
+  id: Option<String>,
+  ui_theme: String,
+}
+
+/// A color theme of the snap (`[[themes]]`, VS Code's `contributes.themes`): its file and the
+/// files it `include`s from the snap folder, read when listing (data for the theme service, also
+/// covered by the trust hash). An include the snap does not have resolves to a built-in theme.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Theme {
+  /// The `workbench.colorTheme` value.
+  pub id: String,
+  pub label: String,
+  /// `vs-dark`, `vs`, `hc-black` or `hc-light`.
+  pub ui_theme: String,
+  /// The theme file's name as the theme service reads it (`<snap>/<path>`), first in `files`.
+  pub file: String,
+  /// File name → text, for the theme and the includes found in the snap.
+  pub files: BTreeMap<String, String>,
+}
+
+const MAX_THEMES: usize = 16;
+const UI_THEMES: [&str; 4] = ["vs-dark", "vs", "hc-black", "hc-light"];
+const MAX_THEME_FILE: u64 = 1024 * 1024;
+
 /// The Claude Code hook events a snap may hook.
 pub const HOOK_EVENTS: &[&str] = &["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "PreCompact", "Stop", "SubagentStart", "SubagentStop", "SessionEnd"];
 const MAX_HOOKS: usize = 16;
@@ -233,6 +266,8 @@ pub struct Parsed {
   pub hooks: Vec<Hook>,
   pub requires: Vec<Require>,
   pub services: Vec<Service>,
+  /// `(path, label, id, ui_theme)` as declared; read from disk by `read_themes`.
+  pub themes: Vec<(String, String, String, String)>,
 }
 
 /// `^[a-z0-9][a-z0-9-]{0,max-1}$` (task ids pass `usize::MAX`).
@@ -478,7 +513,29 @@ pub fn parse_manifest(text: &str, folder: &str) -> Result<Parsed, String> {
     services.push(Service { id: sv.id, title: sv.title, command: sv.command, env: sv.env, autostart: sv.autostart, when: sv.when });
   }
 
-  Ok(Parsed { id: m.id, name: m.name, version: m.version, description: m.description, permissions: m.permissions, tasks: m.tasks, settings, mcp, skills, hooks, requires: m.requires, services })
+  if m.themes.len() > MAX_THEMES {
+    return Err(format!("มีธีมได้ไม่เกิน {MAX_THEMES} ตัว"));
+  }
+  let mut themes = Vec::new();
+  let mut theme_ids = BTreeSet::new();
+  for th in m.themes {
+    if plain_rel(&th.path).is_none() || !th.path.ends_with(".json") {
+      return Err(format!("path ของธีม \"{}\" ต้องเป็นไฟล์ .json ในโฟลเดอร์ snap", th.path));
+    }
+    if th.label.trim().is_empty() {
+      return Err(format!("ธีม {} ต้องมี label", th.path));
+    }
+    if !UI_THEMES.contains(&th.ui_theme.as_str()) {
+      return Err(format!("ธีม \"{}\": ui_theme ต้องเป็น {}", th.label, UI_THEMES.join(", ")));
+    }
+    let id = th.id.unwrap_or_else(|| th.label.clone());
+    if !theme_ids.insert(id.clone()) {
+      return Err(format!("ธีม \"{id}\" ซ้ำ"));
+    }
+    themes.push((th.path, th.label, id, th.ui_theme));
+  }
+
+  Ok(Parsed { id: m.id, name: m.name, version: m.version, description: m.description, permissions: m.permissions, tasks: m.tasks, settings, mcp, skills, hooks, requires: m.requires, services, themes })
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -671,6 +728,54 @@ pub fn run_files(p: &Parsed, snap_dir: &Path, root: Option<&Path>) -> Result<Vec
   Ok(out)
 }
 
+/// `"include": "<file>"` of a theme's JSON(C) text, without parsing the rest.
+fn theme_include(text: &str) -> Option<String> {
+  let at = text.find("\"include\"")?;
+  let rest = text[at + 9..].trim_start().strip_prefix(':')?.trim_start().strip_prefix('"')?;
+  Some(rest[..rest.find('"')?].to_string())
+}
+
+/// Reads each declared theme and the include chain it has in the snap folder (no symlinks out,
+/// at most 8 files per theme and 1 MB each), keyed `<snap>/<path>` so names never clash with the
+/// built-in themes; the files go into the trust hash as well.
+pub fn read_themes(snap_dir: &Path, snap_id: &str, declared: &[(String, String, String, String)]) -> Result<(Vec<Theme>, Vec<RunFile>), String> {
+  let base = snap_dir.canonicalize().map_err(|e| e.to_string())?;
+  let read = |rel: &str| -> Result<String, String> {
+    let real = snap_dir.join(rel).canonicalize().map_err(|_| format!("ไม่พบไฟล์ธีม {rel}"))?;
+    if !real.starts_with(&base) || !real.is_file() {
+      return Err(format!("ไฟล์ธีม {rel} อยู่นอกโฟลเดอร์ snap"));
+    }
+    if std::fs::metadata(&real).map(|m| m.len()).unwrap_or_default() > MAX_THEME_FILE {
+      return Err(format!("ไฟล์ธีม {rel} ใหญ่เกิน 1 MB"));
+    }
+    std::fs::read_to_string(&real).map_err(|e| format!("อ่านไฟล์ธีม {rel} ไม่ได้: {e}"))
+  };
+  let (mut themes, mut hashed) = (Vec::new(), Vec::new());
+  for (path, label, id, ui_theme) in declared {
+    let mut files = BTreeMap::new();
+    let mut next = Some(plain_rel(path).unwrap_or(path).to_string());
+    while let Some(rel) = next.take() {
+      let key = format!("{snap_id}/{rel}");
+      if files.contains_key(&key) || files.len() >= 8 {
+        break;
+      }
+      let text = read(&rel)?;
+      // An include in the snap folder is read too; one that is not there is a built-in theme.
+      next = theme_include(&text).and_then(|inc| {
+        let dir = rel.rsplit_once('/').map(|(d, _)| format!("{d}/")).unwrap_or_default();
+        let inc_rel = format!("{dir}{}", inc.strip_prefix("./").unwrap_or(&inc));
+        plain_rel(&inc_rel).map(str::to_string).filter(|r| snap_dir.join(r).is_file())
+      });
+      hashed.push(RunFile { label: format!("theme:{rel}"), bytes: text.as_bytes().to_vec() });
+      files.insert(key, text);
+    }
+    themes.push(Theme { id: id.clone(), label: label.clone(), ui_theme: ui_theme.clone(), file: format!("{snap_id}/{}", plain_rel(path).unwrap_or(path)), files });
+  }
+  hashed.sort_by(|a, b| a.label.cmp(&b.label));
+  hashed.dedup_by(|a, b| a.label == b.label);
+  Ok((themes, hashed))
+}
+
 /// The trust hash: SHA-256 of `snap.toml` alone for a snap without skills or run files (unchanged
 /// from phase 1), otherwise also over every skill file and every file its commands run, so editing
 /// a repo snap's SKILL.md or a script its task calls revokes trust too: they decide what runs and
@@ -741,6 +846,7 @@ pub struct SnapInfo {
   pub readme: Option<String>,
   /// The files its commands run (`run_files`), covered by the trust hash.
   pub files: Vec<String>,
+  pub themes: Vec<Theme>,
   /// User snaps installed through Kingu: where they came from (`.kingu-snap.json`, not hashed).
   pub origin: Option<Origin>,
   /// Repo snaps when the folder has `.kingu/snaps.lock`: whether this snap matches its entry.
@@ -770,6 +876,7 @@ impl SnapInfo {
       services: Vec::new(),
       readme: None,
       files: Vec::new(),
+      themes: Vec::new(),
       origin: None,
       lock: None,
     }
@@ -842,7 +949,12 @@ pub(crate) fn read_snap(dir: &Path, folder: &str, source: Source, root: Option<&
     Ok(f) => f,
     Err(e) => return broken(hash, e),
   };
-  let hash = snap_hash(&bytes, &skills, &files);
+  let (themes, theme_files) = match read_themes(dir, &p.id, &p.themes) {
+    Ok(t) => t,
+    Err(e) => return broken(hash, e),
+  };
+  let hashed: Vec<RunFile> = files.iter().cloned().chain(theme_files).collect();
+  let hash = snap_hash(&bytes, &skills, &hashed);
   SnapInfo {
     trusted: match (source, root) {
       (Source::User, _) => true,
@@ -868,6 +980,7 @@ pub(crate) fn read_snap(dir: &Path, folder: &str, source: Source, root: Option<&
     services: p.services,
     readme: read_readme(dir),
     files: files.into_iter().map(|f| f.label).collect(),
+    themes,
     origin: None,
     lock: None,
   }
@@ -1783,6 +1896,32 @@ env = { GOFLAGS = "-mod=mod" }
     assert!(read("bin/out.sh").error.unwrap().contains("bin/out.sh"));
     let inside = read("bin/in.sh");
     assert_eq!((inside.error, inside.files), (None, vec!["bin/in.sh".to_string()]));
+  }
+
+  #[test]
+  fn reads_themes_with_their_includes() {
+    let dir = tempfile::tempdir().unwrap();
+    let snap = write_snap(dir.path(), "ocean", "id = \"ocean\"\nname = \"Ocean\"\nversion = \"1\"\n[[themes]]\npath = \"themes/ocean.json\"\nlabel = \"Ocean Dark\"\nui_theme = \"vs-dark\"\n");
+    std::fs::create_dir_all(snap.join("themes")).unwrap();
+    std::fs::write(snap.join("themes/ocean.json"), "// jsonc\n{ \"include\": \"./base.json\", \"colors\": { \"editor.background\": \"#001122\" } }").unwrap();
+    std::fs::write(snap.join("themes/base.json"), "{ \"include\": \"./dark_modern.json\", \"colors\": {} }").unwrap();
+    let s = discover(dir.path(), None, &TrustData::default()).remove(0);
+    assert_eq!(s.error, None);
+    let th = &s.themes[0];
+    assert_eq!((th.id.as_str(), th.ui_theme.as_str(), th.file.as_str()), ("Ocean Dark", "vs-dark", "ocean/themes/ocean.json"));
+    // The chain stops at the built-in theme the snap does not have.
+    assert_eq!(th.files.keys().collect::<Vec<_>>(), vec!["ocean/themes/base.json", "ocean/themes/ocean.json"]);
+    // Theme files are in the trust hash.
+    let before = s.hash.clone();
+    std::fs::write(snap.join("themes/base.json"), "{ \"colors\": { \"x\": \"#fff\" } }").unwrap();
+    assert_ne!(discover(dir.path(), None, &TrustData::default()).remove(0).hash, before);
+
+    let bad = |extra: &str| parse_manifest(&format!("id = \"o\"\nname = \"O\"\nversion = \"1\"\n[[themes]]\n{extra}"), "o").unwrap_err();
+    assert!(bad("path = \"../x.json\"\nlabel = \"X\"\nui_theme = \"vs\"\n").contains("../x.json"));
+    assert!(bad("path = \"x.json\"\nlabel = \"X\"\nui_theme = \"dark\"\n").contains("ui_theme"));
+    assert!(bad("path = \"x.toml\"\nlabel = \"X\"\nui_theme = \"vs\"\n").contains("x.toml"));
+    std::fs::remove_file(snap.join("themes/ocean.json")).unwrap();
+    assert!(discover(dir.path(), None, &TrustData::default()).remove(0).error.unwrap().contains("ocean.json"));
   }
 
   /// The snaps this repo ships in `snaps/<id>` (installable with the repo's git URL) read clean.

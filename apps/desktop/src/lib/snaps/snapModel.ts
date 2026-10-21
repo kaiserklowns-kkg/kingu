@@ -3,6 +3,7 @@
 
 import type { SettingSchema } from '../settings/registry';
 import { t } from '#lib/i18n/index.ts';
+import { themeType, type ThemeInfo } from '#lib/theme/themes.ts';
 
 export type SnapSource = 'user' | 'repo';
 export type SnapSettingType = 'string' | 'boolean' | 'number';
@@ -24,6 +25,8 @@ export type SnapRequire = { program: string; setting: string | null; url: string
 export type SnapService = { id: string; title: string; command: string[]; env: Record<string, string>; autostart: boolean; when: string | null };
 /** `snap_service_list` / the `snap-service` event (Rust `snap_service::ServiceStatus`). */
 export type ServiceStatus = { snapId: string; serviceId: string; running: boolean; pid: number | null; startedAt: number; endedAt: number | null; exitCode: number | null; stopped: boolean; log: string };
+/** A color theme of the snap (`[[themes]]`, Rust `snap::Theme`). */
+export type SnapTheme = { id: string; label: string; uiTheme: string; file: string; files: Record<string, string> };
 /** `snap_find_programs` (Rust `snap_service::Found`). */
 export type FoundProgram = { path: string | null; onPath: boolean };
 /** Where an installed user snap came from (`.kingu-snap.json`): git (`url`, `ref`, `commit`) or a folder (`path`). */
@@ -57,6 +60,7 @@ export type SnapInfo = {
 	readme: string | null;
 	/** Files its commands run (`${snap:dir}/…` and repo paths), covered by the trust hash. */
 	files: string[];
+	themes: SnapTheme[];
 	/** Turned off by the user (`kingu.snaps.disabled`, set by the store): contributes nothing. */
 	disabled?: boolean;
 	origin: SnapOrigin | null;
@@ -375,6 +379,7 @@ export function audiences(s: SnapInfo): { you: string[]; agents: string[] } {
 	const you = [
 		...(s.tasks.length ? [t('tools.snaps.contrib.tasks', { count: s.tasks.length, names: names(s.tasks.map((x) => x.title)) })] : []),
 		...(s.services.length ? [t('tools.snaps.contrib.services', { count: s.services.length, names: names(s.services.map((x) => x.title)) })] : []),
+		...(s.themes.length ? [t('tools.snaps.contrib.themes', { count: s.themes.length, names: names(s.themes.map((x) => x.label)) })] : []),
 		...(s.settings.length ? [t('tools.snaps.contrib.settings', { count: s.settings.length })] : [])
 	];
 	const agents = [
@@ -403,6 +408,11 @@ export function snapAvatar(s: Pick<SnapInfo, 'id' | 'name'>): { hue: number; let
 		.filter(Boolean);
 	const letters = (words.length > 1 ? words[0][0] + words[1][0] : (words[0] ?? s.id).slice(0, 2)).toUpperCase();
 	return { hue: h, letters };
+}
+
+/** The color themes of active snaps, for the theme service (themes.ts setSnapThemes). */
+export function snapThemesOf(list: readonly SnapInfo[]): ThemeInfo[] {
+	return list.filter(isActive).flatMap((s) => s.themes.map((th) => ({ id: th.id, label: th.label, file: th.file, type: themeType(th.uiTheme), snap: s.name, files: th.files })));
 }
 
 /** Active snaps whose skills or hooks agents get (as plugins Rust writes into the app cache). */
@@ -514,7 +524,8 @@ function contributionLines(s: SnapInfo): string[] {
 		t('tools.snaps.contrib.mcp', { count: s.mcp.length, names: names(s.mcp.map((m) => m.name)) }),
 		t('tools.snaps.contrib.skills', { count: s.skills.length, names: names(s.skills.map((k) => k.name)) }),
 		...(s.hooks.length ? [t('tools.snaps.contrib.hooks', { count: s.hooks.length, names: names([...new Set(s.hooks.map((h) => h.event))]) })] : []),
-		...(s.services.length ? [t('tools.snaps.contrib.services', { count: s.services.length, names: names(s.services.map((x) => x.title)) })] : [])
+		...(s.services.length ? [t('tools.snaps.contrib.services', { count: s.services.length, names: names(s.services.map((x) => x.title)) })] : []),
+		...(s.themes.length ? [t('tools.snaps.contrib.themes', { count: s.themes.length, names: names(s.themes.map((x) => x.label)) })] : [])
 	];
 }
 

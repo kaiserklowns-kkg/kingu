@@ -345,50 +345,63 @@
 				{#if s.origin}<span>{t('tools.snapsUi.installedFrom')}</span><span class="truncate" title={originLabel(s.origin)}>{originLabel(s.origin)}{s.origin.installed_at ? ` · ${new Date(s.origin.installed_at * 1000).toLocaleString()}` : ''}</span>{/if}
 			</div>
 		{:else if tab === 'features'}
-			<div class="grid gap-3 sm:grid-cols-2">
-				<div class={[CARD, 'p-3']}>
-					<div class="flex items-center gap-1.5 font-semibold"><Icon name="desktop" size={15} /> {t('tools.snapsUi.forYou')}</div>
-					<p class="mt-0.5 text-xs text-(--vscode-descriptionForeground)">{t('tools.snapsUi.forYouDesc')}</p>
-					{#each s.tasks as tk (tk.id)}
-						<div class="mt-2 flex items-center gap-2">
-							<span class="min-w-0 flex-1"><span>{tk.title}</span> <code class="block truncate text-[11px] text-(--vscode-descriptionForeground)" title={tk.command.join(' ')}>{tk.command.join(' ')}</code></span>
-							<button
-								class={[SMALL, 'flex shrink-0 items-center gap-1']}
-								disabled={!active || (!workspace.root && tk.id !== s.requires.find((r) => r.install_task)?.install_task)}
-								title={!active ? t('tools.snapsUi.activateFirst') : t('tools.snapsUi.runHint')}
-								onclick={() => snaps.runTask(s.id, tk.id, { home: true })}><Icon name="play" size={11} /> {t('tools.snapsUi.run')}</button
-							>
-						</div>
-					{/each}
-					{#each s.services as sv (sv.id)}
-						<div class="mt-2 flex items-center gap-1.5"><Icon name="activity" size={13} /> <span>{sv.title}</span> <span class="text-xs text-(--vscode-descriptionForeground)">— {t('tools.snapsUi.serviceDesc')}</span></div>
-					{/each}
-					{#if !s.tasks.length && !s.services.length}<p class="mt-2 text-(--vscode-descriptionForeground)">—</p>{/if}
-				</div>
-				<div class={[CARD, 'p-3']}>
-					<div class="flex items-center gap-1.5 font-semibold"><Icon name="robot" size={15} /> {t('tools.snapsUi.forAgents')}</div>
-					<p class="mt-0.5 text-xs text-(--vscode-descriptionForeground)">{t('tools.snapsUi.forAgentsDesc')}</p>
-					{#each s.mcp as m (m.name)}
-						<div class="mt-2"><span class={BADGE}>MCP</span> <span class="font-semibold">{m.name}</span> <code class="block truncate text-[11px] text-(--vscode-descriptionForeground)">{m.command.join(' ')}</code></div>
-					{/each}
-					{#each s.skills as k (k.path)}
-						<div class="mt-2"><span class={BADGE}>skill</span> <span class="font-semibold">snap-{s.id}:{k.name}</span>{#if k.description}<span class="block text-xs text-(--vscode-descriptionForeground)">{k.description}</span>{/if}</div>
-					{/each}
-					{#if s.hooks.length}
-						<div class="mt-2"><span class={BADGE}>hooks</span> {[...new Set(s.hooks.map((h) => h.event))].join(', ')}<span class="block text-xs text-(--vscode-descriptionForeground)">{t('tools.snaps.hooksForAgents')}</span></div>
-					{/if}
-					{#if !s.mcp.length && !s.skills.length && !s.hooks.length}<p class="mt-2 text-(--vscode-descriptionForeground)">—</p>{/if}
-					{#if agentReach(s).length}
-						<div class={['mt-3', LABEL]}>{t('tools.snapsUi.worksWith')}</div>
-						<table class="mt-1 w-full text-xs">
-							<tbody>
-								{#each agentReach(s) as r (r.agent)}
-									<tr class="border-t border-(--vscode-widget-border,var(--vscode-panel-border))"><td class="py-0.5 pr-3">{r.agent}</td><td class="py-0.5 text-(--vscode-descriptionForeground)">{r.gets.join(' · ')}</td></tr>
-								{/each}
-							</tbody>
-						</table>
-					{/if}
-				</div>
+			<!-- Only the sides the snap adds to; one side takes the full width. -->
+			<div class={['grid gap-3', (s.tasks.length || s.services.length || s.themes.length) && (s.mcp.length || s.skills.length || s.hooks.length) && 'sm:grid-cols-2']}>
+				{#if s.tasks.length || s.services.length || s.themes.length || !(s.mcp.length || s.skills.length || s.hooks.length)}
+					<div class={[CARD, 'p-3']}>
+						<div class="flex items-center gap-1.5 font-semibold"><Icon name="desktop" size={15} /> {t('tools.snapsUi.forYou')}</div>
+						<p class="mt-0.5 text-xs text-(--vscode-descriptionForeground)">{t('tools.snapsUi.forYouDesc')}</p>
+						{#each s.tasks as tk (tk.id)}
+							<div class="mt-2 flex items-center gap-2">
+								<span class="min-w-0 flex-1"><span>{tk.title}</span> <code class="block truncate text-[11px] text-(--vscode-descriptionForeground)" title={tk.command.join(' ')}>{tk.command.join(' ')}</code></span>
+								<button
+									class={[SMALL, 'flex shrink-0 items-center gap-1']}
+									disabled={!active || (!workspace.root && tk.id !== s.requires.find((r) => r.install_task)?.install_task)}
+									title={!active ? t('tools.snapsUi.activateFirst') : t('tools.snapsUi.runHint')}
+									onclick={() => snaps.runTask(s.id, tk.id, { home: true })}><Icon name="play" size={11} /> {t('tools.snapsUi.run')}</button
+								>
+							</div>
+						{/each}
+						{#each s.services as sv (sv.id)}
+							<div class="mt-2 flex items-center gap-1.5"><Icon name="activity" size={13} /> <span>{sv.title}</span> <span class="text-xs text-(--vscode-descriptionForeground)">— {t('tools.snapsUi.serviceDesc')}</span></div>
+						{/each}
+						{#each s.themes as th (th.id)}
+							{@const using = settings.get('workbench.colorTheme') === th.id}
+							<div class="mt-2 flex items-center gap-1.5">
+								<Icon name="sparkle" size={13} /> <span class="min-w-0 flex-1">{th.label} <span class="text-xs text-(--vscode-descriptionForeground)">— {t('tools.snapsUi.colorTheme')}</span></span>
+								{#if using}<span class={['text-xs', TONE.ok]}>{t('tools.snapsUi.themeInUse')}</span>
+								{:else}<button class={SMALL} disabled={!active} title={!active ? t('tools.snapsUi.activateFirst') : undefined} onclick={() => settings.set('workbench.colorTheme', th.id, 'user')}>{t('tools.snapsUi.useTheme')}</button>{/if}
+							</div>
+						{/each}
+						{#if !s.tasks.length && !s.services.length && !s.themes.length}<p class="mt-2 text-(--vscode-descriptionForeground)">—</p>{/if}
+					</div>
+				{/if}
+				{#if s.mcp.length || s.skills.length || s.hooks.length}
+					<div class={[CARD, 'p-3']}>
+						<div class="flex items-center gap-1.5 font-semibold"><Icon name="robot" size={15} /> {t('tools.snapsUi.forAgents')}</div>
+						<p class="mt-0.5 text-xs text-(--vscode-descriptionForeground)">{t('tools.snapsUi.forAgentsDesc')}</p>
+						{#each s.mcp as m (m.name)}
+							<div class="mt-2"><span class={BADGE}>MCP</span> <span class="font-semibold">{m.name}</span> <code class="block truncate text-[11px] text-(--vscode-descriptionForeground)">{m.command.join(' ')}</code></div>
+						{/each}
+						{#each s.skills as k (k.path)}
+							<div class="mt-2"><span class={BADGE}>skill</span> <span class="font-semibold">snap-{s.id}:{k.name}</span>{#if k.description}<span class="block text-xs text-(--vscode-descriptionForeground)">{k.description}</span>{/if}</div>
+						{/each}
+						{#if s.hooks.length}
+							<div class="mt-2"><span class={BADGE}>hooks</span> {[...new Set(s.hooks.map((h) => h.event))].join(', ')}<span class="block text-xs text-(--vscode-descriptionForeground)">{t('tools.snaps.hooksForAgents')}</span></div>
+						{/if}
+						{#if !s.mcp.length && !s.skills.length && !s.hooks.length}<p class="mt-2 text-(--vscode-descriptionForeground)">—</p>{/if}
+						{#if agentReach(s).length}
+							<div class={['mt-3', LABEL]}>{t('tools.snapsUi.worksWith')}</div>
+							<table class="mt-1 w-full text-xs">
+								<tbody>
+									{#each agentReach(s) as r (r.agent)}
+										<tr class="border-t border-(--vscode-widget-border,var(--vscode-panel-border))"><td class="py-0.5 pr-3">{r.agent}</td><td class="py-0.5 text-(--vscode-descriptionForeground)">{r.gets.join(' · ')}</td></tr>
+									{/each}
+								</tbody>
+							</table>
+						{/if}
+					</div>
+				{/if}
 			</div>
 		{:else if tab === 'permissions'}
 			<div class={[CARD, 'p-3']}>

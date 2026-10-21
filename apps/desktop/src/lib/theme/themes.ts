@@ -1,4 +1,5 @@
-// The built-in color themes (VS Code extensions/theme-defaults package.json `contributes.themes`).
+// The built-in color themes (VS Code extensions/theme-defaults package.json `contributes.themes`)
+// and the ones active Snaps contribute (`[[themes]]`, set by the Snap store).
 // Pure: the vendored files are read through `read`, so tests can pass the file system.
 
 import { flattenTheme, type FlatTheme, type ThemeType } from '../editor/textmate/theme';
@@ -9,6 +10,9 @@ export type ThemeInfo = {
 	label: string;
 	file: string;
 	type: ThemeType;
+	/** A Snap's theme: the snap's id and its files (`<snap>/<path>` → text); includes it does not have are built-in themes. */
+	snap?: string;
+	files?: Record<string, string>;
 };
 
 export const THEMES: ThemeInfo[] = [
@@ -27,6 +31,19 @@ export const THEMES: ThemeInfo[] = [
 
 export const DEFAULT_THEME = 'Dark Modern';
 
+let snapThemes: ThemeInfo[] = [];
+
+/** Replaces the themes of active Snaps (a built-in id is never shadowed). */
+export function setSnapThemes(list: readonly ThemeInfo[]) {
+	snapThemes = list.filter((t) => !THEMES.some((b) => b.id === t.id));
+}
+
+/** Built-in themes, then the Snaps' (what the Color Theme picker and the theme settings offer). */
+export const allThemes = (): ThemeInfo[] => [...THEMES, ...snapThemes];
+
+/** VS Code's `uiTheme` of a contributed theme. */
+export const themeType = (uiTheme: string): ThemeType => ({ 'vs-dark': 'dark', vs: 'light', 'hc-black': 'hcDark', 'hc-light': 'hcLight' })[uiTheme] as ThemeType ?? 'dark';
+
 /** VS Code's older `Default …` ids and the display labels also select a theme. */
 const ALIASES: Record<string, string> = {
 	'Default Dark Modern': 'Dark Modern',
@@ -40,7 +57,7 @@ const ALIASES: Record<string, string> = {
 /** The theme for a setting value, falling back to Dark Modern like VS Code does for unknown ids. */
 export function findTheme(id: unknown): ThemeInfo {
 	const key = typeof id === 'string' ? (ALIASES[id] ?? id) : '';
-	return THEMES.find((t) => t.id === key) ?? THEMES.find((t) => t.id === DEFAULT_THEME)!;
+	return allThemes().find((t) => t.id === key) ?? THEMES.find((t) => t.id === DEFAULT_THEME)!;
 }
 
 /** Monaco's built-in base theme for a VS Code theme type. */

@@ -1,16 +1,18 @@
 <script lang="ts">
 	// Settings › Appearance (Orca's General/Appearance pane): themes as preview cards, text sizes.
-	import { onMount } from 'svelte';
 	import Icon from '#lib/workbench/Icon.svelte';
-	import { THEMES, type ThemeInfo } from '#lib/theme/themes.ts';
+	import { allThemes, type ThemeInfo } from '#lib/theme/themes.ts';
 	import { themeSwatch } from '#lib/theme/theme.svelte.ts';
+	import { snaps } from '#lib/snaps/snaps.svelte.ts';
 	import { settings } from '../settings.svelte';
 	import { SETTINGS } from '../registry';
 	import Switch from './Switch.svelte';
 
 	let swatches = $state<Record<string, Awaited<ReturnType<typeof themeSwatch>>>>({});
-	onMount(() => {
-		for (const t of THEMES) void themeSwatch(t).then((s) => (swatches[t.id] = s)).catch(() => {});
+	// Built-in themes and the active Snaps' (re-read when the snaps change).
+	const themes = $derived((void snaps.list, allThemes()));
+	$effect(() => {
+		for (const t of themes) if (!swatches[t.id]) void themeSwatch(t).then((s) => (swatches[t.id] = s)).catch(() => {});
 	});
 
 	const current = $derived(settings.get<string>('workbench.colorTheme'));
@@ -37,7 +39,7 @@
 		{#each groups as g (g.label)}
 			<h2 class="mt-6 mb-2.5 text-xs font-semibold tracking-wide text-(--vscode-descriptionForeground) uppercase">{g.label}</h2>
 			<div class="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-3">
-				{#each THEMES.filter((t) => g.types.includes(t.type)) as t (t.id)}
+				{#each themes.filter((t) => g.types.includes(t.type)) as t (t.id)}
 					{@const s = swatches[t.id]}
 					{@const on = current === t.id}
 					<button
@@ -61,6 +63,7 @@
 						</div>
 						<div class="flex items-center gap-2 px-3 py-2 text-[13px]">
 							<span class="flex-1 truncate">{t.label}</span>
+							{#if t.snap}<span class="shrink-0 rounded-full bg-(--vscode-badge-background) px-1.5 text-[10px] leading-4 text-(--vscode-badge-foreground)" title={`Snap: ${t.snap}`}>Snap</span>{/if}
 							{#if on}<span class="text-(--vscode-focusBorder)"><Icon name="check" size={14} /></span>{/if}
 						</div>
 					</button>

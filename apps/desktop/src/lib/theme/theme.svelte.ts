@@ -5,23 +5,28 @@
 import { parseJsonc } from '../settings/jsonc';
 import { setActiveTheme } from './current';
 import { chromeVariables, resolveColor, terminalTheme } from './colors';
-import { findTheme, isDarkType, loadTheme, type ThemeInfo } from './themes';
-import type { FlatTheme } from '../editor/textmate/theme';
+import { findTheme, isDarkType, loadTheme, THEMES, type ThemeInfo } from './themes';
+import { joinPath, type FlatTheme } from '../editor/textmate/theme';
 
 // Lazy chunks: only the selected theme's include chain is fetched.
 const sources = import.meta.glob<string>('../editor/textmate/themes/*.json', { query: '?raw', import: 'default' });
 const CACHE_KEY = 'kingu.theme.variables';
 
-async function readChain(file: string): Promise<Record<string, string>> {
+/** The theme's file and its include chain: a Snap theme's own files, else the vendored ones (by name). */
+async function readChain(info: ThemeInfo): Promise<Record<string, string>> {
 	const files: Record<string, string> = {};
-	let next: string | undefined = file;
+	let next: string | undefined = info.file;
 	while (next && !(next in files)) {
-		const load: (() => Promise<string>) | undefined = sources[`../editor/textmate/themes/${next}`];
-		if (!load) throw new Error(`theme file not vendored: ${next}`);
-		const text: string = await load();
+		let text: string | undefined = info.files?.[next];
+		if (text === undefined) {
+			const name: string = next.split('/').pop() ?? next;
+			const load: (() => Promise<string>) | undefined = sources[`../editor/textmate/themes/${name}`];
+			if (!load) throw new Error(`theme file not found: ${next}`);
+			text = await load();
+		}
 		files[next] = text;
 		const include: string | undefined = parseJsonc<{ include?: string }>(text).include;
-		next = include?.replace(/^\.\//, '');
+		next = include ? joinPath(next, include) : undefined;
 	}
 	return files;
 }
@@ -31,7 +36,7 @@ const flatCache = new Map<string, FlatTheme>();
 async function flatTheme(info: ThemeInfo): Promise<FlatTheme> {
 	const cached = flatCache.get(info.id);
 	if (cached) return cached;
-	const files = await readChain(info.file);
+	const files = await readChain(info);
 	const flat = loadTheme(info, (p) => files[p]);
 	flatCache.set(info.id, flat);
 	return flat;
@@ -65,8 +70,12 @@ class ThemeService {
 		}
 	}
 
+	/** The setting value last asked for (it may name a Snap theme that is not loaded yet). */
+	private requested: unknown = undefined;
+
 	/** Applies a theme by setting value. Stale loads (a newer apply started) are dropped. */
 	async apply(id: unknown): Promise<void> {
+		this.requested = id;
 		const info = findTheme(id);
 		if (info.id === this.applied && this.seq === this.appliedSeq) return;
 		const seq = ++this.seq;
@@ -84,6 +93,16 @@ class ThemeService {
 		} catch {
 			// Storage unavailable; only the startup flash is affected.
 		}
+	}
+
+	/**
+	 * The Snaps' themes changed (setSnapThemes): their cached copies are dropped and the theme asked
+	 * for is applied again, so one that only now became available (startup) or changed takes effect.
+	 */
+	async refresh(): Promise<void> {
+		for (const key of [...flatCache.keys()]) if (!THEMES.some((t) => t.id === key)) flatCache.delete(key);
+		this.applied = '';
+		await this.apply(this.requested);
 	}
 }
 

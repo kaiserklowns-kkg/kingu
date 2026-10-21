@@ -2,7 +2,7 @@
 // Pure, so `bun test` can exercise it: defaults < user < workspace, each value checked against
 // its schema so a bad value in a file falls back instead of breaking the workbench.
 
-import { DEFAULT_THEME, THEMES } from '../theme/themes';
+import { allThemes, DEFAULT_THEME } from '../theme/themes';
 import { defaultTitleTemplate } from '../workbench/title';
 import { PROFILES } from '../ade/agentProfiles';
 import { IDE_SETTINGS } from './ideSettings';
@@ -73,8 +73,13 @@ const CORE_SETTINGS: SettingSchema[] = [
 		group: 'Workbench',
 		type: 'string',
 		default: DEFAULT_THEME,
-		enum: THEMES.map((t) => t.id),
-		enumDescriptions: THEMES.map((t) => t.label),
+		// Snaps add themes at runtime (setSnapThemes), so the values are read when validated.
+		get enum() {
+			return allThemes().map((t) => t.id);
+		},
+		get enumDescriptions() {
+			return allThemes().map((t) => t.label);
+		},
 		description: 'ธีมสีของ workbench และ editor (Specifies the color theme used in the workbench when `#window.autoDetectColorScheme#` is not enabled.)',
 		scope: 'application'
 	},

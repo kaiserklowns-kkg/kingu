@@ -80,7 +80,7 @@
 	}
 
 	const forAgents = (s: SnapInfo) => s.mcp.length + s.skills.length + s.hooks.length;
-	const forYou = (s: SnapInfo) => s.tasks.length + s.services.length;
+	const forYou = (s: SnapInfo) => s.tasks.length + s.services.length + s.themes.length;
 
 	const TONE = {
 		ok: 'text-(--vscode-testing-iconPassed,var(--vscode-charts-green))',

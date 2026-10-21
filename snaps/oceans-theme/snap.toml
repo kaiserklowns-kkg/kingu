@@ -1,0 +1,17 @@
+# Oceans: Kingu color themes in deep-sea blues, built on VS Code's Dark Modern and Light Modern
+# (each theme `include`s the built-in one and overrides the chrome and a few token colors).
+# Data only: a theme runs nothing.
+id = "oceans-theme"
+name = "Oceans Theme"
+version = "0.1.0"
+description = "Deep-sea color themes for Kingu: Oceans Dark and Oceans Light."
+
+[[themes]]
+path = "themes/oceans-dark.json"
+label = "Oceans Dark"
+ui_theme = "vs-dark"
+
+[[themes]]
+path = "themes/oceans-light.json"
+label = "Oceans Light"
+ui_theme = "vs"

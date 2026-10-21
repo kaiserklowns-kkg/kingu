@@ -16,6 +16,7 @@ import {
 	requirementStates,
 	serviceChanges,
 	snapAvatar,
+	snapThemesOf,
 	toggleDisabled,
 	wantedServices,
 	withDisabled,
@@ -72,6 +73,7 @@ function snap(over: Partial<SnapInfo> = {}): SnapInfo {
 		services: [],
 		readme: null,
 		files: [],
+		themes: [],
 		origin: null,
 		lock: null,
 		...over
@@ -420,5 +422,13 @@ describe('files a snap runs', () => {
 		expect(inSnapDir(s, ['${snap:dir}/bin/tool', '${snap:dir}x', 'a'])).toEqual(['/u/snaps/go/bin/tool', '${snap:dir}x', 'a']);
 		expect(taskArgv(s, s.tasks[0], () => undefined)).toEqual(['/u/snaps/go/bin/tool', '${snap:dir}/evil', '--a=${snap:dir}/b']);
 		expect(trustSummary({ ...s, source: 'repo', trusted: false, files: ['./scripts/test.sh'] })).toContain('./scripts/test.sh');
+	});
+});
+
+describe('themes of snaps', () => {
+	test('active snaps only, typed from uiTheme and labelled with the snap', () => {
+		const th = { id: 'Ocean Dark', label: 'Ocean Dark', uiTheme: 'vs', file: 'go/t.json', files: { 'go/t.json': '{}' } };
+		expect(snapThemesOf([snap({ themes: [th] }), snap({ id: 'off', disabled: true, themes: [{ ...th, id: 'Other' }] })])).toEqual([{ id: 'Ocean Dark', label: 'Ocean Dark', file: 'go/t.json', type: 'light', snap: 'Go', files: { 'go/t.json': '{}' } }]);
+		expect(audiences(snap({ themes: [th] })).you.some((l) => l.includes('Ocean Dark'))).toBe(true);
 	});
 });

@@ -7,6 +7,8 @@
 
 import { untrack } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
+import { setSnapThemes } from '#lib/theme/themes.ts';
+import { theme } from '#lib/theme/theme.svelte.ts';
 import { listen } from '@tauri-apps/api/event';
 import { homeDir } from '@tauri-apps/api/path';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -38,6 +40,7 @@ import {
 	requiredPrograms,
 	requirementStates,
 	serviceChanges,
+	snapThemesOf,
 	toggleDisabled,
 	wantedServices,
 	withDisabled,
@@ -678,6 +681,7 @@ export function installSnaps(): () => void {
 	window.addEventListener('focus', reloadAll);
 	const stopServiceEvents = listen<ServiceStatus>('snap-service', (e) => snaps.serviceExited(e.payload));
 	let taskCommands: (() => void)[] = [];
+	let lastThemes = '[]';
 	const unregisterTasks = () => {
 		taskCommands.forEach((u) => u());
 		taskCommands = [];
@@ -703,7 +707,13 @@ export function installSnaps(): () => void {
 		$effect(() => {
 			const list = snaps.list;
 			untrack(() => {
+				// Themes first: the theme settings' values are checked against them when the schemas change.
+				const themes = snapThemesOf(list);
+				const changed = JSON.stringify(themes.map((x) => [x.id, x.files])) !== lastThemes;
+				lastThemes = JSON.stringify(themes.map((x) => [x.id, x.files]));
+				if (changed) setSnapThemes(themes);
 				settingSchemas.contribute('snaps', snapSettingSchemas(list));
+				if (changed) void theme.refresh();
 				unregisterTasks();
 				taskCommands = runnableTasks(list).map(({ snap, task }) =>
 					commands.register({
@@ -750,6 +760,7 @@ export function installSnaps(): () => void {
 		unregisterTasks();
 		unregister.forEach((u) => u());
 		settingSchemas.contribute('snaps', []);
+		setSnapThemes([]);
 		setMcpProvider(() => ({}));
 		setSkillPluginProvider(async () => []);
 	};
