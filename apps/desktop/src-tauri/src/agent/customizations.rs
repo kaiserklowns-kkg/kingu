@@ -434,8 +434,9 @@ pub fn disallowed_for(tools: &[String]) -> Vec<String> {
 
 /// What a run of chat agent `name` gets: text after the system prompt and the tools it must not
 /// have. `ask` is the built-in Ask agent; anything else must be a custom agent found in `cwd`'s
-/// locations (else an error: the chat names an agent that is gone).
-pub fn for_run(cwd: &Path, home: Option<&Path>, settings: &Settings, name: &str) -> Result<(String, Vec<String>), String> {
+/// locations (else an error: the chat names an agent that is gone). A tool set named in the
+/// agent's `tools` (`tool_sets`) stands for its own tools.
+pub fn for_run(cwd: &Path, home: Option<&Path>, settings: &Settings, sets: &[super::tool_sets::ToolSet], name: &str) -> Result<(String, Vec<String>), String> {
   if name == ASK_AGENT {
     let text = "# Ask mode\n\nThe user picked Ask: they want answers, not changes. Read and search the code to answer questions, explain and suggest. Do not edit files or run commands; show any change as a code block the user can apply.".to_owned();
     let mut tools: Vec<String> = EDIT_TOOLS.iter().chain(SHELL_TOOLS).map(|s| (*s).to_owned()).collect();
@@ -450,7 +451,7 @@ pub fn for_run(cwd: &Path, home: Option<&Path>, settings: &Settings, name: &str)
     name = agent.name,
     rel = agent.rel
   );
-  Ok((text, disallowed_for(&agent.tools)))
+  Ok((text, disallowed_for(&super::tool_sets::expand(&agent.tools, sets))))
 }
 
 // ---- instructions files ------------------------------------------------------------------------
@@ -635,15 +636,21 @@ mod tests {
     let reviewer = &agents[3].0;
     assert_eq!((reviewer.tools.clone(), reviewer.model.as_deref()), (vec!["Read".to_owned(), "Grep".to_owned(), "Bash".to_owned()], Some("sonnet")));
 
-    let (text, disallowed) = for_run(&cwd, Some(&home), &Settings::default(), "planner").unwrap();
+    let (text, disallowed) = for_run(&cwd, Some(&home), &Settings::default(), &[], "planner").unwrap();
     assert!(text.contains("custom agent \"Planner\" (.github/agents/planner.agent.md)") && text.contains("<agent-instructions>\nReturn a plan.\n</agent-instructions>"), "{text}");
     assert_eq!(disallowed, ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash", "WebFetch", "WebSearch"]);
-    assert_eq!(for_run(&cwd, Some(&home), &Settings::default(), "reviewer").unwrap().1, ["Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch"]);
-    assert!(for_run(&cwd, Some(&home), &Settings::default(), "writer").unwrap().1.is_empty());
-    assert!(for_run(&cwd, Some(&home), &Settings::default(), "gone").is_err());
-    let (ask, tools) = for_run(&cwd, None, &Settings::default(), ASK_AGENT).unwrap();
+    assert_eq!(for_run(&cwd, Some(&home), &Settings::default(), &[], "reviewer").unwrap().1, ["Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch"]);
+    assert!(for_run(&cwd, Some(&home), &Settings::default(), &[], "writer").unwrap().1.is_empty());
+    assert!(for_run(&cwd, Some(&home), &Settings::default(), &[], "gone").is_err());
+    let (ask, tools) = for_run(&cwd, None, &Settings::default(), &[], ASK_AGENT).unwrap();
     assert!(ask.starts_with("# Ask mode"));
     assert_eq!(tools, ["Bash", "Edit", "MultiEdit", "NotebookEdit", "Write"]);
+    // A tool set in the agent's tools: its tools count.
+    write(&cwd, ".github/agents/editor.agent.md", "---\ntools: ['writer']\n---\nEdit things.");
+    write(&cwd, ".vscode/x.toolsets.jsonc", r#"{"writer": {"tools": ["edit", "runCommands"]}}"#);
+    let sets = super::super::tool_sets::discover(&cwd, None);
+    assert_eq!(for_run(&cwd, None, &Settings::default(), &sets, "editor").unwrap().1, ["WebFetch", "WebSearch"]);
+    assert_eq!(for_run(&cwd, None, &Settings::default(), &[], "editor").unwrap().1, ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash", "WebFetch", "WebSearch"]);
   }
 
   #[test]

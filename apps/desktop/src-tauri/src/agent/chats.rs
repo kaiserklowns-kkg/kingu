@@ -34,6 +34,9 @@ const MAX_TITLE: usize = 200;
 /// The chat's first prompt (for "Promote to task"); the webview cuts it to this.
 pub const MAX_PROMPT: usize = 2000;
 const MAX_MODEL: usize = 128;
+/// Tools a chat may turn off, and how long one name may be.
+pub const MAX_DISABLED_TOOLS: usize = 500;
+const MAX_TOOL_NAME: usize = 200;
 /// The modes a saved chat may keep. "Allow all" (`bypassPermissions`) is never saved: `chats.json`
 /// lives in the folder, so a repository could ship one that turns every prompt off.
 pub const PERMISSION_MODES: &[&str] = &["default", "acceptEdits", "plan"];
@@ -104,6 +107,11 @@ pub struct ChatMeta {
   /// mid-turn (`kingu.chat.resumeWorkOnRestart` continues those chats).
   #[serde(default, skip_serializing_if = "std::ops::Not::not")]
   pub working: bool,
+  /// Tools the user turned off in the chat's Configure Tools picker (Claude tool names,
+  /// `mcp__<server>` or `mcp__<server>__<tool>`); its runs go without them (`disallowedTools`).
+  /// Only ever takes tools away, so a repository's chats.json cannot grant anything.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub disabled_tools: Vec<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -119,6 +127,19 @@ pub fn valid_id(id: &str) -> bool {
 
 pub fn check_id(id: &str) -> Result<(), String> {
   if valid_id(id) { Ok(()) } else { Err(tr!(AgentMsg::BadChatId)) }
+}
+
+/// A tool name as the SDK takes it: `Bash`, `mcp__github`, `mcp__github__search_issues`.
+pub fn valid_tool_name(t: &str) -> bool {
+  !t.is_empty() && t.len() <= MAX_TOOL_NAME && t.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '*'))
+}
+
+/// A list of tool names to leave out: at most `MAX_DISABLED_TOOLS`, each `valid_tool_name`.
+pub fn check_tool_names(id: &str, tools: &[String]) -> Result<(), String> {
+  if tools.len() > MAX_DISABLED_TOOLS || tools.iter().any(|t| !valid_tool_name(t)) {
+    return Err(format!("{id}: invalid tool list"));
+  }
+  Ok(())
 }
 
 fn valid_model(m: &str) -> bool {
@@ -180,6 +201,7 @@ pub fn validate(chats: &[ChatMeta]) -> Result<(), String> {
     if let Some(r) = &c.last_run {
       validate_run_summary(&c.id, r)?;
     }
+    check_tool_names(&c.id, &c.disabled_tools)?;
   }
   Ok(())
 }
@@ -294,6 +316,7 @@ fn for_transcript_with(ev: &AgentEvent, full_inputs: bool) -> Option<AgentEvent>
     AgentEvent::ToolResult { content, .. } => cut(content, MAX_TOOL_RESULT),
     AgentEvent::Result { result: Some(r), .. } => cut(r, MAX_TEXT),
     AgentEvent::Error { message } => cut(message, MAX_ERROR),
+    AgentEvent::HookRun { output, .. } => cut(output, MAX_ERROR),
     _ => {}
   }
   Some(ev)
@@ -423,12 +446,35 @@ pub fn load_transcript_full(root: &Path, id: &str) -> Result<Vec<AgentEvent>, St
     .lines()
     .filter_map(|l| serde_json::from_str::<Line>(l).ok())
     .map(|l| l.event)
-    .filter(|e| !matches!(e, AgentEvent::Anchor { .. }))
+    .filter(|e| !rust_only(e))
     .collect();
   if events.len() > MAX_LOADED_EVENTS {
     events.drain(..events.len() - MAX_LOADED_EVENTS);
   }
   Ok(events)
+}
+
+/// Transcript events for Rust only: rewind points and what the Chat Debug view reads.
+pub fn rust_only(ev: &AgentEvent) -> bool {
+  matches!(ev, AgentEvent::Anchor { .. } | AgentEvent::HookRun { .. } | AgentEvent::RunInfo { .. })
+}
+
+/// Every kept line of the transcript with its time (Unix ms), oldest first, anchors included;
+/// at most the newest `max` lines. Torn lines are skipped. Empty without a transcript.
+pub fn load_lines(root: &Path, id: &str, max: usize) -> Result<Vec<(u64, AgentEvent)>, String> {
+  let path = transcript_path(root, id)?;
+  let bytes = match std::fs::read(&path) {
+    Ok(b) => b,
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+    Err(e) => return Err(format!("{}: {e}", path.display())),
+  };
+  let from = bytes.len().saturating_sub(2 * MAX_TRANSCRIPT_BYTES as usize);
+  let text = String::from_utf8_lossy(&bytes[from..]);
+  let mut lines: Vec<(u64, AgentEvent)> = text.lines().filter_map(|l| serde_json::from_str::<Line>(l).ok()).map(|l| (l.t, l.event)).collect();
+  if lines.len() > max {
+    lines.drain(..lines.len() - max);
+  }
+  Ok(lines)
 }
 
 pub fn delete_transcript(root: &Path, id: &str) -> Result<(), String> {
@@ -472,6 +518,7 @@ mod tests {
         started_at: Some(1),
       }),
       working: false,
+      disabled_tools: Vec::new(),
     }
   }
 
@@ -527,6 +574,10 @@ mod tests {
     assert!(bad(|c| c.runtime = String::new()));
     assert!(validate(&[ChatMeta { runtime: "gemini".into(), ..chat("a") }]).is_ok());
     assert!(validate(&[ChatMeta { agent: Some("Planner".into()), ..chat("a") }]).is_ok());
+    assert!(validate(&[ChatMeta { disabled_tools: vec!["Bash".into(), "mcp__github".into(), "mcp__gh__search_issues".into()], ..chat("a") }]).is_ok());
+    assert!(bad(|c| c.disabled_tools = vec!["Bash; rm".into()]));
+    assert!(bad(|c| c.disabled_tools = vec![String::new()]));
+    assert!(bad(|c| c.disabled_tools = vec!["x".into(); MAX_DISABLED_TOOLS + 1]));
     assert!(bad(|c| c.agent = Some(" ".into())));
     assert!(bad(|c| c.agent = Some("a\nb".into())));
     assert!(bad(|c| c.last_run.as_mut().unwrap().status = "weird".into()));
