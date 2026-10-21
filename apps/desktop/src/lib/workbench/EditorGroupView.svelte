@@ -33,7 +33,9 @@
 	import { scm } from './scm.svelte';
 	import { tabDescription, type LabelFormat } from './tabLabels';
 	import { emptyUntitled } from './editorModels';
-	import type { EditorTab, SplitDirection } from './editorGroups';
+	import { isSplitInGroup, type EditorTab, type SplitDirection } from './editorGroups';
+	import { canSplitInGroup } from './editorKind';
+	import SideEditor from './SideEditor.svelte';
 	import SettingsEditor from '#lib/settings/SettingsEditor.svelte';
 	import { settings, SETTINGS_EDITOR_KEY, USER_SETTINGS_KEY } from '#lib/settings/settings.svelte.ts';
 	import Board from '#lib/ade/Board.svelte';
@@ -175,6 +177,9 @@
 		void textFiles.closeEditors([path], group, { discard });
 	}
 	const placeholder = $derived(textFiles.placeholder(activePath));
+	/** Split Editor in Group: the active editor shown a second time beside (or below) itself. */
+	const sideShown = $derived(isSplitInGroup(g, activePath) && canSplitInGroup(activePath) && !placeholder);
+	const sideVertical = $derived(settings.get<string>('workbench.editor.splitInGroupLayout') === 'vertical');
 	const comparing = $derived(activePath !== null && textFiles.compare?.path === activePath ? textFiles.compare : null);
 
 	function dragStart(e: DragEvent, path: string) {
@@ -282,7 +287,12 @@
 			menuItem('splitUp', 'Split Up'),
 			menuItem('splitDown', 'Split Down'),
 			menuItem('splitLeft', 'Split Left'),
-			menuItem('splitRight', 'Split Right')
+			menuItem('splitRight', 'Split Right'),
+			path === activePath && isSplitInGroup(g, path)
+				? item('joinInGroup', 'Join in Group', { key: keyFor('workbench.action.joinEditorInGroup') })
+				: item('splitInGroup', 'Split in Group', { enabled: canSplitInGroup(path), key: keyFor('workbench.action.splitEditorInGroup') }),
+			menuSeparator,
+			menuItem('lockGroup', g?.locked ? 'Unlock Group' : 'Lock Group')
 		];
 	}
 
@@ -319,6 +329,13 @@
 				return cmd.splitFrom(group, path, 'left');
 			case 'splitRight':
 				return cmd.splitFrom(group, path, 'right');
+			case 'splitInGroup':
+				editors.open(path, { preview: false, group });
+				return editors.setSplitInGroup(true, group);
+			case 'joinInGroup':
+				return editors.setSplitInGroup(false, group);
+			case 'lockGroup':
+				return editors.setLocked(!g?.locked, group);
 		}
 	}
 
@@ -487,6 +504,17 @@
 						</div>
 					{/each}
 					{#if dropTarget === tabs.length && r === rows.length - 1}<span class="h-(--kg-tab-height) w-0.5 shrink-0 bg-(--vscode-focusBorder)"></span>{/if}
+					{#if g?.locked && r === rows.length - 1}
+						<!-- A locked group's lock (VS Code's Unlock Group editor action). -->
+						<button
+							class="ml-auto flex h-(--kg-tab-height) shrink-0 items-center self-center px-1.5 text-(--vscode-icon-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
+							title="Unlock Group"
+							aria-label="Unlock Group"
+							onclick={() => editors.setLocked(false, group)}
+						>
+							<Icon name="lock" size={14} />
+						</button>
+					{/if}
 				</div>
 			{/each}
 		</div>
@@ -531,9 +559,26 @@
 	{/if}
 
 	<div role="presentation" class="relative min-h-0 flex-1" ondragovercapture={editorDragOver} ondragleave={editorDragLeave} ondropcapture={editorDrop}>
-		<div class={['absolute inset-0', (!activePath || diffActive || settingsActive || adeActive || viewerActive || placeholder) && 'invisible']}>
+		<div
+			class={[
+				'absolute',
+				!sideShown ? 'inset-0' : sideVertical ? 'inset-x-0 top-0 h-1/2' : 'inset-y-0 left-0 w-1/2',
+				(!activePath || diffActive || settingsActive || adeActive || viewerActive || placeholder) && 'invisible'
+			]}
+		>
 			<EditorHost {group} />
 		</div>
+		{#if sideShown && activePath}
+			<!-- Split Editor in Group: the same document again (workbench.editor.splitInGroupLayout). -->
+			<div
+				class={[
+					'absolute border-(--vscode-editorGroup-border,var(--vscode-panel-border))',
+					sideVertical ? 'inset-x-0 bottom-0 h-1/2 border-t' : 'inset-y-0 right-0 w-1/2 border-l'
+				]}
+			>
+				{#key activePath}<SideEditor {group} path={activePath} />{/key}
+			</div>
+		{/if}
 		{#if splitZone}
 			<!-- Where a dragged tab lands (VS Code: editorGroup.dropBackground). -->
 			<div

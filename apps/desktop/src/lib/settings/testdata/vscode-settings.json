@@ -1275,6 +1275,7 @@
 	"workbench.commandPalette.showAskInChat": {"type":"boolean","default":true},
 	"workbench.diffEditorAssociations": {"type":"object","default":{}},
 	"workbench.editor.alwaysShowEditorActions": {"type":"boolean","default":false},
+	"workbench.editor.autoLockGroups": {"type":"object","default":{"default":false,"mainThreadWebview-browserPreview":true,"mainThreadWebview-markdown.preview":false,"mainThreadWebview-simpleBrowser.view":true,"terminalEditor":true,"workbench.editor.processExplorer":true,"workbench.editorinputs.searchEditorInput":false,"workbench.input.interactive":false}},
 	"workbench.editor.centeredLayoutAutoResize": {"type":"boolean","default":true},
 	"workbench.editor.centeredLayoutFixedWidth": {"type":"boolean","default":false},
 	"workbench.editor.closeEmptyGroups": {"type":"boolean","default":true},

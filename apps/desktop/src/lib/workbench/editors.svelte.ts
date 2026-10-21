@@ -9,6 +9,7 @@ import { diffKey } from './scm';
 import * as G from './editorGroups';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { appMode } from './mode.svelte';
+import { autoLocks } from './editorKind';
 
 export type { EditorTab, EditorGroup, GridNode, SplitDirection } from './editorGroups';
 export type Cursor = { line: number; column: number };
@@ -36,7 +37,9 @@ export type EditorHostHandle = {
 	/** Replaces the selection (or inserts at the cursor) with `text` as one undoable edit; false when no file is shown. */
 	insertText?: (text: string) => boolean;
 };
-export type LanguageInfo = { id: string; name: string; extensions: string[] };
+/** The second editor of Split Editor in Group. */
+export type SideEditorHandle = { focus: () => void; hasFocus: () => boolean };
+export type LanguageInfo ={ id: string; name: string; extensions: string[] };
 /** VS Code's selection status: characters selected and how many selections (cursors). */
 export type SelectionInfo = { chars: number; count: number; /** The primary selection's lines, when it is not empty. */ range?: { startLine: number; endLine: number } };
 
@@ -45,7 +48,8 @@ G.setBehaviour(() => ({
 	closeEmptyGroups: settings.get<boolean>('workbench.editor.closeEmptyGroups'),
 	focusRecentEditorAfterClose: settings.get<boolean>('workbench.editor.focusRecentEditorAfterClose'),
 	openPositioning: settings.get<G.OpenPositioning>('workbench.editor.openPositioning'),
-	splitSizing: settings.get<G.SplitSizing>('workbench.editor.splitSizing')
+	splitSizing: settings.get<G.SplitSizing>('workbench.editor.splitSizing'),
+	autoLock: (path) => autoLocks(path, settings.get('workbench.editor.autoLockGroups'))
 }));
 
 /** `workbench.editor.limit.*`, or null when the limit is off. */
@@ -211,6 +215,8 @@ class Editors {
 		if (!settings.get('workbench.editor.enablePreview')) preview = false;
 		// workbench.editor.revealIfOpen: a group that already shows the file, before opening it again here.
 		if (group === undefined && settings.get<boolean>('workbench.editor.revealIfOpen')) group = G.groupShowing(this.model, path) ?? undefined;
+		// A locked group takes no new editors: the most recent unlocked group, else a new one beside it.
+		if (group === undefined) group = G.unlockedGroupFor(this.model, path) ?? G.addGroup(this.model, this.model.activeGroup, this.#sideDirection()) ?? undefined;
 		G.openEditor(this.model, path, { preview, group });
 		// The file may be dirty in the Agents layout only.
 		if (this.#dirty.has(path)) G.setDirty(this.model, path, true);
@@ -337,12 +343,17 @@ class Editors {
 		if (id !== null) this.focusGroup(id);
 	}
 
+	/** `workbench.editor.openSideBySideDirection`. */
+	#sideDirection(): 'right' | 'down' {
+		return settings.get<'right' | 'down'>('workbench.editor.openSideBySideDirection') === 'down' ? 'down' : 'right';
+	}
+
 	/**
 	 * VS Code's "Open to the Side" (⌘Enter in Quick Open): the group to the right, or below with
 	 * `workbench.editor.openSideBySideDirection: down`, created if needed.
 	 */
 	openToSide(path: string, reveal?: Reveal) {
-		const direction = settings.get<'right' | 'down'>('workbench.editor.openSideBySideDirection') === 'down' ? 'down' : 'right';
+		const direction = this.#sideDirection();
 		let target: number | null = G.neighbourGroup(this.model, this.model.activeGroup, direction);
 		if (target === null) target = G.addGroup(this.model, this.model.activeGroup, direction);
 		if (target === null) return this.open(path, { reveal });
@@ -422,6 +433,55 @@ class Editors {
 
 	evenAll() {
 		G.evenAll(this.model);
+	}
+
+	/** Expand Editor Group (VS Code's minimizeOtherEditors). */
+	expandGroup(group = this.model.activeGroup) {
+		G.expandGroup(this.model, group);
+	}
+
+	isLocked(group = this.model.activeGroup): boolean {
+		return !!this.group(group)?.locked;
+	}
+	/** Lock / Unlock Editor Group. */
+	setLocked(locked: boolean, group = this.model.activeGroup) {
+		G.setGroupLocked(this.model, group, locked);
+	}
+
+	/** Join Editor Group with Next Group. */
+	joinWithNextGroup(group = this.model.activeGroup) {
+		const target = G.joinWithNextGroup(this.model, group);
+		if (target !== null) this.focusRequest = target;
+	}
+
+	/** Whether the group shows its active editor split in two (Split Editor in Group). */
+	isSplitInGroup(group = this.model.activeGroup): boolean {
+		const g = this.group(group);
+		return G.isSplitInGroup(g, g?.active ?? null);
+	}
+	/** Split Editor in Group / Join Editor in Group on the group's active editor. */
+	setSplitInGroup(split: boolean, group = this.model.activeGroup) {
+		const path = this.group(group)?.active;
+		if (path) G.setSplitInGroup(this.model, group, path, split);
+		this.focusRequest = group;
+	}
+
+	/** The second editor of a group's Split Editor in Group, while it is mounted. */
+	#sides = new Map<number, SideEditorHandle>();
+	registerSideEditor(id: number, handle: SideEditorHandle): () => void {
+		this.#sides.set(id, handle);
+		return () => {
+			if (this.#sides.get(id) === handle) this.#sides.delete(id);
+		};
+	}
+	/** Focus First / Second / Other Side in Active Editor (a split editor in the active group). */
+	focusSide(which: 'first' | 'second' | 'other') {
+		const id = this.model.activeGroup;
+		const side = this.#sides.get(id);
+		if (!side) return;
+		const second = which === 'second' || (which === 'other' && !side.hasFocus());
+		if (second) side.focus();
+		else this.#hosts.get(id)?.focus();
 	}
 }
 

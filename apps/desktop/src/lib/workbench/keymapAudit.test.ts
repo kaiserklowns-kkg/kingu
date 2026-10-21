@@ -77,6 +77,8 @@ function registrations(): Entry[] {
 const EXCLUSIVE: [string, string][] = [
 	// Pin / Unpin Editor: VS Code binds both to ⌘K ⇧↵, one per pinned state.
 	['workbench.action.pinEditor', 'workbench.action.unpinEditor'],
+	// Split / Join Editor in Group: VS Code binds both to ⌘K ⇧⌘\, one per split state.
+	['workbench.action.splitEditorInGroup', 'workbench.action.joinEditorInGroup'],
 	// New Chat takes ⌘N only while the chat has focus (keyWhen + weight), New Untitled File elsewhere.
 	['workbench.action.chat.newChat', 'workbench.action.files.newUntitledFile'],
 	// F11 off macOS (VS Code's keys): Step Into while the debugger is stopped, Toggle Full Screen (lower weight) otherwise.

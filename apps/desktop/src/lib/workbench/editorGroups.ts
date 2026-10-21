@@ -10,7 +10,11 @@
 /** `sticky`: pinned with Pin Editor (VS Code's sticky tabs), kept first in the strip. */
 export type EditorTab = { path: string; preview: boolean; dirty: boolean; sticky?: boolean };
 /** `mru`: the group's editors, most recently active first (VS Code's EditorGroupModel.mru). */
-export type EditorGroup = { id: number; tabs: EditorTab[]; active: string | null; mru: string[]; used?: Record<string, number> };
+/**
+ * `locked`: VS Code's locked editor group, which new editors skip unless it already shows them.
+ * `splitIn`: editors shown twice side by side in the group (Split Editor in Group).
+ */
+export type EditorGroup = { id: number; tabs: EditorTab[]; active: string | null; mru: string[]; used?: Record<string, number>; locked?: boolean; splitIn?: string[] };
 /** A closed editor, for Reopen Closed Editor (⇧⌘T). */
 export type ClosedEditor = { path: string; group: number; index: number; sticky: boolean };
 export type GroupLeaf = { type: 'group'; id: number };
@@ -38,7 +42,8 @@ export type SplitSizing = 'auto' | 'distribute' | 'split';
 /** `workbench.editor.limit.*`, as one value (null when the limit is off). */
 export type EditorLimit = { value: number; perEditorGroup: boolean; excludeDirty: boolean };
 
-export type Behaviour = { closeEmptyGroups: boolean; focusRecentEditorAfterClose: boolean; openPositioning: OpenPositioning; splitSizing: SplitSizing };
+/** `autoLock`: whether opening `path` as the first editor of a group locks it (`workbench.editor.autoLockGroups`). */
+export type Behaviour = { closeEmptyGroups: boolean; focusRecentEditorAfterClose: boolean; openPositioning: OpenPositioning; splitSizing: SplitSizing; autoLock?: (path: string) => boolean };
 
 /** VS Code's defaults of the editor management settings the model follows (IEditorPartOptions). */
 export const DEFAULT_BEHAVIOUR: Behaviour = { closeEmptyGroups: true, focusRecentEditorAfterClose: true, openPositioning: 'right', splitSizing: 'auto' };
@@ -132,8 +137,11 @@ export function openEditor(m: GroupsModel, path: string, { preview = true, group
 		const previewIdx = tab.preview ? g.tabs.findIndex((t) => t.preview && !t.dirty) : -1;
 		if (previewIdx >= 0) {
 			forget(g, g.tabs[previewIdx].path);
+			dropSplit(g, g.tabs[previewIdx].path);
 			g.tabs[previewIdx] = tab;
 		} else g.tabs.splice(insertIndex(g), 0, tab);
+		// workbench.editor.autoLockGroups: the first editor of a group, with other groups open (VS Code's editorGroupView).
+		if (g.tabs.length === 1 && m.groups.length > 1 && behaviour().autoLock?.(path)) g.locked = true;
 	}
 	g.active = path;
 	touch(g, path);
@@ -216,6 +224,7 @@ export function closeEditor(m: GroupsModel, group: number, path: string, { force
 		m.closed = [...(m.closed ?? []).filter((c) => c.path !== path), { path, group, index: i, sticky: !!tab.sticky }].slice(-MAX_CLOSED);
 	}
 	forget(g, path);
+	dropSplit(g, path);
 	if (g.used) delete g.used[path];
 	// workbench.editor.focusRecentEditorAfterClose: the most recently used editor, else the one that took its place.
 	if (g.active === path) {
@@ -368,6 +377,7 @@ export function remapEditors(m: GroupsModel, remap: (path: string) => string | n
 			tabs.push(next === tab.path ? tab : { ...tab, path: next });
 		}
 		g.tabs = tabs;
+		if (g.splitIn) g.splitIn = [...new Set(g.splitIn.map((p) => remap(p) ?? p))];
 		if (g.active) g.active = remap(g.active) ?? g.active;
 		g.mru = [...new Set((g.mru ?? []).map((p) => remap(p) ?? p))];
 	}
@@ -607,17 +617,20 @@ export function nextUnpinned(m: GroupsModel): [number, string] | null {
 }
 
 /**
- * The group right of (`right`) or below (`down`) group `id` in the grid, or null (VS Code's
- * SIDE_GROUP lookup for `workbench.editor.openSideBySideDirection`).
+ * The group beside group `id` in `direction` in the grid, or null (VS Code's findGroup by
+ * direction, e.g. the SIDE_GROUP lookup for `workbench.editor.openSideBySideDirection`). Going
+ * left or up lands on the nearest group of the neighbouring cell.
  */
-export function neighbourGroup(m: GroupsModel, id: number, direction: 'right' | 'down'): number | null {
-	const orientation = direction === 'right' ? 'row' : 'column';
+export function neighbourGroup(m: GroupsModel, id: number, direction: SplitDirection): number | null {
+	const orientation = direction === 'right' || direction === 'left' ? 'row' : 'column';
+	const step = direction === 'right' || direction === 'down' ? 1 : -1;
 	let at = locate(m, (n) => n.type === 'group' && n.id === id);
 	while (at?.parent) {
 		const split = at.parent;
-		if (split.direction === orientation && at.index + 1 < split.children.length) {
-			let node = split.children[at.index + 1];
-			while (node.type === 'split') node = node.children[0];
+		const next = split.children[at.index + step];
+		if (split.direction === orientation && next) {
+			let node = next;
+			while (node.type === 'split') node = step < 0 && node.direction === orientation ? node.children[node.children.length - 1] : node.children[0];
 			return node.id;
 		}
 		const node: GridNode = split;
@@ -626,11 +639,80 @@ export function neighbourGroup(m: GroupsModel, id: number, direction: 'right' | 
 	return null;
 }
 
+/** Expand Editor Group (VS Code's minimizeOtherEditors, arrangeGroups EXPAND): the group takes most of the grid. */
+export function expandGroup(m: GroupsModel, id: number) {
+	if (m.expanded === id || m.groups.length < 2) return;
+	toggleExpandGroup(m, id);
+}
+
 /** VS Code's toggleMaximizeGroup: the group alone in the editor area until toggled or another group is used. */
 export function toggleMaximizeGroup(m: GroupsModel, id: number) {
 	if (m.groups.length < 2 && m.maximized == null) return;
 	m.maximized = m.maximized === id ? null : id;
 	if (m.maximized != null) m.activeGroup = id;
+}
+
+// --- Locked groups (VS Code: Lock Editor Group, workbench.editor.autoLockGroups) ---------------
+
+/** Lock or unlock a group (VS Code's lockEditorGroup / unlockEditorGroup). */
+export function setGroupLocked(m: GroupsModel, id: number, locked: boolean) {
+	const g = getGroup(m, id);
+	if (!g) return;
+	if (locked) g.locked = true;
+	else delete g.locked;
+}
+
+/** A locked group is skipped for `path` unless it already shows it (VS Code's isGroupLockedForEditor). */
+export const isLockedFor = (g: EditorGroup, path: string) => !!g.locked && !g.tabs.some((t) => t.path === path);
+
+/** When a group was last used: its most recently used editor's turn of the global clock. */
+const lastUsed = (g: EditorGroup) => Math.max(0, ...Object.values(g.used ?? {}));
+
+/**
+ * The group a new editor opens in when no group is named (VS Code's editorGroupFinder fallback):
+ * the active group, or, when that one is locked, the most recently used unlocked group. Null when
+ * every group is locked for `path`: the caller adds a group beside the active one.
+ */
+export function unlockedGroupFor(m: GroupsModel, path: string): number | null {
+	const active = activeGroupOf(m);
+	if (!isLockedFor(active, path)) return active.id;
+	const recent = m.groups.filter((g) => g !== active).sort((a, b) => lastUsed(b) - lastUsed(a));
+	return recent.find((g) => !isLockedFor(g, path))?.id ?? null;
+}
+
+// --- Split Editor in Group (VS Code's SideBySideEditorInput of one editor twice) ----------------
+
+function dropSplit(g: EditorGroup, path: string) {
+	if (!g.splitIn?.includes(path)) return;
+	g.splitIn = g.splitIn.filter((p) => p !== path);
+	if (!g.splitIn.length) delete g.splitIn;
+}
+
+/** Whether the group shows `path` split in two. */
+export const isSplitInGroup = (g: EditorGroup | undefined, path: string | null) => !!g && !!path && !!g.splitIn?.includes(path);
+
+/** Split Editor in Group / Join Editor in Group: `path` (a tab of the group) shown twice, or once again. */
+export function setSplitInGroup(m: GroupsModel, id: number, path: string, split: boolean) {
+	const g = getGroup(m, id);
+	if (!g || !g.tabs.some((t) => t.path === path)) return;
+	if (!split) return dropSplit(g, path);
+	if (!g.splitIn?.includes(path)) g.splitIn = [...(g.splitIn ?? []), path];
+	pinEditor(m, id, path);
+}
+
+/**
+ * VS Code's Join Editor Group with Next Group (joinTwoGroups): the group's editors move into the
+ * group to its right, else below, left or above. Returns the group that received them.
+ */
+export function joinWithNextGroup(m: GroupsModel, id = m.activeGroup): number | null {
+	for (const direction of ['right', 'down', 'left', 'up'] as const) {
+		const target = neighbourGroup(m, id, direction);
+		if (target !== null && target !== id) {
+			mergeGroup(m, id, target);
+			return target;
+		}
+	}
+	return null;
 }
 
 // --- Editor layouts (VS Code: View > Editor Layout, IEditorGroupsService.applyLayout) ------------
