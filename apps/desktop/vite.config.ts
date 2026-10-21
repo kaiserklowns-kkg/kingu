@@ -6,7 +6,9 @@ import { sveltePhosphorOptimize } from 'phosphor-svelte/vite';
 
 export default defineConfig({
 	// Tauri expects a fixed port and fails if it is taken
-	server: { port: 1420, strictPort: true },
+	// `snaps/` holds the built-in snaps' files (themes...), imported raw by snapFiles.ts; outside
+	// SvelteKit's allowed folders, the dev server would refuse them.
+	server: { port: 1420, strictPort: true, fs: { allow: ['snaps'] } },
 	clearScreen: false,
 	plugins: [
 		tailwindcss(),
