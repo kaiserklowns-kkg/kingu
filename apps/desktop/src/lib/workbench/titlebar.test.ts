@@ -4,16 +4,21 @@ import {
 	agentShortName,
 	agentStatusText,
 	agentStatusView,
+	BRANCH_MAX_CHARS,
 	countSessions,
 	inFilter,
 	layoutControlItems,
 	layoutToggleIcon,
+	OPEN_IN_AGENTS_WIDTH,
+	openInAgentsLabelFits,
+	openInAgentsWidth,
 	overflowHidden,
 	rightSideWidth,
 	SEARCH_MIN_WIDTH,
 	SEARCH_WIDTH,
 	searchBoxLabel,
 	searchTooltip,
+	shortBranchName,
 	SessionHistory,
 	sessionsAttentionLabel,
 	statusAgents,
@@ -46,18 +51,40 @@ describe('title bar sizes and command center', () => {
 });
 
 describe('project and branch', () => {
-	test('the active repository: branch or detached head, * when dirty, the repository first when several', () => {
-		expect(titleBranch({ repo: { branch: 'main' } })).toEqual({ label: 'main', interactive: true, tooltip: 'Switch Branch\nmain' });
-		expect(titleBranch({ repo: { branch: 'main', dirty: true, name: 'kingu', multiple: true } })?.tooltip).toBe('Switch Branch\nkingu (Git) - main*');
-		expect(titleBranch({ repo: { branch: null, head: 'a1b2c3d', detached: true } })).toEqual({ label: 'a1b2c3d', interactive: true, tooltip: 'Switch Branch\na1b2c3d (detached HEAD)' });
+	test('the active repository: branch or detached head, a dirty flag (no *), the repository first when several', () => {
+		expect(titleBranch({ repo: { branch: 'main' } })).toEqual({ label: 'main', short: 'main', dirty: false, interactive: true, tooltip: 'Switch Branch\nmain' });
+		const dirty = titleBranch({ repo: { branch: 'main', dirty: true, name: 'kingu', multiple: true } });
+		expect(dirty?.label).toBe('main');
+		expect(dirty?.dirty).toBe(true);
+		expect(dirty?.tooltip).toBe('Switch Branch\nkingu (Git) - main\nUncommitted changes');
+		expect(titleBranch({ repo: { branch: null, head: 'a1b2c3d', detached: true } })).toEqual({ label: 'a1b2c3d', short: 'a1b2c3d', dirty: false, interactive: true, tooltip: 'Switch Branch\na1b2c3d (detached HEAD)' });
 		expect(titleBranch({ repo: { branch: null, head: null } })).toBeNull();
 	});
 
 	test("no repository: the folder's branch; the Agents layout: the worktree's, shown only", () => {
-		expect(titleBranch({ folderBranch: 'dev' })).toEqual({ label: 'dev', interactive: true, tooltip: 'Switch Branch' });
+		expect(titleBranch({ folderBranch: 'dev' })).toEqual({ label: 'dev', short: 'dev', dirty: false, interactive: true, tooltip: 'Switch Branch\ndev' });
 		expect(titleBranch({})).toBeNull();
-		expect(titleBranch({ worktreeBranch: 'kingu/fix-x', repo: { branch: 'main' } })).toEqual({ label: 'kingu/fix-x', interactive: false, tooltip: "The selected worktree's branch" });
+		expect(titleBranch({ worktreeBranch: 'kingu/fix-x', repo: { branch: 'main' } })).toEqual({ label: 'kingu/fix-x', short: 'kingu/fix-x', dirty: false, interactive: false, tooltip: "The selected worktree's branch\nkingu/fix-x" });
 		expect(titleBranch({ worktreeBranch: null, repo: { branch: 'main' } })).toBeNull();
+	});
+
+	test('long branch names: the last segment behind …/, then a middle ellipsis; the full name stays in label and tooltip', () => {
+		expect(shortBranchName('kingu/test')).toBe('kingu/test');
+		expect(shortBranchName('kaiserklowns-kkg/system-gap-review')).toBe('…/system-gap-review');
+		const long = shortBranchName('team/feature/a-really-long-branch-name-for-the-title-bar');
+		expect(long.length).toBe(BRANCH_MAX_CHARS);
+		expect(long.startsWith('…/a-really-long')).toBe(true);
+		expect(long.endsWith('title-bar')).toBe(true);
+		expect(long.slice(2)).toContain('…');
+		const flat = shortBranchName('a-really-long-branch-name-without-any-slash-at-all');
+		expect(flat.length).toBe(BRANCH_MAX_CHARS);
+		expect(flat.startsWith('a-really-long')).toBe(true);
+		expect(flat.endsWith('at-all')).toBe(true);
+		expect(shortBranchName('trailing-slash-branch-name-that-is-long/')).toHaveLength(BRANCH_MAX_CHARS);
+		const b = titleBranch({ repo: { branch: 'kaiserklowns-kkg/system-gap-review', dirty: true } });
+		expect(b?.short).toBe('…/system-gap-review');
+		expect(b?.label).toBe('kaiserklowns-kkg/system-gap-review');
+		expect(b?.tooltip).toContain('kaiserklowns-kkg/system-gap-review');
 	});
 });
 
@@ -92,6 +119,22 @@ describe('fitting the bar', () => {
 		expect(rightSideWidth(items, true)).toBe(24 + 6 * 22 + 6 * 4 + 4 + 8);
 		expect(rightSideWidth(items, false)).toBe(24 + 6 * 22 + 6 * 4 + 4);
 		expect(rightSideWidth([], true)).toBe(0);
+	});
+
+	test('Open in Agents: labelled ("Agents") while the search keeps its full width; the label goes first', () => {
+		expect(openInAgentsWidth(0)).toBe(OPEN_IN_AGENTS_WIDTH);
+		expect(openInAgentsWidth(40)).toBe(16 + 6 + 40 + 12 + 2);
+		const labelled = titleToolbar({ openInAgents: true, openInAgentsLabel: 40, layout: [], globalActions: false });
+		expect(labelled).toEqual([{ id: 'openInAgents', width: 76 }]);
+		const fits = { width: 1140, leftWidth: 228, rightWidth: 186, labelWidth: 40, centerFixed: 80 };
+		expect(openInAgentsLabelFits(fits)).toBe(true);
+		// 810: 810 - 20 - 228 - (186 + 52) - 80 = 244, the search still full; 800: 234, so the label goes.
+		expect(openInAgentsLabelFits({ ...fits, width: 810 })).toBe(true);
+		expect(openInAgentsLabelFits({ ...fits, width: 800 })).toBe(false);
+		// ...while without it the search there is still a full box.
+		expect(titleBarFit({ width: 800, leftWidth: 228, rightWidth: 186, contextWidth: 150, centerFixed: 80 })).toEqual({ search: 'box', searchWidth: SEARCH_WIDTH });
+		// Not measured yet: no label.
+		expect(openInAgentsLabelFits({ ...fits, labelWidth: 0 })).toBe(false);
 	});
 });
 

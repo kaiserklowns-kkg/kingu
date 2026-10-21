@@ -118,7 +118,7 @@
 		menuItem('kingu.agents.show', 'Show Agents'),
 		menuItem('kingu.agents.openBoard', 'Board', { enabled: commands.enabled('kingu.agents.openBoard') }),
 		menuSeparator,
-		menuItem('workbench.action.toggleAgentsMode', appMode.isAgents ? 'Open in Editor' : 'Open in Agents', { keyLabel: key('workbench.action.toggleAgentsMode') }),
+		menuItem('workbench.action.toggleAgentsMode', t(appMode.isAgents ? 'titleBar.openInEditor' : 'titleBar.openInAgents'), { keyLabel: key('workbench.action.toggleAgentsMode') }),
 		menuSeparator,
 		menuItem('kingu.agents.settings', 'Agent Settings')
 	]);

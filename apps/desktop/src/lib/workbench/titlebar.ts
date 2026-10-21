@@ -36,37 +36,62 @@ export function searchTooltip(quickOpenKey?: string): string {
 // --- Project and branch ------------------------------------------------------------------------
 
 export type TitleBranch = {
-	/** What the control shows: the branch (or detached head), `*` when the working tree has changes. */
+	/** The branch (or detached head), in full. */
 	label: string;
+	/** What the control shows: `label`, shortened to its last segment (shortBranchName). */
+	short: string;
+	/** The working tree has changes: a dot after the name (no `*`). */
+	dirty: boolean;
 	/** Opens the branch picker (Git: Checkout to...); a worktree's branch in the Agents layout only shows. */
 	interactive: boolean;
-	/** Tooltip, with what the status bar's branch item (which this replaces) said. */
+	/** Tooltip: the full name, with what the status bar's branch item (which this replaces) said. */
 	tooltip: string;
 };
 
 /** The repository the branch control describes (the workbench's active one). */
 export type TitleRepo = { branch?: string | null; head?: string | null; detached?: boolean; dirty?: boolean; name?: string; multiple?: boolean };
 
+/** The most characters the title bar shows of a branch name before it shortens it. */
+export const BRANCH_MAX_CHARS = 28;
+
+/**
+ * A long branch name, shortened the way it reads best: its last path segment behind `…/`
+ * (`kaiserklowns-kkg/system-gap-review` is `…/system-gap-review`), and when even that is too long,
+ * the segment's start and end around a middle `…`. Short names stay as they are.
+ */
+export function shortBranchName(name: string, max = BRANCH_MAX_CHARS): string {
+	if (name.length <= max) return name;
+	const slash = name.lastIndexOf('/');
+	const last = slash >= 0 ? name.slice(slash + 1) : '';
+	const prefix = last ? '…/' : '';
+	const tail = last || name;
+	if (prefix.length + tail.length <= max) return prefix + tail;
+	const room = Math.max(2, max - prefix.length - 1);
+	const head = Math.ceil(room / 2);
+	return `${prefix}${tail.slice(0, head)}…${tail.slice(tail.length - (room - head))}`;
+}
+
 /**
  * The title bar's branch control, which replaces the status bar's branch item: the selected
  * worktree's branch in the Agents layout (`worktreeBranch` given), else the active repository's
- * (its branch or detached head, `*` when dirty, its name first when there are several), else the
- * folder's branch.
+ * (its branch or detached head, a dirty dot when it has changes, its name first in the tooltip when
+ * there are several), else the folder's branch. The tooltip always carries the full name.
  */
 export function titleBranch(opts: { worktreeBranch?: string | null; repo?: TitleRepo | null; folderBranch?: string | null }): TitleBranch | null {
+	const make = (label: string, interactive: boolean, tooltip: string, dirty = false): TitleBranch => ({ label, short: shortBranchName(label), dirty, interactive, tooltip });
 	if (opts.worktreeBranch !== undefined) {
-		return opts.worktreeBranch ? { label: opts.worktreeBranch, interactive: false, tooltip: t('titleBar.worktreeBranch') } : null;
+		return opts.worktreeBranch ? make(opts.worktreeBranch, false, `${t('titleBar.worktreeBranch')}\n${opts.worktreeBranch}`) : null;
 	}
 	const r = opts.repo;
 	if (r) {
 		const name = r.branch ?? r.head;
 		if (!name) return null;
-		const label = `${name}${r.dirty ? '*' : ''}`;
 		const where = r.multiple && r.name ? `${r.name} (Git) - ` : '';
 		const detached = r.detached ? ` ${t('titleBar.detached')}` : '';
-		return { label, interactive: true, tooltip: `${t('titleBar.switchBranch')}\n${where}${label}${detached}` };
+		const dirty = r.dirty ? `\n${t('titleBar.dirty')}` : '';
+		return make(name, true, `${t('titleBar.switchBranch')}\n${where}${name}${detached}${dirty}`, !!r.dirty);
 	}
-	return opts.folderBranch ? { label: opts.folderBranch, interactive: true, tooltip: t('titleBar.switchBranch') } : null;
+	return opts.folderBranch ? make(opts.folderBranch, true, `${t('titleBar.switchBranch')}\n${opts.folderBranch}`) : null;
 }
 
 // --- Fitting the bar ---------------------------------------------------------------------------
@@ -277,19 +302,42 @@ export const TOOLBAR_MAX = 12;
 export const TOOLBAR_GAP = 4;
 /** A title bar action: 22px (a 16px icon, 3px padding), as in kingu-old. */
 export const ICON_ITEM_WIDTH = 22;
-/** Open in Agents at rest: its 16px tile and 4px padding each side. */
+/** Open in Agents without its label: its 16px tile, 3px padding and a 1px border each side. */
 export const OPEN_IN_AGENTS_WIDTH = 24;
+
+/**
+ * Open in Agents (Open in Editor) with its label shown at rest ("Agents" / "Editor"): the tile, a
+ * 6px gap, the label, 6px padding and a 1px border each side; just the tile when `labelWidth` is 0.
+ */
+export function openInAgentsWidth(labelWidth: number): number {
+	return labelWidth > 0 ? 16 + 6 + Math.ceil(labelWidth) + 12 + 2 : OPEN_IN_AGENTS_WIDTH;
+}
 
 export type ToolbarItem = { id: string; width: number };
 
-/** The right toolbar, from the center outward: Open in Agents, layout controls, notifications, accounts, manage. */
-export function titleToolbar(opts: { openInAgents: boolean; layout: LayoutControlItem[]; notifications?: boolean; globalActions: boolean }): ToolbarItem[] {
+/**
+ * The right toolbar, from the center outward: Open in Agents, layout controls, notifications,
+ * accounts, manage. `openInAgentsLabel`: the width of Open in Agents' label when it shows.
+ */
+export function titleToolbar(opts: { openInAgents: boolean; openInAgentsLabel?: number; layout: LayoutControlItem[]; notifications?: boolean; globalActions: boolean }): ToolbarItem[] {
 	const ids: string[] = [];
 	if (opts.openInAgents) ids.push('openInAgents');
 	ids.push(...opts.layout);
 	if (opts.notifications) ids.push('notifications');
 	if (opts.globalActions) ids.push('accounts', 'manage');
-	return ids.slice(0, TOOLBAR_MAX).map((id) => ({ id, width: id === 'openInAgents' ? OPEN_IN_AGENTS_WIDTH : ICON_ITEM_WIDTH }));
+	return ids.slice(0, TOOLBAR_MAX).map((id) => ({ id, width: id === 'openInAgents' ? openInAgentsWidth(opts.openInAgentsLabel ?? 0) : ICON_ITEM_WIDTH }));
+}
+
+/**
+ * Whether Open in Agents keeps its label: only while the search can stay a full box
+ * (SEARCH_WIDTH) with the label's extra width on the right. The label is the first to go as the
+ * bar narrows, before the search shrinks.
+ */
+export function openInAgentsLabelFits(opts: { width: number; leftWidth: number; rightWidth: number; labelWidth: number; centerFixed: number }): boolean {
+	if (opts.labelWidth <= 0) return false;
+	const right = opts.rightWidth + openInAgentsWidth(opts.labelWidth) - OPEN_IN_AGENTS_WIDTH;
+	const fit = titleBarFit({ width: opts.width, leftWidth: opts.leftWidth, rightWidth: right, contextWidth: 0, centerFixed: opts.centerFixed });
+	return fit.search === 'box' && fit.searchWidth >= SEARCH_WIDTH;
 }
 
 /**

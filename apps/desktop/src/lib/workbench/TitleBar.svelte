@@ -3,15 +3,18 @@
 	// draws it: 35px (30px without the command center), left 20% / center (fit-content, max 60%,
 	// 10px margins) / right 20%, the sides growing alike and never below their content.
 	// Left: the macOS traffic-light inset, or the Kingu mark and the in-window menu bar; then the
-	// project (Open Recent) and branch (Git: Checkout to...) controls (kingu-old had them inside the
-	// search pill; Kingu shows them on their own, and the branch is no longer in the status bar).
+	// project (Open Recent) and branch (Git: Checkout to...) as one quiet group: the project's name,
+	// then the branch as a secondary label (shortened to its last segment, a dot when dirty, the full
+	// name in the tooltip). kingu-old had them inside the search pill; Kingu shows them on their own,
+	// and the branch is no longer in the status bar.
 	// Center: Back / Forward, the search ("Search ⌘P") with the agents status, the Arkai chat button.
 	// Right: Open in Agents / Open in Editor next to the center (VS Code's center-adjacent toolbar;
-	// the same title bar serves the IDE and the Agents layout), then the layout controls (Customize
-	// Layout..., the side bar, panel and secondary side bar toggles), Accounts and Manage.
-	// When the bar narrows the search gives way first (narrower, then an icon), then the toolbar's
-	// items next to the center, then the project and branch labels (titleBarFit). Any
-	// non-interactive part drags the window.
+	// the same title bar serves the IDE and the Agents layout), labelled "Agents" / "Editor" while
+	// there is room, then the layout controls (Customize Layout..., the side bar, panel and secondary
+	// side bar toggles), Accounts and Manage.
+	// When the bar narrows Open in Agents' label goes first, then the search gives way (narrower,
+	// then an icon), then the toolbar's items next to the center, then the project and branch labels
+	// (titleBarFit). Any non-interactive part drags the window.
 	import { onMount, tick } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import CommandCenter from './CommandCenter.svelte';
@@ -37,6 +40,7 @@
 		CENTER_MARGIN,
 		layoutControlItems,
 		layoutToggleIcon,
+		openInAgentsLabelFits,
 		overflowHidden,
 		rightSideWidth,
 		SEARCH_ICON_WIDTH,
@@ -47,6 +51,7 @@
 		titleBranch,
 		titleToolbar,
 		type LayoutControlType,
+		type TitleBranch,
 		type LayoutToggle
 	} from './titlebar';
 	import { workspace } from './workspace.svelte';
@@ -159,7 +164,11 @@
 	const bellInTitle = $derived(bellPlacement(settings.get<string>('workbench.notifications.position'), settings.get<boolean>('workbench.notifications.showInTitleBar')) === 'titleBar');
 	// The Agents layout has no bottom panel.
 	const rightLayoutItems = $derived(appMode.isAgents ? layoutItems.filter((id) => id !== 'togglePanel' && id !== 'layoutMenu' && id !== 'customizeLayout') : layoutItems);
-	const toolbar = $derived(titleToolbar({ openInAgents, layout: rightLayoutItems, notifications: bellInTitle, globalActions: true }));
+	// Open in Agents / Open in Editor (same place, same key): the action, its label and its tooltip.
+	const toAgents = $derived(!appMode.isAgents);
+	const agentsAction = $derived(translate(toAgents ? 'titleBar.openInAgents' : 'titleBar.openInEditor'));
+	const agentsLabel = $derived(translate(toAgents ? 'titleBar.openInAgents.label' : 'titleBar.openInEditor.label'));
+	const agentsTooltip = $derived(`${agentsAction}${hint('workbench.action.toggleAgentsMode')}\n${translate(toAgents ? 'titleBar.openInAgents.detail' : 'titleBar.openInEditor.detail')}`);
 	// window.doubleClickIconToClose: the icon (Windows/Linux) closes the window on a double click instead of dragging it.
 	const iconCloses = $derived(settings.get<boolean>('window.doubleClickIconToClose'));
 	// Through the close guard, like Close Window.
@@ -215,11 +224,21 @@
 	// A label can change while truncated (no resize): measure again.
 	$effect(() => {
 		void projectName;
-		void branch?.label;
+		void branch?.short;
+		void branch?.dirty;
 		void tick().then(measure);
 	});
 	// macOS chrome (also the platform preview's): VS Code moves the toolbar 8px in from the edge.
 	const macChrome = $derived(platform.profile.windowControls === 'traffic-lights');
+	// Open in Agents shows "Agents" / "Editor" beside its tile while the bar has room for it with the
+	// search at full width (openInAgentsLabelFits): the label is the first thing to go as it narrows.
+	let agentsLabelWidth = $state(0);
+	const compactToolbar = $derived(titleToolbar({ openInAgents, layout: rightLayoutItems, notifications: bellInTitle, globalActions: true }));
+	const showAgentsLabel = $derived(
+		openInAgents &&
+			openInAgentsLabelFits({ width: barWidth, leftWidth: leftNatural, rightWidth: rightSideWidth(compactToolbar, macChrome), labelWidth: agentsLabelWidth, centerFixed: commandCenter ? centerFixed : 0 })
+	);
+	const toolbar = $derived(showAgentsLabel ? titleToolbar({ openInAgents, openInAgentsLabel: agentsLabelWidth, layout: rightLayoutItems, notifications: bellInTitle, globalActions: true }) : compactToolbar);
 	// Toolbar items hide (from the center outward, VS Code `.overflowing`) only once the search is an icon.
 	const hidden = $derived(
 		overflowHidden(toolbar, barWidth - Math.max(barWidth * 0.2, leftNatural) - CENTER_MARGIN * 2 - (commandCenter ? centerFixed + SEARCH_ICON_WIDTH : 0) - 4 - (macChrome ? 8 : 0))
@@ -320,10 +339,12 @@
 	// toolbar's hover fill, and its active fill while the action's menu is open.
 	const ACTION = 'grid size-[22px] shrink-0 place-items-center rounded-[6px] hover:bg-(--vscode-toolbar-hoverBackground) focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-(--vscode-focusBorder)';
 	const ACTIVE = 'bg-(--vscode-toolbar-activeBackground) hover:bg-(--vscode-toolbar-activeBackground)';
-	// The project and branch controls (kingu-old's `.kingu-title-segment`, out of the pill): a 14px
-	// icon, the label (the project's semibold, at most 180px), a 12px chevron at 60%.
+	// The project and branch controls (kingu-old's `.kingu-title-segment`, out of the pill), one quiet
+	// group: the project's name (medium weight), then the branch as a secondary label (a muted 12px
+	// branch icon, the shortened name in the description colour, a dot when dirty). 22px tall, 6px
+	// corners, no chevrons; the fill only on hover.
 	const SEGMENT =
-		'flex h-[22px] min-w-0 items-center gap-1 rounded-[6px] px-[5px] text-xs whitespace-nowrap text-(--vscode-commandCenter-foreground) focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-(--vscode-focusBorder)';
+		'flex h-[22px] min-w-0 items-center gap-1 rounded-[6px] px-1.5 text-xs whitespace-nowrap focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-(--vscode-focusBorder)';
 	const SEGMENT_HOVER = 'hover:bg-(--vscode-commandCenter-activeBackground) hover:text-(--vscode-commandCenter-activeForeground)';
 </script>
 
@@ -369,23 +390,29 @@
 				{/if}
 				{#if projectName}
 					<!-- Where the work is: the project (Open Recent) and its branch (Git: Checkout to...). -->
-					<div bind:this={context} class="titlebar-context flex min-w-0 items-center gap-0.5 pl-1" style:max-width={fit.contextMaxWidth !== undefined ? `${fit.contextMaxWidth}px` : undefined}>
-						<button class={[SEGMENT, SEGMENT_HOVER]} title="{translate('titleBar.switchProject')}{hint('workbench.action.openRecent')}" aria-label="{translate('titleBar.switchProject')}: {projectName}" onclick={() => commands.run('workbench.action.openRecent')}>
-							<Codicon id="folder" size={14} />
-							<span data-label class="max-w-[180px] min-w-0 truncate font-semibold">{projectName}</span>
-							<Codicon id="chevron-down" size={12} class="opacity-60" />
+					<div bind:this={context} class="titlebar-context flex min-w-0 items-center pl-1" style:max-width={fit.contextMaxWidth !== undefined ? `${fit.contextMaxWidth}px` : undefined}>
+						<button
+							class={[SEGMENT, SEGMENT_HOVER, 'font-medium text-(--vscode-commandCenter-foreground)']}
+							title={`${translate('titleBar.switchProject')}${hint('workbench.action.openRecent')}\n${workspace.root}`}
+							aria-label="{translate('titleBar.switchProject')}: {projectName}"
+							onclick={() => commands.run('workbench.action.openRecent')}
+						>
+							<span data-label class="max-w-[180px] min-w-0 truncate">{projectName}</span>
 						</button>
 						{#if branch}
+							{@const aria = `${branch.interactive ? translate('titleBar.switchBranch') : translate('titleBar.worktreeBranch')}: ${branch.label}${branch.dirty ? ` (${translate('titleBar.dirty')})` : ''}`}
+							{#snippet branchBody(b: TitleBranch)}
+								<Codicon id="git-branch" size={12} class="shrink-0 opacity-70" />
+								<span data-label class="max-w-[180px] min-w-0 truncate">{b.short}</span>
+								{#if b.dirty}<span class="size-1.5 shrink-0 rounded-full bg-(--vscode-gitDecoration-modifiedResourceForeground) opacity-80" aria-hidden="true"></span>{/if}
+							{/snippet}
 							{#if branch.interactive}
-								<button class={[SEGMENT, SEGMENT_HOVER]} title={branch.tooltip} aria-label="{translate('titleBar.switchBranch')}: {branch.label}" onclick={checkout}>
-									<Codicon id="git-branch" size={14} />
-									<span data-label class="max-w-[180px] min-w-0 truncate">{branch.label}</span>
-									<Codicon id="chevron-down" size={12} class="opacity-60" />
+								<button class={[SEGMENT, SEGMENT_HOVER, 'text-(--vscode-descriptionForeground)']} title={branch.tooltip} aria-label={aria} onclick={checkout}>
+									{@render branchBody(branch)}
 								</button>
 							{:else}
-								<span class={SEGMENT} title={branch.tooltip}>
-									<Codicon id="git-branch" size={14} />
-									<span data-label class="max-w-[180px] min-w-0 truncate">{branch.label}</span>
+								<span class={[SEGMENT, 'text-(--vscode-descriptionForeground)']} title={branch.tooltip} aria-label={aria} role="img">
+									{@render branchBody(branch)}
 								</span>
 							{/if}
 						{/if}
@@ -405,31 +432,27 @@
 
 		<div class="titlebar-right flex h-full w-[20%] grow-[2] items-center justify-end overflow-hidden pt-[2px]" style:min-width="{rightNatural}px">
 			{#if shown('openInAgents')}
-				<!-- VS Code's center-adjacent toolbar (kingu-old's Open in Agents widget): the Kingu tile in
-				     grey, in colour on hover, its label sliding out on hover. Open in Editor in the Agents
-				     layout (same place, same key). The tile's url() is quoted: Vite inlines the small SVG as a
-				     data: URL with ' in it, which an unquoted url() drops (the tile went blank). -->
-				{@const toAgents = !appMode.isAgents}
+				<!-- VS Code's center-adjacent toolbar (kingu-old's Open in Agents widget), made plain to see:
+				     the Kingu tile in full colour (no grey at rest) in a 1px outlined 22px button, with
+				     "Agents" beside it while there is room (showAgentsLabel); the tooltip says what it does
+				     and its key. Open in Editor in the Agents layout (same place, same key). The tile is an
+				     <img>: Vite inlines the small SVG as a data: URL, which a CSS url() needs quoted. -->
 				<button
-					class="group mr-auto flex h-[22px] shrink-0 items-center rounded-[5px] px-1 whitespace-nowrap text-(--vscode-titleBar-activeForeground) hover:bg-(--vscode-toolbar-hoverBackground) focus-visible:bg-(--vscode-toolbar-hoverBackground) focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-(--vscode-focusBorder)"
-					title="{toAgents ? 'Open in Agents' : 'Open in Editor'}{hint('workbench.action.toggleAgentsMode')}"
-					aria-label={toAgents ? 'Open in Agents' : 'Open in Editor'}
+					class={[
+						'mr-auto flex h-[22px] shrink-0 items-center gap-1.5 rounded-[6px] border border-(--vscode-commandCenter-border) text-xs font-medium whitespace-nowrap text-(--vscode-titleBar-activeForeground)',
+						'hover:bg-(--vscode-toolbar-hoverBackground) focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-(--vscode-focusBorder)',
+						showAgentsLabel ? 'px-1.5' : 'px-[3px]'
+					]}
+					title={agentsTooltip}
+					aria-label={agentsAction}
 					onclick={() => toggleAgentsMode()}
 				>
 					{#if toAgents}
-						<span
-							class="size-4 shrink-0 bg-contain bg-center bg-no-repeat grayscale transition-[filter] duration-[160ms] group-hover:grayscale-0 group-focus-visible:grayscale-0 motion-reduce:transition-none"
-							style:background-image={`url("${sessionsIconUrl}")`}
-							aria-hidden="true"
-						></span>
+						<img src={sessionsIconUrl} alt="" class="size-4 shrink-0" draggable="false" />
 					{:else}
 						<Codicon id="vscode" size={16} />
 					{/if}
-					<span
-						class="ml-0 inline-block max-w-0 overflow-hidden text-(--vscode-foreground) opacity-0 transition-[max-width,opacity,margin] delay-200 duration-[160ms] group-hover:ml-1.5 group-hover:max-w-[200px] group-hover:opacity-100 group-hover:delay-0 group-focus-visible:ml-1.5 group-focus-visible:max-w-[200px] group-focus-visible:opacity-100 group-focus-visible:delay-0 motion-reduce:transition-none"
-					>
-						{toAgents ? 'Open in Agents' : 'Open in Editor'}
-					</span>
+					{#if showAgentsLabel}<span>{agentsLabel}</span>{/if}
 				</button>
 			{/if}
 			<div class={['action-toolbar-container ml-auto flex h-full shrink-0 items-center gap-1 pr-1', macChrome && 'mr-2']} role="toolbar" aria-label="Title actions">
@@ -491,6 +514,8 @@
 		</div>
 	</div>
 	<WindowControls />
+	<!-- Open in Agents' label, measured off-screen so the bar knows whether it fits. -->
+	<span bind:offsetWidth={agentsLabelWidth} class="pointer-events-none invisible absolute top-0 left-0 text-xs font-medium whitespace-nowrap" aria-hidden="true">{agentsLabel}</span>
 </header>
 
 
