@@ -2,7 +2,8 @@
 // extensions): finds the tests of every project in the folder (cargo, bun, vitest, jest, go,
 // pytest), runs them in a test terminal and reads the results as they stream or from the
 // runner's report, debugs one through the debugger, and keeps the results for the Testing view,
-// the editor gutter and the failure peek.
+// the editor gutter and the failure peek. Continuous run reruns the watched tests when their
+// files change.
 
 import { invoke } from '@tauri-apps/api/core';
 import { clientLog } from '#lib/client-log.ts';
@@ -40,6 +41,7 @@ import { addDynamic, ancestors, countBadge, fileItem, findItem, keepDynamic, lea
 import { mergeCoverage, parseGoCoverProfile, parseLcov, type FileCoverage } from './coverage.ts';
 import { CargoParser, GoParser, parseJestJson, parseJunit, type TestEvent } from './results.ts';
 import { cargoBinaryName, cargoName, cargoTestExecutable, debugConfig, joinRel, relTo, runPlans, shellLine, type RunPlan } from './runners.ts';
+import { affectedTests, ALL, isWatched, toggleWatched } from './continuous.ts';
 
 type BuildResult = { success: boolean; output: string };
 /** The failure peek (VS Code: the testing output peek) open in an editor. */
@@ -71,6 +73,8 @@ class Testing {
 	coverage = $state.raw<ReadonlyMap<string, FileCoverage> | null>(null);
 	/** Toggle Inline Coverage: covered and uncovered lines are shaded, not only marked in the gutter. */
 	coverageInline = $state(false);
+	/** Continuous run: the watched items' ids (ALL: every test). */
+	continuous = $state.raw<ReadonlySet<string>>(new Set());
 	root = '';
 
 	badge = $derived(countBadge(this.results, settings.get<string>('testing.countBadge')));
@@ -92,6 +96,8 @@ class Testing {
 		this.results = new Map();
 		this.peek = null;
 		this.coverage = null;
+		this.continuous = new Set();
+		this.#autoFiles.clear();
 		this.#coverageTools.clear();
 		this.#lastRun = null;
 		this.#loaded = null;
@@ -309,6 +315,7 @@ class Testing {
 	/** A test file changed on disk (or was saved): its tests are read again. */
 	async fileChanged(rels: readonly string[]) {
 		if (!this.#loaded || !this.root) return;
+		this.#queueAuto(rels);
 		let changed = false;
 		for (const rel of rels) {
 			if (SKIP_DIR.test(rel)) continue;
@@ -371,18 +378,20 @@ class Testing {
 		this.#pendingResults = null;
 	}
 
-	/** Runs (or with `debug`, debugs; with `coverage`, runs with coverage) tests: any mix of projects, files, suites and tests. */
-	async run(selected: readonly TestItem[], { debug: asDebug = false, coverage = false } = {}) {
+	/** Runs (or with `debug`, debugs; with `coverage`, runs with coverage) tests: any mix of projects,
+	 * files, suites and tests. `auto`: a continuous run (not the last run; opens nothing but the peek
+	 * with testing.automaticallyOpenPeekViewDuringAutoRun). */
+	async run(selected: readonly TestItem[], { debug: asDebug = false, coverage = false, auto = false } = {}) {
 		if (!selected.length) return status.flash(t('testing.noTests'));
 		if (this.running) return status.flash(t('testing.alreadyRunning'));
-		this.#lastRun = { ids: selected.map((s) => s.id), debug: asDebug, coverage };
+		if (!auto) this.#lastRun = { ids: selected.map((s) => s.id), debug: asDebug, coverage };
 		// testing.saveBeforeTest
 		if (settings.get<boolean>('testing.saveBeforeTest')) {
 			const { saveFile } = await import('#lib/workbench/editorModels.ts');
 			for (const p of editors.dirtyPaths()) await saveFile(p, 'explicit');
 		}
 		if (asDebug) return this.#debug(selected[0]);
-		const open = settings.get<string>('testing.automaticallyOpenTestResults');
+		const open = auto ? 'neverOpen' : settings.get<string>('testing.automaticallyOpenTestResults');
 		if (open === 'openExplorerOnTestStart') {
 			layout.sideView = 'testing';
 			layout.sidebarVisible = true;
@@ -428,7 +437,51 @@ class Testing {
 				layout.sidebarVisible = true;
 			} else if (!cancelled) notifications.info(t('testing.coverage.none'));
 		}
-		if (failures) this.#afterFailures();
+		if (failures && (!auto || settings.get<boolean>('testing.automaticallyOpenPeekViewDuringAutoRun'))) this.#afterFailures();
+	}
+
+	// --- Continuous run ----------------------------------------------------------------------------
+
+	#autoFiles = new Set<string>();
+	#autoTimer: ReturnType<typeof setTimeout> | null = null;
+
+	/** Whether an item is watched by continuous run (itself, an ancestor, or everything). */
+	isContinuous(item: TestItem): boolean {
+		return this.continuous.size > 0 && isWatched(this.continuous, item, this.ancestorsOf(item.id));
+	}
+
+	/** Turn on / off continuous run for an item, or (no item) for every test (VS Code: Toggle Continuous Run). */
+	async toggleContinuous(item?: TestItem) {
+		await this.ensureLoaded();
+		const id = item?.id ?? ALL;
+		// An item watched through a parent (or everything) is not turned off by itself: the toggle acts on what watches it.
+		const owner = this.continuous.has(id) ? id : this.continuous.has(ALL) ? ALL : (this.ancestorsOf(id).find((a) => this.continuous.has(a.id))?.id ?? id);
+		this.continuous = toggleWatched(this.continuous, owner);
+		status.flash(this.continuous.size ? t('testingExtras.continuous.on') : t('testingExtras.continuous.off'));
+	}
+
+	stopContinuous() {
+		this.continuous = new Set();
+		this.#autoFiles.clear();
+	}
+
+	/** Files changed: the watched tests they affect run once things settle (one run at a time). */
+	#queueAuto(rels: readonly string[]) {
+		if (!this.continuous.size) return;
+		for (const r of rels) if (!SKIP_DIR.test(r)) this.#autoFiles.add(r);
+		if (!this.#autoFiles.size) return;
+		if (this.#autoTimer) clearTimeout(this.#autoTimer);
+		this.#autoTimer = setTimeout(() => void this.#autoRun(), 400);
+	}
+
+	async #autoRun() {
+		this.#autoTimer = null;
+		// A run in progress: try again after it.
+		if (this.running) return void (this.#autoTimer = setTimeout(() => void this.#autoRun(), 500));
+		const files = [...this.#autoFiles];
+		this.#autoFiles.clear();
+		const items = affectedTests(this.items, this.continuous, files);
+		if (items.length) await this.run(items, { auto: true });
 	}
 
 	/** The runners and projects of `selected` that can run with coverage (`runner|project`). */
@@ -831,6 +884,21 @@ export function installTesting(): () => void {
 		commands.register({ id: 'testing.showMostRecentOutput', title: 'Show Output', category: 'Test', key: 'cmd+; cmd+o', ...ide, run: () => testing.showOutput() }),
 		commands.register({ id: 'testing.refreshTests', title: 'Refresh Tests', category: 'Test', key: 'cmd+; cmd+r', ...ide, run: () => testing.refresh(true) }),
 		commands.register({ id: 'testing.clearTestResults', title: 'Clear All Results', category: 'Test', ...ide, run: () => testing.clearResults() }),
+		// Continuous run (VS Code: testing.startContinuousRun / stopContinuousRun / toggleContinuousRunForTest).
+		commands.register({ id: 'testing.startContinuousRun', title: 'Start Continuous Run', category: 'Test', ...ide, when: () => !testing.continuous.size, run: () => testing.toggleContinuous() }),
+		commands.register({ id: 'testing.stopContinuousRun', title: 'Stop Continuous Run', category: 'Test', ...ide, when: () => testing.continuous.size > 0, run: () => testing.stopContinuous() }),
+		commands.register({
+			id: 'testing.toggleContinuousRunForTest',
+			title: 'Toggle Continuous Run for Test at Cursor',
+			category: 'Test',
+			...ide,
+			run: async () => {
+				await testing.ensureLoaded();
+				const item = editors.active ? testAt(testing.items, editors.active, editors.cursor.line) : undefined;
+				if (!item) return status.flash(t('testing.noTestAtCursor'));
+				await testing.toggleContinuous(item);
+			}
+		}),
 		// Coverage (VS Code's coverage run profile commands and keys).
 		commands.register({ id: 'testing.coverageAll', title: 'Run All Tests with Coverage', category: 'Test', key: 'cmd+; cmd+shift+a', ...ide, run: () => testing.runAll(false, true) }),
 		commands.register({ id: 'testing.coverageAtCursor', title: 'Run Test at Cursor with Coverage', category: 'Test', key: 'cmd+; cmd+shift+c', ...ide, run: () => testing.runAtCursor(false, true) }),

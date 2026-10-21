@@ -4,7 +4,8 @@
 	// project, file, suite, test) with each one's last result, Run and Debug on every row, the
 	// failure messages under a failed test, a filter, and the run toolbar. After a run with coverage,
 	// the Test Coverage view below: the covered files by folder with their percentage
-	// (`testing.displayedCoveragePercent`, colored by `testing.coverageBarThresholds`).
+	// (`testing.displayedCoveragePercent`, colored by `testing.coverageBarThresholds`), filtered and
+	// sorted. Continuous run is toggled for everything from the toolbar, per item from its menu.
 	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
 	import PopupMenu, { menuItem } from '#lib/workbench/PopupMenu.svelte';
 	import type { MenuNode } from '#lib/workbench/menus.ts';
@@ -16,6 +17,7 @@
 	import type { TestItem, TestState } from './model.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { coverageColor, coverageTotals, coverageTree, displayedPercent, displayPercent, percent, type CoverageNode, type CoverageSource, type Thresholds } from './coverage.ts';
+	import { COVERAGE_SORTS, filterCoverageFiles, sortCoverageNodes, type CoverageSort } from './coverageView.ts';
 
 	$effect(() => void testing.ensureLoaded());
 
@@ -78,13 +80,16 @@
 			menuItem('debug', t('testing.menu.debug'), { enabled: item.runner !== 'bun' && item.kind !== 'project' }),
 			menuItem('coverage', t('testing.menu.coverage')),
 			menuItem('goto', t('testing.menu.goto'), { enabled: !!item.rel }),
+			menuItem('continuous', testing.isContinuous(item) ? t('testingExtras.menu.continuousOff') : t('testingExtras.menu.continuousOn')),
 			...(state === 'failed' || state === 'errored' ? [menuItem('peek', t('testing.menu.peek'))] : [])
 		];
 		menu = { x: e.clientX, y: e.clientY, items, item };
 	}
 
 	// --- Test Coverage
-	const coverageNodes = $derived(testing.coverage ? coverageTree([...testing.coverage.values()]) : []);
+	let coverageFilter = $state('');
+	let coverageSort = $state<CoverageSort>('location');
+	const coverageNodes = $derived(testing.coverage ? sortCoverageNodes(coverageTree(filterCoverageFiles([...testing.coverage.values()], coverageFilter)), coverageSort, (n) => shown(n)) : []);
 	const coverageTotal = $derived(testing.coverage ? coverageTotals([...testing.coverage.values()]) : null);
 	let coverageCollapsed = $state<Record<string, boolean>>({});
 	const coverageRows = $derived.by(() => {
@@ -114,6 +119,14 @@
 	<div class="flex shrink-0 items-center gap-0.5 px-2 pb-1">
 		<button aria-label="Run All Tests" title={titled('Run All Tests', 'testing.runAll')} class={ICON_BUTTON} disabled={testing.running || !testing.items.length} onclick={() => testing.runAll()}><Icon name="play" size={15} /></button>
 		<button aria-label={t('testing.runAllCoverage')} title={titled(t('testing.runAllCoverage'), 'testing.coverageAll')} class={ICON_BUTTON} disabled={testing.running || !testing.items.length} onclick={() => testing.runAll(false, true)}><Icon name="shield" size={14} /></button>
+		<button
+			aria-label={t('testingExtras.continuous.toggle')}
+			aria-pressed={testing.continuous.size > 0}
+			title={testing.continuous.size ? t('testingExtras.continuous.stop') : t('testingExtras.continuous.start')}
+			class={[ICON_BUTTON, testing.continuous.size > 0 && 'bg-(--vscode-inputOption-activeBackground)']}
+			disabled={!testing.items.length}
+			onclick={() => (testing.continuous.size ? testing.stopContinuous() : void testing.toggleContinuous())}><Icon name="infinity" size={14} /></button
+		>
 		<button aria-label="Rerun Failed Tests" title={titled('Rerun Failed Tests', 'testing.reRunFailTests')} class={ICON_BUTTON} disabled={testing.running || !testing.totals.failed} onclick={() => testing.reRunFailed()}><Icon name="refresh" size={14} /></button>
 		{#if testing.running}
 			<button aria-label="Cancel Test Run" title={titled('Cancel Test Run', 'testing.cancelRun')} class={ICON_BUTTON} onclick={() => testing.cancel()}><Icon name="stop" size={14} /></button>
@@ -165,6 +178,7 @@
 				{/if}
 				<span class={['grid size-4 shrink-0 place-items-center', icon.color, icon.spin && 'animate-spin']} title={t(`testing.state.${state}`)}><Icon name={icon.icon} size={13} /></span>
 				<button class="min-w-0 flex-1 truncate text-left" ondblclick={() => open(item)} onclick={() => item.kind !== 'project' && item.kind !== 'file' && open(item)}>{item.label}</button>
+				{#if testing.continuous.size && testing.continuous.has(item.id)}<span class="grid size-4 shrink-0 place-items-center text-(--vscode-descriptionForeground)" title={t('testingExtras.continuous.watching')}><Icon name="infinity" size={12} /></span>{/if}
 				{#if result?.duration !== undefined && item.kind === 'test'}<span class="shrink-0 text-xs text-(--vscode-descriptionForeground)">{duration(result.duration)}</span>{/if}
 				<span class="hidden shrink-0 items-center gap-0.5 group-hover/row:flex">
 					<button aria-label={t('testing.menu.run')} title={t('testing.menu.run')} class={ICON_BUTTON} disabled={testing.running} onclick={() => testing.run([item])}><Icon name="play" size={13} /></button>
@@ -200,6 +214,17 @@
 				<span class="shrink-0 font-normal normal-case tabular-nums" style:color={colorOf(coverageTotal)}>{displayPercent(shown(coverageTotal))}</span>
 				<button aria-label={t('testing.coverage.toggleInline')} title={titled(t('testing.coverage.toggleInline'), 'testing.toggleInlineCoverage')} aria-pressed={testing.coverageInline} class={[ICON_BUTTON, testing.coverageInline && 'bg-(--vscode-inputOption-activeBackground)']} onclick={() => (testing.coverageInline = !testing.coverageInline)}><Icon name="eye" size={13} /></button>
 				<button aria-label={t('testing.coverage.close')} title={t('testing.coverage.close')} class={ICON_BUTTON} onclick={() => testing.closeCoverage()}><Icon name="close" size={13} /></button>
+			</div>
+			<div class="flex shrink-0 items-center gap-1 px-2 pb-1">
+				<input
+					aria-label={t('testingExtras.coverage.filter')}
+					placeholder={t('testingExtras.coverage.filter')}
+					bind:value={coverageFilter}
+					class="block h-[22px] min-w-0 flex-1 rounded-sm border border-(--vscode-input-border,transparent) bg-(--vscode-input-background) px-1.5 text-(--vscode-input-foreground) outline-none focus:border-(--vscode-focusBorder)"
+				/>
+				<select aria-label={t('testingExtras.coverage.sort')} title={t('testingExtras.coverage.sort')} bind:value={coverageSort} class="h-[22px] shrink-0 rounded-sm border border-(--vscode-dropdown-border,transparent) bg-(--vscode-dropdown-background) px-1 text-xs text-(--vscode-dropdown-foreground)">
+					{#each COVERAGE_SORTS as s (s)}<option value={s}>{t(`testingExtras.coverage.sort.${s}`)}</option>{/each}
+				</select>
 			</div>
 			<div class="min-h-0 flex-1 overflow-y-auto" role="tree" aria-label={t('testing.coverage.title')}>
 				{#each coverageRows as row (row.node.id)}
@@ -237,6 +262,7 @@
 			else if (node.id === 'coverage') void testing.run([current.item], { coverage: true });
 			else if (node.id === 'goto') open(current.item);
 			else if (node.id === 'peek') testing.openPeek(current.item.id);
+			else if (node.id === 'continuous') void testing.toggleContinuous(current.item);
 		}}
 		onClose={() => (menu = null)}
 	/>
