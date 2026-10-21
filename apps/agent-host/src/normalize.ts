@@ -197,6 +197,22 @@ export function ruleTexts(suggestions: unknown): string[] {
 	return [...new Set(out)];
 }
 
+/** Hook output kept per run: the debug log shows a preview. */
+const MAX_HOOK_OUTPUT_CHARS = 2000;
+
+function hookRun(msg: Obj): AgentEvent {
+	const output = [str(msg.output), str(msg.stdout), str(msg.stderr)].filter((s): s is string => !!s && !!s.trim());
+	return {
+		kind: 'hook_run',
+		hook_id: str(msg.hook_id) ?? '',
+		name: str(msg.hook_name) ?? '',
+		event: str(msg.hook_event) ?? '',
+		outcome: str(msg.outcome) ?? '',
+		exit_code: num(msg.exit_code),
+		output: truncate([...new Set(output)].join('\n'), MAX_HOOK_OUTPUT_CHARS)
+	};
+}
+
 /** Maps one SDK message to events; unknown messages become `raw`. */
 export function normalize(msg: unknown): AgentEvent[] {
 	const raw = (): AgentEvent[] => [{ kind: 'raw', line: truncate(JSON.stringify(msg) ?? String(msg), MAX_TOOL_RESULT_CHARS) }];
@@ -204,7 +220,9 @@ export function normalize(msg: unknown): AgentEvent[] {
 	switch (msg.type) {
 		case 'system':
 			if (msg.subtype === 'commands_changed') return Array.isArray(msg.commands) ? [{ kind: 'commands', commands: slashCommands(msg.commands) }] : [];
-			if (msg.subtype !== 'init') return []; // status/hook/task chatter: not timeline material
+			// A hook's outcome, for the chat's debug log (Rust keeps it out of the timeline).
+			if (msg.subtype === 'hook_response') return [hookRun(msg)];
+			if (msg.subtype !== 'init') return []; // status/task chatter, hook starts: not timeline material
 			return [{ kind: 'system', subtype: 'init', session_id: str(msg.session_id), model: str(msg.model) }, ...sessionInfo(msg)];
 		case 'assistant':
 			return withAnchor(msg, blocks(msg, 'assistant') ?? raw());

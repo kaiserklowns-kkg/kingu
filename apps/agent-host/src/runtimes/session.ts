@@ -58,6 +58,8 @@ export type SessionInit = {
 	mode: PermissionMode;
 	resume: string | null;
 	mcpServers: Record<string, McpServerParams>;
+	/** Arkai only: tools it must not offer (`disallowedTools`; `mcp__<server>` covers that server). */
+	disallowedTools?: string[];
 	env: Record<string, string | undefined>;
 	snapshots: boolean;
 	safetyChecks: boolean;

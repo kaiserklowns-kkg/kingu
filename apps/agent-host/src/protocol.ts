@@ -34,7 +34,11 @@ export type StartParams = {
 	 * `disabled` never starts, whatever the user's Claude settings approve.
 	 */
 	projectMcp?: { enabled?: string[]; disabled?: string[] } | null;
-	/** Tools the session must not have: `mcp__<server>` for each MCP server the user turned off. */
+	/**
+	 * Tools the session must not have: `mcp__<server>` for each MCP server the user turned off, the
+	 * tools a custom agent leaves out and those the chat's Configure Tools picker turned off
+	 * (Claude names; `mcp__<server>` stands for all of that server's tools). Arkai offers none of them.
+	 */
 	disallowedTools?: string[];
 	/** Skill plugin folders of active Snaps (absolute; Rust checks they are ones Kingu generated). */
 	plugins?: string[];
@@ -197,6 +201,11 @@ export type AgentEvent =
 	 * outside the run's folder), `delete`, `protected` (a .kinguignore path) or `mcp`; `paths`: what it is about.
 	 */
 	| { kind: 'guard_asked'; request_id: string; tool: string; tool_use_id: string | null; check: 'outside_cwd' | 'delete' | 'protected' | 'mcp'; paths: string[] }
+	/**
+	 * A hook of the session ran (the SDK's `hook_response`, with `includeHookEvents`): its name,
+	 * event, outcome and output. Rust keeps it in a chat's transcript for the Agent Debug Log only.
+	 */
+	| { kind: 'hook_run'; hook_id: string; name: string; event: string; outcome: string; exit_code: number | null; output: string }
 	/**
 	 * The agent published an artifact (artifacts.ts, Kingu's `artifact_publish` tool): version
 	 * `version` of artifact `id`, stored by the app under `<root>/.kingu/artifacts/<id>/`. The chat

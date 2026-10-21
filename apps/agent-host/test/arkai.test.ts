@@ -13,7 +13,7 @@ import { hasLeftoverToolCall, recoverToolCalls, stripToolMarkup } from '../src/a
 import { ThinkSplitter, type CompletionRequest, type Msg } from '../src/arkai/messages.ts';
 import { OpenAiClient, openaiMessages } from '../src/arkai/openai.ts';
 import { LIGHT_SYSTEM_PROMPT, systemPrompt } from '../src/arkai/prompt.ts';
-import { arkaiDecision, granted, ruleFor } from '../src/arkai/session.ts';
+import { arkaiDecision, granted, ruleFor, toolDisallowed } from '../src/arkai/session.ts';
 import { arkaiSpec, modelOf, type ArkaiProvider } from '../src/arkai/spec.ts';
 import { runTool, TOOL_DEFS, toolDefs } from '../src/arkai/tools.ts';
 import { FakeLlm } from './fixtures/fake-llm.ts';
@@ -191,6 +191,18 @@ describe('spec and prompts', () => {
 });
 
 describe('permissions', () => {
+	test('disallowed tools follow the SDK rules', () => {
+		expect(toolDisallowed('Bash', ['Bash'])).toBe(true);
+		expect(toolDisallowed('Read', ['Bash'])).toBe(false);
+		expect(toolDisallowed('mcp__gh__search', ['mcp__gh'])).toBe(true);
+		expect(toolDisallowed('mcp__gh__search', ['mcp__gh__*'])).toBe(true);
+		expect(toolDisallowed('mcp__gh__search', ['mcp__*'])).toBe(true);
+		expect(toolDisallowed('mcp__gh__search', ['mcp__gh__search'])).toBe(true);
+		expect(toolDisallowed('mcp__gh__search', ['mcp__gh__list', 'mcp__ghx'])).toBe(false);
+		expect(toolDisallowed('mcp__ghx__search', ['mcp__gh'])).toBe(false);
+		expect(toolDisallowed('Bash', ['mcp__*'])).toBe(false);
+	});
+
 	test('each mode decides what it can by itself', () => {
 		expect(arkaiDecision('default', 'read')).toBe('allow');
 		expect(arkaiDecision('default', 'edit')).toBeNull();

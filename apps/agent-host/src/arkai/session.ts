@@ -94,6 +94,21 @@ export function granted(grants: ReadonlySet<string>, view: ToolView): boolean {
 	return false;
 }
 
+/**
+ * Whether `name` is left out by `disallowed` (the SDK's rules): its own name, `mcp__<server>` or
+ * `mcp__<server>__*` for every tool of that server, `mcp__*` for every MCP tool.
+ */
+export function toolDisallowed(name: string, disallowed: readonly string[]): boolean {
+	for (const d of disallowed) {
+		if (d === name) return true;
+		if (!name.startsWith('mcp__') || !d.startsWith('mcp__')) continue;
+		if (d === 'mcp__*') return true;
+		const server = d.endsWith('__*') ? d.slice(0, -3) : d;
+		if (server.split('__').length === 2 && name.startsWith(`${server}__`)) return true;
+	}
+	return false;
+}
+
 export function clientFor(provider: ArkaiProvider, fetchFn?: typeof fetch): ChatClient {
 	return provider.api === 'anthropic' ? new AnthropicClient(provider, fetchFn) : new OpenAiClient(provider, fetchFn);
 }
@@ -160,8 +175,9 @@ export class ArkaiSession extends RunSession {
 	}
 
 	private offered(): ToolDef[] {
-		const own = toolDefs(this.settings().light);
-		const mcp = this.mcp?.defs() ?? [];
+		const off = this.init.disallowedTools ?? [];
+		const own = toolDefs(this.settings().light).filter((t) => !toolDisallowed(t.name, off));
+		const mcp = (this.mcp?.defs() ?? []).filter((t) => !toolDisallowed(t.name, off));
 		if (!mcp.length) return own;
 		// Many servers' tools would not leave a small window room for the conversation.
 		if (estimateTokens(JSON.stringify(mcp)) > this.settings().contextWindow * MCP_SHARE) {

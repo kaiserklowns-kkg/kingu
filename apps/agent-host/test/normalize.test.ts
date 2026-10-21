@@ -7,6 +7,12 @@ describe('normalize', () => {
 			{ kind: 'system', subtype: 'init', session_id: 's-1', model: 'claude-opus-5-5' }
 		]);
 		expect(normalize({ type: 'system', subtype: 'status', status: 'compacting' })).toEqual([]);
+		// Hook outcomes go to the debug log; their starts do not.
+		expect(normalize({ type: 'system', subtype: 'hook_started', hook_id: 'h1', hook_name: 'fmt', hook_event: 'PostToolUse' })).toEqual([]);
+		expect(
+			normalize({ type: 'system', subtype: 'hook_response', hook_id: 'h1', hook_name: 'fmt', hook_event: 'PostToolUse', output: 'done', stdout: 'done', stderr: 'warn', exit_code: 1, outcome: 'error' })
+		).toEqual([{ kind: 'hook_run', hook_id: 'h1', name: 'fmt', event: 'PostToolUse', outcome: 'error', exit_code: 1, output: 'done\nwarn' }]);
+		expect(normalize({ type: 'system', subtype: 'hook_response' })).toEqual([{ kind: 'hook_run', hook_id: '', name: '', event: '', outcome: '', exit_code: null, output: '' }]);
 		expect(
 			normalize({
 				type: 'assistant',
