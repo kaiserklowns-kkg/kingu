@@ -10,6 +10,8 @@ export const settings = {
 	'settings.registry.invalidValue': 'ค่า {value} ไม่ถูกต้อง จึงใช้ค่าจากชั้นถัดไปแทน (ต้องเป็น {expected})',
 	'settings.registry.userOrRepoOnly': 'ตั้งได้เฉพาะใน User หรือ Repository (ที่ Kingu เก็บไว้เอง) ไม่ใช่ไฟล์ของ repository',
 	'settings.registry.userOnly': 'ตั้งได้เฉพาะใน User จึงถูกละไว้',
+	'settings.registry.notLanguageOverridable': 'ตั้งค่านี้แยกตามภาษาไม่ได้ จึงถูกละไว้',
+	'settings.languageBlock.placeholder': 'เลือกภาษา',
 	'settings.sections.aiCapabilities': 'ความสามารถ AI (AI Capabilities)',
 	'settings.sections.system': 'ระบบ (System)',
 	'settings.sections.ide': 'IDE',

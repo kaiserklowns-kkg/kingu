@@ -8,6 +8,7 @@ import { parseSettingsText, setProperty } from './jsonc';
 import { resolveSettings, settingProblems, type Resolved, type SettingProblem, type SettingScope } from './registry';
 import { settingSchemas } from './schemas.svelte';
 import { isApplicationScoped, profileUserValues } from './profiles';
+import { isLanguageOverridable, languageSchemas, languageValues } from './languageOverrides';
 
 type SettingsFile = { path: string; content: string | null };
 /** The files behind the layers: `defaultUser` is the Default profile's settings.json (profiles.ts). */
@@ -55,6 +56,48 @@ class Settings {
 	/** The effective value (repo over workspace over user over default). */
 	get<T = unknown>(id: string): T {
 		return (this.resolved.get(id)?.value ?? settingSchemas.byId.get(id)?.default) as T;
+	}
+
+	/** Each language's resolved settings, computed on first use; a new (empty) cache whenever a layer changes. */
+	readonly #languageCache: Map<string, Map<string, Resolved>> = $derived.by(() => {
+		void this.resolved;
+		return new Map();
+	});
+
+	#forLanguage(language: string): Map<string, Resolved> {
+		const cache = this.#languageCache;
+		let resolved = cache.get(language);
+		if (!resolved) {
+			const byId = settingSchemas.byId;
+			const overridable = (id: string) => {
+				const s = byId.get(id);
+				return !!s && isLanguageOverridable(s);
+			};
+			resolved = resolveSettings(
+				languageValues(this.#userValues, language, overridable),
+				languageValues({ ...this.workspaceFile, ...this.workspace.values }, language, overridable),
+				languageSchemas(settingSchemas.all, language),
+				languageValues(this.repo.values, language, overridable)
+			);
+			cache.set(language, resolved);
+		}
+		return resolved;
+	}
+
+	/**
+	 * The effective value for a file of `language`: each layer's `[language]` blocks over its own
+	 * values, and the built-in language defaults under the user's (VS Code's overrideIdentifier).
+	 * Settings that cannot be overridden, and no language, read like `get`.
+	 */
+	getFor<T = unknown>(id: string, language: string | undefined): T {
+		if (!language) return this.get<T>(id);
+		const r = this.#forLanguage(language).get(id);
+		return (r ? r.value : this.get<T>(id)) as T;
+	}
+
+	/** `getFor` bound to one language, for the mappings that take a `get`. */
+	getterFor(language: string | undefined): <T = unknown>(id: string) => T {
+		return <T>(id: string) => this.getFor<T>(id, language);
 	}
 
 	/** The value set in one scope's file, or undefined. */

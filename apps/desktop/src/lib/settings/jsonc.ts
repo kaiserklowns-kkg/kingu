@@ -152,3 +152,72 @@ export function setProperty(text: string, key: string, value: unknown): string {
 	const at = last.commaEnd ?? last.valueEnd;
 	return text.slice(0, at) + (last.commaEnd === null ? ',' : '') + '\n' + entry(indent) + text.slice(at);
 }
+
+/** One element of the root array: its text span and the end of the comma after it, if any. */
+export type ArrayElement = { start: number; end: number; commaEnd: number | null };
+
+/** Elements of the root array (keybindings.json), or null when the text has no root array. */
+export function arrayElements(text: string): { open: number; close: number; elements: ArrayElement[] } | null {
+	const tokens = tokenize(text);
+	if (tokens[0]?.text !== '[') return null;
+	const elements: ArrayElement[] = [];
+	let i = 1;
+	while (i < tokens.length) {
+		if (tokens[i].text === ']') return { open: tokens[0].start, close: tokens[i].start, elements };
+		const start = tokens[i].start;
+		let end = start;
+		let depth = 0;
+		let j = i;
+		for (; j < tokens.length; j++) {
+			const v = tokens[j];
+			if (depth === 0 && (v.text === ',' || v.text === ']')) break;
+			if (v.text === '{' || v.text === '[') depth++;
+			else if (v.text === '}' || v.text === ']') depth--;
+			end = v.end;
+		}
+		if (j === i) return null;
+		const comma = tokens[j]?.text === ',' ? tokens[j] : null;
+		elements.push({ start, end, commaEnd: comma ? comma.end : null });
+		i = comma ? j + 1 : j;
+	}
+	return null;
+}
+
+/** Removes one element of the root array, keeping comments and formatting elsewhere. */
+function removeArrayElement(text: string, index: number): string {
+	const root = arrayElements(text);
+	const e = root?.elements[index];
+	if (!root || !e) return text;
+	const start = lineStart(text, e.start);
+	const from = start > 0 && text[start - 1] === '\n' ? start : e.start;
+	if (e.commaEnd !== null) {
+		let end = e.commaEnd;
+		while (end < text.length && (text[end] === ' ' || text[end] === '\t')) end++;
+		if (text[end] === '\n' && from !== e.start) end++;
+		return text.slice(0, from) + text.slice(end);
+	}
+	// The last element: the previous one's comma goes with it.
+	const prev = root.elements[index - 1];
+	if (prev) return text.slice(0, prev.end) + text.slice(e.end);
+	return text.slice(0, root.open + 1) + '\n' + text.slice(e.end).replace(/^\s*/, '');
+}
+
+/** Removes the root array's elements at `indexes`, keeping comments and formatting elsewhere. */
+export function removeArrayElements(text: string, indexes: readonly number[]): string {
+	return [...new Set(indexes)].sort((a, b) => b - a).reduce(removeArrayElement, text);
+}
+
+/** Appends `value` to the root array as a tab-indented element (a new array when there is none). */
+export function appendArrayElement(text: string, value: unknown): string {
+	const body = JSON.stringify(value, null, '\t').replace(/\n/g, '\n\t');
+	const root = arrayElements(text);
+	if (!root) return `[\n\t${body}\n]\n`;
+	const last = root.elements[root.elements.length - 1];
+	if (!last) {
+		const inner = text.slice(root.open + 1, root.close);
+		const keep = inner.trim() ? inner.replace(/\s*$/, '') + '\n' : '\n';
+		return text.slice(0, root.open + 1) + keep + '\t' + body + '\n' + text.slice(root.close);
+	}
+	const at = last.commaEnd ?? last.end;
+	return text.slice(0, at) + (last.commaEnd === null ? ',' : '') + '\n\t' + body + text.slice(at);
+}

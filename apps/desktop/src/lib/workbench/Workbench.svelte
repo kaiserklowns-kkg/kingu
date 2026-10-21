@@ -20,6 +20,7 @@
 	import { welcome } from './welcomeTour.svelte';
 	import { floating } from './floating.svelte';
 	import { installSignals } from './signals.svelte';
+	import { installAccessibilitySignals } from './accessibilitySignals.svelte';
 	import { platform } from './platform.svelte';
 	import { PROFILES, type Platform } from './platform';
 	import { hasPreview, previewKey } from './viewers';
@@ -47,6 +48,7 @@
 	import { installSettings } from '#lib/settings/apply.svelte.ts';
 	import { installWorkbenchAppearance } from './workbenchAppearance.svelte';
 	import { registerSettingsCommands } from '#lib/settings/contributions.ts';
+	import { registerCompareCommands } from './compare.svelte';
 	import { installLocalAi } from '#lib/localAi/localAi.svelte.ts';
 	import { installAde } from '#lib/ade/tasks.svelte.ts';
 	import { isMac } from './keys';
@@ -130,6 +132,7 @@
 		welcome.maybeShow();
 		const unregister = [
 			installSignals(),
+			installAccessibilitySignals(),
 			installChatExtras(),
 			// Shows another OS's chrome (window controls, fonts) on this machine; real users keep macOS's.
 			commands.register({
@@ -362,6 +365,7 @@
 		const uninstallSettings = installSettings();
 		const uninstallAppearance = installWorkbenchAppearance();
 		const unregisterSettings = registerSettingsCommands();
+		const unregisterCompare = registerCompareCommands();
 		const uninstallAde = installAde();
 		const uninstallAgentsMode = installAgentsMode();
 		const uninstallWorktreeCommands = installWorktreeCommands();
@@ -457,6 +461,7 @@
 			uninstallAppearance();
 			uninstallSettings();
 			unregisterSettings();
+			unregisterCompare();
 			unregister.forEach((u) => u());
 		};
 	});

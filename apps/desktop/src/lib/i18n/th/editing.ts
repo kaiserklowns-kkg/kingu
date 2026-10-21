@@ -42,5 +42,14 @@ export const editing = {
 	'editing.status.columnSelection': 'เลือกแบบคอลัมน์',
 	'editing.status.columnSelectionTooltip': 'ปิดโหมดเลือกแบบคอลัมน์',
 	'editing.status.overtype': 'OVR',
-	'editing.status.overtypeTooltip': 'โหมดพิมพ์ทับ: พิมพ์แล้วแทนที่อักขระเดิม คลิกเพื่อกลับเป็นโหมดแทรก'
+	'editing.status.overtypeTooltip': 'โหมดพิมพ์ทับ: พิมพ์แล้วแทนที่อักขระเดิม คลิกเพื่อกลับเป็นโหมดแทรก',
+	'editing.formatter.multiple': "ไฟล์ '{language}' มีตัวจัดรูปแบบหลายตัว ควรตั้งตัวหนึ่งเป็นตัวเริ่มต้น",
+	'editing.formatter.unavailable': "ตั้ง '{formatter}' เป็นตัวจัดรูปแบบไว้ แต่จัดรูปแบบไฟล์ '{language}' ไม่ได้ เลือกตัวจัดรูปแบบเริ่มต้นตัวอื่นเพื่อดำเนินการต่อ",
+	'editing.formatter.configure': 'ตั้งค่า...',
+	'editing.formatter.configureTitle': 'ตั้งตัวจัดรูปแบบเริ่มต้น',
+	'editing.formatter.configureDefault': 'ตั้งตัวจัดรูปแบบเริ่มต้น...',
+	'editing.formatter.selectDefault': "เลือกตัวจัดรูปแบบเริ่มต้นของไฟล์ '{language}'",
+	'editing.formatter.formatWithPlaceholder': 'เลือกตัวจัดรูปแบบ',
+	'editing.formatter.default': '(ค่าเริ่มต้น)',
+	'editing.formatter.none': "ยังไม่มีตัวจัดรูปแบบสำหรับไฟล์ '{language}'"
 } satisfies Record<keyof typeof en, string>;
