@@ -8,7 +8,8 @@ import { parseJsonc } from '#lib/settings/jsonc.ts';
 import { globToRegExp } from '#lib/settings/mappings.ts';
 import { parseSnippet, rewriteUnknownVariables, serializeSnippet, snippetText, usesSelection } from './snippetSyntax.ts';
 
-export type SnippetSource = 'user' | 'workspace';
+/** `snap`: a snap's `[[snippets]]` file, for the language it names (VS Code: `contributes.snippets`). */
+export type SnippetSource = 'user' | 'workspace' | 'snap';
 
 /** Editor tab key of a user snippets file (in the profile's snippets folder, read and saved by Rust). */
 export const USER_SNIPPETS_PREFIX = 'snippets://user/';
@@ -49,10 +50,10 @@ export function languageOfFile(file: string): string | undefined {
 	return !isGlobalFile(name) && name.endsWith('.json') ? name.slice(0, -'.json'.length) : undefined;
 }
 
-function toSnippets(name: string, raw: Raw, file: string, source: SnippetSource, out: Snippet[]) {
+function toSnippets(name: string, raw: Raw, file: string, source: SnippetSource, out: Snippet[], snapLanguage?: string) {
 	const body = Array.isArray(raw.body) ? raw.body.filter((x) => typeof x === 'string').join('\n') : raw.body;
 	if (typeof body !== 'string') return;
-	const language = source === 'user' ? languageOfFile(file) : undefined;
+	const language = source === 'user' ? languageOfFile(file) : source === 'snap' ? snapLanguage : undefined;
 	const scopes = language ? [language] : typeof raw.scope === 'string' ? raw.scope.split(',').map((s) => s.trim()).filter(Boolean) : [];
 	const description = Array.isArray(raw.description) ? raw.description.join('\n') : typeof raw.description === 'string' ? raw.description : '';
 	const { nodes, changed } = rewriteUnknownVariables(parseSnippet(body));
@@ -80,7 +81,7 @@ function toSnippets(name: string, raw: Raw, file: string, source: SnippetSource,
  * caller reports it); an entry without a body is skipped, and one level of nesting is accepted
  * (`{ "group": { "name": { … } } }`), like VS Code.
  */
-export function parseSnippetFile(text: string, file: string, source: SnippetSource): { snippets: Snippet[]; error?: string } {
+export function parseSnippetFile(text: string, file: string, source: SnippetSource, snapLanguage?: string): { snippets: Snippet[]; error?: string } {
 	if (!text.replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, '').trim()) return { snippets: [] };
 	let data: unknown;
 	try {
@@ -92,8 +93,8 @@ export function parseSnippetFile(text: string, file: string, source: SnippetSour
 	const out: Snippet[] = [];
 	for (const [name, value] of Object.entries(data as Record<string, unknown>)) {
 		if (!value || typeof value !== 'object') continue;
-		if ((value as Raw).body) toSnippets(name, value as Raw, file, source, out);
-		else for (const [inner, v] of Object.entries(value as Record<string, unknown>)) if (v && typeof v === 'object' && (v as Raw).body) toSnippets(inner, v as Raw, file, source, out);
+		if ((value as Raw).body) toSnippets(name, value as Raw, file, source, out, snapLanguage);
+		else for (const [inner, v] of Object.entries(value as Record<string, unknown>)) if (v && typeof v === 'object' && (v as Raw).body) toSnippets(inner, v as Raw, file, source, out, snapLanguage);
 	}
 	return { snippets: out };
 }

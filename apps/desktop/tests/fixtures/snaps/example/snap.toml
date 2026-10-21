@@ -1,0 +1,65 @@
+# An example snap with every kind of contribution, for tests only (never shipped to users):
+# Rust (snap_contrib.rs) and TS (snaps/contributions.test.ts) read it from here.
+id = "example"
+name = "Example"
+version = "0.1.0"
+description = "Kingu Notes: a language, a grammar, snippets, a language server, themes and a board view"
+
+[[settings]]
+key = "greeting"
+type = "string"
+default = "Hello from the board"
+description = "What the board view says"
+
+[[settings]]
+key = "serverPath"
+type = "string"
+default = "knote-ls"
+
+[[tasks]]
+id = "hello"
+title = "Say Hello"
+command = ["echo", "${setting:greeting}"]
+
+[[languages]]
+id = "knote"
+aliases = ["Kingu Note", "knote"]
+extensions = [".knote"]
+filenames = ["NOTES.knote"]
+configuration = "language-configuration.json"
+
+[[grammars]]
+language = "knote"
+scope_name = "text.knote"
+path = "syntaxes/knote.tmLanguage.json"
+
+[[snippets]]
+language = "knote"
+path = "snippets/knote.code-snippets"
+
+[lsp.knote]
+name = "Kingu Note language server"
+languages = ["knote"]
+command = ["${setting:serverPath}", "--stdio"]
+settings_section = "knote"
+initialization_options = { lint = true }
+install = [{ tool = "npm", package = "knote-ls" }]
+
+[[themes]]
+label = "Example Night"
+ui_theme = "vs-dark"
+path = "themes/night.json"
+
+[[icon_themes]]
+id = "example-icons"
+label = "Example Icons"
+path = "icons/icon-theme.json"
+
+[[views]]
+id = "board"
+name = "Board"
+location = "panel"
+path = "views/board.html"
+settings = ["greeting"]
+tasks = ["hello"]
+notifications = true

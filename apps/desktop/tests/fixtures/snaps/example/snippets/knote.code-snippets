@@ -1,0 +1,3 @@
+{
+	"Todo": { "prefix": "todo", "body": "- TODO ${1:what}", "description": "A todo line" }
+}

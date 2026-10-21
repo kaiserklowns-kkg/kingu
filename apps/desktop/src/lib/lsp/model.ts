@@ -7,6 +7,21 @@ import { problemLabel } from './folders';
 import type { WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 import type { Diagnostic } from './protocol';
 import { t } from '#lib/i18n/index.ts';
+import { BUILTIN_SNAPS } from '#lib/snaps/builtinSnaps.ts';
+import { lspServersOf } from '#lib/snaps/contributions.ts';
+
+/** A server a snap contributes (`[lsp.<key>]`): started through `lsp_start`'s `snap` argument. */
+export type SnapServer = {
+	source: 'user' | 'repo' | 'builtin';
+	/** The snap's id and the server's key in its manifest. */
+	id: string;
+	server: string;
+	/** argv with `${setting:…}`, expanded from the snap's settings when it starts. */
+	command: string[];
+	env: Record<string, string>;
+	/** `workspace/configuration` for this section is answered with the snap's settings. */
+	settingsSection: string | null;
+};
 
 export type ServerInfo = {
 	key: string;
@@ -26,11 +41,12 @@ export type ServerInfo = {
 	 * (tsserver finds each file's tsconfig, the JSON/CSS/HTML/YAML/TOML servers need no root), as
 	 * VS Code runs one of these for the whole workspace. Others get a server per folder then. */
 	oneServer?: boolean;
+	/** Contributed by a snap (built-in ones included), not the table below. */
+	snap?: SnapServer;
 };
 
-/** Mirrors `spec_for` in src-tauri/src/lsp.rs. Keys are what `lsp_start` accepts. */
-export const SERVERS: ServerInfo[] = [
-	{ key: 'rust', name: 'rust-analyzer', languages: ['rust'] },
+/** Mirrors the table of `spec_for` in src-tauri/src/lsp.rs. Keys are what `lsp_start` accepts. */
+export const TABLE_SERVERS: ServerInfo[] = [
 	{ key: 'typescript', name: 'TypeScript language server', languages: ['typescript', 'javascript', 'typescriptreact', 'javascriptreact'], yieldsBuiltin: true, oneServer: true },
 	{ key: 'go', name: 'gopls', languages: ['go'] },
 	{
@@ -81,8 +97,12 @@ export const SERVERS: ServerInfo[] = [
 	{ key: 'toml', name: 'Taplo', languages: ['toml'], oneServer: true }
 ];
 
-export function serverFor(languageId: string): ServerInfo | undefined {
-	return SERVERS.find((s) => s.languages.includes(languageId));
+/** What runs with no snap installed: the built-in snaps' servers (rust-analyzer), then the table. */
+export const SERVERS: ServerInfo[] = [...lspServersOf(BUILTIN_SNAPS), ...TABLE_SERVERS];
+
+/** The server for a language: the first of `servers` that serves it (snaps' before the table's). */
+export function serverFor(languageId: string, servers: readonly ServerInfo[] = SERVERS): ServerInfo | undefined {
+	return servers.find((s) => s.languages.includes(languageId));
 }
 
 /** `kingu.lsp.disabled`: comma- or space-separated server keys or language ids. */

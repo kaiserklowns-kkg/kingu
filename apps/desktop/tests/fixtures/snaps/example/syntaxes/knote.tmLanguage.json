@@ -1,0 +1,9 @@
+{
+	"name": "Kingu Note",
+	"scopeName": "text.knote",
+	"patterns": [
+		{ "name": "markup.heading.knote", "match": "^#{1,6} .*$" },
+		{ "name": "comment.line.knote", "match": "^//.*$" },
+		{ "name": "keyword.other.todo.knote", "match": "\\bTODO\\b" }
+	]
+}

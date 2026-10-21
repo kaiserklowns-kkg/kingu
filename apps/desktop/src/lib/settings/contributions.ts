@@ -6,7 +6,7 @@ import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { quick, type PickItem } from '#lib/workbench/quick.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { theme } from '#lib/theme/theme.svelte.ts';
-import { findTheme, THEMES } from '#lib/theme/themes.ts';
+import { allThemes, findTheme } from '#lib/theme/themes.ts';
 import { SCHEMA } from './registry';
 import { settings, USER_SETTINGS_KEY, WORKSPACE_SETTINGS_PATH } from './settings.svelte';
 import { systemSettings } from './systemSettings.svelte';
@@ -32,7 +32,8 @@ export function pickColorTheme() {
 	});
 	const original = settings.get<string>(target);
 	let lastGroup = '';
-	const items: PickItem[] = THEMES.map((th) => {
+	// The built-in themes, then those of snaps (VS Code lists every installed extension's).
+	const items: PickItem[] = allThemes().map((th) => {
 		const group = groupOf(th.type);
 		const separator = group !== lastGroup ? group : undefined;
 		lastGroup = group;

@@ -29,6 +29,9 @@
 	import { panelSize } from './panelSize.svelte';
 	import RefactorPreviewView from '#lib/lsp/RefactorPreviewView.svelte';
 	import { refactorPreview } from '#lib/lsp/refactorPreview.svelte.ts';
+	import SnapViewFrame from '#lib/snaps/SnapViewFrame.svelte';
+	import { snaps } from '#lib/snaps/snaps.svelte.ts';
+	import { viewsOf } from '#lib/snaps/contributions.ts';
 
 	// View: Maximize Panel Size (panelSize.svelte.ts, shared with workbench.action.toggleMaximizedPanel).
 	const maximized = $derived(panelSize.maximized);
@@ -115,13 +118,17 @@
 		editors.open(rel, { preview: false, reveal: line ? { line, column: column ?? 1, focus: true } : undefined });
 	}
 
+	const snapPanels = $derived(viewsOf(snaps.all, 'panel'));
+	const snapPanel = $derived(layout.panelTab.startsWith('snap:') ? snapPanels.find((v) => `snap:${v.key}` === layout.panelTab) : undefined);
 	const tabs: { id: PanelTab; label: string; icon: IconName }[] = $derived([
 		{ id: 'problems', label: 'Problems', icon: 'warning' },
 		{ id: 'output', label: 'Output', icon: 'note' },
 		{ id: 'debugConsole', label: 'Debug Console', icon: 'bug' },
 		{ id: 'terminal', label: 'Terminal', icon: 'terminal' },
 		// Only while an edit waits in the Refactor Preview (VS Code shows its view then).
-		...(refactorPreview.pending || layout.panelTab === 'refactorPreview' ? [{ id: 'refactorPreview' as const, label: t('refactorPreview.title'), icon: 'replace' as const }] : [])
+		...(refactorPreview.pending || layout.panelTab === 'refactorPreview' ? [{ id: 'refactorPreview' as const, label: t('refactorPreview.title'), icon: 'replace' as const }] : []),
+		// Snaps' panel views.
+		...snapPanels.map((v) => ({ id: `snap:${v.key}` as PanelTab, label: v.view.name, icon: 'snap' as IconName }))
 	]);
 </script>
 
@@ -345,6 +352,8 @@
 			<OutputView />
 		{:else if layout.panelTab === 'refactorPreview'}
 			<div class="absolute inset-0"><RefactorPreviewView /></div>
+		{:else if snapPanel}
+			<div class="absolute inset-0 flex flex-col">{#key snapPanel.key}<SnapViewFrame entry={snapPanel} />{/key}</div>
 		{/if}
 	</div>
 </section>

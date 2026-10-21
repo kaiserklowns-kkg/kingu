@@ -8,9 +8,26 @@
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 	import { enforcementLabel, isActive, isUpdatable, lockNote, originLabel, SANDBOX_SETTING, settingId, settingsGroup, snapKey, type SnapInfo } from './snapModel.ts';
 	import { snaps } from './snaps.svelte.ts';
+	import { contributionGroups, contributionsOf, type ContributionKind } from './contributions.ts';
+	import { t } from '#lib/i18n/index.ts';
 
 	let reloading = $state(false);
-	const shown = $derived(systemSettings.snapKey ? snaps.list.filter((s) => snapKey(s) === systemSettings.snapKey) : snaps.list);
+	const shown = $derived(systemSettings.snapKey ? snaps.all.filter((s) => snapKey(s) === systemSettings.snapKey) : snaps.all);
+	/** The kinds the overview chips name; the new contribution kinds also get a section below. */
+	const KIND_KEYS: Record<ContributionKind, `snapContrib.kind.${ContributionKind}`> = {
+		languages: 'snapContrib.kind.languages',
+		grammars: 'snapContrib.kind.grammars',
+		snippets: 'snapContrib.kind.snippets',
+		lsp: 'snapContrib.kind.lsp',
+		themes: 'snapContrib.kind.themes',
+		iconThemes: 'snapContrib.kind.iconThemes',
+		views: 'snapContrib.kind.views',
+		commands: 'snapContrib.kind.commands',
+		settings: 'snapContrib.kind.settings',
+		mcp: 'snapContrib.kind.mcp',
+		skills: 'snapContrib.kind.skills'
+	};
+	const DETAILED: ContributionKind[] = ['languages', 'grammars', 'snippets', 'lsp', 'themes', 'iconThemes', 'views'];
 	const enforcement = $derived(enforcementLabel(snaps.sandbox));
 
 	async function reload() {
@@ -21,7 +38,7 @@
 
 	function snapState(s: SnapInfo): { label: string; tone: 'ok' | 'warn' | 'error' | 'muted' } {
 		if (s.error) return { label: 'ใช้งานไม่ได้ (Error)', tone: 'error' };
-		if (s.overridden) return { label: 'ถูกแทนด้วย snap ของโฟลเดอร์ (Overridden)', tone: 'muted' };
+		if (s.overridden) return { label: s.source === 'builtin' ? t('snapContrib.builtinOverridden') : 'ถูกแทนด้วย snap ของโฟลเดอร์ (Overridden)', tone: 'muted' };
 		if (!s.trusted) return { label: 'ยังไม่เชื่อถือ (Untrusted)', tone: 'warn' };
 		return { label: 'ใช้งานอยู่ (Active)', tone: 'ok' };
 	}
@@ -73,7 +90,7 @@
 				<div class="flex flex-wrap items-center gap-2">
 					<span class="font-semibold">{s.name}</span>
 					{#if s.version}<span class="text-(--vscode-descriptionForeground)">v{s.version}</span>{/if}
-					<span class={BADGE} title={s.source === 'user' ? 'Snap ของคุณ (user)' : 'Snap ของโฟลเดอร์นี้ แชร์ผ่าน git (repo)'}>{s.source}</span>
+					<span class={BADGE} title={s.source === 'user' ? 'Snap ของคุณ (user)' : s.source === 'builtin' ? t('snapContrib.builtinTitle') : 'Snap ของโฟลเดอร์นี้ แชร์ผ่าน git (repo)'}>{s.source}</span>
 					<span class={['text-xs', TONE[st.tone]]}>{st.label}</span>
 					{#if lockNote(s)}<span class="text-xs text-(--vscode-editorWarning-foreground)" title=".kingu/snaps.lock">{lockNote(s)}</span>{/if}
 					<span class="flex-1"></span>
@@ -82,7 +99,7 @@
 						{#if !s.error}<button class={SECONDARY} onclick={() => snaps.editManifest(s)}>แก้ snap.toml</button>{/if}
 						<button class={SECONDARY} disabled={!!snaps.busy} onclick={() => snaps.uninstall(s.id)}>ถอนการติดตั้ง (Uninstall)</button>
 					{/if}
-					<button class={SECONDARY} onclick={() => snaps.reveal(s)}>เปิดโฟลเดอร์ (Reveal)</button>
+					{#if s.source !== 'builtin'}<button class={SECONDARY} onclick={() => snaps.reveal(s)}>เปิดโฟลเดอร์ (Reveal)</button>{/if}
 					{#if s.source === 'repo' && !s.error}
 						{#if s.trusted}
 							<button class={SECONDARY} onclick={() => snaps.trust(s.id, false)}>เลิกเชื่อถือ (Untrust)</button>
@@ -91,7 +108,7 @@
 						{/if}
 					{/if}
 				</div>
-				<div class="mt-0.5 truncate text-[11px] text-(--vscode-descriptionForeground) opacity-80" title={s.dir}>{s.id} · {s.dir}</div>
+				<div class="mt-0.5 truncate text-[11px] text-(--vscode-descriptionForeground) opacity-80" title={s.dir}>{s.id} · {s.source === 'builtin' ? t('snapContrib.builtinTitle') : s.dir}</div>
 				{#if s.origin}
 					<div class="mt-0.5 truncate text-[11px] text-(--vscode-descriptionForeground) opacity-80" title={originLabel(s.origin)}>
 						ติดตั้งจาก {originLabel(s.origin)}{s.origin.installed_at ? ` · ${new Date(s.origin.installed_at * 1000).toLocaleString()}` : ''}
@@ -112,6 +129,32 @@
 				{/if}
 
 				{#if !s.error}
+					{@const groups = contributionGroups(s)}
+					<!-- What the snap adds, by kind (VS Code's extension page "Feature Contributions"). -->
+					<div class={['mt-3', LABEL]}>{t('snapContrib.details.title')}</div>
+					<div class="mt-1 flex flex-wrap gap-1.5" aria-label={t('snapContrib.details.title')}>
+						{#each groups as g (g.kind)}
+							<span class="rounded-md border border-(--vscode-widget-border) px-1.5 py-0.5 text-[12px]">{t(KIND_KEYS[g.kind])} <span class="text-(--vscode-descriptionForeground)">{g.items.length}</span></span>
+						{:else}
+							<span class="text-(--vscode-descriptionForeground)">—</span>
+						{/each}
+					</div>
+					{#each groups.filter((g) => DETAILED.includes(g.kind)) as g (g.kind)}
+						<div class={['mt-3', LABEL]}>{t(KIND_KEYS[g.kind])}</div>
+						{#each g.items as item, i (i)}
+							<div class="mt-1"><span class="font-semibold">{item.label}</span> {#if item.detail}<code class="text-(--vscode-descriptionForeground)">{item.detail}</code>{/if}</div>
+						{/each}
+						{#if g.kind === 'views' && !active}
+							<p class="mt-1 text-[11px] text-(--vscode-descriptionForeground) opacity-80">{t('snapContrib.details.viewsInactive')}</p>
+						{/if}
+						{#if g.kind === 'lsp' && s.source === 'repo'}
+							<p class="mt-1 text-[11px] text-(--vscode-descriptionForeground) opacity-80">{t('snapContrib.details.lspRepo')}</p>
+						{/if}
+					{/each}
+					{#if contributionsOf(s).views.length}
+						<p class="mt-1 text-[11px] text-(--vscode-descriptionForeground) opacity-80">{t('snapContrib.details.viewsSandbox')}</p>
+					{/if}
+
 					<div class="mt-3 grid gap-3 sm:grid-cols-2">
 						<div>
 							<div class={LABEL}>สิทธิ์ที่ขอ (Permissions)</div>

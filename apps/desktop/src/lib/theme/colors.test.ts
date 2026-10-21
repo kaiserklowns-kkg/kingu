@@ -6,7 +6,8 @@ import { chromeVariables, resolveColor, terminalTheme } from './colors';
 import { findTheme, loadTheme, THEMES } from './themes';
 import { normalizeColor } from '../editor/textmate/theme';
 
-const dir = join(import.meta.dir, '../editor/textmate/themes');
+// The built-in snap `kingu-themes`: theme files are paths in it (`themes/dark_modern.json`).
+const dir = join(import.meta.dir, '../../../snaps/kingu-themes');
 const read = (file: string) => readFileSync(join(dir, file), 'utf8');
 const load = (id: string) => {
 	const info = findTheme(id);
@@ -23,7 +24,7 @@ describe('themes', () => {
 	});
 
 	test('ids, VS Code aliases and unknown values', () => {
-		expect(findTheme('Light+').file).toBe('light_plus.json');
+		expect(findTheme('Light+').file).toBe('themes/light_plus.json');
 		expect(findTheme('Default Dark Modern').id).toBe('Dark Modern');
 		expect(findTheme('Light High Contrast').id).toBe('Default High Contrast Light');
 		expect(findTheme('Solarized').id).toBe('Dark Modern');

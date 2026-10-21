@@ -3,8 +3,10 @@
 
 import type { SettingSchema } from '../settings/registry';
 import { t } from '#lib/i18n/index.ts';
+import type { SnapContributions } from './contributions.ts';
 
-export type SnapSource = 'user' | 'repo';
+/** `builtin`: shipped with the app (builtinSnaps.ts), never from `snap_list`. */
+export type SnapSource = 'user' | 'repo' | 'builtin';
 export type SnapSettingType = 'string' | 'boolean' | 'number';
 export type SettingValue = string | boolean | number;
 
@@ -38,6 +40,8 @@ export type SnapInfo = {
 	settings: SnapSetting[];
 	mcp: SnapMcp[];
 	skills: SnapSkill[];
+	/** Languages, grammars, snippets, language servers, themes and views (contributions.ts). */
+	contributes?: SnapContributions;
 	origin: SnapOrigin | null;
 	lock: LockStatus | null;
 };
@@ -317,13 +321,21 @@ export function permissionDiff(before: SnapPermissions, after: SnapPermissions):
 	return { added, removed };
 }
 
-/** Counts and names of the tasks, MCP servers and skills a snap adds. */
+/** Counts and names of the tasks, MCP servers and skills a snap adds, then what else it contributes. */
 function contributionLines(s: SnapInfo): string[] {
 	const names = (xs: string[]) => (xs.length ? `: ${xs.join(', ')}` : '');
+	const c = s.contributes;
+	const more: ['snapContrib.summary.languages' | 'snapContrib.summary.lsp' | 'snapContrib.summary.themes' | 'snapContrib.summary.views', string[]][] = [
+		['snapContrib.summary.languages', c?.languages.map((l) => l.aliases[0] ?? l.id) ?? []],
+		['snapContrib.summary.lsp', c?.lsp.map((l) => l.name) ?? []],
+		['snapContrib.summary.themes', [...(c?.themes.map((x) => x.label) ?? []), ...(c?.iconThemes.map((x) => x.label) ?? [])]],
+		['snapContrib.summary.views', c?.views.map((v) => v.name) ?? []]
+	];
 	return [
 		t('tools.snaps.contrib.tasks', { count: s.tasks.length, names: names(s.tasks.map((x) => x.title)) }),
 		t('tools.snaps.contrib.mcp', { count: s.mcp.length, names: names(s.mcp.map((m) => m.name)) }),
-		t('tools.snaps.contrib.skills', { count: s.skills.length, names: names(s.skills.map((k) => k.name)) })
+		t('tools.snaps.contrib.skills', { count: s.skills.length, names: names(s.skills.map((k) => k.name)) }),
+		...more.filter(([, xs]) => xs.length).map(([key, xs]) => t(key, { count: xs.length, names: names(xs) }))
 	];
 }
 
@@ -346,7 +358,13 @@ export function installSummary(s: SnapInfo, origin: SnapOrigin, plan?: SandboxPl
 
 /** The native confirm before trusting a repo snap: what it may run, with the exact commands. */
 export function trustSummary(s: SnapInfo, plan?: SandboxPlan): string {
-	const commands = [...s.tasks.map((x) => t('tools.snaps.taskCommand', { title: x.title, command: x.command.join(' ') })), ...s.mcp.map((m) => `• MCP ${m.name}: ${m.command.join(' ')}`)];
+	const commands = [
+		...s.tasks.map((x) => t('tools.snaps.taskCommand', { title: x.title, command: x.command.join(' ') })),
+		...s.mcp.map((m) => `• MCP ${m.name}: ${m.command.join(' ')}`),
+		// Language servers run as soon as a file of their language opens.
+		...(s.contributes?.lsp ?? []).map((l) => t('snapContrib.trust.server', { name: l.name, command: l.command.join(' ') }))
+	];
+	const views = s.contributes?.views ?? [];
 	return [
 		t('tools.snaps.fromRepo', { name: s.name, id: s.id, version: s.version }),
 		'',
@@ -355,6 +373,7 @@ export function trustSummary(s: SnapInfo, plan?: SandboxPlan): string {
 		...(plan ? [enforcementNote(plan)] : []),
 		...(commands.length ? ['', t('tools.snaps.commandsToRun'), ...commands] : []),
 		...(s.skills.length ? ['', t('tools.snaps.skillsForAgents', { names: s.skills.map((k) => k.name).join(', ') })] : []),
+		...(views.length ? ['', t('snapContrib.trust.views', { names: views.map((v) => v.name).join(', ') })] : []),
 		'',
 		t('tools.snaps.repoTrustWarning')
 	].join('\n');

@@ -1,6 +1,6 @@
 <script lang="ts">
-	// The Snaps side view (VS Code's Extensions view, compact): search, the user's snaps and this
-	// folder's repo snaps, hover actions per row. A row opens its details page: SnapsView for one
+	// The Snaps side view (VS Code's Extensions view, compact): search, the user's snaps, this
+	// folder's repo snaps and the built-in ones, hover actions per row. A row opens its details page: SnapsView for one
 	// snap in the system settings page.
 	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
@@ -9,9 +9,10 @@
 	import { filterSnaps, isActive, isUpdatable, lockNote, snapKey, snapStatus, type SnapInfo } from './snapModel.ts';
 	import { approvalNote, canApprove, isApprovable, missingRequired, teamSnapStatus, type TeamSnap } from './teamSnaps.ts';
 	import { snaps } from './snaps.svelte.ts';
+	import { t } from '#lib/i18n/index.ts';
 
 	let query = $state('');
-	let open = $state({ user: true, repo: true, team: true });
+	let open = $state({ user: true, repo: true, builtin: false, team: true });
 	const teamItems = $derived(snaps.teamCatalog?.items ?? []);
 	const teamFiltered = $derived.by(() => {
 		const words = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -19,10 +20,12 @@
 	});
 	const teamMissing = $derived(missingRequired(teamItems, snaps.list));
 	const isTeamAdmin = $derived(canApprove(snaps.teamCatalog?.role));
-	const filtered = $derived(filterSnaps(snaps.list, query));
+	const filtered = $derived(filterSnaps(snaps.all, query));
 	const sections = $derived([
 		{ id: 'user' as const, title: 'Installed (user)', list: filtered.filter((s) => s.source === 'user') },
-		{ id: 'repo' as const, title: 'This folder (repo)', list: filtered.filter((s) => s.source === 'repo') }
+		{ id: 'repo' as const, title: 'This folder (repo)', list: filtered.filter((s) => s.source === 'repo') },
+		// VS Code's "Built-in" extensions: shipped with the app, collapsed at first.
+		{ id: 'builtin' as const, title: t('snapContrib.section.builtin'), list: filtered.filter((s) => s.source === 'builtin') }
 	]);
 	const selectedKey = $derived(systemSettings.visible && systemSettings.snaps ? systemSettings.snapKey : null);
 
@@ -43,7 +46,7 @@
 		if (isUpdatable(s)) out.push({ icon: 'refresh', label: 'Update', run: () => snaps.update(s.id) });
 		if (isTeamAdmin && isApprovable(s)) out.push({ icon: 'account', label: 'Approve for Team…', run: () => snaps.approveForTeam(s.id) });
 		if (s.source === 'user') out.push({ icon: 'trash', label: 'Uninstall', run: () => snaps.uninstall(s.id) });
-		out.push({ icon: 'folder', label: 'Reveal Folder', run: () => snaps.reveal(s) });
+		if (s.source !== 'builtin') out.push({ icon: 'folder', label: 'Reveal Folder', run: () => snaps.reveal(s) });
 		return out;
 	}
 
@@ -96,7 +99,7 @@
 
 	<div class="min-h-0 flex-1 overflow-y-auto">
 		{#each sections as sec (sec.id)}
-			{#if sec.id === 'user' || workspace.root}
+			{#if sec.id !== 'repo' || workspace.root}
 				<div class="flex h-(--kg-row-height) shrink-0 items-center pr-2 text-[11px] font-bold text-(--vscode-sideBarTitle-foreground) uppercase hover:bg-(--vscode-list-hoverBackground)">
 					<button class="flex h-full min-w-0 flex-1 items-center gap-0.5 pl-0.5 text-left" aria-expanded={open[sec.id]} onclick={() => (open[sec.id] = !open[sec.id])}>
 						<Icon name={open[sec.id] ? 'chevronDown' : 'chevronRight'} size={16} />
@@ -130,7 +133,7 @@
 						</div>
 					{:else}
 						<p class="py-1 pl-5 text-(--vscode-descriptionForeground)">
-							{query ? 'ไม่พบ Snap ที่ตรงกับคำค้น' : sec.id === 'user' ? 'ยังไม่มี — ติดตั้งจาก git, จากโฟลเดอร์ หรือสร้างใหม่' : 'โฟลเดอร์นี้ไม่มี .kingu/snaps'}
+							{query ? 'ไม่พบ Snap ที่ตรงกับคำค้น' : sec.id === 'user' ? 'ยังไม่มี — ติดตั้งจาก git, จากโฟลเดอร์ หรือสร้างใหม่' : sec.id === 'builtin' ? '—' : 'โฟลเดอร์นี้ไม่มี .kingu/snaps'}
 						</p>
 					{/each}
 				{/if}

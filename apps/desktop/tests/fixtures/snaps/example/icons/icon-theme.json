@@ -1,0 +1,14 @@
+{
+	"iconDefinitions": {
+		"_file": { "iconPath": "./file.svg" },
+		"_note": { "iconPath": "./note.svg" },
+		"_folder": { "iconPath": "./file.svg" },
+		"_font": { "fontCharacter": "\\E001" }
+	},
+	"file": "_file",
+	"folder": "_folder",
+	"fileExtensions": { "knote": "_note", "d.knote": "_font" },
+	"fileNames": { "NOTES.md": "_note" },
+	"languageIds": { "markdown": "_note" },
+	"light": { "fileExtensions": { "knote": "_file" } }
+}

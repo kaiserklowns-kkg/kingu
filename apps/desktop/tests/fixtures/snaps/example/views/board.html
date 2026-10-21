@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="utf-8" />
+		<style>
+			body { font: 13px system-ui, sans-serif; margin: 8px; color: #ccc; }
+			:root[data-kingu-theme='light'] body { color: #333; }
+			button { margin-right: 6px; }
+		</style>
+	</head>
+	<body>
+		<p id="greeting">…</p>
+		<button id="run">Say Hello</button>
+		<button id="notify">Notify</button>
+		<script>
+			// window.kingu is the bridge Kingu injects (snap_view.rs): only what snap.toml declares works.
+			kingu.getSetting('greeting').then((g) => (document.getElementById('greeting').textContent = g));
+			document.getElementById('run').onclick = () => kingu.runTask('hello');
+			document.getElementById('notify').onclick = () => kingu.notify('Hello from the board view');
+		</script>
+	</body>
+</html>

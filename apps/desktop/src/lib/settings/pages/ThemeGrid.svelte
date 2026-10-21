@@ -1,16 +1,23 @@
 <script lang="ts">
-	// Appearance › Interface: Kingu's color themes as preview cards (a miniature workbench each).
-	import { onMount } from 'svelte';
+	// Appearance › Interface: the color themes (built-in, then snaps') as preview cards (a miniature workbench each).
 	import Icon from '#lib/workbench/Icon.svelte';
-	import { THEMES, type ThemeInfo } from '#lib/theme/themes.ts';
+	import type { ThemeInfo } from '#lib/theme/themes.ts';
+	import { snapContrib } from '#lib/snaps/contrib.svelte.ts';
 	import { themeSwatch } from '#lib/theme/theme.svelte.ts';
 	import { settings } from '../settings.svelte';
 	import { SETTINGS } from '../registry';
 	import { t } from '#lib/i18n/index.ts';
 
 	let swatches = $state<Record<string, Awaited<ReturnType<typeof themeSwatch>>>>({});
-	onMount(() => {
-		for (const th of THEMES) void themeSwatch(th).then((s) => (swatches[th.id] = s)).catch(() => {});
+	const themes = $derived(snapContrib.themes);
+	// Card colors for every theme, and for a snap's theme once it is listed.
+	const asked = new Set<string>();
+	$effect(() => {
+		for (const th of themes) {
+			if (asked.has(th.id)) continue;
+			asked.add(th.id);
+			void themeSwatch(th).then((s) => (swatches[th.id] = s)).catch(() => {});
+		}
 	});
 
 	const current = $derived(settings.get<string>('workbench.colorTheme'));
@@ -29,7 +36,7 @@
 	{#each groups as g (g.label)}
 		<h2 class="mt-5 mb-2.5 text-xs first:mt-1 font-semibold tracking-wide text-(--vscode-descriptionForeground) uppercase">{g.label}</h2>
 		<div class="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-3">
-			{#each THEMES.filter((th) => g.types.includes(th.type)) as th (th.id)}
+			{#each themes.filter((th) => g.types.includes(th.type)) as th (th.id)}
 				{@const s = swatches[th.id]}
 				{@const on = current === th.id}
 				<button
