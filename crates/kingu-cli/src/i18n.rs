@@ -88,6 +88,8 @@ pub enum Msg {
   UnknownArtifactCommand,
   ArtifactPublished,
   NoArtifacts,
+  Starting,
+  StartFailed,
 }
 
 impl Msg {
@@ -133,6 +135,8 @@ impl Msg {
     Msg::UnknownArtifactCommand,
     Msg::ArtifactPublished,
     Msg::NoArtifacts,
+    Msg::Starting,
+    Msg::StartFailed,
   ];
 
   /// (English, Thai).
@@ -182,6 +186,8 @@ impl Msg {
       Msg::UnknownArtifactCommand => ("unknown artifact command `{command}` (publish, list)", "ไม่รู้จักคำสั่ง artifact `{command}` (มี publish, list)"),
       Msg::ArtifactPublished => ("Published {title} (artifact {id}, version {version})", "เผยแพร่ {title} แล้ว (artifact {id} เวอร์ชัน {version})"),
       Msg::NoArtifacts => ("no artifacts", "ไม่มี artifact"),
+      Msg::Starting => ("Kingu is not running: starting it with {path}", "Kingu ไม่ได้เปิดอยู่ กำลังเปิดพร้อม {path}"),
+      Msg::StartFailed => ("Kingu is not running and could not be started ({detail})", "Kingu ไม่ได้เปิดอยู่และเปิดไม่สำเร็จ ({detail})"),
     }
   }
 
@@ -219,6 +225,7 @@ Usage:
                                      start a task in a new worktree; prints its slug
   kingu task open <slug>             show a task in Kingu
   kingu open <path>[:line[:column]]  open a file (in the open folder) or a folder in Kingu
+                                     (starts Kingu with it when it is not running)
   kingu notify <message…> [--title <title>]
                                      post a desktop notification
   kingu artifact publish <file> [--title <title>] [--description <text>]
@@ -245,6 +252,7 @@ const USAGE_TH: &str = "kingu: สั่งงานแอป Kingu ที่เ
                                      เริ่มงานใน worktree ใหม่ แล้วพิมพ์ slug ของงาน
   kingu task open <slug>             แสดงงานใน Kingu
   kingu open <path>[:line[:column]]  เปิดไฟล์ (ในโฟลเดอร์ที่เปิด) หรือโฟลเดอร์ใน Kingu
+                                     (เปิด Kingu พร้อม path นั้นถ้ายังไม่ได้เปิดอยู่)
   kingu notify <message…> [--title <title>]
                                      แสดงการแจ้งเตือนบนเดสก์ท็อป
   kingu artifact publish <file> [--title <title>] [--description <text>]

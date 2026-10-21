@@ -22,6 +22,7 @@ import { externalKey } from './externalFiles';
 import { isWorkspaceFile, parseCodeWorkspace, workspaceName, type CodeWorkspace } from './workspaceFile';
 import { folderOf, keyForPath, watcherPaths, within, workspaceFileText, workspaceLabel, workspaceStateKey, type WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 import { editors } from './editors.svelte';
+import { saveEditorLayout } from './editorRestore.svelte';
 import { explorer } from './explorer.svelte';
 import { ideChanges, recentLabel, workspaceFiles } from './fileTree';
 import type { RecentFolder } from './menus';
@@ -472,6 +473,8 @@ class Workspace {
 
 	/** Every view of the old workspace goes: editors, language servers, tree, search, source control. */
 	#switched(info: WorkspaceState) {
+		// The old workspace keeps its editors as they were (scroll and cursor included).
+		saveEditorLayout();
 		editors.closeAll();
 		navigation.clear();
 		lsp.reset();

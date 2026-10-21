@@ -400,6 +400,24 @@ export function saveViewState(group: number, path: string, state: Monaco.editor.
 	for (const map of [views, sharedViews] as Map<string, unknown>[]) while (map.size > MAX_VIEW_STATES) map.delete(map.keys().next().value!);
 }
 
+/** The view states kept per group (by `group\0path`, oldest first), to save with the workspace's editors. */
+export function allViewStates(): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	for (const [k, v] of views) if (v) out[k] = v;
+	return out;
+}
+
+/** A workspace's saved view states, before its editors show again (each group's editor restores its own). */
+export function loadViewStates(saved: Record<string, unknown>) {
+	views.clear();
+	sharedViews.clear();
+	for (const [k, v] of Object.entries(saved)) {
+		const state = v as Monaco.editor.ICodeEditorViewState;
+		views.set(k, state);
+		sharedViews.set(k.slice(k.indexOf('\u0000') + 1), state);
+	}
+}
+
 /** The view state to restore for `path` in `group`: the group's own, else (with `workbench.editor.sharedViewState`) the latest from any group. */
 export function viewState(group: number, path: string) {
 	const own = views.get(viewKey(group, path));

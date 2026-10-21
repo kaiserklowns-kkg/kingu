@@ -96,6 +96,12 @@ impl WindowSession {
     }
     self.folders.first().map(|f| f.path.display().to_string())
   }
+
+  /// What the window's own state (backups, the page's workspace storage) is kept under: the
+  /// identity, else `empty:<id>` for an empty window (the page's workspaceStateKey).
+  pub fn storage_key(&self) -> Option<String> {
+    self.identity().or_else(|| self.empty.as_ref().map(|e| format!("empty:{e}")))
+  }
 }
 
 /// One window's workspace and the per-window services that follow it.
@@ -187,9 +193,9 @@ impl Workspace {
     self.current().ok_or_else(|| tr!(FilesMsg::NoFolder))
   }
 
-  /// See [`WindowSession::identity`].
-  pub fn identity(&self) -> Option<String> {
-    self.session().identity()
+  /// See [`WindowSession::storage_key`].
+  pub fn storage_key(&self) -> Option<String> {
+    self.session().storage_key()
   }
 
   /// The root folder a webview path belongs to and the path relative to it (see the module docs).
@@ -473,6 +479,19 @@ pub fn windows_to_restore(setting: Option<&str>, windows: &[WindowSession]) -> V
   }
 }
 
+/// Workspace storage keys (the page's per-workspace state, see `storage_key`) no window can show
+/// again, so their state can go (VS Code's unused workspace storage cleanup): an empty window or
+/// an untitled workspace that no open window and no window to restore has (`live`), a folder or
+/// workspace file that no longer exists. Anything else is kept.
+pub fn stale_scopes(scopes: &[String], live: &std::collections::HashSet<String>, exists: impl Fn(&Path) -> bool) -> Vec<String> {
+  scopes
+    .iter()
+    .filter(|s| !live.contains(*s))
+    .filter(|s| if s.starts_with("empty:") || s.starts_with("untitled:") { true } else { s.starts_with('/') && !exists(Path::new(s.as_str())) })
+    .cloned()
+    .collect()
+}
+
 // ---------------------------------------------------------------------------------------------
 // Recently opened folders and the last session's windows
 
@@ -697,6 +716,10 @@ mod tests {
     s.file = Some("/w/x.code-workspace".into());
     assert_eq!(s.identity().as_deref(), Some("/w/x.code-workspace"));
     assert_eq!(WindowSession::default().identity(), None);
+    // An empty window's own state: under its id.
+    assert_eq!(WindowSession { empty: Some("e1".into()), ..Default::default() }.storage_key().as_deref(), Some("empty:e1"));
+    assert_eq!(WindowSession::default().storage_key(), None);
+    assert_eq!(s.storage_key(), s.identity());
   }
 
   #[test]
@@ -709,6 +732,15 @@ mod tests {
     assert_eq!(windows_to_restore(Some("one"), &all), [w("/c")]);
     assert_eq!(windows_to_restore(Some("none"), &all), []);
     assert_eq!(windows_to_restore(Some("one"), &[]), []);
+  }
+
+  #[test]
+  fn stale_workspace_storage() {
+    let here = tempfile::tempdir().unwrap();
+    let dir = here.path().display().to_string();
+    let live: std::collections::HashSet<String> = ["empty:e1".to_string(), "untitled:u1".into(), "/gone/but/open".into()].into();
+    let scopes: Vec<String> = ["empty:e1", "empty:e2", "untitled:u1", "untitled:u2", &dir, "/no/such/folder", "/gone/but/open", "C:weird"].map(String::from).into();
+    assert_eq!(stale_scopes(&scopes, &live, Path::exists), ["empty:e2", "untitled:u2", "/no/such/folder"]);
   }
 
   #[test]

@@ -181,11 +181,12 @@ export type HotExit = 'off' | 'onExit' | 'onExitAndWindowClose';
 export type ShutdownReason = 'quit' | 'close' | 'load' | 'reload';
 
 /**
- * Whether unsaved editors are backed up and restored next time (hot exit) instead of asking.
- * Kingu has one window, so closing it on Windows/Linux quits; on macOS VS Code treats a window
- * close as not quitting and asks unless `onExitAndWindowClose`.
+ * Whether unsaved editors are backed up and restored next time (hot exit) instead of asking
+ * (VS Code's nativeWorkingCopyBackupTracker). Closing a window backs up with a folder open and
+ * `onExitAndWindowClose`; otherwise only when it quits the app: the last window on
+ * Windows/Linux (`lastWindow`), never on macOS, where the app keeps running.
  */
-export function backsUpOnShutdown(o: { reason: ShutdownReason; hotExit: HotExit; hasFolder: boolean; isMac: boolean }): boolean {
+export function backsUpOnShutdown(o: { reason: ShutdownReason; hotExit: HotExit; hasFolder: boolean; isMac: boolean; lastWindow?: boolean }): boolean {
 	if (o.hotExit === 'off') return false;
 	switch (o.reason) {
 		case 'quit':
@@ -193,7 +194,7 @@ export function backsUpOnShutdown(o: { reason: ShutdownReason; hotExit: HotExit;
 			return true;
 		case 'close':
 			if (o.hasFolder && o.hotExit === 'onExitAndWindowClose') return true;
-			return !o.isMac;
+			return !o.isMac && (o.lastWindow ?? true);
 		case 'load':
 			return o.hasFolder && o.hotExit === 'onExitAndWindowClose';
 	}

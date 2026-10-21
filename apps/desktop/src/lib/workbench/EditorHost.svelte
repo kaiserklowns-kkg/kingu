@@ -100,6 +100,9 @@
 		});
 
 		const unregister = editors.registerHost(group, {
+			saveViewState: () => {
+				if (editor && shown) saveViewState(group, shown, editor.saveViewState());
+			},
 			gotoLine: (line, column = 1) => {
 				if (!editor) return;
 				editor.revealLineInCenter(line);

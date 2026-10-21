@@ -6,7 +6,7 @@ use std::io::Read;
 use kingu_cli::args::{self, Command};
 use kingu_cli::client::{self, EXIT_FAILED, EXIT_UNAVAILABLE, EXIT_USAGE};
 use kingu_cli::i18n::{self, Lang, Msg, tr};
-use kingu_cli::runtime;
+use kingu_cli::{launch, runtime};
 
 fn fail(code: i32, msg: impl std::fmt::Display) -> ! {
   eprintln!("kingu: {msg}");
@@ -37,12 +37,29 @@ fn main() {
   };
   let cwd = std::env::current_dir().unwrap_or_else(|e| fail(EXIT_USAGE, tr(Msg::CurrentFolder, &[("detail", &e)])));
   let Some((method, params)) = client::request_of(&inv.command, &cwd, stdin_prompt).unwrap_or_else(|e| fail(EXIT_USAGE, e)) else { return };
+  // `kingu open` starts Kingu with the path when it is not running (VS Code's `code <path>`).
+  let start_instead = |e: String| -> ! {
+    let Command::Open { .. } = &inv.command else { fail(EXIT_UNAVAILABLE, e) };
+    let target = std::path::PathBuf::from(params["path"].as_str().unwrap_or_default());
+    match launch::start(&target) {
+      Ok(()) => {
+        eprintln!("kingu: {}", tr(Msg::Starting, &[("path", &target.display())]));
+        std::process::exit(0);
+      }
+      Err(detail) => fail(EXIT_UNAVAILABLE, tr(Msg::StartFailed, &[("detail", &detail)])),
+    }
+  };
   let path = runtime::runtime_path().unwrap_or_else(|| fail(EXIT_UNAVAILABLE, tr(Msg::NoDataFolder, &[])));
   if !path.exists() {
-    fail(EXIT_UNAVAILABLE, tr(Msg::NotRunning, &[]));
+    start_instead(tr(Msg::NotRunning, &[]));
   }
   let rt = runtime::read(&path).unwrap_or_else(|e| fail(EXIT_UNAVAILABLE, e));
-  let res = client::call(std::path::Path::new(&rt.socket), &rt.token, method, params).unwrap_or_else(|(code, e)| fail(code, e));
+  let res = match client::call(std::path::Path::new(&rt.socket), &rt.token, method, params.clone()) {
+    Ok(res) => res,
+    // A runtime file left by an app that is gone.
+    Err((EXIT_UNAVAILABLE, e)) => start_instead(e),
+    Err((code, e)) => fail(code, e),
+  };
   if inv.json {
     let out = if res.ok { res.result.clone().unwrap_or_default() } else { serde_json::json!({ "error": res.error }) };
     println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());

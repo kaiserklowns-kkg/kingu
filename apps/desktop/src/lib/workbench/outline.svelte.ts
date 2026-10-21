@@ -1,7 +1,7 @@
 // Document symbols of the open files for the Outline view and the breadcrumbs (VS Code:
 // IOutlineService / DocumentSymbolsOutline): the language server's when it has answered, else
 // Monaco's own providers (its TypeScript/JSON/CSS/HTML workers). Also the Outline view's state:
-// sort order, Follow Cursor, Filter on Type (VS Code's OutlineViewState, kept per window) and
+// sort order, Follow Cursor, Filter on Type (VS Code's OutlineViewState, kept per workspace) and
 // which elements are toggled per file.
 
 import { SvelteMap } from 'svelte/reactivity';
@@ -10,17 +10,21 @@ import { lsp } from '#lib/lsp/lsp.svelte.ts';
 import type { DocumentSymbol, SymbolInformation } from '#lib/lsp/protocol.ts';
 import { editors } from './editors.svelte';
 import { fromMonacoSymbols, type OutlineSortOrder } from './outlineModel';
+import { workspaceStorage } from './workspaceStorage.svelte';
+import { withSaved } from './workspaceState';
 
 const STATE_KEY = 'kingu.outline.state';
 const FALLBACK_DELAY_MS = 400;
 
-type Saved = { sortBy?: OutlineSortOrder; followCursor?: boolean; filterOnType?: boolean; open?: boolean };
+/** What a workspace opened for the first time shows (VS Code: sorted by position, the section collapsed). */
+const DEFAULTS = { sortBy: 'position' as OutlineSortOrder, followCursor: true, filterOnType: true, open: false };
 
-function readSaved(): Saved {
+/** What an older build kept for every window (it goes to the first workspace opened). */
+function readLegacy(): unknown {
 	try {
-		return JSON.parse(localStorage.getItem(STATE_KEY) ?? '{}') as Saved;
+		return JSON.parse(localStorage.getItem(STATE_KEY) ?? 'null');
 	} catch {
-		return {};
+		return null;
 	}
 }
 
@@ -39,11 +43,14 @@ class Outline {
 	#installed = false;
 
 	constructor() {
-		const s = readSaved();
-		if (s.sortBy === 'position' || s.sortBy === 'name' || s.sortBy === 'kind') this.sortBy = s.sortBy;
-		if (typeof s.followCursor === 'boolean') this.followCursor = s.followCursor;
-		if (typeof s.filterOnType === 'boolean') this.filterOnType = s.filterOnType;
-		if (typeof s.open === 'boolean') this.open = s.open;
+		workspaceStorage.register(STATE_KEY, Object.keys(DEFAULTS), (saved) => {
+			const s = withSaved(DEFAULTS, saved);
+			this.sortBy = s.sortBy === 'name' || s.sortBy === 'kind' ? s.sortBy : 'position';
+			this.followCursor = s.followCursor;
+			this.filterOnType = s.filterOnType;
+			this.open = s.open;
+			this.#toggled.clear();
+		}, readLegacy());
 	}
 
 	/** Starts following the active editor (once, from the workbench). */
@@ -52,12 +59,7 @@ class Outline {
 		this.#installed = true;
 		const stop = $effect.root(() => {
 			$effect(() => {
-				const snapshot: Saved = { sortBy: this.sortBy, followCursor: this.followCursor, filterOnType: this.filterOnType, open: this.open };
-				try {
-					localStorage.setItem(STATE_KEY, JSON.stringify(snapshot));
-				} catch {
-					/* storage unavailable: the defaults come back next time */
-				}
+				workspaceStorage.save(STATE_KEY, { sortBy: this.sortBy, followCursor: this.followCursor, filterOnType: this.filterOnType, open: this.open });
 			});
 			$effect(() => {
 				const rel = editors.active;

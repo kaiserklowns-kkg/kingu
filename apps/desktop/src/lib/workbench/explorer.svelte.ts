@@ -9,6 +9,12 @@ import { affectedBy, baseName, dirsToRefresh, isUnder, joinRel, parentOf, remapP
 import { notifications } from './notifications.svelte';
 import { compactChain, compactLabel, dropTarget, moveQuestion, planTransfer, rangeSelection, topLevel } from './explorerModel';
 import { nestFiles } from './fileNesting';
+import { workspaceStorage } from './workspaceStorage.svelte';
+import { withSaved } from './workspaceState';
+
+const TREE_STATE = 'kingu.explorer.treeViewState';
+/** Expanded folders kept per workspace at most. */
+const MAX_EXPANDED = 500;
 import { t } from '#lib/i18n/index.ts';
 import { isRustError } from '#lib/i18n/rustErrors.ts';
 
@@ -49,6 +55,29 @@ class Explorer {
 	nestToggled = new SvelteSet<string>();
 	/** Root folders collapsed in a multi-root workspace (VS Code shows each root as a tree node). */
 	collapsedRoots = new SvelteSet<string>();
+
+	constructor() {
+		// The expanded folders are kept per workspace (VS Code's workbench.explorer.treeViewState).
+		workspaceStorage.register(TREE_STATE, ['expanded', 'collapsedRoots'], (saved) => void this.#restoreExpanded(saved));
+		$effect.root(() => {
+			$effect(() => {
+				workspaceStorage.save(TREE_STATE, { expanded: [...this.expanded].slice(0, MAX_EXPANDED), collapsedRoots: [...this.collapsedRoots] });
+			});
+		});
+	}
+
+	/** A workspace's expanded folders come back; their children load (a folder gone since is dropped). */
+	async #restoreExpanded(saved: Record<string, unknown> | null) {
+		const s = withSaved({ expanded: [] as unknown[], collapsedRoots: [] as unknown[] }, saved);
+		const strings = (list: unknown[]) => list.filter((v): v is string => typeof v === 'string' && v !== '');
+		this.expanded.clear();
+		this.collapsedRoots.clear();
+		for (const rel of strings(s.expanded)) this.expanded.add(rel);
+		for (const rel of strings(s.collapsedRoots)) this.collapsedRoots.add(rel);
+		// Parents first, so a folder shows as soon as its own children are in.
+		const dirs = [...this.expanded].sort((a, b) => a.split('/').length - b.split('/').length);
+		for (const d of dirs) if (this.expanded.has(d) && !this.children.has(d)) await this.load(d);
+	}
 
 	#roots = (): ExplorerRoot[] => [];
 	/** Set by the view: the root folders to show as rows (none for a single folder). */

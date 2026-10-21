@@ -297,7 +297,17 @@ fn dispatch(app: &AppHandle, method: &str, params: &Value) -> Result<Value, RpcE
     }
     protocol::METHOD_OPEN => {
       let checked = check_open(params)?;
-      ask_window(app, cwd_of(params).as_deref(), method, checked, true)
+      let path = PathBuf::from(checked["path"].as_str().unwrap_or_default());
+      // `kingu open <folder>` like `code <folder>`: the window that has it comes to the front, else
+      // (window.openFoldersInNewWindow `default` and `on`) it opens in a new window.
+      if checked["kind"] == "folder" {
+        if crate::windows::open_folder_from_cli(app, &path).map_err(|e| rpc(ERR_FAILED, e))? {
+          return Ok(Value::Null);
+        }
+        return ask_window(app, cwd_of(params).as_deref(), method, checked, true);
+      }
+      // A file goes to the window whose folder has it.
+      ask_window(app, Some(&path), method, checked, true)
     }
     protocol::METHOD_ARTIFACT_PUBLISH => {
       let (cwd, publish) = check_publish(params)?;

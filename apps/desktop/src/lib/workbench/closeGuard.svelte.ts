@@ -11,6 +11,7 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { confirmTerminalExit } from '#lib/terminal/confirmKill.ts';
 import { debug } from '#lib/debug/debug.svelte.ts';
 import { editors } from './editors.svelte';
+import { saveEditorLayout } from './editorRestore.svelte';
 import { textFiles } from './textFileService.svelte';
 import type { ShutdownReason } from './textFiles';
 import { t } from '#lib/i18n/index.ts';
@@ -19,6 +20,8 @@ const debugConfirmsExit = () => debug.active && settings.get('debug.confirmOnExi
 
 /** Whether quitting may go ahead: unsaved files are backed up or asked about, then window.confirmBeforeClose decides. */
 export async function confirmClose(reason: ShutdownReason = 'quit'): Promise<boolean> {
+	// The workspace's editors as they are now (scroll and cursor included) for the next time.
+	saveEditorLayout();
 	const hadDirty = editors.hasDirty();
 	if (!(await textFiles.beforeShutdown(reason))) return false;
 	// terminal.integrated.confirmOnExit: live terminal sessions.
