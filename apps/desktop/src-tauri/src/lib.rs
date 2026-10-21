@@ -1578,6 +1578,7 @@ pub fn run() {
       agent::agent_stop,
       agent::agent_set_options,
       agent::chats_load,
+      agent::home::home_recent_chats,
       agent::slash_commands::chat_slash_commands,
       agent::chats_save,
       agent::chat_transcript_load,

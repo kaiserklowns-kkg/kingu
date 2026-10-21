@@ -80,14 +80,19 @@ const keyName = (key: string) => (key.length === 1 || /^f\d+$/.test(key) ? key.t
 
 /** Display label in VS Code's macOS style (⌃⌥⇧⌘) or `Ctrl+Shift+P` elsewhere; chord parts joined by a space. */
 export function keyLabel(keybinding: string, mac = isMac): string {
-	return splitKeybinding(keybinding)
-		.map((part) => {
-			const c = parseChord(part, mac);
-			const key = mac ? (MAC_KEY_LABELS[c.key] ?? keyName(c.key)) : (KEY_LABELS[c.key] ?? keyName(c.key));
-			if (mac) return `${c.ctrl ? '⌃' : ''}${c.alt ? '⌥' : ''}${c.shift ? '⇧' : ''}${c.meta ? '⌘' : ''}${key}`;
-			return [c.ctrl && 'Ctrl', c.alt && 'Alt', c.shift && 'Shift', key].filter(Boolean).join('+');
-		})
+	return keyParts(keybinding, mac)
+		.map((keys) => keys.join(mac ? '' : '+'))
 		.join(' ');
+}
+
+/** The keys of each chord part, one keycap each (VS Code's KeybindingLabel): `[['⌃', '⌘', 'I']]`. */
+export function keyParts(keybinding: string, mac = isMac): string[][] {
+	return splitKeybinding(keybinding).map((part) => {
+		const c = parseChord(part, mac);
+		const key = mac ? (MAC_KEY_LABELS[c.key] ?? keyName(c.key)) : (KEY_LABELS[c.key] ?? keyName(c.key));
+		const mods = mac ? [c.ctrl && '⌃', c.alt && '⌥', c.shift && '⇧', c.meta && '⌘'] : [c.ctrl && 'Ctrl', c.alt && 'Alt', c.shift && 'Shift'];
+		return [...mods.filter((m): m is string => !!m), key];
+	});
 }
 
 /** A keybinding is one chord (`cmd+p`) or a two-part chord like VS Code's `cmd+k cmd+t`. */

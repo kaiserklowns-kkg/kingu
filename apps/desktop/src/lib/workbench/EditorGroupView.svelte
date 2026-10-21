@@ -21,7 +21,7 @@
 	import { workspace } from './workspace.svelte';
 	import { isNonTextEditor } from '#lib/settings/resources.ts';
 	import FileIcon from './FileIcon.svelte';
-	import KinguMark from './KinguMark.svelte';
+	import KinguHome from './KinguHome.svelte';
 	import Icon from './Icon.svelte';
 	import { editors } from './editors.svelte';
 	import { layout } from './layout.svelte';
@@ -65,7 +65,6 @@
 	import MemoryView from '#lib/debug/MemoryView.svelte';
 	import { isDebugEditorKey, isDisassemblyKey, isMemoryKey } from '#lib/debug/memory.ts';
 	import ChatDebugView from '#lib/agent/ChatDebugView.svelte';
-	import RecentChats from '#lib/agent/RecentChats.svelte';
 	import { chatIdOfDebugKey, isChatDebugKey } from '#lib/agent/chatDebug.ts';
 
 	let { group }: { group: number } = $props();
@@ -377,14 +376,8 @@
 		tabMenu = { x: e.clientX, y: Math.min(e.clientY, window.innerHeight - 20 * 22), path };
 	}
 
-	const watermark = [
-		['Show All Commands', 'cmd+shift+p'],
-		['Go to File', 'cmd+p'],
-		['Split Editor', 'cmd+\\'],
-		['Toggle Terminal', 'ctrl+`'],
-		['Toggle Arkai', 'cmd+alt+b'],
-		['Zen Mode', 'cmd+k z']
-	];
+	// VS Code hides the watermark's shortcuts in a group under 478px tall.
+	let emptyHeight = $state(0);
 
 	// Breadcrumb folders open a list of their entries (VS Code's breadcrumb picker).
 	type Entry = { name: string; rel: string; is_dir: boolean };
@@ -690,24 +683,10 @@
 		{:else if chatEditorId}
 			<div class="absolute inset-0 bg-(--vscode-editor-background)">{#key chatEditorId}<AgentPanel editorChatId={chatEditorId} />{/key}</div>
 		{/if}
-		<!-- workbench.tips.enabled: the shortcut watermark of an empty editor area. -->
-		{#if !activePath && editors.groups.length === 1 && settings.get<boolean>('workbench.tips.enabled')}
-			<div class="absolute inset-0 grid place-items-center">
-				<div class="flex flex-col items-center gap-6">
-					<span class="text-(--vscode-foreground) opacity-15"><KinguMark size={88} /></span>
-					<dl class="grid grid-cols-[auto_auto] items-center gap-x-4 gap-y-2.5 text-(--vscode-descriptionForeground)">
-						{#each watermark as [label, key] (label)}
-							<dt class="text-right">{label}</dt>
-							<dd class="flex gap-1">
-								{#each keyLabel(key).split(' ') as chord, ci (ci)}
-									<kbd class="rounded-md border border-(--vscode-widget-border) bg-(--vscode-editorGroupHeader-tabsBackground) px-1.5 py-0.5 font-sans text-xs tracking-wider">{chord}</kbd>
-								{/each}
-							</dd>
-						{/each}
-					</dl>
-					<!-- The folder's recent agent chats (VS Code's welcome agent sessions). -->
-					<RecentChats />
-				</div>
+		<!-- Kingu Home in the empty editor area (kingu.home.enabled; its shortcuts: workbench.tips.enabled). -->
+		{#if !activePath && editors.groups.length === 1}
+			<div class="absolute inset-0 flex overflow-auto" bind:clientHeight={emptyHeight}>
+				<div class="m-auto w-full"><KinguHome shortcuts={emptyHeight >= 478} /></div>
 			</div>
 		{/if}
 	</div>

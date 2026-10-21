@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { eventLabel, isModifierKey, keyLabel, matches, parseChord, splitKeybinding } from './keys';
+import { eventLabel, isModifierKey, keyLabel, keyParts, matches, parseChord, splitKeybinding } from './keys';
 
 describe('two-part chords', () => {
 	test('split and label like VS Code', () => {
@@ -8,6 +8,13 @@ describe('two-part chords', () => {
 		expect(splitKeybinding('cmd+,')).toEqual(['cmd+,']);
 		expect(keyLabel('cmd+k cmd+t', true)).toBe('⌘K ⌘T');
 		expect(keyLabel('cmd+k cmd+t', false)).toBe('Ctrl+K Ctrl+T');
+	});
+
+	test('keycaps per key, modifiers in VS Code order', () => {
+		expect(keyParts('ctrl+cmd+i', true)).toEqual([['⌃', '⌘', 'I']]);
+		expect(keyParts('cmd+shift+p', true)).toEqual([['⇧', '⌘', 'P']]);
+		expect(keyParts('cmd+shift+p', false)).toEqual([['Ctrl', 'Shift', 'P']]);
+		expect(keyParts('cmd+k z', true)).toEqual([['⌘', 'K'], ['Z']]);
 	});
 
 	test('labels a pressed key and ignores lone modifiers', () => {

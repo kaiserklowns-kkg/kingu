@@ -851,6 +851,14 @@ const CORE_SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.home.enabled',
+		group: 'Workbench',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงแชต agent ล่าสุดจากทุกโปรเจกต์ และโปรเจกต์ที่เปิดล่าสุด ในพื้นที่ editor เมื่อไม่มี editor เปิดอยู่ (Show your recent agent chats, across every project, and your recent projects in the editor area while no editor is open.)',
+		scope: 'application'
+	},
+	{
 		id: 'kingu.floating.enabled',
 		group: 'Terminal',
 		type: 'boolean',

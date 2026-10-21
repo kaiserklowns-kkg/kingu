@@ -15,6 +15,7 @@ pub mod customizations;
 pub mod cli;
 pub mod events;
 pub mod forge;
+pub mod home;
 pub mod gh_projects;
 pub mod hooks;
 pub mod hunks;
