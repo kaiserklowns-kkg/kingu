@@ -7,6 +7,7 @@
 	import { t } from '#lib/i18n/index.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { editors } from '#lib/workbench/editors.svelte.ts';
+	import { listKeys } from '#lib/workbench/listKeys.ts';
 	import { debug } from './debug.svelte.ts';
 	import { disassemblyRows, formatBytes, indexOfAddress, mergeInstructions, PAGE, sameAddress } from './disassembly.ts';
 	import type { DisassembledInstruction } from './protocol.ts';
@@ -104,7 +105,7 @@
 		</label>
 	</div>
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-	<div bind:this={scroller} class="min-h-0 flex-1 overflow-auto outline-none" tabindex="0" role="grid" aria-label={t('debugExtras.disassembly.title')} onscroll={() => void more()}>
+	<div bind:this={scroller} class="min-h-0 flex-1 overflow-auto outline-none" tabindex="0" role="grid" aria-label={t('debugExtras.disassembly.title')} onscroll={() => void more()} use:listKeys>
 		{#if !supported}
 			<p class="px-4 py-2 font-sans text-(--vscode-descriptionForeground)">{t('debugExtras.disassembly.unsupported')}</p>
 		{:else if !ip && !instructions.length}
