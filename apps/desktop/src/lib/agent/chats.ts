@@ -39,6 +39,8 @@ export type ChatMeta = {
 	last_run: RunSummary | null;
 	/** A turn was running when saved; still set at launch: Kingu quit mid-turn (chatResume.ts). */
 	working?: boolean;
+	/** Tools turned off in Configure Tools (chatTools.ts); Rust runs the chat without them. */
+	disabled_tools?: string[];
 };
 
 /** Rust's limits (chats.rs). */

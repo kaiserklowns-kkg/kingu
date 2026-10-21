@@ -14,6 +14,7 @@ import { isVaultKey } from '#lib/vault/vault.ts';
 import { isArtifactKey } from '#lib/artifacts/artifacts.ts';
 import { isDebugEditorKey } from '#lib/debug/memory.ts';
 import { isChatEditorKey } from '#lib/agent/chatExtras.ts';
+import { isChatDebugKey } from '#lib/agent/chatDebug.ts';
 import { isMergeKey } from '#lib/workbench/scm.ts';
 import { externalPath, isExternalKey } from '#lib/workbench/externalFiles.ts';
 import { isLocalHistoryKey, parseLocalHistoryKey } from '#lib/scm/localHistory.ts';
@@ -26,7 +27,7 @@ const USER_MCP_KEY = 'mcp://user/mcp.json';
 
 /** Tabs with no text model (the Settings editor UI, ADE task pages and the board, images, Markdown previews, AI Vault transcripts, chats). */
 export const isNonTextEditor = (key: string) =>
-	key === SETTINGS_EDITOR_KEY || isAdeEditor(key) || isImagePath(key) || isPreviewKey(key) || isNotebookPath(key) || isChangesKey(key) || isVaultKey(key) || isChatEditorKey(key) || isArtifactKey(key) || isMergeKey(key) || isSearchEditorKey(key) || isDebugEditorKey(key);
+	key === SETTINGS_EDITOR_KEY || isAdeEditor(key) || isImagePath(key) || isPreviewKey(key) || isNotebookPath(key) || isChangesKey(key) || isVaultKey(key) || isChatEditorKey(key) || isArtifactKey(key) || isMergeKey(key) || isSearchEditorKey(key) || isDebugEditorKey(key) || isChatDebugKey(key);
 
 /** A user snap's manifest (`snap://user/<id>/snap.toml`): it lives in the app config dir, outside the workspace. */
 const userSnapId = (key: string) => /^snap:\/\/user\/([a-z0-9][a-z0-9-]{0,39})\/snap\.toml$/.exec(key)?.[1];

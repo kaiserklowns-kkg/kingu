@@ -307,6 +307,8 @@ class Chats {
 				runtime: runtimeOf(meta),
 				// Ask or a custom agent (Rust looks the name up among the folder's agent files).
 				agent: meta.agent ?? null,
+				// Configure Tools: what the chat runs without (chatTools.ts).
+				disabledTools: meta.disabled_tools?.length ? meta.disabled_tools : null,
 				onEvent
 			});
 			clientLog('info', `agent run ${state.runId} started for chat ${meta.id}`);
@@ -584,6 +586,23 @@ class Chats {
 		const run = this.run(id);
 		if (run && !run.ended && (run.agent ?? null) !== agent && !turnBusy(run)) await this.stopAndWait(id);
 		return 'next';
+	}
+
+	/**
+	 * Configure Tools (chatTools.ts): the tools the chat runs without. A run's tools are fixed when
+	 * it starts, so an idle live session ends now and the next message continues it in a new run;
+	 * a busy one keeps its tools until then.
+	 */
+	async setDisabledTools(id: string, tools: string[]): Promise<boolean> {
+		const root = this.root;
+		const meta = this.get(id);
+		if (!root || !meta) return false;
+		const before = meta.disabled_tools ?? [];
+		if (before.length === tools.length && before.every((t, i) => t === tools[i])) return false;
+		this.#patch(root, id, { disabled_tools: tools });
+		const run = this.run(id);
+		if (run && !run.ended && !turnBusy(run)) await this.stopAndWait(id);
+		return true;
 	}
 
 	/** The chat runs with "Allow all". */
