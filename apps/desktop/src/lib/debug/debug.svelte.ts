@@ -725,6 +725,7 @@ class Debug {
 					this.#hit(frameLocation(frame, this.root));
 					this.#reveal(frame);
 					this.#onBreak();
+					void import('#lib/workbench/accessibilitySignals.svelte.ts').then((m) => m.playAccessibilitySignal('onDebugBreak'));
 					void this.#evaluateWatches();
 				},
 				terminated: () => void this.#finish(active)

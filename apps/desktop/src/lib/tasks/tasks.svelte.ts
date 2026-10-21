@@ -618,6 +618,8 @@ class Tasks {
 					else if (p.reveal === 'silent' && (code !== 0 || errors)) this.#showTerminal(terminalId, false);
 				}
 				clientLog('info', `task ${task.label}: exit ${code ?? 'terminated'} (${matches} problems)`);
+				// accessibility.signals.taskCompleted / taskFailed (a non-zero exit code).
+				if (!terminated && code !== undefined) void import('#lib/workbench/accessibilitySignals.svelte.ts').then((m) => m.playAccessibilitySignal(code === 0 ? 'taskCompleted' : 'taskFailed'));
 				if (!wentIdle) idle({ exitCode: code });
 				finish({ exitCode: terminated ? undefined : code });
 			});

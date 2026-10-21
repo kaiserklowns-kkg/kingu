@@ -20,6 +20,7 @@
 	import { welcome } from './welcomeTour.svelte';
 	import { floating } from './floating.svelte';
 	import { installSignals } from './signals.svelte';
+	import { installAccessibilitySignals } from './accessibilitySignals.svelte';
 	import { platform } from './platform.svelte';
 	import { PROFILES, type Platform } from './platform';
 	import { hasPreview, previewKey } from './viewers';
@@ -130,6 +131,7 @@
 		welcome.maybeShow();
 		const unregister = [
 			installSignals(),
+			installAccessibilitySignals(),
 			installChatExtras(),
 			// Shows another OS's chrome (window controls, fonts) on this machine; real users keep macOS's.
 			commands.register({

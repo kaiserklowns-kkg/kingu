@@ -66,6 +66,9 @@ export const textFileHooks = {
 	saved: (_path: string, _entry: ModelEntry, _version: number) => {}
 };
 
+/** Called after every successful save with its reason (accessibility.signals.save). */
+export const saveListeners = new Set<(path: string, reason: SaveReason) => void>();
+
 const entries = new Map<string, ModelEntry>();
 /** The first line of each open untitled editor (reactive, for its tab label). */
 export const untitledFirstLines = new SvelteMap<string, string>();
@@ -240,6 +243,7 @@ export async function saveFile(path: string, reasonOrOptions: SaveReason | SaveO
 	if (!dirty) textFileHooks.clean(path);
 	lsp.didSave(entry.model);
 	textFileHooks.saved(path, entry, version);
+	for (const fn of saveListeners) fn(path, opts.reason ?? 'explicit');
 	return true;
 }
 
