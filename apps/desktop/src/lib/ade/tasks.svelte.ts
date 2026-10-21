@@ -360,6 +360,8 @@ class AdeTasks {
 		model?: string;
 		/** Stacked worktrees: the task whose branch `base` is. */
 		parent?: string;
+		/** Orchestration: the task whose agent dispatched this one with `kingu task create`. */
+		dispatchedBy?: string;
 	}): Promise<string | undefined> {
 		const title = input.title.trim();
 		if (!title || !workspace.root) return;
@@ -415,7 +417,8 @@ class AdeTasks {
 				status: prompt || cli ? 'running' : 'review',
 				group: input.group,
 				model: input.model,
-				parent: input.parent
+				parent: input.parent,
+				dispatchedBy: input.dispatchedBy
 			},
 			Date.now()
 		);

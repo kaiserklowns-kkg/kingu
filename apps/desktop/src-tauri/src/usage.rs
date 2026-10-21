@@ -1,7 +1,10 @@
 //! Agent usage limits for the status bar, read the way Orca reads them: Claude's session and
 //! weekly windows from Anthropic's OAuth usage endpoint with Claude Code's own sign-in (Keychain,
 //! else `~/.claude/.credentials.json`), Codex's from ChatGPT's usage endpoint with
-//! `~/.codex/auth.json`. Tokens are only ever sent to the service that issued them, never logged.
+//! `~/.codex/auth.json`, and Gemini CLI's quota (Orca's Gemini provider) from Google's Code
+//! Assist endpoints with `~/.gemini/oauth_creds.json` when `kingu.usage.gemini` is on. Tokens are
+//! only ever sent to the service that issued them, never logged, and never refreshed here (the
+//! CLI refreshes its own; Orca can also refresh Gemini's with the CLI's bundled OAuth client).
 
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -9,6 +12,10 @@ use std::time::Duration;
 
 const CLAUDE_USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+pub const GEMINI_PROJECT_URL: &str = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
+pub const GEMINI_QUOTA_URL: &str = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota";
+/// Gemini's quotas reset daily.
+const GEMINI_WINDOW_MINUTES: u32 = 1440;
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -287,6 +294,98 @@ pub fn fetch_codex() -> ProviderUsage {
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Gemini
+
+/// POSTs JSON with a bearer token: the status and the response text (a seam for tests).
+pub trait JsonPost {
+  fn post(&self, url: &str, token: &str, body: &Value) -> Result<(u16, String), &'static str>;
+}
+
+struct LivePost;
+
+impl JsonPost for LivePost {
+  fn post(&self, url: &str, token: &str, body: &Value) -> Result<(u16, String), &'static str> {
+    let c = client().map_err(|_| "unknown")?;
+    let res = c.post(url).bearer_auth(token).json(body).send().map_err(|e| network_kind(&e))?;
+    let code = res.status().as_u16();
+    Ok((code, res.text().unwrap_or_default()))
+  }
+}
+
+/// `~/.gemini/oauth_creds.json`: the access token and when it expires (Unix ms), if it says.
+pub fn gemini_token(text: &str) -> Option<(String, Option<i64>)> {
+  let v: Value = serde_json::from_str(text.trim()).ok()?;
+  let token = v.get("access_token").and_then(Value::as_str).filter(|t| !t.is_empty())?;
+  Some((token.to_owned(), v.get("expiry_date").and_then(Value::as_f64).map(|n| n as i64)))
+}
+
+/// The quota buckets (`{ buckets: [{ remainingFraction, resetTime, modelId }] }`) as one daily
+/// window: the most used model's.
+pub fn parse_gemini(body: &Value) -> ProviderUsage {
+  let buckets = body.get("buckets").and_then(Value::as_array).or_else(|| body.as_array()).cloned().unwrap_or_default();
+  let mut best: Option<Window> = None;
+  for b in &buckets {
+    let Some(left) = b.get("remainingFraction").and_then(Value::as_f64).filter(|f| f.is_finite()) else { continue };
+    let used = ((1.0 - left) * 100.0).clamp(0.0, 100.0).round();
+    let w = Window { used_percent: used, window_minutes: GEMINI_WINDOW_MINUTES, resets_at: b.get("resetTime").and_then(parse_time) };
+    if best.as_ref().is_none_or(|x| w.used_percent > x.used_percent) {
+      best = Some(w);
+    }
+  }
+  ProviderUsage { session: best, ..ProviderUsage::new("gemini") }
+}
+
+fn gemini_failed_http(code: u16) -> ProviderUsage {
+  const P: &str = "gemini";
+  match code {
+    401 | 403 => ProviderUsage::failed(P, "error", "stale-token", "Gemini usage updates the next time Gemini CLI runs."),
+    429 => ProviderUsage::failed(P, "error", "rate-limited", "Gemini usage is rate limited right now."),
+    500.. => ProviderUsage::failed(P, "error", "server", "Gemini usage is unavailable."),
+    _ => ProviderUsage::failed(P, "error", "usage-unavailable", &format!("Gemini quota fetch failed (HTTP {code})")),
+  }
+}
+
+/// Gemini's quota with the CLI's own sign-in (`creds`: the oauth_creds.json text), at `now` (Unix ms).
+pub fn fetch_gemini_with(post: &dyn JsonPost, creds: Option<&str>, now: i64) -> ProviderUsage {
+  const P: &str = "gemini";
+  let Some((token, expires)) = creds.and_then(gemini_token) else {
+    return ProviderUsage::failed(P, "unavailable", "missing-credentials", "Gemini CLI not signed in");
+  };
+  if expires.is_some_and(|e| e <= now) {
+    return ProviderUsage::failed(P, "error", "stale-token", "Gemini usage updates the next time Gemini CLI runs.");
+  }
+  let net = |kind: &str| ProviderUsage::failed(P, "error", kind, "Gemini usage could not be refreshed because the network request failed.");
+  let project = match post.post(GEMINI_PROJECT_URL, &token, &serde_json::json!({ "metadata": { "ideType": "GEMINI_CLI", "pluginType": "GEMINI" } })) {
+    Ok((200..=299, text)) => serde_json::from_str::<Value>(&text).ok().and_then(|v| v.get("cloudaicompanionProject").and_then(Value::as_str).map(str::to_owned)),
+    Ok((code, _)) => return gemini_failed_http(code),
+    Err(kind) => return net(kind),
+  };
+  let Some(project) = project else {
+    return ProviderUsage::failed(P, "unavailable", "no-subscription", "No Gemini Code Assist project for this sign-in");
+  };
+  match post.post(GEMINI_QUOTA_URL, &token, &serde_json::json!({ "project": project })) {
+    Ok((200..=299, text)) => match serde_json::from_str::<Value>(&text) {
+      Ok(body) => parse_gemini(&body),
+      Err(_) => ProviderUsage::failed(P, "error", "parse", "Gemini usage is unavailable."),
+    },
+    Ok((code, _)) => gemini_failed_http(code),
+    Err(kind) => net(kind),
+  }
+}
+
+fn gemini_home() -> Option<PathBuf> {
+  match std::env::var("GEMINI_CLI_HOME") {
+    Ok(dir) if !dir.is_empty() => Some(PathBuf::from(dir).join(".gemini")),
+    _ => dirs_home().map(|h| h.join(".gemini")),
+  }
+}
+
+pub fn fetch_gemini() -> ProviderUsage {
+  let creds = gemini_home().and_then(|h| std::fs::read_to_string(h.join("oauth_creds.json")).ok());
+  fetch_gemini_with(&LivePost, creds.as_deref(), now_ms())
+}
+
 /// Which agent CLIs are on the login PATH (Orca shows a provider's usage only when its agent is installed).
 pub fn detect() -> Vec<String> {
   let path = crate::shell_env::path().or_else(|| std::env::var_os("PATH"));
@@ -294,7 +393,7 @@ pub fn detect() -> Vec<String> {
   let home = dirs_home();
   let extra = home.iter().flat_map(|h| [h.join(".local/bin"), h.join(".claude/local")]);
   let all: Vec<PathBuf> = dirs.into_iter().chain(extra).collect();
-  ["claude", "codex"].into_iter().filter(|bin| all.iter().any(|d| is_file(&d.join(bin)))).map(str::to_owned).collect()
+  ["claude", "codex", "gemini"].into_iter().filter(|bin| all.iter().any(|d| is_file(&d.join(bin)))).map(str::to_owned).collect()
 }
 
 fn is_file(p: &Path) -> bool {
@@ -330,6 +429,60 @@ mod tests {
     assert_eq!(u.session.unwrap().used_percent, 30.0);
     assert_eq!(u.weekly.unwrap().window_minutes, 10_080);
     assert_eq!(u.plan_type.as_deref(), Some("plus"));
+  }
+
+  struct FakePost(std::sync::Mutex<Vec<(String, String, Value)>>, Vec<Result<(u16, String), &'static str>>);
+
+  impl JsonPost for FakePost {
+    fn post(&self, url: &str, token: &str, body: &Value) -> Result<(u16, String), &'static str> {
+      let mut seen = self.0.lock().unwrap();
+      seen.push((url.into(), token.into(), body.clone()));
+      self.1.get(seen.len() - 1).cloned().unwrap_or(Err("network"))
+    }
+  }
+
+  fn fake(replies: Vec<Result<(u16, String), &'static str>>) -> FakePost {
+    FakePost(std::sync::Mutex::default(), replies)
+  }
+
+  const CREDS: &str = r#"{"access_token":"ya29.t","refresh_token":"r","expiry_date":2000}"#;
+
+  #[test]
+  fn maps_gemini_buckets_to_the_most_used() {
+    let u = parse_gemini(&json!({"buckets": [
+      {"remainingFraction": 0.9, "resetTime": "2026-10-18T12:00:00Z", "modelId": "gemini-2.5-flash"},
+      {"remainingFraction": 0.25, "resetTime": "2026-10-18T12:00:00Z", "modelId": "gemini-2.5-pro"},
+      {"remainingFraction": "x", "modelId": "bad"}]}));
+    let s = u.session.unwrap();
+    assert_eq!((s.used_percent, s.window_minutes, s.resets_at), (75.0, 1440, Some(1_792_324_800_000)));
+    assert_eq!(u.weekly, None);
+    assert_eq!(parse_gemini(&json!({})).session, None);
+  }
+
+  #[test]
+  fn fetches_gemini_quota_with_the_clis_token() {
+    let post = fake(vec![Ok((200, r#"{"cloudaicompanionProject":"proj-1"}"#.into())), Ok((200, r#"{"buckets":[{"remainingFraction":0.5,"resetTime":"2026-10-18T12:00:00Z","modelId":"gemini-2.5-pro"}]}"#.into()))]);
+    let u = fetch_gemini_with(&post, Some(CREDS), 1000);
+    assert_eq!((u.status.as_str(), u.session.map(|w| w.used_percent)), ("ok", Some(50.0)));
+    let seen = post.0.lock().unwrap();
+    assert_eq!((seen[0].0.as_str(), seen[0].1.as_str()), (GEMINI_PROJECT_URL, "ya29.t"));
+    assert_eq!((seen[1].0.as_str(), &seen[1].2), (GEMINI_QUOTA_URL, &json!({"project": "proj-1"})));
+  }
+
+  #[test]
+  fn gemini_failures_never_refresh_tokens() {
+    let none = fake(vec![]);
+    assert_eq!(fetch_gemini_with(&none, None, 0).failure_kind.as_deref(), Some("missing-credentials"));
+    assert_eq!(fetch_gemini_with(&none, Some(CREDS), 5000).failure_kind.as_deref(), Some("stale-token"), "expired: wait for the CLI");
+    assert!(none.0.lock().unwrap().is_empty(), "nothing was sent");
+    let denied = fake(vec![Ok((401, String::new()))]);
+    assert_eq!(fetch_gemini_with(&denied, Some(CREDS), 0).failure_kind.as_deref(), Some("stale-token"));
+    let limited = fake(vec![Ok((200, r#"{"cloudaicompanionProject":"p"}"#.into())), Ok((429, String::new()))]);
+    assert_eq!(fetch_gemini_with(&limited, Some(CREDS), 0).failure_kind.as_deref(), Some("rate-limited"));
+    let no_project = fake(vec![Ok((200, "{}".into()))]);
+    assert_eq!(fetch_gemini_with(&no_project, Some(CREDS), 0).status, "unavailable");
+    assert_eq!(fetch_gemini_with(&fake(vec![]), Some(CREDS), 0).failure_kind.as_deref(), Some("network"));
+    assert_eq!(gemini_token(r#"{"access_token":""}"#), None);
   }
 
   #[test]

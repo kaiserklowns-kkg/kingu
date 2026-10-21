@@ -31,6 +31,7 @@ mod system;
 mod tasks;
 mod team;
 mod trackers;
+mod voice;
 mod workspace;
 mod worktree;
 
@@ -64,6 +65,7 @@ pub use system::SystemMsg;
 pub use tasks::TasksMsg;
 pub use team::TeamMsg;
 pub use trackers::TrackerMsg;
+pub use voice::VoiceMsg;
 pub use workspace::WorkspaceMsg;
 pub use worktree::WorktreeMsg;
 
@@ -113,6 +115,7 @@ pub fn all() -> Vec<Entry> {
   out.extend(TasksMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(TeamMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(TrackerMsg::ALL.iter().map(|&m| entry(m)));
+  out.extend(VoiceMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(WorkspaceMsg::ALL.iter().map(|&m| entry(m)));
   out.extend(WorktreeMsg::ALL.iter().map(|&m| entry(m)));
   out

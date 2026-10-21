@@ -105,6 +105,7 @@
 		InfinityIcon,
 		ChatCircleIcon,
 		RobotIcon,
+		MicrophoneIcon,
 		AtIcon,
 		DotsSixVerticalIcon
 	} from 'phosphor-svelte';
@@ -236,7 +237,9 @@
 		chat: ChatCircleIcon,
 		robot: RobotIcon,
 		at: AtIcon,
-		grip: DotsSixVerticalIcon
+		grip: DotsSixVerticalIcon,
+		/** Voice dictation (voice/dictation.svelte.ts). */
+		mic: MicrophoneIcon
 	} as const;
 	export type IconName = keyof typeof icons;
 

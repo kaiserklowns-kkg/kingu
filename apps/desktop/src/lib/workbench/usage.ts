@@ -6,9 +6,16 @@
 import type { RunSummary } from '#lib/ade/model.ts';
 import type { UsageRow, UsageWindow } from '#lib/accounts/usage.ts';
 
-export type ProviderId = 'claude' | 'codex';
-export const PROVIDERS: ProviderId[] = ['claude', 'codex'];
-export const PROVIDER_NAME: Record<ProviderId, string> = { claude: 'Claude', codex: 'Codex' };
+export type ProviderId = 'claude' | 'codex' | 'gemini';
+export const PROVIDERS: ProviderId[] = ['claude', 'codex', 'gemini'];
+export const PROVIDER_NAME: Record<ProviderId, string> = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini' };
+/** Providers read through the AI accounts service; Gemini (kingu.usage.gemini) is read by Rust usage.rs. */
+export const ACCOUNT_PROVIDERS: ProviderId[] = ['claude', 'codex'];
+
+/** The providers whose usage is shown: detected ones (all while unknown), Gemini only when turned on. */
+export function activeProviders(detected: ProviderId[] | null, gemini: boolean): ProviderId[] {
+	return (detected ?? PROVIDERS).filter((p) => p !== 'gemini' || gemini);
+}
 
 export type Window = { usedPercent: number; windowMinutes: number; resetsAt: number | null };
 export type ProviderStatus = 'idle' | 'fetching' | 'ok' | 'error' | 'unavailable';
@@ -130,6 +137,7 @@ export function errorLabel(p: ProviderState): string {
 		if (k === 'missing-credentials') return 'Sign in again';
 	}
 	if (p.provider === 'codex' && k === 'stale-token') return 'Sign-in expired';
+	if (p.provider === 'gemini' && k === 'stale-token') return 'Updates when Gemini runs';
 	if (k === 'no-subscription') return 'No subscription';
 	if (/rate[- ]?limit(s|ed)?/i.test(p.error ?? '')) return 'Limited';
 	return 'Refresh failed';

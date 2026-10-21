@@ -137,6 +137,10 @@ pub struct TaskMeta {
   /// Unix ms the idle agent CLI was closed by hibernation (resumable with one click); absent once resumed.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub hibernated_at: Option<u64>,
+  /// Orchestration: the task whose agent dispatched this one with `kingu task create`
+  /// (agent/orchestration.rs); absent for a task you started.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub dispatched_by: Option<String>,
 }
 
 /// One agent session a task ran, so it can be continued later (or handed to another agent).
@@ -252,6 +256,11 @@ pub fn validate(tasks: &[TaskMeta]) -> Result<(), String> {
       && (validate_slug(p).is_err() || p == &t.slug)
     {
       return Err(format!("{}: invalid parent task", t.slug));
+    }
+    if let Some(d) = &t.dispatched_by
+      && (validate_slug(d).is_err() || d == &t.slug)
+    {
+      return Err(format!("{}: invalid dispatching task", t.slug));
     }
   }
   Ok(())
@@ -401,6 +410,7 @@ mod tests {
       attempt_model: Some("gpt-5.1-codex".into()),
       parent: Some("base-task".into()),
       hibernated_at: Some(4),
+      dispatched_by: Some("coordinator".into()),
     }
   }
 
@@ -447,6 +457,7 @@ mod tests {
     assert_eq!((t.session_id.as_deref(), t.last_run.as_ref(), t.issue.as_ref(), t.origin.as_deref()), (None, None, None, None));
     assert_eq!((t.workflow_status.as_deref(), t.sessions.len()), (None, 0));
     assert_eq!((t.group.as_deref(), t.attempt_model.as_deref(), t.parent.as_deref(), t.hibernated_at), (None, None, None, None));
+    assert_eq!(t.dispatched_by, None);
   }
 
   #[test]
@@ -492,6 +503,8 @@ mod tests {
     assert!(bad(|t| t.attempt_model = Some("opus; rm -rf".into())));
     assert!(bad(|t| t.parent = Some("../x".into())));
     assert!(bad(|t| t.parent = Some(t.slug.clone())));
+    assert!(bad(|t| t.dispatched_by = Some("../x".into())));
+    assert!(bad(|t| t.dispatched_by = Some(t.slug.clone())));
     assert!(save(tmp.path(), &[task("a"), task("a")]).is_err());
     assert!(!tmp.path().join(".kingu/tasks.json").exists());
   }

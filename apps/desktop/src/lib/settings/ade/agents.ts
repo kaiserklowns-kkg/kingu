@@ -1,6 +1,7 @@
 // Orca's Agents, Chat and Notifications pages (groups Agent, Agent Chat, Notifications).
 // Behaviour: ade/agentCli.ts (launch options), ade/agentPicker.ts (disabled agents),
-// ade/promptCache.ts + CacheTimer.svelte (prompt-cache timer), ade/automations.svelte.ts.
+// ade/promptCache.ts + CacheTimer.svelte (prompt-cache timer), ade/automations.svelte.ts,
+// agent/orchestration.rs (sub-task depth), voice/ + voice.rs (dictation).
 import type { SettingSchema } from '../registry';
 import { PROFILES } from '../../ade/agentProfiles';
 
@@ -163,6 +164,113 @@ export const AGENT_SETTINGS: SettingSchema[] = [
 		default: true,
 		description:
 			'หลังคำตอบแรก ให้ agent ของ Source Control AI ตั้งชื่อแชตสั้น ๆ 3–6 คำ (ทำงานเฉพาะเมื่อเลือก kingu.git.ai.agent ไว้ และไม่แทนชื่อที่คุณเปลี่ยนเอง) (VS Code: AI chat titles) (After the first answer, the Source Control AI agent names the chat in 3–6 words; only when kingu.git.ai.agent is set, never over a name you chose.)'
+	},
+	// Orca's AI Provider Accounts pane: Gemini CLI's quota in the usage item (Rust usage.rs).
+	{
+		id: 'kingu.usage.gemini',
+		group: G,
+		type: 'boolean',
+		default: false,
+		description:
+			'แสดงโควตาของ Gemini CLI ใน status bar โดยอ่านการลงชื่อเข้าใช้ของ Gemini CLI (~/.gemini/oauth_creds.json) และถาม Google เท่านั้น Kingu ไม่ต่ออายุ token เอง เมื่อหมดอายุจะอัปเดตหลัง Gemini CLI ทำงานครั้งถัดไป (Orca: geminiCliOAuthEnabled) (Show Gemini CLI quota from its own sign-in, sent only to Google; Kingu never refreshes the token.)',
+		// User-only: it reads another program's sign-in.
+		scope: 'application'
+	},
+	// --- Orchestration (Orca's Orchestration pane): agents dispatching sub-tasks with `kingu task create`.
+	{
+		id: 'kingu.orchestration.maxDepth',
+		group: 'Orchestration',
+		type: 'number',
+		default: 1,
+		minimum: 1,
+		maximum: 5,
+		integer: true,
+		description:
+			'งานที่ agent ส่งต่อด้วย kingu task create ซ้อนกันได้ลึกเท่าไร งานที่คุณเริ่มเองคือชั้น 0 งานย่อยที่ agent ของมันส่งคือชั้น 1 ค่า 1 คือ agent ของงานย่อยส่งงานย่อยต่อไม่ได้ Kingu ตรวจที่ตัวแอปเองและตอบ agent ให้ทำงานนั้นเอง (Orca: nestedWorkerMaxDepth) (How deep sub-tasks agents dispatch with kingu task create may nest: your tasks are depth 0, the ones their agents dispatch depth 1; 1 means a sub-task cannot dispatch more.)',
+		// User-only: it decides how many agents agents may start.
+		scope: 'application'
+	},
+	// --- Voice (Orca's Voice pane): dictation into the focused composer, editor or terminal (voice/).
+	{
+		id: 'kingu.voice.enabled',
+		group: 'Voice',
+		type: 'boolean',
+		default: false,
+		description: 'เปิดการพูดเป็นข้อความ (dictation): กดคีย์ลัด Voice: Dictation แล้วพูด ข้อความจะเข้าไปที่ช่องที่โฟกัสอยู่ เช่นช่องแชต editor หรือ terminal (Orca: voice.enabled) (Dictate into the focused chat box, editor or terminal with the Voice: Dictation shortcut.)'
+	},
+	{
+		id: 'kingu.voice.engine',
+		group: 'Voice',
+		type: 'string',
+		default: 'local',
+		enum: ['local', 'openai'],
+		enumDescriptions: [
+			'whisper.cpp บนเครื่องนี้ เสียงไม่ออกจากเครื่อง ต้องติดตั้ง whisper-cli และเลือกไฟล์โมเดลใน kingu.voice.localModel (whisper.cpp on this computer; the audio never leaves it.)',
+			'ส่งเสียงไปถอดที่ OpenAI ด้วย API key ของคุณที่เก็บใน Keychain (ตั้งในหน้า Voice) (Sends the audio to OpenAI with your API key from the Keychain.)'
+		],
+		description: 'ตัวถอดเสียงเป็นข้อความ (Orca: voice.sttModel) (The speech-to-text engine.)',
+		// User-only: a repository must not route your voice to a cloud service.
+		scope: 'application'
+	},
+	{
+		id: 'kingu.voice.openaiModel',
+		group: 'Voice',
+		type: 'string',
+		default: 'gpt-4o-mini-transcribe',
+		enum: ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe'],
+		enumDescriptions: ['เร็วและถูกกว่า (Faster and cheaper.)', 'แม่นยำกว่า (More accurate.)'],
+		description: 'โมเดลของ OpenAI เมื่อ kingu.voice.engine เป็น openai (Orca: voice.sttModel) (The OpenAI model when the engine is openai.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.voice.localModel',
+		group: 'Voice',
+		type: 'string',
+		default: '',
+		description:
+			'path เต็มของไฟล์โมเดล whisper.cpp (ggml-*.bin เช่น ggml-base.bin หรือ ggml-large-v3-turbo.bin) ที่ใช้เมื่อ kingu.voice.engine เป็น local Kingu ไม่ดาวน์โหลดโมเดลเอง (Orca: voice.modelsDir, voice.userModels) (Absolute path of the whisper.cpp ggml model file for the local engine; Kingu does not download models.)',
+		// User-only: it is a file a program Kingu runs reads.
+		scope: 'application'
+	},
+	{
+		id: 'kingu.voice.whisperPath',
+		group: 'Voice',
+		type: 'string',
+		default: '',
+		description: 'path เต็มของ whisper-cli (หรือ whisper-cpp) ถ้าไม่อยู่ใน PATH เว้นว่างเพื่อหาเอง (Absolute path of whisper-cli when it is not on the PATH; empty finds it.)',
+		// User-only: it is a program Kingu runs.
+		scope: 'application'
+	},
+	{
+		id: 'kingu.voice.language',
+		group: 'Voice',
+		type: 'string',
+		default: 'auto',
+		pattern: '^(auto|[a-z]{2,3})$',
+		description: 'ภาษาที่พูด เป็นรหัส ISO 639-1 เช่น th หรือ en หรือ auto ให้ตรวจเอง (Orca: voice.language) (The spoken language as an ISO 639-1 code such as th or en, or auto.)'
+	},
+	{
+		id: 'kingu.voice.dictationMode',
+		group: 'Voice',
+		type: 'string',
+		default: 'toggle',
+		enum: ['toggle', 'hold'],
+		enumDescriptions: ['กดคีย์ลัดครั้งหนึ่งเพื่อเริ่ม อีกครั้งเพื่อหยุด (Press the shortcut to start, again to stop.)', 'พูดขณะกดคีย์ลัดค้างไว้ ปล่อยเพื่อหยุด (Dictate while the shortcut is held.)'],
+		description: 'วิธีเริ่มและหยุดการพูด (Orca: voice.dictationMode) (How the shortcut starts and stops dictation.)'
+	},
+	{
+		id: 'kingu.voice.terminalConfirmBeforeInsert',
+		group: 'Voice',
+		type: 'boolean',
+		default: false,
+		description: 'ถามก่อนใส่ข้อความที่ถอดได้ลงใน terminal (Orca: voice.terminalConfirmBeforeInsert) (Ask before inserting dictated text into a terminal.)'
+	},
+	{
+		id: 'kingu.voice.microphone',
+		group: 'Voice',
+		type: 'string',
+		default: '',
+		description: 'ไมโครโฟนที่ใช้ (id ของอุปกรณ์ เลือกได้ในหน้า Voice) เว้นว่างเพื่อใช้ค่าเริ่มต้นของระบบ ถ้าไม่พบจะใช้ค่าเริ่มต้น (Orca: voice.microphoneDeviceId) (The microphone, chosen on the Voice page; empty or unplugged uses the system default.)'
 	},
 	{
 		id: 'kingu.automations.confirmDelete',

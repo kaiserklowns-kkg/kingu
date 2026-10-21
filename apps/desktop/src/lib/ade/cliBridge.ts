@@ -3,7 +3,8 @@
 
 export type CliRequest = { id: number; method: string; params: Record<string, unknown> };
 
-export type CreateParams = { title: string; prompt: string; base: string | null; mode: 'terminal' | 'timeline' | null; open: boolean };
+/** `dispatchedBy`: the task whose agent asked (Rust checked the orchestration depth). */
+export type CreateParams = { title: string; prompt: string; base: string | null; mode: 'terminal' | 'timeline' | null; open: boolean; dispatchedBy?: string | null };
 export type OpenParams = { path: string; kind: 'file' | 'folder'; line: number | null; column: number | null };
 
 /** What `kingu open` does here: open a folder, a file of the open folder, or refuse. */
