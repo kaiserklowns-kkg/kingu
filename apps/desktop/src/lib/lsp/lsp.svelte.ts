@@ -71,6 +71,7 @@ import type { WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 import { t } from '#lib/i18n/index.ts';
 import { isRustError } from '#lib/i18n/rustErrors.ts';
 import { formatTrace, TRACE_SETTINGS, traceValue, type TraceValue } from './trace.ts';
+import { AUTO_INSERT_DELAY_MS, AUTO_INSERT_REQUEST, autoInsertAt, CUSTOM_DATA_CONTENT_REQUEST, CUSTOM_DATA_NOTIFICATION, customDataUris } from './htmlExtras.ts';
 import {
 	chosenTsserver,
 	fileReferenceLocations,
@@ -96,7 +97,7 @@ type LspEvent = { type: 'message'; json: string } | { type: 'stderr'; line: stri
 /** `sid`: the server key, or the key and folder of a server started for one root folder
  * (`folder`; null: every folder, folders.ts). `pushed` / `init`: the settings last sent and the
  * initializationOptions it started with (JSON), to spot changes. */
-type Session = { sid: string; folder: string | null; info: ServerInfo; client: LanguageClient; id: number | null; ready: Promise<boolean>; pushed: string; init: string; trace: TraceValue };
+type Session = { sid: string; folder: string | null; info: ServerInfo; client: LanguageClient; id: number | null; ready: Promise<boolean>; pushed: string; init: string; trace: TraceValue; /** The custom data URIs last sent (HTML, CSS; JSON). */ customData?: string };
 /** `sid`: the session it is open in ('' until opened). */
 type Doc = { rel: string; uri: string; key: string; sid: string; model: Monaco.editor.ITextModel; dispose?: () => void };
 
@@ -176,10 +177,17 @@ class Lsp {
 		this.#init(monaco);
 		const doc: Doc = { rel, uri: '', key: info.key, sid: '', model };
 		this.#docs.set(model, doc);
-		const changed = model.onDidChangeContent(() => {
+		let autoInsert: ReturnType<typeof setTimeout> | undefined;
+		const changed = model.onDidChangeContent((e) => {
 			if (!doc.uri) return;
 			this.#sessions.get(doc.sid)?.client.didChange(doc.uri, model.getValue());
 			this.#scheduleSymbols(doc);
+			// html.autoClosingTags / html.autoCreateQuotes (VS Code's autoInsertion.ts).
+			if (doc.key !== 'html') return;
+			clearTimeout(autoInsert);
+			const enabled = { autoClose: userSettings.get<boolean>('html.autoClosingTags'), autoQuote: userSettings.get<boolean>('html.autoCreateQuotes') };
+			const at = autoInsertAt(e.changes, enabled, e.isUndoing || e.isRedoing);
+			if (at) autoInsert = setTimeout(() => void this.#autoInsert(doc, at, model.getVersionId()), AUTO_INSERT_DELAY_MS);
 		});
 		const disposing = model.onWillDispose(() => this.#detach(model));
 		doc.dispose = () => {
@@ -190,6 +198,43 @@ class Lsp {
 	}
 
 	#languageWatched = new WeakSet<Monaco.editor.ITextModel>();
+
+	/** Asks the HTML server what to insert after a typed `>`, `/` or `=`, and inserts it as a
+	 * snippet in the focused editor, unless the document changed or the cursor moved meanwhile. */
+	async #autoInsert(doc: Doc, at: { kind: 'autoClose' | 'autoQuote'; line: number; column: number }, version: number) {
+		const client = this.#sessions.get(doc.sid)?.client;
+		if (!client?.ready || !this.#monaco) return;
+		const position = { line: at.line - 1, character: at.column - 1 };
+		const text = await client.rpc.request<string | null>(AUTO_INSERT_REQUEST, { kind: at.kind, textDocument: { uri: doc.uri }, position }).catch(() => null);
+		if (!text || doc.model.isDisposed() || doc.model.getVersionId() !== version) return;
+		const editor = this.#monaco.editor.getEditors().find((ed) => ed.getModel() === doc.model && ed.hasTextFocus());
+		const cursor = editor?.getPosition();
+		if (!editor || !cursor || cursor.lineNumber !== at.line || cursor.column !== at.column) return;
+		editor.getContribution<Monaco.editor.IEditorContribution & { insert(template: string): void }>('snippetController2')?.insert(text);
+	}
+
+	/** `html.customData` / `css.customData` as the servers want them (customData.ts). */
+	#customData(key: string): string[] {
+		const id = `${key}.customData`;
+		const folders = this.#folders.map((f, i) => ({ path: f.path, value: i === 0 ? (userSettings.inspect(id, 'workspace') ?? userSettings.inspect(id, 'repo')) : userSettings.inspectFolder(id, f.path) }));
+		return customDataUris(folders, userSettings.workspaceFile[id], userSettings.inspect(id, 'user'));
+	}
+
+	/** A started HTML or CSS server hears of its custom data; the HTML server reads the files through the client. */
+	#sendCustomData(session: Session) {
+		const { info, client } = session;
+		const method = CUSTOM_DATA_NOTIFICATION[info.key];
+		if (!method) return;
+		if (info.key === 'html')
+			client.rpc.onRequest(CUSTOM_DATA_CONTENT_REQUEST, async (uri: string) => {
+				const rel = typeof uri === 'string' ? this.#keyOf(uri) : null;
+				if (rel === null) throw new Error(`${uri} is outside the workspace`);
+				return invoke<string>('read_workspace_file', { rel });
+			});
+		const uris = this.#customData(info.key);
+		session.customData = JSON.stringify(uris);
+		client.rpc.notify(method, uris);
+	}
 
 	#detach(model: Monaco.editor.ITextModel) {
 		const doc = this.#docs.get(model);
@@ -557,6 +602,19 @@ class Lsp {
 						}
 				});
 			});
+			// html.customData / css.customData: the servers are told again when the lists change.
+			$effect(() => {
+				const next = Object.keys(CUSTOM_DATA_NOTIFICATION).map((key) => [key, JSON.stringify(this.#customData(key))] as const);
+				untrack(() => {
+					for (const [key, uris] of next)
+						for (const s of this.#sessions.values()) {
+							// A session not told yet hears it once it has started (#sendCustomData).
+							if (s.info.key !== key || s.customData === undefined || s.customData === uris) continue;
+							s.customData = uris;
+							s.client.rpc.notify(CUSTOM_DATA_NOTIFICATION[key], JSON.parse(uris));
+						}
+				});
+			});
 			$effect(() => {
 				// For the shared servers and for each other root folder's settings (a per-folder server).
 				const folders = [null, ...Object.keys(userSettings.folders)];
@@ -687,6 +745,7 @@ class Lsp {
 				clientLog('info', `${info.name} initialized${folder ? ` for ${folder}` : ''}`);
 				// Monaco's providers come from the shared server; they find each model's own session.
 				if (this.#sessions.get(sid) === session && !folder) this.#registerProviders(info, caps);
+				this.#sendCustomData(session);
 				return true;
 			} catch (e) {
 				const message = String(e);
