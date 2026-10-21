@@ -167,15 +167,6 @@ export const MARKDOWN_SETTINGS: SettingSchema[] = [
 		description: 'วางไฟล์ใน editor Markdown แล้วแทรกเป็นลิงก์ (Insert Markdown links when files are pasted into a Markdown editor.)'
 	},
 	{
-		id: 'markdown.editor.filePaste.copyIntoWorkspace',
-		group: 'Markdown',
-		type: 'string',
-		default: 'mediaFiles',
-		enum: COPY,
-		enumDescriptions: COPY_TH,
-		description: 'คัดลอกไฟล์นอก workspace ที่วางเข้ามาไว้ข้างไฟล์ Markdown (Copy files from outside the workspace that are pasted into a Markdown editor into the workspace.)'
-	},
-	{
 		id: 'markdown.editor.pasteUrlAsFormattedLink.enabled',
 		group: 'Markdown',
 		type: 'string',

@@ -1,10 +1,12 @@
-// Hooks a new code editor into the editing features (snippets, Emmet, the word wrap toggle, Markdown preview sync).
+// Hooks a new code editor into the editing features (snippets, Emmet, the word wrap toggle, Markdown
+// preview sync and language features).
 // Loaded with Monaco (EditorHost), so the Emmet code stays out of the first paint.
 
 import type * as Monaco from 'monaco-editor';
 import { trackEditor } from './activeEditor.ts';
 import { attachEditingModes } from './editingCommands.svelte.ts';
 import { attachEmmet } from './emmet/emmet.svelte.ts';
+import { attachMarkdown } from '#lib/markdown/features.svelte.ts';
 import { attachPreviewSync } from '#lib/markdown/previewSync.ts';
 import { attachSnippets } from './snippets/snippets.svelte.ts';
 
@@ -14,4 +16,5 @@ export function attachEditorFeatures(monaco: typeof Monaco, editor: Monaco.edito
 	attachEmmet(monaco, editor);
 	attachEditingModes(editor);
 	attachPreviewSync(editor);
+	attachMarkdown(monaco, editor);
 }

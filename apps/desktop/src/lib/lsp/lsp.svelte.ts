@@ -75,6 +75,8 @@ import { isRustError } from '#lib/i18n/rustErrors.ts';
 import { formatTrace, TRACE_SETTINGS, traceValue, type TraceValue } from './trace.ts';
 
 type MonacoApi = typeof Monaco;
+/** One `#` quick access result; line and column 1-based. */
+export type WorkspaceSymbolItem = { name: string; kind: number; container?: string; rel: string; line: number; column: number };
 type LspEvent = { type: 'message'; json: string } | { type: 'stderr'; line: string } | { type: 'exit'; code: number | null };
 /** `sid`: the server key, or the key and folder of a server started for one root folder
  * (`folder`; null: every folder, folders.ts). `pushed` / `init`: the settings last sent and the
@@ -194,12 +196,21 @@ class Lsp {
 		return { text: statusText(info, s), tooltip: s.message ?? statusText(info, s), state: s.state, channel: info.name };
 	}
 
+	/** Workspace symbol sources besides the servers (Markdown headers: lib/markdown). */
+	#symbolSources: ((query: string) => Promise<WorkspaceSymbolItem[]>)[] = [];
+
+	addWorkspaceSymbolSource(source: (query: string) => Promise<WorkspaceSymbolItem[]>): () => void {
+		this.#symbolSources.push(source);
+		return () => (this.#symbolSources = this.#symbolSources.filter((s) => s !== source));
+	}
+
 	/** `#query` (VS Code's workspace symbol search): every running server that offers it, merged. */
-	async workspaceSymbols(query: string): Promise<{ name: string; kind: number; container?: string; rel: string; line: number; column: number }[]> {
-		const lists = await Promise.all(
-			[...this.#sessions.values()].map((s) => (s.client.ready ? s.client.workspaceSymbols(query).catch(() => null) : Promise.resolve(null)))
-		);
-		const out: { name: string; kind: number; container?: string; rel: string; line: number; column: number }[] = [];
+	async workspaceSymbols(query: string): Promise<WorkspaceSymbolItem[]> {
+		const [lists, extra] = await Promise.all([
+			Promise.all([...this.#sessions.values()].map((s) => (s.client.ready ? s.client.workspaceSymbols(query).catch(() => null) : Promise.resolve(null)))),
+			Promise.all(this.#symbolSources.map((s) => s(query).catch(() => [])))
+		]);
+		const out: WorkspaceSymbolItem[] = extra.flat();
 		for (const list of lists)
 			for (const sym of list ?? []) {
 				const rel = sym.location?.uri ? this.#keyOf(sym.location.uri) : null;
@@ -212,7 +223,7 @@ class Lsp {
 
 	/** Whether any running server answers `#` queries. */
 	hasWorkspaceSymbols(): boolean {
-		return [...this.#sessions.values()].some((s) => !!s.client.capabilities.workspaceSymbolProvider);
+		return this.#symbolSources.length > 0 || [...this.#sessions.values()].some((s) => !!s.client.capabilities.workspaceSymbolProvider);
 	}
 
 	/** Document symbols of an open file: the breadcrumbs' copy, or a fresh request when there is none yet. */
@@ -851,6 +862,12 @@ class Lsp {
 	#dropPreview(rel: string, model = this.#previews.get(rel)) {
 		this.#previews.delete(rel);
 		if (model && !model.isDisposed()) model.dispose();
+	}
+
+	/** Models for workspace files with no tab, so a definition or references peek from another
+	 * provider (lib/markdown) can show them. */
+	ensurePreviewModels(rels: string[], opts: { dropOthers?: boolean } = {}): Promise<void> {
+		return this.#ensurePreviews(rels, opts);
 	}
 
 	/** EditorHost takes over a preview model when its file is opened in a tab. */
