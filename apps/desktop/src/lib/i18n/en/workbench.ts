@@ -269,4 +269,7 @@ export const workbench = {
 	'workbench.signals.screenReaderOn': 'Screen reader optimized mode enabled.',
 	'workbench.signals.screenReaderOff': 'Screen reader optimized mode disabled.',
 	'workbench.signals.cursorPosition': 'Line {line}, Column {column}',
+	'workbench.imageZoom.whole': 'Whole Image',
+	'workbench.imageZoom.select': 'Select zoom level',
+	'workbench.imageZoom.clickHint': 'Click to zoom in, Option-click (Ctrl-click) to zoom out',
 } as const;
