@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { filePathCrumbs, KIND_SETTINGS, sortSymbols, symbolCodicon, symbolPathText, symbolSiblings, visibleSymbols } from './breadcrumbs';
+import { crumbKeyAction, filePathCrumbs, KIND_SETTINGS, movedCrumb, sortSymbols, symbolCodicon, symbolPathText, symbolSiblings, visibleSymbols } from './breadcrumbs';
 import type { DocumentSymbol } from '#lib/lsp/protocol.ts';
 
 const r = (sl: number, el: number) => ({ start: { line: sl, character: 0 }, end: { line: el, character: 0 } });
@@ -43,5 +43,33 @@ describe('breadcrumbs settings', () => {
 		expect(sortSymbols(levels[0], 'name').map((s) => s.name)).toEqual(['a', 'b']);
 		expect(sortSymbols(levels[1], 'type').map((s) => s.name)).toEqual(['zeta', 'alpha']);
 		expect(symbolSiblings(tree, { line: 2, character: 0 }, settingsWith({ 'breadcrumbs.showVariables': false }))[1].map((s) => s.name)).toEqual(['alpha']);
+	});
+});
+
+describe('keyboard in the breadcrumbs', () => {
+	const key = (k: string, mods: { alt?: boolean; ctrl?: boolean; meta?: boolean; shift?: boolean } = {}) => ({ key: k, altKey: !!mods.alt, ctrlKey: !!mods.ctrl, metaKey: !!mods.meta, shiftKey: !!mods.shift });
+
+	test('arrows move, Enter/Space pick, Escape leaves', () => {
+		expect(crumbKeyAction(key('ArrowRight'), true)).toBe('next');
+		expect(crumbKeyAction(key('ArrowLeft'), false)).toBe('prev');
+		expect(crumbKeyAction(key('ArrowRight', { alt: true }), true)).toBe('next');
+		expect(crumbKeyAction(key('ArrowRight', { ctrl: true }), false)).toBe('next');
+		expect(crumbKeyAction(key('ArrowRight', { ctrl: true }), true)).toBeNull();
+		expect(crumbKeyAction(key('ArrowRight', { meta: true }), true)).toBeNull();
+		expect(crumbKeyAction(key('ArrowRight', { shift: true }), true)).toBeNull();
+		expect(crumbKeyAction(key('Enter'), true)).toBe('select');
+		expect(crumbKeyAction(key(' '), true)).toBe('select');
+		expect(crumbKeyAction(key('Escape'), true)).toBe('leave');
+		expect(crumbKeyAction(key('Enter', { meta: true }), true)).toBeNull();
+		expect(crumbKeyAction(key('a'), true)).toBeNull();
+	});
+
+	test('focus stays within the crumbs', () => {
+		expect(movedCrumb(0, 3, 1)).toBe(1);
+		expect(movedCrumb(2, 3, 1)).toBe(2);
+		expect(movedCrumb(0, 3, -1)).toBe(0);
+		// Nothing focused yet: from the end.
+		expect(movedCrumb(-1, 3, -1)).toBe(2);
+		expect(movedCrumb(-1, 0, 1)).toBe(-1);
 	});
 });

@@ -53,7 +53,8 @@
 	import { isMac } from './keys';
 	import * as cmd from './editorCommands.svelte';
 	import { isUntitled } from './untitled';
-	import { filePathCrumbs, sortSymbols, symbolCodicon, symbolSiblings, visibleSymbols, type PathMode, type SymbolSortOrder } from './breadcrumbs';
+	import { crumbKeyAction, filePathCrumbs, movedCrumb, sortSymbols, symbolCodicon, symbolSiblings, visibleSymbols, type PathMode, type SymbolSortOrder } from './breadcrumbs';
+	import { crumbFocus } from './breadcrumbsCommands.svelte';
 	import { symbolPath, type Crumb } from '#lib/lsp/convert.ts';
 	import { outline } from './outline.svelte';
 	import SearchEditorView from './SearchEditorView.svelte';
@@ -108,6 +109,29 @@
 		const siblings = symbolSiblings(outline.symbolsOf(activePath), { line: editors.cursor.line - 1, character: editors.cursor.column - 1 }, getSetting)[level] ?? [crumb];
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		crumbMenu = { x: rect.left, y: rect.bottom + 2, items: sortSymbols(siblings, settings.get<SymbolSortOrder>('breadcrumbs.symbolSortOrder')) };
+	}
+	// Focus Breadcrumbs / Focus and Select Breadcrumbs (⇧⌘; / ⇧⌘.): the last crumb takes the keyboard, and opens its picker.
+	let crumbNav = $state<HTMLElement | null>(null);
+	const crumbButtons = () => [...(crumbNav?.querySelectorAll<HTMLButtonElement>('button[data-crumb]') ?? [])];
+	let crumbSeq = 0;
+	$effect(() => {
+		const seq = crumbFocus.seq;
+		if (seq === crumbSeq || crumbFocus.group !== group || !crumbNav) return;
+		crumbSeq = seq;
+		const last = crumbButtons().at(-1);
+		last?.focus();
+		if (last && crumbFocus.select) last.click();
+	});
+	/** ←/→ between crumbs, Enter/Space opens one's picker (the button's own click), Escape back to the editor. */
+	function onCrumbKey(e: KeyboardEvent) {
+		const action = crumbKeyAction(e, isMac);
+		if (!action || action === 'select') return;
+		e.preventDefault();
+		e.stopPropagation();
+		if (action === 'leave') return editors.focusGroup(group);
+		const buttons = crumbButtons();
+		const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+		buttons[movedCrumb(at, buttons.length, action === 'next' ? 1 : -1)]?.focus();
 	}
 	let dropTarget = $state<number | null>(null);
 	// The tab strip follows VS Code's editor part options (multiEditorTabsControl.ts).
@@ -520,14 +544,20 @@
 		</div>
 	{/if}
 	{#if activePath && !adeActive && breadcrumbsOn}
-		<nav aria-label="Breadcrumbs" class="flex h-(--kg-breadcrumbs-height) shrink-0 items-center gap-0.5 overflow-hidden px-3 text-(--vscode-breadcrumb-foreground)">
+		<nav
+			bind:this={crumbNav}
+			aria-label="Breadcrumbs"
+			class="flex h-(--kg-breadcrumbs-height) shrink-0 items-center gap-0.5 overflow-hidden px-3 text-(--vscode-breadcrumb-foreground)"
+		>
 			{#each shownCrumbs as c, i (i)}
 				{#if i > 0}<Icon name="chevronRight" size={14} />{/if}
 				{#if crumbIcons && i === shownCrumbs.length - 1}<span class="flex shrink-0"><FileIcon icon={iconOf(activePath)} /></span>{/if}
 				{#if crumbsAreFiles}
 					{@const at = crumbs.length - shownCrumbs.length + i}
 					<button
-						class="rounded px-0.5 whitespace-nowrap hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)"
+						data-crumb
+						onkeydown={onCrumbKey}
+						class="rounded px-0.5 whitespace-nowrap hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground) focus-visible:outline-1 focus-visible:outline-(--vscode-focusBorder)"
 						title={at < crumbs.length - 1 ? 'ไฟล์ในโฟลเดอร์นี้' : 'ไฟล์ข้างเคียง'}
 						onclick={(e) => {
 							const r = e.currentTarget.getBoundingClientRect();
@@ -541,7 +571,12 @@
 			{/each}
 			{#each symbolCrumbs as s, i (i)}
 				{#if shownCrumbs.length || i > 0}<Icon name="chevronRight" size={14} />{/if}
-				<button class="flex items-center gap-1 whitespace-nowrap hover:text-(--vscode-foreground)" onclick={(e) => openSymbolPicker(e, s)}>
+				<button
+					data-crumb
+					onkeydown={onCrumbKey}
+					class="flex items-center gap-1 whitespace-nowrap hover:text-(--vscode-foreground) focus-visible:outline-1 focus-visible:outline-(--vscode-focusBorder)"
+					onclick={(e) => openSymbolPicker(e, s)}
+				>
 					{#if crumbIcons}<span class={['codicon', symbolCodicon(s.kind)]} aria-hidden="true"></span>{/if}{s.name}
 				</button>
 			{/each}
