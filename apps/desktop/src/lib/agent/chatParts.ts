@@ -190,6 +190,22 @@ export const responseText = (turn: Turn) =>
 		.map((p) => p.text)
 		.join('\n\n');
 
+/**
+ * The checkpoint "How did the agent do?" (Cursor's) asks about: the chat's last request, once its
+ * answer is done, nothing runs and it has no vote yet; null when there is nothing to ask. Output
+ * after that request is a turn of its own without a request (an error or exit line after the
+ * result, a turn the agent took by itself) and does not hide the question.
+ */
+export function feedbackTarget(turns: readonly Turn[], busy: boolean): number | null {
+	if (busy) return null;
+	for (let i = turns.length - 1; i >= 0; i--) {
+		const turn = turns[i];
+		if (!turn.request) continue;
+		return turn.done && turn.parts.length > 0 && turn.checkpoint != null && !turn.feedback ? turn.checkpoint : null;
+	}
+	return null;
+}
+
 /** The last request that was sent (Retry). */
 export function lastRequest(turns: readonly Turn[]): Turn['request'] {
 	for (let i = turns.length - 1; i >= 0; i--) if (turns[i].request) return turns[i].request;
