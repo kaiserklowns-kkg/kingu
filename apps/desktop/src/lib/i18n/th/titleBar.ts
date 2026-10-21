@@ -3,10 +3,11 @@ import type { titleBar as en } from '../en/titleBar';
 
 export const titleBar = {
 	'titleBar.search': 'ค้นหา',
-	'titleBar.searchFilesAndCommands': 'ค้นหาไฟล์และคำสั่ง',
 	'titleBar.openQuickAccess': 'เปิด Quick Access',
 	'titleBar.switchProject': 'สลับโปรเจกต์',
 	'titleBar.switchBranch': 'สลับ branch',
+	'titleBar.worktreeBranch': 'branch ของ worktree ที่เลือก',
+	'titleBar.detached': '(detached HEAD)',
 	'titleBar.working.one': '{name} กำลังทำงาน',
 	'titleBar.working.many': '{count} กำลังทำงาน',
 	'titleBar.waiting.one': '{name} รอคุณอยู่',

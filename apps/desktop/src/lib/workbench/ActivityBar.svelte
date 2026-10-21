@@ -53,7 +53,6 @@
 		}
 		layout.showView(view);
 	}
-	const agentLabel = $derived(titled('Arkai', 'workbench.action.toggleAuxiliaryBar'));
 </script>
 
 <!-- 48px wide, 48px items, 24px icons, 2px active indicator on the left (VS Code activitybarPart);
@@ -102,17 +101,5 @@
 			{/if}
 		</button>
 	{/each}
-	<button
-		aria-label={agentLabel}
-		aria-pressed={layout.auxVisible}
-		title={agentLabel}
-		class={[
-			ITEM,
-			layout.auxVisible ? 'text-(--vscode-activityBar-foreground)' : 'text-(--vscode-activityBar-inactiveForeground) hover:text-(--vscode-activityBar-foreground)'
-		]}
-		style:height={vertical ? `${metrics.item}px` : undefined}
-		onclick={() => (layout.auxVisible = !layout.auxVisible)}
-	>
-		<Icon name="agent" size={ICON} />
-	</button>
+	<!-- No Arkai item here: the chat is the title bar's Arkai button and the secondary side bar (⌥⌘B). -->
 </nav>

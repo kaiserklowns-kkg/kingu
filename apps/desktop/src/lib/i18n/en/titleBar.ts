@@ -2,10 +2,11 @@
 // (workbench/CommandCenter.svelte, TitleBar.svelte, titlebar.ts). Thai in ../th/titleBar.ts.
 export const titleBar = {
 	'titleBar.search': 'Search',
-	'titleBar.searchFilesAndCommands': 'Search files and commands',
 	'titleBar.openQuickAccess': 'Open Quick Access',
 	'titleBar.switchProject': 'Switch Project',
 	'titleBar.switchBranch': 'Switch Branch',
+	'titleBar.worktreeBranch': "The selected worktree's branch",
+	'titleBar.detached': '(detached HEAD)',
 	'titleBar.working.one': '{name} working',
 	'titleBar.working.many': '{count} working',
 	'titleBar.waiting.one': '{name} waiting for you',

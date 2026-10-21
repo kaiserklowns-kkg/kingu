@@ -20,30 +20,91 @@ export function titleBarHeight(mode: AppMode, opts: { commandCenter: boolean; co
 // --- Command center ----------------------------------------------------------------------------
 
 /**
- * The search pill's label: the workspace name, or the whole window title when `window.title` is
- * customised, or "Search" with no folder open (VS Code commandCenterControl).
+ * The search control's label. kingu-old's pill said "Search files and commands" behind the project
+ * and branch; Kingu shows those as title bar controls of their own, so the search says "Search"
+ * (its key beside it). A customised `window.title` still wins, as in VS Code's command center.
  */
-export function commandCenterLabel(opts: { folderName: string | null | undefined; title: string; customTitle: boolean }): string {
-	if (opts.customTitle) return opts.title;
-	return opts.folderName || 'Search';
+export function searchBoxLabel(opts: { title: string; customTitle: boolean }): string {
+	return opts.customTitle ? opts.title : t('titleBar.search');
 }
+
+/** The search control's tooltip, kingu-old's `Open Quick Access (⌘P)`. */
+export function searchTooltip(quickOpenKey?: string): string {
+	return quickOpenKey ? `${t('titleBar.openQuickAccess')} (${quickOpenKey})` : t('titleBar.openQuickAccess');
+}
+
+// --- Project and branch ------------------------------------------------------------------------
+
+export type TitleBranch = {
+	/** What the control shows: the branch (or detached head), `*` when the working tree has changes. */
+	label: string;
+	/** Opens the branch picker (Git: Checkout to...); a worktree's branch in the Agents layout only shows. */
+	interactive: boolean;
+	/** Tooltip, with what the status bar's branch item (which this replaces) said. */
+	tooltip: string;
+};
+
+/** The repository the branch control describes (the workbench's active one). */
+export type TitleRepo = { branch?: string | null; head?: string | null; detached?: boolean; dirty?: boolean; name?: string; multiple?: boolean };
 
 /**
- * The compact (unified) pill's placeholder (kingu-old agentTitleBarStatusWidget + kinguTitleBarContext):
- * with a folder open the project and branch buttons name it, so the search reads "Search files and
- * commands"; a customised `window.title` still wins; "Search" with no folder.
+ * The title bar's branch control, which replaces the status bar's branch item: the selected
+ * worktree's branch in the Agents layout (`worktreeBranch` given), else the active repository's
+ * (its branch or detached head, `*` when dirty, its name first when there are several), else the
+ * folder's branch.
  */
-export function compactSearchLabel(opts: { folderName: string | null | undefined; title: string; customTitle: boolean }): string {
-	if (opts.customTitle) return opts.title;
-	return opts.folderName ? t('titleBar.searchFilesAndCommands') : t('titleBar.search');
+export function titleBranch(opts: { worktreeBranch?: string | null; repo?: TitleRepo | null; folderBranch?: string | null }): TitleBranch | null {
+	if (opts.worktreeBranch !== undefined) {
+		return opts.worktreeBranch ? { label: opts.worktreeBranch, interactive: false, tooltip: t('titleBar.worktreeBranch') } : null;
+	}
+	const r = opts.repo;
+	if (r) {
+		const name = r.branch ?? r.head;
+		if (!name) return null;
+		const label = `${name}${r.dirty ? '*' : ''}`;
+		const where = r.multiple && r.name ? `${r.name} (Git) - ` : '';
+		const detached = r.detached ? ` ${t('titleBar.detached')}` : '';
+		return { label, interactive: true, tooltip: `${t('titleBar.switchBranch')}\n${where}${label}${detached}` };
+	}
+	return opts.folderBranch ? { label: opts.folderBranch, interactive: true, tooltip: t('titleBar.switchBranch') } : null;
 }
 
-/** `Search kingu (⌘P) — Show and Run Commands (⇧⌘P)`. */
-export function commandCenterTooltip(opts: { folderName: string | null | undefined; quickOpenKey?: string; commandsKey?: string }): string {
-	const what = opts.folderName ? `Search ${opts.folderName}` : 'Search';
-	const qo = opts.quickOpenKey ? ` (${opts.quickOpenKey})` : '';
-	const cmds = opts.commandsKey ? ` — Show and Run Commands (${opts.commandsKey})` : '';
-	return `${what}${qo}${cmds}`;
+// --- Fitting the bar ---------------------------------------------------------------------------
+
+/** VS Code's `.titlebar-center` margin, each side. */
+export const CENTER_MARGIN = 10;
+/** The search control's width when there is room, and the least it narrows to before it becomes an icon. */
+export const SEARCH_WIDTH = 240;
+export const SEARCH_MIN_WIDTH = 120;
+/** The collapsed search: one title bar action. */
+export const SEARCH_ICON_WIDTH = 22;
+/** The project and branch controls never shrink below this together (their icons and an ellipsis stay). */
+export const CONTEXT_MIN_WIDTH = 48;
+
+export type TitleBarFit = {
+	search: 'box' | 'icon';
+	/** The search box's width (`box`; 0 for the icon). */
+	searchWidth: number;
+	/** A cap on the project and branch controls, only when even the search icon does not fit. */
+	contextMaxWidth?: number;
+};
+
+/**
+ * How the center fits between the sides (VS Code titlebarpart.css: left and right 20% each but never
+ * below their content, the center what is left less its 10px margins). The search gives way first:
+ * it narrows to SEARCH_MIN_WIDTH, then becomes an icon; only then do the project and branch labels
+ * truncate. `leftWidth` / `rightWidth`: the sides' natural content widths (the left's includes
+ * `contextWidth`, the project and branch); `centerFixed`: the center's content besides the search.
+ */
+export function titleBarFit(opts: { width: number; leftWidth: number; rightWidth: number; contextWidth: number; centerFixed: number }): TitleBarFit {
+	const side = (w: number) => Math.max(opts.width * 0.2, w);
+	const room = opts.width - CENTER_MARGIN * 2 - side(opts.leftWidth) - side(opts.rightWidth) - opts.centerFixed;
+	if (room >= SEARCH_MIN_WIDTH) return { search: 'box', searchWidth: Math.min(SEARCH_WIDTH, Math.floor(room)) };
+	const deficit = SEARCH_ICON_WIDTH - room;
+	// Only the left's overflow past its 20% share comes back by truncating it.
+	const give = Math.min(deficit, opts.leftWidth - opts.width * 0.2);
+	if (deficit <= 0 || opts.contextWidth <= 0 || give <= 0) return { search: 'icon', searchWidth: 0 };
+	return { search: 'icon', searchWidth: 0, contextMaxWidth: Math.max(CONTEXT_MIN_WIDTH, Math.floor(opts.contextWidth - give)) };
 }
 
 // --- Agents status widget ----------------------------------------------------------------------
@@ -195,12 +256,29 @@ export function layoutControlItems(enabled: boolean, type: LayoutControlType): L
 	return ['customizeLayout', ...toggles];
 }
 
+/** A layout toggle in the title bar. */
+export type LayoutToggle = 'toggleSidebar' | 'togglePanel' | 'toggleAuxiliaryBar';
+
+/**
+ * A layout toggle's icon id (VS Code layoutActions.ts, panelActions.ts, auxiliaryBarActions.ts: the
+ * `toggled` icon while the part shows, the `-off` one while it is hidden). With the side bar on the
+ * right the two side bars trade icons.
+ */
+export function layoutToggleIcon(id: LayoutToggle, on: boolean, sidebarRight: boolean): string {
+	if (id === 'togglePanel') return on ? 'panel-layout-icon' : 'panel-layout-icon-off';
+	if (id === 'toggleSidebar') return `panel-${sidebarRight ? 'right' : 'left'}${on ? '' : '-off'}`;
+	return `auxiliarybar-${sidebarRight ? 'left' : 'right'}${on ? '' : '-off'}-layout-icon`;
+}
+
 // --- Right toolbar and overflow ----------------------------------------------------------------
 
 /** VS Code caps the title bar's action toolbar at 12 items. */
 export const TOOLBAR_MAX = 12;
 export const TOOLBAR_GAP = 4;
-export const ICON_ITEM_WIDTH = 24;
+/** A title bar action: 22px (a 16px icon, 3px padding), as in kingu-old. */
+export const ICON_ITEM_WIDTH = 22;
+/** Open in Agents at rest: its 16px tile and 4px padding each side. */
+export const OPEN_IN_AGENTS_WIDTH = 24;
 
 export type ToolbarItem = { id: string; width: number };
 
@@ -211,7 +289,7 @@ export function titleToolbar(opts: { openInAgents: boolean; layout: LayoutContro
 	ids.push(...opts.layout);
 	if (opts.notifications) ids.push('notifications');
 	if (opts.globalActions) ids.push('accounts', 'manage');
-	return ids.slice(0, TOOLBAR_MAX).map((id) => ({ id, width: ICON_ITEM_WIDTH }));
+	return ids.slice(0, TOOLBAR_MAX).map((id) => ({ id, width: id === 'openInAgents' ? OPEN_IN_AGENTS_WIDTH : ICON_ITEM_WIDTH }));
 }
 
 /**
@@ -228,6 +306,15 @@ export function overflowHidden(items: ToolbarItem[], available: number, gap = TO
 		shown = shown.slice(1);
 	}
 	return hidden;
+}
+
+/**
+ * The right side's natural width: its items and gaps, the toolbar's 4px right padding and, on macOS,
+ * the 8px VS Code shifts it in by (`right: 8px`), so the last icon ends 12px from the edge.
+ */
+export function rightSideWidth(items: ToolbarItem[], mac: boolean, gap = TOOLBAR_GAP): number {
+	if (!items.length) return 0;
+	return items.reduce((w, i) => w + i.width, 0) + (items.length - 1) * gap + 4 + (mac ? 8 : 0);
 }
 
 // --- Title bar context menu --------------------------------------------------------------------
