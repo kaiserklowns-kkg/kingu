@@ -60,18 +60,21 @@ async function reply(req: CliRequest) {
 	}
 }
 
-async function installInPath() {
-	if (!(await ask(t('cli.installAsk', { dir: '/usr/local/bin (~/.local/bin)' }), { okLabel: t('cli.installOk') }))) return;
+/** "Shell Command: Install 'kingu' command in PATH" (also Settings › General's Kingu CLI switch); true when installed. */
+export async function installInPath(): Promise<boolean> {
+	if (!(await ask(t('cli.installAsk', { dir: '/usr/local/bin (~/.local/bin)' }), { okLabel: t('cli.installOk') }))) return false;
 	try {
 		const r = await invoke<{ path: string; on_path: boolean }>('cli_install');
 		if (r.on_path) status.flash(t('cli.installed', { path: r.path }), 8000);
 		else notifications.info(t('cli.installedNotOnPath', { path: r.path, dir: dirOf(r.path) }));
+		return true;
 	} catch (e) {
 		notifications.error(t('cli.installFailed', { error: String(e) }));
+		return false;
 	}
 }
 
-async function uninstallFromPath() {
+export async function uninstallFromPath() {
 	try {
 		const removed = await invoke<string[]>('cli_uninstall');
 		status.flash(removed.length ? t('cli.uninstalled', { paths: removed.join(', ') }) : t('cli.notInstalled'), 6000);

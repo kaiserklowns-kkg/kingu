@@ -88,6 +88,18 @@ pub enum Msg {
   UnknownArtifactCommand,
   ArtifactPublished,
   NoArtifacts,
+  AccountNeedsSubcommand,
+  UnknownAccountCommand,
+  AccountNeedsAgent,
+  AccountNeedsId,
+  IntegrationOnlyOpencode,
+  LoginExited,
+  LoginNotLaunched,
+  TempFolder,
+  ManagedHeader,
+  NoManaged,
+  SystemDefault,
+  ActiveMark,
   Starting,
   StartFailed,
 }
@@ -135,6 +147,18 @@ impl Msg {
     Msg::UnknownArtifactCommand,
     Msg::ArtifactPublished,
     Msg::NoArtifacts,
+    Msg::AccountNeedsSubcommand,
+    Msg::UnknownAccountCommand,
+    Msg::AccountNeedsAgent,
+    Msg::AccountNeedsId,
+    Msg::IntegrationOnlyOpencode,
+    Msg::LoginExited,
+    Msg::LoginNotLaunched,
+    Msg::TempFolder,
+    Msg::ManagedHeader,
+    Msg::NoManaged,
+    Msg::SystemDefault,
+    Msg::ActiveMark,
     Msg::Starting,
     Msg::StartFailed,
   ];
@@ -186,6 +210,18 @@ impl Msg {
       Msg::UnknownArtifactCommand => ("unknown artifact command `{command}` (publish, list)", "ไม่รู้จักคำสั่ง artifact `{command}` (มี publish, list)"),
       Msg::ArtifactPublished => ("Published {title} (artifact {id}, version {version})", "เผยแพร่ {title} แล้ว (artifact {id} เวอร์ชัน {version})"),
       Msg::NoArtifacts => ("no artifacts", "ไม่มี artifact"),
+      Msg::AccountNeedsSubcommand => ("`kingu account` needs add, list, select or rm", "`kingu account` ต้องตามด้วย add, list, select หรือ rm"),
+      Msg::UnknownAccountCommand => ("unknown account command `{command}` (add, list, select, rm)", "ไม่รู้จักคำสั่ง account `{command}` (มี add, list, select, rm)"),
+      Msg::AccountNeedsAgent => ("Use --agent opencode or --agent devin.", "ใช้ --agent opencode หรือ --agent devin"),
+      Msg::AccountNeedsId => ("Use --agent opencode|devin and --account <id> (system for the default selection).", "ใช้ --agent opencode|devin และ --account <id> (system คือค่าเริ่มต้นของระบบ)"),
+      Msg::IntegrationOnlyOpencode => ("--integration requires an OpenCode integration ID or name.", "--integration ใช้ได้กับ OpenCode เท่านั้น และต้องเป็น id หรือชื่อ integration"),
+      Msg::LoginExited => ("`{command}` exited with code {code}.", "`{command}` จบด้วยรหัส {code}"),
+      Msg::LoginNotLaunched => ("Could not launch `{command}`. Is it installed and on PATH?", "เปิด `{command}` ไม่ได้ ติดตั้งและอยู่ใน PATH แล้วหรือยัง"),
+      Msg::TempFolder => ("could not create a temporary login folder: {detail}", "สร้างโฟลเดอร์ login ชั่วคราวไม่ได้: {detail}"),
+      Msg::ManagedHeader => ("Managed {provider} accounts ({count}):", "บัญชี {provider} แบบ managed ({count}):"),
+      Msg::NoManaged => ("No managed {provider} accounts.", "ยังไม่มีบัญชี {provider} แบบ managed"),
+      Msg::SystemDefault => ("System default", "ค่าเริ่มต้นของระบบ"),
+      Msg::ActiveMark => ("(active)", "(ใช้งานอยู่)"),
       Msg::Starting => ("Kingu is not running: starting it with {path}", "Kingu ไม่ได้เปิดอยู่ กำลังเปิดพร้อม {path}"),
       Msg::StartFailed => ("Kingu is not running and could not be started ({detail})", "Kingu ไม่ได้เปิดอยู่และเปิดไม่สำเร็จ ({detail})"),
     }
@@ -233,6 +269,15 @@ Usage:
                                      publish an HTML or Markdown page as an artifact of
                                      the project (a new version with --id); prints its id
   kingu artifact list                the project's artifacts (id, version, format, title)
+  kingu account add --agent opencode|devin [--label <name>] [--integration <id>]
+                                     sign in to OpenCode or Devin as a new managed account
+                                     (agents Kingu starts use the selected one)
+  kingu account list [--agent opencode|devin]
+                                     the managed accounts (id, label)
+  kingu account select --agent opencode|devin --account <id|system>
+                                     pick the account new agents use
+  kingu account rm --agent opencode|devin --account <id>
+                                     remove an account with its login and conversations
 
 Options:
   --json         print the app's answer as JSON
@@ -260,6 +305,15 @@ const USAGE_TH: &str = "kingu: สั่งงานแอป Kingu ที่เ
                                      เผยแพร่หน้า HTML หรือ Markdown เป็น artifact ของโปรเจกต์
                                      (ใส่ --id เพื่อเพิ่มเวอร์ชันใหม่) แล้วพิมพ์ id
   kingu artifact list                artifact ของโปรเจกต์ (id, เวอร์ชัน, รูปแบบ, ชื่อ)
+  kingu account add --agent opencode|devin [--label <name>] [--integration <id>]
+                                     login OpenCode หรือ Devin เป็นบัญชี managed ใหม่
+                                     (agent ที่ Kingu เปิดจะใช้บัญชีที่เลือก)
+  kingu account list [--agent opencode|devin]
+                                     บัญชี managed (id, ชื่อ)
+  kingu account select --agent opencode|devin --account <id|system>
+                                     เลือกบัญชีที่ agent ใหม่ใช้
+  kingu account rm --agent opencode|devin --account <id>
+                                     ลบบัญชีพร้อม login และบทสนทนาของบัญชีนั้น
 
 ตัวเลือก:
   --json         พิมพ์คำตอบของแอปเป็น JSON
@@ -295,7 +349,7 @@ mod tests {
   fn usage_lists_the_same_commands_in_both_languages() {
     let commands = |s: &str| s.lines().filter(|l| l.trim_start().starts_with("kingu ")).map(|l| l.trim().split("  ").next().unwrap_or_default().to_owned()).collect::<Vec<_>>();
     assert_eq!(commands(USAGE_EN), commands(USAGE_TH));
-    assert_eq!(commands(USAGE_EN).len(), 8);
+    assert_eq!(commands(USAGE_EN).len(), 12);
   }
 
   #[test]

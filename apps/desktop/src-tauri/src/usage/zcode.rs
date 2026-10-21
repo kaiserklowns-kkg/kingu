@@ -7,7 +7,7 @@
 //! used. Body: `{success, code, data: {level, limits: [{type, unit, number, usage, currentValue,
 //! remaining, percentage, nextResetTime}]}}`.
 //!
-//! Not read (Orca does): ZCode 2's `~/.zcode/v2` store, whose keys are AES-GCM encrypted.
+//! ZCode 2's `~/.zcode/v2` store comes first; its values may be AES-256-GCM sealed (`enc:v1:`).
 
 use std::path::PathBuf;
 
@@ -111,11 +111,66 @@ fn cli_config(host: &dyn Host) -> Option<PathBuf> {
   Some(host.home()?.join(".zcode/cli/config.json"))
 }
 
+/// `enc:v1:<nonce>.<tag>.<ciphertext>` (base64url), sealed with SHA-256 of `ZCODE_CREDENTIAL_SECRET`
+/// or ZCode's fallback secret; a plain value comes back as it is.
+pub fn unseal(value: &str, host: &dyn Host) -> Option<String> {
+  use aes_gcm::aead::{Aead, KeyInit};
+  use base64::Engine;
+  use sha2::{Digest, Sha256};
+  let Some(rest) = value.strip_prefix("enc:v1:") else { return Some(value.to_owned()) };
+  let b64 = |s: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(s.trim_end_matches('=')).ok();
+  let mut parts = rest.split('.');
+  let (nonce, tag, ct) = (b64(parts.next()?)?, b64(parts.next()?)?, b64(parts.next()?)?);
+  if nonce.len() != 12 || tag.len() != 16 {
+    return None;
+  }
+  let secret = host.var("ZCODE_CREDENTIAL_SECRET").unwrap_or_else(|| {
+    let home = host.home().map(|h| h.display().to_string()).unwrap_or_default();
+    format!("zcode-credential-fallback:{}:{home}:{}", std::env::consts::OS, host.var("USER").unwrap_or_default())
+  });
+  let cipher = aes_gcm::Aes256Gcm::new_from_slice(&Sha256::digest(secret.as_bytes())).ok()?;
+  let mut sealed = ct;
+  sealed.extend_from_slice(&tag);
+  String::from_utf8(cipher.decrypt(aes_gcm::Nonce::from_slice(&nonce), sealed.as_slice()).ok()?).ok()
+}
+
+/// ZCode 2's selected Coding Plan: `provider_config.json` (schemaVersion 1) names the provider,
+/// `credentials.json` holds its identity and key. `Err` when a file exists but cannot be read.
+pub fn v2_credentials(host: &dyn Host) -> Result<Option<(String, String)>, ()> {
+  let base = host.var("ZCODE_DATA_BASE_DIR").map(PathBuf::from).or_else(|| host.home()).ok_or(())?;
+  let config_file = host.var("ZCODE_PERSONAL_PROVIDER_CONFIG_FILE").map(PathBuf::from).unwrap_or_else(|| base.join(".zcode/v2/provider_config.json"));
+  let Some(config) = host.read(&config_file)? else { return Ok(None) };
+  let config: Value = serde_json::from_str(&config).map_err(|_| ())?;
+  if config["schemaVersion"] != 1 {
+    return Ok(None);
+  }
+  let Some(pid) = config["defaultModelSelection"]["providerId"].as_str() else { return Ok(None) };
+  let base_url = match pid {
+    "account:zai-individual-coding-plan" => "https://api.z.ai",
+    "account:bigmodel-individual-coding-plan" => "https://open.bigmodel.cn",
+    _ => return Ok(None),
+  };
+  let Some(creds) = host.read(&base.join(".zcode/v2/credentials.json"))? else { return Ok(None) };
+  let creds: Value = serde_json::from_str(&creds).map_err(|_| ())?;
+  let get = |k: &str| creds[k].as_str().and_then(|v| unseal(v, host));
+  let Some(identity) = get(&format!("account-provider:{pid}:identity")) else { return Ok(None) };
+  let enc = url::form_urlencoded::byte_serialize(identity.as_bytes()).collect::<String>().replace('+', "%20");
+  Ok(get(&format!("account-provider:coding-plan:{pid}:account:{enc}:api-key")).and_then(|k| clean_key(&k)).map(|k| (k, base_url.to_owned())))
+}
+
 pub fn fetch(http: &dyn Http, host: &dyn Host, secrets: &dyn SecretStore, site: &str, now: i64) -> ProviderUsage {
   let (key, url) = match secrets.get("zcode.apiKey") {
     Some(k) => (k, quota_url(site_base(site)).unwrap_or_default()),
     None => {
-      let found = cli_config(host).map(|p| host.read(&p));
+      // ZCode 2's store first, then the legacy CLI config.
+      let found = match v2_credentials(host) {
+        Ok(Some((k, base))) => match quota_url(&base) {
+          Some(url) => return send(http, &k, &url, now),
+          None => return ProviderUsage::failed(P, "unavailable", "missing-credentials", &tr!(UsageMsg::ZcodeNotConfigured)),
+        },
+        Err(()) => Some(Err(())),
+        Ok(None) => cli_config(host).map(|p| host.read(&p)),
+      };
       match found {
         Some(Err(())) => return ProviderUsage::failed(P, "error", "parse", &tr!(UsageMsg::ZcodeCliUnreadable)),
         Some(Ok(Some(text))) => match cli_credentials(&text).and_then(|(k, base)| Some((k, quota_url(&base)?))) {
@@ -126,7 +181,12 @@ pub fn fetch(http: &dyn Http, host: &dyn Host, secrets: &dyn SecretStore, site: 
       }
     }
   };
-  let req = Request::get(&url).header("Authorization", key).header("Accept-Language", "en-US,en").header("Content-Type", "application/json");
+  send(http, &key, &url, now)
+}
+
+/// The quota request with the plan key (sent raw, no Bearer, only to the plan host).
+fn send(http: &dyn Http, key: &str, url: &str, now: i64) -> ProviderUsage {
+  let req = Request::get(url).header("Authorization", key.to_owned()).header("Accept-Language", "en-US,en").header("Content-Type", "application/json");
   match http.send(&req) {
     Err(kind) => ProviderUsage::failed(P, "error", kind, &tr!(UsageMsg::Network, provider = "ZCode")),
     Ok(r) if matches!(r.status, 401 | 403) => ProviderUsage::failed(P, "error", "stale-token", &tr!(UsageMsg::KeyRejected, provider = "ZCode")),
@@ -192,4 +252,31 @@ mod tests {
     assert_eq!(fetch(&http, &FakeHost::new(), &FakeSecrets::default(), "zai", NOW).status, "unavailable");
     assert!(http.urls().is_empty());
   }
+
+  #[test]
+  fn reads_zcode2_sealed_store() {
+    use aes_gcm::aead::{Aead, KeyInit};
+    use base64::Engine;
+    use sha2::{Digest, Sha256};
+    let cipher = aes_gcm::Aes256Gcm::new_from_slice(&Sha256::digest(b"s3cret")).unwrap();
+    let e = |b: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b);
+    let seal = |plain: &str| {
+      let nonce = [7u8; 12];
+      let sealed = cipher.encrypt(aes_gcm::Nonce::from_slice(&nonce), plain.as_bytes()).unwrap();
+      let (ct, tag) = sealed.split_at(sealed.len() - 16);
+      format!("enc:v1:{}.{}.{}", e(&nonce), e(tag), e(ct))
+    };
+    let pid = "account:zai-individual-coding-plan";
+    let creds = serde_json::json!({
+      format!("account-provider:{pid}:identity"): seal("me@x.io"),
+      format!("account-provider:coding-plan:{pid}:account:me%40x.io:api-key"): seal("plan-key"),
+    });
+    let host = FakeHost::new()
+      .var("ZCODE_CREDENTIAL_SECRET", "s3cret")
+      .file(&format!("{HOME}/.zcode/v2/provider_config.json"), &format!(r#"{{"schemaVersion":1,"defaultModelSelection":{{"providerId":"{pid}"}}}}"#))
+      .file(&format!("{HOME}/.zcode/v2/credentials.json"), &creds.to_string());
+    assert_eq!(v2_credentials(&host), Ok(Some(("plan-key".into(), "https://api.z.ai".into()))));
+    assert_eq!(unseal("plain", &host).as_deref(), Some("plain"));
+  }
+
 }

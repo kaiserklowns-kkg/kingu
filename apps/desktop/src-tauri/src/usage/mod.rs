@@ -354,20 +354,56 @@ pub fn gemini_token(text: &str) -> Option<(String, Option<i64>)> {
   Some((token.to_owned(), v.get("expiry_date").and_then(Value::as_f64).map(|n| n as i64)))
 }
 
-/// The quota buckets (`{ buckets: [{ remainingFraction, resetTime, modelId }] }`) as one daily
-/// window: the most used model's.
+/// Orca's names for Gemini models; others lose `gemini-` and are title-cased.
+pub fn gemini_model_name(id: &str) -> String {
+  const KNOWN: &[(&str, &str)] = &[
+    ("gemini-2.5-pro", "Pro"),
+    ("gemini-2.5-flash", "Flash"),
+    ("gemini-2.5-flash-lite", "Flash Lite"),
+    ("gemini-3.1-pro", "3.1 Pro"),
+    ("gemini-3.1-flash", "3.1 Flash"),
+    ("gemini-3.1-flash-lite", "3.1 Flash Lite"),
+    ("gemini-3.0-pro", "3.0 Pro"),
+    ("gemini-3.0-flash", "3.0 Flash"),
+    ("gemini-2.0-pro", "2.0 Pro"),
+    ("gemini-2.0-flash", "2.0 Flash"),
+    ("gemini-2.0-flash-lite", "2.0 Flash Lite"),
+    ("gemini-1.5-pro", "1.5 Pro"),
+    ("gemini-1.5-flash", "1.5 Flash"),
+    ("gemini-exp", "Exp"),
+    ("gemini-experimental", "Exp"),
+  ];
+  if let Some((_, n)) = KNOWN.iter().find(|(k, _)| *k == id) {
+    return (*n).into();
+  }
+  id.trim_start_matches("gemini-").split('-').filter(|s| !s.is_empty()).map(|s| s[..1].to_uppercase() + &s[1..]).collect::<Vec<_>>().join(" ")
+}
+
+/// The quota buckets (`{ buckets: [{ remainingFraction, resetTime, modelId }] }`): one per model
+/// (Orca's names; the same percent and reset only once, a known model first), and the most used
+/// one as the daily session window.
 pub fn parse_gemini(body: &Value) -> ProviderUsage {
-  let buckets = body.get("buckets").and_then(Value::as_array).or_else(|| body.as_array()).cloned().unwrap_or_default();
+  let list = body.get("buckets").and_then(Value::as_array).or_else(|| body.as_array()).cloned().unwrap_or_default();
   let mut best: Option<Window> = None;
-  for b in &buckets {
+  let mut buckets: Vec<(bool, Bucket)> = Vec::new();
+  for b in &list {
     let Some(left) = b.get("remainingFraction").and_then(Value::as_f64).filter(|f| f.is_finite()) else { continue };
     let used = ((1.0 - left) * 100.0).clamp(0.0, 100.0).round();
     let w = Window { used_percent: used, window_minutes: GEMINI_WINDOW_MINUTES, resets_at: b.get("resetTime").and_then(parse_time) };
     if best.as_ref().is_none_or(|x| w.used_percent > x.used_percent) {
-      best = Some(w);
+      best = Some(w.clone());
+    }
+    let Some(id) = b.get("modelId").and_then(Value::as_str) else { continue };
+    let name = gemini_model_name(id);
+    let known = name != id;
+    let bucket = Bucket { name, used_percent: w.used_percent, window_minutes: w.window_minutes, resets_at: w.resets_at };
+    match buckets.iter().position(|(_, x)| x.used_percent == bucket.used_percent && x.resets_at == bucket.resets_at) {
+      Some(i) if (known && !buckets[i].0) || (known == buckets[i].0 && bucket.name.len() < buckets[i].1.name.len()) => buckets[i] = (known, bucket),
+      Some(_) => {}
+      None => buckets.push((known, bucket)),
     }
   }
-  ProviderUsage { session: best, ..ProviderUsage::new("gemini") }
+  ProviderUsage { session: best, buckets: buckets.into_iter().map(|(_, b)| b).collect(), ..ProviderUsage::new("gemini") }
 }
 
 fn gemini_failed_http(code: u16) -> ProviderUsage {
@@ -567,4 +603,16 @@ mod tests {
     assert_eq!(oauth_from(r#"{"claudeAiOauth":{"accessToken":"t","refreshToken":"r"}}"#), Some((Some("t".into()), true)));
     assert_eq!(oauth_from("{}"), None);
   }
+
+  #[test]
+  fn names_gemini_model_buckets() {
+    let u = parse_gemini(&json!({"buckets": [
+      {"remainingFraction": 0.25, "modelId": "gemini-2.5-pro"},
+      {"remainingFraction": 0.9, "modelId": "gemini-2.5-flash-preview-x"},
+      {"remainingFraction": 0.9, "modelId": "gemini-2.5-flash"}
+    ]}));
+    assert_eq!(u.buckets.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(), vec!["Pro", "Flash"]);
+    assert_eq!(gemini_model_name("gemini-9-ultra"), "9 Ultra");
+  }
+
 }

@@ -5,7 +5,13 @@
 	import type { SettingSchema } from './registry';
 
 	type ListSchema = Extract<SettingSchema, { type: 'array' } | { type: 'object' }>;
-	let { schema, value, disabled = false, onchange }: { schema: ListSchema; value: unknown; disabled?: boolean; onchange: (v: unknown) => void } = $props();
+	/** `quiet`: an outlined add button, for Orca-style panes (VS Code's editor keeps its primary button). */
+	let { schema, value, disabled = false, quiet = false, onchange }: { schema: ListSchema; value: unknown; disabled?: boolean; quiet?: boolean; onchange: (v: unknown) => void } = $props();
+	const ADD = $derived(
+		quiet
+			? 'rounded-md border border-(--vscode-widget-border) px-2.5 text-xs hover:bg-(--vscode-list-hoverBackground) disabled:opacity-50'
+			: 'rounded-sm bg-(--vscode-button-background) px-2 text-[13px] text-(--vscode-button-foreground) hover:bg-(--vscode-button-hoverBackground)'
+	);
 
 	let draftKey = $state('');
 	let draftValue = $state('');
@@ -68,7 +74,7 @@
 			{:else}
 				<input class={[INPUT, 'flex-1']} placeholder={schema.items === 'number' ? 'เพิ่มตัวเลข (Add Item)' : 'เพิ่มรายการ (Add Item)'} bind:value={draftKey} {disabled} onkeydown={(e) => e.key === 'Enter' && addItem()} />
 			{/if}
-			<button class="rounded-sm bg-(--vscode-button-background) px-2 text-[13px] text-(--vscode-button-foreground) hover:bg-(--vscode-button-hoverBackground)" {disabled} onclick={addItem}>Add Item</button>
+			<button class={ADD} {disabled} onclick={addItem}>Add Item</button>
 		</div>
 	{:else}
 		{#each entries as [key, v] (key)}
@@ -91,7 +97,7 @@
 			{#if !patterns}
 				<input class={[INPUT, 'w-40']} placeholder="ค่า (Value)" bind:value={draftValue} {disabled} onkeydown={(e) => e.key === 'Enter' && addEntry()} />
 			{/if}
-			<button class="rounded-sm bg-(--vscode-button-background) px-2 text-[13px] text-(--vscode-button-foreground) hover:bg-(--vscode-button-hoverBackground)" {disabled} onclick={addEntry}>
+			<button class={ADD} {disabled} onclick={addEntry}>
 				{patterns ? 'Add Pattern' : 'Add Item'}
 			</button>
 		</div>

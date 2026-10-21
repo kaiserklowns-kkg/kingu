@@ -6,6 +6,7 @@ import { adeTasks } from './th/adeTasks';
 import { workbench } from './th/workbench';
 import { team } from './th/team';
 import { settings } from './th/settings';
+import { panes } from './th/panes';
 import { tools } from './th/tools';
 import { chat } from './th/chat';
 import { chatView } from './th/chatView';
@@ -52,4 +53,4 @@ import { keybindings } from './th/keybindings';
 import { editing } from './th/editing';
 
 
-export const th = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault, ...adeAttempts, ...localAi, ...chatRuntime, ...chatExtras, ...adeSources, ...cli, ...artifacts, ...skills, ...arkai, ...forge, ...scmEditor, ...scmRepos, ...localHistory, ...ideTasks, ...language, ...workspaces, ...searchEditor, ...output, ...profiles, ...debugger_, ...testing, ...chatCustomize, ...editing, ...composer, ...voice, ...usage, ...keybindings } satisfies Record<keyof typeof en, string>;
+export const th = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...panes, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault, ...adeAttempts, ...localAi, ...chatRuntime, ...chatExtras, ...adeSources, ...cli, ...artifacts, ...skills, ...arkai, ...forge, ...scmEditor, ...scmRepos, ...localHistory, ...ideTasks, ...language, ...workspaces, ...searchEditor, ...output, ...profiles, ...debugger_, ...testing, ...chatCustomize, ...editing, ...composer, ...voice, ...usage, ...keybindings } satisfies Record<keyof typeof en, string>;

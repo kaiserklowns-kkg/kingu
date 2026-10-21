@@ -9,6 +9,8 @@
 //! labels and states only.
 
 pub mod creds;
+pub mod antigravity;
+pub mod managed;
 pub mod secrets;
 pub mod store;
 pub mod usage;
@@ -30,6 +32,8 @@ use store::{Account, AgentEnv, Kind, Provider, Store};
 use usage::{Api, Endpoints, Failure, Fetched, History, Http, Poll, Sample, Usage};
 
 pub const HISTORY_FILE: &str = "ai-usage-history.json";
+/// Event when `kingu account` changed the OpenCode / Devin managed accounts (payload: provider).
+pub const MANAGED_CHANGED: &str = "accounts://managed-changed";
 const PROVIDERS: [Provider; 2] = [Provider::Claude, Provider::Codex];
 
 fn now_ms() -> u64 {
@@ -73,6 +77,8 @@ pub struct Accounts {
   creds: Box<dyn CredentialSource>,
   http: Box<dyn Http>,
   endpoints: Endpoints,
+  /// OpenCode and Devin managed data accounts (next to the account folders).
+  pub managed: managed::Managed,
 }
 
 /// One usage subject: a provider's login that agents use or may use.
@@ -128,7 +134,8 @@ impl Accounts {
   pub fn new(paths: Paths, secrets: Box<dyn SecretStore>, creds: Box<dyn CredentialSource>, http: Box<dyn Http>, endpoints: Endpoints) -> Self {
     let store = Store::load(paths.store_file.clone());
     let history = History::load(&paths.history_file);
-    Self { paths, inner: Mutex::new(Inner { store, polls: BTreeMap::new(), history }), refreshing: Mutex::new(()), secrets, creds, http, endpoints }
+    let managed = managed::Managed::new(paths.root.parent().unwrap_or(&paths.root).join(managed::DIR));
+    Self { paths, inner: Mutex::new(Inner { store, polls: BTreeMap::new(), history }), refreshing: Mutex::new(()), secrets, creds, http, endpoints, managed }
   }
 
   fn account_dir(&self, a: &Account) -> PathBuf {
@@ -412,11 +419,12 @@ pub fn install(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
   Ok(())
 }
 
-/// The env an agent CLI started in a terminal gets: by program name (`claude`, `codex`).
+/// The env an agent CLI started in a terminal gets: by program name (`claude`, `codex`; the
+/// managed accounts' `opencode`, `devin`).
 pub fn env_for_program(accounts: &Accounts, program: &str) -> Result<BTreeMap<String, String>, String> {
   match Provider::of_program(program) {
     Some(p) => Ok(accounts.agent_env(p)?.for_shell()),
-    None => Ok(BTreeMap::new()),
+    None => Ok(accounts.managed.env_for_program(program)),
   }
 }
 
@@ -616,4 +624,42 @@ mod tests {
     assert!(!dir.exists());
     assert!(tmp.path().join("home/.claude/projects").is_dir(), "the user's own folder is untouched");
   }
+}
+
+// ---- OpenCode / Devin managed data accounts --------------------------------------------------
+
+#[tauri::command]
+pub async fn managed_accounts_list(app: tauri::AppHandle) -> Result<BTreeMap<String, managed::State>, String> {
+  blocking(move || app.state::<Accounts>().managed.list()).await
+}
+
+#[tauri::command]
+pub async fn managed_account_select(app: tauri::AppHandle, provider: String, id: Option<String>) -> Result<managed::State, String> {
+  let p = managed::DataProvider::parse(&provider)?;
+  blocking(move || app.state::<Accounts>().managed.select(p, id.as_deref())).await?
+}
+
+#[tauri::command]
+pub async fn managed_account_remove(app: tauri::AppHandle, provider: String, id: String) -> Result<managed::State, String> {
+  let p = managed::DataProvider::parse(&provider)?;
+  blocking(move || app.state::<Accounts>().managed.remove(p, &id)).await?
+}
+
+// ---- Antigravity's saved accounts (accounts/antigravity) ---------------------------------------
+
+/// Antigravity's saved accounts: `list`, `add-current`, `select` or `remove` (with `id`).
+#[tauri::command]
+pub async fn antigravity_accounts(app: tauri::AppHandle, action: String, id: Option<String>) -> Result<antigravity::AccountState, String> {
+  blocking(move || {
+    let accounts = app.state::<Accounts>();
+    let (run, secrets, home) = (&antigravity::SystemRunner, accounts.secrets.as_ref(), accounts.paths.home.as_path());
+    let id = id.unwrap_or_default();
+    match action.as_str() {
+      "add-current" => antigravity::add_current(run, secrets, home, now_ms()),
+      "select" => antigravity::select(run, secrets, home, &id),
+      "remove" => antigravity::remove(run, secrets, home, &id),
+      _ => antigravity::list(run, secrets, home, now_ms()),
+    }
+  })
+  .await?
 }

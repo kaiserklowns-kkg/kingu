@@ -2,7 +2,8 @@
 //! 1. With an OpenCode Go API key: `GET https://opencode.ai/zen/go/v1/usage` (`Bearer`), body
 //!    `{usage: {rolling, weekly, monthly: {percent, resetsAt}}}`. The key is the one saved in
 //!    Kingu (Keychain), else OpenCode's own (`OPENCODE_AUTH_CONTENT`, then
-//!    `$XDG_DATA_HOME/opencode/auth.json` → `opencode-go: {type: api, key}`), else
+//!    OpenCode 2's `opencode.db` `credential` table, else `$XDG_DATA_HOME/opencode/auth.json` →
+//!    `opencode-go: {type: api, key}`), else
 //!    `OPENCODE_API_KEY`.
 //! 2. With the opencode.ai session cookie a user pasted (only its auth cookies are sent): the
 //!    console's workspaces (`/_server` server function) unless a workspace id is set, then
@@ -104,7 +105,20 @@ fn key_in(v: &Value) -> Option<String> {
   e.get("key")?.as_str().map(str::trim).filter(|k| !k.is_empty()).map(str::to_owned)
 }
 
-/// The API key and where it came from (`settings`, `opencode-auth-content`, `opencode-auth-file`, `environment`).
+/// OpenCode 2's saved Go key: its `credential` table (`{type: "key"|"api", key}`), newest active first.
+fn db_key(host: &dyn Host, db: &std::path::Path) -> Option<String> {
+  host.read(db).ok().flatten()?;
+  let sql = "SELECT value FROM credential WHERE integration_id='opencode-go' ORDER BY active DESC, time_created DESC LIMIT 8";
+  let db = db.display().to_string();
+  let out = host.run(std::path::Path::new("/usr/bin/sqlite3"), &["-readonly", "-json", "-cmd", ".timeout 1500", &db, sql], std::time::Duration::from_secs(5)).ok()?;
+  let rows: Vec<Value> = serde_json::from_str(out.stdout.trim()).ok()?;
+  rows.iter().filter_map(|r| r.get("value")?.as_str().and_then(|v| serde_json::from_str::<Value>(v).ok())).find_map(|v| {
+    matches!(v.get("type")?.as_str()?, "key" | "api").then_some(())?;
+    v.get("key")?.as_str().map(str::trim).filter(|k| !k.is_empty()).map(str::to_owned)
+  })
+}
+
+/// The API key and where it came from (`settings`, `opencode-auth-content`, `opencode-db`, `opencode-auth-file`, `environment`).
 pub fn api_key(host: &dyn Host, secrets: &dyn SecretStore) -> Option<(String, &'static str)> {
   if let Some(k) = secrets.get("opencode.apiKey") {
     return Some((k, "settings"));
@@ -115,6 +129,9 @@ pub fn api_key(host: &dyn Host, secrets: &dyn SecretStore) -> Option<(String, &'
     }
   } else {
     let data = host.var("XDG_DATA_HOME").map(std::path::PathBuf::from).or_else(|| host.home().map(|h| h.join(".local/share")));
+    if let Some(k) = data.as_ref().and_then(|d| db_key(host, &d.join("opencode/opencode.db"))) {
+      return Some((k, "opencode-db"));
+    }
     let file = data.and_then(|d| host.read(&d.join("opencode/auth.json")).ok().flatten());
     if let Some(k) = file.and_then(|t| serde_json::from_str::<Value>(&t).ok()).as_ref().and_then(key_in) {
       return Some((k, "opencode-auth-file"));

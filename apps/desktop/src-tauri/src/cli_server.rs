@@ -331,7 +331,48 @@ fn dispatch(app: &AppHandle, method: &str, params: &Value) -> Result<Value, RpcE
       crate::notify::show(app, title, body).map_err(|e| rpc(ERR_FAILED, e))?;
       Ok(Value::Null)
     }
+    protocol::METHOD_ACCOUNT_LIST_DATA | protocol::METHOD_ACCOUNT_ADD_DATA | protocol::METHOD_ACCOUNT_SELECT_DATA | protocol::METHOD_ACCOUNT_REMOVE_DATA => data_accounts(app, method, params),
     other => Err(rpc(ERR_UNKNOWN_METHOD, tr!(CliMsg::UnknownMethod, method = other))),
+  }
+}
+
+/// `kingu account …` for OpenCode / Devin managed accounts (accounts/managed.rs). The answer is
+/// always `{<provider>: State}` (both providers for a list without `--agent`).
+fn data_accounts(app: &AppHandle, method: &str, params: &Value) -> Result<Value, RpcError> {
+  use crate::accounts::managed::DataProvider;
+  let managed = &app.state::<crate::accounts::Accounts>().managed;
+  let provider = || DataProvider::parse(str_param(params, "provider").unwrap_or_default()).map_err(|e| rpc(ERR_BAD_REQUEST, e));
+  let answer = |p: DataProvider, state: crate::accounts::managed::State| json!({ p.name(): state });
+  let failed = |e: String| rpc(ERR_FAILED, e);
+  match method {
+    protocol::METHOD_ACCOUNT_LIST_DATA => match str_param(params, "provider") {
+      Some(_) => {
+        let p = provider()?;
+        Ok(answer(p, managed.load(p).map_err(failed)?))
+      }
+      None => serde_json::to_value(managed.list()).map_err(|e| failed(e.to_string())),
+    },
+    protocol::METHOD_ACCOUNT_ADD_DATA => {
+      let p = provider()?;
+      let source = abs_param(params, "sourceDataHome")?;
+      let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+      let state = managed.add_from_home(p, &source, str_param(params, "label").unwrap_or_default(), now).map_err(failed)?;
+      let _ = app.emit(crate::accounts::MANAGED_CHANGED, p.name());
+      Ok(answer(p, state))
+    }
+    protocol::METHOD_ACCOUNT_SELECT_DATA => {
+      let p = provider()?;
+      let state = managed.select(p, str_param(params, "accountId")).map_err(failed)?;
+      let _ = app.emit(crate::accounts::MANAGED_CHANGED, p.name());
+      Ok(answer(p, state))
+    }
+    _ => {
+      let p = provider()?;
+      let id = str_param(params, "accountId").unwrap_or_default();
+      let state = managed.remove(p, id).map_err(failed)?;
+      let _ = app.emit(crate::accounts::MANAGED_CHANGED, p.name());
+      Ok(answer(p, state))
+    }
   }
 }
 
@@ -561,6 +602,20 @@ pub async fn cli_install() -> Result<Installed, String> {
   })
   .await
   .map_err(|e| e.to_string())?
+}
+
+/// Where "Install" linked the `kingu` command, if it did (Settings › General shows it as a switch).
+#[tauri::command]
+pub fn cli_status() -> Option<Installed> {
+  let home = std::env::var_os("HOME").map(PathBuf::from);
+  install_dirs(home.as_deref()).into_iter().find_map(|dir| {
+    let link = dir.join(COMMAND);
+    if !std::fs::read_link(&link).is_ok_and(|t| is_kingu_link(&t)) {
+      return None;
+    }
+    let on_path = crate::shell_env::path().is_some_and(|p| std::env::split_paths(&p).any(|d| d == dir));
+    Some(Installed { path: link.display().to_string(), on_path })
+  })
 }
 
 /// Removes the links "Install" made; the paths removed.

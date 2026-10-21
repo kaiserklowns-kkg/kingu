@@ -6,6 +6,7 @@ import { adeTasks } from './en/adeTasks';
 import { workbench } from './en/workbench';
 import { team } from './en/team';
 import { settings } from './en/settings';
+import { panes } from './en/panes';
 import { tools } from './en/tools';
 import { chat } from './en/chat';
 import { chatView } from './en/chatView';
@@ -52,6 +53,6 @@ import { keybindings } from './en/keybindings';
 import { editing } from './en/editing';
 
 
-export const en = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault, ...adeAttempts, ...localAi, ...chatRuntime, ...chatExtras, ...adeSources, ...cli, ...artifacts, ...skills, ...arkai, ...forge, ...scmEditor, ...scmRepos, ...localHistory, ...ideTasks, ...language, ...workspaces, ...searchEditor, ...output, ...profiles, ...debugger_, ...testing, ...chatCustomize, ...editing, ...composer, ...voice, ...usage, ...keybindings } as const;
+export const en = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...panes, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault, ...adeAttempts, ...localAi, ...chatRuntime, ...chatExtras, ...adeSources, ...cli, ...artifacts, ...skills, ...arkai, ...forge, ...scmEditor, ...scmRepos, ...localHistory, ...ideTasks, ...language, ...workspaces, ...searchEditor, ...output, ...profiles, ...debugger_, ...testing, ...chatCustomize, ...editing, ...composer, ...voice, ...usage, ...keybindings } as const;
 
 export type MessageKey = keyof typeof en;

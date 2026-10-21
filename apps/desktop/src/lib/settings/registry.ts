@@ -1044,7 +1044,8 @@ export function subgroupsOf(group: string, schemas: SettingSchema[] = SETTINGS):
 /** A table of contents selection: a group, or `Group/Sub-group`. */
 export const tocKey = (group: string, subgroup?: string | null) => (subgroup ? `${group}/${subgroup}` : group);
 
-function inSelection(s: SettingSchema, selection: string): boolean {
+/** Whether a setting is in a TOC selection (a group, or `Group/Sub-group`). */
+export function inTocSelection(s: SettingSchema, selection: string): boolean {
 	const slash = selection.indexOf('/');
 	if (slash < 0) return s.group === selection;
 	return s.group === selection.slice(0, slash) && settingSubgroup(s) === selection.slice(slash + 1);
@@ -1059,7 +1060,7 @@ export function settingsInView(query: string, group: string | null, schemas: Set
 		if (filters.modified && !modified(s.id)) return false;
 		if (filters.id && !filters.id.some((id) => s.id.toLowerCase().includes(id))) return false;
 		if (text) return matchesQuery(s, text);
-		return filters.modified || filters.id ? true : group === null || inSelection(s, group);
+		return filters.modified || filters.id ? true : group === null || inTocSelection(s, group);
 	});
 }
 

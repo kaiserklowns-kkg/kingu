@@ -35,9 +35,9 @@
 </script>
 
 <div class="h-full overflow-y-auto">
-	<div class="mx-auto max-w-[880px] px-8 py-6">
+	<div class="mx-auto max-w-4xl px-8 pt-10 pb-24">
 		<div class="flex items-center gap-2">
-			<h1 class="flex flex-1 items-center gap-2 text-lg font-semibold"><Icon name="sparkle" size={20} />{t('skills.title')}</h1>
+			<h1 class="flex flex-1 items-center gap-2 text-2xl leading-tight font-semibold"><Icon name="sparkle" size={20} />{t('skills.title')}</h1>
 			<button class={BUTTON} disabled={skills.loading} onclick={() => skills.load()} aria-label={t('skills.refresh')} title={t('skills.refresh')}>
 				<span class={['grid place-items-center', skills.loading && 'animate-spin']}><Icon name="refresh" size={14} /></span>
 			</button>
