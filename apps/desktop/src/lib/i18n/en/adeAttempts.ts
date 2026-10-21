@@ -48,6 +48,7 @@ export const adeAttempts = {
 	'adeAttempts.action.newFromTask': 'New Task from This Task',
 	'adeAttempts.action.compare': 'Compare Attempts…',
 	'adeAttempts.badge.stacked': 'Stacked on {parent}: its pull request goes into that branch',
+	'adeAttempts.badge.dispatched': 'Sub-task dispatched by the agent of {task}',
 	'adeAttempts.badge.hibernated': 'Agent hibernated {ago}: resume it to continue its session',
 	'adeAttempts.badge.resume': 'Resume agent',
 	// AgentsLayout.svelte

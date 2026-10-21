@@ -24,6 +24,7 @@ pub mod memories;
 pub mod mr;
 pub mod notes;
 pub mod open_in;
+pub mod orchestration;
 pub mod pr;
 pub mod review;
 pub mod rules;

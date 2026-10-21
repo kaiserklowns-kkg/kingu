@@ -70,5 +70,9 @@ crate::i18n::messages! {
       en: "The kingu command is not supported on this operating system yet",
       th: "ระบบปฏิบัติการนี้ยังไม่รองรับคำสั่ง kingu",
     },
+    DispatchTooDeep {
+      en: "Dispatching a sub-task is not allowed at depth {depth} (max {max}). Complete this task yourself; to allow deeper nesting, raise kingu.orchestration.maxDepth in Kingu's settings",
+      th: "ส่งงานย่อยต่อที่ความลึก {depth} ไม่ได้ (สูงสุด {max}) ให้ทำงานนี้เอง ถ้าต้องการให้ซ้อนลึกขึ้น ให้เพิ่ม kingu.orchestration.maxDepth ในการตั้งค่าของ Kingu",
+    },
   }
 }

@@ -38,6 +38,20 @@ kingu artifact list          # the project's artifacts: id  v<version>  format  
 - Exit codes: 0 done, 1 Kingu refused (the message says why), 2 bad arguments, 3 Kingu is not
   running or not reachable.
 
+## Orchestration (sub-tasks)
+
+You can coordinate larger work by splitting it into sub-tasks that other agents do in parallel:
+
+- When you run `kingu task create` from inside a Kingu task's worktree, the new task is a
+  sub-task you dispatched; Kingu marks it as dispatched by your task. `kingu --json task list`
+  shows each task's `dispatched_by` and `status`, so you can follow your sub-tasks' progress
+  (`running`, `review`, `done`, …) and review their branches when they finish.
+- Nesting is limited (Settings: `kingu.orchestration.maxDepth`, default 1): a task you were
+  dispatched to may not dispatch sub-tasks of its own unless the user allows deeper nesting.
+  If Kingu refuses a sub-task for that reason, do the work yourself instead of retrying.
+- Give each sub-task a self-contained prompt, a separate area of the code where possible (so
+  their branches merge cleanly), and say how its result will be checked.
+
 ## Artifacts
 
 An artifact is a page (HTML, or Markdown) stored with the project (`.kingu/artifacts/`, not in
