@@ -45,6 +45,7 @@ mod snap;
 mod snap_install;
 mod snap_sandbox;
 mod snap_secrets;
+mod mcp_tools;
 mod snippets;
 mod startup;
 mod system;
@@ -1732,6 +1733,8 @@ pub fn run() {
       snap_secrets::snap_secret_set,
       snap_secrets::snap_secret_delete,
       snap_secrets::snap_secrets_file,
+      mcp_tools::mcp_tools_list,
+      mcp_tools::mcp_tool_call,
       snap_install::snap_install_git,
       snap_install::snap_install_folder,
       snap_install::snap_update_prepare,

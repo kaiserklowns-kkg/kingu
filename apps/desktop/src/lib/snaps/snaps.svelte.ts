@@ -56,6 +56,7 @@ import {
 	type SnapInfo
 } from './snapModel.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
+import { runMcpTool } from './mcpTools.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
 
 class Snaps {
@@ -760,6 +761,7 @@ export function installSnaps(): () => void {
 		commands.register({ id: 'snap.updateFromLibrary', title: 'Update from Team Library', category: 'Snap', when: () => snaps.library !== null, run: () => snaps.updateFromLibrary() }),
 		commands.register({ id: 'snap.yankLibraryVersion', title: 'Yank Team Library Version…', category: 'Snap', when: () => canApprove(snaps.library?.role), run: () => snaps.yankVersion() }),
 		commands.register({ id: 'snap.pinTeamInLock', title: 'Pin Team Snap in snaps.lock…', category: 'Snap', when: () => workspace.root !== null, run: () => snaps.pinTeamInLock() }),
+		commands.register({ id: 'mcp.runTool', title: 'Run Tool…', category: 'MCP', run: () => runMcpTool() }),
 		commands.register({ id: 'snap.setSecrets', title: 'Set Secrets…', category: 'Snap', run: () => snaps.setSecrets() }),
 		commands.register({ id: 'snap.verifyLock', title: 'Verify snaps.lock', category: 'Snap', when: () => workspace.root !== null, run: () => snaps.verifyLock() }),
 		// VS Code's Extensions view key.
