@@ -28,7 +28,11 @@
 	//   Commands, Modes, Actions); `#` or `@` lists `mentions` (the current file, then the context
 	//   sources; Files & Folders, Terminals and Past Chats open in place), `preview` beside it.
 	// Images can be pasted, dropped (an overlay shows while dragging) or picked with the paperclip.
+	// `onpastetext` may take a long pasted text instead (chat.pasteAsAttachmentThreshold). With
+	// kingu.voice.enabled a microphone before the paperclip dictates into the text (chatVoice.svelte.ts).
 	import type { Snippet } from 'svelte';
+	import { dictation } from '#lib/voice/dictation.svelte.ts';
+	import { chatDictationShown, toggleChatDictation } from './chatVoice.svelte.ts';
 	import { invoke } from '@tauri-apps/api/core';
 	import { open } from '@tauri-apps/plugin-dialog';
 	import Icon from '#lib/workbench/Icon.svelte';
@@ -92,7 +96,8 @@
 		top = false,
 		approval,
 		stacked = false,
-		tint
+		tint,
+		onpastetext
 	}: {
 		value?: string;
 		placeholder: string;
@@ -148,6 +153,8 @@
 		stacked?: boolean;
 		/** The mode's colour: the round button takes it (Cursor tints it per mode). */
 		tint?: string;
+		/** A pasted text: true when the caller took it (attached it) instead of the input. */
+		onpastetext?: (text: string) => boolean;
 	} = $props();
 
 	const MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
@@ -284,6 +291,11 @@
 	});
 
 	async function onpaste(e: ClipboardEvent) {
+		const pasted = onpastetext ? (e.clipboardData?.getData('text/plain') ?? '') : '';
+		if (pasted && onpastetext?.(pasted)) {
+			e.preventDefault();
+			return;
+		}
 		const image = attach ? clipboardImage(e) : null;
 		if (!image) return;
 		e.preventDefault();
@@ -345,6 +357,13 @@
 	}
 
 	function onkeydown(e: KeyboardEvent) {
+		// Esc drops a dictation into this input (VS Code's Cancel Dictation).
+		if (e.key === 'Escape' && micActive && dictation.state === 'listening') {
+			e.preventDefault();
+			e.stopPropagation();
+			dictation.cancel();
+			return;
+		}
 		if (mentionOpen && mention && !e.isComposing) {
 			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
 				e.preventDefault();
@@ -495,6 +514,18 @@
 		sendMenuAt = { x: e.clientX - 200, y: Math.max(4, e.clientY - sendItems.length * 26 - 14) };
 	}
 
+	// The microphone: lit while a dictation it (or a command, with the text focused) started runs.
+	let micStarted = $state(false);
+	let textFocused = $state(false);
+	$effect(() => {
+		if (dictation.state === 'idle') micStarted = false;
+	});
+	const micActive = $derived(dictation.state !== 'idle' && (micStarted || textFocused));
+	function onmic() {
+		if (dictation.state === 'idle') micStarted = true;
+		toggleChatDictation(() => area?.focus());
+	}
+
 	const CHIP = 'group/chip inline-flex h-5 max-w-52 shrink-0 items-center gap-1 rounded-md bg-[color-mix(in_srgb,var(--vscode-foreground)_9%,transparent)] px-1 text-xs text-(--vscode-foreground)';
 	const BAR_BTN = 'grid size-6 shrink-0 place-items-center rounded-md text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground) disabled:opacity-50';
 </script>
@@ -593,6 +624,8 @@
 			{oninput}
 			onkeyup={trackCaret}
 			onclick={trackCaret}
+			onfocus={() => (textFocused = true)}
+			onblur={() => (textFocused = false)}
 			role={commands.length || mentions ? 'combobox' : undefined}
 			aria-expanded={commands.length || mentions ? slashOpen || mentionOpen : undefined}
 			aria-controls={slashOpen || mentionOpen ? listId : undefined}
@@ -612,6 +645,20 @@
 			{@render left?.(layout)}
 		</div>
 		{@render right?.(layout)}
+		{#if chatDictationShown()}
+			<button
+				type="button"
+				aria-label={micActive && dictation.state === 'listening' ? t('chatRender.voice.stop') : t('chatRender.voice.start')}
+				aria-pressed={micActive}
+				title={micActive ? (dictation.state === 'transcribing' ? t('chatRender.voice.transcribing') : t('chatRender.voice.listening', { time: dictation.elapsed })) : t('chatRender.voice.start')}
+				class={[BAR_BTN, micActive && 'text-(--vscode-errorForeground) hover:text-(--vscode-errorForeground)']}
+				disabled={disabled || (dictation.state !== 'idle' && !micActive) || dictation.state === 'starting' || dictation.state === 'transcribing'}
+				onmousedown={(e) => e.preventDefault()}
+				onclick={onmic}
+			>
+				{#if micActive && dictation.state === 'transcribing'}<span class="size-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent"></span>{:else}<span class={micActive ? 'animate-pulse' : undefined}><Icon name="mic" size={14} /></span>{/if}
+			</button>
+		{/if}
 		{#if attach}
 			<button type="button" aria-label={t('chatView.attach')} title={t('chatView.attachHint')} class={BAR_BTN} {disabled} onclick={pick}><Icon name="attach" size={14} /></button>
 		{/if}

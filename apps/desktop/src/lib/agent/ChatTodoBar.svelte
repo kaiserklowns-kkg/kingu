@@ -2,8 +2,10 @@
 	// The agent's todo list pinned above the chat input (VS Code's ChatTodoListWidget): the list of
 	// the main agent's last TodoWrite call. Collapsed, it shows the item being worked on with its
 	// number, "Fixing the bug (2/5)"; expanded, "Todos (2/5)" and every item as completed, in
-	// progress or not started. Hidden when there is no list, or every item is done and the turn ended.
+	// progress or not started. Hidden when there is no list, or every item is done and the turn ended,
+	// and with chat.tools.todos.showWidget off.
 	import Icon from '#lib/workbench/Icon.svelte';
+	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import { latestTodos, todoProgress, type Todo, type Turn } from './chatParts';
 
@@ -12,7 +14,7 @@
 	let open = $state(false);
 	const todos = $derived(latestTodos(turns) ?? []);
 	const p = $derived(todoProgress(todos));
-	const shown = $derived(todos.length > 0 && (running || p.done < p.total));
+	const shown = $derived(settings.get<boolean>('chat.tools.todos.showWidget') !== false && todos.length > 0 && (running || p.done < p.total));
 
 	const STATUS: Record<Todo['status'], () => string> = {
 		completed: () => t('chatParts.todos.completed'),

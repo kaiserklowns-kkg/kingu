@@ -2,7 +2,7 @@
 // elsewhere while agents run: kingu.agent.notifications (on/off), .suppressWhenFocused, .events, .sound.
 // Clicking one (macOS; Rust notify.rs) brings Kingu to the front and opens its task in Agents,
 // like Orca's notification click that activates the worktree pane. Agent chats notify too (a
-// permission prompt, a question, a finished or failed turn) while the window is unfocused; a click
+// permission prompt, a question, a finished or failed turn) as chat.notifyWindowOn* say; a click
 // opens the chat in the chat panel. The other added projects' tasks notify too (projects.svelte.ts);
 // a click on one switches to its folder and opens the task.
 
@@ -16,6 +16,8 @@ import { commands } from '#lib/workbench/commands.svelte.ts';
 import { chatNoticeFor, noticeFor, noticeState, notificationSound, shouldNotify, type NoticeState } from './agentNotify';
 import { chats } from '#lib/agent/chats.svelte.ts';
 import { openChat } from '#lib/agent/chatCommands.svelte.ts';
+import { chatNotifies } from '#lib/agent/chatSettings.ts';
+import { requestAttention } from '#lib/agent/chatSettings.svelte.ts';
 import { adeTasks } from './tasks.svelte';
 import { hiddenInSidebar, sidebarPrefs } from './sidebarState.svelte';
 import { projects } from './projects.svelte';
@@ -76,16 +78,20 @@ export function installAgentNotifications(): () => void {
 		}
 		openNotifiedTask(slug);
 	});
-	// Agent chats of the open folder: only while the window is unfocused (with Suppress While Focused on, the default).
+	// Agent chats of the open folder: VS Code's chat.notifyWindowOnConfirmation (approvals,
+	// questions) and chat.notifyWindowOnResponseReceived (finished or failed turns) decide, by
+	// default while the window is unfocused; kingu.agent.notifications off silences them too. An
+	// unfocused window also asks for attention (the Dock icon bounces once).
 	const offChats = chats.onEvent((id, ev) => {
 		if (ev.kind !== 'permission_request' && ev.kind !== 'result') return;
 		const meta = chats.get(id);
-		if (!meta) return;
-		const enabled = settings.get<boolean>('kingu.agent.notifications') !== false;
-		const suppressWhenFocused = settings.get<boolean>('kingu.agent.notifications.suppressWhenFocused') !== false;
-		if (!shouldNotify({ enabled, suppressWhenFocused }, document.hasFocus(), true)) return;
-		const notice = chatNoticeFor(ev, meta.title, settings.get<string>('kingu.agent.notifications.events'));
-		if (notice) void notify(notice.title, notice.body, undefined, id);
+		if (!meta || settings.get<boolean>('kingu.agent.notifications') === false) return;
+		const focused = document.hasFocus();
+		if (!chatNotifies(ev, (k) => settings.get(k), focused)) return;
+		const notice = chatNoticeFor(ev, meta.title);
+		if (!notice) return;
+		void notify(notice.title, notice.body, undefined, id);
+		if (!focused) requestAttention();
 	});
 	const unregister = commands.register({
 		id: 'kingu.agents.testNotification',

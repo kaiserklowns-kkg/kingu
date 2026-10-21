@@ -28,13 +28,13 @@ import { restoreTargets, workspacePath, type Report } from './chatEdits.ts';
 import { buildTurns, lastRequest } from './chatParts.ts';
 import { withoutImagesLine } from './chatPrompt.ts';
 import { confirmAnswer, lastCheckpoint, rewoundMeta, type ForkPoint, type Rewound } from './chatRewind.ts';
-
-/** `kingu.chat.confirmRewind`: ask before a rewind removes requests (VS Code's chat.editing.confirmEditRequestRemoval). */
-export const CONFIRM_SETTING = 'kingu.chat.confirmRewind';
+import { CONFIRM_REMOVAL, CONFIRM_RETRY, confirmsRewind } from './chatSettings.ts';
 
 type Options = {
 	/** 'always' asks (Restore Checkpoint); 'files' only when file edits would be undone (Edit, Retry). */
 	confirm: 'always' | 'files';
+	/** Which setting turns the ask off: chat.editing.confirmEditRequestRetry for Retry, …Removal otherwise (chatSettings.ts). */
+	kind?: 'removal' | 'retry';
 };
 
 class ChatRewindStore {
@@ -65,7 +65,8 @@ class ChatRewindStore {
 		await chatEdits.refresh(chatId);
 		const view = chatEdits.views[chatId];
 		const targets = view ? restoreTargets(view, request) : [];
-		if (settings.get<boolean>(CONFIRM_SETTING) !== false && (o.confirm === 'always' || targets.length)) {
+		const kind = o.kind ?? 'removal';
+		if (confirmsRewind(kind, (k) => settings.get(k), (k) => settings.userValue(k)) && (o.confirm === 'always' || targets.length)) {
 			const button = await messageBox(targets.length ? t('chatRewind.confirm', { count: targets.length }) : t('chatRewind.confirmNoFiles'), {
 				kind: 'warning',
 				buttons: [t('chatRewind.ok'), t('chatRewind.okDontAsk'), cancelLabel()],
@@ -73,7 +74,7 @@ class ChatRewindStore {
 			});
 			const answer = confirmAnswer(button);
 			if (!answer.go) return false;
-			if (answer.dontAsk) void settings.set(CONFIRM_SETTING, false, 'user').catch((e) => notifications.error(String(e)));
+			if (answer.dontAsk) void settings.set(kind === 'retry' ? CONFIRM_RETRY : CONFIRM_REMOVAL, false, 'user').catch((e) => notifications.error(String(e)));
 		}
 		if (!(await chatEdits.confirmDirty(targets))) return false;
 		if (!(await chats.stopAndWait(chatId))) {
@@ -102,8 +103,8 @@ class ChatRewindStore {
 	}
 
 	/** Edit request: the request and the rest go, then `message` is sent in its place. */
-	async editAndSend(chatId: string, request: number, message: OutgoingMessage): Promise<boolean> {
-		return (await this.rewind(chatId, request, { confirm: 'files' })) && chats.send(chatId, message);
+	async editAndSend(chatId: string, request: number, message: OutgoingMessage, kind: 'removal' | 'retry' = 'removal'): Promise<boolean> {
+		return (await this.rewind(chatId, request, { confirm: 'files', kind })) && chats.send(chatId, message);
 	}
 
 	/** Retry: the last request goes and is sent again (with its images while they are known). */
@@ -116,7 +117,7 @@ class ChatRewindStore {
 		if (!last || checkpoint === null) return chats.retry(chatId);
 		const text = withoutImagesLine(last.sent);
 		const known = chats.lastSent(chatId);
-		return this.editAndSend(chatId, checkpoint, { text, images: known?.text === text ? known.images : [] });
+		return this.editAndSend(chatId, checkpoint, { text, images: known?.text === text ? known.images : [] }, 'retry');
 	}
 
 	async redo(chatId: string): Promise<boolean> {

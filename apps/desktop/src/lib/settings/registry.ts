@@ -249,14 +249,8 @@ const CORE_SETTINGS: SettingSchema[] = [
 		description:
 			'โมเดล Claude ของงานโหมด timeline (agent host) ส่วนโหมด terminal ใช้ค่าของ CLI เอง หรือใส่ --model ใน kingu.agent.args.claude (The Claude model of timeline-mode runs; terminal-mode CLIs use their own, or --model in kingu.agent.args.claude.)'
 	},
-	{
-		id: 'kingu.chat.confirmRewind',
-		group: 'Agent',
-		type: 'boolean',
-		default: true,
-		description:
-			'ถามก่อนกลับไปจุด checkpoint แก้คำขอ หรือลองใหม่ ซึ่งจะลบคำขอหลังจากนั้นและย้อนการแก้ไฟล์ (VS Code: chat.editing.confirmEditRequestRemoval) (Ask before restoring a checkpoint, editing or retrying a request removes the later requests and undoes their edits.)'
-	},
+	// kingu.chat.confirmRewind is now VS Code's chat.editing.confirmEditRequestRemoval / …Retry
+	// (vscode/chat.ts); a `false` left in settings.json is still honoured (agent/chatSettings.ts).
 	{
 		id: 'kingu.agent.permissionMode',
 		group: 'Agent',
@@ -466,7 +460,7 @@ const CORE_SETTINGS: SettingSchema[] = [
 		type: 'boolean',
 		default: true,
 		description:
-			'ไม่แจ้งเตือนงานที่คุณเปิดดูอยู่ขณะหน้าต่าง Kingu อยู่ด้านหน้า ปิดเพื่อแจ้งเตือนทุกครั้ง (Avoid notifying about the task on screen while Kingu is focused; off notifies always.)',
+			'ไม่แจ้งเตือนงานที่คุณเปิดดูอยู่ขณะหน้าต่าง Kingu อยู่ด้านหน้า ปิดเพื่อแจ้งเตือนทุกครั้ง แชตของ agent ใช้ chat.notifyWindowOnConfirmation และ chat.notifyWindowOnResponseReceived แทน (Avoid notifying about the task on screen while Kingu is focused; off notifies always. Agent chats follow chat.notifyWindowOn* instead.)',
 		scope: 'application'
 	},
 	{
@@ -479,7 +473,7 @@ const CORE_SETTINGS: SettingSchema[] = [
 			'รอคุณอนุญาต เสร็จรอบ และล้มเหลว (Needs permission, finished a turn, failed.)',
 			'เฉพาะที่ต้องให้คุณทำอะไร: รอคุณอนุญาตและล้มเหลว (Only needs permission and failed.)'
 		],
-		description: 'เหตุการณ์ของ agent ที่แจ้งเตือน (Which agent events notify you.)',
+		description: 'เหตุการณ์ของงาน agent ที่แจ้งเตือน แชตของ agent ใช้ chat.notifyWindowOn* แทน (Which agent task events notify you; agent chats follow chat.notifyWindowOn* instead.)',
 		scope: 'application'
 	},
 	{

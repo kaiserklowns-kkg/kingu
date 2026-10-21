@@ -10,6 +10,7 @@
 //   kingu.chat.cancel                 Cancel Chat: stop the running turn (⌘⇧⌫ / ⌃C in the input)
 //   workbench.action.chat.export / .import  Export Chat... (JSON) / Import Chat...
 //   Find in Chat and Previous / Next User Prompt: chatTranscriptCommands.svelte.ts
+//   workbench.action.chat.toggleSpeechToText and the other dictation commands (chatVoice.svelte.ts)
 // The panel listens to `chatSignals` (it is mounted once, hidden with the secondary side bar).
 
 import { commands } from '#lib/workbench/commands.svelte.ts';
@@ -18,6 +19,7 @@ import { layout } from '#lib/workbench/layout.svelte.ts';
 import { registerCustomizeCommands } from './chatCustomizeCommands.ts';
 import { registerInlineChatCommands } from './inlineChat.svelte.ts';
 import { registerTranscriptCommands } from './chatTranscriptCommands.svelte.ts';
+import { registerChatVoiceCommands } from './chatVoice.svelte.ts';
 
 class ChatSignals {
 	/** Bumped to focus the chat input. */
@@ -163,5 +165,15 @@ export function registerChatCommands(): () => void {
 	off.push(registerInlineChatCommands());
 	// Find in Chat, Previous / Next User Prompt (chatTranscriptCommands.svelte.ts).
 	off.push(registerTranscriptCommands());
+	// Dictation into the chat input (chatVoice.svelte.ts).
+	off.push(
+		registerChatVoiceCommands(
+			() => {
+				show();
+				chatSignals.focus++;
+			},
+			() => chatSignals.hasFocus()
+		)
+	);
 	return () => off.forEach((f) => f());
 }

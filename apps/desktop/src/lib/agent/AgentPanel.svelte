@@ -73,6 +73,8 @@
 	import { ARKAI_RUNTIME, arkaiDefault } from './arkai.ts';
 	import { chatExtras } from './chatExtras.svelte.ts';
 	import { layout } from '#lib/workbench/layout.svelte.ts';
+	import { defaultModePick, pastedContext } from './chatSettings.ts';
+	import { saveBeforeSend } from './chatSettings.svelte.ts';
 
 	let {
 		editorChatId
@@ -84,6 +86,8 @@
 
 	let selectedId = $state<string | null>(untrack(() => editorChatId ?? null));
 	let composingNew = $state(false);
+	/** The panel showed its first chat of the folder (chat.restoreLastPanelSession decides which). */
+	let panelStarted = false;
 	let showList = $state(false);
 	let busy = $state(false);
 	let input = $state('');
@@ -307,7 +311,14 @@
 	$effect(() => {
 		if (inEditor) return;
 		if (selectedId && chats.loaded && !chats.get(selectedId)) selectedId = null;
-		if (selectedId === null && !composingNew && chats.loaded) selectedId = initialChat(chats.visible);
+		if (selectedId === null && !composingNew && chats.loaded) {
+			// The folder just opened: chat.restoreLastPanelSession (VS Code's default: off) shows the
+			// most recent chat, else a new one. Later (a chat removed), the most recent one.
+			const fresh = !panelStarted && settings.get<boolean>('chat.restoreLastPanelSession') !== true;
+			panelStarted = true;
+			if (fresh) untrack(() => newChat(false));
+			else selectedId = initialChat(chats.visible);
+		}
 	});
 
 	// Settings load after the panel: pick up the default model once it is known.
@@ -354,7 +365,27 @@
 		const d = chats.defaults();
 		newModel = d.model ?? '';
 		newMode = modeOf(d.permissionMode);
+		const preset = settings.get<string>('chat.newSession.defaultMode');
+		if (typeof preset === 'string' && preset.trim()) void startMode(preset);
 		if (focus) queueMicrotask(() => composer?.focus());
+	}
+
+	/** chat.pasteAsAttachmentThreshold: a long paste becomes a context chip instead of input text. */
+	function attachPaste(text: string): boolean {
+		const c = pastedContext(text, settings.get('chat.pasteAsAttachmentThreshold'));
+		if (!c) return false;
+		texts = [...texts, c];
+		return true;
+	}
+
+	/** chat.newSession.defaultMode: the new chat's mode (a custom agent once the folder's agents are read). */
+	async function startMode(preset: string) {
+		let p = defaultModePick(preset, customs.agents);
+		if (!p) {
+			await loadCustomizations();
+			p = defaultModePick(preset, customs.agents);
+		}
+		if (p && !chatMeta) await applyPick(p);
 	}
 
 	/** The request's prompt: the text and its attached files (read now), plus its images. */
@@ -448,6 +479,8 @@
 		if (busy) return;
 		busy = true;
 		try {
+			// chat.saveBeforeSend: the agent reads the files as you see them.
+			await saveBeforeSend();
 			if (!chatMeta) {
 				const where: ChatCwd = newWhere ? { kind: 'task', slug: newWhere } : { kind: 'folder' };
 				const message = await outgoing(text, attachments, where.kind === 'folder', extra);
@@ -477,9 +510,9 @@
 		queueMicrotask(() => composer?.focus());
 	}
 
-	/** Restore Checkpoint put the request back in an empty input, with its files (VS Code's restoreRequestToMainInputIfEmpty). */
+	/** Restore Checkpoint put the request back in an empty input, with its files (VS Code's restoreRequestToMainInputIfEmpty), unless chat.undoRequests.restoreInput is off. */
 	function restoreToInput(req: NonNullable<Turn['request']>) {
-		if (input.trim() || picked.length || files.length) return;
+		if (settings.get<boolean>('chat.undoRequests.restoreInput') === false || input.trim() || picked.length || files.length) return;
 		editRequest(req);
 		editing = false;
 	}
@@ -487,6 +520,7 @@
 	/** Edit request in place: the chat rewinds to it, then the new text goes with the request's files (read now). */
 	async function editInline(req: NonNullable<Turn['request']>, checkpoint: number, text: string) {
 		if (!chatMeta || !workspace.root) return;
+		await saveBeforeSend();
 		const id = chatMeta.id;
 		const rootDir = workspace.root;
 		const runsInRoot = chatMeta.cwd.kind === 'folder';
@@ -1216,6 +1250,7 @@
 				oncyclemode={() => void nextMode()}
 				approval={pendingApproval ? { answer: answerApproval } : undefined}
 				onsubmit={submit}
+				onpastetext={attachPaste}
 			>
 				{#snippet left(l)}
 					<!-- The mode pill: its colour and icon per mode (Cursor's), ⌘. / ⇧Tab cycles. -->
@@ -1283,7 +1318,7 @@
 					{/if}
 				{/snippet}
 				{#snippet right(l)}
-					{#if chatRun?.context && l.ring}<ContextRing usage={chatRun.context} cost={chatRun.result?.total_cost_usd ?? null} oncompact={chatMeta ? compact : undefined} />{:else if running && l.ring}<span
+					{#if chatRun?.context && l.ring && settings.get<boolean>('chat.contextUsage.enabled') !== false}<ContextRing usage={chatRun.context} cost={chatRun.result?.total_cost_usd ?? null} oncompact={chatMeta ? compact : undefined} />{:else if running && l.ring}<span
 							class="grid size-6 shrink-0 place-items-center"
 							role="status"
 							aria-label={t('composer.status.running')}><span class="size-3 animate-spin rounded-full border-[1.5px] border-(--vscode-widget-border) border-t-(--vscode-descriptionForeground)"></span></span
