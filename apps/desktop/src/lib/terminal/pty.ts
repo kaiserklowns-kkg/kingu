@@ -21,9 +21,10 @@ export function foregroundJobs(keys: string[]): Promise<Record<string, { pid: nu
 	return invoke<Record<string, { pid: number; name: string }>>('pty_foreground', { keys }).catch(() => ({}));
 }
 
-/** The open folder's file a terminal link names (relative to the folder), or null when there is none. */
-export function linkTarget(key: string, text: string): Promise<string | null> {
-	return invoke<{ rel: string } | null>('terminal_link_target', { key, text })
+/** The open folder's file a terminal link names (relative to the folder), or null when there is none.
+ *  `cwd`: the directory its command ran in (shell integration), tried first. */
+export function linkTarget(key: string, text: string, cwd?: string): Promise<string | null> {
+	return invoke<{ rel: string } | null>('terminal_link_target', { key, text, cwd: cwd ?? null })
 		.then((t) => t?.rel ?? null)
 		.catch(() => null);
 }

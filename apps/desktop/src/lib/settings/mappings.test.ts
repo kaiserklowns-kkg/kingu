@@ -17,6 +17,7 @@ import {
 	opensOnStart,
 	searchSettingsFrom,
 	shellFrom,
+	profileNames,
 	sortEntries,
 	terminalFontWeight,
 	terminalOptionsFrom,
@@ -207,6 +208,15 @@ describe('terminal', () => {
 		// `null` removes a default profile; an unknown name falls back to the legacy shell settings.
 		expect(shellFrom(getter({ ...user, 'terminal.integrated.defaultProfile.osx': 'bash', 'terminal.integrated.profiles.osx': { bash: null } }), 'osx')).toMatchObject({ paths: [], args: ['-l'] });
 		expect(shellFrom(getter({ 'terminal.integrated.defaultProfile.linux': 'nope' }), 'linux')).toMatchObject({ paths: [], args: ['-l'] });
+	});
+
+	test('New Terminal With Profile: a picked profile over the default, and the profile list', () => {
+		const user = { 'terminal.integrated.defaultProfile.osx': 'zsh', 'terminal.integrated.profiles.osx': { mine: { path: '/opt/bin/nu', args: [] }, tmux: null } };
+		expect(shellFrom(getter(user), 'osx', null, 'mine')).toMatchObject({ paths: ['/opt/bin/nu'], args: [] });
+		expect(shellFrom(getter(user), 'osx', null, 'fish')).toMatchObject({ paths: ['fish'], args: ['-l'] });
+		expect(shellFrom(getter(user), 'osx', null)).toMatchObject({ paths: ['zsh'] });
+		expect(profileNames(getter(user), 'osx')).toEqual(['bash', 'zsh', 'fish', 'pwsh', 'mine']);
+		expect(profileNames(getter({}), 'linux')).toEqual(['bash', 'zsh', 'fish', 'tmux', 'pwsh']);
 	});
 });
 

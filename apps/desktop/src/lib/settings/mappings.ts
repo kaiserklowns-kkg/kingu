@@ -191,18 +191,30 @@ function profileNamed(get: Get, platform: ShellPlatform, name: string): Terminal
 	return Object.hasOwn(all, name) ? all[name] : undefined;
 }
 
+/** The terminal profiles of `platform` (VS Code's defaults merged with the user's map, `null` ones
+ *  removed), in order: the defaults first, then the user's own. */
+export function profileNames(get: Get, platform: ShellPlatform): string[] {
+	const id = `terminal.integrated.profiles.${platform}`;
+	const defaults = (TERMINAL_SETTINGS.find((s) => s.id === id)?.default ?? {}) as Record<string, TerminalProfile>;
+	const user = get<Record<string, TerminalProfile> | undefined>(id);
+	const all: Record<string, TerminalProfile> = { ...defaults, ...(user && typeof user === 'object' ? user : {}) };
+	return Object.keys(all).filter((name) => all[name] && typeof all[name] === 'object');
+}
+
 /**
  * The shell a new terminal starts (VS Code: the default profile, then terminal.integrated.env.*).
  * `terminal.integrated.defaultProfile.<platform>` names a profile with a `path` (a name looked up
- * on PATH, or a list tried in turn), `args` and `env`; without one, the legacy
+ * on PATH, or a list tried in turn), `args` and `env` (`pickedProfile` names another one); without one, the legacy
  * `terminal.integrated.shell.*` / `shellArgs.*` apply. All of them are user-only settings.
  */
 export function shellFrom(
 	get: Get,
 	platform: ShellPlatform,
-	locale: string | null = typeof navigator !== 'undefined' ? navigator.language : null
+	locale: string | null = typeof navigator !== 'undefined' ? navigator.language : null,
+	/** A profile picked for this terminal (New Terminal With Profile) instead of the default one. */
+	pickedProfile?: string
 ): ShellSettings {
-	const name = get<unknown>(`terminal.integrated.defaultProfile.${platform}`);
+	const name = pickedProfile || get<unknown>(`terminal.integrated.defaultProfile.${platform}`);
 	const profile = typeof name === 'string' && name ? profileNamed(get, platform, name) : undefined;
 	const rawPaths = profile?.path;
 	const paths = (Array.isArray(rawPaths) ? rawPaths : [rawPaths]).filter((p): p is string => typeof p === 'string' && p.trim() !== '');
