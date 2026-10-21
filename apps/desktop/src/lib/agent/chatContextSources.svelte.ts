@@ -139,11 +139,14 @@ export async function resolveMention(item: SuggestItem, env: ContextEnv): Promis
 }
 
 /** Add Context: pick a source, then (for the ones that list things) what from it. */
-export async function pickContext(env: ContextEnv): Promise<ContextPick[]> {
+/** Add Context's list; `extra` rows (the chat panel's Files from Disk...) go first and run their own `run`. */
+export async function pickContext(env: ContextEnv, extra: { id: string; label: string; description: string; run: () => void }[] = []): Promise<ContextPick[]> {
 	const item = await quick.choose({
 		placeholder: t('chatContext.pick'),
-		items: CONTEXT_SOURCES.map((s) => ({ id: s, label: sourceLabel(s), description: sourceHint(s) }))
+		items: [...extra.map((x) => ({ id: `extra:${x.id}`, label: x.label, description: x.description })), ...CONTEXT_SOURCES.map((s) => ({ id: s, label: sourceLabel(s), description: sourceHint(s) }))]
 	});
+	const own = item && extra.find((x) => `extra:${x.id}` === item.id);
+	if (own) return (own.run(), []);
 	return item ? resolveSource(item.id as ContextSource, env) : [];
 }
 

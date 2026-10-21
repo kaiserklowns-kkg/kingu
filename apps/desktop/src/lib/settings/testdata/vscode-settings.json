@@ -65,6 +65,7 @@
 	"chat.promptFilesLocations": {"type":"object","default":{".github/prompts":true}},
 	"chat.restoreLastPanelSession": {"type":"boolean","default":false},
 	"chat.saveBeforeSend": {"type":"boolean","default":true},
+	"chat.tips.enabled": {"type":"boolean","default":true},
 	"chat.tools.autoExpandFailures": {"type":"boolean","default":true},
 	"chat.tools.edits.autoApprove": {"type":"object","default":{"**/*":true,"**/.git/**":false,"**/{package.json,server.xml,build.rs,web.config,.gitattributes,.env,Cargo.toml}":false,"**/{.npmrc,.yarnrc,.yarnrc.yml,.pnpmfile.js,.pnpmfile.cjs,.pnpmfile.mjs,pnpm-workspace.yaml}":false,"**/*.{code-workspace,csproj,fsproj,vbproj,vcxproj,proj,targets,props,gradle,gradle.kts}":false,"**/gradle.properties":false,"**/ruby_lsp/*/addon":false,"**/*.lock":false,"**/*-lock.{yaml,json}":false,"**/.mcp.json":false,"**/.npmrc":false,"**/.vscode/*.json":false,"**/.github/agents/**":false,"**/.github/hooks/**":false,"**/.claude/agents/**":false,"**/.claude/settings.json":false,"**/.claude/settings.local.json":false,"**/.codex/agents/**":false,"**/.codex/config.toml":false,"**/.codex/hooks.json":false}},
 	"chat.tools.global.autoApprove": {"type":"boolean","default":false},

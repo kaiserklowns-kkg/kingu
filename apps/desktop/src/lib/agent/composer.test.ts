@@ -80,6 +80,10 @@ describe('placeholder', () => {
 		expect(composerPlaceholder({ folder: true, running: true })).toBe('Add a follow-up');
 		expect(composerPlaceholder({ folder: true, followUp: true })).toBe('Add a follow-up');
 		expect(composerPlaceholder({ folder: true })).toBe('Plan, Build, / for skills, @ for context');
+		expect(composerPlaceholder({ folder: true, agent: 'Arkai' })).toBe('Chat with Arkai');
+		expect(composerPlaceholder({ folder: true, agent: 'Arkai', followUp: true, running: true })).toBe('Chat with Arkai');
+		expect(composerPlaceholder({ folder: true, agent: 'Arkai', pendingApproval: true })).toBe('Reject, suggest, follow up?');
+		expect(composerPlaceholder({ folder: false, agent: 'Arkai' })).toBe('Open a folder to chat with the agent');
 	});
 });
 

@@ -30,6 +30,8 @@
 	// Images can be pasted, dropped (an overlay shows while dragging) or picked with the paperclip.
 	// `onpastetext` may take a long pasted text instead (chat.pasteAsAttachmentThreshold). With
 	// kingu.voice.enabled a microphone before the paperclip dictates into the text (chatVoice.svelte.ts).
+	// `vscode`: VS Code's chat input look (the chat panel): an 8px box, no paperclip (the caller's
+	// Add Context offers files from disk through `pickFiles`), a plain send / stop icon button.
 	import type { Snippet } from 'svelte';
 	import { dictation } from '#lib/voice/dictation.svelte.ts';
 	import { chatDictationShown, toggleChatDictation } from './chatVoice.svelte.ts';
@@ -97,7 +99,8 @@
 		approval,
 		stacked = false,
 		tint,
-		onpastetext
+		onpastetext,
+		vscode = false
 	}: {
 		value?: string;
 		placeholder: string;
@@ -155,6 +158,8 @@
 		tint?: string;
 		/** A pasted text: true when the caller took it (attached it) instead of the input. */
 		onpastetext?: (text: string) => boolean;
+		/** VS Code's chat input look (see the top). */
+		vscode?: boolean;
 	} = $props();
 
 	const MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
@@ -305,6 +310,11 @@
 			status.flash(t('chatView.pasteFailed', { error: String(err) }), 8000);
 		}
 		area?.focus();
+	}
+
+	/** Attach files from disk (the paperclip's dialog). */
+	export function pickFiles() {
+		void pick();
 	}
 
 	async function pick() {
@@ -535,7 +545,7 @@
 	bind:this={box}
 	class={[
 		'relative flex cursor-text flex-col gap-1.5 border bg-(--vscode-input-background) px-2.5 pt-2 pb-1.5 transition-[border-color,box-shadow] duration-100 focus-within:border-(--vscode-focusBorder)',
-		stacked ? 'rounded-b-xl' : 'rounded-xl',
+		vscode ? (stacked ? 'rounded-b-[8px]' : 'rounded-[8px]') : stacked ? 'rounded-b-xl' : 'rounded-xl',
 		'border-(--vscode-input-border,var(--vscode-widget-border))',
 		top && 'min-h-[120px]',
 		size === 'lg' && 'shadow-[0_2px_12px_rgba(0,0,0,0.25)]'
@@ -659,22 +669,22 @@
 				{#if micActive && dictation.state === 'transcribing'}<span class="size-3 animate-spin rounded-full border-[1.5px] border-current border-t-transparent"></span>{:else}<span class={micActive ? 'animate-pulse' : undefined}><Icon name="mic" size={14} /></span>{/if}
 			</button>
 		{/if}
-		{#if attach}
+		{#if attach && !vscode}
 			<button type="button" aria-label={t('chatView.attach')} title={t('chatView.attachHint')} class={BAR_BTN} {disabled} onclick={pick}><Icon name="attach" size={14} /></button>
 		{/if}
 		<button
 			type="button"
 			aria-label={action === 'stop' ? t('chatView.stop') : action === 'queue' ? SEND_LABEL[queueDefault]() : (sendLabel ?? t('chatView.send'))}
 			title={primaryTitle}
-			class={[
-				'ml-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-[color-mix(in_srgb,var(--vscode-foreground)_85%,transparent)] text-(--vscode-sideBar-background,var(--vscode-input-background)) transition-opacity hover:opacity-90 disabled:opacity-30'
-			]}
-			style:background={action !== 'none' && tint ? tint : undefined}
+			class={vscode
+				? 'grid size-6 shrink-0 place-items-center rounded-md text-(--vscode-foreground) hover:bg-(--vscode-toolbar-hoverBackground) disabled:text-(--vscode-descriptionForeground) disabled:opacity-60 disabled:hover:bg-transparent'
+				: 'ml-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-[color-mix(in_srgb,var(--vscode-foreground)_85%,transparent)] text-(--vscode-sideBar-background,var(--vscode-input-background)) transition-opacity hover:opacity-90 disabled:opacity-30'}
+			style:background={!vscode && action !== 'none' && tint ? tint : undefined}
 			disabled={busy || disabled || action === 'none'}
 			onclick={onprimary}
 			oncontextmenu={onprimarymenu}
 		>
-			{#if busy}<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>{:else if action === 'stop'}<span class="size-2.5 rounded-[2px] bg-current"></span>{:else}<Icon name="send" size={14} />{/if}
+			{#if busy}<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>{:else if action === 'stop'}<span class={vscode ? 'size-2.5 rounded-[2px] border-[1.5px] border-current' : 'size-2.5 rounded-[2px] bg-current'}></span>{:else}<Icon name="send" size={vscode ? 15 : 14} />{/if}
 		</button>
 	</div>
 	{#if dragOver}
