@@ -407,7 +407,8 @@
 			{#if shown('openInAgents')}
 				<!-- VS Code's center-adjacent toolbar (kingu-old's Open in Agents widget): the Kingu tile in
 				     grey, in colour on hover, its label sliding out on hover. Open in Editor in the Agents
-				     layout (same place, same key). -->
+				     layout (same place, same key). The tile's url() is quoted: Vite inlines the small SVG as a
+				     data: URL with ' in it, which an unquoted url() drops (the tile went blank). -->
 				{@const toAgents = !appMode.isAgents}
 				<button
 					class="group mr-auto flex h-[22px] shrink-0 items-center rounded-[5px] px-1 whitespace-nowrap text-(--vscode-titleBar-activeForeground) hover:bg-(--vscode-toolbar-hoverBackground) focus-visible:bg-(--vscode-toolbar-hoverBackground) focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-(--vscode-focusBorder)"
@@ -418,7 +419,7 @@
 					{#if toAgents}
 						<span
 							class="size-4 shrink-0 bg-contain bg-center bg-no-repeat grayscale transition-[filter] duration-[160ms] group-hover:grayscale-0 group-focus-visible:grayscale-0 motion-reduce:transition-none"
-							style:background-image="url({sessionsIconUrl})"
+							style:background-image={`url("${sessionsIconUrl}")`}
 							aria-hidden="true"
 						></span>
 					{:else}
