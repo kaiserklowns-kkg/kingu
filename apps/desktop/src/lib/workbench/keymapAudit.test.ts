@@ -77,6 +77,10 @@ function registrations(): Entry[] {
 const EXCLUSIVE: [string, string][] = [
 	// Pin / Unpin Editor: VS Code binds both to ⌘K ⇧↵, one per pinned state.
 	['workbench.action.pinEditor', 'workbench.action.unpinEditor'],
+	// Split / Join Editor in Group: VS Code binds both to ⌘K ⇧⌘\, one per split state.
+	['workbench.action.splitEditorInGroup', 'workbench.action.joinEditorInGroup'],
+	// ⇧⌘.: Focus and Select Breadcrumbs while they are on, Toggle Breadcrumbs to On while they are off.
+	['breadcrumbs.focusAndSelect', 'breadcrumbs.toggleToOn'],
 	// New Chat takes ⌘N only while the chat has focus (keyWhen + weight), New Untitled File elsewhere.
 	['workbench.action.chat.newChat', 'workbench.action.files.newUntitledFile'],
 	// F11 off macOS (VS Code's keys): Step Into while the debugger is stopped, Toggle Full Screen (lower weight) otherwise.
@@ -93,7 +97,14 @@ const EXCLUSIVE: [string, string][] = [
 	// ⌘F finds in a focused terminal, or focuses the Problems filter while the Problems view has focus.
 	['workbench.action.terminal.focusFind', 'problems.action.focusFilter'],
 	// Escape in the Problems filter box clears it; the toasts' Escape never acts from a text input.
-	['notifications.hideToasts', 'problems.action.clearFilterText']
+	['notifications.hideToasts', 'problems.action.clearFilterText'],
+	// ⌘↓ goes to the next command in a focused panel terminal, to the Problems list from its filter box.
+	['workbench.action.terminal.scrollToNextCommand', 'problems.action.focusProblemsFromFilter'],
+	// ⇧⌘↑ / ⇧⌘↓ select to a command in a focused IDE panel terminal, move between worktrees in the Agents layout.
+	['workbench.action.terminal.selectToPreviousCommand', 'kingu.agents.worktreeUp'],
+	['workbench.action.terminal.selectToNextCommand', 'kingu.agents.worktreeDown'],
+	// Ctrl+G off macOS (VS Code's keys): Go to Recent Directory in a focused terminal (higher weight), Go to Line elsewhere.
+	['workbench.action.terminal.goToRecentDirectory', 'workbench.action.gotoLine']
 ];
 
 /** VS Code's `terminalFocus` / `!terminalFocus`: one command's key acts only in a focused panel

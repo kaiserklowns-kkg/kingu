@@ -153,3 +153,27 @@ describe('persistence', () => {
 		expect(gone).toEqual({ b: saved.b });
 	});
 });
+
+describe('panel terminal extras', () => {
+	test('profile, icon, color and editor terminals are kept; an editor terminal is in no group', () => {
+		const raw = {
+			list: [
+				{ id: 1, title: 'zsh', profile: 'fish', icon: 'bug', color: 'terminal.ansiRed' },
+				{ id: 2, title: 'ed', inEditor: true },
+				{ id: 3, title: 'bad', icon: '<img>', color: 'red', inEditor: 'yes' }
+			],
+			active: 2,
+			seq: 3,
+			groups: [leaf('1'), leaf('2')]
+		};
+		const parsed = parsePanelTerminals(raw)!;
+		expect(parsed.list).toEqual([
+			{ id: 1, title: 'zsh', run: undefined, profile: 'fish', icon: 'bug', color: 'terminal.ansiRed' },
+			{ id: 2, title: 'ed', run: undefined, inEditor: true },
+			{ id: 3, title: 'bad', run: undefined }
+		]);
+		expect(parsed.groups).toEqual([leaf('1'), leaf('3')]);
+		// The active terminal is a panel one.
+		expect(parsed.active).toBe(1);
+	});
+});

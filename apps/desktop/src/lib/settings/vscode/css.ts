@@ -4,6 +4,14 @@ import type { SettingSchema } from '../registry';
 
 export const CSS_SETTINGS: SettingSchema[] = [
 	{
+		id: 'css.customData',
+		group: 'CSS',
+		type: 'json',
+		schema: { type: 'array', items: { type: 'string' } },
+		default: [],
+		description: 'ไฟล์ JSON custom data (custom property, at-rule, pseudo-class ที่กำหนดเอง) ตาม path ที่สัมพันธ์กับ workspace (A list of relative file paths pointing to JSON files following the [custom data format](https://github.com/microsoft/vscode-css-languageservice/blob/master/docs/customData.md).\n\nKingu loads custom data on startup to enhance its CSS support for CSS custom properties (variables), at-rules, pseudo-classes, and pseudo-elements you specify in the JSON files.\n\nThe file paths are relative to workspace and only workspace folder settings are considered.)'
+	},
+	{
 		id: 'css.validate',
 		group: 'CSS',
 		type: 'boolean',

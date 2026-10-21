@@ -16,7 +16,7 @@
 	import { diffEditorOptionsFrom, diffWraps } from '#lib/settings/mappings.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { editors } from './editors.svelte';
-	import { fileOf, isConflictCompareKey, isDiffKey, isIndexDiffKey, isTaskDiffKey, parseCommitDiffKey, parseHistoryDiffKey, parseTaskDiffKey } from './scm';
+	import { fileOf, isConflictCompareKey, isDiffKey, isIndexDiffKey, isTaskDiffKey, parseCommitDiffKey, parseHistoryDiffKey, parseRefDiffKey, parseTaskDiffKey } from './scm';
 	import { compareSides } from '#lib/scm/conflicts.ts';
 	import { addIndexDiffView } from '#lib/scm/quickDiff.svelte.ts';
 	import { scm } from './scm.svelte';
@@ -36,6 +36,8 @@
 	import { getEntry } from './editorModels';
 	import { parseCompareKey } from './compare';
 	import { compareStore } from './compare.svelte';
+	import { isRefactorPreviewKey } from '#lib/lsp/refactorPreview.ts';
+	import { refactorPreview } from '#lib/lsp/refactorPreview.svelte.ts';
 
 	let { active, onfail, reportLanguage = false }: { active: string | null; onfail: (key: string) => void; reportLanguage?: boolean } = $props();
 	const activeKey = $derived(active);
@@ -192,6 +194,13 @@
 				invoke<string>('git_show_ref', { slug: null, rev: `${history.hash}^`, rel: history.before }).catch(() => '').then((text) => ({ text, path: `${history.hash}^/${history.before}` })),
 				invoke<string>('git_show_ref', { slug: null, rev: history.hash, rel: history.rel }).catch(() => '')
 			]);
+		// Two revisions of a file, or one ↔ the working copy (Source Control Graph, stashes, Compare with…).
+		const ref = parseRefDiffKey(key);
+		if (ref)
+			return Promise.all([
+				invoke<string>('git_show_ref', { slug: null, rev: ref.left, rel: ref.before }).catch(() => '').then((text) => ({ text, path: `${ref.left}/${ref.before}` })),
+				ref.right === null ? workingCopy(m, rel) : invoke<string>('git_show_ref', { slug: null, rev: ref.right, rel: ref.rel }).catch(() => '')
+			]);
 		// Local history: an entry ↔ the file now (Compare with File) or ↔ another entry.
 		const local = parseLocalHistoryDiffKey(key);
 		if (local) {
@@ -214,6 +223,11 @@
 						: resourceCopy(left.key);
 			const leftPath = left.kind === 'clipboard' ? `clipboard/${left.id}` : left.kind === 'saved' ? `saved/${left.key}` : `left/${left.key}`;
 			return Promise.all([leftText.then((text) => ({ text, path: leftPath })), resourceCopy(right)]);
+		}
+		// Refactor Preview: the file as it is ↔ with the edits checked in the panel.
+		if (isRefactorPreviewKey(key)) {
+			const [before, after] = refactorPreview.sides(rel);
+			return [{ text: before, path: `refactor/${rel}` }, after];
 		}
 		// Staged Changes: the index on the right.
 		if (isIndexDiffKey(key)) return Promise.all([original(key, rel), invoke<string | null>('scm_show_index', { rel }).then((t) => t ?? '')]);
@@ -263,6 +277,8 @@
 		if (key && isTaskDiffKey(key)) void adeTasks.stats[parseTaskDiffKey(key)?.slug ?? ''];
 		// A chat's working set changed (another edit, Keep, Undo).
 		if (key && isChatEditKey(key)) void chatEdits.views[parseChatEditKey(key)?.chatId ?? ''];
+		// Edits checked or unchecked in the Refactor Preview.
+		if (key && isRefactorPreviewKey(key)) void [refactorPreview.checked, refactorPreview.originals.size];
 		if (api && key && isDiffKey(key)) void show(api, key);
 	});
 

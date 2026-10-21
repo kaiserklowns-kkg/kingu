@@ -1,7 +1,8 @@
 // The editor area of a workspace as it is kept between sessions (VS Code's EditorPart state and
 // its editors' serializers): the groups and their grid (orientation and sizes), each group's
 // editors in order with their pinned (sticky) and preview state, its active editor and most
-// recently used order, the active group, and each editor's view state (scroll, cursor, folding).
+// recently used order, whether it is locked and which editors it shows split, the active and the
+// maximized group, and each editor's view state (scroll, cursor, folding).
 // Pure, so bun tests cover it; editorRestore.svelte.ts reads and writes it per workspace.
 
 import type { EditorGroup, GridNode, GroupsModel } from './editorGroups';
@@ -12,8 +13,8 @@ import { isUntitled } from './untitled';
 /** A view state (Monaco's ICodeEditorViewState, plain JSON) per `group\0path`. */
 export type ViewStates = Record<string, unknown>;
 export type SavedTab = { path: string; preview?: boolean; sticky?: boolean };
-export type SavedGroup = { id: number; tabs: SavedTab[]; active: string | null; mru: string[] };
-export type SavedLayout = { groups: SavedGroup[]; root: GridNode; activeGroup: number; views?: ViewStates };
+export type SavedGroup = { id: number; tabs: SavedTab[]; active: string | null; mru: string[]; locked?: boolean; splitIn?: string[] };
+export type SavedLayout = { groups: SavedGroup[]; root: GridNode; activeGroup: number; maximized?: number; views?: ViewStates };
 
 /** View states kept per workspace at most (the open editors' come first). */
 export const MAX_SAVED_VIEWS = 200;
@@ -37,14 +38,23 @@ export function serializeLayout(model: GroupsModel, keep: (key: string) => boole
 	const groups = model.groups.map((g) => {
 		const tabs = g.tabs.filter((t) => keep(t.path)).map((t) => ({ path: t.path, ...(t.preview ? { preview: true } : {}), ...(t.sticky ? { sticky: true } : {}) }));
 		const paths = new Set(tabs.map((t) => t.path));
-		return { id: g.id, tabs, active: g.active && paths.has(g.active) ? g.active : (tabs.at(-1)?.path ?? null), mru: (g.mru ?? []).filter((p) => paths.has(p)) };
+		const splitIn = (g.splitIn ?? []).filter((p) => paths.has(p));
+		return {
+			id: g.id,
+			tabs,
+			active: g.active && paths.has(g.active) ? g.active : (tabs.at(-1)?.path ?? null),
+			mru: (g.mru ?? []).filter((p) => paths.has(p)),
+			...(g.locked ? { locked: true } : {}),
+			...(splitIn.length ? { splitIn } : {})
+		};
 	});
 	const open = new Set(groups.flatMap((g) => g.tabs.map((t) => viewKey(g.id, t.path))));
 	const live = new Set(groups.map((g) => String(g.id)));
 	const entries = Object.entries(views).filter(([k, v]) => v && live.has(k.split('\u0000')[0]) && keep(k.slice(k.indexOf('\u0000') + 1)));
 	// The open editors' first, then the most recent of the closed ones (last in insertion order).
 	const kept = [...entries.filter(([k]) => open.has(k)), ...entries.filter(([k]) => !open.has(k)).reverse()].slice(0, MAX_SAVED_VIEWS);
-	return { groups, root: JSON.parse(JSON.stringify(model.root)) as GridNode, activeGroup: model.activeGroup, views: Object.fromEntries(kept) };
+	const maximized = model.maximized != null && model.groups.length > 1 && model.groups.some((g) => g.id === model.maximized) ? { maximized: model.maximized } : {};
+	return { groups, root: JSON.parse(JSON.stringify(model.root)) as GridNode, activeGroup: model.activeGroup, ...maximized, views: Object.fromEntries(kept) };
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -92,7 +102,15 @@ function parseGroup(raw: unknown, keep: (key: string) => boolean): EditorGroup |
 	const mru = Array.isArray(raw.mru) ? raw.mru.filter((p): p is string => typeof p === 'string' && paths.has(p)) : [];
 	for (const t of tabs) if (!mru.includes(t.path)) mru.push(t.path);
 	const order = [...new Set(mru)];
-	return { id: raw.id, tabs, active, mru: active ? [active, ...order.filter((p) => p !== active)] : order };
+	const splitIn = Array.isArray(raw.splitIn) ? [...new Set(raw.splitIn.filter((p): p is string => typeof p === 'string' && paths.has(p)))] : [];
+	return {
+		id: raw.id,
+		tabs,
+		active,
+		mru: active ? [active, ...order.filter((p) => p !== active)] : order,
+		...(raw.locked === true ? { locked: true } : {}),
+		...(splitIn.length ? { splitIn } : {})
+	};
 }
 
 /** A saved layout read back as a groups model (null when it is not one), with its view states. */
@@ -113,7 +131,9 @@ export function parseLayout(raw: unknown, keep: (key: string) => boolean): { mod
 	const nextId = Math.max(...ids, ...nodeIds) + 1;
 	const views: ViewStates = {};
 	if (isObject(raw.views)) for (const [k, v] of Object.entries(raw.views)) if (isObject(v) && ids.has(Number(k.split('\u0000')[0]))) views[k] = v;
-	return { model: { groups, root, activeGroup, nextId, closed: [], maximized: null, expanded: null }, views };
+	// A maximized group comes back maximized, and active (VS Code restores the maximized state).
+	const maximized = groups.length > 1 && isId(raw.maximized) && ids.has(raw.maximized) ? raw.maximized : null;
+	return { model: { groups, root, activeGroup: maximized ?? activeGroup, nextId, closed: [], maximized, expanded: null }, views };
 }
 
 /** What an older build kept (the open files, one group): the same as a layout of one group. */

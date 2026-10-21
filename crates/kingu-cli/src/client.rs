@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-use crate::args::Command;
+use crate::args::{Command, Editor};
 use crate::i18n::{Msg, tr};
 use crate::protocol::{self, Request, Response};
 
@@ -73,7 +73,55 @@ pub fn request_of(cmd: &Command, cwd: &Path, stdin_prompt: Option<String>) -> Re
     Command::AccountList { agent } => (protocol::METHOD_ACCOUNT_LIST_DATA, json!({ "provider": agent })),
     Command::AccountSelect { agent, account } => (protocol::METHOD_ACCOUNT_SELECT_DATA, json!({ "provider": agent, "accountId": account })),
     Command::AccountRemove { agent, account } => (protocol::METHOD_ACCOUNT_REMOVE_DATA, json!({ "provider": agent, "accountId": account })),
+    Command::Editor(e) => (protocol::METHOD_EDITOR_OPEN, editor_params(e, cwd)),
   }))
+}
+
+/// `editor.open`'s params: every path absolute (`main` has put the stdin file in its place).
+pub fn editor_params(e: &Editor, cwd: &Path) -> Value {
+  let paths: Vec<Value> = e.paths.iter().map(|t| json!({ "path": absolute(cwd, &t.path).display().to_string(), "line": t.line, "column": t.column })).collect();
+  json!({
+    "cwd": cwd.display().to_string(),
+    "paths": paths,
+    "diff": e.diff,
+    "merge": e.merge,
+    "add": e.add,
+    "remove": e.remove,
+    "newWindow": e.new_window,
+    "reuseWindow": e.reuse_window,
+    "wait": e.wait,
+    "profile": e.profile,
+  })
+}
+
+/// The launch arguments for a Kingu that is not running: the absolute paths.
+pub fn launch_paths(e: &Editor, cwd: &Path) -> Vec<PathBuf> {
+  e.paths.iter().map(|t| absolute(cwd, &t.path)).collect()
+}
+
+/// Bigger stdin is refused (VS Code reads it into a temporary file too).
+pub const MAX_STDIN: usize = 64 * 1024 * 1024;
+
+/// Writes what was read from stdin to a new owner-only `kingu-stdin-<n>.txt` in `dir`.
+pub fn write_stdin_file(dir: &Path, text: &[u8]) -> Result<PathBuf, String> {
+  use std::io::Write;
+  for attempt in 0..16u32 {
+    let n = protocol::new_token()?;
+    let path = dir.join(format!("kingu-stdin-{}.txt", &n[..if attempt < 8 { 6 } else { 12 }]));
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::OpenOptionsExt;
+      opts.mode(0o600);
+    }
+    match opts.open(&path) {
+      Ok(mut f) => return f.write_all(text).map(|()| path.clone()).map_err(|e| format!("{}: {e}", path.display())),
+      Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+      Err(e) => return Err(format!("{}: {e}", path.display())),
+    }
+  }
+  Err(format!("{}: no free name", dir.display()))
 }
 
 fn absolute(cwd: &Path, path: &str) -> PathBuf {
@@ -157,15 +205,22 @@ pub fn render(method: &str, result: &Value) -> String {
   }
 }
 
+/// How long an answer may take: starting a task waits for the window (the app gives it 30 s).
+pub const ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
 /// Sends one request over the app's socket and reads its answer.
-#[cfg(unix)]
 pub fn call(socket: &Path, token: &str, method: &str, params: Value) -> Result<Response, (i32, String)> {
+  call_with(socket, token, method, params, Some(ANSWER_TIMEOUT))
+}
+
+/// [`call`] waiting `timeout` for the answer (`None`: as long as it takes, for `editor.wait`).
+#[cfg(unix)]
+pub fn call_with(socket: &Path, token: &str, method: &str, params: Value, timeout: Option<std::time::Duration>) -> Result<Response, (i32, String)> {
   use std::io::{BufRead, BufReader, Read, Write};
   use std::os::unix::net::UnixStream;
   use std::time::Duration;
   let mut stream = UnixStream::connect(socket).map_err(|e| (EXIT_UNAVAILABLE, tr(Msg::NotReachable, &[("socket", &socket.display()), ("detail", &e)])))?;
-  // Starting a task waits for the window (the app gives it 30 s).
-  let _ = stream.set_read_timeout(Some(Duration::from_secs(90)));
+  let _ = stream.set_read_timeout(timeout);
   let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
   let req = Request { id: 1, auth_token: token.to_owned(), method: method.to_owned(), params };
   stream.write_all(protocol::encode(&req).as_bytes()).map_err(|e| (EXIT_UNAVAILABLE, tr(Msg::SendFailed, &[("detail", &e)])))?;
@@ -178,7 +233,7 @@ pub fn call(socket: &Path, token: &str, method: &str, params: Value) -> Result<R
 }
 
 #[cfg(not(unix))]
-pub fn call(_socket: &Path, _token: &str, _method: &str, _params: Value) -> Result<Response, (i32, String)> {
+pub fn call_with(_socket: &Path, _token: &str, _method: &str, _params: Value, _timeout: Option<std::time::Duration>) -> Result<Response, (i32, String)> {
   Err((EXIT_UNAVAILABLE, tr(Msg::Unsupported, &[])))
 }
 
@@ -202,6 +257,46 @@ mod tests {
     assert!(request_of(&Command::Help, cwd, None).unwrap().is_none());
     let (m, p) = request_of(&Command::Notify { message: "done".into(), title: None }, cwd, None).unwrap().unwrap();
     assert_eq!((m, p), (protocol::METHOD_NOTIFY, json!({ "message": "done", "title": null })));
+  }
+
+  #[test]
+  fn builds_editor_requests_with_absolute_paths() {
+    use crate::args::Target;
+    let cwd = Path::new("/repo");
+    let e = Editor {
+      paths: vec![Target { path: "src/a.rs".into(), line: Some(3), column: Some(2) }, Target::plain("/etc/hosts"), Target::plain(".")],
+      goto: true,
+      wait: true,
+      profile: Some("Work".into()),
+      ..Default::default()
+    };
+    let (m, p) = request_of(&Command::Editor(e.clone()), cwd, None).unwrap().unwrap();
+    assert_eq!(m, protocol::METHOD_EDITOR_OPEN);
+    assert_eq!(
+      p,
+      json!({
+        "cwd": "/repo",
+        "paths": [{ "path": "/repo/src/a.rs", "line": 3, "column": 2 }, { "path": "/etc/hosts", "line": null, "column": null }, { "path": "/repo/.", "line": null, "column": null }],
+        "diff": false, "merge": false, "add": false, "remove": false, "newWindow": false, "reuseWindow": false, "wait": true, "profile": "Work",
+      })
+    );
+    assert_eq!(launch_paths(&e, cwd), [PathBuf::from("/repo/src/a.rs"), PathBuf::from("/etc/hosts"), PathBuf::from("/repo/.")]);
+  }
+
+  #[test]
+  fn writes_stdin_to_a_private_temporary_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = write_stdin_file(tmp.path(), "สวัสดี\n".as_bytes()).unwrap();
+    let b = write_stdin_file(tmp.path(), b"").unwrap();
+    assert_ne!(a, b);
+    assert!(a.file_name().unwrap().to_str().unwrap().starts_with("kingu-stdin-"));
+    assert_eq!(std::fs::read_to_string(&a).unwrap(), "สวัสดี\n");
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      assert_eq!(std::fs::metadata(&a).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+    assert!(write_stdin_file(&tmp.path().join("missing"), b"x").is_err());
   }
 
   #[test]

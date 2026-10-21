@@ -270,6 +270,8 @@ export const MENUS: Menu[] = [
 					{ command: 'workbench.action.splitEditorLeft', label: 'Split Left' },
 					{ command: 'workbench.action.splitEditorRight', label: 'Split Right' },
 					SEP,
+					{ command: 'workbench.action.splitEditorInGroup', label: 'Split in Group' },
+					SEP,
 					{ command: 'workbench.action.editorLayoutSingle', label: 'Single' },
 					{ command: 'workbench.action.editorLayoutTwoColumns', label: 'Two Columns' },
 					{ command: 'workbench.action.editorLayoutThreeColumns', label: 'Three Columns' },

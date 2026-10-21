@@ -3,8 +3,19 @@
 
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { quickInputKind, quickValueKind, recordCommand, restoredInput } from './workbenchOptions';
+import { parseAlignment, type QuickAlignment } from './quickAccess';
 
 const HISTORY_KEY = 'kingu.commandPalette.history';
+/** Align Quick Input Top / Center, kept per machine like VS Code's quick input view state. */
+const ALIGNMENT_KEY = 'kingu.quickInput.alignment';
+
+function readAlignment(): QuickAlignment {
+	try {
+		return parseAlignment(localStorage.getItem(ALIGNMENT_KEY));
+	} catch {
+		return 'top';
+	}
+}
 
 function readHistory(): string[] {
 	try {
@@ -64,6 +75,17 @@ class Quick {
 	#lastInput: { commands?: string; files?: string } = {};
 	/** `workbench.commandPalette.history`: recently run palette commands, most recent first. */
 	commandHistory = $state<string[]>(readHistory());
+	/** Where the quick input sits: below the title bar, or a quarter down the window. */
+	alignment = $state<QuickAlignment>(readAlignment());
+
+	setAlignment(alignment: QuickAlignment) {
+		this.alignment = alignment;
+		try {
+			localStorage.setItem(ALIGNMENT_KEY, alignment);
+		} catch {
+			// Storage unavailable: the choice lasts until the window reloads.
+		}
+	}
 
 	/**
 	 * Opens quick access at `prefix`. `workbench.commandPalette.preserveInput` and

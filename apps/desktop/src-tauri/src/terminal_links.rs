@@ -60,12 +60,14 @@ fn inside(path: &Path, root: &Path) -> Option<LinkTarget> {
 
 /// The file a terminal link names, or null when there is none (no link is drawn then).
 /// `key`: the terminal's session, whose shell's current and starting directories are the bases.
+/// `cwd`: the directory shell integration reported for the line's command (VS Code resolves a
+/// link against the cwd its command ran in), tried first.
 #[tauri::command(async)]
-pub fn terminal_link_target(ws: Workspace, ptys: State<'_, Ptys>, key: String, text: String) -> Result<Option<LinkTarget>, String> {
+pub fn terminal_link_target(ws: Workspace, ptys: State<'_, Ptys>, key: String, text: String, cwd: Option<String>) -> Result<Option<LinkTarget>, String> {
   let roots = ws.roots();
   let Some(root) = roots.first().cloned() else { return Ok(None) };
   let session = ptys.list().unwrap_or_default().into_iter().find(|s| s.key == key);
-  let mut bases = Vec::new();
+  let mut bases: Vec<PathBuf> = cwd.map(PathBuf::from).filter(|d| d.is_absolute()).into_iter().collect();
   if let Some(s) = &session {
     if let Some(cwd) = s.pid.and_then(kingu_ptyd::procinfo::process_cwd) {
       bases.push(cwd);

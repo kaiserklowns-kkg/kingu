@@ -24,6 +24,10 @@ import { panelTerminalFocus } from '#lib/terminal/terminalCommands.svelte.ts';
 import { isMac } from './keys';
 import { isSearchEditorKey } from './searchEditor';
 import { searchEditors } from './searchEditor.svelte.ts';
+import { appMode } from './mode.svelte';
+import { canSplitInGroup } from './editorKind';
+import { setUserSetting } from './layoutControls.svelte';
+import { settings } from '#lib/settings/settings.svelte.ts';
 
 
 /** A tab that is a workspace file (or a diff of one), so it has a path to copy or reveal. */
@@ -205,7 +209,51 @@ export function installEditorCommands(): () => void {
 		commands.register({ id: 'copyFilePath', title: 'Copy Path of Active File', category: 'File', key: 'alt+ctrl+c', mac: 'alt+cmd+c', keyWhen: notInExplorerOrEditor, when: () => hasEditor() && isFileEditor(active()!), run: () => copyPath(active()!) }),
 		commands.register({ id: 'copyRelativeFilePath', title: 'Copy Relative Path of Active File', category: 'File', key: 'ctrl+shift+alt+c', mac: 'alt+shift+cmd+c', keyWhen: notInExplorerOrEditor, when: () => hasEditor() && isFileEditor(active()!), run: () => copyRelativePath(active()!) }),
 		commands.register({ id: 'revealFileInOS', title: 'Reveal Active File in Finder', category: 'File', key: 'shift+alt+r', mac: 'alt+cmd+r', keyWhen: notInExplorerOrEditor, when: () => hasEditor() && isFileEditor(active()!), run: () => revealInOS(active()!) }),
-		commands.register({ id: 'workbench.files.action.showActiveFileInExplorer', title: 'Reveal Active File in Explorer View', category: 'File', when: () => hasEditor() && isFileEditor(active()!), run: () => revealInExplorer(active()!) })
+		commands.register({ id: 'workbench.files.action.showActiveFileInExplorer', title: 'Reveal Active File in Explorer View', category: 'File', when: () => hasEditor() && isFileEditor(active()!), run: () => revealInExplorer(active()!) }),
+		...installGroupCommands()
 	];
 	return () => unregister.forEach((u) => u());
+}
+
+/** Editor group commands (VS Code's editorActions.ts / editorCommands.ts): maximize, expand, lock, join, split in group. */
+function installGroupCommands(): (() => void)[] {
+	const ide = () => !appMode.isAgents;
+	const several = () => ide() && editors.groups.length > 1;
+	const canSplit = () => ide() && !editors.isSplitInGroup() && canSplitInGroup(editors.active);
+	const split = () => ide() && editors.isSplitInGroup();
+	return [
+		commands.register({
+			id: 'workbench.action.toggleMaximizeEditorGroup',
+			title: 'Toggle Maximize Editor Group',
+			category: 'View',
+			key: 'cmd+k cmd+m',
+			when: () => several() || (ide() && editors.model.maximized != null),
+			run: () => editors.toggleMaximizeGroup()
+		}),
+		commands.register({ id: 'workbench.action.minimizeOtherEditors', title: 'Expand Editor Group', category: 'View', when: several, run: () => editors.expandGroup() }),
+		commands.register({ id: 'workbench.action.toggleEditorWidths', title: 'Toggle Editor Group Sizes', category: 'View', when: several, run: () => editors.toggleExpandGroup() }),
+		commands.register({ id: 'workbench.action.joinTwoGroups', title: 'Join Editor Group with Next Group', category: 'View', when: several, run: () => editors.joinWithNextGroup() }),
+		commands.register({ id: 'workbench.action.lockEditorGroup', title: 'Lock Editor Group', category: 'View', when: () => ide() && !editors.isLocked(), run: () => editors.setLocked(true) }),
+		commands.register({ id: 'workbench.action.unlockEditorGroup', title: 'Unlock Editor Group', category: 'View', when: () => ide() && editors.isLocked(), run: () => editors.setLocked(false) }),
+		commands.register({ id: 'workbench.action.toggleEditorGroupLock', title: 'Toggle Editor Group Lock', category: 'View', when: ide, run: () => editors.setLocked(!editors.isLocked()) }),
+		commands.register({ id: 'workbench.action.splitEditorInGroup', title: 'Split Editor in Group', category: 'View', key: 'cmd+k cmd+shift+\\', when: canSplit, run: () => editors.setSplitInGroup(true) }),
+		commands.register({ id: 'workbench.action.joinEditorInGroup', title: 'Join Editor in Group', category: 'View', key: 'cmd+k cmd+shift+\\', when: split, run: () => editors.setSplitInGroup(false) }),
+		commands.register({
+			id: 'workbench.action.toggleSplitEditorInGroup',
+			title: 'Toggle Split Editor in Group',
+			category: 'View',
+			when: () => canSplit() || split(),
+			run: () => editors.setSplitInGroup(!editors.isSplitInGroup())
+		}),
+		commands.register({
+			id: 'workbench.action.toggleSplitEditorInGroupLayout',
+			title: 'Toggle Layout of Split Editor in Group',
+			category: 'View',
+			when: split,
+			run: () => setUserSetting('workbench.editor.splitInGroupLayout', settings.get('workbench.editor.splitInGroupLayout') === 'vertical' ? 'horizontal' : 'vertical')
+		}),
+		commands.register({ id: 'workbench.action.focusFirstSideEditor', title: 'Focus First Side in Active Editor', category: 'View', when: split, run: () => editors.focusSide('first') }),
+		commands.register({ id: 'workbench.action.focusSecondSideEditor', title: 'Focus Second Side in Active Editor', category: 'View', when: split, run: () => editors.focusSide('second') }),
+		commands.register({ id: 'workbench.action.focusOtherSideEditor', title: 'Focus Other Side in Active Editor', category: 'View', when: split, run: () => editors.focusSide('other') })
+	];
 }

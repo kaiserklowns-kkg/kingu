@@ -6,6 +6,7 @@ import { t } from '#lib/i18n/index.ts';
 import { isChatEditKey, parseChatEditKey } from '#lib/agent/chatEdits.ts';
 import { isLocalHistoryDiffKey, localHistoryTabLabel, parseLocalHistoryDiffKey, parseLocalHistoryKey } from '#lib/scm/localHistory.ts';
 import { isOutputKey, outputChannelOf } from '#lib/output/output.ts';
+import { isRefactorPreviewKey, REFACTOR_PREVIEW_PREFIX } from '#lib/lsp/refactorPreview.ts';
 
 export type StatusEntry = {
 	path: string;
@@ -186,6 +187,29 @@ export function parseHistoryDiffKey(key: string): { hash: string; rel: string; b
 	return { hash, rel, before: before === '_' ? rel : decodeURIComponent(before) };
 }
 
+/**
+ * A file at one revision ↔ at another, or ↔ the working copy (Source Control Graph, a stash,
+ * Compare with Branch or Tag): `refdiff://<left>/<right or ~>/<path before or _>/<rel>`, the
+ * revisions and the earlier path URI-encoded (branch names have slashes).
+ */
+export const REF_DIFF_PREFIX = 'refdiff://';
+export const refDiffKey = (left: string, right: string | null, rel: string, before?: string | null) =>
+	`${REF_DIFF_PREFIX}${encodeURIComponent(left)}/${right === null ? '~' : encodeURIComponent(right)}/${before && before !== rel ? encodeURIComponent(before) : '_'}/${rel}`;
+export const isRefDiffKey = (key: string) => key.startsWith(REF_DIFF_PREFIX);
+export function parseRefDiffKey(key: string): { left: string; right: string | null; rel: string; before: string } | null {
+	if (!isRefDiffKey(key)) return null;
+	const [left, right, before, ...rest] = key.slice(REF_DIFF_PREFIX.length).split('/');
+	if (!left || !right || !before || !rest.length) return null;
+	const rel = rest.join('/');
+	try {
+		return { left: decodeURIComponent(left), right: right === '~' ? null : decodeURIComponent(right), rel, before: before === '_' ? rel : decodeURIComponent(before) };
+	} catch {
+		return null;
+	}
+}
+/** A revision as a tab shows it: a commit id shortened, a ref name as it is (`HEAD~1`, `origin/main`). */
+const revLabel = (rev: string) => rev.replace(/^([0-9a-f]{7})[0-9a-f]{33}(?:[0-9a-f]{24})?/, '$1');
+
 /** merge-conflict.compare: the file with every conflict as its current side ↔ as its incoming side. */
 export const CONFLICT_COMPARE_PREFIX = 'conflictcompare:';
 export const conflictCompareKey = (rel: string) => CONFLICT_COMPARE_PREFIX + rel;
@@ -198,7 +222,7 @@ export const isMergeKey = (key: string) => key.startsWith(MERGE_PREFIX);
 
 /** A chat's working-set file, its snapshot before the agent's edits vs now: `chatedit://<chat id>/<file>` (agent/chatEdits.ts). */
 export const isDiffKey = (key: string) =>
-	key.startsWith(DIFF_PREFIX) || isIndexDiffKey(key) || isHistoryDiffKey(key) || isConflictCompareKey(key) || isTaskDiffKey(key) || isCommitDiffKey(key) || isChatEditKey(key) || isLocalHistoryDiffKey(key) || isCompareKey(key);
+	key.startsWith(DIFF_PREFIX) || isIndexDiffKey(key) || isHistoryDiffKey(key) || isRefDiffKey(key) || isConflictCompareKey(key) || isTaskDiffKey(key) || isCommitDiffKey(key) || isChatEditKey(key) || isLocalHistoryDiffKey(key) || isCompareKey(key) || isRefactorPreviewKey(key);
 /** The workspace file behind an editor tab key (itself for plain file tabs; a task diff's file
  * lives in the worktree under `.kingu/worktrees/<slug>/`). */
 export function fileOf(key: string): string {
@@ -213,9 +237,11 @@ export function fileOf(key: string): string {
 	if (commit) return commit.slug ? `.kingu/worktrees/${commit.slug}/${commit.rel}` : commit.rel;
 	const history = parseHistoryDiffKey(key);
 	if (history) return history.rel;
+	const ref = parseRefDiffKey(key);
+	if (ref) return ref.rel;
 	const local = parseLocalHistoryDiffKey(key) ?? parseLocalHistoryKey(key);
 	if (local) return local.rel;
-	for (const prefix of [INDEX_DIFF_PREFIX, CONFLICT_COMPARE_PREFIX, MERGE_PREFIX]) if (key.startsWith(prefix)) return key.slice(prefix.length);
+	for (const prefix of [INDEX_DIFF_PREFIX, CONFLICT_COMPARE_PREFIX, MERGE_PREFIX, REFACTOR_PREVIEW_PREFIX]) if (key.startsWith(prefix)) return key.slice(prefix.length);
 	return key.startsWith(DIFF_PREFIX) ? key.slice(DIFF_PREFIX.length) : key;
 }
 
@@ -235,8 +261,11 @@ export function tabLabel(key: string): string {
 	if (isIndexDiffKey(key)) return `${name} (Index)`;
 	const history = parseHistoryDiffKey(key);
 	if (history) return `${name} (${history.hash.slice(0, 7)})`;
+	const ref = parseRefDiffKey(key);
+	if (ref) return `${name} (${revLabel(ref.left)} ↔ ${ref.right === null ? 'Working Tree' : revLabel(ref.right)})`;
 	if (isConflictCompareKey(key)) return t('scmEditor.compareLabel', { name });
 	if (isMergeKey(key)) return t('scmEditor.merge.tabLabel', { name });
+	if (isRefactorPreviewKey(key)) return t('refactorPreview.diffLabel', { name });
 	if (isPreviewKey(key)) return `Preview ${name}`;
 	return isDiffKey(key) ? `${name} (Working Tree)` : name;
 }

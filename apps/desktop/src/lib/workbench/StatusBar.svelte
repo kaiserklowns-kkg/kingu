@@ -13,6 +13,7 @@
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 	import { scm } from './scm.svelte';
 	import { statusEntries } from './statusEntries.svelte';
+	import { workspaceTrust } from './workspaceTrust.svelte';
 	import { commands } from './commands.svelte';
 	import { syncItem } from './scmRemote';
 	import { textFiles } from './textFileService.svelte';
@@ -39,6 +40,7 @@
 	import { gitQueue } from './gitQueue.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import { editorModes } from '#lib/editor/editingCommands.svelte.ts';
+	import { imageZoom } from './imageZoom.svelte';
 
 	$effect(() => gitQueue.install());
 
@@ -139,6 +141,7 @@
 		{ id: 'status.editor.encoding', label: 'Editor Encoding' },
 		{ id: 'status.editor.eol', label: 'Editor End of Line' },
 		{ id: 'status.editor.mode', label: 'Editor Language' },
+		{ id: 'status.imagePreview.zoom', label: 'Image Zoom' },
 		{ id: 'status.kingu.localAi', label: 'Local AI' },
 		{ id: 'status.notifications', label: 'Notifications' }
 	];
@@ -175,6 +178,12 @@
 			: 'bg-(--vscode-statusBar-background) text-(--vscode-statusBar-foreground)'
 	]}
 >
+	<!-- VS Code's Restricted Mode item: the window is not trusted; opens the Workspace Trust editor. -->
+	{#if workspaceTrust.restricted}
+		<button class={[ITEM, 'bg-(--vscode-statusBarItem-prominentBackground,rgba(0,0,0,0.5)) text-(--vscode-statusBarItem-prominentForeground,inherit)']} title={t('trust.status.tooltip')} onclick={() => workspaceTrust.manage()}>
+			<Icon name="shield" size={14} />{t('trust.status.restricted')}
+		</button>
+	{/if}
 	<!-- workbench.notifications.position bottom-left: the bell is the left-most item. -->
 	{#if bell === 'statusLeft' && show('status.notifications')}<NotificationsBell />{/if}
 	{#if branch && show('status.scm')}
@@ -265,6 +274,8 @@
 		{#if show('status.editor.eol')}<button class={ITEM} title="Select End of Line Sequence" onclick={() => commands.run('workbench.action.editor.changeEOL')}>{editors.eol}</button>{/if}
 		{#if show('status.editor.mode')}<button class={ITEM} title="Select Language Mode" onclick={() => commands.run('workbench.action.editor.changeLanguageMode')}>{languageName}</button>{/if}
 	{/if}
+	<!-- The image preview's zoom (VS Code's status.imagePreview.zoom): "Whole Image" or the percentage, click to pick. -->
+	{#if imageZoom.label && show('status.imagePreview.zoom')}<button class={ITEM} title="Image Zoom" onclick={() => imageZoom.pick()}>{imageZoom.label}</button>{/if}
 	{#if show('status.kingu.localAi')}<LocalAiStatus />{/if}
 	<!-- VS Code keeps the notification bell at the far right. -->
 	{#if floating.enabled && floating.location === 'status-bar'}<FloatingToggle variant="status-bar" />{/if}

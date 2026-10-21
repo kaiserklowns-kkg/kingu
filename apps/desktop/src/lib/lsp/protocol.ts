@@ -65,12 +65,16 @@ export type DocumentDiagnosticReport = { kind: 'full'; resultId?: string; items:
 
 // --- Edits ---------------------------------------------------------------------------------------
 
-export type TextDocumentEdit = { textDocument: { uri: string; version: number | null }; edits: TextEdit[] };
+/** An edit tagged with a change annotation (a key of `WorkspaceEdit.changeAnnotations`). */
+export type AnnotatedTextEdit = TextEdit & { annotationId: string };
+export type TextDocumentEdit = { textDocument: { uri: string; version: number | null }; edits: (TextEdit | AnnotatedTextEdit)[] };
+/** `needsConfirmation`: the client shows the edit before applying it (Refactor Preview). */
+export type ChangeAnnotation = { label: string; needsConfirmation?: boolean; description?: string };
 export type ResourceOperation = { kind: 'create' | 'rename' | 'delete'; [key: string]: unknown };
 export type WorkspaceEdit = {
 	changes?: Record<string, TextEdit[]>;
 	documentChanges?: (TextDocumentEdit | ResourceOperation)[];
-	changeAnnotations?: Record<string, unknown>;
+	changeAnnotations?: Record<string, ChangeAnnotation>;
 };
 export type Command = { title: string; command: string; arguments?: unknown[] };
 export type CodeAction = {
@@ -138,7 +142,7 @@ export type ColorPresentation = { label: string; textEdit?: TextEdit; additional
 export type ServerCapabilities = {
 	positionEncoding?: string;
 	/** `changeNotifications`: the server takes `workspace/didChangeWorkspaceFolders` (true, or a registration id). */
-	workspace?: { workspaceFolders?: { supported?: boolean; changeNotifications?: boolean | string } };
+	workspace?: { workspaceFolders?: { supported?: boolean; changeNotifications?: boolean | string }; fileOperations?: { willRename?: object; didRename?: object } };
 	textDocumentSync?: number | { openClose?: boolean; change?: number; save?: boolean | { includeText?: boolean } };
 	hoverProvider?: boolean | object;
 	completionProvider?: { triggerCharacters?: string[]; resolveProvider?: boolean };

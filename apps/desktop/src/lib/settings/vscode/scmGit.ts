@@ -609,5 +609,19 @@ export const GIT_SETTINGS: SettingSchema[] = [
 		],
 		description: 'ใช้ git repository ที่อยู่ในโฟลเดอร์แม่ของโฟลเดอร์ที่เปิดหรือไม่ (Control whether a repository in parent folders of workspaces or open files should be opened.)',
 		scope: 'resource'
+	},
+	{
+		id: 'git.useEditorAsCommitInput',
+		group: 'Git',
+		type: 'boolean',
+		default: true,
+		description: 'commit ตอนช่องข้อความว่างจะเปิด editor ให้เขียนข้อความ commit (COMMIT_EDITMSG) บันทึกแล้วปิดแท็บเพื่อ commit (Controls whether a full text editor will be used to author commit messages, whenever no message is provided in the commit input box.)'
+	},
+	{
+		id: 'git.verboseCommit',
+		group: 'Git',
+		type: 'boolean',
+		default: false,
+		description: 'แสดง diff ของสิ่งที่ stage ไว้ใต้ข้อความ commit ใน editor เมื่อเปิด git.useEditorAsCommitInput (Enable verbose output when `#git.useEditorAsCommitInput#` is enabled.)'
 	}
 ];

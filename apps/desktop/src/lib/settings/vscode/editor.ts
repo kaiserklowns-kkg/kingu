@@ -1591,6 +1591,13 @@ export const EDITOR_SETTINGS: SettingSchema[] = [
 		description: 'รองรับคลิปบอร์ด primary ของ Linux (Controls whether the Linux primary clipboard should be supported.)'
 	},
 	{
+		id: 'editor.rename.enablePreview',
+		group: 'Text Editor',
+		type: 'boolean',
+		default: true,
+		description: 'กด ⇧Enter ในช่องเปลี่ยนชื่อเพื่อดูการเปลี่ยนแปลงใน Refactor Preview ก่อน (Enable/disable the ability to preview changes before renaming.)'
+	},
+	{
 		id: 'editor.selectionHighlight',
 		group: 'Text Editor',
 		type: 'boolean',
@@ -1621,6 +1628,44 @@ export const EDITOR_SETTINGS: SettingSchema[] = [
 		schema: { enum: [true, false, 'configuredByTheme'] },
 		default: 'configuredByTheme',
 		description: 'ใช้สีจาก semantic token ของ language server (Controls whether the semanticHighlighting is shown for the languages that support it.)'
+	},
+	{
+		id: 'editor.tokenColorCustomizations',
+		group: 'Text Editor',
+		type: 'json',
+		// No top-level type, like VS Code's (an object of groups, textMateRules and `[Theme]` blocks).
+		schema: {
+			properties: {
+				comments: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				strings: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				keywords: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				numbers: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				types: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				functions: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				variables: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				textMateRules: { type: 'array', items: { type: 'object' } },
+				semanticHighlighting: { type: 'boolean' }
+			},
+			patternProperties: { '^\\[': { type: 'object' } }
+		},
+		default: {},
+		description:
+			'แทนที่สีและรูปแบบตัวอักษรของ token จากธีม เช่น {"comments": "#6a9955"}, {"textMateRules": [{"scope": "keyword", "settings": {"fontStyle": "bold"}}]} หรือเฉพาะธีม {"[Dark Modern]": {...}} (Overrides editor syntax colors and font style from the currently selected color theme.)'
+	},
+	{
+		id: 'editor.semanticTokenColorCustomizations',
+		group: 'Text Editor',
+		type: 'json',
+		schema: {
+			properties: {
+				enabled: { type: 'boolean' },
+				rules: { type: 'object' }
+			},
+			patternProperties: { '^\\[': { type: 'object' } }
+		},
+		default: {},
+		description:
+			'แทนที่สีและรูปแบบของ semantic token จากธีม เช่น {"rules": {"variable.readonly": "#4fc1ff"}} หรือเฉพาะธีม {"[Dark Modern]": {"enabled": true}} (Overrides editor semantic token color and styles from the currently selected color theme.)'
 	},
 	{
 		id: 'editor.showDeprecated',

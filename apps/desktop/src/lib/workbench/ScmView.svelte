@@ -29,6 +29,10 @@
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { workspace } from './workspace.svelte.ts';
+	import PopupMenu, { menuItem, menuSeparator } from './PopupMenu.svelte';
+	import type { MenuNode } from './menus';
+	import { commitHistory } from '#lib/scm/commitInput.svelte.ts';
+	import { compareWithRef, ignore } from '#lib/scm/gitCommands.svelte.ts';
 
 	/**
 	 * `source`: one workspace repository (the list below renders one per shown repository), or a
@@ -122,6 +126,12 @@
 	);
 
 	function onInputKey(e: KeyboardEvent) {
+		// ↑/↓ on the first/last line walk the repository's earlier commit messages (VS Code's
+		// history.showPrevious / history.showNext).
+		if (own && input && commitHistory.key(own.dir, e, input, (v) => (scm.message = v))) {
+			e.preventDefault();
+			return;
+		}
 		if (e.key === 'Enter' && (mac ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey) {
 			e.preventDefault();
 			void scm.commit();
@@ -236,6 +246,31 @@
 		];
 	}
 
+	// A row's context menu (VS Code's scm/resourceState/context): open, stage or discard, and for a
+	// workspace repository's files Add to .gitignore and Compare with Branch or Tag.
+	let rowMenu = $state<{ x: number; y: number; r: Resource } | null>(null);
+	function rowMenuItems(r: Resource): MenuNode[] {
+		const items: MenuNode[] = [menuItem('open', t('scmGit.rowOpenChanges')), menuItem('file', t('scmGit.rowOpenFile'), { enabled: !r.deleted })];
+		items.push(menuSeparator, r.staged ? menuItem('unstage', t('scmGit.rowUnstage')) : menuItem('stage', t('scmGit.rowStage')));
+		if (!r.staged && !r.entry.conflict) items.push(menuItem('discard', t('scmGit.rowDiscard')));
+		if (own) {
+			items.push(menuSeparator);
+			if (r.entry.worktree === '?') items.push(menuItem('ignore', t('scmGit.rowIgnore')));
+			items.push(menuItem('compare', t('scmGit.rowCompareWithRef'), { enabled: !r.deleted && r.entry.worktree !== '?' }));
+		}
+		return items;
+	}
+	function runRowMenu(id: string, r: Resource) {
+		const path = r.entry.path;
+		if (id === 'open') openDiff(r, false);
+		else if (id === 'file') openFile(path);
+		else if (id === 'stage') void (r.entry.conflict ? stageResolved([path]) : scm.stage([path]));
+		else if (id === 'unstage') void scm.unstage([path]);
+		else if (id === 'discard') askDiscard(rowKey(r), [r]);
+		else if (id === 'ignore' && own) void ignore(own, [path]);
+		else if (id === 'compare') void compareWithRef(path);
+	}
+
 	// scm.alwaysShowActions: inline actions without hovering.
 	const actionsClass = $derived(settings.get<boolean>('scm.alwaysShowActions') ? 'flex' : 'hidden group-hover/row:flex group-focus-within/row:flex');
 	const treeMode = $derived(settings.get<string>('scm.defaultViewMode') === 'tree');
@@ -341,6 +376,11 @@
 							openResource(r, true);
 						}}
 						ondblclick={() => openResource(r, false)}
+						oncontextmenu={(e) => {
+							e.preventDefault();
+							selected = key;
+							rowMenu = { x: e.clientX, y: e.clientY, r };
+						}}
 					>
 						<FileIcon icon={fileIcon(name)} />
 						<span class={['shrink-0 truncate', r.deleted && 'line-through']}>{name}</span>
@@ -474,6 +514,7 @@
 						style:min-height="{minLines * lineHeight + 8}px"
 						style:max-height="{maxLines * lineHeight + 8}px"
 						onkeydown={onInputKey}
+						oninput={() => own && commitHistory.reset(own.dir)}
 					></textarea>
 					{#if settings.get<boolean>('scm.showInputActionButton')}
 						<!-- scm.showInputActionButton: VS Code's commit button inside the input. -->
@@ -534,3 +575,17 @@
 		{/if}
 	{/if}
 </section>
+
+{#if rowMenu}
+	{@const r = rowMenu.r}
+	<PopupMenu
+		items={rowMenuItems(r)}
+		label={t('scmGit.rowMenu')}
+		x={rowMenu.x}
+		y={rowMenu.y}
+		onRun={(node) => {
+			if (node.type === 'item') runRowMenu(node.id, r);
+		}}
+		onClose={() => (rowMenu = null)}
+	/>
+{/if}

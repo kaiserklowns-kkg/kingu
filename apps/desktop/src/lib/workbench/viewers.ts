@@ -24,4 +24,5 @@ export const previewTarget = (key: string) => key.slice(PREVIEW_PREFIX.length);
 export const CHANGES_PREFIX = 'changes:';
 export const changesKey = (slug = '') => CHANGES_PREFIX + slug;
 export const isChangesKey = (key: string) => key.startsWith(CHANGES_PREFIX);
-export const changesSlug = (key: string) => key.slice(CHANGES_PREFIX.length);
+/** The task of a `changes:` key ('' for the folder's, and for a commit's or a stash's: scm/rangeChanges.ts). */
+export const changesSlug = (key: string) => (key.startsWith(`${CHANGES_PREFIX}@`) ? '' : key.slice(CHANGES_PREFIX.length));

@@ -12,6 +12,8 @@ mod floating;
 mod fs;
 mod git;
 mod git_editor;
+mod git_graph;
+mod git_ops;
 mod git_output;
 mod git_queue;
 mod git_repos;
@@ -37,6 +39,7 @@ mod smart_search;
 mod sessions;
 mod settings;
 mod shell_env;
+mod shell_integration;
 mod skill_hub;
 mod snap;
 mod snap_install;
@@ -58,6 +61,7 @@ mod watcher;
 mod window;
 mod windows;
 mod workspace;
+mod workspace_trust;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -551,6 +555,7 @@ fn pty_spawn(
   floating_cwd: Option<String>,
   task: Option<tasks::TaskLaunch>,
   folder: Option<String>,
+  reported_cwd: Option<String>,
 ) -> Result<kingu_ptyd::Attached, String> {
   pty::validate_key(&key)?;
   // `folder`: the root folder of a multi-root window the terminal belongs to (the user's pick, or
@@ -564,7 +569,9 @@ fn pty_spawn(
   // Orca's resolve-split-cwd), else where a new terminal would.
   // terminal.integrated.splitCwd picks which directory (inherited, the source's initial one, or the root).
   let split_mode = terminal.as_ref().and_then(|t| t.split_cwd.clone()).unwrap_or_else(|| "inherited".into());
-  let inherited = cwd_from.as_deref().and_then(|from| pty::split_cwd(&split_mode, || ptys.live_cwd(from), || ptys.initial_cwd(from), folder.clone()));
+  // `reported_cwd`: the source's directory as its shell integration reported it (OSC 633 P;Cwd), else the process's.
+  let reported = reported_cwd.map(PathBuf::from).filter(|d| d.is_absolute() && d.is_dir());
+  let inherited = cwd_from.as_deref().and_then(|from| pty::split_cwd(&split_mode, || reported.or_else(|| ptys.live_cwd(from)), || ptys.initial_cwd(from), folder.clone()));
   // A task terminal starts in the task's worktree (the ADE's per-worktree terminals); a floating
   // workspace terminal in its own directory setting. No folder open: the terminal starts in the
   // home folder, like VS Code's empty window.
@@ -592,7 +599,7 @@ fn pty_spawn(
   // Only an agent CLI's terminal (`cli:` keys) gets the active AI account's env, never an
   // ordinary terminal, so an API key does not leak into every shell.
   // terminal.integrated.env.*: a `null` value removes the variable.
-  let (mut env, unset) = pty::split_env(terminal.env);
+  let (mut env, mut unset) = pty::split_env(terminal.env);
   // terminal.integrated.inheritEnv / detectLocale.
   let clean_env = terminal.inherit_env == Some(false);
   let current_lang = env.get("LANG").cloned().or_else(|| if clean_env || unset.iter().any(|k| k == "LANG") { None } else { std::env::var("LANG").ok() });
@@ -660,6 +667,28 @@ fn pty_spawn(
       Err(e) => log::warn!("terminal {key}: no agent status file ({e})"),
     }
   }
+  // terminal.integrated.shellIntegration.enabled: Kingu's scripts for zsh, bash, fish and pwsh
+  // (shell_integration.rs), not for a task or an agent CLI's terminal.
+  let mut injected_args: Option<Vec<String>> = None;
+  if terminal.shell_integration && task.is_none() && !key.starts_with("cli:") {
+    let program = shell.map(str::to_owned).or_else(|| std::env::var("SHELL").ok().filter(|s| !s.is_empty())).unwrap_or_else(|| "/bin/zsh".into());
+    let inherited = |k: &str| if clean_env || unset.iter().any(|u| u == k) { None } else { std::env::var(k).ok() };
+    let user_zdotdir = env.get("ZDOTDIR").cloned().or_else(|| inherited("ZDOTDIR"));
+    let home = env.get("HOME").cloned().or_else(|| std::env::var("HOME").ok());
+    let scripts = app.path().app_data_dir().map_err(|e| e.to_string()).and_then(|d| shell_integration::ensure_scripts(&d).map_err(|e| e.to_string()));
+    match scripts {
+      Ok(dir) => {
+        if let Some(inj) = shell_integration::injection(&program, shell_args, &dir, user_zdotdir.as_deref(), home.as_deref()) {
+          // A `null` in terminal.integrated.env must not remove what the injection needs.
+          unset.retain(|u| !inj.env.iter().any(|(k, _)| k == u));
+          env.extend(inj.env);
+          injected_args = Some(inj.args);
+        }
+      }
+      Err(e) => log::warn!("terminal {key}: no shell integration ({e})"),
+    }
+  }
+  let shell_args = injected_args.as_deref().or(shell_args);
   // The `kingu` command on PATH (cli_server.rs).
   cli_server::terminal_env(&mut env, &unset);
   let attached = ptys.open(&key, &cwd, cols, rows, run.as_deref(), &env, shell, shell_args, &unset, clean_env, pty::channel_sink(on_data))?;
@@ -697,6 +726,8 @@ struct TerminalSettings {
   locale: Option<String>,
   /// `terminal.integrated.splitCwd`.
   split_cwd: Option<String>,
+  /// `terminal.integrated.shellIntegration.enabled`.
+  shell_integration: bool,
 }
 
 /// `files.watcherExclude`.
@@ -868,7 +899,9 @@ fn lsp_start(
     Some(f) => roots.iter().find(|r| r.as_path() == Path::new(f)).cloned().ok_or_else(|| crate::tr!(crate::i18n::msg::FilesMsg::OutsideWorkspace, path = f))?,
     None => ws.root()?,
   };
-  let id = lsp::start_for(&servers, &cwd, &lsp::roots_from(&cwd, &roots), &language, on_event)?;
+  // Restricted Mode: no server from the folders' node_modules (workspace_trust.rs).
+  let local = workspace_trust::local_tool_roots(&ws, lsp::roots_from(&cwd, &roots));
+  let id = lsp::start_for(&servers, &cwd, &local, &language, on_event)?;
   servers.own(id, ws.label());
   Ok(id)
 }
@@ -878,14 +911,14 @@ fn lsp_start(
 #[tauri::command]
 fn lsp_check(ws: Workspace, language: String) -> Result<String, String> {
   ws.root()?;
-  lsp::check(&language, &ws.roots()).map(|p| p.to_string_lossy().into_owned())
+  lsp::check(&language, &workspace_trust::local_tool_roots(&ws, ws.roots())).map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Install commands for the server of `language` that this machine's tools can run.
 #[tauri::command]
 fn lsp_install_methods(ws: Workspace, language: String) -> Result<lsp::InstallInfo, String> {
   ws.root()?;
-  lsp::install_info(&language, &ws.roots())
+  lsp::install_info(&language, &workspace_trust::local_tool_roots(&ws, ws.roots()))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1423,6 +1456,31 @@ pub fn run() {
       git_remote::git_stash_drop,
       git_remote::git_clone,
       git_remote::git_clone_cancel,
+      git_graph::scm_graph_log,
+      git_graph::scm_changed_files,
+      git_graph::scm_diff_range,
+      git_graph::scm_merge_base,
+      git_ops::git_merge_branch,
+      git_ops::git_rebase_branch,
+      git_ops::git_cherry_pick,
+      git_ops::git_checkout_detached,
+      git_ops::git_tag_create,
+      git_ops::git_tag_delete,
+      git_ops::git_tags_push,
+      git_ops::git_undo_commit,
+      git_ops::git_ignore_paths,
+      git_ops::git_remote_list,
+      git_ops::git_remote_add,
+      git_ops::git_remote_remove,
+      git_ops::git_remote_rename,
+      git_ops::git_stash_show,
+      git_ops::git_stash_diff,
+      git_ops::git_stash_clear,
+      git_ops::git_commit_editmsg_prepare,
+      git_ops::git_commit_editmsg_read,
+      git_ops::scm_worktree_list,
+      git_ops::scm_worktree_add,
+      git_ops::scm_worktree_remove,
       project::git_init,
       project::project_create,
       projects::projects_list,
@@ -1437,6 +1495,7 @@ pub fn run() {
       pty::pty_backend,
       pty::pty_foreground,
       terminal_links::terminal_link_target,
+      shell_integration::terminal_shell_history,
       terminal_links::terminal_open_url,
       worktree_create,
       worktree_refresh_base,
@@ -1570,6 +1629,8 @@ pub fn run() {
       artifacts::team::team_artifact_get,
       artifacts::team::team_artifact_delete,
       cli_server::cli_reply,
+      cli_server::cli_queued,
+      cli_server::cli_wait_done,
       cli_server::cli_install,
       cli_server::cli_status,
       accounts::managed_accounts_list,
@@ -1578,6 +1639,12 @@ pub fn run() {
       accounts::antigravity_accounts,
       cli_server::cli_uninstall,
       cli_server::cli_skill_plugin,
+      workspace_trust::workspace_trust_read,
+      workspace_trust::workspace_trust_set,
+      workspace_trust::workspace_trust_prompted,
+      workspace_trust::trusted_domains_read,
+      workspace_trust::trusted_domains_write,
+      workspace_trust::trusted_domains_open,
       linear::linear_status,
       linear::linear_connect,
       linear::linear_disconnect,

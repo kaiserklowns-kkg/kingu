@@ -21,6 +21,10 @@ pub const METHOD_ACCOUNT_LIST_DATA: &str = "accounts.listData";
 pub const METHOD_ACCOUNT_ADD_DATA: &str = "accounts.addDataFromHome";
 pub const METHOD_ACCOUNT_SELECT_DATA: &str = "accounts.selectData";
 pub const METHOD_ACCOUNT_REMOVE_DATA: &str = "accounts.removeData";
+/// `kingu [options] [paths…]`: opens files, folders, a diff or a merge; with `wait` the answer
+/// holds a `waitId` that `editor.wait` blocks on until the editors (or their window) close.
+pub const METHOD_EDITOR_OPEN: &str = "editor.open";
+pub const METHOD_EDITOR_WAIT: &str = "editor.wait";
 
 /// Error codes. `unauthorized`: missing or wrong token; `bad_request`: unreadable line or bad
 /// params; `unknown_method`; `unavailable`: the window did not answer; `failed`: the app refused.

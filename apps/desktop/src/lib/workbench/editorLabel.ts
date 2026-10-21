@@ -8,6 +8,7 @@ import { untitledFirstLines } from './editorModels';
 import { tabLabel } from './scm';
 import { customLabel, customLabelPatterns, untitledLabel } from './tabLabels';
 import { changesSlug, isChangesKey } from './viewers';
+import { parseHistoryChangesKey } from '#lib/scm/rangeChanges.ts';
 import { isUntitled, untitledName } from './untitled';
 import { workspace } from './workspace.svelte';
 import { t } from '#lib/i18n/index.ts';
@@ -19,6 +20,8 @@ import { parseArtifactKey } from '#lib/artifacts/artifacts.ts';
 import { artifacts } from '#lib/artifacts/artifacts.svelte.ts';
 import { isSearchEditorKey, searchEditorName } from './searchEditor';
 import { searchEditors } from './searchEditor.svelte.ts';
+import { terminalIdOfEditor } from '#lib/terminal/terminalEditor.svelte.ts';
+import { terminals } from '#lib/terminal/terminals.svelte.ts';
 
 const compiled = new WeakMap<object, ReturnType<typeof customLabelPatterns>>();
 
@@ -37,6 +40,8 @@ export function editorLabel(key: string): string {
 	if (isUntitled(key)) return untitledLabel(untitledName(key), untitledFirstLines.get(key) ?? '', settings.get<'content' | 'name'>('workbench.editor.untitled.labelFormat'));
 	if (isSearchEditorKey(key)) return searchEditorName(key, searchEditors.peek(key)?.config.query ?? '');
 	if (isBoardKey(key)) return t('workbench.editorLabel.board');
+	const history = parseHistoryChangesKey(key);
+	if (history) return history.title;
 	if (isChangesKey(key)) return changesSlug(key) ? t('workbench.editorLabel.changes', { title: adeTasks.find(changesSlug(key))?.meta.title ?? changesSlug(key) ?? '' }) : t('workbench.editorLabel.allChanges');
 	const session = parseVaultKey(key);
 	if (session) return vault.byPath(session.path)?.title ?? session.path.split('/').pop() ?? key;
@@ -44,6 +49,8 @@ export function editorLabel(key: string): string {
 	if (artifact) return (artifact.team ? artifacts.team.find((a) => a.artifact_id === artifact.id)?.title : artifacts.list.find((a) => a.id === artifact.id)?.title) ?? t('artifacts.title');
 	const chatId = chatIdOfEditorKey(key);
 	if (chatId) return chats.get(chatId)?.title ?? t('chat.panel.newChat');
+	const terminal = terminalIdOfEditor(key);
+	if (terminal !== null) return terminals.get(terminal)?.title ?? 'Terminal';
 	const slug = slugOfTaskKey(key);
 	if (slug) return t('workbench.editorLabel.task', { title: adeTasks.find(slug)?.meta.title ?? slug });
 	return custom(key) ?? tabLabel(key);

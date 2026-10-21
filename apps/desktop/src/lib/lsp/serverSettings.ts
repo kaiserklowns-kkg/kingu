@@ -19,12 +19,12 @@ export type SettingsReader = {
 	/** The value one settings file sets (`folder`: the folder's file or Kingu's per-repository store). */
 	layer?: (id: string, scope: 'user' | 'folder') => unknown;
 };
-type Lang = 'typescript' | 'javascript';
+export type Lang = 'typescript' | 'javascript';
 
 /** [unified, TypeScript, JavaScript] keys of one TS/JS setting (null where VS Code has none). */
-type Keys = readonly [string, string, string | null];
+export type Keys = readonly [string, string, string | null];
 
-function readUnified<T>(r: SettingsReader, keys: Keys, lang: Lang): T {
+export function readUnified<T>(r: SettingsReader, keys: Keys, lang: Lang): T {
 	const [unified, ts, js] = keys;
 	if (r.isSet(unified)) return r.get<T>(unified);
 	const own = lang === 'typescript' ? ts : js;

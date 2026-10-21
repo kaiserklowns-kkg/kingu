@@ -9,6 +9,7 @@
 	import { panelTitleShows, showTabsList } from '#lib/terminal/behaviour.ts';
 	import { createTerminal } from '#lib/terminal/newTerminal.ts';
 	import { terminalFolderName } from '#lib/terminal/folders.ts';
+	import { tabColor, tabIcon } from '#lib/terminal/tabAppearance.ts';
 	import { workspace } from './workspace.svelte.ts';
 	import Icon, { type IconName } from './Icon.svelte';
 	import { editors } from './editors.svelte';
@@ -26,6 +27,8 @@
 	import PopupMenu, { menuItem, menuSeparator } from './PopupMenu.svelte';
 	import type { MenuNode } from './menus';
 	import { panelSize } from './panelSize.svelte';
+	import RefactorPreviewView from '#lib/lsp/RefactorPreviewView.svelte';
+	import { refactorPreview } from '#lib/lsp/refactorPreview.svelte.ts';
 
 	// View: Maximize Panel Size (panelSize.svelte.ts, shared with workbench.action.toggleMaximizedPanel).
 	const maximized = $derived(panelSize.maximized);
@@ -90,12 +93,12 @@
 	const activeGroup = $derived(terminals.groupOf(terminals.active));
 	// terminal.integrated.tabs.enabled / hideCondition / location / focusMode.
 	const tabsShown = $derived(
-		showTabsList(settings.get<boolean>('terminal.integrated.tabs.enabled'), settings.get<string>('terminal.integrated.tabs.hideCondition'), terminals.list.length, terminals.groups.length)
+		showTabsList(settings.get<boolean>('terminal.integrated.tabs.enabled'), settings.get<string>('terminal.integrated.tabs.hideCondition'), terminals.panelList.length, terminals.groups.length)
 	);
 	const tabsLeft = $derived(settings.get<string>('terminal.integrated.tabs.location') === 'left');
 	// terminal.integrated.tabs.showActions / showActiveTerminal: what the title shows next to New Terminal.
-	const showTerminalActions = $derived(panelTitleShows(settings.get<string>('terminal.integrated.tabs.showActions'), terminals.list.length, tabsShown));
-	const showActiveTerminal = $derived(panelTitleShows(settings.get<string>('terminal.integrated.tabs.showActiveTerminal'), terminals.list.length, tabsShown));
+	const showTerminalActions = $derived(panelTitleShows(settings.get<string>('terminal.integrated.tabs.showActions'), terminals.panelList.length, tabsShown));
+	const showActiveTerminal = $derived(panelTitleShows(settings.get<string>('terminal.integrated.tabs.showActiveTerminal'), terminals.panelList.length, tabsShown));
 	const activeTerminal = $derived(terminals.get(terminals.active));
 	const focusOnDoubleClick = $derived(settings.get<string>('terminal.integrated.tabs.focusMode') === 'doubleClick');
 	const splitKey = keyLabel(isMac ? 'cmd+\\' : 'ctrl+shift+5');
@@ -112,12 +115,14 @@
 		editors.open(rel, { preview: false, reveal: line ? { line, column: column ?? 1, focus: true } : undefined });
 	}
 
-	const tabs: { id: PanelTab; label: string; icon: IconName }[] = [
+	const tabs: { id: PanelTab; label: string; icon: IconName }[] = $derived([
 		{ id: 'problems', label: 'Problems', icon: 'warning' },
 		{ id: 'output', label: 'Output', icon: 'note' },
 		{ id: 'debugConsole', label: 'Debug Console', icon: 'bug' },
-		{ id: 'terminal', label: 'Terminal', icon: 'terminal' }
-	];
+		{ id: 'terminal', label: 'Terminal', icon: 'terminal' },
+		// Only while an edit waits in the Refactor Preview (VS Code shows its view then).
+		...(refactorPreview.pending || layout.panelTab === 'refactorPreview' ? [{ id: 'refactorPreview' as const, label: t('refactorPreview.title'), icon: 'replace' as const }] : [])
+	]);
 </script>
 
 <section aria-label="Panel" class="flex h-full flex-col border-t border-(--vscode-panel-border) bg-(--vscode-panel-background)">
@@ -223,10 +228,13 @@
 					<Icon name="collapseAll" size={15} />
 				</button>
 			{/if}
+		{:else if layout.panelTab === 'refactorPreview' && refactorPreview.pending}
+			<button class="h-[22px] rounded-sm bg-(--vscode-button-background) px-2 text-xs text-(--vscode-button-foreground) hover:bg-(--vscode-button-hoverBackground)" onclick={() => refactorPreview.apply()}>{t('refactorPreview.apply')}</button>
+			<button class="h-[22px] rounded-sm bg-(--vscode-button-secondaryBackground) px-2 text-xs text-(--vscode-button-secondaryForeground) hover:bg-(--vscode-button-secondaryHoverBackground)" onclick={() => refactorPreview.discard()}>{t('refactorPreview.discard')}</button>
 		{:else if layout.panelTab === 'terminal'}
 			{#if showActiveTerminal && activeTerminal}
 				<span class="flex max-w-48 min-w-0 items-center gap-1 px-1 text-xs text-(--vscode-panelTitle-activeForeground)" title={activeTerminal.run?.join(' ') ?? activeTerminal.title}>
-					<Icon name="terminal" size={14} />
+					<span class="flex" style:color={tabColor(activeTerminal.color, settings.get('terminal.integrated.tabs.defaultColor'))}><Icon name={tabIcon(activeTerminal.icon)} size={14} /></span>
 					<span class="truncate">{activeTerminal.title}</span>
 				</span>
 			{/if}
@@ -273,7 +281,9 @@
 												run={t.run}
 												task={t.task}
 												cwdFrom={t.cwdFrom}
+												reportedCwd={t.reportedCwd}
 												folder={t.folder}
+												profile={t.profile}
 												flavor="ide"
 												keyLabels={{ split: splitKey }}
 												onfocus={() => (terminals.active = t.id)}
@@ -305,7 +315,8 @@
 										ondblclick={() => (focusOnDoubleClick ? focusTerminal(terminals.key(t.id)) : terminals.rename(t.id))}
 									>
 										{#if ids.length > 1}<span class="w-2 shrink-0 font-mono text-(--vscode-descriptionForeground)" aria-hidden="true">{i === 0 ? '┌' : i === ids.length - 1 ? '└' : '├'}</span>{/if}
-										<Icon name="terminal" size={14} />
+										<!-- Change Icon / Change Color (terminal.integrated.tabs.defaultColor). -->
+										<span class="flex" style:color={tabColor(t.color, settings.get('terminal.integrated.tabs.defaultColor'))}><Icon name={tabIcon(t.icon)} size={14} /></span>
 										<span class="min-w-0 flex-1 truncate" title={[t.run?.join(' ') ?? t.title, folderName].filter(Boolean).join('\n')}
 											>{t.title}{#if folderName}<span class="ml-1.5 text-xs text-(--vscode-descriptionForeground)">{folderName}</span>{/if}</span
 										>
@@ -332,6 +343,8 @@
 		{:else if layout.panelTab === 'output'}
 			<!-- The active Output channel (Tasks, Git, Kingu, each language server). -->
 			<OutputView />
+		{:else if layout.panelTab === 'refactorPreview'}
+			<div class="absolute inset-0"><RefactorPreviewView /></div>
 		{/if}
 	</div>
 </section>

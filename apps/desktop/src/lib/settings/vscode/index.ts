@@ -26,6 +26,8 @@ import { LOCAL_HISTORY_SETTINGS } from './localHistory';
 import { CHAT_SETTINGS } from './chat';
 import { EMMET_SETTINGS } from './emmet';
 import { ACCESSIBILITY_SETTINGS } from './accessibility';
+import { MARKDOWN_SETTINGS } from './markdown';
+import { SECURITY_SETTINGS } from './security';
 
 export const VSCODE_SETTINGS = [
 	...EDITOR_SETTINGS,
@@ -51,6 +53,8 @@ export const VSCODE_SETTINGS = [
 	...CHAT_SETTINGS,
 	...EMMET_SETTINGS,
 	...ACCESSIBILITY_SETTINGS,
+	...MARKDOWN_SETTINGS,
+	...SECURITY_SETTINGS,
 	// The settings sections Kingu delivers to the language servers it runs (lsp/serverSettings.ts).
 	...TYPESCRIPT_SETTINGS,
 	...CSS_SETTINGS,

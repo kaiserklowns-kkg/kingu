@@ -1,0 +1,27 @@
+// UI strings of the Markdown language features (lib/markdown). Keys: 'markdown.<feature>.<what>'. Thai in ../th/markdown.ts.
+export const markdown = {
+	'markdown.validate.noSuchReference': "No link definition found: '{ref}'",
+	'markdown.validate.noSuchHeader': "No header found: '{fragment}'",
+	'markdown.validate.noSuchFile': 'File does not exist at path: {path}',
+	'markdown.validate.noSuchHeaderInFile': "Header does not exist in file '{path}': {fragment}",
+	'markdown.validate.unusedDefinition': "Link definition '{ref}' is unused",
+	'markdown.validate.duplicateDefinition': "Link definition for '{ref}' already exists",
+	'markdown.link.follow': 'Follow link',
+	'markdown.link.definition': 'Go to link definition',
+	'markdown.link.missing': 'File not found: {path}',
+	'markdown.completion.header': 'Header in this file',
+	'markdown.completion.workspaceHeader': 'Header in {path}',
+	'markdown.completion.definition': 'Link definition: {href}',
+	'markdown.rename.cantRename': 'Rename works on a header, a link to a header, or an external link.',
+	'markdown.rename.label': "Rename '{name}'",
+	'markdown.rename.done': "Renamed to '{name}': {edits|# change|# changes} in {files|# file|# files}",
+	'markdown.updateLinks.question': "Update Markdown links to '{name}'?",
+	'markdown.updateLinks.detail': '{count|# link|# links} in {files|# file|# files} point to the moved path.',
+	'markdown.updateLinks.update': 'Update Links',
+	'markdown.updateLinks.always': 'Always',
+	'markdown.updateLinks.skip': "Don't Update",
+	'markdown.updateLinks.label': "Update links to '{name}'",
+	'markdown.updateLinks.done': 'Updated {count|# link|# links}',
+	'markdown.updateLinks.failed': "Couldn't update Markdown links: {reason}",
+	'markdown.drop.copyFailed': "Couldn't copy {name} into the workspace: {error}"
+} as const;

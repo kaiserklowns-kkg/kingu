@@ -3,10 +3,10 @@
 	// shown as text), code blocks in their own box, syntax coloured once the text stopped streaming,
 	// with Insert at Cursor (into the active editor), Insert into New File, Insert into Terminal and
 	// Copy. Links: web links open in the browser, workspace paths open in the editor.
-	import { invoke } from '@tauri-apps/api/core';
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { editors } from '#lib/workbench/editors.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
+	import { trustedDomains } from '#lib/workbench/trustedDomains.svelte.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import { splitMarkdown } from './chatMarkdown';
 	import { shortPath } from './chatParts';
@@ -53,7 +53,8 @@
 		e.preventDefault();
 		const href = a.dataset.href ?? '';
 		if (/^https?:\/\//i.test(href)) {
-			void invoke('open_web_url', { url: href }).catch((err) => status.error(String(err)));
+			// Outgoing link protection: a model's link to an untrusted domain asks first.
+			void trustedDomains.openLink(href, { fromWorkspace: false });
 			return;
 		}
 		if (/^[a-z][a-z0-9+.-]*:/i.test(href) && !href.startsWith('file:')) return;

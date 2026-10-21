@@ -23,7 +23,7 @@
 	import { installAccessibilitySignals } from './accessibilitySignals.svelte';
 	import { platform } from './platform.svelte';
 	import { PROFILES, type Platform } from './platform';
-	import { hasPreview, previewKey } from './viewers';
+	import { registerMarkdownPreviewCommands } from '#lib/markdown/previewCommands.svelte.ts';
 	import EditorPart from './EditorPart.svelte';
 	import Panel from './Panel.svelte';
 	import QuickInput from './QuickInput.svelte';
@@ -81,6 +81,9 @@
 	import { installIssues } from '#lib/ade/issues.svelte.ts';
 	import { installLinear } from '#lib/ade/linear.svelte.ts';
 	import { installCliBridge } from '#lib/ade/cliBridge.svelte.ts';
+	import WorkspaceTrustBanner from './WorkspaceTrustBanner.svelte';
+	import { workspaceTrust } from './workspaceTrust.svelte';
+	import { trustedDomains } from './trustedDomains.svelte';
 	import { installVoice } from '#lib/voice/dictation.svelte.ts';
 	import DictationIndicator from '#lib/voice/DictationIndicator.svelte';
 	import LinearConnect from '#lib/ade/LinearConnect.svelte';
@@ -96,7 +99,10 @@
 	import DebugToolbar from '#lib/debug/DebugToolbar.svelte';
 	import { installBreadcrumbs } from './breadcrumbsCommands.svelte';
 	import { installLanguageCommands } from './languageCommands.svelte';
+	import { installTypeScriptCommands } from '#lib/lsp/typescriptCommands.svelte.ts';
+	import { installImageZoomCommands } from './imageZoom.svelte';
 	import { installProblemsSettings } from '#lib/lsp/problemsCommands.svelte.ts';
+	import { installRefactorPreviewCommands } from '#lib/lsp/refactorPreview.svelte.ts';
 	import { installCloseGuard, quit } from './closeGuard.svelte';
 	import { installEditorRestore } from './editorRestore.svelte';
 	import { installWorkspaceStorage } from './workspaceStorage.svelte';
@@ -243,30 +249,6 @@
 				when: () => !appMode.isAgents,
 				run: () => layout.toggleZen()
 			}),
-			// Markdown: Open Preview / Open Preview to the Side (VS Code's markdown-language-features).
-			commands.register({
-				id: 'markdown.showPreview',
-				title: 'Open Preview (Markdown, CSV)',
-				category: 'Markdown',
-				key: 'cmd+shift+v',
-				when: () => !appMode.isAgents && editors.active !== null && hasPreview(editors.active),
-				run: () => editors.open(previewKey(editors.active!), { preview: false })
-			}),
-			commands.register({
-				id: 'markdown.showPreviewToSide',
-				title: 'Open Preview to the Side (Markdown, CSV)',
-				category: 'Markdown',
-				key: 'cmd+k v',
-				when: () => !appMode.isAgents && editors.active !== null && hasPreview(editors.active),
-				run: () => {
-					const rel = editors.active!;
-					const side = editors.split('right');
-					if (side === null) return editors.open(previewKey(rel), { preview: false });
-					// The split copies the Markdown tab; the side group shows only the preview.
-					editors.open(previewKey(rel), { preview: false, group: side });
-					editors.close(rel, { group: side });
-				}
-			}),
 			commands.register({
 				id: 'kingu.floatingTerminal.toggle',
 				title: 'Toggle Floating Terminal',
@@ -366,6 +348,7 @@
 		const uninstallAppearance = installWorkbenchAppearance();
 		const unregisterSettings = registerSettingsCommands();
 		const unregisterCompare = registerCompareCommands();
+		const unregisterMarkdownPreview = registerMarkdownPreviewCommands();
 		const uninstallAde = installAde();
 		const uninstallAgentsMode = installAgentsMode();
 		const uninstallWorktreeCommands = installWorktreeCommands();
@@ -377,6 +360,8 @@
 		const uninstallLinear = installLinear();
 		const uninstallTaskSources = installTaskSources();
 		const uninstallCliBridge = installCliBridge();
+		const uninstallWorkspaceTrust = workspaceTrust.install();
+		const uninstallTrustedDomains = trustedDomains.install();
 		const uninstallVoice = installVoice();
 		const uninstallLayout = installLayoutCommands();
 		const uninstallSnaps = installSnaps();
@@ -396,7 +381,10 @@
 		const uninstallTesting = installTesting();
 		const uninstallBreadcrumbs = installBreadcrumbs();
 		const uninstallLanguageCommands = installLanguageCommands();
+		const uninstallTypeScriptCommands = installTypeScriptCommands();
+		const uninstallImageZoomCommands = installImageZoomCommands();
 		const uninstallProblemsSettings = installProblemsSettings();
+		const uninstallRefactorPreview = installRefactorPreviewCommands();
 		const uninstallAccounts = accounts.install();
 		const uninstallTextFiles = textFiles.install();
 		const unregisterEditorStatus = registerEditorStatusCommands();
@@ -421,8 +409,11 @@
 			uninstallTextFiles();
 			uninstallAccounts();
 			uninstallProblemsSettings();
+			uninstallRefactorPreview();
 			uninstallBreadcrumbs();
 			uninstallLanguageCommands();
+			uninstallTypeScriptCommands();
+			uninstallImageZoomCommands();
 			uninstallDebug();
 			uninstallTesting();
 			uninstallAdeCommands();
@@ -446,6 +437,8 @@
 			uninstallLinear();
 			uninstallTaskSources();
 			uninstallCliBridge();
+			uninstallWorkspaceTrust();
+			uninstallTrustedDomains();
 			uninstallVoice();
 			uninstallAutomations();
 			uninstallAgentNotifications();
@@ -462,6 +455,7 @@
 			uninstallSettings();
 			unregisterSettings();
 			unregisterCompare();
+			unregisterMarkdownPreview();
 			unregister.forEach((u) => u());
 		};
 	});
@@ -527,6 +521,7 @@
 	<!-- One title bar and one status bar for the IDE and the Agents layout. -->
 	<TitleBar workspaceName={workspaceName || 'Kingu'} {focused} />
 	<DebugToolbar placement="floating" />
+	<WorkspaceTrustBanner />
 
 	<div bind:this={middle} class={['workbench-body grid min-h-0 flex-1 bg-(--vscode-titleBar-activeBackground) px-[4px] pb-[4px]', (appMode.isAgents || systemSettings.visible) && 'hidden']}
 		style:grid-template-areas={gridTemplateAreas(grid)}

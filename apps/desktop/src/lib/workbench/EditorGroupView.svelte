@@ -33,7 +33,9 @@
 	import { scm } from './scm.svelte';
 	import { tabDescription, type LabelFormat } from './tabLabels';
 	import { emptyUntitled } from './editorModels';
-	import type { EditorTab, SplitDirection } from './editorGroups';
+	import { isSplitInGroup, type EditorTab, type SplitDirection } from './editorGroups';
+	import { canSplitInGroup } from './editorKind';
+	import SideEditor from './SideEditor.svelte';
 	import SettingsEditor from '#lib/settings/SettingsEditor.svelte';
 	import { settings, SETTINGS_EDITOR_KEY, USER_SETTINGS_KEY } from '#lib/settings/settings.svelte.ts';
 	import Board from '#lib/ade/Board.svelte';
@@ -51,11 +53,14 @@
 	import { isMac } from './keys';
 	import * as cmd from './editorCommands.svelte';
 	import { isUntitled } from './untitled';
-	import { filePathCrumbs, sortSymbols, symbolCodicon, symbolSiblings, visibleSymbols, type PathMode, type SymbolSortOrder } from './breadcrumbs';
+	import { crumbKeyAction, filePathCrumbs, movedCrumb, sortSymbols, symbolCodicon, symbolSiblings, visibleSymbols, type PathMode, type SymbolSortOrder } from './breadcrumbs';
+	import { crumbFocus } from './breadcrumbsCommands.svelte';
 	import { symbolPath, type Crumb } from '#lib/lsp/convert.ts';
 	import { outline } from './outline.svelte';
 	import SearchEditorView from './SearchEditorView.svelte';
 	import { isSearchEditorKey, isUntitledSearchEditor } from './searchEditor';
+	import TerminalEditor from '#lib/terminal/TerminalEditor.svelte';
+	import { isTerminalEditorKey } from '#lib/terminal/terminalEditor.svelte.ts';
 
 	let { group }: { group: number } = $props();
 
@@ -86,7 +91,7 @@
 	const crumbsAreFiles = $derived(!!activePath && activePath !== USER_SETTINGS_KEY && !isChangesKey(activePath) && !isExternalKey(activePath) && !isOutputKey(activePath) && crumbs.length > 0);
 	const diffActive = $derived(activePath !== null && isDiffKey(activePath));
 	/** Images and Markdown previews have their own viewers instead of Monaco. */
-	const viewerActive = $derived(activePath !== null && (isMergeKey(activePath) || isImagePath(activePath) || isPreviewKey(activePath) || isNotebookPath(activePath) || isChangesKey(activePath) || isVaultKey(activePath) || isArtifactKey(activePath) || isSearchEditorKey(activePath)));
+	const viewerActive = $derived(activePath !== null && (isTerminalEditorKey(activePath) || isMergeKey(activePath) || isImagePath(activePath) || isPreviewKey(activePath) || isNotebookPath(activePath) || isChangesKey(activePath) || isVaultKey(activePath) || isArtifactKey(activePath) || isSearchEditorKey(activePath)));
 	// The diff editor exists only while this group has a diff tab.
 	const hasDiff = $derived(tabs.some((t) => isDiffKey(t.path)));
 	// Enclosing symbols from the language server's document symbols, like VS Code's outline crumbs.
@@ -106,6 +111,29 @@
 		const siblings = symbolSiblings(outline.symbolsOf(activePath), { line: editors.cursor.line - 1, character: editors.cursor.column - 1 }, getSetting)[level] ?? [crumb];
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		crumbMenu = { x: rect.left, y: rect.bottom + 2, items: sortSymbols(siblings, settings.get<SymbolSortOrder>('breadcrumbs.symbolSortOrder')) };
+	}
+	// Focus Breadcrumbs / Focus and Select Breadcrumbs (⇧⌘; / ⇧⌘.): the last crumb takes the keyboard, and opens its picker.
+	let crumbNav = $state<HTMLElement | null>(null);
+	const crumbButtons = () => [...(crumbNav?.querySelectorAll<HTMLButtonElement>('button[data-crumb]') ?? [])];
+	let crumbSeq = 0;
+	$effect(() => {
+		const seq = crumbFocus.seq;
+		if (seq === crumbSeq || crumbFocus.group !== group || !crumbNav) return;
+		crumbSeq = seq;
+		const last = crumbButtons().at(-1);
+		last?.focus();
+		if (last && crumbFocus.select) last.click();
+	});
+	/** ←/→ between crumbs, Enter/Space opens one's picker (the button's own click), Escape back to the editor. */
+	function onCrumbKey(e: KeyboardEvent) {
+		const action = crumbKeyAction(e, isMac);
+		if (!action || action === 'select') return;
+		e.preventDefault();
+		e.stopPropagation();
+		if (action === 'leave') return editors.focusGroup(group);
+		const buttons = crumbButtons();
+		const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+		buttons[movedCrumb(at, buttons.length, action === 'next' ? 1 : -1)]?.focus();
 	}
 	let dropTarget = $state<number | null>(null);
 	// The tab strip follows VS Code's editor part options (multiEditorTabsControl.ts).
@@ -175,6 +203,9 @@
 		void textFiles.closeEditors([path], group, { discard });
 	}
 	const placeholder = $derived(textFiles.placeholder(activePath));
+	/** Split Editor in Group: the active editor shown a second time beside (or below) itself. */
+	const sideShown = $derived(isSplitInGroup(g, activePath) && canSplitInGroup(activePath) && !placeholder);
+	const sideVertical = $derived(settings.get<string>('workbench.editor.splitInGroupLayout') === 'vertical');
 	const comparing = $derived(activePath !== null && textFiles.compare?.path === activePath ? textFiles.compare : null);
 
 	function dragStart(e: DragEvent, path: string) {
@@ -282,7 +313,12 @@
 			menuItem('splitUp', 'Split Up'),
 			menuItem('splitDown', 'Split Down'),
 			menuItem('splitLeft', 'Split Left'),
-			menuItem('splitRight', 'Split Right')
+			menuItem('splitRight', 'Split Right'),
+			path === activePath && isSplitInGroup(g, path)
+				? item('joinInGroup', 'Join in Group', { key: keyFor('workbench.action.joinEditorInGroup') })
+				: item('splitInGroup', 'Split in Group', { enabled: canSplitInGroup(path), key: keyFor('workbench.action.splitEditorInGroup') }),
+			menuSeparator,
+			menuItem('lockGroup', g?.locked ? 'Unlock Group' : 'Lock Group')
 		];
 	}
 
@@ -319,6 +355,13 @@
 				return cmd.splitFrom(group, path, 'left');
 			case 'splitRight':
 				return cmd.splitFrom(group, path, 'right');
+			case 'splitInGroup':
+				editors.open(path, { preview: false, group });
+				return editors.setSplitInGroup(true, group);
+			case 'joinInGroup':
+				return editors.setSplitInGroup(false, group);
+			case 'lockGroup':
+				return editors.setLocked(!g?.locked, group);
 		}
 	}
 
@@ -487,19 +530,36 @@
 						</div>
 					{/each}
 					{#if dropTarget === tabs.length && r === rows.length - 1}<span class="h-(--kg-tab-height) w-0.5 shrink-0 bg-(--vscode-focusBorder)"></span>{/if}
+					{#if g?.locked && r === rows.length - 1}
+						<!-- A locked group's lock (VS Code's Unlock Group editor action). -->
+						<button
+							class="ml-auto flex h-(--kg-tab-height) shrink-0 items-center self-center px-1.5 text-(--vscode-icon-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
+							title="Unlock Group"
+							aria-label="Unlock Group"
+							onclick={() => editors.setLocked(false, group)}
+						>
+							<Icon name="lock" size={14} />
+						</button>
+					{/if}
 				</div>
 			{/each}
 		</div>
 	{/if}
 	{#if activePath && !adeActive && breadcrumbsOn}
-		<nav aria-label="Breadcrumbs" class="flex h-(--kg-breadcrumbs-height) shrink-0 items-center gap-0.5 overflow-hidden px-3 text-(--vscode-breadcrumb-foreground)">
+		<nav
+			bind:this={crumbNav}
+			aria-label="Breadcrumbs"
+			class="flex h-(--kg-breadcrumbs-height) shrink-0 items-center gap-0.5 overflow-hidden px-3 text-(--vscode-breadcrumb-foreground)"
+		>
 			{#each shownCrumbs as c, i (i)}
 				{#if i > 0}<Icon name="chevronRight" size={14} />{/if}
 				{#if crumbIcons && i === shownCrumbs.length - 1}<span class="flex shrink-0"><FileIcon icon={iconOf(activePath)} /></span>{/if}
 				{#if crumbsAreFiles}
 					{@const at = crumbs.length - shownCrumbs.length + i}
 					<button
-						class="rounded px-0.5 whitespace-nowrap hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)"
+						data-crumb
+						onkeydown={onCrumbKey}
+						class="rounded px-0.5 whitespace-nowrap hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground) focus-visible:outline-1 focus-visible:outline-(--vscode-focusBorder)"
 						title={at < crumbs.length - 1 ? 'ไฟล์ในโฟลเดอร์นี้' : 'ไฟล์ข้างเคียง'}
 						onclick={(e) => {
 							const r = e.currentTarget.getBoundingClientRect();
@@ -513,7 +573,12 @@
 			{/each}
 			{#each symbolCrumbs as s, i (i)}
 				{#if shownCrumbs.length || i > 0}<Icon name="chevronRight" size={14} />{/if}
-				<button class="flex items-center gap-1 whitespace-nowrap hover:text-(--vscode-foreground)" onclick={(e) => openSymbolPicker(e, s)}>
+				<button
+					data-crumb
+					onkeydown={onCrumbKey}
+					class="flex items-center gap-1 whitespace-nowrap hover:text-(--vscode-foreground) focus-visible:outline-1 focus-visible:outline-(--vscode-focusBorder)"
+					onclick={(e) => openSymbolPicker(e, s)}
+				>
 					{#if crumbIcons}<span class={['codicon', symbolCodicon(s.kind)]} aria-hidden="true"></span>{/if}{s.name}
 				</button>
 			{/each}
@@ -531,9 +596,26 @@
 	{/if}
 
 	<div role="presentation" class="relative min-h-0 flex-1" ondragovercapture={editorDragOver} ondragleave={editorDragLeave} ondropcapture={editorDrop}>
-		<div class={['absolute inset-0', (!activePath || diffActive || settingsActive || adeActive || viewerActive || placeholder) && 'invisible']}>
+		<div
+			class={[
+				'absolute',
+				!sideShown ? 'inset-0' : sideVertical ? 'inset-x-0 top-0 h-1/2' : 'inset-y-0 left-0 w-1/2',
+				(!activePath || diffActive || settingsActive || adeActive || viewerActive || placeholder) && 'invisible'
+			]}
+		>
 			<EditorHost {group} />
 		</div>
+		{#if sideShown && activePath}
+			<!-- Split Editor in Group: the same document again (workbench.editor.splitInGroupLayout). -->
+			<div
+				class={[
+					'absolute border-(--vscode-editorGroup-border,var(--vscode-panel-border))',
+					sideVertical ? 'inset-x-0 bottom-0 h-1/2 border-t' : 'inset-y-0 right-0 w-1/2 border-l'
+				]}
+			>
+				{#key activePath}<SideEditor {group} path={activePath} />{/key}
+			</div>
+		{/if}
 		{#if splitZone}
 			<!-- Where a dragged tab lands (VS Code: editorGroup.dropBackground). -->
 			<div
@@ -575,13 +657,15 @@
 			<div class="absolute inset-0">{#key activePath}<VaultTranscript vaultKey={activePath} />{/key}</div>
 		{:else if activePath && isArtifactKey(activePath)}
 			<div class="absolute inset-0">{#key activePath}<ArtifactViewer artifactKey={activePath} />{/key}</div>
+		{:else if activePath && isTerminalEditorKey(activePath)}
+			<div class="absolute inset-0">{#key activePath}<TerminalEditor editorKey={activePath} />{/key}</div>
 		{:else if activePath && isSearchEditorKey(activePath)}
 			<div class="absolute inset-0">{#key activePath}<SearchEditorView editorKey={activePath} {group} />{/key}</div>
 		{:else if activePath && isNotebookPath(activePath)}
 			<div class="absolute inset-0">{#key activePath}<NotebookViewer path={activePath} />{/key}</div>
 		{:else if activePath && isPreviewKey(activePath)}
 			<div class="absolute inset-0">
-				{#key activePath}{#if isCsvPath(previewTarget(activePath))}<CsvPreview previewKey={activePath} />{:else}<MarkdownPreview previewKey={activePath} />{/if}{/key}
+				{#key activePath}{#if isCsvPath(previewTarget(activePath))}<CsvPreview previewKey={activePath} />{:else}<MarkdownPreview previewKey={activePath} {group} />{/if}{/key}
 			</div>
 		{/if}
 		{#if settingsActive}

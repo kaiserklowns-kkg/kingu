@@ -37,6 +37,7 @@ import { workspaces } from './en/workspaces';
 import { ideTasks } from './en/ideTasks';
 import { scmEditor } from './en/scmEditor';
 import { scmRepos } from './en/scmRepos';
+import { scmGit, scmGraph } from './en/scmGraph';
 import { localHistory } from './en/localHistory';
 import { searchEditor } from './en/searchEditor';
 import { output } from './en/output';
@@ -49,10 +50,15 @@ import { composer } from './en/composer';
 import { voice } from './en/voice';
 import { usage } from './en/usage';
 import { keybindings } from './en/keybindings';
+import { markdownPreview } from './en/markdownPreview';
+import { refactorPreview } from './en/refactorPreview';
+import { markdown } from './en/markdown';
+import { trust } from './en/trust';
 
 import { editing } from './en/editing';
+import { terminal } from './en/terminal';
 
 
-export const en = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...panes, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault, ...adeAttempts, ...localAi, ...chatRuntime, ...chatExtras, ...adeSources, ...cli, ...artifacts, ...skills, ...arkai, ...forge, ...scmEditor, ...scmRepos, ...localHistory, ...ideTasks, ...language, ...workspaces, ...searchEditor, ...output, ...profiles, ...debugger_, ...testing, ...chatCustomize, ...editing, ...composer, ...voice, ...usage, ...keybindings } as const;
+export const en = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...panes, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault, ...adeAttempts, ...localAi, ...chatRuntime, ...chatExtras, ...adeSources, ...cli, ...artifacts, ...skills, ...arkai, ...forge, ...scmEditor, ...scmRepos, ...localHistory, ...ideTasks, ...language, ...workspaces, ...searchEditor, ...output, ...profiles, ...debugger_, ...testing, ...chatCustomize, ...editing, ...composer, ...voice, ...usage, ...keybindings, ...markdownPreview, ...refactorPreview, ...markdown, ...scmGraph, ...scmGit, ...terminal, ...trust } as const;
 
 export type MessageKey = keyof typeof en;

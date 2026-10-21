@@ -606,5 +606,72 @@ export const TERMINAL_SETTINGS: SettingSchema[] = [
 			'ไม่แสดง (Never show the actions)'
 		],
 		description: 'แสดงปุ่ม Split และ Kill ข้างปุ่ม terminal ใหม่บนแถบหัว panel (Controls whether terminal split and kill buttons are displays next to the new terminal button.)'
+	},
+	{
+		id: 'terminal.integrated.shellIntegration.enabled',
+		group: 'Terminal',
+		type: 'boolean',
+		default: true,
+		description: 'ใส่สคริปต์ shell integration ให้ zsh, bash, fish และ pwsh ที่เริ่มใหม่ เพื่อรู้ตำแหน่งคำสั่ง exit code และโฟลเดอร์ปัจจุบัน (Determines whether or not shell integration is auto-injected to support features like enhanced command tracking and current working directory detection. Shell integration works by injecting the script that is run when the shell is initialized. The script allows the terminal to get additional information about what\'s happening within the terminal. Supported shells: Linux/macOS: bash, fish, pwsh, zsh. This setting applies only when terminals are created, so you will need to restart your terminals for it to take effect.)'
+	},
+	{
+		id: 'terminal.integrated.shellIntegration.decorationsEnabled',
+		group: 'Terminal',
+		type: 'string',
+		default: 'both',
+		enum: ['both', 'gutter', 'overviewRuler', 'never'],
+		enumDescriptions: [
+			'แสดงทั้งข้างบรรทัดและใน overview ruler (Show decorations in the gutter (left) and overview ruler (right))',
+			'แสดงข้างบรรทัด (Show gutter decorations to the left of the terminal)',
+			'แสดงใน overview ruler (Show overview ruler decorations to the right of the terminal)',
+			'ไม่แสดง (Do not show decorations)'
+		],
+		description: 'จุดบอกผลของแต่ละคำสั่ง (สำเร็จ/ล้มเหลว) ที่ shell integration ตรวจพบ (When shell integration is enabled, adds a decoration for each command.)'
+	},
+	{
+		id: 'terminal.integrated.shellIntegration.history',
+		group: 'Terminal',
+		type: 'number',
+		default: 100,
+		description: 'จำนวนคำสั่งล่าสุดที่เก็บไว้ให้ Run Recent Command (Controls the number of recently used commands to keep in the terminal command history. Set to 0 to disable terminal command history.)'
+	},
+	{
+		id: 'terminal.integrated.shellIntegration.quickFixEnabled',
+		group: 'Terminal',
+		type: 'boolean',
+		default: true,
+		description: 'เสนอวิธีแก้ด่วนเมื่อคำสั่งล้มเหลว เช่น พอร์ตถูกใช้อยู่ หรือ git push ที่ยังไม่มี upstream (When shell integration is enabled, enables quick fixes for terminal commands that will appear as a lightbulb to the left of the prompt.)'
+	},
+	{
+		id: 'terminal.integrated.stickyScroll.enabled',
+		group: 'Terminal',
+		type: 'boolean',
+		default: true,
+		description: 'ตรึงคำสั่งของผลลัพธ์ที่เลื่อนอยู่ไว้บนสุดของ terminal (Shows the current command at the top of the terminal. This feature requires shell integration to be activated. See `#terminal.integrated.shellIntegration.enabled#`.)'
+	},
+	{
+		id: 'terminal.integrated.stickyScroll.maxLineCount',
+		group: 'Terminal',
+		type: 'number',
+		default: 5,
+		minimum: 1,
+		maximum: 10,
+		description: 'จำนวนบรรทัดสูงสุดของ sticky scroll (Defines the maximum number of sticky lines to show. Sticky scroll lines will never exceed 40% of the viewport regardless of this setting.)'
+	},
+	{
+		id: 'terminal.integrated.stickyScroll.ignoredCommands',
+		group: 'Terminal',
+		type: 'array',
+		items: 'string',
+		default: ['clear', 'cls', 'clear-host', 'agent', 'agy', 'copilot', 'claude', 'codex', 'gemini'],
+		description: 'คำสั่งที่ไม่ตรึงด้วย sticky scroll (A list of commands that should not trigger sticky scroll. When a command from this list is detected, the sticky scroll overlay will be hidden.)'
+	},
+	{
+		id: 'terminal.integrated.tabs.defaultColor',
+		group: 'Terminal',
+		type: 'json',
+		schema: { anyOf: [{ type: 'null' }, { type: 'string', enum: ['terminal.ansiBlack', 'terminal.ansiRed', 'terminal.ansiGreen', 'terminal.ansiYellow', 'terminal.ansiBlue', 'terminal.ansiMagenta', 'terminal.ansiCyan', 'terminal.ansiWhite'] }] },
+		default: null,
+		description: 'สีเริ่มต้นของแท็บ terminal (A theme color ID to associate with terminal icons by default.)'
 	}
 ];
