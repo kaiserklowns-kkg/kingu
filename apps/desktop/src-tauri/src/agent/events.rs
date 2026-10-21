@@ -244,6 +244,49 @@ pub enum AgentEvent {
   },
   /// Added by Rust: the chat's working set changed (an edit was recorded, a turn ended). Live only.
   EditsChanged { request: Option<u32> },
+  /// A hook of the session ran (the SDK's `hook_response`, with `includeHookEvents`): its name,
+  /// event (`PreToolUse`, `Stop`, …), outcome (`success`, `error`, `cancelled`) and output. Kept
+  /// in a chat's transcript for the Chat Debug view (`chat_debug`), never passed to the webview.
+  HookRun {
+    #[serde(default)]
+    hook_id: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    event: String,
+    #[serde(default)]
+    outcome: String,
+    #[serde(default)]
+    exit_code: Option<i32>,
+    #[serde(default)]
+    output: String,
+  },
+  /// Added by Rust when a chat's run starts: what the run was given (runtime, model, mode, agent,
+  /// the rules files and instructions assembled, the tools taken away, MCP servers). Kept in the
+  /// transcript for the Chat Debug view, never passed to the webview.
+  RunInfo {
+    runtime: String,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    permission_mode: Option<String>,
+    #[serde(default)]
+    agent: Option<String>,
+    #[serde(default)]
+    resumed: bool,
+    /// Rules and instructions files that applied (relative paths).
+    #[serde(default)]
+    rules: Vec<String>,
+    /// Characters appended to the system prompt (rules + the agent's instructions).
+    #[serde(default)]
+    instructions_chars: u64,
+    #[serde(default)]
+    disallowed_tools: Vec<String>,
+    #[serde(default)]
+    mcp_servers: Vec<String>,
+    #[serde(default)]
+    plugins: u32,
+  },
   Error { message: String },
   /// Output the host did not understand, passed through untouched.
   Raw { line: String },
@@ -349,6 +392,28 @@ mod tests {
     }
     let ev = AgentEvent::from_host(json!({"kind": "message", "role": "assistant", "text": "hi"}));
     assert!(matches!(ev, AgentEvent::Message { parent_tool_use_id: None, .. }));
+  }
+
+  #[test]
+  fn hook_runs_and_run_info_round_trip() {
+    let hook = json!({"kind": "hook_run", "hook_id": "h1", "name": "PreToolUse:Bash", "event": "PreToolUse", "outcome": "success", "exit_code": 0, "output": "ok"});
+    assert!(matches!(AgentEvent::from_host(hook.clone()), AgentEvent::HookRun { ref outcome, .. } if outcome == "success"));
+    assert_eq!(serde_json::to_value(AgentEvent::from_host(hook)).unwrap()["exit_code"], 0);
+    let info = AgentEvent::RunInfo {
+      runtime: "claude".into(),
+      model: Some("opus".into()),
+      permission_mode: None,
+      agent: None,
+      resumed: false,
+      rules: vec!["AGENTS.md".into()],
+      instructions_chars: 12,
+      disallowed_tools: vec!["Bash".into()],
+      mcp_servers: vec![],
+      plugins: 0,
+    };
+    let v = serde_json::to_value(&info).unwrap();
+    assert_eq!(v["kind"], "run_info");
+    assert_eq!(AgentEvent::from_host(v), info);
   }
 
   #[test]

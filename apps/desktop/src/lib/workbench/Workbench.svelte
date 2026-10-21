@@ -17,6 +17,8 @@
 	import Tooltips from './Tooltips.svelte';
 	import FloatingTerminal from './FloatingTerminal.svelte';
 	import Welcome from './Welcome.svelte';
+	import ChatToolPicker from '#lib/agent/ChatToolPicker.svelte';
+	import { chatTools } from '#lib/agent/chatTools.svelte.ts';
 	import { welcome } from './welcomeTour.svelte';
 	import { floating } from './floating.svelte';
 	import { installSignals } from './signals.svelte';
@@ -611,6 +613,7 @@
 	<DictationIndicator />
 	<FloatingTerminal />
 	{#if welcome.open}<Welcome />{/if}
+	{#if chatTools.picking}{#key chatTools.picking}<ChatToolPicker id={chatTools.picking} />{/key}{/if}
 	{#if cleanup.open}<CleanupDialog />{/if}
 	<Tooltips />
 	<QuickInput />

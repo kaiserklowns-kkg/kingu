@@ -11,6 +11,7 @@
 //   workbench.action.chat.export / .import  Export Chat... (JSON) / Import Chat...
 //   Find in Chat and Previous / Next User Prompt: chatTranscriptCommands.svelte.ts
 //   workbench.action.chat.toggleSpeechToText and the other dictation commands (chatVoice.svelte.ts)
+//   Show Agent Debug Logs, Show Chats..., Configure Tools... (chatDebugCommands.ts)
 // The panel listens to `chatSignals` (it is mounted once, hidden with the secondary side bar).
 
 import { commands } from '#lib/workbench/commands.svelte.ts';
@@ -20,6 +21,7 @@ import { registerCustomizeCommands } from './chatCustomizeCommands.ts';
 import { registerInlineChatCommands } from './inlineChat.svelte.ts';
 import { registerTranscriptCommands } from './chatTranscriptCommands.svelte.ts';
 import { registerChatVoiceCommands } from './chatVoice.svelte.ts';
+import { registerChatDebugCommands } from './chatDebugCommands.ts';
 
 class ChatSignals {
 	/** Bumped to focus the chat input. */
@@ -175,5 +177,7 @@ export function registerChatCommands(): () => void {
 			() => chatSignals.hasFocus()
 		)
 	);
+	// The debug log, Show Chats and Configure Tools (chatDebugCommands.ts).
+	off.push(registerChatDebugCommands());
 	return () => off.forEach((f) => f());
 }

@@ -41,6 +41,8 @@ export type ChatMeta = {
 	working?: boolean;
 	/** A side chat ("Ask in Side Chat", chatTranscript.ts): the chat it was forked from; not in the history until kept. */
 	side_of?: string | null;
+	/** Tools turned off in Configure Tools (chatTools.ts); Rust runs the chat without them. */
+	disabled_tools?: string[];
 };
 
 /** Rust's limits (chats.rs). */

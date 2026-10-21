@@ -61,11 +61,11 @@ import { trust } from './th/trust';
 import { snapContrib } from './th/snapContrib';
 import { notebook } from './th/notebook';
 import { accessibility } from './th/accessibility';
-import { chatRender } from './th/chatRender';
+import { chatRender, chatObserve } from './th/chatRender';
 
 import { editing } from './th/editing';
 import { terminal } from './th/terminal';
 import { snapPlatform } from './th/snapPlatform';
 
 
-export const th = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...panes, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatTranscript, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault, ...adeAttempts, ...localAi, ...chatRuntime, ...chatExtras, ...adeSources, ...cli, ...artifacts, ...skills, ...arkai, ...forge, ...scmEditor, ...scmRepos, ...localHistory, ...ideTasks, ...language, ...workspaces, ...searchEditor, ...output, ...profiles, ...debugger_, ...testing, ...debugExtras, ...testingExtras, ...chatCustomize, ...editing, ...composer, ...voice, ...usage, ...keybindings, ...markdownPreview, ...refactorPreview, ...markdown, ...scmGraph, ...scmGit, ...terminal, ...trust, ...snapContrib, ...snapPlatform, ...notebook, ...accessibility, ...chatRender, ...chatToolRules } satisfies Record<keyof typeof en, string>;
+export const th = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...panes, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatTranscript, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault, ...adeAttempts, ...localAi, ...chatRuntime, ...chatExtras, ...adeSources, ...cli, ...artifacts, ...skills, ...arkai, ...forge, ...scmEditor, ...scmRepos, ...localHistory, ...ideTasks, ...language, ...workspaces, ...searchEditor, ...output, ...profiles, ...debugger_, ...testing, ...debugExtras, ...testingExtras, ...chatCustomize, ...editing, ...composer, ...voice, ...usage, ...keybindings, ...markdownPreview, ...refactorPreview, ...markdown, ...scmGraph, ...scmGit, ...terminal, ...trust, ...snapContrib, ...snapPlatform, ...notebook, ...accessibility, ...chatRender, ...chatToolRules, ...chatObserve } satisfies Record<keyof typeof en, string>;

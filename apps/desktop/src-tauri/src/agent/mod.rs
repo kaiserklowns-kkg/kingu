@@ -5,6 +5,7 @@
 
 pub mod ai_text;
 pub mod automations;
+pub mod chat_debug;
 pub mod chat_edits;
 pub mod chat_extras;
 pub mod chat_io;
@@ -38,6 +39,7 @@ pub mod slash_commands;
 pub mod status_hooks;
 pub mod tasks;
 pub mod tool_rules;
+pub mod tool_sets;
 pub mod trust;
 pub mod worktree;
 pub mod worktree_from;
@@ -82,6 +84,7 @@ fn run_dir(open_root: &std::path::Path, root: Option<&str>, slug: Option<&str>, 
 /// events are appended to the chat's transcript and only one run of a chat is live at a time.
 /// `resume` continues an earlier session (its `session_id`), refused while a live run holds it;
 /// with `resume_at` (a chat after a rewind or fork), only up to that message, in a fork of it.
+/// `disabled_tools`: the tools the chat's Configure Tools picker turned off (`disallowedTools`).
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn agent_start(
@@ -104,11 +107,14 @@ pub async fn agent_start(
   rules: Option<Vec<String>>,
   runtime: Option<String>,
   agent: Option<String>,
+  disabled_tools: Option<Vec<String>>,
   on_event: Channel<AgentEvent>,
 ) -> Result<u32, String> {
   if let Some(id) = chat_id.as_deref() {
     chats::check_id(id)?;
   }
+  let disabled_tools = disabled_tools.unwrap_or_default();
+  chats::check_tool_names("agent_start", &disabled_tools)?;
   let images = images.unwrap_or_default();
   crate::attachments::check_images(&images)?;
   if prompt.trim().is_empty() {
@@ -161,17 +167,20 @@ pub async fn agent_start(
   // chat's agent (Ask, or a custom agent: `customizations`): its text after the rules, and the
   // tools it leaves out.
   let config = crate::snap::config_dir(&app)?;
-  let (system_prompt_append, agent_disallowed) = {
-    let (root, dir, config) = (open_root.clone(), dir.clone(), config.clone());
-    let agent = agent.filter(|a| !a.trim().is_empty());
-    tauri::async_runtime::spawn_blocking(move || -> Result<(Option<String>, Vec<String>), String> {
-      let rules_text = rules.and_then(|files| rules::system_append(&rules::discover(&root, &dir, &files, &rules::Options::from_user(&config))));
+  let agent = agent.filter(|a| !a.trim().is_empty());
+  let (system_prompt_append, agent_disallowed, rule_files) = {
+    let (root, dir, config, agent) = (open_root.clone(), dir.clone(), config.clone(), agent.clone());
+    tauri::async_runtime::spawn_blocking(move || -> Result<(Option<String>, Vec<String>, Vec<String>), String> {
+      let loaded = rules.map(|files| rules::discover(&root, &dir, &files, &rules::Options::from_user(&config)));
+      let rules_text = loaded.as_deref().and_then(rules::system_append);
+      let rule_files = loaded.iter().flatten().filter(|l| l.rule.applies).map(|l| l.rule.rel.clone()).collect();
       let (agent_text, disallowed) = match agent {
-        Some(name) => customizations::for_run(&dir, customizations::home().as_deref(), &customizations::Settings::from_user(&config), &name)?,
+        // A tool set the agent's `tools` names (tool_sets.rs) stands for its tools.
+        Some(name) => customizations::for_run(&dir, customizations::home().as_deref(), &customizations::Settings::from_user(&config), &tool_sets::discover(&dir, Some(&config)), &name)?,
         None => (String::new(), Vec::new()),
       };
       let text = [rules_text.unwrap_or_default(), agent_text].into_iter().filter(|s| !s.trim().is_empty()).collect::<Vec<_>>().join("\n\n");
-      Ok(((!text.is_empty()).then_some(text), disallowed))
+      Ok(((!text.is_empty()).then_some(text), disallowed, rule_files))
     })
     .await
     .map_err(|e| e.to_string())??
@@ -260,7 +269,11 @@ pub async fn agent_start(
     project_mcp: mcp_plan.project,
     disallowed_tools: {
       let mut tools = mcp_plan.disallowed_tools;
-      tools.extend(agent_disallowed.into_iter().filter(|t| !tools.contains(t)).collect::<Vec<_>>());
+      for t in agent_disallowed.into_iter().chain(disabled_tools) {
+        if !tools.contains(&t) {
+          tools.push(t);
+        }
+      }
       tools
     },
     plugins,
@@ -275,6 +288,24 @@ pub async fn agent_start(
     owner,
   };
   let resuming = req.resume.is_some();
+  // What the run was given, for the chat's Agent Debug Log (chat_debug.rs); never sent to the webview.
+  if let Some(t) = &transcript {
+    let info = AgentEvent::RunInfo {
+      runtime: runtime.clone(),
+      model: req.model.clone(),
+      permission_mode: req.permission_mode.clone(),
+      agent: agent.clone(),
+      resumed: resuming,
+      rules: rule_files,
+      instructions_chars: req.system_prompt_append.as_ref().map_or(0, |s| s.chars().count() as u64),
+      disallowed_tools: req.disallowed_tools.clone(),
+      mcp_servers: req.mcp_servers.iter().flat_map(|m| m.keys().cloned()).collect(),
+      plugins: req.plugins.as_ref().map_or(0, |p| p.len() as u32),
+    };
+    if let Err(e) = t.append(&info) {
+      log::warn!("chat transcript: {e}");
+    }
+  }
   let agents = agents.inner().clone();
   let what = match (&chat_id, &slug) {
     (Some(id), _) => format!("chat {id}"),
@@ -312,8 +343,8 @@ pub async fn agent_start(
           {
             log::warn!("chat transcript: {e}");
           }
-          // Rewind points are Rust's own.
-          if !matches!(ev, AgentEvent::Anchor { .. }) {
+          // Rewind points and hook runs are Rust's own (the transcript keeps them).
+          if !chats::rust_only(&ev) {
             let _ = on_event.send(ev);
           }
         }

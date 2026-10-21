@@ -95,7 +95,7 @@ pub fn export_json(meta: &ChatMeta, events: &[AgentEvent], now: u64) -> Result<S
 fn imported(v: Value) -> Option<AgentEvent> {
   let mut ev = AgentEvent::from_host(v);
   match &mut ev {
-    AgentEvent::Raw { .. } | AgentEvent::Anchor { .. } | AgentEvent::FileSnapshot { .. } => return None,
+    AgentEvent::Raw { .. } | AgentEvent::Anchor { .. } | AgentEvent::FileSnapshot { .. } | AgentEvent::HookRun { .. } | AgentEvent::RunInfo { .. } => return None,
     AgentEvent::System { session_id, .. } | AgentEvent::Result { session_id, .. } => *session_id = None,
     AgentEvent::Checkpoint { session_id, resume_at, .. } => {
       *session_id = None;

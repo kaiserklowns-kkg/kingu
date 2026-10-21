@@ -159,6 +159,19 @@ describe('Arkai runtime', () => {
 		expect(results[1]!.content).toBe('     1\told');
 	});
 
+	test('disallowed tools are not offered, and a call to one is refused', async () => {
+		const { cwd, llm, events, nth, call, runtime } = setup();
+		llm.reply({ calls: [{ id: 'd1', name: 'Bash', args: '{"command": "echo hi"}' }] }, { text: ['ok'] });
+		await call(1, 'start', { runId: 1, cwd, prompt: 'run it', runtime: runtime(), disallowedTools: ['Bash', 'Write'] });
+		await nth('result');
+		const offered = (llm.requests[0]!.body as { tools?: { function: { name: string } }[] }).tools?.map((t) => t.function.name) ?? [];
+		expect(offered).toContain('Read');
+		expect(offered).not.toContain('Bash');
+		expect(offered).not.toContain('Write');
+		const result = events().find((e) => e.kind === 'tool_result') as Extract<AgentEvent, { kind: 'tool_result' }>;
+		expect([result.is_error, result.content.startsWith('Unknown tool Bash')]).toEqual([true, true]);
+	});
+
 	test('a small model: a call written as text runs, markup that is not a call sends it back (twice at most)', async () => {
 		const { cwd, llm, events, nth, call, runtime } = setup();
 		llm.reply(

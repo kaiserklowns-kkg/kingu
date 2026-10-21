@@ -75,6 +75,11 @@
 	import { layout } from '#lib/workbench/layout.svelte.ts';
 	import { defaultModePick, pastedContext } from './chatSettings.ts';
 	import { saveBeforeSend } from './chatSettings.svelte.ts';
+	import ChatHistoryFilter from './ChatHistoryFilter.svelte';
+	import { chatHistory } from './chatHistory.svelte.ts';
+	import { filterChats, isFiltered, snippetParts, type SearchHit } from './chatHistory.ts';
+	import { chatTools } from './chatTools.svelte.ts';
+	import { openChatDebug } from './chatDebugCommands.ts';
 
 	let {
 		editorChatId
@@ -144,8 +149,25 @@
 			(r) => (r.kind === 'chat' ? chats.run(r.id)?.status : runtime.run(r.slug)?.status)
 		)
 	);
+	/** The history's search and filters (chatHistory.svelte.ts): the rows kept, with a transcript snippet each. */
+	const historyFilter = $derived(chatHistory.filter);
+	const filteredChats = $derived(
+		isFiltered(historyFilter)
+			? filterChats(
+					sections.chats.map((r) => ({ ...r, runtime: chats.get(r.id)?.runtime })),
+					historyFilter,
+					chatHistory.facts(historyFilter.query.trim() ? chatHistory.hitsFor(historyFilter.query) : null)
+				)
+			: null
+	);
+	const historyHits = $derived(new Map<string, SearchHit>((filteredChats ?? []).flatMap((x) => (x.hit ? [[x.chat.id, x.hit] as const] : []))));
 	/** The history's chats by Today / Yesterday / Last 7 days / Older. */
-	const chatGroups = $derived(groupByDate(sections.chats, Date.now()));
+	const chatGroups = $derived(groupByDate(filteredChats ? filteredChats.map((x) => x.chat) : sections.chats, Date.now()));
+	// The chat commands act on (Show Agent Debug Logs, Configure Tools): the one shown here last.
+	$effect(() => {
+		const id = selectedId;
+		if (id) untrack(() => (chatTools.current = id));
+	});
 	const GROUP_LABEL: Record<DateGroup, () => string> = {
 		today: () => t('chat.history.today'),
 		yesterday: () => t('chat.history.yesterday'),
@@ -481,6 +503,8 @@
 		try {
 			// chat.saveBeforeSend: the agent reads the files as you see them.
 			await saveBeforeSend();
+			// `#set` names a tool set (chatTools.ts): its tools are on again, and the agent is told what they are.
+			extra = [...extra, ...(await chatTools.promptRefs(chatMeta?.id ?? null, text, cwd))];
 			if (!chatMeta) {
 				const where: ChatCwd = newWhere ? { kind: 'task', slug: newWhere } : { kind: 'folder' };
 				const message = await outgoing(text, attachments, where.kind === 'folder', extra);
@@ -906,6 +930,8 @@
 					menuItem('rename', t('chat.panel.rename')),
 					menuItem('editor', t('chatExtras.openInEditor'), { enabled: !inEditor }),
 					menuItem('promote', t('chat.panel.promote'), { enabled: !busy }),
+					menuItem('tools', t('chatTools.menu')),
+					menuItem('debug', t('chatDebug.menu')),
 					...(chatLive ? [menuItem('end', t('chat.panel.endSession'))] : []),
 					menuItem('delete', t('chat.panel.delete'), { enabled: !chatLive })
 				]
@@ -922,6 +948,8 @@
 			startRename(chatMeta.id, chatMeta.title);
 		} else if (id === 'editor') openInEditor();
 		else if (id === 'promote') void promote();
+		else if (id === 'tools' && chatMeta) void chatTools.configure(chatMeta.id);
+		else if (id === 'debug' && chatMeta) openChatDebug(chatMeta.id);
 		else if (id === 'end' && chatMeta) void chats.stop(chatMeta.id);
 		else if (id === 'delete' && chatMeta) void removeChat(chatMeta.id);
 		else if (id === 'agents') appMode.setMode('agents');
@@ -989,7 +1017,7 @@
 	}
 </script>
 
-<div bind:this={root} class="flex h-full min-w-0 flex-col overflow-hidden text-[13px]" data-chat-view>
+<div bind:this={root} class="flex h-full min-w-0 flex-col overflow-hidden text-[13px]" data-chat-view onfocusin={() => selectedId && (chatTools.current = selectedId)}>
 	<!-- The chat header (Cursor's): the chat as a tab (spinner while it runs, a dot when it finished
 	     unseen, × closes it), then New Chat, History, ⋯ (where and how it runs, the chat's actions)
 	     and the panel toggle. -->
@@ -1051,8 +1079,9 @@
 	{#if composerTop}{@render composerBlock()}{/if}
 	<div bind:this={listBox} class="relative min-h-0 flex-1 overflow-hidden">
 		{#if showList}
-			<!-- History (VS Code's agent sessions): chats, then the folder's ADE tasks (read-only here). -->
-			<div class="h-full overflow-y-auto py-1">
+			<!-- History (VS Code's agent sessions): search and filters, chats, then the folder's ADE tasks (read-only here). -->
+			<div class="h-full overflow-y-auto pb-1">
+				<div class="sticky top-0 z-10 bg-(--vscode-sideBar-background)"><ChatHistoryFilter /></div>
 				<ul aria-label={t('chatView.chats')}>
 					{#each chatGroups as g (g.group)}
 						<li class="px-3 pt-2 pb-1 text-[11px] font-medium text-(--vscode-descriptionForeground) uppercase" role="presentation">{GROUP_LABEL[g.group]()}</li>
@@ -1080,7 +1109,12 @@
 									<span class="shrink-0 text-(--vscode-descriptionForeground)"><Icon name="agent" size={14} /></span>
 									<span class="flex min-w-0 flex-1 flex-col">
 										<span class="truncate">{r.title}</span>
-										<span class="truncate text-xs text-(--vscode-descriptionForeground)">{r.state ? STATE_LABEL[r.state]() : timeAgo(r.at, Date.now())}</span>
+										{#if historyHits.get(r.id)}
+											{@const sn = snippetParts(historyHits.get(r.id)!.snippets[0])}
+											<span class="truncate text-xs text-(--vscode-descriptionForeground)">{sn.before}<mark class="bg-(--vscode-editor-findMatchHighlightBackground) text-inherit">{sn.match}</mark>{sn.after}</span>
+										{:else}
+											<span class="truncate text-xs text-(--vscode-descriptionForeground)">{r.state ? STATE_LABEL[r.state]() : timeAgo(r.at, Date.now())}</span>
+										{/if}
 									</span>
 									{#if r.state}<span class={['size-2 shrink-0 rounded-full', STATE_DOT[r.state]]} title={STATE_LABEL[r.state]()}></span>{/if}
 								</button>
@@ -1092,7 +1126,7 @@
 						</li>
 						{/each}
 					{:else}
-						<li class="px-3 py-2 text-(--vscode-descriptionForeground)">{t('chatView.noChats')}</li>
+						<li class="px-3 py-2 text-(--vscode-descriptionForeground)">{filteredChats ? t('chatHistory.noMatch') : t('chatView.noChats')}</li>
 					{/each}
 				</ul>
 				{#if sections.tasks.length}

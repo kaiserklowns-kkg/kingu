@@ -415,6 +415,7 @@ export class AgentHost {
 				mode,
 				resume: p.resume || null,
 				mcpServers: mcp,
+				disallowedTools: disallowed,
 				env: runEnv(this.deps.options?.env ?? process.env, extraEnv, unset),
 				snapshots: p.snapshots === true,
 				safetyChecks: p.safetyChecks !== false
@@ -460,6 +461,8 @@ export class AgentHost {
 			...(plugins.length ? { plugins: plugins.map((path) => ({ type: 'local' as const, path, skipMcpDiscovery: true })) } : {}),
 			...(accountEnv ? { env: accountEnv } : {}),
 			includePartialMessages: true,
+			// Hook outcomes (hook_response) for the chat's Agent Debug Log.
+			includeHookEvents: true,
 			// Subagents' text and thinking too (not only their tool calls): the chat nests them under the Task call.
 			forwardSubagentText: true,
 			// User + project settings: CLAUDE.md and the user's own allow/deny rules apply.
