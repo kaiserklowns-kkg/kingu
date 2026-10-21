@@ -864,6 +864,14 @@ const CORE_SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.statusBar.geminiUsage.visible',
+		group: 'Status Bar',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงโควตาของ Gemini ใน status bar เมื่อติดตั้ง Gemini CLI และเปิด kingu.usage.gemini (Gemini Usage: show Gemini CLI quota when kingu.usage.gemini is on.)',
+		scope: 'application'
+	},
+	{
 		id: 'kingu.usage.display',
 		group: 'Status Bar',
 		type: 'string',
@@ -925,7 +933,7 @@ export type SettingsSection = { id: string; label: string; labelKey?: 'settings.
  */
 export const SETTINGS_SECTIONS: SettingsSection[] = (
 	[
-		{ id: 'ai', label: 'AI Capabilities', labelKey: 'settings.sections.aiCapabilities', pages: ['accounts', 'mcp', 'skills', 'memories'], groups: AI_SECTION_GROUPS },
+		{ id: 'ai', label: 'AI Capabilities', labelKey: 'settings.sections.aiCapabilities', pages: ['accounts', 'mcp', 'skills', 'memories', 'voice'], groups: AI_SECTION_GROUPS },
 		{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Zen Mode', 'Application', ...SYSTEM_SECTION_GROUPS, 'Status Bar', 'Accessibility', 'Team', 'Snap Sandbox'] },
 		{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Source Control', 'Git', 'Merge Conflict', 'Timeline', 'Terminal', 'Tasks', 'Debug', 'Testing', 'Problems', 'Output', 'TypeScript', 'CSS', 'HTML', 'JSON', 'Emmet'] },
 		{ id: 'ade', label: 'ADE (Agents)', groups: ADE_SECTION_GROUPS }

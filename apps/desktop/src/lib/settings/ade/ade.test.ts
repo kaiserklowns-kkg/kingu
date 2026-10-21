@@ -70,7 +70,7 @@ describe("Orca's AI Capabilities group", () => {
 		expect(sections[0].id).toBe('ai');
 		expect(ai().labelKey).toBe('settings.sections.aiCapabilities');
 		expect(t('settings.sections.aiCapabilities')).toBeTruthy();
-		expect(ai().pages).toEqual(['accounts', 'mcp', 'skills', 'memories']);
+		expect(ai().pages).toEqual(['accounts', 'mcp', 'skills', 'memories', 'voice']);
 		expect(ai().groups).toEqual(AI_SECTION_GROUPS);
 		for (const g of AI_SECTION_GROUPS) expect([g, sections.filter((s) => s.groups.includes(g)).map((s) => s.id)]).toEqual([g, ['ai']]);
 	});

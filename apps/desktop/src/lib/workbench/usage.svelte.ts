@@ -13,25 +13,26 @@ import { agents } from '#lib/agent/agents.svelte.ts';
 import { chats } from '#lib/agent/chats.svelte.ts';
 import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 import { clientLog } from '#lib/client-log.ts';
-import { applyStale, backoff, fromAccountRow, LIVE_FRESH_MS, nextTick, parseLiveLimit, POLL_MS, PROVIDERS, spend, STALE_AFTER_MS, windowsOf, type ProviderId, type ProviderState } from './usage';
+import { settings } from '#lib/settings/settings.svelte.ts';
+import { ACCOUNT_PROVIDERS, activeProviders, applyStale, backoff, fromAccountRow, LIVE_FRESH_MS, nextTick, parseLiveLimit, POLL_MS, PROVIDERS, spend, STALE_AFTER_MS, windowsOf, type ProviderId, type ProviderState } from './usage';
 
 class Usage {
 	now = $state(Date.now());
-	providers = $state<Record<ProviderId, ProviderState | null>>({ claude: null, codex: null });
+	providers = $state<Record<ProviderId, ProviderState | null>>({ claude: null, codex: null, gemini: null });
 	detected = $state<ProviderId[] | null>(null);
 	refreshing = $state(false);
 	anyFetching = $derived(PROVIDERS.some((p) => this.providers[p]?.status === 'fetching'));
 	spend = $derived(spend(adeTasks.list.map((t) => ({ slug: t.slug, title: t.title, last_run: t.last_run })), this.now));
 
-	#streak: Record<ProviderId, number> = { claude: 0, codex: 0 };
-	#retryAt: Record<ProviderId, number> = { claude: 0, codex: 0 };
+	#streak: Record<ProviderId, number> = { claude: 0, codex: 0, gemini: 0 };
+	#retryAt: Record<ProviderId, number> = { claude: 0, codex: 0, gemini: 0 };
 	#liveAt = 0;
 	#running: Promise<void> | null = null;
 	#again = false;
 
-	/** Detected providers, or both while detection has not answered (Orca's "unknown" gate). */
+	/** Detected providers, or all while detection has not answered (Orca's "unknown" gate); Gemini when kingu.usage.gemini is on. */
 	get active(): ProviderId[] {
-		return this.detected ?? PROVIDERS;
+		return activeProviders(this.detected, settings.get<boolean>('kingu.usage.gemini') === true);
 	}
 
 	/** `p`'s reading from the accounts service's last refresh (its active account). */
@@ -42,7 +43,12 @@ class Usage {
 			this.providers[p] = prev ?? { ...empty(p), status: 'unavailable' };
 			return;
 		}
-		const next = fromAccountRow(row);
+		this.#apply(p, fromAccountRow(row));
+	}
+
+	/** `next` as `p`'s reading, keeping recent windows through a failure, with the error backoff. */
+	#apply(p: ProviderId, next: ProviderState) {
+		const prev = this.providers[p];
 		const now = Date.now();
 		this.providers[p] = applyStale(prev, next, now);
 		if (next.status === 'error') {
@@ -58,12 +64,17 @@ class Usage {
 	async #fetchProviders(list: ProviderId[], force: boolean) {
 		if (!list.length) return;
 		for (const p of list) if (!this.providers[p] || this.providers[p].status === 'idle') this.providers[p] = { ...(this.providers[p] ?? empty(p)), status: 'fetching' };
-		try {
-			await accounts.refresh(force);
-		} catch (e) {
-			clientLog('error', `usage: ${e}`);
+		const viaAccounts = list.filter((p) => ACCOUNT_PROVIDERS.includes(p));
+		const gemini = list.includes('gemini') ? invoke<ProviderState>('usage_fetch', { provider: 'gemini' }).then((u) => this.#apply('gemini', { ...u, source: 'api' }), (e) => clientLog('error', `usage gemini: ${e}`)) : null;
+		if (viaAccounts.length) {
+			try {
+				await accounts.refresh(force);
+			} catch (e) {
+				clientLog('error', `usage: ${e}`);
+			}
+			for (const p of viaAccounts) this.#read(p);
 		}
-		for (const p of list) this.#read(p);
+		await gemini;
 	}
 
 	/** Every detected provider; scheduled fetches skip a fresh live Claude reading and active retry waits. */

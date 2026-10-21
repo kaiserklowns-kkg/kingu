@@ -20,6 +20,7 @@
 	import McpPage from '#lib/mcp/McpPage.svelte';
 	import SkillsPage from '#lib/skills/SkillsPage.svelte';
 	import MemoriesPage from '#lib/agent/MemoriesPage.svelte';
+	import VoicePage from './pages/VoicePage.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import { settings } from './settings.svelte';
 	import type { IconName } from '#lib/workbench/Icon.svelte';
@@ -54,6 +55,13 @@
 			},
 			icon: 'bookmark'
 		},
+		{
+			id: 'voice',
+			get label() {
+				return t('voice.title');
+			},
+			icon: 'mic'
+		},
 		{ id: 'shortcuts', label: 'Keyboard Shortcuts', icon: 'keyboard' }
 	];
 	const PAGE_LABEL: Record<SettingsPageId, string> = {
@@ -69,6 +77,9 @@
 		},
 		get memories() {
 			return t('chatExtras.memories.title');
+		},
+		get voice() {
+			return t('voice.title');
 		},
 		shortcuts: 'Keyboard Shortcuts',
 		about: 'About Kingu'
@@ -206,6 +217,7 @@
 			{:else if page === 'mcp'}<McpPage />
 			{:else if page === 'skills'}<SkillsPage />
 		{:else if page === 'memories'}<MemoriesPage />
+			{:else if page === 'voice'}<VoicePage />
 			{:else if page === 'about'}<AboutPage />
 			{:else if showSnaps}<SnapsView />{:else}<SettingsEditor group={systemSettings.group} bind:query />{/if}
 		</div>

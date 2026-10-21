@@ -26,6 +26,7 @@
 	import { emitOutput, markTaskSpawned, registerTerminal, taskSpawned, touchTerminal } from './registry.ts';
 	import type { TaskSpawn } from './registry.ts';
 	import { bindAdeTerminal, copiedSelection, type AdeBinding } from './adeTerminal.svelte.ts';
+	import { INSERT_EVENT } from '#lib/voice/target.ts';
 	import { quickCommandInput, quickCommands } from './adeTerminalOptions.ts';
 	import { isBuiltin, terminalMenu, type MenuState, type TerminalFlavor } from './terminalMenu.ts';
 
@@ -359,6 +360,14 @@
 				.catch((err) => status.flash(`วางรูปไม่ได้: ${err}`, 8000));
 		};
 		host.addEventListener('paste', onPaste, true);
+		// Voice dictation's text (voice/target.ts) arrives as a paste.
+		const onDictation = (e: Event) => {
+			const text = (e as CustomEvent<{ text?: unknown }>).detail?.text;
+			if (typeof text !== 'string' || !live) return;
+			e.preventDefault();
+			void pasteText(text);
+		};
+		host.addEventListener(INSERT_EVENT, onDictation);
 		// Files dropped from Finder are typed as paths (images as a bracketed paste, like Orca).
 		const stopDrop = onFileDrop(host, {
 			drop: (paths) => {
@@ -476,6 +485,7 @@
 			host.removeEventListener('auxclick', onAuxClick);
 			host.removeEventListener('wheel', onWheel, { capture: true });
 			host.removeEventListener('paste', onPaste, true);
+			host.removeEventListener(INSERT_EVENT, onDictation);
 			stopDrop();
 			unregister();
 			t.textarea?.removeEventListener('focus', onFocus);

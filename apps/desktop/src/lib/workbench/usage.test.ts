@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+	activeProviders,
 	applyStale,
 	backoff,
 	countdown,
@@ -127,5 +128,19 @@ describe('fromAccountRow', () => {
 		expect(fromAccountRow({ ...row, status: 'error', failure: 'stale_token', usage: null }).failureKind).toBe('stale-token');
 		expect(fromAccountRow({ ...row, status: 'error', failure: 'not_signed_in', usage: null }).failureKind).toBe('missing-credentials');
 		expect(fromAccountRow({ ...row, status: 'api_key', failure: null, usage: null }).status).toBe('unavailable');
+	});
+});
+
+describe('Gemini usage (kingu.usage.gemini)', () => {
+	test('shown only when turned on and its CLI is installed (or detection has not answered)', () => {
+		expect(activeProviders(['claude', 'gemini'], false)).toEqual(['claude']);
+		expect(activeProviders(['claude', 'gemini'], true)).toEqual(['claude', 'gemini']);
+		expect(activeProviders(['codex'], true)).toEqual(['codex']);
+		expect(activeProviders(null, false)).toEqual(['claude', 'codex']);
+		expect(activeProviders(null, true)).toEqual(['claude', 'codex', 'gemini']);
+	});
+
+	test('an expired Gemini sign-in waits for the CLI', () => {
+		expect(errorLabel(state({ provider: 'gemini', status: 'error', failureKind: 'stale-token' }))).toBe('Updates when Gemini runs');
 	});
 });

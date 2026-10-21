@@ -97,6 +97,7 @@
 			<Switch id="kingu.statusBar.ports.visible" label="Ports" hint="พอร์ตที่โปรเซสของ Kingu เปิดอยู่" />
 			<Switch id="kingu.statusBar.claudeUsage.visible" label="Claude Usage" hint="โควตา session และรายสัปดาห์ของ Claude" />
 			<Switch id="kingu.statusBar.codexUsage.visible" label="Codex Usage" hint="โควตาของ Codex (เมื่อติดตั้ง Codex CLI)" />
+			<Switch id="kingu.statusBar.geminiUsage.visible" label="Gemini Usage" hint="โควตาของ Gemini CLI (เมื่อเปิด kingu.usage.gemini)" />
 		</div>
 	</div>
 </div>

@@ -51,6 +51,7 @@ mod user_profiles;
 mod textfile;
 mod tracker_http;
 mod vault;
+mod voice;
 mod watcher;
 mod window;
 mod windows;
@@ -327,12 +328,13 @@ async fn git_user_configured(ws: Workspace, slug: Option<String>) -> Result<bool
   blocking(move || Ok(git::user_configured(&dir))).await
 }
 
-/// Usage limits of one agent provider (`claude` or `codex`) for the status bar.
+/// Usage limits of one agent provider (`claude`, `codex` or `gemini`) for the status bar.
 #[tauri::command]
 async fn usage_fetch(provider: String) -> Result<usage::ProviderUsage, String> {
   blocking(move || match provider.as_str() {
     "claude" => Ok(usage::fetch_claude()),
     "codex" => Ok(usage::fetch_codex()),
+    "gemini" => Ok(usage::fetch_gemini()),
     other => Err(format!("{other}: unknown provider")),
   })
   .await
@@ -1155,6 +1157,7 @@ pub fn run() {
     .manage(menu::MenuState::default())
     .manage(DroppedPaths::default())
     .manage(artifacts::preview::Previews::default())
+    .manage(voice::Voice::default())
     // Artifact previews (artifacts/preview.rs): served only to the sandboxed preview iframe.
     .register_uri_scheme_protocol(artifacts::preview::SCHEME, artifacts::preview::handle)
     .setup(|app| {
@@ -1306,6 +1309,10 @@ pub fn run() {
       git_continue,
       usage_fetch,
       usage_detect,
+      voice::voice_status,
+      voice::voice_set_openai_key,
+      voice::voice_clear_openai_key,
+      voice::voice_transcribe,
       floating_note_new,
       floating_note_read,
       floating_note_write,

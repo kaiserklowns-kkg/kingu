@@ -78,6 +78,8 @@
 	import { installIssues } from '#lib/ade/issues.svelte.ts';
 	import { installLinear } from '#lib/ade/linear.svelte.ts';
 	import { installCliBridge } from '#lib/ade/cliBridge.svelte.ts';
+	import { installVoice } from '#lib/voice/dictation.svelte.ts';
+	import DictationIndicator from '#lib/voice/DictationIndicator.svelte';
 	import LinearConnect from '#lib/ade/LinearConnect.svelte';
 	import { installTaskSources } from '#lib/ade/taskSources.svelte.ts';
 	import TrackerConnect from '#lib/ade/TrackerConnect.svelte';
@@ -367,6 +369,7 @@
 		const uninstallLinear = installLinear();
 		const uninstallTaskSources = installTaskSources();
 		const uninstallCliBridge = installCliBridge();
+		const uninstallVoice = installVoice();
 		const uninstallLayout = installLayoutCommands();
 		const uninstallSnaps = installSnaps();
 		const uninstallMcp = installMcp();
@@ -433,6 +436,7 @@
 			uninstallLinear();
 			uninstallTaskSources();
 			uninstallCliBridge();
+			uninstallVoice();
 			uninstallAutomations();
 			uninstallAgentNotifications();
 			uninstallAdeAttention();
@@ -590,6 +594,7 @@
 
 	<!-- workbench.statusBar.visible (kept mounted so its items keep their state); Zen Mode hides it (zenMode.hideStatusBar). -->
 	<div class={['contents', ((layout.zen && layout.zenParts?.statusBar !== true) || !settings.get<boolean>('workbench.statusBar.visible')) && '[&>*]:hidden']}><StatusBar /></div>
+	<DictationIndicator />
 	<FloatingTerminal />
 	{#if welcome.open}<Welcome />{/if}
 	{#if cleanup.open}<CleanupDialog />{/if}
