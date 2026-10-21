@@ -12,8 +12,11 @@ export type LaunchConfig = { type: string; request: string; name: string; preLau
 /** Read in this order; `.kingu/launch.json` is Kingu's own place, same format. */
 export const LAUNCH_FILES = ['.vscode/launch.json', '.kingu/launch.json'];
 
+/** A compound's configuration: by name, or `{ name, folder }` naming the root folder whose launch.json has it. */
+export type CompoundRef = { name: string; folder?: string };
+
 /** A launch.json compound (VS Code): several configurations started together. */
-export type LaunchCompound = { name: string; configurations: string[]; preLaunchTask?: string | Record<string, unknown>; stopAll?: boolean };
+export type LaunchCompound = { name: string; configurations: CompoundRef[]; preLaunchTask?: string | Record<string, unknown>; stopAll?: boolean };
 
 export type LaunchFile = { configs: LaunchConfig[]; compounds: LaunchCompound[]; inputs: InputDef[]; error?: string };
 
@@ -42,23 +45,53 @@ function parseCompounds(raw: unknown): LaunchCompound[] {
 	if (!Array.isArray(raw)) return [];
 	return raw.flatMap((c) => {
 		if (!c || typeof c !== 'object' || typeof c.name !== 'string' || !Array.isArray(c.configurations)) return [];
-		// A configuration is named directly or as { name, folder } (matched by name only, in any folder).
-		const names = c.configurations.map((x: unknown) => (typeof x === 'string' ? x : x && typeof x === 'object' && typeof (x as { name?: unknown }).name === 'string' ? (x as { name: string }).name : null)).filter((x: string | null): x is string => !!x);
-		if (!names.length) return [];
-		return [{ name: c.name, configurations: names, ...(c.preLaunchTask ? { preLaunchTask: c.preLaunchTask } : {}), ...(c.stopAll === true ? { stopAll: true } : {}) }];
+		// A configuration is named directly or as { name, folder } (the root folder's name).
+		const refs = c.configurations.flatMap((x: unknown): CompoundRef[] => {
+			if (typeof x === 'string') return x ? [{ name: x }] : [];
+			if (!x || typeof x !== 'object' || typeof (x as { name?: unknown }).name !== 'string') return [];
+			const { name, folder } = x as { name: string; folder?: unknown };
+			return [typeof folder === 'string' && folder ? { name, folder } : { name }];
+		});
+		if (!refs.length) return [];
+		return [{ name: c.name, configurations: refs, ...(c.preLaunchTask ? { preLaunchTask: c.preLaunchTask } : {}), ...(c.stopAll === true ? { stopAll: true } : {}) }];
 	});
 }
 
-/** The configurations of a compound, in its order; names that match no configuration are reported. */
-export function compoundConfigs(compound: LaunchCompound, configs: readonly LaunchConfig[]): { configs: LaunchConfig[]; missing: string[] } {
+/** Where configurations come from in a multi-root workspace: a config's root folder path
+ * (undefined: the workspace file's `launch`) and a folder path's name. */
+export type ConfigOrigin = { folderOf(config: object): string | undefined; nameOf(folder: string): string };
+
+/**
+ * The configurations of a compound, in its order (VS Code's debugService for a compound): a
+ * `{ name, folder }` reference is looked up in that folder's launch.json; a bare name must be in
+ * one launch.json only, or in the compound's own. `missing`: references that match nothing,
+ * `ambiguous`: bare names several folders have. A compound naming itself is skipped.
+ */
+export function compoundConfigs(compound: LaunchCompound, configs: readonly LaunchConfig[], origin?: ConfigOrigin): { configs: LaunchConfig[]; missing: string[]; ambiguous: string[] } {
 	const found: LaunchConfig[] = [];
 	const missing: string[] = [];
-	for (const name of compound.configurations) {
-		const c = configs.find((x) => x.name === name);
-		if (c) found.push(c);
-		else missing.push(name);
+	const ambiguous: string[] = [];
+	const from = (c: object) => origin?.folderOf(c);
+	for (const ref of compound.configurations) {
+		if (ref.name === compound.name) continue;
+		const named = configs.filter((x) => x.name === ref.name);
+		let pick: LaunchConfig | undefined;
+		if (ref.folder !== undefined) {
+			pick = named.find((x) => {
+				const folder = from(x);
+				return folder !== undefined && origin?.nameOf(folder) === ref.folder;
+			});
+			if (!pick) missing.push(`${ref.folder}/${ref.name}`);
+		} else {
+			const sources = new Set(named.map(from));
+			if (sources.size <= 1) pick = named[0];
+			else pick = named.find((x) => from(x) === from(compound));
+			if (!named.length) missing.push(ref.name);
+			else if (!pick) ambiguous.push(ref.name);
+		}
+		if (pick) found.push(pick);
 	}
-	return { configs: found, missing };
+	return { configs: found, missing, ambiguous };
 }
 
 /** What launch.json's variables resolve against: tasks.json's context (the active editor, `${config:…}`,

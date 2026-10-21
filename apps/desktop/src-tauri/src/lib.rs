@@ -1510,6 +1510,8 @@ pub fn run() {
       agent::scripts::worktree_script_trust,
       tasks::tasks_file,
       tasks::tasks_trust,
+      tasks::tasks_workspace_file,
+      tasks::tasks_workspace_trust,
       agent::scripts::worktree_script_prepare,
       agent::scripts::worktree_setup_marker,
       agent::scripts::worktree_setup_status,

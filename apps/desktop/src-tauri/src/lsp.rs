@@ -680,7 +680,9 @@ mod tests {
   fn finds_project_local_servers_in_every_root_folder() {
     let tmp = tempfile::tempdir().unwrap();
     let (a, b, empty) = (tmp.path().join("a"), tmp.path().join("b"), tmp.path().join("empty"));
-    std::fs::create_dir_all(&empty).unwrap();
+    for d in [&empty, &a.join("node_modules/.bin"), &b.join("node_modules/.bin")] {
+      std::fs::create_dir_all(d).unwrap();
+    }
     let spec = spec_for("svelte").unwrap();
     // Only the second folder has it: still found.
     let in_b = fake_bin(&b.join("node_modules/.bin"), "svelteserver", "");

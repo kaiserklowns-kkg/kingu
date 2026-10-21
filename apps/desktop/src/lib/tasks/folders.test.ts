@@ -4,7 +4,7 @@
 import { describe, expect, test } from 'bun:test';
 import { npmTask } from './detect.ts';
 import { customTask } from './taskConfig.ts';
-import { filesInFolder, findTaskFrom, folderKey, scopeTasks, taskCwd, taskFolder, taskFolderLabel, workspaceFileSection } from './folders.ts';
+import { filesInFolder, findTaskFrom, folderKey, folderPickItems, scopeTasks, taskCwd, taskFolder, taskFolderLabel, WORKSPACE_PICK, workspaceFileSection } from './folders.ts';
 import { substitute, type VariableContext } from './variables.ts';
 
 const app = { path: '/w/app', name: 'app' };
@@ -106,5 +106,17 @@ describe('variables in a multi-root workspace', () => {
 	test("a detected task's cwd follows its folder", () => {
 		const [npm] = scopeTasks([npmTask('build', 'packages/ui', 'bun')], lib, false);
 		expect(substitute(npm.options.cwd, { ...ctx, workspaceFolder: npm.folder })).toBe('/w/lib/packages/ui');
+	});
+});
+
+describe('which folder a tasks.json / launch.json is for', () => {
+	test('each root folder, then the workspace file when there is one', () => {
+		expect(folderPickItems(folders, null, 'Workspace').map((i) => [i.id, i.label])).toEqual([
+			['/w/app', 'app'],
+			['/w/lib', 'Library']
+		]);
+		const items = folderPickItems(folders, '/w/all.code-workspace', 'Workspace');
+		expect(items.at(-1)).toEqual({ id: WORKSPACE_PICK, label: 'Workspace', description: '/w/all.code-workspace' });
+		expect(items).toHaveLength(3);
 	});
 });

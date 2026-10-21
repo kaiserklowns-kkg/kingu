@@ -35,11 +35,34 @@ describe('compounds', () => {
 	test('read with their configurations, by name or { name, folder }', () => {
 		const { configs, compounds } = parseLaunchJson(text, '.vscode/launch.json');
 		expect(compounds).toEqual([
-			{ name: 'Server/Client', configurations: ['Server', 'Client'], preLaunchTask: 'build', stopAll: true },
-			{ name: 'Broken', configurations: ['Server', 'Nope'] }
+			{ name: 'Server/Client', configurations: [{ name: 'Server' }, { name: 'Client', folder: 'web' }], preLaunchTask: 'build', stopAll: true },
+			{ name: 'Broken', configurations: [{ name: 'Server' }, { name: 'Nope' }] }
 		]);
-		expect(compoundConfigs(compounds[0], configs).configs.map((c) => c.name)).toEqual(['Server', 'Client']);
-		expect(compoundConfigs(compounds[1], configs).missing).toEqual(['Nope']);
+		const origin = { folderOf: () => '/w/web', nameOf: (p: string) => p.slice(p.lastIndexOf('/') + 1) };
+		expect(compoundConfigs(compounds[0], configs, origin).configs.map((c) => c.name)).toEqual(['Server', 'Client']);
+		expect(compoundConfigs(compounds[1], configs, origin).missing).toEqual(['Nope']);
+	});
+
+	test('in a multi-root workspace, { name, folder } picks that folder’s configuration and a bare name must be unique', () => {
+		const at = (name: string, folder: string | undefined) => ({ config: { type: 'node', request: 'launch', name }, folder });
+		const list = [at('Server', '/w/api'), at('Client', '/w/web'), at('Server', '/w/web'), at('Tool', undefined)];
+		const folderOf = new Map<object, string | undefined>(list.map((x) => [x.config, x.folder]));
+		const compound = { name: 'All', configurations: [{ name: 'Server', folder: 'web' }, { name: 'Client' }, { name: 'Tool' }, { name: 'All' }] };
+		folderOf.set(compound, '/w/api');
+		const origin = { folderOf: (c: object) => folderOf.get(c), nameOf: (p: string) => p.slice(p.lastIndexOf('/') + 1) };
+		const configs = list.map((x) => x.config);
+		const r = compoundConfigs(compound, configs, origin);
+		// The compound naming itself is skipped (VS Code).
+		expect(r.configs).toEqual([list[2].config, list[1].config, list[3].config]);
+		expect(r.missing).toEqual([]);
+		// A bare name two folders have: the compound's own folder's, else ambiguous.
+		expect(compoundConfigs({ name: 'C', configurations: [{ name: 'Server' }] }, configs, origin).ambiguous).toEqual(['Server']);
+		expect(compoundConfigs(compound, configs, origin).configs[0]).toBe(list[2].config);
+		const own = { name: 'Own', configurations: [{ name: 'Server' }] };
+		folderOf.set(own, '/w/api');
+		expect(compoundConfigs(own, configs, origin).configs).toEqual([list[0].config]);
+		// A folder that has no such configuration.
+		expect(compoundConfigs({ name: 'X', configurations: [{ name: 'Client', folder: 'api' }] }, configs, origin).missing).toEqual(['api/Client']);
 	});
 });
 
