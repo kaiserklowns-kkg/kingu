@@ -1,11 +1,13 @@
 // The Problems view's state (VS Code: MarkersView's filters and panel state): the filter box,
 // the filter toggles, tree/table, single or multi line messages, the selected problem and the
-// collapsed files. Filters and the view mode last across reloads like VS Code's panel state.
+// collapsed files. Filters and the view mode are kept per workspace, like VS Code's Markers panel
+// state (workspaceStorage).
 
 import { SvelteSet } from 'svelte/reactivity';
 import { enabledGlobs } from '#lib/settings/mappings.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { editors } from '#lib/workbench/editors.svelte.ts';
+import { workspaceStorage } from '#lib/workbench/workspaceStorage.svelte.ts';
 import { uriToPath } from './convert';
 import { lsp } from './lsp.svelte';
 import type { ProblemFile } from './model';
@@ -15,13 +17,17 @@ import { filterProblems, isFiltering, type ProblemsFilterState } from './problem
 const KEY = 'kingu.problems.view';
 const PERSISTED = ['text', 'showErrors', 'showWarnings', 'showInfos', 'activeFile', 'excludedFiles', 'multiline'] as const;
 
-function readSaved(): Record<string, unknown> {
+/** What an older build kept for every window (it goes to the first workspace opened). */
+function readLegacy(): unknown {
 	try {
-		return JSON.parse(localStorage.getItem(KEY) ?? '{}');
+		return JSON.parse(localStorage.getItem(KEY) ?? 'null');
 	} catch {
-		return {};
+		return null;
 	}
 }
+
+/** A workspace opened for the first time: no filter, every severity, messages on several lines. */
+const DEFAULTS = { text: '', showErrors: true, showWarnings: true, showInfos: true, activeFile: false, excludedFiles: false, multiline: true };
 
 export type ProblemsViewMode = 'tree' | 'table';
 
@@ -56,17 +62,21 @@ class ProblemsView {
 	filtering = $derived(isFiltering(this.filter));
 
 	constructor() {
-		const saved = readSaved();
-		for (const k of PERSISTED) if (k in saved && typeof saved[k] === typeof this[k]) (this as Record<string, unknown>)[k] = saved[k];
-		if (saved.mode === 'tree' || saved.mode === 'table') this.#mode = saved.mode;
+		workspaceStorage.register(
+			KEY,
+			[...PERSISTED, 'mode'],
+			(saved) => {
+				const s = saved ?? {};
+				for (const k of PERSISTED) (this as Record<string, unknown>)[k] = typeof s[k] === typeof DEFAULTS[k] ? s[k] : DEFAULTS[k];
+				this.#mode = s.mode === 'tree' || s.mode === 'table' ? s.mode : null;
+				this.collapsed.clear();
+				this.selected = null;
+			},
+			readLegacy()
+		);
 		$effect.root(() => {
 			$effect(() => {
-				const snapshot = { ...Object.fromEntries(PERSISTED.map((k) => [k, this[k]])), mode: this.#mode };
-				try {
-					localStorage.setItem(KEY, JSON.stringify(snapshot));
-				} catch {
-					// Storage unavailable: the filters reset on the next launch.
-				}
+				workspaceStorage.save(KEY, { ...Object.fromEntries(PERSISTED.map((k) => [k, this[k]])), mode: this.#mode });
 			});
 		});
 	}

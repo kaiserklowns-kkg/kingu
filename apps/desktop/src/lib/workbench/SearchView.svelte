@@ -10,6 +10,7 @@
 	import { fileIcon, folderIcon } from './fileIcons';
 	import { editors } from './editors.svelte';
 	import { search } from './search.svelte';
+	import type { HistoryField } from './searchHistory';
 	import {
 		basename,
 		dirname,
@@ -75,6 +76,7 @@
 	}
 
 	function onReplaceKey(e: KeyboardEvent) {
+		if (historyKey(e, 'replace')) return;
 		// VS Code: ⌥⌘Enter (and Enter in the Replace box) replaces all.
 		if (e.key === 'Enter') askReplaceAll();
 		else if (e.key === 'Escape' && confirmAll) confirmAll = false;
@@ -139,7 +141,23 @@
 		e.preventDefault();
 	}
 
+	/** ↑ / ↓ browse a box's history (VS Code's HistoryInputBox); false when there is nothing to show. */
+	function historyKey(e: KeyboardEvent, field: HistoryField): boolean {
+		if ((e.key !== 'ArrowUp' && e.key !== 'ArrowDown') || e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return false;
+		if (!search.historyStep(field, e.key === 'ArrowUp' ? -1 : 1)) return false;
+		e.preventDefault();
+		// Like typing it (search.searchOnType).
+		if (field !== 'replace') search.schedule();
+		return true;
+	}
+
+	function onPatternKey(e: KeyboardEvent, field: 'include' | 'exclude') {
+		if (e.key === 'Enter') void search.run();
+		else historyKey(e, field);
+	}
+
 	function onInputKey(e: KeyboardEvent) {
+		if (historyKey(e, 'search')) return;
 		if (e.key === 'Enter') void search.run();
 		else if (e.key === 'Escape' && search.query) search.clear();
 		else if (e.key === 'ArrowDown' && rows.length) {
@@ -273,7 +291,7 @@
 					<input
 						bind:value={search.include}
 						oninput={() => search.schedule()}
-						onkeydown={(e) => e.key === 'Enter' && search.run()}
+						onkeydown={(e) => onPatternKey(e, 'include')}
 						placeholder="e.g. *.ts, src/**/include"
 						spellcheck="false"
 						class={inputField}
@@ -286,7 +304,7 @@
 					<input
 						bind:value={search.exclude}
 						oninput={() => search.schedule()}
-						onkeydown={(e) => e.key === 'Enter' && search.run()}
+						onkeydown={(e) => onPatternKey(e, 'exclude')}
 						placeholder="e.g. *.ts, src/**/exclude"
 						spellcheck="false"
 						class={inputField}

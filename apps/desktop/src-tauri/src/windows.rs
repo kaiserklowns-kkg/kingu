@@ -243,38 +243,57 @@ pub fn on_destroyed(app: &AppHandle, label: &str) {
   save_windows(app);
 }
 
-/// At startup: the last session's windows per `window.restoreWindows` (the main window takes the
-/// last active one), else `KINGU_WORKSPACE`, else an empty main window.
-pub fn restore(app: &AppHandle, setting: Option<&str>, data: &workspace::RecentData) {
+/// At startup (startup.rs): the last session's windows per `window.restoreWindows`, the paths
+/// Kingu was launched with, and empty windows with backups (the main window takes the one in
+/// front); with none of them `KINGU_WORKSPACE`, else an empty main window.
+pub fn restore(app: &AppHandle, setting: Option<&str>, data: &workspace::RecentData, launch: &crate::startup::Launch) {
   // Full screen comes back only with window.restoreFullscreen (VS Code).
   let fullscreen = window_setting(app, "window.restoreFullscreen").and_then(|v| v.as_bool()) == Some(true);
-  let mut sessions: Vec<WindowSession> = workspace::windows_to_restore(setting, &data.sessions())
-    .into_iter()
-    .map(|s| WindowSession {
-      folders: workspace::existing_folders(&s.folders),
-      bounds: s.bounds.map(|b| WindowBounds { fullscreen: b.fullscreen && fullscreen, ..b }),
-      ..s
+  let last_session = data.sessions();
+  // Before any window writes a backup: stale backup folders go, rescued ones become empty windows.
+  let with_backups = crate::backup::base_dir(app)
+    .map(|base| {
+      let known = last_session.iter().filter_map(WindowSession::storage_key).collect();
+      crate::backup::sweep(&base, &known, Path::exists, untitled_id)
     })
-    .collect();
-  // The main window takes the last active one; an empty one gives way to KINGU_WORKSPACE.
-  let last = sessions.pop();
-  let mut main_session = match last {
-    Some(s) if !s.folders.is_empty() => s,
-    last => workspace::startup_root(None, std::env::var_os("KINGU_WORKSPACE"))
-      .map(|r| WindowSession { folders: vec![Folder::new(r)], bounds: last.as_ref().and_then(|l| l.bounds), ..Default::default() })
-      .or(last)
-      .unwrap_or_default(),
+    .unwrap_or_default();
+  // Launched files may be outside every folder: they were named by the user, like Open File's.
+  for f in &launch.files {
+    app.state::<crate::external::ExternalFiles>().allow(f);
+  }
+  if let Some(w) = &launch.workspace {
+    app.state::<crate::external::ExternalFiles>().allow(w);
+  }
+  let mut plan = crate::startup::plan(setting, &last_session, launch, &with_backups);
+  for o in &mut plan {
+    o.session.folders = workspace::existing_folders(&o.session.folders);
+    o.session.bounds = o.session.bounds.map(|b| WindowBounds { fullscreen: b.fullscreen && fullscreen, ..b });
+  }
+  let has_backups = |s: &WindowSession| s.folders.is_empty() && with_backups.iter().any(|b| b.empty == s.empty);
+  // The main window takes the one in front; a plain empty one gives way to KINGU_WORKSPACE.
+  let last = plan.pop();
+  let (mut main_session, main_files) = match last {
+    Some(o) if !o.session.folders.is_empty() || !o.files.is_empty() || has_backups(&o.session) => (o.session, o.files),
+    last => (
+      workspace::startup_root(None, std::env::var_os("KINGU_WORKSPACE"))
+        .map(|r| WindowSession { folders: vec![Folder::new(r)], bounds: last.as_ref().and_then(|l| l.session.bounds), ..Default::default() })
+        .or(last.map(|l| l.session))
+        .unwrap_or_default(),
+      Vec::new(),
+    ),
   };
   // The first window opens where the last active one was, even when no window is restored (VS Code).
   if main_session.bounds.is_none() {
-    main_session.bounds = data.sessions().last().and_then(|s| s.bounds).map(|b| WindowBounds { fullscreen: b.fullscreen && fullscreen, ..b });
+    main_session.bounds = last_session.last().and_then(|s| s.bounds).map(|b| WindowBounds { fullscreen: b.fullscreen && fullscreen, ..b });
   }
   let main = app.state::<Workspaces>().get(workspace::MAIN_WINDOW);
-  for s in sessions {
-    if let Err(e) = open_window(app, s, Vec::new()) {
+  let paths = |files: Vec<PathBuf>| files.into_iter().map(|f| f.display().to_string()).collect::<Vec<_>>();
+  for o in plan {
+    if let Err(e) = open_window(app, o.session, paths(o.files)) {
       log::error!("restore window: {e}");
     }
   }
+  main.set_pending_files(paths(main_files));
   if let (Some(b), Some(w)) = (main_session.bounds, app.get_webview_window(workspace::MAIN_WINDOW)) {
     let size = app.config().app.windows.first().map_or((1440.0, 900.0), |c| (c.width, c.height));
     apply_bounds(&w, placed(b, &monitors(app), size));
@@ -573,6 +592,23 @@ fn new_bounds(app: &AppHandle, session: &WindowSession) -> Option<WindowBounds> 
   new_window_bounds(setting.as_ref().and_then(|v| v.as_str()), active, display, size, &others)
 }
 
+/// `kingu open <folder>` while Kingu runs (VS Code's `code <folder>`): the window that has the
+/// folder comes to the front, else it opens in a new window unless `window.openFoldersInNewWindow`
+/// is `off`. False: the caller hands it to the last active window, which opens it in place.
+pub fn open_folder_from_cli(app: &AppHandle, path: &Path) -> Result<bool, String> {
+  let root = workspace::canonical_dir(path)?;
+  if let Some(label) = app.state::<Workspaces>().window_with(std::slice::from_ref(&root), None) {
+    return Ok(focus(app, &label));
+  }
+  if window_setting(app, "window.openFoldersInNewWindow").as_ref().and_then(|v| v.as_str()) == Some("off") {
+    return Ok(false);
+  }
+  let mut session = WindowSession { folders: vec![Folder::new(root)], ..Default::default() };
+  session.bounds = new_bounds(app, &session);
+  open_window(app, session, Vec::new())?;
+  Ok(true)
+}
+
 /// Before opening `path` in this window: when another window already has exactly that folder,
 /// it comes to the front instead (true).
 #[tauri::command]
@@ -582,6 +618,17 @@ pub fn window_focus_folder(app: AppHandle, ws: Workspace, path: String) -> bool 
     Some(label) if label != ws.label() => focus(&app, &label),
     _ => false,
   }
+}
+
+/// Which of the page's workspace storage keys no window can show again (workspace::stale_scopes):
+/// the open windows' and the windows to restore are live.
+#[tauri::command]
+pub fn workspace_storage_stale(app: AppHandle, scopes: Vec<String>) -> Vec<String> {
+  let mut live: std::collections::HashSet<String> = app.state::<Workspaces>().all().iter().filter_map(|w| w.session().storage_key()).collect();
+  if let Some(recent) = app.try_state::<Recent>() {
+    live.extend(recent.data().sessions().iter().filter_map(WindowSession::storage_key));
+  }
+  workspace::stale_scopes(&scopes, &live, Path::exists)
 }
 
 /// How many windows are open (Close Window on the last one quits on Windows/Linux like VS Code).

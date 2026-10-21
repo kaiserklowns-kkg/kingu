@@ -89,10 +89,10 @@ export const WINDOW_SETTINGS: SettingSchema[] = [
 		default: 'all',
 		enum: ['preserve', 'all', 'folders', 'one', 'none'],
 		enumDescriptions: [
-			'เปิดโฟลเดอร์ล่าสุดคืนเสมอ (Always reopen all windows. If a folder or workspace is opened (e.g. from the command line) it opens as a new window unless it was opened before. If files are opened they will open in one of the restored windows together with editors that were previously opened.)',
-			'เปิดโฟลเดอร์ล่าสุดคืน (Reopen all windows unless a folder, workspace or file is opened (e.g. from the command line). If a file is opened, it will replace any of the editors that were previously opened in a window.)',
-			'เปิดโฟลเดอร์ล่าสุดคืน (Reopen all windows that had folders or workspaces opened unless a folder, workspace or file is opened (e.g. from the command line). If a file is opened, it will replace any of the editors that were previously opened in a window.)',
-			'เปิดโฟลเดอร์ล่าสุดคืน (Reopen the last active window unless a folder, workspace or file is opened (e.g. from the command line). If a file is opened, it will replace any of the editors that were previously opened in a window.)',
+			'เปิดทุกหน้าต่างคืนเสมอ โฟลเดอร์ที่สั่งเปิดตอนเริ่ม เช่นจาก kingu open เปิดเป็นหน้าต่างใหม่ถ้ายังไม่มีหน้าต่างไหนเปิดอยู่ (Always reopen all windows. If a folder or workspace is opened (e.g. from the command line) it opens as a new window unless it was opened before. If files are opened they will open in one of the restored windows together with editors that were previously opened.)',
+			'เปิดทุกหน้าต่างคืน เว้นแต่สั่งเปิดโฟลเดอร์หรือไฟล์ตอนเริ่ม เช่นจาก kingu open (Reopen all windows unless a folder, workspace or file is opened (e.g. from the command line). If a file is opened, it will replace any of the editors that were previously opened in a window.)',
+			'เปิดคืนเฉพาะหน้าต่างที่มีโฟลเดอร์ เว้นแต่สั่งเปิดโฟลเดอร์หรือไฟล์ตอนเริ่ม (Reopen all windows that had folders or workspaces opened unless a folder, workspace or file is opened (e.g. from the command line). If a file is opened, it will replace any of the editors that were previously opened in a window.)',
+			'เปิดคืนเฉพาะหน้าต่างล่าสุด เว้นแต่สั่งเปิดโฟลเดอร์หรือไฟล์ตอนเริ่ม (Reopen the last active window unless a folder, workspace or file is opened (e.g. from the command line). If a file is opened, it will replace any of the editors that were previously opened in a window.)',
 			'เริ่มด้วยหน้าต่างว่าง (Never reopen a window. Unless a folder or workspace is opened (e.g. from the command line), an empty window will appear.)'
 		],
 		description: 'หน้าต่างที่เปิดคืนเมื่อเริ่ม Kingu แต่ละหน้าต่างกลับมาพร้อมโฟลเดอร์หรือ workspace ตำแหน่งบนจอ และ layout ของตัวเอง (Controls how windows and editors within are being restored when opening.)',

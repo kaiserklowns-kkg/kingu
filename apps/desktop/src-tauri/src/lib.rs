@@ -42,6 +42,7 @@ mod snap;
 mod snap_install;
 mod snap_sandbox;
 mod snippets;
+mod startup;
 mod system;
 mod tasks;
 mod testing;
@@ -1247,7 +1248,10 @@ pub fn run() {
           let _ = std::fs::remove_dir_all(stash);
         });
       }
-      windows::restore(app.handle(), restore.as_ref().and_then(|v| v.as_str()), &last_session);
+      // Folders and files Kingu was launched with (`kingu open <path>` when it was not running).
+      let cwd = std::env::current_dir().unwrap_or_default();
+      let launch = startup::launch_args(std::env::args_os().skip(1), &cwd);
+      windows::restore(app.handle(), restore.as_ref().and_then(|v| v.as_str()), &last_session, &launch);
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
@@ -1303,6 +1307,7 @@ pub fn run() {
       windows::window_new,
       windows::window_focus_folder,
       windows::window_count,
+      windows::workspace_storage_stale,
       window::window_close,
       window::window_close_cancelled,
       snippets::snippets_user_list,
