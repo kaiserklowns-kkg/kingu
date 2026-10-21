@@ -15,5 +15,17 @@ export const profiles = {
 	'profiles.delete': 'Delete',
 	'profiles.switched': 'Profile: {name}',
 	'profiles.failed': 'Profile: {error}',
-	'profiles.noOthers': 'There is no profile other than Default.'
+	'profiles.noOthers': 'There is no profile other than Default.',
+	'profiles.exportPlaceholder': 'Select a profile to export',
+	'profiles.exportTitle': 'Export Profile',
+	'profiles.importTitle': 'Import Profile',
+	'profiles.fileFilter': 'Profile',
+	'profiles.exported': 'Exported the profile {name} to {path}',
+	'profiles.importPlaceholder': 'Name of the imported profile',
+	'profiles.importHint': 'Create the profile "{name}" with {contents}',
+	'profiles.importNothing': 'nothing to import',
+	'profiles.nameTaken': 'A profile named "{name}" already exists',
+	'profiles.partSettings': 'settings',
+	'profiles.partKeybindings': 'keybindings',
+	'profiles.partSnippets': '{count|# snippets file|# snippets files}'
 } as const;

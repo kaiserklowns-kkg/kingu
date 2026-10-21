@@ -12,7 +12,8 @@ import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { quick, type PickItem } from '#lib/workbench/quick.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
-import { activeProfileName, type Profile, type ProfileList } from './profiles';
+import { open, save } from '@tauri-apps/plugin-dialog';
+import { activeProfileName, DEFAULT_PROFILE_NAME, templateContents, type Profile, type ProfileList, type TemplateSummary } from './profiles';
 import { settings } from './settings.svelte';
 
 /** Quick pick id of the Default profile (Rust's `None`). */
@@ -106,6 +107,52 @@ class Profiles {
 		if (wasActive) await Promise.all([settings.load(), keybindings.load()]);
 	}
 
+	/** Export Profile…: the active profile (or one picked when there are others), to a `.code-profile` file. */
+	async exportProfile() {
+		await this.load();
+		const item = this.list.profiles.length ? await quick.choose({ placeholder: t('profiles.exportPlaceholder'), items: this.#items(() => true) }) : { id: DEFAULT_ID };
+		if (!item) return;
+		const id = item.id === DEFAULT_ID ? null : item.id;
+		const name = this.list.profiles.find((p) => p.id === id)?.name ?? DEFAULT_PROFILE_NAME;
+		const path = await save({ title: t('profiles.exportTitle'), defaultPath: `${name}.code-profile`, filters: [{ name: t('profiles.fileFilter'), extensions: ['code-profile'] }] }).catch(() => null);
+		if (!path) return;
+		try {
+			await invoke('profile_export', { id, path });
+		} catch (e) {
+			return this.#fail(e);
+		}
+		notifications.info(t('profiles.exported', { name, path }));
+	}
+
+	/** Import Profile…: a `.code-profile` file (Kingu's or VS Code's), a name, then switch to it. */
+	async importProfile() {
+		const picked = await open({ title: t('profiles.importTitle'), multiple: false, directory: false, filters: [{ name: t('profiles.fileFilter'), extensions: ['code-profile', 'json'] }] }).catch(() => null);
+		const path = typeof picked === 'string' ? picked : null;
+		if (!path) return;
+		let summary: TemplateSummary;
+		try {
+			summary = await invoke<TemplateSummary>('profile_import_preview', { path });
+		} catch (e) {
+			return this.#fail(e);
+		}
+		await this.load();
+		const taken = (v: string) => v.trim().toLowerCase() === DEFAULT_PROFILE_NAME.toLowerCase() || this.list.profiles.some((p) => p.name.toLowerCase() === v.trim().toLowerCase());
+		const contents = templateContents(summary).map((c) => (c.key === 'profiles.partSnippets' ? t(c.key, { count: c.count }) : t(c.key))).join(', ') || t('profiles.importNothing');
+		const name = await quick.input({
+			placeholder: t('profiles.importPlaceholder'),
+			value: summary.name && !taken(summary.name) ? summary.name : '',
+			hint: (v) => (!v.trim() ? t('profiles.nameHint') : taken(v) ? t('profiles.nameTaken', { name: v.trim() }) : t('profiles.importHint', { name: v.trim(), contents }))
+		});
+		if (!name?.trim() || taken(name)) return;
+		let profile: Profile;
+		try {
+			profile = await invoke<Profile>('profile_import', { path, name });
+		} catch (e) {
+			return this.#fail(e);
+		}
+		await this.switchTo(profile.id);
+	}
+
 	async #pickOther(placeholder: string): Promise<Profile | undefined> {
 		const item = await quick.choose({ placeholder, items: this.#items((p) => p !== null) });
 		return this.list.profiles.find((p) => p.id === item?.id);
@@ -119,7 +166,9 @@ class Profiles {
 			commands.register({ id: 'workbench.profiles.actions.switchProfile', title: 'Switch Profile...', category: 'Profiles', run: () => this.pickSwitch() }),
 			commands.register({ id: 'workbench.profiles.actions.createProfile', title: 'New Profile...', category: 'Profiles', run: () => this.create() }),
 			commands.register({ id: 'workbench.profiles.actions.renameProfile', title: 'Rename Profile...', category: 'Profiles', run: () => this.rename() }),
-			commands.register({ id: 'workbench.profiles.actions.deleteProfile', title: 'Delete Profile...', category: 'Profiles', run: () => this.remove() })
+			commands.register({ id: 'workbench.profiles.actions.deleteProfile', title: 'Delete Profile...', category: 'Profiles', run: () => this.remove() }),
+			commands.register({ id: 'workbench.profiles.actions.exportProfile', title: 'Export Profile...', category: 'Profiles', run: () => this.exportProfile() }),
+			commands.register({ id: 'workbench.profiles.actions.importProfile', title: 'Import Profile...', category: 'Profiles', run: () => this.importProfile() })
 		];
 		return () => {
 			void unlisten.then((u) => u());

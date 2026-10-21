@@ -28,3 +28,15 @@ export function profileUserValues(profile: Record<string, unknown>, defaults: Re
 export function activeProfileName(list: ProfileList): string {
 	return list.profiles.find((p) => p.id === list.active)?.name ?? '';
 }
+
+/** Mirrors Rust `TemplateSummary`: what a `.code-profile` file holds (Import Profile…). */
+export type TemplateSummary = { name: string; settings: boolean; keybindings: boolean; snippets: number };
+
+/** The parts of a template, as message keys for Import Profile…'s hint. */
+export function templateContents(s: TemplateSummary): { key: 'profiles.partSettings' | 'profiles.partKeybindings' | 'profiles.partSnippets'; count: number }[] {
+	return [
+		...(s.settings ? [{ key: 'profiles.partSettings' as const, count: 1 }] : []),
+		...(s.keybindings ? [{ key: 'profiles.partKeybindings' as const, count: 1 }] : []),
+		...(s.snippets ? [{ key: 'profiles.partSnippets' as const, count: s.snippets }] : [])
+	];
+}
