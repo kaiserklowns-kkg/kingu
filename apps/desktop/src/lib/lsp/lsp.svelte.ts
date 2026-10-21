@@ -9,6 +9,8 @@ import type * as Monaco from 'monaco-editor';
 import { clientLog } from '#lib/client-log.ts';
 import { lspLanguageId } from '#lib/editor/languages.ts';
 import { jsonSchema } from '#lib/settings/registry.ts';
+import { kinguJsonSchemas, withKinguSchemas } from '#lib/settings/jsonSchemas.ts';
+import { commands } from '#lib/workbench/commands.svelte.ts';
 import { settingSchemas } from '#lib/settings/schemas.svelte.ts';
 import { settings as userSettings } from '#lib/settings/settings.svelte.ts';
 import { terminals } from '#lib/terminal/terminals.svelte.ts';
@@ -659,15 +661,14 @@ class Lsp {
 		}
 	}
 
-	/** `workspace/configuration` answers and pushed settings: the table's, plus Kingu's
-	 * settings.json schema for the JSON server (Monaco's JSON worker has it too), then `settings`.
-	 * `folder`: a root folder whose own settings apply (a file of it, or its own server). */
+	/** `workspace/configuration` answers and pushed settings: the table's, plus Kingu's own
+	 * schemas for the JSON server (settings, keybindings, launch, tasks, `.code-workspace`,
+	 * extensions: what Monaco's JSON worker had before the server took over), then `settings`.
+	 * `folder`: a root folder whose own settings apply (a file of it, or its own server; its
+	 * `json.schemas` come with them). */
 	#settingsFor(info: ServerInfo, folder: string | null = null): Record<string, unknown> {
 		const base: Record<string, unknown> = { ...info.settings, ...serverSettings(info.key, this.#readerFor(folder), uriOfRel(folder ?? this.#rootPath, '').replace(/\/$/, '')) };
-		if (info.key === 'json') {
-			const json = base.json as { schemas: unknown[] };
-			base.json = { ...json, schemas: [...json.schemas, { fileMatch: ['settings.json', '**/settings.json'], schema: jsonSchema(settingSchemas.all) }] };
-		}
+		if (info.key === 'json') base.json = withKinguSchemas(base.json, kinguJsonSchemas(jsonSchema(settingSchemas.all), commands.all.map((c) => c.id)));
 		return { ...base, ...this.settings[info.key] };
 	}
 
