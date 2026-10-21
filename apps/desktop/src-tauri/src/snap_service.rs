@@ -280,6 +280,37 @@ pub fn startup(app: &AppHandle) {
   }
 }
 
+/// `text` without ANSI escape sequences (CSI `ESC [ … final` and OSC `ESC ] … BEL/ST`): services
+/// colour their logs even into a file, and the log view shows plain text.
+pub fn strip_ansi(text: &str) -> String {
+  let mut out = String::with_capacity(text.len());
+  let mut it = text.chars().peekable();
+  while let Some(c) = it.next() {
+    if c != '\x1b' {
+      out.push(c);
+      continue;
+    }
+    match it.next() {
+      Some('[') => {
+        for c in it.by_ref() {
+          if ('@'..='~').contains(&c) {
+            break;
+          }
+        }
+      }
+      Some(']') => {
+        while let Some(c) = it.next() {
+          if c == '\x07' || (c == '\x1b' && it.next_if_eq(&'\\').is_some()) {
+            break;
+          }
+        }
+      }
+      _ => {}
+    }
+  }
+  out
+}
+
 /// The end of `file` (at most `max` bytes, from a line start), lossy UTF-8.
 pub fn tail(file: &Path, max: u64) -> String {
   use std::io::{Read, Seek, SeekFrom};
@@ -377,7 +408,7 @@ pub fn snap_service_list(services: State<'_, Services>) -> Vec<ServiceStatus> {
 #[tauri::command]
 pub fn snap_service_log(app: AppHandle, snap: String, service: String) -> Result<String, String> {
   check_ids(&snap, &service)?;
-  Ok(tail(&log_file(&app, &snap, &service)?, MAX_LOG_READ))
+  Ok(strip_ansi(&tail(&log_file(&app, &snap, &service)?, MAX_LOG_READ)))
 }
 
 /// Whether `url` is one a listed or shipped snap declares (`[[requires]].url`).
@@ -646,6 +677,13 @@ mod tests {
     assert_eq!(parse_etime("2-01:00:00"), Some(2 * 86400 + 3600));
     assert_eq!(parse_etime(""), None);
     assert_eq!(parse_etime("x"), None);
+  }
+
+  #[test]
+  fn strips_ansi_colours_and_titles() {
+    assert_eq!(strip_ansi("\x1b[2m2026\x1b[0m \x1b[32m INFO\x1b[0m ready \x1b[3mx\x1b[0m=1"), "2026  INFO ready x=1");
+    assert_eq!(strip_ansi("a\x1b]0;title\x07b\x1b]8;;http://x\x1b\\c"), "abc");
+    assert_eq!(strip_ansi("plain ไทย\n"), "plain ไทย\n");
   }
 
   #[test]
