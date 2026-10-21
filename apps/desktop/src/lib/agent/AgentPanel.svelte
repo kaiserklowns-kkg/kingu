@@ -45,7 +45,7 @@
 	import type { MenuRow } from './composerMenu.ts';
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
 	import type { MenuNode } from '#lib/workbench/menus.ts';
-	import { canSteer, composerPlaceholder, customName, cycleMode, MODE_ICON, modeOrder, modeTone, runModeHint, runModeLabel, shortModelLabel } from './composer.ts';
+	import { canSteer, composerPlaceholder, customName, cycleMode, modeOrder, modeTone, runModeHint, runModeLabel, shortModelLabel } from './composer.ts';
 	import { arkaiGroups, needsKey } from './arkai.ts';
 	import type { QueuedMessage } from './chats.svelte.ts';
 	import { queueDefault, type SendHow } from './requestQueuing.ts';
@@ -53,7 +53,7 @@
 	import { chatEdits } from './chatEdits.svelte.ts';
 	import type { IconName } from '#lib/workbench/Icon.svelte';
 	import Codicon from '#lib/workbench/Codicon.svelte';
-	import { codiconOf, MODE_CODICON, PERMISSION_CODICON } from './chatIcons.ts';
+	import { MODE_CODICON, MODE_MENU_CODICON, PERMISSION_CODICON } from './chatIcons.ts';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 	import { runtime } from '#lib/ade/runtime.svelte.ts';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
@@ -856,10 +856,10 @@
 	const KEY = MAC ? { mode: '⌘.', model: '⌘/', find: '⌘F', context: '⌥⌘P', newChat: '⌘N' } : { mode: 'Ctrl+.', model: 'Ctrl+/', find: 'Ctrl+F', context: 'Ctrl+Alt+P', newChat: 'Ctrl+N' };
 	const modeRows = $derived<MenuRow[]>([
 		// Cursor's mode menu: icon, label and a check, in ⇧Tab's order (Agent, Plan, Ask), then custom agents.
-		...(['agent', 'plan', 'ask'] as const).map((m) => ({ id: m, label: modeName(m), icon: MODE_ICON[m], checked: pick === m })),
-		...shownAgents.map((a) => ({ id: `custom:${a.name}`, label: a.name, icon: MODE_ICON.custom, section: t('chatCustomize.customAgents'), checked: pick === `custom:${a.name}` })),
+		...(['agent', 'plan', 'ask'] as const).map((m) => ({ id: m, label: modeName(m), codicon: MODE_MENU_CODICON[m], checked: pick === m })),
+		...shownAgents.map((a) => ({ id: `custom:${a.name}`, label: a.name, section: t('chatCustomize.customAgents'), checked: pick === `custom:${a.name}` })),
 		...(chatAgent && chatAgent !== 'ask' && !shownAgents.some((a) => a.name === chatAgent)
-			? [{ id: `custom:${chatAgent}`, label: t('chatCustomize.agentMissing', { name: chatAgent }), icon: MODE_ICON.custom, section: t('chatCustomize.customAgents'), checked: true }]
+			? [{ id: `custom:${chatAgent}`, label: t('chatCustomize.agentMissing', { name: chatAgent }), section: t('chatCustomize.customAgents'), checked: true }]
 			: [])
 	]);
 	/** The chat's model (a new chat's pick), for the trigger and the picker's check. */

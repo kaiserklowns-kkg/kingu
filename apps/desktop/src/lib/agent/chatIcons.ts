@@ -149,6 +149,9 @@ export const drawsIcon = (id: string) => isIconId(id) || id in MASK_ICONS;
  */
 export const MODE_CODICON: Record<ModeTone, string | null> = { agent: compactCodicon('agent'), ask: compactCodicon('question'), plan: compactCodicon('tasklist'), custom: null };
 
+/** The mode menu's icons (the built-in modes' own, full size); custom agents have none. */
+export const MODE_MENU_CODICON = { agent: 'agent', ask: 'question', plan: 'tasklist' } as const;
+
 /**
  * The permission picker's icon per run mode (kingu-old's agent host picker, getConfigIcon): Manual
  * permissions a key, editing automatically Claude's `edit`, Allow all a warning.
