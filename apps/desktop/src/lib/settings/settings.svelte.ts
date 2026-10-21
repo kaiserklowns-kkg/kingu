@@ -8,7 +8,7 @@ import { parseSettingsText, setProperty } from './jsonc';
 import { resolveSettings, settingProblems, type Resolved, type SettingProblem, type SettingScope } from './registry';
 import { settingSchemas } from './schemas.svelte';
 import { profileUserValues, sharedByAllProfiles } from './profiles';
-import { isLanguageOverridable, languageSchemas, languageValues } from './languageOverrides';
+import { isLanguageOverridable, languageBlockValue, languageSchemas, languageValues, withLanguageValue } from './languageOverrides';
 import { withoutRestricted } from './restricted';
 
 type SettingsFile = { path: string; content: string | null };
@@ -126,6 +126,17 @@ class Settings {
 	/** The value set in one scope's file, or undefined. */
 	inspect(id: string, scope: SettingScope): unknown {
 		return this.layer(scope).values[id];
+	}
+
+	/** The value one scope's `[language]` block sets (the Settings editor's `@lang:`), or undefined. */
+	inspectLanguage(id: string, language: string, scope: SettingScope): unknown {
+		return languageBlockValue(this.layer(scope).values, language, id);
+	}
+
+	/** Sets (or with `undefined`, removes) `id` in `scope`'s `[language]` block; an emptied block goes. */
+	setLanguage(id: string, language: string, value: unknown, scope: SettingScope): Promise<void> {
+		const { key, block } = withLanguageValue(this.layer(scope).values, language, id, value);
+		return this.set(key, block, scope);
 	}
 
 	/** The settings in effect for a file of root folder `folder` (its path): that folder's file over
