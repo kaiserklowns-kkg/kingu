@@ -64,3 +64,17 @@ export function areasAreRectangles(g: WorkbenchGrid): boolean {
 	}
 	return true;
 }
+
+export type Edge = 'left' | 'right';
+
+/**
+ * How the activity bar's card meets the side bar's (kingu-old floatingPanels.css): with the side
+ * bar shown they join into one surface, the rail square on its facing edge with no gap and the
+ * side bar square on its own facing edge (its border there given up: the rail's is the seam);
+ * with the side bar hidden the rail is a card of its own, rounded all round, 4px from the editor.
+ */
+export function railJoin(sideBar: SideBarLocation, sidebarVisible: boolean): { railSquare: Edge | null; sideSquare: Edge | null; gap: Edge | null } {
+	const facing: Edge = sideBar === 'left' ? 'right' : 'left';
+	if (!sidebarVisible) return { railSquare: null, sideSquare: null, gap: facing };
+	return { railSquare: facing, sideSquare: facing === 'right' ? 'left' : 'right', gap: null };
+}

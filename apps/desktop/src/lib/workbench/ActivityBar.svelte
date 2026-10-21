@@ -12,14 +12,25 @@
 	import { viewsOf } from '#lib/snaps/contributions.ts';
 	import { activityBarMetrics, activityClickHides } from './workbenchOptions';
 	import { t } from '#lib/i18n/index.ts';
+	import type { Edge } from './workbenchGrid';
 
 	/**
 	 * `vertical`: the activity bar (`workbench.activityBar.location: default`, 36px wide with
 	 * `workbench.activityBar.compact`). `horizontal`: the view icons at the top or bottom of the side
 	 * bar (`top`, `bottom`). Accounts and Manage are always in the title bar.
+	 * `join` (vertical): how its card meets the side bar's (workbenchGrid railJoin).
 	 */
-	let { orientation = 'vertical' }: { orientation?: 'vertical' | 'horizontal' } = $props();
+	let { orientation = 'vertical', join = { railSquare: null, gap: 'right' } }: { orientation?: 'vertical' | 'horizontal'; join?: { railSquare: Edge | null; gap: Edge | null } } = $props();
 	const vertical = $derived(orientation === 'vertical');
+	// kingu-old's floating rail (floatingPanels.css `.part.activitybar`): a 10px card on the surface
+	// border, square where it meets the side bar.
+	const RAIL = $derived([
+		'flex shrink-0 flex-col items-center rounded-(--vscode-cornerRadius-large) border border-(--vscode-modernActivityBar-border,var(--vscode-surface-border,var(--vscode-widget-border,transparent)))',
+		join.railSquare === 'right' && 'rounded-r-none',
+		join.railSquare === 'left' && 'rounded-l-none',
+		join.gap === 'right' && 'mr-[4px]',
+		join.gap === 'left' && 'ml-[4px]'
+	]);
 
 	// Count badges (VS Code activitybar badge: bottom-right, 16px).
 	const badges: Partial<Record<SideView, () => number>> = { scm: () => scm.count, snaps: () => pendingTrustCount(snaps.list), agents: () => adeTasks.attentionCount, testing: () => testing.badge };
@@ -59,11 +70,7 @@
      at the top of the side bar: 16px icons, the indicator below. -->
 <nav
 	aria-label="Activity Bar"
-	class={
-		vertical
-			? 'mr-[4px] flex shrink-0 flex-col items-center rounded-[8px] border border-(--vscode-widget-border)'
-			: 'flex h-full items-center'
-	}
+	class={vertical ? RAIL : 'flex h-full items-center'}
 	style:width={vertical ? `${metrics.width}px` : undefined}
 >
 	{#each views.filter((v) => v.view !== 'artifacts' || settings.get<boolean>('kingu.artifacts.showButton') !== false) as v (v.view)}

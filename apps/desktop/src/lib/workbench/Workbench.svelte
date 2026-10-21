@@ -59,7 +59,7 @@
 	import { navigation } from './navigation.svelte';
 	import { appMode } from './mode.svelte';
 	import { installLayoutCommands } from './layoutControls.svelte';
-	import { gridTemplateAreas, gridTemplateColumns, gridTemplateRows, workbenchGrid, type PanelAlignment, type PanelLocation, type SideBarLocation } from './workbenchGrid';
+	import { gridTemplateAreas, gridTemplateColumns, gridTemplateRows, railJoin, workbenchGrid, type PanelAlignment, type PanelLocation, type SideBarLocation } from './workbenchGrid';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import AgentsLayout from '#lib/ade/AgentsLayout.svelte';
 	import AdeDialogs from '#lib/ade/AdeDialogs.svelte';
@@ -548,8 +548,17 @@
 	/** +1 when dragging a sash rightward/downward grows the part. */
 	const sideSign = $derived(sideBarAt === 'left' ? 1 : -1);
 	const panelSign = $derived(panelAt === 'top' || panelAt === 'left' ? 1 : -1);
-	// VS Code's modern layout: each part is a softly rounded pane on the title bar's color, 4px apart.
-	const FRAME = 'min-h-0 overflow-hidden rounded-[8px] border border-(--vscode-widget-border)';
+	// kingu-old's floating cards (floatingPanels.css, editorBorder.css): each part a card with
+	// cornerRadius-large (10px) corners and a 1px border, on the title bar's color, 4px apart and 4px
+	// in from the window's sides and bottom, flush under the title bar. The border is the surface
+	// border (side bars), the editor border (editor) or the modern panel border (panel), each
+	// falling back to the surface and widget borders.
+	const FRAME = 'min-h-0 overflow-hidden rounded-(--vscode-cornerRadius-large) border';
+	const SURFACE_BORDER = 'border-(--vscode-surface-border,var(--vscode-widget-border,transparent))';
+	const EDITOR_BORDER = 'border-(--vscode-editor-border,var(--vscode-surface-border,var(--vscode-widget-border,transparent)))';
+	const PANEL_BORDER = 'border-(--vscode-modernPanel-border,var(--vscode-surface-border,var(--vscode-widget-border,transparent)))';
+	// The activity bar and the side bar join into one card while both show.
+	const rail = $derived(railJoin(sideBarAt, layout.sidebarVisible));
 </script>
 
 <svelte:window onfocus={() => (focused = true)} onblur={() => (focused = false)} />
@@ -565,12 +574,19 @@
 		style:grid-template-columns={gridTemplateColumns(grid, layout.auxMaximized ? 'aux' : 'edit')}
 		style:grid-template-rows={gridTemplateRows(grid)}
 	>
-		<div style:grid-area="act" class={['flex min-h-0', !activityBar && 'hidden']}><ActivityBar /></div>
+		<div style:grid-area="act" class={['flex min-h-0', !activityBar && 'hidden']}><ActivityBar join={rail} /></div>
 
 		<div
 			style:grid-area="side"
 			style:width="{layout.sidebarWidth}px"
-			class={[FRAME, !layout.sidebarVisible && 'hidden']}
+			class={[
+				FRAME,
+				SURFACE_BORDER,
+				// Joined to the activity bar: square on that edge, its border there given up (the rail's is the seam).
+				activityBar && rail.sideSquare === 'left' && 'rounded-l-none border-l-transparent',
+				activityBar && rail.sideSquare === 'right' && 'rounded-r-none border-r-transparent',
+				!layout.sidebarVisible && 'hidden'
+			]}
 		>
 			<SideBar {workspaceName} />
 		</div>
@@ -583,7 +599,7 @@
 			/>
 		</div>
 
-		<div style:grid-area="edit" class={[FRAME, 'min-w-0', layout.auxMaximized && 'hidden']}><EditorPart /></div>
+		<div style:grid-area="edit" class={[FRAME, EDITOR_BORDER, 'min-w-0', layout.auxMaximized && 'hidden']}><EditorPart /></div>
 
 		<div style:grid-area="sashP" class={['flex', panelBeside ? 'flex-row' : 'flex-col', !layout.panelVisible && 'hidden']}>
 			<Sash
@@ -600,7 +616,7 @@
 			style:grid-area="panel"
 			style:height={panelBeside ? undefined : `${layout.panelHeight}px`}
 			style:width={panelBeside ? `${layout.panelWidth}px` : undefined}
-			class={[FRAME, 'min-w-0', !layout.panelVisible && 'hidden']}
+			class={[FRAME, PANEL_BORDER, 'min-w-0', !layout.panelVisible && 'hidden']}
 		>
 			<Panel />
 		</div>
@@ -621,6 +637,7 @@
 			style:width={layout.auxMaximized ? undefined : `${layout.auxWidth}px`}
 			class={[
 				FRAME,
+				SURFACE_BORDER,
 				'part auxiliarybar flex min-w-0 flex-col bg-(--vscode-sideBar-background)',
 				!layout.auxVisible && 'hidden'
 			]}
