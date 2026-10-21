@@ -367,7 +367,7 @@ div.chat-welcome-view {
 	gap: var(--vscode-spacing-size60);
 	padding: var(--vscode-spacing-size60) var(--vscode-spacing-size80);
 	font-size: var(--vscode-chat-font-size-body-s);
-	line-height: 1.4;
+	line-height: 18.2px;
 	color: var(--vscode-descriptionForeground);
 }
 
@@ -480,7 +480,7 @@ div.chat-welcome-view {
 	box-sizing: border-box;
 	width: 100%;
 	padding: 0 6px 6px 6px;
-	overflow: hidden;
+	/* VS Code clips the contents to the corners; Kingu's / and # lists open above the box, so it does not. */
 	cursor: text;
 	background-color: var(--vscode-input-background);
 	border: var(--vscode-strokeThickness) solid var(--vscode-input-border, transparent);
