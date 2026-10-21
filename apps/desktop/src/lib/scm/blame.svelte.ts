@@ -47,12 +47,12 @@ class GitBlame {
 	/** When the blame of `path` must be read again: HEAD, the file's status, a save, the whitespace setting. */
 	#key(path: string): string {
 		const e = versions.entry(path);
-		return [scm.repo?.head ?? '', e?.index ?? '', e?.worktree ?? '', getEntry(path)?.savedVersion ?? '', settings.get<boolean>('git.blame.ignoreWhitespace')].join('|');
+		return [scm.repositoryOf(path)?.repo?.head ?? '', e?.index ?? '', e?.worktree ?? '', getEntry(path)?.savedVersion ?? '', settings.get<boolean>('git.blame.ignoreWhitespace')].join('|');
 	}
 
 	/** The blame of `path` (reactive); schedules a read when it is missing or stale. */
 	file(path: string, model: Monaco.editor.ITextModel): FileBlame | null {
-		if (!scm.repo || !isRepoFile(path)) return null;
+		if (!isRepoFile(path) || !scm.repositoryOf(path)?.repo) return null;
 		const key = this.#key(path);
 		const have = this.#files[path];
 		if (have?.key !== key && this.#pending.get(path) !== key) {
@@ -95,12 +95,12 @@ class GitBlame {
 		return b.lines[line - 1] ?? null;
 	}
 
-	/** Loads the hover's details of `hash` once. */
-	commit(hash: string): CommitInfo | undefined {
+	/** Loads the hover's details of `hash` (a commit of `path`'s repository) once. */
+	commit(hash: string, path?: string): CommitInfo | undefined {
 		const have = this.commits[hash];
 		if (!have && !this.#commitPending.has(hash)) {
 			this.#commitPending.add(hash);
-			void invoke<CommitInfo>('scm_commit_info', { hash })
+			void invoke<CommitInfo>('scm_commit_info', { hash, rel: path ?? null })
 				.then((c) => (this.commits[hash] = c))
 				.catch((e) => clientLog('info', `commit ${hash}: ${e}`))
 				.finally(() => this.#commitPending.delete(hash));
@@ -114,7 +114,7 @@ class GitBlame {
 
 	/** VS Code's blame hover: author, date, message, stats and the commit's actions. */
 	hover(c: BlameCommit, path: string): string {
-		const info = this.commit(c.hash);
+		const info = this.commit(c.hash, path);
 		const tokens = templateTokens(c, { nowMs: Date.now(), locale: locale(), shortLength: settings.get<number>('git.commitShortHashLength') });
 		const esc = (s: string) => s.replace(/[\\`*_{}[\]()#+\-.!|<>]/g, '\\$&');
 		const arg = (v: unknown) => encodeURIComponent(JSON.stringify([v]));

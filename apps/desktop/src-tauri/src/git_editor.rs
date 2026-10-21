@@ -303,48 +303,52 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
   tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
-fn checked(ws: &Workspace, rel: &str) -> Result<PathBuf, String> {
-  let root = ws.root()?;
-  check_rel(&root, rel)?;
-  Ok(root)
+/// The repository of webview path `rel` (any root folder, nested repositories too) and the path
+/// relative to it.
+fn checked(ws: &Workspace, rel: &str) -> Result<(PathBuf, String), String> {
+  crate::git_repos::locate_file(ws, rel)
 }
 
 /// The index version of a file (quick diff, index ↔ working tree diffs); `None` when untracked or conflicted.
 #[tauri::command]
 pub async fn scm_show_index(ws: Workspace, rel: String) -> Result<Option<String>, String> {
-  let root = checked(&ws, &rel)?;
+  let (root, rel) = checked(&ws, &rel)?;
   blocking(move || show_index(&root, &rel)).await
 }
 
 /// Stage 1, 2 or 3 of a conflicted file (the merge editor's base, current and incoming).
 #[tauri::command]
 pub async fn scm_show_stage(ws: Workspace, rel: String, stage: u8) -> Result<String, String> {
-  let root = checked(&ws, &rel)?;
+  let (root, rel) = checked(&ws, &rel)?;
   blocking(move || show_stage(&root, &rel, stage)).await
 }
 
 /// Stages hunks of a file computed by the webview (stage / unstage selected ranges).
 #[tauri::command]
 pub async fn scm_stage_patch(ws: Workspace, rel: String, hunks: String) -> Result<(), String> {
-  let root = checked(&ws, &rel)?;
+  let (root, rel) = checked(&ws, &rel)?;
   blocking(move || stage_patch(&root, &rel, &hunks)).await
 }
 
 #[tauri::command]
 pub async fn scm_blame(ws: Workspace, rel: String, ignore_whitespace: Option<bool>) -> Result<String, String> {
-  let root = checked(&ws, &rel)?;
+  let (root, rel) = checked(&ws, &rel)?;
   blocking(move || blame(&root, &rel, ignore_whitespace.unwrap_or(false))).await
 }
 
 #[tauri::command]
 pub async fn scm_file_log(ws: Workspace, rel: String, limit: Option<u32>, skip: Option<u32>) -> Result<Vec<FileCommit>, String> {
-  let root = checked(&ws, &rel)?;
+  let (root, rel) = checked(&ws, &rel)?;
   blocking(move || file_log(&root, &rel, limit.unwrap_or(50), skip.unwrap_or(0))).await
 }
 
 #[tauri::command]
-pub async fn scm_commit_info(ws: Workspace, hash: String) -> Result<CommitInfo, String> {
-  let root = ws.root()?;
+/// `rel`: a file of the commit's repository (blame and the Timeline name the file they show).
+pub async fn scm_commit_info(ws: Workspace, hash: String, rel: Option<String>) -> Result<CommitInfo, String> {
+  let root = match rel.as_deref().filter(|r| !r.is_empty()) {
+    Some(r) => checked(&ws, r)?.0,
+    None => ws.root()?,
+  };
   blocking(move || commit_info(&root, &hash)).await
 }
 

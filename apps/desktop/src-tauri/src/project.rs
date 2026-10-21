@@ -107,11 +107,11 @@ pub fn create(parent: &Path, name: &str) -> Result<PathBuf, String> {
   Ok(target)
 }
 
-/// `git init` in the open folder (`initial_commit` from the ADE, which needs a branch to fork
-/// worktrees from).
+/// `git init` in the open folder, or root folder `folder` of a multi-root workspace
+/// (`initial_commit` from the ADE, which needs a branch to fork worktrees from).
 #[tauri::command]
-pub async fn git_init(ws: Workspace, initial_commit: Option<bool>, default_branch: Option<String>) -> Result<(), String> {
-  let root = ws.root()?;
+pub async fn git_init(ws: Workspace, initial_commit: Option<bool>, default_branch: Option<String>, folder: Option<String>) -> Result<(), String> {
+  let root = crate::git_repos::repo_or_root(&ws, folder.as_deref())?;
   tauri::async_runtime::spawn_blocking(move || init_with(&root, initial_commit.unwrap_or(false), default_branch.as_deref())).await.map_err(|e| e.to_string())??;
   log::info!("git init in the open folder");
   Ok(())

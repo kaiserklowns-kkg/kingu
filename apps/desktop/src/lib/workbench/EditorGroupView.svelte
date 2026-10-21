@@ -133,7 +133,7 @@
 	const pinnedRow = $derived(showTabs === 'multiple' && settings.get<boolean>('workbench.editor.pinnedTabsOnSeparateRow') && tabs.some((t) => t.sticky) && tabs.some((t) => !t.sticky));
 	const rows = $derived(pinnedRow ? [shownTabs.filter((t) => t.sticky), shownTabs.filter((t) => !t.sticky)] : [shownTabs]);
 	// Git decorations of the tabs' files (workbench.editor.decorations.*), like the Explorer's.
-	const decorations = $derived(decoColors || decoBadges ? fileDecorations(entryChanges(scm.repo?.entries ?? [])) : null);
+	const decorations = $derived(decoColors || decoBadges ? fileDecorations(entryChanges(scm.entries)) : null);
 	const tabFiles = $derived(tabs.map((t) => t.path).filter((p) => !p.includes(':')));
 	/** The description after a tab's name (workbench.editor.labelFormat); workspace files only. */
 	const descriptionOf = (path: string) => (isExternalKey(path) ? externalDescription(path, workspace.home) : path.includes(':') || !workspace.root ? '' : tabDescription(path, tabFiles, labelFormat, workspace.root));

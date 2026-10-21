@@ -142,8 +142,9 @@ export function splitUntracked(g: { staged: Resource[]; changes: Resource[] }, m
 }
 
 /**
- * The activity bar badge: `scm.countBadge` (`focused` is the one repository Kingu shows) over
- * `git.countBadge` (`tracked` leaves untracked files out).
+ * One repository's part of the activity bar badge: `scm.countBadge` (scm.svelte.ts sums the
+ * repositories, or takes the active one for `focused`) over `git.countBadge` (`tracked` leaves
+ * untracked files out).
  */
 export function countBadge(g: ResourceGroups, gitBadge: string, scmBadge: string): number {
 	if (scmBadge === 'off' || gitBadge === 'off') return 0;

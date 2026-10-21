@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { absolutePath, folderNamed, folderOf, keyForPath, relativeInFolder, relativePath, watcherPaths, within, workspaceFileText, workspaceLabel, type WorkspaceFolder } from './workspaceFolders.ts';
+import { absolutePath, fileDetail, folderNamed, folderOf, keyForPath, relativeInFolder, relativePath, watcherPaths, within, workspaceFileText, workspaceLabel, type WorkspaceFolder } from './workspaceFolders.ts';
 import { parseCodeWorkspace } from './workspaceFile.ts';
 
 const app: WorkspaceFolder = { path: '/w/app', name: 'app' };
@@ -68,5 +68,14 @@ describe('.code-workspace files', () => {
 		expect(workspaceLabel(folders, null, true, suffix, 'Untitled (Workspace)')).toBe('Untitled (Workspace)');
 		expect(workspaceLabel(folders, '/w/team.code-workspace', false, suffix, 'Untitled (Workspace)')).toBe('team (Workspace)');
 		expect(workspaceLabel([], null, false, suffix, 'U')).toBe('');
+	});
+
+	test('file rows lead with the root folder in a multi-root workspace', () => {
+		expect(fileDetail('src/a.ts', [app])).toBe('src');
+		expect(fileDetail('a.ts', [app])).toBe('');
+		expect(fileDetail('src/a.ts', folders)).toBe('app • src');
+		expect(fileDetail('/w/lib/src/x/b.ts', folders)).toBe('Library • src/x');
+		expect(fileDetail('/w/lib/b.ts', folders)).toBe('Library');
+		expect(fileDetail('/elsewhere/c.ts', folders)).toBe('/elsewhere');
 	});
 });

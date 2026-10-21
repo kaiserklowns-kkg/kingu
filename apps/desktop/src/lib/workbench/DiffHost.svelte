@@ -154,7 +154,7 @@
 			return { text, path: `${base.slug}/${base.orig}` };
 		}
 		// A rename diffs against the source's HEAD contents.
-		const entry = scm.repo?.entries.find((e) => e.path === rel);
+		const entry = scm.entry(rel);
 		const headPath = entry?.orig_path ?? rel;
 		const head = async () => ({ text: await invoke<string>('git_show_head', { rel: headPath }), path: headPath });
 		// Staged Changes (`indexdiff:`) compare HEAD with the index.
@@ -236,7 +236,7 @@
 	// Re-read when a diff tab becomes active and whenever git status changes (save, focus, stage).
 	$effect(() => {
 		const key = activeKey;
-		void scm.repo;
+		void scm.entries;
 		if (key && isTaskDiffKey(key)) void adeTasks.stats[parseTaskDiffKey(key)?.slug ?? ''];
 		// A chat's working set changed (another edit, Keep, Undo).
 		if (key && isChatEditKey(key)) void chatEdits.views[parseChatEditKey(key)?.chatId ?? ''];

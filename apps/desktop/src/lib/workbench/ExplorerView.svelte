@@ -31,7 +31,7 @@
 
 	const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
 	// git.decorations.enabled: git's colors and letters in the explorer.
-	const decorations = $derived(fileDecorations(settings.get<boolean>('git.decorations.enabled') ? entryChanges(scm.repo?.entries ?? []) : []));
+	const decorations = $derived(fileDecorations(settings.get<boolean>('git.decorations.enabled') ? entryChanges(scm.entries) : []));
 	/** explorer.decorations.colors / explorer.decorations.badges. */
 	const decoColors = $derived(settings.get<boolean>('explorer.decorations.colors'));
 	const decoBadges = $derived(settings.get<boolean>('explorer.decorations.badges'));

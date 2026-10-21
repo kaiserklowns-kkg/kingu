@@ -45,7 +45,7 @@
 	const lineNumbers = $derived(settings.get<boolean>('search.showLineNumbers'));
 	const decoColors = $derived(settings.get<boolean>('search.decorations.colors'));
 	const decoBadges = $derived(settings.get<boolean>('search.decorations.badges'));
-	const decorations = $derived(decoColors || decoBadges ? fileDecorations(entryChanges(scm.repo?.entries ?? [])) : new Map());
+	const decorations = $derived(decoColors || decoBadges ? fileDecorations(entryChanges(scm.entries)) : new Map());
 	const PAD = 8;
 	const INDENT = 20;
 	const first = $derived(Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN));

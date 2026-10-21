@@ -17,6 +17,8 @@
 	import { isMac, keyLabel } from './keys';
 	import { flattenSymbols, parseQuickInput, pickSymbols, QUICK_ACCESS_HELP, rankFiles, SYMBOL_KIND_NAMES, type FlatSymbol } from './quickAccess';
 	import { recentFiles } from './recentFiles.svelte';
+	import { fileDetail } from '#lib/workbench/workspaceFolders.ts';
+	import { workspace } from './workspace.svelte.ts';
 	import { withRecentFirst } from './workbenchOptions';
 	import { layout } from './layout.svelte';
 	import { editorLabel } from './editorLabel';
@@ -164,7 +166,8 @@
 		return {
 			label: path.slice(slash + 1),
 			icon: fileIcon(path),
-			detail: slash > 0 ? path.slice(0, slash) : '',
+			// A multi-root workspace leads with the file's root folder (VS Code's `folder • dir`).
+			detail: fileDetail(path, workspace.folders),
 			separator,
 			match: match && { score: match.score, positions: match.positions.filter((p) => p > slash).map((p) => p - slash - 1) },
 			// workbench.editor.enablePreviewFromQuickOpen (off: Quick Open keeps what it opens).
