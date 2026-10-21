@@ -26,6 +26,8 @@
 	import PopupMenu, { menuItem, menuSeparator } from './PopupMenu.svelte';
 	import type { MenuNode } from './menus';
 	import { panelSize } from './panelSize.svelte';
+	import RefactorPreviewView from '#lib/lsp/RefactorPreviewView.svelte';
+	import { refactorPreview } from '#lib/lsp/refactorPreview.svelte.ts';
 
 	// View: Maximize Panel Size (panelSize.svelte.ts, shared with workbench.action.toggleMaximizedPanel).
 	const maximized = $derived(panelSize.maximized);
@@ -112,12 +114,14 @@
 		editors.open(rel, { preview: false, reveal: line ? { line, column: column ?? 1, focus: true } : undefined });
 	}
 
-	const tabs: { id: PanelTab; label: string; icon: IconName }[] = [
+	const tabs: { id: PanelTab; label: string; icon: IconName }[] = $derived([
 		{ id: 'problems', label: 'Problems', icon: 'warning' },
 		{ id: 'output', label: 'Output', icon: 'note' },
 		{ id: 'debugConsole', label: 'Debug Console', icon: 'bug' },
-		{ id: 'terminal', label: 'Terminal', icon: 'terminal' }
-	];
+		{ id: 'terminal', label: 'Terminal', icon: 'terminal' },
+		// Only while an edit waits in the Refactor Preview (VS Code shows its view then).
+		...(refactorPreview.pending || layout.panelTab === 'refactorPreview' ? [{ id: 'refactorPreview' as const, label: t('refactorPreview.title'), icon: 'replace' as const }] : [])
+	]);
 </script>
 
 <section aria-label="Panel" class="flex h-full flex-col border-t border-(--vscode-panel-border) bg-(--vscode-panel-background)">
@@ -223,6 +227,9 @@
 					<Icon name="collapseAll" size={15} />
 				</button>
 			{/if}
+		{:else if layout.panelTab === 'refactorPreview' && refactorPreview.pending}
+			<button class="h-[22px] rounded-sm bg-(--vscode-button-background) px-2 text-xs text-(--vscode-button-foreground) hover:bg-(--vscode-button-hoverBackground)" onclick={() => refactorPreview.apply()}>{t('refactorPreview.apply')}</button>
+			<button class="h-[22px] rounded-sm bg-(--vscode-button-secondaryBackground) px-2 text-xs text-(--vscode-button-secondaryForeground) hover:bg-(--vscode-button-secondaryHoverBackground)" onclick={() => refactorPreview.discard()}>{t('refactorPreview.discard')}</button>
 		{:else if layout.panelTab === 'terminal'}
 			{#if showActiveTerminal && activeTerminal}
 				<span class="flex max-w-48 min-w-0 items-center gap-1 px-1 text-xs text-(--vscode-panelTitle-activeForeground)" title={activeTerminal.run?.join(' ') ?? activeTerminal.title}>
@@ -332,6 +339,8 @@
 		{:else if layout.panelTab === 'output'}
 			<!-- The active Output channel (Tasks, Git, Kingu, each language server). -->
 			<OutputView />
+		{:else if layout.panelTab === 'refactorPreview'}
+			<div class="absolute inset-0"><RefactorPreviewView /></div>
 		{/if}
 	</div>
 </section>

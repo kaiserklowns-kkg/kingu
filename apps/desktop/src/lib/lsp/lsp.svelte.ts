@@ -66,6 +66,8 @@ import {
 import type { CallHierarchyItem, CodeAction, Command, CompletionItem, Diagnostic, DocumentSymbol, Location, Range, ServerCapabilities, SymbolInformation, WorkspaceEdit } from './protocol';
 import type { HierarchyDirection, HierarchyKind } from '#lib/workbench/hierarchyModel.ts';
 import { applyWorkspaceEdit, type ApplyResult } from './workspaceEdit';
+import { needsPreview } from './refactorPreview.ts';
+import { refactorPreview, takeRenamePreview } from './refactorPreview.svelte.ts';
 import { folderOfUri, folderPathOf, parseSessionId, sessionFolder, sessionId } from './folders';
 import type { WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 import { t } from '#lib/i18n/index.ts';
@@ -862,8 +864,18 @@ class Lsp {
 	 * are edited in their model (undoable, left dirty), others are rewritten on disk through the
 	 * workspace-guarded Rust commands. Nothing outside the workspace is touched.
 	 * `refactoring` (rename, a chosen code action): with `files.refactoring.autoSave` on, an edit
-	 * across several files also saves the open editors it changed (VS Code's respectAutoSaveConfig). */
-	async applyWorkspaceEdit(edit: WorkspaceEdit, opts: { refactoring?: boolean } = {}): Promise<ApplyResult> {
+	 * across several files also saves the open editors it changed (VS Code's respectAutoSaveConfig).
+	 * An edit goes through the Refactor Preview first when `preview` asks for it or one of its
+	 * change annotations needs confirmation; only the edits left checked there are applied. */
+	async applyWorkspaceEdit(edit: WorkspaceEdit, opts: { refactoring?: boolean; preview?: boolean; label?: string } = {}): Promise<ApplyResult> {
+		if (needsPreview(edit, opts)) {
+			const picked = await refactorPreview.request(edit, opts.label ?? '', {
+				read: (uri) => this.#readUri(uri),
+				keyOf: (uri) => this.#keyOf(uri)
+			});
+			if (!picked) return { applied: false, cancelled: true, uris: [], edits: 0 };
+			edit = picked;
+		}
 		const written: string[] = [];
 		const openEdited: string[] = [];
 		const result = await applyWorkspaceEdit(edit, (uri) => {
@@ -903,6 +915,14 @@ class Lsp {
 		return result;
 	}
 
+	/** A document's text as an edit would see it: its open model, else the file on disk. */
+	async #readUri(uri: string): Promise<string> {
+		const rel = this.#keyOf(uri);
+		if (rel === null) throw new Error(`${uriToPath(uri) ?? uri} is outside the workspace`);
+		const model = editors.textModel(rel);
+		return model ? model.getValue() : invoke<string>('read_workspace_file', { rel });
+	}
+
 	/** `editor.codeActionsOnSave` (VS Code's CodeActionOnSaveParticipant): code actions of each kind
 	 * over the whole file, applied in order. Without a server for the file this does nothing. */
 	async codeActionsOnSave(model: Monaco.editor.ITextModel, kinds: string[]) {
@@ -932,7 +952,8 @@ class Lsp {
 			let action = item as CodeAction;
 			if (!action.edit && client.canResolveCodeAction) action = (await client.resolveCodeAction(action)) ?? action;
 			if (action.edit) {
-				const r = await this.applyWorkspaceEdit(action.edit, { refactoring: true });
+				const r = await this.applyWorkspaceEdit(action.edit, { refactoring: true, label: action.title });
+				if (r.cancelled) return;
 				if (!r.applied) return statusBar.error(`${action.title}: ${r.failureReason}`);
 			}
 			if (action.command) await this.#execute(client, action.command);
@@ -1100,6 +1121,8 @@ class Lsp {
 							return toRenameLocation(prepared, fallback, (r) => model.getValueInRange(r)) ?? reject(t('tools.lsp.cantRename'));
 						},
 						provideRenameEdits: async (model, position, newName, token) => {
+							// ⇧Enter in the rename input: show the Refactor Preview first.
+							const preview = takeRenamePreview();
 							const d = this.#lookup(model);
 							if (!d) return { edits: [], rejectReason: t('tools.lsp.notReady', { name: info.name }) };
 							let edit: WorkspaceEdit | null;
@@ -1111,7 +1134,8 @@ class Lsp {
 							if (!edit) return { edits: [], rejectReason: t('tools.lsp.noResult') };
 							// Applied here rather than by Monaco, whose standalone bulk edit only reaches
 							// open models; files without a tab are rewritten on disk.
-							const r = await this.applyWorkspaceEdit(edit, { refactoring: true });
+							const r = await this.applyWorkspaceEdit(edit, { refactoring: true, preview, label: t('refactorPreview.renameLabel', { name: newName }) });
+							if (r.cancelled) return { edits: [] };
 							if (!r.applied) return { edits: [], rejectReason: t('tools.lsp.renameFailed', { reason: r.failureReason ?? '' }) };
 							statusBar.flash(t('tools.lsp.renamed', { name: newName, edits: r.edits, files: r.uris.length }));
 							return { edits: [] };

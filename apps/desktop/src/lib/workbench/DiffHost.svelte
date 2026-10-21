@@ -36,6 +36,8 @@
 	import { getEntry } from './editorModels';
 	import { parseCompareKey } from './compare';
 	import { compareStore } from './compare.svelte';
+	import { isRefactorPreviewKey } from '#lib/lsp/refactorPreview.ts';
+	import { refactorPreview } from '#lib/lsp/refactorPreview.svelte.ts';
 
 	let { active, onfail, reportLanguage = false }: { active: string | null; onfail: (key: string) => void; reportLanguage?: boolean } = $props();
 	const activeKey = $derived(active);
@@ -215,6 +217,11 @@
 			const leftPath = left.kind === 'clipboard' ? `clipboard/${left.id}` : left.kind === 'saved' ? `saved/${left.key}` : `left/${left.key}`;
 			return Promise.all([leftText.then((text) => ({ text, path: leftPath })), resourceCopy(right)]);
 		}
+		// Refactor Preview: the file as it is ↔ with the edits checked in the panel.
+		if (isRefactorPreviewKey(key)) {
+			const [before, after] = refactorPreview.sides(rel);
+			return [{ text: before, path: `refactor/${rel}` }, after];
+		}
 		// Staged Changes: the index on the right.
 		if (isIndexDiffKey(key)) return Promise.all([original(key, rel), invoke<string | null>('scm_show_index', { rel }).then((t) => t ?? '')]);
 		// merge-conflict.compare: every conflict as its current side ↔ as its incoming side.
@@ -263,6 +270,8 @@
 		if (key && isTaskDiffKey(key)) void adeTasks.stats[parseTaskDiffKey(key)?.slug ?? ''];
 		// A chat's working set changed (another edit, Keep, Undo).
 		if (key && isChatEditKey(key)) void chatEdits.views[parseChatEditKey(key)?.chatId ?? ''];
+		// Edits checked or unchecked in the Refactor Preview.
+		if (key && isRefactorPreviewKey(key)) void [refactorPreview.checked, refactorPreview.originals.size];
 		if (api && key && isDiffKey(key)) void show(api, key);
 	});
 

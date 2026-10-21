@@ -97,6 +97,7 @@
 	import { installBreadcrumbs } from './breadcrumbsCommands.svelte';
 	import { installLanguageCommands } from './languageCommands.svelte';
 	import { installProblemsSettings } from '#lib/lsp/problemsCommands.svelte.ts';
+	import { installRefactorPreviewCommands } from '#lib/lsp/refactorPreview.svelte.ts';
 	import { installCloseGuard, quit } from './closeGuard.svelte';
 	import { installEditorRestore } from './editorRestore.svelte';
 	import { installWorkspaceStorage } from './workspaceStorage.svelte';
@@ -374,6 +375,7 @@
 		const uninstallBreadcrumbs = installBreadcrumbs();
 		const uninstallLanguageCommands = installLanguageCommands();
 		const uninstallProblemsSettings = installProblemsSettings();
+		const uninstallRefactorPreview = installRefactorPreviewCommands();
 		const uninstallAccounts = accounts.install();
 		const uninstallTextFiles = textFiles.install();
 		const unregisterEditorStatus = registerEditorStatusCommands();
@@ -398,6 +400,7 @@
 			uninstallTextFiles();
 			uninstallAccounts();
 			uninstallProblemsSettings();
+			uninstallRefactorPreview();
 			uninstallBreadcrumbs();
 			uninstallLanguageCommands();
 			uninstallDebug();

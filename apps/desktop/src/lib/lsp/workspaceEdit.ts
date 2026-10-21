@@ -77,7 +77,8 @@ export type EditTarget = {
 	commit(text: string, edits: TextEdit[] | null): void | Promise<void>;
 };
 
-export type ApplyResult = { applied: boolean; failureReason?: string; uris: string[]; edits: number };
+/** `cancelled`: the user discarded it in the Refactor Preview (nothing was changed). */
+export type ApplyResult = { applied: boolean; failureReason?: string; uris: string[]; edits: number; cancelled?: boolean };
 
 /** `resolve` returns a target, or a reason the document cannot be edited (outside the workspace). */
 export async function applyWorkspaceEdit(edit: WorkspaceEdit, resolve: (uri: string) => EditTarget | string): Promise<ApplyResult> {

@@ -1591,6 +1591,13 @@ export const EDITOR_SETTINGS: SettingSchema[] = [
 		description: 'รองรับคลิปบอร์ด primary ของ Linux (Controls whether the Linux primary clipboard should be supported.)'
 	},
 	{
+		id: 'editor.rename.enablePreview',
+		group: 'Text Editor',
+		type: 'boolean',
+		default: true,
+		description: 'กด ⇧Enter ในช่องเปลี่ยนชื่อเพื่อดูการเปลี่ยนแปลงใน Refactor Preview ก่อน (Enable/disable the ability to preview changes before renaming.)'
+	},
+	{
 		id: 'editor.selectionHighlight',
 		group: 'Text Editor',
 		type: 'boolean',
