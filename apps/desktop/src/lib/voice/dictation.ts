@@ -27,6 +27,17 @@ export function onShortcut(state: DictationState, mode: DictationMode): 'start' 
 	return 'ignore';
 }
 
+/**
+ * The chat input's microphone (always shown, like VS Code's `mic-compact` in the execute toolbar):
+ * with dictation off it opens the Voice settings to turn it on; otherwise it starts from idle and
+ * stops while listening.
+ */
+export function onMicButton(enabled: boolean, state: DictationState): 'settings' | 'start' | 'stop' | 'ignore' {
+	if (state === 'listening') return 'stop';
+	if (state !== 'idle') return 'ignore';
+	return enabled ? 'start' : 'settings';
+}
+
 /** `m:ss`. */
 export function elapsed(ms: number): string {
 	const s = Math.max(0, Math.floor(ms / 1000));

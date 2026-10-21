@@ -33,8 +33,9 @@
 	// `vscode`: VS Code's chat input look (the chat panel): an 8px box, no paperclip (the caller's
 	// Add Context offers files from disk through `pickFiles`), a plain send / stop icon button.
 	import type { Snippet } from 'svelte';
+	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { dictation } from '#lib/voice/dictation.svelte.ts';
-	import { chatDictationShown, toggleChatDictation } from './chatVoice.svelte.ts';
+	import { toggleChatDictation } from './chatVoice.svelte.ts';
 	import { invoke } from '@tauri-apps/api/core';
 	import { open } from '@tauri-apps/plugin-dialog';
 	import Codicon from '#lib/workbench/Codicon.svelte';
@@ -669,20 +670,19 @@
 			</div>
 			{@render right?.(layout)}
 			<div class="chat-execute-toolbar">
-				{#if chatDictationShown()}
-					<button
-						type="button"
-						class={['action-label icon-only', micActive && dictation.state === 'listening' && 'listening']}
-						aria-label={micActive && dictation.state === 'listening' ? t('chatRender.voice.stop') : t('chatRender.voice.start')}
-						aria-pressed={micActive}
-						title={micActive ? (dictation.state === 'transcribing' ? t('chatRender.voice.transcribing') : t('chatRender.voice.listening', { time: dictation.elapsed })) : t('chatRender.voice.start')}
-						disabled={disabled || (dictation.state !== 'idle' && !micActive) || dictation.state === 'starting' || dictation.state === 'transcribing'}
-						onmousedown={(e) => e.preventDefault()}
-						onclick={onmic}
-					>
-						<Codicon id={micActive && dictation.state === 'transcribing' ? 'loading-compact~spin' : micActive ? 'mic-filled' : 'mic-compact'} />
-					</button>
-				{/if}
+				<!-- Always there (VS Code's mic-compact); with dictation off it opens the Voice settings. -->
+				<button
+					type="button"
+					class={['action-label icon-only', micActive && dictation.state === 'listening' && 'listening']}
+					aria-label={micActive && dictation.state === 'listening' ? t('chatRender.voice.stop') : t('chatRender.voice.start')}
+					aria-pressed={micActive}
+					title={micActive ? (dictation.state === 'transcribing' ? t('chatRender.voice.transcribing') : t('chatRender.voice.listening', { time: dictation.elapsed })) : t('chatRender.voice.start')}
+					disabled={disabled || (dictation.state !== 'idle' && !micActive) || dictation.state === 'starting' || dictation.state === 'transcribing'}
+					onmousedown={(e) => e.preventDefault()}
+					onclick={onmic}
+				>
+					<Codicon id={micActive && dictation.state === 'transcribing' ? 'loading-compact~spin' : micActive ? 'mic-filled' : 'mic-compact'} />
+				</button>
 				<button
 					type="button"
 					class={['action-label icon-only', action !== 'stop' && 'chat-submit-button']}
@@ -704,7 +704,7 @@
 				{@render left?.(layout)}
 			</div>
 			{@render right?.(layout)}
-			{#if chatDictationShown()}
+			{#if settings.get<boolean>('kingu.voice.enabled') === true}
 				<button
 					type="button"
 					aria-label={micActive && dictation.state === 'listening' ? t('chatRender.voice.stop') : t('chatRender.voice.start')}
