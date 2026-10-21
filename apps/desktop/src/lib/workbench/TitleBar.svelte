@@ -2,9 +2,11 @@
 	// Workbench (IDE) title bar, VS Code's `window.titleBarStyle: custom` (titlebarPart.ts):
 	// 35px (30px without the command center), left 20% / center (fit-content, max 60%) / right 20%.
 	// Left: the macOS traffic-light inset, or the Kingu mark and the in-window menu bar.
-	// Center: the command center and Open in Agents / Open in Editor next to it (the same
-	// title bar serves the IDE and the Agents layout). Right: layout controls, then Accounts and
-	// Manage (always here, in both modes). Any non-interactive part drags the window.
+	// Center (kingu-old's layout): Back / Forward, the search pill with the agents status, the Arkai
+	// chat button, then Open in Agents / Open in Editor (the same title bar serves the IDE and the
+	// Agents layout). Right: layout controls (Customize Layout..., then the side bar, panel and
+	// secondary side bar toggles), then Accounts and Manage (always here, in both modes). Any
+	// non-interactive part drags the window.
 	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import CommandCenter from './CommandCenter.svelte';
@@ -26,6 +28,7 @@
 	import { isCustomTitle, renderWindowTitle } from './title';
 	import {
 		commandCenterLabel,
+		compactSearchLabel,
 		layoutControlItems,
 		overflowHidden,
 		TITLE_BAR_TOGGLES,
@@ -134,6 +137,7 @@
 		};
 	});
 	const label = $derived(commandCenterLabel({ folderName: workspace.root ? workspaceName : null, title, customTitle: isCustomTitle(template, isMac) }));
+	const compactLabel = $derived(compactSearchLabel({ folderName: workspace.root ? workspaceName : null, title, customTitle: isCustomTitle(template, isMac) }));
 	const layoutItems = $derived(layoutControlItems(settings.get<boolean>('workbench.layoutControl.enabled'), settings.get<LayoutControlType>('workbench.layoutControl.type')));
 	// Open in Agents sits next to the command center (VS Code's TitleBarAdjacentCenter), not in the right toolbar.
 	const openInAgents = $derived(settings.get<boolean>('kingu.titleBar.openInAgents.enabled'));
@@ -157,14 +161,15 @@
 	const hidden = $derived(overflowHidden(toolbar, rightWidth - 8));
 	const shown = (id: string) => toolbar.some((t) => t.id === id) && !hidden.has(id);
 
-	const TOGGLES: Record<Exclude<LayoutControlItem, 'layoutMenu'>, { label: string; icon: IconName; command: string; on: () => boolean }> = {
+	type Toggle = Exclude<LayoutControlItem, 'layoutMenu' | 'customizeLayout'>;
+	const TOGGLES: Record<Toggle, { label: string; icon: IconName; command: string; on: () => boolean }> = {
 		toggleSidebar: { label: 'Toggle Primary Side Bar', icon: 'sidebarLeft', command: 'workbench.action.toggleSidebarVisibility', on: () => (appMode.isAgents ? appMode.sessionsVisible : layout.sidebarVisible) },
 		togglePanel: { label: 'Toggle Panel', icon: 'panelBottom', command: 'workbench.action.togglePanel', on: () => layout.panelVisible },
 		toggleAuxiliaryBar: { label: 'Toggle Secondary Side Bar', icon: 'sidebarRight', command: 'workbench.action.toggleAuxiliaryBar', on: () => (appMode.isAgents ? appMode.panelVisible : layout.auxVisible) }
 	};
 	// With the side bar on the right, VS Code swaps the side bar icons.
 	const sidebarRight = $derived(settings.get<string>('workbench.sideBar.location') === 'right');
-	const toggleIcon = (id: Exclude<LayoutControlItem, 'layoutMenu'>): IconName =>
+	const toggleIcon = (id: Toggle): IconName =>
 		sidebarRight && id === 'toggleSidebar' ? 'sidebarRight' : sidebarRight && id === 'toggleAuxiliaryBar' ? 'sidebarLeft' : TOGGLES[id].icon;
 
 	const account = $derived.by(() => {
@@ -181,13 +186,18 @@
 	const popupItems = $derived.by((): MenuNode[] => {
 		if (!popup) return [];
 		if (popup.kind === 'hamburger') return currentMenubar(false);
-		// VS Code's Manage (gear) menu; settings are one system page for the IDE and the ADE.
+		// VS Code's Manage (gear) menu, in its order, with the commands Kingu has; settings are one
+		// system page for the IDE and the ADE.
 		if (popup.kind === 'manage')
 			return [
 				menuItem('workbench.action.showCommands', 'Command Palette...', { keyLabel: key('workbench.action.showCommands') }),
 				menuSeparator,
+				...manageItem('workbench.profiles.actions.switchProfile', 'Profiles...'),
 				menuItem('workbench.action.openSettings', 'Settings', { keyLabel: key('workbench.action.openSettings') }),
 				menuItem('workbench.action.openSettingsJson', 'Settings (JSON)'),
+				...manageItem('workbench.action.openGlobalKeybindings', 'Keyboard Shortcuts'),
+				...manageItem('workbench.action.openSnippets', 'Snippets'),
+				...manageItem('workbench.action.tasks.runTask', 'Tasks'),
 				menuSeparator,
 				menuItem('workbench.action.selectTheme', 'Themes: Color Theme', { keyLabel: key('workbench.action.selectTheme') })
 			];
@@ -207,6 +217,9 @@
 			menuItem('workbench.action.customizeLayout', 'Customize Layout...')
 		];
 	});
+
+	/** A Manage menu row for a command that is registered (nothing when it is not). */
+	const manageItem = (command: string, label: string): MenuNode[] => (commands.get(command) ? [menuItem(command, label, { keyLabel: key(command) })] : []);
 
 	function runPopup(node: MenuNode) {
 		if (node.type === 'item') {
@@ -281,19 +294,30 @@
 
 	{#if commandCenter || openInAgents}
 		<div class="titlebar-center mx-2.5 flex h-full max-w-[60%] min-w-0 flex-[0_1_auto] items-center justify-center gap-1.5">
-			{#if commandCenter}<CommandCenter {label} folderName={workspace.root ? workspaceName : null} />{/if}
+			{#if commandCenter}<CommandCenter {label} {compactLabel} folderName={workspace.root ? workspaceName : null} />{/if}
 			{#if openInAgents}
-				<!-- VS Code's TitleBarAdjacentCenter, right after the command center: Open in Agents in the
-				     IDE, Open in Editor in the Agents layout (same place, ⇧⌘A). The label slides out after a 0.2s hover. -->
+				<!-- VS Code's TitleBarAdjacentCenter, right after the command center (kingu-old's Open in
+				     Agents widget): the Kingu mark on a tile in the title bar's colours inverted, its label
+				     sliding out on hover. Open in Editor in the Agents layout (same place, ⇧⌘A). -->
 				{@const toAgents = !appMode.isAgents}
 				<button
-					class="group flex h-[22px] max-w-[22px] shrink-0 items-center gap-1 overflow-hidden rounded-[5px] px-[3px] text-xs whitespace-nowrap transition-[max-width] delay-0 duration-200 hover:max-w-[200px] hover:bg-(--vscode-toolbar-hoverBackground) hover:delay-200"
+					class="group flex h-[22px] shrink-0 items-center rounded-[5px] px-1 text-xs whitespace-nowrap text-(--vscode-titleBar-activeForeground) hover:bg-(--vscode-toolbar-hoverBackground) focus-visible:bg-(--vscode-toolbar-hoverBackground) focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-(--vscode-focusBorder)"
 					title="{toAgents ? 'Open in Agents' : 'Open in Editor'}{hint('workbench.action.toggleAgentsMode')}"
 					aria-label={toAgents ? 'Open in Agents' : 'Open in Editor'}
 					onclick={() => toggleAgentsMode()}
 				>
-					<span class="shrink-0 grayscale group-hover:grayscale-0 group-hover:text-(--vscode-textLink-foreground)"><Icon name={toAgents ? 'agentsLayout' : 'code'} size={16} /></span>
-					<span class="pr-1">{toAgents ? 'Open in Agents' : 'Open in Editor'}</span>
+					{#if toAgents}
+						<span class="grid size-4 shrink-0 place-items-center rounded-[3px] bg-(--vscode-titleBar-activeForeground) text-(--vscode-titleBar-activeBackground)" aria-hidden="true">
+							<Icon name="kingu" size={13} />
+						</span>
+					{:else}
+						<span class="shrink-0"><Icon name="code" size={16} /></span>
+					{/if}
+					<span
+						class="ml-0 inline-block max-w-0 overflow-hidden text-(--vscode-foreground) opacity-0 transition-[max-width,opacity,margin] delay-200 duration-150 group-hover:ml-1.5 group-hover:max-w-[200px] group-hover:opacity-100 group-hover:delay-0 group-focus-visible:ml-1.5 group-focus-visible:max-w-[200px] group-focus-visible:opacity-100 motion-reduce:transition-none"
+					>
+						{toAgents ? 'Open in Agents' : 'Open in Editor'}
+					</span>
 				</button>
 			{/if}
 		</div>
@@ -302,8 +326,13 @@
 	<div bind:this={right} class="titlebar-right flex h-full min-w-0 flex-[1_1_20%] items-center justify-end gap-1 overflow-hidden pr-1.5" role="toolbar" aria-label="Title actions">
 		{#each layoutItems as id (id)}
 			<!-- The Agents layout has no bottom panel. -->
-			{#if shown(id) && !(appMode.isAgents && (id === 'togglePanel' || id === 'layoutMenu'))}
-				{#if id === 'layoutMenu'}
+			{#if shown(id) && !(appMode.isAgents && (id === 'togglePanel' || id === 'layoutMenu' || id === 'customizeLayout'))}
+				{#if id === 'customizeLayout'}
+					<!-- workbench.layoutControl.type both: Customize Layout... first, opening the layout picker. -->
+					<button class={ACTION} aria-label="Customize Layout..." title="Customize Layout...{hint('workbench.action.customizeLayout')}" onclick={() => commands.run('workbench.action.customizeLayout')}>
+						<Icon name="layout" size={16} />
+					</button>
+				{:else if id === 'layoutMenu'}
 					<button class={ACTION} aria-label="Configure Layout" title="Configure Layout" aria-haspopup="menu" onclick={(e) => openBelow('layout', e, true)}>
 						<Icon name="layout" size={16} />
 					</button>
@@ -315,7 +344,7 @@
 						aria-label={chatBusy ? `${t.label} · ${translate('chatRender.badge')}` : t.label}
 						aria-pressed={t.on()}
 						title="{t.label}{hint(t.command)}{chatBusy ? `\n${translate('chatRender.badge')}` : ''}"
-						class={[ACTION, 'relative', t.on() || chatBusy ? 'opacity-100' : 'opacity-50']}
+						class={[ACTION, 'relative']}
 						onclick={() => commands.run(t.command)}
 					>
 						<Icon name={toggleIcon(id)} size={16} filled={t.on()} />
