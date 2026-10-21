@@ -1,6 +1,8 @@
 <script lang="ts">
-	// Diff for Source Control tabs (`diff:<file>`): HEAD on the left, the working copy on the right
-	// (VS Code's "file (Working Tree)" editor), and for task diff tabs (`taskdiff://`) the task's
+	// Diff for Source Control tabs: `diff:<file>` the index on the left and the working copy on the
+	// right (VS Code's "file (Working Tree)" editor), `indexdiff:<file>` HEAD ↔ index ("file
+	// (Index)"), `histdiff://` a commit of the Timeline, `conflictcompare:` merge-conflict.compare;
+	// and for task diff tabs (`taskdiff://`) the task's
 	// fork point on the left. Read-only: edits go through the file's own tab. Mounted per editor
 	// group only while that group has a diff tab open, and in the Agents layout for its diff tabs.
 	// `active` is the shown tab's key; `onfail` closes it. The header has Orca's diff controls
@@ -9,11 +11,14 @@
 	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import type * as Monaco from 'monaco-editor';
+	import { modelPath } from '#lib/workbench/editorModels.ts';
 	import { clientLog } from '#lib/client-log.ts';
 	import { diffEditorOptionsFrom, diffWraps } from '#lib/settings/mappings.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { editors } from './editors.svelte';
-	import { fileOf, isDiffKey, isTaskDiffKey, parseCommitDiffKey, parseTaskDiffKey } from './scm';
+	import { fileOf, isConflictCompareKey, isDiffKey, isIndexDiffKey, isTaskDiffKey, parseCommitDiffKey, parseHistoryDiffKey, parseRefDiffKey, parseTaskDiffKey } from './scm';
+	import { compareSides } from '#lib/scm/conflicts.ts';
+	import { addIndexDiffView } from '#lib/scm/quickDiff.svelte.ts';
 	import { scm } from './scm.svelte';
 	import Icon from './Icon.svelte';
 	import PopupMenu, { menuItem, menuSeparator } from './PopupMenu.svelte';
@@ -22,7 +27,17 @@
 	import { notesOfFile } from '#lib/ade/diffNotes.ts';
 	import { installDiffNotes, type DiffNotesHandle, type NoteFile } from '#lib/ade/diffNoteZones.ts';
 	import { hunkReview } from '#lib/ade/hunkReview.svelte.ts';
+	import { chatEdits } from '#lib/agent/chatEdits.svelte.ts';
+	import { isChatEditKey, parseChatEditKey } from '#lib/agent/chatEdits.ts';
 	import { installHunkToolbars, type HunkToolbars } from '#lib/ade/hunkToolbars.ts';
+	import { localHistoryKey, parseLocalHistoryDiffKey } from '#lib/scm/localHistory.ts';
+	import { readTextResource } from '#lib/settings/resources.ts';
+	import { isExternalKey } from './externalFiles';
+	import { getEntry } from './editorModels';
+	import { parseCompareKey } from './compare';
+	import { compareStore } from './compare.svelte';
+	import { isRefactorPreviewKey } from '#lib/lsp/refactorPreview.ts';
+	import { refactorPreview } from '#lib/lsp/refactorPreview.svelte.ts';
 
 	let { active, onfail, reportLanguage = false }: { active: string | null; onfail: (key: string) => void; reportLanguage?: boolean } = $props();
 	const activeKey = $derived(active);
@@ -35,6 +50,7 @@
 	/** Accept / reject per hunk on task diffs (hunkReview). */
 	let hunksUi: HunkToolbars | undefined;
 	let detachHunks: (() => void) | undefined;
+	let detachIndexDiff: (() => void) | undefined;
 	let shown: { original: Monaco.editor.ITextModel; modified: Monaco.editor.ITextModel } | undefined;
 	/** The key whose models are in the editor (the zones belong to it). */
 	let shownKey = $state<string | null>(null);
@@ -42,7 +58,7 @@
 
 	/** The worktree and file a diff key's notes belong to: the task, or the folder for Source Control diffs. */
 	function noteFile(key: string | null): NoteFile | null {
-		if (!key || !isDiffKey(key)) return null;
+		if (!key || !isDiffKey(key) || isChatEditKey(key)) return null;
 		const task = parseTaskDiffKey(key);
 		return task ? { key: task.slug, file: task.rel } : { key: '', file: fileOf(key) };
 	}
@@ -82,6 +98,11 @@
 				...diffEditorOptionsFrom((id) => settings.get(id))
 			});
 			notesUi = installDiffNotes(m.monaco, d, () => noteFile(shownKey));
+			// git.unstageSelectedRanges in a Staged Changes tab: the selected index lines.
+			detachIndexDiff = addIndexDiffView({
+				key: () => (shownKey && isIndexDiffKey(shownKey) ? shownKey : null),
+				selections: () => (d.getModifiedEditor().getSelections() ?? []).map((s) => ({ start: s.startLineNumber, end: s.endLineNumber }))
+			});
 			hunksUi = installHunkToolbars(d, () => (shownKey && isTaskDiffKey(shownKey) ? shownKey : null));
 			detachHunks = hunkReview.attach(hunksUi);
 			d.getModifiedEditor().addAction({
@@ -98,6 +119,7 @@
 			disposed = true;
 			notesUi?.dispose();
 			detachHunks?.();
+			detachIndexDiff?.();
 			hunksUi?.dispose();
 			diff?.dispose();
 			shown?.original.dispose();
@@ -106,14 +128,32 @@
 	});
 
 	/** Working copy: the open tab's text (unsaved edits included), else the file on disk, else empty (deleted). */
+	/** A file outside the folder as its editor has it, else as it is on disk (local history of an `external:` editor). */
+	async function externalCopy(key: string): Promise<string> {
+		const open = getEntry(key)?.model;
+		if (open && !open.isDisposed()) return open.getValue();
+		const read = await readTextResource(key, { acceptLarge: true }).catch(() => null);
+		return read?.kind === 'text' ? read.content : '';
+	}
+
+	/** Any editor key as its open editor has it (unsaved edits included), else as stored. */
+	async function resourceCopy(key: string): Promise<string> {
+		const open = getEntry(key)?.model;
+		if (open && !open.isDisposed()) return open.getValue();
+		const read = await readTextResource(key, { acceptLarge: true }).catch(() => null);
+		return read?.kind === 'text' ? read.content : '';
+	}
+
 	async function workingCopy(m: typeof import('#lib/editor/monaco.ts'), rel: string): Promise<string> {
-		const open = m.monaco.editor.getModel(m.monaco.Uri.file('/' + rel));
+		const open = m.monaco.editor.getModel(m.monaco.Uri.file(modelPath(rel)));
 		if (open) return open.getValue();
 		return invoke<string>('read_workspace_file', { rel }).catch(() => '');
 	}
 
-	/** Left side: HEAD for Source Control diffs; the task's fork point for task diffs (`taskdiff://`). */
+	/** Left side: HEAD for Source Control diffs; the task's fork point for task diffs (`taskdiff://`);
+	 * the file before the agent's pending changes for a chat's working set (`chatedit://`). */
 	async function original(key: string, rel: string): Promise<{ text: string; path: string }> {
+		if (isChatEditKey(key)) return chatEdits.original(key);
 		if (isTaskDiffKey(key)) {
 			let base = adeTasks.diffBase(key);
 			if (!base) {
@@ -126,23 +166,84 @@
 			return { text, path: `${base.slug}/${base.orig}` };
 		}
 		// A rename diffs against the source's HEAD contents.
-		const entry = scm.repo?.entries.find((e) => e.path === rel);
+		const entry = scm.entry(rel);
 		const headPath = entry?.orig_path ?? rel;
-		return { text: await invoke<string>('git_show_head', { rel: headPath }), path: headPath };
+		const head = async () => ({ text: await invoke<string>('git_show_head', { rel: headPath }), path: headPath });
+		// Staged Changes (`indexdiff:`) compare HEAD with the index.
+		if (isIndexDiffKey(key)) return head();
+		// Changes (`diff:`): the index against the working tree (VS Code's "a.ts (Working Tree)");
+		// an untracked file has nothing on the left, a conflicted one (no stage 0) HEAD.
+		if (entry?.worktree === '?') return { text: '', path: rel };
+		const index = await invoke<string | null>('scm_show_index', { rel }).catch(() => null);
+		return index === null ? head() : { text: index, path: `index/${rel}` };
+	}
+
+	/** The two sides of the Source Control diff kinds that are not the working copy on the right. */
+	async function sides(m: typeof import('#lib/editor/monaco.ts'), key: string, rel: string): Promise<[{ text: string; path: string }, string] | null> {
+		const commit = parseCommitDiffKey(key);
+		// A commit diff compares the file before and after that commit (empty when added or deleted).
+		if (commit)
+			return Promise.all([
+				invoke<string>('git_show_ref', { slug: commit.slug || null, rev: `${commit.hash}^`, rel: commit.rel }).catch(() => '').then((text) => ({ text, path: `${commit.hash}^/${commit.rel}` })),
+				invoke<string>('git_show_ref', { slug: commit.slug || null, rev: commit.hash, rel: commit.rel }).catch(() => '')
+			]);
+		// Timeline / file history: the commit's parent under the file's earlier name.
+		const history = parseHistoryDiffKey(key);
+		if (history)
+			return Promise.all([
+				invoke<string>('git_show_ref', { slug: null, rev: `${history.hash}^`, rel: history.before }).catch(() => '').then((text) => ({ text, path: `${history.hash}^/${history.before}` })),
+				invoke<string>('git_show_ref', { slug: null, rev: history.hash, rel: history.rel }).catch(() => '')
+			]);
+		// Two revisions of a file, or one ↔ the working copy (Source Control Graph, stashes, Compare with…).
+		const ref = parseRefDiffKey(key);
+		if (ref)
+			return Promise.all([
+				invoke<string>('git_show_ref', { slug: null, rev: ref.left, rel: ref.before }).catch(() => '').then((text) => ({ text, path: `${ref.left}/${ref.before}` })),
+				ref.right === null ? workingCopy(m, rel) : invoke<string>('git_show_ref', { slug: null, rev: ref.right, rel: ref.rel }).catch(() => '')
+			]);
+		// Local history: an entry ↔ the file now (Compare with File) or ↔ another entry.
+		const local = parseLocalHistoryDiffKey(key);
+		if (local) {
+			const entry = (id: string) =>
+				readTextResource(localHistoryKey(id, local.rel), { acceptBinary: true, acceptLarge: true }).then((r) => (r.kind === 'text' ? r.content : ''));
+			return Promise.all([
+				entry(local.left).then((text) => ({ text, path: `localhistory/${local.left}/${local.rel}` })),
+				local.right ? entry(local.right) : isExternalKey(local.rel) ? externalCopy(local.rel) : workingCopy(m, local.rel)
+			]);
+		}
+		// Compare editors: two files, a file's saved copy, or the clipboard ↔ the file as its editor has it.
+		const compare = parseCompareKey(key);
+		if (compare) {
+			const { left, right } = compare;
+			const leftText =
+				left.kind === 'clipboard'
+					? Promise.resolve(compareStore.clipboardText(left.id))
+					: left.kind === 'saved'
+						? readTextResource(left.key, { acceptLarge: true }).then((r) => (r.kind === 'text' ? r.content : ''))
+						: resourceCopy(left.key);
+			const leftPath = left.kind === 'clipboard' ? `clipboard/${left.id}` : left.kind === 'saved' ? `saved/${left.key}` : `left/${left.key}`;
+			return Promise.all([leftText.then((text) => ({ text, path: leftPath })), resourceCopy(right)]);
+		}
+		// Refactor Preview: the file as it is ↔ with the edits checked in the panel.
+		if (isRefactorPreviewKey(key)) {
+			const [before, after] = refactorPreview.sides(rel);
+			return [{ text: before, path: `refactor/${rel}` }, after];
+		}
+		// Staged Changes: the index on the right.
+		if (isIndexDiffKey(key)) return Promise.all([original(key, rel), invoke<string | null>('scm_show_index', { rel }).then((t) => t ?? '')]);
+		// merge-conflict.compare: every conflict as its current side ↔ as its incoming side.
+		if (isConflictCompareKey(key)) {
+			const both = compareSides(await workingCopy(m, rel));
+			return [{ text: both.current, path: `current/${rel}` }, both.incoming];
+		}
+		return null;
 	}
 
 	async function show(m: typeof import('#lib/editor/monaco.ts'), key: string) {
 		const rel = fileOf(key);
 		const my = ++seq;
 		try {
-			const commit = parseCommitDiffKey(key);
-			// A commit diff compares the file before and after that commit (empty when added or deleted).
-			const [orig, work] = commit
-				? await Promise.all([
-						invoke<string>('git_show_ref', { slug: commit.slug || null, rev: `${commit.hash}^`, rel: commit.rel }).catch(() => '').then((text) => ({ text, path: `${commit.hash}^/${commit.rel}` })),
-						invoke<string>('git_show_ref', { slug: commit.slug || null, rev: commit.hash, rel: commit.rel }).catch(() => '')
-					])
-				: await Promise.all([original(key, rel), workingCopy(m, rel)]);
+			const [orig, work] = (await sides(m, key, rel)) ?? (await Promise.all([original(key, rel), workingCopy(m, rel)]));
 			const head = orig.text;
 			const headPath = orig.path;
 			if (my !== seq || !diff || active !== key) return;
@@ -172,8 +273,12 @@
 	// Re-read when a diff tab becomes active and whenever git status changes (save, focus, stage).
 	$effect(() => {
 		const key = activeKey;
-		void scm.repo;
+		void scm.entries;
 		if (key && isTaskDiffKey(key)) void adeTasks.stats[parseTaskDiffKey(key)?.slug ?? ''];
+		// A chat's working set changed (another edit, Keep, Undo).
+		if (key && isChatEditKey(key)) void chatEdits.views[parseChatEditKey(key)?.chatId ?? ''];
+		// Edits checked or unchecked in the Refactor Preview.
+		if (key && isRefactorPreviewKey(key)) void [refactorPreview.checked, refactorPreview.originals.size];
 		if (api && key && isDiffKey(key)) void show(api, key);
 	});
 

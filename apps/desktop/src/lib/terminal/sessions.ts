@@ -37,8 +37,11 @@ export function keyTag(key: string): string | null {
 	return m ? m[1] : null;
 }
 
-/** What `pty_list` returns per live session. */
-export type PtyInfo = { key: string; cwd: string; alive: boolean };
+/** What `pty_list` returns per live session. `elsewhere`: another open window shows it (not this window's to kill). */
+export type PtyInfo = { key: string; cwd: string; alive: boolean; elsewhere?: boolean };
+
+/** Sessions this window may treat as its own: not shown by another open window. */
+export const ownSessions = (live: PtyInfo[]) => live.filter((s) => !s.elsewhere);
 
 /** Live PTYs of root `tag` that the restored page does not show: left over, so safe to kill.
  *  Other roots' sessions keep running until their folder is opened again. */
@@ -46,9 +49,20 @@ export function orphanKeys(live: string[], wanted: Set<string>, tag: string): st
 	return live.filter((k) => keyTag(k) === tag && !wanted.has(k));
 }
 
-/** Live PTYs this window does not show (other folders, or left over from an older build). */
+/** An agent CLI's PTY: it belongs to its task session (VS Code's Agents window owns session terminals). */
+export const isCliKey = (key: string) => key.startsWith('cli:');
+
+/**
+ * Live terminal PTYs this window does not show (other folders, or left over from an older build).
+ * Agent CLIs are not among them: another folder's agents keep working (`backgroundAgentKeys`).
+ */
 export function backgroundKeys(live: string[], wanted: Set<string>): string[] {
-	return live.filter((k) => !wanted.has(k));
+	return live.filter((k) => !wanted.has(k) && !isCliKey(k));
+}
+
+/** Agent CLI PTYs this window does not show; ended only after their own confirmation. */
+export function backgroundAgentKeys(live: string[], wanted: Set<string>): string[] {
+	return live.filter((k) => !wanted.has(k) && isCliKey(k));
 }
 
 type Storage = Pick<globalThis.Storage, 'getItem' | 'setItem'>;
@@ -96,7 +110,18 @@ const optArgv = (v: unknown) => (isArgv(v) ? v : undefined);
 /** Any root tag: key validity only depends on its length. */
 const SAMPLE_TAG = '00000000';
 
-export type PanelTerminalsState = { list: { id: number; title: string; run?: string[] }[]; active: number; seq: number; groups: PaneNode[] };
+/** `folder`: the root folder a terminal started in (a multi-root window asks; absent: the first folder).
+ * `profile`: the terminal profile it started with (New Terminal With Profile); `icon` / `color`: its
+ * tab's (Change Icon / Change Color); `inEditor`: shown in the editor area, not in a panel group. */
+export type PanelTerminalsState = {
+	list: { id: number; title: string; run?: string[]; folder?: string; profile?: string; icon?: string; color?: string; inEditor?: boolean }[];
+	active: number;
+	seq: number;
+	groups: PaneNode[];
+};
+
+/** A tab color: a terminal ANSI color id (`terminal.ansiRed`), like VS Code's color picker. */
+export const isTabColor = (v: unknown): v is string => typeof v === 'string' && /^terminal\.ansi(?:Bright)?(?:Black|Red|Green|Yellow|Blue|Magenta|Cyan|White)$/.test(v);
 
 /** VS Code's terminal groups: each a pane tree of terminal ids; every terminal is in exactly one. */
 export function panelGroups(raw: unknown, ids: number[]): PaneNode[] {
@@ -115,11 +140,23 @@ export function panelGroups(raw: unknown, ids: number[]): PaneNode[] {
 
 export function parsePanelTerminals(raw: unknown): PanelTerminalsState | null {
 	if (!isObject(raw) || !Array.isArray(raw.list) || !isInt(raw.active) || !isInt(raw.seq)) return null;
-	const list = raw.list.filter((t) => isObject(t) && isInt(t.id) && t.id > 0).map((t) => ({ id: t.id as number, title: optString(t.title) ?? 'zsh', run: optArgv(t.run) }));
+	const list = raw.list
+		.filter((t) => isObject(t) && isInt(t.id) && t.id > 0)
+		.map((t) => ({
+			id: t.id as number,
+			title: optString(t.title) ?? 'zsh',
+			run: optArgv(t.run),
+			...(typeof t.folder === 'string' && t.folder.startsWith('/') ? { folder: t.folder } : {}),
+			...(typeof t.profile === 'string' && t.profile ? { profile: t.profile } : {}),
+			...(typeof t.icon === 'string' && /^[a-z][\w-]{0,40}$/i.test(t.icon) ? { icon: t.icon } : {}),
+			...(isTabColor(t.color) ? { color: t.color } : {}),
+			...(t.inEditor === true ? { inEditor: true } : {})
+		}));
 	if (!list.length) return null;
 	const seq = Math.max(raw.seq, ...list.map((t) => t.id));
-	const active = list.some((t) => t.id === raw.active) ? raw.active : list[0].id;
-	return { list, active, seq, groups: panelGroups(raw.groups, list.map((t) => t.id)) };
+	const inPanel = list.filter((t) => !t.inEditor);
+	const active = inPanel.some((t) => t.id === raw.active) ? raw.active : (inPanel[0]?.id ?? list[0].id);
+	return { list, active, seq, groups: panelGroups(raw.groups, inPanel.map((t) => t.id)) };
 }
 
 export type AdeTerminalsState = {

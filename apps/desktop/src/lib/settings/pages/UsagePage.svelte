@@ -5,15 +5,21 @@
 	import Icon from '#lib/workbench/Icon.svelte';
 	import ProviderIcon from '#lib/workbench/ProviderIcon.svelte';
 	import { usage } from '#lib/workbench/usage.svelte.ts';
-	import { barTone, clampPct, errorMessage, percentLabel, PROVIDER_NAME, resetsIn, rowState, shownPct, updatedLabel, windowsOf, type UsageDisplay } from '#lib/workbench/usage.ts';
+	import { barTone, clampPct, errorMessage, listed, percentLabel, poolsOf, PROVIDER_NAME, resetsIn, rowState, shownPct, updatedLabel, windowsOf, type UsageDisplay } from '#lib/workbench/usage.ts';
+	import { t } from '#lib/i18n/index.ts';
+	import UsageCredentials from './UsageCredentials.svelte';
 	import { timeAgo } from '#lib/ade/model.ts';
 	import { runWorktreeAction } from '#lib/ade/worktreeMenu.svelte.ts';
 	import { settings } from '../settings.svelte';
 	import { systemSettings } from '../systemSettings.svelte';
 	import SettingChoice from './SettingChoice.svelte';
+	import VaultStats from '#lib/vault/VaultStats.svelte';
 
 	const display = $derived((settings.get<string>('kingu.usage.display') ?? 'used') as UsageDisplay);
 	const spend = $derived(usage.spend);
+	/** Providers set up (and Claude, Codex, Gemini), then the others with why they show nothing. */
+	const shown = $derived(usage.active.filter((id) => listed(id, usage.providers[id])));
+	const notSetUp = $derived(usage.active.filter((id) => !listed(id, usage.providers[id])));
 	const peak = $derived(Math.max(...spend.days.map((d) => d.cost), 0.01));
 	const compact = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n));
 	const day = (ms: number) => new Date(ms).toLocaleDateString('th-TH', { weekday: 'short' });
@@ -29,9 +35,9 @@
 </script>
 
 <div class="h-full overflow-y-auto">
-	<div class="mx-auto max-w-[880px] px-8 py-6">
+	<div class="mx-auto max-w-4xl px-8 pt-10 pb-24">
 		<div class="flex items-center gap-2">
-			<h1 class="flex flex-1 items-center gap-2 text-lg font-semibold"><Icon name="usage" size={20} />Stats & Usage</h1>
+			<h1 class="flex flex-1 items-center gap-2 text-2xl leading-tight font-semibold"><Icon name="usage" size={20} />Stats & Usage</h1>
 			<button class="flex h-8 items-center gap-1.5 rounded-md border border-(--vscode-widget-border) px-3 text-[13px] hover:bg-(--vscode-list-hoverBackground) disabled:opacity-50" disabled={usage.refreshing} onclick={() => usage.refresh()}>
 				<span class={['grid place-items-center', usage.refreshing && 'animate-spin']}><Icon name="refresh" size={14} /></span>Refresh
 			</button>
@@ -40,7 +46,7 @@
 
 		<h2 class={SECTION}>Usage limits</h2>
 		<div class="space-y-2">
-			{#each usage.active as id (id)}
+			{#each shown as id (id)}
 				{@const p = usage.providers[id]}
 				{@const state = rowState(p)}
 				<div class="{CARD} px-4 py-3.5">
@@ -61,6 +67,18 @@
 									{/if}
 								</div>
 							{/each}
+							{#if poolsOf(p).length}
+								<div class="space-y-1.5">
+									<div class="text-xs {MUTED}">{t('usage.pools')}</div>
+									{#each poolsOf(p) as b (b.name)}
+										<div class="flex items-center gap-2 text-xs">
+											<span class="min-w-0 flex-1 truncate">{b.name}</span>
+											<span class="h-1.5 w-24 overflow-hidden rounded-full bg-(--vscode-widget-border)"><span class={['block h-full rounded-full', BAR[barTone(clampPct(b.usedPercent))]]} style:width="{shownPct(b.usedPercent, display)}%"></span></span>
+											<span class="w-16 text-right tabular-nums">{percentLabel(b.usedPercent, display)}</span>
+										</div>
+									{/each}
+								</div>
+							{/if}
 							{#if p.status === 'error'}<p class="text-xs {MUTED}">Refresh failed — showing cached data · {p.error}</p>{/if}
 						</div>
 					{:else if p && (state.kind === 'error' || state.kind === 'unavailable' || state.kind === 'sign-in')}
@@ -71,6 +89,18 @@
 				<p class="text-[13px] {MUTED}">ไม่พบ Claude Code หรือ Codex CLI ในเครื่องนี้</p>
 			{/each}
 		</div>
+
+		{#if notSetUp.length}
+			<div class="mt-2 space-y-1">
+				<div class="text-xs {MUTED}">{t('usage.notSetUp')}</div>
+				{#each notSetUp as id (id)}
+					<div class="flex items-start gap-2 text-xs {MUTED}"><span class="mt-px"><ProviderIcon provider={id} size={13} /></span><span class="w-24 shrink-0">{PROVIDER_NAME[id]}</span><span class="min-w-0 flex-1">{usage.providers[id]?.error ?? ''}</span></div>
+				{/each}
+			</div>
+		{/if}
+
+		<h2 class={SECTION}>{t('usage.cred.title')}</h2>
+		<UsageCredentials />
 
 		<h2 class={SECTION}>Usage percentages</h2>
 		<SettingChoice id="kingu.usage.display" labels={{ used: 'Used', remaining: 'Remaining' }} />
@@ -115,5 +145,7 @@
 			{/each}
 		</div>
 		<p class="mt-2 text-xs {MUTED}">นับจากรอบล่าสุดของแต่ละงาน (ค่าใช้จ่ายสะสมของ session นั้น) รอบที่เก่ากว่าไม่ได้เก็บไว้ ตัวเลขจริงจึงอาจสูงกว่านี้</p>
+
+		<VaultStats />
 	</div>
 </div>

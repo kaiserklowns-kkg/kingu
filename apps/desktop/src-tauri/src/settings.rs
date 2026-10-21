@@ -7,8 +7,10 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 
+use crate::i18n::msg::FilesMsg;
+use crate::tr;
 use crate::workspace::Workspace;
 
 const FILE: &str = "settings.json";
@@ -32,6 +34,9 @@ pub enum Scope {
   /// Kingu's own per-repository overrides (Orca's per-repo settings) for the open folder:
   /// `<config_dir>/repos/<id>.json`, never inside the repository.
   Repo,
+  /// The Default profile's `settings.json` while another profile is active: application-scoped
+  /// settings always live there (VS Code). `User` is the active profile's (user_profiles.rs).
+  DefaultUser,
 }
 
 impl Scope {
@@ -41,6 +46,7 @@ impl Scope {
       "workspace" => Ok(Self::Workspace),
       "keybindings" => Ok(Self::Keybindings),
       "repo" => Ok(Self::Repo),
+      "defaultUser" => Ok(Self::DefaultUser),
       _ => Err(format!("unknown settings scope: {s}")),
     }
   }
@@ -80,21 +86,21 @@ pub fn kingu_file(root: &Path, name: &str) -> Result<PathBuf, String> {
   if let Ok(meta) = std::fs::symlink_metadata(&dir)
     && (meta.file_type().is_symlink() || !meta.is_dir())
   {
-    return Err(format!("{}: not a directory", dir.display()));
+    return Err(tr!(FilesMsg::NotADirectory, path = dir.display()));
   }
   let file = dir.join(name);
   if let Ok(meta) = std::fs::symlink_metadata(&file)
     && !meta.is_file()
   {
-    return Err(format!("{}: not a regular file", file.display()));
+    return Err(tr!(FilesMsg::NotARegularFile, path = file.display()));
   }
   Ok(file)
 }
 
 pub fn read(path: &Path) -> Result<Option<String>, String> {
   match std::fs::read(path) {
-    Ok(bytes) if bytes.len() > MAX_BYTES => Err(format!("{}: larger than {MAX_BYTES} bytes", path.display())),
-    Ok(bytes) => String::from_utf8(bytes).map(Some).map_err(|_| format!("{}: not UTF-8", path.display())),
+    Ok(bytes) if bytes.len() > MAX_BYTES => Err(tr!(FilesMsg::FileTooLarge, path = path.display(), max = MAX_BYTES)),
+    Ok(bytes) => String::from_utf8(bytes).map(Some).map_err(|_| tr!(FilesMsg::NotUtf8, path = path.display())),
     Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
     Err(e) => Err(format!("{}: {e}", path.display())),
   }
@@ -103,7 +109,7 @@ pub fn read(path: &Path) -> Result<Option<String>, String> {
 /// Writes `content` to a sibling temp file, syncs it, then renames it over `path`.
 pub fn write_atomic(path: &Path, content: &str) -> Result<(), String> {
   if content.len() > MAX_BYTES {
-    return Err(format!("settings larger than {MAX_BYTES} bytes"));
+    return Err(tr!(FilesMsg::SettingsTooLarge, max = MAX_BYTES));
   }
   let dir = path.parent().ok_or("settings path has no parent")?;
   let name = path.file_name().and_then(|n| n.to_str()).unwrap_or(FILE);
@@ -204,15 +210,16 @@ pub fn user_value(config_dir: &Path, key: &str) -> Option<serde_json::Value> {
 
 fn path_for(app: &AppHandle, ws: &Workspace, scope: Scope) -> Result<PathBuf, String> {
   match scope {
-    Scope::User => Ok(user_path(&app.path().app_config_dir().map_err(|e| e.to_string())?)),
+    Scope::User => Ok(user_path(&crate::user_profiles::active_dir(&app.path().app_config_dir().map_err(|e| e.to_string())?))),
+    Scope::DefaultUser => Ok(user_path(&app.path().app_config_dir().map_err(|e| e.to_string())?)),
     Scope::Workspace => workspace_path(&ws.root()?),
-    Scope::Keybindings => Ok(app.path().app_config_dir().map_err(|e| e.to_string())?.join(KEYBINDINGS_FILE)),
+    Scope::Keybindings => Ok(crate::user_profiles::active_dir(&app.path().app_config_dir().map_err(|e| e.to_string())?).join(KEYBINDINGS_FILE)),
     Scope::Repo => Ok(repo_path(&app.path().app_config_dir().map_err(|e| e.to_string())?, &ws.root()?)),
   }
 }
 
 #[tauri::command]
-pub fn settings_read(app: AppHandle, ws: State<'_, Workspace>, scope: String) -> Result<SettingsFile, String> {
+pub fn settings_read(app: AppHandle, ws: Workspace, scope: String) -> Result<SettingsFile, String> {
   let scope = Scope::parse(&scope)?;
   // No folder open: there are no workspace settings (not an error, which would keep the last
   // folder's values).
@@ -223,17 +230,135 @@ pub fn settings_read(app: AppHandle, ws: State<'_, Workspace>, scope: String) ->
   Ok(SettingsFile { content: read(&path)?, path: path.display().to_string() })
 }
 
+/// The folder settings of one root folder of a multi-root window (VS Code: a folder's
+/// `.vscode/settings.json`, which applies to that folder's files only): its `.kingu/settings.json`.
+/// `folder` must be one of the window's roots.
 #[tauri::command]
-pub fn settings_write(app: AppHandle, ws: State<'_, Workspace>, scope: String, content: String) -> Result<(), String> {
+pub fn settings_read_folder(ws: Workspace, folder: String) -> Result<SettingsFile, String> {
+  let root = ws.roots().into_iter().find(|r| r.as_path() == Path::new(&folder)).ok_or_else(|| tr!(FilesMsg::OutsideWorkspace, path = folder))?;
+  let path = workspace_path(&root)?;
+  Ok(SettingsFile { content: read(&path)?, path: path.display().to_string() })
+}
+
+#[tauri::command]
+pub fn settings_write(app: AppHandle, ws: Workspace, scope: String, content: String) -> Result<(), String> {
   let path = path_for(&app, &ws, Scope::parse(&scope)?)?;
   write_atomic(&path, &content)?;
   log::info!("saved {scope} settings");
   Ok(())
 }
 
+/// Which settings file a change in the app config dir touched (for `settings://changed`): the
+/// user `settings.json`, `keybindings.json` (of the active profile), a per-repository file under
+/// `repos/`, or the profiles list.
+pub fn changed_file(config_dir: &Path, path: &Path) -> Option<&'static str> {
+  changed_in(config_dir, &crate::user_profiles::active_dir(config_dir), path)
+}
+
+/// [`changed_file`] with the active profile's folder (`profile`, the config dir for Default): the
+/// Default `settings.json` counts too, for its application-scoped settings.
+pub fn changed_in(config_dir: &Path, profile: &Path, path: &Path) -> Option<&'static str> {
+  if path == user_path(config_dir) || path == user_path(profile) {
+    Some("settings")
+  } else if path == profile.join(KEYBINDINGS_FILE) {
+    Some("keybindings")
+  } else if path.parent() == Some(crate::snippets::dir_in(profile).as_path()) && path.file_name().and_then(|n| n.to_str()).is_some_and(crate::snippets::valid_name) {
+    Some("snippets")
+  } else if path == config_dir.join(crate::user_profiles::PROFILES_DIR).join("profiles.json") {
+    Some("profiles")
+  } else if path.parent() == Some(config_dir.join(REPOS_DIR).as_path()) && path.extension().is_some_and(|e| e == "json") {
+    Some("repo")
+  } else {
+    None
+  }
+}
+
+/// Keeps the config-dir watcher alive.
+#[derive(Default)]
+pub struct ConfigWatcher(std::sync::Mutex<Option<notify::RecommendedWatcher>>);
+
+/// Watches the app config dir so `settings.json` and `keybindings.json` edited while Kingu has
+/// focus (by another program or an agent) apply right away, like VS Code; the webview also
+/// re-reads on focus. Emits `settings://changed` with the file kind, at most every 150 ms per kind.
+pub fn watch_config(app: &AppHandle, config_dir: &Path) -> Result<(), String> {
+  use notify::{RecursiveMode, Watcher};
+  use tauri::Emitter;
+  std::fs::create_dir_all(config_dir.join(REPOS_DIR)).map_err(|e| e.to_string())?;
+  let (tx, rx) = std::sync::mpsc::channel::<&'static str>();
+  // File events carry resolved paths (e.g. /private/var on macOS).
+  let dir = std::fs::canonicalize(config_dir).unwrap_or_else(|_| config_dir.to_owned());
+  let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+    let Ok(event) = res else { return };
+    if matches!(event.kind, notify::EventKind::Access(_)) {
+      return;
+    }
+    for p in &event.paths {
+      if let Some(kind) = changed_file(&dir, p) {
+        let _ = tx.send(kind);
+      }
+    }
+  })
+  .map_err(|e| e.to_string())?;
+  watcher.watch(config_dir, RecursiveMode::NonRecursive).map_err(|e| e.to_string())?;
+  watcher.watch(&config_dir.join(REPOS_DIR), RecursiveMode::NonRecursive).map_err(|e| e.to_string())?;
+  // The Default profile's user snippets (a profile's own are under `profiles/`, watched below).
+  let snippets = crate::snippets::dir_in(config_dir);
+  std::fs::create_dir_all(&snippets).map_err(|e| e.to_string())?;
+  watcher.watch(&snippets, RecursiveMode::NonRecursive).map_err(|e| e.to_string())?;
+  // Profiles: each one's settings.json / keybindings.json, and the list naming the active one.
+  let profiles = config_dir.join(crate::user_profiles::PROFILES_DIR);
+  std::fs::create_dir_all(&profiles).map_err(|e| e.to_string())?;
+  watcher.watch(&profiles, RecursiveMode::Recursive).map_err(|e| e.to_string())?;
+  let handle = app.clone();
+  std::thread::spawn(move || {
+    // Editors save in several steps (temp file, rename): one event per burst.
+    while let Ok(first) = rx.recv() {
+      let mut kinds = std::collections::BTreeSet::from([first]);
+      while let Ok(k) = rx.recv_timeout(std::time::Duration::from_millis(150)) {
+        kinds.insert(k);
+      }
+      for k in kinds {
+        let _ = handle.emit("settings://changed", k);
+      }
+    }
+  });
+  if let Some(w) = app.try_state::<ConfigWatcher>() {
+    *w.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(watcher);
+  }
+  Ok(())
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn knows_which_config_file_changed() {
+    let dir = Path::new("/cfg");
+    assert_eq!(changed_file(dir, Path::new("/cfg/settings.json")), Some("settings"));
+    assert_eq!(changed_file(dir, Path::new("/cfg/keybindings.json")), Some("keybindings"));
+    assert_eq!(changed_file(dir, &dir.join(REPOS_DIR).join("0123456789abcdef.json")), Some("repo"));
+    assert_eq!(changed_file(dir, Path::new("/cfg/settings.json.tmp")), None);
+    assert_eq!(changed_file(dir, Path::new("/cfg/other/settings.json")), None);
+  }
+
+  #[test]
+  fn a_profile_has_its_own_files_beside_the_default_settings() {
+    let dir = Path::new("/cfg");
+    let profile = Path::new("/cfg/profiles/0a1b2c3d");
+    assert_eq!(changed_in(dir, profile, Path::new("/cfg/profiles/0a1b2c3d/settings.json")), Some("settings"));
+    assert_eq!(changed_in(dir, profile, Path::new("/cfg/profiles/0a1b2c3d/keybindings.json")), Some("keybindings"));
+    // The Default profile's settings.json still holds the application-scoped settings.
+    assert_eq!(changed_in(dir, profile, Path::new("/cfg/settings.json")), Some("settings"));
+    // Its keybindings are not the active ones.
+    assert_eq!(changed_in(dir, profile, Path::new("/cfg/keybindings.json")), None);
+    assert_eq!(changed_in(dir, profile, Path::new("/cfg/profiles/ffffffff/settings.json")), None);
+    assert_eq!(changed_in(dir, profile, Path::new("/cfg/profiles/profiles.json")), Some("profiles"));
+    assert_eq!(changed_in(dir, profile, Path::new("/cfg/profiles/0a1b2c3d/snippets/rust.json")), Some("snippets"));
+    assert_eq!(changed_in(dir, profile, Path::new("/cfg/profiles/0a1b2c3d/snippets/.rust.json.1.tmp")), None);
+    assert_eq!(changed_in(dir, Path::new("/cfg"), Path::new("/cfg/snippets/all.code-snippets")), Some("snippets"));
+    assert_eq!(Scope::parse("defaultUser").unwrap(), Scope::DefaultUser);
+  }
 
   #[test]
   fn parses_only_known_scopes() {

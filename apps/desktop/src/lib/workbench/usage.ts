@@ -6,17 +6,62 @@
 import type { RunSummary } from '#lib/ade/model.ts';
 import type { UsageRow, UsageWindow } from '#lib/accounts/usage.ts';
 
-export type ProviderId = 'claude' | 'codex';
-export const PROVIDERS: ProviderId[] = ['claude', 'codex'];
-export const PROVIDER_NAME: Record<ProviderId, string> = { claude: 'Claude', codex: 'Codex' };
+export type ProviderId = 'claude' | 'codex' | 'gemini' | 'antigravity' | 'opencode' | 'kimi' | 'minimax' | 'grok' | 'cursor' | 'zcode';
+/** Orca's status bar order. */
+export const PROVIDERS: ProviderId[] = ['claude', 'codex', 'gemini', 'antigravity', 'opencode', 'kimi', 'minimax', 'grok', 'cursor', 'zcode'];
+export const PROVIDER_NAME: Record<ProviderId, string> = {
+	claude: 'Claude',
+	codex: 'Codex',
+	gemini: 'Gemini',
+	antigravity: 'Antigravity',
+	opencode: 'OpenCode Go',
+	kimi: 'Kimi',
+	minimax: 'MiniMax',
+	grok: 'Grok',
+	cursor: 'Cursor',
+	zcode: 'ZCode'
+};
+/** Providers read through the AI accounts service; the others by Rust usage/ (`usage_fetch`). */
+export const ACCOUNT_PROVIDERS: ProviderId[] = ['claude', 'codex'];
+/** Orca shows these only when their CLI is installed (status-bar-agent-gating.ts); the rest once set up. */
+export const CLI_GATED: ProviderId[] = ['claude', 'codex', 'gemini', 'kimi', 'antigravity', 'grok', 'zcode'];
+/** Off unless their setting is on: Gemini (kingu.usage.gemini), Antigravity (kingu.usage.antigravity). */
+export const OPT_IN: ProviderId[] = ['gemini', 'antigravity'];
+
+/**
+ * The providers whose usage is read: CLI-gated ones when detected (all while detection has not
+ * answered), opt-in ones only when turned on, the others always (they stay hidden while
+ * `unavailable`, i.e. not set up).
+ */
+export function activeProviders(detected: ProviderId[] | null, enabled: Partial<Record<ProviderId, boolean>>): ProviderId[] {
+	return PROVIDERS.filter((p) => (!CLI_GATED.includes(p) || !detected || detected.includes(p)) && (!OPT_IN.includes(p) || enabled[p] === true));
+}
+
+/** The non-secret settings Rust's extra providers read (usage::Options). */
+export type UsageOptions = { opencodeWorkspaceId: string; minimaxEndpoint: string; minimaxGroupId: string; minimaxModels: string; zcodeSite: string };
+export function usageOptions(get: (id: string) => unknown): UsageOptions {
+	const s = (id: string, fallback: string) => (typeof get(id) === 'string' ? (get(id) as string) : fallback);
+	return {
+		opencodeWorkspaceId: s('kingu.usage.opencode.workspaceId', ''),
+		minimaxEndpoint: s('kingu.usage.minimax.endpoint', 'overseas'),
+		minimaxGroupId: s('kingu.usage.minimax.groupId', ''),
+		minimaxModels: s('kingu.usage.minimax.models', 'general'),
+		zcodeSite: s('kingu.usage.zcode.site', 'zai')
+	};
+}
 
 export type Window = { usedPercent: number; windowMinutes: number; resetsAt: number | null };
+/** A named pool (Cursor's model pools, Antigravity's model groups). */
+export type Bucket = Window & { name: string };
 export type ProviderStatus = 'idle' | 'fetching' | 'ok' | 'error' | 'unavailable';
 export type ProviderState = {
 	provider: ProviderId;
 	status: ProviderStatus;
 	session: Window | null;
 	weekly: Window | null;
+	/** A 30-day or billing-cycle window (OpenCode Go, Grok, Cursor, ZCode). */
+	monthly?: Window | null;
+	buckets?: Bucket[];
 	planType: string | null;
 	error: string | null;
 	failureKind: string | null;
@@ -87,14 +132,20 @@ export function windowLength(minutes: number): string {
 }
 export const windowWhen = (w: Window, now: number) => (w.resetsAt !== null ? countdown(w.resetsAt - now) : windowLength(w.windowMinutes));
 
-export type NamedWindow = { label: 'Session' | 'Weekly'; window: Window };
+/** `label`: Session, Weekly, Monthly, or a pool's name when a provider reports only pools. */
+export type NamedWindow = { label: string; window: Window };
 export function windowsOf(p: ProviderState | null): NamedWindow[] {
 	if (!p) return [];
 	const out: NamedWindow[] = [];
 	if (p.session) out.push({ label: 'Session', window: p.session });
 	if (p.weekly) out.push({ label: 'Weekly', window: p.weekly });
+	if (p.monthly) out.push({ label: 'Monthly', window: p.monthly });
+	if (!out.length) for (const b of p.buckets ?? []) out.push({ label: b.name, window: b });
 	return out;
 }
+
+/** Named pools beyond the windows (the Usage page lists them under the provider). */
+export const poolsOf = (p: ProviderState | null): Bucket[] => (p && (p.session || p.weekly || p.monthly) ? (p.buckets ?? []) : []);
 
 /** The most used window; the earlier one wins a tie. */
 export function headline(p: ProviderState | null): NamedWindow | null {
@@ -108,6 +159,12 @@ export const maxUsed = (p: ProviderState | null) => Math.max(-1, ...windowsOf(p)
 /** Popup only: bar fill and percent colour by the used share (also in "remaining" mode). */
 export const barTone = (used: number) => (used < 60 ? 'neutral' : used < 80 ? 'warning' : 'critical');
 export const textTone = (used: number) => (used >= 80 ? 'critical' : used >= 60 ? 'warning' : 'normal');
+
+/** Popup and Usage page rows: Claude, Codex and Gemini always (a sign-in row), the others once set up (Orca hides an `unavailable` one). */
+export const listed = (id: ProviderId, p: ProviderState | null) => ACCOUNT_PROVIDERS.includes(id) || id === 'gemini' || p?.status !== 'unavailable';
+
+/** Where "Sign in" goes: AI Accounts for Claude and Codex, Stats & Usage (keys, cookies, CLI hints) for the others. */
+export const signInPage = (id: ProviderId): 'account' | 'usage' => (ACCOUNT_PROVIDERS.includes(id) ? 'account' : 'usage');
 
 /** A state worth a chip: has data, or is loading/erroring rather than simply unavailable. */
 export const hasValue = (p: ProviderState | null) => !!p && p.status !== 'unavailable' && !(p.status === 'fetching' && !windowsOf(p).length);
@@ -130,6 +187,10 @@ export function errorLabel(p: ProviderState): string {
 		if (k === 'missing-credentials') return 'Sign in again';
 	}
 	if (p.provider === 'codex' && k === 'stale-token') return 'Sign-in expired';
+	if (p.provider === 'gemini' && k === 'stale-token') return 'Updates when Gemini runs';
+	// Grok and Kimi rotate the session Kingu reads only when their CLI runs (Orca's copy).
+	if (k === 'delegated-refresh-required') return `Run ${PROVIDER_NAME[p.provider]} to refresh`;
+	if (k === 'stale-token') return 'Sign-in expired';
 	if (k === 'no-subscription') return 'No subscription';
 	if (/rate[- ]?limit(s|ed)?/i.test(p.error ?? '')) return 'Limited';
 	return 'Refresh failed';
@@ -146,7 +207,8 @@ export function errorMessage(p: ProviderState): string {
 		if (k === 'usage-unavailable' || k === 'server' || k === 'parse') return 'Claude usage is unavailable right now.';
 		if (k === 'missing-credentials') return 'The selected Claude account needs you to sign in again. Open Settings > AI Provider Accounts, or choose System default.';
 	}
-	if (p.error && AUTHISH.test(p.error) && k !== 'rate-limited') return `${PROVIDER_NAME[p.provider]} usage could not be refreshed. Agent sessions may still be signed in.`;
+	// The other providers' messages (usage/*.rs) already say what to run or replace.
+	if (p.error && AUTHISH.test(p.error) && k !== 'rate-limited' && (ACCOUNT_PROVIDERS.includes(p.provider) || p.provider === 'gemini')) return `${PROVIDER_NAME[p.provider]} usage could not be refreshed. Agent sessions may still be signed in.`;
 	return p.error || 'Unable to fetch usage';
 }
 
@@ -197,7 +259,7 @@ export function applyStale(prev: ProviderState | null, next: ProviderState, now:
 	if (next.status !== 'error' || !prev || !windowsOf(prev).length) return next;
 	const keep = next.failureKind === 'rate-limited' ? DAY : 30 * MIN;
 	if (now - prev.updatedAt > keep) return next;
-	return { ...next, session: prev.session, weekly: prev.weekly, planType: next.planType ?? prev.planType, updatedAt: prev.updatedAt, source: prev.source };
+	return { ...next, session: prev.session, weekly: prev.weekly, monthly: prev.monthly, buckets: prev.buckets, planType: next.planType ?? prev.planType, updatedAt: prev.updatedAt, source: prev.source };
 }
 
 /** Retry delay after `streak` failures in a row: 30 s doubling, at most 15 min. */

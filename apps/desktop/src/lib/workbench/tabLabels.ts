@@ -72,7 +72,7 @@ const TEMPLATE = /\$\{(dirname|filename|extname|extname\(([-+]?\d+)\)|dirname\((
  * Templates use `${filename}`, `${extname}`, `${extname(N)}`, `${dirname}` and `${dirname(N)}`.
  */
 export function customLabel(rel: string, root: string, patterns: readonly Pattern[]): string | undefined {
-	const abs = `${root}/${rel}`;
+	const abs = rel.startsWith('/') ? rel : `${root}/${rel}`;
 	const rootName = baseOf(root);
 	for (const p of patterns) {
 		const relevant = p.absolute ? abs : `${rootName}/${rel}`;

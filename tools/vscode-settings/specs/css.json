@@ -1,0 +1,784 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/css.ts",
+	"export": "CSS_SETTINGS",
+	"what": "css.*, scss.*, less.* (vscode-css-language-server)",
+	"entries": [
+		{
+			"id": "css.validate",
+			"group": "CSS",
+			"th": "ตรวจความถูกต้องทั้งหมด ของ CSS"
+		},
+		{
+			"id": "css.completion.triggerPropertyValueCompletion",
+			"group": "CSS",
+			"th": "แนะนำค่าต่อทันทีหลังเลือก property ของ CSS"
+		},
+		{
+			"id": "css.completion.completePropertyWithSemicolon",
+			"group": "CSS",
+			"th": "เติมเซมิโคลอนเมื่อเติม property ของ CSS"
+		},
+		{
+			"id": "css.hover.documentation",
+			"group": "CSS",
+			"th": "แสดงคำอธิบายใน hover ของ CSS"
+		},
+		{
+			"id": "css.hover.references",
+			"group": "CSS",
+			"th": "แสดงลิงก์อ้างอิง MDN ใน hover ของ CSS"
+		},
+		{
+			"id": "css.format.enable",
+			"group": "CSS",
+			"th": "เปิดตัวจัดรูปแบบ ของ CSS"
+		},
+		{
+			"id": "css.format.newlineBetweenSelectors",
+			"group": "CSS",
+			"th": "แยก selector ด้วยบรรทัดใหม่ ของ CSS"
+		},
+		{
+			"id": "css.format.newlineBetweenRules",
+			"group": "CSS",
+			"th": "เว้นบรรทัดว่างระหว่าง rule ของ CSS"
+		},
+		{
+			"id": "css.format.spaceAroundSelectorSeparator",
+			"group": "CSS",
+			"th": "เว้นวรรครอบตัวคั่น selector ของ CSS"
+		},
+		{
+			"id": "css.format.braceStyle",
+			"group": "CSS",
+			"th": "ตำแหน่งวงเล็บปีกกา ของ CSS",
+			"enumTh": [
+				"บรรทัดเดียวกับ selector",
+				"บรรทัดใหม่"
+			]
+		},
+		{
+			"id": "css.format.preserveNewLines",
+			"group": "CSS",
+			"th": "คงบรรทัดว่างที่มีอยู่ ของ CSS"
+		},
+		{
+			"id": "css.format.maxPreserveNewLines",
+			"group": "CSS",
+			"th": "จำนวนบรรทัดว่างสูงสุดที่คงไว้ ของ CSS"
+		},
+		{
+			"id": "css.lint.compatibleVendorPrefixes",
+			"group": "CSS",
+			"th": "เมื่อใช้ vendor prefix ให้ใส่ prefix ของ browser อื่นด้วย ของ CSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "css.lint.vendorPrefix",
+			"group": "CSS",
+			"th": "เมื่อใช้ vendor prefix ให้ใส่ property มาตรฐานด้วย ของ CSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "css.lint.duplicateProperties",
+			"group": "CSS",
+			"th": "property ซ้ำ ของ CSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "css.lint.emptyRules",
+			"group": "CSS",
+			"th": "rule ว่าง ของ CSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "css.lint.importStatement",
+			"group": "CSS",
+			"th": "คำสั่ง import ของ CSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "css.lint.boxModel",
+			"group": "CSS",
+			"th": "ใช้ width หรือ height คู่กับ padding หรือ border ของ CSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "css.lint.universalSelector",
+			"group": "CSS",
+			"th": "universal selector ของ CSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "css.lint.zeroUnits",
+			"group": "CSS",
+			"th": "ใส่หน่วยกับเลขศูนย์ ของ CSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "css.lint.fontFaceProperties",
+			"group": "CSS",
+			"th": "@font-face ต้องมี src และ font-family ของ CSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "css.lint.hexColorLength",
+			"group": "CSS",
+			"th": "สี hex ต้องมี 3 4 6 หรือ 8 หลัก ของ CSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "css.lint.argumentsInColorFunction",
+			"group": "CSS",
+			"th": "จำนวนพารามิเตอร์ของฟังก์ชันสีไม่ถูกต้อง ของ CSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "css.lint.unknownProperties",
+			"group": "CSS",
+			"th": "property ที่ไม่รู้จัก ของ CSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "css.lint.validProperties",
+			"group": "CSS",
+			"th": "property ที่ไม่ตรวจว่ารู้จักหรือไม่ ของ CSS"
+		},
+		{
+			"id": "css.lint.ieHack",
+			"group": "CSS",
+			"th": "IE hack ของ CSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "css.lint.unknownVendorSpecificProperties",
+			"group": "CSS",
+			"th": "property เฉพาะ vendor ที่ไม่รู้จัก ของ CSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "css.lint.propertyIgnoredDueToDisplay",
+			"group": "CSS",
+			"th": "property ที่ไม่มีผลเพราะค่า display ของ CSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "css.lint.important",
+			"group": "CSS",
+			"th": "ใช้ !important ของ CSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "css.lint.float",
+			"group": "CSS",
+			"th": "ใช้ float ของ CSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "css.lint.idSelector",
+			"group": "CSS",
+			"th": "selector แบบ id ของ CSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "css.lint.unknownAtRules",
+			"group": "CSS",
+			"th": "at-rule ที่ไม่รู้จัก ของ CSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "scss.validate",
+			"group": "CSS",
+			"th": "ตรวจความถูกต้องทั้งหมด ของ SCSS"
+		},
+		{
+			"id": "scss.completion.triggerPropertyValueCompletion",
+			"group": "CSS",
+			"th": "แนะนำค่าต่อทันทีหลังเลือก property ของ SCSS"
+		},
+		{
+			"id": "scss.completion.completePropertyWithSemicolon",
+			"group": "CSS",
+			"th": "เติมเซมิโคลอนเมื่อเติม property ของ SCSS"
+		},
+		{
+			"id": "scss.hover.documentation",
+			"group": "CSS",
+			"th": "แสดงคำอธิบายใน hover ของ SCSS"
+		},
+		{
+			"id": "scss.hover.references",
+			"group": "CSS",
+			"th": "แสดงลิงก์อ้างอิง MDN ใน hover ของ SCSS"
+		},
+		{
+			"id": "scss.format.enable",
+			"group": "CSS",
+			"th": "เปิดตัวจัดรูปแบบ ของ SCSS"
+		},
+		{
+			"id": "scss.format.newlineBetweenSelectors",
+			"group": "CSS",
+			"th": "แยก selector ด้วยบรรทัดใหม่ ของ SCSS"
+		},
+		{
+			"id": "scss.format.newlineBetweenRules",
+			"group": "CSS",
+			"th": "เว้นบรรทัดว่างระหว่าง rule ของ SCSS"
+		},
+		{
+			"id": "scss.format.spaceAroundSelectorSeparator",
+			"group": "CSS",
+			"th": "เว้นวรรครอบตัวคั่น selector ของ SCSS"
+		},
+		{
+			"id": "scss.format.braceStyle",
+			"group": "CSS",
+			"th": "ตำแหน่งวงเล็บปีกกา ของ SCSS",
+			"enumTh": [
+				"บรรทัดเดียวกับ selector",
+				"บรรทัดใหม่"
+			]
+		},
+		{
+			"id": "scss.format.preserveNewLines",
+			"group": "CSS",
+			"th": "คงบรรทัดว่างที่มีอยู่ ของ SCSS"
+		},
+		{
+			"id": "scss.format.maxPreserveNewLines",
+			"group": "CSS",
+			"th": "จำนวนบรรทัดว่างสูงสุดที่คงไว้ ของ SCSS"
+		},
+		{
+			"id": "scss.lint.compatibleVendorPrefixes",
+			"group": "CSS",
+			"th": "เมื่อใช้ vendor prefix ให้ใส่ prefix ของ browser อื่นด้วย ของ SCSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "scss.lint.vendorPrefix",
+			"group": "CSS",
+			"th": "เมื่อใช้ vendor prefix ให้ใส่ property มาตรฐานด้วย ของ SCSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "scss.lint.duplicateProperties",
+			"group": "CSS",
+			"th": "property ซ้ำ ของ SCSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "scss.lint.emptyRules",
+			"group": "CSS",
+			"th": "rule ว่าง ของ SCSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "scss.lint.importStatement",
+			"group": "CSS",
+			"th": "คำสั่ง import ของ SCSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "scss.lint.boxModel",
+			"group": "CSS",
+			"th": "ใช้ width หรือ height คู่กับ padding หรือ border ของ SCSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "scss.lint.universalSelector",
+			"group": "CSS",
+			"th": "universal selector ของ SCSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "scss.lint.zeroUnits",
+			"group": "CSS",
+			"th": "ใส่หน่วยกับเลขศูนย์ ของ SCSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "scss.lint.fontFaceProperties",
+			"group": "CSS",
+			"th": "@font-face ต้องมี src และ font-family ของ SCSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "scss.lint.hexColorLength",
+			"group": "CSS",
+			"th": "สี hex ต้องมี 3 4 6 หรือ 8 หลัก ของ SCSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "scss.lint.argumentsInColorFunction",
+			"group": "CSS",
+			"th": "จำนวนพารามิเตอร์ของฟังก์ชันสีไม่ถูกต้อง ของ SCSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "scss.lint.unknownProperties",
+			"group": "CSS",
+			"th": "property ที่ไม่รู้จัก ของ SCSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "scss.lint.validProperties",
+			"group": "CSS",
+			"th": "property ที่ไม่ตรวจว่ารู้จักหรือไม่ ของ SCSS"
+		},
+		{
+			"id": "scss.lint.ieHack",
+			"group": "CSS",
+			"th": "IE hack ของ SCSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "scss.lint.unknownVendorSpecificProperties",
+			"group": "CSS",
+			"th": "property เฉพาะ vendor ที่ไม่รู้จัก ของ SCSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "scss.lint.propertyIgnoredDueToDisplay",
+			"group": "CSS",
+			"th": "property ที่ไม่มีผลเพราะค่า display ของ SCSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "scss.lint.important",
+			"group": "CSS",
+			"th": "ใช้ !important ของ SCSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "scss.lint.float",
+			"group": "CSS",
+			"th": "ใช้ float ของ SCSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "scss.lint.idSelector",
+			"group": "CSS",
+			"th": "selector แบบ id ของ SCSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "scss.lint.unknownAtRules",
+			"group": "CSS",
+			"th": "at-rule ที่ไม่รู้จัก ของ SCSS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "less.validate",
+			"group": "CSS",
+			"th": "ตรวจความถูกต้องทั้งหมด ของ LESS"
+		},
+		{
+			"id": "less.completion.triggerPropertyValueCompletion",
+			"group": "CSS",
+			"th": "แนะนำค่าต่อทันทีหลังเลือก property ของ LESS"
+		},
+		{
+			"id": "less.completion.completePropertyWithSemicolon",
+			"group": "CSS",
+			"th": "เติมเซมิโคลอนเมื่อเติม property ของ LESS"
+		},
+		{
+			"id": "less.hover.documentation",
+			"group": "CSS",
+			"th": "แสดงคำอธิบายใน hover ของ LESS"
+		},
+		{
+			"id": "less.hover.references",
+			"group": "CSS",
+			"th": "แสดงลิงก์อ้างอิง MDN ใน hover ของ LESS"
+		},
+		{
+			"id": "less.format.enable",
+			"group": "CSS",
+			"th": "เปิดตัวจัดรูปแบบ ของ LESS"
+		},
+		{
+			"id": "less.format.newlineBetweenSelectors",
+			"group": "CSS",
+			"th": "แยก selector ด้วยบรรทัดใหม่ ของ LESS"
+		},
+		{
+			"id": "less.format.newlineBetweenRules",
+			"group": "CSS",
+			"th": "เว้นบรรทัดว่างระหว่าง rule ของ LESS"
+		},
+		{
+			"id": "less.format.spaceAroundSelectorSeparator",
+			"group": "CSS",
+			"th": "เว้นวรรครอบตัวคั่น selector ของ LESS"
+		},
+		{
+			"id": "less.format.braceStyle",
+			"group": "CSS",
+			"th": "ตำแหน่งวงเล็บปีกกา ของ LESS",
+			"enumTh": [
+				"บรรทัดเดียวกับ selector",
+				"บรรทัดใหม่"
+			]
+		},
+		{
+			"id": "less.format.preserveNewLines",
+			"group": "CSS",
+			"th": "คงบรรทัดว่างที่มีอยู่ ของ LESS"
+		},
+		{
+			"id": "less.format.maxPreserveNewLines",
+			"group": "CSS",
+			"th": "จำนวนบรรทัดว่างสูงสุดที่คงไว้ ของ LESS"
+		},
+		{
+			"id": "less.lint.compatibleVendorPrefixes",
+			"group": "CSS",
+			"th": "เมื่อใช้ vendor prefix ให้ใส่ prefix ของ browser อื่นด้วย ของ LESS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "less.lint.vendorPrefix",
+			"group": "CSS",
+			"th": "เมื่อใช้ vendor prefix ให้ใส่ property มาตรฐานด้วย ของ LESS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "less.lint.duplicateProperties",
+			"group": "CSS",
+			"th": "property ซ้ำ ของ LESS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "less.lint.emptyRules",
+			"group": "CSS",
+			"th": "rule ว่าง ของ LESS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "less.lint.importStatement",
+			"group": "CSS",
+			"th": "คำสั่ง import ของ LESS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "less.lint.boxModel",
+			"group": "CSS",
+			"th": "ใช้ width หรือ height คู่กับ padding หรือ border ของ LESS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "less.lint.universalSelector",
+			"group": "CSS",
+			"th": "universal selector ของ LESS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "less.lint.zeroUnits",
+			"group": "CSS",
+			"th": "ใส่หน่วยกับเลขศูนย์ ของ LESS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "less.lint.fontFaceProperties",
+			"group": "CSS",
+			"th": "@font-face ต้องมี src และ font-family ของ LESS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "less.lint.hexColorLength",
+			"group": "CSS",
+			"th": "สี hex ต้องมี 3 4 6 หรือ 8 หลัก ของ LESS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "less.lint.argumentsInColorFunction",
+			"group": "CSS",
+			"th": "จำนวนพารามิเตอร์ของฟังก์ชันสีไม่ถูกต้อง ของ LESS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "less.lint.unknownProperties",
+			"group": "CSS",
+			"th": "property ที่ไม่รู้จัก ของ LESS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "less.lint.validProperties",
+			"group": "CSS",
+			"th": "property ที่ไม่ตรวจว่ารู้จักหรือไม่ ของ LESS"
+		},
+		{
+			"id": "less.lint.ieHack",
+			"group": "CSS",
+			"th": "IE hack ของ LESS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "less.lint.unknownVendorSpecificProperties",
+			"group": "CSS",
+			"th": "property เฉพาะ vendor ที่ไม่รู้จัก ของ LESS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "less.lint.propertyIgnoredDueToDisplay",
+			"group": "CSS",
+			"th": "property ที่ไม่มีผลเพราะค่า display ของ LESS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "less.lint.important",
+			"group": "CSS",
+			"th": "ใช้ !important ของ LESS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "less.lint.float",
+			"group": "CSS",
+			"th": "ใช้ float ของ LESS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "less.lint.idSelector",
+			"group": "CSS",
+			"th": "selector แบบ id ของ LESS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		},
+		{
+			"id": "less.lint.unknownAtRules",
+			"group": "CSS",
+			"th": "at-rule ที่ไม่รู้จัก ของ LESS",
+			"enumTh": [
+				"ไม่ตรวจ",
+				"เตือน",
+				"ข้อผิดพลาด"
+			]
+		}
+	]
+}

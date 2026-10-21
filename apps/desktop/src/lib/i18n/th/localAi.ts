@@ -1,0 +1,31 @@
+import type { localAi as en } from '../en/localAi';
+
+export const localAi = {
+	'localAi.status.label': 'Local AI',
+	'localAi.status.off': 'ปิดการเติมโค้ดอยู่ คลิกเพื่อเปิดเมนู Local AI',
+	'localAi.status.idle': 'เปิดการเติมโค้ดอยู่ ({model}) คลิกเพื่อเปิดเมนู Local AI',
+	'localAi.status.loading': 'กำลังถามโมเดล…',
+	'localAi.status.error': 'เติมโค้ดไม่สำเร็จ: {error}',
+	'localAi.status.autoModel': 'โมเดลเขียนโค้ดตัวแรก',
+	'localAi.status.indexing': 'กำลังทำดัชนีสำหรับค้นหาตามความหมาย: {done} จาก {total} ไฟล์',
+	'localAi.menu.placeholder': 'Local AI',
+	'localAi.menu.enable': 'เปิดการเติมโค้ด',
+	'localAi.menu.disable': 'ปิดการเติมโค้ด',
+	'localAi.menu.search': 'ค้นหาตามความหมาย…',
+	'localAi.menu.enableSemantic': 'เปิดการค้นหาตามความหมาย',
+	'localAi.menu.rebuild': 'สร้างดัชนีค้นหาตามความหมายใหม่',
+	'localAi.menu.settings': 'ตั้งค่า Local AI',
+	'localAi.semantic.placeholder': 'ค้นหาใน workspace ตามความหมาย (ไทยหรืออังกฤษ)',
+	'localAi.semantic.hint': 'กด Enter เพื่อค้นหา “{query}”',
+	'localAi.semantic.hintEmpty': 'พิมพ์สิ่งที่ต้องการหา',
+	'localAi.semantic.searching': 'กำลังค้นหาตามความหมาย…',
+	'localAi.semantic.results': '{count} ผลลัพธ์สำหรับ “{query}”',
+	'localAi.semantic.resultsIndexing': '{count} ผลลัพธ์สำหรับ “{query}” (ยังทำดัชนีอยู่: {done} จาก {total} ไฟล์)',
+	'localAi.semantic.noResults': 'ยังไม่พบสิ่งที่เกี่ยวกับ “{query}”',
+	'localAi.semantic.failed': 'ค้นหาตามความหมายไม่สำเร็จ: {error}',
+	'localAi.semantic.off': 'การค้นหาตามความหมายปิดอยู่ เปิดได้ที่ Settings › Local AI',
+	'localAi.semantic.noFolder': 'เปิดโฟลเดอร์ก่อนจึงจะค้นหาตามความหมายได้',
+	'localAi.semantic.rebuilding': 'กำลังสร้างดัชนีค้นหาตามความหมายใหม่…',
+	'localAi.semantic.limited': 'ดัชนีค้นหาตามความหมายเต็มแล้ว ไฟล์ที่ไม่ได้แก้นานที่สุดจะไม่ถูกรวม',
+	'localAi.semantic.ready': 'ดัชนีค้นหาตามความหมายพร้อมแล้ว: {files} ไฟล์'
+} satisfies Record<keyof typeof en, string>;

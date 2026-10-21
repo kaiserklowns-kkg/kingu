@@ -147,7 +147,7 @@ describe('ADE settings', () => {
 			const d = SCHEMA.get(id)!.description;
 			expect([id, /[฀-๿]/.test(d), /\([A-Z][^)]*\.\)/.test(d)]).toEqual([id, true, true]);
 		}
-		expect(settingsSections().find((s) => s.id === 'ade')?.groups.slice(0, 3)).toEqual(['Agent', 'Agent Chat', 'Notifications']);
+		expect(settingsSections().find((s) => s.id === 'ade')?.groups.slice(0, 2)).toEqual(['Agent Chat', 'Notifications']);
 	});
 
 	test('settings that run commands, loosen prompts or delete branches are user-only', () => {
@@ -197,7 +197,7 @@ describe('settings sections', () => {
 		for (const sec of SETTINGS_SECTIONS) for (const g of sec.groups) expect(staticGroups.has(g)).toBe(true);
 	});
 	test('contributed groups go to the Snaps section, which is always there', () => {
-		expect(settingsSections().at(-1)).toEqual({ id: 'snaps', label: 'Snaps', groups: [] });
+		expect(settingsSections().at(-1)).toEqual({ id: 'snaps', label: 'Snaps', labelKey: 'settings.sections.snaps', groups: [] });
 		expect(settingsSections([...SETTINGS, ...contributed]).at(-1)?.groups).toEqual(['Snap: Go', 'Snap: Lint']);
 		const all = [...SETTINGS, ...contributed];
 		expect(settingsInView('', 'Snap: Go', all).map((s) => s.id)).toEqual(['snap.go.testFlags', 'snap.go.verbose']);

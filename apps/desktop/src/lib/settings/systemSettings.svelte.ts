@@ -1,7 +1,7 @@
 // The system settings page: one page for the IDE and the ADE, opened over the content area in
 // either mode (⌘, or the gear in the title bar), so changing a setting never switches modes.
 
-export type SettingsPageId = 'appearance' | 'arkai' | 'terminal' | 'account' | 'accounts' | 'usage' | 'shortcuts' | 'about';
+export type SettingsPageId = 'appearance' | 'arkai' | 'terminal' | 'account' | 'accounts' | 'usage' | 'mcp' | 'skills' | 'memories' | 'voice' | 'shortcuts' | 'about';
 
 class SystemSettings {
 	visible = $state(false);
@@ -14,7 +14,8 @@ class SystemSettings {
 	/** A dedicated page instead of the settings editor (Orca's settings panes; `accounts` is Manage Accounts). */
 	page = $state<SettingsPageId | null>(null);
 
-	show(group: string | null = null) {
+	/** Opens on `group`; with none, on the Agent pane, Orca's first (its Agents pane), not every setting. */
+	show(group: string | null = 'Agent') {
 		this.group = group;
 		this.snaps = false;
 		this.snapKey = null;

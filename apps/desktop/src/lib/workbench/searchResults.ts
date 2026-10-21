@@ -39,6 +39,8 @@ export type SearchOptions = {
 	use_global_ignore?: boolean;
 	use_parent_ignore?: boolean;
 	max_threads?: number;
+	/** kingu.search.smart (Rust smart_search.rs). */
+	smart?: boolean;
 };
 
 export type ResultRow =

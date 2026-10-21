@@ -26,6 +26,13 @@ export const PROBLEMS_SETTINGS: SettingSchema[] = [
 		description: 'รูปแบบเริ่มต้นของมุมมอง Problems เป็นตารางหรือต้นไม้ (Controls the default view mode of the Problems view.)'
 	},
 	{
+		id: 'problems.decorations.enabled',
+		group: 'Problems',
+		type: 'boolean',
+		default: true,
+		description: 'แสดง error และ warning บนไฟล์และโฟลเดอร์ใน Explorer ถูกแทนด้วย problems.visibility เมื่อปิดอยู่ (Show Errors & Warnings on files and folder. Overwritten by `#problems.visibility#` when it is off.)'
+	},
+	{
 		id: 'problems.showCurrentInStatus',
 		group: 'Problems',
 		type: 'boolean',

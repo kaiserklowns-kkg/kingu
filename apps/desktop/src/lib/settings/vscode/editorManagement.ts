@@ -220,6 +220,33 @@ export const EDITOR_MANAGEMENT_SETTINGS: SettingSchema[] = [
 		description: 'ดับเบิลคลิกแท็บเพื่อขยายกลุ่ม editor (Controls how the editor group is resized when double clicking on a tab. This value is ignored when `#workbench.editor.showTabs#` is not set to `multiple`.)'
 	},
 	{
+		id: 'workbench.editor.splitInGroupLayout',
+		group: 'Workbench',
+		type: 'string',
+		default: 'horizontal',
+		enum: ['vertical', 'horizontal'],
+		enumDescriptions: ['แบ่งบน-ล่าง (Editors are positioned from top to bottom.)', 'แบ่งซ้าย-ขวา (Editors are positioned from left to right.)'],
+		description: 'การจัดวางเมื่อแบ่ง editor ภายในกลุ่มเดียวกัน (Controls the layout for when an editor is split in an editor group to be either vertical or horizontal.)'
+	},
+	{
+		id: 'workbench.editor.autoLockGroups',
+		group: 'Workbench',
+		type: 'json',
+		// VS Code builds the keys from the editors registered at runtime; these are Kingu's editor types.
+		schema: {
+			type: 'object',
+			properties: {
+				default: { type: 'boolean' },
+				'workbench.editorinputs.searchEditorInput': { type: 'boolean' },
+				'mainThreadWebview-markdown.preview': { type: 'boolean' },
+				'imagePreview.previewEditor': { type: 'boolean' }
+			},
+			additionalProperties: false
+		},
+		default: { default: false, 'workbench.editorinputs.searchEditorInput': false, 'mainThreadWebview-markdown.preview': false, 'imagePreview.previewEditor': false },
+		description: 'ล็อกกลุ่ม editor อัตโนมัติเมื่อเปิด editor ชนิดที่เลือกเป็นอันแรกของกลุ่ม (มีหลายกลุ่ม) กลุ่มที่ล็อกจะไม่รับ editor ใหม่ เว้นแต่ผู้ใช้เลือกเอง (If an editor matching one of the listed types is opened as the first in an editor group and more than one group is open, the group is automatically locked. Locked groups will only be used for opening editors when explicitly chosen by a user gesture (for example drag and drop), but not by default. Consequently, the active editor in a locked group is less likely to be replaced accidentally with a different editor.)'
+	},
+	{
 		id: 'workbench.editor.scrollToSwitchTabs',
 		group: 'Workbench',
 		type: 'boolean',
@@ -398,5 +425,12 @@ export const EDITOR_MANAGEMENT_SETTINGS: SettingSchema[] = [
 		default: 10,
 		minimum: 1,
 		description: 'ขนาดไฟล์เป็น MB ที่ต้องยืนยันก่อนเปิดใน editor (Controls the minimum size of a file in MB before asking for confirmation when opening in the editor. Note that this setting may not apply to all editor types and environments.)'
+	},
+	{
+		id: 'workbench.editor.splitOnDragAndDrop',
+		group: 'Workbench',
+		type: 'boolean',
+		default: true,
+		description: 'ลากแท็บไปวางที่ขอบของ editor เพื่อแยกเป็นกลุ่มใหม่ด้านนั้น (Controls if editor groups can be split from drag and drop operations by dropping an editor or file on the edges of the editor area.)'
 	}
 ];

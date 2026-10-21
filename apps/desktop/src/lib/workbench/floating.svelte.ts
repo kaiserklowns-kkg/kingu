@@ -10,7 +10,7 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { status } from './status.svelte';
 import { killPty, listPtys } from '#lib/terminal/pty.ts';
-import { floatingKey } from '#lib/terminal/sessions.ts';
+import { floatingKey, ownSessions } from '#lib/terminal/sessions.ts';
 
 /** Floating tabs are not restored, so each launch's shells get their own keys. */
 const LAUNCH = Date.now().toString(36);
@@ -126,7 +126,8 @@ class Floating {
 
 	/** Shells of an earlier launch's floating tabs (tabs are not restored): ended once at start. */
 	async endStaleShells() {
-		for (const s of await listPtys()) if (s.key.startsWith('floating:') && !s.key.startsWith(`floating:${LAUNCH}:`)) killPty(s.key);
+		// Another open window's floating tabs are its own (each page load has its own LAUNCH).
+		for (const s of ownSessions(await listPtys())) if (s.key.startsWith('floating:') && !s.key.startsWith(`floating:${LAUNCH}:`)) killPty(s.key);
 	}
 
 	select(id: string) {

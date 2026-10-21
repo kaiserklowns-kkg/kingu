@@ -3,8 +3,9 @@
 // does not parse keeps the last good bindings and says so in the status bar.
 
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { status } from './status.svelte';
-import { NO_USER_KEYBINDINGS, parseKeybindings, userKeybindings, type UserKeybindings } from './keybindingsModel';
+import { KEYBINDINGS_TEMPLATE, NO_USER_KEYBINDINGS, parseKeybindings, userKeybindings, type UserKeybindings } from './keybindingsModel';
 import { t } from '#lib/i18n/index.ts';
 
 /** Editor tab key of the user keybindings.json (outside the workspace, like the user settings.json). */
@@ -34,11 +35,32 @@ class Keybindings {
 		}
 	}
 
+	#writes: Promise<unknown> = Promise.resolve();
+
+	/** Rewrites keybindings.json with `change` (the Keyboard Shortcuts editor's edits, see
+	 * keybindingsEditor.ts), then reloads. Serialized; a file that does not parse is not touched. */
+	edit(change: (text: string) => string): Promise<void> {
+		const run = async () => {
+			const text = (await invoke<{ content: string | null }>('settings_read', { scope: 'keybindings' })).content ?? KEYBINDINGS_TEMPLATE;
+			const next = change(text);
+			if (next !== text) await invoke('settings_write', { scope: 'keybindings', content: next });
+			await this.load();
+		};
+		const p = this.#writes.then(run);
+		this.#writes = p.catch(() => {});
+		return p;
+	}
+
 	install(): () => void {
 		void this.load();
 		const onFocus = () => void this.load();
 		window.addEventListener('focus', onFocus);
-		return () => window.removeEventListener('focus', onFocus);
+		// keybindings.json edited while Kingu has focus (Rust watches the config dir).
+		const unlisten = listen<string>('settings://changed', (e) => (e.payload === 'keybindings' || e.payload === 'profiles') && void this.load());
+		return () => {
+			window.removeEventListener('focus', onFocus);
+			void unlisten.then((u) => u());
+		};
 	}
 }
 

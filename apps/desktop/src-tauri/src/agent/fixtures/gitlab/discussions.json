@@ -1,0 +1,56 @@
+[
+  {
+    "id": "6a9c1a7f3e2d4b5c8f0e1d2c3b4a59687f6e5d4c",
+    "individual_note": true,
+    "notes": [
+      { "id": 2101, "type": null, "body": "ดูแล้วโอเค", "author": { "id": 77, "username": "reviewer", "name": "Reviewer" },
+        "created_at": "2026-10-12T09:00:00.000Z", "updated_at": "2026-10-12T09:00:00.000Z", "system": false, "noteable_id": 318441207,
+        "noteable_type": "MergeRequest", "resolvable": false, "noteable_iid": 12 }
+    ]
+  },
+  {
+    "id": "3f8d2c1b0a9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c",
+    "individual_note": false,
+    "notes": [
+      { "id": 2102, "type": "DiffNote", "body": "ใช้ const แทน let", "author": { "id": 77, "username": "reviewer", "name": "Reviewer" },
+        "created_at": "2026-10-12T09:05:00.000Z", "updated_at": "2026-10-12T09:05:00.000Z", "system": false, "noteable_id": 318441207,
+        "noteable_type": "MergeRequest", "noteable_iid": 12, "resolvable": true, "resolved": false, "resolved_by": null,
+        "position": { "base_sha": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d", "start_sha": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+          "head_sha": "9f2c1e7a4b0d8c3e5f6a7b8c9d0e1f2a3b4c5d6e", "old_path": "src/auth.ts", "new_path": "src/auth.ts", "position_type": "text",
+          "old_line": null, "new_line": 42,
+          "line_range": { "start": { "line_code": "a_40_40", "type": "new", "old_line": null, "new_line": 40 }, "end": { "line_code": "a_42_42", "type": "new", "old_line": null, "new_line": 42 } } } },
+      { "id": 2103, "type": "DiffNote", "body": "แก้แล้ว", "author": { "id": 4102, "username": "kawin", "name": "Kawin" },
+        "created_at": "2026-10-12T10:00:00.000Z", "updated_at": "2026-10-12T10:00:00.000Z", "system": false, "noteable_id": 318441207,
+        "noteable_type": "MergeRequest", "noteable_iid": 12, "resolvable": true, "resolved": false, "resolved_by": null,
+        "position": { "old_path": "src/auth.ts", "new_path": "src/auth.ts", "position_type": "text", "old_line": null, "new_line": 42 } }
+    ]
+  },
+  {
+    "id": "0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c",
+    "individual_note": false,
+    "notes": [
+      { "id": 2104, "type": "DiffNote", "body": "ลบ log นี้", "author": { "id": 77, "username": "reviewer", "name": "Reviewer" },
+        "created_at": "2026-10-12T09:10:00.000Z", "updated_at": "2026-10-12T11:00:00.000Z", "system": false, "noteable_id": 318441207,
+        "noteable_type": "MergeRequest", "noteable_iid": 12, "resolvable": true, "resolved": true,
+        "resolved_by": { "id": 4102, "username": "kawin" }, "resolved_at": "2026-10-12T11:00:00.000Z",
+        "position": { "old_path": "src/log.ts", "new_path": "src/log.ts", "position_type": "text", "old_line": 7, "new_line": null } }
+    ]
+  },
+  {
+    "id": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d",
+    "individual_note": true,
+    "notes": [
+      { "id": 2105, "type": null, "body": "added 1 commit\n\n<ul><li>9f2c1e7a - แก้ตาม review</li></ul>", "author": { "id": 4102, "username": "kawin" },
+        "created_at": "2026-10-12T10:00:30.000Z", "system": true, "noteable_type": "MergeRequest", "resolvable": false, "noteable_iid": 12 }
+    ]
+  },
+  {
+    "id": "5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b",
+    "individual_note": false,
+    "notes": [
+      { "id": 2106, "type": "DiscussionNote", "body": "ต้องเพิ่ม test ก่อน merge", "author": { "id": 77, "username": "reviewer" },
+        "created_at": "2026-10-12T12:00:00.000Z", "system": false, "noteable_type": "MergeRequest", "noteable_iid": 12,
+        "resolvable": true, "resolved": false }
+    ]
+  }
+]

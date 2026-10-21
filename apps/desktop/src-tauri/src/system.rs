@@ -5,6 +5,8 @@ use std::process::{Child, Command};
 use std::sync::Mutex;
 
 use crate::pty::PtyInfo;
+use crate::i18n::msg::{CoreMsg, SystemMsg};
+use crate::tr;
 
 /// The `caffeinate` process that keeps the Mac awake while it runs (`None`: off).
 #[derive(Default)]
@@ -186,7 +188,7 @@ impl KeepAwake {
 
   pub fn set(&self, on: bool) -> Result<bool, String> {
     if !cfg!(target_os = "macos") {
-      return Err("keep-awake needs macOS".into());
+      return Err(tr!(SystemMsg::KeepAwakeMacOnly));
     }
     let mut child = self.0.lock().unwrap();
     if on && child.as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None))) {
@@ -256,7 +258,7 @@ fn parse_lsof(text: &str) -> Vec<(u32, String, String, u16)> {
 /// TCP ports in LISTEN state, Kingu's own first, then by port. Empty where `lsof` is missing.
 pub fn ports(daemon: Option<u32>) -> Result<Vec<Port>, String> {
   if !cfg!(unix) {
-    return Err("port scan needs macOS or Linux".into());
+    return Err(tr!(SystemMsg::PortScanUnsupported));
   }
   let out = Command::new("lsof").args(["-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pcn"]).output().map_err(|e| format!("lsof: {e}"))?;
   let ours = ps().map(|rows| kingu_tree(&rows, daemon)).unwrap_or_default();
@@ -314,13 +316,13 @@ fn parse_lsof_cwd(text: &str) -> std::collections::HashMap<u32, String> {
 /// SIGTERM to a process, but only one that runs under Kingu: the webview can never stop
 /// another app's process.
 pub fn kill(pid: u32, daemon: Option<u32>) -> Result<(), String> {
-  let rows = ps().ok_or("not supported here")?;
+  let rows = ps().ok_or_else(|| tr!(SystemMsg::NotSupportedHere))?;
   let me = std::process::id();
   if pid == me || Some(pid) == daemon || !kingu_tree(&rows, daemon).contains(&pid) {
-    return Err(format!("process {pid} was not started by Kingu"));
+    return Err(tr!(SystemMsg::NotOurProcess, pid));
   }
   let ok = Command::new("kill").args(["-TERM", &pid.to_string()]).status().map_err(|e| e.to_string())?.success();
-  if ok { Ok(()) } else { Err(format!("kill {pid} failed")) }
+  if ok { Ok(()) } else { Err(tr!(SystemMsg::KillFailed, pid)) }
 }
 
 /// Opens a local server (`http://localhost:<port>`) in the default browser; any other URL is refused.
@@ -328,7 +330,7 @@ pub fn open_local_url(url: &str) -> Result<(), String> {
   let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
   let local = matches!(parsed.scheme(), "http" | "https") && matches!(parsed.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
   if !local {
-    return Err("only localhost URLs open from the status bar".into());
+    return Err(tr!(SystemMsg::LocalhostOnly));
   }
   let program = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
   Command::new(program).arg(parsed.as_str()).spawn().map(|_| ()).map_err(|e| format!("{program}: {e}"))
@@ -339,6 +341,11 @@ static CONFIG_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock
 /// The app config dir, where the user's settings.json lives (set once at startup).
 pub fn set_config_dir(dir: std::path::PathBuf) {
   let _ = CONFIG_DIR.set(dir);
+}
+
+/// The app config dir once startup set it.
+pub fn config_dir() -> Option<&'static std::path::Path> {
+  CONFIG_DIR.get().map(std::path::PathBuf::as_path)
 }
 
 /// `workbench.externalBrowser` from the user's settings.json only: it names a program to run, so
@@ -373,7 +380,7 @@ pub fn browser_command(browser: Option<&str>, url: &str, macos: bool) -> (String
 pub fn open_web_url(url: &str) -> Result<(), String> {
   let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
   if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
-    return Err(format!("{}: เปิดได้เฉพาะลิงก์ http/https", parsed.scheme()));
+    return Err(tr!(CoreMsg::HttpOnly, scheme = parsed.scheme()));
   }
   let (program, args) = browser_command(external_browser().as_deref(), parsed.as_str(), cfg!(target_os = "macos"));
   Command::new(&program).args(&args).spawn().map(|_| ()).map_err(|e| format!("{program}: {e}"))

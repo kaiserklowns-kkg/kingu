@@ -1,0 +1,13 @@
+{
+  "id": 61204,
+  "name": "app",
+  "path_with_namespace": "acme/sub/app",
+  "default_branch": "main",
+  "web_url": "https://gitlab.com/acme/sub/app",
+  "merge_method": "merge",
+  "squash_option": "default_on",
+  "only_allow_merge_if_pipeline_succeeds": true,
+  "only_allow_merge_if_all_discussions_are_resolved": false,
+  "remove_source_branch_after_merge": true,
+  "merge_requests_enabled": true
+}

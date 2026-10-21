@@ -34,14 +34,20 @@
 
 <script lang="ts">
 	import type { FileIconSpec } from './fileIcons';
+	import { settings } from '#lib/settings/settings.svelte.ts';
 
 	let { icon, size = 16 }: { icon: FileIconSpec; size?: number } = $props();
+
+	/** `workbench.iconTheme: null`: no file icons anywhere (VS Code's "None" icon theme). */
+	const enabled = $derived(settings.get('workbench.iconTheme') !== null);
 
 	const Glyph = $derived(icon.glyph === 'badge' ? null : (glyphs[icon.glyph] ?? FileIcon));
 	const folder = $derived(icon.glyph === 'folder' || icon.glyph === 'folderOpen');
 </script>
 
-{#if Glyph}
+{#if !enabled}
+	<!-- No file icon theme. -->
+{:else if Glyph}
 	<Glyph {size} weight={folder ? 'fill' : 'duotone'} color={icon.color} class="shrink-0" aria-hidden="true" />
 {:else}
 	<svg class="shrink-0" width={size} height={size} viewBox="0 0 16 16" aria-hidden="true" style:color={icon.color}>

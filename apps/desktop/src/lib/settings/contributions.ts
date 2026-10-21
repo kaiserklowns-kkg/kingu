@@ -57,6 +57,28 @@ function zoom(delta: number | null) {
 	settings.set('window.zoomLevel', next === 0 ? undefined : next, 'user').catch(report);
 }
 
+/** Configure Language Specific Settings…: a language, then the user settings.json with its
+ * `"[language]": {}` block added when missing (VS Code opens the settings editor at `@lang:`). */
+async function configureLanguageSettings() {
+	const { monaco } = await import('#lib/editor/monaco.ts');
+	const current = editors.language;
+	const items: PickItem[] = monaco.languages
+		.getLanguages()
+		.map((l) => ({ id: l.id, label: l.aliases?.[0] ?? l.id, description: `(${l.id})` }))
+		.sort((a, b) => (a.id === current ? -1 : b.id === current ? 1 : a.label.localeCompare(b.label)));
+	const pick = await quick.choose({ placeholder: t('settings.languageBlock.placeholder'), items });
+	if (!pick) return;
+	const key = `[${pick.id}]`;
+	try {
+		if (settings.inspect(key, 'user') === undefined) await settings.set(key, {}, 'user');
+	} catch (e) {
+		notifications.error(String(e));
+		return;
+	}
+	systemSettings.close();
+	editors.open(USER_SETTINGS_KEY, { preview: false });
+}
+
 export function registerSettingsCommands(): () => void {
 	const all = [
 		commands.register({
@@ -84,6 +106,12 @@ export function registerSettingsCommands(): () => void {
 				systemSettings.close();
 				editors.open(WORKSPACE_SETTINGS_PATH, { preview: false });
 			}
+		}),
+		commands.register({
+			id: 'workbench.action.configureLanguageBasedSettings',
+			title: 'Configure Language Specific Settings...',
+			category: 'Preferences',
+			run: configureLanguageSettings
 		}),
 		commands.register({
 			id: 'workbench.action.openGlobalKeybindingsFile',

@@ -13,6 +13,8 @@ use std::time::Duration;
 use serde::Serialize;
 
 use super::client::{SendError, classify};
+use crate::i18n::msg::TeamMsg;
+use crate::tr;
 
 pub const EVENT_NAME: &str = "team://event";
 
@@ -295,7 +297,7 @@ fn connect_once(
     .and_then(|v| v.to_str().ok())
     .is_some_and(|v| v.trim_start().to_ascii_lowercase().starts_with("text/event-stream"));
   if !is_sse {
-    return Ended::Failed(SendError::Permanent("เซิร์ฟเวอร์ไม่ได้ตอบเป็น event stream".into()));
+    return Ended::Failed(SendError::Permanent(tr!(TeamMsg::NotEventStream)));
   }
   if stop.is_stopped() {
     return Ended::Stopped;

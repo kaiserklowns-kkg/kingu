@@ -11,7 +11,13 @@ import {
 	opensOnBreak,
 	statusItemShown,
 	toolbarShown,
-	variableLabel
+	variableLabel,
+	autoExpandsLazy,
+	launcherWhileDebugging,
+	lazyValue,
+	rootSession,
+	toolbarSessions,
+	toolbarTarget
 } from './debugSettings.ts';
 import { breakpointKey, glyphs, parseStored, setLogMessage, setTriggeredBy, sourceBreakpoints } from './breakpoints.ts';
 import { appendOutput, initialModel, outputLimit, OUTPUT_LIMIT } from './model.ts';
@@ -53,6 +59,8 @@ describe('debug settings', () => {
 
 	test('debug.allowBreakpointsEverywhere', () => {
 		expect(canSetBreakpoint('rust', false)).toBe(true);
+		// js-debug's languages, whether or not it is installed yet (VS Code ships it built in).
+		for (const language of ['javascript', 'typescript', 'typescriptreact']) expect(canSetBreakpoint(language, false)).toBe(true);
 		expect(canSetBreakpoint('markdown', false)).toBe(false);
 		expect(canSetBreakpoint('markdown', true)).toBe(true);
 	});
@@ -131,5 +139,38 @@ describe('debug settings', () => {
 		expect(glyphs(m['a.py'], [{ verified: true }, { verified: true }], hit).map((g) => g.kind)).toEqual(['log', 'verified']);
 		expect(parseStored(JSON.stringify(m))).toEqual(m);
 		expect(setLogMessage(m, 'a.py', 4, ' ')['a.py'][0].logMessage).toBeUndefined();
+	});
+});
+
+describe('debug settings without a view of their own', () => {
+	// A js-debug launch (1) with its child (2) and grandchild (3), and a second top-level session (4).
+	const sessions = [
+		{ key: 1, parentKey: null, name: 'Launch' },
+		{ key: 2, parentKey: 1, name: 'child' },
+		{ key: 3, parentKey: 2, name: 'worker' },
+		{ key: 4, parentKey: null, name: 'Server' }
+	];
+	test('debug.showSubSessionsInToolBar: the picker and the Stop/Restart target', () => {
+		expect(toolbarSessions(sessions, false).map((s) => s.key)).toEqual([1, 4]);
+		expect(toolbarSessions(sessions, true).map((s) => s.key)).toEqual([1, 2, 3, 4]);
+		expect(rootSession(sessions, 3)).toBe(1);
+		expect(toolbarTarget(sessions, 3, false)).toBe(1);
+		expect(toolbarTarget(sessions, 3, true)).toBe(3);
+		expect(toolbarTarget(sessions, null, true)).toBeNull();
+	});
+	test('debug.autoExpandLazyVariables', () => {
+		expect(autoExpandsLazy('on', false)).toBe(true);
+		expect(autoExpandsLazy('auto', false)).toBe(false);
+		expect(autoExpandsLazy('auto', true)).toBe(true);
+		expect(autoExpandsLazy('off', true)).toBe(false);
+		const getter = { name: 'size', value: '(...)', variablesReference: 9, presentationHint: { lazy: true } };
+		expect(lazyValue({ name: 'n', value: '1', variablesReference: 0 }, undefined)).toBeUndefined();
+		expect(lazyValue(getter, undefined)).toBeNull();
+		expect(lazyValue(getter, [{ name: 'size', value: '3', variablesReference: 0 }])?.value).toBe('3');
+	});
+	test('debug.hideLauncherWhileDebugging', () => {
+		expect(launcherWhileDebugging(false, 'floating')).toBe(true);
+		expect(launcherWhileDebugging(true, 'floating')).toBe(false);
+		expect(launcherWhileDebugging(false, 'docked')).toBe(false);
 	});
 });

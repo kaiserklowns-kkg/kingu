@@ -5,6 +5,8 @@
 use std::time::Duration;
 
 use super::outbox::Item;
+use crate::i18n::msg::TeamMsg;
+use crate::tr;
 
 /// Keychain service name for team tokens; the account is the normalized server URL.
 pub const KEYCHAIN_SERVICE: &str = "dev.kingu.team";
@@ -13,20 +15,20 @@ pub const KEYCHAIN_SERVICE: &str = "dev.kingu.team";
 /// slash. HTTPS is required unless the host is loopback.
 pub fn normalize_server_url(raw: &str) -> Result<String, String> {
   let raw = raw.trim();
-  let url = url::Url::parse(raw).map_err(|e| format!("server URL ไม่ถูกต้อง: {e}"))?;
-  let host = url.host_str().ok_or("server URL ต้องมีชื่อโฮสต์")?;
+  let url = url::Url::parse(raw).map_err(|e| tr!(TeamMsg::BadServerUrl, detail = e))?;
+  let host = url.host_str().ok_or_else(|| tr!(TeamMsg::UrlNeedsHost))?;
   let loopback = matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1");
   match url.scheme() {
     "https" => {}
     "http" if loopback => {}
-    "http" => return Err("ต้องใช้ HTTPS (อนุญาต HTTP เฉพาะ localhost)".into()),
-    s => return Err(format!("ไม่รองรับ scheme {s}")),
+    "http" => return Err(tr!(TeamMsg::HttpsRequired)),
+    s => return Err(tr!(TeamMsg::UnsupportedScheme, scheme = s)),
   }
   if !url.username().is_empty() || url.password().is_some() {
-    return Err("server URL ต้องไม่มีชื่อผู้ใช้/รหัสผ่าน".into());
+    return Err(tr!(TeamMsg::UrlHasCredentials));
   }
   if url.query().is_some() || url.fragment().is_some() {
-    return Err("server URL ต้องไม่มี query หรือ fragment".into());
+    return Err(tr!(TeamMsg::UrlHasQuery));
   }
   let mut out = format!("{}://{}", url.scheme(), host);
   if let Some(port) = url.port() {
@@ -136,6 +138,25 @@ impl HttpTransport {
       .json(body)
       .send()
       .map_err(|e| SendError::Retryable(e.without_url().to_string()))?;
+    let status = res.status().as_u16();
+    let text = res.text().unwrap_or_default();
+    classify(status, &text).map_err(|e| match e {
+      SendError::Permanent(m) => SendError::Permanent(server_message(&text).map_or(m.clone(), |msg| format!("{m}: {msg}"))),
+      other => other,
+    })?;
+    Ok(text)
+  }
+}
+
+impl HttpTransport {
+  /// `method` on `{server}{path}` with an optional JSON body (team skills, `/v1/skills`); returns
+  /// the body. A rejection carries the server's message.
+  pub fn request(&self, method: reqwest::Method, server: &str, token: &str, path: &str, body: Option<&serde_json::Value>) -> Result<String, SendError> {
+    let mut req = self.client.request(method, format!("{server}{path}")).bearer_auth(token);
+    if let Some(b) = body {
+      req = req.json(b);
+    }
+    let res = req.send().map_err(|e| SendError::Retryable(e.without_url().to_string()))?;
     let status = res.status().as_u16();
     let text = res.text().unwrap_or_default();
     classify(status, &text).map_err(|e| match e {

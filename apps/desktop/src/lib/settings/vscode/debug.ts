@@ -215,5 +215,39 @@ export const DEBUG_SETTINGS: SettingSchema[] = [
 		type: 'boolean',
 		default: true,
 		description: 'เปลี่ยนสีแถบสถานะระหว่าง debug (Color of the status bar when the debugger is active.)'
+	},
+	{
+		id: 'debug.showSubSessionsInToolBar',
+		group: 'Debug',
+		type: 'boolean',
+		default: false,
+		description: 'แสดง sub-session ในแถบเครื่องมือ debug เมื่อปิด คำสั่ง Stop บน sub-session จะหยุด session แม่ด้วย (Controls whether the debug sub-sessions are shown in the debug tool bar. When this setting is false the stop command on a sub-session will also stop the parent session.)'
+	},
+	{
+		id: 'debug.autoExpandLazyVariables',
+		group: 'Debug',
+		type: 'string',
+		default: 'auto',
+		enum: ['auto', 'on', 'off'],
+		enumDescriptions: [
+			'ขยายเองเมื่ออยู่ในโหมดสำหรับโปรแกรมอ่านหน้าจอ (When in screen reader optimized mode, automatically expand lazy variables.)',
+			'ขยายเองเสมอ (Always automatically expand lazy variables.)',
+			'ไม่ขยายเอง (Never automatically expand lazy variables.)'
+		],
+		description: 'ดึงค่าตัวแปรแบบ lazy (เช่น getter) มาแสดงเองหรือไม่ (Controls whether variables that are lazily resolved, such as getters, are automatically resolved and expanded by the debugger.)'
+	},
+	{
+		id: 'debug.hideLauncherWhileDebugging',
+		group: 'Debug',
+		type: 'boolean',
+		default: false,
+		description: 'ซ่อนปุ่ม Start Debugging ในมุมมอง Run and Debug ระหว่าง debug ใช้เฉพาะเมื่อ debug.toolBarLocation ไม่ใช่ docked (Hide \'Start Debugging\' control in title bar of \'Run and Debug\' view while debugging is active. Only relevant when `#debug.toolBarLocation#` is not `docked`.)'
+	},
+	{
+		id: 'debug.hideSlowPreLaunchWarning',
+		group: 'Debug',
+		type: 'boolean',
+		default: false,
+		description: 'ซ่อนคำเตือนเมื่อ preLaunchTask รันนาน (Hide the warning shown when a `preLaunchTask` has been running for a while.)'
 	}
 ];

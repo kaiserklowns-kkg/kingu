@@ -6,9 +6,12 @@ import { allThemes, DEFAULT_THEME } from '../theme/themes';
 import { defaultTitleTemplate } from '../workbench/title';
 import { PROFILES } from '../ade/agentProfiles';
 import { IDE_SETTINGS } from './ideSettings';
-import { ADE_SECTION_GROUPS, ADE_SETTINGS, SYSTEM_SECTION_GROUPS } from './ade';
+import { LOCAL_AI_SETTINGS } from './localAi';
+import { ARKAI_SETTINGS } from './arkai';
+import { ADE_SECTION_GROUPS, ADE_SETTINGS, AI_SECTION_GROUPS, SYSTEM_SECTION_GROUPS } from './ade';
 import { describeSchema, matchesSchema, schemaTypes, type JsonSchema } from './jsonSchema';
 import { t } from '../i18n/index';
+import { isLanguageOverridable, LANGUAGE_BLOCK_PATTERN, overrideBlocks } from './languageOverrides';
 
 const MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
 
@@ -51,6 +54,27 @@ export type SettingSchema =
 	 * properties): validated with `schema`, edited in settings.json like VS Code's "Edit in settings.json".
 	 */
 	| (Base & { type: 'json'; schema: JsonSchema; default: unknown });
+
+/** `kingu.statusBar.<provider>Usage.visible` for Orca's other usage providers (Orca's statusBarItems). */
+function usageItemSettings(): SettingSchema[] {
+	const items: [id: string, name: string, th: string, en: string][] = [
+		['opencode', 'OpenCode Go', 'เมื่อตั้ง API key หรือ cookie ไว้', 'when a key or cookie is set up'],
+		['minimax', 'MiniMax', 'เมื่อตั้ง API key หรือ cookie ไว้', 'when a key or cookie is set up'],
+		['zcode', 'ZCode', 'เมื่อติดตั้ง ZCode CLI', 'when ZCode CLI is installed'],
+		['cursor', 'Cursor', 'เมื่อลงชื่อเข้าใช้ Cursor ไว้', 'when Cursor is signed in'],
+		['grok', 'Grok', 'เมื่อติดตั้ง Grok CLI', 'when Grok CLI is installed'],
+		['kimi', 'Kimi', 'เมื่อติดตั้ง Kimi Code', 'when Kimi Code is installed'],
+		['antigravity', 'Antigravity', 'เมื่อติดตั้ง agy และเปิด kingu.usage.antigravity', 'when agy is installed and kingu.usage.antigravity is on']
+	];
+	return items.map(([id, name, th, en]) => ({
+		id: `kingu.statusBar.${id}Usage.visible`,
+		group: 'Status Bar',
+		type: 'boolean' as const,
+		default: true,
+		description: `แสดงโควตาของ ${name} ใน status bar ${th} (${name} Usage: show ${name} quota ${en}.)`,
+		scope: 'application' as const
+	}));
+}
 
 /** `kingu.agent.args.<profile>`: extra arguments per known agent CLI (agentCli.ts agentCommand). */
 function agentArgsSettings(): SettingSchema[] {
@@ -229,6 +253,14 @@ const CORE_SETTINGS: SettingSchema[] = [
 			'โมเดล Claude ของงานโหมด timeline (agent host) ส่วนโหมด terminal ใช้ค่าของ CLI เอง หรือใส่ --model ใน kingu.agent.args.claude (The Claude model of timeline-mode runs; terminal-mode CLIs use their own, or --model in kingu.agent.args.claude.)'
 	},
 	{
+		id: 'kingu.chat.confirmRewind',
+		group: 'Agent',
+		type: 'boolean',
+		default: true,
+		description:
+			'ถามก่อนกลับไปจุด checkpoint แก้คำขอ หรือลองใหม่ ซึ่งจะลบคำขอหลังจากนั้นและย้อนการแก้ไฟล์ (VS Code: chat.editing.confirmEditRequestRemoval) (Ask before restoring a checkpoint, editing or retrying a request removes the later requests and undoes their edits.)'
+	},
+	{
 		id: 'kingu.agent.permissionMode',
 		group: 'Agent',
 		type: 'string',
@@ -245,6 +277,29 @@ const CORE_SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.chat.requestQueuing.defaultAction',
+		group: 'Agent Chat',
+		type: 'string',
+		default: 'queue',
+		enum: ['queue', 'steer'],
+		enumDescriptions: [
+			'ต่อคิวไว้ ส่งเมื่อรอบปัจจุบันจบ (Add to Queue: sent when the current turn ends.)',
+			'ส่งเข้า session ทันที agent อ่านเมื่อมีจังหวะถัดไป (Steer with Message: sent now; the agent reads it at its next opportunity.)'
+		],
+		// VS Code's chat.requestQueuing.defaultAction; no Orca setting, so not in the ADE list.
+		description:
+			'สิ่งที่ Enter ทำเมื่อส่งข้อความขณะ agent กำลังทำงาน ⌥Enter ทำอีกแบบ ⌘Enter หยุดรอบนั้นแล้วส่ง (VS Code: chat.requestQueuing.defaultAction) (What Enter does while a turn runs; ⌥Enter does the other, ⌘Enter stops the turn and sends.)'
+	},
+	{
+		id: 'kingu.chat.submitWithCmdEnter',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: false,
+		// Cursor's "Submit with ⌘ + Enter" (chatSubmitOnCmdEnter); no VS Code or Orca setting.
+		description:
+			'ส่งข้อความในแชตด้วย ⌘Enter (Ctrl+Enter) แทน Enter แล้ว Enter จะขึ้นบรรทัดใหม่ (Send chat messages with ⌘Enter / Ctrl+Enter; Enter then adds a new line.)'
+	},
+	{
 		id: 'kingu.agent.runMode',
 		group: 'Agent',
 		type: 'string',
@@ -255,6 +310,149 @@ const CORE_SETTINGS: SettingSchema[] = [
 			'รันผ่าน agent host แสดงเป็น timeline พร้อมการ์ดขออนุญาต (Run through the agent host as a timeline with permission cards.)'
 		],
 		description: 'วิธีรัน agent ของงานใหม่ใน Agents เลือกต่องานได้ตอนสร้าง (How new tasks run their agent; each task can pick when it is created.)'
+	},
+	{
+		id: 'kingu.agent.safetyChecks',
+		group: 'Agent',
+		type: 'boolean',
+		default: true,
+		description:
+			'บล็อกคำสั่ง shell ที่อันตรายร้ายแรง (เช่น rm -rf /, curl … | sh) และการเรียกเครื่องมือเดิมซ้ำเป็นครั้งที่สามติดกัน ในทุกโหมดการอนุญาต (Block catastrophic shell commands such as rm -rf / or curl … | sh, and the third identical tool call in a row, in every permission mode.)'
+	},
+	// Cursor's yolo protections: asked in every permission mode, Allow all included. Rust reads them
+	// from the user settings only (agent/safety_asks.rs), so a repository cannot turn them off.
+	{
+		id: 'kingu.agent.ask.outsideWorkspace',
+		group: 'Agent',
+		type: 'boolean',
+		default: true,
+		description:
+			'ถามทุกครั้งก่อน agent เขียนหรือแก้ไฟล์นอกโฟลเดอร์ที่มันทำงานอยู่ แม้ในโหมดแก้ไฟล์อัตโนมัติหรืออนุญาตทั้งหมด (Cursor: yoloOutsideWorkspaceDisabled) (Always ask before an agent writes a file outside its folder, even when edits are auto-accepted or everything is allowed.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.agent.ask.fileDeletes',
+		group: 'Agent',
+		type: 'boolean',
+		default: true,
+		description:
+			'ถามทุกครั้งก่อน agent ลบไฟล์ (rm, git rm, git clean, find -delete) แม้ในโหมดอนุญาตทั้งหมด (Cursor: yoloDeleteFileDisabled) (Always ask before an agent deletes files, even when everything is allowed.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.agent.ask.mcpTools',
+		group: 'Agent',
+		type: 'boolean',
+		default: false,
+		description:
+			'ถามทุกครั้งก่อน agent ใช้เครื่องมือของ MCP server แม้จะเคยอนุญาตไว้หรืออยู่ในโหมดอนุญาตทั้งหมด (Cursor: yoloMcpToolsDisabled) (Always ask before an agent calls an MCP tool, even if it was allowed before or everything is allowed.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.agent.protectedPaths',
+		group: 'Agent',
+		type: 'array',
+		items: 'string',
+		default: [],
+		description:
+			'ไฟล์ที่ agent ต้องถามก่อนอ่านหรือแก้ทุกครั้ง เป็น pattern แบบ .gitignore เทียบกับโฟลเดอร์ที่ agent ทำงาน เช่น .env*, secrets/ รวมกับไฟล์ .kinguignore ของโปรเจกต์ (Cursor: .cursorignore) (Files an agent must ask about before reading or changing them, as .gitignore patterns; added to the project\'s .kinguignore.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.agent.acpAgents',
+		group: 'Agent Chat',
+		type: 'object',
+		values: 'string',
+		default: {},
+		description:
+			'เอเจนต์ ACP (Agent Client Protocol) เพิ่มเติมสำหรับแชต: ชื่อ (ตัวพิมพ์เล็ก ตัวเลข -) → คำสั่งที่เริ่มเอเจนต์ผ่าน stdio เช่น `{"my-agent": "my-agent --acp"}` แสดงในตัวเลือกเอเจนต์เมื่อพบโปรแกรมใน PATH (Extra ACP agents for the chat: id → the command that starts the agent over stdio. Listed in the agent picker when the program is found on PATH.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.chat.rules.enabled',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: true,
+		description:
+			'ให้ agent ในแชตทำตามไฟล์กฎของโปรเจกต์นอกจาก CLAUDE.md: AGENTS.md, .cursor/rules/*.mdc และ .github/copilot-instructions.md (Cursor: rules) (Chat agents follow the project\'s rules files besides CLAUDE.md: AGENTS.md, .cursor/rules/*.mdc and .github/copilot-instructions.md.)'
+	},
+	{
+		id: 'kingu.chat.resumeWorkOnRestart',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: false,
+		description:
+			'แชตที่ agent กำลังทำงานอยู่ตอน Kingu ปิด จะทำต่อเองเมื่อเปิดโฟลเดอร์นั้นอีกครั้ง (Orca: nativeChatResumeWorkOnRestart) (Chats whose agent was working when Kingu quit continue on their own when the folder opens again.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.artifacts.showButton',
+		group: 'Workbench',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงปุ่ม Artifacts (หน้าที่ agent เผยแพร่) ใน activity bar (Orca: showArtifactsButton) (Show the Artifacts view, the pages agents publish, in the activity bar.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.chat.usage',
+		group: 'Agent Chat',
+		type: 'string',
+		default: 'hover',
+		enum: ['never', 'hover', 'always'],
+		enumDescriptions: [
+			'ไม่แสดง (Never show it.)',
+			'แสดงเมื่อชี้ที่ไอคอน ⓘ ใต้คำตอบ (On hover of the ⓘ under each answer.)',
+			'แสดงใต้คำตอบทุกครั้ง (Always, under each answer.)'
+		],
+		description: 'ค่าใช้จ่ายและจำนวน token ของแต่ละคำตอบในแชต (Cursor: usage summary) (The cost and tokens of each chat answer.)'
+	},
+	{
+		id: 'kingu.chat.completionSound',
+		group: 'Agent Chat',
+		type: 'string',
+		default: 'off',
+		enum: ['off', 'tone', 'Glass', 'Ping', 'Pop', 'Hero', 'Submarine', 'Tink', 'custom'],
+		enumDescriptions: [
+			'ไม่มีเสียง (Silent.)',
+			'เสียงสั้น ๆ ของ Kingu (Kingu\'s own short tone.)',
+			'Glass',
+			'Ping',
+			'Pop',
+			'Hero',
+			'Submarine',
+			'Tink',
+			'ไฟล์เสียงของคุณใน kingu.chat.completionSound.customPath (Your own sound file.)'
+		],
+		description:
+			'เล่นเสียงเมื่อ agent ในแชตตอบเสร็จ (เสียงของ macOS หรือไฟล์ของคุณ) (Cursor: completion chime) (Play a sound when a chat agent finishes an answer.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.chat.completionSound.customPath',
+		group: 'Agent Chat',
+		type: 'string',
+		default: '',
+		description:
+			'path เต็มของไฟล์เสียง (aiff, wav, mp3, m4a หรือ caf ไม่เกิน 10 MB) เมื่อ kingu.chat.completionSound เป็น custom (Full path of the sound file played when kingu.chat.completionSound is custom.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.chat.followups',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: false,
+		description:
+			'เสนอคำถามต่อสั้น ๆ ใต้คำตอบล่าสุด สร้างโดย AI agent ของ Source Control (kingu.git.ai.agent) เฉพาะเมื่อตั้งค่า agent นั้นไว้ ทุกคำตอบจะเรียก agent นั้นหนึ่งครั้ง (VS Code: chat followups) (Suggest short follow-ups under the last answer, written by the source-control AI agent when it is set up; runs it once per answer.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.mcp.disabled',
+		group: 'Agent Chat',
+		type: 'array',
+		items: 'string',
+		default: [],
+		description:
+			'MCP server ที่ปิดไว้ (`<แหล่ง>:<ชื่อ>` เช่น `user:github`, `project:db`, `snap:go-gopls`) agent ที่เริ่มหลังจากนี้จะไม่ได้ server เหล่านี้ เปิด/ปิดได้ที่หน้า MCP Servers (MCP servers turned off, as `<source>:<name>`; agents started afterwards do not get them. Toggle them on the MCP Servers page.)'
 	},
 	{
 		id: 'kingu.agent.notifications',
@@ -285,6 +483,15 @@ const CORE_SETTINGS: SettingSchema[] = [
 			'เฉพาะที่ต้องให้คุณทำอะไร: รอคุณอนุญาตและล้มเหลว (Only needs permission and failed.)'
 		],
 		description: 'เหตุการณ์ของ agent ที่แจ้งเตือน (Which agent events notify you.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.agent.notifications.terminalBell',
+		group: 'Agent',
+		type: 'boolean',
+		default: false,
+		description:
+			'แจ้งเตือนเมื่อ terminal ของงานที่คุณไม่ได้ดูอยู่ส่งเสียงเตือน (BEL) เช่น build เสร็จ และติดจุดที่แท็บนั้น (Notify and mark the tab when a task terminal you are not looking at rings the bell.)',
 		scope: 'application'
 	},
 	{
@@ -346,6 +553,14 @@ const CORE_SETTINGS: SettingSchema[] = [
 		default: 'kingu/',
 		description:
 			'คำนำหน้าชื่อ branch ของงานใหม่ เช่น kingu/ feature/ หรือเว้นว่าง ใช้ได้เฉพาะ a-z A-Z 0-9 . _ / - งานเดิมใช้ branch เดิมต่อ (Prefix of new task branches, e.g. kingu/ or feature/; may be empty. Existing tasks keep their branch.)'
+	},
+	{
+		id: 'kingu.worktree.autoRenameBranch',
+		group: 'Worktrees',
+		type: 'boolean',
+		default: true,
+		description:
+			'เมื่อ agent เริ่มทำงานในงานใหม่ ให้ AI ของ source control (kingu.git.ai.*) ตั้งชื่อ branch สั้นๆ จากงานแทนชื่อที่ได้จากชื่องาน เฉพาะ branch ที่ยังไม่ push และไม่ได้เลือกเอง ชื่อโฟลเดอร์ worktree ไม่เปลี่ยน (Orca: autoRenameBranchFromWork) (When the agent starts on a new task, the source-control AI names its branch from the work instead of the title; only branches not yet pushed and not chosen by you; the worktree folder keeps its name.)'
 	},
 	{
 		id: 'kingu.worktree.baseBranch',
@@ -465,6 +680,39 @@ const CORE_SETTINGS: SettingSchema[] = [
 			'team key ของ Linear (เช่น ENG) ที่ Linear: Start Task from Issue… แสดง issue ว่างไว้เพื่อแสดงทุกทีม ตั้งต่อ repository ได้ (Linear team key to list issues from; empty lists every team.)'
 	},
 	{
+		id: 'kingu.github.project',
+		group: 'Agent',
+		type: 'string',
+		default: '',
+		description:
+			'GitHub Project (v2) ที่หน้า Issues แสดง issue ที่เปิดอยู่ ในรูป owner/number (เช่น acme/3 หรือ @me/1) ต้องให้ gh มี scope read:project ว่างไว้เพื่อไม่แสดง (GitHub Project whose open issues the Issues page lists, as owner/number; needs gh\'s read:project scope.)'
+	},
+	{
+		id: 'kingu.gitlab.host',
+		group: 'Agent',
+		type: 'string',
+		default: 'gitlab.com',
+		description: 'host ของ GitLab ที่ใช้กับ GitLab: Connect และหน้า Issues (GitLab host for GitLab: Connect and the Issues page.)',
+		// User-only: a repository's workspace settings must not send the token to another host.
+		scope: 'application'
+	},
+	{
+		id: 'kingu.gitlab.project',
+		group: 'Agent',
+		type: 'string',
+		default: '',
+		description:
+			'path ของโปรเจกต์ GitLab (เช่น group/app) ที่หน้า Issues แสดง issue ว่างไว้เพื่อใช้ remote ของโฟลเดอร์ที่อยู่บน host นั้น ตั้งต่อ repository ได้ (GitLab project path to list issues from; empty uses the folder\'s remote on that host.)'
+	},
+	{
+		id: 'kingu.jira.jql',
+		group: 'Agent',
+		type: 'string',
+		default: '',
+		description:
+			'เงื่อนไข JQL เพิ่มเติมสำหรับ issue ของ Jira ในหน้า Issues (เช่น project = ENG) ไม่ต้องใส่ ORDER BY ตั้งต่อ repository ได้ (Extra JQL ANDed into the Jira issue lists, e.g. project = ENG, without ORDER BY.)'
+	},
+	{
 		id: 'kingu.team.serverUrl',
 		group: 'Team',
 		type: 'string',
@@ -544,10 +792,10 @@ const CORE_SETTINGS: SettingSchema[] = [
 		description: 'เสียงแจ้งเหตุการณ์ (accessibility signals) (Plays a sound for agent and error events.)',
 		scope: 'application'
 	},
-	// --- Status bar resources (Orca's footer)
+	// Orca's Agents pane keep-awake (AI Capabilities); its status bar item is below.
 	{
 		id: 'kingu.keepAwake',
-		group: 'Status Bar',
+		group: 'Agent',
 		type: 'string',
 		default: 'off',
 		enum: ['off', 'auto', 'on'],
@@ -654,6 +902,15 @@ const CORE_SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.statusBar.geminiUsage.visible',
+		group: 'Status Bar',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงโควตาของ Gemini ใน status bar เมื่อติดตั้ง Gemini CLI และเปิด kingu.usage.gemini (Gemini Usage: show Gemini CLI quota when kingu.usage.gemini is on.)',
+		scope: 'application'
+	},
+	...usageItemSettings(),
+	{
 		id: 'kingu.usage.display',
 		group: 'Status Bar',
 		type: 'string',
@@ -698,19 +955,29 @@ const CORE_SETTINGS: SettingSchema[] = [
 ];
 
 /** Every static setting: the core ones above plus the VS Code-derived IDE settings (ideSettings.ts). */
-export const SETTINGS: SettingSchema[] = [...CORE_SETTINGS, ...ADE_SETTINGS, ...IDE_SETTINGS];
+export const SETTINGS: SettingSchema[] = [...CORE_SETTINGS, ...ADE_SETTINGS, ...IDE_SETTINGS, ...LOCAL_AI_SETTINGS, ...ARKAI_SETTINGS];
 
-export type SettingsSection = { id: string; label: string; groups: string[] };
+/**
+ * A table-of-contents section. `labelKey`: the label through t() (shown instead of `label`, the
+ * English fallback), so every section header follows the UI language the same way;
+ * `pages`: dedicated settings pages (systemSettings.svelte.ts SettingsPageId) listed in the
+ * section above its groups.
+ */
+export type SettingsSection = { id: string; label: string; labelKey?: SectionLabelKey; pages?: string[]; groups: string[] };
+type SectionLabelKey = 'settings.sections.aiCapabilities' | 'settings.sections.system' | 'settings.sections.ide' | 'settings.sections.ade' | 'settings.sections.snaps';
 
 /**
  * The system settings page's table of contents: one settings system for the IDE and the ADE,
- * grouped by what they affect. Every group in `SETTINGS` belongs to exactly one section.
+ * grouped by what they affect. Every group in `SETTINGS` belongs to exactly one section. First,
+ * Orca's AI Capabilities group: its Agents pane (the Agent group), the AI accounts page, and
+ * Kingu's own AI pages and Local AI settings (ade/orcaMap.ts ORCA_AI_CAPABILITIES).
  */
 export const SETTINGS_SECTIONS: SettingsSection[] = (
 	[
-		{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Application', ...SYSTEM_SECTION_GROUPS, 'Status Bar', 'Accessibility', 'Team', 'Snap Sandbox'] },
-		{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Source Control', 'Git', 'Terminal', 'Debug', 'Problems'] },
-		{ id: 'ade', label: 'ADE (Agents)', groups: ADE_SECTION_GROUPS }
+		{ id: 'ai', label: 'AI Capabilities', labelKey: 'settings.sections.aiCapabilities', pages: ['accounts', 'mcp', 'skills', 'memories', 'voice'], groups: AI_SECTION_GROUPS },
+		{ id: 'system', label: 'System', labelKey: 'settings.sections.system', groups: ['Workbench', 'Window', 'Zen Mode', 'Application', 'Security', ...SYSTEM_SECTION_GROUPS, 'Status Bar', 'Accessibility', 'Team', 'Snap Sandbox'] },
+		{ id: 'ide', label: 'IDE', labelKey: 'settings.sections.ide', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Source Control', 'Git', 'Merge Conflict', 'Timeline', 'Terminal', 'Tasks', 'Debug', 'Testing', 'Problems', 'Output', 'TypeScript', 'CSS', 'HTML', 'JSON', 'Emmet', 'Markdown'] },
+		{ id: 'ade', label: 'ADE (Agents)', labelKey: 'settings.sections.ade', groups: ADE_SECTION_GROUPS }
 	] satisfies SettingsSection[]
 ).map((sec) => ({ ...sec, groups: sec.groups.filter((g) => SETTINGS.some((s) => s.group === g)) }));
 
@@ -724,7 +991,7 @@ export const SNAPS_SECTION_ID = 'snaps';
 export function settingsSections(schemas: SettingSchema[] = SETTINGS): SettingsSection[] {
 	const known = new Set(SETTINGS_SECTIONS.flatMap((s) => s.groups));
 	const contributed = [...new Set(schemas.map((s) => s.group).filter((g) => !known.has(g)))];
-	return [...SETTINGS_SECTIONS, { id: SNAPS_SECTION_ID, label: 'Snaps', groups: contributed }];
+	return [...SETTINGS_SECTIONS, { id: SNAPS_SECTION_ID, label: 'Snaps', labelKey: 'settings.sections.snaps', groups: contributed }];
 }
 
 /**
@@ -747,10 +1014,22 @@ export const SUBGROUPS: Readonly<Record<string, readonly (readonly [string, read
 			['workbench.activityBar.*', 'workbench.*color*', 'workbench.fontAliasing', 'workbench.iconTheme', 'workbench.sidebar.location', 'workbench.*.visible', 'workbench.tips.enabled', 'workbench.tree.*', 'workbench.view.*']
 		],
 		['Breadcrumbs', ['breadcrumbs.*']],
+		['Outline', ['outline.*']],
 		['Editor Management', ['workbench.editor.*']],
 		['Settings Editor', ['workbench.settings.*']]
 	],
 	Window: [['New Window', ['window.*newwindow*']]],
+	TypeScript: [
+		['Inlay Hints', ['*.inlayHints.*']],
+		['Format', ['*.format.*']],
+		['Preferences', ['*.preferences.*']],
+		['Suggestions', ['*.suggest.*']],
+		['Implicit Project Config', ['js/ts.implicitProjectConfig.*']]
+	],
+	CSS: [
+		['SCSS', ['scss.*']],
+		['LESS', ['less.*']]
+	],
 	Application: [
 		['Keyboard', ['keyboard.*']],
 		['Proxy', ['http.*']],
@@ -781,7 +1060,8 @@ export function subgroupsOf(group: string, schemas: SettingSchema[] = SETTINGS):
 /** A table of contents selection: a group, or `Group/Sub-group`. */
 export const tocKey = (group: string, subgroup?: string | null) => (subgroup ? `${group}/${subgroup}` : group);
 
-function inSelection(s: SettingSchema, selection: string): boolean {
+/** Whether a setting is in a TOC selection (a group, or `Group/Sub-group`). */
+export function inTocSelection(s: SettingSchema, selection: string): boolean {
 	const slash = selection.indexOf('/');
 	if (slash < 0) return s.group === selection;
 	return s.group === selection.slice(0, slash) && settingSubgroup(s) === selection.slice(slash + 1);
@@ -796,7 +1076,7 @@ export function settingsInView(query: string, group: string | null, schemas: Set
 		if (filters.modified && !modified(s.id)) return false;
 		if (filters.id && !filters.id.some((id) => s.id.toLowerCase().includes(id))) return false;
 		if (text) return matchesQuery(s, text);
-		return filters.modified || filters.id ? true : group === null || inSelection(s, group);
+		return filters.modified || filters.id ? true : group === null || inTocSelection(s, group);
 	});
 }
 
@@ -909,6 +1189,15 @@ export function settingProblems(values: Record<string, unknown>, scope: SettingS
 		if (!allowedIn(s, scope)) out.push({ scope, id, message: scopeRule(s) });
 		else if (validate(s, value) === undefined) out.push({ scope, id, message: t('settings.registry.invalidValue', { value: JSON.stringify(value), expected: describeType(s) }) });
 	}
+	// Inside `[language]` blocks: settings that cannot be set per language, and invalid values.
+	for (const [key, block] of overrideBlocks(values))
+		for (const [id, value] of Object.entries(block)) {
+			const s = byId.get(id);
+			if (!s) continue;
+			if (!isLanguageOverridable(s)) out.push({ scope, id: `${key} ${id}`, message: t('settings.registry.notLanguageOverridable') });
+			else if (!allowedIn(s, scope)) out.push({ scope, id: `${key} ${id}`, message: scopeRule(s) });
+			else if (validate(s, value) === undefined) out.push({ scope, id: `${key} ${id}`, message: t('settings.registry.invalidValue', { value: JSON.stringify(value), expected: describeType(s) }) });
+		}
 	return out;
 }
 
@@ -980,5 +1269,8 @@ export function jsonSchema(schemas: SettingSchema[] = SETTINGS) {
 					: { type: s.values.split('|') };
 		properties[s.id] = base;
 	}
-	return { type: 'object', properties };
+	// `"[typescript]": { … }`: the settings a language block may set (languageOverrides.ts).
+	const overridable = Object.fromEntries(schemas.filter(isLanguageOverridable).map((s) => [s.id, properties[s.id]]));
+	const block = { type: 'object', description: 'การตั้งค่าเฉพาะภาษา (Configure editor settings to be overridden for a language.)', properties: overridable };
+	return { type: 'object', properties, patternProperties: { [LANGUAGE_BLOCK_PATTERN]: block } };
 }

@@ -36,13 +36,16 @@
 	});
 
 	async function confirm() {
-		busy = true;
 		// Orca: the confirm removes the changes the dialog showed; unknown changes still ask.
-		const removed = await adeTasks.removeConfirmed(slug, { deleteBranch, force: !!changes?.count });
-		busy = false;
-		if (!removed) return;
+		const task = slug;
+		const opts = { deleteBranch, force: !!changes?.count };
+		const remember = dontAsk;
+		busy = true;
+		// Orca's background removal: the dialog goes, the card shows "Removing…" until git is done.
 		onClose();
-		if (dontAsk) {
+		const removed = await adeTasks.removeConfirmed(task, opts);
+		if (!removed) return;
+		if (remember) {
 			try {
 				await settings.set('kingu.worktree.confirmRemove', false, 'user');
 				status.flash('ครั้งหน้าจะลบโดยไม่ถาม เปลี่ยนได้ใน Settings: kingu.worktree.confirmRemove', 8000);

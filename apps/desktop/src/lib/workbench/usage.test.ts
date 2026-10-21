@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import {
+	activeProviders,
 	applyStale,
 	backoff,
 	countdown,
 	errorLabel,
+	errorMessage,
 	fromAccountRow,
 	hasValue,
 	headline,
@@ -11,11 +13,15 @@ import {
 	parseLiveLimit,
 	percentLabel,
 	planName,
+	poolsOf,
+	PROVIDERS,
 	resetsIn,
 	rowState,
 	spend,
 	updatedLabel,
+	usageOptions,
 	windowLength,
+	windowsOf,
 	type ProviderState
 } from './usage';
 
@@ -127,5 +133,56 @@ describe('fromAccountRow', () => {
 		expect(fromAccountRow({ ...row, status: 'error', failure: 'stale_token', usage: null }).failureKind).toBe('stale-token');
 		expect(fromAccountRow({ ...row, status: 'error', failure: 'not_signed_in', usage: null }).failureKind).toBe('missing-credentials');
 		expect(fromAccountRow({ ...row, status: 'api_key', failure: null, usage: null }).status).toBe('unavailable');
+	});
+});
+
+describe('Gemini usage (kingu.usage.gemini)', () => {
+	test('shown only when turned on and its CLI is installed (or detection has not answered)', () => {
+		const cli = (l: string[]) => l.filter((p) => ['claude', 'codex', 'gemini'].includes(p));
+		expect(cli(activeProviders(['claude', 'gemini'], { gemini: false }))).toEqual(['claude']);
+		expect(cli(activeProviders(['claude', 'gemini'], { gemini: true }))).toEqual(['claude', 'gemini']);
+		expect(cli(activeProviders(['codex'], { gemini: true }))).toEqual(['codex']);
+		expect(cli(activeProviders(null, {}))).toEqual(['claude', 'codex']);
+		expect(cli(activeProviders(null, { gemini: true }))).toEqual(['claude', 'codex', 'gemini']);
+	});
+
+	test('an expired Gemini sign-in waits for the CLI', () => {
+		expect(errorLabel(state({ provider: 'gemini', status: 'error', failureKind: 'stale-token' }))).toBe('Updates when Gemini runs');
+	});
+});
+
+describe("Orca's other usage providers", () => {
+	test('CLI-gated ones need their CLI, Antigravity its setting, the rest are always read', () => {
+		expect(activeProviders(['claude'], {})).toEqual(['claude', 'opencode', 'minimax', 'cursor']);
+		expect(activeProviders(['kimi', 'grok', 'zcode', 'antigravity'], {})).toEqual(['opencode', 'kimi', 'minimax', 'grok', 'cursor', 'zcode']);
+		expect(activeProviders(['antigravity'], { antigravity: true })).toEqual(['antigravity', 'opencode', 'minimax', 'cursor']);
+		expect(activeProviders(null, { antigravity: true, gemini: true })).toEqual(PROVIDERS);
+	});
+
+	test('a monthly window and pools count like the others', () => {
+		const cursor = state({ provider: 'cursor', monthly: win(40, null, 43_200), buckets: [{ name: 'Cursor Models', ...win(90, null, 43_200) }] });
+		expect(windowsOf(cursor).map((w) => w.label)).toEqual(['Monthly']);
+		expect(headline(cursor)?.window.usedPercent).toBe(40);
+		expect(poolsOf(cursor).map((b) => b.name)).toEqual(['Cursor Models']);
+		const pools = state({ provider: 'antigravity', buckets: [{ name: 'Gemini Models', ...win(20) }, { name: 'Claude and GPT models', ...win(60) }] });
+		expect(headline(pools)?.label).toBe('Claude and GPT models');
+		expect(poolsOf(pools)).toEqual([]);
+		expect(windowLength(43_200)).toBe('30d');
+		const kept = applyStale(cursor, state({ provider: 'cursor', status: 'error', failureKind: 'network', updatedAt: NOW + MIN }), NOW + MIN);
+		expect([kept.monthly?.usedPercent, kept.buckets?.length]).toEqual([40, 1]);
+	});
+
+	test('labels: Grok and Kimi wait for their CLI; the providers\' own words stay', () => {
+		expect(errorLabel(state({ provider: 'grok', status: 'error', failureKind: 'delegated-refresh-required' }))).toBe('Run Grok to refresh');
+		expect(errorLabel(state({ provider: 'kimi', status: 'error', failureKind: 'delegated-refresh-required' }))).toBe('Run Kimi to refresh');
+		expect(errorLabel(state({ provider: 'cursor', status: 'error', failureKind: 'stale-token' }))).toBe('Sign-in expired');
+		const minimax = state({ provider: 'minimax', status: 'error', failureKind: 'missing-credentials', error: 'MiniMax auth cookie not found: paste a Cookie header with _token' });
+		expect(errorMessage(minimax)).toBe(minimax.error!);
+		expect(rowState(state({ provider: 'opencode', status: 'unavailable', failureKind: 'missing-credentials', error: 'x' })).kind).toBe('sign-in');
+	});
+
+	test('options sent to Rust come from settings, with Orca\'s defaults', () => {
+		expect(usageOptions(() => undefined)).toEqual({ opencodeWorkspaceId: '', minimaxEndpoint: 'overseas', minimaxGroupId: '', minimaxModels: 'general', zcodeSite: 'zai' });
+		expect(usageOptions((id) => (id === 'kingu.usage.zcode.site' ? 'bigmodel' : undefined)).zcodeSite).toBe('bigmodel');
 	});
 });

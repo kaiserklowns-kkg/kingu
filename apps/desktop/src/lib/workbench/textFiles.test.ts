@@ -5,6 +5,7 @@ import {
 	backupDelay,
 	closeAction,
 	confirmResult,
+	diskChangeAction,
 	encodingLabel,
 	encodingPicks,
 	ENCODINGS,
@@ -67,8 +68,8 @@ describe('closing a dirty editor (handleDirtyClosing)', () => {
 });
 
 describe('hot exit (shouldBackupBeforeShutdown)', () => {
-	const plan = (reason: 'quit' | 'close' | 'load' | 'reload', hotExit: HotExit, o: { hasFolder?: boolean; isMac?: boolean } = {}) =>
-		backsUpOnShutdown({ reason, hotExit, hasFolder: o.hasFolder ?? true, isMac: o.isMac ?? true });
+	const plan = (reason: 'quit' | 'close' | 'load' | 'reload', hotExit: HotExit, o: { hasFolder?: boolean; isMac?: boolean; lastWindow?: boolean } = {}) =>
+		backsUpOnShutdown({ reason, hotExit, hasFolder: o.hasFolder ?? true, isMac: o.isMac ?? true, lastWindow: o.lastWindow });
 	test('off always asks', () => {
 		for (const r of ['quit', 'close', 'load', 'reload'] as const) expect(plan(r, 'off')).toBe(false);
 	});
@@ -78,6 +79,12 @@ describe('hot exit (shouldBackupBeforeShutdown)', () => {
 		expect(plan('close', 'onExit', { isMac: true })).toBe(false);
 		expect(plan('close', 'onExit', { isMac: false })).toBe(true);
 		expect(plan('load', 'onExit')).toBe(false);
+	});
+	test('closing one of several windows on Windows/Linux does not quit, so it asks', () => {
+		expect(plan('close', 'onExit', { isMac: false, lastWindow: false })).toBe(false);
+		expect(plan('close', 'onExit', { isMac: false, lastWindow: true })).toBe(true);
+		expect(plan('close', 'onExitAndWindowClose', { isMac: false, lastWindow: false })).toBe(true);
+		expect(plan('close', 'onExitAndWindowClose', { isMac: false, hasFolder: false, lastWindow: false })).toBe(false);
 	});
 	test('onExitAndWindowClose also backs up window close and folder change with a folder open', () => {
 		expect(plan('close', 'onExitAndWindowClose')).toBe(true);
@@ -142,5 +149,18 @@ describe('encodings and status bar items', () => {
 		expect(isLargeModel(1000, 10)).toBe(false);
 		expect(formatSize(512)).toBe('512B');
 		expect(formatSize(10 * 1024 * 1024)).toBe('10.00MB');
+	});
+});
+
+describe('an open file changed on disk', () => {
+	const base = { dirty: true, inConflict: false, diskDiffers: true, autoSave: 'afterDelay' as const };
+	test('clean editors reload, dirty ones are never overwritten', () => {
+		expect(diskChangeAction({ ...base, dirty: false })).toBe('reload');
+		expect(diskChangeAction(base)).toBe('conflict');
+		expect(diskChangeAction({ ...base, autoSave: 'off' })).toBe('pause');
+	});
+	test('no new prompt when already in conflict or the content is the same', () => {
+		expect(diskChangeAction({ ...base, inConflict: true })).toBe('none');
+		expect(diskChangeAction({ ...base, diskDiffers: false })).toBe('none');
 	});
 });

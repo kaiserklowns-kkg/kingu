@@ -15,6 +15,7 @@
 		hasValue,
 		headline,
 		isWaiting,
+		listed,
 		maxUsed,
 		percentLabel,
 		planName,
@@ -22,6 +23,7 @@
 		resetsIn,
 		rowState,
 		shownPct,
+		signInPage,
 		soonestReset,
 		textTone,
 		updatedLabel,
@@ -49,8 +51,8 @@
 	const loading = $derived(usage.active.some((p) => !usage.providers[p] || usage.providers[p]?.status === 'fetching' || usage.providers[p]?.status === 'idle'));
 	let dismissed = $state(readDismissed());
 	const emptyState = $derived(!visible.length && !loading && usage.detected !== null);
-	/** Popup rows: every installed provider, most used first. */
-	const rows = $derived([...usage.active].sort((a, b) => maxUsed(usage.providers[b]) - maxUsed(usage.providers[a])));
+	/** Popup rows: every installed provider (the ones set up, past Claude, Codex and Gemini), most used first. */
+	const rows = $derived(usage.active.filter((p) => listed(p, usage.providers[p])).sort((a, b) => maxUsed(usage.providers[b]) - maxUsed(usage.providers[a])));
 
 	$effect(() => usage.start());
 
@@ -238,7 +240,7 @@
 					aria-haspopup={state.kind === 'sign-in' ? undefined : 'menu'}
 					aria-expanded={state.kind === 'sign-in' ? undefined : sub?.provider === id}
 					aria-label={state.kind === 'sign-in' ? `Sign in to ${PROVIDER_NAME[id]}` : 'Open usage details'}
-					onclick={(e) => (state.kind === 'sign-in' ? go('account') : openSub(id, e.currentTarget))}
+					onclick={(e) => (state.kind === 'sign-in' ? go(signInPage(id)) : openSub(id, e.currentTarget))}
 					onpointerenter={(e) => (state.kind === 'sign-in' ? (sub = null) : openSub(id, e.currentTarget))}
 					onkeydown={(e) => e.key === 'ArrowRight' && state.kind !== 'sign-in' && openSub(id, e.currentTarget)}
 				>

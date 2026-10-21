@@ -16,12 +16,21 @@ export interface VsCodeThemeFile {
 	include?: string;
 	colors?: Record<string, string>;
 	tokenColors?: TokenColorRule[];
+	semanticHighlighting?: boolean;
+	semanticTokenColors?: Record<string, SemanticColorValue>;
 }
+
+/** A `semanticTokenColors` value: a color, or a style object (colorThemeData.ts readSemanticTokenRule). */
+export type SemanticColorValue = string | boolean | { foreground?: string; bold?: boolean; italic?: boolean; underline?: boolean; strikethrough?: boolean; fontStyle?: string };
 
 export interface FlatTheme {
 	name: string;
 	colors: Record<string, string>;
 	tokenColors: TokenColorRule[];
+	/** Whether the theme (or one it includes) turns semantic highlighting on. */
+	semanticHighlighting?: boolean;
+	/** `semanticTokenColors` of the include chain, the including theme's rules winning. */
+	semanticTokenColors?: Record<string, SemanticColorValue>;
 }
 
 export { parseJsonc };
@@ -40,6 +49,8 @@ export function flattenTheme(entry: string, read: (path: string) => string): Fla
 			else result.colors[id] = value;
 		}
 		if (Array.isArray(theme.tokenColors)) result.tokenColors.push(...theme.tokenColors);
+		if (theme.semanticHighlighting) result.semanticHighlighting = true;
+		if (theme.semanticTokenColors && typeof theme.semanticTokenColors === 'object') result.semanticTokenColors = { ...result.semanticTokenColors, ...theme.semanticTokenColors };
 		if (theme.name) result.name = theme.name;
 	};
 	load(entry);

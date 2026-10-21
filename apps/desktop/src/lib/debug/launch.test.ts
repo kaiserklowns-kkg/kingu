@@ -26,6 +26,12 @@ describe('launch.json', () => {
 describe('variable substitution', () => {
 	const ctx: VarContext = { workspaceFolder: '/Users/me/โปรเจกต์', file: '/Users/me/โปรเจกต์/cmd/server/main.go', env: { HOME: '/Users/me', EMPTY: '' } };
 
+	test('${workspaceFolder:name} in a multi-root workspace (VS Code docs: launch configurations per folder)', () => {
+		const folders = [{ path: '/w/Program', name: 'Program' }, { path: '/w/lib', name: 'Library' }];
+		expect(substitute({ program: '${workspaceFolder:Program}/test.js', outFiles: ['${workspaceFolder:Library}/out/**/*.js'] }, { ...ctx, folders })).toEqual({ program: '/w/Program/test.js', outFiles: ['/w/lib/out/**/*.js'] });
+		expect(() => substitute('${workspaceFolder:Nope}', { ...ctx, folders })).toThrow(/No workspace folder named Nope/);
+	});
+
 	test('workspace, file and env variables, deep in arrays and objects', () => {
 		const config = {
 			type: 'go',
@@ -50,9 +56,33 @@ describe('variable substitution', () => {
 	});
 
 	test('file variables need an open file; unknown variables are errors', () => {
-		expect(() => substitute('${file}', { ...ctx, file: undefined })).toThrow('needs a file open');
-		expect(() => substitute({ p: '${command:pickProcess}' }, ctx)).toThrow('Variable ${command:pickProcess} is not supported');
+		expect(() => substitute('${file}', { ...ctx, file: undefined })).toThrow('Please open an editor');
+		expect(() => substitute({ p: '${command:pickProcess}' }, ctx)).toThrow('Variable ${command:pickProcess} can not be resolved');
+		expect(() => substitute('${input:port}', ctx)).toThrow("Undefined input variable 'port'");
 		expect(substitute('${workspaceFolder}/a', { ...ctx, file: undefined })).toBe('/Users/me/โปรเจกต์/a');
+	});
+
+	test('shares the tasks.json resolver: inputs, ${config:…}, ${userHome}, ${lineNumber}', () => {
+		const full = { ...ctx, userHome: '/Users/me', lineNumber: 7, config: (k: string) => (k === 'editor.tabSize' ? 4 : undefined), inputs: { port: '9230' } };
+		expect(substitute({ port: '${input:port}', home: '${userHome}', line: '${lineNumber}', tab: '${config:editor.tabSize}' }, full)).toEqual({ port: '9230', home: '/Users/me', line: '7', tab: '4' });
+	});
+
+	test('launch.json inputs are parsed like tasks.json inputs', () => {
+		const parsed = parseLaunchJson(
+			`{ "configurations": [], "inputs": [
+				{ "id": "port", "type": "promptString", "description": "Port", "default": "9229" },
+				{ "id": "env", "type": "pickString", "options": ["dev", { "label": "Production", "value": "prod" }] },
+				{ "id": "cmd", "type": "command", "command": "pickProcess" },
+				{ "id": "bad", "type": "nope" }
+			] }`,
+			'.vscode/launch.json'
+		);
+		expect(parsed.inputs).toEqual([
+			{ id: 'port', type: 'promptString', description: 'Port', default: '9229', password: false },
+			{ id: 'env', type: 'pickString', description: undefined, options: [{ value: 'dev' }, { label: 'Production', value: 'prod' }], default: undefined },
+			{ id: 'cmd', type: 'command', command: 'pickProcess', args: undefined }
+		]);
+		expect(parsed.error).toContain('bad');
 	});
 });
 

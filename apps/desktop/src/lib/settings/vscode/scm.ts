@@ -14,7 +14,7 @@ export const SCM_SETTINGS: SettingSchema[] = [
 			'นับเฉพาะ repository ที่เลือกอยู่ (Show the count badge of the focused Source Control Provider.)',
 			'ไม่แสดงตัวเลข (Disable the Source Control count badge.)'
 		],
-		description: 'ตัวเลขบนไอคอน Source Control Kingu แสดง repository เดียว ค่า focused จึงเท่ากับ all (Controls the count badge on the Source Control icon on the Activity Bar.)'
+		description: 'ตัวเลขบนไอคอน Source Control: รวมทุก repository, เฉพาะ repository ที่ใช้อยู่ (focused) หรือไม่แสดง (Controls the count badge on the Source Control icon on the Activity Bar.)'
 	},
 	{
 		id: 'scm.alwaysShowActions',
@@ -107,5 +107,84 @@ export const SCM_SETTINGS: SettingSchema[] = [
 		type: 'boolean',
 		default: true,
 		description: 'รวมโฟลเดอร์ที่มีโฟลเดอร์ย่อยเดียวเป็นแถวเดียวเมื่อแสดงเป็นต้นไม้ (Controls whether the Source Control view should render folders in a compact form. In such a form, single child folders will be compressed in a combined tree element.)'
+	},
+	{
+		id: 'scm.alwaysShowRepositories',
+		group: 'Source Control',
+		type: 'boolean',
+		default: false,
+		description: 'แสดงรายการ repository ตลอดแม้มี repository เดียว (Controls whether repositories should always be visible in the Source Control view.)'
+	},
+	{
+		id: 'scm.repositories.sortOrder',
+		group: 'Source Control',
+		type: 'string',
+		default: 'discovery time',
+		enum: ['discovery time', 'name', 'path'],
+		enumDescriptions: [
+			'เรียงตามลำดับที่พบ (Repositories in the Source Control Repositories view are sorted by discovery time. Repositories in the Source Control view are sorted in the order that they were selected.)',
+			'เรียงตามชื่อ repository (Repositories in the Source Control Repositories and Source Control views are sorted by repository name.)',
+			'เรียงตาม path (Repositories in the Source Control Repositories and Source Control views are sorted by repository path.)'
+		],
+		description: 'การเรียง repository ในรายการ Repositories (Controls the sort order of the repositories in the source control repositories view.)'
+	},
+	{
+		id: 'scm.repositories.visible',
+		group: 'Source Control',
+		type: 'number',
+		default: 10,
+		description: 'จำนวน repository ที่แสดงใน Source Control เมื่อยังไม่ได้เลือก (Controls how many repositories are visible in the Source Control Repositories section. Set to 0, to be able to manually resize the view.)'
+	},
+	{
+		id: 'scm.repositories.selectionMode',
+		group: 'Source Control',
+		type: 'string',
+		default: 'multiple',
+		enum: ['multiple', 'single'],
+		enumDescriptions: [
+			'เลือกได้หลาย repository (กด Cmd/Ctrl ค้างแล้วคลิก) (Multiple repositories can be selected at the same time.)',
+			'เลือกได้ทีละ repository (Only one repository can be selected at a time.)'
+		],
+		description: 'การเลือก repository ในรายการ Repositories (Controls the selection mode of the repositories in the Source Control Repositories view.)'
+	},
+	{
+		id: 'scm.graph.badges',
+		group: 'Source Control',
+		type: 'string',
+		default: 'filter',
+		enum: ['all', 'filter'],
+		enumDescriptions: [
+			'แสดงป้ายของทุก branch และ tag (Show badges of all history item groups in the Source Control Graph view.)',
+			'แสดงเฉพาะป้ายของ branch ที่กราฟใช้กรองอยู่ (Show only the badges of history item groups used as a filter in the Source Control Graph view.)'
+		],
+		description: 'ป้ายชื่อ branch และ tag ที่แสดงในกราฟ Source Control (Controls which badges are shown in the Source Control Graph view. The badges are shown on the right side of the graph indicating the names of history item groups.)'
+	},
+	{
+		id: 'scm.graph.pageOnScroll',
+		group: 'Source Control',
+		type: 'boolean',
+		default: true,
+		description: 'โหลด commit หน้าถัดไปเมื่อเลื่อนกราฟจนสุด (Controls whether the Source Control Graph view will load the next page of items when you scroll to the end of the list.)'
+	},
+	{
+		id: 'scm.graph.pageSize',
+		group: 'Source Control',
+		type: 'number',
+		default: 50,
+		description: 'จำนวน commit ที่กราฟแสดงตอนแรกและที่โหลดเพิ่มแต่ละครั้ง (The number of items to show in the Source Control Graph view by default and when loading more items.)'
+	},
+	{
+		id: 'scm.graph.showIncomingChanges',
+		group: 'Source Control',
+		type: 'boolean',
+		default: true,
+		description: 'แสดง commit ขาเข้า (มีบน upstream แต่ยังไม่ได้ pull) ในกราฟ (Controls whether to show incoming changes in the Source Control Graph view.)'
+	},
+	{
+		id: 'scm.graph.showOutgoingChanges',
+		group: 'Source Control',
+		type: 'boolean',
+		default: true,
+		description: 'แสดง commit ขาออก (ยังไม่ได้ push) ในกราฟ (Controls whether to show outgoing changes in the Source Control Graph view.)'
 	}
 ];

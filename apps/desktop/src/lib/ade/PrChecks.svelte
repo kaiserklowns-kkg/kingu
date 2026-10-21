@@ -11,6 +11,8 @@
 	import { adeTasks } from './tasks.svelte';
 	import { scm } from '#lib/workbench/scm.svelte.ts';
 	import { BUTTON_SECONDARY, ICON_BUTTON } from './ui.ts';
+	import { forgeFor, ft } from './forge.ts';
+	import { t } from '#lib/i18n/index.ts';
 
 	/** `slug` '' is the folder itself: the PR of its checked-out branch. */
 	let { slug, title = true }: { slug: string; title?: boolean } = $props();
@@ -33,26 +35,29 @@
 		skipped: 'bg-(--vscode-descriptionForeground)'
 	};
 	const entry = $derived(prStatuses.bySlug[slug]);
-	const branch = $derived(slug ? adeTasks.branchOf(slug) : (scm.repo?.branch ?? 'branch นี้'));
+	const branch = $derived(slug ? adeTasks.branchOf(slug) : (scm.repo?.branch ?? t('forge.status.thisBranch')));
 	const pr = $derived(entry?.pr);
+	const forge = $derived(forgeFor(pr?.url, adeTasks.gh));
 </script>
 
 <div class="space-y-1.5 text-xs">
 	<div class="flex items-center gap-1 text-[11px] font-bold text-(--vscode-descriptionForeground) uppercase">
 		<span class="flex-1">{title ? 'Checks' : ''}</span>
-		<button class={ICON_BUTTON} aria-label="รีเฟรช checks" title="รีเฟรช" disabled={entry?.loading || !adeTasks.gh?.authenticated} onclick={() => prStatuses.refresh(slug)}><Icon name="refresh" size={14} /></button>
+		<button class={ICON_BUTTON} aria-label={t('forge.status.refreshChecks')} title={t('forge.status.refresh')} disabled={entry?.loading || !adeTasks.gh?.authenticated} onclick={() => prStatuses.refresh(slug)}><Icon name="refresh" size={14} /></button>
 	</div>
-	{#if adeTasks.gh && !adeTasks.gh.installed}
-		<p class="text-(--vscode-descriptionForeground)">ต้องมี GitHub CLI เพื่อดู PR และ CI: <code>brew install gh</code> แล้ว <code>gh auth login</code></p>
+	{#if adeTasks.gh?.provider === 'gitlab' && !adeTasks.gh.authenticated}
+		<p class="text-(--vscode-descriptionForeground)">{adeTasks.gh.detail}</p>
+	{:else if adeTasks.gh && !adeTasks.gh.installed}
+		<p class="text-(--vscode-descriptionForeground)">{t('forge.status.ghMissing')}</p>
 	{:else if adeTasks.gh && !adeTasks.gh.authenticated}
-		<p class="text-(--vscode-descriptionForeground)">gh ยังไม่ได้เข้าสู่ระบบ: รัน <code>gh auth login</code> ในเทอร์มินัล</p>
+		<p class="text-(--vscode-descriptionForeground)">{t('forge.status.ghSignedOut')}</p>
 	{:else if pr}
 		{@const sum = summarizeChecks(pr.checks)}
 		<a class="flex items-center gap-1.5 hover:underline" href={pr.url} target="_blank" rel="noreferrer" title={pr.url}>
-			<Icon name="pullRequest" size={12} /><span class="truncate">#{pr.number} {pr.title}</span>
+			<Icon name="pullRequest" size={12} /><span class="truncate">{ft('forge.ref', forge, { number: pr.number })} {pr.title}</span>
 		</a>
 		<p class="text-(--vscode-descriptionForeground)">
-			{prLine(pr)}{#if sum.total} · ผ่าน {sum.passed}/{sum.total}{#if sum.pending} · กำลังรัน {sum.pending}{/if}{#if sum.failed} · ล้มเหลว {sum.failed}{/if}{/if}
+			{prLine(pr)}{#if sum.total} · {t('forge.status.passed', { passed: sum.passed, total: sum.total })}{#if sum.pending} · {t('forge.status.running', { count: sum.pending })}{/if}{#if sum.failed} · {t('forge.status.failed', { count: sum.failed })}{/if}{/if}
 		</p>
 		<PrMerge {slug} {pr} />
 		{#each sortChecks(pr.checks) as c (c.name)}
@@ -62,11 +67,11 @@
 				<span class="shrink-0 text-(--vscode-descriptionForeground)">{c.state}</span>
 			</div>
 		{:else}
-			<p class="text-(--vscode-descriptionForeground)">PR นี้ยังไม่มี CI check</p>
+			<p class="text-(--vscode-descriptionForeground)">{ft('forge.status.noChecks', forge)}</p>
 		{/each}
 		{#if pr.state === 'OPEN' && brokenChecks(pr.checks).length}
-			<button class={BUTTON_SECONDARY} disabled={!!adeTasks.busy[slug]} title={slug ? 'ส่ง check ที่ล้มเหลวพร้อม log ให้ agent ของงานนี้แก้' : 'คัดลอก prompt ไปวางให้ agent'} onclick={() => adeTasks.fixChecks(slug)}>
-				<Icon name="send" size={12} /> {slug ? 'ให้ agent แก้ checks ที่ล้มเหลว' : 'คัดลอก prompt แก้ checks'}
+			<button class={BUTTON_SECONDARY} disabled={!!adeTasks.busy[slug]} title={slug ? t('forge.status.fixChecksTip') : t('forge.status.copyTip')} onclick={() => adeTasks.fixChecks(slug)}>
+				<Icon name="send" size={12} /> {slug ? t('forge.status.fixChecks') : t('forge.status.copyFixChecks')}
 			</button>
 		{/if}
 		{#if pr.state === 'OPEN'}
@@ -75,8 +80,8 @@
 	{:else if entry?.error}
 		<p class="text-(--vscode-errorForeground)">{entry.error}</p>
 	{:else if entry && !entry.loading}
-		<p class="text-(--vscode-descriptionForeground)">{branch} ยังไม่มี pull request</p>
+		<p class="text-(--vscode-descriptionForeground)">{ft('forge.status.none', forge, { branch })}</p>
 	{:else}
-		<p class="text-(--vscode-descriptionForeground)">กำลังอ่านสถานะ PR…</p>
+		<p class="text-(--vscode-descriptionForeground)">{ft('forge.status.reading', forge)}</p>
 	{/if}
 </div>

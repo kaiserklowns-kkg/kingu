@@ -3,6 +3,8 @@
 
 import { firstLine, formatUsage, slugify, toolArg, type AgentEvent, type RunState, type RunStatus } from '#lib/agent/events.ts';
 import { isQuestionTool, questionText } from './agentHooks.ts';
+import type { AgentRow } from './agentPresence.ts';
+import type { SessionRef } from './sessionHistory.ts';
 import { locale, t } from '#lib/i18n/index.ts';
 
 export type TaskStatus = 'running' | 'waiting' | 'review' | 'done' | 'failed';
@@ -34,10 +36,30 @@ export type TaskMeta = {
 	issue: IssueLink | null;
 	/** `automation`: an automation started it (Orca's automation badge); absent when you did. */
 	origin?: 'automation' | null;
+	/** The branch still has the name made from the title and waits for one made from the work
+	 *  (Orca's autoRenameBranchFromWork); absent once renamed, or for a branch you chose. */
+	auto_name?: boolean;
+	/** The board column you put it in (Orca's workspace status, workflow.ts); absent: the default column. */
+	workflow_status?: string | null;
+	/** Earlier agent sessions, newest first (sessionHistory.ts); `session_id` is the latest. */
+	sessions?: SessionRef[];
+	/** Best-of-N: the attempts of one prompt share this id; their slugs end `-a`, `-b`… (attempts.ts). */
+	group?: string | null;
+	/** The model the attempt was started with (`--model` of its CLI, or the timeline run's model). */
+	attempt_model?: string | null;
+	/** Stacked worktrees: the task whose branch this one forked from (its base and PR base). */
+	parent?: string | null;
+	/** Unix ms its idle agent CLI was closed by hibernation (hibernation.ts); absent once resumed. */
+	hibernated_at?: number | null;
+	/** Orchestration: the task whose agent dispatched this one (`kingu task create`, Rust agent/orchestration.rs). */
+	dispatched_by?: string | null;
 };
 
-/** Mirrors Rust `agent::tasks::IssueLink`. No `provider` means GitHub (links saved before Linear came). */
-export type IssueLink = { number: number; url: string; title: string; provider?: 'github' | 'linear'; key?: string };
+/**
+ * Mirrors Rust `agent::tasks::IssueLink`. No `provider` means GitHub (links saved before Linear came).
+ * `key`: `ENG-123` (Linear, Jira), `group/app#12` (GitLab), `acme/app#42` (GitHub, from a Project).
+ */
+export type IssueLink = { number: number; url: string; title: string; provider?: 'github' | 'linear' | 'gitlab' | 'jira'; key?: string };
 
 /** Mirrors Rust `agent::tasks::RunSummary`. */
 export type RunSummary = {
@@ -80,6 +102,8 @@ export type TaskRuntime = {
 	error?: string;
 	/** Unix ms of the latest event. */
 	updatedAt?: number;
+	/** Agents found in the task's other terminal panes (agentPresence.ts), one row each. */
+	agents?: AgentRow[];
 };
 
 export type FileChange = {
@@ -102,7 +126,9 @@ export type DiffStat = {
 	files: FileChange[];
 };
 
-export type GhStatus = { installed: boolean; authenticated: boolean; path: string | null; detail: string };
+/** `provider: 'gitlab'`: the folder's origin is on GitLab, so PRs are merge requests over GitLab's API
+ * (always `installed`; `authenticated` = a token for its host is stored, `detail` says how to connect). */
+export type GhStatus = { installed: boolean; authenticated: boolean; path: string | null; detail: string; provider?: 'github' | 'gitlab' };
 export type MergeResult = { commit: string; fast_forward: boolean; checkout: string | null };
 
 export type TaskView = { meta: TaskMeta; runtime?: TaskRuntime; status: TaskStatus; stat?: DiffStat; statError?: string };
@@ -141,7 +167,27 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
 // ---------------------------------------------------------------------------------------------
 // tasks.json reducers (immutable: each returns a new list)
 
-export function newTask(input: { slug: string; title: string; prompt: string; base: string; agent?: string; issue?: IssueLink | null; origin?: 'automation' }, now: number): TaskMeta {
+export function newTask(
+	input: {
+		slug: string;
+		title: string;
+		prompt: string;
+		base: string;
+		agent?: string;
+		issue?: IssueLink | null;
+		origin?: 'automation';
+		prUrl?: string;
+		autoName?: boolean;
+		status?: TaskStatus;
+		/** Best-of-N group, the attempt's model, the stacked task's parent (attempts.ts). */
+		group?: string;
+		model?: string;
+		parent?: string;
+		/** The task whose agent dispatched it (orchestration). */
+		dispatchedBy?: string;
+	},
+	now: number
+): TaskMeta {
 	return {
 		slug: input.slug,
 		title: input.title.trim(),
@@ -151,14 +197,19 @@ export function newTask(input: { slug: string; title: string; prompt: string; ba
 		updated_at: now,
 		agent: input.agent ?? 'claude-code',
 		model: null,
-		status: 'running',
-		pr_url: null,
+		status: input.status ?? 'running',
+		pr_url: input.prUrl ?? null,
 		accepted: [],
 		merged_at: null,
 		session_id: null,
 		last_run: null,
 		issue: input.issue ?? null,
-		...(input.origin ? { origin: input.origin } : {})
+		...(input.origin ? { origin: input.origin } : {}),
+		...(input.autoName ? { auto_name: true } : {}),
+		...(input.group ? { group: input.group } : {}),
+		...(input.model ? { attempt_model: input.model } : {}),
+		...(input.parent ? { parent: input.parent } : {}),
+		...(input.dispatchedBy ? { dispatched_by: input.dispatchedBy } : {})
 	};
 }
 
@@ -179,6 +230,30 @@ export function upsertTask(list: TaskMeta[], task: TaskMeta): TaskMeta[] {
 
 export function removeTask(list: TaskMeta[], slug: string): TaskMeta[] {
 	return list.filter((t) => t.slug !== slug);
+}
+
+/** A change Rust's `tasks_update` applies to tasks.json as it is on disk (agent/tasks.rs `TaskChange`). */
+export type TaskChange =
+	| { kind: 'upsert'; task: TaskMeta }
+	| { kind: 'patch'; slug: string; fields: Partial<Omit<TaskMeta, 'slug'>> }
+	| { kind: 'remove'; slug: string };
+
+/**
+ * What turned `prev` into `next`, task by task: new or changed tasks are upserted, missing ones
+ * removed. Sent instead of the whole list, so another window's edits to other tasks survive.
+ */
+export function taskChanges(prev: readonly TaskMeta[], next: readonly TaskMeta[]): TaskChange[] {
+	const before = new Map(prev.map((t) => [t.slug, JSON.stringify(t)]));
+	const after = new Set(next.map((t) => t.slug));
+	const out: TaskChange[] = [];
+	for (const t of next) if (before.get(t.slug) !== JSON.stringify(t)) out.push({ kind: 'upsert', task: t });
+	for (const t of prev) if (!after.has(t.slug)) out.push({ kind: 'remove', slug: t.slug });
+	return out;
+}
+
+/** `patchTask`'s fields as one patch change (with the bumped `updated_at`), for `tasks_update`. */
+export function patchChange(slug: string, patch: Partial<Omit<TaskMeta, 'slug'>>, now: number): TaskChange {
+	return { kind: 'patch', slug, fields: { ...patch, updated_at: now } };
 }
 
 /** Merges `patch` into the task and bumps `updated_at`; unknown slugs leave the list unchanged. */

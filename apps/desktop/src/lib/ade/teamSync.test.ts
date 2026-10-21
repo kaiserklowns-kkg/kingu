@@ -45,6 +45,14 @@ describe('toTeamTask', () => {
 		expect(JSON.stringify(t)).not.toContain('src/a.ts');
 	});
 
+	test('metadata only: a fixed set of fields, nothing of the dispatching agent or its prompt', () => {
+		const child = view({ meta: { ...view().meta, prompt: 'refactor src/secret.ts with key sk-live', dispatched_by: 'parent-task' } as TaskView['meta'] });
+		const t = toTeamTask(child, 'shop-web');
+		expect(Object.keys(t).sort()).toEqual(['additions', 'agent', 'branch', 'deletions', 'filesChanged', 'finishedAt', 'id', 'issue', 'model', 'startedAt', 'status', 'title']);
+		const json = JSON.stringify(t);
+		for (const leak of ['src/secret.ts', 'sk-live', 'parent-task', 'sess']) expect([leak, json.includes(leak)]).toEqual([leak, false]);
+	});
+
 	test('sync key ignores unchanged tasks and changes with status', () => {
 		expect(syncKey(toTeamTask(view(), 'f'))).toBe(syncKey(toTeamTask(view(), 'f')));
 		expect(syncKey(toTeamTask(view({ status: 'review' }), 'f'))).not.toBe(syncKey(toTeamTask(view(), 'f')));

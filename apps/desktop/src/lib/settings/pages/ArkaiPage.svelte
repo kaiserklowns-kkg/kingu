@@ -5,6 +5,7 @@
 	import { settings } from '../settings.svelte';
 	import { SETTINGS } from '../registry';
 	import SettingChoice from './SettingChoice.svelte';
+	import ArkaiProviders from './ArkaiProviders.svelte';
 
 	const get = (id: string) => settings.get<string>(id) ?? '';
 	const set = (id: string, v: string) => void settings.set(id, v.trim() === SETTINGS.find((s) => s.id === id)?.default ? undefined : v.trim(), 'user');
@@ -15,12 +16,12 @@
 </script>
 
 <div class="h-full overflow-y-auto">
-	<div class="mx-auto max-w-[880px] px-8 py-6">
+	<div class="mx-auto max-w-4xl px-8 pt-10 pb-24">
 		<div class="flex items-center gap-3">
 			<span class="text-(--vscode-foreground)"><ArkaiMark size={40} /></span>
 			<div>
-				<h1 class="text-lg font-semibold">Arkai</h1>
-				<p class="text-[13px] text-(--vscode-descriptionForeground)">ผู้ช่วย AI ของ Kingu: แต่ละงานได้ git worktree ของตัวเอง</p>
+				<h1 class="text-2xl leading-tight font-semibold">Arkai</h1>
+				<p class="mt-2 max-w-3xl text-sm leading-6 text-(--vscode-descriptionForeground)">ผู้ช่วย AI ของ Kingu: แต่ละงานได้ git worktree ของตัวเอง</p>
 			</div>
 		</div>
 
@@ -39,6 +40,8 @@
 				<input class="{INPUT} mt-1.5" value={get('kingu.agent.model')} onchange={(e) => set('kingu.agent.model', e.currentTarget.value)} spellcheck="false" />
 			</label>
 		{/if}
+
+		<ArkaiProviders />
 
 		<h2 class={SECTION}>การขออนุญาต</h2>
 		<SettingChoice id="kingu.agent.permissionMode" labels={{ default: 'ถามก่อน', acceptEdits: 'แก้ไฟล์ได้เลย', plan: 'วางแผนอย่างเดียว' }} />

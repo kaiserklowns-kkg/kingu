@@ -115,16 +115,37 @@ export function enabledBins(found: readonly string[], disabled: readonly unknown
 }
 
 /**
+ * Each profile's skip-every-permission-prompt flags (Orca's YOLO_TUI_AGENT_ARGS), which
+ * `kingu.agent.cliPermissions` = `yolo` adds. opencode has none; the custom profile gets none.
+ */
+export const YOLO_ARGS: Readonly<Record<string, readonly string[]>> = {
+	claude: ['--dangerously-skip-permissions'],
+	codex: ['--dangerously-bypass-approvals-and-sandbox'],
+	gemini: ['--yolo'],
+	cursor: ['--yolo'],
+	copilot: ['--yolo'],
+	amp: ['--dangerously-allow-all'],
+	droid: ['--auto', 'high'],
+	qwen: ['--approval-mode', 'yolo'],
+	aider: ['--yes-always']
+};
+
+/**
  * The command a new terminal task runs: `kingu.agent.cli` (default `claude`), plus the extra
  * arguments set for that CLI's profile (`kingu.agent.args.<id>`), so switching CLIs with the
- * picker keeps each one's flags. Null when either is not a plain command.
+ * picker keeps each one's flags. With `kingu.agent.cliPermissions` = `yolo` (Orca's Agent
+ * Permissions), a profile whose arguments you left empty gets its bypass flag, unless the command
+ * already has it; arguments you set win, as in Orca. Null when either is not a plain command.
  */
 export function agentCommand(get: (id: string) => string | undefined): string[] | null {
 	const base = parseCliCommand(get('kingu.agent.cli') || 'claude');
 	if (!base) return null;
 	const profile = profileOf(base);
 	const extra = profile.id === 'custom' ? '' : (get(agentArgsSetting(profile.id)) ?? '').trim();
-	if (!extra) return base;
+	if (!extra) {
+		const yolo = get('kingu.agent.cliPermissions') === 'yolo' ? YOLO_ARGS[profile.id] : undefined;
+		return yolo && !base.includes(yolo[0]) ? [...base, ...yolo] : base;
+	}
 	const args = parseCliCommand(extra);
 	return args ? [...base, ...args] : null;
 }

@@ -1,109 +1,151 @@
 <script lang="ts">
-	// Issues page (Agents layout center, from the side bar): the folder's open GitHub issues via gh,
-	// filtered to mine or all, by label and search. A row starts a task (a small confirm with the base
-	// branch and run mode, like the composer) or opens the issue on GitHub; a row that already has a
-	// task links to it.
+	// Issues page (Agents layout center, from the side bar): every connected tracker in one list
+	// (the folder's GitHub issues, a GitHub Project, Linear, GitLab, Jira), filtered by source, to
+	// mine or all, by label and search. A row starts a task (a small confirm with the base branch
+	// and run mode, like the composer) or opens the issue; a row that already has a task links to it.
 	import { onMount } from 'svelte';
+	import { t } from '#lib/i18n/index.ts';
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { quick } from '#lib/workbench/quick.svelte.ts';
 	import { adeLayout } from './adeLayout.svelte.ts';
 	import type { RunMode } from './agentCli.ts';
-	import { issues, defaultBase, defaultRunMode } from './issues.svelte.ts';
-	import type { Issue } from './issues.ts';
+	import { defaultBase, defaultRunMode } from './issues.svelte.ts';
+	import { linear } from './linear.svelte.ts';
 	import { timeAgo } from './model.ts';
+	import { sources } from './taskSources.svelte.ts';
+	import { SOURCE_NAMES, SOURCES, filterItems, isoTime, type SourceId, type SourceItem } from './taskSources.ts';
 	import { adeTasks } from './tasks.svelte.ts';
 	import { BUTTON, BUTTON_SECONDARY, ICON_BUTTON, INPUT } from './ui.ts';
 
-	let label = $state(issues.filter.label);
-	let search = $state(issues.filter.search);
+	let label = $state(sources.filter.label);
+	let search = $state(sources.filter.search);
 	let base = $state('');
 	let mode = $state<RunMode>(defaultRunMode());
 	let busy = $state(false);
 	const cliSetting = $derived(settings.get<string>('kingu.agent.cli') ?? '');
+	const enabled = $derived(sources.enabled());
+	const shown = $derived(filterItems(sources.items, sources.only));
+	const missing = $derived(SOURCES.filter((s) => s !== 'github' && !enabled.includes(s)));
+	const errors = $derived(Object.entries(sources.errors) as [SourceId, string][]);
 
 	onMount(() => {
-		if (!issues.loaded) void issues.load();
+		if (!sources.loaded) void sources.load();
 		void adeTasks.refreshBranches();
 	});
 
 	function setMine(mine: boolean) {
-		if (issues.filter.mine === mine) return;
-		issues.filter.mine = mine;
-		void issues.load();
+		if (sources.filter.mine === mine) return;
+		sources.filter.mine = mine;
+		void sources.load();
+	}
+
+	function setOnly(only: SourceId | null) {
+		if (sources.only === only) return;
+		sources.only = only;
+		void sources.load();
 	}
 
 	function apply(e: Event) {
 		e.preventDefault();
-		issues.filter.label = label;
-		issues.filter.search = search;
-		void issues.load();
+		sources.filter.label = label;
+		sources.filter.search = search;
+		void sources.load();
 	}
 
-	function confirm(issue: Issue) {
-		issues.confirming = issue;
+	function confirm(item: SourceItem) {
+		sources.confirming = item;
 		base = defaultBase();
 		mode = defaultRunMode();
 	}
 
-	async function start(issue: Issue) {
+	async function start(item: SourceItem) {
 		busy = true;
 		try {
-			await issues.start(issue, base, mode);
+			await sources.start(item, base, mode);
 		} finally {
 			busy = false;
 		}
 	}
 
+	function connect(source: SourceId) {
+		if (source === 'project') void sources.chooseProject();
+		else if (source === 'linear') linear.connecting = true;
+		else if (source === 'gitlab' || source === 'jira') sources.connecting = source;
+	}
+
+	async function connectMenu() {
+		const picked = await quick.choose({ placeholder: t('adeSources.connectPlaceholder'), items: missing.map((s) => ({ id: s, label: SOURCE_NAMES[s] })) });
+		if (picked) connect(picked.id as SourceId);
+	}
+
 	const updated = (iso: string) => {
-		const t = Date.parse(iso);
-		return Number.isNaN(t) ? '' : timeAgo(t, adeTasks.now);
+		const at = isoTime(iso);
+		return at ? timeAgo(at, adeTasks.now) : '';
 	};
 	const TAB = 'h-6 rounded-sm px-2 text-xs';
+	const tab = (on: boolean) => [TAB, on ? 'bg-(--vscode-list-activeSelectionBackground)/40' : 'hover:bg-(--vscode-toolbar-hoverBackground)'];
 </script>
 
 <div class="flex h-full flex-col overflow-hidden bg-(--vscode-editor-background) text-(--vscode-foreground)">
 	<header class="flex shrink-0 flex-wrap items-center gap-2 border-b border-(--vscode-widget-border) px-4 py-2">
 		<h1 class="text-sm font-semibold">Issues</h1>
-		<div class="flex items-center gap-0.5" role="group" aria-label="ตัวกรอง">
-			<button class={[TAB, issues.filter.mine ? 'bg-(--vscode-list-activeSelectionBackground)/40' : 'hover:bg-(--vscode-toolbar-hoverBackground)']} aria-pressed={issues.filter.mine} onclick={() => setMine(true)}>มอบหมายให้ฉัน</button>
-			<button class={[TAB, !issues.filter.mine ? 'bg-(--vscode-list-activeSelectionBackground)/40' : 'hover:bg-(--vscode-toolbar-hoverBackground)']} aria-pressed={!issues.filter.mine} onclick={() => setMine(false)}>เปิดอยู่ทั้งหมด</button>
+		<div class="flex items-center gap-0.5" role="group" aria-label={t('adeSources.mineGroup')}>
+			<button class={tab(sources.filter.mine)} aria-pressed={sources.filter.mine} onclick={() => setMine(true)}>{t('adeTasks.issues.assignedToMe')}</button>
+			<button class={tab(!sources.filter.mine)} aria-pressed={!sources.filter.mine} onclick={() => setMine(false)}>{t('adeSources.allOpen')}</button>
 		</div>
+		{#if enabled.length > 1}
+			<div class="flex items-center gap-0.5" role="group" aria-label={t('adeSources.sourceGroup')}>
+				<button class={tab(sources.only === null)} aria-pressed={sources.only === null} onclick={() => setOnly(null)}>{t('adeSources.allSources')}</button>
+				{#each enabled as s (s)}
+					<button class={tab(sources.only === s)} aria-pressed={sources.only === s} onclick={() => setOnly(s)}>{SOURCE_NAMES[s]}</button>
+				{/each}
+			</div>
+		{/if}
 		<form class="flex min-w-0 flex-1 items-center gap-1.5 text-xs" onsubmit={apply}>
 			<input class={[INPUT, 'max-w-36']} placeholder="label" aria-label="label" bind:value={label} />
-			<input class={[INPUT, 'max-w-64']} placeholder="ค้นหา (Enter)" aria-label="ค้นหา issue" bind:value={search} />
-			<button type="submit" class="sr-only">ค้นหา</button>
+			<input class={[INPUT, 'max-w-64']} placeholder={t('adeSources.searchPlaceholder')} aria-label={t('adeSources.search')} bind:value={search} />
+			<button type="submit" class="sr-only">{t('adeSources.search')}</button>
 		</form>
-		<button class={ICON_BUTTON} aria-label="รีเฟรช" title="รีเฟรช" disabled={issues.loading} onclick={() => issues.load()}><Icon name="refresh" size={16} /></button>
+		{#if missing.length}
+			<button class={BUTTON_SECONDARY} onclick={connectMenu}><Icon name="plus" size={12} /> {t('adeSources.connect')}</button>
+		{/if}
+		<button class={ICON_BUTTON} aria-label={t('adeSources.refresh')} title={t('adeSources.refresh')} disabled={sources.loading} onclick={() => sources.load()}><Icon name="refresh" size={16} /></button>
 	</header>
 
 	<div class="min-h-0 flex-1 overflow-y-auto p-4">
-		{#if issues.error}
+		{#each errors as [source, error] (source)}
 			<div class="mb-3 rounded border border-(--vscode-errorForeground) px-3 py-2 text-xs" role="alert">
-				<p class="text-(--vscode-errorForeground)">โหลด issues ไม่ได้: {issues.error}</p>
+				<p class="text-(--vscode-errorForeground)">{t('adeSources.loadFailed', { service: SOURCE_NAMES[source], error })}</p>
 			</div>
-		{/if}
-		{#if issues.loading && !issues.list.length}
-			<p class="text-xs text-(--vscode-descriptionForeground)">กำลังโหลด issues…</p>
-		{:else if issues.loaded && !issues.list.length && !issues.error}
+		{/each}
+		{#if sources.loading && !shown.length}
+			<p class="text-xs text-(--vscode-descriptionForeground)">{t('adeSources.loading')}</p>
+		{:else if sources.loaded && !shown.length && !errors.length}
 			<p class="text-xs text-(--vscode-descriptionForeground)">
-				ไม่มี issue ที่เปิดอยู่{issues.filter.mine ? 'ที่มอบหมายให้คุณ' : ''}{issues.filter.label || issues.filter.search ? ' ตามตัวกรองนี้' : ''}
+				{sources.filter.mine ? t('adeSources.noneMine') : t('adeSources.none')}{sources.filter.label || sources.filter.search ? ` ${t('adeSources.noneFiltered')}` : ''}
 			</p>
+			{#if !enabled.length}<p class="mt-1 text-xs text-(--vscode-descriptionForeground)">{t('adeSources.noSources')}</p>{/if}
 		{:else}
-			<ul class={['space-y-1.5', issues.loading && 'opacity-60']} aria-label="รายการ issue" aria-busy={issues.loading}>
-				{#each issues.list as issue (issue.number)}
-					{@const taskSlug = issues.tasks.get(issue.number)}
+			<ul class={['space-y-1.5', sources.loading && 'opacity-60']} aria-label={t('adeSources.list')} aria-busy={sources.loading}>
+				{#each shown as item (item.id)}
+					{@const taskSlug = sources.tasks.get(item.id)}
 					{@const task = taskSlug ? adeTasks.find(taskSlug) : undefined}
 					<li class="rounded border border-(--vscode-widget-border) px-3 py-2 text-xs">
 						<div class="flex items-start gap-3">
-							<span class="shrink-0 font-mono text-(--vscode-descriptionForeground)">#{issue.number}</span>
+							<span class="flex shrink-0 flex-col items-start gap-0.5">
+								<span class="font-mono text-(--vscode-descriptionForeground)">{item.ref}</span>
+								<span class="rounded-sm bg-(--vscode-badge-background)/60 px-1 text-[10px] leading-4 text-(--vscode-badge-foreground)">{SOURCE_NAMES[item.source]}</span>
+							</span>
 							<div class="min-w-0 flex-1 space-y-1">
-								<p class="truncate text-[13px]" title={issue.title}>{issue.title}</p>
+								<p class="truncate text-[13px]" title={item.title}>{item.title}</p>
 								<p class="flex flex-wrap items-center gap-1.5 text-(--vscode-descriptionForeground)">
-									{#each issue.labels as l (l.name)}
+									{#each item.labels as l (l.name)}
 										<span class="rounded-full border px-1.5 text-[10px] leading-4" style:border-color={/^[0-9a-f]{6}$/i.test(l.color) ? `#${l.color}` : undefined}>{l.name}</span>
 									{/each}
-									<span>อัปเดต {updated(issue.updated_at)}</span>
-									{#if issue.assignees.length}<span>· {issue.assignees.map((a) => `@${a}`).join(', ')}</span>{/if}
+									{#each item.facts as f, i (i)}<span>{f} ·</span>{/each}
+									<span>{t('adeSources.updated', { when: updated(item.updated_at) })}</span>
+									{#if item.assignees.length}<span>· {item.assignees.map((a) => (item.source === 'jira' || item.source === 'linear' ? a : `@${a}`)).join(', ')}</span>{/if}
 									{#if task}
 										<span>·</span>
 										<button class="font-mono text-(--vscode-textLink-foreground) hover:underline" onclick={() => adeLayout.show(task.meta.slug)}>kingu/{task.meta.slug}</button>
@@ -112,37 +154,42 @@
 							</div>
 							<div class="flex shrink-0 items-center gap-1">
 								{#if task}
-									<button class={BUTTON_SECONDARY} onclick={() => adeLayout.show(task.meta.slug)}>เปิดงาน</button>
+									<button class={BUTTON_SECONDARY} onclick={() => adeLayout.show(task.meta.slug)}>{t('adeSources.openTask')}</button>
 								{:else}
-									<button class={BUTTON} disabled={!!issues.confirming && issues.confirming.number === issue.number} onclick={() => confirm(issue)}><Icon name="play" size={12} /> Start task</button>
+									<button class={BUTTON} disabled={sources.confirming?.id === item.id} onclick={() => confirm(item)}><Icon name="play" size={12} /> {t('adeSources.startTask')}</button>
 								{/if}
-								<button class={ICON_BUTTON} aria-label="เปิด #{issue.number} บน GitHub" title="Open on GitHub" onclick={() => issues.open(issue)}><Icon name="openExternal" size={14} /></button>
+								<button
+									class={ICON_BUTTON}
+									aria-label={t('adeSources.openOn', { ref: item.ref, service: SOURCE_NAMES[item.source] })}
+									title={t('adeSources.openOn', { ref: item.ref, service: SOURCE_NAMES[item.source] })}
+									onclick={() => sources.open(item)}><Icon name="openExternal" size={14} /></button
+								>
 							</div>
 						</div>
-						{#if issues.confirming?.number === issue.number}
+						{#if sources.confirming?.id === item.id}
 							<!-- svelte-ignore a11y_no_noninteractive_element_interactions (Escape from any field) -->
 							<form
 								class="mt-2 flex flex-wrap items-center gap-2 border-t border-(--vscode-widget-border) pt-2"
-								onsubmit={(e) => (e.preventDefault(), start(issue))}
-								onkeydown={(e) => e.key === 'Escape' && (issues.confirming = null)}
+								onsubmit={(e) => (e.preventDefault(), start(item))}
+								onkeydown={(e) => e.key === 'Escape' && (sources.confirming = null)}
 							>
 								<label class="flex items-center gap-1">
-									<span class="text-(--vscode-descriptionForeground)">แตกจาก</span>
+									<span class="text-(--vscode-descriptionForeground)">{t('adeSources.base')}</span>
 									<select class={[INPUT, 'w-auto py-0.5']} bind:value={base} disabled={busy} aria-label="base branch">
 										{#each adeTasks.branches as b (b)}<option value={b}>{b}</option>{/each}
 										{#if !adeTasks.branches.length}<option value="">HEAD</option>{/if}
 									</select>
 								</label>
 								<label class="flex items-center gap-1">
-									<span class="text-(--vscode-descriptionForeground)">รันแบบ</span>
-									<select class={[INPUT, 'w-auto py-0.5']} bind:value={mode} disabled={busy} aria-label="วิธีรัน agent">
+									<span class="text-(--vscode-descriptionForeground)">{t('adeSources.runAs')}</span>
+									<select class={[INPUT, 'w-auto py-0.5']} bind:value={mode} disabled={busy} aria-label={t('adeTasks.issues.runModePlaceholder')}>
 										<option value="terminal">Terminal · {cliSetting || 'claude'}</option>
 										<option value="timeline">Timeline</option>
 									</select>
 								</label>
 								<span class="flex-1"></span>
-								<button type="submit" class={BUTTON} disabled={busy}>{busy ? 'กำลังสร้าง…' : 'สร้างและเริ่ม'}</button>
-								<button type="button" class={BUTTON_SECONDARY} disabled={busy} onclick={() => (issues.confirming = null)}>ยกเลิก</button>
+								<button type="submit" class={BUTTON} disabled={busy}>{busy ? t('adeSources.creating') : t('adeSources.createAndStart')}</button>
+								<button type="button" class={BUTTON_SECONDARY} disabled={busy} onclick={() => (sources.confirming = null)}>{t('common.cancel')}</button>
 							</form>
 						{/if}
 					</li>

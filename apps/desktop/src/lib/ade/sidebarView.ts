@@ -3,10 +3,12 @@
 // (Orca's worktree visibility). Pure, so `bun test` covers it.
 
 import type { TaskStatus } from './model';
+import { workflowOf, workflowStatuses, type WorkflowStatus } from './workflow.ts';
 import { t } from '#lib/i18n/index.ts';
 
-/** `repo`: one group for the open folder (Kingu shows one project), so it lists like `none`. */
-export type GroupBy = 'none' | 'workspace-status' | 'pr-status' | 'repo';
+/** `repo`: one group per added project (projects.ts); within the open folder it lists like `none`.
+ *  `workflow`: the board columns you move tasks between (workflow.ts). */
+export type GroupBy = 'none' | 'workspace-status' | 'pr-status' | 'repo' | 'workflow';
 /** `manual`: the order the user dragged (the side bar keeps it); sorted here like `recent`. */
 export type SortBy = 'smart' | 'recent' | 'name' | 'manual';
 export type CardProperty = 'status' | 'branch' | 'diff' | 'activity' | 'time' | 'pr' | 'issue' | 'automation';
@@ -29,6 +31,8 @@ export type SidebarTask = {
 	/** `OPEN`, `MERGED`, `CLOSED` (from gh), or null when there is no PR (or not fetched). */
 	prState: string | null;
 	prDraft?: boolean;
+	/** The board column you put it in (`TaskMeta.workflow_status`). */
+	workflowStatus?: string | null;
 };
 
 export type SidebarPrefs = {
@@ -96,12 +100,16 @@ const STATUS_GROUPS: { id: string; label: string; of: (s: TaskStatus) => boolean
 ];
 
 /** The visible tasks, filtered, sorted and grouped; empty groups are left out. `none` is one unnamed group. */
-export function sidebarGroups<T extends SidebarTask>(list: T[], p: SidebarPrefs): Group<T>[] {
+export function sidebarGroups<T extends SidebarTask>(list: T[], p: SidebarPrefs, statuses: readonly WorkflowStatus[] = workflowStatuses(undefined)): Group<T>[] {
 	const shown = sortTasks(
 		list.filter((t) => !hiddenBy(t, p)),
 		p.sortBy
 	);
 	if (p.groupBy === 'none' || p.groupBy === 'repo') return shown.length ? [{ id: 'all', label: '', tasks: shown }] : [];
+	if (p.groupBy === 'workflow')
+		return statuses
+			.map((s) => ({ id: `workflow:${s.id}`, label: s.label, tasks: shown.filter((t) => workflowOf({ workflow_status: t.workflowStatus }, statuses) === s.id) }))
+			.filter((g) => g.tasks.length);
 	const defs = p.groupBy === 'pr-status' ? PR_GROUPS.map((g) => ({ ...g, of: (t: T) => prGroupOf(t) === g.id })) : STATUS_GROUPS.map((g) => ({ ...g, of: (t: T) => g.of(t.status) }));
 	return defs.map((g) => ({ id: g.id, label: g.label, tasks: shown.filter(g.of) })).filter((g) => g.tasks.length);
 }

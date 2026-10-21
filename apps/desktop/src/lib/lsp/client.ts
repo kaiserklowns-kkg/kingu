@@ -1,9 +1,26 @@
 // One language server session: lifecycle, document sync, progress/status and diagnostics.
 // Transport-agnostic (the Tauri bridge lives in lsp.svelte.ts) so it can be tested with a fake.
 
+import { folderChanges, type LspFolder } from './convert';
 import { JsonRpc, ResponseError, type Cancellation } from './jsonrpc';
 import {
 	ErrorCodes,
+	type CallHierarchyIncomingCall,
+	type CallHierarchyItem,
+	type CallHierarchyOutgoingCall,
+	type CodeLens,
+	type Color,
+	type ColorInformation,
+	type ColorPresentation,
+	type DocumentLink,
+	type FoldingRange,
+	type InlayHint,
+	type LinkedEditingRanges,
+	type SelectionRange,
+	type SemanticTokens,
+	type SemanticTokensDelta,
+	type SemanticTokensLegend,
+	type TypeHierarchyItem,
 	type CodeAction,
 	type Command,
 	type CompletionItem,
@@ -43,7 +60,19 @@ export type ClientHooks = {
 	applyEdit?(edit: WorkspaceEdit, label?: string): Promise<{ applied: boolean; failureReason?: string }>;
 	/** `workspace/configuration`: the settings value for `section` (null when unset). */
 	configuration?(section: string | undefined, scopeUri: string | undefined): unknown;
+	/** `workspace/semanticTokens/refresh`, `workspace/inlayHint/refresh`, `workspace/codeLens/refresh`. */
+	refresh?(kind: RefreshKind): void;
 };
+
+/** LSP's predefined semantic token types and modifiers (the ones VS Code's theming knows). */
+export const SEMANTIC_TOKEN_TYPES = [
+	'namespace', 'type', 'class', 'enum', 'interface', 'struct', 'typeParameter', 'parameter', 'variable', 'property', 'enumMember', 'event',
+	'function', 'method', 'macro', 'keyword', 'modifier', 'comment', 'string', 'number', 'regexp', 'operator', 'decorator', 'label'
+];
+export const SEMANTIC_TOKEN_MODIFIERS = ['declaration', 'definition', 'readonly', 'static', 'deprecated', 'abstract', 'async', 'modification', 'documentation', 'defaultLibrary'];
+
+/** Server → client refresh requests (LSP 3.16/3.17) that re-ask a feature for every open file. */
+export type RefreshKind = 'semanticTokens' | 'inlayHint' | 'codeLens';
 
 /** Code action kinds Kingu understands (VS Code's list). */
 const CODE_ACTION_KINDS = ['', 'quickfix', 'refactor', 'refactor.extract', 'refactor.inline', 'refactor.rewrite', 'source', 'source.organizeImports', 'source.fixAll'];
@@ -56,9 +85,15 @@ export const clientCapabilities = {
 		configuration: true,
 		symbol: { dynamicRegistration: false },
 		applyEdit: true,
-		workspaceEdit: { documentChanges: true, resourceOperations: [], failureHandling: 'abort', normalizesLineEndings: false },
+		workspaceEdit: { documentChanges: true, resourceOperations: [], failureHandling: 'abort', normalizesLineEndings: false, changeAnnotationSupport: { groupsOnLabel: true } },
 		executeCommand: { dynamicRegistration: false },
-		diagnostics: { refreshSupport: true }
+		diagnostics: { refreshSupport: true },
+		semanticTokens: { refreshSupport: true },
+		inlayHint: { refreshSupport: true },
+		codeLens: { refreshSupport: true },
+		didChangeConfiguration: { dynamicRegistration: false },
+		// Update imports on file move (typescript-language-server's willRenameFiles).
+		fileOperations: { dynamicRegistration: false, willRename: true, didRename: true }
 	},
 	textDocument: {
 		synchronization: { didSave: true, willSave: false, willSaveWaitUntil: false, dynamicRegistration: false },
@@ -84,7 +119,7 @@ export const clientCapabilities = {
 		documentSymbol: { hierarchicalDocumentSymbolSupport: true },
 		references: {},
 		documentHighlight: {},
-		rename: { prepareSupport: true, prepareSupportDefaultBehavior: 1, honorsChangeAnnotations: false },
+		rename: { prepareSupport: true, prepareSupportDefaultBehavior: 1, honorsChangeAnnotations: true },
 		codeAction: {
 			codeActionLiteralSupport: { codeActionKind: { valueSet: CODE_ACTION_KINDS } },
 			isPreferredSupport: true,
@@ -97,10 +132,35 @@ export const clientCapabilities = {
 			signatureInformation: { documentationFormat: ['markdown', 'plaintext'], parameterInformation: { labelOffsetSupport: true }, activeParameterSupport: true }
 		},
 		formatting: {},
-		rangeFormatting: {}
+		rangeFormatting: {},
+		onTypeFormatting: {},
+		declaration: { linkSupport: true },
+		typeDefinition: { linkSupport: true },
+		implementation: { linkSupport: true },
+		inlayHint: { resolveSupport: { properties: ['tooltip', 'textEdits', 'label.tooltip', 'label.location', 'label.command'] } },
+		semanticTokens: {
+			requests: { range: true, full: { delta: true } },
+			tokenTypes: SEMANTIC_TOKEN_TYPES,
+			tokenModifiers: SEMANTIC_TOKEN_MODIFIERS,
+			formats: ['relative'],
+			overlappingTokenSupport: false,
+			multilineTokenSupport: false,
+			serverCancelSupport: true,
+			augmentsSyntaxTokens: true
+		},
+		// VS Code: editor.foldingMaximumRegions, line folding only (Monaco folds whole lines).
+		foldingRange: { rangeLimit: 5000, lineFoldingOnly: true, foldingRangeKind: { valueSet: ['comment', 'imports', 'region'] } },
+		codeLens: {},
+		callHierarchy: {},
+		typeHierarchy: {},
+		linkedEditingRange: {},
+		selectionRange: {},
+		documentLink: { tooltipSupport: true },
+		colorProvider: {}
 	},
-	// rust-analyzer: `experimental/serverStatus` tells when indexing is done.
-	experimental: { serverStatusNotification: true }
+	// rust-analyzer: `experimental/serverStatus` tells when indexing is done; its code lenses use
+	// these client commands (references open Monaco's peek, see featureProviders.ts).
+	experimental: { serverStatusNotification: true, commands: { commands: ['rust-analyzer.showReferences', 'rust-analyzer.gotoLocation'] } }
 };
 
 type Doc = { languageId: string; version: number; text: string };
@@ -119,7 +179,8 @@ export class LanguageClient {
 	#quiescent = true;
 	#pullTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	#lastState: ServerState | null = null;
-	#rootUri = '';
+	/** The workspace folders the server knows (`initialize`, then `didChangeWorkspaceFolders`). */
+	#folders: LspFolder[] = [];
 
 	constructor(name: string, write: (json: string) => void, hooks: ClientHooks) {
 		this.#name = name;
@@ -161,11 +222,15 @@ export class LanguageClient {
 			hooks.showMessage?.(p.type, p.message);
 			return null;
 		});
-		rpc.onRequest('workspace/workspaceFolders', () => (this.#rootUri ? [{ uri: this.#rootUri, name: this.#rootUri.split('/').pop() }] : null));
+		rpc.onRequest('workspace/workspaceFolders', () => (this.#folders.length ? this.#folders : null));
 		rpc.onRequest('workspace/diagnostic/refresh', () => (this.#pullAll(), null));
-		for (const m of ['workspace/semanticTokens/refresh', 'workspace/inlayHint/refresh', 'workspace/codeLens/refresh', 'workspace/inlineValue/refresh']) {
-			rpc.onRequest(m, () => null);
-		}
+		const refreshes: [string, RefreshKind][] = [
+			['workspace/semanticTokens/refresh', 'semanticTokens'],
+			['workspace/inlayHint/refresh', 'inlayHint'],
+			['workspace/codeLens/refresh', 'codeLens']
+		];
+		for (const [m, kind] of refreshes) rpc.onRequest(m, () => (hooks.refresh?.(kind), null));
+		rpc.onRequest('workspace/inlineValue/refresh', () => null);
 		rpc.onRequest('workspace/applyEdit', async (p: { label?: string; edit: WorkspaceEdit }) => {
 			if (!hooks.applyEdit) return { applied: false, failureReason: 'no workspace to edit' };
 			const r = await hooks.applyEdit(p.edit, p.label);
@@ -177,25 +242,45 @@ export class LanguageClient {
 		return this.#ready;
 	}
 
-	async initialize(rootUri: string, initializationOptions?: unknown): Promise<ServerCapabilities> {
-		this.#rootUri = rootUri;
+	/** `folders`: every root folder of the workspace (the first is `rootUri`); just `rootUri` when omitted. */
+	async initialize(rootUri: string, initializationOptions?: unknown, trace: 'off' | 'messages' | 'verbose' = 'off', folders?: LspFolder[]): Promise<ServerCapabilities> {
+		this.#folders = folders?.length ? folders : [{ uri: rootUri, name: rootUri.split('/').pop() ?? 'workspace' }];
 		this.#hooks.status({ state: 'starting' });
-		const name = rootUri.split('/').pop() ?? 'workspace';
 		const result = await this.rpc.request<{ capabilities: ServerCapabilities }>('initialize', {
 			processId: null,
 			clientInfo: { name: 'Kingu' },
 			locale: 'en',
 			rootUri,
 			rootPath: decodeURIComponent(rootUri.replace(/^file:\/\//, '')),
-			workspaceFolders: [{ uri: rootUri, name }],
+			workspaceFolders: this.#folders,
 			capabilities: clientCapabilities,
-			initializationOptions
+			initializationOptions,
+			trace
 		});
 		this.capabilities = result?.capabilities ?? {};
 		this.rpc.notify('initialized', {});
 		this.#ready = true;
 		this.#emitStatus();
 		return this.capabilities;
+	}
+
+	/** Whether the server works with several workspace folders at once (else it only knows `rootUri`). */
+	get takesFolders(): boolean {
+		return !!this.capabilities.workspace?.workspaceFolders?.supported;
+	}
+
+	/** Whether the server takes `workspace/didChangeWorkspaceFolders` (else it must restart to see new folders). */
+	get takesFolderChanges(): boolean {
+		return !!this.capabilities.workspace?.workspaceFolders?.changeNotifications;
+	}
+
+	/** Tells the server the workspace folders are now `next`; false when nothing changed. */
+	changeWorkspaceFolders(next: LspFolder[]): boolean {
+		const event = folderChanges(this.#folders, next);
+		this.#folders = next;
+		if (!event.added.length && !event.removed.length) return false;
+		if (this.#ready) this.rpc.notify('workspace/didChangeWorkspaceFolders', { event });
+		return true;
 	}
 
 	/** The server process ended (crash, kill, or after `exit`). */
@@ -406,11 +491,189 @@ export class LanguageClient {
 		return this.rpc.request<TextEdit[] | null>('textDocument/rangeFormatting', { textDocument: { uri }, range, options }, token);
 	}
 
+	onTypeFormatting(uri: string, position: Position, ch: string, options: FormattingOptions, token?: Cancellation) {
+		if (!this.capabilities.documentOnTypeFormattingProvider) return Promise.resolve(null);
+		return this.rpc.request<TextEdit[] | null>('textDocument/onTypeFormatting', { textDocument: { uri }, position, ch, options }, token);
+	}
+
+	// --- Go to declaration / type definition / implementation ------------------------------------
+
+	#locations(method: string, cap: unknown, uri: string, position: Position, token?: Cancellation) {
+		if (!cap) return Promise.resolve(null);
+		return this.rpc.request<Location | Location[] | LocationLink[] | null>(method, { textDocument: { uri }, position }, token);
+	}
+
+	declaration(uri: string, position: Position, token?: Cancellation) {
+		return this.#locations('textDocument/declaration', this.capabilities.declarationProvider, uri, position, token);
+	}
+
+	typeDefinition(uri: string, position: Position, token?: Cancellation) {
+		return this.#locations('textDocument/typeDefinition', this.capabilities.typeDefinitionProvider, uri, position, token);
+	}
+
+	implementation(uri: string, position: Position, token?: Cancellation) {
+		return this.#locations('textDocument/implementation', this.capabilities.implementationProvider, uri, position, token);
+	}
+
+	// --- Inlay hints, semantic tokens, folding, code lens ----------------------------------------
+
+	inlayHints(uri: string, range: Range, token?: Cancellation) {
+		if (!this.capabilities.inlayHintProvider) return Promise.resolve(null);
+		return this.rpc.request<InlayHint[] | null>('textDocument/inlayHint', { textDocument: { uri }, range }, token);
+	}
+
+	get canResolveInlayHint() {
+		const c = this.capabilities.inlayHintProvider;
+		return typeof c === 'object' && c !== null && !!c.resolveProvider;
+	}
+
+	resolveInlayHint(hint: InlayHint, token?: Cancellation) {
+		return this.rpc.request<InlayHint>('inlayHint/resolve', hint, token);
+	}
+
+	/** The server's semantic token legend, or null without semantic tokens. */
+	get semanticTokensLegend(): SemanticTokensLegend | null {
+		return this.capabilities.semanticTokensProvider?.legend ?? null;
+	}
+
+	get semanticTokensFull(): boolean {
+		return !!this.capabilities.semanticTokensProvider?.full;
+	}
+
+	get semanticTokensDelta(): boolean {
+		const full = this.capabilities.semanticTokensProvider?.full;
+		return typeof full === 'object' && full !== null && !!full.delta;
+	}
+
+	get semanticTokensRange(): boolean {
+		return !!this.capabilities.semanticTokensProvider?.range;
+	}
+
+	semanticTokens(uri: string, token?: Cancellation) {
+		if (!this.semanticTokensFull) return Promise.resolve(null);
+		return this.rpc.request<SemanticTokens | null>('textDocument/semanticTokens/full', { textDocument: { uri } }, token);
+	}
+
+	/** `full/delta` against `previousResultId`; the answer may be a whole new token set. */
+	semanticTokensEdits(uri: string, previousResultId: string, token?: Cancellation) {
+		if (!this.semanticTokensDelta) return Promise.resolve(null);
+		return this.rpc.request<SemanticTokens | SemanticTokensDelta | null>('textDocument/semanticTokens/full/delta', { textDocument: { uri }, previousResultId }, token);
+	}
+
+	semanticTokensInRange(uri: string, range: Range, token?: Cancellation) {
+		if (!this.semanticTokensRange) return Promise.resolve(null);
+		return this.rpc.request<SemanticTokens | null>('textDocument/semanticTokens/range', { textDocument: { uri }, range }, token);
+	}
+
+	foldingRanges(uri: string, token?: Cancellation) {
+		if (!this.capabilities.foldingRangeProvider) return Promise.resolve(null);
+		return this.rpc.request<FoldingRange[] | null>('textDocument/foldingRange', { textDocument: { uri } }, token);
+	}
+
+	codeLenses(uri: string, token?: Cancellation) {
+		if (!this.capabilities.codeLensProvider) return Promise.resolve(null);
+		return this.rpc.request<CodeLens[] | null>('textDocument/codeLens', { textDocument: { uri } }, token);
+	}
+
+	get canResolveCodeLens() {
+		return !!this.capabilities.codeLensProvider?.resolveProvider;
+	}
+
+	resolveCodeLens(lens: CodeLens, token?: Cancellation) {
+		return this.rpc.request<CodeLens>('codeLens/resolve', lens, token);
+	}
+
+	// --- Call and type hierarchy -----------------------------------------------------------------
+
+	prepareCallHierarchy(uri: string, position: Position, token?: Cancellation) {
+		if (!this.capabilities.callHierarchyProvider) return Promise.resolve(null);
+		return this.rpc.request<CallHierarchyItem[] | null>('textDocument/prepareCallHierarchy', { textDocument: { uri }, position }, token);
+	}
+
+	incomingCalls(item: CallHierarchyItem, token?: Cancellation) {
+		return this.rpc.request<CallHierarchyIncomingCall[] | null>('callHierarchy/incomingCalls', { item }, token);
+	}
+
+	outgoingCalls(item: CallHierarchyItem, token?: Cancellation) {
+		return this.rpc.request<CallHierarchyOutgoingCall[] | null>('callHierarchy/outgoingCalls', { item }, token);
+	}
+
+	prepareTypeHierarchy(uri: string, position: Position, token?: Cancellation) {
+		if (!this.capabilities.typeHierarchyProvider) return Promise.resolve(null);
+		return this.rpc.request<TypeHierarchyItem[] | null>('textDocument/prepareTypeHierarchy', { textDocument: { uri }, position }, token);
+	}
+
+	supertypes(item: TypeHierarchyItem, token?: Cancellation) {
+		return this.rpc.request<TypeHierarchyItem[] | null>('typeHierarchy/supertypes', { item }, token);
+	}
+
+	subtypes(item: TypeHierarchyItem, token?: Cancellation) {
+		return this.rpc.request<TypeHierarchyItem[] | null>('typeHierarchy/subtypes', { item }, token);
+	}
+
+	// --- Linked editing, selection ranges, links, colors -----------------------------------------
+
+	linkedEditingRange(uri: string, position: Position, token?: Cancellation) {
+		if (!this.capabilities.linkedEditingRangeProvider) return Promise.resolve(null);
+		return this.rpc.request<LinkedEditingRanges | null>('textDocument/linkedEditingRange', { textDocument: { uri }, position }, token);
+	}
+
+	selectionRanges(uri: string, positions: Position[], token?: Cancellation) {
+		if (!this.capabilities.selectionRangeProvider) return Promise.resolve(null);
+		return this.rpc.request<SelectionRange[] | null>('textDocument/selectionRange', { textDocument: { uri }, positions }, token);
+	}
+
+	documentLinks(uri: string, token?: Cancellation) {
+		if (!this.capabilities.documentLinkProvider) return Promise.resolve(null);
+		return this.rpc.request<DocumentLink[] | null>('textDocument/documentLink', { textDocument: { uri } }, token);
+	}
+
+	get canResolveDocumentLink() {
+		return !!this.capabilities.documentLinkProvider?.resolveProvider;
+	}
+
+	resolveDocumentLink(link: DocumentLink, token?: Cancellation) {
+		return this.rpc.request<DocumentLink>('documentLink/resolve', link, token);
+	}
+
+	documentColors(uri: string, token?: Cancellation) {
+		if (!this.capabilities.colorProvider) return Promise.resolve(null);
+		return this.rpc.request<ColorInformation[] | null>('textDocument/documentColor', { textDocument: { uri } }, token);
+	}
+
+	colorPresentations(uri: string, color: Color, range: Range, token?: Cancellation) {
+		if (!this.capabilities.colorProvider) return Promise.resolve(null);
+		return this.rpc.request<ColorPresentation[] | null>('textDocument/colorPresentation', { textDocument: { uri }, color, range }, token);
+	}
+
+	/** Pushes settings (VS Code's language clients send their `synchronize.configurationSection`). */
+	didChangeConfiguration(settings: unknown) {
+		if (this.#ready) this.rpc.notify('workspace/didChangeConfiguration', { settings });
+	}
+
 	/** Runs a server command; false when the server does not offer it. */
 	async executeCommand(command: Command): Promise<boolean> {
 		if (!this.capabilities.executeCommandProvider?.commands?.includes(command.command)) return false;
 		await this.rpc.request('workspace/executeCommand', { command: command.command, arguments: command.arguments });
 		return true;
+	}
+
+	/** A server command's result (`workspace/executeCommand`), e.g. typescript-language-server's
+	 * Go to Source Definition; rejects when the server does not know it. */
+	executeCommandResult<T = unknown>(command: string, args: unknown[]): Promise<T | null> {
+		return this.rpc.request<T | null>('workspace/executeCommand', { command, arguments: args });
+	}
+
+	/** Whether the server wants `workspace/willRenameFiles` (edits to make before files move). */
+	get takesWillRename(): boolean {
+		return !!this.capabilities.workspace?.fileOperations?.willRename;
+	}
+	willRenameFiles(files: { oldUri: string; newUri: string }[]): Promise<WorkspaceEdit | null> {
+		return this.rpc.request<WorkspaceEdit | null>('workspace/willRenameFiles', { files });
+	}
+	/** Files were renamed or moved (`workspace/didRenameFiles`), when the server asks for it. */
+	didRenameFiles(files: { oldUri: string; newUri: string }[]) {
+		if (this.capabilities.workspace?.fileOperations?.didRename && files.length) this.rpc.notify('workspace/didRenameFiles', { files });
 	}
 
 	/** Files changed on disk behind the server's back (Search: Replace, rename into unopened files). */

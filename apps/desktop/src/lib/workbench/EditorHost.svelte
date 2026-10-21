@@ -7,8 +7,11 @@
 	import type * as Monaco from 'monaco-editor';
 	import { clientLog } from '#lib/client-log.ts';
 	import { editors } from './editors.svelte';
+	import { installEditorSignals } from './accessibilitySignals.svelte';
 	import { getEntry, modelEntry, saveViewState, viewState } from './editorModels';
 	import { isReadonly } from './readonly';
+	import { isLocalHistoryKey } from '#lib/scm/localHistory.ts';
+	import { isOutputKey } from '#lib/output/output.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { workspace } from './workspace.svelte';
 	import { navigation } from './navigation.svelte';
@@ -16,6 +19,9 @@
 	import { isNonTextEditor } from '#lib/settings/resources.ts';
 	import { editorOptions, installEditorSettings } from '#lib/settings/apply.svelte.ts';
 	import { attachDebugEditor, type DebugDecorations } from '#lib/debug/editorDebug.ts';
+	import { attachTestingEditor, type TestingDecorations } from '#lib/testing/editorTesting.ts';
+	import { attachChatEditDecorations, type ChatEditDecorations } from '#lib/agent/chatEditDecorations.svelte.ts';
+	import { attachScmEditor, type ScmEditorDecorations } from '#lib/scm/scmEditor.svelte.ts';
 	import { indentLabel } from './textFiles';
 	import { textFiles } from './textFileService.svelte';
 	import { installEditorActions } from './editorActions.svelte';
@@ -31,20 +37,29 @@
 	let switching = false;
 	/** Breakpoint glyphs and the stopped line for the shown file. */
 	let debugDecorations = $state<DebugDecorations | undefined>();
+	/** Test run icons, failure messages and the failure peek for the shown file. */
+	let testingDecorations = $state<TestingDecorations | undefined>();
+	/** The agent chat's pending changes of the shown file, with Keep / Undo per change. */
+	let chatEditDecorations = $state<ChatEditDecorations | undefined>();
+	/** Quick diff, git blame and merge conflicts of the shown file. */
+	let scmDecorations = $state<ScmEditorDecorations | undefined>();
 
 	const path = $derived(editors.group(group)?.active ?? null);
 	const isActiveGroup = $derived(editors.activeGroupId === group);
 
 	onMount(() => {
 		let disposed = false;
-		import('#lib/editor/monaco.ts').then(async (m) => {
+		Promise.all([import('#lib/editor/monaco.ts'), import('#lib/editor/editorAttach.ts')]).then(async ([m, { attachEditorFeatures }]) => {
 			await m.setupTextMate();
 			if (disposed) return;
 			api = m;
 			installEditorSettings(m.monaco);
+			installEditorSignals(m.monaco);
+			void import('#lib/editor/formatterSelector.ts').then((f) => f.installFormatterSelector(m.monaco));
 			// The editor settings from the first paint; installEditorSettings keeps them live.
 			const ed = m.monaco.editor.create(host, { ...editorOptions(), theme: m.THEME_ID, automaticLayout: true });
 			installEditorActions(m.monaco, ed);
+			attachEditorFeatures(m.monaco, ed);
 			const { CursorChangeReason } = m.monaco.editor;
 			ed.onDidChangeCursorPosition((e) => {
 				if (editors.activeGroupId !== group) return;
@@ -57,7 +72,14 @@
 				if (editors.activeGroupId !== group) return;
 				const model = ed.getModel();
 				const sels = ed.getSelections() ?? [];
-				editors.selection = { chars: model ? sels.reduce((n, sel) => n + model.getValueLengthInRange(sel), 0) : 0, count: Math.max(1, sels.length) };
+				const primary = ed.getSelection();
+				// A selection ending at column 1 of a line does not take that line (VS Code's chat selection context).
+				const endLine = primary && primary.endColumn === 1 && primary.endLineNumber > primary.startLineNumber ? primary.endLineNumber - 1 : primary?.endLineNumber;
+				editors.selection = {
+					chars: model ? sels.reduce((n, sel) => n + model.getValueLengthInRange(sel), 0) : 0,
+					count: Math.max(1, sels.length),
+					...(primary && !primary.isEmpty() && endLine ? { range: { startLine: primary.startLineNumber, endLine } } : {})
+				};
 			});
 			// Indentation and line endings change from the status bar pickers and Monaco's own actions.
 			const reportModel = () => {
@@ -73,11 +95,17 @@
 			ed.onDidChangeModelContent((e) => e.eol && reportModel());
 			ed.onDidFocusEditorText(() => editors.activateGroup(group));
 			debugDecorations = attachDebugEditor(m.monaco, ed, () => shown);
+			testingDecorations = attachTestingEditor(m.monaco, ed, () => shown);
+			chatEditDecorations = attachChatEditDecorations(m.monaco, ed, () => shown);
+			scmDecorations = attachScmEditor(m.monaco, ed, () => shown);
 			editor = ed;
 			clientLog('info', `editor ready (group ${group})`);
 		});
 
 		const unregister = editors.registerHost(group, {
+			saveViewState: () => {
+				if (editor && shown) saveViewState(group, shown, editor.saveViewState());
+			},
 			gotoLine: (line, column = 1) => {
 				if (!editor) return;
 				editor.revealLineInCenter(line);
@@ -92,6 +120,15 @@
 				return nearestWord ? (model.getWordAtPosition(sel.getPosition())?.word ?? '') : '';
 			},
 			focus: () => editor?.focus(),
+			insertText: (text) => {
+				const sel = editor?.getSelection();
+				if (!editor?.getModel() || !sel || (api && editor.getOption(api.monaco.editor.EditorOption.readOnly))) return false;
+				editor.pushUndoStop();
+				editor.executeEdits('chat.insertAtCursor', [{ range: sel, text, forceMoveMarkers: true }]);
+				editor.pushUndoStop();
+				editor.focus();
+				return true;
+			},
 			peek: (line, column) => {
 				if (!editor) return;
 				const range = { startLineNumber: line, startColumn: column, endLineNumber: line, endColumn: column };
@@ -125,6 +162,9 @@
 			disposed = true;
 			unregister();
 			debugDecorations?.dispose();
+			testingDecorations?.dispose();
+			chatEditDecorations?.dispose();
+			scmDecorations?.dispose();
 			if (editor && shown) saveViewState(group, shown, editor.saveViewState());
 			// Models are shared and outlive this editor; only detach.
 			editor?.setModel(null);
@@ -161,7 +201,8 @@
 	$effect(() => {
 		const file = shown;
 		if (!editor || !file) return;
-		const readOnly = isReadonly(
+		// A local history entry (Show Contents) is always read-only, like VS Code's history file system.
+		const readOnly = isLocalHistoryKey(file) || isReadonly(
 			file,
 			`${workspace.root ?? ''}/${file}`,
 			{
@@ -171,13 +212,32 @@
 			},
 			getEntry(file)?.stat?.readonly ?? false
 		);
-		editor.updateOptions({ readOnly });
+		// An Output channel in an editor is never edited.
+		editor.updateOptions({ readOnly: readOnly || isOutputKey(file) });
 	});
 
 	// Breakpoints and the stopped line follow the breakpoint store, the session and the shown file.
 	$effect(() => {
 		void shown;
 		debugDecorations?.render();
+	});
+
+	// Test decorations follow the discovered tests, the results and the shown file.
+	$effect(() => {
+		void shown;
+		testingDecorations?.render();
+	});
+
+	// Chat edits follow the working sets, the file on disk and the shown file.
+	$effect(() => {
+		void shown;
+		chatEditDecorations?.render();
+	});
+
+	// Source Control follows git status, the settings and the shown file.
+	$effect(() => {
+		void shown;
+		scmDecorations?.render();
 	});
 
 	// The status bar follows the active group's editor.
@@ -278,6 +338,91 @@
 		background: transparent;
 		border: 1.5px dashed var(--vscode-debugIcon-breakpointForeground, #e51400);
 	}
+	/* A breakpoint using a feature the debugger lacks (VS Code's debug-breakpoint-unsupported). */
+	:global(.kg-bp-unsupported)::before {
+		background: linear-gradient(135deg, transparent 43%, var(--vscode-debugIcon-breakpointUnverifiedForeground, #848484) 43%, var(--vscode-debugIcon-breakpointUnverifiedForeground, #848484) 57%, transparent 57%);
+		border: 1.5px solid var(--vscode-debugIcon-breakpointUnverifiedForeground, #848484);
+	}
+	/* Test gutter icons (VS Code testing decorations): run, then the last result. */
+	:global(.kg-test) {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+	}
+	:global(.kg-test)::before {
+		content: '';
+		width: 0;
+		height: 0;
+		border-top: 5px solid transparent;
+		border-bottom: 5px solid transparent;
+		border-left: 8px solid var(--vscode-testing-runAction, #89d185);
+	}
+	:global(.kg-test-passed)::before {
+		width: 9px;
+		height: 5px;
+		border: solid var(--vscode-testing-iconPassed, #73c991);
+		border-width: 0 0 2px 2px;
+		transform: rotate(-45deg) translate(1px, -1px);
+	}
+	:global(.kg-test-failed)::before,
+	:global(.kg-test-errored)::before {
+		width: 10px;
+		height: 10px;
+		border: none;
+		border-radius: 50%;
+		background: radial-gradient(circle, var(--vscode-testing-iconFailed, #f14c4c) 60%, transparent 62%);
+	}
+	:global(.kg-test-skipped)::before {
+		width: 9px;
+		height: 2px;
+		border: none;
+		background: var(--vscode-testing-iconSkipped, #848484);
+	}
+	:global(.kg-test-running)::before {
+		width: 9px;
+		height: 9px;
+		border: 2px solid var(--vscode-testing-iconQueued, #cca700);
+		border-right-color: transparent;
+		border-radius: 50%;
+		animation: kg-test-spin 1s linear infinite;
+	}
+	@keyframes -global-kg-test-spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+	/* The failure peek (VS Code testing peek) and the message after a failing line. */
+	:global(.kg-test-message) {
+		color: var(--vscode-testing-message-error-decorationForeground, var(--vscode-errorForeground, #f14c4c));
+		margin-left: 12px;
+		font-style: italic;
+	}
+	:global(.kg-test-message-line) {
+		background: var(--vscode-testing-message-error-lineBackground, rgba(255, 0, 0, 0.1));
+	}
+	/* Test coverage (VS Code: coverage-deco-gutter / coverage-deco-inline). */
+	:global(.kg-cov-gutter) {
+		box-shadow: inset -3px 0 0 var(--kg-cov-color);
+	}
+	:global(.kg-cov-covered) {
+		--kg-cov-color: var(--vscode-testing-coveredGutterBackground, rgba(115, 201, 145, 0.6));
+	}
+	:global(.kg-cov-uncovered) {
+		--kg-cov-color: var(--vscode-testing-uncoveredGutterBackground, rgba(241, 76, 76, 0.7));
+	}
+	:global(.kg-cov-partial) {
+		--kg-cov-color: var(--vscode-testing-uncoveredBranchBackground, rgba(204, 167, 0, 0.7));
+	}
+	:global(.kg-cov-line-covered) {
+		background: var(--vscode-testing-coveredBackground, rgba(115, 201, 145, 0.1));
+	}
+	:global(.kg-cov-line-uncovered) {
+		background: var(--vscode-testing-uncoveredBackground, rgba(241, 76, 76, 0.12));
+	}
+	:global(.kg-cov-line-partial) {
+		background: var(--vscode-testing-uncoveredBranchBackground, rgba(204, 167, 0, 0.1));
+	}
 	/* debug.inlineValues */
 	:global(.kg-debug-inline-value) {
 		color: var(--vscode-editor-inlineValuesForeground, rgba(255, 255, 255, 0.5));
@@ -301,5 +446,86 @@
 	}
 	:global(.kg-debug-line-focused) {
 		background: var(--vscode-editor-focusedStackFrameHighlightBackground, rgba(122, 189, 122, 0.3));
+	}
+	/* Agent chat edits (VS Code chatEditingEditorController / chatEditorOverlay CSS). */
+	:global(.kg-ce-added) {
+		background: var(--vscode-diffEditor-insertedLineBackground, rgba(155, 185, 85, 0.2));
+	}
+	:global(.kg-ce-added-gutter) {
+		border-left: 3px solid var(--vscode-editorGutter-addedBackground, #2ea043);
+	}
+	:global(.kg-ce-removed) {
+		white-space: pre;
+		overflow: hidden;
+		opacity: 0.85;
+		background: var(--vscode-diffEditor-removedLineBackground, rgba(255, 0, 0, 0.2));
+	}
+	:global(.kg-ce-removed-margin) {
+		border-left: 3px solid var(--vscode-editorGutter-deletedBackground, #f85149);
+		background: var(--vscode-diffEditor-removedLineBackground, rgba(255, 0, 0, 0.2));
+	}
+	:global(.kg-ce-widgets) {
+		position: absolute;
+		top: 0;
+		left: 0;
+		height: 0;
+		overflow: visible;
+		pointer-events: none;
+	}
+	:global(.kg-ce-hunk-bar),
+	:global(.kg-ce-overlay) {
+		position: absolute;
+		display: flex;
+		align-items: center;
+		gap: 2px;
+		border: 1px solid var(--vscode-widget-border, transparent);
+		color: var(--vscode-foreground);
+		background: var(--vscode-editorWidget-background);
+		box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+		pointer-events: auto;
+		white-space: nowrap;
+	}
+	:global(.kg-ce-hunk-bar) {
+		height: 20px;
+		padding: 0 2px;
+		border-radius: 4px;
+		font-size: 11px;
+	}
+	:global(.kg-ce-overlay) {
+		height: 28px;
+		padding: 0 4px;
+		border-radius: 6px;
+		font-size: 12px;
+	}
+	:global(.kg-ce-hunk-bar button),
+	:global(.kg-ce-overlay button) {
+		padding: 0 6px;
+		height: calc(100% - 6px);
+		border-radius: 3px;
+		cursor: pointer;
+	}
+	:global(.kg-ce-hunk-bar button:hover),
+	:global(.kg-ce-overlay button:hover) {
+		background: var(--vscode-toolbar-hoverBackground);
+	}
+	:global(.kg-ce-overlay .kg-ce-primary) {
+		color: var(--vscode-button-foreground);
+		background: var(--vscode-button-background);
+	}
+	:global(.kg-ce-overlay .kg-ce-primary:hover) {
+		background: var(--vscode-button-hoverBackground);
+	}
+	:global(.kg-ce-icon) {
+		min-width: 22px;
+	}
+	:global(.kg-ce-count) {
+		padding: 0 6px;
+		color: var(--vscode-descriptionForeground);
+	}
+	:global(.kg-ce-sep) {
+		width: 1px;
+		height: 16px;
+		margin: 0 2px;
+		background: var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
 	}
 </style>

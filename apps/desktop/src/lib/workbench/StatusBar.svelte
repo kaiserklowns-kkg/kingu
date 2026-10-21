@@ -2,6 +2,7 @@
 	import { debug } from '#lib/debug/debug.svelte.ts';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 	import { lsp } from '#lib/lsp/lsp.svelte.ts';
+	import { output } from '#lib/output/output.svelte.ts';
 	import TeamStatus from '#lib/team/TeamStatus.svelte';
 	import Icon from './Icon.svelte';
 	import { editors } from './editors.svelte';
@@ -12,6 +13,7 @@
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 	import { scm } from './scm.svelte';
 	import { statusEntries } from './statusEntries.svelte';
+	import { workspaceTrust } from './workspaceTrust.svelte';
 	import { commands } from './commands.svelte';
 	import { syncItem } from './scmRemote';
 	import { textFiles } from './textFileService.svelte';
@@ -21,14 +23,26 @@
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 	import StatusResources from './StatusResources.svelte';
 	import NotificationsBell from './NotificationsBell.svelte';
+	import { bellPlacement } from './workbenchOptions';
 	import UsageStatus from './UsageStatus.svelte';
+	import LocalAiStatus from '#lib/localAi/LocalAiStatus.svelte';
 	import { usage } from './usage.svelte';
 	import { PROVIDER_NAME } from './usage';
 	import { tick } from 'svelte';
 	import PopupMenu, { menuItem, menuSeparator } from './PopupMenu.svelte';
 	import { floating } from './floating.svelte';
+	import { gitBlame, openCommitChanges } from '#lib/scm/blame.svelte.ts';
+	import { isRepoFile } from '#lib/scm/scmViews.svelte.ts';
+	import { editorKind, showsEditorStatus } from './editorKind.ts';
+	import { fileOf } from './scm.ts';
 	import FloatingToggle from './FloatingToggle.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { gitQueue } from './gitQueue.svelte';
+	import { t } from '#lib/i18n/index.ts';
+	import { editorModes } from '#lib/editor/editingCommands.svelte.ts';
+	import { imageZoom } from './imageZoom.svelte';
+
+	$effect(() => gitQueue.install());
 
 	const languageNames: Record<string, string> = {
 		typescript: 'TypeScript',
@@ -58,11 +72,16 @@
 	// VS Code's entries on the left (branch, sync, problems) and the editor's on the right; Orca's
 	// usage, resources and ports in between. Branch and changes follow the selected worktree in Agents.
 	const worktree = $derived(appMode.isAgents && adeLayout.key ? adeLayout.key : null);
-	const branch = $derived(worktree ? adeTasks.branchOf(worktree) : status.branch);
-	const repo = $derived(worktree ? null : scm.repo);
+	// The workbench's branch is the active repository's (the active editor's in a multi-root workspace).
+	const active = $derived(worktree ? null : scm.active);
+	const repo = $derived(active?.repo ?? null);
+	const branch = $derived(worktree ? adeTasks.branchOf(worktree) : repo ? (repo.branch ?? repo.head) : status.branch);
 	const dirty = $derived(!!repo && repo.entries.length > 0);
 	const sync = $derived(repo ? syncItem(repo) : null);
-	const editorItems = $derived(!appMode.isAgents && editors.active);
+	// The editor items follow the active editor: none for editors without a text model, and the
+	// blame only for a workspace file (VS Code hides both when the editor cannot provide them).
+	const editorItems = $derived(!appMode.isAgents && showsEditorStatus(editors.active));
+	const blameItem = $derived(editorItems && editorKind(editors.active) === 'file' && isRepoFile(editors.active ? fileOf(editors.active) : null));
 	const languageName = $derived(editors.languages().find((l) => l.id === editors.language)?.name ?? languageNames[editors.language] ?? editors.language);
 	const counts = $derived(lsp.counts);
 	const problemsTitle = $derived(
@@ -122,6 +141,8 @@
 		{ id: 'status.editor.encoding', label: 'Editor Encoding' },
 		{ id: 'status.editor.eol', label: 'Editor End of Line' },
 		{ id: 'status.editor.mode', label: 'Editor Language' },
+		{ id: 'status.imagePreview.zoom', label: 'Image Zoom' },
+		{ id: 'status.kingu.localAi', label: 'Local AI' },
 		{ id: 'status.notifications', label: 'Notifications' }
 	];
 	const show = (id: string) => !statusEntries.hidden.has(id);
@@ -140,6 +161,9 @@
 		const shown = settings.get<boolean>(id) !== false;
 		void settings.set(id, shown ? false : undefined, 'user');
 	}
+
+	// workbench.notifications.position / showInTitleBar: which side of the bar has the bell (top-right: the title bar).
+	const bell = $derived(bellPlacement(settings.get<string>('workbench.notifications.position'), settings.get<boolean>('workbench.notifications.showInTitleBar')));
 </script>
 
 <!-- 22px, items 22px line-height (VS Code statusbarPart). -->
@@ -154,10 +178,18 @@
 			: 'bg-(--vscode-statusBar-background) text-(--vscode-statusBar-foreground)'
 	]}
 >
+	<!-- VS Code's Restricted Mode item: the window is not trusted; opens the Workspace Trust editor. -->
+	{#if workspaceTrust.restricted}
+		<button class={[ITEM, 'bg-(--vscode-statusBarItem-prominentBackground,rgba(0,0,0,0.5)) text-(--vscode-statusBarItem-prominentForeground,inherit)']} title={t('trust.status.tooltip')} onclick={() => workspaceTrust.manage()}>
+			<Icon name="shield" size={14} />{t('trust.status.restricted')}
+		</button>
+	{/if}
+	<!-- workbench.notifications.position bottom-left: the bell is the left-most item. -->
+	{#if bell === 'statusLeft' && show('status.notifications')}<NotificationsBell />{/if}
 	{#if branch && show('status.scm')}
 		{#if repo}
 			<!-- VS Code's branch item (Checkout to…) and its sync item; a running git operation can be cancelled. -->
-			<button class={ITEM} title="{branch}{dirty ? '*' : ''}{repo.detached ? ' (detached HEAD)' : ''}, Checkout Branch/Tag..." onclick={() => commands.run('git.checkout')}>
+			<button class={ITEM} title="{scm.repositories.length > 1 && active ? `${active.label.name} (Git) - ` : ''}{branch}{dirty ? '*' : ''}{repo.detached ? ' (detached HEAD)' : ''}, Checkout Branch/Tag..." onclick={() => (active ? active.checkout() : commands.run('git.checkout'))}>
 				<Icon name="branch" size={14} />{branch}{dirty ? '*' : ''}
 			</button>
 			<!-- git.showProgress: the running operation; git.enableStatusBarSync: the sync item. -->
@@ -166,13 +198,19 @@
 					<span class="inline-block size-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent"></span>{scm.op}
 				</button>
 			{:else if sync && !scm.op && settings.get<boolean>('git.enableStatusBarSync')}
-				<button class={ITEM} title={sync.title} onclick={() => commands.run(sync.command)}>
+				<button class={ITEM} title={sync.title} onclick={() => (active ? active.run(sync.command) : commands.run(sync.command))}>
 					<Icon name={sync.command === 'git.publish' ? 'publish' : 'sync'} size={14} />{#if sync.label}<span class="tabular-nums">{sync.label}</span>{/if}
 				</button>
 			{/if}
 		{:else}
 			<span class="flex h-full items-center gap-1 px-2" title="branch ของ worktree ที่เลือก"><Icon name="branch" size={14} />{branch}</span>
 		{/if}
+	{/if}
+	{#if gitQueue.first}
+		<!-- A git operation (IDE or ADE) waits for another one in the same repository (Rust's git_queue). -->
+		<span class="flex h-full items-center gap-1 px-2" title={t('workbench.scm.queueWaitingTitle', { running: gitQueue.first.running, count: gitQueue.first.count })}>
+			<span class="inline-block size-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent"></span>{t('workbench.scm.queueWaiting', { op: gitQueue.first.op, running: gitQueue.first.running })}
+		</span>
 	{/if}
 	{#if show('status.problems')}
 		<button class={ITEM} title={problemsTitle} onclick={toggleProblems}>
@@ -212,14 +250,23 @@
 	<div class="flex-1"></div>
 	<TeamStatus />
 	<StatusResources />
+	{#if gitBlame.statusEnabled && gitBlame.statusText && blameItem}
+		<!-- git.blame.statusBarItem.enabled: the cursor line's commit (VS Code's git.blame item). -->
+		<button class={[ITEM, 'max-w-80 min-w-0']} title={gitBlame.statusTitle} onclick={() => gitBlame.statusCommit && openCommitChanges(gitBlame.statusCommit.hash, gitBlame.statusCommit.path)}>
+			<Icon name="commit" size={14} /><span class="truncate">{gitBlame.statusText}</span>
+		</button>
+	{/if}
 	{#if editorItems && languageStatus}
 		<button
 			class={['h-full max-w-80 truncate px-2 hover:bg-(--vscode-toolbar-hoverBackground)', languageStatus.state === 'not-installed' || languageStatus.state === 'error' ? 'text-(--vscode-editorWarning-foreground)' : '']}
 			title={languageStatus.tooltip}
-			onclick={() => layout.showPanel('output')}>{languageStatus.text}</button
+			onclick={() => output.show(output.has(languageStatus.channel) ? languageStatus.channel : undefined)}>{languageStatus.text}</button
 		>
 	{/if}
 	{#if editorItems}
+		<!-- VS Code's editor modes: overtype (OVR) and Column Selection, each a click away from off. -->
+		{#if editorModes.overtype}<button class={ITEM} title={t('editing.status.overtypeTooltip')} onclick={() => commands.run('editor.action.toggleOvertypeInsertMode')}>{t('editing.status.overtype')}</button>{/if}
+		{#if settings.get<boolean>('editor.columnSelection')}<button class={ITEM} title={t('editing.status.columnSelectionTooltip')} onclick={() => commands.run('editor.action.toggleColumnSelection')}>{t('editing.status.columnSelection')}</button>{/if}
 		{#if show('status.editor.selection')}<button class={ITEM} title="Go to Line/Column" onclick={() => quick.show(':')}>{position}</button>{/if}
 		<!-- VS Code's editor status items: each opens its picker command (editorStatus.ts). -->
 		{#if show('status.editor.indentation')}<button class={ITEM} title="Select Indentation" onclick={() => commands.run('changeEditorIndentation')}>{editors.indent}</button>{/if}
@@ -227,9 +274,12 @@
 		{#if show('status.editor.eol')}<button class={ITEM} title="Select End of Line Sequence" onclick={() => commands.run('workbench.action.editor.changeEOL')}>{editors.eol}</button>{/if}
 		{#if show('status.editor.mode')}<button class={ITEM} title="Select Language Mode" onclick={() => commands.run('workbench.action.editor.changeLanguageMode')}>{languageName}</button>{/if}
 	{/if}
+	<!-- The image preview's zoom (VS Code's status.imagePreview.zoom): "Whole Image" or the percentage, click to pick. -->
+	{#if imageZoom.label && show('status.imagePreview.zoom')}<button class={ITEM} title="Image Zoom" onclick={() => imageZoom.pick()}>{imageZoom.label}</button>{/if}
+	{#if show('status.kingu.localAi')}<LocalAiStatus />{/if}
 	<!-- VS Code keeps the notification bell at the far right. -->
 	{#if floating.enabled && floating.location === 'status-bar'}<FloatingToggle variant="status-bar" />{/if}
-	{#if show('status.notifications')}<NotificationsBell />{/if}
+	{#if bell === 'statusRight' && show('status.notifications')}<NotificationsBell />{/if}
 </footer>
 
 {#if menu}

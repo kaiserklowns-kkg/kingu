@@ -1,0 +1,10 @@
+{"timestamp":"2026-10-16T10:00:00.000Z","type":"session_meta","payload":{"id":"7f3a9c1e-2222-4b8d-8e0f-000000000002","timestamp":"2026-10-16T10:00:00.000Z","cwd":"/w/api","originator":"codex_cli_rs","cli_version":"0.50.0","git":{"branch":"feat/rate-limit","commit_hash":"abc"}}}
+{"timestamp":"2026-10-16T10:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>/w/api</cwd>\n</environment_context>"}]}}
+{"timestamp":"2026-10-16T10:00:02.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Add rate limiting to the upload endpoint"}]}}
+{"timestamp":"2026-10-16T10:00:02.500Z","type":"turn_context","payload":{"cwd":"/w/api","model":"gpt-5-codex","approval_policy":"on-request"}}
+{"timestamp":"2026-10-16T10:00:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"Add rate limiting to the upload endpoint"}}
+{"timestamp":"2026-10-16T10:00:05.000Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":[\"rg\",\"upload\"]}","call_id":"c1"}}
+{"timestamp":"2026-10-16T10:00:06.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":12000,"cached_input_tokens":8000,"output_tokens":600,"reasoning_output_tokens":200,"total_tokens":12600},"last_token_usage":{"input_tokens":12000,"cached_input_tokens":8000,"output_tokens":600}}}}
+{"timestamp":"2026-10-16T10:00:09.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Added a token bucket limiter to POST /upload."}]}}
+{"timestamp":"2026-10-16T10:00:10.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":20000,"cached_input_tokens":14000,"output_tokens":1000,"reasoning_output_tokens":300,"total_tokens":21000}}}}
+{"timestamp":"2026-10-16T10:00:11.000Z","type":"event_msg","payload":{"type":"token_count","info":null}}

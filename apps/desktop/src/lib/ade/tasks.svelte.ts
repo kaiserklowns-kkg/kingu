@@ -9,7 +9,9 @@ import { team } from '#lib/team/team.svelte.ts';
 import { runKey, syncKey, toTeamRun, toTeamTask } from './teamSync.ts';
 import { untrack } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
+import { listenWindow } from '#lib/workbench/windowEvents.ts';
 import { ask, message } from '#lib/workbench/messageBox.ts';
+import { removalGate } from './agentPresence';
 import { clientLog } from '#lib/client-log.ts';
 import { agents } from '#lib/agent/agents.svelte.ts';
 import type { Decision, WorktreeInfo } from '#lib/agent/events.ts';
@@ -30,9 +32,12 @@ import {
 	groupTasks,
 	newTask,
 	nextNeedingAttention,
+	patchChange,
 	patchTask,
 	pruneAccepted,
 	removeTask,
+	taskChanges,
+	type TaskChange,
 	renamedTitle,
 	runSummary,
 	toTaskRuntime,
@@ -47,22 +52,30 @@ import {
 	type TaskView
 } from './model';
 import { runtime } from './runtime.svelte';
+import { tabsOfTask, touchedTasks } from './agentGuard';
+import { confirmAgentIdle } from './agentGuard.svelte';
 import { adeLayout } from './adeLayout.svelte';
 import { agentCommand, cliAgent, cliOf, launchOptions, withLaunchOptions, type RunMode } from './agentCli';
+import { noDaemonProgram, withNoDaemon } from '#lib/ade/codexServer.ts';
 import { profileOf, programOf } from '#lib/ade/agentProfiles.ts';
 import { chooseAgentCli } from '#lib/ade/agentPicker.ts';
 import { composeMessage, promptWithAttachments, type Attachment } from '#lib/agent/attachments.ts';
 import { cliSessions } from './cliSessions.svelte';
+import { projects } from './projects.svelte';
+import { projectBadge, strayRuns } from './projects';
 import { mcpServers, skillPlugins } from './mcp';
 import { prStatuses } from './prStatus.svelte';
 import { quickOpenWorktree } from './quickOpen.svelte.ts';
 import { diffNotes } from './diffNotes.svelte.ts';
 import { pruneAcceptedHunks, sameMarks } from './hunkReview.ts';
 import { adeDialogs } from './dialogs.svelte.ts';
+import { commentOnLink } from './trackerApi.ts';
+import { issueBranchLeaf } from './issueBranch.ts';
 import { prefillPr, prFormProblem, type Commit, type PrForm } from './prForm.ts';
-import { isLinear, issueLink, issuePrompt, issueRef, issueSlug, issueTaskTitle, prBody, prComment, taskForIssue, type Issue, type IssueDetail } from './issues.ts';
+import { isFolderGithub, isLinear, issueLink, issuePrompt, issueRef, issueSlug, issueTaskTitle, prBody, prComment, taskForIssue, type Issue, type IssueDetail } from './issues.ts';
 import { linearLink, linearPrompt, linearSlug, linearTaskTitle, taskForLinearIssue, type LinearIssue, type LinearIssueDetail } from './linear.ts';
-import { brokenChecks, MERGE_LABEL, type MergeMethod } from './prChecks.ts';
+import { brokenChecks, methodLabel, type MergeMethod } from './prChecks.ts';
+import { forgeFor, forgeOf, ft } from './forge.ts';
 import { buildCommentsPrompt, buildFixChecksPrompt, type CheckLog } from './prPrompts.ts';
 import type { ReviewThread } from './prComments.ts';
 
@@ -88,6 +101,13 @@ import {
 } from './worktreeSettings.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
+import { aiTextEnabled } from './aiText.svelte.ts';
+import type { BranchRef } from '#lib/workbench/scmRemote.ts';
+import { branchChoices, branchNamePrompt, branchSlug, branchTitle, looksLikePr, prTitle, type PrHead, type TaskSource } from './worktreeSource.ts';
+import { canResumeWith, handOffPrompt, withSession, type SessionRef } from './sessionHistory.ts';
+import { isStackedBase, withModel } from './attempts.ts';
+import { workflowLabel } from './workflow.ts';
+import { isRustError } from '#lib/i18n/rustErrors.ts';
 
 const scriptTitle = (kind: ScriptKind): string =>
 	({
@@ -107,6 +127,12 @@ class AdeTasks {
 	branches = $state<string[]>([]);
 	gh = $state<GhStatus | null>(null);
 	loaded = $state(false);
+	/**
+	 * The folder whose tasks.json and worktrees were last read without an error. `loaded` is also
+	 * set after a failed read (with an empty list); only this says the list can be trusted to end
+	 * the terminals and agent CLIs of tasks that are gone.
+	 */
+	loadedRoot = $state<string | null>(null);
 	busy = $state<Record<string, string>>({});
 	/** Ticks every 30s so "time ago" labels move. */
 	now = $state(Date.now());
@@ -123,24 +149,29 @@ class AdeTasks {
 	attentionCount = $derived(this.groups.attention.length);
 	/** Tasks of the open folder that need a review (or failed); permission prompts are counted by `agents`. */
 	reviewCount = $derived(this.groups.attention.filter((v) => v.status !== 'waiting').length);
-	/** The title-bar "รอคุณ" badge: pending permission requests (every folder) + tasks to review. */
-	badgeCount = $derived(agents.pendingCount + this.reviewCount);
 	/**
-	 * Every agent session for the title bar's agents status: this folder's tasks, plus runs started
-	 * in other folders (they can still need input or be working).
+	 * The title-bar "รอคุณ" badge: pending permission requests (every folder) + tasks to review,
+	 * with the other added projects' CLI prompts and reviews (projects.ts projectBadge).
+	 */
+	badgeCount = $derived(agents.pendingCount + this.reviewCount + projectBadge(projects.all));
+	/**
+	 * Every agent session for the title bar's agents status: this folder's tasks, the other added
+	 * projects' tasks (agent-host runs and CLIs alike), plus runs started in folders that are not
+	 * added (they can still need input or be working).
 	 */
 	sessionStates: (SessionState & { slug: string })[] = $derived.by(() => {
 		const here = this.views.map((v) => ({ slug: v.meta.slug, ...this.stateOf(v) }));
-		const others = agents.list
-			.filter((r) => r.root !== workspace.root)
-			.map((r) => ({ slug: r.slug, status: toTaskRuntime(r).status, pending: r.pending.length }));
-		return [...here, ...others];
+		const projectTasks = projects.all.map(({ view }) => ({ slug: view.meta.slug, ...this.stateOf(view) }));
+		const others = strayRuns(agents.list, workspace.root, projects.added).map((r) => ({ slug: r.slug, status: toTaskRuntime(r).status, pending: r.pending.length }));
+		return [...here, ...projectTasks, ...others];
 	});
 	/** Needs input / in progress / unread, for the agents status widget and the session pill. */
 	counts = $derived(countSessions(this.sessionStates));
 
 	#saving: Promise<void> = Promise.resolve();
 	#root: string | null = null;
+	/** Tasks whose worktree git is removing now (Orca's "removing" row). */
+	#removing = new Set<string>();
 
 	/** A task as the agents status sees it (unread = finished after it was last viewed). */
 	stateOf(v: TaskView): SessionState {
@@ -181,6 +212,7 @@ class AdeTasks {
 		this.worktrees = [];
 		this.listed = [];
 		this.loaded = false;
+		this.loadedRoot = null;
 		if (!root) return;
 		try {
 			const [tasks, worktrees, branches] = await Promise.all([
@@ -196,12 +228,15 @@ class AdeTasks {
 			const adopted = adoptOrphans(tasks, this.worktrees.map((w) => w.slug!), base, Date.now());
 			this.list = adopted;
 			if (adopted !== tasks) await this.#save(adopted);
+			if (this.#root === root) this.loadedRoot = root;
 		} catch (e) {
 			notifications.error(t('adeTasks.tasks.loadFailed', { error: String(e) }));
 			clientLog('error', `tasks_load: ${e}`);
 		}
 		this.loaded = true;
 		await this.refreshStats();
+		// Tasks whose first-work branch name was still coming when Kingu closed.
+		for (const t of this.list) if (t.auto_name) void this.autoNameBranch(t.slug);
 	}
 
 	async refreshBranches() {
@@ -231,16 +266,37 @@ class AdeTasks {
 		}
 	}
 
-	#save(next: TaskMeta[]): Promise<void> {
-		this.list = next;
-		const snapshot = $state.snapshot(next) as TaskMeta[];
-		this.#saving = this.#saving.then(() =>
-			invoke<void>('tasks_save', { tasks: snapshot }).catch((e) => {
+	/** Writes of ours still queued; the stored list comes back only when the last one lands. */
+	#pending = 0;
+
+	/**
+	 * Sends `changes` (not the whole list): Rust applies them to tasks.json as it is on disk under
+	 * one lock per file, so another window's (or a later Kingu's) edits to other tasks and fields
+	 * are kept, and returns the stored list, which this window then shows.
+	 */
+	#write(changes: TaskChange[]): Promise<void> {
+		if (!changes.length) return this.#saving;
+		const root = this.#root;
+		const payload = $state.snapshot(changes) as TaskChange[];
+		this.#pending++;
+		this.#saving = this.#saving.then(async () => {
+			try {
+				const stored = await invoke<TaskMeta[]>('tasks_update', { changes: payload });
+				if (this.#pending === 1 && this.#root === root) this.list = stored;
+			} catch (e) {
 				notifications.error(t('adeTasks.tasks.saveFailed', { error: String(e) }));
-				clientLog('error', `tasks_save: ${e}`);
-			})
-		);
+				clientLog('error', `tasks_update: ${e}`);
+			} finally {
+				this.#pending--;
+			}
+		});
 		return this.#saving;
+	}
+
+	#save(next: TaskMeta[]): Promise<void> {
+		const changes = taskChanges(this.list, next);
+		this.list = next;
+		return this.#write(changes);
 	}
 
 	/** A PR created for the task outside its Review page (Source Control's composer). */
@@ -248,8 +304,18 @@ class AdeTasks {
 		return this.#patch(slug, { pr_url: url || null });
 	}
 
+	/** Only these fields of the task are written: another window's edits to its other fields stay. */
 	#patch(slug: string, patch: Partial<Omit<TaskMeta, 'slug'>>) {
-		return this.#save(patchTask(this.list, slug, patch, Date.now()));
+		const meta = this.list.find((t) => t.slug === slug);
+		if (!meta) return this.#saving;
+		const now = Date.now();
+		// Every session the task runs is kept for Continue Session… (sessionHistory.ts).
+		if (patch.session_id && !patch.sessions) {
+			const sessions = withSession(meta.sessions, patch.session_id, patch.agent ?? meta.agent, now);
+			if (JSON.stringify(sessions) !== JSON.stringify(meta.sessions ?? [])) patch = { ...patch, sessions };
+		}
+		this.list = patchTask(this.list, slug, patch, now);
+		return this.#write([patchChange(slug, patch, now)]);
 	}
 
 	async #step<T>(slug: string, label: string, f: () => Promise<T>): Promise<T | undefined> {
@@ -288,16 +354,29 @@ class AdeTasks {
 		origin?: 'automation';
 		/** Composer attachments: image blocks for a timeline run, path references for a CLI. */
 		attachments?: Attachment[];
+		/** Where the branch comes from: a new one from `base` (default), an existing branch, or a PR. */
+		source?: TaskSource;
+		/** Best-of-N (attempts.svelte.ts): the attempts' group and this one's model. */
+		group?: string;
+		model?: string;
+		/** Stacked worktrees: the task whose branch `base` is. */
+		parent?: string;
+		/** Orchestration: the task whose agent dispatched this one with `kingu task create`. */
+		dispatchedBy?: string;
 	}): Promise<string | undefined> {
 		const title = input.title.trim();
 		if (!title || !workspace.root) return;
+		const source = input.source ?? { kind: 'new' };
 		const taken = new Set([...this.list.map((t) => t.slug), ...this.worktrees.map((w) => w.slug ?? '')]);
 		const slug = uniqueSlug(input.slug ?? (input.slugHint ? `${input.slugHint} ${title}` : title), taken);
-		const prompt = input.prompt.trim() || title;
+		// A branch or PR you start from may need no instructions yet: its agent then starts without a prompt.
+		const prompt = input.prompt.trim() || (source.kind === 'new' ? title : '');
 		// Without a pick, fork from kingu.worktree.baseBranch or the folder's current branch (so merging back has a branch).
 		const base = input.base || this.defaultBase() || status.branch || 'HEAD';
 		const mode = input.mode ?? (settings.get<RunMode>('kingu.agent.runMode') === 'timeline' ? 'timeline' : 'terminal');
-		const cli = mode === 'terminal' ? agentCommand((k) => settings.get<string>(k)) : null;
+		const configured = mode === 'terminal' ? agentCommand((k) => settings.get<string>(k)) : null;
+		// An attempt's model goes into its command, so a resume keeps it.
+		const cli = configured && input.model ? withModel(configured, input.model) : configured;
 		if (mode === 'terminal' && !cli) {
 			status.flash(t('adeTasks.tasks.badCli'), 10000);
 			return;
@@ -307,17 +386,44 @@ class AdeTasks {
 			status.flash(t('adeTasks.tasks.badBranchPrefix'), 10000);
 			return;
 		}
-		if (settings.get<boolean>('kingu.worktree.refreshBaseOnCreate') === true && base !== 'HEAD') {
+		// A base checked out in a task worktree whose agent works is left alone unless the user says so.
+		const refresh = source.kind === 'new' && !input.parent && settings.get<boolean>('kingu.worktree.refreshBaseOnCreate') === true && base !== 'HEAD';
+		if (refresh && (await this.#agentIdleOrConfirmed(null, base, t('adeTasks.tasks.step.refreshBase', { base })))) {
 			const note = await invoke<string | null>('worktree_refresh_base', { base }).catch((e) => t('adeTasks.tasks.refreshBaseFailed', { base, error: String(e) }));
 			if (note) status.flash(note, 8000);
 		}
+		let pr: PrHead | null = null;
 		try {
-			await invoke<WorktreeInfo>('worktree_create', { slug, base, prefix });
+			if (source.kind === 'branch') await invoke<WorktreeInfo>('worktree_create_from_branch', { slug, branch: source.branch });
+			else if (source.kind === 'pr') pr = (await invoke<{ worktree: WorktreeInfo; pr: PrHead }>('worktree_create_from_pr', { slug, pr: source.pr })).pr;
+			else await invoke<WorktreeInfo>('worktree_create', { slug, base, prefix, branch: issueBranchLeaf(slug, input.issue) });
 		} catch (e) {
 			notifications.error(t('adeTasks.tasks.createWorktreeFailed', { error: String(e) }));
 			return;
 		}
-		await this.#save([...this.list, newTask({ slug, title, prompt, base, agent: cli ? cliAgent(cli) : undefined, issue: input.issue, origin: input.origin }, Date.now())]);
+		// Orca's autoRenameBranchFromWork: only a branch Kingu named from the title (not an issue's, a PR's or one you picked).
+		// Attempts keep their `-a`, `-b` branches, so they read as one group.
+		const autoName = source.kind === 'new' && !input.slug && !input.group && settings.get<boolean>('kingu.worktree.autoRenameBranch') !== false && aiTextEnabled();
+		const task = newTask(
+			{
+				slug,
+				title,
+				prompt,
+				base,
+				agent: cli ? cliAgent(cli) : undefined,
+				issue: input.issue,
+				origin: input.origin,
+				prUrl: pr?.url || undefined,
+				autoName,
+				status: prompt || cli ? 'running' : 'review',
+				group: input.group,
+				model: input.model,
+				parent: input.parent,
+				dispatchedBy: input.dispatchedBy
+			},
+			Date.now()
+		);
+		await this.#save([...this.list, task]);
 		const listed = await invoke<WorktreeInfo[]>('worktree_list').catch(() => this.listed);
 		this.listed = listed;
 		this.worktrees = listed.filter((w) => w.slug);
@@ -327,16 +433,142 @@ class AdeTasks {
 		await invoke<string[]>('worktree_link_shared', { slug }).catch((e) => clientLog('info', `link shared ${slug}: ${e}`));
 		const marker = await this.#runSetup(slug, input.open !== false, yaml);
 		await this.#openDefaultTabs(slug, input.open !== false, yaml);
-		if (input.issue && input.issue.provider !== 'linear') await this.#runIssueCommand(slug, input.issue, input.open !== false);
+		if (input.issue && isFolderGithub(input.issue)) await this.#runIssueCommand(slug, input.issue, input.open !== false);
 		if (marker) await this.#waitForSetup(slug, marker);
 		// After the prompt: claude's --mcp-config takes several values and would swallow it.
 		const attachments = input.attachments ?? [];
-		if (cli) await this.#launchCli(slug, cli, { prompt: promptWithAttachments(prompt, attachments) });
-		else {
+		if (cli) await this.#launchCli(slug, cli, prompt ? { prompt: promptWithAttachments(prompt, attachments) } : { fresh: true });
+		else if (prompt) {
 			const message = composeMessage(prompt, attachments);
 			await this.run(slug, message.text, message.images);
 		}
+		if (autoName) void this.autoNameBranch(slug);
+		if (pr) void prStatuses.refresh(slug);
 		return slug;
+	}
+
+	/** Branches being named, so a slow generation is not started twice. */
+	#naming = new Set<string>();
+
+	/**
+	 * Orca's first-work branch rename: once the agent has its first prompt, the source-control AI
+	 * (kingu.git.ai.*, read-only, in the worktree) names the branch from the work, and the branch is
+	 * renamed when it was never pushed (Rust refuses otherwise). Any failure keeps the title's
+	 * name; either way the task is settled and not tried again.
+	 */
+	async autoNameBranch(slug: string) {
+		const meta = this.list.find((t) => t.slug === slug);
+		const from = this.worktrees.find((w) => w.slug === slug)?.branch;
+		if (!meta?.auto_name || !from || this.#naming.has(slug)) return;
+		if (settings.get<boolean>('kingu.worktree.autoRenameBranch') === false || !aiTextEnabled()) return;
+		this.#naming.add(slug);
+		try {
+			const prefix = branchPrefix(settings.get<string>('kingu.worktree.branchPrefix')) ?? '';
+			const answer = await invoke<string>('ai_generate', { slug, prompt: branchNamePrompt(meta.prompt || meta.title, settings.get<string>('kingu.git.ai.branchNameInstructions')) });
+			const leaf = branchSlug(answer, prefix);
+			if (leaf && this.find(slug)) {
+				const to = await invoke<string>('worktree_rename_branch', { slug, from, leaf, prefix });
+				if (to !== from) {
+					// Tasks stacked on it fork from (and open their PRs against) the new name.
+					for (const c of this.list.filter((x) => x.parent === slug && x.base === from)) await this.#patch(c.slug, { base: to });
+					status.flash(t('adeWorktrees.renamed', { from, to }), 6000);
+					await this.refreshWorktrees();
+				}
+			}
+		} catch (e) {
+			clientLog('info', `auto-name branch of ${slug}: ${e}`);
+		} finally {
+			this.#naming.delete(slug);
+		}
+		await this.#patch(slug, { auto_name: false });
+	}
+
+	/** A task on the existing branch `branch` (local, `origin/x`, or only on origin), like Orca's "Reuse branch". */
+	createFromBranch(branch: string, opts: { title?: string; prompt?: string; base?: string; mode?: RunMode } = {}) {
+		return this.create({ title: opts.title?.trim() || branchTitle(branch), prompt: opts.prompt ?? '', base: opts.base ?? '', mode: opts.mode, source: { kind: 'branch', branch } });
+	}
+
+	/**
+	 * A task on a GitHub pull request (number, link or one from `gh_pr_list`), compared against its
+	 * base. When a task for the PR exists, offers to open it instead.
+	 */
+	async createFromPr(input: string | PrHead, opts: { title?: string; prompt?: string; base?: string; mode?: RunMode } = {}): Promise<string | undefined> {
+		let pr: PrHead;
+		try {
+			pr = typeof input === 'string' ? await invoke<PrHead>('gh_pr_lookup', { input }) : input;
+		} catch (e) {
+			notifications.error(t('adeWorktrees.prLookupFailed', { error: String(e) }));
+			return;
+		}
+		const existing = this.list.find((t) => t.pr_url === pr.url);
+		if (existing) {
+			const open = await ask(t('adeWorktrees.prTaskExists', { number: pr.number, title: existing.title }), { title: t('adeWorktrees.prTaskTitle'), okLabel: t('adeTasks.tasks.openExisting'), cancelLabel: t('common.cancel') });
+			if (open) this.openTask(existing.slug);
+			return;
+		}
+		const base = opts.base || (this.branches.includes(pr.base_ref) ? pr.base_ref : '');
+		return this.create({ title: opts.title?.trim() || prTitle(pr), prompt: opts.prompt ?? '', base, mode: opts.mode, slug: `pr ${pr.number} ${pr.title}`, source: { kind: 'pr', pr: String(pr.number) } });
+	}
+
+	/** Palette: pick a branch to start a task on (branches checked out elsewhere are left out). */
+	async pickBranchForTask() {
+		const refs = await invoke<BranchRef[]>('git_refs', {}).catch((e) => {
+			notifications.error(e);
+			return null;
+		});
+		if (!refs) return;
+		const items = branchChoices(refs)
+			.filter((b) => !b.busy)
+			.map((b) => ({ id: b.name, label: b.name, description: b.remote ? t('adeWorktrees.remoteBranch') : undefined }));
+		const item = await quick.choose({ placeholder: t('adeWorktrees.pickBranch'), items });
+		if (item) await this.createFromBranch(item.id);
+	}
+
+	/** Palette: the open PRs, or a typed number or link. */
+	async pickPrForTask() {
+		if ((await this.checkGh())?.provider === 'gitlab') return void status.flash(t('forge.prStart.notOnGitlab'), 8000);
+		let prs: PrHead[] = [];
+		try {
+			prs = await invoke<PrHead[]>('gh_pr_list', { limit: 50 });
+		} catch (e) {
+			status.flash(t('adeWorktrees.prListFailed', { error: String(e) }), 8000);
+		}
+		const row = (p: PrHead) => ({ id: String(p.number), label: prTitle(p), description: `${p.head_ref}${p.cross_repo ? ` · ${p.head_owner}` : ''}${p.draft ? ` · ${t('adeWorktrees.draft')}` : ''}` });
+		const item = await quick.choose({
+			placeholder: t('adeWorktrees.pickPr'),
+			items: [],
+			dynamic: (value) => {
+				const q = value.trim().toLowerCase();
+				const typed = looksLikePr(value) && !prs.some((p) => String(p.number) === q.replace('#', '')) ? [{ id: value.trim(), label: t('adeWorktrees.usePr', { pr: value.trim() }) }] : [];
+				return [...typed, ...prs.filter((p) => !q || prTitle(p).toLowerCase().includes(q) || p.head_ref.toLowerCase().includes(q)).map(row)];
+			}
+		});
+		if (!item) return;
+		await this.createFromPr(prs.find((p) => String(p.number) === item.id) ?? item.id);
+	}
+
+	/**
+	 * The worktree list again without resetting anything (Rust's git watcher: a branch switched,
+	 * a commit, a worktree added or removed outside Kingu). A task whose branch changed reads its
+	 * PR again (PRs are found by branch); one whose commit moved, its diff stats.
+	 */
+	async refreshWorktrees() {
+		const root = this.#root;
+		if (!root) return;
+		const listed = await invoke<WorktreeInfo[]>('worktree_list').catch(() => null);
+		if (!listed || this.#root !== root) return;
+		const before = new Map(this.listed.map((w) => [w.path, w]));
+		this.listed = listed;
+		this.worktrees = listed.filter((w) => w.slug);
+		listed.forEach((w, i) => {
+			const old = before.get(w.path);
+			// The folder's own PR is keyed '' (the first entry is the main checkout).
+			const key = w.slug ?? (i === 0 ? '' : null);
+			if (!old || key === null) return;
+			if (old.branch !== w.branch && prStatuses.bySlug[key]) void prStatuses.refresh(key);
+			if (old.head !== w.head && w.slug && this.list.some((t) => t.slug === w.slug)) void this.refreshStat(w.slug);
+		});
+		void this.refreshBranches();
 	}
 
 	/** The open folder's kingu.yaml; its problems are reported once per folder (the file is then ignored or partly used). */
@@ -542,6 +774,21 @@ class AdeTasks {
 		});
 	}
 
+	/**
+	 * Agent hibernation (hibernation.svelte.ts): closes the task's idle agent CLI to free its
+	 * process; the task remembers it, and `resumeCli` continues its session with one click.
+	 */
+	async hibernate(slug: string) {
+		if (!cliSessions.has(slug)) return;
+		cliSessions.end(slug);
+		await this.#patch(slug, { hibernated_at: Date.now() });
+	}
+
+	/** Pick winner (attempts.svelte.ts): the attempt leaves its best-of-N group and stays as a task of its own. */
+	leaveGroup(slug: string) {
+		return this.#patch(slug, { group: null });
+	}
+
 	/** After a restart: start the task's CLI again in its worktree, continuing its latest session where the CLI can. */
 	async resumeCli(slug: string, fresh = false) {
 		const meta = this.list.find((t) => t.slug === slug);
@@ -594,7 +841,13 @@ class AdeTasks {
 		}
 		const launch = profile.launch(cli, how, { sessionId, hookSettings, hookFile, opencodeDir, servers: mcpServers(root), plugins: profile.skills ? await skillPlugins(root) : [] });
 		if (sessionId) await this.#patch(slug, { session_id: sessionId });
-		cliSessions.start(slug, withLaunchOptions(launch.argv, options), hookSettings || hookFile ? token : undefined, launch.typePrompt);
+		// A hibernated CLI (hibernation.svelte.ts) is awake again.
+		if (this.list.find((t) => t.slug === slug)?.hibernated_at) await this.#patch(slug, { hibernated_at: null });
+		let argv = withLaunchOptions(launch.argv, options);
+		// Orca's codexTerminalServerIsolation: this codex gets its own app-server, not the shared one.
+		const noDaemon = profile.id === 'codex' ? noDaemonProgram(argv, (k) => settings.get(k)) : null;
+		if (noDaemon && (await invoke<boolean>('codex_supports_no_daemon', { program: noDaemon }).catch(() => false))) argv = withNoDaemon(argv);
+		cliSessions.start(slug, argv, hookSettings || hookFile ? token : undefined, launch.typePrompt);
 	}
 
 	/** A CLI reported its session id (codex notify): saved so a restart resumes exactly it. */
@@ -604,10 +857,62 @@ class AdeTasks {
 		if (cli && profileOf(cli).status === 'notify' && meta.session_id !== id) void this.#patch(slug, { session_id: id });
 	}
 
+	/** Moves the task to a board column (Orca's Move to Status); the agent's own status is untouched. */
+	async setWorkflowStatus(slug: string, id: string, quiet = false) {
+		const meta = this.list.find((t) => t.slug === slug);
+		if (!meta || meta.workflow_status === id) return;
+		await this.#patch(slug, { workflow_status: id });
+		if (!quiet) status.flash(t('adeWorkflow.moved', { title: meta.title, status: workflowLabel(id) }));
+	}
+
+	/**
+	 * Continue Session… (Orca's agent session continuation): picks an earlier session of the task
+	 * up again. A CLI task restarts its CLI resuming it; a timeline task resumes it with the next
+	 * message. A session the task's agent cannot resume (another CLI's) is handed off instead.
+	 */
+	async continueSession(slug: string, session: SessionRef) {
+		const meta = this.list.find((t) => t.slug === slug);
+		if (!meta) return;
+		const cli = cliOf(meta.agent);
+		if (!canResumeWith(meta.agent, session.agent)) return this.handOff(slug, session, cli);
+		if (runtime.isWorking(slug) || cliSessions.working(slug)) return status.flash(t('adeWorkflow.stopFirst', { title: meta.title }));
+		if (cli) {
+			await this.#patch(slug, { session_id: session.id });
+			status.flash(t('adeWorkflow.resuming', { id: session.id.slice(0, 8), agent: programOf(cli) }));
+			await this.#launchCli(slug, cli, { resume: session.id });
+			return;
+		}
+		if (runtime.isLive(slug)) await this.stop(slug);
+		await this.#patch(slug, { session_id: session.id });
+		status.flash(t('adeWorkflow.nextMessageResumes', { id: session.id.slice(0, 8) }));
+	}
+
+	/**
+	 * Hand Off to Another Agent (Orca's AgentSessionContinuationDialog): starts `cli` (or the
+	 * timeline agent for null) in the task's worktree with a prompt pointing at the session's
+	 * transcript; the task's agent becomes that one.
+	 */
+	async handOff(slug: string, session: SessionRef, cli: string[] | null) {
+		const meta = this.list.find((t) => t.slug === slug);
+		if (!meta || !workspace.root) return;
+		if (runtime.isWorking(slug) || cliSessions.working(slug)) return status.flash(t('adeWorkflow.stopFirst', { title: meta.title }));
+		const prompt = handOffPrompt({ agent: session.agent, id: session.id, cwd: `${workspace.root}/${worktreeDir(slug)}`, title: meta.title, prompt: meta.prompt, summary: meta.last_run?.summary });
+		if (cli) {
+			await this.#patch(slug, { agent: cliAgent(cli) });
+			await this.#launchCli(slug, cli, { prompt });
+		} else {
+			if (runtime.isLive(slug)) await this.stop(slug);
+			cliSessions.end(slug);
+			await this.#patch(slug, { agent: 'claude-code', session_id: null });
+			await this.run(slug, prompt);
+		}
+		status.flash(t('adeWorkflow.handedOff', { title: meta.title, agent: cli ? programOf(cli) : 'Claude' }));
+	}
+
 	/** Starts the agent in the task worktree through the agents store. */
 	async run(slug: string, prompt: string, images: string[] = []) {
 		try {
-			await runtime.start(slug, prompt, null, images);
+			await runtime.start(slug, prompt, null, images, this.list.find((t) => t.slug === slug)?.attempt_model ?? null);
 			await this.#patch(slug, { status: 'running' });
 		} catch (e) {
 			notifications.error(t('adeTasks.tasks.startAgentFailed', { error: String(e) }));
@@ -621,7 +926,7 @@ class AdeTasks {
 		if (!meta || !text.trim()) return false;
 		const message = composeMessage(text, attachments);
 		try {
-			await runtime.followUp(slug, message.text, meta.session_id, message.images);
+			await runtime.followUp(slug, message.text, meta.session_id, message.images, meta.attempt_model ?? null);
 			if (meta.status !== 'running') await this.#patch(slug, { status: 'running' });
 			return true;
 		} catch (e) {
@@ -690,7 +995,8 @@ class AdeTasks {
 	 * again"), or straight away when kingu.worktree.confirmRemove is off.
 	 */
 	async remove(slug: string) {
-		if (runtime.isWorking(slug)) {
+		// A dead agent never blocks this: its status ends with its process (agentPresence.ts).
+		if (removalGate(runtime.timelineWorking(slug), false) === 'block') {
 			status.flash(t('adeTasks.tasks.stopAgentFirst'));
 			return;
 		}
@@ -704,32 +1010,74 @@ class AdeTasks {
 	 * still asks. False when nothing was removed.
 	 */
 	async removeConfirmed(slug: string, opts: { deleteBranch: BranchRemoval; force: boolean }): Promise<boolean> {
-		if (runtime.isWorking(slug)) {
+		if (this.#removing.has(slug)) {
+			status.flash(t('adeWorkflow.alreadyRemoving', { slug }));
+			return false;
+		}
+		const gate = removalGate(runtime.timelineWorking(slug), runtime.isWorking(slug));
+		if (gate === 'block') {
 			status.flash(t('adeTasks.tasks.stopAgentFirst'));
 			return false;
 		}
+		// An agent working in one of the task's terminals ends with them: ask first.
+		if (gate === 'confirm' && !(await ask(t('adeTasks.tasks.terminalAgentAsk'), { title: t('adeTasks.tasks.terminalAgentTitle'), kind: 'warning', okLabel: t('adeTasks.tasks.stopAndRemove'), cancelLabel: t('common.cancel') }))) return false;
 		const path = worktreeDir(slug);
 		const hasWorktree = this.hasWorktree(slug);
 		const deleteBranch = opts.deleteBranch;
 		// kingu.worktree.alwaysForceDelete (Orca): uncommitted changes go without asking again.
 		opts = { ...opts, force: opts.force || settings.get<boolean>('kingu.worktree.alwaysForceDelete') === true };
 		let kept: string | null = null;
+		// Unsaved editors of the task (its worktree files, an edited diff) would be lost with it: ask.
+		const tabs = tabsOfTask(
+			editors.allTabs().map((t) => t.path),
+			slug,
+			(p) => parseTaskDiffKey(p)?.slug
+		);
+		const unsaved = tabs.filter((p) => editors.isDirty(p));
+		if (unsaved.length) {
+			const go = await ask(t('adeTasks.tasks.removeUnsavedAsk', { slug, count: unsaved.length }), {
+				title: t('adeTasks.tasks.removeUnsavedTitle'),
+				kind: 'warning',
+				okLabel: t('adeTasks.tasks.removeUnsavedOk'),
+				cancelLabel: t('common.cancel')
+			});
+			if (!go) return false;
+		}
 		if (hasWorktree) {
 			// An idle session still runs in the worktree: end it with the task.
 			if (runtime.isLive(slug)) await this.stop(slug);
 			if (!(await this.#runArchive(slug))) return false;
+		}
+		// Also without a worktree git lists: Rust prunes a folder deleted by hand and finds one git lost track of.
+		{
+			// Orca's background removal: the card shows "Removing…" while git deletes the folder
+			// (Rust runs it off the main thread), and a second remove of it waits for this one.
+			const remove = async (force: boolean) => {
+				this.#removing.add(slug);
+				this.busy[slug] = t('adeWorkflow.removing');
+				try {
+					return await invoke<string | null>('worktree_remove', { slug, force, deleteBranch });
+				} finally {
+					this.#removing.delete(slug);
+					delete this.busy[slug];
+				}
+			};
 			try {
-				kept = await invoke<string | null>('worktree_remove', { slug, force: opts.force, deleteBranch });
+				kept = await remove(opts.force);
 			} catch (e) {
 				const dirty = /modified|untracked|dirty/i.test(String(e));
-				if (!dirty || opts.force) {
+				// Git lost track of the folder (Rust `RemoveOrphan`): deleting it needs a yes, forced or not.
+				const orphan = isRustError(e, 'worktreeOrphan');
+				if (!orphan && (!dirty || opts.force)) {
 					notifications.error(t('adeTasks.tasks.removeFailed', { error: String(e) }));
 					return false;
 				}
-				const force = await ask(t('adeTasks.tasks.dirtyAsk', { path }), { title: t('adeTasks.tasks.dirtyTitle'), kind: 'warning', okLabel: t('adeTasks.tasks.discard'), cancelLabel: t('common.cancel') });
+				const force = orphan
+					? await ask(t('adeWorkflow.orphanAsk', { path }), { title: t('adeWorkflow.orphanTitle'), kind: 'warning', okLabel: t('adeWorkflow.orphanOk'), cancelLabel: t('common.cancel') })
+					: await ask(t('adeTasks.tasks.dirtyAsk', { path }), { title: t('adeTasks.tasks.dirtyTitle'), kind: 'warning', okLabel: t('adeTasks.tasks.discard'), cancelLabel: t('common.cancel') });
 				if (!force) return false;
 				try {
-					kept = await invoke<string | null>('worktree_remove', { slug, force: true, deleteBranch });
+					kept = await remove(true);
 				} catch (e2) {
 					notifications.error(t('adeTasks.tasks.removeFailed', { error: String(e2) }));
 					return false;
@@ -740,9 +1088,8 @@ class AdeTasks {
 		runtime.forget(slug);
 		cliSessions.end(slug);
 		diffNotes.forget(slug);
-		for (const t of editors.allTabs().map((t) => t.path)) {
-			if (slugOfTaskKey(t) === slug || parseTaskDiffKey(t)?.slug === slug) editors.closeEverywhere(t);
-		}
+		// The user saw (and accepted) the unsaved ones above; the files are gone with the worktree.
+		for (const p of tabs) editors.closeEverywhere(p);
 		this.worktrees = this.worktrees.filter((w) => w.slug !== slug);
 		this.listed = this.listed.filter((w) => w.slug !== slug);
 		delete this.stats[slug];
@@ -757,7 +1104,8 @@ class AdeTasks {
 	// Review
 
 	toggleAccept(slug: string, path: string) {
-		return this.#save(toggleAccepted(this.list, slug, path, Date.now()));
+		const accepted = toggleAccepted(this.list, slug, path, Date.now()).find((t) => t.slug === slug)?.accepted;
+		return accepted ? this.#patch(slug, { accepted }) : this.#saving;
 	}
 
 	/** Accepted file and hunk marks from the hunkReview.ts reducers (saved like toggleAccept). */
@@ -774,11 +1122,21 @@ class AdeTasks {
 		if (!sameMarks(meta.accepted_hunks, next)) return this.#patch(slug, { accepted_hunks: next });
 	}
 
+	/**
+	 * Commit, reject, merge and refresh-base touch a task worktree (and, for merge and refresh, the
+	 * checkout of `branch`). While an agent works there they ask first, with the native message
+	 * box (VS Code's Agents window keeps a working session's worktree to the agent). True: go on.
+	 */
+	#agentIdleOrConfirmed(slug: string | null, branch: string | null, action: string): Promise<boolean> {
+		return confirmAgentIdle(touchedTasks(slug, branch, this.worktrees), action);
+	}
+
 	/** Takes back hunks `ids` of `path` (no confirmation: one change at a time, like VS Code's Undo this Change). */
 	async rejectHunks(slug: string, path: string, ids: string[]): Promise<boolean> {
 		const stat = this.stats[slug];
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta || !ids.length) return false;
+		if (!(await this.#agentIdleOrConfirmed(slug, null, t('adeTasks.tasks.step.rejectChanges')))) return false;
 		const n = await this.#step(slug, t('adeTasks.tasks.step.rejectChanges'), () => invoke<number>('worktree_reject_hunks', { slug, base: stat?.base ?? meta.base, path, ids }));
 		await this.refreshStat(slug);
 		return n !== undefined;
@@ -789,6 +1147,7 @@ class AdeTasks {
 	async reject(slug: string, paths: string[], label: string, confirmEmpty = false): Promise<boolean> {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta || (!paths.length && !confirmEmpty)) return false;
+		if (!(await this.#agentIdleOrConfirmed(slug, null, t('adeTasks.tasks.step.rejectFiles')))) return false;
 		const ok = await ask(t('adeTasks.tasks.rejectAsk', { label, slug, base: meta.base }), {
 			title: t('adeTasks.tasks.rejectTitle'),
 			kind: 'warning',
@@ -808,6 +1167,7 @@ class AdeTasks {
 			status.flash(t('adeTasks.git.commitMessageFirst'));
 			return false;
 		}
+		if (!(await this.#agentIdleOrConfirmed(slug, null, t('adeTasks.tasks.step.commit')))) return false;
 		const done = await this.#step(slug, t('adeTasks.tasks.step.commit'), () => invoke('worktree_commit', { slug, message: msg }).then(() => true));
 		await this.refreshStat(slug);
 		if (done) status.flash(t('adeTasks.git.committed', { branch: this.branchOf(slug) }));
@@ -823,6 +1183,7 @@ class AdeTasks {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta) return;
 		const how = mode === 'ff' ? t('adeTasks.tasks.mergeFastForward') : t('adeTasks.tasks.mergeCommit');
+		if (!(await this.#agentIdleOrConfirmed(slug, meta.base, t('adeTasks.tasks.step.merge')))) return;
 		const ok = await ask(t('adeTasks.tasks.mergeAsk', { branch: this.branchOf(slug), base: meta.base, how }), { title: t('adeTasks.tasks.mergeTitle'), okLabel: t('adeTasks.tasks.mergeOk'), cancelLabel: t('common.cancel') });
 		if (!ok) return;
 		const r = await this.#step(slug, t('adeTasks.tasks.step.merge'), () => invoke<MergeResult>('worktree_merge', { slug, base: meta.base, mode }));
@@ -842,12 +1203,17 @@ class AdeTasks {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta) return;
 		const gh = await this.checkGh();
+		const title = ft('forge.create.title', forgeOf(gh));
+		if (gh?.provider === 'gitlab' && !gh.authenticated) {
+			await message(gh.detail, { title, kind: 'info' });
+			return;
+		}
 		if (!gh?.installed) {
-			await message(t('adeTasks.tasks.ghMissing'), { title: t('adeTasks.tasks.createPrTitle'), kind: 'info' });
+			await message(t('adeTasks.tasks.ghMissing'), { title, kind: 'info' });
 			return;
 		}
 		if (!gh.authenticated) {
-			await message(t('adeTasks.tasks.ghSignedOut', { detail: gh.detail }), { title: t('adeTasks.tasks.createPrTitle'), kind: 'info' });
+			await message(t('adeTasks.tasks.ghSignedOut', { detail: gh.detail }), { title, kind: 'info' });
 			return;
 		}
 		adeDialogs.open({ kind: 'pr', slug });
@@ -874,9 +1240,10 @@ class AdeTasks {
 	async submitPr(slug: string, form: PrForm): Promise<string | null> {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta) return t('adeTasks.tasks.taskNotFound');
-		const problem = prFormProblem(form, this.branchOf(slug));
+		const forge = forgeOf(this.gh);
+		const problem = prFormProblem(form, this.branchOf(slug), forge);
 		if (problem) return problem;
-		this.busy[slug] = t('adeTasks.tasks.busy.createPr');
+		this.busy[slug] = ft('forge.create.busy', forge);
 		let url: string;
 		try {
 			url = await invoke<string>('worktree_pr_create', {
@@ -885,7 +1252,9 @@ class AdeTasks {
 				title: form.title.trim(),
 				body: form.body,
 				draft: form.draft,
-				open: settings.get<boolean>('kingu.pr.openAfterCreate') === true
+				open: settings.get<boolean>('kingu.pr.openAfterCreate') === true,
+				// Stacked worktrees: a PR into the parent task's branch pushes that branch first.
+				stacked: isStackedBase(meta, form.base.trim(), (s) => (this.find(s) ? this.branchOf(s) : null))
 			});
 		} catch (e) {
 			clientLog('error', `${slug} create PR: ${e}`);
@@ -894,11 +1263,11 @@ class AdeTasks {
 			delete this.busy[slug];
 		}
 		await this.#patch(slug, { pr_url: url || null });
-		status.flash(url ? t('adeTasks.tasks.prOpenedUrl', { url }) : t('adeTasks.tasks.prOpened'), 10000);
+		status.flash(url ? ft('forge.create.openedUrl', forgeFor(url, this.gh), { url }) : ft('forge.create.opened', forge), 10000);
 		void prStatuses.refresh(slug);
 		if (url && meta.issue && settings.get<boolean>('kingu.issues.commentOnPr') === true) {
 			const link = meta.issue;
-			const posted = isLinear(link) ? invoke('linear_issue_comment', { id: link.key, body: prComment(url) }) : invoke('gh_issue_comment', { number: link.number, body: prComment(url) });
+			const posted = isLinear(link) ? invoke('linear_issue_comment', { id: link.key, body: prComment(url) }) : isFolderGithub(link) ? invoke('gh_issue_comment', { number: link.number, body: prComment(url) }) : commentOnLink(link, prComment(url));
 			posted.catch((e) => status.flash(t('adeTasks.tasks.issueCommentFailed', { ref: issueRef(link), error: String(e) }), 8000));
 		}
 		return null;
@@ -952,17 +1321,18 @@ class AdeTasks {
 		return true;
 	}
 
-	/** Merges the PR on GitHub after confirming (Orca's merge button); the task becomes done. */
+	/** Merges the PR on its host after confirming (Orca's merge button); the task becomes done. */
 	async mergePr(slug: string, method: MergeMethod, deleteBranch: boolean) {
 		const pr = prStatuses.bySlug[slug]?.pr;
 		if (!pr) return;
-		const branchNote = deleteBranch && pr.head_ref ? `\n${t('adeTasks.tasks.mergePrDeleteBranch', { branch: pr.head_ref })}` : '';
-		const ok = await ask(`${t('adeTasks.tasks.mergePrAsk', { method: MERGE_LABEL[method], number: pr.number })}${branchNote}`, { title: t('adeTasks.tasks.mergePrTitle'), okLabel: MERGE_LABEL[method], cancelLabel: t('common.cancel') });
+		const forge = forgeFor(pr.url, this.gh);
+		const branchNote = deleteBranch && pr.head_ref ? `\n${ft('forge.merge.askDeleteBranch', forge, { branch: pr.head_ref })}` : '';
+		const ok = await ask(`${ft('forge.merge.ask', forge, { method: methodLabel(method), number: pr.number })}${branchNote}`, { title: ft('forge.merge.title', forge), okLabel: methodLabel(method), cancelLabel: t('common.cancel') });
 		if (!ok) return;
-		const r = await this.#step(slug, t('adeTasks.tasks.step.mergePr'), () => invoke<MergeOutcome>('worktree_pr_merge', { slug, url: pr.url, number: pr.number, method, deleteBranch }));
+		const r = await this.#step(slug, ft('forge.merge.title', forge), () => invoke<MergeOutcome>('worktree_pr_merge', { slug, url: pr.url, number: pr.number, method, deleteBranch }));
 		if (!r) return;
 		if (slug && this.list.some((t) => t.slug === slug)) await this.#patch(slug, { merged_at: Date.now(), status: 'done' });
-		status.flash([t('adeTasks.tasks.mergedPr', { number: pr.number }), r.deleted_branch ? t('adeTasks.tasks.deletedRemoteBranch', { branch: r.deleted_branch }) : '', r.branch_note ?? ''].filter(Boolean).join(' · '), 10000);
+		status.flash([ft('forge.merge.done', forge, { number: pr.number }), r.deleted_branch ? ft('forge.merge.deletedBranch', forge, { branch: r.deleted_branch }) : '', r.branch_note ?? ''].filter(Boolean).join(' · '), 10000);
 		await prStatuses.refresh(slug);
 	}
 
@@ -983,7 +1353,7 @@ class AdeTasks {
 		await this.sendToAgent(slug, buildCommentsPrompt(pr, threads, path), t('adeTasks.tasks.what.reviewComments', { count: threads.length }));
 	}
 
-	/** Resolves (or reopens) a review thread on GitHub. */
+	/** Resolves (or reopens) a review thread on its host (a discussion on GitLab). */
 	async resolveThread(slug: string, id: string, resolve = true) {
 		const pr = prStatuses.bySlug[slug]?.pr;
 		if (!pr) return;
@@ -1138,6 +1508,8 @@ export function installAde(): () => void {
 		});
 	});
 	const tick = setInterval(() => (adeTasks.now = Date.now()), 30_000);
+	// The other added projects of the side bar (their tasks, agent status and notifications).
+	const uninstallProjects = projects.install();
 	// Refresh stats when the window regains focus (agents and terminals change worktrees).
 	const onFocus = () => void adeTasks.refreshStats();
 	window.addEventListener('focus', onFocus);
@@ -1146,6 +1518,8 @@ export function installAde(): () => void {
 		// No keybinding: ⌘⇧A (Ctrl+Shift+A) switches to the Agents layout (workbench.action.toggleAgentsMode).
 		commands.register({ id: 'kingu.agents.show', title: 'Show Agents', category: 'View', run: () => adeTasks.showView() }),
 		commands.register({ id: 'kingu.agents.newTask', title: 'New Task', category: 'Agents', when: hasRoot, run: () => (adeTasks.showView(), (adeTasks.composing = true)) }),
+		commands.register({ id: 'kingu.agents.newTaskFromBranch', title: 'New Task from Branch…', category: 'Agents', when: hasRoot, run: () => adeTasks.pickBranchForTask() }),
+		commands.register({ id: 'kingu.agents.newTaskFromPr', title: 'New Task from Pull Request…', category: 'Agents', when: hasRoot, run: () => adeTasks.pickPrForTask() }),
 		commands.register({ id: 'kingu.agents.openBoard', title: 'Open Board', category: 'Agents', when: hasRoot, run: () => adeTasks.openBoard() }),
 		commands.register({ id: 'kingu.agents.nextAttention', title: 'Next Task Needing Attention', category: 'Agents', when: hasRoot, run: () => adeTasks.openNext() }),
 		commands.register({ id: 'kingu.agents.openTask', title: 'Open Task...', category: 'Agents', when: () => adeTasks.list.length > 0, run: () => adeTasks.pickTask() }),
@@ -1168,6 +1542,7 @@ export function installAde(): () => void {
 			title: 'Rename Task',
 			category: 'Agents',
 			key: 'cmd+alt+r',
+			scope: 'agents',
 			when: () => appMode.isAgents && !!appMode.activeSession && !!adeTasks.find(appMode.activeSession),
 			run: () => appMode.activeSession && adeTasks.startRename(appMode.activeSession)
 		}),
@@ -1185,8 +1560,19 @@ export function installAde(): () => void {
 		})
 	];
 	cliSessions.onSessionId = (slug, id) => adeTasks.learnCliSession(slug, id);
+	// Rust's git watcher (watcher.rs GitWatcher): branches and worktrees changed in the open folder's repository.
+	let stopGitWatch: (() => void) | null = null;
+	let disposed = false;
+	void listenWindow<{ root: string }>('ade:worktrees-changed', (e) => {
+		if (e.payload.root === workspace.root && adeTasks.loaded) void adeTasks.refreshWorktrees();
+	})
+		.then((un) => (disposed ? un() : (stopGitWatch = un)))
+		.catch((e) => clientLog('info', `ade:worktrees-changed: ${e}`));
 	return () => {
+		disposed = true;
+		stopGitWatch?.();
 		stopEffects();
+		uninstallProjects();
 		clearInterval(tick);
 		window.removeEventListener('focus', onFocus);
 		cliSessions.onSessionId = null;

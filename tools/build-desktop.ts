@@ -111,6 +111,8 @@ if (target.endsWith('apple-darwin')) {
 	sign(join(app, 'Contents/MacOS/kingu-agent-host'), 'agent-host.plist', ['--identifier', 'ai.anthov.kingu.studio.agent-host']);
 	// The terminal daemon needs no entitlements (app.plist is empty); it gets its own identifier.
 	sign(join(app, 'Contents/MacOS/kingu-ptyd'), 'app.plist', ['--identifier', 'ai.anthov.kingu.studio.ptyd']);
+	// The `kingu` command (tools/build-cli.ts), likewise.
+	sign(join(app, 'Contents/MacOS/kingu-cli'), 'app.plist', ['--identifier', 'ai.anthov.kingu.studio.cli']);
 	sign(app, 'app.plist');
 	run(['codesign', '--verify', '--deep', '--strict', '--verbose=2', app]);
 	console.log(`build-desktop: ${app}\n  verify: bun tools/release-verify.ts ${app}`);

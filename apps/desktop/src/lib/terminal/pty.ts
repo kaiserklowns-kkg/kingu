@@ -7,6 +7,8 @@ import type { PtyInfo } from './sessions.ts';
 
 export function killPty(key: string) {
 	invoke('pty_kill', { key }).catch(() => {});
+	// A task pane's agent status file (paneAgents.svelte.ts) goes with its shell.
+	if (key.startsWith('ade:')) invoke('agent_pane_hook_clear', { key }).catch(() => {});
 }
 
 /** Live sessions; empty when the backend cannot be reached. */
@@ -19,14 +21,20 @@ export function foregroundJobs(keys: string[]): Promise<Record<string, { pid: nu
 	return invoke<Record<string, { pid: number; name: string }>>('pty_foreground', { keys }).catch(() => ({}));
 }
 
-/** The open folder's file a terminal link names (relative to the folder), or null when there is none. */
-export function linkTarget(key: string, text: string): Promise<string | null> {
-	return invoke<{ rel: string } | null>('terminal_link_target', { key, text })
+/** The open folder's file a terminal link names (relative to the folder), or null when there is none.
+ *  `cwd`: the directory its command ran in (shell integration), tried first. */
+export function linkTarget(key: string, text: string, cwd?: string): Promise<string | null> {
+	return invoke<{ rel: string } | null>('terminal_link_target', { key, text, cwd: cwd ?? null })
 		.then((t) => t?.rel ?? null)
 		.catch(() => null);
 }
 
-/** Opens a terminal link; `allowed` is terminal.integrated.allowedLinkSchemes (Rust checks it again). */
-export function openUrl(url: string, allowed?: string[]): Promise<void> {
+/**
+ * Opens a terminal link; `allowed` is terminal.integrated.allowedLinkSchemes (Rust checks it
+ * again). A web link to an untrusted domain asks first (outgoing link protection).
+ */
+export async function openUrl(url: string, allowed?: string[]): Promise<void> {
+	const { trustedDomains } = await import('#lib/workbench/trustedDomains.svelte.ts');
+	if (!(await trustedDomains.confirm(url, { fromWorkspace: false }))) return;
 	return invoke('terminal_open_url', { url, allowed: allowed ?? null });
 }

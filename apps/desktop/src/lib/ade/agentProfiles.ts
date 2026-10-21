@@ -3,7 +3,7 @@
 // servers and skills reach it, where its status comes from and which AI account env it gets.
 // A command that matches no profile runs as typed with the prompt as its last argument. Pure.
 
-import { cliWithMcp, type McpServers } from '#lib/ade/mcp.ts';
+import { cliWithMcp, stdioOnly, type McpServers } from '#lib/ade/mcp.ts';
 import { t } from '#lib/i18n/index.ts';
 
 /**
@@ -78,7 +78,7 @@ const codexKey = (name: string) => name.replace(/[^A-Za-z0-9_-]/g, '_');
 
 /** codex `-c` overrides that add each MCP server (`mcp_servers.<name>.command/args/env`). */
 export function codexMcpArgs(servers: McpServers): string[] {
-	return Object.entries(servers).flatMap(([name, s]) => {
+	return Object.entries(stdioOnly(servers)).flatMap(([name, s]) => {
 		const key = `mcp_servers.${codexKey(name)}`;
 		return [
 			'-c',
@@ -104,7 +104,7 @@ export function codexNotifyArgs(hookFile: string): string[] {
 
 /** opencode: `OPENCODE_CONFIG_CONTENT` is merged over its config files; local servers take one command array. */
 export function opencodeConfig(servers: McpServers): string | null {
-	const entries = Object.entries(servers);
+	const entries = Object.entries(stdioOnly(servers));
 	if (!entries.length) return null;
 	return JSON.stringify({
 		mcp: Object.fromEntries(entries.map(([name, s]) => [name, { type: 'local', command: [s.command, ...s.args], environment: s.env, enabled: true }]))
@@ -113,14 +113,14 @@ export function opencodeConfig(servers: McpServers): string | null {
 
 /** Copilot CLI `--additional-mcp-config`: `{ mcpServers: { name: { type: 'local', … } } }`. */
 export function copilotMcpConfig(servers: McpServers): string | null {
-	const entries = Object.entries(servers);
+	const entries = Object.entries(stdioOnly(servers));
 	if (!entries.length) return null;
 	return JSON.stringify({ mcpServers: Object.fromEntries(entries.map(([name, s]) => [name, { type: 'local', command: s.command, args: s.args, env: s.env, tools: ['*'] }])) });
 }
 
 /** Amp `--mcp-config`: the `amp.mcpServers` shape, `{ name: { command, args, env } }`. */
 export function ampMcpConfig(servers: McpServers): string | null {
-	const entries = Object.entries(servers);
+	const entries = Object.entries(stdioOnly(servers));
 	if (!entries.length) return null;
 	return JSON.stringify(Object.fromEntries(entries.map(([name, s]) => [name, { command: s.command, args: s.args, env: s.env }])));
 }

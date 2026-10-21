@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { listWheel } from '#lib/workbench/listWheel.ts';
 	// VS Code's Search view (searchView.ts / searchWidget.ts): query box with Match Case,
 	// Whole Word and Regex toggles, the Replace box behind the chevron (Preserve Case, Replace
 	// All, per-file and per-match replace on hover), include/exclude globs behind "…", and a
@@ -9,6 +10,7 @@
 	import { fileIcon, folderIcon } from './fileIcons';
 	import { editors } from './editors.svelte';
 	import { search } from './search.svelte';
+	import type { HistoryField } from './searchHistory';
 	import {
 		basename,
 		dirname,
@@ -25,6 +27,9 @@
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { scm } from './scm.svelte';
 	import { entryChanges, fileDecorations } from './scm';
+	import { openSearchViewInEditor } from './searchEditorCommands.svelte.ts';
+	import { searchEditors } from './searchEditor.svelte.ts';
+	import { t } from '#lib/i18n/index.ts';
 
 	const ROW = 22;
 	const OVERSCAN = 10;
@@ -40,9 +45,13 @@
 	const rows = $derived(flattenResults(sortResults(search.files, settings.get<ResultSortOrder>('search.sortOrder')), search.collapsed, search.viewMode));
 	/** search.showLineNumbers, search.decorations.colors / search.decorations.badges. */
 	const lineNumbers = $derived(settings.get<boolean>('search.showLineNumbers'));
+	/** search.actionsPosition: `auto` puts a row's actions right after its text once the view is
+	 * wider than 640px (VS Code's wide view pane); `right` keeps them at the right edge. */
+	let viewWidth = $state(0);
+	const actionsRight = $derived(settings.get<string>('search.actionsPosition') !== 'auto' || viewWidth <= 640);
 	const decoColors = $derived(settings.get<boolean>('search.decorations.colors'));
 	const decoBadges = $derived(settings.get<boolean>('search.decorations.badges'));
-	const decorations = $derived(decoColors || decoBadges ? fileDecorations(entryChanges(scm.repo?.entries ?? [])) : new Map());
+	const decorations = $derived(decoColors || decoBadges ? fileDecorations(entryChanges(scm.entries)) : new Map());
 	const PAD = 8;
 	const INDENT = 20;
 	const first = $derived(Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN));
@@ -67,6 +76,7 @@
 	}
 
 	function onReplaceKey(e: KeyboardEvent) {
+		if (historyKey(e, 'replace')) return;
 		// VS Code: ⌥⌘Enter (and Enter in the Replace box) replaces all.
 		if (e.key === 'Enter') askReplaceAll();
 		else if (e.key === 'Escape' && confirmAll) confirmAll = false;
@@ -131,7 +141,23 @@
 		e.preventDefault();
 	}
 
+	/** ↑ / ↓ browse a box's history (VS Code's HistoryInputBox); false when there is nothing to show. */
+	function historyKey(e: KeyboardEvent, field: HistoryField): boolean {
+		if ((e.key !== 'ArrowUp' && e.key !== 'ArrowDown') || e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return false;
+		if (!search.historyStep(field, e.key === 'ArrowUp' ? -1 : 1)) return false;
+		e.preventDefault();
+		// Like typing it (search.searchOnType).
+		if (field !== 'replace') search.schedule();
+		return true;
+	}
+
+	function onPatternKey(e: KeyboardEvent, field: 'include' | 'exclude') {
+		if (e.key === 'Enter') void search.run();
+		else historyKey(e, field);
+	}
+
 	function onInputKey(e: KeyboardEvent) {
+		if (historyKey(e, 'search')) return;
 		if (e.key === 'Enter') void search.run();
 		else if (e.key === 'Escape' && search.query) search.clear();
 		else if (e.key === 'ArrowDown' && rows.length) {
@@ -158,7 +184,7 @@
 	const inputField = 'h-full min-w-0 flex-1 bg-transparent px-1.5 outline-none placeholder:text-(--vscode-input-placeholderForeground)';
 </script>
 
-<section aria-label="Search" class="flex min-h-0 flex-1 flex-col">
+<section aria-label="Search" class="flex min-h-0 flex-1 flex-col" bind:clientWidth={viewWidth}>
 	<div class="flex shrink-0 flex-col gap-1 pr-3 pl-0.5">
 		<div class="flex gap-0.5">
 			<button
@@ -265,7 +291,7 @@
 					<input
 						bind:value={search.include}
 						oninput={() => search.schedule()}
-						onkeydown={(e) => e.key === 'Enter' && search.run()}
+						onkeydown={(e) => onPatternKey(e, 'include')}
 						placeholder="e.g. *.ts, src/**/include"
 						spellcheck="false"
 						class={inputField}
@@ -278,7 +304,7 @@
 					<input
 						bind:value={search.exclude}
 						oninput={() => search.schedule()}
-						onkeydown={(e) => e.key === 'Enter' && search.run()}
+						onkeydown={(e) => onPatternKey(e, 'exclude')}
 						placeholder="e.g. *.ts, src/**/exclude"
 						spellcheck="false"
 						class={inputField}
@@ -308,6 +334,8 @@
 				{search.done.matches === 0 ? 'ไม่พบผลลัพธ์ ลองปรับตัวเลือกหรือไฟล์ที่ exclude' : summarize(search.done.matches, search.done.files)}
 				{#if search.done.limitHit}· ผลลัพธ์ถูกตัดที่ {search.done.matches.toLocaleString()} รายการ{/if}
 			</span>
+			<!-- VS Code's "Open in editor" link under the results (Search: Open Results in Editor). -->
+			<button class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" onclick={openSearchViewInEditor}>{t('searchEditor.openInEditor')}</button>
 		{:else if search.running}
 			<span>กำลังค้นหา… {shownMatches ? summarize(shownMatches, search.files.length) : ''}</span>
 		{:else if !search.query}
@@ -317,6 +345,7 @@
 			<div class="ml-auto flex shrink-0 items-center">
 				{#each [
 					{ label: 'Refresh', icon: 'refresh', run: () => void search.run(), show: true },
+					{ label: t('searchEditor.newSearchEditor'), icon: 'newFile', run: () => void searchEditors.openNew({}), show: true },
 					{ label: 'Clear Search Results', icon: 'close', run: () => search.clear(), show: true },
 					{ label: 'Collapse All', icon: 'collapseAll', run: () => search.collapseAll(), show: search.files.length > 0 },
 					{
@@ -343,6 +372,7 @@
 		bind:this={tree}
 		bind:clientHeight={viewHeight}
 		role="tree"
+		use:listWheel
 		aria-label="Search results"
 		tabindex="0"
 		class="relative mt-1 min-h-0 flex-1 overflow-y-auto outline-none"
@@ -389,7 +419,7 @@
 						{#if decoBadges && deco}<span class="shrink-0 text-[11px] font-semibold" style:color={decoColors ? deco.color : undefined}>{deco.letter || '•'}</span>{/if}
 						{#if canReplace}
 							<button
-								class="ml-auto hidden size-5 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) group-hover/row:grid hover:bg-(--vscode-toolbar-hoverBackground)"
+								class={['hidden size-5 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) group-hover/row:grid hover:bg-(--vscode-toolbar-hoverBackground)', actionsRight ? 'ml-auto' : 'ml-2.5']}
 								title="Replace All in File"
 								aria-label="Replace All in {basename(row.file.path)}"
 								onclick={(e) => replaceRow(row, e)}><Icon name="replaceAll" size={14} /></button
@@ -398,7 +428,7 @@
 						<span
 							class={[
 								'flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-[11px] bg-(--vscode-badge-background) px-1.5 text-[11px] text-(--vscode-badge-foreground)',
-								canReplace ? 'ml-auto group-hover/row:ml-0' : 'ml-auto'
+								!actionsRight ? 'ml-2.5 group-hover/row:ml-0' : canReplace ? 'ml-auto group-hover/row:ml-0' : 'ml-auto'
 							]}>{row.file.matches.length}</span
 						>
 					{:else}
@@ -412,7 +442,7 @@
 							>
 							{#if canReplace}
 								<button
-									class="ml-auto hidden size-5 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) group-hover/row:grid hover:bg-(--vscode-toolbar-hoverBackground)"
+									class={['hidden size-5 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) group-hover/row:grid hover:bg-(--vscode-toolbar-hoverBackground)', actionsRight ? 'ml-auto' : 'ml-1']}
 									title="Replace"
 									aria-label="Replace"
 									onclick={(e) => replaceRow(row, e)}><Icon name="replace" size={14} /></button

@@ -381,6 +381,22 @@
 			"id": "git.showReferenceDetails",
 			"group": "Git",
 			"th": "แสดง commit ล่าสุดของแต่ละ ref ในตัวเลือก branch"
+		},
+		{
+			"id": "git.ignoreMissingGitWarning",
+			"group": "Git",
+			"th": "ไม่เตือนเมื่อหาโปรแกรม git ไม่พบ"
+		},
+		{
+			"id": "git.openRepositoryInParentFolders",
+			"group": "Git",
+			"th": "ใช้ git repository ที่อยู่ในโฟลเดอร์แม่ของโฟลเดอร์ที่เปิดหรือไม่",
+			"enumTh": [
+				"เปิดเสมอ",
+				"ไม่เปิด",
+				"ถามก่อน"
+			],
+			"scope": "resource"
 		}
 	]
 }

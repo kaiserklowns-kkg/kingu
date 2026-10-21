@@ -1,9 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: only the Tauri APIs the workbench calls (app commands are handled in Rust and check their own arguments).",
+  "description": "Workbench windows (the main one and New Window's window-N): only the Tauri APIs the workbench calls (app commands are handled in Rust and check their own arguments).",
   "windows": [
-    "main"
+    "main",
+    "window-*"
   ],
   "permissions": [
     "core:event:allow-listen",
@@ -14,6 +15,7 @@
     "core:window:allow-set-title",
     "core:window:allow-set-theme",
     "core:window:allow-is-fullscreen",
+    "core:window:allow-set-fullscreen",
     "core:webview:allow-set-webview-zoom",
     "dialog:allow-open",
     "dialog:allow-message",

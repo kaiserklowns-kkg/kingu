@@ -78,8 +78,30 @@ export const EDITOR_ACTIONS: Record<string, string> = {
 	'actions.find': 'Find',
 	'editor.action.startFindReplaceAction': 'Replace',
 	'editor.action.revealDefinition': 'Go to Definition',
+	'editor.action.peekDefinition': 'Peek Definition',
+	'editor.action.revealDeclaration': 'Go to Declaration',
+	'editor.action.peekDeclaration': 'Peek Declaration',
+	'editor.action.goToTypeDefinition': 'Go to Type Definition',
+	'editor.action.peekTypeDefinition': 'Peek Type Definition',
+	'editor.action.goToImplementation': 'Go to Implementations',
+	'editor.action.peekImplementation': 'Peek Implementations',
+	'editor.action.goToReferences': 'Go to References',
+	'editor.action.referenceSearch.trigger': 'Peek References',
 	'editor.action.smartSelect.expand': 'Expand Selection',
-	'editor.action.smartSelect.shrink': 'Shrink Selection'
+	'editor.action.smartSelect.shrink': 'Shrink Selection',
+	'editor.action.commentLine': 'Toggle Line Comment',
+	'editor.action.blockComment': 'Toggle Block Comment',
+	'editor.action.copyLinesUpAction': 'Copy Line Up',
+	'editor.action.copyLinesDownAction': 'Copy Line Down',
+	'editor.action.moveLinesUpAction': 'Move Line Up',
+	'editor.action.moveLinesDownAction': 'Move Line Down',
+	'editor.action.duplicateSelection': 'Duplicate Selection',
+	'editor.action.insertCursorAbove': 'Add Cursor Above',
+	'editor.action.insertCursorBelow': 'Add Cursor Below',
+	'editor.action.insertCursorAtEndOfEachLineSelected': 'Add Cursors to Line Ends',
+	'editor.action.addSelectionToNextFindMatch': 'Add Selection To Next Find Match',
+	'editor.action.addSelectionToPreviousFindMatch': 'Add Selection To Previous Find Match',
+	'editor.action.selectHighlights': 'Select All Occurrences of Find Match'
 };
 
 const SEP = { separator: true } as const;
@@ -110,9 +132,16 @@ export const MENUS: Menu[] = [
 			{ command: 'workbench.action.files.newUntitledFile', label: 'New Text File' },
 			{ command: 'kingu.agents.newTask', label: 'New Task' },
 			{ command: 'explorer.newFile', label: 'New File...' },
+			{ command: 'workbench.action.newWindow', label: 'New Window' },
 			SEP,
+			{ command: 'workbench.action.files.openFile', label: 'Open File...' },
 			{ command: 'workbench.action.files.openFolder', label: 'Open Folder...' },
+			{ command: 'workbench.action.openWorkspace', label: 'Open Workspace from File...' },
 			{ submenu: 'openRecent', label: 'Open Recent', items: [{ recent: true }] },
+			SEP,
+			{ command: 'workbench.action.addRootFolder', label: 'Add Folder to Workspace...' },
+			{ command: 'workbench.action.saveWorkspaceAs', label: 'Save Workspace As...' },
+			{ command: 'workbench.action.duplicateWorkspaceInNewWindow', label: 'Duplicate Workspace' },
 			SEP,
 			{ command: 'workbench.action.files.save', label: 'Save' },
 			{ command: 'workbench.action.files.saveAs', label: 'Save As...' },
@@ -126,6 +155,7 @@ export const MENUS: Menu[] = [
 				platform: 'other',
 				items: [
 					{ command: 'workbench.action.openSettings', label: 'Settings' },
+					{ command: 'workbench.action.openSnippets', label: 'Configure Snippets' },
 					{ command: 'workbench.action.selectTheme', label: 'Color Theme' }
 				]
 			},
@@ -133,6 +163,7 @@ export const MENUS: Menu[] = [
 			{ command: 'workbench.action.closeActiveEditor', label: 'Close Editor' },
 			{ command: 'workbench.action.reopenClosedEditor', label: 'Reopen Closed Editor' },
 			{ command: 'workbench.action.closeFolder', label: 'Close Folder' },
+			{ command: 'workbench.action.closeWindow', label: 'Close Window' },
 			{ ...SEP, platform: 'other' },
 			{ command: 'workbench.action.quit', label: 'Exit', platform: 'other' }
 		]
@@ -151,7 +182,12 @@ export const MENUS: Menu[] = [
 			{ command: 'actions.find', label: 'Find', key: 'cmd+f' },
 			{ command: 'editor.action.startFindReplaceAction', label: 'Replace', key: 'ctrl+h', mac: 'cmd+alt+f' },
 			SEP,
-			{ command: 'workbench.action.findInFiles', label: 'Find in Files' }
+			{ command: 'workbench.action.findInFiles', label: 'Find in Files' },
+			SEP,
+			// Monaco's ⌘/ is shown from its keybinding (the chat's Attach Context has ⌘/ while the chat has focus).
+			{ command: 'editor.action.commentLine', label: 'Toggle Line Comment' },
+			{ command: 'editor.action.blockComment', label: 'Toggle Block Comment', key: 'shift+alt+a' },
+			{ command: 'editor.emmet.action.expandAbbreviation', label: 'Emmet: Expand Abbreviation' }
 		]
 	},
 	{
@@ -160,7 +196,25 @@ export const MENUS: Menu[] = [
 		items: [
 			{ role: 'selectAll' },
 			{ command: 'editor.action.smartSelect.expand', label: 'Expand Selection', key: 'shift+alt+right', mac: 'ctrl+shift+cmd+right' },
-			{ command: 'editor.action.smartSelect.shrink', label: 'Shrink Selection', key: 'shift+alt+left', mac: 'ctrl+shift+cmd+left' }
+			{ command: 'editor.action.smartSelect.shrink', label: 'Shrink Selection', key: 'shift+alt+left', mac: 'ctrl+shift+cmd+left' },
+			SEP,
+			{ command: 'editor.action.copyLinesUpAction', label: 'Copy Line Up', key: 'shift+alt+up' },
+			{ command: 'editor.action.copyLinesDownAction', label: 'Copy Line Down', key: 'shift+alt+down' },
+			{ command: 'editor.action.moveLinesUpAction', label: 'Move Line Up', key: 'alt+up' },
+			{ command: 'editor.action.moveLinesDownAction', label: 'Move Line Down', key: 'alt+down' },
+			{ command: 'editor.action.duplicateSelection', label: 'Duplicate Selection' },
+			SEP,
+			{ command: 'editor.action.insertCursorAbove', label: 'Add Cursor Above', key: 'ctrl+alt+up', mac: 'cmd+alt+up' },
+			{ command: 'editor.action.insertCursorBelow', label: 'Add Cursor Below', key: 'ctrl+alt+down', mac: 'cmd+alt+down' },
+			{ command: 'editor.action.insertCursorAtEndOfEachLineSelected', label: 'Add Cursors to Line Ends', key: 'shift+alt+i' },
+			{ command: 'editor.action.addSelectionToNextFindMatch', label: 'Add Next Occurrence', key: 'cmd+d' },
+			{ command: 'editor.action.addSelectionToPreviousFindMatch', label: 'Add Previous Occurrence' },
+			// ⇧⌘L from Monaco's keybinding (the Search Editor's Select All Matches has it while it has focus).
+			{ command: 'editor.action.selectHighlights', label: 'Select All Occurrences' },
+			SEP,
+			{ command: 'workbench.action.toggleMultiCursorModifier', label: 'Switch to Cmd+Click for Multi-Cursor', checkedLabel: 'Switch to Alt+Click for Multi-Cursor', platform: 'mac' },
+			{ command: 'workbench.action.toggleMultiCursorModifier', label: 'Switch to Ctrl+Click for Multi-Cursor', checkedLabel: 'Switch to Alt+Click for Multi-Cursor', platform: 'other' },
+			{ command: 'editor.action.toggleColumnSelection', label: 'Column Selection Mode', toggle: true }
 		]
 	},
 	{
@@ -174,10 +228,23 @@ export const MENUS: Menu[] = [
 				submenu: 'appearance',
 				label: 'Appearance',
 				items: [
+					// macOS enters full screen from the Window menu (its native item owns ⌃⌘F).
+					{ command: 'workbench.action.toggleFullScreen', label: 'Full Screen', toggle: true, platform: 'other' },
+					{ command: 'workbench.action.toggleZenMode', label: 'Zen Mode', toggle: true },
+					{ command: 'workbench.action.toggleCenteredLayout', label: 'Centered Layout', toggle: true },
+					SEP,
+					{ command: 'workbench.action.toggleMenuBar', label: 'Menu Bar', toggle: true, platform: 'other' },
 					{ command: 'workbench.action.toggleSidebarVisibility', label: 'Primary Side Bar', toggle: true },
 					{ command: 'workbench.action.toggleAuxiliaryBar', label: 'Secondary Side Bar', toggle: true },
+					{ command: 'workbench.action.toggleStatusbarVisibility', label: 'Status Bar', toggle: true },
 					{ command: 'workbench.action.togglePanel', label: 'Panel', toggle: true },
-					{ command: 'workbench.action.toggleZenMode', label: 'Zen Mode', toggle: true },
+					SEP,
+					{ command: 'editor.action.toggleMinimap', label: 'Minimap', toggle: true },
+					{ command: 'editor.action.toggleStickyScroll', label: 'Sticky Scroll', toggle: true },
+					{ command: 'editor.action.toggleRenderWhitespace', label: 'Render Whitespace', toggle: true },
+					{ command: 'editor.action.toggleRenderControlCharacter', label: 'Render Control Characters', toggle: true },
+					SEP,
+					{ command: 'workbench.action.toggleSidebarPosition', label: 'Move Primary Side Bar Right', checkedLabel: 'Move Primary Side Bar Left' },
 					{ command: 'workbench.action.customizeLayout', label: 'Customize Layout...' },
 					SEP,
 					{ command: 'workbench.action.zoomIn', label: 'Zoom In' },
@@ -194,7 +261,32 @@ export const MENUS: Menu[] = [
 			{ command: 'workbench.view.snaps', label: 'Snaps' },
 			{ command: 'workbench.actions.view.problems', label: 'Problems' },
 			SEP,
-			{ command: 'workbench.action.splitEditor', label: 'Split Editor' }
+			{
+				submenu: 'editorLayout',
+				label: 'Editor Layout',
+				items: [
+					{ command: 'workbench.action.splitEditorUp', label: 'Split Up' },
+					{ command: 'workbench.action.splitEditorDown', label: 'Split Down' },
+					{ command: 'workbench.action.splitEditorLeft', label: 'Split Left' },
+					{ command: 'workbench.action.splitEditorRight', label: 'Split Right' },
+					SEP,
+					{ command: 'workbench.action.splitEditorInGroup', label: 'Split in Group' },
+					SEP,
+					{ command: 'workbench.action.editorLayoutSingle', label: 'Single' },
+					{ command: 'workbench.action.editorLayoutTwoColumns', label: 'Two Columns' },
+					{ command: 'workbench.action.editorLayoutThreeColumns', label: 'Three Columns' },
+					{ command: 'workbench.action.editorLayoutTwoRows', label: 'Two Rows' },
+					{ command: 'workbench.action.editorLayoutThreeRows', label: 'Three Rows' },
+					{ command: 'workbench.action.editorLayoutTwoByTwoGrid', label: 'Grid (2x2)' },
+					{ command: 'workbench.action.editorLayoutTwoRowsRight', label: 'Two Rows Right' },
+					{ command: 'workbench.action.editorLayoutTwoColumnsBottom', label: 'Two Columns Bottom' },
+					SEP,
+					{ command: 'workbench.action.toggleEditorGroupLayout', label: 'Flip Layout' }
+				]
+			},
+			{ command: 'workbench.action.splitEditor', label: 'Split Editor' },
+			SEP,
+			{ command: 'editor.action.toggleWordWrap', label: 'Word Wrap', toggle: true }
 		]
 	},
 	{
@@ -221,7 +313,11 @@ export const MENUS: Menu[] = [
 			{ command: 'workbench.action.gotoSymbol', label: 'Go to Symbol in Editor...' },
 			{ command: 'workbench.action.gotoLine', label: 'Go to Line/Column...' },
 			SEP,
-			{ command: 'editor.action.revealDefinition', label: 'Go to Definition', key: 'f12' }
+			{ command: 'editor.action.revealDefinition', label: 'Go to Definition', key: 'f12' },
+			{ command: 'editor.action.revealDeclaration', label: 'Go to Declaration' },
+			{ command: 'editor.action.goToTypeDefinition', label: 'Go to Type Definition' },
+			{ command: 'editor.action.goToImplementation', label: 'Go to Implementations', key: 'cmd+f12' },
+			{ command: 'editor.action.goToReferences', label: 'Go to References', key: 'shift+f12' }
 		]
 	},
 	{
@@ -234,6 +330,7 @@ export const MENUS: Menu[] = [
 			{ command: 'workbench.action.debug.restart', label: 'Restart Debugging' },
 			SEP,
 			{ command: 'workbench.action.debug.configure', label: 'Open Configurations' },
+			{ command: 'debug.addConfiguration', label: 'Add Configuration...' },
 			SEP,
 			{ command: 'workbench.action.debug.stepOver', label: 'Step Over' },
 			{ command: 'workbench.action.debug.stepInto', label: 'Step Into' },
@@ -241,8 +338,23 @@ export const MENUS: Menu[] = [
 			{ command: 'workbench.action.debug.continue', label: 'Continue' },
 			SEP,
 			{ command: 'editor.debug.action.toggleBreakpoint', label: 'Toggle Breakpoint' },
-			{ command: 'editor.debug.action.conditionalBreakpoint', label: 'New Conditional Breakpoint...' },
-			{ command: 'workbench.debug.viewlet.action.removeAllBreakpoints', label: 'Remove All Breakpoints' }
+			{
+				submenu: 'newBreakpoint',
+				label: 'New Breakpoint',
+				items: [
+					{ command: 'editor.debug.action.conditionalBreakpoint', label: 'Conditional Breakpoint...' },
+					{ command: 'editor.debug.action.editBreakpoint', label: 'Edit Breakpoint' },
+					{ command: 'workbench.debug.viewlet.action.addFunctionBreakpointAction', label: 'Function Breakpoint...' },
+					{ command: 'editor.debug.action.addLogPoint', label: 'Logpoint...' },
+					{ command: 'editor.debug.action.triggerByBreakpoint', label: 'Triggered Breakpoint...' }
+				]
+			},
+			SEP,
+			{ command: 'workbench.debug.viewlet.action.enableAllBreakpoints', label: 'Enable All Breakpoints' },
+			{ command: 'workbench.debug.viewlet.action.disableAllBreakpoints', label: 'Disable All Breakpoints' },
+			{ command: 'workbench.debug.viewlet.action.removeAllBreakpoints', label: 'Remove All Breakpoints' },
+			SEP,
+			{ command: 'debug.installAdditionalDebuggers', label: 'Install Additional Debuggers...' }
 		]
 	},
 	{
@@ -261,7 +373,20 @@ export const MENUS: Menu[] = [
 	{
 		id: 'terminal',
 		label: '&Terminal',
-		items: [{ command: 'workbench.action.terminal.toggleTerminal', label: 'Toggle Terminal' }]
+		items: [
+			{ command: 'workbench.action.terminal.new', label: 'New Terminal' },
+			SEP,
+			{ command: 'workbench.action.tasks.runTask', label: 'Run Task...' },
+			{ command: 'workbench.action.tasks.build', label: 'Run Build Task...' },
+			{ command: 'workbench.action.tasks.showTasks', label: 'Show Running Tasks...' },
+			{ command: 'workbench.action.tasks.restartTask', label: 'Restart Running Task...' },
+			{ command: 'workbench.action.tasks.terminate', label: 'Terminate Task...' },
+			SEP,
+			{ command: 'workbench.action.tasks.configureTaskRunner', label: 'Configure Tasks...' },
+			{ command: 'workbench.action.tasks.configureDefaultBuildTask', label: 'Configure Default Build Task...' },
+			SEP,
+			{ command: 'workbench.action.terminal.toggleTerminal', label: 'Toggle Terminal' }
+		]
 	},
 	{
 		id: 'window',

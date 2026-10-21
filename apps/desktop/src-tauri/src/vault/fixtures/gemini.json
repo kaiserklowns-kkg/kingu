@@ -1,0 +1,11 @@
+{
+  "sessionId": "c2d4e6f8-3333-4a1b-9c2d-000000000003",
+  "projectHash": "PROJECT_HASH",
+  "startTime": "2026-10-15T08:00:00.000Z",
+  "lastUpdated": "2026-10-15T08:05:00.000Z",
+  "messages": [
+    { "id": "m1", "timestamp": "2026-10-15T08:00:00.000Z", "type": "user", "content": "Explain the build pipeline" },
+    { "id": "m2", "timestamp": "2026-10-15T08:01:00.000Z", "type": "gemini", "content": "The pipeline runs vite then tauri build.", "model": "gemini-2.5-pro", "tokens": { "input": 9000, "output": 400, "cached": 3000, "thoughts": 100, "tool": 0, "total": 9500 }, "toolCalls": [{ "name": "read_file", "args": { "path": "package.json" } }] },
+    { "id": "m3", "timestamp": "2026-10-15T08:05:00.000Z", "type": "info", "content": "Saved" }
+  ]
+}

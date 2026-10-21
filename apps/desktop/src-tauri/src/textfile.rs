@@ -13,6 +13,9 @@ use std::time::UNIX_EPOCH;
 use encoding_rs::Encoding;
 use sha2::{Digest, Sha256};
 
+use crate::i18n::msg::FilesMsg;
+use crate::tr;
+
 /// VS Code's encoding ids (SUPPORTED_ENCODINGS keys) that encoding_rs implements. ISO 8859-1,
 /// 8859-9 and 8859-11 decode as their WHATWG supersets (Windows 1252, 1254 and 874).
 const ENCODINGS: &[(&str, &Encoding)] = &[
@@ -102,9 +105,16 @@ pub struct Detected {
   pub seems_binary: bool,
 }
 
-/// VS Code's detectEncodingFromBuffer: a BOM, else zero bytes in the first 512 bytes mean UTF-16
-/// (when they all sit on one side of each byte pair) or binary content.
+/// [`detect_with`] with any guess allowed.
+#[cfg(test)]
 pub fn detect(buf: &[u8], auto_guess: bool) -> Detected {
+  detect_with(buf, auto_guess, &[])
+}
+
+/// VS Code's detectEncodingFromBuffer: a BOM, else zero bytes in the first 512 bytes mean UTF-16
+/// (when they all sit on one side of each byte pair) or binary content. A guess must be one of
+/// `candidates` (`files.candidateGuessEncodings`; empty: any).
+pub fn detect_with(buf: &[u8], auto_guess: bool, candidates: &[String]) -> Detected {
   let mut encoding = detect_bom(buf);
   let mut seems_binary = false;
   if encoding.is_none() {
@@ -134,7 +144,7 @@ pub fn detect(buf: &[u8], auto_guess: bool) -> Detected {
     }
   }
   if auto_guess && !seems_binary && encoding.is_none() {
-    encoding = guess(buf);
+    encoding = guess(buf).filter(|g| candidates.is_empty() || candidates.iter().any(|c| c == g));
   }
   Detected { encoding, seems_binary }
 }
@@ -199,6 +209,9 @@ pub struct ReadOptions {
   /// "Open Anyway" on the large file placeholder.
   #[serde(default)]
   pub accept_large: bool,
+  /// `files.candidateGuessEncodings`: the encodings a guess may give (empty: any).
+  #[serde(default)]
+  pub candidate_guess_encodings: Vec<String>,
 }
 
 #[derive(Debug, serde::Serialize, PartialEq)]
@@ -246,7 +259,7 @@ pub fn decode(bytes: &[u8], encoding: &str) -> (String, bool) {
 
 pub fn decode_file(bytes: &[u8], opts: &ReadOptions) -> ReadResult {
   let size = bytes.len() as u64;
-  let detected = detect(bytes, opts.auto_guess && opts.encoding.is_none());
+  let detected = detect_with(bytes, opts.auto_guess && opts.encoding.is_none(), &opts.candidate_guess_encodings);
   if detected.seems_binary && !opts.accept_binary && opts.encoding.is_none() {
     return ReadResult::Binary { size };
   }
@@ -258,7 +271,7 @@ pub fn decode_file(bytes: &[u8], opts: &ReadOptions) -> ReadResult {
 pub fn read(path: &Path, opts: &ReadOptions) -> Result<ReadResult, String> {
   let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
   if meta.is_dir() {
-    return Err("is a directory".into());
+    return Err(tr!(FilesMsg::IsADirectoryBare));
   }
   let size = meta.len();
   let confirm = opts.large_file_limit.unwrap_or(LARGE_FILE_LIMIT).clamp(1, MAX_FILE_SIZE);
@@ -348,14 +361,14 @@ pub fn write(path: &Path, text: &str, encoding: &str, expected: Option<&Expected
 /// with a plain file name.
 pub fn resolve_for_write(root: &Path, rel: &str) -> Result<PathBuf, String> {
   if let Ok(p) = crate::workspace::resolve_in(root, rel) {
-    return if p.is_dir() { Err(format!("{rel}: is a directory")) } else { Ok(p) };
+    return if p.is_dir() { Err(tr!(FilesMsg::IsADirectory, path = rel)) } else { Ok(p) };
   }
   let rel_path = Path::new(rel);
-  let name = rel_path.file_name().filter(|n| *n != ".." && *n != ".").ok_or_else(|| format!("{rel}: invalid path"))?;
+  let name = rel_path.file_name().filter(|n| *n != ".." && *n != ".").ok_or_else(|| tr!(FilesMsg::InvalidPath, path = rel))?;
   let parent = rel_path.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
   let dir = if parent.is_empty() { root.to_path_buf() } else { crate::workspace::resolve_in(root, &parent)? };
   if !dir.is_dir() {
-    return Err(format!("{rel}: folder not found"));
+    return Err(tr!(FilesMsg::FolderNotFound, path = rel));
   }
   Ok(dir.join(name))
 }
@@ -449,6 +462,11 @@ mod tests {
   #[test]
   fn guess_leaves_ascii_and_utf8_alone() {
     assert_eq!(guess(b"just ascii"), None);
+    // files.candidateGuessEncodings limits what a guess may give.
+    let thai = encoding_rs::WINDOWS_874.encode("ภาษาไทยในไฟล์นี้ยาวพอให้เดาได้").0;
+    assert_eq!(detect_with(&thai, true, &[]).encoding, guess(&thai));
+    assert_eq!(detect_with(&thai, true, &["shiftjis".into()]).encoding, None);
+    assert_eq!(detect_with("ไทย".as_bytes(), true, &["utf8".into()]).encoding, Some("utf8"));
     assert_eq!(guess("ไทย".as_bytes()), Some("utf8"));
     // ASCII falls back to files.encoding.
     let r = decode_file(b"abc", &ReadOptions { auto_guess: true, default_encoding: Some("windows1252".into()), ..Default::default() });

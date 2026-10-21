@@ -1,4 +1,4 @@
-/* Rendered Markdown (renderMarkdown): the Markdown preview and a Snap's README. */
+/* Rendered Markdown (workbench/markdown.ts) outside the Markdown preview, e.g. a Snap's README. The preview keeps its own copy (MarkdownPreview.svelte). */
 .markdown-body {
 	font-size: 14px;
 	line-height: 1.65;

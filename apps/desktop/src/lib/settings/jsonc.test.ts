@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { parseJsonc, parseSettingsText, setProperty } from './jsonc';
+import { appendArrayElement, arrayElements, parseJsonc, parseSettingsText, removeArrayElements, setProperty } from './jsonc';
 
 describe('parseSettingsText', () => {
 	test('reads comments and trailing commas', () => {
@@ -69,5 +69,27 @@ describe('setProperty', () => {
 	test('keys with escapes and strings with braces do not confuse the scanner', () => {
 		const text = '{ "x": "}{,", "we\\"ird": 1 }';
 		expect(roundTrip(setProperty(text, 'we"ird', 2))).toEqual({ x: '}{,', 'we"ird': 2 });
+	});
+});
+
+describe('root array edits', () => {
+	test('finds elements past comments and nested values', () => {
+		const text = '// x\n[ { "a": [1, 2] }, /* c */ "s", 3 ]';
+		expect(arrayElements(text)?.elements.map((e) => text.slice(e.start, e.end))).toEqual(['{ "a": [1, 2] }', '"s"', '3']);
+		expect(arrayElements('{}')).toBeNull();
+	});
+
+	test('removes elements and fixes commas', () => {
+		const text = '[\n\t1,\n\t// two\n\t2,\n\t3\n]\n';
+		expect(removeArrayElements(text, [0])).toBe('[\n\t// two\n\t2,\n\t3\n]\n');
+		expect(removeArrayElements(text, [2])).toBe('[\n\t1,\n\t// two\n\t2\n]\n');
+		expect(parseJsonc<unknown>(removeArrayElements(text, [0, 1, 2]))).toEqual([]);
+	});
+
+	test('appends after the last element or into an empty array', () => {
+		expect(parseJsonc<unknown>(appendArrayElement('[1]', { a: 1 }))).toEqual([1, { a: 1 }]);
+		expect(parseJsonc<unknown>(appendArrayElement('[1,]', 2))).toEqual([1, 2]);
+		expect(appendArrayElement('[]', 1)).toBe('[\n\t1\n]');
+		expect(appendArrayElement('', 1)).toBe('[\n\t1\n]\n');
 	});
 });

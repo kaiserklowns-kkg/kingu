@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 use tauri::Manager;
+use crate::i18n::msg::CoreMsg;
+use crate::tr;
 
 const DIR: &str = "pasted-images";
 const PREFIX: &str = "kingu-paste-";
@@ -54,12 +56,12 @@ static SEQ: AtomicU64 = AtomicU64::new(0);
 /// Saves a pasted image into `dir`; returns its path.
 pub fn save_image(dir: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
   if bytes.is_empty() {
-    return Err("ไม่มีรูปในคลิปบอร์ด".into());
+    return Err(tr!(CoreMsg::NoClipboardImage));
   }
   if bytes.len() > MAX_PASTE_BYTES {
-    return Err("รูปใหญ่เกินไป (เกิน 18 MB)".into());
+    return Err(tr!(CoreMsg::PasteTooLarge));
   }
-  let ext = sniff(bytes).ok_or("ไม่ใช่รูป png, jpeg, gif หรือ webp")?;
+  let ext = sniff(bytes).ok_or_else(|| tr!(CoreMsg::NotAnImage))?;
   fs::create_dir_all(dir).map_err(|e| e.to_string())?;
   #[cfg(unix)]
   {
@@ -89,37 +91,59 @@ pub fn save_image(dir: &Path, bytes: &[u8]) -> Result<PathBuf, String> {
 /// signature, within the size limits.
 pub fn check_images(paths: &[String]) -> Result<(), String> {
   if paths.len() > MAX_IMAGES {
-    return Err(format!("แนบรูปได้ไม่เกิน {MAX_IMAGES} รูปต่อข้อความ"));
+    return Err(tr!(CoreMsg::TooManyImages, max = MAX_IMAGES));
   }
   let mut total = 0;
   for p in paths {
     let path = Path::new(p);
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     if !path.is_absolute() {
-      return Err(format!("{p}: ต้องเป็น path เต็ม"));
+      return Err(tr!(CoreMsg::NeedsAbsolutePath, path = p));
     }
     let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
     if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp") {
-      return Err(format!("{name}: แนบได้เฉพาะรูป png, jpeg, gif หรือ webp"));
+      return Err(tr!(CoreMsg::ImageTypeOnly, name));
     }
     let meta = fs::metadata(path).map_err(|e| format!("{name}: {e}"))?;
     if !meta.is_file() {
-      return Err(format!("{name}: ไม่ใช่ไฟล์"));
+      return Err(tr!(CoreMsg::NotAFile, name));
     }
     if meta.len() == 0 || meta.len() > MAX_IMAGE_BYTES {
-      return Err(format!("{name}: รูปต้องไม่ว่างและไม่เกิน 5 MB"));
+      return Err(tr!(CoreMsg::ImageSize, name));
     }
     total += meta.len();
     let mut head = [0u8; 12];
     let n = std::io::Read::read(&mut fs::File::open(path).map_err(|e| e.to_string())?, &mut head).map_err(|e| e.to_string())?;
     if sniff(&head[..n]).is_none() {
-      return Err(format!("{name}: เนื้อไฟล์ไม่ใช่รูปที่รองรับ"));
+      return Err(tr!(CoreMsg::ImageContent, name));
     }
   }
   if total > MAX_IMAGES_TOTAL {
-    return Err("รูปที่แนบรวมกันเกิน 20 MB".into());
+    return Err(tr!(CoreMsg::ImagesTotalTooLarge));
   }
   Ok(())
+}
+
+/// The composer's thumbnail of an attached image: the file as a `data:` URL, after the checks a
+/// message's images get (absolute, a supported type by name and signature, within 5 MB).
+pub fn preview_data_url(path: &str) -> Result<String, String> {
+  use base64::Engine;
+  check_images(&[path.to_owned()])?;
+  let bytes = fs::read(path).map_err(|e| e.to_string())?;
+  let mime = match sniff(&bytes) {
+    Some("png") => "image/png",
+    Some("jpg") => "image/jpeg",
+    Some("gif") => "image/gif",
+    Some("webp") => "image/webp",
+    _ => return Err(tr!(CoreMsg::NotAnImage)),
+  };
+  Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+}
+
+/// An attached image's thumbnail for the chat composer (`preview_data_url`).
+#[tauri::command]
+pub async fn chat_attachment_preview(path: String) -> Result<String, String> {
+  tauri::async_runtime::spawn_blocking(move || preview_data_url(&path)).await.map_err(|e| e.to_string())?
 }
 
 /// A pasted image (the request body is its raw bytes): saved, its path returned.
@@ -170,6 +194,22 @@ mod tests {
     sweep(&d, Duration::ZERO, SystemTime::now() + Duration::from_secs(5));
     assert!(!a.exists() && !b.exists());
     assert!(d.join("keep.txt").exists(), "only Kingu's pastes are swept");
+  }
+
+  #[test]
+  fn previews_attached_images_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let img = dir.path().join("shot.png");
+    fs::write(&img, PNG).unwrap();
+    let url = preview_data_url(img.to_str().unwrap()).unwrap();
+    assert!(url.starts_with("data:image/png;base64,"));
+    let txt = dir.path().join("notes.txt");
+    fs::write(&txt, "x").unwrap();
+    assert!(preview_data_url(txt.to_str().unwrap()).is_err());
+    let fake = dir.path().join("fake.png");
+    fs::write(&fake, "not an image").unwrap();
+    assert!(preview_data_url(fake.to_str().unwrap()).is_err());
+    assert!(preview_data_url("shot.png").is_err(), "relative paths are refused");
   }
 
   #[test]

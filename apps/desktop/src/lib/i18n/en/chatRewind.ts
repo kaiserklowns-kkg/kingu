@@ -1,0 +1,28 @@
+// UI strings of rewinding and forking agent chats (agent/chatRewind.svelte.ts, RestoreCheckpoint,
+// the inline request editor and the Redo bar). Keys: 'chatRewind.<what>'. Thai in ../th/chatRewind.ts.
+export const chatRewind = {
+	'chatRewind.restore': 'Restore Checkpoint',
+	'chatRewind.restoreHint': 'Restores workspace and chat to this point',
+	'chatRewind.startOver': 'Start Over',
+	'chatRewind.startOverHint': 'Clears the chat and undoes all changes',
+	'chatRewind.confirm': 'This will remove all subsequent requests and undo edits made to {count|# file|# files}. Do you want to proceed?',
+	'chatRewind.confirmNoFiles': 'This will remove this request and all subsequent requests. Do you want to proceed?',
+	'chatRewind.ok': 'Yes',
+	'chatRewind.okDontAsk': "Yes, Don't Ask Again",
+	'chatRewind.restored': 'Checkpoint restored',
+	'chatRewind.restoredFiles': 'Checkpoint restored: {count|# file|# files} went back',
+	'chatRewind.redo': 'Redo',
+	'chatRewind.redoHint': 'Bring back the requests and file changes the checkpoint removed',
+	'chatRewind.redone': 'Restored the removed requests',
+	'chatRewind.failed': 'Could not restore the checkpoint: {error}',
+	'chatRewind.redoFailed': 'Could not redo: {error}',
+	'chatRewind.stopTimeout': 'The agent did not stop in time: try again',
+	'chatRewind.editHint': 'Edit this request and send it again (Enter to send, Escape to cancel)',
+	'chatRewind.editLabel': 'Edit request',
+	'chatRewind.editSend': 'Send',
+	'chatRewind.fork': 'Fork Conversation',
+	'chatRewind.forkHint': 'Fork conversation from this point',
+	'chatRewind.forkedTitle': 'Forked: {title}',
+	'chatRewind.forkedPrefix': 'Forked: ',
+	'chatRewind.forkFailed': 'Could not fork the chat: {error}'
+} as const;

@@ -1,0 +1,103 @@
+// UI strings of the agent chat composer, Cursor's agent input (agent/Composer.svelte,
+// agent/ComposerMenu.svelte, agent/ComposerQueue.svelte, agent/composer.ts, the toolbar row of
+// agent/ChatEditsBar.svelte, agent/PermissionCard.svelte's Skip / Run, the bottom bar of
+// agent/AgentPanel.svelte). Keys: 'composer.<what>'. Thai in ../th/composer.ts.
+export const composer = {
+	'composer.placeholder.followUp': 'Add a follow-up',
+	'composer.placeholder.pending': 'Reject, suggest, follow up?',
+	'composer.placeholder.editingQueued': 'Editing queued message…',
+
+	'composer.mode.label': 'Mode: {mode}',
+	'composer.mode.hint': 'Switch mode ({key} or ⇧Tab)',
+	'composer.mode.footer': '{key} or ⇧Tab switches to the next mode',
+
+	'composer.model.label': 'Model: {model}',
+	'composer.model.hint': 'Model: {model} ({key})',
+	'composer.model.search': 'Search models',
+	'composer.model.default': 'Default',
+
+	'composer.options.hint': 'Runs on {runtime} in {where} · {run}',
+
+	'composer.run.title': 'Run Mode',
+	'composer.run.ask': 'Ask Every Time',
+	'composer.run.askHint': 'Asks before tools that are not on your allowlist',
+	'composer.run.edits': 'Auto-Accept Edits',
+	'composer.run.editsHint': 'File edits go ahead; commands still ask',
+	'composer.run.all': 'Run Everything',
+	'composer.run.allHint': 'Every tool runs without asking, commands included',
+	'composer.run.global': 'Global auto-approve is on',
+
+	'composer.menu.search': 'Search',
+	'composer.menu.none': 'Nothing found',
+
+	'composer.slash.skills': 'Skills',
+	'composer.slash.commands': 'Commands',
+	'composer.slash.modes': 'Modes',
+	'composer.slash.actions': 'Actions',
+	'composer.slash.source.mode': 'Mode',
+	'composer.slash.modeSwitch': 'Switch to {mode}',
+
+	'composer.mention.back': 'Back to all context',
+
+	'composer.send.queueTitle': '{action} (⏎) · {alt} the other way · {stop} stops and sends · right-click for more',
+	'composer.drop': 'Drop files to attach',
+
+	'composer.status.label': 'Agent status',
+	'composer.status.running': 'Generating',
+	'composer.status.waiting': 'Waiting for Approval',
+
+	'composer.review.review': 'Review',
+	'composer.review.reviewHint': 'Open the diff of every changed file',
+	'composer.review.confirm': 'Confirm',
+	'composer.review.confirmHint': 'Click again to confirm undo',
+
+	'composer.queue.title': '{count|# Queued Message|# Queued Messages}',
+	'composer.queue.edit': 'Edit queued message',
+	'composer.queue.steer': 'Steer',
+	'composer.queue.steerHint': 'Steer: sends now without interrupting the agent',
+	'composer.queue.sendNow': 'Send Now',
+	'composer.queue.sendNowHint': 'Send Now: stops the agent, then sends this message',
+	'composer.queue.interrupt': 'Interrupt: stop the agent and send',
+	'composer.queue.remove': 'Remove from queue',
+	'composer.queue.more': 'More actions',
+	'composer.queue.moveUp': 'Move Up',
+	'composer.queue.moveDown': 'Move Down',
+	'composer.queue.drag': 'Drag to reorder',
+	'composer.editingQueued': 'Editing queued message',
+
+	'composer.approve.run': 'Run',
+	'composer.approve.skip': 'Skip',
+	'composer.approve.skipHint': 'Skip this call (deny it); the agent is told',
+
+	'composer.placeholder.new': 'Plan, Build, / for skills, @ for context',
+	'composer.slash.more': 'Show {count} more',
+	'composer.mention.source.files': 'Files & Folders',
+	'composer.mention.source.terminal': 'Terminals',
+	'composer.mention.source.pastChat': 'Past Chats',
+	'composer.mention.source.scm': 'Changes (Uncommitted Diff)',
+	'composer.mention.source.selection': 'Selection',
+	'composer.mention.source.problems': 'Problems',
+	'composer.mention.source.clipboardImage': 'Image from Clipboard',
+	'composer.mention.source.instructions': 'Rules & Instructions',
+	'composer.header.unread': 'Finished: not seen yet',
+	'composer.header.close': 'Close chat',
+	'composer.header.more': 'More actions',
+	'composer.header.hidePanel': 'Hide the panel',
+	'composer.status.files': '{count|# File|# Files}',
+	'composer.progress.planning': 'Planning next moves',
+	'composer.progress.thought': 'Thought briefly',
+	'composer.progress.worked': 'Worked',
+	'composer.progress.workedFor': 'Worked for {time}',
+	'composer.feedback.title': 'How did the agent do?',
+	'composer.nudge.title': 'Steer New Messages?',
+	'composer.nudge.body': 'Steering sends new messages to the agent while it works, without stopping it. Turn it on to steer instead of queuing.',
+	'composer.nudge.keep': 'Keep Queuing',
+	'composer.nudge.steer': 'Use Steering',
+	'composer.approve.pending': 'Pending approval',
+	'composer.approve.allowlist': 'Allowlist',
+	'composer.approve.changeRunMode': 'Change run mode',
+	'composer.approve.allowCall': 'Always allow this call',
+	'composer.approve.skipped': 'Skipped {name}',
+	'composer.stop': 'Stop',
+	'composer.approve.skippedEdit': 'Skipped edit to {file}'
+} as const;

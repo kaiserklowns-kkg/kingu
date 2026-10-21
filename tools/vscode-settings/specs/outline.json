@@ -1,0 +1,166 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/outline.ts",
+	"export": "OUTLINE_SETTINGS",
+	"what": "outline.*",
+	"entries": [
+		{
+			"id": "outline.icons",
+			"group": "Workbench",
+			"th": "แสดงไอคอนของรายการใน Outline"
+		},
+		{
+			"id": "outline.collapseItems",
+			"group": "Workbench",
+			"th": "รายการใน Outline เริ่มแบบยุบหรือขยาย",
+			"enumTh": [
+				"ยุบทุกรายการ",
+				"ขยายทุกรายการ"
+			]
+		},
+		{
+			"id": "outline.problems.enabled",
+			"group": "Workbench",
+			"th": "แสดง error และ warning บนรายการใน Outline"
+		},
+		{
+			"id": "outline.problems.colors",
+			"group": "Workbench",
+			"th": "ใช้สีกับรายการที่มี error หรือ warning ใน Outline"
+		},
+		{
+			"id": "outline.problems.badges",
+			"group": "Workbench",
+			"th": "แสดงจำนวนปัญหาเป็น badge บนรายการใน Outline"
+		},
+		{
+			"id": "outline.showFiles",
+			"group": "Workbench",
+			"th": "แสดงไฟล์ใน Outline"
+		},
+		{
+			"id": "outline.showModules",
+			"group": "Workbench",
+			"th": "แสดงmoduleใน Outline"
+		},
+		{
+			"id": "outline.showNamespaces",
+			"group": "Workbench",
+			"th": "แสดงnamespaceใน Outline"
+		},
+		{
+			"id": "outline.showPackages",
+			"group": "Workbench",
+			"th": "แสดงpackageใน Outline"
+		},
+		{
+			"id": "outline.showClasses",
+			"group": "Workbench",
+			"th": "แสดงคลาสใน Outline"
+		},
+		{
+			"id": "outline.showMethods",
+			"group": "Workbench",
+			"th": "แสดงเมธอดใน Outline"
+		},
+		{
+			"id": "outline.showProperties",
+			"group": "Workbench",
+			"th": "แสดงpropertyใน Outline"
+		},
+		{
+			"id": "outline.showFields",
+			"group": "Workbench",
+			"th": "แสดงfieldใน Outline"
+		},
+		{
+			"id": "outline.showConstructors",
+			"group": "Workbench",
+			"th": "แสดงconstructorใน Outline"
+		},
+		{
+			"id": "outline.showEnums",
+			"group": "Workbench",
+			"th": "แสดงenumใน Outline"
+		},
+		{
+			"id": "outline.showInterfaces",
+			"group": "Workbench",
+			"th": "แสดงinterfaceใน Outline"
+		},
+		{
+			"id": "outline.showFunctions",
+			"group": "Workbench",
+			"th": "แสดงฟังก์ชันใน Outline"
+		},
+		{
+			"id": "outline.showVariables",
+			"group": "Workbench",
+			"th": "แสดงตัวแปรใน Outline"
+		},
+		{
+			"id": "outline.showConstants",
+			"group": "Workbench",
+			"th": "แสดงค่าคงที่ใน Outline"
+		},
+		{
+			"id": "outline.showStrings",
+			"group": "Workbench",
+			"th": "แสดงstringใน Outline"
+		},
+		{
+			"id": "outline.showNumbers",
+			"group": "Workbench",
+			"th": "แสดงตัวเลขใน Outline"
+		},
+		{
+			"id": "outline.showBooleans",
+			"group": "Workbench",
+			"th": "แสดงbooleanใน Outline"
+		},
+		{
+			"id": "outline.showArrays",
+			"group": "Workbench",
+			"th": "แสดงarrayใน Outline"
+		},
+		{
+			"id": "outline.showObjects",
+			"group": "Workbench",
+			"th": "แสดงobjectใน Outline"
+		},
+		{
+			"id": "outline.showKeys",
+			"group": "Workbench",
+			"th": "แสดงkeyใน Outline"
+		},
+		{
+			"id": "outline.showNull",
+			"group": "Workbench",
+			"th": "แสดงnullใน Outline"
+		},
+		{
+			"id": "outline.showEnumMembers",
+			"group": "Workbench",
+			"th": "แสดงสมาชิก enumใน Outline"
+		},
+		{
+			"id": "outline.showStructs",
+			"group": "Workbench",
+			"th": "แสดงstructใน Outline"
+		},
+		{
+			"id": "outline.showEvents",
+			"group": "Workbench",
+			"th": "แสดงeventใน Outline"
+		},
+		{
+			"id": "outline.showOperators",
+			"group": "Workbench",
+			"th": "แสดงตัวดำเนินการใน Outline"
+		},
+		{
+			"id": "outline.showTypeParameters",
+			"group": "Workbench",
+			"th": "แสดงtype parameterใน Outline"
+		}
+	]
+}

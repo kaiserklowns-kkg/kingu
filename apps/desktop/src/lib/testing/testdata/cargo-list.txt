@@ -1,0 +1,10 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s
+     Running unittests src/lib.rs (target/debug/deps/demo_crate-fd3b01623de0e6a4)
+tests::adds: test
+tests::fails: test
+tests::panics: test
+tests::slow: test
+
+4 tests, 0 benchmarks
+   Doc-tests demo_crate
+0 tests, 0 benchmarks

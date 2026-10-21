@@ -5,12 +5,14 @@
 //! `kingu.git.ai.customCommand`), read here, never from the page or the repository. Also the
 //! repository's pull request template (Orca's "use template").
 
+use crate::i18n::msg::AgentMsg;
+use crate::tr;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 
 use crate::git;
 use crate::workspace::Workspace;
@@ -44,7 +46,7 @@ pub const AGENTS: &[&str] = &["claude", "codex", "gemini", "qwen", "opencode", "
 /// CLI's own default.
 pub fn invocation(agent: &str, model: &str, prompt: &str) -> Result<Invocation, String> {
   if !model.is_empty() && !valid_model(model) {
-    return Err(format!("kingu.git.ai.model: {model:?} ไม่ใช่ชื่อ model ที่ใช้ได้"));
+    return Err(tr!(AgentMsg::BadAiModel, model = format!("{model:?}")));
   }
   let m = |flag: &str| if model.is_empty() { vec![] } else { vec![flag.to_owned(), model.to_owned()] };
   let s = |v: &[&str]| v.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
@@ -59,7 +61,7 @@ pub fn invocation(agent: &str, model: &str, prompt: &str) -> Result<Invocation, 
     "gemini" | "qwen" => ([s(&[agent]), m("--model"), s(&["--approval-mode", "plan", "-p"]), vec![prompt.to_owned()]].concat(), None),
     "cursor" => ([s(&["cursor-agent", "--print", "--mode", "ask", "--output-format", "text"]), m("--model"), vec![prompt.to_owned()]].concat(), None),
     "copilot" => ([s(&["copilot", "--silent", "--no-custom-instructions"]), m("--model"), s(&["--prompt"]), vec![prompt.to_owned()]].concat(), None),
-    _ => return Err(format!("{agent}: ยังไม่รองรับการสร้างข้อความด้วย agent นี้ — เลือก {} หรือ custom", AGENTS.join(", "))),
+    _ => return Err(tr!(AgentMsg::AiAgentUnsupported, agent, agents = AGENTS.join(", "))),
   };
   Ok(Invocation { argv, stdin })
 }
@@ -79,7 +81,7 @@ pub fn split_command(cmd: &str) -> Result<Vec<String>, String> {
           match chars.next() {
             Some('\'') => break,
             Some(x) => cur.push(x),
-            None => return Err("คำสั่งมี ' ที่ไม่ปิด".into()),
+            None => return Err(tr!(AgentMsg::UnclosedSingleQuote)),
           }
         }
       }
@@ -90,16 +92,16 @@ pub fn split_command(cmd: &str) -> Result<Vec<String>, String> {
             Some('"') => break,
             Some('\\') => match chars.next() {
               Some(x) => cur.push(x),
-              None => return Err("คำสั่งจบด้วย \\".into()),
+              None => return Err(tr!(AgentMsg::TrailingBackslash)),
             },
             Some(x) => cur.push(x),
-            None => return Err("คำสั่งมี \" ที่ไม่ปิด".into()),
+            None => return Err(tr!(AgentMsg::UnclosedDoubleQuote)),
           }
         }
       }
       '\\' => {
         any = true;
-        cur.push(chars.next().ok_or("คำสั่งจบด้วย \\")?);
+        cur.push(chars.next().ok_or_else(|| tr!(AgentMsg::TrailingBackslash))?);
       }
       c if c.is_whitespace() => {
         if any {
@@ -124,7 +126,7 @@ pub fn split_command(cmd: &str) -> Result<Vec<String>, String> {
 pub fn custom_invocation(template: &str, prompt: &str) -> Result<Invocation, String> {
   let words = split_command(template)?;
   if words.is_empty() {
-    return Err("kingu.git.ai.customCommand ว่างอยู่".into());
+    return Err(tr!(AgentMsg::CustomCommandEmpty));
   }
   if words.iter().any(|w| w.contains("{prompt}")) {
     Ok(Invocation { argv: words.iter().map(|w| w.replace("{prompt}", prompt)).collect(), stdin: None })
@@ -196,15 +198,15 @@ pub fn run(inv: &Invocation, dir: &Path, timeout: Duration) -> Result<String, St
   let stdout = String::from_utf8_lossy(&out_reader.join().unwrap_or_default()).into_owned();
   let stderr = String::from_utf8_lossy(&err_reader.join().unwrap_or_default()).into_owned();
   let Some(status) = status else {
-    return Err(format!("{program} ใช้เวลานานเกิน {} วินาทีจึงหยุดไว้", timeout.as_secs()));
+    return Err(tr!(AgentMsg::ProgramTimeout, program, secs = timeout.as_secs()));
   };
   if !status.success() {
     let detail = if stderr.trim().is_empty() { stdout.trim() } else { stderr.trim() };
-    return Err(format!("{program} จบด้วย {}: {}", status.code().map_or("signal".into(), |c| c.to_string()), tail(detail, 1500)));
+    return Err(tr!(AgentMsg::ProgramExited, program, code = status.code().map_or("signal".into(), |c| c.to_string()), detail = tail(detail, 1500)));
   }
   let text = tail(stdout.trim(), MAX_OUTPUT);
   if text.is_empty() {
-    return Err(format!("{program} ไม่ได้ตอบอะไรกลับมา"));
+    return Err(tr!(AgentMsg::ProgramNoOutput, program));
   }
   Ok(text)
 }
@@ -218,7 +220,7 @@ fn tail(s: &str, max: usize) -> String {
 
 fn head(s: &str, max: usize) -> String {
   match s.char_indices().nth(max) {
-    Some((i, _)) => format!("{}\n…(ตัดไว้ {} ตัวอักษร)", &s[..i], s.len() - i),
+    Some((i, _)) => format!("{}\n…({} more characters cut)", &s[..i], s.len() - i),
     None => s.to_owned(),
   }
 }
@@ -328,22 +330,22 @@ pub fn invocation_from_settings(config: &Path, prompt: &str) -> Result<Invocatio
 }
 
 #[tauri::command]
-pub async fn ai_commit_context(ws: State<'_, Workspace>, slug: Option<String>) -> Result<CommitContext, String> {
+pub async fn ai_commit_context(ws: Workspace, slug: Option<String>) -> Result<CommitContext, String> {
   let dir = repo_dir(&ws, slug.as_deref())?;
   tauri::async_runtime::spawn_blocking(move || commit_context(&dir)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub async fn ai_pr_context(ws: State<'_, Workspace>, slug: String, base: String) -> Result<PrContext, String> {
+pub async fn ai_pr_context(ws: Workspace, slug: String, base: String) -> Result<PrContext, String> {
   let dir = repo_dir(&ws, Some(&slug))?;
   tauri::async_runtime::spawn_blocking(move || pr_context(&dir, &base)).await.map_err(|e| e.to_string())?
 }
 
 /// Runs the source-control AI agent of the user's settings on `prompt` in the repository.
 #[tauri::command]
-pub async fn ai_generate(app: AppHandle, ws: State<'_, Workspace>, slug: Option<String>, prompt: String) -> Result<String, String> {
+pub async fn ai_generate(app: AppHandle, ws: Workspace, slug: Option<String>, prompt: String) -> Result<String, String> {
   if prompt.len() > MAX_PROMPT {
-    return Err("prompt ยาวเกินไป".into());
+    return Err(tr!(AgentMsg::PromptTooLong));
   }
   let dir = repo_dir(&ws, slug.as_deref())?;
   let config = app.path().app_config_dir().map_err(|e| e.to_string())?;
@@ -352,16 +354,45 @@ pub async fn ai_generate(app: AppHandle, ws: State<'_, Workspace>, slug: Option<
   tauri::async_runtime::spawn_blocking(move || run(&inv, &dir, TIMEOUT)).await.map_err(|e| e.to_string())?
 }
 
+/// How long generating a chat's title may take, and the prompt it may get.
+pub const TITLE_TIMEOUT: Duration = Duration::from_secs(60);
+pub const MAX_TITLE_PROMPT: usize = 8_000;
+
+/// Whether chat titles may run the source-control AI: only when the user picked its agent
+/// (`kingu.git.ai.agent`) and did not turn it off (`kingu.git.ai.enabled`), so a title never
+/// starts an agent CLI they did not choose.
+pub fn titles_configured(enabled: Option<&serde_json::Value>, agent: &str) -> bool {
+  enabled.and_then(|v| v.as_bool()) != Some(false) && !agent.trim().is_empty()
+}
+
+/// A chat's AI title (vscode's generateInitialChatTitleIfNeeded): the source-control AI agent
+/// run once on `prompt` (built by the webview, chatTitle.ts) in the open folder. `None` when the
+/// user has not set that agent up; the webview drops errors, the title then stays as it was.
+#[tauri::command]
+pub async fn ai_chat_title(app: AppHandle, ws: Workspace, prompt: String) -> Result<Option<String>, String> {
+  if prompt.trim().is_empty() || prompt.len() > MAX_TITLE_PROMPT {
+    return Err(tr!(AgentMsg::PromptTooLong));
+  }
+  let config = app.path().app_config_dir().map_err(|e| e.to_string())?;
+  if !titles_configured(crate::settings::user_value(&config, "kingu.git.ai.enabled").as_ref(), &user_string(&config, "kingu.git.ai.agent")) {
+    return Ok(None);
+  }
+  let dir = ws.root()?;
+  let inv = invocation_from_settings(&config, &prompt)?;
+  log::info!("chat title: {}", inv.argv[0]);
+  tauri::async_runtime::spawn_blocking(move || run(&inv, &dir, TITLE_TIMEOUT).map(Some)).await.map_err(|e| e.to_string())?
+}
+
 /// The task worktree's pull request template (`kingu.pr.useTemplate`), or `None`.
 #[tauri::command]
-pub async fn ai_pr_template(ws: State<'_, Workspace>, slug: String) -> Result<Option<String>, String> {
+pub async fn ai_pr_template(ws: Workspace, slug: String) -> Result<Option<String>, String> {
   let dir = repo_dir(&ws, Some(&slug))?;
   tauri::async_runtime::spawn_blocking(move || pr_template(&dir)).await.map_err(|e| e.to_string())
 }
 
 /// `base`'s upstream (`origin/main`) in the open folder, or `None`.
 #[tauri::command]
-pub async fn git_base_upstream(ws: State<'_, Workspace>, base: String) -> Result<Option<String>, String> {
+pub async fn git_base_upstream(ws: Workspace, base: String) -> Result<Option<String>, String> {
   let root = ws.root()?;
   tauri::async_runtime::spawn_blocking(move || upstream_of(&root, &base)).await.map_err(|e| e.to_string())
 }
@@ -401,6 +432,16 @@ mod tests {
   }
 
   #[test]
+  fn chat_titles_need_a_chosen_agent() {
+    use serde_json::json;
+    assert!(!titles_configured(None, ""), "nothing set up: no title run");
+    assert!(!titles_configured(None, "  "));
+    assert!(titles_configured(None, "claude"));
+    assert!(titles_configured(Some(&json!(true)), "custom"));
+    assert!(!titles_configured(Some(&json!(false)), "claude"), "source-control AI turned off");
+  }
+
+  #[test]
   fn the_agent_follows_the_setting_then_the_agent_cli() {
     assert_eq!(resolve_agent("codex", "claude"), "codex");
     assert_eq!(resolve_agent("", "/opt/bin/codex --full-auto"), "codex");
@@ -424,7 +465,7 @@ mod tests {
     let err = run(&Invocation { argv: vec![s.clone(), "fail".into()], stdin: None }, tmp.path(), TIMEOUT).unwrap_err();
     assert!(err.contains("3") && err.contains("boom"), "{err}");
     let err = run(&Invocation { argv: vec![s, "sleep".into()], stdin: None }, tmp.path(), Duration::from_millis(300)).unwrap_err();
-    assert!(err.contains("นานเกิน"), "{err}");
+    assert!(err.contains("took longer"), "{err}");
     assert!(run(&Invocation { argv: vec!["/nonexistent/agent".into()], stdin: None }, tmp.path(), TIMEOUT).is_err());
   }
 

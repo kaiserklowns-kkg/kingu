@@ -1,11 +1,13 @@
-// The debugger for the workbench (VS Code: IDebugService). Picks a launch configuration, starts the
-// adapter through Rust `dap_start`, runs a DebugSession over it and exposes its state reactively
-// for the Run and Debug view, the Debug Console, the editors' breakpoint glyphs and the status bar.
-// One session at a time (Rust keeps a table, so more can come later).
+// The debugger for the workbench (VS Code: IDebugService). Picks a launch configuration or compound,
+// starts the adapter through Rust `dap_start`, runs a DebugSession over it and exposes the sessions'
+// state reactively for the Run and Debug view, the Debug Console, the editors' breakpoint glyphs,
+// hovers and the status bar. Several sessions run at once (compounds, a second F5, js-debug's child
+// sessions over the same server); commands act on the focused one, like VS Code.
 
 import { untrack } from 'svelte';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { clientLog } from '#lib/client-log.ts';
+import { isRustError } from '#lib/i18n/rustErrors.ts';
 import { installItems, type InstallInfo } from '#lib/lsp/model.ts';
 import { opensOnStart } from '#lib/settings/mappings.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
@@ -13,29 +15,71 @@ import { terminals } from '#lib/terminal/terminals.svelte.ts';
 import { commands } from '#lib/workbench/commands.svelte.ts';
 import { editors } from '#lib/workbench/editors.svelte.ts';
 import { layout } from '#lib/workbench/layout.svelte.ts';
-import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
 import { isDiffKey } from '#lib/workbench/scm.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import * as B from './breakpoints.ts';
 import { DapClient } from './client.ts';
-import { generatedConfigs, LAUNCH_FILES, parseLaunchJson, runInTerminalArgv, substitute, type Generated, type LaunchConfig } from './launch.ts';
+import {
+	addConfigurationText,
+	compoundConfigs,
+	generatedConfigs,
+	isJsDebugType,
+	LAUNCH_FILES,
+	parseLaunchJson,
+	resolveJsDebug,
+	runInTerminalArgv,
+	snippetsFor,
+	type Generated,
+	type LaunchCompound,
+	type LaunchConfig
+} from './launch.ts';
 import { appendOutput, currentFrame, frameLocation, initialModel, outputLimit, stateLabel, type DebugModel } from './model.ts';
 import { canSetBreakpoint, editorsToSave, opensOnBreak } from './debugSettings.ts';
 import { isUntitled } from '#lib/workbench/untitled.ts';
-import type { StackFrame } from './protocol.ts';
-import { DebugSession } from './session.ts';
+import type { Capabilities, CompletionItem, StackFrame, StartDebuggingArguments } from './protocol.ts';
+import { DebugSession, type EvaluateResult } from './session.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
+import { lsp } from '#lib/lsp/lsp.svelte.ts';
+import { parseProblemMatchers } from '#lib/tasks/problemMatcher.ts';
+import { tasks } from '#lib/tasks/tasks.svelte.ts';
+import { folderKey } from '#lib/tasks/folders.ts';
+import type { InputDef, TaskRef } from '#lib/tasks/taskConfig.ts';
+import { inputPrompter } from '#lib/tasks/inputPrompter.svelte.ts';
+import { collectVariables, resolveInputs, substitute as substituteVariables } from '#lib/tasks/variables.ts';
+import { choose } from '#lib/workbench/messageBox.ts';
+import { workspaceTrust } from '#lib/workbench/workspaceTrust.svelte.ts';
 
 type DapEvent = { type: 'message'; json: string } | { type: 'stderr'; line: string } | { type: 'exit'; code: number | null };
-type Active = { session: DebugSession; id: number | null; config: LaunchConfig; build?: string[]; noDebug: boolean };
+type Active = {
+	key: number;
+	session: DebugSession;
+	/** Rust's session id once the adapter (or the child connection) is up. */
+	id: number | null;
+	config: LaunchConfig;
+	build?: string[];
+	noDebug: boolean;
+	postDone?: boolean;
+	/** js-debug's child sessions run over their parent's server. */
+	parent: Active | null;
+	/** A compound with `stopAll`: stopping one stops these. */
+	group?: number;
+};
 export type WatchResult = { value: string; error?: boolean };
+/** One session in the Call Stack view. */
+export type SessionView = { key: number; name: string; parentKey: number | null; model: DebugModel };
+type DataBreakpointSpec = B.DataBreakpointSpec;
+type JsDebugStatus = { version: string; url: string; bytes: number; sha256: string; server: string | null; node: string | null };
 
-/** Start of Rust's "adapter not installed" error (`lsp::NOT_INSTALLED`). */
-const NOT_INSTALLED = 'ไม่ได้ติดตั้ง';
 const LAST_CONFIG = 'kingu.debug.lastConfig';
 const WATCHES = 'kingu.debug.watches';
+const FUNCTION_BPS = 'kingu.debug.functionBreakpoints';
+const EXCEPTIONS = 'kingu.debug.exceptionBreakpoints';
+const ACTIVATED = 'kingu.debug.breakpointsActivated';
+
+/** A preLaunchTask / postDebugTask reference as text (a label, or a task identifier). */
+const taskName = (ref: unknown) => (typeof ref === 'string' ? ref : JSON.stringify(ref));
 
 const isWorkspaceFile = (p: string | null): p is string => !!p && !p.includes('://') && !isDiffKey(p);
 
@@ -54,25 +98,39 @@ function save(key: string, value: string) {
 	}
 }
 
+type Picked = { kind: 'config'; config: LaunchConfig; generated?: Generated } | { kind: 'compound'; compound: LaunchCompound; configs: LaunchConfig[] };
+
 class Debug {
-	/** The current (or last) session's state; null before the first session in this folder. */
+	/** The focused (or last) session's state; null before the first session in this folder. */
 	model = $state.raw<DebugModel | null>(null);
 	configName = $state('');
 	/** For the `openOnFirstSessionStart` / `onFirstSessionStart` settings: sessions started since Kingu opened. */
 	sessionsStarted = $state(0);
 	breakpoints = $state.raw<B.BreakpointMap>({});
+	functionBreakpoints = $state.raw<B.FunctionBreakpointSpec[]>([]);
+	exceptions = $state.raw<B.ExceptionSettings>({ filters: [], state: {} });
+	dataBreakpoints = $state.raw<DataBreakpointSpec[]>([]);
+	/** VS Code's Toggle Activate Breakpoints: off sends none (they show disabled). */
+	breakpointsActivated = $state(true);
 	watches = $state<string[]>([]);
 	watchResults = $state.raw<Record<string, WatchResult>>({});
 	root = $state('');
+	/** Live sessions, for the Call Stack view. */
+	sessions = $state.raw<SessionView[]>([]);
+	focusedKey = $state<number | null>(null);
+	/** The focused session's capabilities (toolbar and context menus show what it can do). */
+	capabilities = $state.raw<Capabilities>({});
 
 	/** A session exists and has not terminated. */
-	active = $derived(this.model !== null && this.model.state !== 'terminated');
+	active = $derived(this.sessions.some((s) => s.model.state !== 'terminated'));
 	stopped = $derived(this.model?.state === 'stopped');
 	running = $derived(this.model?.state === 'running' || this.model?.state === 'initializing');
 	stoppedLocation = $derived(this.model ? frameLocation(currentFrame(this.model), this.root) : null);
 	label = $derived(stateLabel(this.model));
 
-	#active: Active | null = null;
+	#all: Active[] = [];
+	#nextKey = 1;
+	#nextGroup = 1;
 	/** Breakpoints hit in this session (`rel:line`): their triggered breakpoints are now sent. */
 	triggered = $state.raw<ReadonlySet<string>>(new Set());
 	#rootLoaded: Promise<string> | undefined;
@@ -82,9 +140,13 @@ class Debug {
 	async #ensureRoot(): Promise<string> {
 		this.#rootLoaded ??= invoke<{ workspace: string }>('app_info').then((i) => {
 			this.root = i.workspace;
-			this.breakpoints = B.parseStored(this.root ? load(B.storageKey(this.root)) : null);
+			const r = this.root;
+			this.breakpoints = B.parseStored(r ? load(B.storageKey(r)) : null);
+			this.functionBreakpoints = B.parseFunctionBreakpoints(r ? load(`${FUNCTION_BPS}:${r}`) : null);
+			this.exceptions = B.parseExceptionSettings(r ? load(`${EXCEPTIONS}:${r}`) : null);
+			this.breakpointsActivated = (r ? load(`${ACTIVATED}:${r}`) : null) !== 'false';
 			try {
-				const w = JSON.parse(load(`${WATCHES}:${this.root}`) ?? '[]');
+				const w = JSON.parse(load(`${WATCHES}:${r}`) ?? '[]');
 				this.watches = Array.isArray(w) ? w.filter((x) => typeof x === 'string') : [];
 			} catch {
 				this.watches = [];
@@ -96,25 +158,67 @@ class Debug {
 
 	/** Open Folder: Rust has already killed the old folder's adapters. */
 	reset() {
-		this.#active = null;
+		this.#all = [];
+		this.sessions = [];
+		this.focusedKey = null;
 		this.model = null;
 		this.configName = '';
 		this.watchResults = {};
+		this.dataBreakpoints = [];
 		this.#rootLoaded = undefined;
 		void this.#ensureRoot();
 	}
 
+	/** A breakpoint's file on disk; another root folder's file (multi-root) is absolute already. */
 	#abs(rel: string) {
-		return `${this.root}/${rel}`;
+		return rel.startsWith('/') ? rel : `${this.root}/${rel}`;
+	}
+
+	#live(): Active[] {
+		return this.#all.filter((a) => a.session.model.state !== 'terminated');
+	}
+
+	#focused(): Active | undefined {
+		return this.#all.find((a) => a.key === this.focusedKey);
+	}
+
+	/** Focuses a session (Call Stack click, a stop): the views follow its model. */
+	focusSession(key: number) {
+		const a = this.#all.find((x) => x.key === key);
+		if (!a) return;
+		this.focusedKey = key;
+		this.model = a.session.model;
+		this.configName = a.config.name;
+		this.capabilities = a.session.capabilities;
+	}
+
+	#publish(a: Active) {
+		const view: SessionView = { key: a.key, name: a.config.name, parentKey: a.parent?.key ?? null, model: a.session.model };
+		const at = this.sessions.findIndex((s) => s.key === a.key);
+		this.sessions = at < 0 ? [...this.sessions, view] : this.sessions.map((s, i) => (i === at ? view : s));
+		if (this.focusedKey === a.key) {
+			this.model = a.session.model;
+			this.capabilities = a.session.capabilities;
+		}
 	}
 
 	// --- Breakpoints -------------------------------------------------------------------------------
 
+	#sourceFor(rel: string) {
+		return B.sourceBreakpoints(this.breakpoints[rel], this.triggered, this.breakpointsActivated);
+	}
+
 	#setBreakpoints(map: B.BreakpointMap, rel: string) {
 		this.breakpoints = map;
 		if (this.root) save(B.storageKey(this.root), JSON.stringify(map));
-		const session = this.#active?.session;
-		if (session) void session.setBreakpoints(this.#abs(rel), B.sourceBreakpoints(map[rel], this.triggered));
+		for (const a of this.#live()) void a.session.setBreakpoints(this.#abs(rel), this.#sourceFor(rel));
+	}
+
+	#resendAll() {
+		const files = new Set([...Object.keys(this.breakpoints), ...this.#live().flatMap((a) => Object.keys(a.session.model.verified).map((p) => (p.startsWith(`${this.root}/`) ? p.slice(this.root.length + 1) : p)))]);
+		for (const rel of files) for (const a of this.#live()) void a.session.setBreakpoints(this.#abs(rel), this.#sourceFor(rel));
+		this.#sendFunctionBreakpoints();
+		this.#sendDataBreakpoints();
 	}
 
 	/** F9 / glyph margin click; defaults to the active editor's cursor line. Outside a debuggable
@@ -140,32 +244,94 @@ class Debug {
 	removeAllBreakpoints() {
 		const files = Object.keys(this.breakpoints);
 		this.breakpoints = {};
-		if (this.root) save(B.storageKey(this.root), '{}');
-		for (const rel of files) void this.#active?.session.setBreakpoints(this.#abs(rel), []);
+		this.functionBreakpoints = [];
+		this.dataBreakpoints = [];
+		if (this.root) {
+			save(B.storageKey(this.root), '{}');
+			save(`${FUNCTION_BPS}:${this.root}`, '[]');
+		}
+		for (const rel of files) for (const a of this.#live()) void a.session.setBreakpoints(this.#abs(rel), []);
+		this.#sendFunctionBreakpoints();
+		this.#sendDataBreakpoints();
+	}
+
+	/** Enable All Breakpoints / Disable All Breakpoints (source, function and data ones). */
+	setAllBreakpointsEnabled(enabled: boolean) {
+		this.breakpoints = B.setAllEnabled(this.breakpoints, enabled);
+		this.functionBreakpoints = this.functionBreakpoints.map((f) => ({ ...f, enabled }));
+		this.dataBreakpoints = this.dataBreakpoints.map((d) => ({ ...d, enabled }));
+		this.#saveAll();
+		this.#resendAll();
+	}
+
+	/** Toggle Activate Breakpoints: none are sent while deactivated; they stay as they are. */
+	toggleBreakpointsActivated() {
+		this.breakpointsActivated = !this.breakpointsActivated;
+		if (this.root) save(`${ACTIVATED}:${this.root}`, String(this.breakpointsActivated));
+		this.#resendAll();
+	}
+
+	#saveAll() {
+		if (!this.root) return;
+		save(B.storageKey(this.root), JSON.stringify(this.breakpoints));
+		save(`${FUNCTION_BPS}:${this.root}`, JSON.stringify(this.functionBreakpoints));
+	}
+
+	async #editField(rel: string | null, line: number, field: 'condition' | 'hitCondition' | 'logMessage') {
+		if (!isWorkspaceFile(rel)) return;
+		await this.#ensureRoot();
+		const current = this.breakpoints[rel]?.find((b) => b.line === line)?.[field] ?? '';
+		const now = current ? t('tools.debug.current', { value: current }) : '';
+		const prompts = {
+			condition: {
+				placeholder: t('tools.debug.conditionPlaceholder', { line, current: now }),
+				hint: (v: string) => (v ? t('tools.debug.conditionHint', { condition: v }) : t('tools.debug.plainBreakpoint'))
+			},
+			hitCondition: {
+				placeholder: t('debugger.hitCountPlaceholder', { line, current: now }),
+				hint: (v: string) => (v ? t('debugger.hitCountHint', { hits: v }) : t('tools.debug.plainBreakpoint'))
+			},
+			logMessage: {
+				placeholder: t('tools.debug.logPlaceholder', { line, current: now, example: `{${t('tools.debug.expression')}}` }),
+				hint: (v: string) => (v ? `log ${v}` : t('tools.debug.plainBreakpoint'))
+			}
+		};
+		const value = await quick.input({ ...prompts[field], value: current });
+		if (value === undefined) return;
+		const set = field === 'condition' ? B.setCondition : field === 'hitCondition' ? B.setHitCondition : B.setLogMessage;
+		this.#setBreakpoints(set(this.breakpoints, rel, line, value), rel);
 	}
 
 	/** Conditional breakpoint on the cursor line (VS Code: Add Conditional Breakpoint…). */
-	async editCondition(rel = editors.active, line = editors.cursor.line) {
-		if (!isWorkspaceFile(rel)) return;
-		await this.#ensureRoot();
-		const current = this.breakpoints[rel]?.find((b) => b.line === line)?.condition ?? '';
-		const cond = await quick.input({
-			placeholder: t('tools.debug.conditionPlaceholder', { line, current: current ? t('tools.debug.current', { value: current }) : '' }),
-			hint: (v) => (v ? t('tools.debug.conditionHint', { condition: v }) : t('tools.debug.plainBreakpoint'))
-		});
-		if (cond !== undefined) this.#setBreakpoints(B.setCondition(this.breakpoints, rel, line, cond), rel);
+	editCondition(rel = editors.active, line = editors.cursor.line) {
+		return this.#editField(rel, line, 'condition');
+	}
+
+	/** Hit count breakpoint (VS Code's breakpoint widget, Hit Count). */
+	editHitCondition(rel = editors.active, line = editors.cursor.line) {
+		return this.#editField(rel, line, 'hitCondition');
 	}
 
 	/** Logpoint on the cursor line (VS Code: Add Logpoint…): `{expr}` in the message is evaluated. */
-	async editLogMessage(rel = editors.active, line = editors.cursor.line) {
+	editLogMessage(rel = editors.active, line = editors.cursor.line) {
+		return this.#editField(rel, line, 'logMessage');
+	}
+
+	/** Edit Breakpoint (VS Code's breakpoint widget): pick Expression, Hit Count or Log Message, then edit it. */
+	async editBreakpoint(rel = editors.active, line = editors.cursor.line) {
 		if (!isWorkspaceFile(rel)) return;
-		await this.#ensureRoot();
-		const current = this.breakpoints[rel]?.find((b) => b.line === line)?.logMessage ?? '';
-		const message = await quick.input({
-			placeholder: t('tools.debug.logPlaceholder', { line, current: current ? t('tools.debug.current', { value: current }) : '', example: `{${t('tools.debug.expression')}}` }),
-			hint: (v) => (v ? `log ${v}` : t('tools.debug.plainBreakpoint'))
+		const kind = await quick.choose({
+			placeholder: t('debugger.editKind', { line }),
+			items: [
+				{ id: 'condition', label: t('debugger.kind.expression') },
+				{ id: 'hitCondition', label: t('debugger.kind.hitCount') },
+				{ id: 'logMessage', label: t('debugger.kind.logMessage') },
+				{ id: 'triggeredBy', label: t('debugger.kind.waitFor') }
+			]
 		});
-		if (message !== undefined) this.#setBreakpoints(B.setLogMessage(this.breakpoints, rel, line, message), rel);
+		if (!kind) return;
+		if (kind.id === 'triggeredBy') return this.editTrigger(rel, line);
+		return this.#editField(rel, line, kind.id as 'condition' | 'hitCondition' | 'logMessage');
 	}
 
 	/** Triggered breakpoint on the cursor line (VS Code: Add Triggered Breakpoint…): pick the breakpoint that enables it. */
@@ -198,15 +364,130 @@ class Debug {
 		return this.active ? (this.model?.verified[this.#abs(rel)] ?? []) : undefined;
 	}
 
+	// Function breakpoints
+
+	#sendFunctionBreakpoints() {
+		const bps = B.functionBreakpoints(this.functionBreakpoints, this.breakpointsActivated);
+		for (const a of this.#live()) void a.session.setFunctionBreakpoints(bps);
+	}
+
+	#setFunctionBreakpoints(list: B.FunctionBreakpointSpec[]) {
+		this.functionBreakpoints = list;
+		if (this.root) save(`${FUNCTION_BPS}:${this.root}`, JSON.stringify(list));
+		this.#sendFunctionBreakpoints();
+	}
+
+	/** Add Function Breakpoint: the debugger stops when a function of that name is entered. */
+	async addFunctionBreakpoint() {
+		await this.#ensureRoot();
+		const name = await quick.input({ placeholder: t('debugger.functionPlaceholder'), hint: (v) => (v ? t('debugger.functionHint', { name: v }) : t('debugger.functionPlaceholder')) });
+		if (name?.trim()) this.#setFunctionBreakpoints(B.addFunctionBreakpoint(this.functionBreakpoints, name));
+	}
+
+	setFunctionBreakpointEnabled(name: string, enabled: boolean) {
+		this.#setFunctionBreakpoints(this.functionBreakpoints.map((f) => (f.name === name ? { ...f, enabled } : f)));
+	}
+
+	removeFunctionBreakpoint(name: string) {
+		this.#setFunctionBreakpoints(this.functionBreakpoints.filter((f) => f.name !== name));
+	}
+
+	async editFunctionCondition(name: string) {
+		const f = this.functionBreakpoints.find((x) => x.name === name);
+		if (!f) return;
+		const cond = await quick.input({ placeholder: t('debugger.functionCondition', { name }), value: f.condition ?? '', hint: (v) => (v ? t('tools.debug.conditionHint', { condition: v }) : t('tools.debug.plainBreakpoint')) });
+		if (cond !== undefined) this.#setFunctionBreakpoints(this.functionBreakpoints.map((x) => (x.name === name ? { ...x, condition: cond.trim() || undefined } : x)));
+	}
+
+	/** The adapter's answer for a function breakpoint (focused session), or undefined outside one. */
+	functionVerified(name: string) {
+		if (!this.active || !this.model) return undefined;
+		const sent = B.functionBreakpoints(this.functionBreakpoints, this.breakpointsActivated);
+		const i = sent.findIndex((f) => f.name === name);
+		return i < 0 ? undefined : (this.model.functionVerified[i] ?? null);
+	}
+
+	// Exception breakpoints
+
+	/** A session's filters (remembered for the Breakpoints view) and the arguments to send. */
+	#exceptionArgs(caps: Capabilities) {
+		const filters = caps.exceptionBreakpointFilters ?? [];
+		if (filters.length && JSON.stringify(filters) !== JSON.stringify(this.exceptions.filters)) {
+			this.exceptions = { ...this.exceptions, filters };
+			if (this.root) save(`${EXCEPTIONS}:${this.root}`, JSON.stringify(this.exceptions));
+		}
+		return B.exceptionArgs(filters, this.exceptions.state, caps);
+	}
+
+	setExceptionFilter(filter: string, enabled: boolean, condition?: string) {
+		this.exceptions = { ...this.exceptions, state: B.setException(this.exceptions.state, filter, enabled, condition) };
+		if (this.root) save(`${EXCEPTIONS}:${this.root}`, JSON.stringify(this.exceptions));
+		for (const a of this.#live()) {
+			const filters = a.session.capabilities.exceptionBreakpointFilters;
+			if (filters?.some((f) => f.filter === filter)) void a.session.setExceptionBreakpoints(B.exceptionArgs(filters, this.exceptions.state, a.session.capabilities));
+		}
+	}
+
+	async editExceptionCondition(filter: string) {
+		const f = this.exceptions.filters.find((x) => x.filter === filter);
+		if (!f?.supportsCondition) return;
+		const current = this.exceptions.state[filter]?.condition ?? '';
+		const cond = await quick.input({ placeholder: f.conditionDescription ?? t('debugger.exceptionCondition', { label: f.label }), value: current, hint: (v) => (v ? t('tools.debug.conditionHint', { condition: v }) : f.label) });
+		if (cond !== undefined) this.setExceptionFilter(filter, true, cond);
+	}
+
+	// Data breakpoints
+
+	#sendDataBreakpoints() {
+		const bps = B.dataBreakpoints(this.dataBreakpoints, this.breakpointsActivated);
+		const a = this.#focused();
+		if (a && a.session.model.state !== 'terminated') void a.session.setDataBreakpoints(bps);
+	}
+
+	/** Whether "Break on Value Change" applies to a variable (the focused session supports data breakpoints). */
+	get dataBreakpointsSupported() {
+		return !!this.capabilities.supportsDataBreakpoints && this.stopped;
+	}
+
+	/** Variables view: Break on Value Change / Read / Access (VS Code: dataBreakpointInfo, setDataBreakpoints). */
+	async addDataBreakpoint(parentRef: number, name: string) {
+		const session = this.#focused()?.session;
+		if (!session) return;
+		const info = await session.dataBreakpointInfo(parentRef, name);
+		if (!info?.dataId) return status.flash(info?.description || t('debugger.dataUnsupported'));
+		const accessTypes = info.accessTypes?.length ? info.accessTypes : ['write' as const];
+		let accessType = accessTypes[0];
+		if (accessTypes.length > 1) {
+			const label = { write: t('debugger.data.write'), read: t('debugger.data.read'), readWrite: t('debugger.data.readWrite') };
+			const pick = await quick.choose({ placeholder: info.description, items: accessTypes.map((a) => ({ id: a, label: label[a] })) });
+			if (!pick) return;
+			accessType = pick.id as typeof accessType;
+		}
+		if (this.dataBreakpoints.some((d) => d.dataId === info.dataId && d.accessType === accessType)) return;
+		this.dataBreakpoints = [...this.dataBreakpoints, { dataId: info.dataId, description: info.description, accessType, enabled: true, canPersist: !!info.canPersist }];
+		this.#sendDataBreakpoints();
+	}
+
+	setDataBreakpointEnabled(dataId: string, enabled: boolean) {
+		this.dataBreakpoints = this.dataBreakpoints.map((d) => (d.dataId === dataId ? { ...d, enabled } : d));
+		this.#sendDataBreakpoints();
+	}
+
+	removeDataBreakpoint(dataId: string) {
+		this.dataBreakpoints = this.dataBreakpoints.filter((d) => d.dataId !== dataId);
+		this.#sendDataBreakpoints();
+	}
+
 	// --- Starting ----------------------------------------------------------------------------------
 
 	/** F5: continue when stopped, else start a session (VS Code: Start Debugging / Continue). */
-	async start({ noDebug = false } = {}) {
-		if (this.stopped) return this.continue();
-		if (this.active) return status.flash(t('tools.debug.alreadyRunning'));
+	async start({ noDebug = false, pick = false } = {}) {
+		if (this.stopped && !pick) return this.continue();
 		const root = await this.#ensureRoot();
 		if (!root) return status.flash(t('tools.debug.openFolderFirst'));
-		const picked = await this.#pickConfig();
+		// Restricted Mode does not debug (VS Code asks to trust the workspace first).
+		if (!(await workspaceTrust.request(t('trust.feature.debug')))) return;
+		const picked = await this.#pickConfig(pick);
 		if (!picked) return;
 		// debug.saveBeforeStart: the dirty editors of the active group (untitled ones ask where to save).
 		const toSave = editorsToSave(settings.get<string>('debug.saveBeforeStart'), editors.tabs.map((t) => t.path), (p) => editors.isDirty(p), isUntitled);
@@ -214,23 +495,68 @@ class Debug {
 			const { saveFile } = await import('#lib/workbench/editorModels.ts');
 			for (const path of toSave) await saveFile(path, 'explicit');
 		}
-		let { config } = picked;
-		const { generated } = picked;
-		const active = editors.active;
-		const file = isWorkspaceFile(active) ? this.#abs(active) : undefined;
-		const ctx = { workspaceFolder: root, file, env: await this.#env(config) };
+		if (picked.kind === 'compound') return this.#startCompound(picked.compound, picked.configs, noDebug);
+		// VS Code asks before starting a configuration that is already running.
+		if (this.#live().some((a) => !a.parent && a.config.name === picked.config.name)) {
+			const again = t('debugger.startAnother');
+			if ((await choose(t('debugger.alreadyRunning', { name: picked.config.name }), { kind: 'info', buttons: [again, t('common.cancel')], cancelId: 1 })) !== again) return;
+		}
+		const config = await this.#prepare(picked.config, picked.generated);
+		if (config) await this.#launch(config, noDebug, picked.generated?.build);
+	}
+
+	/** Debugs a configuration made elsewhere (the Testing view's Debug Test). */
+	async startConfig(config: LaunchConfig) {
+		if (!(await this.#ensureRoot())) return status.flash(t('tools.debug.openFolderFirst'));
+		if (!(await workspaceTrust.request(t('trust.feature.debug')))) return;
+		const prepared = await this.#prepare(config);
+		if (prepared) await this.#launch(prepared, false);
+	}
+
+	/** launch.json's `inputs`, from the last read of the launch files. */
+	#launchInputs: InputDef[] = [];
+
+	/**
+	 * Variables (tasks.json's resolver: `${input:…}` from launch.json's inputs, `${command:pickProcess}`,
+	 * `${config:…}`…), js-debug's defaults; undefined when cancelled or invalid. Inputs are asked once
+	 * per launch, in order (VS Code: configurationResolver.resolveWithInteractionReplace).
+	 */
+	async #prepare(raw: LaunchConfig, generated?: Generated): Promise<LaunchConfig | undefined> {
+		// Multi-root: the configuration's own folder (a workspace file's has none: ${workspaceFolder} must name one).
+		const folder = this.#folderOfConfig(raw);
+		const root = folder ?? this.root;
+		let config = raw;
 		try {
+			const used = collectVariables(config);
+			const ctx = await tasks.variableContext(folder, used.has('defaultBuildTask'));
+			ctx.env = await this.#env(config);
+			const answers = await resolveInputs(used, this.#launchInputs, ctx, inputPrompter());
+			if (!answers) return undefined;
 			if (generated?.askProgram) {
-				const suggestion = substitute(String(config.program ?? ''), ctx);
+				const suggestion = substituteVariables(String(config.program ?? ''), ctx, answers);
 				const program = await quick.input({ placeholder: t('tools.debug.programPlaceholder', { suggestion }), hint: (v) => t('tools.debug.programHint', { program: v || suggestion }) });
-				if (program === undefined) return;
+				if (program === undefined) return undefined;
 				config = { ...config, program: program ? (program.startsWith('/') ? program : `${root}/${program}`) : suggestion };
 			}
-			config = substitute(config, ctx);
+			config = substituteVariables(config, ctx, answers);
 		} catch (e) {
-			return notifications.error(e instanceof Error ? e.message : String(e));
+			notifications.error(e instanceof Error ? e.message : String(e));
+			return undefined;
 		}
-		await this.#launch(config, noDebug, generated?.build);
+		const prepared = resolveJsDebug(config, root);
+		// Its preLaunchTask / postDebugTask resolve in the same folder.
+		this.#configFolder.set(prepared, folder);
+		return prepared;
+	}
+
+	/** A compound: its preLaunchTask once, then each configuration (VS Code: debugService.startDebugging for a compound). */
+	async #startCompound(compound: LaunchCompound, configs: LaunchConfig[], noDebug: boolean) {
+		if (compound.preLaunchTask && !(await this.#runPreLaunchTask(compound.preLaunchTask as TaskRef, this.#folderOfConfig(compound)))) return;
+		const group = compound.stopAll ? this.#nextGroup++ : undefined;
+		for (const c of configs) {
+			const config = await this.#prepare(c);
+			if (config) await this.#launch(config, noDebug, undefined, { group });
+		}
 	}
 
 	/** `${env:X}` values from the app's environment (login-shell PATH), only the names the config uses. */
@@ -240,33 +566,70 @@ class Debug {
 		return invoke<Record<string, string>>('debug_env', { names }).catch(() => ({}));
 	}
 
-	async #readLaunchFiles(): Promise<LaunchConfig[]> {
-		const configs: LaunchConfig[] = [];
-		for (const rel of LAUNCH_FILES) {
-			const text = await invoke<string>('read_workspace_file', { rel }).catch(() => null);
-			if (text === null) continue;
-			const parsed = parseLaunchJson(text, rel);
-			if (parsed.error) status.flash(parsed.error);
-			configs.push(...parsed.configs);
-		}
-		return configs;
+	/** The root folder (absolute) a configuration came from; a `.code-workspace` file's has none. */
+	#configFolder = new WeakMap<object, string | undefined>();
+	/** Every root folder's name by path (compounds name folders; the picker shows them in a multi-root window). */
+	#folderNames = new Map<string, string>();
+
+	/** The folder a configuration's variables, defaults and preLaunchTask use (its launch.json's; the first folder for one made here). */
+	#folderOfConfig(config: object): string | undefined {
+		return this.#configFolder.has(config) ? this.#configFolder.get(config) : this.root || undefined;
 	}
 
-	async #pickConfig(): Promise<{ config: LaunchConfig; generated?: Generated } | undefined> {
-		const configs = await this.#readLaunchFiles();
+	/** Every root folder's launch files, then the `.code-workspace` file's `launch` (VS Code multi-root). */
+	async #readLaunchFiles(): Promise<{ configs: LaunchConfig[]; compounds: LaunchCompound[] }> {
+		const configs: LaunchConfig[] = [];
+		const compounds: LaunchCompound[] = [];
+		const inputs: InputDef[] = [];
+		const folders = await tasks.folders();
+		const multi = folders.length > 1;
+		this.#folderNames = new Map(folders.map((f) => [f.path, f.name]));
+		const add = (text: string, source: string, folder: string | undefined) => {
+			const parsed = parseLaunchJson(text, source);
+			if (parsed.error) status.flash(parsed.error);
+			for (const c of parsed.configs) this.#configFolder.set(c, folder);
+			for (const c of parsed.compounds) this.#configFolder.set(c, folder);
+			configs.push(...parsed.configs);
+			compounds.push(...parsed.compounds);
+			inputs.push(...parsed.inputs.filter((i) => !inputs.some((x) => x.id === i.id)));
+		};
+		for (const [i, folder] of folders.entries()) {
+			for (const rel of LAUNCH_FILES) {
+				// The first folder's files are relative; another root folder's absolute (workspaceFolders.ts).
+				const key = i === 0 ? rel : `${folder.path}/${rel}`;
+				const text = await invoke<string>('read_workspace_file', { rel: key }).catch(() => null);
+				if (text !== null) add(text, multi ? `${folder.name}/${rel}` : rel, folder.path);
+			}
+		}
+		const section = await tasks.workspaceSection('launch');
+		if (section) add(section.text, section.name, undefined);
+		this.#launchInputs = inputs;
+		return { configs, compounds };
+	}
+
+	/** A picker row's description: the configuration's folder in a multi-root workspace (VS Code), then `what`. */
+	#describe(config: object, what: string): string {
+		if (this.#folderNames.size < 2) return what;
+		const folder = this.#configFolder.get(config);
+		return `${folder === undefined ? t('ideTasks.pick.workspace') : (this.#folderNames.get(folder) ?? folder)} · ${what}`;
+	}
+
+	async #pickConfig(always = false): Promise<Picked | undefined> {
+		const { configs, compounds } = await this.#readLaunchFiles();
 		const lastKey = `${LAST_CONFIG}:${this.root}`;
-		if (configs.length === 1) return { config: configs[0] };
-		if (configs.length > 1) {
+		const total = configs.length + compounds.length;
+		if (total === 1 && !always) return configs.length ? { kind: 'config', config: configs[0] } : this.#compound(compounds[0], configs);
+		if (total > 0) {
 			const last = load(lastKey);
-			const item = await quick.choose({
-				placeholder: t('tools.debug.pickConfig'),
-				items: configs.map((c, i) => ({ id: String(i), label: c.name, description: c.type })),
-				activeId: String(Math.max(0, configs.findIndex((c) => c.name === last)))
-			});
+			const items = [
+				...configs.map((c, i) => ({ id: `c${i}`, label: c.name, description: this.#describe(c, c.type) })),
+				...compounds.map((c, i) => ({ id: `k${i}`, label: c.name, description: this.#describe(c, t('debugger.compound')) }))
+			];
+			const item = await quick.choose({ placeholder: t('tools.debug.pickConfig'), items, activeId: items.find((i) => i.label === last)?.id ?? items[0].id });
 			if (!item) return;
-			const config = configs[Number(item.id)];
-			save(lastKey, config.name);
-			return { config };
+			save(lastKey, item.label);
+			const i = Number(item.id.slice(1));
+			return item.id.startsWith('c') ? { kind: 'config', config: configs[i] } : this.#compound(compounds[i], configs);
 		}
 		const language = editors.language;
 		const cargoToml = language === 'rust' ? await invoke<string>('read_workspace_file', { rel: 'Cargo.toml' }).catch(() => null) : null;
@@ -275,31 +638,64 @@ class Debug {
 			status.flash(t('tools.debug.noLaunchJson'));
 			return;
 		}
-		return { config: gens[0].config, generated: gens[0] };
+		return { kind: 'config', config: gens[0].config, generated: gens[0] };
 	}
 
-	async #launch(config: LaunchConfig, noDebug: boolean, build?: string[]) {
-		let model = initialModel();
-		this.model = model;
-		this.triggered = new Set();
-		this.configName = config.name;
-		this.watchResults = {};
-		// debug.openDebug / debug.internalConsoleOptions (a launch config's own internalConsoleOptions wins).
-		const first = this.sessionsStarted++ === 0;
-		if (opensOnStart(settings.get('debug.openDebug'), first)) {
-			layout.sideView = 'debug';
-			layout.sidebarVisible = true;
+	#compound(compound: LaunchCompound, all: LaunchConfig[]): Picked | undefined {
+		const origin = { folderOf: (c: object) => this.#configFolder.get(c), nameOf: (folder: string) => this.#folderNames.get(folder) ?? folder };
+		const { configs, missing, ambiguous } = compoundConfigs(compound, all, origin);
+		if (missing.length) {
+			notifications.error(t('debugger.compoundMissing', { name: compound.name, missing: missing.join(', ') }));
+			return;
 		}
-		const consoleOption = typeof config.internalConsoleOptions === 'string' ? config.internalConsoleOptions : settings.get<string>('debug.internalConsoleOptions');
-		if (config.console !== 'integratedTerminal' && opensOnStart(consoleOption, first)) layout.showPanel('debugConsole');
-		const out = (category: string, text: string) => (this.model = model = appendOutput(this.model ?? model, category, text));
-		if (config.preLaunchTask) out('console', t('tools.debug.skipPreLaunch', { task: String(config.preLaunchTask) }));
+		if (ambiguous.length) {
+			notifications.error(t('debugger.compoundAmbiguous', { name: compound.name, names: ambiguous.join(', ') }));
+			return;
+		}
+		return { kind: 'compound', compound, configs };
+	}
+
+	/** Starts a session (with `parent`: a child connection to the parent's adapter server). */
+	async #launch(config: LaunchConfig, noDebug: boolean, build?: string[], opts: { parent?: Active; group?: number } = {}) {
+		const parent = opts.parent ?? null;
+		const pendingModel = initialModel();
+		if (!parent) {
+			this.triggered = this.#live().length ? this.triggered : new Set();
+			this.watchResults = {};
+			// The console shows the starting session's output from its first line.
+			this.focusedKey = null;
+			this.model = pendingModel;
+			this.configName = config.name;
+		}
+		let model = pendingModel;
+		// debug.openDebug / debug.internalConsoleOptions (a launch config's own internalConsoleOptions wins).
+		if (!parent) {
+			const first = this.sessionsStarted++ === 0;
+			if (opensOnStart(settings.get('debug.openDebug'), first)) {
+				layout.sideView = 'debug';
+				layout.sidebarVisible = true;
+			}
+			const consoleOption = typeof config.internalConsoleOptions === 'string' ? config.internalConsoleOptions : settings.get<string>('debug.internalConsoleOptions');
+			if (config.console !== 'integratedTerminal' && opensOnStart(consoleOption, first)) layout.showPanel('debugConsole');
+		}
+		const out = (category: string, text: string) => {
+			model = appendOutput(model, category, text);
+			if (this.focusedKey === null) this.model = model;
+		};
+		// VS Code's DebugTaskRunner: the preLaunchTask runs (a background one until its watcher is idle) before the adapter starts.
+		if (config.preLaunchTask && !parent) {
+			out('console', t('ideTasks.debug.running', { task: taskName(config.preLaunchTask) }));
+			if (!(await this.#runPreLaunchTask(config.preLaunchTask as TaskRef, this.#folderOfConfig(config)))) {
+				if (this.focusedKey === null) this.model = { ...model, state: 'terminated' };
+				return;
+			}
+		}
 		if (build) {
 			out('console', `> ${build.join(' ')}\n`);
 			const res = await invoke<{ success: boolean; output: string }>('debug_build', { argv: build }).catch((e) => ({ success: false, output: `${e}\n` }));
 			out(res.success ? 'stdout' : 'stderr', res.output);
 			if (!res.success) {
-				this.model = { ...this.model!, state: 'terminated' };
+				if (this.focusedKey === null) this.model = { ...model, state: 'terminated' };
 				return status.flash(t('tools.debug.buildFailed', { command: build.join(' ') }));
 			}
 		}
@@ -308,7 +704,7 @@ class Debug {
 		let chain: Promise<unknown> = Promise.resolve();
 		// Sends are chained so the adapter sees them in order (separate IPC calls may not be).
 		const write = (json: string) => {
-			chain = chain.then(() => (id === null ? undefined : invoke('dap_send', { id, message: json }))).catch((e) => this.#sessionOutput(session, 'stderr', `send: ${e}\n`));
+			chain = chain.then(() => (id === null ? undefined : invoke('dap_send', { id, message: json }))).catch((e) => this.#sessionOutput(active, 'stderr', `send: ${e}\n`));
 		};
 		const client = new DapClient(write);
 		const session: DebugSession = new DebugSession(
@@ -317,54 +713,67 @@ class Debug {
 			{
 				breakpoints: () => {
 					const all: Record<string, ReturnType<typeof B.sourceBreakpoints>> = {};
-					for (const [rel, list] of Object.entries(this.breakpoints)) {
-						const bps = B.sourceBreakpoints(list, this.triggered);
+					for (const rel of Object.keys(this.breakpoints)) {
+						const bps = this.#sourceFor(rel);
 						if (bps.length) all[this.#abs(rel)] = bps;
 					}
 					return all;
 				},
+				functionBreakpoints: () => B.functionBreakpoints(this.functionBreakpoints, this.breakpointsActivated),
+				exceptionArgs: (caps) => this.#exceptionArgs(caps),
+				dataBreakpoints: () => B.dataBreakpoints(this.dataBreakpoints.filter((d) => d.canPersist), this.breakpointsActivated),
 				runInTerminal: async (args) => {
-					terminals.open({ title: args.title ?? `Debug: ${config.name}`, run: runInTerminalArgv(args) });
+					// In the configuration's folder (multi-root), where its program runs.
+					terminals.open({ title: args.title ?? `Debug: ${config.name}`, run: runInTerminalArgv(args), folder: this.#folderOfConfig(config) });
 					layout.showPanel('terminal');
 					return {};
 				},
-				changed: (m) => {
-					if (this.#active?.session === session) this.model = m;
-				},
+				// Answered once the child session has started (VS Code's rawDebugSession does the same).
+				startDebugging: (args) => this.#startChild(active, args),
+				changed: () => this.#publish(active),
 				stopped: (frame) => {
+					this.focusSession(active.key);
 					this.#hit(frameLocation(frame, this.root));
 					this.#reveal(frame);
 					this.#onBreak();
+					void import('#lib/workbench/accessibilitySignals.svelte.ts').then((m) => m.playAccessibilitySignal('onDebugBreak'));
 					void this.#evaluateWatches();
 				},
-				terminated: () => void this.#finish(session)
+				terminated: () => void this.#finish(active)
 			},
 			{ noDebug }
 		);
 		// Output already shown (preLaunchTask notice, build) stays at the top of the console.
 		session.model = { ...session.model, output: model.output };
-		const active: Active = { session, id: null, config, build, noDebug };
-		this.#active = active;
+		const active: Active = { key: this.#nextKey++, session, id: null, config, build, noDebug, parent, group: opts.group ?? parent?.group };
+		this.#all = [...this.#all, active];
+		// A child takes focus from its parent (js-debug's parent session shows no program state).
+		if (!parent || this.focusedKey === parent.key || this.focusedKey === null) this.focusSession(active.key);
+		this.#publish(active);
 
 		const channel = new Channel<DapEvent>();
 		channel.onmessage = (ev) => {
 			if (ev.type === 'message') client.handle(ev.json);
-			else if (ev.type === 'stderr') session.model.state !== 'terminated' && this.#sessionOutput(session, 'stderr', `${ev.line}\n`);
+			else if (ev.type === 'stderr') session.model.state !== 'terminated' && this.#sessionOutput(active, 'stderr', `${ev.line}\n`);
 			else {
 				session.exited(ev.code);
+				this.#ended(active);
 				clientLog('info', `debug adapter exited (code ${ev.code})`);
 			}
 		};
 		try {
-			id = await invoke<number>('dap_start', { debugType: config.type, python: typeof config.python === 'string' ? config.python : null, onEvent: channel });
+			id = parent
+				? await invoke<number>('dap_start_child', { parent: parent.id, onEvent: channel })
+				: await invoke<number>('dap_start', { debugType: config.type, python: typeof config.python === 'string' ? config.python : null, onEvent: channel });
 			active.id = id;
-			clientLog('info', `debug session started: ${config.name} (${config.type})`);
+			clientLog('info', `debug session started: ${config.name} (${config.type})${parent ? ' (child)' : ''}`);
 		} catch (e) {
 			const message = String(e);
-			out('stderr', `${message}\n`);
-			this.model = { ...this.model!, state: 'terminated' };
-			this.#active = null;
-			if (message.startsWith(NOT_INSTALLED)) void this.install(config.type);
+			this.#sessionOutput(active, 'stderr', `${message}\n`);
+			session.model = { ...session.model, state: 'terminated' };
+			this.#publish(active);
+			this.#ended(active);
+			if (isRustError(message, 'notInstalled')) void this.install(config.type);
 			else status.flash(message);
 			return;
 		}
@@ -372,72 +781,252 @@ class Debug {
 			await session.start();
 		} catch (e) {
 			const message = e instanceof Error ? e.message : String(e);
-			this.#sessionOutput(session, 'stderr', `${message}\n`);
+			this.#sessionOutput(active, 'stderr', `${message}\n`);
 			notifications.error(t('tools.debug.startFailed', { error: message }));
 			await this.#kill(active);
 		}
 	}
 
-	#sessionOutput(session: DebugSession, category: string, text: string) {
-		session.model = appendOutput(session.model, category, text);
-		if (this.#active?.session === session) this.model = session.model;
+	/** js-debug's `startDebugging`: a child session over a new connection to the same server. */
+	async #startChild(parent: Active, args: StartDebuggingArguments) {
+		if (parent.id === null) return;
+		const configuration = args.configuration ?? {};
+		// VS Code: the parent's debugger type, the request from the arguments, the parent's name unless given.
+		const config: LaunchConfig = {
+			...configuration,
+			type: parent.config.type,
+			request: args.request === 'attach' ? 'attach' : 'launch',
+			name: typeof configuration.name === 'string' && configuration.name ? configuration.name : parent.config.name
+		};
+		await this.#launch(config, parent.noDebug, undefined, { parent });
+	}
+
+	/** VS Code's runTaskAndCheckErrors: true when debugging may start. */
+	async #runPreLaunchTask(ref: TaskRef, folder: string | undefined): Promise<boolean> {
+		const name = taskName(ref);
+		const debugAnyway = t('ideTasks.debug.debugAnyway');
+		const configure = t('ideTasks.debug.configureTask');
+		const failed = async (message: string, task?: Parameters<typeof tasks.configure>[0]) => {
+			const answer = await choose(message, { kind: 'error', buttons: [debugAnyway, configure, t('common.cancel')], cancelId: 2 });
+			if (answer === configure) await tasks.configure(task ?? 'template');
+			return answer === debugAnyway;
+		};
+		const { task } = await tasks.find(ref, { folder });
+		if (!task) return failed(t('ideTasks.debug.notFound', { task: name }));
+		const run = tasks.run(task, { untilInactive: true });
+		// debug.hideSlowPreLaunchWarning: after a while (5 s for a background task, else 10 s) a
+		// notification offers Debug Anyway / Configure Task / Abort (VS Code: debugTaskRunner).
+		let slow: ReturnType<typeof notifications.notify> | undefined;
+		const answered = new Promise<'debug' | 'abort'>((resolve) => {
+			if (settings.get<boolean>('debug.hideSlowPreLaunchWarning')) return;
+			const timer = setTimeout(() => {
+				slow = notifications.info(t('ideTasks.debug.waiting', { task: name }), {
+					sticky: true,
+					progress: { infinite: true },
+					actions: [
+						{ label: t('ideTasks.debug.debugAnyway'), run: () => resolve('debug') },
+						...(task.configured ? [{ label: t('ideTasks.debug.configureTask'), run: () => (void tasks.configure(task), resolve('abort')) }] : []),
+						{ label: t('ideTasks.debug.abort'), run: () => resolve('abort') }
+					]
+				});
+			}, task.isBackground ? 5000 : 10000);
+			void run.finally(() => clearTimeout(timer));
+		});
+		const waited = Promise.race([run, answered]).finally(() => slow?.close());
+		let summary;
+		// A background task without a background pattern never goes idle: VS Code gives up after 5 s.
+		if (task.isBackground && !parseProblemMatchers(task.problemMatcher, []).some((m) => m.watching)) {
+			const timeout = new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), 5000));
+			const first = await Promise.race([waited, timeout]);
+			if (first === 'timeout') return failed(t('ideTasks.debug.notTracked', { task: name }), task);
+			summary = first;
+		} else summary = await waited;
+		if (summary === 'debug') return true;
+		if (summary === 'abort') {
+			tasks.terminate(task);
+			return false;
+		}
+		if (summary.exitCode === undefined) return false;
+		const errors = lsp.errorCount();
+		const onErrors = settings.get<string>('debug.onTaskErrors');
+		if (summary.exitCode === 0 || onErrors === 'debugAnyway') return true;
+		if (onErrors === 'showErrors') {
+			layout.showPanel('problems');
+			return false;
+		}
+		if (onErrors === 'abort') return false;
+		const message =
+			errors > 1 ? t('ideTasks.debug.errors', { task: name }) : errors === 1 ? t('ideTasks.debug.error', { task: name }) : t('ideTasks.debug.exitCode', { task: name, code: summary.exitCode });
+		const showErrors = t('ideTasks.debug.showErrors');
+		const answer = await choose(message, { kind: 'warning', buttons: [debugAnyway, showErrors, t('ideTasks.debug.abort')], cancelId: 2 });
+		if (answer === debugAnyway) return true;
+		if (answer === showErrors) layout.showPanel('problems');
+		return false;
+	}
+
+	/** postDebugTask: runs once the session ended (not awaited, like VS Code). */
+	#runPostDebugTask(active: Active) {
+		const ref = active.config.postDebugTask;
+		if (!ref || active.postDone || active.parent) return;
+		active.postDone = true;
+		this.#sessionOutput(active, 'console', t('ideTasks.debug.postRunning', { task: taskName(ref) }));
+		void tasks.find(ref as TaskRef, { folder: this.#folderOfConfig(active.config) }).then(({ task }) => {
+			if (task) void tasks.run(task);
+			else notifications.error(t('ideTasks.debug.notFound', { task: taskName(ref) }));
+		});
+	}
+
+	#sessionOutput(active: Active, category: string, text: string) {
+		active.session.model = appendOutput(active.session.model, category, text);
+		this.#publish(active);
 	}
 
 	/** The adapter said `terminated`: disconnect (VS Code does), then make sure the process is gone. */
-	async #finish(session: DebugSession) {
-		const active = this.#active;
-		if (!active || active.session !== session) return;
-		await session.disconnect();
+	async #finish(active: Active) {
+		if (!this.#all.includes(active)) return;
+		await active.session.disconnect();
+		this.#runPostDebugTask(active);
+		this.#ended(active);
 		setTimeout(() => active.id !== null && void invoke('dap_stop', { id: active.id }).catch(() => {}), 1000);
+	}
+
+	/** A session is over: its children go too, a stopAll compound stops, and focus moves on. */
+	#ended(active: Active) {
+		for (const child of this.#all.filter((a) => a.parent === active && a.session.model.state !== 'terminated')) void this.#kill(child);
+		if (active.group !== undefined && !active.parent) for (const other of this.#live().filter((a) => a.group === active.group && a !== active && !a.parent)) void this.#kill(other);
+		// A child's output stays readable in its parent's console after focus goes back to it.
+		const parent = active.parent;
+		if (parent && parent.session.model.state !== 'terminated' && active.session.model.output.length) {
+			const output = [...parent.session.model.output, ...active.session.model.output];
+			parent.session.model = { ...parent.session.model, output: output.slice(-Math.max(1, outputLimit.max)) };
+			active.session.model = { ...active.session.model, output: [] };
+			this.#publish(parent);
+		}
+		// Persistent data breakpoints stay; the rest belonged to this session (VS Code).
+		if (!this.#live().length) this.dataBreakpoints = B.persistentData(this.dataBreakpoints);
+		this.sessions = this.sessions.filter((s) => s.key !== active.key);
+		const remaining = this.#live().filter((a) => a !== active);
+		if (this.focusedKey === active.key) {
+			const next = (active.parent && remaining.includes(active.parent) ? active.parent : null) ?? remaining.find((a) => a.session.model.state === 'stopped') ?? remaining[0];
+			// Without another session the ended one stays shown (its output, Restart) until the next start.
+			if (next) this.focusSession(next.key);
+			else this.model = active.session.model;
+		}
+		this.#all = this.#all.filter((a) => a.session.model.state !== 'terminated' || a.key === this.focusedKey);
 	}
 
 	async #kill(active: Active) {
 		await active.session.disconnect(1000);
 		if (active.id !== null) await invoke('dap_stop', { id: active.id }).catch(() => {});
 		active.session.exited(null);
-		if (this.#active === active) this.model = active.session.model;
+		this.#publish(active);
+		this.#runPostDebugTask(active);
+		this.#ended(active);
+	}
+
+	/** The top of a session's tree (a js-debug child's parent session). */
+	#root(a: Active): Active {
+		let r = a;
+		while (r.parent) r = r.parent;
+		return r;
 	}
 
 	// --- Running -----------------------------------------------------------------------------------
 
+	/** Stop: the focused session's whole tree (a js-debug child stops with its parent), or only the
+	 * focused child with debug.showSubSessionsInToolBar. */
 	async stop() {
-		const active = this.#active;
-		if (!active || !this.active) return;
-		await this.#kill(active);
+		const a = this.#focused() ?? this.#live()[0];
+		if (!a || !this.active) return;
+		// debug.showSubSessionsInToolBar: a child session the toolbar shows stops by itself.
+		await this.#kill(this.#showSubSessions() ? a : this.#root(a));
+	}
+
+	#showSubSessions() {
+		return settings.get<boolean>('debug.showSubSessionsInToolBar') === true;
 	}
 
 	async restart() {
-		const active = this.#active;
-		if (!active) return;
-		if (this.active && (await active.session.restart().catch(() => false))) return;
-		if (this.active) await this.#kill(active);
-		await this.#launch(active.config, active.noDebug, active.build);
+		const focused = this.#focused() ?? this.#all.at(-1);
+		if (!focused) return;
+		// A child session restarts by itself only when the toolbar shows sub-sessions and the adapter can.
+		if (focused.parent && this.#showSubSessions() && focused.session.model.state !== 'terminated' && (await focused.session.restart().catch(() => false))) return;
+		const a = this.#root(focused);
+		if (a.session.model.state !== 'terminated' && (await a.session.restart().catch(() => false))) return;
+		if (a.session.model.state !== 'terminated') await this.#kill(a);
+		await this.#launch(a.config, a.noDebug, a.build, { group: a.group });
+	}
+
+	#session() {
+		return this.#focused()?.session;
 	}
 
 	continue() {
-		return this.#active?.session.continue();
+		return this.#session()?.continue();
 	}
 	stepOver() {
-		return this.#active?.session.next();
+		return this.#session()?.next();
 	}
 	stepInto() {
-		return this.#active?.session.stepIn();
+		return this.#session()?.stepIn();
 	}
 	stepOut() {
-		return this.#active?.session.stepOut();
+		return this.#session()?.stepOut();
+	}
+	stepBack() {
+		return this.#session()?.stepBack();
+	}
+	reverseContinue() {
+		return this.#session()?.reverseContinue();
 	}
 	pause() {
-		return this.#active?.session.pause();
+		return this.#session()?.pause();
 	}
 
-	async selectFrame(frameId: number) {
-		await this.#active?.session.selectFrame(frameId);
+	/** Run to Cursor (VS Code: editor.debug.action.runToCursor). */
+	async runToCursor(rel = editors.active, line = editors.cursor.line) {
+		const session = this.#session();
+		if (!session || !isWorkspaceFile(rel) || !this.stopped) return;
+		await session.runTo(this.#abs(rel), line);
+	}
+
+	/** Jump to Cursor (VS Code: debug.jumpToCursor): the adapter must support goto targets. */
+	async jumpToCursor(rel = editors.active, line = editors.cursor.line) {
+		const session = this.#session();
+		if (!session || !isWorkspaceFile(rel) || !this.stopped) return;
+		if (!session.capabilities.supportsGotoTargetsRequest) return status.flash(t('debugger.noJump'));
+		const ok = await session.jumpTo(this.#abs(rel), line).catch((e) => (notifications.error(e instanceof Error ? e.message : String(e)), true));
+		if (!ok) status.flash(t('debugger.noJumpTarget', { line }));
+	}
+
+	/** Call Stack: Restart Frame. */
+	restartFrame(frameId: number) {
+		return this.#session()?.restartFrame(frameId);
+	}
+
+	async selectFrame(frameId: number, sessionKey = this.focusedKey) {
+		if (sessionKey !== null && sessionKey !== this.focusedKey) this.focusSession(sessionKey);
+		await this.#session()?.selectFrame(frameId);
 		void this.#evaluateWatches();
 	}
 
 	/** Children of a scope or variable for the Variables tree. */
 	expand(ref: number) {
-		return this.#active?.session.expand(ref).catch(() => []) ?? Promise.resolve([]);
+		return this.#session()?.expand(ref).catch(() => []) ?? Promise.resolve([]);
+	}
+
+	/** Variables view: Set Value (supportsSetVariable). */
+	async setVariable(parentRef: number, name: string, current: string) {
+		const session = this.#session();
+		if (!session?.capabilities.supportsSetVariable) return;
+		const value = await quick.input({ placeholder: t('debugger.setValue', { name }), value: current, hint: (v) => `${name} = ${v}` });
+		if (value === undefined) return;
+		try {
+			await session.setVariable(parentRef, name, value);
+			void this.#evaluateWatches();
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : String(e));
+		}
 	}
 
 	/** debug.openDebug: openOnDebugBreak, debug.focusWindowOnBreak. */
@@ -457,7 +1046,17 @@ class Debug {
 		else if (frame?.source?.path) notifications.warn(t('tools.debug.outsideWorkspace', { path: frame.source.path }));
 	}
 
-	// --- Watch and REPL ----------------------------------------------------------------------------
+	// --- Hover, Watch and REPL ---------------------------------------------------------------------
+
+	/** The debug hover's value for an expression in the focused session (null outside a stop). */
+	hover(expression: string): Promise<EvaluateResult | null> {
+		return this.#session()?.hover(expression) ?? Promise.resolve(null);
+	}
+
+	/** Debug Console completions (the adapter's, when it has the completions request). */
+	completions(text: string, column: number): Promise<CompletionItem[]> {
+		return this.#session()?.completions(text, column) ?? Promise.resolve([]);
+	}
 
 	addWatch(expr: string) {
 		const e = expr.trim();
@@ -472,8 +1071,13 @@ class Debug {
 		save(`${WATCHES}:${this.root}`, JSON.stringify(this.watches));
 	}
 
+	removeAllWatches() {
+		this.watches = [];
+		save(`${WATCHES}:${this.root}`, '[]');
+	}
+
 	async #evaluateWatches() {
-		const session = this.#active?.session;
+		const session = this.#session();
 		if (!session || !this.stopped) return;
 		const results: Record<string, WatchResult> = {};
 		await Promise.all(
@@ -490,61 +1094,126 @@ class Debug {
 
 	/** Debug Console input. */
 	async repl(expr: string) {
-		const session = this.#active?.session;
-		if (!session || !this.active) {
+		const a = this.#focused();
+		if (!a || a.session.model.state === 'terminated') {
 			if (this.model) this.model = appendOutput(this.model, 'stderr', t('tools.debug.noSession'));
 			return;
 		}
-		this.#sessionOutput(session, 'input', `> ${expr}\n`);
+		this.#sessionOutput(a, 'input', `> ${expr}\n`);
 		try {
-			const r = await session.evaluate(expr, 'repl');
-			this.#sessionOutput(session, 'result', `${r.result}\n`);
+			const r = await a.session.evaluate(expr, 'repl');
+			this.#sessionOutput(a, 'result', `${r.result}\n`);
 		} catch (e) {
-			this.#sessionOutput(session, 'stderr', `${e instanceof Error ? e.message : e}\n`);
+			this.#sessionOutput(a, 'stderr', `${e instanceof Error ? e.message : e}\n`);
 		}
 		void this.#evaluateWatches();
 	}
 
 	clearConsole() {
 		if (this.model) this.model = { ...this.model, output: [] };
-		if (this.#active) this.#active.session.model = { ...this.#active.session.model, output: [] };
+		const a = this.#focused();
+		if (a) {
+			a.session.model = { ...a.session.model, output: [] };
+			this.#publish(a);
+		}
 	}
 
 	// --- Missing adapters --------------------------------------------------------------------------
 
-	/** Offers the install commands this machine can run, like a missing language server. */
+	/** Offers what installs the adapter: js-debug is downloaded (pinned, checksum verified) after
+	 * the user agrees; the others are install commands run in a terminal, like a missing language server. */
 	async install(debugType: string) {
+		if (isJsDebugType(debugType)) {
+			const st = await invoke<JsDebugStatus>('dap_js_debug_status').catch(() => null);
+			if (st && !st.server) return this.installJsDebug(st);
+		}
 		let res: InstallInfo;
 		try {
 			res = await invoke<InstallInfo>('dap_install_methods', { debugType });
 		} catch (e) {
 			return notifications.error(e);
 		}
+		const server = isJsDebugType(debugType) ? 'Node.js' : res.server;
 		quick.pick({
-			placeholder: res.methods.length ? t('tools.debug.installWith', { server: res.server }) : t('tools.debug.installManual', { server: res.server, binary: res.binary }),
+			placeholder: res.methods.length ? t('tools.debug.installWith', { server }) : t('tools.debug.installManual', { server, binary: res.binary }),
 			items: installItems(res),
 			onAccept: (item) => {
 				const method = res.methods[Number(item.id)];
 				if (!method) return;
-				terminals.open({ title: t('tools.debug.installTerminal', { server: res.server }), run: method.argv });
+				terminals.open({ title: t('tools.debug.installTerminal', { server }), run: method.argv });
 				layout.showPanel('terminal');
 			}
 		});
 	}
 
+	/** Downloads js-debug only when the user says so (VS Code ships it built in; Kingu fetches the same release). */
+	async installJsDebug(status?: JsDebugStatus | null) {
+		const st = status ?? (await invoke<JsDebugStatus>('dap_js_debug_status').catch(() => null));
+		if (!st) return;
+		const download = t('debugger.js.download');
+		const mb = (st.bytes / 1024 / 1024).toFixed(1);
+		const message = `${t('debugger.js.ask', { version: st.version, size: mb })}\n\n${t('debugger.js.detail', { url: st.url, sha256: st.sha256 })}`;
+		const answer = await choose(message, { kind: 'info', buttons: [download, t('common.cancel')], cancelId: 1 });
+		if (answer !== download) return;
+		try {
+			await notifications.withProgress({ title: t('debugger.js.installing', { version: st.version }) }, () => invoke<string>('dap_js_debug_install'));
+			notifications.info(st.node ? t('debugger.js.installed', { version: st.version }) : t('debugger.js.installedNoNode', { version: st.version }));
+		} catch (e) {
+			notifications.error(t('debugger.js.failed', { error: String(e) }));
+		}
+	}
+
+	/** Install Additional Debuggers… (VS Code opens the extensions view; Kingu lists its adapters). */
+	async installAdditional() {
+		const st = await invoke<JsDebugStatus>('dap_js_debug_status').catch(() => null);
+		const items = [
+			{ id: 'node', label: 'js-debug', description: st?.server ? t('debugger.installed') : t('debugger.js.description', { version: st?.version ?? '' }) },
+			{ id: 'lldb', label: 'lldb-dap', description: 'Rust, C, C++, Swift' },
+			{ id: 'go', label: 'Delve (dlv)', description: 'Go' },
+			{ id: 'debugpy', label: 'debugpy', description: 'Python' }
+		];
+		const item = await quick.choose({ placeholder: t('debugger.installPick'), items });
+		if (!item) return;
+		if (item.id === 'node') return st?.server ? status.flash(t('debugger.js.already', { version: st.version })) : this.installJsDebug(st);
+		const ok = await invoke<string>('dap_check', { debugType: item.id, python: null }).then(
+			() => true,
+			() => false
+		);
+		if (ok) status.flash(t('debugger.alreadyInstalled', { name: item.label }));
+		else void this.install(item.id);
+	}
+
 	// --- launch.json -------------------------------------------------------------------------------
+
+	/**
+	 * Which launch.json Open launch.json / Add Configuration work on: in a multi-root window the
+	 * folder is asked for (VS Code); picking the `.code-workspace`
+	 * file opens it (its `launch`) and gives null. Returns the workbench path of a file in that folder.
+	 */
+	async #launchFolder(): Promise<((rel: string) => string) | null> {
+		const folders = await tasks.folders();
+		const picked = folders.length < 2 ? folders[0] : await tasks.pickFolder(t('debugger.pickLaunchFolder'), { workspace: true });
+		if (picked === 'workspace') {
+			tasks.openWorkspaceFile();
+			return null;
+		}
+		if (!picked) return null;
+		return (rel) => folderKey(rel, picked, folders);
+	}
 
 	/** Debug: Open launch.json — creates `.vscode/launch.json` with a configuration for the active file's language. */
 	async openLaunchJson() {
 		const root = await this.#ensureRoot();
 		if (!root) return status.flash(t('tools.debug.openFolder'));
-		const rel = LAUNCH_FILES[0];
+		const at = await this.#launchFolder();
+		if (!at) return;
+		const rel = at(LAUNCH_FILES[0]);
 		const exists = await invoke<string>('read_workspace_file', { rel }).then(
 			() => true,
 			() => false
 		);
 		if (!exists) {
-			const cargoToml = editors.language === 'rust' ? await invoke<string>('read_workspace_file', { rel: 'Cargo.toml' }).catch(() => null) : null;
+			const cargoToml = editors.language === 'rust' ? await invoke<string>('read_workspace_file', { rel: at('Cargo.toml') }).catch(() => null) : null;
 			const configs = generatedConfigs(editors.language, { cargoToml }).map((g) => g.config);
 			const text = `{\n\t// ดู https://code.visualstudio.com/docs/editor/debugging#_launch-configurations\n\t"version": "0.2.0",\n\t"configurations": ${JSON.stringify(configs, null, '\t').replaceAll('\n', '\n\t')}\n}\n`;
 			try {
@@ -556,6 +1225,36 @@ class Debug {
 		}
 		editors.open(rel, { preview: false });
 	}
+
+	/** Debug: Add Configuration… — a snippet for the active file's debugger first, appended to launch.json. */
+	async addConfiguration() {
+		const root = await this.#ensureRoot();
+		if (!root) return status.flash(t('tools.debug.openFolder'));
+		const at = await this.#launchFolder();
+		if (!at) return;
+		const language = editors.language;
+		const snippets = snippetsFor(language);
+		const item = await quick.choose({ placeholder: t('debugger.addConfigPick'), items: snippets.map((s, i) => ({ id: String(i), label: s.label, description: s.description })) });
+		if (!item) return;
+		const snippet = snippets[Number(item.id)];
+		const rel = at(LAUNCH_FILES[0]);
+		const current = await invoke<string>('read_workspace_file', { rel }).catch(() => null);
+		const { text, offset } = addConfigurationText(current ?? '', snippet.body);
+		try {
+			if (current === null) await invoke('fs_create_file', { rel });
+			const { getEntry, saveFile } = await import('#lib/workbench/editorModels.ts');
+			const entry = getEntry(rel);
+			// An open launch.json is edited in place (undoable), else the file is written.
+			if (entry?.model) {
+				entry.model.pushEditOperations([], [{ range: entry.model.getFullModelRange(), text }], () => null);
+				await saveFile(rel, 'explicit');
+			} else await invoke('fs_write_file', { rel, content: text });
+		} catch (e) {
+			return notifications.error(e);
+		}
+		const line = text.slice(0, offset).split('\n').length;
+		editors.openAt(rel, line, 1);
+	}
 }
 
 export const debug = new Debug();
@@ -564,12 +1263,12 @@ export const debug = new Debug();
 export function installDebug(): () => void {
 	debug.reset();
 	// debug.openExplorerOnEnd / debug.console.closeOnEnd when a session ends; debug.console.maximumLines.
-	let lastState: string | undefined;
+	let lastActive = false;
 	const disposeEffects = $effect.root(() => {
 		$effect(() => {
-			const state = debug.model?.state;
-			const ended = state === 'terminated' && lastState !== undefined && lastState !== 'terminated';
-			lastState = state;
+			const active = debug.active;
+			const ended = !active && lastActive;
+			lastActive = active;
 			if (!ended) return;
 			untrack(() => {
 				if (settings.get<boolean>('debug.openExplorerOnEnd')) {
@@ -583,9 +1282,11 @@ export function installDebug(): () => void {
 			outputLimit.max = settings.get<number>('debug.console.maximumLines');
 		});
 	});
+	const fileOpen = () => isWorkspaceFile(editors.active);
 	const unregister = [
 		commands.register({ id: 'workbench.action.debug.start', title: 'Start Debugging', category: 'Debug', key: 'f5', run: () => debug.start() }),
-		commands.register({ id: 'workbench.action.debug.run', title: 'Start Without Debugging', category: 'Debug', key: 'ctrl+f5', when: () => !debug.active, run: () => debug.start({ noDebug: true }) }),
+		commands.register({ id: 'workbench.action.debug.run', title: 'Start Without Debugging', category: 'Debug', key: 'ctrl+f5', run: () => debug.start({ noDebug: true }) }),
+		commands.register({ id: 'workbench.action.debug.selectandstart', title: 'Select and Start Debugging', category: 'Debug', run: () => debug.start({ pick: true }) }),
 		commands.register({ id: 'workbench.action.debug.stop', title: 'Stop', category: 'Debug', key: 'shift+f5', when: () => debug.active, run: () => debug.stop() }),
 		commands.register({ id: 'workbench.action.debug.restart', title: 'Restart', category: 'Debug', key: 'cmd+shift+f5', when: () => debug.model !== null, run: () => debug.restart() }),
 		// F5 while stopped is Continue: Start Debugging's F5 does it, so one key never maps to two native menu items.
@@ -593,14 +1294,26 @@ export function installDebug(): () => void {
 		commands.register({ id: 'workbench.action.debug.stepOver', title: 'Step Over', category: 'Debug', key: 'f10', when: () => debug.stopped, run: () => debug.stepOver() }),
 		commands.register({ id: 'workbench.action.debug.stepInto', title: 'Step Into', category: 'Debug', key: 'f11', when: () => debug.stopped, run: () => debug.stepInto() }),
 		commands.register({ id: 'workbench.action.debug.stepOut', title: 'Step Out', category: 'Debug', key: 'shift+f11', when: () => debug.stopped, run: () => debug.stepOut() }),
+		commands.register({ id: 'workbench.action.debug.stepBack', title: 'Step Back', category: 'Debug', when: () => debug.stopped && !!debug.capabilities.supportsStepBack, run: () => debug.stepBack() }),
+		commands.register({ id: 'workbench.action.debug.reverseContinue', title: 'Reverse', category: 'Debug', when: () => debug.stopped && !!debug.capabilities.supportsStepBack, run: () => debug.reverseContinue() }),
 		commands.register({ id: 'workbench.action.debug.pause', title: 'Pause', category: 'Debug', key: 'f6', when: () => debug.running, run: () => debug.pause() }),
-		commands.register({ id: 'editor.debug.action.toggleBreakpoint', title: 'Toggle Breakpoint', category: 'Debug', key: 'f9', when: () => isWorkspaceFile(editors.active), run: () => debug.toggleBreakpoint() }),
-		commands.register({ id: 'editor.debug.action.conditionalBreakpoint', title: 'Add Conditional Breakpoint...', category: 'Debug', when: () => isWorkspaceFile(editors.active), run: () => debug.editCondition() }),
-		commands.register({ id: 'editor.debug.action.triggerByBreakpoint', title: 'Add Triggered Breakpoint...', category: 'Debug', when: () => isWorkspaceFile(editors.active), run: () => debug.editTrigger() }),
-		commands.register({ id: 'editor.debug.action.addLogPoint', title: 'Add Logpoint...', category: 'Debug', when: () => isWorkspaceFile(editors.active), run: () => debug.editLogMessage() }),
+		commands.register({ id: 'editor.debug.action.runToCursor', title: 'Run to Cursor', category: 'Debug', when: () => debug.stopped && fileOpen(), run: () => debug.runToCursor() }),
+		commands.register({ id: 'editor.debug.action.jumpToCursor', title: 'Jump to Cursor', category: 'Debug', when: () => debug.stopped && fileOpen() && !!debug.capabilities.supportsGotoTargetsRequest, run: () => debug.jumpToCursor() }),
+		commands.register({ id: 'editor.debug.action.toggleBreakpoint', title: 'Toggle Breakpoint', category: 'Debug', key: 'f9', when: fileOpen, run: () => debug.toggleBreakpoint() }),
+		commands.register({ id: 'editor.debug.action.conditionalBreakpoint', title: 'Add Conditional Breakpoint...', category: 'Debug', when: fileOpen, run: () => debug.editCondition() }),
+		commands.register({ id: 'editor.debug.action.editBreakpoint', title: 'Edit Breakpoint...', category: 'Debug', when: fileOpen, run: () => debug.editBreakpoint() }),
+		commands.register({ id: 'editor.debug.action.triggerByBreakpoint', title: 'Add Triggered Breakpoint...', category: 'Debug', when: fileOpen, run: () => debug.editTrigger() }),
+		commands.register({ id: 'editor.debug.action.addLogPoint', title: 'Add Logpoint...', category: 'Debug', when: fileOpen, run: () => debug.editLogMessage() }),
+		commands.register({ id: 'workbench.debug.viewlet.action.addFunctionBreakpointAction', title: 'Add Function Breakpoint', category: 'Debug', run: () => debug.addFunctionBreakpoint() }),
+		commands.register({ id: 'workbench.debug.viewlet.action.enableAllBreakpoints', title: 'Enable All Breakpoints', category: 'Debug', run: () => debug.setAllBreakpointsEnabled(true) }),
+		commands.register({ id: 'workbench.debug.viewlet.action.disableAllBreakpoints', title: 'Disable All Breakpoints', category: 'Debug', run: () => debug.setAllBreakpointsEnabled(false) }),
+		commands.register({ id: 'workbench.debug.viewlet.action.toggleBreakpointsActivatedAction', title: 'Toggle Activate Breakpoints', category: 'Debug', run: () => debug.toggleBreakpointsActivated() }),
 		commands.register({ id: 'workbench.debug.viewlet.action.removeAllBreakpoints', title: 'Remove All Breakpoints', category: 'Debug', run: () => debug.removeAllBreakpoints() }),
+		commands.register({ id: 'workbench.debug.viewlet.action.removeAllExpressions', title: 'Remove All Expressions', category: 'Debug', run: () => debug.removeAllWatches() }),
 		commands.register({ id: 'workbench.action.debug.configure', title: 'Open launch.json', category: 'Debug', run: () => debug.openLaunchJson() }),
-		commands.register({ id: 'workbench.view.debug', title: 'Show Run and Debug', category: 'View', key: 'cmd+shift+d', keyWhen: () => !appMode.isAgents, run: () => ((layout.sideView = 'debug'), (layout.sidebarVisible = true)) }),
+		commands.register({ id: 'debug.addConfiguration', title: 'Add Configuration...', category: 'Debug', run: () => debug.addConfiguration() }),
+		commands.register({ id: 'debug.installAdditionalDebuggers', title: 'Install Additional Debuggers...', category: 'Debug', run: () => debug.installAdditional() }),
+		commands.register({ id: 'workbench.view.debug', title: 'Show Run and Debug', category: 'View', key: 'cmd+shift+d', scope: 'ide', run: () => ((layout.sideView = 'debug'), (layout.sidebarVisible = true)) }),
 		commands.register({ id: 'workbench.debug.action.toggleRepl', title: 'Focus on Debug Console View', category: 'View', run: () => layout.showPanel('debugConsole') })
 	];
 	return () => {

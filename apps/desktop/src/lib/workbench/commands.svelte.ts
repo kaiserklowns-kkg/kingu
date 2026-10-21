@@ -3,23 +3,35 @@
 
 import { eventLabel as chordLabel, isMac, isMenuEcho, isModifierKey, keyOf as defaultKeyOf, matches, parseChord, splitKeybinding } from './keys';
 import { keybindings } from './keybindings.svelte';
-import { keysFor, whenKey } from './keybindingsModel';
+import { keysFor, liveKeys, ownedKeys, whenKey, type KeyScope } from './keybindingsModel';
 import { evaluateWhen } from './contextKey';
 import { currentContext } from './contextKeys.svelte';
+import { appMode } from './mode.svelte';
 import { status } from './status.svelte';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { terminalStartsChord, workbenchTakesKey } from '#lib/terminal/behaviour.ts';
 import { t } from '#lib/i18n/index.ts';
 
-/** Every key that runs `cmd` on this platform: keybindings.json's first, then the default unless removed. */
-export function keysOf(cmd: { id: string; key?: string; mac?: string }, mac = isMac): string[] {
+type Keyed = { id: string; key?: string; mac?: string; scope?: KeyScope };
+
+/** Every key bound to `cmd` on this platform: keybindings.json's first, then the default unless removed. */
+export function keysOf(cmd: Keyed, mac = isMac): string[] {
 	return keysFor(cmd.id, defaultKeyOf(cmd, mac), keybindings.user);
+}
+
+/** The layout whose keys are live: Orca's in the Agents layout, VS Code's in the IDE. */
+export const keyLayout = (): KeyScope => (appMode.isAgents ? 'agents' : 'ide');
+
+/** The keys that run `cmd` in `layout` (keybindingsModel.liveKeys). */
+export function liveKeysOf(cmd: Keyed, layout = keyLayout(), mac = isMac): string[] {
+	const owned = mac === isMac ? commands.owned[layout] : ownedKeys(commands.all.map((c) => ({ scope: c.scope, keys: keysOf(c, mac) })), layout);
+	return liveKeys(keysOf(cmd, mac), cmd.scope, layout, owned, keybindings.user.added.get(cmd.id));
 }
 
 /** The key menus, the palette and tooltips show for `cmd` (the user's own wins), else the key
  * of whoever owns it (Monaco for editor actions). */
-export function keyOf(cmd: { id: string; key?: string; mac?: string; ownerKey?: () => string | undefined }, mac = isMac): string | undefined {
-	return keysOf(cmd, mac)[0] ?? (keybindings.user.removed.get(cmd.id) === 'all' ? undefined : cmd.ownerKey?.());
+export function keyOf(cmd: Keyed & { ownerKey?: () => string | undefined }, mac = isMac): string | undefined {
+	return liveKeysOf(cmd, keyLayout(), mac)[0] ?? (keybindings.user.removed.get(cmd.id) === 'all' ? undefined : cmd.ownerKey?.());
 }
 
 export type Command = {
@@ -36,16 +48,30 @@ export type Command = {
 	/** Extra condition for the keybinding only (VS Code's keybinding `when`, e.g. not in the
 	 * terminal), so menus and the palette still run the command. */
 	keyWhen?: () => boolean;
+	/** The layout this keybinding belongs to (keybindingsModel.liveKeys): `agents` for Orca's keys,
+	 * which win over an unscoped command's default there. Menus and the palette ignore it. */
+	scope?: KeyScope;
 	/** A key bound outside this registry (Monaco's own keybinding of an editor action), for display only. */
 	ownerKey?: () => string | undefined;
 	/** A default key of a higher weight wins over one of a lower weight on the same key while both
 	 * are enabled (VS Code's KeybindingWeight), e.g. a review key over New File. Defaults to 0. */
 	weight?: number;
-	run: () => unknown;
+	/** `args`: a keybindings.json entry's arguments (VS Code's command `args`), unchecked JSON, else
+	 * undefined. Typed `never` so a command whose own optional parameter means something else
+	 * still registers; a command that reads `args` validates it. */
+	run: (args?: never) => unknown;
 };
+
+/** Runs a command with keybindings.json arguments (see `Command.run`). */
+const runWith = (cmd: Command, args: unknown) => (cmd.run as (args?: unknown) => unknown)(args);
 
 class Commands {
 	all = $state<Command[]>([]);
+	/** The keys the commands scoped to each layout own there. */
+	owned = $derived.by(() => {
+		const entries = this.all.map((c) => ({ scope: c.scope, keys: c.scope ? keysOf(c) : [] }));
+		return { ide: ownedKeys(entries, 'ide'), agents: ownedKeys(entries, 'agents') };
+	});
 	/** The last command run by a keybinding (see MENU_ECHO_MS in keys.ts). */
 	lastKeyRun: { id: string; at: number } | null = null;
 
@@ -69,9 +95,9 @@ class Commands {
 		return () => (this.all = this.all.filter((c) => c !== cmd));
 	}
 
-	async run(id: string) {
+	async run(id: string, args?: unknown) {
 		const cmd = this.all.find((c) => c.id === id);
-		if (cmd && (!cmd.when || cmd.when())) await cmd.run();
+		if (cmd && (!cmd.when || cmd.when())) await runWith(cmd, args);
 	}
 
 	paletteItems() {
@@ -88,25 +114,25 @@ export const commands = new Commands();
  */
 export function installKeybindings(): () => void {
 	let pending: KeyboardEvent | null = null;
-	type Binding = { cmd: Command; parts: string[]; user: boolean; when?: string };
+	type Binding = { cmd: Command; parts: string[]; user: boolean; when?: string; args?: unknown };
 	let ctx: ReturnType<typeof currentContext> | null = null;
 	/** keybindings.json's `when` on top of the command's own conditions; the context is read once per keypress. */
 	const enabled = (b: Binding) => (!b.cmd.when || b.cmd.when()) && (!b.cmd.keyWhen || b.cmd.keyWhen()) && (!b.when || evaluateWhen(b.when, (ctx ??= currentContext())));
 	/** Every (command, chord parts) pair; user keybindings first, so they win over a default on the same key. */
 	const bindings = (): Binding[] => {
-		const { added, when } = keybindings.user;
+		const { added, when, args } = keybindings.user;
 		const all = commands.all.flatMap((cmd) =>
-			keysOf(cmd).map((key) => {
+			liveKeysOf(cmd).map((key) => {
 				const user = added.get(cmd.id)?.includes(key) ?? false;
-				return { cmd, parts: splitKeybinding(key), user, when: user ? when.get(whenKey(cmd.id, key)) : undefined };
+				return { cmd, parts: splitKeybinding(key), user, when: user ? when.get(whenKey(cmd.id, key)) : undefined, args: user ? args.get(whenKey(cmd.id, key)) : undefined };
 			})
 		);
 		const byWeight = (list: Binding[]) => list.sort((a, b) => (b.cmd.weight ?? 0) - (a.cmd.weight ?? 0));
 		return [...byWeight(all.filter((b) => b.user)), ...byWeight(all.filter((b) => !b.user))];
 	};
-	const runByKey = (cmd: Command) => {
-		commands.lastKeyRun = { id: cmd.id, at: performance.now() };
-		void cmd.run();
+	const runByKey = (b: Binding) => {
+		commands.lastKeyRun = { id: b.cmd.id, at: performance.now() };
+		void runWith(b.cmd, b.args);
 	};
 	const consume = (e: KeyboardEvent, inEditor: boolean) => {
 		if (inEditor) return;
@@ -115,6 +141,11 @@ export function installKeybindings(): () => void {
 	};
 	const onKey = (e: KeyboardEvent) => {
 		if (isModifierKey(e)) return;
+		// The Keyboard Shortcuts editor is recording a keybinding: the keys are its input, not commands.
+		if (e.target instanceof Element && e.target.closest('[data-keybinding-capture]')) {
+			pending = null;
+			return;
+		}
 		ctx = null;
 		const inEditor = e.target instanceof Element && e.target.closest('.monaco-editor') !== null;
 		// A focused terminal keeps the keys terminal.integrated.sendKeybindingsToShell / commandsToSkipShell give the shell.
@@ -130,7 +161,7 @@ export function installKeybindings(): () => void {
 				if (p.length === 2 && matches(parseChord(p[0]), first) && matches(parseChord(p[1]), e) && enabled(b)) {
 					consume(e, inEditor);
 					status.flash('', 0);
-					runByKey(b.cmd);
+					runByKey(b);
 					return;
 				}
 			}
@@ -143,7 +174,7 @@ export function installKeybindings(): () => void {
 			if (b.parts.length !== 1 || !matches(parseChord(b.parts[0]), e) || !enabled(b) || !takes(b.cmd)) continue;
 			e.preventDefault();
 			e.stopPropagation();
-			runByKey(b.cmd);
+			runByKey(b);
 			return;
 		}
 		// terminal.integrated.allowChords: off, a chord's first key goes to the shell instead.

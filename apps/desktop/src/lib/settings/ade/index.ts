@@ -12,8 +12,14 @@ import { TERMINAL_SETTINGS } from './terminal';
 
 export const ADE_SETTINGS: SettingSchema[] = [...AGENT_SETTINGS, ...REPO_SETTINGS, ...SIDEBAR_SETTINGS, ...TERMINAL_SETTINGS, ...GIT_SETTINGS, ...APPEARANCE_SETTINGS];
 
+/**
+ * The AI Capabilities section's groups (Orca's AI Capabilities: its Agents, Orchestration and
+ * Voice panes; Local AI is Kingu's own). The section's pages are in registry.ts.
+ */
+export const AI_SECTION_GROUPS = ['Agent', 'Orchestration', 'Voice', 'Local AI'];
+
 /** The ADE section's groups, in Orca's settings page order. */
-export const ADE_SECTION_GROUPS = ['Agent', 'Agent Chat', 'Notifications', 'Worktrees', 'Repository', 'ADE Sidebar', 'ADE Terminal', 'Source Control AI', 'Pull Requests'];
+export const ADE_SECTION_GROUPS = ['Agent Chat', 'Notifications', 'Worktrees', 'Repository', 'ADE Sidebar', 'ADE Terminal', 'Source Control AI', 'Pull Requests'];
 
 /** Groups of the System section that come from Orca's Appearance / General pages. */
 export const SYSTEM_SECTION_GROUPS = ['Appearance'];

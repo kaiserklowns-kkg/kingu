@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
 	adeKey,
+	backgroundAgentKeys,
 	backgroundKeys,
 	cliKey,
 	isValidKey,
@@ -68,8 +69,10 @@ describe('session keys', () => {
 		const other = rootTag('/other');
 		const live = [panelKey(tag, 1), panelKey(tag, 2), cliKey(tag, 'x', 1), panelKey(other, 1), 'panel:7'];
 		expect(orphanKeys(live, new Set([panelKey(tag, 2), adeKey(tag, '', 't1')]), tag)).toEqual([panelKey(tag, 1), cliKey(tag, 'x', 1)]);
-		// Background: everything the window does not show, any folder.
-		expect(backgroundKeys(live, new Set([panelKey(tag, 2)]))).toEqual([panelKey(tag, 1), cliKey(tag, 'x', 1), panelKey(other, 1), 'panel:7']);
+		// Background: every terminal the window does not show, any folder; agent CLIs apart.
+		const withAgents = [...live, cliKey(other, 'y', 2), 'cli:fix:1700000000000'];
+		expect(backgroundKeys(withAgents, new Set([panelKey(tag, 2)]))).toEqual([panelKey(tag, 1), panelKey(other, 1), 'panel:7']);
+		expect(backgroundAgentKeys(withAgents, new Set([cliKey(tag, 'x', 1)]))).toEqual([cliKey(other, 'y', 2), 'cli:fix:1700000000000']);
 	});
 });
 
@@ -83,6 +86,11 @@ describe('persistence', () => {
 		expect(restore(storeName('p', a), parsePanelTerminals, store)).toEqual({ list: [{ id: 2, title: 'zsh', run: undefined }, { id: 5, title: 'test', run: ['go', 'test'] }], active: 5, seq: 5, groups: [leaf('2'), leaf('5')] });
 		expect(restore(storeName('p', b), parsePanelTerminals, store)).toBeNull();
 		expect(storeName('p', a)).toBe(`p:${a}`);
+	});
+	test("a terminal's root folder survives a restore (multi-root)", () => {
+		const store = memory();
+		persist('p', { list: [{ id: 1, title: 'zsh', folder: '/w/lib' }, { id: 2, title: 'zsh', folder: 'relative' }], active: 1, seq: 2 }, store);
+		expect(restore('p', parsePanelTerminals, store)?.list).toEqual([{ id: 1, title: 'zsh', run: undefined, folder: '/w/lib' }, { id: 2, title: 'zsh', run: undefined }]);
 	});
 	test('a restored terminal never re-runs its command', () => {
 		expect(withoutRun({ id: 5, title: 'test', run: ['go', 'test'] })).toEqual({ id: 5, title: 'test' });
@@ -143,5 +151,29 @@ describe('persistence', () => {
 		const { kept, gone } = liveCliSessions(saved, tag, new Set([cliKey(tag, 'a', 10), cliKey(rootTag('/other'), 'b', 20)]));
 		expect(kept).toEqual({ a: saved.a });
 		expect(gone).toEqual({ b: saved.b });
+	});
+});
+
+describe('panel terminal extras', () => {
+	test('profile, icon, color and editor terminals are kept; an editor terminal is in no group', () => {
+		const raw = {
+			list: [
+				{ id: 1, title: 'zsh', profile: 'fish', icon: 'bug', color: 'terminal.ansiRed' },
+				{ id: 2, title: 'ed', inEditor: true },
+				{ id: 3, title: 'bad', icon: '<img>', color: 'red', inEditor: 'yes' }
+			],
+			active: 2,
+			seq: 3,
+			groups: [leaf('1'), leaf('2')]
+		};
+		const parsed = parsePanelTerminals(raw)!;
+		expect(parsed.list).toEqual([
+			{ id: 1, title: 'zsh', run: undefined, profile: 'fish', icon: 'bug', color: 'terminal.ansiRed' },
+			{ id: 2, title: 'ed', run: undefined, inEditor: true },
+			{ id: 3, title: 'bad', run: undefined }
+		]);
+		expect(parsed.groups).toEqual([leaf('1'), leaf('3')]);
+		// The active terminal is a panel one.
+		expect(parsed.active).toBe(1);
 	});
 });

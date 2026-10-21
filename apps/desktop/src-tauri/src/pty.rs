@@ -14,6 +14,8 @@ use std::sync::{Arc, Mutex};
 
 use kingu_ptyd::{Attached, Host, SessionInfo, ShellSpec, Sink};
 use tauri::State;
+use crate::i18n::msg::CoreMsg;
+use crate::tr;
 use tauri::ipc::Channel;
 
 pub use kingu_ptyd::validate_key;
@@ -60,7 +62,7 @@ impl Daemon {
   /// The connection as it is, without reconnecting: keystrokes and resizes run on the main
   /// thread (in order) and must never wait for a daemon to start.
   fn connected(&self) -> Result<Arc<kingu_ptyd::client::Client>, String> {
-    self.client.lock().unwrap().clone().ok_or_else(|| "terminal daemon หลุดการเชื่อมต่อ".to_string())
+    self.client.lock().unwrap().clone().ok_or_else(|| tr!(CoreMsg::DaemonDisconnected))
   }
 }
 
@@ -75,6 +77,35 @@ pub struct Ptys {
   /// Private per-user directory for the daemon's socket, lock and log (set at startup).
   dir: OnceLock<PathBuf>,
   backend: OnceLock<Backend>,
+  /// The window showing each session (the last one to start or attach to it), so one window's
+  /// "Kill All Background Sessions" and orphan cleanup leave another window's terminals alone.
+  owners: std::sync::Mutex<BTreeMap<String, String>>,
+}
+
+impl Ptys {
+  /// Records that window `window` shows session `key`.
+  pub fn own(&self, key: &str, window: &str) {
+    self.owners.lock().unwrap_or_else(|e| e.into_inner()).insert(key.into(), window.into());
+  }
+
+  /// The window showing `key`, if it still is.
+  pub fn owner(&self, key: &str) -> Option<String> {
+    self.owners.lock().unwrap_or_else(|e| e.into_inner()).get(key).cloned()
+  }
+
+  /// A window closed: its sessions keep running (the daemon re-attaches them later) but nobody shows them.
+  pub fn forget_window(&self, window: &str) {
+    self.owners.lock().unwrap_or_else(|e| e.into_inner()).retain(|_, w| w != window);
+  }
+}
+
+/// A live session as `pty_list` reports it to a window.
+#[derive(serde::Serialize)]
+pub struct ListedSession {
+  #[serde(flatten)]
+  pub info: SessionInfo,
+  /// Another open window shows it: not this window's to kill or adopt.
+  pub elsewhere: bool,
 }
 
 /// Where the daemon's socket lives: `$XDG_RUNTIME_DIR/kingu` on Linux, else `<app data>/ptyd`,
@@ -90,10 +121,10 @@ pub fn daemon_dir(app_data: &Path, runtime_dir: Option<PathBuf>, temp: &Path, ui
 /// Tauri's `externalBin` puts it in `Contents/MacOS`; dev: `cargo build` puts it in `target/debug`).
 pub fn find_daemon(override_var: Option<std::ffi::OsString>, exe_dir: Option<&Path>) -> Result<PathBuf, String> {
   if let Some(p) = override_var.filter(|o| !o.is_empty()).map(PathBuf::from) {
-    return if p.is_file() { Ok(p) } else { Err(format!("KINGU_PTYD={}: ไม่พบไฟล์", p.display())) };
+    return if p.is_file() { Ok(p) } else { Err(tr!(CoreMsg::PtydOverrideMissing, path = p.display())) };
   }
   let name = if cfg!(windows) { "kingu-ptyd.exe" } else { "kingu-ptyd" };
-  exe_dir.map(|d| d.join(name)).filter(|p| p.is_file()).ok_or_else(|| format!("ไม่พบ {name} ข้างตัวแอป (ตั้ง KINGU_PTYD หรือ cargo build -p kingu-ptyd)"))
+  exe_dir.map(|d| d.join(name)).filter(|p| p.is_file()).ok_or_else(|| tr!(CoreMsg::PtydMissing, name))
 }
 
 impl Ptys {
@@ -120,7 +151,7 @@ impl Ptys {
       }
       let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
       let launch = find_daemon(std::env::var_os("KINGU_PTYD"), exe_dir.as_deref()).and_then(|bin| {
-        let dir = self.dir.get().cloned().ok_or("ยังไม่รู้โฟลเดอร์ของ daemon")?;
+        let dir = self.dir.get().cloned().ok_or_else(|| tr!(CoreMsg::DaemonDirUnknown))?;
         Ok(kingu_ptyd::client::Launch { bin, dir, app_version: env!("CARGO_PKG_VERSION").into(), args: Vec::new(), env: Vec::new() })
       });
       let connected = launch.and_then(|launch| {
@@ -231,9 +262,13 @@ pub fn channel_sink(on_data: Channel<String>) -> Sink {
 /// Re-attaches to a live session without starting one (a terminal mounted hidden after a reload
 /// or restart, so an agent CLI's output keeps reaching the page). Null when `key` has no live shell.
 #[tauri::command(async)]
-pub fn pty_attach(ptys: State<'_, Ptys>, key: String, cols: Option<u16>, rows: Option<u16>, on_data: Channel<String>) -> Result<Option<Attached>, String> {
+pub fn pty_attach(window: tauri::WebviewWindow, ptys: State<'_, Ptys>, key: String, cols: Option<u16>, rows: Option<u16>, on_data: Channel<String>) -> Result<Option<Attached>, String> {
   validate_key(&key)?;
-  ptys.attach(&key, cols.zip(rows), channel_sink(on_data))
+  let attached = ptys.attach(&key, cols.zip(rows), channel_sink(on_data))?;
+  if attached.is_some() {
+    ptys.own(&key, window.label());
+  }
+  Ok(attached)
 }
 
 /// Sync, so keystrokes reach the shell in the order they were typed (async commands run concurrently).
@@ -258,8 +293,19 @@ pub fn pty_kill(ptys: State<'_, Ptys>, key: String) -> Result<(), String> {
 /// Live sessions (key, cwd, alive), so the page can re-attach after a restart and kill the ones it
 /// no longer shows.
 #[tauri::command(async)]
-pub fn pty_list(ptys: State<'_, Ptys>) -> Result<Vec<SessionInfo>, String> {
-  ptys.list()
+pub fn pty_list(window: tauri::WebviewWindow, ptys: State<'_, Ptys>) -> Result<Vec<ListedSession>, String> {
+  use tauri::Manager;
+  let open = window.app_handle().state::<crate::workspace::Workspaces>().labels();
+  Ok(
+    ptys
+      .list()?
+      .into_iter()
+      .map(|info| {
+        let elsewhere = ptys.owner(&info.key).is_some_and(|w| w != window.label() && open.contains(&w));
+        ListedSession { info, elsewhere }
+      })
+      .collect(),
+  )
 }
 
 /// The jobs running in front of the shells of `keys` (a close asks first while one runs), by key;
@@ -288,6 +334,25 @@ pub fn terminal_cwd(setting: Option<&str>, folder: Option<&Path>, fallback: Path
     log::warn!("terminal.integrated.cwd {}: not a folder, using {}", dir.display(), fallback.display());
     fallback
   }
+}
+
+/// The root folder a panel terminal starts in: `requested` (a multi-root window's pick, or a split
+/// keeping its source's folder) when it is a folder inside one of `roots`, else the first folder.
+/// A requested folder that is gone falls back too; one outside every root is refused.
+pub fn terminal_folder(roots: &[PathBuf], requested: Option<&str>) -> Result<Option<PathBuf>, String> {
+  let Some(raw) = requested.map(str::trim).filter(|s| !s.is_empty()) else { return Ok(roots.first().cloned()) };
+  let path = Path::new(raw);
+  if !path.is_absolute() {
+    return Err(tr!(crate::i18n::msg::FilesMsg::OutsideWorkspace, path = raw));
+  }
+  let Ok(dir) = path.canonicalize() else {
+    log::warn!("terminal folder {raw}: gone, using the first folder");
+    return Ok(roots.first().cloned());
+  };
+  if !dir.is_dir() || !roots.iter().any(|r| dir.starts_with(r)) {
+    return Err(tr!(crate::i18n::msg::FilesMsg::OutsideWorkspace, path = raw));
+  }
+  Ok(Some(dir))
 }
 
 /// Orca's terminalScopeHistoryByWorktree: the env that gives a new shell its own history for the
@@ -321,6 +386,32 @@ pub fn split_env(env: BTreeMap<String, Option<String>>) -> (BTreeMap<String, Str
     }
   }
   (set, unset)
+}
+
+/// A terminal profile's `path` candidates (`terminal.integrated.profiles.*`; VS Code tries each in
+/// turn): an absolute path is used as is, a bare name is looked up on `search_path` (the login-shell
+/// PATH). `None` when none is an executable file.
+pub fn resolve_shell(candidates: &[String], search_path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+  candidates.iter().map(|c| c.trim()).filter(|c| !c.is_empty()).find_map(|c| {
+    let path = Path::new(c);
+    if path.is_absolute() {
+      return is_executable(path).then(|| path.to_path_buf());
+    }
+    if c.contains('/') {
+      return None;
+    }
+    search_path.into_iter().flat_map(std::env::split_paths).map(|d| d.join(c)).find(|p| is_executable(p))
+  })
+}
+
+fn is_executable(path: &Path) -> bool {
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    path.metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+  }
+  #[cfg(not(unix))]
+  path.is_file()
 }
 
 /// `terminal.integrated.splitCwd`: where a split terminal starts — the workspace root, the
@@ -368,7 +459,28 @@ pub fn lang_env(mode: &str, current: Option<&str>, locale: Option<&str>) -> Opti
 mod tests {
   use std::path::{Path, PathBuf};
 
-  use super::{daemon_dir, find_daemon, lang_env, scoped_history_env, split_cwd, terminal_cwd};
+  use super::{daemon_dir, find_daemon, lang_env, resolve_shell, scoped_history_env, split_cwd, terminal_cwd, terminal_folder};
+
+  #[cfg(unix)]
+  #[test]
+  fn resolves_profile_paths_absolute_or_on_path() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let sh = bin.join("myshell");
+    std::fs::write(&sh, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&sh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(bin.join("plain"), "x").unwrap();
+    let path = std::env::join_paths([tmp.path().join("none"), bin.clone()]).unwrap();
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    assert_eq!(resolve_shell(&s(&["myshell"]), Some(&path)), Some(sh.clone()));
+    assert_eq!(resolve_shell(&s(&["/nope/zsh", sh.to_str().unwrap()]), None), Some(sh.clone()));
+    assert_eq!(resolve_shell(&s(&["missing", "myshell"]), Some(&path)), Some(sh));
+    assert_eq!(resolve_shell(&s(&["plain"]), Some(&path)), None);
+    assert_eq!(resolve_shell(&s(&["bin/myshell"]), Some(&path)), None);
+    assert_eq!(resolve_shell(&[], Some(&path)), None);
+  }
 
   #[test]
   fn scoped_history_is_per_worktree_and_per_shell() {
@@ -421,6 +533,25 @@ mod tests {
     assert_eq!(terminal_cwd(Some(root.join("apps").to_str().unwrap()), None, fallback.clone()), root.join("apps"));
     assert_eq!(terminal_cwd(Some("missing"), Some(root), fallback.clone()), fallback);
     assert_eq!(terminal_cwd(Some("apps"), None, fallback.clone()), fallback);
+  }
+
+  #[test]
+  fn terminal_folder_is_one_of_the_roots() {
+    let (a, b, out) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (ra, rb) = (a.path().canonicalize().unwrap(), b.path().canonicalize().unwrap());
+    std::fs::create_dir(rb.join("pkg")).unwrap();
+    let roots = vec![ra.clone(), rb.clone()];
+    assert_eq!(terminal_folder(&roots, None).unwrap(), Some(ra.clone()));
+    assert_eq!(terminal_folder(&roots, Some(" ")).unwrap(), Some(ra.clone()));
+    assert_eq!(terminal_folder(&roots, Some(rb.to_str().unwrap())).unwrap(), Some(rb.clone()));
+    assert_eq!(terminal_folder(&roots, Some(rb.join("pkg").to_str().unwrap())).unwrap(), Some(rb.join("pkg")));
+    // A folder gone from disk falls back to the first one; one outside the roots is refused.
+    assert_eq!(terminal_folder(&roots, Some(rb.join("gone").to_str().unwrap())).unwrap(), Some(ra.clone()));
+    assert!(terminal_folder(&roots, Some(out.path().to_str().unwrap())).is_err());
+    assert!(terminal_folder(&roots, Some(rb.join("..").to_str().unwrap())).is_err());
+    assert!(terminal_folder(&roots, Some("pkg")).is_err());
+    assert_eq!(terminal_folder(&[], None).unwrap(), None);
+    assert!(terminal_folder(&[], Some(rb.to_str().unwrap())).is_err());
   }
 
   #[test]

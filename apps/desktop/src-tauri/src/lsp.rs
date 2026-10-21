@@ -11,6 +11,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
+use crate::i18n::msg::LspMsg;
+use crate::tr;
 use tauri::State;
 use tauri::ipc::Channel;
 
@@ -99,7 +101,7 @@ pub enum Package {
 pub struct ServerSpec {
   /// Key shared by languages served by one process (`javascript` uses `typescript`).
   pub key: &'static str,
-  /// Shown to the user, e.g. in "ไม่ได้ติดตั้ง TypeScript language server".
+  /// Shown to the user, e.g. in "Not installed: TypeScript language server".
   pub display: &'static str,
   /// Executable names in order of preference (basedpyright before pyright).
   pub binaries: &'static [&'static str],
@@ -141,8 +143,10 @@ pub fn spec_for(language: &str) -> Option<ServerSpec> {
 }
 
 /// Directories searched after PATH. A GUI app launched from Finder gets a minimal PATH, so the
-/// usual per-user tool locations are added explicitly.
-fn extra_dirs(home: Option<&Path>, root: &Path) -> Vec<PathBuf> {
+/// usual per-user tool locations are added explicitly, then the `node_modules/.bin` of each of
+/// `roots` (VS Code finds a project-local server in every workspace folder; the folder a server
+/// starts for comes first).
+fn extra_dirs(home: Option<&Path>, roots: &[PathBuf]) -> Vec<PathBuf> {
   let mut dirs = Vec::new();
   if let Some(h) = home {
     dirs.push(h.join(".cargo/bin"));
@@ -151,7 +155,7 @@ fn extra_dirs(home: Option<&Path>, root: &Path) -> Vec<PathBuf> {
     // pipx and `uv tool` install here; it is often missing from PATH until `pipx ensurepath`.
     dirs.push(h.join(".local/bin"));
   }
-  dirs.push(root.join("node_modules/.bin"));
+  dirs.extend(roots.iter().map(|r| r.join("node_modules/.bin")));
   dirs.push("/opt/homebrew/bin".into());
   dirs.push("/usr/local/bin".into());
   dirs
@@ -171,15 +175,17 @@ pub(crate) fn is_executable(p: &Path) -> bool {
 
 /// `name` on `path`, else in the extra dirs. The bool is whether it came from `path`.
 pub(crate) fn find_executable(name: &str, path: Option<&OsStr>, home: Option<&Path>, root: &Path) -> Option<(PathBuf, bool)> {
+  find_executable_in(name, path, home, &[root.to_path_buf()])
+}
+
+/// [`find_executable`] looking in the `node_modules/.bin` of each of `roots`, in order.
+pub(crate) fn find_executable_in(name: &str, path: Option<&OsStr>, home: Option<&Path>, roots: &[PathBuf]) -> Option<(PathBuf, bool)> {
   let on_path = path.map(|p| std::env::split_paths(p).collect::<Vec<_>>()).unwrap_or_default();
   if let Some(p) = on_path.iter().map(|d| d.join(name)).find(|p| is_executable(p)) {
     return Some((p, true));
   }
-  extra_dirs(home, root).into_iter().map(|d| d.join(name)).find(|p| is_executable(p)).map(|p| (p, false))
+  extra_dirs(home, roots).into_iter().map(|d| d.join(name)).find(|p| is_executable(p)).map(|p| (p, false))
 }
-
-/// Prefix of every "server not installed" error; the webview keys its Install offer off it.
-pub const NOT_INSTALLED: &str = "ไม่ได้ติดตั้ง";
 
 /// `KINGU_LSP_<KEY>` (a path to the server binary), else the first of `binaries` found on
 /// `path` + the extra dirs.
@@ -188,23 +194,18 @@ pub fn resolve_binary(
   override_var: Option<OsString>,
   path: Option<&OsStr>,
   home: Option<&Path>,
-  root: &Path,
+  roots: &[PathBuf],
 ) -> Result<PathBuf, String> {
   if let Some(o) = override_var.filter(|o| !o.is_empty()) {
     let p = PathBuf::from(o);
     return if is_executable(&p) {
       Ok(p)
     } else {
-      Err(format!("{NOT_INSTALLED} {}: {} (จาก {}) ไม่ใช่ไฟล์ที่รันได้", spec.display, p.display(), override_name(spec)))
+      Err(tr!(LspMsg::NotExecutable, name = spec.display, path = p.display(), var = override_name(spec)))
     };
   }
-  spec.binaries.iter().find_map(|b| find_executable(b, path, home, root)).map(|(p, _)| p).ok_or_else(|| {
-    format!(
-      "{NOT_INSTALLED} {} (ไม่พบ {} ใน PATH; ติดตั้งได้จากแถบสถานะ หรือตั้ง {} เป็นพาธของโปรแกรม)",
-      spec.display,
-      spec.binaries.join(" หรือ "),
-      override_name(spec)
-    )
+  spec.binaries.iter().find_map(|b| find_executable_in(b, path, home, roots)).map(|(p, _)| p).ok_or_else(|| {
+    tr!(LspMsg::NotOnPath, name = spec.display, binaries = spec.binaries.join(&tr!(LspMsg::Or)), var = override_name(spec))
   })
 }
 
@@ -212,11 +213,17 @@ pub fn override_name(spec: &ServerSpec) -> String {
   format!("KINGU_LSP_{}", spec.key.to_uppercase())
 }
 
-/// The server binary for `language`, or the "not installed" error (no process is started).
-pub fn check(language: &str, root: &Path) -> Result<PathBuf, String> {
-  let spec = spec_for(language).ok_or_else(|| format!("ไม่มี language server สำหรับ {language}"))?;
+/// The server binary for `language` (a project-local one from the `node_modules/.bin` of
+/// `roots`, first one first), or the "not installed" error (no process is started).
+pub fn check(language: &str, roots: &[PathBuf]) -> Result<PathBuf, String> {
+  let spec = spec_for(language).ok_or_else(|| tr!(LspMsg::NoServer, language))?;
   let home = std::env::var_os("HOME").map(PathBuf::from);
-  resolve_binary(&spec, std::env::var_os(override_name(&spec)), crate::shell_env::path().as_deref(), home.as_deref(), root)
+  resolve_binary(&spec, std::env::var_os(override_name(&spec)), crate::shell_env::path().as_deref(), home.as_deref(), roots)
+}
+
+/// `roots` with `first` moved to the front (the folder a per-folder server starts for).
+pub fn roots_from(first: &Path, roots: &[PathBuf]) -> Vec<PathBuf> {
+  std::iter::once(first.to_path_buf()).chain(roots.iter().filter(|r| r.as_path() != first).cloned()).collect()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -273,13 +280,13 @@ pub struct InstallInfo {
 }
 
 /// Install commands for the server of `language` usable on this machine (login-shell PATH).
-pub fn install_info(language: &str, root: &Path) -> Result<InstallInfo, String> {
-  let spec = spec_for(language).ok_or_else(|| format!("ไม่มี language server สำหรับ {language}"))?;
+pub fn install_info(language: &str, roots: &[PathBuf]) -> Result<InstallInfo, String> {
+  let spec = spec_for(language).ok_or_else(|| tr!(LspMsg::NoServer, language))?;
   let home = std::env::var_os("HOME").map(PathBuf::from);
   let path = crate::shell_env::path();
   let methods = install_methods(&spec, |tool| {
     // By name when the terminal's shell will find it; otherwise its full path.
-    find_executable(tool, path.as_deref(), home.as_deref(), root).map(|(p, on_path)| if on_path { tool.to_string() } else { p.to_string_lossy().into_owned() })
+    find_executable_in(tool, path.as_deref(), home.as_deref(), roots).map(|(p, on_path)| if on_path { tool.to_string() } else { p.to_string_lossy().into_owned() })
   });
   Ok(InstallInfo { server: spec.display, binary: spec.binaries[0], methods })
 }
@@ -330,6 +337,8 @@ struct Server {
 pub struct Servers {
   next_id: AtomicU32,
   running: Arc<Mutex<HashMap<u32, Arc<Server>>>>,
+  /// The window that started each server (a window's folder switch or close stops only its own).
+  owners: Mutex<HashMap<u32, String>>,
 }
 
 pub struct Launch {
@@ -433,6 +442,31 @@ impl Servers {
     Ok(())
   }
 
+  /// Records the window that started server `id`.
+  pub fn own(&self, id: u32, window: &str) {
+    self.owners.lock().unwrap().insert(id, window.to_string());
+  }
+
+  /// A window switched folders or closed: its servers go (the other windows' keep running).
+  pub fn stop_window(&self, window: &str) {
+    let ids: Vec<u32> = {
+      let mut owners = self.owners.lock().unwrap();
+      let ids = owners.iter().filter(|(_, w)| *w == window).map(|(id, _)| *id).collect::<Vec<_>>();
+      owners.retain(|_, w| w != window);
+      ids
+    };
+    let gone: Vec<_> = {
+      let mut running = self.running.lock().unwrap();
+      ids.iter().filter_map(|id| running.remove(id)).collect()
+    };
+    for s in &gone {
+      kill(s);
+    }
+    if !gone.is_empty() {
+      log::info!("stopped {} language server(s) of window {window}", gone.len());
+    }
+  }
+
   /// On app exit: nothing may outlive the window.
   pub fn stop_all(&self) {
     let all: Vec<_> = self.running.lock().unwrap().drain().map(|(_, s)| s).collect();
@@ -462,13 +496,15 @@ fn kill(server: &Server) {
 // Commands
 
 /// Starts the server for `language`; its messages stream over `on_event`. Fails with
-/// "ไม่ได้ติดตั้ง <server> (…)" ([`NOT_INSTALLED`]) when the binary cannot be found.
-pub fn start_for(servers: &Servers, root: &Path, language: &str, on_event: Channel<LspEvent>) -> Result<u32, String> {
-  let spec = spec_for(language).ok_or_else(|| format!("ไม่มี language server สำหรับ {language}"))?;
+/// "Not installed: <server> (…)" (`LspMsg::NotOnPath`) when the binary cannot be found.
+/// It runs in `cwd`; a project-local binary is looked for in each of `roots`, in order.
+pub fn start_for(servers: &Servers, cwd: &Path, roots: &[PathBuf], language: &str, on_event: Channel<LspEvent>) -> Result<u32, String> {
+  let spec = spec_for(language).ok_or_else(|| tr!(LspMsg::NoServer, language))?;
+  let cwd = cwd.to_path_buf();
   let home = std::env::var_os("HOME").map(PathBuf::from);
-  let program = check(language, root)?;
+  let program = check(language, roots)?;
   let env = server_env(crate::shell_env::vars_os(), &program, home.as_deref());
-  let launch = Launch { program: program.clone(), args: spec.args.iter().map(|s| s.to_string()).collect(), cwd: root.to_path_buf(), env };
+  let launch = Launch { program: program.clone(), args: spec.args.iter().map(|s| s.to_string()).collect(), cwd, env };
   let id = servers.start(
     launch,
     Arc::new(move |ev| {
@@ -606,18 +642,18 @@ mod tests {
     }
     let rust = spec_for("rust").unwrap();
     let ra = fake_bin(&home.join(".cargo/bin"), "rust-analyzer", "");
-    assert_eq!(resolve_binary(&rust, None, Some(bin.as_os_str()), Some(&home), &root).unwrap(), ra);
+    assert_eq!(resolve_binary(&rust, None, Some(bin.as_os_str()), Some(&home), &[root.clone()]).unwrap(), ra);
     let on_path = fake_bin(&bin, "rust-analyzer", "");
-    assert_eq!(resolve_binary(&rust, None, Some(bin.as_os_str()), Some(&home), &root).unwrap(), on_path);
+    assert_eq!(resolve_binary(&rust, None, Some(bin.as_os_str()), Some(&home), &[root.clone()]).unwrap(), on_path);
 
-    let err = resolve_binary(&MISSING, None, Some(bin.as_os_str()), Some(&home), &root).unwrap_err();
-    assert!(err.starts_with("ไม่ได้ติดตั้ง Missing server"), "{err}");
-    assert!(err.starts_with(NOT_INSTALLED), "{err}");
+    let err = resolve_binary(&MISSING, None, Some(bin.as_os_str()), Some(&home), &[root.clone()]).unwrap_err();
+    assert!(err.starts_with("Not installed: Missing server"), "{err}");
+    assert!(err.starts_with("Not installed:"), "{err}");
     assert!(err.contains("kingu-test-no-such-server") && err.contains("KINGU_LSP_MISSING"), "{err}");
 
     let custom = fake_bin(tmp.path(), "my-server", "");
-    assert_eq!(resolve_binary(&MISSING, Some(custom.clone().into()), None, None, &root).unwrap(), custom);
-    assert!(resolve_binary(&MISSING, Some("/nonexistent/srv".into()), None, None, &root).unwrap_err().starts_with(NOT_INSTALLED));
+    assert_eq!(resolve_binary(&MISSING, Some(custom.clone().into()), None, None, &[root.clone()]).unwrap(), custom);
+    assert!(resolve_binary(&MISSING, Some("/nonexistent/srv".into()), None, None, &[root.clone()]).unwrap_err().starts_with("Not installed:"));
   }
 
   #[cfg(unix)]
@@ -630,13 +666,33 @@ mod tests {
     for lang in ["svelte", "python", "json", "css", "html", "yaml", "toml"] {
       let spec = spec_for(lang).unwrap();
       let fake = fake_bin(&bin, spec.binaries[0], "");
-      assert_eq!(resolve_binary(&spec, None, Some(bin.as_os_str()), None, &root).unwrap(), fake, "{lang}");
+      assert_eq!(resolve_binary(&spec, None, Some(bin.as_os_str()), None, &[root.clone()]).unwrap(), fake, "{lang}");
     }
     // A project-local install (node_modules/.bin) is found when PATH has none.
     let local = fake_bin(&root.join("node_modules/.bin"), "svelteserver", "");
     let empty = tmp.path().join("empty");
     std::fs::create_dir_all(&empty).unwrap();
-    assert_eq!(resolve_binary(&spec_for("svelte").unwrap(), None, Some(empty.as_os_str()), None, &root).unwrap(), local);
+    assert_eq!(resolve_binary(&spec_for("svelte").unwrap(), None, Some(empty.as_os_str()), None, &[root.clone()]).unwrap(), local);
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn finds_project_local_servers_in_every_root_folder() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (a, b, empty) = (tmp.path().join("a"), tmp.path().join("b"), tmp.path().join("empty"));
+    for d in [&empty, &a.join("node_modules/.bin"), &b.join("node_modules/.bin")] {
+      std::fs::create_dir_all(d).unwrap();
+    }
+    let spec = spec_for("svelte").unwrap();
+    // Only the second folder has it: still found.
+    let in_b = fake_bin(&b.join("node_modules/.bin"), "svelteserver", "");
+    let roots = [a.clone(), b.clone()];
+    assert_eq!(resolve_binary(&spec, None, Some(empty.as_os_str()), None, &roots).unwrap(), in_b);
+    // Both have it: the folder the server starts for wins.
+    let in_a = fake_bin(&a.join("node_modules/.bin"), "svelteserver", "");
+    assert_eq!(resolve_binary(&spec, None, Some(empty.as_os_str()), None, &roots).unwrap(), in_a);
+    assert_eq!(resolve_binary(&spec, None, Some(empty.as_os_str()), None, &roots_from(&b, &roots)).unwrap(), in_b);
+    assert_eq!(roots_from(&b, &roots), vec![b.clone(), a.clone()]);
   }
 
   #[cfg(unix)]
@@ -652,10 +708,10 @@ mod tests {
     fake_bin(&bin, "pyright-langserver", "");
     // basedpyright in an extra dir (pipx's ~/.local/bin) beats pyright on PATH.
     let based = fake_bin(&home.join(".local/bin"), "basedpyright-langserver", "");
-    let got = resolve_binary(&py, None, path, Some(&home), &root).unwrap();
+    let got = resolve_binary(&py, None, path, Some(&home), &[root.clone()]).unwrap();
     assert!(got.ends_with("basedpyright-langserver"), "{got:?}");
     let based_on_path = fake_bin(&bin, "basedpyright-langserver", "");
-    assert_eq!(resolve_binary(&py, None, path, Some(&home), &root).unwrap(), based_on_path);
+    assert_eq!(resolve_binary(&py, None, path, Some(&home), &[root.clone()]).unwrap(), based_on_path);
     assert_ne!(based, based_on_path);
   }
 
@@ -793,7 +849,7 @@ mod tests {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();
     let spec = spec_for("rust").unwrap();
-    let Ok(program) = resolve_binary(&spec, std::env::var_os(override_name(&spec)), std::env::var_os("PATH").as_deref(), home.as_deref(), &root) else {
+    let Ok(program) = resolve_binary(&spec, std::env::var_os(override_name(&spec)), std::env::var_os("PATH").as_deref(), home.as_deref(), &[root.clone()]) else {
       eprintln!("rust-analyzer not installed; skipping");
       return;
     };
@@ -869,7 +925,7 @@ mod tests {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();
     let spec = spec_for("rust").unwrap();
-    let Ok(program) = resolve_binary(&spec, std::env::var_os(override_name(&spec)), std::env::var_os("PATH").as_deref(), home.as_deref(), &root) else {
+    let Ok(program) = resolve_binary(&spec, std::env::var_os(override_name(&spec)), std::env::var_os("PATH").as_deref(), home.as_deref(), &[root.clone()]) else {
       eprintln!("rust-analyzer not installed; skipping");
       return;
     };

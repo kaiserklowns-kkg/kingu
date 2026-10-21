@@ -9,18 +9,27 @@ let audio: AudioContext | null = null;
 
 export function playSignal(signal: Signal) {
 	const mode = (settings.get<string>('kingu.accessibility.signals') ?? 'agents') as SignalsMode;
-	if (!plays(mode, signal)) return;
+	if (plays(mode, signal)) playTone(signal);
+}
+
+/** A signal's tones whatever kingu.accessibility.signals says (the chat's completion chime picked it). */
+export function playTone(signal: Signal) {
+	playNotes(TONES[signal]);
+}
+
+/** Plays notes ([frequency Hz, start s, length s]) at a peak gain (accessibilitySignals.svelte.ts sets its volume). */
+export function playNotes(notes: readonly [number, number, number][], peak = 0.12) {
 	try {
 		audio ??= new AudioContext();
 		const t0 = audio.currentTime + 0.01;
-		for (const [freq, start, length] of TONES[signal]) {
+		for (const [freq, start, length] of notes) {
 			const osc = audio.createOscillator();
 			const gain = audio.createGain();
 			osc.type = 'sine';
 			osc.frequency.value = freq;
 			// A soft attack and decay so the tones never click.
 			gain.gain.setValueAtTime(0, t0 + start);
-			gain.gain.linearRampToValueAtTime(0.12, t0 + start + 0.015);
+			gain.gain.linearRampToValueAtTime(Math.max(peak, 0.0002), t0 + start + 0.015);
 			gain.gain.exponentialRampToValueAtTime(0.0001, t0 + start + length);
 			osc.connect(gain).connect(audio.destination);
 			osc.start(t0 + start);

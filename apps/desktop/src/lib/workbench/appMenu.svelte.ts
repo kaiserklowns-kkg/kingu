@@ -8,8 +8,9 @@
 // ever fire, `commands.runFromMenu` drops the menu event as an echo of the key (MENU_ECHO_MS).
 
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { listenWindow } from '#lib/workbench/windowEvents.ts';
 import { clientLog } from '#lib/client-log.ts';
+import { settings } from '#lib/settings/settings.svelte.ts';
 import { commands, keyOf } from './commands.svelte';
 import { editors } from './editors.svelte';
 import { isMac } from './keys';
@@ -17,14 +18,30 @@ import { layout } from './layout.svelte';
 import { appMode } from './mode.svelte';
 import { itemStates, RECENT_PREFIX, resolveMenubar, structureKey, type MenuNode, type Role } from './menus';
 import { workspace } from './workspace.svelte';
+import { wordWrapChecked } from '#lib/editor/editingCommands.svelte.ts';
 
 const CHECKED: Record<string, () => boolean> = {
 	'workbench.action.toggleSidebarVisibility': () => layout.sidebarVisible,
 	'workbench.action.toggleAuxiliaryBar': () => layout.auxVisible,
 	'workbench.action.togglePanel': () => layout.panelVisible,
 	'workbench.action.toggleZenMode': () => layout.zen,
+	'workbench.action.toggleCenteredLayout': () => layout.centered,
+	'workbench.action.toggleFullScreen': () => layout.fullscreen,
+	'workbench.action.toggleStatusbarVisibility': () => settings.get<boolean>('workbench.statusBar.visible'),
+	'workbench.action.toggleMenuBar': () => ['classic', 'visible'].includes(settings.get<string>('window.menuBarVisibility')),
+	// Not a check mark: the item reads "Move Primary Side Bar Left" while it is on the right.
+	'workbench.action.toggleSidebarPosition': () => settings.get<string>('workbench.sideBar.location') === 'right',
 	// Not a check mark: the Agents menu item reads "Open in Editor" while in Agents mode.
-	'workbench.action.toggleAgentsMode': () => appMode.isAgents
+	'workbench.action.toggleAgentsMode': () => appMode.isAgents,
+	// The editor toggles (editingCommands.svelte.ts).
+	'editor.action.toggleMinimap': () => settings.get<boolean>('editor.minimap.enabled'),
+	'editor.action.toggleStickyScroll': () => settings.get<boolean>('editor.stickyScroll.enabled'),
+	'editor.action.toggleRenderWhitespace': () => settings.get<string>('editor.renderWhitespace') !== 'none',
+	'editor.action.toggleRenderControlCharacter': () => settings.get<boolean>('editor.renderControlCharacters'),
+	'editor.action.toggleColumnSelection': () => settings.get<boolean>('editor.columnSelection'),
+	'editor.action.toggleWordWrap': () => wordWrapChecked(),
+	// Not a check mark: the item reads "Switch to Alt+Click" while ⌘/Ctrl+Click adds cursors.
+	'workbench.action.toggleMultiCursorModifier': () => settings.get<string>('editor.multiCursorModifier') === 'ctrlCmd'
 };
 
 /** The menu bar as it should look now (reactive: reads commands, `when` state and layout). */
@@ -76,15 +93,25 @@ export function installNativeMenu(): () => void {
 	if (!isMac) return () => {};
 	let unlisten: (() => void) | undefined;
 	let gone = false;
-	listen<string>('menu://command', (e) => runMenuItem(e.payload))
+	listenWindow<string>('menu://command', (e) => runMenuItem(e.payload))
 		.then((u) => (gone ? u() : (unlisten = u)))
 		.catch(() => {});
 
 	let lastKey = '';
 	let lastStates = new Map<string, { enabled: boolean; checked?: boolean }>();
+	// The menu bar is one for every window: the one that comes to the front puts its own model back.
+	let refresh = $state(0);
+	let unlistenRefresh: (() => void) | undefined;
+	listenWindow('menu://refresh', () => {
+		lastKey = '';
+		refresh++;
+	})
+		.then((u) => (gone ? u() : (unlistenRefresh = u)))
+		.catch(() => {});
 	const report = (what: string) => (e: unknown) => clientLog('error', `${what}: ${e}`);
 	const stopEffect = $effect.root(() => {
 		$effect(() => {
+			void refresh;
 			const nodes: MenuNode[] = currentMenubar(true);
 			const key = structureKey(nodes);
 			const states = itemStates(nodes);
@@ -105,6 +132,7 @@ export function installNativeMenu(): () => void {
 	return () => {
 		gone = true;
 		unlisten?.();
+		unlistenRefresh?.();
 		stopEffect();
 	};
 }

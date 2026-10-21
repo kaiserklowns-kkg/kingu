@@ -1,13 +1,18 @@
 <script lang="ts">
 	// One editor group (VS Code: EditorGroupView): its tab strip, breadcrumbs, a Monaco editor for
 	// file tabs and a diff editor while it has a diff tab. Inactive groups dim their tabs.
-	import { lsp } from '#lib/lsp/lsp.svelte.ts';
 	import DiffHost from './DiffHost.svelte';
 	import EditorHost from './EditorHost.svelte';
 	import ImageViewer from './ImageViewer.svelte';
 	import MarkdownPreview from './MarkdownPreview.svelte';
+	import { isOutputKey, outputChannelOf } from '#lib/output/output.ts';
 	import { hasPreview, isChangesKey, isCsvPath, isImagePath, isPreviewKey, previewTarget } from './viewers';
 	import CombinedDiff from './CombinedDiff.svelte';
+	import MergeEditor from '#lib/scm/MergeEditor.svelte';
+	import VaultTranscript from '#lib/vault/VaultTranscript.svelte';
+	import { isVaultKey } from '#lib/vault/vault.ts';
+	import { isArtifactKey } from '#lib/artifacts/artifacts.ts';
+	import ArtifactViewer from '#lib/artifacts/ArtifactViewer.svelte';
 	import CsvPreview from './CsvPreview.svelte';
 	import NotebookViewer from './NotebookViewer.svelte';
 	import { isNotebookPath } from './notebook';
@@ -19,19 +24,25 @@
 	import KinguMark from './KinguMark.svelte';
 	import Icon from './Icon.svelte';
 	import { editors } from './editors.svelte';
+	import { layout } from './layout.svelte';
+	import { externalCrumbs, externalDescription, isExternalKey } from './externalFiles';
 	import { editorLabel } from './editorLabel';
 	import { fileIcon } from './fileIcons';
 	import { keyLabel } from './keys';
-	import { entryChanges, fileDecorations, fileOf, isDiffKey } from './scm';
+	import { entryChanges, fileDecorations, fileOf, isDiffKey, isMergeKey } from './scm';
 	import { scm } from './scm.svelte';
 	import { tabDescription, type LabelFormat } from './tabLabels';
 	import { emptyUntitled } from './editorModels';
-	import type { EditorTab } from './editorGroups';
+	import { isSplitInGroup, type EditorTab, type SplitDirection } from './editorGroups';
+	import { canSplitInGroup } from './editorKind';
+	import SideEditor from './SideEditor.svelte';
 	import SettingsEditor from '#lib/settings/SettingsEditor.svelte';
 	import { settings, SETTINGS_EDITOR_KEY, USER_SETTINGS_KEY } from '#lib/settings/settings.svelte.ts';
 	import Board from '#lib/ade/Board.svelte';
 	import TaskPage from '#lib/ade/TaskPage.svelte';
 	import { isAdeEditor, isBoardKey, slugOfTaskKey } from '#lib/ade/keys.ts';
+	import AgentPanel from '#lib/agent/AgentPanel.svelte';
+	import { chatIdOfEditorKey, isChatEditorKey } from '#lib/agent/chatExtras.ts';
 	import { USER_KEYBINDINGS_KEY } from './keybindings.svelte';
 	import FilePlaceholder from './FilePlaceholder.svelte';
 	import SaveConflictCompare from './SaveConflictCompare.svelte';
@@ -42,8 +53,14 @@
 	import { isMac } from './keys';
 	import * as cmd from './editorCommands.svelte';
 	import { isUntitled } from './untitled';
-	import { filePathCrumbs, sortSymbols, symbolCodicon, symbolSiblings, visibleSymbols, type PathMode, type SymbolSortOrder } from './breadcrumbs';
-	import type { Crumb } from '#lib/lsp/convert.ts';
+	import { crumbKeyAction, filePathCrumbs, movedCrumb, sortSymbols, symbolCodicon, symbolSiblings, visibleSymbols, type PathMode, type SymbolSortOrder } from './breadcrumbs';
+	import { crumbFocus } from './breadcrumbsCommands.svelte';
+	import { symbolPath, type Crumb } from '#lib/lsp/convert.ts';
+	import { outline } from './outline.svelte';
+	import SearchEditorView from './SearchEditorView.svelte';
+	import { isSearchEditorKey, isUntitledSearchEditor } from './searchEditor';
+	import TerminalEditor from '#lib/terminal/TerminalEditor.svelte';
+	import { isTerminalEditorKey } from '#lib/terminal/terminalEditor.svelte.ts';
 
 	let { group }: { group: number } = $props();
 
@@ -54,28 +71,32 @@
 	const activePath = $derived(g?.active ?? null);
 	const focused = $derived(editors.activeGroupId === group);
 	const settingsActive = $derived(activePath === SETTINGS_EDITOR_KEY);
-	const adeActive = $derived(activePath !== null && isAdeEditor(activePath));
+	/** A chat opened in the editor (Open Chat in Editor), rendered like the ADE editors. */
+	const chatEditorId = $derived(activePath ? chatIdOfEditorKey(activePath) : null);
+	const adeActive = $derived(activePath !== null && (isAdeEditor(activePath) || isChatEditorKey(activePath)));
 	const taskSlug = $derived(activePath ? slugOfTaskKey(activePath) : null);
-	const crumbs = $derived(!activePath || settingsActive || adeActive || isChangesKey(activePath) ? [] : activePath === USER_SETTINGS_KEY
+	const crumbs = $derived(!activePath || settingsActive || adeActive || isChangesKey(activePath) || isVaultKey(activePath) || isArtifactKey(activePath) || isUntitledSearchEditor(activePath) ? [] : isOutputKey(activePath) ? ['Output', outputChannelOf(activePath)] : activePath === USER_SETTINGS_KEY
 					? ['User', 'settings.json']
 					: activePath === USER_KEYBINDINGS_KEY
 						? ['User', 'keybindings.json']
 					: activePath.startsWith('snap://user/')
 						? ['User Snaps', ...activePath.slice('snap://user/'.length).split('/')]
-						: fileOf(activePath).split('/'));
+						: isExternalKey(activePath)
+							? externalCrumbs(activePath)
+							: fileOf(activePath).split('/'));
 	const label = editorLabel;
 	const iconOf = (key: string) =>
-		fileIcon(key === SETTINGS_EDITOR_KEY || key === USER_SETTINGS_KEY ? 'settings.json' : isAdeEditor(key) ? 'tasks.md' : fileOf(key));
+		fileIcon(key === SETTINGS_EDITOR_KEY || key === USER_SETTINGS_KEY ? 'settings.json' : isAdeEditor(key) || isChatEditorKey(key) ? 'tasks.md' : fileOf(key));
 	/** Breadcrumbs of a workspace file are clickable (not the Settings editor's or user settings'). */
-	const crumbsAreFiles = $derived(!!activePath && activePath !== USER_SETTINGS_KEY && !isChangesKey(activePath) && crumbs.length > 0);
+	const crumbsAreFiles = $derived(!!activePath && activePath !== USER_SETTINGS_KEY && !isChangesKey(activePath) && !isExternalKey(activePath) && !isOutputKey(activePath) && crumbs.length > 0);
 	const diffActive = $derived(activePath !== null && isDiffKey(activePath));
 	/** Images and Markdown previews have their own viewers instead of Monaco. */
-	const viewerActive = $derived(activePath !== null && (isImagePath(activePath) || isPreviewKey(activePath) || isNotebookPath(activePath) || isChangesKey(activePath)));
+	const viewerActive = $derived(activePath !== null && (isTerminalEditorKey(activePath) || isMergeKey(activePath) || isImagePath(activePath) || isPreviewKey(activePath) || isNotebookPath(activePath) || isChangesKey(activePath) || isVaultKey(activePath) || isArtifactKey(activePath) || isSearchEditorKey(activePath)));
 	// The diff editor exists only while this group has a diff tab.
 	const hasDiff = $derived(tabs.some((t) => isDiffKey(t.path)));
 	// Enclosing symbols from the language server's document symbols, like VS Code's outline crumbs.
 	// The cursor is tracked for the active group only, so other groups show just the path.
-	const rawSymbolCrumbs = $derived(activePath && !diffActive && !settingsActive && !adeActive && focused ? lsp.crumbs(activePath, editors.cursor.line, editors.cursor.column) : []);
+	const rawSymbolCrumbs = $derived(activePath && !diffActive && !settingsActive && !adeActive && focused ? symbolPath(outline.symbolsOf(activePath), { line: editors.cursor.line - 1, character: editors.cursor.column - 1 }) : []);
 	// breadcrumbs.enabled / filePath / symbolPath / icons / show* / symbolSortOrder (breadcrumbs.ts).
 	const getSetting = <T,>(id: string) => settings.get<T>(id);
 	const breadcrumbsOn = $derived(settings.get<boolean>('breadcrumbs.enabled'));
@@ -87,13 +108,37 @@
 	function openSymbolPicker(e: MouseEvent, crumb: Crumb) {
 		if (!activePath) return;
 		const level = allSymbolCrumbs.indexOf(crumb);
-		const siblings = symbolSiblings(lsp.symbols.get(activePath) ?? [], { line: editors.cursor.line - 1, character: editors.cursor.column - 1 }, getSetting)[level] ?? [crumb];
+		const siblings = symbolSiblings(outline.symbolsOf(activePath), { line: editors.cursor.line - 1, character: editors.cursor.column - 1 }, getSetting)[level] ?? [crumb];
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		crumbMenu = { x: rect.left, y: rect.bottom + 2, items: sortSymbols(siblings, settings.get<SymbolSortOrder>('breadcrumbs.symbolSortOrder')) };
 	}
+	// Focus Breadcrumbs / Focus and Select Breadcrumbs (⇧⌘; / ⇧⌘.): the last crumb takes the keyboard, and opens its picker.
+	let crumbNav = $state<HTMLElement | null>(null);
+	const crumbButtons = () => [...(crumbNav?.querySelectorAll<HTMLButtonElement>('button[data-crumb]') ?? [])];
+	let crumbSeq = 0;
+	$effect(() => {
+		const seq = crumbFocus.seq;
+		if (seq === crumbSeq || crumbFocus.group !== group || !crumbNav) return;
+		crumbSeq = seq;
+		const last = crumbButtons().at(-1);
+		last?.focus();
+		if (last && crumbFocus.select) last.click();
+	});
+	/** ←/→ between crumbs, Enter/Space opens one's picker (the button's own click), Escape back to the editor. */
+	function onCrumbKey(e: KeyboardEvent) {
+		const action = crumbKeyAction(e, isMac);
+		if (!action || action === 'select') return;
+		e.preventDefault();
+		e.stopPropagation();
+		if (action === 'leave') return editors.focusGroup(group);
+		const buttons = crumbButtons();
+		const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
+		buttons[movedCrumb(at, buttons.length, action === 'next' ? 1 : -1)]?.focus();
+	}
 	let dropTarget = $state<number | null>(null);
 	// The tab strip follows VS Code's editor part options (multiEditorTabsControl.ts).
-	const showTabs = $derived(settings.get<'multiple' | 'single' | 'none'>('workbench.editor.showTabs'));
+	// Zen Mode shows the tabs as zenMode.showTabs says (VS Code's enforcePartOptions).
+	const showTabs = $derived(layout.zenParts?.showTabs ?? settings.get<'multiple' | 'single' | 'none'>('workbench.editor.showTabs'));
 	const shownTabs = $derived(showTabs === 'single' ? tabs.filter((t) => t.path === activePath) : tabs);
 	const tabSizing = $derived(settings.get<'fit' | 'shrink' | 'fixed'>('workbench.editor.tabSizing'));
 	const fixedMin = $derived(settings.get<number>('workbench.editor.tabSizingFixedMinWidth'));
@@ -116,10 +161,10 @@
 	const pinnedRow = $derived(showTabs === 'multiple' && settings.get<boolean>('workbench.editor.pinnedTabsOnSeparateRow') && tabs.some((t) => t.sticky) && tabs.some((t) => !t.sticky));
 	const rows = $derived(pinnedRow ? [shownTabs.filter((t) => t.sticky), shownTabs.filter((t) => !t.sticky)] : [shownTabs]);
 	// Git decorations of the tabs' files (workbench.editor.decorations.*), like the Explorer's.
-	const decorations = $derived(decoColors || decoBadges ? fileDecorations(entryChanges(scm.repo?.entries ?? [])) : null);
+	const decorations = $derived(decoColors || decoBadges ? fileDecorations(entryChanges(scm.entries)) : null);
 	const tabFiles = $derived(tabs.map((t) => t.path).filter((p) => !p.includes(':')));
 	/** The description after a tab's name (workbench.editor.labelFormat); workspace files only. */
-	const descriptionOf = (path: string) => (path.includes(':') || !workspace.root ? '' : tabDescription(path, tabFiles, labelFormat, workspace.root));
+	const descriptionOf = (path: string) => (isExternalKey(path) ? externalDescription(path, workspace.home) : path.includes(':') || !workspace.root ? '' : tabDescription(path, tabFiles, labelFormat, workspace.root));
 
 	/** Tab width classes and style: workbench.editor.tabSizing (+ fixed widths) and pinnedTabSizing. */
 	function sizing(tab: EditorTab): { cls: string; style: string } {
@@ -158,6 +203,9 @@
 		void textFiles.closeEditors([path], group, { discard });
 	}
 	const placeholder = $derived(textFiles.placeholder(activePath));
+	/** Split Editor in Group: the active editor shown a second time beside (or below) itself. */
+	const sideShown = $derived(isSplitInGroup(g, activePath) && canSplitInGroup(activePath) && !placeholder);
+	const sideVertical = $derived(settings.get<string>('workbench.editor.splitInGroupLayout') === 'vertical');
 	const comparing = $derived(activePath !== null && textFiles.compare?.path === activePath ? textFiles.compare : null);
 
 	function dragStart(e: DragEvent, path: string) {
@@ -182,6 +230,52 @@
 		e.stopPropagation();
 		const from = JSON.parse(raw) as { group: number; path: string };
 		editors.moveEditor(from.group, from.path, group, index);
+	}
+
+	// --- A tab dropped on the editor: into this group, or a new group on that edge ---------------
+	// (VS Code's editorDropTarget; the edges only with workbench.editor.splitOnDragAndDrop).
+
+	let splitZone = $state<SplitDirection | 'center' | null>(null);
+
+	/** The edge a drag is over (the outer third on each side), else the center. */
+	function zoneOf(e: DragEvent, el: HTMLElement): SplitDirection | 'center' {
+		if (!settings.get<boolean>('workbench.editor.splitOnDragAndDrop')) return 'center';
+		const r = el.getBoundingClientRect();
+		const x = (e.clientX - r.left) / r.width;
+		const y = (e.clientY - r.top) / r.height;
+		const edges: [SplitDirection, number][] = [
+			['left', x],
+			['right', 1 - x],
+			['up', y],
+			['down', 1 - y]
+		];
+		const [dir, d] = edges.reduce((a, b) => (b[1] < a[1] ? b : a));
+		return d < 1 / 3 ? dir : 'center';
+	}
+
+	function editorDragOver(e: DragEvent) {
+		if (!e.dataTransfer?.types.includes(TAB_MIME)) return;
+		e.preventDefault();
+		e.stopPropagation();
+		e.dataTransfer.dropEffect = 'move';
+		splitZone = zoneOf(e, e.currentTarget as HTMLElement);
+	}
+
+	function editorDragLeave(e: DragEvent) {
+		if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) splitZone = null;
+	}
+
+	function editorDrop(e: DragEvent) {
+		const raw = e.dataTransfer?.getData(TAB_MIME);
+		const zone = splitZone;
+		splitZone = null;
+		if (!raw || !zone) return;
+		e.preventDefault();
+		e.stopPropagation();
+		const from = JSON.parse(raw) as { group: number; path: string };
+		if (zone === 'center') {
+			if (from.group !== group) editors.moveEditor(from.group, from.path, group);
+		} else editors.moveToNewGroup(from.group, from.path, group, zone);
 	}
 
 	// --- Tab context menu (VS Code: MenuId.EditorTitleContext, editorTabsControl.ts) -------------
@@ -219,7 +313,12 @@
 			menuItem('splitUp', 'Split Up'),
 			menuItem('splitDown', 'Split Down'),
 			menuItem('splitLeft', 'Split Left'),
-			menuItem('splitRight', 'Split Right')
+			menuItem('splitRight', 'Split Right'),
+			path === activePath && isSplitInGroup(g, path)
+				? item('joinInGroup', 'Join in Group', { key: keyFor('workbench.action.joinEditorInGroup') })
+				: item('splitInGroup', 'Split in Group', { enabled: canSplitInGroup(path), key: keyFor('workbench.action.splitEditorInGroup') }),
+			menuSeparator,
+			menuItem('lockGroup', g?.locked ? 'Unlock Group' : 'Lock Group')
 		];
 	}
 
@@ -256,6 +355,13 @@
 				return cmd.splitFrom(group, path, 'left');
 			case 'splitRight':
 				return cmd.splitFrom(group, path, 'right');
+			case 'splitInGroup':
+				editors.open(path, { preview: false, group });
+				return editors.setSplitInGroup(true, group);
+			case 'joinInGroup':
+				return editors.setSplitInGroup(false, group);
+			case 'lockGroup':
+				return editors.setLocked(!g?.locked, group);
 		}
 	}
 
@@ -338,14 +444,14 @@
 							ondragstart={(e) => dragStart(e, tab.path)}
 							ondragover={(e) => dragOver(e, i)}
 							ondrop={(e) => drop(e, i)}
-							ondragend={() => (dropTarget = null)}
+							ondragend={() => ((dropTarget = null), (splitZone = null))}
 							oncontextmenu={(e) => openTabMenu(e, tab.path)}
 							style={size.style}
 							class={[
 								'group relative flex h-[calc(var(--kg-tab-height)-5px)] items-center gap-1.5 rounded-t-lg transition-colors',
 								actionsLeft ? 'pr-2.5 pl-1' : 'pl-2.5',
 								size.cls,
-								active ? 'bg-(--vscode-tab-activeBackground)' : 'bg-(--vscode-tab-inactiveBackground) hover:bg-(--vscode-tab-hoverBackground)',
+								active ? 'bg-(--vscode-tab-activeBackground)' : 'hover:bg-(--vscode-tab-hoverBackground)',
 								active
 									? focused
 										? 'text-(--vscode-tab-activeForeground)'
@@ -424,19 +530,36 @@
 						</div>
 					{/each}
 					{#if dropTarget === tabs.length && r === rows.length - 1}<span class="h-(--kg-tab-height) w-0.5 shrink-0 bg-(--vscode-focusBorder)"></span>{/if}
+					{#if g?.locked && r === rows.length - 1}
+						<!-- A locked group's lock (VS Code's Unlock Group editor action). -->
+						<button
+							class="ml-auto flex h-(--kg-tab-height) shrink-0 items-center self-center px-1.5 text-(--vscode-icon-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
+							title="Unlock Group"
+							aria-label="Unlock Group"
+							onclick={() => editors.setLocked(false, group)}
+						>
+							<Icon name="lock" size={14} />
+						</button>
+					{/if}
 				</div>
 			{/each}
 		</div>
 	{/if}
 	{#if activePath && !adeActive && breadcrumbsOn}
-		<nav aria-label="Breadcrumbs" class="flex h-(--kg-breadcrumbs-height) shrink-0 items-center gap-0.5 overflow-hidden px-3 text-(--vscode-breadcrumb-foreground)">
+		<nav
+			bind:this={crumbNav}
+			aria-label="Breadcrumbs"
+			class="flex h-(--kg-breadcrumbs-height) shrink-0 items-center gap-0.5 overflow-hidden px-3 text-(--vscode-breadcrumb-foreground)"
+		>
 			{#each shownCrumbs as c, i (i)}
 				{#if i > 0}<Icon name="chevronRight" size={14} />{/if}
 				{#if crumbIcons && i === shownCrumbs.length - 1}<span class="flex shrink-0"><FileIcon icon={iconOf(activePath)} /></span>{/if}
 				{#if crumbsAreFiles}
 					{@const at = crumbs.length - shownCrumbs.length + i}
 					<button
-						class="rounded px-0.5 whitespace-nowrap hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)"
+						data-crumb
+						onkeydown={onCrumbKey}
+						class="rounded px-0.5 whitespace-nowrap hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground) focus-visible:outline-1 focus-visible:outline-(--vscode-focusBorder)"
 						title={at < crumbs.length - 1 ? 'ไฟล์ในโฟลเดอร์นี้' : 'ไฟล์ข้างเคียง'}
 						onclick={(e) => {
 							const r = e.currentTarget.getBoundingClientRect();
@@ -450,7 +573,12 @@
 			{/each}
 			{#each symbolCrumbs as s, i (i)}
 				{#if shownCrumbs.length || i > 0}<Icon name="chevronRight" size={14} />{/if}
-				<button class="flex items-center gap-1 whitespace-nowrap hover:text-(--vscode-foreground)" onclick={(e) => openSymbolPicker(e, s)}>
+				<button
+					data-crumb
+					onkeydown={onCrumbKey}
+					class="flex items-center gap-1 whitespace-nowrap hover:text-(--vscode-foreground) focus-visible:outline-1 focus-visible:outline-(--vscode-focusBorder)"
+					onclick={(e) => openSymbolPicker(e, s)}
+				>
 					{#if crumbIcons}<span class={['codicon', symbolCodicon(s.kind)]} aria-hidden="true"></span>{/if}{s.name}
 				</button>
 			{/each}
@@ -467,10 +595,40 @@
 		</nav>
 	{/if}
 
-	<div class="relative min-h-0 flex-1">
-		<div class={['absolute inset-0', (!activePath || diffActive || settingsActive || adeActive || viewerActive || placeholder) && 'invisible']}>
+	<div role="presentation" class="relative min-h-0 flex-1" ondragovercapture={editorDragOver} ondragleave={editorDragLeave} ondropcapture={editorDrop}>
+		<div
+			class={[
+				'absolute',
+				!sideShown ? 'inset-0' : sideVertical ? 'inset-x-0 top-0 h-1/2' : 'inset-y-0 left-0 w-1/2',
+				(!activePath || diffActive || settingsActive || adeActive || viewerActive || placeholder) && 'invisible'
+			]}
+		>
 			<EditorHost {group} />
 		</div>
+		{#if sideShown && activePath}
+			<!-- Split Editor in Group: the same document again (workbench.editor.splitInGroupLayout). -->
+			<div
+				class={[
+					'absolute border-(--vscode-editorGroup-border,var(--vscode-panel-border))',
+					sideVertical ? 'inset-x-0 bottom-0 h-1/2 border-t' : 'inset-y-0 right-0 w-1/2 border-l'
+				]}
+			>
+				{#key activePath}<SideEditor {group} path={activePath} />{/key}
+			</div>
+		{/if}
+		{#if splitZone}
+			<!-- Where a dragged tab lands (VS Code: editorGroup.dropBackground). -->
+			<div
+				class={[
+					'pointer-events-none absolute z-20 bg-[var(--vscode-editorGroup-dropBackground,rgba(83,89,93,0.5))] transition-all duration-100',
+					splitZone === 'center' && 'inset-0',
+					splitZone === 'left' && 'inset-y-0 left-0 w-1/2',
+					splitZone === 'right' && 'inset-y-0 right-0 w-1/2',
+					splitZone === 'up' && 'inset-x-0 top-0 h-1/2',
+					splitZone === 'down' && 'inset-x-0 bottom-0 h-1/2'
+				]}
+			></div>
+		{/if}
 		{#if activePath && emptyUntitled.has(activePath) && settings.get('workbench.editor.empty.hint') === 'text'}
 			<!-- workbench.editor.empty.hint (VS Code's EmptyTextEditorHintContribution) -->
 			<div class="pointer-events-none absolute top-0 left-[64px] z-10 text-[13px] leading-[19px] text-(--vscode-editorGhostText-foreground,var(--vscode-descriptionForeground)) italic">
@@ -489,15 +647,25 @@
 				<DiffHost active={activePath} onfail={(key) => editors.close(key, { force: true, group })} reportLanguage={focused} />
 			</div>
 		{/if}
-		{#if activePath && isImagePath(activePath)}
+		{#if activePath && isMergeKey(activePath)}
+			<div class="absolute inset-0">{#key activePath}<MergeEditor mergeKey={activePath} />{/key}</div>
+		{:else if activePath && isImagePath(activePath)}
 			<div class="absolute inset-0">{#key activePath}<ImageViewer path={activePath} />{/key}</div>
 		{:else if activePath && isChangesKey(activePath)}
 			<div class="absolute inset-0">{#key activePath}<CombinedDiff changesKey={activePath} />{/key}</div>
+		{:else if activePath && isVaultKey(activePath)}
+			<div class="absolute inset-0">{#key activePath}<VaultTranscript vaultKey={activePath} />{/key}</div>
+		{:else if activePath && isArtifactKey(activePath)}
+			<div class="absolute inset-0">{#key activePath}<ArtifactViewer artifactKey={activePath} />{/key}</div>
+		{:else if activePath && isTerminalEditorKey(activePath)}
+			<div class="absolute inset-0">{#key activePath}<TerminalEditor editorKey={activePath} />{/key}</div>
+		{:else if activePath && isSearchEditorKey(activePath)}
+			<div class="absolute inset-0">{#key activePath}<SearchEditorView editorKey={activePath} {group} />{/key}</div>
 		{:else if activePath && isNotebookPath(activePath)}
 			<div class="absolute inset-0">{#key activePath}<NotebookViewer path={activePath} />{/key}</div>
 		{:else if activePath && isPreviewKey(activePath)}
 			<div class="absolute inset-0">
-				{#key activePath}{#if isCsvPath(previewTarget(activePath))}<CsvPreview previewKey={activePath} />{:else}<MarkdownPreview previewKey={activePath} />{/if}{/key}
+				{#key activePath}{#if isCsvPath(previewTarget(activePath))}<CsvPreview previewKey={activePath} />{:else}<MarkdownPreview previewKey={activePath} {group} />{/if}{/key}
 			</div>
 		{/if}
 		{#if settingsActive}
@@ -507,6 +675,8 @@
 			<div class="absolute inset-0">{#key taskSlug}<TaskPage slug={taskSlug} />{/key}</div>
 		{:else if activePath && isBoardKey(activePath)}
 			<div class="absolute inset-0"><Board /></div>
+		{:else if chatEditorId}
+			<div class="absolute inset-0 bg-(--vscode-editor-background)">{#key chatEditorId}<AgentPanel editorChatId={chatEditorId} />{/key}</div>
 		{/if}
 		<!-- workbench.tips.enabled: the shortcut watermark of an empty editor area. -->
 		{#if !activePath && editors.groups.length === 1 && settings.get<boolean>('workbench.tips.enabled')}

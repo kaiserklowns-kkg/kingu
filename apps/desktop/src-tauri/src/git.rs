@@ -9,6 +9,10 @@ use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::sync::RwLock;
 
+use crate::git_queue::{self, Scope};
+use crate::i18n::msg::{FilesMsg, ScmMsg};
+use crate::tr;
+
 /// `git.path` (VS Code: a path, or a list tried in order; `null` finds `git` on PATH). Read by Rust
 /// itself from the user settings file (it picks a program to run, so never from the webview or a
 /// repository's own settings).
@@ -35,6 +39,12 @@ pub fn load_git_path(config_dir: &Path) {
 /// The git executable: `git.path` when set, else `git` from the login-shell PATH.
 pub fn program() -> OsString {
   GIT_PROGRAM.read().ok().and_then(|p| p.clone()).map(PathBuf::into_os_string).unwrap_or_else(|| "git".into())
+}
+
+/// `git --version` of the git in use (`git.path` or PATH); `None` when git cannot run.
+pub fn version() -> Option<String> {
+  let out = command().arg("--version").output().ok()?;
+  out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
 }
 
 /// `crate::shell_env::command` for [`program`].
@@ -66,6 +76,9 @@ pub struct GitStatus {
   /// The merge, rebase, cherry-pick or revert waiting for its conflicts (see [`operation`]).
   pub operation: Option<Operation>,
   pub entries: Vec<StatusEntry>,
+  /// The folder is inside the repository rather than its top level: the repository is in a
+  /// parent folder (`git.openRepositoryInParentFolders`).
+  pub in_parent: bool,
 }
 
 /// A multi-step git operation stopped half-way, usually on conflicts.
@@ -110,7 +123,7 @@ pub fn check_rel(root: &Path, rel: &str) -> Result<(), String> {
   }
   let path = Path::new(rel);
   if !path.components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir)) {
-    return Err(format!("{rel}: outside the workspace"));
+    return Err(tr!(FilesMsg::OutsideWorkspace, path = rel));
   }
   let full = root.join(path);
   let mut probe = full.clone();
@@ -119,11 +132,11 @@ pub fn check_rel(root: &Path, rel: &str) -> Result<(), String> {
   loop {
     if probe.symlink_metadata().is_ok() {
       let at = if probe == full && probe.is_symlink() { probe.parent().map(Path::to_path_buf) } else { Some(probe.clone()) };
-      let real = at.and_then(|p| p.canonicalize().ok()).ok_or_else(|| format!("{rel}: cannot resolve"))?;
-      return if real.starts_with(root) { Ok(()) } else { Err(format!("{rel}: outside the workspace")) };
+      let real = at.and_then(|p| p.canonicalize().ok()).ok_or_else(|| tr!(ScmMsg::CannotResolve, path = rel))?;
+      return if real.starts_with(root) { Ok(()) } else { Err(tr!(FilesMsg::OutsideWorkspace, path = rel)) };
     }
     if !probe.pop() || !probe.starts_with(root) {
-      return Err(format!("{rel}: outside the workspace"));
+      return Err(tr!(FilesMsg::OutsideWorkspace, path = rel));
     }
   }
 }
@@ -179,18 +192,28 @@ fn mark_untracked_dirs(dir: &Path, entries: &mut [crate::fs::DirEntry]) {
 }
 
 pub(crate) fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+  let started = std::time::Instant::now();
   let out = command()
     .arg("-C")
     .arg(root)
     .arg("--literal-pathspecs")
+    // Reads (status above all, run on every watcher event) must not take the index lock to
+    // refresh it, or they collide with a commit or stage running beside them; writes are queued
+    // in `git_queue`. Only optional locks are skipped: a write still locks what it writes.
+    .arg("--no-optional-locks")
     .args(args)
     .output()
-    .map_err(|e| format!("git: {e}"))?;
+    .map_err(|e| {
+      crate::git_output::record(args, started.elapsed(), Some(&e.to_string()));
+      format!("git: {e}")
+    })?;
   if !out.status.success() {
     // `git commit` reports "nothing to commit" on stdout.
     let err = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr });
+    crate::git_output::record(args, started.elapsed(), Some(&err));
     return Err(format!("git {}: {}", args.first().unwrap_or(&""), err.trim()));
   }
+  crate::git_output::record(args, started.elapsed(), None);
   Ok(out.stdout)
 }
 
@@ -252,9 +275,18 @@ pub fn status_with(root: &Path, opts: &StatusOptions) -> Result<Option<GitStatus
   let args = status_args(opts);
   let out = run(root, &args.iter().map(String::as_str).collect::<Vec<_>>())?;
   let mut st = parse_status(&String::from_utf8_lossy(&out), &prefix);
+  st.in_parent = !prefix.is_empty();
+  // Task worktrees inside the folder are their own checkouts (the ADE shows each one); git sees
+  // them as untracked nested repositories of the main one.
+  st.entries.retain(|e| !in_task_worktree(&e.path));
   st.remotes = remotes(root)?;
   st.operation = operation(root);
   Ok(Some(st))
+}
+
+/// A workspace-relative path in `.kingu/worktrees/` (a task's checkout, not the folder's file).
+pub fn in_task_worktree(rel: &str) -> bool {
+  rel == ".kingu/worktrees" || rel.starts_with(".kingu/worktrees/")
 }
 
 /// The operation in progress, read from the markers git leaves in this worktree's git dir
@@ -282,7 +314,8 @@ fn operation_in(git_dir: &Path) -> Option<Operation> {
 
 /// Aborts the operation in progress; returns which one.
 pub fn abort_operation(root: &Path) -> Result<Operation, String> {
-  let op = operation(root).ok_or("No merge, rebase, cherry-pick or revert is in progress.")?;
+  let op = operation(root).ok_or_else(|| tr!(ScmMsg::NoOperation))?;
+  let _queue = git_queue::lock(root, Scope::Repository, op.verb())?;
   run(root, &[op.verb(), "--abort"])?;
   Ok(op)
 }
@@ -291,12 +324,13 @@ pub fn abort_operation(root: &Path) -> Result<Operation, String> {
 /// prepared message (no editor: `core.editor=true` accepts it as is). Unresolved paths stop it
 /// before git is asked.
 pub fn continue_operation(root: &Path) -> Result<Operation, String> {
-  let op = operation(root).ok_or("No merge, rebase, cherry-pick or revert is in progress.")?;
+  let op = operation(root).ok_or_else(|| tr!(ScmMsg::NoOperation))?;
   let out = run(root, &["diff", "--name-only", "--diff-filter=U", "-z"])?;
   let unresolved = out.split(|b| *b == 0).filter(|s| !s.is_empty()).count();
   if unresolved > 0 {
-    return Err(format!("{unresolved} file(s) still have conflicts. Resolve and stage them first."));
+    return Err(tr!(ScmMsg::StillConflicted, count = unresolved));
   }
+  let _queue = git_queue::lock(root, Scope::Repository, op.verb())?;
   run(root, &["-c", "core.editor=true", op.verb(), "--continue"])?;
   Ok(op)
 }
@@ -325,6 +359,7 @@ pub fn parse_status(text: &str, prefix: &str) -> GitStatus {
     remotes: Vec::new(),
     operation: None,
     entries: Vec::new(),
+    in_parent: false,
   };
   let mut has_ab = false;
   let strip = |p: &str| p.strip_prefix(prefix).map(str::to_owned);
@@ -391,11 +426,12 @@ pub fn parse_status(text: &str, prefix: &str) -> GitStatus {
 
 /// `git add -A`, so deletions are staged too.
 pub fn stage(root: &Path, paths: &[String]) -> Result<(), String> {
-  run_paths(root, &["add", "-A"], paths)
+  git_queue::with(root, Scope::Worktree, "add", || run_paths(root, &["add", "-A"], paths))
 }
 
 /// `git restore --staged`; before the first commit there is no HEAD, so `git rm --cached`.
 pub fn unstage(root: &Path, paths: &[String]) -> Result<(), String> {
+  let _queue = git_queue::lock(root, Scope::Worktree, "restore --staged")?;
   if has_head(root) {
     run_paths(root, &["restore", "--staged"], paths)
   } else {
@@ -409,12 +445,13 @@ pub fn unstage(root: &Path, paths: &[String]) -> Result<(), String> {
 /// `to_trash` (VS Code's `git.discardUntrackedChangesToTrash`) moves untracked files to the trash
 /// instead of deleting them.
 pub fn discard(root: &Path, paths: &[String], delete_untracked: bool, to_trash: bool) -> Result<(), String> {
-  let Some(st) = status(root)? else { return Err("not a git repository".into()) };
+  let _queue = git_queue::lock(root, Scope::Worktree, "restore")?;
+  let Some(st) = status(root)? else { return Err(tr!(ScmMsg::NotARepository)) };
   let untracked: HashSet<&str> =
     st.entries.iter().filter(|e| e.worktree.as_deref() == Some("?")).map(|e| e.path.as_str()).collect();
   let (new, tracked): (Vec<String>, Vec<String>) = paths.iter().cloned().partition(|p| untracked.contains(p.as_str()));
   if !new.is_empty() && !delete_untracked {
-    return Err(format!("{}: untracked, deleting needs confirmation", new.join(", ")));
+    return Err(tr!(ScmMsg::UntrackedNeedsConfirm, paths = new.join(", ")));
   }
   run_paths(root, &["restore", "--worktree"], &tracked)?;
   if to_trash {
@@ -456,11 +493,12 @@ pub fn commit_flags(opts: &CommitOptions) -> Vec<&'static str> {
 
 pub fn commit(root: &Path, message: &str, opts: &CommitOptions) -> Result<(), String> {
   if message.trim().is_empty() {
-    return Err("commit message is empty".into());
+    return Err(tr!(ScmMsg::CommitMessageEmpty));
   }
+  let _queue = git_queue::lock(root, Scope::Repository, "commit")?;
   // `git diff --cached --quiet` fails when something is staged (git's own message is a page of status).
   if !opts.amend && !opts.empty && has_head(root) && run(root, &["diff", "--cached", "--quiet"]).is_ok() {
-    return Err("nothing staged to commit".into());
+    return Err(tr!(ScmMsg::NothingStaged));
   }
   let mut args = commit_flags(opts);
   args.extend(["-m", message]);
@@ -486,7 +524,7 @@ pub fn check_rev(rev: &str) -> Result<(), String> {
     || rev.starts_with('-')
     || rev.contains("..")
     || rev.chars().any(|c| c.is_whitespace() || c.is_control() || matches!(c, ':' | '\\' | '*' | '?' | '['));
-  if bad { Err(format!("{rev:?}: invalid revision")) } else { Ok(()) }
+  if bad { Err(tr!(ScmMsg::InvalidRevision, rev = format!("{rev:?}"))) } else { Ok(()) }
 }
 
 /// Local branch names (`refs/heads`), sorted by git.
@@ -534,6 +572,7 @@ pub fn numstat(root: &Path) -> Result<NumStat, String> {
 /// Source Control remote actions, each on its own (Orca's dropdown): push (optionally force with
 /// lease), pull (optionally fast-forward only), fetch, and rebase onto a remote base.
 pub fn push(root: &Path, force_with_lease: bool) -> Result<(), String> {
+  let _queue = git_queue::lock(root, Scope::Refs, "push")?;
   let mut args = vec!["push", "-q"];
   if force_with_lease {
     args.push("--force-with-lease");
@@ -542,11 +581,13 @@ pub fn push(root: &Path, force_with_lease: bool) -> Result<(), String> {
 }
 
 pub fn pull(root: &Path, ff_only: bool) -> Result<(), String> {
+  let _queue = git_queue::lock(root, Scope::Repository, "pull")?;
   run_remote(root, &["pull", "-q", "--no-edit", if ff_only { "--ff-only" } else { "--no-rebase" }])
 }
 
 pub fn rebase(root: &Path, base: &str) -> Result<(), String> {
   check_rev(base)?;
+  let _queue = git_queue::lock(root, Scope::Repository, "rebase")?;
   run_remote(root, &["fetch", "-q"])?;
   run(root, &["rebase", "-q", "--end-of-options", base]).map(|_| ())
 }
@@ -595,17 +636,23 @@ pub fn log(root: &Path, limit: u32) -> Result<Vec<Commit>, String> {
 
 /// Network operations must fail rather than wait for a password nobody can type.
 fn run_remote(root: &Path, args: &[&str]) -> Result<(), String> {
+  let started = std::time::Instant::now();
   let out = crate::shell_env::command("git")
     .env("GIT_TERMINAL_PROMPT", "0")
     .arg("-C")
     .arg(root)
     .args(args)
     .output()
-    .map_err(|e| format!("git: {e}"))?;
+    .map_err(|e| {
+      crate::git_output::record(args, started.elapsed(), Some(&e.to_string()));
+      format!("git: {e}")
+    })?;
   if out.status.success() {
+    crate::git_output::record(args, started.elapsed(), None);
     return Ok(());
   }
   let err = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr });
+  crate::git_output::record(args, started.elapsed(), Some(&err));
   Err(format!("git {}: {}", args.first().unwrap_or(&""), err.trim()))
 }
 
@@ -618,7 +665,7 @@ pub fn show_at(root: &Path, rev: &str, rel: &str) -> Result<String, String> {
   }
   let size = run(root, &["cat-file", "-s", &spec])?;
   if String::from_utf8_lossy(&size).trim().parse::<usize>().unwrap_or(0) > MAX_SHOW_BYTES {
-    return Err(format!("{rel}: larger than {MAX_SHOW_BYTES} bytes"));
+    return Err(tr!(FilesMsg::FileTooLarge, path = rel, max = MAX_SHOW_BYTES));
   }
   Ok(String::from_utf8_lossy(&run(root, &["cat-file", "blob", &spec])?).into_owned())
 }
@@ -678,7 +725,7 @@ mod tests {
     assert!(sh_git(d, &["commit", "-qam", "main"]));
     assert!(!sh_git(d, &["merge", "-q", "other"]));
     assert_eq!(operation(d), Some(Operation::Merge));
-    assert!(continue_operation(d).unwrap_err().contains("1 file(s) still have conflicts"));
+    assert!(continue_operation(d).unwrap_err().contains("1 file still has conflicts"));
     std::fs::write(d.join("a.txt"), "both\n").unwrap();
     assert!(sh_git(d, &["add", "a.txt"]));
     // `continue_operation` commits through `run`, so the repository needs its own identity.
@@ -720,6 +767,21 @@ mod tests {
     let mut entries = crate::fs::list_dir(plain.path(), plain.path()).unwrap();
     mark_ignored(plain.path(), &mut entries);
     assert!(entries.iter().all(|e| !e.ignored));
+  }
+
+  #[test]
+  fn folder_status_leaves_task_worktrees_out() {
+    let (_tmp, repo) = temp_repo();
+    git(&repo, &["worktree", "add", "-q", "-b", "kingu/t", ".kingu/worktrees/t"]);
+    write(&repo, ".kingu/worktrees/t/agent.txt", "x\n");
+    write(&repo, ".kingu/settings.json", "{}\n");
+    write(&repo, "mine.txt", "x\n");
+    let paths: Vec<String> = status(&repo).unwrap().unwrap().entries.into_iter().map(|e| e.path).collect();
+    assert_eq!(paths, [".kingu/settings.json", "mine.txt"]);
+    // The task's own status still sees its change.
+    let task: Vec<String> = status(&repo.join(".kingu/worktrees/t")).unwrap().unwrap().entries.into_iter().map(|e| e.path).collect();
+    assert_eq!(task, ["agent.txt"]);
+    assert!(in_task_worktree(".kingu/worktrees/t/x") && !in_task_worktree(".kingu/worktreesx"));
   }
 
   fn git(dir: &Path, args: &[&str]) {

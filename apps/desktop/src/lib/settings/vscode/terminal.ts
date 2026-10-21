@@ -480,5 +480,198 @@ export const TERMINAL_SETTINGS: SettingSchema[] = [
 			'ดับเบิลคลิก (Focus the terminal when double-clicking a terminal tab)'
 		],
 		description: 'คลิกครั้งเดียวหรือดับเบิลคลิกที่รายการเพื่อโฟกัส terminal (Controls whether focusing the terminal of a tab happens on double or single click.)'
+	},
+	{
+		id: 'terminal.integrated.rescaleOverlappingGlyphs',
+		group: 'Terminal',
+		type: 'boolean',
+		default: true,
+		description: 'ย่อตัวอักษรกว้างหนึ่งช่องที่ล้นไปทับช่องถัดไปให้พอดี (Whether to rescale glyphs horizontally that are a single cell wide but have glyphs that would overlap following cell(s). This typically happens for ambiguous width characters (eg. the roman numeral characters U+2160+) which aren\'t featured in monospace fonts. Emoji glyphs are never rescaled.)'
+	},
+	{
+		id: 'terminal.integrated.customGlyphs',
+		group: 'Terminal',
+		type: 'boolean',
+		default: true,
+		description: 'วาดตัวอักษรเส้นกรอบ block และ Powerline เองแทนการใช้ฟอนต์ ให้เส้นต่อกันสนิท (Whether to draw custom glyphs instead of using the font for box drawing, block elements, braille patterns, Powerline symbols and the other ranges xterm.js draws itself. This will typically result in better rendering with continuous lines, even when line height and letter spacing is used.)'
+	},
+	{
+		id: 'terminal.integrated.defaultProfile.osx',
+		group: 'Terminal',
+		type: 'json',
+		schema: { type: ['null', 'string'] },
+		default: null,
+		description: 'ชื่อโปรไฟล์ terminal ที่ใช้เริ่มต้นบน macOS (จาก terminal.integrated.profiles.osx) null = $SHELL (The default terminal profile on macOS.)',
+		scope: 'application'
+	},
+	{
+		id: 'terminal.integrated.defaultProfile.linux',
+		group: 'Terminal',
+		type: 'json',
+		schema: { type: ['null', 'string'] },
+		default: null,
+		description: 'ชื่อโปรไฟล์ terminal ที่ใช้เริ่มต้นบน Linux (จาก terminal.integrated.profiles.linux) null = $SHELL (The default terminal profile on Linux.)',
+		scope: 'application'
+	},
+	{
+		id: 'terminal.integrated.profiles.osx',
+		group: 'Terminal',
+		type: 'json',
+		schema: {
+			type: 'object',
+			additionalProperties: {
+				anyOf: [
+					{ type: 'null' },
+					{
+						type: 'object',
+						properties: {
+							path: { type: ['string', 'array'], items: { type: 'string' } },
+							args: { type: 'array', items: { type: 'string' } },
+							env: { type: 'object', additionalProperties: { type: ['string', 'null'] } },
+							overrideName: { type: 'boolean' },
+							icon: { type: 'string' },
+							color: { type: 'string' }
+						}
+					}
+				]
+			}
+		},
+		default: {
+			bash: { path: 'bash', args: ['-l'], icon: 'terminal-bash' },
+			zsh: { path: 'zsh', args: ['-l'] },
+			fish: { path: 'fish', args: ['-l'] },
+			tmux: { path: 'tmux', icon: 'terminal-tmux' },
+			pwsh: { path: 'pwsh', icon: 'terminal-powershell' }
+		},
+		description: 'โปรไฟล์ terminal บน macOS: path (ชื่อที่หาใน PATH หรือ path เต็ม หรือรายการที่ลองตามลำดับ) args และ env (A set of terminal profile customizations for Mac which allows adding, removing or changing how terminals are launched. Profiles are made up of a mandatory path, optional arguments and other presentation options.\n\nTo override an existing profile use its profile name as the key, for example:\n\n```json\n"terminal.integrated.profile.osx": {\n  "bash": null\n}\n```\n\n[Read more about configuring profiles](https://code.visualstudio.com/docs/terminal/profiles).)',
+		scope: 'application'
+	},
+	{
+		id: 'terminal.integrated.profiles.linux',
+		group: 'Terminal',
+		type: 'json',
+		schema: {
+			type: 'object',
+			additionalProperties: {
+				anyOf: [
+					{ type: 'null' },
+					{
+						type: 'object',
+						properties: {
+							path: { type: ['string', 'array'], items: { type: 'string' } },
+							args: { type: 'array', items: { type: 'string' } },
+							env: { type: 'object', additionalProperties: { type: ['string', 'null'] } },
+							overrideName: { type: 'boolean' },
+							icon: { type: 'string' },
+							color: { type: 'string' }
+						}
+					}
+				]
+			}
+		},
+		default: {
+			bash: { path: 'bash', icon: 'terminal-bash' },
+			zsh: { path: 'zsh' },
+			fish: { path: 'fish' },
+			tmux: { path: 'tmux', icon: 'terminal-tmux' },
+			pwsh: { path: 'pwsh', icon: 'terminal-powershell' }
+		},
+		description: 'โปรไฟล์ terminal บน Linux: path (ชื่อที่หาใน PATH หรือ path เต็ม หรือรายการที่ลองตามลำดับ) args และ env (A set of terminal profile customizations for Linux which allows adding, removing or changing how terminals are launched. Profiles are made up of a mandatory path, optional arguments and other presentation options.\n\nTo override an existing profile use its profile name as the key, for example:\n\n```json\n"terminal.integrated.profile.linux": {\n  "bash": null\n}\n```\n\n[Read more about configuring profiles](https://code.visualstudio.com/docs/terminal/profiles).)',
+		scope: 'application'
+	},
+	{
+		id: 'terminal.integrated.tabs.showActiveTerminal',
+		group: 'Terminal',
+		type: 'string',
+		default: 'singleTerminalOrNarrow',
+		enum: ['always', 'singleTerminal', 'singleTerminalOrNarrow', 'never'],
+		enumDescriptions: [
+			'เสมอ (Always show the active terminal)',
+			'เมื่อมี terminal เดียว (Show the active terminal when it is the only terminal opened)',
+			'เมื่อมี terminal เดียวหรือไม่มีรายการ terminal (Show the active terminal when it is the only terminal opened or when the tabs view is in its narrow textless state)',
+			'ไม่แสดง (Never show the active terminal)'
+		],
+		description: 'แสดงชื่อ terminal ที่ใช้อยู่บนแถบหัว panel (Shows the active terminal information in the view. This is particularly useful when the title within the tabs aren\'t visible.)'
+	},
+	{
+		id: 'terminal.integrated.tabs.showActions',
+		group: 'Terminal',
+		type: 'string',
+		default: 'singleTerminalOrNarrow',
+		enum: ['always', 'singleTerminal', 'singleTerminalOrNarrow', 'never'],
+		enumDescriptions: [
+			'เสมอ (Always show the actions)',
+			'เมื่อมี terminal เดียว (Show the actions when it is the only terminal opened)',
+			'เมื่อมี terminal เดียวหรือไม่มีรายการ terminal (Show the actions when it is the only terminal opened or when the tabs view is in its narrow textless state)',
+			'ไม่แสดง (Never show the actions)'
+		],
+		description: 'แสดงปุ่ม Split และ Kill ข้างปุ่ม terminal ใหม่บนแถบหัว panel (Controls whether terminal split and kill buttons are displays next to the new terminal button.)'
+	},
+	{
+		id: 'terminal.integrated.shellIntegration.enabled',
+		group: 'Terminal',
+		type: 'boolean',
+		default: true,
+		description: 'ใส่สคริปต์ shell integration ให้ zsh, bash, fish และ pwsh ที่เริ่มใหม่ เพื่อรู้ตำแหน่งคำสั่ง exit code และโฟลเดอร์ปัจจุบัน (Determines whether or not shell integration is auto-injected to support features like enhanced command tracking and current working directory detection. Shell integration works by injecting the script that is run when the shell is initialized. The script allows the terminal to get additional information about what\'s happening within the terminal. Supported shells: Linux/macOS: bash, fish, pwsh, zsh. This setting applies only when terminals are created, so you will need to restart your terminals for it to take effect.)'
+	},
+	{
+		id: 'terminal.integrated.shellIntegration.decorationsEnabled',
+		group: 'Terminal',
+		type: 'string',
+		default: 'both',
+		enum: ['both', 'gutter', 'overviewRuler', 'never'],
+		enumDescriptions: [
+			'แสดงทั้งข้างบรรทัดและใน overview ruler (Show decorations in the gutter (left) and overview ruler (right))',
+			'แสดงข้างบรรทัด (Show gutter decorations to the left of the terminal)',
+			'แสดงใน overview ruler (Show overview ruler decorations to the right of the terminal)',
+			'ไม่แสดง (Do not show decorations)'
+		],
+		description: 'จุดบอกผลของแต่ละคำสั่ง (สำเร็จ/ล้มเหลว) ที่ shell integration ตรวจพบ (When shell integration is enabled, adds a decoration for each command.)'
+	},
+	{
+		id: 'terminal.integrated.shellIntegration.history',
+		group: 'Terminal',
+		type: 'number',
+		default: 100,
+		description: 'จำนวนคำสั่งล่าสุดที่เก็บไว้ให้ Run Recent Command (Controls the number of recently used commands to keep in the terminal command history. Set to 0 to disable terminal command history.)'
+	},
+	{
+		id: 'terminal.integrated.shellIntegration.quickFixEnabled',
+		group: 'Terminal',
+		type: 'boolean',
+		default: true,
+		description: 'เสนอวิธีแก้ด่วนเมื่อคำสั่งล้มเหลว เช่น พอร์ตถูกใช้อยู่ หรือ git push ที่ยังไม่มี upstream (When shell integration is enabled, enables quick fixes for terminal commands that will appear as a lightbulb to the left of the prompt.)'
+	},
+	{
+		id: 'terminal.integrated.stickyScroll.enabled',
+		group: 'Terminal',
+		type: 'boolean',
+		default: true,
+		description: 'ตรึงคำสั่งของผลลัพธ์ที่เลื่อนอยู่ไว้บนสุดของ terminal (Shows the current command at the top of the terminal. This feature requires shell integration to be activated. See `#terminal.integrated.shellIntegration.enabled#`.)'
+	},
+	{
+		id: 'terminal.integrated.stickyScroll.maxLineCount',
+		group: 'Terminal',
+		type: 'number',
+		default: 5,
+		minimum: 1,
+		maximum: 10,
+		description: 'จำนวนบรรทัดสูงสุดของ sticky scroll (Defines the maximum number of sticky lines to show. Sticky scroll lines will never exceed 40% of the viewport regardless of this setting.)'
+	},
+	{
+		id: 'terminal.integrated.stickyScroll.ignoredCommands',
+		group: 'Terminal',
+		type: 'array',
+		items: 'string',
+		default: ['clear', 'cls', 'clear-host', 'agent', 'agy', 'copilot', 'claude', 'codex', 'gemini'],
+		description: 'คำสั่งที่ไม่ตรึงด้วย sticky scroll (A list of commands that should not trigger sticky scroll. When a command from this list is detected, the sticky scroll overlay will be hidden.)'
+	},
+	{
+		id: 'terminal.integrated.tabs.defaultColor',
+		group: 'Terminal',
+		type: 'json',
+		schema: { anyOf: [{ type: 'null' }, { type: 'string', enum: ['terminal.ansiBlack', 'terminal.ansiRed', 'terminal.ansiGreen', 'terminal.ansiYellow', 'terminal.ansiBlue', 'terminal.ansiMagenta', 'terminal.ansiCyan', 'terminal.ansiWhite'] }] },
+		default: null,
+		description: 'สีเริ่มต้นของแท็บ terminal (A theme color ID to associate with terminal icons by default.)'
 	}
 ];

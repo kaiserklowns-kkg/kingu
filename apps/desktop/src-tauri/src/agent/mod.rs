@@ -5,22 +5,41 @@
 
 pub mod ai_text;
 pub mod automations;
+pub mod chat_edits;
+pub mod chat_extras;
+pub mod chat_io;
+pub mod chats;
+pub mod codex_server;
+pub mod customizations;
 pub mod cli;
 pub mod events;
+pub mod forge;
+pub mod gh_projects;
 pub mod hooks;
 pub mod hunks;
 pub mod host;
 pub mod issues;
 pub mod kingu_yaml;
+pub mod mcp;
+pub mod memories;
+pub mod mr;
 pub mod notes;
 pub mod open_in;
+pub mod orchestration;
 pub mod pr;
 pub mod review;
+pub mod rules;
+pub mod rewind;
+pub mod arkai;
+pub mod runtimes;
+pub mod safety_asks;
 pub mod scripts;
+pub mod slash_commands;
 pub mod status_hooks;
 pub mod tasks;
 pub mod trust;
 pub mod worktree;
+pub mod worktree_from;
 
 use std::sync::Arc;
 
@@ -31,34 +50,71 @@ use crate::workspace::Workspace;
 pub use events::AgentEvent;
 pub use host::AgentHost;
 
-const PERMISSION_MODES: &[&str] = &["default", "acceptEdits", "plan"];
+use chats::RUN_PERMISSION_MODES;
 
-/// Runs the agent in the task's worktree; events stream over `on_event`. `resume` continues an
-/// earlier session (its `session_id`); `model`/`permission_mode` come from the user's settings.
+/// Where a run goes: the task worktree `slug` (the ADE), or an explicit `cwd` the webview chose
+/// (a chat): the open folder or one of its task worktrees (`chats::resolve_cwd`). `root`, when
+/// given, must still be the open folder, so a chat never runs against a folder opened since.
+fn run_dir(open_root: &std::path::Path, root: Option<&str>, slug: Option<&str>, cwd: Option<&str>) -> Result<std::path::PathBuf, String> {
+  if let Some(r) = root {
+    let same = std::fs::canonicalize(r).is_ok_and(|r| r == open_root);
+    if !same {
+      return Err(crate::tr!(crate::i18n::msg::AgentMsg::ChatFolderChanged, path = r));
+    }
+  }
+  match (cwd, slug) {
+    (Some(dir), _) => chats::resolve_cwd(open_root, std::path::Path::new(dir)),
+    (None, Some(slug)) => {
+      worktree::validate_slug(slug)?;
+      let dir = worktree::worktree_path(open_root, slug);
+      if !dir.is_dir() {
+        return Err(crate::tr!(crate::i18n::msg::TasksMsg::NoWorktreeYet, slug));
+      }
+      Ok(dir)
+    }
+    (None, None) => Err(crate::tr!(crate::i18n::msg::AgentMsg::NoAgentCwd)),
+  }
+}
+
+/// Runs the agent and streams its events over `on_event`. Where: the task worktree `slug` (the
+/// ADE's calls), or `cwd` (`run_dir`). `chat_id`: the run belongs to that chat of `root`; its
+/// events are appended to the chat's transcript and only one run of a chat is live at a time.
+/// `resume` continues an earlier session (its `session_id`), refused while a live run holds it;
+/// with `resume_at` (a chat after a rewind or fork), only up to that message, in a fork of it.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn agent_start(
   app: tauri::AppHandle,
-  ws: State<'_, Workspace>,
+  ws: Workspace,
   agents: State<'_, Arc<AgentHost>>,
-  slug: String,
+  slug: Option<String>,
+  root: Option<String>,
+  cwd: Option<String>,
+  chat_id: Option<String>,
   prompt: String,
   model: Option<String>,
   permission_mode: Option<String>,
   resume: Option<String>,
+  resume_at: Option<String>,
   mcp_servers: Option<std::collections::BTreeMap<String, host::McpServer>>,
   plugins: Option<Vec<String>>,
   images: Option<Vec<String>>,
+  safety_checks: Option<bool>,
+  rules: Option<Vec<String>>,
+  runtime: Option<String>,
+  agent: Option<String>,
   on_event: Channel<AgentEvent>,
 ) -> Result<u32, String> {
-  worktree::validate_slug(&slug)?;
+  if let Some(id) = chat_id.as_deref() {
+    chats::check_id(id)?;
+  }
   let images = images.unwrap_or_default();
   crate::attachments::check_images(&images)?;
   if prompt.trim().is_empty() {
-    return Err("prompt is empty".into());
+    return Err(crate::tr!(crate::i18n::msg::TasksMsg::PromptEmpty));
   }
   if let Some(m) = permission_mode.as_deref()
-    && !PERMISSION_MODES.contains(&m)
+    && !RUN_PERMISSION_MODES.contains(&m)
   {
     return Err(format!("{m}: unsupported permission mode"));
   }
@@ -67,50 +123,491 @@ pub async fn agent_start(
   {
     return Err("invalid session id to resume".into());
   }
+  if resume_at.as_deref().is_some_and(|u| !rewind::valid_uuid(u) || resume.is_none()) {
+    return Err("invalid message to resume at".into());
+  }
+  // The chat's agent (`runtimes`): the Claude SDK, or a program found on the login-shell PATH.
+  let runtime = runtime.unwrap_or_else(runtimes::default_id);
+  if !runtimes::valid_id(&runtime) {
+    return Err(crate::tr!(crate::i18n::msg::RuntimeMsg::Unknown, id = runtime));
+  }
+  if resume_at.is_some() && !runtimes::can_rewind(&runtime) {
+    return Err(crate::tr!(crate::i18n::msg::RuntimeMsg::NoRewind));
+  }
+  // Arkai rewinds by its transcript (cut by `chat_rewind`), never at an SDK message.
+  let resume_at = if runtime == arkai::RUNTIME { None } else { resume_at };
+  let mut runtime_spec = match runtime.as_str() {
+    // Arkai's spec needs the chat's transcript: below, once the folder is known.
+    runtimes::CLAUDE | arkai::RUNTIME => None,
+    id => {
+      let (id, config) = (id.to_owned(), crate::snap::config_dir(&app)?);
+      tauri::async_runtime::spawn_blocking(move || runtimes::resolve(&id, crate::shell_env::path().as_deref(), &runtimes::configured(&config)))
+        .await
+        .map_err(|e| e.to_string())??
+    }
+  };
   if let Some(servers) = &mcp_servers {
     host::validate_mcp_servers(servers)?;
   }
   let plugins = plugins.filter(|p| !p.is_empty());
   if let Some(dirs) = &plugins {
-    crate::snap::validate_plugin_dirs(&crate::snap::plugins_dir(&app)?, dirs)?;
+    crate::snap::validate_plugin_dirs(&crate::skill_hub::plugin_bases(&app)?, dirs)?;
   }
-  let cwd = worktree::worktree_path(&ws.root()?, &slug);
-  if !cwd.is_dir() {
-    return Err(format!("{slug}: no worktree, create it first"));
+  let open_root = ws.root()?;
+  let dir = run_dir(&open_root, root.as_deref(), slug.as_deref(), cwd.as_deref())?;
+  let cwd = dir.to_str().ok_or("worktree path is not valid UTF-8")?.to_owned();
+  // A chat's rules files (kingu.chat.rules.enabled): `rules` are its attached files. Then the
+  // chat's agent (Ask, or a custom agent: `customizations`): its text after the rules, and the
+  // tools it leaves out.
+  let config = crate::snap::config_dir(&app)?;
+  let (system_prompt_append, agent_disallowed) = {
+    let (root, dir, config) = (open_root.clone(), dir.clone(), config.clone());
+    let agent = agent.filter(|a| !a.trim().is_empty());
+    tauri::async_runtime::spawn_blocking(move || -> Result<(Option<String>, Vec<String>), String> {
+      let rules_text = rules.and_then(|files| rules::system_append(&rules::discover(&root, &dir, &files, &rules::Options::from_user(&config))));
+      let (agent_text, disallowed) = match agent {
+        Some(name) => customizations::for_run(&dir, customizations::home().as_deref(), &customizations::Settings::from_user(&config), &name)?,
+        None => (String::new(), Vec::new()),
+      };
+      let text = [rules_text.unwrap_or_default(), agent_text].into_iter().filter(|s| !s.trim().is_empty()).collect::<Vec<_>>().join("\n\n");
+      Ok(((!text.is_empty()).then_some(text), disallowed))
+    })
+    .await
+    .map_err(|e| e.to_string())??
+  };
+  if runtime == arkai::RUNTIME {
+    // A continued chat: the agent host gets the conversation back from the transcript.
+    let past = match (chat_id.as_deref(), resume.is_some()) {
+      (Some(id), true) => chats::load_transcript_full(&open_root, id)?,
+      _ => Vec::new(),
+    };
+    let (config, model) = (crate::snap::config_dir(&app)?, model.clone());
+    runtime_spec = Some(tauri::async_runtime::spawn_blocking(move || arkai::run_spec(&config, model.as_deref(), past)).await.map_err(|e| e.to_string())??);
   }
-  let cwd = cwd.to_str().ok_or("worktree path is not valid UTF-8")?.to_owned();
-  let mcp_servers = mcp_servers.filter(|m| !m.is_empty());
+  let transcript = match chat_id.as_deref() {
+    // Arkai's tool inputs are kept whole: they are the model's own history on the next run.
+    Some(id) => Some(chats::Transcript::new(&open_root, id)?.full_inputs(runtime == arkai::RUNTIME)),
+    None => None,
+  };
+  let owner = chat_id.as_deref().map(|id| chat_owner(&open_root, id));
+  // A chat's rewind points so far: the run stamps its checkpoints from them.
+  let anchors = chat_id.as_deref().map(|id| std::sync::Mutex::new(rewind::anchors(&open_root, id)));
+  let mut mcp_servers = mcp_servers.filter(|m| !m.is_empty());
+  // The project's .mcp.json servers (Claude Code reads them itself): only trusted, enabled ones
+  // start; servers the user turned off lose their tools.
+  let mut mcp_plan = {
+    let (root, dir) = (open_root.clone(), dir.clone());
+    let passed: std::collections::BTreeSet<String> = mcp_servers.iter().flat_map(|m| m.keys().cloned()).collect();
+    let config = crate::snap::config_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+      let trust = crate::snap::TrustData::load(&config.join(crate::snap::TRUST_FILE));
+      mcp::run_plan(&root, &dir, &passed, &mcp::disabled_ids(&config), &trust)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+  };
+  // Arkai has no Claude Code to read .mcp.json: the enabled servers are passed like the others.
+  if runtime == arkai::RUNTIME
+    && let Some(project) = mcp_plan.project.take()
+    && !project.enabled.is_empty()
+  {
+    let (root, dir) = (open_root.clone(), dir.clone());
+    let found = tauri::async_runtime::spawn_blocking(move || {
+      let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+      let env = |k: &str| std::env::var(k).ok();
+      mcp::project_servers(&root, &dir, &project.enabled, &mcp::Vars { folder: Some(&root), home: home.as_deref(), env: &env })
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    if !found.is_empty() {
+      let servers = mcp_servers.get_or_insert_with(Default::default);
+      for (name, server) in found {
+        servers.entry(name).or_insert(server);
+      }
+    }
+  }
+  // The active account of the runtime's provider; an ACP agent signs in on its own.
   let account = {
     use tauri::Manager;
-    app.state::<crate::accounts::Accounts>().agent_env(crate::accounts::store::Provider::Claude)?
+    let provider = match runtime_spec.as_ref().map(|s| s.kind) {
+      None => Some(crate::accounts::store::Provider::Claude),
+      Some("codex") => Some(crate::accounts::store::Provider::Codex),
+      Some(_) => None,
+    };
+    match provider {
+      Some(p) => app.state::<crate::accounts::Accounts>().agent_env(p)?,
+      None => crate::accounts::store::AgentEnv::default(),
+    }
   };
+  // Writes outside the folder, deletes, MCP tools, protected paths: asked about in every mode.
+  let guard_asks = {
+    let (root, dir, config) = (open_root.clone(), dir.clone(), crate::snap::config_dir(&app)?);
+    tauri::async_runtime::spawn_blocking(move || safety_asks::from_settings(&config, &root, &dir)).await.map_err(|e| e.to_string())?
+  };
+  let edits = chat_id.as_ref().map(|id| {
+    use tauri::Manager;
+    (app.state::<Arc<chat_edits::ChatEdits>>().inner().clone(), open_root.clone(), id.clone(), dir.clone())
+  });
   let req = host::StartRequest {
     cwd,
     prompt,
     model: model.filter(|m| !m.trim().is_empty()),
     permission_mode,
     resume,
+    resume_at,
     mcp_servers,
+    project_mcp: mcp_plan.project,
+    disallowed_tools: {
+      let mut tools = mcp_plan.disallowed_tools;
+      tools.extend(agent_disallowed.into_iter().filter(|t| !tools.contains(t)).collect::<Vec<_>>());
+      tools
+    },
     plugins,
     env: (!account.set.is_empty()).then_some(host::SecretEnv(account.set)),
     unset_env: account.unset,
     images,
+    snapshots: edits.is_some(),
+    safety_checks: safety_checks.filter(|on| !on),
+    guard_asks: Some(guard_asks),
+    system_prompt_append,
+    runtime: runtime_spec,
+    owner,
   };
   let resuming = req.resume.is_some();
   let agents = agents.inner().clone();
+  let what = match (&chat_id, &slug) {
+    (Some(id), _) => format!("chat {id}"),
+    (None, Some(slug)) => format!("task {slug}"),
+    (None, None) => "folder".into(),
+  };
   // Spawning the sidecar and its first answer can take a moment: keep it off the main thread.
   let id = tauri::async_runtime::spawn_blocking(move || {
     agents.start(
       req,
       Arc::new(move |ev| {
-        let _ = on_event.send(ev);
+        // A chat's edits first: snapshots are stored (not passed on), checkpoints added.
+        let events = match &edits {
+          Some((edits, root, id, cwd)) => edits.on_event(root, id, cwd, ev),
+          None if matches!(ev, AgentEvent::FileSnapshot { .. }) => Vec::new(),
+          None => vec![ev],
+        };
+        for mut ev in events {
+          if let Some(a) = &anchors {
+            a.lock().unwrap().observe(&mut ev);
+          }
+          // Transcript first, so a chat reopened right after an event has it.
+          if let Some(t) = &transcript
+            && let Err(e) = t.append(&ev)
+          {
+            log::warn!("chat transcript: {e}");
+          }
+          // Rewind points are Rust's own.
+          if !matches!(ev, AgentEvent::Anchor { .. }) {
+            let _ = on_event.send(ev);
+          }
+        }
       }),
     )
   })
   .await
   .map_err(|e| e.to_string())??;
-  log::info!("agent run {id} started for task {slug}{}", if resuming { " (resumed)" } else { "" });
+  log::info!("agent run {id} started for {what}{}{}", if resuming { " (resumed)" } else { "" }, if runtime == runtimes::CLAUDE { String::new() } else { format!(" on {runtime}") });
+  // A new run makes the chat's last rewind final.
+  if let Some(chat) = chat_id.as_deref()
+    && let Err(e) = rewind::clear_redo(&open_root, chat)
+  {
+    log::warn!("chat {chat}: redo: {e}");
+  }
   Ok(id)
+}
+
+/// The owner key of a chat's live run (`host::Owners`).
+fn chat_owner(root: &std::path::Path, id: &str) -> String {
+  format!("chat:{}:{id}", root.display())
+}
+
+/// Changes a live run's model and/or permission mode from its next response on.
+#[tauri::command]
+pub async fn agent_set_options(app: tauri::AppHandle, agents: State<'_, Arc<AgentHost>>, run_id: u32, model: Option<String>, permission_mode: Option<String>) -> Result<(), String> {
+  if let Some(m) = permission_mode.as_deref()
+    && !RUN_PERMISSION_MODES.contains(&m)
+  {
+    return Err(format!("{m}: unsupported permission mode"));
+  }
+  let model = model.filter(|m| !m.trim().is_empty());
+  if model.as_deref().is_some_and(|m| m.len() > 256 || !m.chars().all(|c| c.is_ascii_graphic())) {
+    return Err("invalid model".into());
+  }
+  // An Arkai model (`provider/model`) goes with its provider, in case it is not the run's own.
+  let config = crate::snap::config_dir(&app)?;
+  on_host(&agents, move |a| {
+    let provider = model.as_deref().and_then(|m| arkai::switch_provider(&config, m));
+    a.set_options(run_id, model.as_deref(), permission_mode.as_deref(), provider.as_ref())
+  })
+  .await
+}
+
+/// Chats of the open folder; empty with no folder open. The first load of a folder also sweeps
+/// its chats' snapshot stores for blobs nothing refers to any more (in the background).
+#[tauri::command]
+pub fn chats_load(ws: Workspace, edits: State<'_, Arc<chat_edits::ChatEdits>>) -> Result<Vec<chats::ChatMeta>, String> {
+  let Some(root) = ws.current() else { return Ok(Vec::new()) };
+  let (edits, swept) = (edits.inner().clone(), root.clone());
+  std::thread::spawn(move || {
+    let n = edits.sweep_once(&swept);
+    if n > 0 {
+      log::info!("chat edits: {n} unreferenced snapshot files removed");
+    }
+  });
+  chats::load(&root)
+}
+
+#[tauri::command]
+pub fn chats_save(ws: Workspace, chats: Vec<chats::ChatMeta>) -> Result<(), String> {
+  chats::save(&ws.root()?, &chats)
+}
+
+/// The chat's saved events (newest `chats::MAX_LOADED_EVENTS`), to rebuild its timeline.
+#[tauri::command]
+pub async fn chat_transcript_load(ws: Workspace, id: String) -> Result<Vec<AgentEvent>, String> {
+  let root = ws.root()?;
+  blocking(move || chats::load_transcript(&root, &id)).await
+}
+
+/// The working tree's changes where a chat runs (`cwd`: the open folder or a task worktree), for
+/// the chat's "Source Control" context.
+#[tauri::command]
+pub async fn chat_context_git_diff(ws: Workspace, cwd: String) -> Result<String, String> {
+  let root = ws.root()?;
+  blocking(move || chat_io::git_changes(&chats::resolve_cwd(&root, std::path::Path::new(&cwd))?)).await
+}
+
+/// Export Chat: chat `id` (its saved events) as JSON at `path`, which the user picked.
+#[tauri::command]
+pub async fn chat_export(ws: Workspace, id: String, path: String) -> Result<(), String> {
+  chats::check_id(&id)?;
+  let root = ws.root()?;
+  blocking(move || {
+    let meta = chats::load(&root)?.into_iter().find(|c| c.id == id).ok_or_else(|| crate::tr!(crate::i18n::msg::AgentMsg::BadChatId))?;
+    let events = chats::load_transcript(&root, &id)?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+    let text = chat_io::export_json(&meta, &events, now)?;
+    std::fs::write(&path, text).map_err(|e| format!("{path}: {e}"))
+  })
+  .await
+}
+
+/// Import Chat: a chat file at `path` (the user picked it) becomes chat `new_id`'s transcript;
+/// the webview adds the returned chat to chats.json.
+#[tauri::command]
+pub async fn chat_import(ws: Workspace, path: String, new_id: String) -> Result<chat_io::ImportedChat, String> {
+  chats::check_id(&new_id)?;
+  let root = ws.root()?;
+  blocking(move || {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+    let (chat, events) = chat_io::parse_import(&chat_io::read_import(std::path::Path::new(&path))?, now)?;
+    chat_io::write_import(&root, &new_id, &events)?;
+    Ok(chat)
+  })
+  .await
+}
+
+/// Deletes the chat's transcript (the webview drops it from chats.json). Refused while it runs.
+#[tauri::command]
+pub async fn chat_transcript_delete(ws: Workspace, agents: State<'_, Arc<AgentHost>>, id: String, session_id: Option<String>) -> Result<(), String> {
+  if session_id.as_deref().is_some_and(|s| agents.session_live(s)) {
+    return Err(crate::tr!(crate::i18n::msg::AgentMsg::ChatBusy));
+  }
+  let root = ws.root()?;
+  blocking(move || {
+    chats::delete_transcript(&root, &id)?;
+    chat_edits::delete(&root, &id)
+  })
+  .await
+}
+
+/// The chat's edits store, with its cwd checked to still be the open folder or one of its task
+/// worktrees; `None` before the chat changed any file.
+fn edits_store(root: &std::path::Path, id: &str) -> Result<Option<chat_edits::Store>, String> {
+  chat_edits::Store::existing(root, id, |cwd| chats::resolve_cwd(root, cwd))
+}
+
+/// The chat's working set (files changed and not yet kept or undone) and its requests.
+#[tauri::command]
+pub async fn chat_edits_list(ws: Workspace, edits: State<'_, Arc<chat_edits::ChatEdits>>, id: String) -> Result<Option<chat_edits::View>, String> {
+  let root = ws.root()?;
+  let edits = edits.inner().clone();
+  blocking(move || {
+    edits.with(&root, &id, false, |running| {
+      let Some(store) = edits_store(&root, &id)? else { return Ok(None) };
+      let prefix = store.cwd().strip_prefix(&root).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+      chat_edits::view(&store, prefix, running).map(Some)
+    })
+  })
+  .await
+}
+
+/// The working set's "before" of `path` (relative to the chat's cwd), for its diff.
+#[tauri::command]
+pub async fn chat_edits_original(ws: Workspace, edits: State<'_, Arc<chat_edits::ChatEdits>>, id: String, path: String) -> Result<String, String> {
+  let root = ws.root()?;
+  let edits = edits.inner().clone();
+  blocking(move || {
+    edits.with(&root, &id, false, |_| {
+      let store = edits_store(&root, &id)?.ok_or_else(|| crate::tr!(crate::i18n::msg::AgentMsg::EditNotRestorable, path = path.clone()))?;
+      chat_edits::original(&store, &path)
+    })
+  })
+  .await
+}
+
+/// Keep: `paths` (all with none) leave the working set as they are.
+#[tauri::command]
+pub async fn chat_edits_keep(ws: Workspace, edits: State<'_, Arc<chat_edits::ChatEdits>>, id: String, paths: Option<Vec<String>>) -> Result<usize, String> {
+  let root = ws.root()?;
+  let edits = edits.inner().clone();
+  blocking(move || {
+    let kept = edits.with(&root, &id, false, |_| match edits_store(&root, &id)? {
+      Some(store) => chat_edits::keep(&store, paths.as_deref()),
+      None => Ok(0),
+    })?;
+    // Keep All: the edits file may have dropped settled entries, and with them their blobs.
+    if paths.is_none() {
+      edits.collect(&root, &id);
+    }
+    Ok(kept)
+  })
+  .await
+}
+
+/// Undo: `paths` (all with none) go back to before the agent changed them. Refused while the
+/// chat's turn runs; the webview asks first about files with unsaved editor changes.
+#[tauri::command]
+pub async fn chat_edits_undo(ws: Workspace, edits: State<'_, Arc<chat_edits::ChatEdits>>, id: String, paths: Option<Vec<String>>) -> Result<chat_edits::Report, String> {
+  let root = ws.root()?;
+  let edits = edits.inner().clone();
+  let report = blocking(move || {
+    edits.with(&root, &id, true, |_| match edits_store(&root, &id)? {
+      Some(store) => chat_edits::undo(&store, paths.as_deref()),
+      None => Ok(chat_edits::Report::default()),
+    })
+  })
+  .await?;
+  log::info!("chat edits: undid {} file(s), deleted {}", report.restored.len(), report.deleted.len());
+  Ok(report)
+}
+
+/// The changes (hunks) of working-set file `path` (relative to the chat's cwd): its base against
+/// the file on disk, for the editor's Keep / Undo per change.
+#[tauri::command]
+pub async fn chat_edits_hunks(ws: Workspace, edits: State<'_, Arc<chat_edits::ChatEdits>>, id: String, path: String) -> Result<chat_edits::FileEditHunks, String> {
+  let root = ws.root()?;
+  let edits = edits.inner().clone();
+  blocking(move || {
+    edits.with(&root, &id, false, |_| match edits_store(&root, &id)? {
+      Some(store) => chat_edits::file_hunks(&store, &path),
+      None => Ok(chat_edits::FileEditHunks { path: path.clone(), ..Default::default() }),
+    })
+  })
+  .await
+}
+
+/// Keep (`keep`) or Undo one change of `path`; returns the file's changes after it. Refused while
+/// the chat's turn runs; Undo writes the file under the git queue lane like file Undo.
+#[tauri::command]
+pub async fn chat_edits_hunk(
+  ws: Workspace,
+  edits: State<'_, Arc<chat_edits::ChatEdits>>,
+  id: String,
+  path: String,
+  hunk: String,
+  keep: bool,
+) -> Result<chat_edits::FileEditHunks, String> {
+  let root = ws.root()?;
+  let edits = edits.inner().clone();
+  let out = blocking(move || {
+    edits.with(&root, &id, true, |_| {
+      let store = edits_store(&root, &id)?.ok_or_else(|| crate::tr!(crate::i18n::msg::AgentMsg::EditHunkGone, path = path.clone()))?;
+      if keep { chat_edits::keep_hunk(&store, &path, &hunk) } else { chat_edits::undo_hunk(&store, &path, &hunk) }
+    })
+  })
+  .await?;
+  log::info!("chat edits: {} one change, {} left", if keep { "kept" } else { "undid" }, out.hunks.len());
+  Ok(out)
+}
+
+/// Restore checkpoint: undoes the changes of request `request` and every later one.
+#[tauri::command]
+pub async fn chat_edits_restore(ws: Workspace, edits: State<'_, Arc<chat_edits::ChatEdits>>, id: String, request: u32) -> Result<chat_edits::Report, String> {
+  let root = ws.root()?;
+  let edits = edits.inner().clone();
+  let report = blocking(move || {
+    edits.with(&root, &id, true, |_| match edits_store(&root, &id)? {
+      Some(store) => chat_edits::restore_checkpoint(&store, request),
+      None => Err(crate::tr!(crate::i18n::msg::AgentMsg::EditNoRequest, index = request + 1)),
+    })
+  })
+  .await?;
+  log::info!("chat edits: restored checkpoint {request} ({} file(s))", report.restored.len() + report.deleted.len());
+  Ok(report)
+}
+
+/// Rewinds the chat to before request `request` (Restore checkpoint, Edit request, Retry): the
+/// files it and later requests changed go back, the transcript loses those requests, and the
+/// result says where the next run continues the conversation. `stack`: Redo should also undo the
+/// rewind made before this one (no run since). Refused while a run of the chat is live.
+#[tauri::command]
+pub async fn chat_rewind(
+  ws: Workspace,
+  agents: State<'_, Arc<AgentHost>>,
+  edits: State<'_, Arc<chat_edits::ChatEdits>>,
+  id: String,
+  request: u32,
+  stack: bool,
+) -> Result<rewind::Rewound, String> {
+  chats::check_id(&id)?;
+  let root = ws.root()?;
+  if agents.owner_live(&chat_owner(&root, &id)) {
+    return Err(crate::tr!(crate::i18n::msg::AgentMsg::ChatBusy));
+  }
+  check_rewindable(&root, &id)?;
+  let edits = edits.inner().clone();
+  let r = blocking(move || edits.with(&root, &id, true, |_| rewind::rewind(&root, &id, request, stack, edits_store(&root, &id)?.as_ref()))).await?;
+  log::info!("chat rewound to request {request} ({} file(s))", r.report.restored.len() + r.report.deleted.len());
+  Ok(r)
+}
+
+/// Redo: undoes the chat's rewinds since its last run (files and transcript).
+#[tauri::command]
+pub async fn chat_rewind_redo(ws: Workspace, agents: State<'_, Arc<AgentHost>>, edits: State<'_, Arc<chat_edits::ChatEdits>>, id: String) -> Result<chat_edits::Report, String> {
+  chats::check_id(&id)?;
+  let root = ws.root()?;
+  if agents.owner_live(&chat_owner(&root, &id)) {
+    return Err(crate::tr!(crate::i18n::msg::AgentMsg::ChatBusy));
+  }
+  let edits = edits.inner().clone();
+  blocking(move || edits.with(&root, &id, true, |_| rewind::redo(&root, &id, edits_store(&root, &id)?.as_ref()))).await
+}
+
+/// Fork: the new chat `new_id` gets chat `id`'s conversation before request `before` (all of it
+/// with none); the result is where its first run continues. The webview adds it to chats.json.
+#[tauri::command]
+pub async fn chat_fork(ws: Workspace, edits: State<'_, Arc<chat_edits::ChatEdits>>, id: String, new_id: String, before: Option<u32>) -> Result<rewind::Resume, String> {
+  chats::check_id(&id)?;
+  chats::check_id(&new_id)?;
+  let root = ws.root()?;
+  check_rewindable(&root, &id)?;
+  let edits = edits.inner().clone();
+  blocking(move || edits.with(&root, &id, false, |_| rewind::fork(&root, &id, &new_id, before, edits_store(&root, &id)?.as_ref()))).await
+}
+
+/// Refuses a rewind or fork of a chat whose agent cannot resume at a message (`runtimes`).
+fn check_rewindable(root: &std::path::Path, id: &str) -> Result<(), String> {
+  let runtime = chats::load(root)?.into_iter().find(|c| c.id == id).map(|c| c.runtime);
+  if runtime.is_some_and(|r| !runtimes::can_rewind(&r)) {
+    return Err(crate::tr!(crate::i18n::msg::RuntimeMsg::NoRewind));
+  }
+  Ok(())
 }
 
 async fn on_host<T: Send + 'static>(
@@ -125,14 +622,15 @@ async fn on_host<T: Send + 'static>(
 #[tauri::command]
 pub async fn agent_send(agents: State<'_, Arc<AgentHost>>, run_id: u32, text: String, images: Option<Vec<String>>) -> Result<(), String> {
   if text.trim().is_empty() {
-    return Err("message is empty".into());
+    return Err(crate::tr!(crate::i18n::msg::TasksMsg::MessageEmpty));
   }
   let images = images.unwrap_or_default();
   crate::attachments::check_images(&images)?;
   on_host(&agents, move |a| a.send(run_id, &text, &images)).await
 }
 
-/// Answers a `permission_request`: `allow`, `allow_always` (this session) or `deny` + message.
+/// Answers a `permission_request`: `allow`, `allow_always` (this session), `allow_workspace`,
+/// `allow_user` (saved rules: `host::DECISIONS`) or `deny` + message.
 /// An AskUserQuestion request is answered with `allow` + `answers` (question text → answer).
 #[tauri::command]
 pub async fn agent_answer_permission(
@@ -163,57 +661,66 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
   tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
-/// Task list of the open folder; empty with no folder open.
+/// Task list of the open folder (empty with no folder open), or of another added project `root`
+/// (the side bar shows every project's tasks).
 #[tauri::command]
-pub fn tasks_load(ws: State<'_, Workspace>) -> Result<Vec<tasks::TaskMeta>, String> {
-  ws.current().map_or(Ok(Vec::new()), |root| tasks::load(&root))
+pub fn tasks_load(ws: Workspace, projects: State<'_, crate::projects::Projects>, root: Option<String>) -> Result<Vec<tasks::TaskMeta>, String> {
+  crate::projects::root_arg(&ws, &projects, root)?.map_or(Ok(Vec::new()), |root| tasks::load(&root))
 }
 
 /// Automations of the open folder; empty with no folder open.
 #[tauri::command]
-pub fn automations_load(ws: State<'_, Workspace>) -> Result<Vec<automations::Automation>, String> {
+pub fn automations_load(ws: Workspace) -> Result<Vec<automations::Automation>, String> {
   ws.current().map_or(Ok(Vec::new()), |root| automations::load(&root))
 }
 
 #[tauri::command]
-pub fn automations_save(ws: State<'_, Workspace>, automations: Vec<automations::Automation>) -> Result<(), String> {
+pub fn automations_save(ws: Workspace, automations: Vec<automations::Automation>) -> Result<(), String> {
   automations::save(&ws.root()?, &automations)
 }
 
 #[tauri::command]
-pub fn tasks_save(ws: State<'_, Workspace>, tasks: Vec<tasks::TaskMeta>) -> Result<(), String> {
+pub fn tasks_save(ws: Workspace, tasks: Vec<tasks::TaskMeta>) -> Result<(), String> {
   tasks::save(&ws.root()?, &tasks)
+}
+
+/// Applies the webview's task changes to tasks.json as it is on disk now (another window's
+/// edits are kept) and returns the stored list.
+#[tauri::command]
+pub async fn tasks_update(ws: Workspace, changes: Vec<tasks::TaskChange>) -> Result<Vec<tasks::TaskMeta>, String> {
+  let root = ws.root()?;
+  blocking(move || tasks::update(&root, &changes)).await
 }
 
 /// Review notes of every worktree of the open folder (`""` = the folder); empty with no folder open.
 #[tauri::command]
-pub fn diff_notes_load(ws: State<'_, Workspace>) -> Result<std::collections::BTreeMap<String, Vec<notes::DiffNote>>, String> {
+pub fn diff_notes_load(ws: Workspace) -> Result<std::collections::BTreeMap<String, Vec<notes::DiffNote>>, String> {
   ws.current().map_or(Ok(Default::default()), |root| notes::load(&root))
 }
 
 /// Replaces the review notes of worktree `key` (`""` = the folder, else a task slug).
 #[tauri::command]
-pub fn diff_notes_save(ws: State<'_, Workspace>, key: String, notes: Vec<notes::DiffNote>) -> Result<(), String> {
+pub fn diff_notes_save(ws: Workspace, key: String, notes: Vec<notes::DiffNote>) -> Result<(), String> {
   notes::save(&ws.root()?, &key, &notes)
 }
 
 /// Commits on the task branch since it forked from `base`, oldest first (prefills the PR form).
 #[tauri::command]
-pub async fn worktree_commits(ws: State<'_, Workspace>, slug: String, base: String) -> Result<Vec<review::Commit>, String> {
+pub async fn worktree_commits(ws: Workspace, slug: String, base: String) -> Result<Vec<review::Commit>, String> {
   let dir = review::task_dir(&ws.root()?, &slug)?;
   blocking(move || review::commits_since(&dir, &base)).await
 }
 
 /// Local branches of the open folder's repository (base branch picker).
 #[tauri::command]
-pub async fn git_branches(ws: State<'_, Workspace>) -> Result<Vec<String>, String> {
+pub async fn git_branches(ws: Workspace) -> Result<Vec<String>, String> {
   let root = ws.root()?;
   blocking(move || crate::git::local_branches(&root)).await
 }
 
 /// Files changed in the task worktree since it forked from `base`, committed or not.
 #[tauri::command]
-pub async fn worktree_diff_stat(ws: State<'_, Workspace>, slug: String, base: String) -> Result<review::DiffStat, String> {
+pub async fn worktree_diff_stat(ws: Workspace, slug: String, base: String) -> Result<review::DiffStat, String> {
   let dir = review::task_dir(&ws.root()?, &slug)?;
   blocking(move || review::diff_stat(&dir, &base)).await
 }
@@ -222,7 +729,7 @@ const DIFF_TEXT_LIMIT: usize = 2 * 1024 * 1024;
 
 /// Unified diff of a task worktree since its fork point (combined diff view).
 #[tauri::command]
-pub async fn worktree_diff_text(ws: State<'_, Workspace>, slug: String, base: String) -> Result<String, String> {
+pub async fn worktree_diff_text(ws: Workspace, slug: String, base: String) -> Result<String, String> {
   let dir = review::task_dir(&ws.root()?, &slug)?;
   blocking(move || {
     let mb = review::merge_base(&dir, &base)?;
@@ -233,14 +740,14 @@ pub async fn worktree_diff_text(ws: State<'_, Workspace>, slug: String, base: St
 
 /// Unified diff of the open folder's working tree against HEAD (combined diff view).
 #[tauri::command]
-pub async fn git_diff_text(ws: State<'_, Workspace>) -> Result<String, String> {
+pub async fn git_diff_text(ws: Workspace) -> Result<String, String> {
   let root = ws.root()?;
   blocking(move || review::diff_text(&root, "HEAD", DIFF_TEXT_LIMIT)).await
 }
 
 /// Restores `paths` in the task worktree to their state at the fork point (the webview confirms).
 #[tauri::command]
-pub async fn worktree_reject(ws: State<'_, Workspace>, slug: String, base: String, paths: Vec<String>) -> Result<(), String> {
+pub async fn worktree_reject(ws: Workspace, slug: String, base: String, paths: Vec<String>) -> Result<(), String> {
   let dir = review::task_dir(&ws.root()?, &slug)?;
   blocking(move || review::reject(&dir, &base, &paths)).await?;
   log::info!("task {slug}: rejected changes");
@@ -249,14 +756,14 @@ pub async fn worktree_reject(ws: State<'_, Workspace>, slug: String, base: Strin
 
 /// The hunks of one file of the task worktree since it forked from `base` (per-hunk review).
 #[tauri::command]
-pub async fn worktree_hunks(ws: State<'_, Workspace>, slug: String, base: String, path: String) -> Result<hunks::FileHunks, String> {
+pub async fn worktree_hunks(ws: Workspace, slug: String, base: String, path: String) -> Result<hunks::FileHunks, String> {
   let dir = review::task_dir(&ws.root()?, &slug)?;
   blocking(move || hunks::file_hunks(&dir, &base, &path)).await
 }
 
 /// Restores the hunks `ids` of `path` in the task worktree to the fork point; the rest of the file stays.
 #[tauri::command]
-pub async fn worktree_reject_hunks(ws: State<'_, Workspace>, slug: String, base: String, path: String, ids: Vec<String>) -> Result<usize, String> {
+pub async fn worktree_reject_hunks(ws: Workspace, slug: String, base: String, path: String, ids: Vec<String>) -> Result<usize, String> {
   let dir = review::task_dir(&ws.root()?, &slug)?;
   let n = blocking(move || hunks::reject_hunks(&dir, &base, &path, &ids)).await?;
   log::info!("task {slug}: rejected {n} hunk(s)");
@@ -264,7 +771,7 @@ pub async fn worktree_reject_hunks(ws: State<'_, Workspace>, slug: String, base:
 }
 
 #[tauri::command]
-pub async fn worktree_commit(ws: State<'_, Workspace>, slug: String, message: String) -> Result<(), String> {
+pub async fn worktree_commit(ws: Workspace, slug: String, message: String) -> Result<(), String> {
   let dir = review::task_dir(&ws.root()?, &slug)?;
   blocking(move || review::commit_all(&dir, &message)).await?;
   log::info!("task {slug}: committed");
@@ -273,7 +780,7 @@ pub async fn worktree_commit(ws: State<'_, Workspace>, slug: String, message: St
 
 /// `mode`: `"ff"` (fast-forward only) or `"merge"` (always a merge commit). The webview confirms.
 #[tauri::command]
-pub async fn worktree_merge(ws: State<'_, Workspace>, slug: String, base: String, mode: String) -> Result<review::MergeResult, String> {
+pub async fn worktree_merge(ws: Workspace, slug: String, base: String, mode: String) -> Result<review::MergeResult, String> {
   let root = ws.root()?;
   let merge_commit = match mode.as_str() {
     "ff" => false,
@@ -285,7 +792,7 @@ pub async fn worktree_merge(ws: State<'_, Workspace>, slug: String, base: String
 
 /// Files of the task worktree for a quick open scoped to it (relative to the worktree).
 #[tauri::command]
-pub async fn worktree_list_files(ws: State<'_, Workspace>, slug: String) -> Result<Vec<String>, String> {
+pub async fn worktree_list_files(ws: Workspace, slug: String) -> Result<Vec<String>, String> {
   let dir = review::task_dir(&ws.root()?, &slug)?;
   tauri::async_runtime::spawn_blocking(move || crate::fs::list_files(&dir, 20_000)).await.map_err(|e| e.to_string())
 }
@@ -293,50 +800,81 @@ pub async fn worktree_list_files(ws: State<'_, Workspace>, slug: String) -> Resu
 /// `rel` at revision `rev`, in the task worktree `slug` (or the open folder without one); empty
 /// when the file does not exist there. Feeds the task diff tabs.
 #[tauri::command]
-pub async fn git_show_ref(ws: State<'_, Workspace>, slug: Option<String>, rev: String, rel: String) -> Result<String, String> {
-  let root = ws.root()?;
-  let dir = match slug {
-    Some(s) => review::task_dir(&root, &s)?,
-    None => root,
+pub async fn git_show_ref(ws: Workspace, slug: Option<String>, rev: String, rel: String) -> Result<String, String> {
+  // Without a task, `rel` is a webview path of any root folder (its own repository's file).
+  let (dir, rel) = match slug {
+    Some(s) => (review::task_dir(&ws.root()?, &s)?, rel),
+    None => crate::git_repos::locate_file(&ws, &rel)?,
   };
   crate::git::check_rel(&dir, &rel)?;
   blocking(move || crate::git::show_at(&dir, &rev, &rel)).await
 }
 
-/// Whether `gh` is installed and logged in (never creates anything).
+/// Whether `gh` is installed and logged in (never creates anything); for a folder whose origin is
+/// on GitLab, whether a token for that host is stored (`provider: "gitlab"`).
 #[tauri::command]
-pub async fn gh_status() -> Result<review::GhStatus, String> {
-  blocking(|| Ok(review::gh_status(review::gh_bin()))).await
+pub async fn gh_status(ws: Workspace) -> Result<review::GhStatus, String> {
+  let root = ws.root().ok();
+  blocking(move || match root.as_deref().map(mr::forge) {
+    Some(mr::Forge::Gitlab(p)) => Ok(mr::status(&p)),
+    _ => Ok(review::gh_status(review::gh_bin())),
+  })
+  .await
+}
+
+fn gh() -> Result<std::path::PathBuf, String> {
+  review::gh_bin().ok_or_else(issues::gh_missing)
 }
 
 /// The worktree's pull request, parsed and as gh reports it (`None` when there is none yet); an
 /// empty `slug` is the open folder itself. The one PR read every view of a worktree shares.
 #[tauri::command]
-pub async fn worktree_pr(ws: State<'_, Workspace>, slug: String) -> Result<Option<review::WorktreePr>, String> {
-  let root = ws.root()?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
-  if slug.is_empty() {
-    return blocking(move || review::worktree_pr(&gh, &root, None)).await;
-  }
-  let dir = review::task_dir(&root, &slug)?;
-  blocking(move || review::worktree_pr(&gh, &dir, Some(&slug))).await
+pub async fn worktree_pr(ws: Workspace, slug: String) -> Result<Option<review::WorktreePr>, String> {
+  let dir = pr_dir(&ws, &slug)?;
+  let slug = (!slug.is_empty()).then_some(slug);
+  blocking(move || match mr::forge(&dir) {
+    mr::Forge::Gitlab(p) => {
+      let (t, r) = forge::gitlab(&p)?;
+      mr::worktree_mr(&t, &r, &dir, slug.as_deref())
+    }
+    mr::Forge::Github => review::worktree_pr(&gh()?, &dir, slug.as_deref()),
+  })
+  .await
 }
 
-/// Pushes the task branch and runs `gh pr create`; returns the PR URL.
+/// Pushes the task branch and runs `gh pr create`; returns the PR URL. `stacked`: the base is the
+/// parent task's branch (stacked worktrees), pushed first so GitHub knows it.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn worktree_pr_create(
-  ws: State<'_, Workspace>,
+  ws: Workspace,
   slug: String,
   base: String,
   title: String,
   body: String,
   draft: Option<bool>,
   open: Option<bool>,
+  stacked: Option<bool>,
 ) -> Result<String, String> {
   let dir = review::task_dir(&ws.root()?, &slug)?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
   let draft = draft.unwrap_or(false);
   let url = blocking(move || {
+    if let mr::Forge::Gitlab(p) = mr::forge(&dir) {
+      let (t, r) = forge::gitlab(&p)?;
+      let url = mr::push_and_create(&t, &r, &dir, &slug, &base, &title, &body, draft, stacked.unwrap_or(false))?;
+      // kingu.pr.openAfterCreate: best effort, the merge request exists either way.
+      if open.unwrap_or(false)
+        && let Err(e) = crate::system::open_web_url(&url)
+      {
+        log::warn!("open {url}: {e}");
+      }
+      return Ok(url);
+    }
+    let gh = gh()?;
+    // Stacked worktrees: the base is the parent task's branch, which must be on origin too.
+    if stacked.unwrap_or(false) {
+      review::push_stack_base(&dir, &base)?;
+    }
     let url = review::pr_create(&gh, &dir, &slug, &base, &title, &body, draft)?;
     // kingu.pr.openAfterCreate: best effort, the PR exists either way.
     if open.unwrap_or(false) && url.starts_with("https://") {
@@ -355,7 +893,7 @@ pub async fn worktree_pr_create(
 /// Issues of the open folder's GitHub repository (`gh issue list`). `assignee`: `@me` or none.
 #[tauri::command]
 pub async fn gh_issues_list(
-  ws: State<'_, Workspace>,
+  ws: Workspace,
   state: Option<String>,
   assignee: Option<String>,
   label: Option<String>,
@@ -363,24 +901,24 @@ pub async fn gh_issues_list(
   limit: Option<u32>,
 ) -> Result<Vec<issues::Issue>, String> {
   let root = ws.root()?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
   let q = issues::IssueQuery { state: state.unwrap_or_else(|| "open".into()), assignee, label, search, limit: limit.unwrap_or(50) };
   blocking(move || issues::list(&gh, &root, &q)).await
 }
 
 /// One issue with its latest comments (`gh issue view`).
 #[tauri::command]
-pub async fn gh_issue_view(ws: State<'_, Workspace>, number: u64) -> Result<issues::IssueDetail, String> {
+pub async fn gh_issue_view(ws: Workspace, number: u64) -> Result<issues::IssueDetail, String> {
   let root = ws.root()?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
   blocking(move || issues::view(&gh, &root, number)).await
 }
 
 /// Comments on an issue (only when `kingu.issues.commentOnPr` is on; the webview decides).
 #[tauri::command]
-pub async fn gh_issue_comment(ws: State<'_, Workspace>, number: u64, body: String) -> Result<(), String> {
+pub async fn gh_issue_comment(ws: Workspace, number: u64, body: String) -> Result<(), String> {
   let root = ws.root()?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
   blocking(move || issues::comment(&gh, &root, number, &body)).await?;
   log::info!("commented on issue #{number}");
   Ok(())
@@ -388,9 +926,9 @@ pub async fn gh_issue_comment(ws: State<'_, Workspace>, number: u64, body: Strin
 
 /// Opens the issue on GitHub in the default browser.
 #[tauri::command]
-pub async fn gh_issue_open(ws: State<'_, Workspace>, number: u64) -> Result<(), String> {
+pub async fn gh_issue_open(ws: Workspace, number: u64) -> Result<(), String> {
   let root = ws.root()?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
+  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
   blocking(move || issues::open_web(&gh, &root, number)).await
 }
 
@@ -405,7 +943,7 @@ fn pr_dir(ws: &Workspace, slug: &str) -> Result<std::path::PathBuf, String> {
 /// `delete_branch` also deletes its head branch on GitHub. The webview confirms first.
 #[tauri::command]
 pub async fn worktree_pr_merge(
-  ws: State<'_, Workspace>,
+  ws: Workspace,
   slug: String,
   url: String,
   number: u64,
@@ -413,42 +951,96 @@ pub async fn worktree_pr_merge(
   delete_branch: Option<bool>,
 ) -> Result<pr::MergeOutcome, String> {
   let dir = pr_dir(&ws, &slug)?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
   let method = pr::MergeMethod::parse(&method)?;
-  blocking(move || pr::merge(&gh, &dir, &url, number, method, delete_branch.unwrap_or(false))).await
+  blocking(move || match mr::forge(&dir) {
+    mr::Forge::Gitlab(p) => {
+      let (p, iid) = mr::parse_url(&url, &p)?;
+      mr::merge(&crate::gitlab::connected(&p.host)?, &p, iid, method, delete_branch.unwrap_or(false))
+    }
+    mr::Forge::Github => pr::merge(&gh()?, &dir, &url, number, method, delete_branch.unwrap_or(false)),
+  })
+  .await
 }
 
 /// Merge methods the PR's repository allows and the viewer's default (`gh repo view`).
 #[tauri::command]
-pub async fn gh_merge_settings(ws: State<'_, Workspace>, slug: String, url: String) -> Result<pr::RepoMergeSettings, String> {
+pub async fn gh_merge_settings(ws: Workspace, slug: String, url: String) -> Result<pr::RepoMergeSettings, String> {
   let dir = pr_dir(&ws, &slug)?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
-  let repo = pr::RepoRef::from_pr_url(&url)?;
-  blocking(move || pr::merge_settings(&gh, &dir, &repo)).await
+  blocking(move || match mr::forge(&dir) {
+    mr::Forge::Gitlab(p) => {
+      let (p, _) = mr::parse_url(&url, &p)?;
+      mr::merge_settings(&crate::gitlab::connected(&p.host)?, &p)
+    }
+    mr::Forge::Github => pr::merge_settings(&gh()?, &dir, &pr::RepoRef::from_pr_url(&url)?),
+  })
+  .await
 }
 
 /// Log excerpts of failed checks' GitHub Actions jobs, for the "fix failing checks" prompt.
 #[tauri::command]
-pub async fn worktree_pr_check_logs(ws: State<'_, Workspace>, slug: String, url: String, checks: Vec<pr::CheckRef>) -> Result<Vec<pr::CheckLog>, String> {
+pub async fn worktree_pr_check_logs(ws: Workspace, slug: String, url: String, checks: Vec<pr::CheckRef>) -> Result<Vec<pr::CheckLog>, String> {
   let dir = pr_dir(&ws, &slug)?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
-  blocking(move || pr::check_logs(&gh, &dir, &url, &checks)).await
+  blocking(move || match mr::forge(&dir) {
+    mr::Forge::Gitlab(p) => {
+      let (p, _) = mr::parse_url(&url, &p)?;
+      Ok(mr::check_logs(&crate::gitlab::connected(&p.host)?, &p, &checks))
+    }
+    mr::Forge::Github => pr::check_logs(&gh()?, &dir, &url, &checks),
+  })
+  .await
 }
 
 /// Review threads of the PR (resolved ones included; the webview filters).
 #[tauri::command]
-pub async fn worktree_pr_threads(ws: State<'_, Workspace>, slug: String, url: String, number: u64) -> Result<Vec<pr::ReviewThread>, String> {
+pub async fn worktree_pr_threads(ws: Workspace, slug: String, url: String, number: u64) -> Result<Vec<pr::ReviewThread>, String> {
   let dir = pr_dir(&ws, &slug)?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
-  blocking(move || pr::review_threads(&gh, &dir, &url, number)).await
+  blocking(move || match mr::forge(&dir) {
+    mr::Forge::Gitlab(p) => {
+      let (p, iid) = mr::parse_url(&url, &p)?;
+      mr::threads(&crate::gitlab::connected(&p.host)?, &p, iid, &url)
+    }
+    mr::Forge::Github => pr::review_threads(&gh()?, &dir, &url, number),
+  })
+  .await
 }
 
 /// Resolves (or, with `resolve: false`, reopens) a review thread; returns its new state.
 #[tauri::command]
-pub async fn gh_resolve_thread(ws: State<'_, Workspace>, slug: String, url: String, thread_id: String, resolve: bool) -> Result<bool, String> {
+pub async fn gh_resolve_thread(ws: Workspace, slug: String, url: String, thread_id: String, resolve: bool) -> Result<bool, String> {
   let dir = pr_dir(&ws, &slug)?;
-  let gh = review::gh_bin().ok_or(issues::GH_MISSING)?;
-  let done = blocking(move || pr::resolve_thread(&gh, &dir, &url, &thread_id, resolve)).await?;
+  let done = blocking(move || match mr::forge(&dir) {
+    mr::Forge::Gitlab(p) => {
+      let (p, iid) = mr::parse_url(&url, &p)?;
+      mr::resolve(&crate::gitlab::connected(&p.host)?, &p, iid, &thread_id, resolve)
+    }
+    mr::Forge::Github => pr::resolve_thread(&gh()?, &dir, &url, &thread_id, resolve),
+  })
+  .await?;
   log::info!("review thread {}", if done { "resolved" } else { "reopened" });
   Ok(done)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn run_dir_takes_a_task_slug_or_a_checked_cwd() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(tmp.path()).unwrap();
+    let wt = root.join(".kingu/worktrees/fix-login");
+    std::fs::create_dir_all(&wt).unwrap();
+    let r = root.to_str().unwrap();
+    // The ADE's calls: a slug, no cwd.
+    assert_eq!(run_dir(&root, None, Some("fix-login"), None).unwrap(), wt);
+    assert!(run_dir(&root, None, Some("gone"), None).unwrap_err().contains("no worktree"));
+    assert!(run_dir(&root, None, Some("../x"), None).is_err());
+    // Chats: the folder or a task worktree, while that folder is still the open one.
+    assert_eq!(run_dir(&root, Some(r), None, Some(r)).unwrap(), root);
+    assert_eq!(run_dir(&root, Some(r), None, Some(wt.to_str().unwrap())).unwrap(), wt);
+    assert!(run_dir(&root, Some(r), Some("fix-login"), Some("/")).unwrap_err().contains("only in the open folder"), "cwd wins over slug");
+    let other = tempfile::tempdir().unwrap();
+    assert!(run_dir(&root, Some(other.path().to_str().unwrap()), None, Some(r)).unwrap_err().contains("open folder changed"));
+    assert!(run_dir(&root, None, None, None).is_err());
+  }
 }

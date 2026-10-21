@@ -3,8 +3,19 @@
 
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { quickInputKind, quickValueKind, recordCommand, restoredInput } from './workbenchOptions';
+import { parseAlignment, type QuickAlignment } from './quickAccess';
 
 const HISTORY_KEY = 'kingu.commandPalette.history';
+/** Align Quick Input Top / Center, kept per machine like VS Code's quick input view state. */
+const ALIGNMENT_KEY = 'kingu.quickInput.alignment';
+
+function readAlignment(): QuickAlignment {
+	try {
+		return parseAlignment(localStorage.getItem(ALIGNMENT_KEY));
+	} catch {
+		return 'top';
+	}
+}
 
 function readHistory(): string[] {
 	try {
@@ -43,6 +54,8 @@ export type Picker = {
 	id?: string;
 	/** VS Code's quickNavigate: releasing Ctrl/Cmd accepts the focused item (the ⌃Tab switcher). */
 	quickNavigate?: boolean;
+	/** An input box for a secret (a task's promptString input with `password`): typed text is hidden. */
+	password?: boolean;
 };
 
 class Quick {
@@ -62,6 +75,17 @@ class Quick {
 	#lastInput: { commands?: string; files?: string } = {};
 	/** `workbench.commandPalette.history`: recently run palette commands, most recent first. */
 	commandHistory = $state<string[]>(readHistory());
+	/** Where the quick input sits: below the title bar, or a quarter down the window. */
+	alignment = $state<QuickAlignment>(readAlignment());
+
+	setAlignment(alignment: QuickAlignment) {
+		this.alignment = alignment;
+		try {
+			localStorage.setItem(ALIGNMENT_KEY, alignment);
+		} catch {
+			// Storage unavailable: the choice lasts until the window reloads.
+		}
+	}
 
 	/**
 	 * Opens quick access at `prefix`. `workbench.commandPalette.preserveInput` and
@@ -94,6 +118,7 @@ class Quick {
 		this.hide();
 		this.picker = picker;
 		this.value = '';
+		this.selectRestored = false;
 		this.visible = true;
 		this.session++;
 	}
@@ -104,10 +129,15 @@ class Quick {
 	}
 
 	/** VS Code's showInputBox: the typed (trimmed) text on Enter, undefined when dismissed.
-	 * `hint` is the row shown under the input for the current text. */
-	async input(opts: { placeholder: string; hint: (value: string) => string }): Promise<string | undefined> {
-		const item = await this.choose({ placeholder: opts.placeholder, items: [], dynamic: (value) => [{ id: value, label: opts.hint(value) }] });
-		return item?.id;
+	 * `hint` is the row shown under the input for the current text; `value` is the starting text
+	 * (selected, so typing replaces it); `password` hides what is typed. */
+	async input(opts: { placeholder: string; hint: (value: string) => string; value?: string; password?: boolean }): Promise<string | undefined> {
+		const item = this.choose({ placeholder: opts.placeholder, items: [], password: opts.password, dynamic: (value) => [{ id: value, label: opts.hint(value) }] });
+		if (opts.value) {
+			this.value = opts.value;
+			this.selectRestored = true;
+		}
+		return (await item)?.id;
 	}
 
 	hide({ accepted = false } = {}) {

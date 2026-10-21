@@ -5,11 +5,20 @@ import { clientLog } from '#lib/client-log.ts';
 import { enabledGlobs, hiddenBySibling, isExcluded, siblingClauses, sortEntries, type LexicographicOrder, type SortOrder } from '#lib/settings/mappings.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { editors } from './editors.svelte';
+import { lsp } from '#lib/lsp/lsp.svelte.ts';
 import { affectedBy, baseName, dirsToRefresh, isUnder, joinRel, parentOf, remapPath, validateName } from './fileTree';
 import { notifications } from './notifications.svelte';
 import { compactChain, compactLabel, dropTarget, moveQuestion, planTransfer, rangeSelection, topLevel } from './explorerModel';
 import { nestFiles } from './fileNesting';
+import { workspaceStorage } from './workspaceStorage.svelte';
+import { fireDidMoveFiles } from './fileMoves';
+import { withSaved } from './workspaceState';
+
+const TREE_STATE = 'kingu.explorer.treeViewState';
+/** Expanded folders kept per workspace at most. */
+const MAX_EXPANDED = 500;
 import { t } from '#lib/i18n/index.ts';
+import { isRustError } from '#lib/i18n/rustErrors.ts';
 
 /** macOS file systems ignore case, so file nesting does too (VS Code's PathCaseSensitive check). */
 const CASE_SENSITIVE_FS = !(typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac'));
@@ -21,7 +30,9 @@ export type DirEntry = { name: string; rel: string; is_dir: boolean; ignored?: b
  * `nests`: how many files are nested under this file (explorer.fileNesting); `expanded` is then
  * whether they show.
  */
-export type Row = DirEntry & { depth: number; expanded: boolean; chain?: string[]; nests?: number };
+export type Row = DirEntry & { depth: number; expanded: boolean; chain?: string[]; nests?: number; root?: boolean };
+/** A root folder row of a multi-root workspace: `key` is `''` for the first folder, its absolute path for another. */
+export type ExplorerRoot = { key: string; name: string; path: string };
 /** Files cut or copied in the Explorer (VS Code keeps its own file clipboard). */
 export type FileClipboard = { paths: string[]; cut: boolean };
 /** The inline input row (VS Code's explorer edit box): a new entry in `parent`, or a rename of `rel`. */
@@ -44,6 +55,46 @@ class Explorer {
 	focusRequest = $state<string | null>(null);
 	/** Nested files' parents whose expansion differs from explorer.fileNesting.expand. */
 	nestToggled = new SvelteSet<string>();
+	/** Root folders collapsed in a multi-root workspace (VS Code shows each root as a tree node). */
+	collapsedRoots = new SvelteSet<string>();
+
+	constructor() {
+		// The expanded folders are kept per workspace (VS Code's workbench.explorer.treeViewState).
+		workspaceStorage.register(TREE_STATE, ['expanded', 'collapsedRoots'], (saved) => void this.#restoreExpanded(saved));
+		$effect.root(() => {
+			$effect(() => {
+				workspaceStorage.save(TREE_STATE, { expanded: [...this.expanded].slice(0, MAX_EXPANDED), collapsedRoots: [...this.collapsedRoots] });
+			});
+		});
+	}
+
+	/** A workspace's expanded folders come back; their children load (a folder gone since is dropped). */
+	async #restoreExpanded(saved: Record<string, unknown> | null) {
+		const s = withSaved({ expanded: [] as unknown[], collapsedRoots: [] as unknown[] }, saved);
+		const strings = (list: unknown[]) => list.filter((v): v is string => typeof v === 'string' && v !== '');
+		this.expanded.clear();
+		this.collapsedRoots.clear();
+		for (const rel of strings(s.expanded)) this.expanded.add(rel);
+		for (const rel of strings(s.collapsedRoots)) this.collapsedRoots.add(rel);
+		// Parents first, so a folder shows as soon as its own children are in.
+		const dirs = [...this.expanded].sort((a, b) => a.split('/').length - b.split('/').length);
+		for (const d of dirs) if (this.expanded.has(d) && !this.children.has(d)) await this.load(d);
+	}
+
+	#roots = (): ExplorerRoot[] => [];
+	/** Set by the view: the root folders to show as rows (none for a single folder). */
+	setRoots(fn: () => ExplorerRoot[]) {
+		this.#roots = fn;
+	}
+
+	/** The root folder rows (empty unless the workspace has several folders). */
+	roots(): ExplorerRoot[] {
+		return this.#roots();
+	}
+
+	isRoot(rel: string): boolean {
+		return this.#roots().some((r) => r.key === rel);
+	}
 
 	async load(rel: string) {
 		try {
@@ -65,6 +116,11 @@ class Explorer {
 	}
 
 	async expand(rel: string) {
+		if (this.isRoot(rel)) {
+			this.collapsedRoots.delete(rel);
+			if (!this.children.has(rel)) await this.load(rel);
+			return;
+		}
 		if (rel) this.expanded.add(rel);
 		if (!this.children.has(rel)) await this.load(rel);
 		// explorer.compactFolders: a folder whose only child is a folder opens that one too, so the
@@ -77,7 +133,19 @@ class Explorer {
 
 	/** Collapsing a compacted row collapses its whole chain. */
 	collapse(row: Pick<Row, 'rel' | 'chain'>) {
+		if (this.isRoot(row.rel)) {
+			this.collapsedRoots.add(row.rel);
+			return;
+		}
 		for (const rel of row.chain ?? [row.rel]) this.expanded.delete(rel);
+	}
+
+	/** A root folder left the workspace: its rows go. */
+	forgetRoot(path: string) {
+		for (const k of [...this.children.keys()]) if (k === path || k.startsWith(path + '/')) this.children.delete(k);
+		for (const k of [...this.expanded]) if (k === path || k.startsWith(path + '/')) this.expanded.delete(k);
+		this.collapsedRoots.delete(path);
+		if (this.selected && (this.selected === path || this.selected.startsWith(path + '/'))) this.select(null);
 	}
 
 	/** Open Folder / Close Folder: drop the whole tree. */
@@ -90,6 +158,7 @@ class Explorer {
 		this.anchor = null;
 		this.editing = null;
 		this.clipboard = null;
+		this.collapsedRoots.clear();
 	}
 
 	/** File watcher batch: re-list the loaded folders the changes touch. */
@@ -192,14 +261,32 @@ class Explorer {
 				if (expanded) walk(last, depth + 1);
 			}
 		};
-		walk('', 0);
+		const roots = this.#roots();
+		if (roots.length < 2) {
+			walk('', 0);
+			return out;
+		}
+		// Multi-root: each root folder is a row, its files below it (VS Code's Explorer).
+		for (const r of roots) {
+			const expanded = !this.collapsedRoots.has(r.key);
+			out.push({ name: r.name, rel: r.key, is_dir: true, ignored: false, depth: 0, expanded, root: true });
+			if (expanded) walk(r.key, 1);
+		}
 		return out;
 	}
 
 	/** explorer.autoReveal: expands the folders above `rel` and selects it. */
 	async reveal(rel: string) {
-		const parts = rel.split('/');
-		for (let i = 0; i < parts.length; i++) await this.expand(parts.slice(0, i).join('/'));
+		// In another root folder (an absolute path): expand from that root down.
+		const root = rel.startsWith('/') ? this.#roots().filter((r) => r.key && (rel === r.key || rel.startsWith(r.key + '/'))).sort((a, b) => b.key.length - a.key.length)[0] : undefined;
+		if (root) {
+			await this.expand(root.key);
+			const inner = rel.slice(root.key.length + 1).split('/');
+			for (let i = 1; i < inner.length; i++) await this.expand(`${root.key}/${inner.slice(0, i).join('/')}`);
+		} else {
+			const parts = rel.split('/');
+			for (let i = 0; i < parts.length; i++) await this.expand(parts.slice(0, i).join('/'));
+		}
 		// A file nested under another one (explorer.fileNesting): open its nest.
 		for (const [parent, nested] of this.nestsOf(parentOf(rel))) if (nested.some((e) => e.rel === rel)) this.toggleNest(parent, true);
 		this.select(rel);
@@ -291,6 +378,9 @@ class Explorer {
 			else if (r !== yes) return false;
 		}
 		const created: string[] = [];
+		// js/ts.updateImportsOnFileMove: the TypeScript server's import updates, asked before the files move.
+		const imports = copy ? null : await lsp.willRenameFiles(ops.map((o) => ({ from: o.from, to: o.to, isDir: this.isDir(o.from) })));
+		const moved = new Set<string>();
 		for (const op of ops) {
 			try {
 				if (copy) {
@@ -302,6 +392,7 @@ class Explorer {
 					const to = await this.#moveReplacing(op.from, dir, op.to);
 					if (to === null) continue;
 					created.push(to);
+					if (to === op.to) moved.add(op.from);
 					this.#afterMove(op.from, to);
 				}
 			} catch (e) {
@@ -309,6 +400,7 @@ class Explorer {
 				break;
 			}
 		}
+		if (imports) void lsp.filesRenamed(imports, moved);
 		if (dir) this.expanded.add(dir);
 		await this.refresh([...ops.map((o) => o.from), ...created, dir]);
 		for (const d of [...this.expanded]) if (!this.children.has(d)) await this.load(d);
@@ -330,7 +422,7 @@ class Explorer {
 		try {
 			return await invoke<string>('fs_copy', { from, toDir: dir, naming });
 		} catch (e) {
-			if (!/already exists/.test(String(e))) throw e;
+			if (!isRustError(e, 'fileExists')) throw e;
 		}
 		if (from === to) throw new Error(t('workbench.explorer.exists', { name: baseName(from) }));
 		if (!(await this.#replaceExisting(to))) return null;
@@ -339,13 +431,16 @@ class Explorer {
 
 	/** Rust never overwrites: a clash asks "Replace?" (VS Code), then deletes the old one first. */
 	async #moveReplacing(from: string, dir: string, to: string): Promise<string | null> {
+		let moved: string;
 		try {
-			return await invoke<string>('fs_move', { from, toDir: dir });
+			moved = await invoke<string>('fs_move', { from, toDir: dir });
 		} catch (e) {
-			if (!/already exists/.test(String(e))) throw e;
+			if (!isRustError(e, 'fileExists')) throw e;
+			if (!(await this.#replaceExisting(to))) return null;
+			moved = await invoke<string>('fs_move', { from, toDir: dir });
 		}
-		if (!(await this.#replaceExisting(to))) return null;
-		return invoke<string>('fs_move', { from, toDir: dir });
+		moveLocalHistory(from, moved);
+		return moved;
 	}
 
 	/** Asks to replace `to`, then deletes it (files.enableTrash) and closes its tabs. */
@@ -396,7 +491,7 @@ class Explorer {
 	}
 
 	isDir(rel: string): boolean {
-		return rel === '' || (this.children.get(parentOf(rel))?.find((e) => e.rel === rel)?.is_dir ?? false);
+		return rel === '' || this.isRoot(rel) || (this.children.get(parentOf(rel))?.find((e) => e.rel === rel)?.is_dir ?? false);
 	}
 
 	// --- File operations (VS Code fileActions.ts) ------------------------------------------------
@@ -427,7 +522,7 @@ class Explorer {
 		if (invalid) return invalid;
 		try {
 			if (edit.kind === 'rename') await this.#rename(edit.rel, joinRel(parentOf(edit.rel), name));
-			else await this.#create(edit.kind, joinRel(edit.parent, name));
+			else await this.#create(edit.kind, edit.parent, name);
 		} catch (e) {
 			return e instanceof Error ? e.message : String(e);
 		}
@@ -438,13 +533,15 @@ class Explorer {
 		this.editing = null;
 	}
 
-	async #create(kind: 'file' | 'folder', rel: string) {
+	async #create(kind: 'file' | 'folder', parent: string, name: string) {
+		const rel = joinRel(parent, name);
 		await invoke(kind === 'file' ? 'fs_create_file' : 'fs_create_dir', { rel });
 		this.editing = null;
 		// Nested names (`a/b/c.ts`) create folders on the way: show the whole chain.
-		const dirs = rel.split('/').slice(0, -1);
-		for (let i = 0; i < dirs.length; i++) this.expanded.add(dirs.slice(0, i + 1).join('/'));
-		await this.refresh([rel, ...dirs.map((_, i) => dirs.slice(0, i + 1).join('/'))]);
+		const parts = name.split('/').slice(0, -1);
+		const dirs = parts.map((_, i) => joinRel(parent, parts.slice(0, i + 1).join('/')));
+		for (const d of dirs) this.expanded.add(d);
+		await this.refresh([rel, ...dirs]);
 		for (const d of [...this.expanded]) if (!this.children.has(d)) await this.load(d);
 		this.select(rel);
 		if (kind === 'file') editors.open(rel, { preview: false });
@@ -452,7 +549,9 @@ class Explorer {
 
 	async #rename(from: string, to: string) {
 		if (editors.allTabs().some((t) => t.dirty && remapPath(t.path, from, to) !== null)) throw new Error(t('workbench.explorer.saveBeforeRename'));
+		const imports = await lsp.willRenameFiles([{ from, to, isDir: this.isDir(from) }]);
 		await invoke('fs_rename', { from, to });
+		moveLocalHistory(from, to);
 		this.editing = null;
 		// Keep the folder's expansion state under its new name.
 		const wasExpanded = [...this.expanded].filter((k) => isUnder(k, from));
@@ -462,11 +561,13 @@ class Explorer {
 		for (const k of wasExpanded) await this.load(to + k.slice(from.length));
 		this.select(to);
 		this.#moveTabs(from, to);
+		if (imports) void lsp.filesRenamed(imports);
 	}
 
 	/** Points the renamed path's tabs (in every group) at the new name; they are clean, so nothing is lost. */
 	#moveTabs(from: string, to: string) {
 		editors.remap((path) => remapPath(path, from, to));
+		if (from !== to) fireDidMoveFiles([{ from, to }]);
 	}
 
 	/** Delete: confirm, move to the Trash (or delete for good: files.enableTrash), close its tabs. Acts on the whole selection when `rel` is in it. */
@@ -537,3 +638,8 @@ class Explorer {
 }
 
 export const explorer = new Explorer();
+
+/** A file's local history follows a rename or move (VS Code's tracker moves the entries); for a folder, every file's under it. */
+function moveLocalHistory(from: string, to: string) {
+	invoke('local_history_move', { from, to }).catch((e) => clientLog('info', `local history move ${from}: ${e}`));
+}

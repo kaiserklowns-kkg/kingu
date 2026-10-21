@@ -17,10 +17,12 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 
+use crate::i18n::msg::SnapMsg;
 use crate::settings::write_atomic;
 use crate::snap_install::{LockStatus, Origin, read_lock, read_origin};
+use crate::tr;
 use crate::workspace::Workspace;
 
 pub(crate) const MANIFEST: &str = "snap.toml";
@@ -305,7 +307,7 @@ pub fn placeholders(arg: &str) -> Result<Vec<&str>, String> {
   let mut rest = arg;
   while let Some(i) = rest.find(OPEN) {
     let after = &rest[i + OPEN.len()..];
-    let end = after.find('}').ok_or_else(|| format!("\"{arg}\": ${{setting:…}} ไม่มี }} ปิด"))?;
+    let end = after.find('}').ok_or_else(|| tr!(SnapMsg::UnclosedPlaceholder, arg))?;
     out.push(&after[..end]);
     rest = &after[end + 1..];
   }
@@ -316,7 +318,7 @@ pub fn placeholders(arg: &str) -> Result<Vec<&str>, String> {
 fn check_placeholders(arg: &str, keys: &BTreeSet<String>, owner: &str) -> Result<(), String> {
   for key in placeholders(arg).map_err(|e| format!("{owner}: {e}"))? {
     if !keys.contains(key) {
-      return Err(format!("{owner} อ้างถึงการตั้งค่า \"{key}\" ที่ไม่ได้ประกาศใน [[settings]]"));
+      return Err(tr!(SnapMsg::UndeclaredSetting, owner, key));
     }
   }
   Ok(())
@@ -330,11 +332,11 @@ fn skill_path_error(path: &str) -> Option<String> {
   let parts: Vec<&str> = path.split('/').collect();
   let plain = |p: &&str| !p.is_empty() && *p != "." && *p != ".." && p.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'.' || c == b'_' || c == b'-');
   if path.starts_with('/') || !parts.iter().all(plain) {
-    return Some(format!("path ของ skill \"{path}\" ต้องเป็น path ย่อยในโฟลเดอร์ snap (ห้ามขึ้นต้นด้วย / และห้ามมี .. หรืออักขระพิเศษ)"));
+    return Some(tr!(SnapMsg::SkillPathInvalid, path));
   }
   let name = parts.last().copied().unwrap_or_default();
   if !is_slug(name, 64) {
-    return Some(format!("ชื่อโฟลเดอร์ของ skill \"{name}\" ใช้เป็นชื่อ skill ไม่ได้ (ใช้ a-z, 0-9, - ยาวไม่เกิน 64 ตัว)"));
+    return Some(tr!(SnapMsg::SkillNameInvalid, name));
   }
   None
 }
@@ -342,7 +344,7 @@ fn skill_path_error(path: &str) -> Option<String> {
 fn setting_default(key: &str, kind: SettingType, value: Option<toml::Value>) -> Result<serde_json::Value, String> {
   use serde_json::Value as J;
   use toml::Value as T;
-  let bad = || format!("ค่า default ของการตั้งค่า \"{key}\" ไม่ตรงกับ type = \"{}\"", serde_json::to_value(kind).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default());
+  let bad = || tr!(SnapMsg::SettingDefaultType, key, kind = serde_json::to_value(kind).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default());
   Ok(match (kind, value) {
     (SettingType::String, None) => J::from(""),
     (SettingType::Boolean, None) => J::from(false),
@@ -355,24 +357,24 @@ fn setting_default(key: &str, kind: SettingType, value: Option<toml::Value>) -> 
   })
 }
 
-/// Parses and validates `snap.toml` found in the folder named `folder`. Errors are Thai, one line.
+/// Parses and validates `snap.toml` found in the folder named `folder`. Errors are one line, in the UI language.
 pub fn parse_manifest(text: &str, folder: &str) -> Result<Parsed, String> {
-  let m: Manifest = toml::from_str(text).map_err(|e| format!("อ่าน {MANIFEST} ไม่ได้: {}", e.to_string().trim().replace('\n', " ")))?;
+  let m: Manifest = toml::from_str(text).map_err(|e| tr!(SnapMsg::ManifestUnreadable, manifest = MANIFEST, detail = e.to_string().trim().replace('\n', " ")))?;
   if !is_snap_id(&m.id) {
-    return Err(format!("id \"{}\" ไม่ถูกต้อง (ใช้ a-z, 0-9, - ขึ้นต้นด้วยตัวอักษรหรือตัวเลข ยาวไม่เกิน 40 ตัว)", m.id));
+    return Err(tr!(SnapMsg::InvalidIdRules, id = m.id));
   }
   if m.id != folder {
-    return Err(format!("id \"{}\" ต้องตรงกับชื่อโฟลเดอร์ \"{folder}\"", m.id));
+    return Err(tr!(SnapMsg::IdFolderMismatch, id = m.id, folder));
   }
   if m.name.trim().is_empty() {
-    return Err("ต้องระบุ name".into());
+    return Err(tr!(SnapMsg::NameRequired));
   }
   if m.version.trim().is_empty() {
-    return Err("ต้องระบุ version".into());
+    return Err(tr!(SnapMsg::VersionRequired));
   }
   for s in &m.permissions.secrets {
     if !is_env_name(s) {
-      return Err(format!("ชื่อ secret \"{s}\" ไม่ถูกต้อง (ใช้ A-Z, a-z, 0-9, _)"));
+      return Err(tr!(SnapMsg::SecretNameInvalid, name = s));
     }
   }
 
@@ -380,10 +382,10 @@ pub fn parse_manifest(text: &str, folder: &str) -> Result<Parsed, String> {
   let mut keys = BTreeSet::new();
   for s in m.settings {
     if !is_setting_key(&s.key) {
-      return Err(format!("key ของการตั้งค่า \"{}\" ไม่ถูกต้อง (ขึ้นต้นด้วยตัวอักษร ตามด้วยตัวอักษรหรือตัวเลข)", s.key));
+      return Err(tr!(SnapMsg::SettingKeyInvalid, key = s.key));
     }
     if !keys.insert(s.key.clone()) {
-      return Err(format!("การตั้งค่า \"{}\" ซ้ำ", s.key));
+      return Err(tr!(SnapMsg::SettingDuplicate, key = s.key));
     }
     let default = setting_default(&s.key, s.kind, s.default)?;
     settings.push(Setting { key: s.key, kind: s.kind, default, description: s.description });
@@ -392,32 +394,32 @@ pub fn parse_manifest(text: &str, folder: &str) -> Result<Parsed, String> {
   let mut ids = BTreeSet::new();
   for t in &m.tasks {
     if !is_slug(&t.id, usize::MAX) {
-      return Err(format!("id ของงาน \"{}\" ไม่ถูกต้อง (ใช้ a-z, 0-9, -)", t.id));
+      return Err(tr!(SnapMsg::TaskIdInvalid, id = t.id));
     }
     if !ids.insert(t.id.as_str()) {
-      return Err(format!("งาน \"{}\" ซ้ำ", t.id));
+      return Err(tr!(SnapMsg::TaskDuplicate, id = t.id));
     }
     if t.title.trim().is_empty() {
-      return Err(format!("งาน \"{}\" ต้องมี title", t.id));
+      return Err(tr!(SnapMsg::TaskNoTitle, id = t.id));
     }
     if t.command.first().is_none_or(|c| c.trim().is_empty()) {
-      return Err(format!("งาน \"{}\" ต้องมี command (argv อย่างน้อยหนึ่งตัว)", t.id));
+      return Err(tr!(SnapMsg::TaskNoCommand, id = t.id));
     }
     for arg in &t.command {
-      check_placeholders(arg, &keys, &format!("งาน \"{}\"", t.id))?;
+      check_placeholders(arg, &keys, &tr!(SnapMsg::TaskOwner, id = t.id))?;
     }
   }
 
   let mut mcp = Vec::new();
   for (name, server) in m.mcp {
     if !is_name(&name) {
-      return Err(format!("ชื่อ MCP server \"{name}\" ไม่ถูกต้อง (ใช้ A-Z, a-z, 0-9, _, -)"));
+      return Err(tr!(SnapMsg::McpNameInvalid, name));
     }
     if server.command.first().is_none_or(|c| c.trim().is_empty()) {
-      return Err(format!("MCP server \"{name}\" ต้องมี command"));
+      return Err(tr!(SnapMsg::McpNoCommand, name));
     }
     if let Some(k) = server.env.keys().find(|k| !is_env_name(k)) {
-      return Err(format!("MCP server \"{name}\": ชื่อตัวแปร env \"{k}\" ไม่ถูกต้อง"));
+      return Err(tr!(SnapMsg::McpEnvInvalid, name, var = k));
     }
     // Expanded by the webview like task arguments (snapModel.expandCommand / expandEnv).
     let owner = format!("MCP server \"{name}\"");
@@ -428,7 +430,7 @@ pub fn parse_manifest(text: &str, folder: &str) -> Result<Parsed, String> {
   }
 
   if m.skills.len() > MAX_SKILLS {
-    return Err(format!("มี skill ได้ไม่เกิน {MAX_SKILLS} ตัว"));
+    return Err(tr!(SnapMsg::TooManySkills, max = MAX_SKILLS));
   }
   let mut skills = Vec::new();
   let mut names = BTreeSet::new();
@@ -438,7 +440,7 @@ pub fn parse_manifest(text: &str, folder: &str) -> Result<Parsed, String> {
     }
     let name = s.path.rsplit('/').next().unwrap_or_default().to_string();
     if !names.insert(name.clone()) {
-      return Err(format!("skill ชื่อ \"{name}\" ซ้ำ (ชื่อ skill คือชื่อโฟลเดอร์สุดท้ายของ path)"));
+      return Err(tr!(SnapMsg::SkillDuplicate, name));
     }
     skills.push(s.path);
   }
@@ -593,9 +595,9 @@ struct Budget {
 /// the snap); hidden entries (`.DS_Store`, `.git`) are skipped so they never change the hash.
 fn read_tree(dir: &Path, prefix: &str, depth: usize, budget: &mut Budget, out: &mut Vec<(String, Vec<u8>)>) -> Result<(), String> {
   if depth > MAX_SKILL_DEPTH {
-    return Err(format!("โฟลเดอร์ซ้อนลึกเกิน {MAX_SKILL_DEPTH} ชั้น"));
+    return Err(tr!(SnapMsg::TooDeep, max = MAX_SKILL_DEPTH));
   }
-  let mut entries: Vec<_> = std::fs::read_dir(dir).map_err(|e| format!("อ่าน {} ไม่ได้: {e}", dir.display()))?.flatten().collect();
+  let mut entries: Vec<_> = std::fs::read_dir(dir).map_err(|e| tr!(SnapMsg::ReadFailed, path = dir.display(), detail = e))?.flatten().collect();
   entries.sort_by_key(|e| e.file_name());
   for entry in entries {
     let name = entry.file_name().to_string_lossy().into_owned();
@@ -603,9 +605,9 @@ fn read_tree(dir: &Path, prefix: &str, depth: usize, budget: &mut Budget, out: &
       continue;
     }
     let rel = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
-    let meta = std::fs::symlink_metadata(entry.path()).map_err(|e| format!("อ่าน {rel} ไม่ได้: {e}"))?;
+    let meta = std::fs::symlink_metadata(entry.path()).map_err(|e| tr!(SnapMsg::ReadFailed, path = rel, detail = e))?;
     if meta.file_type().is_symlink() {
-      return Err(format!("{rel} เป็น symlink — ไม่รองรับใน skill"));
+      return Err(tr!(SnapMsg::SkillSymlink, path = rel));
     }
     if meta.is_dir() {
       read_tree(&entry.path(), &rel, depth + 1, budget, out)?;
@@ -613,9 +615,9 @@ fn read_tree(dir: &Path, prefix: &str, depth: usize, budget: &mut Budget, out: &
       budget.files += 1;
       budget.bytes += meta.len();
       if budget.files > MAX_SKILL_FILES || budget.bytes > MAX_SKILL_BYTES {
-        return Err(format!("skill ใหญ่เกินไป (รวมได้ไม่เกิน {MAX_SKILL_FILES} ไฟล์ และ {} MB ต่อ snap)", MAX_SKILL_BYTES / 1024 / 1024));
+        return Err(tr!(SnapMsg::SkillTooBig, files = MAX_SKILL_FILES, mb = MAX_SKILL_BYTES / 1024 / 1024));
       }
-      out.push((rel, std::fs::read(entry.path()).map_err(|e| format!("อ่าน {} ไม่ได้: {e}", entry.path().display()))?));
+      out.push((rel, std::fs::read(entry.path()).map_err(|e| tr!(SnapMsg::ReadFailed, path = entry.path().display(), detail = e))?));
     }
   }
   Ok(())
@@ -632,16 +634,16 @@ pub fn read_skills(snap_dir: &Path, paths: &[String]) -> Result<Vec<Skill>, Stri
     for part in path.split('/') {
       dir.push(part);
       match std::fs::symlink_metadata(&dir) {
-        Ok(m) if m.file_type().is_symlink() => return Err(err(format!("{part} เป็น symlink — ไม่รองรับ"))),
+        Ok(m) if m.file_type().is_symlink() => return Err(err(tr!(SnapMsg::SkillPartSymlink, part))),
         Ok(m) if m.is_dir() => {}
-        Ok(_) => return Err(err("ต้องเป็นโฟลเดอร์".into())),
-        Err(_) => return Err(err("ไม่พบโฟลเดอร์นี้ใน snap".into())),
+        Ok(_) => return Err(err(tr!(SnapMsg::SkillMustBeFolder))),
+        Err(_) => return Err(err(tr!(SnapMsg::SkillFolderMissing))),
       }
     }
     match std::fs::symlink_metadata(dir.join(SKILL_FILE)) {
       Ok(m) if m.is_file() => {}
-      Ok(_) => return Err(err(format!("{SKILL_FILE} ต้องเป็นไฟล์ธรรมดา (ไม่ใช่ symlink)"))),
-      Err(_) => return Err(err(format!("ไม่มี {SKILL_FILE}"))),
+      Ok(_) => return Err(err(tr!(SnapMsg::SkillFileNotPlain, file = SKILL_FILE))),
+      Err(_) => return Err(err(tr!(SnapMsg::SkillFileMissing, file = SKILL_FILE))),
     }
     let mut files = Vec::new();
     read_tree(&dir, "", 0, &mut budget, &mut files).map_err(err)?;
@@ -915,27 +917,27 @@ fn read_readme(dir: &Path) -> Option<String> {
 pub(crate) fn read_snap(dir: &Path, folder: &str, source: Source, root: Option<&Path>, trust: &TrustData) -> SnapInfo {
   let broken = |hash: String, e: String| SnapInfo::broken(folder, source, dir, hash, e);
   if !is_snap_id(folder) {
-    return broken(String::new(), format!("ชื่อโฟลเดอร์ \"{folder}\" ใช้เป็น id ของ snap ไม่ได้ (ใช้ a-z, 0-9, - ยาวไม่เกิน 40 ตัว)"));
+    return broken(String::new(), tr!(SnapMsg::FolderNameNotId, folder));
   }
   let file = dir.join(MANIFEST);
   let meta = match std::fs::symlink_metadata(&file) {
     Ok(m) => m,
-    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return broken(String::new(), format!("ไม่มี {MANIFEST} ในโฟลเดอร์นี้")),
-    Err(e) => return broken(String::new(), format!("อ่าน {MANIFEST} ไม่ได้: {e}")),
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return broken(String::new(), tr!(SnapMsg::NoManifest, manifest = MANIFEST)),
+    Err(e) => return broken(String::new(), tr!(SnapMsg::ManifestUnreadable, manifest = MANIFEST, detail = e)),
   };
   if !meta.is_file() {
-    return broken(String::new(), format!("{MANIFEST} ต้องเป็นไฟล์ธรรมดา (ไม่ใช่ symlink หรือโฟลเดอร์)"));
+    return broken(String::new(), tr!(SnapMsg::ManifestNotRegular, manifest = MANIFEST));
   }
   if meta.len() > MAX_MANIFEST_BYTES {
-    return broken(String::new(), format!("{MANIFEST} ใหญ่เกิน {} KB", MAX_MANIFEST_BYTES / 1024));
+    return broken(String::new(), tr!(SnapMsg::ManifestOverKb, manifest = MANIFEST, kb = MAX_MANIFEST_BYTES / 1024));
   }
   let bytes = match std::fs::read(&file) {
     Ok(b) => b,
-    Err(e) => return broken(String::new(), format!("อ่าน {MANIFEST} ไม่ได้: {e}")),
+    Err(e) => return broken(String::new(), tr!(SnapMsg::ManifestUnreadable, manifest = MANIFEST, detail = e)),
   };
   let hash = sha256_hex(&bytes);
   let Ok(text) = std::str::from_utf8(&bytes) else {
-    return broken(hash, format!("{MANIFEST} ไม่ใช่ UTF-8"));
+    return broken(hash, tr!(SnapMsg::ManifestNotUtf8, manifest = MANIFEST));
   };
   let p = match parse_manifest(text, folder) {
     Ok(p) => p,
@@ -1000,7 +1002,7 @@ pub(crate) fn scan(snaps_dir: &Path, source: Source, root: Option<&Path>, trust:
     let dir = entry.path();
     let Ok(meta) = std::fs::symlink_metadata(&dir) else { continue };
     if meta.file_type().is_symlink() {
-      out.push(SnapInfo::broken(&name, source, &dir, String::new(), "โฟลเดอร์ snap เป็น symlink — ไม่รองรับ (Kingu ไม่ตามลิงก์ออกนอกโฟลเดอร์ snaps)".into()));
+      out.push(SnapInfo::broken(&name, source, &dir, String::new(), tr!(SnapMsg::SnapFolderSymlink)));
     } else if meta.is_dir() {
       let mut snap = read_snap(&dir, &name, source, root, trust);
       if source == Source::User {
@@ -1054,7 +1056,7 @@ impl TrustData {
 
   pub fn save(&self, file: &Path) -> Result<(), String> {
     let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-    write_atomic(file, &text).map_err(|e| format!("บันทึกการเชื่อถือ snap ไม่สำเร็จ: {e}"))
+    write_atomic(file, &text).map_err(|e| tr!(SnapMsg::TrustSaveFailed, detail = e))
   }
 
   pub fn is_trusted(&self, root: &Path, id: &str, sha256: &str) -> bool {
@@ -1077,19 +1079,19 @@ static TRUST_LOCK: Mutex<()> = Mutex::new(());
 /// if the manifest changed since, nothing is trusted.
 pub fn set_trust(config_dir: &Path, root: &Path, id: &str, trusted: bool, expected: Option<&str>) -> Result<(), String> {
   if !is_snap_id(id) {
-    return Err(format!("id \"{id}\" ไม่ถูกต้อง"));
+    return Err(tr!(SnapMsg::InvalidId, id));
   }
   let file = config_dir.join(TRUST_FILE);
   let _guard = TRUST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
   let mut data = TrustData::load(&file);
   if trusted {
-    let dir = repo_snaps_dir(root).ok_or("โฟลเดอร์นี้ไม่มี .kingu/snaps")?;
-    let snap = scan(&dir, Source::Repo, Some(root), &data).into_iter().find(|s| s.id == id).ok_or_else(|| format!("ไม่พบ snap \"{id}\" ในโฟลเดอร์นี้"))?;
+    let dir = repo_snaps_dir(root).ok_or_else(|| tr!(SnapMsg::NoRepoSnaps))?;
+    let snap = scan(&dir, Source::Repo, Some(root), &data).into_iter().find(|s| s.id == id).ok_or_else(|| tr!(SnapMsg::NotFoundHere, id))?;
     if let Some(e) = &snap.error {
-      return Err(format!("snap \"{id}\" มีข้อผิดพลาด เชื่อถือไม่ได้: {e}"));
+      return Err(tr!(SnapMsg::TrustBroken, id, detail = e));
     }
     if expected.is_some_and(|h| h != snap.hash) {
-      return Err(format!("{MANIFEST} ของ snap \"{id}\" เปลี่ยนไปแล้ว — โหลด Snaps ใหม่แล้วตรวจอีกครั้งก่อนเชื่อถือ"));
+      return Err(tr!(SnapMsg::TrustChanged, manifest = MANIFEST, id));
     }
     data.set(root, id, Some(&snap.hash));
   } else {
@@ -1165,16 +1167,16 @@ pub fn plugin_name(snap_id: &str) -> String {
 
 fn write_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
   if let Some(parent) = path.parent() {
-    std::fs::create_dir_all(parent).map_err(|e| format!("สร้าง {} ไม่ได้: {e}", parent.display()))?;
+    std::fs::create_dir_all(parent).map_err(|e| tr!(SnapMsg::CreateFailed, path = parent.display(), detail = e))?;
   }
-  std::fs::write(path, bytes).map_err(|e| format!("เขียน {} ไม่ได้: {e}", path.display()))
+  std::fs::write(path, bytes).map_err(|e| tr!(SnapMsg::WriteFailed, path = path.display(), detail = e))
 }
 
 /// Writes (or reuses) the plugin folder of `snap` with the hook commands `runs` under
 /// `plugins_dir` and returns its path.
 pub fn write_plugin(plugins_dir: &Path, snap: &SnapInfo, runs: &[HookRun]) -> Result<PathBuf, String> {
   if !is_snap_id(&snap.id) || snap.hash.len() < 16 {
-    return Err(format!("snap \"{}\" ไม่ถูกต้อง", snap.id));
+    return Err(tr!(SnapMsg::SnapInvalid, id = snap.id));
   }
   let hooks = if runs.is_empty() { None } else { Some(hooks_json(snap, runs)?) };
   // Without hooks the folder is named by the trust hash alone (as before hooks existed).
@@ -1205,7 +1207,7 @@ pub fn write_plugin(plugins_dir: &Path, snap: &SnapInfo, runs: &[HookRun]) -> Re
       for (rel, bytes) in &skill.files {
         // `rel` came from `read_tree` (plain names joined by `/`); checked again before writing.
         if rel.split('/').any(|p| p.is_empty() || p == "." || p == ".." || p.contains('\\')) {
-          return Err(format!("ชื่อไฟล์ใน skill ไม่ถูกต้อง: {rel}"));
+          return Err(tr!(SnapMsg::SkillFileNameInvalid, path = rel));
         }
         write_file(&base.join(rel), bytes)?;
       }
@@ -1216,7 +1218,7 @@ pub fn write_plugin(plugins_dir: &Path, snap: &SnapInfo, runs: &[HookRun]) -> Re
     Ok(()) => Ok(()),
     // Another run wrote the same content first.
     Err(_) if dir.join(PLUGIN_MANIFEST[0]).join(PLUGIN_MANIFEST[1]).is_file() => Ok(()),
-    Err(e) => Err(format!("ย้าย plugin ของ snap \"{}\" เข้าที่ไม่ได้: {e}", snap.id)),
+    Err(e) => Err(tr!(SnapMsg::PluginMoveFailed, id = snap.id, detail = e)),
   });
   if tmp.exists() {
     let _ = std::fs::remove_dir_all(&tmp);
@@ -1258,19 +1260,24 @@ pub fn skill_plugins(plugins_dir: &Path, list: &[SnapInfo], ids: &[String], hook
     if snap.skills.is_empty() && runs.is_empty() {
       continue;
     }
-    std::fs::create_dir_all(plugins_dir).map_err(|e| format!("สร้าง {} ไม่ได้: {e}", plugins_dir.display()))?;
+    std::fs::create_dir_all(plugins_dir).map_err(|e| tr!(SnapMsg::CreateFailed, path = plugins_dir.display(), detail = e))?;
     out.push(write_plugin(plugins_dir, snap, runs)?);
   }
   Ok(out)
 }
 
-/// Plugin folders handed to an agent must be ones `skill_plugins` wrote: directly inside
-/// `plugins_dir`, not hidden, with a plugin manifest. Anything else could load arbitrary hooks.
-pub fn validate_plugin_dirs(plugins_dir: &Path, dirs: &[String]) -> Result<(), String> {
+/// Plugin folders handed to an agent must be ones Kingu wrote: directly inside one of `bases`
+/// (the snap plugins, the Skills view's plugin, the `kingu` command's skill; see
+/// `skill_hub::plugin_bases`), not hidden, with a plugin manifest. Anything else could load
+/// arbitrary hooks.
+pub fn validate_plugin_dirs(bases: &[PathBuf], dirs: &[String]) -> Result<(), String> {
   if dirs.len() > MAX_PLUGINS {
     return Err("too many plugins".into());
   }
-  let base = plugins_dir.canonicalize().map_err(|_| "no snap plugins have been prepared".to_string())?;
+  let bases: Vec<PathBuf> = bases.iter().filter_map(|b| b.canonicalize().ok()).collect();
+  if bases.is_empty() {
+    return Err("no snap plugins have been prepared".to_string());
+  }
   for d in dirs {
     let bad = || format!("{d}: not a Kingu snap plugin folder");
     let path = Path::new(d);
@@ -1279,7 +1286,7 @@ pub fn validate_plugin_dirs(plugins_dir: &Path, dirs: &[String]) -> Result<(), S
     }
     let real = path.canonicalize().map_err(|_| bad())?;
     let hidden = real.file_name().is_none_or(|n| n.to_string_lossy().starts_with('.'));
-    if real.parent() != Some(base.as_path()) || hidden || !real.join(PLUGIN_MANIFEST[0]).join(PLUGIN_MANIFEST[1]).is_file() {
+    if !real.parent().is_some_and(|p| bases.iter().any(|b| b == p)) || hidden || !real.join(PLUGIN_MANIFEST[0]).join(PLUGIN_MANIFEST[1]).is_file() {
       return Err(bad());
     }
   }
@@ -1295,7 +1302,7 @@ pub(crate) fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-pub fn snap_list(app: AppHandle, ws: State<'_, Workspace>) -> Result<Vec<SnapInfo>, String> {
+pub fn snap_list(app: AppHandle, ws: Workspace) -> Result<Vec<SnapInfo>, String> {
   let config = config_dir(&app)?;
   let trust = TrustData::load(&config.join(TRUST_FILE));
   Ok(discover(&config.join(USER_DIR), ws.current().as_deref(), &trust))
@@ -1306,19 +1313,20 @@ pub fn snap_list(app: AppHandle, ws: State<'_, Workspace>) -> Result<Vec<SnapInf
 /// overridden) contribute, with exactly the bytes that were hashed for trust. `hooks`: each
 /// snap's `[[hooks]]` as the webview resolved them for this run (see `HookRun`).
 #[tauri::command]
-pub async fn snap_skill_plugins(app: AppHandle, ids: Vec<String>, hooks: Option<BTreeMap<String, Vec<HookRun>>>) -> Result<Vec<String>, String> {
+pub async fn snap_skill_plugins(app: AppHandle, ws: Workspace, ids: Vec<String>, hooks: Option<BTreeMap<String, Vec<HookRun>>>) -> Result<Vec<String>, String> {
   let hooks = hooks.unwrap_or_default();
   if ids.is_empty() {
     return Ok(Vec::new());
   }
   if ids.iter().any(|id| !is_snap_id(id)) {
-    return Err("id ของ snap ไม่ถูกต้อง".into());
+    return Err(tr!(SnapMsg::InvalidSnapId));
   }
   tauri::async_runtime::spawn_blocking(move || {
     let config = config_dir(&app)?;
     let trust = TrustData::load(&config.join(TRUST_FILE));
-    let root = app.state::<Workspace>().current();
-    let list = discover(&config.join(USER_DIR), root.as_deref(), &trust);
+    let root = ws.current();
+    // Skills turned off in the Skills view stay out.
+    let list = crate::skill_hub::without_disabled(discover(&config.join(USER_DIR), root.as_deref(), &trust), &crate::skill_hub::HubState::load(&config));
     let dirs = skill_plugins(&plugins_dir(&app)?, &list, &ids, &hooks)?;
     Ok(dirs.into_iter().map(|d| d.display().to_string()).collect())
   })
@@ -1327,8 +1335,8 @@ pub async fn snap_skill_plugins(app: AppHandle, ids: Vec<String>, hooks: Option<
 }
 
 #[tauri::command]
-pub fn snap_trust(app: AppHandle, ws: State<'_, Workspace>, id: String, trusted: bool, hash: Option<String>) -> Result<(), String> {
-  let root = ws.root().map_err(|_| "ยังไม่ได้เปิดโฟลเดอร์".to_string())?;
+pub fn snap_trust(app: AppHandle, ws: Workspace, id: String, trusted: bool, hash: Option<String>) -> Result<(), String> {
+  let root = ws.root().map_err(|_| tr!(SnapMsg::NoFolderOpen))?;
   set_trust(&config_dir(&app)?, &root, &id, trusted, hash.as_deref())?;
   log::info!("snap {id}: trusted = {trusted} in {}", root.display());
   Ok(())
@@ -1415,9 +1423,9 @@ env = { GOFLAGS = "-mod=mod" }
 
   #[test]
   fn id_must_match_folder_and_be_a_slug() {
-    assert!(parse_manifest(FULL, "golang").unwrap_err().contains("ต้องตรงกับชื่อโฟลเดอร์"));
+    assert!(parse_manifest(FULL, "golang").unwrap_err().contains("must match the folder name"));
     let bad = FULL.replace("id = \"go\"", "id = \"Go\"");
-    assert!(parse_manifest(&bad, "Go").unwrap_err().contains("ไม่ถูกต้อง"));
+    assert!(parse_manifest(&bad, "Go").unwrap_err().contains("Invalid id"));
     let long = "a".repeat(41);
     assert!(parse_manifest(&FULL.replace("id = \"go\"", &format!("id = \"{long}\"")), &long).is_err());
     assert!(is_snap_id(&"a".repeat(40)) && is_snap_id("go-1") && !is_snap_id("-go") && !is_snap_id("") && !is_snap_id("../x"));
@@ -1434,8 +1442,8 @@ env = { GOFLAGS = "-mod=mod" }
 
   #[test]
   fn validates_tasks() {
-    assert!(parse_manifest(&FULL.replace("id = \"vet\"", "id = \"Vet!\""), "go").unwrap_err().contains("id ของงาน"));
-    assert!(parse_manifest(&FULL.replace("id = \"vet\"", "id = \"test\""), "go").unwrap_err().contains("ซ้ำ"));
+    assert!(parse_manifest(&FULL.replace("id = \"vet\"", "id = \"Vet!\""), "go").unwrap_err().contains("Invalid task id"));
+    assert!(parse_manifest(&FULL.replace("id = \"vet\"", "id = \"test\""), "go").unwrap_err().contains("declared twice"));
     assert!(parse_manifest(&FULL.replace("command = [\"go\", \"vet\", \"./...\"]", "command = []"), "go").unwrap_err().contains("command"));
     let e = parse_manifest(&FULL.replace("${setting:testFlags}", "${setting:nope}"), "go").unwrap_err();
     assert!(e.contains("\"nope\""), "{e}");
@@ -1445,7 +1453,7 @@ env = { GOFLAGS = "-mod=mod" }
   #[test]
   fn validates_settings_and_mcp() {
     assert!(parse_manifest(&FULL.replace("key = \"testFlags\"", "key = \"test-flags\""), "go").unwrap_err().contains("key"));
-    assert!(parse_manifest(&FULL.replace("key = \"verbose\"", "key = \"count\""), "go").unwrap_err().contains("ซ้ำ"));
+    assert!(parse_manifest(&FULL.replace("key = \"verbose\"", "key = \"count\""), "go").unwrap_err().contains("declared twice"));
     assert!(parse_manifest(&FULL.replace("default = \"-race\"", "default = 1"), "go").unwrap_err().contains("default"));
     assert!(parse_manifest(&FULL.replace("type = \"boolean\"", "type = \"list\""), "go").is_err());
     assert!(parse_manifest(&FULL.replace("command = [\"gopls\", \"mcp\"]", "command = []"), "go").is_err());
@@ -1493,7 +1501,7 @@ env = { GOFLAGS = "-mod=mod" }
     let list = discover(&user_dir, Some(root.path()), &TrustData::default());
     let ids: Vec<_> = list.iter().map(|s| (s.id.as_str(), s.source)).collect();
     assert_eq!(ids, [("Bad_Name", Source::User), ("go", Source::User), ("mine", Source::User), ("broken", Source::Repo), ("go", Source::Repo)]);
-    assert!(list[0].error.as_deref().unwrap().contains("ชื่อโฟลเดอร์"));
+    assert!(list[0].error.as_deref().unwrap().contains("Folder name"));
     // The repo "go" is not trusted yet: the user's "go" stays active.
     assert!(!list[1].overridden && list[1].trusted);
     assert!(!list[2].overridden && list[2].trusted && list[2].error.is_none());
@@ -1520,7 +1528,7 @@ env = { GOFLAGS = "-mod=mod" }
     let shown = find(&load());
     assert!(!shown.trusted);
     // A stale hash (the manifest changed after the user looked at it) trusts nothing.
-    assert!(set_trust(config.path(), root.path(), "lint", true, Some("0".repeat(64).as_str())).unwrap_err().contains("เปลี่ยน"));
+    assert!(set_trust(config.path(), root.path(), "lint", true, Some("0".repeat(64).as_str())).unwrap_err().contains("has changed"));
     assert!(!find(&load()).trusted);
     set_trust(config.path(), root.path(), "lint", true, Some(&shown.hash)).unwrap();
     assert!(find(&load()).trusted);
@@ -1547,7 +1555,7 @@ env = { GOFLAGS = "-mod=mod" }
     let root = tempfile::tempdir().unwrap();
     assert!(set_trust(config.path(), root.path(), "x", true, None).is_err());
     write_snap(&root.path().join(".kingu/snaps"), "x", "id = \"x\"\n");
-    assert!(set_trust(config.path(), root.path(), "x", true, None).unwrap_err().contains("ข้อผิดพลาด"));
+    assert!(set_trust(config.path(), root.path(), "x", true, None).unwrap_err().contains("has an error"));
     assert!(set_trust(config.path(), root.path(), "../x", true, None).is_err());
   }
 
@@ -1578,7 +1586,7 @@ env = { GOFLAGS = "-mod=mod" }
     for bad in ["/etc/skills", "../x", "skills/../x", "skills//x", "./x", "skills/Go_Style", "a b", "skills\\\\x", ""] {
       assert!(parse_manifest(&with_skills(&[bad]), "go").is_err(), "{bad}");
     }
-    assert!(parse_manifest(&with_skills(&["a/style", "b/style"]), "go").unwrap_err().contains("ซ้ำ"));
+    assert!(parse_manifest(&with_skills(&["a/style", "b/style"]), "go").unwrap_err().contains("declared twice"));
     assert!(parse_manifest(&format!("{}[[skills]]\npath = \"x\"\nname = \"y\"\n", minimal("go")), "go").is_err());
   }
 
@@ -1624,13 +1632,13 @@ env = { GOFLAGS = "-mod=mod" }
     let dir = tempfile::tempdir().unwrap();
     let snap = write_snap(dir.path(), "go", &with_skills(&["skills/go-style"]));
     let list = || discover(dir.path(), None, &TrustData::default());
-    assert!(list()[0].error.as_deref().unwrap().contains("ไม่พบโฟลเดอร์"));
+    assert!(list()[0].error.as_deref().unwrap().contains("not in the snap"));
     write_skill(&snap, "skills/go-style", &[("README.md", "no skill file")]);
     assert!(list()[0].error.as_deref().unwrap().contains("SKILL.md"));
     write_skill(&snap, "skills/go-style", &[("SKILL.md", SKILL_MD)]);
     assert_eq!(list()[0].error, None);
     std::fs::write(snap.join("skills/go-style/big.bin"), vec![0u8; MAX_SKILL_BYTES as usize + 1]).unwrap();
-    assert!(list()[0].error.as_deref().unwrap().contains("ใหญ่เกินไป"));
+    assert!(list()[0].error.as_deref().unwrap().contains("too large"));
   }
 
   #[cfg(unix)]
@@ -1711,13 +1719,13 @@ env = { GOFLAGS = "-mod=mod" }
 
     // Only folders written here pass the agent_start check.
     let as_str = |p: &Path| p.display().to_string();
-    assert!(validate_plugin_dirs(&plugins, &dirs.iter().map(|d| as_str(d)).collect::<Vec<_>>()).is_ok());
-    assert!(validate_plugin_dirs(&plugins, &[as_str(&mine)]).is_err());
-    assert!(validate_plugin_dirs(&plugins, &[as_str(&plugins.join("go-0000000000000000"))]).is_err());
-    assert!(validate_plugin_dirs(&plugins, &[as_str(&dirs[0].join("skills"))]).is_err());
-    assert!(validate_plugin_dirs(&plugins, &[format!("{}/../{}", as_str(&plugins), PLUGINS_DIR)]).is_err());
-    assert!(validate_plugin_dirs(&plugins, &["relative/path".into()]).is_err());
-    assert!(validate_plugin_dirs(&cache.path().join("none"), &[as_str(&dirs[0])]).is_err());
+    assert!(validate_plugin_dirs(std::slice::from_ref(&plugins), &dirs.iter().map(|d| as_str(d)).collect::<Vec<_>>()).is_ok());
+    assert!(validate_plugin_dirs(std::slice::from_ref(&plugins), &[as_str(&mine)]).is_err());
+    assert!(validate_plugin_dirs(std::slice::from_ref(&plugins), &[as_str(&plugins.join("go-0000000000000000"))]).is_err());
+    assert!(validate_plugin_dirs(std::slice::from_ref(&plugins), &[as_str(&dirs[0].join("skills"))]).is_err());
+    assert!(validate_plugin_dirs(std::slice::from_ref(&plugins), &[format!("{}/../{}", as_str(&plugins), PLUGINS_DIR)]).is_err());
+    assert!(validate_plugin_dirs(std::slice::from_ref(&plugins), &["relative/path".into()]).is_err());
+    assert!(validate_plugin_dirs(&[cache.path().join("none")], &[as_str(&dirs[0])]).is_err());
   }
 
   #[test]
@@ -1821,7 +1829,7 @@ env = { GOFLAGS = "-mod=mod" }
     let json: serde_json::Value = serde_json::from_slice(&std::fs::read(dirs[0].join("hooks/hooks.json")).unwrap()).unwrap();
     assert_eq!(json["hooks"]["SessionStart"][0]["hooks"][0], serde_json::json!({ "type": "command", "command": "/k/kingu-ptyd snap-exec -- mem start" }));
     assert_eq!(json["hooks"]["Stop"][0]["hooks"][0]["command"], "mem 'it'\\''s'");
-    assert!(validate_plugin_dirs(&plugins, &[dirs[0].display().to_string()]).is_ok());
+    assert!(validate_plugin_dirs(std::slice::from_ref(&plugins), &[dirs[0].display().to_string()]).is_ok());
 
     // Other commands (another worktree) get their own folder; the same ones reuse it.
     assert_eq!(skill_plugins(&plugins, &list, &ids, &hooks).unwrap(), dirs);

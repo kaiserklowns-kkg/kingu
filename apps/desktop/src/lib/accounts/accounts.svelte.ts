@@ -126,12 +126,33 @@ class Accounts {
 		}
 	}
 
+	/** Logins the user cancelled (Orca's Cancel next to Add Account): their watch stops. */
+	#cancelled = new Set<string>();
+
+	/** Stops waiting for a login; the terminal it was typed into stays open. */
+	cancelLogin(id: string) {
+		this.#cancelled.add(id);
+		this.loggingIn = this.loggingIn.filter((x) => x !== id);
+	}
+
+	/** The CLI login an account runs, as one line for another terminal (Orca's "Copy sign-in link"). */
+	async copyLoginCommand(id: string) {
+		try {
+			const run = await invoke<string[]>('ai_account_login_command', { id });
+			await navigator.clipboard.writeText(run.map((w) => (/^[\w@%+=:,./-]+$/.test(w) ? w : `'${w.replace(/'/g, "'\\''")}'`)).join(' '));
+			status.flash(t('settings.accounts.copied'), 4000);
+		} catch (e) {
+			notifications.error(t('team.accounts.loginStartFailed', { error: message(e) }));
+		}
+	}
+
 	async #watchLogin(id: string) {
 		if (this.loggingIn.includes(id)) return;
+		this.#cancelled.delete(id);
 		this.loggingIn = [...this.loggingIn, id];
 		const until = Date.now() + LOGIN_TIMEOUT_MS;
 		try {
-			while (Date.now() < until) {
+			while (Date.now() < until && !this.#cancelled.has(id)) {
 				await new Promise((r) => setTimeout(r, LOGIN_WATCH_MS));
 				await this.load();
 				const a = this.view?.accounts.find((x) => x.id === id);

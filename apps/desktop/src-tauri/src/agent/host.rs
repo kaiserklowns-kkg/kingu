@@ -6,6 +6,8 @@
 //!
 //! Prompts and tool inputs pass through but are never logged.
 
+use crate::i18n::msg::AgentMsg;
+use crate::tr;
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -75,7 +77,7 @@ pub fn resolve_sidecar(
   bun: impl FnOnce() -> Option<PathBuf>,
 ) -> Result<(PathBuf, Vec<OsString>), String> {
   let with_bun = |script: &Path| -> Result<(PathBuf, Vec<OsString>), String> {
-    let bun = bun().ok_or("ไม่พบ bun สำหรับรัน agent host: ติดตั้ง bun หรือตั้ง KINGU_BUN / KINGU_AGENT_HOST")?;
+    let bun = bun().ok_or_else(|| tr!(AgentMsg::NoBun))?;
     Ok((bun, vec!["run".into(), script.as_os_str().to_owned()]))
   };
   if let Some(o) = override_var.filter(|o| !o.is_empty()) {
@@ -112,14 +114,20 @@ fn dev_script() -> Option<PathBuf> {
 
 /// The real launch: resolved per spawn so a fixed PATH or newly built sidecar is picked up.
 pub fn default_launch() -> Result<HostLaunch, String> {
-  let path = crate::shell_env::path();
+  // The `kingu` command first, so timeline agents can run it too (cli_server.rs).
+  let path = crate::shell_env::merge(crate::cli_server::bin_dir().map(Path::as_os_str), crate::shell_env::path().as_deref());
   let home = std::env::var_os("HOME").map(PathBuf::from);
   let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
   let dev_script = dev_script();
   let (program, args) = resolve_sidecar(std::env::var_os("KINGU_AGENT_HOST"), exe_dir.as_deref(), dev_script.as_deref(), || {
     find_bun(std::env::var_os("KINGU_BUN"), path.as_deref(), home.as_deref())
   })?;
-  Ok(HostLaunch { program, args, env: agent_env(std::env::vars_os(), path) })
+  let mut env = agent_env(std::env::vars_os(), path);
+  // The `kingu` command's runtime file: the host's `artifact_publish` tool publishes through it.
+  if let Some(rt) = crate::cli_server::runtime_file() {
+    env.push((kingu_cli::runtime::ENV_RUNTIME.into(), rt.as_os_str().to_owned()));
+  }
+  Ok(HostLaunch { program, args, env })
 }
 
 /// Options for a new run (camelCase on the wire, like the sidecar's `StartParams`).
@@ -131,9 +139,19 @@ pub struct StartRequest {
   pub model: Option<String>,
   pub permission_mode: Option<String>,
   pub resume: Option<String>,
-  /// MCP servers for the run (from trusted Snaps); omitted when there are none.
+  /// With `resume`: continue only up to this message, in a fork of the session (`rewind`).
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub resume_at: Option<String>,
+  /// MCP servers for the run (trusted Snaps, the user's mcp.json, trusted .vscode / .cursor
+  /// configs); omitted when there are none.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub mcp_servers: Option<std::collections::BTreeMap<String, McpServer>>,
+  /// Which of the project's `.mcp.json` servers may run (`mcp::run_plan`); omitted when it has none.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub project_mcp: Option<super::mcp::ProjectMcp>,
+  /// `mcp__<server>` of each MCP server the user turned off (`mcp::run_plan`).
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  pub disallowed_tools: Vec<String>,
   /// Skill plugin folders of active Snaps (`snap::validate_plugin_dirs`); omitted when none.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub plugins: Option<Vec<String>>,
@@ -146,6 +164,81 @@ pub struct StartRequest {
   /// Image files sent with the first prompt (checked: attachments.rs).
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub images: Vec<String>,
+  /// Snapshot files before the edit tools change them (chats: `chat_edits`); omitted when off.
+  #[serde(skip_serializing_if = "std::ops::Not::not")]
+  pub snapshots: bool,
+  /// Kingu's safety checks (`kingu.agent.safetyChecks`); omitted (on) unless turned off.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub safety_checks: Option<bool>,
+  /// Kingu's always-ask checks (`safety_asks::from_settings`); omitted when none.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub guard_asks: Option<super::safety_asks::GuardAsks>,
+  /// Project rules (`rules::system_append`) after Claude Code's system prompt; omitted when none.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub system_prompt_append: Option<String>,
+  /// The agent behind the run when it is not the Claude SDK (`runtimes::resolve`); omitted for Claude.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub runtime: Option<super::runtimes::Spec>,
+  /// What else this run owns while it is live besides its session (e.g. `chat:<root>:<id>`);
+  /// not sent to the sidecar.
+  #[serde(skip)]
+  pub owner: Option<String>,
+}
+
+/// Single owner per agent session: while a run is live it holds its session id (the one it
+/// resumes, and the ones the sidecar reports) and its owner key; starting another run that
+/// would hold any of them is refused. Released with the run's `Exit`.
+#[derive(Debug, Default)]
+pub struct Owners {
+  by_key: HashMap<String, u32>,
+}
+
+fn session_key(id: &str) -> String {
+  format!("session:{id}")
+}
+
+impl Owners {
+  /// Claims every key for `run`, or none: a key held by another run is refused.
+  pub fn claim(&mut self, run: u32, session: Option<&str>, owner: Option<&str>) -> Result<(), String> {
+    if let Some(id) = session
+      && self.by_key.get(&session_key(id)).is_some_and(|&r| r != run)
+    {
+      return Err(tr!(AgentMsg::SessionBusy));
+    }
+    if let Some(o) = owner
+      && self.by_key.get(o).is_some_and(|&r| r != run)
+    {
+      return Err(tr!(AgentMsg::ChatBusy));
+    }
+    if let Some(id) = session {
+      self.by_key.insert(session_key(id), run);
+    }
+    if let Some(o) = owner {
+      self.by_key.insert(o.to_owned(), run);
+    }
+    Ok(())
+  }
+
+  /// A session id the run reported (`system` / `result`); kept by the first run that holds it.
+  pub fn observe(&mut self, run: u32, ev: &AgentEvent) {
+    let id = match ev {
+      AgentEvent::System { session_id: Some(id), .. } | AgentEvent::Result { session_id: Some(id), .. } => id,
+      _ => return,
+    };
+    self.by_key.entry(session_key(id)).or_insert(run);
+  }
+
+  pub fn release(&mut self, run: u32) {
+    self.by_key.retain(|_, r| *r != run);
+  }
+
+  pub fn holds_session(&self, id: &str) -> bool {
+    self.by_key.contains_key(&session_key(id))
+  }
+
+  pub fn holds(&self, owner: &str) -> bool {
+    self.by_key.contains_key(owner)
+  }
 }
 
 /// Env values that may hold an API key: serialized for the sidecar, never shown by Debug.
@@ -159,31 +252,72 @@ impl std::fmt::Debug for SecretEnv {
   }
 }
 
-/// A stdio MCP server handed to an agent run (the SDK's `mcpServers` entry without `type`).
+/// An MCP server handed to an agent run, as the SDK's `mcpServers` entry: a program over stdio
+/// (`type` absent or `stdio`: `command`, `args`, `env`) or a remote server (`type` `http` or
+/// `sse`: `url`, `headers`).
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct McpServer {
+  #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+  pub kind: Option<String>,
+  #[serde(default, skip_serializing_if = "String::is_empty")]
   pub command: String,
-  #[serde(default)]
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub args: Vec<String>,
-  #[serde(default)]
+  #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
   pub env: std::collections::BTreeMap<String, String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub url: Option<String>,
+  #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+  pub headers: std::collections::BTreeMap<String, String>,
 }
 
-/// Server names are `<snap>-<server>` (letters, digits, `-`, `_`); commands must not be empty.
-pub fn validate_mcp_servers(servers: &std::collections::BTreeMap<String, McpServer>) -> Result<(), String> {
-  if servers.len() > 32 {
-    return Err("too many MCP servers".into());
+pub const MAX_MCP_SERVERS: usize = 64;
+
+/// A server name as it appears in tool names (`mcp__<name>__<tool>`): letters, digits, `-`, `_`.
+pub fn valid_mcp_name(name: &str) -> bool {
+  !name.is_empty() && name.len() <= 81 && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// One server: a stdio one needs a command; a remote one an http(s) URL and plain header lines.
+pub fn validate_mcp_server(name: &str, s: &McpServer) -> Result<(), String> {
+  use crate::i18n::msg::McpMsg;
+  if !valid_mcp_name(name) {
+    return Err(crate::tr!(McpMsg::InvalidName, name));
   }
-  for (name, s) in servers {
-    let ok_name = !name.is_empty() && name.len() <= 81 && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-    if !ok_name {
-      return Err(format!("{name}: invalid MCP server name"));
+  let bad = |v: &str| v.chars().any(|c| c == '\0' || c == '\r' || c == '\n');
+  match s.kind.as_deref() {
+    None | Some("stdio") => {
+      if s.command.trim().is_empty() || s.command.contains('\0') || s.args.iter().any(|a| a.contains('\0')) || s.url.is_some() {
+        return Err(crate::tr!(McpMsg::InvalidCommand, name));
+      }
     }
-    if s.command.trim().is_empty() || s.command.contains('\0') || s.args.iter().any(|a| a.contains('\0')) {
-      return Err(format!("{name}: invalid MCP server command"));
+    Some("http" | "sse") => {
+      let url = s.url.as_deref().unwrap_or_default();
+      let scheme = url.starts_with("https://") || url.starts_with("http://");
+      if !scheme || url.len() > 4096 || url.chars().any(|c| c.is_whitespace() || c.is_control()) || !s.command.is_empty() {
+        return Err(crate::tr!(McpMsg::InvalidUrl, name));
+      }
+      for (header, value) in &s.headers {
+        let token = !header.is_empty() && header.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        if !token || bad(value) {
+          return Err(crate::tr!(McpMsg::InvalidHeader, name, header));
+        }
+      }
     }
+    Some(kind) => return Err(crate::tr!(McpMsg::UnsupportedType, name, kind)),
+  }
+  if s.env.iter().any(|(k, v)| k.is_empty() || k.contains(['=', '\0']) || v.contains('\0')) {
+    return Err(crate::tr!(McpMsg::InvalidCommand, name));
   }
   Ok(())
+}
+
+/// Every server of a run (names as in tool names; see `validate_mcp_server`).
+pub fn validate_mcp_servers(servers: &std::collections::BTreeMap<String, McpServer>) -> Result<(), String> {
+  if servers.len() > MAX_MCP_SERVERS {
+    return Err(crate::tr!(crate::i18n::msg::McpMsg::TooMany, max = MAX_MCP_SERVERS));
+  }
+  servers.iter().try_for_each(|(name, s)| validate_mcp_server(name, s))
 }
 
 struct Proc {
@@ -275,7 +409,7 @@ impl Proc {
     let runs: Vec<_> = self.runs.lock().unwrap().drain().collect();
     log::info!("agent host {} exited (code {code:?}, signal {signal:?}); ending {} run(s)", self.pid, runs.len());
     for (_, sink) in runs {
-      sink(AgentEvent::Error { message: "agent host หยุดทำงานกะทันหัน (agent host exited unexpectedly)".into() });
+      sink(AgentEvent::Error { message: tr!(AgentMsg::HostExited) });
       sink(AgentEvent::Exit { code, signal, stopped: false });
     }
   }
@@ -325,6 +459,7 @@ pub struct AgentHost {
   launch: Launcher,
   next_run: AtomicU32,
   proc: Arc<Mutex<Option<Arc<Proc>>>>,
+  owners: Arc<Mutex<Owners>>,
 }
 
 impl Default for AgentHost {
@@ -335,7 +470,7 @@ impl Default for AgentHost {
 
 impl AgentHost {
   pub fn new(launch: Launcher) -> Self {
-    Self { launch, next_run: AtomicU32::new(0), proc: Arc::default() }
+    Self { launch, next_run: AtomicU32::new(0), proc: Arc::default(), owners: Arc::default() }
   }
 
   /// The running sidecar, spawning it if needed.
@@ -390,20 +525,64 @@ impl AgentHost {
   }
 
   /// Starts a run; its events go to `sink`, ending with exactly one `Exit`.
+  /// Refused while another live run holds the session it resumes or its `owner` (`Owners`).
   pub fn start(&self, req: StartRequest, sink: Sink) -> Result<u32, String> {
-    let proc = self.ensure()?;
     let id = self.next_run.fetch_add(1, Ordering::Relaxed) + 1;
-    // Registered first: the sidecar may emit events before it answers.
-    proc.runs.lock().unwrap().insert(id, sink);
-    let mut params = serde_json::to_value(&req).map_err(|e| e.to_string())?;
-    params["runId"] = json!(id);
-    match proc.request("start", params, REQUEST_TIMEOUT) {
+    self.owners.lock().unwrap().claim(id, req.resume.as_deref(), req.owner.as_deref())?;
+    let owners = self.owners.clone();
+    let sink: Sink = Arc::new(move |ev: AgentEvent| {
+      {
+        let mut o = owners.lock().unwrap();
+        if matches!(ev, AgentEvent::Exit { .. }) { o.release(id) } else { o.observe(id, &ev) }
+      }
+      sink(ev);
+    });
+    let started = (|| {
+      let proc = self.ensure()?;
+      // Registered first: the sidecar may emit events before it answers.
+      proc.runs.lock().unwrap().insert(id, sink);
+      let mut params = serde_json::to_value(&req).map_err(|e| e.to_string())?;
+      params["runId"] = json!(id);
+      proc.request("start", params, REQUEST_TIMEOUT).inspect_err(|_| {
+        proc.runs.lock().unwrap().remove(&id);
+      })
+    })();
+    match started {
       Ok(_) => Ok(id),
       Err(e) => {
-        proc.runs.lock().unwrap().remove(&id);
+        self.owners.lock().unwrap().release(id);
         Err(e)
       }
     }
+  }
+
+  /// Whether a live run holds `owner` (a `StartRequest::owner` key, e.g. `chat:<root>:<id>`).
+  pub fn owner_live(&self, owner: &str) -> bool {
+    self.owners.lock().unwrap().holds(owner)
+  }
+
+  /// Whether a live run of this app holds the agent session `id`.
+  pub fn session_live(&self, id: &str) -> bool {
+    self.owners.lock().unwrap().holds_session(id)
+  }
+
+  /// Changes the live run's model and/or permission mode from its next response on (the SDK's
+  /// `setModel` / `setPermissionMode`). `provider`: an Arkai model's provider (`arkai.rs`), with its key.
+  pub fn set_options(&self, run_id: u32, model: Option<&str>, permission_mode: Option<&str>, provider: Option<&super::arkai::WireProvider>) -> Result<(), String> {
+    if model.is_none() && permission_mode.is_none() {
+      return Ok(());
+    }
+    let mut params = json!({});
+    if let Some(m) = model {
+      params["model"] = json!(m);
+    }
+    if let Some(p) = provider {
+      params["provider"] = serde_json::to_value(p).map_err(|e| e.to_string())?;
+    }
+    if let Some(m) = permission_mode {
+      params["permissionMode"] = json!(m);
+    }
+    self.run_request(run_id, "set_options", params)
   }
 
   fn run_request(&self, run_id: u32, method: &str, mut params: Value) -> Result<(), String> {
@@ -424,7 +603,9 @@ impl AgentHost {
     self.run_request(run_id, "send", params)
   }
 
-  /// `decision`: `allow`, `allow_always` (this session) or `deny` (with an optional message).
+  /// `decision`: `allow`, `allow_always` (this session), `allow_workspace` (the folder's
+  /// `.claude/settings.local.json`), `allow_user` (the user's settings) or `deny` (with an
+  /// optional message).
   /// `answers`: an AskUserQuestion's answers (question text → answer), sent with `allow`; the
   /// sidecar checks them against the questions it holds.
   pub fn answer_permission(
@@ -465,9 +646,12 @@ impl AgentHost {
   }
 }
 
+/// How a permission request can be answered (the sidecar's `Decision`).
+pub const DECISIONS: &[&str] = &["allow", "allow_always", "allow_workspace", "allow_user", "deny"];
+
 /// The `answer` request's params; `answers` only with an allow.
 fn answer_params(request_id: &str, decision: &str, message: Option<&str>, answers: Option<&HashMap<String, String>>) -> Result<Value, String> {
-  if !matches!(decision, "allow" | "allow_always" | "deny") {
+  if !DECISIONS.contains(&decision) {
     return Err(format!("{decision}: unknown decision"));
   }
   let mut params = json!({ "requestId": request_id, "decision": decision, "message": message });
@@ -595,6 +779,70 @@ read -r line
   }
 
   #[test]
+  fn owners_hold_sessions_and_chats_until_released() {
+    let mut o = Owners::default();
+    o.claim(1, Some("s-1"), Some("chat:/r:c-1")).unwrap();
+    assert!(o.claim(2, Some("s-1"), None).unwrap_err().contains("already running"));
+    assert!(o.claim(2, None, Some("chat:/r:c-1")).unwrap_err().contains("already has a running agent"));
+    // All or nothing: a refused claim takes no key.
+    assert!(o.claim(2, Some("s-2"), Some("chat:/r:c-1")).is_err());
+    assert!(!o.holds_session("s-2"));
+    o.claim(1, Some("s-1"), None).unwrap();
+    o.observe(2, &AgentEvent::System { subtype: "init".into(), session_id: Some("s-9".into()), model: None });
+    o.observe(3, &AgentEvent::System { subtype: "init".into(), session_id: Some("s-9".into()), model: None });
+    assert!(o.claim(3, Some("s-9"), None).is_err(), "s-9 belongs to run 2");
+    o.release(1);
+    assert!(!o.holds_session("s-1"));
+    o.claim(4, Some("s-1"), Some("chat:/r:c-1")).unwrap();
+    o.release(2);
+    o.claim(3, Some("s-9"), None).unwrap();
+  }
+
+  #[test]
+  fn a_live_session_cannot_be_started_twice_and_options_reach_the_sidecar() {
+    let tmp = tempfile::tempdir().unwrap();
+    let log = tmp.path().join("requests.log");
+    let body = format!(
+      r#"{SH_LIB}
+while read -r line; do
+  echo "$line" >> '{log}'
+  id=$(field "$line" id); run=$(field "$line" runId)
+  reply $id
+  case "$line" in
+    *'"method":"start"'*) event $run '{{"kind":"system","subtype":"init","session_id":"s-new","model":"m"}}' ;;
+    *'"method":"stop"'*) event $run '{{"kind":"exit","code":null,"signal":null,"stopped":true}}' ;;
+  esac
+done"#,
+      log = log.display()
+    );
+    let host = host_for(script(tmp.path(), "fake-host", &body), vec![]);
+    let (sink, rx) = collect();
+    let first = host.start(StartRequest { resume: Some("s-old".into()), owner: Some("chat:/r:c-1".into()), ..req("/w") }, sink.clone()).unwrap();
+    assert!(matches!(next(&rx), AgentEvent::System { .. }));
+    assert!(host.session_live("s-old") && host.session_live("s-new"));
+    assert!(host.owner_live("chat:/r:c-1") && !host.owner_live("chat:/r:c-2"));
+    let err = host.start(StartRequest { resume: Some("s-old".into()), ..req("/w") }, sink.clone()).unwrap_err();
+    assert!(err.contains("already running"), "{err}");
+    assert!(host.start(StartRequest { resume: Some("s-new".into()), ..req("/w") }, sink.clone()).is_err(), "the session it reported is held too");
+    assert!(host.start(StartRequest { owner: Some("chat:/r:c-1".into()), ..req("/w") }, sink.clone()).unwrap_err().contains("already has a running agent"));
+
+    host.set_options(first, Some("claude-sonnet-5"), Some("plan"), None).unwrap();
+    host.stop(first).unwrap();
+    assert!(matches!(next(&rx), AgentEvent::Exit { stopped: true, .. }));
+    assert!(!host.session_live("s-old") && !host.session_live("s-new") && !host.owner_live("chat:/r:c-1"));
+    let second = host.start(StartRequest { resume: Some("s-old".into()), owner: Some("chat:/r:c-1".into()), ..req("/w") }, sink).unwrap();
+    assert_ne!(first, second);
+
+    let requests = std::fs::read_to_string(&log).unwrap();
+    let lines: Vec<Value> = requests.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    let methods: Vec<_> = lines.iter().map(|l| l["method"].as_str().unwrap()).collect();
+    assert_eq!(methods, ["start", "set_options", "stop", "start"], "refused starts never reach the sidecar");
+    assert_eq!(lines[1]["params"], json!({"runId": first, "model": "claude-sonnet-5", "permissionMode": "plan"}));
+    assert!(lines[0]["params"].get("owner").is_none(), "the owner key stays in the app");
+    host.shutdown();
+  }
+
+  #[test]
   fn a_crashing_sidecar_ends_its_runs_and_is_respawned() {
     let tmp = tempfile::tempdir().unwrap();
     let body = format!(
@@ -623,7 +871,7 @@ exit 3"#
   fn mcp_servers_are_validated_and_sent_as_camel_case() {
     use std::collections::BTreeMap;
     let mut servers = BTreeMap::new();
-    servers.insert("go-gopls".to_string(), McpServer { command: "gopls".into(), args: vec!["mcp".into()], env: BTreeMap::new() });
+    servers.insert("go-gopls".to_string(), McpServer { command: "gopls".into(), args: vec!["mcp".into()], ..Default::default() });
     assert!(validate_mcp_servers(&servers).is_ok());
     let wire = serde_json::to_value(StartRequest { cwd: "/w".into(), prompt: "x".into(), mcp_servers: Some(servers.clone()), ..Default::default() }).unwrap();
     assert_eq!(wire["mcpServers"]["go-gopls"]["args"], json!(["mcp"]));
@@ -636,11 +884,57 @@ exit 3"#
   }
 
   #[test]
+  fn remote_mcp_servers_need_an_http_url_and_plain_headers() {
+    let http = |url: &str| McpServer { kind: Some("http".into()), url: Some(url.into()), ..Default::default() };
+    assert!(validate_mcp_server("docs", &http("https://mcp.example.com/mcp")).is_ok());
+    assert!(validate_mcp_server("docs", &McpServer { kind: Some("sse".into()), url: Some("http://localhost:9000/sse".into()), ..Default::default() }).is_ok());
+    for url in ["file:///etc/passwd", "https://a b", "ftp://x", ""] {
+      assert!(validate_mcp_server("docs", &http(url)).is_err(), "{url}");
+    }
+    let mut h = http("https://x.dev");
+    h.headers.insert("Authorization".into(), "Bearer t".into());
+    assert!(validate_mcp_server("docs", &h).is_ok());
+    h.headers.insert("X-Evil".into(), "a\r\nHost: b".into());
+    assert!(validate_mcp_server("docs", &h).is_err());
+    assert!(validate_mcp_server("docs", &McpServer { kind: Some("ws".into()), url: Some("https://x".into()), ..Default::default() }).is_err());
+    // A remote entry never names a program, and a stdio one never a URL.
+    assert!(validate_mcp_server("docs", &McpServer { command: "sh".into(), ..http("https://x") }).is_err());
+    assert!(validate_mcp_server("docs", &McpServer { command: "sh".into(), url: Some("https://x".into()), ..Default::default() }).is_err());
+    let wire = serde_json::to_value(&h).unwrap();
+    assert_eq!(wire["type"], "http");
+    assert!(wire.get("command").is_none());
+  }
+
+  #[test]
   fn images_are_sent_only_when_attached() {
     let wire = serde_json::to_value(StartRequest { cwd: "/w".into(), prompt: "x".into(), images: vec!["/c/a.png".into()], ..Default::default() }).unwrap();
     assert_eq!(wire["images"], json!(["/c/a.png"]));
     let wire = serde_json::to_value(StartRequest { cwd: "/w".into(), prompt: "x".into(), ..Default::default() }).unwrap();
     assert!(wire.get("images").is_none());
+  }
+
+  #[test]
+  fn safety_checks_and_rules_are_sent_only_when_set() {
+    let wire = serde_json::to_value(StartRequest { cwd: "/w".into(), prompt: "x".into(), ..Default::default() }).unwrap();
+    assert!(wire.get("safetyChecks").is_none() && wire.get("systemPromptAppend").is_none());
+    let req = StartRequest { cwd: "/w".into(), prompt: "x".into(), safety_checks: Some(false), system_prompt_append: Some("# Project rules".into()), ..Default::default() };
+    let wire = serde_json::to_value(req).unwrap();
+    assert_eq!((wire["safetyChecks"].clone(), wire["systemPromptAppend"].clone()), (json!(false), json!("# Project rules")));
+  }
+
+  #[test]
+  fn resume_at_is_sent_as_resume_at_only_when_set() {
+    let req = StartRequest { cwd: "/w".into(), prompt: "x".into(), resume: Some("s".into()), resume_at: Some("0b5e9a1c-4c1d-4e2f-9a3b-000000000001".into()), ..Default::default() };
+    assert_eq!(serde_json::to_value(req).unwrap()["resumeAt"], "0b5e9a1c-4c1d-4e2f-9a3b-000000000001");
+    assert!(serde_json::to_value(StartRequest::default()).unwrap().get("resumeAt").is_none());
+  }
+
+  #[test]
+  fn runtime_is_sent_only_for_another_agent() {
+    assert!(serde_json::to_value(StartRequest::default()).unwrap().get("runtime").is_none(), "the Claude SDK: no runtime");
+    let spec = super::super::runtimes::Spec { kind: "acp", command: "/opt/bin/gemini".into(), args: vec!["--experimental-acp".into()], arkai: None };
+    let wire = serde_json::to_value(StartRequest { runtime: Some(spec), ..Default::default() }).unwrap();
+    assert_eq!(wire["runtime"], json!({"kind": "acp", "command": "/opt/bin/gemini", "args": ["--experimental-acp"]}));
   }
 
   #[test]
@@ -785,7 +1079,7 @@ sleep 60"#;
     let (sink, _rx) = collect();
     let err = host.start(req("relative/path"), sink.clone()).unwrap_err();
     assert!(err.contains("absolute"), "{err}");
-    let err = host.start(StartRequest { permission_mode: Some("bypassPermissions".into()), ..req("/w") }, sink).unwrap_err();
+    let err = host.start(StartRequest { permission_mode: Some("dontAsk".into()), ..req("/w") }, sink).unwrap_err();
     assert!(err.contains("permission mode"), "{err}");
     host.shutdown();
   }

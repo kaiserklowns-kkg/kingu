@@ -131,17 +131,62 @@ export function closeAction(o: { dirty: boolean; openElsewhere: boolean; autoSav
 	return 'ask';
 }
 
+/** What closing editors needs from the workbench (the IDE's groups or the Agents layout's tabs). */
+export type ClosePorts = {
+	isDirty: (path: string) => boolean;
+	/** Another editor keeps showing the file's model, so closing this one loses nothing. */
+	openElsewhere: (path: string) => boolean;
+	autoSave: AutoSaveMode;
+	isMac: boolean;
+	save: (path: string, reason?: 'focusChange' | 'windowChange') => Promise<boolean>;
+	/** Save / Don't Save / Cancel for these paths. */
+	confirm: (paths: string[]) => Promise<ConfirmResult>;
+	/** Unsaved edits are thrown away: their hot exit backup goes too. */
+	discardBackup: (path: string) => void;
+	/** Shows the only file asked about, so the user sees what the question is about. */
+	reveal?: (path: string) => void;
+};
+
+/**
+ * VS Code's handleDirtyClosing for `paths`: resolves to the ones that may close now, in order.
+ * `discard` closes without asking (⌥-click). One dialog covers every dirty file.
+ */
+export async function settleClose(paths: string[], p: ClosePorts, { discard = false } = {}): Promise<string[]> {
+	const ok: string[] = [];
+	const ask: string[] = [];
+	for (const path of paths) {
+		const dirty = p.isDirty(path);
+		const elsewhere = p.openElsewhere(path);
+		if (dirty && discard && !elsewhere) p.discardBackup(path);
+		const action = discard ? 'close' : closeAction({ dirty, openElsewhere: elsewhere, autoSave: p.autoSave, isMac: p.isMac });
+		if (action === 'close') ok.push(path);
+		else if (action === 'save' && (await p.save(path, p.autoSave === 'onFocusChange' ? 'focusChange' : 'windowChange'))) ok.push(path);
+		else ask.push(path);
+	}
+	if (!ask.length) return ok;
+	if (ask.length === 1) p.reveal?.(ask[0]);
+	const choice = await p.confirm(ask);
+	if (choice === 'cancel') return ok;
+	for (const path of ask) {
+		if (choice === 'save' && !(await p.save(path))) continue;
+		if (choice === 'dontSave') p.discardBackup(path);
+		ok.push(path);
+	}
+	return ok;
+}
+
 // --- Quitting, closing the window, switching folders (nativeWorkingCopyBackupTracker)
 
 export type HotExit = 'off' | 'onExit' | 'onExitAndWindowClose';
 export type ShutdownReason = 'quit' | 'close' | 'load' | 'reload';
 
 /**
- * Whether unsaved editors are backed up and restored next time (hot exit) instead of asking.
- * Kingu has one window, so closing it on Windows/Linux quits; on macOS VS Code treats a window
- * close as not quitting and asks unless `onExitAndWindowClose`.
+ * Whether unsaved editors are backed up and restored next time (hot exit) instead of asking
+ * (VS Code's nativeWorkingCopyBackupTracker). Closing a window backs up with a folder open and
+ * `onExitAndWindowClose`; otherwise only when it quits the app: the last window on
+ * Windows/Linux (`lastWindow`), never on macOS, where the app keeps running.
  */
-export function backsUpOnShutdown(o: { reason: ShutdownReason; hotExit: HotExit; hasFolder: boolean; isMac: boolean }): boolean {
+export function backsUpOnShutdown(o: { reason: ShutdownReason; hotExit: HotExit; hasFolder: boolean; isMac: boolean; lastWindow?: boolean }): boolean {
 	if (o.hotExit === 'off') return false;
 	switch (o.reason) {
 		case 'quit':
@@ -149,7 +194,7 @@ export function backsUpOnShutdown(o: { reason: ShutdownReason; hotExit: HotExit;
 			return true;
 		case 'close':
 			if (o.hasFolder && o.hotExit === 'onExitAndWindowClose') return true;
-			return !o.isMac;
+			return !o.isMac && (o.lastWindow ?? true);
 		case 'load':
 			return o.hasFolder && o.hotExit === 'onExitAndWindowClose';
 	}
@@ -181,6 +226,19 @@ export type ConflictChoice = 'compare' | 'overwrite' | 'revert';
 
 export function conflictMessage(name: string): string {
 	return t('workbench.textFiles.conflict', { name });
+}
+
+/**
+ * The watcher saw an open file change on disk (an agent writing into a task worktree, a git
+ * checkout, another program). A clean editor reloads. A dirty one is never overwritten silently:
+ * when its disk content really differs it goes into conflict mode, which pauses auto save
+ * (`inConflict`), and with auto save on the save conflict prompt shows right away (auto save
+ * would otherwise have hit it on its own). With auto save off the next explicit save shows it.
+ */
+export function diskChangeAction(o: { dirty: boolean; inConflict: boolean; diskDiffers: boolean; autoSave: AutoSaveMode }): 'reload' | 'conflict' | 'pause' | 'none' {
+	if (!o.dirty) return 'reload';
+	if (o.inConflict || !o.diskDiffers) return 'none';
+	return o.autoSave === 'off' ? 'pause' : 'conflict';
 }
 
 // --- Status bar (editorStatus.ts)

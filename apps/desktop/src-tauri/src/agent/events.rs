@@ -26,26 +26,103 @@ fn yes() -> bool {
   true
 }
 
+/// An MCP server of the session and how it is (`connected`, `failed`, `needs-auth`, `pending`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct McpServerState {
+  pub name: String,
+  #[serde(default)]
+  pub status: String,
+}
+
+/// An MCP server of the live session now: its status, error line, where it came from and its tools.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct McpServerLive {
+  pub name: String,
+  #[serde(default)]
+  pub status: String,
+  #[serde(default)]
+  pub error: Option<String>,
+  #[serde(default)]
+  pub source: Option<String>,
+  #[serde(default)]
+  pub tools: Vec<String>,
+}
+
+/// A slash command the session knows (built in, a skill, or `.claude/commands`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SlashCommand {
+  pub name: String,
+  #[serde(default)]
+  pub description: String,
+  #[serde(default)]
+  pub argument_hint: String,
+}
+
+/// A model the session can use (SDK `supportedModels()`), for the chat's model picker.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ModelOption {
+  pub value: String,
+  #[serde(default)]
+  pub display_name: String,
+  #[serde(default)]
+  pub description: String,
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentEvent {
   /// Session start (`system`/`init`).
   System { subtype: String, session_id: Option<String>, model: Option<String> },
-  Message { role: String, text: String },
-  /// Streaming chunk of assistant text or thinking (`block`); the full `Message`/`Thinking` follows.
+  /// What the session started with: its slash command names, tools and MCP servers.
+  SessionInfo {
+    #[serde(default)]
+    slash_commands: Vec<String>,
+    #[serde(default)]
+    tools: Vec<String>,
+    #[serde(default)]
+    mcp_servers: Vec<McpServerState>,
+  },
+  /// The session's MCP servers as they are now (after the start and each turn); replaces the last list.
+  McpStatus {
+    #[serde(default)]
+    servers: Vec<McpServerLive>,
+  },
+  /// The session's slash commands with descriptions; replaces the last list.
+  Commands { commands: Vec<SlashCommand> },
+  /// The models the session can switch to; replaces the last list.
+  Models { models: Vec<ModelOption> },
+  /// How full the context window is after a turn.
+  ContextUsage { used_tokens: u64, max_tokens: u64 },
+  /// `parent_tool_use_id` (also on `Thinking`, `ToolUse`, `ToolResult`): set on a subagent's own
+  /// events, the id of the Task/Agent call that started it (the chat nests them under that call).
+  Message {
+    role: String,
+    text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent_tool_use_id: Option<String>,
+  },
+  /// Streaming chunk of the main agent's text or thinking (`block`); the full `Message`/`Thinking` follows.
   Delta { block: String, text: String },
-  Thinking { text: String },
+  Thinking {
+    text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent_tool_use_id: Option<String>,
+  },
   ToolUse {
     id: String,
     name: String,
     #[serde(default)]
     input: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent_tool_use_id: Option<String>,
   },
   ToolResult {
     tool_use_id: String,
     content: String,
     #[serde(default)]
     is_error: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    parent_tool_use_id: Option<String>,
   },
   Result {
     subtype: String,
@@ -72,9 +149,79 @@ pub enum AgentEvent {
     input: Value,
     #[serde(default = "yes")]
     can_always: bool,
+    /// The rules an "always" answer adds (`Bash(npm test:*)`); empty: the whole tool.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    rules: Vec<String>,
   },
-  /// A permission request was answered (`allow`/`allow_always`/`deny`) or `cancelled`.
+  /// A permission request was answered (`allow`, `allow_always`, `allow_workspace`, `allow_user`,
+  /// `deny`) or `cancelled`.
   PermissionResolved { request_id: String, decision: String },
+  /// A file's content just before an edit tool changed it (the host's PreToolUse hook). Rust
+  /// stores it in the chat's snapshot store (`chat_edits`) and never passes it on.
+  FileSnapshot {
+    tool_use_id: String,
+    tool: String,
+    path: String,
+    existed: bool,
+    #[serde(default)]
+    size: u64,
+    #[serde(default)]
+    content_b64: Option<String>,
+    #[serde(default)]
+    skipped: Option<String>,
+  },
+  /// Kingu's safety check refused a tool call (the host's guards, in every permission mode):
+  /// `check` is `security` (a catastrophic shell command; `threats` are goose pattern names,
+  /// `detail` their descriptions) or `repetition` (the third identical call in a row).
+  GuardBlocked {
+    tool: String,
+    #[serde(default)]
+    tool_use_id: Option<String>,
+    check: String,
+    #[serde(default)]
+    threats: Vec<String>,
+    #[serde(default)]
+    detail: String,
+  },
+  /// Kingu's always-ask check stopped a tool call for the user (the host's guards, in every
+  /// permission mode); the `PermissionRequest` with this `request_id` follows. `check`:
+  /// `outside_cwd`, `delete`, `protected` or `mcp`; `paths`: what it is about.
+  GuardAsked {
+    request_id: String,
+    tool: String,
+    #[serde(default)]
+    tool_use_id: Option<String>,
+    check: String,
+    #[serde(default)]
+    paths: Vec<String>,
+  },
+  /// The agent published an artifact (the host's `artifact_publish` tool, through artifacts/):
+  /// version `version` of artifact `id` in project `root`. The chat shows a card that opens it.
+  Artifact { id: String, title: String, version: u32, format: String, root: String },
+  /// Added by the webview (`chat_feedback`): the user's thumbs up (`up`) or down (`down`) on the
+  /// answer to chat request `request`, or none (`vote` null: taken back). Kept in the transcript.
+  Feedback {
+    request: u32,
+    #[serde(default)]
+    vote: Option<String>,
+  },
+  /// The agent session's uuid of the SDK message whose events came just before (the host's
+  /// `anchor`). Kept in a chat's transcript (its rewind points: `rewind::Anchors`), never passed
+  /// to the webview.
+  Anchor { uuid: String },
+  /// Added by Rust after a chat's user message: that message is request `request` of the chat,
+  /// the checkpoint "Restore checkpoint" goes back to. Kept in the transcript. `session_id` and
+  /// `resume_at`: where the conversation before this request ends (the last `Anchor` before it
+  /// and its session); none for a chat's first request.
+  Checkpoint {
+    request: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resume_at: Option<String>,
+  },
+  /// Added by Rust: the chat's working set changed (an edit was recorded, a turn ended). Live only.
+  EditsChanged { request: Option<u32> },
   Error { message: String },
   /// Output the host did not understand, passed through untouched.
   Raw { line: String },
@@ -114,6 +261,51 @@ mod tests {
   }
 
   #[test]
+  fn artifacts_round_trip() {
+    let ev = json!({"kind": "artifact", "id": "0123456789abcdef", "title": "รายงาน", "version": 2, "format": "html", "root": "/repo"});
+    let parsed = AgentEvent::from_host(ev.clone());
+    assert!(matches!(&parsed, AgentEvent::Artifact { id, version: 2, .. } if id == "0123456789abcdef"));
+    assert_eq!(serde_json::to_value(&parsed).unwrap(), ev);
+  }
+
+  #[test]
+  fn guard_blocks_round_trip() {
+    let ev = json!({"kind": "guard_blocked", "tool": "Bash", "tool_use_id": "tu1", "check": "security", "threats": ["rm_rf_root_bare"], "detail": "Recursive deletion of root filesystem"});
+    assert!(matches!(AgentEvent::from_host(ev.clone()), AgentEvent::GuardBlocked { ref check, .. } if check == "security"));
+    assert_eq!(serde_json::to_value(AgentEvent::from_host(ev.clone())).unwrap(), ev);
+  }
+
+  #[test]
+  fn guard_asks_and_feedback_round_trip() {
+    for v in [
+      json!({"kind": "guard_asked", "request_id": "r1", "tool": "Bash", "tool_use_id": "tu1", "check": "delete", "paths": ["a.txt"]}),
+      json!({"kind": "feedback", "request": 2, "vote": "up"}),
+      json!({"kind": "feedback", "request": 2, "vote": null}),
+    ] {
+      assert_eq!(serde_json::to_value(AgentEvent::from_host(v.clone())).unwrap(), v);
+    }
+  }
+
+  #[test]
+  fn round_trips_session_commands_and_context() {
+    for v in [
+      json!({"kind": "session_info", "slash_commands": ["compact"], "tools": ["Bash"], "mcp_servers": [{"name": "gh", "status": "connected"}]}),
+      json!({"kind": "commands", "commands": [{"name": "review", "description": "Review a PR", "argument_hint": "<pr>"}]}),
+      json!({"kind": "context_usage", "used_tokens": 1200, "max_tokens": 200000}),
+      json!({"kind": "models", "models": [{"value": "opus", "display_name": "Opus", "description": "Most capable"}]}),
+      json!({"kind": "mcp_status", "servers": [{"name": "gh", "status": "failed", "error": "spawn gh ENOENT", "source": "user", "tools": ["search"]}]}),
+    ] {
+      assert_eq!(serde_json::to_value(AgentEvent::from_host(v.clone())).unwrap(), v);
+    }
+    let req = json!({
+      "kind": "permission_request", "request_id": "r1", "tool": "Bash", "tool_use_id": null, "title": null,
+      "input_summary": "npm test", "detail": null, "diff": null, "input": {}, "can_always": true, "rules": ["Bash(npm test:*)"]
+    });
+    assert_eq!(serde_json::to_value(AgentEvent::from_host(req.clone())).unwrap(), req);
+    assert!(matches!(AgentEvent::from_host(json!({"kind": "session_info"})), AgentEvent::SessionInfo { .. }));
+  }
+
+  #[test]
   fn tolerates_missing_optional_fields() {
     let ev = AgentEvent::from_host(json!({"kind": "system", "subtype": "init"}));
     assert_eq!(ev, AgentEvent::System { subtype: "init".into(), session_id: None, model: None });
@@ -121,6 +313,20 @@ mod tests {
     assert!(matches!(ev, AgentEvent::Result { usage: None, total_cost_usd: None, .. }));
     let ev = AgentEvent::from_host(json!({"kind": "permission_request", "request_id": "r", "tool": "X", "input_summary": ""}));
     assert!(matches!(ev, AgentEvent::PermissionRequest { can_always: true, diff: None, .. }));
+  }
+
+  #[test]
+  fn keeps_a_subagents_parent_call() {
+    for v in [
+      json!({"kind": "tool_use", "id": "t2", "name": "Grep", "input": {"pattern": "x"}, "parent_tool_use_id": "task-1"}),
+      json!({"kind": "tool_result", "tool_use_id": "t2", "content": "a.ts:1", "is_error": false, "parent_tool_use_id": "task-1"}),
+      json!({"kind": "message", "role": "assistant", "text": "พบแล้ว", "parent_tool_use_id": "task-1"}),
+      json!({"kind": "thinking", "text": "hm", "parent_tool_use_id": "task-1"}),
+    ] {
+      assert_eq!(serde_json::to_value(AgentEvent::from_host(v.clone())).unwrap(), v);
+    }
+    let ev = AgentEvent::from_host(json!({"kind": "message", "role": "assistant", "text": "hi"}));
+    assert!(matches!(ev, AgentEvent::Message { parent_tool_use_id: None, .. }));
   }
 
   #[test]
@@ -132,7 +338,7 @@ mod tests {
 
   #[test]
   fn serializes_with_a_kind_tag() {
-    let v = serde_json::to_value(AgentEvent::ToolUse { id: "1".into(), name: "Bash".into(), input: json!({}) }).unwrap();
+    let v = serde_json::to_value(AgentEvent::ToolUse { id: "1".into(), name: "Bash".into(), input: json!({}), parent_tool_use_id: None }).unwrap();
     assert_eq!(v, json!({"kind":"tool_use","id":"1","name":"Bash","input":{}}));
     let v = serde_json::to_value(AgentEvent::Exit { code: Some(0), signal: None, stopped: false }).unwrap();
     assert_eq!(v, json!({"kind":"exit","code":0,"signal":null,"stopped":false}));

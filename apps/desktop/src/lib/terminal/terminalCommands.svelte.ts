@@ -9,8 +9,10 @@ import { status } from '#lib/workbench/status.svelte.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { focusedTerminal, lastAdeTerminal, terminalHandle } from './registry.ts';
 import { terminals } from './terminals.svelte.ts';
+import { codeTerminalFolder, createTerminal, createTerminalInActiveFolder } from './newTerminal.ts';
 import { quickCommandInput, quickCommands } from './adeTerminalOptions.ts';
 import { t } from '#lib/i18n/index.ts';
+import { installShellIntegrationCommands } from './shellIntegrationCommands.svelte.ts';
 
 /** Orca's quick commands (`kingu.terminal.quickCommands`): pick one, typed into the last used ADE terminal. */
 async function runQuickCommand() {
@@ -28,6 +30,8 @@ async function runQuickCommand() {
 export const panelTerminalFocus = () => !appMode.isAgents && focusedTerminal('ide') !== null;
 
 export function installTerminalCommands(): () => void {
+	// Terminals opened by code start in the active editor's folder (VS Code's last active workspace root).
+	terminals.defaultFolder = codeTerminalFolder;
 	const panelShown = () => !appMode.isAgents && terminals.tag !== null;
 	const active = () => terminalHandle(terminals.key(terminals.active));
 	const unregister = [
@@ -61,7 +65,9 @@ export function installTerminalCommands(): () => void {
 			when: () => focusedTerminal() !== null,
 			run: () => focusedTerminal()?.selectAll()
 		}),
-		commands.register({ id: 'workbench.action.terminal.new', title: 'Create New Terminal', category: 'Terminal', key: 'ctrl+shift+`', run: () => (layout.showPanel('terminal'), terminals.open()) }),
+		// A multi-root window asks which folder the terminal starts in (newTerminal.ts).
+		commands.register({ id: 'workbench.action.terminal.new', title: 'Create New Terminal', category: 'Terminal', key: 'ctrl+shift+`', run: () => void createTerminal() }),
+		commands.register({ id: 'workbench.action.terminal.newInActiveWorkspace', title: 'Create New Terminal (In Active Workspace)', category: 'Terminal', run: () => void createTerminalInActiveFolder() }),
 		commands.register({
 			id: 'workbench.action.terminal.split',
 			title: 'Split Terminal',
@@ -94,7 +100,8 @@ export function installTerminalCommands(): () => void {
 		}),
 		commands.register({ id: 'workbench.action.terminal.rename', title: 'Rename...', category: 'Terminal', when: panelShown, run: () => terminals.rename() }),
 		commands.register({ id: 'workbench.action.terminal.kill', title: 'Kill the Active Terminal Instance', category: 'Terminal', when: panelShown, run: () => terminals.kill(terminals.active) }),
-		commands.register({ id: 'kingu.terminal.runQuickCommand', title: 'Run Quick Command…', category: 'Terminal', run: () => void runQuickCommand() })
+		commands.register({ id: 'kingu.terminal.runQuickCommand', title: 'Run Quick Command…', category: 'Terminal', run: () => void runQuickCommand() }),
+		installShellIntegrationCommands()
 	];
 	return () => unregister.forEach((u) => u());
 }

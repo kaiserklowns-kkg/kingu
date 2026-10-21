@@ -1,0 +1,19 @@
+{
+  "id": 70321,
+  "name": "app",
+  "path_with_namespace": "kawin/app",
+  "default_branch": "main",
+  "web_url": "https://gitlab.com/kawin/app",
+  "merge_method": "merge",
+  "squash_option": "default_off",
+  "merge_requests_enabled": true,
+  "forked_from_project": {
+    "id": 61204,
+    "name": "app",
+    "name_with_namespace": "acme / sub / app",
+    "path": "app",
+    "path_with_namespace": "acme/sub/app",
+    "default_branch": "main",
+    "web_url": "https://gitlab.com/acme/sub/app"
+  }
+}

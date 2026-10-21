@@ -15,8 +15,10 @@
 	import { untrack } from 'svelte';
 	import { highlightRuns, rank, type Match } from './fuzzy';
 	import { isMac, keyLabel } from './keys';
-	import { flattenSymbols, parseQuickInput, pickSymbols, QUICK_ACCESS_HELP, rankFiles, SYMBOL_KIND_NAMES, type FlatSymbol } from './quickAccess';
+	import { flattenSymbols, parseQuickInput, pickSymbols, QUICK_ACCESS_HELP, quickInputTop, rankFiles, SYMBOL_KIND_NAMES, type FlatSymbol } from './quickAccess';
 	import { recentFiles } from './recentFiles.svelte';
+	import { fileDetail } from '#lib/workbench/workspaceFolders.ts';
+	import { workspace } from './workspace.svelte.ts';
 	import { withRecentFirst } from './workbenchOptions';
 	import { layout } from './layout.svelte';
 	import { editorLabel } from './editorLabel';
@@ -164,7 +166,8 @@
 		return {
 			label: path.slice(slash + 1),
 			icon: fileIcon(path),
-			detail: slash > 0 ? path.slice(0, slash) : '',
+			// A multi-root workspace leads with the file's root folder (VS Code's `folder • dir`).
+			detail: fileDetail(path, workspace.folders),
 			separator,
 			match: match && { score: match.score, positions: match.positions.filter((p) => p > slash).map((p) => p - slash - 1) },
 			// workbench.editor.enablePreviewFromQuickOpen (off: Quick Open keeps what it opens).
@@ -344,7 +347,8 @@
 		role="dialog"
 		aria-label="Quick open"
 		tabindex="-1"
-		class="fixed top-[calc(var(--kg-titlebar-height)+2px)] left-1/2 z-50 w-[min(600px,62vw)] -translate-x-1/2 rounded-xl border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) p-2 text-(--vscode-quickInput-foreground) shadow-2xl shadow-black/50"
+		style:top={quickInputTop(quick.alignment)}
+		class="fixed left-1/2 z-50 w-[min(600px,62vw)] -translate-x-1/2 rounded-xl border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) p-2 text-(--vscode-quickInput-foreground) shadow-2xl shadow-black/50"
 		onfocusout={(e) => {
 			// workbench.quickOpen.closeOnFocusLost
 			if (!e.currentTarget.contains(e.relatedTarget as Node | null) && settings.get<boolean>('workbench.quickOpen.closeOnFocusLost')) cancel();
@@ -353,6 +357,7 @@
 		<input
 			bind:this={input}
 			bind:value={quick.value}
+			type={quick.picker?.password ? 'password' : 'text'}
 			oninput={() => (index = 0)}
 			onkeydown={onKey}
 			aria-label="ค้นหาไฟล์ พิมพ์ > เพื่อดูคำสั่ง : เพื่อไปบรรทัด @ เพื่อไปที่สัญลักษณ์ หรือ ? เพื่อดูวิธีใช้"

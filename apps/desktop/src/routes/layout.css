@@ -81,6 +81,27 @@ html.kg-no-shadows *::after {
 	box-shadow: none !important;
 }
 
+/* workbench.view.alwaysShowHeaderActions: a view's header actions do not wait for hover or focus. */
+html.kg-always-show-header-actions .kg-view-actions {
+	opacity: 1 !important;
+}
+
+/* workbench.tree.renderIndentGuides (VS Code: tree.indentGuidesStroke; onHover while the tree is hovered). */
+.kg-indent-guide {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 1px;
+	pointer-events: none;
+	background: var(--vscode-tree-indentGuidesStroke, #585858);
+	opacity: 0;
+	transition: opacity 0.1s linear;
+}
+html[data-indent-guides='always'] .kg-indent-guide,
+html[data-indent-guides='onHover'] [role='tree']:hover .kg-indent-guide {
+	opacity: 1;
+}
+
 /* Thin rounded scrollbars that only darken on hover, like VS Code's overlay scrollbars
    (Monaco and xterm draw their own). */
 * {

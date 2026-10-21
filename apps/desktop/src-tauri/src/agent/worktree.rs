@@ -3,8 +3,14 @@
 //! whatever is checked out there, so changing the prefix never loses an existing task.
 //! Drives the `git` CLI directly (no shell), so arguments are never re-parsed.
 
+use crate::git_queue::{self, Scope};
+use crate::i18n::msg::{AgentMsg, TasksMsg, WorktreeMsg};
+use crate::tr;
+use std::collections::HashSet;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 
 pub const MAX_SLUG_LEN: usize = 48;
 const WORKTREES_DIR: &str = ".kingu/worktrees";
@@ -29,13 +35,13 @@ pub struct WorktreeInfo {
 /// Lowercase a-z, 0-9 and '-', 1..=48 chars, no leading/trailing or doubled '-'.
 pub fn validate_slug(slug: &str) -> Result<(), String> {
   if slug.is_empty() || slug.len() > MAX_SLUG_LEN {
-    return Err(format!("slug must be 1-{MAX_SLUG_LEN} characters"));
+    return Err(tr!(TasksMsg::SlugLength, max = MAX_SLUG_LEN));
   }
   if !slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
-    return Err(format!("{slug}: slug may only contain a-z, 0-9 and '-'"));
+    return Err(tr!(TasksMsg::SlugChars, slug));
   }
   if slug.starts_with('-') || slug.ends_with('-') || slug.contains("--") {
-    return Err(format!("{slug}: slug must not start/end with '-' or contain '--'"));
+    return Err(tr!(TasksMsg::SlugDashes, slug));
   }
   Ok(())
 }
@@ -53,7 +59,7 @@ pub fn validate_prefix(prefix: &str) -> Result<(), String> {
     && !prefix.contains("..")
     && !prefix.contains("//")
     && !prefix.contains("/.");
-  if ok { Ok(()) } else { Err(format!("branch prefix \"{prefix}\" ไม่ถูกต้อง (ใช้ได้เฉพาะ a-z A-Z 0-9 . _ / -)")) }
+  if ok { Ok(()) } else { Err(tr!(AgentMsg::BadBranchPrefix, prefix)) }
 }
 
 /// The branch checked out in a worktree (`None`: detached).
@@ -70,10 +76,10 @@ pub fn current_branch(dir: &Path) -> Result<Option<String>, String> {
 
 /// The task's branch, refusing a detached worktree (nothing to merge, push or delete).
 pub fn task_branch(dir: &Path, slug: &str) -> Result<String, String> {
-  current_branch(dir)?.ok_or_else(|| format!("worktree {slug} ไม่ได้อยู่บน branch (detached HEAD)"))
+  current_branch(dir)?.ok_or_else(|| tr!(AgentMsg::DetachedWorktree, slug))
 }
 
-fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
+pub(super) fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
   let out = Command::new("git")
     .arg("-C")
     .arg(repo)
@@ -87,27 +93,51 @@ fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
   Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// A branch name's own part when it is not the slug: a task from a Jira issue keeps the key's case
+/// (`ENG-123-fix-login`) so Jira's development panel links the branch. ASCII letters, digits, `-`
+/// and `_`, otherwise like a slug (1..=48, no leading/trailing or doubled `-`).
+pub fn validate_leaf(leaf: &str) -> Result<(), String> {
+  let ok = !leaf.is_empty()
+    && leaf.len() <= MAX_SLUG_LEN
+    && leaf.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+    && !leaf.starts_with(['-', '_'])
+    && !leaf.ends_with('-')
+    && !leaf.contains("--");
+  if ok { Ok(()) } else { Err(tr!(AgentMsg::BadBranchName, branch = leaf)) }
+}
+
 /// Creates the task worktree on a new branch `<prefix><slug>` (default prefix `kingu/`) from
-/// `base` (default `HEAD`).
+/// `base` (default `HEAD`). The app calls [`create_named`]; tests use this short form.
+#[cfg(test)]
 pub fn create(repo: &Path, slug: &str, base: Option<&str>, prefix: Option<&str>) -> Result<WorktreeInfo, String> {
+  create_named(repo, slug, base, prefix, None)
+}
+
+/// [`create`] on the branch `<prefix><leaf>` when `leaf` is given (the folder is still the slug).
+pub fn create_named(repo: &Path, slug: &str, base: Option<&str>, prefix: Option<&str>, leaf: Option<&str>) -> Result<WorktreeInfo, String> {
   validate_slug(slug)?;
+  if let Some(l) = leaf {
+    validate_leaf(l)?;
+  }
   let prefix = prefix.unwrap_or(DEFAULT_BRANCH_PREFIX);
   validate_prefix(prefix)?;
   let base = base.map(str::trim).filter(|b| !b.is_empty()).unwrap_or("HEAD");
   if base.starts_with('-') {
-    return Err(format!("{base}: invalid base ref"));
+    return Err(tr!(TasksMsg::BadBaseRef, base));
   }
   // Resolve first so a bad ref fails clearly, and the branch starts from a fixed commit.
   let commit = git(repo, &["rev-parse", "--verify", "--quiet", "--end-of-options", &format!("{base}^{{commit}}")])
-    .map_err(|_| format!("{base}: not a commit"))?;
+    .map_err(|_| tr!(TasksMsg::NotACommit, base))?;
   let commit = commit.trim();
   let path = worktree_path(repo, slug);
   if path.exists() {
-    return Err(format!("{}: already exists", path.display()));
+    return Err(tr!(TasksMsg::WorktreeExists, path = path.display()));
   }
-  let branch = format!("{prefix}{slug}");
-  git(repo, &["check-ref-format", "--branch", &branch]).map_err(|_| format!("{branch}: ชื่อ branch ไม่ถูกต้อง"))?;
+  let branch = format!("{prefix}{}", leaf.unwrap_or(slug));
+  git(repo, &["check-ref-format", "--branch", &branch]).map_err(|_| tr!(AgentMsg::BadBranchName, branch))?;
   let path_str = path.to_str().ok_or("worktree path is not valid UTF-8")?;
+  exclude_kingu_logged(repo);
+  let _queue = git_queue::lock(repo, Scope::Refs, "worktree add")?;
   git(repo, &["worktree", "add", "-b", &branch, "--", path_str, commit])?;
   log::info!("worktree {slug} created at {path_str} from {base} ({commit})");
   list(repo)?
@@ -134,6 +164,7 @@ pub fn refresh_base(repo: &Path, base: &str, timeout: std::time::Duration) -> Re
     return Ok(None);
   }
   let cancel = std::sync::atomic::AtomicBool::new(false);
+  let _queue = git_queue::lock(repo, Scope::Refs, "fetch (refresh base)")?;
   crate::git_remote::net_env(repo, &["fetch", "--quiet", "--no-tags", "--", &remote, &merge], &[], &cancel, timeout)?;
   let fetched = git(repo, &["rev-parse", "--verify", "--quiet", "FETCH_HEAD^{commit}"])?.trim().to_owned();
   let local = git(repo, &["rev-parse", &format!("refs/heads/{base}")])?.trim().to_owned();
@@ -141,14 +172,15 @@ pub fn refresh_base(repo: &Path, base: &str, timeout: std::time::Duration) -> Re
     return Ok(None);
   }
   if git(repo, &["merge-base", "--is-ancestor", &local, &fetched]).is_err() {
-    return Ok(Some(format!("{base} มี commit ที่ไม่อยู่บน {remote} จึงไม่ได้อัปเดต (fast-forward ไม่ได้)")));
+    return Ok(Some(tr!(AgentMsg::BaseNotFastForward, base, remote)));
   }
   let short = &fetched[..fetched.len().min(8)];
   match list(repo)?.into_iter().find(|w| w.branch.as_deref() == Some(base) && !w.bare) {
     Some(w) => {
       let at = Path::new(&w.path);
+      let _checkout = git_queue::lock(at, Scope::Repository, "merge --ff-only (refresh base)")?;
       if !git(at, &["status", "--porcelain", "--untracked-files=no"])?.trim().is_empty() {
-        return Ok(Some(format!("{base} มีการแก้ไขที่ยังไม่ commit ที่ {} จึงไม่ได้อัปเดต", w.path)));
+        return Ok(Some(tr!(AgentMsg::BaseDirty, base, path = w.path)));
       }
       git(at, &["merge", "--ff-only", "--quiet", &fetched])?;
     }
@@ -157,7 +189,7 @@ pub fn refresh_base(repo: &Path, base: &str, timeout: std::time::Duration) -> Re
     }
   }
   log::info!("refreshed {base} from {remote} to {fetched}");
-  Ok(Some(format!("อัปเดต {base} จาก {remote} แล้ว ({short})")))
+  Ok(Some(tr!(AgentMsg::BaseUpdated, base, remote, short)))
 }
 
 /// What removing a task does with its branch (`kingu.worktree.deleteBranchOnRemove`).
@@ -181,20 +213,101 @@ impl DeleteBranch {
   }
 }
 
+/// What git and the disk say about a task's worktree folder when it is to be removed (Orca's
+/// removal recovery: already-missing folders, prunable rows, locked rows, orphaned folders).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Removal {
+  /// Registered and on disk: `git worktree remove`.
+  Remove,
+  /// Registered, but the folder is gone (deleted by hand): `git worktree prune` forgets it.
+  Prune,
+  /// Registered and locked (`git worktree lock`): refused, even with force.
+  Locked,
+  /// Not registered, but the folder is still there with its `.git` file (git lost track, a
+  /// removal stopped halfway): with force the folder is deleted.
+  Orphan,
+  /// Not registered and the folder is empty: it goes.
+  Empty,
+  /// Not registered and not a worktree (no `.git` file, a `.git` folder, a symlink): left alone.
+  Foreign,
+  /// Neither registered nor on disk: nothing left to remove.
+  Gone,
+}
+
+/// Decides how to remove the task worktree at `path`, from its row in `git worktree list` (if any).
+pub fn removal_of(path: &Path, row: Option<&WorktreeInfo>) -> Removal {
+  let meta = std::fs::symlink_metadata(path).ok();
+  match (row, meta) {
+    (Some(w), _) if w.locked => Removal::Locked,
+    (Some(_), Some(m)) if m.is_dir() => Removal::Remove,
+    (Some(_), _) => Removal::Prune,
+    (None, None) => Removal::Gone,
+    (None, Some(m)) if !m.is_dir() => Removal::Foreign,
+    (None, Some(_)) if path.join(".git").symlink_metadata().is_ok_and(|g| g.is_file()) => Removal::Orphan,
+    (None, Some(_)) if std::fs::read_dir(path).is_ok_and(|mut d| d.next().is_none()) => Removal::Empty,
+    (None, Some(_)) => Removal::Foreign,
+  }
+}
+
+/// `git worktree remove` failed because git cannot use the folder any more (its `.git` file is
+/// gone, broken, or points elsewhere): git's "validation failed" errors.
+fn lost_by_git(err: &str) -> bool {
+  err.contains("validation failed") || err.contains("is not a working tree") || err.contains("is not a .git file")
+}
+
+/// Deletes an app-made worktree folder git no longer tracks, then prunes git's record of it.
+fn delete_folder(repo: &Path, path: &Path) -> Result<(), String> {
+  std::fs::remove_dir_all(path).map_err(|e| format!("{}: {e}", path.display()))?;
+  git(repo, &["worktree", "prune"]).map(|_| ())
+}
+
 /// Removes the task worktree and, per `branch`, the branch it had checked out. Returns the branch
-/// a safe delete kept because git does not see it merged.
+/// a safe delete kept because git does not see it merged. A folder deleted by hand is pruned from
+/// git; a folder git lost track of is deleted with `force` (without it: `RemoveOrphan`, so the
+/// webview can ask); a locked worktree or a folder that is not a worktree is refused.
 pub fn remove(repo: &Path, slug: &str, force: bool, branch: DeleteBranch) -> Result<Option<String>, String> {
   validate_slug(slug)?;
   let path = worktree_path(repo, slug);
   let path_str = path.to_str().ok_or("worktree path is not valid UTF-8")?;
-  let name = if branch == DeleteBranch::Keep { None } else { current_branch(&path).ok().flatten() };
-  let mut args = vec!["worktree", "remove"];
-  if force {
-    args.push("--force");
+  let _queue = git_queue::lock(repo, Scope::Refs, "worktree remove")?;
+  let row = list(repo)?.into_iter().find(|w| w.slug.as_deref() == Some(slug));
+  // The branch from git's record: a folder deleted by hand can no longer say what it had out.
+  let name = if branch == DeleteBranch::Keep { None } else { row.as_ref().and_then(|w| w.branch.clone()) };
+  match removal_of(&path, row.as_ref()) {
+    Removal::Locked => return Err(tr!(WorktreeMsg::RemoveLocked, slug)),
+    Removal::Foreign => return Err(tr!(WorktreeMsg::RemoveNotWorktree, path = path.display())),
+    Removal::Orphan if !force => return Err(tr!(WorktreeMsg::RemoveOrphan, path = path.display())),
+    Removal::Orphan => {
+      delete_folder(repo, &path)?;
+      log::info!("worktree {slug}: deleted the folder git no longer tracked");
+    }
+    Removal::Empty => {
+      std::fs::remove_dir(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+      git(repo, &["worktree", "prune"])?;
+    }
+    Removal::Prune | Removal::Gone => {
+      git(repo, &["worktree", "prune"])?;
+      log::info!("worktree {slug}: folder already gone, pruned");
+    }
+    Removal::Remove => {
+      // Nothing may be staging or rejecting inside the worktree while it goes away.
+      let _tree = git_queue::lock(&path, Scope::Worktree, "worktree remove")?;
+      let mut args = vec!["worktree", "remove"];
+      if force {
+        args.push("--force");
+      }
+      args.extend(["--", path_str]);
+      match git(repo, &args) {
+        Ok(_) => log::info!("worktree {slug} removed"),
+        Err(e) if lost_by_git(&e) && force => {
+          log::warn!("worktree {slug}: {e}; deleting the folder");
+          delete_folder(repo, &path)?;
+        }
+        Err(e) if lost_by_git(&e) => return Err(tr!(WorktreeMsg::RemoveOrphan, path = path.display())),
+        Err(e) => return Err(e),
+      }
+    }
   }
-  args.extend(["--", path_str]);
-  git(repo, &args)?;
-  log::info!("worktree {slug} removed");
   let Some(name) = name else {
     return Ok(None);
   };
@@ -207,6 +320,171 @@ pub fn remove(repo: &Path, slug: &str, force: bool, branch: DeleteBranch) -> Res
     Err(e) if e.contains("not fully merged") => Ok(Some(name)),
     Err(e) => Err(e),
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// `.kingu/` stays out of git status
+
+/// The line that starts Kingu's block in `info/exclude` (written once per repository).
+const EXCLUDE_MARK: &str = "# Kingu: task worktrees and local state (shared .kingu files stay visible)";
+
+/// `.kingu/` holds task worktrees and machine-local state (tasks.json, chats.json …), but also
+/// files a team may commit: settings.json, snaps/ and the older `<kind>.sh` scripts. Its children
+/// are excluded and those are let back in, so a repository that shares them still sees them.
+/// `prefix` is the folder's path below the repository's top level (`""` or `"apps/web/"`).
+pub fn exclude_rules(prefix: &str) -> Vec<String> {
+  let at = format!("/{}.kingu/", escape_glob(prefix));
+  vec![format!("{at}*"), format!("!{at}settings.json"), format!("!{at}snaps/"), format!("!{at}*.sh")]
+}
+
+/// A literal path inside a gitignore pattern: glob characters, backslashes and trailing spaces escaped.
+fn escape_glob(s: &str) -> String {
+  let mut out = String::with_capacity(s.len());
+  for c in s.chars() {
+    if matches!(c, '*' | '?' | '[' | ']' | '\\') {
+      out.push('\\');
+    }
+    out.push(c);
+  }
+  let kept = out.trim_end_matches(' ').len();
+  let spaces = out.len() - kept;
+  out.truncate(kept);
+  out.push_str(&"\\ ".repeat(spaces));
+  out
+}
+
+fn excluded_roots() -> &'static Mutex<HashSet<PathBuf>> {
+  static DONE: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+  DONE.get_or_init(Default::default)
+}
+
+/// Keeps `<root>/.kingu/` out of `git status` without touching the user's `.gitignore` (Orca
+/// writes nothing into the checkout at all): Kingu's rules go into the repository's own
+/// `info/exclude` in the git common dir, which every worktree reads and nobody commits. Nothing
+/// is written when `.kingu/` is ignored already (a `.gitignore` entry, or our block from an
+/// earlier run). Checked once per folder per run. True when the rules were added.
+pub fn exclude_kingu(root: &Path) -> Result<bool, String> {
+  let key = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+  if excluded_roots().lock().unwrap_or_else(|e| e.into_inner()).contains(&key) {
+    return Ok(false);
+  }
+  let added = add_exclude(root)?;
+  excluded_roots().lock().unwrap_or_else(|e| e.into_inner()).insert(key);
+  Ok(added)
+}
+
+/// [`exclude_kingu`] where a failure must not stop what Kingu is doing (it is only logged).
+pub fn exclude_kingu_logged(root: &Path) {
+  match exclude_kingu(root) {
+    Ok(true) => log::info!("added .kingu/ to info/exclude of {}", root.display()),
+    Ok(false) => {}
+    Err(e) => log::warn!("info/exclude for {}: {e}", root.display()),
+  }
+}
+
+/// [`exclude_kingu_logged`] on a thread of its own, for writers that must not wait on git (the
+/// tasks.json save); nothing is started once the folder was checked.
+pub fn exclude_kingu_soon(root: &Path) {
+  let key = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+  if excluded_roots().lock().unwrap_or_else(|e| e.into_inner()).contains(&key) {
+    return;
+  }
+  let root = root.to_path_buf();
+  std::thread::spawn(move || exclude_kingu_logged(&root));
+}
+
+fn add_exclude(root: &Path) -> Result<bool, String> {
+  // Not a repository (or no git): there is no status to keep it out of.
+  let Ok(out) = git(root, &["rev-parse", "--path-format=absolute", "--git-common-dir", "--show-prefix"]) else { return Ok(false) };
+  let mut lines = out.lines();
+  let common = PathBuf::from(lines.next().unwrap_or_default().trim());
+  let prefix = lines.next().unwrap_or_default().trim().to_owned();
+  if common.as_os_str().is_empty() {
+    return Ok(false);
+  }
+  // check-ignore exits 0 when the path is ignored (--no-index: whether or not it is tracked).
+  if git(root, &["check-ignore", "-q", "--no-index", "--", ".kingu/tasks.json"]).is_ok() {
+    return Ok(false);
+  }
+  // git itself never writes info/exclude; the short wait only keeps two Kingu writers apart.
+  let _queue = git_queue::lock_for(root, Scope::Refs, "info/exclude", std::time::Duration::from_secs(5))?;
+  let file = common.join("info").join("exclude");
+  let text = match std::fs::read_to_string(&file) {
+    Ok(t) => t,
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+    Err(e) => return Err(format!("{}: {e}", file.display())),
+  };
+  let rules = exclude_rules(&prefix);
+  if text.lines().any(|l| l.trim() == rules[0]) {
+    return Ok(false);
+  }
+  let mut block = String::new();
+  if !text.is_empty() && !text.ends_with('\n') {
+    block.push('\n');
+  }
+  block.push_str(EXCLUDE_MARK);
+  block.push('\n');
+  for r in &rules {
+    block.push_str(r);
+    block.push('\n');
+  }
+  std::fs::create_dir_all(common.join("info")).map_err(|e| format!("{}: {e}", file.display()))?;
+  let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+  f.write_all(block.as_bytes()).map_err(|e| format!("{}: {e}", file.display()))?;
+  Ok(true)
+}
+
+// ---------------------------------------------------------------------------------------------
+// First-work branch rename (Orca's autoRenameBranchFromWork)
+
+/// The branch has been published: an upstream, a push remote, or a remote branch of its name.
+fn published(dir: &Path, branch: &str) -> bool {
+  let has = |key: &str| git(dir, &["config", "--get", &format!("branch.{branch}.{key}")]).is_ok_and(|v| !v.trim().is_empty());
+  if has("remote") || has("merge") || has("pushRemote") {
+    return true;
+  }
+  git(dir, &["for-each-ref", "--format=%(refname:lstrip=3)", "refs/remotes"]).is_ok_and(|out| out.lines().any(|l| l == branch))
+}
+
+/// Orca's first-work rename: the task branch `from` becomes `<prefix><leaf>` (`-2`, `-3` … when
+/// that name is taken), only while the task worktree still has it checked out and it was never
+/// pushed (renaming a published branch would orphan the remote one and its PR). The worktree
+/// folder keeps its name, so terminals and agents running there are not disturbed. Returns the
+/// branch's name now.
+pub fn rename_branch(repo: &Path, slug: &str, from: &str, leaf: &str, prefix: &str) -> Result<String, String> {
+  validate_slug(slug)?;
+  validate_slug(leaf)?;
+  validate_prefix(prefix)?;
+  let dir = worktree_path(repo, slug);
+  let _queue = git_queue::lock(&dir, Scope::Repository, "branch -m")?;
+  if current_branch(&dir)?.as_deref() != Some(from) {
+    return Err(tr!(WorktreeMsg::BranchMoved, branch = from));
+  }
+  if published(&dir, from) {
+    return Err(tr!(WorktreeMsg::BranchPublished, branch = from));
+  }
+  let taken = |name: &str| git(&dir, &["show-ref", "--verify", "--quiet", &format!("refs/heads/{name}")]).is_ok();
+  let to = (1..=100)
+    .map(|n| if n == 1 { format!("{prefix}{leaf}") } else { format!("{prefix}{leaf}-{n}") })
+    .find(|c| c == from || !taken(c))
+    .ok_or_else(|| tr!(AgentMsg::BadBranchName, branch = format!("{prefix}{leaf}")))?;
+  if to == from {
+    return Ok(to);
+  }
+  git(&dir, &["check-ref-format", "--branch", &to]).map_err(|_| tr!(AgentMsg::BadBranchName, branch = to))?;
+  git(&dir, &["branch", "-m", from, &to])?;
+  log::info!("task {slug}: branch {from} renamed to {to}");
+  Ok(to)
+}
+
+/// The pull request a task branch was checked out from (`branch.<b>.kinguPr`, written when a task
+/// starts from a PR, or gh's own `refs/pull/<n>/head` upstream), so its PR is found by number.
+pub fn pr_number_of(dir: &Path, branch: &str) -> Option<u64> {
+  let get = |key: &str| git(dir, &["config", "--get", &format!("branch.{branch}.{key}")]).ok().map(|v| v.trim().to_owned());
+  if let Some(n) = get("kinguPr").and_then(|v| v.parse().ok()) {
+    return Some(n);
+  }
+  get("merge")?.strip_prefix("refs/pull/")?.strip_suffix("/head")?.parse().ok()
 }
 
 fn slug_of(path: &str) -> Option<String> {
@@ -283,6 +561,17 @@ mod tests {
   }
 
   #[test]
+  fn a_jira_task_branch_keeps_the_key_uppercase() {
+    let (_tmp, repo) = temp_repo();
+    let w = create_named(&repo, "eng-123-fix-login", None, None, Some("ENG-123-fix-login")).unwrap();
+    assert_eq!((w.slug.as_deref(), w.branch.as_deref()), (Some("eng-123-fix-login"), Some("kingu/ENG-123-fix-login")));
+    assert!(validate_leaf("MY_PROJ-7-x").is_ok());
+    for bad in ["", "a b", "-a", "a-", "a--b", "a/b", "a..b", "_a"] {
+      assert!(validate_leaf(bad).is_err(), "{bad}");
+    }
+  }
+
+  #[test]
   fn creates_lists_and_removes_a_worktree() {
     let (_tmp, repo) = temp_repo();
     let w = create(&repo, "fix-login", None, None).unwrap();
@@ -309,6 +598,79 @@ mod tests {
     assert!(git(&repo, &["branch", "--list", "kingu/fix-login"]).unwrap().trim().is_empty());
   }
 
+  fn branch_exists(repo: &Path, name: &str) -> bool {
+    !git(repo, &["branch", "--list", name]).unwrap().trim().is_empty()
+  }
+
+  /// Orca's removal recovery: a folder deleted by hand is pruned (its branch still goes).
+  #[test]
+  fn removes_a_worktree_whose_folder_was_deleted_by_hand() {
+    let (_tmp, repo) = temp_repo();
+    create(&repo, "gone", None, None).unwrap();
+    let path = worktree_path(&repo, "gone");
+    std::fs::remove_dir_all(&path).unwrap();
+    assert_eq!(removal_of(&path, list(&repo).unwrap().iter().find(|w| w.slug.as_deref() == Some("gone"))), Removal::Prune);
+    assert_eq!(remove(&repo, "gone", false, DeleteBranch::Force), Ok(None));
+    assert_eq!(list(&repo).unwrap().len(), 1, "git forgot the worktree");
+    assert!(!branch_exists(&repo, "kingu/gone"));
+  }
+
+  #[test]
+  fn deletes_an_orphaned_folder_only_with_force() {
+    let (_tmp, repo) = temp_repo();
+    create(&repo, "orphan", None, None).unwrap();
+    let path = worktree_path(&repo, "orphan");
+    // Git loses track of it (its admin dir is gone) while the folder and its `.git` file stay.
+    std::fs::write(path.join("notes.txt"), "x").unwrap();
+    std::fs::remove_dir_all(repo.join(".git/worktrees/orphan")).unwrap();
+    run(&repo, &["worktree", "prune"]);
+    assert_eq!(removal_of(&path, None), Removal::Orphan);
+    let err = remove(&repo, "orphan", false, DeleteBranch::Keep).unwrap_err();
+    assert!(err.contains(&path.display().to_string()), "{err}");
+    assert!(path.join("notes.txt").exists(), "nothing deleted without force");
+    assert_eq!(remove(&repo, "orphan", true, DeleteBranch::Keep), Ok(None));
+    assert!(!path.exists());
+  }
+
+  #[test]
+  fn deletes_a_folder_git_cannot_use_with_force() {
+    let (_tmp, repo) = temp_repo();
+    create(&repo, "broken", None, None).unwrap();
+    let path = worktree_path(&repo, "broken");
+    // Still registered, but its `.git` file is gone: `git worktree remove` fails validation.
+    std::fs::remove_file(path.join(".git")).unwrap();
+    assert!(remove(&repo, "broken", false, DeleteBranch::Keep).is_err());
+    assert!(path.exists());
+    assert_eq!(remove(&repo, "broken", true, DeleteBranch::Keep), Ok(None));
+    assert!(!path.exists());
+    assert_eq!(list(&repo).unwrap().len(), 1);
+  }
+
+  #[test]
+  fn refuses_locked_worktrees_and_folders_that_are_not_worktrees() {
+    let (_tmp, repo) = temp_repo();
+    create(&repo, "locked", None, None).unwrap();
+    let locked = worktree_path(&repo, "locked");
+    run(&repo, &["worktree", "lock", "--reason", "agent", locked.to_str().unwrap()]);
+    assert!(remove(&repo, "locked", true, DeleteBranch::Keep).is_err());
+    assert!(locked.exists());
+
+    let mine = worktree_path(&repo, "mine");
+    std::fs::create_dir_all(&mine).unwrap();
+    std::fs::write(mine.join("notes.txt"), "keep me").unwrap();
+    assert_eq!(removal_of(&mine, None), Removal::Foreign);
+    assert!(remove(&repo, "mine", true, DeleteBranch::Keep).is_err());
+    assert!(mine.join("notes.txt").exists());
+
+    std::fs::create_dir_all(mine.join(".git")).unwrap();
+    assert_eq!(removal_of(&mine, None), Removal::Foreign, "a .git folder is another repository");
+
+    let empty = worktree_path(&repo, "empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    assert_eq!(remove(&repo, "empty", false, DeleteBranch::Keep), Ok(None));
+    assert!(!empty.exists());
+  }
+
   #[test]
   fn creates_from_a_base_ref_and_rejects_bad_input() {
     let (_tmp, repo) = temp_repo();
@@ -318,7 +680,9 @@ mod tests {
     assert!(create(&repo, "nope", Some("no-such-ref"), None).unwrap_err().contains("not a commit"));
     assert!(create(&repo, "nope", Some("--orphan"), None).is_err());
     assert!(create(&repo, "../escape", None, None).is_err());
-    assert!(remove(&repo, "missing", false, DeleteBranch::Keep).is_err());
+    // Nothing registered and no folder: already removed.
+    assert_eq!(remove(&repo, "missing", false, DeleteBranch::Keep), Ok(None));
+    assert!(remove(&repo, "../escape", false, DeleteBranch::Keep).is_err());
   }
 
   #[test]
@@ -387,7 +751,7 @@ mod tests {
     // main checked out in the clone: fast-forwarded there.
     commit(&origin, "a.txt");
     let new_main = git(&origin, &["rev-parse", "main"]).unwrap();
-    assert!(refresh_base(&clone, "main", t).unwrap().unwrap().contains("อัปเดต main"));
+    assert!(refresh_base(&clone, "main", t).unwrap().unwrap().contains("Updated main"));
     assert_eq!(git(&clone, &["rev-parse", "main"]).unwrap(), new_main);
     assert!(clone.join("a.txt").is_file());
 
@@ -401,12 +765,84 @@ mod tests {
     run(&origin, &["checkout", "-q", "main"]);
     commit(&origin, "c.txt");
     std::fs::write(clone.join("a.txt"), "edited").unwrap();
-    assert!(refresh_base(&clone, "main", t).unwrap().unwrap().contains("ยังไม่ commit"));
+    assert!(refresh_base(&clone, "main", t).unwrap().unwrap().contains("uncommitted"));
     run(&clone, &["checkout", "-q", "--", "a.txt"]);
     commit(&clone, "local.txt");
     let local = git(&clone, &["rev-parse", "main"]).unwrap();
-    assert!(refresh_base(&clone, "main", t).unwrap().unwrap().contains("fast-forward ไม่ได้"));
+    assert!(refresh_base(&clone, "main", t).unwrap().unwrap().contains("cannot fast-forward"));
     assert_eq!(git(&clone, &["rev-parse", "main"]).unwrap(), local);
+  }
+
+  /// A repository whose .gitignore does not mention `.kingu/`.
+  fn bare_repo() -> (tempfile::TempDir, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().canonicalize().unwrap();
+    run(&repo, &["init", "-q", "-b", "main"]);
+    commit(&repo, "a.txt");
+    (tmp, repo)
+  }
+
+  #[test]
+  fn keeps_kingu_out_of_git_status_through_info_exclude() {
+    let (_tmp, repo) = bare_repo();
+    create(&repo, "t", None, None).unwrap();
+    std::fs::write(repo.join(".kingu/tasks.json"), "{}").unwrap();
+    assert_eq!(git(&repo, &["status", "--porcelain"]).unwrap(), "", "worktrees and tasks.json are excluded");
+    // The user's .gitignore is untouched; the rules are in the common dir's info/exclude, once.
+    assert!(!repo.join(".gitignore").exists());
+    let exclude = std::fs::read_to_string(repo.join(".git/info/exclude")).unwrap();
+    assert_eq!(exclude.matches(EXCLUDE_MARK).count(), 1);
+    excluded_roots().lock().unwrap().clear();
+    assert!(!exclude_kingu(&repo).unwrap(), "already there");
+    assert_eq!(std::fs::read_to_string(repo.join(".git/info/exclude")).unwrap(), exclude);
+    // Shared files still show; the task worktree's own status is its own.
+    std::fs::write(repo.join(".kingu/settings.json"), "{}").unwrap();
+    assert_eq!(git(&repo, &["status", "--porcelain", "--untracked-files=all"]).unwrap().trim(), "?? .kingu/settings.json");
+    std::fs::write(worktree_path(&repo, "t").join("b.txt"), "b").unwrap();
+    assert_eq!(git(&worktree_path(&repo, "t"), &["status", "--porcelain"]).unwrap().trim(), "?? b.txt");
+
+    // A folder below the top level gets rules for its own .kingu/.
+    let sub = repo.join("apps/web");
+    std::fs::create_dir_all(sub.join(".kingu")).unwrap();
+    std::fs::write(sub.join(".kingu/chats.json"), "{}").unwrap();
+    assert!(exclude_kingu(&sub).unwrap());
+    assert_eq!(git(&repo, &["status", "--porcelain", "--untracked-files=all"]).unwrap().trim(), "?? .kingu/settings.json");
+
+    // Already ignored by the repository: nothing written.
+    let (_tmp2, other) = temp_repo();
+    assert!(!exclude_kingu(&other).unwrap());
+    assert!(!std::fs::read_to_string(other.join(".git/info/exclude")).unwrap_or_default().contains(EXCLUDE_MARK));
+    // Not a repository: nothing to do.
+    let plain = tempfile::tempdir().unwrap();
+    assert!(!exclude_kingu(plain.path()).unwrap());
+  }
+
+  #[test]
+  fn exclude_rules_escape_the_folder_path() {
+    assert_eq!(exclude_rules(""), ["/.kingu/*", "!/.kingu/settings.json", "!/.kingu/snaps/", "!/.kingu/*.sh"]);
+    assert_eq!(exclude_rules("a*b/[x]/")[0], "/a\\*b/\\[x\\]/.kingu/*");
+  }
+
+  #[test]
+  fn renames_an_unpublished_task_branch_once() {
+    let (_tmp, repo) = bare_repo();
+    create(&repo, "please-fix-the-login", None, None).unwrap();
+    let dir = worktree_path(&repo, "please-fix-the-login");
+    run(&repo, &["branch", "kingu/fix-login"]);
+    // Taken names get a number; the folder stays.
+    let to = rename_branch(&repo, "please-fix-the-login", "kingu/please-fix-the-login", "fix-login", "kingu/").unwrap();
+    assert_eq!(to, "kingu/fix-login-2");
+    assert_eq!(current_branch(&dir).unwrap().as_deref(), Some("kingu/fix-login-2"));
+    assert!(dir.is_dir());
+    // Renaming to its own name is a no-op; a branch that moved on is left alone.
+    assert_eq!(rename_branch(&repo, "please-fix-the-login", "kingu/fix-login-2", "fix-login", "kingu/").unwrap(), "kingu/fix-login-2");
+    let e = crate::i18n::with_locale(crate::i18n::Locale::En, || rename_branch(&repo, "please-fix-the-login", "kingu/please-fix-the-login", "x", "kingu/").unwrap_err());
+    assert!(e.contains("no longer on"), "{e}");
+    // A published branch keeps its name.
+    run(&dir, &["config", "branch.kingu/fix-login-2.remote", "origin"]);
+    let e = crate::i18n::with_locale(crate::i18n::Locale::En, || rename_branch(&repo, "please-fix-the-login", "kingu/fix-login-2", "other", "kingu/").unwrap_err());
+    assert!(e.contains("already pushed"), "{e}");
+    assert!(rename_branch(&repo, "please-fix-the-login", "kingu/fix-login-2", "Bad Name", "kingu/").is_err());
   }
 
   #[test]

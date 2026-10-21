@@ -5,6 +5,7 @@
 // index JavaScript strings), so a character offset maps to a column by adding one.
 
 import type * as Monaco from 'monaco-editor';
+import { keyForPath, within, type WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 import type {
 	CompletionItem,
 	CompletionItemDefaults,
@@ -129,8 +130,44 @@ export function relOfUri(root: string, uri: string): string | null {
 	return path.startsWith(base) ? path.slice(base.length) : null;
 }
 
+/** A file of another root folder of a multi-root workspace has an absolute path already. */
 export function uriOfRel(root: string, rel: string): string {
+	if (rel.startsWith('/')) return pathToUri(rel);
 	return pathToUri(`${root.replace(/\/$/, '')}/${rel}`);
+}
+
+/**
+ * The workbench key of an LSP URI in a multi-root workspace: relative in the first folder,
+ * absolute in another (workspaceFolders.ts), null outside every folder or for a folder itself.
+ */
+export function keyOfUri(folders: readonly WorkspaceFolder[], uri: string): string | null {
+	const path = uriToPath(uri);
+	if (!path) return null;
+	const key = keyForPath(path.replace(/\/+$/, '') || '/', folders);
+	return key ? key : null;
+}
+
+/** The Monaco model path of a workbench key (editorModels.ts `modelPath`: `/rel`, or the absolute path). */
+export function modelPathOf(key: string): string {
+	return key.startsWith('/') ? key : '/' + key;
+}
+
+/** The workbench key of a Monaco model path: absolute when it lies in a root folder other than the first, else `/rel`. */
+export function keyOfModelPath(path: string, folders: readonly WorkspaceFolder[]): string {
+	return folders.slice(1).some((f) => within(path, f.path)) ? path : path.replace(/^\//, '');
+}
+
+/** An LSP workspace folder (`WorkspaceFolder` in the protocol). */
+export type LspFolder = { uri: string; name: string };
+
+export function lspFolders(folders: readonly WorkspaceFolder[]): LspFolder[] {
+	return folders.map((f) => ({ uri: pathToUri(f.path.replace(/\/+$/, '') || '/'), name: f.name || f.path.slice(f.path.lastIndexOf('/') + 1) }));
+}
+
+/** `workspace/didChangeWorkspaceFolders`' event between two folder lists (by URI; a renamed folder is removed and added). */
+export function folderChanges(before: readonly LspFolder[], after: readonly LspFolder[]): { added: LspFolder[]; removed: LspFolder[] } {
+	const same = (a: LspFolder, b: LspFolder) => a.uri === b.uri && a.name === b.name;
+	return { added: after.filter((f) => !before.some((b) => same(b, f))), removed: before.filter((f) => !after.some((a) => same(a, f))) };
 }
 
 // --- Hover and documentation -----------------------------------------------------------------

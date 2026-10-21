@@ -10,18 +10,45 @@ import { isNotebookPath } from '#lib/workbench/notebook.ts';
 import { keybindings, USER_KEYBINDINGS_KEY } from '#lib/workbench/keybindings.svelte.ts';
 import { KEYBINDINGS_TEMPLATE } from '#lib/workbench/keybindingsModel.ts';
 import { isUntitled } from '#lib/workbench/untitled.ts';
+import { isVaultKey } from '#lib/vault/vault.ts';
+import { isArtifactKey } from '#lib/artifacts/artifacts.ts';
+import { isChatEditorKey } from '#lib/agent/chatExtras.ts';
+import { isMergeKey } from '#lib/workbench/scm.ts';
+import { externalPath, isExternalKey } from '#lib/workbench/externalFiles.ts';
+import { isLocalHistoryKey, parseLocalHistoryKey } from '#lib/scm/localHistory.ts';
+import { isSearchEditorKey } from '#lib/workbench/searchEditor.ts';
+import { isOutputKey } from '#lib/output/output.ts';
+import { userSnippetsName } from '#lib/editor/snippets/snippetFiles.ts';
 
-/** Tabs with no text model (the Settings editor UI, ADE task pages and the board, images, Markdown previews). */
-export const isNonTextEditor = (key: string) => key === SETTINGS_EDITOR_KEY || isAdeEditor(key) || isImagePath(key) || isPreviewKey(key) || isNotebookPath(key) || isChangesKey(key);
+/** Kingu's user mcp.json (the MCP store's `USER_MCP_KEY`): in the app config dir, read and saved by Rust. */
+const USER_MCP_KEY = 'mcp://user/mcp.json';
+
+/** Tabs with no text model (the Settings editor UI, ADE task pages and the board, images, Markdown previews, AI Vault transcripts, chats). */
+export const isNonTextEditor = (key: string) =>
+	key === SETTINGS_EDITOR_KEY || isAdeEditor(key) || isImagePath(key) || isPreviewKey(key) || isNotebookPath(key) || isChangesKey(key) || isVaultKey(key) || isChatEditorKey(key) || isArtifactKey(key) || isMergeKey(key) || isSearchEditorKey(key);
 
 /** A user snap's manifest (`snap://user/<id>/snap.toml`): it lives in the app config dir, outside the workspace. */
 const userSnapId = (key: string) => /^snap:\/\/user\/([a-z0-9][a-z0-9-]{0,39})\/snap\.toml$/.exec(key)?.[1];
 
 export async function readResource(key: string): Promise<string> {
+	if (isExternalKey(key)) {
+		const file = await readTextResource(key);
+		if (file.kind !== 'text') throw new Error(externalPath(key));
+		return file.content;
+	}
 	// An untitled editor starts empty; it has nothing on disk.
 	if (isUntitled(key)) return '';
+	if (isLocalHistoryKey(key)) {
+		const read = await readTextResource(key);
+		return read.kind === 'text' ? read.content : '';
+	}
+	// An Output channel opened in an editor (read-only; output.svelte.ts keeps it current).
+	if (isOutputKey(key)) return import('#lib/output/output.svelte.ts').then((m) => m.output.text(key));
 	const snapId = userSnapId(key);
 	if (snapId) return invoke<string>('snap_manifest_read', { id: snapId });
+	if (key === USER_MCP_KEY) return invoke<string>('mcp_user_read');
+	const snippets = userSnippetsName(key);
+	if (snippets) return (await invoke<string | null>('snippets_user_read', { name: snippets })) ?? '{\n}\n';
 	if (key === USER_SETTINGS_KEY) {
 		const file = await invoke<{ content: string | null }>('settings_read', { scope: 'user' });
 		return file.content ?? '{\n}\n';
@@ -34,25 +61,46 @@ export async function readResource(key: string): Promise<string> {
 }
 
 export async function writeResource(key: string, content: string): Promise<void> {
+	if (isExternalKey(key)) {
+		await writeTextResource(key, content, 'utf8');
+		return;
+	}
 	if (isUntitled(key)) throw new Error('an untitled editor is saved with Save As');
+	if (isLocalHistoryKey(key)) throw new Error('a local history entry is read-only');
+	if (isOutputKey(key)) throw new Error('an Output channel is read-only');
 	const snapId = userSnapId(key);
+	const snippets = userSnippetsName(key);
 	if (key === USER_SETTINGS_KEY) await invoke('settings_write', { scope: 'user', content });
+	else if (snippets) await invoke('snippets_user_write', { name: snippets, content });
 	else if (key === USER_KEYBINDINGS_KEY) await invoke('settings_write', { scope: 'keybindings', content });
 	else if (snapId) await invoke('snap_manifest_write', { id: snapId, content });
+	else if (key === USER_MCP_KEY) await invoke('mcp_user_write', { content });
 	else await invoke('fs_write_file', { rel: key, content });
 	if (key === USER_SETTINGS_KEY || key === WORKSPACE_SETTINGS_PATH) await settings.load();
 	if (key === USER_KEYBINDINGS_KEY) await keybindings.load();
 	// The user snaps dir is not watched; loaded lazily to keep the snaps store out of this module's imports.
 	if (snapId) await import('#lib/snaps/snaps.svelte.ts').then((m) => m.snaps.load());
+	if (key === USER_MCP_KEY) await import('#lib/mcp/mcp.svelte.ts').then((m) => m.mcp.load());
+	if (snippets) await import('#lib/editor/snippets/snippets.svelte.ts').then((m) => m.snippetStore.loadUser());
 }
 
 /** Workspace files are read and saved with their encoding and checked for save conflicts; the
- * settings, keybindings and snap manifests are always UTF-8 and owned by Kingu. */
-export const isWorkspaceTextFile = (key: string) => key !== USER_SETTINGS_KEY && key !== USER_KEYBINDINGS_KEY && !userSnapId(key);
+ * settings, keybindings and snap manifests are always UTF-8 and owned by Kingu. Files outside the
+ * folder (`external:`) are text files too, but not workspace files (auto save, associations). */
+export const isWorkspaceTextFile = (key: string) => !isExternalKey(key) && !isOutputKey(key) && key !== USER_SETTINGS_KEY && key !== USER_KEYBINDINGS_KEY && key !== USER_MCP_KEY && !userSnapId(key) && !userSnippetsName(key) && !isLocalHistoryKey(key);
 
 /** `readonly`: the file's permissions say it cannot be written (files.readonlyFromPermissions). */
 export type FileStat = { mtime: number; size: number; hash: string; readonly?: boolean };
-export type ReadOptions = { encoding?: string; defaultEncoding?: string; autoGuess?: boolean; acceptBinary?: boolean; acceptLarge?: boolean; largeFileLimit?: number };
+export type ReadOptions = {
+	encoding?: string;
+	defaultEncoding?: string;
+	autoGuess?: boolean;
+	/** `files.candidateGuessEncodings`: the encodings a guess may give (empty: any). */
+	candidateGuessEncodings?: string[];
+	acceptBinary?: boolean;
+	acceptLarge?: boolean;
+	largeFileLimit?: number;
+};
 export type TextRead =
 	| { kind: 'text'; content: string; encoding: string; lossy: boolean; stat?: FileStat }
 	| { kind: 'binary'; size: number }
@@ -61,12 +109,18 @@ export type TextWrite = { kind: 'saved'; stat?: FileStat } | { kind: 'conflict';
 
 /** `readResource` with encodings, binary and large file detection (Rust `textfile_read`). */
 export async function readTextResource(key: string, options: ReadOptions = {}): Promise<TextRead> {
+	if (isExternalKey(key)) return invoke<TextRead>('external_textfile_read', { path: externalPath(key), options });
+	// A local history entry (Show Contents) decodes like the file it is a copy of.
+	const entry = parseLocalHistoryKey(key);
+	if (entry) return invoke<TextRead>('local_history_read', { rel: entry.rel, id: entry.id, options: { ...options, acceptBinary: true, acceptLarge: true } });
 	if (!isWorkspaceTextFile(key)) return { kind: 'text', content: await readResource(key), encoding: 'utf8', lossy: false };
 	return invoke<TextRead>('textfile_read', { rel: key, options });
 }
 
 /** `writeResource` with the file's encoding; `expected` is the stat it was loaded with (none: overwrite). */
 export async function writeTextResource(key: string, content: string, encoding: string, expected?: FileStat): Promise<TextWrite> {
+	const stamp = expected ? { mtime: expected.mtime, hash: expected.hash } : null;
+	if (isExternalKey(key)) return invoke<TextWrite>('external_textfile_write', { path: externalPath(key), content, encoding, expected: stamp });
 	if (!isWorkspaceTextFile(key)) {
 		await writeResource(key, content);
 		return { kind: 'saved' };

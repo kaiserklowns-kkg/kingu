@@ -9,6 +9,23 @@ starts one per app and talks newline-delimited JSON-RPC 2.0 over stdio; see `src
 - Notifications: `ready {sdkVersion}`, `event {runId, event}` (normalized `AgentEvent`, snake_case).
 - Permission prompts come from the SDK's `canUseTool`; "allow always" becomes a `session`-scoped
   rule, never written to settings files. Closing stdin ends every run and exits.
+- Safety checks (`src/guards/`, ported from goose by way of old Kingu's Arkai; Apache-2.0, see
+  NOTICE): a PreToolUse hook, so they hold in every permission mode. A catastrophic Bash command
+  (`rm -rf /`, `curl … | sh`, …) and the third identical tool call in a row are denied, with a
+  `guard_blocked` event. `start {safetyChecks: false}` turns them off.
+- `start {systemPromptAppend}`: project rules (Rust `agent/rules.rs`) after Claude Code's own prompt.
+- `start {runtime}`: another agent (`src/runtimes/`): an ACP agent or `codex app-server` as a child
+  process, or **Arkai** (`src/arkai/`), Kingu's own agent loop run in this process on a model the
+  user brings: any OpenAI-compatible chat-completions server (OpenAI, OpenRouter, Groq, DeepSeek,
+  LM Studio, vLLM, Ollama's `/v1`) or the Anthropic Messages API, streamed. Its built-in tools
+  (Read, Write, Edit, Bash, Glob, Grep, TodoWrite) carry Claude Code's names and inputs and go
+  through the same safety checks, permission modes, prompts and edit snapshots. For small models:
+  the tool coach (argument repair and hints), tool calls written as text turned into real ones (or
+  the model sent back, twice at most), and light mode (a short prompt, six tools) for a context
+  window of 16k or less. The conversation is fitted to the model's window before each request
+  (old turns summarised), and a continued chat gets it back from the transcript Rust sends
+  (`runtime.history`). The provider's API key comes from the Keychain through Rust and is never
+  logged. Tests run against a fake server (`test/fixtures/fake-llm.ts`).
 
 ## Dev
 

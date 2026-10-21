@@ -16,6 +16,8 @@ import {
 	patchTask,
 	pruneAccepted,
 	removeTask,
+	taskChanges,
+	patchChange,
 	reviewChip,
 	runSummary,
 	sameSummary,
@@ -70,6 +72,18 @@ describe('tasks.json reducers', () => {
 		expect(patched[1]).toMatchObject({ slug: 'b', status: 'review', model: 'opus', updated_at: 2000 });
 		expect(patched[0]).toBe(list[0]);
 		expect(patchTask(list, 'zzz', { status: 'done' }, 3)).toEqual(list);
+	});
+
+	test('task changes name only what changed, for a read-modify-write in Rust', () => {
+		const list = [meta('a'), meta('b'), meta('c')];
+		const next = [...patchTask(removeTask(list, 'c'), 'b', { title: 'B' }, 9), meta('d')];
+		expect(taskChanges(list, next)).toEqual([
+			{ kind: 'upsert', task: next[1] },
+			{ kind: 'upsert', task: next[2] },
+			{ kind: 'remove', slug: 'c' }
+		]);
+		expect(taskChanges(list, list)).toEqual([]);
+		expect(patchChange('a', { status: 'done', pr_url: null }, 7)).toEqual({ kind: 'patch', slug: 'a', fields: { status: 'done', pr_url: null, updated_at: 7 } });
 	});
 
 	test('toggleAccepted adds sorted and removes; pruneAccepted drops stale marks', () => {

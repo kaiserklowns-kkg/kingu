@@ -337,7 +337,7 @@ describe('server table and status text', () => {
 		// VS Code matches extensions with endsWith, so a bare `.yml` is YAML too.
 		expect(languageFor('.yml')).toBe('yaml');
 		expect(languageFor('dir.d/file')).toBe('plaintext');
-		expect(EXTRA_LANGUAGES.map((l) => l.id)).toEqual(['svelte', 'toml', 'typescriptreact', 'javascriptreact', 'jsx-tags', 'makefile', 'diff', 'dotenv', 'properties', 'ignore']);
+		expect(EXTRA_LANGUAGES.map((l) => l.id)).toEqual(['svelte', 'toml', 'typescriptreact', 'javascriptreact', 'jsx-tags', 'makefile', 'diff', 'dotenv', 'properties', 'ignore', 'search-result']);
 		// TSX/JSX are their own languages, served by the TypeScript server.
 		expect(serverFor(languageFor('App.tsx'))?.key).toBe('typescript');
 		expect(serverFor(languageFor('App.jsx'))?.key).toBe('typescript');

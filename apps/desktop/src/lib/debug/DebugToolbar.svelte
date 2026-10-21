@@ -8,13 +8,28 @@
 	import { keyLabel } from '#lib/workbench/keys.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { debug } from './debug.svelte.ts';
-	import { toolbarShown, type ToolBarLocation } from './debugSettings.ts';
+	import { toolbarSessions, toolbarShown, toolbarTarget, type ToolBarLocation } from './debugSettings.ts';
+	import { t } from '#lib/i18n/index.ts';
 
 	let { placement }: { placement: Exclude<ToolBarLocation, 'hidden'> } = $props();
 
 	const shown = $derived(
 		debug.active && toolbarShown(placement, settings.get<ToolBarLocation>('debug.toolBarLocation'), settings.get<boolean>('window.commandCenter') !== false)
 	);
+
+	// debug.showSubSessionsInToolBar: the session picker lists top-level sessions only, unless on.
+	const showSub = $derived(settings.get<boolean>('debug.showSubSessionsInToolBar') === true);
+	const pickable = $derived(toolbarSessions(debug.sessions, showSub));
+	const selected = $derived(toolbarTarget(debug.sessions, debug.focusedKey, showSub));
+
+	/** Picking a top-level session focuses the part of its tree that has program state (a stopped child, else its newest). */
+	function pick(key: number) {
+		if (showSub) return debug.focusSession(key);
+		const tree = (k: number): number[] => debug.sessions.filter((s) => s.parentKey === k).flatMap((s) => [s.key, ...tree(s.key)]);
+		const below = tree(key);
+		const stopped = below.find((k) => debug.sessions.find((s) => s.key === k)?.model.state === 'stopped');
+		debug.focusSession(stopped ?? below.at(-1) ?? key);
+	}
 
 	const titled = (label: string, id: string) => {
 		const cmd = commands.get(id);
@@ -28,6 +43,9 @@
 		{ icon: 'stepOver', label: 'Step Over', command: 'workbench.action.debug.stepOver', show: true },
 		{ icon: 'stepInto', label: 'Step Into', command: 'workbench.action.debug.stepInto', show: true },
 		{ icon: 'stepOut', label: 'Step Out', command: 'workbench.action.debug.stepOut', show: true },
+		// Shown for adapters with supportsStepBack (VS Code's toolbar does the same).
+		{ icon: 'arrowLeft', label: 'Step Back', command: 'workbench.action.debug.stepBack', show: !!debug.capabilities.supportsStepBack },
+		{ icon: 'discard', label: 'Reverse', command: 'workbench.action.debug.reverseContinue', show: !!debug.capabilities.supportsStepBack },
 		{ icon: 'refresh', label: 'Restart', command: 'workbench.action.debug.restart', show: true },
 		{ icon: 'stop', label: 'Stop', command: 'workbench.action.debug.stop', show: true }
 	]);
@@ -64,6 +82,19 @@
 </script>
 
 {#snippet buttons()}
+	{#if pickable.length > 1}
+		<select
+			aria-label={t('debugger.sessionPicker')}
+			title={t('debugger.sessionPicker')}
+			class="h-6 max-w-40 min-w-0 truncate rounded border border-(--vscode-dropdown-border) bg-(--vscode-dropdown-background) px-1 text-(--vscode-dropdown-foreground)"
+			value={selected ?? undefined}
+			onchange={(e) => pick(Number(e.currentTarget.value))}
+		>
+			{#each pickable as s (s.key)}
+				<option value={s.key}>{s.name}</option>
+			{/each}
+		</select>
+	{/if}
 	{#each tools as t (t.label)}
 		{#if t.show}
 			<button aria-label={t.label} title={titled(t.label, t.command)} disabled={!commands.enabled(t.command)} class={BUTTON} onclick={() => commands.run(t.command)}>

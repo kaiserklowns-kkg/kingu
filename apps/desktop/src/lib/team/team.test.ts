@@ -77,6 +77,9 @@ describe('issueSource', () => {
 	test('Linear uses the identifier; bad links are left out', () => {
 		expect(issueSource({ number: 123, url: 'https://linear.app/acme/issue/ENG-123/x', provider: 'linear', key: 'ENG-123' })).toEqual({ source: 'linear', external_ref: 'ENG-123' });
 		expect(issueSource({ number: 1, url: 'https://linear.app/x', provider: 'linear' })).toBeUndefined();
+		expect(issueSource({ number: 9, url: 'https://acme.atlassian.net/browse/ENG-9', provider: 'jira', key: 'ENG-9' })).toEqual({ source: 'jira', external_ref: 'ENG-9' });
+		expect(issueSource({ number: 9, url: 'https://github.com/acme/api/issues/9', provider: 'github', key: 'acme/api#9' })).toEqual({ source: 'github', external_ref: 'acme/api#9' });
+		expect(issueSource({ number: 9, url: 'https://gitlab.com/acme/app/-/issues/9', provider: 'gitlab', key: 'acme/app#9' })).toBeUndefined();
 		expect(issueSource({ number: 0, url: 'https://github.com/a/b/issues/0' })).toBeUndefined();
 		expect(issueSource(null)).toBeUndefined();
 	});

@@ -1,0 +1,126 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/html.ts",
+	"export": "HTML_SETTINGS",
+	"what": "html.* (vscode-html-language-server)",
+	"entries": [
+		{
+			"id": "html.format.enable",
+			"group": "HTML",
+			"th": "เปิดตัวจัดรูปแบบ HTML"
+		},
+		{
+			"id": "html.format.wrapLineLength",
+			"group": "HTML",
+			"th": "ความยาวบรรทัดสูงสุดก่อนตัดบรรทัด 0 = ไม่ตัด"
+		},
+		{
+			"id": "html.format.unformatted",
+			"group": "HTML",
+			"th": "แท็กที่ไม่จัดรูปแบบ"
+		},
+		{
+			"id": "html.format.contentUnformatted",
+			"group": "HTML",
+			"th": "แท็กที่ไม่จัดรูปแบบเนื้อหาข้างใน"
+		},
+		{
+			"id": "html.format.indentInnerHtml",
+			"group": "HTML",
+			"th": "ย่อหน้าส่วน head และ body"
+		},
+		{
+			"id": "html.format.preserveNewLines",
+			"group": "HTML",
+			"th": "คงบรรทัดว่างก่อน element"
+		},
+		{
+			"id": "html.format.maxPreserveNewLines",
+			"group": "HTML",
+			"th": "จำนวนบรรทัดว่างสูงสุดที่คงไว้"
+		},
+		{
+			"id": "html.format.indentHandlebars",
+			"group": "HTML",
+			"th": "จัดรูปแบบและย่อหน้า handlebars"
+		},
+		{
+			"id": "html.format.extraLiners",
+			"group": "HTML",
+			"th": "แท็กที่ขึ้นบรรทัดว่างก่อนหน้า"
+		},
+		{
+			"id": "html.format.wrapAttributes",
+			"group": "HTML",
+			"th": "การตัดบรรทัด attribute",
+			"enumTh": [
+				"ตัดเมื่อเกินความยาวบรรทัด",
+				"ทุก attribute ขึ้นบรรทัดใหม่ยกเว้นตัวแรก",
+				"ทุก attribute ขึ้นบรรทัดใหม่และจัดแนว",
+				"ขึ้นบรรทัดใหม่ทุก attribute เมื่อเกินความยาว",
+				"ตัดเมื่อเกินความยาวและจัดแนว",
+				"คงการตัดบรรทัดเดิม",
+				"คงการตัดบรรทัดเดิมและจัดแนว"
+			]
+		},
+		{
+			"id": "html.format.wrapAttributesIndentSize",
+			"group": "HTML",
+			"th": "ระยะย่อหน้าของ attribute ที่ถูกตัดบรรทัด"
+		},
+		{
+			"id": "html.format.templating",
+			"group": "HTML",
+			"th": "รองรับ template เช่น django erb handlebars php"
+		},
+		{
+			"id": "html.format.unformattedContentDelimiter",
+			"group": "HTML",
+			"th": "ข้อความคั่นที่เนื้อหาระหว่างนั้นไม่ถูกจัดรูปแบบ"
+		},
+		{
+			"id": "html.suggest.html5",
+			"group": "HTML",
+			"th": "แนะนำแท็ก attribute และค่าของ HTML5"
+		},
+		{
+			"id": "html.suggest.hideEndTagSuggestions",
+			"group": "HTML",
+			"th": "ไม่แนะนำแท็กปิด"
+		},
+		{
+			"id": "html.validate.scripts",
+			"group": "HTML",
+			"th": "ตรวจ script ที่ฝังอยู่"
+		},
+		{
+			"id": "html.validate.styles",
+			"group": "HTML",
+			"th": "ตรวจ style ที่ฝังอยู่"
+		},
+		{
+			"id": "html.hover.documentation",
+			"group": "HTML",
+			"th": "แสดงคำอธิบายแท็กและ attribute ใน hover"
+		},
+		{
+			"id": "html.hover.references",
+			"group": "HTML",
+			"th": "แสดงลิงก์อ้างอิง MDN ใน hover"
+		},
+		{
+			"id": "html.autoCreateQuotes",
+			"group": "HTML",
+			"th": "ใส่เครื่องหมายคำพูดเมื่อพิมพ์ = หลัง attribute"
+		},
+		{
+			"id": "html.completion.attributeDefaultValue",
+			"group": "HTML",
+			"th": "ค่าเริ่มต้นเมื่อเติม attribute",
+			"enumTh": [
+				"ใส่ double quote",
+				"ใส่ single quote",
+				"ไม่ใส่ค่า"
+			]
+		}
+	]
+}

@@ -1,0 +1,715 @@
+{
+	"out": "apps/desktop/src/lib/settings/vscode/typescript.ts",
+	"export": "TYPESCRIPT_SETTINGS",
+	"what": "js/ts.*, typescript.* and javascript.* (typescript-language-server)",
+	"entries": [
+		{
+			"id": "js/ts.inlayHints.parameterNames.enabled",
+			"group": "TypeScript",
+			"th": "แสดง inlay hint ชื่อพารามิเตอร์",
+			"enumTh": [
+				"ไม่แสดง",
+				"แสดงเฉพาะอาร์กิวเมนต์ที่เป็น literal",
+				"แสดงทุกอาร์กิวเมนต์"
+			]
+		},
+		{
+			"id": "js/ts.inlayHints.parameterNames.suppressWhenArgumentMatchesName",
+			"group": "TypeScript",
+			"th": "ไม่แสดง hint ชื่อพารามิเตอร์เมื่ออาร์กิวเมนต์ชื่อเดียวกับพารามิเตอร์"
+		},
+		{
+			"id": "js/ts.inlayHints.parameterTypes.enabled",
+			"group": "TypeScript",
+			"th": "แสดง inlay hint ชนิดของพารามิเตอร์ที่อนุมานได้"
+		},
+		{
+			"id": "js/ts.inlayHints.variableTypes.enabled",
+			"group": "TypeScript",
+			"th": "แสดง inlay hint ชนิดของตัวแปรที่อนุมานได้"
+		},
+		{
+			"id": "js/ts.inlayHints.variableTypes.suppressWhenTypeMatchesName",
+			"group": "TypeScript",
+			"th": "ไม่แสดง hint ชนิดตัวแปรเมื่อชื่อชนิดตรงกับชื่อตัวแปร"
+		},
+		{
+			"id": "js/ts.inlayHints.propertyDeclarationTypes.enabled",
+			"group": "TypeScript",
+			"th": "แสดง inlay hint ชนิดของ property ที่อนุมานได้"
+		},
+		{
+			"id": "js/ts.inlayHints.functionLikeReturnTypes.enabled",
+			"group": "TypeScript",
+			"th": "แสดง inlay hint ชนิดค่าที่ฟังก์ชันคืน"
+		},
+		{
+			"id": "js/ts.inlayHints.enumMemberValues.enabled",
+			"group": "TypeScript",
+			"th": "แสดง inlay hint ค่าของสมาชิก enum"
+		},
+		{
+			"id": "js/ts.format.insertSpaceAfterCommaDelimiter",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังเครื่องหมายจุลภาค"
+		},
+		{
+			"id": "js/ts.format.insertSpaceAfterConstructor",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังคำว่า constructor"
+		},
+		{
+			"id": "js/ts.format.insertSpaceAfterSemicolonInForStatements",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังเซมิโคลอนในคำสั่ง for"
+		},
+		{
+			"id": "js/ts.format.insertSpaceBeforeAndAfterBinaryOperators",
+			"group": "TypeScript",
+			"th": "เว้นวรรคก่อนและหลังตัวดำเนินการสองตัวถูกดำเนินการ"
+		},
+		{
+			"id": "js/ts.format.insertSpaceAfterKeywordsInControlFlowStatements",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังคีย์เวิร์ดของคำสั่งควบคุม"
+		},
+		{
+			"id": "js/ts.format.insertSpaceAfterFunctionKeywordForAnonymousFunctions",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังคำว่า function ของฟังก์ชันนิรนาม"
+		},
+		{
+			"id": "js/ts.format.insertSpaceBeforeFunctionParenthesis",
+			"group": "TypeScript",
+			"th": "เว้นวรรคก่อนวงเล็บอาร์กิวเมนต์ของฟังก์ชัน"
+		},
+		{
+			"id": "js/ts.format.insertSpaceAfterOpeningAndBeforeClosingEmptyBraces",
+			"group": "TypeScript",
+			"th": "เว้นวรรคในวงเล็บปีกกาว่าง"
+		},
+		{
+			"id": "js/ts.format.insertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังวงเล็บเปิดและก่อนวงเล็บปิดที่ไม่ว่าง"
+		},
+		{
+			"id": "js/ts.format.insertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังวงเล็บเหลี่ยมเปิดและก่อนวงเล็บเหลี่ยมปิดที่ไม่ว่าง"
+		},
+		{
+			"id": "js/ts.format.insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังวงเล็บปีกกาเปิดและก่อนวงเล็บปีกกาปิดที่ไม่ว่าง"
+		},
+		{
+			"id": "js/ts.format.insertSpaceAfterOpeningAndBeforeClosingTemplateStringBraces",
+			"group": "TypeScript",
+			"th": "เว้นวรรคในวงเล็บของ template string"
+		},
+		{
+			"id": "js/ts.format.insertSpaceAfterOpeningAndBeforeClosingJsxExpressionBraces",
+			"group": "TypeScript",
+			"th": "เว้นวรรคในวงเล็บของ JSX expression"
+		},
+		{
+			"id": "js/ts.format.insertSpaceAfterTypeAssertion",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลัง type assertion"
+		},
+		{
+			"id": "js/ts.format.placeOpenBraceOnNewLineForFunctions",
+			"group": "TypeScript",
+			"th": "ขึ้นบรรทัดใหม่ก่อนวงเล็บปีกกาเปิดของฟังก์ชัน"
+		},
+		{
+			"id": "js/ts.format.placeOpenBraceOnNewLineForControlBlocks",
+			"group": "TypeScript",
+			"th": "ขึ้นบรรทัดใหม่ก่อนวงเล็บปีกกาเปิดของบล็อกควบคุม"
+		},
+		{
+			"id": "js/ts.format.semicolons",
+			"group": "TypeScript",
+			"th": "การจัดการเซมิโคลอนตอนจัดรูปแบบ",
+			"enumTh": [
+				"ไม่เพิ่มหรือลบ",
+				"เติมเซมิโคลอนท้ายคำสั่ง",
+				"ลบเซมิโคลอนที่ไม่จำเป็น"
+			]
+		},
+		{
+			"id": "js/ts.format.indentSwitchCase",
+			"group": "TypeScript",
+			"th": "ย่อหน้า case ใน switch"
+		},
+		{
+			"id": "js/ts.referencesCodeLens.enabled",
+			"group": "TypeScript",
+			"th": "แสดง CodeLens จำนวนการอ้างอิง"
+		},
+		{
+			"id": "js/ts.referencesCodeLens.showOnAllFunctions",
+			"group": "TypeScript",
+			"th": "แสดง CodeLens การอ้างอิงบนทุกฟังก์ชัน"
+		},
+		{
+			"id": "js/ts.implementationsCodeLens.enabled",
+			"group": "TypeScript",
+			"th": "แสดง CodeLens จำนวน implementation"
+		},
+		{
+			"id": "js/ts.preferences.quoteStyle",
+			"group": "TypeScript",
+			"th": "เครื่องหมายคำพูดที่ใช้ใน quick fix และ auto import",
+			"enumTh": [
+				"อนุมานจากโค้ดที่มีอยู่",
+				"ใช้ single quote",
+				"ใช้ double quote"
+			]
+		},
+		{
+			"id": "js/ts.preferences.importModuleSpecifier",
+			"group": "TypeScript",
+			"th": "รูปแบบ path ของ import ที่เพิ่มอัตโนมัติ",
+			"enumTh": [
+				"path ที่สั้นที่สุด",
+				"path สัมพัทธ์กับไฟล์",
+				"path จาก baseUrl หรือ paths",
+				"สัมพัทธ์เมื่ออยู่ในโปรเจกต์เดียวกัน"
+			]
+		},
+		{
+			"id": "js/ts.preferences.importModuleSpecifierEnding",
+			"group": "TypeScript",
+			"th": "นามสกุลท้าย path ของ import อัตโนมัติ",
+			"enumTh": [
+				"ตาม moduleResolution",
+				"ตัด /index และนามสกุล",
+				"ตัดเฉพาะนามสกุล",
+				"ใช้ .js"
+			]
+		},
+		{
+			"id": "js/ts.preferences.jsxAttributeCompletionStyle",
+			"group": "TypeScript",
+			"th": "รูปแบบการเติม attribute ของ JSX",
+			"enumTh": [
+				"ตามชนิดของ attribute",
+				"ใส่วงเล็บปีกกา",
+				"เติมแค่ชื่อ"
+			]
+		},
+		{
+			"id": "js/ts.preferences.includePackageJsonAutoImports",
+			"group": "TypeScript",
+			"th": "auto import จาก dependency ใน package.json",
+			"enumTh": [
+				"ตามจำนวน dependency",
+				"เปิดเสมอ",
+				"ปิด"
+			]
+		},
+		{
+			"id": "js/ts.preferences.preferTypeOnlyAutoImports",
+			"group": "TypeScript",
+			"th": "ใช้ import type สำหรับ auto import ของชนิด"
+		},
+		{
+			"id": "js/ts.preferences.autoImportFileExcludePatterns",
+			"group": "TypeScript",
+			"th": "glob ของไฟล์ที่ไม่ให้ auto import",
+			"default": []
+		},
+		{
+			"id": "js/ts.preferences.autoImportSpecifierExcludeRegexes",
+			"group": "TypeScript",
+			"th": "regex ของ module specifier ที่ไม่ให้ auto import",
+			"default": []
+		},
+		{
+			"id": "js/ts.preferences.useAliasesForRenames",
+			"group": "TypeScript",
+			"th": "ใช้ alias ตอนเปลี่ยนชื่อ property ใน shorthand"
+		},
+		{
+			"id": "js/ts.suggest.autoImports",
+			"group": "TypeScript",
+			"th": "แนะนำ export จากไฟล์อื่นพร้อม import อัตโนมัติ"
+		},
+		{
+			"id": "js/ts.suggest.completeFunctionCalls",
+			"group": "TypeScript",
+			"th": "เติมวงเล็บและพารามิเตอร์เมื่อเลือกฟังก์ชัน"
+		},
+		{
+			"id": "js/ts.suggest.includeAutomaticOptionalChainCompletions",
+			"group": "TypeScript",
+			"th": "แนะนำสมาชิกที่ต้องใช้ optional chain"
+		},
+		{
+			"id": "js/ts.suggest.includeCompletionsForImportStatements",
+			"group": "TypeScript",
+			"th": "เติมคำสั่ง import ทั้งบรรทัด"
+		},
+		{
+			"id": "js/ts.suggest.classMemberSnippets.enabled",
+			"group": "TypeScript",
+			"th": "snippet สำหรับสมาชิกของคลาส"
+		},
+		{
+			"id": "js/ts.suggest.objectLiteralMethodSnippets.enabled",
+			"group": "TypeScript",
+			"th": "snippet สำหรับเมธอดใน object literal"
+		},
+		{
+			"id": "js/ts.suggest.jsdoc.generateReturns",
+			"group": "TypeScript",
+			"th": "ใส่ @returns ใน JSDoc ที่สร้างให้"
+		},
+		{
+			"id": "js/ts.hover.maximumLength",
+			"group": "TypeScript",
+			"th": "ความยาวสูงสุดของข้อความ hover"
+		},
+		{
+			"id": "js/ts.implicitProjectConfig.checkJs",
+			"group": "TypeScript",
+			"th": "ตรวจชนิดในไฟล์ JavaScript ที่ไม่อยู่ในโปรเจกต์"
+		},
+		{
+			"id": "js/ts.implicitProjectConfig.experimentalDecorators",
+			"group": "TypeScript",
+			"th": "เปิด experimentalDecorators ในไฟล์ที่ไม่อยู่ในโปรเจกต์"
+		},
+		{
+			"id": "js/ts.implicitProjectConfig.module",
+			"group": "TypeScript",
+			"th": "module ของไฟล์ที่ไม่อยู่ในโปรเจกต์"
+		},
+		{
+			"id": "js/ts.implicitProjectConfig.strict",
+			"group": "TypeScript",
+			"th": "เปิด strict ในไฟล์ที่ไม่อยู่ในโปรเจกต์"
+		},
+		{
+			"id": "js/ts.implicitProjectConfig.strictFunctionTypes",
+			"group": "TypeScript",
+			"th": "เปิด strictFunctionTypes ในไฟล์ที่ไม่อยู่ในโปรเจกต์"
+		},
+		{
+			"id": "js/ts.implicitProjectConfig.strictNullChecks",
+			"group": "TypeScript",
+			"th": "เปิด strictNullChecks ในไฟล์ที่ไม่อยู่ในโปรเจกต์"
+		},
+		{
+			"id": "js/ts.implicitProjectConfig.target",
+			"group": "TypeScript",
+			"th": "target ของไฟล์ที่ไม่อยู่ในโปรเจกต์"
+		},
+		{
+			"id": "typescript.inlayHints.parameterNames.enabled",
+			"group": "TypeScript",
+			"th": "แสดง inlay hint ชื่อพารามิเตอร์ ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.inlayHints.parameterNames.enabled",
+			"enumTh": [
+				"ไม่แสดง",
+				"แสดงเฉพาะอาร์กิวเมนต์ที่เป็น literal",
+				"แสดงทุกอาร์กิวเมนต์"
+			]
+		},
+		{
+			"id": "typescript.inlayHints.parameterNames.suppressWhenArgumentMatchesName",
+			"group": "TypeScript",
+			"th": "ไม่แสดง hint ชื่อพารามิเตอร์เมื่ออาร์กิวเมนต์ชื่อเดียวกับพารามิเตอร์ ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.inlayHints.parameterNames.suppressWhenArgumentMatchesName"
+		},
+		{
+			"id": "typescript.inlayHints.parameterTypes.enabled",
+			"group": "TypeScript",
+			"th": "แสดง inlay hint ชนิดของพารามิเตอร์ที่อนุมานได้ ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.inlayHints.parameterTypes.enabled"
+		},
+		{
+			"id": "typescript.inlayHints.variableTypes.enabled",
+			"group": "TypeScript",
+			"th": "แสดง inlay hint ชนิดของตัวแปรที่อนุมานได้ ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.inlayHints.variableTypes.enabled"
+		},
+		{
+			"id": "typescript.inlayHints.variableTypes.suppressWhenTypeMatchesName",
+			"group": "TypeScript",
+			"th": "ไม่แสดง hint ชนิดตัวแปรเมื่อชื่อชนิดตรงกับชื่อตัวแปร ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.inlayHints.variableTypes.suppressWhenTypeMatchesName"
+		},
+		{
+			"id": "typescript.inlayHints.propertyDeclarationTypes.enabled",
+			"group": "TypeScript",
+			"th": "แสดง inlay hint ชนิดของ property ที่อนุมานได้ ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.inlayHints.propertyDeclarationTypes.enabled"
+		},
+		{
+			"id": "typescript.inlayHints.functionLikeReturnTypes.enabled",
+			"group": "TypeScript",
+			"th": "แสดง inlay hint ชนิดค่าที่ฟังก์ชันคืน ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.inlayHints.functionLikeReturnTypes.enabled"
+		},
+		{
+			"id": "typescript.inlayHints.enumMemberValues.enabled",
+			"group": "TypeScript",
+			"th": "แสดง inlay hint ค่าของสมาชิก enum ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.inlayHints.enumMemberValues.enabled"
+		},
+		{
+			"id": "typescript.format.insertSpaceAfterCommaDelimiter",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังเครื่องหมายจุลภาค ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterCommaDelimiter"
+		},
+		{
+			"id": "typescript.format.insertSpaceAfterConstructor",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังคำว่า constructor ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterConstructor"
+		},
+		{
+			"id": "typescript.format.insertSpaceAfterSemicolonInForStatements",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังเซมิโคลอนในคำสั่ง for ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterSemicolonInForStatements"
+		},
+		{
+			"id": "typescript.format.insertSpaceBeforeAndAfterBinaryOperators",
+			"group": "TypeScript",
+			"th": "เว้นวรรคก่อนและหลังตัวดำเนินการสองตัวถูกดำเนินการ ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceBeforeAndAfterBinaryOperators"
+		},
+		{
+			"id": "typescript.format.insertSpaceAfterKeywordsInControlFlowStatements",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังคีย์เวิร์ดของคำสั่งควบคุม ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterKeywordsInControlFlowStatements"
+		},
+		{
+			"id": "typescript.format.insertSpaceAfterFunctionKeywordForAnonymousFunctions",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังคำว่า function ของฟังก์ชันนิรนาม ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterFunctionKeywordForAnonymousFunctions"
+		},
+		{
+			"id": "typescript.format.insertSpaceBeforeFunctionParenthesis",
+			"group": "TypeScript",
+			"th": "เว้นวรรคก่อนวงเล็บอาร์กิวเมนต์ของฟังก์ชัน ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceBeforeFunctionParenthesis"
+		},
+		{
+			"id": "typescript.format.insertSpaceAfterOpeningAndBeforeClosingEmptyBraces",
+			"group": "TypeScript",
+			"th": "เว้นวรรคในวงเล็บปีกกาว่าง ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterOpeningAndBeforeClosingEmptyBraces"
+		},
+		{
+			"id": "typescript.format.insertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังวงเล็บเปิดและก่อนวงเล็บปิดที่ไม่ว่าง ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis"
+		},
+		{
+			"id": "typescript.format.insertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังวงเล็บเหลี่ยมเปิดและก่อนวงเล็บเหลี่ยมปิดที่ไม่ว่าง ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets"
+		},
+		{
+			"id": "typescript.format.insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังวงเล็บปีกกาเปิดและก่อนวงเล็บปีกกาปิดที่ไม่ว่าง ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces"
+		},
+		{
+			"id": "typescript.format.insertSpaceAfterOpeningAndBeforeClosingTemplateStringBraces",
+			"group": "TypeScript",
+			"th": "เว้นวรรคในวงเล็บของ template string ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterOpeningAndBeforeClosingTemplateStringBraces"
+		},
+		{
+			"id": "typescript.format.insertSpaceAfterOpeningAndBeforeClosingJsxExpressionBraces",
+			"group": "TypeScript",
+			"th": "เว้นวรรคในวงเล็บของ JSX expression ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterOpeningAndBeforeClosingJsxExpressionBraces"
+		},
+		{
+			"id": "typescript.format.insertSpaceAfterTypeAssertion",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลัง type assertion ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterTypeAssertion"
+		},
+		{
+			"id": "typescript.format.placeOpenBraceOnNewLineForFunctions",
+			"group": "TypeScript",
+			"th": "ขึ้นบรรทัดใหม่ก่อนวงเล็บปีกกาเปิดของฟังก์ชัน ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.placeOpenBraceOnNewLineForFunctions"
+		},
+		{
+			"id": "typescript.format.placeOpenBraceOnNewLineForControlBlocks",
+			"group": "TypeScript",
+			"th": "ขึ้นบรรทัดใหม่ก่อนวงเล็บปีกกาเปิดของบล็อกควบคุม ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.placeOpenBraceOnNewLineForControlBlocks"
+		},
+		{
+			"id": "typescript.format.semicolons",
+			"group": "TypeScript",
+			"th": "การจัดการเซมิโคลอนตอนจัดรูปแบบ ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.semicolons",
+			"enumTh": [
+				"ไม่เพิ่มหรือลบ",
+				"เติมเซมิโคลอนท้ายคำสั่ง",
+				"ลบเซมิโคลอนที่ไม่จำเป็น"
+			]
+		},
+		{
+			"id": "typescript.format.indentSwitchCase",
+			"group": "TypeScript",
+			"th": "ย่อหน้า case ใน switch ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.indentSwitchCase"
+		},
+		{
+			"id": "typescript.referencesCodeLens.enabled",
+			"group": "TypeScript",
+			"th": "แสดง CodeLens จำนวนการอ้างอิง ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.referencesCodeLens.enabled"
+		},
+		{
+			"id": "typescript.referencesCodeLens.showOnAllFunctions",
+			"group": "TypeScript",
+			"th": "แสดง CodeLens การอ้างอิงบนทุกฟังก์ชัน ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.referencesCodeLens.showOnAllFunctions"
+		},
+		{
+			"id": "typescript.implementationsCodeLens.enabled",
+			"group": "TypeScript",
+			"th": "แสดง CodeLens จำนวน implementation ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.implementationsCodeLens.enabled"
+		},
+		{
+			"id": "typescript.preferences.quoteStyle",
+			"group": "TypeScript",
+			"th": "เครื่องหมายคำพูดที่ใช้ใน quick fix และ auto import ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.preferences.quoteStyle",
+			"enumTh": [
+				"อนุมานจากโค้ดที่มีอยู่",
+				"ใช้ single quote",
+				"ใช้ double quote"
+			]
+		},
+		{
+			"id": "typescript.preferences.importModuleSpecifier",
+			"group": "TypeScript",
+			"th": "รูปแบบ path ของ import ที่เพิ่มอัตโนมัติ ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.preferences.importModuleSpecifier",
+			"enumTh": [
+				"path ที่สั้นที่สุด",
+				"path สัมพัทธ์กับไฟล์",
+				"path จาก baseUrl หรือ paths",
+				"สัมพัทธ์เมื่ออยู่ในโปรเจกต์เดียวกัน"
+			]
+		},
+		{
+			"id": "typescript.preferences.importModuleSpecifierEnding",
+			"group": "TypeScript",
+			"th": "นามสกุลท้าย path ของ import อัตโนมัติ ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.preferences.importModuleSpecifierEnding",
+			"enumTh": [
+				"ตาม moduleResolution",
+				"ตัด /index และนามสกุล",
+				"ตัดเฉพาะนามสกุล",
+				"ใช้ .js"
+			]
+		},
+		{
+			"id": "typescript.preferences.jsxAttributeCompletionStyle",
+			"group": "TypeScript",
+			"th": "รูปแบบการเติม attribute ของ JSX ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.preferences.jsxAttributeCompletionStyle",
+			"enumTh": [
+				"ตามชนิดของ attribute",
+				"ใส่วงเล็บปีกกา",
+				"เติมแค่ชื่อ"
+			]
+		},
+		{
+			"id": "typescript.preferences.includePackageJsonAutoImports",
+			"group": "TypeScript",
+			"th": "auto import จาก dependency ใน package.json ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.preferences.includePackageJsonAutoImports",
+			"enumTh": [
+				"ตามจำนวน dependency",
+				"เปิดเสมอ",
+				"ปิด"
+			]
+		},
+		{
+			"id": "typescript.preferences.preferTypeOnlyAutoImports",
+			"group": "TypeScript",
+			"th": "ใช้ import type สำหรับ auto import ของชนิด ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.preferences.preferTypeOnlyAutoImports"
+		},
+		{
+			"id": "typescript.preferences.autoImportFileExcludePatterns",
+			"group": "TypeScript",
+			"th": "glob ของไฟล์ที่ไม่ให้ auto import ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.preferences.autoImportFileExcludePatterns",
+			"default": []
+		},
+		{
+			"id": "typescript.preferences.autoImportSpecifierExcludeRegexes",
+			"group": "TypeScript",
+			"th": "regex ของ module specifier ที่ไม่ให้ auto import ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.preferences.autoImportSpecifierExcludeRegexes",
+			"default": []
+		},
+		{
+			"id": "typescript.preferences.useAliasesForRenames",
+			"group": "TypeScript",
+			"th": "ใช้ alias ตอนเปลี่ยนชื่อ property ใน shorthand ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.preferences.useAliasesForRenames"
+		},
+		{
+			"id": "typescript.suggest.autoImports",
+			"group": "TypeScript",
+			"th": "แนะนำ export จากไฟล์อื่นพร้อม import อัตโนมัติ ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.suggest.autoImports"
+		},
+		{
+			"id": "typescript.suggest.completeFunctionCalls",
+			"group": "TypeScript",
+			"th": "เติมวงเล็บและพารามิเตอร์เมื่อเลือกฟังก์ชัน ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.suggest.completeFunctionCalls"
+		},
+		{
+			"id": "typescript.suggest.includeAutomaticOptionalChainCompletions",
+			"group": "TypeScript",
+			"th": "แนะนำสมาชิกที่ต้องใช้ optional chain ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.suggest.includeAutomaticOptionalChainCompletions"
+		},
+		{
+			"id": "typescript.suggest.includeCompletionsForImportStatements",
+			"group": "TypeScript",
+			"th": "เติมคำสั่ง import ทั้งบรรทัด ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.suggest.includeCompletionsForImportStatements"
+		},
+		{
+			"id": "typescript.suggest.classMemberSnippets.enabled",
+			"group": "TypeScript",
+			"th": "snippet สำหรับสมาชิกของคลาส ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.suggest.classMemberSnippets.enabled"
+		},
+		{
+			"id": "typescript.suggest.objectLiteralMethodSnippets.enabled",
+			"group": "TypeScript",
+			"th": "snippet สำหรับเมธอดใน object literal ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.suggest.objectLiteralMethodSnippets.enabled"
+		},
+		{
+			"id": "typescript.suggest.jsdoc.generateReturns",
+			"group": "TypeScript",
+			"th": "ใส่ @returns ใน JSDoc ที่สร้างให้ ของ TypeScript — เลิกใช้แล้ว ให้ใช้ js/ts.suggest.jsdoc.generateReturns"
+		},
+		{
+			"id": "javascript.inlayHints.parameterNames.enabled",
+			"group": "TypeScript",
+			"th": "แสดง inlay hint ชื่อพารามิเตอร์ ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.inlayHints.parameterNames.enabled",
+			"enumTh": [
+				"ไม่แสดง",
+				"แสดงเฉพาะอาร์กิวเมนต์ที่เป็น literal",
+				"แสดงทุกอาร์กิวเมนต์"
+			]
+		},
+		{
+			"id": "javascript.inlayHints.parameterNames.suppressWhenArgumentMatchesName",
+			"group": "TypeScript",
+			"th": "ไม่แสดง hint ชื่อพารามิเตอร์เมื่ออาร์กิวเมนต์ชื่อเดียวกับพารามิเตอร์ ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.inlayHints.parameterNames.suppressWhenArgumentMatchesName"
+		},
+		{
+			"id": "javascript.inlayHints.parameterTypes.enabled",
+			"group": "TypeScript",
+			"th": "แสดง inlay hint ชนิดของพารามิเตอร์ที่อนุมานได้ ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.inlayHints.parameterTypes.enabled"
+		},
+		{
+			"id": "javascript.inlayHints.variableTypes.enabled",
+			"group": "TypeScript",
+			"th": "แสดง inlay hint ชนิดของตัวแปรที่อนุมานได้ ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.inlayHints.variableTypes.enabled"
+		},
+		{
+			"id": "javascript.inlayHints.variableTypes.suppressWhenTypeMatchesName",
+			"group": "TypeScript",
+			"th": "ไม่แสดง hint ชนิดตัวแปรเมื่อชื่อชนิดตรงกับชื่อตัวแปร ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.inlayHints.variableTypes.suppressWhenTypeMatchesName"
+		},
+		{
+			"id": "javascript.inlayHints.propertyDeclarationTypes.enabled",
+			"group": "TypeScript",
+			"th": "แสดง inlay hint ชนิดของ property ที่อนุมานได้ ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.inlayHints.propertyDeclarationTypes.enabled"
+		},
+		{
+			"id": "javascript.inlayHints.functionLikeReturnTypes.enabled",
+			"group": "TypeScript",
+			"th": "แสดง inlay hint ชนิดค่าที่ฟังก์ชันคืน ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.inlayHints.functionLikeReturnTypes.enabled"
+		},
+		{
+			"id": "javascript.format.insertSpaceAfterCommaDelimiter",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังเครื่องหมายจุลภาค ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterCommaDelimiter"
+		},
+		{
+			"id": "javascript.format.insertSpaceAfterConstructor",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังคำว่า constructor ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterConstructor"
+		},
+		{
+			"id": "javascript.format.insertSpaceAfterSemicolonInForStatements",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังเซมิโคลอนในคำสั่ง for ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterSemicolonInForStatements"
+		},
+		{
+			"id": "javascript.format.insertSpaceBeforeAndAfterBinaryOperators",
+			"group": "TypeScript",
+			"th": "เว้นวรรคก่อนและหลังตัวดำเนินการสองตัวถูกดำเนินการ ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceBeforeAndAfterBinaryOperators"
+		},
+		{
+			"id": "javascript.format.insertSpaceAfterKeywordsInControlFlowStatements",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังคีย์เวิร์ดของคำสั่งควบคุม ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterKeywordsInControlFlowStatements"
+		},
+		{
+			"id": "javascript.format.insertSpaceAfterFunctionKeywordForAnonymousFunctions",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังคำว่า function ของฟังก์ชันนิรนาม ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterFunctionKeywordForAnonymousFunctions"
+		},
+		{
+			"id": "javascript.format.insertSpaceBeforeFunctionParenthesis",
+			"group": "TypeScript",
+			"th": "เว้นวรรคก่อนวงเล็บอาร์กิวเมนต์ของฟังก์ชัน ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceBeforeFunctionParenthesis"
+		},
+		{
+			"id": "javascript.format.insertSpaceAfterOpeningAndBeforeClosingEmptyBraces",
+			"group": "TypeScript",
+			"th": "เว้นวรรคในวงเล็บปีกกาว่าง ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterOpeningAndBeforeClosingEmptyBraces"
+		},
+		{
+			"id": "javascript.format.insertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังวงเล็บเปิดและก่อนวงเล็บปิดที่ไม่ว่าง ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterOpeningAndBeforeClosingNonemptyParenthesis"
+		},
+		{
+			"id": "javascript.format.insertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังวงเล็บเหลี่ยมเปิดและก่อนวงเล็บเหลี่ยมปิดที่ไม่ว่าง ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterOpeningAndBeforeClosingNonemptyBrackets"
+		},
+		{
+			"id": "javascript.format.insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces",
+			"group": "TypeScript",
+			"th": "เว้นวรรคหลังวงเล็บปีกกาเปิดและก่อนวงเล็บปีกกาปิดที่ไม่ว่าง ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterOpeningAndBeforeClosingNonemptyBraces"
+		},
+		{
+			"id": "javascript.format.insertSpaceAfterOpeningAndBeforeClosingTemplateStringBraces",
+			"group": "TypeScript",
+			"th": "เว้นวรรคในวงเล็บของ template string ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterOpeningAndBeforeClosingTemplateStringBraces"
+		},
+		{
+			"id": "javascript.format.insertSpaceAfterOpeningAndBeforeClosingJsxExpressionBraces",
+			"group": "TypeScript",
+			"th": "เว้นวรรคในวงเล็บของ JSX expression ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.insertSpaceAfterOpeningAndBeforeClosingJsxExpressionBraces"
+		},
+		{
+			"id": "javascript.format.placeOpenBraceOnNewLineForFunctions",
+			"group": "TypeScript",
+			"th": "ขึ้นบรรทัดใหม่ก่อนวงเล็บปีกกาเปิดของฟังก์ชัน ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.placeOpenBraceOnNewLineForFunctions"
+		},
+		{
+			"id": "javascript.format.placeOpenBraceOnNewLineForControlBlocks",
+			"group": "TypeScript",
+			"th": "ขึ้นบรรทัดใหม่ก่อนวงเล็บปีกกาเปิดของบล็อกควบคุม ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.placeOpenBraceOnNewLineForControlBlocks"
+		},
+		{
+			"id": "javascript.format.semicolons",
+			"group": "TypeScript",
+			"th": "การจัดการเซมิโคลอนตอนจัดรูปแบบ ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.semicolons",
+			"enumTh": [
+				"ไม่เพิ่มหรือลบ",
+				"เติมเซมิโคลอนท้ายคำสั่ง",
+				"ลบเซมิโคลอนที่ไม่จำเป็น"
+			]
+		},
+		{
+			"id": "javascript.format.indentSwitchCase",
+			"group": "TypeScript",
+			"th": "ย่อหน้า case ใน switch ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.format.indentSwitchCase"
+		},
+		{
+			"id": "javascript.referencesCodeLens.enabled",
+			"group": "TypeScript",
+			"th": "แสดง CodeLens จำนวนการอ้างอิง ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.referencesCodeLens.enabled"
+		},
+		{
+			"id": "javascript.referencesCodeLens.showOnAllFunctions",
+			"group": "TypeScript",
+			"th": "แสดง CodeLens การอ้างอิงบนทุกฟังก์ชัน ของ JavaScript — เลิกใช้แล้ว ให้ใช้ js/ts.referencesCodeLens.showOnAllFunctions"
+		}
+	]
+}

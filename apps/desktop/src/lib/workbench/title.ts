@@ -72,9 +72,11 @@ export type TitleContext = {
 	focusedView?: string | null;
 	app?: string;
 	separator?: string;
+	/** `${profileName}`: the active profile's name, empty for Default. */
+	profileName?: string;
 };
 
-/** The variables of VS Code's window title. Kingu has no profiles or remotes: those are always empty. */
+/** The variables of VS Code's window title. Kingu has no remotes: `${remoteName}` is always empty. */
 export function titleVariables(ctx: TitleContext): Record<string, string | Separator> {
 	const e = ctx.editor;
 	const dir = (path: string | undefined) => (path && path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
@@ -98,7 +100,7 @@ export function titleVariables(ctx: TitleContext): Record<string, string | Separ
 		activeRepositoryName: ctx.branch && ctx.rootName ? ctx.rootName : '',
 		activeRepositoryBranchName: ctx.branch ?? '',
 		appName: ctx.app ?? APP_NAME,
-		profileName: '',
+		profileName: ctx.profileName ?? '',
 		remoteName: '',
 		focusedView: ctx.focusedView ?? '',
 		separator: { label: ctx.separator ?? TITLE_SEPARATOR }

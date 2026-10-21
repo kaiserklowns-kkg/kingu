@@ -219,6 +219,30 @@ export const EDITOR_SETTINGS: SettingSchema[] = [
 		description: 'แสดงหัวกลุ่มในเมนู Code Action (Enable/disable showing group headers in the Code Action menu.)'
 	},
 	{
+		id: 'editor.codeLens',
+		group: 'Text Editor',
+		type: 'boolean',
+		default: true,
+		description: 'แสดง CodeLens เหนือโค้ด (Controls whether the editor shows CodeLens.)'
+	},
+	{
+		id: 'editor.codeLensFontFamily',
+		group: 'Text Editor',
+		type: 'string',
+		default: '',
+		description: 'ฟอนต์ของ CodeLens เว้นว่าง = ฟอนต์ของ editor (Controls the font family for CodeLens.)'
+	},
+	{
+		id: 'editor.codeLensFontSize',
+		group: 'Text Editor',
+		type: 'number',
+		default: 0,
+		minimum: 0,
+		maximum: 100,
+		integer: true,
+		description: 'ขนาดฟอนต์ของ CodeLens 0 = 90% ของ editor.fontSize (Controls the font size in pixels for CodeLens. When set to 0, 90% of `#editor.fontSize#` is used.)'
+	},
+	{
 		id: 'editor.colorDecorators',
 		group: 'Text Editor',
 		type: 'boolean',
@@ -359,6 +383,15 @@ export const EDITOR_SETTINGS: SettingSchema[] = [
 			'Never show default color decorators.'
 		],
 		description: 'แสดงตัวอย่างสีด้วยตัวหาสีพื้นฐานของ editor (Controls whether inline color decorations should be shown using the default document color provider.)'
+	},
+	{
+		id: 'editor.defaultFormatter',
+		group: 'Text Editor',
+		type: 'json',
+		schema: { type: ['null', 'string'] },
+		default: null,
+		description:
+			'ตัวจัดรูปแบบเริ่มต้น ใส่ชื่อ language server (เช่น rust-analyzer) หรือ id ของ VS Code ที่ Kingu รู้จัก (เช่น vscode.typescript-language-features) มักตั้งใน "[ภาษา]": {} ด้วย Format Document With… › Configure Default Formatter (Defines a default formatter which takes precedence over all other formatter settings. Must be the identifier of an extension contributing a formatter.)'
 	},
 	{
 		id: 'editor.definitionLinkOpensInPeek',
@@ -915,6 +948,101 @@ export const EDITOR_SETTINGS: SettingSchema[] = [
 		description: 'เลื่อนแบบมีแรงเฉื่อย เหมาะกับทัชแพดบน Linux (Make scrolling inertial - mostly useful with touchpad on linux.)'
 	},
 	{
+		id: 'editor.inlayHints.enabled',
+		group: 'Text Editor',
+		type: 'string',
+		default: 'on',
+		enum: ['on', 'onUnlessPressed', 'offUnlessPressed', 'off'],
+		enumDescriptions: [
+			'แสดง (Inlay hints are enabled)',
+			'แสดงยกเว้นตอนกด Ctrl+Option ค้างไว้ (Inlay hints are showing by default and hide when holding Ctrl+Option)',
+			'ซ่อนยกเว้นตอนกด Ctrl+Option ค้างไว้ (Inlay hints are hidden by default and show when holding Ctrl+Option)',
+			'ไม่แสดง (Inlay hints are disabled)'
+		],
+		description: 'แสดง inlay hint ใน editor (Enables the inlay hints in the editor.)'
+	},
+	{
+		id: 'editor.inlayHints.fontFamily',
+		group: 'Text Editor',
+		type: 'string',
+		default: '',
+		description: 'ฟอนต์ของ inlay hint เว้นว่าง = ฟอนต์ของ editor (Controls font family of inlay hints in the editor. When set to empty, the `#editor.fontFamily#` is used.)'
+	},
+	{
+		id: 'editor.inlayHints.fontSize',
+		group: 'Text Editor',
+		type: 'number',
+		default: 0,
+		description: 'ขนาดฟอนต์ของ inlay hint ค่าเริ่มต้น = 90% ของ editor.fontSize (Controls font size of inlay hints in the editor. As default the `#editor.fontSize#` is used when the configured value is less than `5` or greater than the editor font size.)'
+	},
+	{
+		id: 'editor.inlayHints.maximumLength',
+		group: 'Text Editor',
+		type: 'number',
+		default: 43,
+		description: 'ความยาวสูงสุดของ inlay hint ต่อบรรทัด 0 = ไม่ตัด (Maximum overall length of inlay hints, for a single line, before they get truncated by the editor. Set to `0` to never truncate)'
+	},
+	{
+		id: 'editor.inlayHints.padding',
+		group: 'Text Editor',
+		type: 'boolean',
+		default: false,
+		description: 'เว้นระยะรอบ inlay hint (Enables the padding around the inlay hints in the editor.)'
+	},
+	{
+		id: 'editor.inlineSuggest.enabled',
+		group: 'Text Editor',
+		type: 'boolean',
+		default: true,
+		description: 'แสดงคำแนะนำแบบ inline ใน editor เช่นของ Local AI และ Emmet (Controls whether to automatically show inline suggestions in the editor.)'
+	},
+	{
+		id: 'editor.inlineSuggest.fontFamily',
+		group: 'Text Editor',
+		type: 'string',
+		default: 'default',
+		description: 'ฟอนต์ของคำแนะนำแบบ inline (Controls the font family of the inline suggestions.)'
+	},
+	{
+		id: 'editor.inlineSuggest.minShowDelay',
+		group: 'Text Editor',
+		type: 'number',
+		default: 0,
+		minimum: 0,
+		maximum: 10000,
+		description: 'หน่วงเวลาขั้นต่ำก่อนแสดงคำแนะนำแบบ inline เป็นมิลลิวินาที (Controls the minimal delay in milliseconds after which inline suggestions are shown after typing.)'
+	},
+	{
+		id: 'editor.inlineSuggest.showToolbar',
+		group: 'Text Editor',
+		type: 'string',
+		default: 'onHover',
+		enum: ['always', 'onHover', 'never'],
+		enumDescriptions: ['Show the inline suggestion toolbar whenever an inline suggestion is shown.', 'Show the inline suggestion toolbar when hovering over an inline suggestion.', 'Never show the inline suggestion toolbar.'],
+		description: 'เมื่อไรจะแสดงแถบเครื่องมือของคำแนะนำแบบ inline (Controls when to show the inline suggestion toolbar.)'
+	},
+	{
+		id: 'editor.inlineSuggest.suppressInSnippetMode',
+		group: 'Text Editor',
+		type: 'boolean',
+		default: true,
+		description: 'ไม่แสดงคำแนะนำแบบ inline ขณะอยู่ใน snippet (Controls whether inline suggestions are suppressed when in snippet mode.)'
+	},
+	{
+		id: 'editor.inlineSuggest.suppressSuggestions',
+		group: 'Text Editor',
+		type: 'boolean',
+		default: false,
+		description: 'ซ่อนรายการคำแนะนำเมื่อมีคำแนะนำแบบ inline (Controls how inline suggestions interact with the suggest widget. If enabled, the suggest widget is not shown automatically when inline suggestions are available.)'
+	},
+	{
+		id: 'editor.inlineSuggest.syntaxHighlightingEnabled',
+		group: 'Text Editor',
+		type: 'boolean',
+		default: true,
+		description: 'ไฮไลต์ไวยากรณ์ในคำแนะนำแบบ inline (Controls whether to show syntax highlighting for inline suggestions in the editor.)'
+	},
+	{
 		id: 'editor.largeFileOptimizations',
 		group: 'Text Editor',
 		type: 'boolean',
@@ -1463,6 +1591,13 @@ export const EDITOR_SETTINGS: SettingSchema[] = [
 		description: 'รองรับคลิปบอร์ด primary ของ Linux (Controls whether the Linux primary clipboard should be supported.)'
 	},
 	{
+		id: 'editor.rename.enablePreview',
+		group: 'Text Editor',
+		type: 'boolean',
+		default: true,
+		description: 'กด ⇧Enter ในช่องเปลี่ยนชื่อเพื่อดูการเปลี่ยนแปลงใน Refactor Preview ก่อน (Enable/disable the ability to preview changes before renaming.)'
+	},
+	{
 		id: 'editor.selectionHighlight',
 		group: 'Text Editor',
 		type: 'boolean',
@@ -1485,6 +1620,52 @@ export const EDITOR_SETTINGS: SettingSchema[] = [
 		type: 'boolean',
 		default: false,
 		description: 'ไฮไลต์ผลที่ตรงกับข้อความที่เลือกแม้คร่อมหลายบรรทัด (Controls whether the editor should highlight selection matches that span multiple lines.)'
+	},
+	{
+		id: 'editor.semanticHighlighting.enabled',
+		group: 'Text Editor',
+		type: 'json',
+		schema: { enum: [true, false, 'configuredByTheme'] },
+		default: 'configuredByTheme',
+		description: 'ใช้สีจาก semantic token ของ language server (Controls whether the semanticHighlighting is shown for the languages that support it.)'
+	},
+	{
+		id: 'editor.tokenColorCustomizations',
+		group: 'Text Editor',
+		type: 'json',
+		// No top-level type, like VS Code's (an object of groups, textMateRules and `[Theme]` blocks).
+		schema: {
+			properties: {
+				comments: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				strings: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				keywords: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				numbers: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				types: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				functions: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				variables: { anyOf: [{ type: 'string' }, { type: 'object' }] },
+				textMateRules: { type: 'array', items: { type: 'object' } },
+				semanticHighlighting: { type: 'boolean' }
+			},
+			patternProperties: { '^\\[': { type: 'object' } }
+		},
+		default: {},
+		description:
+			'แทนที่สีและรูปแบบตัวอักษรของ token จากธีม เช่น {"comments": "#6a9955"}, {"textMateRules": [{"scope": "keyword", "settings": {"fontStyle": "bold"}}]} หรือเฉพาะธีม {"[Dark Modern]": {...}} (Overrides editor syntax colors and font style from the currently selected color theme.)'
+	},
+	{
+		id: 'editor.semanticTokenColorCustomizations',
+		group: 'Text Editor',
+		type: 'json',
+		schema: {
+			properties: {
+				enabled: { type: 'boolean' },
+				rules: { type: 'object' }
+			},
+			patternProperties: { '^\\[': { type: 'object' } }
+		},
+		default: {},
+		description:
+			'แทนที่สีและรูปแบบของ semantic token จากธีม เช่น {"rules": {"variable.readonly": "#4fc1ff"}} หรือเฉพาะธีม {"[Dark Modern]": {"enabled": true}} (Overrides editor semantic token color and styles from the currently selected color theme.)'
 	},
 	{
 		id: 'editor.showDeprecated',
@@ -1547,6 +1728,13 @@ export const EDITOR_SETTINGS: SettingSchema[] = [
 			'Do not show snippet suggestions.'
 		],
 		description: 'ตำแหน่งของ snippet ในรายการคำแนะนำ (Controls whether snippets are shown with other suggestions and how they are sorted.)'
+	},
+	{
+		id: 'editor.snippets.codeActions.enabled',
+		group: 'Text Editor',
+		type: 'boolean',
+		default: true,
+		description: 'เสนอ snippet เป็น code action: Surround With เมื่อเลือกข้อความ และ Start with ในไฟล์ว่าง (Controls if surround-with-snippets or file template snippets show as Code Actions.)'
 	},
 	{
 		id: 'editor.stablePeek',

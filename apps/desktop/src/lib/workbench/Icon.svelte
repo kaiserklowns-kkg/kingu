@@ -51,6 +51,9 @@
 		FileTextIcon,
 		ChartBarIcon,
 		EyeSlashIcon,
+		EyeIcon,
+		ShieldCheckIcon,
+		FunnelSimpleIcon,
 		ArrowsClockwiseIcon,
 		CloudArrowUpIcon,
 		PulseIcon,
@@ -69,6 +72,7 @@
 		InfoIcon,
 		KeyboardIcon,
 		KeyIcon,
+		LockIcon,
 		KanbanIcon,
 		LayoutIcon,
 		ListIcon,
@@ -93,13 +97,20 @@
 		TerminalWindowIcon,
 		TrashIcon,
 		UserCircleIcon,
+		ThumbsDownIcon,
+		ThumbsUpIcon,
+		BookmarkSimpleIcon,
 		WarningIcon,
 		XCircleIcon,
 		XIcon,
-		ShieldCheckIcon,
+		InfinityIcon,
+		ChatCircleIcon,
+		RobotIcon,
+		MicrophoneIcon,
+		AtIcon,
+		DotsSixVerticalIcon,
 		PowerIcon,
 		DownloadSimpleIcon,
-		RobotIcon,
 		DesktopIcon
 	} from 'phosphor-svelte';
 	import ArkaiMark from './ArkaiMark.svelte';
@@ -186,6 +197,9 @@
 		fileText: FileTextIcon,
 		chartBar: ChartBarIcon,
 		eyeOff: EyeSlashIcon,
+		eye: EyeIcon,
+		shield: ShieldCheckIcon,
+		filter: FunnelSimpleIcon,
 		sync: ArrowsClockwiseIcon,
 		publish: CloudArrowUpIcon,
 		more: DotsThreeIcon,
@@ -209,6 +223,7 @@
 		claude: AsteriskIcon,
 		openai: OpenAiLogoIcon,
 		key: KeyIcon,
+		lock: LockIcon,
 		signIn: SignInIcon,
 		arrowUp: ArrowUpIcon,
 		arrowDown: ArrowDownIcon,
@@ -218,11 +233,21 @@
 		/** Diff views: side by side / inline. */
 		columns: ColumnsIcon,
 		rows: RowsIcon,
-		/** Snaps: confined by the sandbox, turned on/off, installed, what they add for agents and for you. */
-		shield: ShieldCheckIcon,
+		/** Chat answers: helpful / not helpful, and "Remember this". */
+		thumbsUp: ThumbsUpIcon,
+		thumbsDown: ThumbsDownIcon,
+		bookmark: BookmarkSimpleIcon,
+		/** The chat composer's modes (Agent, Ask, a custom agent), `@` context and a queue row's drag handle. */
+		infinity: InfinityIcon,
+		chat: ChatCircleIcon,
+		robot: RobotIcon,
+		at: AtIcon,
+		grip: DotsSixVerticalIcon,
+		/** Voice dictation (voice/dictation.svelte.ts). */
+		mic: MicrophoneIcon,
+		/** Snaps (with shield and robot): turned on/off, installed, what they add for you. */
 		power: PowerIcon,
 		download: DownloadSimpleIcon,
-		robot: RobotIcon,
 		desktop: DesktopIcon
 	} as const;
 	export type IconName = keyof typeof icons;

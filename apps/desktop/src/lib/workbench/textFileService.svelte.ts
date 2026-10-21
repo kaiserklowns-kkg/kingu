@@ -27,7 +27,6 @@ import { status } from './status.svelte';
 import {
 	backsUpOnShutdown,
 	backupDelay,
-	closeAction,
 	confirmResult,
 	conflictMessage,
 	encodingLabel,
@@ -35,6 +34,7 @@ import {
 	isLargeModel,
 	restorePlan,
 	saveConfirm,
+	settleClose,
 	type AutoSaveMode,
 	type BackupHeader,
 	type BackupMeta,
@@ -43,6 +43,7 @@ import {
 	type ShutdownReason
 } from './textFiles';
 import { workspace } from './workspace.svelte';
+import { isSearchEditorKey } from './searchEditor.ts';
 import { t } from '#lib/i18n/index.ts';
 
 export type Placeholder = { kind: 'binary' | 'tooLarge' | 'error'; size?: number; limit?: number; message?: string };
@@ -108,9 +109,10 @@ class TextFileService {
 		const stop = $effect.root(() => {
 			$effect(() => {
 				if (!workspace.ready || !settings.loaded) return;
-				const root = workspace.root;
-				if (root === restoredFor) return;
-				restoredFor = root;
+				// Per workspace: an empty window has its own backups too.
+				const key = workspace.stateKey;
+				if (key === restoredFor) return;
+				restoredFor = key;
 				untrack(() => void this.restoreBackups().catch((e) => clientLog('error', `restore backups: ${e}`)));
 			});
 		});
@@ -235,7 +237,8 @@ class TextFileService {
 	async openCompare(path: string) {
 		try {
 			this.compare = { path, disk: await diskText(path) };
-			editors.open(path, { preview: false });
+			// The Agents layout shows the compare over its own file tab.
+			if (editors.adeFile() !== path) editors.open(path, { preview: false });
 		} catch (e) {
 			status.flash(t('workbench.textFileService.readFailed', { name: editorLabel(path), error: String(e) }), 8000);
 		}
@@ -267,6 +270,25 @@ class TextFileService {
 		return confirmResult(answer, c);
 	}
 
+	/** Save / Don't Save / Cancel before editors of `paths` close (textFiles.settleClose); resolves to
+	 * the paths that may close. Used by the IDE's groups and the Agents layout's file tabs alike. */
+	confirmClose(paths: string[], openElsewhere: (path: string) => boolean, { discard = false, reveal }: { discard?: boolean; reveal?: (path: string) => void } = {}): Promise<string[]> {
+		return settleClose(
+			paths,
+			{
+				isDirty: (p) => editors.isDirty(p) && !isDiffKey(p),
+				openElsewhere,
+				autoSave: autoSaveMode(),
+				isMac,
+				save: (p, reason) => saveFile(p, reason ?? 'explicit'),
+				confirm: (ask) => this.confirmSave(ask),
+				discardBackup: (p) => this.#discardBackup(p),
+				reveal
+			},
+			{ discard }
+		);
+	}
+
 	/**
 	 * Closes `paths` in `group`, asking about the dirty ones that are not open anywhere else (one
 	 * dialog for all of them, like VS Code's Close All). `discard` closes without asking (⌥-click).
@@ -274,29 +296,9 @@ class TextFileService {
 	 */
 	async closeEditors(paths: string[], group = editors.activeGroupId, { discard = false } = {}): Promise<string[]> {
 		const elsewhere = (p: string) => adeLayout.openFiles().includes(p) || editors.groups.some((g) => g.id !== group && g.tabs.some((t) => t.path === p));
-		const close = (p: string) => editors.close(p, { force: true, group });
-		const ask: string[] = [];
-		for (const p of paths) {
-			const dirty = editors.isDirty(p) && !isDiffKey(p);
-			if (dirty && discard && !elsewhere(p)) this.#discardBackup(p);
-			const action = discard ? 'close' : closeAction({ dirty, openElsewhere: elsewhere(p), autoSave: autoSaveMode(), isMac });
-			if (action === 'close') close(p);
-			else if (action === 'save' && (await saveFile(p, autoSaveMode() === 'onFocusChange' ? 'focusChange' : 'windowChange'))) close(p);
-			else ask.push(p);
-		}
-		if (!ask.length) return [];
-		if (ask.length === 1) editors.open(ask[0], { preview: false, group });
-		const choice = await this.confirmSave(ask);
-		if (choice === 'cancel') return ask;
-		const left: string[] = [];
-		for (const p of ask) {
-			if (choice === 'save' && !(await saveFile(p))) left.push(p);
-			else {
-				if (choice === 'dontSave') this.#discardBackup(p);
-				close(p);
-			}
-		}
-		return left;
+		const ok = await this.confirmClose(paths, elsewhere, { discard, reveal: (p) => editors.open(p, { preview: false, group }) });
+		for (const p of ok) editors.close(p, { force: true, group });
+		return paths.filter((p) => !ok.includes(p));
 	}
 
 	// --- Shutdown
@@ -312,12 +314,17 @@ class TextFileService {
 			for (const p of dirty()) await saveFile(p, 'windowChange').catch((e) => clientLog('error', `save ${p}: ${e}`));
 			if (!dirty().length) return true;
 		}
-		const remaining = dirty();
+		let remaining = dirty();
 		const hotExit = settings.get<HotExit>('files.hotExit');
-		if (backsUpOnShutdown({ reason, hotExit, hasFolder: workspace.root !== null, isMac })) {
+		// Closing the last window quits the app on Windows/Linux.
+		const lastWindow = reason === 'close' && !isMac ? (await invoke<number>('window_count').catch(() => 1)) <= 1 : true;
+		if (backsUpOnShutdown({ reason, hotExit, hasFolder: workspace.root !== null, isMac, lastWindow })) {
+			// Editors with no text-model backup (a dirty Search Editor) still ask Save / Don't Save.
+			const unbacked = remaining.filter(isSearchEditorKey);
 			try {
-				await this.backupNow(remaining);
-				return true;
+				await this.backupNow(remaining.filter((p) => !isSearchEditorKey(p)));
+				if (!unbacked.length) return true;
+				remaining = unbacked;
 			} catch (e) {
 				clientLog('error', `backup before shutdown: ${e}`);
 				const force = reason === 'quit' ? t('workbench.textFileService.quitAnyway') : t('workbench.textFileService.closeAnyway');
@@ -334,7 +341,7 @@ class TextFileService {
 		if (choice === 'cancel') return false;
 		if (choice === 'save') {
 			for (const p of remaining) await saveFile(p).catch((e) => status.flash(t('workbench.textFileService.saveFileFailed', { name: editorLabel(p), error: String(e) }), 8000));
-			return dirty().length === 0;
+			return remaining.every((p) => !editors.isDirty(p));
 		}
 		for (const p of remaining) this.#discardBackup(p);
 		return true;

@@ -14,12 +14,15 @@ import { lsp } from '#lib/lsp/lsp.svelte.ts';
 import { eolFor, type SaveReason } from '#lib/settings/mappings.ts';
 import { readTextResource, writeTextResource, type FileStat, type ReadOptions, type TextRead } from '#lib/settings/resources.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
+import { diskChangeAction, type AutoSaveMode } from './textFiles';
 import { editors } from './editors.svelte';
+import { externalKey, isExternalKey } from './externalFiles';
 import { invoke } from '@tauri-apps/api/core';
 import { runSaveParticipants } from './textFileSave';
 import { defaultLanguage, isUntitled, suggestedName } from './untitled';
 import { notifications } from './notifications.svelte';
 import { t } from '#lib/i18n/index.ts';
+import { isLocalHistoryKey } from '#lib/scm/localHistory.ts';
 
 type MonacoModule = typeof import('#lib/editor/monaco.ts');
 export type ModelEntry = {
@@ -36,6 +39,8 @@ export type ModelEntry = {
 	explicitLanguage?: boolean;
 	/** A save found a newer file on disk; auto save stops until it is resolved (VS Code's conflict mode). */
 	inConflict?: boolean;
+	/** Saves in flight: their own watcher event is not a change by someone else. */
+	saving?: number;
 };
 
 /** A file that opens as a placeholder instead of a text editor (VS Code's binary / too large / error editors). */
@@ -56,8 +61,13 @@ export const textFileHooks = {
 	/** A save could not encode a character. */
 	unencodable: (_path: string, _ch: string) => {},
 	/** The model is saved or reverted: its backup goes. */
-	clean: (_path: string) => {}
+	clean: (_path: string) => {},
+	/** A workspace file was written by a save (Local History adds an entry). */
+	saved: (_path: string, _entry: ModelEntry, _version: number) => {}
 };
+
+/** Called after every successful save with its reason (accessibility.signals.save). */
+export const saveListeners = new Set<(path: string, reason: SaveReason) => void>();
 
 const entries = new Map<string, ModelEntry>();
 /** The first line of each open untitled editor (reactive, for its tab label). */
@@ -85,6 +95,7 @@ export function readOptions(path: string, extra: ReadOptions = {}): ReadOptions 
 	return {
 		defaultEncoding: settings.get<string>('files.encoding'),
 		autoGuess: settings.get<boolean>('files.autoGuessEncoding'),
+		candidateGuessEncodings: settings.get<string[]>('files.candidateGuessEncodings').filter((e) => typeof e === 'string'),
 		// workbench.editorLargeFileConfirmation is in MB.
 		largeFileLimit: Math.round(settings.get<number>('workbench.editorLargeFileConfirmation') * 1024 * 1024),
 		...textFileHooks.readOptions(path),
@@ -116,7 +127,7 @@ export function modelEntry(m: MonacoModule, path: string): Promise<ModelEntry> {
 				// A references peek may already have made a preview model for this file.
 				const preview = lsp.adoptPreview(path);
 				if (preview && preview.getValue() !== text) preview.setValue(text);
-				const model = preview ?? m.monaco.editor.createModel(text, languageOf(m, path, text), m.monaco.Uri.file('/' + path));
+				const model = preview ?? m.monaco.editor.createModel(text, languageOf(m, path, text), m.monaco.Uri.file(modelPath(path)));
 				if (preview) setLanguage(m, model, languageOf(m, path, text));
 				// files.eol: a file with no line break yet takes the configured one (not counted as an edit).
 				if (!/\r?\n/.test(text)) model.setEOL(eolFor(settings.get('files.eol')) === '\n' ? m.monaco.editor.EndOfLineSequence.LF : m.monaco.editor.EndOfLineSequence.CRLF);
@@ -139,7 +150,9 @@ export function modelEntry(m: MonacoModule, path: string): Promise<ModelEntry> {
 					model.onWillDispose(() => (untitledFirstLines.delete(path), emptyUntitled.delete(path)));
 				}
 				entries.set(path, entry);
-				lsp.attach(m.monaco, model, path);
+				// Language servers run on the open folder: a file outside it, or a local history entry
+				// (Show Contents), is not one of their documents.
+				if (!isExternalKey(path) && !isLocalHistoryKey(path)) lsp.attach(m.monaco, model, path);
 				textFileHooks.created(path, entry);
 				return entry;
 			})
@@ -183,6 +196,12 @@ export function refreshLanguages(m: MonacoModule) {
 
 export type SaveOptions = { reason?: SaveReason; overwrite?: boolean; encoding?: string };
 
+/** Editors that save without a Monaco model entry here (the Search Editor's `.code-search`). */
+const customSavers: { owns: (path: string) => boolean; save: (path: string, reason: SaveReason) => Promise<boolean> }[] = [];
+export function registerSaver(owns: (path: string) => boolean, save: (path: string, reason: SaveReason) => Promise<boolean>) {
+	customSavers.push({ owns, save });
+}
+
 /**
  * Runs the save participants (format, trim…), then writes with the file's encoding. Resolves to
  * whether the file was saved: a newer file on disk (unless `overwrite`) or a character the
@@ -190,6 +209,8 @@ export type SaveOptions = { reason?: SaveReason; overwrite?: boolean; encoding?:
  */
 export async function saveFile(path: string, reasonOrOptions: SaveReason | SaveOptions = 'explicit'): Promise<boolean> {
 	const opts = typeof reasonOrOptions === 'string' ? { reason: reasonOrOptions } : reasonOrOptions;
+	const custom = customSavers.find((c) => c.owns(path));
+	if (custom) return custom.save(path, opts.reason ?? 'explicit');
 	const entry = entries.get(path);
 	if (!entry) return false;
 	// An untitled editor has no file yet: an explicit save asks where (auto save leaves it alone).
@@ -201,7 +222,8 @@ export async function saveFile(path: string, reasonOrOptions: SaveReason | SaveO
 	const encoding = opts.encoding ?? entry.encoding;
 	// files.saveConflictResolution `overwriteFileOnDisk`: a newer file on disk is overwritten without asking.
 	const overwrite = opts.overwrite || settings.get<string>('files.saveConflictResolution') === 'overwriteFileOnDisk';
-	const result = await writeTextResource(path, entry.model.getValue(), encoding, overwrite ? undefined : entry.stat);
+	entry.saving = (entry.saving ?? 0) + 1;
+	const result = await writeTextResource(path, entry.model.getValue(), encoding, overwrite ? undefined : entry.stat).finally(() => entry.saving!--);
 	if (result.kind === 'conflict') {
 		entry.inConflict = true;
 		textFileHooks.conflict(path);
@@ -220,6 +242,8 @@ export async function saveFile(path: string, reasonOrOptions: SaveReason | SaveO
 	editors.setDirty(path, dirty);
 	if (!dirty) textFileHooks.clean(path);
 	lsp.didSave(entry.model);
+	textFileHooks.saved(path, entry, version);
+	for (const fn of saveListeners) fn(path, opts.reason ?? 'explicit');
 	return true;
 }
 
@@ -276,7 +300,7 @@ type SavedAs = { rel: string | null; path: string };
 /**
  * Save As (⇧⌘S), and the first save of an untitled editor: the native save dialog (run by Rust),
  * then the editor switches to the new file like VS Code. The old file keeps what is on disk.
- * Returns the new workspace path, or null when cancelled or saved outside the folder.
+ * Returns the new editor key (a workspace path, or `external:` outside the folder), or null when cancelled.
  */
 export async function saveAs(path: string): Promise<string | null> {
 	const entry = entries.get(path);
@@ -288,22 +312,17 @@ export async function saveAs(path: string): Promise<string | null> {
 		saved = await invoke<SavedAs | null>('fs_save_as', {
 			content: text,
 			name: suggestedName(path, text),
-			dir: !isUntitled(path) && slash > 0 ? path.slice(0, slash) : null
+			dir: !isUntitled(path) && slash > 0 ? path.slice(0, slash) : null,
+			// files.dialog.defaultPath: where the dialog starts when no folder is open.
+			defaultPath: settings.get<string>('files.dialog.defaultPath').trim() || null
 		});
 	} catch (e) {
 		notifications.error(t('workbench.editorModels.saveAsFailed', { error: String(e) }));
 		return null;
 	}
 	if (!saved) return null;
-	if (!saved.rel) {
-		notifications.info(t('workbench.editorModels.savedOutside', { path: saved.path }));
-		if (isUntitled(path)) {
-			editors.setDirty(path, false);
-			editors.closeEverywhere(path);
-		}
-		return null;
-	}
-	const rel = saved.rel;
+	// Saved outside the folder: the editor goes on with the file there (an external editor, as in VS Code).
+	const rel = saved.rel ?? externalKey(saved.path);
 	editors.setDirty(path, false);
 	if (rel !== path) {
 		// The editor now shows the new file; the old model goes once no tab shows it.
@@ -319,12 +338,18 @@ export async function saveAs(path: string): Promise<string | null> {
 
 /**
  * The file watcher saw `paths` change on disk: a clean model takes the new contents (undoable, and
- * every group showing it follows); a dirty one keeps the user's version.
+ * every group showing it follows); a dirty one keeps the user's version, and when the disk really
+ * changed (an agent editing a task worktree file that is open here) auto save pauses for it and
+ * the save conflict flow shows (`diskChangeAction`).
  */
 export async function reloadClean(paths: string[]) {
 	for (const path of paths) {
 		const entry = entries.get(path);
-		if (!entry || entry.model.getAlternativeVersionId() !== entry.savedVersion) continue;
+		if (!entry) continue;
+		if (entry.model.getAlternativeVersionId() !== entry.savedVersion) {
+			await pauseIfChangedOnDisk(path, entry);
+			continue;
+		}
 		let file: Extract<TextRead, { kind: 'text' }>;
 		try {
 			file = await readText(path, { encoding: entry.encoding, acceptBinary: true, acceptLarge: true });
@@ -341,6 +366,28 @@ export async function reloadClean(paths: string[]) {
 	}
 }
 
+/** A dirty model whose file changed on disk: conflict mode (auto save stops), prompting when auto save is on. */
+async function pauseIfChangedOnDisk(path: string, entry: ModelEntry) {
+	if (entry.inConflict || entry.saving || !entry.stat || isUntitled(path)) return;
+	let disk: Extract<TextRead, { kind: 'text' }>;
+	try {
+		disk = await readText(path, { encoding: entry.encoding, acceptBinary: true, acceptLarge: true });
+	} catch {
+		return; // deleted: saving recreates it, as before
+	}
+	if (entry.saving || entry.model.isDisposed()) return;
+	const action = diskChangeAction({
+		dirty: entry.model.getAlternativeVersionId() !== entry.savedVersion,
+		inConflict: !!entry.inConflict,
+		diskDiffers: !!disk.stat && disk.stat.hash !== entry.stat?.hash,
+		autoSave: settings.get<AutoSaveMode>('files.autoSave')
+	});
+	if (action !== 'conflict' && action !== 'pause') return;
+	entry.inConflict = true;
+	clientLog('info', `${path} changed on disk while it has unsaved changes; auto save paused`);
+	if (action === 'conflict') textFileHooks.conflict(path);
+}
+
 /** The most recent view state of each file in any group (`workbench.editor.sharedViewState`). */
 const sharedViews = new Map<string, Monaco.editor.ICodeEditorViewState>();
 /** View states kept for closed editors (`workbench.editor.restoreViewState`), oldest first. */
@@ -355,6 +402,24 @@ export function saveViewState(group: number, path: string, state: Monaco.editor.
 		sharedViews.set(path, state);
 	}
 	for (const map of [views, sharedViews] as Map<string, unknown>[]) while (map.size > MAX_VIEW_STATES) map.delete(map.keys().next().value!);
+}
+
+/** The view states kept per group (by `group\0path`, oldest first), to save with the workspace's editors. */
+export function allViewStates(): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	for (const [k, v] of views) if (v) out[k] = v;
+	return out;
+}
+
+/** A workspace's saved view states, before its editors show again (each group's editor restores its own). */
+export function loadViewStates(saved: Record<string, unknown>) {
+	views.clear();
+	sharedViews.clear();
+	for (const [k, v] of Object.entries(saved)) {
+		const state = v as Monaco.editor.ICodeEditorViewState;
+		views.set(k, state);
+		sharedViews.set(k.slice(k.indexOf('\u0000') + 1), state);
+	}
 }
 
 /** The view state to restore for `path` in `group`: the group's own, else (with `workbench.editor.sharedViewState`) the latest from any group. */
@@ -401,3 +466,6 @@ export function disposeAll() {
 	views.clear();
 	sharedViews.clear();
 }
+
+/** The model URI's path of an editor key: another root folder's file is absolute already (multi-root). */
+export const modelPath = (key: string) => (key.startsWith('/') ? key : '/' + key);

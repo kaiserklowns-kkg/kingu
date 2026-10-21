@@ -7,7 +7,9 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
+use crate::i18n::msg::{AgentMsg, TasksMsg};
 use crate::settings::{kingu_file, read, write_atomic};
+use crate::tr;
 
 use super::worktree::validate_slug;
 
@@ -55,7 +57,7 @@ fn load_file(root: &Path) -> Result<NotesFile, String> {
   let Some(text) = read(&path)? else { return Ok(NotesFile { version: VERSION, ..Default::default() }) };
   let file: NotesFile = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
   if file.version > VERSION {
-    return Err(format!("{}: written by a newer Kingu (version {})", path.display(), file.version));
+    return Err(tr!(AgentMsg::AutomationsNewer, path = path.display(), version = file.version));
   }
   Ok(file)
 }
@@ -67,7 +69,7 @@ pub fn validate_key(key: &str) -> Result<(), String> {
 
 pub fn validate(notes: &[DiffNote]) -> Result<(), String> {
   if notes.len() > MAX_NOTES {
-    return Err(format!("more than {MAX_NOTES} notes"));
+    return Err(tr!(TasksMsg::TooManyNotes, max = MAX_NOTES));
   }
   let mut ids = std::collections::HashSet::new();
   for n in notes {
@@ -82,7 +84,7 @@ pub fn validate(notes: &[DiffNote]) -> Result<(), String> {
       return Err(format!("{}: note path must be relative to the worktree", n.file_path));
     }
     if n.body.trim().is_empty() || n.body.len() > MAX_BODY {
-      return Err(format!("{}: note must be 1-{MAX_BODY} bytes", n.id));
+      return Err(tr!(TasksMsg::NoteSize, id = n.id, max = MAX_BODY));
     }
     if let Some(start) = n.start_line
       && (start == 0 || start > n.line_number)

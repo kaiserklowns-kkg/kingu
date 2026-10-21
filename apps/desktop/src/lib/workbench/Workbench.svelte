@@ -8,6 +8,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { message } from '#lib/workbench/messageBox.ts';
 	import AgentPanel from '#lib/agent/AgentPanel.svelte';
+	import { installChatExtras } from '#lib/agent/chatExtras.svelte.ts';
 	import ActivityBar from './ActivityBar.svelte';
 	import Icon from './Icon.svelte';
 	import CleanupDialog from '#lib/ade/CleanupDialog.svelte';
@@ -19,9 +20,10 @@
 	import { welcome } from './welcomeTour.svelte';
 	import { floating } from './floating.svelte';
 	import { installSignals } from './signals.svelte';
+	import { installAccessibilitySignals } from './accessibilitySignals.svelte';
 	import { platform } from './platform.svelte';
 	import { PROFILES, type Platform } from './platform';
-	import { hasPreview, previewKey } from './viewers';
+	import { registerMarkdownPreviewCommands } from '#lib/markdown/previewCommands.svelte.ts';
 	import EditorPart from './EditorPart.svelte';
 	import Panel from './Panel.svelte';
 	import QuickInput from './QuickInput.svelte';
@@ -35,14 +37,19 @@
 	import { editors } from './editors.svelte';
 	import { explorer } from './explorer.svelte';
 	import { layout, PANEL_MIN, SIDEBAR_MIN } from './layout.svelte';
+	import { t } from '#lib/i18n/index.ts';
 	import { quick } from './quick.svelte';
 	import { installScm } from './scm.svelte';
+	import { installScmEditor } from '#lib/scm/scmEditor.svelte.ts';
+	import { installTimeline } from '#lib/scm/timeline.svelte.ts';
 	import { search } from './search.svelte';
 	import { status } from './status.svelte';
 	import { workspace } from './workspace.svelte';
 	import { installSettings } from '#lib/settings/apply.svelte.ts';
 	import { installWorkbenchAppearance } from './workbenchAppearance.svelte';
 	import { registerSettingsCommands } from '#lib/settings/contributions.ts';
+	import { registerCompareCommands } from './compare.svelte';
+	import { installLocalAi } from '#lib/localAi/localAi.svelte.ts';
 	import { installAde } from '#lib/ade/tasks.svelte.ts';
 	import { isMac } from './keys';
 	import { installNativeMenu } from './appMenu.svelte';
@@ -56,32 +63,58 @@
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 	import { quickOpenWorktree } from '#lib/ade/quickOpen.svelte.ts';
 	import { installTerminalSessions } from './terminalSessions.svelte';
+	import { installCodexSharedServerWarning } from '#lib/ade/codexSharedServer.ts';
 	import { installTerminalCommands, panelTerminalFocus } from '#lib/terminal/terminalCommands.svelte.ts';
+	import { installTaskCommands } from '#lib/tasks/taskCommands.svelte.ts';
 	import { adeInFront, installAdeCommands } from '#lib/ade/adeCommands.svelte.ts';
 	import { installHunkCommands } from '#lib/ade/hunkReview.svelte.ts';
+	import { installChatEditorCommands } from '#lib/agent/chatEditDecorations.svelte.ts';
 	import { accounts } from '#lib/accounts/accounts.svelte.ts';
 	import SettingsPage from '#lib/settings/SettingsPage.svelte';
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 	import { installAgentsMode } from '#lib/ade/agentsMode.svelte.ts';
 	import { installWorktreeCommands } from '#lib/ade/worktreeMenu.svelte.ts';
+	import { installAttempts } from '#lib/ade/attempts.svelte.ts';
 	import { installAgentNotifications } from '#lib/ade/agentNotify.svelte.ts';
+	import { installAdeAttention } from '#lib/ade/adeAttention.svelte.ts';
 	import { installAutomations } from '#lib/ade/automations.svelte.ts';
 	import { installIssues } from '#lib/ade/issues.svelte.ts';
 	import { installLinear } from '#lib/ade/linear.svelte.ts';
+	import { installCliBridge } from '#lib/ade/cliBridge.svelte.ts';
+	import WorkspaceTrustBanner from './WorkspaceTrustBanner.svelte';
+	import { workspaceTrust } from './workspaceTrust.svelte';
+	import { trustedDomains } from './trustedDomains.svelte';
+	import { installVoice } from '#lib/voice/dictation.svelte.ts';
+	import DictationIndicator from '#lib/voice/DictationIndicator.svelte';
 	import LinearConnect from '#lib/ade/LinearConnect.svelte';
+	import { installTaskSources } from '#lib/ade/taskSources.svelte.ts';
+	import TrackerConnect from '#lib/ade/TrackerConnect.svelte';
 	import { installSnaps } from '#lib/snaps/snaps.svelte.ts';
+	import { installMcp } from '#lib/mcp/mcp.svelte.ts';
+	import { installSkills } from '#lib/skills/skills.svelte.ts';
+	import { installVault } from '#lib/vault/vault.svelte.ts';
+	import { installArtifacts } from '#lib/artifacts/artifacts.svelte.ts';
 	import { installDebug } from '#lib/debug/debug.svelte.ts';
+	import { installTesting } from '#lib/testing/testing.svelte.ts';
 	import DebugToolbar from '#lib/debug/DebugToolbar.svelte';
 	import { installBreadcrumbs } from './breadcrumbsCommands.svelte';
+	import { installLanguageCommands } from './languageCommands.svelte';
+	import { installTypeScriptCommands } from '#lib/lsp/typescriptCommands.svelte.ts';
+	import { installImageZoomCommands } from './imageZoom.svelte';
 	import { installProblemsSettings } from '#lib/lsp/problemsCommands.svelte.ts';
+	import { installRefactorPreviewCommands } from '#lib/lsp/refactorPreview.svelte.ts';
 	import { installCloseGuard, quit } from './closeGuard.svelte';
 	import { installEditorRestore } from './editorRestore.svelte';
+	import { installWorkspaceStorage } from './workspaceStorage.svelte';
 	import { textFiles } from './textFileService.svelte';
 	import { registerEditorStatusCommands } from './editorStatusActions.svelte';
 	import { installEditorCommands } from './editorCommands.svelte';
+	import { installEditorFeatures } from '#lib/editor/editorFeatures.svelte.ts';
 	import { installNotificationCommands } from './notificationCommands.svelte';
+	import { installSearchEditorCommands } from './searchEditorCommands.svelte.ts';
 	import NotificationToasts from './NotificationToasts.svelte';
 	import { recentFiles } from './recentFiles.svelte';
+	import { profiles } from '#lib/settings/profiles.svelte.ts';
 
 	// Opening a file or diff (Quick Open, a review file, settings.json) closes the system settings page.
 	// `editors.active` also re-runs on focus changes, so only a different editor closes it.
@@ -95,7 +128,8 @@
 
 
 	let middle: HTMLDivElement | undefined = $state();
-	const workspaceName = $derived(workspace.name);
+	// The folder's name, or the workspace's (`name (Workspace)`, Untitled (Workspace)) for several folders.
+	const workspaceName = $derived(workspace.title || workspace.name);
 
 	// VS Code's default macOS keybindings (docs/IDE-DESIGN.md §2). onMount, not $effect:
 	// register() reads and writes the registry, which an effect would re-run on forever.
@@ -104,6 +138,8 @@
 		welcome.maybeShow();
 		const unregister = [
 			installSignals(),
+			installAccessibilitySignals(),
+			installChatExtras(),
 			// Shows another OS's chrome (window controls, fonts) on this machine; real users keep macOS's.
 			commands.register({
 				id: 'kingu.dev.previewPlatform',
@@ -120,6 +156,27 @@
 			commands.register({ id: 'kingu.agents.cleanup', title: 'Clean Up Tasks…', category: 'Agents', when: () => adeTasks.views.length > 0, run: () => (cleanup.open = true) }),
 			commands.register({ id: 'kingu.welcome.show', title: 'Welcome: Show Getting Started', category: 'Help', run: () => (welcome.open = true) }),
 			commands.register({ id: 'workbench.action.files.openFolder', title: 'Open Folder...', category: 'File', key: 'cmd+o', run: () => workspace.pickFolder() }),
+			// Files anywhere on disk (an external editor outside the folder) and `.code-workspace` files.
+			commands.register({ id: 'workbench.action.files.openFile', title: 'Open File...', category: 'File', run: () => workspace.openFile() }),
+			commands.register({ id: 'workbench.action.openWorkspace', title: 'Open Workspace from File...', category: 'File', run: () => workspace.pickWorkspaceFile() }),
+			commands.register({ id: 'workbench.action.saveWorkspaceAs', title: 'Save Workspace As...', category: 'Workspaces', when: () => workspace.root !== null, run: () => workspace.saveWorkspaceAs() }),
+			commands.register({ id: 'workbench.action.addRootFolder', title: 'Add Folder to Workspace...', category: 'Workspaces', run: () => workspace.addFolderToWorkspace() }),
+			commands.register({
+				id: 'workbench.action.removeRootFolder',
+				title: 'Remove Folder from Workspace...',
+				category: 'Workspaces',
+				when: () => workspace.folders.length > 1,
+				run: () =>
+					quick.pick({
+						placeholder: t('workspaces.removeFolderPick'),
+						items: workspace.folders.map((f) => ({ id: f.path, label: f.name, description: f.path })),
+						onAccept: (item) => void workspace.removeFolder(item.id)
+					})
+			}),
+			// Windows (VS Code: each window has its own workspace).
+			commands.register({ id: 'workbench.action.newWindow', title: 'New Window', category: 'File', key: 'cmd+shift+n', run: () => workspace.newWindow() }),
+			commands.register({ id: 'workbench.action.closeWindow', title: 'Close Window', category: 'View', key: 'cmd+shift+w', run: () => workspace.closeWindow() }),
+			commands.register({ id: 'workbench.action.duplicateWorkspaceInNewWindow', title: 'Duplicate As Workspace in New Window', category: 'Workspaces', when: () => workspace.root !== null, run: () => workspace.duplicateInNewWindow() }),
 			commands.register({ id: 'workbench.action.openRecent', title: 'Open Recent...', category: 'File', key: 'ctrl+r',
 				// The shell's reverse search keeps ctrl+r inside the terminal (the menu still opens the picker).
 				keyWhen: () => !document.activeElement?.closest('.xterm'),
@@ -192,30 +249,6 @@
 				when: () => !appMode.isAgents,
 				run: () => layout.toggleZen()
 			}),
-			// Markdown: Open Preview / Open Preview to the Side (VS Code's markdown-language-features).
-			commands.register({
-				id: 'markdown.showPreview',
-				title: 'Open Preview (Markdown, CSV)',
-				category: 'Markdown',
-				key: 'cmd+shift+v',
-				when: () => !appMode.isAgents && editors.active !== null && hasPreview(editors.active),
-				run: () => editors.open(previewKey(editors.active!), { preview: false })
-			}),
-			commands.register({
-				id: 'markdown.showPreviewToSide',
-				title: 'Open Preview to the Side (Markdown, CSV)',
-				category: 'Markdown',
-				key: 'cmd+k v',
-				when: () => !appMode.isAgents && editors.active !== null && hasPreview(editors.active),
-				run: () => {
-					const rel = editors.active!;
-					const side = editors.split('right');
-					if (side === null) return editors.open(previewKey(rel), { preview: false });
-					// The split copies the Markdown tab; the side group shows only the preview.
-					editors.open(previewKey(rel), { preview: false, group: side });
-					editors.close(rel, { group: side });
-				}
-			}),
 			commands.register({
 				id: 'kingu.floatingTerminal.toggle',
 				title: 'Toggle Floating Terminal',
@@ -257,8 +290,8 @@
 					else layout.showPanel('terminal');
 				}
 			}),
-			commands.register({ id: 'workbench.view.explorer', title: 'Show Explorer', category: 'View', key: 'cmd+shift+e', keyWhen: () => !appMode.isAgents, run: () => ((layout.sideView = 'explorer'), (layout.sidebarVisible = true)) }),
-			commands.register({ id: 'workbench.action.findInFiles', title: 'Search: Find in Files', key: 'cmd+shift+f', keyWhen: () => !appMode.isAgents, run: () => ((layout.sideView = 'search'), (layout.sidebarVisible = true), search.reveal(editors.selectionText(settings.get<boolean>('search.seedWithNearestWord')))) }),
+			commands.register({ id: 'workbench.view.explorer', title: 'Show Explorer', category: 'View', key: 'cmd+shift+e', scope: 'ide', run: () => ((layout.sideView = 'explorer'), (layout.sidebarVisible = true)) }),
+			commands.register({ id: 'workbench.action.findInFiles', title: 'Search: Find in Files', key: 'cmd+shift+f', scope: 'ide', run: () => ((layout.sideView = 'search'), (layout.sidebarVisible = true), search.reveal(editors.selectionText(settings.get<boolean>('search.seedWithNearestWord')))) }),
 			commands.register({ id: 'workbench.view.scm', title: 'Show Source Control', category: 'View', key: 'ctrl+shift+g', run: () => ((layout.sideView = 'scm'), (layout.sidebarVisible = true)) }),
 			commands.register({ id: 'workbench.actions.view.problems', title: 'Focus on Problems View', category: 'View', key: 'cmd+shift+m', run: () => layout.showPanel('problems') }),
 			commands.register({
@@ -306,66 +339,123 @@
 		const uninstall = installKeybindings();
 		const uninstallMenu = installNativeMenu();
 		const uninstallScm = installScm();
+		const uninstallScmEditor = installScmEditor();
+		const uninstallTimeline = installTimeline();
 		const uninstallWatcher = workspace.install();
+		// Before the editors and terminals: the layout follows the window's workspace (an empty window has its own).
+		const uninstallWorkspaceStorage = installWorkspaceStorage(() => (workspace.ready ? (workspace.stateKey ?? 'empty') : undefined));
 		const uninstallSettings = installSettings();
 		const uninstallAppearance = installWorkbenchAppearance();
 		const unregisterSettings = registerSettingsCommands();
+		const unregisterCompare = registerCompareCommands();
+		const unregisterMarkdownPreview = registerMarkdownPreviewCommands();
 		const uninstallAde = installAde();
 		const uninstallAgentsMode = installAgentsMode();
 		const uninstallWorktreeCommands = installWorktreeCommands();
+		const uninstallAttempts = installAttempts();
 		const uninstallAgentNotifications = installAgentNotifications();
+		const uninstallAdeAttention = installAdeAttention();
 		const uninstallAutomations = installAutomations();
 		const uninstallIssues = installIssues();
 		const uninstallLinear = installLinear();
+		const uninstallTaskSources = installTaskSources();
+		const uninstallCliBridge = installCliBridge();
+		const uninstallWorkspaceTrust = workspaceTrust.install();
+		const uninstallTrustedDomains = trustedDomains.install();
+		const uninstallVoice = installVoice();
 		const uninstallLayout = installLayoutCommands();
 		const uninstallSnaps = installSnaps();
+		const uninstallMcp = installMcp();
+		const uninstallSkills = installSkills();
+		const uninstallVault = installVault();
+		const uninstallArtifacts = installArtifacts();
+		const uninstallLocalAi = installLocalAi();
 		const uninstallTerminalSessions = installTerminalSessions();
+		const uninstallCodexWarning = installCodexSharedServerWarning();
 		const uninstallTerminalCommands = installTerminalCommands();
+		const uninstallTaskCommands = installTaskCommands();
 		const uninstallAdeCommands = installAdeCommands();
 		const uninstallHunkCommands = installHunkCommands();
+		const uninstallChatEditorCommands = installChatEditorCommands();
 		const uninstallDebug = installDebug();
+		const uninstallTesting = installTesting();
 		const uninstallBreadcrumbs = installBreadcrumbs();
+		const uninstallLanguageCommands = installLanguageCommands();
+		const uninstallTypeScriptCommands = installTypeScriptCommands();
+		const uninstallImageZoomCommands = installImageZoomCommands();
 		const uninstallProblemsSettings = installProblemsSettings();
+		const uninstallRefactorPreview = installRefactorPreviewCommands();
 		const uninstallAccounts = accounts.install();
 		const uninstallTextFiles = textFiles.install();
 		const unregisterEditorStatus = registerEditorStatusCommands();
 		const uninstallCloseGuard = installCloseGuard();
 		const uninstallEditorRestore = installEditorRestore();
 		const uninstallEditorCommands = installEditorCommands();
+		const uninstallEditorFeatures = installEditorFeatures();
 		const uninstallRecentFiles = recentFiles.install();
 		const uninstallNotificationCommands = installNotificationCommands();
+		const uninstallProfiles = profiles.install();
+		const uninstallSearchEditorCommands = installSearchEditorCommands();
 		return () => {
+			uninstallProfiles();
 			uninstallNotificationCommands();
+			uninstallSearchEditorCommands();
 			uninstallRecentFiles();
 			uninstallEditorCommands();
+			uninstallEditorFeatures();
 			uninstallEditorRestore();
 			uninstallCloseGuard();
 			unregisterEditorStatus();
 			uninstallTextFiles();
 			uninstallAccounts();
 			uninstallProblemsSettings();
+			uninstallRefactorPreview();
 			uninstallBreadcrumbs();
+			uninstallLanguageCommands();
+			uninstallTypeScriptCommands();
+			uninstallImageZoomCommands();
 			uninstallDebug();
+			uninstallTesting();
 			uninstallAdeCommands();
 			uninstallHunkCommands();
+			uninstallChatEditorCommands();
+			uninstallTaskCommands();
 			uninstallTerminalCommands();
 			uninstallTerminalSessions();
+			uninstallCodexWarning();
+			uninstallMcp();
+			uninstallSkills();
 			uninstallSnaps();
+			uninstallVault();
+			uninstallArtifacts();
+			uninstallLocalAi();
 			uninstallLayout();
 			uninstallAgentsMode();
 			uninstallWorktreeCommands();
+			uninstallAttempts();
 			uninstallIssues();
 			uninstallLinear();
+			uninstallTaskSources();
+			uninstallCliBridge();
+			uninstallWorkspaceTrust();
+			uninstallTrustedDomains();
+			uninstallVoice();
 			uninstallAutomations();
 			uninstallAgentNotifications();
+			uninstallAdeAttention();
 			uninstallAde();
 			uninstallMenu();
 			uninstall();
 			uninstallScm();
+			uninstallScmEditor();
+			uninstallTimeline();
 			uninstallWatcher();
+			uninstallWorkspaceStorage();
 			uninstallAppearance();
 			uninstallSettings();
 			unregisterSettings();
+			unregisterCompare();
+			unregisterMarkdownPreview();
 			unregister.forEach((u) => u());
 		};
 	});
@@ -416,7 +506,8 @@
 	const panelAt = $derived(settings.get<PanelLocation>('workbench.panel.defaultLocation'));
 	const grid = $derived(workbenchGrid({ sideBar: sideBarAt, panel: panelAt, alignment: settings.get<PanelAlignment>('workbench.panel.alignment') }));
 	const panelBeside = $derived(panelAt === 'left' || panelAt === 'right');
-	const activityBar = $derived(settings.get<string>('workbench.activityBar.location') === 'default');
+	// Zen Mode hides the activity bar and the status bar unless zenMode.hideActivityBar / hideStatusBar are off.
+	const activityBar = $derived(settings.get<string>('workbench.activityBar.location') === 'default' && (!layout.zen || layout.zenParts?.activityBar === true));
 	/** +1 when dragging a sash rightward/downward grows the part. */
 	const sideSign = $derived(sideBarAt === 'left' ? 1 : -1);
 	const panelSign = $derived(panelAt === 'top' || panelAt === 'left' ? 1 : -1);
@@ -430,6 +521,7 @@
 	<!-- One title bar and one status bar for the IDE and the Agents layout. -->
 	<TitleBar workspaceName={workspaceName || 'Kingu'} {focused} />
 	<DebugToolbar placement="floating" />
+	<WorkspaceTrustBanner />
 
 	<div bind:this={middle} class={['workbench-body grid min-h-0 flex-1 bg-(--vscode-titleBar-activeBackground) px-[4px] pb-[4px]', (appMode.isAgents || systemSettings.visible) && 'hidden']}
 		style:grid-template-areas={gridTemplateAreas(grid)}
@@ -507,14 +599,16 @@
 	<!-- System settings (IDE + ADE) over the content of either mode. -->
 	{#if systemSettings.visible}<SettingsPage />{/if}
 
-	<!-- workbench.statusBar.visible (kept mounted so its items keep their state); zen mode hides it. -->
-	<div class={['contents', (layout.zen || !settings.get<boolean>('workbench.statusBar.visible')) && '[&>*]:hidden']}><StatusBar /></div>
+	<!-- workbench.statusBar.visible (kept mounted so its items keep their state); Zen Mode hides it (zenMode.hideStatusBar). -->
+	<div class={['contents', ((layout.zen && layout.zenParts?.statusBar !== true) || !settings.get<boolean>('workbench.statusBar.visible')) && '[&>*]:hidden']}><StatusBar /></div>
+	<DictationIndicator />
 	<FloatingTerminal />
 	{#if welcome.open}<Welcome />{/if}
 	{#if cleanup.open}<CleanupDialog />{/if}
 	<Tooltips />
 	<QuickInput />
 	<LinearConnect />
+	<TrackerConnect />
 	<AdeDialogs />
 	<RepoDialog />
 	<NotificationToasts />

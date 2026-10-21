@@ -9,9 +9,24 @@ describe('worktree actions', () => {
 	});
 	test('a task can be closed and removed, but not while its agent works', () => {
 		const rows = worktreeActions({ slug: 'fix', status: 'review', running: true });
-		expect(ids(rows).slice(-5)).toEqual(['copyBranch', 'rename', '-', 'markDone', 'remove']);
+		expect(ids(rows).slice(-11)).toEqual(['copyBranch', 'rename', '-', 'markDone', 'moveStatus', 'continueSession', 'handOff', '-', 'newFromTask', '-', 'remove']);
 		const blocked = rows.filter((r) => r !== 'separator' && (r.id === 'markDone' || r.id === 'remove'));
 		expect(blocked.map((r) => r !== 'separator' && r.enabled)).toEqual([false, false]);
+	});
+	test('sessions can be continued or handed off once the task has one and its agent is idle', () => {
+		const enabled = (w: Parameters<typeof worktreeActions>[0]) =>
+			worktreeActions(w)
+				.filter((r) => r !== 'separator' && (r.id === 'continueSession' || r.id === 'handOff' || r.id === 'moveStatus'))
+				.map((r) => r !== 'separator' && r.enabled !== false);
+		expect(enabled({ slug: 'fix', status: 'review', sessions: 2 })).toEqual([true, true, true]);
+		expect(enabled({ slug: 'fix', status: 'review', sessions: 0 })).toEqual([true, false, false]);
+		expect(enabled({ slug: 'fix', status: 'running', sessions: 2, running: true })).toEqual([true, false, false]);
+	});
+	test('any task can have a task stacked on it; only an attempt compares', () => {
+		expect(ids(worktreeActions({ slug: 'fix', status: 'review' }))).not.toContain('compareAttempts');
+		expect(ids(worktreeActions({ slug: 'fix-a', status: 'review', attempts: true })).slice(-4)).toEqual(['newFromTask', 'compareAttempts', '-', 'remove']);
+		const orphan = worktreeActions({ slug: 'gone', hasWorktree: false }).find((r) => r !== 'separator' && r.id === 'newFromTask');
+		expect(orphan !== 'separator' && orphan?.enabled).toBe(false);
 	});
 	test('a done task offers to reopen', () => {
 		expect(ids(worktreeActions({ slug: 'fix', status: 'done' }))).toContain('reopen');

@@ -65,12 +65,16 @@ export type DocumentDiagnosticReport = { kind: 'full'; resultId?: string; items:
 
 // --- Edits ---------------------------------------------------------------------------------------
 
-export type TextDocumentEdit = { textDocument: { uri: string; version: number | null }; edits: TextEdit[] };
+/** An edit tagged with a change annotation (a key of `WorkspaceEdit.changeAnnotations`). */
+export type AnnotatedTextEdit = TextEdit & { annotationId: string };
+export type TextDocumentEdit = { textDocument: { uri: string; version: number | null }; edits: (TextEdit | AnnotatedTextEdit)[] };
+/** `needsConfirmation`: the client shows the edit before applying it (Refactor Preview). */
+export type ChangeAnnotation = { label: string; needsConfirmation?: boolean; description?: string };
 export type ResourceOperation = { kind: 'create' | 'rename' | 'delete'; [key: string]: unknown };
 export type WorkspaceEdit = {
 	changes?: Record<string, TextEdit[]>;
 	documentChanges?: (TextDocumentEdit | ResourceOperation)[];
-	changeAnnotations?: Record<string, unknown>;
+	changeAnnotations?: Record<string, ChangeAnnotation>;
 };
 export type Command = { title: string; command: string; arguments?: unknown[] };
 export type CodeAction = {
@@ -96,8 +100,49 @@ export type DocumentHighlight = { range: Range; kind?: number };
 
 export type ProgressValue = { kind: 'begin' | 'report' | 'end'; title?: string; message?: string; percentage?: number };
 
+// --- Inlay hints, semantic tokens, folding, code lens -------------------------------------------
+
+export type InlayHintLabelPart = { value: string; tooltip?: string | MarkupContent; location?: Location; command?: Command };
+export type InlayHint = {
+	position: Position;
+	label: string | InlayHintLabelPart[];
+	/** 1 Type, 2 Parameter. */
+	kind?: number;
+	textEdits?: TextEdit[];
+	tooltip?: string | MarkupContent;
+	paddingLeft?: boolean;
+	paddingRight?: boolean;
+	data?: unknown;
+};
+
+export type SemanticTokensLegend = { tokenTypes: string[]; tokenModifiers: string[] };
+export type SemanticTokens = { resultId?: string; data: number[] };
+export type SemanticTokensEdit = { start: number; deleteCount: number; data?: number[] };
+export type SemanticTokensDelta = { resultId?: string; edits: SemanticTokensEdit[] };
+export type SemanticTokensOptions = { legend: SemanticTokensLegend; range?: boolean | object; full?: boolean | { delta?: boolean } };
+
+export type FoldingRange = { startLine: number; startCharacter?: number; endLine: number; endCharacter?: number; kind?: string; collapsedText?: string };
+
+export type CodeLens = { range: Range; command?: Command; data?: unknown };
+
+// --- Hierarchies, linked editing, selection ranges, links, colors -------------------------------
+
+export type CallHierarchyItem = { name: string; kind: number; tags?: number[]; detail?: string; uri: string; range: Range; selectionRange: Range; data?: unknown };
+export type CallHierarchyIncomingCall = { from: CallHierarchyItem; fromRanges: Range[] };
+export type CallHierarchyOutgoingCall = { to: CallHierarchyItem; fromRanges: Range[] };
+export type TypeHierarchyItem = CallHierarchyItem;
+
+export type LinkedEditingRanges = { ranges: Range[]; wordPattern?: string };
+export type SelectionRange = { range: Range; parent?: SelectionRange };
+export type DocumentLink = { range: Range; target?: string; tooltip?: string; data?: unknown };
+export type Color = { red: number; green: number; blue: number; alpha: number };
+export type ColorInformation = { range: Range; color: Color };
+export type ColorPresentation = { label: string; textEdit?: TextEdit; additionalTextEdits?: TextEdit[] };
+
 export type ServerCapabilities = {
 	positionEncoding?: string;
+	/** `changeNotifications`: the server takes `workspace/didChangeWorkspaceFolders` (true, or a registration id). */
+	workspace?: { workspaceFolders?: { supported?: boolean; changeNotifications?: boolean | string }; fileOperations?: { willRename?: object; didRename?: object } };
 	textDocumentSync?: number | { openClose?: boolean; change?: number; save?: boolean | { includeText?: boolean } };
 	hoverProvider?: boolean | object;
 	completionProvider?: { triggerCharacters?: string[]; resolveProvider?: boolean };
@@ -113,6 +158,20 @@ export type ServerCapabilities = {
 	documentFormattingProvider?: boolean | object;
 	documentRangeFormattingProvider?: boolean | object;
 	executeCommandProvider?: { commands?: string[] };
+	declarationProvider?: boolean | object;
+	typeDefinitionProvider?: boolean | object;
+	implementationProvider?: boolean | object;
+	inlayHintProvider?: boolean | { resolveProvider?: boolean };
+	semanticTokensProvider?: SemanticTokensOptions;
+	foldingRangeProvider?: boolean | object;
+	codeLensProvider?: { resolveProvider?: boolean };
+	callHierarchyProvider?: boolean | object;
+	typeHierarchyProvider?: boolean | object;
+	linkedEditingRangeProvider?: boolean | object;
+	documentOnTypeFormattingProvider?: { firstTriggerCharacter: string; moreTriggerCharacter?: string[] };
+	selectionRangeProvider?: boolean | object;
+	documentLinkProvider?: { resolveProvider?: boolean };
+	colorProvider?: boolean | object;
 	[key: string]: unknown;
 };
 

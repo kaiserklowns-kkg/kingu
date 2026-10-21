@@ -6,6 +6,7 @@ import type * as Monaco from 'monaco-editor';
 import type { ITerminalOptions } from '@xterm/xterm';
 import { themeSettingFor } from '../workbench/workbenchOptions';
 import { DIFF_EDITOR_OPTION_PATHS, EDITOR_CONFIG_SETTINGS, EDITOR_KINGU_SETTINGS, EDITOR_OPTION_PATHS } from './editorOptionMap';
+import { TERMINAL_SETTINGS } from './vscode/terminal';
 
 export type Get = <T = unknown>(id: string) => T;
 
@@ -44,10 +45,10 @@ export function diffWraps(get: Get): boolean {
  * IEditorOptions). Every editor.* setting that is a Monaco option goes through as is; the paths
  * are generated in editorOptionMap.ts.
  */
-export function editorOptionsFrom(get: Get): Monaco.editor.IEditorOptions & Monaco.editor.IGlobalEditorOptions {
+export function editorOptionsFrom(get: Get, themeSemantic = false): Monaco.editor.IEditorOptions & Monaco.editor.IGlobalEditorOptions {
 	const out: Record<string, unknown> = {};
 	for (const [id, path] of Object.entries(EDITOR_OPTION_PATHS)) {
-		const value = get(id);
+		const value = id === SEMANTIC_HIGHLIGHTING ? semanticHighlightingFrom(get(id), themeSemantic) : get(id);
 		if (value !== undefined) setPath(out, path, value);
 	}
 	// problems.visibility: off hides the squiggles in every editor, like VS Code's text editors.
@@ -60,9 +61,22 @@ export function editorOptionsFrom(get: Get): Monaco.editor.IEditorOptions & Mona
  * VS Code the editor contributions read `editor.codeActionWidget.showHeaders`,
  * `editor.stickyScroll.enabled`, … from the configuration, not from the editor's options).
  */
-export function editorConfigurationFrom(get: Get): [string, unknown][] {
+export function editorConfigurationFrom(get: Get, themeSemantic = false): [string, unknown][] {
 	const ids = [...Object.keys(EDITOR_OPTION_PATHS), ...EDITOR_CONFIG_SETTINGS, ...EDITOR_KINGU_SETTINGS, ...Object.keys(DIFF_EDITOR_OPTION_PATHS)];
-	return ids.map((id) => [id, get(id)] as [string, unknown]).filter(([, v]) => v !== undefined);
+	return ids.map((id) => [id, id === SEMANTIC_HIGHLIGHTING ? semanticHighlightingFrom(get(id), themeSemantic) : get(id)] as [string, unknown]).filter(([, v]) => v !== undefined);
+}
+
+const SEMANTIC_HIGHLIGHTING = 'editor.semanticHighlighting.enabled';
+
+/**
+ * `editor.semanticHighlighting.enabled` as Monaco takes it: `configuredByTheme` becomes the color
+ * theme's own `semanticHighlighting` (VS Code's default themes turn it on), because Monaco's
+ * standalone themes never do. Monaco reads it from its configuration service, so the
+ * configuration value is resolved the same way.
+ */
+export function semanticHighlightingFrom(value: unknown, themeSemantic: boolean): boolean | undefined {
+	if (value === undefined) return undefined;
+	return value === 'configuredByTheme' ? themeSemantic : value === true;
 }
 
 /** A model's indentation: `indentSize` is a number or `"tabSize"` (VS Code's editor.indentSize). */
@@ -131,6 +145,8 @@ export function terminalOptionsFrom(get: Get): ITerminalOptions {
 		rightClickSelectsWord: get<string>('terminal.integrated.rightClickBehavior') === 'selectWord',
 		drawBoldTextInBrightColors: get<boolean>('terminal.integrated.drawBoldTextInBrightColors'),
 		minimumContrastRatio: get<number>('terminal.integrated.minimumContrastRatio'),
+		rescaleOverlappingGlyphs: get<boolean>('terminal.integrated.rescaleOverlappingGlyphs'),
+		customGlyphs: get<boolean>('terminal.integrated.customGlyphs'),
 		scrollSensitivity: get<number>('terminal.integrated.mouseWheelScrollSensitivity'),
 		fastScrollSensitivity: get<number>('terminal.integrated.fastScrollSensitivity'),
 		smoothScrollDuration: get<boolean>('terminal.integrated.smoothScrolling') ? TERMINAL_SMOOTH_SCROLL_MS : 0,
@@ -147,6 +163,8 @@ export function shellPlatform(): ShellPlatform {
 /** What pty_spawn gets for a new shell (lib.rs TerminalSettings): `null` fields keep Rust's defaults ($SHELL -l in the folder). */
 export type ShellSettings = {
 	shell: string | null;
+	/** The default profile's `path` candidates (a bare name is looked up on PATH); they win over `shell`. */
+	paths: string[];
 	args: string[];
 	/** `terminal.integrated.env.*`: a `null` value removes the variable. */
 	env: Record<string, string | null>;
@@ -158,11 +176,59 @@ export type ShellSettings = {
 	splitCwd: string;
 };
 
-export function shellFrom(get: Get, platform: ShellPlatform, locale: string | null = typeof navigator !== 'undefined' ? navigator.language : null): ShellSettings {
+type TerminalProfile = { path?: unknown; args?: unknown; env?: unknown } | null;
+
+/**
+ * A terminal profile by name (`terminal.integrated.profiles.<platform>`): the user's map over
+ * VS Code's default profiles (VS Code merges an object setting with its default), where `null`
+ * removes a default profile.
+ */
+function profileNamed(get: Get, platform: ShellPlatform, name: string): TerminalProfile | undefined {
+	const id = `terminal.integrated.profiles.${platform}`;
+	const defaults = (TERMINAL_SETTINGS.find((s) => s.id === id)?.default ?? {}) as Record<string, TerminalProfile>;
+	const user = get<Record<string, TerminalProfile> | undefined>(id);
+	const all: Record<string, TerminalProfile> = { ...defaults, ...(user && typeof user === 'object' ? user : {}) };
+	return Object.hasOwn(all, name) ? all[name] : undefined;
+}
+
+/** The terminal profiles of `platform` (VS Code's defaults merged with the user's map, `null` ones
+ *  removed), in order: the defaults first, then the user's own. */
+export function profileNames(get: Get, platform: ShellPlatform): string[] {
+	const id = `terminal.integrated.profiles.${platform}`;
+	const defaults = (TERMINAL_SETTINGS.find((s) => s.id === id)?.default ?? {}) as Record<string, TerminalProfile>;
+	const user = get<Record<string, TerminalProfile> | undefined>(id);
+	const all: Record<string, TerminalProfile> = { ...defaults, ...(user && typeof user === 'object' ? user : {}) };
+	return Object.keys(all).filter((name) => all[name] && typeof all[name] === 'object');
+}
+
+/**
+ * The shell a new terminal starts (VS Code: the default profile, then terminal.integrated.env.*).
+ * `terminal.integrated.defaultProfile.<platform>` names a profile with a `path` (a name looked up
+ * on PATH, or a list tried in turn), `args` and `env` (`pickedProfile` names another one); without one, the legacy
+ * `terminal.integrated.shell.*` / `shellArgs.*` apply. All of them are user-only settings.
+ */
+export function shellFrom(
+	get: Get,
+	platform: ShellPlatform,
+	locale: string | null = typeof navigator !== 'undefined' ? navigator.language : null,
+	/** A profile picked for this terminal (New Terminal With Profile) instead of the default one. */
+	pickedProfile?: string
+): ShellSettings {
+	const name = pickedProfile || get<unknown>(`terminal.integrated.defaultProfile.${platform}`);
+	const profile = typeof name === 'string' && name ? profileNamed(get, platform, name) : undefined;
+	const rawPaths = profile?.path;
+	const paths = (Array.isArray(rawPaths) ? rawPaths : [rawPaths]).filter((p): p is string => typeof p === 'string' && p.trim() !== '');
+	const useProfile = paths.length > 0;
+	const env: Record<string, string | null> = { ...get<Record<string, string | null>>(`terminal.integrated.env.${platform}`) };
+	if (useProfile && profile?.env && typeof profile.env === 'object') {
+		for (const [k, v] of Object.entries(profile.env as Record<string, unknown>)) if (typeof v === 'string' || v === null) env[k] = v;
+	}
+	const profileArgs = Array.isArray(profile?.args) ? (profile.args as unknown[]).filter((a): a is string => typeof a === 'string') : [];
 	return {
 		shell: get<string>(`terminal.integrated.shell.${platform}`).trim() || null,
-		args: [...get<string[]>(`terminal.integrated.shellArgs.${platform}`)],
-		env: { ...get<Record<string, string | null>>(`terminal.integrated.env.${platform}`) },
+		paths,
+		args: useProfile ? profileArgs : [...get<string[]>(`terminal.integrated.shellArgs.${platform}`)],
+		env,
 		cwd: get<string>('terminal.integrated.cwd').trim() || null,
 		inheritEnv: get<boolean>('terminal.integrated.inheritEnv'),
 		detectLocale: get<string>('terminal.integrated.detectLocale'),
@@ -213,6 +279,8 @@ export type SearchSettings = {
 	use_global_ignore: boolean;
 	use_parent_ignore: boolean;
 	max_threads: number;
+	/** kingu.search.smart: a plain query also finds its words in any case, order and name spelling (Rust smart_search.rs). */
+	smart: boolean;
 };
 
 /** VS Code: search.exclude inherits files.exclude; both apply unless "Use Exclude Settings" is off. */
@@ -227,7 +295,8 @@ export function searchSettingsFrom(get: Get, useExcludes: boolean): SearchSettin
 		max_results: get<number | null>('search.maxResults') ?? Number.MAX_SAFE_INTEGER,
 		use_global_ignore: get<boolean>('search.useGlobalIgnoreFiles'),
 		use_parent_ignore: get<boolean>('search.useParentIgnoreFiles'),
-		max_threads: get<number>('search.ripgrep.maxThreads')
+		max_threads: get<number>('search.ripgrep.maxThreads'),
+		smart: get<boolean>('kingu.search.smart') === true
 	};
 }
 

@@ -28,6 +28,9 @@ use std::time::Duration;
 
 use serde_json::{Map, Value};
 
+use crate::i18n::msg::TasksMsg;
+use crate::tr;
+
 /// One trust write at a time within Kingu (several tasks can start at once).
 pub(crate) static WRITING: Mutex<()> = Mutex::new(());
 
@@ -119,7 +122,7 @@ pub(crate) fn replace_file(file: &Path, content: &[u8], new_mode: Option<u32>) -
   if existing.is_some() {
     let bak = dir.join(format!("{name}.kingu.bak"));
     if fs::symlink_metadata(&bak).is_ok_and(|m| m.file_type().is_symlink()) {
-      return Err(format!("{} is a symlink", bak.display()));
+      return Err(tr!(TasksMsg::BackupIsSymlink, path = bak.display()));
     }
     let tmp = dir.join(format!("{name}.kingu.bak.{}.tmp", std::process::id()));
     fs::copy(file, &tmp).map_err(|e| e.to_string())?;
@@ -490,7 +493,7 @@ pub fn trust_copilot(path: &Path, h: &Homes) -> Result<Outcome, String> {
 /// Trusts `worktree` for `preset`'s CLI (the caller resolved it from the open repo and a slug).
 pub fn trust(preset: Preset, worktree: &Path, h: &Homes) -> Result<Outcome, String> {
   if !worktree.is_absolute() || !worktree.is_dir() {
-    return Err(format!("{}: not a worktree folder", worktree.display()));
+    return Err(tr!(TasksMsg::NotWorktreeFolder, path = worktree.display()));
   }
   // Trust in claude and copilot covers subfolders: never a home or its ancestors (Orca's guard).
   if worktree.parent().is_none() || (preset.inherits() && too_broad(worktree, &[h.home.as_path()])) {
@@ -519,11 +522,10 @@ pub fn launch_homes(app: &tauri::AppHandle, program: &str) -> Result<Homes, Stri
 /// Before an agent CLI starts in task `slug`'s worktree (`kingu.agent.trustWorkspace`): trusts it
 /// for that CLI, in the config of the account the launch uses. Returns what happened, for the log.
 #[tauri::command]
-pub async fn agent_trust_workspace(app: tauri::AppHandle, slug: String, program: String) -> Result<Option<Outcome>, String> {
-  use tauri::Manager;
+pub async fn agent_trust_workspace(app: tauri::AppHandle, ws: crate::workspace::Workspace, slug: String, program: String) -> Result<Option<Outcome>, String> {
   super::worktree::validate_slug(&slug)?;
   let Some(preset) = Preset::of_program(&program) else { return Ok(None) };
-  let root = app.state::<crate::workspace::Workspace>().root()?;
+  let root = ws.root()?;
   let worktree = super::worktree::worktree_path(&root, &slug);
   let homes = launch_homes(&app, &program)?;
   let outcome = tauri::async_runtime::spawn_blocking(move || trust(preset, &worktree, &homes)).await.map_err(|e| e.to_string())??;

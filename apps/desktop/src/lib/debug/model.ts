@@ -22,6 +22,8 @@ export type DebugModel = {
 	output: OutputLine[];
 	/** The adapter's answer to setBreakpoints, per absolute source path, in request order. */
 	verified: Record<string, Breakpoint[]>;
+	/** The adapter's answer to setFunctionBreakpoints, in request order. */
+	functionVerified: Breakpoint[];
 	exitCode: number | null;
 };
 
@@ -31,7 +33,7 @@ export const OUTPUT_LIMIT = 10000;
 export const outputLimit = { max: OUTPUT_LIMIT };
 
 export function initialModel(): DebugModel {
-	return { state: 'initializing', threads: [], stopped: null, frames: [], frameId: null, scopes: [], variables: {}, output: [], verified: {}, exitCode: null };
+	return { state: 'initializing', threads: [], stopped: null, frames: [], frameId: null, scopes: [], variables: {}, output: [], verified: {}, functionVerified: [], exitCode: null };
 }
 
 /** Everything tied to one stop (frames, scopes, variables) goes when execution resumes. */
@@ -76,7 +78,8 @@ export function applyEvent(m: DebugModel, ev: Event): DebugModel {
 			if (!bp || bp.id === undefined) return m;
 			const verified: Record<string, Breakpoint[]> = {};
 			for (const [path, list] of Object.entries(m.verified)) verified[path] = list.map((b) => (b.id === bp.id ? { ...b, ...bp } : b));
-			return { ...m, verified };
+			const functionVerified = m.functionVerified.map((b) => (b.id === bp.id ? { ...b, ...bp } : b));
+			return { ...m, verified, functionVerified };
 		}
 		case 'thread':
 			if (body.reason === 'exited') return { ...m, threads: m.threads.filter((t) => t.id !== body.threadId) };

@@ -1,6 +1,5 @@
 <script lang="ts">
 	import type { Attachment } from '#lib/agent/attachments.ts';
-	import { notifications } from '#lib/workbench/notifications.svelte.ts';
 	// Agents layout body, laid out like Orca: side bar (search, Tasks, Projects → worktrees) | the
 	// selected worktree's active tab (the agent session, the new-task composer for the folder
 	// itself, a terminal in that worktree, or a file / task diff opened from the right side bar;
@@ -10,6 +9,9 @@
 	import Sash from '#lib/workbench/Sash.svelte';
 	import DiffHost from '#lib/workbench/DiffHost.svelte';
 	import AdeEditor from './AdeEditor.svelte';
+	import FilePlaceholder from '#lib/workbench/FilePlaceholder.svelte';
+	import SaveConflictCompare from '#lib/workbench/SaveConflictCompare.svelte';
+	import { textFiles } from '#lib/workbench/textFileService.svelte.ts';
 	import { keyOfTabId } from './adeTabs.ts';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
@@ -42,13 +44,17 @@
 	import { adeLayout, PRIMARY } from './adeLayout.svelte';
 	import { rightSidebar } from './rightSidebar.svelte.ts';
 	import { adeTasks } from './tasks.svelte';
+	import { mayPruneSessions } from './agentGuard';
 	import { recordQuickOpenVisit } from './quickOpen.svelte.ts';
 	import { untrack } from 'svelte';
 	import { cliName, cliOf, type RunMode } from './agentCli';
 	import { profileOf } from '#lib/ade/agentProfiles.ts';
 	import { cliSessions } from './cliSessions.svelte';
+	import { paneAgents } from './paneAgents.svelte';
+	import { terminalBells } from './terminalBell.svelte';
 	import { BUTTON, BUTTON_SECONDARY, statusDot } from './ui';
 	import { statusLabel, timeAgo } from './model';
+	import { t } from '#lib/i18n/index.ts';
 
 	let body: HTMLDivElement | undefined = $state();
 	const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
@@ -64,6 +70,8 @@
 	const cli = $derived(slug ? cliOf(adeTasks.find(slug)?.meta.agent ?? '') : null);
 	/** Resumes the task's own session when its id is saved, else the CLI's latest one, where the CLI can. */
 	const resume = $derived(cli ? profileOf(cli).canResume : null);
+	/** Agent hibernation (attempts.svelte.ts) closed the task's idle CLI then. */
+	const hibernatedAt = $derived(slug ? adeTasks.find(slug)?.meta.hibernated_at : null);
 
 	// The folder's "new task" composer (Orca: a new worktree with an agent).
 	let draft = $state('');
@@ -83,9 +91,10 @@
 	});
 
 	// A removed task's terminals and agent CLI close with it (also a task of the previous folder,
-	// or one removed while the page was reloading).
+	// or one removed while the page was reloading). Only after this folder's tasks were read
+	// successfully: a failed tasks_load leaves an empty list, which must not end running agents.
 	$effect(() => {
-		if (!adeTasks.loaded) return;
+		if (!mayPruneSessions({ loaded: adeTasks.loaded, loadedRoot: adeTasks.loadedRoot, root: workspace.root })) return;
 		for (const k of new Set([...Object.keys(adeLayout.terminals), ...Object.keys(adeLayout.files)])) if (k !== PRIMARY && !adeTasks.find(k)) adeLayout.drop(k);
 		for (const s of Object.keys(cliSessions.sessions)) if (!adeTasks.find(s)) untrack(() => cliSessions.end(s));
 	});
@@ -202,15 +211,22 @@
 					<DiffHost active={activeFile} onfail={(k) => adeLayout.closeFile(key, k)} />
 				</div>
 			{:else}
-				{#key activeFile}
-					<div class="absolute inset-0">
-						<AdeEditor
-							path={activeFile}
-							onedit={() => adeLayout.pin(key, activeFile)}
-							onfail={(e) => (notifications.error(`เปิดไฟล์ไม่ได้: ${e}`), adeLayout.closeFile(key, activeFile))}
-						/>
-					</div>
-				{/key}
+				<!-- The IDE's text file service: binary, too large and unreadable files keep their tab as a
+				     placeholder with "Open Anyway", and a save conflict opens its compare here. -->
+				{@const placeholder = textFiles.placeholder(activeFile)}
+				{#if placeholder}
+					<div class="absolute inset-0"><FilePlaceholder path={activeFile} {placeholder} /></div>
+				{:else}
+					{#key activeFile}
+						<div class="absolute inset-0">
+							<AdeEditor path={activeFile} onedit={() => adeLayout.pin(key, activeFile)} onfail={(e) => textFiles.openFailed(activeFile, e)} />
+						</div>
+					{/key}
+					{#if textFiles.compare?.path === activeFile}
+						{@const c = textFiles.compare}
+						<div class="absolute inset-0">{#key c}<SaveConflictCompare path={c.path} disk={c.disk} />{/key}</div>
+					{/if}
+				{/if}
 			{/if}
 		{:else if activeTab === 'main'}
 			{#if slug && cli}
@@ -221,6 +237,7 @@
 							<div class="flex justify-center text-(--vscode-descriptionForeground)"><Icon name="terminal" size={28} /></div>
 							<p>{cliName(cli)} ของงานนี้ไม่ได้รันอยู่</p>
 							<p class="text-xs text-(--vscode-descriptionForeground)">งานรันใน terminal ของ worktree <span class="font-mono">kingu/{slug}</span></p>
+							{#if hibernatedAt}<p class="text-xs text-(--vscode-descriptionForeground)">{t('adeAttempts.hibernated.text', { ago: timeAgo(hibernatedAt, adeTasks.now) })}</p>{/if}
 							<div class="flex justify-center gap-2">
 								{#if resume}<button class={BUTTON} onclick={() => adeTasks.resumeCli(slug)}>ทำงานต่อใน session เดิม</button>{/if}
 								<button class={resume ? BUTTON_SECONDARY : BUTTON} onclick={() => adeTasks.resumeCli(slug, true)}>เริ่ม {cli.join(' ')} ใหม่</button>
@@ -241,7 +258,7 @@
 							</div>
 							{#key `${focusKey}:${nudge}`}
 								<Composer bind:value={draft} attach bind:attachments={draftFiles} size="lg" autofocus placeholder="อธิบายงาน เช่น เพิ่มปุ่ม export รายงานเป็น CSV…" {busy} onsubmit={start}>
-									{#snippet chips()}
+									{#snippet left()}
 										<label class="inline-flex shrink-0 items-center gap-1 rounded-sm border border-(--vscode-widget-border) px-1.5 py-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" title="วิธีรัน agent">
 											<Icon name={mode === 'terminal' ? 'terminal' : 'agent'} size={12} />
 											<span class="sr-only">วิธีรัน agent</span>
@@ -306,6 +323,8 @@
 					flavor="ade"
 					menuState={() => ({ panes: false })}
 					onoutput={() => cliSessions.output(s)}
+					ontitle={(title) => cliSessions.title(s, title)}
+					onbell={() => terminalBells.ring(s, 'main')}
 					onopenfile={(rel, line, column) => openLinkedFile(s, rel, line, column)}
 				/>
 				<!-- Quick reply while the CLI asks a question (top right: the CLI draws its question at the bottom). -->
@@ -326,6 +345,9 @@
 								flavor="ade"
 								keyLabels={PANE_KEYS}
 								menuState={() => ({ split: tabPanes(t).length > 1, expanded: !!t.expanded })}
+								onoutput={() => paneAgents.output(adeLayout.ptyKey(k, p))}
+								ontitle={(title) => paneAgents.title(adeLayout.ptyKey(k, p), title)}
+								onbell={() => terminalBells.ring(k, t.id)}
 								onfocus={() => adeLayout.focusPaneOf(k, t.id, p)}
 								onaction={(a) => paneAction(k, t.id, p, a)}
 								onopenfile={(rel, line, column) => openLinkedFile(k, rel, line, column)}

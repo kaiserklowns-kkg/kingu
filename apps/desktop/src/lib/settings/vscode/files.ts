@@ -173,5 +173,37 @@ export const FILES_SETTINGS: SettingSchema[] = [
 			'เขียนทับไฟล์บนดิสก์เลย (Will resolve the save conflict by overwriting the file on disk with the changes in the editor.)'
 		],
 		description: 'ทำอย่างไรเมื่อไฟล์บนดิสก์ถูกแก้โดยโปรแกรมอื่นระหว่างบันทึก (A save conflict can occur when a file is saved to disk that was changed by another program in the meantime. To prevent data loss, the user is asked to compare the changes in the editor with the version on disk. This setting should only be changed if you frequently encounter save conflict errors and may result in data loss if used without caution.)'
+	},
+	{
+		id: 'files.restoreUndoStack',
+		group: 'Files',
+		type: 'boolean',
+		default: true,
+		description: 'เก็บประวัติ undo ไว้เมื่อปิดไฟล์ แล้วคืนให้เมื่อเปิดไฟล์อีกครั้ง (Restore the undo stack when a file is reopened.)'
+	},
+	{
+		id: 'files.candidateGuessEncodings',
+		group: 'Files',
+		type: 'array',
+		items: 'string',
+		default: [],
+		itemEnum: ['utf8', 'utf16le', 'utf16be', 'windows1252', 'windows1250', 'iso88592', 'windows1251', 'cp866', 'cp1125', 'iso88595', 'koi8r', 'windows1253', 'iso88597', 'windows1255', 'iso88598', 'cp950', 'shiftjis', 'eucjp', 'euckr', 'gb2312'],
+		description: 'encoding ที่ยอมให้ files.autoGuessEncoding เดาได้ (ว่าง = ทุกตัว) (List of character set encodings that the editor should attempt to guess. If guessing fails for non-UTF-8 content, a legacy encoding is used only if it is the only lossless match among the candidates. If no encoding can be determined, `#files.encoding#` is respected.)',
+		scope: 'resource'
+	},
+	{
+		id: 'files.refactoring.autoSave',
+		group: 'Files',
+		type: 'boolean',
+		default: true,
+		description: 'บันทึกไฟล์ที่เปิดอยู่ซึ่ง refactoring หลายไฟล์ (เช่น Rename Symbol) แก้ไข โดยอัตโนมัติ (Controls if files that were part of a refactoring are saved automatically)'
+	},
+	{
+		id: 'files.dialog.defaultPath',
+		group: 'Files',
+		type: 'string',
+		default: '',
+		description: 'โฟลเดอร์เริ่มต้นของหน้าต่างเลือกไฟล์แทนโฮมโฟลเดอร์ เมื่อไม่มีโฟลเดอร์เปิดอยู่ (Default path for file dialogs, overriding user\'s home path. Only used in the absence of a context-specific path, such as most recently opened file or folder.)',
+		scope: 'application'
 	}
 ];

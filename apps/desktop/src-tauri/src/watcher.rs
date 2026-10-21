@@ -183,9 +183,255 @@ impl FileWatcher {
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// The repository's worktrees and branches (Orca's worktree-git-common-watch)
+
+/// Git changes come in bursts (a commit writes a ref, the reflog and HEAD); one refresh per burst.
+const GIT_QUIET: Duration = Duration::from_millis(300);
+
+/// Whether a change at `path` in the git common dir can change the worktree list or a worktree's
+/// branch: the main checkout's HEAD, a branch ref (also packed), a worktree registered, removed,
+/// locked or switched (`worktrees/<name>/HEAD`). Lock files are git's temporaries.
+pub fn git_change(common: &Path, path: &Path) -> bool {
+  let Ok(rel) = path.strip_prefix(common) else { return false };
+  let parts: Vec<&str> = rel.components().filter_map(|c| c.as_os_str().to_str()).collect();
+  if parts.last().is_some_and(|p| p.ends_with(".lock")) {
+    return false;
+  }
+  matches!(
+    parts.as_slice(),
+    ["HEAD"] | ["packed-refs"] | ["refs", "heads", ..] | ["worktrees"] | ["worktrees", _] | ["worktrees", _, "HEAD" | "gitdir" | "locked"]
+  )
+}
+
+/// Watches the open folder's git common dir, so the ADE sees an agent's `git checkout -b`, a
+/// commit moving a branch, and worktrees added or removed outside Kingu: the dir itself (HEAD,
+/// packed-refs, `worktrees/` appearing), `refs/heads` and `worktrees/`, each only where it exists
+/// (no recursive watch over the object store). `emit` runs once per debounced burst.
+#[derive(Default)]
+pub struct GitWatcher {
+  current: Mutex<Option<Arc<Mutex<notify::RecommendedWatcher>>>>,
+}
+
+impl GitWatcher {
+  /// Replaces the watch with one on `common` (none for `None`).
+  pub fn watch(&self, common: Option<&Path>, emit: impl Fn() + Send + 'static) -> Result<(), String> {
+    let mut current = self.current.lock().unwrap_or_else(|e| e.into_inner());
+    // The old watcher's sender goes with it, which ends its debounce thread.
+    *current = None;
+    let Some(common) = common else { return Ok(()) };
+    let common = common.to_path_buf();
+    let (tx, rx) = channel::<String>();
+    let base = common.clone();
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+      let Ok(ev) = res else { return };
+      if matches!(ev.kind, EventKind::Access(_)) {
+        return;
+      }
+      if ev.need_rescan() || ev.paths.iter().any(|p| git_change(&base, p)) {
+        let _ = tx.send(String::new());
+      }
+    })
+    .map_err(|e| format!("watch {}: {e}", common.display()))?;
+    watcher.watch(&common, RecursiveMode::NonRecursive).map_err(|e| format!("watch {}: {e}", common.display()))?;
+    let inner = [common.join("refs").join("heads"), common.join("worktrees")];
+    let watch_inner = move |w: &mut notify::RecommendedWatcher, watched: &mut Vec<PathBuf>| {
+      for dir in &inner {
+        if !watched.contains(dir) && dir.is_dir() {
+          match w.watch(dir, RecursiveMode::Recursive) {
+            Ok(()) => watched.push(dir.clone()),
+            Err(e) => log::warn!("watch {}: {e}", dir.display()),
+          }
+        }
+      }
+    };
+    let mut watched = Vec::new();
+    watch_inner(&mut watcher, &mut watched);
+    let shared = Arc::new(Mutex::new(watcher));
+    // Weak: the thread must not keep a replaced watcher (and so its own sender) alive.
+    let weak = Arc::downgrade(&shared);
+    std::thread::spawn(move || {
+      while next_batch(&rx, GIT_QUIET, MAX_WAIT).is_some() {
+        // `worktrees/` appears with the first `git worktree add`: watch it from then on.
+        if let Some(w) = weak.upgrade() {
+          watch_inner(&mut w.lock().unwrap_or_else(|e| e.into_inner()), &mut watched);
+        }
+        emit();
+      }
+    });
+    *current = Some(shared);
+    log::info!("watching git refs and worktrees in {}", common.display());
+    Ok(())
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Source Control repositories whose git dir no root folder watch sees (VS Code's git extension
+// watches each repository's `.git`): a repository above a root folder, a nested worktree or
+// submodule whose `.git` file points elsewhere. A commit, a stage or a checkout made in a
+// terminal then refreshes Source Control.
+
+/// Whether a change at `path` in a repository's git dir `gitdir` (or its common dir `common`) can
+/// change its status: HEAD, the index, a ref, or an operation starting or ending (MERGE_HEAD and
+/// the like). Lock files are git's temporaries.
+pub fn repo_state_change(gitdir: &Path, common: &Path, path: &Path) -> bool {
+  if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(".lock")) {
+    return false;
+  }
+  let parts = |base: &Path| path.strip_prefix(base).ok().map(|r| r.components().filter_map(|c| c.as_os_str().to_str().map(str::to_owned)).collect::<Vec<_>>());
+  let state = |p: &[String]| matches!(p, [f] if ["HEAD", "index", "packed-refs", "MERGE_HEAD", "ORIG_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply"].contains(&f.as_str()));
+  let refs = |p: &[String]| p.first().is_some_and(|f| f == "refs");
+  parts(gitdir).is_some_and(|p| state(&p) || refs(&p)) || parts(common).is_some_and(|p| (p.len() == 1 && p[0] == "packed-refs") || refs(&p))
+}
+
+/// One watch per git dir; `set` replaces them (a git dir watched already keeps its watcher).
+#[derive(Default)]
+pub struct RepoWatcher {
+  current: Mutex<Vec<(PathBuf, notify::RecommendedWatcher)>>,
+}
+
+impl RepoWatcher {
+  /// Watches each `(gitdir, common dir)` pair: the git dir itself (HEAD, index) and `refs/` of
+  /// both, recursively. `emit` runs once per debounced burst of any of them.
+  pub fn set(&self, dirs: Vec<(PathBuf, PathBuf)>, emit: impl Fn() + Send + Sync + 'static) {
+    let mut current = self.current.lock().unwrap_or_else(|e| e.into_inner());
+    let mut old = std::mem::take(&mut *current);
+    let emit: Arc<dyn Fn() + Send + Sync> = Arc::new(emit);
+    for (gitdir, common) in dirs {
+      if let Some(i) = old.iter().position(|(g, _)| *g == gitdir) {
+        current.push(old.swap_remove(i));
+        continue;
+      }
+      match watch_repo(&gitdir, &common, Arc::clone(&emit)) {
+        Ok(w) => current.push((gitdir, w)),
+        Err(e) => log::warn!("{e}"),
+      }
+    }
+    // Dropping a watcher drops its sender, which ends its debounce thread.
+    drop(old);
+  }
+}
+
+fn watch_repo(gitdir: &Path, common: &Path, emit: Arc<dyn Fn() + Send + Sync>) -> Result<notify::RecommendedWatcher, String> {
+  let (tx, rx) = channel::<String>();
+  let (g, c) = (gitdir.to_path_buf(), common.to_path_buf());
+  let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+    let Ok(ev) = res else { return };
+    if matches!(ev.kind, EventKind::Access(_)) {
+      return;
+    }
+    if ev.need_rescan() || ev.paths.iter().any(|p| repo_state_change(&g, &c, p)) {
+      let _ = tx.send(String::new());
+    }
+  })
+  .map_err(|e| format!("watch {}: {e}", gitdir.display()))?;
+  watcher.watch(gitdir, RecursiveMode::NonRecursive).map_err(|e| format!("watch {}: {e}", gitdir.display()))?;
+  for dir in [gitdir.join("refs"), common.join("refs")] {
+    if dir.is_dir() && let Err(e) = watcher.watch(&dir, RecursiveMode::Recursive) {
+      log::warn!("watch {}: {e}", dir.display());
+    }
+  }
+  if common != gitdir && let Err(e) = watcher.watch(common, RecursiveMode::NonRecursive) {
+    log::warn!("watch {}: {e}", common.display());
+  }
+  std::thread::spawn(move || {
+    while next_batch(&rx, GIT_QUIET, MAX_WAIT).is_some() {
+      emit();
+    }
+  });
+  log::info!("watching repository state in {}", gitdir.display());
+  Ok(watcher)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn git_changes_that_move_worktrees_or_branches() {
+    let c = Path::new("/r/.git");
+    let yes = |p: &str| git_change(c, Path::new(p));
+    for p in ["/r/.git/HEAD", "/r/.git/packed-refs", "/r/.git/refs/heads/kingu/x", "/r/.git/worktrees", "/r/.git/worktrees/t", "/r/.git/worktrees/t/HEAD", "/r/.git/worktrees/t/gitdir"] {
+      assert!(yes(p), "{p}");
+    }
+    for p in ["/r/.git/index", "/r/.git/refs/heads/x.lock", "/r/.git/worktrees/t/index", "/r/.git/worktrees/t/logs/HEAD", "/r/.git/objects/ab/cd", "/r/.git/refs/tags/v1", "/r/.git/FETCH_HEAD", "/elsewhere/HEAD"] {
+      assert!(!yes(p), "{p}");
+    }
+  }
+
+  #[test]
+  fn repository_state_changes() {
+    let (g, c) = (Path::new("/r/.git/worktrees/t"), Path::new("/r/.git"));
+    let yes = |p: &str| repo_state_change(g, c, Path::new(p));
+    for p in ["/r/.git/worktrees/t/HEAD", "/r/.git/worktrees/t/index", "/r/.git/worktrees/t/MERGE_HEAD", "/r/.git/refs/heads/main", "/r/.git/packed-refs"] {
+      assert!(yes(p), "{p}");
+    }
+    for p in ["/r/.git/worktrees/t/index.lock", "/r/.git/refs/heads/main.lock", "/r/.git/objects/ab/cd", "/r/.git/worktrees/t/logs/HEAD", "/elsewhere/index"] {
+      assert!(!yes(p), "{p}");
+    }
+  }
+
+  #[test]
+  fn hears_a_commit_made_outside_kingu() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().canonicalize().unwrap();
+    let git = |args: &[&str]| {
+      let out = std::process::Command::new("git").arg("-C").arg(&repo).args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]).args(args).output().unwrap();
+      assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    git(&["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("a.txt"), "a").unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-qm", "init"]);
+    let (tx, rx) = channel();
+    let w = RepoWatcher::default();
+    let tx = Mutex::new(tx);
+    w.set(vec![(repo.join(".git"), repo.join(".git"))], move || {
+      let _ = tx.lock().unwrap().send(());
+    });
+    std::thread::sleep(Duration::from_millis(200));
+    std::fs::write(repo.join("a.txt"), "b").unwrap();
+    git(&["commit", "-qam", "second"]);
+    assert!(rx.recv_timeout(Duration::from_secs(10)).is_ok(), "no event for the commit");
+  }
+
+  #[test]
+  fn hears_a_branch_switch_and_a_new_worktree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().canonicalize().unwrap();
+    let git = |dir: &Path, args: &[&str]| {
+      let out = std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]).args(args).output().unwrap();
+      assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("a.txt"), "a").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "init"]);
+    let (tx, rx) = channel();
+    let w = GitWatcher::default();
+    w.watch(Some(&repo.join(".git")), move || {
+      let _ = tx.send(());
+    })
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    let heard = |rx: &Receiver<()>| {
+      let deadline = Instant::now() + Duration::from_secs(5);
+      while Instant::now() < deadline {
+        if rx.recv_timeout(Duration::from_millis(100)).is_ok() {
+          return true;
+        }
+      }
+      false
+    };
+    // The first worktree creates `worktrees/`; its branch switch is heard after that.
+    git(&repo, &["worktree", "add", "-q", "-b", "kingu/t", ".kingu/worktrees/t"]);
+    assert!(heard(&rx), "worktree add");
+    std::thread::sleep(Duration::from_millis(400));
+    while rx.try_recv().is_ok() {}
+    git(&repo.join(".kingu/worktrees/t"), &["checkout", "-q", "-b", "fix/x"]);
+    assert!(heard(&rx), "branch switch in the worktree");
+    w.watch(None, || {}).unwrap();
+  }
 
   #[test]
   fn filters_noise_and_relativizes() {

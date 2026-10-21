@@ -8,8 +8,10 @@ import { invoke } from '@tauri-apps/api/core';
 import type * as Monaco from 'monaco-editor';
 import type { Terminal } from '@xterm/xterm';
 import { editors } from '#lib/workbench/editors.svelte.ts';
+import { layout } from '#lib/workbench/layout.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { theme } from '#lib/theme/theme.svelte.ts';
+import { activeTheme } from '#lib/theme/current.ts';
 import { isDiffKey } from '#lib/workbench/scm.ts';
 import { getEntry, openModels, refreshLanguages, saveFile } from '#lib/workbench/editorModels.ts';
 import { isWorkspaceTextFile } from './resources';
@@ -26,13 +28,24 @@ import { settingSchemas } from './schemas.svelte';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { installUiLanguage } from '#lib/i18n/locale.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
+import { kinguJsonSchemas } from './jsonSchemas.ts';
 
-const SETTINGS_SCHEMA_URI = 'kingu://schemas/settings';
-const KEYBINDINGS_SCHEMA_URI = 'kingu://schemas/keybindings';
 const get = <T>(id: string) => settings.get<T>(id);
 
-/** Monaco editor options from settings (VS Code: editor.* configuration). */
-export const editorOptions = (): Monaco.editor.IEditorOptions & Monaco.editor.IGlobalEditorOptions => editorOptionsFrom(get);
+/** Monaco editor options from settings (VS Code: editor.* configuration), for an editor showing a
+ * model of `language` (its `[language]` settings apply). */
+export const editorOptions = (language?: string): Monaco.editor.IEditorOptions & Monaco.editor.IGlobalEditorOptions => {
+	const options = editorOptionsFrom(language ? settings.getterFor(language) : get, themeSemantic());
+	// Zen Mode with zenMode.hideLineNumbers turns line numbers off; leaving it restores editor.lineNumbers.
+	return layout.zenParts?.lineNumbersOff ? { ...options, lineNumbers: 'off' } : options;
+};
+
+/** The color theme's `semanticHighlighting` (for `editor.semanticHighlighting.enabled: configuredByTheme`); reading `theme.current` re-runs effects on a theme change. */
+function themeSemantic(): boolean {
+	void theme.current;
+	void theme.revision;
+	return activeTheme()?.flat.semanticHighlighting ?? false;
+}
 
 function applyIndent(model: Monaco.editor.ITextModel, i: Indent) {
 	if (model.isDisposed()) return;
@@ -76,8 +89,12 @@ export function installEditorSettings(monaco: typeof Monaco) {
 	monacoApi = monaco;
 
 	const timers = new WeakMap<Monaco.editor.ITextModel, ReturnType<typeof setTimeout>>();
+	const modelIndent = (model: Monaco.editor.ITextModel) => indentFrom(settings.getterFor(model.getLanguageId()));
+	const optionsOf = (editor: Monaco.editor.ICodeEditor) => editorOptions(editor.getModel()?.getLanguageId());
 	monaco.editor.onDidCreateModel((model) => {
-		applyIndent(model, untrack(() => indentFrom(get)));
+		applyIndent(model, untrack(() => modelIndent(model)));
+		// A language change (Change Language Mode, files.associations) brings that language's settings.
+		model.onDidChangeLanguage(() => applyIndent(model, untrack(() => modelIndent(model))));
 		// files.autoSave afterDelay: each model saves itself once typing pauses (VS Code saves every dirty editor, not just the active one).
 		model.onDidChangeContent(() => {
 			clearTimeout(timers.get(model));
@@ -87,7 +104,9 @@ export function installEditorSettings(monaco: typeof Monaco) {
 	});
 	monaco.editor.onDidCreateEditor((editor) => {
 		// After the constructor has applied its own creation options.
-		queueMicrotask(() => editor.updateOptions(untrack(editorOptions)));
+		queueMicrotask(() => editor.updateOptions(untrack(() => optionsOf(editor))));
+		editor.onDidChangeModel(() => editor.updateOptions(untrack(() => optionsOf(editor))));
+		editor.onDidChangeModelLanguage(() => editor.updateOptions(untrack(() => optionsOf(editor))));
 		editor.onDidBlurEditorText(() => {
 			const model = editor.getModel();
 			if (model && untrack(() => get('files.autoSave')) === 'onFocusChange') void autoSave([pathOf(model)], 'focusChange');
@@ -97,9 +116,15 @@ export function installEditorSettings(monaco: typeof Monaco) {
 	$effect.root(() => {
 		// Monaco's configuration service: what its contributions read instead of editor options.
 		$effect(() => {
-			const values = editorConfigurationFrom(get);
+			const values = editorConfigurationFrom(get, themeSemantic());
 			// Loaded with Monaco (this runs once Monaco is in), so the workbench start does not pull it in.
 			untrack(() => void import('#lib/editor/monacoConfiguration.ts').then(({ updateMonacoConfiguration }) => updateMonacoConfiguration(values)));
+		});
+		// files.restoreUndoStack: Monaco's model service reads it when a closed file's model is
+		// disposed (keep its undo stack for when the file opens again, as VS Code's does).
+		$effect(() => {
+			const restore = get<boolean>('files.restoreUndoStack');
+			untrack(() => void import('#lib/editor/monacoConfiguration.ts').then(({ updateMonacoConfiguration }) => updateMonacoConfiguration([['files.restoreUndoStack', restore]])));
 		});
 		// Kingu's TextMate tokenizer skips long lines like Monaco's Monarch one.
 		$effect(() => setMaxTokenizationLineLength(get<number>('editor.maxTokenizationLineLength')));
@@ -111,45 +136,42 @@ export function installEditorSettings(monaco: typeof Monaco) {
 		// settings.json is JSONC; give it completion and validation from the schema registry
 		// (contributed Snap settings included, so it follows them).
 		$effect(() => {
-			const schema = jsonSchema(settingSchemas.all);
-			const ids = commands.all.map((c) => c.id).sort();
-			// keybindings.json: completion of command ids (and their removal form `-id`).
-			const keys = {
-				type: 'array',
-				items: {
-					type: 'object',
-					required: ['key', 'command'],
-					properties: {
-						key: { type: 'string', description: 'คีย์ เช่น cmd+shift+p หรือ cmd+k cmd+t (The key or key sequence.)' },
-						command: { type: 'string', enum: [...ids, ...ids.map((id) => `-${id}`)] },
-						when: { type: 'string', description: 'ยังไม่ประเมินใน Kingu (Not evaluated yet.)' }
-					}
-				}
-			};
+			// settings.json, keybindings.json (command ids), launch.json, tasks.json, `.code-workspace`, extensions.json.
+			const kingu = kinguJsonSchemas(jsonSchema(settingSchemas.all), commands.all.map((c) => c.id));
 			untrack(() => {
 				const opts = monaco.json.jsonDefaults.diagnosticsOptions;
-				const ours = new Set([SETTINGS_SCHEMA_URI, KEYBINDINGS_SCHEMA_URI]);
+				const ours = new Set(kingu.map((s) => s.uri));
 				monaco.json.jsonDefaults.setDiagnosticsOptions({
 					...opts,
 					validate: true,
 					allowComments: true,
 					trailingCommas: 'ignore',
-					schemas: [
-						...(opts.schemas ?? []).filter((s) => !ours.has(s.uri)),
-						{ uri: SETTINGS_SCHEMA_URI, fileMatch: ['**/settings.json'], schema },
-						{ uri: KEYBINDINGS_SCHEMA_URI, fileMatch: ['**/keybindings.json'], schema: keys }
-					]
+					schemas: [...(opts.schemas ?? []).filter((s) => !ours.has(s.uri)), ...kingu]
 				});
 			});
 		});
 		$effect(() => {
 			const options = editorOptions();
-			untrack(() => monaco.editor.getEditors().forEach((e) => e.updateOptions(options)));
+			// Read inside the effect, so a change to a `[language]` block re-runs it too.
+			void settings.resolved;
+			untrack(() => {
+				const byLanguage = new Map<string, ReturnType<typeof editorOptions>>();
+				for (const e of monaco.editor.getEditors()) {
+					const language = e.getModel()?.getLanguageId();
+					if (!language) {
+						e.updateOptions(options);
+						continue;
+					}
+					if (!byLanguage.has(language)) byLanguage.set(language, editorOptions(language));
+					e.updateOptions(byLanguage.get(language)!);
+				}
+			});
 		});
 		$effect(() => {
-			const indent = indentFrom(get);
+			void indentFrom(get);
+			void settings.resolved;
 			untrack(() => {
-				monaco.editor.getModels().forEach((m) => applyIndent(m, indent));
+				monaco.editor.getModels().forEach((m) => applyIndent(m, modelIndent(m)));
 				const active = monaco.editor.getModels().find(isActiveModel);
 				if (active) {
 					const o = active.getOptions();
@@ -243,6 +265,17 @@ export function installSettings(): () => void {
 			const id = effectiveTheme(get, prefersDark, highContrast);
 			// Wait for the files so the default theme does not flash before the user's.
 			if (settings.loaded) untrack(() => void theme.apply(id));
+		});
+		// workbench.colorCustomizations: colors over the applied theme (chrome, editor and terminal).
+		$effect(() => {
+			const custom = settings.get('workbench.colorCustomizations');
+			untrack(() => theme.setCustomizations(custom));
+		});
+		// editor.tokenColorCustomizations / editor.semanticTokenColorCustomizations: token colors over the theme.
+		$effect(() => {
+			const token = settings.get('editor.tokenColorCustomizations');
+			const semantic = settings.get('editor.semanticTokenColorCustomizations');
+			untrack(() => theme.setTokenCustomizations(token, semantic));
 		});
 		$effect(() => {
 			const level = settings.get<number>('window.zoomLevel');

@@ -12,12 +12,36 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { confirmKill } from './confirmKill.ts';
 import { cyclePane, equalize, hasLeaf, leaf, leaves, removePane, setRatio, splitPane, type PaneNode, type PanePath, type SplitDirection } from './paneLayout.ts';
 import { killPty } from './pty.ts';
-import { focusTerminal } from './registry.ts';
+import { focusTerminal, type TaskSpawn } from './registry.ts';
 import { hideOnStartup, panelKey, parsePanelTerminals, persist, restore, storeName, withoutRun } from './sessions.ts';
 import { t as tr } from '#lib/i18n/index.ts';
 
-/** `cwdFrom`: a split starts in that terminal's current directory (not kept across reloads). */
-export type PanelTerminal = { id: number; title: string; run?: string[]; cwdFrom?: string };
+/** `cwdFrom`: a split starts in that terminal's current directory (not kept across reloads).
+ * `task`: a task terminal's launch (tasks.svelte.ts), dropped once the task ended and never kept.
+ * `folder`: the root folder it starts in (absolute; a multi-root window asks, see newTerminal.ts),
+ * absent for the first folder; kept, so a restored or split terminal stays in its folder. */
+export type PanelTerminal = {
+	id: number;
+	title: string;
+	run?: string[];
+	cwdFrom?: string;
+	task?: TaskSpawn;
+	folder?: string;
+	/** The terminal profile it started with (New Terminal With Profile); absent: the default profile. */
+	profile?: string;
+	/** Its tab's icon and color (Change Icon / Change Color: an icon name, a `terminal.ansi*` color id). */
+	icon?: string;
+	color?: string;
+	/** Shown in the editor area (`terminal:<id>` editors, terminalEditor.svelte.ts) instead of a panel group. */
+	inEditor?: boolean;
+	/** A split's source directory as its shell integration reported it (not kept). */
+	reportedCwd?: string;
+};
+
+function renameLeaf(node: PaneNode, from: string, to: string): PaneNode {
+	if (node.type === 'leaf') return node.id === from ? leaf(to) : node;
+	return { ...node, first: renameLeaf(node.first, from, to), second: renameLeaf(node.second, from, to) };
+}
 
 const STORE = 'kingu.panelTerminals';
 
@@ -36,10 +60,10 @@ class Terminals {
 			// Showing the terminal view with no terminal (the last one closed) starts one, like VS Code.
 			$effect(() => {
 				const shown = this.tag !== null && layout.panelVisible && layout.panelTab === 'terminal';
-				if (shown) untrack(() => this.list.length === 0 && this.open());
+				if (shown) untrack(() => this.groups.length === 0 && this.open());
 			});
 			$effect(() => {
-				const state = { list: $state.snapshot(this.list).map(({ cwdFrom: _, ...t }) => t), active: this.active, seq: this.#seq, groups: $state.snapshot(this.groups) };
+				const state = { list: $state.snapshot(this.list).map(({ cwdFrom: _, task: __, reportedCwd: ___, ...t }) => t), active: this.active, seq: this.#seq, groups: $state.snapshot(this.groups) };
 				if (this.tag) persist(storeName(STORE, this.tag), state);
 			});
 		});
@@ -97,13 +121,97 @@ class Terminals {
 		return this.groups.flatMap((g) => leaves(g).map(Number));
 	}
 
-	/** A new terminal in the folder root, shown in the panel; `run` is typed into its shell. */
-	open(opts: { title?: string; run?: string[] } = {}): number {
+	/** A new terminal in the folder root (`folder`: that root folder of a multi-root window), shown in the panel; `run` is typed into its shell. */
+	/** The root folder of a terminal opened by code without one (an installer, a code block run
+	 * from chat): VS Code's last active workspace root, the active editor's folder in a multi-root
+	 * window (newTerminal.ts sets it); null: the first folder. */
+	defaultFolder: () => string | null = () => null;
+
+	open(opts: { title?: string; run?: string[]; folder?: string; profile?: string; inEditor?: boolean } = {}): number {
 		const id = ++this.#seq;
-		this.list = [...this.list, { id, title: opts.title ?? 'zsh', run: opts.run }];
+		const folder = opts.folder ?? this.defaultFolder();
+		const title = opts.title ?? opts.profile ?? 'zsh';
+		this.list = [...this.list, { id, title, run: opts.run, ...(folder ? { folder } : {}), ...(opts.profile ? { profile: opts.profile } : {}), ...(opts.inEditor ? { inEditor: true } : {}) }];
+		if (opts.inEditor) return id;
 		this.groups = [...this.groups, leaf(String(id))];
 		this.active = id;
 		return id;
+	}
+
+	/** Terminals shown in the panel (not moved to the editor area). */
+	get panelList(): PanelTerminal[] {
+		return this.list.filter((t) => !t.inEditor);
+	}
+
+	/** Changes terminal `id`'s fields (its tab icon or color). */
+	update(id: number, fields: Partial<Pick<PanelTerminal, 'icon' | 'color' | 'title'>>) {
+		this.list = this.list.map((t) => (t.id === id ? { ...t, ...fields } : t));
+	}
+
+	/** Takes terminal `id` out of its panel group into the editor area; its shell keeps running. */
+	detachToEditor(id: number): boolean {
+		const t = this.get(id);
+		if (!t || t.inEditor) return false;
+		this.#removeFromGroups(id);
+		this.list = this.list.map((x) => (x.id === id ? { ...x, inEditor: true } : x));
+		return true;
+	}
+
+	/** Puts editor terminal `id` back into the panel as its own group, active. */
+	attachToPanel(id: number): boolean {
+		const t = this.get(id);
+		if (!t?.inEditor) return false;
+		this.list = this.list.map((x) => (x.id === id ? { ...x, inEditor: undefined } : x));
+		this.groups = [...this.groups, leaf(String(id))];
+		this.active = id;
+		return true;
+	}
+
+	/** Removes `id` from its group, the active terminal moving like VS Code's close. */
+	#removeFromGroups(id: number) {
+		const order = this.ordered();
+		const g = this.groupOf(id);
+		if (g < 0) return;
+		const inGroup = leaves(this.groups[g]);
+		const rest = removePane(this.groups[g], String(id));
+		this.groups = this.groups.flatMap((tree, i) => (i !== g ? [tree] : rest ? [equalize(rest)] : []));
+		if (!this.groups.length || this.active !== id) return;
+		// VS Code: the pane at the same place in the group, else the neighbouring terminal in the list.
+		if (rest) {
+			const left = leaves(rest);
+			this.active = Number(left[Math.min(inGroup.indexOf(String(id)), left.length - 1)]);
+		} else {
+			const next = this.ordered();
+			this.active = next[Math.min(Math.max(order.indexOf(id), 0), next.length - 1)];
+		}
+	}
+
+	/**
+	 * A task terminal (VS Code's task terminals): in place of terminal `replace` (a reused one, its
+	 * old process killed), split next to `splitWith` (presentation.group), else a new tab.
+	 */
+	openTask(opts: { title: string; task: TaskSpawn; replace?: number; splitWith?: number; folder?: string }): number {
+		const id = ++this.#seq;
+		const entry: PanelTerminal = { id, title: opts.title, task: opts.task, ...(opts.folder ? { folder: opts.folder } : {}) };
+		const old = opts.replace !== undefined ? this.get(opts.replace) : undefined;
+		if (old) {
+			killPty(this.key(old.id));
+			this.list = this.list.map((t) => (t.id === old.id ? entry : t));
+			this.groups = this.groups.map((g) => renameLeaf(g, String(old.id), String(id)));
+		} else if (opts.splitWith !== undefined && this.groupOf(opts.splitWith) >= 0) {
+			const g = this.groupOf(opts.splitWith);
+			this.list = [...this.list, entry];
+			this.groups = this.groups.map((tree, i) => (i === g ? equalize(splitPane(tree, String(opts.splitWith), String(id), this.#direction())) : tree));
+		} else {
+			this.list = [...this.list, entry];
+			this.groups = [...this.groups, leaf(String(id))];
+		}
+		return id;
+	}
+
+	/** The task of terminal `id` ended: a remount opens a shell instead of running it again. */
+	endTask(id: number) {
+		if (this.get(id)?.task) this.list = this.list.map((t) => (t.id === id ? { ...t, task: undefined } : t));
 	}
 
 	/** VS Code's panel terminals sit side by side when the panel is at the top or bottom, stacked when it is at a side. */
@@ -118,7 +226,12 @@ class Terminals {
 		const source = this.get(id);
 		if (g < 0 || !source) return null;
 		const added = ++this.#seq;
-		this.list = [...this.list, { id: added, title: source.title, cwdFrom: this.key(id) }];
+		// The split keeps the source's folder and profile: splitCwd `workspaceRoot`, or a source whose shell is gone, starts there.
+		const reportedCwd = this.reportedCwd(this.key(id));
+		this.list = [
+			...this.list,
+			{ id: added, title: source.title, cwdFrom: this.key(id), ...(reportedCwd ? { reportedCwd } : {}), ...(source.folder ? { folder: source.folder } : {}), ...(source.profile ? { profile: source.profile } : {}) }
+		];
 		this.groups = this.groups.map((tree, i) => (i === g ? equalize(splitPane(tree, String(id), String(added), this.#direction())) : tree));
 		this.active = added;
 		focusTerminal(this.key(added));
@@ -163,31 +276,21 @@ class Terminals {
 	}
 
 	close(id: number) {
-		if (!this.get(id)) return;
+		const t = this.get(id);
+		if (!t) return;
 		killPty(this.key(id));
-		const order = this.ordered();
-		const g = this.groupOf(id);
-		const inGroup = g >= 0 ? leaves(this.groups[g]) : [];
-		const rest = g >= 0 ? removePane(this.groups[g], String(id)) : null;
-		this.groups = this.groups.flatMap((tree, i) => (i !== g ? [tree] : rest ? [equalize(rest)] : []));
-		this.list = this.list.filter((t) => t.id !== id);
-		if (!this.list.length) {
+		const wasInPanel = !t.inEditor;
+		this.#removeFromGroups(id);
+		this.list = this.list.filter((x) => x.id !== id);
+		if (wasInPanel && !this.groups.length) {
 			// The terminal view stays empty (VS Code); terminal.integrated.hideOnLastClosed also hides the
 			// panel. Showing it again, or New Terminal, starts a terminal.
-			this.groups = [];
 			if (settings.get<boolean>('terminal.integrated.hideOnLastClosed') && layout.panelTab === 'terminal') layout.panelVisible = false;
-			return;
-		}
-		if (this.active !== id) return;
-		// VS Code: the pane at the same place in the group, else the neighbouring terminal in the list.
-		if (rest) {
-			const left = leaves(rest);
-			this.active = Number(left[Math.min(inGroup.indexOf(String(id)), left.length - 1)]);
-		} else {
-			const next = this.ordered();
-			this.active = next[Math.min(Math.max(order.indexOf(id), 0), next.length - 1)];
 		}
 	}
+
+	/** The directory terminal `key`'s shell integration last reported (set by the terminal page). */
+	reportedCwd: (key: string) => string | undefined = () => undefined;
 }
 
 export const terminals = new Terminals();

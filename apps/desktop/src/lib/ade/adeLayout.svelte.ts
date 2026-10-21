@@ -5,7 +5,7 @@
 // while their worktree is not shown. File tabs edit the IDE's shared text models (editorModels.ts),
 // so dirty state and Save are per file, whichever layout shows it.
 
-import { ask } from '#lib/workbench/messageBox.ts';
+import { textFiles } from '#lib/workbench/textFileService.svelte.ts';
 import { editors, type Reveal } from '#lib/workbench/editors.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { isDiffKey } from '#lib/workbench/scm.ts';
@@ -312,13 +312,14 @@ class AdeLayout {
 		}
 	}
 
-	/** Closes a file tab; asks first when it holds the only view of unsaved edits (they go with the model). */
-	async closeFile(key: string, file: string) {
-		if (editors.isDirty(file) && !this.#shownElsewhere(key, file)) {
-			const name = file.slice(file.lastIndexOf('/') + 1);
-			const ok = await ask(t('ade.tabs.unsavedMessage', { name }), { title: t('ade.tabs.unsavedTitle'), kind: 'warning', okLabel: t('ade.tabs.discard'), cancelLabel: t('common.cancel') });
-			if (!ok) return;
-		}
+	/**
+	 * Closes a file tab. When it holds the only view of unsaved edits it asks Save / Don't Save /
+	 * Cancel through the IDE's text file service (auto save and hot exit backups included), as
+	 * VS Code and Orca do. `discard` closes without asking.
+	 */
+	async closeFile(key: string, file: string, { discard = false }: { discard?: boolean } = {}) {
+		const ok = await textFiles.confirmClose([file], (f) => this.#shownElsewhere(key, f), { discard, reveal: (f) => this.select(key, fileTabId(f)) });
+		if (!ok.includes(file)) return;
 		const list = this.files[key] ?? [];
 		if (!list.some((f) => f.key === file)) return;
 		const id = fileTabId(file);

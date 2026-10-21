@@ -45,6 +45,7 @@ export const ade = {
 	'ade.hooks.ready': 'Ready for a prompt',
 	'ade.hooks.waiting': 'Waiting for you',
 	'ade.hooks.sessionEnded': 'Session ended',
+	'ade.hooks.processExited': 'The agent exited',
 
 	// prChecks.ts: the PR line and the merge button
 	'ade.prChecks.merged': 'merged',
@@ -58,32 +59,19 @@ export const ade = {
 	'ade.prChecks.passedLabel': 'Checks passed',
 	'ade.prChecks.passedTip': 'Checks passed; mergeability is checked again before merging',
 	'ade.prChecks.mergedLabel': 'Merged',
-	'ade.prChecks.mergedTip': 'This PR is merged',
 	'ade.prChecks.closedLabel': 'Closed',
-	'ade.prChecks.closedTip': 'This PR is closed',
 	'ade.prChecks.draftLabel': 'Draft',
-	'ade.prChecks.draftTip': 'This PR is still a draft',
 	'ade.prChecks.approvalLabel': 'Approval required',
-	'ade.prChecks.approvalTip': 'GitHub requires an approving review before merging',
 	'ade.prChecks.changesLabel': 'Changes requested',
-	'ade.prChecks.changesTip': 'A reviewer asked for changes to this PR',
 	'ade.prChecks.mergeLabel': 'Merge',
-	'ade.prChecks.unknownTip': "This PR's merge state isn't known yet",
 	'ade.prChecks.conflictLabel': 'Conflicts',
-	'ade.prChecks.conflictTip': 'GitHub reports conflicts with the base',
 	'ade.prChecks.behindLabel': 'Behind base',
 	'ade.prChecks.behindTip': 'Update the branch with the base before merging',
 	'ade.prChecks.blockedLabel': 'Blocked',
-	'ade.prChecks.blockedTip': 'GitHub blocks this PR (e.g. a required check failed or a branch rule)',
 	'ade.prChecks.failedLabel': 'Checks failed',
-	'ade.prChecks.failedTip': 'GitHub allows merging, but a check failed',
 	'ade.prChecks.pendingLabel': 'Checks running',
-	'ade.prChecks.pendingTip': 'GitHub allows merging, but checks are still running',
 	'ade.prChecks.mergeableLabel': 'Ready to merge',
-	'ade.prChecks.mergeableTip': 'GitHub allows merging',
-	'ade.prChecks.mergeablePassedTip': 'GitHub allows merging and checks passed',
 	'ade.prChecks.computingLabel': 'Checking',
-	'ade.prChecks.computingTip': 'GitHub is still working out the merge state',
 
 	// sidebarView.ts / sidebarModel.ts: side bar groups, sort and card status
 	'ade.sidebar.prOpen': 'Open',
@@ -91,6 +79,9 @@ export const ade = {
 	'ade.sidebar.prMerged': 'Merged',
 	'ade.sidebar.prClosed': 'Closed',
 	'ade.sidebar.prNone': 'No PR',
+	'ade.sidebar.childAgentsShow': 'Show {count|# child agent|# child agents}',
+	'ade.sidebar.childAgentsHide': 'Hide {count|# child agent|# child agents}',
+	'ade.sidebar.childAgentsHidden': '{count|# child agent|# child agents}, hidden (Settings › Show child agents)',
 	'ade.sidebar.sortName': 'Name',
 	'ade.sidebar.sortSmart': 'Agent Activity',
 	'ade.sidebar.sortRecent': 'Recent',
@@ -134,14 +125,10 @@ export const ade = {
 	'ade.agentProfiles.typeCommand': 'Type a command',
 	'ade.agentCli.badOverride': '{setting} must be a plain command or path (no shell characters)',
 	'ade.agentCli.badEnv': '{setting} must use plain variable names (A-Z 0-9 _) and values without control characters',
-
-	// prForm.ts
-	'ade.prForm.needTitle': 'Enter a PR title',
-	'ade.prForm.needBase': 'Choose a base branch',
-	'ade.prForm.baseIsBranch': "The base can't be the task's own branch",
-	'ade.prForm.creating': 'Creating…',
-	'ade.prForm.submitDraft': 'Push and Create Draft PR',
-	'ade.prForm.submit': 'Push and Create PR',
+	// codexSharedServer.ts: a typed codex that joined Codex's shared app-server (Orca's codexSharedServerWarning)
+	'ade.codexServer.sharedTitle': 'This Codex is sharing a server with your other Codex tabs',
+	'ade.codexServer.sharedBody': 'Sessions may end unexpectedly, and agent status may be wrong.\n\nStart codex with --no-daemon to give it its own server, or stop the shared one: codex features disable daemon_auto_start, then codex app-server daemon stop.',
+	'ade.codexServer.dontShowAgain': "Don't Show Again",
 
 	// quickOpen.svelte.ts, agentsMode.svelte.ts
 	'ade.openFolderFirst': 'Open a folder first',
@@ -189,6 +176,19 @@ export const ade = {
 	'ade.cli.noneRunning': 'No agent CLI is running in this task',
 	'ade.cli.working': '{cli} is working in the terminal',
 	'ade.cli.waiting': '{cli} is waiting for you in the terminal',
+	'ade.cli.needsAnswer': '{cli} needs your answer in the terminal',
+
+	// agentPresence.ts, paneAgents.svelte.ts: agents in a task's other terminal panes
+	'ade.agentRow.working': 'Working',
+	'ade.agentRow.permission': 'Needs permission',
+	'ade.agentRow.question': 'Has a question',
+	'ade.agentRow.idle': 'Waiting for you',
+	'ade.agentRow.unknown': 'Agent',
+
+	// terminalBell.svelte.ts: kingu.agent.notifications.terminalBell
+	'ade.bell.title': 'Terminal bell: {task}',
+	'ade.bell.body': '{tab} needs your attention',
+	'ade.bell.dot': 'Rang the bell',
 
 	// aiText.svelte.ts: AI commit message / PR title
 	'ade.aiText.busy': 'Already generating a message',

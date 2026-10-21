@@ -2,10 +2,13 @@
 //! Agents view survives restarts. The webview owns the list and its reducers; Rust validates the
 //! whole list and writes it atomically through the same guarded `.kingu` path as settings.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::i18n::msg::{AgentMsg, TasksMsg};
 use crate::settings::{kingu_file, read, write_atomic};
+use crate::tr;
 
 use super::worktree::validate_slug;
 
@@ -20,8 +23,13 @@ pub const RUN_STATUSES: &[&str] = &["starting", "running", "waiting", "idle", "s
 const MAX_SESSION_ID: usize = 128;
 /// Accepted hunk marks of one task, over all its files.
 const MAX_ACCEPTED_HUNKS: usize = 20_000;
-const MAX_SUMMARY: usize = 2000;
+pub const MAX_SUMMARY: usize = 2000;
 const MAX_ISSUE_URL: usize = 2048;
+/// Sessions a task remembers (`TaskMeta::sessions`).
+pub const MAX_SESSIONS: usize = 20;
+const MAX_WORKFLOW_STATUS: usize = 40;
+const MAX_AGENT: usize = 256;
+const MAX_MODEL: usize = 128;
 /// What created a task other than you (Orca's automation / CLI workspace badges); the side bar can hide them.
 pub const ORIGINS: &[&str] = &["automation"];
 
@@ -31,10 +39,11 @@ pub struct IssueLink {
   pub number: u64,
   pub url: String,
   pub title: String,
-  /// `github` or `linear`; links saved before Linear came are GitHub's.
+  /// `github`, `linear`, `gitlab` or `jira`; links saved before Linear came are GitHub's.
   #[serde(default = "github")]
   pub provider: String,
-  /// Linear's identifier (`ENG-123`); none for GitHub.
+  /// Linear's or Jira's identifier (`ENG-123`), GitLab's `group/app#12`, `acme/app#42` for an
+  /// issue from a GitHub Project; none for an issue of the folder's own GitHub repository.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub key: Option<String>,
 }
@@ -105,6 +114,43 @@ pub struct TaskMeta {
   /// `automation` for a task an automation started; absent when you started it.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub origin: Option<String>,
+  /// The branch still has the name made from the title and waits for its work-derived one
+  /// (Orca's autoRenameBranchFromWork); absent once renamed, or for a branch you chose.
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub auto_name: bool,
+  /// The board column you put the task in (Orca's workspace status: `todo`, `in-progress`,
+  /// `in-review`, `completed`, or a column of `kingu.board.statuses`); absent: the default column.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub workflow_status: Option<String>,
+  /// Earlier agent sessions of the task, newest first (Continue Session…); `session_id` is the latest.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub sessions: Vec<SessionRef>,
+  /// Best-of-N: the attempts of one prompt share this id (their slugs end `-a`, `-b`…).
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub group: Option<String>,
+  /// The model this attempt was started with (passed to its CLI as `--model`, or to the timeline run).
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub attempt_model: Option<String>,
+  /// Stacked worktrees: the task whose branch this one forked from (its `base` and PR base).
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub parent: Option<String>,
+  /// Unix ms the idle agent CLI was closed by hibernation (resumable with one click); absent once resumed.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub hibernated_at: Option<u64>,
+  /// Orchestration: the task whose agent dispatched this one with `kingu task create`
+  /// (agent/orchestration.rs); absent for a task you started.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub dispatched_by: Option<String>,
+}
+
+/// One agent session a task ran, so it can be continued later (or handed to another agent).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SessionRef {
+  pub id: String,
+  /// The task's agent when the session ran (`claude-code`, or `cli:<command>`).
+  pub agent: String,
+  /// Unix milliseconds the session was first seen.
+  pub at: u64,
 }
 
 /// Session ids go to the agent host as `resume`: keep them to plain id characters.
@@ -132,14 +178,14 @@ pub fn load(root: &Path) -> Result<Vec<TaskMeta>, String> {
   let Some(text) = read(&path)? else { return Ok(Vec::new()) };
   let file: TasksFile = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
   if file.version > VERSION {
-    return Err(format!("{}: written by a newer Kingu (version {})", path.display(), file.version));
+    return Err(tr!(AgentMsg::AutomationsNewer, path = path.display(), version = file.version));
   }
   Ok(file.tasks)
 }
 
 pub fn validate(tasks: &[TaskMeta]) -> Result<(), String> {
   if tasks.len() > MAX_TASKS {
-    return Err(format!("more than {MAX_TASKS} tasks"));
+    return Err(tr!(TasksMsg::TooManyTasks, max = MAX_TASKS));
   }
   let mut seen = HashSet::new();
   for t in tasks {
@@ -148,10 +194,10 @@ pub fn validate(tasks: &[TaskMeta]) -> Result<(), String> {
       return Err(format!("{}: duplicate task", t.slug));
     }
     if t.title.trim().is_empty() || t.title.chars().count() > MAX_TITLE {
-      return Err(format!("{}: title must be 1-{MAX_TITLE} characters", t.slug));
+      return Err(tr!(TasksMsg::TitleLength, name = t.slug, max = MAX_TITLE));
     }
     if t.prompt.len() > MAX_PROMPT {
-      return Err(format!("{}: prompt larger than {MAX_PROMPT} bytes", t.slug));
+      return Err(tr!(TasksMsg::TaskPromptTooLarge, slug = t.slug, max = MAX_PROMPT));
     }
     crate::git::check_rev(&t.base)?;
     if !STATUSES.contains(&t.status.as_str()) {
@@ -166,7 +212,11 @@ pub fn validate(tasks: &[TaskMeta]) -> Result<(), String> {
       let web = i.url.starts_with("https://") || i.url.starts_with("http://");
       let source = match (i.provider.as_str(), i.key.as_deref()) {
         ("github", None) => true,
+        // An issue reached through a GitHub Project, maybe in another repository: `acme/app#42`.
+        ("github", Some(k)) => super::gh_projects::valid_issue_key(k),
         ("linear", Some(k)) => crate::linear::valid_identifier(k),
+        ("gitlab", Some(k)) => crate::gitlab::valid_issue_key(k),
+        ("jira", Some(k)) => crate::jira::valid_key(k),
         _ => false,
       };
       if i.number == 0 || !web || !source || i.url.len() > MAX_ISSUE_URL || i.title.chars().count() > 1000 {
@@ -184,24 +234,140 @@ pub fn validate(tasks: &[TaskMeta]) -> Result<(), String> {
       return Err(format!("{}: unknown origin {o}", t.slug));
     }
     if let Some(r) = &t.last_run {
-      if !RUN_STATUSES.contains(&r.status.as_str()) {
-        return Err(format!("{}: unknown run status {}", t.slug, r.status));
-      }
-      if [&r.summary, &r.error].into_iter().flatten().any(|s| s.len() > MAX_SUMMARY) {
-        return Err(format!("{}: run summary larger than {MAX_SUMMARY} bytes", t.slug));
-      }
-      if r.cost_usd.is_some_and(|c| !c.is_finite() || c < 0.0) {
-        return Err(format!("{}: invalid run cost", t.slug));
-      }
+      validate_run_summary(&t.slug, r)?;
+    }
+    if let Some(w) = &t.workflow_status
+      && !valid_workflow_status(w)
+    {
+      return Err(format!("{}: invalid workflow status", t.slug));
+    }
+    if t.sessions.len() > MAX_SESSIONS || t.sessions.iter().any(|s| !valid_session_id(&s.id) || s.agent.is_empty() || s.agent.len() > MAX_AGENT) {
+      return Err(format!("{}: invalid sessions", t.slug));
+    }
+    if let Some(g) = &t.group {
+      validate_slug(g).map_err(|_| format!("{}: invalid attempt group", t.slug))?;
+    }
+    if let Some(m) = &t.attempt_model
+      && !valid_model(m)
+    {
+      return Err(format!("{}: invalid attempt model", t.slug));
+    }
+    if let Some(p) = &t.parent
+      && (validate_slug(p).is_err() || p == &t.slug)
+    {
+      return Err(format!("{}: invalid parent task", t.slug));
+    }
+    if let Some(d) = &t.dispatched_by
+      && (validate_slug(d).is_err() || d == &t.slug)
+    {
+      return Err(format!("{}: invalid dispatching task", t.slug));
     }
   }
   Ok(())
 }
 
+/// A model name as a CLI argument word (`opus`, `gpt-5.1-codex`, `claude-opus-5-5[1m]` is not one).
+pub fn valid_model(m: &str) -> bool {
+  !m.is_empty() && m.len() <= MAX_MODEL && !m.starts_with('-') && m.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b'/' | b':' | b'@'))
+}
+
+/// A board column id: lowercase letters, digits and `-`, 1-40 characters.
+pub fn valid_workflow_status(id: &str) -> bool {
+  !id.is_empty() && id.len() <= MAX_WORKFLOW_STATUS && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') && !id.starts_with('-')
+}
+
+/// A saved run summary (tasks.json and chats.json); `owner` names the task or chat in errors.
+pub fn validate_run_summary(owner: &str, r: &RunSummary) -> Result<(), String> {
+  if !RUN_STATUSES.contains(&r.status.as_str()) {
+    return Err(format!("{owner}: unknown run status {}", r.status));
+  }
+  if [&r.summary, &r.error].into_iter().flatten().any(|s| s.len() > MAX_SUMMARY) {
+    return Err(format!("{owner}: run summary larger than {MAX_SUMMARY} bytes"));
+  }
+  if r.cost_usd.is_some_and(|c| !c.is_finite() || c < 0.0) {
+    return Err(format!("{owner}: invalid run cost"));
+  }
+  Ok(())
+}
+
+/// Writes the whole list (tasks_save, kept for older webviews). Prefer [`update`]: a whole-list
+/// write from one window drops what another window (or Kingu instance) changed since it read.
 pub fn save(root: &Path, tasks: &[TaskMeta]) -> Result<(), String> {
+  let path = path(root)?;
+  let lock = file_lock(&path);
+  let _held = lock.lock().unwrap_or_else(|e| e.into_inner());
+  write_list(&path, tasks)?;
+  super::worktree::exclude_kingu_soon(root);
+  Ok(())
+}
+
+fn write_list(path: &Path, tasks: &[TaskMeta]) -> Result<(), String> {
   validate(tasks)?;
   let text = serde_json::to_string_pretty(&TasksFile { version: VERSION, tasks: tasks.to_vec() }).map_err(|e| e.to_string())?;
-  write_atomic(&path(root)?, &(text + "\n"))
+  write_atomic(path, &(text + "\n"))
+}
+
+/// One lock per tasks.json path, so read-modify-write updates of this process never interleave.
+/// (Atomic renames keep a reader from ever seeing half a file; this keeps writers from losing
+/// each other's changes.)
+fn file_lock(path: &Path) -> Arc<Mutex<()>> {
+  static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> = OnceLock::new();
+  let mut map = LOCKS.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
+  map.entry(path.to_path_buf()).or_default().clone()
+}
+
+/// A change to the task list, applied by [`update`] to what is on disk at that moment.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum TaskChange {
+  /// Adds the task, or replaces the one with its slug.
+  Upsert { task: Box<TaskMeta> },
+  /// Sets these fields of the task (absent fields keep the stored value); an unknown slug
+  /// (removed meanwhile) is skipped.
+  Patch { slug: String, fields: serde_json::Map<String, serde_json::Value> },
+  Remove { slug: String },
+}
+
+/// Applies `changes` to the stored list under the file's lock (a read-modify-write, so a patch
+/// from one window keeps another window's edits to other tasks and other fields) and returns the
+/// list as now stored. The file format is unchanged.
+pub fn update(root: &Path, changes: &[TaskChange]) -> Result<Vec<TaskMeta>, String> {
+  let path = path(root)?;
+  let lock = file_lock(&path);
+  let _held = lock.lock().unwrap_or_else(|e| e.into_inner());
+  let mut list = load(root)?;
+  let before = list.clone();
+  for change in changes {
+    apply(&mut list, change)?;
+  }
+  if list != before {
+    write_list(&path, &list)?;
+    super::worktree::exclude_kingu_soon(root);
+  }
+  Ok(list)
+}
+
+fn apply(list: &mut Vec<TaskMeta>, change: &TaskChange) -> Result<(), String> {
+  match change {
+    TaskChange::Upsert { task } => match list.iter_mut().find(|t| t.slug == task.slug) {
+      Some(t) => *t = (**task).clone(),
+      None => list.push((**task).clone()),
+    },
+    TaskChange::Patch { slug, fields } => {
+      if fields.contains_key("slug") {
+        return Err(format!("{slug}: a task's slug cannot change"));
+      }
+      let Some(t) = list.iter_mut().find(|t| &t.slug == slug) else { return Ok(()) };
+      let mut value = serde_json::to_value(&*t).map_err(|e| e.to_string())?;
+      let obj = value.as_object_mut().ok_or("task is not an object")?;
+      for (k, v) in fields {
+        obj.insert(k.clone(), v.clone());
+      }
+      *t = serde_json::from_value(value).map_err(|e| format!("{slug}: {e}"))?;
+    }
+    TaskChange::Remove { slug } => list.retain(|t| &t.slug != slug),
+  }
+  Ok(())
 }
 
 #[cfg(test)]
@@ -237,6 +403,14 @@ mod tests {
       }),
       issue: Some(IssueLink { number: 42, url: "https://github.com/acme/app/issues/42".into(), title: "แก้ login".into(), provider: "github".into(), key: None }),
       origin: Some("automation".into()),
+      auto_name: false,
+      workflow_status: Some("in-review".into()),
+      sessions: vec![SessionRef { id: "0b5e-4c1d_9".into(), agent: "claude-code".into(), at: 1 }],
+      group: Some("fix-login".into()),
+      attempt_model: Some("gpt-5.1-codex".into()),
+      parent: Some("base-task".into()),
+      hibernated_at: Some(4),
+      dispatched_by: Some("coordinator".into()),
     }
   }
 
@@ -281,6 +455,9 @@ mod tests {
     let t = &load(tmp.path()).unwrap()[0];
     assert_eq!((t.agent.as_str(), t.updated_at, t.accepted.len(), t.accepted_hunks.len()), ("claude-code", 0, 0, 0));
     assert_eq!((t.session_id.as_deref(), t.last_run.as_ref(), t.issue.as_ref(), t.origin.as_deref()), (None, None, None, None));
+    assert_eq!((t.workflow_status.as_deref(), t.sessions.len()), (None, 0));
+    assert_eq!((t.group.as_deref(), t.attempt_model.as_deref(), t.parent.as_deref(), t.hibernated_at), (None, None, None, None));
+    assert_eq!(t.dispatched_by, None);
   }
 
   #[test]
@@ -308,11 +485,89 @@ mod tests {
     let mut linear = task("b");
     linear.issue = Some(IssueLink { number: 7, url: "https://linear.app/acme/issue/ENG-7/x".into(), title: "t".into(), provider: "linear".into(), key: Some("ENG-7".into()) });
     assert!(validate(&[linear]).is_ok());
+    let link = |provider: &str, key: &str| IssueLink { number: 7, url: "https://example.dev/x/7".into(), title: "t".into(), provider: provider.into(), key: Some(key.into()) };
+    for (provider, key, ok) in [("jira", "ENG-7", true), ("gitlab", "acme/app#7", true), ("github", "acme/app#7", true), ("jira", "eng-7", false), ("gitlab", "#7", false)] {
+      let mut t = task("c");
+      t.issue = Some(link(provider, key));
+      assert_eq!(validate(&[t]).is_ok(), ok, "{provider} {key}");
+    }
     assert!(bad(|t| t.origin = Some("cli; rm".into())));
     assert!(bad(|t| t.accepted_hunks = BTreeMap::from([("b.txt".into(), vec!["../x".into()])])));
     assert!(bad(|t| t.accepted_hunks = BTreeMap::from([(String::new(), vec!["ab".into()])])));
+    assert!(bad(|t| t.workflow_status = Some("In Review".into())));
+    assert!(bad(|t| t.workflow_status = Some(String::new())));
+    assert!(bad(|t| t.sessions[0].id = "--resume; rm".into()));
+    assert!(bad(|t| t.sessions = vec![t.sessions[0].clone(); MAX_SESSIONS + 1]));
+    assert!(bad(|t| t.group = Some("Fix Login".into())));
+    assert!(bad(|t| t.attempt_model = Some("--dangerously-skip-permissions".into())));
+    assert!(bad(|t| t.attempt_model = Some("opus; rm -rf".into())));
+    assert!(bad(|t| t.parent = Some("../x".into())));
+    assert!(bad(|t| t.parent = Some(t.slug.clone())));
+    assert!(bad(|t| t.dispatched_by = Some("../x".into())));
+    assert!(bad(|t| t.dispatched_by = Some(t.slug.clone())));
     assert!(save(tmp.path(), &[task("a"), task("a")]).is_err());
     assert!(!tmp.path().join(".kingu/tasks.json").exists());
+  }
+
+  fn patch(slug: &str, fields: serde_json::Value) -> TaskChange {
+    TaskChange::Patch { slug: slug.into(), fields: fields.as_object().unwrap().clone() }
+  }
+
+  #[test]
+  fn updates_merge_with_what_is_on_disk() {
+    let tmp = tempfile::tempdir().unwrap();
+    save(tmp.path(), &[task("a"), task("b")]).unwrap();
+    // Window 1 read the list, then window 2 renamed `b` and added `c`.
+    update(tmp.path(), &[patch("b", serde_json::json!({ "title": "จากหน้าต่างที่สอง", "updated_at": 9 }))]).unwrap();
+    update(tmp.path(), &[TaskChange::Upsert { task: Box::new(task("c")) }]).unwrap();
+    // Window 1's patch of `a` keeps both; null clears an option, absent fields stay.
+    let list = update(tmp.path(), &[patch("a", serde_json::json!({ "status": "done", "pr_url": "https://github.com/x/y/pull/1", "session_id": null }))]).unwrap();
+    assert_eq!(list.iter().map(|t| t.slug.as_str()).collect::<Vec<_>>(), ["a", "b", "c"]);
+    assert_eq!((list[0].status.as_str(), list[0].pr_url.as_deref(), list[0].session_id.as_deref()), ("done", Some("https://github.com/x/y/pull/1"), None));
+    assert_eq!(list[0].title, task("a").title);
+    assert_eq!((list[1].title.as_str(), list[1].updated_at), ("จากหน้าต่างที่สอง", 9));
+    assert_eq!(load(tmp.path()).unwrap(), list);
+    // A task removed meanwhile is not brought back by a late patch.
+    update(tmp.path(), &[TaskChange::Remove { slug: "c".into() }]).unwrap();
+    let list = update(tmp.path(), &[patch("c", serde_json::json!({ "status": "done" }))]).unwrap();
+    assert_eq!(list.len(), 2);
+    // Bad patches change nothing.
+    assert!(update(tmp.path(), &[patch("a", serde_json::json!({ "status": "weird" }))]).is_err());
+    assert!(update(tmp.path(), &[patch("a", serde_json::json!({ "slug": "z" }))]).is_err());
+    assert!(update(tmp.path(), &[patch("a", serde_json::json!({ "created_at": "soon" }))]).is_err());
+    assert_eq!(load(tmp.path()).unwrap()[0].status, "done");
+  }
+
+  #[test]
+  fn concurrent_updates_never_lose_a_task() {
+    let tmp = tempfile::tempdir().unwrap();
+    save(tmp.path(), &[]).unwrap();
+    let root = tmp.path().to_path_buf();
+    let threads: Vec<_> = (0..8)
+      .map(|i| {
+        let root = root.clone();
+        std::thread::spawn(move || {
+          for j in 0..5 {
+            let slug = format!("t{i}-{j}");
+            update(&root, &[TaskChange::Upsert { task: Box::new(task(&slug)) }]).unwrap();
+            update(&root, &[patch(&slug, serde_json::json!({ "status": "done" }))]).unwrap();
+          }
+        })
+      })
+      .collect();
+    for t in threads {
+      t.join().unwrap();
+    }
+    let list = load(&root).unwrap();
+    assert_eq!(list.len(), 40);
+    assert!(list.iter().all(|t| t.status == "done"));
+  }
+
+  #[test]
+  fn changes_read_as_the_webview_sends_them() {
+    let c: Vec<TaskChange> = serde_json::from_str(r#"[{"kind":"remove","slug":"a"},{"kind":"patch","slug":"b","fields":{"title":"x"}}]"#).unwrap();
+    assert_eq!(c[0], TaskChange::Remove { slug: "a".into() });
+    assert!(matches!(&c[1], TaskChange::Patch { slug, fields } if slug == "b" && fields["title"] == "x"));
   }
 
   #[cfg(unix)]

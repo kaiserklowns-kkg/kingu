@@ -38,23 +38,23 @@ pub fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
 
 /// Accepts only a peer running as `own`.
 pub fn check_peer(peer: u32, own: u32) -> Result<(), String> {
-  if peer == own { Ok(()) } else { Err(format!("ปฏิเสธการเชื่อมต่อจาก uid {peer} (daemon เป็นของ uid {own})")) }
+  if peer == own { Ok(()) } else { Err(format!("refused a connection from uid {peer} (the daemon belongs to uid {own})")) }
 }
 
 pub fn check_stream(stream: &UnixStream) -> Result<(), String> {
-  let uid = peer_uid(stream).map_err(|e| format!("อ่าน uid ของอีกฝั่งไม่ได้: {e}"))?;
+  let uid = peer_uid(stream).map_err(|e| format!("could not read the peer's uid: {e}"))?;
   check_peer(uid, own_uid())
 }
 
 /// Creates `dir` (0700) or tightens an existing one; refuses a directory another user owns.
 pub fn prepare_dir(dir: &Path) -> Result<(), String> {
-  fs::create_dir_all(dir).map_err(|e| format!("สร้าง {} ไม่ได้: {e}", dir.display()))?;
+  fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
   let meta = fs::symlink_metadata(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
   if !meta.is_dir() {
-    return Err(format!("{} ไม่ใช่โฟลเดอร์", dir.display()));
+    return Err(format!("{} is not a folder", dir.display()));
   }
   if meta.uid() != own_uid() {
-    return Err(format!("{} เป็นของ uid {} ไม่ใช่ของผู้ใช้นี้", dir.display(), meta.uid()));
+    return Err(format!("{} belongs to uid {}, not this user", dir.display(), meta.uid()));
   }
   if meta.mode() & 0o777 != 0o700 {
     fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).map_err(|e| format!("{}: {e}", dir.display()))?;

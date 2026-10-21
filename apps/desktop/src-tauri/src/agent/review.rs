@@ -4,11 +4,14 @@
 //! `--literal-pathspecs`, paths after `--`); revisions are checked with `git::check_rev` and
 //! resolved to commit ids before use.
 
+use crate::i18n::msg::{AgentMsg, TasksMsg};
+use crate::tr;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::git::{self, check_rel, check_rev};
+use crate::git_queue::{self, Scope};
 
 use super::worktree::{task_branch, validate_slug, worktree_path};
 
@@ -57,6 +60,9 @@ pub struct GhStatus {
   pub path: Option<String>,
   /// `gh auth status` output (or why it could not run), for the "how to log in" hint.
   pub detail: String,
+  /// `github` (gh), or `gitlab` when the folder's origin is on GitLab (`agent/mr.rs`): then
+  /// `installed` is always true and `authenticated` means a token for its host is stored.
+  pub provider: &'static str,
 }
 
 fn text(out: Vec<u8>) -> String {
@@ -68,9 +74,9 @@ fn text(out: Vec<u8>) -> String {
 pub fn task_dir(root: &Path, slug: &str) -> Result<PathBuf, String> {
   validate_slug(slug)?;
   let dir = worktree_path(root, slug);
-  let meta = std::fs::symlink_metadata(&dir).map_err(|_| format!("{slug}: no worktree"))?;
+  let meta = std::fs::symlink_metadata(&dir).map_err(|_| tr!(TasksMsg::NoWorktree, slug))?;
   if !meta.is_dir() || !dir.join(".git").is_file() {
-    return Err(format!("{slug}: not a task worktree"));
+    return Err(tr!(TasksMsg::NotTaskWorktree, slug));
   }
   Ok(dir)
 }
@@ -259,6 +265,7 @@ pub fn reject(dir: &Path, base: &str, paths: &[String]) -> Result<(), String> {
   for p in paths {
     check_rel(dir, p)?;
   }
+  let _queue = git_queue::lock(dir, Scope::Worktree, "restore (reject)")?;
   for p in paths {
     if git::run(dir, &["cat-file", "-e", &format!("{mb}:./{p}")]).is_ok() {
       git::run(dir, &["restore", &format!("--source={mb}"), "--staged", "--worktree", "--", p])?;
@@ -275,6 +282,8 @@ pub fn reject(dir: &Path, base: &str, paths: &[String]) -> Result<(), String> {
 
 /// Stages everything in the worktree and commits it.
 pub fn commit_all(dir: &Path, message: &str) -> Result<(), String> {
+  // One queued operation: nothing else may stage or commit between the add and the commit.
+  let _queue = git_queue::lock(dir, Scope::Repository, "commit")?;
   git::stage(dir, &[".".into()])?;
   git::commit(dir, message, &git::CommitOptions::default())
 }
@@ -293,23 +302,26 @@ pub fn merge_local(repo: &Path, slug: &str, base: &str, merge_commit: bool) -> R
   check_branch(repo, base)?;
   let branch = task_branch(&dir, slug)?;
   if base == branch {
-    return Err("cannot merge a task into its own branch".into());
+    return Err(tr!(TasksMsg::MergeIntoOwnBranch));
   }
   if !clean(&dir, true)? {
-    return Err(format!("{slug}: มีการเปลี่ยนแปลงที่ยังไม่ commit, commit หรือทิ้งก่อน merge"));
+    return Err(tr!(AgentMsg::MergeDirty, slug));
   }
+  let label = format!("merge {branch}");
+  let _queue = git_queue::lock(repo, Scope::Refs, &label)?;
   let task = resolve_commit(repo, &format!("refs/heads/{branch}"))?;
   let old = resolve_commit(repo, &format!("refs/heads/{base}"))?;
   if count(repo, &[&task, &format!("^{old}")])? == 0 {
-    return Err(format!("{branch}: ไม่มี commit ใหม่ให้ merge เข้า {base}"));
+    return Err(tr!(AgentMsg::NothingToMerge, branch, base));
   }
   let ff_possible = git::run(repo, &["merge-base", "--is-ancestor", &old, &task]).is_ok();
   let target = super::worktree::list(repo)?.into_iter().find(|w| w.branch.as_deref() == Some(base) && !w.bare);
   match target {
     Some(w) => {
       let at = PathBuf::from(&w.path);
+      let _checkout = git_queue::lock(&at, Scope::Repository, &label)?;
       if !clean(&at, false)? {
-        return Err(format!("{}: {base} มีการแก้ไขที่ยังไม่ commit", w.path));
+        return Err(tr!(AgentMsg::BaseCheckoutDirty, path = w.path, base));
       }
       let msg = format!("Merge {branch} into {base}");
       let args: Vec<&str> =
@@ -322,8 +334,8 @@ pub fn merge_local(repo: &Path, slug: &str, base: &str, merge_commit: bool) -> R
       log::info!("merged {branch} into {base} at {} ({commit})", w.path);
       Ok(MergeResult { fast_forward: commit == task, commit, checkout: Some(w.path) })
     }
-    None if merge_commit => Err(format!("{base} ไม่ได้ checkout อยู่ที่ไหน: merge commit ต้อง checkout {base} ก่อน")),
-    None if !ff_possible => Err(format!("{base} มี commit ใหม่: fast-forward ไม่ได้, checkout {base} แล้วใช้ merge commit")),
+    None if merge_commit => Err(tr!(AgentMsg::BaseNotCheckedOut, base)),
+    None if !ff_possible => Err(tr!(AgentMsg::BaseAhead, base)),
     None => {
       let msg = format!("kingu: fast-forward {base} to {branch}");
       git::run(repo, &["update-ref", "-m", &msg, &format!("refs/heads/{base}"), &task, &old])?;
@@ -355,15 +367,15 @@ pub fn gh_bin() -> Option<PathBuf> {
 /// Installed and logged in? Runs `gh auth status` (exit 0 when a host is authenticated).
 pub fn gh_status(bin: Option<PathBuf>) -> GhStatus {
   let Some(bin) = bin else {
-    return GhStatus { installed: false, authenticated: false, path: None, detail: "gh not found".into() };
+    return GhStatus { installed: false, authenticated: false, path: None, detail: "gh not found".into(), provider: "github" };
   };
   let path = Some(bin.display().to_string());
   match crate::shell_env::command(&bin).args(["auth", "status"]).output() {
     Ok(out) => {
       let detail = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)).trim().to_owned();
-      GhStatus { installed: true, authenticated: out.status.success(), path, detail }
+      GhStatus { installed: true, authenticated: out.status.success(), path, detail, provider: "github" }
     }
-    Err(e) => GhStatus { installed: false, authenticated: false, path, detail: e.to_string() },
+    Err(e) => GhStatus { installed: false, authenticated: false, path, detail: e.to_string(), provider: "github" },
   }
 }
 
@@ -376,15 +388,21 @@ pub fn pr_create_args(base: &str, branch: &str, title: &str, body: &str, draft: 
   args
 }
 
+/// Pushes the task branch to `origin` (setting its upstream); returns the branch name.
+pub fn push_task_branch(dir: &Path, slug: &str) -> Result<String, String> {
+  git::run(dir, &["remote", "get-url", "origin"]).map_err(|_| tr!(AgentMsg::NoOrigin))?;
+  let branch = task_branch(dir, slug)?;
+  git_queue::with(dir, Scope::Refs, "push", || git::run(dir, &["push", "-u", "origin", &format!("refs/heads/{branch}:refs/heads/{branch}")]))?;
+  Ok(branch)
+}
+
 /// Pushes the task branch to `origin` and opens a pull request against `base`; returns its URL.
 pub fn pr_create(gh: &Path, dir: &Path, slug: &str, base: &str, title: &str, body: &str, draft: bool) -> Result<String, String> {
   check_rev(base)?;
   if title.trim().is_empty() {
-    return Err("PR title is empty".into());
+    return Err(tr!(TasksMsg::PrTitleEmpty));
   }
-  git::run(dir, &["remote", "get-url", "origin"]).map_err(|_| "ไม่มี remote ชื่อ origin".to_owned())?;
-  let branch = task_branch(dir, slug)?;
-  git::run(dir, &["push", "-u", "origin", &format!("refs/heads/{branch}:refs/heads/{branch}")])?;
+  let branch = push_task_branch(dir, slug)?;
   let out = crate::shell_env::command(gh)
     .current_dir(dir)
     .args(pr_create_args(base, &branch, title, body, draft))
@@ -395,6 +413,20 @@ pub fn pr_create(gh: &Path, dir: &Path, slug: &str, base: &str, title: &str, bod
   }
   let url = String::from_utf8_lossy(&out.stdout).lines().rev().find(|l| l.starts_with("http")).unwrap_or_default().trim().to_owned();
   Ok(url)
+}
+
+/// Stacked worktrees: a task's PR targets its parent task's branch, which GitHub only knows once
+/// it is on origin. Pushes `base` there when it is a local branch (no upstream is set: the parent
+/// task's own PR does that); false when `base` is no local branch (e.g. `origin/main`).
+pub fn push_stack_base(dir: &Path, base: &str) -> Result<bool, String> {
+  check_rev(base)?;
+  if git::run(dir, &["rev-parse", "--verify", "--quiet", "--end-of-options", &format!("refs/heads/{base}")]).is_err() {
+    return Ok(false);
+  }
+  git::run(dir, &["remote", "get-url", "origin"]).map_err(|_| tr!(AgentMsg::NoOrigin))?;
+  git_queue::with(dir, Scope::Refs, "push (stack base)", || git::run(dir, &["push", "origin", &format!("refs/heads/{base}:refs/heads/{base}")]))
+    .map_err(|e| tr!(AgentMsg::StackBasePushFailed, base, detail = e))?;
+  Ok(true)
 }
 
 /// One CI check of a pull request (a GitHub Actions run or a commit status).
@@ -410,9 +442,13 @@ pub struct PrCheck {
   pub job_id: Option<u64>,
 }
 
-/// `(run, job)` ids in a GitHub Actions details URL; other check URLs have none.
+/// `(run, job)` ids in a GitHub Actions details URL, or the job id of a GitLab CI job URL
+/// (`…/-/jobs/<job>`); other check URLs have none.
 pub fn actions_ids(url: Option<&str>) -> (Option<u64>, Option<u64>) {
   let Some(url) = url else { return (None, None) };
+  if let Some((_, job)) = url.split_once("/-/jobs/") {
+    return (None, job.split(['/', '?', '#']).next().and_then(|j| j.parse().ok()));
+  }
   let Some((_, rest)) = url.split_once("/actions/runs/") else { return (None, None) };
   let mut parts = rest.split(['/', '?', '#']);
   let run = parts.next().and_then(|r| r.parse().ok());
@@ -521,7 +557,9 @@ pub fn is_no_pr(stderr: &str) -> bool {
 pub fn pr_view(gh: &Path, dir: &Path, slug: Option<&str>) -> Result<Option<serde_json::Value>, String> {
   let mut args = vec!["pr".to_owned(), "view".to_owned()];
   if let Some(slug) = slug {
-    args.push(task_branch(dir, slug)?);
+    let branch = task_branch(dir, slug)?;
+    // A task started from a PR knows its number (a fork's head name, like `main`, is ambiguous).
+    args.push(super::worktree::pr_number_of(dir, &branch).map_or(branch, |n| n.to_string()));
   }
   args.extend(["--json".to_owned(), format!("{PR_FIELDS},{PR_VIEW_FIELDS}")]);
   let out = crate::shell_env::command(gh)
@@ -667,6 +705,20 @@ mod tests {
     assert!(pr_create(&gh, &wt, "t", "main", "  ", "", false).is_err(), "empty title");
   }
 
+  /// A stacked task's PR base (its parent's branch) is pushed first; a remote-only base is left alone.
+  #[test]
+  fn push_stack_base_pushes_a_local_parent_branch() {
+    let (tmp, repo, wt) = setup();
+    let remote = tmp.path().join("remote.git");
+    git_ok(tmp.path(), &["init", "-q", "--bare", remote.to_str().unwrap()]);
+    git_ok(&repo, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    git_ok(&repo, &["branch", "kingu/parent", "main"]);
+    assert!(push_stack_base(&wt, "kingu/parent").unwrap());
+    assert_eq!(git_ok(&remote, &["rev-parse", "kingu/parent"]), git_ok(&repo, &["rev-parse", "kingu/parent"]));
+    assert!(!push_stack_base(&wt, "origin/main").unwrap(), "not a local branch");
+    assert!(push_stack_base(&wt, "-x").is_err());
+  }
+
   #[test]
   fn diff_stat_covers_every_kind_of_change() {
     let (_tmp, _repo, wt) = setup();
@@ -743,7 +795,7 @@ mod tests {
   #[test]
   fn commits_and_fast_forwards_main_checkout() {
     let (_tmp, repo, wt) = setup();
-    assert!(merge_local(&repo, "t", "main", false).unwrap_err().contains("ไม่มี commit"));
+    assert!(merge_local(&repo, "t", "main", false).unwrap_err().contains("no new commits"));
     write(&wt, "feature.txt", "f\n");
     assert!(merge_local(&repo, "t", "main", false).unwrap_err().contains("commit"), "dirty worktree refused");
     commit_all(&wt, "add feature").unwrap();

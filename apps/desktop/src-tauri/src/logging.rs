@@ -1,5 +1,6 @@
 //! The app log: a size-limited, rotating `Kingu.log` in the app log dir (macOS:
-//! `~/Library/Logs/<identifier>/`) in every build, plus stdout in debug builds. Info level.
+//! `~/Library/Logs/<identifier>/`) in every build, plus stdout in debug builds. Info level unless
+//! Developer: Set Log Level… changes it (the logger takes every level; `log`'s max level gates).
 //!
 //! Call sites log ids, paths and outcomes, never credentials. As a safety net for messages that
 //! carry text from elsewhere (webview errors, agent host stderr, git and network errors), every
@@ -67,6 +68,11 @@ pub fn redact(message: &str) -> Cow<'_, str> {
   out
 }
 
+/// The local time as the log file writes it (the Output panel's Git channel uses it too).
+pub fn now_text() -> String {
+  TimezoneStrategy::UseLocal.get_now().format(TIME_FORMAT).unwrap_or_default()
+}
+
 /// The log plugin: the rotating file always, stdout in debug builds.
 pub fn plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
   let mut targets = vec![Target::new(TargetKind::LogDir { file_name: Some(FILE_NAME.into()) })];
@@ -76,7 +82,8 @@ pub fn plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
   tauri_plugin_log::Builder::new()
     .clear_targets()
     .targets(targets)
-    .level(log::LevelFilter::Info)
+    // Every level reaches the file; `log::set_max_level` (DEFAULT_LEVEL, `app_set_log_level`) decides.
+    .level(log::LevelFilter::Trace)
     // Dependencies log request details at info/debug; only their warnings are worth keeping.
     .level_for("reqwest", log::LevelFilter::Warn)
     .level_for("hyper", log::LevelFilter::Warn)
@@ -86,11 +93,36 @@ pub fn plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
     .rotation_strategy(RotationStrategy::KeepSome(KEEP_FILES))
     .timezone_strategy(TimezoneStrategy::UseLocal)
     .format(|out, message, record| {
-      let when = TimezoneStrategy::UseLocal.get_now().format(TIME_FORMAT).unwrap_or_default();
+      let when = now_text();
       let text = message.to_string();
       out.finish(format_args!("{when} [{}] [{}] {}", record.level(), record.target(), redact(&text)))
     })
     .build()
+}
+
+/// The log level until Developer: Set Log Level… changes it (VS Code's default, Info).
+pub const DEFAULT_LEVEL: log::LevelFilter = log::LevelFilter::Info;
+
+/// VS Code's log level names (`trace` … `off`) as a `log` filter.
+pub fn level_filter(level: &str) -> Option<log::LevelFilter> {
+  Some(match level {
+    "trace" => log::LevelFilter::Trace,
+    "debug" => log::LevelFilter::Debug,
+    "info" => log::LevelFilter::Info,
+    "warning" | "warn" => log::LevelFilter::Warn,
+    "error" => log::LevelFilter::Error,
+    "off" => log::LevelFilter::Off,
+    _ => return None,
+  })
+}
+
+/// Developer: Set Log Level… — what Kingu.log (and the webview's log lines) keep from now on.
+#[tauri::command]
+pub fn app_set_log_level(level: String) -> Result<(), String> {
+  let filter = level_filter(&level).ok_or_else(|| format!("unknown log level: {level}"))?;
+  log::set_max_level(filter);
+  log::info!("log level: {level}");
+  Ok(())
 }
 
 /// Opens `dir` in Finder (Explorer / the file manager elsewhere).
@@ -114,9 +146,54 @@ pub fn open_logs_folder(app: AppHandle) -> Result<String, String> {
   Ok(dir.display().to_string())
 }
 
+/// The last `max_bytes` of `file` (from its first whole line), `""` when it does not exist yet.
+pub fn tail(file: &Path, max_bytes: u64) -> Result<String, String> {
+  use std::io::{Read, Seek, SeekFrom};
+  let mut f = match std::fs::File::open(file) {
+    Ok(f) => f,
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+    Err(e) => return Err(format!("{}: {e}", file.display())),
+  };
+  let len = f.metadata().map_err(|e| e.to_string())?.len();
+  let start = len.saturating_sub(max_bytes);
+  f.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;
+  let mut buf = Vec::new();
+  f.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+  let text = String::from_utf8_lossy(&buf).into_owned();
+  // A cut start drops the partial first line.
+  Ok(if start > 0 { text.split_once('\n').map_or(String::new(), |(_, rest)| rest.to_string()) } else { text })
+}
+
+/// The Output panel's "Kingu" channel: the end of the current `Kingu.log`.
+#[tauri::command]
+pub async fn app_log_tail(app: AppHandle, max_bytes: Option<u64>) -> Result<String, String> {
+  let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
+  let file = dir.join(format!("{FILE_NAME}.log"));
+  let max = max_bytes.unwrap_or(256 * 1024).min(4 * 1024 * 1024);
+  tauri::async_runtime::spawn_blocking(move || tail(&file, max)).await.map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn log_levels_are_vscode_names() {
+    assert_eq!(level_filter("trace"), Some(log::LevelFilter::Trace));
+    assert_eq!(level_filter("warning"), Some(log::LevelFilter::Warn));
+    assert_eq!(level_filter("off"), Some(log::LevelFilter::Off));
+    assert_eq!(level_filter("verbose"), None);
+  }
+
+  #[test]
+  fn tail_keeps_whole_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("Kingu.log");
+    assert_eq!(tail(&file, 100).unwrap(), "");
+    std::fs::write(&file, "first line\nsecond\nthird\n").unwrap();
+    assert_eq!(tail(&file, 1000).unwrap(), "first line\nsecond\nthird\n");
+    assert_eq!(tail(&file, 10).unwrap(), "third\n");
+  }
 
   #[test]
   fn masks_tokens() {

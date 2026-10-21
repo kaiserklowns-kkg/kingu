@@ -37,3 +37,31 @@ export function notificationSound(setting: string | undefined): string | undefin
 	// mac-notification-sys plays the system default for this name.
 	return setting === 'default' ? 'NSUserNotificationDefaultSoundName' : setting;
 }
+
+/** One terminal rings at most this often (a shell beeps on every failed tab completion). */
+export const BELL_THROTTLE_MS = 10_000;
+
+/**
+ * Orca's notifications.terminalBell (`kingu.agent.notifications.terminalBell`, default off): a
+ * bell (BEL) from a terminal you are not looking at marks its tab and notifies, at most once per
+ * BELL_THROTTLE_MS per terminal. `mark`: the tab's dot; `notify`: the system notification too.
+ */
+export function bellAction(enabled: boolean, visible: boolean, lastAt: number | undefined, now: number): { mark: boolean; notify: boolean } {
+	if (!enabled || visible) return { mark: false, notify: false };
+	return { mark: true, notify: lastAt === undefined || now - lastAt >= BELL_THROTTLE_MS };
+}
+
+/**
+ * An agent chat's notice for one of its events (VS Code's chatWindowNotifier): a permission prompt
+ * or a question needs you, a turn finished (left out with `events` = `attention`) or failed.
+ */
+export function chatNoticeFor(ev: { kind: string; tool?: string; is_error?: boolean }, title: string, events = 'all'): Notice | null {
+	if (ev.kind === 'permission_request') {
+		return ev.tool === 'AskUserQuestion'
+			? { title: t('chat.notify.questionTitle', { title }), body: t('chat.notify.questionBody'), kind: 'attention' }
+			: { title: t('chat.notify.approvalTitle', { title }), body: t('chat.notify.approvalBody'), kind: 'attention' };
+	}
+	if (ev.kind !== 'result') return null;
+	if (ev.is_error) return { title: t('chat.notify.failedTitle', { title }), body: t('chat.notify.failedBody'), kind: 'attention' };
+	return events === 'attention' ? null : { title: t('chat.notify.finishedTitle', { title }), body: t('chat.notify.finishedBody'), kind: 'finished' };
+}

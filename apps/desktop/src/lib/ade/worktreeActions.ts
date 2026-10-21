@@ -16,6 +16,11 @@ export type WorktreeAction =
 	| 'rename'
 	| 'markDone'
 	| 'reopen'
+	| 'moveStatus'
+	| 'continueSession'
+	| 'handOff'
+	| 'newFromTask'
+	| 'compareAttempts'
 	| 'remove'
 	| `openIn:${string}`;
 
@@ -32,8 +37,12 @@ export function openInLabels(setting: Readonly<Record<string, unknown>> | undefi
 		.slice(0, MAX_OPEN_IN);
 }
 
-/** The folder itself (`slug` null) or a task worktree; `running`: its agent is mid-turn. `openIn`: Open In app labels. */
-export function worktreeActions(w: { slug: string | null; status?: TaskStatus; running?: boolean; hasWorktree?: boolean; openIn?: readonly string[] }): ActionRow[] {
+/**
+ * The folder itself (`slug` null) or a task worktree; `running`: its agent is mid-turn. `openIn`:
+ * Open In app labels. `sessions`: how many agent sessions the task has saved (Continue Session…).
+ * `attempts`: the task is one of a best-of-N group (Compare Attempts…).
+ */
+export function worktreeActions(w: { slug: string | null; status?: TaskStatus; running?: boolean; hasWorktree?: boolean; openIn?: readonly string[]; sessions?: number; attempts?: boolean }): ActionRow[] {
 	const task = w.slug !== null;
 	const rows: ActionRow[] = [
 		{ id: 'open', label: t('adeTasks.worktree.open') },
@@ -48,6 +57,18 @@ export function worktreeActions(w: { slug: string | null; status?: TaskStatus; r
 	if (!task) return rows;
 	rows.push({ id: 'copyBranch', label: t('adeTasks.worktree.copyBranch') }, { id: 'rename', label: t('adeTasks.worktree.rename') }, 'separator');
 	rows.push(w.status === 'done' ? { id: 'reopen', label: t('adeTasks.worktree.reopen') } : { id: 'markDone', label: t('adeTasks.worktree.markDone'), enabled: !w.running });
+	// Orca's Move to Status and agent session continuation.
+	const sessions = (w.sessions ?? 0) > 0 && !w.running && w.hasWorktree !== false;
+	rows.push(
+		{ id: 'moveStatus', label: t('adeWorkflow.action.moveStatus') },
+		{ id: 'continueSession', label: t('adeWorkflow.action.continueSession'), enabled: sessions },
+		{ id: 'handOff', label: t('adeWorkflow.action.handOff'), enabled: sessions },
+		'separator'
+	);
+	// Stacked worktrees (Orca's lineage) and best-of-N attempts (attempts.svelte.ts).
+	rows.push({ id: 'newFromTask', label: t('adeAttempts.action.newFromTask'), enabled: w.hasWorktree !== false });
+	if (w.attempts) rows.push({ id: 'compareAttempts', label: t('adeAttempts.action.compare') });
+	rows.push('separator');
 	rows.push({ id: 'remove', label: t('adeTasks.worktree.remove'), enabled: !w.running });
 	return rows;
 }

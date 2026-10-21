@@ -110,3 +110,27 @@ export function sortSymbols(list: Crumb[], order: SymbolSortOrder): Crumb[] {
 	const cmp = order === 'name' ? (a: Crumb, b: Crumb) => byName(a, b) || byPos(a, b) : order === 'type' ? (a: Crumb, b: Crumb) => a.kind - b.kind || byName(a, b) : byPos;
 	return [...list].sort(cmp);
 }
+
+// --- Keyboard focus in the breadcrumbs (VS Code: breadcrumbs.focusNext / selectFocused / selectEditor) ---
+
+export type CrumbKeyAction = 'next' | 'prev' | 'select' | 'leave';
+type Keys = Pick<KeyboardEvent, 'key' | 'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey'>;
+
+/**
+ * What a key does with focus in the breadcrumbs: ←/→ (⌥←/⌥→ on macOS, ⌃←/⌃→ elsewhere) move
+ * between crumbs, Enter and Space open the focused crumb's picker, Escape goes back to the editor.
+ */
+export function crumbKeyAction(e: Keys, mac: boolean): CrumbKeyAction | null {
+	const word = mac ? e.altKey && !e.ctrlKey && !e.metaKey : e.ctrlKey && !e.altKey && !e.metaKey;
+	const plain = !e.altKey && !e.ctrlKey && !e.metaKey;
+	if (e.shiftKey) return null;
+	if (e.key === 'ArrowRight' && (plain || word)) return 'next';
+	if (e.key === 'ArrowLeft' && (plain || word)) return 'prev';
+	if (!plain) return null;
+	if (e.key === 'Enter' || e.key === ' ') return 'select';
+	if (e.key === 'Escape') return 'leave';
+	return null;
+}
+
+/** The crumb focused after moving `delta` from `index` (-1: none) of `count`, staying at the ends. */
+export const movedCrumb = (index: number, count: number, delta: 1 | -1) => (count <= 0 ? -1 : Math.max(0, Math.min(count - 1, (index < 0 ? count : index) + delta)));

@@ -2,14 +2,25 @@
 	// Source Control view (VS Code scmViewPane): commit input, the action button (Commit, Publish
 	// Branch or Sync Changes), then the "Staged Changes", "Changes" and "Untracked Changes" groups as
 	// a list or a tree. Clicking a file opens its diff against HEAD. VS Code's scm.* and git.* view
-	// settings apply (scmSettings.ts).
+	// settings apply (scmSettings.ts). With several repositories (multi-root workspaces, nested
+	// ones) the Repositories list comes first and each shown repository gets its own header, input
+	// and groups (VS Code's SCM Repositories view, `scm.repositories.*`).
 	import FileIcon from './FileIcon.svelte';
 	import Icon, { type IconName } from './Icon.svelte';
 	import { fileIcon, folderIcon } from './fileIcons';
 	import { editors } from './editors.svelte';
 	import { keyLabel } from './keys';
-	import { diffKey as headDiffKey, splitPath, type Resource, type ScmSource } from './scm';
-	import { scm as folderScm } from './scm.svelte';
+	import { diffKey as headDiffKey, indexDiffKey, mergeKey, splitPath, type Resource, type ScmSource } from './scm';
+	import { ask } from './messageBox';
+	import { invoke } from '@tauri-apps/api/core';
+	import { hasConflictMarkers } from '#lib/scm/conflicts.ts';
+	import { t } from '#lib/i18n/index.ts';
+	import { scm as folderScm, Repository } from './scm.svelte';
+	import { syncItem } from './scmRemote';
+	import { sortRepositories, visibleRepositories, type SortOrder } from './scmRepos';
+	import ScmView from './ScmView.svelte';
+	import Sash from './Sash.svelte';
+	import { listWheel } from './listWheel';
 	import { actionButton, actionButtonFlags, commitMessageWarnings, inputFontFamily, resourceTree, sortResources, type SortKey } from './scmSettings';
 	import { repoDialog } from './repoDialog.svelte.ts';
 	import { appMode } from './mode.svelte';
@@ -17,34 +28,80 @@
 	import { changesKey } from './viewers';
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { workspace } from './workspace.svelte.ts';
+	import PopupMenu, { menuItem, menuSeparator } from './PopupMenu.svelte';
+	import type { MenuNode } from './menus';
+	import { commitHistory } from '#lib/scm/commitInput.svelte.ts';
+	import { compareWithRef, ignore } from '#lib/scm/gitCommands.svelte.ts';
 
 	/**
-	 * `source`: another repository than the open folder's (a task worktree in the ADE's right side
-	 * bar); `diffKey` / `fileKey` then name its diff and file tabs.
+	 * `source`: one workspace repository (the list below renders one per shown repository), or a
+	 * task worktree in the ADE's right side bar; `diffKey` / `fileKey` then name its diff and file
+	 * tabs. `header`: the repository's own title row (several repositories are shown).
 	 */
 	let {
 		source,
 		diffKey = headDiffKey,
-		fileKey = (rel: string) => rel
-	}: { source?: ScmSource; diffKey?: (rel: string) => string; fileKey?: (rel: string) => string } = $props();
-	const scm = $derived(source ?? folderScm);
+		fileKey = (rel: string) => rel,
+		header = false
+	}: { source?: ScmSource; diffKey?: (rel: string) => string; fileKey?: (rel: string) => string; header?: boolean } = $props();
+	/** No repository yet: the welcome views read this. */
+	const emptySource: ScmSource = {
+		repo: null,
+		loaded: true,
+		busy: false,
+		message: '',
+		groups: { staged: [], changes: [], untracked: [] },
+		refresh: () => folderScm.refresh(),
+		stage: async () => false,
+		unstage: async () => false,
+		discard: async () => false,
+		commit: async () => {}
+	};
+	const scm = $derived<ScmSource>(source ?? folderScm.primary ?? folderScm.repositories[0] ?? emptySource);
+	/** A task worktree's view (Commit only: its push, sync and merge editor live in the ADE). */
+	const isTask = $derived(!!source && !(source instanceof Repository));
+	const own = $derived(source instanceof Repository ? source : null);
 
-	type GroupId = 'staged' | 'changes' | 'untracked';
+	// The workspace's repositories (top level only): the Repositories list and which are shown.
+	const sortOrder = $derived(settings.get<SortOrder>('scm.repositories.sortOrder'));
+	const repositories = $derived(sortRepositories(folderScm.repositories, sortOrder));
+	const showList = $derived(!source && (repositories.length > 1 || settings.get<boolean>('scm.alwaysShowRepositories')));
+	const shown = $derived(
+		visibleRepositories(repositories, folderScm.selected, settings.get<string>('scm.repositories.selectionMode'), settings.get<number>('scm.repositories.visible'))
+	);
+	let listOpen = $state(true);
+	let repoOpen = $state(true);
+	/** The Repositories section's height once its sash was dragged (null: as many rows as
+	 * `scm.repositories.visible`, VS Code's default size); double-clicking the sash resets it. */
+	let listPx = $state<number | null>(null);
+	const ROW_PX = 22;
+	const listHeight = (n: number) => {
+		const all = Math.max(1, n) * ROW_PX;
+		const initial = Math.min(n, Math.max(1, settings.get<number>('scm.repositories.visible') || 10)) * ROW_PX;
+		return Math.min(all, Math.max(ROW_PX, listPx ?? initial));
+	};
+	const resizeList = (delta: number, n: number) => (listPx = listHeight(n) + delta);
+
+	type GroupId = 'merge' | 'staged' | 'changes' | 'untracked';
 	type Confirm = { key: string; paths: string[]; untracked: boolean; text: string };
 
-	let open = $state({ staged: true, changes: true, untracked: true });
+	let open = $state({ merge: true, staged: true, changes: true, untracked: true });
 	let selected = $state<string | null>(null);
 	let confirming = $state<Confirm | null>(null);
 	let collapsed = $state(new Set<string>());
 	let input: HTMLTextAreaElement | undefined = $state();
 
 	$effect(() => {
-		void scm.refresh();
+		void (source ?? folderScm).refresh();
 	});
 
 	const mac = keyLabel('cmd+a').startsWith('⌘');
 	const commitKey = mac ? '⌘Enter' : 'Ctrl+Enter';
-	const placeholder = $derived(`Message (${commitKey} to commit on '${scm.repo?.branch ?? scm.repo?.head ?? 'HEAD'}')`);
+	const placeholder = $derived.by(() => {
+		const branch = scm.repo?.branch ?? scm.repo?.head ?? 'HEAD';
+		return own && folderScm.repositories.length > 1 ? t('scmRepos.commitOnIn', { key: commitKey, branch, repository: own.label.name }) : t('scmRepos.commitOn', { key: commitKey, branch });
+	});
 
 	// scm.input*: font, size and the line counts the input grows between.
 	const fontSize = $derived(settings.get<number>('scm.inputFontSize'));
@@ -69,6 +126,12 @@
 	);
 
 	function onInputKey(e: KeyboardEvent) {
+		// ↑/↓ on the first/last line walk the repository's earlier commit messages (VS Code's
+		// history.showPrevious / history.showNext).
+		if (own && input && commitHistory.key(own.dir, e, input, (v) => (scm.message = v))) {
+			e.preventDefault();
+			return;
+		}
 		if (e.key === 'Enter' && (mac ? e.metaKey : e.ctrlKey) && !e.shiftKey && !e.altKey) {
 			e.preventDefault();
 			void scm.commit();
@@ -76,15 +139,18 @@
 	}
 
 	const untrackedList = $derived(scm.groups.untracked ?? []);
+	// VS Code's "Merge Changes" group: conflicted files, apart from the other changes.
+	const mergeList = $derived(scm.groups.changes.filter((r) => r.entry.conflict));
+	const changeList = $derived(scm.groups.changes.filter((r) => !r.entry.conflict));
 	const changeCount = $derived(scm.groups.staged.length + scm.groups.changes.length + untrackedList.length);
 	// scm.showActionButton + git.showActionButton: Commit, else Publish Branch, else Sync Changes.
 	const button = $derived(
 		actionButton(
 			{
 				changes: changeCount,
-				// A task worktree (`source`) has its own push and sync in the ADE side bar: Commit only.
-				branch: source ? null : (scm.repo?.branch ?? null),
-				upstream: source ? null : (scm.repo?.upstream ?? null),
+				// A task worktree has its own push and sync in the ADE side bar: Commit only.
+				branch: isTask ? null : (scm.repo?.branch ?? null),
+				upstream: isTask ? null : (scm.repo?.upstream ?? null),
 				upstreamGone: scm.repo?.upstream_gone ?? false,
 				remotes: scm.repo?.remotes.length ?? 0,
 				ahead: scm.repo?.ahead ?? 0,
@@ -94,7 +160,7 @@
 			settings.get<boolean>('scm.showActionButton')
 		)
 	);
-	const remoteCommand = (id: string) => (source ? undefined : () => commands.run(id));
+	const remoteCommand = (id: string) => (isTask ? undefined : own ? () => own.run(id) : () => commands.run(id));
 
 	const rowKey = (r: Resource) => `${r.staged ? 's' : 'w'}:${r.entry.path}`;
 	const toTrash = $derived(settings.get<boolean>('git.discardUntrackedChangesToTrash'));
@@ -120,25 +186,57 @@
 	type Action = { icon: IconName; label: string; run: () => unknown; hidden?: boolean };
 
 	// In the Agents layout (the folder's own Changes panel) diffs and files open as ADE tabs.
-	const openDiff = (rel: string, preview: boolean) =>
-		appMode.isAgents ? adeLayout.openFile(adeLayout.key, diffKey(rel), { preview }) : editors.open(diffKey(rel), { preview });
+	const openKey = (key: string, preview: boolean) => (appMode.isAgents ? adeLayout.openFile(adeLayout.key, key, { preview }) : editors.open(key, { preview }));
+	/** The diff a row opens: the open folder's staged files HEAD ↔ index, its changes index ↔ working tree (VS Code). */
+	const diffOf = (r: Resource) => (r.staged && !isTask ? indexDiffKey(r.entry.path) : diffKey(r.entry.path));
+	const openDiff = (r: Resource, preview: boolean) => openKey(diffOf(r), preview);
+	/** The merge editor is a workbench editor (the Agents layout has no merge view). */
+	const openMerge = (rel: string) => (appMode.setMode('workbench'), editors.open(mergeKey(rel), { preview: false }));
 	const openFile = (rel: string, preview = false) =>
 		appMode.isAgents ? adeLayout.openFile(adeLayout.key, fileKey(rel), { preview }) : editors.open(fileKey(rel), { preview });
 	// git.openDiffOnClick: a click opens the diff, else the file (deleted files have only the diff).
+	// A conflicted file opens itself, or the merge editor with `git.mergeEditor` (VS Code).
 	const openResource = (r: Resource, preview: boolean) =>
-		settings.get<boolean>('git.openDiffOnClick') || r.deleted ? openDiff(r.entry.path, preview) : openFile(r.entry.path, preview);
+		r.entry.conflict
+			? !isTask && settings.get<boolean>('git.mergeEditor')
+				? openMerge(r.entry.path)
+				: openFile(r.entry.path, preview)
+			: settings.get<boolean>('git.openDiffOnClick') || r.deleted
+				? openDiff(r, preview)
+				: openFile(r.entry.path, preview);
+
+	/** Staging a conflicted file marks it resolved; VS Code asks first when it still has markers. */
+	async function stageResolved(paths: string[]) {
+		const marked: string[] = [];
+		for (const p of paths) {
+			const text = editors.textModel(p)?.getValue() ?? (await invoke<string>('read_workspace_file', { rel: p }).catch(() => ''));
+			if (hasConflictMarkers(text)) marked.push(p);
+		}
+		if (marked.length) {
+			const name = marked.length === 1 ? splitPath(marked[0])[0] : t('scmEditor.merge.nFiles', { count: marked.length });
+			const ok = await ask(t('scmEditor.merge.stageWithConflicts', { name }), { title: 'Git', kind: 'warning', okLabel: t('scmEditor.merge.stageAnyway'), cancelLabel: t('common.cancel') });
+			if (!ok) return;
+		}
+		await scm.stage(paths);
+	}
 
 	// scm.autoReveal: the row of the active editor's file is selected.
 	$effect(() => {
 		const active = editors.active;
 		if (!active || !settings.get<boolean>('scm.autoReveal')) return;
 		const all = [...scm.groups.staged, ...scm.groups.changes, ...untrackedList];
-		const hit = all.find((r) => diffKey(r.entry.path) === active) ?? all.find((r) => fileKey(r.entry.path) === active);
+		const hit = all.find((r) => diffOf(r) === active) ?? all.find((r) => fileKey(r.entry.path) === active);
 		if (hit) selected = rowKey(hit);
 	});
 
 	function rowActions(r: Resource): Action[] {
 		const path = r.entry.path;
+		if (r.entry.conflict)
+			return [
+				{ icon: 'goToFile', label: 'Open File', run: () => openFile(path), hidden: !settings.get<boolean>('git.showInlineOpenFileAction') },
+				{ icon: 'merge', label: t('scmEditor.merge.resolveInEditor'), run: () => openMerge(path), hidden: isTask },
+				{ icon: 'plus', label: 'Stage Changes', run: () => stageResolved([path]) }
+			];
 		return [
 			{ icon: 'goToFile', label: 'Open File', run: () => openFile(path), hidden: r.deleted || !settings.get<boolean>('git.showInlineOpenFileAction') },
 			{ icon: 'discard', label: 'Discard Changes', run: () => askDiscard(rowKey(r), [r]), hidden: r.staged },
@@ -146,6 +244,31 @@
 				? { icon: 'minus', label: 'Unstage Changes', run: () => scm.unstage([path]) }
 				: { icon: 'plus', label: 'Stage Changes', run: () => scm.stage([path]) }
 		];
+	}
+
+	// A row's context menu (VS Code's scm/resourceState/context): open, stage or discard, and for a
+	// workspace repository's files Add to .gitignore and Compare with Branch or Tag.
+	let rowMenu = $state<{ x: number; y: number; r: Resource } | null>(null);
+	function rowMenuItems(r: Resource): MenuNode[] {
+		const items: MenuNode[] = [menuItem('open', t('scmGit.rowOpenChanges')), menuItem('file', t('scmGit.rowOpenFile'), { enabled: !r.deleted })];
+		items.push(menuSeparator, r.staged ? menuItem('unstage', t('scmGit.rowUnstage')) : menuItem('stage', t('scmGit.rowStage')));
+		if (!r.staged && !r.entry.conflict) items.push(menuItem('discard', t('scmGit.rowDiscard')));
+		if (own) {
+			items.push(menuSeparator);
+			if (r.entry.worktree === '?') items.push(menuItem('ignore', t('scmGit.rowIgnore')));
+			items.push(menuItem('compare', t('scmGit.rowCompareWithRef'), { enabled: !r.deleted && r.entry.worktree !== '?' }));
+		}
+		return items;
+	}
+	function runRowMenu(id: string, r: Resource) {
+		const path = r.entry.path;
+		if (id === 'open') openDiff(r, false);
+		else if (id === 'file') openFile(path);
+		else if (id === 'stage') void (r.entry.conflict ? stageResolved([path]) : scm.stage([path]));
+		else if (id === 'unstage') void scm.unstage([path]);
+		else if (id === 'discard') askDiscard(rowKey(r), [r]);
+		else if (id === 'ignore' && own) void ignore(own, [path]);
+		else if (id === 'compare') void compareWithRef(path);
 	}
 
 	// scm.alwaysShowActions: inline actions without hovering.
@@ -220,7 +343,7 @@
 			{#if row.kind === 'folder'}
 				{@const shut = collapsed.has(`${id}:${row.path}`)}
 				<button
-					class="flex h-(--kg-row-height) w-full items-center gap-1 pr-2 text-left hover:bg-(--vscode-list-hoverBackground)"
+					class="mx-1.5 flex h-(--kg-row-height) w-[calc(100%-12px)] items-center gap-1 rounded-md pr-2 text-left hover:bg-(--vscode-list-hoverBackground)"
 					style:padding-left="{12 + row.depth * 8}px"
 					aria-expanded={!shut}
 					title={row.path}
@@ -239,7 +362,7 @@
 						'group/row mx-1.5 flex h-(--kg-row-height) items-center rounded-md pr-2 leading-(--kg-row-height)',
 						selected === key
 							? 'bg-(--vscode-list-activeSelectionBackground) text-(--vscode-list-activeSelectionForeground)'
-							: editors.active === diffKey(r.entry.path)
+							: editors.active === diffOf(r)
 								? 'bg-(--vscode-list-inactiveSelectionBackground)'
 								: 'hover:bg-(--vscode-list-hoverBackground)'
 					]}
@@ -253,6 +376,11 @@
 							openResource(r, true);
 						}}
 						ondblclick={() => openResource(r, false)}
+						oncontextmenu={(e) => {
+							e.preventDefault();
+							selected = key;
+							rowMenu = { x: e.clientX, y: e.clientY, r };
+						}}
 					>
 						<FileIcon icon={fileIcon(name)} />
 						<span class={['shrink-0 truncate', r.deleted && 'line-through']}>{name}</span>
@@ -267,13 +395,79 @@
 	{/if}
 {/snippet}
 
+{#snippet repositoryRow(r: Repository)}
+	{@const st = r.repo}
+	{@const sync = st ? syncItem(st) : null}
+	{@const picked = shown.includes(r)}
+	<div
+		class={[
+			'group/row mx-1.5 flex h-(--kg-row-height) items-center gap-1.5 rounded-md pr-2 pl-3',
+			picked ? 'bg-(--vscode-list-inactiveSelectionBackground)' : 'hover:bg-(--vscode-list-hoverBackground)'
+		]}
+	>
+		<button class="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left" title={r.dir} aria-pressed={picked} onclick={(e) => folderScm.select(r, e.metaKey || e.ctrlKey)}>
+			<Icon name="git" size={16} />
+			<span class="shrink-0 truncate">{r.label.name}</span>
+			{#if r.label.description}<span class="truncate text-[0.9em] text-(--vscode-descriptionForeground)">{r.label.description}</span>{/if}
+		</button>
+		{#if st}
+			<button class="flex shrink-0 items-center gap-0.5 rounded px-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" title={t('scmRepos.checkout')} onclick={() => r.checkout()}>
+				<Icon name="branch" size={14} /><span class="max-w-24 truncate">{st.branch ?? st.head ?? 'HEAD'}</span>
+			</button>
+			{#if sync && !folderScm.op}
+				<button class="flex shrink-0 items-center gap-0.5 rounded px-0.5 tabular-nums hover:bg-(--vscode-toolbar-hoverBackground)" title={sync.title} onclick={() => r.run(sync.command)}>
+					<Icon name={sync.command === 'git.publish' ? 'publish' : 'sync'} size={14} />{sync.label}
+				</button>
+			{/if}
+		{/if}
+		{#if r.count}
+			<span class="min-w-[18px] shrink-0 rounded-full bg-(--vscode-badge-background) px-1.5 text-center text-[11px] leading-[18px] text-(--vscode-badge-foreground)" title={t('scmRepos.changes', { count: r.count })}>{r.count}</span>
+		{/if}
+	</div>
+{/snippet}
+
 <section class="flex min-h-0 flex-1 flex-col">
-	{#if !scm.loaded}
+	{#if !source && !folderScm.loaded}
+		<p class="flex items-center gap-2 px-5 py-2 text-(--vscode-descriptionForeground)">
+			<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>กำลังอ่านสถานะ git…
+		</p>
+	{:else if !source && repositories.length && (showList || shown[0] !== folderScm.primary || folderScm.primary === null)}
+		<!-- Several repositories: the Repositories view (its own collapsible, resizable section, as
+		     VS Code's SCM Repositories view), then each shown repository's own view below it. -->
+		{#if showList}
+			<div class="flex h-(--kg-row-height) shrink-0 items-center pr-2 font-bold text-[11px] uppercase text-(--vscode-sideBarTitle-foreground) hover:bg-(--vscode-list-hoverBackground)">
+				<button class="flex h-full min-w-0 flex-1 items-center gap-0.5 pl-0.5 text-left" aria-expanded={listOpen} onclick={() => (listOpen = !listOpen)}>
+					<Icon name={listOpen ? 'chevronDown' : 'chevronRight'} size={16} />
+					<span class="truncate">{t('scmRepos.repositories')}</span>
+				</button>
+			</div>
+			{#if listOpen}
+				<div class="shrink-0 overflow-y-auto" style:height="{listHeight(repositories.length)}px" use:listWheel>
+					{#each repositories as r (r.dir)}{@render repositoryRow(r)}{/each}
+				</div>
+				<Sash orientation="horizontal" onDrag={(d) => resizeList(d, repositories.length)} onReset={() => (listPx = null)} />
+			{/if}
+		{/if}
+		<div class="min-h-0 flex-1 overflow-y-auto">
+			{#each shown as r (r.dir)}
+				<div class="flex flex-col">
+					<ScmView source={r} header={showList} />
+				</div>
+			{/each}
+		</div>
+	{:else if !scm.loaded}
 		<p class="flex items-center gap-2 px-5 py-2 text-(--vscode-descriptionForeground)">
 			<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>กำลังอ่านสถานะ git…
 		</p>
 	{:else if !scm.repo && !source && folderScm.disabled}
 		<p class="px-5 py-1 leading-normal text-(--vscode-descriptionForeground)">Git ถูกปิดอยู่ เปิดได้ที่การตั้งค่า git.enabled (Git is disabled.)</p>
+	{:else if !scm.repo && !source && !workspace.root}
+		<!-- VS Code's welcome view with no folder open. -->
+		<div class="flex flex-col items-center gap-2 px-6 py-8 text-center text-(--vscode-descriptionForeground)">
+			<p class="text-xs leading-relaxed">{t('scmEditor.noFolder')}</p>
+			<button class="mt-1 h-[26px] w-full rounded-md bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:brightness-110" onclick={() => commands.run('workbench.action.files.openFolder')}>{t('scmEditor.openFolder')}</button>
+			<button class="h-[26px] w-full rounded-md border border-(--vscode-widget-border) text-(--vscode-foreground) hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => repoDialog.show('clone')}>Clone Repository</button>
+		</div>
 	{:else if !scm.repo}
 		<!-- VS Code's welcome view for a folder without a repository. -->
 		<div class="flex flex-col items-center gap-2 px-6 py-8 text-center text-(--vscode-descriptionForeground)">
@@ -290,6 +484,16 @@
 			<button class="h-[26px] w-full rounded-md border border-(--vscode-widget-border) text-(--vscode-foreground) hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => repoDialog.show('clone')}>Clone Repository</button>
 		</div>
 	{:else}
+		{#if header && own}
+			<div class="flex h-(--kg-row-height) shrink-0 items-center pr-2 font-bold text-[11px] uppercase text-(--vscode-sideBarTitle-foreground) hover:bg-(--vscode-list-hoverBackground)">
+				<button class="flex h-full min-w-0 flex-1 items-center gap-0.5 pl-0.5 text-left" aria-expanded={repoOpen} title={t('scmRepos.toggle', { name: own.label.name })} onclick={() => (repoOpen = !repoOpen)}>
+					<Icon name={repoOpen ? 'chevronDown' : 'chevronRight'} size={16} />
+					<span class="truncate">{own.label.name}</span>
+					{#if scm.repo}<span class="truncate font-normal normal-case text-(--vscode-descriptionForeground)">{scm.repo.branch ?? scm.repo.head ?? ''}</span>{/if}
+				</button>
+			</div>
+		{/if}
+		{#if repoOpen || !header}
 		<div class="flex shrink-0 flex-col gap-1.5 px-2 pt-1 pb-2">
 			{#if settings.get<boolean>('git.showCommitInput')}
 				<div class="relative">
@@ -310,6 +514,7 @@
 						style:min-height="{minLines * lineHeight + 8}px"
 						style:max-height="{maxLines * lineHeight + 8}px"
 						onkeydown={onInputKey}
+						oninput={() => own && commitHistory.reset(own.dir)}
 					></textarea>
 					{#if settings.get<boolean>('scm.showInputActionButton')}
 						<!-- scm.showInputActionButton: VS Code's commit button inside the input. -->
@@ -346,16 +551,19 @@
 			{/if}
 		</div>
 
-		<div class="min-h-0 flex-1 overflow-y-auto" style:scroll-behavior="var(--kg-list-scroll-behavior, auto)">
+		<div class={[header ? '' : 'min-h-0 flex-1 overflow-y-auto']} style:scroll-behavior="var(--kg-list-scroll-behavior, auto)">
+			{#if mergeList.length}
+				{@render group('merge', 'Merge Changes', mergeList, [{ icon: 'plus', label: 'Stage All Merge Changes', run: () => stageResolved(mergeList.map((r) => r.entry.path)) }])}
+			{/if}
 			{#if scm.groups.staged.length || settings.get<boolean>('git.alwaysShowStagedChangesResourceGroup')}
 				{@render group('staged', 'Staged Changes', scm.groups.staged, [
 					{ icon: 'minus', label: 'Unstage All Changes', run: () => scm.unstage(scm.groups.staged.map((r) => r.entry.path)), hidden: !scm.groups.staged.length }
 				])}
 			{/if}
-			{@render group('changes', 'Changes', scm.groups.changes, [
+			{@render group('changes', 'Changes', changeList, [
 				{ icon: 'files', label: 'ดูการเปลี่ยนแปลงทั้งหมดในหน้าเดียว', run: () => (appMode.setMode('workbench'), editors.open(changesKey(), { preview: false })), hidden: !scm.groups.changes.length && !scm.groups.staged.length },
-				{ icon: 'discard', label: 'Discard All Changes', run: () => askDiscard('group:changes', scm.groups.changes), hidden: !scm.groups.changes.length },
-				{ icon: 'plus', label: 'Stage All Changes', run: () => scm.stage(scm.groups.changes.map((r) => r.entry.path)), hidden: !scm.groups.changes.length }
+				{ icon: 'discard', label: 'Discard All Changes', run: () => askDiscard('group:changes', changeList), hidden: !changeList.length },
+				{ icon: 'plus', label: 'Stage All Changes', run: () => scm.stage(changeList.map((r) => r.entry.path)), hidden: !changeList.length }
 			])}
 			{#if untrackedList.length}
 				{@render group('untracked', 'Untracked Changes', untrackedList, [
@@ -364,5 +572,20 @@
 				])}
 			{/if}
 		</div>
+		{/if}
 	{/if}
 </section>
+
+{#if rowMenu}
+	{@const r = rowMenu.r}
+	<PopupMenu
+		items={rowMenuItems(r)}
+		label={t('scmGit.rowMenu')}
+		x={rowMenu.x}
+		y={rowMenu.y}
+		onRun={(node) => {
+			if (node.type === 'item') runRowMenu(node.id, r);
+		}}
+		onClose={() => (rowMenu = null)}
+	/>
+{/if}

@@ -15,9 +15,9 @@
 </script>
 
 <div class="h-full overflow-y-auto">
-	<div class="mx-auto max-w-[880px] px-8 py-6">
-		<h1 class="flex items-center gap-2 text-lg font-semibold"><Icon name="terminal" size={20} />Terminal</h1>
-		<p class="mt-1 text-[13px] text-(--vscode-descriptionForeground)">terminal ใน panel ล่าง, ใน worktree ของงาน และ floating terminal ใช้ค่าเดียวกัน</p>
+	<div class="mx-auto max-w-4xl px-8 pt-10 pb-24">
+		<h1 class="flex items-center gap-2 text-2xl leading-tight font-semibold"><Icon name="terminal" size={20} />Terminal</h1>
+		<p class="mt-2 max-w-3xl text-sm leading-6 text-(--vscode-descriptionForeground)">terminal ใน panel ล่าง, ใน worktree ของงาน และ floating terminal ใช้ค่าเดียวกัน</p>
 
 		<h2 class={SECTION}>ตัวอักษร</h2>
 		<div class={CARD}>

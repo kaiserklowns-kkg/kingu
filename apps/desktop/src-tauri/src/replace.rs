@@ -12,6 +12,9 @@ use std::path::{Path, PathBuf};
 
 use regex::{Captures, Regex, RegexBuilder};
 
+use crate::i18n::msg::FilesMsg;
+use crate::tr;
+
 /// The search that produced the matches (only what affects the replacement text).
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(default)]
@@ -302,7 +305,7 @@ pub fn plan(text: &str, matches: &[MatchRef], replacer: &Replacer) -> Result<Vec
   let spans = line_spans(text);
   let mut out = Vec::with_capacity(matches.len());
   for m in matches {
-    let stale = || format!("line {}: \"{}\" is no longer there", m.line, m.text);
+    let stale = || tr!(FilesMsg::MatchGone, line = m.line, text = m.text);
     let &(ls, le) = spans.get((m.line as usize).wrapping_sub(1)).ok_or_else(stale)?;
     let line = &text[ls..le];
     let (Some(s), Some(e)) = (byte_of_column(line, m.column), byte_of_column(line, m.end_column)) else {
@@ -337,10 +340,10 @@ pub fn apply(text: &str, plan: &[(usize, usize, ReplaceEdit)]) -> String {
 fn resolve(root: &Path, rel: &str) -> Result<PathBuf, String> {
   let path = root.join(rel).canonicalize().map_err(|e| format!("{rel}: {e}"))?;
   if !path.starts_with(root) {
-    return Err(format!("{rel}: outside the workspace"));
+    return Err(tr!(FilesMsg::OutsideWorkspace, path = rel));
   }
   if !path.is_file() {
-    return Err(format!("{rel}: not a file"));
+    return Err(tr!(FilesMsg::NotAFile, path = rel));
   }
   Ok(path)
 }
@@ -378,10 +381,10 @@ pub fn replace_file(root: &Path, file: &FileReplace, replacer: &Replacer) -> Fil
     Err(e) => return result(Outcome::Failed, 0, Vec::new(), Some(e.to_string())),
   };
   if file.version.as_ref().is_some_and(|v| !v.is_empty() && *v != version_of(&bytes)) {
-    return result(Outcome::Stale, 0, Vec::new(), Some("changed since the search".into()));
+    return result(Outcome::Stale, 0, Vec::new(), Some(tr!(FilesMsg::ChangedSinceSearch)));
   }
   let Ok(text) = String::from_utf8(bytes) else {
-    return result(Outcome::Failed, 0, Vec::new(), Some("not UTF-8 text".into()));
+    return result(Outcome::Failed, 0, Vec::new(), Some(tr!(FilesMsg::NotUtf8Text)));
   };
   let p = match plan(&text, &file.matches, replacer) {
     Ok(p) => p,
@@ -394,9 +397,25 @@ pub fn replace_file(root: &Path, file: &FileReplace, replacer: &Replacer) -> Fil
   FileResult { version: Some(version_of(new_text.as_bytes())), ..result(Outcome::Written, p.len(), p.into_iter().map(|(_, _, e)| e).collect(), None) }
 }
 
+#[cfg(test)]
 pub fn replace_all(root: &Path, req: &ReplaceRequest) -> Result<Vec<FileResult>, String> {
+  replace_all_in(|_| Ok(root.to_path_buf()), req)
+}
+
+/// [`replace_all`] in a multi-root workspace: `root_of` names each file's root folder (a file of
+/// another root folder has an absolute path, which resolves inside that folder unchanged).
+pub fn replace_all_in(root_of: impl Fn(&str) -> Result<PathBuf, String>, req: &ReplaceRequest) -> Result<Vec<FileResult>, String> {
   let replacer = Replacer::new(&req.pattern, &req.replace, req.preserve_case)?;
-  Ok(req.files.iter().map(|f| replace_file(root, f, &replacer)).collect())
+  Ok(
+    req
+      .files
+      .iter()
+      .map(|f| match root_of(&f.path) {
+        Ok(root) => replace_file(&root, f, &replacer),
+        Err(e) => FileResult { path: f.path.clone(), outcome: Outcome::Stale, replaced: 0, edits: Vec::new(), version: None, message: Some(e) },
+      })
+      .collect(),
+  )
 }
 
 #[cfg(test)]
@@ -533,5 +552,30 @@ mod tests {
     let r = replace_file(&root, &open, &Replacer::new(&literal("foo"), "bar", false).unwrap());
     assert_eq!(r.outcome, Outcome::Edits);
     assert_eq!(r.edits, [ReplaceEdit { line: 1, column: 3, end_column: 6, text: "bar".into() }]);
+  }
+
+  #[test]
+  fn replaces_in_every_root_folder() {
+    let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (ra, rb) = (a.path().canonicalize().unwrap(), b.path().canonicalize().unwrap());
+    std::fs::write(ra.join("a.txt"), "foo").unwrap();
+    std::fs::write(rb.join("b.txt"), "foo foo").unwrap();
+    let roots = [ra.clone(), rb.clone()];
+    let b_file = rb.join("b.txt").display().to_string();
+    let req = ReplaceRequest {
+      pattern: literal("foo"),
+      replace: "bar".into(),
+      preserve_case: false,
+      files: vec![
+        FileReplace { path: "a.txt".into(), version: None, matches: find("foo", "foo"), content: None },
+        FileReplace { path: b_file.clone(), version: None, matches: find("foo foo", "foo"), content: None },
+        FileReplace { path: "/elsewhere/c.txt".into(), version: None, matches: Vec::new(), content: None },
+      ],
+    };
+    let results = replace_all_in(|p| crate::workspace::locate_in(&roots, p).map(|(r, _)| r), &req).unwrap();
+    assert_eq!(results.iter().map(|r| r.outcome).collect::<Vec<_>>(), [Outcome::Written, Outcome::Written, Outcome::Stale]);
+    assert_eq!(results[1].path, b_file);
+    assert_eq!(std::fs::read_to_string(ra.join("a.txt")).unwrap(), "bar");
+    assert_eq!(std::fs::read_to_string(rb.join("b.txt")).unwrap(), "bar bar");
   }
 }

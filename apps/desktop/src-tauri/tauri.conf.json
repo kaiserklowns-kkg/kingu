@@ -5,7 +5,7 @@
   "build": {
     "frontendDist": "../build",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "cargo build -p kingu-ptyd && bun run dev",
+    "beforeDevCommand": "cargo build -p kingu-ptyd -p kingu-cli && bun run dev",
     "beforeBuildCommand": "bun run build"
   },
   "app": {
@@ -17,6 +17,7 @@
         "height": 900,
         "resizable": true,
         "fullscreen": false,
+        "visible": false,
         "minWidth": 960,
         "minHeight": 600,
         "titleBarStyle": "Overlay",
@@ -24,7 +25,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: asset:; worker-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: asset:; worker-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost; frame-src kingu-artifact: http://kingu-artifact.localhost"
     }
   },
   "bundle": {

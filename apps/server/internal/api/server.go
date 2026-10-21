@@ -2,7 +2,9 @@
 //
 // The server stores task METADATA only (projects, tasks, agent runs, audit
 // trail, event feed). It must never accept or persist source code, diffs,
-// transcripts or secrets.
+// transcripts or secrets. The one exception is team artifacts (artifacts.go):
+// a page an agent made that a member explicitly shares with the team, one
+// HTML file of at most 2 MiB, refused when it looks like it holds a credential.
 package api
 
 import (
@@ -142,6 +144,13 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/snaps", s.org(s.listSnaps))
 	mux.Handle("PUT /v1/snaps/{id}", s.org(s.putSnap))
 	mux.Handle("DELETE /v1/snaps/{id}", s.org(s.deleteSnap))
+	mux.Handle("GET /v1/artifacts", s.org(s.listArtifacts))
+	mux.Handle("GET /v1/artifacts/{id}", s.org(s.getArtifact))
+	mux.Handle("PUT /v1/artifacts/{id}", s.orgLimit(s.putArtifact, MaxArtifactBodyBytes))
+	mux.Handle("DELETE /v1/artifacts/{id}", s.org(s.deleteArtifact))
+	mux.Handle("GET /v1/skills", s.org(s.listSkills))
+	mux.Handle("PUT /v1/skills/{name}", s.org(s.putSkill))
+	mux.Handle("DELETE /v1/skills/{name}", s.org(s.deleteSkill))
 	mux.HandleFunc("GET /v1/events", s.handleEvents)
 	if s.cfg.Dev {
 		mux.HandleFunc("POST /v1/dev/tokens", s.handleDevMintToken)
@@ -256,7 +265,11 @@ func writeRateLimited(w http.ResponseWriter, wait time.Duration) {
 
 // org authenticates the caller, then runs h inside a transaction with
 // app.org_id set so RLS scopes every query to the caller's org.
-func (s *Server) org(h orgHandler) http.Handler {
+func (s *Server) org(h orgHandler) http.Handler { return s.orgLimit(h, MaxBodyBytes) }
+
+// orgLimit is org with its own request body cap (a shared artifact's page is
+// far larger than any metadata body).
+func (s *Server) orgLimit(h orgHandler, limit int64) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, ok := s.authenticate(w, r)
 		if !ok {
@@ -271,12 +284,12 @@ func (s *Server) org(h orgHandler) http.Handler {
 		// Read the (capped) body before opening a transaction so a slow
 		// client can never hold a database transaction open.
 		if r.Body != nil {
-			buf, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBodyBytes))
+			buf, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 			if err != nil {
 				var maxErr *http.MaxBytesError
 				if errors.As(err, &maxErr) {
 					writeError(w, &apiError{Status: http.StatusRequestEntityTooLarge, Code: "body_too_large",
-						Message: fmt.Sprintf("request body exceeds %d bytes", MaxBodyBytes)})
+						Message: fmt.Sprintf("request body exceeds %d bytes", limit)})
 					return
 				}
 				writeError(w, errBadRequest("invalid_body", "could not read request body"))

@@ -211,5 +211,5 @@ fn the_terminal_command_line_survives_shell_quoting() {
 fn refuses_with_a_message_when_the_root_is_missing() {
   let o = Command::new(env!("CARGO_BIN_EXE_kingu-ptyd")).args(["snap-exec", "--network", "off", "--root", "/kingu-no-such-root", "--", "/usr/bin/true"]).output().unwrap();
   assert_eq!(o.status.code(), Some(126));
-  assert!(String::from_utf8_lossy(&o.stderr).contains("โฟลเดอร์งาน"));
+  assert!(String::from_utf8_lossy(&o.stderr).contains("task folder"));
 }

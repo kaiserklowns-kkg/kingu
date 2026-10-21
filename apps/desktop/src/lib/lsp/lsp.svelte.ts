@@ -3,11 +3,14 @@
 // with the Monaco models EditorHost owns, and exposes diagnostics and server status reactively.
 
 import { Channel, invoke } from '@tauri-apps/api/core';
+import { untrack } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import type * as Monaco from 'monaco-editor';
 import { clientLog } from '#lib/client-log.ts';
 import { lspLanguageId } from '#lib/editor/languages.ts';
 import { jsonSchema } from '#lib/settings/registry.ts';
+import { kinguJsonSchemas, withKinguSchemas } from '#lib/settings/jsonSchemas.ts';
+import { commands } from '#lib/workbench/commands.svelte.ts';
 import { settingSchemas } from '#lib/settings/schemas.svelte.ts';
 import { settings as userSettings } from '#lib/settings/settings.svelte.ts';
 import { terminals } from '#lib/terminal/terminals.svelte.ts';
@@ -16,18 +19,24 @@ import { layout } from '#lib/workbench/layout.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
 import { status as statusBar } from '#lib/workbench/status.svelte.ts';
 import { notifications, type Severity } from '#lib/workbench/notifications.svelte.ts';
-import { LanguageClient, type ServerStatus } from './client';
+import { output } from '#lib/output/output.svelte.ts';
+import { LanguageClient, type RefreshKind, type ServerStatus } from './client';
+import { registerFeatureProviders } from './featureProviders';
+import { serverSettings, typescriptPreferences, type SettingsReader } from './serverSettings';
 import {
 	fromSignatureHelp,
 	hoverContents,
 	markerToDiagnostic,
-	relOfUri,
+	keyOfModelPath,
+	keyOfUri,
+	lspFolders,
+	modelPathOf,
+	pathToUri,
 	toDocumentHighlights,
 	toLspRange,
 	toMonacoTextEdits,
 	toRenameLocation,
 	toSignatureHelp,
-	symbolPath,
 	toCompletionItem,
 	toLspPosition,
 	toMarker,
@@ -35,14 +44,14 @@ import {
 	toMonacoSymbols,
 	toTargets,
 	uriOfRel,
-	uriToPath,
-	type Crumb
+	uriToPath
 } from './convert';
 import {
 	configurationValue,
 	countDiagnostics,
 	DiagnosticsIndex,
 	installItems,
+	OwnedDiagnostics,
 	isDisabled,
 	parseDisabled,
 	progressText,
@@ -54,24 +63,57 @@ import {
 	type ProblemFile,
 	type ServerInfo
 } from './model';
-import type { CodeAction, Command, CompletionItem, Diagnostic, DocumentSymbol, ServerCapabilities, SymbolInformation, WorkspaceEdit } from './protocol';
+import type { CallHierarchyItem, CodeAction, Command, CompletionItem, Diagnostic, DocumentSymbol, Location, Range, ServerCapabilities, SymbolInformation, WorkspaceEdit } from './protocol';
+import type { HierarchyDirection, HierarchyKind } from '#lib/workbench/hierarchyModel.ts';
 import { applyWorkspaceEdit, type ApplyResult } from './workspaceEdit';
+import { needsPreview } from './refactorPreview.ts';
+import { refactorPreview, takeRenamePreview } from './refactorPreview.svelte.ts';
+import { folderOfUri, folderPathOf, parseSessionId, sessionFolder, sessionId } from './folders';
+import type { WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 import { t } from '#lib/i18n/index.ts';
+import { isRustError } from '#lib/i18n/rustErrors.ts';
+import { formatTrace, TRACE_SETTINGS, traceValue, type TraceValue } from './trace.ts';
+import { AUTO_INSERT_DELAY_MS, AUTO_INSERT_REQUEST, autoInsertAt, CUSTOM_DATA_CONTENT_REQUEST, CUSTOM_DATA_NOTIFICATION, customDataUris } from './htmlExtras.ts';
+import {
+	chosenTsserver,
+	fileReferenceLocations,
+	isEmptyEdit,
+	mayHaveImports,
+	remapEditUris,
+	renameSubject,
+	SOURCE_DEFINITION_COMMAND,
+	TSSERVER_REQUEST_COMMAND,
+	updateImportsMode,
+	UPDATE_IMPORTS_KEYS,
+	type FileRenameUris,
+	type TsVersionChoice
+} from './typescriptExtras.ts';
+
+/** How long a move waits for the TypeScript server's import updates (VS Code's participants have a timeout too). */
+const WILL_RENAME_TIMEOUT_MS = 5000;
+/** A move whose import updates were asked for: applied (or offered) once the files are in place. */
+export type PendingRename = { files: FileRenameUris[]; rels: string[]; edit: Promise<WorkspaceEdit | null>; client: LanguageClient };
 
 type MonacoApi = typeof Monaco;
+/** One `#` quick access result; line and column 1-based. */
+export type WorkspaceSymbolItem = { name: string; kind: number; container?: string; rel: string; line: number; column: number };
 type LspEvent = { type: 'message'; json: string } | { type: 'stderr'; line: string } | { type: 'exit'; code: number | null };
-type Session = { info: ServerInfo; client: LanguageClient; id: number | null; ready: Promise<boolean> };
-type Doc = { rel: string; uri: string; key: string; model: Monaco.editor.ITextModel; dispose?: () => void };
+/** `sid`: the server key, or the key and folder of a server started for one root folder
+ * (`folder`; null: every folder, folders.ts). `pushed` / `init`: the settings last sent and the
+ * initializationOptions it started with (JSON), to spot changes. */
+type Session = { sid: string; folder: string | null; info: ServerInfo; client: LanguageClient; id: number | null; ready: Promise<boolean>; pushed: string; init: string; trace: TraceValue; /** The custom data URIs last sent (HTML, CSS; JSON). */ customData?: string };
+/** `sid`: the session it is open in ('' until opened). */
+type Doc = { rel: string; uri: string; key: string; sid: string; model: Monaco.editor.ITextModel; dispose?: () => void };
 
 const MARKER_OWNER = 'lsp';
 /** LSP MessageType → notification severity. */
 const MESSAGE_SEVERITY: Record<number, Severity> = { 1: 'error', 2: 'warning', 3: 'info', 4: 'info' };
 const EXTERNAL_SCHEME = 'kingu-external';
 const LOG_LIMIT = 1000;
+/** Output channel of language feature lines that belong to no one server. */
+const LANGUAGE_SERVERS_CHANNEL = 'Language Servers';
 const SYMBOLS_DELAY_MS = 400;
 const CODE_ACTION_COMMAND = 'kingu.lsp.codeAction';
-/** Start of Rust's "server not installed" error (`lsp::NOT_INSTALLED`). */
-const NOT_INSTALLED = 'ไม่ได้ติดตั้ง';
 const INSTALL_POLL_MS = 3000;
 /** Give up watching for an install after this long; window focus and Retry still re-check. */
 const INSTALL_WATCH_MS = 15 * 60 * 1000;
@@ -93,15 +135,20 @@ class Lsp {
 		}
 		return null;
 	});
+	/** Select TypeScript Version: the server's own TypeScript, or the workspace's (restarts the server). */
+	tsVersion = $state<TsVersionChoice>('bundled');
 	/** Overrides of the server table's settings, per server key (e.g. `{ 'rust-analyzer': { … } }`). */
 	settings: Record<string, Record<string, unknown>> = {};
 
 	#monaco: MonacoApi | undefined;
 	#root: Promise<string> | undefined;
-	#rootPath = '';
+	/** The window's root folders (workspace.svelte.ts sets them); every server is told all of them. */
+	#folders: WorkspaceFolder[] = [];
 	#sessions = new Map<string, Session>();
 	#docs = new Map<Monaco.editor.ITextModel, Doc>();
 	#index = new DiagnosticsIndex();
+	/** Problems of other owners (task problem matchers), shown with the servers' ones. */
+	#owned = new OwnedDiagnostics();
 	/** Which server published diagnostics for a URI, so a stopped server's problems can be cleared. */
 	#origin = new Map<string, string>();
 	#refreshQueued = false;
@@ -113,9 +160,13 @@ class Lsp {
 	#pendingLog: string[] = [];
 	#installWatch = new Map<string, ReturnType<typeof setInterval>>();
 	#retrying = new Set<string>();
+	/** Listeners for the servers' refresh requests, per server key (replaced with the providers). */
+	#refresh = new Map<string, { kind: RefreshKind; run: () => void }[]>();
 
 	/** Called by EditorHost for every model it creates. */
 	attach(monaco: MonacoApi, model: Monaco.editor.ITextModel, rel: string) {
+		this.#markerMonaco = monaco;
+		this.#applyOwnedMarkers(rel);
 		// A language change (Change Language Mode, files.associations) closes the document with the
 		// old server and opens it with the new one, as VS Code does.
 		if (!this.#languageWatched.has(model)) {
@@ -128,12 +179,19 @@ class Lsp {
 		const info = serverFor(model.getLanguageId());
 		if (!info || this.#docs.has(model)) return;
 		this.#init(monaco);
-		const doc: Doc = { rel, uri: '', key: info.key, model };
+		const doc: Doc = { rel, uri: '', key: info.key, sid: '', model };
 		this.#docs.set(model, doc);
-		const changed = model.onDidChangeContent(() => {
+		let autoInsert: ReturnType<typeof setTimeout> | undefined;
+		const changed = model.onDidChangeContent((e) => {
 			if (!doc.uri) return;
-			this.#sessions.get(info.key)?.client.didChange(doc.uri, model.getValue());
+			this.#sessions.get(doc.sid)?.client.didChange(doc.uri, model.getValue());
 			this.#scheduleSymbols(doc);
+			// html.autoClosingTags / html.autoCreateQuotes (VS Code's autoInsertion.ts).
+			if (doc.key !== 'html') return;
+			clearTimeout(autoInsert);
+			const enabled = { autoClose: userSettings.get<boolean>('html.autoClosingTags'), autoQuote: userSettings.get<boolean>('html.autoCreateQuotes') };
+			const at = autoInsertAt(e.changes, enabled, e.isUndoing || e.isRedoing);
+			if (at) autoInsert = setTimeout(() => void this.#autoInsert(doc, at, model.getVersionId()), AUTO_INSERT_DELAY_MS);
 		});
 		const disposing = model.onWillDispose(() => this.#detach(model));
 		doc.dispose = () => {
@@ -145,42 +203,175 @@ class Lsp {
 
 	#languageWatched = new WeakSet<Monaco.editor.ITextModel>();
 
+	/** Asks the HTML server what to insert after a typed `>`, `/` or `=`, and inserts it as a
+	 * snippet in the focused editor, unless the document changed or the cursor moved meanwhile. */
+	async #autoInsert(doc: Doc, at: { kind: 'autoClose' | 'autoQuote'; line: number; column: number }, version: number) {
+		const client = this.#sessions.get(doc.sid)?.client;
+		if (!client?.ready || !this.#monaco) return;
+		const position = { line: at.line - 1, character: at.column - 1 };
+		const text = await client.rpc.request<string | null>(AUTO_INSERT_REQUEST, { kind: at.kind, textDocument: { uri: doc.uri }, position }).catch(() => null);
+		if (!text || doc.model.isDisposed() || doc.model.getVersionId() !== version) return;
+		const editor = this.#monaco.editor.getEditors().find((ed) => ed.getModel() === doc.model && ed.hasTextFocus());
+		const cursor = editor?.getPosition();
+		if (!editor || !cursor || cursor.lineNumber !== at.line || cursor.column !== at.column) return;
+		editor.getContribution<Monaco.editor.IEditorContribution & { insert(template: string): void }>('snippetController2')?.insert(text);
+	}
+
+	/** `html.customData` / `css.customData` as the servers want them (customData.ts). */
+	#customData(key: string): string[] {
+		const id = `${key}.customData`;
+		const folders = this.#folders.map((f, i) => ({ path: f.path, value: i === 0 ? (userSettings.inspect(id, 'workspace') ?? userSettings.inspect(id, 'repo')) : userSettings.inspectFolder(id, f.path) }));
+		return customDataUris(folders, userSettings.workspaceFile[id], userSettings.inspect(id, 'user'));
+	}
+
+	/** A started HTML or CSS server hears of its custom data; the HTML server reads the files through the client. */
+	#sendCustomData(session: Session) {
+		const { info, client } = session;
+		const method = CUSTOM_DATA_NOTIFICATION[info.key];
+		if (!method) return;
+		if (info.key === 'html')
+			client.rpc.onRequest(CUSTOM_DATA_CONTENT_REQUEST, async (uri: string) => {
+				const rel = typeof uri === 'string' ? this.#keyOf(uri) : null;
+				if (rel === null) throw new Error(`${uri} is outside the workspace`);
+				return invoke<string>('read_workspace_file', { rel });
+			});
+		const uris = this.#customData(info.key);
+		session.customData = JSON.stringify(uris);
+		client.rpc.notify(method, uris);
+	}
+
 	#detach(model: Monaco.editor.ITextModel) {
 		const doc = this.#docs.get(model);
 		if (!doc) return;
 		doc.dispose?.();
 		this.#docs.delete(model);
 		this.symbols.delete(doc.rel);
-		if (doc.uri) this.#sessions.get(doc.key)?.client.didClose(doc.uri);
+		if (doc.uri) this.#sessions.get(doc.sid)?.client.didClose(doc.uri);
 	}
 
 	didSave(model: Monaco.editor.ITextModel) {
 		const doc = this.#docs.get(model);
-		if (doc?.uri) this.#sessions.get(doc.key)?.client.didSave(doc.uri);
+		if (doc?.uri) this.#sessions.get(doc.sid)?.client.didSave(doc.uri);
+	}
+
+	// --- TypeScript extras (typescriptExtras.ts) -------------------------------------------------
+
+	/** The running TypeScript server, once it has started. */
+	async #typescript(): Promise<LanguageClient | null> {
+		const s = this.#sessions.get(sessionId('typescript', null));
+		return s && (await s.ready) && s.client.ready ? s.client : null;
+	}
+
+	/**
+	 * Files about to be renamed or moved (`isDir`: a folder): asks the TypeScript server for the
+	 * import updates they need while they are still in place (`workspace/willRenameFiles`). Null
+	 * when nothing can import them, `js/ts.updateImportsOnFileMove.enabled` is `never`, or no
+	 * TypeScript server runs (VS Code's extension is not active then either).
+	 */
+	async willRenameFiles(renames: { from: string; to: string; isDir: boolean }[]): Promise<PendingRename | null> {
+		const relevant = renames.filter((r) => mayHaveImports(r.from, r.isDir));
+		if (!relevant.length || relevant.every((r) => updateImportsMode(this.#reader, r.from) === 'never')) return null;
+		const client = await this.#typescript();
+		if (!client?.takesWillRename) return null;
+		const root = this.#rootPath;
+		const files = relevant.map((r) => ({ oldUri: uriOfRel(root, r.from), newUri: uriOfRel(root, r.to) }));
+		const edit = Promise.race([client.willRenameFiles(files).catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), WILL_RENAME_TIMEOUT_MS))]);
+		await edit;
+		return { files, rels: relevant.map((r) => r.from), edit, client };
+	}
+
+	/**
+	 * The files of `pending` were moved: the server hears of it, and their import updates are
+	 * applied, after asking with `js/ts.updateImportsOnFileMove.enabled` `prompt` (VS Code's
+	 * "Update imports for 'a.ts'?" with Yes / No / Always / Never).
+	 */
+	async filesRenamed(pending: PendingRename | null, moved?: Set<string>) {
+		if (!pending) return;
+		const files = moved ? pending.files.filter((_, i) => moved.has(pending.rels[i])) : pending.files;
+		pending.client.didRenameFiles(files);
+		const edit = await pending.edit;
+		if (!files.length || !edit || isEmptyEdit(edit)) return;
+		const mode = updateImportsMode(this.#reader, pending.rels[0]);
+		if (mode === 'never') return;
+		if (mode === 'prompt') {
+			const yes = t('tools.lsp.updateImportsYes');
+			const always = t('tools.lsp.updateImportsAlways');
+			const never = t('tools.lsp.updateImportsNever');
+			const subject = renameSubject(files);
+			const message = files.length === 1 ? t('tools.lsp.updateImportsOne', { name: subject }) : t('tools.lsp.updateImportsMany', { count: subject });
+			const choice = await notifications.prompt('info', message, [yes, t('tools.lsp.updateImportsNo'), always, never], { source: 'TypeScript' });
+			if (choice === always || choice === never) await userSettings.set(UPDATE_IMPORTS_KEYS[0], choice === always ? 'always' : 'never', 'user').catch(() => {});
+			if (choice !== yes && choice !== always) return;
+		}
+		const r = await this.applyWorkspaceEdit(remapEditUris(edit, files), { refactoring: true });
+		if (!r.applied) statusBar.error(t('tools.lsp.updateImportsFailed', { error: r.failureReason ?? '' }));
+	}
+
+	/** The open document of `rel` and its server, when it is a TypeScript server's. */
+	#typescriptDoc(rel: string): { client: LanguageClient; uri: string } | null {
+		for (const doc of this.#docs.values()) {
+			if (doc.rel !== rel || !doc.uri) continue;
+			const s = this.#sessions.get(doc.sid);
+			return s?.info.key === 'typescript' && s.client.ready ? { client: s.client, uri: doc.uri } : null;
+		}
+		return null;
+	}
+
+	/** Whether `rel` is open in the TypeScript server (Go to Source Definition, Find File References). */
+	isTypeScriptDoc(rel: string | null): boolean {
+		return !!rel && this.#typescriptDoc(rel) !== null;
+	}
+
+	/** TypeScript: Go to Source Definition (TS 4.7+): the .js/.ts source behind a declaration file. */
+	async sourceDefinition(rel: string, line: number, column: number): Promise<{ rel: string; line: number; column: number }[] | null> {
+		const d = this.#typescriptDoc(rel);
+		if (!d) return null;
+		const result = await d.client.executeCommandResult<Location[] | Location>(SOURCE_DEFINITION_COMMAND, [d.uri, { line: line - 1, character: column - 1 }]);
+		return this.#workbenchLocations(result ? [result].flat() : []);
+	}
+
+	/** TypeScript: Find File References (TS 4.2+): every file that imports `rel`. */
+	async fileReferences(rel: string): Promise<{ rel: string; line: number; column: number }[] | null> {
+		const d = this.#typescriptDoc(rel);
+		const path = uriToPath(d?.uri ?? '');
+		if (!d || !path) return null;
+		const response = await d.client.executeCommandResult(TSSERVER_REQUEST_COMMAND, ['fileReferences', { file: path }]);
+		return this.#workbenchLocations(fileReferenceLocations(response, pathToUri));
+	}
+
+	#workbenchLocations(locations: Location[]): { rel: string; line: number; column: number }[] {
+		return locations.flatMap((l) => {
+			const rel = this.#keyOf(l.uri);
+			return rel === null ? [] : [{ rel, line: l.range.start.line + 1, column: l.range.start.character + 1 }];
+		});
 	}
 
 	/** Status bar entry for a Monaco language id, or null when it has no server. */
-	statusFor(languageId: string): { text: string; tooltip: string; state: ServerStatus['state'] } | null {
+	statusFor(languageId: string): { text: string; tooltip: string; state: ServerStatus['state']; /** Its Output channel. */ channel: string } | null {
 		const info = serverFor(languageId);
 		const s = info && this.status.get(info.key);
 		if (!info || !s) return null;
-		return { text: statusText(info, s), tooltip: s.message ?? statusText(info, s), state: s.state };
+		return { text: statusText(info, s), tooltip: s.message ?? statusText(info, s), state: s.state, channel: info.name };
 	}
 
-	crumbs(rel: string, line: number, column: number): Crumb[] {
-		const syms = this.symbols.get(rel);
-		return syms ? symbolPath(syms, toLspPosition({ lineNumber: line, column })) : [];
+	/** Workspace symbol sources besides the servers (Markdown headers: lib/markdown). */
+	#symbolSources: ((query: string) => Promise<WorkspaceSymbolItem[]>)[] = [];
+
+	addWorkspaceSymbolSource(source: (query: string) => Promise<WorkspaceSymbolItem[]>): () => void {
+		this.#symbolSources.push(source);
+		return () => (this.#symbolSources = this.#symbolSources.filter((s) => s !== source));
 	}
 
 	/** `#query` (VS Code's workspace symbol search): every running server that offers it, merged. */
-	async workspaceSymbols(query: string): Promise<{ name: string; kind: number; container?: string; rel: string; line: number; column: number }[]> {
-		const lists = await Promise.all(
-			[...this.#sessions.values()].map((s) => (s.client.ready ? s.client.workspaceSymbols(query).catch(() => null) : Promise.resolve(null)))
-		);
-		const out: { name: string; kind: number; container?: string; rel: string; line: number; column: number }[] = [];
+	async workspaceSymbols(query: string): Promise<WorkspaceSymbolItem[]> {
+		const [lists, extra] = await Promise.all([
+			Promise.all([...this.#sessions.values()].map((s) => (s.client.ready ? s.client.workspaceSymbols(query).catch(() => null) : Promise.resolve(null)))),
+			Promise.all(this.#symbolSources.map((s) => s(query).catch(() => [])))
+		]);
+		const out: WorkspaceSymbolItem[] = extra.flat();
 		for (const list of lists)
 			for (const sym of list ?? []) {
-				const rel = sym.location?.uri ? relOfUri(this.#rootPath, sym.location.uri) : null;
+				const rel = sym.location?.uri ? this.#keyOf(sym.location.uri) : null;
 				if (rel === null) continue;
 				const start = sym.location.range?.start ?? { line: 0, character: 0 };
 				out.push({ name: sym.name, kind: sym.kind, container: sym.containerName, rel, line: start.line + 1, column: start.character + 1 });
@@ -190,7 +381,7 @@ class Lsp {
 
 	/** Whether any running server answers `#` queries. */
 	hasWorkspaceSymbols(): boolean {
-		return [...this.#sessions.values()].some((s) => !!s.client.capabilities.workspaceSymbolProvider);
+		return this.#symbolSources.length > 0 || [...this.#sessions.values()].some((s) => !!s.client.capabilities.workspaceSymbolProvider);
 	}
 
 	/** Document symbols of an open file: the breadcrumbs' copy, or a fresh request when there is none yet. */
@@ -198,11 +389,83 @@ class Lsp {
 		const cached = this.symbols.get(rel);
 		if (cached?.length) return cached;
 		const doc = [...this.#docs.values()].find((d) => d.rel === rel);
-		const client = doc?.uri ? this.#sessions.get(doc.key)?.client : undefined;
+		const client = doc?.uri ? this.#sessions.get(doc.sid)?.client : undefined;
 		if (!doc || !client?.ready) return cached ?? [];
 		const syms = (await client.documentSymbols(doc.uri).catch(() => null)) ?? [];
 		if (this.#docs.has(doc.model)) this.symbols.set(rel, syms);
 		return syms;
+	}
+
+	// --- Call and type hierarchy (VS Code: references-view's Calls / Types views) ---------------
+
+	/** The hierarchy items at a position of an open file; null when its server has no such provider. */
+	async hierarchyRoots(kind: HierarchyKind, rel: string, line: number, column: number): Promise<{ key: string; items: CallHierarchyItem[] } | null> {
+		const doc = [...this.#docs.values()].find((d) => d.rel === rel);
+		const client = doc?.uri ? this.#sessions.get(doc.sid)?.client : undefined;
+		if (!doc || !client?.ready) return null;
+		const cap = kind === 'call' ? client.capabilities.callHierarchyProvider : client.capabilities.typeHierarchyProvider;
+		if (!cap) return null;
+		const at = toLspPosition({ lineNumber: line, column });
+		const items = kind === 'call' ? await client.prepareCallHierarchy(doc.uri, at) : await client.prepareTypeHierarchy(doc.uri, at);
+		return { key: doc.sid, items: items ?? [] };
+	}
+
+	/** One level of a hierarchy (`key`: the session hierarchyRoots named): each child with the ranges of the calls (empty for types). */
+	async hierarchyChildren(key: string, direction: HierarchyDirection, item: CallHierarchyItem): Promise<{ item: CallHierarchyItem; ranges: Range[] }[]> {
+		const client = this.#sessions.get(key)?.client;
+		if (!client?.ready) return [];
+		switch (direction) {
+			case 'incoming':
+				return ((await client.incomingCalls(item)) ?? []).map((c) => ({ item: c.from, ranges: c.fromRanges ?? [] }));
+			case 'outgoing':
+				return ((await client.outgoingCalls(item)) ?? []).map((c) => ({ item: c.to, ranges: c.fromRanges ?? [] }));
+			case 'supertypes':
+				return ((await client.supertypes(item)) ?? []).map((i) => ({ item: i, ranges: [] }));
+			case 'subtypes':
+				return ((await client.subtypes(item)) ?? []).map((i) => ({ item: i, ranges: [] }));
+		}
+	}
+
+	/** Workbench key of an LSP URI (relative in the first folder, absolute in another), or null outside the workspace. */
+	relOf(uri: string): string | null {
+		return this.#keyOf(uri);
+	}
+
+	#keyOf(uri: string): string | null {
+		return keyOfUri(this.#folders, uri);
+	}
+
+	/** The first root folder's path ('' before one is known). */
+	get #rootPath(): string {
+		return this.#folders[0]?.path ?? '';
+	}
+
+	/**
+	 * The window's root folders changed (workspace.svelte.ts). A new first folder is a new workspace
+	 * (Rust has stopped the servers, `reset` follows). Otherwise each running server is told with
+	 * `workspace/didChangeWorkspaceFolders`, or restarts when it cannot take the notification; a
+	 * server started for one folder stops with its folder. Problems are keyed again, since a file
+	 * of an added folder is now a workspace file.
+	 */
+	setFolders(folders: readonly WorkspaceFolder[]) {
+		const before = this.#folders;
+		this.#folders = [...folders];
+		this.#root = this.#folders.length ? Promise.resolve(this.#rootPath) : undefined;
+		if (before[0]?.path !== this.#folders[0]?.path) return;
+		const next = lspFolders(this.#folders);
+		const restart = new Set<string>();
+		for (const [sid, s] of [...this.#sessions]) {
+			if (s.folder !== null) {
+				if (!this.#folders.some((f) => f.path === s.folder)) void this.#stop(sid);
+				continue;
+			}
+			if (!s.client.ready) continue;
+			if (s.client.takesFolderChanges) s.client.changeWorkspaceFolders(next);
+			else if (s.client.takesFolders && folderListChanged(lspFolders(before), next)) restart.add(s.info.key);
+		}
+		for (const key of restart) void this.#restartKey(key);
+		for (const uri of this.#origin.keys()) this.#applyMarkers(uri);
+		this.#queueRefresh();
 	}
 
 	hasServer(languageId: string) {
@@ -215,8 +478,17 @@ class Lsp {
 		if (info) await this.#restartKey(info.key);
 	}
 
+	/** Workspace Trust changed: every server (and every missing one) looks for its binary again,
+	 * since a folder's node_modules counts only in a trusted window (Rust workspace_trust.rs). */
+	async restartAll() {
+		const keys = new Set([...this.#sessions.values()].map((s) => s.info.key));
+		for (const s of this.missing()) keys.add(s.key);
+		await Promise.all([...keys].map((k) => this.#restartKey(k)));
+	}
+
+	/** Restarts every session of server `key` (the shared one and the per-folder ones). */
 	async #restartKey(key: string) {
-		await this.#stop(key);
+		await Promise.all([...this.#sessions.values()].filter((s) => s.info.key === key).map((s) => this.#stop(s.sid)));
 		this.status.delete(key);
 		// Providers are registered again once the new session reports its capabilities.
 		for (const doc of this.#docs.values()) if (doc.key === key) void this.#open(doc);
@@ -317,12 +589,15 @@ class Lsp {
 
 	/** Open Folder: Rust has already killed the old root's servers; forget them and the cached root. */
 	reset() {
-		for (const key of [...this.#sessions.keys()]) this.#forget(key);
+		for (const sid of [...this.#sessions.keys()]) this.#forget(sid);
 		this.#root = undefined;
-		this.#rootPath = '';
+		this.#folders = [];
 		for (const [rel, model] of [...this.#previews]) this.#dropPreview(rel, model);
 		this.status.clear();
 		this.symbols.clear();
+		// Task problems belong to the folder too.
+		this.#owned.clear();
+		this.#queueRefresh();
 	}
 
 	// --- Sessions --------------------------------------------------------------------------------
@@ -332,8 +607,58 @@ class Lsp {
 		this.#monaco = monaco;
 		// Back from installing a server in another app (or a terminal outside Kingu).
 		window.addEventListener('focus', () => this.#retryMissing());
+		// VS Code settings sections follow edits live: pushed again when they change; a server that
+		// reads them only at startup (typescript-language-server's tsserver preferences) restarts.
+		$effect.root(() => {
+			// `<language>.trace.server`: the tracer follows the setting, and the server is told ($/setTrace).
+			$effect(() => {
+				const next = SERVERS.map((info) => ({ key: info.key, trace: this.#trace(info) }));
+				untrack(() => {
+					for (const n of next)
+						for (const s of this.#sessions.values()) {
+							if (s.info.key !== n.key || s.trace === n.trace) continue;
+							s.trace = n.trace;
+							this.#setTracer(s);
+							if (s.client.ready) s.client.rpc.notify('$/setTrace', { value: n.trace });
+						}
+				});
+			});
+			// html.customData / css.customData: the servers are told again when the lists change.
+			$effect(() => {
+				const next = Object.keys(CUSTOM_DATA_NOTIFICATION).map((key) => [key, JSON.stringify(this.#customData(key))] as const);
+				untrack(() => {
+					for (const [key, uris] of next)
+						for (const s of this.#sessions.values()) {
+							// A session not told yet hears it once it has started (#sendCustomData).
+							if (s.info.key !== key || s.customData === undefined || s.customData === uris) continue;
+							s.customData = uris;
+							s.client.rpc.notify(CUSTOM_DATA_NOTIFICATION[key], JSON.parse(uris));
+						}
+				});
+			});
+			$effect(() => {
+				// For the shared servers and for each other root folder's settings (a per-folder server).
+				const folders = [null, ...Object.keys(userSettings.folders)];
+				const next = new Map(
+					SERVERS.flatMap((info) => folders.map((folder) => [sessionId(info.key, folder), { pushed: JSON.stringify(this.#settingsFor(info, folder)), init: JSON.stringify(this.#initOptions(info, folder) ?? null) }] as const))
+				);
+				untrack(() => {
+					const restart = new Set<string>();
+					for (const s of this.#sessions.values()) {
+						const n = next.get(s.sid) ?? next.get(s.info.key);
+						if (!n || !s.client.ready) continue;
+						if (n.init !== s.init) restart.add(s.info.key);
+						else if (n.pushed !== s.pushed) {
+							s.pushed = n.pushed;
+							s.client.didChangeConfiguration(JSON.parse(n.pushed));
+						}
+					}
+					for (const key of restart) void this.#restartKey(key);
+				});
+			});
+		});
 		// Go to Definition into another file: open it as a tab and put the cursor on the target.
-		monaco.editor.registerCommand(CODE_ACTION_COMMAND, (_accessor, key: string, item: Command | CodeAction) => void this.#runCodeAction(key, item));
+		monaco.editor.registerCommand(CODE_ACTION_COMMAND, (_accessor, sid: string, item: Command | CodeAction) => void this.#runCodeAction(sid, item));
 		monaco.editor.registerEditorOpener({
 			openCodeEditor: (_source, resource, selection) => {
 				const at = selection && 'startLineNumber' in selection ? { line: selection.startLineNumber, column: selection.startColumn } : selection ? { line: selection.lineNumber, column: selection.column } : { line: 1, column: 1 };
@@ -342,84 +667,111 @@ class Lsp {
 					return true;
 				}
 				if (resource.scheme !== 'file') return false;
-				editors.openFromCodeNavigation(resource.path.replace(/^\//, ''), at.line, at.column);
+				editors.openFromCodeNavigation(keyOfModelPath(resource.path, this.#folders), at.line, at.column);
 				return true;
 			}
 		});
 	}
 
 	async #rootDir(): Promise<string> {
-		this.#root ??= invoke<{ workspace: string }>('app_info').then((i) => (this.#rootPath = i.workspace));
+		// Before workspace.svelte.ts has set the folders (or with an older Rust side): the first folder only.
+		this.#root ??= invoke<{ workspace: string }>('app_info').then((i) => {
+			if (!this.#folders.length && i.workspace) this.#folders = [{ path: i.workspace, name: i.workspace.split('/').pop() ?? i.workspace }];
+			return this.#rootPath;
+		});
 		return this.#root;
 	}
 
 	async #open(doc: Doc) {
 		const info = SERVERS.find((s) => s.key === doc.key);
 		if (!info || isDisabled(info, parseDisabled(userSettings.get('kingu.lsp.disabled')))) return;
-		const session = await this.#session(doc.key);
-		if (!session || !(await session.ready) || !this.#docs.has(doc.model)) return;
+		const session = await this.#sessionFor(info, doc.rel);
+		if (!(await session.ready) || !this.#docs.has(doc.model)) return;
+		doc.sid = session.sid;
 		doc.uri = uriOfRel(this.#rootPath, doc.rel);
 		session.client.didOpen(doc.uri, lspLanguageId(doc.model.getLanguageId(), doc.rel), doc.model.getValue());
 		this.#applyMarkers(doc.uri);
 		this.#scheduleSymbols(doc, 0);
 	}
 
-	async #session(key: string): Promise<Session | null> {
-		const existing = this.#sessions.get(key);
+	/** The session for a file: the shared server, or (when it cannot take several folders) the
+	 * server of the file's root folder, started on first use (folders.ts `sessionFolder`). */
+	async #sessionFor(info: ServerInfo, rel: string): Promise<Session> {
+		await this.#rootDir();
+		const shared = await this.#session(info, null);
+		if (!(await shared.ready)) return shared;
+		const folder = sessionFolder(folderPathOf(rel, this.#folders), this.#folders, shared.client.takesFolders, info.oneServer);
+		return folder ? this.#session(info, folder) : shared;
+	}
+
+	async #session(info: ServerInfo, folder: string | null): Promise<Session> {
+		const key = info.key;
+		const sid = sessionId(key, folder);
+		const existing = this.#sessions.get(sid);
 		if (existing) return existing;
-		const info = SERVERS.find((s) => s.key === key)!;
-		const root = await this.#rootDir();
-		const again = this.#sessions.get(key);
+		const root = folder ?? (await this.#rootDir());
+		const again = this.#sessions.get(sid);
 		if (again) return again;
+		const own = folder ? this.#folders.filter((f) => f.path === folder) : this.#folders;
 
 		let id: number | null = null;
 		let chain: Promise<unknown> = Promise.resolve();
 		// Sends are chained so the server sees them in order (separate IPC calls may not be).
 		const write = (json: string) => {
-			chain = chain.then(() => (id === null ? undefined : invoke('lsp_send', { id, message: json }))).catch((e) => this.#append(`${info.name}: send failed: ${e}`));
+			chain = chain.then(() => (id === null ? undefined : invoke('lsp_send', { id, message: json }))).catch((e) => this.#append(`${info.name}: send failed: ${e}`, info.name));
 		};
 		const client = new LanguageClient(info.name, write, {
 			diagnostics: (uri, kind, items) => {
-				this.#origin.set(uri, key);
+				this.#origin.set(uri, sid);
 				this.#setDiagnostics(uri, kind, items);
 			},
 			status: (s) => this.#setStatus(info, s),
-			log: (line) => this.#append(line),
+			log: (line) => this.#append(line, info.name),
 			// MessageType Error 1, Warning 2, Info 3 are notifications (VS Code); Log 4 only goes to the Output log.
 			showMessage: (type, message) => {
 				if (type <= 3) notifications.notify({ severity: MESSAGE_SEVERITY[type], message, source: info.name });
 			},
 			showMessageRequest: async (type, message, actions) => (await notifications.prompt(MESSAGE_SEVERITY[type] ?? 'info', message, actions, { source: info.name })) ?? null,
 			applyEdit: (edit) => this.applyWorkspaceEdit(edit),
-			configuration: (section) => configurationValue(this.#settingsFor(info), section)
+			// Per resource, as VS Code's getConfiguration(section, scopeUri): a file of another root
+			// folder gets that folder's settings.
+			configuration: (section, scopeUri) => configurationValue(this.#settingsFor(info, folderOfUri(scopeUri, this.#folders)?.path ?? folder), section),
+			refresh: (kind) => {
+				for (const r of this.#refresh.get(key) ?? []) if (r.kind === kind) r.run();
+			}
 		});
 		const channel = new Channel<LspEvent>();
 		channel.onmessage = (ev) => {
 			if (ev.type === 'message') client.rpc.handle(ev.json);
-			else if (ev.type === 'stderr') this.#append(ev.line);
+			else if (ev.type === 'stderr') this.#append(ev.line, info.name);
 			else {
-				this.#append(`${info.name} exited (code ${ev.code})`);
+				this.#append(`${info.name} exited (code ${ev.code})`, info.name);
 				client.exited(ev.code);
-				if (this.#sessions.get(key)?.client === client) this.#forget(key);
+				if (this.#sessions.get(sid)?.client === client) this.#forget(sid);
 			}
 		};
-		const session: Session = { info, client, id: null, ready: Promise.resolve(false) };
-		this.#sessions.set(key, session);
+		const init = this.#initOptions(info, folder);
+		const session: Session = { sid, folder, info, client, id: null, ready: Promise.resolve(false), pushed: '', init: JSON.stringify(init ?? null), trace: this.#trace(info) };
+		this.#setTracer(session);
+		this.#sessions.set(sid, session);
 		this.#setStatus(info, { state: 'starting' });
 		session.ready = (async () => {
 			try {
-				id = await invoke<number>('lsp_start', { language: info.languages[0], onEvent: channel });
+				id = await invoke<number>('lsp_start', { language: info.languages[0], folder: folder ?? undefined, onEvent: channel });
 				session.id = id;
-				const caps = await client.initialize(uriOfRel(root, '').replace(/\/$/, ''), info.initializationOptions);
-				const pushed = this.#settingsFor(info);
-				if (Object.keys(pushed).length) client.rpc.notify('workspace/didChangeConfiguration', { settings: pushed });
-				clientLog('info', `${info.name} initialized`);
-				if (this.#sessions.get(key) === session) this.#registerProviders(info, caps);
+				const caps = await client.initialize(uriOfRel(root, '').replace(/\/$/, ''), init, session.trace, lspFolders(own));
+				const pushed = this.#settingsFor(info, folder);
+				session.pushed = JSON.stringify(pushed);
+				if (Object.keys(pushed).length) client.didChangeConfiguration(pushed);
+				clientLog('info', `${info.name} initialized${folder ? ` for ${folder}` : ''}`);
+				// Monaco's providers come from the shared server; they find each model's own session.
+				if (this.#sessions.get(sid) === session && !folder) this.#registerProviders(info, caps);
+				this.#sendCustomData(session);
 				return true;
 			} catch (e) {
 				const message = String(e);
-				this.#setStatus(info, { state: message.includes(NOT_INSTALLED) ? 'not-installed' : 'error', message });
-				this.#append(message);
+				this.#setStatus(info, { state: isRustError(message, 'notInstalled') ? 'not-installed' : 'error', message });
+				this.#append(message, info.name);
 				clientLog('error', `language server ${key}: ${message}`);
 				return false;
 			}
@@ -427,10 +779,10 @@ class Lsp {
 		return session;
 	}
 
-	async #stop(key: string) {
-		const s = this.#sessions.get(key);
+	async #stop(sid: string) {
+		const s = this.#sessions.get(sid);
 		if (!s) return;
-		this.#forget(key);
+		this.#forget(sid);
 		try {
 			await Promise.race([s.client.shutdown(), new Promise((r) => setTimeout(r, 2000))]);
 		} catch {
@@ -440,26 +792,35 @@ class Lsp {
 	}
 
 	/** Drops a session and everything it published (VS Code clears a stopped server's problems). */
-	#forget(key: string) {
-		this.#sessions.delete(key);
-		this.#providers.get(key)?.forEach((d) => d.dispose());
-		this.#providers.delete(key);
-		for (const uri of this.#index.clear((uri) => this.#origin.get(uri) === key)) {
+	#forget(sid: string) {
+		const { key, folder } = parseSessionId(sid);
+		this.#sessions.delete(sid);
+		if (folder === null) {
+			this.#providers.get(key)?.forEach((d) => d.dispose());
+			this.#providers.delete(key);
+			this.#refresh.delete(key);
+		}
+		for (const uri of this.#index.clear((uri) => this.#origin.get(uri) === sid)) {
 			this.#origin.delete(uri);
 			this.#applyMarkers(uri);
 		}
-		for (const d of this.#docs.values()) if (d.key === key) d.uri = '';
+		for (const d of this.#docs.values())
+			if (d.sid === sid) {
+				d.uri = '';
+				d.sid = '';
+			}
 		this.#queueRefresh();
 	}
 
 	#setStatus(info: ServerInfo, s: ServerStatus) {
 		this.status.set(info.key, s);
-		if (info.yieldsBuiltin && s.state === 'ready') this.#yieldBuiltin(info.key);
+		if (info.yieldsBuiltin && s.state === 'ready') this.#yieldBuiltin(info.key, this.#sessions.get(info.key)?.client.capabilities ?? {});
 	}
 
 	/** Monaco's bundled TypeScript/JSON/CSS/HTML workers would answer hovers, completions and
-	 * diagnostics a second time. Colors, folding and selection ranges stay (no LSP equivalent here). */
-	#yieldBuiltin(key: string) {
+	 * diagnostics a second time. Colors, folding, selection ranges, links and inlay hints give way
+	 * only when the server offers them. */
+	#yieldBuiltin(key: string, caps: ServerCapabilities) {
 		const m = this.#monaco as unknown as Record<string, Record<string, ModeDefaults | undefined> | undefined> | undefined;
 		const defaults: Record<string, (ModeDefaults | undefined)[]> = {
 			typescript: [m?.typescript?.typescriptDefaults, m?.typescript?.javascriptDefaults],
@@ -483,23 +844,71 @@ class Lsp {
 				...(key === 'typescript' ? {} : { documentFormattingEdits: false, links: false }),
 				documentRangeFormattingEdits: false,
 				onTypeFormattingEdits: false,
-				codeActions: false
+				codeActions: false,
+				...(caps.colorProvider ? { colors: false } : {}),
+				...(caps.foldingRangeProvider ? { foldingRanges: false } : {}),
+				...(caps.selectionRangeProvider ? { selectionRanges: false } : {}),
+				...(caps.documentLinkProvider ? { links: false } : {}),
+				...(caps.inlayHintProvider ? { inlayHints: false } : {})
 			});
 		}
 	}
 
-	/** `workspace/configuration` answers and pushed settings: the table's, plus Kingu's
-	 * settings.json schema for the JSON server (Monaco's JSON worker has it too), then `settings`. */
-	#settingsFor(info: ServerInfo): Record<string, unknown> {
-		const base: Record<string, unknown> = { ...info.settings };
-		if (info.key === 'json') {
-			const json = base.json as { schemas: unknown[] };
-			base.json = { ...json, schemas: [...json.schemas, { fileMatch: ['settings.json', '**/settings.json'], schema: jsonSchema(settingSchemas.all) }] };
-		}
+	/** `workspace/configuration` answers and pushed settings: the table's, plus Kingu's own
+	 * schemas for the JSON server (settings, keybindings, launch, tasks, `.code-workspace`,
+	 * extensions: what Monaco's JSON worker had before the server took over), then `settings`.
+	 * `folder`: a root folder whose own settings apply (a file of it, or its own server; its
+	 * `json.schemas` come with them). */
+	#settingsFor(info: ServerInfo, folder: string | null = null): Record<string, unknown> {
+		const base: Record<string, unknown> = { ...info.settings, ...serverSettings(info.key, this.#readerFor(folder), uriOfRel(folder ?? this.#rootPath, '').replace(/\/$/, '')) };
+		if (info.key === 'json') base.json = withKinguSchemas(base.json, kinguJsonSchemas(jsonSchema(settingSchemas.all), commands.all.map((c) => c.id)));
 		return { ...base, ...this.settings[info.key] };
 	}
 
-	#append(line: string) {
+	/** The `initialize` options: the table's, plus tsserver preferences for typescript-language-server. */
+	#initOptions(info: ServerInfo, folder: string | null = null): unknown {
+		if (info.key !== 'typescript') return info.initializationOptions;
+		const reader = this.#readerFor(folder);
+		// Select TypeScript Version: the workspace's tsserver instead of the server's own.
+		const tsserver = chosenTsserver(reader, this.tsVersion, folder ?? this.#rootPath);
+		return { ...(info.initializationOptions as object | undefined), preferences: typescriptPreferences(reader), ...(tsserver ? { tsserver: { path: tsserver } } : {}) };
+	}
+
+	/** VS Code settings as serverSettings.ts reads them. */
+	#reader: SettingsReader = {
+		get: (id) => userSettings.get(id),
+		isSet: (id) => (userSettings.resolved.get(id)?.source ?? 'default') !== 'default',
+		layer: (id, scope) => (scope === 'user' ? userSettings.inspect(id, 'user') : (userSettings.inspect(id, 'repo') ?? userSettings.inspect(id, 'workspace')))
+	};
+
+	/** The settings in effect for files of root folder `folder` (the first one, or none: `#reader`). */
+	#readerFor(folder: string | null): SettingsReader {
+		if (!folder || !(folder in userSettings.folders)) return this.#reader;
+		const resolved = userSettings.resolvedIn(folder);
+		return {
+			get: <T>(id: string) => (resolved.get(id)?.value ?? settingSchemas.byId.get(id)?.default) as T,
+			isSet: (id) => (resolved.get(id)?.source ?? 'default') !== 'default',
+			layer: (id, scope) => (scope === 'user' ? userSettings.inspect(id, 'user') : (userSettings.inspectFolder(id, folder) ?? userSettings.workspaceFile[id]))
+		};
+	}
+
+	/** The server's `<language>.trace.server` (off for a server whose extension has none). An
+	 * extension's own key Kingu does not register (rust-analyzer.trace.server) is read as written. */
+	#trace(info: ServerInfo): TraceValue {
+		const id = TRACE_SETTINGS[info.key];
+		if (!id) return 'off';
+		return traceValue(userSettings.get(id) ?? userSettings.inspect(id, 'repo') ?? userSettings.inspect(id, 'workspace') ?? userSettings.inspect(id, 'user'));
+	}
+
+	/** Traced messages go to the server's Output channel (vscode-languageclient's default channel). */
+	#setTracer(s: Session) {
+		const verbose = s.trace === 'verbose';
+		s.client.rpc.tracer = s.trace === 'off' ? null : (ev) => this.#append(formatTrace(ev, verbose, new Date()).join('\n'), s.info.name);
+	}
+
+	/** A line for the Output panel: the server's own channel (by its name), else "Language Servers". */
+	#append(line: string, channel = LANGUAGE_SERVERS_CHANNEL) {
+		output.append(channel, line);
 		this.#pendingLog.push(line);
 		if (this.#pendingLog.length > 1) return;
 		queueMicrotask(() => {
@@ -518,9 +927,9 @@ class Lsp {
 
 	#applyMarkers(uri: string) {
 		const monaco = this.#monaco;
-		const rel = relOfUri(this.#rootPath, uri);
+		const rel = this.#keyOf(uri);
 		if (!monaco || rel === null) return;
-		const model = monaco.editor.getModel(monaco.Uri.file('/' + rel));
+		const model = monaco.editor.getModel(monaco.Uri.file(modelPathOf(rel)));
 		if (model) monaco.editor.setModelMarkers(model, MARKER_OWNER, this.#index.get(uri).map(toMarker));
 	}
 
@@ -529,8 +938,55 @@ class Lsp {
 		this.#refreshQueued = true;
 		queueMicrotask(() => {
 			this.#refreshQueued = false;
-			this.problems = this.#index.files(this.#rootPath);
+			this.problems = this.#index.files(this.#folders, this.#owned);
 		});
+	}
+
+	// --- Problems of other owners (tasks) ---------------------------------------------------------
+
+	#markerMonaco: MonacoApi | undefined;
+
+	/** Replaces `owner`'s problems in the file at absolute `path` (VS Code: IMarkerService.changeOne). */
+	setOwnedDiagnostics(owner: string, path: string, items: Diagnostic[]) {
+		const uri = pathToUri(path);
+		this.#owned.set(owner, uri, items);
+		const rel = this.#keyOf(uri);
+		if (rel !== null) this.#applyOwnedMarkers(rel, owner);
+		this.#queueRefresh();
+	}
+
+	/** Absolute paths holding problems of `owner`. */
+	ownedPaths(owner: string): string[] {
+		return this.#owned.uris(owner).flatMap((u) => uriToPath(u) ?? []);
+	}
+
+	/** Error problems of any owner and server (debug.onTaskErrors counts them). */
+	errorCount(): number {
+		return this.counts.errors;
+	}
+
+	/** The file at absolute `path` has an editor model (applyTo openDocuments / closedDocuments). */
+	isOpen(path: string): boolean {
+		const monaco = this.#markerMonaco;
+		const rel = this.#keyOf(pathToUri(path));
+		return !!monaco && rel !== null && !!monaco.editor.getModel(monaco.Uri.file(modelPathOf(rel)));
+	}
+
+	/** Sets the task folder root when no language server ran yet (problem paths are made relative to it). */
+	setRoot(root: string) {
+		if (!this.#rootPath) {
+			this.#folders = [{ path: root, name: root.split('/').pop() ?? root }];
+			this.#root = Promise.resolve(root);
+		}
+	}
+
+	#applyOwnedMarkers(rel: string, only?: string) {
+		const monaco = this.#markerMonaco;
+		if (!monaco || !this.#rootPath) return;
+		const model = monaco.editor.getModel(monaco.Uri.file(modelPathOf(rel)));
+		if (!model) return;
+		const uri = uriOfRel(this.#rootPath, rel);
+		for (const owner of only !== undefined ? [only] : this.#owned.owners()) monaco.editor.setModelMarkers(model, `task:${owner}`, this.#owned.forOwner(owner, uri).map(toMarker));
 	}
 
 	// --- Symbols (breadcrumbs) -------------------------------------------------------------------
@@ -540,7 +996,7 @@ class Lsp {
 		this.#symbolTimers.set(
 			doc.rel,
 			setTimeout(async () => {
-				const client = this.#sessions.get(doc.key)?.client;
+				const client = this.#sessions.get(doc.sid)?.client;
 				if (!doc.uri || !client?.ready) return;
 				try {
 					const syms = await client.documentSymbols(doc.uri);
@@ -554,17 +1010,17 @@ class Lsp {
 
 	// --- Monaco providers ------------------------------------------------------------------------
 
-	#lookup(model: Monaco.editor.ITextModel): { client: LanguageClient; uri: string } | null {
+	#lookup(model: Monaco.editor.ITextModel): { client: LanguageClient; uri: string; sid: string } | null {
 		const doc = this.#docs.get(model);
-		const client = doc?.uri ? this.#sessions.get(doc.key)?.client : undefined;
-		return doc && client?.ready ? { client, uri: doc.uri } : null;
+		const client = doc?.uri ? this.#sessions.get(doc.sid)?.client : undefined;
+		return doc && client?.ready ? { client, uri: doc.uri, sid: doc.sid } : null;
 	}
 
 	/** Monaco location of an LSP URI: a workspace file, or an external one Monaco cannot open. */
 	#monacoUri(uri: string): Monaco.Uri {
 		const monaco = this.#monaco!;
-		const rel = relOfUri(this.#rootPath, uri);
-		return rel !== null ? monaco.Uri.file('/' + rel) : monaco.Uri.from({ scheme: EXTERNAL_SCHEME, path: uriToPath(uri) ?? uri });
+		const rel = this.#keyOf(uri);
+		return rel !== null ? monaco.Uri.file(modelPathOf(rel)) : monaco.Uri.from({ scheme: EXTERNAL_SCHEME, path: uriToPath(uri) ?? uri });
 	}
 
 	/** Peek widgets need a model for every file they show; create read-only previews for files
@@ -573,13 +1029,13 @@ class Lsp {
 		const monaco = this.#monaco!;
 		const want = new Set(rels);
 		if (dropOthers) for (const [rel, model] of this.#previews) if (!want.has(rel)) this.#dropPreview(rel, model);
-		const missing = [...want].filter((rel) => !monaco.editor.getModel(monaco.Uri.file('/' + rel)));
+		const missing = [...want].filter((rel) => !monaco.editor.getModel(monaco.Uri.file(modelPathOf(rel))));
 		if (!missing.length) return;
 		const { languageFor } = await import('#lib/editor/monaco.ts');
 		await Promise.all(
 			missing.map(async (rel) => {
 				const text = await invoke<string>('read_workspace_file', { rel }).catch(() => null);
-				const uri = monaco.Uri.file('/' + rel);
+				const uri = monaco.Uri.file(modelPathOf(rel));
 				if (text === null || monaco.editor.getModel(uri)) return;
 				this.#previews.set(rel, monaco.editor.createModel(text, languageFor(rel), uri));
 			})
@@ -591,6 +1047,12 @@ class Lsp {
 		if (model && !model.isDisposed()) model.dispose();
 	}
 
+	/** Models for workspace files with no tab, so a definition or references peek from another
+	 * provider (lib/markdown) can show them. */
+	ensurePreviewModels(rels: string[], opts: { dropOthers?: boolean } = {}): Promise<void> {
+		return this.#ensurePreviews(rels, opts);
+	}
+
 	/** EditorHost takes over a preview model when its file is opened in a tab. */
 	adoptPreview(rel: string): Monaco.editor.ITextModel | null {
 		const model = this.#previews.get(rel);
@@ -600,17 +1062,31 @@ class Lsp {
 
 	/** Applies a WorkspaceEdit (rename, code actions, `workspace/applyEdit`): files open in an editor
 	 * are edited in their model (undoable, left dirty), others are rewritten on disk through the
-	 * workspace-guarded Rust commands. Nothing outside the workspace is touched. */
-	async applyWorkspaceEdit(edit: WorkspaceEdit): Promise<ApplyResult> {
+	 * workspace-guarded Rust commands. Nothing outside the workspace is touched.
+	 * `refactoring` (rename, a chosen code action): with `files.refactoring.autoSave` on, an edit
+	 * across several files also saves the open editors it changed (VS Code's respectAutoSaveConfig).
+	 * An edit goes through the Refactor Preview first when `preview` asks for it or one of its
+	 * change annotations needs confirmation; only the edits left checked there are applied. */
+	async applyWorkspaceEdit(edit: WorkspaceEdit, opts: { refactoring?: boolean; preview?: boolean; label?: string } = {}): Promise<ApplyResult> {
+		if (needsPreview(edit, opts)) {
+			const picked = await refactorPreview.request(edit, opts.label ?? '', {
+				read: (uri) => this.#readUri(uri),
+				keyOf: (uri) => this.#keyOf(uri)
+			});
+			if (!picked) return { applied: false, cancelled: true, uris: [], edits: 0 };
+			edit = picked;
+		}
 		const written: string[] = [];
+		const openEdited: string[] = [];
 		const result = await applyWorkspaceEdit(edit, (uri) => {
-			const rel = relOfUri(this.#rootPath, uri);
+			const rel = this.#keyOf(uri);
 			if (rel === null) return `${uriToPath(uri) ?? uri} is outside the workspace`;
 			const model = editors.textModel(rel);
 			if (model) {
+				openEdited.push(rel);
 				const doc = this.#docs.get(model);
 				return {
-					version: doc?.uri === uri ? this.#sessions.get(doc.key)?.client.versionOf(uri) : undefined,
+					version: doc?.uri === uri ? this.#sessions.get(doc.sid)?.client.versionOf(uri) : undefined,
 					read: () => model.getValue(),
 					commit: (text, edits) => {
 						const ops = edits ? toMonacoTextEdits(edits) : [{ range: model.getFullModelRange(), text }];
@@ -631,7 +1107,20 @@ class Lsp {
 		});
 		if (written.length) for (const s of this.#sessions.values()) s.client.didChangeWatchedFiles(written);
 		if (!result.applied) this.#append(`workspace edit not applied: ${result.failureReason}`);
+		else if (opts.refactoring && result.uris.length > 1 && userSettings.get<boolean>('files.refactoring.autoSave') && openEdited.length) {
+			// Imported here: editorModels imports this module.
+			const { saveFile } = await import('#lib/workbench/editorModels.ts');
+			for (const rel of new Set(openEdited)) if (editors.isDirty(rel)) await saveFile(rel, 'explicit').catch((e) => this.#append(`save ${rel}: ${e}`));
+		}
 		return result;
+	}
+
+	/** A document's text as an edit would see it: its open model, else the file on disk. */
+	async #readUri(uri: string): Promise<string> {
+		const rel = this.#keyOf(uri);
+		if (rel === null) throw new Error(`${uriToPath(uri) ?? uri} is outside the workspace`);
+		const model = editors.textModel(rel);
+		return model ? model.getValue() : invoke<string>('read_workspace_file', { rel });
 	}
 
 	/** `editor.codeActionsOnSave` (VS Code's CodeActionOnSaveParticipant): code actions of each kind
@@ -649,20 +1138,22 @@ class Lsp {
 				const k = typeof item.command === 'string' ? undefined : (item as CodeAction).kind;
 				if (k && k !== kind && !k.startsWith(`${kind}.`)) continue;
 				if ((item as CodeAction).disabled) continue;
-				await this.#runCodeAction(doc.key, item);
+				await this.#runCodeAction(d.sid, item);
 			}
 		}
 	}
 
-	async #runCodeAction(key: string, item: Command | CodeAction) {
-		const client = this.#sessions.get(key)?.client;
+	/** `sid`: the session that offered `item`. */
+	async #runCodeAction(sid: string, item: Command | CodeAction) {
+		const client = this.#sessions.get(sid)?.client;
 		if (!client?.ready) return;
 		try {
 			if (typeof item.command === 'string') return void (await this.#execute(client, item as Command));
 			let action = item as CodeAction;
 			if (!action.edit && client.canResolveCodeAction) action = (await client.resolveCodeAction(action)) ?? action;
 			if (action.edit) {
-				const r = await this.applyWorkspaceEdit(action.edit);
+				const r = await this.applyWorkspaceEdit(action.edit, { refactoring: true, label: action.title });
+				if (r.cancelled) return;
 				if (!r.applied) return statusBar.error(`${action.title}: ${r.failureReason}`);
 			}
 			if (action.command) await this.#execute(client, action.command);
@@ -672,6 +1163,13 @@ class Lsp {
 	}
 
 	async #execute(client: LanguageClient, command: Command) {
+		// Client-side commands a server may hand out (rust-analyzer's code lenses).
+		const target = command.command === 'rust-analyzer.gotoLocation' ? (command.arguments?.[0] as Location | undefined) : undefined;
+		if (target?.uri && target.range) {
+			const rel = this.#keyOf(target.uri);
+			if (rel === null) return notifications.warn(t('tools.lsp.outsideWorkspace', { path: uriToPath(target.uri) ?? target.uri }));
+			return editors.openFromCodeNavigation(rel, target.range.start.line + 1, target.range.start.character + 1);
+		}
 		if (!(await client.executeCommand(command))) statusBar.flash(t('tools.lsp.commandUnsupported', { command: command.title || command.command }));
 	}
 
@@ -739,7 +1237,7 @@ class Lsp {
 							const d = this.#lookup(model);
 							const result = d && (await d.client.definition(d.uri, toLspPosition(position), token).catch(() => null));
 							const targets = toTargets(result);
-							await this.#ensurePreviews(targets.map((t) => relOfUri(this.#rootPath, t.uri)).filter((r) => r !== null));
+							await this.#ensurePreviews(targets.map((t) => this.#keyOf(t.uri)).filter((r) => r !== null));
 							return targets.map((t) => ({ uri: this.#monacoUri(t.uri), range: toMonacoRange(t.range) }));
 						}
 					})
@@ -752,9 +1250,9 @@ class Lsp {
 							const d = this.#lookup(model);
 							const result = d && (await d.client.references(d.uri, toLspPosition(position), context.includeDeclaration, token).catch(() => null));
 							// The peek can only show workspace files (it needs a model for each).
-							const inside = (result ?? []).filter((l) => relOfUri(this.#rootPath, l.uri) !== null);
+							const inside = (result ?? []).filter((l) => this.#keyOf(l.uri) !== null);
 							await this.#ensurePreviews(
-								inside.map((l) => relOfUri(this.#rootPath, l.uri)!),
+								inside.map((l) => this.#keyOf(l.uri)!),
 								{ dropOthers: true }
 							);
 							return inside.map((l) => ({ uri: this.#monacoUri(l.uri), range: toMonacoRange(l.range) }));
@@ -823,6 +1321,8 @@ class Lsp {
 							return toRenameLocation(prepared, fallback, (r) => model.getValueInRange(r)) ?? reject(t('tools.lsp.cantRename'));
 						},
 						provideRenameEdits: async (model, position, newName, token) => {
+							// ⇧Enter in the rename input: show the Refactor Preview first.
+							const preview = takeRenamePreview();
 							const d = this.#lookup(model);
 							if (!d) return { edits: [], rejectReason: t('tools.lsp.notReady', { name: info.name }) };
 							let edit: WorkspaceEdit | null;
@@ -834,7 +1334,8 @@ class Lsp {
 							if (!edit) return { edits: [], rejectReason: t('tools.lsp.noResult') };
 							// Applied here rather than by Monaco, whose standalone bulk edit only reaches
 							// open models; files without a tab are rewritten on disk.
-							const r = await this.applyWorkspaceEdit(edit);
+							const r = await this.applyWorkspaceEdit(edit, { refactoring: true, preview, label: t('refactorPreview.renameLabel', { name: newName }) });
+							if (r.cancelled) return { edits: [] };
 							if (!r.applied) return { edits: [], rejectReason: t('tools.lsp.renameFailed', { reason: r.failureReason ?? '' }) };
 							statusBar.flash(t('tools.lsp.renamed', { name: newName, edits: r.edits, files: r.uris.length }));
 							return { edits: [] };
@@ -856,7 +1357,7 @@ class Lsp {
 								const items = await d.client.codeActions(d.uri, toLspRange(range), lspContext, token).catch(() => null);
 								if (!items?.length) return none;
 								const actions = items.map((item): Monaco.languages.CodeAction => {
-									const run = { id: CODE_ACTION_COMMAND, title: item.title, arguments: [info.key, item] };
+									const run = { id: CODE_ACTION_COMMAND, title: item.title, arguments: [d.sid, item] };
 									if (typeof item.command === 'string') return { title: item.title, command: run };
 									const a = item as CodeAction;
 									return {
@@ -900,7 +1401,28 @@ class Lsp {
 					})
 				);
 		}
+
+		const refresh: { kind: RefreshKind; run: () => void }[] = [];
+		this.#refresh.set(info.key, refresh);
+		registerFeatureProviders({
+			monaco,
+			key: info.key,
+			languages: info.languages,
+			caps,
+			lookup: (model) => this.#lookup(model),
+			relOf: (uri) => this.#keyOf(uri),
+			monacoUri: (uri) => this.#monacoUri(uri),
+			ensurePreviews: (rels) => this.#ensurePreviews(rels),
+			commandId: CODE_ACTION_COMMAND,
+			add,
+			onRefresh: (kind, run) => refresh.push({ kind, run })
+		});
 	}
+}
+
+/** Whether two folder lists differ (a server that cannot be told restarts on a change). */
+function folderListChanged(a: { uri: string; name: string }[], b: { uri: string; name: string }[]): boolean {
+	return a.length !== b.length || a.some((f, i) => f.uri !== b[i].uri || f.name !== b[i].name);
 }
 
 type ModeDefaults = { modeConfiguration: object; setModeConfiguration(c: object): void };
