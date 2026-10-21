@@ -39,6 +39,8 @@ export type ChatMeta = {
 	last_run: RunSummary | null;
 	/** A turn was running when saved; still set at launch: Kingu quit mid-turn (chatResume.ts). */
 	working?: boolean;
+	/** A side chat ("Ask in Side Chat", chatTranscript.ts): the chat it was forked from; not in the history until kept. */
+	side_of?: string | null;
 };
 
 /** Rust's limits (chats.rs). */

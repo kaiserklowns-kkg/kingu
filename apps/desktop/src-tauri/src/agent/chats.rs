@@ -104,6 +104,10 @@ pub struct ChatMeta {
   /// mid-turn (`kingu.chat.resumeWorkOnRestart` continues those chats).
   #[serde(default, skip_serializing_if = "std::ops::Not::not")]
   pub working: bool,
+  /// A side chat (the Agent panel's "Ask in Side Chat"): the chat it was forked from. Kept out of
+  /// the chat history until the user keeps it as a chat of its own.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub side_of: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -176,6 +180,9 @@ pub fn validate(chats: &[ChatMeta]) -> Result<(), String> {
     }
     if c.agent.as_deref().is_some_and(|a| a.trim().is_empty() || a.chars().count() > 100 || a.chars().any(char::is_control)) {
       return Err(format!("{}: invalid agent", c.id));
+    }
+    if let Some(parent) = &c.side_of {
+      check_id(parent)?;
     }
     if let Some(r) = &c.last_run {
       validate_run_summary(&c.id, r)?;
@@ -472,6 +479,7 @@ mod tests {
         started_at: Some(1),
       }),
       working: false,
+      side_of: None,
     }
   }
 
@@ -527,6 +535,8 @@ mod tests {
     assert!(bad(|c| c.runtime = String::new()));
     assert!(validate(&[ChatMeta { runtime: "gemini".into(), ..chat("a") }]).is_ok());
     assert!(validate(&[ChatMeta { agent: Some("Planner".into()), ..chat("a") }]).is_ok());
+    assert!(validate(&[ChatMeta { side_of: Some("c-1".into()), ..chat("a") }]).is_ok());
+    assert!(validate(&[ChatMeta { side_of: Some("../x".into()), ..chat("a") }]).is_err());
     assert!(bad(|c| c.agent = Some(" ".into())));
     assert!(bad(|c| c.agent = Some("a\nb".into())));
     assert!(bad(|c| c.last_run.as_mut().unwrap().status = "weird".into()));

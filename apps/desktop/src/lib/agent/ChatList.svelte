@@ -29,6 +29,8 @@
 		sentAt?: (request: number) => number | null;
 		/** The chat's run mode, offered by the approval card's Allowlist menu. */
 		runMode?: RunModeControl;
+		/** Continue under a stopped last turn (Orca's): sends "continue". */
+		continue?: () => void;
 	};
 </script>
 
@@ -48,7 +50,7 @@
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { chatLook } from '#lib/ade/chatLook.ts';
-	import { t } from '#lib/i18n/index.ts';
+	import { locale, t } from '#lib/i18n/index.ts';
 	import PermissionCard from './PermissionCard.svelte';
 	import QuestionCard from './QuestionCard.svelte';
 	import ChatMarkdown from './ChatMarkdown.svelte';
@@ -62,6 +64,7 @@
 	import { formatUsage, type Decision, type PermissionRequest } from './events';
 	import { usageDisplay } from './chatExtras';
 	import { accessibleView, chatProvider } from '#lib/workbench/accessibleView.svelte.ts';
+	import { continuable, foldsPrompt } from './chatTranscript.ts';
 
 	let {
 		run,
@@ -114,6 +117,14 @@
 	let editText = $state('');
 	let editBusy = $state(false);
 	const firstRequest = $derived(turns.findIndex((x) => x.request));
+	/** Long requests opened past their fold (Show more). */
+	let unfolded = $state<Record<number, boolean>>({});
+	const canContinue = $derived(!!actions.continue && continuable(turns, false));
+	/** When a request was sent, for its row's tooltip. */
+	const sentTitle = (checkpoint: number | null | undefined): string | undefined => {
+		const at = checkpoint != null ? actions.sentAt?.(checkpoint) : null;
+		return at ? t('chatTranscript.sentAt', { time: new Date(at).toLocaleString(locale() === 'th' ? 'th-TH' : 'en-US') }) : undefined;
+	};
 
 	function startEdit(ti: number, text: string) {
 		editing = ti;
@@ -192,6 +203,7 @@
 <div
 	bind:this={list}
 	{onscroll}
+	data-chat-scroll
 	class={['kg-selectable kg-chat min-h-0 min-w-0 overflow-x-hidden overflow-y-auto', klass]}
 	aria-live="polite"
 	style:font-size="{look.fontSize}px"
@@ -207,7 +219,7 @@
 				{@const end = foldSteps(turn)}
 				{@const took = workedFor(turn.result?.duration_ms ?? tookMs(ti, turn))}
 				{@const folded = end > 0 && !open[`w:${ti}`]}
-				<div class={['flex flex-col gap-3', dim && 'opacity-50']}>
+				<div class={['flex flex-col gap-3', dim && 'opacity-50']} data-chat-turn={turn.request ? '' : undefined}>
 				{#if turn.request}
 					{@const req = turn.request}
 					{@const inline = !!actions.editInline && turn.checkpoint != null}
@@ -239,7 +251,8 @@
 								</div>
 							</div>
 						{:else}
-						<div class="flex w-full items-start gap-2 rounded-xl border border-(--vscode-input-border,var(--vscode-widget-border)) bg-(--vscode-input-background) py-2 pr-2 pl-3">
+						{@const folds = foldsPrompt(req.text)}
+						<div class="flex w-full items-start gap-2 rounded-xl border border-(--vscode-input-border,var(--vscode-widget-border)) bg-(--vscode-input-background) py-2 pr-2 pl-3 outline-none focus-visible:border-(--vscode-focusBorder)" data-chat-request tabindex="-1" title={sentTitle(turn.checkpoint)}>
 						<!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_tabindex -->
 						<div
 							class={['min-w-0 flex-1 break-words whitespace-pre-wrap', inline && 'cursor-text']}
@@ -249,7 +262,22 @@
 							onclick={() => inline && !getSelection()?.toString() && startEdit(ti, req.text)}
 							onkeydown={(e) => inline && e.key === 'Enter' && e.target === e.currentTarget && (e.preventDefault(), startEdit(ti, req.text))}
 						>
-							{req.text}
+							{#if folds && !unfolded[ti]}
+								<div class="max-h-44 overflow-hidden [mask-image:linear-gradient(to_bottom,black_75%,transparent)]">{req.text}</div>
+							{:else}
+								{req.text}
+							{/if}
+							{#if folds}
+								<button
+									type="button"
+									class="mt-0.5 block text-xs text-(--vscode-textLink-foreground) hover:underline"
+									aria-expanded={!!unfolded[ti]}
+									onclick={(e) => {
+										e.stopPropagation();
+										unfolded[ti] = !unfolded[ti];
+									}}>{unfolded[ti] ? t('chatTranscript.fold.less') : t('chatTranscript.fold.more')}</button
+								>
+							{/if}
 							{#if req.files.length || req.images.length}
 								<div class="mt-1 flex flex-wrap gap-1">
 									{#each req.files as f (f.path + (f.range?.startLine ?? ''))}
@@ -356,7 +384,17 @@
 						{:else if part.kind === 'artifact'}
 							<ArtifactCard artifact={part.artifact} />
 						{:else if part.kind === 'canceled'}
-							<div class="text-(--vscode-descriptionForeground) italic">{t('chatView.canceled')}</div>
+							<div class="flex items-center gap-2">
+								<span class="text-(--vscode-descriptionForeground) italic">{t('chatView.canceled')}</span>
+								{#if last && pi === turn.parts.length - 1 && canContinue}
+									<button
+										type="button"
+										class="flex items-center gap-1 rounded-md border border-(--vscode-widget-border) px-1.5 py-0.5 text-xs hover:bg-(--vscode-toolbar-hoverBackground)"
+										title={t('chatTranscript.continueHint')}
+										onclick={() => actions.continue?.()}><Icon name="play" size={11} />{t('chatTranscript.continue')}</button
+									>
+								{/if}
+							</div>
 						{/if}
 					{/each}
 

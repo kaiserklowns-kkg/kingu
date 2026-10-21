@@ -104,7 +104,11 @@ const EXCLUSIVE: [string, string][] = [
 	['workbench.action.terminal.selectToPreviousCommand', 'kingu.agents.worktreeUp'],
 	['workbench.action.terminal.selectToNextCommand', 'kingu.agents.worktreeDown'],
 	// Ctrl+G off macOS (VS Code's keys): Go to Recent Directory in a focused terminal (higher weight), Go to Line elsewhere.
-	['workbench.action.terminal.goToRecentDirectory', 'workbench.action.gotoLine']
+	['workbench.action.terminal.goToRecentDirectory', 'workbench.action.gotoLine'],
+	// ⌘F / ⌘G with focus in the chat view (Find in Chat, Find Next) where no terminal or Problems view has focus.
+	['workbench.action.chat.find', 'workbench.action.terminal.focusFind'],
+	['workbench.action.chat.find', 'problems.action.focusFilter'],
+	['workbench.action.chat.findNext', 'workbench.action.terminal.goToRecentDirectory']
 ];
 
 /** VS Code's `terminalFocus` / `!terminalFocus`: one command's key acts only in a focused panel
@@ -113,6 +117,8 @@ const TERMINAL_ONLY = 'panelTerminalFocus';
 const outsideTerminal = (keyWhen?: string) => !!keyWhen && keyWhen.includes('!panelTerminalFocus()');
 
 function exclusive(ids: string[], byId: Map<string, Entry>): boolean {
+	// Three or more on one key: every two of them exclude each other.
+	if (ids.length > 2) return ids.every((a, i) => ids.slice(i + 1).every((b) => exclusive([a, b], byId)));
 	if (ids.length !== 2) return false;
 	if (EXCLUSIVE.some(([a, b]) => ids.includes(a) && ids.includes(b))) return true;
 	const [a, b] = ids.map((id) => byId.get(id)?.keyWhen);

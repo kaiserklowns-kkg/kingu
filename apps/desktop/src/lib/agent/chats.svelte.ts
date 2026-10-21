@@ -17,6 +17,9 @@
  *   chats.retry(id)                    sends the last request again (chatRewind.retry rewinds first)
  *   chats.fork(id, before)             Fork Conversation: a new chat with the conversation before
  *                                      request `before` (all of it with null); returns its id
+ *                                      (`{ side: true }`: a side chat, kept out of `visible`)
+ *   chats.visible / keepSideChat(id)   the chats the history shows (no side chats) / a side chat
+ *                                      kept as a chat of its own
  *   chats.stopAndWait(id) / reload(id, resume)   for rewinds (chatRewind.svelte.ts)
  *   chats.importFile(path)             Import Chat: a chat file as a new chat (no session yet)
  *   chats.setModel / setPermissionMode applied to the live session (SDK setModel / setPermissionMode)
@@ -96,7 +99,9 @@ class Chats {
 	root = $state<string | null>(null);
 	loaded = $state(false);
 	runs = $state<Record<string, ChatRun>>({});
-	sorted = $derived(sortChats(this.list));
+	/** The chats the history lists: side chats stay in their drawer until kept. */
+	visible = $derived(this.list.filter((c) => !c.side_of));
+	sorted = $derived(sortChats(this.visible));
 	/** Unanswered permission prompts of this folder's chats. */
 	pendingCount = $derived(Object.values(this.runs).reduce((n, r) => n + (r.root === this.root ? r.pending.length : 0), 0));
 
@@ -158,7 +163,15 @@ class Chats {
 			notifications.error(t('chat.loadFailed', { error: String(e) }));
 		}
 		this.loaded = true;
-		void this.#resumeCutOff(root);
+		void this.#dropSideChats(root).then(() => this.#resumeCutOff(root));
+	}
+
+	/** Side chats whose drawer is gone (Kingu quit, another folder was opened): discarded, unless one's agent is still live. */
+	async #dropSideChats(root: string) {
+		for (const c of this.list.filter((c) => c.side_of && (this.runs[runKey(root, c.id)]?.ended ?? true))) {
+			if (this.root !== root) return;
+			await this.remove(c.id);
+		}
 	}
 
 	/** Folders whose cut-off chats were looked at in this app session (once each). */
@@ -513,7 +526,7 @@ class Chats {
 	 * it with null), titled "Forked: …"; its first message continues from there. The source chat
 	 * is unchanged. Returns the new chat's id.
 	 */
-	async fork(id: string, before: number | null): Promise<string | undefined> {
+	async fork(id: string, before: number | null, opts: { side?: boolean } = {}): Promise<string | undefined> {
 		const root = this.root;
 		const meta = this.get(id);
 		if (!root || !meta) return;
@@ -521,8 +534,8 @@ class Chats {
 		const newId = newChatId(now);
 		try {
 			const point = await invoke<ForkPoint>('chat_fork', { id, newId, before });
-			const title = forkTitle(meta.title, t('chatRewind.forkedPrefix'), (title) => t('chatRewind.forkedTitle', { title }));
-			const fork: ChatMeta = { ...meta, id: newId, title: renamedChatTitle('', title) ?? meta.title, ...rewoundMeta(point), created_at: now, updated_at: now, last_run: null, working: false };
+			const title = opts.side ? t('chatTranscript.side.title', { title: meta.title }) : forkTitle(meta.title, t('chatRewind.forkedPrefix'), (title) => t('chatRewind.forkedTitle', { title }));
+			const fork: ChatMeta = { ...meta, id: newId, title: renamedChatTitle('', title) ?? meta.title, ...rewoundMeta(point), created_at: now, updated_at: now, last_run: null, working: false, side_of: opts.side ? id : null };
 			this.#save([...this.list, fork], root);
 			await this.#saving;
 			return newId;
@@ -606,6 +619,11 @@ class Chats {
 		}
 		this.#patch(root, id, patch);
 		return when;
+	}
+
+	/** A side chat kept as a chat of its own: it joins the history. */
+	keepSideChat(id: string) {
+		if (this.root && this.get(id)?.side_of) this.#patch(this.root, id, { side_of: null });
 	}
 
 	rename(id: string, input: string) {

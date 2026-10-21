@@ -9,6 +9,7 @@
 //   kingu.chat.openModelPicker        ⌘/ while the chat has focus: the composer's model picker
 //   kingu.chat.cancel                 Cancel Chat: stop the running turn (⌘⇧⌫ / ⌃C in the input)
 //   workbench.action.chat.export / .import  Export Chat... (JSON) / Import Chat...
+//   Find in Chat and Previous / Next User Prompt: chatTranscriptCommands.svelte.ts
 // The panel listens to `chatSignals` (it is mounted once, hidden with the secondary side bar).
 
 import { commands } from '#lib/workbench/commands.svelte.ts';
@@ -16,6 +17,7 @@ import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { layout } from '#lib/workbench/layout.svelte.ts';
 import { registerCustomizeCommands } from './chatCustomizeCommands.ts';
 import { registerInlineChatCommands } from './inlineChat.svelte.ts';
+import { registerTranscriptCommands } from './chatTranscriptCommands.svelte.ts';
 
 class ChatSignals {
 	/** Bumped to focus the chat input. */
@@ -159,5 +161,7 @@ export function registerChatCommands(): () => void {
 	off.push(registerCustomizeCommands());
 	// ⌘I in the editor and the terminal (inlineChat.svelte.ts).
 	off.push(registerInlineChatCommands());
+	// Find in Chat, Previous / Next User Prompt (chatTranscriptCommands.svelte.ts).
+	off.push(registerTranscriptCommands());
 	return () => off.forEach((f) => f());
 }

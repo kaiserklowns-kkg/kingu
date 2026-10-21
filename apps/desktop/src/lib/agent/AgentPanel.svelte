@@ -30,6 +30,9 @@
 	import ChatEditsBar from './ChatEditsBar.svelte';
 	import ChatTodoBar from './ChatTodoBar.svelte';
 	import RestoreCheckpoint from './RestoreCheckpoint.svelte';
+	import ChatTranscriptTools from './ChatTranscriptTools.svelte';
+	import SideChat from './SideChat.svelte';
+	import { CONTINUE_PROMPT, withQuote } from './chatTranscript.ts';
 	import ContextRing from './ContextRing.svelte';
 	import { kinguCommands, localCommandFor, mergeCommands, modeCommands, type FileCommand, type SlashItem } from './slashCommands.ts';
 	import ComposerMenu from './ComposerMenu.svelte';
@@ -115,6 +118,10 @@
 	/** The new chat's agent: Ask or a custom agent (null: Agent / Plan by `newMode`). */
 	let newAgent = $state<string | null>(null);
 	let root: HTMLDivElement;
+	/** The box holding the chat list (Find in Chat, the selection bar and the side chat sit over it). */
+	let listBox: HTMLDivElement | undefined = $state();
+	/** Ask in Side Chat: the drawer's chat and excerpt, shown while that chat is. */
+	let side = $state<{ parent: string; excerpt: string } | null>(null);
 
 	const chatMeta = $derived(selectedId ? chats.get(selectedId) : undefined);
 	/** The chat's agent and what it can do: rewind and the model picker are the Claude SDK's. */
@@ -128,7 +135,7 @@
 	const running = $derived(turnBusy(chatRun));
 	const sections = $derived(
 		historySections(
-			chats.list,
+			chats.visible,
 			adeTasks.list.map((x) => ({ slug: x.slug, title: x.title, created_at: x.created_at, updated_at: x.updated_at, terminal: !!cliOf(x.agent) })),
 			(r) => (r.kind === 'chat' ? chats.run(r.id)?.status : runtime.run(r.slug)?.status)
 		)
@@ -300,7 +307,7 @@
 	$effect(() => {
 		if (inEditor) return;
 		if (selectedId && chats.loaded && !chats.get(selectedId)) selectedId = null;
-		if (selectedId === null && !composingNew && chats.loaded) selectedId = initialChat(chats.list);
+		if (selectedId === null && !composingNew && chats.loaded) selectedId = initialChat(chats.visible);
 	});
 
 	// Settings load after the panel: pick up the default model once it is known.
@@ -1008,7 +1015,7 @@
 	{/if}
 
 	{#if composerTop}{@render composerBlock()}{/if}
-	<div class="min-h-0 flex-1 overflow-hidden">
+	<div bind:this={listBox} class="relative min-h-0 flex-1 overflow-hidden">
 		{#if showList}
 			<!-- History (VS Code's agent sessions): chats, then the folder's ADE tasks (read-only here). -->
 			<div class="h-full overflow-y-auto py-1">
@@ -1085,6 +1092,7 @@
 					runMode: mode === 'agent' ? { current: currentApproval, options: AGENT_APPROVALS, pick: (a) => void pickApproval(a), locked: globalAutoApprove } : undefined,
 					sentAt: (request) => (chatMeta ? (chatEdits.view(chatMeta.id)?.requests.find((r) => r.index === request)?.at ?? null) : null),
 					remember: (text) => void chatExtras.remember(text),
+					continue: () => void submit(CONTINUE_PROMPT, []),
 					followups: { items: running ? [] : chatExtras.followups(chatMeta.id), pick: pickFollowup }
 				}}
 				reverted={(r) => !!chatMeta && chatEdits.isReverted(chatMeta.id, r)}
@@ -1099,6 +1107,20 @@
 					<p class="text-(--vscode-descriptionForeground)">{t('chat.panel.noHistory')}</p>
 				{/snippet}
 			</ChatList>
+			<ChatTranscriptTools
+				host={() => listBox ?? null}
+				active={!inEditor}
+				onquote={(text) => {
+					input = withQuote(input, text);
+					queueMicrotask(() => composer?.focus());
+				}}
+				onside={features.rewind ? (text) => chatMeta && (side = { parent: chatMeta.id, excerpt: text }) : undefined}
+			/>
+			{#if side && side.parent === chatMeta.id}
+				{#key side}
+					<SideChat parentId={side.parent} excerpt={side.excerpt} {cwd} root={workspace.root} onclose={() => (side = null)} onkeep={(id) => ((side = null), select(id))} />
+				{/key}
+			{/if}
 		{:else if inEditor}
 			<p class="p-6 text-center text-(--vscode-descriptionForeground)">{chats.loaded ? t('chatExtras.editorMissing') : t('chatExtras.editorLoading')}</p>
 		{/if}
