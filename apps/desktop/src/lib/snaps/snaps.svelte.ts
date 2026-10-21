@@ -7,6 +7,8 @@
 
 import { untrack } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import { homeDir } from '@tauri-apps/api/path';
 import { open } from '@tauri-apps/plugin-dialog';
 import { ask, message } from '#lib/workbench/messageBox.ts';
 import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
@@ -27,7 +29,21 @@ import { createSnapEventRouter, needsFocusReload } from '#lib/team/teamEvents.ts
 import { approveSummary, canApprove, isApprovable, type TeamCatalog } from './teamSnaps.ts';
 import { worktreeDir } from '#lib/ade/keys.ts';
 import {
+	catalogEntries,
+	catalogKey,
+	DISABLED_SETTING,
+	hookRunsOf,
 	installSummary,
+	missingRequirements,
+	requiredPrograms,
+	requirementStates,
+	serviceChanges,
+	toggleDisabled,
+	wantedServices,
+	withDisabled,
+	type CatalogEntry,
+	type FoundProgram,
+	type ServiceStatus,
 	isActive,
 	isUpdatable,
 	mcpServersOf,
@@ -54,6 +70,15 @@ import { t } from '#lib/i18n/index.ts';
 
 class Snaps {
 	list = $state<SnapInfo[]>([]);
+	/** `snap_list` as Rust returned it (before `kingu.snaps.disabled` is applied). */
+	#raw: SnapInfo[] = [];
+	/** The snaps Kingu ships (`snap_catalog`): the Recommended section. */
+	catalog = $state<SnapInfo[]>([]);
+	/** Where each required program is (`snap_find_programs`), by program. */
+	found = $state<Record<string, FoundProgram>>({});
+	/** Services Kingu started (`snap_service_list`, then `snap-service` events). */
+	services = $state<ServiceStatus[]>([]);
+	#home: string | null = null;
 	loaded = $state(false);
 	/** `snap_list` itself failed (a broken snap is listed with its own error instead). */
 	error = $state<string | null>(null);
@@ -73,17 +98,185 @@ class Snaps {
 			this.sandboxInfo = await invoke<SandboxInfo>('snap_sandbox_info').catch((e) => ({ enforcer: null, launcher: null, protect: [], problem: String(e) }));
 		}
 		try {
-			const list = await invoke<SnapInfo[]>('snap_list');
+			const raw = await invoke<SnapInfo[]>('snap_list');
 			if (seq !== this.#seq) return;
-			// Reloads on focus and file changes mostly find nothing new: keep the list (and the
-			// commands and settings derived from it) as it is then.
-			if (JSON.stringify(list) !== JSON.stringify($state.snapshot(this.list))) this.list = list;
+			this.#raw = raw;
+			this.applyDisabled(settings.get(DISABLED_SETTING));
 			this.error = null;
+			void this.#afterLoad();
 		} catch (e) {
 			if (seq === this.#seq) this.error = String(e);
 		} finally {
 			if (seq === this.#seq) this.loaded = true;
 		}
+	}
+
+	/** Applies `kingu.snaps.disabled` to the listed snaps (on load and when the setting changes). */
+	applyDisabled(disabled: unknown) {
+		const list = withDisabled(this.#raw, disabled);
+		// Reloads on focus and file changes mostly find nothing new: keep the list (and the
+		// commands and settings derived from it) as it is then.
+		if (JSON.stringify(list) !== JSON.stringify($state.snapshot(this.list))) this.list = list;
+	}
+
+	/** After a load: the catalog (once), which required programs are installed, and the services. */
+	async #afterLoad() {
+		if (!this.catalog.length) this.catalog = await invoke<SnapInfo[]>('snap_catalog').catch(() => []);
+		await this.checkPrograms();
+		await this.syncServices();
+	}
+
+	/** Looks up every program the listed and shipped snaps require. */
+	async checkPrograms() {
+		const get = (id: string) => settings.get(id);
+		const programs = requiredPrograms([...this.list, ...this.catalog], get);
+		if (!programs.length) return;
+		try {
+			const found = await invoke<FoundProgram[]>('snap_find_programs', { programs });
+			const next = Object.fromEntries(programs.map((p, i) => [p, found[i]]));
+			if (JSON.stringify(next) !== JSON.stringify($state.snapshot(this.found))) this.found = next;
+		} catch (e) {
+			console.warn('snap_find_programs', e);
+		}
+	}
+
+	/** Starts the services active snaps want and stops the ones no longer wanted. */
+	async syncServices() {
+		this.#home ??= await homeDir().catch(() => null);
+		const wanted = wantedServices(this.list, (id) => settings.get(id), this.sandbox, this.#home, this.found);
+		this.services = await invoke<ServiceStatus[]>('snap_service_list').catch(() => this.services);
+		const { start, stop } = serviceChanges(wanted, this.services);
+		for (const st of stop) await invoke('snap_service_stop', { snap: st.snapId, service: st.serviceId }).catch(() => {});
+		for (const w of start) {
+			// One that crashed is not restarted on every reload: the user starts it again from its page.
+			const last = this.services.find((st) => st.snapId === w.snap && st.serviceId === w.service);
+			if (last && !last.stopped) continue;
+			await this.startService(w.snap, w.service, true);
+		}
+	}
+
+	/** Starts one service now (Start on the details page, or autostart). */
+	async startService(snapId: string, serviceId: string, quiet = false) {
+		this.#home ??= await homeDir().catch(() => null);
+		const only = this.list.filter((s) => s.id === snapId).map((s) => ({ ...s, services: s.services.map((sv) => (sv.id === serviceId ? { ...sv, autostart: true, when: null } : { ...sv, autostart: false })) }));
+		const w = wantedServices(only, (id) => settings.get(id), this.sandbox, this.#home, this.found)[0];
+		if (!w) {
+			if (!quiet) status.flash(sandboxRefusal(this.sandbox) ?? t('tools.snaps.serviceCannotStart'));
+			return;
+		}
+		try {
+			const st = await invoke<ServiceStatus>('snap_service_start', { snap: w.snap, service: w.service, argv: w.argv, env: w.env });
+			this.#updateService(st);
+		} catch (e) {
+			notifications.error(t('tools.snaps.serviceFailed', { title: w.title, error: String(e) }));
+		}
+	}
+
+	async stopService(snapId: string, serviceId: string) {
+		await invoke('snap_service_stop', { snap: snapId, service: serviceId }).catch(() => {});
+	}
+
+	async serviceLog(snapId: string, serviceId: string): Promise<string> {
+		return invoke<string>('snap_service_log', { snap: snapId, service: serviceId }).catch((e) => String(e));
+	}
+
+	#updateService(st: ServiceStatus) {
+		const i = this.services.findIndex((x) => x.snapId === st.snapId && x.serviceId === st.serviceId);
+		if (i < 0) this.services.push(st);
+		else this.services[i] = st;
+	}
+
+	/** A `snap-service` event: a service ended. A crash is reported once. */
+	serviceExited(st: ServiceStatus) {
+		this.#updateService(st);
+		if (st.stopped) return;
+		const snap = this.list.find((s) => s.id === st.snapId);
+		const title = snap?.services.find((sv) => sv.id === st.serviceId)?.title ?? st.serviceId;
+		notifications.error(t('tools.snaps.serviceCrashed', { title, code: st.exitCode ?? '—' }));
+	}
+
+	/** Enable / Disable (VS Code's): a disabled snap stays installed but contributes nothing. */
+	async setEnabled(id: string, enabled: boolean) {
+		await settings.set(DISABLED_SETTING, toggleDisabled(settings.inspect(DISABLED_SETTING, 'user'), id, enabled), 'user');
+		this.applyDisabled(settings.get(DISABLED_SETTING));
+		await this.syncServices();
+		const s = this.list.find((x) => x.id === id);
+		if (s) status.flash(enabled ? t('tools.snaps.enabled', { name: s.name }) : t('tools.snaps.disabledFlash', { name: s.name }));
+	}
+
+	/** The Recommended section: each shipped snap and whether it is installed or has an update. */
+	get recommended(): CatalogEntry[] {
+		return catalogEntries(this.catalog, this.list);
+	}
+
+	/** One click from the Recommended section (or a details page): the usual review, then install. */
+	async installBuiltin(id: string) {
+		const done = await this.#exclusive(t('tools.snaps.copying'), async () => {
+			const prepared = await this.#prepare(() => invoke<PreparedInstall>('snap_install_builtin', { id }));
+			return prepared ? await this.#confirmAndCommit(prepared) : false;
+		});
+		if (!done) return;
+		systemSettings.showSnaps(`user/${id}`);
+		await this.offerSetup(id);
+	}
+
+	/** After an install: a required program that is missing gets its install task offered right away. */
+	async offerSetup(id: string) {
+		await this.checkPrograms();
+		const s = this.list.find((x) => x.source === 'user' && x.id === id);
+		if (!s) return;
+		const missing = missingRequirements(requirementStates(s, (k) => settings.get(k), this.found)).find((r) => r.require.install_task);
+		if (!missing) return;
+		const task = s.tasks.find((x) => x.id === missing.require.install_task);
+		const sure = await ask(t('tools.snaps.setupAsk', { name: s.name, program: missing.program, task: task?.title ?? '' }), {
+			title: t('tools.snaps.setupTitle', { name: s.name }),
+			kind: 'info',
+			okLabel: task?.title ?? t('tools.snaps.install'),
+			cancelLabel: t('tools.snaps.later')
+		});
+		if (sure && task) this.runTask(s.id, task.id, { home: true });
+	}
+
+	/** Which declared secrets of a snap have a value in the keychain (`snap_secret_status`), by snap id. */
+	secrets = $state<Record<string, { name: string; stored: boolean }[]>>({});
+
+	async loadSecrets(id: string) {
+		try {
+			this.secrets[id] = await invoke<{ name: string; stored: boolean }[]>('snap_secret_status', { id });
+		} catch (e) {
+			notifications.error(t('tools.snaps.secretFailed', { error: String(e) }));
+		}
+	}
+
+	/** Stores a secret's value; it goes to `kingu-ptyd`, which keeps it in the keychain, and is not kept here. */
+	async setSecret(id: string, name: string, value: string): Promise<boolean> {
+		try {
+			await invoke('snap_secret_set', { id, name, value });
+			status.flash(t('tools.snaps.secretSaved', { name }));
+			return true;
+		} catch (e) {
+			notifications.error(t('tools.snaps.secretFailed', { error: String(e) }));
+			return false;
+		} finally {
+			await this.loadSecrets(id);
+		}
+	}
+
+	async removeSecret(id: string, name: string) {
+		const sure = await ask(t('tools.snaps.secretRemoveAsk', { name }), { title: t('tools.snaps.secretRemoveTitle'), kind: 'warning', okLabel: t('tools.snaps.secretRemove'), cancelLabel: t('common.cancel') });
+		if (!sure) return;
+		try {
+			await invoke('snap_secret_delete', { id, name });
+			status.flash(t('tools.snaps.secretRemoved', { name }));
+		} catch (e) {
+			notifications.error(t('tools.snaps.secretFailed', { error: String(e) }));
+		}
+		await this.loadSecrets(id);
+	}
+
+	/** The details page of a shipped snap that is not installed. */
+	catalogSnap(key: string | null): SnapInfo | undefined {
+		return key ? this.catalog.find((c) => catalogKey(c.id) === key) : undefined;
 	}
 
 	/** Trusts (or untrusts) a repo snap of the open folder: exactly the manifest that was listed. */
@@ -259,7 +452,7 @@ class Snaps {
 	}
 
 	/** Picks the snap of a multi-snap repo, shows the native confirm, then installs (or cleans up). */
-	async #confirmAndCommit(p: PreparedInstall) {
+	async #confirmAndCommit(p: PreparedInstall): Promise<boolean> {
 		const cancel = () => invoke('snap_install_cancel', { token: p.token }).catch(() => {});
 		let candidate = p.candidates[0];
 		if (p.candidates.length > 1) {
@@ -269,11 +462,11 @@ class Snaps {
 			});
 			candidate = p.candidates.find((c) => c.snap.id === picked?.id)!;
 		}
-		if (!candidate) return cancel();
+		if (!candidate) return cancel().then(() => false);
 		const s = candidate.snap;
 		if (s.error) {
 			await message(s.error, { title: t('tools.snaps.brokenTitle', { name: s.name }), kind: 'error' });
-			return cancel();
+			return cancel().then(() => false);
 		}
 		const existing = p.existing.find((e) => e.id === s.id);
 		const sure = await ask(existing ? updateSummary(existing, s, p.origin, this.sandbox) : installSummary(s, p.origin, this.sandbox), {
@@ -282,14 +475,17 @@ class Snaps {
 			okLabel: existing ? t('tools.snaps.update') : t('tools.snaps.install'),
 			cancelLabel: t('common.cancel')
 		});
-		if (!sure) return cancel();
+		if (!sure) return cancel().then(() => false);
+		let ok = false;
 		try {
 			await invoke('snap_install_commit', { token: p.token, id: s.id, hash: s.hash, replace: !!existing });
 			status.flash(existing ? t('tools.snaps.updated', { name: s.name, version: s.version }) : t('tools.snaps.installed', { name: s.name }));
+			ok = true;
 		} catch (e) {
 			await message(String(e), { title: t('tools.snaps.installFailedTitle'), kind: 'error' });
 		}
 		await this.load();
+		return ok;
 	}
 
 	/** The team Snap catalog; null when no team server is set or not signed in (see `teamError`). */
@@ -364,15 +560,18 @@ class Snaps {
 		});
 	}
 
-	/** Runs a task of an active snap in a new terminal of the mode that is showing. */
-	runTask(snapId: string, taskId: string) {
+	/**
+	 * Runs a task of an active snap in a new terminal of the mode that is showing. `home`: in the
+	 * home folder when no folder is open (an install task needs no project).
+	 */
+	runTask(snapId: string, taskId: string, opts: { home?: boolean } = {}) {
 		const snap = this.list.find((s) => s.id === snapId && isActive(s));
 		const task = snap?.tasks.find((t) => t.id === taskId);
 		if (!snap || !task) {
 			status.flash(t('tools.snaps.taskNotFound', { id: `${snapId}/${taskId}` }));
 			return;
 		}
-		if (!workspace.root) {
+		if (!workspace.root && !(opts.home && this.#home)) {
 			status.flash(t('tools.snaps.openFolderBeforeTask'));
 			return;
 		}
@@ -382,9 +581,9 @@ class Snaps {
 			return;
 		}
 		// The folder the terminal opens in: the selected task worktree in the ADE, else the folder.
-		const slug = appMode.isAgents ? adeLayout.key : '';
-		const root = slug ? `${workspace.root}/${worktreeDir(slug)}` : workspace.root;
-		const confined = sandboxTask(this.sandbox, snap.permissions, root, argv);
+		const slug = appMode.isAgents && workspace.root ? adeLayout.key : '';
+		const root = (slug ? `${workspace.root}/${worktreeDir(slug)}` : workspace.root) ?? this.#home!;
+		const confined = sandboxTask(this.sandbox, snap.permissions, root, argv, snap.id);
 		if ('error' in confined) {
 			status.flash(confined.error, 10000);
 			return;
@@ -392,7 +591,7 @@ class Snaps {
 		const { run } = confined;
 		const title = `${task.title} (${snap.name})`;
 		systemSettings.close();
-		if (appMode.isAgents) adeLayout.newTerminal(adeLayout.key, { title, run });
+		if (appMode.isAgents && workspace.root) adeLayout.newTerminal(adeLayout.key, { title, run });
 		else {
 			terminals.open({ title, run });
 			layout.showPanel('terminal');
@@ -407,12 +606,19 @@ class Snaps {
 		return mcpServersOf(this.list, (id) => settings.get(id), { plan, root });
 	}
 
-	/** Skill plugin folders of active snaps for an agent run (Rust lists the snaps again and writes them into the app cache). */
-	async skillPlugins(): Promise<string[]> {
+	/**
+	 * Skill plugin folders of active snaps for an agent run in `root` (Rust lists the snaps again and
+	 * writes them into the app cache), carrying their hooks confined like MCP servers.
+	 */
+	async skillPlugins(root: string | null): Promise<string[]> {
 		const ids = skillSnapIds(this.list);
 		if (!ids.length) return [];
+		const plan = this.sandbox;
+		const refused = sandboxRefusal(plan);
+		if (refused && this.list.some((s) => isActive(s) && s.hooks.length)) status.flash(refused, 10000);
+		const hooks = hookRunsOf(this.list, (id) => settings.get(id), { plan, root });
 		try {
-			return await invoke<string[]>('snap_skill_plugins', { ids });
+			return await invoke<string[]>('snap_skill_plugins', { ids, hooks });
 		} catch (e) {
 			notifications.error(t('tools.snaps.skillsFailed', { error: String(e) }));
 			return [];
@@ -428,7 +634,7 @@ const RELOAD_DEBOUNCE_MS = 300;
 export function installSnaps(): () => void {
 	// Agents (timeline and CLI) get the MCP servers of active snaps when a run starts.
 	setMcpProvider((root) => snaps.mcpServers(root));
-	setSkillPluginProvider(() => snaps.skillPlugins());
+	setSkillPluginProvider((root) => snaps.skillPlugins(root));
 	// Editing a repo snap reloads the list (the watcher reports `.kingu/snaps/**`); the user snaps
 	// dir is not watched, so they are re-listed when the window gets focus (listing is cheap).
 	let reloadTimer: ReturnType<typeof setTimeout> | undefined;
@@ -447,6 +653,7 @@ export function installSnaps(): () => void {
 		if (touchesRepoSnaps(paths)) reloadSoon();
 	});
 	window.addEventListener('focus', reloadAll);
+	const stopServiceEvents = listen<ServiceStatus>('snap-service', (e) => snaps.serviceExited(e.payload));
 	let taskCommands: (() => void)[] = [];
 	const unregisterTasks = () => {
 		taskCommands.forEach((u) => u());
@@ -456,6 +663,10 @@ export function installSnaps(): () => void {
 		$effect(() => {
 			void workspace.root;
 			untrack(() => void snaps.load());
+		});
+		$effect(() => {
+			const disabled = settings.get(DISABLED_SETTING);
+			untrack(() => snaps.applyDisabled(disabled));
 		});
 		$effect(() => {
 			void team.serverUrl;
@@ -509,6 +720,7 @@ export function installSnaps(): () => void {
 		clearTimeout(reloadTimer);
 		stopWatching();
 		window.removeEventListener('focus', reloadAll);
+		void stopServiceEvents.then((u) => u());
 		stopTeamEvents();
 		teamRouter.dispose();
 		stopEffects();

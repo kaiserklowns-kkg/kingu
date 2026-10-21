@@ -5,7 +5,20 @@ import { validate } from '../settings/registry';
 import {
 	expandCommand,
 	expandEnv,
+	agentReach,
+	audiences,
+	catalogEntries,
 	filterSnaps,
+	hookRunsOf,
+	inSnapDir,
+	missingRequirements,
+	requiredPrograms,
+	requirementStates,
+	serviceChanges,
+	snapAvatar,
+	toggleDisabled,
+	wantedServices,
+	withDisabled,
 	installSummary,
 	isActive,
 	isUpdatable,
@@ -54,6 +67,11 @@ function snap(over: Partial<SnapInfo> = {}): SnapInfo {
 		],
 		mcp: [{ name: 'gopls', command: ['gopls', 'mcp'], env: { GOFLAGS: '-mod=mod' } }],
 		skills: [],
+		hooks: [],
+		requires: [],
+		services: [],
+		readme: null,
+		files: [],
 		origin: null,
 		lock: null,
 		...over
@@ -155,6 +173,11 @@ describe('skills and reloads', () => {
 		expect(skillSnapIds(list)).toEqual(['go']);
 	});
 
+	test('active snaps with hooks get a plugin too', () => {
+		const hook = { event: 'Stop', command: ['mem', 'stop'], env: {} };
+		expect(skillSnapIds([snap({ id: 'mem', hooks: [hook] }), snap({ id: 'off', trusted: false, source: 'repo', hooks: [hook] })])).toEqual(['mem']);
+	});
+
 	test('reloads for changes under .kingu/snaps or a rescan, not worktrees or other .kingu files', () => {
 		expect(touchesRepoSnaps(['.kingu/snaps/go/snap.toml'])).toBe(true);
 		expect(touchesRepoSnaps(['src/a.ts', '.kingu/snaps/go/skills/go-style/SKILL.md'])).toBe(true);
@@ -167,7 +190,7 @@ describe('skills and reloads', () => {
 
 describe('Snaps view', () => {
 	test('row status: error, overridden, untrusted, active', () => {
-		expect(snapStatus(snap({ error: 'bad' })).label).toBe('error');
+		expect(snapStatus(snap({ error: 'bad' })).label).toBe('ใช้งานไม่ได้');
 		expect(snapStatus(snap({ overridden: true })).key).toBe('overridden');
 		expect(snapStatus(snap({ source: 'repo', trusted: false })).label).toBe('ต้อง trust');
 		expect(snapStatus(snap()).key).toBe('active');
@@ -242,6 +265,9 @@ describe('sandbox', () => {
 			run: ['/App/kingu-ptyd', 'snap-exec', '--network', 'off', '--fs', 'worktree', '--root', '/w/my repo', '--secret', 'GITHUB_TOKEN', '--protect', '/cfg', '--', 'go', 'test', '-run', 'A B']
 		});
 		expect(sandboxTask({ kind: 'off' }, p, '/w', ['make'])).toEqual({ run: ['make'] });
+		// With the snap named, the launcher also reads its keychain secrets (only when it declares some).
+		expect(sandboxTask(enforce, p, '/w', ['x'], 'go')).toEqual({ run: ['/App/kingu-ptyd', 'snap-exec', '--network', 'off', '--fs', 'worktree', '--root', '/w', '--snap', 'go', '--secret', 'GITHUB_TOKEN', '--protect', '/cfg', '--', 'x'] });
+		expect(sandboxTask(enforce, { ...p, secrets: [] }, '/w', ['x'], 'go')).toEqual({ run: ['/App/kingu-ptyd', 'snap-exec', '--network', 'off', '--fs', 'worktree', '--root', '/w', '--protect', '/cfg', '--', 'x'] });
 		const refused = sandboxTask({ kind: 'refuse', reason: 'ไม่พบ bwrap' }, p, '/w', ['make']);
 		expect('error' in refused && refused.error).toContain('ไม่พบ bwrap');
 		expect('error' in refused && refused.error).toContain('kingu.snaps.sandbox');
@@ -262,6 +288,31 @@ describe('sandbox', () => {
 		expect(mcpServersOf([s], undefined, { plan: { kind: 'off' }, root: null })).toEqual({ 'go-gopls': { command: 'gopls', args: ['mcp'], env: { GOFLAGS: '-mod=mod' } } });
 	});
 
+	test('hooks: settings expanded, env through `env`, confined like MCP servers', () => {
+		const s = snap({
+			id: 'mem',
+			permissions: { network: true, fs: 'home', secrets: [] },
+			settings: [{ key: 'bin', type: 'string', default: 'ai-memory', description: '' }],
+			hooks: [
+				{ event: 'SessionStart', command: ['${setting:bin}', 'hook', '--event', 'session-start'], env: { ORIGIN: 'kingu' } },
+				{ event: 'Stop', command: ['${setting:bin}', 'hook', '--event', 'stop'], env: {} }
+			]
+		});
+		expect(hookRunsOf([s], () => undefined, { plan: enforce, root: '/w/t1' })).toEqual({
+			mem: [
+				{ event: 'SessionStart', argv: ['env', 'ORIGIN=kingu', '/App/kingu-ptyd', 'snap-exec', '--network', 'on', '--fs', 'home', '--root', '/w/t1', '--keep', 'ORIGIN', '--protect', '/cfg', '--', 'ai-memory', 'hook', '--event', 'session-start'] },
+				{ event: 'Stop', argv: ['/App/kingu-ptyd', 'snap-exec', '--network', 'on', '--fs', 'home', '--root', '/w/t1', '--protect', '/cfg', '--', 'ai-memory', 'hook', '--event', 'stop'] }
+			]
+		});
+		expect(hookRunsOf([s], () => '/opt/am', { plan: { kind: 'off' }, root: null }).mem[1]).toEqual({ event: 'Stop', argv: ['/opt/am', 'hook', '--event', 'stop'] });
+		// Refused, no folder, an empty program, or an inactive snap: no hooks, never unconfined.
+		expect(hookRunsOf([s], () => undefined, { plan: { kind: 'refuse', reason: 'x' }, root: '/w' })).toEqual({});
+		expect(hookRunsOf([s], () => undefined, { plan: enforce, root: null })).toEqual({});
+		expect(hookRunsOf([s], () => '', { plan: { kind: 'off' }, root: null })).toEqual({});
+		expect(hookRunsOf([{ ...s, trusted: false, source: 'repo' }], () => undefined, { plan: { kind: 'off' }, root: null })).toEqual({});
+		expect(trustSummary({ ...s, source: 'repo', trusted: false })).toContain('hook SessionStart: ${setting:bin} hook --event session-start');
+	});
+
 	test('the details label and the confirm note say whether permissions are enforced', () => {
 		const origin = { url: null, ref: null, commit: null, path: '/src', installed_at: 0 };
 		expect(enforcementLabel(enforce)).toEqual({ text: 'บังคับใช้: sandbox-exec', tone: 'ok' });
@@ -270,5 +321,104 @@ describe('sandbox', () => {
 		expect(trustSummary(snap({ source: 'repo', trusted: false }), enforce)).toContain('Kingu บังคับใช้สิทธิ์เหล่านี้ด้วย sandbox-exec');
 		expect(installSummary(snap(), origin, { kind: 'off' })).toContain('⚠ ไม่ได้บังคับใช้สิทธิ์');
 		expect(updateSummary(snap(), snap(), origin, enforce)).toContain('บังคับใช้สิทธิ์');
+	});
+});
+
+describe('enable / disable', () => {
+	test('disabled snaps are listed but inactive; toggling keeps other ids', () => {
+		const list = withDisabled([snap(), snap({ id: 'mem' })], ['mem', 42]);
+		expect(list.map((s) => [s.id, !!s.disabled, isActive(s)])).toEqual([
+			['go', false, true],
+			['mem', true, false]
+		]);
+		expect(snapStatus(list[1]).key).toBe('disabled');
+		expect(toggleDisabled(['a', 'mem'], 'mem', true)).toEqual(['a']);
+		expect(toggleDisabled(['b'], 'a', false)).toEqual(['a', 'b']);
+		expect(toggleDisabled(undefined, 'a', false)).toEqual(['a']);
+		// An unchanged snap stays the same object (no needless re-renders).
+		const once = withDisabled([snap()], []);
+		expect(withDisabled(once, [])[0]).toBe(once[0]);
+	});
+});
+
+describe('requirements and services', () => {
+	const info: SandboxInfo = { enforcer: 'sandbox-exec', launcher: '/App/kingu-ptyd', protect: [], problem: null };
+	const enforce = sandboxPlan(info, 'enforce');
+	const mem = snap({
+		id: 'mem',
+		permissions: { network: true, fs: 'home', secrets: [] },
+		settings: [
+			{ key: 'bin', type: 'string', default: 'ai-memory', description: '' },
+			{ key: 'run', type: 'boolean', default: true, description: '' }
+		],
+		requires: [{ program: 'ai-memory', setting: 'bin', url: 'https://x', install_task: 'install', description: '' }],
+		services: [{ id: 'server', title: 'Server', command: ['${setting:bin}', 'serve'], env: { ORIGIN: 'k' }, autostart: true, when: 'run' }]
+	});
+	const found = { 'ai-memory': { path: '/u/.local/bin/ai-memory', onPath: true } };
+
+	test('the program comes from its setting when set; missing only once looked up', () => {
+		expect(requiredPrograms([mem], () => undefined)).toEqual(['ai-memory']);
+		expect(requiredPrograms([mem], (id) => (id === 'snap.mem.bin' ? '/opt/am' : undefined))).toEqual(['/opt/am']);
+		expect(missingRequirements(requirementStates(mem, () => undefined, {}))).toEqual([]);
+		expect(missingRequirements(requirementStates(mem, () => undefined, { 'ai-memory': { path: null, onPath: false } })).map((r) => r.program)).toEqual(['ai-memory']);
+	});
+
+	test('wanted services: active, setting on, requirements installed, confined', () => {
+		expect(wantedServices([mem], () => undefined, enforce, '/Users/me', found)).toEqual([
+			{ snap: 'mem', service: 'server', title: 'Server', argv: ['/App/kingu-ptyd', 'snap-exec', '--network', 'on', '--fs', 'home', '--root', '/Users/me', '--keep', 'ORIGIN', '--', 'ai-memory', 'serve'], env: [['ORIGIN', 'k']] }
+		]);
+		expect(wantedServices([mem], (id) => (id === 'snap.mem.run' ? false : undefined), enforce, '/Users/me', found)).toEqual([]);
+		expect(wantedServices([{ ...mem, disabled: true }], () => undefined, enforce, '/Users/me', found)).toEqual([]);
+		expect(wantedServices([mem], () => undefined, enforce, '/Users/me', { 'ai-memory': { path: null, onPath: false } })).toEqual([]);
+		expect(wantedServices([mem], () => undefined, { kind: 'refuse', reason: 'x' }, '/Users/me', found)).toEqual([]);
+		expect(wantedServices([mem], () => undefined, { kind: 'off' }, null, found)[0].argv).toEqual(['ai-memory', 'serve']);
+	});
+
+	test('start what is wanted and not running; stop what runs and is not wanted', () => {
+		const w = wantedServices([mem], () => undefined, { kind: 'off' }, null, found);
+		const st = (snapId: string, running: boolean) => ({ snapId, serviceId: 'server', running, pid: 1, startedAt: 0, endedAt: null, exitCode: null, stopped: false, log: '' });
+		expect(serviceChanges(w, []).start.length).toBe(1);
+		expect(serviceChanges(w, [st('mem', true)])).toEqual({ start: [], stop: [] });
+		expect(serviceChanges([], [st('mem', true), st('old', false)]).stop.map((x) => x.snapId)).toEqual(['mem']);
+	});
+});
+
+describe('catalog and audiences', () => {
+	test('shipped snaps: available, installed, or an update when the version moved on', () => {
+		const shipped = [snap({ id: 'mem', version: '0.3.0', hash: 'b' }), snap({ id: 'go', hash: 'h' }), snap({ id: 'bad', error: 'x' })];
+		const list = [snap({ id: 'go', hash: 'h' }), snap({ id: 'mem', version: '0.2.0', hash: 'a' })];
+		expect(catalogEntries(shipped, list).map((e) => [e.snap.id, e.state])).toEqual([
+			['mem', 'update'],
+			['go', 'installed']
+		]);
+		expect(catalogEntries(shipped, []).map((e) => e.state)).toEqual(['available', 'available']);
+		// A repo snap with the same id is not an install of the shipped one.
+		expect(catalogEntries([snap({ id: 'go' })], [snap({ id: 'go', source: 'repo' })])[0].state).toBe('available');
+	});
+
+	test('for you vs for agents, and which agents get what', () => {
+		const s = snap({ skills: [{ name: 'style', path: 'skills/style', description: '' }], hooks: [{ event: 'Stop', command: ['x'], env: {} }] });
+		const a = audiences(s);
+		expect(a.you.length).toBe(2);
+		expect(a.agents.length).toBe(3);
+		expect(agentReach(s)[0]).toEqual({ agent: 'Claude Code', gets: ['MCP', 'skills', 'hooks'] });
+		expect(agentReach(s).find((r) => r.agent === 'Codex')).toEqual({ agent: 'Codex', gets: ['MCP'] });
+		expect(agentReach(snap({ mcp: [] }))).toEqual([]);
+	});
+
+	test('avatars are stable per id and use initials', () => {
+		expect(snapAvatar({ id: 'ai-memory', name: 'ai-memory' })).toEqual(snapAvatar({ id: 'ai-memory', name: 'ai-memory' }));
+		expect(snapAvatar({ id: 'ai-memory', name: 'ai-memory' }).letters).toBe('AM');
+		expect(snapAvatar({ id: 'go', name: 'Go' }).letters).toBe('GO');
+		expect(snapAvatar({ id: 'pg', name: 'Postgres Tools' }).letters).toBe('PT');
+	});
+});
+
+describe('files a snap runs', () => {
+	test('${snap:dir}/… points at the snap folder, before settings; trust lists the covered files', () => {
+		const s = snap({ dir: '/u/snaps/go', settings: [{ key: 'x', type: 'string', default: '${snap:dir}/evil', description: '' }], tasks: [{ id: 't', title: 'T', command: ['${snap:dir}/bin/tool', '${setting:x}', '--a=${snap:dir}/b'] }] });
+		expect(inSnapDir(s, ['${snap:dir}/bin/tool', '${snap:dir}x', 'a'])).toEqual(['/u/snaps/go/bin/tool', '${snap:dir}x', 'a']);
+		expect(taskArgv(s, s.tasks[0], () => undefined)).toEqual(['/u/snaps/go/bin/tool', '${snap:dir}/evil', '--a=${snap:dir}/b']);
+		expect(trustSummary({ ...s, source: 'repo', trusted: false, files: ['./scripts/test.sh'] })).toContain('./scripts/test.sh');
 	});
 });

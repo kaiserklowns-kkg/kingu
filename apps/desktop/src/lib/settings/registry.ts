@@ -485,6 +485,17 @@ const CORE_SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.snaps.disabled',
+		group: 'Snap Sandbox',
+		type: 'array',
+		items: 'string',
+		default: [],
+		description:
+			'id ของ Snap ที่ปิดไว้ (Disable ในแถบ Snaps): ยังติดตั้งอยู่แต่ไม่เพิ่มงาน MCP server skill hook หรือ service (VS Code: disabled extensions) (Ids of Snaps turned off without uninstalling them.)',
+		// User-only: a repository must not switch off the user's own tools.
+		scope: 'application'
+	},
+	{
 		id: 'kingu.team.project',
 		group: 'Team',
 		type: 'string',

@@ -26,6 +26,7 @@ mod shell_env;
 mod snap;
 mod snap_install;
 mod snap_sandbox;
+mod snap_service;
 mod system;
 mod terminal_links;
 mod team;
@@ -1117,6 +1118,7 @@ pub fn run() {
     .manage(Arc::new(search::Searches::default()))
     .manage(WorktreeSearches::default())
     .manage(lsp::Servers::default())
+    .manage(snap_service::Services::default())
     .manage(dap::Sessions::default())
     .manage(git_remote::GitOps::default())
     .manage(git_remote::CloneOps::default())
@@ -1361,6 +1363,17 @@ pub fn run() {
       snap::snap_list,
       snap::snap_trust,
       snap::snap_skill_plugins,
+      snap_service::snap_service_start,
+      snap_service::snap_service_stop,
+      snap_service::snap_service_list,
+      snap_service::snap_service_log,
+      snap_service::snap_find_programs,
+      snap_service::snap_open_link,
+      snap_service::snap_secret_status,
+      snap_service::snap_secret_set,
+      snap_service::snap_secret_delete,
+      snap_install::snap_catalog,
+      snap_install::snap_install_builtin,
       snap_sandbox::snap_sandbox_info,
       snap_install::snap_install_git,
       snap_install::snap_install_folder,
@@ -1421,6 +1434,7 @@ pub fn run() {
       }
       if let tauri::RunEvent::Exit = event {
         app.state::<lsp::Servers>().stop_all();
+        app.state::<snap_service::Services>().stop_all();
         app.state::<dap::Sessions>().stop_all();
         app.state::<Arc<agent::AgentHost>>().shutdown();
       }

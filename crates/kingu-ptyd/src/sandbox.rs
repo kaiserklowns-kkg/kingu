@@ -1,8 +1,8 @@
 //! Snap sandbox: confines a Snap task or MCP server to the `[permissions]` of its `snap.toml`.
 //!
 //! The app never builds the confined command itself. It runs
-//! `kingu-ptyd snap-exec --network on|off --fs worktree|home --root <dir> [--secret N]…
-//! [--keep N]… [--protect <path>]… -- <argv>` (typed into a terminal for a task, as the MCP
+//! `kingu-ptyd snap-exec --network on|off --fs worktree|home --root <dir> [--snap <id>]
+//! [--secret N]… [--keep N]… [--protect <path>]… -- <argv>` (typed into a terminal for a task, as the MCP
 //! server command for an agent), and this launcher, already inside the final environment,
 //! filters that environment and execs the OS confinement:
 //!
@@ -40,8 +40,11 @@ pub struct Request {
   pub network: bool,
   pub fs: Fs,
   pub root: PathBuf,
-  /// Declared secrets: passed through when the environment has them.
+  /// Declared secrets: from the keychain when `snap` has them stored there (`secrets.rs`), else
+  /// passed through when the environment has them.
   pub secrets: Vec<String>,
+  /// The snap whose keychain secrets to read.
+  pub snap: Option<String>,
   /// Variables the snap itself sets (an MCP server's `env`): passed through too.
   pub keep: Vec<String>,
   /// Extra paths kept read-only (the app's config, data and cache folders).
@@ -51,7 +54,7 @@ pub struct Request {
 
 pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Request, String> {
   let mut it = args.into_iter();
-  let (mut network, mut fs, mut root) = (None, Fs::Worktree, None);
+  let (mut network, mut fs, mut root, mut snap) = (None, Fs::Worktree, None, None);
   let (mut secrets, mut keep, mut protect) = (Vec::new(), Vec::new(), Vec::new());
   loop {
     let Some(flag) = it.next() else { return Err("ไม่มีคำสั่งหลัง --".into()) };
@@ -75,6 +78,8 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Request, Str
         }
       }
       "--root" => root = Some(PathBuf::from(value)),
+      "--snap" if crate::secrets::valid_snap(&value) => snap = Some(value),
+      "--snap" => return Err(format!("--snap {value}: id ของ snap ไม่ถูกต้อง")),
       "--secret" => secrets.push(value),
       "--keep" => keep.push(value),
       "--protect" => protect.push(PathBuf::from(value)),
@@ -93,7 +98,7 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Request, Str
   if protect.iter().any(|p| !p.is_absolute()) {
     return Err("--protect ต้องเป็น path เต็ม".into());
   }
-  Ok(Request { network, fs, root, secrets, keep, protect, argv })
+  Ok(Request { network, fs, root, secrets, snap, keep, protect, argv })
 }
 
 /// What the confinement allows, with every path already canonical.
@@ -380,6 +385,10 @@ pub fn exec(args: impl IntoIterator<Item = String>) -> String {
     let argv = enforcer(std::env::var_os("PATH").as_deref())?.argv(&policy, &req.argv)?;
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]).env_clear().envs(filter_env(std::env::vars_os(), req.network, &req.secrets, &req.keep));
+    // Stored secrets win over the environment: they were set for this snap.
+    if let Some(snap) = &req.snap {
+      cmd.envs(crate::secrets::lookup(&crate::secrets::Keychain, snap, &req.secrets));
+    }
     Ok(cmd)
   };
   match run() {
@@ -399,7 +408,7 @@ mod tests {
   #[test]
   fn parses_the_launcher_arguments() {
     let r = parse_args(args(&[
-      "--network", "off", "--fs", "home", "--root", "/w", "--secret", "GITHUB_TOKEN", "--keep", "MODE", "--protect", "/cfg", "--", "go", "test", "--", "./...",
+      "--network", "off", "--fs", "home", "--root", "/w", "--snap", "go", "--secret", "GITHUB_TOKEN", "--keep", "MODE", "--protect", "/cfg", "--", "go", "test", "--", "./...",
     ]))
     .unwrap();
     assert_eq!(
@@ -409,12 +418,14 @@ mod tests {
         fs: Fs::Home,
         root: "/w".into(),
         secrets: args(&["GITHUB_TOKEN"]),
+        snap: Some("go".into()),
         keep: args(&["MODE"]),
         protect: vec!["/cfg".into()],
         argv: args(&["go", "test", "--", "./..."]),
       }
     );
     assert_eq!(parse_args(args(&["--network", "on", "--root", "/w", "--", "x"])).unwrap().fs, Fs::Worktree);
+    assert!(parse_args(args(&["--network", "on", "--root", "/w", "--snap", "../x", "--", "x"])).is_err());
   }
 
   #[test]
@@ -562,7 +573,7 @@ mod tests {
   #[test]
   fn resolve_canonicalizes_and_refuses_bad_roots() {
     let tmp = tempfile::tempdir().unwrap();
-    let req = |root: &Path, fs| Request { network: false, fs, root: root.to_path_buf(), secrets: vec![], keep: vec![], protect: vec![], argv: args(&["x"]) };
+    let req = |root: &Path, fs| Request { network: false, fs, root: root.to_path_buf(), secrets: vec![], snap: None, keep: vec![], protect: vec![], argv: args(&["x"]) };
     let p = resolve(&req(tmp.path(), Fs::Worktree), Some(OsStr::new("/nonexistent-home")), None).unwrap();
     assert_eq!(p.writable[0], std::fs::canonicalize(tmp.path()).unwrap());
     assert!(resolve(&req(&tmp.path().join("missing"), Fs::Worktree), None, None).is_err());

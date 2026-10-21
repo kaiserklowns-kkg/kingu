@@ -52,6 +52,12 @@ struct Manifest {
   mcp: BTreeMap<String, RawMcp>,
   #[serde(default)]
   skills: Vec<RawSkill>,
+  #[serde(default)]
+  hooks: Vec<RawHook>,
+  #[serde(default)]
+  requires: Vec<Require>,
+  #[serde(default)]
+  services: Vec<RawService>,
 }
 
 /// Shown to the user before trust and enforced when a task or MCP server runs (`kingu-ptyd
@@ -65,7 +71,8 @@ pub struct Permissions {
   #[serde(default)]
   pub fs: FsAccess,
   /// Names of environment variables passed through to the snap (others that look like
-  /// credentials are removed). Keychain-backed values are not supported yet.
+  /// credentials are removed), or set from the keychain when the user stored a value for this
+  /// snap (`kingu-ptyd snap-secret`, snap_service.rs).
   #[serde(default)]
   pub secrets: Vec<String>,
 }
@@ -129,6 +136,80 @@ struct RawSkill {
   path: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawHook {
+  event: String,
+  command: Vec<String>,
+  #[serde(default)]
+  env: BTreeMap<String, String>,
+}
+
+/// A command run on a Claude Code lifecycle event of an agent session (`[[hooks]]`): the event's
+/// JSON on stdin, its stdout read by Claude Code (SessionStart output becomes context). Runs
+/// confined like tasks, through the snap's agent plugin (see `write_plugin`).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Hook {
+  pub event: String,
+  pub command: Vec<String>,
+  pub env: BTreeMap<String, String>,
+}
+
+/// A program the snap runs that Kingu does not ship (`[[requires]]`): checked on the PATH so the
+/// Snaps view can say it is missing and how to get it. `setting` names the setting that may point
+/// at it instead (its value replaces `program`), `install_task` a task of this snap that installs
+/// it, `url` where to read how.
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Require {
+  pub program: String,
+  #[serde(default)]
+  pub setting: Option<String>,
+  #[serde(default)]
+  pub url: Option<String>,
+  #[serde(default)]
+  pub install_task: Option<String>,
+  #[serde(default)]
+  pub description: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawService {
+  id: String,
+  title: String,
+  command: Vec<String>,
+  #[serde(default)]
+  env: BTreeMap<String, String>,
+  #[serde(default = "default_true")]
+  autostart: bool,
+  #[serde(default)]
+  when: Option<String>,
+}
+
+fn default_true() -> bool {
+  true
+}
+
+/// A long-running process of the snap (`[[services]]`) that Kingu starts while the snap is active
+/// and stops with the app (snap_service.rs), confined like tasks.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Service {
+  pub id: String,
+  pub title: String,
+  pub command: Vec<String>,
+  pub env: BTreeMap<String, String>,
+  pub autostart: bool,
+  /// A boolean setting of the snap that must be on for the service to start by itself.
+  pub when: Option<String>,
+}
+
+const MAX_SERVICES: usize = 4;
+
+/// The Claude Code hook events a snap may hook.
+pub const HOOK_EVENTS: &[&str] = &["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "PreCompact", "Stop", "SubagentStart", "SubagentStop", "SessionEnd"];
+const MAX_HOOKS: usize = 16;
+
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct McpServer {
   pub name: String,
@@ -149,6 +230,9 @@ pub struct Parsed {
   pub mcp: Vec<McpServer>,
   /// Skill folders relative to the snap folder (`skills/go-style`), checked on disk by `read_skills`.
   pub skills: Vec<String>,
+  pub hooks: Vec<Hook>,
+  pub requires: Vec<Require>,
+  pub services: Vec<Service>,
 }
 
 /// `^[a-z0-9][a-z0-9-]{0,max-1}$` (task ids pass `usize::MAX`).
@@ -324,7 +408,77 @@ pub fn parse_manifest(text: &str, folder: &str) -> Result<Parsed, String> {
     skills.push(s.path);
   }
 
-  Ok(Parsed { id: m.id, name: m.name, version: m.version, description: m.description, permissions: m.permissions, tasks: m.tasks, settings, mcp, skills })
+  if m.hooks.len() > MAX_HOOKS {
+    return Err(format!("มี hook ได้ไม่เกิน {MAX_HOOKS} ตัว"));
+  }
+  let mut hooks = Vec::new();
+  for h in m.hooks {
+    if !HOOK_EVENTS.contains(&h.event.as_str()) {
+      return Err(format!("hook event \"{}\" ไม่รู้จัก (ใช้ได้: {})", h.event, HOOK_EVENTS.join(", ")));
+    }
+    if h.command.first().is_none_or(|c| c.trim().is_empty()) {
+      return Err(format!("hook {} ต้องมี command", h.event));
+    }
+    if let Some(k) = h.env.keys().find(|k| !is_env_name(k)) {
+      return Err(format!("hook {}: ชื่อตัวแปร env \"{k}\" ไม่ถูกต้อง", h.event));
+    }
+    let owner = format!("hook {}", h.event);
+    for arg in h.command.iter().chain(h.env.values()) {
+      check_placeholders(arg, &keys, &owner)?;
+    }
+    hooks.push(Hook { event: h.event, command: h.command, env: h.env });
+  }
+
+  for r in &m.requires {
+    if r.program.trim().is_empty() || r.program.contains('/') && !r.program.starts_with('/') {
+      return Err(format!("requires: program \"{}\" ต้องเป็นชื่อโปรแกรมหรือ path เต็ม", r.program));
+    }
+    if let Some(k) = &r.setting
+      && !keys.contains(k)
+    {
+      return Err(format!("requires {}: setting \"{k}\" ไม่ได้ประกาศใน [[settings]]", r.program));
+    }
+    if let Some(t) = &r.install_task
+      && !ids.contains(t.as_str())
+    {
+      return Err(format!("requires {}: install_task \"{t}\" ไม่มีใน [[tasks]]", r.program));
+    }
+    if r.url.as_deref().is_some_and(|u| !u.starts_with("https://")) {
+      return Err(format!("requires {}: url ต้องขึ้นต้นด้วย https://", r.program));
+    }
+  }
+
+  if m.services.len() > MAX_SERVICES {
+    return Err(format!("มี service ได้ไม่เกิน {MAX_SERVICES} ตัว"));
+  }
+  let mut services = Vec::new();
+  let mut service_ids = BTreeSet::new();
+  for sv in m.services {
+    if !is_slug(&sv.id, 40) || !service_ids.insert(sv.id.clone()) {
+      return Err(format!("id ของ service \"{}\" ไม่ถูกต้องหรือซ้ำ (ใช้ a-z, 0-9, -)", sv.id));
+    }
+    if sv.title.trim().is_empty() {
+      return Err(format!("service \"{}\" ต้องมี title", sv.id));
+    }
+    if sv.command.first().is_none_or(|c| c.trim().is_empty()) {
+      return Err(format!("service \"{}\" ต้องมี command", sv.id));
+    }
+    if let Some(k) = sv.env.keys().find(|k| !is_env_name(k)) {
+      return Err(format!("service \"{}\": ชื่อตัวแปร env \"{k}\" ไม่ถูกต้อง", sv.id));
+    }
+    let owner = format!("service \"{}\"", sv.id);
+    for arg in sv.command.iter().chain(sv.env.values()) {
+      check_placeholders(arg, &keys, &owner)?;
+    }
+    if let Some(w) = &sv.when
+      && !settings.iter().any(|st| &st.key == w && st.kind == SettingType::Boolean)
+    {
+      return Err(format!("service \"{}\": when = \"{w}\" ต้องเป็นการตั้งค่าแบบ boolean ใน [[settings]]", sv.id));
+    }
+    services.push(Service { id: sv.id, title: sv.title, command: sv.command, env: sv.env, autostart: sv.autostart, when: sv.when });
+  }
+
+  Ok(Parsed { id: m.id, name: m.name, version: m.version, description: m.description, permissions: m.permissions, tasks: m.tasks, settings, mcp, skills, hooks, requires: m.requires, services })
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -441,11 +595,88 @@ pub fn read_skills(snap_dir: &Path, paths: &[String]) -> Result<Vec<Skill>, Stri
   Ok(out)
 }
 
-/// The trust hash: SHA-256 of `snap.toml` alone for a snap without skills (unchanged from phase
-/// 1), otherwise also over every skill file, so editing a repo snap's SKILL.md revokes trust too:
-/// a skill is instructions to the agent and must not change behind the user's back.
-pub fn snap_hash(manifest: &[u8], skills: &[Skill]) -> String {
-  if skills.is_empty() {
+// ---------------------------------------------------------------------------------------------
+// Files the commands run
+
+/// The prefix of an argument naming a file shipped in the snap folder (`${snap:dir}/bin/tool`);
+/// the webview replaces it with the folder when it builds the argv.
+pub const SNAP_DIR: &str = "${snap:dir}";
+const MAX_RUN_FILES: usize = 64;
+const MAX_RUN_BYTES: u64 = 8 * 1024 * 1024;
+
+/// A file a command of the snap runs or reads (a script it calls), hashed for trust like skills:
+/// `label` is `${snap:dir}/<rel>` or the path relative to the folder root, as written.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunFile {
+  pub label: String,
+  pub bytes: Vec<u8>,
+}
+
+/// Plain `/`-separated parts (no empty, `.`, `..` or backslash), after an optional leading `./`.
+fn plain_rel(path: &str) -> Option<&str> {
+  let rel = path.strip_prefix("./").unwrap_or(path);
+  let ok = !rel.is_empty() && !rel.starts_with('/') && rel.split('/').all(|p| !p.is_empty() && p != "." && p != ".." && !p.contains('\\'));
+  ok.then_some(rel)
+}
+
+/// Every argv of the snap's tasks, MCP servers, hooks and services.
+fn command_args(p: &Parsed) -> impl Iterator<Item = &String> {
+  p.tasks.iter().flat_map(|t| &t.command).chain(p.mcp.iter().flat_map(|m| &m.command)).chain(p.hooks.iter().flat_map(|h| &h.command)).chain(p.services.iter().flat_map(|s| &s.command))
+}
+
+/// The files the snap's commands name: `${snap:dir}/…` (must exist in the snap folder) and, for a
+/// repo snap, arguments that are paths of existing files in the open folder (`./scripts/test.sh`,
+/// `tools/lint.py`). Their bytes join the trust hash, so a pull that changes a script a trusted
+/// task runs revokes trust just like a changed snap.toml. A symlink is followed only when it stays
+/// inside the folder it belongs to.
+pub fn run_files(p: &Parsed, snap_dir: &Path, root: Option<&Path>) -> Result<Vec<RunFile>, String> {
+  let mut seen = BTreeSet::new();
+  let mut out = Vec::new();
+  let mut total = 0u64;
+  let mut add = |label: String, base: &Path, rel: &str, required: bool| -> Result<(), String> {
+    if !seen.insert(label.clone()) {
+      return Ok(());
+    }
+    let path = base.join(rel);
+    let real = match (path.canonicalize(), base.canonicalize()) {
+      (Ok(real), Ok(b)) if real.starts_with(&b) && real.is_file() => real,
+      (Ok(real), Ok(b)) if !real.starts_with(&b) => return Err(format!("{label} ชี้ออกนอกโฟลเดอร์ (symlink) — ไม่รองรับ")),
+      _ if required => return Err(format!("ไม่พบไฟล์ {label} ที่คำสั่งเรียกใช้")),
+      _ => return Ok(()),
+    };
+    let len = std::fs::metadata(&real).map(|m| m.len()).unwrap_or_default();
+    total += len;
+    if out.len() >= MAX_RUN_FILES || total > MAX_RUN_BYTES {
+      return Err(format!("ไฟล์ที่คำสั่งเรียกใช้มากเกินไป (ไม่เกิน {MAX_RUN_FILES} ไฟล์ และ {} MB)", MAX_RUN_BYTES / 1024 / 1024));
+    }
+    let bytes = std::fs::read(&real).map_err(|e| format!("อ่าน {label} ไม่ได้: {e}"))?;
+    out.push(RunFile { label, bytes });
+    Ok(())
+  };
+  for arg in command_args(p) {
+    if let Some(rest) = arg.strip_prefix(SNAP_DIR) {
+      let rel = rest.strip_prefix('/').and_then(plain_rel).ok_or_else(|| format!("\"{arg}\": {SNAP_DIR} ต้องตามด้วย /<path ในโฟลเดอร์ snap>"))?;
+      add(arg.clone(), snap_dir, rel, true)?;
+    } else if arg.contains("${snap:") {
+      return Err(format!("\"{arg}\": ใช้ {SNAP_DIR} ได้เฉพาะที่ต้นอาร์กิวเมนต์ ({SNAP_DIR}/…)"));
+    } else if let Some(root) = root
+      && !arg.contains("${")
+      && (arg.starts_with("./") || arg.contains('/'))
+      && let Some(rel) = plain_rel(arg)
+    {
+      add(arg.clone(), root, rel, false)?;
+    }
+  }
+  out.sort_by(|a, b| a.label.cmp(&b.label));
+  Ok(out)
+}
+
+/// The trust hash: SHA-256 of `snap.toml` alone for a snap without skills or run files (unchanged
+/// from phase 1), otherwise also over every skill file and every file its commands run, so editing
+/// a repo snap's SKILL.md or a script its task calls revokes trust too: they decide what runs and
+/// what the agent is told, and must not change behind the user's back.
+pub fn snap_hash(manifest: &[u8], skills: &[Skill], files: &[RunFile]) -> String {
+  if skills.is_empty() && files.is_empty() {
     return sha256_hex(manifest);
   }
   let mut h = Sha256::new();
@@ -460,6 +691,13 @@ pub fn snap_hash(manifest: &[u8], skills: &[Skill]) -> String {
       h.update((bytes.len() as u64).to_le_bytes());
       h.update(bytes);
     }
+  }
+  for f in files {
+    h.update(b"\0kingu-file\0");
+    h.update(f.label.as_bytes());
+    h.update(b"\0");
+    h.update((f.bytes.len() as u64).to_le_bytes());
+    h.update(&f.bytes);
   }
   h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -496,6 +734,13 @@ pub struct SnapInfo {
   pub settings: Vec<Setting>,
   pub mcp: Vec<McpServer>,
   pub skills: Vec<Skill>,
+  pub hooks: Vec<Hook>,
+  pub requires: Vec<Require>,
+  pub services: Vec<Service>,
+  /// `README.md` of the snap folder, shown on its details page (display only, not hashed).
+  pub readme: Option<String>,
+  /// The files its commands run (`run_files`), covered by the trust hash.
+  pub files: Vec<String>,
   /// User snaps installed through Kingu: where they came from (`.kingu-snap.json`, not hashed).
   pub origin: Option<Origin>,
   /// Repo snaps when the folder has `.kingu/snaps.lock`: whether this snap matches its entry.
@@ -520,6 +765,11 @@ impl SnapInfo {
       settings: Vec::new(),
       mcp: Vec::new(),
       skills: Vec::new(),
+      hooks: Vec::new(),
+      requires: Vec::new(),
+      services: Vec::new(),
+      readme: None,
+      files: Vec::new(),
       origin: None,
       lock: None,
     }
@@ -539,6 +789,19 @@ pub fn repo_snaps_dir(root: &Path) -> Option<PathBuf> {
     }
   }
   Some(dir)
+}
+
+const README: &str = "README.md";
+const MAX_README_BYTES: u64 = 256 * 1024;
+
+/// The snap's README when it is a regular file of a sane size.
+fn read_readme(dir: &Path) -> Option<String> {
+  let file = dir.join(README);
+  let meta = std::fs::symlink_metadata(&file).ok()?;
+  if !meta.is_file() || meta.len() > MAX_README_BYTES {
+    return None;
+  }
+  String::from_utf8(std::fs::read(file).ok()?).ok()
 }
 
 /// Reads one snap folder. Never follows a symlink: a symlinked folder or manifest is listed as broken.
@@ -575,7 +838,11 @@ pub(crate) fn read_snap(dir: &Path, folder: &str, source: Source, root: Option<&
     Ok(s) => s,
     Err(e) => return broken(hash, e),
   };
-  let hash = snap_hash(&bytes, &skills);
+  let files = match run_files(&p, dir, if source == Source::Repo { root } else { None }) {
+    Ok(f) => f,
+    Err(e) => return broken(hash, e),
+  };
+  let hash = snap_hash(&bytes, &skills, &files);
   SnapInfo {
     trusted: match (source, root) {
       (Source::User, _) => true,
@@ -596,6 +863,11 @@ pub(crate) fn read_snap(dir: &Path, folder: &str, source: Source, root: Option<&
     settings: p.settings,
     mcp: p.mcp,
     skills,
+    hooks: p.hooks,
+    requires: p.requires,
+    services: p.services,
+    readme: read_readme(dir),
+    files: files.into_iter().map(|f| f.label).collect(),
     origin: None,
     lock: None,
   }
@@ -731,16 +1003,47 @@ pub fn set_script_trust(config_dir: &Path, root: &Path, key: &str, sha256: Optio
 //
 // Claude Code loads skills from plugins: a folder with `.claude-plugin/plugin.json` and
 // `skills/<name>/SKILL.md`, passed as the SDK's `plugins: [{ type: 'local', path }]` or the CLI's
-// `--plugin-dir <path>`. Kingu writes one such folder per active snap with skills into the app's
-// cache dir (never the repo or a worktree), from the bytes read and hashed when listing. Folders
-// are named by that hash, so a running agent's folder never changes under it and an unchanged
-// snap reuses its folder.
+// `--plugin-dir <path>`. Kingu writes one such folder per active snap with skills or hooks into
+// the app's cache dir (never the repo or a worktree), from the bytes read and hashed when
+// listing. Folders are named by that hash (and by the hook commands of the run, see `HookRun`),
+// so a running agent's folder never changes under it and an unchanged snap reuses its folder.
+//
+// A snap's `[[hooks]]` go in as the plugin's `hooks/hooks.json`. Their commands come from the
+// webview as it resolved them for this run (settings expanded, wrapped in the sandbox launcher
+// for the agent's worktree, like MCP servers); Rust only accepts events the snap declares.
 
 const PLUGINS_DIR: &str = "snap-plugins";
 const PLUGIN_MANIFEST: [&str; 2] = [".claude-plugin", "plugin.json"];
 /// Older versions of a snap's plugin folder are removed after this long unused.
 const PLUGIN_TTL: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
 const MAX_PLUGINS: usize = 64;
+
+/// One `[[hooks]]` entry of a snap resolved for an agent run: the argv to run on `event`.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+pub struct HookRun {
+  pub event: String,
+  pub argv: Vec<String>,
+}
+
+/// `hooks/hooks.json` for `runs`, each argv quoted into one shell command (Claude Code runs hook
+/// commands through the shell); every run must match an entry the snap declares.
+fn hooks_json(snap: &SnapInfo, runs: &[HookRun]) -> Result<serde_json::Value, String> {
+  let mut by_event: BTreeMap<&str, Vec<serde_json::Value>> = BTreeMap::new();
+  for run in runs {
+    let declared = snap.hooks.iter().filter(|h| h.event == run.event).count();
+    let used = by_event.get(run.event.as_str()).map_or(0, Vec::len);
+    if used >= declared {
+      return Err(format!("snap \"{}\" ไม่ได้ประกาศ hook {}", snap.id, run.event));
+    }
+    if run.argv.first().is_none_or(|a| a.trim().is_empty()) || run.argv.iter().any(|a| a.contains('\0')) {
+      return Err(format!("hook {} ของ snap \"{}\" ไม่มีคำสั่งที่รันได้", run.event, snap.id));
+    }
+    let command = run.argv.iter().map(|a| kingu_ptyd::session::shell_quote(a)).collect::<Vec<_>>().join(" ");
+    by_event.entry(run.event.as_str()).or_default().push(serde_json::json!({ "type": "command", "command": command }));
+  }
+  let hooks: serde_json::Map<String, serde_json::Value> = by_event.into_iter().map(|(e, list)| (e.to_string(), serde_json::json!([{ "hooks": list }]))).collect();
+  Ok(serde_json::json!({ "hooks": hooks }))
+}
 
 /// The plugin's name, so its skills show up as `snap-<id>:<skill>`.
 pub fn plugin_name(snap_id: &str) -> String {
@@ -754,12 +1057,19 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
   std::fs::write(path, bytes).map_err(|e| format!("เขียน {} ไม่ได้: {e}", path.display()))
 }
 
-/// Writes (or reuses) the plugin folder of `snap` under `plugins_dir` and returns its path.
-pub fn write_plugin(plugins_dir: &Path, snap: &SnapInfo) -> Result<PathBuf, String> {
+/// Writes (or reuses) the plugin folder of `snap` with the hook commands `runs` under
+/// `plugins_dir` and returns its path.
+pub fn write_plugin(plugins_dir: &Path, snap: &SnapInfo, runs: &[HookRun]) -> Result<PathBuf, String> {
   if !is_snap_id(&snap.id) || snap.hash.len() < 16 {
     return Err(format!("snap \"{}\" ไม่ถูกต้อง", snap.id));
   }
-  let dir = plugins_dir.join(format!("{}-{}", snap.id, &snap.hash[..16]));
+  let hooks = if runs.is_empty() { None } else { Some(hooks_json(snap, runs)?) };
+  // Without hooks the folder is named by the trust hash alone (as before hooks existed).
+  let name_hash = match &hooks {
+    Some(h) => sha256_hex(format!("{}\0{h}", snap.hash).as_bytes()),
+    None => snap.hash.clone(),
+  };
+  let dir = plugins_dir.join(format!("{}-{}", snap.id, &name_hash[..16]));
   if dir.join(PLUGIN_MANIFEST[0]).join(PLUGIN_MANIFEST[1]).is_file() {
     prune_plugins(plugins_dir, &snap.id, &dir);
     return Ok(dir);
@@ -771,9 +1081,12 @@ pub fn write_plugin(plugins_dir: &Path, snap: &SnapInfo) -> Result<PathBuf, Stri
     let manifest = serde_json::json!({
       "name": plugin_name(&snap.id),
       "version": snap.version,
-      "description": format!("Skills of the Kingu snap \"{}\"", snap.name),
+      "description": format!("Skills and hooks of the Kingu snap \"{}\"", snap.name),
     });
     write_file(&tmp.join(PLUGIN_MANIFEST[0]).join(PLUGIN_MANIFEST[1]), serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?.as_bytes())?;
+    if let Some(hooks) = &hooks {
+      write_file(&tmp.join("hooks").join("hooks.json"), serde_json::to_string_pretty(hooks).map_err(|e| e.to_string())?.as_bytes())?;
+    }
     for skill in &snap.skills {
       let base = tmp.join("skills").join(&skill.name);
       for (rel, bytes) in &skill.files {
@@ -819,13 +1132,21 @@ fn prune_plugins(plugins_dir: &Path, id: &str, keep: &Path) {
   }
 }
 
-/// Plugin folders for the active snaps among `ids` that have skills.
-pub fn skill_plugins(plugins_dir: &Path, list: &[SnapInfo], ids: &[String]) -> Result<Vec<PathBuf>, String> {
-  let active = list.iter().filter(|s| s.error.is_none() && s.trusted && !s.overridden && !s.skills.is_empty() && ids.contains(&s.id));
+/// Plugin folders for the active snaps among `ids` that have skills, or hooks resolved in `hooks`
+/// (a snap whose hooks the webview left out, because the sandbox refused, adds only its skills).
+pub fn skill_plugins(plugins_dir: &Path, list: &[SnapInfo], ids: &[String], hooks: &BTreeMap<String, Vec<HookRun>>) -> Result<Vec<PathBuf>, String> {
+  if let Some(id) = hooks.keys().find(|id| !ids.contains(id)) {
+    return Err(format!("hook ของ snap \"{id}\" ไม่อยู่ในรายการ snap ของ run นี้"));
+  }
+  let active = list.iter().filter(|s| s.error.is_none() && s.trusted && !s.overridden && ids.contains(&s.id));
   let mut out = Vec::new();
   for snap in active {
+    let runs = hooks.get(&snap.id).map(Vec::as_slice).unwrap_or_default();
+    if snap.skills.is_empty() && runs.is_empty() {
+      continue;
+    }
     std::fs::create_dir_all(plugins_dir).map_err(|e| format!("สร้าง {} ไม่ได้: {e}", plugins_dir.display()))?;
-    out.push(write_plugin(plugins_dir, snap)?);
+    out.push(write_plugin(plugins_dir, snap, runs)?);
   }
   Ok(out)
 }
@@ -869,9 +1190,11 @@ pub fn snap_list(app: AppHandle, ws: State<'_, Workspace>) -> Result<Vec<SnapInf
 
 /// Prepares the skill plugins of the given snaps for an agent run and returns their folders.
 /// Snaps are listed again here, so only ones that are active right now (valid, trusted, not
-/// overridden) contribute, with exactly the bytes that were hashed for trust.
+/// overridden) contribute, with exactly the bytes that were hashed for trust. `hooks`: each
+/// snap's `[[hooks]]` as the webview resolved them for this run (see `HookRun`).
 #[tauri::command]
-pub async fn snap_skill_plugins(app: AppHandle, ids: Vec<String>) -> Result<Vec<String>, String> {
+pub async fn snap_skill_plugins(app: AppHandle, ids: Vec<String>, hooks: Option<BTreeMap<String, Vec<HookRun>>>) -> Result<Vec<String>, String> {
+  let hooks = hooks.unwrap_or_default();
   if ids.is_empty() {
     return Ok(Vec::new());
   }
@@ -883,7 +1206,7 @@ pub async fn snap_skill_plugins(app: AppHandle, ids: Vec<String>) -> Result<Vec<
     let trust = TrustData::load(&config.join(TRUST_FILE));
     let root = app.state::<Workspace>().current();
     let list = discover(&config.join(USER_DIR), root.as_deref(), &trust);
-    let dirs = skill_plugins(&plugins_dir(&app)?, &list, &ids)?;
+    let dirs = skill_plugins(&plugins_dir(&app)?, &list, &ids, &hooks)?;
     Ok(dirs.into_iter().map(|d| d.display().to_string()).collect())
   })
   .await
@@ -1240,7 +1563,7 @@ env = { GOFLAGS = "-mod=mod" }
 
     // The untrusted repo snap and the snap without skills get no plugin.
     let list = discover(&user_dir, Some(root.path()), &TrustData::default());
-    let dirs = skill_plugins(&plugins, &list, &ids).unwrap();
+    let dirs = skill_plugins(&plugins, &list, &ids, &BTreeMap::new()).unwrap();
     assert_eq!(dirs.len(), 1);
     let go = &dirs[0];
     assert_eq!(go.parent(), Some(plugins.as_path()));
@@ -1251,13 +1574,13 @@ env = { GOFLAGS = "-mod=mod" }
     // Nothing was written into the repo or next to the snaps.
     assert!(!root.path().join(".claude-plugin").exists() && !mine.join(".claude-plugin").exists());
     // Only the listed ids.
-    assert!(skill_plugins(&plugins, &list, &["plain".to_string()]).unwrap().is_empty());
+    assert!(skill_plugins(&plugins, &list, &["plain".to_string()], &BTreeMap::new()).unwrap().is_empty());
 
     // Same content reuses the folder; changed content gets a new one and the old one stays for running agents.
-    assert_eq!(&skill_plugins(&plugins, &list, &ids).unwrap()[0], go);
+    assert_eq!(&skill_plugins(&plugins, &list, &ids, &BTreeMap::new()).unwrap()[0], go);
     std::fs::write(mine.join("skills/go-style/SKILL.md"), "v2").unwrap();
     let list = discover(&user_dir, Some(root.path()), &TrustData::default());
-    let v2 = skill_plugins(&plugins, &list, &ids).unwrap().remove(0);
+    let v2 = skill_plugins(&plugins, &list, &ids, &BTreeMap::new()).unwrap().remove(0);
     assert_ne!(&v2, go);
     assert!(go.exists());
     assert_eq!(std::fs::read_to_string(v2.join("skills/go-style/SKILL.md")).unwrap(), "v2");
@@ -1267,7 +1590,7 @@ env = { GOFLAGS = "-mod=mod" }
     let mut trust = TrustData::default();
     trust.set(root.path(), "lint", Some(&lint.hash));
     let list = discover(&user_dir, Some(root.path()), &trust);
-    let dirs = skill_plugins(&plugins, &list, &ids).unwrap();
+    let dirs = skill_plugins(&plugins, &list, &ids, &BTreeMap::new()).unwrap();
     assert_eq!(dirs.len(), 2);
     assert!(dirs[1].join("skills/review/SKILL.md").is_file());
     // No temp folders are left behind.
@@ -1319,5 +1642,160 @@ env = { GOFLAGS = "-mod=mod" }
     let root3 = tempfile::tempdir().unwrap();
     symlink(root.path().join(".kingu"), root3.path().join(".kingu")).unwrap();
     assert!(repo_snaps_dir(root3.path()).is_none());
+  }
+
+  #[test]
+  fn validates_hooks() {
+    let base = "id = \"m\"\nname = \"M\"\nversion = \"1\"\n[[settings]]\nkey = \"bin\"\ntype = \"string\"\n";
+    let p = parse_manifest(&format!("{base}[[hooks]]\nevent = \"SessionStart\"\ncommand = [\"${{setting:bin}}\", \"hook\"]\nenv = {{ ORIGIN = \"kingu\" }}\n"), "m").unwrap();
+    assert_eq!(p.hooks, vec![Hook { event: "SessionStart".into(), command: vec!["${setting:bin}".into(), "hook".into()], env: BTreeMap::from([("ORIGIN".into(), "kingu".into())]) }]);
+    let err = |hook: &str| parse_manifest(&format!("{base}[[hooks]]\n{hook}\n"), "m").unwrap_err();
+    assert!(err("event = \"BeforeEverything\"\ncommand = [\"x\"]").contains("BeforeEverything"));
+    assert!(err("event = \"Stop\"\ncommand = []").contains("command"));
+    assert!(err("event = \"Stop\"\ncommand = [\"${setting:nope}\"]").contains("nope"));
+    assert!(err("event = \"Stop\"\ncommand = [\"x\"]\nenv = { \"1X\" = \"v\" }").contains("1X"));
+    assert!(err("event = \"Stop\"\ncommand = [\"x\"]\nmatcher = \"Bash\"").contains("matcher"));
+    let many = "[[hooks]]\nevent = \"Stop\"\ncommand = [\"x\"]\n".repeat(MAX_HOOKS + 1);
+    assert!(parse_manifest(&format!("{base}{many}"), "m").is_err());
+  }
+
+  #[test]
+  fn validates_requires_and_services() {
+    let base = "id = \"m\"\nname = \"M\"\nversion = \"1\"\n[[settings]]\nkey = \"bin\"\ntype = \"string\"\n[[settings]]\nkey = \"run\"\ntype = \"boolean\"\ndefault = true\n[[tasks]]\nid = \"install\"\ntitle = \"Install\"\ncommand = [\"sh\"]\n";
+    let ok = format!("{base}[[requires]]\nprogram = \"mem\"\nsetting = \"bin\"\nurl = \"https://example.com\"\ninstall_task = \"install\"\n[[services]]\nid = \"server\"\ntitle = \"Server\"\ncommand = [\"${{setting:bin}}\", \"serve\"]\nwhen = \"run\"\n");
+    let p = parse_manifest(&ok, "m").unwrap();
+    assert_eq!(p.requires[0].install_task.as_deref(), Some("install"));
+    assert_eq!(p.services, vec![Service { id: "server".into(), title: "Server".into(), command: vec!["${setting:bin}".into(), "serve".into()], env: BTreeMap::new(), autostart: true, when: Some("run".into()) }]);
+    let err = |extra: &str| parse_manifest(&format!("{base}{extra}"), "m").unwrap_err();
+    assert!(err("[[requires]]\nprogram = \"mem\"\nsetting = \"nope\"\n").contains("nope"));
+    assert!(err("[[requires]]\nprogram = \"mem\"\ninstall_task = \"nope\"\n").contains("nope"));
+    assert!(err("[[requires]]\nprogram = \"mem\"\nurl = \"http://x\"\n").contains("https"));
+    assert!(err("[[requires]]\nprogram = \"./mem\"\n").contains("./mem"));
+    assert!(err("[[services]]\nid = \"S\"\ntitle = \"S\"\ncommand = [\"x\"]\n").contains("S"));
+    assert!(err("[[services]]\nid = \"s\"\ntitle = \"S\"\ncommand = [\"x\"]\nwhen = \"bin\"\n").contains("boolean"));
+    assert!(err("[[services]]\nid = \"s\"\ntitle = \"S\"\ncommand = [\"${setting:x}\"]\n").contains("x"));
+  }
+
+  #[test]
+  fn reads_the_readme_for_display() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = write_snap(dir.path(), "go", &minimal("go"));
+    assert_eq!(read_snap(&d, "go", Source::User, None, &TrustData::default()).readme, None);
+    std::fs::write(d.join(README), "# Go\n").unwrap();
+    let s = read_snap(&d, "go", Source::User, None, &TrustData::default());
+    assert_eq!(s.readme.as_deref(), Some("# Go\n"));
+    // Not part of the trust hash.
+    std::fs::write(d.join(README), "# Changed\n").unwrap();
+    assert_eq!(read_snap(&d, "go", Source::User, None, &TrustData::default()).hash, s.hash);
+  }
+
+  #[test]
+  fn writes_resolved_hooks_into_the_plugin() {
+    let config = tempfile::tempdir().unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    let plugins = cache.path().join(PLUGINS_DIR);
+    let user_dir = config.path().join(USER_DIR);
+    write_snap(&user_dir, "mem", "id = \"mem\"\nname = \"Mem\"\nversion = \"1\"\n[[hooks]]\nevent = \"SessionStart\"\ncommand = [\"mem\", \"start\"]\n[[hooks]]\nevent = \"Stop\"\ncommand = [\"mem\", \"stop\"]\n");
+    let list = discover(&user_dir, None, &TrustData::default());
+    let ids = vec!["mem".to_string()];
+    let run = |event: &str, argv: &[&str]| HookRun { event: event.into(), argv: argv.iter().map(|a| a.to_string()).collect() };
+
+    // A snap with only hooks gets no plugin until its hooks are resolved (the sandbox refused).
+    assert!(skill_plugins(&plugins, &list, &ids, &BTreeMap::new()).unwrap().is_empty());
+    let hooks = BTreeMap::from([("mem".to_string(), vec![run("SessionStart", &["/k/kingu-ptyd", "snap-exec", "--", "mem", "start"]), run("Stop", &["mem", "it's"])])]);
+    let dirs = skill_plugins(&plugins, &list, &ids, &hooks).unwrap();
+    assert_eq!(dirs.len(), 1);
+    let json: serde_json::Value = serde_json::from_slice(&std::fs::read(dirs[0].join("hooks/hooks.json")).unwrap()).unwrap();
+    assert_eq!(json["hooks"]["SessionStart"][0]["hooks"][0], serde_json::json!({ "type": "command", "command": "/k/kingu-ptyd snap-exec -- mem start" }));
+    assert_eq!(json["hooks"]["Stop"][0]["hooks"][0]["command"], "mem 'it'\\''s'");
+    assert!(validate_plugin_dirs(&plugins, &[dirs[0].display().to_string()]).is_ok());
+
+    // Other commands (another worktree) get their own folder; the same ones reuse it.
+    assert_eq!(skill_plugins(&plugins, &list, &ids, &hooks).unwrap(), dirs);
+    let other = BTreeMap::from([("mem".to_string(), vec![run("SessionStart", &["mem", "elsewhere"])])]);
+    assert_ne!(skill_plugins(&plugins, &list, &ids, &other).unwrap(), dirs);
+
+    // Only declared events, at most as often as declared, for snaps of this run.
+    let bad = |runs: Vec<HookRun>| skill_plugins(&plugins, &list, &ids, &BTreeMap::from([("mem".to_string(), runs)])).unwrap_err();
+    assert!(bad(vec![run("PreToolUse", &["x"])]).contains("PreToolUse"));
+    assert!(bad(vec![run("Stop", &["x"]), run("Stop", &["y"])]).contains("Stop"));
+    assert!(bad(vec![run("Stop", &[])]).contains("Stop"));
+    assert!(skill_plugins(&plugins, &list, &[], &hooks).is_err());
+  }
+
+  #[test]
+  fn trust_covers_the_files_commands_run() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("scripts")).unwrap();
+    std::fs::write(root.path().join("scripts/test.sh"), "echo ok").unwrap();
+    let manifest = "id = \"t\"\nname = \"T\"\nversion = \"1\"\n[[tasks]]\nid = \"test\"\ntitle = \"Test\"\ncommand = [\"sh\", \"./scripts/test.sh\", \"./...\", \"https://x/y\"]\n[[tasks]]\nid = \"tool\"\ntitle = \"Tool\"\ncommand = [\"${snap:dir}/bin/tool\"]\n";
+    let snap = write_snap(&root.path().join(".kingu/snaps"), "t", manifest);
+    std::fs::create_dir_all(snap.join("bin")).unwrap();
+    std::fs::write(snap.join("bin/tool"), "v1").unwrap();
+    let list = || discover(&root.path().join("none"), Some(root.path()), &TrustData::default());
+    let s = list().remove(0);
+    assert_eq!(s.error, None);
+    assert_eq!(s.files, vec!["${snap:dir}/bin/tool".to_string(), "./scripts/test.sh".to_string()].into_iter().collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>());
+    assert_ne!(s.hash, sha256_hex(manifest.as_bytes()));
+
+    // Editing either file changes the hash (and so revokes trust); an unrelated file does not.
+    std::fs::write(root.path().join("scripts/test.sh"), "rm -rf ~").unwrap();
+    let after_script = list().remove(0).hash;
+    assert_ne!(after_script, s.hash);
+    std::fs::write(snap.join("bin/tool"), "v2").unwrap();
+    assert_ne!(list().remove(0).hash, after_script);
+    let before = list().remove(0).hash;
+    std::fs::write(root.path().join("README.md"), "x").unwrap();
+    assert_eq!(list().remove(0).hash, before);
+
+    // A ${snap:dir} file must exist; repo paths that are not files are just arguments.
+    std::fs::remove_file(snap.join("bin/tool")).unwrap();
+    assert!(list().remove(0).error.unwrap().contains("bin/tool"));
+    // ${snap:dir} only as a prefix, and never out of the folder.
+    let bad = |cmd: &str| {
+      let r = tempfile::tempdir().unwrap();
+      write_snap(r.path(), "b", &format!("id = \"b\"\nname = \"B\"\nversion = \"1\"\n[[tasks]]\nid = \"x\"\ntitle = \"X\"\ncommand = [{cmd}]\n"));
+      discover(r.path(), None, &TrustData::default()).remove(0).error.unwrap_or_default()
+    };
+    assert!(bad("\"--x=${snap:dir}/a\"").contains("${snap:dir}"));
+    assert!(bad("\"${snap:dir}/../escape\"").contains("${snap:dir}"));
+    assert!(bad("\"${snap:dir}\"").contains("${snap:dir}"));
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn run_files_never_follow_symlinks_out() {
+    use std::os::unix::fs::symlink;
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("evil.sh"), "x").unwrap();
+    std::fs::write(root.path().join("real.sh"), "ok").unwrap();
+    std::fs::create_dir_all(root.path().join("bin")).unwrap();
+    symlink(outside.path().join("evil.sh"), root.path().join("bin/out.sh")).unwrap();
+    symlink(root.path().join("real.sh"), root.path().join("bin/in.sh")).unwrap();
+    let manifest = |arg: &str| format!("id = \"t\"\nname = \"T\"\nversion = \"1\"\n[[tasks]]\nid = \"x\"\ntitle = \"X\"\ncommand = [\"sh\", \"{arg}\"]\n");
+    let read = |arg: &str| {
+      let snaps = root.path().join(".kingu/snaps");
+      let _ = std::fs::remove_dir_all(&snaps);
+      write_snap(&snaps, "t", &manifest(arg));
+      discover(&root.path().join("none"), Some(root.path()), &TrustData::default()).remove(0)
+    };
+    assert!(read("bin/out.sh").error.unwrap().contains("bin/out.sh"));
+    let inside = read("bin/in.sh");
+    assert_eq!((inside.error, inside.files), (None, vec!["bin/in.sh".to_string()]));
+  }
+
+  /// The snaps this repo ships in `snaps/<id>` (installable with the repo's git URL) read clean.
+  #[test]
+  fn shipped_snaps_are_valid() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../snaps");
+    let mut ids = Vec::new();
+    for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+      let folder = entry.file_name().to_string_lossy().into_owned();
+      let snap = read_snap(&entry.path(), &folder, Source::User, None, &TrustData::default());
+      assert_eq!(snap.error, None, "snaps/{folder}");
+      ids.push(folder);
+    }
+    assert!(ids.contains(&"ai-memory".to_string()));
   }
 }

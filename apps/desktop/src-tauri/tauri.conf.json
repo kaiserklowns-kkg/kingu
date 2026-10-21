@@ -31,6 +31,9 @@
     "active": true,
     "targets": "all",
     "category": "DeveloperTool",
+    "resources": {
+      "../../../snaps/": "snaps/"
+    },
     "shortDescription": "Code editor and AI agent workspace",
     "icon": [
       "icons/32x32.png",

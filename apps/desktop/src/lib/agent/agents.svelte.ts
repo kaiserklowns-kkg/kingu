@@ -66,7 +66,7 @@ class Agents {
 		this.runs[slug] = run;
 		const state = this.runs[slug]; // the reactive proxy
 		const mcp = mcpServers(`${root}/${worktreeDir(slug)}`);
-		const plugins = await skillPlugins();
+		const plugins = await skillPlugins(`${root}/${worktreeDir(slug)}`);
 		const onEvent = new Channel<AgentEvent>();
 		onEvent.onmessage = (ev) => {
 			applyEvent(state, ev);

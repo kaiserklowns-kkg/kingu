@@ -8,7 +8,7 @@ export type McpServer = { command: string; args: string[]; env: Record<string, s
 export type McpServers = Record<string, McpServer>;
 
 let provider: (root: string | null) => McpServers = () => ({});
-let pluginProvider: () => Promise<string[]> = async () => [];
+let pluginProvider: (root: string | null) => Promise<string[]> = async () => [];
 
 export function setMcpProvider(fn: (root: string | null) => McpServers) {
 	provider = fn;
@@ -19,15 +19,15 @@ export function mcpServers(root: string | null): McpServers {
 	return provider(root);
 }
 
-/** Skill plugin folders (written by Rust into the app cache) come from the Snap store too. */
-export function setSkillPluginProvider(fn: () => Promise<string[]>) {
+/** Skill plugin folders (written by Rust into the app cache, with the snaps' hooks) come from the Snap store too. */
+export function setSkillPluginProvider(fn: (root: string | null) => Promise<string[]>) {
 	pluginProvider = fn;
 }
 
-/** Skill plugin folders for a run starting now; never throws (an agent still starts without them). */
-export async function skillPlugins(): Promise<string[]> {
+/** Skill plugin folders for a run starting now in `root` (the worktree hooks are confined to); never throws (an agent still starts without them). */
+export async function skillPlugins(root: string | null): Promise<string[]> {
 	try {
-		return await pluginProvider();
+		return await pluginProvider(root);
 	} catch {
 		return [];
 	}

@@ -5,6 +5,7 @@
 pub mod procinfo;
 pub mod protocol;
 pub mod sandbox;
+pub mod secrets;
 pub mod session;
 
 #[cfg(unix)]

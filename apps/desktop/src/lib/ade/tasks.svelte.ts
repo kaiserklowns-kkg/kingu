@@ -592,7 +592,7 @@ class AdeTasks {
 			notifications.error(options);
 			return;
 		}
-		const launch = profile.launch(cli, how, { sessionId, hookSettings, hookFile, opencodeDir, servers: mcpServers(root), plugins: profile.skills ? await skillPlugins() : [] });
+		const launch = profile.launch(cli, how, { sessionId, hookSettings, hookFile, opencodeDir, servers: mcpServers(root), plugins: profile.skills ? await skillPlugins(root) : [] });
 		if (sessionId) await this.#patch(slug, { session_id: sessionId });
 		cliSessions.start(slug, withLaunchOptions(launch.argv, options), hookSettings || hookFile ? token : undefined, launch.typePrompt);
 	}

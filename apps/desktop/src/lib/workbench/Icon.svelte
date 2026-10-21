@@ -95,7 +95,12 @@
 		UserCircleIcon,
 		WarningIcon,
 		XCircleIcon,
-		XIcon
+		XIcon,
+		ShieldCheckIcon,
+		PowerIcon,
+		DownloadSimpleIcon,
+		RobotIcon,
+		DesktopIcon
 	} from 'phosphor-svelte';
 	import ArkaiMark from './ArkaiMark.svelte';
 	import KinguMark from './KinguMark.svelte';
@@ -212,7 +217,13 @@
 		edit: PencilSimpleIcon,
 		/** Diff views: side by side / inline. */
 		columns: ColumnsIcon,
-		rows: RowsIcon
+		rows: RowsIcon,
+		/** Snaps: confined by the sandbox, turned on/off, installed, what they add for agents and for you. */
+		shield: ShieldCheckIcon,
+		power: PowerIcon,
+		download: DownloadSimpleIcon,
+		robot: RobotIcon,
+		desktop: DesktopIcon
 	} as const;
 	export type IconName = keyof typeof icons;
 

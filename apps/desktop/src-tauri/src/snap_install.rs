@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
 use crate::settings::write_atomic;
-use crate::snap::{MANIFEST, MAX_MANIFEST_BYTES, REPO_DIR, Source, SnapInfo, TrustData, USER_DIR, config_dir, is_snap_id, read_snap, repo_snaps_dir};
+use crate::snap::{MANIFEST, MAX_MANIFEST_BYTES, REPO_DIR, Source, SnapInfo, TrustData, USER_DIR, config_dir, is_snap_id, read_snap, repo_snaps_dir, scan};
 use crate::workspace::Workspace;
 
 pub const ORIGIN_FILE: &str = ".kingu-snap.json";
@@ -651,6 +651,30 @@ description = "ข้อความที่งาน hello พิมพ์"
 # Skill ของ agent: โฟลเดอร์ใน snap ที่มี SKILL.md
 # [[skills]]
 # path = "skills/my-skill"
+
+# Hook ของ agent (Claude Code): รันเมื่อมีเหตุการณ์ ได้ JSON ของเหตุการณ์ทาง stdin
+# event: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Notification, PreCompact,
+# Stop, SubagentStart, SubagentStop, SessionEnd
+# [[hooks]]
+# event = "SessionStart"
+# command = ["my-tool", "session-start"]
+
+# โปรแกรมที่ต้องติดตั้งเอง: Kingu ตรวจให้และแสดงปุ่มติดตั้ง (install_task) หรือลิงก์วิธีติดตั้ง (url)
+# [[requires]]
+# program = "my-tool"
+# url = "https://example.com/install"
+# install_task = "install"
+
+# Service เบื้องหลัง: Kingu รันให้ขณะ snap เปิดอยู่ และหยุดเมื่อปิดแอป
+# when = การตั้งค่า boolean ที่ต้องเปิดอยู่ (ไม่ใส่ก็ได้)
+# [[services]]
+# id = "server"
+# title = "My server"
+# command = ["my-tool", "serve"]
+
+# ไฟล์ที่มากับ snap: อ้างด้วย ${{snap:dir}}/<path> เช่น command = ["${{snap:dir}}/bin/run.sh"]
+# ไฟล์ที่คำสั่งเรียกใช้ (ใน snap หรือใน repo เช่น ./scripts/test.sh) อยู่ในการเชื่อถือด้วย
+# README.md ในโฟลเดอร์นี้แสดงในหน้ารายละเอียดของ snap
 "#
   )
 }
@@ -770,6 +794,34 @@ pub async fn snap_install_git(app: AppHandle, url: String) -> Result<Prepared, S
 #[tauri::command]
 pub async fn snap_install_folder(app: AppHandle, path: String) -> Result<Prepared, String> {
   blocking(move || prepare_folder(&staging_dir(&app)?, &user_dir(&app)?, &path)).await
+}
+
+/// The snaps Kingu ships (the repo's `snaps/`, bundled as the `snaps` resource; the source tree's
+/// in a dev build): the Snaps view's Recommended section. Installing one copies it like a folder
+/// install, so it is the user's own snap from then on.
+pub(crate) fn catalog_dir(app: &AppHandle) -> Option<PathBuf> {
+  let bundled = app.path().resource_dir().ok().map(|d| d.join(USER_DIR)).filter(|d| d.is_dir());
+  #[cfg(debug_assertions)]
+  let bundled = bundled.or_else(|| Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../snaps")).filter(|d| d.is_dir()));
+  bundled
+}
+
+#[tauri::command]
+pub async fn snap_catalog(app: AppHandle) -> Result<Vec<SnapInfo>, String> {
+  blocking(move || Ok(catalog_dir(&app).map(|d| scan(&d, Source::User, None, &TrustData::default())).unwrap_or_default())).await
+}
+
+#[tauri::command]
+pub async fn snap_install_builtin(app: AppHandle, id: String) -> Result<Prepared, String> {
+  if !is_snap_id(&id) {
+    return Err(format!("id \"{id}\" ไม่ถูกต้อง"));
+  }
+  blocking(move || {
+    let dir = catalog_dir(&app).ok_or("Kingu รุ่นนี้ไม่มี Snap ที่แนะนำ")?.join(&id);
+    let path = dir.to_str().ok_or("path ของ Snap ไม่ใช่ UTF-8")?;
+    prepare_folder(&staging_dir(&app)?, &user_dir(&app)?, path)
+  })
+  .await
 }
 
 #[tauri::command]
