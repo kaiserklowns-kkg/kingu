@@ -17,8 +17,10 @@ import { hideOnStartup, panelKey, parsePanelTerminals, persist, restore, storeNa
 import { t as tr } from '#lib/i18n/index.ts';
 
 /** `cwdFrom`: a split starts in that terminal's current directory (not kept across reloads).
- * `task`: a task terminal's launch (tasks.svelte.ts), dropped once the task ended and never kept. */
-export type PanelTerminal = { id: number; title: string; run?: string[]; cwdFrom?: string; task?: TaskSpawn };
+ * `task`: a task terminal's launch (tasks.svelte.ts), dropped once the task ended and never kept.
+ * `folder`: the root folder it starts in (absolute; a multi-root window asks, see newTerminal.ts),
+ * absent for the first folder; kept, so a restored or split terminal stays in its folder. */
+export type PanelTerminal = { id: number; title: string; run?: string[]; cwdFrom?: string; task?: TaskSpawn; folder?: string };
 
 function renameLeaf(node: PaneNode, from: string, to: string): PaneNode {
 	if (node.type === 'leaf') return node.id === from ? leaf(to) : node;
@@ -103,10 +105,16 @@ class Terminals {
 		return this.groups.flatMap((g) => leaves(g).map(Number));
 	}
 
-	/** A new terminal in the folder root, shown in the panel; `run` is typed into its shell. */
-	open(opts: { title?: string; run?: string[] } = {}): number {
+	/** A new terminal in the folder root (`folder`: that root folder of a multi-root window), shown in the panel; `run` is typed into its shell. */
+	/** The root folder of a terminal opened by code without one (an installer, a code block run
+	 * from chat): VS Code's last active workspace root, the active editor's folder in a multi-root
+	 * window (newTerminal.ts sets it); null: the first folder. */
+	defaultFolder: () => string | null = () => null;
+
+	open(opts: { title?: string; run?: string[]; folder?: string } = {}): number {
 		const id = ++this.#seq;
-		this.list = [...this.list, { id, title: opts.title ?? 'zsh', run: opts.run }];
+		const folder = opts.folder ?? this.defaultFolder();
+		this.list = [...this.list, { id, title: opts.title ?? 'zsh', run: opts.run, ...(folder ? { folder } : {}) }];
 		this.groups = [...this.groups, leaf(String(id))];
 		this.active = id;
 		return id;
@@ -116,9 +124,9 @@ class Terminals {
 	 * A task terminal (VS Code's task terminals): in place of terminal `replace` (a reused one, its
 	 * old process killed), split next to `splitWith` (presentation.group), else a new tab.
 	 */
-	openTask(opts: { title: string; task: TaskSpawn; replace?: number; splitWith?: number }): number {
+	openTask(opts: { title: string; task: TaskSpawn; replace?: number; splitWith?: number; folder?: string }): number {
 		const id = ++this.#seq;
-		const entry: PanelTerminal = { id, title: opts.title, task: opts.task };
+		const entry: PanelTerminal = { id, title: opts.title, task: opts.task, ...(opts.folder ? { folder: opts.folder } : {}) };
 		const old = opts.replace !== undefined ? this.get(opts.replace) : undefined;
 		if (old) {
 			killPty(this.key(old.id));
@@ -152,7 +160,8 @@ class Terminals {
 		const source = this.get(id);
 		if (g < 0 || !source) return null;
 		const added = ++this.#seq;
-		this.list = [...this.list, { id: added, title: source.title, cwdFrom: this.key(id) }];
+		// The split keeps the source's folder: splitCwd `workspaceRoot`, or a source whose shell is gone, starts there.
+		this.list = [...this.list, { id: added, title: source.title, cwdFrom: this.key(id), ...(source.folder ? { folder: source.folder } : {}) }];
 		this.groups = this.groups.map((tree, i) => (i === g ? equalize(splitPane(tree, String(id), String(added), this.#direction())) : tree));
 		this.active = added;
 		focusTerminal(this.key(added));

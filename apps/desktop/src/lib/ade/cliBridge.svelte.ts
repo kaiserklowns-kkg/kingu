@@ -23,7 +23,7 @@ async function handle(req: CliRequest): Promise<unknown> {
 		case 'task.create': {
 			const p = req.params as CreateParams;
 			if (!workspace.root) throw new Error(t('cli.noFolder'));
-			const slug = await adeTasks.create({ title: p.title, prompt: p.prompt, base: p.base ?? '', mode: p.mode ?? undefined, open: p.open });
+			const slug = await adeTasks.create({ title: p.title, prompt: p.prompt, base: p.base ?? '', mode: p.mode ?? undefined, open: p.open, dispatchedBy: p.dispatchedBy ?? undefined });
 			if (!slug) throw new Error(t('cli.taskNotCreated'));
 			return { slug };
 		}

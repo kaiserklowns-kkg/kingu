@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { AutoReplies, linkSchemeAllowed, Osc99, pasteNeedsWarning, rightClickAction, showTabsList, terminalStartsChord, workbenchTakesKey, zoomedFontSize } from './behaviour';
+import { AutoReplies, linkSchemeAllowed, Osc99, panelTitleShows, pasteNeedsWarning, rightClickAction, showTabsList, terminalStartsChord, workbenchTakesKey, zoomedFontSize } from './behaviour';
 import { confirmsOnExit } from './closeGuard';
 import { hideOnStartup } from './sessions';
 
@@ -59,6 +59,17 @@ describe('terminal settings behaviour', () => {
 		expect(showTabsList(true, 'singleGroup', 2, 2)).toBe(true);
 		expect(showTabsList(true, 'never', 1, 1)).toBe(true);
 		expect(showTabsList(false, 'never', 3, 3)).toBe(false);
+	});
+
+	test('tabs.showActions / showActiveTerminal', () => {
+		expect(panelTitleShows('always', 3, true)).toBe(true);
+		expect(panelTitleShows('never', 1, false)).toBe(false);
+		expect(panelTitleShows('singleTerminal', 1, false)).toBe(true);
+		expect(panelTitleShows('singleTerminal', 2, false)).toBe(false);
+		// singleTerminalOrNarrow: one terminal, or no tabs list to show the names.
+		expect(panelTitleShows('singleTerminalOrNarrow', 1, false)).toBe(true);
+		expect(panelTitleShows('singleTerminalOrNarrow', 3, false)).toBe(true);
+		expect(panelTitleShows('singleTerminalOrNarrow', 3, true)).toBe(false);
 	});
 
 	test('mouseWheelZoom', () => {

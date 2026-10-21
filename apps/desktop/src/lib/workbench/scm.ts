@@ -1,5 +1,6 @@
 // Pure Source Control helpers (no runes, so they are unit-testable). Shapes mirror Rust `git.rs`.
 
+import { compareLabel, isCompareKey, parseCompareKey } from './compare';
 import { isPreviewKey, previewTarget } from './viewers';
 import { t } from '#lib/i18n/index.ts';
 import { isChatEditKey, parseChatEditKey } from '#lib/agent/chatEdits.ts';
@@ -29,6 +30,8 @@ export type GitStatus = {
 	/** A merge, rebase, cherry-pick or revert stopped half-way (usually on conflicts). */
 	operation?: GitOperation | null;
 	entries: StatusEntry[];
+	/** The repository is in a parent folder of the open folder (`git.openRepositoryInParentFolders`). */
+	in_parent?: boolean;
 };
 
 export type GitOperation = 'merge' | 'rebase' | 'cherry-pick' | 'revert';
@@ -195,13 +198,15 @@ export const isMergeKey = (key: string) => key.startsWith(MERGE_PREFIX);
 
 /** A chat's working-set file, its snapshot before the agent's edits vs now: `chatedit://<chat id>/<file>` (agent/chatEdits.ts). */
 export const isDiffKey = (key: string) =>
-	key.startsWith(DIFF_PREFIX) || isIndexDiffKey(key) || isHistoryDiffKey(key) || isConflictCompareKey(key) || isTaskDiffKey(key) || isCommitDiffKey(key) || isChatEditKey(key) || isLocalHistoryDiffKey(key);
+	key.startsWith(DIFF_PREFIX) || isIndexDiffKey(key) || isHistoryDiffKey(key) || isConflictCompareKey(key) || isTaskDiffKey(key) || isCommitDiffKey(key) || isChatEditKey(key) || isLocalHistoryDiffKey(key) || isCompareKey(key);
 /** The workspace file behind an editor tab key (itself for plain file tabs; a task diff's file
  * lives in the worktree under `.kingu/worktrees/<slug>/`). */
 export function fileOf(key: string): string {
 	if (isPreviewKey(key)) return previewTarget(key);
 	const chatEdit = parseChatEditKey(key);
 	if (chatEdit) return chatEdit.rel;
+	const compare = parseCompareKey(key);
+	if (compare) return compare.right;
 	const task = parseTaskDiffKey(key);
 	if (task) return `.kingu/worktrees/${task.slug}/${task.rel}`;
 	const commit = parseCommitDiffKey(key);
@@ -222,6 +227,8 @@ export function tabLabel(key: string): string {
 	if (local) return local;
 	const task = parseTaskDiffKey(key);
 	if (task) return t('workbench.scm.taskDiffLabel', { name, slug: task.slug });
+	const compare = parseCompareKey(key);
+	if (compare) return compareLabel(compare.left, compare.right, { saved: t('workbench.compare.saved'), clipboard: t('workbench.compare.clipboard') });
 	const commit = parseCommitDiffKey(key);
 	if (commit) return `${name} (${commit.hash.slice(0, 7)})`;
 	if (isChatEditKey(key)) return t('chatEdits.diffLabel', { name });

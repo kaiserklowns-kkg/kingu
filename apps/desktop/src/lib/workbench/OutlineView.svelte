@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { listWheel } from '#lib/workbench/listWheel.ts';
 	// The Outline section of the Explorer (VS Code: contrib/outline/browser/outlinePane.ts): the
 	// active editor's document symbols as a tree, following the cursor, filtered as you type,
 	// sorted by position, name or category, with problem badges (outline.* settings).
@@ -120,7 +121,7 @@
 			<span class="truncate">{t('language.outline.title')}</span>
 		</button>
 		{#if outline.open}
-			<div class="flex items-center opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+			<div class="kg-view-actions flex items-center opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
 				<button class="grid size-[22px] place-items-center rounded text-(--vscode-icon-foreground) hover:bg-(--vscode-toolbar-hoverBackground)" aria-label={t('language.outline.collapseAll')} title={t('language.outline.collapseAll')} onclick={collapseAll}>
 					<Icon name="collapseAll" size={16} />
 				</button>
@@ -164,6 +165,7 @@
 		<div
 			bind:this={tree}
 			role="tree"
+			use:listWheel
 			tabindex="0"
 			aria-label={t('language.outline.title')}
 			class="min-h-0 flex-1 overflow-y-auto outline-none"

@@ -385,6 +385,15 @@ export const EDITOR_SETTINGS: SettingSchema[] = [
 		description: 'แสดงตัวอย่างสีด้วยตัวหาสีพื้นฐานของ editor (Controls whether inline color decorations should be shown using the default document color provider.)'
 	},
 	{
+		id: 'editor.defaultFormatter',
+		group: 'Text Editor',
+		type: 'json',
+		schema: { type: ['null', 'string'] },
+		default: null,
+		description:
+			'ตัวจัดรูปแบบเริ่มต้น ใส่ชื่อ language server (เช่น rust-analyzer) หรือ id ของ VS Code ที่ Kingu รู้จัก (เช่น vscode.typescript-language-features) มักตั้งใน "[ภาษา]": {} ด้วย Format Document With… › Configure Default Formatter (Defines a default formatter which takes precedence over all other formatter settings. Must be the identifier of an extension contributing a formatter.)'
+	},
+	{
 		id: 'editor.definitionLinkOpensInPeek',
 		group: 'Text Editor',
 		type: 'boolean',

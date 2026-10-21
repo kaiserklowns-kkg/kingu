@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use tauri::AppHandle;
 
-use crate::i18n::msg::IdeTasksMsg;
+use crate::i18n::msg::{FilesMsg, IdeTasksMsg, WorkspaceMsg};
 use crate::snap::{TRUST_FILE, TrustData, set_script_trust, sha256_hex};
 use crate::tr;
 use crate::workspace::Workspace;
@@ -138,19 +138,82 @@ pub fn set_trust(config_dir: &Path, root: &Path, expected: Option<&str>) -> Resu
   set_script_trust(config_dir, root, TRUST_KEY, Some(expected))
 }
 
-/// `.vscode/tasks.json` of the open folder, with its trust (no folder: no file).
+/// The trust store key of a `.code-workspace` file's `tasks` (the store's root is the file itself).
+const WORKSPACE_TRUST_KEY: &str = ".code-workspace-tasks";
+
+/// The `tasks` of a `.code-workspace` file's text, as compact JSON (what is hashed and trusted, so
+/// an edit elsewhere in the file, such as its folders or settings, keeps the trust), or `None`.
+pub fn workspace_tasks(text: &str) -> Option<String> {
+  let parsed: serde_json::Value = serde_json::from_str(&crate::settings::strip_jsonc(text)).ok()?;
+  let tasks = parsed.get("tasks").filter(|t| t.is_object())?;
+  serde_json::to_string(tasks).ok()
+}
+
+/// A `.code-workspace` file's `tasks` with their trust (VS Code runs its `folderOpen` tasks too).
+pub fn workspace_status(file: &Path, trust: &TrustData) -> Result<TasksFile, String> {
+  let text = crate::external::read_workspace_file(file)?;
+  Ok(match workspace_tasks(&text) {
+    None => TasksFile { text: None, hash: None, trusted: false },
+    Some(tasks) => {
+      let hash = sha256_hex(tasks.as_bytes());
+      let trusted = trust.is_trusted(file, WORKSPACE_TRUST_KEY, &hash);
+      TasksFile { text: Some(tasks), hash: Some(hash), trusted }
+    }
+  })
+}
+
+/// Trusts the `.code-workspace` file's `tasks` the user was shown (by hash), or revokes the trust.
+pub fn set_workspace_trust(config_dir: &Path, file: &Path, expected: Option<&str>) -> Result<(), String> {
+  let Some(expected) = expected else {
+    return set_script_trust(config_dir, file, WORKSPACE_TRUST_KEY, None);
+  };
+  let tasks = workspace_tasks(&crate::external::read_workspace_file(file)?).ok_or_else(|| tr!(IdeTasksMsg::NoTasksFile))?;
+  if sha256_hex(tasks.as_bytes()) != expected {
+    return Err(tr!(IdeTasksMsg::TasksFileChanged));
+  }
+  set_script_trust(config_dir, file, WORKSPACE_TRUST_KEY, Some(expected))
+}
+
+/// The window's `.code-workspace` file's `tasks` with their trust (none without a workspace file).
 #[tauri::command]
-pub fn tasks_file(app: AppHandle, ws: Workspace) -> Result<TasksFile, String> {
-  let Some(root) = ws.current() else {
+pub fn tasks_workspace_file(app: AppHandle, ws: Workspace) -> Result<TasksFile, String> {
+  let Some(file) = ws.session().file else {
+    return Ok(TasksFile { text: None, hash: None, trusted: false });
+  };
+  workspace_status(&file, &TrustData::load(&crate::snap::config_dir(&app)?.join(TRUST_FILE)))
+}
+
+/// Allows (with the hash that was shown) or disallows the workspace file's automatic tasks.
+#[tauri::command]
+pub fn tasks_workspace_trust(app: AppHandle, ws: Workspace, hash: Option<String>) -> Result<(), String> {
+  let file = ws.session().file.ok_or_else(|| tr!(IdeTasksMsg::NoTasksFile))?;
+  set_workspace_trust(&crate::snap::config_dir(&app)?, &file, hash.as_deref())?;
+  log::info!("workspace file automatic tasks: trusted = {} in {}", hash.is_some(), file.display());
+  Ok(())
+}
+
+/// The root folder a tasks command names: `folder` (one of the window's root folders, as the
+/// webview has it from `workspace_folders`), else the first one.
+pub fn pick_root(roots: &[PathBuf], folder: Option<&str>) -> Result<Option<PathBuf>, String> {
+  match folder.filter(|f| !f.is_empty()) {
+    None => Ok(roots.first().cloned()),
+    Some(f) => roots.iter().find(|r| r.as_path() == Path::new(f)).cloned().map(Some).ok_or_else(|| tr!(WorkspaceMsg::NotARootFolder, path = f)),
+  }
+}
+
+/// `.vscode/tasks.json` of a root folder (`folder`, else the first), with its trust (no folder: no file).
+#[tauri::command]
+pub fn tasks_file(app: AppHandle, ws: Workspace, folder: Option<String>) -> Result<TasksFile, String> {
+  let Some(root) = pick_root(&ws.roots(), folder.as_deref())? else {
     return Ok(TasksFile { text: None, hash: None, trusted: false });
   };
   status(&root, &TrustData::load(&crate::snap::config_dir(&app)?.join(TRUST_FILE)))
 }
 
-/// Allows (with the hash that was shown) or disallows the folder's automatic tasks.
+/// Allows (with the hash that was shown) or disallows a root folder's automatic tasks.
 #[tauri::command]
-pub fn tasks_trust(app: AppHandle, ws: Workspace, hash: Option<String>) -> Result<(), String> {
-  let root = ws.root()?;
+pub fn tasks_trust(app: AppHandle, ws: Workspace, hash: Option<String>, folder: Option<String>) -> Result<(), String> {
+  let root = pick_root(&ws.roots(), folder.as_deref())?.ok_or_else(|| tr!(FilesMsg::NoFolder))?;
   set_trust(&crate::snap::config_dir(&app)?, &root, hash.as_deref())?;
   log::info!("tasks.json automatic tasks: trusted = {} in {}", hash.is_some(), root.display());
   Ok(())
@@ -222,6 +285,19 @@ mod tests {
   }
 
   #[test]
+  fn a_tasks_command_picks_one_of_the_root_folders() {
+    let roots = [PathBuf::from("/w/app"), PathBuf::from("/w/lib")];
+    assert_eq!(pick_root(&roots, None).unwrap(), Some(PathBuf::from("/w/app")));
+    assert_eq!(pick_root(&roots, Some("")).unwrap(), Some(PathBuf::from("/w/app")));
+    assert_eq!(pick_root(&roots, Some("/w/lib")).unwrap(), Some(PathBuf::from("/w/lib")));
+    // Only a root folder itself: not a folder inside one, not one elsewhere.
+    assert!(pick_root(&roots, Some("/w/lib/src")).is_err());
+    assert!(pick_root(&roots, Some("/etc")).is_err());
+    assert_eq!(pick_root(&[], None).unwrap(), None);
+    assert!(pick_root(&[], Some("/w/app")).is_err());
+  }
+
+  #[test]
   fn automatic_tasks_need_trust_in_exactly_this_file() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("repo");
@@ -247,5 +323,34 @@ mod tests {
     set_trust(&config, &root, None).unwrap();
     std::fs::write(root.join(TASKS_FILE), "{\"tasks\": []}").unwrap();
     assert!(!status(&root, &load()).unwrap().trusted);
+  }
+
+  #[test]
+  fn workspace_file_tasks_are_trusted_by_their_own_content() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = tmp.path().join("all.code-workspace");
+    let config = tmp.path().join("config");
+    std::fs::create_dir_all(&config).unwrap();
+    let load = || TrustData::load(&config.join(TRUST_FILE));
+    std::fs::write(&file, "{ \"folders\": [{ \"path\": \"a\" }] }").unwrap();
+    assert_eq!(workspace_status(&file, &load()).unwrap(), TasksFile { text: None, hash: None, trusted: false });
+
+    // JSONC, as VS Code writes it.
+    std::fs::write(&file, "{\n  // tasks for every folder\n  \"folders\": [{ \"path\": \"a\" }],\n  \"tasks\": { \"version\": \"2.0.0\", \"tasks\": [] },\n}\n").unwrap();
+    let s = workspace_status(&file, &load()).unwrap();
+    assert!(!s.trusted);
+    let hash = s.hash.clone().unwrap();
+    assert!(set_workspace_trust(&config, &file, Some("other")).unwrap_err().contains("changed"));
+    set_workspace_trust(&config, &file, Some(&hash)).unwrap();
+    assert!(workspace_status(&file, &load()).unwrap().trusted);
+    // A folder trust of the same path is another record.
+    assert!(!status(tmp.path(), &load()).unwrap().trusted);
+
+    // Editing the folders keeps the trust; editing the tasks does not.
+    std::fs::write(&file, "{ \"folders\": [{ \"path\": \"a\" }, { \"path\": \"b\" }], \"tasks\": { \"version\": \"2.0.0\", \"tasks\": [] } }").unwrap();
+    assert!(workspace_status(&file, &load()).unwrap().trusted);
+    std::fs::write(&file, "{ \"tasks\": { \"version\": \"2.0.0\", \"tasks\": [{ \"label\": \"x\" }] } }").unwrap();
+    assert!(!workspace_status(&file, &load()).unwrap().trusted);
+    set_workspace_trust(&config, &file, None).unwrap();
   }
 }

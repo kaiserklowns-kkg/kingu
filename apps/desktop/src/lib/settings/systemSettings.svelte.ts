@@ -1,7 +1,7 @@
 // The system settings page: one page for the IDE and the ADE, opened over the content area in
 // either mode (⌘, or the gear in the title bar), so changing a setting never switches modes.
 
-export type SettingsPageId = 'appearance' | 'arkai' | 'terminal' | 'account' | 'accounts' | 'usage' | 'mcp' | 'skills' | 'memories' | 'shortcuts' | 'about';
+export type SettingsPageId = 'appearance' | 'arkai' | 'terminal' | 'account' | 'accounts' | 'usage' | 'mcp' | 'skills' | 'memories' | 'voice' | 'shortcuts' | 'about';
 
 class SystemSettings {
 	visible = $state(false);

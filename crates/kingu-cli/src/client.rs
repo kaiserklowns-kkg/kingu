@@ -33,7 +33,8 @@ pub fn request_of(cmd: &Command, cwd: &Path, stdin_prompt: Option<String>) -> Re
       if prompt.len() > MAX_PROMPT {
         return Err(tr(Msg::PromptTooLarge, &[("kb", &(MAX_PROMPT / 1024))]));
       }
-      (protocol::METHOD_TASK_CREATE, json!({ "title": title, "prompt": prompt, "base": base, "mode": mode, "open": !background }))
+      // `cwd`: the app picks the window, and a caller inside a task's worktree dispatches a sub-task.
+      (protocol::METHOD_TASK_CREATE, json!({ "title": title, "prompt": prompt, "base": base, "mode": mode, "open": !background, "cwd": cwd.display().to_string() }))
     }
     Command::TaskOpen { slug } => (protocol::METHOD_TASK_OPEN, json!({ "slug": slug })),
     Command::Open { path, line, column } => {
@@ -195,7 +196,7 @@ mod tests {
     assert_eq!(p["path"], "/etc/x");
     let create = Command::TaskCreate { title: "Fix".into(), prompt: Some("-".into()), base: None, mode: Some("terminal".into()), background: true };
     let (m, p) = request_of(&create, cwd, Some("from stdin".into())).unwrap().unwrap();
-    assert_eq!((m, p), (protocol::METHOD_TASK_CREATE, json!({ "title": "Fix", "prompt": "from stdin", "base": null, "mode": "terminal", "open": false })));
+    assert_eq!((m, p), (protocol::METHOD_TASK_CREATE, json!({ "title": "Fix", "prompt": "from stdin", "base": null, "mode": "terminal", "open": false, "cwd": "/repo" })));
     let big = Command::TaskCreate { title: "x".into(), prompt: Some("a".repeat(MAX_PROMPT + 1)), base: None, mode: None, background: false };
     assert!(request_of(&big, cwd, None).is_err());
     assert!(request_of(&Command::Help, cwd, None).unwrap().is_none());

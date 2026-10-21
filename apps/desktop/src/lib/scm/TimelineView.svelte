@@ -71,7 +71,7 @@
 		</button>
 		{#if timelineView.open}
 			<button
-				class="grid size-[22px] place-items-center rounded text-(--vscode-icon-foreground) opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-(--vscode-toolbar-hoverBackground)"
+				class="kg-view-actions grid size-[22px] place-items-center rounded text-(--vscode-icon-foreground) opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-(--vscode-toolbar-hoverBackground)"
 				aria-label={t('localHistory.filter')}
 				title={t('localHistory.filter')}
 				onclick={(e) => {
@@ -80,7 +80,7 @@
 				}}><span class="codicon codicon-filter" aria-hidden="true"></span></button
 			>
 			<button
-				class="grid size-[22px] place-items-center rounded text-(--vscode-icon-foreground) opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-(--vscode-toolbar-hoverBackground)"
+				class="kg-view-actions grid size-[22px] place-items-center rounded text-(--vscode-icon-foreground) opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-(--vscode-toolbar-hoverBackground)"
 				aria-label={t('scmEditor.timeline.refresh')}
 				title={t('scmEditor.timeline.refresh')}
 				onclick={() => timeline.refresh(true)}><Icon name="refresh" size={16} /></button

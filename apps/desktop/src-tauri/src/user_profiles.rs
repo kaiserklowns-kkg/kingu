@@ -163,6 +163,139 @@ pub fn delete(config: &Path, id: &str) -> Result<ProfileList, String> {
   Ok(list)
 }
 
+// --- Export / Import Profile (VS Code's `.code-profile`, IUserDataProfileTemplate)
+//
+// The template is a JSON object; each resource is itself a JSON string, as VS Code writes it:
+// `settings` is `{"settings": "<settings.json text>"}`, `keybindings` is
+// `{"platform": n, "keybindings": "<keybindings.json text>"}`, `snippets` is
+// `{"snippets": {"<file name>": "<text>"}}`. Kingu's profiles hold only these three; a VS Code
+// template's other resources (extensions, tasks, UI state) are ignored on import.
+
+/// Largest `.code-profile` file read on import.
+const MAX_TEMPLATE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// VS Code's `Platform` enum value of this OS in a keybindings resource.
+fn platform_number() -> u8 {
+  if cfg!(target_os = "macos") {
+    1
+  } else if cfg!(target_os = "windows") {
+    3
+  } else {
+    2
+  }
+}
+
+/// What an imported template holds, for the confirmation before it is created.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateSummary {
+  pub name: String,
+  pub settings: bool,
+  pub keybindings: bool,
+  pub snippets: usize,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Template {
+  name: String,
+  settings: Option<String>,
+  keybindings: Option<String>,
+  snippets: Vec<(String, String)>,
+}
+
+/// The `.code-profile` text of a profile (`None`: Default).
+pub fn export_template(config: &Path, id: Option<&str>) -> Result<String, String> {
+  let list = load(config);
+  let name = match id {
+    Some(id) => {
+      known(&list, id)?;
+      list.profiles.iter().find(|p| p.id == id).map(|p| p.name.clone()).unwrap_or_default()
+    }
+    None => "Default".to_string(),
+  };
+  let dir = dir_of(config, id);
+  let mut out = serde_json::Map::new();
+  out.insert("name".into(), name.into());
+  if let Ok(text) = std::fs::read_to_string(dir.join("settings.json")) {
+    out.insert("settings".into(), serde_json::json!({ "settings": text }).to_string().into());
+  }
+  if let Ok(text) = std::fs::read_to_string(dir.join("keybindings.json")) {
+    out.insert("keybindings".into(), serde_json::json!({ "platform": platform_number(), "keybindings": text }).to_string().into());
+  }
+  let snippets = crate::snippets::list(&crate::snippets::dir_in(&dir));
+  if !snippets.is_empty() {
+    let files: serde_json::Map<String, serde_json::Value> = snippets.into_iter().map(|s| (s.name, s.content.into())).collect();
+    out.insert("snippets".into(), serde_json::json!({ "snippets": files }).to_string().into());
+  }
+  serde_json::to_string_pretty(&serde_json::Value::Object(out)).map_err(|e| e.to_string())
+}
+
+/// A resource string of a template parsed as an object (a missing or broken one is `None`).
+fn resource(template: &serde_json::Value, key: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
+  match template.get(key)? {
+    serde_json::Value::String(text) => serde_json::from_str::<serde_json::Value>(text).ok()?.as_object().cloned(),
+    // Lenient: an object written by hand instead of a string.
+    serde_json::Value::Object(o) => Some(o.clone()),
+    _ => None,
+  }
+}
+
+fn parse_template(text: &str) -> Result<Template, String> {
+  let value: serde_json::Value = serde_json::from_str(text).map_err(|_| tr!(ProfilesMsg::NotATemplate))?;
+  if !value.is_object() {
+    return Err(tr!(ProfilesMsg::NotATemplate));
+  }
+  let name = value.get("name").and_then(|n| n.as_str()).unwrap_or_default().trim().to_string();
+  let string_of = |o: Option<serde_json::Map<String, serde_json::Value>>, key: &str| o.and_then(|o| o.get(key).and_then(|v| v.as_str()).map(str::to_string));
+  let settings = string_of(resource(&value, "settings"), "settings");
+  let keybindings = string_of(resource(&value, "keybindings"), "keybindings");
+  let snippets = resource(&value, "snippets")
+    .and_then(|o| o.get("snippets").and_then(|s| s.as_object()).cloned())
+    .map(|files| files.into_iter().filter_map(|(name, v)| Some((name, v.as_str()?.to_string()))).filter(|(name, _)| crate::snippets::valid_name(name)).collect())
+    .unwrap_or_default();
+  Ok(Template { name, settings, keybindings, snippets })
+}
+
+fn read_template(path: &Path) -> Result<Template, String> {
+  let meta = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+  if meta.len() > MAX_TEMPLATE_BYTES {
+    return Err(tr!(ProfilesMsg::TemplateTooLarge));
+  }
+  let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+  parse_template(&text)
+}
+
+pub fn template_summary(path: &Path) -> Result<TemplateSummary, String> {
+  let t = read_template(path)?;
+  Ok(TemplateSummary { name: t.name, settings: t.settings.is_some(), keybindings: t.keybindings.is_some(), snippets: t.snippets.len() })
+}
+
+/// Import Profile: a new profile named `name` with the template's settings, keybindings and
+/// snippets. It does not become active.
+pub fn import_template(config: &Path, path: &Path, name: &str) -> Result<Profile, String> {
+  let t = read_template(path)?;
+  let profile = create(config, name, None)?;
+  let dir = dir_of(config, Some(&profile.id));
+  let written = (|| {
+    if let Some(text) = &t.settings {
+      crate::settings::write_atomic(&dir.join("settings.json"), text)?;
+    }
+    if let Some(text) = &t.keybindings {
+      crate::settings::write_atomic(&dir.join("keybindings.json"), text)?;
+    }
+    for (name, content) in &t.snippets {
+      crate::snippets::write(&crate::snippets::dir_in(&dir), name, content)?;
+    }
+    Ok::<(), String>(())
+  })();
+  if let Err(e) = written {
+    // No half-imported profile is left behind.
+    let _ = delete(config, &profile.id);
+    return Err(e);
+  }
+  Ok(profile)
+}
+
 fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
   app.path().app_config_dir().map_err(|e| e.to_string())
 }
@@ -204,9 +337,77 @@ pub fn profile_delete(app: AppHandle, id: String) -> Result<ProfileList, String>
   delete(&config_dir(&app)?, &id)
 }
 
+/// Export Profile…: writes the `.code-profile` of `id` (absent: Default) to `path`, a file the user
+/// picked in the save dialog.
+#[tauri::command]
+pub fn profile_export(app: AppHandle, id: Option<String>, path: String) -> Result<(), String> {
+  let text = export_template(&config_dir(&app)?, id.as_deref().filter(|i| !i.is_empty()))?;
+  crate::settings::write_atomic(Path::new(&path), &text)?;
+  log::info!("profile exported: {}", id.as_deref().unwrap_or("default"));
+  Ok(())
+}
+
+/// What the `.code-profile` at `path` holds (Import Profile… shows it before creating the profile).
+#[tauri::command]
+pub fn profile_import_preview(path: String) -> Result<TemplateSummary, String> {
+  template_summary(Path::new(&path))
+}
+
+#[tauri::command]
+pub fn profile_import(app: AppHandle, path: String, name: String) -> Result<Profile, String> {
+  let profile = import_template(&config_dir(&app)?, Path::new(&path), &name)?;
+  log::info!("profile imported: {}", profile.id);
+  Ok(profile)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn export_and_import_round_trip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path();
+    let work = create(config, "Work", None).unwrap();
+    let dir = config.join("profiles").join(&work.id);
+    std::fs::write(dir.join("settings.json"), "// mine\n{\"editor.tabSize\": 2}").unwrap();
+    std::fs::write(dir.join("keybindings.json"), "[{\"key\": \"cmd+i\", \"command\": \"x\"}]").unwrap();
+    crate::snippets::write(&dir.join("snippets"), "rust.json", "{\"a\": {}}").unwrap();
+
+    let text = export_template(config, Some(&work.id)).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(value["name"], "Work");
+    // VS Code's shape: each resource is a JSON string.
+    let settings: serde_json::Value = serde_json::from_str(value["settings"].as_str().unwrap()).unwrap();
+    assert_eq!(settings["settings"], "// mine\n{\"editor.tabSize\": 2}");
+    let keys: serde_json::Value = serde_json::from_str(value["keybindings"].as_str().unwrap()).unwrap();
+    assert_eq!(keys["platform"], platform_number());
+
+    let file = tmp.path().join("work.code-profile");
+    std::fs::write(&file, &text).unwrap();
+    assert_eq!(template_summary(&file).unwrap(), TemplateSummary { name: "Work".into(), settings: true, keybindings: true, snippets: 1 });
+    assert!(import_template(config, &file, "work").is_err());
+    let copy = import_template(config, &file, "Work 2").unwrap();
+    let copy_dir = config.join("profiles").join(&copy.id);
+    assert_eq!(std::fs::read_to_string(copy_dir.join("settings.json")).unwrap(), "// mine\n{\"editor.tabSize\": 2}");
+    assert_eq!(std::fs::read_to_string(copy_dir.join("keybindings.json")).unwrap(), "[{\"key\": \"cmd+i\", \"command\": \"x\"}]");
+    assert_eq!(std::fs::read_to_string(copy_dir.join("snippets").join("rust.json")).unwrap(), "{\"a\": {}}");
+    assert_eq!(load(config).active, None);
+  }
+
+  #[test]
+  fn templates_from_vs_code_and_bad_files() {
+    // A VS Code export: extensions and UI state are ignored, bad snippet names are dropped.
+    let text = r#"{"name":"Py","settings":"{\"settings\":\"{}\"}","extensions":"[]","snippets":"{\"snippets\":{\"py.json\":\"{}\",\"../x.json\":\"{}\"}}"}"#;
+    let t = parse_template(text).unwrap();
+    assert_eq!(t, Template { name: "Py".into(), settings: Some("{}".into()), keybindings: None, snippets: vec![("py.json".into(), "{}".into())] });
+    assert!(parse_template("[1]").is_err());
+    assert!(parse_template("nope").is_err());
+    assert_eq!(parse_template("{}").unwrap(), Template::default());
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(export_template(tmp.path(), Some("ffffffff")).is_err());
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&export_template(tmp.path(), None).unwrap()).unwrap(), serde_json::json!({ "name": "Default" }));
+  }
 
   #[test]
   fn ids_are_plain_hex_names() {

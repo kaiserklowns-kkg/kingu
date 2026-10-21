@@ -1,19 +1,23 @@
 // The ADE's right side bar (Orca's right sidebar), following the selected worktree: the tab in
-// front per worktree (Orca's rightSidebarTabByWorktree), the Explorer's Names / Contents mode and
-// search per worktree (fileSearchStateByWorktree), the Show Dotfiles / Show Git Ignored Files
-// toggles, each task worktree's Source Control, and the shortcuts and palette commands.
+// front per worktree (Orca's rightSidebarTabByWorktree, kept per workspace), the Explorer's
+// Names / Contents mode and search per worktree (fileSearchStateByWorktree), the Show Dotfiles /
+// Show Git Ignored Files toggles (the user's, for every workspace), each task worktree's Source
+// Control, and the shortcuts and palette commands.
 
 import { FileUndo } from './fileUndo.ts';
 import { commands } from '#lib/workbench/commands.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { scm } from '#lib/workbench/scm.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
+import { workspaceStorage } from '#lib/workbench/workspaceStorage.svelte.ts';
 import { adeLayout } from './adeLayout.svelte.ts';
 import { cleanTabs, touchesWorktree, toggleTab, visibleTabs, type RightTab } from './rightSidebar.ts';
 import { adeTasks } from './tasks.svelte.ts';
 import { WorktreeRepo } from './worktreeRepo.svelte.ts';
 
 const KEY = 'kingu.adeRightSidebar';
+/** The tab in front per worktree, per workspace. */
+const TABS_KEY = 'kingu.adeRightSidebar.tabs';
 
 export type ExplorerView = 'names' | 'contents';
 export type ContentOptions = { matchCase: boolean; wholeWord: boolean; regex: boolean; include: string; exclude: string; details: boolean };
@@ -45,27 +49,33 @@ class RightSidebar {
 	focusFind = $state(0);
 	#repos = new Map<string, WorktreeRepo>();
 	#undo = new Map<string, FileUndo>();
-	/** The folder `#tabs` belongs to, and every other folder's saved tabs (Orca keeps the tab per worktree across restarts). */
-	#root: string | null = null;
-	#savedTabs: Record<string, unknown> = {};
+	/** The tabs an older build kept for every folder, by folder: each goes to its workspace once. */
+	#legacyTabs: Record<string, unknown> = {};
 
 	constructor() {
 		const s = readSaved();
 		if (typeof s.showDotfiles === 'boolean') this.showDotfiles = s.showDotfiles;
 		if (typeof s.showIgnored === 'boolean') this.showIgnored = s.showIgnored;
-		if (s.tabs && typeof s.tabs === 'object') this.#savedTabs = s.tabs;
+		if (s.tabs && typeof s.tabs === 'object') this.#legacyTabs = s.tabs;
+		// The tab per worktree is the workspace's (Orca keeps it in its workspace session).
+		workspaceStorage.register(TABS_KEY, ['tabs'], (saved) => {
+			const root = workspace.root;
+			const legacy = root ? this.#legacyTabs[root] : undefined;
+			if (root) delete this.#legacyTabs[root];
+			this.#tabs = cleanTabs(saved ? saved.tabs : legacy);
+		});
 		$effect.root(() => {
+			// The toggles are the user's, for every workspace (Orca's settings).
 			$effect(() => {
-				const all = { ...this.#savedTabs };
-				if (this.#root) (delete all[this.#root], (all[this.#root] = { ...this.#tabs }));
-				// The 50 most recently opened folders.
-				const tabs = Object.fromEntries(Object.entries(all).slice(-50));
-				const snapshot = { showDotfiles: this.showDotfiles, showIgnored: this.showIgnored, tabs };
+				const snapshot = { showDotfiles: this.showDotfiles, showIgnored: this.showIgnored, tabs: this.#legacyTabs };
 				try {
 					localStorage.setItem(KEY, JSON.stringify(snapshot));
 				} catch {
 					// Storage can be unavailable; the toggles reset on the next launch.
 				}
+			});
+			$effect(() => {
+				workspaceStorage.save(TABS_KEY, { tabs: { ...this.#tabs } });
 			});
 		});
 	}
@@ -151,11 +161,8 @@ class RightSidebar {
 		return h;
 	}
 
-	/** Another folder: nothing of the old one's worktrees stays, except the tabs saved for it. */
-	reset(root: string | null = workspace.root) {
-		if (this.#root) this.#savedTabs = { ...this.#savedTabs, [this.#root]: { ...this.#tabs } };
-		this.#root = root;
-		this.#tabs = root ? cleanTabs(this.#savedTabs[root]) : {};
+	/** Another folder: nothing of the old one's worktrees stays (its tabs are its workspace's, workspaceStorage). */
+	reset() {
 		this.#find.clear();
 		this.#repos.clear();
 		this.#undo.clear();
@@ -186,10 +193,10 @@ export function installRightSidebar(): () => void {
 	];
 	const unwatch = workspace.onAnyChange((paths) => rightSidebar.changed(paths));
 	let root = workspace.root;
-	rightSidebar.reset(root);
+	rightSidebar.reset();
 	const stop = $effect.root(() => {
 		$effect(() => {
-			if (workspace.root !== root) rightSidebar.reset(workspace.root);
+			if (workspace.root !== root) rightSidebar.reset();
 			root = workspace.root;
 		});
 	});

@@ -25,9 +25,34 @@ import {
 } from './searchResults';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
+import { emptyHistory, historyStep, parseHistory, remember, type HistoryField, type SearchHistory } from './searchHistory';
+import { workspaceStorage } from './workspaceStorage.svelte';
+import { withSaved } from './workspaceState';
 
 /** Streamed files are appended in batches so a big result set re-renders a few times, not per file. */
 const FLUSH_MS = 50;
+const HISTORY_DELAY = 2000;
+
+/** The view's state per workspace (VS Code's search view memento and search history). */
+const STATE_KEY = 'kingu.search.view';
+const DEFAULTS = {
+	query: '',
+	matchCase: false,
+	wholeWord: false,
+	isRegex: false,
+	include: '',
+	exclude: '',
+	useIgnoreFiles: true,
+	showDetails: false,
+	showReplace: false,
+	replaceText: '',
+	preserveCase: false,
+	viewMode: null as ViewMode | null,
+	history: null as SearchHistory | null
+};
+const VIEW_KEYS = ['query', 'matchCase', 'wholeWord', 'isRegex', 'include', 'exclude', 'useIgnoreFiles', 'showDetails', 'showReplace', 'replaceText', 'preserveCase'] as const;
+/** The box behind each history. */
+const BOX = { search: 'query', replace: 'replaceText', include: 'include', exclude: 'exclude' } as const;
 
 class Search {
 	query = $state('');
@@ -65,6 +90,60 @@ class Search {
 	searched = $state.raw<SearchOptions | null>(null);
 	#generation = 0;
 	#debounce: ReturnType<typeof setTimeout> | undefined;
+	/** What was searched for, replaced with, included and excluded (oldest first). */
+	history = $state.raw<SearchHistory>(emptyHistory());
+	/** The history entry each box shows while ↑/↓ browse it. */
+	#browsing: Partial<Record<HistoryField, { at: number; typed: string }>> = {};
+	#historyTimer: ReturnType<typeof setTimeout> | undefined;
+
+	constructor() {
+		workspaceStorage.register(STATE_KEY, Object.keys(DEFAULTS), (saved) => {
+			const s = withSaved(DEFAULTS, saved);
+			for (const k of VIEW_KEYS) (this as Record<string, unknown>)[k] = s[k];
+			const mode = saved?.viewMode;
+			this.#viewMode = mode === 'list' || mode === 'tree' ? mode : null;
+			this.history = parseHistory(s.history);
+			this.#browsing = {};
+			clearTimeout(this.#historyTimer);
+		});
+		$effect.root(() => {
+			$effect(() => {
+				const view = Object.fromEntries(VIEW_KEYS.map((k) => [k, this[k]]));
+				workspaceStorage.save(STATE_KEY, { ...view, viewMode: this.#viewMode, history: this.history });
+			});
+		});
+	}
+
+	#remember(field: HistoryField, value: string) {
+		const list = remember(this.history[field], value);
+		if (list.join('\n') !== this.history[field].join('\n')) this.history = { ...this.history, [field]: list };
+	}
+
+	/** ↑ (`-1`) / ↓ (`1`) in a box: an older / newer entry of its history. False when there is none (↓ then moves to the results). */
+	historyStep(field: HistoryField, dir: -1 | 1): boolean {
+		const box = BOX[field];
+		const list = this.history[field];
+		let nav = this.#browsing[field];
+		// Typing since leaves the history.
+		if (nav && this[box] !== list[nav.at]) nav = undefined;
+		const next = historyStep(list, nav?.at ?? null, dir, this[box]);
+		if (!next) return nav !== undefined;
+		const typed = nav?.typed ?? this[box];
+		if (next.at === null) {
+			delete this.#browsing[field];
+			this[box] = typed;
+		} else {
+			this.#browsing[field] = { at: next.at, typed };
+			this[box] = list[next.at];
+		}
+		return true;
+	}
+
+	/** VS Code's Clear Search History. */
+	clearHistory() {
+		this.history = emptyHistory();
+		this.#browsing = {};
+	}
 
 	options(): SearchOptions {
 		return {
@@ -100,6 +179,15 @@ class Search {
 			return;
 		}
 		this.running = true;
+		// Into the history once the query has settled (VS Code's addToSearchHistoryDelayer), so
+		// search-as-you-type does not keep every prefix.
+		clearTimeout(this.#historyTimer);
+		const { query, include, exclude } = this;
+		this.#historyTimer = setTimeout(() => {
+			this.#remember('search', query);
+			this.#remember('include', include);
+			this.#remember('exclude', exclude);
+		}, HISTORY_DELAY);
 
 		let pending: FileMatches[] = [];
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -154,6 +242,7 @@ class Search {
 			files
 		};
 		this.replacing = true;
+		this.#remember('replace', this.replaceText);
 		let results: ReplaceResult[];
 		try {
 			results = await invoke<ReplaceResult[]>('search_replace', { request });

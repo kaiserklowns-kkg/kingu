@@ -100,6 +100,8 @@ pub enum Msg {
   NoManaged,
   SystemDefault,
   ActiveMark,
+  Starting,
+  StartFailed,
 }
 
 impl Msg {
@@ -157,6 +159,8 @@ impl Msg {
     Msg::NoManaged,
     Msg::SystemDefault,
     Msg::ActiveMark,
+    Msg::Starting,
+    Msg::StartFailed,
   ];
 
   /// (English, Thai).
@@ -218,6 +222,8 @@ impl Msg {
       Msg::NoManaged => ("No managed {provider} accounts.", "ยังไม่มีบัญชี {provider} แบบ managed"),
       Msg::SystemDefault => ("System default", "ค่าเริ่มต้นของระบบ"),
       Msg::ActiveMark => ("(active)", "(ใช้งานอยู่)"),
+      Msg::Starting => ("Kingu is not running: starting it with {path}", "Kingu ไม่ได้เปิดอยู่ กำลังเปิดพร้อม {path}"),
+      Msg::StartFailed => ("Kingu is not running and could not be started ({detail})", "Kingu ไม่ได้เปิดอยู่และเปิดไม่สำเร็จ ({detail})"),
     }
   }
 
@@ -255,6 +261,7 @@ Usage:
                                      start a task in a new worktree; prints its slug
   kingu task open <slug>             show a task in Kingu
   kingu open <path>[:line[:column]]  open a file (in the open folder) or a folder in Kingu
+                                     (starts Kingu with it when it is not running)
   kingu notify <message…> [--title <title>]
                                      post a desktop notification
   kingu artifact publish <file> [--title <title>] [--description <text>]
@@ -290,6 +297,7 @@ const USAGE_TH: &str = "kingu: สั่งงานแอป Kingu ที่เ
                                      เริ่มงานใน worktree ใหม่ แล้วพิมพ์ slug ของงาน
   kingu task open <slug>             แสดงงานใน Kingu
   kingu open <path>[:line[:column]]  เปิดไฟล์ (ในโฟลเดอร์ที่เปิด) หรือโฟลเดอร์ใน Kingu
+                                     (เปิด Kingu พร้อม path นั้นถ้ายังไม่ได้เปิดอยู่)
   kingu notify <message…> [--title <title>]
                                      แสดงการแจ้งเตือนบนเดสก์ท็อป
   kingu artifact publish <file> [--title <title>] [--description <text>]

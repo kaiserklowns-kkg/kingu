@@ -1,10 +1,15 @@
 // Workbench part visibility and sizes (VS Code: IWorkbenchLayoutService, layout.ts).
 // Defaults and minimums follow VS Code: sidebar/aux 300 (min 170), panel min height 77.
 // Zen Mode and the centered editor layout follow layout.ts (the pure parts are in zenMode.ts).
+// Like VS Code's layout state, what is shown (parts, the side bar's view, the panel's tab, Zen
+// Mode, the centered layout) is kept per workspace (workspaceStorage.svelte.ts), with the panel
+// hidden in a workspace never opened before; the sizes are shared by every window.
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { notifications } from './notifications.svelte';
+import { workspaceStorage } from './workspaceStorage.svelte';
+import { withSaved } from './workspaceState';
 import { CENTERED_DEFAULT, enterZen, exitZenFullScreen, zenConfig, zenParts, type CenteredState, type ZenExitInfo, type ZenParts } from './zenMode';
 
 export type SideView = 'explorer' | 'search' | 'scm' | 'debug' | 'testing' | 'snaps' | 'agents' | 'vault' | 'artifacts';
@@ -13,7 +18,22 @@ export type PanelTab = 'problems' | 'output' | 'debugConsole' | 'terminal';
 const KEY = 'kingu.workbench.layout';
 export const SIDEBAR_MIN = 170;
 export const PANEL_MIN = 77;
-const PERSISTED = ['sidebarVisible', 'panelVisible', 'auxVisible', 'sidebarWidth', 'panelHeight', 'auxWidth', 'panelWidth', 'sideView', 'panelTab', 'centered', 'centeredState', 'zen', 'zenExit'] as const;
+/** Shared by every window. */
+const SIZES = ['sidebarWidth', 'panelHeight', 'auxWidth', 'panelWidth'] as const;
+
+/** Per workspace, with what a workspace opened for the first time shows (VS Code: panel hidden). */
+const WORKSPACE_DEFAULTS: {
+	sidebarVisible: boolean;
+	panelVisible: boolean;
+	auxVisible: boolean;
+	sideView: SideView;
+	panelTab: PanelTab;
+	centered: boolean;
+	centeredState: CenteredState;
+	zen: boolean;
+	zenExit: ZenExitInfo | null;
+} = { sidebarVisible: true, panelVisible: false, auxVisible: true, sideView: 'explorer', panelTab: 'terminal', centered: false, centeredState: CENTERED_DEFAULT, zen: false, zenExit: null };
+const WORKSPACE_KEYS = Object.keys(WORKSPACE_DEFAULTS) as (keyof typeof WORKSPACE_DEFAULTS)[];
 
 function readSaved(): Record<string, unknown> {
 	try {
@@ -24,9 +44,9 @@ function readSaved(): Record<string, unknown> {
 }
 
 class Layout {
-	sidebarVisible = $state(true);
-	panelVisible = $state(true);
-	auxVisible = $state(true);
+	sidebarVisible = $state(WORKSPACE_DEFAULTS.sidebarVisible);
+	panelVisible = $state(WORKSPACE_DEFAULTS.panelVisible);
+	auxVisible = $state(WORKSPACE_DEFAULTS.auxVisible);
 	sidebarWidth = $state(300);
 	panelHeight = $state(260);
 	auxWidth = $state(360);
@@ -117,20 +137,35 @@ class Layout {
 	}
 
 	constructor() {
+		// An older build kept everything here for every window: the sizes stay, the rest goes to
+		// the first workspace this window opens (workspaceStorage).
 		const saved = readSaved();
-		for (const k of PERSISTED) {
+		for (const k of SIZES) {
 			if (k in saved && typeof saved[k] === typeof this[k]) (this as Record<string, unknown>)[k] = saved[k];
 		}
+		workspaceStorage.register(KEY, WORKSPACE_KEYS, (state) => this.#show(state), saved);
 		$effect.root(() => {
 			$effect(() => {
-				const snapshot = Object.fromEntries(PERSISTED.map((k) => [k, this[k]]));
+				const snapshot = Object.fromEntries(SIZES.map((k) => [k, this[k]]));
 				try {
 					localStorage.setItem(KEY, JSON.stringify(snapshot));
 				} catch {
 					// Storage can be unavailable; layout then resets on the next launch.
 				}
 			});
+			$effect(() => {
+				const snapshot = Object.fromEntries(WORKSPACE_KEYS.map((k) => [k, this[k]]));
+				if (workspaceStorage.scope !== undefined) workspaceStorage.save(KEY, snapshot);
+			});
 		});
+	}
+
+	/** Another workspace in this window (or the first one): its parts, views and modes. */
+	#show(saved: Record<string, unknown> | null) {
+		const next = withSaved(WORKSPACE_DEFAULTS, saved);
+		for (const k of WORKSPACE_KEYS) (this as Record<string, unknown>)[k] = next[k];
+		// The new workspace's Zen Mode is kept or ended like at startup (zenMode.restore).
+		if (settings.loaded) this.restoreZen();
 	}
 
 	/** Activity bar click: VS Code toggles the sidebar off when the active view is clicked again. */

@@ -11,6 +11,7 @@ import { editors } from '#lib/workbench/editors.svelte.ts';
 import { scm } from '#lib/workbench/scm.svelte.ts';
 import { isDiffKey } from '#lib/workbench/scm.ts';
 import { isUntitled } from '#lib/workbench/untitled.ts';
+import { workspace } from '#lib/workbench/workspace.svelte.ts';
 
 export type MonacoApi = typeof Monaco;
 
@@ -36,8 +37,12 @@ export function activeView(): ScmView | undefined {
 
 export const viewsOf = (path: string) => [...views].filter((v) => v.path() === path);
 
-/** A file of the open folder that git may know (not untitled, a diff tab or one of Kingu's own resources). */
-export const isRepoFile = (path: string | null): path is string => !!path && !isUntitled(path) && !isDiffKey(path) && !path.includes(':') && !path.startsWith('/');
+/**
+ * A file of a root folder that git may know (not untitled, a diff tab or one of Kingu's own
+ * resources): relative in the first folder, absolute in another.
+ */
+export const isRepoFile = (path: string | null): path is string =>
+	!!path && !isUntitled(path) && !isDiffKey(path) && !path.includes(':') && (!path.startsWith('/') || workspace.folderOf(path) !== null);
 
 type Version = { gen: number; text: string | null };
 
@@ -51,7 +56,7 @@ class ScmVersions {
 	constructor() {
 		$effect.root(() => {
 			$effect(() => {
-				void scm.repo;
+				for (const r of scm.repositories) void r.repo;
 				untrack(() => this.gen++);
 			});
 		});
@@ -59,7 +64,7 @@ class ScmVersions {
 
 	/** The status entry of `path`, if it changed. */
 	entry(path: string) {
-		return scm.repo?.entries.find((e) => e.path === path);
+		return scm.entry(path);
 	}
 
 	/**
@@ -85,7 +90,7 @@ class ScmVersions {
 	}
 
 	async #readIndex(path: string): Promise<string | null> {
-		if (!scm.repo) return null;
+		if (!scm.repositoryOf(path)?.repo) return null;
 		const e = this.entry(path);
 		// Untracked files have no original (VS Code draws no quick diff for them).
 		if (e?.worktree === '?') return null;
@@ -109,7 +114,7 @@ class ScmVersions {
 		const p = (async () => {
 			let text: string | null = null;
 			try {
-				text = scm.repo ? await read() : null;
+				text = scm.repositoryOf(key.slice(key.indexOf(':') + 1))?.repo ? await read() : null;
 			} catch (e) {
 				clientLog('info', `scm version ${key}: ${e}`);
 			}

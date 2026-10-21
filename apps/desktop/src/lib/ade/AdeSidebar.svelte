@@ -45,6 +45,7 @@
 	import { defaultWorkflowId, workflowOf, workflowStatuses } from './workflow.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import { nestTasks } from './attempts.ts';
+	import { childAgentRows, childAgentsKey, childAgentToggle } from './childAgents.ts';
 	import TaskBadges from './TaskBadges.svelte';
 
 	const root = $derived(workspace.root ?? '');
@@ -98,8 +99,12 @@
 			prefs.manual(root)
 		)
 	);
+	// Tasks an agent dispatched (kingu task create) under the dispatching card, or hidden, per
+	// kingu.sidebar.showChildAgents and each card's fold (childAgents.ts).
+	const childOpts = $derived({ show: settings.get<boolean>('kingu.sidebar.showChildAgents') === true, collapsed: (s: string) => prefs.isCollapsed(childAgentsKey(s)), selected: selectedKey });
+	const childRows = $derived(childAgentRows(sorted.map((r) => ({ ...r, parent: r.view?.meta.parent, group: r.view?.meta.group, dispatchedBy: r.view?.meta.dispatched_by })), childOpts));
 	// Stacked tasks right under their parent, a best-of-N group's attempts together (attempts.ts).
-	const nested = $derived(nestTasks(sorted.map((r) => ({ ...r, parent: r.view?.meta.parent, group: r.view?.meta.group }))));
+	const nested = $derived(nestTasks(childRows.rows));
 	// Indented under its parent only where the parent is listed with it (not split by status, PR or workflow).
 	const depthOf = $derived(new Map(nested.map((n) => [n.item.key, n.depth])));
 	const showPrimary = $derived(!prefs.filters.hideDefault && !prefs.filters.showActiveOnly && !(prefs.filters.hideSleeping && !prefs.filters.exceptDefault && !(adeLayout.terminals[PRIMARY]?.length ?? 0)));
@@ -403,6 +408,7 @@
 	{@const unread = isUnread(r)}
 	{@const secondary = active && groupId !== 'pinned' && prefs.pinned(root).includes(r.key)}
 	{@const depth = groupId === 'all' || groupId.startsWith('repo:') ? (depthOf.get(r.key) ?? 0) : 0}
+	{@const kids = r.view ? childAgentToggle(r.key, childRows, childOpts) : null}
 	<div role="option" aria-selected={active} aria-current={active ? 'page' : undefined} data-worktree-id={r.key} class={['relative px-1 pb-1', dragging === r.key && 'opacity-0']} style:padding-left={depth ? `${4 + Math.min(depth, 4) * 12}px` : undefined}>
 		{#if dropBefore === r.key}<div class="absolute inset-x-2 -top-px h-0.5 rounded-full bg-(--vscode-focusBorder)"></div>{/if}
 		<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
@@ -468,6 +474,20 @@
 								</span>
 							{/if}
 							{#if r.view}<TaskBadges meta={r.view.meta} parentTitle={depth ? adeTasks.find(r.view.meta.parent ?? '')?.meta.title : undefined} />{/if}
+							{#if kids && childOpts.show}
+								<button
+									class="flex h-4 shrink-0 items-center gap-0.5 rounded px-0.5 text-[10px] text-(--vscode-descriptionForeground) tabular-nums hover:bg-(--vscode-toolbar-hoverBackground)"
+									aria-expanded={kids.expanded}
+									aria-label={kids.expanded ? t('ade.sidebar.childAgentsHide', { count: kids.count }) : t('ade.sidebar.childAgentsShow', { count: kids.count })}
+									title={kids.expanded ? t('ade.sidebar.childAgentsHide', { count: kids.count }) : t('ade.sidebar.childAgentsShow', { count: kids.count })}
+									onclick={(e) => (e.stopPropagation(), prefs.toggleCollapsed(childAgentsKey(r.key)))}
+									ondblclick={(e) => e.stopPropagation()}
+								>
+									<span class={['grid place-items-center transition-transform', !kids.expanded && '-rotate-90']}><Icon name="chevronDown" size={11} /></span>{#if !kids.expanded}+{kids.count}{/if}
+								</button>
+							{:else if kids}
+								<span class="shrink-0 text-[10px] text-(--vscode-descriptionForeground) tabular-nums" title={t('ade.sidebar.childAgentsHidden', { count: kids.count })}>+{kids.count}</span>
+							{/if}
 							{#if r.key === PRIMARY && !prefs.compact}
 								<span class="h-4 shrink-0 rounded border border-(--vscode-foreground)/20 bg-(--vscode-foreground)/[0.06] px-1.5 text-[10px] leading-[14px] font-medium text-(--vscode-foreground)/70" title="Primary worktree (original clone directory)">primary</span>
 							{/if}

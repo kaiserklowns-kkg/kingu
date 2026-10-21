@@ -15,6 +15,7 @@
 	import { settings } from './settings.svelte';
 	import { settingSchemas } from './schemas.svelte';
 	import ListSetting from './ListSetting.svelte';
+	import SettingDescription from './SettingDescription.svelte';
 	import Toggle from './Toggle.svelte';
 	import type { Snippet } from 'svelte';
 	import { locale, t } from '#lib/i18n/index.ts';
@@ -300,10 +301,10 @@
 									{disabled}
 									onchange={(e) => update(s, e.currentTarget.checked)}
 								/>
-								<span>{s.description}</span>
+								<span><SettingDescription text={s.description} onsetting={(id) => (query = `@id:${id}`)} /></span>
 							</label>
 						{:else}
-							<p class="mt-1 text-[13px] text-(--vscode-descriptionForeground)">{s.description}</p>
+							<p class="mt-1 text-[13px] text-(--vscode-descriptionForeground)"><SettingDescription text={s.description} onsetting={(id) => (query = `@id:${id}`)} /></p>
 							{#if s.type === 'number'}
 								<input
 									type="number"
@@ -328,7 +329,7 @@
 								</select>
 								{#if s.enumDescriptions && !labelled(s)}
 									{@const i = s.enum.indexOf(value as string)}
-									{#if i >= 0 && s.enumDescriptions[i]}<p class="mt-1 text-xs text-(--vscode-descriptionForeground)">{s.enumDescriptions[i]}</p>{/if}
+									{#if i >= 0 && s.enumDescriptions[i]}<p class="mt-1 text-xs text-(--vscode-descriptionForeground)"><SettingDescription text={s.enumDescriptions[i]} onsetting={(id) => (query = `@id:${id}`)} /></p>{/if}
 								{/if}
 							{:else if s.type === 'array' || s.type === 'object'}
 								<ListSetting schema={s} {value} {disabled} onchange={(v) => update(s, v)} />
@@ -428,7 +429,7 @@
 						}}><Icon name="settings" size={14} /></button
 					>
 				</div>
-				<p class="text-xs text-(--vscode-descriptionForeground) select-text" title={s.description}>{paneText(s.description, locale())}</p>
+				<p class="text-xs text-(--vscode-descriptionForeground) select-text" title={s.description}><SettingDescription text={paneText(s.description, locale())} onsetting={(id) => (query = `@id:${id}`)} /></p>
 			</div>
 			{#if !wide}
 				<div class="shrink-0">

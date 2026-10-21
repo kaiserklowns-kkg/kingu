@@ -41,6 +41,12 @@ pub fn program() -> OsString {
   GIT_PROGRAM.read().ok().and_then(|p| p.clone()).map(PathBuf::into_os_string).unwrap_or_else(|| "git".into())
 }
 
+/// `git --version` of the git in use (`git.path` or PATH); `None` when git cannot run.
+pub fn version() -> Option<String> {
+  let out = command().arg("--version").output().ok()?;
+  out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+}
+
 /// `crate::shell_env::command` for [`program`].
 pub fn command() -> std::process::Command {
   crate::shell_env::command(program())
@@ -70,6 +76,9 @@ pub struct GitStatus {
   /// The merge, rebase, cherry-pick or revert waiting for its conflicts (see [`operation`]).
   pub operation: Option<Operation>,
   pub entries: Vec<StatusEntry>,
+  /// The folder is inside the repository rather than its top level: the repository is in a
+  /// parent folder (`git.openRepositoryInParentFolders`).
+  pub in_parent: bool,
 }
 
 /// A multi-step git operation stopped half-way, usually on conflicts.
@@ -266,6 +275,7 @@ pub fn status_with(root: &Path, opts: &StatusOptions) -> Result<Option<GitStatus
   let args = status_args(opts);
   let out = run(root, &args.iter().map(String::as_str).collect::<Vec<_>>())?;
   let mut st = parse_status(&String::from_utf8_lossy(&out), &prefix);
+  st.in_parent = !prefix.is_empty();
   // Task worktrees inside the folder are their own checkouts (the ADE shows each one); git sees
   // them as untracked nested repositories of the main one.
   st.entries.retain(|e| !in_task_worktree(&e.path));
@@ -349,6 +359,7 @@ pub fn parse_status(text: &str, prefix: &str) -> GitStatus {
     remotes: Vec::new(),
     operation: None,
     entries: Vec::new(),
+    in_parent: false,
   };
   let mut has_ab = false;
   let strip = |p: &str| p.strip_prefix(prefix).map(str::to_owned);

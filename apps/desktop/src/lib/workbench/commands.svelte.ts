@@ -141,6 +141,11 @@ export function installKeybindings(): () => void {
 	};
 	const onKey = (e: KeyboardEvent) => {
 		if (isModifierKey(e)) return;
+		// The Keyboard Shortcuts editor is recording a keybinding: the keys are its input, not commands.
+		if (e.target instanceof Element && e.target.closest('[data-keybinding-capture]')) {
+			pending = null;
+			return;
+		}
 		ctx = null;
 		const inEditor = e.target instanceof Element && e.target.closest('.monaco-editor') !== null;
 		// A focused terminal keeps the keys terminal.integrated.sendKeybindingsToShell / commandsToSkipShell give the shell.

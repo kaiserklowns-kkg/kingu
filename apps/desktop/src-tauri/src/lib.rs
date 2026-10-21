@@ -14,6 +14,7 @@ mod git;
 mod git_editor;
 mod git_output;
 mod git_queue;
+mod git_repos;
 mod i18n;
 mod glob;
 mod git_remote;
@@ -41,6 +42,7 @@ mod snap;
 mod snap_install;
 mod snap_sandbox;
 mod snippets;
+mod startup;
 mod system;
 mod tasks;
 mod testing;
@@ -51,6 +53,7 @@ mod user_profiles;
 mod textfile;
 mod tracker_http;
 mod vault;
+mod voice;
 mod watcher;
 mod window;
 mod windows;
@@ -137,7 +140,8 @@ const MAX_OPEN_BYTES: u64 = 5 * 1024 * 1024;
 
 #[tauri::command]
 fn read_workspace_file(ws: Workspace, rel: String) -> Result<String, String> {
-  let path = ws.resolve(&rel)?;
+  // A file of an open repository above a root folder too (Source Control's diff of it).
+  let path = ws.resolve_with_repos(&rel)?;
   let len = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
   if len > MAX_OPEN_BYTES {
     return Err(format!("{rel}: larger than {MAX_OPEN_BYTES} bytes"));
@@ -156,7 +160,7 @@ async fn fs_read_data_url(ws: Workspace, rel: String) -> Result<String, String> 
 /// editor shows as a placeholder (VS Code's text file service read).
 #[tauri::command]
 async fn textfile_read(ws: Workspace, rel: String, options: textfile::ReadOptions) -> Result<textfile::ReadResult, String> {
-  let path = ws.resolve(&rel)?;
+  let path = ws.resolve_with_repos(&rel)?;
   blocking(move || textfile::read(&path, &options).map_err(|e| format!("{rel}: {e}"))).await
 }
 
@@ -170,7 +174,7 @@ async fn textfile_write(
   encoding: String,
   expected: Option<textfile::Expected>,
 ) -> Result<textfile::WriteResult, String> {
-  let (root, inner) = ws.locate(&rel)?;
+  let (root, inner) = ws.locate_with_repos(&rel)?;
   let path = textfile::resolve_for_write(&root, &inner)?;
   blocking(move || {
     let result = textfile::write(&path, &content, &encoding, expected.as_ref()).map_err(|e| format!("{rel}: {e}"))?;
@@ -229,10 +233,10 @@ fn fs_write_file(ws: Workspace, rel: String, content: String) -> Result<(), Stri
 
 /// Current branch for the status bar; `None` outside a git repository.
 #[tauri::command]
-fn git_branch(ws: Workspace) -> Option<String> {
+fn git_branch(ws: Workspace, repo: Option<String>) -> Option<String> {
   let out = std::process::Command::new("git")
     .args(["rev-parse", "--abbrev-ref", "HEAD"])
-    .current_dir(ws.current()?)
+    .current_dir(git_repos::repo_or_root(&ws, repo.as_deref()).ok()?)
     .output()
     .ok()?;
   out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
@@ -248,8 +252,8 @@ fn checked(root: &Path, paths: Vec<String>) -> Result<Vec<String>, String> {
 
 /// The repository a Source Control command acts on: the open folder, or a task's worktree
 /// (`slug`), so the Agents layout's right side bar works for whichever worktree is selected.
-fn git_dir(ws: &Workspace, slug: Option<&str>) -> Result<PathBuf, String> {
-  repo_dir(ws, slug.filter(|s| !s.is_empty()))
+fn git_dir(ws: &Workspace, slug: Option<&str>, repo: Option<&str>) -> Result<PathBuf, String> {
+  repo_dir(ws, slug.filter(|s| !s.is_empty()), repo)
 }
 
 /// Runs a git operation off the main thread (status can take a while in a large repository).
@@ -257,36 +261,36 @@ pub(crate) async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, St
   tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
-/// The repository a Source Control command acts on: the open folder, or the task worktree
-/// `slug` (the ADE's right side bar works on the selected worktree).
-fn repo_dir(ws: &Workspace, slug: Option<&str>) -> Result<PathBuf, String> {
-  let root = ws.root()?;
+/// The repository a Source Control command acts on: `repo` (one of a multi-root workspace's
+/// repositories, git_repos.rs), else the first folder, or the task worktree `slug` (the ADE's
+/// right side bar works on the selected worktree).
+fn repo_dir(ws: &Workspace, slug: Option<&str>, repo: Option<&str>) -> Result<PathBuf, String> {
   match slug {
-    Some(s) => agent::review::task_dir(&root, s),
-    None => Ok(root),
+    Some(s) => agent::review::task_dir(&ws.root()?, s),
+    None => git_repos::repo_or_root(ws, repo),
   }
 }
 
 /// Source Control view: branch, ahead/behind and changed files; `None` outside a repository.
 #[tauri::command]
-async fn git_status(ws: Workspace, slug: Option<String>, options: Option<git::StatusOptions>) -> Result<Option<git::GitStatus>, String> {
+async fn git_status(ws: Workspace, slug: Option<String>, options: Option<git::StatusOptions>, repo: Option<String>) -> Result<Option<git::GitStatus>, String> {
   if slug.is_none() && ws.current().is_none() {
     return Ok(None);
   }
-  let dir = repo_dir(&ws, slug.as_deref())?;
+  let dir = repo_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || git::status_with(&dir, &options.unwrap_or_default())).await
 }
 
 #[tauri::command]
-async fn git_stage(ws: Workspace, paths: Vec<String>, slug: Option<String>) -> Result<(), String> {
-  let dir = repo_dir(&ws, slug.as_deref())?;
+async fn git_stage(ws: Workspace, paths: Vec<String>, slug: Option<String>, repo: Option<String>) -> Result<(), String> {
+  let dir = repo_dir(&ws, slug.as_deref(), repo.as_deref())?;
   let paths = checked(&dir, paths)?;
   blocking(move || git::stage(&dir, &paths)).await
 }
 
 #[tauri::command]
-async fn git_unstage(ws: Workspace, paths: Vec<String>, slug: Option<String>) -> Result<(), String> {
-  let dir = repo_dir(&ws, slug.as_deref())?;
+async fn git_unstage(ws: Workspace, paths: Vec<String>, slug: Option<String>, repo: Option<String>) -> Result<(), String> {
+  let dir = repo_dir(&ws, slug.as_deref(), repo.as_deref())?;
   let paths = checked(&dir, paths)?;
   blocking(move || git::unstage(&dir, &paths)).await
 }
@@ -294,8 +298,8 @@ async fn git_unstage(ws: Workspace, paths: Vec<String>, slug: Option<String>) ->
 /// Deleting untracked files needs `delete_untracked`, set only after the user confirmed;
 /// `to_trash` (git.discardUntrackedChangesToTrash) moves them to the trash instead.
 #[tauri::command]
-async fn git_discard(ws: Workspace, paths: Vec<String>, delete_untracked: Option<bool>, to_trash: Option<bool>, slug: Option<String>) -> Result<(), String> {
-  let dir = repo_dir(&ws, slug.as_deref())?;
+async fn git_discard(ws: Workspace, paths: Vec<String>, delete_untracked: Option<bool>, to_trash: Option<bool>, slug: Option<String>, repo: Option<String>) -> Result<(), String> {
+  let dir = repo_dir(&ws, slug.as_deref(), repo.as_deref())?;
   let paths = checked(&dir, paths)?;
   blocking(move || git::discard(&dir, &paths, delete_untracked.unwrap_or(false), to_trash.unwrap_or(false))).await
 }
@@ -303,8 +307,8 @@ async fn git_discard(ws: Workspace, paths: Vec<String>, delete_untracked: Option
 /// `options` carries the commit flags of VS Code's git settings (sign-off, signing) and commands
 /// (Commit (No Verify), Commit Empty); `amend` is kept for older callers.
 #[tauri::command]
-async fn git_commit(ws: Workspace, message: String, amend: Option<bool>, options: Option<git::CommitOptions>, slug: Option<String>) -> Result<(), String> {
-  let dir = repo_dir(&ws, slug.as_deref())?;
+async fn git_commit(ws: Workspace, message: String, amend: Option<bool>, options: Option<git::CommitOptions>, slug: Option<String>, repo: Option<String>) -> Result<(), String> {
+  let dir = repo_dir(&ws, slug.as_deref(), repo.as_deref())?;
   let mut opts = options.unwrap_or_default();
   opts.amend |= amend.unwrap_or(false);
   blocking(move || git::commit(&dir, &message, &opts)).await?;
@@ -320,20 +324,58 @@ fn git_reload_path(app: AppHandle) -> Result<(), String> {
   Ok(())
 }
 
+/// Whether git runs (`git.ignoreMissingGitWarning`): its version, `None` when it cannot run, and
+/// whether a folder of the window has a `.git` (VS Code warns only then).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitProbe {
+  version: Option<String>,
+  has_repository: bool,
+}
+
+#[tauri::command]
+async fn git_probe(ws: Workspace) -> Result<GitProbe, String> {
+  let roots = ws.roots();
+  blocking(move || Ok(GitProbe { version: git::version(), has_repository: roots.iter().any(|f| f.join(".git").exists()) })).await
+}
+
 /// `git.requireGitUserConfig`: whether `user.name` and `user.email` are configured.
 #[tauri::command]
-async fn git_user_configured(ws: Workspace, slug: Option<String>) -> Result<bool, String> {
-  let dir = repo_dir(&ws, slug.as_deref())?;
+async fn git_user_configured(ws: Workspace, slug: Option<String>, repo: Option<String>) -> Result<bool, String> {
+  let dir = repo_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || Ok(git::user_configured(&dir))).await
 }
 
-/// Usage limits of one agent provider (`claude` or `codex`) for the status bar.
+/// Usage limits of one agent provider for the status bar: `claude`, `codex`, `gemini`, or one of
+/// Orca's others (`usage::fetch_more`), which read `options` (their non-secret settings).
 #[tauri::command]
-async fn usage_fetch(provider: String) -> Result<usage::ProviderUsage, String> {
+async fn usage_fetch(provider: String, options: Option<usage::Options>) -> Result<usage::ProviderUsage, String> {
   blocking(move || match provider.as_str() {
     "claude" => Ok(usage::fetch_claude()),
     "codex" => Ok(usage::fetch_codex()),
-    other => Err(format!("{other}: unknown provider")),
+    "gemini" => Ok(usage::fetch_gemini()),
+    other => usage::fetch_more(other, &options.unwrap_or_default()).ok_or_else(|| crate::tr!(crate::i18n::msg::UsageMsg::UnknownProvider, provider = other)),
+  })
+  .await
+}
+
+/// Which usage-provider credentials (`usage::secrets::IDS`) are saved; never their values.
+#[tauri::command]
+async fn usage_secret_status() -> Result<BTreeMap<String, bool>, String> {
+  use accounts::secrets::SecretStore;
+  blocking(|| Ok(usage::secrets::IDS.iter().map(|(id, _)| ((*id).to_owned(), usage::secrets::UsageKeychain.get(id).is_some())).collect())).await
+}
+
+/// Saves a pasted usage-provider credential in the Keychain; an empty value removes it.
+#[tauri::command]
+async fn usage_secret_set(id: String, value: String) -> Result<(), String> {
+  use accounts::secrets::SecretStore;
+  if !usage::secrets::known(&id) {
+    return Err(crate::tr!(crate::i18n::msg::UsageMsg::UnknownSecret, id = id));
+  }
+  blocking(move || match usage::secrets::clean(&value) {
+    Some(v) => usage::secrets::UsageKeychain.set(&id, &v),
+    None => usage::secrets::UsageKeychain.delete(&id),
   })
   .await
 }
@@ -370,35 +412,35 @@ fn floating_dir(app: AppHandle) -> Result<String, String> {
 
 /// Lines added and deleted per changed file (`git diff --numstat`), unstaged and staged.
 #[tauri::command]
-async fn git_numstat(ws: Workspace, slug: Option<String>) -> Result<git::NumStat, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_numstat(ws: Workspace, slug: Option<String>, repo: Option<String>) -> Result<git::NumStat, String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || git::numstat(&root)).await
 }
 
 #[tauri::command]
 /// Force push with lease (the ADE's Source Control menu); a plain push is `git_remote::git_push`.
-async fn git_force_push(ws: Workspace, slug: Option<String>) -> Result<(), String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_force_push(ws: Workspace, slug: Option<String>, repo: Option<String>) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || git::push(&root, true)).await
 }
 
 #[tauri::command]
 /// Fast-forward only (the ADE's Source Control menu); a plain pull is `git_remote::git_pull`.
-async fn git_pull_ff_only(ws: Workspace, slug: Option<String>) -> Result<(), String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_pull_ff_only(ws: Workspace, slug: Option<String>, repo: Option<String>) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || git::pull(&root, true)).await
 }
 
 #[tauri::command]
-async fn git_rebase(ws: Workspace, slug: Option<String>, base: String) -> Result<(), String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_rebase(ws: Workspace, slug: Option<String>, base: String, repo: Option<String>) -> Result<(), String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || git::rebase(&root, &base)).await
 }
 
 /// The Commits panel of Source Control.
 #[tauri::command]
-async fn git_log(ws: Workspace, slug: Option<String>, limit: Option<u32>) -> Result<Vec<git::Commit>, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_log(ws: Workspace, slug: Option<String>, limit: Option<u32>, repo: Option<String>) -> Result<Vec<git::Commit>, String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || git::log(&root, limit.unwrap_or(50))).await
 }
 
@@ -409,8 +451,8 @@ fn open_web_url(url: String) -> Result<(), String> {
 
 /// Files a commit changed (`git show --name-status`), for the Commits panel.
 #[tauri::command]
-async fn git_show_files(ws: Workspace, slug: Option<String>, hash: String) -> Result<Vec<(String, String)>, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_show_files(ws: Workspace, slug: Option<String>, hash: String, repo: Option<String>) -> Result<Vec<(String, String)>, String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   git::check_rev(&hash)?;
   blocking(move || {
     let out = git::run(&root, &["show", "--name-status", "--format=", "--end-of-options", &hash])?;
@@ -421,8 +463,8 @@ async fn git_show_files(ws: Workspace, slug: Option<String>, hash: String) -> Re
 
 /// Commits ahead of and behind `base` (Change Base Ref's compare).
 #[tauri::command]
-async fn git_compare(ws: Workspace, slug: Option<String>, base: String) -> Result<(u32, u32), String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_compare(ws: Workspace, slug: Option<String>, base: String, repo: Option<String>) -> Result<(u32, u32), String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   git::check_rev(&base)?;
   blocking(move || {
     let out = git::run(&root, &["rev-list", "--left-right", "--count", &format!("{base}...HEAD")])?;
@@ -436,8 +478,8 @@ async fn git_compare(ws: Workspace, slug: Option<String>, base: String) -> Resul
 
 /// Local and remote branch names, for the base ref picker.
 #[tauri::command]
-async fn git_ref_names(ws: Workspace, slug: Option<String>) -> Result<Vec<String>, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_ref_names(ws: Workspace, slug: Option<String>, repo: Option<String>) -> Result<Vec<String>, String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || {
     let out = git::run(&root, &["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"])?;
     Ok(String::from_utf8_lossy(&out).lines().filter(|l| !l.is_empty() && !l.ends_with("/HEAD")).map(str::to_owned).collect())
@@ -471,23 +513,22 @@ async fn delete_claude_session(ws: Workspace, path: String) -> Result<(), String
 
 /// Aborts the merge, rebase, cherry-pick or revert in progress (Source Control's conflict card).
 #[tauri::command]
-async fn git_abort(ws: Workspace, slug: Option<String>) -> Result<git::Operation, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_abort(ws: Workspace, slug: Option<String>, repo: Option<String>) -> Result<git::Operation, String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || git::abort_operation(&root)).await
 }
 
 /// Continues the merge, rebase, cherry-pick or revert once its conflicts are resolved and staged.
 #[tauri::command]
-async fn git_continue(ws: Workspace, slug: Option<String>) -> Result<git::Operation, String> {
-  let root = git_dir(&ws, slug.as_deref())?;
+async fn git_continue(ws: Workspace, slug: Option<String>, repo: Option<String>) -> Result<git::Operation, String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || git::continue_operation(&root)).await
 }
 
 /// HEAD version of a file for the diff editor; empty when the file is not in HEAD.
 #[tauri::command]
 async fn git_show_head(ws: Workspace, rel: String) -> Result<String, String> {
-  let root = ws.root()?;
-  git::check_rel(&root, &rel)?;
+  let (root, rel) = git_repos::locate_file(&ws, &rel)?;
   blocking(move || git::show_head(&root, &rel)).await
 }
 
@@ -509,8 +550,12 @@ fn pty_spawn(
   cwd_from: Option<String>,
   floating_cwd: Option<String>,
   task: Option<tasks::TaskLaunch>,
+  folder: Option<String>,
 ) -> Result<kingu_ptyd::Attached, String> {
   pty::validate_key(&key)?;
+  // `folder`: the root folder of a multi-root window the terminal belongs to (the user's pick, or
+  // a split's source); absent, the first folder. It must be inside one of the window's roots.
+  let folder = pty::terminal_folder(&ws.roots(), folder.as_deref())?;
   // A task terminal (tasks.rs) is a panel terminal running the task instead of a shell.
   if task.is_some() && !key.starts_with("panel:") {
     return Err(format!("terminal {key}: tasks run in panel terminals"));
@@ -519,7 +564,7 @@ fn pty_spawn(
   // Orca's resolve-split-cwd), else where a new terminal would.
   // terminal.integrated.splitCwd picks which directory (inherited, the source's initial one, or the root).
   let split_mode = terminal.as_ref().and_then(|t| t.split_cwd.clone()).unwrap_or_else(|| "inherited".into());
-  let inherited = cwd_from.as_deref().and_then(|from| pty::split_cwd(&split_mode, || ptys.live_cwd(from), || ptys.initial_cwd(from), ws.current()));
+  let inherited = cwd_from.as_deref().and_then(|from| pty::split_cwd(&split_mode, || ptys.live_cwd(from), || ptys.initial_cwd(from), folder.clone()));
   // A task terminal starts in the task's worktree (the ADE's per-worktree terminals); a floating
   // workspace terminal in its own directory setting. No folder open: the terminal starts in the
   // home folder, like VS Code's empty window.
@@ -538,7 +583,7 @@ fn pty_spawn(
       dir
     }
     (None, None) => {
-      let folder = ws.current();
+      let folder = folder.clone();
       let fallback = folder.clone().or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("/"));
       pty::terminal_cwd(terminal.as_ref().and_then(|t| t.cwd.as_deref()), folder.as_deref(), fallback)
     }
@@ -567,7 +612,16 @@ fn pty_spawn(
       }
     }
   }
-  let shell = terminal.shell.as_deref().filter(|s| !s.trim().is_empty());
+  // terminal.integrated.defaultProfile.*: the profile's path (a name looked up on PATH, or a list
+  // tried in turn, like VS Code), else the legacy terminal.integrated.shell.* (an absolute path).
+  let profile_shell = if terminal.paths.is_empty() {
+    None
+  } else {
+    let found = pty::resolve_shell(&terminal.paths, shell_env::path().as_deref())
+      .ok_or_else(|| crate::tr!(crate::i18n::msg::CoreMsg::ProfileShellMissing, paths = terminal.paths.join(", ")))?;
+    Some(found.to_string_lossy().into_owned())
+  };
+  let shell = profile_shell.as_deref().or(terminal.shell.as_deref()).filter(|s| !s.trim().is_empty());
   // A task: its folder and env, and /bin/sh running the task wrapper with the task's argv.
   let (cwd, task_args) = match &task {
     Some(t) => {
@@ -586,7 +640,7 @@ fn pty_spawn(
   if terminal.scope_history && !key.starts_with("cli:") {
     let scope = match slug.as_deref() {
       Some(s) => agent::worktree::worktree_path(&ws.root()?, s),
-      None => ws.current().unwrap_or_else(|| cwd.clone()),
+      None => folder.clone().unwrap_or_else(|| cwd.clone()),
     };
     let program = shell.map(str::to_owned).or_else(|| std::env::var("SHELL").ok()).unwrap_or_default();
     let history = app.path().app_data_dir().map_err(|e| e.to_string())?.join("terminal-history");
@@ -627,6 +681,8 @@ fn pty_spawn(
 #[serde(default, rename_all = "camelCase")]
 struct TerminalSettings {
   shell: Option<String>,
+  /// The default profile's `path` candidates (terminal.integrated.profiles.*); they win over `shell`.
+  paths: Vec<String>,
   args: Option<Vec<String>>,
   /// `terminal.integrated.env.*`: `null` removes a variable.
   env: BTreeMap<String, Option<String>>,
@@ -760,7 +816,7 @@ fn worktree_search(
     searches.cancel();
     return Err("query is empty".into());
   }
-  let dir = repo_dir(&ws, slug.as_deref())?;
+  let dir = repo_dir(&ws, slug.as_deref(), None)?;
   let rg = search::find_rg(std::env::var_os("KINGU_RG"), shell_env::path())?;
   searches.start(&rg, &dir, &options, move |ev| on_event.send(ev).is_ok())
 }
@@ -801,9 +857,18 @@ fn lsp_start(
   ws: Workspace,
   servers: State<'_, lsp::Servers>,
   language: String,
+  folder: Option<String>,
   on_event: Channel<lsp::LspEvent>,
 ) -> Result<u32, String> {
-  let id = lsp::start_for(&servers, &ws.root()?, &language, on_event)?;
+  // `folder`: the root folder a server is started for on its own (one that cannot be told about
+  // several folders); absent, the first. It runs there, and a project-local binary is looked for
+  // in that folder's node_modules first, then in every other folder's.
+  let roots = ws.roots();
+  let cwd = match folder.as_deref() {
+    Some(f) => roots.iter().find(|r| r.as_path() == Path::new(f)).cloned().ok_or_else(|| crate::tr!(crate::i18n::msg::FilesMsg::OutsideWorkspace, path = f))?,
+    None => ws.root()?,
+  };
+  let id = lsp::start_for(&servers, &cwd, &lsp::roots_from(&cwd, &roots), &language, on_event)?;
   servers.own(id, ws.label());
   Ok(id)
 }
@@ -812,13 +877,15 @@ fn lsp_start(
 /// installed meanwhile is found): its path, or the "Not installed: …" error.
 #[tauri::command]
 fn lsp_check(ws: Workspace, language: String) -> Result<String, String> {
-  lsp::check(&language, &ws.root()?).map(|p| p.to_string_lossy().into_owned())
+  ws.root()?;
+  lsp::check(&language, &ws.roots()).map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Install commands for the server of `language` that this machine's tools can run.
 #[tauri::command]
 fn lsp_install_methods(ws: Workspace, language: String) -> Result<lsp::InstallInfo, String> {
-  lsp::install_info(&language, &ws.root()?)
+  ws.root()?;
+  lsp::install_info(&language, &ws.roots())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1110,13 +1177,21 @@ struct SavedAs {
 /// Save As (and the first save of an untitled editor): the native save dialog, then the write.
 /// The dialog runs here so the webview never names a path outside the workspace itself.
 #[tauri::command]
-async fn fs_save_as(app: AppHandle, window: tauri::WebviewWindow, ws: Workspace, content: String, name: String, dir: Option<String>) -> Result<Option<SavedAs>, String> {
+async fn fs_save_as(
+  app: AppHandle,
+  window: tauri::WebviewWindow,
+  ws: Workspace,
+  content: String,
+  name: String,
+  dir: Option<String>,
+  default_path: Option<String>,
+) -> Result<Option<SavedAs>, String> {
   use tauri_plugin_dialog::DialogExt;
   let root = ws.current();
   let start = match (&root, dir) {
     (Some(r), Some(d)) => ws.resolve(&d).unwrap_or_else(|_| r.clone()),
     (Some(r), None) => r.clone(),
-    (None, _) => app.path().home_dir().map_err(|e| e.to_string())?,
+    (None, _) => external::dialog_home(&app, default_path.as_deref())?,
   };
   let handle = app.clone();
   let picked = tauri::async_runtime::spawn_blocking(move || handle.dialog().file().set_parent(&window).set_directory(start).set_file_name(name).blocking_save_file())
@@ -1155,6 +1230,7 @@ pub fn run() {
     .manage(menu::MenuState::default())
     .manage(DroppedPaths::default())
     .manage(artifacts::preview::Previews::default())
+    .manage(voice::Voice::default())
     // Artifact previews (artifacts/preview.rs): served only to the sandboxed preview iframe.
     .register_uri_scheme_protocol(artifacts::preview::SCHEME, artifacts::preview::handle)
     .setup(|app| {
@@ -1206,7 +1282,10 @@ pub fn run() {
           let _ = std::fs::remove_dir_all(stash);
         });
       }
-      windows::restore(app.handle(), restore.as_ref().and_then(|v| v.as_str()), &last_session);
+      // Folders and files Kingu was launched with (`kingu open <path>` when it was not running).
+      let cwd = std::env::current_dir().unwrap_or_default();
+      let launch = startup::launch_args(std::env::args_os().skip(1), &cwd);
+      windows::restore(app.handle(), restore.as_ref().and_then(|v| v.as_str()), &last_session, &launch);
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
@@ -1251,6 +1330,9 @@ pub fn run() {
       user_profiles::profile_switch,
       user_profiles::profile_rename,
       user_profiles::profile_delete,
+      user_profiles::profile_export,
+      user_profiles::profile_import_preview,
+      user_profiles::profile_import,
       windows::workspace_state,
       windows::workspace_folders,
       windows::workspace_open,
@@ -1262,6 +1344,7 @@ pub fn run() {
       windows::window_new,
       windows::window_focus_folder,
       windows::window_count,
+      windows::workspace_storage_stale,
       window::window_close,
       window::window_close_cancelled,
       snippets::snippets_user_list,
@@ -1271,12 +1354,14 @@ pub fn run() {
       workspace_recent_remove,
       workspace_recent_clear,
       git_branch,
+      git_repos::git_repositories,
       git_status,
       git_stage,
       git_unstage,
       git_discard,
       git_commit,
       git_reload_path,
+      git_probe,
       git_user_configured,
       git_numstat,
       git_force_push,
@@ -1306,6 +1391,12 @@ pub fn run() {
       git_continue,
       usage_fetch,
       usage_detect,
+      usage_secret_status,
+      usage_secret_set,
+      voice::voice_status,
+      voice::voice_set_openai_key,
+      voice::voice_clear_openai_key,
+      voice::voice_transcribe,
       floating_note_new,
       floating_note_read,
       floating_note_write,
@@ -1363,6 +1454,8 @@ pub fn run() {
       attachments::paste_image_save,
       attachments::chat_attachment_preview,
       agent::trust::agent_trust_workspace,
+      agent::codex_server::codex_supports_no_daemon,
+      agent::codex_server::codex_shared_server_joined,
       agent::mcp::mcp_list,
       agent::mcp::mcp_trust,
       agent::mcp::mcp_user_read,
@@ -1452,6 +1545,8 @@ pub fn run() {
       agent::scripts::worktree_script_trust,
       tasks::tasks_file,
       tasks::tasks_trust,
+      tasks::tasks_workspace_file,
+      tasks::tasks_workspace_trust,
       agent::scripts::worktree_script_prepare,
       agent::scripts::worktree_setup_marker,
       agent::scripts::worktree_setup_status,
@@ -1480,13 +1575,6 @@ pub fn run() {
       accounts::managed_accounts_list,
       accounts::managed_account_select,
       accounts::managed_account_remove,
-      accounts::provider_usage_get,
-      accounts::provider_usage_refresh,
-      accounts::provider_credentials_status,
-      accounts::provider_credential_set,
-      accounts::grok_status,
-      accounts::cursor_status,
-      accounts::zcode_status,
       accounts::antigravity_accounts,
       cli_server::cli_uninstall,
       cli_server::cli_skill_plugin,
@@ -1560,6 +1648,7 @@ pub fn run() {
       testing_coverage_take,
       dap::dap_stop,
       settings::settings_read,
+      settings::settings_read_folder,
       settings::settings_write,
       watcher_set_exclude,
       watcher_set_include,
@@ -1644,6 +1733,10 @@ pub fn run() {
         app.state::<Workspaces>().focused(label);
         menu::window_focused(app, label);
         windows::save_windows(app);
+      }
+      // Each window's place on screen, for window.restoreWindows.
+      if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_), .. } = &event {
+        windows::on_moved(app, label);
       }
       if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } = &event {
         windows::on_destroyed(app, label);

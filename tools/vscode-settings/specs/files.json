@@ -115,6 +115,28 @@
 				"ถามก่อน ให้เลือกเปรียบเทียบ เขียนทับ หรือใช้เวอร์ชันบนดิสก์",
 				"เขียนทับไฟล์บนดิสก์เลย"
 			]
+		},
+		{
+			"id": "files.candidateGuessEncodings",
+			"group": "Files",
+			"th": "encoding ที่ยอมให้ files.autoGuessEncoding เดาได้ (ว่าง = ทุกตัว)",
+			"scope": "resource"
+		},
+		{
+			"id": "files.dialog.defaultPath",
+			"group": "Files",
+			"th": "โฟลเดอร์เริ่มต้นของหน้าต่างเลือกไฟล์แทนโฮมโฟลเดอร์ เมื่อไม่มีโฟลเดอร์เปิดอยู่",
+			"scope": "application"
+		},
+		{
+			"id": "files.refactoring.autoSave",
+			"group": "Files",
+			"th": "บันทึกไฟล์ที่เปิดอยู่ซึ่ง refactoring หลายไฟล์ (เช่น Rename Symbol) แก้ไข โดยอัตโนมัติ"
+		},
+		{
+			"id": "files.restoreUndoStack",
+			"group": "Files",
+			"th": "เก็บประวัติ undo ไว้เมื่อปิดไฟล์ แล้วคืนให้เมื่อเปิดไฟล์อีกครั้ง"
 		}
 	]
 }

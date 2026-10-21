@@ -18,5 +18,13 @@ crate::i18n::messages! {
       en: "The Default profile cannot be renamed or deleted",
       th: "เปลี่ยนชื่อหรือลบ profile Default ไม่ได้",
     },
+    NotATemplate {
+      en: "This is not a profile file (.code-profile)",
+      th: "ไฟล์นี้ไม่ใช่ไฟล์ profile (.code-profile)",
+    },
+    TemplateTooLarge {
+      en: "The profile file is too large to import",
+      th: "ไฟล์ profile ใหญ่เกินกว่าจะนำเข้าได้",
+    },
   }
 }

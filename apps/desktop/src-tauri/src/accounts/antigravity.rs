@@ -1,128 +1,73 @@
-//! Antigravity (the `agy` CLI): quota and native account switching (Orca's antigravity-usage-* and
-//! native-* modules).
-//!
-//! Usage: agy keeps its own Google credential, so Kingu asks it (`agy -p /usage --output-format
-//! json`, agy 1.1.11 or newer, only while its status-bar item is on). An agy that answers `/usage`
-//! as a prompt (spending a turn) is not asked again until Kingu restarts.
-//!
-//! Switching: the native credential (macOS Keychain item `gemini`/`antigravity`, else agy's token
-//! file) is saved per Google account in a vault — a Kingu Keychain item — and written back on
-//! Select, with a compare-and-swap and a read-back check.
+//! Antigravity (`agy`) native account switching (Orca's antigravity native-* modules): the
+//! credential agy uses (the macOS Keychain item `gemini`/`antigravity`, else agy's token file) is
+//! saved per Google account in a vault — a Kingu Keychain item — and written back on Select, with
+//! a compare-and-swap and a read-back check. agy's quota is read by `usage::antigravity`.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{Bucket, Ctx, Runner, Status, Usage, jwt_payload, parse_iso, window};
 use crate::accounts::secrets::SecretStore;
 use crate::i18n::msg::ProvidersMsg;
 use crate::tr;
 
-const P: &str = "antigravity";
-const MIN_VERSION: (u32, u32, u32) = (1, 1, 11);
 const VAULT_ID: &str = "provider:antigravity:vault";
 const MAX_TOKEN_FILE: u64 = 64 * 1024;
 
-static TURN_SPENT: AtomicBool = AtomicBool::new(false);
-
-// ---- usage ------------------------------------------------------------------------------------
-
-pub fn version_of(text: &str) -> Option<(u32, u32, u32)> {
-  let re = regex::Regex::new(r"(\d+)\.(\d+)\.(\d+)").expect("regex");
-  let c = re.captures(text)?;
-  Some((c[1].parse().ok()?, c[2].parse().ok()?, c[3].parse().ok()?))
+/// Runs `security` (with stdin for writes) and returns its exit code and stdout.
+pub trait Runner: Send + Sync {
+  fn run(&self, program: &str, args: &[&str], stdin: Option<&str>, timeout: Duration) -> Result<(Option<i32>, String), String>;
 }
 
-pub fn fetch(ctx: &Ctx) -> Usage {
-  if !ctx.config.antigravity {
-    return Usage::new(P, Status::Idle);
+pub struct SystemRunner;
+
+impl Runner for SystemRunner {
+  fn run(&self, program: &str, args: &[&str], stdin: Option<&str>, timeout: Duration) -> Result<(Option<i32>, String), String> {
+    use std::io::{Read, Write};
+    use std::process::{Command, Stdio};
+    let mut child = Command::new(program)
+      .args(args)
+      .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+      .stdout(Stdio::piped())
+      .stderr(Stdio::null())
+      .spawn()
+      .map_err(|e| e.to_string())?;
+    if let (Some(input), Some(mut pipe)) = (stdin, child.stdin.take()) {
+      let _ = pipe.write_all(input.as_bytes());
+    }
+    let mut out = child.stdout.take();
+    let reader = std::thread::spawn(move || {
+      let mut s = Vec::new();
+      if let Some(o) = out.as_mut() {
+        let _ = o.take(256 * 1024).read_to_end(&mut s);
+      }
+      s
+    });
+    let deadline = std::time::Instant::now() + timeout;
+    let code = loop {
+      match child.try_wait().map_err(|e| e.to_string())? {
+        Some(status) => break status.code(),
+        None if std::time::Instant::now() >= deadline => {
+          let _ = child.kill();
+          let _ = child.wait();
+          break None;
+        }
+        None => std::thread::sleep(Duration::from_millis(25)),
+      }
+    };
+    Ok((code, String::from_utf8_lossy(&reader.join().unwrap_or_default()).into_owned()))
   }
-  if TURN_SPENT.load(Ordering::Relaxed) {
-    return Usage::unavailable(P, tr!(ProvidersMsg::AgyTurnSpent), "usage-unavailable");
-  }
-  let Some(bin) = ctx.run.which("agy") else { return Usage::unavailable(P, tr!(ProvidersMsg::AgyMissing), "cli-unavailable") };
-  let bin = bin.display().to_string();
-  let version = ctx.run.run(&bin, &["--version"], None, Duration::from_secs(5)).ok().and_then(|o| version_of(&o.stdout).or_else(|| version_of(&o.stderr)));
-  match version {
-    None => return Usage::unavailable(P, tr!(ProvidersMsg::AgyNoVersion), "cli-unavailable"),
-    Some(v) if v < MIN_VERSION => return Usage::unavailable(P, tr!(ProvidersMsg::AgyTooOld, version = format!("{}.{}.{}", v.0, v.1, v.2)), "cli-unavailable"),
-    Some(_) => {}
-  }
-  let out = match ctx.run.run(&bin, &["-p", "/usage", "--output-format", "json", "--print-timeout", "20s"], None, Duration::from_secs(30)) {
-    Ok(o) => o,
-    Err(e) => return Usage::error(P, tr!(ProvidersMsg::AgyNotStarted, detail = e), "cli-unavailable"),
-  };
-  if out.timed_out {
-    return Usage::error(P, tr!(ProvidersMsg::AgyTimeout), "server");
-  }
-  parse_output(&out.stdout, &out.stderr, out.code)
 }
 
-pub fn parse_output(stdout: &str, stderr: &str, code: Option<i32>) -> Usage {
-  let lines: Vec<Value> = stdout.lines().filter(|l| l.trim_start().starts_with('{')).filter_map(|l| serde_json::from_str(l.trim()).ok()).collect();
-  if let Some(u) = lines.iter().find_map(parse_usage_line) {
-    return u;
-  }
-  if lines.iter().any(|v| v["num_turns"].as_u64().unwrap_or(0) > 0 || v["conversation_id"].as_str().is_some_and(|c| !c.is_empty())) {
-    TURN_SPENT.store(true, Ordering::Relaxed);
-    return Usage::unavailable(P, tr!(ProvidersMsg::AgyTurnSpent), "usage-unavailable");
-  }
-  let all = format!("{stdout}\n{stderr}");
-  let structured = all.lines().find_map(|l| l.split_once("AGY_ERROR:").and_then(|(_, j)| serde_json::from_str::<Value>(j.trim()).ok()));
-  if let Some(e) = structured {
-    let status = e["status"].as_str().unwrap_or_default();
-    let code = e["error_code"].as_i64().unwrap_or(0);
-    if status == "UNAUTHENTICATED" || code == 401 {
-      return Usage::unavailable(P, tr!(ProvidersMsg::AgySignedOut), "missing-credentials");
-    }
-    if status == "PERMISSION_DENIED" || code == 403 {
-      return Usage::error(P, tr!(ProvidersMsg::AgyNotEntitled), "no-subscription");
-    }
-    if status == "RESOURCE_EXHAUSTED" || code == 429 {
-      return Usage::error(P, tr!(ProvidersMsg::AgyRateLimited), "rate-limited");
-    }
-    if (500..600).contains(&code) {
-      return Usage::error(P, tr!(ProvidersMsg::AgyServer), "server");
-    }
-  }
-  let low = all.to_lowercase();
-  if ["not logged in", "run agy login", "unauthenticated", "not signed in", "please sign in", "login required"].iter().any(|p| low.contains(p)) {
-    return Usage::unavailable(P, tr!(ProvidersMsg::AgySignedOut), "missing-credentials");
-  }
-  Usage::error(P, tr!(ProvidersMsg::AgyNoQuota, code = code.map_or_else(|| "?".to_owned(), |c| c.to_string())), "parse")
+/// The payload of a JWT (unverified: only to read the Google identity).
+fn jwt_payload(token: &str) -> Option<Value> {
+  use base64::Engine;
+  let part = token.split('.').nth(1)?;
+  let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(part.trim_end_matches('=')).ok()?;
+  serde_json::from_slice(&bytes).ok()
 }
-
-fn parse_usage_line(v: &Value) -> Option<Usage> {
-  if v["status"] != "SUCCESS" || v["command"]["name"] != "usage" {
-    return None;
-  }
-  let groups = v["command"]["data"]["groups"].as_array()?;
-  let mut buckets = Vec::new();
-  for g in groups {
-    let gname = g["name"].as_str().unwrap_or("Antigravity");
-    let enabled: Vec<&Value> = g["buckets"].as_array().map(|b| b.iter().filter(|x| x["disabled"] != true).collect()).unwrap_or_default();
-    for b in &enabled {
-      let Some(frac) = b["remaining_fraction"].as_f64() else { continue };
-      let minutes = match b["window"].as_str() {
-        Some("weekly") => 10080,
-        Some("5h") => 300,
-        _ => 0,
-      };
-      let name = if enabled.len() > 1 { format!("{gname} · {}", b["name"].as_str().unwrap_or("")) } else { gname.to_owned() };
-      buckets.push(Bucket { name, window: window((1.0 - frac) * 100.0, minutes, b["reset_time"].as_str().and_then(parse_iso)) });
-    }
-  }
-  if buckets.is_empty() {
-    return None;
-  }
-  let worst = |m: u32| buckets.iter().filter(|b| b.window.window_minutes == m).max_by(|a, b| a.window.used_percent.total_cmp(&b.window.used_percent)).map(|b| b.window.clone());
-  Some(Usage { session: worst(300), weekly: worst(10080), ..Usage { buckets: buckets.clone(), ..Usage::new(P, Status::Ok) } })
-}
-
-// ---- native account switching -----------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -173,9 +118,9 @@ pub fn read_native(run: &dyn Runner, home: &Path) -> Result<Option<String>, Stri
     return Err(tr!(ProvidersMsg::AgyKeyringUnavailable));
   }
   if !use_file_backend() {
-    let o = run.run("/usr/bin/security", &["find-generic-password", "-s", "gemini", "-a", "antigravity", "-w"], None, Duration::from_secs(5))?;
-    match o.code {
-      Some(0) => return Ok(decode_keyring(&o.stdout)),
+    let (code, stdout) = run.run("/usr/bin/security", &["find-generic-password", "-s", "gemini", "-a", "antigravity", "-w"], None, Duration::from_secs(5))?;
+    match code {
+      Some(0) => return Ok(decode_keyring(&stdout)),
       Some(44) => {}
       _ => return Err(tr!(ProvidersMsg::AgyKeychain)),
     }
@@ -212,8 +157,8 @@ fn write_native(run: &dyn Runner, home: &Path, blob: &str) -> Result<(), String>
   if line.len() > 4096 {
     return Err(tr!(ProvidersMsg::AgyTooLarge));
   }
-  let o = run.run("/usr/bin/security", &["-i"], Some(&line), Duration::from_secs(10))?;
-  if o.code != Some(0) {
+  let (code, _) = run.run("/usr/bin/security", &["-i"], Some(&line), Duration::from_secs(10))?;
+  if code != Some(0) {
     return Err(tr!(ProvidersMsg::AgyKeychain));
   }
   Ok(())
@@ -361,28 +306,6 @@ pub fn remove(run: &dyn Runner, secrets: &dyn SecretStore, home: &Path, id: &str
 #[cfg(test)]
 mod tests {
   use super::*;
-  use serde_json::json;
-
-  #[test]
-  fn parses_usage_and_failures() {
-    let ok = json!({ "status": "SUCCESS", "command": { "name": "usage", "data": { "groups": [
-      { "name": "Gemini Models", "buckets": [
-        { "id": "gemini-weekly", "name": "Weekly", "window": "weekly", "remaining_fraction": 0.4, "reset_time": "1970-01-01T00:00:01Z" },
-        { "id": "gemini-5h", "name": "5h", "window": "5h", "remaining_fraction": 0.9 }
-      ]},
-      { "name": "Claude and GPT models", "buckets": [ { "window": "5h", "remaining_fraction": 0.5 }, { "window": "weekly", "disabled": true, "remaining_fraction": 0 } ] }
-    ]}}});
-    let u = parse_output(&format!("noise\n{ok}\n"), "", Some(0));
-    assert_eq!(u.status, Status::Ok);
-    assert_eq!(u.buckets[0].name, "Gemini Models · Weekly");
-    assert_eq!(u.buckets[2].name, "Claude and GPT models");
-    assert_eq!(u.session.unwrap().used_percent, 50.0);
-    assert_eq!(u.weekly.unwrap().used_percent, 60.0);
-    let out = parse_output("", "AGY_ERROR:{\"status\":\"UNAUTHENTICATED\"}", Some(1));
-    assert_eq!(out.status, Status::Unavailable);
-    assert_eq!(version_of("agy version 1.2.0 (abc)"), Some((1, 2, 0)));
-    assert!(version_of("1.1.10").unwrap() < MIN_VERSION);
-  }
 
   #[test]
   fn reads_identities_and_keyring_values() {

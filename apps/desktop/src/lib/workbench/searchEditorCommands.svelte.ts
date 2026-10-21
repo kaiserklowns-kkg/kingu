@@ -95,6 +95,8 @@ export function installSearchEditorCommands(): () => void {
 			}
 		}),
 		commands.register({ id: 'search.action.openNewEditorToSide', title: 'Open New Search Editor to the Side', category: 'Search', run: () => searchEditors.openNew(seed(), { toSide: true }) }),
+		// The Search view's history is kept per workspace (search.svelte.ts).
+		commands.register({ id: 'search.action.clearHistory', title: 'Clear Search History', category: 'Search', run: () => search.clearHistory() }),
 		commands.register({
 			id: 'search.action.openInEditor',
 			title: 'Open Results in Editor',

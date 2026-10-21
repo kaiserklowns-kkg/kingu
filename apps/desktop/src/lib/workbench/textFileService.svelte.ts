@@ -109,9 +109,10 @@ class TextFileService {
 		const stop = $effect.root(() => {
 			$effect(() => {
 				if (!workspace.ready || !settings.loaded) return;
-				const root = workspace.root;
-				if (root === restoredFor) return;
-				restoredFor = root;
+				// Per workspace: an empty window has its own backups too.
+				const key = workspace.stateKey;
+				if (key === restoredFor) return;
+				restoredFor = key;
 				untrack(() => void this.restoreBackups().catch((e) => clientLog('error', `restore backups: ${e}`)));
 			});
 		});
@@ -315,7 +316,9 @@ class TextFileService {
 		}
 		let remaining = dirty();
 		const hotExit = settings.get<HotExit>('files.hotExit');
-		if (backsUpOnShutdown({ reason, hotExit, hasFolder: workspace.root !== null, isMac })) {
+		// Closing the last window quits the app on Windows/Linux.
+		const lastWindow = reason === 'close' && !isMac ? (await invoke<number>('window_count').catch(() => 1)) <= 1 : true;
+		if (backsUpOnShutdown({ reason, hotExit, hasFolder: workspace.root !== null, isMac, lastWindow })) {
 			// Editors with no text-model backup (a dirty Search Editor) still ask Save / Don't Save.
 			const unbacked = remaining.filter(isSearchEditorKey);
 			try {

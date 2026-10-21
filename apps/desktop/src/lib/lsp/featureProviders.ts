@@ -7,7 +7,7 @@
 
 import type * as Monaco from 'monaco-editor';
 import type { LanguageClient, RefreshKind } from './client';
-import { toLspPosition, toLspRange, toMonacoRange, toMonacoTextEdits, toTargets } from './convert';
+import { modelPathOf, toLspPosition, toLspRange, toMonacoRange, toMonacoTextEdits, toTargets } from './convert';
 import {
 	applySemanticTokensEdits,
 	restyleSemanticTokens,
@@ -33,7 +33,8 @@ export type FeatureContext = {
 	/** Monaco language ids the server serves. */
 	languages: string[];
 	caps: ServerCapabilities;
-	lookup(model: Model): { client: LanguageClient; uri: string } | null;
+	/** The model's client and URI; `sid`: its session (the server key, or key and folder for a per-folder server). */
+	lookup(model: Model): { client: LanguageClient; uri: string; sid: string } | null;
 	/** Workspace-relative path of an LSP URI, or null outside the workspace. */
 	relOf(uri: string): string | null;
 	monacoUri(uri: string): Monaco.Uri;
@@ -103,7 +104,7 @@ export function registerFeatureProviders(ctx: FeatureContext) {
 	const toLocation = (l: Location): Monaco.languages.Location => ({ uri: ctx.monacoUri(l.uri), range: toMonacoRange(l.range) });
 
 	/** References-style commands open Monaco's peek (`editor.action.showReferences`, as VS Code); the rest go to the server. */
-	const mapCommand: CommandMapper = (command: Command) => {
+	const mapCommand = (sid: string): CommandMapper => (command: Command) => {
 		const [uri, position, locations] = command.arguments ?? [];
 		if (SHOW_REFERENCES.has(command.command) && typeof uri === 'string' && isPosition(position) && Array.isArray(locations))
 			return {
@@ -111,7 +112,7 @@ export function registerFeatureProviders(ctx: FeatureContext) {
 				title: command.title,
 				arguments: [ctx.monacoUri(uri), { lineNumber: position.line + 1, column: position.character + 1 }, (locations as Location[]).filter((l) => ctx.relOf(l.uri) !== null).map(toLocation)]
 			};
-		return { id: ctx.commandId, title: command.title, arguments: [ctx.key, command] };
+		return { id: ctx.commandId, title: command.title, arguments: [sid, command] };
 	};
 	/** Files a references command's peek shows need models before it is clicked. */
 	const previewsFor = async (command: Command | undefined) => {
@@ -145,7 +146,7 @@ export function registerFeatureProviders(ctx: FeatureContext) {
 		}
 
 		if (caps.inlayHintProvider) {
-			const origin = new WeakMap<Monaco.languages.InlayHint, { client: LanguageClient; hint: InlayHint }>();
+			const origin = new WeakMap<Monaco.languages.InlayHint, { client: LanguageClient; sid: string; hint: InlayHint }>();
 			add(
 				monaco.languages.registerInlayHintsProvider(language, {
 					displayName: ctx.key,
@@ -157,8 +158,8 @@ export function registerFeatureProviders(ctx: FeatureContext) {
 						if (!d || !hints || model.isDisposed() || model.getVersionId() !== version) return { hints: [], dispose() {} };
 						return {
 							hints: hints.map((h) => {
-								const m = toInlayHint(h, mapCommand, toLocation);
-								origin.set(m, { client: d.client, hint: h });
+								const m = toInlayHint(h, mapCommand(d.sid), toLocation);
+								origin.set(m, { client: d.client, sid: d.sid, hint: h });
 								return m;
 							}),
 							dispose() {}
@@ -168,7 +169,7 @@ export function registerFeatureProviders(ctx: FeatureContext) {
 						const o = origin.get(hint);
 						if (!o?.client.canResolveInlayHint) return hint;
 						const r = await o.client.resolveInlayHint(o.hint, token).catch(() => null);
-						return r ? { ...hint, ...toInlayHint(r, mapCommand, toLocation), position: hint.position } : hint;
+						return r ? { ...hint, ...toInlayHint(r, mapCommand(o.sid), toLocation), position: hint.position } : hint;
 					}
 				})
 			);
@@ -248,7 +249,7 @@ export function registerFeatureProviders(ctx: FeatureContext) {
 		}
 
 		if (caps.codeLensProvider) {
-			const origin = new WeakMap<Monaco.languages.CodeLens, { client: LanguageClient; lens: CodeLens }>();
+			const origin = new WeakMap<Monaco.languages.CodeLens, { client: LanguageClient; sid: string; lens: CodeLens }>();
 			const codeLensChanged = emitter('codeLens');
 			add(
 				monaco.languages.registerCodeLensProvider(language, {
@@ -260,8 +261,8 @@ export function registerFeatureProviders(ctx: FeatureContext) {
 						await Promise.all(lenses.map((l) => previewsFor(l.command)));
 						return {
 							lenses: lenses.map((l) => {
-								const m = toCodeLens(l, mapCommand);
-								origin.set(m, { client: d.client, lens: l });
+								const m = toCodeLens(l, mapCommand(d.sid));
+								origin.set(m, { client: d.client, sid: d.sid, lens: l });
 								return m;
 							}),
 							dispose() {}
@@ -273,7 +274,7 @@ export function registerFeatureProviders(ctx: FeatureContext) {
 						const r = await o.client.resolveCodeLens(o.lens, token).catch(() => null);
 						if (!r) return lens;
 						await previewsFor(r.command);
-						return toCodeLens(r, mapCommand);
+						return toCodeLens(r, mapCommand(o.sid));
 					}
 				})
 			);
@@ -316,11 +317,11 @@ export function registerFeatureProviders(ctx: FeatureContext) {
 
 		if (caps.documentLinkProvider) {
 			const origin = new WeakMap<Monaco.languages.ILink, { client: LanguageClient; link: DocumentLink }>();
-			// Workspace files open as tabs (the editor opener takes `/rel` paths); other targets stay URLs.
+			// Workspace files open as tabs (the editor opener takes model paths: `/rel`, or absolute in another root folder); other targets stay URLs.
 			const target = (url: string | undefined) => {
 				if (!url) return undefined;
 				const rel = url.startsWith('file:') ? ctx.relOf(url.replace(/#.*$/, '')) : null;
-				return rel !== null ? monaco.Uri.file('/' + rel).with({ fragment: /#(.*)$/.exec(url)?.[1] ?? '' }) : url;
+				return rel !== null ? monaco.Uri.file(modelPathOf(rel)).with({ fragment: /#(.*)$/.exec(url)?.[1] ?? '' }) : url;
 			};
 			add(
 				monaco.languages.registerLinkProvider(language, {

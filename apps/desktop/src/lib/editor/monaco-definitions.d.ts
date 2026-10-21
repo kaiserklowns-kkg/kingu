@@ -32,3 +32,17 @@ declare module 'monaco-editor/platform/configuration/common/configurationRegistr
 declare module 'monaco-editor/editor/common/inputMode.js' {
 	export const InputMode: { getInputMode(): 'insert' | 'overtype' };
 }
+
+// Which formatter runs (editor/formatterSelector.ts): Monaco's hook and its list of a document's formatters.
+declare module 'monaco-editor/editor/contrib/format/browser/format.js' {
+	import type { editor, languages } from 'monaco-editor';
+	type Formatter = languages.DocumentFormattingEditProvider;
+	/** `mode`: 1 explicit (a user action), 2 silent (format on save/type/paste). `kind`: 1 file, 2 selection. */
+	export const FormattingConflicts: {
+		setFormatterSelector(selector: <T extends { displayName?: string }>(formatters: T[], model: editor.ITextModel, mode: number, kind: number) => Promise<T | undefined>): { dispose(): void };
+	};
+	export function getRealAndSyntheticDocumentFormattersOrdered(documentFormattingEditProvider: unknown, documentRangeFormattingEditProvider: unknown, model: editor.ITextModel): Formatter[];
+}
+declare module 'monaco-editor/editor/common/services/languageFeatures.js' {
+	export const ILanguageFeaturesService: unknown;
+}

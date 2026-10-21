@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use crate::i18n::msg::{FilesMsg, WorkspaceMsg};
 use crate::search::Searches;
 use crate::tr;
-use crate::watcher::{FileWatcher, GitWatcher};
+use crate::watcher::{FileWatcher, GitWatcher, RepoWatcher};
 
 /// The label of the window Tauri creates from `tauri.conf.json`.
 pub const MAIN_WINDOW: &str = "main";
@@ -48,8 +48,22 @@ impl Folder {
   }
 }
 
+/// Where a window is on screen, in logical pixels (VS Code's IWindowUIState). `x`/`y`/`width`/
+/// `height` are its normal bounds, kept while it is maximized or in full screen.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct WindowBounds {
+  pub x: f64,
+  pub y: f64,
+  pub width: f64,
+  pub height: f64,
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub maximized: bool,
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub fullscreen: bool,
+}
+
 /// What a window has open: its folders, and the `.code-workspace` file they came from (`None`
-/// for a single folder or an untitled multi-root workspace).
+/// for a single folder or an untitled multi-root workspace); and where the window was.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WindowSession {
   #[serde(default)]
@@ -60,6 +74,14 @@ pub struct WindowSession {
   /// it keeps the window's terminals and backups apart from another window on the same folders.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub untitled: Option<String>,
+  /// An empty window's id (VS Code's empty workspace id): its page keeps its own layout and
+  /// terminals under it, so a new empty window starts from the defaults and a restored one comes
+  /// back as it was. `None` while the window has folders.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub empty: Option<String>,
+  /// The window's place on screen (restored with it; `window.newWindowDimensions` for a new one).
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub bounds: Option<WindowBounds>,
 }
 
 impl WindowSession {
@@ -73,6 +95,12 @@ impl WindowSession {
       return Some(format!("untitled:{u}"));
     }
     self.folders.first().map(|f| f.path.display().to_string())
+  }
+
+  /// What the window's own state (backups, the page's workspace storage) is kept under: the
+  /// identity, else `empty:<id>` for an empty window (the page's workspaceStateKey).
+  pub fn storage_key(&self) -> Option<String> {
+    self.identity().or_else(|| self.empty.as_ref().map(|e| format!("empty:{e}")))
   }
 }
 
@@ -93,6 +121,12 @@ pub struct WindowState {
   watch_include: Mutex<Vec<String>>,
   /// Files to open once the window's page has loaded (Open File with `window.openFilesInNewWindow`).
   pending_files: Mutex<Vec<String>>,
+  /// Top levels of the repositories above a root folder that Source Control opened
+  /// (`git.openRepositoryInParentFolders`): their files can be read and their git commands run,
+  /// as VS Code shows such a repository's every change.
+  parent_repos: Mutex<Vec<PathBuf>>,
+  /// The git dirs of Source Control's repositories that no root folder's watcher sees.
+  pub repo_watcher: RepoWatcher,
 }
 
 /// The calling window's workspace, as a command argument (`ws: Workspace`).
@@ -140,6 +174,11 @@ impl Workspace {
     *self.state.session.write().unwrap_or_else(|e| e.into_inner()) = session;
   }
 
+  /// The window moved or was resized: its bounds change, its workspace does not.
+  pub fn set_bounds(&self, bounds: WindowBounds) {
+    self.state.session.write().unwrap_or_else(|e| e.into_inner()).bounds = Some(bounds);
+  }
+
   /// The root folders, first one first.
   pub fn folders(&self) -> Vec<Folder> {
     self.session().folders
@@ -160,9 +199,9 @@ impl Workspace {
     self.current().ok_or_else(|| tr!(FilesMsg::NoFolder))
   }
 
-  /// See [`WindowSession::identity`].
-  pub fn identity(&self) -> Option<String> {
-    self.session().identity()
+  /// See [`WindowSession::storage_key`].
+  pub fn storage_key(&self) -> Option<String> {
+    self.session().storage_key()
   }
 
   /// The root folder a webview path belongs to and the path relative to it (see the module docs).
@@ -182,6 +221,43 @@ impl Workspace {
       return Ok(root);
     }
     resolve_in(&root, &rel)
+  }
+
+  /// The repositories above a root folder Source Control has open (git_repos.rs sets them).
+  pub fn set_parent_repos(&self, tops: Vec<PathBuf>) {
+    *self.state.parent_repos.lock().unwrap_or_else(|e| e.into_inner()) = tops;
+  }
+
+  pub fn parent_repos(&self) -> Vec<PathBuf> {
+    self.state.parent_repos.lock().unwrap_or_else(|e| e.into_inner()).clone()
+  }
+
+  /// An absolute path outside every root folder but inside an open parent repository: that
+  /// repository's top level and the path relative to it (checked to stay inside).
+  pub fn locate_in_parent_repo(&self, path: &str) -> Option<(PathBuf, String)> {
+    let p = Path::new(path);
+    if !p.is_absolute() {
+      return None;
+    }
+    let top = self.parent_repos().into_iter().filter(|t| p.starts_with(t)).max_by_key(|t| t.as_os_str().len())?;
+    let rel = p.strip_prefix(&top).ok()?.to_string_lossy().into_owned();
+    // No `..`, and a symlink may not lead out (a deleted file is judged by its folder).
+    if !rel.is_empty() && crate::git::check_rel(&top, &rel).is_err() {
+      return None;
+    }
+    Some((top, rel))
+  }
+
+  /// [`Self::locate`], or a file of an open parent repository outside every root folder (Source
+  /// Control lists and opens them, as VS Code does).
+  pub fn locate_with_repos(&self, path: &str) -> Result<(PathBuf, String), String> {
+    self.locate(path).or_else(|e| self.locate_in_parent_repo(path).ok_or(e))
+  }
+
+  /// [`Self::resolve`] the same way.
+  pub fn resolve_with_repos(&self, path: &str) -> Result<PathBuf, String> {
+    let (root, rel) = self.locate_with_repos(path)?;
+    if rel.is_empty() { Ok(root) } else { resolve_in(&root, &rel) }
   }
 
   /// Files this window should open once its page is up (each handed out once).
@@ -446,6 +522,19 @@ pub fn windows_to_restore(setting: Option<&str>, windows: &[WindowSession]) -> V
   }
 }
 
+/// Workspace storage keys (the page's per-workspace state, see `storage_key`) no window can show
+/// again, so their state can go (VS Code's unused workspace storage cleanup): an empty window or
+/// an untitled workspace that no open window and no window to restore has (`live`), a folder or
+/// workspace file that no longer exists. Anything else is kept.
+pub fn stale_scopes(scopes: &[String], live: &std::collections::HashSet<String>, exists: impl Fn(&Path) -> bool) -> Vec<String> {
+  scopes
+    .iter()
+    .filter(|s| !live.contains(*s))
+    .filter(|s| if s.starts_with("empty:") || s.starts_with("untitled:") { true } else { s.starts_with('/') && !exists(Path::new(s.as_str())) })
+    .cloned()
+    .collect()
+}
+
 // ---------------------------------------------------------------------------------------------
 // Recently opened folders and the last session's windows
 
@@ -670,6 +759,10 @@ mod tests {
     s.file = Some("/w/x.code-workspace".into());
     assert_eq!(s.identity().as_deref(), Some("/w/x.code-workspace"));
     assert_eq!(WindowSession::default().identity(), None);
+    // An empty window's own state: under its id.
+    assert_eq!(WindowSession { empty: Some("e1".into()), ..Default::default() }.storage_key().as_deref(), Some("empty:e1"));
+    assert_eq!(WindowSession::default().storage_key(), None);
+    assert_eq!(s.storage_key(), s.identity());
   }
 
   #[test]
@@ -682,6 +775,15 @@ mod tests {
     assert_eq!(windows_to_restore(Some("one"), &all), [w("/c")]);
     assert_eq!(windows_to_restore(Some("none"), &all), []);
     assert_eq!(windows_to_restore(Some("one"), &[]), []);
+  }
+
+  #[test]
+  fn stale_workspace_storage() {
+    let here = tempfile::tempdir().unwrap();
+    let dir = here.path().display().to_string();
+    let live: std::collections::HashSet<String> = ["empty:e1".to_string(), "untitled:u1".into(), "/gone/but/open".into()].into();
+    let scopes: Vec<String> = ["empty:e1", "empty:e2", "untitled:u1", "untitled:u2", &dir, "/no/such/folder", "/gone/but/open", "C:weird"].map(String::from).into();
+    assert_eq!(stale_scopes(&scopes, &live, Path::exists), ["empty:e2", "untitled:u2", "/no/such/folder"]);
   }
 
   #[test]
@@ -733,8 +835,8 @@ mod tests {
     let recent = Recent::load(file.clone());
     assert_eq!(recent.data().sessions(), [WindowSession { folders: vec![Folder::new("/a".into())], ..Default::default() }]);
     let two = vec![
-      WindowSession { folders: vec![Folder::new("/a".into()), Folder { path: "/b".into(), name: Some("B".into()) }], file: Some("/w.code-workspace".into()), untitled: None },
-      WindowSession::default(),
+      WindowSession { folders: vec![Folder::new("/a".into()), Folder { path: "/b".into(), name: Some("B".into()) }], file: Some("/w.code-workspace".into()), ..Default::default() },
+      WindowSession { empty: Some("e1".into()), bounds: Some(WindowBounds { x: 10.0, y: 20.0, width: 1200.0, height: 800.0, maximized: true, fullscreen: false }), ..Default::default() },
     ];
     recent.set_windows(two.clone()).unwrap();
     let again = Recent::load(file).data();

@@ -14,7 +14,8 @@ export type Pane = { icon: IconName; description: PaneText; title?: string };
 
 export const PANES: Readonly<Record<string, Pane>> = {
 	Agent: { icon: 'agent', description: 'settings.pane.agent', title: 'Agents' },
-	'AI Accounts': { icon: 'key', description: 'settings.pane.aiAccounts' },
+	Orchestration: { icon: 'agentsLayout', description: 'settings.pane.orchestration' },
+	Voice: { icon: 'mic', description: 'settings.pane.voice' },
 	'Local AI': { icon: 'cpu', description: 'settings.pane.localAi' },
 	'Agent Chat': { icon: 'chat', description: 'settings.pane.agentChat' },
 	Notifications: { icon: 'bell', description: 'settings.pane.notifications' },
@@ -54,7 +55,7 @@ export const ORCA_NAV: readonly {
 	{
 		id: 'ai',
 		label: 'settings.sections.aiCapabilities',
-		items: [{ group: 'Agent' }, { page: 'arkai' }, { page: 'accounts' }, { page: 'mcp' }, { page: 'skills' }, { page: 'memories' }, { group: 'Local AI' }]
+		items: [{ group: 'Agent' }, { page: 'arkai' }, { page: 'accounts' }, { group: 'Orchestration' }, { page: 'voice' }, { page: 'mcp' }, { page: 'skills' }, { page: 'memories' }, { group: 'Local AI' }]
 	},
 	{ id: 'setup', label: 'settings.nav.setup', items: [{ page: 'account' }, { pane: 'general' }] },
 	{ id: 'workflows', label: 'settings.nav.workflows', items: [{ pane: 'automations' }, { pane: 'git' }, { pane: 'terminal' }, { pane: 'floating' }] },
@@ -67,8 +68,8 @@ export const ORCA_NAV: readonly {
 	{ id: 'experimental', label: 'panes.experimental.title', items: [{ pane: 'experimental' }] }
 ];
 
-/** Groups a dedicated page shows (the AI Provider Accounts page draws AI Accounts' settings). */
-export const PAGE_GROUPS: readonly string[] = ['AI Accounts'];
+/** Groups a dedicated page shows (the Voice page draws the Voice group's settings). */
+export const PAGE_GROUPS: readonly string[] = ['Voice'];
 
 /** Sections of the registry's table of contents that ORCA_NAV shows instead. */
 export const ORCA_SECTION_IDS = new Set(['ai', 'ade']);

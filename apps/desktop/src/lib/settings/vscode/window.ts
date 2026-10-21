@@ -89,13 +89,37 @@ export const WINDOW_SETTINGS: SettingSchema[] = [
 		default: 'all',
 		enum: ['preserve', 'all', 'folders', 'one', 'none'],
 		enumDescriptions: [
-			'เปิดโฟลเดอร์ล่าสุดคืนเสมอ (Always reopen all windows. If a folder or workspace is opened (e.g. from the command line) it opens as a new window unless it was opened before. If files are opened they will open in one of the restored windows together with editors that were previously opened.)',
-			'เปิดโฟลเดอร์ล่าสุดคืน (Reopen all windows unless a folder, workspace or file is opened (e.g. from the command line). If a file is opened, it will replace any of the editors that were previously opened in a window.)',
-			'เปิดโฟลเดอร์ล่าสุดคืน (Reopen all windows that had folders or workspaces opened unless a folder, workspace or file is opened (e.g. from the command line). If a file is opened, it will replace any of the editors that were previously opened in a window.)',
-			'เปิดโฟลเดอร์ล่าสุดคืน (Reopen the last active window unless a folder, workspace or file is opened (e.g. from the command line). If a file is opened, it will replace any of the editors that were previously opened in a window.)',
+			'เปิดทุกหน้าต่างคืนเสมอ โฟลเดอร์ที่สั่งเปิดตอนเริ่ม เช่นจาก kingu open เปิดเป็นหน้าต่างใหม่ถ้ายังไม่มีหน้าต่างไหนเปิดอยู่ (Always reopen all windows. If a folder or workspace is opened (e.g. from the command line) it opens as a new window unless it was opened before. If files are opened they will open in one of the restored windows together with editors that were previously opened.)',
+			'เปิดทุกหน้าต่างคืน เว้นแต่สั่งเปิดโฟลเดอร์หรือไฟล์ตอนเริ่ม เช่นจาก kingu open (Reopen all windows unless a folder, workspace or file is opened (e.g. from the command line). If a file is opened, it will replace any of the editors that were previously opened in a window.)',
+			'เปิดคืนเฉพาะหน้าต่างที่มีโฟลเดอร์ เว้นแต่สั่งเปิดโฟลเดอร์หรือไฟล์ตอนเริ่ม (Reopen all windows that had folders or workspaces opened unless a folder, workspace or file is opened (e.g. from the command line). If a file is opened, it will replace any of the editors that were previously opened in a window.)',
+			'เปิดคืนเฉพาะหน้าต่างล่าสุด เว้นแต่สั่งเปิดโฟลเดอร์หรือไฟล์ตอนเริ่ม (Reopen the last active window unless a folder, workspace or file is opened (e.g. from the command line). If a file is opened, it will replace any of the editors that were previously opened in a window.)',
 			'เริ่มด้วยหน้าต่างว่าง (Never reopen a window. Unless a folder or workspace is opened (e.g. from the command line), an empty window will appear.)'
 		],
-		description: 'หน้าต่างที่เปิดคืนเมื่อเริ่ม Kingu แต่ละหน้าต่างกลับมาพร้อมโฟลเดอร์หรือ workspace ของตัวเอง (Controls how windows and editors within are being restored when opening.)',
+		description: 'หน้าต่างที่เปิดคืนเมื่อเริ่ม Kingu แต่ละหน้าต่างกลับมาพร้อมโฟลเดอร์หรือ workspace ตำแหน่งบนจอ และ layout ของตัวเอง (Controls how windows and editors within are being restored when opening.)',
+		scope: 'application'
+	},
+	{
+		id: 'window.newWindowDimensions',
+		group: 'Window',
+		type: 'string',
+		default: 'default',
+		enum: ['default', 'inherit', 'offset', 'maximized', 'fullscreen'],
+		enumDescriptions: [
+			'เปิดหน้าต่างใหม่กลางจอ (Open new windows in the center of the screen.)',
+			'ขนาดและตำแหน่งเดียวกับหน้าต่างที่ใช้อยู่ล่าสุด (Open new windows with same dimension as last active one.)',
+			'ขนาดเดียวกับหน้าต่างที่ใช้อยู่ล่าสุด เลื่อนออกไปเล็กน้อย (Open new windows with same dimension as last active one with an offset position.)',
+			'เปิดหน้าต่างใหม่แบบขยายเต็ม (Open new windows maximized.)',
+			'เปิดหน้าต่างใหม่แบบเต็มจอ (Open new windows in full screen mode.)'
+		],
+		description: 'ขนาดและตำแหน่งของหน้าต่างใหม่ เมื่อเปิดหน้าต่างอย่างน้อยหนึ่งหน้าต่างอยู่แล้ว (Controls the dimensions of opening a new window when at least one window is already opened. Note that this setting does not have an impact on the first window that is opened. The first window will always restore the size and location as you left it before closing.)',
+		scope: 'application'
+	},
+	{
+		id: 'window.restoreFullscreen',
+		group: 'Window',
+		type: 'boolean',
+		default: false,
+		description: 'หน้าต่างที่ปิดตอนเต็มจอ กลับมาเต็มจอเมื่อเปิดคืน (Controls whether a window should restore to full screen mode if it was exited in full screen mode.)',
 		scope: 'application'
 	},
 	{
@@ -150,6 +174,35 @@ export const WINDOW_SETTINGS: SettingSchema[] = [
 		type: 'boolean',
 		default: true,
 		description: 'กด Alt แล้วปล่อยเพื่อโฟกัสเมนูบาร์ บน Linux และ Windows (Controls whether the menu bar will be focused by pressing the Alt-key. This setting has no effect on toggling the menu bar with the Alt-key.)',
+		scope: 'application'
+	},
+	{
+		id: 'window.closeWhenEmpty',
+		group: 'Window',
+		type: 'boolean',
+		default: false,
+		description: 'ปิดหน้าต่างเมื่อปิด editor ตัวสุดท้าย (เฉพาะหน้าต่างที่ไม่ได้เปิดโฟลเดอร์) (Controls whether closing the last editor should also close the window. This setting only applies for windows that do not show folders.)'
+	},
+	{
+		id: 'window.doubleClickIconToClose',
+		group: 'Window',
+		type: 'boolean',
+		default: false,
+		description: 'ดับเบิลคลิกไอคอนแอปในแถบชื่อเรื่องเพื่อปิดหน้าต่าง และลากหน้าต่างจากไอคอนไม่ได้ (Windows/Linux) (If enabled, this setting will close the window when the application icon in the title bar is double-clicked. The window will not be able to be dragged by the icon. This setting is effective only if `#window.titleBarStyle#` is set to `custom`.)',
+		scope: 'application'
+	},
+	{
+		id: 'window.customTitleBarVisibility',
+		group: 'Window',
+		type: 'string',
+		default: 'auto',
+		enum: ['auto', 'windowed', 'never'],
+		enumDescriptions: [
+			'แสดงตามปกติ (Automatically changes custom title bar visibility.)',
+			'ซ่อนเมื่อเต็มจอ (Hide custom titlebar in full screen. When not in full screen, automatically change custom title bar visibility.)',
+			'ซ่อนเมื่อเต็มจอ (แถบชื่อเรื่องของ Kingu แสดงเสมอนอกโหมดเต็มจอ) (Hide custom titlebar when `#window.titleBarStyle#` is set to `native`.)'
+		],
+		description: 'เมื่อใดที่แสดงแถบชื่อเรื่องของ Kingu (Adjust when the custom title bar should be shown. The custom title bar can be hidden when in full screen mode with `windowed`. The custom title bar can only be hidden in non full screen mode with `never` when `#window.titleBarStyle#` is set to `native`.)',
 		scope: 'application'
 	}
 ];

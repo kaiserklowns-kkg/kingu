@@ -18,7 +18,8 @@ export type GraphHost<T, R> = {
 	sequence(task: T): boolean;
 	isBackground(task: T): boolean;
 	hasCommand(task: T): boolean;
-	resolve(ref: R): T | undefined;
+	/** A `dependsOn` entry of `from` (multi-root: a task of `from`'s folder first). */
+	resolve(ref: R, from: T): T | undefined;
 	/** Starts the task's own command (its dependencies are done). */
 	execute(task: T): Execution;
 	/** The running instance of `task`, if it already runs (it is then not started again). */
@@ -50,7 +51,7 @@ async function execute<T, R>(host: GraphHost<T, R>, task: T, live: Set<string>, 
 	if (deps.length) {
 		const nextLive = new Set(live).add(host.key(task));
 		for (const ref of deps) {
-			const dep = host.resolve(ref);
+			const dep = host.resolve(ref, task);
 			if (!dep) {
 				host.log(t('ideTasks.deps.unresolved', { task: typeof ref === 'string' ? ref : JSON.stringify(ref) }));
 				continue;

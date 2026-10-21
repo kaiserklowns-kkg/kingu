@@ -398,5 +398,12 @@ export const EDITOR_MANAGEMENT_SETTINGS: SettingSchema[] = [
 		default: 10,
 		minimum: 1,
 		description: 'ขนาดไฟล์เป็น MB ที่ต้องยืนยันก่อนเปิดใน editor (Controls the minimum size of a file in MB before asking for confirmation when opening in the editor. Note that this setting may not apply to all editor types and environments.)'
+	},
+	{
+		id: 'workbench.editor.splitOnDragAndDrop',
+		group: 'Workbench',
+		type: 'boolean',
+		default: true,
+		description: 'ลากแท็บไปวางที่ขอบของ editor เพื่อแยกเป็นกลุ่มใหม่ด้านนั้น (Controls if editor groups can be split from drag and drop operations by dropping an editor or file on the edges of the editor area.)'
 	}
 ];

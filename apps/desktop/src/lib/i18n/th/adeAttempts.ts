@@ -47,6 +47,7 @@ export const adeAttempts = {
 	'adeAttempts.action.newFromTask': 'งานใหม่ต่อจากงานนี้',
 	'adeAttempts.action.compare': 'เทียบผลแต่ละรอบ…',
 	'adeAttempts.badge.stacked': 'ต่อจาก {parent} pull request จะ merge เข้า branch นั้น',
+	'adeAttempts.badge.dispatched': 'งานย่อยที่ agent ของ {task} ส่งมา',
 	'adeAttempts.badge.hibernated': 'agent พักไว้เมื่อ {ago} กดทำงานต่อเพื่อใช้ session เดิม',
 	'adeAttempts.badge.resume': 'ให้ agent ทำงานต่อ',
 	// AgentsLayout.svelte

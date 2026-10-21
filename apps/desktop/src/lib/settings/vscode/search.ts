@@ -224,5 +224,17 @@ export const SEARCH_SETTINGS: SettingSchema[] = [
 		type: 'boolean',
 		default: false,
 		description: 'เมื่อค้นหาใน Search Editor ให้โฟกัสที่ผลลัพธ์แทนช่องค้นหา (When a search is triggered, focus the Search Editor results instead of the Search Editor input.)'
+	},
+	{
+		id: 'search.actionsPosition',
+		group: 'Search',
+		type: 'string',
+		default: 'right',
+		enum: ['auto', 'right'],
+		enumDescriptions: [
+			'ชิดขวาเมื่อมุมมองแคบ ต่อท้ายข้อความเมื่อมุมมองกว้าง (Position the actionbar to the right when the search view is narrow, and immediately after the content when the search view is wide.)',
+			'ชิดขวาเสมอ (Always position the actionbar to the right.)'
+		],
+		description: 'ตำแหน่งปุ่มของแต่ละแถวในผลการค้นหา (Controls the positioning of the actionbar on rows in the search view.)'
 	}
 ];

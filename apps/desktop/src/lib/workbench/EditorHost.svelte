@@ -7,6 +7,7 @@
 	import type * as Monaco from 'monaco-editor';
 	import { clientLog } from '#lib/client-log.ts';
 	import { editors } from './editors.svelte';
+	import { installEditorSignals } from './accessibilitySignals.svelte';
 	import { getEntry, modelEntry, saveViewState, viewState } from './editorModels';
 	import { isReadonly } from './readonly';
 	import { isLocalHistoryKey } from '#lib/scm/localHistory.ts';
@@ -53,6 +54,8 @@
 			if (disposed) return;
 			api = m;
 			installEditorSettings(m.monaco);
+			installEditorSignals(m.monaco);
+			void import('#lib/editor/formatterSelector.ts').then((f) => f.installFormatterSelector(m.monaco));
 			// The editor settings from the first paint; installEditorSettings keeps them live.
 			const ed = m.monaco.editor.create(host, { ...editorOptions(), theme: m.THEME_ID, automaticLayout: true });
 			installEditorActions(m.monaco, ed);
@@ -100,6 +103,9 @@
 		});
 
 		const unregister = editors.registerHost(group, {
+			saveViewState: () => {
+				if (editor && shown) saveViewState(group, shown, editor.saveViewState());
+			},
 			gotoLine: (line, column = 1) => {
 				if (!editor) return;
 				editor.revealLineInCenter(line);

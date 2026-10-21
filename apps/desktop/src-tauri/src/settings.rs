@@ -230,6 +230,16 @@ pub fn settings_read(app: AppHandle, ws: Workspace, scope: String) -> Result<Set
   Ok(SettingsFile { content: read(&path)?, path: path.display().to_string() })
 }
 
+/// The folder settings of one root folder of a multi-root window (VS Code: a folder's
+/// `.vscode/settings.json`, which applies to that folder's files only): its `.kingu/settings.json`.
+/// `folder` must be one of the window's roots.
+#[tauri::command]
+pub fn settings_read_folder(ws: Workspace, folder: String) -> Result<SettingsFile, String> {
+  let root = ws.roots().into_iter().find(|r| r.as_path() == Path::new(&folder)).ok_or_else(|| tr!(FilesMsg::OutsideWorkspace, path = folder))?;
+  let path = workspace_path(&root)?;
+  Ok(SettingsFile { content: read(&path)?, path: path.display().to_string() })
+}
+
 #[tauri::command]
 pub fn settings_write(app: AppHandle, ws: Workspace, scope: String, content: String) -> Result<(), String> {
   let path = path_for(&app, &ws, Scope::parse(&scope)?)?;

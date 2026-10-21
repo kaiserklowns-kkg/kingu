@@ -1,149 +1,323 @@
 <script lang="ts">
-	// Settings › Shortcuts, laid out like Orca's Shortcuts pane: who wins in a terminal, the
-	// keybindings.json to edit, then a rail (search + status filters with counts) beside every
-	// command with its keys. Double-click a row to run the command.
-	import { commands, keyOf } from '#lib/workbench/commands.svelte.ts';
-	import { keybindings } from '#lib/workbench/keybindings.svelte.ts';
-	import { keyLabel } from '#lib/workbench/keys.ts';
-	import Icon from '#lib/workbench/Icon.svelte';
+	// Settings › Keyboard Shortcuts (VS Code's keybindings editor): every command with its key, when
+	// clause and source; search by name, id, key or a recorded keystroke (`@source:user`,
+	// `@command:id`, `"⌘K ⌘T"`); change, add, remove and reset keys, edit the when clause and see
+	// the commands that share a key. Edits go to keybindings.json (keybindingsEditor.ts).
+	import { tick, untrack } from 'svelte';
+	import { commands } from '#lib/workbench/commands.svelte.ts';
+	import { keybindings, USER_KEYBINDINGS_KEY } from '#lib/workbench/keybindings.svelte.ts';
+	import { isMac, keyLabel, keyOf as defaultKeyOf } from '#lib/workbench/keys.ts';
+	import {
+		addKeybinding,
+		appendChord,
+		changeKeybinding,
+		conflictCounts,
+		filterKeybindingRows,
+		keybindingRows,
+		parseKeybindingQuery,
+		recordedChord,
+		removeKeybinding,
+		resetKeybinding,
+		sameKeyRows,
+		type KeybindingRow
+	} from '#lib/workbench/keybindingsEditor.ts';
+	import { parseWhen } from '#lib/workbench/contextKey.ts';
+	import { editors } from '#lib/workbench/editors.svelte.ts';
 	import { notifications } from '#lib/workbench/notifications.svelte.ts';
+	import { quick } from '#lib/workbench/quick.svelte.ts';
+	import { popupMenuAt } from '#lib/workbench/popupMenuAt.ts';
+	import { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
+	import Icon from '#lib/workbench/Icon.svelte';
 	import { t } from '#lib/i18n/index.ts';
-	import { settings } from '../settings.svelte';
 	import { systemSettings } from '../systemSettings.svelte';
 
-	type Status = 'all' | 'modified' | 'unassigned';
+	const RECORD_KEY = 'alt+cmd+k';
+
 	let query = $state('');
-	let status = $state<Status>('all');
+	let recording = $state(false);
+	let selected = $state(-1);
+	let searchEl = $state<HTMLInputElement>();
+	let listEl = $state<HTMLDivElement>();
+	/** The define-keybinding widget: the row it changes (or adds to), and what has been pressed. */
+	let define = $state<{ row: KeybindingRow; add: boolean; key: string } | null>(null);
+	let defineEl = $state<HTMLInputElement>();
 
 	const all = $derived(
-		commands.all
-			.filter((c) => c.palette !== false || keyOf(c))
-			.map((c) => ({
-				id: c.id,
-				title: c.category ? `${c.category}: ${c.title}` : c.title,
-				key: keyOf(c) ? keyLabel(keyOf(c)!) : '',
-				modified: keybindings.user.added.has(c.id) || keybindings.user.removed.has(c.id)
-			}))
-			.sort((a, b) => a.title.localeCompare(b.title))
+		keybindingRows(
+			commands.all.map((c) => ({ id: c.id, title: c.title, category: c.category, palette: c.palette, scope: c.scope, defaultKey: defaultKeyOf(c) ?? c.ownerKey?.() })),
+			keybindings.user
+		).sort((a, b) => a.title.localeCompare(b.title) || a.command.localeCompare(b.command) || a.source.localeCompare(b.source))
 	);
-	const inStatus = (r: (typeof all)[number], s: Status) => (s === 'modified' ? r.modified : s === 'unassigned' ? !r.key : true);
-	const count = (s: Status) => all.filter((r) => inStatus(r, s)).length;
-	const rows = $derived.by(() => {
-		const q = query.trim().toLowerCase();
-		return all.filter((r) => inStatus(r, status) && (!q || r.title.toLowerCase().includes(q) || r.key.toLowerCase().includes(q) || r.id.toLowerCase().includes(q)));
+	const conflicts = $derived(new Map(conflictCounts(all).map((n, i) => [all[i], n])));
+	const rows = $derived(filterKeybindingRows(all, parseKeybindingQuery(query)));
+	const selectedRow = $derived(rows[selected] as KeybindingRow | undefined);
+	const defineConflicts = $derived(define?.key ? sameKeyRows(all, define.key, define.row.scope).filter((r) => r.command !== define!.row.command) : []);
+
+	$effect(() => {
+		void query;
+		// A new search selects its first row; an edit (rows change under the same search) keeps the place.
+		selected = untrack(() => (rows.length ? 0 : -1));
 	});
 
-	const terminalFirst = $derived(settings.get<boolean>('terminal.integrated.sendKeybindingsToShell') === true);
-	async function setTerminalFirst(on: boolean) {
+	async function edit(change: (text: string) => string) {
 		try {
-			await settings.set('terminal.integrated.sendKeybindingsToShell', on || undefined, 'user');
+			await keybindings.edit(change);
 		} catch (e) {
-			notifications.error(t('settings.agents.saveFailed', { error: e instanceof Error ? e.message : String(e) }));
+			notifications.error(t('keybindings.editFailed', { error: e instanceof Error ? e.message : String(e) }));
 		}
 	}
+
+	async function startDefine(row: KeybindingRow, add = false) {
+		define = { row, add, key: '' };
+		await tick();
+		defineEl?.focus();
+	}
+
+	function onDefineKey(e: KeyboardEvent) {
+		if (!define || ['Meta', 'Control', 'Shift', 'Alt', 'CapsLock', 'Fn'].includes(e.key)) return;
+		e.preventDefault();
+		e.stopPropagation();
+		const plain = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
+		if (plain && e.key === 'Escape') return closeDefine();
+		if (plain && e.key === 'Enter' && define.key) return void acceptDefine();
+		define.key = appendChord(define.key, recordedChord(e));
+	}
+
+	async function acceptDefine() {
+		if (!define?.key) return;
+		const { row, add, key } = define;
+		closeDefine();
+		await edit((text) => (add || !row.key ? addKeybinding(text, row.command, key, add ? undefined : row.when) : changeKeybinding(text, row, key, undefined)));
+		query = `"${key}"`;
+	}
+
+	function closeDefine() {
+		define = null;
+		listEl?.focus();
+	}
+
+	async function changeWhen(row: KeybindingRow) {
+		const when = await quick.input({
+			placeholder: t('keybindings.whenPlaceholder', { command: row.title }),
+			value: row.when,
+			hint: (v) => {
+				if (!v.trim()) return t('keybindings.whenAlways');
+				try {
+					parseWhen(v);
+					return t('keybindings.whenOk', { when: v.trim() });
+				} catch (e) {
+					return t('keybindings.whenInvalid', { error: e instanceof Error ? e.message : String(e) });
+				}
+			}
+		});
+		if (when === undefined || when.trim() === row.when) return;
+		try {
+			if (when.trim()) parseWhen(when);
+		} catch {
+			return;
+		}
+		await edit((text) => changeKeybinding(text, row, row.key, when.trim()));
+	}
+
+	const copy = (text: string) => void navigator.clipboard?.writeText(text).catch(() => {});
 
 	function run(id: string) {
 		systemSettings.close();
 		void commands.run(id);
 	}
 
-	const STATUSES: { id: Status; label: 'panes.shortcuts.all' | 'panes.shortcuts.modified' | 'panes.shortcuts.unassigned' }[] = [
-		{ id: 'all', label: 'panes.shortcuts.all' },
-		{ id: 'modified', label: 'panes.shortcuts.modified' },
-		{ id: 'unassigned', label: 'panes.shortcuts.unassigned' }
-	];
+	function openJson() {
+		systemSettings.close();
+		editors.open(USER_KEYBINDINGS_KEY, { preview: false });
+	}
+
+	function showSame(row: KeybindingRow) {
+		query = `"${row.key}"`;
+	}
+
+	function menu(e: MouseEvent, row: KeybindingRow, index: number) {
+		e.preventDefault();
+		selected = index;
+		const bound = !!row.key;
+		const items = [
+			menuItem('copy', t('keybindings.copy')),
+			menuItem('copyId', t('keybindings.copyId')),
+			menuItem('copyTitle', t('keybindings.copyTitle')),
+			menuSeparator,
+			menuItem('change', t('keybindings.change')),
+			menuItem('add', t('keybindings.add'), { enabled: bound }),
+			menuItem('when', t('keybindings.changeWhen'), { enabled: bound }),
+			menuSeparator,
+			menuItem('remove', t('keybindings.remove'), { enabled: bound }),
+			menuItem('reset', t('keybindings.reset'), { enabled: row.source === 'user' || keybindings.user.removed.has(row.command) }),
+			menuSeparator,
+			menuItem('same', t('keybindings.showSame'), { enabled: bound }),
+			menuItem('run', t('keybindings.run'), { enabled: commands.enabled(row.command) })
+		];
+		popupMenuAt(e.clientX, e.clientY, t('keybindings.title'), items, (id) => {
+			if (id === 'copy') copy(`${row.title} (${row.command})${row.key ? `  ${keyLabel(row.key)}` : ''}${row.when ? `  when: ${row.when}` : ''}`);
+			else if (id === 'copyId') copy(row.command);
+			else if (id === 'copyTitle') copy(row.title);
+			else if (id === 'change') void startDefine(row);
+			else if (id === 'add') void startDefine(row, true);
+			else if (id === 'when') void changeWhen(row);
+			else if (id === 'remove') void edit((text) => removeKeybinding(text, row));
+			else if (id === 'reset') void edit((text) => resetKeybinding(text, row.command));
+			else if (id === 'same') showSame(row);
+			else if (id === 'run') run(row.command);
+		});
+	}
+
+	function onListKey(e: KeyboardEvent) {
+		if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+			e.preventDefault();
+			selected = Math.max(0, Math.min(rows.length - 1, selected + (e.key === 'ArrowDown' ? 1 : -1)));
+			listEl?.querySelector(`[data-row="${selected}"]`)?.scrollIntoView({ block: 'nearest' });
+		} else if (e.key === 'Enter' && selectedRow) {
+			e.preventDefault();
+			void startDefine(selectedRow);
+		} else if ((e.key === 'Delete' || (isMac && e.key === 'Backspace' && e.metaKey)) && selectedRow?.key) {
+			e.preventDefault();
+			void edit((text) => removeKeybinding(text, selectedRow));
+		}
+	}
+
+	function onSearchKey(e: KeyboardEvent) {
+		const toggle = e.altKey && (isMac ? e.metaKey : e.ctrlKey) && e.code === 'KeyK';
+		if (toggle) {
+			e.preventDefault();
+			recording = !recording;
+			return;
+		}
+		if (recording) {
+			if (['Meta', 'Control', 'Shift', 'Alt', 'CapsLock', 'Fn'].includes(e.key)) return;
+			e.preventDefault();
+			if (e.key === 'Escape' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+				recording = false;
+				return;
+			}
+			const current = parseKeybindingQuery(query).key ?? '';
+			query = `"${appendChord(current, recordedChord(e))}"`;
+			return;
+		}
+		if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			listEl?.focus();
+		}
+	}
+
+	function toggleRecording() {
+		recording = !recording;
+		searchEl?.focus();
+	}
+
+	const sourceLabel = (r: KeybindingRow) => (r.source === 'user' ? t('keybindings.sourceUser') : r.source === 'default' ? t('keybindings.sourceDefault') : '');
 </script>
 
 <div class="flex h-full flex-col">
-	<div class="mx-auto flex w-full max-w-4xl shrink-0 flex-col gap-6 px-8 pt-10 pb-4">
-		<header class="space-y-2 border-b border-(--vscode-widget-border)/60 pb-5">
-			<h1 class="text-2xl leading-tight font-semibold">{t('panes.shortcuts.title')}</h1>
-			<p class="max-w-3xl text-sm leading-6 text-(--vscode-descriptionForeground)">{t('panes.shortcuts.description')}</p>
-		</header>
-		<div class="space-y-1 rounded-xl border border-(--vscode-widget-border)/50 bg-(--vscode-sideBar-background)/50 px-7 py-4 shadow-xs">
-			<div class="flex items-center justify-between gap-4 py-3">
-				<div class="min-w-0 flex-1 space-y-1">
-					<div class="text-sm leading-none font-medium">{t('panes.shortcuts.terminal')}</div>
-					<p class="text-xs text-(--vscode-descriptionForeground)">{t('panes.shortcuts.terminalHint')}</p>
-				</div>
-				<select
-					class="h-7 w-44 rounded-md border border-(--vscode-dropdown-border) bg-(--vscode-dropdown-background) px-1.5 text-xs text-(--vscode-dropdown-foreground) outline-none focus:border-(--vscode-focusBorder)"
-					aria-label={t('panes.shortcuts.terminal')}
-					value={terminalFirst ? 'terminal' : 'kingu'}
-					onchange={(e) => setTerminalFirst(e.currentTarget.value === 'terminal')}
-				>
-					<option value="kingu">{t('panes.shortcuts.kinguFirst')}</option>
-					<option value="terminal">{t('panes.shortcuts.terminalFirst')}</option>
-				</select>
-			</div>
-			<div class="flex items-center justify-between gap-4 border-t border-(--vscode-widget-border)/40 py-3">
-				<div class="min-w-0 flex-1 space-y-1">
-					<div class="text-sm leading-none font-medium">{t('panes.shortcuts.file')}</div>
-					<p class="text-xs text-(--vscode-descriptionForeground)">{t('panes.shortcuts.fileHint')}</p>
-					{#if keybindings.error}<p class="text-xs text-(--vscode-errorForeground)">{keybindings.error}</p>{/if}
-				</div>
-				<button class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-(--vscode-widget-border) px-3 text-xs hover:bg-(--vscode-list-hoverBackground)" onclick={() => run('workbench.action.openGlobalKeybindingsFile')}>
-					<Icon name="goToFile" size={13} />{t('panes.shortcuts.editFile')}
-				</button>
-			</div>
+	<div class="mx-auto flex w-full max-w-[1100px] shrink-0 items-center gap-3 px-8 pt-6 pb-3">
+		<div class="flex-1">
+			<h1 class="text-lg font-semibold">{t('keybindings.title')}</h1>
+			<p class="mt-1 text-[13px] text-(--vscode-descriptionForeground)">{t('keybindings.summary', { count: rows.length })}</p>
 		</div>
+		<button class="rounded-md px-2 py-1 text-[13px] hover:bg-(--vscode-toolbar-hoverBackground)" class:bg-(--vscode-toolbar-activeBackground)={query.includes('@source:user')} onclick={() => (query = query.includes('@source:user') ? query.replace(/@source:user\s*/, '') : `@source:user ${query}`.trim())}>{t('keybindings.showUser')}</button>
+		<button class="rounded-md p-1 hover:bg-(--vscode-toolbar-hoverBackground)" title={t('keybindings.openJson')} aria-label={t('keybindings.openJson')} onclick={openJson}><Icon name="code" size={16} /></button>
 	</div>
-	<div class="mx-auto grid min-h-0 w-full max-w-4xl flex-1 grid-cols-[14rem_1fr] gap-6 px-8 pb-6">
-		<!-- The rail: search and the status filters with their counts. -->
-		<div class="space-y-4">
-			<label class="block space-y-1.5">
-				<span class="text-xs font-medium">{t('panes.shortcuts.find')}</span>
-				<span class="relative flex items-center">
-					<span class="pointer-events-none absolute left-2.5 text-(--vscode-input-placeholderForeground)"><Icon name="search" size={14} /></span>
-					<!-- svelte-ignore a11y_autofocus -->
-					<input bind:value={query} autofocus placeholder={t('panes.shortcuts.findPlaceholder')} class="h-8 w-full rounded-md border border-(--vscode-input-border) bg-(--vscode-input-background) pr-2 pl-8 text-xs outline-none focus:border-(--vscode-focusBorder)" />
-				</span>
-			</label>
-			<div class="space-y-1">
-				<div class="text-xs font-medium">{t('panes.shortcuts.status')}</div>
-				{#each STATUSES as s (s.id)}
-					<button
-						class={['flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-[13px] hover:bg-(--vscode-list-hoverBackground)', status === s.id && 'bg-(--vscode-list-inactiveSelectionBackground) font-medium']}
-						aria-pressed={status === s.id}
-						onclick={() => (status = s.id)}
+	<div class="mx-auto w-full max-w-[1100px] shrink-0 px-8 pb-3">
+		<label class="relative flex items-center">
+			<span class="pointer-events-none absolute left-2.5 text-(--vscode-input-placeholderForeground)"><Icon name="search" size={15} /></span>
+			<!-- svelte-ignore a11y_autofocus -->
+			<input
+				bind:this={searchEl}
+				bind:value={query}
+				autofocus
+				data-keybinding-capture={recording ? '' : undefined}
+				onkeydown={onSearchKey}
+				placeholder={recording ? t('keybindings.searchRecording') : t('keybindings.search')}
+				class="h-8 w-full rounded-md border bg-(--vscode-input-background) pr-16 pl-8 text-[13px] outline-none {recording ? 'border-(--vscode-inputOption-activeBorder)' : 'border-(--vscode-input-border) focus:border-(--vscode-focusBorder)'}"
+			/>
+			<span class="absolute right-1 flex gap-0.5">
+				{#if query}
+					<button class="rounded p-1 hover:bg-(--vscode-toolbar-hoverBackground)" title={t('keybindings.clear')} aria-label={t('keybindings.clear')} onclick={() => ((query = ''), searchEl?.focus())}><Icon name="close" size={14} /></button>
+				{/if}
+				<button
+					class="rounded p-1 hover:bg-(--vscode-toolbar-hoverBackground) {recording ? 'bg-(--vscode-inputOption-activeBackground) text-(--vscode-inputOption-activeForeground)' : ''}"
+					title={t('keybindings.recordKeys', { key: keyLabel(RECORD_KEY) })}
+					aria-label={t('keybindings.recordKeys', { key: keyLabel(RECORD_KEY) })}
+					aria-pressed={recording}
+					onclick={toggleRecording}><Icon name="keyboard" size={14} /></button>
+			</span>
+		</label>
+	</div>
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+	<div bind:this={listEl} class="min-h-0 flex-1 overflow-y-auto outline-none" tabindex="0" role="grid" aria-label={t('keybindings.title')} onkeydown={onListKey}>
+		<table class="mx-auto w-full max-w-[1100px] table-fixed border-separate border-spacing-0 px-8 text-[13px]">
+			<thead class="sticky top-0 bg-(--vscode-editor-background) text-left text-xs text-(--vscode-descriptionForeground)">
+				<tr>
+					<th class="border-b border-(--vscode-widget-border) py-2 pl-3 font-medium">{t('keybindings.colCommand')}</th>
+					<th class="w-52 border-b border-(--vscode-widget-border) py-2 font-medium">{t('keybindings.colKey')}</th>
+					<th class="w-56 border-b border-(--vscode-widget-border) py-2 font-medium">{t('keybindings.colWhen')}</th>
+					<th class="w-20 border-b border-(--vscode-widget-border) py-2 pr-3 font-medium">{t('keybindings.colSource')}</th>
+				</tr>
+			</thead>
+			<tbody>
+				{#each rows as r, i (`${r.command}\u0000${r.key}\u0000${r.source}`)}
+					{@const count = conflicts.get(r) ?? 0}
+					<tr
+						data-row={i}
+						class="group cursor-default {i === selected ? 'bg-(--vscode-list-inactiveSelectionBackground)' : 'hover:bg-(--vscode-list-hoverBackground)'}"
+						onclick={() => (selected = i)}
+						ondblclick={() => void startDefine(r)}
+						oncontextmenu={(e) => menu(e, r, i)}
 					>
-						<span>{t(s.label)}</span><span class="text-[11px] text-(--vscode-descriptionForeground)">{count(s.id)}</span>
-					</button>
-				{/each}
-			</div>
-		</div>
-		<div class="min-h-0 overflow-y-auto rounded-xl border border-(--vscode-widget-border)/50">
-			<table class="w-full border-separate border-spacing-0 text-[13px]">
-				<thead class="sticky top-0 bg-(--vscode-editor-background) text-left text-xs text-(--vscode-descriptionForeground)">
-					<tr>
-						<th class="border-b border-(--vscode-widget-border)/60 py-2 pl-4 font-medium">{t('panes.shortcuts.command')}</th>
-						<th class="w-48 border-b border-(--vscode-widget-border)/60 py-2 pr-4 font-medium">{t('panes.shortcuts.keys')}</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each rows as r (r.id)}
-						<tr class="group cursor-default hover:bg-(--vscode-list-hoverBackground)" ondblclick={() => run(r.id)} title={r.id}>
-							<td class="py-1.5 pl-4">
-								<span class="flex items-center gap-2">
-									<span class="truncate">{r.title}</span>
-									{#if r.modified}<span class="shrink-0 rounded border border-(--vscode-widget-border) px-1.5 text-[10px] text-(--vscode-foreground)/75">{t('panes.shortcuts.modified')}</span>{/if}
+						<td class="truncate rounded-l-md py-1.5 pl-3" title={r.command}>
+							{r.title}
+							<span class="ml-1 font-mono text-xs text-(--vscode-descriptionForeground)">{r.command}</span>
+						</td>
+						<td class="py-1.5">
+							{#if r.key}
+								<span class="flex items-center gap-1">
+									{#each keyLabel(r.key).split(' ') as chord, j (j)}
+										<kbd class="rounded-md border border-(--vscode-widget-border) bg-(--vscode-editorGroupHeader-tabsBackground) px-1.5 py-0.5 font-sans text-xs">{chord}</kbd>
+									{/each}
+									{#if count}
+										<button class="ml-1 text-xs text-(--vscode-textLink-foreground) hover:underline" title={t('keybindings.conflicts', { count })} onclick={(e) => (e.stopPropagation(), showSame(r))}>+{count}</button>
+									{/if}
 								</span>
-							</td>
-							<td class="py-1.5 pr-4">
-								{#if r.key}
-									<span class="flex gap-1">
-										{#each r.key.split(' ') as chord, i (i)}
-											<kbd class="rounded-md border border-(--vscode-widget-border) bg-(--vscode-editorGroupHeader-tabsBackground) px-1.5 py-0.5 font-sans text-xs">{chord}</kbd>
-										{/each}
-									</span>
-								{:else}<span class="text-(--vscode-descriptionForeground)">—</span>{/if}
-							</td>
-						</tr>
-					{:else}
-						<tr><td colspan="2" class="py-8 text-center text-(--vscode-descriptionForeground)">{t('panes.shortcuts.none')}</td></tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
+							{:else}<span class="text-(--vscode-descriptionForeground)">—</span>{/if}
+						</td>
+						<td class="truncate py-1.5 font-mono text-xs" title={r.when}>{r.when || (r.key ? '—' : '')}</td>
+						<td class="truncate rounded-r-md py-1.5 pr-3 text-xs text-(--vscode-descriptionForeground)">{sourceLabel(r)}</td>
+					</tr>
+				{:else}
+					<tr><td colspan="4" class="py-8 text-center text-(--vscode-descriptionForeground)">{t('keybindings.none', { query })}</td></tr>
+				{/each}
+			</tbody>
+		</table>
 	</div>
 </div>
+
+{#if define}
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<div class="fixed inset-0 z-50 flex items-start justify-center bg-black/20 pt-[20vh]" onclick={closeDefine}>
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+		<div class="w-[420px] rounded-lg border border-(--vscode-widget-border) bg-(--vscode-editorWidget-background) p-4 shadow-lg" onclick={(e) => e.stopPropagation()}>
+			<p class="text-[13px]">{t('keybindings.define')}</p>
+			<p class="mt-0.5 truncate text-xs text-(--vscode-descriptionForeground)">{t('keybindings.defineFor', { command: define.row.title })}</p>
+			<input
+				bind:this={defineEl}
+				data-keybinding-capture
+				readonly
+				value={define.key ? keyLabel(define.key) : ''}
+				onkeydown={onDefineKey}
+				aria-label={t('keybindings.define')}
+				class="mt-3 h-8 w-full rounded-md border border-(--vscode-focusBorder) bg-(--vscode-input-background) px-2 text-center text-[13px] outline-none"
+			/>
+			{#if defineConflicts.length}
+				<button class="mt-2 text-xs text-(--vscode-textLink-foreground) hover:underline" onclick={() => { const key = define!.key; closeDefine(); query = `"${key}"`; }}>
+					{t('keybindings.defineConflicts', { count: defineConflicts.length })}
+				</button>
+			{/if}
+		</div>
+	</div>
+{/if}

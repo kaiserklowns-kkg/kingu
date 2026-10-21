@@ -66,6 +66,9 @@ export const textFileHooks = {
 	saved: (_path: string, _entry: ModelEntry, _version: number) => {}
 };
 
+/** Called after every successful save with its reason (accessibility.signals.save). */
+export const saveListeners = new Set<(path: string, reason: SaveReason) => void>();
+
 const entries = new Map<string, ModelEntry>();
 /** The first line of each open untitled editor (reactive, for its tab label). */
 export const untitledFirstLines = new SvelteMap<string, string>();
@@ -92,6 +95,7 @@ export function readOptions(path: string, extra: ReadOptions = {}): ReadOptions 
 	return {
 		defaultEncoding: settings.get<string>('files.encoding'),
 		autoGuess: settings.get<boolean>('files.autoGuessEncoding'),
+		candidateGuessEncodings: settings.get<string[]>('files.candidateGuessEncodings').filter((e) => typeof e === 'string'),
 		// workbench.editorLargeFileConfirmation is in MB.
 		largeFileLimit: Math.round(settings.get<number>('workbench.editorLargeFileConfirmation') * 1024 * 1024),
 		...textFileHooks.readOptions(path),
@@ -239,6 +243,7 @@ export async function saveFile(path: string, reasonOrOptions: SaveReason | SaveO
 	if (!dirty) textFileHooks.clean(path);
 	lsp.didSave(entry.model);
 	textFileHooks.saved(path, entry, version);
+	for (const fn of saveListeners) fn(path, opts.reason ?? 'explicit');
 	return true;
 }
 
@@ -307,7 +312,9 @@ export async function saveAs(path: string): Promise<string | null> {
 		saved = await invoke<SavedAs | null>('fs_save_as', {
 			content: text,
 			name: suggestedName(path, text),
-			dir: !isUntitled(path) && slash > 0 ? path.slice(0, slash) : null
+			dir: !isUntitled(path) && slash > 0 ? path.slice(0, slash) : null,
+			// files.dialog.defaultPath: where the dialog starts when no folder is open.
+			defaultPath: settings.get<string>('files.dialog.defaultPath').trim() || null
 		});
 	} catch (e) {
 		notifications.error(t('workbench.editorModels.saveAsFailed', { error: String(e) }));
@@ -395,6 +402,24 @@ export function saveViewState(group: number, path: string, state: Monaco.editor.
 		sharedViews.set(path, state);
 	}
 	for (const map of [views, sharedViews] as Map<string, unknown>[]) while (map.size > MAX_VIEW_STATES) map.delete(map.keys().next().value!);
+}
+
+/** The view states kept per group (by `group\0path`, oldest first), to save with the workspace's editors. */
+export function allViewStates(): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	for (const [k, v] of views) if (v) out[k] = v;
+	return out;
+}
+
+/** A workspace's saved view states, before its editors show again (each group's editor restores its own). */
+export function loadViewStates(saved: Record<string, unknown>) {
+	views.clear();
+	sharedViews.clear();
+	for (const [k, v] of Object.entries(saved)) {
+		const state = v as Monaco.editor.ICodeEditorViewState;
+		views.set(k, state);
+		sharedViews.set(k.slice(k.indexOf('\u0000') + 1), state);
+	}
 }
 
 /** The view state to restore for `path` in `group`: the group's own, else (with `workbench.editor.sharedViewState`) the latest from any group. */

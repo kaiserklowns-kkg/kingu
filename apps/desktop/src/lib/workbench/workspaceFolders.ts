@@ -8,6 +8,17 @@ export type WorkspaceFolder = { path: string; name: string };
 
 const trim = (p: string) => p.replace(/\/+$/, '') || '/';
 
+/**
+ * What a window's per-workspace state is kept under (VS Code's workspace storage id): the folder
+ * itself for a single folder, the workspace file or untitled workspace's identity otherwise, and
+ * `empty:<id>` for an empty window, so two empty windows never share theirs. null: no id known
+ * (an older Rust side).
+ */
+export function workspaceStateKey(identity: string | null, root: string | null, empty: string | null): string | null {
+	if (identity && identity !== root) return identity;
+	return root ?? (empty ? `empty:${empty}` : null);
+}
+
 /** Whether `path` is `root` or inside it. */
 export function within(path: string, root: string): boolean {
 	const r = trim(root);
@@ -96,4 +107,17 @@ export function workspaceLabel(folders: readonly WorkspaceFolder[], file: string
 	if (file) return suffix(file.slice(file.lastIndexOf('/') + 1).replace(/\.code-workspace$/, ''));
 	if (untitled || folders.length > 1) return untitledLabel;
 	return folders[0]?.name ?? '';
+}
+
+/**
+ * The folder part a file row shows beside its name (Quick Open, VS Code's label service): its
+ * directory, led by the root folder's name in a multi-root workspace (`Library • src`).
+ */
+export function fileDetail(key: string, folders: readonly WorkspaceFolder[]): string {
+	const f = folderOf(key, folders);
+	const parent = (p: string) => (p.includes('/') ? p.slice(0, Math.max(1, p.lastIndexOf('/'))) : '');
+	if (!f) return parent(key);
+	const dir = parent(relativeInFolder(key, folders));
+	if (folders.length < 2) return dir;
+	return dir ? `${f.name} • ${dir}` : f.name;
 }

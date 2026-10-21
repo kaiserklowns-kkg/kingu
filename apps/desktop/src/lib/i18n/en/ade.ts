@@ -79,6 +79,9 @@ export const ade = {
 	'ade.sidebar.prMerged': 'Merged',
 	'ade.sidebar.prClosed': 'Closed',
 	'ade.sidebar.prNone': 'No PR',
+	'ade.sidebar.childAgentsShow': 'Show {count|# child agent|# child agents}',
+	'ade.sidebar.childAgentsHide': 'Hide {count|# child agent|# child agents}',
+	'ade.sidebar.childAgentsHidden': '{count|# child agent|# child agents}, hidden (Settings › Show child agents)',
 	'ade.sidebar.sortName': 'Name',
 	'ade.sidebar.sortSmart': 'Agent Activity',
 	'ade.sidebar.sortRecent': 'Recent',
@@ -122,6 +125,10 @@ export const ade = {
 	'ade.agentProfiles.typeCommand': 'Type a command',
 	'ade.agentCli.badOverride': '{setting} must be a plain command or path (no shell characters)',
 	'ade.agentCli.badEnv': '{setting} must use plain variable names (A-Z 0-9 _) and values without control characters',
+	// codexSharedServer.ts: a typed codex that joined Codex's shared app-server (Orca's codexSharedServerWarning)
+	'ade.codexServer.sharedTitle': 'This Codex is sharing a server with your other Codex tabs',
+	'ade.codexServer.sharedBody': 'Sessions may end unexpectedly, and agent status may be wrong.\n\nStart codex with --no-daemon to give it its own server, or stop the shared one: codex features disable daemon_auto_start, then codex app-server daemon stop.',
+	'ade.codexServer.dontShowAgain': "Don't Show Again",
 
 	// quickOpen.svelte.ts, agentsMode.svelte.ts
 	'ade.openFolderFirst': 'Open a folder first',

@@ -11,6 +11,7 @@ import { ARKAI_SETTINGS } from './arkai';
 import { ADE_SECTION_GROUPS, ADE_SETTINGS, AI_SECTION_GROUPS, SYSTEM_SECTION_GROUPS } from './ade';
 import { describeSchema, matchesSchema, schemaTypes, type JsonSchema } from './jsonSchema';
 import { t } from '../i18n/index';
+import { isLanguageOverridable, LANGUAGE_BLOCK_PATTERN, overrideBlocks } from './languageOverrides';
 
 const MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
 
@@ -53,6 +54,27 @@ export type SettingSchema =
 	 * properties): validated with `schema`, edited in settings.json like VS Code's "Edit in settings.json".
 	 */
 	| (Base & { type: 'json'; schema: JsonSchema; default: unknown });
+
+/** `kingu.statusBar.<provider>Usage.visible` for Orca's other usage providers (Orca's statusBarItems). */
+function usageItemSettings(): SettingSchema[] {
+	const items: [id: string, name: string, th: string, en: string][] = [
+		['opencode', 'OpenCode Go', 'เมื่อตั้ง API key หรือ cookie ไว้', 'when a key or cookie is set up'],
+		['minimax', 'MiniMax', 'เมื่อตั้ง API key หรือ cookie ไว้', 'when a key or cookie is set up'],
+		['zcode', 'ZCode', 'เมื่อติดตั้ง ZCode CLI', 'when ZCode CLI is installed'],
+		['cursor', 'Cursor', 'เมื่อลงชื่อเข้าใช้ Cursor ไว้', 'when Cursor is signed in'],
+		['grok', 'Grok', 'เมื่อติดตั้ง Grok CLI', 'when Grok CLI is installed'],
+		['kimi', 'Kimi', 'เมื่อติดตั้ง Kimi Code', 'when Kimi Code is installed'],
+		['antigravity', 'Antigravity', 'เมื่อติดตั้ง agy และเปิด kingu.usage.antigravity', 'when agy is installed and kingu.usage.antigravity is on']
+	];
+	return items.map(([id, name, th, en]) => ({
+		id: `kingu.statusBar.${id}Usage.visible`,
+		group: 'Status Bar',
+		type: 'boolean' as const,
+		default: true,
+		description: `แสดงโควตาของ ${name} ใน status bar ${th} (${name} Usage: show ${name} quota ${en}.)`,
+		scope: 'application' as const
+	}));
+}
 
 /** `kingu.agent.args.<profile>`: extra arguments per known agent CLI (agentCli.ts agentCommand). */
 function agentArgsSettings(): SettingSchema[] {
@@ -864,66 +886,14 @@ const CORE_SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
-		id: 'kingu.statusBar.antigravity.visible',
+		id: 'kingu.statusBar.geminiUsage.visible',
 		group: 'Status Bar',
 		type: 'boolean',
 		default: true,
-		description: 'แสดงโควตาของ Antigravity ใน status bar เมื่อพบ agy (Kingu ถาม agy ด้วย /usage) (Antigravity Usage: show the agy quota when the CLI is found.)',
+		description: 'แสดงโควตาของ Gemini ใน status bar เมื่อติดตั้ง Gemini CLI และเปิด kingu.usage.gemini (Gemini Usage: show Gemini CLI quota when kingu.usage.gemini is on.)',
 		scope: 'application'
 	},
-	{
-		id: 'kingu.usage.gemini.cliOAuth',
-		group: 'AI Accounts',
-		type: 'boolean',
-		default: false,
-		description: 'ใช้ credential OAuth ของ Gemini CLI ในเครื่องเพื่อดึงโควตา (ทดลอง) เป็น credential ที่ออกให้ Gemini CLI ไม่ใช่ Kingu อาจใช้ไม่ได้ถ้า Google เปลี่ยน CLI (Use Gemini CLI credentials (experimental) for rate-limit fetching. These are credentials issued to the Gemini CLI app, not Kingu; may break if Google updates the CLI.)',
-		scope: 'application'
-	},
-	{
-		id: 'kingu.usage.opencodeGo.workspaceId',
-		group: 'AI Accounts',
-		type: 'string',
-		default: '',
-		pattern: '^((org|wrk|wk)_[A-Za-z0-9]+)?$',
-		description: 'Workspace ID ของ OpenCode Go กำหนดเองถ้าหาอัตโนมัติไม่เจอ เช่น wrk_… (OpenCode Go Workspace ID override if the automatic lookup fails.)',
-		scope: 'application'
-	},
-	{
-		id: 'kingu.usage.minimax.endpoint',
-		group: 'AI Accounts',
-		type: 'string',
-		default: 'overseas',
-		enum: ['overseas', 'cn'],
-		enumDescriptions: ['platform.minimax.io (Overseas.)', 'platform.minimaxi.com (China.)'],
-		description: 'host ของ MiniMax ที่ตรงกับบัญชี (The MiniMax endpoint that matches your account.)',
-		scope: 'application'
-	},
-	{
-		id: 'kingu.usage.minimax.groupId',
-		group: 'AI Accounts',
-		type: 'string',
-		default: '',
-		description: 'Group ID ของ MiniMax กำหนดเอง เว้นว่างเพื่อใช้ minimax_group_id_v2 จาก cookie (Optional MiniMax group ID override.)',
-		scope: 'application'
-	},
-	{
-		id: 'kingu.usage.minimax.models',
-		group: 'AI Accounts',
-		type: 'string',
-		default: 'general',
-		description: 'ชื่อโมเดลของ MiniMax คั่นด้วยจุลภาค ใช้ general ไว้ เว้นแต่ MiniMax แจ้ง error เฉพาะโมเดล (Comma-separated MiniMax usage model names.)',
-		scope: 'application'
-	},
-	{
-		id: 'kingu.usage.zcode.site',
-		group: 'AI Accounts',
-		type: 'string',
-		default: 'zai',
-		enum: ['zai', 'bigmodel'],
-		enumDescriptions: ['Z.AI (z.ai)', 'Zhipu · BigModel (open.bigmodel.cn)'],
-		description: 'เว็บของ GLM Coding Plan ที่ใช้ (The console your GLM Coding Plan belongs to.)',
-		scope: 'application'
-	},
+	...usageItemSettings(),
 	{
 		id: 'kingu.usage.display',
 		group: 'Status Bar',
@@ -972,11 +942,13 @@ const CORE_SETTINGS: SettingSchema[] = [
 export const SETTINGS: SettingSchema[] = [...CORE_SETTINGS, ...ADE_SETTINGS, ...IDE_SETTINGS, ...LOCAL_AI_SETTINGS, ...ARKAI_SETTINGS];
 
 /**
- * A table-of-contents section. `labelKey`: the label through t() (shown instead of `label`);
+ * A table-of-contents section. `labelKey`: the label through t() (shown instead of `label`, the
+ * English fallback), so every section header follows the UI language the same way;
  * `pages`: dedicated settings pages (systemSettings.svelte.ts SettingsPageId) listed in the
  * section above its groups.
  */
-export type SettingsSection = { id: string; label: string; labelKey?: 'settings.sections.aiCapabilities'; pages?: string[]; groups: string[] };
+export type SettingsSection = { id: string; label: string; labelKey?: SectionLabelKey; pages?: string[]; groups: string[] };
+type SectionLabelKey = 'settings.sections.aiCapabilities' | 'settings.sections.system' | 'settings.sections.ide' | 'settings.sections.ade' | 'settings.sections.snaps';
 
 /**
  * The system settings page's table of contents: one settings system for the IDE and the ADE,
@@ -986,10 +958,10 @@ export type SettingsSection = { id: string; label: string; labelKey?: 'settings.
  */
 export const SETTINGS_SECTIONS: SettingsSection[] = (
 	[
-		{ id: 'ai', label: 'AI Capabilities', labelKey: 'settings.sections.aiCapabilities', pages: ['accounts', 'mcp', 'skills', 'memories'], groups: AI_SECTION_GROUPS },
-		{ id: 'system', label: 'ระบบ (System)', groups: ['Workbench', 'Window', 'Zen Mode', 'Application', ...SYSTEM_SECTION_GROUPS, 'Status Bar', 'Accessibility', 'Team', 'Snap Sandbox'] },
-		{ id: 'ide', label: 'IDE', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Source Control', 'Git', 'Merge Conflict', 'Timeline', 'Terminal', 'Tasks', 'Debug', 'Testing', 'Problems', 'Output', 'TypeScript', 'CSS', 'HTML', 'JSON', 'Emmet'] },
-		{ id: 'ade', label: 'ADE (Agents)', groups: ADE_SECTION_GROUPS }
+		{ id: 'ai', label: 'AI Capabilities', labelKey: 'settings.sections.aiCapabilities', pages: ['accounts', 'mcp', 'skills', 'memories', 'voice'], groups: AI_SECTION_GROUPS },
+		{ id: 'system', label: 'System', labelKey: 'settings.sections.system', groups: ['Workbench', 'Window', 'Zen Mode', 'Application', ...SYSTEM_SECTION_GROUPS, 'Status Bar', 'Accessibility', 'Team', 'Snap Sandbox'] },
+		{ id: 'ide', label: 'IDE', labelKey: 'settings.sections.ide', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Source Control', 'Git', 'Merge Conflict', 'Timeline', 'Terminal', 'Tasks', 'Debug', 'Testing', 'Problems', 'Output', 'TypeScript', 'CSS', 'HTML', 'JSON', 'Emmet'] },
+		{ id: 'ade', label: 'ADE (Agents)', labelKey: 'settings.sections.ade', groups: ADE_SECTION_GROUPS }
 	] satisfies SettingsSection[]
 ).map((sec) => ({ ...sec, groups: sec.groups.filter((g) => SETTINGS.some((s) => s.group === g)) }));
 
@@ -1003,7 +975,7 @@ export const SNAPS_SECTION_ID = 'snaps';
 export function settingsSections(schemas: SettingSchema[] = SETTINGS): SettingsSection[] {
 	const known = new Set(SETTINGS_SECTIONS.flatMap((s) => s.groups));
 	const contributed = [...new Set(schemas.map((s) => s.group).filter((g) => !known.has(g)))];
-	return [...SETTINGS_SECTIONS, { id: SNAPS_SECTION_ID, label: 'Snaps', groups: contributed }];
+	return [...SETTINGS_SECTIONS, { id: SNAPS_SECTION_ID, label: 'Snaps', labelKey: 'settings.sections.snaps', groups: contributed }];
 }
 
 /**
@@ -1201,6 +1173,15 @@ export function settingProblems(values: Record<string, unknown>, scope: SettingS
 		if (!allowedIn(s, scope)) out.push({ scope, id, message: scopeRule(s) });
 		else if (validate(s, value) === undefined) out.push({ scope, id, message: t('settings.registry.invalidValue', { value: JSON.stringify(value), expected: describeType(s) }) });
 	}
+	// Inside `[language]` blocks: settings that cannot be set per language, and invalid values.
+	for (const [key, block] of overrideBlocks(values))
+		for (const [id, value] of Object.entries(block)) {
+			const s = byId.get(id);
+			if (!s) continue;
+			if (!isLanguageOverridable(s)) out.push({ scope, id: `${key} ${id}`, message: t('settings.registry.notLanguageOverridable') });
+			else if (!allowedIn(s, scope)) out.push({ scope, id: `${key} ${id}`, message: scopeRule(s) });
+			else if (validate(s, value) === undefined) out.push({ scope, id: `${key} ${id}`, message: t('settings.registry.invalidValue', { value: JSON.stringify(value), expected: describeType(s) }) });
+		}
 	return out;
 }
 
@@ -1272,5 +1253,8 @@ export function jsonSchema(schemas: SettingSchema[] = SETTINGS) {
 					: { type: s.values.split('|') };
 		properties[s.id] = base;
 	}
-	return { type: 'object', properties };
+	// `"[typescript]": { … }`: the settings a language block may set (languageOverrides.ts).
+	const overridable = Object.fromEntries(schemas.filter(isLanguageOverridable).map((s) => [s.id, properties[s.id]]));
+	const block = { type: 'object', description: 'การตั้งค่าเฉพาะภาษา (Configure editor settings to be overridden for a language.)', properties: overridable };
+	return { type: 'object', properties, patternProperties: { [LANGUAGE_BLOCK_PATTERN]: block } };
 }

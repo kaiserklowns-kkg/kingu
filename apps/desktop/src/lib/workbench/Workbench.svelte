@@ -20,6 +20,7 @@
 	import { welcome } from './welcomeTour.svelte';
 	import { floating } from './floating.svelte';
 	import { installSignals } from './signals.svelte';
+	import { installAccessibilitySignals } from './accessibilitySignals.svelte';
 	import { platform } from './platform.svelte';
 	import { PROFILES, type Platform } from './platform';
 	import { hasPreview, previewKey } from './viewers';
@@ -47,6 +48,7 @@
 	import { installSettings } from '#lib/settings/apply.svelte.ts';
 	import { installWorkbenchAppearance } from './workbenchAppearance.svelte';
 	import { registerSettingsCommands } from '#lib/settings/contributions.ts';
+	import { registerCompareCommands } from './compare.svelte';
 	import { installLocalAi } from '#lib/localAi/localAi.svelte.ts';
 	import { installAde } from '#lib/ade/tasks.svelte.ts';
 	import { isMac } from './keys';
@@ -61,6 +63,7 @@
 	import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 	import { quickOpenWorktree } from '#lib/ade/quickOpen.svelte.ts';
 	import { installTerminalSessions } from './terminalSessions.svelte';
+	import { installCodexSharedServerWarning } from '#lib/ade/codexSharedServer.ts';
 	import { installTerminalCommands, panelTerminalFocus } from '#lib/terminal/terminalCommands.svelte.ts';
 	import { installTaskCommands } from '#lib/tasks/taskCommands.svelte.ts';
 	import { adeInFront, installAdeCommands } from '#lib/ade/adeCommands.svelte.ts';
@@ -78,6 +81,8 @@
 	import { installIssues } from '#lib/ade/issues.svelte.ts';
 	import { installLinear } from '#lib/ade/linear.svelte.ts';
 	import { installCliBridge } from '#lib/ade/cliBridge.svelte.ts';
+	import { installVoice } from '#lib/voice/dictation.svelte.ts';
+	import DictationIndicator from '#lib/voice/DictationIndicator.svelte';
 	import LinearConnect from '#lib/ade/LinearConnect.svelte';
 	import { installTaskSources } from '#lib/ade/taskSources.svelte.ts';
 	import TrackerConnect from '#lib/ade/TrackerConnect.svelte';
@@ -94,6 +99,7 @@
 	import { installProblemsSettings } from '#lib/lsp/problemsCommands.svelte.ts';
 	import { installCloseGuard, quit } from './closeGuard.svelte';
 	import { installEditorRestore } from './editorRestore.svelte';
+	import { installWorkspaceStorage } from './workspaceStorage.svelte';
 	import { textFiles } from './textFileService.svelte';
 	import { registerEditorStatusCommands } from './editorStatusActions.svelte';
 	import { installEditorCommands } from './editorCommands.svelte';
@@ -126,6 +132,7 @@
 		welcome.maybeShow();
 		const unregister = [
 			installSignals(),
+			installAccessibilitySignals(),
 			installChatExtras(),
 			// Shows another OS's chrome (window controls, fonts) on this machine; real users keep macOS's.
 			commands.register({
@@ -353,9 +360,12 @@
 		const uninstallScmEditor = installScmEditor();
 		const uninstallTimeline = installTimeline();
 		const uninstallWatcher = workspace.install();
+		// Before the editors and terminals: the layout follows the window's workspace (an empty window has its own).
+		const uninstallWorkspaceStorage = installWorkspaceStorage(() => (workspace.ready ? (workspace.stateKey ?? 'empty') : undefined));
 		const uninstallSettings = installSettings();
 		const uninstallAppearance = installWorkbenchAppearance();
 		const unregisterSettings = registerSettingsCommands();
+		const unregisterCompare = registerCompareCommands();
 		const uninstallAde = installAde();
 		const uninstallAgentsMode = installAgentsMode();
 		const uninstallWorktreeCommands = installWorktreeCommands();
@@ -367,6 +377,7 @@
 		const uninstallLinear = installLinear();
 		const uninstallTaskSources = installTaskSources();
 		const uninstallCliBridge = installCliBridge();
+		const uninstallVoice = installVoice();
 		const uninstallLayout = installLayoutCommands();
 		const uninstallSnaps = installSnaps();
 		const uninstallMcp = installMcp();
@@ -375,6 +386,7 @@
 		const uninstallArtifacts = installArtifacts();
 		const uninstallLocalAi = installLocalAi();
 		const uninstallTerminalSessions = installTerminalSessions();
+		const uninstallCodexWarning = installCodexSharedServerWarning();
 		const uninstallTerminalCommands = installTerminalCommands();
 		const uninstallTaskCommands = installTaskCommands();
 		const uninstallAdeCommands = installAdeCommands();
@@ -419,6 +431,7 @@
 			uninstallTaskCommands();
 			uninstallTerminalCommands();
 			uninstallTerminalSessions();
+			uninstallCodexWarning();
 			uninstallMcp();
 			uninstallSkills();
 			uninstallSnaps();
@@ -433,6 +446,7 @@
 			uninstallLinear();
 			uninstallTaskSources();
 			uninstallCliBridge();
+			uninstallVoice();
 			uninstallAutomations();
 			uninstallAgentNotifications();
 			uninstallAdeAttention();
@@ -443,9 +457,11 @@
 			uninstallScmEditor();
 			uninstallTimeline();
 			uninstallWatcher();
+			uninstallWorkspaceStorage();
 			uninstallAppearance();
 			uninstallSettings();
 			unregisterSettings();
+			unregisterCompare();
 			unregister.forEach((u) => u());
 		};
 	});
@@ -590,6 +606,7 @@
 
 	<!-- workbench.statusBar.visible (kept mounted so its items keep their state); Zen Mode hides it (zenMode.hideStatusBar). -->
 	<div class={['contents', ((layout.zen && layout.zenParts?.statusBar !== true) || !settings.get<boolean>('workbench.statusBar.visible')) && '[&>*]:hidden']}><StatusBar /></div>
+	<DictationIndicator />
 	<FloatingTerminal />
 	{#if welcome.open}<Welcome />{/if}
 	{#if cleanup.open}<CleanupDialog />{/if}

@@ -9,6 +9,7 @@
 	import { fileIcon, folderIcon } from './fileIcons';
 	import { explorer, type Row } from './explorer.svelte';
 	import { editors } from './editors.svelte';
+	import { compareStore } from './compare.svelte';
 	import { baseName, recentLabel, stemLength } from './fileTree';
 	import { keyLabel } from './keys';
 	import { workspace } from './workspace.svelte';
@@ -26,12 +27,14 @@
 	import { autoRevealOf, dropTarget, withPathSeparator } from './explorerModel';
 	import { enabledGlobs, hiddenBySibling, isExcluded, siblingClauses } from '#lib/settings/mappings.ts';
 	import { relativeInFolder } from '#lib/workbench/workspaceFolders.ts';
+	import { indentGuideOffsets, isMultiSelect, isOpenToSide, rowClick, type ClickMode, type MultiSelectModifier } from './workbenchOptions';
+	import { listWheel } from './listWheel';
 
 	let { workspaceName }: { workspaceName: string } = $props();
 
 	const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
 	// git.decorations.enabled: git's colors and letters in the explorer.
-	const decorations = $derived(fileDecorations(settings.get<boolean>('git.decorations.enabled') ? entryChanges(scm.repo?.entries ?? []) : []));
+	const decorations = $derived(fileDecorations(settings.get<boolean>('git.decorations.enabled') ? entryChanges(scm.entries) : []));
 	/** explorer.decorations.colors / explorer.decorations.badges. */
 	const decoColors = $derived(settings.get<boolean>('explorer.decorations.colors'));
 	const decoBadges = $derived(settings.get<boolean>('explorer.decorations.badges'));
@@ -199,14 +202,24 @@
 
 	/** Row click: ⌘ toggles, ⇧ extends, a plain click selects and opens (VS Code's list). The
 	 * twistie of a file with nested files (explorer.fileNesting) opens or closes the nest. */
+	// workbench.list.multiSelectModifier / openMode, workbench.tree.expandMode (VS Code's list controller).
+	const multiSelectModifier = $derived(settings.get<MultiSelectModifier>('workbench.list.multiSelectModifier'));
 	function onRowClick(e: MouseEvent, row: Row) {
-		if (isMac ? e.metaKey : e.ctrlKey) return explorer.toggleSelect(row.rel);
+		if (isMultiSelect(e, multiSelectModifier, isMac)) return explorer.toggleSelect(row.rel);
 		if (e.shiftKey) return explorer.selectRange(row.rel);
 		select(row.rel);
-		if (row.is_dir) void (row.expanded ? explorer.collapse(row) : explorer.expand(row.rel));
-		else if (row.nests && (e.target as HTMLElement).closest('[data-twistie]')) explorer.toggleNest(row.rel);
-		else editors.open(row.rel, { preview: true });
+		const onTwistie = (e.target as HTMLElement).closest('[data-twistie]') !== null;
+		if (row.nests && onTwistie) return explorer.toggleNest(row.rel);
+		// A folder's twistie toggles it whatever workbench.tree.expandMode says.
+		if (row.is_dir && onTwistie && e.detail === 1) return void (row.expanded ? explorer.collapse(row) : explorer.expand(row.rel));
+		// The other modifier opens a file to the side.
+		if (!row.is_dir && isOpenToSide(e, multiSelectModifier, isMac)) return editors.openToSide(row.rel);
+		const action = rowClick({ isDir: row.is_dir, detail: e.detail, openMode: settings.get<ClickMode>('workbench.list.openMode'), expandMode: settings.get<ClickMode>('workbench.tree.expandMode') });
+		if (action === 'toggle') void (row.expanded ? explorer.collapse(row) : explorer.expand(row.rel));
+		else if (action === 'open') editors.open(row.rel, { preview: true });
 	}
+	/** workbench.list.horizontalScrolling: long names scroll sideways instead of being cut. */
+	const hscroll = $derived(settings.get<boolean>('workbench.list.horizontalScrolling'));
 
 	/** Mounts the edit box focused, with the name (minus extension) selected like VS Code. */
 	function editBox(el: HTMLInputElement, init: { value: string; is_dir: boolean }) {
@@ -305,6 +318,12 @@
 			return items;
 		}
 		if (target) {
+			// Select for Compare / Compare with Selected; two selected files: Compare Selected (VS Code).
+			const files = explorer.targets(target).filter((r) => !explorer.isDir(r));
+			if (!many && files.length === 1) {
+				items.push('sep', { label: 'Select for Compare', run: () => compareStore.select(target) });
+				if (compareStore.selected && compareStore.selected !== target) items.push({ label: 'Compare with Selected', run: () => compareStore.withSelected(target) });
+			} else if (files.length === 2) items.push('sep', { label: 'Compare Selected', run: () => compareStore.open(files[0], files[1]) });
 			items.push('sep');
 			if (!many) items.push({ label: 'Rename...', key: isMac ? '↵' : 'F2', run: () => explorer.startRename(target) });
 			items.push({ label: 'Delete', key: isMac ? '⌘⌫' : 'Delete', run: () => explorer.delete(target) });
@@ -436,7 +455,7 @@
 				<Icon name={open ? 'chevronDown' : 'chevronRight'} size={16} />
 				<span class="truncate">{workspaceName}</span>
 			</button>
-			<div class="flex items-center opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+			<div class="kg-view-actions flex items-center opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
 				{#each [
 					{ label: 'New File...', icon: 'newFile', run: () => explorer.startCreate('file') },
 					{ label: 'New Folder...', icon: 'newFolder', run: () => explorer.startCreate('folder') },
@@ -464,8 +483,9 @@
 				aria-label="ไฟล์ใน workspace"
 				aria-multiselectable="true"
 				data-context="explorer"
-				class={['min-h-0 flex-1 overflow-y-auto outline-none', dragTarget === '' && 'bg-(--vscode-list-dropBackground)']}
+				class={['min-h-0 flex-1 outline-none', hscroll ? 'overflow-auto' : 'overflow-y-auto', dragTarget === '' && 'bg-(--vscode-list-dropBackground)']}
 				style:scroll-behavior="var(--kg-list-scroll-behavior, auto)"
+				use:listWheel
 				onkeydown={onTreeKey}
 				oncontextmenu={(e) => openMenu(e, null)}
 				onclick={(e) => e.target === e.currentTarget && select(null)}
@@ -515,7 +535,8 @@
 							aria-expanded={row.is_dir ? row.expanded : undefined}
 							draggable={dndEnabled}
 							class={[
-								'mx-1.5 flex h-(--kg-row-height) w-[calc(100%-12px)] items-center gap-1 rounded-md pr-2 text-left leading-(--kg-row-height) outline-offset-[-1px]',
+								'relative mx-1.5 flex h-(--kg-row-height) items-center gap-1 rounded-md pr-2 text-left leading-(--kg-row-height) outline-offset-[-1px]',
+								hscroll ? 'w-max min-w-[calc(100%-12px)]' : 'w-[calc(100%-12px)]',
 								picked
 									? 'bg-(--vscode-list-activeSelectionBackground) text-(--vscode-list-activeSelectionForeground) outline outline-1 outline-(--vscode-focusBorder)'
 									: inDragTarget(row.rel)
@@ -530,7 +551,7 @@
 							title={row.root ? explorer.roots().find((r) => r.key === row.rel)?.path : row.rel}
 							onclick={(e) => onRowClick(e, row)}
 							ondblclick={(e) => {
-								if (!row.is_dir && !e.shiftKey && !(isMac ? e.metaKey : e.ctrlKey)) editors.open(row.rel, { preview: false });
+								if (!row.is_dir && !e.shiftKey && !isMultiSelect(e, multiSelectModifier, isMac) && !isOpenToSide(e, multiSelectModifier, isMac)) editors.open(row.rel, { preview: false });
 							}}
 							oncontextmenu={(e) => openMenu(e, row.rel)}
 							ondragstart={(e) => onDragStart(e, row)}
@@ -542,7 +563,8 @@
 								{#if row.is_dir || row.nests}<Icon name={row.expanded ? 'chevronDown' : 'chevronRight'} size={16} />{/if}
 							</span>
 							<FileIcon icon={row.is_dir ? folderIcon(row.rel, row.expanded) : fileIcon(row.name)} />
-							<span class={['min-w-0 flex-1 truncate', row.ignored && 'italic opacity-55', row.root && 'font-semibold']} style:color={decoColors ? nameColor(row.rel) : undefined}>{row.name}</span>
+							{#each indentGuideOffsets(row.depth, indent) as left (left)}<span class="kg-indent-guide" style:left="{left}px"></span>{/each}
+							<span class={['min-w-0 flex-1', hscroll ? 'whitespace-nowrap' : 'truncate', row.ignored && 'italic opacity-55', row.root && 'font-semibold']} style:color={decoColors ? nameColor(row.rel) : undefined}>{row.name}</span>
 							{#if decoBadges && problems?.get(row.rel)?.count}{@const p = problems.get(row.rel)!}<span class="shrink-0 pl-2 text-[11px] font-semibold" style:color={decoColors ? PROBLEM_COLORS[p.severity] : undefined} title={p.count === 1 ? t('problems.decoration.one') : t('problems.decoration.many', { count: p.count! })}>{problemBadge(p.count!)}</span>{/if}
 							{#if coverage}{@const cov = coverageBadge(row.rel)}{#if cov}<span class="shrink-0 pl-2 text-[11px] tabular-nums" style:color={cov.color}>{cov.text}</span>{/if}{/if}
 							{#if row.ignored}<span class="shrink-0 pr-3 pl-2 opacity-55" title="ถูก .gitignore"><Icon name="ignored" size={12} /></span>

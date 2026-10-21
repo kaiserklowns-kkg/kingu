@@ -27,6 +27,7 @@
 	import McpPage from '#lib/mcp/McpPage.svelte';
 	import SkillsPage from '#lib/skills/SkillsPage.svelte';
 	import MemoriesPage from '#lib/agent/MemoriesPage.svelte';
+	import VoicePage from './pages/VoicePage.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import { settings } from './settings.svelte';
 	import type { IconName } from '#lib/workbench/Icon.svelte';
@@ -68,6 +69,13 @@
 			icon: 'bookmark'
 		},
 		{
+			id: 'voice',
+			get label() {
+				return t('voice.title');
+			},
+			icon: 'mic'
+		},
+		{
 			id: 'shortcuts',
 			get label() {
 				return t('panes.shortcuts.title');
@@ -82,6 +90,7 @@
 
 	let query = $state('');
 	const searching = $derived(query.trim() !== '');
+	const tocHidden = $derived(searching && settings.get<string>('workbench.settings.settingsSearchTocBehavior') === 'hide');
 	const isModified = (id: string) => settings.inspect(id, 'user') !== undefined || settings.inspect(id, 'workspace') !== undefined;
 	/** Settings per group: all of them, or while searching the ones that match (Orca lists only matching panes). */
 	const counts = $derived.by(() => {
@@ -211,6 +220,8 @@
 			</label>
 		</div>
 		<div bind:this={navList} class="min-h-0 flex-1 space-y-5 overflow-y-auto px-3 py-4">
+			<!-- workbench.settings.settingsSearchTocBehavior `hide`: no table of contents while searching. -->
+			{#if !tocHidden}
 			{#each ORCA_NAV as sec (sec.id)}
 				{@const items = sec.items.filter((it) => ('page' in it ? pageShown(it.page) : 'pane' in it ? paneMatches(ORCA_PANES[it.pane], query, (k) => t(k)) : !searching || shownGroup(it.group)))}
 				{#if items.length}
@@ -324,6 +335,7 @@
 					{/if}
 				</div>
 			{/if}
+			{/if}
 		</div>
 		<div class="shrink-0 border-t border-(--vscode-sideBar-border) p-2">
 			<button class={[ITEM, page === 'about' && SELECTED]} aria-current={page === 'about' ? 'page' : undefined} onclick={() => openPage('about')}>
@@ -351,6 +363,7 @@
 			{:else if page === 'mcp'}<McpPage />
 			{:else if page === 'skills'}<SkillsPage />
 			{:else if page === 'memories'}<MemoriesPage />
+			{:else if page === 'voice'}<VoicePage />
 			{:else if page === 'about'}<AboutPage />
 			{:else if showSnaps}<SnapsView />
 			{:else if orcaPane}<OrcaPane spec={orcaPane} {query} />

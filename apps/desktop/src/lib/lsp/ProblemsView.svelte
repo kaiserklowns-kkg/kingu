@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { listWheel } from '#lib/workbench/listWheel.ts';
 	// Problems panel (VS Code: MarkersView): diagnostics grouped by file (tree) or one row per
 	// problem (table; `problems.defaultViewMode` until View as Tree / View as Table), ordered by
 	// `problems.sortOrder`, narrowed by the filter box and toggles (problemsView.svelte.ts). With
@@ -8,7 +9,7 @@
 	import { editors } from '#lib/workbench/editors.svelte.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { t } from '#lib/i18n/index.ts';
-	import { severityName } from './convert';
+	import { severityName, uriToPath } from './convert';
 	import { lsp } from './lsp.svelte';
 	import { problemTable, sortProblems, type ProblemsSortOrder } from './problemsSettings';
 	import { problemsView as view } from './problemsViewState.svelte';
@@ -32,7 +33,8 @@
 	let scroller: HTMLDivElement | undefined = $state();
 
 	const base = (p: string) => p.split('/').pop() ?? p;
-	const dir = (p: string) => p.split('/').slice(0, -1).join('/');
+	/** The full path, for the tooltip. */
+	const pathOf = (file: ProblemFile) => uriToPath(file.uri) ?? file.label;
 	const isSelected = (file: ProblemFile, d: Diagnostic) => view.selected?.file.uri === file.uri && view.selected.item === d;
 
 	function open(file: ProblemFile, d: Diagnostic, preview = true) {
@@ -98,14 +100,14 @@
 				>
 					<span role="cell" class={['mt-px w-4 shrink-0', color[sev]]}><Icon name={icon[sev]} size={14} /></span>
 					<span role="cell" class="min-w-0 flex-[3] truncate">{d.message}</span>
-					<span role="cell" class="min-w-0 flex-1 truncate" title={file.label}>{base(file.label)}</span>
+					<span role="cell" class="min-w-0 flex-1 truncate" title={pathOf(file)}>{base(file.label)}</span>
 					<span role="cell" class="w-24 shrink-0 truncate text-(--vscode-descriptionForeground)">{d.source ?? ''}{d.code !== undefined ? `(${d.code})` : ''}</span>
 					<span role="cell" class="w-24 shrink-0 text-(--vscode-descriptionForeground)">[Ln {d.range.start.line + 1}, Col {d.range.start.character + 1}]</span>
 				</button>
 			{/each}
 		</div>
 	{:else}
-		<div bind:this={scroller} role="tree" aria-label="Problems" class="h-full overflow-y-auto py-0.5">
+		<div bind:this={scroller} role="tree" aria-label="Problems" class="h-full overflow-y-auto py-0.5" use:listWheel>
 			{#each files as file (file.uri)}
 				{@const isOpen = !view.collapsed.has(file.uri)}
 				<button
@@ -113,13 +115,13 @@
 					aria-selected="false"
 					aria-expanded={isOpen}
 					data-uri={file.uri}
-					title={file.label}
+					title={pathOf(file)}
 					class="mx-1.5 flex h-(--kg-row-height) w-[calc(100%-12px)] items-center gap-1 rounded-md pr-2 pl-1 text-left hover:bg-(--vscode-list-hoverBackground)"
 					onclick={() => view.toggle(file.uri)}
 				>
 					<Icon name={isOpen ? 'chevronDown' : 'chevronRight'} size={16} />
 					<span class="whitespace-nowrap">{base(file.label)}</span>
-					<span class="truncate text-(--vscode-descriptionForeground)">{dir(file.label)}</span>
+					<span class="truncate text-(--vscode-descriptionForeground)">{file.detail}</span>
 					<span class="ml-auto rounded-full bg-(--vscode-badge-background) px-1.5 text-[11px] leading-4 text-(--vscode-badge-foreground)">{file.items.length}</span>
 				</button>
 				{#if isOpen}

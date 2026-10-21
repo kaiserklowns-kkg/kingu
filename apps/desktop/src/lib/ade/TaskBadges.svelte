@@ -1,6 +1,7 @@
 <script lang="ts">
 	// A task card's small badges (side bar and board): the best-of-N attempt letter (opens Compare
-	// Attempts), the stacked-on-another-task mark, and a hibernated agent's resume button.
+	// Attempts), the stacked-on-another-task mark, the dispatched-by-an-agent mark (orchestration)
+	// and a hibernated agent's resume button.
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import { adeTasks } from './tasks.svelte';
@@ -12,6 +13,7 @@
 	let { meta, parentTitle }: { meta: TaskMeta; parentTitle?: string } = $props();
 
 	const letter = $derived(attemptLetter(meta));
+	const dispatcher = $derived(meta.dispatched_by ? (adeTasks.find(meta.dispatched_by)?.meta.title ?? meta.dispatched_by) : null);
 	const sleeping = $derived(!!meta.hibernated_at && !cliSessions.has(meta.slug));
 	const CHIP = 'grid h-4 min-w-4 shrink-0 place-items-center rounded px-1 text-[10px] leading-none font-semibold';
 </script>
@@ -27,6 +29,9 @@
 {/if}
 {#if meta.parent}
 	<span class="shrink-0 text-(--vscode-descriptionForeground)" title={t('adeAttempts.badge.stacked', { parent: parentTitle ?? meta.base })}><Icon name="branch" size={11} /></span>
+{/if}
+{#if dispatcher}
+	<span class="shrink-0 text-(--vscode-descriptionForeground)" title={t('adeAttempts.badge.dispatched', { task: dispatcher })}><Icon name="robot" size={11} /></span>
 {/if}
 {#if sleeping}
 	<button

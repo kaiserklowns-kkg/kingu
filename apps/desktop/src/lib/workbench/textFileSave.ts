@@ -45,13 +45,15 @@ function inStringOrRegex(model: Monaco.editor.ITextModel): (line: number, column
 }
 
 export async function runSaveParticipants(monaco: typeof Monaco, model: Monaco.editor.ITextModel, reason: SaveReason) {
+	// `[language]` blocks apply to the file being saved.
+	const get = settings.getterFor(model.getLanguageId());
 	const shown = monaco.editor.getEditors().filter((e) => e.getModel() === model);
 	const editor = shown.find((e) => e.hasTextFocus()) ?? shown[0];
 
-	const kinds = codeActionsOnSave(settings.get('editor.codeActionsOnSave'), reason);
+	const kinds = codeActionsOnSave(get('editor.codeActionsOnSave'), reason);
 	if (kinds.length) await withTimeout(lsp.codeActionsOnSave(model, kinds));
 
-	if (editor && formatsOnSave(settings.get<boolean>('editor.formatOnSave'), reason)) {
+	if (editor && formatsOnSave(get<boolean>('editor.formatOnSave'), reason)) {
 		const format = editor.getAction('editor.action.formatDocument');
 		if (format?.isSupported()) await withTimeout(format.run());
 	}
@@ -60,10 +62,10 @@ export async function runSaveParticipants(monaco: typeof Monaco, model: Monaco.e
 	const selections = shown.map((e) => [e, e.getSelections()] as const);
 	// On auto save the lines being typed on keep their whitespace, like VS Code.
 	const keep = new Set(reason === 'explicit' ? [] : selections.flatMap(([, sel]) => (sel ?? []).map((s) => s.positionLineNumber)));
-	if (settings.get<boolean>('files.trimTrailingWhitespace'))
-		apply(model, trimTrailingWhitespaceEdits(model.getLinesContent(), keep, settings.get<boolean>('files.trimTrailingWhitespaceInRegexAndStrings') ? undefined : inStringOrRegex(model)));
-	if (settings.get<boolean>('files.trimFinalNewlines')) apply(model, [trimFinalNewlinesEdit(model.getLinesContent())]);
-	if (settings.get<boolean>('files.insertFinalNewline')) apply(model, [insertFinalNewlineEdit(model.getLinesContent(), model.getEOL())]);
+	if (get<boolean>('files.trimTrailingWhitespace'))
+		apply(model, trimTrailingWhitespaceEdits(model.getLinesContent(), keep, get<boolean>('files.trimTrailingWhitespaceInRegexAndStrings') ? undefined : inStringOrRegex(model)));
+	if (get<boolean>('files.trimFinalNewlines')) apply(model, [trimFinalNewlinesEdit(model.getLinesContent())]);
+	if (get<boolean>('files.insertFinalNewline')) apply(model, [insertFinalNewlineEdit(model.getLinesContent(), model.getEOL())]);
 	// A newline inserted at the cursor must not carry the cursor along.
 	for (const [e, sel] of selections) if (sel && e.getModel() === model) e.setSelections(sel);
 }

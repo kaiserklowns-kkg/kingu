@@ -9,6 +9,7 @@ pub mod chat_edits;
 pub mod chat_extras;
 pub mod chat_io;
 pub mod chats;
+pub mod codex_server;
 pub mod customizations;
 pub mod cli;
 pub mod events;
@@ -24,6 +25,7 @@ pub mod memories;
 pub mod mr;
 pub mod notes;
 pub mod open_in;
+pub mod orchestration;
 pub mod pr;
 pub mod review;
 pub mod rules;
@@ -799,10 +801,10 @@ pub async fn worktree_list_files(ws: Workspace, slug: String) -> Result<Vec<Stri
 /// when the file does not exist there. Feeds the task diff tabs.
 #[tauri::command]
 pub async fn git_show_ref(ws: Workspace, slug: Option<String>, rev: String, rel: String) -> Result<String, String> {
-  let root = ws.root()?;
-  let dir = match slug {
-    Some(s) => review::task_dir(&root, &s)?,
-    None => root,
+  // Without a task, `rel` is a webview path of any root folder (its own repository's file).
+  let (dir, rel) = match slug {
+    Some(s) => (review::task_dir(&ws.root()?, &s)?, rel),
+    None => crate::git_repos::locate_file(&ws, &rel)?,
   };
   crate::git::check_rel(&dir, &rel)?;
   blocking(move || crate::git::show_at(&dir, &rev, &rel)).await

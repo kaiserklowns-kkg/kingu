@@ -22,6 +22,7 @@
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 	import StatusResources from './StatusResources.svelte';
 	import NotificationsBell from './NotificationsBell.svelte';
+	import { bellPlacement } from './workbenchOptions';
 	import UsageStatus from './UsageStatus.svelte';
 	import LocalAiStatus from '#lib/localAi/LocalAiStatus.svelte';
 	import { usage } from './usage.svelte';
@@ -69,8 +70,10 @@
 	// VS Code's entries on the left (branch, sync, problems) and the editor's on the right; Orca's
 	// usage, resources and ports in between. Branch and changes follow the selected worktree in Agents.
 	const worktree = $derived(appMode.isAgents && adeLayout.key ? adeLayout.key : null);
-	const branch = $derived(worktree ? adeTasks.branchOf(worktree) : status.branch);
-	const repo = $derived(worktree ? null : scm.repo);
+	// The workbench's branch is the active repository's (the active editor's in a multi-root workspace).
+	const active = $derived(worktree ? null : scm.active);
+	const repo = $derived(active?.repo ?? null);
+	const branch = $derived(worktree ? adeTasks.branchOf(worktree) : repo ? (repo.branch ?? repo.head) : status.branch);
 	const dirty = $derived(!!repo && repo.entries.length > 0);
 	const sync = $derived(repo ? syncItem(repo) : null);
 	// The editor items follow the active editor: none for editors without a text model, and the
@@ -155,6 +158,9 @@
 		const shown = settings.get<boolean>(id) !== false;
 		void settings.set(id, shown ? false : undefined, 'user');
 	}
+
+	// workbench.notifications.position / showInTitleBar: which side of the bar has the bell (top-right: the title bar).
+	const bell = $derived(bellPlacement(settings.get<string>('workbench.notifications.position'), settings.get<boolean>('workbench.notifications.showInTitleBar')));
 </script>
 
 <!-- 22px, items 22px line-height (VS Code statusbarPart). -->
@@ -169,10 +175,12 @@
 			: 'bg-(--vscode-statusBar-background) text-(--vscode-statusBar-foreground)'
 	]}
 >
+	<!-- workbench.notifications.position bottom-left: the bell is the left-most item. -->
+	{#if bell === 'statusLeft' && show('status.notifications')}<NotificationsBell />{/if}
 	{#if branch && show('status.scm')}
 		{#if repo}
 			<!-- VS Code's branch item (Checkout to…) and its sync item; a running git operation can be cancelled. -->
-			<button class={ITEM} title="{branch}{dirty ? '*' : ''}{repo.detached ? ' (detached HEAD)' : ''}, Checkout Branch/Tag..." onclick={() => commands.run('git.checkout')}>
+			<button class={ITEM} title="{scm.repositories.length > 1 && active ? `${active.label.name} (Git) - ` : ''}{branch}{dirty ? '*' : ''}{repo.detached ? ' (detached HEAD)' : ''}, Checkout Branch/Tag..." onclick={() => (active ? active.checkout() : commands.run('git.checkout'))}>
 				<Icon name="branch" size={14} />{branch}{dirty ? '*' : ''}
 			</button>
 			<!-- git.showProgress: the running operation; git.enableStatusBarSync: the sync item. -->
@@ -181,7 +189,7 @@
 					<span class="inline-block size-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent"></span>{scm.op}
 				</button>
 			{:else if sync && !scm.op && settings.get<boolean>('git.enableStatusBarSync')}
-				<button class={ITEM} title={sync.title} onclick={() => commands.run(sync.command)}>
+				<button class={ITEM} title={sync.title} onclick={() => (active ? active.run(sync.command) : commands.run(sync.command))}>
 					<Icon name={sync.command === 'git.publish' ? 'publish' : 'sync'} size={14} />{#if sync.label}<span class="tabular-nums">{sync.label}</span>{/if}
 				</button>
 			{/if}
@@ -260,7 +268,7 @@
 	{#if show('status.kingu.localAi')}<LocalAiStatus />{/if}
 	<!-- VS Code keeps the notification bell at the far right. -->
 	{#if floating.enabled && floating.location === 'status-bar'}<FloatingToggle variant="status-bar" />{/if}
-	{#if show('status.notifications')}<NotificationsBell />{/if}
+	{#if bell === 'statusRight' && show('status.notifications')}<NotificationsBell />{/if}
 </footer>
 
 {#if menu}

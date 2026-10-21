@@ -42,5 +42,14 @@ export const editing = {
 	'editing.status.columnSelection': 'Column Selection',
 	'editing.status.columnSelectionTooltip': 'Disable Column Selection Mode',
 	'editing.status.overtype': 'OVR',
-	'editing.status.overtypeTooltip': 'Overtype mode: typing replaces characters. Click to switch to insert mode.'
+	'editing.status.overtypeTooltip': 'Overtype mode: typing replaces characters. Click to switch to insert mode.',
+	'editing.formatter.multiple': "There are multiple formatters for '{language}' files. One of them should be configured as default formatter.",
+	'editing.formatter.unavailable': "'{formatter}' is configured as formatter but cannot format '{language}' files. Select a different default formatter to continue.",
+	'editing.formatter.configure': 'Configure...',
+	'editing.formatter.configureTitle': 'Configure Default Formatter',
+	'editing.formatter.configureDefault': 'Configure Default Formatter...',
+	'editing.formatter.selectDefault': "Select a default formatter for '{language}' files",
+	'editing.formatter.formatWithPlaceholder': 'Select a formatter',
+	'editing.formatter.default': '(default)',
+	'editing.formatter.none': "There is no formatter for '{language}' files installed."
 } as const;

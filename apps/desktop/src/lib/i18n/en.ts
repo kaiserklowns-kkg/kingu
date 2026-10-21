@@ -36,6 +36,7 @@ import { language } from './en/language';
 import { workspaces } from './en/workspaces';
 import { ideTasks } from './en/ideTasks';
 import { scmEditor } from './en/scmEditor';
+import { scmRepos } from './en/scmRepos';
 import { localHistory } from './en/localHistory';
 import { searchEditor } from './en/searchEditor';
 import { output } from './en/output';
@@ -45,10 +46,13 @@ import { debugger_ } from './en/debugger';
 import { testing } from './en/testing';
 import { chatCustomize } from './en/chatCustomize';
 import { composer } from './en/composer';
+import { voice } from './en/voice';
+import { usage } from './en/usage';
+import { keybindings } from './en/keybindings';
 
 import { editing } from './en/editing';
 
 
-export const en = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...panes, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault, ...adeAttempts, ...localAi, ...chatRuntime, ...chatExtras, ...adeSources, ...cli, ...artifacts, ...skills, ...arkai, ...forge, ...scmEditor, ...localHistory, ...ideTasks, ...language, ...workspaces, ...searchEditor, ...output, ...profiles, ...debugger_, ...testing, ...chatCustomize, ...editing, ...composer } as const;
+export const en = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...panes, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault, ...adeAttempts, ...localAi, ...chatRuntime, ...chatExtras, ...adeSources, ...cli, ...artifacts, ...skills, ...arkai, ...forge, ...scmEditor, ...scmRepos, ...localHistory, ...ideTasks, ...language, ...workspaces, ...searchEditor, ...output, ...profiles, ...debugger_, ...testing, ...chatCustomize, ...editing, ...composer, ...voice, ...usage, ...keybindings } as const;
 
 export type MessageKey = keyof typeof en;

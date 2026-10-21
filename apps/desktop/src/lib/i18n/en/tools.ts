@@ -170,6 +170,8 @@ export const tools = {
 	'tools.terminal.rename.placeholder': 'Terminal name (now: {title})',
 	'tools.terminal.rename.hint': 'Rename to "{name}"',
 	'tools.terminal.rename.empty': 'Type a new name and press Enter',
+	'tools.terminal.pickFolder': 'Select current working directory for new terminal',
+	'tools.terminal.overriddenCwd': '(Overridden) {cwd}',
 	'tools.debug.bp.disabled': 'Breakpoint (disabled)',
 	'tools.debug.bp.triggered': 'Triggered breakpoint: active after stopping at {at}',
 	'tools.debug.bp.unverified': 'Breakpoint not verified by the debugger',

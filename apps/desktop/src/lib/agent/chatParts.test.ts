@@ -1,8 +1,9 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { buildTurns, editOf, isInternal, isSubagentTool, lastRequest, latestTodos, parseTodos, planOf, promptHistory, responseText, shortPath, subagentStats, todoProgress, toolLabel, type TodoStatus, type ToolPart, type Turn } from './chatParts';
+import { buildTurns, editOf, feedbackTarget, isInternal, isSubagentTool, lastRequest, latestTodos, parseTodos, planOf, promptHistory, responseText, shortPath, subagentStats, todoProgress, toolLabel, type TodoStatus, type ToolPart, type Turn } from './chatParts';
 import { applyEvent, initialRun, type AgentEvent, type PermissionRequest } from './events';
 import { assemblePrompt } from './chatPrompt';
+import { turnBusy } from './chatInput';
 
 const result = (text: string | null, extra: Partial<Extract<AgentEvent, { kind: 'result' }>> = {}): AgentEvent => ({
 	kind: 'result',
@@ -272,5 +273,38 @@ describe('todos, plans and edits', () => {
 		expect(editOf('NotebookEdit', { notebook_path: 'n.ipynb', new_source: 'x' })).toEqual({ path: 'n.ipynb', added: 1, removed: 0 });
 		expect(editOf('Read', { file_path: 'a.ts' })).toBeNull();
 		expect(editOf('Edit', {})).toBeNull();
+	});
+});
+
+describe('"How did the agent do?"', () => {
+	const done = (extra: AgentEvent[] = []): AgentEvent[] => [
+		{ kind: 'message', role: 'user', text: 'fix it' },
+		{ kind: 'checkpoint', request: 0 },
+		{ kind: 'message', role: 'assistant', text: 'fixed' },
+		{ kind: 'result', subtype: 'success', is_error: false, result: 'fixed', session_id: 's', num_turns: 1, duration_ms: 5, total_cost_usd: null },
+		...extra
+	];
+	const target = (events: AgentEvent[]) => {
+		const run = fold(events);
+		return feedbackTarget(buildTurns(run), turnBusy(run));
+	};
+
+	test('asks about the last request once its answer is done, not while it runs or after a vote', () => {
+		expect(target(done())).toBe(0);
+		expect(target(done().slice(0, 3))).toBeNull();
+		expect(target(done([{ kind: 'feedback', request: 0, vote: 'up' }]))).toBeNull();
+		expect(target(done([{ kind: 'feedback', request: 0, vote: 'up' }, { kind: 'feedback', request: 0, vote: null }]))).toBe(0);
+		expect(target(done([{ kind: 'message', role: 'user', text: 'more' }, { kind: 'checkpoint', request: 1 }]))).toBeNull();
+	});
+
+	test('output after the last request (an exit error, an error line) does not hide it', () => {
+		expect(target(done([{ kind: 'exit', code: 1, signal: null, stopped: false }]))).toBe(0);
+		expect(target(done([{ kind: 'error', message: 'the session closed' }]))).toBe(0);
+		expect(target(done([{ kind: 'exit', code: 0, signal: null, stopped: false }]))).toBe(0);
+	});
+
+	test('nothing to ask without a checkpoint to keep the vote on, or an answer', () => {
+		expect(target(done().filter((e) => e.kind !== 'checkpoint'))).toBeNull();
+		expect(target([{ kind: 'message', role: 'assistant', text: 'before any request' }, { kind: 'exit', code: 0, signal: null, stopped: false }])).toBeNull();
 	});
 });

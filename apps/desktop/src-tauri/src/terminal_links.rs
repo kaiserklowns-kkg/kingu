@@ -1,5 +1,5 @@
 //! Terminal file links: a path printed in a terminal (`src/main.rs`, `./a.ts`, `/abs/b.go`,
-//! `~/x`) becomes a link only when it names a file of the open folder. Relative paths resolve
+//! `~/x`) becomes a link only when it names a file of a root folder. Relative paths resolve
 //! against the shell's current directory (after a `cd`), then the directory it started in, like
 //! VS Code's local link detector resolving against the terminal's cwd.
 
@@ -12,7 +12,8 @@ use crate::workspace::Workspace;
 use crate::i18n::msg::CoreMsg;
 use crate::tr;
 
-/// A link's file, as the editors key it: relative to the open folder with `/` separators.
+/// A link's file, as the editors key it: relative to the first folder with `/` separators, absolute
+/// in another root folder (workspace.rs `qualify`).
 #[derive(serde::Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct LinkTarget {
   pub rel: String,
@@ -37,6 +38,14 @@ pub fn link_target(text: &str, bases: &[PathBuf], home: Option<&Path>, root: &Pa
   candidates.into_iter().find_map(|p| inside(&p, root))
 }
 
+/// [`link_target`] in a multi-root workspace: the file may be in any root folder (the innermost
+/// one holding it names it).
+pub fn link_target_in(text: &str, bases: &[PathBuf], home: Option<&Path>, roots: &[PathBuf]) -> Option<LinkTarget> {
+  let mut order: Vec<&PathBuf> = roots.iter().collect();
+  order.sort_by_key(|r| std::cmp::Reverse(r.as_os_str().len()));
+  order.into_iter().find_map(|root| link_target(text, bases, home, root).map(|t| LinkTarget { rel: crate::workspace::qualify_in(roots, root, &t.rel) }))
+}
+
 /// `path` as a workspace-relative file key when it is an existing file under `root`.
 fn inside(path: &Path, root: &Path) -> Option<LinkTarget> {
   let real = path.canonicalize().ok()?;
@@ -53,7 +62,8 @@ fn inside(path: &Path, root: &Path) -> Option<LinkTarget> {
 /// `key`: the terminal's session, whose shell's current and starting directories are the bases.
 #[tauri::command(async)]
 pub fn terminal_link_target(ws: Workspace, ptys: State<'_, Ptys>, key: String, text: String) -> Result<Option<LinkTarget>, String> {
-  let Some(root) = ws.current() else { return Ok(None) };
+  let roots = ws.roots();
+  let Some(root) = roots.first().cloned() else { return Ok(None) };
   let session = ptys.list().unwrap_or_default().into_iter().find(|s| s.key == key);
   let mut bases = Vec::new();
   if let Some(s) = &session {
@@ -64,7 +74,7 @@ pub fn terminal_link_target(ws: Workspace, ptys: State<'_, Ptys>, key: String, t
   }
   bases.push(root.clone());
   let home = std::env::var_os("HOME").map(PathBuf::from);
-  Ok(link_target(&text, &bases, home.as_deref(), &root))
+  Ok(link_target_in(&text, &bases, home.as_deref(), &roots))
 }
 
 /// The scheme of a terminal link, when `terminal.integrated.allowedLinkSchemes` lets it open.
@@ -103,7 +113,7 @@ pub fn terminal_open_url(url: String, allowed: Option<Vec<String>>) -> Result<()
 mod tests {
   use std::fs;
 
-  use super::{LinkTarget, link_target, openable_scheme};
+  use super::{LinkTarget, link_target, link_target_in, openable_scheme};
 
   #[test]
   fn allowed_link_schemes() {
@@ -155,5 +165,21 @@ mod tests {
     assert_eq!(link_target("~/x", &bases, None, &root), None);
     assert_eq!(link_target("", &bases, None, &root), None);
     assert_eq!(link_target(&"a/".repeat(600), &bases, None, &root), None);
+  }
+
+  #[test]
+  fn links_reach_every_root_folder() {
+    let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (ra, rb) = (a.path().canonicalize().unwrap(), b.path().canonicalize().unwrap());
+    fs::write(ra.join("a.ts"), "").unwrap();
+    fs::create_dir_all(rb.join("src")).unwrap();
+    fs::write(rb.join("src/b.ts"), "").unwrap();
+    let roots = [ra.clone(), rb.clone()];
+    let rel = |s: String| Some(LinkTarget { rel: s });
+    assert_eq!(link_target_in("a.ts", std::slice::from_ref(&ra), None, &roots), rel("a.ts".into()));
+    // A terminal of the second folder: its file comes back absolute.
+    assert_eq!(link_target_in("src/b.ts", std::slice::from_ref(&rb), None, &roots), rel(rb.join("src/b.ts").display().to_string()));
+    assert_eq!(link_target_in(rb.join("src/b.ts").to_str().unwrap(), &[], None, &roots), rel(rb.join("src/b.ts").display().to_string()));
+    assert_eq!(link_target_in("src/b.ts", std::slice::from_ref(&ra), None, &roots), None);
   }
 }

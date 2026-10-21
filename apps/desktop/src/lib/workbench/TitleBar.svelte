@@ -35,7 +35,8 @@
 		type LayoutControlType
 	} from './titlebar';
 	import { workspace } from './workspace.svelte';
-	import { menuBarShown, type MenuBarVisibility } from './workbenchOptions';
+	import { bellPlacement, customTitleBarShown, menuBarShown, type MenuBarVisibility } from './workbenchOptions';
+	import { notifications } from './notifications.svelte';
 	import type { MenuNode } from './menus';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { team } from '#lib/team/team.svelte.ts';
@@ -88,7 +89,9 @@
 
 	// --- Parts ---------------------------------------------------------------------------------
 	const commandCenter = $derived(settings.get<boolean>('window.commandCenter'));
-	const height = $derived(titleBarHeight('workbench', { commandCenter, compactAgents: false }));
+	// window.customTitleBarVisibility `windowed` / `never`: no title bar in full screen.
+	const visible = $derived(customTitleBarShown(settings.get<string>('window.customTitleBarVisibility'), layout.fullscreen));
+	const height = $derived(visible ? titleBarHeight('workbench', { commandCenter, compactAgents: false }) : 0);
 	// Quick input and other overlays sit just below the title bar.
 	$effect(() => document.documentElement.style.setProperty('--kg-titlebar-height', `${height}px`));
 	// window.menuBarVisibility (Windows and Linux): `classic` hides the menu in full screen, `toggle`
@@ -132,7 +135,13 @@
 	const layoutItems = $derived(layoutControlItems(settings.get<boolean>('workbench.layoutControl.enabled'), settings.get<LayoutControlType>('workbench.layoutControl.type')));
 	// Open in Agents sits next to the command center (VS Code's TitleBarAdjacentCenter), not in the right toolbar.
 	const openInAgents = $derived(settings.get<boolean>('kingu.titleBar.openInAgents.enabled'));
-	const toolbar = $derived(titleToolbar({ openInAgents: false, layout: layoutItems, globalActions: true }));
+	// workbench.notifications.position top-right with showInTitleBar: the bell is a title bar action.
+	const bellInTitle = $derived(bellPlacement(settings.get<string>('workbench.notifications.position'), settings.get<boolean>('workbench.notifications.showInTitleBar')) === 'titleBar');
+	const toolbar = $derived(titleToolbar({ openInAgents: false, layout: layoutItems, notifications: bellInTitle, globalActions: true }));
+	// window.doubleClickIconToClose: the icon (Windows/Linux) closes the window on a double click instead of dragging it.
+	const iconCloses = $derived(settings.get<boolean>('window.doubleClickIconToClose'));
+	// Through the close guard, like Close Window.
+	const closeWindow = () => void invoke('window_close').catch(() => {});
 
 	// Overflow: items next to the center hide first (VS Code `.overflowing`).
 	let right: HTMLDivElement | undefined = $state();
@@ -238,6 +247,7 @@
 	class={[
 		// No bottom border: the framed parts below start right under it (VS Code's modern layout).
 		'titlebar relative flex shrink-0 items-center select-none',
+		!visible && 'hidden',
 		focused
 			? 'bg-(--vscode-titleBar-activeBackground) text-(--vscode-titleBar-activeForeground)'
 			: 'inactive bg-(--vscode-titleBar-inactiveBackground) text-(--vscode-titleBar-inactiveForeground) [&>*]:opacity-60'
@@ -248,7 +258,13 @@
 			<!-- The overlay title bar's traffic lights (macOS draws them; we leave room). -->
 			<div class="h-full shrink-0" style:width="{platform.profile.leftInset}px"></div>
 		{:else}
-			<div class="grid h-full w-[35px] shrink-0 place-items-center text-(--vscode-titleBar-activeForeground)" aria-hidden="true">
+			<!-- svelte-ignore a11y_no_static_element_interactions (a pointer convenience, like a native title bar icon) -->
+			<div
+				class="grid h-full w-[35px] shrink-0 place-items-center text-(--vscode-titleBar-activeForeground)"
+				aria-hidden="true"
+				data-tauri-drag-region={iconCloses ? 'false' : undefined}
+				ondblclick={() => iconCloses && closeWindow()}
+			>
 				<Icon name="kingu" size={16} />
 			</div>
 			{#if menuBar === 'bar'}
@@ -303,6 +319,18 @@
 				{/if}
 			{/if}
 		{/each}
+		{#if shown('notifications')}
+			<button
+				class={[ACTION, 'relative']}
+				aria-expanded={notifications.centerVisible}
+				aria-label={notifications.doNotDisturb ? 'Notifications (Do Not Disturb)' : notifications.unread ? `Notifications: ${notifications.unread} new` : 'Notifications'}
+				title="Toggle Notifications"
+				onclick={() => notifications.toggleCenter()}
+			>
+				<Icon name={notifications.doNotDisturb ? 'bellSlash' : 'bell'} size={16} />
+				{#if notifications.unread && !notifications.doNotDisturb}<span class="absolute top-1 right-1 size-1.5 rounded-full bg-(--vscode-activityBarBadge-background)"></span>{/if}
+			</button>
+		{/if}
 		{#if shown('accounts')}
 			<button aria-label={`${account.label} · บัญชี AI`} title={`${account.label}\nคลิก: บัญชี AI (Claude, Codex) และทีม`} class={[ACTION, 'relative']} onclick={() => showAccountsMenu()}>
 				<Icon name="account" size={16} />

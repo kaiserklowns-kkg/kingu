@@ -122,6 +122,24 @@ export function showTabsList(enabled: boolean, hideCondition: string, terminalCo
 	return true;
 }
 
+/**
+ * `terminal.integrated.tabs.showActiveTerminal` / `tabs.showActions`: whether the panel title shows
+ * the active terminal's name, or the Split and Kill buttons. VS Code's "narrow" is a tabs list too
+ * narrow for names; Kingu's list has a fixed width, so a hidden list counts as narrow.
+ */
+export function panelTitleShows(setting: string, terminalCount: number, tabsListShown: boolean): boolean {
+	switch (setting) {
+		case 'always':
+			return true;
+		case 'never':
+			return false;
+		case 'singleTerminal':
+			return terminalCount === 1;
+		default:
+			return terminalCount === 1 || !tabsListShown;
+	}
+}
+
 /** `terminal.integrated.mouseWheelZoom`: the font size after one wheel step (6–100 like the setting's range). */
 export function zoomedFontSize(size: number, deltaY: number): number {
 	if (deltaY === 0) return size;

@@ -51,6 +51,8 @@ export type TaskMeta = {
 	parent?: string | null;
 	/** Unix ms its idle agent CLI was closed by hibernation (hibernation.ts); absent once resumed. */
 	hibernated_at?: number | null;
+	/** Orchestration: the task whose agent dispatched this one (`kingu task create`, Rust agent/orchestration.rs). */
+	dispatched_by?: string | null;
 };
 
 /**
@@ -181,6 +183,8 @@ export function newTask(
 		group?: string;
 		model?: string;
 		parent?: string;
+		/** The task whose agent dispatched it (orchestration). */
+		dispatchedBy?: string;
 	},
 	now: number
 ): TaskMeta {
@@ -204,7 +208,8 @@ export function newTask(
 		...(input.autoName ? { auto_name: true } : {}),
 		...(input.group ? { group: input.group } : {}),
 		...(input.model ? { attempt_model: input.model } : {}),
-		...(input.parent ? { parent: input.parent } : {})
+		...(input.parent ? { parent: input.parent } : {}),
+		...(input.dispatchedBy ? { dispatched_by: input.dispatchedBy } : {})
 	};
 }
 

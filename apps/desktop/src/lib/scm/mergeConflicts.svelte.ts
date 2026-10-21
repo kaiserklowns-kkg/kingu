@@ -226,7 +226,7 @@ export function installConflictCommands(): () => void {
 	};
 	const conflicted = () => {
 		const p = editors.active;
-		return !!p && !!scm.repo?.entries.some((e) => e.path === p && e.conflict);
+		return !!p && !!scm.entry(p)?.conflict;
 	};
 	const list = [
 		{ id: 'merge-conflict.accept.current', title: 'Merge Conflict: Accept Current', run: acceptAt('current') },

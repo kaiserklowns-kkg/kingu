@@ -34,6 +34,8 @@ export const debugger_ = {
 	'debugger.pickProcess': 'เลือกโปรเซสที่จะ attach',
 	'debugger.compound': 'compound',
 	'debugger.compoundMissing': 'compound "{name}" อ้างถึง configuration ที่ไม่มี: {missing}',
+	'debugger.pickLaunchFolder': 'เลือกโฟลเดอร์ใน workspace ของ launch.json',
+	'debugger.compoundAmbiguous': 'compound "{name}": มีหลายโฟลเดอร์ที่มี configuration ชื่อ {names} ให้ระบุโฟลเดอร์ในการอ้างอิง ("folder": ชื่อโฟลเดอร์)',
 	'debugger.noJump': 'debugger นี้กระโดดไปบรรทัดอื่นไม่ได้',
 	'debugger.noJumpTarget': 'กระโดดไปบรรทัด {line} ไม่ได้',
 	'debugger.setValue': 'ค่าใหม่ของ {name}',

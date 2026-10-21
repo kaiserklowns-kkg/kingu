@@ -34,6 +34,8 @@
 	import { readTextResource } from '#lib/settings/resources.ts';
 	import { isExternalKey } from './externalFiles';
 	import { getEntry } from './editorModels';
+	import { parseCompareKey } from './compare';
+	import { compareStore } from './compare.svelte';
 
 	let { active, onfail, reportLanguage = false }: { active: string | null; onfail: (key: string) => void; reportLanguage?: boolean } = $props();
 	const activeKey = $derived(active);
@@ -132,6 +134,14 @@
 		return read?.kind === 'text' ? read.content : '';
 	}
 
+	/** Any editor key as its open editor has it (unsaved edits included), else as stored. */
+	async function resourceCopy(key: string): Promise<string> {
+		const open = getEntry(key)?.model;
+		if (open && !open.isDisposed()) return open.getValue();
+		const read = await readTextResource(key, { acceptLarge: true }).catch(() => null);
+		return read?.kind === 'text' ? read.content : '';
+	}
+
 	async function workingCopy(m: typeof import('#lib/editor/monaco.ts'), rel: string): Promise<string> {
 		const open = m.monaco.editor.getModel(m.monaco.Uri.file(modelPath(rel)));
 		if (open) return open.getValue();
@@ -154,7 +164,7 @@
 			return { text, path: `${base.slug}/${base.orig}` };
 		}
 		// A rename diffs against the source's HEAD contents.
-		const entry = scm.repo?.entries.find((e) => e.path === rel);
+		const entry = scm.entry(rel);
 		const headPath = entry?.orig_path ?? rel;
 		const head = async () => ({ text: await invoke<string>('git_show_head', { rel: headPath }), path: headPath });
 		// Staged Changes (`indexdiff:`) compare HEAD with the index.
@@ -191,6 +201,19 @@
 				entry(local.left).then((text) => ({ text, path: `localhistory/${local.left}/${local.rel}` })),
 				local.right ? entry(local.right) : isExternalKey(local.rel) ? externalCopy(local.rel) : workingCopy(m, local.rel)
 			]);
+		}
+		// Compare editors: two files, a file's saved copy, or the clipboard ↔ the file as its editor has it.
+		const compare = parseCompareKey(key);
+		if (compare) {
+			const { left, right } = compare;
+			const leftText =
+				left.kind === 'clipboard'
+					? Promise.resolve(compareStore.clipboardText(left.id))
+					: left.kind === 'saved'
+						? readTextResource(left.key, { acceptLarge: true }).then((r) => (r.kind === 'text' ? r.content : ''))
+						: resourceCopy(left.key);
+			const leftPath = left.kind === 'clipboard' ? `clipboard/${left.id}` : left.kind === 'saved' ? `saved/${left.key}` : `left/${left.key}`;
+			return Promise.all([leftText.then((text) => ({ text, path: leftPath })), resourceCopy(right)]);
 		}
 		// Staged Changes: the index on the right.
 		if (isIndexDiffKey(key)) return Promise.all([original(key, rel), invoke<string | null>('scm_show_index', { rel }).then((t) => t ?? '')]);
@@ -236,7 +259,7 @@
 	// Re-read when a diff tab becomes active and whenever git status changes (save, focus, stage).
 	$effect(() => {
 		const key = activeKey;
-		void scm.repo;
+		void scm.entries;
 		if (key && isTaskDiffKey(key)) void adeTasks.stats[parseTaskDiffKey(key)?.slug ?? ''];
 		// A chat's working set changed (another edit, Keep, Undo).
 		if (key && isChatEditKey(key)) void chatEdits.views[parseChatEditKey(key)?.chatId ?? ''];

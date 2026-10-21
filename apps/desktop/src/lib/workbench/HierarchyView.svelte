@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { listWheel } from '#lib/workbench/listWheel.ts';
 	// Call Hierarchy / Type Hierarchy section of the Explorer (VS Code: references-view's tree with
 	// its title actions: switch direction, refresh, clear).
 	import { t } from '#lib/i18n/index.ts';
@@ -47,7 +48,7 @@
 		</div>
 	</div>
 	<p class="truncate px-5 pb-1 text-xs text-(--vscode-descriptionForeground)">{message}</p>
-	<div role="tree" aria-label={hierarchy.title} class="min-h-0 flex-1 overflow-y-auto">
+	<div role="tree" aria-label={hierarchy.title} class="min-h-0 flex-1 overflow-y-auto" use:listWheel>
 		{#each hierarchy.rows as row (row.node.id)}
 			{@const n = row.node}
 			<button

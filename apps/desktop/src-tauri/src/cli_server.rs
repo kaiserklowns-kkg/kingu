@@ -6,6 +6,7 @@
 //! `task.open` and `open` go to the window as a `kingu-cli:request` event, which answers through
 //! `cli_reply` (cliBridge.svelte.ts); `notify` posts a notification; `artifact.publish` and
 //! `artifact.list` are answered here (artifacts/, also the agent host's `artifact_publish` tool).
+//! A `task.create` from inside a task's worktree is a dispatched sub-task (agent/orchestration.rs).
 //!
 //! The bundled `kingu-cli` binary is linked as `<app data>/cli/bin/kingu`; that folder goes first
 //! on the PATH of Kingu's terminals and the agent host, so agents can run `kingu`. "Shell Command:
@@ -22,6 +23,7 @@ use kingu_cli::protocol::{self, ERR_BAD_REQUEST, ERR_FAILED, ERR_UNAVAILABLE, ER
 use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::agent::orchestration;
 use crate::i18n::msg::CliMsg;
 use crate::tr;
 
@@ -207,6 +209,7 @@ pub fn task_row(t: &crate::agent::tasks::TaskMeta) -> Value {
     "agent": t.agent,
     "pr_url": t.pr_url,
     "issue": t.issue.as_ref().map(|i| i.key.clone().unwrap_or_else(|| format!("#{}", i.number))),
+    "dispatched_by": t.dispatched_by,
     "created_at": t.created_at,
     "updated_at": t.updated_at,
   })
@@ -274,8 +277,13 @@ fn dispatch(app: &AppHandle, method: &str, params: &Value) -> Result<Value, RpcE
       Ok(json!({ "tasks": list.iter().map(task_row).collect::<Vec<_>>() }))
     }
     protocol::METHOD_TASK_CREATE => {
-      folder(app, params)?;
-      let checked = check_create(params)?;
+      let root = folder(app, params)?;
+      let mut checked = check_create(params)?;
+      // Orchestration: an agent in a task's worktree dispatches a sub-task, within the depth fence.
+      let max = app.path().app_config_dir().ok().and_then(|d| crate::settings::user_value(&d, orchestration::MAX_DEPTH_KEY));
+      let dispatch = orchestration::check_dispatch(&root, cwd_of(params).as_deref(), &tasks(&root)?, orchestration::resolve_max_depth(max.as_ref()))
+        .map_err(|e| rpc(ERR_FAILED, e))?;
+      checked["dispatchedBy"] = json!(dispatch.by);
       let focus = checked["open"] == json!(true);
       ask_window(app, cwd_of(params).as_deref(), method, checked, focus)
     }
@@ -289,7 +297,17 @@ fn dispatch(app: &AppHandle, method: &str, params: &Value) -> Result<Value, RpcE
     }
     protocol::METHOD_OPEN => {
       let checked = check_open(params)?;
-      ask_window(app, cwd_of(params).as_deref(), method, checked, true)
+      let path = PathBuf::from(checked["path"].as_str().unwrap_or_default());
+      // `kingu open <folder>` like `code <folder>`: the window that has it comes to the front, else
+      // (window.openFoldersInNewWindow `default` and `on`) it opens in a new window.
+      if checked["kind"] == "folder" {
+        if crate::windows::open_folder_from_cli(app, &path).map_err(|e| rpc(ERR_FAILED, e))? {
+          return Ok(Value::Null);
+        }
+        return ask_window(app, cwd_of(params).as_deref(), method, checked, true);
+      }
+      // A file goes to the window whose folder has it.
+      ask_window(app, Some(&path), method, checked, true)
     }
     protocol::METHOD_ARTIFACT_PUBLISH => {
       let (cwd, publish) = check_publish(params)?;

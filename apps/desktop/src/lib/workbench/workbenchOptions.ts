@@ -61,6 +61,90 @@ export function notificationsCorner(position: string): { top: boolean; left: boo
 	return { top: position === 'top-right', left: position === 'bottom-left' };
 }
 
+/**
+ * Where the notifications bell is (VS Code's NotificationsStatus and title bar action): the
+ * right-most status bar item, the left-most one for `bottom-left`, and for `top-right` the title
+ * bar when `workbench.notifications.showInTitleBar` is on (else nowhere).
+ */
+export function bellPlacement(position: string, showInTitleBar: boolean): 'statusLeft' | 'statusRight' | 'titleBar' | 'none' {
+	if (position === 'top-right') return showInTitleBar ? 'titleBar' : 'none';
+	return position === 'bottom-left' ? 'statusLeft' : 'statusRight';
+}
+
+/** `window.customTitleBarVisibility`: `windowed` (and `never`) hide Kingu's title bar in full screen. */
+export const customTitleBarShown = (visibility: string, fullscreen: boolean) => !fullscreen || visibility === 'auto';
+
+/** `window.closeWhenEmpty`: closing the last editor of a window without a folder closes the window. */
+export const closesWhenEmpty = (enabled: boolean, s: { hadEditors: boolean; editors: number; folderOpen: boolean }) => enabled && s.hadEditors && s.editors === 0 && !s.folderOpen;
+
+/** A theme-name pattern of `workbench.colorCustomizations` (`[Dark*]`): `*` and `?` wildcards, any case. */
+function themePattern(name: string): RegExp {
+	return new RegExp(`^${name.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`, 'i');
+}
+
+/**
+ * `workbench.colorCustomizations` for the theme `themeId`: the top-level colors, then every
+ * `[Theme Name]` block (several names as `[A][B]`, `*` wildcards) that names this theme, which
+ * win over the top level (VS Code's colorThemeData). Only string values are colors.
+ */
+export function colorCustomizationsFor(custom: unknown, themeId: string): Record<string, string> {
+	if (!custom || typeof custom !== 'object' || Array.isArray(custom)) return {};
+	const out: Record<string, string> = {};
+	const scoped: Record<string, unknown>[] = [];
+	for (const [key, value] of Object.entries(custom as Record<string, unknown>)) {
+		if (key.startsWith('[')) {
+			const names = [...key.matchAll(/\[([^\]]*)\]/g)].map((m) => m[1].trim());
+			if (value && typeof value === 'object' && names.some((n) => themePattern(n).test(themeId))) scoped.push(value as Record<string, unknown>);
+		} else if (typeof value === 'string') out[key] = value;
+	}
+	for (const block of scoped) for (const [k, v] of Object.entries(block)) if (typeof v === 'string') out[k] = v;
+	return out;
+}
+
+// --- Lists and trees (workbench.list.*, workbench.tree.*) --------------------------------------
+
+export type MultiSelectModifier = 'ctrlCmd' | 'alt';
+type Mods = Pick<MouseEvent, 'metaKey' | 'ctrlKey' | 'altKey'>;
+
+/** `workbench.list.multiSelectModifier`: the click modifier that adds a row to the selection. */
+export function isMultiSelect(e: Mods, modifier: MultiSelectModifier, mac: boolean): boolean {
+	return modifier === 'alt' ? e.altKey : mac ? e.metaKey : e.ctrlKey;
+}
+
+/** VS Code's "open to side" click takes the other modifier, so the two never clash (listService.ts). */
+export function isOpenToSide(e: Mods, modifier: MultiSelectModifier, mac: boolean): boolean {
+	return modifier === 'alt' ? (mac ? e.metaKey : e.ctrlKey) : e.altKey;
+}
+
+export type ClickMode = 'singleClick' | 'doubleClick';
+
+/**
+ * What a click on a row does: `workbench.list.openMode` for a file, `workbench.tree.expandMode`
+ * for a folder (`detail` is the click count). In doubleClick mode the second click of a double
+ * click toggles a folder (a file's double click is the dblclick handler's: it opens pinned).
+ */
+export function rowClick(opts: { isDir: boolean; detail: number; openMode: ClickMode; expandMode: ClickMode }): 'open' | 'toggle' | 'select' {
+	const mode = opts.isDir ? opts.expandMode : opts.openMode;
+	if (opts.detail >= 2) return opts.isDir && mode === 'doubleClick' && opts.detail === 2 ? 'toggle' : 'select';
+	if (mode === 'doubleClick') return 'select';
+	return opts.isDir ? 'toggle' : 'open';
+}
+
+/** `workbench.tree.renderIndentGuides`: left offsets (px, in the row) of the guides of a row at `depth`. */
+export function indentGuideOffsets(depth: number, indent: number, base = 8, twistie = 16): number[] {
+	return Array.from({ length: Math.max(0, depth) }, (_, d) => base + d * indent + twistie / 2);
+}
+
+/**
+ * `workbench.list.mouseWheelScrollSensitivity`, and `fastScrollSensitivity` while Alt is held: the
+ * scroll distance for a wheel delta, or null when the browser's own scrolling is already right.
+ */
+export function wheelDelta(delta: { x: number; y: number }, alt: boolean, sensitivity: number, fast: number): { x: number; y: number } | null {
+	const k = sensitivity * (alt ? fast : 1);
+	if (k === 1 || !Number.isFinite(k)) return null;
+	return { x: delta.x * k, y: delta.y * k };
+}
+
 /** `workbench.reduceMotion`: `auto` follows the OS (prefers-reduced-motion). */
 export const reducedMotion = (setting: string, osReduced: boolean) => setting === 'on' || (setting === 'auto' && osReduced);
 

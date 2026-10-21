@@ -6,7 +6,10 @@
 	import PaneSplitView from '#lib/terminal/PaneSplitView.svelte';
 	import { leaves } from '#lib/terminal/paneLayout.ts';
 	import { focusTerminal } from '#lib/terminal/registry.ts';
-	import { showTabsList } from '#lib/terminal/behaviour.ts';
+	import { panelTitleShows, showTabsList } from '#lib/terminal/behaviour.ts';
+	import { createTerminal } from '#lib/terminal/newTerminal.ts';
+	import { terminalFolderName } from '#lib/terminal/folders.ts';
+	import { workspace } from './workspace.svelte.ts';
 	import Icon, { type IconName } from './Icon.svelte';
 	import { editors } from './editors.svelte';
 	import { isMac, keyLabel } from './keys';
@@ -90,6 +93,10 @@
 		showTabsList(settings.get<boolean>('terminal.integrated.tabs.enabled'), settings.get<string>('terminal.integrated.tabs.hideCondition'), terminals.list.length, terminals.groups.length)
 	);
 	const tabsLeft = $derived(settings.get<string>('terminal.integrated.tabs.location') === 'left');
+	// terminal.integrated.tabs.showActions / showActiveTerminal: what the title shows next to New Terminal.
+	const showTerminalActions = $derived(panelTitleShows(settings.get<string>('terminal.integrated.tabs.showActions'), terminals.list.length, tabsShown));
+	const showActiveTerminal = $derived(panelTitleShows(settings.get<string>('terminal.integrated.tabs.showActiveTerminal'), terminals.list.length, tabsShown));
+	const activeTerminal = $derived(terminals.get(terminals.active));
 	const focusOnDoubleClick = $derived(settings.get<string>('terminal.integrated.tabs.focusMode') === 'doubleClick');
 	const splitKey = keyLabel(isMac ? 'cmd+\\' : 'ctrl+shift+5');
 
@@ -217,15 +224,23 @@
 				</button>
 			{/if}
 		{:else if layout.panelTab === 'terminal'}
-			<button aria-label="New Terminal" title="New Terminal" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => terminals.open()}>
+			{#if showActiveTerminal && activeTerminal}
+				<span class="flex max-w-48 min-w-0 items-center gap-1 px-1 text-xs text-(--vscode-panelTitle-activeForeground)" title={activeTerminal.run?.join(' ') ?? activeTerminal.title}>
+					<Icon name="terminal" size={14} />
+					<span class="truncate">{activeTerminal.title}</span>
+				</span>
+			{/if}
+			<button aria-label="New Terminal" title="New Terminal" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => void createTerminal()}>
 				<Icon name="plus" size={16} />
 			</button>
-			<button aria-label="Split Terminal" title="Split Terminal ({splitKey})" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => terminals.split()}>
-				<Icon name="layout" size={15} />
-			</button>
-			<button aria-label="Kill Terminal" title="Kill Terminal" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => terminals.kill(terminals.active)}>
-				<Icon name="trash" size={15} />
-			</button>
+			{#if showTerminalActions}
+				<button aria-label="Split Terminal" title="Split Terminal ({splitKey})" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => terminals.split()}>
+					<Icon name="layout" size={15} />
+				</button>
+				<button aria-label="Kill Terminal" title="Kill Terminal" class="grid size-6 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => terminals.kill(terminals.active)}>
+					<Icon name="trash" size={15} />
+				</button>
+			{/if}
 		{/if}
 		<button
 			aria-label={maximized ? t('panel.restore') : t('panel.maximize')}
@@ -258,6 +273,7 @@
 												run={t.run}
 												task={t.task}
 												cwdFrom={t.cwdFrom}
+												folder={t.folder}
 												flavor="ide"
 												keyLabels={{ split: splitKey }}
 												onfocus={() => (terminals.active = t.id)}
@@ -280,6 +296,8 @@
 						{#each ids as id, i (id)}
 							{@const t = terminals.get(id)}
 							{#if t}
+								<!-- A multi-root window shows each terminal's folder (VS Code's tab description). -->
+								{@const folderName = terminalFolderName(t.folder, workspace.folders)}
 								<li>
 									<button
 										class={['group flex h-[22px] w-full items-center gap-1.5 px-2 text-left', t.id === terminals.active ? 'bg-(--vscode-list-inactiveSelectionBackground)' : 'hover:bg-(--vscode-list-hoverBackground)']}
@@ -288,7 +306,9 @@
 									>
 										{#if ids.length > 1}<span class="w-2 shrink-0 font-mono text-(--vscode-descriptionForeground)" aria-hidden="true">{i === 0 ? '┌' : i === ids.length - 1 ? '└' : '├'}</span>{/if}
 										<Icon name="terminal" size={14} />
-										<span class="min-w-0 flex-1 truncate" title={t.run?.join(' ') ?? t.title}>{t.title}</span>
+										<span class="min-w-0 flex-1 truncate" title={[t.run?.join(' ') ?? t.title, folderName].filter(Boolean).join('\n')}
+											>{t.title}{#if folderName}<span class="ml-1.5 text-xs text-(--vscode-descriptionForeground)">{folderName}</span>{/if}</span
+										>
 										<span
 											role="button"
 											tabindex="-1"

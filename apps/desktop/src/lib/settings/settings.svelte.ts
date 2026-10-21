@@ -8,6 +8,7 @@ import { parseSettingsText, setProperty } from './jsonc';
 import { resolveSettings, settingProblems, type Resolved, type SettingProblem, type SettingScope } from './registry';
 import { settingSchemas } from './schemas.svelte';
 import { isApplicationScoped, profileUserValues } from './profiles';
+import { isLanguageOverridable, languageSchemas, languageValues } from './languageOverrides';
 
 type SettingsFile = { path: string; content: string | null };
 /** The files behind the layers: `defaultUser` is the Default profile's settings.json (profiles.ts). */
@@ -37,6 +38,15 @@ class Settings {
 	 * the folder's own `.kingu/settings.json` (VS Code: workspace file < folder settings). */
 	workspaceFile = $state.raw<Record<string, unknown>>({});
 	readonly resolved: Map<string, Resolved> = $derived(resolveSettings(this.#userValues, { ...this.workspaceFile, ...this.workspace.values }, settingSchemas.all, this.repo.values));
+	/** Folder settings of the other root folders of a multi-root window (each one's
+	 * `.kingu/settings.json`), by folder path. Like VS Code's folder settings they apply to that
+	 * folder's files only (what a language server asks for a resource of it); the first folder's
+	 * file is `workspace`. */
+	folders = $state.raw<Record<string, Layer>>({});
+	readonly #folderResolved: Map<string, Map<string, Resolved>> = $derived(
+		new Map(Object.entries(this.folders).map(([path, layer]) => [path, resolveSettings(this.#userValues, { ...this.workspaceFile, ...layer.values }, settingSchemas.all)]))
+	);
+	#folderPaths: string[] = [];
 	/** Values the files set but that are ignored (wrong type, out of range, user-only in the workspace file). */
 	readonly problems: SettingProblem[] = $derived([
 		...settingProblems(this.user.values, 'user', settingSchemas.all),
@@ -57,9 +67,87 @@ class Settings {
 		return (this.resolved.get(id)?.value ?? settingSchemas.byId.get(id)?.default) as T;
 	}
 
+	/** Each language's resolved settings, computed on first use; a new (empty) cache whenever a layer changes. */
+	readonly #languageCache: Map<string, Map<string, Resolved>> = $derived.by(() => {
+		void this.resolved;
+		return new Map();
+	});
+
+	#forLanguage(language: string): Map<string, Resolved> {
+		const cache = this.#languageCache;
+		let resolved = cache.get(language);
+		if (!resolved) {
+			const byId = settingSchemas.byId;
+			const overridable = (id: string) => {
+				const s = byId.get(id);
+				return !!s && isLanguageOverridable(s);
+			};
+			resolved = resolveSettings(
+				languageValues(this.#userValues, language, overridable),
+				languageValues({ ...this.workspaceFile, ...this.workspace.values }, language, overridable),
+				languageSchemas(settingSchemas.all, language),
+				languageValues(this.repo.values, language, overridable)
+			);
+			cache.set(language, resolved);
+		}
+		return resolved;
+	}
+
+	/**
+	 * The effective value for a file of `language`: each layer's `[language]` blocks over its own
+	 * values, and the built-in language defaults under the user's (VS Code's overrideIdentifier).
+	 * Settings that cannot be overridden, and no language, read like `get`.
+	 */
+	getFor<T = unknown>(id: string, language: string | undefined): T {
+		if (!language) return this.get<T>(id);
+		const r = this.#forLanguage(language).get(id);
+		return (r ? r.value : this.get<T>(id)) as T;
+	}
+
+	/** `getFor` bound to one language, for the mappings that take a `get`. */
+	getterFor(language: string | undefined): <T = unknown>(id: string) => T {
+		return <T>(id: string) => this.getFor<T>(id, language);
+	}
+
 	/** The value set in one scope's file, or undefined. */
 	inspect(id: string, scope: SettingScope): unknown {
 		return this.layer(scope).values[id];
+	}
+
+	/** The settings in effect for a file of root folder `folder` (its path): that folder's file over
+	 * the workspace file's settings over the user's. The first folder (or none) is `resolved`. */
+	resolvedIn(folder: string | null | undefined): Map<string, Resolved> {
+		return (folder && this.#folderResolved.get(folder)) || this.resolved;
+	}
+
+	/** The value root folder `folder`'s own settings file sets (the first folder's: `workspace`). */
+	inspectFolder(id: string, folder: string): unknown {
+		return this.folders[folder]?.values[id];
+	}
+
+	/** The window's root folders changed: reads the folder settings of every folder but the first. */
+	setFolders(paths: readonly string[]) {
+		this.#folderPaths = paths.slice(1);
+		void this.#loadFolders();
+	}
+
+	async #loadFolders() {
+		const paths = this.#folderPaths;
+		const layers = await Promise.all(
+			paths.map(async (folder) => {
+				const prev = this.folders[folder] ?? emptyLayer();
+				try {
+					return parseLayer(await invoke<SettingsFile>('settings_read_folder', { folder }), prev);
+				} catch (e) {
+					return { ...prev, error: String(e) };
+				}
+			})
+		);
+		if (paths !== this.#folderPaths) return;
+		const same = (a: Layer, b: Layer | undefined) => !!b && a.path === b.path && a.text === b.text && a.error === b.error;
+		const next = Object.fromEntries(paths.map((p, i) => [p, same(layers[i], this.folders[p]) ? this.folders[p] : layers[i]]));
+		const changed = paths.length !== Object.keys(this.folders).length || paths.some((p) => next[p] !== this.folders[p]);
+		if (changed) this.folders = next;
 	}
 
 	/** Where the effective value comes from. */
@@ -83,6 +171,7 @@ class Settings {
 		if (!same(workspace, this.workspace)) this.workspace = workspace;
 		if (!same(repo, this.repo)) this.repo = repo;
 		if (!same(defaultUser, this.defaultUser)) this.defaultUser = defaultUser;
+		if (this.#folderPaths.length) await this.#loadFolders();
 		this.loaded = true;
 	}
 

@@ -26,6 +26,7 @@
 	import { emitOutput, markTaskSpawned, registerTerminal, taskSpawned, touchTerminal } from './registry.ts';
 	import type { TaskSpawn } from './registry.ts';
 	import { bindAdeTerminal, copiedSelection, type AdeBinding } from './adeTerminal.svelte.ts';
+	import { INSERT_EVENT } from '#lib/voice/target.ts';
 	import { quickCommandInput, quickCommands } from './adeTerminalOptions.ts';
 	import { isBuiltin, terminalMenu, type MenuState, type TerminalFlavor } from './terminalMenu.ts';
 
@@ -34,7 +35,8 @@
 	 * replayed, so the shell outlives a webview reload, a folder switch and (with the kingu-ptyd
 	 * daemon) an app restart; unmounting never kills it, closing the tab does (the terminal stores). `slug`: start in that task's worktree instead of the folder root.
 	 * `run`: a command typed into a new shell (an agent CLI, a Snap task); Rust quotes every argument.
-	 * `cwdFrom`: a split pane starts in that terminal's current directory. `flavor`: the IDE panel
+	 * `cwdFrom`: a split pane starts in that terminal's current directory. `folder`: the root folder
+	 * of a multi-root window it starts in (Rust checks it is one). `flavor`: the IDE panel
 	 * (VS Code behaviour) or an ADE terminal (Orca behaviour) for find and the context menu.
 	 * `task`: a task terminal (tasks.svelte.ts): Rust runs the task instead of a shell, once; it
 	 * starts even while the panel is hidden (presentation.reveal never).
@@ -45,6 +47,7 @@
 		run,
 		task,
 		cwdFrom,
+		folder,
 		floatingCwd,
 		flavor = 'ide',
 		menuState,
@@ -61,6 +64,7 @@
 		run?: string[];
 		task?: TaskSpawn;
 		cwdFrom?: string;
+		folder?: string;
 		/** A floating workspace terminal, started in that directory setting (`~` = home). */
 		floatingCwd?: string;
 		flavor?: TerminalFlavor;
@@ -285,7 +289,10 @@
 				// kingu.terminal.scopeHistoryByWorktree: an ADE shell keeps its own history per worktree.
 				scopeHistory: flavor === 'ade' && settings.get<boolean>('kingu.terminal.scopeHistoryByWorktree') !== false
 			};
-			invoke<Attached>('pty_spawn', { key, cols: t.cols, rows: t.rows, onData: channel(), slug: slug ?? null, run: run ?? null, terminal, cwdFrom: cwdFrom ?? null, floatingCwd: floatingCwd ?? null, task: launch ?? null })
+			// `${workspaceFolder}`, `${env:…}`, … in terminal.integrated.cwd resolve for this terminal's folder (VS Code).
+			const cwd = terminal.cwd?.includes('${') ? import('./newTerminal.ts').then((m) => m.terminalCwdSetting(folder)) : Promise.resolve(terminal.cwd);
+			cwd
+				.then((resolved) => invoke<Attached>('pty_spawn', { key, cols: t.cols, rows: t.rows, onData: channel(), slug: slug ?? null, run: run ?? null, terminal: { ...terminal, cwd: resolved }, cwdFrom: cwdFrom ?? null, folder: folder ?? null, floatingCwd: floatingCwd ?? null, task: launch ?? null }))
 				.then((a) => (connected(a), void system.refresh()))
 				.catch(failed);
 		}
@@ -359,6 +366,14 @@
 				.catch((err) => status.flash(`วางรูปไม่ได้: ${err}`, 8000));
 		};
 		host.addEventListener('paste', onPaste, true);
+		// Voice dictation's text (voice/target.ts) arrives as a paste.
+		const onDictation = (e: Event) => {
+			const text = (e as CustomEvent<{ text?: unknown }>).detail?.text;
+			if (typeof text !== 'string' || !live) return;
+			e.preventDefault();
+			void pasteText(text);
+		};
+		host.addEventListener(INSERT_EVENT, onDictation);
 		// Files dropped from Finder are typed as paths (images as a bracketed paste, like Orca).
 		const stopDrop = onFileDrop(host, {
 			drop: (paths) => {
@@ -476,6 +491,7 @@
 			host.removeEventListener('auxclick', onAuxClick);
 			host.removeEventListener('wheel', onWheel, { capture: true });
 			host.removeEventListener('paste', onPaste, true);
+			host.removeEventListener(INSERT_EVENT, onDictation);
 			stopDrop();
 			unregister();
 			t.textarea?.removeEventListener('focus', onFocus);

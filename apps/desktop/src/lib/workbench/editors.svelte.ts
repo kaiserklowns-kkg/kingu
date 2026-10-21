@@ -17,6 +17,8 @@ export type Reveal = { line: number; column: number; endColumn?: number; focus?:
 
 /** What a group's editor host exposes to commands that act on "the active editor". */
 export type EditorHostHandle = {
+	/** Keeps the shown editor's scroll, cursor and folding (editorModels' view states) before they are saved. */
+	saveViewState?: () => void;
 	gotoLine: (line: number, column?: number) => void;
 	/** The selected text; with `nearestWord`, the word at the cursor when nothing is selected (search.seedWithNearestWord). */
 	selectionText: (nearestWord?: boolean) => string;
@@ -137,6 +139,18 @@ class Editors {
 		return () => {
 			if (this.#hosts.get(id) === handle) this.#hosts.delete(id);
 		};
+	}
+
+	/** Every group's shown editor records its view state (the workspace's editors are about to be saved). */
+	flushViewStates() {
+		for (const host of this.#hosts.values()) host.saveViewState?.();
+	}
+
+	/** The workspace's saved editor area (editorRestore.svelte.ts): its groups, grid and editors in place of these. */
+	restoreModel(model: G.GroupsModel) {
+		this.model = model;
+		for (const p of this.#dirty) G.setDirty(this.model, p, true);
+		this.focusRequest = null;
 	}
 
 	/** The editor of the Agents layout's active file tab, while it is mounted. */
@@ -339,6 +353,12 @@ class Editors {
 	moveEditor(from: number, path: string, to: number, index?: number) {
 		G.moveEditor(this.model, from, path, to, index);
 		this.focusRequest = to;
+	}
+
+	/** A tab dropped on an edge of a group's editor: a new group on that side shows it (workbench.editor.splitOnDragAndDrop). */
+	moveToNewGroup(from: number, path: string, beside: number, direction: G.SplitDirection) {
+		const id = G.addGroup(this.model, beside, direction);
+		if (id !== null) this.moveEditor(from, path, id);
 	}
 
 	moveActiveEditorToNextGroup() {

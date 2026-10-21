@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { activeProfileName, profileUserValues } from './profiles';
+import { activeProfileName, profileUserValues, templateContents } from './profiles';
 import { SETTINGS } from './registry';
 import { renderWindowTitle } from '#lib/workbench/title.ts';
 
@@ -22,5 +22,15 @@ describe('profiles', () => {
 		const tpl = '${rootName}${separator}${profileName}${separator}${appName}';
 		expect(renderWindowTitle(tpl, { rootName: 'kingu', profileName: 'Work', app: 'Kingu' })).toBe('kingu — Work — Kingu');
 		expect(renderWindowTitle(tpl, { rootName: 'kingu', profileName: '', app: 'Kingu' })).toBe('kingu — Kingu');
+	});
+});
+
+describe('Import Profile', () => {
+	test('lists what a template holds', () => {
+		expect(templateContents({ name: 'x', settings: true, keybindings: false, snippets: 2 })).toEqual([
+			{ key: 'profiles.partSettings', count: 1 },
+			{ key: 'profiles.partSnippets', count: 2 }
+		]);
+		expect(templateContents({ name: 'x', settings: false, keybindings: false, snippets: 0 })).toEqual([]);
 	});
 });

@@ -16,5 +16,17 @@ export const profiles = {
 	'profiles.delete': 'ลบ',
 	'profiles.switched': 'Profile: {name}',
 	'profiles.failed': 'Profile: {error}',
-	'profiles.noOthers': 'ยังไม่มี profile อื่นนอกจาก Default'
+	'profiles.noOthers': 'ยังไม่มี profile อื่นนอกจาก Default',
+	'profiles.exportPlaceholder': 'เลือก profile ที่จะส่งออก',
+	'profiles.exportTitle': 'ส่งออก Profile',
+	'profiles.importTitle': 'นำเข้า Profile',
+	'profiles.fileFilter': 'Profile',
+	'profiles.exported': 'ส่งออก profile {name} ไปที่ {path} แล้ว',
+	'profiles.importPlaceholder': 'ชื่อของ profile ที่นำเข้า',
+	'profiles.importHint': 'สร้าง profile "{name}" พร้อม {contents}',
+	'profiles.importNothing': 'ไม่มีอะไรให้นำเข้า',
+	'profiles.nameTaken': 'มี profile ชื่อ "{name}" อยู่แล้ว',
+	'profiles.partSettings': 'settings',
+	'profiles.partKeybindings': 'คีย์ลัด',
+	'profiles.partSnippets': 'snippets {count} ไฟล์'
 } satisfies Record<keyof typeof en, string>;

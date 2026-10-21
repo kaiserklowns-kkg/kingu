@@ -1,10 +1,15 @@
 // Which layout the window shows: the IDE workbench or the Agents layout (VS Code's Agents window,
 // in-window here). Switching only flips `mode`: the workbench stays mounted (hidden), so editors,
 // terminals and the workbench layout keep their state; the Agents layout keeps its own parts.
+// The layout, the session shown and what was read are kept per workspace (workspaceStorage), so
+// a new window starts in the workbench; the side bars' widths are shared by every window.
 
 import { SessionHistory, type AgentsFilter, type AppMode } from './titlebar';
+import { workspaceStorage } from './workspaceStorage.svelte';
 
 const KEY = 'kingu.appMode';
+/** What each workspace keeps (the rest of Saved is shared). */
+const WORKSPACE_KEYS = ['mode', 'activeSession', 'sessionsVisible', 'panelVisible', 'viewedAt'] as const;
 
 type Saved = { mode?: AppMode; activeSession?: string | null; sessionsVisible?: boolean; panelVisible?: boolean; sessionsWidth?: number; panelWidth?: number; viewedAt?: Record<string, number> };
 
@@ -36,32 +41,43 @@ class AppModeStore {
 
 	constructor() {
 		const s = readSaved();
-		if (s.mode === 'agents' || s.mode === 'workbench') this.mode = s.mode;
-		if (typeof s.activeSession === 'string') this.activeSession = s.activeSession;
-		if (typeof s.sessionsVisible === 'boolean') this.sessionsVisible = s.sessionsVisible;
-		if (typeof s.panelVisible === 'boolean') this.panelVisible = s.panelVisible;
 		if (typeof s.sessionsWidth === 'number') this.sessionsWidth = s.sessionsWidth;
 		if (typeof s.panelWidth === 'number') this.panelWidth = s.panelWidth;
-		if (s.viewedAt && typeof s.viewedAt === 'object') this.viewedAt = s.viewedAt;
-		if (this.activeSession) this.#history.record(this.activeSession);
+		// An older build kept the rest here for every window: it goes to the first workspace opened.
+		workspaceStorage.register(KEY, WORKSPACE_KEYS, (saved) => this.#show((saved ?? {}) as Saved), s);
 		$effect.root(() => {
+			$effect(() => {
+				const snapshot: Saved = { sessionsWidth: this.sessionsWidth, panelWidth: this.panelWidth };
+				try {
+					localStorage.setItem(KEY, JSON.stringify(snapshot));
+				} catch {
+					// Storage can be unavailable; the widths then reset on the next launch.
+				}
+			});
 			$effect(() => {
 				const snapshot: Saved = {
 					mode: this.mode,
 					activeSession: this.activeSession,
 					sessionsVisible: this.sessionsVisible,
 					panelVisible: this.panelVisible,
-					sessionsWidth: this.sessionsWidth,
-					panelWidth: this.panelWidth,
 					viewedAt: { ...this.viewedAt }
 				};
-				try {
-					localStorage.setItem(KEY, JSON.stringify(snapshot));
-				} catch {
-					// Storage can be unavailable; the mode then resets on the next launch.
-				}
+				if (workspaceStorage.scope !== undefined) workspaceStorage.save(KEY, snapshot);
 			});
 		});
+	}
+
+	/** Another workspace in this window (or the first one): its layout and sessions, else the defaults. */
+	#show(s: Saved) {
+		this.mode = s.mode === 'agents' ? 'agents' : 'workbench';
+		this.activeSession = typeof s.activeSession === 'string' ? s.activeSession : null;
+		this.sessionsVisible = typeof s.sessionsVisible === 'boolean' ? s.sessionsVisible : true;
+		this.panelVisible = typeof s.panelVisible === 'boolean' ? s.panelVisible : true;
+		this.viewedAt = s.viewedAt && typeof s.viewedAt === 'object' ? s.viewedAt : {};
+		this.filter = 'all';
+		this.#history = new SessionHistory();
+		if (this.activeSession) this.#history.record(this.activeSession);
+		this.#sync();
 	}
 
 	get isAgents() {

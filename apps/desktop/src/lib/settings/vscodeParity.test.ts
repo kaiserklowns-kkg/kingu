@@ -42,10 +42,10 @@ export const ENUM_SUBSETS: Readonly<Record<string, string>> = {
 
 /** Kingu settings with a VS Code key that VS Code no longer registers (kept for older settings.json files). */
 export const LEGACY_KEYS: Readonly<Record<string, string>> = {
-	'terminal.integrated.shell.osx': 'VS Code replaced it with terminal profiles, which Kingu does not have yet',
-	'terminal.integrated.shell.linux': 'VS Code replaced it with terminal profiles, which Kingu does not have yet',
-	'terminal.integrated.shellArgs.osx': 'VS Code replaced it with terminal profiles, which Kingu does not have yet',
-	'terminal.integrated.shellArgs.linux': 'VS Code replaced it with terminal profiles, which Kingu does not have yet',
+	'terminal.integrated.shell.osx': 'VS Code replaced it with terminal profiles; Kingu still uses it when terminal.integrated.defaultProfile.* names no profile',
+	'terminal.integrated.shell.linux': 'VS Code replaced it with terminal profiles; Kingu still uses it when terminal.integrated.defaultProfile.* names no profile',
+	'terminal.integrated.shellArgs.osx': 'VS Code replaced it with terminal profiles; Kingu still uses it when terminal.integrated.defaultProfile.* names no profile',
+	'terminal.integrated.shellArgs.linux': 'VS Code replaced it with terminal profiles; Kingu still uses it when terminal.integrated.defaultProfile.* names no profile',
 	'workbench.panel.alignment': 'VS Code dropped it for workbench.panel.defaultLocation and the layout commands; Kingu still aligns the bottom panel with it'
 };
 
@@ -99,7 +99,8 @@ describe('VS Code settings parity', () => {
 		for (const s of vscodeKeyed) {
 			const ours = enumOf(s);
 			const theirs = VSCODE[s.id]?.enum;
-			if (!theirs || !ours || /ColorTheme$/.test(s.id)) continue;
+			// Theme pickers list the installed themes (VS Code's icon theme enum is only `null` without them).
+			if (!theirs || !ours || /ColorTheme$/.test(s.id) || s.id === 'workbench.iconTheme') continue;
 			if (ENUM_SUBSETS[s.id]) {
 				if (!ours.every((v) => theirs.includes(v))) problems.push(`${s.id}: ${JSON.stringify(ours)} is not a subset of ${JSON.stringify(theirs)}`);
 			} else if (JSON.stringify(ours) !== JSON.stringify(theirs)) problems.push(`${s.id}: ${JSON.stringify(ours)} vs VS Code ${JSON.stringify(theirs)}`);

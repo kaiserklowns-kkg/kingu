@@ -6,6 +6,7 @@ import type * as Monaco from 'monaco-editor';
 import type { ITerminalOptions } from '@xterm/xterm';
 import { themeSettingFor } from '../workbench/workbenchOptions';
 import { DIFF_EDITOR_OPTION_PATHS, EDITOR_CONFIG_SETTINGS, EDITOR_KINGU_SETTINGS, EDITOR_OPTION_PATHS } from './editorOptionMap';
+import { TERMINAL_SETTINGS } from './vscode/terminal';
 
 export type Get = <T = unknown>(id: string) => T;
 
@@ -144,6 +145,8 @@ export function terminalOptionsFrom(get: Get): ITerminalOptions {
 		rightClickSelectsWord: get<string>('terminal.integrated.rightClickBehavior') === 'selectWord',
 		drawBoldTextInBrightColors: get<boolean>('terminal.integrated.drawBoldTextInBrightColors'),
 		minimumContrastRatio: get<number>('terminal.integrated.minimumContrastRatio'),
+		rescaleOverlappingGlyphs: get<boolean>('terminal.integrated.rescaleOverlappingGlyphs'),
+		customGlyphs: get<boolean>('terminal.integrated.customGlyphs'),
 		scrollSensitivity: get<number>('terminal.integrated.mouseWheelScrollSensitivity'),
 		fastScrollSensitivity: get<number>('terminal.integrated.fastScrollSensitivity'),
 		smoothScrollDuration: get<boolean>('terminal.integrated.smoothScrolling') ? TERMINAL_SMOOTH_SCROLL_MS : 0,
@@ -160,6 +163,8 @@ export function shellPlatform(): ShellPlatform {
 /** What pty_spawn gets for a new shell (lib.rs TerminalSettings): `null` fields keep Rust's defaults ($SHELL -l in the folder). */
 export type ShellSettings = {
 	shell: string | null;
+	/** The default profile's `path` candidates (a bare name is looked up on PATH); they win over `shell`. */
+	paths: string[];
 	args: string[];
 	/** `terminal.integrated.env.*`: a `null` value removes the variable. */
 	env: Record<string, string | null>;
@@ -171,11 +176,47 @@ export type ShellSettings = {
 	splitCwd: string;
 };
 
-export function shellFrom(get: Get, platform: ShellPlatform, locale: string | null = typeof navigator !== 'undefined' ? navigator.language : null): ShellSettings {
+type TerminalProfile = { path?: unknown; args?: unknown; env?: unknown } | null;
+
+/**
+ * A terminal profile by name (`terminal.integrated.profiles.<platform>`): the user's map over
+ * VS Code's default profiles (VS Code merges an object setting with its default), where `null`
+ * removes a default profile.
+ */
+function profileNamed(get: Get, platform: ShellPlatform, name: string): TerminalProfile | undefined {
+	const id = `terminal.integrated.profiles.${platform}`;
+	const defaults = (TERMINAL_SETTINGS.find((s) => s.id === id)?.default ?? {}) as Record<string, TerminalProfile>;
+	const user = get<Record<string, TerminalProfile> | undefined>(id);
+	const all: Record<string, TerminalProfile> = { ...defaults, ...(user && typeof user === 'object' ? user : {}) };
+	return Object.hasOwn(all, name) ? all[name] : undefined;
+}
+
+/**
+ * The shell a new terminal starts (VS Code: the default profile, then terminal.integrated.env.*).
+ * `terminal.integrated.defaultProfile.<platform>` names a profile with a `path` (a name looked up
+ * on PATH, or a list tried in turn), `args` and `env`; without one, the legacy
+ * `terminal.integrated.shell.*` / `shellArgs.*` apply. All of them are user-only settings.
+ */
+export function shellFrom(
+	get: Get,
+	platform: ShellPlatform,
+	locale: string | null = typeof navigator !== 'undefined' ? navigator.language : null
+): ShellSettings {
+	const name = get<unknown>(`terminal.integrated.defaultProfile.${platform}`);
+	const profile = typeof name === 'string' && name ? profileNamed(get, platform, name) : undefined;
+	const rawPaths = profile?.path;
+	const paths = (Array.isArray(rawPaths) ? rawPaths : [rawPaths]).filter((p): p is string => typeof p === 'string' && p.trim() !== '');
+	const useProfile = paths.length > 0;
+	const env: Record<string, string | null> = { ...get<Record<string, string | null>>(`terminal.integrated.env.${platform}`) };
+	if (useProfile && profile?.env && typeof profile.env === 'object') {
+		for (const [k, v] of Object.entries(profile.env as Record<string, unknown>)) if (typeof v === 'string' || v === null) env[k] = v;
+	}
+	const profileArgs = Array.isArray(profile?.args) ? (profile.args as unknown[]).filter((a): a is string => typeof a === 'string') : [];
 	return {
 		shell: get<string>(`terminal.integrated.shell.${platform}`).trim() || null,
-		args: [...get<string[]>(`terminal.integrated.shellArgs.${platform}`)],
-		env: { ...get<Record<string, string | null>>(`terminal.integrated.env.${platform}`) },
+		paths,
+		args: useProfile ? profileArgs : [...get<string[]>(`terminal.integrated.shellArgs.${platform}`)],
+		env,
 		cwd: get<string>('terminal.integrated.cwd').trim() || null,
 		inheritEnv: get<boolean>('terminal.integrated.inheritEnv'),
 		detectLocale: get<string>('terminal.integrated.detectLocale'),

@@ -4,9 +4,10 @@
 // every view that showed the old folder.
 //
 // A workspace has no folder, one folder, or several root folders (multi-root, VS Code's
-// `.code-workspace` `folders`). `root` is the first folder: everything that works on "the
-// folder" (Source Control, tasks, the ADE, language servers) uses it, and its files have
-// relative paths. Files of the other root folders have absolute paths (workspaceFolders.ts).
+// `.code-workspace` `folders`). `root` is the first folder: its files have relative paths, files
+// of the other root folders absolute ones (workspaceFolders.ts). Source Control, language
+// servers, tasks and terminals cover every folder; the ADE and workspace settings work on the
+// first one.
 
 import { invoke } from '@tauri-apps/api/core';
 import { homeDir } from '@tauri-apps/api/path';
@@ -19,8 +20,9 @@ import { parseSettingsText } from '#lib/settings/jsonc.ts';
 import { listenWindow, windowLabel } from '#lib/workbench/windowEvents.ts';
 import { externalKey } from './externalFiles';
 import { isWorkspaceFile, parseCodeWorkspace, workspaceName, type CodeWorkspace } from './workspaceFile';
-import { folderOf, keyForPath, watcherPaths, within, workspaceFileText, workspaceLabel, type WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
+import { folderOf, keyForPath, watcherPaths, within, workspaceFileText, workspaceLabel, workspaceStateKey, type WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 import { editors } from './editors.svelte';
+import { saveEditorLayout } from './editorRestore.svelte';
 import { explorer } from './explorer.svelte';
 import { ideChanges, recentLabel, workspaceFiles } from './fileTree';
 import type { RecentFolder } from './menus';
@@ -28,7 +30,6 @@ import { navigation } from './navigation.svelte';
 import { quick, type PickItem } from './quick.svelte';
 import { scm } from './scm.svelte';
 import { search } from './search.svelte';
-import { status } from './status.svelte';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
 
@@ -42,6 +43,8 @@ type WorkspaceState = {
 	file: string | null;
 	untitled: string | null;
 	identity: string | null;
+	/** An empty window's id (an older Rust side sends none). */
+	empty?: string | null;
 	open_files?: string[];
 };
 
@@ -61,6 +64,8 @@ class Workspace {
 	untitled = $state<string | null>(null);
 	/** The workspace's identity: per identity the window keeps its terminals and open editors. */
 	identity = $state<string | null>(null);
+	/** An empty window's own id (VS Code's empty workspace): its layout and terminals are its own. */
+	empty = $state<string | null>(null);
 	/** This window's label (`main`, `window-1`, …). */
 	window = $state('main');
 	name = $derived(this.root ? this.root.split('/').pop() || this.root : '');
@@ -68,8 +73,11 @@ class Workspace {
 	isMultiRoot = $derived(this.folders.length > 1);
 	/** The window title's workspace part (VS Code's `${rootName}`). */
 	title = $derived(workspaceLabel(this.folders, this.workspaceFile, this.untitled !== null, (name) => t('workspaces.workspaceSuffix', { name }), t('workspaces.untitled')));
-	/** What per-workspace state (terminals, open editors) is stored under: the folder itself for a single folder. */
-	stateKey = $derived(this.identity && this.identity !== this.root ? this.identity : this.root);
+	/**
+	 * What per-workspace state (layout, terminals, open editors) is stored under: the folder itself
+	 * for a single folder, `empty:<id>` for an empty window (null from an older Rust side).
+	 */
+	stateKey = $derived(workspaceStateKey(this.identity, this.root, this.empty));
 
 	#listeners = new Set<Listener>();
 	#raw = new Set<Listener>();
@@ -120,6 +128,11 @@ class Workspace {
 		this.workspaceFile = info.file;
 		this.untitled = info.untitled;
 		this.identity = info.identity;
+		this.empty = info.empty ?? null;
+		// Language servers know every root folder (didChangeWorkspaceFolders when one is added or removed).
+		lsp.setFolders(this.folders);
+		// Each other root folder's own settings, for its files (language servers ask by resource).
+		settings.setFolders(this.folders.map((f) => f.path));
 	}
 
 	async loadRecent() {
@@ -145,7 +158,7 @@ class Workspace {
 	async openFile() {
 		let picked: string[];
 		try {
-			picked = await invoke<string[]>('external_pick_files', { title: t('workspaces.openFileTitle') });
+			picked = await invoke<string[]>('external_pick_files', { title: t('workspaces.openFileTitle'), defaultPath: dialogDefaultPath() });
 		} catch (e) {
 			notifications.error(t('workspaces.openFileFailed', { error: String(e) }));
 			return;
@@ -166,7 +179,7 @@ class Workspace {
 
 	/** File: Open Workspace from File… */
 	async pickWorkspaceFile() {
-		const [file] = await invoke<string[]>('external_pick_files', { workspace: true, title: t('workspaces.openWorkspaceTitle') }).catch((e) => {
+		const [file] = await invoke<string[]>('external_pick_files', { workspace: true, title: t('workspaces.openWorkspaceTitle'), defaultPath: dialogDefaultPath() }).catch((e) => {
 			notifications.error(t('workspaces.openFileFailed', { error: String(e) }));
 			return [];
 		});
@@ -258,7 +271,7 @@ class Workspace {
 	async addFolderToWorkspace(paths?: string[]) {
 		let dirs = paths;
 		if (!dirs) {
-			const picked = await open({ directory: true, multiple: true, title: t('workspaces.addFolderTitle'), defaultPath: this.root ?? (this.home || undefined) });
+			const picked = await open({ directory: true, multiple: true, title: t('workspaces.addFolderTitle'), defaultPath: this.root ?? (dialogDefaultPath() ?? (this.home || undefined)) });
 			dirs = Array.isArray(picked) ? picked : typeof picked === 'string' ? [picked] : [];
 		}
 		dirs = dirs.filter((d) => !this.folders.some((f) => f.path === d));
@@ -310,6 +323,8 @@ class Workspace {
 			return;
 		}
 		search.clear();
+		// Each root folder has its own repositories.
+		void scm.rescan();
 		clientLog('info', `workspace folders: ${this.folders.map((f) => f.path).join(', ')}`);
 		void this.loadRecent();
 	}
@@ -321,7 +336,7 @@ class Workspace {
 
 	/** `workbench.action.files.openFolder`: the native folder picker. Several folders picked open as one multi-root workspace. */
 	async pickFolder(opts: { newWindow?: boolean } = {}) {
-		const picked = await open({ directory: true, multiple: true, title: t('workspaces.openFolderTitle'), defaultPath: this.root ?? (this.home || undefined) });
+		const picked = await open({ directory: true, multiple: true, title: t('workspaces.openFolderTitle'), defaultPath: this.root ?? (dialogDefaultPath() ?? (this.home || undefined)) });
 		const dirs = Array.isArray(picked) ? picked : typeof picked === 'string' ? [picked] : [];
 		if (dirs.length === 1) await this.openFolder(dirs[0], opts);
 		else if (dirs.length > 1) await this.openFolders(dirs, opts);
@@ -381,7 +396,9 @@ class Workspace {
 			notifications.error(e);
 			return;
 		}
-		this.#switched({ window: this.window, folders: [], file: null, untitled: null, identity: null });
+		// The empty window's new id comes from Rust.
+		const info = await invoke<WorkspaceState>('workspace_state').catch(() => null);
+		this.#switched(info ?? { window: this.window, folders: [], file: null, untitled: null, identity: null });
 	}
 
 	/** New Window (⇧⌘N), and opening folders, a workspace file or files in one. A window that already has them comes to the front. */
@@ -458,16 +475,15 @@ class Workspace {
 
 	/** Every view of the old workspace goes: editors, language servers, tree, search, source control. */
 	#switched(info: WorkspaceState) {
+		// The old workspace keeps its editors as they were (scroll and cursor included).
+		saveEditorLayout();
 		editors.closeAll();
 		navigation.clear();
 		lsp.reset();
 		debug.reset();
 		explorer.reset();
 		search.clear();
-		scm.repo = null;
-		scm.loaded = false;
-		scm.message = '';
-		status.branch = null;
+		scm.reset();
 		this.#apply(info);
 		// The workspace file's settings come back with the file (openWorkspaceFile sets them right after).
 		settings.workspaceFile = {};
@@ -492,10 +508,9 @@ class Workspace {
 			const qualify = (paths: string[]) => watcherPaths(e.payload.root, paths, this.folders) ?? [];
 			// Agents writing into `.kingu/worktrees/` do not refresh the IDE's Source Control or Explorer.
 			const ide = ideChanges(e.payload.paths);
-			if (primary) {
-				if (ide.length) void scm.refresh();
-				for (const fn of this.#raw) fn(e.payload.paths);
-			}
+			// Every root folder's changes re-read Source Control (each folder has its repositories).
+			if (ide.length) void scm.refresh();
+			if (primary) for (const fn of this.#raw) fn(e.payload.paths);
 			const files = workspaceFiles(e.payload.paths);
 			if (!files.length) return;
 			const ideFiles = workspaceFiles(ide);
@@ -521,6 +536,12 @@ async function confirmDiscard(): Promise<boolean> {
 const WORKSPACE_FILE_KEY = 'kingu.workspace.file';
 
 /** Where a build before multiple windows kept the folder's `.code-workspace` file (read once, to move it to Rust). */
+/** `files.dialog.defaultPath`: where a file dialog starts instead of the home folder when no folder gives it one. */
+export function dialogDefaultPath(): string | undefined {
+	const p = settings.get<string>('files.dialog.defaultPath')?.trim();
+	return p && p.startsWith('/') ? p : undefined;
+}
+
 function savedWorkspaceFile(): { root: string; file: string } | null {
 	try {
 		const v = JSON.parse(localStorage.getItem(WORKSPACE_FILE_KEY) ?? 'null');

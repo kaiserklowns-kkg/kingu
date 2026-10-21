@@ -2,7 +2,9 @@
 // kept out of the Svelte store so `bun test` can cover them.
 
 import type { ServerStatus } from './client';
-import { mergeDiagnostics, relOfUri, uriToPath } from './convert';
+import { keyOfUri, mergeDiagnostics, uriToPath } from './convert';
+import { problemLabel } from './folders';
+import type { WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 import type { Diagnostic } from './protocol';
 import { t } from '#lib/i18n/index.ts';
 
@@ -20,12 +22,16 @@ export type ServerInfo = {
 	/** Monaco's own language service for these ids gives way once the server is ready, so hovers
 	 * and completions do not show twice. */
 	yieldsBuiltin?: boolean;
+	/** One server for every root folder even when it cannot take several: it works per file
+	 * (tsserver finds each file's tsconfig, the JSON/CSS/HTML/YAML/TOML servers need no root), as
+	 * VS Code runs one of these for the whole workspace. Others get a server per folder then. */
+	oneServer?: boolean;
 };
 
 /** Mirrors `spec_for` in src-tauri/src/lsp.rs. Keys are what `lsp_start` accepts. */
 export const SERVERS: ServerInfo[] = [
 	{ key: 'rust', name: 'rust-analyzer', languages: ['rust'] },
-	{ key: 'typescript', name: 'TypeScript language server', languages: ['typescript', 'javascript', 'typescriptreact', 'javascriptreact'], yieldsBuiltin: true },
+	{ key: 'typescript', name: 'TypeScript language server', languages: ['typescript', 'javascript', 'typescriptreact', 'javascriptreact'], yieldsBuiltin: true, oneServer: true },
 	{ key: 'go', name: 'gopls', languages: ['go'] },
 	{
 		key: 'svelte',
@@ -50,15 +56,17 @@ export const SERVERS: ServerInfo[] = [
 			json: { validate: { enable: true }, format: { enable: true }, schemas: [] },
 			http: { proxy: '', proxyStrictSSL: true }
 		},
-		yieldsBuiltin: true
+		yieldsBuiltin: true,
+		oneServer: true
 	},
-	{ key: 'css', name: 'CSS language server', languages: ['css', 'scss', 'less'], initializationOptions: { provideFormatter: true }, yieldsBuiltin: true },
+	{ key: 'css', name: 'CSS language server', languages: ['css', 'scss', 'less'], initializationOptions: { provideFormatter: true }, yieldsBuiltin: true, oneServer: true },
 	{
 		key: 'html',
 		name: 'HTML language server',
 		languages: ['html'],
 		initializationOptions: { provideFormatter: true, embeddedLanguages: { css: true, javascript: true }, configurationSection: ['html', 'css', 'javascript'] },
-		yieldsBuiltin: true
+		yieldsBuiltin: true,
+		oneServer: true
 	},
 	{
 		key: 'yaml',
@@ -67,9 +75,10 @@ export const SERVERS: ServerInfo[] = [
 		settings: {
 			yaml: { validate: true, hover: true, completion: true, format: { enable: true }, schemaStore: { enable: true, url: 'https://www.schemastore.org/api/json/catalog.json' } },
 			http: { proxy: '', proxyStrictSSL: true }
-		}
+		},
+		oneServer: true
 	},
-	{ key: 'toml', name: 'Taplo', languages: ['toml'] }
+	{ key: 'toml', name: 'Taplo', languages: ['toml'], oneServer: true }
 ];
 
 export function serverFor(languageId: string): ServerInfo | undefined {
@@ -128,8 +137,10 @@ export type ProblemFile = {
 	uri: string;
 	/** Workspace-relative path when the file can be opened, else null. */
 	rel: string | null;
-	/** What the Problems panel shows: the relative path, or the absolute one outside the workspace. */
+	/** What the Problems panel shows: the path relative to its root folder, or the absolute one outside the workspace. */
 	label: string;
+	/** Beside it: the directory, led by the root folder's name in a multi-root window (VS Code's label service). */
+	detail: string;
 	items: Diagnostic[];
 };
 
@@ -160,17 +171,20 @@ export class DiagnosticsIndex {
 		return gone;
 	}
 
-	/** The Problems panel's files; `extra` adds problems of other owners (task problem matchers). */
-	files(root: string, extra?: OwnedDiagnostics): ProblemFile[] {
+	/** The Problems panel's files; `extra` adds problems of other owners (task problem matchers).
+	 * `rel` is the workbench key in `root` (one folder) or in the workspace's root folders. */
+	files(root: string | readonly WorkspaceFolder[], extra?: OwnedDiagnostics): ProblemFile[] {
+		const folders = typeof root === 'string' ? (root ? [{ path: root, name: '' }] : []) : root;
 		const out: ProblemFile[] = [];
 		for (const uri of new Set([...this.#byUri.keys(), ...(extra?.uris() ?? [])])) {
 			const items = extra ? mergeDiagnostics(this.get(uri), extra.get(uri)) : this.get(uri);
 			if (!items.length) continue;
-			const rel = relOfUri(root, uri);
-			out.push({ uri, rel, label: rel ?? uriToPath(uri) ?? uri, items });
+			const rel = keyOfUri(folders, uri);
+			out.push({ uri, rel, ...problemLabel(rel, uriToPath(uri) ?? uri, folders), items });
 		}
 		// Workspace files first, then by path (VS Code sorts the Problems tree by resource).
-		return out.sort((a, b) => Number(a.rel === null) - Number(b.rel === null) || a.label.localeCompare(b.label));
+		const path = (f: ProblemFile) => uriToPath(f.uri) ?? f.uri;
+		return out.sort((a, b) => Number(a.rel === null) - Number(b.rel === null) || path(a).localeCompare(path(b)));
 	}
 }
 

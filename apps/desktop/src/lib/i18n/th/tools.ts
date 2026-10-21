@@ -171,6 +171,8 @@ export const tools = {
 	'tools.terminal.rename.placeholder': 'ชื่อ terminal (ตอนนี้: {title})',
 	'tools.terminal.rename.hint': 'เปลี่ยนชื่อเป็น "{name}"',
 	'tools.terminal.rename.empty': 'พิมพ์ชื่อใหม่ แล้วกด Enter',
+	'tools.terminal.pickFolder': 'เลือกโฟลเดอร์ที่ terminal ใหม่จะเริ่มทำงาน',
+	'tools.terminal.overriddenCwd': '(กำหนดใน terminal.integrated.cwd) {cwd}',
 	'tools.debug.bp.disabled': 'Breakpoint (ปิดอยู่)',
 	'tools.debug.bp.triggered': 'Triggered breakpoint: ทำงานหลังหยุดที่ {at}',
 	'tools.debug.bp.unverified': 'Breakpoint ยังไม่ถูกยืนยันโดย debugger',
