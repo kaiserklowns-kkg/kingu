@@ -197,7 +197,7 @@ describe('settings sections', () => {
 		for (const sec of SETTINGS_SECTIONS) for (const g of sec.groups) expect(staticGroups.has(g)).toBe(true);
 	});
 	test('contributed groups go to the Snaps section, which is always there', () => {
-		expect(settingsSections().at(-1)).toEqual({ id: 'snaps', label: 'Snaps', groups: [] });
+		expect(settingsSections().at(-1)).toEqual({ id: 'snaps', label: 'Snaps', labelKey: 'settings.sections.snaps', groups: [] });
 		expect(settingsSections([...SETTINGS, ...contributed]).at(-1)?.groups).toEqual(['Snap: Go', 'Snap: Lint']);
 		const all = [...SETTINGS, ...contributed];
 		expect(settingsInView('', 'Snap: Go', all).map((s) => s.id)).toEqual(['snap.go.testFlags', 'snap.go.verbose']);

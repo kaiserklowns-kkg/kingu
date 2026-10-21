@@ -62,7 +62,7 @@
 	import RulesChip from './RulesChip.svelte';
 	import { assemblePrompt, contextLabel, isFileKey, promptPath, relativeTo, resolveContext, withoutImagesLine, type ContextText } from './chatPrompt.ts';
 	import { AGENT_APPROVALS, modeOf, permissionFor, turnBusy, type AgentApproval, type ChatMode } from './chatInput.ts';
-	import { buildTurns, promptHistory, type Turn } from './chatParts.ts';
+	import { buildTurns, feedbackTarget, promptHistory, type Turn } from './chatParts.ts';
 	import { chatSignals, registerChatCommands } from './chatCommands.svelte.ts';
 	import { agentRuntimes } from './runtimes.svelte.ts';
 	import { runtimeChoices, runtimeOf } from './runtimes.ts';
@@ -832,13 +832,8 @@
 	// "How did the agent do?" (Cursor's) after a turn ends: 👍 👎 saved in the chat's own transcript
 	// (chatExtras.vote, never sent anywhere), × hides it for that request.
 	let feedbackHidden = $state<Record<string, true>>({});
-	const lastTurn = $derived(turns.at(-1));
-	const feedbackFor = $derived(
-		chatMeta && actionsVisible(lastTurn) && lastTurn?.checkpoint != null && !lastTurn.feedback && !feedbackHidden[`${chatMeta.id}:${lastTurn.checkpoint}`] ? lastTurn.checkpoint : null
-	);
-	function actionsVisible(turn: Turn | undefined): boolean {
-		return !!turn && turn.done && !!turn.request && turn.parts.length > 0 && !running;
-	}
+	const feedbackRequest = $derived(feedbackTarget(turns, running));
+	const feedbackFor = $derived(chatMeta && feedbackRequest !== null && !feedbackHidden[`${chatMeta.id}:${feedbackRequest}`] ? feedbackRequest : null);
 	function vote(v: 'up' | 'down' | null) {
 		if (!chatMeta || feedbackFor === null) return;
 		if (v) void chatExtras.vote(chatMeta.id, feedbackFor, v);

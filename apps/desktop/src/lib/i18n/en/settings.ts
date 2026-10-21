@@ -9,5 +9,11 @@ export const settings = {
 	'settings.registry.invalidValue': 'The value {value} is invalid, so the next layer is used instead (expected {expected}).',
 	'settings.registry.userOrRepoOnly': 'This setting can only be applied in user or repository-local settings, never by the repository itself.',
 	'settings.registry.userOnly': 'This setting can only be applied in user settings, so it is ignored.',
-	'settings.sections.aiCapabilities': 'AI Capabilities'
+	'settings.sections.aiCapabilities': 'AI Capabilities',
+	'settings.sections.system': 'System',
+	'settings.sections.ide': 'IDE',
+	'settings.sections.ade': 'ADE (Agents)',
+	'settings.sections.snaps': 'Snaps',
+	'settings.page.searchResults': 'Search Results',
+	'settings.page.allSettings': 'All Settings (IDE + ADE)'
 } as const;

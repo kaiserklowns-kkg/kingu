@@ -20,7 +20,7 @@ import { parseSettingsText } from '#lib/settings/jsonc.ts';
 import { listenWindow, windowLabel } from '#lib/workbench/windowEvents.ts';
 import { externalKey } from './externalFiles';
 import { isWorkspaceFile, parseCodeWorkspace, workspaceName, type CodeWorkspace } from './workspaceFile';
-import { folderOf, keyForPath, watcherPaths, within, workspaceFileText, workspaceLabel, type WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
+import { folderOf, keyForPath, watcherPaths, within, workspaceFileText, workspaceLabel, workspaceStateKey, type WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 import { editors } from './editors.svelte';
 import { explorer } from './explorer.svelte';
 import { ideChanges, recentLabel, workspaceFiles } from './fileTree';
@@ -42,6 +42,8 @@ type WorkspaceState = {
 	file: string | null;
 	untitled: string | null;
 	identity: string | null;
+	/** An empty window's id (an older Rust side sends none). */
+	empty?: string | null;
 	open_files?: string[];
 };
 
@@ -61,6 +63,8 @@ class Workspace {
 	untitled = $state<string | null>(null);
 	/** The workspace's identity: per identity the window keeps its terminals and open editors. */
 	identity = $state<string | null>(null);
+	/** An empty window's own id (VS Code's empty workspace): its layout and terminals are its own. */
+	empty = $state<string | null>(null);
 	/** This window's label (`main`, `window-1`, …). */
 	window = $state('main');
 	name = $derived(this.root ? this.root.split('/').pop() || this.root : '');
@@ -68,8 +72,11 @@ class Workspace {
 	isMultiRoot = $derived(this.folders.length > 1);
 	/** The window title's workspace part (VS Code's `${rootName}`). */
 	title = $derived(workspaceLabel(this.folders, this.workspaceFile, this.untitled !== null, (name) => t('workspaces.workspaceSuffix', { name }), t('workspaces.untitled')));
-	/** What per-workspace state (terminals, open editors) is stored under: the folder itself for a single folder. */
-	stateKey = $derived(this.identity && this.identity !== this.root ? this.identity : this.root);
+	/**
+	 * What per-workspace state (layout, terminals, open editors) is stored under: the folder itself
+	 * for a single folder, `empty:<id>` for an empty window (null from an older Rust side).
+	 */
+	stateKey = $derived(workspaceStateKey(this.identity, this.root, this.empty));
 
 	#listeners = new Set<Listener>();
 	#raw = new Set<Listener>();
@@ -120,6 +127,7 @@ class Workspace {
 		this.workspaceFile = info.file;
 		this.untitled = info.untitled;
 		this.identity = info.identity;
+		this.empty = info.empty ?? null;
 		// Language servers know every root folder (didChangeWorkspaceFolders when one is added or removed).
 		lsp.setFolders(this.folders);
 	}
@@ -385,7 +393,9 @@ class Workspace {
 			notifications.error(e);
 			return;
 		}
-		this.#switched({ window: this.window, folders: [], file: null, untitled: null, identity: null });
+		// The empty window's new id comes from Rust.
+		const info = await invoke<WorkspaceState>('workspace_state').catch(() => null);
+		this.#switched(info ?? { window: this.window, folders: [], file: null, untitled: null, identity: null });
 	}
 
 	/** New Window (⇧⌘N), and opening folders, a workspace file or files in one. A window that already has them comes to the front. */

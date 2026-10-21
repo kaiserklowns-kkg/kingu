@@ -8,6 +8,17 @@ export type WorkspaceFolder = { path: string; name: string };
 
 const trim = (p: string) => p.replace(/\/+$/, '') || '/';
 
+/**
+ * What a window's per-workspace state is kept under (VS Code's workspace storage id): the folder
+ * itself for a single folder, the workspace file or untitled workspace's identity otherwise, and
+ * `empty:<id>` for an empty window, so two empty windows never share theirs. null: no id known
+ * (an older Rust side).
+ */
+export function workspaceStateKey(identity: string | null, root: string | null, empty: string | null): string | null {
+	if (identity && identity !== root) return identity;
+	return root ?? (empty ? `empty:${empty}` : null);
+}
+
 /** Whether `path` is `root` or inside it. */
 export function within(path: string, root: string): boolean {
 	const r = trim(root);

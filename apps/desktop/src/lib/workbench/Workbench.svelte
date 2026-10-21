@@ -94,6 +94,7 @@
 	import { installProblemsSettings } from '#lib/lsp/problemsCommands.svelte.ts';
 	import { installCloseGuard, quit } from './closeGuard.svelte';
 	import { installEditorRestore } from './editorRestore.svelte';
+	import { installWorkspaceStorage } from './workspaceStorage.svelte';
 	import { textFiles } from './textFileService.svelte';
 	import { registerEditorStatusCommands } from './editorStatusActions.svelte';
 	import { installEditorCommands } from './editorCommands.svelte';
@@ -353,6 +354,8 @@
 		const uninstallScmEditor = installScmEditor();
 		const uninstallTimeline = installTimeline();
 		const uninstallWatcher = workspace.install();
+		// Before the editors and terminals: the layout follows the window's workspace (an empty window has its own).
+		const uninstallWorkspaceStorage = installWorkspaceStorage(() => (workspace.ready ? (workspace.stateKey ?? 'empty') : undefined));
 		const uninstallSettings = installSettings();
 		const uninstallAppearance = installWorkbenchAppearance();
 		const unregisterSettings = registerSettingsCommands();
@@ -443,6 +446,7 @@
 			uninstallScmEditor();
 			uninstallTimeline();
 			uninstallWatcher();
+			uninstallWorkspaceStorage();
 			uninstallAppearance();
 			uninstallSettings();
 			unregisterSettings();
