@@ -48,8 +48,22 @@ impl Folder {
   }
 }
 
+/// Where a window is on screen, in logical pixels (VS Code's IWindowUIState). `x`/`y`/`width`/
+/// `height` are its normal bounds, kept while it is maximized or in full screen.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct WindowBounds {
+  pub x: f64,
+  pub y: f64,
+  pub width: f64,
+  pub height: f64,
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub maximized: bool,
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub fullscreen: bool,
+}
+
 /// What a window has open: its folders, and the `.code-workspace` file they came from (`None`
-/// for a single folder or an untitled multi-root workspace).
+/// for a single folder or an untitled multi-root workspace); and where the window was.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WindowSession {
   #[serde(default)]
@@ -60,6 +74,14 @@ pub struct WindowSession {
   /// it keeps the window's terminals and backups apart from another window on the same folders.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub untitled: Option<String>,
+  /// An empty window's id (VS Code's empty workspace id): its page keeps its own layout and
+  /// terminals under it, so a new empty window starts from the defaults and a restored one comes
+  /// back as it was. `None` while the window has folders.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub empty: Option<String>,
+  /// The window's place on screen (restored with it; `window.newWindowDimensions` for a new one).
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub bounds: Option<WindowBounds>,
 }
 
 impl WindowSession {
@@ -138,6 +160,11 @@ impl Workspace {
 
   pub fn set_session(&self, session: WindowSession) {
     *self.state.session.write().unwrap_or_else(|e| e.into_inner()) = session;
+  }
+
+  /// The window moved or was resized: its bounds change, its workspace does not.
+  pub fn set_bounds(&self, bounds: WindowBounds) {
+    self.state.session.write().unwrap_or_else(|e| e.into_inner()).bounds = Some(bounds);
   }
 
   /// The root folders, first one first.
@@ -733,8 +760,8 @@ mod tests {
     let recent = Recent::load(file.clone());
     assert_eq!(recent.data().sessions(), [WindowSession { folders: vec![Folder::new("/a".into())], ..Default::default() }]);
     let two = vec![
-      WindowSession { folders: vec![Folder::new("/a".into()), Folder { path: "/b".into(), name: Some("B".into()) }], file: Some("/w.code-workspace".into()), untitled: None },
-      WindowSession::default(),
+      WindowSession { folders: vec![Folder::new("/a".into()), Folder { path: "/b".into(), name: Some("B".into()) }], file: Some("/w.code-workspace".into()), ..Default::default() },
+      WindowSession { empty: Some("e1".into()), bounds: Some(WindowBounds { x: 10.0, y: 20.0, width: 1200.0, height: 800.0, maximized: true, fullscreen: false }), ..Default::default() },
     ];
     recent.set_windows(two.clone()).unwrap();
     let again = Recent::load(file).data();

@@ -1633,6 +1633,10 @@ pub fn run() {
         menu::window_focused(app, label);
         windows::save_windows(app);
       }
+      // Each window's place on screen, for window.restoreWindows.
+      if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_), .. } = &event {
+        windows::on_moved(app, label);
+      }
       if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } = &event {
         windows::on_destroyed(app, label);
       }

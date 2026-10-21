@@ -95,7 +95,31 @@ export const WINDOW_SETTINGS: SettingSchema[] = [
 			'เปิดโฟลเดอร์ล่าสุดคืน (Reopen the last active window unless a folder, workspace or file is opened (e.g. from the command line). If a file is opened, it will replace any of the editors that were previously opened in a window.)',
 			'เริ่มด้วยหน้าต่างว่าง (Never reopen a window. Unless a folder or workspace is opened (e.g. from the command line), an empty window will appear.)'
 		],
-		description: 'หน้าต่างที่เปิดคืนเมื่อเริ่ม Kingu แต่ละหน้าต่างกลับมาพร้อมโฟลเดอร์หรือ workspace ของตัวเอง (Controls how windows and editors within are being restored when opening.)',
+		description: 'หน้าต่างที่เปิดคืนเมื่อเริ่ม Kingu แต่ละหน้าต่างกลับมาพร้อมโฟลเดอร์หรือ workspace ตำแหน่งบนจอ และ layout ของตัวเอง (Controls how windows and editors within are being restored when opening.)',
+		scope: 'application'
+	},
+	{
+		id: 'window.newWindowDimensions',
+		group: 'Window',
+		type: 'string',
+		default: 'default',
+		enum: ['default', 'inherit', 'offset', 'maximized', 'fullscreen'],
+		enumDescriptions: [
+			'เปิดหน้าต่างใหม่กลางจอ (Open new windows in the center of the screen.)',
+			'ขนาดและตำแหน่งเดียวกับหน้าต่างที่ใช้อยู่ล่าสุด (Open new windows with same dimension as last active one.)',
+			'ขนาดเดียวกับหน้าต่างที่ใช้อยู่ล่าสุด เลื่อนออกไปเล็กน้อย (Open new windows with same dimension as last active one with an offset position.)',
+			'เปิดหน้าต่างใหม่แบบขยายเต็ม (Open new windows maximized.)',
+			'เปิดหน้าต่างใหม่แบบเต็มจอ (Open new windows in full screen mode.)'
+		],
+		description: 'ขนาดและตำแหน่งของหน้าต่างใหม่ เมื่อเปิดหน้าต่างอย่างน้อยหนึ่งหน้าต่างอยู่แล้ว (Controls the dimensions of opening a new window when at least one window is already opened. Note that this setting does not have an impact on the first window that is opened. The first window will always restore the size and location as you left it before closing.)',
+		scope: 'application'
+	},
+	{
+		id: 'window.restoreFullscreen',
+		group: 'Window',
+		type: 'boolean',
+		default: false,
+		description: 'หน้าต่างที่ปิดตอนเต็มจอ กลับมาเต็มจอเมื่อเปิดคืน (Controls whether a window should restore to full screen mode if it was exited in full screen mode.)',
 		scope: 'application'
 	},
 	{
