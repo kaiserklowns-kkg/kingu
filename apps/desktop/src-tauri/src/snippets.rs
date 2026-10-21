@@ -33,9 +33,10 @@ pub fn dir_in(profile_dir: &Path) -> PathBuf {
   profile_dir.join(SNIPPETS_DIR)
 }
 
-fn active_dir(app: &AppHandle) -> Result<PathBuf, String> {
+/// The user snippets of window `ws`'s profile.
+fn active_dir(app: &AppHandle, ws: &crate::workspace::Workspace) -> Result<PathBuf, String> {
   let config = app.path().app_config_dir().map_err(|e| e.to_string())?;
-  Ok(dir_in(&crate::user_profiles::active_dir(&config)))
+  Ok(dir_in(&crate::user_profiles::window_dir(&config, ws)))
 }
 
 fn checked(name: &str) -> Result<(), String> {
@@ -79,18 +80,18 @@ pub fn write(dir: &Path, name: &str, content: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn snippets_user_list(app: AppHandle) -> Result<Vec<SnippetFile>, String> {
-  Ok(list(&active_dir(&app)?))
+pub fn snippets_user_list(app: AppHandle, ws: crate::workspace::Workspace) -> Result<Vec<SnippetFile>, String> {
+  Ok(list(&active_dir(&app, &ws)?))
 }
 
 #[tauri::command]
-pub fn snippets_user_read(app: AppHandle, name: String) -> Result<Option<String>, String> {
-  read(&active_dir(&app)?, &name)
+pub fn snippets_user_read(app: AppHandle, ws: crate::workspace::Workspace, name: String) -> Result<Option<String>, String> {
+  read(&active_dir(&app, &ws)?, &name)
 }
 
 #[tauri::command]
-pub fn snippets_user_write(app: AppHandle, name: String, content: String) -> Result<(), String> {
-  write(&active_dir(&app)?, &name, &content)?;
+pub fn snippets_user_write(app: AppHandle, ws: crate::workspace::Workspace, name: String, content: String) -> Result<(), String> {
+  write(&active_dir(&app, &ws)?, &name, &content)?;
   log::info!("saved user snippets {name}");
   Ok(())
 }

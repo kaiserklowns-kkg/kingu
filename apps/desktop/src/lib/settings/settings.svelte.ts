@@ -7,7 +7,7 @@ import { listen } from '@tauri-apps/api/event';
 import { parseSettingsText, setProperty } from './jsonc';
 import { resolveSettings, settingProblems, type Resolved, type SettingProblem, type SettingScope } from './registry';
 import { settingSchemas } from './schemas.svelte';
-import { isApplicationScoped, profileUserValues } from './profiles';
+import { profileUserValues, sharedByAllProfiles } from './profiles';
 import { isLanguageOverridable, languageSchemas, languageValues } from './languageOverrides';
 import { withoutRestricted } from './restricted';
 
@@ -208,8 +208,9 @@ class Settings {
 
 	/** Sets (or with `undefined`, resets) a setting in `scope`'s file. Writes are serialized. */
 	set(id: string, value: unknown, scope: SettingScope): Promise<void> {
-		// With a profile active, application-scoped settings are written to the Default profile's file.
-		const file: FileScope = scope === 'user' && this.inProfile && isApplicationScoped(settingSchemas.byId.get(id)) ? 'defaultUser' : scope;
+		// With a profile active, settings shared by all profiles (application-scoped ones and
+		// workbench.settings.applyToAllProfiles) are written to the Default profile's file.
+		const file: FileScope = scope === 'user' && this.inProfile && sharedByAllProfiles(id, settingSchemas.byId.get(id), this.defaultUser.values) ? 'defaultUser' : scope;
 		const run = async () => {
 			const layer = await this.read(file);
 			// Editing text that does not parse could lose what the user wrote; they fix it first.

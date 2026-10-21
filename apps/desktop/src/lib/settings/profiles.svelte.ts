@@ -1,7 +1,9 @@
 // Profiles (VS Code: IUserDataProfilesService for settings and keybindings). Rust keeps each
 // profile's settings.json and keybindings.json (user_profiles.rs); switching reloads both, like
-// VS Code's profile switch in the window. Commands: Profiles: Switch Profile…, New Profile…,
-// Rename Profile…, Delete Profile….
+// VS Code's profile switch in the window. Each window has its own profile (the folder remembers
+// the one switched to; Rust resolves it). Commands: Switch Profile…, New Profile… (empty, a copy
+// or a template), New Window with Profile…, New Temporary Profile, Rename…, Delete…, Export…,
+// Import….
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -14,6 +16,8 @@ import { status } from '#lib/workbench/status.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { activeProfileName, DEFAULT_PROFILE_NAME, templateContents, type Profile, type ProfileList, type TemplateSummary } from './profiles';
+import { PROFILE_TEMPLATES, templateSettingsText, temporaryProfileName } from './profileTemplates';
+import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { settings } from './settings.svelte';
 
 /** Quick pick id of the Default profile (Rust's `None`). */
@@ -38,7 +42,7 @@ class Profiles {
 		return all.filter(include).map((p) => ({
 			id: p?.id ?? DEFAULT_ID,
 			label: p?.name ?? t('profiles.default'),
-			description: (p?.id ?? null) === this.list.active ? t('profiles.current') : undefined
+			description: [(p?.id ?? null) === this.list.active && t('profiles.current'), p?.transient && t('profiles.temporary')].filter(Boolean).join(' · ') || undefined
 		}));
 	}
 
@@ -66,15 +70,50 @@ class Profiles {
 		const name = await quick.input({ placeholder: t('profiles.newPlaceholder'), hint: (v) => (v.trim() ? t('profiles.newHint', { name: v.trim() }) : t('profiles.nameHint')) });
 		if (!name?.trim()) return;
 		const EMPTY = '\0empty';
-		const from = await quick.choose({ placeholder: t('profiles.copyFromPlaceholder'), items: [{ id: EMPTY, label: t('profiles.empty') }, ...this.#items(() => true)] });
+		const TEMPLATE = '\0template:';
+		const profilesItems = this.#items((p) => !p?.transient);
+		const from = await quick.choose({
+			placeholder: t('profiles.copyFromPlaceholder'),
+			items: [
+				{ id: EMPTY, label: t('profiles.empty') },
+				...profilesItems.map((it, i) => (i === 0 ? { ...it, separator: t('profiles.profilesGroup') } : it)),
+				...PROFILE_TEMPLATES.map((tpl, i) => ({ id: TEMPLATE + tpl.id, label: tpl.name, separator: i === 0 ? t('profiles.templates') : undefined }))
+			]
+		});
 		if (!from) return;
+		const template = from.id.startsWith(TEMPLATE) ? PROFILE_TEMPLATES.find((tpl) => TEMPLATE + tpl.id === from.id) : undefined;
 		let profile: Profile;
 		try {
-			profile = await invoke<Profile>('profile_create', { name, copyFrom: from.id === EMPTY ? null : from.id === DEFAULT_ID ? '' : from.id });
+			profile = await invoke<Profile>('profile_create', {
+				name,
+				copyFrom: template || from.id === EMPTY ? null : from.id === DEFAULT_ID ? '' : from.id,
+				settings: template ? templateSettingsText(template) : null
+			});
 		} catch (e) {
 			return this.#fail(e);
 		}
 		await this.switchTo(profile.id);
+	}
+
+	/** New Window with Profile…: a new empty window that uses the profile picked. */
+	async newWindowWithProfile() {
+		await this.load();
+		const item = await quick.choose({ placeholder: t('profiles.newWindowPlaceholder'), items: this.#items((p) => !p?.transient) });
+		if (!item) return;
+		await workspace.newWindow({ profile: item.id === DEFAULT_ID ? '' : item.id });
+	}
+
+	/** New Temporary Profile: an empty profile for this window only, deleted when it closes. */
+	async createTemporary() {
+		await this.load();
+		let profile: Profile;
+		try {
+			profile = await invoke<Profile>('profile_create', { name: temporaryProfileName(this.list.profiles.map((p) => p.name)), copyFrom: null, transient: true });
+		} catch (e) {
+			return this.#fail(e);
+		}
+		await this.switchTo(profile.id);
+		notifications.info(t('profiles.temporaryCreated', { name: profile.name }));
 	}
 
 	async rename() {
@@ -165,6 +204,8 @@ class Profiles {
 		const unregister = [
 			commands.register({ id: 'workbench.profiles.actions.switchProfile', title: 'Switch Profile...', category: 'Profiles', run: () => this.pickSwitch() }),
 			commands.register({ id: 'workbench.profiles.actions.createProfile', title: 'New Profile...', category: 'Profiles', run: () => this.create() }),
+			commands.register({ id: 'workbench.profiles.actions.newWindowWithProfile', title: 'New Window with Profile...', category: 'Profiles', run: () => this.newWindowWithProfile() }),
+			commands.register({ id: 'workbench.profiles.actions.createTemporaryProfile', title: 'New Temporary Profile', category: 'Profiles', run: () => this.createTemporary() }),
 			commands.register({ id: 'workbench.profiles.actions.renameProfile', title: 'Rename Profile...', category: 'Profiles', run: () => this.rename() }),
 			commands.register({ id: 'workbench.profiles.actions.deleteProfile', title: 'Delete Profile...', category: 'Profiles', run: () => this.remove() }),
 			commands.register({ id: 'workbench.profiles.actions.exportProfile', title: 'Export Profile...', category: 'Profiles', run: () => this.exportProfile() }),

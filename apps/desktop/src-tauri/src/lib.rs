@@ -1274,6 +1274,8 @@ pub fn run() {
         settings::user_value(&config_dir, "application.shellEnvironmentResolutionTimeout").as_ref(),
       ));
       net_proxy::init(&config_dir);
+      // Temporary profiles do not outlive the app (VS Code's transient profiles).
+      user_profiles::remove_unused_transient(&config_dir, &[]);
       app.manage(settings::ConfigWatcher::default());
       if let Err(e) = settings::watch_config(app.handle(), &config_dir) {
         log::warn!("settings watcher: {e}");

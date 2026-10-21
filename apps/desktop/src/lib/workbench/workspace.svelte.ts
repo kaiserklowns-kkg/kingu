@@ -406,7 +406,7 @@ class Workspace {
 	}
 
 	/** New Window (⇧⌘N), and opening folders, a workspace file or files in one. A window that already has them comes to the front. */
-	async newWindow(options: { folders?: WorkspaceFolder[]; file?: string; files?: string[]; duplicate?: boolean } = {}) {
+	async newWindow(options: { folders?: WorkspaceFolder[]; file?: string; files?: string[]; duplicate?: boolean; profile?: string } = {}) {
 		try {
 			await invoke<string>('window_new', { options });
 		} catch (e) {
