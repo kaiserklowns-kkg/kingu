@@ -1,0 +1,145 @@
+# ai-memory (https://github.com/akitaonrails/ai-memory) for Kingu agents: long-term project memory
+# shared across agents, machines and teammates. The snap does not ship ai-memory; it runs the
+# `ai-memory` binary you installed (install.sh, AUR, RPM, …) and talks to your ai-memory server.
+#
+# Agents get the server's MCP tools through `ai-memory mcp-bridge`, a stdio-to-HTTP bridge that
+# reads the server URL and bearer token from your ai-memory config, so no token is written here.
+# The bridge forwards no session id, so agents pass `workspace` and `project` on every call (the
+# skills say how). Nothing calls an LLM unless your server has a provider configured.
+#
+# Claude Code sessions (timeline and the claude CLI) are captured through `[[hooks]]`: each event
+# goes to `ai-memory hook`, which applies ai-memory's capture policy, spools when the server is
+# down, and at SessionStart prints the project brief and any pending handoff into the session.
+#
+# Kingu runs the ai-memory server as this snap's service while the snap is enabled (turn
+# `runServer` off when it already runs as a launchd/systemd service or elsewhere). The program is
+# installed with the "Install ai-memory" task (the project's checksum-verified install.sh, pinned
+# to `version`); `ai-memory setup` is not needed and would wire agents a second time.
+id = "ai-memory"
+name = "ai-memory"
+version = "0.3.1"
+description = "Long-term memory for agents through your ai-memory server: captures Claude Code sessions, searches past decisions, saves durable pages and hands work off between agents."
+
+# The bridge and hooks reach the server over loopback HTTP (network = false blocks loopback too),
+# the server writes ai-memory's data dir under your home folder, and the install task downloads.
+[permissions]
+network = true
+fs = "home"
+secrets = ["AI_MEMORY_AUTH_TOKEN"]
+
+[[settings]]
+key = "binary"
+type = "string"
+default = "ai-memory"
+description = "The ai-memory program: a name on PATH or an absolute path."
+
+[[settings]]
+key = "serverUrl"
+type = "string"
+default = ""
+description = "ai-memory server URL (base or /mcp). Empty uses the server in your ai-memory config."
+
+[[settings]]
+key = "runServer"
+type = "boolean"
+default = true
+description = "Kingu runs the ai-memory server while this snap is enabled. Turn off when it runs elsewhere."
+
+[[settings]]
+key = "embeddingProvider"
+type = "string"
+default = ""
+description = "Vector search: empty = local model (about 87 MB, downloaded once on first start, nothing leaves the machine); \"none\" = keyword search only; or openai, voyage, google, openai-compat."
+
+[[settings]]
+key = "version"
+type = "string"
+default = "3.1.1"
+description = "The ai-memory release the Install task installs."
+
+[[requires]]
+program = "ai-memory"
+setting = "binary"
+url = "https://github.com/akitaonrails/ai-memory#quick-start"
+install_task = "install"
+description = "The ai-memory server and CLI (one self-contained binary)."
+
+[mcp.bridge]
+command = ["${setting:binary}", "mcp-bridge", "--no-session-id", "--server-url=${setting:serverUrl}"]
+
+[[services]]
+id = "server"
+title = "ai-memory server"
+# `init` creates the data dir and token the first time and changes nothing after that.
+command = ["sh", "-c", "\"$0\" init >/dev/null 2>&1; exec \"$0\" serve --transport http", "${setting:binary}"]
+env = { AI_MEMORY_EMBEDDING_PROVIDER = "${setting:embeddingProvider}" }
+when = "runServer"
+
+[[tasks]]
+id = "install"
+title = "Install ai-memory"
+command = ["sh", "-c", "curl -fsSL \"https://github.com/akitaonrails/ai-memory/releases/download/v$0/install.sh\" | AI_MEMORY_VERSION=\"$0\" sh", "${setting:version}"]
+
+[[tasks]]
+id = "status"
+title = "ai-memory: status"
+command = ["${setting:binary}", "status"]
+
+[[tasks]]
+id = "doctor"
+title = "ai-memory: doctor"
+command = ["${setting:binary}", "doctor"]
+
+[[skills]]
+path = "skills/ai-memory-retrieval"
+
+[[skills]]
+path = "skills/ai-memory-durable-pages"
+
+[[skills]]
+path = "skills/ai-memory-handoff"
+
+[[hooks]]
+event = "SessionStart"
+command = ["${setting:binary}", "hook", "--event", "session-start", "--agent", "claude-code", "--server-url=${setting:serverUrl}"]
+env = { AI_MEMORY_HOOK_ORIGIN = "kingu-snap" }
+
+[[hooks]]
+event = "UserPromptSubmit"
+command = ["${setting:binary}", "hook", "--event", "user-prompt-submit", "--agent", "claude-code", "--server-url=${setting:serverUrl}"]
+env = { AI_MEMORY_HOOK_ORIGIN = "kingu-snap" }
+
+[[hooks]]
+event = "PreToolUse"
+command = ["${setting:binary}", "hook", "--event", "pre-tool-use", "--agent", "claude-code", "--server-url=${setting:serverUrl}"]
+env = { AI_MEMORY_HOOK_ORIGIN = "kingu-snap" }
+
+[[hooks]]
+event = "PostToolUse"
+command = ["${setting:binary}", "hook", "--event", "post-tool-use", "--agent", "claude-code", "--server-url=${setting:serverUrl}"]
+env = { AI_MEMORY_HOOK_ORIGIN = "kingu-snap" }
+
+[[hooks]]
+event = "PreCompact"
+command = ["${setting:binary}", "hook", "--event", "pre-compact", "--agent", "claude-code", "--server-url=${setting:serverUrl}"]
+env = { AI_MEMORY_HOOK_ORIGIN = "kingu-snap" }
+
+[[hooks]]
+event = "Stop"
+command = ["${setting:binary}", "hook", "--event", "stop", "--agent", "claude-code", "--server-url=${setting:serverUrl}"]
+env = { AI_MEMORY_HOOK_ORIGIN = "kingu-snap" }
+
+[[hooks]]
+event = "SubagentStart"
+command = ["${setting:binary}", "hook", "--event", "subagent-start", "--agent", "claude-code", "--server-url=${setting:serverUrl}"]
+env = { AI_MEMORY_HOOK_ORIGIN = "kingu-snap" }
+
+[[hooks]]
+event = "SubagentStop"
+command = ["${setting:binary}", "hook", "--event", "subagent-stop", "--agent", "claude-code", "--server-url=${setting:serverUrl}"]
+env = { AI_MEMORY_HOOK_ORIGIN = "kingu-snap" }
+
+[[hooks]]
+event = "SessionEnd"
+command = ["${setting:binary}", "hook", "--event", "session-end", "--agent", "claude-code", "--server-url=${setting:serverUrl}"]
+env = { AI_MEMORY_HOOK_ORIGIN = "kingu-snap" }
