@@ -15,9 +15,15 @@ export type AskConfig = {
 	protectedPaths?: string[];
 	/** Kingu's own MCP tools in this run (the artifact tool): not asked about as MCP tools. */
 	trustedTools?: string[];
+	/**
+	 * VS Code's `chat.tools.edits.autoApprove`, merged by Rust (agent/tool_rules): glob → whether
+	 * edits to matching files are approved; the last matching glob decides. A file whose last match
+	 * is `false` is asked about before an edit, in every permission mode but Allow all.
+	 */
+	editRules?: [string, boolean][];
 };
 
-export type AskCheck = 'outside_cwd' | 'delete' | 'protected' | 'mcp';
+export type AskCheck = 'outside_cwd' | 'delete' | 'protected' | 'mcp' | 'edit_rule';
 
 /** Why a call needs the user: the first check that applies, and the paths it is about. */
 export type Ask = { check: AskCheck; paths: string[] };
@@ -90,6 +96,64 @@ export function isProtected(rules: readonly Rule[], rel: string): boolean {
 		if (r.re.test(rel)) hit = !r.negate;
 	}
 	return hit;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Edit rules: VS Code globs (`**`, `*`, `?`, `{a,b}`, `[abc]`)
+
+export type EditRule = { re: RegExp; approve: boolean };
+
+/** A VS Code glob as a regular expression over a whole `/`-separated path. */
+export function globRegex(glob: string): RegExp {
+	let re = '';
+	let braces = 0;
+	for (let i = 0; i < glob.length; i++) {
+		const c = glob.charAt(i);
+		if (c === '*') {
+			if (glob[i + 1] === '*') {
+				// `**/` any folders (also none); a `**` elsewhere anything at all.
+				const slash = glob[i + 2] === '/';
+				re += slash ? '(?:[^/]*/)*' : '.*';
+				i += slash ? 2 : 1;
+			} else re += '[^/]*';
+		} else if (c === '?') re += '[^/]';
+		else if (c === '{') {
+			braces++;
+			re += '(?:';
+		} else if (c === '}' && braces > 0) {
+			braces--;
+			re += ')';
+		} else if (c === ',' && braces > 0) re += '|';
+		else if (c === '[') {
+			const end = glob.indexOf(']', i + 1);
+			if (end < 0) re += '\\[';
+			else {
+				re += `[${glob.slice(i + 1, end).replace(/^!/, '^').replace(/\\/g, '\\\\')}]`;
+				i = end;
+			}
+		} else re += c.replace(/[.+^${}()|\\]/g, '\\$&');
+	}
+	if (braces) throw new Error('unclosed {');
+	return new RegExp(`^${re}$`);
+}
+
+/** The rules of `editRules` (a glob that does not compile is left out). */
+export function parseEditRules(rules: readonly (readonly [string, boolean])[]): EditRule[] {
+	const out: EditRule[] = [];
+	for (const [glob, approve] of rules.slice(-MAX_PATTERNS)) {
+		try {
+			out.push({ re: globRegex(glob.replace(/\\/g, '/')), approve: approve === true });
+		} catch {
+			// Matches nothing.
+		}
+	}
+	return out;
+}
+
+/** Whether an edit of `path` (`/`-separated) is approved: the last matching rule, else yes (VS Code's default). */
+export function editApproved(rules: readonly EditRule[], path: string): boolean {
+	for (let i = rules.length - 1; i >= 0; i--) if (rules[i]!.re.test(path)) return rules[i]!.approve;
+	return true;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -199,7 +263,15 @@ export function insideCwd(path: string, cwd: string, realpath: (p: string) => st
  * Why `tool` with `input` must be asked about in a run in `cwd`, or null. `realpath` resolves the
  * existing part of a path (symlinks out of the folder count as outside); tests pass the identity.
  */
-export function askFor(tool: string, input: unknown, cwd: string, config: AskConfig, rules: readonly Rule[], realpath?: (p: string) => string): Ask | null {
+export function askFor(
+	tool: string,
+	input: unknown,
+	cwd: string,
+	config: AskConfig,
+	rules: readonly Rule[],
+	realpath?: (p: string) => string,
+	edits: { rules: readonly EditRule[]; allowAll: boolean } | null = null
+): Ask | null {
 	const o = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
 	const command = tool === 'Bash' && typeof o.command === 'string' ? o.command : null;
 	const paths = command === null ? toolPaths(tool, input) : [];
@@ -222,6 +294,15 @@ export function askFor(tool: string, input: unknown, cwd: string, config: AskCon
 		const outside = paths.filter((p) => !where(p).inside);
 		if (outside.length) return { check: 'outside_cwd', paths: outside };
 	}
+	if (edits?.rules.length && !edits.allowAll && WRITE_TOOLS.has(tool)) {
+		// Inside the folder the glob sees the relative path, outside it the absolute one.
+		const asked = paths.filter((p) => {
+			const w = where(p);
+			const shown = w.inside ? w.rel : w.abs.split(sep).join('/').replace(/^\/+/, '');
+			return !editApproved(edits.rules, shown);
+		});
+		if (asked.length) return { check: 'edit_rule', paths: asked };
+	}
 	if (config.mcpTools && tool.startsWith('mcp__') && !config.trustedTools?.includes(tool)) return { check: 'mcp', paths: [] };
 	return null;
 }
@@ -232,7 +313,8 @@ export function askDeniedReason(ask: Ask, message?: string | null): string {
 		outside_cwd: 'it writes outside the project folder',
 		delete: 'it deletes files',
 		protected: 'it touches a file the user protected (.kinguignore)',
-		mcp: 'it calls an MCP tool'
+		mcp: 'it calls an MCP tool',
+		edit_rule: 'it edits a file the user wants to approve edits to (chat.tools.edits.autoApprove)'
 	};
 	const said = message?.trim();
 	return `The user did not allow this call (Kingu asks before running it because ${why[ask.check]}).${said ? ` They said: ${said}` : ''} Do not try another way to do the same thing.`;

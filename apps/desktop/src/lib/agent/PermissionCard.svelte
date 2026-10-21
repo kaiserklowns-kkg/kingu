@@ -5,7 +5,8 @@
 	// shell colours; an edit is Cursor's edit card (the file's icon, its path in the workspace,
 	// +/− and a few lines of the diff); other tools show their title, input and +/− lines. The bottom row: "Allowlist ⌄"
 	// on the left (the chat's run mode, "Change run mode", and under a separator the ways to always
-	// allow this call: in this folder, this session, every folder), Skip and Run on the right. In the
+	// allow this call: in this folder, this session, every folder), then VS Code's "Always allow
+	// `npm test …`" / "Always allow docs.rs" when Rust offers a rule, Skip and Run on the right. In the
 	// Agent panel the composer answers it too while its input is empty: ⏎ Run, ⇧⏎ allow in this
 	// folder, Esc Skip (`keys` shows them). Shared by the Agent panel and the ADE task page (through ChatList).
 	import Icon from '#lib/workbench/Icon.svelte';
@@ -18,6 +19,8 @@
 	import { bashDescription, editOf, editSnippet, shortPath } from './chatParts.ts';
 	import FileIcon from '#lib/workbench/FileIcon.svelte';
 	import { fileIcon } from '#lib/workbench/fileIcons.ts';
+	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { suggestionLabel, usableSuggestion, withRule } from './toolRules.ts';
 
 	/** The chat's run mode, changed from the card's Allowlist menu (the Agent panel's chats). */
 	export type RunModeControl = { current: AgentApproval; options: readonly AgentApproval[]; pick: (a: AgentApproval) => void; locked?: boolean };
@@ -76,6 +79,24 @@
 				]
 			: [])
 	]);
+
+	// VS Code's "Always allow `npm test …`" / "Always allow docs.rs": the rule Rust offers
+	// (agent/tool_rules) goes to the user's chat.tools.terminal/urls.autoApprove, then this call runs.
+	const suggestion = $derived(usableSuggestion(request.auto_approve));
+	const suggested = $derived(suggestion ? suggestionLabel(suggestion) : null);
+	let ruleError = $state<string | null>(null);
+
+	async function allowAlways() {
+		if (sent || !suggestion) return;
+		ruleError = null;
+		try {
+			await settings.set(suggestion.setting, withRule(settings.userValue(suggestion.setting), suggestion), 'user');
+		} catch (e) {
+			ruleError = t('chatToolRules.saveFailed', { error: e instanceof Error ? e.message : String(e) });
+			return;
+		}
+		answer('allow');
+	}
 
 	function pick(id: string) {
 		menuOpen = false;
@@ -162,6 +183,14 @@
 				</div>
 			{/if}
 			<span class="flex-1"></span>
+			{#if suggested}
+				<button
+					class={[BTN, 'min-w-0 border border-(--vscode-button-border,var(--vscode-widget-border)) text-(--vscode-foreground) hover:bg-(--vscode-toolbar-hoverBackground)']}
+					title={suggested.hint}
+					disabled={sent}
+					onclick={() => void allowAlways()}><span class="truncate">{suggested.label}</span></button
+				>
+			{/if}
 			<button class={[BTN, 'text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)']} title={t('composer.approve.skipHint')} disabled={sent} onclick={() => answer('deny')}
 				>{t('composer.approve.skip')}{#if keys}<span class={KEY}>Esc</span>{/if}</button
 			>
@@ -172,5 +201,6 @@
 				onclick={() => answer('allow')}>{t('composer.approve.run')}{#if keys}<span class={KEY}>⏎</span>{/if}</button
 			>
 		</div>
+		{#if ruleError}<div class="px-2.5 pb-1.5 text-(--vscode-errorForeground)" role="alert">{ruleError}</div>{/if}
 	</div>
 </div>

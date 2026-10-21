@@ -261,7 +261,7 @@ describe('built-in tools (tools.ts)', () => {
 		const r = await runTool('TodoWrite', { todos: [{ content: 'a', status: 'in_progress' }, { content: '', status: 'x' }] }, { ...ctx(tmp()), todos: (t) => (got = t) });
 		expect(r.content).toBe('Todo list updated (1 items, 1 open)');
 		expect(got).toEqual([{ content: 'a', status: 'in_progress', activeForm: 'a' }]);
-		expect(Object.keys(TOOL_DEFS)).toEqual(['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'TodoWrite']);
+		expect(Object.keys(TOOL_DEFS)).toEqual(['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'TodoWrite', 'WebFetch']);
 	});
 });
 

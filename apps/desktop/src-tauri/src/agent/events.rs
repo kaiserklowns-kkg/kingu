@@ -68,6 +68,14 @@ pub struct ModelOption {
   pub description: String,
 }
 
+/// The rule an "Always allow" answer to a permission prompt writes to the user's settings
+/// (`tool_rules`): each of `keys` set to `true` in the object setting `setting`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RuleSuggestion {
+  pub setting: String,
+  pub keys: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentEvent {
@@ -151,6 +159,20 @@ pub enum AgentEvent {
     can_always: bool,
     /// The rules an "always" answer adds (`Bash(npm test:*)`); empty: the whole tool.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    rules: Vec<String>,
+    /// Set by Rust only (`tool_rules`; what the sidecar sends is dropped): the
+    /// `chat.tools.*.autoApprove` rule an "Always allow" button writes to the user's settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    auto_approve: Option<RuleSuggestion>,
+  },
+  /// Added by Rust in place of a `PermissionRequest` that `chat.tools.*.autoApprove` rules
+  /// approve (`tool_rules`); Rust answers it `allow`. `rules`: the keys that approved it.
+  ToolAutoApproved {
+    request_id: String,
+    tool: String,
+    #[serde(default)]
+    tool_use_id: Option<String>,
+    #[serde(default)]
     rules: Vec<String>,
   },
   /// A permission request was answered (`allow`, `allow_always`, `allow_workspace`, `allow_user`,

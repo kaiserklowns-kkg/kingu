@@ -39,10 +39,18 @@ export type PermissionRequest = {
 	can_always: boolean;
 	/** The rules an "always" answer adds (`Bash(npm test:*)`); absent or empty: the whole tool. */
 	rules?: string[];
+	/** Added by Rust (agent/tool_rules): the `chat.tools.*.autoApprove` rule "Always allow" writes (toolRules.ts). */
+	auto_approve?: RuleSuggestion | null;
 };
 
+/** `keys` set to true in the object setting `setting` (`chat.tools.terminal.autoApprove` or `chat.tools.urls.autoApprove`). */
+export type RuleSuggestion = { setting: string; keys: string[] };
+
 /** Why Kingu asked before a call, whatever the permission mode (agent-host guards/asks.ts). */
-export type GuardAsked = { kind: 'guard_asked'; request_id: string; tool: string; tool_use_id: string | null; check: 'outside_cwd' | 'delete' | 'protected' | 'mcp'; paths: string[] };
+export type GuardAsked = { kind: 'guard_asked'; request_id: string; tool: string; tool_use_id: string | null; check: 'outside_cwd' | 'delete' | 'protected' | 'mcp' | 'edit_rule'; paths: string[] };
+
+/** Added by Rust in place of a prompt the `chat.tools.*.autoApprove` rules approved (Rust answered it). */
+export type ToolAutoApproved = { kind: 'tool_auto_approved'; request_id: string; tool: string; tool_use_id: string | null; rules: string[] };
 
 /** A vote on an answer (VS Code's helpful / unhelpful). */
 export type Vote = 'up' | 'down';
@@ -90,6 +98,8 @@ export type AgentEvent =
 	| { kind: 'guard_blocked'; tool: string; tool_use_id: string | null; check: 'security' | 'repetition'; threats: string[]; detail: string }
 	/** Kingu's always-ask check stopped a call for the user (any permission mode); its `permission_request` follows. */
 	| GuardAsked
+	/** A tool call the user's auto-approve rules let run without a prompt; its row says by which rule. */
+	| ToolAutoApproved
 	/** The agent published an artifact (its `artifact_publish` tool): the chat shows a card that opens it. */
 	| ArtifactEvent
 	/** The user's thumbs up / down on the answer to chat request `request` (null: taken back). Kept in the transcript. */

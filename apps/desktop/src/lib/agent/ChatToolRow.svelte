@@ -8,13 +8,16 @@
 	// command in a terminal-styled block with the output under it (chatTerminalToolProgressPart).
 	// Cursor's look: most calls are quiet one-liners with the verb in bold ("**Read** app.js"); a
 	// shell call is a bordered card ("›_ Show git status  git" over its output); an edit is a
-	// bordered card with the file, +N and a few lines of its diff.
+	// bordered card with the file, +N and a few lines of its diff. A failed call opens by itself
+	// (chat.tools.autoExpandFailures); one the auto-approve rules let run says by which rule.
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import ChatMarkdown from './ChatMarkdown.svelte';
 	import ChatEditPill from './ChatEditPill.svelte';
 	import ChatToolRow from './ChatToolRow.svelte';
 	import { bashDescription, editOf, editSnippet, isSubagentTool, planOf, splitVerb, subagentStats, toolLabel, type ToolPart } from './chatParts';
+	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { approvedByText } from './toolRules.ts';
 
 	let {
 		part,
@@ -37,7 +40,11 @@
 		onimplement?: () => void;
 	} = $props();
 
-	let open = $state(false);
+	// chat.tools.autoExpandFailures: a failed call opens by itself until the user folds it.
+	let toggled = $state<boolean | null>(null);
+	const open = $derived(toggled ?? (settings.get<boolean>('chat.tools.autoExpandFailures') !== false && !!part.result?.isError));
+	const toggle = () => (toggled = !open);
+	const approvedBy = $derived(approvedByText(part.autoApproved));
 	let openThoughts = $state<Record<number, boolean>>({});
 	const done = $derived(!!part.result || turnDone);
 	const edit = $derived(editOf(part.name, part.input));
@@ -127,7 +134,7 @@
 			type="button"
 			class="flex w-full min-w-0 items-center gap-1.5 text-left text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)"
 			aria-expanded={open}
-			onclick={() => (open = !open)}
+			onclick={toggle}
 		>
 			{@render statusIcon()}
 			{@render label(toolLabel(part.name, part.input, done, cwd))}
@@ -176,7 +183,7 @@
 			class="flex w-full min-w-0 items-center gap-1.5 px-2 py-1 text-left hover:bg-(--vscode-list-hoverBackground)"
 			aria-expanded={open}
 			title={bash}
-			onclick={() => (open = !open)}
+			onclick={toggle}
 		>
 			{#if !done || part.result?.isError}{@render statusIcon()}{:else}<span class="shrink-0 font-mono text-(--vscode-descriptionForeground)" aria-hidden="true">›_</span>{/if}
 			<span class="min-w-0 truncate text-(--vscode-foreground)">{desc ?? bash}</span>
@@ -194,6 +201,7 @@
 				<pre class="px-2 py-1 break-all whitespace-pre-wrap text-(--vscode-descriptionForeground)">$ {bash}</pre>
 			{/if}
 		</div>
+		{#if approvedBy}<div class="truncate border-t border-(--vscode-widget-border) px-2 py-0.5 text-[11px] text-(--vscode-descriptionForeground)" title={approvedBy}>{approvedBy}</div>{/if}
 	</div>
 {:else}
 	<div class="group/tool">
@@ -201,12 +209,13 @@
 			type="button"
 			class="flex w-full min-w-0 items-center gap-1.5 text-left text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)"
 			aria-expanded={open}
-			onclick={() => (open = !open)}
+			onclick={toggle}
 		>
 			{@render statusIcon()}
 			{@render label(toolLabel(part.name, part.input, done, cwd))}
 			<span class="opacity-0 group-hover/tool:opacity-100"><Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} /></span>
 		</button>
+		{#if approvedBy}<div class="ml-[18px] truncate text-[11px] text-(--vscode-descriptionForeground)" title={approvedBy}>{approvedBy}</div>{/if}
 		{#if open}{@render details()}{/if}
 	</div>
 {/if}

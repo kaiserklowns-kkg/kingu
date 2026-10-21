@@ -19,6 +19,8 @@ export type ToolPart = {
 	result?: { content: string; isError: boolean };
 	/** A Task/Agent call: its subagent's own text, thinking and tool calls (VS Code's subagent part). */
 	children?: Part[];
+	/** The `chat.tools.*.autoApprove` rules that let it run without a prompt (`tool_auto_approved`). */
+	autoApproved?: string[];
 };
 
 export type Part =
@@ -81,6 +83,8 @@ export function buildTurns(run: ChatView): Turn[] {
 	};
 	/** Why each safety ask was raised, by request id. */
 	const askReasons = new Map<string, string>();
+	/** Auto-approvals that came before their call's `tool_use`, by tool call id. */
+	const approvedEarly = new Map<string, string[]>();
 	/** Votes by checkpoint, the last one winning. */
 	const votes = new Map<number, Vote | null>();
 	const close = (canceled: boolean) => {
@@ -108,6 +112,8 @@ export function buildTurns(run: ChatView): Turn[] {
 				break;
 			case 'tool_use': {
 				const tool: ToolPart = { kind: 'tool', id: ev.id, name: ev.name, input: ev.input };
+				const early = approvedEarly.get(ev.id);
+				if (early) tool.autoApproved = early;
 				sink(ev.parent_tool_use_id).push(tool);
 				if (ev.id) tools.set(ev.id, tool);
 				break;
@@ -127,6 +133,13 @@ export function buildTurns(run: ChatView): Turn[] {
 			case 'guard_asked':
 				askReasons.set(ev.request_id, guardAskedText(ev));
 				break;
+			case 'tool_auto_approved': {
+				if (!ev.tool_use_id) break;
+				const tool = tools.get(ev.tool_use_id);
+				if (tool) tool.autoApproved = ev.rules;
+				else approvedEarly.set(ev.tool_use_id, ev.rules);
+				break;
+			}
 			case 'feedback':
 				votes.set(ev.request, ev.vote);
 				break;
