@@ -455,5 +455,51 @@ crate::i18n::messages! {
       en: "Snap sandboxing is not supported on this operating system yet",
       th: "ระบบปฏิบัติการนี้ยังไม่รองรับ sandbox ของ Snap",
     },
+
+    // Permissions, lock file, secrets and team library (snap.rs, snap_install.rs, snap_secrets.rs).
+    PermissionTooMany {
+      en: "permissions.{field} has more than {max} entries",
+      th: "permissions.{field} มีเกิน {max} รายการ",
+    },
+    PermissionInvalid {
+      en: "permissions.{field}: \"{value}\" is not valid",
+      th: "permissions.{field}: \"{value}\" ไม่ถูกต้อง",
+    },
+    HostsNeedNetwork {
+      en: "permissions.hosts needs network = true",
+      th: "permissions.hosts ต้องใช้คู่กับ network = true",
+    },
+    NoLockFile {
+      en: "This folder has no .kingu/snaps.lock",
+      th: "โฟลเดอร์นี้ไม่มี .kingu/snaps.lock",
+    },
+    NotFromTeamLibrary {
+      en: "Snap \"{id}\" was not installed from the team library",
+      th: "Snap \"{id}\" ไม่ได้ติดตั้งจากคลังของทีม",
+    },
+    SecretNotDeclared {
+      en: "Snap \"{id}\" does not declare the secret {name}",
+      th: "Snap \"{id}\" ไม่ได้ประกาศ secret ชื่อ {name}",
+    },
+    SecretValueInvalid {
+      en: "The value of {name} is empty or too long",
+      th: "ค่าของ {name} ว่างหรือยาวเกินไป",
+    },
+    KeychainFailed {
+      en: "Keychain: {detail}",
+      th: "Keychain: {detail}",
+    },
+    PackageInvalid {
+      en: "The snap package is not valid: {detail}",
+      th: "แพ็กเกจ snap ไม่ถูกต้อง: {detail}",
+    },
+    PackageHashMismatch {
+      en: "The downloaded package of {id} {version} does not match its published SHA-256",
+      th: "แพ็กเกจ {id} {version} ที่ดาวน์โหลดมาไม่ตรงกับ SHA-256 ที่เผยแพร่ไว้",
+    },
+    PackageSnapMismatch {
+      en: "Snap {id} {version} in the package hashes to {got}, not the published {published}",
+      th: "Snap {id} {version} ในแพ็กเกจมี hash {got} ไม่ตรงกับที่เผยแพร่ไว้ ({published})",
+    },
   }
 }

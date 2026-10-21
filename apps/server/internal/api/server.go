@@ -5,6 +5,8 @@
 // transcripts or secrets. The one exception is team artifacts (artifacts.go):
 // a page an agent made that a member explicitly shares with the team, one
 // HTML file of at most 2 MiB, refused when it looks like it holds a credential.
+// And the team Snap library (snap_library.go): snap packages an owner or lead
+// explicitly publishes, never anything of users' projects (secrets only by name).
 package api
 
 import (
@@ -144,6 +146,10 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/snaps", s.org(s.listSnaps))
 	mux.Handle("PUT /v1/snaps/{id}", s.org(s.putSnap))
 	mux.Handle("DELETE /v1/snaps/{id}", s.org(s.deleteSnap))
+	mux.Handle("GET /v1/snap-library", s.org(s.listSnapLibrary))
+	mux.Handle("GET /v1/snap-library/{id}/versions/{version}/package", s.org(s.getSnapPackage))
+	mux.Handle("PUT /v1/snap-library/{id}/versions/{version}", s.orgLimit(s.publishSnapVersion, MaxSnapPublishBodyBytes))
+	mux.Handle("POST /v1/snap-library/{id}/versions/{version}/yank", s.org(s.yankSnapVersion))
 	mux.Handle("GET /v1/artifacts", s.org(s.listArtifacts))
 	mux.Handle("GET /v1/artifacts/{id}", s.org(s.getArtifact))
 	mux.Handle("PUT /v1/artifacts/{id}", s.orgLimit(s.putArtifact, MaxArtifactBodyBytes))
@@ -178,6 +184,9 @@ func errBadRequest(code, msg string) *apiError {
 func errNotFound(msg string) *apiError {
 	return &apiError{Status: http.StatusNotFound, Code: "not_found", Message: msg}
 }
+func errConflict(msg string) *apiError {
+	return &apiError{Status: http.StatusConflict, Code: "conflict", Message: msg}
+}
 
 var (
 	errMissingOrg = &apiError{Status: http.StatusUnauthorized, Code: "missing_org",
@@ -198,6 +207,27 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, e *apiError) {
 	writeJSON(w, e.Status, map[string]*apiError{"error": e})
+}
+
+// rawBody is an orgHandler body sent as bytes rather than JSON (a snap
+// package download). Header holds extra response headers.
+type rawBody struct {
+	ContentType string
+	Header      map[string]string
+	Data        []byte
+}
+
+func writeRaw(w http.ResponseWriter, status int, b rawBody) {
+	h := w.Header()
+	for k, v := range b.Header {
+		h.Set(k, v)
+	}
+	h.Set("Content-Type", b.ContentType)
+	h.Set("Content-Length", strconv.Itoa(len(b.Data)))
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_, _ = w.Write(b.Data)
 }
 
 // ---- authentication, rate limiting, org-scoped handler plumbing ------------
@@ -317,6 +347,10 @@ func (s *Server) orgLimit(h orgHandler, limit int64) http.Handler {
 		})
 		if err != nil {
 			writeError(w, s.toAPIError(r, err))
+			return
+		}
+		if raw, ok := body.(rawBody); ok {
+			writeRaw(w, status, raw)
 			return
 		}
 		writeJSON(w, status, body)

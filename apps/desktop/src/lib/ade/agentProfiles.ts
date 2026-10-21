@@ -1,9 +1,10 @@
 // Agent profiles: what Kingu knows about each agent CLI it runs in a task terminal (Orca's
 // TUI_AGENT_CONFIG + resume argv). Per CLI: how the prompt goes in, how to resume, how Snap MCP
-// servers and skills reach it, where its status comes from and which AI account env it gets.
+// servers and skills reach it for one run (argv, env, or a file the caller writes into the
+// session's `runDir`), where its status comes from and which AI account env it gets.
 // A command that matches no profile runs as typed with the prompt as its last argument. Pure.
 
-import { cliWithMcp, stdioOnly, type McpServers } from '#lib/ade/mcp.ts';
+import { cliWithMcp, stdioOnly, type McpServer, type McpServers } from '#lib/ade/mcp.ts';
 import { t } from '#lib/i18n/index.ts';
 
 /**
@@ -27,11 +28,19 @@ export type LaunchContext = {
 	hookFile?: string | null;
 	/** opencode: the session's `OPENCODE_CONFIG_DIR` holding Kingu's status plugin. */
 	opencodeDir?: string | null;
+	/**
+	 * A folder of this session's own outside the worktree (in the app cache, like the hook file)
+	 * for the files a launch returns. Without it, what needs a file goes without (gemini MCP).
+	 */
+	runDir?: string | null;
 	servers: McpServers;
+	/** Skill plugin folders (`.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`; see mcp.ts). */
 	plugins: readonly string[];
 };
+/** A file the caller writes (creating its folder) before it starts the argv; `path` is under `runDir`. */
+export type LaunchFile = { path: string; content: string };
 /** `typePrompt`: the prompt is pasted into the CLI once it is up (CLIs without a prompt argument). */
-export type Launch = { argv: string[]; typePrompt?: string };
+export type Launch = { argv: string[]; typePrompt?: string; files?: LaunchFile[] };
 
 export type AgentProfile = {
 	id: string;
@@ -100,16 +109,78 @@ export function codexNotifyArgs(hookFile: string): string[] {
 	return ['-c', `notify=${tomlArray(['sh', '-c', script, 'kingu-notify'])}`];
 }
 
-// ---- MCP config formats of the other CLIs -----------------------------------------------------
+// ---- MCP and skill formats of the other CLIs --------------------------------------------------
+//
+// Only per-run mechanisms: nothing is written into the worktree or the user's own config. Left
+// out, for want of one: codex skills (only `$CODEX_HOME/skills`, `~/.agents/skills` and the
+// repo's `.agents/skills`; the app-server's `skills/extraRoots/set` is not the TUI's, and a
+// CODEX_HOME of our own would also move its login, sessions, trust and hooks.json), gemini
+// skills (`~/.gemini/skills` sits in the folder with its OAuth login, which GEMINI_CLI_HOME
+// moves along), amp skills (`amp.skills.path` only through settings files; `--settings-file`
+// replaces the user's), cursor-agent MCP and skills (only `~/.cursor` and `.cursor/`; its
+// CURSOR_CONFIG_DIR is undocumented).
 
-/** opencode: `OPENCODE_CONFIG_CONTENT` is merged over its config files; local servers take one command array. */
-export function opencodeConfig(servers: McpServers): string | null {
+/** A plugin folder's skills folder (its `skills/<name>/SKILL.md`). */
+const pluginSkills = (dir: string) => `${dir.replace(/\/+$/, '')}/skills`;
+
+/**
+ * opencode: `OPENCODE_CONFIG_CONTENT` is merged over its config files; local servers take one
+ * command array, and `skills.paths` folders are searched for `**\/SKILL.md` (opencode v1.19
+ * packages/opencode/src/skill/index.ts). Its deep merge replaces arrays, so a `skills.paths` of
+ * the user's own config is left out of a run that gets skills from Kingu. UNVERIFIED: opencode's
+ * unreleased rewrite (dev branch, packages/core) reads `skills` as a plain array instead.
+ */
+export function opencodeConfig(servers: McpServers, plugins: readonly string[] = []): string | null {
 	const entries = Object.entries(stdioOnly(servers));
-	if (!entries.length) return null;
+	if (!entries.length && !plugins.length) return null;
 	return JSON.stringify({
-		mcp: Object.fromEntries(entries.map(([name, s]) => [name, { type: 'local', command: [s.command, ...s.args], environment: s.env, enabled: true }]))
+		...(entries.length ? { mcp: Object.fromEntries(entries.map(([name, s]) => [name, { type: 'local', command: [s.command, ...s.args], environment: s.env, enabled: true }])) } : {}),
+		...(plugins.length ? { skills: { paths: plugins.map(pluginSkills) } } : {})
 	});
 }
+
+/**
+ * Gemini CLI expands `$VAR` / `${VAR}` in every settings string and has no escape; `${UNSET:-$}`
+ * gives a bare `$` (one pass, the result is not expanded again; gemini-cli
+ * packages/cli/src/utils/envVarResolver.ts). Only a `$` it would expand is replaced.
+ */
+const GEMINI_DOLLAR = '${KINGU_LITERAL_DOLLAR:-$}';
+export const geminiLiteral = (s: string) => s.replace(/\$(?=[\w{])/g, () => GEMINI_DOLLAR);
+
+/**
+ * Gemini CLI: a settings file with the servers in `mcpServers`, for the session's
+ * GEMINI_CLI_SYSTEM_DEFAULTS_PATH. System defaults are the lowest settings layer and
+ * `mcpServers` is merged key by key (gemini-cli packages/cli/src/config/settings.ts,
+ * settingsSchema.ts), so the user's own servers and `mcp.allowed` / `mcp.excluded` still apply.
+ * A server's env goes through `env K=V cmd`: gemini expands env values a second time
+ * (dotenv-expand, packages/core/src/tools/mcp-client.ts) but passes args as they are.
+ */
+export function geminiSystemDefaults(servers: McpServers): string | null {
+	const entries = Object.entries(stdioOnly(servers));
+	if (!entries.length) return null;
+	const server = (s: McpServer) => {
+		const env = Object.entries(s.env);
+		// `env` would take a program with `=` in its name for one more variable.
+		if (env.length && !s.command.includes('=')) return { command: 'env', args: [...env.map(([k, v]) => `${k}=${v}`), s.command, ...s.args].map(geminiLiteral) };
+		return { command: geminiLiteral(s.command), args: s.args.map(geminiLiteral), ...(env.length ? { env: Object.fromEntries(env.map(([k, v]) => [k, geminiLiteral(v)])) } : {}) };
+	};
+	return JSON.stringify({ mcpServers: Object.fromEntries(entries.map(([name, s]) => [name, server(s)])) });
+}
+
+/** The gemini settings file of a run, and the env that points Gemini CLI at it. */
+export function geminiMcp(ctx: Pick<LaunchContext, 'servers' | 'runDir'>): Extras {
+	const content = geminiSystemDefaults(ctx.servers);
+	if (!content || !ctx.runDir) return {};
+	const path = `${ctx.runDir.replace(/\/+$/, '')}/gemini-system-defaults.json`;
+	return { env: { GEMINI_CLI_SYSTEM_DEFAULTS_PATH: path }, files: [{ path, content }] };
+}
+
+/**
+ * Copilot CLI `--plugin-dir=DIR` (repeatable) mounts a plugin for this session only; its legacy
+ * plugin manifest may be `.claude-plugin/plugin.json` and skills default to `skills/`
+ * (docs.github.com copilot-cli-reference: cli-command-reference, cli-plugin-reference).
+ */
+export const copilotPluginArgs = (plugins: readonly string[]) => plugins.map((dir) => `--plugin-dir=${dir}`);
 
 /** Copilot CLI `--additional-mcp-config`: `{ mcpServers: { name: { type: 'local', … } } }`. */
 export function copilotMcpConfig(servers: McpServers): string | null {
@@ -127,14 +198,17 @@ export function ampMcpConfig(servers: McpServers): string | null {
 
 // ---- profiles --------------------------------------------------------------------------------
 
+/** What MCP servers and skills add to a launch: arguments right after the base command, env, files. */
+type Extras = { args?: string[]; env?: Record<string, string>; files?: LaunchFile[] };
+
 type Spec = Omit<AgentProfile, 'launch' | 'canResume' | 'mcp' | 'skills'> & {
 	/** Where the prompt goes: a positional argument, a flag, or pasted once the CLI is up. */
 	prompt: { kind: 'argv' } | { kind: 'flag'; flag: string } | { kind: 'type' };
 	/** The resume argv after the base command (null: the CLI cannot resume). */
 	resume: ((id: string | null) => string[]) | null;
-	/** MCP / skills: arguments right after the base command, or an env prefix. */
-	mcpArgs?: (servers: McpServers) => string[];
-	mcpEnv?: (servers: McpServers) => Record<string, string>;
+	mcp?: boolean;
+	skills?: boolean;
+	extras?: (ctx: LaunchContext) => Extras;
 };
 
 /** The session's status hook file (and opencode's plugin folder), as env for the CLI. */
@@ -151,19 +225,20 @@ const envPrefix = (env: Record<string, string>) => {
 };
 
 function simple(spec: Spec): AgentProfile {
-	const { prompt, resume, mcpArgs, mcpEnv, ...rest } = spec;
+	const { prompt, resume, mcp = false, skills = false, extras, ...rest } = spec;
 	return {
 		...rest,
 		canResume: resume !== null,
-		mcp: !!(mcpArgs || mcpEnv),
-		skills: false,
+		mcp,
+		skills,
 		launch(base, how, ctx) {
-			const env = Object.entries({ ...(rest.status === 'agent-hooks' ? hookEnv(ctx) : {}), ...(mcpEnv?.(ctx.servers) ?? {}) });
-			const head = [...(env.length ? ['env', ...env.map(([k, v]) => `${k}=${v}`)] : []), ...base, ...(mcpArgs?.(ctx.servers) ?? [])];
-			if ('resume' in how) return { argv: resume ? [...head, ...resume(how.resume)] : head };
-			if ('fresh' in how) return { argv: head };
-			if (prompt.kind === 'type') return { argv: head, typePrompt: how.prompt };
-			return { argv: [...head, ...(prompt.kind === 'flag' ? valueFlag(prompt.flag, how.prompt) : positional(how.prompt))] };
+			const x = extras?.(skills ? ctx : { ...ctx, plugins: [] }) ?? {};
+			const head = [...envPrefix({ ...(rest.status === 'agent-hooks' ? hookEnv(ctx) : {}), ...x.env }), ...base, ...(x.args ?? [])];
+			const files = x.files?.length ? { files: x.files } : {};
+			if ('resume' in how) return { argv: resume ? [...head, ...resume(how.resume)] : head, ...files };
+			if ('fresh' in how) return { argv: head, ...files };
+			if (prompt.kind === 'type') return { argv: head, typePrompt: how.prompt, ...files };
+			return { argv: [...head, ...(prompt.kind === 'flag' ? valueFlag(prompt.flag, how.prompt) : positional(how.prompt))], ...files };
 		}
 	};
 }
@@ -236,7 +311,10 @@ export const PROFILES: readonly AgentProfile[] = [
 		account: null,
 		ownsSessionId: false,
 		prompt: { kind: 'flag', flag: '--prompt-interactive' },
-		resume: (id) => ['--resume', id ?? 'latest']
+		resume: (id) => ['--resume', id ?? 'latest'],
+		// MCP through a settings file of the run (needs `runDir`); no per-run skills (see above).
+		mcp: true,
+		extras: geminiMcp
 	}),
 	simple({
 		id: 'opencode',
@@ -247,9 +325,11 @@ export const PROFILES: readonly AgentProfile[] = [
 		ownsSessionId: false,
 		prompt: { kind: 'flag', flag: '--prompt' },
 		resume: (id) => (id ? ['--session', id] : ['--continue']),
-		mcpEnv: (servers): Record<string, string> => {
-			const config = opencodeConfig(servers);
-			return config ? { OPENCODE_CONFIG_CONTENT: config } : {};
+		mcp: true,
+		skills: true,
+		extras: (ctx) => {
+			const config = opencodeConfig(ctx.servers, ctx.plugins);
+			return config ? { env: { OPENCODE_CONFIG_CONTENT: config } } : {};
 		}
 	}),
 	simple({
@@ -272,9 +352,11 @@ export const PROFILES: readonly AgentProfile[] = [
 		// `--prompt` runs once and exits; `--interactive` keeps the session.
 		prompt: { kind: 'flag', flag: '--interactive' },
 		resume: (id) => (id ? [`--resume=${id}`] : ['--continue']),
-		mcpArgs: (servers) => {
-			const config = copilotMcpConfig(servers);
-			return config ? ['--additional-mcp-config', config] : [];
+		mcp: true,
+		skills: true,
+		extras: (ctx) => {
+			const config = copilotMcpConfig(ctx.servers);
+			return { args: [...(config ? ['--additional-mcp-config', config] : []), ...copilotPluginArgs(ctx.plugins)] };
 		}
 	}),
 	simple({
@@ -287,9 +369,10 @@ export const PROFILES: readonly AgentProfile[] = [
 		// `amp -x` is one-shot; the interactive TUI takes no prompt argument.
 		prompt: { kind: 'type' },
 		resume: (id) => ['threads', 'continue', ...(id ? [id] : [])],
-		mcpArgs: (servers) => {
-			const config = ampMcpConfig(servers);
-			return config ? ['--mcp-config', config] : [];
+		mcp: true,
+		extras: (ctx) => {
+			const config = ampMcpConfig(ctx.servers);
+			return config ? { args: ['--mcp-config', config] } : {};
 		}
 	}),
 	simple({

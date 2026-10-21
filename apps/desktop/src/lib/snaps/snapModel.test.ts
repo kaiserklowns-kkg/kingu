@@ -54,8 +54,10 @@ function snap(over: Partial<SnapInfo> = {}): SnapInfo {
 		],
 		mcp: [{ name: 'gopls', command: ['gopls', 'mcp'], env: { GOFLAGS: '-mod=mod' } }],
 		skills: [],
+		scripts: [],
 		origin: null,
 		lock: null,
+		approved_permissions: null,
 		...over
 	};
 }
@@ -173,7 +175,7 @@ describe('Snaps view', () => {
 		expect(snapStatus(snap()).key).toBe('active');
 	});
 	test('lock notes and the pending trust badge', () => {
-		expect(lockNote(snap({ source: 'repo', lock: 'changed' }))).toBe('เปลี่ยนจาก lock');
+		expect(lockNote(snap({ source: 'repo', lock: 'changed' }))).toBe('ไม่ตรงกับ snaps.lock — ต้องอนุมัติใหม่');
 		expect(lockNote(snap({ source: 'repo', lock: 'unlocked' }))).toBe('ไม่อยู่ใน lock');
 		expect(lockNote(snap({ source: 'repo', lock: 'locked' }))).toBeNull();
 		const list = [snap({ source: 'repo', trusted: false }), snap({ source: 'repo', trusted: false, error: 'x' }), snap({ source: 'repo' }), snap({ trusted: true })];

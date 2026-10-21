@@ -48,6 +48,8 @@ mod snap_install;
 mod snap_lsp;
 mod snap_sandbox;
 mod snap_view;
+mod snap_secrets;
+mod mcp_tools;
 mod snippets;
 mod startup;
 mod system;
@@ -1547,6 +1549,8 @@ pub fn run() {
       agent::status_hooks::agent_status_hooks_remove,
       agent::hooks::agent_hook_settings,
       agent::hooks::agent_hook_file,
+      agent::hooks::agent_run_dir,
+      agent::hooks::agent_run_files_write,
       agent::cli::agent_cli_found,
       agent::runtimes::agent_runtimes,
       agent::arkai::arkai_providers,
@@ -1751,6 +1755,12 @@ pub fn run() {
       snap_view::snap_view_open,
       snap_view::snap_view_close,
       snap_sandbox::snap_sandbox_info,
+      snap_secrets::snap_secrets_list,
+      snap_secrets::snap_secret_set,
+      snap_secrets::snap_secret_delete,
+      snap_secrets::snap_secrets_file,
+      mcp_tools::mcp_tools_list,
+      mcp_tools::mcp_tool_call,
       snap_install::snap_install_git,
       snap_install::snap_install_folder,
       snap_install::snap_update_prepare,
@@ -1759,6 +1769,9 @@ pub fn run() {
       snap_install::snap_uninstall,
       snap_install::snap_new,
       snap_install::snap_lock,
+      snap_install::snap_lock_verify,
+      snap_install::snap_lock_approve,
+      snap_install::snap_lock_pin_team,
       snap_install::snap_reveal,
       skill_hub::skill_hub_list,
       skill_hub::skill_hub_set_enabled,
@@ -1798,6 +1811,10 @@ pub fn run() {
       team::snaps::team_snap_catalog,
       team::snaps::team_snap_approve,
       team::snaps::snap_install_team,
+      team::library::team_snap_library,
+      team::library::team_snap_publish,
+      team::library::snap_install_library,
+      team::library::team_snap_yank,
       team::skills::team_skill_list,
       team::skills::team_skill_share,
       team::skills::team_skill_unshare,

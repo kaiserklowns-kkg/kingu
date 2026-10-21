@@ -21,35 +21,42 @@ import { layout } from '#lib/workbench/layout.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
-import { setMcpProvider, setSkillPluginProvider } from '#lib/ade/mcp.ts';
+import { setMcpPrepare, setMcpProvider, setSkillPluginProvider } from '#lib/ade/mcp.ts';
 import { team } from '#lib/team/team.svelte.ts';
 import { createSnapEventRouter, needsFocusReload } from '#lib/team/teamEvents.ts';
 import { approveSummary, canApprove, isApprovable, type TeamCatalog } from './teamSnaps.ts';
+import { isPublishable, libraryUpdates, librarySnaps, publishSummary, versionRow, type Library, type LibraryVersion } from './teamLibrary.ts';
 import { worktreeDir } from '#lib/ade/keys.ts';
 import {
 	installSummary,
 	isActive,
 	isUpdatable,
+	lockReportText,
 	mcpServersOf,
 	runnableTasks,
 	SANDBOX_SETTING,
 	sandboxPlan,
 	sandboxRefusal,
 	sandboxTask,
+	secretRows,
 	skillSnapIds,
+	snapsNeedingMcpSecrets,
 	snapSettingSchemas,
 	taskArgv,
 	taskCommandId,
 	touchesRepoSnaps,
 	trustSummary,
 	updateSummary,
+	type LockReport,
 	type McpServerSpec,
 	type PreparedInstall,
 	type SandboxInfo,
 	type SandboxPlan,
+	type SecretState,
 	type SnapInfo
 } from './snapModel.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
+import { runMcpTool } from './mcpTools.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
 import { BUILTIN_SNAPS } from './builtinSnaps.ts';
 import { withBuiltins } from './contributions.ts';
@@ -95,6 +102,17 @@ class Snaps {
 	async trust(id: string, on: boolean) {
 		const snap = this.list.find((s) => s.id === id && s.source === 'repo');
 		if (!snap) return;
+		// Differs from snaps.lock: trusting it means approving this version into the lock.
+		if (on && snap.lock === 'changed') {
+			try {
+				await invoke('snap_lock_approve', { id, hash: snap.hash });
+				status.flash(t('snapPlatform.approved', { name: snap.name }));
+			} catch (e) {
+				notifications.error(t('snapPlatform.approveFailed', { name: snap.name, error: String(e) }));
+			}
+			await this.load();
+			return;
+		}
 		try {
 			await invoke('snap_trust', { id, trusted: on, hash: on ? snap.hash : null });
 			status.flash(on ? t('tools.snaps.trusted', { name: snap.name }) : t('tools.snaps.untrusted', { name: snap.name }));
@@ -210,6 +228,30 @@ class Snaps {
 		await this.load();
 	}
 
+	/** Snap: Verify snaps.lock — every pinned snap against what is here, with the files that changed. */
+	async verifyLock() {
+		if (!workspace.root) {
+			status.flash(t('tools.snaps.openFolderFirst'));
+			return;
+		}
+		try {
+			const rows = await invoke<LockReport[]>('snap_lock_verify');
+			const bad = rows.some((r) => r.status !== 'locked');
+			await message(lockReportText(rows), { title: t('snapPlatform.verify.title'), kind: bad ? 'warning' : 'info' });
+			const pinned = rows.filter((r) => r.source === 'team' && r.status !== 'locked' && r.lockedVersion);
+			if (pinned.length && this.library) {
+				const ok = await ask(t('snapPlatform.library.installLocked', { list: pinned.map((r) => `${r.id} v${r.lockedVersion}`).join(', ') }), {
+					title: t('snapPlatform.library.installLockedTitle'),
+					okLabel: t('snapPlatform.library.installLockedOk'),
+					cancelLabel: t('common.cancel')
+				});
+				if (ok) for (const r of pinned) await this.installFromLibrary(r.id, r.lockedVersion);
+			}
+		} catch (e) {
+			notifications.error(t('snapPlatform.verify.failed', { error: String(e) }));
+		}
+	}
+
 	/** Trust from a row of the Snaps view: the same review as the details page, as a native confirm. */
 	async confirmTrust(s: SnapInfo) {
 		const sure = await ask(trustSummary(s, this.sandbox), { title: t('tools.snaps.trustTitle', { name: s.name }), kind: 'warning', okLabel: t('tools.snaps.trust'), cancelLabel: t('common.cancel') });
@@ -309,8 +351,10 @@ class Snaps {
 		if (!serverUrl || !team.status?.signed_in) {
 			this.teamCatalog = null;
 			this.teamError = null;
+			this.library = null;
 			return;
 		}
+		void this.#loadLibrary(serverUrl, seq);
 		this.teamLoading = true;
 		try {
 			const catalog = await invoke<TeamCatalog>('team_snap_catalog', { serverUrl });
@@ -322,6 +366,124 @@ class Snaps {
 		} finally {
 			if (seq === this.#teamSeq) this.teamLoading = false;
 		}
+	}
+
+	/** The team Snap library (published packages); null when not signed in or it failed (`libraryError`). */
+	library = $state<Library | null>(null);
+	libraryError = $state<string | null>(null);
+
+	async #loadLibrary(serverUrl: string, seq: number) {
+		try {
+			const lib = await invoke<Library>('team_snap_library', { serverUrl });
+			if (seq !== this.#teamSeq) return;
+			if (JSON.stringify(lib) !== JSON.stringify($state.snapshot(this.library))) this.library = lib;
+			this.libraryError = null;
+		} catch (e) {
+			if (seq === this.#teamSeq) this.libraryError = String(e);
+		}
+	}
+
+	#libraryAdmin(): boolean {
+		if (!team.status?.signed_in || !team.serverUrl) {
+			status.flash(t('snapPlatform.library.signInFirst'));
+			return false;
+		}
+		if (!canApprove(this.library?.role ?? this.teamCatalog?.role)) {
+			status.flash(t('snapPlatform.library.adminOnly'));
+			return false;
+		}
+		return true;
+	}
+
+	/** Snap: Publish to Team Library… (owner/lead) — packs the snap folder and uploads it as its version. */
+	async publishToLibrary(id?: string, source?: 'user' | 'repo') {
+		if (!this.#libraryAdmin()) return;
+		const items = this.library?.items ?? [];
+		const candidates = this.list.filter((s) => isPublishable(s, items));
+		let snap = this.list.find((s) => s.id === id && (!source || s.source === source));
+		if (!snap) {
+			const picked = await quick.choose({ placeholder: t('snapPlatform.library.pickPublish'), items: candidates.map((s) => ({ id: `${s.source}/${s.id}`, label: s.name, description: `${s.id} v${s.version} · ${s.source}` })) });
+			snap = candidates.find((s) => `${s.source}/${s.id}` === picked?.id);
+		}
+		if (!snap) return;
+		const target = snap;
+		const sure = await ask(publishSummary(target), { title: t('snapPlatform.library.publishTitle', { name: target.name }), kind: 'warning', okLabel: t('snapPlatform.library.publish'), cancelLabel: t('common.cancel') });
+		if (!sure) return;
+		await this.#exclusive(t('snapPlatform.library.publishing', { name: target.name }), async () => {
+			try {
+				const v = await invoke<LibraryVersion>('team_snap_publish', { serverUrl: team.serverUrl, id: target.id, source: target.source });
+				status.flash(t('snapPlatform.library.published', { name: target.name, version: v.version }));
+			} catch (e) {
+				await message(String(e), { title: t('snapPlatform.library.publishFailedTitle'), kind: 'error' });
+			}
+			await this.loadTeam();
+		});
+	}
+
+	/** Snap: Install from Team Library… — a version (newest not yanked unless one is picked), verified, then the normal confirm. */
+	async installFromLibrary(id?: string, version?: string | null) {
+		if (!team.status?.signed_in || !team.serverUrl) {
+			status.flash(t('snapPlatform.library.signInFirst'));
+			return;
+		}
+		const all = librarySnaps(this.library?.items ?? []);
+		const target = id ?? (await quick.choose({ placeholder: t('snapPlatform.library.pickInstall'), items: all.map((l) => ({ id: l.id, label: l.latest?.name ?? l.id, description: l.latest ? `v${l.latest.version}` : t('snapPlatform.library.allYanked') })) }))?.id;
+		if (!target) return;
+		await this.#exclusive(t('snapPlatform.library.fetching', { id: target }), async () => {
+			const prepared = await this.#prepare(() => invoke<PreparedInstall>('snap_install_library', { serverUrl: team.serverUrl, id: target, version: version ?? null }));
+			if (prepared) await this.#confirmAndCommit(prepared);
+		});
+	}
+
+	/** Snap: Update from Team Library — the installed library snaps with a newer version (permission changes shown first). */
+	async updateFromLibrary() {
+		const server = this.library?.server;
+		const updates = server ? libraryUpdates(librarySnaps(this.library?.items ?? []), this.list, server) : [];
+		if (!updates.length) {
+			status.flash(t('snapPlatform.library.noUpdates'));
+			return;
+		}
+		for (const u of updates) await this.installFromLibrary(u.id);
+	}
+
+	/** Snap: Yank Team Library Version… (owner/lead) — new installs and updates skip it; pinned installs keep working. */
+	async yankVersion(id?: string) {
+		if (!this.#libraryAdmin()) return;
+		const all = librarySnaps(this.library?.items ?? []);
+		const snapId = id ?? (await quick.choose({ placeholder: t('snapPlatform.library.pickInstall'), items: all.map((l) => ({ id: l.id, label: l.latest?.name ?? l.id, description: `${l.versions.length}` })) }))?.id;
+		const versions = all.find((l) => l.id === snapId)?.versions ?? [];
+		if (!snapId || !versions.length) return;
+		const row = await quick.choose({ placeholder: t('snapPlatform.library.pickYank'), items: versions.map(versionRow) });
+		const v = versions.find((x) => x.version === row?.id);
+		if (!v) return;
+		let reason: string | null = null;
+		if (!v.yanked) {
+			const r = await quick.input({ placeholder: t('snapPlatform.library.yankReason'), hint: () => t('snapPlatform.library.yankHint', { version: v.version }) });
+			if (r === undefined) return;
+			reason = r.trim() || null;
+		}
+		try {
+			await invoke('team_snap_yank', { serverUrl: team.serverUrl, id: snapId, version: v.version, yanked: !v.yanked, reason });
+			status.flash(v.yanked ? t('snapPlatform.library.restored', { id: snapId, version: v.version }) : t('snapPlatform.library.yanked', { id: snapId, version: v.version }));
+		} catch (e) {
+			notifications.error(t('snapPlatform.library.failed', { error: String(e) }));
+		}
+		await this.loadTeam();
+	}
+
+	/** Snap: Pin Team Snap in snaps.lock — the installed library version becomes the project's. */
+	async pinTeamInLock(id?: string) {
+		const pinnable = this.list.filter((s) => s.source === 'user' && !s.error && s.origin?.team);
+		const target = id ?? (await this.#pick(pinnable, t('snapPlatform.library.pickInstall')));
+		const snap = pinnable.find((s) => s.id === target);
+		if (!snap) return;
+		try {
+			await invoke('snap_lock_pin_team', { id: snap.id });
+			status.flash(t('snapPlatform.library.pinned', { id: snap.id, version: snap.version }));
+		} catch (e) {
+			notifications.error(t('tools.snaps.lockFailed', { error: String(e) }));
+		}
+		await this.load();
 	}
 
 	/** Installs a team snap at the commit the team pinned; Rust refuses it unless its hash is the approved one. */
@@ -369,8 +531,98 @@ class Snaps {
 		});
 	}
 
+	/** Snaps whose missing secrets the user chose not to enter this session (asked once). */
+	#secretsDeclined = new Set<string>();
+
+	/** Snap: Set Secrets… — values for a snap's declared secrets, kept in the Keychain. */
+	async setSecrets(id?: string) {
+		const target = id ?? (await this.#pick(this.list.filter((s) => !s.error && s.permissions.secrets.length > 0), t('snapPlatform.secrets.pickSnap')));
+		const snap = this.list.find((s) => s.id === target && !s.error);
+		if (!target || !snap) return;
+		let states: SecretState[];
+		try {
+			states = await invoke<SecretState[]>('snap_secrets_list', { id: target });
+		} catch (e) {
+			notifications.error(t('snapPlatform.secrets.failed', { error: String(e) }));
+			return;
+		}
+		const row = await quick.choose({ placeholder: t('snapPlatform.secrets.pickName', { name: snap.name }), items: secretRows(states) });
+		if (!row) return;
+		const stored = states.find((s) => s.name === row.id)?.stored;
+		if (stored) {
+			const action = await quick.choose({
+				placeholder: row.id,
+				items: [
+					{ id: 'replace', label: t('snapPlatform.secrets.replace'), description: '' },
+					{ id: 'remove', label: t('snapPlatform.secrets.remove'), description: t('snapPlatform.secrets.removeDesc') }
+				]
+			});
+			if (!action) return;
+			if (action.id === 'remove') {
+				try {
+					await invoke('snap_secret_delete', { id: target, name: row.id });
+					status.flash(t('snapPlatform.secrets.removed', { name: row.id }));
+				} catch (e) {
+					notifications.error(t('snapPlatform.secrets.failed', { error: String(e) }));
+				}
+				return;
+			}
+		}
+		// Typed hidden; the hint never shows the value.
+		const value = await quick.input({ placeholder: t('snapPlatform.secrets.enter', { name: row.id, snap: snap.name }), password: true, hint: (v) => (v ? t('snapPlatform.secrets.saveHint') : t('snapPlatform.secrets.typeValue')) });
+		if (!value) return;
+		try {
+			await invoke('snap_secret_set', { id: target, name: row.id, value });
+			this.#secretsDeclined.delete(target);
+			status.flash(t('snapPlatform.secrets.saved', { name: row.id }));
+		} catch (e) {
+			notifications.error(t('snapPlatform.secrets.failed', { error: String(e) }));
+		}
+	}
+
+	/**
+	 * Before a task of a snap with secrets: offers once per session to enter missing values, then
+	 * writes the secrets file for this launch (null when none is stored or the sandbox is off,
+	 * which has no launcher to hand it to).
+	 */
+	async #taskSecrets(snap: SnapInfo): Promise<string | null> {
+		if (!snap.permissions.secrets.length || this.sandbox.kind !== 'enforce') return null;
+		const missing = await invoke<SecretState[]>('snap_secrets_list', { id: snap.id })
+			.then((list) => list.filter((s) => !s.stored).map((s) => s.name))
+			.catch(() => []);
+		if (missing.length && !this.#secretsDeclined.has(snap.id)) {
+			const enter = await ask(t('snapPlatform.secrets.missingAsk', { name: snap.name, list: missing.join(', ') }), {
+				title: t('snapPlatform.secrets.missingTitle'),
+				okLabel: t('snapPlatform.secrets.enterNow'),
+				cancelLabel: t('snapPlatform.secrets.notNow')
+			});
+			if (enter) await this.setSecrets(snap.id);
+			else this.#secretsDeclined.add(snap.id);
+		}
+		return invoke<string | null>('snap_secrets_file', { id: snap.id }).catch((e) => {
+			notifications.error(t('snapPlatform.secrets.failed', { error: String(e) }));
+			return null;
+		});
+	}
+
+	/** MCP secrets files of the active snaps, written before an agent starts (`prepareMcp`). */
+	#mcpSecrets = new Map<string, string>();
+
+	async prepareMcpSecrets() {
+		if (this.sandbox.kind !== 'enforce') return;
+		const ids = snapsNeedingMcpSecrets(this.list);
+		for (const id of [...this.#mcpSecrets.keys()]) if (!ids.includes(id)) this.#mcpSecrets.delete(id);
+		await Promise.all(
+			ids.map(async (id) => {
+				const path = await invoke<string | null>('snap_secrets_file', { id }).catch(() => null);
+				if (path) this.#mcpSecrets.set(id, path);
+				else this.#mcpSecrets.delete(id);
+			})
+		);
+	}
+
 	/** Runs a task of an active snap in a new terminal of the mode that is showing. */
-	runTask(snapId: string, taskId: string) {
+	async runTask(snapId: string, taskId: string) {
 		const snap = this.list.find((s) => s.id === snapId && isActive(s));
 		const task = snap?.tasks.find((t) => t.id === taskId);
 		if (!snap || !task) {
@@ -389,7 +641,8 @@ class Snaps {
 		// The folder the terminal opens in: the selected task worktree in the ADE, else the folder.
 		const slug = appMode.isAgents ? adeLayout.key : '';
 		const root = slug ? `${workspace.root}/${worktreeDir(slug)}` : workspace.root;
-		const confined = sandboxTask(this.sandbox, snap.permissions, root, argv);
+		const secrets = await this.#taskSecrets(snap);
+		const confined = sandboxTask(this.sandbox, snap.permissions, root, argv, secrets);
 		if ('error' in confined) {
 			status.flash(confined.error, 10000);
 			return;
@@ -409,7 +662,7 @@ class Snaps {
 		const plan = this.sandbox;
 		const refused = sandboxRefusal(plan);
 		if (refused && this.list.some((s) => isActive(s) && s.mcp.length)) status.flash(refused, 10000);
-		return mcpServersOf(this.list, (id) => settings.get(id), { plan, root });
+		return mcpServersOf(this.list, (id) => settings.get(id), { plan, root, secretsFile: (id) => this.#mcpSecrets.get(id) ?? null });
 	}
 
 	/** Skill plugin folders of active snaps for an agent run (Rust lists the snaps again and writes them into the app cache). */
@@ -433,6 +686,7 @@ const RELOAD_DEBOUNCE_MS = 300;
 export function installSnaps(): () => void {
 	// Agents (timeline and CLI) get the MCP servers of active snaps when a run starts.
 	setMcpProvider((root) => snaps.mcpServers(root));
+	setMcpPrepare(() => snaps.prepareMcpSecrets());
 	setSkillPluginProvider(() => snaps.skillPlugins());
 	// Editing a repo snap reloads the list (the watcher reports `.kingu/snaps/**`); the user snaps
 	// dir is not watched, so they are re-listed when the window gets focus (listing is cheap).
@@ -512,6 +766,14 @@ export function installSnaps(): () => void {
 		commands.register({ id: 'snap.new', title: 'New Snap…', category: 'Snap', run: () => snaps.newSnap() }),
 		commands.register({ id: 'snap.approveForTeam', title: 'Approve Snap for Team…', category: 'Snap', when: () => canApprove(snaps.teamCatalog?.role), run: () => snaps.approveForTeam() }),
 		commands.register({ id: 'snap.lock', title: 'Write snaps.lock', category: 'Snap', when: () => workspace.root !== null, run: () => snaps.lock() }),
+		commands.register({ id: 'snap.publishToLibrary', title: 'Publish to Team Library…', category: 'Snap', when: () => canApprove(snaps.library?.role), run: () => snaps.publishToLibrary() }),
+		commands.register({ id: 'snap.installFromLibrary', title: 'Install from Team Library…', category: 'Snap', when: () => snaps.library !== null, run: () => snaps.installFromLibrary() }),
+		commands.register({ id: 'snap.updateFromLibrary', title: 'Update from Team Library', category: 'Snap', when: () => snaps.library !== null, run: () => snaps.updateFromLibrary() }),
+		commands.register({ id: 'snap.yankLibraryVersion', title: 'Yank Team Library Version…', category: 'Snap', when: () => canApprove(snaps.library?.role), run: () => snaps.yankVersion() }),
+		commands.register({ id: 'snap.pinTeamInLock', title: 'Pin Team Snap in snaps.lock…', category: 'Snap', when: () => workspace.root !== null, run: () => snaps.pinTeamInLock() }),
+		commands.register({ id: 'mcp.runTool', title: 'Run Tool…', category: 'MCP', run: () => runMcpTool() }),
+		commands.register({ id: 'snap.setSecrets', title: 'Set Secrets…', category: 'Snap', run: () => snaps.setSecrets() }),
+		commands.register({ id: 'snap.verifyLock', title: 'Verify snaps.lock', category: 'Snap', when: () => workspace.root !== null, run: () => snaps.verifyLock() }),
 		// VS Code's Extensions view key.
 		commands.register({ id: 'workbench.view.snaps', title: 'Show Snaps', category: 'View', key: 'cmd+shift+x', run: () => ((layout.sideView = 'snaps'), (layout.sidebarVisible = true)) })
 	];
@@ -527,6 +789,7 @@ export function installSnaps(): () => void {
 		unregister.forEach((u) => u());
 		settingSchemas.contribute('snaps', []);
 		setMcpProvider(() => ({}));
+		setMcpPrepare(async () => {});
 		setSkillPluginProvider(async () => []);
 	};
 }

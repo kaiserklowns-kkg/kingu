@@ -273,7 +273,7 @@ mod tests {
   }
 
   fn git_origin(url: &str) -> Option<Origin> {
-    Some(Origin { url: Some(url.into()), git_ref: Some("main".into()), commit: Some(C.into()), path: None, installed_at: 1 })
+    Some(Origin { url: Some(url.into()), git_ref: Some("main".into()), commit: Some(C.into()), path: None, team: None, installed_at: 1 })
   }
 
   #[test]
