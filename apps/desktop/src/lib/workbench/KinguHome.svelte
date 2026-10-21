@@ -5,7 +5,7 @@
 	// (workbench.tips.enabled) with their live keys. Choosing logic is in home.ts.
 	import { tick } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
-	import Icon from './Icon.svelte';
+	import Codicon from './Codicon.svelte';
 	import { KINGU_GLYPH, KINGU_GLYPH_BOX } from './KinguMark.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import { timeAgo } from '#lib/ade/model.ts';
@@ -84,33 +84,36 @@
 		}
 	}
 
-	const STATUS_ICON = { working: null, needsInput: 'warning', failed: 'error', idle: 'chat' } as const;
-	const STATUS_COLOR = { working: '', needsInput: 'text-(--vscode-editorWarning-foreground)', failed: 'text-(--vscode-errorForeground)', idle: 'text-(--vscode-descriptionForeground)' } as const;
+	// kingu-old's statusIcon (kinguHome.ts): loading~spin, report, error, comment-discussion; codicons
+	// at their own 16px (the `.kingu-home-icon` 14px loses to `.codicon`), in the description colour.
+	const STATUS_ICON = { working: 'loading~spin', needsInput: 'report', failed: 'error', idle: 'comment-discussion' } as const;
+	const STATUS_COLOR = { working: '', needsInput: 'text-(--vscode-editorWarning-foreground)', failed: 'text-(--vscode-errorForeground)', idle: '' } as const;
+	const ICON = 'shrink-0 text-(--vscode-descriptionForeground)';
 </script>
 
 <div class="flex w-full flex-col items-center gap-6 py-6">
-	<svg class="letterpress h-[213px] w-[172px] max-w-full shrink-0 text-(--vscode-foreground)" viewBox={KINGU_GLYPH_BOX} aria-hidden="true">
-		<path fill="currentColor" fill-rule="evenodd" d={KINGU_GLYPH} />
-	</svg>
+	<!-- VS Code's `.letterpress`: a 256px box, the glyph (172 x 213) centred in it. -->
+	<div class="grid size-[256px] max-w-full shrink-0 place-items-center" aria-hidden="true">
+		<svg class="letterpress h-[213px] w-[172px] max-w-full text-(--vscode-foreground)" viewBox={KINGU_GLYPH_BOX}>
+			<path fill="currentColor" fill-rule="evenodd" d={KINGU_GLYPH} />
+		</svg>
+	</div>
 
 	{#if homeOn}
-		<div class="mx-auto flex w-[min(440px,90%)] flex-col gap-[18px] text-left text-[13px]" role="region" aria-label={t('home.label')}>
+		<!-- kinguLook.css `.kingu-home`: margin 8px auto 20px inside the watermark's 24px gaps. -->
+		<div class="mx-auto mt-2 mb-5 flex w-[min(440px,90%)] flex-col gap-[18px] text-left text-[13px]" role="region" aria-label={t('home.label')}>
 			<section>
 				<h2 class="mb-1 ml-2 text-[11px] font-normal tracking-[0.04em] text-(--vscode-descriptionForeground) uppercase">{t('home.continue')}</h2>
 				{#each rows as row (row.root + '\n' + row.id)}
 					{@const detail = t('home.chatDetail', { agent: row.agentName, when: timeAgo(row.at, now) })}
 					<button class="row" title={`${row.title} — ${detail}`} onclick={() => continueChat(row)}>
-						{#if STATUS_ICON[row.status]}
-							<span class={['grid w-[14px] shrink-0 place-items-center', STATUS_COLOR[row.status]]} title={t(STATUS_KEY[row.status])}><Icon name={STATUS_ICON[row.status]!} size={14} /></span>
-						{:else}
-							<span class="grid w-[14px] shrink-0 place-items-center" role="status" title={t(STATUS_KEY[row.status])}><span class="size-3 animate-spin rounded-full border-[1.5px] border-(--vscode-widget-border) border-t-(--vscode-descriptionForeground)"></span></span>
-						{/if}
+						<span class={[ICON, 'flex', STATUS_COLOR[row.status]]} role={row.status === 'working' ? 'status' : undefined} title={t(STATUS_KEY[row.status])}><Codicon id={STATUS_ICON[row.status]} size={16} /></span>
 						<span class="label">{row.title}</span>
 						<span class="detail">{detail}</span>
 					</button>
 				{:else}
 					<button class="row" onclick={() => commands.run('workbench.action.chat.open')}>
-						<span class="grid w-[14px] shrink-0 place-items-center text-(--vscode-descriptionForeground)"><Icon name="chat" size={14} /></span>
+						<span class={[ICON, 'flex']}><Codicon id="comment-discussion" size={16} /></span>
 						<span class="label">{t('home.startChat')}</span>
 					</button>
 				{/each}
@@ -119,13 +122,13 @@
 				<h2 class="mb-1 ml-2 text-[11px] font-normal tracking-[0.04em] text-(--vscode-descriptionForeground) uppercase">{t('home.projects')}</h2>
 				{#each projects as p (p.path)}
 					<button class="row" title={`${p.label} — ${p.detail}`} onclick={() => workspace.openFolder(p.path)}>
-						<span class="grid w-[14px] shrink-0 place-items-center text-(--vscode-descriptionForeground)"><Icon name="folder" size={14} /></span>
+						<span class={[ICON, 'flex']}><Codicon id="folder" size={16} /></span>
 						<span class="label">{p.label}</span>
 						<span class="detail">{p.detail}</span>
 					</button>
 				{/each}
 				<button class="row" onclick={() => commands.run('workbench.action.files.openFolder')}>
-					<span class="grid w-[14px] shrink-0 place-items-center text-(--vscode-descriptionForeground)"><Icon name="folder" size={14} /></span>
+					<span class={[ICON, 'flex']}><Codicon id="folder-opened" size={16} /></span>
 					<span class="label">{t('home.openFolder')}</span>
 				</button>
 			</section>
