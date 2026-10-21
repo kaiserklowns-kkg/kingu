@@ -7,7 +7,7 @@
 import { t } from '#lib/i18n/index.ts';
 import { parseRequest, type ParsedRequest } from './chatPrompt';
 import { guardAskedText, guardBlockedText } from './guardText';
-import type { AgentEvent, PermissionRequest, ResultEvent, RunState, RunStatus, Vote } from './events';
+import type { AgentEvent, McpAction, McpRequestEvent, PermissionRequest, ResultEvent, RunState, RunStatus, Vote } from './events';
 import type { ArtifactEvent } from '#lib/artifacts/artifacts.ts';
 
 export type ToolPart = {
@@ -32,6 +32,8 @@ export type Part =
 	| { kind: 'error'; message: string }
 	/** A page the agent published (`artifact` event): a card that opens it. */
 	| { kind: 'artifact'; artifact: ArtifactEvent }
+	/** An MCP server's form or sampling request (McpRequestCard); `action` once answered. */
+	| { kind: 'mcpRequest'; request: McpRequestEvent; action?: McpAction }
 	/** The turn was cut short (Stop, or the session ended mid-turn). */
 	| { kind: 'canceled' };
 
@@ -49,7 +51,7 @@ export type Turn = {
 	feedback?: Vote | null;
 };
 
-export type ChatView = Pick<RunState, 'items' | 'draft' | 'decisions' | 'ended'> & { status?: RunStatus };
+export type ChatView = Pick<RunState, 'items' | 'draft' | 'decisions' | 'ended' | 'mcpActions'> & { status?: RunStatus };
 
 /** Events the list never shows (logged instead). */
 export function isInternal(ev: AgentEvent): boolean {
@@ -165,6 +167,11 @@ export function buildTurns(run: ChatView): Turn[] {
 			case 'artifact':
 				current().parts.push({ kind: 'artifact', artifact: ev });
 				break;
+			case 'mcp_request': {
+				const action = run.mcpActions?.[ev.request_id];
+				current().parts.push({ kind: 'mcpRequest', request: ev, ...(action ? { action } : {}) });
+				break;
+			}
 			case 'guard_blocked':
 				current().parts.push({ kind: 'error', message: guardBlockedText(ev) });
 				break;

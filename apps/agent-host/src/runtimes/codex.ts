@@ -7,14 +7,16 @@
 //   `mcpToolCall` and `webSearch` become tool rows (codexToolView); `turn/plan/updated` the todo bar.
 // - Approvals (`item/commandExecution/requestApproval`, `item/fileChange/requestApproval`) go
 //   through Kingu's safety check and permission mode, then to the user. The approval policy and
-//   sandbox follow the permission mode (codexPolicy). Requests Kingu cannot show (MCP
-//   elicitation, a tool asking for input) are declined.
+//   sandbox follow the permission mode (codexPolicy). An MCP server's elicitation
+//   (`mcpServer/elicitation/request`) is a form card in the chat (../mcpAsks.ts); a tool asking
+//   for input, which Kingu cannot show, gets no answers.
 // - A file change's files are snapshotted when its item starts, before the patch is applied.
 
 import pkg from '../../package.json' with { type: 'json' };
 import { RpcCallError } from './rpc.ts';
 import { ProcessSession, OPEN_TIMEOUT_MS, type TurnEnd } from './session.ts';
 import { codexDecision, codexPolicy, codexToolResult, codexToolView, isObj, num, planTodos, str } from './tools.ts';
+import { elicitAsk } from '../mcpAsks.ts';
 import type { PermissionMode, Usage } from '../protocol.ts';
 
 type Obj = Record<string, unknown>;
@@ -209,8 +211,14 @@ export class CodexSession extends ProcessSession {
 				if (id) this.toolStarted(id, view);
 				return { decision: codexDecision(await this.ask(id, view, str(p.reason), true)) };
 			}
-			case 'mcpServer/elicitation/request':
-				return { action: 'decline', content: null };
+			case 'mcpServer/elicitation/request': {
+				// The request may come nested (`request`) or flat, the server under either spelling.
+				const req = isObj(p.request) ? p.request : p;
+				const ask = elicitAsk(str(p.serverName) ?? str(p.server_name) ?? str(p.server) ?? 'mcp', req);
+				if (!ask) return { action: 'decline', content: null };
+				const r = await this.asks.elicit(ask);
+				return { action: r.action, content: r.content ?? null };
+			}
 			case 'item/tool/requestUserInput':
 				return { answers: {} };
 			case 'applyPatchApproval':

@@ -83,7 +83,7 @@ export function installAgentNotifications(): () => void {
 	// default while the window is unfocused; kingu.agent.notifications off silences them too. An
 	// unfocused window also asks for attention (the Dock icon bounces once).
 	const offChats = chats.onEvent((id, ev) => {
-		if (ev.kind !== 'permission_request' && ev.kind !== 'result') return;
+		if (ev.kind !== 'permission_request' && ev.kind !== 'mcp_request' && ev.kind !== 'result') return;
 		const meta = chats.get(id);
 		if (!meta || settings.get<boolean>('kingu.agent.notifications') === false) return;
 		const focused = document.hasFocus();

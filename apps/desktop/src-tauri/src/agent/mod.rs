@@ -22,6 +22,7 @@ pub mod host;
 pub mod issues;
 pub mod kingu_yaml;
 pub mod mcp;
+pub mod mcp_chat;
 pub mod memories;
 pub mod mr;
 pub mod notes;
@@ -254,6 +255,11 @@ pub async fn agent_start(
     let (root, dir, config) = (open_root.clone(), dir.clone(), crate::snap::config_dir(&app)?);
     tauri::async_runtime::spawn_blocking(move || safety_asks::from_settings(&config, &root, &dir)).await.map_err(|e| e.to_string())?
   };
+  // `chat.mcp.serverSampling`: the servers allowed (or refused) model calls without asking.
+  let mcp_sampling = {
+    let config = crate::snap::config_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || mcp_chat::sampling_policy(&config)).await.map_err(|e| e.to_string())?
+  };
   let edits = chat_id.as_ref().map(|id| {
     use tauri::Manager;
     (app.state::<Arc<chat_edits::ChatEdits>>().inner().clone(), open_root.clone(), id.clone(), dir.clone())
@@ -285,6 +291,7 @@ pub async fn agent_start(
     guard_asks: Some(guard_asks),
     system_prompt_append,
     runtime: runtime_spec,
+    mcp_sampling: (!mcp_sampling.is_empty()).then_some(mcp_sampling),
     owner,
   };
   let resuming = req.resume.is_some();

@@ -172,6 +172,26 @@ export const CHAT_SETTINGS: SettingSchema[] = [
 			'ข้อความที่วางในช่องแชตยาวเกินกี่ตัวอักษรจึงแนบเป็น context แทนการใส่ในช่อง ตั้งค่ามาก ๆ เพื่อวางในช่องเสมอ (The number of characters a paste must exceed before it is added to the chat input as an attachment instead of being inserted inline. Set this to a very large number to always paste inline.)'
 	},
 	{
+		id: 'chat.mcp.serverSampling',
+		group: 'Agent Chat',
+		type: 'json',
+		schema: {
+			type: 'object',
+			additionalProperties: {
+				type: 'object',
+				properties: {
+					allowedDuringChat: { type: 'boolean' },
+					allowedOutsideChat: { type: 'boolean' },
+					allowedModels: { type: 'array', items: { type: 'string' } }
+				}
+			}
+		},
+		default: {},
+		description:
+			'MCP server ใดเรียกโมเดลของแชตได้ (sampling) โดยไม่ต้องถาม คีย์คือชื่อ server (หรือ "<collection>: <server>" แบบ VS Code) allowedDuringChat: true อนุญาต false ไม่อนุญาต ไม่ระบุ: ถามทุกครั้งในแชต ปุ่ม Always / Never บนการ์ดในแชตเขียนค่านี้ ใช้กับ Arkai ซึ่งส่งคำขอไปยังโมเดลของแชตนั้น (Configures which models are exposed to MCP servers for sampling (making model requests in the background).)',
+		scope: 'application'
+	},
+	{
 		id: 'chat.promptFilesLocations',
 		group: 'Agent Chat',
 		type: 'object',

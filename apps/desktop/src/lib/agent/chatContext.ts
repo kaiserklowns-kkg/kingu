@@ -7,7 +7,7 @@ import { parseRequest, type ContextText } from './chatPrompt.ts';
 import type { AgentEvent } from './events';
 
 /** Add Context's sources, in the picker's order (VS Code's "Add Context..." quick pick). */
-export const CONTEXT_SOURCES = ['files', 'selection', 'problems', 'scm', 'terminal', 'clipboardImage', 'pastChat', 'instructions'] as const;
+export const CONTEXT_SOURCES = ['files', 'selection', 'problems', 'scm', 'terminal', 'clipboardImage', 'pastChat', 'instructions', 'mcpResources'] as const;
 export type ContextSource = (typeof CONTEXT_SOURCES)[number];
 
 // ---- `#` / `@` in the input ------------------------------------------------------------------

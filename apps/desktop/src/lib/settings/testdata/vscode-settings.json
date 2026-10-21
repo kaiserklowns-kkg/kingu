@@ -57,6 +57,7 @@
 	"chat.includeApplyingInstructions": {"type":"boolean","default":true},
 	"chat.instructionsFilesLocations": {"type":"object","default":{".github/instructions":true,".claude/rules":true,"~/.copilot/instructions":true,"~/.claude/rules":true}},
 	"chat.math.enabled": {"type":"boolean","default":true},
+	"chat.mcp.serverSampling": {"type":"object","default":{}},
 	"chat.newSession.defaultMode": {"type":"string","default":""},
 	"chat.notifyWindowOnConfirmation": {"type":"string","default":"windowNotFocused","enum":["off","windowNotFocused","always"]},
 	"chat.notifyWindowOnResponseReceived": {"type":"string","default":"windowNotFocused","enum":["off","windowNotFocused","always"]},

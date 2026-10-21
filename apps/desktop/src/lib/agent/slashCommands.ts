@@ -2,18 +2,19 @@
 // `bun test` covers it. The list is Kingu's own commands (handled before anything is sent), then
 // VS Code's prompt files (`*.prompt.md`, customizations.ts: run here, their body sent), then the
 // session's (SDK `supportedCommands()`: built-ins, skills, plugins), then the `.claude/commands`
-// files and skills Rust found (`chat_slash_commands`, for a chat with no session yet). Anything
-// else goes to the agent as text; the SDK expands it.
+// files and skills Rust found (`chat_slash_commands`, for a chat with no session yet), then the
+// MCP servers' prompts (`/mcp.<server>.<prompt>`, mcpChat.svelte.ts: rendered into the input).
+// Anything else goes to the agent as text; the SDK expands it.
 
 import type { SessionCommand } from './events';
 
 /** Where a command comes from (`project`… are `chat_slash_commands`' sources). */
-export type SlashSource = 'kingu' | 'mode' | 'prompt' | 'user-prompt' | 'session' | 'project' | 'user' | 'project-skill' | 'user-skill';
+export type SlashSource = 'kingu' | 'mode' | 'prompt' | 'user-prompt' | 'session' | 'project' | 'user' | 'project-skill' | 'user-skill' | 'mcp';
 
 export type SlashItem = { name: string; description: string; argumentHint: string; source: SlashSource };
 
 /** A command file or skill from Rust (`slash_commands.rs`). */
-export type FileCommand = { name: string; description: string; argument_hint: string; source: Exclude<SlashSource, 'kingu' | 'mode' | 'session' | 'prompt' | 'user-prompt'> };
+export type FileCommand = { name: string; description: string; argument_hint: string; source: Exclude<SlashSource, 'kingu' | 'mode' | 'session' | 'prompt' | 'user-prompt' | 'mcp'> };
 
 /** A prompt file as the list needs it (customizations.ts `PromptFile`). */
 export type PromptCommand = { name: string; description: string; argument_hint: string; user: boolean };
@@ -54,8 +55,8 @@ export function slashQuery(text: string, caret: number): string | null {
 	return /\s|\//.test(word) ? null : word;
 }
 
-/** Kingu's commands first, then prompt files, then the session's, then files the session does not already list. */
-export function mergeCommands(local: readonly SlashItem[], session: readonly SessionCommand[], files: readonly FileCommand[], prompts: readonly PromptCommand[] = []): SlashItem[] {
+/** Kingu's commands first, then prompt files, then the session's, then files the session does not already list, then MCP prompts. */
+export function mergeCommands(local: readonly SlashItem[], session: readonly SessionCommand[], files: readonly FileCommand[], prompts: readonly PromptCommand[] = [], mcp: readonly SlashItem[] = []): SlashItem[] {
 	const out: SlashItem[] = [];
 	const seen = new Set<string>();
 	const add = (item: SlashItem) => {
@@ -67,6 +68,7 @@ export function mergeCommands(local: readonly SlashItem[], session: readonly Ses
 	for (const p of prompts) add({ name: p.name, description: p.description, argumentHint: p.argument_hint, source: p.user ? 'user-prompt' : 'prompt' });
 	for (const c of session) add({ name: c.name, description: c.description, argumentHint: c.argument_hint, source: 'session' });
 	for (const f of files) add({ name: f.name, description: f.description, argumentHint: f.argument_hint, source: f.source });
+	mcp.forEach(add);
 	return out;
 }
 

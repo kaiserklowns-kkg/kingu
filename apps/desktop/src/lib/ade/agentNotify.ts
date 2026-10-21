@@ -52,8 +52,8 @@ export function bellAction(enabled: boolean, visible: boolean, lastAt: number | 
 }
 
 /**
- * An agent chat's notice for one of its events (VS Code's chatWindowNotifier): a permission prompt
- * or a question needs you, a turn finished (left out with `events` = `attention`) or failed.
+ * An agent chat's notice for one of its events (VS Code's chatWindowNotifier): a permission prompt,
+ * a question or an MCP server's request needs you, a turn finished (left out with `events` = `attention`) or failed.
  */
 export function chatNoticeFor(ev: { kind: string; tool?: string; is_error?: boolean }, title: string, events = 'all'): Notice | null {
 	if (ev.kind === 'permission_request') {
@@ -61,6 +61,8 @@ export function chatNoticeFor(ev: { kind: string; tool?: string; is_error?: bool
 			? { title: t('chat.notify.questionTitle', { title }), body: t('chat.notify.questionBody'), kind: 'attention' }
 			: { title: t('chat.notify.approvalTitle', { title }), body: t('chat.notify.approvalBody'), kind: 'attention' };
 	}
+	// An MCP server's form or sampling request waits for the user like a question.
+	if (ev.kind === 'mcp_request') return { title: t('chat.notify.questionTitle', { title }), body: t('chat.notify.questionBody'), kind: 'attention' };
 	if (ev.kind !== 'result') return null;
 	if (ev.is_error) return { title: t('chat.notify.failedTitle', { title }), body: t('chat.notify.failedBody'), kind: 'attention' };
 	return events === 'attention' ? null : { title: t('chat.notify.finishedTitle', { title }), body: t('chat.notify.finishedBody'), kind: 'finished' };

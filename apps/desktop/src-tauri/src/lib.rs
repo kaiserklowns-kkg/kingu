@@ -1572,6 +1572,8 @@ pub fn run() {
       agent::hooks::agent_pane_hook_clear,
       agent::agent_send,
       agent::agent_answer_permission,
+      agent::mcp_chat::agent_answer_mcp,
+      agent::mcp_chat::agent_mcp_query,
       agent::agent_interrupt,
       agent::agent_stop,
       agent::agent_set_options,

@@ -179,6 +179,9 @@ pub struct StartRequest {
   /// The agent behind the run when it is not the Claude SDK (`runtimes::resolve`); omitted for Claude.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub runtime: Option<super::runtimes::Spec>,
+  /// `chat.mcp.serverSampling` (`mcp_chat::sampling_policy`): server → may make model calls; omitted when none.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub mcp_sampling: Option<std::collections::BTreeMap<String, bool>>,
   /// What else this run owns while it is live besides its session (e.g. `chat:<root>:<id>`);
   /// not sent to the sidecar.
   #[serde(skip)]
@@ -619,6 +622,27 @@ impl AgentHost {
     self.run_request(run_id, "answer", answer_params(request_id, decision, message, answers)?)
   }
 
+  /// Answers an `mcp_request` (an MCP server's form or sampling request): `accept` (a form's
+  /// `content`, which the sidecar checks against the schema it holds), `decline` or `cancel`;
+  /// `remember` (sampling): `session`, or `always` / `never` once saved in the settings.
+  pub fn answer_mcp(&self, run_id: u32, request_id: &str, action: &str, content: Option<&Value>, remember: Option<&str>) -> Result<(), String> {
+    self.run_request(run_id, "mcp_answer", mcp_answer_params(request_id, action, content, remember)?)
+  }
+
+  /// An MCP server's resources, templates and prompts (`op` `list`), one resource (`read`, `uri`)
+  /// or a rendered prompt (`prompt`, `prompt` + `arguments`), through the sidecar (its
+  /// `mcp_query`); over run `run_id`'s live connection when it has one. Starts the sidecar if needed.
+  pub fn mcp_query(&self, run_id: Option<u32>, name: &str, server: &McpServer, mut params: Value) -> Result<Value, String> {
+    validate_mcp_server(name, server)?;
+    let proc = self.ensure()?;
+    params["name"] = json!(name);
+    params["server"] = serde_json::to_value(server).map_err(|e| e.to_string())?;
+    if let Some(id) = run_id.filter(|id| proc.runs.lock().unwrap().contains_key(id)) {
+      params["runId"] = json!(id);
+    }
+    proc.request("mcp_query", params, MCP_QUERY_TIMEOUT)
+  }
+
   /// Stops the current turn; the session stays open for follow-ups.
   pub fn interrupt(&self, run_id: u32) -> Result<(), String> {
     self.run_request(run_id, "interrupt", json!({}))
@@ -650,6 +674,32 @@ impl AgentHost {
 pub const DECISIONS: &[&str] = &["allow", "allow_always", "allow_workspace", "allow_user", "deny"];
 
 /// The `answer` request's params; `answers` only with an allow.
+/// What an `mcp_request` can be answered with, and the sampling answers that are kept.
+pub const MCP_ACTIONS: &[&str] = &["accept", "decline", "cancel"];
+const MCP_REMEMBER: &[&str] = &["session", "always", "never"];
+/// An `mcp_query` may take this long (a stdio server started for it, then its lists).
+const MCP_QUERY_TIMEOUT: Duration = Duration::from_secs(60);
+
+fn mcp_answer_params(request_id: &str, action: &str, content: Option<&Value>, remember: Option<&str>) -> Result<Value, String> {
+  if !MCP_ACTIONS.contains(&action) {
+    return Err(format!("{action}: unknown action"));
+  }
+  if remember.is_some_and(|r| !MCP_REMEMBER.contains(&r)) {
+    return Err("remember must be session, always or never".into());
+  }
+  if content.is_some_and(|c| !c.is_object()) {
+    return Err("content must be an object".into());
+  }
+  let mut params = json!({ "requestId": request_id, "action": action });
+  if let Some(c) = content.filter(|_| action == "accept") {
+    params["content"] = c.clone();
+  }
+  if let Some(r) = remember {
+    params["remember"] = json!(r);
+  }
+  Ok(params)
+}
+
 fn answer_params(request_id: &str, decision: &str, message: Option<&str>, answers: Option<&HashMap<String, String>>) -> Result<Value, String> {
   if !DECISIONS.contains(&decision) {
     return Err(format!("{decision}: unknown decision"));
@@ -715,6 +765,18 @@ reply() { echo "{\"jsonrpc\":\"2.0\",\"id\":$1,\"result\":null}"; }
   }
 
   #[test]
+  fn mcp_answers_are_checked_before_they_go() {
+    let form = json!({"title": "Bug"});
+    assert_eq!(mcp_answer_params("r1", "accept", Some(&form), None).unwrap(), json!({"requestId": "r1", "action": "accept", "content": {"title": "Bug"}}));
+    // Content goes only with accept.
+    assert_eq!(mcp_answer_params("r1", "decline", Some(&form), None).unwrap(), json!({"requestId": "r1", "action": "decline"}));
+    assert_eq!(mcp_answer_params("r2", "accept", None, Some("session")).unwrap(), json!({"requestId": "r2", "action": "accept", "remember": "session"}));
+    assert!(mcp_answer_params("r1", "allow", None, None).is_err());
+    assert!(mcp_answer_params("r1", "accept", None, Some("forever")).is_err());
+    assert!(mcp_answer_params("r1", "accept", Some(&json!([1])), None).is_err());
+  }
+
+  #[test]
   fn permission_round_trip_with_a_fake_sidecar() {
     let tmp = tempfile::tempdir().unwrap();
     let log = tmp.path().join("requests.log");
@@ -775,6 +837,30 @@ read -r line
     assert_eq!(lines[0]["params"], json!({"runId": run, "cwd": "/w", "prompt": "แก้บั๊ก", "model": null, "permissionMode": "default", "resume": null}));
     assert_eq!(lines[1]["params"], json!({"runId": run, "requestId": "r1", "decision": "allow_always", "message": null}));
     assert_eq!(lines[2]["method"], "stop");
+    host.shutdown();
+  }
+
+  #[test]
+  fn mcp_query_starts_the_sidecar_and_passes_the_server() {
+    let tmp = tempfile::tempdir().unwrap();
+    let log = tmp.path().join("requests.log");
+    let body = format!(
+      r#"{SH_LIB}
+read -r line; echo "$line" >> '{log}'
+echo "{{\"jsonrpc\":\"2.0\",\"id\":$(field "$line" id),\"result\":{{\"resources\":[],\"templates\":[],\"prompts\":[{{\"name\":\"review\"}}]}}}}"
+read -r line
+"#,
+      log = log.display()
+    );
+    let host = host_for(script(tmp.path(), "fake-host", &body), vec![]);
+    let server = McpServer { command: "/bin/notes".into(), ..Default::default() };
+    assert!(host.mcp_query(None, "bad name", &server, json!({"cwd": "/w", "op": "list"})).is_err());
+    let r = host.mcp_query(Some(9), "notes", &server, json!({"cwd": "/w", "op": "list"})).unwrap();
+    assert_eq!(r["prompts"][0]["name"], "review");
+    let sent: Value = serde_json::from_str(std::fs::read_to_string(&log).unwrap().lines().next().unwrap()).unwrap();
+    assert_eq!(sent["method"], "mcp_query");
+    // Run 9 is not live: no runId goes.
+    assert_eq!(sent["params"], json!({"cwd": "/w", "op": "list", "name": "notes", "server": {"command": "/bin/notes"}}));
     host.shutdown();
   }
 
