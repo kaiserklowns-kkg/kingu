@@ -960,7 +960,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = (
 	[
 		{ id: 'ai', label: 'AI Capabilities', labelKey: 'settings.sections.aiCapabilities', pages: ['accounts', 'mcp', 'skills', 'memories', 'voice'], groups: AI_SECTION_GROUPS },
 		{ id: 'system', label: 'System', labelKey: 'settings.sections.system', groups: ['Workbench', 'Window', 'Zen Mode', 'Application', ...SYSTEM_SECTION_GROUPS, 'Status Bar', 'Accessibility', 'Team', 'Snap Sandbox'] },
-		{ id: 'ide', label: 'IDE', labelKey: 'settings.sections.ide', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Source Control', 'Git', 'Merge Conflict', 'Timeline', 'Terminal', 'Tasks', 'Debug', 'Testing', 'Problems', 'Output', 'TypeScript', 'CSS', 'HTML', 'JSON', 'Emmet'] },
+		{ id: 'ide', label: 'IDE', labelKey: 'settings.sections.ide', groups: ['Text Editor', 'Diff Editor', 'Files', 'Explorer', 'Search', 'Source Control', 'Git', 'Merge Conflict', 'Timeline', 'Terminal', 'Tasks', 'Debug', 'Testing', 'Problems', 'Output', 'TypeScript', 'CSS', 'HTML', 'JSON', 'Emmet', 'Markdown'] },
 		{ id: 'ade', label: 'ADE (Agents)', labelKey: 'settings.sections.ade', groups: ADE_SECTION_GROUPS }
 	] satisfies SettingsSection[]
 ).map((sec) => ({ ...sec, groups: sec.groups.filter((g) => SETTINGS.some((s) => s.group === g)) }));

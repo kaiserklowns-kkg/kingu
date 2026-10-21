@@ -48,10 +48,11 @@ import { composer } from './en/composer';
 import { voice } from './en/voice';
 import { usage } from './en/usage';
 import { keybindings } from './en/keybindings';
+import { markdownPreview } from './en/markdownPreview';
 
 import { editing } from './en/editing';
 
 
-export const en = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault, ...adeAttempts, ...localAi, ...chatRuntime, ...chatExtras, ...adeSources, ...cli, ...artifacts, ...skills, ...arkai, ...forge, ...scmEditor, ...scmRepos, ...localHistory, ...ideTasks, ...language, ...workspaces, ...searchEditor, ...output, ...profiles, ...debugger_, ...testing, ...chatCustomize, ...editing, ...composer, ...voice, ...usage, ...keybindings } as const;
+export const en = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault, ...adeAttempts, ...localAi, ...chatRuntime, ...chatExtras, ...adeSources, ...cli, ...artifacts, ...skills, ...arkai, ...forge, ...scmEditor, ...scmRepos, ...localHistory, ...ideTasks, ...language, ...workspaces, ...searchEditor, ...output, ...profiles, ...debugger_, ...testing, ...chatCustomize, ...editing, ...composer, ...voice, ...usage, ...keybindings, ...markdownPreview } as const;
 
 export type MessageKey = keyof typeof en;

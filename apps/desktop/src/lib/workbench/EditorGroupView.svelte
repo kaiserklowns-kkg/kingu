@@ -581,7 +581,7 @@
 			<div class="absolute inset-0">{#key activePath}<NotebookViewer path={activePath} />{/key}</div>
 		{:else if activePath && isPreviewKey(activePath)}
 			<div class="absolute inset-0">
-				{#key activePath}{#if isCsvPath(previewTarget(activePath))}<CsvPreview previewKey={activePath} />{:else}<MarkdownPreview previewKey={activePath} />{/if}{/key}
+				{#key activePath}{#if isCsvPath(previewTarget(activePath))}<CsvPreview previewKey={activePath} />{:else}<MarkdownPreview previewKey={activePath} {group} />{/if}{/key}
 			</div>
 		{/if}
 		{#if settingsActive}

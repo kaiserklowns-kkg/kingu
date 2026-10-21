@@ -23,7 +23,7 @@
 	import { installAccessibilitySignals } from './accessibilitySignals.svelte';
 	import { platform } from './platform.svelte';
 	import { PROFILES, type Platform } from './platform';
-	import { hasPreview, previewKey } from './viewers';
+	import { registerMarkdownPreviewCommands } from '#lib/markdown/previewCommands.svelte.ts';
 	import EditorPart from './EditorPart.svelte';
 	import Panel from './Panel.svelte';
 	import QuickInput from './QuickInput.svelte';
@@ -243,30 +243,6 @@
 				when: () => !appMode.isAgents,
 				run: () => layout.toggleZen()
 			}),
-			// Markdown: Open Preview / Open Preview to the Side (VS Code's markdown-language-features).
-			commands.register({
-				id: 'markdown.showPreview',
-				title: 'Open Preview (Markdown, CSV)',
-				category: 'Markdown',
-				key: 'cmd+shift+v',
-				when: () => !appMode.isAgents && editors.active !== null && hasPreview(editors.active),
-				run: () => editors.open(previewKey(editors.active!), { preview: false })
-			}),
-			commands.register({
-				id: 'markdown.showPreviewToSide',
-				title: 'Open Preview to the Side (Markdown, CSV)',
-				category: 'Markdown',
-				key: 'cmd+k v',
-				when: () => !appMode.isAgents && editors.active !== null && hasPreview(editors.active),
-				run: () => {
-					const rel = editors.active!;
-					const side = editors.split('right');
-					if (side === null) return editors.open(previewKey(rel), { preview: false });
-					// The split copies the Markdown tab; the side group shows only the preview.
-					editors.open(previewKey(rel), { preview: false, group: side });
-					editors.close(rel, { group: side });
-				}
-			}),
 			commands.register({
 				id: 'kingu.floatingTerminal.toggle',
 				title: 'Toggle Floating Terminal',
@@ -366,6 +342,7 @@
 		const uninstallAppearance = installWorkbenchAppearance();
 		const unregisterSettings = registerSettingsCommands();
 		const unregisterCompare = registerCompareCommands();
+		const unregisterMarkdownPreview = registerMarkdownPreviewCommands();
 		const uninstallAde = installAde();
 		const uninstallAgentsMode = installAgentsMode();
 		const uninstallWorktreeCommands = installWorktreeCommands();
@@ -462,6 +439,7 @@
 			uninstallSettings();
 			unregisterSettings();
 			unregisterCompare();
+			unregisterMarkdownPreview();
 			unregister.forEach((u) => u());
 		};
 	});

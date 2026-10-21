@@ -1,4 +1,5 @@
-// Markdown → HTML for the Markdown preview (see MarkdownPreview.svelte).
+// Markdown → HTML for chat, notes, notebooks and checks (the editor's Markdown preview renders with
+// lib/markdown/previewRender.ts, which adds source lines, heading ids, images and math).
 import { Marked, type Tokens } from 'marked';
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
