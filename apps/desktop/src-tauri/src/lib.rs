@@ -1151,6 +1151,7 @@ pub fn run() {
       #[cfg(not(unix))]
       let (runtime, uid) = (None, 0);
       pty::Ptys::init(app.handle(), pty::daemon_dir(&data, runtime, &std::env::temp_dir(), uid));
+      snap_service::startup(app.handle());
       team::install(app)?;
       accounts::install(app)?;
       git::load_git_path(&app.path().app_config_dir()?);

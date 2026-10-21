@@ -4,7 +4,9 @@
 //! wrapped in `kingu-ptyd snap-exec` like tasks) and starts or stops services as snaps become
 //! active; Rust accepts only services the snap declares while it is active, owns the processes,
 //! writes their output to `<app cache>/snap-services/<snap>-<service>.log` and reports each exit
-//! as a `snap-service` event.
+//! as a `snap-service` event. A `<snap>-<service>.pid` file next to the log lives as long as the
+//! process, so one left behind by a Kingu that was killed (no exit hook ran) is stopped at the
+//! next start (`stop_orphans`).
 //!
 //! Also here: `snap_find_programs`, the `[[requires]]` check (is the program a snap runs
 //! installed), and the commands that store a snap's declared secrets in the keychain through
@@ -132,6 +134,8 @@ impl Services {
     let running = Arc::new(Running { child: Mutex::new(child), status: Mutex::new(status.clone()) });
     all.insert(k, running.clone());
     drop(all);
+    let pid_file = log.with_extension("pid");
+    let _ = std::fs::write(&pid_file, format!("{} {}\n", status.pid.unwrap_or_default(), status.started_at));
     log::info!("snap {snap}: service {service} started (pid {:?})", status.pid);
     std::thread::spawn(move || {
       let code = loop {
@@ -149,6 +153,7 @@ impl Services {
         st.exit_code = code;
         st.clone()
       };
+      let _ = std::fs::remove_file(&pid_file);
       log::info!("snap {}: service {} exited (code {code:?}, stopped = {})", st.snap_id, st.service_id, st.stopped);
       on_exit(st);
     });
@@ -216,6 +221,62 @@ impl Services {
       signal_group(pid, libc::SIGKILL);
     }
     log::info!("stopped {} snap service(s)", pids.len());
+  }
+}
+
+/// Seconds since `pid` started (`ps -o etime=`: `[[dd-]hh:]mm:ss`), or None when it is gone.
+fn elapsed(pid: u32) -> Option<u64> {
+  let out = Command::new("ps").args(["-o", "etime=", "-p", &pid.to_string()]).output().ok()?;
+  parse_etime(String::from_utf8_lossy(&out.stdout).trim())
+}
+
+fn parse_etime(s: &str) -> Option<u64> {
+  if s.is_empty() {
+    return None;
+  }
+  let (days, rest) = match s.split_once('-') {
+    Some((d, r)) => (d.parse::<u64>().ok()?, r),
+    None => (0, s),
+  };
+  let parts: Vec<u64> = rest.split(':').map(|p| p.parse().ok()).collect::<Option<_>>()?;
+  let secs = match parts.as_slice() {
+    [m, s] => m * 60 + s,
+    [h, m, s] => h * 3600 + m * 60 + s,
+    _ => return None,
+  };
+  Some(days * 86400 + secs)
+}
+
+/// Stops the services a previous Kingu left running (their `.pid` files are still in `dir`): only
+/// a process that leads its own group and started when the file says, so a reused pid is never hit.
+pub fn stop_orphans(dir: &Path) -> usize {
+  let Ok(read) = std::fs::read_dir(dir) else { return 0 };
+  let mut stopped = 0;
+  for entry in read.flatten() {
+    let path = entry.path();
+    if path.extension().and_then(|e| e.to_str()) != Some("pid") {
+      continue;
+    }
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let _ = std::fs::remove_file(&path);
+    let mut it = text.split_whitespace().map(|w| w.parse::<u64>().ok());
+    let (Some(Some(pid)), Some(Some(started))) = (it.next(), it.next()) else { continue };
+    let Ok(pid) = u32::try_from(pid) else { continue };
+    let same = elapsed(pid).is_some_and(|e| now().saturating_sub(e).abs_diff(started) <= 5);
+    if pid > 1 && same {
+      #[cfg(unix)]
+      signal_group(pid, libc::SIGTERM);
+      log::info!("stopped snap service left running by a previous Kingu (pid {pid}, {})", path.display());
+      stopped += 1;
+    }
+  }
+  stopped
+}
+
+/// At startup: stops services a killed Kingu left behind.
+pub fn startup(app: &AppHandle) {
+  if let Ok(dir) = app.path().app_cache_dir().map(|d| d.join(LOG_DIR)) {
+    std::thread::spawn(move || stop_orphans(&dir));
   }
 }
 
@@ -558,6 +619,33 @@ mod tests {
     std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert_eq!(secret_tool(&tool, &["set", "pg", "PGPASSWORD"], Some("pw")).unwrap(), "snap-secret set pg PGPASSWORD pw");
     assert_eq!(secret_tool(&tool, &["bad"], None).unwrap_err(), "nope");
+  }
+
+  #[test]
+  fn stops_services_a_killed_kingu_left_behind() {
+    let dir = tempfile::tempdir().unwrap();
+    let services = Services::default();
+    let log = dir.path().join("mem-server.log");
+    let st = services.start("mem", "server", launch(sh("exec sleep 30"), vec![], dir.path(), log.clone()), |_| {}).unwrap();
+    let pid_file = log.with_extension("pid");
+    assert!(pid_file.is_file());
+    // Kingu "dies": the record stays, the process keeps running.
+    let pid = st.pid.unwrap();
+    // A stale record of a process that is gone, and one whose pid now belongs to another process.
+    std::fs::write(dir.path().join("gone-x.pid"), "999999 1\n").unwrap();
+    std::fs::write(dir.path().join("reused-x.pid"), format!("{} 1\n", std::process::id())).unwrap();
+    assert_eq!(stop_orphans(dir.path()), 1);
+    assert!(wait_until(|| elapsed(pid).is_none() || !services.list()[0].running));
+    assert!(std::fs::read_dir(dir.path()).unwrap().flatten().all(|e| e.path().extension().and_then(|x| x.to_str()) != Some("pid")));
+  }
+
+  #[test]
+  fn parses_ps_elapsed_times() {
+    assert_eq!(parse_etime("00:05"), Some(5));
+    assert_eq!(parse_etime("01:02:03"), Some(3723));
+    assert_eq!(parse_etime("2-01:00:00"), Some(2 * 86400 + 3600));
+    assert_eq!(parse_etime(""), None);
+    assert_eq!(parse_etime("x"), None);
   }
 
   #[test]

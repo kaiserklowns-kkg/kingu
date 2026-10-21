@@ -38,7 +38,7 @@
 
 	type Tab = 'details' | 'features' | 'permissions' | 'settings';
 	let tab = $state<Tab>('details');
-	let log = $state<{ service: string; text: string } | null>(null);
+	let log = $state<{ snap: string; service: string; text: string } | null>(null);
 	let reloading = $state(false);
 	/** The value being typed for a secret (`<name>`), cleared once it is saved. */
 	let secretInput = $state<{ name: string; value: string } | null>(null);
@@ -75,8 +75,28 @@
 	}
 
 	async function showLog(s: SnapInfo, service: string) {
-		log = { service, text: (await snaps.serviceLog(s.id, service)) || t('tools.snapsUi.logEmpty') };
+		log = { snap: s.id, service, text: (await snaps.serviceLog(s.id, service)) || t('tools.snapsUi.logEmpty') };
 	}
+
+	// An open log follows the service (a restart starts a new log) and stays at its end unless the
+	// user scrolled up to read.
+	let logBox = $state<HTMLPreElement | null>(null);
+	$effect(() => {
+		if (!log) return;
+		const { snap: id, service } = log;
+		const timer = setInterval(async () => {
+			const text = (await snaps.serviceLog(id, service)) || t('tools.snapsUi.logEmpty');
+			if (log && log.service === service && log.text !== text) log = { ...log, text };
+		}, 2000);
+		return () => clearInterval(timer);
+	});
+	$effect.pre(() => {
+		void log?.text;
+		const box = logBox;
+		if (!box) return;
+		const atEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 24 || box.scrollTop === 0;
+		if (atEnd) queueMicrotask(() => (box.scrollTop = box.scrollHeight));
+	});
 
 	function openLink(s: SnapInfo, url: string) {
 		void invoke('snap_open_link', { id: s.id, url }).catch((e) => status.error(String(e)));
@@ -256,7 +276,7 @@
 						<span class="min-w-0 flex-1">
 							<code>{r.program}</code>
 							<span class="text-(--vscode-descriptionForeground)">
-								{#if r.found?.path}— {r.found.path}{#if !r.found.onPath}{' '}· {t('tools.snapsUi.notOnPath')}{/if}{:else if r.found}— {t('tools.snapsUi.notInstalled')}{/if}
+								{#if r.found?.path}{#if r.found.path !== r.program}— {r.found.path}{/if}{#if !r.found.onPath && r.found.path !== r.program}{' '}· {t('tools.snapsUi.notOnPath')}{/if}{:else if r.found}— {t('tools.snapsUi.notInstalled')}{/if}
 								{#if r.require.description}<span class="block text-xs">{r.require.description}</span>{/if}
 							</span>
 						</span>
@@ -292,7 +312,7 @@
 			{#if log}
 				<div class="mt-2">
 					<div class="flex items-center gap-2 text-xs text-(--vscode-descriptionForeground)">{t('tools.snapsUi.logOf', { service: log.service })}<button class="ml-auto hover:underline" onclick={() => (log = null)}>{t('tools.snapsUi.close')}</button></div>
-					<pre class="kg-selectable mt-1 max-h-60 overflow-auto rounded-sm bg-(--vscode-textCodeBlock-background) p-2 text-[11px] whitespace-pre-wrap">{log.text}</pre>
+					<pre bind:this={logBox} class="kg-selectable mt-1 max-h-60 overflow-auto rounded-sm bg-(--vscode-textCodeBlock-background) p-2 text-[11px] whitespace-pre-wrap">{log.text}</pre>
 				</div>
 			{/if}
 		</section>

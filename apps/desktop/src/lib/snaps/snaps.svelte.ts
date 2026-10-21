@@ -134,10 +134,32 @@ class Snaps {
 		try {
 			const found = await invoke<FoundProgram[]>('snap_find_programs', { programs });
 			const next = Object.fromEntries(programs.map((p, i) => [p, found[i]]));
-			if (JSON.stringify(next) !== JSON.stringify($state.snapshot(this.found))) this.found = next;
+			if (JSON.stringify(next) === JSON.stringify($state.snapshot(this.found))) return;
+			this.found = next;
+			// A program that just appeared lets its snap's services start.
+			await this.syncServices();
 		} catch (e) {
 			console.warn('snap_find_programs', e);
 		}
+	}
+
+	#installWatch: ReturnType<typeof setInterval> | undefined;
+
+	/**
+	 * After an install task starts: look for the snap's missing programs every few seconds (the task
+	 * runs in a terminal, with no end event here) until they are found, for at most ten minutes.
+	 */
+	#watchInstall(snapId: string) {
+		clearInterval(this.#installWatch);
+		const until = Date.now() + 10 * 60_000;
+		const missing = () => {
+			const s = this.list.find((x) => x.id === snapId);
+			return !!s && missingRequirements(requirementStates(s, (k) => settings.get(k), this.found)).length > 0;
+		};
+		this.#installWatch = setInterval(async () => {
+			await this.checkPrograms();
+			if (!missing() || Date.now() > until) clearInterval(this.#installWatch);
+		}, 3000);
 	}
 
 	/** Starts the services active snaps want and stops the ones no longer wanted. */
@@ -590,6 +612,7 @@ class Snaps {
 		}
 		const { run } = confined;
 		const title = `${task.title} (${snap.name})`;
+		if (snap.requires.some((r) => r.install_task === task.id)) this.#watchInstall(snap.id);
 		systemSettings.close();
 		if (appMode.isAgents && workspace.root) adeLayout.newTerminal(adeLayout.key, { title, run });
 		else {
