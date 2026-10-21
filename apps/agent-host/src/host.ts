@@ -22,6 +22,7 @@ import { readSkills, skillIndex } from './skills.ts';
 import { elicitAsk, McpAsks } from './mcpAsks.ts';
 import { checkQuery, runQuery } from './mcpQuery.ts';
 import type { McpConnection } from './arkai/mcp.ts';
+import { checkEffort, claudeEffortLevel, claudeStartOptions, type ClaudeEffortLevel, type Effort } from './effort.ts';
 import {
 	DECISIONS,
 	MCP_TYPES,
@@ -46,6 +47,10 @@ export type QueryLike = AsyncIterable<unknown> & {
 	/** Mid-session changes (streaming input only); optional so older fakes still fit. */
 	setModel?(model?: string): Promise<void>;
 	setPermissionMode?(mode: PermissionMode): Promise<void>;
+	/** The session's flag settings (the effort level, effort.ts); `null` clears one. */
+	applyFlagSettings?(settings: { effortLevel?: ClaudeEffortLevel | null }): Promise<void>;
+	/** 0 turns thinking off; null clears the limit. */
+	setMaxThinkingTokens?(tokens: number | null): Promise<void>;
 	/** The session's slash commands with descriptions (for the composer's `/` list). */
 	supportedCommands?(): Promise<unknown[]>;
 	/** The models the session can use (for the chat's model picker). */
@@ -241,6 +246,27 @@ const METHOD_NOT_FOUND = -32601;
 const RUN_NOT_FOUND = 1;
 const UNSUPPORTED = 2;
 
+/** A request's `effort`, checked (an unknown level is a bad request). */
+function effortParam(v: unknown): Effort | undefined {
+	try {
+		return checkEffort(v);
+	} catch (e) {
+		throw new RpcError(INVALID_PARAMS, e instanceof Error ? e.message : String(e));
+	}
+}
+
+/**
+ * A live Claude session's effort from the next response on: thinking back on (no token limit)
+ * at the SDK's `effortLevel`, or thinking off (`setMaxThinkingTokens(0)`).
+ */
+export async function applyClaudeEffort(q: QueryLike, effort: Effort) {
+	if (!q.setMaxThinkingTokens || !q.applyFlagSettings) throw new RpcError(UNSUPPORTED, 'this agent SDK cannot change the reasoning effort mid-session');
+	const level = claudeEffortLevel(effort);
+	if (!level) return q.setMaxThinkingTokens(0);
+	await q.setMaxThinkingTokens(null);
+	await q.applyFlagSettings({ effortLevel: level });
+}
+
 function need<T>(cond: T, message: string): asserts cond {
 	if (!cond) throw new RpcError(INVALID_PARAMS, message);
 }
@@ -340,10 +366,11 @@ export class AgentHost {
 				const o = p as SetOptionsParams;
 				const model = o.model ?? undefined;
 				const mode = o.permissionMode ?? undefined;
+				const effort = effortParam(o.effort);
 				need(mode === undefined || PERMISSION_MODES.includes(mode), `unsupported permission mode ${String(mode)}`);
 				need(model === undefined || (typeof model === 'string' && model.trim() && model.length <= 300), 'model must be a non-empty string');
-				need(model !== undefined || mode !== undefined, 'nothing to change');
-				return run.setOptions(model, mode, o.provider);
+				need(model !== undefined || mode !== undefined || effort !== undefined, 'nothing to change');
+				return run.setOptions(model, mode, o.provider, effort);
 			}
 			case 'start':
 				throw new RpcError(INVALID_PARAMS, `run ${String(p.runId)} already exists`);
@@ -407,6 +434,7 @@ export class AgentHost {
 		need(sampling === null || (typeof sampling === 'object' && !Array.isArray(sampling) && Object.values(sampling).every((v) => typeof v === 'boolean')), 'mcpSampling must map server names to booleans');
 		const resumeAt = p.resumeAt || undefined;
 		need(resumeAt === undefined || (isUuid(resumeAt) && p.resume), 'resumeAt must be a message uuid, with resume');
+		const effort = effortParam(p.effort);
 		let other: ReturnType<typeof runtimeSpec>;
 		try {
 			other = runtimeSpec(p.runtime);
@@ -437,7 +465,8 @@ export class AgentHost {
 				env: runEnv(this.deps.options?.env ?? process.env, extraEnv, unset),
 				snapshots: p.snapshots === true,
 				safetyChecks: p.safetyChecks !== false,
-				mcpSampling: sampling
+				mcpSampling: sampling,
+				effort: effort ?? null
 			});
 			return { runId: p.runId };
 		}
@@ -462,6 +491,8 @@ export class AgentHost {
 			...this.deps.options,
 			cwd: p.cwd,
 			model: p.model || DEFAULT_MODEL,
+			// The chat's reasoning effort (effort.ts): `effort`, or thinking off; none: the model's default.
+			...claudeStartOptions(effort),
 			permissionMode: mode,
 			// Lets the user switch a live session to "Allow all" (`setPermissionMode`); the mode
 			// itself only ever comes from the user's pick, which the app confirms first.
@@ -504,7 +535,7 @@ export class AgentHost {
 		};
 		run.inbox.push(p.prompt, images);
 		this.emit(run.id, { kind: 'message', role: 'user', text: shownText(p.prompt, p.images) });
-		this.log(`run ${run.id} starting (mode ${mode}${p.resume ? (resumeAt ? ', resuming at a message' : ', resuming') : ''})`);
+		this.log(`run ${run.id} starting (mode ${mode}${effort ? `, effort ${effort}` : ''}${p.resume ? (resumeAt ? ', resuming at a message' : ', resuming') : ''})`);
 		try {
 			run.query = this.deps.query({ prompt: run.inbox, options });
 		} catch (e) {
@@ -635,16 +666,18 @@ export class AgentHost {
 	}
 
 	/**
-	 * Changes the live session's model and/or permission mode (the SDK's `setModel` /
-	 * `setPermissionMode`); they apply from the next response on. Returns what was applied.
+	 * Changes the live session's model, permission mode and/or reasoning effort (the SDK's
+	 * `setModel` / `setPermissionMode` / `applyFlagSettings` + `setMaxThinkingTokens`); they apply
+	 * from the next response on. Returns what was applied.
 	 */
 	async setOptions(p: SetOptionsParams) {
 		const run = this.run(p.runId);
 		const model = p.model ?? undefined;
 		const mode = p.permissionMode ?? undefined;
+		const effort = effortParam(p.effort);
 		need(model === undefined || (typeof model === 'string' && model.trim() && model.length <= 200), 'model must be a non-empty string');
 		need(mode === undefined || PERMISSION_MODES.includes(mode), `unsupported permission mode ${String(mode)}`);
-		need(model !== undefined || mode !== undefined, 'nothing to change');
+		need(model !== undefined || mode !== undefined || effort !== undefined, 'nothing to change');
 		const q = run.query;
 		need(q && !run.exited, 'run has ended');
 		if (model !== undefined) {
@@ -656,8 +689,9 @@ export class AgentHost {
 			await q.setPermissionMode(mode);
 			run.mode = mode;
 		}
-		this.log(`run ${run.id}: options changed${model !== undefined ? ' (model)' : ''}${mode !== undefined ? ` (mode ${mode})` : ''}`);
-		return { model: model ?? null, permissionMode: mode ?? null };
+		if (effort !== undefined) await applyClaudeEffort(q, effort);
+		this.log(`run ${run.id}: options changed${model !== undefined ? ' (model)' : ''}${mode !== undefined ? ` (mode ${mode})` : ''}${effort !== undefined ? ` (effort ${effort})` : ''}`);
+		return { model: model ?? null, permissionMode: mode ?? null, ...(effort !== undefined ? { effort } : {}) };
 	}
 
 	async interrupt(run: Run) {

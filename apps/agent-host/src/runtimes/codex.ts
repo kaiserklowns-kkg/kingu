@@ -11,12 +11,15 @@
 //   (`mcpServer/elicitation/request`) is a form card in the chat (../mcpAsks.ts); a tool asking
 //   for input, which Kingu cannot show, gets no answers.
 // - A file change's files are snapshotted when its item starts, before the patch is applied.
+// - Reasoning effort (../effort.ts): each `turn/start` carries the chat's `effort` and a reasoning
+//   summary; the levels the thread's model takes come from `model/list` (an `effort_options` event).
 
 import pkg from '../../package.json' with { type: 'json' };
 import { RpcCallError } from './rpc.ts';
 import { ProcessSession, OPEN_TIMEOUT_MS, type TurnEnd } from './session.ts';
 import { codexDecision, codexPolicy, codexToolResult, codexToolView, isObj, num, planTodos, str } from './tools.ts';
 import { elicitAsk } from '../mcpAsks.ts';
+import { codexEffort, codexLevels, normalizeLevel } from '../effort.ts';
 import type { PermissionMode, Usage } from '../protocol.ts';
 
 type Obj = Record<string, unknown>;
@@ -58,6 +61,23 @@ export class CodexSession extends ProcessSession {
 		this.sessionId = str(thread.id) ?? this.init.resume;
 		if (!this.sessionId) throw new Error('codex opened no thread');
 		this.threadModel = str(r?.model);
+		void this.listEfforts();
+	}
+
+	/** The thread model's reasoning levels (`model/list`), for the chat's effort picker; skipped on failure. */
+	private async listEfforts() {
+		try {
+			const r = await this.peer.request<Obj>('model/list', {}, 10_000);
+			const list = Array.isArray(r?.data) ? r.data.filter(isObj) : [];
+			const m = list.find((x) => str(x.model) === this.threadModel || str(x.id) === this.threadModel) ?? list.find((x) => x.isDefault === true);
+			if (!m) return;
+			const levels = codexLevels(m.supportedReasoningEfforts);
+			const fallback = str(m.defaultReasoningEffort);
+			// `current`: the model's own default (the chat shows it while nothing is picked).
+			this.emit({ kind: 'effort_options', levels, current: fallback ? normalizeLevel(fallback) : null });
+		} catch (e) {
+			this.log(`models not listed: ${e instanceof Error ? e.message : 'error'}`);
+		}
 	}
 
 	protected model() {
@@ -69,7 +89,7 @@ export class CodexSession extends ProcessSession {
 		this.early.clear();
 		this.interruptWanted = false;
 		const done = new Promise<TurnEnd>((resolve) => (this.waiting = { turnId: null, resolve }));
-		const r = await this.peer.request<Obj>('turn/start', { threadId: this.sessionId, input, approvalPolicy: codexPolicy(this.mode).approvalPolicy });
+		const r = await this.peer.request<Obj>('turn/start', { threadId: this.sessionId, input, approvalPolicy: codexPolicy(this.mode).approvalPolicy, ...codexEffort(this.effort ?? undefined) });
 		const id = isObj(r?.turn) ? str(r.turn.id) : null;
 		this.turnId = id;
 		if (this.waiting) this.waiting.turnId = id;

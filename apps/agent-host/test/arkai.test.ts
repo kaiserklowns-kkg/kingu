@@ -366,6 +366,27 @@ describe('API clients against a fake server', () => {
 		]);
 	});
 
+	test('Anthropic: thinking blocks with their signature, sent back first while thinking is on; effort fields in the body', async () => {
+		const llm = fake().reply({ thinking: ['let me ', 'see'], signature: 'sig-1', text: ['Hi'] });
+		const { r } = req({ extra: { thinking: { type: 'adaptive' }, output_config: { effort: 'high' } }, keepThinking: true });
+		const res = await new AnthropicClient(provider(llm.url, 'anthropic')).complete(r);
+		expect(res.thinking).toEqual([{ type: 'thinking', thinking: 'let me see', signature: 'sig-1' }]);
+		expect(llm.requests[0]!.body).toMatchObject({ thinking: { type: 'adaptive' }, output_config: { effort: 'high' } });
+		const answer = { role: 'assistant' as const, text: 'a', calls: [], thinking: [{ type: 'thinking' as const, thinking: 't', signature: 's' }, { type: 'redacted_thinking' as const, data: 'r' }] };
+		expect(anthropicMessages([{ role: 'user', text: 'q' }, answer], true)[1]).toEqual({
+			role: 'assistant',
+			content: [{ type: 'thinking', thinking: 't', signature: 's' }, { type: 'redacted_thinking', data: 'r' }, { type: 'text', text: 'a' }]
+		});
+		// Thinking off (or another provider's model): the blocks stay out.
+		expect(anthropicMessages([{ role: 'user', text: 'q' }, answer])[1]).toEqual({ role: 'assistant', content: [{ type: 'text', text: 'a' }] });
+	});
+
+	test('OpenAI: effort fields in the body', async () => {
+		const llm = fake().reply({ text: ['ok'] });
+		await new OpenAiClient(provider(llm.url)).complete(req({ extra: { reasoning_effort: 'high' } }).r);
+		expect(llm.requests[0]!.body.reasoning_effort).toBe('high');
+	});
+
 	test('<think> tags split across chunks', () => {
 		let text = '';
 		let thinking = '';

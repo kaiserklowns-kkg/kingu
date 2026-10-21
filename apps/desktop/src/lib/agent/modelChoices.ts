@@ -38,7 +38,12 @@ export function parseCachedModels(raw: string | null): ModelOption[] {
 		if (!Array.isArray(v)) return [];
 		return v
 			.filter((m): m is ModelOption => !!m && typeof m === 'object' && typeof m.value === 'string' && !!m.value && typeof m.display_name === 'string')
-			.map((m) => ({ value: m.value, display_name: m.display_name, description: typeof m.description === 'string' ? m.description : '' }));
+			.map((m) => ({
+				value: m.value,
+				display_name: m.display_name,
+				description: typeof m.description === 'string' ? m.description : '',
+				...(Array.isArray(m.efforts) && m.efforts.every((e) => typeof e === 'string') ? { efforts: m.efforts } : {})
+			}));
 	} catch {
 		return [];
 	}

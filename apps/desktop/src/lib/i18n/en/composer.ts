@@ -16,6 +16,23 @@ export const composer = {
 	'composer.model.search': 'Search models',
 	'composer.model.default': 'Default',
 
+	'composer.effort.title': 'Effort Level',
+	'composer.effort.label': 'Effort Level: {effort}',
+	'composer.effort.off': 'None',
+	'composer.effort.minimal': 'Minimal',
+	'composer.effort.low': 'Low',
+	'composer.effort.medium': 'Medium',
+	'composer.effort.high': 'High',
+	'composer.effort.xhigh': 'Extra High',
+	'composer.effort.max': 'Max',
+	'composer.effort.offHint': 'No reasoning applied',
+	'composer.effort.minimalHint': 'Minimal reasoning for fastest responses',
+	'composer.effort.lowHint': 'Faster responses with less reasoning',
+	'composer.effort.mediumHint': 'Balanced reasoning and speed',
+	'composer.effort.highHint': 'Greater reasoning depth but slower',
+	'composer.effort.xhighHint': 'Highest reasoning depth but slowest',
+	'composer.effort.maxHint': 'Absolute maximum capability with no constraints',
+
 	'composer.options.hint': 'Runs on {runtime} in {where} · {run}',
 
 	'composer.run.title': 'Run Mode',

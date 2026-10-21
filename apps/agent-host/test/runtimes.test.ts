@@ -243,6 +243,46 @@ describe('Codex runtime (app-server)', () => {
 	});
 });
 
+describe('reasoning effort (fake agents)', () => {
+	test('Codex: levels from model/list, the effort and a summary on each turn, changed for the next turn', async () => {
+		const { cwd, out, event, stderr, call } = setup();
+		await call(1, 'start', { runId: 1, cwd, prompt: 'x', runtime: CODEX, effort: 'high' });
+		expect(await event('effort_options')).toEqual({ kind: 'effort_options', levels: ['minimal', 'low', 'medium', 'high', 'xhigh'], current: 'medium' });
+		await stderr('got turn/start untrusted effort=high summary=auto');
+		await event('result');
+		const mark = out.length;
+		expect((await call(2, 'set_options', { runId: 1, effort: 'off' })).result).toEqual({ model: null, permissionMode: null, effort: 'off' });
+		await call(3, 'send', { runId: 1, text: 'y' });
+		await stderr('got turn/start untrusted effort=none summary=none', mark);
+		expect((await call(4, 'set_options', { runId: 1, effort: 'huge' })).error?.message).toContain('reasoning effort');
+	});
+
+	test('Codex: no effort picked sends none', async () => {
+		const { cwd, event, stderr, call } = setup();
+		await call(1, 'start', { runId: 1, cwd, prompt: 'x', runtime: CODEX });
+		expect(await event('effort_options')).toMatchObject({ current: 'medium' });
+		await stderr('got turn/start untrusted');
+	});
+
+	test('ACP: an advertised thought level is offered and set; an agent without one gets nothing', async () => {
+		const { cwd, events, event, stderr, call } = setup();
+		await call(1, 'start', { runId: 1, cwd, prompt: 'x', runtime: ACP, env: { FAKE_ACP_THOUGHT: '1' }, effort: 'xhigh' });
+		await stderr('got session/set_config_option reasoning=extra_high');
+		expect(await event('effort_options')).toEqual({ kind: 'effort_options', levels: ['low', 'medium', 'high', 'xhigh'], current: 'xhigh' });
+		await event('result');
+		expect((await call(2, 'set_options', { runId: 1, effort: 'low' })).result).toMatchObject({ effort: 'low' });
+		await stderr('got session/set_config_option reasoning=low');
+		expect((await call(3, 'set_options', { runId: 1, effort: 'max' })).error?.message).toContain('no max reasoning level');
+		expect(events().filter((e) => e.kind === 'stderr' && e.line.startsWith('got session/set_config_option'))).toHaveLength(2);
+
+		const other = setup();
+		await other.call(1, 'start', { runId: 1, cwd: other.cwd, prompt: 'x', runtime: ACP, effort: 'high' });
+		await other.event('result');
+		expect(other.events().some((e) => e.kind === 'effort_options')).toBe(false);
+		expect(other.events().some((e) => e.kind === 'stderr' && e.line.startsWith('got session/set_config_option'))).toBe(false);
+	});
+});
+
 describe('runtime helpers', () => {
 	test('runtimeSpec', () => {
 		expect(runtimeSpec(null)).toBeNull();

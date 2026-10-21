@@ -87,6 +87,7 @@ fn run_dir(open_root: &std::path::Path, root: Option<&str>, slug: Option<&str>, 
 /// `resume` continues an earlier session (its `session_id`), refused while a live run holds it;
 /// with `resume_at` (a chat after a rewind or fork), only up to that message, in a fork of it.
 /// `disabled_tools`: the tools the chat's Configure Tools picker turned off (`disallowedTools`).
+/// `effort`: the chat's reasoning effort (`events::EFFORTS`); none: the model's default.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn agent_start(
@@ -110,8 +111,10 @@ pub async fn agent_start(
   runtime: Option<String>,
   agent: Option<String>,
   disabled_tools: Option<Vec<String>>,
+  effort: Option<String>,
   on_event: Channel<AgentEvent>,
 ) -> Result<u32, String> {
+  check_effort(effort.as_deref())?;
   if let Some(id) = chat_id.as_deref() {
     chats::check_id(id)?;
   }
@@ -293,6 +296,7 @@ pub async fn agent_start(
     system_prompt_append,
     runtime: runtime_spec,
     mcp_sampling: (!mcp_sampling.is_empty()).then_some(mcp_sampling),
+    effort,
     owner,
   };
   let resuming = req.resume.is_some();
@@ -302,6 +306,7 @@ pub async fn agent_start(
       runtime: runtime.clone(),
       model: req.model.clone(),
       permission_mode: req.permission_mode.clone(),
+      effort: req.effort.clone(),
       agent: agent.clone(),
       resumed: resuming,
       rules: rule_files,
@@ -400,14 +405,16 @@ fn chat_owner(root: &std::path::Path, id: &str) -> String {
   format!("chat:{}:{id}", root.display())
 }
 
-/// Changes a live run's model and/or permission mode from its next response on.
+/// Changes a live run's model, permission mode and/or reasoning effort from its next response on.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
-pub async fn agent_set_options(app: tauri::AppHandle, agents: State<'_, Arc<AgentHost>>, run_id: u32, model: Option<String>, permission_mode: Option<String>) -> Result<(), String> {
+pub async fn agent_set_options(app: tauri::AppHandle, agents: State<'_, Arc<AgentHost>>, run_id: u32, model: Option<String>, permission_mode: Option<String>, effort: Option<String>) -> Result<(), String> {
   if let Some(m) = permission_mode.as_deref()
     && !RUN_PERMISSION_MODES.contains(&m)
   {
     return Err(format!("{m}: unsupported permission mode"));
   }
+  check_effort(effort.as_deref())?;
   let model = model.filter(|m| !m.trim().is_empty());
   if model.as_deref().is_some_and(|m| m.len() > 256 || !m.chars().all(|c| c.is_ascii_graphic())) {
     return Err("invalid model".into());
@@ -416,9 +423,17 @@ pub async fn agent_set_options(app: tauri::AppHandle, agents: State<'_, Arc<Agen
   let config = crate::snap::config_dir(&app)?;
   on_host(&agents, move |a| {
     let provider = model.as_deref().and_then(|m| arkai::switch_provider(&config, m));
-    a.set_options(run_id, model.as_deref(), permission_mode.as_deref(), provider.as_ref())
+    a.set_options(run_id, model.as_deref(), permission_mode.as_deref(), effort.as_deref(), provider.as_ref())
   })
   .await
+}
+
+/// A reasoning effort from the webview: one of `events::EFFORTS`, or none.
+fn check_effort(effort: Option<&str>) -> Result<(), String> {
+  match effort {
+    Some(e) if !events::EFFORTS.contains(&e) => Err(format!("{e}: unsupported reasoning effort")),
+    _ => Ok(()),
+  }
 }
 
 /// Chats of the open folder; empty with no folder open. The first load of a folder also sweeps

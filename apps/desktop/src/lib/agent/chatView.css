@@ -708,6 +708,30 @@ div.chat-welcome-view {
 	white-space: nowrap;
 }
 
+/* The model's Effort Level after its name (modelPicker.css `.model-picker-config-summary`, chatInputPicker.css `.chat-input-picker-split-secondary`). */
+.interactive-session .chat-input-toolbars .model-picker-config .action-label {
+	color: var(--vscode-descriptionForeground);
+	font-size: var(--vscode-fontSize-label3);
+}
+
+/* The split's 2px between name and readout, in a toolbar whose items are 4px apart. */
+.interactive-session .chat-input-toolbars .model-picker-config-split {
+	margin-left: calc(var(--vscode-spacing-size20) - var(--vscode-spacing-size40));
+}
+
+.interactive-session .chat-input-toolbars .model-picker-config-split::before {
+	position: absolute;
+	left: calc(-1 * var(--vscode-spacing-size20) / 2);
+	top: 50%;
+	width: var(--vscode-strokeThickness);
+	height: var(--vscode-spacing-size120);
+	background-color: var(--vscode-widget-border, var(--vscode-editorWidget-border, transparent));
+	content: '';
+	transform: translate(-50%, -50%);
+	z-index: 1;
+	pointer-events: none;
+}
+
 .interactive-session .chat-secondary-toolbar .action-label.warning,
 .interactive-session .chat-secondary-toolbar .action-label.warning .codicon {
 	color: var(--vscode-problemsWarningIcon-foreground);

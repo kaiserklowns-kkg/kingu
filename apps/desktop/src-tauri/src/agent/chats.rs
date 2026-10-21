@@ -90,6 +90,10 @@ pub struct ChatMeta {
   pub model: Option<String>,
   #[serde(default)]
   pub permission_mode: Option<String>,
+  /// The chat's reasoning effort (`events::EFFORTS`), picked in the composer; unset: the
+  /// runtime's default from `kingu.chat.reasoningEffort`, else the model's own.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub effort: Option<String>,
   /// Which agent runs the chat (`runtimes`): `claude`, the Claude Agent SDK, unless set.
   #[serde(default = "super::runtimes::default_id")]
   pub runtime: String,
@@ -195,6 +199,9 @@ pub fn validate(chats: &[ChatMeta]) -> Result<(), String> {
     }
     if c.permission_mode.as_deref().is_some_and(|m| !PERMISSION_MODES.contains(&m)) {
       return Err(format!("{}: unsupported permission mode", c.id));
+    }
+    if c.effort.as_deref().is_some_and(|e| !super::events::EFFORTS.contains(&e)) {
+      return Err(format!("{}: unsupported reasoning effort", c.id));
     }
     if !super::runtimes::valid_id(&c.runtime) {
       return Err(format!("{}: invalid runtime", c.id));
@@ -509,6 +516,7 @@ mod tests {
       resume_at: None,
       model: Some("claude-opus-5-5[1m]".into()),
       permission_mode: Some("acceptEdits".into()),
+      effort: None,
       runtime: "claude".into(),
       agent: None,
       created_at: 1,
@@ -581,6 +589,8 @@ mod tests {
     assert!(bad(|c| c.runtime = "Gemini CLI".into()));
     assert!(bad(|c| c.runtime = String::new()));
     assert!(validate(&[ChatMeta { runtime: "gemini".into(), ..chat("a") }]).is_ok());
+    assert!(validate(&[ChatMeta { effort: Some("xhigh".into()), ..chat("a") }]).is_ok());
+    assert!(bad(|c| c.effort = Some("ultra".into())));
     assert!(validate(&[ChatMeta { agent: Some("Planner".into()), ..chat("a") }]).is_ok());
     assert!(validate(&[ChatMeta { side_of: Some("c-1".into()), ..chat("a") }]).is_ok());
     assert!(validate(&[ChatMeta { side_of: Some("../x".into()), ..chat("a") }]).is_err());
