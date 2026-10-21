@@ -509,8 +509,12 @@ fn pty_spawn(
   cwd_from: Option<String>,
   floating_cwd: Option<String>,
   task: Option<tasks::TaskLaunch>,
+  folder: Option<String>,
 ) -> Result<kingu_ptyd::Attached, String> {
   pty::validate_key(&key)?;
+  // `folder`: the root folder of a multi-root window the terminal belongs to (the user's pick, or
+  // a split's source); absent, the first folder. It must be inside one of the window's roots.
+  let folder = pty::terminal_folder(&ws.roots(), folder.as_deref())?;
   // A task terminal (tasks.rs) is a panel terminal running the task instead of a shell.
   if task.is_some() && !key.starts_with("panel:") {
     return Err(format!("terminal {key}: tasks run in panel terminals"));
@@ -519,7 +523,7 @@ fn pty_spawn(
   // Orca's resolve-split-cwd), else where a new terminal would.
   // terminal.integrated.splitCwd picks which directory (inherited, the source's initial one, or the root).
   let split_mode = terminal.as_ref().and_then(|t| t.split_cwd.clone()).unwrap_or_else(|| "inherited".into());
-  let inherited = cwd_from.as_deref().and_then(|from| pty::split_cwd(&split_mode, || ptys.live_cwd(from), || ptys.initial_cwd(from), ws.current()));
+  let inherited = cwd_from.as_deref().and_then(|from| pty::split_cwd(&split_mode, || ptys.live_cwd(from), || ptys.initial_cwd(from), folder.clone()));
   // A task terminal starts in the task's worktree (the ADE's per-worktree terminals); a floating
   // workspace terminal in its own directory setting. No folder open: the terminal starts in the
   // home folder, like VS Code's empty window.
@@ -538,7 +542,7 @@ fn pty_spawn(
       dir
     }
     (None, None) => {
-      let folder = ws.current();
+      let folder = folder.clone();
       let fallback = folder.clone().or_else(|| std::env::var_os("HOME").map(PathBuf::from)).unwrap_or_else(|| PathBuf::from("/"));
       pty::terminal_cwd(terminal.as_ref().and_then(|t| t.cwd.as_deref()), folder.as_deref(), fallback)
     }
@@ -586,7 +590,7 @@ fn pty_spawn(
   if terminal.scope_history && !key.starts_with("cli:") {
     let scope = match slug.as_deref() {
       Some(s) => agent::worktree::worktree_path(&ws.root()?, s),
-      None => ws.current().unwrap_or_else(|| cwd.clone()),
+      None => folder.clone().unwrap_or_else(|| cwd.clone()),
     };
     let program = shell.map(str::to_owned).or_else(|| std::env::var("SHELL").ok()).unwrap_or_default();
     let history = app.path().app_data_dir().map_err(|e| e.to_string())?.join("terminal-history");

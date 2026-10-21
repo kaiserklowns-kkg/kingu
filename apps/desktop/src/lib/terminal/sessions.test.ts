@@ -87,6 +87,11 @@ describe('persistence', () => {
 		expect(restore(storeName('p', b), parsePanelTerminals, store)).toBeNull();
 		expect(storeName('p', a)).toBe(`p:${a}`);
 	});
+	test("a terminal's root folder survives a restore (multi-root)", () => {
+		const store = memory();
+		persist('p', { list: [{ id: 1, title: 'zsh', folder: '/w/lib' }, { id: 2, title: 'zsh', folder: 'relative' }], active: 1, seq: 2 }, store);
+		expect(restore('p', parsePanelTerminals, store)?.list).toEqual([{ id: 1, title: 'zsh', run: undefined, folder: '/w/lib' }, { id: 2, title: 'zsh', run: undefined }]);
+	});
 	test('a restored terminal never re-runs its command', () => {
 		expect(withoutRun({ id: 5, title: 'test', run: ['go', 'test'] })).toEqual({ id: 5, title: 'test' });
 	});
