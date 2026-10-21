@@ -33,6 +33,8 @@ export const debugger_ = {
 	'debugger.pickProcess': 'Select the process to attach to',
 	'debugger.compound': 'compound',
 	'debugger.compoundMissing': 'Compound "{name}" names configurations that don\'t exist: {missing}',
+	'debugger.pickLaunchFolder': 'Select the workspace folder of the launch.json',
+	'debugger.compoundAmbiguous': 'Compound "{name}": several folders have a configuration named {names}. Add the folder to the reference ("folder": the folder name).',
 	'debugger.noJump': 'This debugger can\'t jump to another line',
 	'debugger.noJumpTarget': 'Execution can\'t jump to line {line}',
 	'debugger.setValue': 'New value of {name}',

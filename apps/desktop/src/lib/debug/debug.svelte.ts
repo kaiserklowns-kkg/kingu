@@ -44,6 +44,7 @@ import { t } from '#lib/i18n/index.ts';
 import { lsp } from '#lib/lsp/lsp.svelte.ts';
 import { parseProblemMatchers } from '#lib/tasks/problemMatcher.ts';
 import { tasks } from '#lib/tasks/tasks.svelte.ts';
+import { folderKey } from '#lib/tasks/folders.ts';
 import type { InputDef, TaskRef } from '#lib/tasks/taskConfig.ts';
 import { inputPrompter } from '#lib/tasks/inputPrompter.svelte.ts';
 import { collectVariables, resolveInputs, substitute as substituteVariables } from '#lib/tasks/variables.ts';
@@ -563,7 +564,7 @@ class Debug {
 
 	/** The root folder (absolute) a configuration came from; a `.code-workspace` file's has none. */
 	#configFolder = new WeakMap<object, string | undefined>();
-	/** Every root folder's name by path, for the picker (multi-root only). */
+	/** Every root folder's name by path (compounds name folders; the picker shows them in a multi-root window). */
 	#folderNames = new Map<string, string>();
 
 	/** The folder a configuration's variables, defaults and preLaunchTask use (its launch.json's; the first folder for one made here). */
@@ -578,7 +579,7 @@ class Debug {
 		const inputs: InputDef[] = [];
 		const folders = await tasks.folders();
 		const multi = folders.length > 1;
-		this.#folderNames = new Map(multi ? folders.map((f) => [f.path, f.name]) : []);
+		this.#folderNames = new Map(folders.map((f) => [f.path, f.name]));
 		const add = (text: string, source: string, folder: string | undefined) => {
 			const parsed = parseLaunchJson(text, source);
 			if (parsed.error) status.flash(parsed.error);
@@ -604,7 +605,7 @@ class Debug {
 
 	/** A picker row's description: the configuration's folder in a multi-root workspace (VS Code), then `what`. */
 	#describe(config: object, what: string): string {
-		if (!this.#folderNames.size) return what;
+		if (this.#folderNames.size < 2) return what;
 		const folder = this.#configFolder.get(config);
 		return `${folder === undefined ? t('ideTasks.pick.workspace') : (this.#folderNames.get(folder) ?? folder)} · ${what}`;
 	}
@@ -637,9 +638,14 @@ class Debug {
 	}
 
 	#compound(compound: LaunchCompound, all: LaunchConfig[]): Picked | undefined {
-		const { configs, missing } = compoundConfigs(compound, all);
+		const origin = { folderOf: (c: object) => this.#configFolder.get(c), nameOf: (folder: string) => this.#folderNames.get(folder) ?? folder };
+		const { configs, missing, ambiguous } = compoundConfigs(compound, all, origin);
 		if (missing.length) {
 			notifications.error(t('debugger.compoundMissing', { name: compound.name, missing: missing.join(', ') }));
+			return;
+		}
+		if (ambiguous.length) {
+			notifications.error(t('debugger.compoundAmbiguous', { name: compound.name, names: ambiguous.join(', ') }));
 			return;
 		}
 		return { kind: 'compound', compound, configs };
@@ -713,7 +719,8 @@ class Debug {
 				exceptionArgs: (caps) => this.#exceptionArgs(caps),
 				dataBreakpoints: () => B.dataBreakpoints(this.dataBreakpoints.filter((d) => d.canPersist), this.breakpointsActivated),
 				runInTerminal: async (args) => {
-					terminals.open({ title: args.title ?? `Debug: ${config.name}`, run: runInTerminalArgv(args) });
+					// In the configuration's folder (multi-root), where its program runs.
+					terminals.open({ title: args.title ?? `Debug: ${config.name}`, run: runInTerminalArgv(args), folder: this.#folderOfConfig(config) });
 					layout.showPanel('terminal');
 					return {};
 				},
@@ -1174,17 +1181,35 @@ class Debug {
 
 	// --- launch.json -------------------------------------------------------------------------------
 
+	/**
+	 * Which launch.json Open launch.json / Add Configuration work on: in a multi-root window the
+	 * folder is asked for (VS Code); picking the `.code-workspace`
+	 * file opens it (its `launch`) and gives null. Returns the workbench path of a file in that folder.
+	 */
+	async #launchFolder(): Promise<((rel: string) => string) | null> {
+		const folders = await tasks.folders();
+		const picked = folders.length < 2 ? folders[0] : await tasks.pickFolder(t('debugger.pickLaunchFolder'), { workspace: true });
+		if (picked === 'workspace') {
+			tasks.openWorkspaceFile();
+			return null;
+		}
+		if (!picked) return null;
+		return (rel) => folderKey(rel, picked, folders);
+	}
+
 	/** Debug: Open launch.json — creates `.vscode/launch.json` with a configuration for the active file's language. */
 	async openLaunchJson() {
 		const root = await this.#ensureRoot();
 		if (!root) return status.flash(t('tools.debug.openFolder'));
-		const rel = LAUNCH_FILES[0];
+		const at = await this.#launchFolder();
+		if (!at) return;
+		const rel = at(LAUNCH_FILES[0]);
 		const exists = await invoke<string>('read_workspace_file', { rel }).then(
 			() => true,
 			() => false
 		);
 		if (!exists) {
-			const cargoToml = editors.language === 'rust' ? await invoke<string>('read_workspace_file', { rel: 'Cargo.toml' }).catch(() => null) : null;
+			const cargoToml = editors.language === 'rust' ? await invoke<string>('read_workspace_file', { rel: at('Cargo.toml') }).catch(() => null) : null;
 			const configs = generatedConfigs(editors.language, { cargoToml }).map((g) => g.config);
 			const text = `{\n\t// ดู https://code.visualstudio.com/docs/editor/debugging#_launch-configurations\n\t"version": "0.2.0",\n\t"configurations": ${JSON.stringify(configs, null, '\t').replaceAll('\n', '\n\t')}\n}\n`;
 			try {
@@ -1201,12 +1226,14 @@ class Debug {
 	async addConfiguration() {
 		const root = await this.#ensureRoot();
 		if (!root) return status.flash(t('tools.debug.openFolder'));
+		const at = await this.#launchFolder();
+		if (!at) return;
 		const language = editors.language;
 		const snippets = snippetsFor(language);
 		const item = await quick.choose({ placeholder: t('debugger.addConfigPick'), items: snippets.map((s, i) => ({ id: String(i), label: s.label, description: s.description })) });
 		if (!item) return;
 		const snippet = snippets[Number(item.id)];
-		const rel = LAUNCH_FILES[0];
+		const rel = at(LAUNCH_FILES[0]);
 		const current = await invoke<string>('read_workspace_file', { rel }).catch(() => null);
 		const { text, offset } = addConfigurationText(current ?? '', snippet.body);
 		try {

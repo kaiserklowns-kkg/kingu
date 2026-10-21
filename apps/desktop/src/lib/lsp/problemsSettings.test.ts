@@ -24,7 +24,7 @@ describe('problems settings', () => {
 	});
 
 	test('problems.defaultViewMode: table rows', () => {
-		const files = [{ uri: 'file:///a', rel: 'a', label: 'a', items }];
+		const files = [{ uri: 'file:///a', rel: 'a', label: 'a', detail: '', items }];
 		expect(problemTable(files, 'position').map((r) => r.item.message)).toEqual(['1:0:2', '3:0:1', '5:0:2']);
 	});
 });
@@ -32,10 +32,10 @@ describe('problems settings', () => {
 test('problems.decorations.enabled: counts on files, the worst color on their folders', () => {
 	const d = (severity: number) => ({ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }, message: 'm', severity });
 	const files = [
-		{ uri: 'file:///w/src/a.ts', rel: 'src/a.ts', label: 'src/a.ts', items: [d(2), d(2)] },
-		{ uri: 'file:///w/src/lib/b.ts', rel: 'src/lib/b.ts', label: 'src/lib/b.ts', items: [d(1), d(3)] },
-		{ uri: 'file:///w/c.ts', rel: 'c.ts', label: 'c.ts', items: [d(4)] },
-		{ uri: 'file:///x/d.ts', rel: null, label: '/x/d.ts', items: [d(1)] }
+		{ uri: 'file:///w/src/a.ts', rel: 'src/a.ts', label: 'src/a.ts', detail: '', items: [d(2), d(2)] },
+		{ uri: 'file:///w/src/lib/b.ts', rel: 'src/lib/b.ts', label: 'src/lib/b.ts', detail: '', items: [d(1), d(3)] },
+		{ uri: 'file:///w/c.ts', rel: 'c.ts', label: 'c.ts', detail: '', items: [d(4)] },
+		{ uri: 'file:///x/d.ts', rel: null, label: '/x/d.ts', detail: '', items: [d(1)] }
 	];
 	const map = problemDecorations(files);
 	expect(map.get('src/a.ts')).toEqual({ severity: 'warning', count: 2 });

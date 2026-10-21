@@ -28,10 +28,8 @@ import { settingSchemas } from './schemas.svelte';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { installUiLanguage } from '#lib/i18n/locale.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
-import { LAUNCH_FILE_MATCH, LAUNCH_SCHEMA_URI, launchSchema } from '#lib/debug/launchSchema.ts';
+import { kinguJsonSchemas } from './jsonSchemas.ts';
 
-const SETTINGS_SCHEMA_URI = 'kingu://schemas/settings';
-const KEYBINDINGS_SCHEMA_URI = 'kingu://schemas/keybindings';
 const get = <T>(id: string) => settings.get<T>(id);
 
 /** Monaco editor options from settings (VS Code: editor.* configuration), for an editor showing a
@@ -137,37 +135,17 @@ export function installEditorSettings(monaco: typeof Monaco) {
 		// settings.json is JSONC; give it completion and validation from the schema registry
 		// (contributed Snap settings included, so it follows them).
 		$effect(() => {
-			const schema = jsonSchema(settingSchemas.all);
-			const ids = commands.all.map((c) => c.id).sort();
-			// keybindings.json: completion of command ids (and their removal form `-id`).
-			const keys = {
-				type: 'array',
-				items: {
-					type: 'object',
-					required: ['key', 'command'],
-					properties: {
-						key: { type: 'string', description: 'คีย์ เช่น cmd+shift+p หรือ cmd+k cmd+t (The key or key sequence.)' },
-						command: { type: 'string', enum: [...ids, ...ids.map((id) => `-${id}`)] },
-						when: { type: 'string', description: 'เงื่อนไขที่คีย์นี้ทำงาน เช่น editorTextFocus && !editorReadonly (Condition when the key is active.)' },
-						args: { description: 'อาร์กิวเมนต์ที่ส่งให้คำสั่ง เช่น { "snippet": "console.log($1)" } ของ editor.action.insertSnippet (Arguments passed to the command.)' }
-					}
-				}
-			};
+			// settings.json, keybindings.json (command ids), launch.json, tasks.json, `.code-workspace`, extensions.json.
+			const kingu = kinguJsonSchemas(jsonSchema(settingSchemas.all), commands.all.map((c) => c.id));
 			untrack(() => {
 				const opts = monaco.json.jsonDefaults.diagnosticsOptions;
-				const ours = new Set([SETTINGS_SCHEMA_URI, KEYBINDINGS_SCHEMA_URI, LAUNCH_SCHEMA_URI]);
+				const ours = new Set(kingu.map((s) => s.uri));
 				monaco.json.jsonDefaults.setDiagnosticsOptions({
 					...opts,
 					validate: true,
 					allowComments: true,
 					trailingCommas: 'ignore',
-					schemas: [
-						...(opts.schemas ?? []).filter((s) => !ours.has(s.uri)),
-						{ uri: SETTINGS_SCHEMA_URI, fileMatch: ['**/settings.json'], schema },
-						{ uri: KEYBINDINGS_SCHEMA_URI, fileMatch: ['**/keybindings.json'], schema: keys },
-						// launch.json: configuration attributes and Add Configuration's snippets (VS Code: launchSchema).
-						{ uri: LAUNCH_SCHEMA_URI, fileMatch: LAUNCH_FILE_MATCH, schema: launchSchema() }
-					]
+					schemas: [...(opts.schemas ?? []).filter((s) => !ours.has(s.uri)), ...kingu]
 				});
 			});
 		});

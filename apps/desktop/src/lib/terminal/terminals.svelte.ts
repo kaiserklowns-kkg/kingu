@@ -106,9 +106,15 @@ class Terminals {
 	}
 
 	/** A new terminal in the folder root (`folder`: that root folder of a multi-root window), shown in the panel; `run` is typed into its shell. */
+	/** The root folder of a terminal opened by code without one (an installer, a code block run
+	 * from chat): VS Code's last active workspace root, the active editor's folder in a multi-root
+	 * window (newTerminal.ts sets it); null: the first folder. */
+	defaultFolder: () => string | null = () => null;
+
 	open(opts: { title?: string; run?: string[]; folder?: string } = {}): number {
 		const id = ++this.#seq;
-		this.list = [...this.list, { id, title: opts.title ?? 'zsh', run: opts.run, ...(opts.folder ? { folder: opts.folder } : {}) }];
+		const folder = opts.folder ?? this.defaultFolder();
+		this.list = [...this.list, { id, title: opts.title ?? 'zsh', run: opts.run, ...(folder ? { folder } : {}) }];
 		this.groups = [...this.groups, leaf(String(id))];
 		this.active = id;
 		return id;

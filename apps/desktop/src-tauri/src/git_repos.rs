@@ -3,9 +3,10 @@
 //! `git.openRepositoryInParentFolders` allows it).
 //!
 //! A repository is named by the directory git runs in (`dir`) and every path of it is relative to
-//! that directory, the same as the first folder's repository has always been: a folder inside a
-//! repository whose top level is above it runs git in the folder, so its status is the folder's
-//! part of that repository.
+//! that directory, the same as the first folder's repository has always been. A folder inside a
+//! repository whose top level is above it runs git at that top level, so Source Control shows
+//! the whole repository's changes (VS Code); its files outside every root folder are reachable
+//! through [`Workspace::locate_in_parent_repo`] once the repository is open.
 
 use std::path::{Path, PathBuf};
 
@@ -220,7 +221,9 @@ pub fn detect_with(roots: &[PathBuf], opts: &DetectOptions, toplevel_of: &dyn Fn
       _ => opts.allowed_parents.contains(&p.toplevel),
     };
     if open {
-      add(&mut found, RepoInfo { dir: p.folder.clone(), folder: p.folder, toplevel: p.toplevel, kind: RepoKind::Parent });
+      // The whole repository, as VS Code shows it: git runs at its top level (one repository for
+      // every root folder inside it).
+      add(&mut found, RepoInfo { dir: p.toplevel.clone(), folder: p.folder, toplevel: p.toplevel, kind: RepoKind::Parent });
     } else if opts.open_repository_in_parent_folders != "never" && !ignored.contains(&p.toplevel) {
       found.parents.push(p);
     }
@@ -258,7 +261,17 @@ pub fn file_repo(root: &Path, rel: &str) -> (PathBuf, String) {
 /// The repository and repository-relative path of webview path `key` (a file of any root folder),
 /// checked to stay inside it.
 pub fn locate_file(ws: &Workspace, key: &str) -> Result<(PathBuf, String), String> {
-  let (root, rel) = ws.locate(key)?;
+  let (root, rel) = match ws.locate(key) {
+    Ok(found) => found,
+    // A file of an open parent repository outside every root folder.
+    Err(e) => match ws.locate_in_parent_repo(key) {
+      Some((top, rel)) => {
+        crate::git::check_rel(&top, &rel)?;
+        return Ok((top, rel));
+      }
+      None => return Err(e),
+    },
+  };
   let (dir, rel) = file_repo(&root, &rel);
   crate::git::check_rel(&dir, &rel)?;
   Ok((dir, rel))
@@ -268,6 +281,8 @@ pub fn locate_file(ws: &Workspace, key: &str) -> Result<(PathBuf, String), Strin
 /// in), else the first folder. It must be a folder of the workspace or inside one.
 pub fn repo_or_root(ws: &Workspace, repo: Option<&str>) -> Result<PathBuf, String> {
   match repo.filter(|r| !r.is_empty()) {
+    // An open repository above a root folder (its top level).
+    Some(r) if ws.parent_repos().iter().any(|t| t.as_path() == Path::new(r)) => Ok(PathBuf::from(r)),
     Some(r) => {
       let dir = ws.resolve(r)?;
       if !dir.is_dir() {
@@ -279,11 +294,53 @@ pub fn repo_or_root(ws: &Workspace, repo: Option<&str>) -> Result<PathBuf, Strin
   }
 }
 
+/// A repository's git dir and common dir (they differ for a worktree), canonical.
+fn git_dirs(dir: &Path) -> Option<(PathBuf, PathBuf)> {
+  let out = crate::git::run(dir, &["rev-parse", "--absolute-git-dir", "--git-common-dir"]).ok()?;
+  let text = String::from_utf8_lossy(&out);
+  let mut lines = text.lines().map(str::trim);
+  let gitdir = PathBuf::from(lines.next()?);
+  let common = lines.next().map(|c| if Path::new(c).is_absolute() { PathBuf::from(c) } else { dir.join(c) })?;
+  let canon = |p: PathBuf| p.canonicalize().unwrap_or(p);
+  Some((canon(gitdir), canon(common)))
+}
+
+/// The git dirs (with their common dirs) of `repos` that no root folder's recursive watch sees,
+/// once each: a repository above a folder, a worktree or submodule whose `.git` points out.
+pub fn unwatched_git_dirs(roots: &[PathBuf], repos: &[RepoInfo], dirs_of: &dyn Fn(&Path) -> Option<(PathBuf, PathBuf)>) -> Vec<(PathBuf, PathBuf)> {
+  let inside = |p: &Path| roots.iter().any(|r| p.starts_with(r));
+  let mut out: Vec<(PathBuf, PathBuf)> = Vec::new();
+  for r in repos {
+    let Some((gitdir, common)) = dirs_of(&r.dir) else { continue };
+    if (inside(&gitdir) && inside(&common)) || out.iter().any(|(g, _)| *g == gitdir) {
+      continue;
+    }
+    out.push((gitdir, common));
+  }
+  out
+}
+
+/// Tells the window Source Control's repository state changed outside every folder watch.
+pub const REPOSITORY_CHANGED: &str = "scm:repository-changed";
+
 #[tauri::command]
-pub async fn git_repositories(ws: Workspace, options: Option<DetectOptions>) -> Result<Detection, String> {
+pub async fn git_repositories(app: tauri::AppHandle, ws: Workspace, options: Option<DetectOptions>) -> Result<Detection, String> {
   let roots = ws.roots();
   let opts = options.unwrap_or_default();
-  crate::blocking(move || Ok(detect(&roots, &opts))).await
+  let (found, unwatched) = crate::blocking(move || {
+    let found = detect(&roots, &opts);
+    let unwatched = unwatched_git_dirs(&roots, &found.repositories, &git_dirs);
+    Ok((found, unwatched))
+  })
+  .await?;
+  ws.set_parent_repos(found.repositories.iter().filter(|r| r.kind == RepoKind::Parent).map(|r| r.toplevel.clone()).collect());
+  // A commit, stage or checkout in a terminal refreshes Source Control (VS Code watches `.git`).
+  let label = ws.label().to_string();
+  ws.state().repo_watcher.set(unwatched, move || {
+    use tauri::Emitter;
+    let _ = app.emit_to(label.as_str(), REPOSITORY_CHANGED, ());
+  });
+  Ok(found)
 }
 
 #[cfg(test)]
@@ -346,10 +403,15 @@ mod tests {
     assert_eq!(prompt.parents, [ParentRepo { folder: pkg.clone(), toplevel: base.clone() }]);
     let allowed = DetectOptions { allowed_parents: vec![base.clone()], ..DetectOptions::default() };
     let open = detect_with(&roots, &allowed, &fake_top);
-    assert_eq!(open.repositories, [RepoInfo { dir: pkg.clone(), folder: pkg.clone(), toplevel: base.clone(), kind: RepoKind::Parent }]);
+    // Git runs at the top level: the whole repository's changes (VS Code).
+    assert_eq!(open.repositories, [RepoInfo { dir: base.clone(), folder: pkg.clone(), toplevel: base.clone(), kind: RepoKind::Parent }]);
     assert!(open.parents.is_empty());
     let always = DetectOptions { open_repository_in_parent_folders: "always".into(), ..DetectOptions::default() };
-    assert_eq!(dirs(&detect_with(&roots, &always, &fake_top)), [(pkg.clone(), RepoKind::Parent)]);
+    assert_eq!(dirs(&detect_with(&roots, &always, &fake_top)), [(base.clone(), RepoKind::Parent)]);
+    // Two root folders in one repository above them: one repository.
+    let other = base.join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    assert_eq!(dirs(&detect_with(&[pkg.clone(), other.clone()], &always, &fake_top)), [(base.clone(), RepoKind::Parent)]);
     let never = detect_with(&roots, &DetectOptions { open_repository_in_parent_folders: "never".into(), ..DetectOptions::default() }, &fake_top);
     assert!(never.repositories.is_empty() && never.parents.is_empty());
     // The repository is a root folder itself: the nested root is covered by it, nothing to ask.
@@ -415,5 +477,48 @@ mod tests {
     let key = rb.join("sub/f.ts").display().to_string();
     assert_eq!(locate_file(&ws, &key).unwrap(), (rb.join("sub"), "f.ts".into()));
     assert!(locate_file(&ws, "/etc/hosts").is_err());
+  }
+
+  #[test]
+  fn only_git_dirs_outside_the_folder_watches_get_their_own() {
+    let roots = [PathBuf::from("/w/app")];
+    let repo = |dir: &str, kind| RepoInfo { dir: dir.into(), folder: "/w/app".into(), toplevel: dir.into(), kind };
+    let repos = [repo("/w/app", RepoKind::Folder), repo("/w/app/nested", RepoKind::Nested), repo("/w/app/wt", RepoKind::Nested), repo("/w", RepoKind::Parent), repo("/w/app/wt2", RepoKind::Nested)];
+    let dirs = |d: &Path| -> Option<(PathBuf, PathBuf)> {
+      Some(match d.to_str()? {
+        "/w/app/wt" | "/w/app/wt2" => ("/main/.git/worktrees/wt".into(), "/main/.git".into()),
+        other => (Path::new(other).join(".git"), Path::new(other).join(".git")),
+      })
+    };
+    assert_eq!(
+      unwatched_git_dirs(&roots, &repos, &dirs),
+      [(PathBuf::from("/main/.git/worktrees/wt"), PathBuf::from("/main/.git")), (PathBuf::from("/w/.git"), PathBuf::from("/w/.git"))]
+    );
+  }
+
+  #[test]
+  fn an_open_parent_repository_reaches_its_files_outside_the_folders() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = tmp.path().canonicalize().unwrap();
+    mkrepo(&base);
+    let pkg = base.join("pkg");
+    std::fs::create_dir_all(&pkg).unwrap();
+    std::fs::write(base.join("README.md"), "x").unwrap();
+    let ws = Workspace::new(Some(pkg.clone()));
+    let readme = base.join("README.md").display().to_string();
+    let top = base.display().to_string();
+    // Not until Source Control opened that repository.
+    assert!(locate_file(&ws, &readme).is_err());
+    assert!(repo_or_root(&ws, Some(&top)).is_err());
+    ws.set_parent_repos(vec![base.clone()]);
+    assert_eq!(locate_file(&ws, &readme).unwrap(), (base.clone(), "README.md".into()));
+    // A deleted file of it too; never a way out.
+    assert_eq!(ws.locate_in_parent_repo(&base.join("gone/x.ts").display().to_string()), Some((base.clone(), "gone/x.ts".into())));
+    assert!(locate_file(&ws, &format!("{top}/../etc/hosts")).is_err());
+    assert!(locate_file(&ws, "/etc/hosts").is_err());
+    assert_eq!(repo_or_root(&ws, Some(&top)).unwrap(), base);
+    // Files of the root folder stay the folder's.
+    std::fs::write(pkg.join("a.ts"), "").unwrap();
+    assert_eq!(locate_file(&ws, "a.ts").unwrap(), (pkg.clone(), "a.ts".into()));
   }
 }

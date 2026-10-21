@@ -5,7 +5,7 @@ import type { Diagnostic } from './protocol.ts';
 import { copyText, DEFAULT_PROBLEMS_FILTER, filterProblems, isFiltering, matchesText, parseProblemsFilter, splitGlobAware, type ProblemsFilterState } from './problemsFilter.ts';
 
 const diag = (message: string, severity = 1, extra: Partial<Diagnostic> = {}): Diagnostic => ({ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } }, message, severity, ...extra });
-const file = (rel: string, items: Diagnostic[]): ProblemFile => ({ uri: `file:///w/${rel}`, rel, label: rel, items });
+const file = (rel: string, items: Diagnostic[]): ProblemFile => ({ uri: `file:///w/${rel}`, rel, label: rel, detail: '', items });
 
 const FILES = [
 	file('src/a.ts', [diag('Cannot find name foo', 1, { source: 'ts', code: 2304 }), diag('Unused variable', 2, { source: 'eslint', code: 'no-unused-vars' })]),

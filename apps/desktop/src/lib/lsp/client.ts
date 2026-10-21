@@ -262,6 +262,11 @@ export class LanguageClient {
 		return this.capabilities;
 	}
 
+	/** Whether the server works with several workspace folders at once (else it only knows `rootUri`). */
+	get takesFolders(): boolean {
+		return !!this.capabilities.workspace?.workspaceFolders?.supported;
+	}
+
 	/** Whether the server takes `workspace/didChangeWorkspaceFolders` (else it must restart to see new folders). */
 	get takesFolderChanges(): boolean {
 		return !!this.capabilities.workspace?.workspaceFolders?.changeNotifications;

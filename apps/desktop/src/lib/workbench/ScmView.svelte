@@ -19,6 +19,8 @@
 	import { syncItem } from './scmRemote';
 	import { sortRepositories, visibleRepositories, type SortOrder } from './scmRepos';
 	import ScmView from './ScmView.svelte';
+	import Sash from './Sash.svelte';
+	import { listWheel } from './listWheel';
 	import { actionButton, actionButtonFlags, commitMessageWarnings, inputFontFamily, resourceTree, sortResources, type SortKey } from './scmSettings';
 	import { repoDialog } from './repoDialog.svelte.ts';
 	import { appMode } from './mode.svelte';
@@ -66,6 +68,16 @@
 	);
 	let listOpen = $state(true);
 	let repoOpen = $state(true);
+	/** The Repositories section's height once its sash was dragged (null: as many rows as
+	 * `scm.repositories.visible`, VS Code's default size); double-clicking the sash resets it. */
+	let listPx = $state<number | null>(null);
+	const ROW_PX = 22;
+	const listHeight = (n: number) => {
+		const all = Math.max(1, n) * ROW_PX;
+		const initial = Math.min(n, Math.max(1, settings.get<number>('scm.repositories.visible') || 10)) * ROW_PX;
+		return Math.min(all, Math.max(ROW_PX, listPx ?? initial));
+	};
+	const resizeList = (delta: number, n: number) => (listPx = listHeight(n) + delta);
 
 	type GroupId = 'merge' | 'staged' | 'changes' | 'untracked';
 	type Confirm = { key: string; paths: string[]; untracked: boolean; text: string };
@@ -380,19 +392,23 @@
 			<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>กำลังอ่านสถานะ git…
 		</p>
 	{:else if !source && repositories.length && (showList || shown[0] !== folderScm.primary || folderScm.primary === null)}
-		<!-- Several repositories: the Repositories list, then each shown repository's own view. -->
-		<div class="min-h-0 flex-1 overflow-y-auto">
-			{#if showList}
-				<div class="flex h-(--kg-row-height) shrink-0 items-center pr-2 font-bold text-[11px] uppercase text-(--vscode-sideBarTitle-foreground) hover:bg-(--vscode-list-hoverBackground)">
-					<button class="flex h-full min-w-0 flex-1 items-center gap-0.5 pl-0.5 text-left" aria-expanded={listOpen} onclick={() => (listOpen = !listOpen)}>
-						<Icon name={listOpen ? 'chevronDown' : 'chevronRight'} size={16} />
-						<span class="truncate">{t('scmRepos.repositories')}</span>
-					</button>
-				</div>
-				{#if listOpen}
+		<!-- Several repositories: the Repositories view (its own collapsible, resizable section, as
+		     VS Code's SCM Repositories view), then each shown repository's own view below it. -->
+		{#if showList}
+			<div class="flex h-(--kg-row-height) shrink-0 items-center pr-2 font-bold text-[11px] uppercase text-(--vscode-sideBarTitle-foreground) hover:bg-(--vscode-list-hoverBackground)">
+				<button class="flex h-full min-w-0 flex-1 items-center gap-0.5 pl-0.5 text-left" aria-expanded={listOpen} onclick={() => (listOpen = !listOpen)}>
+					<Icon name={listOpen ? 'chevronDown' : 'chevronRight'} size={16} />
+					<span class="truncate">{t('scmRepos.repositories')}</span>
+				</button>
+			</div>
+			{#if listOpen}
+				<div class="shrink-0 overflow-y-auto" style:height="{listHeight(repositories.length)}px" use:listWheel>
 					{#each repositories as r (r.dir)}{@render repositoryRow(r)}{/each}
-				{/if}
+				</div>
+				<Sash orientation="horizontal" onDrag={(d) => resizeList(d, repositories.length)} onReset={() => (listPx = null)} />
 			{/if}
+		{/if}
+		<div class="min-h-0 flex-1 overflow-y-auto">
 			{#each shown as r (r.dir)}
 				<div class="flex flex-col">
 					<ScmView source={r} header={showList} />

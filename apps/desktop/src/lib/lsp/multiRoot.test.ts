@@ -38,7 +38,9 @@ describe('workbench keys of LSP URIs', () => {
 		idx.set('file:///w/app/a.ts', 'push', [d]);
 		idx.set('file:///w/my%20lib/b.ts', 'push', [d]);
 		idx.set('file:///tmp/c.ts', 'push', [d]);
-		expect(idx.files(FOLDERS).map((f) => f.rel)).toEqual(['/w/my lib/b.ts', 'a.ts', null]);
+		expect(idx.files(FOLDERS).map((f) => f.rel)).toEqual(['a.ts', '/w/my lib/b.ts', null]);
+		// Named relative to their own folder, the folder's name beside them (VS Code's label service).
+		expect(idx.files(FOLDERS).map((f) => [f.label, f.detail])).toEqual([['a.ts', 'app'], ['b.ts', 'Lib'], ['/tmp/c.ts', '/tmp']]);
 		// One folder given as a path (the single-folder form) still works.
 		expect(idx.files('/w/app').map((f) => f.rel)).toEqual(['a.ts', null, null]);
 	});
@@ -75,6 +77,7 @@ describe('workspace folders', () => {
 		expect(sent[0].params.rootUri).toBe('file:///w/app');
 		expect(sent[0].params.workspaceFolders).toEqual(folders);
 		expect(client.takesFolderChanges).toBe(true);
+		expect(client.takesFolders).toBe(true);
 		// workspace/workspaceFolders answers with all of them.
 		client.rpc.handle(JSON.stringify({ jsonrpc: '2.0', id: 'f', method: 'workspace/workspaceFolders' }));
 		await new Promise((r) => setTimeout(r, 0));
@@ -89,6 +92,7 @@ describe('workspace folders', () => {
 
 		const plain = await run({});
 		expect(plain.client.takesFolderChanges).toBe(false);
+		expect(plain.client.takesFolders).toBe(false);
 	});
 
 	test('a server started with only a root URI knows that one folder', async () => {

@@ -59,6 +59,18 @@ export function taskFolderLabel(task: Pick<Task, 'folder'>, folders: readonly Wo
 	return folders.find((f) => f.path === task.folder)?.name;
 }
 
+/** The id of the `.code-workspace` file's row in a folder picker. */
+export const WORKSPACE_PICK = '\0workspace';
+
+/**
+ * The rows of a "which folder" picker (VS Code's pickFolder for tasks.json / launch.json): each
+ * root folder, then the `.code-workspace` file (`workspaceFile`; its own `tasks` / `launch`).
+ */
+export function folderPickItems(folders: readonly WorkspaceFolder[], workspaceFile: string | null, workspaceLabel: string): { id: string; label: string; description: string }[] {
+	const rows = folders.map((f) => ({ id: f.path, label: f.name, description: f.path }));
+	return workspaceFile ? [...rows, { id: WORKSPACE_PICK, label: workspaceLabel, description: workspaceFile }] : rows;
+}
+
 /** The folder a task's variables and cwd use: its own; a workspace file's task has none. */
 export function taskFolder(task: Pick<Task, 'folder'>, folders: readonly WorkspaceFolder[]): WorkspaceFolder | undefined {
 	return task.folder === undefined ? undefined : (folders.find((f) => f.path === task.folder) ?? { path: task.folder, name: task.folder.slice(task.folder.lastIndexOf('/') + 1) });
