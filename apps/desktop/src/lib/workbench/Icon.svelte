@@ -111,7 +111,9 @@
 		DotsSixVerticalIcon,
 		PowerIcon,
 		DownloadSimpleIcon,
-		DesktopIcon
+		DesktopIcon,
+		LightningIcon,
+		CaretLeftIcon
 	} from 'phosphor-svelte';
 	import ArkaiMark from './ArkaiMark.svelte';
 	import KinguMark from './KinguMark.svelte';
@@ -248,7 +250,11 @@
 		/** Snaps (with shield and robot): turned on/off, installed, what they add for you. */
 		power: PowerIcon,
 		download: DownloadSimpleIcon,
-		desktop: DesktopIcon
+		desktop: DesktopIcon,
+		/** The chat view's Customize Chat action (VS Code's chat customizations). */
+		lightning: LightningIcon,
+		/** The chat tips card's Previous tip. */
+		chevronLeft: CaretLeftIcon
 	} as const;
 	export type IconName = keyof typeof icons;
 

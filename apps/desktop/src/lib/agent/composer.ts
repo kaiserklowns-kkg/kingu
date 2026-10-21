@@ -28,7 +28,7 @@ export type ModeTone = 'agent' | 'ask' | 'plan' | 'custom';
 
 export const modeTone = (pick: ModePick): ModeTone => (pick === 'agent' || pick === 'ask' || pick === 'plan' ? pick : 'custom');
 
-export const MODE_ICON: Record<ModeTone, IconName> = { agent: 'infinity', ask: 'chat', plan: 'listChecks', custom: 'robot' };
+export const MODE_ICON: Record<ModeTone, IconName> = { agent: 'code', ask: 'chat', plan: 'listChecks', custom: 'robot' };
 
 /** A custom agent's name (`custom:<name>`), else null. */
 export const customName = (pick: ModePick): string | null => (pick.startsWith('custom:') ? pick.slice(7) : null);
@@ -70,6 +70,8 @@ export type PlaceholderState = {
 	running?: boolean;
 	/** The chat already has messages. */
 	followUp?: boolean;
+	/** The agent the chat runs on (VS Code's "Chat with <agent>"). */
+	agent?: string;
 };
 
 /**
@@ -80,6 +82,8 @@ export function composerPlaceholder(s: PlaceholderState): string {
 	if (!s.folder) return t('chat.panel.noFolder');
 	if (s.editingQueued) return t('composer.placeholder.editingQueued');
 	if (s.pendingApproval) return t('composer.placeholder.pending');
+	// VS Code's chat names the agent the chat runs on ("Chat with Arkai"), before and after the first message.
+	if (s.agent) return t('chatWelcome.placeholder', { agent: s.agent });
 	// While the agent works, and after: "Add a follow-up"; an empty chat gets Cursor's one line.
 	return s.running || s.followUp ? t('composer.placeholder.followUp') : t('composer.placeholder.new');
 }

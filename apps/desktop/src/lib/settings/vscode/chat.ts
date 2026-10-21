@@ -4,7 +4,8 @@
 // only, so they are user settings here (a repository cannot point the chat at other files);
 // `chat.tools.global.autoApprove` is VS Code's APPLICATION_MACHINE setting. The look, rendering,
 // input and notification ones are read by the chat UI: chatLook.ts (fonts), ChatMarkdown.svelte
-// (math, mermaid), chatSettings.ts (the rest; AgentPanel, ChatList, chatRewind, agentNotify).
+// (math, mermaid), chatTips.svelte.ts (the tips card), chatSettings.ts (the rest; AgentPanel,
+// ChatList, chatRewind, agentNotify).
 // The tool approval rules (`chat.tools.terminal/edits/urls.*`) are read by Rust (agent/tool_rules)
 // from the user's settings.json only too, merged over VS Code's defaults in chatToolRules.json
 // (Rust reads the same file), so they are user settings here.
@@ -214,6 +215,15 @@ export const CHAT_SETTINGS: SettingSchema[] = [
 		type: 'boolean',
 		default: true,
 		description: 'บันทึกไฟล์ที่แก้ค้างไว้ทุกไฟล์ (ยกเว้นไฟล์ที่ยังไม่มีชื่อ) ก่อนส่งข้อความแชต เพื่อให้ agent อ่านเนื้อหาล่าสุด (Controls whether all dirty editors except untitled editors are saved before sending a chat message.)'
+	},
+	{
+		id: 'chat.tips.enabled',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: true,
+		description:
+			'แสดงเคล็ดลับการใช้แชตในการ์ดเหนือช่องพิมพ์ของแชตใหม่ ปิด เลื่อน หรือปิดทั้งหมดได้จากปุ่มบนการ์ด (Controls whether tips are shown above user messages in chat. New tips are added frequently, so this is a helpful way to stay up to date with the latest features.)',
+		scope: 'application'
 	},
 	{
 		id: 'chat.tools.autoExpandFailures',
