@@ -34,9 +34,10 @@ const SETTINGS_SCHEMA_URI = 'kingu://schemas/settings';
 const KEYBINDINGS_SCHEMA_URI = 'kingu://schemas/keybindings';
 const get = <T>(id: string) => settings.get<T>(id);
 
-/** Monaco editor options from settings (VS Code: editor.* configuration). */
-export const editorOptions = (): Monaco.editor.IEditorOptions & Monaco.editor.IGlobalEditorOptions => {
-	const options = editorOptionsFrom(get, themeSemantic());
+/** Monaco editor options from settings (VS Code: editor.* configuration), for an editor showing a
+ * model of `language` (its `[language]` settings apply). */
+export const editorOptions = (language?: string): Monaco.editor.IEditorOptions & Monaco.editor.IGlobalEditorOptions => {
+	const options = editorOptionsFrom(language ? settings.getterFor(language) : get, themeSemantic());
 	// Zen Mode with zenMode.hideLineNumbers turns line numbers off; leaving it restores editor.lineNumbers.
 	return layout.zenParts?.lineNumbersOff ? { ...options, lineNumbers: 'off' } : options;
 };
@@ -89,8 +90,12 @@ export function installEditorSettings(monaco: typeof Monaco) {
 	monacoApi = monaco;
 
 	const timers = new WeakMap<Monaco.editor.ITextModel, ReturnType<typeof setTimeout>>();
+	const modelIndent = (model: Monaco.editor.ITextModel) => indentFrom(settings.getterFor(model.getLanguageId()));
+	const optionsOf = (editor: Monaco.editor.ICodeEditor) => editorOptions(editor.getModel()?.getLanguageId());
 	monaco.editor.onDidCreateModel((model) => {
-		applyIndent(model, untrack(() => indentFrom(get)));
+		applyIndent(model, untrack(() => modelIndent(model)));
+		// A language change (Change Language Mode, files.associations) brings that language's settings.
+		model.onDidChangeLanguage(() => applyIndent(model, untrack(() => modelIndent(model))));
 		// files.autoSave afterDelay: each model saves itself once typing pauses (VS Code saves every dirty editor, not just the active one).
 		model.onDidChangeContent(() => {
 			clearTimeout(timers.get(model));
@@ -100,7 +105,9 @@ export function installEditorSettings(monaco: typeof Monaco) {
 	});
 	monaco.editor.onDidCreateEditor((editor) => {
 		// After the constructor has applied its own creation options.
-		queueMicrotask(() => editor.updateOptions(untrack(editorOptions)));
+		queueMicrotask(() => editor.updateOptions(untrack(() => optionsOf(editor))));
+		editor.onDidChangeModel(() => editor.updateOptions(untrack(() => optionsOf(editor))));
+		editor.onDidChangeModelLanguage(() => editor.updateOptions(untrack(() => optionsOf(editor))));
 		editor.onDidBlurEditorText(() => {
 			const model = editor.getModel();
 			if (model && untrack(() => get('files.autoSave')) === 'onFocusChange') void autoSave([pathOf(model)], 'focusChange');
@@ -141,7 +148,7 @@ export function installEditorSettings(monaco: typeof Monaco) {
 					properties: {
 						key: { type: 'string', description: 'คีย์ เช่น cmd+shift+p หรือ cmd+k cmd+t (The key or key sequence.)' },
 						command: { type: 'string', enum: [...ids, ...ids.map((id) => `-${id}`)] },
-						when: { type: 'string', description: 'ยังไม่ประเมินใน Kingu (Not evaluated yet.)' },
+						when: { type: 'string', description: 'เงื่อนไขที่คีย์นี้ทำงาน เช่น editorTextFocus && !editorReadonly (Condition when the key is active.)' },
 						args: { description: 'อาร์กิวเมนต์ที่ส่งให้คำสั่ง เช่น { "snippet": "console.log($1)" } ของ editor.action.insertSnippet (Arguments passed to the command.)' }
 					}
 				}
@@ -166,12 +173,26 @@ export function installEditorSettings(monaco: typeof Monaco) {
 		});
 		$effect(() => {
 			const options = editorOptions();
-			untrack(() => monaco.editor.getEditors().forEach((e) => e.updateOptions(options)));
+			// Read inside the effect, so a change to a `[language]` block re-runs it too.
+			void settings.resolved;
+			untrack(() => {
+				const byLanguage = new Map<string, ReturnType<typeof editorOptions>>();
+				for (const e of monaco.editor.getEditors()) {
+					const language = e.getModel()?.getLanguageId();
+					if (!language) {
+						e.updateOptions(options);
+						continue;
+					}
+					if (!byLanguage.has(language)) byLanguage.set(language, editorOptions(language));
+					e.updateOptions(byLanguage.get(language)!);
+				}
+			});
 		});
 		$effect(() => {
-			const indent = indentFrom(get);
+			void indentFrom(get);
+			void settings.resolved;
 			untrack(() => {
-				monaco.editor.getModels().forEach((m) => applyIndent(m, indent));
+				monaco.editor.getModels().forEach((m) => applyIndent(m, modelIndent(m)));
 				const active = monaco.editor.getModels().find(isActiveModel);
 				if (active) {
 					const o = active.getOptions();

@@ -9,6 +9,8 @@ export const settings = {
 	'settings.registry.invalidValue': 'The value {value} is invalid, so the next layer is used instead (expected {expected}).',
 	'settings.registry.userOrRepoOnly': 'This setting can only be applied in user or repository-local settings, never by the repository itself.',
 	'settings.registry.userOnly': 'This setting can only be applied in user settings, so it is ignored.',
+	'settings.registry.notLanguageOverridable': 'This setting cannot be applied in this language block, so it is ignored.',
+	'settings.languageBlock.placeholder': 'Select Language',
 	'settings.sections.aiCapabilities': 'AI Capabilities',
 	'settings.sections.system': 'System',
 	'settings.sections.ide': 'IDE',

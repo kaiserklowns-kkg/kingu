@@ -11,6 +11,7 @@ import { ARKAI_SETTINGS } from './arkai';
 import { ADE_SECTION_GROUPS, ADE_SETTINGS, AI_SECTION_GROUPS, SYSTEM_SECTION_GROUPS } from './ade';
 import { describeSchema, matchesSchema, schemaTypes, type JsonSchema } from './jsonSchema';
 import { t } from '../i18n/index';
+import { isLanguageOverridable, LANGUAGE_BLOCK_PATTERN, overrideBlocks } from './languageOverrides';
 
 const MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
 
@@ -1149,6 +1150,15 @@ export function settingProblems(values: Record<string, unknown>, scope: SettingS
 		if (!allowedIn(s, scope)) out.push({ scope, id, message: scopeRule(s) });
 		else if (validate(s, value) === undefined) out.push({ scope, id, message: t('settings.registry.invalidValue', { value: JSON.stringify(value), expected: describeType(s) }) });
 	}
+	// Inside `[language]` blocks: settings that cannot be set per language, and invalid values.
+	for (const [key, block] of overrideBlocks(values))
+		for (const [id, value] of Object.entries(block)) {
+			const s = byId.get(id);
+			if (!s) continue;
+			if (!isLanguageOverridable(s)) out.push({ scope, id: `${key} ${id}`, message: t('settings.registry.notLanguageOverridable') });
+			else if (!allowedIn(s, scope)) out.push({ scope, id: `${key} ${id}`, message: scopeRule(s) });
+			else if (validate(s, value) === undefined) out.push({ scope, id: `${key} ${id}`, message: t('settings.registry.invalidValue', { value: JSON.stringify(value), expected: describeType(s) }) });
+		}
 	return out;
 }
 
@@ -1220,5 +1230,8 @@ export function jsonSchema(schemas: SettingSchema[] = SETTINGS) {
 					: { type: s.values.split('|') };
 		properties[s.id] = base;
 	}
-	return { type: 'object', properties };
+	// `"[typescript]": { … }`: the settings a language block may set (languageOverrides.ts).
+	const overridable = Object.fromEntries(schemas.filter(isLanguageOverridable).map((s) => [s.id, properties[s.id]]));
+	const block = { type: 'object', description: 'การตั้งค่าเฉพาะภาษา (Configure editor settings to be overridden for a language.)', properties: overridable };
+	return { type: 'object', properties, patternProperties: { [LANGUAGE_BLOCK_PATTERN]: block } };
 }
