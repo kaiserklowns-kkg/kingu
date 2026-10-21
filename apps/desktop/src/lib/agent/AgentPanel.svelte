@@ -1151,7 +1151,7 @@
 		setting: (key) => settings.get(key),
 		used: new Set(chatTips.used)
 	});
-	const tipsShown = $derived(showTips({ enabled: chatTips.enabled, hiddenForSession: chatTips.hiddenForSession, folder: !!workspace.root, empty: !chatMeta && !inEditor && !showList }));
+	const tipsShown = $derived(showTips({ enabled: chatTips.enabled, hiddenForSession: chatTips.hiddenForSession, empty: !chatMeta && !inEditor && !showList }));
 	const tip = $derived(tipsShown ? chatTips.current(tipCtx) : undefined);
 	const severalTips = $derived(tipsShown && orderedTips(tipCtx, chatTips.dismissedSet).length > 1);
 	// The tip on screen stays put between renders (VS Code's stable rerender).

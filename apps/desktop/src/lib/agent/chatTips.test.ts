@@ -51,12 +51,12 @@ describe('eligibility', () => {
 		expect(hasAgentInstructions([{ kind: 'copilot' }])).toBe(true);
 	});
 
-	test('the card shows only on an empty chat in a folder, with tips on', () => {
-		expect(showTips({ enabled: true, hiddenForSession: false, folder: true, empty: true })).toBe(true);
-		expect(showTips({ enabled: false, hiddenForSession: false, folder: true, empty: true })).toBe(false);
-		expect(showTips({ enabled: true, hiddenForSession: true, folder: true, empty: true })).toBe(false);
-		expect(showTips({ enabled: true, hiddenForSession: false, folder: false, empty: true })).toBe(false);
-		expect(showTips({ enabled: true, hiddenForSession: false, folder: true, empty: false })).toBe(false);
+	test('the card shows only on an empty chat, with tips on, folder or not', () => {
+		expect(showTips({ enabled: true, hiddenForSession: false, empty: true })).toBe(true);
+		expect(showTips({ enabled: false, hiddenForSession: false, empty: true })).toBe(false);
+		expect(showTips({ enabled: true, hiddenForSession: true, empty: true })).toBe(false);
+		// No folder needed (VS Code's getWelcomeTip shows a tip on an empty window's chat too).
+		expect(showTips({ enabled: true, hiddenForSession: false, empty: false })).toBe(false);
 	});
 });
 
