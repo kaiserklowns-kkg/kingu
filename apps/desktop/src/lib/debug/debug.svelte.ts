@@ -719,7 +719,8 @@ class Debug {
 				exceptionArgs: (caps) => this.#exceptionArgs(caps),
 				dataBreakpoints: () => B.dataBreakpoints(this.dataBreakpoints.filter((d) => d.canPersist), this.breakpointsActivated),
 				runInTerminal: async (args) => {
-					terminals.open({ title: args.title ?? `Debug: ${config.name}`, run: runInTerminalArgv(args) });
+					// In the configuration's folder (multi-root), where its program runs.
+					terminals.open({ title: args.title ?? `Debug: ${config.name}`, run: runInTerminalArgv(args), folder: this.#folderOfConfig(config) });
 					layout.showPanel('terminal');
 					return {};
 				},

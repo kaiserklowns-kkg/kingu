@@ -9,7 +9,7 @@ import { status } from '#lib/workbench/status.svelte.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { focusedTerminal, lastAdeTerminal, terminalHandle } from './registry.ts';
 import { terminals } from './terminals.svelte.ts';
-import { createTerminal, createTerminalInActiveFolder } from './newTerminal.ts';
+import { codeTerminalFolder, createTerminal, createTerminalInActiveFolder } from './newTerminal.ts';
 import { quickCommandInput, quickCommands } from './adeTerminalOptions.ts';
 import { t } from '#lib/i18n/index.ts';
 
@@ -29,6 +29,8 @@ async function runQuickCommand() {
 export const panelTerminalFocus = () => !appMode.isAgents && focusedTerminal('ide') !== null;
 
 export function installTerminalCommands(): () => void {
+	// Terminals opened by code start in the active editor's folder (VS Code's last active workspace root).
+	terminals.defaultFolder = codeTerminalFolder;
 	const panelShown = () => !appMode.isAgents && terminals.tag !== null;
 	const active = () => terminalHandle(terminals.key(terminals.active));
 	const unregister = [

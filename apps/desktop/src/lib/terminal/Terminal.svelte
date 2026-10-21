@@ -289,7 +289,10 @@
 				// kingu.terminal.scopeHistoryByWorktree: an ADE shell keeps its own history per worktree.
 				scopeHistory: flavor === 'ade' && settings.get<boolean>('kingu.terminal.scopeHistoryByWorktree') !== false
 			};
-			invoke<Attached>('pty_spawn', { key, cols: t.cols, rows: t.rows, onData: channel(), slug: slug ?? null, run: run ?? null, terminal, cwdFrom: cwdFrom ?? null, folder: folder ?? null, floatingCwd: floatingCwd ?? null, task: launch ?? null })
+			// `${workspaceFolder}`, `${env:…}`, … in terminal.integrated.cwd resolve for this terminal's folder (VS Code).
+			const cwd = terminal.cwd?.includes('${') ? import('./newTerminal.ts').then((m) => m.terminalCwdSetting(folder)) : Promise.resolve(terminal.cwd);
+			cwd
+				.then((resolved) => invoke<Attached>('pty_spawn', { key, cols: t.cols, rows: t.rows, onData: channel(), slug: slug ?? null, run: run ?? null, terminal: { ...terminal, cwd: resolved }, cwdFrom: cwdFrom ?? null, folder: folder ?? null, floatingCwd: floatingCwd ?? null, task: launch ?? null }))
 				.then((a) => (connected(a), void system.refresh()))
 				.catch(failed);
 		}
