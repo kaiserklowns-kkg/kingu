@@ -9,6 +9,8 @@
 	import { filterSnaps, isActive, isUpdatable, lockNote, snapKey, snapStatus, type SnapInfo } from './snapModel.ts';
 	import { approvalNote, canApprove, isApprovable, missingRequired, teamSnapStatus, type TeamSnap } from './teamSnaps.ts';
 	import { snaps } from './snaps.svelte.ts';
+	import { isPublishable, libraryStatus, librarySnaps, type LibrarySnap } from './teamLibrary.ts';
+	import { t as tr } from '#lib/i18n/index.ts';
 
 	let query = $state('');
 	let open = $state({ user: true, repo: true, team: true });
@@ -19,6 +21,11 @@
 	});
 	const teamMissing = $derived(missingRequired(teamItems, snaps.list));
 	const isTeamAdmin = $derived(canApprove(snaps.teamCatalog?.role));
+	const library = $derived(librarySnaps(snaps.library?.items ?? []));
+	const libraryFiltered = $derived.by(() => {
+		const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+		return library.filter((l) => words.every((w) => `${l.latest?.name ?? ''}\n${l.id}\n${l.latest?.description ?? ''}`.toLowerCase().includes(w)));
+	});
 	const filtered = $derived(filterSnaps(snaps.list, query));
 	const sections = $derived([
 		{ id: 'user' as const, title: 'Installed (user)', list: filtered.filter((s) => s.source === 'user') },
@@ -42,6 +49,7 @@
 		if (isActive(s) && s.tasks.length) out.push({ icon: 'play', label: 'Run Task…', run: () => snaps.pickTask(s) });
 		if (isUpdatable(s)) out.push({ icon: 'refresh', label: 'Update', run: () => snaps.update(s.id) });
 		if (isTeamAdmin && isApprovable(s)) out.push({ icon: 'account', label: 'Approve for Team…', run: () => snaps.approveForTeam(s.id) });
+		if (isTeamAdmin && snaps.library && isPublishable(s, snaps.library.items)) out.push({ icon: 'publish', label: 'Publish to Team Library…', run: () => snaps.publishToLibrary(s.id, s.source) });
 		if (s.source === 'user') out.push({ icon: 'trash', label: 'Uninstall', run: () => snaps.uninstall(s.id) });
 		out.push({ icon: 'folder', label: 'Reveal Folder', run: () => snaps.reveal(s) });
 		return out;
@@ -52,6 +60,14 @@
 		if (st.key === 'missing') return [{ icon: 'plus', label: 'Install', run: () => snaps.installTeam(t.snap_id) }];
 		if (st.key === 'different') return [{ icon: 'refresh', label: 'Install Team Version', run: () => snaps.installTeam(t.snap_id) }];
 		return [];
+	}
+
+	function libraryActions(l: LibrarySnap): Action[] {
+		const st = libraryStatus(l, snaps.list, snaps.library?.server ?? '');
+		const out: Action[] = [];
+		if (l.latest && (st.key === 'missing' || st.key === 'update' || st.key === 'yanked')) out.push({ icon: st.key === 'missing' ? 'plus' : 'refresh', label: st.key === 'missing' ? 'Install' : 'Update', run: () => snaps.installFromLibrary(l.id) });
+		if (isTeamAdmin) out.push({ icon: 'close', label: 'Yank Version…', run: () => snaps.yankVersion(l.id) });
+		return out;
 	}
 
 	const TONE = {
@@ -184,6 +200,27 @@
 					<p class="py-1 pl-5 text-(--vscode-descriptionForeground)">
 						{query ? 'ไม่พบ Snap ที่ตรงกับคำค้น' : isTeamAdmin ? 'ทีมยังไม่ได้อนุมัติ Snap — วางเมาส์บน Snap ที่ติดตั้งจาก git แล้วกด Approve for Team' : 'ทีมยังไม่ได้อนุมัติ Snap'}
 					</p>
+				{/each}
+				<p class="pt-1 pl-5 text-[11px] font-bold text-(--vscode-sideBarTitle-foreground) uppercase">{tr('snapPlatform.library.title')}</p>
+				{#if snaps.libraryError}
+					<p role="alert" class="py-1 pr-2 pl-5 text-(--vscode-errorForeground)">{tr('snapPlatform.library.failed', { error: snaps.libraryError })}</p>
+				{/if}
+				{#each libraryFiltered as l (l.id)}
+					{@const st = libraryStatus(l, snaps.list, snaps.library?.server ?? '')}
+					{@const shown = l.latest ?? l.versions[0]}
+					<div class="group/row flex items-center gap-1 py-1 pr-2 hover:bg-(--vscode-list-hoverBackground)">
+						<div class="flex min-w-0 flex-1 flex-col pl-5" title={`${shown.snap_id} v${shown.version}\n${shown.published_by} · ${shown.published_at.slice(0, 10)}\nSHA-256 ${shown.sha256}`}>
+							<span class="flex min-w-0 items-center gap-1.5">
+								<span class="truncate font-semibold">{shown.name}</span>
+								<span class="shrink-0 text-[0.9em] text-(--vscode-descriptionForeground)">v{shown.version}</span>
+								<span class={['shrink-0 text-[0.9em]', TONE[st.tone]]}>{st.label}</span>
+							</span>
+							<span class="truncate text-[0.9em] text-(--vscode-descriptionForeground)">{l.latest ? shown.description || shown.snap_id : tr('snapPlatform.library.allYanked')}</span>
+						</div>
+						<span class="hidden shrink-0 items-center gap-0.5 group-hover/row:flex group-focus-within/row:flex">{@render actionButtons(libraryActions(l))}</span>
+					</div>
+				{:else}
+					{#if !snaps.libraryError}<p class="py-1 pl-5 text-(--vscode-descriptionForeground)">{tr('snapPlatform.library.empty')}</p>{/if}
 				{/each}
 			{/if}
 		{/if}

@@ -323,7 +323,7 @@ fn new_stage(staging: &Path) -> Result<(String, PathBuf), String> {
 }
 
 /// Validates the staged `src`, records the origin next to it and lists the candidates.
-fn finish_stage(token: String, dir: &Path, origin: Origin, user_dir: &Path) -> Result<Prepared, String> {
+pub(crate) fn finish_stage(token: String, dir: &Path, origin: Origin, user_dir: &Path) -> Result<Prepared, String> {
   let src = dir.join("src");
   files_of(&src)?;
   let candidates = candidates(&src)?;
@@ -339,7 +339,7 @@ fn finish_stage(token: String, dir: &Path, origin: Origin, user_dir: &Path) -> R
 }
 
 /// Runs `f` on a fresh staging folder; the folder is removed when it fails.
-fn staged(staging: &Path, f: impl FnOnce(&str, &Path) -> Result<Prepared, String>) -> Result<Prepared, String> {
+pub(crate) fn staged(staging: &Path, f: impl FnOnce(&str, &Path) -> Result<Prepared, String>) -> Result<Prepared, String> {
   let (token, dir) = new_stage(staging)?;
   let result = f(&token, &dir);
   if result.is_err() {

@@ -25,6 +25,7 @@ import { setMcpPrepare, setMcpProvider, setSkillPluginProvider } from '#lib/ade/
 import { team } from '#lib/team/team.svelte.ts';
 import { createSnapEventRouter, needsFocusReload } from '#lib/team/teamEvents.ts';
 import { approveSummary, canApprove, isApprovable, type TeamCatalog } from './teamSnaps.ts';
+import { isPublishable, libraryUpdates, librarySnaps, publishSummary, versionRow, type Library, type LibraryVersion } from './teamLibrary.ts';
 import { worktreeDir } from '#lib/ade/keys.ts';
 import {
 	installSummary,
@@ -231,6 +232,15 @@ class Snaps {
 			const rows = await invoke<LockReport[]>('snap_lock_verify');
 			const bad = rows.some((r) => r.status !== 'locked');
 			await message(lockReportText(rows), { title: t('snapPlatform.verify.title'), kind: bad ? 'warning' : 'info' });
+			const pinned = rows.filter((r) => r.source === 'team' && r.status !== 'locked' && r.lockedVersion);
+			if (pinned.length && this.library) {
+				const ok = await ask(t('snapPlatform.library.installLocked', { list: pinned.map((r) => `${r.id} v${r.lockedVersion}`).join(', ') }), {
+					title: t('snapPlatform.library.installLockedTitle'),
+					okLabel: t('snapPlatform.library.installLockedOk'),
+					cancelLabel: t('common.cancel')
+				});
+				if (ok) for (const r of pinned) await this.installFromLibrary(r.id, r.lockedVersion);
+			}
 		} catch (e) {
 			notifications.error(t('snapPlatform.verify.failed', { error: String(e) }));
 		}
@@ -335,8 +345,10 @@ class Snaps {
 		if (!serverUrl || !team.status?.signed_in) {
 			this.teamCatalog = null;
 			this.teamError = null;
+			this.library = null;
 			return;
 		}
+		void this.#loadLibrary(serverUrl, seq);
 		this.teamLoading = true;
 		try {
 			const catalog = await invoke<TeamCatalog>('team_snap_catalog', { serverUrl });
@@ -348,6 +360,124 @@ class Snaps {
 		} finally {
 			if (seq === this.#teamSeq) this.teamLoading = false;
 		}
+	}
+
+	/** The team Snap library (published packages); null when not signed in or it failed (`libraryError`). */
+	library = $state<Library | null>(null);
+	libraryError = $state<string | null>(null);
+
+	async #loadLibrary(serverUrl: string, seq: number) {
+		try {
+			const lib = await invoke<Library>('team_snap_library', { serverUrl });
+			if (seq !== this.#teamSeq) return;
+			if (JSON.stringify(lib) !== JSON.stringify($state.snapshot(this.library))) this.library = lib;
+			this.libraryError = null;
+		} catch (e) {
+			if (seq === this.#teamSeq) this.libraryError = String(e);
+		}
+	}
+
+	#libraryAdmin(): boolean {
+		if (!team.status?.signed_in || !team.serverUrl) {
+			status.flash(t('snapPlatform.library.signInFirst'));
+			return false;
+		}
+		if (!canApprove(this.library?.role ?? this.teamCatalog?.role)) {
+			status.flash(t('snapPlatform.library.adminOnly'));
+			return false;
+		}
+		return true;
+	}
+
+	/** Snap: Publish to Team Library… (owner/lead) — packs the snap folder and uploads it as its version. */
+	async publishToLibrary(id?: string, source?: 'user' | 'repo') {
+		if (!this.#libraryAdmin()) return;
+		const items = this.library?.items ?? [];
+		const candidates = this.list.filter((s) => isPublishable(s, items));
+		let snap = this.list.find((s) => s.id === id && (!source || s.source === source));
+		if (!snap) {
+			const picked = await quick.choose({ placeholder: t('snapPlatform.library.pickPublish'), items: candidates.map((s) => ({ id: `${s.source}/${s.id}`, label: s.name, description: `${s.id} v${s.version} · ${s.source}` })) });
+			snap = candidates.find((s) => `${s.source}/${s.id}` === picked?.id);
+		}
+		if (!snap) return;
+		const target = snap;
+		const sure = await ask(publishSummary(target), { title: t('snapPlatform.library.publishTitle', { name: target.name }), kind: 'warning', okLabel: t('snapPlatform.library.publish'), cancelLabel: t('common.cancel') });
+		if (!sure) return;
+		await this.#exclusive(t('snapPlatform.library.publishing', { name: target.name }), async () => {
+			try {
+				const v = await invoke<LibraryVersion>('team_snap_publish', { serverUrl: team.serverUrl, id: target.id, source: target.source });
+				status.flash(t('snapPlatform.library.published', { name: target.name, version: v.version }));
+			} catch (e) {
+				await message(String(e), { title: t('snapPlatform.library.publishFailedTitle'), kind: 'error' });
+			}
+			await this.loadTeam();
+		});
+	}
+
+	/** Snap: Install from Team Library… — a version (newest not yanked unless one is picked), verified, then the normal confirm. */
+	async installFromLibrary(id?: string, version?: string | null) {
+		if (!team.status?.signed_in || !team.serverUrl) {
+			status.flash(t('snapPlatform.library.signInFirst'));
+			return;
+		}
+		const all = librarySnaps(this.library?.items ?? []);
+		const target = id ?? (await quick.choose({ placeholder: t('snapPlatform.library.pickInstall'), items: all.map((l) => ({ id: l.id, label: l.latest?.name ?? l.id, description: l.latest ? `v${l.latest.version}` : t('snapPlatform.library.allYanked') })) }))?.id;
+		if (!target) return;
+		await this.#exclusive(t('snapPlatform.library.fetching', { id: target }), async () => {
+			const prepared = await this.#prepare(() => invoke<PreparedInstall>('snap_install_library', { serverUrl: team.serverUrl, id: target, version: version ?? null }));
+			if (prepared) await this.#confirmAndCommit(prepared);
+		});
+	}
+
+	/** Snap: Update from Team Library — the installed library snaps with a newer version (permission changes shown first). */
+	async updateFromLibrary() {
+		const server = this.library?.server;
+		const updates = server ? libraryUpdates(librarySnaps(this.library?.items ?? []), this.list, server) : [];
+		if (!updates.length) {
+			status.flash(t('snapPlatform.library.noUpdates'));
+			return;
+		}
+		for (const u of updates) await this.installFromLibrary(u.id);
+	}
+
+	/** Snap: Yank Team Library Version… (owner/lead) — new installs and updates skip it; pinned installs keep working. */
+	async yankVersion(id?: string) {
+		if (!this.#libraryAdmin()) return;
+		const all = librarySnaps(this.library?.items ?? []);
+		const snapId = id ?? (await quick.choose({ placeholder: t('snapPlatform.library.pickInstall'), items: all.map((l) => ({ id: l.id, label: l.latest?.name ?? l.id, description: `${l.versions.length}` })) }))?.id;
+		const versions = all.find((l) => l.id === snapId)?.versions ?? [];
+		if (!snapId || !versions.length) return;
+		const row = await quick.choose({ placeholder: t('snapPlatform.library.pickYank'), items: versions.map(versionRow) });
+		const v = versions.find((x) => x.version === row?.id);
+		if (!v) return;
+		let reason: string | null = null;
+		if (!v.yanked) {
+			const r = await quick.input({ placeholder: t('snapPlatform.library.yankReason'), hint: () => t('snapPlatform.library.yankHint', { version: v.version }) });
+			if (r === undefined) return;
+			reason = r.trim() || null;
+		}
+		try {
+			await invoke('team_snap_yank', { serverUrl: team.serverUrl, id: snapId, version: v.version, yanked: !v.yanked, reason });
+			status.flash(v.yanked ? t('snapPlatform.library.restored', { id: snapId, version: v.version }) : t('snapPlatform.library.yanked', { id: snapId, version: v.version }));
+		} catch (e) {
+			notifications.error(t('snapPlatform.library.failed', { error: String(e) }));
+		}
+		await this.loadTeam();
+	}
+
+	/** Snap: Pin Team Snap in snaps.lock — the installed library version becomes the project's. */
+	async pinTeamInLock(id?: string) {
+		const pinnable = this.list.filter((s) => s.source === 'user' && !s.error && s.origin?.team);
+		const target = id ?? (await this.#pick(pinnable, t('snapPlatform.library.pickInstall')));
+		const snap = pinnable.find((s) => s.id === target);
+		if (!snap) return;
+		try {
+			await invoke('snap_lock_pin_team', { id: snap.id });
+			status.flash(t('snapPlatform.library.pinned', { id: snap.id, version: snap.version }));
+		} catch (e) {
+			notifications.error(t('tools.snaps.lockFailed', { error: String(e) }));
+		}
+		await this.load();
 	}
 
 	/** Installs a team snap at the commit the team pinned; Rust refuses it unless its hash is the approved one. */
@@ -625,6 +755,11 @@ export function installSnaps(): () => void {
 		commands.register({ id: 'snap.new', title: 'New Snap…', category: 'Snap', run: () => snaps.newSnap() }),
 		commands.register({ id: 'snap.approveForTeam', title: 'Approve Snap for Team…', category: 'Snap', when: () => canApprove(snaps.teamCatalog?.role), run: () => snaps.approveForTeam() }),
 		commands.register({ id: 'snap.lock', title: 'Write snaps.lock', category: 'Snap', when: () => workspace.root !== null, run: () => snaps.lock() }),
+		commands.register({ id: 'snap.publishToLibrary', title: 'Publish to Team Library…', category: 'Snap', when: () => canApprove(snaps.library?.role), run: () => snaps.publishToLibrary() }),
+		commands.register({ id: 'snap.installFromLibrary', title: 'Install from Team Library…', category: 'Snap', when: () => snaps.library !== null, run: () => snaps.installFromLibrary() }),
+		commands.register({ id: 'snap.updateFromLibrary', title: 'Update from Team Library', category: 'Snap', when: () => snaps.library !== null, run: () => snaps.updateFromLibrary() }),
+		commands.register({ id: 'snap.yankLibraryVersion', title: 'Yank Team Library Version…', category: 'Snap', when: () => canApprove(snaps.library?.role), run: () => snaps.yankVersion() }),
+		commands.register({ id: 'snap.pinTeamInLock', title: 'Pin Team Snap in snaps.lock…', category: 'Snap', when: () => workspace.root !== null, run: () => snaps.pinTeamInLock() }),
 		commands.register({ id: 'snap.setSecrets', title: 'Set Secrets…', category: 'Snap', run: () => snaps.setSecrets() }),
 		commands.register({ id: 'snap.verifyLock', title: 'Verify snaps.lock', category: 'Snap', when: () => workspace.root !== null, run: () => snaps.verifyLock() }),
 		// VS Code's Extensions view key.

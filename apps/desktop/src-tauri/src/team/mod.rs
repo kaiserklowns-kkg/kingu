@@ -9,6 +9,7 @@
 
 pub mod client;
 pub mod events;
+pub mod library;
 pub mod outbox;
 pub mod payload;
 pub mod skills;
