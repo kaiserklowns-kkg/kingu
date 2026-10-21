@@ -6,6 +6,7 @@ import { t } from '#lib/i18n/index.ts';
 import { isChatEditKey, parseChatEditKey } from '#lib/agent/chatEdits.ts';
 import { isLocalHistoryDiffKey, localHistoryTabLabel, parseLocalHistoryDiffKey, parseLocalHistoryKey } from '#lib/scm/localHistory.ts';
 import { isOutputKey, outputChannelOf } from '#lib/output/output.ts';
+import { isRefactorPreviewKey, REFACTOR_PREVIEW_PREFIX } from '#lib/lsp/refactorPreview.ts';
 
 export type StatusEntry = {
 	path: string;
@@ -198,7 +199,7 @@ export const isMergeKey = (key: string) => key.startsWith(MERGE_PREFIX);
 
 /** A chat's working-set file, its snapshot before the agent's edits vs now: `chatedit://<chat id>/<file>` (agent/chatEdits.ts). */
 export const isDiffKey = (key: string) =>
-	key.startsWith(DIFF_PREFIX) || isIndexDiffKey(key) || isHistoryDiffKey(key) || isConflictCompareKey(key) || isTaskDiffKey(key) || isCommitDiffKey(key) || isChatEditKey(key) || isLocalHistoryDiffKey(key) || isCompareKey(key);
+	key.startsWith(DIFF_PREFIX) || isIndexDiffKey(key) || isHistoryDiffKey(key) || isConflictCompareKey(key) || isTaskDiffKey(key) || isCommitDiffKey(key) || isChatEditKey(key) || isLocalHistoryDiffKey(key) || isCompareKey(key) || isRefactorPreviewKey(key);
 /** The workspace file behind an editor tab key (itself for plain file tabs; a task diff's file
  * lives in the worktree under `.kingu/worktrees/<slug>/`). */
 export function fileOf(key: string): string {
@@ -215,7 +216,7 @@ export function fileOf(key: string): string {
 	if (history) return history.rel;
 	const local = parseLocalHistoryDiffKey(key) ?? parseLocalHistoryKey(key);
 	if (local) return local.rel;
-	for (const prefix of [INDEX_DIFF_PREFIX, CONFLICT_COMPARE_PREFIX, MERGE_PREFIX]) if (key.startsWith(prefix)) return key.slice(prefix.length);
+	for (const prefix of [INDEX_DIFF_PREFIX, CONFLICT_COMPARE_PREFIX, MERGE_PREFIX, REFACTOR_PREVIEW_PREFIX]) if (key.startsWith(prefix)) return key.slice(prefix.length);
 	return key.startsWith(DIFF_PREFIX) ? key.slice(DIFF_PREFIX.length) : key;
 }
 
@@ -237,6 +238,7 @@ export function tabLabel(key: string): string {
 	if (history) return `${name} (${history.hash.slice(0, 7)})`;
 	if (isConflictCompareKey(key)) return t('scmEditor.compareLabel', { name });
 	if (isMergeKey(key)) return t('scmEditor.merge.tabLabel', { name });
+	if (isRefactorPreviewKey(key)) return t('refactorPreview.diffLabel', { name });
 	if (isPreviewKey(key)) return `Preview ${name}`;
 	return isDiffKey(key) ? `${name} (Working Tree)` : name;
 }

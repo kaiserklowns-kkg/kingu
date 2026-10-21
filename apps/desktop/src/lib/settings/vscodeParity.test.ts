@@ -26,6 +26,7 @@ export const DEFAULT_DEVIATIONS: Readonly<Record<string, string>> = {
 	'typescript.preferences.autoImportFileExcludePatterns': 'VS Code registers no default (unset reads as an empty list); every Kingu setting needs one',
 	'typescript.preferences.autoImportSpecifierExcludeRegexes': 'VS Code registers no default (unset reads as an empty list); every Kingu setting needs one',
 	'json.schemas': 'VS Code registers no default (unset reads as an empty list); every Kingu setting needs one',
+	'markdown.validate.ignoredLinks': 'VS Code registers no default (unset reads as an empty list); every Kingu setting needs one',
 	'workbench.editorLargeFileConfirmation':"VS Code's 10 MB for remote and web windows (every byte crosses the webview IPC here); the local 1024 MB would load huge files into the webview without asking"
 };
 

@@ -13,7 +13,7 @@ import { withSaved } from './workspaceState';
 import { CENTERED_DEFAULT, enterZen, exitZenFullScreen, zenConfig, zenParts, type CenteredState, type ZenExitInfo, type ZenParts } from './zenMode';
 
 export type SideView = 'explorer' | 'search' | 'scm' | 'debug' | 'testing' | 'snaps' | 'agents' | 'vault' | 'artifacts';
-export type PanelTab = 'problems' | 'output' | 'debugConsole' | 'terminal';
+export type PanelTab = 'problems' | 'output' | 'debugConsole' | 'terminal' | 'refactorPreview';
 
 const KEY = 'kingu.workbench.layout';
 export const SIDEBAR_MIN = 170;

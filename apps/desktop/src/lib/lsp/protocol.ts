@@ -65,12 +65,16 @@ export type DocumentDiagnosticReport = { kind: 'full'; resultId?: string; items:
 
 // --- Edits ---------------------------------------------------------------------------------------
 
-export type TextDocumentEdit = { textDocument: { uri: string; version: number | null }; edits: TextEdit[] };
+/** An edit tagged with a change annotation (a key of `WorkspaceEdit.changeAnnotations`). */
+export type AnnotatedTextEdit = TextEdit & { annotationId: string };
+export type TextDocumentEdit = { textDocument: { uri: string; version: number | null }; edits: (TextEdit | AnnotatedTextEdit)[] };
+/** `needsConfirmation`: the client shows the edit before applying it (Refactor Preview). */
+export type ChangeAnnotation = { label: string; needsConfirmation?: boolean; description?: string };
 export type ResourceOperation = { kind: 'create' | 'rename' | 'delete'; [key: string]: unknown };
 export type WorkspaceEdit = {
 	changes?: Record<string, TextEdit[]>;
 	documentChanges?: (TextDocumentEdit | ResourceOperation)[];
-	changeAnnotations?: Record<string, unknown>;
+	changeAnnotations?: Record<string, ChangeAnnotation>;
 };
 export type Command = { title: string; command: string; arguments?: unknown[] };
 export type CodeAction = {

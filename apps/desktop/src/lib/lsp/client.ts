@@ -85,7 +85,7 @@ export const clientCapabilities = {
 		configuration: true,
 		symbol: { dynamicRegistration: false },
 		applyEdit: true,
-		workspaceEdit: { documentChanges: true, resourceOperations: [], failureHandling: 'abort', normalizesLineEndings: false },
+		workspaceEdit: { documentChanges: true, resourceOperations: [], failureHandling: 'abort', normalizesLineEndings: false, changeAnnotationSupport: { groupsOnLabel: true } },
 		executeCommand: { dynamicRegistration: false },
 		diagnostics: { refreshSupport: true },
 		semanticTokens: { refreshSupport: true },
@@ -117,7 +117,7 @@ export const clientCapabilities = {
 		documentSymbol: { hierarchicalDocumentSymbolSupport: true },
 		references: {},
 		documentHighlight: {},
-		rename: { prepareSupport: true, prepareSupportDefaultBehavior: 1, honorsChangeAnnotations: false },
+		rename: { prepareSupport: true, prepareSupportDefaultBehavior: 1, honorsChangeAnnotations: true },
 		codeAction: {
 			codeActionLiteralSupport: { codeActionKind: { valueSet: CODE_ACTION_KINDS } },
 			isPreferredSupport: true,

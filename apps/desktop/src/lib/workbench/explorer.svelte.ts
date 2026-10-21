@@ -10,6 +10,7 @@ import { notifications } from './notifications.svelte';
 import { compactChain, compactLabel, dropTarget, moveQuestion, planTransfer, rangeSelection, topLevel } from './explorerModel';
 import { nestFiles } from './fileNesting';
 import { workspaceStorage } from './workspaceStorage.svelte';
+import { fireDidMoveFiles } from './fileMoves';
 import { withSaved } from './workspaceState';
 
 const TREE_STATE = 'kingu.explorer.treeViewState';
@@ -558,6 +559,7 @@ class Explorer {
 	/** Points the renamed path's tabs (in every group) at the new name; they are clean, so nothing is lost. */
 	#moveTabs(from: string, to: string) {
 		editors.remap((path) => remapPath(path, from, to));
+		if (from !== to) fireDidMoveFiles([{ from, to }]);
 	}
 
 	/** Delete: confirm, move to the Trash (or delete for good: files.enableTrash), close its tabs. Acts on the whole selection when `rel` is in it. */
