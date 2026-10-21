@@ -15,6 +15,7 @@ import { layout } from '#lib/workbench/layout.svelte.ts';
 import { isJsTestFile, isPythonTestFile } from './discover.ts';
 import type { TestItem, TestMessage } from './model.ts';
 import { lineDecorations } from './coverage.ts';
+import { hasDiff, messageDiff } from './messageDiff.ts';
 import { testing } from './testing.svelte.ts';
 
 type MonacoApi = typeof Monaco;
@@ -43,7 +44,26 @@ function peekNode(item: TestItem, m: TestMessage, onClose: () => void): HTMLElem
 	pre.textContent = m.message;
 	pre.style.cssText = 'margin:0 0 6px;white-space:pre-wrap;color:var(--vscode-errorForeground,#f14c4c);';
 	root.append(head, pre);
-	if (m.expected !== undefined || m.actual !== undefined) {
+	if (hasDiff(m.expected, m.actual)) {
+		// Expected against actual, line by line (VS Code's diff in the peek): - expected, + actual.
+		const legend = document.createElement('div');
+		legend.style.cssText = 'display:flex;gap:12px;padding-bottom:2px;color:var(--vscode-descriptionForeground);font-weight:600;';
+		const exp = document.createElement('span');
+		exp.textContent = `− ${t('testing.expected')}`;
+		const act = document.createElement('span');
+		act.textContent = `+ ${t('testing.actual')}`;
+		legend.append(exp, act);
+		const diff = document.createElement('pre');
+		diff.style.cssText = 'margin:0;white-space:pre-wrap;';
+		for (const line of messageDiff(m.expected, m.actual!)) {
+			const row = document.createElement('div');
+			row.textContent = `${line.kind === 'expected' ? '−' : line.kind === 'actual' ? '+' : ' '} ${line.text}`;
+			if (line.kind === 'expected') row.style.background = 'var(--vscode-diffEditor-removedTextBackground,rgba(255,0,0,.2))';
+			else if (line.kind === 'actual') row.style.background = 'var(--vscode-diffEditor-insertedTextBackground,rgba(155,185,85,.2))';
+			diff.append(row);
+		}
+		root.append(legend, diff);
+	} else if (m.expected !== undefined || m.actual !== undefined) {
 		const grid = document.createElement('div');
 		grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:8px;';
 		for (const [label, value, color] of [
@@ -132,7 +152,8 @@ export function attachTestingEditor(monaco: MonacoApi, editor: Monaco.editor.ISt
 			if (zone) acc.removeZone(zone);
 			zone = null;
 			if (!item || !message || !peek) return;
-			const lines = Math.min(18, 4 + message.message.split('\n').length + (message.expected !== undefined || message.actual !== undefined ? 3 : 0));
+			const diffLines = hasDiff(message.expected, message.actual) ? messageDiff(message.expected, message.actual!).length + 1 : message.expected !== undefined || message.actual !== undefined ? 3 : 0;
+			const lines = Math.min(24, 4 + message.message.split('\n').length + diffLines);
 			zone = acc.addZone({ afterLineNumber: peek.line, heightInLines: lines, domNode: peekNode(item, message, () => testing.closePeek()) });
 		});
 	}

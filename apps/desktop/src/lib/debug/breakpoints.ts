@@ -11,16 +11,19 @@ import { t } from '#lib/i18n/index.ts';
  * `hitCondition`: stop only when the hit count matches (`5`, `>= 3`, `% 2`, as the adapter reads it).
  * `triggeredBy`: a triggered breakpoint (`rel:line` of another breakpoint); like VS Code it is
  * sent to the debugger only once that breakpoint has been hit in the session.
+ * `column`: an inline breakpoint (VS Code: Shift+F9), at a column of the line; several can share a line.
  */
-export type BreakpointSpec = { line: number; condition?: string; hitCondition?: string; logMessage?: string; triggeredBy?: string; enabled: boolean };
+export type BreakpointSpec = { line: number; column?: number; condition?: string; hitCondition?: string; logMessage?: string; triggeredBy?: string; enabled: boolean };
 export type BreakpointMap = Record<string, BreakpointSpec[]>;
 export type GlyphKind = 'breakpoint' | 'verified' | 'unverified' | 'disabled' | 'conditional' | 'log' | 'triggered' | 'unsupported';
-export type Glyph = { line: number; kind: GlyphKind; hover: string };
+export type Glyph = { line: number; column?: number; kind: GlyphKind; hover: string };
 
 const STORE = 'kingu.debug.breakpoints';
 export const storageKey = (root: string) => `${STORE}:${root}`;
 
-const byLine = (a: BreakpointSpec, b: BreakpointSpec) => a.line - b.line;
+const byLine = (a: BreakpointSpec, b: BreakpointSpec) => a.line - b.line || (a.column ?? 0) - (b.column ?? 0);
+/** Whether a breakpoint is the one at `line` and `column` (no column: the line's whole-line breakpoint). */
+const at = (b: BreakpointSpec, line: number, column?: number) => b.line === line && (b.column ?? 0) === (column ?? 0);
 
 /** The id a triggered breakpoint names its trigger by. */
 export const breakpointKey = (rel: string, line: number) => `${rel}:${line}`;
@@ -39,6 +42,16 @@ export function toggle(map: BreakpointMap, rel: string, line: number): Breakpoin
 	const list = map[rel] ?? [];
 	return list.some((b) => b.line === line) ? put(map, rel, list.filter((b) => b.line !== line)) : put(map, rel, [...list, { line, enabled: true }]);
 }
+
+/** Shift+F9 (VS Code: Toggle Inline Breakpoint): a breakpoint at the column, or the one there removed. */
+export function toggleInline(map: BreakpointMap, rel: string, line: number, column: number): BreakpointMap {
+	const list = map[rel] ?? [];
+	const col = column > 1 ? column : undefined;
+	return list.some((b) => at(b, line, col)) ? put(map, rel, list.filter((b) => !at(b, line, col))) : put(map, rel, [...list, { line, ...(col ? { column: col } : {}), enabled: true }]);
+}
+
+/** Whether a line has inline (column) breakpoints. */
+export const hasInline = (list: readonly BreakpointSpec[] | undefined, line: number) => !!list?.some((b) => b.line === line && b.column);
 
 export function remove(map: BreakpointMap, rel: string, line: number): BreakpointMap {
 	return put(map, rel, (map[rel] ?? []).filter((b) => b.line !== line));
@@ -93,8 +106,8 @@ export function setTriggeredBy(map: BreakpointMap, rel: string, line: number, tr
 export function moveTo(map: BreakpointMap, rel: string, lines: number[]): BreakpointMap {
 	const list = map[rel] ?? [];
 	if (lines.length !== list.length || list.every((b, i) => b.line === lines[i])) return map;
-	const seen = new Set<number>();
-	const moved = list.map((b, i) => ({ ...b, line: lines[i] })).filter((b) => !seen.has(b.line) && (seen.add(b.line), true));
+	const seen = new Set<string>();
+	const moved = list.map((b, i) => ({ ...b, line: lines[i] })).filter((b) => !seen.has(`${b.line}:${b.column ?? 0}`) && (seen.add(`${b.line}:${b.column ?? 0}`), true));
 	return put(map, rel, moved);
 }
 
@@ -107,6 +120,7 @@ export function sourceBreakpoints(list: BreakpointSpec[] | undefined, triggered?
 		.sort(byLine)
 		.map((b) => ({
 			line: b.line,
+			...(b.column ? { column: b.column } : {}),
 			...(b.condition ? { condition: b.condition } : {}),
 			...(b.hitCondition ? { hitCondition: b.hitCondition } : {}),
 			...(b.logMessage ? { logMessage: b.logMessage } : {})
@@ -140,18 +154,19 @@ export function glyphs(list: BreakpointSpec[] | undefined, verified: Breakpoint[
 	const sorted = [...(list ?? [])].sort(byLine);
 	let i = 0;
 	return sorted.map((b) => {
-		if (!b.enabled || !activated) return { line: b.line, kind: 'disabled', hover: b.logMessage ? t('debugger.bp.disabledLogpoint') : t('tools.debug.bp.disabled') };
-		if (!isSent(b, triggered)) return { line: b.line, kind: 'triggered', hover: t('tools.debug.bp.triggered', { at: b.triggeredBy ?? '' }) };
+		const column = b.column ? { column: b.column } : {};
+		if (!b.enabled || !activated) return { line: b.line, ...column, kind: 'disabled', hover: b.logMessage ? t('debugger.bp.disabledLogpoint') : t('tools.debug.bp.disabled') };
+		if (!isSent(b, triggered)) return { line: b.line, ...column, kind: 'triggered', hover: t('tools.debug.bp.triggered', { at: b.triggeredBy ?? '' }) };
 		const answer = verified?.[i++];
 		const message = breakpointMessage(b);
 		const plain: GlyphKind = b.logMessage ? 'log' : b.condition || b.hitCondition ? 'conditional' : 'breakpoint';
 		const hover = message ?? t('debugger.bp.breakpoint');
-		if (!verified) return { line: b.line, kind: plain, hover };
+		if (!verified) return { line: b.line, ...column, kind: plain, hover };
 		if (!answer || !answer.verified)
-			return { line: b.line, kind: 'unverified', hover: answer?.message ?? (b.logMessage ? t('debugger.bp.unverifiedLogpoint') : t('tools.debug.bp.unverified')) };
-		if (caps && !isSupported(b, caps)) return { line: b.line, kind: 'unsupported', hover: `${t('debugger.bp.unsupported')}\n${hover}` };
+			return { line: b.line, ...column, kind: 'unverified', hover: answer?.message ?? (b.logMessage ? t('debugger.bp.unverifiedLogpoint') : t('tools.debug.bp.unverified')) };
+		if (caps && !isSupported(b, caps)) return { line: b.line, ...column, kind: 'unsupported', hover: `${t('debugger.bp.unsupported')}\n${hover}` };
 		const withAnswer = answer.message ? `${hover}, ${answer.message}` : hover;
-		return { line: b.line, kind: plain === 'breakpoint' ? 'verified' : plain, hover: withAnswer };
+		return { line: b.line, ...column, kind: plain === 'breakpoint' ? 'verified' : plain, hover: withAnswer };
 	});
 }
 
@@ -167,7 +182,7 @@ export function parseStored(text: string | null): BreakpointMap {
 			const ok = list
 				.filter((b) => b && Number.isInteger(b.line) && b.line > 0)
 				.map((b) => {
-					const spec: BreakpointSpec = { line: b.line, enabled: b.enabled !== false };
+					const spec: BreakpointSpec = { line: b.line, ...(Number.isInteger(b.column) && b.column > 1 ? { column: b.column } : {}), enabled: b.enabled !== false };
 					for (const k of ['condition', 'hitCondition', 'logMessage', 'triggeredBy'] as const) {
 						const v = str(b[k]);
 						if (v) spec[k] = v;
