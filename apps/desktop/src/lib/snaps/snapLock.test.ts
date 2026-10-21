@@ -28,7 +28,7 @@ function snap(over: Partial<SnapInfo> = {}): SnapInfo {
 		scripts: [{ path: 'scripts/ci.sh', sha256: 'a'.repeat(64) }],
 		origin: null,
 		lock: null,
-		approved_permissions: null,
+		approvedPermissions: null,
 		...over
 	};
 }
@@ -83,7 +83,7 @@ describe('launcher arguments', () => {
 
 describe('trust and the lock', () => {
 	test('the trust prompt calls out a lock mismatch, grown permissions and pinned scripts', () => {
-		const text = trustSummary(snap({ lock: 'changed', approved_permissions: base, permissions: { ...base, network: true } }));
+		const text = trustSummary(snap({ lock: 'changed', approvedPermissions: base, permissions: { ...base, network: true } }));
 		expect(text).toContain('differs from the version pinned in .kingu/snaps.lock');
 		expect(text).toContain('It asks for more than you approved last time:\n• Uses the network');
 		expect(text).toContain('pinned too: scripts/ci.sh');

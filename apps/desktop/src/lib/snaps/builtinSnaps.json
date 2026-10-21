@@ -9,7 +9,7 @@
     "trusted": true,
     "error": null,
     "overridden": false,
-    "hash": "e6c30fb4da4ee220b545ee2c7b883fcb143dbcbb08b77907e3ac7a50f95da83b",
+    "hash": "3683d086bda9f5370de549041b23147f06d1f6f56bee4f25639bfc7e23243a2f",
     "permissions": {
       "network": false,
       "fs": "worktree",
@@ -131,8 +131,10 @@
         }
       ]
     },
+    "scripts": [],
     "origin": null,
-    "lock": null
+    "lock": null,
+    "approvedPermissions": null
   },
   {
     "id": "rust-analyzer",
@@ -188,7 +190,9 @@
       "views": [],
       "files": []
     },
+    "scripts": [],
     "origin": null,
-    "lock": null
+    "lock": null,
+    "approvedPermissions": null
   }
 ]

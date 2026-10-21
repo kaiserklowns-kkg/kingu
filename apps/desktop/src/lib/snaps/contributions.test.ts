@@ -63,6 +63,8 @@ const snap = (over: Partial<SnapInfo> = {}): SnapInfo => ({
 	mcp: [],
 	skills: [],
 	contributes,
+	scripts: [],
+	approvedPermissions: null,
 	origin: null,
 	lock: null,
 	...over

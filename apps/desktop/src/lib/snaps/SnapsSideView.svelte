@@ -51,7 +51,7 @@
 		if (isActive(s) && s.tasks.length) out.push({ icon: 'play', label: 'Run Task…', run: () => snaps.pickTask(s) });
 		if (isUpdatable(s)) out.push({ icon: 'refresh', label: 'Update', run: () => snaps.update(s.id) });
 		if (isTeamAdmin && isApprovable(s)) out.push({ icon: 'account', label: 'Approve for Team…', run: () => snaps.approveForTeam(s.id) });
-		if (isTeamAdmin && snaps.library && isPublishable(s, snaps.library.items)) out.push({ icon: 'publish', label: 'Publish to Team Library…', run: () => snaps.publishToLibrary(s.id, s.source) });
+		if (isTeamAdmin && snaps.library && s.source !== 'builtin' && isPublishable(s, snaps.library.items)) { const source = s.source; out.push({ icon: 'publish', label: 'Publish to Team Library…', run: () => snaps.publishToLibrary(s.id, source) }); }
 		if (s.source === 'user') out.push({ icon: 'trash', label: 'Uninstall', run: () => snaps.uninstall(s.id) });
 		if (s.source !== 'builtin') out.push({ icon: 'folder', label: 'Reveal Folder', run: () => snaps.reveal(s) });
 		return out;

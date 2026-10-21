@@ -47,7 +47,7 @@ function installed(version: string, server: string | null = SERVER): SnapInfo {
 		scripts: [],
 		origin: server ? { url: null, ref: null, commit: null, path: null, team: { server, version }, installed_at: 1 } : null,
 		lock: null,
-		approved_permissions: null
+		approvedPermissions: null
 	};
 }
 

@@ -63,7 +63,7 @@ export type SnapInfo = {
 	/** Repo snaps against `.kingu/snaps.lock`; user snaps when the lock pins a team snap with their id. */
 	lock: LockStatus | null;
 	/** Repo snaps: the permissions approved last time (trust or lock), to show what grew. */
-	approved_permissions: SnapPermissions | null;
+	approvedPermissions: SnapPermissions | null;
 };
 
 /** `snap_lock_verify` (snap_install.rs LockReport). */
@@ -462,7 +462,7 @@ export function trustSummary(s: SnapInfo, plan?: SandboxPlan): string {
 		...(s.contributes?.lsp ?? []).map((l) => t('snapContrib.trust.server', { name: l.name, command: l.command.join(' ') }))
 	];
 	const views = s.contributes?.views ?? [];
-	const grown = s.approved_permissions ? permissionDiff(s.approved_permissions, s.permissions).added : [];
+	const grown = s.approvedPermissions ? permissionDiff(s.approvedPermissions, s.permissions).added : [];
 	return [
 		t('tools.snaps.fromRepo', { name: s.name, id: s.id, version: s.version }),
 		...(s.lock === 'changed' ? ['', t('snapPlatform.lockReapprove')] : []),

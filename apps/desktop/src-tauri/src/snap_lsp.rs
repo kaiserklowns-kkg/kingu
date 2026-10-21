@@ -314,7 +314,7 @@ command = ["${setting:zlsPath}"]
 
   #[test]
   fn sandboxed_argv_mirrors_the_webview() {
-    let p = Permissions { network: false, fs: snap::FsAccess::Home, secrets: vec!["TOKEN".into()] };
+    let p = Permissions { network: false, fs: snap::FsAccess::Home, secrets: vec!["TOKEN".into()], ..Default::default() };
     let (prog, args) = sandboxed(Path::new("/A/kingu-ptyd"), &p, Path::new("/ws"), &[PathBuf::from("/cfg")], &["ZLS_LOG".into()], Path::new("/bin/zls"), &["--stdio".into()]);
     assert_eq!(prog, Path::new("/A/kingu-ptyd"));
     assert_eq!(

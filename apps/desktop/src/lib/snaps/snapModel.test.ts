@@ -57,7 +57,7 @@ function snap(over: Partial<SnapInfo> = {}): SnapInfo {
 		scripts: [],
 		origin: null,
 		lock: null,
-		approved_permissions: null,
+		approvedPermissions: null,
 		...over
 	};
 }
