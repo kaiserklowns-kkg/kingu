@@ -14,8 +14,6 @@ export const chatWelcome = {
 	'chatWelcome.newChatMenu': 'คำสั่งแชตใหม่อื่น ๆ',
 	'chatWelcome.newChatWith': 'แชตใหม่กับ {name}',
 	'chatWelcome.newChatKey': 'แชตใหม่ ({key})',
-	'chatWelcome.viewSwitcher': 'ตัวสลับมุมมองที่ใช้งาน',
-	'chatWelcome.viewTab': 'แชต ({key})',
 	'chatWelcome.actions': 'คำสั่งของแชต',
 	'chatWelcome.more': 'มุมมองและคำสั่งเพิ่มเติม...',
 	'chatWelcome.goBack': 'ย้อนกลับ',

@@ -96,8 +96,7 @@
 	import ChatSessionBar from './ChatSessionBar.svelte';
 	import { chatTips, registerTipCommands, tipSignals } from './chatTips.svelte.ts';
 	import { generateRequest, hasAgentInstructions, orderedTips, showTips, type TipAction, type TipContext } from './chatTips.ts';
-	import { commands, keyOf } from '#lib/workbench/commands.svelte.ts';
-	import { keyLabel } from '#lib/workbench/keys.ts';
+	import { commands } from '#lib/workbench/commands.svelte.ts';
 	import './chatView.css';
 
 	let {
@@ -840,12 +839,6 @@
 	const TEXT_ICON: Record<string, IconName> = { problems: 'warning', 'git-diff': 'git', terminal: 'terminal', folder: 'folder', chat: 'agent' };
 	const STATE_DOT = { working: 'bg-(--vscode-editorInfo-foreground) animate-pulse', needsInput: 'bg-(--vscode-editorWarning-foreground)' } as const;
 	const STATE_LABEL = { working: () => t('team.agent.status.running'), needsInput: () => t('team.agent.status.waiting') } as const;
-	/** The view switcher's tab: "Chat (⌃⌘I)", Open Chat's key as VS Code shows it. */
-	const viewTabLabel = $derived.by(() => {
-		const cmd = commands.get('workbench.action.chat.open');
-		const k = cmd && keyOf(cmd);
-		return k ? t('chatWelcome.viewTab', { key: keyLabel(k) }) : t('chatWelcome.viewTitle');
-	});
 	const ICON_BTN = 'grid size-[22px] shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-40';
 	const title = $derived(chatMeta?.title ?? t('chatWelcome.viewTitle'));
 	const pendingApproval = $derived(chatRun?.pending.find((p) => p.tool !== 'AskUserQuestion'));
@@ -1261,15 +1254,6 @@
 			</button>
 		</div>
 	{:else}
-		<!-- The secondary side bar's view switcher (VS Code's composite bar in the part's header): its one view, Chat. -->
-		<div class="composite header-or-footer header">
-			<div class="composite-bar" role="tablist" aria-label={t('chatWelcome.viewSwitcher')}>
-				<button type="button" class="action-item icon checked" role="tab" aria-selected="true" aria-label={viewTabLabel} title={viewTabLabel} onclick={() => composer?.focus()}>
-					<span class="active-item-indicator"></span>
-					<Codicon id="chat-view-icon" />
-				</button>
-			</div>
-		</div>
 		<!-- The title row (VS Code's pane-composite title): "Chat", then New Chat + with its ⌄, Open
 		     Customizations, Views and More Actions, and Maximize Secondary Side Bar after a separator. -->
 		<div class="composite title has-actions" onfocusin={() => (unread = false)}>

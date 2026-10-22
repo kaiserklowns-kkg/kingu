@@ -15,8 +15,6 @@ export const chatWelcome = {
 	'chatWelcome.newChatMenu': 'More New Chat Actions',
 	'chatWelcome.newChatWith': 'New Chat with {name}',
 	'chatWelcome.newChatKey': 'New Chat ({key})',
-	'chatWelcome.viewSwitcher': 'Active View Switcher',
-	'chatWelcome.viewTab': 'Chat ({key})',
 	'chatWelcome.actions': 'Chat actions',
 	'chatWelcome.more': 'Views and More Actions...',
 	'chatWelcome.goBack': 'Go Back',

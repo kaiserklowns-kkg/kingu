@@ -13,57 +13,6 @@
 	--chat-input-control-height: 22px;
 }
 
-/* ---- the secondary side bar's header: the view switcher (one view, Chat) -------------------- */
-
-.kg-chat-part > .composite.header {
-	display: flex;
-	flex-shrink: 0;
-	height: 32px;
-	padding: 0 4px 0 2px;
-}
-
-.kg-chat-part > .composite.header .composite-bar {
-	display: flex;
-}
-
-.kg-chat-part > .composite.header .action-item {
-	position: relative;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 28px;
-	height: 32px;
-	padding: 0 var(--vscode-spacing-size60);
-	color: var(--vscode-modernTab-activeForeground);
-	cursor: pointer;
-	outline: none;
-}
-
-.kg-chat-part > .composite.header .action-item > .active-item-indicator {
-	position: absolute;
-	top: 50%;
-	right: var(--vscode-spacing-size20);
-	left: var(--vscode-spacing-size20);
-	z-index: 0;
-	height: var(--vscode-spacing-size240);
-	border-radius: var(--vscode-cornerRadius-small);
-	transform: translateY(-50%);
-}
-
-.kg-chat-part > .composite.header .action-item.checked > .active-item-indicator {
-	background-color: var(--vscode-modernTab-activeBackground);
-}
-
-.kg-chat-part > .composite.header .action-item:focus-visible > .active-item-indicator {
-	outline: var(--vscode-strokeThickness) solid var(--vscode-focusBorder);
-	outline-offset: calc(-1 * var(--vscode-strokeThickness));
-}
-
-.kg-chat-part > .composite.header .action-item > .codicon {
-	position: relative;
-	z-index: 1;
-}
-
 /* ---- the title row: "Chat" and the view's actions ---------------------------------------- */
 
 .kg-chat-part > .composite.title {
@@ -276,7 +225,8 @@ div.chat-welcome-view {
 		min-height: 40px;
 	}
 
-	& > .chat-welcome-view-icon .codicon {
+	& > .chat-welcome-view-icon .codicon,
+	& > .chat-welcome-view-icon svg {
 		margin-bottom: 24px;
 		font-size: 40px;
 		color: var(--vscode-descriptionForeground);

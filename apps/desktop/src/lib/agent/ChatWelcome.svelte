@@ -1,9 +1,9 @@
 <script lang="ts">
-	// An empty chat's welcome (VS Code's chat welcome view, chatViewWelcome.css): the chat-sparkle
-	// icon, the title for the mode ("Build with Agent", "Ask about your code"), the disclaimer, and,
+	// An empty chat's welcome (VS Code's chat welcome view, chatViewWelcome.css): the Arkai logo,
+	// the title for the mode ("Build with Agent", "Ask about your code"), the disclaimer, and,
 	// while the folder has no agent instructions, "Generate Agent Instructions to onboard AI onto
 	// your codebase."
-	import Codicon from '#lib/workbench/Codicon.svelte';
+	import Icon from '#lib/workbench/Icon.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import { tipParts } from './chatTips.ts';
 
@@ -14,7 +14,7 @@
 
 <div class="chat-welcome-view-container">
 	<div class="chat-welcome-view">
-		<div class="chat-welcome-view-icon" aria-hidden="true"><Codicon id="chat-sparkle" size={40} /></div>
+		<div class="chat-welcome-view-icon" aria-hidden="true"><Icon name="agent" size={40} /></div>
 		<div class="chat-welcome-view-title">{title}</div>
 		<div class="chat-welcome-view-message"><div class="rendered-markdown"><p>{t('chatWelcome.disclaimer')}</p></div></div>
 		{#if instructions}

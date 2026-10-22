@@ -249,8 +249,10 @@ export function attachChatEditDecorations(monaco: MonacoApi, ed: Monaco.editor.I
 	root.className = 'kg-ce-widgets';
 	const bar = document.createElement('div');
 	bar.className = 'kg-ce-hunk-bar';
+	bar.style.display = 'none';
 	const overlay = document.createElement('div');
 	overlay.className = 'kg-ce-overlay';
+	overlay.style.display = 'none';
 	overlay.setAttribute('role', 'toolbar');
 	shield(bar);
 	shield(overlay);
