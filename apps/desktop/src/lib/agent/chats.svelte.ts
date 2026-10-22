@@ -207,12 +207,12 @@ class Chats {
 		}
 	}
 
-	async create(input: { prompt: string; cwd: ChatCwd; model: string | null; permissionMode: RunPermissionMode; message: OutgoingMessage; runtime?: string; agent?: string | null }): Promise<string | undefined> {
+	async create(input: { prompt: string; cwd: ChatCwd; model: string | null; effort?: ChatMeta['effort']; permissionMode: RunPermissionMode; message: OutgoingMessage; runtime?: string; agent?: string | null }): Promise<string | undefined> {
 		const root = workspace.root;
 		if (!root || !input.prompt.trim()) return;
 		if (root !== this.root) await this.load();
 		const allowAll = input.permissionMode === 'bypassPermissions';
-		const meta = newChat({ prompt: input.prompt, cwd: input.cwd, model: input.model, permissionMode: allowAll ? 'default' : (input.permissionMode as PermissionMode), runtime: input.runtime, agent: input.agent }, Date.now());
+		const meta = newChat({ prompt: input.prompt, cwd: input.cwd, model: input.model, effort: input.effort, permissionMode: allowAll ? 'default' : (input.permissionMode as PermissionMode), runtime: input.runtime, agent: input.agent }, Date.now());
 		if (allowAll) this.allowAll[runKey(root, meta.id)] = true;
 		this.#save([...this.list, meta], root);
 		await this.#saving;
@@ -291,8 +291,8 @@ class Chats {
 				cwd,
 				chatId: meta.id,
 				prompt,
-				// Another agent picks its own model (no model picker for it: runtimes.ts).
-				model: runtimeOf(meta) === CLAUDE_RUNTIME ? meta.model : null,
+				model: meta.model,
+				effort: meta.effort && meta.effort !== 'default' ? meta.effort : null,
 				permissionMode: this.allowAll[key] ? 'bypassPermissions' : meta.permission_mode,
 				resume,
 				resumeAt,
@@ -554,6 +554,11 @@ class Chats {
 		return this.#setOption(id, { model: model.trim() || null }, { model: model.trim() || null });
 	}
 
+	/** Claude reasoning effort: live from the next response, or on the next run. */
+	async setEffort(id: string, effort: NonNullable<ChatMeta['effort']>): Promise<'live' | 'next' | null> {
+		return this.#setOption(id, { effort }, { effort });
+	}
+
 	/** "Allow all" stays in memory (`allowAll`); the chat keeps an Agent mode it can save. */
 	async setPermissionMode(id: string, mode: RunPermissionMode): Promise<'live' | 'next' | null> {
 		const meta = this.get(id);
@@ -590,14 +595,14 @@ class Chats {
 		return !!this.root && !!this.allowAll[runKey(this.root, id)];
 	}
 
-	async #setOption(id: string, patch: Partial<ChatMeta>, wire: { model?: string | null; permissionMode?: RunPermissionMode }): Promise<'live' | 'next' | null> {
+	async #setOption(id: string, patch: Partial<ChatMeta>, wire: { model?: string | null; effort?: ChatMeta['effort']; permissionMode?: RunPermissionMode }): Promise<'live' | 'next' | null> {
 		const root = this.root;
 		if (!root || !this.get(id)) return null;
 		const run = this.run(id);
 		const when = optionChange(run, run?.runId);
-		if (when === 'live' && (wire.model || wire.permissionMode)) {
+		if (when === 'live' && (wire.model || wire.effort || wire.permissionMode)) {
 			try {
-				await invoke('agent_set_options', { runId: run!.runId, model: wire.model ?? null, permissionMode: wire.permissionMode ?? null });
+				await invoke('agent_set_options', { runId: run!.runId, model: wire.model ?? null, effort: wire.effort ?? null, permissionMode: wire.permissionMode ?? null });
 			} catch (e) {
 				notifications.error(t('chat.optionFailed', { error: String(e) }));
 				return null;

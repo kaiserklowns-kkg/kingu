@@ -343,11 +343,11 @@
 								</div>
 							{/if}
 						{:else if part.kind === 'error'}
-							<div class="flex items-start gap-1.5 rounded border border-(--vscode-inputValidation-errorBorder,var(--vscode-errorForeground)) px-2 py-1.5" role="alert">
+							<div class="flex items-start gap-2 rounded-lg border border-(--vscode-inputValidation-errorBorder,var(--vscode-errorForeground)) bg-[color-mix(in_srgb,var(--vscode-errorForeground)_6%,transparent)] px-2.5 py-2" role="alert">
 								<span class="mt-0.5 shrink-0 text-(--vscode-errorForeground)"><Icon name="error" size={14} /></span>
 								<span class="min-w-0 flex-1 break-words whitespace-pre-wrap">{part.message}</span>
 								{#if last && turn.done && actions.retry}
-									<button type="button" class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" onclick={() => actions.retry?.()}>{t('chatView.retry')}</button>
+									<button type="button" class="flex h-6 shrink-0 items-center gap-1 rounded-md border border-(--vscode-widget-border) px-2 text-(--vscode-foreground) hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => actions.retry?.()}><Icon name="refresh" size={12} />{t('chatView.retry')}</button>
 								{/if}
 							</div>
 						{:else if part.kind === 'artifact'}

@@ -16,9 +16,9 @@
 
 import pkg from '../../package.json' with { type: 'json' };
 import { RpcCallError } from './rpc.ts';
-import { ProcessSession, OPEN_TIMEOUT_MS, type TurnEnd } from './session.ts';
+import { ProcessSession, OPEN_TIMEOUT_MS, SessionError, UNSUPPORTED, type TurnEnd } from './session.ts';
 import { acpMcpServers, acpOptionFor, acpOptions, acpToolOutput, acpToolView, agentModeFor, isObj, num, planTodos, str } from './tools.ts';
-import type { PermissionMode } from '../protocol.ts';
+import type { ModelOption, PermissionMode } from '../protocol.ts';
 
 export const ACP_PROTOCOL_VERSION = 1;
 /** JSON-RPC error the ACP spec uses for "sign in first". */
@@ -79,6 +79,10 @@ export class AcpSession extends ProcessSession {
 			}
 			throw e;
 		}
+		// A saved chat can predate this agent's model catalog (or belong to a runtime
+		// whose agent exposes no chooser). Only request a switch the live ACP session
+		// explicitly says it supports; otherwise keep its advertised current model.
+		if (this.init.model && this.init.model !== this.model() && this.hasModel(this.init.model)) await this.setModel(this.init.model);
 		const modeId = agentModeFor(this.mode, this.modes?.availableModes);
 		if (modeId && modeId !== this.modes?.currentModeId) await this.setAgentMode(modeId);
 	}
@@ -91,11 +95,40 @@ export class AcpSession extends ProcessSession {
 	private session(r: Obj | null) {
 		if (!isObj(r)) return;
 		if (isObj(r.modes)) this.modes = r.modes;
-		if (isObj(r.models)) this.models = r.models;
+		if (isObj(r.models)) {
+			this.models = r.models;
+			const options = (Array.isArray(r.models.availableModels) ? r.models.availableModels : []).filter(isObj).flatMap((m): ModelOption[] => {
+				const value = str(m.modelId)?.trim();
+				if (!value) return [];
+				return [{ value, display_name: str(m.name)?.trim() || value, description: str(m.description)?.trim() || '' }];
+			});
+			if (options.length) this.emit({ kind: 'models', models: options });
+		}
 	}
 
 	protected model() {
 		return str(this.models?.currentModelId);
+	}
+
+	private hasModel(modelId: string) {
+		return Array.isArray(this.models?.availableModels) && this.models.availableModels.some((m) => isObj(m) && m.modelId === modelId);
+	}
+
+	private async setModel(modelId: string) {
+		if (!this.sessionId) throw new Error('the agent session is not ready for a model change');
+		if (!this.hasModel(modelId)) throw new SessionError(UNSUPPORTED, `model is not available in this session: ${modelId}`);
+		await this.peer.request('session/set_model', { sessionId: this.sessionId, modelId }, OPEN_TIMEOUT_MS);
+		if (this.models) this.models = { ...this.models, currentModelId: modelId };
+	}
+
+	async setOptions(model: string | undefined, mode: PermissionMode | undefined, extra?: unknown) {
+		if (model !== undefined) await this.setModel(model);
+		if (mode !== undefined) {
+			this.mode = mode;
+			await this.modeChanged(mode);
+		}
+		if (extra && typeof extra === 'object' && 'effort' in extra && extra.effort !== undefined) throw new Error('this ACP agent does not expose reasoning effort controls');
+		return { model: model ?? this.model(), permissionMode: mode ?? null };
 	}
 
 	private async setAgentMode(modeId: string) {

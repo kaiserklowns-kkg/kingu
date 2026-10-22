@@ -95,7 +95,7 @@ const KNOWN: &[Known] = &[
 
 fn features(p: Protocol) -> Features {
   let own = matches!(p, Protocol::Claude | Protocol::Arkai);
-  Features { rewind: own, models: own }
+  Features { rewind: own, models: true }
 }
 
 /// A user-configured ACP agent.

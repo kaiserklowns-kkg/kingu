@@ -245,7 +245,7 @@ const CORE_SETTINGS: SettingSchema[] = [
 		type: 'string',
 		default: 'claude-opus-5-5',
 		description:
-			'โมเดล Claude ของงานโหมด timeline (agent host) ส่วนโหมด terminal ใช้ค่าของ CLI เอง หรือใส่ --model ใน kingu.agent.args.claude (The Claude model of timeline-mode runs; terminal-mode CLIs use their own, or --model in kingu.agent.args.claude.)'
+			'โมเดลเริ่มต้นของ Agent Chat และ agent host ส่วนงาน ADE ใน terminal ใช้ค่าของ CLI เอง หรือใส่ --model ใน kingu.agent.args.claude (The default model for Agent Chat and agent-host runs; terminal ADE tasks use their CLI’s own model, or --model in kingu.agent.args.claude.)'
 	},
 	{
 		id: 'kingu.chat.confirmRewind',
@@ -267,7 +267,7 @@ const CORE_SETTINGS: SettingSchema[] = [
 			'วางแผนเท่านั้น ไม่แก้ไขไฟล์ (Plan only; no edits or commands.)'
 		],
 		description:
-			'โหมดการขออนุญาตของงานโหมด timeline ส่วนโหมด terminal CLI ถามเองตาม flag ของมัน (How timeline-mode runs ask for permission to use tools; terminal-mode CLIs follow their own flags.)',
+			'โหมดการขออนุญาตของ agent host และ Agent Chat ส่วนงาน ADE ใน terminal CLI ถามเองตาม flag ของมัน (How agent-host runs ask for permission to use tools; terminal ADE CLIs follow their own flags.)',
 		// User-only: a repository's workspace settings must not loosen the user's permission prompts.
 		scope: 'application'
 	},
@@ -293,18 +293,6 @@ const CORE_SETTINGS: SettingSchema[] = [
 		// Cursor's "Submit with ⌘ + Enter" (chatSubmitOnCmdEnter); no VS Code or Orca setting.
 		description:
 			'ส่งข้อความในแชตด้วย ⌘Enter (Ctrl+Enter) แทน Enter แล้ว Enter จะขึ้นบรรทัดใหม่ (Send chat messages with ⌘Enter / Ctrl+Enter; Enter then adds a new line.)'
-	},
-	{
-		id: 'kingu.agent.runMode',
-		group: 'Agent',
-		type: 'string',
-		default: 'terminal',
-		enum: ['terminal', 'timeline'],
-		enumDescriptions: [
-			'รัน agent CLI ใน terminal ของ worktree แบบ Orca (Run the agent CLI in a terminal of the worktree, like Orca.)',
-			'รันผ่าน agent host แสดงเป็น timeline พร้อมการ์ดขออนุญาต (Run through the agent host as a timeline with permission cards.)'
-		],
-		description: 'วิธีรัน agent ของงานใหม่ใน Agents เลือกต่องานได้ตอนสร้าง (How new tasks run their agent; each task can pick when it is created.)'
 	},
 	{
 		id: 'kingu.agent.safetyChecks',

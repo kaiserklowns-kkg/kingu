@@ -40,7 +40,7 @@ import {
 import { switcherOrder } from './sidebarView.ts';
 import { t } from '#lib/i18n/index.ts';
 
-export type CenterPage = 'board' | 'automations' | 'issues';
+export type CenterPage = 'now' | 'board' | 'automations' | 'issues';
 /** Worktree key: '' for the folder itself (Orca's "primary" worktree), else the task slug. */
 export const PRIMARY = '';
 const STORE = 'kingu.adeTerminals';

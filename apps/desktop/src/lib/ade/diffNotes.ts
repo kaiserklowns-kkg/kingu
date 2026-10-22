@@ -113,14 +113,12 @@ export function formatNote(c: DiffNote): string {
 export const formatNotes = (notes: readonly DiffNote[]) => notes.map(formatNote).join('\n\n');
 
 /**
- * How the notes reach the task's agent: typed into its running CLI terminal (bracketed paste,
- * then Enter), as a timeline follow-up, by starting its CLI again with them as the prompt
- * (Orca's "New agent"), or nowhere (the folder has no agent: copy them instead).
+ * How the notes reach the task's agent: typed into its running CLI terminal (bracketed paste),
+ * launched in that worktree terminal when it is not running, or copied for the root folder.
  */
-export type Delivery = 'cli' | 'timeline' | 'launch' | 'none';
+export type Delivery = 'cli' | 'launch' | 'none';
 
 export function deliveryFor(t: { isTask: boolean; cli: boolean; cliRunning: boolean }): Delivery {
 	if (!t.isTask) return 'none';
-	if (!t.cli) return 'timeline';
-	return t.cliRunning ? 'cli' : 'launch';
+	return t.cli && t.cliRunning ? 'cli' : 'launch';
 }

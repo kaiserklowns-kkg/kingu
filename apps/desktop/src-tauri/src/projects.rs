@@ -97,6 +97,20 @@ impl Projects {
     found.ok_or_else(|| "project not added".into())
   }
 
+  /// Moves `dir` in front of `before` (to the end when `None`); a folder that is not added is
+  /// left alone. The order is the side bar's manual project order (`kingu.projects.orderBy`).
+  pub fn move_before(&self, dir: &Path, before: Option<&Path>) -> Result<(), String> {
+    self.update(|d| {
+      let Some(from) = d.projects.iter().position(|p| p.path == dir) else {
+        return Ok(());
+      };
+      let project = d.projects.remove(from);
+      let to = before.and_then(|b| d.projects.iter().position(|p| p.path == b)).unwrap_or(d.projects.len());
+      d.projects.insert(to, project);
+      Ok(())
+    })
+  }
+
   /// Removes `dir` (as given, or canonicalized: a folder that is gone can still be removed).
   pub fn remove(&self, dir: &Path) -> Result<(), String> {
     let canonical = dir.canonicalize().ok();
@@ -160,6 +174,12 @@ pub fn projects_add(projects: State<'_, Projects>, path: String) -> Result<Added
 }
 
 #[tauri::command]
+pub fn projects_move(projects: State<'_, Projects>, path: String, before: Option<String>) -> Result<(), String> {
+  projects.move_before(Path::new(&path), before.as_deref().map(Path::new))?;
+  Ok(())
+}
+
+#[tauri::command]
 pub fn projects_remove(projects: State<'_, Projects>, path: String) -> Result<(), String> {
   projects.remove(Path::new(&path))?;
   log::info!("project removed: {path}");
@@ -191,6 +211,21 @@ mod tests {
     assert_eq!(again.project, first.project);
     let reloaded = Projects::load(file);
     assert_eq!(reloaded.list().iter().map(|p| p.path.clone()).collect::<Vec<_>>(), vec![a.path().canonicalize().unwrap(), b.path().canonicalize().unwrap()]);
+  }
+
+  #[test]
+  fn moves_a_project_in_front_of_another_or_to_the_end_and_saves_it() {
+    let (data, a, b, c) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let file = data.path().join("projects.json");
+    let p = Projects::load(file.clone());
+    let (a, b, c) = (p.add(a.path()).unwrap().project.path, p.add(b.path()).unwrap().project.path, p.add(c.path()).unwrap().project.path);
+    p.move_before(&c, Some(&a)).unwrap();
+    assert_eq!(p.list().iter().map(|p| p.path.clone()).collect::<Vec<_>>(), vec![c.clone(), a.clone(), b.clone()]);
+    p.move_before(&a, None).unwrap();
+    assert_eq!(p.list().iter().map(|p| p.path.clone()).collect::<Vec<_>>(), vec![c.clone(), b.clone(), a.clone()]);
+    // An unknown folder changes nothing.
+    p.move_before(&data.path().join("missing"), Some(&b)).unwrap();
+    assert_eq!(Projects::load(file).list().iter().map(|p| p.path.clone()).collect::<Vec<_>>(), vec![c, b, a]);
   }
 
   #[test]

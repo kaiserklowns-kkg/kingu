@@ -32,6 +32,20 @@ export const SIDEBAR_SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.projects.orderBy',
+		group: G,
+		type: 'string',
+		default: 'manual',
+		enum: ['manual', 'recent'],
+		enumDescriptions: [
+			'ตามลำดับที่เพิ่มไว้ ลากหัวโปรเจกต์เพื่อสลับ (The order you added them; drag a project header to reorder.)',
+			'โปรเจกต์ที่มีความเคลื่อนไหวล่าสุดก่อน (The project with the latest task activity first.)'
+		],
+		description:
+			'ลำดับโปรเจกต์ในแถบข้างของ Agents (Orca: projectOrderBy) การลากหัวโปรเจกต์จะสลับมาเป็น manual ให้เอง (How the Agents side bar orders projects; dragging a project header switches to manual.)',
+		scope: 'application'
+	},
+	{
 		id: 'kingu.sidebar.sortBy',
 		group: G,
 		type: 'string',

@@ -6,7 +6,7 @@ import { runtime } from './runtime.svelte';
 import { workingTask } from './agentGuard';
 
 /**
- * True when none of `slugs` has a working agent (timeline turn or CLI hook status), or the user
+ * True when none of `slugs` has a working agent (legacy host turn or CLI hook status), or the user
  * chose to continue in the native message box. VS Code's Agents window keeps a working session's
  * worktree to the agent; Kingu lets the user override, knowingly.
  */

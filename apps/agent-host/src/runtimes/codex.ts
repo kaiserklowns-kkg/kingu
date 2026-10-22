@@ -22,6 +22,7 @@ type Waiting = { turnId: string | null; resolve: (end: TurnEnd) => void };
 
 export class CodexSession extends ProcessSession {
 	private threadModel: string | null = null;
+	private effort: string | null = null;
 	private turnId: string | null = null;
 	private waiting: Waiting | null = null;
 	/** `turn/completed` that came before `turn/start` answered. */
@@ -40,22 +41,31 @@ export class CodexSession extends ProcessSession {
 	protected async open() {
 		await this.peer.request('initialize', { clientInfo: { name: 'kingu_desktop', title: 'Kingu', version: pkg.version } }, OPEN_TIMEOUT_MS);
 		this.peer.notify('initialized');
+		const catalog = await this.peer.request<Obj>('model/list', {}).catch(() => null);
+		const models = (Array.isArray(catalog?.data) ? catalog.data : []).filter(isObj).flatMap((m) => {
+			const value = str(m.id)?.trim() || str(m.model)?.trim();
+			if (!value) return [];
+			const effortLevels = (Array.isArray(m.supportedReasoningEfforts) ? m.supportedReasoningEfforts : []).filter(isObj).map((x) => str(x.reasoningEffort)).filter((x): x is string => !!x);
+			return [{ value, display_name: str(m.displayName)?.trim() || value, description: str(m.description)?.trim() || '', ...(effortLevels.length ? { effort_levels: effortLevels } : {}) }];
+		});
+		if (models.length) this.emit({ kind: 'models', models });
 		// The enabled skills (../skills.ts) as developer instructions: Codex's own config stays untouched.
 		const params = { ...codexPolicy(this.mode), ...(this.init.skillIndex ? { developerInstructions: this.init.skillIndex } : {}) };
 		let r: Obj | null = null;
 		if (this.init.resume) {
 			try {
-				r = await this.peer.request<Obj>('thread/resume', { threadId: this.init.resume, cwd: this.cwd, ...params }, OPEN_TIMEOUT_MS);
+			r = await this.peer.request<Obj>('thread/resume', { threadId: this.init.resume, cwd: this.cwd, ...params, ...(this.init.model ? { model: this.init.model } : {}), ...(this.init.effort ? { effort: this.init.effort } : {}) }, OPEN_TIMEOUT_MS);
 			} catch (e) {
 				// A thread Codex never saved (or removed): start over.
 				this.emit({ kind: 'stderr', line: `codex could not continue the earlier thread: ${e instanceof Error ? e.message : 'error'}` });
 			}
 		}
-		r ??= await this.peer.request<Obj>('thread/start', { cwd: this.cwd, ...params }, OPEN_TIMEOUT_MS);
+		r ??= await this.peer.request<Obj>('thread/start', { cwd: this.cwd, ...params, ...(this.init.model ? { model: this.init.model } : {}), ...(this.init.effort ? { effort: this.init.effort } : {}) }, OPEN_TIMEOUT_MS);
 		const thread = isObj(r?.thread) ? r.thread : {};
 		this.sessionId = str(thread.id) ?? this.init.resume;
 		if (!this.sessionId) throw new Error('codex opened no thread');
-		this.threadModel = str(r?.model);
+		this.threadModel = str(r?.model) ?? this.init.model ?? null;
+		this.effort = this.init.effort ?? null;
 	}
 
 	protected model() {
@@ -67,7 +77,7 @@ export class CodexSession extends ProcessSession {
 		this.early.clear();
 		this.interruptWanted = false;
 		const done = new Promise<TurnEnd>((resolve) => (this.waiting = { turnId: null, resolve }));
-		const r = await this.peer.request<Obj>('turn/start', { threadId: this.sessionId, input, approvalPolicy: codexPolicy(this.mode).approvalPolicy });
+		const r = await this.peer.request<Obj>('turn/start', { threadId: this.sessionId, input, approvalPolicy: codexPolicy(this.mode).approvalPolicy, ...(this.threadModel ? { model: this.threadModel } : {}), ...(this.effort ? { effort: this.effort } : {}) });
 		const id = isObj(r?.turn) ? str(r.turn.id) : null;
 		this.turnId = id;
 		if (this.waiting) this.waiting.turnId = id;
@@ -100,6 +110,17 @@ export class CodexSession extends ProcessSession {
 
 	protected async modeChanged(_mode: PermissionMode) {
 		// The next `turn/start` carries the new approval policy.
+	}
+
+	async setOptions(model: string | undefined, mode: PermissionMode | undefined, extra?: unknown) {
+		if (model !== undefined) this.threadModel = model;
+		if (mode !== undefined) {
+			this.mode = mode;
+			await this.modeChanged(mode);
+		}
+		const effort = extra && typeof extra === 'object' && 'effort' in extra && typeof extra.effort === 'string' ? extra.effort : undefined;
+		if (effort !== undefined) this.effort = effort === 'default' ? null : effort;
+		return { model: model ?? this.threadModel, permissionMode: mode ?? null };
 	}
 
 	protected onNotification(method: string, params: unknown) {

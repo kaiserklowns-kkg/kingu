@@ -24,6 +24,7 @@
 	import { linesOf } from './chatPrompt.ts';
 	import { CLAUDE_RUNTIME } from './runtimes.ts';
 	import { modelCatalog } from './modelCatalog.svelte.ts';
+	import { modelEffortPrefs } from './modelEffortPrefs.svelte.ts';
 	import { modelChoices, modelSublabel } from './modelChoices.ts';
 	import ChatList from './ChatList.svelte';
 	import Composer from './Composer.svelte';
@@ -96,6 +97,7 @@
 	/** New chat picks: where it runs ('' = this folder, else a task slug), model, mode. */
 	let newWhere = $state('');
 	let newModel = $state(chats.defaults().model ?? '');
+	let newEffort = $state<NonNullable<import('./chats.ts').ChatMeta['effort']>>('default');
 	let newMode = $state<ChatMode>(modeOf(chats.defaults().permissionMode));
 	/** The new chat's agent (runtimes.ts); kept for the next new chat. */
 	let newRuntime = $state(runtimeOf(null));
@@ -105,7 +107,7 @@
 	let optionNote = $state('');
 	let composer: ReturnType<typeof Composer> | undefined = $state();
 	/** The composer's open dropdown: the mode pill's, the model picker or the options menu. */
-	let menuOpen = $state<'mode' | 'model' | 'options' | null>(null);
+	let menuOpen = $state<'runtime' | 'mode' | 'model' | 'effort' | 'options' | null>(null);
 	/** A queued message being edited in the input: it goes back to `index` when sent or cancelled. */
 	let editingQueued = $state<{ item: QueuedMessage; index: number } | null>(null);
 	/** `.claude/commands` and skills of where the chat runs (for a chat with no session list yet). */
@@ -158,6 +160,8 @@
 			(name) => (name === 'clear' ? t('chatInput.slash.clear') : name === 'model' ? t('chatInput.slash.model') : t('chatInput.slash.fork'))
 		)
 	);
+	const runtimeModels = $derived(chatRun?.models.length ? chatRun.models : modelCatalog.forRuntime(runtimeId));
+	const canPickModel = $derived(runtimeId === CLAUDE_RUNTIME || runtimeId === ARKAI_RUNTIME || runtimeModels.length > 0);
 	/** The mode picker: Agent / Ask / Plan, then the folder's custom agents. */
 	const chatAgent = $derived(chatMeta ? (chatMeta.agent ?? null) : newAgent);
 	const pick = $derived(modePick(chatMeta ? chatMeta.permission_mode : mode === 'ask' ? 'plan' : 'default', chatAgent));
@@ -264,7 +268,7 @@
 		const n = chatSignals.modelPicker;
 		if (n === seenModel || inEditor) return;
 		seenModel = n;
-		untrack(() => (features.models || runtimeId === ARKAI_RUNTIME) && (menuOpen = 'model'));
+		untrack(() => canPickModel && (menuOpen = 'model'));
 	});
 	$effect(() => {
 		const n = chatSignals.cancel;
@@ -346,6 +350,7 @@
 		resetInput();
 		const d = chats.defaults();
 		newModel = d.model ?? '';
+		newEffort = 'default';
 		newMode = modeOf(d.permissionMode);
 		if (focus) queueMicrotask(() => composer?.focus());
 	}
@@ -444,7 +449,8 @@
 			if (!chatMeta) {
 				const where: ChatCwd = newWhere ? { kind: 'task', slug: newWhere } : { kind: 'folder' };
 				const message = await outgoing(text, attachments, where.kind === 'folder', extra);
-				const id = await chats.create({ prompt: title, cwd: where, model: newRuntime === ARKAI_RUNTIME ? arkaiDefault(arkaiProviders.list, newModel) : newModel.trim() || chats.defaults().model, permissionMode: permissionFor(newMode, approval), message, runtime: newRuntime, agent: newAgent });
+				const model = newRuntime === ARKAI_RUNTIME ? arkaiDefault(arkaiProviders.list, newModel) : newRuntime === CLAUDE_RUNTIME ? newModel.trim() || chats.defaults().model : newModel.trim() || null;
+				const id = await chats.create({ prompt: title, cwd: where, model, effort: ['claude', 'codex'].includes(newRuntime) ? currentEffort : null, permissionMode: permissionFor(newMode, approval), message, runtime: newRuntime, agent: newAgent });
 				if (id) {
 					select(id);
 					resetInput();
@@ -673,9 +679,25 @@
 	async function changeModel(model: string) {
 		if (!chatMeta) {
 			newModel = model;
+			const nextEffort = modelEffortPrefs.get(runtimeId, effortModelId(model)) ?? 'default';
+			newEffort = runtimeModels.find((m) => m.value === model)?.effort_levels?.includes(nextEffort) ? nextEffort : 'default';
 			return;
 		}
+		modelEffortPrefs.set(runtimeId, effortModelId(currentModel), currentEffort);
 		const when = await chats.setModel(chatMeta.id, model);
+		const nextEffort = modelEffortPrefs.get(runtimeId, effortModelId(model)) ?? 'default';
+		const supportedEfforts = runtimeModels.find((m) => m.value === model)?.effort_levels ?? [];
+		await chats.setEffort(chatMeta.id, supportedEfforts.includes(nextEffort) ? nextEffort : 'default');
+		optionNote = when === 'live' ? t('chat.panel.appliedNow') : when === 'next' ? t('chat.panel.appliedNext') : '';
+	}
+
+	async function changeEffort(effort: NonNullable<import('./chats.ts').ChatMeta['effort']>) {
+		modelEffortPrefs.set(runtimeId, effortModelId(currentModel), effort);
+		if (!chatMeta) {
+			newEffort = effort;
+			return;
+		}
+		const when = await chats.setEffort(chatMeta.id, effort);
 		optionNote = when === 'live' ? t('chat.panel.appliedNow') : when === 'next' ? t('chat.panel.appliedNext') : '';
 	}
 
@@ -757,6 +779,7 @@
 	]);
 	/** The chat's model (a new chat's pick), for the trigger and the picker's check. */
 	const currentModel = $derived(chatMeta ? (chatMeta.model ?? '') : newModel);
+	const effortModelId = (model: string) => runtimeModels.find((m) => m.value === model || m.resolved_model === model)?.resolved_model ?? model;
 	const modelRows = $derived.by<MenuRow[]>(() => {
 		if (runtimeId === ARKAI_RUNTIME) {
 			const byId = new Map(arkaiProviders.list.map((p) => [p.id, p]));
@@ -766,21 +789,59 @@
 				return g.models.map((m) => ({ id: m.value, label: m.label, description: m.description, section, checked: m.value === currentModel }));
 			});
 		}
+		if (runtimeId !== CLAUDE_RUNTIME) return runtimeModels.map((m) => ({ id: m.value, label: m.display_name || m.value, ...(m.description ? { description: m.description } : {}), checked: m.value === currentModel }));
 		// The second line only when it says something the label does not (no "claude-opus-5-5" twice).
 		return modelChoices(chatMeta ? chatMeta.model : newModel, chats.defaults().model, modelCatalog.list).map((m) => {
 			const description = modelSublabel(m);
-			return { id: m.value, label: m.label, ...(description ? { description } : {}), checked: m.value === currentModel };
+			return { id: m.value, label: m.label, ...(description ? { description } : {}), checked: m.value === currentModel || m.resolved_model === currentModel };
 		});
 	});
 	const modelShort = $derived(shortModelLabel(modelRows.find((r) => r.checked)?.label || currentModel || t('composer.model.default')));
+	const currentEffort = $derived(chatMeta?.effort ?? (newEffort !== 'default' ? newEffort : modelEffortPrefs.get(runtimeId, currentModel)) ?? 'default');
+	const selectedModelInfo = $derived(
+		runtimeId === CLAUDE_RUNTIME ? modelCatalog.list.find((m) => m.value === currentModel || m.resolved_model === currentModel) : runtimeModels.find((m) => m.value === currentModel || m.resolved_model === currentModel)
+	);
+	// Claude's model catalogue is reported by the first SDK session, so a fresh install can
+	// already know the selected Opus alias while not yet having its capability row. Keep the
+	// Cursor-style effort control available for Opus in that gap; the SDK validates the value.
+	const effortLevels = $derived(selectedModelInfo?.effort_levels?.length
+		? selectedModelInfo.effort_levels
+		: runtimeId === CLAUDE_RUNTIME && /(?:^|-)opus(?:-|$)/i.test(currentModel)
+			? ['low', 'medium', 'high', 'xhigh', 'max']
+			: []);
+	const effortLabel = (level: string) => {
+		switch (level) {
+			case 'minimal': return t('chat.panel.effort.minimal');
+			case 'low': return t('chat.panel.effort.low');
+			case 'medium': return t('chat.panel.effort.medium');
+			case 'high': return t('chat.panel.effort.high');
+			case 'xhigh': return t('chat.panel.effort.xhigh');
+			case 'max': return t('chat.panel.effort.max');
+			default: return level;
+		}
+	};
+	const effortHint = (level: string) => {
+		switch (level) {
+			case 'minimal': return t('chat.panel.effort.minimalHint');
+			case 'low': return t('chat.panel.effort.lowHint');
+			case 'medium': return t('chat.panel.effort.mediumHint');
+			case 'high': return t('chat.panel.effort.highHint');
+			case 'xhigh': return t('chat.panel.effort.xhighHint');
+			case 'max': return t('chat.panel.effort.maxHint');
+			default: return undefined;
+		}
+	};
+	const effortRows = $derived<MenuRow[]>([
+		{ id: 'default', label: t('chat.panel.effort.default'), description: t('chat.panel.effort.defaultHint'), checked: currentEffort === 'default' },
+		...effortLevels.map((level) => ({ id: level, label: effortLabel(level), ...(effortHint(level) ? { description: effortHint(level) } : {}), checked: currentEffort === level }))
+	]);
 	const runtimeName = $derived(runtimeChoices(agentRuntimes.list, runtimeId).find((r) => r.id === runtimeId)?.name ?? runtimeId);
 	const runtimeProtocol = $derived(agentRuntimes.list.find((r) => r.id === runtimeId)?.protocol ?? null);
+	const runtimeRows = $derived(runtimeChoices(agentRuntimes.list, newRuntime));
+	const runtimePickerRows = $derived<MenuRow[]>(runtimeRows.map((r) => ({ id: r.id, label: r.missing ? t('chatRuntime.missing', { name: r.name }) : r.name, checked: r.id === newRuntime })));
 	const currentApproval = $derived<AgentApproval>(allowAll ? 'bypassPermissions' : chatMeta ? ((chatMeta.permission_mode === 'plan' ? approval : chatMeta.permission_mode) ?? 'default') : approval);
 	const globalAutoApprove = $derived(settings.get<boolean>('chat.tools.global.autoApprove') === true);
 	const optionRows = $derived<MenuRow[]>([
-		...(!chatMeta && agentRuntimes.list.length > 1
-			? runtimeChoices(agentRuntimes.list, newRuntime).map((r) => ({ id: `runtime:${r.id}`, label: r.missing ? t('chatRuntime.missing', { name: r.name }) : r.name, icon: 'agent' as const, section: t('chatRuntime.label'), checked: r.id === newRuntime }))
-			: []),
 		...(!chatMeta
 			? [
 					{ id: 'where:', label: workspace.name || t('chat.panel.cwdFolder'), icon: 'folder' as const, section: t('chat.panel.cwdLabel'), checked: newWhere === '' },
@@ -856,7 +917,6 @@
 		const rows = (section: string) => optionRows.filter((r) => r.section === section).map((r) => menuItem(r.id, r.label, { checked: !!r.checked, enabled: !r.disabled }));
 		const sub = (id: string, text: string, items: MenuNode[]): MenuNode[] => (items.length ? [{ type: 'submenu', id, text, items }] : []);
 		const out: MenuNode[] = [
-			...sub('runtime', t('chatRuntime.label'), rows(t('chatRuntime.label'))),
 			...sub('where', t('chat.panel.cwdLabel'), rows(t('chat.panel.cwdLabel'))),
 			...sub('run', t('composer.run.title'), rows(t('composer.run.title')))
 		];
@@ -875,7 +935,7 @@
 	let headerMenuAt = $state<{ x: number; y: number; keyboard: boolean } | null>(null);
 
 	function runHeader(id: string) {
-		if (id.startsWith('runtime:') || id.startsWith('where:') || id.startsWith('run:')) return pickOption(id);
+		if (id.startsWith('where:') || id.startsWith('run:')) return pickOption(id);
 		if (id === 'rename' && chatMeta) {
 			showList = true;
 			startRename(chatMeta.id, chatMeta.title);
@@ -917,9 +977,15 @@
 
 	function pickOption(id: string) {
 		closeMenu();
-		if (id.startsWith('runtime:')) newRuntime = id.slice(8);
-		else if (id.startsWith('where:')) newWhere = id.slice(6);
+		if (id.startsWith('where:')) newWhere = id.slice(6);
 		else if (id.startsWith('run:')) void pickApproval(id.slice(4) as AgentApproval);
+	}
+
+	function pickRuntime(id: string) {
+		newRuntime = id;
+		newModel = id === CLAUDE_RUNTIME ? chats.defaults().model ?? '' : '';
+		newEffort = modelEffortPrefs.get(id, newModel) ?? 'default';
+		newAgent = null;
 	}
 
 	async function nextMode() {
@@ -957,7 +1023,7 @@
 			<span class="min-w-0 flex-1 truncate px-1.5 font-medium">{t('chatView.history')}</span>
 		{:else}
 			<div
-				class="group/tab flex h-[26px] max-w-[70%] min-w-0 items-center gap-1.5 rounded-md bg-(--vscode-toolbar-hoverBackground) pr-0.5 pl-2"
+				class={['group/tab flex h-[26px] min-w-0 items-center gap-1.5 rounded-md bg-(--vscode-toolbar-hoverBackground) pr-0.5 pl-2', chatMeta ? 'max-w-[70%]' : 'max-w-[42%]']}
 				title={chatMeta ? `${title} · ${cwdLabel(chatMeta.cwd)}` : title}
 			>
 				{#if pendingApproval}
@@ -970,6 +1036,7 @@
 					<span class="shrink-0 text-(--vscode-descriptionForeground)"><Icon name="chat" size={13} /></span>
 				{/if}
 				<span class="min-w-0 truncate">{title}</span>
+				{#if chatMeta}<span class="hidden shrink-0 text-[10px] text-(--vscode-descriptionForeground) min-[520px]:inline">{runtimeName}</span>{/if}
 				{#if !inEditor && chatMeta}
 					<button class={[ICON_BTN, 'size-[18px] opacity-60 group-hover/tab:opacity-100']} aria-label={t('composer.header.close')} title={t('composer.header.close')} onclick={() => newChat()}><Icon name="close" size={12} /></button>
 				{/if}
@@ -1006,7 +1073,6 @@
 	{#if headerMenuAt}
 		<PopupMenu items={headerMenu} label={t('composer.header.more')} x={headerMenuAt.x} y={headerMenuAt.y} focusFirst={headerMenuAt.keyboard} onRun={(n) => n.type === 'item' && runHeader(n.id)} onClose={() => (headerMenuAt = null)} />
 	{/if}
-
 	{#if composerTop}{@render composerBlock()}{/if}
 	<div class="min-h-0 flex-1 overflow-hidden">
 		{#if showList}
@@ -1076,7 +1142,7 @@
 				root={workspace.root}
 				onanswer={(p, decision, message, answers) => chatMeta && chats.answer(chatMeta.id, p.request_id, decision, message, answers)}
 				actions={{
-					retry: features.rewind ? () => chatMeta && void chatRewind.retry(chatMeta.id) : undefined,
+				retry: () => chatMeta && void (features.rewind ? chatRewind.retry(chatMeta.id) : chats.retry(chatMeta.id)),
 					edit: editRequest,
 					editInline: features.rewind ? editInline : undefined,
 					implement: mode === 'ask' ? implement : undefined,
@@ -1196,6 +1262,32 @@
 				onsubmit={submit}
 			>
 				{#snippet left(l)}
+					{#if !inEditor && !chatMeta && runtimeRows.length > 1}
+						<div class="relative flex min-w-0 shrink-0">
+							<button
+								type="button"
+								class="flex h-[22px] min-w-0 items-center gap-1 rounded-md px-1.5 text-xs text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)"
+								aria-label={t('chatRuntime.label')}
+								title={t('chatRuntime.label')}
+								aria-haspopup="listbox"
+								aria-expanded={menuOpen === 'runtime'}
+								onclick={() => (menuOpen = menuOpen === 'runtime' ? null : 'runtime')}
+							>
+								<Icon name="agent" size={12} /><span class="max-w-24 truncate">{runtimeName}</span><Icon name="chevronDown" size={10} />
+							</button>
+							{#if menuOpen === 'runtime'}
+								<ComposerMenu
+									rows={runtimePickerRows}
+									below={composerTop}
+									width={240}
+									label={t('chatRuntime.label')}
+									search={runtimePickerRows.length > 6}
+									onpick={(id) => (closeMenu(), pickRuntime(id))}
+									onclose={closeMenu}
+								/>
+							{/if}
+						</div>
+					{/if}
 					<!-- The mode pill: its colour and icon per mode (Cursor's), ⌘. / ⇧Tab cycles. -->
 					<div class="relative flex min-w-0 shrink-0">
 						<button
@@ -1230,7 +1322,7 @@
 							/>
 						{/if}
 					</div>
-					{#if features.models || runtimeId === ARKAI_RUNTIME}
+					{#if canPickModel && (modelRows.length > 0 || runtimeId === CLAUDE_RUNTIME || runtimeId === ARKAI_RUNTIME)}
 						<!-- The model label (Cursor's compact trigger), ⌘/ opens it. -->
 						<div class="relative flex min-w-0">
 							<button
@@ -1256,6 +1348,30 @@
 									onpick={(id) => (closeMenu(), void changeModel(id))}
 									onclose={closeMenu}
 								/>
+							{/if}
+							{#if effortLevels.length > 0}
+								<button
+									type="button"
+									class="flex h-[22px] shrink-0 items-center gap-0.5 rounded-md px-1 text-xs text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)"
+									aria-label={`${t('chat.panel.effort')}: ${effortLabel(currentEffort)}`}
+									title={`${t('chat.panel.effort')}: ${effortLabel(currentEffort)}`}
+									aria-haspopup="listbox"
+									aria-expanded={menuOpen === 'effort'}
+									onclick={() => (menuOpen = menuOpen === 'effort' ? null : 'effort')}
+								>
+									<Icon name="sparkle" size={12} />
+									{#if l.modelLabel}<span>{effortLabel(currentEffort)}</span>{/if}
+								</button>
+								{#if menuOpen === 'effort'}
+									<ComposerMenu
+									rows={effortRows}
+									below={composerTop}
+									label={t('chat.panel.effort')}
+									width={270}
+									onpick={(id) => (closeMenu(), void changeEffort(id as NonNullable<import('./chats.ts').ChatMeta['effort']>))}
+									onclose={closeMenu}
+									/>
+								{/if}
 							{/if}
 						</div>
 					{/if}

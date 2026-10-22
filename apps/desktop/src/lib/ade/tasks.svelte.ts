@@ -1,9 +1,9 @@
-// ADE tasks (Orca-style: one task = one git worktree with an agent). Task metadata is persisted in
-// `<root>/.kingu/tasks.json` through Rust; live state comes from the TaskRuntime adapter; diff
-// stats come from `worktree_diff_stat`. Runs go through the agent host's `agents` store (via the
-// runtime adapter); when a turn or run ends its status, usage and session id are saved here so a
-// task can be continued after a restart. Views read `adeTasks.views / groups`; actions confirm
-// destructive steps with a native dialog and report results in the status bar.
+// ADE tasks (Orca-style: one task = one git worktree with an agent CLI in its terminal). Task
+// metadata is persisted in `<root>/.kingu/tasks.json` through Rust; live state comes from the
+// TaskRuntime adapter (the CLI's terminal and hook evidence); diff stats come from
+// `worktree_diff_stat`. A task saved by an older Kingu timeline is migrated to a terminal agent
+// when it is started. Views read `adeTasks.views / groups`; actions confirm destructive steps with
+// a native dialog and report results in the status bar.
 
 import { team } from '#lib/team/team.svelte.ts';
 import { runKey, syncKey, toTeamRun, toTeamTask } from './teamSync.ts';
@@ -14,7 +14,7 @@ import { ask, message } from '#lib/workbench/messageBox.ts';
 import { removalGate } from './agentPresence';
 import { clientLog } from '#lib/client-log.ts';
 import { agents } from '#lib/agent/agents.svelte.ts';
-import type { Decision, WorktreeInfo } from '#lib/agent/events.ts';
+import type { WorktreeInfo } from '#lib/agent/events.ts';
 import { commands } from '#lib/workbench/commands.svelte.ts';
 import { editors } from '#lib/workbench/editors.svelte.ts';
 import { layout } from '#lib/workbench/layout.svelte.ts';
@@ -39,9 +39,7 @@ import {
 	taskChanges,
 	type TaskChange,
 	renamedTitle,
-	runSummary,
 	toTaskRuntime,
-	sameSummary,
 	toggleAccepted,
 	uniqueSlug,
 	type DiffStat,
@@ -59,7 +57,7 @@ import { agentCommand, cliAgent, cliOf, launchOptions, withLaunchOptions, type R
 import { noDaemonProgram, withNoDaemon } from '#lib/ade/codexServer.ts';
 import { profileOf, programOf } from '#lib/ade/agentProfiles.ts';
 import { chooseAgentCli } from '#lib/ade/agentPicker.ts';
-import { composeMessage, promptWithAttachments, type Attachment } from '#lib/agent/attachments.ts';
+import { promptWithAttachments, type Attachment } from '#lib/agent/attachments.ts';
 import { cliSessions } from './cliSessions.svelte';
 import { projects } from './projects.svelte';
 import { projectBadge, strayRuns } from './projects';
@@ -334,9 +332,9 @@ class AdeTasks {
 	// Lifecycle
 
 	/**
-	 * Creates the worktree, saves the task and starts the agent; opens the task page. `mode`:
-	 * `terminal` runs the agent CLI (`kingu.agent.cli`) in a terminal of the worktree, the Orca way;
-	 * `timeline` runs it through the agent host. Without one, `kingu.agent.runMode` decides.
+	 * Creates the worktree, saves the task and starts the agent in its worktree terminal, the Orca
+	 * way. `mode` remains in the public input only so old automations and CLI clients stay
+	 * compatible; ADE never creates an in-app timeline run.
 	 * `open: false` (automations) leaves the user's view alone.
 	 */
 	/** `slugHint`: the branch name to start from when the title has no Latin letters (e.g. an automation id).
@@ -352,7 +350,7 @@ class AdeTasks {
 		issue?: IssueLink;
 		/** `automation`: an automation started it (kingu.sidebar.hideAutomationTasks). */
 		origin?: 'automation';
-		/** Composer attachments: image blocks for a timeline run, path references for a CLI. */
+		/** Composer attachments: path references appended to the CLI's prompt. */
 		attachments?: Attachment[];
 		/** Where the branch comes from: a new one from `base` (default), an existing branch, or a PR. */
 		source?: TaskSource;
@@ -373,11 +371,10 @@ class AdeTasks {
 		const prompt = input.prompt.trim() || (source.kind === 'new' ? title : '');
 		// Without a pick, fork from kingu.worktree.baseBranch or the folder's current branch (so merging back has a branch).
 		const base = input.base || this.defaultBase() || status.branch || 'HEAD';
-		const mode = input.mode ?? (settings.get<RunMode>('kingu.agent.runMode') === 'timeline' ? 'timeline' : 'terminal');
-		const configured = mode === 'terminal' ? agentCommand((k) => settings.get<string>(k)) : null;
+		const configured = agentCommand((k) => settings.get<string>(k));
 		// An attempt's model goes into its command, so a resume keeps it.
 		const cli = configured && input.model ? withModel(configured, input.model) : configured;
-		if (mode === 'terminal' && !cli) {
+		if (!cli) {
 			status.flash(t('adeTasks.tasks.badCli'), 10000);
 			return;
 		}
@@ -437,11 +434,7 @@ class AdeTasks {
 		if (marker) await this.#waitForSetup(slug, marker);
 		// After the prompt: claude's --mcp-config takes several values and would swallow it.
 		const attachments = input.attachments ?? [];
-		if (cli) await this.#launchCli(slug, cli, prompt ? { prompt: promptWithAttachments(prompt, attachments) } : { fresh: true });
-		else if (prompt) {
-			const message = composeMessage(prompt, attachments);
-			await this.run(slug, message.text, message.images);
-		}
+		await this.#launchCli(slug, cli, prompt ? { prompt: promptWithAttachments(prompt, attachments) } : { fresh: true });
 		if (autoName) void this.autoNameBranch(slug);
 		if (pr) void prStatuses.refresh(slug);
 		return slug;
@@ -792,8 +785,11 @@ class AdeTasks {
 	/** After a restart: start the task's CLI again in its worktree, continuing its latest session where the CLI can. */
 	async resumeCli(slug: string, fresh = false) {
 		const meta = this.list.find((t) => t.slug === slug);
-		const cli = meta && cliOf(meta.agent);
+		const cli = meta && (cliOf(meta.agent) ?? agentCommand((k) => settings.get<string>(k)));
 		if (!cli) return;
+		// ADE used to have a host-backed timeline. Let an old task continue safely in the
+		// configured terminal agent instead of reviving that UI path.
+		if (!cliOf(meta.agent)) await this.#patch(slug, { agent: cliAgent(cli), session_id: null });
 		await this.#launchCli(slug, cli, fresh ? { fresh: true } : { resume: meta.session_id });
 	}
 
@@ -867,66 +863,50 @@ class AdeTasks {
 
 	/**
 	 * Continue Session… (Orca's agent session continuation): picks an earlier session of the task
-	 * up again. A CLI task restarts its CLI resuming it; a timeline task resumes it with the next
-	 * message. A session the task's agent cannot resume (another CLI's) is handed off instead.
+	 * up again in a worktree terminal. A session the task's agent cannot resume is handed off.
 	 */
 	async continueSession(slug: string, session: SessionRef) {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta) return;
-		const cli = cliOf(meta.agent);
+		const cli = cliOf(meta.agent) ?? agentCommand((k) => settings.get<string>(k));
 		if (!canResumeWith(meta.agent, session.agent)) return this.handOff(slug, session, cli);
 		if (runtime.isWorking(slug) || cliSessions.working(slug)) return status.flash(t('adeWorkflow.stopFirst', { title: meta.title }));
-		if (cli) {
-			await this.#patch(slug, { session_id: session.id });
-			status.flash(t('adeWorkflow.resuming', { id: session.id.slice(0, 8), agent: programOf(cli) }));
-			await this.#launchCli(slug, cli, { resume: session.id });
-			return;
-		}
-		if (runtime.isLive(slug)) await this.stop(slug);
-		await this.#patch(slug, { session_id: session.id });
-		status.flash(t('adeWorkflow.nextMessageResumes', { id: session.id.slice(0, 8) }));
+		if (!cli) return status.flash(t('adeTasks.tasks.badCli'), 10000);
+		await this.#patch(slug, { agent: cliAgent(cli), session_id: session.id });
+		status.flash(t('adeWorkflow.resuming', { id: session.id.slice(0, 8), agent: programOf(cli) }));
+		await this.#launchCli(slug, cli, { resume: session.id });
 	}
 
 	/**
-	 * Hand Off to Another Agent (Orca's AgentSessionContinuationDialog): starts `cli` (or the
-	 * timeline agent for null) in the task's worktree with a prompt pointing at the session's
-	 * transcript; the task's agent becomes that one.
+	 * Hand Off to Another Agent (Orca's AgentSessionContinuationDialog): starts a terminal CLI in
+	 * the task's worktree with a prompt pointing at the session's transcript.
 	 */
 	async handOff(slug: string, session: SessionRef, cli: string[] | null) {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta || !workspace.root) return;
 		if (runtime.isWorking(slug) || cliSessions.working(slug)) return status.flash(t('adeWorkflow.stopFirst', { title: meta.title }));
 		const prompt = handOffPrompt({ agent: session.agent, id: session.id, cwd: `${workspace.root}/${worktreeDir(slug)}`, title: meta.title, prompt: meta.prompt, summary: meta.last_run?.summary });
-		if (cli) {
-			await this.#patch(slug, { agent: cliAgent(cli) });
-			await this.#launchCli(slug, cli, { prompt });
-		} else {
-			if (runtime.isLive(slug)) await this.stop(slug);
-			cliSessions.end(slug);
-			await this.#patch(slug, { agent: 'claude-code', session_id: null });
-			await this.run(slug, prompt);
-		}
-		status.flash(t('adeWorkflow.handedOff', { title: meta.title, agent: cli ? programOf(cli) : 'Claude' }));
+		const target = cli ?? agentCommand((k) => settings.get<string>(k));
+		if (!target) return status.flash(t('adeTasks.tasks.badCli'), 10000);
+		await this.#patch(slug, { agent: cliAgent(target), session_id: null });
+		await this.#launchCli(slug, target, { prompt });
+		status.flash(t('adeWorkflow.handedOff', { title: meta.title, agent: programOf(target) }));
 	}
 
-	/** Starts the agent in the task worktree through the agents store. */
-	async run(slug: string, prompt: string, images: string[] = []) {
-		try {
-			await runtime.start(slug, prompt, null, images, this.list.find((t) => t.slug === slug)?.attempt_model ?? null);
-			await this.#patch(slug, { status: 'running' });
-		} catch (e) {
-			notifications.error(t('adeTasks.tasks.startAgentFailed', { error: String(e) }));
-			await this.#patch(slug, { status: 'failed' });
-		}
-	}
-
-	/** Follow-up message: into the open session, else resuming the task's session (saved in tasks.json). */
+	/** Follow-up message: paste into the task terminal, or launch its CLI with the prompt. */
 	async followUp(slug: string, text: string, attachments: Attachment[] = []): Promise<boolean> {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta || !text.trim()) return false;
-		const message = composeMessage(text, attachments);
+		const cli = cliOf(meta.agent) ?? agentCommand((k) => settings.get<string>(k));
+		if (!cli) {
+			status.flash(t('adeTasks.tasks.badCli'), 10000);
+			return false;
+		}
+		const prompt = promptWithAttachments(text, attachments);
 		try {
-			await runtime.followUp(slug, message.text, meta.session_id, message.images, meta.attempt_model ?? null);
+			if (!cliOf(meta.agent)) await this.#patch(slug, { agent: cliAgent(cli), session_id: null });
+			if (cliSessions.has(slug)) await cliSessions.paste(slug, prompt);
+			else await this.#launchCli(slug, cli, { prompt });
 			if (meta.status !== 'running') await this.#patch(slug, { status: 'running' });
 			return true;
 		} catch (e) {
@@ -935,48 +915,20 @@ class AdeTasks {
 		}
 	}
 
-	/** Starts the task's CLI again in its worktree with `prompt` (Orca's "New agent" for review notes). */
-	async startCliWith(slug: string, prompt: string): Promise<boolean> {
-		const meta = this.list.find((t) => t.slug === slug);
-		const cli = meta && cliOf(meta.agent);
-		if (!cli) return false;
-		await this.#launchCli(slug, cli, { prompt });
-		return true;
-	}
-
-	answer(slug: string, requestId: string, decision: Decision, message?: string, answers?: Record<string, string>) {
-		return runtime.answer(slug, requestId, decision, message, answers).catch((e) => notifications.error(t('adeTasks.tasks.answerFailed', { error: String(e) })));
-	}
-
-	/** Stops the current turn; the session stays open for follow-ups. */
-	interrupt(slug: string) {
-		return runtime.interrupt(slug).catch((e) => notifications.error(e));
-	}
-
-	/** Ends the run (continue later with a follow-up, which resumes the session). */
-	stop(slug: string) {
-		return runtime.stop(slug).catch((e) => notifications.error(e));
-	}
-
 	/**
-	 * Called when a run's state changes, so tasks.json follows it: status, model, the session id
-	 * (to resume after a restart) and, after each turn and when the run ends, its summary and usage.
+	 * Stops the current turn: Ctrl-C in the task's CLI terminal (the session stays open), or the
+	 * legacy host run if a task still has one.
 	 */
-	syncRuntime(slug: string) {
-		const run = runtime.run(slug);
-		const rt = runtime.get(slug);
-		const meta = this.list.find((t) => t.slug === slug);
-		if (!run || !rt || !meta) return;
-		const patch: Partial<TaskMeta> = {};
-		if (rt.status !== meta.status && !(meta.status === 'done' && rt.status === 'review')) patch.status = rt.status;
-		if (rt.model && rt.model !== meta.model) patch.model = rt.model;
-		if (run.sessionId && run.sessionId !== meta.session_id) patch.session_id = run.sessionId;
-		if (run.ended || run.status === 'idle') {
-			const summary = runSummary(run, Date.now(), run.startedAt);
-			if (!sameSummary(summary, meta.last_run)) patch.last_run = summary;
-		}
-		if (Object.keys(patch).length) void this.#patch(slug, patch);
-		if (rt.status === 'review' || rt.status === 'failed') void this.refreshStat(slug);
+	async interrupt(slug: string) {
+		if (runtime.run(slug)) return runtime.interrupt(slug).catch((e) => notifications.error(e));
+		if (cliSessions.has(slug) && (await cliSessions.interrupt(slug))) return;
+		status.flash(t('ade.cli.noneRunning'));
+	}
+
+	/** Ends the task's agent: its terminal closes (continue later with a follow-up). */
+	async stop(slug: string) {
+		if (runtime.run(slug)) await runtime.stop(slug).catch((e) => notifications.error(e));
+		if (cliSessions.has(slug)) cliSessions.end(slug);
 	}
 
 	/** The branch removal a task gets by default (`kingu.worktree.deleteBranchOnRemove`, merged or not). */
@@ -1293,8 +1245,7 @@ class AdeTasks {
 	// Landing the PR (Orca's Checks panel: merge, fix failing checks, review comments)
 
 	/**
-	 * Hands `prompt` to the task's agent: pasted into its running CLI, a new CLI session when none
-	 * runs, or a follow-up in the timeline. The folder itself (`''`) has no agent, so the prompt
+	 * Hands `prompt` to the task's terminal agent. The folder itself (`''`) has no agent, so the prompt
 	 * is copied for the user to paste where they like.
 	 */
 	async sendToAgent(slug: string, prompt: string, what: string): Promise<boolean> {
@@ -1307,11 +1258,8 @@ class AdeTasks {
 			status.flash(copied ? t('adeTasks.tasks.promptCopied', { what }) : t('adeTasks.tasks.promptCopyFailed', { what }), 8000);
 			return copied;
 		}
-		const cli = cliOf(meta.agent);
 		try {
-			if (cli && cliSessions.has(slug)) await cliSessions.paste(slug, prompt);
-			else if (cli) await this.#launchCli(slug, cli, { prompt });
-			else await this.followUp(slug, prompt);
+			if (!(await this.followUp(slug, prompt))) return false;
 		} catch (e) {
 			status.flash(t('adeTasks.tasks.sendToAgentFailed', { what, error: String(e) }), 10000);
 			return false;
@@ -1454,13 +1402,10 @@ export const adeTasks = new AdeTasks();
 
 /** Workbench wiring: loads tasks per folder, follows runtime changes, registers commands. */
 export function installAde(): () => void {
-	const synced = new Map<string, string>();
 	const stopEffects = $effect.root(() => {
 		$effect(() => {
 			void workspace.root;
 			untrack(() => {
-				// Runs stay in the agents store across folders; re-sync this folder's after loading.
-				synced.clear();
 				void adeTasks.load();
 				void diffNotes.load();
 			});
@@ -1496,15 +1441,6 @@ export function installAde(): () => void {
 			void v?.runtime?.updatedAt;
 			void v?.meta.updated_at;
 			untrack(() => appMode.markViewed(slug));
-		});
-		$effect(() => {
-			if (!adeTasks.loaded) return;
-			for (const rt of runtime.all()) {
-				const sig = `${rt.status}|${rt.runStatus}|${rt.model ?? ''}|${rt.sessionId ?? ''}|${rt.usage ?? ''}|${rt.error ?? ''}`;
-				if (synced.get(rt.slug) === sig) continue;
-				synced.set(rt.slug, sig);
-				untrack(() => adeTasks.syncRuntime(rt.slug));
-			}
 		});
 	});
 	const tick = setInterval(() => (adeTasks.now = Date.now()), 30_000);

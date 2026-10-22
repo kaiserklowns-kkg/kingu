@@ -1485,6 +1485,7 @@ pub fn run() {
       project::project_create,
       projects::projects_list,
       projects::projects_add,
+      projects::projects_move,
       projects::projects_remove,
       pty_spawn,
       pty::pty_write,

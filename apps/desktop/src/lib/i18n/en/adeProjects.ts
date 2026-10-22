@@ -8,6 +8,7 @@ export const adeProjects = {
 	'adeProjects.addFailed': 'Could not add the project: {error}',
 	'adeProjects.removed': '{name} removed from the side bar',
 	'adeProjects.removeFailed': 'Could not remove the project: {error}',
+	'adeProjects.moveFailed': 'Could not reorder the project: {error}',
 	'adeProjects.loadFailed': 'Could not read this project: {error}',
 	'adeProjects.open': 'Open Project',
 	'adeProjects.remove': 'Remove Project',

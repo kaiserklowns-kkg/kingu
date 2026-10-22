@@ -1,28 +1,49 @@
-// `modelCatalog.list`: the models the last session listed (agent-host `models` event, from the SDK's
-// `supportedModels()`), kept in localStorage so the picker has them before any session starts.
+// Per-runtime model catalogs, kept so a chat can pick from its harness's known models before its
+// next session starts. This mirrors the old Agents Window's session-type-scoped model providers.
 
 import { chats } from './chats.svelte.ts';
+import { CLAUDE_RUNTIME } from './runtimes.ts';
 import { parseCachedModels } from './modelChoices.ts';
 import type { ModelOption } from './events';
 
-const KEY = 'kingu.chat.models';
+const KEY = 'kingu.chat.modelsByRuntime';
+const LEGACY_KEY = 'kingu.chat.models';
 
-function read(): ModelOption[] {
+function read(): Record<string, ModelOption[]> {
 	try {
-		return parseCachedModels(localStorage.getItem(KEY));
+		const saved = localStorage.getItem(KEY);
+		if (saved) {
+			const value: unknown = JSON.parse(saved);
+			if (value && typeof value === 'object' && !Array.isArray(value)) {
+				return Object.fromEntries(Object.entries(value).flatMap(([runtime, models]) => {
+					const parsed = parseCachedModels(JSON.stringify(models));
+					return parsed.length ? [[runtime, parsed]] : [];
+				}));
+			}
+		}
+		const legacy = parseCachedModels(localStorage.getItem(LEGACY_KEY));
+		return legacy.length ? { [CLAUDE_RUNTIME]: legacy } : {};
 	} catch {
-		return [];
+		return {};
 	}
 }
 
 class ModelCatalog {
-	list = $state<ModelOption[]>(read());
+	private catalogs = $state<Record<string, ModelOption[]>>(read());
 
-	set(models: ModelOption[]) {
+	get list() {
+		return this.forRuntime(CLAUDE_RUNTIME);
+	}
+
+	forRuntime(runtime: string) {
+		return this.catalogs[runtime] ?? [];
+	}
+
+	set(runtime: string, models: ModelOption[]) {
 		if (!models.length) return;
-		this.list = models;
+		this.catalogs = { ...this.catalogs, [runtime]: models };
 		try {
-			localStorage.setItem(KEY, JSON.stringify(models));
+			localStorage.setItem(KEY, JSON.stringify(this.catalogs));
 		} catch {
 			// Storage off: the list lasts until the app quits.
 		}
@@ -30,6 +51,6 @@ class ModelCatalog {
 }
 
 export const modelCatalog = new ModelCatalog();
-chats.onEvent((_, ev) => {
-	if (ev.kind === 'models') modelCatalog.set(ev.models);
+chats.onEvent((id, ev) => {
+	if (ev.kind === 'models') modelCatalog.set(chats.get(id)?.runtime || CLAUDE_RUNTIME, ev.models);
 });

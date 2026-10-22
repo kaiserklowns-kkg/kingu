@@ -9,7 +9,7 @@
 
 import { blockingThreats, threatSummary } from '../guards/security.ts';
 import { snapshotOf } from '../snapshots.ts';
-import { DECISIONS, type AgentEvent, type AnswerParams, type Decision, type McpServerParams, type PermissionMode, type Usage } from '../protocol.ts';
+import { DECISIONS, type AgentEvent, type AnswerParams, type Decision, type EffortLevel, type McpServerParams, type PermissionMode, type Usage } from '../protocol.ts';
 import { summarizeTool } from '../normalize.ts';
 import { JsonRpcPeer, linesOf, type PeerOptions } from './rpc.ts';
 import { autoDecision, SESSION_ID, type ToolKind, type ToolView } from './tools.ts';
@@ -56,6 +56,8 @@ export type SessionInit = {
 	images: ImageBlock[];
 	imagePaths: string[];
 	mode: PermissionMode;
+	model?: string | null;
+	effort?: EffortLevel | null;
 	resume: string | null;
 	mcpServers: Record<string, McpServerParams>;
 	env: Record<string, string | undefined>;
@@ -376,6 +378,7 @@ export abstract class RunSession {
 	/** `extra`: what a runtime may need besides the model id (Arkai: the model's provider). */
 	async setOptions(model: string | undefined, mode: PermissionMode | undefined, _extra?: unknown): Promise<{ model: string | null; permissionMode: PermissionMode | null }> {
 		if (model !== undefined) throw new SessionError(UNSUPPORTED, 'this agent cannot change the model mid-session');
+		if (_extra && typeof _extra === 'object' && 'effort' in _extra && _extra.effort !== undefined) throw new SessionError(UNSUPPORTED, 'this agent cannot change reasoning effort');
 		if (mode !== undefined) {
 			this.mode = mode;
 			await this.modeChanged(mode).catch((e) => this.log(`mode not passed on: ${e instanceof Error ? e.message : 'error'}`));

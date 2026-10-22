@@ -11,12 +11,14 @@ import type { ArkaiSpec } from './arkai/spec.ts';
 /** `bypassPermissions` is "Allow all": no prompts at all (the app confirms it with the user first). */
 export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions';
 export const PERMISSION_MODES: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan', 'bypassPermissions'];
+export type EffortLevel = 'default' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export type StartParams = {
 	runId: number;
 	cwd: string;
 	prompt: string;
 	model?: string | null;
+	effort?: EffortLevel | null;
 	permissionMode?: PermissionMode | null;
 	/** Session id to continue (from an earlier `system`/`result` event). */
 	resume?: string | null;
@@ -83,7 +85,7 @@ export type RunParams = { runId: number };
  * Mid-session change of the live run's model and/or permission mode (at least one). `provider`:
  * an Arkai model of another provider comes with that provider (arkai/spec.ts).
  */
-export type SetOptionsParams = { runId: number; model?: string | null; permissionMode?: PermissionMode | null; provider?: unknown };
+export type SetOptionsParams = { runId: number; model?: string | null; effort?: EffortLevel | null; permissionMode?: PermissionMode | null; provider?: unknown };
 /**
  * `allow` once; `allow_always` for the rest of this session; `allow_workspace` from now on in this
  * folder (the SDK writes the rule to `.claude/settings.local.json`, which is not committed);
@@ -110,7 +112,7 @@ export type DiffStats = { added: number; removed: number };
 export type SlashCommandInfo = { name: string; description: string; argument_hint: string };
 
 /** A model the session can use (SDK `ModelInfo` from `supportedModels()`). */
-export type ModelOption = { value: string; display_name: string; description: string };
+export type ModelOption = { value: string; resolved_model?: string; display_name: string; description: string; effort_levels?: string[] };
 /** One MCP server of the live session (SDK `mcpServerStatus()`): `tools` are their bare names. */
 export type McpServerLive = { name: string; status: string; error: string | null; source: string | null; tools: string[] };
 

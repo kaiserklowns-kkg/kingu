@@ -21,7 +21,7 @@ export type Decision = 'allow' | 'allow_always' | 'allow_workspace' | 'allow_use
 export type SessionCommand = { name: string; description: string; argument_hint: string };
 
 /** A model the session can use (SDK `supportedModels()`). */
-export type ModelOption = { value: string; display_name: string; description: string };
+export type ModelOption = { value: string; resolved_model?: string; display_name: string; description: string; effort_levels?: string[] };
 
 /** How full the context window was after the last turn. */
 export type ContextUsage = { used: number; max: number };
@@ -161,6 +161,7 @@ export type RunState = {
 	decisions: Record<string, Decision | 'cancelled'>;
 	sessionId: string | null;
 	model: string | null;
+	models: ModelOption[];
 	/** Latest result (its cost and usage are cumulative for the session). */
 	result: ResultEvent | null;
 	error: string | null;
@@ -183,6 +184,7 @@ export function initialRun(): RunState {
 		decisions: {},
 		sessionId: null,
 		model: null,
+		models: [],
 		result: null,
 		error: null,
 		ended: false,
@@ -216,6 +218,8 @@ export function applyEvent(s: RunState, ev: AgentEvent): void {
 			s.commands = ev.commands;
 			return;
 		case 'models':
+			s.models = ev.models;
+			return;
 		case 'mcp_status':
 			// Kept by the MCP store (mcp/mcp.svelte.ts), not by the run.
 			return;

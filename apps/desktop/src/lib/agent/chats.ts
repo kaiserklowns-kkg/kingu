@@ -28,6 +28,8 @@ export type ChatMeta = {
 	/** After a rewind or a fork: the next run resumes `session_id` up to this message, in a fork of it (Rust `rewind.rs`). */
 	resume_at?: string | null;
 	model: string | null;
+	/** The selected model's per-chat reasoning effort, when that runtime/model supports one. */
+	effort?: 'default' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null;
 	permission_mode: PermissionMode | null;
 	/** Which agent runs it (runtimes.ts); absent: Claude (Rust defaults it). */
 	runtime?: string;
@@ -59,7 +61,7 @@ export const initialTitle = (prompt: string) => taskTitleFromPrompt(prompt.trim(
 /** Whether a finished turn should get the chat an AI title: never renamed, and still its first-prompt title. */
 export const wantsAiTitle = (meta: Pick<ChatMeta, 'title' | 'title_auto' | 'prompt'>) => meta.title_auto === true && !!meta.prompt.trim() && meta.title === initialTitle(meta.prompt);
 
-export function newChat(input: { prompt: string; cwd: ChatCwd; model: string | null; permissionMode: PermissionMode | null; runtime?: string; agent?: string | null }, now: number, id = newChatId(now)): ChatMeta {
+export function newChat(input: { prompt: string; cwd: ChatCwd; model: string | null; effort?: ChatMeta['effort']; permissionMode: PermissionMode | null; runtime?: string; agent?: string | null }, now: number, id = newChatId(now)): ChatMeta {
 	const prompt = input.prompt.trim();
 	return {
 		...(input.agent ? { agent: input.agent } : {}),
@@ -70,6 +72,7 @@ export function newChat(input: { prompt: string; cwd: ChatCwd; model: string | n
 		cwd: input.cwd,
 		session_id: null,
 		model: input.model?.trim() || null,
+		effort: input.effort ?? null,
 		permission_mode: input.permissionMode,
 		runtime: input.runtime || CLAUDE_RUNTIME,
 		created_at: now,

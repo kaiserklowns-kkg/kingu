@@ -117,8 +117,8 @@ export function topRow(rows: readonly AgentRow[]): AgentRow | undefined {
 const rowStatus = (r: AgentRow): TaskStatus => (r.state === 'permission' || r.state === 'question' ? 'waiting' : r.state === 'working' ? 'running' : 'review');
 
 /**
- * A task's runtime with the agents of its other terminal panes: the launched agent (timeline run
- * or CLI) stays the base; a pane that needs you or works raises the task's status the way Orca's
+ * A task's runtime with the agents of its other terminal panes: the launched agent (legacy host
+ * run or CLI) stays the base; a pane that needs you or works raises the task's status the way Orca's
  * card takes its most urgent agent. Without a base the panes alone make the runtime.
  */
 export function withPaneAgents(slug: string, base: TaskRuntime | undefined, rows: readonly AgentRow[]): TaskRuntime | undefined {
@@ -170,7 +170,7 @@ export function rowText(r: AgentRow): string {
 /** A row's dot in the side bar's status vocabulary (sidebarModel.ts CardStatus). */
 export const rowCardStatus = (r: AgentRow): 'working' | 'permission' | 'done' => (r.state === 'working' ? 'working' : r.state === 'idle' ? 'done' : 'permission');
 
-/** Removing a task: a working timeline run must be stopped first; agents in terminals are asked about (removal kills them). */
+/** Removing a task: a working legacy host run must be stopped first; agents in terminals are asked about (removal kills them). */
 export function removalGate(timelineWorking: boolean, terminalWorking: boolean): 'block' | 'confirm' | 'ok' {
 	if (timelineWorking) return 'block';
 	return terminalWorking ? 'confirm' : 'ok';

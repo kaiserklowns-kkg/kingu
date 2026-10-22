@@ -2,15 +2,14 @@
 	// Issues page (Agents layout center, from the side bar): every connected tracker in one list
 	// (the folder's GitHub issues, a GitHub Project, Linear, GitLab, Jira), filtered by source, to
 	// mine or all, by label and search. A row starts a task (a small confirm with the base branch
-	// and run mode, like the composer) or opens the issue; a row that already has a task links to it.
+	// and terminal agent) or opens the issue; a row that already has a task links to it.
 	import { onMount } from 'svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { quick } from '#lib/workbench/quick.svelte.ts';
 	import { adeLayout } from './adeLayout.svelte.ts';
-	import type { RunMode } from './agentCli.ts';
-	import { defaultBase, defaultRunMode } from './issues.svelte.ts';
+	import { defaultBase } from './issues.svelte.ts';
 	import { linear } from './linear.svelte.ts';
 	import { timeAgo } from './model.ts';
 	import { sources } from './taskSources.svelte.ts';
@@ -21,7 +20,6 @@
 	let label = $state(sources.filter.label);
 	let search = $state(sources.filter.search);
 	let base = $state('');
-	let mode = $state<RunMode>(defaultRunMode());
 	let busy = $state(false);
 	const cliSetting = $derived(settings.get<string>('kingu.agent.cli') ?? '');
 	const enabled = $derived(sources.enabled());
@@ -56,13 +54,12 @@
 	function confirm(item: SourceItem) {
 		sources.confirming = item;
 		base = defaultBase();
-		mode = defaultRunMode();
 	}
 
 	async function start(item: SourceItem) {
 		busy = true;
 		try {
-			await sources.start(item, base, mode);
+			await sources.start(item, base, 'terminal');
 		} finally {
 			busy = false;
 		}
@@ -180,13 +177,7 @@
 										{#if !adeTasks.branches.length}<option value="">HEAD</option>{/if}
 									</select>
 								</label>
-								<label class="flex items-center gap-1">
-									<span class="text-(--vscode-descriptionForeground)">{t('adeSources.runAs')}</span>
-									<select class={[INPUT, 'w-auto py-0.5']} bind:value={mode} disabled={busy} aria-label={t('adeTasks.issues.runModePlaceholder')}>
-										<option value="terminal">Terminal · {cliSetting || 'claude'}</option>
-										<option value="timeline">Timeline</option>
-									</select>
-								</label>
+								<span class="text-(--vscode-descriptionForeground)">{t('adeSources.runAs')}: Terminal · {cliSetting || 'claude'}</span>
 								<span class="flex-1"></span>
 								<button type="submit" class={BUTTON} disabled={busy}>{busy ? t('adeSources.creating') : t('adeSources.createAndStart')}</button>
 								<button type="button" class={BUTTON_SECONDARY} disabled={busy} onclick={() => (sources.confirming = null)}>{t('common.cancel')}</button>

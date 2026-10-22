@@ -46,6 +46,9 @@ function fakeQuery(log: { options?: Options; prompts: string[]; interrupted: num
 			setModel: async (model?: string) => {
 				(log.changes ??= []).push(`model:${model}`);
 			},
+			applyFlagSettings: async ({ effortLevel }: { effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null }) => {
+				(log.changes ??= []).push(`effort:${effortLevel ?? 'default'}`);
+			},
 			setPermissionMode: async (mode: string) => {
 				(log.changes ??= []).push(`mode:${mode}`);
 			}
@@ -193,20 +196,22 @@ describe('agent host protocol', () => {
 		expect((await call(2, 'answer', { runId: 1, requestId: 'req-1', decision: 'allow_never' })).error?.message).toContain('bad decision');
 	});
 
-	test('set_options changes the live session model and permission mode', async () => {
+	test('set_options changes the live session model, effort and permission mode', async () => {
 		const { log, event, call } = setup();
 		await call(1, 'start', { runId: 1, cwd: '/w', prompt: 'x' });
 		await event('permission_request');
-		expect((await call(2, 'set_options', { runId: 1, model: 'claude-sonnet-5' })).result).toEqual({ model: 'claude-sonnet-5', permissionMode: null });
-		expect((await call(3, 'set_options', { runId: 1, permissionMode: 'plan' })).result).toEqual({ model: null, permissionMode: 'plan' });
-		expect(log.changes).toEqual(['model:claude-sonnet-5', 'mode:plan']);
-		expect((await call(4, 'set_options', { runId: 1, permissionMode: 'dontAsk' })).error?.message).toContain('permission mode');
+		expect((await call(2, 'set_options', { runId: 1, model: 'claude-sonnet-5' })).result).toEqual({ model: 'claude-sonnet-5', effort: null, permissionMode: null });
+		expect((await call(3, 'set_options', { runId: 1, effort: 'high' })).result).toEqual({ model: null, effort: 'high', permissionMode: null });
+		expect((await call(4, 'set_options', { runId: 1, effort: 'default' })).result).toEqual({ model: null, effort: 'default', permissionMode: null });
+		expect((await call(5, 'set_options', { runId: 1, permissionMode: 'plan' })).result).toEqual({ model: null, effort: null, permissionMode: 'plan' });
+		expect(log.changes).toEqual(['model:claude-sonnet-5', 'effort:high', 'effort:default', 'mode:plan']);
+		expect((await call(6, 'set_options', { runId: 1, permissionMode: 'dontAsk' })).error?.message).toContain('permission mode');
 		// "Allow all" is the user's pick; the session was started able to take it.
-		expect((await call(5, 'set_options', { runId: 1, permissionMode: 'bypassPermissions' })).result).toEqual({ model: null, permissionMode: 'bypassPermissions' });
+		expect((await call(7, 'set_options', { runId: 1, permissionMode: 'bypassPermissions' })).result).toEqual({ model: null, effort: null, permissionMode: 'bypassPermissions' });
 		expect(log.options?.allowDangerouslySkipPermissions).toBe(true);
-		expect((await call(5, 'set_options', { runId: 1 })).error?.message).toContain('nothing to change');
-		expect((await call(6, 'set_options', { runId: 9, model: 'm' })).error?.code).toBe(1);
-		expect(log.changes).toHaveLength(3);
+		expect((await call(8, 'set_options', { runId: 1 })).error?.message).toContain('nothing to change');
+		expect((await call(9, 'set_options', { runId: 9, model: 'm' })).error?.code).toBe(1);
+		expect(log.changes).toHaveLength(5);
 	});
 
 	test('set_options says so when the SDK cannot change options', async () => {

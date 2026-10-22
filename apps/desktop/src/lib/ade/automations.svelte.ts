@@ -140,7 +140,7 @@ class AdeAutomations {
 	async #confirmEnable(a: Automation): Promise<boolean> {
 		const now = Date.now();
 		const next = upcoming(a.schedule, now, now);
-		const mode = a.mode ?? (settings.get<string>('kingu.agent.runMode') === 'timeline' ? 'timeline' : 'terminal');
+		const mode = 'terminal';
 		return ask(t('adeTasks.automations.enableAsk', { name: a.name, schedule: a.schedule, next: formatWhen(next, now), base: a.base ?? t('adeTasks.automations.folderBranch'), mode }), {
 			title: t('adeTasks.automations.enableTitle'),
 			kind: 'warning',

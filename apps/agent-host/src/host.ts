@@ -38,6 +38,7 @@ export type QueryLike = AsyncIterable<unknown> & {
 	interrupt(): Promise<unknown>;
 	/** Mid-session changes (streaming input only); optional so older fakes still fit. */
 	setModel?(model?: string): Promise<void>;
+	applyFlagSettings?(settings: { effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null }): Promise<void>;
 	setPermissionMode?(mode: PermissionMode): Promise<void>;
 	/** The session's slash commands with descriptions (for the composer's `/` list). */
 	supportedCommands?(): Promise<unknown[]>;
@@ -323,11 +324,13 @@ export class AgentHost {
 			case 'set_options': {
 				const o = p as SetOptionsParams;
 				const model = o.model ?? undefined;
+				const effort = o.effort ?? undefined;
 				const mode = o.permissionMode ?? undefined;
 				need(mode === undefined || PERMISSION_MODES.includes(mode), `unsupported permission mode ${String(mode)}`);
 				need(model === undefined || (typeof model === 'string' && model.trim() && model.length <= 300), 'model must be a non-empty string');
-				need(model !== undefined || mode !== undefined, 'nothing to change');
-				return run.setOptions(model, mode, o.provider);
+				need(effort === undefined || ['default', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(effort), 'unsupported effort');
+				need(model !== undefined || effort !== undefined || mode !== undefined, 'nothing to change');
+				return run.setOptions(model, mode, { provider: o.provider, effort });
 			}
 			case 'start':
 				throw new RpcError(INVALID_PARAMS, `run ${String(p.runId)} already exists`);
@@ -405,6 +408,8 @@ export class AgentHost {
 				args: other.kind === 'arkai' ? [] : other.args,
 				...(arkai ? { arkai, systemPromptAppend: [append.trim(), index].filter(Boolean).join('\n\n'), guardAsks: asks ? { ...asks, cwd: p.cwd } : null } : { skillIndex: index }),
 				prompt: p.prompt,
+				model: p.model ?? null,
+				effort: p.effort ?? null,
 				shownPrompt: shownText(p.prompt, p.images),
 				images,
 				imagePaths: p.images ?? [],
@@ -437,6 +442,7 @@ export class AgentHost {
 			...this.deps.options,
 			cwd: p.cwd,
 			model: p.model || DEFAULT_MODEL,
+			...(p.effort && p.effort !== 'default' && p.effort !== 'minimal' ? { effort: p.effort } : {}),
 			permissionMode: mode,
 			// Lets the user switch a live session to "Allow all" (`setPermissionMode`); the mode
 			// itself only ever comes from the user's pick, which the app confirms first.
@@ -607,10 +613,13 @@ export class AgentHost {
 	async setOptions(p: SetOptionsParams) {
 		const run = this.run(p.runId);
 		const model = p.model ?? undefined;
+		const effort = p.effort ?? undefined;
 		const mode = p.permissionMode ?? undefined;
 		need(model === undefined || (typeof model === 'string' && model.trim() && model.length <= 200), 'model must be a non-empty string');
 		need(mode === undefined || PERMISSION_MODES.includes(mode), `unsupported permission mode ${String(mode)}`);
-		need(model !== undefined || mode !== undefined, 'nothing to change');
+		need(effort === undefined || ['default', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(effort), 'unsupported effort');
+		need(effort !== 'minimal', 'Claude does not support minimal reasoning effort');
+		need(model !== undefined || effort !== undefined || mode !== undefined, 'nothing to change');
 		const q = run.query;
 		need(q && !run.exited, 'run has ended');
 		if (model !== undefined) {
@@ -622,8 +631,12 @@ export class AgentHost {
 			await q.setPermissionMode(mode);
 			run.mode = mode;
 		}
-		this.log(`run ${run.id}: options changed${model !== undefined ? ' (model)' : ''}${mode !== undefined ? ` (mode ${mode})` : ''}`);
-		return { model: model ?? null, permissionMode: mode ?? null };
+		if (effort !== undefined) {
+			if (!q.applyFlagSettings) throw new RpcError(UNSUPPORTED, 'this agent SDK cannot change reasoning effort mid-session');
+			await q.applyFlagSettings({ effortLevel: effort === 'default' ? null : effort });
+		}
+		this.log(`run ${run.id}: options changed${model !== undefined ? ' (model)' : ''}${effort !== undefined ? ` (effort ${effort})` : ''}${mode !== undefined ? ` (mode ${mode})` : ''}`);
+		return { model: model ?? null, effort: effort ?? null, permissionMode: mode ?? null };
 	}
 
 	async interrupt(run: Run) {

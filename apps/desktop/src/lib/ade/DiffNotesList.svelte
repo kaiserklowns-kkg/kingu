@@ -17,7 +17,7 @@
 	const notes = $derived(sortedNotes(diffNotes.list(worktree)));
 	const delivery = $derived(diffNotes.delivery(worktree));
 	const sendLabel = $derived(
-		delivery === 'cli' ? 'ส่งถึง agent (พิมพ์ลง terminal)' : delivery === 'timeline' ? 'ส่งถึง agent' : delivery === 'launch' ? 'เริ่ม agent พร้อมโน้ต' : 'คัดลอกโน้ต'
+		delivery === 'cli' ? 'ส่งถึง agent (พิมพ์ลง terminal)' : delivery === 'launch' ? 'เริ่ม agent ใน terminal พร้อมโน้ต' : 'คัดลอกโน้ต'
 	);
 	const busy = $derived(notes.some((n) => diffNotes.sending[n.id]));
 	let editing = $state<string | null>(null);

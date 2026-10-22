@@ -1,6 +1,6 @@
 // Agents run the Orca way: a CLI (`claude`, `codex`, …) in a terminal of the task's worktree,
-// started with the prompt as its last argument. The other way is our timeline (the agent host's
-// SDK session). A CLI task stores `cli:<command>` as its agent. Per-CLI behaviour (resume, MCP,
+// started with the prompt as its last argument. Older tasks may carry our legacy timeline (the
+// agent host's SDK session). A CLI task stores `cli:<command>` as its agent. Per-CLI behaviour (resume, MCP,
 // status) lives in agentProfiles.ts. Pure, so `bun test` covers it.
 
 import { profileOf, programOf } from '#lib/ade/agentProfiles.ts';

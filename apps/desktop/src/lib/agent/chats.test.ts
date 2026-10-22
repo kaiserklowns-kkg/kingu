@@ -45,6 +45,7 @@ describe('chat ids and new chats', () => {
 			cwd: { kind: 'task', slug: 'fix-login' },
 			session_id: null,
 			model: null,
+			effort: null,
 			permission_mode: 'plan',
 			runtime: 'claude',
 			created_at: 5,

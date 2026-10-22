@@ -1,9 +1,9 @@
 <script lang="ts">
 	// Automation editor: name, prompt, schedule (with a live preview of the next 3 runs), base
-	// branch and run mode. A new automation is saved off; enabling it is a separate, confirmed step.
+	// branch. Automations always launch the configured terminal agent; a new automation is saved
+	// off and enabling it is a separate, confirmed step.
 	import { onMount, untrack } from 'svelte';
 	import { keyLabel } from '#lib/workbench/keys.ts';
-	import type { RunMode } from './agentCli.ts';
 	import { automations } from './automations.svelte.ts';
 	import { formatWhen } from './automations.ts';
 	import { nextRuns, parseSchedule } from './schedule.ts';
@@ -18,7 +18,6 @@
 	let prompt = $state(existing?.prompt ?? '');
 	let schedule = $state(existing?.schedule ?? 'weekdays 09:00');
 	let base = $state(existing?.base ?? '');
-	let mode = $state<RunMode | ''>(existing?.mode ?? '');
 	let catchUp = $state(existing?.catch_up ?? true);
 	let busy = $state(false);
 	let input: HTMLInputElement | undefined = $state();
@@ -26,7 +25,7 @@
 
 	const parsed = $derived(parseSchedule(schedule));
 	const preview = $derived(parsed.ok ? nextRuns(parsed.schedule, new Date(automations.now), 3) : []);
-	const error = $derived(automations.validate({ name, prompt, schedule, base: base || null, mode: mode || null, catch_up: catchUp }));
+	const error = $derived(automations.validate({ name, prompt, schedule, base: base || null, mode: 'terminal', catch_up: catchUp }));
 
 	onMount(() => {
 		void adeTasks.refreshBranches();
@@ -38,7 +37,7 @@
 		if (error || busy) return;
 		busy = true;
 		try {
-			if (await automations.save(id, { name, prompt, schedule, base: base || null, mode: mode || null, catch_up: catchUp })) automations.editing = null;
+			if (await automations.save(id, { name, prompt, schedule, base: base || null, mode: 'terminal', catch_up: catchUp })) automations.editing = null;
 		} finally {
 			busy = false;
 		}
@@ -73,14 +72,7 @@
 				{#each adeTasks.branches as b (b)}<option value={b}>{b}</option>{/each}
 			</select>
 		</label>
-		<label class="flex items-center gap-1.5">
-			<span class="shrink-0 text-(--vscode-descriptionForeground)">โหมด</span>
-			<select class={[INPUT, 'w-auto py-0.5']} bind:value={mode} aria-label="วิธีรัน agent" disabled={busy}>
-				<option value="">ตามการตั้งค่า (kingu.agent.runMode)</option>
-				<option value="terminal">Terminal</option>
-				<option value="timeline">Timeline</option>
-			</select>
-		</label>
+		<span class="text-(--vscode-descriptionForeground)">รันผ่าน terminal ของ worktree</span>
 		<label class="flex items-center gap-1.5" title="ถ้าถึงเวลาตอนที่ Kingu ปิดอยู่ ให้รันหนึ่งรอบเมื่อเปิดขึ้นมา">
 			<input type="checkbox" bind:checked={catchUp} disabled={busy} />
 			<span>รันรอบที่พลาดเมื่อเปิด Kingu</span>

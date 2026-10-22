@@ -90,10 +90,10 @@ describe('commentable lines', () => {
 });
 
 describe('delivery', () => {
-	test('running CLI types, timeline follows up, idle CLI starts again, the folder copies', () => {
+	test('running CLI types, idle or legacy tasks launch a terminal agent, the folder copies', () => {
 		expect(deliveryFor({ isTask: true, cli: true, cliRunning: true })).toBe('cli');
 		expect(deliveryFor({ isTask: true, cli: true, cliRunning: false })).toBe('launch');
-		expect(deliveryFor({ isTask: true, cli: false, cliRunning: false })).toBe('timeline');
+		expect(deliveryFor({ isTask: true, cli: false, cliRunning: false })).toBe('launch');
 		expect(deliveryFor({ isTask: false, cli: false, cliRunning: false })).toBe('none');
 	});
 });

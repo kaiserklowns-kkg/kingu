@@ -135,7 +135,9 @@ export function modelOptions(list: unknown): ModelOption[] {
 		const value = isObj(m) ? str(m.value)?.trim() : null;
 		if (!isObj(m) || !value || value.length > 128 || seen.has(value)) continue;
 		seen.add(value);
-		out.push({ value, display_name: truncate(str(m.displayName)?.trim() || value, 200), description: truncate(str(m.description)?.trim() ?? '', MAX_SUMMARY_CHARS) });
+		const effortLevels = Array.isArray(m.supportedEffortLevels) ? m.supportedEffortLevels.filter((x): x is string => typeof x === 'string' && x.length <= 32).slice(0, 8) : [];
+		const resolvedModel = str(m.resolvedModel)?.trim();
+		out.push({ value, ...(resolvedModel && resolvedModel !== value ? { resolved_model: truncate(resolvedModel, 128) } : {}), display_name: truncate(str(m.displayName)?.trim() || value, 200), description: truncate(str(m.description)?.trim() ?? '', MAX_SUMMARY_CHARS), ...(effortLevels.length ? { effort_levels: effortLevels } : {}) });
 		if (out.length >= MAX_MODELS) break;
 	}
 	return out;

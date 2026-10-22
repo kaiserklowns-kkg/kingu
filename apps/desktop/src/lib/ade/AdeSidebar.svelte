@@ -1,6 +1,6 @@
 <script lang="ts">
 	// The Agents layout side bar, built like Orca's worktree sidebar: Search (the worktree jump
-	// palette), Tasks (the board), Automations and Issues on top, a "Projects" header with the activity view, workspace
+	// palette), Now (Kingu's decision inbox), Tasks (the board), Automations and Issues on top, a "Projects" header with the activity view, workspace
 	// options, add project and new workspace, then the folder as a project group with a card per
 	// worktree (status slot, title, branch, the agent row with its last message and time). Every
 	// other added project follows as its own group (projects.svelte.ts): lighter cards with the
@@ -262,6 +262,28 @@
 			prefs.sortBy = 'manual';
 			status.flash(`Sort changed to Manual · Manual keeps workspaces where you drop them. (เดิม: ${SORT_LABEL[previous]})`, 8000);
 		}
+	}
+
+	// --- Drag to reorder projects (Orca's manual project order) --------------------------------
+	let draggingProject = $state<string | null>(null);
+	let dropProject = $state<string | null>(null);
+	function dragProject(e: DragEvent, path: string) {
+		draggingProject = path;
+		e.dataTransfer?.setData('text/plain', path);
+		if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+	}
+	function overProject(e: DragEvent, path: string) {
+		if (!draggingProject || draggingProject === path) return;
+		e.preventDefault();
+		e.stopPropagation();
+		dropProject = path;
+	}
+	function dropProjectOn(before: string | null) {
+		const path = draggingProject;
+		draggingProject = dropProject = null;
+		if (!path || path === before) return;
+		if (settings.get<string>('kingu.projects.orderBy') === 'recent') void settings.set('kingu.projects.orderBy', 'manual', 'user');
+		void projects.move(path, before);
 	}
 
 	// --- Keyboard: arrows move and activate (Orca's listbox) -----------------------------------
@@ -596,11 +618,16 @@
 			role="button"
 			tabindex="0"
 			aria-expanded={!collapsed}
-			class="group/header relative flex h-7 w-full cursor-pointer items-center gap-1.5 pr-2 pl-2.5 text-left"
+			draggable="true"
+			class={['group/header relative flex h-7 w-full cursor-pointer items-center gap-1.5 pr-2 pl-2.5 text-left', dropProject === p.path && 'shadow-[inset_0_2px_0_var(--vscode-focusBorder)]']}
 			title={p.path}
 			onclick={() => prefs.toggleCollapsed(id)}
 			onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), prefs.toggleCollapsed(id))}
 			oncontextmenu={(e) => (e.preventDefault(), (projectMenu = { root: p.path, x: e.clientX, y: e.clientY }))}
+			ondragstart={(e) => dragProject(e, p.path)}
+			ondragend={() => (draggingProject = dropProject = null)}
+			ondragover={(e) => overProject(e, p.path)}
+			ondrop={(e) => (e.preventDefault(), e.stopPropagation(), dropProjectOn(p.path))}
 		>
 			<span class="grid size-4 shrink-0 place-items-center rounded-[4px] bg-amber-500/15 text-amber-400"><Icon name="folder" size={12} /></span>
 			<span class="truncate text-[13px] leading-none font-semibold">{p.name}</span>
@@ -631,7 +658,7 @@
 {/snippet}
 
 <div class="flex h-full min-h-0 flex-col bg-(--vscode-sideBar-background) text-(--vscode-sideBar-foreground)">
-	<!-- Top nav: Search (the worktree palette), then the center's pages: Tasks (the board), Automations, Issues. -->
+	<!-- Top nav: Search, then Kingu Now (the decision inbox), Board, Automations and Issues. -->
 	<nav class="flex flex-col gap-0.5 px-2 pt-2 pb-1">
 		<button class="{NAV} bg-(--vscode-sideBar-foreground)/5 {NAV_OFF}" aria-label="Search worktrees" onclick={jumpToWorktree}>
 			<span class="text-(--vscode-sideBar-foreground)/30"><Icon name="search" size={16} /></span>
@@ -640,12 +667,12 @@
 				{#each ['⇧', '⌘', 'J'] as k (k)}<kbd class="min-w-4 rounded border border-(--vscode-widget-border) bg-(--vscode-sideBar-foreground)/8 px-1 py-px text-center font-sans text-[9px] text-(--vscode-sideBar-foreground)/55">{k}</kbd>{/each}
 			</span>
 		</button>
-		{#each ([{ page: 'board', icon: 'menu', label: 'Tasks' }, { page: 'automations', icon: 'clock', label: 'Automations' }, { page: 'issues', icon: 'bug', label: 'Issues' }] as const).filter((n) => settings.get<boolean>(n.page === 'automations' ? 'kingu.sidebar.showAutomations' : n.page === 'issues' ? 'kingu.sidebar.showIssues' : '') !== false) as n (n.page)}
+		{#each ([{ page: 'now', icon: 'agent', label: 'Now' }, { page: 'board', icon: 'menu', label: 'Tasks' }, { page: 'automations', icon: 'clock', label: 'Automations' }, { page: 'issues', icon: 'bug', label: 'Issues' }] as const).filter((n) => settings.get<boolean>(n.page === 'automations' ? 'kingu.sidebar.showAutomations' : n.page === 'issues' ? 'kingu.sidebar.showIssues' : '') !== false) as n (n.page)}
 			{@const on = adeLayout.page === n.page}
 			<button class="{NAV} {on ? NAV_ON : NAV_OFF}" aria-current={on ? 'page' : undefined} disabled={n.page !== 'board' && !workspace.root} onclick={() => adeLayout.togglePage(n.page)}>
 				<span class={on ? '' : 'text-(--vscode-sideBar-foreground)/30'}><Icon name={n.icon} size={16} /></span>
 				<span class="flex-1">{n.label}</span>
-				{#if n.page === 'board' && adeTasks.counts.needsInput}
+				{#if n.page === 'now' && adeTasks.counts.needsInput}
 					<span class="rounded-full bg-(--vscode-editorWarning-foreground) px-1.5 text-[10px] leading-4 font-semibold text-black" title="รอคุณ">{adeTasks.counts.needsInput}</span>
 				{:else if n.page === 'automations' && automations.activeCount}
 					<span class="text-[11px] {MUTED}" title={automations.globalEnabled ? 'automation ที่เปิดอยู่' : 'หยุดทั้งหมดอยู่'}>{automations.globalEnabled ? automations.activeCount : 'หยุด'}</span>
@@ -803,6 +830,10 @@
 				</div>
 			{/if}
 			{#each afterProjects as p (p.path)}{@render projectGroup(p)}{/each}
+			{#if draggingProject}
+				<!-- Dropping below the last project moves it to the end (Orca's manual project order). -->
+				<div class="h-6 shrink-0" role="presentation" ondragover={(e) => (e.preventDefault(), e.stopPropagation())} ondrop={(e) => (e.preventDefault(), e.stopPropagation(), dropProjectOn(null))}></div>
+			{/if}
 		{/if}
 	</div>
 

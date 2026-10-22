@@ -85,6 +85,9 @@ pub struct ChatMeta {
   pub resume_at: Option<String>,
   #[serde(default)]
   pub model: Option<String>,
+  /// The selected model's per-chat reasoning effort, when that runtime/model supports one.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub effort: Option<String>,
   #[serde(default)]
   pub permission_mode: Option<String>,
   /// Which agent runs the chat (`runtimes`): `claude`, the Claude Agent SDK, unless set.
@@ -179,6 +182,9 @@ pub fn validate(chats: &[ChatMeta]) -> Result<(), String> {
     }
     if let Some(r) = &c.last_run {
       validate_run_summary(&c.id, r)?;
+    }
+    if c.effort.as_deref().is_some_and(|v| !["default", "minimal", "low", "medium", "high", "xhigh", "max"].contains(&v)) {
+      return Err(format!("{}: invalid effort", c.id));
     }
   }
   Ok(())
@@ -455,6 +461,7 @@ mod tests {
       session_id: Some("0b5e-4c1d_9".into()),
       resume_at: None,
       model: Some("claude-opus-5-5[1m]".into()),
+      effort: Some("high".into()),
       permission_mode: Some("acceptEdits".into()),
       runtime: "claude".into(),
       agent: None,

@@ -93,6 +93,7 @@ pub async fn agent_start(
   chat_id: Option<String>,
   prompt: String,
   model: Option<String>,
+  effort: Option<String>,
   permission_mode: Option<String>,
   resume: Option<String>,
   resume_at: Option<String>,
@@ -117,6 +118,9 @@ pub async fn agent_start(
     && !RUN_PERMISSION_MODES.contains(&m)
   {
     return Err(format!("{m}: unsupported permission mode"));
+  }
+  if effort.as_deref().is_some_and(|v| !["default", "minimal", "low", "medium", "high", "xhigh", "max"].contains(&v)) {
+    return Err("unsupported reasoning effort".into());
   }
   if let Some(id) = resume.as_deref()
     && !tasks::valid_session_id(id)
@@ -252,6 +256,7 @@ pub async fn agent_start(
     cwd,
     prompt,
     model: model.filter(|m| !m.trim().is_empty()),
+    effort,
     permission_mode,
     resume,
     resume_at,
@@ -328,13 +333,16 @@ fn chat_owner(root: &std::path::Path, id: &str) -> String {
 
 /// Changes a live run's model and/or permission mode from its next response on.
 #[tauri::command]
-pub async fn agent_set_options(app: tauri::AppHandle, agents: State<'_, Arc<AgentHost>>, run_id: u32, model: Option<String>, permission_mode: Option<String>) -> Result<(), String> {
+pub async fn agent_set_options(app: tauri::AppHandle, agents: State<'_, Arc<AgentHost>>, run_id: u32, model: Option<String>, effort: Option<String>, permission_mode: Option<String>) -> Result<(), String> {
   if let Some(m) = permission_mode.as_deref()
     && !RUN_PERMISSION_MODES.contains(&m)
   {
     return Err(format!("{m}: unsupported permission mode"));
   }
   let model = model.filter(|m| !m.trim().is_empty());
+  if effort.as_deref().is_some_and(|v| !["default", "minimal", "low", "medium", "high", "xhigh", "max"].contains(&v)) {
+    return Err("unsupported reasoning effort".into());
+  }
   if model.as_deref().is_some_and(|m| m.len() > 256 || !m.chars().all(|c| c.is_ascii_graphic())) {
     return Err("invalid model".into());
   }
@@ -342,7 +350,7 @@ pub async fn agent_set_options(app: tauri::AppHandle, agents: State<'_, Arc<Agen
   let config = crate::snap::config_dir(&app)?;
   on_host(&agents, move |a| {
     let provider = model.as_deref().and_then(|m| arkai::switch_provider(&config, m));
-    a.set_options(run_id, model.as_deref(), permission_mode.as_deref(), provider.as_ref())
+    a.set_options(run_id, model.as_deref(), effort.as_deref(), permission_mode.as_deref(), provider.as_ref())
   })
   .await
 }

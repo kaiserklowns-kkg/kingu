@@ -11,22 +11,22 @@ export const FALLBACK_MODELS: readonly ModelOption[] = [
 	{ value: 'haiku', display_name: 'Haiku', description: '' }
 ];
 
-export type ModelChoice = { value: string; label: string; description: string };
+export type ModelChoice = { value: string; resolved_model?: string; label: string; description: string };
 
 /** The picker's rows: `current` and `fallbackDefault` first when not listed, then the list (or the aliases). */
 export function modelChoices(current: string | null | undefined, fallbackDefault: string | null | undefined, listed: readonly ModelOption[]): ModelChoice[] {
 	const list = listed.length ? listed : FALLBACK_MODELS;
 	const out: ModelChoice[] = [];
 	const seen = new Set<string>();
-	const add = (value: string, label: string, description: string) => {
+	const add = (value: string, label: string, description: string, resolved_model?: string) => {
 		if (!value || seen.has(value)) return;
 		seen.add(value);
-		out.push({ value, label: label || value, description });
+		out.push({ value, ...(resolved_model ? { resolved_model } : {}), label: label || value, description });
 	};
 	// A model id the list does not name (the chat's own, the settings default): its friendly name,
 	// the id under it.
-	for (const m of [current, fallbackDefault]) if (m && !list.some((o) => o.value === m)) add(m, friendlyModel(m), m);
-	for (const o of list) add(o.value, o.display_name, o.description);
+	for (const m of [current, fallbackDefault]) if (m && !list.some((o) => o.value === m || o.resolved_model === m)) add(m, friendlyModel(m), m);
+	for (const o of list) add(o.value, o.display_name, o.description, o.resolved_model);
 	return out;
 }
 
@@ -38,7 +38,7 @@ export function parseCachedModels(raw: string | null): ModelOption[] {
 		if (!Array.isArray(v)) return [];
 		return v
 			.filter((m): m is ModelOption => !!m && typeof m === 'object' && typeof m.value === 'string' && !!m.value && typeof m.display_name === 'string')
-			.map((m) => ({ value: m.value, display_name: m.display_name, description: typeof m.description === 'string' ? m.description : '' }));
+			.map((m) => ({ value: m.value, ...(typeof m.resolved_model === 'string' ? { resolved_model: m.resolved_model } : {}), display_name: m.display_name, description: typeof m.description === 'string' ? m.description : '', ...(Array.isArray(m.effort_levels) ? { effort_levels: m.effort_levels.filter((x) => typeof x === 'string') } : {}) }));
 	} catch {
 		return [];
 	}

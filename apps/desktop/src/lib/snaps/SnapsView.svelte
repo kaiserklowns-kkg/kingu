@@ -146,7 +146,7 @@
 					{/each}
 					{#if s.skills.length}
 						<p class="mt-1 text-[11px] text-(--vscode-descriptionForeground) opacity-80">
-							agent แบบ timeline และ claude CLI ได้ skill เหล่านี้ในชื่อ <code>snap-{s.id}:&lt;skill&gt;</code>{active ? '' : ' เมื่อ snap นี้ใช้งานอยู่'} — codex และ CLI อื่นยังไม่ได้
+							agent ที่รันผ่าน agent host และ claude CLI ได้ skill เหล่านี้ในชื่อ <code>snap-{s.id}:&lt;skill&gt;</code>{active ? '' : ' เมื่อ snap นี้ใช้งานอยู่'} — codex และ CLI อื่นยังไม่ได้
 						</p>
 					{/if}
 

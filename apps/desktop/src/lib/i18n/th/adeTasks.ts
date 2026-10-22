@@ -43,9 +43,7 @@ export const adeTasks = {
 	'adeTasks.tasks.linearTaskTitle': 'งานจาก Linear issue',
 	'adeTasks.tasks.openExisting': 'เปิดงานเดิม',
 	'adeTasks.tasks.hooksFailed': 'ติดตั้ง status hooks ของ {agent} ไม่ได้: {error}',
-	'adeTasks.tasks.startAgentFailed': 'เริ่ม agent ไม่ได้: {error}',
 	'adeTasks.tasks.sendMessageFailed': 'ส่งข้อความถึง agent ไม่ได้: {error}',
-	'adeTasks.tasks.answerFailed': 'ตอบคำขออนุญาตไม่ได้: {error}',
 	'adeTasks.tasks.stopAgentFirst': 'หยุด agent ก่อนลบงาน',
 	'adeTasks.tasks.terminalAgentAsk': 'ยังมี agent ทำงานอยู่ใน terminal ของงานนี้\n\nการลบงานจะหยุด agent นั้นด้วย ลบเลยไหม?',
 	'adeTasks.tasks.terminalAgentTitle': 'Agent ยังทำงานอยู่',
@@ -118,7 +116,6 @@ export const adeTasks = {
 	'adeTasks.issues.allOpen': 'issue ที่เปิดอยู่ทั้งหมด',
 	'adeTasks.issues.basePlaceholder': 'แตกจาก branch ไหน (งาน {ref})',
 	'adeTasks.issues.currentBranch': 'branch ปัจจุบัน',
-	'adeTasks.issues.runModePlaceholder': 'วิธีรัน agent',
 
 	// linear.svelte.ts
 	'adeTasks.linear.checkFailed': 'ตรวจการเชื่อมต่อ Linear ไม่ได้: {error}',

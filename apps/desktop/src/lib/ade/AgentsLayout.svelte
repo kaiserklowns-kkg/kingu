@@ -32,6 +32,7 @@
 	import AdeTabBar from './AdeTabBar.svelte';
 	import type { IconName } from '#lib/workbench/Icon.svelte';
 	import Board from './Board.svelte';
+	import NowPage from './NowPage.svelte';
 	import AutomationsPage from './AutomationsPage.svelte';
 	import IssuesPage from './IssuesPage.svelte';
 	import TaskPage from './TaskPage.svelte';
@@ -47,7 +48,7 @@
 	import { mayPruneSessions } from './agentGuard';
 	import { recordQuickOpenVisit } from './quickOpen.svelte.ts';
 	import { untrack } from 'svelte';
-	import { cliName, cliOf, type RunMode } from './agentCli';
+	import { cliName, cliOf } from './agentCli';
 	import { profileOf } from '#lib/ade/agentProfiles.ts';
 	import { cliSessions } from './cliSessions.svelte';
 	import { paneAgents } from './paneAgents.svelte';
@@ -79,9 +80,7 @@
 	let base = $state('');
 	let busy = $state(false);
 	let focusKey = $derived(appMode.composeRequest);
-	const model = $derived(settings.get<string>('kingu.agent.model') ?? '');
 	const cliSetting = $derived(settings.get<string>('kingu.agent.cli') ?? '');
-	let mode = $state<RunMode>(untrack(() => (settings.get<string>('kingu.agent.runMode') === 'timeline' ? 'timeline' : 'terminal')));
 
 	$effect(() => {
 		if (!workspace.root || slug) return;
@@ -130,7 +129,7 @@
 	async function start(text: string, attachments: Attachment[]) {
 		busy = true;
 		try {
-			const created = await adeTasks.create({ title: taskTitleFromPrompt(text), prompt: text, base, mode, attachments });
+			const created = await adeTasks.create({ title: taskTitleFromPrompt(text), prompt: text, base, attachments });
 			if (created) {
 				draft = '';
 				draftFiles = [];
@@ -199,7 +198,9 @@
 		<AdeTabBar />
 		<div class="relative min-h-0 flex-1">
 		<RecentTabSwitcher />
-		{#if adeLayout.page === 'automations'}
+		{#if adeLayout.page === 'now'}
+			<NowPage />
+		{:else if adeLayout.page === 'automations'}
 			<AutomationsPage />
 		{:else if adeLayout.page === 'issues'}
 			<IssuesPage />
@@ -246,7 +247,15 @@
 					</div>
 				{/if}
 			{:else if slug}
-				{#key slug}<TaskPage {slug} sections="timeline" />{/key}
+				<!-- A task saved by an older Kingu timeline is migrated only when the user starts it. -->
+				<div class="grid h-full place-items-center p-6">
+					<div class="max-w-md space-y-3 text-center">
+						<div class="flex justify-center text-(--vscode-descriptionForeground)"><Icon name="terminal" size={28} /></div>
+						<p>งานนี้เคยใช้ agent timeline</p>
+						<p class="text-xs text-(--vscode-descriptionForeground)">ADE ใช้ terminal ของ worktree เท่านั้น กดเริ่มเพื่อย้ายงานนี้ไปยัง {cliSetting || 'claude'}.</p>
+						<button class={BUTTON} onclick={() => adeTasks.resumeCli(slug, true)}>เริ่มใน terminal</button>
+					</div>
+				</div>
 			{:else}
 				<div class="grid h-full place-items-center p-6">
 					{#if workspace.root}
@@ -259,14 +268,9 @@
 							{#key `${focusKey}:${nudge}`}
 								<Composer bind:value={draft} attach bind:attachments={draftFiles} size="lg" autofocus placeholder="อธิบายงาน เช่น เพิ่มปุ่ม export รายงานเป็น CSV…" {busy} onsubmit={start}>
 									{#snippet left()}
-										<label class="inline-flex shrink-0 items-center gap-1 rounded-sm border border-(--vscode-widget-border) px-1.5 py-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" title="วิธีรัน agent">
-											<Icon name={mode === 'terminal' ? 'terminal' : 'agent'} size={12} />
-											<span class="sr-only">วิธีรัน agent</span>
-											<select class="bg-transparent outline-none focus-visible:outline-none" bind:value={mode} disabled={busy}>
-												<option value="terminal">Terminal · {cliSetting || 'claude'}</option>
-												<option value="timeline">Timeline</option>
-											</select>
-										</label>
+										<span class="inline-flex shrink-0 items-center gap-1 rounded-sm border border-(--vscode-widget-border) px-1.5 py-0.5 text-xs text-(--vscode-descriptionForeground)" title="Agent runs in the worktree terminal">
+											<Icon name="terminal" size={12} /> Terminal · {cliSetting || 'claude'}
+										</span>
 										<label class="inline-flex shrink-0 items-center gap-1 rounded-sm border border-(--vscode-widget-border) px-1.5 py-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" title="แตกจาก branch">
 											<Icon name="branch" size={12} />
 											<span class="sr-only">แตกจาก branch</span>
@@ -275,7 +279,6 @@
 												{#if !adeTasks.branches.length}<option value="">HEAD</option>{/if}
 											</select>
 										</label>
-										{#if mode === 'timeline'}<span class="truncate">{model}</span>{/if}
 									{/snippet}
 								</Composer>
 							{/key}
@@ -286,7 +289,7 @@
 									</button>
 								{/each}
 							</div>
-							<p class="text-xs text-(--vscode-descriptionForeground)">สร้าง worktree ใหม่บน branch <span class="font-mono">kingu/…</span> แล้วเริ่ม {mode === 'terminal' ? `${cliSetting || 'claude'} ใน terminal ของ worktree` : 'agent (timeline)'} · Enter เพื่อเริ่ม · Shift+Enter ขึ้นบรรทัดใหม่</p>
+							<p class="text-xs text-(--vscode-descriptionForeground)">สร้าง worktree ใหม่บน branch <span class="font-mono">kingu/…</span> แล้วเริ่ม {cliSetting || 'claude'} ใน terminal ของ worktree · Enter เพื่อเริ่ม · Shift+Enter ขึ้นบรรทัดใหม่</p>
 							{#if recent.length}
 								<section class="pt-5" aria-label="งานล่าสุด">
 									<h2 class="mb-2 text-xs font-medium text-(--vscode-descriptionForeground)">งานล่าสุด</h2>

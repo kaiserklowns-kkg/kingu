@@ -11,8 +11,7 @@ import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
-import type { RunMode } from './agentCli.ts';
-import { defaultBase, defaultRunMode } from './issues.svelte.ts';
+import { defaultBase } from './issues.svelte.ts';
 import { mergeLinearLists, taskForLinearIssue, type LinearFilter, type LinearIssue, type LinearViewer } from './linear.ts';
 import type { IssueLink } from './model.ts';
 import { adeTasks } from './tasks.svelte.ts';
@@ -112,17 +111,7 @@ class AdeLinear {
 			items: branches.map((b) => ({ id: b, label: b || 'HEAD', description: b === current ? t('adeTasks.issues.currentBranch') : undefined }))
 		});
 		if (!base) return;
-		const preferred = defaultRunMode();
-		const modes: { id: RunMode; label: string }[] = [
-			{ id: 'terminal', label: `Terminal · ${settings.get<string>('kingu.agent.cli') || 'claude'}` },
-			{ id: 'timeline', label: 'Timeline' }
-		];
-		const mode = await quick.choose({
-			placeholder: t('adeTasks.issues.runModePlaceholder'),
-			items: [...modes].sort((a, b) => Number(b.id === preferred) - Number(a.id === preferred))
-		});
-		if (!mode) return;
-		await adeTasks.createFromLinearIssue(issue, { base: base.id, mode: mode.id as RunMode });
+		await adeTasks.createFromLinearIssue(issue, { base: base.id, mode: 'terminal' });
 	}
 }
 

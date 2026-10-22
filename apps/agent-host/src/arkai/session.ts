@@ -209,7 +209,8 @@ export class ArkaiSession extends RunSession {
 			if (providerId !== this.provider.id) {
 				let next: ArkaiProvider;
 				try {
-					next = arkaiProvider(extra);
+					const config = extra && typeof extra === 'object' && 'provider' in extra ? extra.provider : extra;
+					next = arkaiProvider(config);
 				} catch {
 					throw new SessionError(UNSUPPORTED, `the provider ${providerId} is not set up`);
 				}

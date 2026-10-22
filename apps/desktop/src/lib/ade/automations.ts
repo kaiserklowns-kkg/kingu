@@ -15,7 +15,7 @@ export type Automation = {
 	schedule: string;
 	/** Branch to fork from; null = the folder's current branch when it runs. */
 	base: string | null;
-	/** null = `kingu.agent.runMode` when it runs. */
+	/** Always `terminal`; nullable only for automations saved by an older Kingu. */
 	mode: RunMode | null;
 	enabled: boolean;
 	/** Run once on start when a run was due while Kingu was closed. */

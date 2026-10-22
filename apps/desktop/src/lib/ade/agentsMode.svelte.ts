@@ -32,7 +32,10 @@ export function openAgents(filter: AgentsFilter = 'all') {
 	if (filter !== 'all') appMode.sessionsVisible = true;
 	const slug = filter === 'all' ? initialSession() : (adeTasks.filtered(filter)[0]?.meta.slug ?? initialSession());
 	appMode.setMode('agents');
-	if (slug) adeLayout.show(slug);
+	// A fresh trip into Agents starts at Kingu Now: the user's next decision is more useful than
+	// arbitrarily reopening a worktree. A selected session or an attention filter still goes there.
+	if (filter === 'all' && !appMode.activeSession) adeLayout.page = 'now';
+	else if (slug) adeLayout.show(slug);
 }
 
 /**

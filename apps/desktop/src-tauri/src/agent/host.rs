@@ -137,6 +137,7 @@ pub struct StartRequest {
   pub cwd: String,
   pub prompt: String,
   pub model: Option<String>,
+  pub effort: Option<String>,
   pub permission_mode: Option<String>,
   pub resume: Option<String>,
   /// With `resume`: continue only up to this message, in a fork of the session (`rewind`).
@@ -409,7 +410,9 @@ impl Proc {
     let runs: Vec<_> = self.runs.lock().unwrap().drain().collect();
     log::info!("agent host {} exited (code {code:?}, signal {signal:?}); ending {} run(s)", self.pid, runs.len());
     for (_, sink) in runs {
-      sink(AgentEvent::Error { message: tr!(AgentMsg::HostExited) });
+      let code_label = code.map(|c| c.to_string()).unwrap_or_else(|| "unknown".into());
+      let signal_label = signal.map(|s| s.to_string()).unwrap_or_else(|| "none".into());
+      sink(AgentEvent::Error { message: format!("{} (exit code: {code_label}, signal: {signal_label})", tr!(AgentMsg::HostExited)) });
       sink(AgentEvent::Exit { code, signal, stopped: false });
     }
   }
@@ -567,14 +570,17 @@ impl AgentHost {
   }
 
   /// Changes the live run's model and/or permission mode from its next response on (the SDK's
-  /// `setModel` / `setPermissionMode`). `provider`: an Arkai model's provider (`arkai.rs`), with its key.
-  pub fn set_options(&self, run_id: u32, model: Option<&str>, permission_mode: Option<&str>, provider: Option<&super::arkai::WireProvider>) -> Result<(), String> {
-    if model.is_none() && permission_mode.is_none() {
+  /// `setModel` / `setPermissionMode` and Claude's effort settings. `provider`: an Arkai model's provider (`arkai.rs`), with its key.
+  pub fn set_options(&self, run_id: u32, model: Option<&str>, effort: Option<&str>, permission_mode: Option<&str>, provider: Option<&super::arkai::WireProvider>) -> Result<(), String> {
+    if model.is_none() && effort.is_none() && permission_mode.is_none() {
       return Ok(());
     }
     let mut params = json!({});
     if let Some(m) = model {
       params["model"] = json!(m);
+    }
+    if let Some(e) = effort {
+      params["effort"] = json!(e);
     }
     if let Some(p) = provider {
       params["provider"] = serde_json::to_value(p).map_err(|e| e.to_string())?;
@@ -772,7 +778,7 @@ read -r line
     let requests = std::fs::read_to_string(&log).unwrap();
     let lines: Vec<Value> = requests.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
     assert_eq!(lines[0]["method"], "start");
-    assert_eq!(lines[0]["params"], json!({"runId": run, "cwd": "/w", "prompt": "แก้บั๊ก", "model": null, "permissionMode": "default", "resume": null}));
+    assert_eq!(lines[0]["params"], json!({"runId": run, "cwd": "/w", "prompt": "แก้บั๊ก", "model": null, "effort": null, "permissionMode": "default", "resume": null}));
     assert_eq!(lines[1]["params"], json!({"runId": run, "requestId": "r1", "decision": "allow_always", "message": null}));
     assert_eq!(lines[2]["method"], "stop");
     host.shutdown();
@@ -826,7 +832,7 @@ done"#,
     assert!(host.start(StartRequest { resume: Some("s-new".into()), ..req("/w") }, sink.clone()).is_err(), "the session it reported is held too");
     assert!(host.start(StartRequest { owner: Some("chat:/r:c-1".into()), ..req("/w") }, sink.clone()).unwrap_err().contains("already has a running agent"));
 
-    host.set_options(first, Some("claude-sonnet-5"), Some("plan"), None).unwrap();
+    host.set_options(first, Some("claude-sonnet-5"), None, Some("plan"), None).unwrap();
     host.stop(first).unwrap();
     assert!(matches!(next(&rx), AgentEvent::Exit { stopped: true, .. }));
     assert!(!host.session_live("s-old") && !host.session_live("s-new") && !host.owner_live("chat:/r:c-1"));

@@ -208,8 +208,6 @@ export const panes = {
 	'panes.advanced.bypassHint': 'Hosts that skip the proxy, such as localhost or *.internal.',
 	'panes.experimental.title': 'Experimental',
 	'panes.experimental.description': 'New features that are still taking shape. Give them a try.',
-	'panes.experimental.chatUi': 'Chat UI',
-	'panes.experimental.chatUiHint': 'New agent tasks open in a structured chat (timeline) instead of a terminal.',
 	'panes.experimental.sleep': 'Agent sleep',
 	'panes.experimental.sleepHint': 'Closes idle agent CLIs whose turn finished, to free memory; the task resumes the same session with one click.',
 	'panes.experimental.sleepAfter': 'Sleep after',

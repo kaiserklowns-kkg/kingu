@@ -39,7 +39,7 @@ pub struct Automation {
   /// Branch to fork from; `None` = the folder's current branch when it runs.
   #[serde(default)]
   pub base: Option<String>,
-  /// `terminal` | `timeline`; `None` = `kingu.agent.runMode` when it runs.
+  /// Always `terminal`; kept for automations saved by an older Kingu.
   #[serde(default)]
   pub mode: Option<String>,
   #[serde(default)]

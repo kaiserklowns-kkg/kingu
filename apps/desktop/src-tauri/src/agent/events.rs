@@ -62,10 +62,14 @@ pub struct SlashCommand {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ModelOption {
   pub value: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub resolved_model: Option<String>,
   #[serde(default)]
   pub display_name: String,
   #[serde(default)]
   pub description: String,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub effort_levels: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

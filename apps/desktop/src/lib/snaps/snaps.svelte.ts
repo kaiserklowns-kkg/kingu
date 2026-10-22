@@ -426,7 +426,7 @@ const RELOAD_DEBOUNCE_MS = 300;
 
 /** Workbench wiring: loads snaps per folder, registers their settings and commands. */
 export function installSnaps(): () => void {
-	// Agents (timeline and CLI) get the MCP servers of active snaps when a run starts.
+	// Agents (agent host and CLI) get the MCP servers of active snaps when a run starts.
 	setMcpProvider((root) => snaps.mcpServers(root));
 	setSkillPluginProvider(() => snaps.skillPlugins());
 	// Editing a repo snap reloads the list (the watcher reports `.kingu/snaps/**`); the user snaps

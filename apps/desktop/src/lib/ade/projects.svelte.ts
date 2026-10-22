@@ -57,7 +57,12 @@ class Projects {
 	now = $state(Date.now());
 
 	/** The side bar's projects, the open folder among them. */
-	items: SidebarProject[] = $derived(sidebarProjects(this.list, workspace.root));
+	items: SidebarProject[] = $derived(
+		sidebarProjects(this.list, workspace.root, {
+			orderBy: settings.get<string>('kingu.projects.orderBy') === 'recent' ? 'recent' : 'manual',
+			lastActive: (path) => this.lastActive(path)
+		})
+	);
 	/** Added projects other than the open folder. */
 	others: string[] = $derived(this.items.filter((p) => !p.open).map((p) => p.path));
 	added: Set<string> = $derived(new Set(this.list.map((p) => p.path)));
@@ -102,6 +107,24 @@ class Projects {
 	async pickAndAdd() {
 		const dir = await open({ directory: true, multiple: false, title: t('adeProjects.pickTitle'), defaultPath: workspace.root ?? undefined });
 		if (typeof dir === 'string') await this.add(dir);
+	}
+
+	/** `kingu.projects.orderBy = recent`: the newest task activity of a project (0 when it has none). */
+	lastActive(path: string): number {
+		const tasks = path === workspace.root ? adeTasks.list : (this.listings[path]?.tasks ?? []);
+		let at = 0;
+		for (const t of tasks) at = Math.max(at, t.updated_at);
+		return at;
+	}
+
+	/** Manual project order: `path` moves in front of `before` (to the end when null). */
+	async move(path: string, before: string | null) {
+		try {
+			await invoke('projects_move', { path, before });
+			this.list = await invoke<Project[]>('projects_list');
+		} catch (e) {
+			notifications.error(t('adeProjects.moveFailed', { error: String(e) }));
+		}
 	}
 
 	async remove(path: string) {

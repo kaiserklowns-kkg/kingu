@@ -418,7 +418,6 @@ export const EXPERIMENTAL: OrcaPaneSpec = {
 	sections: [
 		{
 			rows: [
-				sw('kingu.agent.runMode', 'panes.experimental.chatUi', 'panes.experimental.chatUiHint', { on: 'timeline', off: 'terminal' }),
 				sw('kingu.agent.hibernation', 'panes.experimental.sleep', 'panes.experimental.sleepHint'),
 				{
 					kind: 'number',
