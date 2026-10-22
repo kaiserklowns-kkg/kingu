@@ -3,6 +3,7 @@
 	// what needs a human decision, what is ready to review, and what is currently moving.
 	import Icon from '#lib/workbench/Icon.svelte';
 	import TaskCard from './TaskCard.svelte';
+	import SetupBanner from '#lib/setup/SetupBanner.svelte';
 	import { adeLayout, PRIMARY } from './adeLayout.svelte';
 	import { adeTasks } from './tasks.svelte';
 	import { BUTTON, BUTTON_SECONDARY } from './ui';
@@ -32,6 +33,7 @@
 	</header>
 
 	<main class="mx-auto max-w-6xl space-y-7 p-5">
+		<SetupBanner />
 		{#if complete}
 			<section class="grid min-h-72 place-items-center rounded-xl border border-dashed border-(--vscode-widget-border) p-8 text-center">
 				<div class="max-w-md space-y-3">

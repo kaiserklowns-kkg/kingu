@@ -23,6 +23,7 @@
 	import ArkaiPage from './pages/ArkaiPage.svelte';
 	import TerminalPage from './pages/TerminalPage.svelte';
 	import AccountPage from './pages/AccountPage.svelte';
+	import SetupPage from './pages/SetupPage.svelte';
 	import UsagePage from './pages/UsagePage.svelte';
 	import McpPage from '#lib/mcp/McpPage.svelte';
 	import SkillsPage from '#lib/skills/SkillsPage.svelte';
@@ -36,6 +37,13 @@
 	// Dedicated pages (ORCA_NAV places them) and About at the bottom.
 	const PAGES: { id: SettingsPageId; label: string; icon: IconName }[] = [
 		{ id: 'appearance', label: 'Appearance', icon: 'layout' },
+		{
+			id: 'setup',
+			get label() {
+				return t('setup.title');
+			},
+			icon: 'check'
+		},
 		{ id: 'arkai', label: 'Arkai', icon: 'agent' },
 		{ id: 'terminal', label: 'Terminal', icon: 'terminal' },
 		{ id: 'account', label: 'บัญชีและทีม', icon: 'account' },
@@ -355,6 +363,7 @@
 		<div class="min-h-0 flex-1">
 			{#if page === 'appearance'}<OrcaPane spec={ORCA_PANES.appearance} {query} />
 			{:else if page === 'shortcuts'}<ShortcutsPage />
+			{:else if page === 'setup'}<SetupPage />
 			{:else if page === 'arkai'}<ArkaiPage />
 			{:else if page === 'terminal'}<TerminalPage />
 			{:else if page === 'account'}<AccountPage />

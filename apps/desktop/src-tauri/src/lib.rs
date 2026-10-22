@@ -6,6 +6,7 @@ mod backup;
 mod cli_server;
 mod dap;
 mod dialog;
+mod doctor;
 mod external;
 mod fileops;
 mod floating;
@@ -1353,6 +1354,7 @@ pub fn run() {
     })
     .invoke_handler(tauri::generate_handler![
       app_info,
+      doctor::setup_check,
       notebook::kernel::notebook_kernels,
       notebook::kernel::notebook_kernel_start,
       notebook::kernel::notebook_kernel_send,

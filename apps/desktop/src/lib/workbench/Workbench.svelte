@@ -162,6 +162,7 @@
 			}),
 			commands.register({ id: 'kingu.agents.cleanup', title: 'Clean Up Tasks…', category: 'Agents', when: () => adeTasks.views.length > 0, run: () => (cleanup.open = true) }),
 			commands.register({ id: 'kingu.welcome.show', title: 'Welcome: Show Getting Started', category: 'Help', run: () => (welcome.open = true) }),
+			commands.register({ id: 'kingu.setup.open', title: 'Setup: Check This Machine', category: 'Help', run: () => systemSettings.showPage('setup') }),
 			commands.register({ id: 'workbench.action.files.openFolder', title: 'Open Folder...', category: 'File', key: 'cmd+o', run: () => workspace.pickFolder() }),
 			// Files anywhere on disk (an external editor outside the folder) and `.code-workspace` files.
 			commands.register({ id: 'workbench.action.files.openFile', title: 'Open File...', category: 'File', run: () => workspace.openFile() }),

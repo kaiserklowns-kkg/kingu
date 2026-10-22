@@ -49,7 +49,8 @@
 			keys: [
 				['Settings', '⌘,'],
 				['Floating terminal', '⌥⌘A']
-			]
+			],
+			actions: [{ label: 'ตรวจสอบความพร้อมของเครื่อง', command: 'kingu.setup.open' }]
 		}
 	];
 

@@ -57,7 +57,7 @@ export const ORCA_NAV: readonly {
 		label: 'settings.sections.aiCapabilities',
 		items: [{ group: 'Agent' }, { page: 'arkai' }, { page: 'accounts' }, { group: 'Orchestration' }, { page: 'voice' }, { page: 'mcp' }, { page: 'skills' }, { page: 'memories' }, { group: 'Local AI' }]
 	},
-	{ id: 'setup', label: 'settings.nav.setup', items: [{ page: 'account' }, { pane: 'general' }] },
+	{ id: 'setup', label: 'settings.nav.setup', items: [{ page: 'setup' }, { page: 'account' }, { pane: 'general' }] },
 	{ id: 'workflows', label: 'settings.nav.workflows', items: [{ pane: 'automations' }, { pane: 'git' }, { pane: 'terminal' }, { pane: 'floating' }] },
 	{
 		id: 'interface',
