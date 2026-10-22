@@ -17,8 +17,11 @@
 	let target: HTMLElement | null = null;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let hiddenAt = 0;
+	/** Invalidates a queued hide when the next tooltip arms first (release → show in one tick). */
+	let seq = 0;
 
 	function release() {
+		const at = ++seq;
 		clearTimeout(timer);
 		if (target?.dataset.kgTitle !== undefined) {
 			target.setAttribute('title', target.dataset.kgTitle);
@@ -26,8 +29,13 @@
 		}
 		target = null;
 		if (text) hiddenAt = performance.now();
-		text = '';
-		pos = null;
+		// A focusout during a component's teardown runs inside Svelte's effect, where writes are
+		// forbidden; the hide itself can wait a microtask.
+		queueMicrotask(() => {
+			if (seq !== at) return;
+			text = '';
+			pos = null;
+		});
 	}
 
 	function arm(el: HTMLElement) {
@@ -40,10 +48,11 @@
 		el.removeAttribute('title');
 		const show = () => {
 			if (target !== el || !el.isConnected) return;
+			const at = ++seq;
 			text = title;
 			pos = { x: -9999, y: -9999 };
 			requestAnimationFrame(() => {
-				if (!tip || target !== el) return;
+				if (seq !== at || !tip || target !== el) return;
 				const r = el.getBoundingClientRect();
 				const p = tooltipPosition(r, { width: tip.offsetWidth, height: tip.offsetHeight }, window.innerWidth, window.innerHeight);
 				pos = { x: p.x, y: p.y };
@@ -75,7 +84,12 @@
 		window.addEventListener('blur', away);
 		document.addEventListener('scroll', away, true);
 		return () => {
-			release();
+			clearTimeout(timer);
+			if (target?.dataset.kgTitle !== undefined) {
+				target.setAttribute('title', target.dataset.kgTitle);
+				delete target.dataset.kgTitle;
+			}
+			target = null;
 			document.removeEventListener('pointerover', over, true);
 			document.removeEventListener('focusin', focus, true);
 			document.removeEventListener('focusout', away, true);

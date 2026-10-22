@@ -62,6 +62,11 @@ jobs:
         working-directory: apps/desktop
         run: bun test src
 
+      # The webview wiring against mocked Tauri IPC, in the runner's Chrome (no browser download).
+      - name: UI end-to-end (Playwright)
+        working-directory: apps/desktop
+        run: bun run test:e2e
+
       # Also produces apps/desktop/build, which the Tauri crate embeds (frontendDist), so it must
       # run before cargo.
       - name: Build webview

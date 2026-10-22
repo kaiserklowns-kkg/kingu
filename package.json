@@ -10,6 +10,7 @@
 		"build:web": "cd apps/web && bun run build",
 		"check": "cd apps/desktop && bun run check && cd ../agent-host && bun run check && cd ../web && bun run check && cd ../.. && cargo check --workspace && (cd apps/server && go vet ./...)",
 		"test": "cd apps/desktop && bun test src && cd ../agent-host && bun test && cd ../web && bun test src && cd ../.. && cargo test --workspace && (cd apps/server && go test ./...)",
+		"test:e2e": "cd apps/desktop && bun run test:e2e",
 		"dev:server": "cd apps/server && go run ./cmd/api"
 	}
 }
