@@ -16,7 +16,7 @@ describe('snap themes', () => {
 		expect(findTheme('Ocean Dark')).toBe(ocean);
 		expect(findTheme('Dark Modern').label).toBe('Dark Modern');
 		setContributedThemes([]);
-		expect(findTheme('Ocean Dark').id).toBe('Dark Modern');
+		expect(findTheme('Ocean Dark').id).toBe('Kingu Dark');
 	});
 
 	test('a snap listing becomes theme infos with the hash of the theme file', () => {

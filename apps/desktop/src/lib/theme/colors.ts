@@ -87,7 +87,7 @@ export const COLOR_DEFAULTS: Record<string, Defaults> = {
 	'editorWidget.foreground': 'foreground',
 	'editorWarning.foreground': ['#CCA700', '#BF8803', '#FFD370', '#895503'],
 	'editorError.foreground': ['#F14C4C', '#E51400', '#F48771', '#B5200D'],
-	'editorInfo.foreground': ['#3794FF', '#0063D3', '#59A4F9', '#0063D3'],
+	'editorInfo.foreground': ['#59A4F9', '#0063D3', '#59A4F9', '#0063D3'],
 	'breadcrumb.foreground': t('foreground', 0.8),
 
 	'tab.activeBackground': 'editor.background',
@@ -141,6 +141,42 @@ export const COLOR_DEFAULTS: Record<string, Defaults> = {
 	'list.inactiveSelectionBackground': ['#37373D', '#E4E6F1', null, t('#0F4A85', 0.1)],
 	'list.highlightForeground': ['#2AAAFF', '#0066BF', 'focusBorder', 'focusBorder'],
 	'sash.hoverBorder': 'focusBorder',
+	'sideBarTitle.background': 'sideBar.background',
+	// kingu-old's modern tabs (the view switcher's active tile; theme.ts MODERN_TAB_*).
+	'modernTab.activeBackground': 'list.inactiveSelectionBackground',
+	'modernTab.activeForeground': 'list.inactiveSelectionForeground',
+	'modernTab.hoverBackground': 'list.hoverBackground',
+	'modernTab.hoverForeground': 'list.hoverForeground',
+	'peekView.border': ['#3794FF', '#1A85FF', 'contrastBorder', 'contrastBorder'],
+
+	// The chat view (VS Code's chatColors.ts and interactive.contribution.ts).
+	'chat.requestBorder': ['#FFFFFF1A', '#0000001A', 'contrastBorder', 'contrastBorder'],
+	'chat.requestBackground': [t('editor.background', 0.62), t('editor.background', 0.62), 'editorWidget.background', null],
+	'chat.statusBackground': [t('foreground', 0.08), t('foreground', 0.08), '#000000', '#FFFFFF'],
+	'chat.slashCommandBackground': ['#26477866', '#ADCEFF7A', '#FFFFFF', 'badge.background'],
+	'chat.slashCommandForeground': ['#85B6FF', '#26569E', '#000000', 'badge.foreground'],
+	'chat.avatarBackground': ['#1F1F1F', '#F2F2F2', '#000000', '#FFFFFF'],
+	'chat.avatarForeground': 'foreground',
+	'chat.editedFileForeground': ['#E2C08D', '#895503', '#E2C08D', '#895503'],
+	'chat.requestCodeBorder': ['#004972B8', '#0E639C40', null, null],
+	'chat.requestBubbleBackground': [t('editor.selectionBackground', 0.3), t('editor.selectionBackground', 0.3), null, null],
+	'chat.requestBubbleHoverBackground': [t('editor.selectionBackground', 0.6), t('editor.selectionBackground', 0.6), null, null],
+	'chat.checkpointSeparator': ['#585858', '#A9A9A9', '#A9A9A9', '#A5A5A5'],
+	'chat.linesAddedForeground': ['#54B054', '#107C10', '#54B054', '#107C10'],
+	'chat.linesRemovedForeground': ['#FC6A6A', '#BC2F32', '#F48771', '#B5200D'],
+	'chat.findMatchHighlightBackground': ['editor.findMatchHighlightBackground', 'editor.findMatchHighlightBackground', '#EA5C0055', '#EA5C0055'],
+	'chat.findMatchBackground': [t('chat.findMatchHighlightBackground', 2), t('chat.findMatchHighlightBackground', 2), '#EA5C00AA', '#EA5C00AA'],
+	'charts.yellow': 'editorWarning.foreground',
+	'charts.green': ['#89D185', '#388A34', '#89D185', '#374E06'],
+	'chat.sessionStateIndicator.inProgressBorder': ['charts.yellow', 'charts.yellow', 'contrastActiveBorder', 'contrastActiveBorder'],
+	'chat.sessionStateIndicator.unvisitedBorder': ['charts.green', 'charts.green', 'contrastActiveBorder', 'contrastActiveBorder'],
+	'chat.sessionStateIndicator.needsInputBorder': ['errorForeground', 'errorForeground', 'contrastActiveBorder', 'contrastActiveBorder'],
+	'chat.thinkingShimmer': ['#FFFFFF', '#000000', '#FFFFFF', '#000000'],
+	'chat.inputWorkingBorderColor1': ['button.background', 'button.background', '#FFFFFF', '#000000'],
+	'chat.voiceGlowBaseColor': 'focusBorder',
+	'chat.dictationActiveMicGlow': 'chat.voiceGlowBaseColor',
+	'interactive.activeCodeBorder': ['peekView.border', 'peekView.border', 'contrastBorder', 'contrastBorder'],
+	'interactive.inactiveCodeBorder': ['list.inactiveSelectionBackground', 'list.inactiveSelectionBackground', 'panel.border', 'panel.border'],
 
 	'settings.headerForeground': ['#E7E7E7', '#444444', '#FFFFFF', '#292929'],
 	'settings.modifiedItemIndicator': ['#0C7D9D', '#66AFE0', '#00497A', '#66AFE0'],
@@ -183,7 +219,8 @@ function defaultFor(id: string, type: ThemeType): Value | undefined {
 
 function withAlpha(hex: string, factor: number): string {
 	const alpha = hex.length === 9 ? parseInt(hex.slice(7), 16) / 255 : 1;
-	const a = Math.round(alpha * factor * 255);
+	// VS Code's RGBA clamps the alpha (transparent(x, 2) of a half-transparent color is opaque).
+	const a = Math.min(255, Math.round(alpha * factor * 255));
 	return hex.slice(0, 7) + a.toString(16).toUpperCase().padStart(2, '0');
 }
 
@@ -209,14 +246,22 @@ export function resolveColor(id: string, colors: Record<string, string>, type: T
 export const cssVariable = (id: string) => '--vscode-' + id.replace(/\./g, '-');
 
 /**
- * All chrome CSS variables for a theme. A color with no value becomes `transparent`,
- * except foregrounds, which inherit the base `foreground` (what an unset CSS color does in VS Code).
+ * All chrome CSS variables for a theme: every color in COLOR_DEFAULTS, then every other color the
+ * theme sets itself (VS Code writes a variable for each color it knows; a part ported from it, say
+ * `--vscode-agentsChatInput-background`, finds its theme's value). A color with no value becomes
+ * `transparent`, except foregrounds, which inherit the base `foreground` (what an unset CSS color
+ * does in VS Code).
  */
 export function chromeVariables(colors: Record<string, string>, type: ThemeType): Record<string, string> {
 	const out: Record<string, string> = {};
 	for (const id of Object.keys(COLOR_DEFAULTS)) {
 		const value = resolveColor(id, colors, type) ?? (/foreground$/i.test(id) ? resolveColor('foreground', colors, type) : null);
 		out[cssVariable(id)] = value ?? 'transparent';
+	}
+	for (const id of Object.keys(colors)) {
+		if (id in COLOR_DEFAULTS || !/^[\w.-]+$/.test(id)) continue;
+		const value = normalizeColor(colors[id]);
+		if (value) out[cssVariable(id)] = value;
 	}
 	return out;
 }

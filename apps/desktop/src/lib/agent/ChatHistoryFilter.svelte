@@ -3,7 +3,7 @@
 	// chat titles here and transcripts in Rust (chatHistory.hitsFor), the menu keeps only a status,
 	// one agent, or chats that edited files. The state is `chatHistory.filter`.
 	import { onMount } from 'svelte';
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
 	import type { MenuNode } from '#lib/workbench/menus.ts';
 	import { t } from '#lib/i18n/index.ts';
@@ -22,7 +22,7 @@
 	const menu = $derived.by<MenuNode[]>(() => [
 		...HISTORY_STATUSES.map((s) => menuItem(`status:${s}`, t(STATUS_KEY[s]), { checked: f.status === s })),
 		menuSeparator,
-		...runtimes.map((r) => menuItem(`runtime:${r}`, chatHistory.runtimeName(r), { checked: f.runtime === r })),
+		...runtimes.map((r) => menuItem(`runtime:${r}`, chatHistory.runtimeName(r), { checked: f.runtime === r, agent: r })),
 		...(runtimes.length ? [menuSeparator] : []),
 		menuItem('edits', t('chatHistory.filter.edits'), { checked: f.edits }),
 		menuSeparator,
@@ -44,7 +44,7 @@
 
 <div class="flex shrink-0 items-center gap-1 px-2 pt-1.5 pb-1">
 	<div class="flex h-[24px] min-w-0 flex-1 items-center gap-1 rounded-sm border border-(--vscode-input-border,transparent) bg-(--vscode-input-background) px-1.5 focus-within:border-(--vscode-focusBorder)">
-		<span class="shrink-0 text-(--vscode-descriptionForeground)"><Icon name="search" size={12} /></span>
+		<span class="shrink-0 text-(--vscode-descriptionForeground)"><Codicon id="search" size={12} /></span>
 		<input
 			class="min-w-0 flex-1 bg-transparent text-[13px] text-(--vscode-input-foreground) outline-none"
 			placeholder={t('chatHistory.search')}
@@ -54,7 +54,7 @@
 			onkeydown={(e) => e.key === 'Escape' && f.query && (e.stopPropagation(), (chatHistory.filter = { ...chatHistory.filter, query: '' }))}
 		/>
 		{#if f.query}
-			<button class="grid size-[18px] shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" aria-label={t('chatHistory.filter.clear')} onclick={() => (chatHistory.filter = { ...chatHistory.filter, query: '' })}><Icon name="close" size={11} /></button>
+			<button class="grid size-[18px] shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" aria-label={t('chatHistory.filter.clear')} onclick={() => (chatHistory.filter = { ...chatHistory.filter, query: '' })}><Codicon id="close" size={11} /></button>
 		{/if}
 	</div>
 	<button
@@ -66,7 +66,7 @@
 		onclick={(e) => {
 			const r = e.currentTarget.getBoundingClientRect();
 			menuAt = { x: r.right - 220, y: r.bottom + 2, keyboard: e.detail === 0 };
-		}}><Icon name="filter" size={14} /></button
+		}}><Codicon id="filter" size={14} /></button
 	>
 </div>
 {#if menuAt}

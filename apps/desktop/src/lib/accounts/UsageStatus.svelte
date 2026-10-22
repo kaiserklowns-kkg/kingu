@@ -2,7 +2,8 @@
 	// Footer usage meter (Orca's): `[logo] 71% used 3d 6h` per provider agents use now, coloured from
 	// 60% / 80%, plus a refresh button. Click: the Usage popover (rows per account, details,
 	// Manage Accounts…). Shown in the IDE and the Agents layout alike.
-	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
+	import Icon from '#lib/workbench/Icon.svelte';
+	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import StatusPopover from '#lib/workbench/StatusPopover.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { accounts } from './accounts.svelte';
@@ -22,7 +23,6 @@
 	let anchor = $state<HTMLElement | null>(null);
 	let expanded = $state<string | null>(null);
 
-	const ICON: Record<Provider, IconName> = { claude: 'claude', codex: 'openai' };
 	const TONE: Record<Level, string> = { normal: '', warning: 'text-(--vscode-editorWarning-foreground)', urgent: 'text-(--vscode-errorForeground)' };
 	const BAR: Record<Level, string> = {
 		normal: 'bg-(--vscode-progressBar-background)',
@@ -58,7 +58,7 @@
 		<button class={ITEM} aria-haspopup="dialog" aria-expanded={open} aria-label="Usage" title={shown.map(tooltip).join('\n\n')} onclick={toggle}>
 			{#each shown as r (r.key)}
 				<span class={['flex items-center gap-1', TONE[rowLevel(r)]]}>
-					<Icon name={ICON[r.provider]} size={13} />{chipText(r, accounts.now, mode, display)}
+					<AgentIcon agent={r.provider} size={13} />{chipText(r, accounts.now, mode, display)}
 					{#if r.status === 'stale' || r.status === 'error'}<span class="text-(--vscode-editorWarning-foreground)"><Icon name="warning" size={12} /></span>{/if}
 				</span>
 			{/each}
@@ -98,7 +98,7 @@
 			{#each listed as r (r.key)}
 				{@const h = headline(r.usage)}
 				<button class="flex h-8 w-full items-center gap-2 px-3 text-left hover:bg-(--vscode-list-hoverBackground)" aria-expanded={expanded === r.key} onclick={() => (expanded = expanded === r.key ? null : r.key)}>
-					<Icon name={ICON[r.provider]} size={14} />
+					<AgentIcon agent={r.provider} size={14} />
 					<span class="min-w-0 flex-1 truncate">
 						{PROVIDER_TITLE[r.provider]}
 						{#if r.account_id}<span class="text-(--vscode-descriptionForeground)"> · {r.label}</span>{/if}

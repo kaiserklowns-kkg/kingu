@@ -9,13 +9,17 @@ export type MenuRow = {
 	label: string;
 	description?: string;
 	icon?: IconName;
+	/** A product icon id, over `icon` (the chat's pickers name VS Code's icons). */
+	codicon?: string;
+	/** An agent whose mark is drawn, over `codicon` (agentIcons.ts). */
+	agent?: string;
 	/** The row is the current choice. */
 	checked?: boolean;
 	/** The section the row belongs to; a header is drawn where it changes. */
 	section?: string;
 	keyLabel?: string;
 	disabled?: boolean;
-	/** Drawn in the warning colour (Run Everything). */
+	/** Drawn in the warning colour (Allow all). */
 	warn?: boolean;
 	/** A CSS colour for the row's icon (a mode's colour). */
 	color?: string;

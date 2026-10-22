@@ -9,6 +9,8 @@ export const chatView = {
 	'chatView.newChatKey': 'แชตใหม่ (⌘N)',
 	'chatView.editRequest': 'แก้แล้วส่งใหม่',
 	'chatView.copyRequest': 'คัดลอก',
+	'chatView.requestActions': 'คำสั่งของคำขอ',
+	'chatView.responseActions': 'คำสั่งของคำตอบ',
 	'chatView.copyResponse': 'คัดลอกคำตอบ',
 	'chatView.copyFailed': 'คัดลอกไม่ได้: {error}',
 	'chatView.retry': 'ลองอีกครั้ง',

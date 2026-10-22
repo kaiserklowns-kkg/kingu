@@ -66,7 +66,9 @@ export type Command = {
 const runWith = (cmd: Command, args: unknown) => (cmd.run as (args?: unknown) => unknown)(args);
 
 class Commands {
-	all = $state<Command[]>([]);
+	/** Raw, not a deep proxy: `register`'s unregister compares the caller's own object, which a
+	 * proxied list would never hold (the command stayed registered and Svelte warned each time). */
+	all = $state.raw<Command[]>([]);
 	/** The keys the commands scoped to each layout own there. */
 	owned = $derived.by(() => {
 		const entries = this.all.map((c) => ({ scope: c.scope, keys: c.scope ? keysOf(c) : [] }));

@@ -214,7 +214,7 @@ describe('themes', () => {
 		expect(findTheme('Example Night').snap.id).toBe('example');
 		expect(findTheme('Kingu Dark').snap.id).toBe('kingu-themes');
 		setContributedThemes([]);
-		expect(findTheme('Example Night').id).toBe('Dark Modern');
+		expect(findTheme('Example Night').id).toBe('Kingu Dark');
 	});
 
 	test('their ids extend the theme settings enums', () => {

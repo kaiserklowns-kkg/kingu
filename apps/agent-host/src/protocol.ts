@@ -8,6 +8,7 @@
 // Field names in events are snake_case, mirroring `AgentEvent` in src-tauri/src/agent/events.rs.
 
 import type { ArkaiSpec } from './arkai/spec.ts';
+import type { Effort } from './effort.ts';
 
 /** `bypassPermissions` is "Allow all": no prompts at all (the app confirms it with the user first). */
 export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions';
@@ -70,6 +71,11 @@ export type StartParams = {
 	 * model calls during the chat (`allowedDuringChat`); a server not listed is asked about.
 	 */
 	mcpSampling?: Record<string, boolean> | null;
+	/**
+	 * The chat's reasoning effort (effort.ts: how each runtime takes it); absent or null: the
+	 * model's default, nothing is sent.
+	 */
+	effort?: Effort | null;
 };
 /**
  * A runtime other than the Claude Agent SDK, resolved by Rust (agent/runtimes.rs) to a program it
@@ -92,10 +98,11 @@ export const MCP_TYPES = ['stdio', 'http', 'sse'] as const;
 export type SendParams = { runId: number; text: string; images?: string[] };
 export type RunParams = { runId: number };
 /**
- * Mid-session change of the live run's model and/or permission mode (at least one). `provider`:
- * an Arkai model of another provider comes with that provider (arkai/spec.ts).
+ * Mid-session change of the live run's model, permission mode and/or reasoning effort (at least
+ * one), from its next response or turn on. `provider`: an Arkai model of another provider comes
+ * with that provider (arkai/spec.ts).
  */
-export type SetOptionsParams = { runId: number; model?: string | null; permissionMode?: PermissionMode | null; provider?: unknown };
+export type SetOptionsParams = { runId: number; model?: string | null; permissionMode?: PermissionMode | null; provider?: unknown; effort?: Effort | null };
 /**
  * `allow` once; `allow_always` for the rest of this session; `allow_workspace` from now on in this
  * folder (the SDK writes the rule to `.claude/settings.local.json`, which is not committed);
@@ -150,8 +157,11 @@ export type DiffStats = { added: number; removed: number };
 /** A slash command the session knows (SDK `SlashCommand`): built in, a skill, or `.claude/commands`. */
 export type SlashCommandInfo = { name: string; description: string; argument_hint: string };
 
-/** A model the session can use (SDK `ModelInfo` from `supportedModels()`). */
-export type ModelOption = { value: string; display_name: string; description: string };
+/**
+ * A model the session can use (SDK `ModelInfo` from `supportedModels()`). `efforts`: the levels it
+ * takes (`supportedEffortLevels`, with `off` first when thinking can be turned off); absent: none.
+ */
+export type ModelOption = { value: string; display_name: string; description: string; efforts?: Effort[] };
 /** One MCP server of the live session (SDK `mcpServerStatus()`): `tools` are their bare names. */
 export type McpServerLive = { name: string; status: string; error: string | null; source: string | null; tools: string[] };
 
@@ -168,6 +178,11 @@ export type AgentEvent =
 	| { kind: 'commands'; commands: SlashCommandInfo[] }
 	/** The models the session can switch to (`supportedModels()`, asked once per run). Replaces the last list. */
 	| { kind: 'models'; models: ModelOption[] }
+	/**
+	 * The reasoning levels the agent itself offers (Codex's model, an ACP agent's `thought_level`
+	 * option) and its own current / default level; empty: none. Replaces the last list.
+	 */
+	| { kind: 'effort_options'; levels: Effort[]; current: Effort | null }
 	/** How full the context window is after a turn: `used_tokens` of `max_tokens`. */
 	| { kind: 'context_usage'; used_tokens: number; max_tokens: number }
 	| ({ kind: 'message'; role: string; text: string } & Parent)

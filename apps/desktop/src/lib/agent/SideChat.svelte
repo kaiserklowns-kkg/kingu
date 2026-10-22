@@ -5,7 +5,7 @@
 	// as a quote with it; the fork stays out of the history. Keep as Chat moves it there and opens
 	// it; closing the drawer (or leaving the chat) discards it, stopped first if it runs.
 	import { onDestroy } from 'svelte';
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import ChatList from './ChatList.svelte';
 	import { chats } from './chats.svelte.ts';
@@ -95,12 +95,12 @@
 	data-chat-find-skip
 >
 	<header class="flex h-[30px] shrink-0 items-center gap-1 px-2">
-		<Icon name="chat" size={13} />
+		<Codicon id="comment-discussion" size={13} />
 		<span class="min-w-0 flex-1 truncate font-medium">{t('chatTranscript.side.header')}</span>
 		{#if sideId}
 			<button type="button" class="shrink-0 rounded px-1.5 py-0.5 text-xs text-(--vscode-textLink-foreground) hover:bg-(--vscode-toolbar-hoverBackground)" title={t('chatTranscript.side.keepHint')} onclick={keep}>{t('chatTranscript.side.keep')}</button>
 		{/if}
-		<button type="button" class={ICON_BTN} title={t('chatTranscript.side.discard')} aria-label={t('chatTranscript.side.discard')} onclick={() => close()}><Icon name="close" size={14} /></button>
+		<button type="button" class={ICON_BTN} title={t('chatTranscript.side.discard')} aria-label={t('chatTranscript.side.discard')} onclick={() => close()}><Codicon id="close" size={14} /></button>
 	</header>
 	{#if excerpt.trim()}
 		<blockquote class="mx-2 mb-1 line-clamp-3 shrink-0 border-l-2 border-(--vscode-textBlockQuote-border,var(--vscode-widget-border)) pl-2 text-xs whitespace-pre-wrap text-(--vscode-descriptionForeground)" title={t('chatTranscript.side.about')}>{excerpt.trim()}</blockquote>
@@ -121,6 +121,6 @@
 			{onkeydown}
 			{@attach (el) => (el as HTMLTextAreaElement).focus()}
 		></textarea>
-		<button type="button" class={ICON_BTN} title={t('chatTranscript.side.send')} aria-label={t('chatTranscript.side.send')} disabled={busy || !text.trim() || running} onclick={() => void send()}><Icon name="send" size={14} /></button>
+		<button type="button" class={ICON_BTN} title={t('chatTranscript.side.send')} aria-label={t('chatTranscript.side.send')} disabled={busy || !text.trim() || running} onclick={() => void send()}><Codicon id="arrow-up-compact" size={14} /></button>
 	</div>
 </section>

@@ -117,9 +117,10 @@ pub fn debug_events(lines: &[(u64, AgentEvent)]) -> (Vec<DebugEvent>, Totals) {
       data: serde_json::to_value(ev).unwrap_or(Value::Null),
     };
     let next = match ev {
-      AgentEvent::RunInfo { runtime, model, agent, rules, disallowed_tools, mcp_servers, resumed, .. } => {
+      AgentEvent::RunInfo { runtime, model, effort, agent, rules, disallowed_tools, mcp_servers, resumed, .. } => {
         let mut parts = vec![runtime.clone()];
         parts.extend(model.clone());
+        parts.extend(effort.as_ref().map(|e| format!("effort {e}")));
         parts.extend(agent.clone());
         parts.push(format!("{} rules", rules.len()));
         if !disallowed_tools.is_empty() {
@@ -276,6 +277,7 @@ pub fn debug_events(lines: &[(u64, AgentEvent)]) -> (Vec<DebugEvent>, Totals) {
       AgentEvent::Anchor { .. }
       | AgentEvent::Commands { .. }
       | AgentEvent::Models { .. }
+      | AgentEvent::EffortOptions { .. }
       | AgentEvent::Delta { .. }
       | AgentEvent::FileSnapshot { .. }
       | AgentEvent::EditsChanged { .. }
@@ -463,6 +465,7 @@ mod tests {
           runtime: "claude".into(),
           model: Some("opus".into()),
           permission_mode: Some("default".into()),
+          effort: Some("high".into()),
           agent: Some("Planner".into()),
           resumed: false,
           rules: vec!["AGENTS.md".into(), ".github/instructions/py.instructions.md".into()],
@@ -500,7 +503,7 @@ mod tests {
     let kinds: Vec<_> = rows.iter().map(|r| r.kind).collect();
     assert_eq!(kinds, ["run", "user", "session", "tool", "permission", "hook", "tool", "assistant", "turn", "mcp", "exit"]);
     assert_eq!(rows.iter().map(|r| r.seq).collect::<Vec<_>>(), (0..rows.len()).collect::<Vec<_>>());
-    assert_eq!(rows[0].detail, "claude · opus · Planner · 2 rules · 1 tools off · 1 MCP");
+    assert_eq!(rows[0].detail, "claude · opus · effort high · Planner · 2 rules · 1 tools off · 1 MCP");
     assert_eq!((rows[1].detail.as_str(), rows[1].request), ("Fix the login bug", Some(0)), "one line, and its request");
     let read = &rows[3];
     assert_eq!((read.name.as_str(), read.detail.as_str(), read.duration_ms, read.is_error, read.request), ("Read", "src/login.rs", Some(250), false, Some(0)));

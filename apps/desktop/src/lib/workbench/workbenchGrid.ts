@@ -40,7 +40,9 @@ function mirror(ltr: Area[], middle: Area[]): Area[] {
 }
 
 export const gridTemplateAreas = (g: WorkbenchGrid) => g.areas.map((r) => `"${r.join(' ')}"`).join(' ');
-export const gridTemplateColumns = (g: WorkbenchGrid) => g.columns.map((c) => (c === 'edit' ? 'minmax(0,1fr)' : 'auto')).join(' ');
+/** `fill`: the area that takes the free width; another than the editor (a maximized secondary side bar) leaves the editor's column empty. */
+export const gridTemplateColumns = (g: WorkbenchGrid, fill: Area = 'edit') =>
+	g.columns.map((c) => (c === fill ? 'minmax(0,1fr)' : c === 'edit' ? '0px' : 'auto')).join(' ');
 export const gridTemplateRows = (g: WorkbenchGrid) => g.rows.map((r) => (r === 'main' ? 'minmax(0,1fr)' : 'auto')).join(' ');
 
 /** Grid areas must be rectangles; true when every area name covers one. */
@@ -61,4 +63,18 @@ export function areasAreRectangles(g: WorkbenchGrid): boolean {
 		if (count !== (bottom - top + 1) * (right - left + 1)) return false;
 	}
 	return true;
+}
+
+export type Edge = 'left' | 'right';
+
+/**
+ * How the activity bar's card meets the side bar's (kingu-old floatingPanels.css): with the side
+ * bar shown they join into one surface, the rail square on its facing edge with no gap and the
+ * side bar square on its own facing edge (its border there given up: the rail's is the seam);
+ * with the side bar hidden the rail is a card of its own, rounded all round, 4px from the editor.
+ */
+export function railJoin(sideBar: SideBarLocation, sidebarVisible: boolean): { railSquare: Edge | null; sideSquare: Edge | null; gap: Edge | null } {
+	const facing: Edge = sideBar === 'left' ? 'right' : 'left';
+	if (!sidebarVisible) return { railSquare: null, sideSquare: null, gap: facing };
+	return { railSquare: facing, sideSquare: facing === 'right' ? 'left' : 'right', gap: null };
 }

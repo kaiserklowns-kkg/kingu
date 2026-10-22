@@ -172,9 +172,12 @@ export function stepTip(currentId: string | null, dir: 1 | -1, c: TipContext, di
 	return list[(at + dir + list.length) % list.length];
 }
 
-/** Whether the card shows at all: tips on, not hidden for this session, a folder, an empty chat. */
-export function showTips(s: { enabled: boolean; hiddenForSession: boolean; folder: boolean; empty: boolean }): boolean {
-	return s.enabled && !s.hiddenForSession && s.folder && s.empty;
+/**
+ * Whether the card shows at all: tips on, not hidden for this session, an empty chat. No folder is
+ * needed (VS Code's getWelcomeTip): the tips that need one say so in their own `when`.
+ */
+export function showTips(s: { enabled: boolean; hiddenForSession: boolean; empty: boolean }): boolean {
+	return s.enabled && !s.hiddenForSession && s.empty;
 }
 
 export type TipPart = { kind: 'text'; text: string } | { kind: 'code'; text: string } | { kind: 'link'; text: string; action: string };

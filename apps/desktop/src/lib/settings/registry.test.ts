@@ -14,7 +14,7 @@ describe('resolveSettings', () => {
 		expect(value(m, 'editor.fontSize')).toEqual({ value: 12, source: 'default' });
 		expect(value(m, 'files.autoSave')).toEqual({ value: 'off', source: 'default' });
 		expect(value(m, 'files.autoSaveDelay')).toEqual({ value: 1000, source: 'default' });
-		expect(value(m, 'workbench.colorTheme')).toEqual({ value: 'Dark Modern', source: 'default' });
+		expect(value(m, 'workbench.colorTheme')).toEqual({ value: 'Kingu Dark', source: 'default' });
 	});
 
 	test('workspace overrides user overrides default', () => {

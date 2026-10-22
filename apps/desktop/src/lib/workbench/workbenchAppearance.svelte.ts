@@ -11,6 +11,7 @@ import { editors } from './editors.svelte';
 import { setKeyboardDispatch, type KeyboardDispatch } from './keys';
 import { workspace } from './workspace.svelte';
 import { closesWhenEmpty, editorTabHeight, fontSmoothing, nativeWindowTheme, reducedMotion } from './workbenchOptions';
+import { findProductIconTheme, productIconsCss } from './codicons';
 
 export function installWorkbenchAppearance(): () => void {
 	const motion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
@@ -40,6 +41,19 @@ export function installWorkbenchAppearance(): () => void {
 			// workbench.view.alwaysShowHeaderActions / workbench.tree.renderIndentGuides (layout.css).
 			root.classList.toggle('kg-always-show-header-actions', settings.get<boolean>('workbench.view.alwaysShowHeaderActions'));
 			root.dataset.indentGuides = settings.get<string>('workbench.tree.renderIndentGuides');
+		});
+		// workbench.productIconTheme: every icon's glyph (`.codicon-<id>::before`, codicons.ts).
+		$effect(() => {
+			const css = productIconsCss(findProductIconTheme(settings.get('workbench.productIconTheme')));
+			untrack(() => {
+				let sheet = document.getElementById('kg-product-icons');
+				if (!sheet) {
+					sheet = document.createElement('style');
+					sheet.id = 'kg-product-icons';
+					document.head.append(sheet);
+				}
+				sheet.textContent = css;
+			});
 		});
 		// keyboard.dispatch
 		$effect(() => setKeyboardDispatch(settings.get<KeyboardDispatch>('keyboard.dispatch')));

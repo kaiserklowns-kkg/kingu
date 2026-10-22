@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { debug } from '#lib/debug/debug.svelte.ts';
-	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 	import { lsp } from '#lib/lsp/lsp.svelte.ts';
 	import { output } from '#lib/output/output.svelte.ts';
 	import TeamStatus from '#lib/team/TeamStatus.svelte';
@@ -70,14 +69,13 @@
 		return file ? problemAt(file.items, { line: editors.cursor.line - 1, character: editors.cursor.column - 1 }) : null;
 	});
 
-	// VS Code's entries on the left (branch, sync, problems) and the editor's on the right; Orca's
-	// usage, resources and ports in between. Branch and changes follow the selected worktree in Agents.
+	// VS Code's entries on the left (sync, problems; the branch is in the title bar) and the editor's
+	// on the right; Orca's usage, resources and ports in between. In Agents the selected worktree's
+	// branch shows in the title bar and there is no workbench sync item.
 	const worktree = $derived(appMode.isAgents && adeLayout.key ? adeLayout.key : null);
-	// The workbench's branch is the active repository's (the active editor's in a multi-root workspace).
+	// The workbench's repository is the active one (the active editor's in a multi-root workspace).
 	const active = $derived(worktree ? null : scm.active);
 	const repo = $derived(active?.repo ?? null);
-	const branch = $derived(worktree ? adeTasks.branchOf(worktree) : repo ? (repo.branch ?? repo.head) : status.branch);
-	const dirty = $derived(!!repo && repo.entries.length > 0);
 	const sync = $derived(repo ? syncItem(repo) : null);
 	// The editor items follow the active editor: none for editors without a text model, and the
 	// blame only for a workspace file (VS Code hides both when the editor cannot provide them).
@@ -187,24 +185,18 @@
 	{/if}
 	<!-- workbench.notifications.position bottom-left: the bell is the left-most item. -->
 	{#if bell === 'statusLeft' && show('status.notifications')}<NotificationsBell />{/if}
-	{#if branch && show('status.scm')}
-		{#if repo}
-			<!-- VS Code's branch item (Checkout to…) and its sync item; a running git operation can be cancelled. -->
-			<button class={ITEM} title="{scm.repositories.length > 1 && active ? `${active.label.name} (Git) - ` : ''}{branch}{dirty ? '*' : ''}{repo.detached ? ' (detached HEAD)' : ''}, Checkout Branch/Tag..." onclick={() => (active ? active.checkout() : commands.run('git.checkout'))}>
-				<Icon name="branch" size={14} />{branch}{dirty ? '*' : ''}
+	<!-- The branch item (Checkout to…) lives in the title bar now (TitleBar.svelte); the Source Control
+	     entry keeps VS Code's sync item and a running git operation (which can be cancelled). -->
+	{#if repo && show('status.scm')}
+		<!-- git.showProgress: the running operation; git.enableStatusBarSync: the sync item. -->
+		{#if scm.op && settings.get<boolean>('git.showProgress')}
+			<button class={ITEM} title="คลิกเพื่อยกเลิก (Cancel)" onclick={() => scm.cancel()}>
+				<span class="inline-block size-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent"></span>{scm.op}
 			</button>
-			<!-- git.showProgress: the running operation; git.enableStatusBarSync: the sync item. -->
-			{#if scm.op && settings.get<boolean>('git.showProgress')}
-				<button class={ITEM} title="คลิกเพื่อยกเลิก (Cancel)" onclick={() => scm.cancel()}>
-					<span class="inline-block size-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent"></span>{scm.op}
-				</button>
-			{:else if sync && !scm.op && settings.get<boolean>('git.enableStatusBarSync')}
-				<button class={ITEM} title={sync.title} onclick={() => (active ? active.run(sync.command) : commands.run(sync.command))}>
-					<Icon name={sync.command === 'git.publish' ? 'publish' : 'sync'} size={14} />{#if sync.label}<span class="tabular-nums">{sync.label}</span>{/if}
-				</button>
-			{/if}
-		{:else}
-			<span class="flex h-full items-center gap-1 px-2" title="branch ของ worktree ที่เลือก"><Icon name="branch" size={14} />{branch}</span>
+		{:else if sync && !scm.op && settings.get<boolean>('git.enableStatusBarSync')}
+			<button class={ITEM} title={sync.title} onclick={() => (active ? active.run(sync.command) : commands.run(sync.command))}>
+				<Icon name={sync.command === 'git.publish' ? 'publish' : 'sync'} size={14} />{#if sync.label}<span class="tabular-nums">{sync.label}</span>{/if}
+			</button>
 		{/if}
 	{/if}
 	{#if gitQueue.first}

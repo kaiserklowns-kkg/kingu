@@ -3,7 +3,8 @@
 	// Provider Accounts pane), each straight into the Keychain, with the settings that go with it,
 	// then the providers that read a CLI's own sign-in. Logic: #lib/workbench/usageCredentials.ts.
 	import { t } from '#lib/i18n/index.ts';
-	import ProviderIcon from '#lib/workbench/ProviderIcon.svelte';
+	import AgentIcon from '#lib/agent/AgentIcon.svelte';
+	import { providerIconKey } from '#lib/agent/agentIcons.ts';
 	import { notifications } from '#lib/workbench/notifications.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { PROVIDER_NAME } from '#lib/workbench/usage.ts';
@@ -46,7 +47,7 @@
 	{#each SECRET_FIELDS as f (f.id)}
 		<div class="px-4 py-3">
 			<div class="flex items-center gap-2 text-[13px]">
-				<ProviderIcon provider={f.provider} size={14} />{t(f.label)}
+				<AgentIcon agent={providerIconKey(f.provider)} size={14} />{t(f.label)}
 				<span class="ml-auto text-xs text-(--vscode-descriptionForeground)">{saved[f.id] ? t('usage.cred.saved') : t('usage.cred.missing')}</span>
 			</div>
 			<span class={HINT}>{t(f.hint)}</span>
@@ -84,7 +85,7 @@
 <div class={CARD}>
 	{#each CLI_SIGN_INS as c (c.provider)}
 		<div class="flex items-start gap-2 px-4 py-2.5 text-[13px]">
-			<span class="mt-0.5"><ProviderIcon provider={c.provider} size={14} /></span>
+			<span class="mt-0.5"><AgentIcon agent={providerIconKey(c.provider)} size={14} /></span>
 			<span class="w-24 shrink-0">{PROVIDER_NAME[c.provider]}</span>
 			<span class="min-w-0 flex-1 text-xs text-(--vscode-descriptionForeground)">{t(c.hint)}</span>
 		</div>

@@ -54,6 +54,8 @@ describe('profile detection', () => {
 		expect(rows.map((r) => r.id)).toEqual(['claude', 'codex', CUSTOM_PICK]);
 		expect(rows[0].description).toContain('hooks');
 		expect(rows[2].description).toContain('claude --model opus');
+		// Each found CLI shows its agent's mark; Custom has none.
+		expect(rows.map((r) => r.agent)).toEqual(['claude', 'codex', undefined]);
 		expect(KNOWN_BINS).toContain('cursor-agent');
 	});
 });

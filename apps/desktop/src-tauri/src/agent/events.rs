@@ -66,7 +66,14 @@ pub struct ModelOption {
   pub display_name: String,
   #[serde(default)]
   pub description: String,
+  /// The reasoning effort levels it takes (`off` first); empty: none.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub efforts: Vec<String>,
 }
+
+/// The chat's reasoning effort levels (agent-host `effort.ts`), lowest first. `None` on a chat
+/// or a run: the model's own default.
+pub const EFFORTS: &[&str] = &["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /// The rule an "Always allow" answer to a permission prompt writes to the user's settings
 /// (`tool_rules`): each of `keys` set to `true` in the object setting `setting`.
@@ -99,6 +106,14 @@ pub enum AgentEvent {
   Commands { commands: Vec<SlashCommand> },
   /// The models the session can switch to; replaces the last list.
   Models { models: Vec<ModelOption> },
+  /// The reasoning levels the agent itself offers (Codex's model, an ACP agent's thought level)
+  /// and the one in effect; empty: none. Replaces the last list.
+  EffortOptions {
+    #[serde(default)]
+    levels: Vec<String>,
+    #[serde(default)]
+    current: Option<String>,
+  },
   /// How full the context window is after a turn.
   ContextUsage { used_tokens: u64, max_tokens: u64 },
   /// `parent_tool_use_id` (also on `Thinking`, `ToolUse`, `ToolResult`): set on a subagent's own
@@ -293,6 +308,9 @@ pub enum AgentEvent {
     model: Option<String>,
     #[serde(default)]
     permission_mode: Option<String>,
+    /// The reasoning effort the run started with (`EFFORTS`); none: the model's default.
+    #[serde(default)]
+    effort: Option<String>,
     #[serde(default)]
     agent: Option<String>,
     #[serde(default)]
@@ -440,6 +458,7 @@ mod tests {
       runtime: "claude".into(),
       model: Some("opus".into()),
       permission_mode: None,
+      effort: Some("max".into()),
       agent: None,
       resumed: false,
       rules: vec!["AGENTS.md".into()],

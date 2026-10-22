@@ -241,6 +241,35 @@ describe('Arkai runtime', () => {
 		expect(llm.requests[2]!.body.messages.map((m: { role: string }) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant', 'user']);
 	});
 
+	test('reasoning effort: the provider\'s fields on each request, changed for the next one', async () => {
+		const { cwd, llm, nth, call, runtime } = setup();
+		const anthropic = { id: 'anth', name: 'Anthropic', api: 'anthropic', baseUrl: llm.url, apiKey: 'sk-a', models: [{ id: 'claude-opus-5-5', contextWindow: 200_000, maxTokens: 8192 }] };
+		llm.reply({ thinking: ['plan'], signature: 'sig', calls: [{ id: 'toolu_1', name: 'Read', args: '{"file_path":"a.txt"}' }] }, { text: ['old'] }, { text: ['again'] });
+		await call(1, 'start', { runId: 1, cwd, prompt: 'read it', runtime: runtime({ provider: anthropic, model: 'claude-opus-5-5' }), effort: 'high' });
+		await nth('result');
+		expect(llm.requests[0]!.body).toMatchObject({ thinking: { type: 'adaptive' }, output_config: { effort: 'high' }, max_tokens: 8192 });
+		// The tool loop's next request sends the thinking back first, with its signature.
+		expect(llm.requests[1]!.body.messages[1].content[0]).toEqual({ type: 'thinking', thinking: 'plan', signature: 'sig' });
+		expect((await call(2, 'set_options', { runId: 1, effort: 'off' })).result).toEqual({ model: null, permissionMode: null, effort: 'off' });
+		await call(3, 'send', { runId: 1, text: 'more' });
+		await nth('result', 2);
+		expect(llm.requests[2]!.body.thinking).toEqual({ type: 'disabled' });
+		expect(llm.requests[2]!.body.output_config).toBeUndefined();
+	});
+
+	test('reasoning effort: OpenAI reasoning_effort; a model without a knob gets nothing', async () => {
+		const { cwd, llm, nth, call, runtime } = setup();
+		llm.reply({ text: ['one'] }, { text: ['two'] });
+		const provider = { id: 'openai', name: 'OpenAI', api: 'openai', baseUrl: `${llm.url}/v1`, apiKey: 'sk-o', models: [{ id: 'gpt-5.1', contextWindow: 400_000 }] };
+		await call(1, 'start', { runId: 1, cwd, prompt: 'hi', runtime: runtime({ provider, model: 'gpt-5.1' }), effort: 'minimal' });
+		await nth('result');
+		expect(llm.requests[0]!.body.reasoning_effort).toBe('minimal');
+		await call(2, 'set_options', { runId: 1, model: 'openai/gpt-4o' });
+		await call(3, 'send', { runId: 1, text: 'again' });
+		await nth('result', 2);
+		expect('reasoning_effort' in llm.requests[1]!.body).toBe(false);
+	});
+
 	test('interrupt ends the turn; stop ends the run', async () => {
 		const { cwd, llm, events, nth, call, runtime, host } = setup();
 		llm.hold = true;

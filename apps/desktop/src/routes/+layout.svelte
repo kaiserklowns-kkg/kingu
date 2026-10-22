@@ -1,5 +1,8 @@
 <script lang="ts">
 	import './layout.css';
+	// Imported here rather than @imported in layout.css so Vite resolves their font and SVG urls.
+	import '#lib/workbench/kinguLook.css';
+	import '#lib/workbench/codicon.css';
 	import favicon from '#lib/assets/favicon.svg';
 
 	import { forwardWindowErrors } from '#lib/client-log.ts';

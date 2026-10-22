@@ -5,7 +5,7 @@
 	// (⌥⌘C / ⌥⌘W / ⌥⌘R), Escape closes. New output is searched again as it streams in. Text
 	// folded away ("Worked for", a closed thinking block) is not in the page and is not found.
 	import { onMount, untrack } from 'svelte';
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
 	import { isMac } from '#lib/workbench/keys.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import { findMatches, keepMatch, stepMatch, type FindOptions, type Match } from './chatTranscript.ts';
@@ -125,10 +125,11 @@
 		};
 	});
 
-	const TOGGLES: { key: keyof FindOptions; label: string; title: () => string; code: string }[] = [
-		{ key: 'caseSensitive', label: 'Aa', title: () => t('chatTranscript.find.caseSensitive'), code: 'C' },
-		{ key: 'wholeWord', label: 'ab', title: () => t('chatTranscript.find.wholeWord'), code: 'W' },
-		{ key: 'regex', label: '.*', title: () => t('chatTranscript.find.regex'), code: 'R' }
+	// VS Code's find toggles and buttons, by their product icons (kingu-old's chat find widget).
+	const TOGGLES: { key: keyof FindOptions; icon: string; title: () => string; code: string }[] = [
+		{ key: 'caseSensitive', icon: 'case-sensitive', title: () => t('chatTranscript.find.caseSensitive'), code: 'C' },
+		{ key: 'wholeWord', icon: 'whole-word', title: () => t('chatTranscript.find.wholeWord'), code: 'W' },
+		{ key: 'regex', icon: 'regex', title: () => t('chatTranscript.find.regex'), code: 'R' }
 	];
 	const keyHint = (code: string) => (isMac ? `⌥⌘${code}` : `Alt+${code}`);
 	const toggleClass = (on: boolean) => [
@@ -160,23 +161,23 @@
 		<div class="flex shrink-0 gap-0.5 pr-0.5">
 			{#each TOGGLES as o (o.key)}
 				<button type="button" class={toggleClass(opts[o.key])} title="{o.title()} ({keyHint(o.code)})" aria-label={o.title()} aria-pressed={opts[o.key]} onclick={() => toggle(o.key)}>
-					<span class={o.key === 'wholeWord' ? 'underline decoration-1 underline-offset-2' : undefined}>{o.label}</span>
+					<Codicon id={o.icon} />
 				</button>
 			{/each}
 		</div>
 	</div>
 	<span class={['min-w-14 shrink-0 px-1 text-xs whitespace-nowrap', (invalid || (query && !count)) ? 'text-(--vscode-errorForeground)' : 'text-(--vscode-descriptionForeground)']} aria-live="polite">{statusText}</span>
-	<button type="button" class={ICON} title={t('chatTranscript.find.previous')} aria-label={t('chatTranscript.find.previous')} disabled={!count} onclick={() => step(-1)}><Icon name="chevronUp" size={16} /></button>
-	<button type="button" class={ICON} title={t('chatTranscript.find.next')} aria-label={t('chatTranscript.find.next')} disabled={!count} onclick={() => step(1)}><Icon name="chevronDown" size={16} /></button>
-	<button type="button" class={ICON} title={t('chatTranscript.find.close')} aria-label={t('chatTranscript.find.close')} onclick={onclose}><Icon name="close" size={14} /></button>
+	<button type="button" class={ICON} title={t('chatTranscript.find.previous')} aria-label={t('chatTranscript.find.previous')} disabled={!count} onclick={() => step(-1)}><Codicon id="find-previous-match" /></button>
+	<button type="button" class={ICON} title={t('chatTranscript.find.next')} aria-label={t('chatTranscript.find.next')} disabled={!count} onclick={() => step(1)}><Codicon id="find-next-match" /></button>
+	<button type="button" class={ICON} title={t('chatTranscript.find.close')} aria-label={t('chatTranscript.find.close')} onclick={onclose}><Codicon id="widget-close" /></button>
 </div>
 
 <style>
 	/* The matches and the current one (VS Code's findMatchHighlight / findMatch colours). */
 	:global(::highlight(kg-chat-find)) {
-		background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
+		background-color: var(--vscode-chat-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
 	}
 	:global(::highlight(kg-chat-find-current)) {
-		background-color: var(--vscode-editor-findMatchBackground, #515c6a);
+		background-color: var(--vscode-chat-findMatchBackground, #515c6a);
 	}
 </style>

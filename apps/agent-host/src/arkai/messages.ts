@@ -7,9 +7,15 @@ import type { ImageBlock } from '../host.ts';
 /** A tool call as the model made it: `arguments` is JSON text (it may be malformed: coach.ts). */
 export type ToolCall = { id: string; name: string; arguments: string };
 
+/**
+ * An Anthropic thinking block as the model sent it (its `signature`, or a redacted one's `data`):
+ * sent back with the answer it came with while thinking is on (anthropic.ts).
+ */
+export type ThinkingBlock = { type: 'thinking'; thinking: string; signature: string } | { type: 'redacted_thinking'; data: string };
+
 export type Msg =
 	| { role: 'user'; text: string; images?: ImageBlock[] }
-	| { role: 'assistant'; text: string; calls: ToolCall[] }
+	| { role: 'assistant'; text: string; calls: ToolCall[]; thinking?: ThinkingBlock[] }
 	| { role: 'tool'; id: string; name: string; content: string; isError: boolean };
 
 /** A tool offered to the model: JSON-schema parameters. */
@@ -23,6 +29,10 @@ export type CompletionRequest = {
 	messages: Msg[];
 	tools: ToolDef[];
 	maxTokens: number;
+	/** The provider's reasoning fields for the chat's effort (../effort.ts `arkaiReasoning`), merged into the body. */
+	extra?: Record<string, unknown>;
+	/** Thinking is on (Anthropic): earlier thinking blocks go back with their answers. */
+	keepThinking?: boolean;
 	signal: AbortSignal;
 	onText: (text: string) => void;
 	onThinking: (text: string) => void;
@@ -34,6 +44,8 @@ export type Completion = {
 	/** `length`: the answer was cut at `maxTokens`. */
 	stop: 'stop' | 'tool_calls' | 'length';
 	usage: TokenUsage | null;
+	/** Anthropic's thinking blocks of this answer, in order. */
+	thinking?: ThinkingBlock[];
 };
 
 /** One provider's API. */

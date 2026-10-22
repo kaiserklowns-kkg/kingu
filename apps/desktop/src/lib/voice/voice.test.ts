@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { concat, encodeWav, level, resample, SAMPLE_RATE, toBase64 } from './wav.ts';
 import { spaced, targetKind } from './target.ts';
-import { elapsed, micConstraints, micErrorKey, onShortcut, voiceOptions } from './dictation.ts';
+import { elapsed, micConstraints, micErrorKey, onMicButton, onShortcut, voiceOptions } from './dictation.ts';
 import { newTask } from '#lib/ade/model.ts';
 import { en } from '#lib/i18n/en.ts';
 
@@ -74,6 +74,12 @@ describe('dictation rules', () => {
 		expect(onShortcut('idle', 'hold')).toBe('start');
 		expect(onShortcut('listening', 'toggle')).toBe('stop');
 		expect(onShortcut('listening', 'hold')).toBe('ignore');
+		// The chat microphone: off opens the Voice settings, on starts, listening stops.
+		expect(onMicButton(false, 'idle')).toBe('settings');
+		expect(onMicButton(true, 'idle')).toBe('start');
+		expect(onMicButton(true, 'listening')).toBe('stop');
+		expect(onMicButton(true, 'transcribing')).toBe('ignore');
+		expect(onMicButton(false, 'starting')).toBe('ignore');
 		expect(onShortcut('transcribing', 'toggle')).toBe('ignore');
 		expect(onShortcut('starting', 'toggle')).toBe('ignore');
 	});

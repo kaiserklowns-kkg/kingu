@@ -5,7 +5,7 @@
 	// click shows the prompt and the latest summary; actions jump to the worktree, resume it, or
 	// copy its session id.
 	import Icon from '#lib/workbench/Icon.svelte';
-	import ProviderIcon from '#lib/workbench/ProviderIcon.svelte';
+	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { adeLayout } from './adeLayout.svelte';
@@ -238,7 +238,7 @@
 					<p class="mt-0.5 line-clamp-2 min-w-0 text-[12px] leading-4 {MUTED}">{p ?? 'No conversation preview available'}</p>
 				{/if}
 				<div class="mt-1 grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-1.5 gap-y-0.5 text-[11px] leading-4 {MUTED}">
-					<span class="flex size-4 items-center justify-center">{#if v.agent === 'codex'}<ProviderIcon provider="codex" size={14} />{:else}<ProviderIcon provider="claude" size={14} />{/if}</span>
+					<span class="flex size-4 items-center justify-center"><AgentIcon agent={v.agent || 'claude'} size={14} /></span>
 					<span class="flex min-w-0 items-center gap-1.5">
 						<span class="min-w-0 shrink-[2] truncate">{v.agent}</span>
 						{#if v.count}<span class="opacity-55">·</span><span class="tabular-nums">{v.count}</span>{/if}

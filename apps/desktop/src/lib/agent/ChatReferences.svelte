@@ -2,7 +2,7 @@
 	// "Used N references" above a response (VS Code's chatReferencesContentPart): collapsed to its
 	// count, open it lists the files the agent read or found as pills; a pill opens its file (at
 	// the line for a Grep match or a ranged Read).
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
 	import { editors } from '#lib/workbench/editors.svelte.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import { shortPath } from './chatParts';
@@ -27,7 +27,7 @@
 
 <div class="flex flex-col gap-1">
 	<button type="button" class="flex items-center gap-1 self-start text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)" aria-expanded={open} onclick={() => (open = !open)}>
-		<Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} />
+		<Codicon id={open ? 'chevron-down' : 'chevron-right'} size={12} />
 		<span>{t('chatRender.references', { count: refs.length })}</span>
 	</button>
 	{#if open}
@@ -41,7 +41,7 @@
 						title={t('chatRender.referenceOpen', { path: r.line ? `${r.path}:${r.line}` : r.path })}
 						onclick={() => openRef(r)}
 					>
-						<Icon name="file" size={11} />
+						<Codicon id="file" size={11} />
 						<span class="truncate">{label.name}{r.line ? `:${r.line}` : ''}</span>
 						{#if label.dir}<span class="min-w-0 truncate text-(--vscode-descriptionForeground)">{label.dir}</span>{/if}
 					</button>

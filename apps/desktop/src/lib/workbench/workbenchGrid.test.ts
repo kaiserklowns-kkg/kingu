@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { expect, test } from 'bun:test';
-import { areasAreRectangles, gridTemplateAreas, gridTemplateColumns, gridTemplateRows, workbenchGrid, type PanelAlignment, type PanelLocation, type SideBarLocation } from './workbenchGrid';
+import { areasAreRectangles, gridTemplateAreas, gridTemplateColumns, gridTemplateRows, railJoin, workbenchGrid, type PanelAlignment, type PanelLocation, type SideBarLocation } from './workbenchGrid';
 
 test('default: side bar left, panel bottom under the editor only', () => {
 	const g = workbenchGrid({ sideBar: 'left', panel: 'bottom', alignment: 'center' });
@@ -37,4 +37,11 @@ test('every arrangement is a valid grid (rectangular areas, each part once)', ()
 				expect([sideBar, panel, alignment, areasAreRectangles(g)]).toEqual([sideBar, panel, alignment, true]);
 				expect(new Set(g.areas.flat())).toEqual(new Set(['act', 'side', 'sashS', 'edit', 'panel', 'sashP', 'sashX', 'aux']));
 			}
+});
+
+test('the activity bar joins the side bar into one card, or stands 4px from the editor', () => {
+	expect(railJoin('left', true)).toEqual({ railSquare: 'right', sideSquare: 'left', gap: null });
+	expect(railJoin('right', true)).toEqual({ railSquare: 'left', sideSquare: 'right', gap: null });
+	expect(railJoin('left', false)).toEqual({ railSquare: null, sideSquare: null, gap: 'right' });
+	expect(railJoin('right', false)).toEqual({ railSquare: null, sideSquare: null, gap: 'left' });
 });

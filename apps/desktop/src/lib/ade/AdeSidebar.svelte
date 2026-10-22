@@ -9,7 +9,7 @@
 	// gear, Settings, the Tasks row); Reveal active workspace is on the project header.
 	import { untrack } from 'svelte';
 	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
-	import ProviderIcon from '#lib/workbench/ProviderIcon.svelte';
+	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
 	import type { MenuNode } from '#lib/workbench/menus.ts';
 	import { commands } from '#lib/workbench/commands.svelte.ts';
@@ -526,7 +526,7 @@
 							<!-- Orca's inline agent row: state, agent, "agent - last message", model, time. -->
 							<div class="flex h-6 items-center gap-1 rounded-sm px-1 text-[11px] leading-none {MUTED} hover:bg-(--vscode-list-hoverBackground)">
 								<span class="grid size-3 shrink-0 place-items-center">{@render statusDot(s, 'size-1.5')}</span>
-								<span class="shrink-0">{#if v.meta.agent === 'codex'}<ProviderIcon provider="codex" />{:else}<ProviderIcon provider="claude" />{/if}</span>
+								<span class="shrink-0"><AgentIcon agent={v.meta.agent || 'claude'} size={13} /></span>
 								<span class={['min-w-0 flex-1 truncate', unread ? 'font-semibold text-(--vscode-foreground)' : 'text-(--vscode-descriptionForeground)/90']}>
 									{agentName(v)}<span class="opacity-65"> - {agentText(v)}</span>
 								</span>

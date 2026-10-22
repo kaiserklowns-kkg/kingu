@@ -4,19 +4,29 @@ import {
 	agentShortName,
 	agentStatusText,
 	agentStatusView,
-	commandCenterLabel,
-	compactSearchLabel,
-	commandCenterTooltip,
+	BRANCH_MAX_CHARS,
 	countSessions,
 	inFilter,
 	layoutControlItems,
+	layoutToggleIcon,
+	OPEN_IN_AGENTS_WIDTH,
+	openInAgentsLabelFits,
+	openInAgentsWidth,
 	overflowHidden,
+	rightSideWidth,
+	SEARCH_MIN_WIDTH,
+	SEARCH_WIDTH,
+	searchBoxLabel,
+	searchTooltip,
+	shortBranchName,
 	SessionHistory,
 	sessionsAttentionLabel,
 	statusAgents,
 	switchMode,
 	TITLE_BAR_TOGGLES,
+	titleBarFit,
 	titleBarHeight,
+	titleBranch,
 	titleToolbar,
 	toggleChecked,
 	TOOLBAR_MAX,
@@ -32,18 +42,99 @@ describe('title bar sizes and command center', () => {
 		expect(titleBarHeight('agents', { commandCenter: true, compactAgents: true })).toBe(35);
 	});
 
-	test('search label: workspace name, the full title when customised, "Search" with no folder', () => {
-		expect(commandCenterLabel({ folderName: 'kingu', title: 'main.ts — kingu', customTitle: false })).toBe('kingu');
-		expect(commandCenterLabel({ folderName: 'kingu', title: 'main.ts — kingu', customTitle: true })).toBe('main.ts — kingu');
-		expect(commandCenterLabel({ folderName: null, title: 'Kingu', customTitle: false })).toBe('Search');
-		expect(commandCenterTooltip({ folderName: 'kingu', quickOpenKey: '⌘P', commandsKey: '⇧⌘P' })).toBe('Search kingu (⌘P) — Show and Run Commands (⇧⌘P)');
-		expect(commandCenterTooltip({ folderName: null })).toBe('Search');
+	test('search: "Search" and its key; a customised window title still wins', () => {
+		expect(searchBoxLabel({ title: 'main.ts — kingu', customTitle: false })).toBe('Search');
+		expect(searchBoxLabel({ title: 'main.ts — kingu', customTitle: true })).toBe('main.ts — kingu');
+		expect(searchTooltip('⌘P')).toBe('Open Quick Access (⌘P)');
+		expect(searchTooltip()).toBe('Open Quick Access');
+	});
+});
+
+describe('project and branch', () => {
+	test('the active repository: branch or detached head, a dirty flag (no *), the repository first when several', () => {
+		expect(titleBranch({ repo: { branch: 'main' } })).toEqual({ label: 'main', short: 'main', dirty: false, interactive: true, tooltip: 'Switch Branch\nmain' });
+		const dirty = titleBranch({ repo: { branch: 'main', dirty: true, name: 'kingu', multiple: true } });
+		expect(dirty?.label).toBe('main');
+		expect(dirty?.dirty).toBe(true);
+		expect(dirty?.tooltip).toBe('Switch Branch\nkingu (Git) - main\nUncommitted changes');
+		expect(titleBranch({ repo: { branch: null, head: 'a1b2c3d', detached: true } })).toEqual({ label: 'a1b2c3d', short: 'a1b2c3d', dirty: false, interactive: true, tooltip: 'Switch Branch\na1b2c3d (detached HEAD)' });
+		expect(titleBranch({ repo: { branch: null, head: null } })).toBeNull();
 	});
 
-	test('compact pill placeholder: the project and branch name the folder, so it says what it searches', () => {
-		expect(compactSearchLabel({ folderName: 'kingu', title: 'main.ts — kingu', customTitle: false })).toBe('Search files and commands');
-		expect(compactSearchLabel({ folderName: 'kingu', title: 'main.ts — kingu', customTitle: true })).toBe('main.ts — kingu');
-		expect(compactSearchLabel({ folderName: null, title: 'Kingu', customTitle: false })).toBe('Search');
+	test("no repository: the folder's branch; the Agents layout: the worktree's, shown only", () => {
+		expect(titleBranch({ folderBranch: 'dev' })).toEqual({ label: 'dev', short: 'dev', dirty: false, interactive: true, tooltip: 'Switch Branch\ndev' });
+		expect(titleBranch({})).toBeNull();
+		expect(titleBranch({ worktreeBranch: 'kingu/fix-x', repo: { branch: 'main' } })).toEqual({ label: 'kingu/fix-x', short: 'kingu/fix-x', dirty: false, interactive: false, tooltip: "The selected worktree's branch\nkingu/fix-x" });
+		expect(titleBranch({ worktreeBranch: null, repo: { branch: 'main' } })).toBeNull();
+	});
+
+	test('long branch names: the last segment behind …/, then a middle ellipsis; the full name stays in label and tooltip', () => {
+		expect(shortBranchName('kingu/test')).toBe('kingu/test');
+		expect(shortBranchName('kaiserklowns-kkg/system-gap-review')).toBe('…/system-gap-review');
+		const long = shortBranchName('team/feature/a-really-long-branch-name-for-the-title-bar');
+		expect(long.length).toBe(BRANCH_MAX_CHARS);
+		expect(long.startsWith('…/a-really-long')).toBe(true);
+		expect(long.endsWith('title-bar')).toBe(true);
+		expect(long.slice(2)).toContain('…');
+		const flat = shortBranchName('a-really-long-branch-name-without-any-slash-at-all');
+		expect(flat.length).toBe(BRANCH_MAX_CHARS);
+		expect(flat.startsWith('a-really-long')).toBe(true);
+		expect(flat.endsWith('at-all')).toBe(true);
+		expect(shortBranchName('trailing-slash-branch-name-that-is-long/')).toHaveLength(BRANCH_MAX_CHARS);
+		const b = titleBranch({ repo: { branch: 'kaiserklowns-kkg/system-gap-review', dirty: true } });
+		expect(b?.short).toBe('…/system-gap-review');
+		expect(b?.label).toBe('kaiserklowns-kkg/system-gap-review');
+		expect(b?.tooltip).toContain('kaiserklowns-kkg/system-gap-review');
+	});
+});
+
+describe('fitting the bar', () => {
+	// kingu-old's window: 1140px; macOS traffic lights (78px) and a 150px project and branch; the
+	// toolbar with Open in Agents (186px); back/forward and the Arkai button around the search (80px).
+	const base = { width: 1140, leftWidth: 78 + 150, rightWidth: 186, contextWidth: 150, centerFixed: 22 + 4 + 22 + 4 + 4 + 24 };
+	const sides = 20 + 228 + 186 + 80;
+
+	test('wide: the search at its width', () => {
+		expect(titleBarFit(base)).toEqual({ search: 'box', searchWidth: SEARCH_WIDTH });
+	});
+
+	test('narrower: the search narrows, then becomes an icon before the project and branch truncate', () => {
+		// The left keeps its content (228 > 20% of 700): 700 - 20 - 228 - 186 - 80 = 186.
+		expect(titleBarFit({ ...base, width: 700 })).toEqual({ search: 'box', searchWidth: 186 });
+		expect(titleBarFit({ ...base, width: sides + SEARCH_MIN_WIDTH }).search).toBe('box');
+		expect(titleBarFit({ ...base, width: sides + SEARCH_MIN_WIDTH - 1 })).toEqual({ search: 'icon', searchWidth: 0 });
+		// The icon still fits: nothing truncates.
+		expect(titleBarFit({ ...base, width: sides + 22 })).toEqual({ search: 'icon', searchWidth: 0 });
+	});
+
+	test('narrower still: the project and branch give back what the icon lacks, down to a floor', () => {
+		expect(titleBarFit({ ...base, width: sides + 22 - 30 })).toEqual({ search: 'icon', searchWidth: 0, contextMaxWidth: 120 });
+		expect(titleBarFit({ ...base, width: 400 }).contextMaxWidth).toBe(48);
+		// No project open: nothing to truncate.
+		expect(titleBarFit({ ...base, width: 400, leftWidth: 78, contextWidth: 0 })).toEqual({ search: 'icon', searchWidth: 0 });
+	});
+
+	test("the right side's natural width: items, 4px gaps, 4px padding and macOS's 8px", () => {
+		const items = titleToolbar({ openInAgents: true, layout: layoutControlItems(true, 'both'), globalActions: true });
+		expect(rightSideWidth(items, true)).toBe(24 + 6 * 22 + 6 * 4 + 4 + 8);
+		expect(rightSideWidth(items, false)).toBe(24 + 6 * 22 + 6 * 4 + 4);
+		expect(rightSideWidth([], true)).toBe(0);
+	});
+
+	test('Open in Agents: labelled ("Agents") while the search keeps its full width; the label goes first', () => {
+		expect(openInAgentsWidth(0)).toBe(OPEN_IN_AGENTS_WIDTH);
+		expect(openInAgentsWidth(40)).toBe(16 + 6 + 40 + 12 + 2);
+		const labelled = titleToolbar({ openInAgents: true, openInAgentsLabel: 40, layout: [], globalActions: false });
+		expect(labelled).toEqual([{ id: 'openInAgents', width: 76 }]);
+		const fits = { width: 1140, leftWidth: 228, rightWidth: 186, labelWidth: 40, centerFixed: 80 };
+		expect(openInAgentsLabelFits(fits)).toBe(true);
+		// 810: 810 - 20 - 228 - (186 + 52) - 80 = 244, the search still full; 800: 234, so the label goes.
+		expect(openInAgentsLabelFits({ ...fits, width: 810 })).toBe(true);
+		expect(openInAgentsLabelFits({ ...fits, width: 800 })).toBe(false);
+		// ...while without it the search there is still a full box.
+		expect(titleBarFit({ width: 800, leftWidth: 228, rightWidth: 186, contextWidth: 150, centerFixed: 80 })).toEqual({ search: 'box', searchWidth: SEARCH_WIDTH });
+		// Not measured yet: no label.
+		expect(openInAgentsLabelFits({ ...fits, labelWidth: 0 })).toBe(false);
 	});
 });
 
@@ -150,11 +241,22 @@ describe('layout controls and toolbar', () => {
 
 	test('overflow hides the items next to the center first', () => {
 		const items = titleToolbar({ openInAgents: true, layout: layoutControlItems(true, 'both'), globalActions: true });
-		// 7 items × 24px + 6 gaps × 4px = 192px.
-		expect(overflowHidden(items, 192).size).toBe(0);
-		expect([...overflowHidden(items, 191)]).toEqual(['openInAgents']);
-		expect([...overflowHidden(items, 24 * 3 + 8)]).toEqual(['openInAgents', 'customizeLayout', 'toggleSidebar', 'togglePanel']);
+		// Open in Agents 24px, 6 items × 22px, 6 gaps × 4px = 180px.
+		expect(overflowHidden(items, 180).size).toBe(0);
+		expect([...overflowHidden(items, 179)]).toEqual(['openInAgents']);
+		expect([...overflowHidden(items, 22 * 3 + 8)]).toEqual(['openInAgents', 'customizeLayout', 'toggleSidebar', 'togglePanel']);
 		expect([...overflowHidden(items, 0)].length).toBe(items.length);
+	});
+
+	test("layout toggles: VS Code's icon ids, -off while hidden, the side bars trading icons on the right", () => {
+		expect(layoutToggleIcon('toggleSidebar', false, false)).toBe('panel-left-off');
+		expect(layoutToggleIcon('toggleSidebar', true, false)).toBe('panel-left');
+		expect(layoutToggleIcon('toggleSidebar', true, true)).toBe('panel-right');
+		expect(layoutToggleIcon('togglePanel', false, false)).toBe('panel-layout-icon-off');
+		expect(layoutToggleIcon('togglePanel', true, true)).toBe('panel-layout-icon');
+		expect(layoutToggleIcon('toggleAuxiliaryBar', true, false)).toBe('auxiliarybar-right-layout-icon');
+		expect(layoutToggleIcon('toggleAuxiliaryBar', false, false)).toBe('auxiliarybar-right-off-layout-icon');
+		expect(layoutToggleIcon('toggleAuxiliaryBar', false, true)).toBe('auxiliarybar-left-off-layout-icon');
 	});
 
 	test('context menu toggles and their settings', () => {

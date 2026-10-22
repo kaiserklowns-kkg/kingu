@@ -2,13 +2,14 @@
 	import type { MenuNode } from './menus';
 
 	/** A clickable row of a popup menu (`id` is handed back to `onRun`). */
-	export const menuItem = (id: string, text: string, opts: { checked?: boolean; enabled?: boolean; keyLabel?: string } = {}): MenuNode => ({
+	export const menuItem = (id: string, text: string, opts: { checked?: boolean; enabled?: boolean; keyLabel?: string; agent?: string } = {}): MenuNode => ({
 		type: 'item',
 		id,
 		text,
 		enabled: opts.enabled ?? true,
 		...(opts.checked !== undefined ? { checked: opts.checked } : {}),
-		...(opts.keyLabel ? { keyLabel: opts.keyLabel } : {})
+		...(opts.keyLabel ? { keyLabel: opts.keyLabel } : {}),
+		...(opts.agent ? { agent: opts.agent } : {})
 	});
 	export const menuSeparator: MenuNode = { type: 'separator' };
 </script>

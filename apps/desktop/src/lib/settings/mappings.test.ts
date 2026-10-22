@@ -344,7 +344,7 @@ describe('workbench', () => {
 		expect(effectiveTheme(getter({ 'workbench.colorTheme': 'Dark+' }), false)).toBe('Dark+');
 		const auto = getter({ 'window.autoDetectColorScheme': true, 'workbench.preferredLightColorTheme': 'Light+' });
 		expect(effectiveTheme(auto, false)).toBe('Light+');
-		expect(effectiveTheme(auto, true)).toBe('Dark Modern');
+		expect(effectiveTheme(auto, true)).toBe('Kingu Dark');
 		// window.autoDetectHighContrast (on by default) wins while the OS asks for more contrast.
 		expect(effectiveTheme(auto, true, true)).toBe('Default High Contrast');
 		expect(effectiveTheme(auto, false, true)).toBe('Default High Contrast Light');

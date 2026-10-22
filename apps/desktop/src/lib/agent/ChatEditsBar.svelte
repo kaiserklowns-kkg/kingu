@@ -5,7 +5,8 @@
 	// Waiting for Approval when nothing changed yet); once every change is kept or undone it keeps
 	// the last request's files with Review only. Undo turns into Confirm (a second click undoes).
 	// `flat`: drawn as a row of the stacked toolbar (no own frame).
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
+	import { codiconOf } from './chatIcons.ts';
 	import { splitPath } from '#lib/workbench/scm.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import { chatEdits } from './chatEdits.svelte.ts';
@@ -99,7 +100,7 @@
 				{#if status === 'waiting'}
 					<span class="truncate text-(--vscode-descriptionForeground)" role="status">{t('composer.status.waiting')}</span>
 				{:else if count}
-					<span class={['shrink-0 transition-transform', open && 'rotate-90']}><Icon name="chevronRight" size={12} /></span>
+					<span class={['shrink-0 transition-transform', open && 'rotate-90']}><Codicon id="chevron-right" size={12} /></span>
 					<span class="truncate">{t('composer.status.files', { count })}</span>
 					{#if files.length && (sum.added || sum.removed)}
 						<span class="shrink-0 font-mono text-[11px]"
@@ -146,7 +147,7 @@
 					{@const [name, dir] = splitPath(path)}
 					<li class="flex h-[22px] items-center pr-1 pl-2 hover:bg-(--vscode-list-hoverBackground)">
 						<button class="flex min-w-0 flex-1 items-center gap-1.5 text-left" title={path} onclick={() => chatEdits.openEdited(chatId, path, workspacePath(prefix, path))}>
-							<Icon name="file" size={13} />
+							<Codicon id="file" size={13} />
 							<span class="truncate">{name}</span>
 							{#if dir}<span class="min-w-0 truncate text-(--vscode-descriptionForeground)">{dir}</span>{/if}
 						</button>
@@ -160,7 +161,7 @@
 					{@const [name, dir] = splitPath(f.path)}
 					<li class="group flex h-[22px] items-center gap-1.5 pr-1 pl-2 hover:bg-(--vscode-list-hoverBackground)">
 						<button class="flex min-w-0 flex-1 items-center gap-1.5 text-left" title={hint(f)} aria-label={t('chatEdits.openDiff', { path: f.path })} disabled={!f.restorable && f.deleted} onclick={() => chatEdits.openDiff(chatId, f.path)}>
-							<Icon name={f.source === 'shell' ? 'terminal' : 'file'} size={13} />
+							<Codicon id={codiconOf(f.source === 'shell' ? 'terminal' : 'file')} size={13} />
 							<span class={['truncate', f.deleted && 'line-through']}>{name}</span>
 							{#if dir}<span class="min-w-0 truncate text-(--vscode-descriptionForeground)">{dir}</span>{/if}
 							{#if f.created}<span class="shrink-0 text-(--vscode-gitDecoration-addedResourceForeground,#73c991)">{t('chatEdits.created')}</span>{/if}
@@ -175,14 +176,14 @@
 						{/if}
 						<span class="flex shrink-0 items-center opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
 							<button class={ICON} aria-label={t('chatEdits.keepFile', { path: f.path })} title={t('chatEdits.keep')} disabled={busy} onclick={() => act(() => chatEdits.keep(chatId, [f.path]))}
-								><Icon name="check" size={13} /></button
+								><Codicon id="check" size={13} /></button
 							>
 							<button
 								class={ICON}
 								aria-label={t('chatEdits.undoFile', { path: f.path })}
 								title={running ? t('chatEdits.running') : f.restorable ? t('chatEdits.undo') : hint(f)}
 								disabled={busy || running || !f.restorable}
-								onclick={() => act(() => chatEdits.undo(chatId, [f.path]))}><Icon name="discard" size={13} /></button
+								onclick={() => act(() => chatEdits.undo(chatId, [f.path]))}><Codicon id="discard" size={13} /></button
 							>
 						</span>
 					</li>

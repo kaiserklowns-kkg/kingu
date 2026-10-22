@@ -3,7 +3,7 @@
 	// Ask in Side Chat): Quote puts it in the chat input as a `>` block, Ask in Side Chat asks about
 	// it in a side chat. Only a selection with both ends in the list counts (not in an input).
 	import { onMount } from 'svelte';
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
 	import { t } from '#lib/i18n/index.ts';
 
 	let {
@@ -87,9 +87,9 @@
 		data-chat-find-skip
 		onmousedown={(e) => e.preventDefault()}
 	>
-		<button type="button" class={BTN} title={t('chatTranscript.quote.quoteHint')} onclick={() => run(onquote)}><Icon name="note" size={12} />{t('chatTranscript.quote.quote')}</button>
+		<button type="button" class={BTN} title={t('chatTranscript.quote.quoteHint')} onclick={() => run(onquote)}><Codicon id="note" size={12} />{t('chatTranscript.quote.quote')}</button>
 		{#if onside}
-			<button type="button" class={BTN} title={t('chatTranscript.quote.sideHint')} onclick={() => onside && run(onside)}><Icon name="chat" size={12} />{t('chatTranscript.quote.side')}</button>
+			<button type="button" class={BTN} title={t('chatTranscript.quote.sideHint')} onclick={() => onside && run(onside)}><Codicon id="comment-discussion" size={12} />{t('chatTranscript.quote.side')}</button>
 		{/if}
 	</div>
 {/if}

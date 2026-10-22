@@ -6,6 +6,8 @@
 //   "wait"         streams a chunk and waits for `session/cancel`
 //   anything else  "echo: <text>"
 // FAKE_ACP_AUTH=1: `session/new` fails with "auth required".
+// FAKE_ACP_THOUGHT=1: the session advertises a `thought_level` config option (Low / Medium /
+// High / Extra High); `session/set_config_option` is logged as `got session/set_config_option <value>`.
 
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -75,15 +77,40 @@ async function prompt(sessionId: string, text: string) {
 	return { stopReason: 'end_turn' };
 }
 
+const thoughtOptions = (current: string) => [
+	{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'fake-model', options: [{ value: 'fake-model', name: 'Fake' }] },
+	{
+		id: 'reasoning',
+		name: 'Reasoning',
+		category: 'thought_level',
+		type: 'select',
+		currentValue: current,
+		options: [
+			{ value: 'low', name: 'Low' },
+			{ value: 'medium', name: 'Medium' },
+			{ value: 'high', name: 'High' },
+			{ value: 'extra_high', name: 'Extra High' }
+		]
+	}
+];
+
 async function handle(msg: any) {
-	if (msg.method) process.stderr.write(`got ${msg.method}${msg.method === 'session/set_mode' ? ` ${msg.params.modeId}` : ''}\n`);
+	if (msg.method) process.stderr.write(`got ${msg.method}${msg.method === 'session/set_mode' ? ` ${msg.params.modeId}` : msg.method === 'session/set_config_option' ? ` ${msg.params.configId}=${msg.params.value}` : ''}\n`);
 	if (msg.id !== undefined && !msg.method) return waiting.get(msg.id)?.(msg.result);
 	switch (msg.method) {
 		case 'initialize':
 			return send({ id: msg.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: { image: false } }, authMethods: [] } });
 		case 'session/new':
 			if (process.env.FAKE_ACP_AUTH === '1') return send({ id: msg.id, error: { code: -32000, message: 'Authentication required' } });
-			send({ id: msg.id, result: { sessionId: SESSION, modes: { currentModeId: 'default', availableModes: [{ id: 'default', name: 'Default' }, { id: 'yolo', name: 'YOLO' }] }, models: { currentModelId: 'fake-model', availableModels: [] } } });
+			send({
+				id: msg.id,
+				result: {
+					sessionId: SESSION,
+					modes: { currentModeId: 'default', availableModes: [{ id: 'default', name: 'Default' }, { id: 'yolo', name: 'YOLO' }] },
+					models: { currentModelId: 'fake-model', availableModels: [] },
+					...(process.env.FAKE_ACP_THOUGHT === '1' ? { configOptions: thoughtOptions('medium') } : {})
+				}
+			});
 			update(SESSION, { sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'init', description: 'Write GEMINI.md', input: null }] });
 			return;
 		case 'session/load':
@@ -93,6 +120,8 @@ async function handle(msg: any) {
 			return send({ id: msg.id, result: null });
 		case 'session/set_mode':
 			return send({ id: msg.id, result: null });
+		case 'session/set_config_option':
+			return send({ id: msg.id, result: { configOptions: thoughtOptions(msg.params.value) } });
 		case 'session/prompt': {
 			// The skill index Kingu puts first (src/skills.ts) is logged, not echoed.
 			if (msg.params.prompt.some((b: any) => b.type === 'text' && b.text.startsWith('# Skills'))) process.stderr.write('got skills\n');

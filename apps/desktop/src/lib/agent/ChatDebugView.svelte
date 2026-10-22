@@ -8,7 +8,7 @@
 	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-	import Icon from '#lib/workbench/Icon.svelte';
+	import Codicon from '#lib/workbench/Codicon.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { compactTokens, formatUsd } from '#lib/vault/vault.ts';
@@ -112,13 +112,13 @@
 <div class="flex h-full min-w-0 flex-col overflow-hidden bg-(--vscode-editor-background) text-[13px] text-(--vscode-foreground)">
 	<header class="shrink-0 border-b border-(--vscode-panel-border) px-4 pt-3 pb-2">
 		<div class="flex items-center gap-2">
-			<Icon name="bug" size={16} />
+			<Codicon id="debug" size={16} />
 			<h1 class="min-w-0 flex-1 truncate text-sm font-semibold">{log ? t('chatDebug.tab', { title: log.title }) : t('chatDebug.title')}</h1>
 			<button class="grid size-[24px] place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" aria-label={t('chatDebug.refresh')} title={t('chatDebug.refresh')} onclick={() => void load()}>
-				<Icon name="refresh" size={14} />
+				<Codicon id="refresh" size={14} />
 			</button>
 			<button class="flex h-[24px] items-center gap-1 rounded px-2 hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-40" disabled={!log} onclick={() => void exportJson()}>
-				<Icon name="download" size={14} />{t('chatDebug.export')}
+				<Codicon id="cloud-download" size={14} />{t('chatDebug.export')}
 			</button>
 		</div>
 		{#if log}

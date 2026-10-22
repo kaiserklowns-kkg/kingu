@@ -115,6 +115,20 @@ describe('normalize', () => {
 		expect(modelOptions('nope')).toEqual([]);
 	});
 
+	test('a model\'s effort levels (supportedEffortLevels), off first; none without them', () => {
+		expect(
+			modelOptions([
+				{ value: 'opus', displayName: 'Opus', description: '', supportsEffort: true, supportedEffortLevels: ['max', 'low', 'high', 'medium', 'xhigh', 'bogus'], supportsAdaptiveThinking: true },
+				{ value: 'haiku', displayName: 'Haiku', description: '', supportsEffort: false, supportedEffortLevels: ['low'] },
+				{ value: 'sonnet', displayName: 'Sonnet', description: '', supportsAdaptiveThinking: true }
+			])
+		).toEqual([
+			{ value: 'opus', display_name: 'Opus', description: '', efforts: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
+			{ value: 'haiku', display_name: 'Haiku', description: '' },
+			{ value: 'sonnet', display_name: 'Sonnet', description: '' }
+		]);
+	});
+
 	test('reads the context window and the main agent\'s last call', () => {
 		expect(contextWindowOf({ modelUsage: { opus: { contextWindow: 200000 }, haiku: { contextWindow: 100000 } } })).toBe(200000);
 		expect(contextWindowOf({ modelUsage: {} })).toBeNull();

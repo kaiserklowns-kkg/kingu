@@ -66,7 +66,9 @@ export class OpenAiClient implements ChatClient {
 			messages: openaiMessages(req.system, req.messages),
 			stream: true,
 			max_tokens: req.maxTokens,
-			...(req.tools.length ? { tools: req.tools.map((t) => ({ type: 'function', function: t })), tool_choice: 'auto' } : {})
+			...(req.tools.length ? { tools: req.tools.map((t) => ({ type: 'function', function: t })), tool_choice: 'auto' } : {}),
+			// The chat's reasoning effort (`reasoning_effort`, OpenRouter's `reasoning`, Gemini's thinking budget).
+			...req.extra
 		};
 		const url = `${this.provider.baseUrl}/chat/completions`;
 		const post = (withUsage: boolean) =>

@@ -48,7 +48,8 @@ function openAiWhole(r: OpenAiReply): string {
 	});
 }
 
-export type AnthropicReply = { text?: string[]; thinking?: string[]; calls?: { id: string; name: string; args: string }[]; usage?: { input: number; output: number } };
+/** `signature`: the thinking block's (sent as a `signature_delta`, as the API does). */
+export type AnthropicReply = { text?: string[]; thinking?: string[]; signature?: string; calls?: { id: string; name: string; args: string }[]; usage?: { input: number; output: number } };
 
 export function anthropicStream(r: AnthropicReply): string {
 	const ev = (type: string, data: Record<string, unknown>) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
@@ -57,6 +58,7 @@ export function anthropicStream(r: AnthropicReply): string {
 	if (r.thinking?.length) {
 		out += ev('content_block_start', { index: i, content_block: { type: 'thinking', thinking: '' } });
 		for (const t of r.thinking) out += ev('content_block_delta', { index: i, delta: { type: 'thinking_delta', thinking: t } });
+		if (r.signature) out += ev('content_block_delta', { index: i, delta: { type: 'signature_delta', signature: r.signature } });
 		out += ev('content_block_stop', { index: i++ });
 	}
 	if (r.text?.length) {

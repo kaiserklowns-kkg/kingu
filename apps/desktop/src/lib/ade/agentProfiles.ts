@@ -442,7 +442,7 @@ export const KNOWN_BINS: readonly string[] = PROFILES.flatMap((p) => p.bins);
 // ---- the CLI picker ("Agent: Choose CLI…") ----------------------------------------------------
 
 export const CUSTOM_PICK = '__custom';
-export type PickRow = { id: string; label: string; description: string };
+export type PickRow = { id: string; label: string; description: string; /** The agent whose mark the row shows (agent/agentIcons.ts). */ agent?: string };
 
 /** What Kingu does with the CLI, for the picker row. */
 export function profileSummary(p: AgentProfile): string {
@@ -455,7 +455,7 @@ export function pickerItems(found: readonly string[], current: string): PickRow[
 	const have = new Set(found);
 	const rows: PickRow[] = PROFILES.flatMap((p) => {
 		const bin = p.bins.find((b) => have.has(b));
-		return bin ? [{ id: bin, label: p.title, description: `${bin} — ${profileSummary(p)}` }] : [];
+		return bin ? [{ id: bin, label: p.title, description: `${bin} — ${profileSummary(p)}`, agent: p.id }] : [];
 	});
 	rows.push({ id: CUSTOM_PICK, label: 'Custom…', description: current ? t('ade.agentProfiles.current', { command: current }) : t('ade.agentProfiles.typeCommand') });
 	return rows;

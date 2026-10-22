@@ -10,20 +10,23 @@
 
 import { commands } from '#lib/workbench/commands.svelte.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
+import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 import { dictation } from '#lib/voice/dictation.svelte.ts';
+import { onMicButton } from '#lib/voice/dictation.ts';
 
 export const TOGGLE_DICTATION = 'workbench.action.chat.toggleSpeechToText';
 
-/** Whether the composer shows its microphone (VS Code shows it once dictation is set up). */
-export const chatDictationShown = () => settings.get<boolean>('kingu.voice.enabled') === true;
-
 /**
- * The microphone button: `focus` puts the caret back in the input first, so the text goes there
- * (the dictation targets whatever has focus when it starts).
+ * The microphone button, always in the input's execute toolbar (VS Code's `mic-compact`: shown
+ * while dictation is available, which on desktop it always is). With kingu.voice.enabled off it
+ * opens the Voice settings; otherwise `focus` puts the caret back in the input first, so the text
+ * goes there (the dictation targets whatever has focus when it starts).
  */
 export function toggleChatDictation(focus: () => void) {
-	if (dictation.state === 'listening') return void dictation.stop();
-	if (dictation.state !== 'idle') return;
+	const act = onMicButton(settings.get<boolean>('kingu.voice.enabled') === true, dictation.state);
+	if (act === 'settings') return systemSettings.showPage('voice');
+	if (act === 'stop') return void dictation.stop();
+	if (act !== 'start') return;
 	focus();
 	void dictation.shortcut(false);
 }

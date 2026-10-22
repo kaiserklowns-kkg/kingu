@@ -80,7 +80,12 @@ async function turn(turnId: string, text: string) {
 function handle(msg: any) {
 	if (msg.method) {
 		const p = msg.params ?? {};
-		const policy = msg.method === 'thread/start' || msg.method === 'thread/resume' ? ` ${p.approvalPolicy} ${p.sandbox}${typeof p.developerInstructions === 'string' && p.developerInstructions.startsWith('# Skills') ? ' +skills' : ''}` : msg.method === 'turn/start' ? ` ${p.approvalPolicy}` : '';
+		const policy =
+			msg.method === 'thread/start' || msg.method === 'thread/resume'
+				? ` ${p.approvalPolicy} ${p.sandbox}${typeof p.developerInstructions === 'string' && p.developerInstructions.startsWith('# Skills') ? ' +skills' : ''}`
+				: msg.method === 'turn/start'
+					? ` ${p.approvalPolicy}${p.effort ? ` effort=${p.effort} summary=${p.summary}` : ''}`
+					: '';
 		process.stderr.write(`got ${msg.method}${policy}${msg.jsonrpc ? ' (with jsonrpc)' : ''}\n`);
 	}
 	if (msg.id !== undefined && !msg.method) return waiting.get(msg.id)?.(msg.result);
@@ -104,6 +109,23 @@ function handle(msg: any) {
 			void turn(id, text);
 			return;
 		}
+		case 'model/list':
+			return send({
+				id: msg.id,
+				result: {
+					data: [
+						{ id: 'gpt-other', model: 'gpt-other', supportedReasoningEfforts: [{ reasoningEffort: 'low' }], defaultReasoningEffort: 'low', isDefault: false },
+						{
+							id: 'gpt-fake',
+							model: 'gpt-fake',
+							supportedReasoningEfforts: [{ reasoningEffort: 'minimal' }, { reasoningEffort: 'low' }, { reasoningEffort: 'medium' }, { reasoningEffort: 'high' }, { reasoningEffort: 'xhigh' }],
+							defaultReasoningEffort: 'medium',
+							isDefault: true
+						}
+					],
+					nextCursor: null
+				}
+			});
 		case 'turn/interrupt':
 			send({ id: msg.id, result: {} });
 			interrupt?.();
