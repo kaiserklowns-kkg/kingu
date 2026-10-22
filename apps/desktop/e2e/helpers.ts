@@ -3,8 +3,8 @@ import { mockTauri, READY } from './mock';
 import type { SetupReport } from '../src/lib/setup/setup';
 
 /** Mock Tauri, load the workbench and close the welcome tour if it opened. */
-export async function openApp(page: Page, setup: SetupReport = READY) {
-	await mockTauri(page, setup);
+export async function openApp(page: Page, setup: SetupReport = READY, settings: Record<string, unknown> = {}) {
+	await mockTauri(page, setup, '/tmp/kingu-e2e', settings);
 	await page.goto('/');
 	await expect(page.getByRole('banner')).toBeVisible({ timeout: 20_000 });
 	await page.keyboard.press('Escape');

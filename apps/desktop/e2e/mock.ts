@@ -26,11 +26,17 @@ export const BLOCKED: SetupReport = {
 };
 
 /** Fake Tauri IPC: enough for boot and Settings; unknown commands resolve to null and are logged. */
-export async function mockTauri(page: Page, setup: SetupReport = READY, workspace = '/tmp/kingu-e2e') {
+export async function mockTauri(
+	page: Page,
+	setup: SetupReport = READY,
+	workspace = '/tmp/kingu-e2e',
+	initialSettings: Record<string, unknown> = {}
+) {
 	await page.addInitScript(
-		({ setup, workspace }) => {
+		({ setup, workspace, initialSettings }) => {
 			const noop = () => 0;
-			const file = { content: '{}' };
+			const settingsKey = '__kingu_e2e_settings';
+			const file = { content: sessionStorage.getItem(settingsKey) ?? JSON.stringify(initialSettings) };
 			const files: Record<string, string> = {
 				'README.md': '# Kingu E2E\n\nA test workspace.\n',
 				'package.json': '{\n  "name": "kingu-e2e"\n}\n',
@@ -53,6 +59,7 @@ export async function mockTauri(page: Page, setup: SetupReport = READY, workspac
 				const content = files[rel];
 				return { kind: 'text', content, encoding: 'utf8', lossy: false, stat: { mtime: 1700000000000, size: content.length, hash: 'e2e' } };
 			};
+			const taskList: any[] = [];
 			const status = {
 				branch: 'main',
 				head: 'abc1234',
@@ -96,7 +103,13 @@ export async function mockTauri(page: Page, setup: SetupReport = READY, workspac
 				profiles_list: () => ({ active: null, profiles: [] }),
 				settings_read: (args: any) => (args?.scope === 'user' ? file : { content: null }),
 				settings_read_folder: () => ({ content: null }),
-				settings_write: () => null,
+				settings_write: (args: any) => {
+					if (args?.scope === 'user' && typeof args.content === 'string') {
+						file.content = args.content;
+						sessionStorage.setItem(settingsKey, args.content);
+					}
+					return null;
+				},
 				fs_list_dir: (args: any) => dirs[args?.rel ?? ''] ?? [],
 				fs_read_file: (args: any) => files[args?.rel ?? ''] ?? '',
 				read_workspace_file: (args: any) => files[args?.rel ?? ''] ?? '',
@@ -113,9 +126,42 @@ export async function mockTauri(page: Page, setup: SetupReport = READY, workspac
 				fs_create_file: () => null,
 				fs_create_dir: () => null,
 				workspace_storage_stale: () => [],
-				tasks_load: () => [],
+				tasks_load: () => taskList,
+				tasks_update: (args: any) => {
+					for (const change of args?.changes ?? []) {
+						const at = taskList.findIndex((t) => t.slug === change.slug || t.slug === change.task?.slug);
+						if (change.kind === 'remove') {
+							if (at >= 0) taskList.splice(at, 1);
+						} else if (change.kind === 'patch') {
+							if (at >= 0) taskList[at] = { ...taskList[at], ...change.fields };
+						} else if (change.kind === 'upsert') {
+							if (at >= 0) taskList[at] = change.task;
+							else taskList.push(change.task);
+						}
+					}
+					return taskList;
+				},
 				projects_list: () => [],
 				worktree_list: () => [],
+				worktree_create: (args: any) => ({
+					path: `${workspace}/.kingu/worktrees/${args?.slug}`,
+					head: null,
+					branch: `kingu/${args?.slug}`,
+					slug: args?.slug,
+					bare: false,
+					detached: false,
+					locked: false,
+					prunable: false
+				}),
+				worktree_diff_stat: (args: any) => ({
+					base: args?.base ?? 'HEAD',
+					merge_base: 'abc1234',
+					head: 'abc1234',
+					ahead: 0,
+					behind: 0,
+					dirty: false,
+					files: []
+				}),
 				worktree_list_files: () => [],
 				pty_list: () => [],
 				pty_attach: () => null,
@@ -125,11 +171,41 @@ export async function mockTauri(page: Page, setup: SetupReport = READY, workspac
 				pty_kill: () => null,
 				pty_foreground: () => ({}),
 				agent_cli_found: () => [],
-				agent_runtimes: () => [],
+				agent_runtimes: () => [{ id: 'claude', name: 'Claude Code', installed: true, models: [] }],
+				agent_start: (args: any) => {
+					const send = (index: number, message: unknown) =>
+						(globalThis as any)[`_${args?.onEvent?.id}`]?.({ index, message });
+					setTimeout(() => {
+						send(0, { kind: 'system', subtype: 'init', session_id: 'session-e2e', model: 'claude-e2e' });
+						send(1, { kind: 'message', role: 'assistant', text: 'Hello from the mock agent' });
+						send(2, { kind: 'delta', block: 'text', text: 'Hello from the mock agent' });
+						send(3, {
+							kind: 'result',
+							subtype: 'success',
+							is_error: false,
+							result: 'Hello from the mock agent',
+							session_id: 'session-e2e',
+							num_turns: 1,
+							duration_ms: 5,
+							total_cost_usd: 0
+						});
+					}, 100);
+					return 1;
+				},
+				agent_send: () => null,
+				agent_interrupt: () => null,
+				agent_stop: () => null,
+				agent_answer_permission: () => null,
+				agent_answer_mcp: () => null,
 				chats_load: () => [],
 				home_recent_chats: () => [],
 				chats_with_edits: () => [],
 				snippets_user_list: () => [],
+				mcp_list: () => [],
+				skill_hub_list: () => [],
+				skill_hub_plugins: () => [],
+				snap_skill_plugins: () => [],
+				mcp_trust: () => null,
 				ai_usage_refresh: () => [],
 				ai_accounts_list: () => ({ accounts: [], own: {} }),
 				cli_queued: () => [],
@@ -140,9 +216,43 @@ export async function mockTauri(page: Page, setup: SetupReport = READY, workspac
 				snap_catalog: () => [],
 				snap_sandbox_info: () => ({ enforcer: null, launcher: null, protect: [], problem: null }),
 				snap_service_list: () => [],
-				vault_list: () => [],
+				vault_list: () => [
+					{
+						agent: 'claude',
+						id: 'session-e2e',
+						path: `${workspace}/.claude/session-e2e.jsonl`,
+						title: 'E2E Vault Session',
+						preview: 'A past session from the fixture',
+						cwd: workspace,
+						cwdExists: true,
+						branch: 'main',
+						model: 'opus',
+						created: 1700000000000,
+						updated: 1700000100000,
+						size: 2048,
+						resume: ['claude', '--resume', 'session-e2e']
+					}
+				],
 				vault_search: () => ({ hits: [], searched: 0, total: 0, stopped: 'complete' }),
-				artifacts_list: () => [],
+				artifacts_list: () => [
+					{
+						id: 'artifact-e2e',
+						title: 'E2E Artifact',
+						description: 'Published by the mock agent',
+						created_at: 1700000000000,
+						updated_at: 1700000100000,
+						versions: [
+							{
+								version: 1,
+								created_at: 1700000000000,
+								format: 'html',
+								entry: 'index.html',
+								files: [{ path: 'index.html', size: 512 }],
+								source: 'agent'
+							}
+						]
+					}
+				],
 				team_artifacts_list: () => [],
 				chat_search: () => [],
 				chat_transcript_load: () => [],
@@ -197,7 +307,7 @@ export async function mockTauri(page: Page, setup: SetupReport = READY, workspac
 			(window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: noop };
 			(window as any).matchMedia ??= () => ({ matches: false, addEventListener: noop, removeEventListener: noop });
 		},
-		{ setup, workspace }
+		{ setup, workspace, initialSettings }
 	);
 }
 
