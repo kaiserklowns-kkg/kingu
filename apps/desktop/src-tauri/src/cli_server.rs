@@ -668,18 +668,16 @@ mod socket {
     if preferred.as_os_str().len() < 100 { preferred } else { temp.join(format!("kingu-cli-{uid}")).join(kingu_cli::runtime::SOCKET) }
   }
 
-  /// Binds readable and writable by this user only (the umask covers the moment before chmod).
+  /// Binds readable and writable by this user only. The socket is chmodded before it is served,
+  /// and every connection checks the peer's uid; a process-wide umask here would instead race
+  /// with every other file the app creates.
   pub fn bind_private(path: &Path) -> Result<UnixListener, String> {
     match std::fs::remove_file(path) {
       Ok(()) => {}
       Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
       Err(e) => return Err(format!("{}: {e}", path.display())),
     }
-    // SAFETY: umask only swaps the process file-creation mask; restored right after bind.
-    let old = unsafe { libc::umask(0o177) };
-    let bound = UnixListener::bind(path);
-    unsafe { libc::umask(old) };
-    let listener = bound.map_err(|e| format!("bind {}: {e}", path.display()))?;
+    let listener = UnixListener::bind(path).map_err(|e| format!("bind {}: {e}", path.display()))?;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(listener)
   }
