@@ -1,14 +1,12 @@
-// TaskRuntime adapter over the agent host's `agents` store (agent/agents.svelte.ts), the single
-// source of truth for agent runs. The ADE reads tasks' live state only through this module:
-// `get` maps a run to a TaskRuntime (pure mapping in model.ts), `run` hands the timeline the run
-// itself, and the actions forward to the store. Runs belong to a workspace root; only runs of
-// the open folder are visible here (others keep streaming in the store; the side bar shows
-// them under their project through projects.svelte.ts).
+// TaskRuntime adapter for the ADE: a task's live state comes from its agent CLI terminal
+// (cliRuntime.ts) plus the agents of its other terminal panes. `get` maps that evidence to a
+// TaskRuntime (pure mapping in model.ts). The legacy agent-host runs in the `agents` store are
+// still observed so a task saved by an older Kingu timeline can be stopped or removed; ADE never
+// starts one. Runs belong to a workspace root; only runs of the open folder are visible here.
 
 import { agents, type AgentRun } from '#lib/agent/agents.svelte.ts';
-import type { Decision } from '#lib/agent/events.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
-import { followUpPlan, toTaskRuntime, type TaskRuntime } from './model';
+import { toTaskRuntime, type TaskRuntime } from './model';
 import { cliSessions } from './cliSessions.svelte';
 import { cliTaskRuntime } from './cliRuntime';
 import { withPaneAgents } from './agentPresence';
@@ -44,7 +42,7 @@ class Runtime {
 		return r && r.root === workspace.root ? r : undefined;
 	}
 
-	/** The task's launched agent (timeline run, else its CLI), with the agents of its other terminal panes. */
+	/** The task's launched agent (legacy host run, else its CLI), with the agents of its other terminal panes. */
 	get(slug: string): TaskRuntime | undefined {
 		return withPaneAgents(slug, this.#own(slug), paneAgents.rows(slug));
 	}
@@ -61,10 +59,6 @@ class Runtime {
 		return !!r && toTaskRuntime(r, r.startedAt).working;
 	}
 
-	all(): TaskRuntime[] {
-		return agents.list.filter((r) => r.root === workspace.root).map((r) => toTaskRuntime(r, this.#touched[r.slug] ?? r.startedAt));
-	}
-
 	/** The session is open (the task's worktree is in use). */
 	isLive(slug: string): boolean {
 		const r = this.run(slug);
@@ -74,27 +68,6 @@ class Runtime {
 	/** A turn is in progress or waiting for a permission answer. */
 	isWorking(slug: string): boolean {
 		return this.get(slug)?.working ?? false;
-	}
-
-	/** Starts the agent in the task worktree (which must exist); model (unless a best-of-N attempt's `model`) and permission mode come from settings. */
-	start(slug: string, prompt: string, resume: string | null = null, images: string[] = [], model: string | null = null): Promise<void> {
-		this.#touched[slug] = Date.now();
-		return agents.start(slug, prompt, { root: workspace.root ?? undefined, resume, images, model });
-	}
-
-	/**
-	 * Follow-up: sent to the open session, else resumes the run's session (or `savedSession` from
-	 * tasks.json after a restart), else starts fresh.
-	 */
-	async followUp(slug: string, text: string, savedSession: string | null, images: string[] = [], model: string | null = null): Promise<void> {
-		const plan = followUpPlan(this.run(slug), savedSession);
-		this.#touched[slug] = Date.now();
-		if (plan.kind === 'send') await agents.send(slug, text, images);
-		else await this.start(slug, text, plan.resume, images, model);
-	}
-
-	answer(slug: string, requestId: string, decision: Decision, message?: string, answers?: Record<string, string>): Promise<void> {
-		return agents.answer(slug, requestId, decision, message, answers);
 	}
 
 	interrupt(slug: string): Promise<void> {

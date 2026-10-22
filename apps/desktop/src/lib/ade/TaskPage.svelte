@@ -1,16 +1,13 @@
 <script lang="ts">
-	// Task page (`task://<slug>`): header, the agent timeline (live from the agents store, with
-	// permission cards to answer), follow-ups that resume the task's session, and the review section — files
-	// changed in the worktree since it forked from its base, accept/reject per file, diffs, then
-	// commit, PR (gh) or a local merge into the base.
+	// Task page (`task://<slug>`): terminal-first task controls and review — files changed in the
+	// worktree since it forked from its base, accept/reject per file, diffs, then commit, PR (gh)
+	// or a local merge into the base.
 	import { untrack } from 'svelte';
-	import AgentTimeline from '#lib/agent/AgentTimeline.svelte';
 	import Icon from '#lib/workbench/Icon.svelte';
 	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import { splitPath, taskDiffKey } from '#lib/workbench/scm.ts';
 	import { keyLabel } from '#lib/workbench/keys.ts';
 	import { aggregateStats, formatSummaryUsage, reviewChip, STATUS_LABEL, timeAgo, type FileChange } from './model';
-	import { runtime } from './runtime.svelte';
 	import { adeTasks } from './tasks.svelte';
 	import PrChecks from './PrChecks.svelte';
 	import { forgeOf, ft } from './forge.ts';
@@ -29,7 +26,7 @@
 	import { changesKey } from '#lib/workbench/viewers.ts';
 	import { BUTTON, BUTTON_SECONDARY, ICON_BUTTON, INPUT, LETTER_COLOR, STATUS_DOT, TONE } from './ui';
 
-	/** `timeline` / `review`: one half, for the Agents layout's main area and changes panel. */
+	/** `timeline` is retained as a layout name for old callers; its content is terminal-first. */
 	/** `embedded`: inside the ADE right side bar's Source Control, which has its own commit box and Checks tab. */
 	let { slug, sections = 'all', embedded = false }: { slug: string; sections?: 'all' | 'timeline' | 'review'; embedded?: boolean } = $props();
 
@@ -39,17 +36,14 @@
 	const meta = $derived(view?.meta);
 	const stat = $derived(view?.stat);
 	const totals = $derived(stat ? aggregateStats(stat.files) : null);
-	const run = $derived(runtime.run(slug));
 	const rt = $derived(view?.runtime);
 	/** A turn is in progress (or waiting for a permission answer): review actions wait. */
 	const running = $derived(!!rt?.working);
-	const resumable = $derived(!!(run?.sessionId ?? meta?.session_id));
 	const busy = $derived(adeTasks.busy[slug]);
 	const accepted = $derived(new Set(meta?.accepted ?? []));
 	const mac = keyLabel('cmd+a').startsWith('⌘');
 
 	let commitMsg = $state('');
-	let followUp = $state('');
 	let msgFor = '';
 
 	// Prefill the commit message from the task title (once per task).
@@ -86,14 +80,6 @@
 	/** Unaccepted files go back to the base; files with accepted hunks keep those (hunkReview). */
 	const rejectUnaccepted = () => hunkReview.rejectUnaccepted(slug);
 
-	async function sendFollowUp(e: Event) {
-		e.preventDefault();
-		const p = followUp.trim();
-		if (!p || run?.status === 'starting') return;
-		followUp = '';
-		await adeTasks.followUp(slug, p);
-	}
-
 	function onCommitKey(e: KeyboardEvent) {
 		if (e.key === 'Enter' && (mac ? e.metaKey : e.ctrlKey)) {
 			e.preventDefault();
@@ -128,7 +114,7 @@
 					<button class="text-(--vscode-textLink-foreground) hover:underline" title="เปิด issue บน {sourceName(issue)}: {issue.url}" onclick={() => issues.open(issue)}>issue {issueRef(issue)}</button>
 				{/if}
 				<span class="flex-1"></span>
-				{#if running && run?.runId !== undefined}
+				{#if running}
 					<button class={BUTTON_SECONDARY} title="หยุดรอบนี้ session ยังเปิดอยู่ (Interrupt)" onclick={() => adeTasks.interrupt(slug)}><Icon name="stop" size={12} /> หยุดรอบนี้</button>
 				{/if}
 				{#if rt?.live}
@@ -153,7 +139,7 @@
 			{/if}
 			{#if view.status === 'waiting'}
 				<p class="mt-2 rounded border border-(--vscode-editorWarning-foreground) px-2 py-1 text-xs text-(--vscode-editorWarning-foreground)">
-					agent รออนุญาต {rt?.pendingPermissions} รายการ (ตอบได้ใน timeline): {rt?.lastEvent}
+					agent รออนุญาต {rt?.pendingPermissions} รายการ: ตอบใน terminal ของ worktree
 				</p>
 			{/if}
 		</header>
@@ -161,41 +147,23 @@
 
 		<div class={['grid min-h-0 flex-1 grid-cols-1 overflow-hidden', sections === 'all' && 'lg:grid-cols-[minmax(0,1fr)_minmax(320px,440px)]']}>
 			{#if sections !== 'review'}
-			<!-- Timeline -->
-			<section aria-label="Timeline" class={['flex min-h-0 flex-col', sections === 'all' && 'border-r border-(--vscode-widget-border)']}>
-				<h2 class="shrink-0 px-4 pt-2 text-[11px] font-bold text-(--vscode-descriptionForeground) uppercase">Timeline</h2>
+			<!-- Terminal agent: ADE never renders an in-app agent chat. -->
+			<section aria-label="Agent terminal" class={['flex min-h-0 flex-col', sections === 'all' && 'border-r border-(--vscode-widget-border)']}>
+				<h2 class="shrink-0 px-4 pt-2 text-[11px] font-bold text-(--vscode-descriptionForeground) uppercase">Agent terminal</h2>
 				{#if meta.prompt}
 					<p class="mx-4 mt-1 line-clamp-3 shrink-0 rounded bg-(--vscode-input-background) px-2 py-1 text-xs whitespace-pre-wrap" title={meta.prompt}>{meta.prompt}</p>
 				{/if}
-				{#if cli}
-					<!-- The agent CLI runs in a terminal of the worktree (Agents); a timeline follow-up here would start a second agent. -->
-					<div class="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-xs text-(--vscode-descriptionForeground)">
-						<Icon name="terminal" size={24} />
+				<div class="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-xs text-(--vscode-descriptionForeground)">
+					<Icon name="terminal" size={24} />
+					{#if cli}
 						<p>งานนี้รัน <span class="font-mono">{cli.join(' ')}</span> ใน terminal ของ worktree</p>
-						<button class={BUTTON_SECONDARY} onclick={() => (appMode.setMode('agents'), adeLayout.show(slug))}>เปิดใน Agents (⇧⌘A)</button>
-						<CliQuestion {slug} class="w-full max-w-md text-left" />
-					</div>
-				{:else}
-					<AgentTimeline {run} onanswer={(p, decision, message, answers) => adeTasks.answer(slug, p.request_id, decision, message, answers)} class="flex-1 px-4 py-2">
-						{#snippet empty()}
-							<p class="text-(--vscode-descriptionForeground)">
-								{run && !run.ended
-									? 'กำลังเริ่ม…'
-									: `ยังไม่มีบันทึกของรอบนี้ (timeline เก็บในหน่วยความจำ จะหายเมื่อปิดแอป)${resumable ? ' — ส่งข้อความด้านล่างเพื่อทำงานต่อใน session เดิม' : ''}`}
-							</p>
-						{/snippet}
-					</AgentTimeline>
-					<form class="flex shrink-0 gap-1.5 border-t border-(--vscode-widget-border) p-2" onsubmit={sendFollowUp}>
-						<input
-							class={INPUT}
-							placeholder={rt?.live ? 'ส่งข้อความเพิ่มเติมถึง agent' : resumable ? 'สั่งงานต่อ (resume session เดิม)' : 'สั่งงานเพิ่มใน worktree นี้ (เริ่ม session ใหม่)'}
-							aria-label="คำสั่งเพิ่มเติม"
-							bind:value={followUp}
-							disabled={run?.status === 'starting'}
-						/>
-						<button class={BUTTON} disabled={run?.status === 'starting' || !followUp.trim()}><Icon name="play" size={12} /> ส่ง</button>
-					</form>
-				{/if}
+					{:else}
+						<p>งานนี้เคยใช้ agent timeline</p>
+					{/if}
+					<button class={BUTTON_SECONDARY} onclick={() => (appMode.setMode('agents'), adeLayout.show(slug))}>{cli ? 'เปิด terminal ใน Agents (⇧⌘A)' : 'ย้ายไปเริ่มใน terminal'}</button>
+					{#if !cli}<button class={BUTTON_SECONDARY} onclick={() => adeTasks.resumeCli(slug, true)}>เริ่ม terminal agent</button>{/if}
+					<CliQuestion {slug} class="w-full max-w-md text-left" />
+				</div>
 			</section>
 			{/if}
 

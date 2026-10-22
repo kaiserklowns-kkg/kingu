@@ -15,18 +15,29 @@ export type Project = { path: string; added_at: number };
 export const projectName = (path: string) => path.replace(/\/+$/, '').split('/').pop() || path;
 
 export type SidebarProject = { path: string; name: string; open: boolean };
+/** Orca's `ui.projectOrderBy`: `manual` is the list's own order (drag a project header), `recent` the latest activity first. */
+export type ProjectOrder = 'manual' | 'recent';
 
 /**
- * The side bar's projects in the order they were added (switching folders never moves them);
- * the open folder is one of them, first when it was never added (`kingu.projects.addOnOpen` off).
+ * The side bar's projects: in the order they were added (or dragged to) by default, or by latest
+ * activity with `orderBy: 'recent'`; ties keep the list's order. Switching folders never moves
+ * them. The open folder is one of them, first when it was never added (`kingu.projects.addOnOpen` off).
  */
-export function sidebarProjects(list: readonly Project[], open: string | null): SidebarProject[] {
-	const out = list.map((p) => ({ path: p.path, name: projectName(p.path), open: p.path === open }));
-	if (open && !out.some((p) => p.open)) out.unshift({ path: open, name: projectName(open), open: true });
-	return out;
+export function sidebarProjects(
+	list: readonly Project[],
+	open: string | null,
+	opts: { orderBy?: ProjectOrder; lastActive?: (path: string) => number } = {}
+): SidebarProject[] {
+	const out = list.map((p, index) => ({ path: p.path, name: projectName(p.path), open: p.path === open, index }));
+	if (open && !out.some((p) => p.open)) out.unshift({ path: open, name: projectName(open), open: true, index: -1 });
+	if (opts.orderBy === 'recent' && opts.lastActive) {
+		const active = opts.lastActive;
+		out.sort((a, b) => active(b.path) - active(a.path) || a.index - b.index);
+	}
+	return out.map(({ path, name, open }) => ({ path, name, open }));
 }
 
-/** The other projects split around the open one, so the side bar keeps the added order. */
+/** The other projects split around the open one, so the side bar keeps the chosen order. */
 export function aroundOpen(items: readonly SidebarProject[]): { before: SidebarProject[]; after: SidebarProject[] } {
 	const i = items.findIndex((p) => p.open);
 	if (i < 0) return { before: [], after: [...items] };

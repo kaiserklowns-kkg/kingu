@@ -161,6 +161,23 @@ class CliSessions {
 	}
 
 	/**
+	 * Ctrl-C into the task's running CLI: stops the current turn; the session stays open for the
+	 * next follow-up. False when no CLI runs or the write fails.
+	 */
+	async interrupt(slug: string): Promise<boolean> {
+		const key = this.key(slug);
+		if (!key) return false;
+		try {
+			await invoke('pty_write', { key, data: '\x03' });
+			this.#last[slug] = Date.now();
+			return true;
+		} catch (e) {
+			status.flash(t('ade.cli.sendFailed', { error: String(e) }), 8000);
+			return false;
+		}
+	}
+
+	/**
 	 * Types `text` into the task's running CLI as one bracketed paste, then Enter apart from it
 	 * (Orca's guarded paste-then-submit). False when no CLI runs or the write fails.
 	 */

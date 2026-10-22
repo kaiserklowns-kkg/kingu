@@ -43,9 +43,7 @@ export const adeTasks = {
 	'adeTasks.tasks.linearTaskTitle': 'Task from Linear Issue',
 	'adeTasks.tasks.openExisting': 'Open Existing Task',
 	'adeTasks.tasks.hooksFailed': 'Could not install the status hooks of {agent}: {error}',
-	'adeTasks.tasks.startAgentFailed': 'Could not start the agent: {error}',
 	'adeTasks.tasks.sendMessageFailed': 'Could not send the message to the agent: {error}',
-	'adeTasks.tasks.answerFailed': 'Could not answer the permission request: {error}',
 	'adeTasks.tasks.stopAgentFirst': 'Stop the agent before removing the task',
 	'adeTasks.tasks.terminalAgentAsk': 'An agent is still working in a terminal of this task.\n\nRemoving the task stops it. Remove anyway?',
 	'adeTasks.tasks.terminalAgentTitle': 'Agent Still Working',
@@ -118,7 +116,6 @@ export const adeTasks = {
 	'adeTasks.issues.allOpen': 'All open issues',
 	'adeTasks.issues.basePlaceholder': 'Branch to start from (task {ref})',
 	'adeTasks.issues.currentBranch': 'current branch',
-	'adeTasks.issues.runModePlaceholder': 'How to run the agent',
 
 	// linear.svelte.ts
 	'adeTasks.linear.checkFailed': 'Could not check the Linear connection: {error}',

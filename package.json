@@ -3,12 +3,13 @@
 	"private": true,
 	"workspaces": ["apps/desktop", "apps/agent-host", "apps/web", "packages/*"],
 	"scripts": {
-		"dev:desktop": "bun --cwd apps/desktop tauri dev",
+		"dev:desktop": "cd apps/desktop && bun tauri dev",
 		"build:desktop": "bun tools/build-desktop.ts",
 		"verify:desktop": "bun tools/release-verify.ts target/aarch64-apple-darwin/release/bundle/macos/Kingu.app",
-		"dev:web": "bun --cwd apps/web run dev",
-		"build:web": "bun --cwd apps/web run build",
-		"check": "bun --cwd apps/desktop run check && bun --cwd apps/web run check && cargo check --workspace && (cd apps/server && go vet ./...)",
+		"dev:web": "cd apps/web && bun run dev",
+		"build:web": "cd apps/web && bun run build",
+		"check": "cd apps/desktop && bun run check && cd ../agent-host && bun run check && cd ../web && bun run check && cd ../.. && cargo check --workspace && (cd apps/server && go vet ./...)",
+		"test": "cd apps/desktop && bun test src && cd ../agent-host && bun test && cd ../web && bun test src && cd ../.. && cargo test --workspace && (cd apps/server && go test ./...)",
 		"dev:server": "cd apps/server && go run ./cmd/api"
 	}
 }

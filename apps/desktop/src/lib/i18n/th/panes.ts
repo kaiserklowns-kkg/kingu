@@ -209,8 +209,6 @@ export const panes = {
 	'panes.advanced.bypassHint': 'host ที่ไม่ต้องผ่าน proxy เช่น localhost หรือ *.internal',
 	'panes.experimental.title': 'ทดลอง',
 	'panes.experimental.description': 'ฟีเจอร์ใหม่ที่ยังพัฒนาอยู่ ลองใช้ดูได้',
-	'panes.experimental.chatUi': 'หน้าแชท',
-	'panes.experimental.chatUiHint': 'งานใหม่ของ agent เปิดในหน้าแชท (timeline) แทนเทอร์มินัล',
 	'panes.experimental.sleep': 'ให้ agent พักหลับ',
 	'panes.experimental.sleepHint': 'ปิด agent CLI ที่ว่างหลังทำงานเสร็จเพื่อคืนหน่วยความจำ กดครั้งเดียวก็กลับมาทำ session เดิมต่อ',
 	'panes.experimental.sleepAfter': 'พักหลังจาก',

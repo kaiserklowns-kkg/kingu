@@ -24,7 +24,6 @@ import { t } from '#lib/i18n/index.ts';
 export type IssueFilter = { mine: boolean; label: string; search: string };
 const LIMIT = 50;
 
-export const defaultRunMode = (): RunMode => (settings.get<string>('kingu.agent.runMode') === 'timeline' ? 'timeline' : 'terminal');
 export const defaultBase = () => adeTasks.defaultBase();
 
 class AdeIssues {
@@ -145,17 +144,7 @@ class AdeIssues {
 			items: branches.map((b) => ({ id: b, label: b || 'HEAD', description: b === current ? t('adeTasks.issues.currentBranch') : undefined }))
 		});
 		if (!base) return;
-		const preferred = defaultRunMode();
-		const modes: { id: RunMode; label: string }[] = [
-			{ id: 'terminal', label: `Terminal · ${settings.get<string>('kingu.agent.cli') || 'claude'}` },
-			{ id: 'timeline', label: 'Timeline' }
-		];
-		const mode = await quick.choose({
-			placeholder: t('adeTasks.issues.runModePlaceholder'),
-			items: [...modes].sort((a, b) => Number(b.id === preferred) - Number(a.id === preferred))
-		});
-		if (!mode) return;
-		await adeTasks.createFromIssue(issue, { base: base.id, mode: mode.id as RunMode });
+		await adeTasks.createFromIssue(issue, { base: base.id, mode: 'terminal' });
 	}
 }
 

@@ -30,6 +30,20 @@ describe('sidebarProjects', () => {
 		expect(sidebarProjects(list, null).every((p) => !p.open)).toBe(true);
 	});
 
+	test('recent orders by latest activity, ties keep the added order; manual keeps the list order', () => {
+		const activity: Record<string, number> = { '/r/a': 5, '/r/b': 9, '/r/c': 5 };
+		const lastActive = (path: string) => activity[path] ?? 0;
+		expect(sidebarProjects(list, '/r/b', { orderBy: 'recent', lastActive }).map((p) => p.name)).toEqual(['b', 'a', 'c']);
+		expect(sidebarProjects(list, '/r/b', { orderBy: 'manual', lastActive }).map((p) => p.name)).toEqual(['a', 'b', 'c']);
+		// A folder that was never added takes its activity rank too.
+		expect(sidebarProjects(list, '/x/new', { orderBy: 'recent', lastActive: (p) => (p === '/x/new' ? 10 : 1) }).map((p) => p.path)).toEqual([
+			'/x/new',
+			'/r/a',
+			'/r/b',
+			'/r/c'
+		]);
+	});
+
 	test('aroundOpen splits the others before and after the open folder', () => {
 		const { before, after } = aroundOpen(sidebarProjects(list, '/r/b'));
 		expect([before.map((p) => p.name), after.map((p) => p.name)]).toEqual([['a'], ['c']]);

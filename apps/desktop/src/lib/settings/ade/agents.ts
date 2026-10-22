@@ -46,7 +46,7 @@ export const AGENT_SETTINGS: SettingSchema[] = [
 			'เพิ่ม flag ข้ามการขออนุญาตของ CLI นั้น เช่น claude --dangerously-skip-permissions, codex --dangerously-bypass-approvals-and-sandbox, gemini --yolo (Add that CLI\'s skip-permissions flag.)'
 		],
 		description:
-			'การขออนุญาตของ agent CLI ในโหมด terminal ใช้กับงานใหม่ ไม่ใช้กับ CLI ที่ตั้ง kingu.agent.args.<profile> ไว้เอง และ opencode ไม่มี flag นี้ ส่วนโหมด timeline ใช้ kingu.agent.permissionMode (Orca: Agent Permissions) (Permissions of terminal-mode agent CLIs for new tasks; a CLI whose kingu.agent.args.<profile> you set keeps your arguments.)',
+			'การขออนุญาตของ agent CLI ในงาน ADE ใช้กับงานใหม่ ไม่ใช้กับ CLI ที่ตั้ง kingu.agent.args.<profile> ไว้เอง และ opencode ไม่มี flag นี้ (Orca: Agent Permissions) (Permissions of ADE agent CLIs for new tasks; a CLI whose kingu.agent.args.<profile> you set keeps your arguments.)',
 		// User-only: it turns off the CLI's permission prompts.
 		scope: 'application'
 	},
@@ -110,7 +110,7 @@ export const AGENT_SETTINGS: SettingSchema[] = [
 		integer: true,
 		description: 'ว่างนานกี่นาทีหลังทำรอบเสร็จ agent CLI จึงถูกพักไว้ เมื่อเปิด kingu.agent.hibernation (Orca: agentHibernationIdleMs) (Minutes an agent CLI stays idle after its turn before hibernation closes it.)'
 	},
-	// --- Agent Chat (Orca's nativeChatAppearance): the timeline of timeline-mode tasks and the Agent panel.
+	// --- Agent Chat (Orca's nativeChatAppearance): the Agent panel.
 	{
 		id: 'kingu.chat.fontSize',
 		group: 'Agent Chat',

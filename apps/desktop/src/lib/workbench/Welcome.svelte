@@ -1,23 +1,32 @@
 <script lang="ts">
-	// The welcome tour: four short steps, each with what to press. Esc or Skip closes it for good.
+	// The welcome tour starts with a concrete choice, then gives the small set of shortcuts that
+	// make the IDE + Agents split discoverable. Esc or Skip closes it for good.
 	import type { IconName } from './Icon.svelte';
 	import Icon from './Icon.svelte';
 	import KinguMark from './KinguMark.svelte';
 	import { commands } from './commands.svelte';
 	import { welcome } from './welcomeTour.svelte';
 
-	type Step = { icon: IconName | 'kingu'; title: string; body: string; keys: [string, string][] };
+	type Action = { label: string; command: string; primary?: boolean };
+	type Step = { icon: IconName | 'kingu'; title: string; body: string; keys: [string, string][]; actions?: Action[] };
 	const STEPS: Step[] = [
 		{
 			icon: 'kingu',
-			title: 'ยินดีต้อนรับสู่ Kingu Studio',
-			body: 'IDE และ ADE ในหน้าต่างเดียว: เขียนโค้ดเอง หรือส่งงานให้ Arkai ทำใน worktree ของตัวเอง โดยไม่ชนกับงานที่คุณทำอยู่',
-			keys: [['เปิดโฟลเดอร์', '⌘O']]
+			title: 'เริ่มงานแบบที่ถนัด',
+			body: 'Kingu มีสองพื้นที่ที่ใช้โปรเจกต์เดียวกัน: Editor สำหรับเขียนและตรวจโค้ด และ Agents สำหรับมอบงานใน worktree แยก เลือกจุดเริ่มต้นได้เลย',
+			keys: [
+				['Editor', '⌘O'],
+				['Agents', '⇧⌘A']
+			],
+			actions: [
+				{ label: 'เปิดโฟลเดอร์', command: 'workbench.action.files.openFolder', primary: true },
+				{ label: 'สร้างโปรเจกต์ใหม่', command: 'kingu.newProject' }
+			]
 		},
 		{
 			icon: 'agent',
 			title: 'Arkai และโหมด Agents (ADE)',
-			body: 'สั่งงานได้หลายงานพร้อมกัน แต่ละงานได้ branch และ worktree แยก ดูความคืบหน้าบนบอร์ด รีวิว diff แล้ว commit หรือ merge ได้ในที่เดียว',
+			body: 'สั่งงานได้หลายงานพร้อมกัน แต่ละงานได้ branch และ worktree แยก เริ่มด้วย New Session แล้วอธิบายผลลัพธ์ที่ต้องการ จากนั้นรีวิว diff ก่อน commit หรือ merge',
 			keys: [
 				['สลับ IDE / Agents', '⇧⌘A'],
 				['แผง Arkai', '⌥⌘B']
@@ -36,10 +45,10 @@
 		{
 			icon: 'settings',
 			title: 'ปรับให้เข้ากับคุณ',
-			body: 'เลือกธีม (รวมถึง 2026 Dark/Light) กันเครื่องหลับขณะ agent ทำงาน (☕ ที่ status bar) และเปิด/ปิดเสียงแจ้งเหตุการณ์ได้ใน Settings',
+			body: 'เลือกธีม ปรับคีย์ลัด และตั้งสิทธิ์ของ agent ได้ใน Settings โดยค่าเริ่มต้นจะถามก่อนทำสิ่งที่มีผลกระทบ เพื่อให้เริ่มใช้งานได้อย่างมั่นใจ',
 			keys: [
 				['Settings', '⌘,'],
-				['Floating terminal', '⌥⌘T']
+				['Floating terminal', '⌥⌘A']
 			]
 		}
 	];
@@ -80,6 +89,18 @@
 					</span>
 				{/each}
 			</div>
+			{#if s.actions}
+				<div class="mt-2 flex flex-wrap justify-center gap-2">
+					{#each s.actions as action (action.command)}
+						<button
+							class={action.primary
+								? 'rounded-md bg-(--vscode-button-background) px-3 py-1.5 text-[13px] text-(--vscode-button-foreground) hover:opacity-90'
+								: 'rounded-md border border-(--vscode-widget-border) px-3 py-1.5 text-[13px] hover:bg-(--vscode-toolbar-hoverBackground)'}
+							onclick={() => run(action.command)}
+						>{action.label}</button>
+					{/each}
+				</div>
+			{/if}
 		</div>
 		<div class="flex items-center gap-2 border-t border-(--vscode-widget-border) px-5 py-3">
 			<div class="flex flex-1 gap-1.5" aria-label="ขั้นที่ {step + 1} จาก {STEPS.length}">
@@ -92,7 +113,7 @@
 				<button class="rounded-md px-3 py-1.5 text-[13px] hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => step--}>ย้อนกลับ</button>
 			{/if}
 			{#if last}
-				<button class="rounded-md bg-(--vscode-button-background) px-3 py-1.5 text-[13px] text-(--vscode-button-foreground) hover:opacity-90" onclick={() => run('workbench.action.files.openFolder')}>เปิดโฟลเดอร์และเริ่มเลย</button>
+				<button class="rounded-md bg-(--vscode-button-background) px-3 py-1.5 text-[13px] text-(--vscode-button-foreground) hover:opacity-90" onclick={() => welcome.close()}>เริ่มใช้งาน</button>
 			{:else}
 				<!-- svelte-ignore a11y_autofocus -->
 				<button autofocus class="rounded-md bg-(--vscode-button-background) px-3 py-1.5 text-[13px] text-(--vscode-button-foreground) hover:opacity-90" onclick={() => step++}>ถัดไป</button>

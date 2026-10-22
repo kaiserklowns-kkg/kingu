@@ -10,7 +10,7 @@ import type { TaskStatus } from './model';
 export const PROMPT_CACHE_TTL_MS: Record<string, number> = { '5m': 300_000, '1h': 3_600_000 };
 export const promptCacheTtl = (setting: string | undefined) => PROMPT_CACHE_TTL_MS[setting ?? ''] ?? PROMPT_CACHE_TTL_MS['5m'];
 
-/** A Claude session: a timeline task (the agent host runs Claude) or a terminal task running claude. */
+/** A Claude session: a legacy timeline task (the agent host runs Claude) or a terminal task running claude. */
 export function isClaudeTask(agent: string): boolean {
 	const cli = cliOf(agent);
 	return cli ? profileOf(cli).id === 'claude' : !agent.startsWith('cli:');

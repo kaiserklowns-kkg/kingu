@@ -120,7 +120,7 @@ class DiffNotes {
 		for (const n of pending) this.sending[n.id] = true;
 		status.flash(t('ade.diffNotes.sending'));
 		try {
-			const ok = how === 'cli' ? await cliSessions.send(key, prompt) : how === 'timeline' ? await adeTasks.followUp(key, prompt) : await adeTasks.startCliWith(key, prompt);
+			const ok = how === 'cli' ? await cliSessions.send(key, prompt) : await adeTasks.followUp(key, prompt);
 			if (!ok) return;
 			await this.#set(key, clearDelivered(this.list(key), pending));
 			status.flash(t('ade.diffNotes.sent', { count: pending.length }));

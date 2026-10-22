@@ -9,7 +9,6 @@
 
 	const get = (id: string) => settings.get<string>(id) ?? '';
 	const set = (id: string, v: string) => void settings.set(id, v.trim() === SETTINGS.find((s) => s.id === id)?.default ? undefined : v.trim(), 'user');
-	const runMode = $derived(get('kingu.agent.runMode'));
 
 	const SECTION = 'mt-7 mb-2 text-xs font-semibold tracking-wide text-(--vscode-descriptionForeground) uppercase';
 	const INPUT = 'h-8 w-full max-w-[420px] rounded-md border border-(--vscode-input-border) bg-(--vscode-input-background) px-2.5 font-mono text-[13px] text-(--vscode-input-foreground) outline-none focus:border-(--vscode-focusBorder)';
@@ -26,20 +25,11 @@
 		</div>
 
 		<h2 class={SECTION}>วิธีรันงานใหม่</h2>
-		<SettingChoice id="kingu.agent.runMode" labels={{ terminal: 'Terminal (agent CLI)', timeline: 'Timeline' }} />
-		{#if runMode === 'terminal'}
-			<label class="mt-3 block">
-				<span class="text-[13px]">คำสั่ง agent CLI</span>
-				<span class="block text-xs text-(--vscode-descriptionForeground)">เช่น claude หรือ codex — prompt จะต่อท้ายเป็นอาร์กิวเมนต์สุดท้าย</span>
-				<input class="{INPUT} mt-1.5" value={get('kingu.agent.cli')} onchange={(e) => set('kingu.agent.cli', e.currentTarget.value)} spellcheck="false" />
-			</label>
-		{:else}
-			<label class="mt-3 block">
-				<span class="text-[13px]">โมเดล</span>
-				<span class="block text-xs text-(--vscode-descriptionForeground)">โมเดลที่ใช้ในโหมด Timeline</span>
-				<input class="{INPUT} mt-1.5" value={get('kingu.agent.model')} onchange={(e) => set('kingu.agent.model', e.currentTarget.value)} spellcheck="false" />
-			</label>
-		{/if}
+		<label class="mt-3 block">
+			<span class="text-[13px]">คำสั่ง agent CLI</span>
+			<span class="block text-xs text-(--vscode-descriptionForeground)">ทุกงาน ADE รันใน terminal ของ worktree เช่น claude, codex หรือ opencode — prompt จะต่อท้ายเป็นอาร์กิวเมนต์สุดท้าย</span>
+			<input class="{INPUT} mt-1.5" value={get('kingu.agent.cli')} onchange={(e) => set('kingu.agent.cli', e.currentTarget.value)} spellcheck="false" />
+		</label>
 
 		<ArkaiProviders />
 

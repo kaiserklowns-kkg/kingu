@@ -18,7 +18,7 @@ import { quick, type PickItem } from '#lib/workbench/quick.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import type { RunMode } from './agentCli.ts';
-import { issues, defaultBase, defaultRunMode } from './issues.svelte.ts';
+import { issues, defaultBase } from './issues.svelte.ts';
 import type { Issue, IssueDetail } from './issues.ts';
 import { linear } from './linear.svelte.ts';
 import { adeTasks } from './tasks.svelte.ts';
@@ -265,14 +265,7 @@ class AdeSources {
 			items: branches.map((b) => ({ id: b, label: b || 'HEAD', description: b === current ? t('adeTasks.issues.currentBranch') : undefined }))
 		});
 		if (!base) return;
-		const preferred = defaultRunMode();
-		const modes: { id: RunMode; label: string }[] = [
-			{ id: 'terminal', label: `Terminal · ${settings.get<string>('kingu.agent.cli') || 'claude'}` },
-			{ id: 'timeline', label: 'Timeline' }
-		];
-		const mode = await quick.choose({ placeholder: t('adeTasks.issues.runModePlaceholder'), items: [...modes].sort((a, b) => Number(b.id === preferred) - Number(a.id === preferred)) });
-		if (!mode) return;
-		await this.startFrom(item, { base: base.id, mode: mode.id as RunMode });
+		await this.startFrom(item, { base: base.id, mode: 'terminal' });
 	}
 
 	/** The dialog's submit: Rust checks the credentials with the tracker before storing them. Throws the reason. */

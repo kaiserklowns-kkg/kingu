@@ -8,6 +8,7 @@ export const adeProjects = {
 	'adeProjects.addFailed': 'เพิ่มโปรเจกต์ไม่ได้: {error}',
 	'adeProjects.removed': 'เอา {name} ออกจากแถบข้างแล้ว',
 	'adeProjects.removeFailed': 'เอาโปรเจกต์ออกไม่ได้: {error}',
+	'adeProjects.moveFailed': 'สลับลำดับโปรเจกต์ไม่ได้: {error}',
 	'adeProjects.loadFailed': 'อ่านโปรเจกต์นี้ไม่ได้: {error}',
 	'adeProjects.open': 'เปิดโปรเจกต์',
 	'adeProjects.remove': 'เอาโปรเจกต์ออก',
