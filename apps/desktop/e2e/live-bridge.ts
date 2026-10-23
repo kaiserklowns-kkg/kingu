@@ -1,14 +1,14 @@
 /**
- * The e2e bridge: one real agent host (`main.ts`), one HTTP door. `agent_list_models` from the
- * page is answered by the real sidecar against the installed CLIs — no fixture answers here.
+ * The e2e bridge: one real agent host (`main.ts`), one HTTP door. `agent_list_models`,
+ * `agent_start` and `agent_send` from the page are answered by the real sidecar against the
+ * installed CLIs — no fixture answers these. The run's `event` notifications stream back
+ * through SSE (`/events?runId=<n>`), `index`-numbered for the page's Tauri channel callback.
  * The runtime id → command table duplicates src-tauri's `agent/runtimes.rs::KNOWN`; both must
  * change together until one source of truth reaches the tests.
  */
-import type { Subprocess } from 'bun';
-
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 
-// The list_models probes spawn their CLI with this cwd; it must exist before the first ask.
+// The agent runs (and the probes) use this cwd with the CLIs; it must exist.
 mkdirSync('/tmp/kingu-e2e', { recursive: true });
 
 const KNOWN: Record<string, { kind: 'acp' | 'codex'; args: string[] }> = {
@@ -23,10 +23,18 @@ const KNOWN: Record<string, { kind: 'acp' | 'codex'; args: string[] }> = {
 
 const host = Bun.spawn(['bun', new URL('../../agent-host/src/main.ts', import.meta.url).pathname], { stdin: 'pipe', stdout: 'pipe', stderr: 'inherit' });
 let nextId = 1;
+let nextRun = 1;
 let raw = '';
+let partial = '';
 const pump = (async () => {
 	const dec = new TextDecoder();
-	for await (const chunk of host.stdout) raw += dec.decode(chunk);
+	for await (const chunk of host.stdout) {
+		const text = partial + dec.decode(chunk);
+		raw += text; // full log for the reply finder
+		const lines = text.split('\n');
+		partial = lines.pop() ?? '';
+		for (const line of lines) handleHostMessage(line);
+	}
 })();
 
 /**
@@ -38,6 +46,27 @@ function resolveCli(name: string): string | null {
 		if (candidate && existsSync(candidate)) return (realpathSync(candidate) || candidate) as string;
 	}
 	return null;
+}
+
+const runs = new Map<number, { buffer: { index: number; message: unknown }[]; subs: Set<(line: string) => void> }>();
+function eventOf(runId: number, message: unknown) {
+	const run = runs.get(runId) ?? { buffer: [], subs: new Set() };
+	runs.set(runId, run);
+	const line = `data: ${JSON.stringify({ index: run.buffer.length, message })}\n\n`;
+	run.buffer.push({ index: run.buffer.length, message });
+	for (const sub of run.subs) sub(line);
+}
+
+/** A real host event notification: `event` with `{ runId, event }`. */
+function handleHostMessage(line: string) {
+	if (!line.trim()) return;
+	let msg: { method?: string; params?: { runId?: number; event?: unknown } };
+	try {
+		msg = JSON.parse(line);
+	} catch {
+		return; // the host's multiline logs and similar
+	}
+	if (msg.method === 'event' && msg.params?.runId != null) eventOf(msg.params.runId, msg.params.event);
 }
 
 async function ask(method: string, params: unknown): Promise<unknown> {
@@ -58,36 +87,97 @@ async function ask(method: string, params: unknown): Promise<unknown> {
 	return parsed.result;
 }
 
-const live: BunServe = Bun.serve({
+const cors = { 'Access-Control-Allow-Origin': '*' };
+const sseHeaders = { ...cors, 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' };
+
+function startParams(args: Record<string, unknown>): Record<string, unknown> | null {
+	const id = String(args?.runtime ?? '');
+	const known = KNOWN[id];
+	const commandPath = known ? resolveCli(id) : null;
+	if (!known || !commandPath) return null;
+	return {
+		runId: nextRun++,
+		cwd: '/tmp/kingu-e2e',
+		prompt: String(args?.prompt ?? ''),
+		model: (args?.model as string | null) ?? null,
+		permissionMode: (args?.permissionMode as string | null) ?? null,
+		images: (args?.images as string[] | null) ?? [],
+		runtime: { kind: known.kind, command: commandPath, args: known.args }
+	};
+}
+
+function response(value: unknown, status = 200) {
+	return Response.json({ ok: true, value }, { status, headers: cors });
+}
+function failure(error: unknown, status = 200) {
+	return Response.json({ ok: false, error: String(error) }, { status, headers: cors });
+}
+
+const live = Bun.serve({
 	port: 4179,
-	idleTimeout: 120,
+	idleTimeout: 240,
 	async fetch(request) {
 		const url = new URL(request.url);
 		// The page's origin (the Vite dev server) crosses to this door: CORS, widely.
-		if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST', 'Access-Control-Allow-Headers': 'content-type' } });
-		const cors = { 'Access-Control-Allow-Origin': '*' };
+		if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { ...cors, 'Access-Control-Allow-Methods': 'POST, GET', 'Access-Control-Allow-Headers': 'content-type' } });
 		if (request.method === 'GET' && url.pathname === '/') return new Response(null, { status: 204, headers: cors }); // the webServer probe
-		if (url.pathname !== '/invoke') return new Response('no such path', { status: 404, headers: cors });
+		if (url.pathname !== '/invoke' && url.pathname !== '/events') return new Response('no such path', { status: 404, headers: cors });
+
+		if (request.method === 'GET' && url.pathname === '/events') {
+			const runId = Number(url.searchParams.get('runId'));
+			const run = runs.get(runId);
+			if (!run) return failure(`no run ${runId}`, 404);
+			return new Response(
+				new ReadableStream({
+					start(controller) {
+						const enc = new TextEncoder();
+						for (const item of run.buffer) controller.enqueue(enc.encode(`data: ${JSON.stringify(item)}\n\n`));
+						run.subs.add((line) => {
+							try {
+								controller.enqueue(enc.encode(line));
+							} catch {
+								// the page navigated away: drop it
+							}
+						});
+					}
+				}),
+				{ headers: sseHeaders }
+			);
+		}
+
 		const { command, args } = (await request.json()) as { command: string; args: Record<string, unknown> };
 		try {
-			if (command !== 'agent_list_models') return Response.json({ ok: false, error: `the bridge speaks list_models only, asked for ${command}` }, { status: 400, headers: cors });
-			const id = String(args?.runtime ?? '');
-			const known = KNOWN[id];
-			const commandPath = known ? resolveCli(id) : null;
-			if (!known || !commandPath) return Response.json({ ok: false, error: `unknown runtime ${id}` }, { status: 400, headers: cors });
-			const result = await ask('list_models', { runtime: { kind: known.kind, command: commandPath, args: known.args }, cwd: '/tmp/kingu-e2e' });
-			// The Rust command returns the bare Vec; the page awaits that shape.
-			const models = (result as { models?: unknown } | null)?.models ?? [];
-			return Response.json({ ok: true, value: models }, { headers: cors });
+			switch (command) {
+				case 'agent_list_models': {
+					const start = startParams({ runtime: args.runtime });
+					if (!start) return failure(`unknown runtime ${String(args?.runtime ?? '')}`);
+					const result = await ask('list_models', { runtime: start.runtime, cwd: start.cwd });
+					// The Rust command returns the bare Vec; the page awaits that shape.
+					return response((result as { models?: unknown } | null)?.models ?? []);
+				}
+				case 'agent_start': {
+					const start = startParams(args);
+					if (!start) return failure(`unknown runtime ${String(args?.runtime ?? '')}`);
+					const runId = start.runId;
+					runs.set(runId!, { buffer: [], subs: new Set() });
+					await ask('start', start);
+					return response(runId);
+				}
+				case 'agent_send':
+					await ask('send', { runId: args.runId, text: args.text, images: (args.images as string[] | null) ?? [] });
+					return response(null);
+				default:
+					return failure(`the bridge speaks list_models/start/send only, asked for ${command}`, 400);
+			}
 		} catch (e) {
-			return Response.json({ ok: false, error: String(e) }, { status: 200, headers: cors });
+			return failure(e);
 		}
 	}
 });
 
-type BunServe = { stop(options?: { closeActiveConnections?: boolean }): unknown };
-console.log(`[live-bridge] agent host ${host.pid} ready, door on ${live.port}`);
+pump.then(() => {}); // events flow; the host's own replies are in `raw`
 process.on('SIGTERM', () => {
 	host.kill();
 	process.exit(0);
 });
+console.log(`[live-bridge] agent host ${host.pid} ready, door on ${live.port}`);

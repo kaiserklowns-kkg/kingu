@@ -11,6 +11,7 @@ export default defineConfig({
 	expect: { timeout: 10_000 },
 	fullyParallel: false,
 	workers: 1,
+	retries: 1, // the one live test waits on real model queues; one retry keeps the suite honest
 	reporter: [['list']],
 	use: {
 		baseURL: 'http://localhost:4174',

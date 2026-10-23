@@ -41,3 +41,28 @@ test('the model picker lists what the real OpenCode runtime names', async ({ pag
 	await expect(option.first()).toBeVisible({ timeout: 3_000 });
 	expect(errors).toEqual([]);
 });
+
+test('a real OpenCode session answers a sent chat message', async ({ page }) => {
+	test.setTimeout(180_000) // a real model answers on its own clock (slow free-model queues)
+	test.skip(!opencodeOnPath, 'the OpenCode CLI is not installed');
+	const errors = watchErrors(page);
+	await openApp(page, READY, {}, { liveModels: true });
+
+	const chat = page.getByRole('complementary', { name: 'Chat' });
+	// Real runtime, real model (the first of what the real CLI named), real first prompt.
+	await chat.getByRole('button', { name: 'Agent: Claude Code' }).click();
+	await page.getByRole('option', { name: 'OpenCode' }).click();
+	const model = chat.getByRole('button', { name: /Model: / });
+	await model.click();
+	const option = page.locator('[role="option"]').filter({ hasText: /OpenCode\// });
+	await option.first().waitFor({ timeout: 5_000 });
+	await option.first().click();
+	const input = chat.getByRole('combobox', { name: /Chat with/ });
+	await input.fill('Reply with exactly the word pineapple and nothing else.');
+	await input.press('Enter');
+
+	// The live answer lands as its own message in the chat wall (the user's prompt names the word
+	// too, so match the whole assistant paragraph, which is the word alone — ChatMarkdown's node).
+	await expect(chat.locator('.kg-md p').filter({ hasText: /^pineapple$/i })).toBeVisible({ timeout: 170_000 });
+	expect(errors).toEqual([]);
+});

@@ -305,11 +305,18 @@ export async function mockTauri(
 			const internals = {
 				invoke: async (cmd: string, args?: any) => {
 					calls[cmd] = (calls[cmd] ?? 0) + 1;
-					if (initialOpts.liveModels && cmd === 'agent_list_models') {
+					if (initialOpts.liveModels && (cmd === 'agent_list_models' || cmd === 'agent_start' || cmd === 'agent_send')) {
 						// The real sidecar answers (live-bridge.ts); same throw-on-failure as Tauri's invoke.
 						const r = await fetch('http://127.0.0.1:4179/invoke', { method: 'POST', body: JSON.stringify({ command: cmd, args }) });
 						const out = (await r.json()) as { ok: boolean; value?: unknown; error?: string };
 						if (!out.ok) throw new Error(out.error ?? 'live bridge error');
+						if (cmd === 'agent_start') {
+							// The run's real events stream to this page's Tauri channel callback: {index, message}.
+							const cb = (globalThis as any)[`_${args?.onEvent?.id}`];
+							const events = new EventSource(`http://127.0.0.1:4179/events?runId=${out.value}`);
+							events.onmessage = (e) => cb?.(JSON.parse(e.data));
+							events.onerror = () => events.close();
+						}
 						return out.value;
 					}
 					const h = handlers[cmd];
