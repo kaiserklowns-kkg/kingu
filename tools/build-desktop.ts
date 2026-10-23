@@ -92,7 +92,7 @@ run(
 		join(tauriDir, 'tauri.release.conf.json'),
 		'--target',
 		target,
-		...(auditable ? ['--runner', 'cargo-auditable'] : []),
+		...(auditable ? ['--runner', join(repo, 'tools/auditable-runner.sh')] : []),
 		...passthrough
 	],
 	{ cwd: desktop, env }

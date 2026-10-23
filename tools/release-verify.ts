@@ -63,14 +63,16 @@ export function forbiddenFile(rel: string): string | null {
 }
 
 /** Byte patterns that must not appear in shipped files. `home` = the build user's home folder. */
-export function forbiddenPatterns(repo: string, home: string): { label: string; re: RegExp }[] {
+export function forbiddenPatterns(repo: string, home: string): { label: string; re: RegExp; want?: RegExp }[] {
 	const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 	return [
 		{ label: 'repo path', re: new RegExp(esc(repo)) },
 		{ label: 'home path', re: new RegExp(esc(home) + '/') },
 		// A real reference to a map file (not the TypeScript emitter's `sourceMappingURL=${…}` template).
 		{ label: 'sourceMappingURL', re: /sourceMappingURL=[\w./-]+\.map\b/ },
-		{ label: 'Anthropic API key', re: /sk-ant-[A-Za-z0-9_-]{20,}/ },
+		// A real Anthropic key mixes digits in (`sk-ant-api03-…`); linker-merged literals nearby
+		// ("sk-ant-" + "sk-…" + env-var names) do not, so the hit itself must carry one.
+		{ label: 'Anthropic API key', re: /sk-ant-[A-Za-z0-9_-]{20,}/, want: /\d/ },
 		{ label: 'GitHub token', re: /gh[pousr]_[A-Za-z0-9]{36}/ },
 		{ label: 'AWS key', re: /AKIA[0-9A-Z]{16}/ },
 		{ label: 'private key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ }
@@ -213,9 +215,9 @@ export function verify(app: string, opts: { frontend?: string; maxAppMb: number;
 	const hits: string[] = [];
 	for (const rel of files) {
 		const buf = readFileSync(join(app, rel)).toString('latin1');
-		for (const { label, re } of patterns) {
+		for (const { label, re, want } of patterns) {
 			const m = re.exec(buf);
-			if (m) hits.push(`${rel}: ${label} ("${buf.slice(m.index, m.index + 60).replace(/[^\x20-\x7e]/g, '.')}")`);
+			if (m && (!want || want.test(m[0]))) hits.push(`${rel}: ${label} ("${buf.slice(m.index, m.index + 60).replace(/[^\x20-\x7e]/g, '.')}")`);
 		}
 	}
 	add('strings.bundle', hits.length === 0, hits.length ? hits.join('; ') : 'no repo/home paths, source map URLs or secret patterns');
@@ -225,7 +227,10 @@ export function verify(app: string, opts: { frontend?: string; maxAppMb: number;
 		const feHits: string[] = [];
 		for (const rel of fe) {
 			const text = readFileSync(join(opts.frontend, rel)).toString('latin1');
-			for (const { label, re } of patterns) if (re.test(text)) feHits.push(`${rel}: ${label}`);
+			for (const { label, re, want } of patterns) {
+				const m = re.exec(text);
+				if (m && (!want || want.test(m[0]))) feHits.push(`${rel}: ${label}`);
+			}
 		}
 		add('files.frontend', feBad.length === 0 && feHits.length === 0, [...feBad.map(([r, w]) => `${r} (${w})`), ...feHits].join('; ') || `${fe.length} files in ${relative(opts.repo, opts.frontend)} (embedded in the binary), none forbidden`);
 	}

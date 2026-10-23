@@ -8,6 +8,20 @@ Checklist from docs/PLAN.md §7 (security baseline) and §11 (REA release verifi
     bun run build:desktop            # tools/build-desktop.ts → target/aarch64-apple-darwin/release/bundle/macos/Kingu.app
     bun run verify:desktop           # tools/release-verify.ts on that bundle; exits 1 on any failure
 
+## Latest rebuild: 2026-10-23 (ad-hoc signed, not notarized)
+
+`bun run build:desktop -- --auditable` (cargo-auditable 0.7.7 through `tools/auditable-runner.sh`:
+a tauri `--runner` is exec'd directly, which cargo-auditable ≥ 0.7 refuses, so the wrapper reaches
+it through `cargo auditable`). release-verify: **all 38 checks passed**, including `.dep-v0` — the
+main binary now embeds its Rust dependency list. Sizes re-checked inside the same run (app 116.7 MB,
+sidecar 68.4 MB, main 46 MB). One scanner fix this round: `strings.bundle`'s Anthropic-key pattern
+hit linker-merged literals (`"sk-ant-"` + env-var names) — the hit itself must now contain a digit,
+which every real `sk-ant-api03-…`/`sk-ant-oat01-…` key has.
+
+Also new: a hand smoke test of the release sidecar answered `list_models` (Codex: 3 models) — the
+per-runtime model probe shipped with this build. DMG built from this app:
+`bundle/macos/Kingu-0.1.0-aarch64.dmg` (52.4 MiB). Notarization/Developer ID still pending (below).
+
 - `build:desktop` = `tauri build --config src-tauri/tauri.release.conf.json --target <host> --bundles app`
   (compiles the sidecar first, adds `bundle.externalBin`), then re-signs the sidecar with
   `entitlements/agent-host.plist` and the app with `entitlements/app.plist`, then runs
