@@ -19,8 +19,11 @@ hit linker-merged literals (`"sk-ant-"` + env-var names) — the hit itself must
 which every real `sk-ant-api03-…`/`sk-ant-oat01-…` key has.
 
 Also new: a hand smoke test of the release sidecar answered `list_models` (Codex: 3 models) — the
-per-runtime model probe shipped with this build. DMG built from this app:
-`bundle/macos/Kingu-0.1.0-aarch64.dmg` (52.4 MiB). Notarization/Developer ID still pending (below).
+per-runtime model probe shipped with this build. No disassembler needed for the deps evidence:
+`otool -s __DATA .dep-v0` reads the section directly on the shipped macOS binary (~5 KB in
+`kingu-desktop`; the other Rust crates, `kingu-cli`/`kingu-ptyd`, are not plan-scoped for it). DMG
+built from this app: `bundle/macos/Kingu-0.1.0-aarch64.dmg` (52.4 MiB). Notarization/Developer ID
+still pending (below).
 
 - `build:desktop` = `tauri build --config src-tauri/tauri.release.conf.json --target <host> --bundles app`
   (compiles the sidecar first, adds `bundle.externalBin`), then re-signs the sidecar with
