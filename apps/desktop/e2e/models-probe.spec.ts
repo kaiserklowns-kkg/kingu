@@ -69,3 +69,29 @@ test('a failed model ask says so and the picker offers a retry', async ({ page }
 	await expect(page.getByRole('option', { name: 'Big Pickle' })).toBeVisible({ timeout: 5_000 });
 	expect(errors).toEqual([]);
 });
+
+test('a picked model stays the default of that runtime\'s next new chat', async ({ page }) => {
+	const errors = watchErrors(page);
+	await openApp(page, READY);
+
+	const chat = page.getByRole('complementary', { name: 'Chat' });
+	// Move to OpenCode and pick a real model for the about-to-open chat.
+	const target = chat.getByRole('button', { name: 'Agent: Claude Code' });
+	await target.click();
+	await page.getByRole('option', { name: 'OpenCode' }).click();
+	const model = chat.getByRole('button', { name: /Model: / });
+	await model.click();
+	await page.getByRole('option', { name: 'Big Pickle' }).click();
+	await expect(model).toHaveAccessibleName(/Model: .*Big Pickle/);
+
+	// A later New Chat with the same runtime starts with that model, not "Default".
+	await chat.getByRole('button', { name: 'New Chat', exact: true }).click();
+	await page.getByRole('menuitem', { name: /^New Chat( ⌘N)?$/ }).click();
+	await expect(chat.getByRole('button', { name: 'Agent: OpenCode' })).toBeVisible();
+	await expect(chat.getByRole('button', { name: /Model: / })).toHaveAccessibleName(/Model: .*Big Pickle/);
+	// Claude keeps its own default (never borrows another runtime's memory).
+	await chat.getByRole('button', { name: 'Agent: OpenCode' }).click();
+	await page.getByRole('option', { name: 'Claude Code' }).click();
+	await expect(chat.getByRole('button', { name: /Model: / })).not.toHaveAccessibleName(/Pickle/i);
+	expect(errors).toEqual([]);
+});

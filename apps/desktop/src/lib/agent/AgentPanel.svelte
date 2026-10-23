@@ -415,8 +415,8 @@
 		optionNote = '';
 		resetInput();
 		const d = chats.defaults();
-		// The default model is Claude's: another runtime starts with its own default, not a Claude model.
-		newModel = newRuntime === CLAUDE_RUNTIME ? (d.model ?? '') : '';
+		// The default model is Claude's: another runtime starts with the model last used with it, not Claude's.
+		newModel = freshModel(newRuntime);
 		newEffort = null;
 		newMode = modeOf(d.permissionMode);
 		const preset = settings.get<string>('chat.newSession.defaultMode');
@@ -786,11 +786,11 @@
 	}
 
 	async function changeModel(model: string) {
+		rememberModel(runtimeId, model);
 		if (!chatMeta) {
 			newModel = model;
 			return;
-		}
-		const when = await chats.setModel(chatMeta.id, model);
+		}		const when = await chats.setModel(chatMeta.id, model);
 		optionNote = when === 'live' ? t('chat.panel.appliedNow') : when === 'next' ? t('chat.panel.appliedNext') : '';
 	}
 
@@ -802,6 +802,29 @@
 		}
 		const when = await chats.setEffort(chatMeta.id, next);
 		optionNote = when === 'live' ? t('chat.panel.appliedNow') : when === 'next' ? t('chat.panel.appliedNext') : '';
+	}
+
+	/** The model a fresh chat starts with: Claude keeps the settings default; another runtime starts with the model last used with it. */
+	function freshModel(runtime: string): string {
+		if (runtime === CLAUDE_RUNTIME) return chats.defaults().model ?? '';
+		const remembered = lastModel(runtime);
+		return modelCatalog.for(runtime).some((m) => m.value === remembered) ? remembered : '';
+	}
+
+	/** The model last picked with a runtime, for its next new chat (a crate value: empty string beats null). */
+	function lastModel(runtime: string): string {
+		try {
+			return localStorage.getItem(`kingu.agent.lastModel.${runtime}`) ?? '';
+		} catch {
+			return '';
+		}
+	}
+	function rememberModel(runtime: string, model: string) {
+		try {
+			localStorage.setItem(`kingu.agent.lastModel.${runtime}`, model);
+		} catch {
+			// Storage off: no memory across chats.
+		}
 	}
 
 	function startRename(id: string, title: string) {
@@ -965,8 +988,7 @@
 			// A started chat keeps its agent: another one starts a new chat (VS Code's new session of that type).
 			if (chatMeta) newChat();
 			newRuntime = id;
-			// Models are per runtime: another agent starts with its own default.
-			if (id !== CLAUDE_RUNTIME) newModel = '';
+			newModel = freshModel(id); // another agent starts with the model last used with it, never Claude's
 		}
 	});
 	const steerable = $derived(canSteer(runtimeProtocol));
