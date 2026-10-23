@@ -195,8 +195,11 @@ const live = Bun.serve({
 					// The page changes the live run's model / permission mode / effort; the host maps it per runtime.
 					await ask('set_options', { runId: args.runId, model: args.model ?? null, permissionMode: args.permissionMode ?? null, effort: args.effort ?? null });
 					return response(null);
+				case 'agent_stop':
+					await ask('stop', { runId: args.runId });
+					return response(null);
 				default:
-					return failure(`the bridge speaks agent_runtimes/list_models/start/send/interrupt/answer/set_options only, asked for ${command}`, 400);
+					return failure(`the bridge speaks agent_runtimes/list_models/start/send/interrupt/answer/set_options/stop only, asked for ${command}`, 400);
 			}
 		} catch (e) {
 			return failure(e);
@@ -206,6 +209,10 @@ const live = Bun.serve({
 
 pump.then(() => {}); // events flow; the host's own replies are in `raw`
 process.on('SIGTERM', () => {
+	// The host's real agent children die with it, but only if we take them first.
+	try {
+		Bun.spawnSync(['pkill', '-P', String(host.pid)]);
+	} catch {}
 	host.kill();
 	process.exit(0);
 });
