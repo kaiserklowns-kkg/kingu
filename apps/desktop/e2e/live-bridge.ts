@@ -11,14 +11,14 @@ import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 // The agent runs (and the probes) use this cwd with the CLIs; it must exist.
 mkdirSync('/tmp/kingu-e2e', { recursive: true });
 
-const KNOWN: Record<string, { kind: 'acp' | 'codex'; args: string[] }> = {
-	opencode: { kind: 'acp', args: ['acp'] },
-	codex: { kind: 'codex', args: ['app-server'] },
-	gemini: { kind: 'acp', args: ['--experimental-acp'] },
-	qwen: { kind: 'acp', args: ['--experimental-acp'] },
-	goose: { kind: 'acp', args: ['acp'] },
-	grok: { kind: 'acp', args: ['agent', 'stdio'] },
-	omp: { kind: 'acp', args: ['acp'] }
+const KNOWN: Record<string, { name: string; kind: 'acp' | 'codex'; args: string[] }> = {
+	opencode: { name: 'OpenCode', kind: 'acp', args: ['acp'] },
+	codex: { name: 'Codex', kind: 'codex', args: ['app-server'] },
+	gemini: { name: 'Gemini CLI', kind: 'acp', args: ['--experimental-acp'] },
+	qwen: { name: 'Qwen Code', kind: 'acp', args: ['--experimental-acp'] },
+	goose: { name: 'goose', kind: 'acp', args: ['acp'] },
+	grok: { name: 'Grok', kind: 'acp', args: ['agent', 'stdio'] },
+	omp: { name: 'oh-my-pi', kind: 'acp', args: ['acp'] }
 };
 
 const host = Bun.spawn(['bun', new URL('../../agent-host/src/main.ts', import.meta.url).pathname], { stdin: 'pipe', stdout: 'pipe', stderr: 'inherit' });
@@ -155,8 +155,20 @@ const live = Bun.serve({
 		const { command, args } = (await request.json()) as { command: string; args: Record<string, unknown> };
 		try {
 			switch (command) {
-				case 'agent_list_models': {
-					const start = startParams({ runtime: args.runtime });
+				case 'agent_runtimes': {
+					// The real resolution, minus the user's custom ACP agents (settings hold those):
+					// Claude and Arkai are always there; a known runtime joins when its CLI is on PATH.
+					const onPath = (kind: string): boolean => !!resolveCli(kind);
+					const features = (protocol: 'claude' | 'arkai' | 'acp' | 'codex') => ({ rewind: protocol === 'claude' || protocol === 'arkai', models: true });
+					return response([
+						{ id: 'claude', name: 'Claude Code', protocol: 'claude', features: features('claude'), custom: false },
+						{ id: 'arkai', name: 'Arkai', protocol: 'arkai', features: features('arkai'), custom: false },
+						...Object.entries(KNOWN)
+							.filter(([id]) => onPath(id))
+							.map(([id, { name, kind }]) => ({ id, name, protocol: kind, features: features(kind), custom: false }))
+					]);
+				}
+				case 'agent_list_models': {					const start = startParams({ runtime: args.runtime });
 					if (!start) return failure(`unknown runtime ${String(args?.runtime ?? '')}`);
 					const result = await ask('list_models', { runtime: start.runtime, cwd: start.cwd });
 					// The Rust command returns the bare Vec; the page awaits that shape.
@@ -184,7 +196,7 @@ const live = Bun.serve({
 					await ask('set_options', { runId: args.runId, model: args.model ?? null, permissionMode: args.permissionMode ?? null, effort: args.effort ?? null });
 					return response(null);
 				default:
-					return failure(`the bridge speaks list_models/start/send/interrupt/answer/set_options only, asked for ${command}`, 400);
+					return failure(`the bridge speaks agent_runtimes/list_models/start/send/interrupt/answer/set_options only, asked for ${command}`, 400);
 			}
 		} catch (e) {
 			return failure(e);

@@ -305,7 +305,7 @@ export async function mockTauri(
 			const internals = {
 				invoke: async (cmd: string, args?: any) => {
 					calls[cmd] = (calls[cmd] ?? 0) + 1;
-					if (initialOpts.live && (cmd === 'agent_list_models' || cmd === 'agent_start' || cmd === 'agent_send' || cmd === 'agent_interrupt' || cmd === 'agent_answer_permission' || cmd === 'agent_set_options')) {
+					if (initialOpts.live && (cmd === 'agent_runtimes' || cmd === 'agent_list_models' || cmd === 'agent_start' || cmd === 'agent_send' || cmd === 'agent_interrupt' || cmd === 'agent_answer_permission' || cmd === 'agent_set_options')) {
 						// The real sidecar answers (live-bridge.ts); same throw-on-failure as Tauri's invoke.
 						const r = await fetch('http://127.0.0.1:4179/invoke', { method: 'POST', body: JSON.stringify({ command: cmd, args }) });
 						const out = (await r.json()) as { ok: boolean; value?: unknown; error?: string };

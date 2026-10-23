@@ -94,3 +94,18 @@ test('a live OpenCode chat switches its model for real', async ({ page }) => {
 	await expect.poll(async () => (await calls(page)).agent_set_options ?? 0).toBeGreaterThan(0);
 	expect(errors).toEqual([]);
 });
+
+test('the agent list comes from the real PATH (installed CLIs only)', async ({ page }) => {
+	test.skip(!opencodeOnPath, 'the OpenCode CLI is not installed');
+	const errors = watchErrors(page);
+	await openApp(page, READY, {}, { live: true });
+
+	// The Agent picker names every runtime whose CLI is really on this machine's PATH.
+	const chat = page.getByRole('complementary', { name: 'Chat' });
+	await chat.getByRole('button', { name: 'Agent: Claude Code' }).click();
+	await page.getByRole('option', { name: 'OpenCode' }).click();
+	// Claude and Arkai are always offered; the remaining rows carry what a real `which` found.
+	const usage = await calls(page);
+	expect(usage.agent_runtimes).toBeGreaterThan(0);
+	expect(errors).toEqual([]);
+});
